@@ -287,6 +287,25 @@ RLVKAPI VkInstance rlvkGetInstance(void);           // Get the VkInstance (the p
 RLVKAPI void rlvkAttachSurface(VkSurfaceKHR surface); // Attach the platform-created surface, builds the swapchain
 RLVKAPI void rlvkDetachSurface(void);                 // Tear down the swapchain + surface (Android pause / window loss); a later rlvkAttachSurface(newSurface) resumes cleanly
 RLVKAPI void rlvkSetMsaaSamples(int samples);       // Set MSAA sample count, call BEFORE rlvkAttachSurface (FLAG_MSAA_4X_HINT)
+
+// Ask an OFFSCREEN framebuffer (render texture) to rasterize multisampled. FLAG_MSAA_4X_HINT /
+// rlvkSetMsaaSamples only reach the swapchain, so an engine that draws its scene into an HDR
+// render target and composites it gets no anti-aliasing at all from them.
+//
+// The attached colour and depth TEXTURES are unchanged and stay single-sampled: they become the
+// RESOLVE destinations of the multisample pass, so everything that samples the render texture
+// afterwards - the compositor, the soft-particle depth snapshot, readback - keeps working with
+// no change and gl_FragCoord/resolution mapping is identical.
+//
+//   samples: 4 to enable, 1 to disable. Returns the count ACTUALLY in effect, which is 1 when
+//   the device cannot do it (Caps.msaa4x), when the framebuffer has a depth attachment and the
+//   device has no depth resolve (Caps.depthResolve), or when it has more than one colour
+//   attachment (MRT resolve is not implemented). Never fails into wrong pixels.
+//
+// Call AFTER every rlFramebufferAttach for that framebuffer and BEFORE its first use; the
+// multisample images are sized from the attachments. Costs one extra 4x colour image and one
+// extra 4x depth image of the target's size in device memory.
+RLVKAPI int  rlvkSetFramebufferSamples(unsigned int fbId, int samples);
 RLVKAPI void rlvkPresent(void);                     // Present the current frame, called from SwapScreenBuffer()
 
 //------------------------------------------------------------------------------------

@@ -236,7 +236,7 @@ static bool rlvkPickPhysicalDevice(void)
 // every other extension/feature is enumerated, recorded in RLVK.Caps, and enabled when present
 static bool rlvkInitLogicalDevice(void)
 {
-    const char *deviceExtensions[12];
+    const char *deviceExtensions[14];
     u32 deviceExtensionCount = 0;
 
     // Extension roll-call
@@ -244,6 +244,7 @@ static bool rlvkInitLogicalDevice(void)
     bool hasLineRasterEXT = false, hasLineRasterKHR = false;
     bool hasPriority = false, hasPageable = false, hasGpl = false, hasPipelineLibrary = false;
     bool hasPortabilitySubset = false;
+    bool hasRenderPass2 = false, hasDepthStencilResolve = false;
     {
         u32 propCount = 0;
         vkEnumerateDeviceExtensionProperties(RLVK.physicalDevice, NULL, &propCount, NULL);
@@ -270,6 +271,10 @@ static bool rlvkInitLogicalDevice(void)
                 hasPipelineLibrary = true;
             else if (strcmp(n, "VK_KHR_portability_subset") == 0)
                 hasPortabilitySubset = true;
+            else if (strcmp(n, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME) == 0)
+                hasRenderPass2 = true;
+            else if (strcmp(n, VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME) == 0)
+                hasDepthStencilResolve = true;
         }
         RL_FREE(props);
     }
@@ -334,6 +339,25 @@ static bool rlvkInitLogicalDevice(void)
         TRACELOG(RL_LOG_WARNING, "RLVK: R32F is limited on this device (blend=%d linearFilter=%d) - use R16F/unorm for blended or filtered float targets",
                  (int)RLVK.Caps.floatBlendR32, (int)RLVK.Caps.floatFilterR32);
 
+    // Offscreen MSAA. framebufferColor/DepthSampleCounts are the ONLY authority on what a
+    // render-pass attachment may use: 4x sampled-image support does not imply 4x attachment
+    // support. Depth resolve is asked for separately because it is a whole extra extension
+    // pair, and an FBO with no depth attachment can have MSAA without it.
+    {
+        VkPhysicalDeviceProperties mprops;
+        vkGetPhysicalDeviceProperties(RLVK.physicalDevice, &mprops);
+        RLVK.Caps.msaa4x = (mprops.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) &&
+                           (mprops.limits.framebufferDepthSampleCounts & VK_SAMPLE_COUNT_4_BIT);
+        RLVK.Caps.depthResolve = false;
+        if (hasRenderPass2 && hasDepthStencilResolve)
+        {
+            VkPhysicalDeviceDepthStencilResolveProperties dsr = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES};
+            VkPhysicalDeviceProperties2 dp2 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &dsr};
+            vkGetPhysicalDeviceProperties2(RLVK.physicalDevice, &dp2);
+            RLVK.Caps.depthResolve = (dsr.supportedDepthResolveModes & VK_RESOLVE_MODE_SAMPLE_ZERO_BIT) != 0;
+        }
+    }
+
     // Enable everything supported (spec: VK_KHR_portability_subset MUST be enabled when present)
     deviceExtensions[deviceExtensionCount++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     if (hasPortabilitySubset)
@@ -350,6 +374,11 @@ static bool rlvkInitLogicalDevice(void)
     {
         deviceExtensions[deviceExtensionCount++] = VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME; // required by graphics_pipeline_library
         deviceExtensions[deviceExtensionCount++] = VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME;
+    }
+    if (RLVK.Caps.depthResolve)
+    {
+        deviceExtensions[deviceExtensionCount++] = VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME; // required by depth_stencil_resolve
+        deviceExtensions[deviceExtensionCount++] = VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME;
     }
 
     f32 queuePriority = 1.0f;
@@ -457,6 +486,17 @@ static void rlvkLoadEntrypoints(void)
         vk.QueueSubmit2 = rlvkQueueSubmit2Compat;
     if (!RLVK.Caps.pushDescriptor || (vk.CmdPushDescriptorSetKHR == NULL))
         vk.CmdPushDescriptorSetKHR = rlvkPushDescriptorSetCompat;
+
+    // Offscreen MSAA depth resolve. There is no fallback: if the entry point is missing the
+    // capability is retracted here, and rlvkSetFramebufferSamples then refuses MSAA on any
+    // framebuffer with a depth attachment (returns 1, caller renders single-sampled as before).
+    if (RLVK.Caps.depthResolve)
+    {
+        vk.CreateRenderPass2KHR = (PFN_vkCreateRenderPass2KHR)vkGetDeviceProcAddr(RLVK.device, "vkCreateRenderPass2KHR");
+        if (vk.CreateRenderPass2KHR == NULL) // 1.2+ device that promoted it and dropped the alias
+            vk.CreateRenderPass2KHR = (PFN_vkCreateRenderPass2KHR)vkGetDeviceProcAddr(RLVK.device, "vkCreateRenderPass2");
+        RLVK.Caps.depthResolve = (vk.CreateRenderPass2KHR != NULL);
+    }
 
     // Warn about anything still unresolved (a genuine gap: no native support, no fallback yet)
 #define RLVK_PFN_FUNC(_func) RLVK_CHECK_LOG(vk._func == NULL, "Couldn't load vk" #_func);

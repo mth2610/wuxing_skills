@@ -3,7 +3,7 @@
 #include "rlgl.h"
 #include <math.h>
 #include <string.h>
-#include <stdlib.h> // getenv (WUXING_NO_HDR)
+#include <stdlib.h> // getenv/atoi (WUXING_NO_HDR, WUXING_MSAA)
 
 // CORE_ISSUES.md Item 3 rebuild — root cause #2: the soft-particle depth
 // linearization must use the SAME near/far the scene was actually rendered
@@ -175,6 +175,26 @@ static RenderTexture2D LoadLinearDepthTarget(int width, int height)
   return target;
 }
 
+/* ANTI-ALIASING — owned by the rlvk Renderer Agent, kept to these few lines on purpose.
+ * The 3D world rasterizes into `renderTex`, never into the window, so FLAG_MSAA_4X_HINT /
+ * rlvkSetMsaaSamples (both swapchain-only) can never anti-alias it: every geometric silhouette
+ * in the game landed with binary coverage. rlvkSetFramebufferSamples makes renderTex ITSELF a
+ * 4x target and resolves into the same colour and depth textures this module already hands out,
+ * so ScreenDistort_Draw / SnapshotDepth / GetRawDepthTexture are unaffected.
+ * Returns the sample count actually in effect (1 when the device declines) — it can cost
+ * aliasing, never correctness. GL 3.3 / GLES have no offscreen-MSAA path and stay on FXAA. */
+#if defined(GRAPHICS_API_VULKAN)
+extern int rlvkSetFramebufferSamples(unsigned int fbId, int samples);
+#endif
+static int s_sceneSamples = 1;
+
+/* Samples the scene target rasterizes with: 4 = real MSAA, 1 = none.
+   NOT a reason to switch FXAA off. MSAA and FXAA fix different edges here: with MSAA on, the
+   post-3D VFX silhouettes still measured 937 -> 933 luma steps, i.e. unchanged, so dropping
+   FXAA when MSAA is enabled would make exactly the edges the owner reported worse. Exported
+   for diagnostics and for anyone who needs to know which path is live. */
+int ScreenDistort_GetSceneSamples(void) { return s_sceneSamples; }
+
 void ScreenDistort_Init(int width, int height)
 {
   bool forceLdr = (getenv("WUXING_NO_HDR") != NULL);
@@ -240,6 +260,39 @@ void ScreenDistort_Init(int width, int height)
   {
     prevDepthTex = (RenderTexture2D){0};
   }
+
+  /* DEFAULT OFF, opt in with WUXING_MSAA=4. The capability is real and tested; what it buys
+     here is not worth its price by default, and both halves of that were measured:
+       - what it fixes: opaque geometry silhouettes. The map's ellipse edge went 47 -> 17 luma
+         steps >20. Real, but this is a NIGHT arena — its geometry edges are low-contrast, so
+         the win is hard to see even where the numbers move. It would matter on bright daylight
+         scenery, which is where this branch is headed.
+       - what it costs: the scene scope opens exactly TWICE per frame — measured at 1.97/frame
+         and CONSTANT, the same with a heavy fixture, a light one, and an empty scene — so two
+         full-screen resolves every frame, always. Each moves ~55 MB (4x RGBA16F colour + 4x
+         depth at 1280x720), which is ~2-4 ms on a bandwidth-shared GPU and was measured at ~5 ms
+         on the Intel Iris 6000 here. ~10 ms against a 16.6 ms budget.
+     And the second of those two resolves is nearly pure waste: that scope is the post-3D VFX
+     pass, where MSAA measured 937 -> 933 luma steps, because an emissive HDR silhouette is
+     eaten by the tone curve and a shader-decided rim is thinner than the pixel MSAA shades
+     once. See ENGINE_LANDMINES.md #19 for the three edge classes.
+
+     An env var rather than tuning.cfg, deliberately: this decides the FBO's allocation inside
+     ScreenDistort_Init, and Tuning_Init runs AFTER the subsystem inits (core/docs/LANDMINES.md
+     — an early Tuning_RegisterFloat silently keeps its default). Gating on GfxQuality would be
+     worse, not better: the tier is cycled at runtime from main.c, so an Init-time snapshot of
+     it would silently desync from what the HUD says. */
+  s_sceneSamples = 1;
+#if defined(GRAPHICS_API_VULKAN)
+  if (renderTex.id > 0)
+  {
+    const char *msaaEnv = getenv("WUXING_MSAA");
+    const int wanted = (msaaEnv != NULL) ? atoi(msaaEnv) : 1;
+    if (wanted > 1)
+      s_sceneSamples = rlvkSetFramebufferSamples(renderTex.id, wanted);
+  }
+#endif
+  TraceLog(LOG_INFO, "ScreenDistort: scene target MSAA x%d", s_sceneSamples);
 
   distortShader = LoadShader(0, "core/shaders/distortion.fs");
   depthCopyShader = LoadShader(0, "core/shaders/depth_copy.fs");

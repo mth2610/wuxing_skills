@@ -561,6 +561,78 @@ existing graphics shader cleanup in `rlvk_core.inl`.
 the stage-handle unload path, then closes the backend. The validated run must finish without
 `VUID-vkDestroyDevice-device-05137`.
 
+### 7.34 The game had no anti-aliasing at all: MSAA never reached the scene target (2026-08-18)
+
+**Symptom.** Every geometric silhouette in the game landed with binary coverage — reported as
+"the colour transition at the boundary is not smooth". Measured on `--render-vfx 21` (SHIELD
+SHELL), column x=640, rows 198..214: a smooth bloom ramp on both sides and a **+64/255 luma jump
+across ONE pixel**. `FLAG_MSAA_4X_HINT` was never set in `main.c`, and setting it would have
+changed nothing.
+
+**Root cause.** Two independent halves.
+1. `rlvkSetMsaaSamples`/`FLAG_MSAA_4X_HINT` configure the **swapchain**. The game rasterizes its
+   entire 3D world into `ScreenDistort`'s offscreen RGBA16F render target and only composites a
+   full-screen quad to the swapchain — so the multisampled surface was the one surface no
+   geometry was ever drawn into.
+2. Offscreen attachments were hardcoded `VK_SAMPLE_COUNT_1_BIT`, and there was no way to ask for
+   anything else. The blocker was **depth**: a 4-sample colour attachment forces a 4-sample depth
+   attachment (one subpass, one sample count), and `renderTex`'s depth is *sampled* afterwards by
+   the soft-particle snapshot. Vulkan 1.1 core cannot bring a multisample depth image back to one
+   sample at all — `vkCmdResolveImage` is colour-only and `vkCmdCopyImage` rejects `samples > 1`.
+
+**Fix.** `rlvkSetFramebufferSamples(fbId, 4)` (public, in `rlvk.h`). The FBO slot gains its own
+4x colour and 4x depth images; the caller's attached 1x textures become the **resolve
+destinations**, so every existing consumer — compositor, `Caps.noSampledDepth` twin bounce,
+readback — is untouched. Colour uses the fixed-function subpass resolve that already existed for
+the swapchain; depth uses `VK_KHR_depth_stencil_resolve` with `SAMPLE_ZERO`, which needs
+`vkCreateRenderPass2` — hence the second render-pass builder branch in `rlvk_renderpass.inl`,
+taken only for `hasDepthResolve`. Both capabilities are queried (`Caps.msaa4x`,
+`Caps.depthResolve`) and the call returns the count actually in effect, so a device without them
+renders single-sampled instead of wrong. Core side: five lines in `ScreenDistort_Init`.
+
+**What it is worth, measured — and where it is NOT.** All FXAA off, so MSAA is the only variable.
+(The switch has since been INVERTED by the Core module: the scene target is single-sampled by
+default and `WUXING_MSAA=4` opts in — see `ScreenDistort_Init` for the cost measurement that
+drove that. These numbers were taken with `WUXING_NO_MSAA=1` as the 1x side; `WUXING_MSAA=4`
+is now the 4x side.)
+- **Opaque map geometry: fixed.** Whole map scene (`--render-vfx 999`), pixel-to-pixel luma steps
+  >30 fall 594 → 342, steps >50 fall 325 → 97 (−70%); with FXAA also on, steps >50 fall 65 → 26.
+  In the exact region cited in the report (the blue ellipse, x 380..560 × y 25..70) steps >20 fall
+  **78 → 25**, and a boundary that read `30.4 | 12.1` now reads `20.4 | 10.4` — a real
+  partial-coverage pixel.
+- **The bright emissive VFX silhouette: NOT fixed, and this is not a bug.** On SHIELD SHELL the
+  same counts move ~9% and the cited +64 step does not shrink; it moves one pixel outward and
+  grows a 247 neighbour where 1x had 188. **MSAA resolves in linear HDR and the tone curve then
+  compresses the result** — the covered side is far up the ACES shoulder, so 25% and 100%
+  coverage land 5 luma apart. More samples cannot fix that; a tonemapped/weighted resolve could,
+  and the fixed-function subpass resolve cannot do one.
+- **Shader-shaded thin features: untouched.** The 1–2 px bright rim line on the ellipse and a
+  1 px specular streak at (280, 833) are byte-identical. Those are interior shading, not
+  coverage: MSAA shades once per pixel, so a feature narrower than a pixel is a shader problem
+  (`smoothstep`/`fwidth`, or supersampling), not a sample-count problem.
+
+**Measurement trap this cost an hour (methodology rule 4).** The first read of the ellipse said
+"not one byte changed", from a horizontal scan through the single hardest pixel. That pixel sits
+where the boundary runs nearly horizontal, so scanning across it can never show gradation no
+matter how many samples there are — while a VERTICAL scan four rows away shows a clean
+`7.9 → 29.1 → 29.1 → 50.2` half-coverage pair. **Never judge anti-aliasing from the max-gradient
+pixel or from one scan axis**; count hard steps over a REGION, both axes, or you will conclude the
+feature is dead when it is working.
+
+**Cost.** `perf_msaa_off`/`perf_msaa_4x` (Intel Iris 6000, MoltenVK, 1280x720 RGBA16F + depth):
+8.4 → 15.2 ms with a single scene pass, 8.3 → 30.1 ms when the target is closed and reopened four
+times — about **+5 ms per extra reopen**, because both resolves run at EVERY render-pass end.
+The game opens the MSAA scene scope **twice per frame** (17 FBO opens total, 2 of them
+`renderTex`). Memory: +29.5 MB colour +14.7 MB depth at 1280x720. The multisample images cannot
+be `TRANSIENT`/lazily-allocated, because rlvk reopens FBO scopes with `loadOp LOAD` — which is
+also why a mobile tiler would not get its free in-tile resolve here.
+
+**Guard.** `run_rlvk_visual_test.sh msaa_rt`, asserting both halves separately: partial-coverage
+pixels along a flat-white sphere's silhouette (**0 before the fix, 426 after**), and that the
+attached 1x depth texture still reads real scene depth afterwards (the depth-resolve half, which
+would otherwise ship silently broken since nothing looks different until a soft particle meets
+geometry). Zero validation errors under `VALIDATE=1`.
+
 ## 8. What remains
 
 ### 8.1 Confirm in-game — **DONE (2026-07-17, user-confirmed)**

@@ -78,6 +78,92 @@ static VkRenderPass rlvkGetRenderPass(const rlvkRenderPassKey *key)
         attCount++;
     }
 
+    // Offscreen MSAA with a depth attachment: the depth also has to come back to 1 sample, and
+    // Vulkan 1.1 core has no way to do it - vkCmdResolveImage is colour-only and vkCmdCopyImage
+    // rejects samples > 1, so the multisample depth is unreadable by anything downstream (the
+    // soft-particle depth snapshot, the Caps.noSampledDepth twin bounce). The subpass depth
+    // resolve of VK_KHR_depth_stencil_resolve is the one mechanism that can, and it is only
+    // reachable through vkCreateRenderPass2. Same attachments, same subpass, restated in the
+    // "2" structs; SAMPLE_ZERO because averaging depth is meaningless (the twin holds raw NDC
+    // depth that depth_copy.fs linearizes) and SAMPLE_ZERO is the one mode the extension
+    // guarantees. The 1x path below is untouched - this branch only runs for MSAA + depth.
+    if (key->hasDepthResolve)
+    {
+        if ((vk.CreateRenderPass2KHR == NULL) || !hasDepth)
+        {
+            TRACELOG(RL_LOG_WARNING, "RLVK: depth-resolve render pass requested without the capability");
+            return VK_NULL_HANDLE;
+        }
+        VkAttachmentDescription2 atts2[RLVK_MAX_SCOPE_ATTACHMENTS];
+        for (u32 a = 0; a < attCount; a++)
+            atts2[a] = (VkAttachmentDescription2){
+                VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2,
+                .format = atts[a].format,
+                .samples = atts[a].samples,
+                .loadOp = atts[a].loadOp,
+                .storeOp = atts[a].storeOp,
+                .stencilLoadOp = atts[a].stencilLoadOp,
+                .stencilStoreOp = atts[a].stencilStoreOp,
+                .initialLayout = atts[a].initialLayout,
+                .finalLayout = atts[a].finalLayout,
+            };
+        // Depth-resolve destination: 1x, DONT_CARE load (the resolve overwrites it), STORE
+        atts2[attCount] = (VkAttachmentDescription2){
+            VK_STRUCTURE_TYPE_ATTACHMENT_DESCRIPTION_2,
+            .format = key->depthFormat,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        };
+        VkAttachmentReference2 colorRefs2[8], resolveRef2, depthRef2, depthResolveRef2;
+        for (u32 c = 0; c < key->colorCount; c++)
+            colorRefs2[c] = (VkAttachmentReference2){VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2, NULL,
+                                                     colorRefs[c].attachment, colorRefs[c].layout, VK_IMAGE_ASPECT_COLOR_BIT};
+        if (key->hasResolve)
+            resolveRef2 = (VkAttachmentReference2){VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2, NULL,
+                                                   resolveRef.attachment, resolveRef.layout, VK_IMAGE_ASPECT_COLOR_BIT};
+        depthRef2 = (VkAttachmentReference2){VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2, NULL,
+                                             depthRef.attachment, depthRef.layout, VK_IMAGE_ASPECT_DEPTH_BIT};
+        depthResolveRef2 = (VkAttachmentReference2){VK_STRUCTURE_TYPE_ATTACHMENT_REFERENCE_2, NULL,
+                                                    attCount, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT};
+        VkSubpassDescriptionDepthStencilResolve dsResolve = {
+            VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_DEPTH_STENCIL_RESOLVE,
+            .depthResolveMode = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT,
+            .stencilResolveMode = VK_RESOLVE_MODE_NONE,
+            .pDepthStencilResolveAttachment = &depthResolveRef2,
+        };
+        VkSubpassDescription2 subpass2 = {
+            VK_STRUCTURE_TYPE_SUBPASS_DESCRIPTION_2,
+            .pNext = &dsResolve,
+            .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+            .colorAttachmentCount = key->colorCount,
+            .pColorAttachments = key->colorCount ? colorRefs2 : NULL,
+            .pResolveAttachments = key->hasResolve ? &resolveRef2 : NULL,
+            .pDepthStencilAttachment = &depthRef2,
+        };
+        VkRenderPass pass2 = VK_NULL_HANDLE;
+        VkResult res2 = vk.CreateRenderPass2KHR(RLVK.device,
+                                                &(VkRenderPassCreateInfo2){
+                                                    VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO_2,
+                                                    .attachmentCount = attCount + 1,
+                                                    .pAttachments = atts2,
+                                                    .subpassCount = 1,
+                                                    .pSubpasses = &subpass2,
+                                                },
+                                                RLVK_ALLOC, &pass2);
+        if (res2 != VK_SUCCESS)
+        {
+            TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateRenderPass2 => %d", (int)res2);
+            return VK_NULL_HANDLE;
+        }
+        RLVK.renderPasses[RLVK.renderPassCount++] = (rlvkRenderPassEntry){pass2, *key};
+        return pass2;
+    }
+
     VkRenderPass pass = VK_NULL_HANDLE;
     VkResult res = vkCreateRenderPass(RLVK.device,
                                       &(VkRenderPassCreateInfo){
@@ -291,8 +377,52 @@ void rlEnableFramebuffer(unsigned int id)
 
     // OPTIMIZATION: Batched Pipeline Barriers
     // Instead of calling CmdPipelineBarrier2 multiple times in loops, collect them into one single submission.
-    VkImageMemoryBarrier2 batchedBarriers[9]; // max 8 colors + 1 depth
+    VkImageMemoryBarrier2 batchedBarriers[11]; // max 8 colors + 1 depth + the 2 MSAA attachments
     u32 barrierCount = 0;
+
+    // Offscreen MSAA: the scene rasterizes into the slot's private multisample images and the
+    // attached 1x textures are the resolve destinations (which the loops below already put in
+    // COLOR_ATTACHMENT_OPTIMAL / DEPTH_STENCIL_ATTACHMENT_OPTIMAL - the same layouts a resolve
+    // destination needs, so nothing changes for them). Only the multisample images are extra.
+    // MSAA is off unless the FBO was declared 4x AND has exactly one colour attachment.
+    // A depth attachment added AFTER rlvkSetFramebufferSamples would have no multisample twin,
+    // and a 1-sample depth cannot share a subpass with a 4-sample colour: fall back to 1x for
+    // this scope rather than build an illegal render pass.
+    bool fbMsaa = (f->samples > 1) && (f->msColorImage != VK_NULL_HANDLE) && (colorCount == 1) &&
+                  (!(fbDepth && fbDepth->image) || (f->msDepthImage != VK_NULL_HANDLE));
+    if (fbMsaa)
+    {
+        if (f->msColorLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+        {
+            batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                .srcAccessMask = 0,
+                .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                .oldLayout = f->msColorLayout,
+                .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .image = f->msColorImage,
+                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+            };
+            f->msColorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
+        if (f->msDepthImage && (f->msDepthLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL))
+        {
+            batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                .srcAccessMask = 0,
+                .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                .oldLayout = f->msDepthLayout,
+                .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                .image = f->msDepthImage,
+                .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+            };
+            f->msDepthLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        }
+    }
 
     for (u32 c = 0; c < colorCount; c++)
     {
@@ -359,17 +489,37 @@ void rlEnableFramebuffer(unsigned int id)
     // Optimized: Replaced memset with zero-init
     rlvkRenderPassKey rpKey = {0};
 
-    for (u32 c = 0; c < colorCount; c++)
+    // Attachment order is the one convention used everywhere (rlvk_state.inl): colours, then the
+    // colour resolve target, then depth, then the depth resolve target. Under MSAA the colour
+    // slot holds the multisample image and the attached texture moves into the resolve slot.
+    if (fbMsaa)
     {
-        scopeViews[scopeViewCount++] = colors[c]->view;
-        rpKey.colorFormats[c] = colors[c]->format;
+        scopeViews[scopeViewCount++] = f->msColorView;
+        rpKey.colorFormats[0] = colors[0]->format;
+        scopeViews[scopeViewCount++] = colors[0]->view; // colour resolve destination
     }
-    if (fbHasDepth)
+    else
+    {
+        for (u32 c = 0; c < colorCount; c++)
+        {
+            scopeViews[scopeViewCount++] = colors[c]->view;
+            rpKey.colorFormats[c] = colors[c]->format;
+        }
+    }
+    bool fbMsaaDepth = fbMsaa && fbHasDepth && (f->msDepthImage != VK_NULL_HANDLE);
+    if (fbMsaaDepth)
+    {
+        scopeViews[scopeViewCount++] = f->msDepthView;
+        scopeViews[scopeViewCount++] = depth->view; // depth resolve destination (SAMPLE_ZERO)
+    }
+    else if (fbHasDepth)
         scopeViews[scopeViewCount++] = depth->view;
 
     rpKey.depthFormat = fbHasDepth ? depth->format : VK_FORMAT_UNDEFINED;
     rpKey.colorCount = (unsigned char)colorCount;
-    rpKey.samples = 1;
+    rpKey.samples = fbMsaa ? 4 : 1;
+    rpKey.hasResolve = fbMsaa ? 1 : 0;
+    rpKey.hasDepthResolve = fbMsaaDepth ? 1 : 0;
     rpKey.colorLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
 
     // VÁ LỖI LOGIC: Sử dụng LOAD_OP_LOAD cho depth để không làm mất dữ liệu chiều sâu
@@ -386,7 +536,8 @@ void rlEnableFramebuffer(unsigned int id)
     RLVK.scope.colorCount = colorCount;
     for (u32 c = 0; c < colorCount; c++)
         RLVK.scope.colorFormats[c] = colors[c]->format;
-    RLVK.scope.samples = 1;
+    RLVK.scope.samples = fbMsaa ? 4u : 1u;
+    RLVK.scope.depthResolve = fbMsaaDepth;
     RLVK.scope.flipY = false;
 }
 
@@ -607,6 +758,7 @@ static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer)
     RLVK.scope.colorCount = 1;
     RLVK.scope.colorFormats[0] = RLVK.swapchainFormat;
     RLVK.scope.samples = (u32)RLVK.msaaSamples;
+    RLVK.scope.depthResolve = false;  // the swapchain scope resolves colour only
     RLVK.scope.flipY = false; // UNMIRRORED: swapchain-scope rendering matches GL memory orientation
     if (rlvkDebugFlag("RLVK_DEBUG_FBO", &s_dbgFbo))
         TRACELOG(RL_LOG_WARNING, "VKDBG frameOPEN fc=%llu img=%u", (ull)RLVK.frameCounter, RLVK.currentImageIndex);

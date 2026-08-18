@@ -26,8 +26,44 @@
 | 16 | `rlDisableColorBlend()` is FLUSH-scoped — re-enabling before the flush un-does it | Anyone wrapping a batch draw in a blend-state toggle (postFX composites, blits) |
 | 17 | A shader redefining a function its `#include` exports renders as the DEFAULT shader, silently | Anyone adding a shared `#include` to an existing shader |
 | 18 | Shaders hot-load from disk, C does not — a measurement after a `.inl` edit describes the OLD binary | Anyone measuring a C-side fix through the game |
+| 19 | The MSAA window hint anti-aliases nothing when the scene renders into an FBO; and MSAA cannot touch a shader-decided edge | Anyone judging edge quality, adding a render target, or authoring a `step()`/`discard` silhouette |
 
 ---
+
+## 19. Window MSAA never reaches an offscreen scene target — and MSAA fixes only ONE kind of edge (18/08/2026)
+
+**Symptom.** Every geometric silhouette in the game arrived with binary coverage — "the colour
+transition at the boundary is not smooth". On `--render-vfx 21`, column x=640: a smooth bloom ramp
+on both sides of a **+64/255 luma jump across ONE pixel**. `main.c` never set
+`FLAG_MSAA_4X_HINT`, and setting it would have changed nothing.
+
+**Cause.** `FLAG_MSAA_4X_HINT` (and rlvk's `rlvkSetMsaaSamples`) configure the **swapchain**. This
+engine rasterizes the entire 3D world into `ScreenDistort`'s offscreen HDR render target and only
+composites a full-screen quad to the swapchain, so the hint was multisampling the one surface no
+geometry is ever drawn into. Offscreen render targets are single-sampled unless the backend is
+explicitly asked otherwise — under rlvk, `rlvkSetFramebufferSamples(fbId, 4)` (Vulkan only; GL 3.3
+/ GLES have no equivalent here and keep FXAA).
+
+**Rule.** Before believing any anti-aliasing setting, ask which surface the geometry actually
+rasterizes into. Then, before concluding MSAA is broken or worthless, classify the edge you are
+measuring — it fixes exactly one of these three:
+- **Triangle silhouette on opaque geometry** — this is what MSAA is for. Measured: luma steps >50
+  fell 325 → 97 across the map scene; in the ellipse region above, steps >20 fell 78 → 25.
+- **Bright emissive HDR silhouette** — largely eaten by the tone curve. The resolve averages in
+  linear HDR, then ACES compresses: 25% and 100% coverage landed 5 luma apart, so the +64 step
+  above merely moved one pixel. Not a bug, and not fixable by more samples.
+- **A feature thinner than a pixel, or an edge decided inside the fragment shader** (a 1–2 px rim
+  line, a specular streak, a `step()`/`discard` cutoff) — **untouched; MSAA shades once per
+  pixel.** Those need `smoothstep` over ~one pixel (`fwidth`), alpha-to-coverage, or supersampling.
+
+**Corollary rule, learned the hard way here: never judge anti-aliasing from the single hardest
+pixel or from one scan axis.** The ellipse first measured as "not one byte changed" — the
+max-gradient pixel happened to sit where the boundary runs nearly horizontal, so a horizontal scan
+across it can never show gradation at any sample count. A vertical scan four rows away had a clean
+`7.9 → 29.1 → 29.1 → 50.2` half-coverage pair. Count hard steps over a REGION, on both axes.
+
+Full chain, the depth-resolve constraint it hits under Vulkan, and the measured cost:
+`third_party/vulkan/docs/HANDOFF.md` §7.34; guard `run_rlvk_visual_test.sh msaa_rt`.
 
 ## 18. Shaders reload from disk; C does not — and that asymmetry produces a false negative (17/08/2026)
 

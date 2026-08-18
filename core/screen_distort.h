@@ -23,6 +23,13 @@ void ScreenDistort_Init(int width, int height);
 // This is the AUTHORITATIVE HDR flag; PostFX_Init matches it. Valid after Init.
 bool ScreenDistort_IsHDR(void);
 
+// Samples the scene target (renderTex) rasterizes with. 4 = real hardware MSAA on the offscreen
+// HDR target (rlvk/Vulkan only — FLAG_MSAA_4X_HINT reaches the swapchain, which no geometry is
+// drawn into); 1 = single-sampled, which is what GL 3.3 / GLES and any device that declines
+// offscreen MSAA get. PostFX's FXAA pass is the fallback resolve for the 1-sample case.
+// Valid after Init.
+int ScreenDistort_GetSceneSamples(void);
+
 // Giải phóng tài nguyên hệ thống
 void ScreenDistort_Unload(void);
 

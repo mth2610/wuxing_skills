@@ -1647,6 +1647,143 @@ void rlFramebufferAttach(unsigned int fb, unsigned int texId, int attachType, in
     // No VkFramebuffer object created; everything is inferred at vkCmdBeginRendering time.
 }
 
+// Release an FBO's private multisample images (see rlvkSetFramebufferSamples). Evicts the
+// cached VkFramebuffers that reference their views FIRST - a cached framebuffer outliving its
+// attachment view is a use-after-free the moment the same scope shape is opened again.
+static void rlvkReleaseFramebufferMsaa(rlvkFramebufferSlot *f)
+{
+    if (f->msColorView)
+        rlvkEvictFramebuffersForView(f->msColorView);
+    if (f->msDepthView)
+        rlvkEvictFramebuffersForView(f->msDepthView);
+    rlvkDeferDestroy(VK_NULL_HANDLE, f->msColorImage, f->msColorView, VK_NULL_HANDLE, f->msColorMemory, VK_NULL_HANDLE);
+    rlvkDeferDestroy(VK_NULL_HANDLE, f->msDepthImage, f->msDepthView, VK_NULL_HANDLE, f->msDepthMemory, VK_NULL_HANDLE);
+    f->msColorImage = VK_NULL_HANDLE;
+    f->msColorView = VK_NULL_HANDLE;
+    f->msColorMemory = VK_NULL_HANDLE;
+    f->msColorLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    f->msDepthImage = VK_NULL_HANDLE;
+    f->msDepthView = VK_NULL_HANDLE;
+    f->msDepthMemory = VK_NULL_HANDLE;
+    f->msDepthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    f->samples = 1;
+}
+
+// Allocate one private multisample attachment image + view. Returns false and leaves every
+// out-param untouched-or-NULL on any failure, so the caller can degrade to 1 sample.
+static bool rlvkCreateMsaaAttachment(u32 width, u32 height, VkFormat format, bool isDepth,
+                                     VkImage *outImage, VkImageView *outView, VkDeviceMemory *outMemory)
+{
+    VkImage image = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    // No SAMPLED usage and no TRANSFER: nothing ever reads these directly. That also keeps the
+    // Caps.noSampledDepth quirk (SAMPLED on a depth image silently kills depth test on
+    // MoltenVK/Intel) out of the multisample depth target by construction.
+    VkResult res = vkCreateImage(RLVK.device,
+                                 &(VkImageCreateInfo){
+                                     VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                                     .imageType = VK_IMAGE_TYPE_2D,
+                                     .format = format,
+                                     .extent = {width, height, 1},
+                                     .mipLevels = 1,
+                                     .arrayLayers = 1,
+                                     .samples = VK_SAMPLE_COUNT_4_BIT,
+                                     .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                     .usage = isDepth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+                                     .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                                 },
+                                 RLVK_ALLOC, &image);
+    if (res != VK_SUCCESS)
+        return false;
+    VkMemoryRequirements memReq;
+    vkGetImageMemoryRequirements(RLVK.device, image, &memReq);
+    memory = rlvkAllocMemory(memReq, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if ((memory == VK_NULL_HANDLE) || (vkBindImageMemory(RLVK.device, image, memory, 0) != VK_SUCCESS))
+    {
+        vkDestroyImage(RLVK.device, image, RLVK_ALLOC);
+        if (memory) vkFreeMemory(RLVK.device, memory, RLVK_ALLOC);
+        return false;
+    }
+    res = vkCreateImageView(RLVK.device,
+                            &(VkImageViewCreateInfo){
+                                VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                                .image = image,
+                                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                                .format = format,
+                                .subresourceRange = {isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+                            },
+                            RLVK_ALLOC, &view);
+    if (res != VK_SUCCESS)
+    {
+        vkDestroyImage(RLVK.device, image, RLVK_ALLOC);
+        vkFreeMemory(RLVK.device, memory, RLVK_ALLOC);
+        return false;
+    }
+    *outImage = image;
+    *outView = view;
+    *outMemory = memory;
+    return true;
+}
+
+// Offscreen MSAA opt-in - see the contract in rlvk.h. Every refusal returns 1 rather than
+// failing: a caller that renders single-sampled is correct, just aliased.
+int rlvkSetFramebufferSamples(unsigned int fbId, int samples)
+{
+    if (!isGpuReady || fbId == 0 || fbId >= RLVK_MAX_FRAMEBUFFER_SLOTS)
+        return 1;
+    rlvkFramebufferSlot *f = &RLVK.fbSlots[fbId];
+    if (!f->inUse)
+        return 1;
+    int want = (samples >= 4) ? 4 : 1;
+    if (want == 1)
+    {
+        if (f->samples > 1)
+            rlvkReleaseFramebufferMsaa(f);
+        f->samples = 1;
+        return 1;
+    }
+    if (f->samples == 4)
+        return 4; // already on; attachments are assumed unchanged (rlgl never re-attaches in place)
+
+    rlvkTextureSlot *color = (f->colorCount == 1) ? &RLVK.textureSlots[f->colorTextures[0]] : NULL;
+    rlvkTextureSlot *depth = f->hasDepth ? &RLVK.textureSlots[f->depthTexture] : NULL;
+    if (!RLVK.Caps.msaa4x || !color || !color->image || (f->colorCount != 1))
+    {
+        TRACELOG(RL_LOG_INFO, "RLVK: offscreen MSAA declined for fb %u (msaa4x=%d colorCount=%u)",
+                 fbId, (int)RLVK.Caps.msaa4x, f->colorCount);
+        return 1;
+    }
+    if (depth && depth->image && !RLVK.Caps.depthResolve)
+    {
+        // No depth resolve => the depth texture the caller attached would keep whatever stale
+        // contents it had while the scene wrote a multisample depth nobody can read. Aliased
+        // and correct beats anti-aliased with a dead depth buffer.
+        TRACELOG(RL_LOG_INFO, "RLVK: offscreen MSAA declined for fb %u (no VK_KHR_depth_stencil_resolve)", fbId);
+        return 1;
+    }
+    if (!rlvkCreateMsaaAttachment((u32)color->width, (u32)color->height, color->format, false,
+                                  &f->msColorImage, &f->msColorView, &f->msColorMemory))
+    {
+        TRACELOG(RL_LOG_WARNING, "RLVK: offscreen MSAA colour target allocation failed for fb %u", fbId);
+        return 1;
+    }
+    if (depth && depth->image &&
+        !rlvkCreateMsaaAttachment((u32)depth->width, (u32)depth->height, depth->format, true,
+                                  &f->msDepthImage, &f->msDepthView, &f->msDepthMemory))
+    {
+        TRACELOG(RL_LOG_WARNING, "RLVK: offscreen MSAA depth target allocation failed for fb %u", fbId);
+        rlvkReleaseFramebufferMsaa(f);
+        return 1;
+    }
+    f->msColorLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    f->msDepthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    f->samples = 4;
+    TRACELOG(RL_LOG_INFO, "RLVK: offscreen MSAA x4 active on fb %u (%dx%d, depth resolve=%d)",
+             fbId, color->width, color->height, (int)(f->msDepthImage != VK_NULL_HANDLE));
+    return 4;
+}
+
 // Verify render texture is complete
 bool rlFramebufferComplete(unsigned int fb)
 {
@@ -1667,6 +1804,8 @@ void rlUnloadFramebuffer(unsigned int fb)
     // backend (which queries GL_DEPTH_ATTACHMENT and deletes it): UnloadRenderTexture()
     // relies on this - color attachments stay caller-owned
     rlvkFramebufferSlot *slot = &RLVK.fbSlots[fb];
+    if (slot->samples > 1)
+        rlvkReleaseFramebufferMsaa(slot);
     if (slot->hasDepth && slot->depthTexture)
         rlUnloadTexture(slot->depthTexture);
     if (slot->hasStencil && slot->stencilTexture && (slot->stencilTexture != slot->depthTexture))

@@ -275,6 +275,109 @@ static const char *sc_depth_rt(void)
     return NULL;
 }
 
+// MSAA on an OFFSCREEN render target (rlvkSetFramebufferSamples). FLAG_MSAA_4X_HINT /
+// rlvkSetMsaaSamples only reach the swapchain, so an engine that rasterizes its scene into an
+// HDR render texture and composites it has binary coverage on every silhouette no matter what
+// the window was configured with. Measured in the game before this existed: a 64/255 luma jump
+// across ONE pixel at a mesh edge, with a smooth bloom ramp either side of it.
+//
+// Two independent things are asserted, because the colour half can work while the depth half is
+// silently dead:
+//   1. COVERAGE — a flat-white sphere on black must produce partially-covered pixels along its
+//      silhouette. At 1 sample there are none at all (that is the bug), so this half is red
+//      before the fix by construction.
+//   2. DEPTH RESOLVE — the attached 1x depth texture must still read back real scene depth
+//      afterwards. The multisample depth is unreadable by anything downstream (vkCmdResolveImage
+//      is colour-only, vkCmdCopyImage rejects samples > 1), so without the
+//      VK_KHR_depth_stencil_resolve subpass resolve the soft-particle depth snapshot gets
+//      garbage — the failure most likely to ship unnoticed, since nothing about the picture
+//      changes until a soft particle meets geometry.
+extern int rlvkSetFramebufferSamples(unsigned int fbId, int samples);
+static const char *sc_msaa_rt(void)
+{
+    const char *DEPTH_FS =
+        "#version 330\n"
+        "in vec2 fragTexCoord; out vec4 finalColor;\n"
+        "uniform sampler2D texture0; uniform vec4 colDiffuse;\n"
+        "uniform float uNear; uniform float uFar;\n"
+        "void main(){\n"
+        "  float ndc = texture(texture0, fragTexCoord).r * 2.0 - 1.0;\n"
+        "  float lin = (2.0*uNear*uFar) / (uFar + uNear - ndc*(uFar - uNear));\n"
+        "  float v = clamp(lin/20.0, 0.0, 1.0);\n"
+        "  finalColor = vec4(v, v, v, 1.0); }\n";
+    Shader dsh = LoadShaderFromMemory(NULL, DEPTH_FS);
+    float nearV = 0.01f, farV = 1000.0f;
+    SetShaderValue(dsh, GetShaderLocation(dsh, "uNear"), &nearV, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(dsh, GetShaderLocation(dsh, "uFar"), &farV, SHADER_UNIFORM_FLOAT);
+
+    RenderTexture2D rt = LoadRenderTexture(W, H);
+    int samples = rlvkSetFramebufferSamples(rt.id, 4);
+    Camera3D cam = cam3d();
+
+    // Pass 1: the coverage half. A flat-shaded sphere (raylib's default shader does no lighting,
+    // so it is a solid white disc) over black — every non-black non-white pixel is AA coverage.
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        BeginTextureMode(rt);
+            ClearBackground(BLACK);
+            BeginMode3D(cam);
+                DrawSphereEx((Vector3){0,0,0}, 1.6f, 24, 24, WHITE);
+            EndMode3D();
+        EndTextureMode();
+        DrawTextureRec(rt.texture, (Rectangle){0,0,W,-H}, (Vector2){0,0}, WHITE);
+        EndDrawing();
+    }
+    int partial = 0;
+    {
+        Image im = snap();
+        for (int y = 0; y < H; y++)
+            for (int x = 0; x < W; x++)
+            {
+                Color c = at(im, x, y);
+                if ((c.r > 24) && (c.r < 231)) partial++;   // neither background nor full coverage
+            }
+        UnloadImage(im);
+    }
+
+    // Pass 2: the depth-resolve half, same shape as soft_depth — a near cube fills the centre
+    // (real depth ~4 units -> dark), the corners keep the cleared far value (-> white).
+    int centre = 0, corner = 0;
+    for (int f = 0; f < 3; f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        BeginTextureMode(rt);
+            ClearBackground(BLACK);
+            BeginMode3D(cam);
+                DrawCube((Vector3){0,0,2}, 1.6f, 1.6f, 1.6f, WHITE);
+            EndMode3D();
+        EndTextureMode();
+        BeginShaderMode(dsh);
+            DrawTexturePro(rt.depth, (Rectangle){0,0,W,H}, (Rectangle){0,0,W,H}, (Vector2){0,0}, 0, WHITE);
+        EndShaderMode();
+        EndDrawing();
+    }
+    {
+        Image im = snap();
+        centre = at(im, W/2, H/2).r;
+        corner = at(im, 8, 8).r;
+        UnloadImage(im);
+    }
+    UnloadRenderTexture(rt); UnloadShader(dsh);
+
+    printf("  [msaa_rt] samples=%d partialCoverage=%d depth(centre=%d corner=%d)\n",
+           samples, partial, centre, corner);
+    if (samples != 4)
+        return NULL;    // device declined offscreen MSAA (Caps.msaa4x / Caps.depthResolve): not a regression
+    if (partial < 200)
+        return "offscreen MSAA reported active but the silhouette is still binary coverage";
+    if (centre > 150)
+        return "MSAA depth was not resolved: the 1x depth texture reads far where geometry is";
+    if (corner < 200)
+        return "MSAA depth resolve clobbered the cleared-far background";
+    return NULL;
+}
+
 // A VFX colour layer shares the scene RT depth so particles still occlude correctly.
 // It clears its own colour target with depth writes disabled.  The clear must honour
 // that mask; otherwise every later VFX draw sees a freshly-cleared depth buffer.
@@ -2430,6 +2533,58 @@ static const char *sc_perf_hdr_main(void)  { return perfPostFX(false, RL_PIXELFO
 static const char *sc_perf_hdr_bloom(void) { return perfPostFX(true,  RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16, "hdr_bloom  1280x720 RGBA16F + pyramid"); }
 static const char *sc_perf_ldr_bloom(void) { return perfPostFX(true,  RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,     "ldr_bloom  1280x720 RGBA8   + pyramid"); }
 
+// What offscreen 4x MSAA actually costs on the game's own scene target: a 1280x720 RGBA16F
+// colour + sampleable depth texture (exactly ScreenDistort's renderTex), reopened four times a
+// frame the way the VFX body/emission layers reopen it - the reopen count matters because the
+// colour AND depth resolves run at EVERY render-pass end, not once per frame.
+// UNCAPPED=1 or this measures the refresh interval (see LANDMINES "measurement traps").
+static const char *perfMsaaRT(int samples, int layers, const char *label)
+{
+    RenderTexture2D rt = fmtRT(1280, 720, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    if (rt.id == 0) return "could not create the RGBA16F target";
+    rlEnableFramebuffer(rt.id);
+    rt.depth.id = rlLoadTextureDepth(1280, 720, false);
+    rt.depth.width = 1280; rt.depth.height = 720; rt.depth.mipmaps = 1;
+    rlFramebufferAttach(rt.id, rt.depth.id, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
+    rlDisableFramebuffer();
+    int got = rlvkSetFramebufferSamples(rt.id, samples);
+    Camera3D cam = cam3d();
+    double t0 = 0; const int WARM = 20, N = 120;
+    for (int f = 0; f < WARM + N; f++)
+    {
+        if (f == WARM) t0 = GetTime();
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginTextureMode(rt);
+            ClearBackground((Color){8,8,16,255});
+            BeginMode3D(cam);
+                for (int i = 0; i < 120; i++)
+                {
+                    float a = (float)i * 0.31f;
+                    DrawCube((Vector3){cosf(a)*2.2f, sinf(a*1.7f)*1.4f, sinf(a)*2.2f}, 0.3f, 0.3f, 0.3f, BLUE);
+                }
+            EndMode3D();
+        EndTextureMode();
+        for (int layer = 0; layer < layers; layer++)   // VFX body/emission reopen the scene target
+        {
+            rlEnableFramebuffer(rt.id);
+            BeginMode3D(cam); DrawCube((Vector3){0,0,0}, 1.0f, 1.0f, 1.0f, RED); EndMode3D();
+            rlDrawRenderBatchActive();
+            rlDisableFramebuffer();
+        }
+        DrawTextureRec(rt.texture, (Rectangle){0,0,W,-H}, (Vector2){0,0}, WHITE);
+        EndDrawing();
+    }
+    double ms = (GetTime() - t0) * 1000.0 / N;
+    printf("  [perf %s] samples=%d reopens=%d  %.3f ms/frame\n", label, got, layers + 1, ms);
+    rlUnloadTexture(rt.texture.id); rlUnloadFramebuffer(rt.id);
+    return NULL;
+}
+static const char *sc_perf_msaa_off(void)  { return perfMsaaRT(1, 3, "msaa_off   1280x720 RGBA16F+depth"); }
+static const char *sc_perf_msaa_4x(void)   { return perfMsaaRT(4, 3, "msaa_4x    1280x720 RGBA16F+depth"); }
+static const char *sc_perf_msaa_off1(void) { return perfMsaaRT(1, 0, "msaa_off1  1280x720 RGBA16F+depth"); }
+static const char *sc_perf_msaa_4x1(void)  { return perfMsaaRT(4, 0, "msaa_4x1   1280x720 RGBA16F+depth"); }
+
 static const char *sc_perf_base(void)   { return perfRun(0);    }
 static const char *sc_perf_rt256(void)  { return perfRun(256);  }
 static const char *sc_perf_rt2048(void) { return perfRun(2048); }
@@ -2880,6 +3035,7 @@ static const Scenario SCENARIOS[] = {
     { "depth",          sc_depth },
     { "depth_rt",       sc_depth_rt },
     { "depth_mask_clear", sc_depth_mask_clear },
+    { "msaa_rt",        sc_msaa_rt },
     { "fbo_switch",     sc_fbo_switch },
     { "soft_depth",     sc_soft_depth },
     { "soft_ground",    sc_soft_ground },
@@ -2918,6 +3074,10 @@ static const Scenario SCENARIOS[] = {
     { "perf_ldr_bloom", sc_perf_ldr_bloom },
     { "perf_rt256",     sc_perf_rt256 },
     { "perf_rt2048",    sc_perf_rt2048 },
+    { "perf_msaa_off",  sc_perf_msaa_off },
+    { "perf_msaa_4x",   sc_perf_msaa_4x },
+    { "perf_msaa_off1", sc_perf_msaa_off1 },
+    { "perf_msaa_4x1",  sc_perf_msaa_4x1 },
 };
 #define N_SCENARIOS (int)(sizeof(SCENARIOS)/sizeof(SCENARIOS[0]))
 

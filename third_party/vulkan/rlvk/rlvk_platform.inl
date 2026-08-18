@@ -705,6 +705,7 @@ static void rlvkBeginFrame(void)
     RLVK.scope.colorCount = 1;
     RLVK.scope.colorFormats[0] = RLVK.swapchainFormat;
     RLVK.scope.samples = (u32)RLVK.msaaSamples;
+    RLVK.scope.depthResolve = false;  // the swapchain scope resolves colour only
     RLVK.scope.flipY = false; // UNMIRRORED: swapchain-scope rendering matches GL memory orientation
 
     // GPU trace: frame-start stamp (query slots were harvested above, safe to reuse)

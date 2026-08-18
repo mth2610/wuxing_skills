@@ -191,6 +191,10 @@ static struct {
 #define RLVK_PFN_FUNC(_func) PFN_vk##_func _func;
     RLVK_PFN_FUNCS
 #undef RLVK_PFN_FUNC
+    // Loaded by hand, NOT through RLVK_PFN_FUNCS: it is legitimately absent on a device without
+    // VK_KHR_create_renderpass2, and the X-macro's "Couldn't load" roll-call would report that
+    // as a gap. NULL unless Caps.depthResolve; only the offscreen-MSAA-with-depth pass uses it.
+    PFN_vkCreateRenderPass2KHR CreateRenderPass2KHR;
 } vk;
 
 //----------------------------------------------------------------------------------

@@ -1,5 +1,37 @@
 # rlvk — Progress / Backlog
 
+## Offscreen MSAA landed — `rlvkSetFramebufferSamples` (2026-08-18)
+
+The game had **no** anti-aliasing: `FLAG_MSAA_4X_HINT` was never set, and it would not have helped
+because the scene rasterizes into `ScreenDistort`'s offscreen HDR target, not the swapchain. New
+public entry point `rlvkSetFramebufferSamples(fbId, 4)` gives an FBO private 4x colour/depth
+images and resolves into the caller's existing 1x textures, so every consumer is unchanged. Depth
+needs `VK_KHR_depth_stencil_resolve` + `vkCreateRenderPass2` (Vulkan 1.1 core cannot resolve
+depth at all); both that and 4x attachment support are `Caps` flags, and the call returns the
+count actually in effect. Full chain and measurements: HANDOFF §7.34. Guard: `msaa_rt`
+(0 → 426 partial-coverage pixels). Core wired in `ScreenDistort_Init`, DEFAULT OFF —
+`WUXING_MSAA=4` opts in. Core inverted the default after measuring the cost: the scene scope
+opens exactly twice per frame (1.97, constant across fixtures and an empty scene), so two
+full-screen resolves of ~55 MB each, ~5 ms apiece on the Intel Iris 6000 here.
+
+**Open items this leaves.**
+- **Resolve cost scales with scope reopens, not frames.** +5 ms per extra reopen at 1280x720
+  RGBA16F on Intel Iris 6000, because both resolves run at every render-pass end and the
+  multisample images must be STOREd (rlvk reopens with `loadOp LOAD`). The game currently opens
+  the MSAA scene scope twice a frame. A "resolve only on the last close of the frame" scheme
+  would need the pass shape chosen at close time, which the current cache decides at open time.
+- **Mobile/GLES gets nothing.** The GL path has no offscreen-MSAA route here and keeps FXAA. Even
+  on Vulkan/Android the `loadOp LOAD` requirement forfeits a tiler's free in-tile resolve, so
+  this should stay desktop-gated until that is addressed.
+- **MSAA does not help the bright emissive VFX silhouettes** (the resolve averages in linear HDR
+  and the tone curve then compresses it), nor sub-pixel shader features like a 1–2 px rim line.
+  Opaque map geometry IS fixed (steps >50: 325 → 97). The remaining two classes are authoring
+  fixes — `smoothstep`/`fwidth`, alpha-to-coverage — or would need a tonemapped resolve, which
+  the fixed-function subpass resolve cannot do. See ENGINE_LANDMINES #19.
+- **FXAA is still on by default** (`postfx_fxaa = 1.0`) and was deliberately left that way; with
+  MSAA active it is now largely redundant on opaque geometry and still the only thing helping the
+  two classes above. Core owner's call.
+
 ## The rear face's grey wash is the EMISSION pass — bisected, not yet fixed (2026-08-17)
 
 Two separate things were being reported as one, and only one of them is the shell's.

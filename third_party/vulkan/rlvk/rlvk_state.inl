@@ -111,6 +111,24 @@ typedef struct rlvkFramebufferSlot {
     u32                 stencilTexture;         // Stencil attachment texture slot (0 = none)
     bool                hasDepth, hasStencil;   // Attachment presence flags
     bool                inUse;                 // Slot occupied
+
+    // Offscreen MSAA (rlvkSetFramebufferSamples; 0/1 = off, the default). The attached
+    // color/depth TEXTURES stay 1x and become RESOLVE destinations - everything that samples
+    // the render texture keeps working unchanged. These privately-owned images are what the
+    // scene actually rasterizes into. Colour resolves with the fixed-function subpass resolve;
+    // depth needs VK_KHR_depth_stencil_resolve (Caps.depthResolve), which is why an FBO with a
+    // depth attachment is refused MSAA when that capability is missing.
+    // NOT transient/lazily-allocated: rlvk opens and closes an FBO scope many times per frame
+    // and every reopen is loadOp LOAD, so the multisample contents must survive between passes.
+    unsigned char       samples;                // 1 = off, else 4
+    VkImage             msColorImage;           // 4x color target (colorCount == 1 only)
+    VkImageView         msColorView;
+    VkDeviceMemory      msColorMemory;
+    VkImageLayout       msColorLayout;
+    VkImage             msDepthImage;           // 4x depth target (resolved into depthTexture)
+    VkImageView         msDepthView;
+    VkDeviceMemory      msDepthMemory;
+    VkImageLayout       msDepthLayout;
 } rlvkFramebufferSlot;
 
 typedef struct rlvkBufferSlot {
@@ -147,6 +165,10 @@ typedef struct rlvkPipelineKey {
     unsigned char       samples;                // Rasterization samples
     unsigned char       colorCount;             // Color attachments in the scope
     unsigned char       depthTest, depthWrite;  // Depth state
+    unsigned char       depthResolve;           // Scope resolves MSAA depth (offscreen MSAA with a depth attachment):
+                                                // a different render-pass compatibility class than the swapchain's
+                                                // colour-only resolve, so it must key its own pipelines
+    unsigned char       _pad[3];                // keep memcmp-comparable: always zero
 } rlvkPipelineKey;
 
 // One cached pipeline: the key it was built from and the pipeline itself
@@ -168,7 +190,7 @@ typedef struct rlvkPipelineEntry {
 //----------------------------------------------------------------------------------
 #define RLVK_MAX_RENDER_PASSES          32
 #define RLVK_MAX_CACHED_FRAMEBUFFERS    64
-#define RLVK_MAX_SCOPE_ATTACHMENTS      10      // 8 colors + resolve + depth
+#define RLVK_MAX_SCOPE_ATTACHMENTS      11      // 8 colors + colour resolve + depth + depth resolve
 #define RLVK_DESC_SETS_PER_FRAME        1024    // pool-ring fallback: snapshot sets per frame slot
 #define RLVK_COMPUTE_SETS_PER_FRAME     256     // compute dispatch snapshot sets per frame slot
 #define RLVK_SET0_CACHE_SIZE            128     // pool-ring fallback: distinct set-0 snapshots reused within one frame
@@ -182,7 +204,12 @@ typedef struct rlvkRenderPassKey {
     unsigned char       depthLoad;              // VkAttachmentLoadOp of the depth attachment
     unsigned char       depthStore;             // VkAttachmentStoreOp of the depth attachment
     unsigned char       hasResolve;             // MSAA fixed-function resolve into a 1x attachment (colorCount == 1 only)
-    unsigned char       _pad[2];                // keep memcmp-comparable: always zero
+    unsigned char       hasDepthResolve;        // MSAA depth resolve into a 1x depth attachment (needs Caps.depthResolve;
+                                                // forces the vkCreateRenderPass2 path). Part of the key because it changes
+                                                // the attachment list, and pipeline render-pass COMPATIBILITY compares
+                                                // resolve attachment references - a pipeline built against a shape without
+                                                // it may not be bound inside a pass that has it.
+    unsigned char       _pad[1];                // keep memcmp-comparable: always zero
 } rlvkRenderPassKey;
 
 typedef struct rlvkRenderPassEntry {
@@ -309,7 +336,9 @@ typedef struct rlvkData {
         u32             fbSlot;
         u32             width, height;
         u32             colorCount;     // color attachments in the open scope (swapchain = 1)
-        u32             samples;        // rasterization samples of the open scope (MSAA on swapchain only)
+        u32             samples;        // rasterization samples of the open scope (swapchain MSAA, or an FBO
+                                        // that asked for it via rlvkSetFramebufferSamples)
+        bool            depthResolve;   // the open scope resolves MSAA depth into a 1x depth attachment
         bool            flipY;
     } scope;
     int                     deadResourceCount[RLVK_FRAME_INDEX_COUNT];
@@ -457,6 +486,14 @@ typedef struct rlvkData {
         // because R32F render targets are the case the engine actually leans on.
         bool        floatBlendR32;      // R32_SFLOAT supports COLOR_ATTACHMENT_BLEND
         bool        floatFilterR32;     // R32_SFLOAT supports SAMPLED_IMAGE_FILTER_LINEAR
+        // Offscreen MSAA (rlvkSetFramebufferSamples). Both are optional: 4x on a framebuffer
+        // attachment is a limits bitmask the device may not set, and resolving a multisample
+        // DEPTH attachment has no Vulkan 1.1-core path at all (vkCmdResolveImage is colour-only,
+        // vkCmdCopyImage rejects samples > 1), so it needs VK_KHR_create_renderpass2 +
+        // VK_KHR_depth_stencil_resolve. Missing either one degrades to 1 sample, never to
+        // wrong pixels: rlvkSetFramebufferSamples returns the count actually in effect.
+        bool        msaa4x;             // framebufferColor/DepthSampleCounts both include 4x
+        bool        depthResolve;       // VK_KHR_depth_stencil_resolve with SAMPLE_ZERO + renderpass2
         // Driver quirks (empirically bisected, see tests/rlvk_visual_test.c depth_rt scenario)
         bool        noSampledDepth;     // MoltenVK/Intel: SAMPLED usage on a depth image silently
                                         // disables depth test/write on that attachment. When set,

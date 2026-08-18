@@ -440,6 +440,10 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
     rpKey.depthLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
     rpKey.depthStore = VK_ATTACHMENT_STORE_OP_STORE;
     rpKey.hasResolve = (key->samples > 1) ? 1 : 0;
+    // Render-pass COMPATIBILITY compares resolve attachment references too, so a pipeline meant
+    // for an offscreen MSAA scope that resolves depth must be built against that same shape -
+    // the swapchain's colour-only-resolve pass is a different compatibility class.
+    rpKey.hasDepthResolve = (key->samples > 1) && key->depthResolve ? 1 : 0;
     VkRenderPass compatPass = rlvkGetRenderPass(&rpKey);
 
     VkPipeline pipeline = VK_NULL_HANDLE;
@@ -563,6 +567,7 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
     key.polygonMode = (unsigned char)((RLVK.Caps.fillModeNonSolid && RLVK.State.pointMode) ? VK_POLYGON_MODE_POINT : (RLVK.Caps.fillModeNonSolid && RLVK.State.wireMode) ? VK_POLYGON_MODE_LINE
                                                                                                                                                                          : VK_POLYGON_MODE_FILL);
     key.samples = (unsigned char)RLVK.scope.samples;
+    key.depthResolve = (unsigned char)(RLVK.scope.depthResolve ? 1 : 0);
     key.colorCount = (unsigned char)RLVK.scope.colorCount;
     key.depthTest = RLVK.State.depthTest ? 1 : 0;
     key.depthWrite = RLVK.State.depthWrite ? 1 : 0;
