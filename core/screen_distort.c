@@ -622,10 +622,26 @@ void ScreenDistort_SnapshotDepth(void)
   // vì đã được gán chết trên GPU ở hàm _Init, giảm API Draw Call.
   BeginTextureMode(prevDepthTex);
   BeginShaderMode(depthCopyShader);
+  // THE DESTINATION Y IS THE MIRROR OF THE SOURCE Y, not a copy of it. A negative
+  // source height makes DrawTexturePro sample the block bottom-to-top, which is what
+  // turns FBO storage order back into screen order — but it mirrors WITHIN THE BLOCK,
+  // so the block also has to be placed at its mirrored position for the composition to
+  // be the plain identity the sampler assumes. Writing `region.y / D` is only correct
+  // when the region is the whole frame (y = 0, h = H), which is the one case this was
+  // ever exercised in, so the bug hid: a full-screen region is its own mirror.
+  //
+  // With a partial region the depth landed `H - 2y - h` screen rows away from where it
+  // was read. Every consumer then compared its fragment against the wrong row of the
+  // floor, and because the floor's depth changes fastest exactly where a shell meets it,
+  // the error was largest where the contact term matters most: the ShieldShell's ground
+  // line measured a 0.35-1.5 m gap at the pixel where the depth TEST had already cut the
+  // geometry away, so no contact band could ever be drawn there.
+  const float regionBottom = s_softDepthRegion.y + s_softDepthRegion.height;
+  const float mirroredY = (float)renderTex.texture.height - regionBottom;
   Rectangle source = {s_softDepthRegion.x, s_softDepthRegion.y,
                       s_softDepthRegion.width, -s_softDepthRegion.height};
   Rectangle destination = {s_softDepthRegion.x / SOFT_DEPTH_DOWNSCALE,
-                           s_softDepthRegion.y / SOFT_DEPTH_DOWNSCALE,
+                           mirroredY / SOFT_DEPTH_DOWNSCALE,
                            s_softDepthRegion.width / SOFT_DEPTH_DOWNSCALE,
                            s_softDepthRegion.height / SOFT_DEPTH_DOWNSCALE};
   DrawTexturePro(renderTex.depth, source, destination, (Vector2){0, 0}, 0.0f, WHITE);
