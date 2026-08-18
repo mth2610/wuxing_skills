@@ -3,8 +3,6 @@
 #include "core/shaders/common/vfx_composite.glsl"
 
 in vec3 shieldViewDir;
-in float shieldFresnel;
-in float shieldNdotV;
 
 uniform vec4 u_bodyColor;
 uniform vec4 u_rimColor;
@@ -104,7 +102,18 @@ float impactRipple() {
 void main() {
     vec3 viewDir = normalize(shieldViewDir);
     vec3 normal = normalize(fragNormal);
-    float fresnel = shieldFresnel;
+    // PER PIXEL. These were varyings computed in the vertex shader, which meant a QUARTIC
+    // sampled at the vertices and joined with straight lines across each quad of a
+    // 40-slice sphere. Everything the shell shades with hangs off them — wall density,
+    // path length, the rim's white threshold, the emission mask — so all of it broke into
+    // flat strips with a crease at every mesh ring, which is what read as an unsmooth
+    // colour transition at the silhouette and along the ground line. The normal is
+    // already interpolated and normalised here; evaluating the curve from it costs a dot
+    // and three multiplies and the facets are gone.
+    float shieldNdotV = abs(dot(normal, viewDir));
+    float fresnelM = 1.0 - shieldNdotV;
+    float fresnelX2 = fresnelM * fresnelM;
+    float fresnel = fresnelX2 * fresnelX2;
     float t = u_time * u_flowSpeed;
     vec2 baseUV = fragTexCoord * u_noiseScale;
     vec3 flowSample = (u_hasFlow != 0) ? texture(u_flowTex, baseUV).rgb :
@@ -168,16 +177,25 @@ void main() {
                 u_rimColor.rgb * (pattern * 0.35 + ripple * 1.5);
     glow += matcap * fresnel * 0.55;
     glow += u_rimColor.rgb * bottomGlow * (0.65 + pattern * 1.15);
-    // SAME TREATMENT AS THE SILHOUETTE RIM, for the same reason. A single flat colour
-    // times a coverage ramp reads as a painted stripe: the eye finds no hot core and no
-    // corona, so the ground line does not look like the same material as the shell's own
-    // edge two centimetres away. `rimHot` above puts near-white at the thinnest, hottest
-    // sliver and lets the element hue carry the wider band (§5.4); the contact line is
-    // the same event — the shell at its densest against a surface — so it is built the
-    // same way, keyed on `contact` instead of `wallDensity`. The white core stays
-    // NARROWER than the hue band, which is what stops it reading as pale.
-    vec3 contactHot = mix(u_contactColor.rgb, vec3(1.0),
-                          smoothstep(0.88, 0.995, contact));
+    // A HOT CORE LIKE THE RIM'S, BUT THE WINDOW HAS TO MATCH THE BAND'S OWN PEAK.
+    // The first attempt keyed the white on smoothstep(0.88, 0.995, contact) — copied from
+    // `rimHot`'s narrow window — and it read as a SEPARATE PALE STRIPE sitting inside the
+    // orange one with a hard edge between them, not as a hot core. Two things make that
+    // window wrong here:
+    //
+    //   - the band's luminance is already near the ceiling across its width (measured, 8
+    //     consecutive pixels with R pinned at 255), so white cannot make anything
+    //     brighter; it can only shift hue, and a hue shift with no luminance change is
+    //     read as a different band, not a hotter one;
+    //   - after the profile went cubic, `contact` spends very little of its range above
+    //     0.88, so that shell of values lands OFF the visible band's peak instead of on
+    //     it — a white line beside the bright part rather than in it.
+    //
+    // 0.75 -> 1.0 ramps the white in across the range the band actually occupies, so the
+    // whitest pixel is the brightest pixel and the eye reads one hot line with a hue
+    // corona, the same structure as the silhouette. Term ablation confirmed this is the
+    // term that owns the artefact: removing the matcap or `rimHot` changed nothing.
+    vec3 contactHot = mix(u_contactColor.rgb, vec3(1.0), smoothstep(0.75, 1.0, contact));
     // HELD BACK OUT OF `glow` until after the rear attenuation below. The contact line is
     // the one emission term that is a property of the SURFACE THE SHELL TOUCHES rather
     // than of which wall you are looking at, and the far wall is where half of that line

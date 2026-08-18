@@ -168,6 +168,8 @@ static void ShieldShell_InitShared(void)
     Tuning_RegisterFloat("shield_shell_base_alpha", &s_shieldBaseAlpha, 0.025f);
     Tuning_RegisterFloat("shield_shell_fresnel_alpha", &s_shieldFresnelAlpha, 0.34f);
     Tuning_RegisterFloat("shield_shell_contact_alpha", &s_shieldContactAlpha, 0.70f);
+    /* Registration is what actually sets the runtime value (Tuning_RegisterFloat assigns
+       the default), so this number, not the static initialiser above, is the shipped one. */
     Tuning_RegisterFloat("shield_shell_depth_enabled", &s_shieldDepthEnabled, 1.0f);
     Tuning_RegisterFloat("shield_shell_depth_lod", &s_shieldDepthLod, 0.5f);
     Tuning_RegisterFloat("shield_shell_ripple_frequency", &s_shieldRippleFrequency, 18.0f);

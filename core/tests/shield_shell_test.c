@@ -219,9 +219,14 @@ int main(void)
                "DrawCoreSphere(shield->pos, radius, rings, rings, WHITE);\n}"),
           "the archetype pair stays for sync_vfx_test.py; the real draw moved "
           "to the post-3D refraction pass");
+    /* WAS "per vertex", and that was the bug, not the contract. A quartic sampled at the
+       vertices and interpolated linearly across a 40-slice sphere is flat facets joined by
+       creases, and wall density, path length, the rim's white threshold and the emission
+       mask all hang off it — so the whole shell terraced along the mesh rings. The
+       contract is the multiply-chain pow-4; the STAGE it runs in is now the fragment one. */
     CHECK(Has("core/shaders/glass_shell.fs", "u_emissionOnly") &&
-          Has("core/shaders/glass_shell.vs", "fresnelX2 * fresnelX2"),
-          "Fresnel is calculated per vertex with multiply-chain math");
+          Has("core/shaders/glass_shell.fs", "fresnelX2 * fresnelX2"),
+          "Fresnel uses multiply-chain math, evaluated per fragment");
     CHECK(Has("core/shaders/glass_shell.fs", "VFX_ResolvePremultiplied") &&
           Has("core/shaders/glass_shell.fs", "VFX_ResolveEmission"),
           "the shell resolves body and emission through the shared compositor");
@@ -251,8 +256,14 @@ int main(void)
     // the scene-depth intersection, refraction via a noise-jittered scene tap,
     // alpha = base + fresnel*fresnelAlpha + contact*contactAlpha.
     CHECK(Has("core/shaders/glass_shell.fs", "shieldPow4") &&
-          Has("core/shaders/glass_shell.vs", "fresnelX2 * fresnelX2"),
+          Has("core/shaders/glass_shell.fs", "fresnelX2 * fresnelX2"),
           "glass fresnel uses the recipe's multiply-chain falloff");
+    /* PER PIXEL. A quartic evaluated at the vertices and interpolated linearly across a
+       40-slice sphere is a set of flat facets joined by creases, and every term the shell
+       shades with hangs off it. The vertex stage must not bake it. */
+    CHECK(!Has("core/shaders/glass_shell.vs", "shieldFresnel") &&
+          !Has("core/shaders/glass_shell.vs", "shieldNdotV"),
+          "the fresnel curve is evaluated per pixel, not interpolated from the vertices");
     /* Pin the CONTRACT — the band is the depth gap normalised by u_contactThickness —
        not the falloff curve. The literal `smoothstep(0.0, u_contactThickness` was pinned
        here, which made replacing a flat-topped profile with a peaked one read as a
@@ -273,14 +284,28 @@ int main(void)
     CHECK(Has("core/shaders/glass_shell.fs", "u_parallaxDepth") &&
           Has("core/shaders/glass_shell.fs", "shieldViewDir.xy * u_parallaxDepth"),
           "inner energy uses view-dependent parallax");
-    /* The ground line is built like the silhouette rim — near-white at its hottest, the
-       element hue carrying the wider band — because it is the same event and the owner
-       reads a flat colour ramp as a painted stripe. Pin the STRUCTURE (a white mix keyed
-       on `contact`), not the two smoothstep edges, which are a look to be tuned. */
-    CHECK(Has("core/shaders/glass_shell.fs", "contactHot") &&
-          Has("core/shaders/glass_shell.fs", "vec3(1.0)") &&
-          Has("core/shaders/glass_shell.fs", "contact)"),
-          "the contact band has a hot core and a hue corona, like the rim");
+    /* THE GROUND LINE CARRIES ONE HUE, and only the RIM gets an authored white core.
+       A white core was tried on the contact band and reverted: at the silhouette the
+       white sits on a real luminance rise so it reads as "hotter", but the ground line is
+       already at the ceiling across its whole width (8 consecutive pixels with R pinned
+       at 255), so white there cannot brighten anything — it only shifts hue, and the eye
+       reads a separate pale stripe with a hard edge inside the orange one. Term-by-term
+       ablation isolated it: removing the matcap or the rim's white changed nothing,
+       removing this made the band a single continuous gradient. Guard both halves so
+       neither is re-derived. */
+    /* BOTH bands get a white core — the ground line is the same event as the silhouette
+       and must look like it. What matters is the WINDOW: copying `rimHot`'s narrow
+       0.88..0.995 put the white on a shell of `contact` values that, after the profile
+       went cubic, sits OFF the visible band's peak, so it read as a separate pale stripe
+       beside the orange one instead of a hot core inside it. Assert that the contact
+       window starts materially lower than the rim's, which is the property that keeps the
+       whitest pixel on the brightest pixel. */
+    CHECK(Has("core/shaders/glass_shell.fs",
+              "mix(u_contactColor.rgb, vec3(1.0), smoothstep(0.75, 1.0, contact))"),
+          "the contact band has a white core on a window matched to its own peak");
+    CHECK(Has("core/shaders/glass_shell.fs",
+              "mix(u_rimColor.rgb, vec3(1.0), smoothstep("),
+          "the SILHOUETTE rim keeps its own, narrower white core");
     /* And it survives the far wall's attenuation: the contact line belongs to the surface
        the shell touches, not to which wall you are looking at, and half of it lives on
        the far wall. Adding it AFTER the rearInterface scale is what keeps that half. */

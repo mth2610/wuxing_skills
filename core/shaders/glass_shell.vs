@@ -2,10 +2,12 @@
 #include "core/shaders/common/vs_header.glsl"
 
 out vec3 shieldViewDir;
-out float shieldFresnel;
-// Raw |N·V|, so the fragment stage can model WALL THICKNESS rather than reuse a
-// fresnel band. shieldFresnel stays as-is for the emission/pattern terms.
-out float shieldNdotV;
+// |N.V| AND THE FRESNEL ARE NOT COMPUTED HERE ANY MORE — see glass_shell.fs. Evaluating
+// a QUARTIC at the vertices and letting the rasteriser interpolate it linearly turns a
+// smooth curve into flat facets joined by creases, and EVERY shading term downstream
+// (wall density, path length, the rim's white threshold, the emission mask) rides on
+// those two values, so the whole shell terraced along the mesh rings. Only the view
+// direction crosses the stage boundary now; the curve is evaluated per pixel.
 
 // DrawCoreSphere is immediate-mode geometry. BeginMode3D has already applied
 // the model-view transform on the CPU, so both attributes arrive in view space.
@@ -27,9 +29,5 @@ void main() {
     // What the shading actually wants is the OBLIQUITY, |N·V| — how edge-on the surface
     // is — which is the same quantity on both walls and is what makes the far wall carry
     // its own grazing gradient inside the near one.
-    shieldNdotV = abs(dot(fragNormal, shieldViewDir));
-    float fresnelM = 1.0 - shieldNdotV;
-    float fresnelX2 = fresnelM * fresnelM;
-    shieldFresnel = fresnelX2 * fresnelX2;
     gl_Position = mvp * vec4(vertexPosition, 1.0);
 }
