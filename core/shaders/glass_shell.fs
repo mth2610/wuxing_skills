@@ -67,8 +67,31 @@ float depthContact(vec2 uv) {
     // -Z, so the axial distance of a visible fragment is -fragPosition.z.
     float fragDepth = max(-fragPosition.z, 0.0001);
     float gap = sceneDepth - fragDepth;
+    // A SCREEN-SPACE WIDTH FLOOR WAS TRIED HERE AND REMOVED. `max(u_contactThickness,
+    // fwidth(gap) * 5.0)` looks like the obvious cure for "the rear ground line has no
+    // band", and it is not: the band was missing because the depth SNAPSHOT was written
+    // to the wrong rows of its target for any region smaller than the full frame (fixed
+    // in ScreenDistort_SnapshotDepth), not because 0.35 m was too thin. With the snapshot
+    // aligned the floor changes 104 of 921600 pixels by more than 2/255 — nothing — while
+    // costing two derivatives and lighting up the silhouette, where fwidth explodes and a
+    // 30 m gap still scores as "touching". Left as a note so it is not re-derived.
     if (gap <= 0.0) return 0.0;
-    return 1.0 - smoothstep(0.0, u_contactThickness, gap);
+    // PEAKED, NOT PLATEAUED. This was `1.0 - smoothstep(0, thickness, gap)`, and
+    // smoothstep has ZERO DERIVATIVE at its lower edge: the band came out flat-topped for
+    // the first ~15% of its width. Measured on the ground line, that flat top was 13 px
+    // wide — and inside it the R channel is pinned at 1.0, so there is no luminance
+    // gradient left and the only thing that can still vary across those 13 px is HUE.
+    // The post FX hue-restoration blend (§12.1) weights by `smoothstep(1,2,peak)`, which
+    // rises and falls across the band, so G swung 185 -> 170 -> 231: a saturated ring
+    // sandwiched between two paler ones. That is the "colour rings instead of a gradient"
+    // report, and it is a plateau problem, not a brightness problem — halving the
+    // strengths only took the clipped area from 10924 px to 6940 and kept the dip.
+    // A cubic falls away immediately (slope -3/thickness at gap = 0), so the pinned core
+    // is a 5 px sliver with a monotone ramp on either side of it: 13 -> 5 px flat top,
+    // 10924 -> 7029 clipped pixels, and G rises monotonically the whole way.
+    float t = clamp(gap / u_contactThickness, 0.0, 1.0);
+    float m = 1.0 - t;
+    return m * m * m;
 }
 
 float impactRipple() {
@@ -145,7 +168,21 @@ void main() {
                 u_rimColor.rgb * (pattern * 0.35 + ripple * 1.5);
     glow += matcap * fresnel * 0.55;
     glow += u_rimColor.rgb * bottomGlow * (0.65 + pattern * 1.15);
-    glow += u_contactColor.rgb * contact * u_contactStrength;
+    // SAME TREATMENT AS THE SILHOUETTE RIM, for the same reason. A single flat colour
+    // times a coverage ramp reads as a painted stripe: the eye finds no hot core and no
+    // corona, so the ground line does not look like the same material as the shell's own
+    // edge two centimetres away. `rimHot` above puts near-white at the thinnest, hottest
+    // sliver and lets the element hue carry the wider band (§5.4); the contact line is
+    // the same event — the shell at its densest against a surface — so it is built the
+    // same way, keyed on `contact` instead of `wallDensity`. The white core stays
+    // NARROWER than the hue band, which is what stops it reading as pale.
+    vec3 contactHot = mix(u_contactColor.rgb, vec3(1.0),
+                          smoothstep(0.88, 0.995, contact));
+    // HELD BACK OUT OF `glow` until after the rear attenuation below. The contact line is
+    // the one emission term that is a property of the SURFACE THE SHELL TOUCHES rather
+    // than of which wall you are looking at, and the far wall is where half of that line
+    // lives. Folding it in would dim exactly the half this fix exists to restore.
+    vec3 contactGlow = contactHot * contact * u_contactStrength;
 
     /* The rear optical interface must remain present, but it cannot be an
      * indistinguishable duplicate of the front shell.  Give it a darker,
@@ -156,7 +193,15 @@ void main() {
      * a second time or the 0.45 volume term collapses to a barely measurable
      * tint after the shared bodyOpacity multiplier. */
     body *= mix(1.0, 1.35, rearInterface);
-    glow *= mix(1.0, 0.68, rearInterface);
+    /* 0.42, DOWN FROM 0.68, because the emission pass now draws this wall too. While it
+     * drew the near wall only the far wall contributed no radiance at all, so the weight
+     * was academic; with both walls drawing, the broad angle-independent terms (`pattern`,
+     * the matcap sheen) land twice on every interior pixel, and the doubled light
+     * cancelled the carrier's attenuation — on the cool plate darken% fell 73.5 -> 12.1
+     * while the shell was still, correctly, a piece of glass. The far wall is also seen
+     * THROUGH the near one, so arriving at ~0.4 is the honest ordering. */
+    glow *= mix(1.0, 0.42, rearInterface);
+    glow += contactGlow;
 
     /* Safe scene-through glass: the C side binds a copy made after the 3D
      * scene is complete.  This is what gives the shield a real volume instead

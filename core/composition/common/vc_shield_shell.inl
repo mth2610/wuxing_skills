@@ -466,9 +466,37 @@ void VFX_ShieldShell_DrawRefraction(Camera3D cam)
     if (s_shieldShader.lightDirView >= 0)
         SetShaderValue(s_shieldShader.shader, s_shieldShader.lightDirView,
                        &lightView, SHADER_UNIFORM_VEC3);
+    /* BOTH INTERFACES, exactly like the body pass above. This pass used to run once,
+     * inheriting RL_CULL_FACE_BACK from the body pass, so emission covered FRONT faces
+     * only — and every consequence the owner reported follows from that one line:
+     *
+     *   - the far wall got the body pass (which only takes light out) and no glow at
+     *     all, so it rendered as a colourless dark shape;
+     *   - `contact` still raised the far wall's ALPHA (`contact * u_contactAlpha`), but
+     *     the matching `glow += contactColor * contact` never reached the framebuffer,
+     *     so the rear ground line drew as a BLACK rim — extra coverage, zero radiance.
+     *
+     * The far wall is where the shell meets the ground on its far side; it needs the
+     * same radiance the near wall gets, attenuated by the `rearInterface` weight the
+     * shader already applies, not omitted. */
+    rlSetCullFace(RL_CULL_FACE_FRONT);
+    {
+        int wall = 0;
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.wallPass,
+                       &wall, SHADER_UNIFORM_INT);
+    }
+    ShieldShell_DrawPass(true);
+    rlDrawRenderBatchActive();
+    rlSetCullFace(RL_CULL_FACE_BACK);
+    {
+        int wall = 1;
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.wallPass,
+                       &wall, SHADER_UNIFORM_INT);
+    }
     ShieldShell_DrawPass(true);
     rlDrawRenderBatchActive();
     SkillManager_EndShader();
+    rlSetCullFace(RL_CULL_FACE_BACK);
     VFXRender_EndDraw(&emission);
 }
 
