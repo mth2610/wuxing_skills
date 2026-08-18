@@ -315,6 +315,7 @@ configure_file(core/shaders/bloom_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shade
 configure_file(core/shaders/bloom_downsample.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_downsample.fs COPYONLY)
 configure_file(core/shaders/bloom_upsample.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_upsample.fs COPYONLY)
 configure_file(core/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/post_process.fs COPYONLY)
+configure_file(core/shaders/fxaa.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/fxaa.fs COPYONLY)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders)
 configure_file(core/trails/shaders/trail_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/trails/shaders/trail_glow.fs COPYONLY)
 # trail_body/trail_deform were missing here. A missing shader does NOT announce

@@ -2579,3 +2579,26 @@ just moves the material away from correct.
 - **Corollary worth remembering:** fixing one thing can EXPOSE a latent defect
   downstream. That is not evidence the fix was wrong — check whether the newly
   visible artifact predates it before reverting anything.
+
+### MSAA cannot reach an offscreen render target — the game had NO anti-aliasing
+- **Symptom:** every geometric silhouette landed with binary coverage. Measured
+  on the ShieldShell, the last background pixel reads 188 luma and the shell's
+  first pixel 252 — a +64 step in ONE pixel, with a perfectly smooth bloom ramp
+  on either side of it. That crease is what reads as "the boundary is not
+  smooth", and it is not any effect's fault: the map's own ellipse staircases
+  identically.
+- **Cause:** two things at once. `main.c` never set `FLAG_MSAA_4X_HINT` — and it
+  would not have helped, because the hint applies to the WINDOW's framebuffer
+  while the scene rasterises into ScreenDistort's offscreen HDR target. A bright
+  thin curve on a dark background is the cruellest case for it, which is why a
+  shell rim made a renderer-wide gap look like a shell bug.
+- **Rule:** before blaming an effect for a hard edge, zoom on unrelated geometry
+  in the same frame. If the map staircases too, the gap is the renderer's.
+  And remember which framebuffer a config flag applies to: an offscreen target
+  needs its own multisample attachment and resolve, or a post-process resolve.
+- **Fix taken:** FXAA on the tone-mapped composite (`core/shaders/fxaa.fs`, one
+  extra pass and one LDR target). `postfx_fxaa = 0` restores the old output
+  exactly — with it off the composite still draws straight to the swapchain, so
+  the A/B is against the real previous path, not a second code path. Guard:
+  `core/tests/fxaa_pass_test.c`. A true MSAA HDR target remains the better fix
+  and belongs to the renderer module.

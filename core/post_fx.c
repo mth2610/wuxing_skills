@@ -8,6 +8,12 @@
 
 static RenderTexture2D mainRenderTex;
 static RenderTexture2D bloomTex; // bright-pass output + final upsampled result (1/4)
+/* Composite lands here instead of the swapchain when FXAA is on, so the AA pass has
+   something to sample. LDR by definition: FXAA thresholds on perceptual luma and must
+   run after the tone map. */
+static RenderTexture2D ldrTex;
+static Shader fxaaShader;
+static int fxaaTexelLoc = -1;
 
 // HDR (Đợt G) — the whole offscreen chain (scene + bloom pyramid) uses a
 // 16-bit half-float color format so additive VFX / emissive can exceed 1.0 and
@@ -118,6 +124,10 @@ static float s_bloomKnee = 0.0f;      // 0 = shader default
 static float s_hueRestore = 0.6f;
 // Diagnostic overlay for §11b gate 3, which expires whenever the scene gets brighter.
 static float s_shoulderView = 0.0f;
+/* The scene rasterises into an offscreen HDR target, so raylib's MSAA hint (which
+   applies to the window framebuffer) cannot antialias it and every silhouette in the
+   game lands with binary coverage. Off = the old aliased output, for A/B. */
+static float s_fxaa = 1.0f;
 static float s_bloomScatterOverride = 0.0f;
 static float s_bloomKaris = 1.0f;     // 1 = firefly weighting on (see below)
 
@@ -179,6 +189,13 @@ void PostFX_Init(int width, int height)
   SetTextureFilter(bloomTex.texture, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(bloomTex.texture, TEXTURE_WRAP_CLAMP);
 
+  /* ALWAYS LDR, never colorFmt: this holds the tone-mapped result, and FXAA's contrast
+     thresholds are perceptual. Clamped wrap so the 3x3 neighbourhood at the frame border
+     cannot wrap around and invent an edge there. */
+  ldrTex = LoadRenderTextureWithFormat(width, height, ldrFmt);
+  SetTextureFilter(ldrTex.texture, TEXTURE_FILTER_BILINEAR);
+  SetTextureWrap(ldrTex.texture, TEXTURE_WRAP_CLAMP);
+
   int w = width / 4, h = height / 4;
   s_dfLevels = 0;
   for (int i = 0; i < DUAL_FILTER_LEVELS; i++)
@@ -238,6 +255,8 @@ void PostFX_Init(int width, int height)
   lutParamsLoc = GetShaderLocation(compositeShader, "u_lutParams");
   lutSizeLoc = GetShaderLocation(compositeShader, "u_lutSize");
   ColorGradeLut_Init();
+  fxaaShader = LoadShader(0, "core/shaders/fxaa.fs");
+  fxaaTexelLoc = GetShaderLocation(fxaaShader, "u_texel");
   radialBlurEnabledLoc = GetShaderLocation(compositeShader, "u_radialBlurEnabled");
   radialBlurCenterLoc = GetShaderLocation(compositeShader, "u_radialBlurCenter");
   radialBlurStrengthLoc = GetShaderLocation(compositeShader, "u_radialBlurStrength");
@@ -253,6 +272,8 @@ void PostFX_Unload(void)
 {
   UnloadRenderTexture(mainRenderTex);
   UnloadRenderTexture(bloomTex);
+  UnloadRenderTexture(ldrTex);
+  UnloadShader(fxaaShader);
   for (int i = 0; i < s_dfLevels; i++)
     UnloadRenderTexture(dfTex[i]);
   s_dfLevels = 0;
@@ -559,6 +580,7 @@ void PostFX_Draw(const PostFXConfig *config)
     Tuning_RegisterFloat("bloom_scatter", &s_bloomScatterOverride, 0.0f);
     Tuning_RegisterFloat("postfx_hue_restore", &s_hueRestore, 0.6f);
     Tuning_RegisterFloat("postfx_shoulder_view", &s_shoulderView, 0.0f);
+    Tuning_RegisterFloat("postfx_fxaa", &s_fxaa, 1.0f);
     Tuning_RegisterFloat("bloom_karis", &s_bloomKaris, 1.0f);
     Tuning_RegisterFloat("lut_strength", &s_lutStrengthOverride, 0.0f);
     s_tunablesReg = true;
@@ -744,10 +766,18 @@ void PostFX_Draw(const PostFXConfig *config)
   // always the same as the real render/swapchain target size (rlvk/Vulkan on Android: the
   // display's full native resolution, no GL-style OS buffer upscale) - a 1:1 draw only covers
   // a sub-rectangle there, leaving the rest of the screen black. See RLVK_HANDOFF.md §7.14.
+  /* WITH FXAA the composite is no longer the last pass, so it lands in ldrTex at 1:1 and
+     the AA pass does the swapchain-sized draw. Without it, nothing changes: the composite
+     goes straight to the swapchain exactly as before, which is what keeps `postfx_fxaa=0`
+     a true A/B against the old output rather than a different code path. */
+  const bool useFxaa = (s_fxaa > 0.5f) && fxaaShader.id != 0 && ldrTex.id != 0;
+  if (useFxaa) BeginTextureMode(ldrTex);
+  const float outW = useFxaa ? (float)width : (float)GetRenderWidth();
+  const float outH = useFxaa ? (float)height : (float)GetRenderHeight();
   rlDisableColorBlend();
   DrawTexturePro(mainRenderTex.texture,
                  (Rectangle){0, 0, (float)width, -(float)height},
-                 (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
+                 (Rectangle){0, 0, outW, outH},
                  (Vector2){0, 0}, 0.0f, WHITE);
   // FLUSH INSIDE THE DISABLED WINDOW. rlDisableColorBlend() is flush-scoped on both
   // backends (it is glDisable(GL_BLEND) under GL and a pipeline-state bump under rlvk):
@@ -761,6 +791,34 @@ void PostFX_Draw(const PostFXConfig *config)
   rlEnableColorBlend();
 
   EndShaderMode();
+
+  if (useFxaa)
+  {
+    EndTextureMode();
+    /* Source height NEGATIVE again, not positive. The composite above already wrote
+       ldrTex with a flip, and this second flip is what returns the image to screen
+       orientation — the same RT->RT convention the rest of this codebase uses. Getting
+       this wrong shows up instantly as an upside-down frame, which is the cheap failure;
+       the expensive one is a PARTIAL rect, where the flip has to be composed with a
+       mirrored destination (see ScreenDistort_SnapshotDepth). This draw is full-frame,
+       so it does not have that problem. */
+    BeginShaderMode(fxaaShader);
+    if (fxaaTexelLoc >= 0)
+    {
+      float texel[2] = {1.0f / (float)ldrTex.texture.width,
+                        1.0f / (float)ldrTex.texture.height};
+      SetShaderValue(fxaaShader, fxaaTexelLoc, texel, SHADER_UNIFORM_VEC2);
+    }
+    rlDisableColorBlend();
+    DrawTexturePro(ldrTex.texture,
+                   (Rectangle){0, 0, (float)ldrTex.texture.width,
+                               -(float)ldrTex.texture.height},
+                   (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
+                   (Vector2){0, 0}, 0.0f, WHITE);
+    rlDrawRenderBatchActive();
+    rlEnableColorBlend();
+    EndShaderMode();
+  }
 
   PostFX_PerfSample(config, width, height);
 }
