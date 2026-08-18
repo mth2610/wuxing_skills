@@ -4,6 +4,11 @@ Branch `bright-background-vfx-foundation`. Gates green: core **69/74** (the five
 failures are pre-existing and unchanged), rlvk visual 27/27, surface-registry and
 `sync_vfx_test --check` clean.
 
+> **Updated 18/08/2026, late.** Everything below still holds. Since it was written: the
+> contact band's white core came back on its OWN window, the fresnel curve moved to the
+> fragment stage, FXAA landed as the shipping anti-aliasing, and MSAA landed as a
+> capability that is OFF by default. See "What landed after this doc was first written".
+
 ## Six symptoms CLOSED, one CHARACTERISED but not fixed
 
 Each closed one had a single cause; two of them shared a cause. Verified in a scene
@@ -88,6 +93,29 @@ so it can be tried and reverted with no rebuild.
 
 Three other reformulations were measured and are dead: anything that starts whitening near
 peak 1 destroys what §12.1 exists to protect (white chroma 0.320 → 0.073 / 0.107).
+
+## What landed after this doc was first written
+
+* **The contact band's white core is back, on a WIDER window** — `smoothstep(0.75, 1.0,
+  contact)`, not the rim's `0.88..0.995`. Copying the rim's narrow window put the white on a
+  shell of `contact` values that, after the profile went cubic, sits OFF the visible band's
+  peak: it read as a separate pale stripe beside the orange one. And the band's luminance is
+  already at the ceiling across its width, so white there cannot brighten anything, only shift
+  hue. Term ablation isolated it — removing the matcap or `rimHot` changed nothing. Removing
+  the core outright was tried and is ALSO wrong: the ground contact is the same event as the
+  silhouette and has to look like it.
+* **Fresnel and `|N.V|` are evaluated per FRAGMENT now.** They were per-vertex varyings, i.e. a
+  QUARTIC sampled at the vertices and joined with straight lines across a 40-slice sphere, and
+  every shading term hangs off them.
+* **FXAA is the shipping anti-aliasing** (`core/shaders/fxaa.fs`, `postfx_fxaa`, default 1.0).
+  The renderer had none at all: every geometric silhouette landed with binary coverage, which
+  is what the remaining stair-stepping at the shell's boundary was. Not a shell bug — the map's
+  own geometry staircased identically.
+* **MSAA on the scene target exists but is OFF** (`WUXING_MSAA=4` opts in). It fixes opaque
+  triangle silhouettes only. On the shell it measured 937 -> 933 luma steps — nothing — because
+  an emissive HDR silhouette is eaten by the tone curve and a shader-decided rim is thinner
+  than the pixel MSAA shades once. `ENGINE_LANDMINES.md` #19 has the three edge classes; read
+  it before trying to sharpen any edge.
 
 ## The bug under the bug — read this before touching any depth consumer
 
@@ -208,6 +236,15 @@ veil brighter, which is exactly how this hid.
 
 * The contact ring is bright enough at this fixture's scale to compete with the
   silhouette rim. `shield_shell_contact` is live in `tuning.cfg` if it should come down.
+* **The shell reads as two bright rings with a hole in the middle** — the emission mask is
+  `max(fresnel * 0.92, ...)` and `fresnel` is `(1-|N.V|)^4`, which at the middle of the disc
+  (`|N.V| = 0.71`) is 0.0067. That mask is A RING BY CONSTRUCTION, while the body pass carries
+  the Beer-Lambert wall thickness — a real volume — but only takes light out, which is
+  invisible on a night background. An emission term shaped by `wallDensity` was tried and
+  REVERTED: it looked right, but the uniform never reached the shader (sweeping the knob
+  changed 0 pixels) and removing its last use made the renderer abort — an rlvk UBO trap that
+  was not chased. Anyone picking this up should start by finding out why that uniform did not
+  arrive; the visual direction was correct.
 * `BRIGHT_BACKGROUND_VFX_SPEC.md` §11b's measured baselines predate the `bloom_scatter`
   restore and need re-measuring. Renderer module's file — not edited here.
 * **The rainbow rim is unresolved by decision, not by ignorance.** Candidate H is ready in
