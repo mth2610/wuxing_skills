@@ -2481,3 +2481,101 @@ just moves the material away from correct.
   fixture can look deterministic purely because it has finished:
   `ENGINE_LANDMINES.md` — "A fixed timestep that only pins the LOOP".
   Guard: `core/tests/frame_delta_determinism_test.c`.
+
+### A second render pass inherits the FIRST pass's cull face
+- **Symptom:** the ShieldShell's far wall rendered as a colourless dark shape,
+  and its ground line drew as a BLACK rim — extra coverage with zero radiance.
+- **Cause:** the shell composites two optical interfaces, and the body pass sets
+  `RL_CULL_FACE_FRONT` then `RL_CULL_FACE_BACK` around two draws. The emission
+  scope ran ONE draw and inherited whatever cull face the body pass left behind,
+  so emission covered the near wall only. The far wall then received the body
+  pass — which only takes light out — and nothing else. The contact term still
+  raised that wall's alpha (`contact * u_contactAlpha`), but its matching
+  `glow += contactColor * contact` never reached the framebuffer: darkening
+  without the light that was supposed to justify it.
+- **Rule:** cull face is render state, not an argument — a pass that draws a
+  two-sided volume declares its own, in every pass that draws it. When a term
+  appears in both an alpha and a colour expression, check that both passes it
+  splits across actually run; a coverage term whose emission half is missing
+  looks exactly like a black outline. Guard: the emission-scoped checks in
+  `core/tests/shield_shell_test.c` (scoped to the emission block, or the body
+  pass's own front/back pair satisfies them and the guard never fails).
+
+### A partial render-texture blit lands in the wrong rows
+- **Symptom:** the soft-depth snapshot reported the scene 0.35–1.5 m too far
+  away whenever the copied region was smaller than the frame; consumers compared
+  against the wrong row of the floor.
+- **Cause:** a negative source height mirrors the block, so the block also has to
+  be written at its mirrored destination `(H - y - h) / D`. `y / D` is right only
+  for a full-frame region — the only region it had ever been used with.
+- **Rule:** full write-up in `ENGINE_LANDMINES.md` — "Blitting a SUB-RECTANGLE
+  between render textures needs the mirrored destination". Guard:
+  `core/tests/soft_depth_region_test.c`. Diagnostic worth reusing: swap the
+  partial region for a full-frame one; if the picture changes, the bug is in the
+  region plumbing, not in what the consumer computes.
+
+### Appending an override to tuning.cfg does nothing if the key is already there
+- **Symptom:** an A/B on `postfx_hue_restore` produced byte-identical frames at
+  0.0, 0.5 and 1.0, which "proved" the tone map was not involved. It was.
+- **Cause:** `Tuning_RegisterFloat` reads the config with `FindKeyValue`, which
+  takes the FIRST match. `tuning.cfg` already contained
+  `postfx_hue_restore = 0.5`, so every value appended at the end was dead text.
+  Forcing the branch in the shader instead changed 11428 pixels, which is what
+  exposed the no-op.
+- **Rule:** before an A/B on a tunable, grep `tuning.cfg` for the key and EDIT
+  the existing line — never append. Two lines with the same key is a silent
+  no-op, not an error. Related and already recorded: persisted overrides survive
+  sessions and silently rescale what you are looking at, so read the whole file,
+  not just your own key. This machine's `tuning.cfg` also pins
+  `postfx_hue_restore = 0.5` where §12.1 documents a shipping default of 0.6 —
+  every local measurement is at 0.5.
+
+### A staleness guard that counts core/tests/ cries wolf
+- **Symptom:** `render_vfx_matrix.sh` refused to run, naming a `_test.c` file as
+  making `./build/wuxing` stale, every time a regression test was added next to
+  a fix.
+- **Cause:** the guard globbed `core/**/*.c`. `core/tests/*` links nothing from
+  the game — `run_core_tests.sh` compiles each suite standalone.
+- **Rule:** a freshness guard must cover exactly the sources that go into the
+  artifact it protects. One that fires when nothing is wrong is one people learn
+  to route around, which defeats it. Fixed by excluding `core/tests/`; the guard
+  was re-verified to still fire on a real source change.
+
+### bloom_scatter = 1 means "no near halo at all", and it looks like a hard edge
+- **Symptom:** every emissive silhouette cliffed straight from background to its
+  rim value in ONE pixel. Measured on ShieldShell: 20 rows outside the rim read
+  86,86,86,85,...,88,88 — a perfectly FLAT lift, then 252. Bloom was clearly on
+  (setting intensity 0 → 0.35 → 1.5 moved that floor 77 → 87 → 127), so "bloom is
+  broken" was not the shape of it: bloom was contributing a uniform veil and no
+  gradient.
+- **Cause:** the upsample folds each level into the one above with
+  `dst = mix(dst, tent(src), scatter)`. At `scatter = 1.0` that is
+  `dst = tent(src)` — the finer, sharper level is REPLACED, at every level, so
+  the pyramid collapses to its coarsest mip. `BLOOM_SCATTER_DEFAULT` is 0.65 and
+  `tuning.cfg`'s own comment says "0 = chỉ quầng sát lõi, 1 = chỉ màn sương rộng
+  nhất. Sweep 0.4 -> 0.8" — the persisted value was 1.0, outside its own
+  documented range, changed 0.65 → 1.0 in a commit titled "update lut".
+- **Rule:** a missing near-field glow is a SCATTER symptom, not an intensity or
+  threshold one — raising intensity just makes the flat veil brighter, which is
+  how this hid. Scan luminance outward from the silhouette before touching any
+  bloom knob: flat means the pyramid collapsed, a ramp means it is working.
+  Restoring 0.65 gave a monotone 87 → 203 ramp over 20 px.
+- **Consequence to remember:** this is a GLOBAL setting. `BRIGHT_BACKGROUND_VFX_SPEC.md`
+  §11b's measured baselines were all taken at scatter 1.0 and are stale; FLAME
+  VOLUME alone moves 80677 pixels by more than 4/255. Effects with no
+  above-threshold emission (IMPACT DUST, SMOKE COLUMN) are pixel-identical.
+
+### The final bloom composite is part of the pyramid
+- **Symptom:** visible 4-pixel stair-steps along bright curved silhouettes once
+  `bloom_scatter` was restored — "hạt hạt pixel".
+- **Cause:** `bloomTex` is quarter-resolution and the composite magnified it 4x
+  with one bilinear tap, which reconstructs as piecewise-linear patches kinking
+  on a 4-pixel grid. Invisible while the pyramid was collapsed (no detail to
+  alias), visible the moment the near halo came back.
+- **Rule:** full write-up in `ENGINE_LANDMINES.md` — "Compositing a QUARTER-RES
+  buffer with one bilinear tap". Guard: `core/tests/bloom_pyramid_contract_test.c`
+  now rejects the single-fetch composite and requires `u_bloomTexel` to come
+  from the live target. Confirmed to fail on the pre-fix shader.
+- **Corollary worth remembering:** fixing one thing can EXPOSE a latent defect
+  downstream. That is not evidence the fix was wrong — check whether the newly
+  visible artifact predates it before reverting anything.

@@ -4,6 +4,299 @@
 **Trạng thái:** **ĐÃ SỬA** — nguyên nhân gốc đã tìm ra và xác nhận bằng ảnh render.
 Nguyên nhân **không nằm ở rlvk**, không nằm ở shader, và không nằm ở màu.
 
+## 2026-08-18b — ShieldShell: the contact band's colour rings
+
+Owner confirmed the contact rim is now on both faces, and reported the remaining
+defect: the bright bands read as concentric RINGS of different colour rather than one
+soft gradient. Fixed; gates green (core 69/74 — same five baseline failures — rlvk
+27/27), and the matrix is byte-identical to the previous run, as expected: the harness
+skips the map, so the contact term is inert in all five of its backgrounds.
+
+**Cause, measured on a scanline through the ground line.** Two things that only bite
+together:
+
+1. The brightest channel is PINNED. `R` sat at 1.0 for 13 consecutive pixels across the
+   band, so there is no luminance gradient left there — hue is the only quantity that
+   can still vary.
+2. §12.1's hue-preserving highlight restoration blends per-channel ACES against a
+   hue-keeping curve with a weight that RISES AND FALLS along an intensity ramp
+   (`smoothstep(1,2,peak) * (1 - smoothstep(5,9,peak))`). With the top channel pinned,
+   the others go down and back up: `G = 185 → 170 → 231`. A non-monotone channel on a
+   monotone ramp is a ring.
+
+Confirmed with the knob (after finding it was unreachable — see below): at
+`postfx_hue_restore = 0` G rises monotonically 197 → 255 and the band is clean; at 0.5
+it dips; at 1.0 it dips harder. The tone map is doing exactly what §12.1 specifies.
+
+**Fix, at the plateau rather than at the tone map.** `depthContact` returned
+`1.0 - smoothstep(0, thickness, gap)`, and smoothstep has ZERO DERIVATIVE at its lower
+edge — the profile holds ~1.0 for the first ~15% of its width. A cubic
+`(1 - gap/thickness)^3` falls away immediately. Flat top 13 px → 5 px, clipped pixels
+10924 → 7029, dip gone. Turning hue restoration down would also have removed the rings —
+for every effect in the game, to pay for one effect's authoring mistake.
+
+**Brightness was the wrong lever, and was measured before being discarded.** Halving
+`shield_shell_rim` and `shield_shell_contact` moved the clipped area 10924 → 6940 and
+left the dip exactly where it was. Only at roughly a sixth of the shipped strength did
+the profile go monotone, which is not a look anyone asked for.
+
+**Tried and REMOVED.** Unifying the two white-core ramps (`rimHot` keyed on wallDensity,
+`contactHot` keyed on contact) into one `max()` hotness scalar, on the theory that two
+white peaks straddling a saturated trough made the ring. It changes 4 pixels out of
+921600 (Rclip 7029 → 7025). The two ramps are not the mechanism.
+
+**Two instrument bugs found on the way, both fixed:**
+
+* **`tuning.cfg` overrides appended at the end are dead text.** `FindKeyValue` takes the
+  FIRST match, and the file already contained `postfx_hue_restore = 0.5`. The whole
+  first A/B came back byte-identical at 0.0 / 0.5 / 1.0 and would have exonerated the
+  tone map. Forcing the branch in the shader instead changed 11428 pixels, which is what
+  exposed the no-op. Note also that this machine pins hue restore at **0.5** where §12.1
+  documents a shipping default of 0.6 — every local measurement is at 0.5.
+* **`render_vfx_matrix.sh`'s stale-binary guard counted `core/tests/`**, which links
+  nothing from the game, so it refused to run every time a regression test was added
+  beside a fix. Excluded; re-verified that it still fires on a real source change.
+
+**Guards.** `core/tests/shield_shell_test.c` asserts the contact profile has no flat top
+AND asserts the contrast against the old plateau form (0.729 vs 0.972 at one tenth of
+the band), so the check is shown to discriminate; plus monotonicity across the whole
+band. Two source-string checks that pinned the literal `smoothstep(0.0, u_contactThickness`
+were loosened to the actual contract (`gap / u_contactThickness`) — they were pinning a
+curve, which is a look, when what they mean is the normalisation.
+
+**Not fixed, noted.** The silhouette itself goes from background to near-white in ONE
+pixel (95,94,126 → 255,240,202): no outward falloff at all, because bloom contributes
+essentially nothing at this threshold. `bloom_threshold = 0.9` and
+`bloom_intensity = 0.35` are persisted overrides in `tuning.cfg`, so this is a global
+call, not a shell one.
+
+## 2026-08-18c — The hard silhouette edge was bloom_scatter, pinned outside its own range
+
+Owner asked for the last open item — the silhouette going from background to near-white
+in one pixel — to be fixed. It was not a shell problem.
+
+**Measured first.** 20 rows outside the top rim read `86 86 86 85 87 ... 88 88` then
+`252`: a perfectly FLAT lift, then a cliff. Bloom was demonstrably ON — sweeping
+`bloom_intensity` 0 → 0.35 → 1.5 moved that floor 77 → 87 → 127 — so it was contributing
+a uniform veil and no gradient at all, which is a different fault from "bloom is off".
+
+**Cause.** The upsample chain folds each level into the one above with
+`dst = mix(dst, tent(src), scatter)`. At `scatter = 1.0` that is `dst = tent(src)`: the
+finer level is REPLACED at every step and the pyramid collapses to its coarsest mip, so
+there is no near-field halo for any effect in the game. `BLOOM_SCATTER_DEFAULT` is 0.65,
+and `tuning.cfg`'s own comment above the line reads "0 = chỉ quầng sát lõi, 1 = chỉ màn
+sương rộng nhất. **Sweep 0.4 -> 0.8**". The persisted value was 1.0 — outside the range
+the file itself documents. `git log -L` shows it went 0.65 → 1.0 in `b18e76d`, a commit
+titled "update lut"; it reads as a change that rode along rather than a decision.
+
+**Fix.** `tuning.cfg`: `bloom_scatter = 1.0` → `0.65`, the shipped default and what the
+file held before that commit. The silhouette now ramps 87 → 203 monotonically over 20 px
+into the rim. At 1:1 the halo is smooth (horizontal scan 84 → 110 → 84, no stepping); the
+blockiness visible at 4x zoom is the 1/4-resolution bloom buffer and is not resolvable at
+native size.
+
+**This is a GLOBAL change — the numbers below are the cost, and it is the owner's call.**
+
+| plate | before (scatter 1.0) | after (0.65) |
+|---|---|---|
+| dark cover% / chroma | 4.9 / 0.416 | 6.1 / 0.314 |
+| mid cover% / darken% | 36.3 / 0.0 | 10.4 / 10.9 |
+| white darken% / chroma | 88.5 / 0.341 | 81.3 / 0.322 |
+| warm darken% / chroma | 87.5 / 0.291 | 65.5 / 0.325 |
+| cool cover% / darken% | 19.7 / 18.6 | 12.1 / **50.8** |
+
+Mostly favourable: the cool plate's darkening — the one real cost of the rear-emission
+fix in 2026-08-18 — recovers 18.6 → 50.8, and the anomalous mid/cool footprints (36% and
+20% of frame) collapse to sane 10–12%. Warm darkening drops 87.5 → 65.5.
+
+Other fixtures, measured: FLAME VOLUME moves 80677 pixels by more than 4/255 (mean luma
+70.56 → 69.79 — the wide haze tightens into a near halo; visually cleaner, not a
+regression). IMPACT DUST and SMOKE COLUMN are PIXEL-IDENTICAL: nothing without
+above-threshold emission is touched.
+
+**Consequence to flag:** `BRIGHT_BACKGROUND_VFX_SPEC.md` §11b's measured baselines for
+VOLUME TRAIL, FLAME VOLUME and PROJECTILE were all taken at scatter 1.0 and are now
+stale. That file belongs to the renderer module, so it is flagged here rather than
+edited.
+
+**Second time this session that `tuning.cfg` was the story.** It also silently pinned
+`postfx_hue_restore = 0.5` against a documented 0.6 default. Both are recorded in
+`core/docs/LANDMINES.md`.
+
+## 2026-08-18d — "Hạt hạt pixel": the final bloom composite was not part of the pyramid
+
+Owner looked at the restored halo and reported blocky graininess along the bright edges.
+Correct, and I had called it clean the turn before on a bad measurement — the scan that
+"proved" smoothness ran 18 rows OUTSIDE the rim, through the far halo, while the
+stair-steps were on the bright edge a few pixels away. A scanline placed where the
+artifact isn't proves nothing.
+
+**Cause.** `bloomTex` is a QUARTER-resolution target and the composite read it with a
+single `texture(u_bloomTex, uv)`. Bilinear magnification at 4x reconstructs the signal as
+piecewise-linear patches with a kink at every source texel boundary — a gradient
+discontinuity on a 4-pixel grid, which the eye finds instantly along a high-contrast
+curve. Bilinear interpolates; it does not reconstruct.
+
+**Why it surfaced only now, and why that is not an argument to revert 2026-08-18c.** With
+`bloom_scatter` pinned at 1.0 the pyramid collapsed to its coarsest mip, so `bloomTex`
+held nothing but smooth low frequencies and there was no detail to alias. Restoring the
+near halo put real quarter-res detail in that buffer and the reconstruction filter's
+inadequacy became visible the same frame. The defect predates the scatter fix; the fix
+only revealed it.
+
+**Fix.** The composite now runs the same 3x3 tent `bloom_upsample.fs` uses, with
+`u_bloomTexel` computed from the LIVE bloom target (not the window) so a resize or a
+quality tier that changes bloom resolution cannot desync it. Eight extra taps in one
+fullscreen pass, no new render targets.
+
+**Energy is unchanged — the kernel is normalised.** FLAME VOLUME moves 1 pixel by more
+than 4/255 (mean luma 69.79 → 69.80); IMPACT DUST and SMOKE COLUMN pixel-identical; the
+SHIELD SHELL matrix moves about a point per plate (white darken 81.3 → 80.0, warm
+65.5 → 64.2, cool 50.8 → 50.5). It is a reconstruction fix, not a look change — it only
+does anything where bloom has a sharp, high-contrast edge, which is exactly the case
+that was broken.
+
+**Guard.** `core/tests/bloom_pyramid_contract_test.c` now REJECTS the single-fetch
+composite, requires the tent, and requires the texel size to come from the live target.
+Confirmed to fail on the pre-fix shader (three checks red).
+
+Gates: core 69/74 (same five baseline failures), rlvk visual 27/27.
+
+## 2026-08-18e — The rainbow rim is the tone map, proven on a one-hue ramp. NOT applied.
+
+Owner asked the right question — shader, or the keep-it-vivid-on-bright-backgrounds mode?
+— and named the right method: build the simplest possible gradient and check.
+
+**The probe.** The shell's emission was replaced with a pure linear ramp of ONE colour
+(`rimColor * t * 12`), body pass and far wall discarded, bloom off. No geometry, no term
+stacking, no profiles — anything that survives belongs to the pipeline. Result on a
+strictly RISING input: G came out `169 → 151 → 152 … 172 → 183 → 254 → 255 (frozen)`. A
+reversal, then a slow plateau, then a fast sweep, then a frozen hue. Four zones from a
+clean ramp. **It is the pipeline, not the shell.**
+
+**Attribution, same probe, `postfx_hue_restore` swept:**
+
+| hue_restore | G reversals on a rising ramp | worst drop | max dHue/step |
+|---|---|---|---|
+| 0.0 | 0 | 0 | 7.74 |
+| 0.5 (shipping) | 1 | 18 | 7.18 |
+| 1.0 | 5 | 71 | 10.32 |
+
+**Mechanism.** Hue keeping restores chroma by LOWERING the non-peak channels. The weight
+`hueRestore · smoothstep(1,2,peak) · (1 - smoothstep(5,9,peak))` rises and then falls, so
+along a rising ramp those channels are pulled down and then released — a trough with two
+edges, which is what a colour band is.
+
+**And it is structural, not a tuning slip.** `rlvk_visual_test`'s `tonemap_shoulder`
+requires the change to be BOUNDED: bit-identical for `peak < 1` AND for `peak > 9`. A
+weight that is zero at both ends and non-zero between them cannot be monotone. Under this
+blend-two-curves architecture, "bounded" and "no banding" are the same knob pointed in
+opposite directions. §12.1 chose bounded, on purpose.
+
+**Four reformulations measured, three dead:**
+
+| formulation | reversals | worst drop | white chroma | white darken% |
+|---|---|---|---|---|
+| shipping | 1 | 18 | 0.320 | 80.0 |
+| w=ss(1,3), desat=ss(1,6) | 1 | 3 | **0.073** | 69.9 |
+| w=ss(1,4), desat=ss(5,12) | — | — | **0.107** | 69.4 |
+| **H: constant w, desat=ss(5,12)** | **0** | **0** | **0.347** | 79.8 |
+
+Anything that starts whitening near peak 1 destroys the thing §12.1 exists to protect
+(white chroma 0.320 → 0.073). Only **H** — taking the intensity dependence out of the
+weight entirely and moving the whitening into a monotone desaturation of the hue-kept
+colour — is monotone by construction, and it is better on every other axis: max hue rate
+4.75 vs 7.18, chroma UP on every plate (white 0.320 → 0.347, warm 0.349 → 0.408, cool
+0.140 → 0.215), darkening unchanged, `bright_vfx` and `bright_vfx_ldr` still PASS.
+
+**H is NOT applied.** It fails `tonemap_shoulder` — "hue restoration leaked outside its
+shoulder at peak 0.2 (d 0.03033): the change is NOT bounded and needs a full whole-scene
+approval" — which is the gate doing exactly its job. Every material below the shoulder
+shifts by up to ~0.03 (about 8/255). The standing instruction for this work is that rlvk
+stays 27/27, and a whole-scene tone-map approval is the owner's call and the renderer
+module's spec, not a shield fix. The exact one-line patch is saved at `HANDOFF_TONEMAP_CANDIDATE_H.md`;
+it is shader-only and hot-loads, so it can be tried and reverted without a rebuild.
+
+Gates after restoring the shipping tone map: core 69/74 (same five baseline failures),
+rlvk visual 27/27.
+
+## 2026-08-18 — ShieldShell: the black rear face, and the depth blit under it
+
+All three of the owner's open symptoms had ONE cause each, and two of them were the
+same cause. Fixed and measured; gates green (core 69/74 — the same five baseline
+failures — rlvk visual 27/27, surface-registry and sync validators clean).
+
+**1 + 2. Black rear face, black rear contact rim.** `VFX_ShieldShell_DrawRefraction`
+ran the emission scope with a SINGLE `ShieldShell_DrawPass(true)`, inheriting
+`RL_CULL_FACE_BACK` from the body pass — so emission covered the near wall only. The
+far wall got the body pass, which only takes light out, and no radiance at all. Its
+ground line was worse than dark: `contact` still raised that wall's alpha, while the
+matching `glow += contactColor * contact` never reached the framebuffer. The emission
+pass now composites both interfaces exactly like the body pass, declaring `u_wallPass`
+for each.
+
+**Where the earlier pass-level bisection pointed, and why it was not the whole story.**
+The recorded measurement (emission raises luma +9 and drops chroma 8.5 inside the
+shell) is correct and reproduced exactly — but it was taken on a FLAT background with
+the map skipped, where there is no floor, no contact term, and no occluded rear wall.
+The mask floor it implicated is real; it is not what makes the rear face black. The
+matrix harness cannot see symptoms 1–3 at all: `WUXING_VFX_BG` skips the map, so the
+ground line the owner is describing does not exist in any of its five backgrounds. A
+scene render (`--render-vfx 21` with no `WUXING_VFX_BG`) is the instrument for this
+bug; the matrix is the instrument for what the fix costs elsewhere.
+
+**3. The contact band was a flat stripe** — and, underneath that, it was in the wrong
+PLACE. `depthContact()` read the soft-depth snapshot, and
+`ScreenDistort_SnapshotDepth()` wrote any region smaller than the full frame to the
+wrong rows of its target: a negative source height mirrors the block, so the block also
+has to be placed at the mirrored destination `(H - y - h) / D`. `y / D` is right only
+for a full-frame region, which was the only region ever armed until a shell bounding
+box reached it. Measured: at the pixel where the depth TEST had already cut the far
+wall away, the depth TEXTURE still reported 0.35–1.5 m of clearance, so no band could
+exist there. With the blit fixed the band traces the whole ground ellipse, and the
+band itself now uses the silhouette rim's own treatment — near-white hot core, element
+hue in the wider corona (§5.4) — instead of one flat colour times a ramp.
+
+**What the fix costs, measured.** Drawing emission on the far wall doubles the broad
+angle-independent terms over every interior pixel. Rear emission weight vs. the matrix
+at warmup 90:
+
+| rear glow | darken% cool | darken% white | darken% warm | chroma white |
+|---|---|---|---|---|
+| 0.00 (pre-fix, rear face BLACK) | 73.5 | 89.8 | 87.6 | 0.213 |
+| 0.28 | 25.8 | 89.0 | 88.1 | 0.334 |
+| **0.42 (shipped)** | **18.6** | **88.5** | **87.5** | **0.341** |
+| 0.68 (first attempt) | 12.1 | 87.8 | 84.2 | 0.350 |
+
+0.42 keeps white/warm darkening at the pre-fix level and buys most of the hue
+retention (white chroma 0.213 → 0.341, a §5 goal). The cost is concentrated on the
+cool plate, where the pre-fix shell's interior was invisible — cover% there was 6.2%
+because only the rim differed from the background at all, so its 73.5% was measured
+over a rim-only footprint. One line if that trade should be re-taken:
+`glow *= mix(1.0, 0.42, rearInterface)` in `glass_shell.fs`. The contact glow is added
+AFTER that scale on purpose — it belongs to the surface the shell touches, not to which
+wall you are looking at, and half of it lives on the far wall.
+
+**Tried and REMOVED, so the ground is not believed covered.** A screen-space width
+floor `max(u_contactThickness, fwidth(gap) * 5.0)` for the missing rear band. With the
+snapshot aligned it changes 104 of 921600 pixels by more than 2/255, costs two
+derivatives, and lights up the silhouette where `fwidth` explodes and a 30 m gap still
+scores as "touching". A note remains at the site.
+
+**Guards.** `core/tests/soft_depth_region_test.c` (new) composes the blit's row mapping
+with the sampler's and asserts the identity for partial regions, and asserts the
+pre-fix formula FAILS that round-trip. `core/tests/shield_shell_test.c` gained
+emission-BLOCK-scoped checks that both interfaces draw — scoped, because the body
+pass's own front/back pair satisfies an unscoped check and the guard would never fail.
+Both were confirmed to fail on the pre-fix code. Landmines:
+`ENGINE_LANDMINES.md` (the sub-rectangle blit, cross-cutting) and
+`core/docs/LANDMINES.md` (inherited cull face).
+
+**Still open.** The contact ring is bright enough to compete with the silhouette rim at
+this fixture's scale; `shield_shell_contact` is live in `tuning.cfg` if it wants
+pulling back. Symptom 3's "unnatural" may also be partly this: the ring is now correct
+and prominent at the same time.
+
 ## 2026-08-16 — ShieldShell mobile path
 
 ShieldShell now avoids scene-color/refraction reads entirely. The shell uses a

@@ -900,3 +900,162 @@ warmup you intend to measure at and compare checksums. An instrument that has
 not been shown to repeat cannot support a conclusion in either direction —
 including a null result. Related: `core/docs/LANDMINES.md`, and the standing
 rule to check `tuning.cfg` for persisted overrides before any visual comparison.
+
+## Blitting a SUB-RECTANGLE between render textures needs the mirrored destination (18/08/2026)
+
+**Symptom.** `ScreenDistort`'s soft-depth snapshot reported a scene 0.35–1.5 m
+further away than it was, but only where the copied region was smaller than the
+frame. Downstream the ShieldShell's ground contact could not draw a band on the
+far wall: at the exact pixel where the depth TEST had already cut the geometry
+away, the depth TEXTURE still claimed a metre of clearance. The near wall's band
+looked plausible, so the whole path read as working-but-badly-tuned, and three
+sessions of shader tuning went at the wrong layer.
+
+**Cause.** The blit is `DrawTexturePro(depth, {x, y, w, -h}, {x/D, y/D, w/D, h/D})`.
+The negative source height is the standard RT→RT convention: it makes raylib
+read the block bottom-to-top, which converts FBO storage order back into screen
+order. But it mirrors WITHIN THE BLOCK, so the block must also be written at its
+MIRRORED position for the composition to come out as the identity every sampler
+assumes when it reads with `gl_FragCoord.xy / u_resolution`. The correct
+destination top edge is `(H - y - h) / D`, not `y / D`; the two agree only when
+`y = 0, h = H`. The displacement is exactly `H - 2y - h` screen rows.
+
+**Why it hid for so long.** A full-frame region is its own mirror. The snapshot
+had only ever been armed full-frame (`ScreenDistort_RequestSceneSnapshot` does
+exactly that), so the one case that was exercised was the one case the formula
+got right. The first partial region to reach it — a shell's bounding box —
+produced a smoothly wrong depth map: monotone, plausible, no seam, no flip, and
+therefore nothing that looks like a bug in a screenshot.
+
+**Rule.** A negative source height flips the block, not the image. Any partial
+RT→RT copy that uses it must place the block at the mirrored destination, and
+the only honest check is a round-trip: compose the blit's row mapping with the
+sampler's row mapping and assert the identity. Guarded by
+`core/tests/soft_depth_region_test.c`, which also asserts the pre-fix formula
+FAILS that round-trip — a guard that cannot fail on the old code is not a guard.
+
+**And the diagnostic that found it:** swap the partial region for a full-frame
+one. If the picture changes, the bug is in the region plumbing and not in
+anything the consumer computes from what it is handed.
+
+## Colour RINGS on a bright ramp are a PLATEAU, not a palette (18/08/2026)
+
+**Symptom.** ShieldShell's ground line read as two or three concentric bands of
+different colour with visible boundaries, instead of one soft gradient. Nothing
+in the authored colour ramp has a boundary in it.
+
+**Cause, in two parts that only bite together.**
+1. The brightest channel is **pinned**. Across the band `R` sat at 1.0 for 13
+   consecutive pixels, so there is no luminance gradient left there — the only
+   quantity that can still vary across those pixels is HUE.
+2. §12.1's hue-preserving highlight restoration blends per-channel ACES against a
+   hue-keeping curve with weight `hueRestore * smoothstep(1,2,peak) * (1 - smoothstep(5,9,peak))`.
+   That weight RISES AND FALLS along an intensity ramp. Where the top channel is
+   pinned, the other channels therefore go down and then back up: measured
+   `G = 185 → 170 → 231` across the band. A non-monotone channel on a monotone
+   ramp is a ring, by construction.
+
+Measured with the knob: at `postfx_hue_restore = 0` G rises monotonically
+197 → 255 and the band is a clean gradient; at 0.5 it dips; at 1.0 it dips
+harder. The tone map is behaving exactly as designed — it just has nothing left
+to work with once a channel is pinned.
+
+**Fix — at the plateau, not at the tone map.** The band came from
+`1.0 - smoothstep(0, thickness, gap)`, and **smoothstep has zero derivative at
+its lower edge**, so the profile holds ~1.0 for the first ~15% of its width. A
+cubic `(1 - gap/thickness)^3` falls away immediately: flat top 13 px → 5 px,
+clipped pixels 10924 → 7029, and the dip is gone. Turning hue restoration down
+would have "fixed" it too — for every effect in the game, to buy back one
+effect's authoring mistake.
+
+**Rule.** Any falloff whose brightest end can pin a channel must be PEAKED, not
+plateaued. `1 - smoothstep(a, b, x)` is a plateau: reach for it for a soft
+*edge*, never for the *hot core* of an additive term. And when you see colour
+banding on a smooth ramp, measure the channels along a scanline before touching
+any colour: rings mean one channel stopped moving, and the cure is upstream of
+the tone map. Brightness is the wrong lever — halving the strengths here moved
+the clipped area 10924 → 6940 and kept the dip exactly where it was.
+
+**Guard.** `core/tests/shield_shell_test.c` asserts the contact profile has no
+flat top, and asserts the contrast against the old plateau form (0.729 vs 0.972
+at one tenth of the band) so the check is shown to discriminate.
+
+## Compositing a QUARTER-RES buffer with one bilinear tap reconstructs as blocks (18/08/2026)
+
+**Symptom.** Once the bloom pyramid was folding properly again, every bright
+curved silhouette grew visible stair-steps — square patches roughly 4 screen
+pixels across, hugging the halo. Reported as "hạt hạt pixel".
+
+**Cause.** `bloomTex` is a quarter-resolution target, and the composite read it
+with a single `texture(u_bloomTex, uv)`. A bilinear fetch magnifying 4x
+reconstructs the signal as piecewise-linear patches with a KINK at every source
+texel boundary — the gradient is discontinuous on a 4-pixel grid, and the eye
+finds that instantly along a high-contrast curve. Bilinear is an interpolation
+filter, not a reconstruction filter; it is fine for magnifying something already
+band-limited and wrong for anything carrying detail at its own Nyquist.
+
+**Why it appeared only now.** While `bloom_scatter` was pinned at 1.0 the
+pyramid collapsed to its coarsest mip, so `bloomTex` held nothing but smooth low
+frequencies — there was no detail to alias. Restoring the near halo put real
+quarter-res detail in that buffer and the reconstruction filter's inadequacy
+became visible the same frame. **A latent quality bug can be revealed by fixing
+something else; that does not make the fix wrong.**
+
+**Fix.** Run the same 3x3 tent the upsample chain already uses
+(`bloom_upsample.fs`) in the final composite, with the bloom target's texel size
+passed as a uniform and computed from the LIVE texture, so a resize or a quality
+tier that changes bloom resolution cannot desync it. Eight extra taps in one
+fullscreen pass, no new render targets. Energy is unchanged — the kernel is
+normalised: FLAME VOLUME moved 1 pixel by more than 4/255, and the SHIELD SHELL
+matrix shifted by ~1 point on every plate.
+
+**Rule.** The final upsample is part of the pyramid, not a free `+=`. Any buffer
+composited back at a different resolution than it was rendered needs a
+reconstruction filter that matches the one used to build it.
+
+**And the measurement lesson, which cost a wrong "it's fine" here:** a single
+scanline is not a proof of smoothness, and a scanline placed where the artifact
+ISN'T proves nothing at all. The first check ran 18 rows OUTSIDE the rim, through
+the smooth far halo, came back monotone, and was reported as "smooth at 1:1" —
+while the stair-steps were on the bright edge a few pixels away. Sample where the
+artifact is, and when the eye and a metric disagree, the metric is on trial.
+
+## "Bounded change" and "no colour banding" are the SAME knob (18/08/2026)
+
+**Symptom.** A bright rim reads as a rainbow — distinct colour patches with
+visible boundaries — where the authored colour is one hue at rising intensity.
+Blamed on the effect's shader three times before it was isolated.
+
+**Isolate it with the simplest possible gradient.** Replace the effect's emission
+with a pure linear ramp of ONE colour, `rimColor * t * 12`, turn bloom off, and
+read the channels along a scanline. Everything else — geometry, profiles, term
+stacking — is gone, so whatever structure survives belongs to the pipeline. Here,
+on a strictly rising input, G came out `169 → 151 → …` : a REVERSAL, then a flat
+plateau, then a fast sweep, then a frozen hue. Three patches, from a clean ramp.
+
+**Cause.** §12.1's hue restoration blends per-channel ACES against a hue-keeping
+curve with weight `w = hueRestore · smoothstep(1,2,peak) · (1 - smoothstep(5,9,peak))`.
+Hue keeping means *lowering* the non-peak channels (that is what restores chroma).
+`w` rises and then falls, so along a rising ramp the non-peak channels are pulled
+down and then released: a trough with two edges. Measured G reversals on the pure
+ramp: 0 at `hueRestore = 0`, 1 at 0.5, 5 at 1.0.
+
+**The part that makes it structural.** `tonemap_shoulder` requires the change to
+be BOUNDED: identical to the approved curve for `peak < 1` **and** for `peak > 9`.
+A weight that is zero at both ends and non-zero between them cannot be monotone.
+So under a blend-two-curves architecture, "bounded" and "no banding" are the same
+knob pointed in opposite directions — you cannot have both, and §12.1 chose
+bounded deliberately.
+
+**The monotone alternative exists and is better on every other axis.** Constant
+weight, with the whitening moved out of the weight and into a monotone
+desaturation of the hue-kept colour: 0 reversals, max hue rate 4.75°/step against
+7.18 shipping, and chroma UP on every plate (white 0.320 → 0.347, warm
+0.349 → 0.408, cool 0.140 → 0.215) at unchanged darkening. It fails
+`tonemap_shoulder` at peak 0.2 with d = 0.03 — which is the gate doing its job:
+it is a whole-scene approval, not a bounded fix.
+
+**Rule.** Before attributing colour banding to an effect, run the one-hue ramp
+through the real pipeline. And when a tone-map contract says "bounded", read that
+as "the weight must return to zero", and expect a non-monotone channel response
+on every smooth ramp as the price. Neither is a bug; the trade is the design.

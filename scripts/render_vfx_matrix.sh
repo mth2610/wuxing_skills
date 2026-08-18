@@ -51,7 +51,13 @@ WARMUPS=("$@"); [ ${#WARMUPS[@]} -gt 0 ] || WARMUPS=(40 90 140)
 # false negative happened on 17/08/2026 with vc_energy_orb.inl. Refuse instead.
 # find -newer, not a pipeline: under `set -euo pipefail` an xargs test that returns
 # non-zero kills the script before it can print why, which is a guard that fails silently.
+# core/tests/ is EXCLUDED: those are standalone headless suites that link nothing from
+# the game (scripts/run_core_tests.sh compiles each one on its own), so they can never
+# make ./build/wuxing stale. Including them made the guard cry wolf every time a
+# regression test was added alongside a fix — and a guard that fires when nothing is
+# wrong is one people learn to route around, which is exactly what it exists to prevent.
 NEWER=$(find core skills sandbox \( -name '*.c' -o -name '*.h' -o -name '*.inl' \) \
+             -not -path 'core/tests/*' \
              -newer ./build/wuxing 2>/dev/null | head -5 || true)
 if [ -n "$NEWER" ]; then
   echo "REFUSING: C sources are newer than ./build/wuxing — the measurement would describe"
