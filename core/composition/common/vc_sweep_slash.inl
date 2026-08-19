@@ -435,7 +435,7 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
                 .colorStart = VC_WithAlpha(VC_Whiten(glowCol, 0.45f),
                                            (unsigned char)(140.0f * fade)),
                 .colorEnd   = VC_WithAlpha(bodyCol, 0),
-                .render.blendMode = VFX_BLEND_ADDITIVE,
+                .render.blendMode = VFX_BLEND_PREMULTIPLIED,
                 .render.unlit = 1,
                 // 1.5 put every spark over the bloom threshold, and bloom turns
                 // a 2 cm sprite into a 10 cm bead. They should catch the light,

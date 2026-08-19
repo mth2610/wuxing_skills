@@ -201,7 +201,7 @@ void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, flo
             .colorEnd   = VC_WithAlpha(m->soft, 0),
             .alphaCurve = &s_glintFade,
             .render.texture       = s_glintTex,
-            .render.blendMode     = VFX_BLEND_ADDITIVE,
+            .render.blendMode     = VFX_BLEND_PREMULTIPLIED,
             .render.unlit         = 1,
             .render.emissiveBoost = 1.6f,
             .rotation = rotation,

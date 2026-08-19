@@ -815,6 +815,37 @@ premultiplied, so anything built on the recipe follows it; the existing 20 are p
 work, because each migration changes appearance and has to be measured (§11b) rather than
 done in bulk.
 
+#### First migration, 19/08/2026 — measured, and it is not one job but three
+
+The owner named 19 effects to move to premultiplied. Surveying them first showed the list is
+**three different kinds of work**, and only one is a blend swap:
+
+| kind | effects | what "premultiplied" means there |
+|---|---|---|
+| **particle** | core glow, sweep slash, glint sparkle, energy burst *(already)* | one field on `ParticleConfig` — done |
+| **trail** | volume trail, trail presets, lightning trail, shock ring | the trail system's own blend law |
+| **geometry / decal** | charge converge, energy orb, light shaft, lightning arc, rune circle, shield shell, decal | **none of these spawn a particle at all** — `VFX_BLEND_*` does not apply; their surface comes from `VFXRender_BeginDraw` and their own shaders |
+
+Migrated in this pass — the particle sites and the volume trail's blend law. Measured before
+and after, on white:
+
+| effect | darken% | chroma | structure | \|d\| |
+|---|---|---|---|---|
+| CORE GLOW | 0.0 → **67.7** | 0.154 → **0.225** | 0.041 → 0.047 | 0.106 → 0.096 |
+| GLINT SPARKLE | 0.0 → **40.4** | 0.395 → **0.525** | 0.013 → **0.022** | 0.102 → **0.149** |
+| VOLUME TRAIL | 89.4 → 72.9 | 0.870 → 0.839 | 0.228 → **0.252** | 0.656 → 0.623 |
+
+**The consistent change is `darken%` appearing where there was none.** These effects now cut
+a silhouette out of a bright background instead of only adding light to it — which is the
+whole point, and is what additive cannot do at any intensity.
+
+On dark the cost is small and uniform: `|d|` falls 2–7% as some of what was pure light
+becomes coverage. `structure` rises on every one.
+
+SWEEP SLASH measures identically because it is not visible at warmup 90 on either
+background — a fast effect already gone by that frame. It is migrated but unverified; pick a
+warmup inside its life before trusting anything about it.
+
 > [!CAUTION]
 > **The engine default is `VFX_BLEND_ALPHA` (zero), which is neither.** So a particle that
 > declares nothing is neither emissive nor premultiplied — it occludes and gets lit. Of the

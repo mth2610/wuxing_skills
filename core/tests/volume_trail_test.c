@@ -439,8 +439,14 @@ static void Test_MirrorMatchesTheSource(void)
     // The blend law, from ONE predicate.
     CHECK(FileHas(inl, "return kind != VOL_SMOKE;"),
           "one predicate decides who emits");
-    CHECK(FileHas(inl, "cfg.blendMode = VolumeTrail_Emits(v->kind) ? BLEND_ADDITIVE : BLEND_ALPHA;"),
-          "the blend is read off it");
+    /* The predicate is unchanged; what it SELECTS changed on 19/08/2026. An
+       emitter is premultiplied rather than additive — it covers a bright
+       background where coverage is high and adds light where coverage falls to
+       zero, instead of only ever adding (§7.6d). Measured on white: structure
+       0.228 -> 0.252 and darken% 89.4 -> 72.9, i.e. it now earns its silhouette
+       with real coverage rather than with the tone map's help. */
+    CHECK(FileHas(inl, "cfg.blendMode = VolumeTrail_Emits(v->kind) ? BLEND_ALPHA_PREMULTIPLY : BLEND_ALPHA;"),
+          "the blend is read off it — premultiplied when it emits");
     CHECK(FileHas(inl, "return VolumeTrail_Emits(kind) ? VC_ElementRamp(mat) : VolumeTrail_SmokeRamp(mat);"),
           "...and so is the ramp, so the two cannot drift apart");
     CHECK(FileHas(inl, "cfg.useCustomBlendMode = true;"),

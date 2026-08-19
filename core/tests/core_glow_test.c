@@ -223,9 +223,15 @@ static void Test_ExtractionChangedTheAddressAndNothingElse(void)
     CHECK(FileHas(glow, "VC_WithAlpha(m->soft, (unsigned char)(40 + 90 * i01))"),
           "the halo still uses the material's SOFT colour, not its glow");
 
-    // The blend law, which a primary must obey on its own terms.
-    CHECK(FileHas(glow, ".render.blendMode = VFX_BLEND_ADDITIVE,"),
-          "a glow EMITS: additive");
+    /* THE BLEND LAW, and it changed on 19/08/2026: an emitter is PREMULTIPLIED,
+       not additive. Additive can only ever add, so it dissolves into anything
+       already near 1.0; premultiplied covers where coverage is high and adds
+       where it falls to zero, which is both jobs in one draw (§5.2, §7.6d).
+       Measured on this effect against a white backdrop: darken% 0.0 -> 67.7 —
+       it now cuts a silhouette where before it only added light — and chroma
+       0.154 -> 0.225. */
+    CHECK(FileHas(glow, ".render.blendMode = VFX_BLEND_PREMULTIPLIED,"),
+          "a glow EMITS, and an emitter is premultiplied");
     CHECK(FileHas(glow, ".render.unlit = 1,"),
           "...and unlit, so nothing multiplies it back down");
 

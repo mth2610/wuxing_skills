@@ -69,7 +69,7 @@ void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius,
             .colorStart = VC_WithAlpha(VC_Whiten(m->glow, 0.75f), 255),
             .colorEnd = VC_WithAlpha(m->glow, 0),
             .alphaCurve = &s_coreGlowFade,
-            .render.blendMode = VFX_BLEND_ADDITIVE, // emits...
+            .render.blendMode = VFX_BLEND_PREMULTIPLIED, // emits...
             .render.unlit = 1,                      // ...so no lighting multiply
             .render.emissiveBoost = Math_Mix(4.0f, 14.0f, i01),
         });
@@ -87,7 +87,7 @@ void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius,
         .colorStart = VC_WithAlpha(VC_Whiten(m->glow, 0.5f), 200),
         .colorEnd = VC_WithAlpha(m->glow, 0),
         .alphaCurve = &s_coreGlowFade,
-        .render.blendMode = VFX_BLEND_ADDITIVE,
+        .render.blendMode = VFX_BLEND_PREMULTIPLIED,
         .render.unlit = 1,
         .render.emissiveBoost = Math_Mix(1.6f, 3.2f, i01),
     });
@@ -99,7 +99,7 @@ void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius,
         .colorStart = VC_WithAlpha(m->soft, (unsigned char)(40 + 90 * i01)),
         .colorEnd = VC_WithAlpha(m->soft, 0),
         .alphaCurve = &s_coreGlowFade,
-        .render.blendMode = VFX_BLEND_ADDITIVE,
+        .render.blendMode = VFX_BLEND_PREMULTIPLIED,
         .render.unlit = 1,
         // NO boost. This is the glow around the hot spot; boosting it would make
         // it a second hot spot and the falloff would be gone.

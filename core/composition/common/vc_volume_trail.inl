@@ -440,7 +440,7 @@ static int VolumeTrail_Spawn(const VC_VolumeTrail *v, int slot)
     cfg.forceField = NULL;
     cfg.ownerTag = VOL_TAG_BASE | slot;
     cfg.priority = VFX_PRIORITY_LOW;
-    cfg.blendMode = VolumeTrail_Emits(v->kind) ? BLEND_ADDITIVE : BLEND_ALPHA;
+    cfg.blendMode = VolumeTrail_Emits(v->kind) ? BLEND_ALPHA_PREMULTIPLY : BLEND_ALPHA;
     cfg.useCustomBlendMode = true; // BLEND_ALPHA is 0 and cannot be detected by >0
     cfg.minVertexDistance = VOL_MIN_VERTEX;
     cfg.disableInnerCore = true; // superseded by the layer stack
@@ -712,7 +712,7 @@ static void VC_VolumeTrail_Update(float dt)
         }
         else
         {
-            t->blendMode = VolumeTrail_Emits(v->kind) ? BLEND_ADDITIVE : BLEND_ALPHA;
+            t->blendMode = VolumeTrail_Emits(v->kind) ? BLEND_ALPHA_PREMULTIPLY : BLEND_ALPHA;
             t->useCustomBlendMode = true;
             t->gradient = VolumeTrail_Ramp(v->kind, v->matId);
             t->tubeSingleSided = false;
