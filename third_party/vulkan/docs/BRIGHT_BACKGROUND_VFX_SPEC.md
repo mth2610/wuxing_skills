@@ -606,6 +606,62 @@ core in 5–12 — at 9.0 the body is already at 0.97 and the core still only 4.
 white-hot heart inside a translucent body needs the temperature ramp to concentrate it, or
 a second population; it is not a gain.
 
+#### 7.6b The reference target, and what it found in five minutes
+
+`REF BANDS` (fixture 20, `core/composition/common/vc_ref_bands.inl`) draws eight flat
+patches at exactly-known scene-referred values through the **real** VFX path — VFXRender's
+blend/target policy, the scene target, bloom, exposure, tone map, grade, LUT, vignette,
+dither, FXAA. It exists because the three instruments that came before it each miss the
+case that matters: `bright_vfx` is exact but an *analogue* of the post chain (its own file
+says so), `gradient_probe` runs the real chain but draws a ramp rather than calibrated
+levels, and `render_vfx_matrix` runs the real chain on ART — which can be wrong in the same
+direction as the pipeline, at which point the two agree and both are wrong.
+
+**Result 1 — the write path is exact.** Every patch reads back its authored value plus the
+background, within 0.05%, all three channels identical. The residual at 8.0 and 12.0 is
+exactly half-float quantisation at that magnitude. The R16F scene target and everything
+that writes it are sound.
+
+**Result 2 — THE GRADE CLIPS THE HIGHLIGHTS THE TONE MAP EXISTS TO ROLL OFF.**
+
+| scene-referred | ACES alone | measured R | G | B |
+|---|---|---|---|---|
+| 0.18 | 0.299 | 0.258 | 0.270 | 0.297 |
+| 1.00 | 0.808 | 0.919 | 0.860 | 0.773 |
+| 2.00 | 0.916 | **1.000** | 0.995 | 0.878 |
+| 5.00 | 0.985 | **1.000** | **1.000** | 0.944 |
+| 8.00 | 1.000 | **1.000** | **1.000** | 0.954 |
+| 12.00 | 1.000 | **1.000** | **1.000** | 0.954 |
+
+R clips at scene **2.0** — more than three times earlier than the curve intends, which does
+not reach display white until ~7.2. The cause is the split-tone's `highlightTint`
+(1.10, 1.02, 0.90): ACES(2.0) = 0.916, times 1.10 = 1.008. Confirmed by re-measuring with
+`contrast = 1.0, saturation = 1.0`, where R still clips at 2.0 — so it is the tint, not the
+two knobs that were suspected first. B is capped at 0.954 by the same tint's 0.90, so no
+highlight in this game can reach neutral white.
+
+**Scene-referred 8.0 and 12.0 are the same colour on screen. So are 5.0 and 8.0 in R and G.**
+The entire top of the radiance scale collapses to one value.
+
+> [!CAUTION]
+> **This contradicts §7.6's own core band.** The anchor tells authors to put a hot core at
+> 5–12 because that is where the tone map's white-hot region lives. The pipeline as shipped
+> cannot show the difference between 5, 8 and 12 — the grade got there first. Either the
+> highlight tint gives the range back, or §7.6's core band is a fiction and should say so.
+
+**It also sharpens the FLAME VOLUME result (§7.6 above).** Raising `flame_emissive` 4.8 →
+14.0 moved p99.9 from 2.12 to 6.11 — i.e. the part of the effect that got brighter was
+*entirely inside the clipped region*. The darkening trade recorded there is real, but this
+is the simpler reason nothing visible changed: above scene 2.0 there is no display range
+left to change into.
+
+**A lesson about the instrument itself, recorded because it nearly produced a false
+report.** The first version spanned the full frame, so its outermost patches sat in the
+vignette. That darkened the extremes and made the blue channel read NON-MONOTONE
+(0.944 → 0.954 → 0.920) — a pipeline defect, apparently. It was the fixture. Moved to the
+vignette-free centre, all three channels are monotone. A calibration target must be
+measured where nothing else is acting on it.
+
 > [!CAUTION]
 > **Do not read §7.6 as "raise everything into the bands".** Two effects, same diagnosis
 > from the anchor, opposite outcomes: the trail was capped BELOW the background by a stale

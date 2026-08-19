@@ -250,6 +250,18 @@
       "draw_call": "VFX_ComposePortalDisc($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
+      "source": "common/vc_ref_bands.inl",
+      "fn": "VFX_ComposeRefBands",
+      "label": "REF BANDS",
+      "category": "common",
+      "fixture": "static",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeRefBands($POS, 1.5f)",
+      "kill_fn": "VFX_KillRefBands"
+    },
+    {
       "source": "common/vc_rune_circle.inl",
       "fn": "VFX_ComposeRuneCircle",
       "label": "RUNE CIRCLE",

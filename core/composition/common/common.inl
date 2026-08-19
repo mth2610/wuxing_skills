@@ -36,6 +36,7 @@
 #include "vc_impact_dust.inl"
 #include "vc_contact_spark.inl"
 #include "vc_decal.inl"
+#include "vc_ref_bands.inl"
 // @gen:common_includes end
 
 // Pool-owned one-shot primitive; its public API is VFX_LightningArc_* rather

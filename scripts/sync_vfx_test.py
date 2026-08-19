@@ -111,6 +111,11 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeChargeConverge":     ("draw",    "timed",      "continuous"),
     "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),
     "VFX_ComposeCoreGlow":           ("draw",    "timed",      "continuous"),
+    # NOT an effect — the HDR pipeline's calibration target. "static" and
+    # "continuous" because it must be on screen unchanged for as long as the
+    # harness wants to measure it: a fixture that fades or animates cannot be
+    # the thing every other measurement is checked against.
+    "VFX_ComposeRefBands":           ("trail",   "static",     "continuous"),
     # THE trail (vc_trail.inl). One entry per PRESET rather than one per source
     # file: the presets are what a reader compares, and hiding the choice behind
     # a tuning knob is what let a stale `strandtrail_style` silently render the

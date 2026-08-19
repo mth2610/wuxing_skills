@@ -118,6 +118,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_FlameEmitter_Draw3D(cam);
 // @gen:archetype_draw end
     LightningArc_Draw3D(cam);
+    VC_RefBands_Draw3D(cam);   /* calibration target — see vc_ref_bands.inl */
     SmokeEmitter_Draw3D(cam);
 }
 
