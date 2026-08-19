@@ -94,7 +94,7 @@ static float s_shieldBaseAlpha = 0.025f;
 static float s_shieldFresnelAlpha = 0.18f;
 static float s_shieldContactAlpha = 0.42f;
 // ON by default since 17/08/2026. It was off because the feature did not work — the
-// depth region was requested from the post-3D draw, where ScreenDistort_Begin() had
+// depth region was requested from the post-3D draw, where SceneTargets_Begin() had
 // already cleared the validity flag, so the snapshot never ran and depthContact()
 // returned 0 for every fragment. With the request moved into the 3D pass it draws the
 // shell's real ground intersection, which is the whole point of a shield that sits on
@@ -278,7 +278,7 @@ static void VC_ShieldShell_Update(float dt)
             continue;
         }
     }
-    if (anyActive) ScreenDistort_RequestSceneSnapshot();
+    if (anyActive) SceneTargets_RequestSceneSnapshot();
 }
 
 // Bind the refraction payload once per pass (inside BeginShaderMode): the
@@ -287,13 +287,13 @@ static void VC_ShieldShell_Update(float dt)
 // turns the term off in the shader, so nothing samples garbage.
 static void ShieldShell_BindInputs(Camera3D cam)
 {
-    Texture2D sceneTex = ScreenDistort_GetSceneSnapshotTexture();
+    Texture2D sceneTex = SceneTargets_GetSceneSnapshotTexture();
     int hasScene = sceneTex.id != 0 ? 1 : 0;
     SetShaderValue(s_shieldShader.shader, s_shieldShader.hasScene,
                    &hasScene, SHADER_UNIFORM_INT);
     if (hasScene && s_shieldShader.sceneTex >= 0)
         SetShaderValueTexture(s_shieldShader.shader, s_shieldShader.sceneTex, sceneTex);
-    Texture2D depthTex = ScreenDistort_GetDepthTexture();
+    Texture2D depthTex = SceneTargets_GetDepthTexture();
     int hasDepth = (depthTex.id != 0 && s_shieldDepthEnabled > 0.5f) ? 1 : 0;
     SetShaderValue(s_shieldShader.shader, s_shieldShader.hasDepth, &hasDepth, SHADER_UNIFORM_INT);
     if (hasDepth && s_shieldShader.depthTex >= 0)
@@ -523,7 +523,7 @@ void VFX_ShieldShell_DrawRefraction(Camera3D cam)
 static void VC_ShieldShell_Draw3D(Camera3D cam)
 {
     // The shell itself draws after the 3D pass (see the note above), but its DEPTH
-    // REGION REQUEST has to happen INSIDE it. ScreenDistort_Begin() clears
+    // REGION REQUEST has to happen INSIDE it. SceneTargets_Begin() clears
     // s_softDepthRegionValid, so that flag's lifetime is exactly the 3D pass:
     //
     //     Begin -> valid=false ... 3D pass ... End -> SnapshotDepth reads the flag
@@ -555,5 +555,5 @@ static void VC_ShieldShell_Draw3D(Camera3D cam)
             bounds.width = x1 - bounds.x; bounds.height = y1 - bounds.y;
         }
     }
-    if (hasBounds) ScreenDistort_RequestSoftDepthRegion(bounds);
+    if (hasBounds) SceneTargets_RequestSoftDepthRegion(bounds);
 }

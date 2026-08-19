@@ -1,6 +1,7 @@
 #include "core/post_fx.h"
 #include "core/tuning.h"
-#include "core/screen_distort.h" // ScreenDistort_IsHDR — scene buffer is the HDR authority
+#include "core/scene_targets.h"
+#include "core/screen_distort.h" // SceneTargets_IsHDR — scene buffer is the HDR authority
 #include "core/gfx_quality.h"    // E8 — the tier budget for the two new passes
 #include "core/color_grade_lut.h" // G5 — display-referred grading strip
 #include "rlgl.h"
@@ -179,7 +180,7 @@ void PostFX_Init(int width, int height)
   // color+depth float FBO ScreenDistort already validated, so no re-probe here.)
   const int hdrFmt = RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16;
   const int ldrFmt = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-  s_hdrActive = ScreenDistort_IsHDR();
+  s_hdrActive = SceneTargets_IsHDR();
   const int colorFmt = s_hdrActive ? hdrFmt : ldrFmt;
   mainRenderTex = LoadRenderTextureWithFormat(width, height, colorFmt);
   TraceLog(LOG_INFO, "PostFX: %s pipeline (%s)", s_hdrActive ? "HDR float" : "LDR",
@@ -800,7 +801,7 @@ void PostFX_Draw(const PostFXConfig *config)
        orientation — the same RT->RT convention the rest of this codebase uses. Getting
        this wrong shows up instantly as an upside-down frame, which is the cheap failure;
        the expensive one is a PARTIAL rect, where the flip has to be composed with a
-       mirrored destination (see ScreenDistort_SnapshotDepth). This draw is full-frame,
+       mirrored destination (see SceneTargets_SnapshotDepth). This draw is full-frame,
        so it does not have that problem. */
     BeginShaderMode(fxaaShader);
     if (fxaaTexelLoc >= 0)

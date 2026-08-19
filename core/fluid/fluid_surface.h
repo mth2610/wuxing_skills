@@ -121,7 +121,7 @@ bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center,
 void FluidSurface_SetReconstructionRadiusFor(FluidSurfacePriority priority, float radius);
 
 /* Screen-space liquid surface. Register from a 3D draw path (no GL work),
- * capture after ScreenDistort_End(), then composite into ScreenDistort's VFX
+ * capture after SceneTargets_End(), then composite into ScreenDistort's VFX
  * body layer before its HDR scene composite. */
 void FluidSurface_Init(int width, int height);
 void FluidSurface_Unload(void);

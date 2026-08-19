@@ -1,6 +1,7 @@
 #include "particle_gpu_legacy.h"
 #include "core/resource_manager.h"
 #include "core/particles/particle_system.h"
+#include "core/scene_targets.h"
 #include "core/screen_distort.h"
 #if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
 #include "third_party/vulkan/rlvk.h"
@@ -586,7 +587,7 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
         // the same previous-frame depth contract as CPU particles.
         if (s_surfacePass == 0)
         {
-            Texture2D depthTex = ScreenDistort_GetDepthTexture();
+            Texture2D depthTex = SceneTargets_GetDepthTexture();
             float softFade = depthTex.id != 0 ? GPU_PARTICLE_SOFT_FADE_METERS : 0.0f;
             int loc_softFade = GetShaderLocation(drawShader, "u_softFade");
             if (softFade > 0.0f)
@@ -594,10 +595,10 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
                 /* GPU particles are buffer-resident, so the CPU cannot cheaply
                  * derive their screen union. Preserve correctness with a full
                  * request; CPU particles use their much tighter bounds. */
-                ScreenDistort_RequestSoftDepthRegion((Rectangle){0.0f, 0.0f,
+                SceneTargets_RequestSoftDepthRegion((Rectangle){0.0f, 0.0f,
                                                        (float)GetScreenWidth(),
                                                        (float)GetScreenHeight()});
-                ScreenDistort_BindDepthForSoftParticles(drawShader, GPU_PARTICLE_SOFT_DEPTH_SLOT);
+                SceneTargets_BindDepthForSoftParticles(drawShader, GPU_PARTICLE_SOFT_DEPTH_SLOT);
                 softParticlePass = true;
             }
             if (loc_softFade >= 0)
@@ -638,7 +639,7 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
         rlActiveTextureSlot(0);
         rlDisableTexture();
         if (s_surfacePass == 0)
-            ScreenDistort_UnbindSoftParticleDepth(GPU_PARTICLE_SOFT_DEPTH_SLOT);
+            SceneTargets_UnbindSoftParticleDepth(GPU_PARTICLE_SOFT_DEPTH_SLOT);
         EndShaderMode();
     }
     else

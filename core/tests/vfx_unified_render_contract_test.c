@@ -54,21 +54,21 @@ int main(void)
           "direct geometry must use one target/blend/depth scope", &failed);
     Check(Has("core/vfx_render.h", "VFXRender_BeginAppearance"),
           "appearance must resolve and enter a semantic pass in one operation", &failed);
-    Check(Has("core/screen_distort.c", "VFXRender_BeginDraw"),
+    Check(Has("core/scene_targets.c", "VFXRender_BeginDraw"),
           "the scene-target owner must implement the unified scope", &failed);
-    Check(Has("core/screen_distort.c", "BLEND_ALPHA_PREMULTIPLY"),
+    Check(Has("core/scene_targets.c", "BLEND_ALPHA_PREMULTIPLY"),
           "the unified scope must preserve premultiplied coverage", &failed);
-    Check(Has("core/screen_distort.c", "pass == VFX_RENDER_PASS_EMISSION") &&
-          Has("core/screen_distort.c", "VFX_SURFACE_ADDITIVE : resolved.surface"),
+    Check(Has("core/scene_targets.c", "pass == VFX_RENDER_PASS_EMISSION") &&
+          Has("core/scene_targets.c", "VFX_SURFACE_ADDITIVE : resolved.surface"),
           "semantic emission from a dual-layer appearance must use additive radiance", &failed);
 
     Check(Has("main.c", "VFXRender_BeginPass(VFX_RENDER_PASS_BODY)"),
           "main must use the unified body pass", &failed);
     Check(Has("main.c", "VFXRender_BeginPass(VFX_RENDER_PASS_EMISSION)"),
           "main must use the unified emission pass", &failed);
-    Check(!Has("main.c", "ScreenDistort_BeginVFXBody();"),
+    Check(!Has("main.c", "SceneTargets_BeginVFXBody();"),
           "main must not bypass the unified renderer", &failed);
-    Check(!Has("main.c", "ScreenDistort_BeginVFXEmission();"),
+    Check(!Has("main.c", "SceneTargets_BeginVFXEmission();"),
           "main must not bypass the unified renderer", &failed);
 
     Check(Has("core/ribbon_strip.h", "DrawRibbonStripAppearanceEx"),
@@ -84,7 +84,7 @@ int main(void)
               directCompositionDraws[i], &failed);
     }
 
-    Check(!Has("core/afterimage.c", "ScreenDistort_BeginVFXBody();"),
+    Check(!Has("core/afterimage.c", "SceneTargets_BeginVFXBody();"),
           "afterimages must use the shared scope", &failed);
     Check(Has("core/afterimage.c", "VFXRender_BeginDraw"),
           "afterimages must declare their surface centrally", &failed);

@@ -1,6 +1,7 @@
 #include "core/fluid/fluid_surface.h"
 #include "core/time_fx.h"   // TimeFX_IsDeterministic — capture must not be load-shed by wall clock
 #include "core/resource_manager.h"
+#include "core/scene_targets.h"
 #include "core/screen_distort.h"
 #include "core/particles/particle_manager.h"
 #include "core/fluid/fluid_pbd_gpu.h"
@@ -202,10 +203,10 @@ static RenderTexture2D FluidSurface_LoadDepthTargetEx(int w, int h, bool carries
 /* A private copy of the scene, in the scene's own format, for the refraction tap.
  *
  * The SSF composite samples "what is behind the water" while it draws the water.
- * Until 2026-08-10 those were two different images: `ScreenDistort_BeginVFXBody()`
+ * Until 2026-08-10 those were two different images: `SceneTargets_BeginVFXBody()`
  * bound a separate `vfxBodyTex` layer, so sampling `renderTex.texture` was safe.
  * Retiring the split layers (b03b7b6) made the body pass bind `renderTex` itself —
- * the very texture `ScreenDistort_GetSceneTexture()` returns — so the composite
+ * the very texture `SceneTargets_GetSceneTexture()` returns — so the composite
  * began sampling its own colour attachment. That is undefined in GL and a
  * read/write hazard in Vulkan; the refraction tap stops returning the background,
  * and the water collapses to its own opaque terms (in-scatter + specular), i.e.
@@ -567,7 +568,7 @@ void FluidSurface_Capture(Camera3D camera) {
      * The composite runs inside ScreenDistort's body pass, which now binds the
      * scene target itself, so sampling it there would be sampling the attachment
      * being written. Keep the copy in the scene's own format so HDR survives. */
-    Texture2D liveScene=ScreenDistort_GetSceneTexture();
+    Texture2D liveScene=SceneTargets_GetSceneTexture();
     if(liveScene.id) {
         if(s_sceneCopy.id==0 || s_sceneCopy.texture.width!=liveScene.width ||
            s_sceneCopy.texture.height!=liveScene.height ||
@@ -764,8 +765,8 @@ void FluidSurface_Composite(void) {
     Vector2 sceneTexel={1.0f/GetRenderWidth(),1.0f/GetRenderHeight()};
     /* The snapshot from Capture, never the live scene target: the body pass we are
      * drawing inside binds that same texture as its colour attachment. */
-    Texture2D scene=s_sceneCopy.id?s_sceneCopy.texture:ScreenDistort_GetSceneTexture();
-    Texture2D sceneDepth=ScreenDistort_GetRawDepthTexture(); int has=sceneDepth.id?1:0;
+    Texture2D scene=s_sceneCopy.id?s_sceneCopy.texture:SceneTargets_GetSceneTexture();
+    Texture2D sceneDepth=SceneTargets_GetRawDepthTexture(); int has=sceneDepth.id?1:0;
     Matrix inverseProjection=MatrixInvert(s_fluidProjection);
     Matrix viewToWorld=MatrixInvert(s_fluidView);
     int qualityTier=(int)GfxQuality_Get();

@@ -70,7 +70,7 @@ int main(void)
     /* RT->RT full-frame convention. A positive source height here is an upside-down
        frame; the expensive mistake is the PARTIAL-rect case, where the flip also needs a
        mirrored destination — that one shipped silently for months in
-       ScreenDistort_SnapshotDepth. This draw is full-frame, so the flip alone is right. */
+       SceneTargets_SnapshotDepth. This draw is full-frame, so the flip alone is right. */
     CHECK(Has("core/post_fx.c", "-(float)ldrTex.texture.height"),
           "the FXAA resolve keeps the RT->RT vertical-flip convention");
 

@@ -821,6 +821,22 @@ Warmup 90, the middle of each fixture's life:
 | | warm | 10.124 | 9.93 | 98.8 | 0.067 | 0.020 | 0.845 | 0.216 |
 | | cool | 10.105 | 10.09 | 91.2 | 0.070 | 0.015 | 0.630 | 0.673 |
 
+> [!IMPORTANT]
+> **Only FLAME VOLUME and VOLUME TRAIL are bit-reproducible. ENERGY ORB is not.**
+> Established on 19/08/2026 while using this table as the `core/scene_targets`
+> acceptance oracle: FLAME and TRAIL reproduced every digit across the refactor, while
+> ENERGY ORB moved slightly. Two further runs **of the same binary** then disagreed with
+> each other — cool `darken%` spanning 89.0 / 89.3 / 91.2 and `chroma` 0.675 / 0.676 /
+> 0.684 — so the spread is the fixture's own, not the change under test, and it is wider
+> than the delta it was being used to detect. The harness's "pinned timestep + RNG seed"
+> therefore does not hold all the way down for this fixture; `vc_energy_orb.inl` itself
+> contains no clock or RNG call, so the source is further down the stack and is not yet
+> identified.
+>
+> **Use FLAME VOLUME + VOLUME TRAIL for any bit-exact comparison.** ENERGY ORB stays in
+> the table as a level reference, but a difference under roughly 0.01 chroma or 2 points
+> of `darken%` on it means nothing.
+
 `autotest_output/` is gitignored, so the captures themselves do not survive a clean — these
 rows are the durable record, and each run's `config.txt` states the pin, the binary
 timestamp and the git HEAD that produced it.

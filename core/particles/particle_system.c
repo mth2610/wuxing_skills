@@ -9,6 +9,7 @@
 #include "core/vfx_light.h"
 #include "core/gfx_quality.h"
 #include "core/tuning.h"
+#include "core/scene_targets.h"
 #include "core/screen_distort.h"
 #include "environment/environment_system.h"
 #include <string.h>
@@ -708,7 +709,7 @@ static void ParticleLighting_Begin(Camera3D camera)
 
   // The shader's unlit branch is also the soft-particle path. Do not make the
   // ground-intersection fade depend on optional lighting being enabled.
-  bool wantSoftParticles = (s_softFade > 0.0f && ScreenDistort_GetDepthTexture().id != 0);
+  bool wantSoftParticles = (s_softFade > 0.0f && SceneTargets_GetDepthTexture().id != 0);
   // A packed volume sheet is NOT an enhancement that may be gated away — it is
   // the only thing that can decode the texture. Its RGB is three density
   // channels, so the default shader would paint it as a colour and the fire
@@ -813,11 +814,11 @@ static void ParticleLighting_Begin(Camera3D camera)
   // decides, and the shader treats 0 as "feature off" rather than "fully
   // occluded".
   {
-    Texture2D depthTex = ScreenDistort_GetDepthTexture();
+    Texture2D depthTex = SceneTargets_GetDepthTexture();
     float fade = (depthTex.id != 0 && s_softFade > 0.0f && s_locSoftFade >= 0)
                      ? s_softFade : 0.0f;
     if (fade > 0.0f && depthTex.id != 0)
-      ScreenDistort_BindDepthForSoftParticles(s_litShader, PARTICLE_SOFT_DEPTH_SLOT);
+      SceneTargets_BindDepthForSoftParticles(s_litShader, PARTICLE_SOFT_DEPTH_SLOT);
     if (s_locSoftFade >= 0)
       SetShaderValue(s_litShader, s_locSoftFade, &fade, SHADER_UNIFORM_FLOAT);
     if (s_locSoftDebug >= 0)
@@ -826,7 +827,7 @@ static void ParticleLighting_Begin(Camera3D camera)
     // or it would paint the answer to a question nobody asked.
     if (fade <= 0.0f && s_softDebug > 0.5f && depthTex.id != 0)
     {
-      ScreenDistort_BindDepthForSoftParticles(s_litShader, PARTICLE_SOFT_DEPTH_SLOT);
+      SceneTargets_BindDepthForSoftParticles(s_litShader, PARTICLE_SOFT_DEPTH_SLOT);
       s_softBound = true;
     }
     s_softBound = (fade > 0.0f || (s_softDebug > 0.5f && depthTex.id != 0));
@@ -911,7 +912,7 @@ static void ParticleLighting_End(void)
   // use slot 3 inherits a bound depth texture.
   if (s_softBound)
   {
-    ScreenDistort_UnbindSoftParticleDepth(PARTICLE_SOFT_DEPTH_SLOT);
+    SceneTargets_UnbindSoftParticleDepth(PARTICLE_SOFT_DEPTH_SLOT);
     s_softBound = false;
   }
   EndShaderMode();
@@ -1020,7 +1021,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         bounds.width = x1 - bounds.x; bounds.height = y1 - bounds.y;
       }
     }
-    if (hasBounds) ScreenDistort_RequestSoftDepthRegion(bounds);
+    if (hasBounds) SceneTargets_RequestSoftDepthRegion(bounds);
   }
 
   // Sắp xếp các hạt từ xa đến gần (Back-to-Front Depth Sorting)

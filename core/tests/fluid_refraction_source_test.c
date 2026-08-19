@@ -7,9 +7,9 @@
 // (in-scatter + specular), which reads as cyan plastic with a silver rim.
 //
 // That is what happened when the split VFX layers were retired (b03b7b6,
-// 2026-08-10): `ScreenDistort_BeginVFXBody()` stopped binding a separate
+// 2026-08-10): `SceneTargets_BeginVFXBody()` stopped binding a separate
 // `vfxBodyTex` and began binding `renderTex` — the exact texture
-// `ScreenDistort_GetSceneTexture()` hands out.
+// `SceneTargets_GetSceneTexture()` hands out.
 //
 // This test encodes the RULE, not the workaround: it first detects whether the
 // body pass and the scene getter still name the same target, and only then demands
@@ -55,19 +55,19 @@ int main(void)
 {
     int bad = 0;
 
-    char *distort = ReadFile("core/screen_distort.c");
+    char *distort = ReadFile("core/scene_targets.c");
     char *fluid = ReadFile("core/fluid/fluid_surface.c");
     if (!distort || !fluid) {
-        printf("FAIL: cannot read core/screen_distort.c or core/fluid/fluid_surface.c\n");
+        printf("FAIL: cannot read core/scene_targets.c or core/fluid/fluid_surface.c\n");
         free(distort); free(fluid);
         return 1;
     }
 
     // Does the body pass bind the same target the scene getter exposes?
-    char *bodyPass = FunctionBody(distort, "void ScreenDistort_BeginVFXBody(void)");
+    char *bodyPass = FunctionBody(distort, "void SceneTargets_BeginVFXBody(void)");
     CHECK(bodyPass != NULL);
     bool bodyBindsSceneTarget = bodyPass && strstr(bodyPass, "rlEnableFramebuffer(renderTex.id)") != NULL;
-    bool getterIsSceneTarget = strstr(distort, "ScreenDistort_GetSceneTexture(void) { return renderTex.texture; }") != NULL;
+    bool getterIsSceneTarget = strstr(distort, "SceneTargets_GetSceneTexture(void) { return renderTex.texture; }") != NULL;
     free(bodyPass);
 
     printf("      body pass binds renderTex: %d | scene getter returns renderTex.texture: %d\n",
@@ -83,21 +83,21 @@ int main(void)
             // It must bind the copy...
             CHECK(strstr(composite, "s_sceneCopy.texture") != NULL);
             // ...and must not hand the live target straight to the shader. (The
-            // fallback `s_sceneCopy.id ? ... : ScreenDistort_GetSceneTexture()` is
+            // fallback `s_sceneCopy.id ? ... : SceneTargets_GetSceneTexture()` is
             // the only tolerated mention, so require the copy to be chosen first.)
-            const char *liveUse = strstr(composite, "ScreenDistort_GetSceneTexture()");
+            const char *liveUse = strstr(composite, "SceneTargets_GetSceneTexture()");
             const char *copyUse = strstr(composite, "s_sceneCopy.id?");
             CHECK(liveUse == NULL || (copyUse != NULL && copyUse < liveUse));
             free(composite);
         }
         // The copy has to be taken while the scene is only a source — Capture runs
-        // before main.c's ScreenDistort_BeginVFXBody(), the composite does not.
+        // before main.c's SceneTargets_BeginVFXBody(), the composite does not.
         char *capture = FunctionBody(fluid, "void FluidSurface_Capture(Camera3D camera)");
         CHECK(capture != NULL);
         if (capture)
         {
             CHECK(strstr(capture, "BeginTextureMode(s_sceneCopy)") != NULL);
-            CHECK(strstr(capture, "ScreenDistort_GetSceneTexture()") != NULL);
+            CHECK(strstr(capture, "SceneTargets_GetSceneTexture()") != NULL);
             free(capture);
         }
         // And the ordering the copy depends on must still be the one in main.c.

@@ -13,6 +13,7 @@
 #include "core/ribbon_strip.h"
 #include "core/lightning/lightning_stroke.h"
 #include "core/path_spline.h"
+#include "core/scene_targets.h"
 #include "core/screen_distort.h"
 #include "core/vfx_render.h"
 #include "core/time_fx.h"

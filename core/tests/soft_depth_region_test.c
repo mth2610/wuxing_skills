@@ -1,6 +1,6 @@
 // Headless contract test — the soft-depth region snapshot's blit alignment.
 //
-// ScreenDistort_SnapshotDepth() copies a RECTANGLE of the scene's depth attachment into
+// SceneTargets_SnapshotDepth() copies a RECTANGLE of the scene's depth attachment into
 // a downscaled linear-depth target, and every consumer (soft particles, the ShieldShell
 // ground contact) then samples that target with `gl_FragCoord.xy / u_resolution` — i.e.
 // it assumes the copy is the identity on screen position. The blit uses a NEGATIVE source
@@ -22,9 +22,9 @@
 static int failures = 0;
 #define CHECK(c, n) do { if (c) printf("PASS: %s\n", n); else { printf("FAIL: %s\n", n); failures++; } } while (0)
 
-#define SOFT_DEPTH_DOWNSCALE 2   /* mirrors core/screen_distort.c */
+#define SOFT_DEPTH_DOWNSCALE 2   /* mirrors core/scene_targets.c */
 
-/* The destination top edge, as core/screen_distort.c computes it. */
+/* The destination top edge, as core/scene_targets.c computes it. */
 static float SoftDepthDestY(float fullHeight, float regionY, float regionH)
 {
     return (fullHeight - (regionY + regionH)) / (float)SOFT_DEPTH_DOWNSCALE;
@@ -120,12 +120,12 @@ int main(void)
     /* Pin the load-bearing expression so the C mirror above cannot silently drift from
        the code it models. The mirror cannot validate the GPU blit itself — only that the
        destination rectangle is built from the region's MIRRORED y. */
-    CHECK(Has("core/screen_distort.c",
+    CHECK(Has("core/scene_targets.c",
               "(float)renderTex.texture.height - regionBottom"),
           "SnapshotDepth places the block at the region's mirrored Y");
-    CHECK(Has("core/screen_distort.c", "mirroredY / SOFT_DEPTH_DOWNSCALE"),
+    CHECK(Has("core/scene_targets.c", "mirroredY / SOFT_DEPTH_DOWNSCALE"),
           "the mirrored Y is what reaches the destination rectangle");
-    CHECK(Has("core/screen_distort.c", "-s_softDepthRegion.height"),
+    CHECK(Has("core/scene_targets.c", "-s_softDepthRegion.height"),
           "the source block is still read bottom-to-top, which the mirror assumes");
 
     return failures ? 1 : 0;

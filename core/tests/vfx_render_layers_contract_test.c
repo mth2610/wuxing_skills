@@ -33,10 +33,10 @@ int main(void)
     // The producer API survives the retirement of the split layers: call sites
     // still declare whether they occlude (body) or only add light (emission),
     // and the particle/trail systems route on exactly that distinction.
-    bad += !Has("core/screen_distort.h", "ScreenDistort_BeginVFXBody");
-    bad += !Has("core/screen_distort.h", "ScreenDistort_BeginVFXEmission");
-    bad += !Has("core/screen_distort.c", "SOFT_DEPTH_DOWNSCALE 2");
-    bad += !Has("core/screen_distort.c", "ScreenDistort_RequestSoftDepthRegion");
+    bad += !Has("core/scene_targets.h", "SceneTargets_BeginVFXBody");
+    bad += !Has("core/scene_targets.h", "SceneTargets_BeginVFXEmission");
+    bad += !Has("core/scene_targets.c", "SOFT_DEPTH_DOWNSCALE 2");
+    bad += !Has("core/scene_targets.c", "SceneTargets_RequestSoftDepthRegion");
 
     // The two render targets and their composite are GONE. Measured equivalent
     // to drawing straight into the scene (alpha-over is associative and the
@@ -44,17 +44,17 @@ int main(void)
     // costs two full-screen R16F targets and a composite pass for no image
     // difference. These assertions are negative on purpose: they fail if the
     // machinery comes back rather than if it stays away.
-    bad += Has("core/screen_distort.c", "vfxBodyTex");
-    bad += Has("core/screen_distort.c", "vfxEmissionTex");
-    bad += Has("core/screen_distort.c", "LoadColorLayerTarget");
-    bad += Has("core/screen_distort.c", "s_vfxLayersActive");
+    bad += Has("core/scene_targets.c", "vfxBodyTex");
+    bad += Has("core/scene_targets.c", "vfxEmissionTex");
+    bad += Has("core/scene_targets.c", "LoadColorLayerTarget");
+    bad += Has("core/scene_targets.c", "s_vfxLayersActive");
     bad += Has("core/shaders/distortion.fs", "u_hasVfxLayers");
     bad += Has("core/shaders/distortion.fs", "u_vfxBodyTex");
     bad += Has("core/shaders/distortion.fs", "u_vfxEmissionTex");
     bad += Has("core/shaders/distortion.fs", "bodyColor * bodyCoverage");
     // BLEND_ADD_COLORS on a full-screen VFX layer is what discarded coverage
     // and made every emissive effect a milky film over a bright background.
-    bad += Has("core/screen_distort.c", "BeginBlendMode(BLEND_ADD_COLORS);");
+    bad += Has("core/scene_targets.c", "BeginBlendMode(BLEND_ADD_COLORS);");
 
     bad += !Has("core/composition/common/vc_light_shaft.inl", "VFXRender_BeginDraw");
     bad += !Has("core/composition/common/vc_rune_circle.inl", "VFXRender_BeginDraw");

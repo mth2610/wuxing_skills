@@ -176,6 +176,7 @@ add_executable(wuxing
     core/color_grade_lut.c
     core/ribbon_strip.c
     core/lightning/lightning_stroke.c
+    core/scene_targets.c
     core/screen_distort.c
     core/surface_material.c
     core/gfx_quality.c

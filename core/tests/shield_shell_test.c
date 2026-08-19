@@ -262,14 +262,14 @@ int main(void)
           "the emission pass composites BOTH glass interfaces, not the near wall alone");
     CHECK(CountIn(EmissionBlock(src), "s_shieldShader.wallPass") == 2,
           "each emission interface declares which wall it is drawing");
-    CHECK(Has(src, "ScreenDistort_RequestSceneSnapshot") &&
-          Has(src, "ScreenDistort_GetSceneSnapshotTexture") &&
-          Has(src, "ScreenDistort_GetDepthTexture") &&
+    CHECK(Has(src, "SceneTargets_RequestSceneSnapshot") &&
+          Has(src, "SceneTargets_GetSceneSnapshotTexture") &&
+          Has(src, "SceneTargets_GetDepthTexture") &&
           Has(src, "SetShaderValueTexture"),
           "shell uses the safe scene snapshot and gates optional depth");
-    CHECK(Has("core/screen_distort.h", "ScreenDistort_GetDepthTexture"),
+    CHECK(Has("core/scene_targets.h", "SceneTargets_GetDepthTexture"),
           "the optional depth source remains available through ScreenDistort");
-    CHECK(Has("main.c", "ScreenDistort_SnapshotDepth();") &&
+    CHECK(Has("main.c", "SceneTargets_SnapshotDepth();") &&
           Has("main.c", "VFX_ShieldShell_DrawRefraction(camera)"),
           "the shield draws in the existing post-3D composition pass");
     CHECK(Has("core/composition/visual_composer.h", "VFX_ShieldShell_DrawRefraction") &&

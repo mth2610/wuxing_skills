@@ -7,6 +7,7 @@
 #include "core/particles/particle_manager.h"
 #include "core/post_fx.h"
 #include "sandbox/sandbox_core.h"
+#include "core/scene_targets.h"
 #include "core/screen_distort.h"
 #include "core/vfx_render.h"
 #include "core/surface_material.h"
@@ -319,7 +320,10 @@ int main(int argc, char **argv) {
   InitTrailSystem(defaultTrailShader);
   VFXLight_Init();
   DecalSystem_Init();
-  ScreenDistort_Init(screenWidth, screenHeight);
+  /* Scene targets FIRST: PostFX_Init reads SceneTargets_IsHDR(), and the distort
+     pass reads the colour target this creates. */
+  SceneTargets_Init(screenWidth, screenHeight);
+  ScreenDistort_Init();
   FluidSurface_Init(screenWidth, screenHeight);
   PostFX_Init(screenWidth, screenHeight);
   SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
@@ -1208,7 +1212,7 @@ int main(int argc, char **argv) {
     }
     const bool vfxBgActive = s_vfxBgOn && currentScreen == SCREEN_VFX_TESTER;
 
-    ScreenDistort_Begin();
+    SceneTargets_Begin();
     if (vfxBgActive) {
         ClearBackground(s_vfxBgColor);
     } else if (g_isDebuggerCapturing || (currentScreen == SCREEN_VFX_TESTER && s_vfxDarkMode)) {
@@ -1257,7 +1261,7 @@ int main(int argc, char **argv) {
     // shield once vanished entirely this way). The snapshot is taken at 2D
     // time after MyEndMode3D, and refractive draws run in a dedicated
     // post-pass (VFX_ShieldShell_DrawRefraction) so they see the complete
-    // scene — see the block after ScreenDistort_SnapshotDepth() below.
+    // scene — see the block after SceneTargets_SnapshotDepth() below.
     VFX_Compose_Draw3D(camera);
 
     // =========================================================================
@@ -1291,14 +1295,14 @@ int main(int argc, char **argv) {
     Atmosphere_Draw(camera); // G3 — owns its emission layer, including debug-only frames
 
     MyEndMode3D();
-    ScreenDistort_End();
-    ScreenDistort_SnapshotDepth(); // soft particles: snapshot this frame's depth for next frame's sampling
+    SceneTargets_End();
+    SceneTargets_SnapshotDepth(); // soft particles: snapshot this frame's depth for next frame's sampling
     // Glass shields refract the COMPLETE scene (characters, trails, atmosphere
     // all drawn by now). Copy it at 2D time while renderTex is still only a
     // source — the copy must not happen inside the 3D pass (landmine #15) —
     // then draw the shields in a dedicated world-space pass in copy-then-draw
     // order.
-    ScreenDistort_SnapshotScene();
+    SceneTargets_SnapshotScene();
     MyBeginMode3D(camera);
     VFX_ShieldShell_DrawRefraction(camera);
     MyEndMode3D();
@@ -1456,6 +1460,7 @@ int main(int argc, char **argv) {
   UnloadTrailSystem();
   DecalSystem_Unload();
   ScreenDistort_Unload();
+  SceneTargets_Unload();
   FluidSurface_Unload();
   Atmosphere_Unload();
   MetaballFX_Unload();
