@@ -1703,6 +1703,27 @@ void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const Part
   }
 }
 
+/* The measured halo ratios. Named so a change to them is a change to a stated
+   recipe rather than to three loose numbers (§7.6c). */
+#define PARTICLE_GLOW_HALO_RADIUS 4.20f
+#define PARTICLE_GLOW_HALO_ALPHA  0.24f
+#define PARTICLE_GLOW_HALO_BOOST  0.30f
+
+void ParticleSystem_SpawnGlow(ParticleConfig core)
+{
+    SpawnParticle(core);
+
+    ParticleConfig halo = core;          /* inherit motion, life, curves, blend */
+    halo.radius *= PARTICLE_GLOW_HALO_RADIUS;
+    halo.render.texture = ParticleSystem_GlowSprite();
+    halo.render.emissiveBoost = (core.render.emissiveBoost > 0.0f
+                                     ? core.render.emissiveBoost : 1.0f)
+                                * PARTICLE_GLOW_HALO_BOOST;
+    halo.colorStart.a = (unsigned char)((float)core.colorStart.a * PARTICLE_GLOW_HALO_ALPHA);
+    halo.colorEnd.a   = (unsigned char)((float)core.colorEnd.a   * PARTICLE_GLOW_HALO_ALPHA);
+    SpawnParticle(halo);
+}
+
 static Texture2D s_glowSprite = {0};
 
 Texture2D ParticleSystem_GlowSprite(void)

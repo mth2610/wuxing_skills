@@ -103,48 +103,22 @@ void VC_RefParticles_Update(float dt)
     for (int i = 0; i < REF_PARTICLE_COUNT; i++)
     {
         float off = ((float)i - (float)(REF_PARTICLE_COUNT - 1) * 0.5f) * pitch;
-        SpawnParticle((ParticleConfig){
+        /* THE RECIPE, now a function. This row used to spell out the core and
+           its halo by hand; it calls ParticleSystem_SpawnGlow instead, which is
+           the same thing with the ratios named. If this row ever stops matching
+           the §7.6c measurements, the recipe moved. */
+        ParticleSystem_SpawnGlow((ParticleConfig){
             .position = {s_refParticlePos.x + off,
                          s_refParticlePos.y + 0.30f * s_refParticleScale,
                          s_refParticlePos.z},
             .velocity = {0.0f, 0.0f, 0.0f},
             .radius = 0.22f * s_refParticleScale,
             .lifetime = 6.0f,
-            /* Blue-violet, strongly weighted to one channel. At boost B the
-               peak channel reaches B and the others ~0.35B and ~0.18B, so the
-               three cross the white point at three different boosts — which is
-               what makes the core-to-skirt gradient. */
             .colorStart = (Color){70, 110, 255, 255},
             .colorEnd = (Color){70, 110, 255, 255},
             .render.blendMode = VFX_BLEND_ADDITIVE,
             .render.unlit = 1,
             .render.emissiveBoost = k_refParticleBoost[i],
-        });
-
-        /* THE HALO COMPANION — and this is the part a single particle cannot do.
-           Post-process bloom spreads in proportion to the SIZE of what feeds it:
-           a core a few pixels across is sub-pixel by the third pyramid level, so
-           the deep levels that carry the wide haze receive nothing from it.
-           Measured on this fixture, turning bloom off entirely changes the frame
-           by 0.09/255 on average — the visible skirt is the SPRITE's falloff, not
-           bloom.
-           A wide glow therefore has to be DRAWN, as a second much larger and much
-           fainter additive particle behind the core. That is the idiom the tree
-           already uses: vc_ember_trail.inl spawns its halo at radius x4.20, and
-           vc_glint_sparkle pairs an alpha body with an additive halo. */
-        SpawnParticle((ParticleConfig){
-            .position = {s_refParticlePos.x + off,
-                         s_refParticlePos.y + 0.30f * s_refParticleScale,
-                         s_refParticlePos.z},
-            .velocity = {0.0f, 0.0f, 0.0f},
-            .radius = 0.22f * 4.2f * s_refParticleScale,
-            .lifetime = 6.0f,
-            .colorStart = (Color){70, 110, 255, 60},
-            .colorEnd = (Color){70, 110, 255, 60},
-            .render.texture = ParticleSystem_GlowSprite(),   /* NOT the spark sprite — see above */
-            .render.blendMode = VFX_BLEND_ADDITIVE,
-            .render.unlit = 1,
-            .render.emissiveBoost = k_refParticleBoost[i] * 0.30f,
         });
     }
 

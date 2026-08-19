@@ -105,11 +105,23 @@ static float s_fvolBodyBlend = 0.0f;
 // clip to white — and it interacts with the background: the test arena's sky
 // sits around 0.35, so the same value that reads as fire against a night scene
 // blows out here. Tune it in the scene the effect ships in.
-// Volume fire is deliberately many low-coverage layers. At 190 live parcels,
-// 0.18 let the hot cores fuse into the opaque white marbles visible at the
-// emitter foot; 0.12 preserves overlap continuity while leaving optical room
-// for neighbouring billows to add depth.
-static float s_fvolBodyAlpha = 0.12f;
+// Volume fire is deliberately many low-coverage layers.
+//
+// 0.35 SINCE 19/08/2026, up from 0.12. The old note here said 0.18 fused the hot
+// cores into "opaque white marbles at the emitter foot", and that observation is
+// left standing because it was real — but it predates the Dot H packed-sheet
+// build, and it was made while tuning.cfg held a bloom threshold below 1.0 that
+// veiled the whole frame (see the harness pin). Re-measured on the pinned
+// configuration, every metric improves on BOTH backgrounds and no marbles
+// appear:
+//        white: structure 0.095 -> 0.179, detail 0.013 -> 0.028, |d| 0.205 -> 0.341
+//        dark : structure 0.512 -> 0.536, detail 0.054 -> 0.061, |d| 0.719 -> 0.759
+//
+// This is the negative-contrast law (§7.6c) doing what tripling the emissive
+// could not: on a bright background an effect cannot out-shine its surroundings,
+// so legibility comes from the core OCCLUDING them. What this flame was missing
+// was opacity, not light.
+static float s_fvolBodyAlpha = 0.35f;
 static SpriteAnim s_fvolFlameAnim = {0};
 static SpriteAnim s_fvolPuffAnim = {0};
 
@@ -231,7 +243,9 @@ static void FVol_InitShared(void)
     Tuning_RegisterFloat("flame_body_size", &s_fvolBodySize, 1.0f);
     Tuning_RegisterFloat("flame_spread", &s_fvolSpread, 1.0f);
     Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 0.0f);
-    Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.12f);
+    /* The default here WINS over the static initialiser above — Tuning_RegisterFloat
+       assigns it. Changing one without the other is a silent no-op, and was. */
+    Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.35f);
     Tuning_RegisterFloat("flame_volume", &s_fvolVolume, 1.0f);
     Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 1.05f);
     Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 4.8f);

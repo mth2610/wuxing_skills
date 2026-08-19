@@ -1076,11 +1076,11 @@ Warmup 90, the middle of each fixture's life:
 
 | fixture | bg | cover% | body% | darken% | structure | detail | chroma | \|d\| |
 |---|---|---|---|---|---|---|---|---|
-| FLAME VOLUME (37) | dark | 1.563 | 1.40 | 0.0 | 0.512 | 0.054 | 0.581 | 0.719 |
-| | mid | 1.704 | 1.42 | 4.5 | 0.347 | 0.037 | 0.541 | 0.520 |
-| | white | 1.438 | 0.90 | 53.6 | 0.095 | 0.013 | 0.455 | 0.205 |
-| | warm | 1.524 | 0.87 | 43.3 | 0.133 | 0.016 | 0.597 | 0.173 |
-| | cool | 1.627 | 1.30 | 27.2 | 0.120 | 0.016 | 0.335 | 0.413 |
+| FLAME VOLUME (37) ※ | dark | 1.783 | 1.65 | 0.0 | 0.536 | 0.061 | 0.627 | 0.759 |
+| | mid | 1.943 | 1.64 | 14.5 | 0.395 | 0.048 | 0.623 | 0.543 |
+| | white | 1.831 | 1.38 | 70.8 | 0.179 | 0.028 | 0.581 | 0.341 |
+| | warm | 1.923 | 1.24 | 60.1 | 0.222 | 0.032 | 0.701 | 0.207 |
+| | cool | 1.914 | 1.58 | 49.9 | 0.205 | 0.030 | 0.516 | 0.487 |
 | VOLUME TRAIL (34) † | dark | 6.368 | 6.08 | 0.0 | 0.277 | 0.117 | 0.861 | 0.885 |
 | | mid | 7.626 | 6.19 | 1.4 | 0.262 | 0.097 | 0.845 | 0.583 |
 | | white | 6.044 | 5.99 | 86.2 | 0.226 | 0.083 | 0.847 | 0.658 |
@@ -1107,6 +1107,9 @@ Warmup 90, the middle of each fixture's life:
 > **Use FLAME VOLUME + VOLUME TRAIL for any bit-exact comparison.** ENERGY ORB stays in
 > the table as a level reference, but a difference under roughly 0.01 chroma or 2 points
 > of `darken%` on it means nothing.
+
+※ **FLAME VOLUME re-baselined again** after `flame_body_alpha` 0.12 → 0.35 (§7.6c). Every
+metric improved on every background; this row is the negative-contrast law applied.
 
 **ALL ROWS RE-BASELINED 19/08/2026 at the shipped grade** — `postfx_hue_restore = 0.0`
 (§12.1) and `saturation = 1.55`. Every fixture moved; do not diff these against any capture
