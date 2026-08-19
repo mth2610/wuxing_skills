@@ -534,6 +534,47 @@ An effect with no pixel above 1.25 will not bloom on a white background, and one
 pixel above 5.0 has no white-hot core — both are now checkable before anyone renders a
 frame, which is the whole point of writing the scale down.
 
+#### Library survey, 19/08/2026 — six effects, dark background, warmup 90
+
+| effect | p99 | max | share above the 1.25 threshold |
+|---|---|---|---|
+| TRAIL BLADE | 0.020 *(= the background)* | 1.52 | 0.002% |
+| TRAIL MAIN | 0.020 *(= the background)* | 1.72 | 0.007% |
+| TRAIL ENERGY | 0.047 | 3.47 | 0.23% |
+| FLAME VOLUME | 0.53 | 2.68 | 0.72% |
+| VOLUME TRAIL | 1.25 | 3.34 | 1.93% |
+| ENERGY ORB | 1.29 | 26.72 | 6.42% |
+
+**Five of the six peak below 3.5, and exactly one reaches the tone map's white-hot band
+(5.5–12).** Two of them — the swept blade and main trails — have a p99 equal to the
+background itself and put roughly 20 pixels of a 921,600-pixel frame over the bloom
+threshold. The curve's shoulder and the bloom prefilter are, for most of this library,
+machinery that almost never engages.
+
+**Where the ceilings came from is NOT one story, and only one of them is a mistake:**
+
+- `volume_trail_test.c` caps the additive budget at 1.0 because **"1.00 is already full
+  white"**. That is false here — 1.00 scene-referred tone-maps to 0.80 display, and display
+  white is not reached until ~5.5. It is LDR reasoning surviving into an HDR pipeline, and
+  it is enforced by a test. Lifting the ENERGY layers 0.16/0.46 → 0.35/1.00 was measured:
+  on white, `structure` 0.076 → 0.217, `detail` 0.049 → 0.099, `chroma` 0.609 → 0.875, and
+  the dark→white `detail` collapse fell from 62% to 12%. Cost: ~12% less `detail` on dark.
+- The swept trail's 0.5 body ceiling and the beam core's 0.35 are **empirical**, measured on
+  screen, with sound stated reasons (bloom lifts near-threshold content; additive alpha is
+  added light, not opacity). They are not premise errors.
+- `flame_volume.inl`'s note that the value interacts with the background — "the test arena's
+  sky sits around 0.35, so the same value that reads as fire against a night scene blows out
+  here" — is already correct HDR-aware reasoning.
+
+> [!WARNING]
+> **A hypothesis that did NOT survive, recorded so it is not retried.** The swept trail's
+> ceiling was halved twice on "it burned out on screen", and it was tempting to blame the
+> unpinned `tuning.cfg` (`bloom_threshold` 0.9, `bloom_intensity` 0.35 against a shipping
+> 1.25 / 0.12). Tested directly with `WUXING_TUNING` pointing at each configuration: TRAIL
+> MAIN measures within noise of itself on dark and mid under both, because at its authored
+> level it sits far below either threshold. The misconfiguration is real and worth having
+> fixed, but it does not explain those ceilings.
+
 > [!NOTE]
 > **(project convention):** state an effect's intended band in its composer, and check it
 > with the probe rather than by eye. The three rows above are the measured reference, not a
