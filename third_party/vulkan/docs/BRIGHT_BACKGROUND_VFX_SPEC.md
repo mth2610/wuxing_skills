@@ -448,7 +448,40 @@ implementation. Tune source zoning before changing the global tone mapper:
 Changing the global tone mapper is out of scope for phases 0–4. It affects every material and
 requires a separate whole-scene approval.
 
-### 7.5 Auto exposure (phase 5, optional until approved)
+### 7.5 Auto exposure — IMPLEMENTED 19/08/2026, default off
+
+Built as specified below, with two decisions that make it safe to ship into a night arena:
+
+**It meters the BACKGROUND luma target** — the scene captured after the world and BEFORE any
+VFX (`SceneTargets_CaptureBackgroundLuma`). That satisfies this section's "no spell-caused
+exposure oscillation" by construction rather than by tuning: a spell is not in the image
+being metered, so it cannot drive the exposure that is then applied to it.
+
+**The result is clamped to <= 1.0, so it can only DARKEN.** The night arena meters at ~0.02,
+asks for a large exposure, is clamped, and renders bit-identically — verified. Only a scene
+bright enough to need exposing down is affected at all, which is precisely the case this
+whole section exists for.
+
+One fragment, one pass, 1x1 ping-pong, no CPU readback. `postfx_auto_exposure` = 0 ships.
+
+Measured on FLAME VOLUME:
+
+| | dark | white |
+|---|---|---|
+| off | 0.536 / 0.061 | 0.179 / 0.028 |
+| on | **bit-identical** | **0.593 / 0.089** |
+
+`structure` +231% and `detail` +218% on a white background — the two metrics that had
+collapsed and that the owner reported as the effect looking flat. `chroma` falls
+0.581 → 0.395 and `|d|` 0.341 → 0.254, which is the trade: the frame as a whole is exposed
+down, so everything sits lower in the display range, and what is bought with it is the
+internal texture that was previously crushed against the ceiling.
+
+**Why it works, in one line:** with exposure pinned at 1.0 a white background occupies 0.804
+of the display range and leaves 0.196 for everything brighter than it. Exposed to mid-grey
+it occupies 0.267 and leaves 0.733 — 3.7x the room, for every effect at once, for one scalar.
+
+### 7.5a The original specification (kept)
 
 > [!NOTE]
 > **(project convention):** auto exposure is bounded camera adaptation, not per-spell inverse

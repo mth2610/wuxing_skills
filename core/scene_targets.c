@@ -174,6 +174,16 @@ static Shader  s_bgLumaShader;
 static int     s_bgLumaTexelLoc = -1;
 static bool    s_bgLumaValid = false;
 
+/* AUTO EXPOSURE (§7.5). 1x1 ping-pong, never read back to the CPU — the value
+   lives on the GPU and post_process.fs samples it. Two targets because a shader
+   cannot read the texture it is writing. */
+static RenderTexture2D s_exposure[2];
+static int    s_exposureCur = 0;
+static Shader s_exposureShader;
+static int    s_expLocLuma = -1, s_expLocSize = -1, s_expLocDt = -1;
+static int    s_expLocGrey = -1, s_expLocMin = -1, s_expLocDown = -1, s_expLocUp = -1;
+static bool   s_exposureReady = false;
+
 static RenderTexture2D LoadLinearDepthTarget(int width, int height)
 {
   RenderTexture2D target = {0};
@@ -341,6 +351,24 @@ void SceneTargets_Init(int width, int height)
     ClearBackground(BLACK);
     EndTextureMode();
     TraceLog(LOG_INFO, "SceneTargets: background-luma target %dx%d", lw, lh);
+
+    for (int i = 0; i < 2; i++) {
+      s_exposure[i] = LoadRenderTextureWithDepthTexture(1, 1, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+      SetTextureFilter(s_exposure[i].texture, TEXTURE_FILTER_POINT);
+      /* Open the scope AND seed it at 1.0 — an unexposed first frame, and a
+         target the backend has entered at least once (see the note above). */
+      BeginTextureMode(s_exposure[i]);
+      ClearBackground((Color){255, 255, 255, 255});
+      EndTextureMode();
+    }
+    s_exposureShader = LoadShader(0, "core/shaders/exposure.fs");
+    s_expLocLuma = GetShaderLocation(s_exposureShader, "u_lumaTex");
+    s_expLocSize = GetShaderLocation(s_exposureShader, "u_lumaSize");
+    s_expLocDt   = GetShaderLocation(s_exposureShader, "u_dt");
+    s_expLocGrey = GetShaderLocation(s_exposureShader, "u_targetGrey");
+    s_expLocMin  = GetShaderLocation(s_exposureShader, "u_minExposure");
+    s_expLocDown = GetShaderLocation(s_exposureShader, "u_speedDown");
+    s_expLocUp   = GetShaderLocation(s_exposureShader, "u_speedUp");
   }
 
   depthCopyShader = LoadShader(0, "core/shaders/depth_copy.fs");
@@ -665,6 +693,44 @@ void SceneTargets_CaptureBackgroundLuma(void)
 Texture2D SceneTargets_GetBackgroundLuma(void)
 {
     return s_bgLumaValid ? s_bgLuma.texture : (Texture2D){0};
+}
+
+/* Advance the exposure. Call once per frame at 2D TIME — after SceneTargets_End
+ * and before PostFX_Draw — so BeginTextureMode is legal here. Cheap: one
+ * fragment, and the result never touches the CPU. */
+void SceneTargets_UpdateExposure(float dt, float targetGrey, float minExposure,
+                                 float speedDown, float speedUp)
+{
+    if (s_exposureShader.id == 0 || !s_bgLumaValid) return;
+    const int dst = 1 - s_exposureCur;
+
+    BeginTextureMode(s_exposure[dst]);
+    BeginShaderMode(s_exposureShader);
+    float sz[2] = {(float)s_bgLuma.texture.width, (float)s_bgLuma.texture.height};
+    if (s_expLocLuma >= 0) SetShaderValueTexture(s_exposureShader, s_expLocLuma, s_bgLuma.texture);
+    if (s_expLocSize >= 0) SetShaderValue(s_exposureShader, s_expLocSize, sz, SHADER_UNIFORM_VEC2);
+    if (s_expLocDt   >= 0) SetShaderValue(s_exposureShader, s_expLocDt, &dt, SHADER_UNIFORM_FLOAT);
+    if (s_expLocGrey >= 0) SetShaderValue(s_exposureShader, s_expLocGrey, &targetGrey, SHADER_UNIFORM_FLOAT);
+    if (s_expLocMin  >= 0) SetShaderValue(s_exposureShader, s_expLocMin, &minExposure, SHADER_UNIFORM_FLOAT);
+    if (s_expLocDown >= 0) SetShaderValue(s_exposureShader, s_expLocDown, &speedDown, SHADER_UNIFORM_FLOAT);
+    if (s_expLocUp   >= 0) SetShaderValue(s_exposureShader, s_expLocUp, &speedUp, SHADER_UNIFORM_FLOAT);
+    rlDisableColorBlend();
+    /* texture0 is the PREVIOUS exposure — the shader reads its own history. */
+    DrawTexturePro(s_exposure[s_exposureCur].texture,
+                   (Rectangle){0, 0, 1, -1}, (Rectangle){0, 0, 1, 1},
+                   (Vector2){0, 0}, 0.0f, WHITE);
+    rlDrawRenderBatchActive();
+    rlEnableColorBlend();
+    EndShaderMode();
+    EndTextureMode();
+
+    s_exposureCur = dst;
+    s_exposureReady = true;
+}
+
+Texture2D SceneTargets_GetExposureTexture(void)
+{
+    return s_exposureReady ? s_exposure[s_exposureCur].texture : (Texture2D){0};
 }
 
 void SceneTargets_SnapshotDepth(void)

@@ -146,6 +146,25 @@ Texture2D SceneTargets_GetRawDepthTexture(void);
 void SceneTargets_CaptureBackgroundLuma(void);
 Texture2D SceneTargets_GetBackgroundLuma(void);
 
+/* AUTO EXPOSURE (§7.5) — one scalar, on the GPU, never read back.
+ *
+ * Metered from the BACKGROUND luma target, i.e. the scene BEFORE any VFX. That
+ * is what satisfies "no spell-caused exposure oscillation" by construction: a
+ * spell is not in the image being metered, so it cannot drive the exposure that
+ * is then applied to it.
+ *
+ * THE RESULT IS CLAMPED TO <= 1.0, so this can only ever DARKEN. The night arena
+ * meters at ~0.02, asks for a large exposure, is clamped, and renders
+ * bit-identically. Only a scene bright enough to need exposing DOWN changes —
+ * which is exactly the case where a white background otherwise eats 80% of the
+ * display range and leaves nothing for an effect to be brighter than (§7.6d).
+ *
+ * Call once per frame at 2D time: after SceneTargets_End, before PostFX_Draw.
+ * Sample the 1x1 texture's red channel; id 0 until the first update. */
+void SceneTargets_UpdateExposure(float dt, float targetGrey, float minExposure,
+                                 float speedDown, float speedUp);
+Texture2D SceneTargets_GetExposureTexture(void);
+
 void SceneTargets_RequestSceneSnapshot(void);
 // Copy renderTex -> private snapshot; no-op unless requested this frame.
 void SceneTargets_SnapshotScene(void);

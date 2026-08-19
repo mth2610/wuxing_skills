@@ -30,6 +30,15 @@ uniform vec3 u_highlightTint;
 uniform float u_tonemapEnabled;
 uniform float u_exposure;
 
+/* AUTO EXPOSURE (§7.5). A 1x1 texture rather than a scalar, because the value is
+ * produced on the GPU and never read back — a per-frame readback would stall the
+ * pipeline for one number. Metered from the scene BEFORE any VFX and clamped to
+ * <= 1.0, so it can only darken; a night scene meters low, asks for more than
+ * 1.0, is clamped, and is unaffected. See core/scene_targets.h.
+ * u_autoExposure 0 = ignore it entirely, which is the shipping default. */
+uniform sampler2D u_exposureTex;
+uniform float u_autoExposure;
+
 // ── Colour-grade LUT (Đợt G5) ────────────────────────────────────────────────
 // A 2D STRIP, not a sampler3D: GLES on Mali is a shipping target and 2D works
 // everywhere without a capability query or a second shader path.
@@ -245,7 +254,12 @@ void main() {
     }
 
     // 2b. Tone mapping
-    vec3 exposedScene = sceneCol.rgb * u_exposure;
+    float exposure = u_exposure;
+    if (u_autoExposure > 0.0) {
+        float autoE = texture(u_exposureTex, vec2(0.5)).r;
+        if (autoE > 0.0) exposure *= mix(1.0, autoE, u_autoExposure);
+    }
+    vec3 exposedScene = sceneCol.rgb * exposure;
     if (u_tonemapEnabled > 0.5) {
         sceneCol.rgb = toneMapScene(exposedScene);
     }

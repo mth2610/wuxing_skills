@@ -1435,6 +1435,11 @@ int main(int argc, char **argv) {
     }
 
     ClearBackground(BLACK);
+    /* AUTO EXPOSURE (§7.5) — 2D time, so BeginTextureMode is legal, and before
+       the composite that consumes it. Metered from the pre-VFX background, so a
+       spell cannot drive the exposure applied to itself. */
+    SceneTargets_UpdateExposure(dt, 0.18f, 0.10f, 2.5f, 0.8f);
+
     PostFX_Draw(&postFXConfig);
     /* Chứng: CÙNG dải màu đó, tính bằng CPU qua đường cong ACES per-channel, vẽ
      * SAU post nên không đi qua gì cả. Chênh lệch giữa hai dải chính là phần

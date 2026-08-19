@@ -68,6 +68,12 @@ static int shadowTintLoc;
 static int highlightTintLoc;
 static int tonemapEnabledLoc;
 static int exposureLoc;
+static int exposureTexLoc;
+static int autoExposureLoc;
+/* tuning.cfg -> postfx_auto_exposure. 0 = off (shipping default until the look is
+   signed off); 1 = full. The metered value can only darken, so enabling it
+   changes nothing in a night scene. */
+static float s_autoExposure = 0.0f;
 static int hueRestoreLoc;
 static int shoulderViewLoc;
 static int lutTexLoc;
@@ -275,6 +281,8 @@ void PostFX_Init(int width, int height)
   highlightTintLoc = GetShaderLocation(compositeShader, "u_highlightTint");
   tonemapEnabledLoc = GetShaderLocation(compositeShader, "u_tonemapEnabled");
   exposureLoc = GetShaderLocation(compositeShader, "u_exposure");
+  exposureTexLoc = GetShaderLocation(compositeShader, "u_exposureTex");
+  autoExposureLoc = GetShaderLocation(compositeShader, "u_autoExposure");
   hueRestoreLoc = GetShaderLocation(compositeShader, "u_hueRestore");
   shoulderViewLoc = GetShaderLocation(compositeShader, "u_shoulderView");
   lutTexLoc = GetShaderLocation(compositeShader, "u_lutTex");
@@ -619,6 +627,7 @@ void PostFX_Draw(const PostFXConfig *config)
     Tuning_RegisterFloat("postfx_hue_restore", &s_hueRestore, 0.0f);
     Tuning_RegisterFloat("postfx_shoulder_view", &s_shoulderView, 0.0f);
     Tuning_RegisterFloat("postfx_fxaa", &s_fxaa, 1.0f);
+    Tuning_RegisterFloat("postfx_auto_exposure", &s_autoExposure, 0.0f);
     Tuning_RegisterFloat("bloom_karis", &s_bloomKaris, 1.0f);
     Tuning_RegisterFloat("lut_strength", &s_lutStrengthOverride, 0.0f);
     Tuning_RegisterFloat("postfx_contrast", &s_contrastOverride, 0.0f);
@@ -769,6 +778,12 @@ void PostFX_Draw(const PostFXConfig *config)
   float exposureVal = (config->exposure > 0.0f) ? config->exposure : 1.0f;
   SetShaderValue(compositeShader, tonemapEnabledLoc, &tonemapEnabledVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, exposureLoc, &exposureVal, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(compositeShader, autoExposureLoc, &s_autoExposure, SHADER_UNIFORM_FLOAT);
+  {
+    Texture2D et = SceneTargets_GetExposureTexture();
+    if (et.id != 0 && exposureTexLoc >= 0)
+      SetShaderValueTexture(compositeShader, exposureTexLoc, et);
+  }
   SetShaderValue(compositeShader, hueRestoreLoc, &s_hueRestore, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, shoulderViewLoc, &s_shoulderView, SHADER_UNIFORM_FLOAT);
 
