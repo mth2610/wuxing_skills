@@ -619,12 +619,15 @@ static void SortParticlesByDepth(int *ids, int count, const float *depths)
 static Shader s_litShader = {0};
 static int   s_locBgLuma = -1;
 static int   s_locBgAdapt = -1;
-/* tuning.cfg -> particle_bg_adapt. SHIPPING AT 1.0: emission falls away as the
-   background brightens. Measured on REF PARTICLES, worst-case legibility on a
-   white backdrop rises 0.132 -> 0.324 while the DARK arena is bit-identical —
-   the night scene sits at ~0.02 luma, below where the ramp starts, so nothing
-   that ships today changes. Set 0 to disable. */
-static float s_bgAdapt = 1.0f;
+/* tuning.cfg -> particle_bg_adapt. DEFAULT 0 = OFF, and the reason is a mistake
+   worth keeping: it was shipped at 1.0 on a measurement taken ONLY on the
+   dark-core row, where legibility on white rose 0.132 -> 0.324. Applied to a
+   PURELY ADDITIVE particle the same attenuation does not dim it, it DELETES it —
+   there is no body underneath to take over, so the particle vanishes on a bright
+   background instead of merely washing out. Worse than the problem.
+   The term is correct and stays available; it belongs with the negative-contrast
+   STRUCTURE, not on its own. Set 1 only where the effect has an opaque core. */
+static float s_bgAdapt = 0.0f;
 static bool   s_litShaderTried = false;
 static bool   s_litActive = false;
 static int s_locSunToLight, s_locSunColor, s_locAmbient, s_locViewPos;
@@ -812,7 +815,7 @@ static void ParticleLighting_Begin(Camera3D camera)
      the default silently (core/docs/LANDMINES.md). */
   {
     static bool reg = false;
-    if (!reg) { Tuning_RegisterFloat("particle_bg_adapt", &s_bgAdapt, 1.0f); reg = true; }
+    if (!reg) { Tuning_RegisterFloat("particle_bg_adapt", &s_bgAdapt, 0.0f); reg = true; }
   }
   if (s_locBgAdapt >= 0)
     SetShaderValue(s_litShader, s_locBgAdapt, &s_bgAdapt, SHADER_UNIFORM_FLOAT);

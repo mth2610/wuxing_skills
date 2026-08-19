@@ -27,15 +27,24 @@
  *   4. a change to the default sprite actually reaches particles at all
  */
 
-#define REF_PARTICLE_COUNT 6
+/* FOUR boosts, not six, and widely spaced.
+ *
+ * The first version packed six columns at a 0.5 pitch and then grew to four
+ * rows. Each glow halo is 4.2x its core, so at that spacing every halo
+ * overlapped its neighbours in both axes and the chart became one bright smear —
+ * unreadable as an instrument, which is the only thing it is for. A calibration
+ * target that cannot be read is worse than none, because it invites judging by
+ * eye the very thing it exists to measure.
+ *
+ * Spacing is now set by the HALO, not the core: pitch > 2x the halo radius, in
+ * both axes. */
+#define REF_PARTICLE_COUNT 4
 
-/* Spread across §7.6's bands: below the bloom threshold, astride it, and into
- * the range where a core can read as hot. */
-static const float k_refParticleBoost[REF_PARTICLE_COUNT] = {
-    0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 12.0f
-};
+static const float k_refParticleBoost[REF_PARTICLE_COUNT] = { 0.5f, 2.0f, 6.0f, 12.0f };
 
-/* The glow sprite is the particle system's now — see ParticleSystem_GlowSprite. */
+#define REF_PARTICLE_CORE_R 0.16f     /* halo is 4.2x this = 0.672 */
+#define REF_PARTICLE_PITCH  1.70f     /* > 2 x halo radius, so nothing overlaps */
+#define REF_PARTICLE_ROW    1.55f
 
 static bool    s_refParticlesOn = false;
 static Vector3 s_refParticlePos = {0};
@@ -48,8 +57,8 @@ int VFX_ComposeRefParticles(Vector3 pos, float scale)
     s_refParticleScale = (scale > 0.0f) ? scale : 1.0f;
     s_refParticlesOn = true;
     s_refParticleTimer = 0.0f;
-    TraceLog(LOG_INFO, "VFX_REF_PARTICLE: %d glow particles, boost %.1f .. %.1f, "
-                       "plus one SOLID control — DEFAULT sprite",
+    TraceLog(LOG_INFO, "VFX_REF_PARTICLE: %d boosts (%.1f .. %.1f) x 3 rows — "
+                       "value / glow recipe / negative contrast",
              REF_PARTICLE_COUNT, k_refParticleBoost[0],
              k_refParticleBoost[REF_PARTICLE_COUNT - 1]);
     return 0;
@@ -57,112 +66,65 @@ int VFX_ComposeRefParticles(Vector3 pos, float scale)
 
 void VFX_KillRefParticles(int id) { (void)id; s_refParticlesOn = false; }
 
+/* Respawned on a slow cadence rather than every frame: one spawn per particle
+   per frame would stack thousands of coincident billboards and the additive sum,
+   not the sprite, would be what got measured. The lifetime outlasts the
+   interval, so exactly one generation is ever alive. */
 void VC_RefParticles_Update(float dt)
 {
     if (!s_refParticlesOn) return;
-    /* Respawned on a slow cadence rather than every frame: one spawn per
-     * particle would stack thousands of coincident billboards and the additive
-     * sum, not the sprite, would be what got measured. The lifetime below
-     * outlasts this interval, so exactly one generation is ever alive. */
     s_refParticleTimer -= dt;
     if (s_refParticleTimer > 0.0f) return;
     s_refParticleTimer = 4.0f;
 
-    const float pitch = 0.75f * s_refParticleScale;
+    const float S = s_refParticleScale;
+    const float pitch = REF_PARTICLE_PITCH * S;
+    const float R = REF_PARTICLE_CORE_R * S;
+
     for (int i = 0; i < REF_PARTICLE_COUNT; i++)
     {
-        float off = ((float)i - (float)(REF_PARTICLE_COUNT - 1) * 0.5f) * pitch;
+        const float off = ((float)i - (float)(REF_PARTICLE_COUNT - 1) * 0.5f) * pitch;
+        const float B = k_refParticleBoost[i];
+        Vector3 at = {s_refParticlePos.x + off, 0.0f, s_refParticlePos.z};
+
+        /* ROW 1 — VALUE CALIBRATION. Achromatic, additive, NO halo: one particle
+           whose peak must equal colour x boost. Grey on purpose, so "the value
+           changed" and "the hue changed" stay separable. */
+        at.y = s_refParticlePos.y + REF_PARTICLE_ROW * S;
         SpawnParticle((ParticleConfig){
-            .position = {s_refParticlePos.x + off,
-                         s_refParticlePos.y - 0.30f * s_refParticleScale,
-                         s_refParticlePos.z},
-            .velocity = {0.0f, 0.0f, 0.0f},      /* stands still: measurable */
-            .radius = 0.22f * s_refParticleScale,
-            .lifetime = 6.0f,                    /* outlasts any warmup */
-            .colorStart = WHITE,                 /* achromatic: value, not hue */
-            .colorEnd = WHITE,
-            /* THE GLOW CONTRACT, stated by hand rather than by preset: naming
-               VFX_APPEARANCE_GLOW would DISCARD the per-particle boost below,
-               because VFXAppearance_Resolve returns its table row wholesale. */
+            .position = at, .velocity = {0}, .radius = R, .lifetime = 6.0f,
+            .colorStart = WHITE, .colorEnd = WHITE,
             .render.blendMode = VFX_BLEND_ADDITIVE,
             .render.unlit = 1,
-            .render.emissiveBoost = k_refParticleBoost[i],
+            .render.emissiveBoost = B,
         });
-    }
 
-    /* THE SATURATED ROW — and this is the row that answers "why does it not
-       look like it glows".
-       A WHITE particle at boost 12 is still just white: there is no hue for the
-       falloff to pass through, so it reads as a grey blob however bright it is.
-       A SATURATED one at the same boost splits: its strong channel goes past the
-       display white point and clips, while the weak channels stay in range. The
-       core therefore burns to white and the skirt keeps the colour — which is
-       exactly the look of a real spark, and what the owner's reference image
-       shows. The hue is not decoration on top of the brightness; at high boost
-       it IS the structure. */
-    for (int i = 0; i < REF_PARTICLE_COUNT; i++)
-    {
-        float off = ((float)i - (float)(REF_PARTICLE_COUNT - 1) * 0.5f) * pitch;
-        /* THE RECIPE, now a function. This row used to spell out the core and
-           its halo by hand; it calls ParticleSystem_SpawnGlow instead, which is
-           the same thing with the ratios named. If this row ever stops matching
-           the §7.6c measurements, the recipe moved. */
+        /* ROW 2 — THE SHIPPED GLOW RECIPE, saturated, core + halo. */
+        at.y = s_refParticlePos.y;
         ParticleSystem_SpawnGlow((ParticleConfig){
-            .position = {s_refParticlePos.x + off,
-                         s_refParticlePos.y + 0.30f * s_refParticleScale,
-                         s_refParticlePos.z},
-            .velocity = {0.0f, 0.0f, 0.0f},
-            .radius = 0.22f * s_refParticleScale,
-            .lifetime = 6.0f,
+            .position = at, .velocity = {0}, .radius = R, .lifetime = 6.0f,
             .colorStart = (Color){70, 110, 255, 255},
             .colorEnd = (Color){70, 110, 255, 255},
             .render.blendMode = VFX_BLEND_ADDITIVE,
             .render.unlit = 1,
-            .render.emissiveBoost = k_refParticleBoost[i],
+            .render.emissiveBoost = B,
         });
-    }
 
-    /* ROW 3 — DARK CORE + EMISSIVE RIM, the bright-background structure.
-     *
-     * On a background already at 1.0 an effect CANNOT be made brighter than its
-     * surroundings; adding light only pushes an already-clipped pixel further
-     * past the clip. Measured here twice: FLAME VOLUME lost ground when its
-     * emissive was tripled, and additive rows on a white plate collapse to a
-     * pale smudge. What is left is NEGATIVE contrast — an opaque, dark core that
-     * cuts a silhouette out of the bright background, with the emission moved to
-     * a rim that surrounds it and blooms outward.
-     *
-     * Built from two particles because that is what the engine offers: an
-     * additive glow BEHIND, and a premultiplied dark core ON TOP that covers the
-     * middle of it. Premultiplied, not alpha: at coverage 1 it replaces (so the
-     * core reads dark), at coverage 0 it adds (so the core's own faint edge
-     * still emits) — §5.2's law doing exactly the job it exists for. */
-    for (int i = 0; i < REF_PARTICLE_COUNT; i++)
-    {
-        float off = ((float)i - (float)(REF_PARTICLE_COUNT - 1) * 0.5f) * pitch;
-        Vector3 at = {s_refParticlePos.x + off,
-                      s_refParticlePos.y + 0.95f * s_refParticleScale,
-                      s_refParticlePos.z};
-        /* the emissive rim, behind and wider */
+        /* ROW 3 — NEGATIVE CONTRAST: emissive rim behind, opaque dark core on
+           top. The structure that stays legible when the background is brighter
+           than anything the effect can emit (§7.6c). */
+        at.y = s_refParticlePos.y - REF_PARTICLE_ROW * S;
         SpawnParticle((ParticleConfig){
-            .position = at, .velocity = {0},
-            .radius = 0.22f * 3.0f * s_refParticleScale,
-            .lifetime = 6.0f,
+            .position = at, .velocity = {0}, .radius = R * 3.0f, .lifetime = 6.0f,
             .colorStart = (Color){120, 170, 255, 90},
             .colorEnd = (Color){120, 170, 255, 90},
             .render.texture = ParticleSystem_GlowSprite(),
             .render.blendMode = VFX_BLEND_ADDITIVE,
             .render.unlit = 1,
-            /* x0.30, the same ratio ParticleSystem_SpawnGlow uses. At FULL boost
-               this rim swamped the core it exists to frame and |d| on white
-               collapsed to a third at mid boost (§7.6c). */
-            .render.emissiveBoost = k_refParticleBoost[i] * 0.30f,
+            .render.emissiveBoost = B * 0.30f,
         });
-        /* the dark core, on top and opaque */
         SpawnParticle((ParticleConfig){
-            .position = at, .velocity = {0},
-            .radius = 0.22f * s_refParticleScale,
-            .lifetime = 6.0f,
+            .position = at, .velocity = {0}, .radius = R, .lifetime = 6.0f,
             .colorStart = (Color){16, 10, 34, 235},
             .colorEnd = (Color){16, 10, 34, 235},
             .render.blendMode = VFX_BLEND_PREMULTIPLIED,
@@ -170,18 +132,14 @@ void VC_RefParticles_Update(float dt)
         });
     }
 
-    /* THE SOLID CONTROL. Same sprite, same size, same position row — the only
+    /* THE SOLID CONTROL, off to one side. Same sprite and size; the only
        differences are the two fields that define "does not emit". If this one
        ever blooms, the blend law is not being applied per particle. */
     SpawnParticle((ParticleConfig){
-        .position = {s_refParticlePos.x,
-                     s_refParticlePos.y - 0.95f * s_refParticleScale,
-                     s_refParticlePos.z},
-        .velocity = {0.0f, 0.0f, 0.0f},
-        .radius = 0.22f * s_refParticleScale,
-        .lifetime = 6.0f,
-        .colorStart = WHITE,
-        .colorEnd = WHITE,
+        .position = {s_refParticlePos.x - (REF_PARTICLE_COUNT * 0.5f + 0.9f) * pitch,
+                     s_refParticlePos.y, s_refParticlePos.z},
+        .velocity = {0}, .radius = R, .lifetime = 6.0f,
+        .colorStart = WHITE, .colorEnd = WHITE,
         .render.blendMode = VFX_BLEND_ALPHA,
         .render.unlit = 0,
     });
