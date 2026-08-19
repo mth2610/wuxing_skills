@@ -954,21 +954,21 @@ Warmup 90, the middle of each fixture's life:
 
 | fixture | bg | cover% | body% | darken% | structure | detail | chroma | \|d\| |
 |---|---|---|---|---|---|---|---|---|
-| FLAME VOLUME (37) | dark | 1.536 | 1.38 | 0.0 | 0.474 | 0.056 | 0.648 | 0.724 |
-| | mid | 1.664 | 1.39 | 2.7 | 0.312 | 0.040 | 0.619 | 0.531 |
-| | white | 1.604 | 1.15 | 93.4 | 0.118 | 0.017 | 0.578 | 0.285 |
-| | warm | 1.479 | 0.61 | 61.4 | 0.181 | 0.021 | 0.747 | 0.120 |
-| | cool | 1.601 | 1.31 | 21.8 | 0.142 | 0.022 | 0.470 | 0.496 |
-| VOLUME TRAIL (34) † | dark | 6.306 | 6.05 | 0.0 | 0.227 | 0.106 | 0.882 | 0.884 |
-| | mid | 7.457 | 6.15 | 1.6 | 0.210 | 0.084 | 0.867 | 0.586 |
-| | white | 6.081 | 6.00 | 99.9 | 0.186 | 0.087 | 0.875 | 0.688 |
-| | warm | 6.026 | 5.51 | 99.4 | 0.185 | 0.079 | 0.897 | 0.242 |
-| | cool | 6.750 | 6.03 | 73.3 | 0.189 | 0.075 | 0.868 | 0.733 |
-| ENERGY ORB (11) | dark | 10.174 | 10.14 | 0.0 | 0.160 | 0.053 | 0.854 | 0.931 |
-| | mid | 10.171 | 10.14 | 0.0 | 0.118 | 0.026 | 0.818 | 0.722 |
-| | white | 10.160 | 10.10 | 99.6 | 0.068 | 0.030 | 0.684 | 0.465 |
-| | warm | 10.124 | 9.93 | 98.8 | 0.067 | 0.020 | 0.845 | 0.216 |
-| | cool | 10.105 | 10.09 | 91.2 | 0.070 | 0.015 | 0.630 | 0.673 |
+| FLAME VOLUME (37) | dark | 1.563 | 1.40 | 0.0 | 0.518 | 0.055 | 0.601 | 0.737 |
+| | mid | 1.705 | 1.43 | 4.5 | 0.355 | 0.038 | 0.565 | 0.538 |
+| | white | 1.460 | 0.72 | 56.6 | 0.085 | 0.014 | 0.527 | 0.195 |
+| | warm | 1.527 | 0.89 | 45.9 | 0.132 | 0.016 | 0.621 | 0.170 |
+| | cool | 1.647 | 1.31 | 27.8 | 0.121 | 0.017 | 0.355 | 0.417 |
+| VOLUME TRAIL (34) † | dark | 6.369 | 6.08 | 0.0 | 0.280 | 0.118 | 0.881 | 0.903 |
+| | mid | 7.684 | 6.21 | 1.4 | 0.267 | 0.099 | 0.862 | 0.592 |
+| | white | 6.060 | 5.97 | 89.4 | 0.228 | 0.085 | 0.870 | 0.656 |
+| | warm | 6.021 | 5.34 | 67.3 | 0.233 | 0.087 | 0.907 | 0.279 |
+| | cool | 7.152 | 6.08 | 43.1 | 0.233 | 0.083 | 0.854 | 0.659 |
+| ENERGY ORB (11) ‡ | dark | 10.175 | 10.14 | 0.0 | 0.179 | 0.053 | 0.904 | 0.973 |
+| | mid | 10.172 | 10.14 | 0.0 | 0.133 | 0.031 | 0.824 | 0.755 |
+| | white | 10.130 | 10.01 | 97.8 | 0.052 | 0.014 | 0.564 | 0.336 |
+| | warm | 10.107 | 7.06 | 96.9 | 0.076 | 0.013 | 0.818 | 0.156 |
+| | cool | 10.108 | 10.09 | 56.3 | 0.068 | 0.008 | 0.534 | 0.583 |
 
 > [!IMPORTANT]
 > **Only FLAME VOLUME and VOLUME TRAIL are bit-reproducible. ENERGY ORB is not.**
@@ -986,7 +986,11 @@ Warmup 90, the middle of each fixture's life:
 > the table as a level reference, but a difference under roughly 0.01 chroma or 2 points
 > of `darken%` on it means nothing.
 
-† **VOLUME TRAIL's rows were re-baselined on 19/08/2026** when its ENERGY layers were
+**ALL ROWS RE-BASELINED 19/08/2026 at the shipped grade** — `postfx_hue_restore = 0.0`
+(§12.1) and `saturation = 1.55`. Every fixture moved; do not diff these against any capture
+taken before that change. ‡ ENERGY ORB is not bit-reproducible — see the warning above.
+
+† **VOLUME TRAIL was additionally re-authored on 19/08/2026** when its ENERGY layers were
 raised out of the LDR cap (0.16/0.46 → 0.35/1.00, see the survey below). The pre-change
 row read `white 6.026 / 5.98 / 99.9 / 0.076 / 0.049 / 0.609 / 0.439`; keep it in mind only
 as the before-picture, never as a target. FLAME VOLUME and ENERGY ORB are untouched, and
