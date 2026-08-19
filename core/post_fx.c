@@ -121,19 +121,35 @@ static float s_bloomMaxEnergy = 0.0f;
 static float s_bloomIntensityOverride = 0.0f;
 static float s_bloomThresholdOverride = 0.0f;
 static float s_bloomKnee = 0.0f;      // 0 = shader default
-// Hue-preserving highlight restoration. SHIPPING AT 0.6 since 17/08/2026; 0 restores the
-// old per-channel ACES curve bit-identically. Chosen by the owner from a blind A/B over
-// 0 / 0.35 / 0.6 / 1.0 after the measured gates: the curve is provably the identity below
-// exposed peak 1.0 and above 9.0, changes under 0.5% of a frame, touches 0.0000% of
-// non-emissive content, and raises mean chroma by 0.127 with a worst-case rgbDistance
-// change of -0.021 anywhere on the acceptance chart. 1.0 was rejected as too strong: it
-// pulls a hot core's non-peak channels down hard (measured 0.777,0.890,0.937 ->
-// 0.332,0.620,0.937), which costs the "hot" read. Full record:
-// third_party/vulkan/docs/BRIGHT_BACKGROUND_VFX_SPEC.md §12.1.
+// Hue-preserving highlight restoration. SHIPPING AT 0.0 since 19/08/2026 — i.e. OFF, and
+// the tone map is the plain per-channel ACES curve again.
+//
+// It shipped at 0.6 from 17/08 on a blind A/B and a careful set of measured gates. The
+// gates were sound; what none of them could see is the assumption underneath the method.
+// Hue restoration keeps a pixel's CHANNEL RATIO and tone-maps its PEAK, which silently
+// assumes that ratio IS the emitter's colour. True only when the background contributes
+// nothing — and every scene it was judged in was the night arena, where it does not.
+//
+// On bright scenery the pixel is background + emitter, so forcing the emitter's ratio onto
+// the sum is arithmetically the same as SUBTRACTING the background. Measured on a white
+// backdrop: (0.915, 0.877, 0.823) at 0 becomes (0.915, 0.762, 0.631) at 0.6 — R untouched,
+// G and B pulled BELOW the background's own 0.804. A purely additive effect then reads as
+// occluding, which is what the owner reported as the volume trail's see-through region
+// disappearing. It also costs ~23% of internal structure at EVERY background luminance,
+// because collapsing three channels onto one peak-mapped scalar flattens the differences
+// between them, and those differences are the texture.
+//
+// The chroma it bought is recovered by the display-referred saturation below, which is
+// about 8x cheaper in structure for the same chroma (+0.145 chroma for -0.011 structure,
+// against hue restore's +0.085 for -0.052). main.c ships saturation at 1.55 for this.
+//
+// It is kept as a knob, not deleted: the METHOD is right, it is the STAGE that is wrong.
+// Applied per-effect before compositing, or on a separate emission buffer, it would have
+// the information it needs. Full record: BRIGHT_BACKGROUND_VFX_SPEC.md §12.1.
 //
 // Because this lives in tuning.cfg it PERSISTS ACROSS SESSIONS - check the file before
 // trusting any visual A/B, and record its value alongside every capture.
-static float s_hueRestore = 0.6f;
+static float s_hueRestore = 0.0f;
 // Diagnostic overlay for §11b gate 3, which expires whenever the scene gets brighter.
 static float s_shoulderView = 0.0f;
 /* The scene rasterises into an offscreen HDR target, so raylib's MSAA hint (which
@@ -600,7 +616,7 @@ void PostFX_Draw(const PostFXConfig *config)
     Tuning_RegisterFloat("bloom_threshold", &s_bloomThresholdOverride, 0.0f);
     Tuning_RegisterFloat("bloom_knee", &s_bloomKnee, 0.0f);
     Tuning_RegisterFloat("bloom_scatter", &s_bloomScatterOverride, 0.0f);
-    Tuning_RegisterFloat("postfx_hue_restore", &s_hueRestore, 0.6f);
+    Tuning_RegisterFloat("postfx_hue_restore", &s_hueRestore, 0.0f);
     Tuning_RegisterFloat("postfx_shoulder_view", &s_shoulderView, 0.0f);
     Tuning_RegisterFloat("postfx_fxaa", &s_fxaa, 1.0f);
     Tuning_RegisterFloat("bloom_karis", &s_bloomKaris, 1.0f);

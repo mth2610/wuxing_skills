@@ -1150,7 +1150,94 @@ measure. And these are three fixtures at three frames, not a survey.
 
 ## 12. Measured findings that are still open
 
-### 12.1 Hue-preserving tone map — MONOTONE form shipping since 18/08/2026
+### 12.1 Hue-preserving tone map — TURNED OFF 19/08/2026, and why the gates could not see it
+
+**`postfx_hue_restore` now ships at 0.0.** The record below the fold is kept intact: the
+monotone form was correct, the banding analysis was correct, and the blind A/B that picked
+0.6 was run honestly. What follows is the assumption none of it could test.
+
+#### The method, and the assumption underneath it
+
+Per-channel ACES desaturates: as the strongest channel enters the shoulder the others keep
+climbing, so a saturated emitter slides toward white as it brightens. Real problem, measured
+at chroma 0.539 → 0.383 → 0.222 across exposures.
+
+Hue restoration fixes it by tone-mapping the **peak** and carrying the channel ratios
+through. That silently assumes **the pixel's channel ratio IS the emitter's colour**.
+
+Post-processing runs AFTER compositing. On a dark background the pixel is essentially all
+emitter and the assumption holds. On a bright one the pixel is `background + emitter`, the
+ratio is no longer the emitter's, and forcing it is arithmetically identical to
+**subtracting the background**:
+
+| white backdrop | R | G | B |
+|---|---|---|---|
+| background alone | 0.804 | 0.804 | 0.804 |
+| + additive emitter, hue restore **0** | 0.915 | 0.877 | 0.823 |
+| + additive emitter, hue restore **0.6** | 0.915 | **0.762** | **0.631** |
+
+R untouched; G and B pulled BELOW the background's own value. **A purely additive effect
+then reads as occluding** — reported by the owner as the volume trail's see-through region
+disappearing, and confirmed by `darken%` 86.3 at 0 against 99.8 at 0.6.
+
+#### Why every gate passed anyway
+
+The gates measured identity below peak 1.0, fraction of frame touched, chroma gained, and
+worst-case rgbDistance — all on the acceptance chart and in the night arena. **Not one of
+them varied the background.** The failure mode only exists when the background contributes
+to the same channels the method is redistributing, so no amount of rigour inside that set
+of scenes could have surfaced it. §11b's gate 3 even warned that it *expires* the moment
+the scene gets brighter; this is that expiry arriving.
+
+#### It is not free on dark scenery either
+
+Measured on VOLUME TRAIL at identical authoring, 0.6 → 0:
+
+| | dark | white |
+|---|---|---|
+| structure | 0.227 → **0.280** | 0.186 → **0.228** |
+| detail | 0.106 → **0.118** | 0.087 → 0.085 |
+| chroma | **0.882** → 0.801 | **0.875** → 0.778 |
+
+It costs ~23% of internal structure at EVERY background luminance, because collapsing three
+channels onto one peak-mapped scalar flattens the differences between them — and those
+differences are the texture.
+
+#### What replaced it, and the tariff that decided it
+
+The chroma is bought back with the display-referred saturation instead, which is about
+**eight times cheaper in structure for the same chroma**:
+
+| | chroma gained | structure paid |
+|---|---|---|
+| hue_restore 0 → 0.6 | +0.085 | −0.052 |
+| saturation 1.00 → 1.28 | +0.145 | −0.011 |
+
+`main.c` ships `saturation = 1.55`, which matches the old chroma almost exactly (dark 0.881
+vs 0.882) while keeping the structure — and multiplies all three channels around luma
+rather than pulling two of them down, so it cannot fake occlusion.
+
+#### The cost, stated plainly
+
+**FLAME VOLUME gets worse on bright backgrounds**, and the decision was taken anyway. On
+white its `|d|` falls 0.285 → 0.195 and its body 1.15% → 0.72%, because it separates by
+occlusion and a large part of that occlusion was the artefact. What it loses is darkening it
+never physically had; its real coverage-based darkening is untouched. The owner took the
+trade on the grounds that propping one effect up with a tone-map artefact is the same class
+of stacked compensation this whole exercise exists to unwind — and that FLAME on bright
+scenery was already measured as needing a structural fix, not a tuning one (see §7.6).
+
+#### The method is right; the STAGE is wrong
+
+Kept as a knob rather than deleted. Applied per-effect **before** compositing, or on a
+separate emission buffer, hue preservation would have the one thing it needs: which part of
+this pixel is the emitter. That is where it belongs if it comes back.
+
+---
+
+*Original record follows, unchanged.*
+
+### 12.1b Hue-preserving tone map — the MONOTONE form (historical record)
 
 > [!IMPORTANT]
 > **SUPERSEDED 18/08/2026 — the curve is now Candidate H (constant weight, monotone

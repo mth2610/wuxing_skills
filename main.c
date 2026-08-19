@@ -461,7 +461,16 @@ int main(int argc, char **argv) {
                                .vignetteSoftness = 0.45f,
                                .colorGradeEnabled = true,
                                .contrast = 1.12f,
-                               .saturation = 1.28f, // ACES desaturates — lift richness back
+                               /* 1.55, up from 1.28 on 19/08/2026. ACES desaturates, and
+                                  this is now the ONLY thing correcting for it: the
+                                  tone map's hue restoration shipped at 0.6 and was turned
+                                  off (see core/post_fx.c), because it bought chroma by
+                                  subtracting the non-peak channels, which fakes occlusion
+                                  on bright scenery and costs ~23% of internal structure
+                                  everywhere. Saturation buys the same chroma for about an
+                                  eighth of the structure, and multiplies all three channels
+                                  around luma instead of pulling two of them down. */
+                               .saturation = 1.55f,
                                .colorTint = {1.0f, 1.0f, 1.0f},
                                // Split-tone: cool moonlit shadows, warm highlights (Moonlight Blade mood).
                                .shadowTint = {0.90f, 0.97f, 1.12f},
