@@ -724,6 +724,35 @@ achieves with a dim rim. The guidance to push the rim to "RGB x10+" is written f
 scene; on a white one it erases the core. **Keep the rim modest and let the core do the
 work** — the opposite of the instinct that has been wrong all session.
 
+#### 7.6d ONE PREMULTIPLIED PARTICLE BEATS ALL OF IT
+
+The owner asked why FLAME VOLUME reads on bright scenery when the reference rows do not, and
+the answer was in the code the whole time: FLAME's shipping population is
+`VFX_BLEND_PREMULTIPLIED`, while the glow recipe built above is `VFX_BLEND_ADDITIVE`.
+Measured as a fourth reference row — a SINGLE premultiplied particle, no halo, no dark core:
+
+| structure | draws | \|d\| on white | \|d\| on dark |
+|---|---|---|---|
+| **one premultiplied particle** | **1** | **0.801** | ~1.65 |
+| dark core + emissive rim | 2 | 0.384 | ~1.66 |
+| additive core + halo (the recipe above) | 2 | 0.132 | ~1.70 |
+
+**Six times the legibility of additive on white, twice the negative-contrast structure, in
+one draw.** §5.2's law does both jobs at once: where coverage is high the equation reduces
+to `src`, so the particle COVERS the bright background with its own colour; where coverage
+falls to zero it is `src + dst`, so the skirt still adds light. That is the entire reason to
+have a premultiplied mode, and this codebase has had one all along.
+
+> [!CAUTION]
+> **The engine default is `VFX_BLEND_ALPHA` (zero), which is neither.** So a particle that
+> declares nothing is neither emissive nor premultiplied — it occludes and gets lit. Of the
+> two blends that do read on bright scenery, the one that needs no extra draw is not the
+> default and is not what the glow recipe uses.
+
+Everything above this section — the halo companion, the dark core, the background-adaptive
+rim — is real and measured, but it is compensation for using ADDITIVE where premultiplied
+belongs. Prefer one premultiplied particle; reach for the rest only when it is not enough.
+
 **AND THE RIM MUST ADAPT — measured, and it overturned my own recommendation.** With the
 rim held at the shipped x0.30 ratio, `|d|` against each background across the boost ramp:
 

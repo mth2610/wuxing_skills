@@ -110,10 +110,27 @@ void VC_RefParticles_Update(float dt)
             .render.emissiveBoost = B,
         });
 
-        /* ROW 3 — NEGATIVE CONTRAST: emissive rim behind, opaque dark core on
+        /* ROW 3 — ONE PREMULTIPLIED PARTICLE, which is what FLAME VOLUME's
+           shipping population actually uses, and the reason that effect reads on
+           bright scenery while the additive rows above do not.
+           §5.2's law does both jobs in ONE draw: where coverage is high the
+           equation is src (it COVERS the background), where coverage falls to
+           zero it is src + dst (it ADDS light). No halo companion, no dark core,
+           no second or third particle. */
+        at.y = s_refParticlePos.y - REF_PARTICLE_ROW * S;
+        SpawnParticle((ParticleConfig){
+            .position = at, .velocity = {0}, .radius = R, .lifetime = 6.0f,
+            .colorStart = (Color){70, 110, 255, 255},
+            .colorEnd = (Color){70, 110, 255, 255},
+            .render.blendMode = VFX_BLEND_PREMULTIPLIED,
+            .render.unlit = 1,
+            .render.emissiveBoost = B,
+        });
+
+        /* ROW 4 — NEGATIVE CONTRAST: emissive rim behind, opaque dark core on
            top. The structure that stays legible when the background is brighter
            than anything the effect can emit (§7.6c). */
-        at.y = s_refParticlePos.y - REF_PARTICLE_ROW * S;
+        at.y = s_refParticlePos.y - 2.0f * REF_PARTICLE_ROW * S;
         SpawnParticle((ParticleConfig){
             .position = at, .velocity = {0}, .radius = R * 3.0f, .lifetime = 6.0f,
             .colorStart = (Color){120, 170, 255, 90},
