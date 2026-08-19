@@ -1757,28 +1757,57 @@ done:
     return why;
 }
 
-// Gate 0 for the hue-preserving tone-map candidate (BRIGHT_BACKGROUND_VFX_SPEC.md §12.1):
-// prove the change is BOUNDED before anyone is asked to look at a screenshot.
+// Gate 0 for the hue-preserving tone map (BRIGHT_BACKGROUND_VFX_SPEC.md §12.1).
 //
-// Changing a tone mapper normally means re-approving every material in the game, which is
-// why §7.4 ruled it out of scope. The candidate is built as a BUMP over the shipping curve
-// instead of a replacement, so the approval surface collapses to the highlight region. This
-// scenario asserts the three claims that make that true, through the SHIPPING shader:
-//   below the shoulder      -> bit-identical output (nothing already approved moves)
+// REWRITTEN 18/08/2026, because the contract it guarded was traded away deliberately.
+// It used to assert the change was BIT-IDENTICAL below exposed peak 1 and above peak 9 —
+// a BUMP over the shipping curve, so the approval surface collapsed to the highlights.
+// That bound is exactly what produced the "rainbow rim": a weight that transitions from
+// zero to non-zero while the input is still climbing pulls the non-peak channels down and
+// then releases them, which is a colour band with an edge on each side. Measured on a
+// plain rectangle through the real pipeline (sandbox/gradient_probe.c), one hue at a
+// rising level gave a G slope of +26 -> +9 -> -10 -> +9 on a perfectly smooth input.
+// Searching the whole weight family showed the two properties are mutually exclusive, and
+// that it is the LOWER bound that causes it, not the upper one — see post_process.fs
+// toneMapScene() and root ENGINE_LANDMINES.md.
+//
+// So the shipping curve is now Candidate H (constant weight, monotone whitening) and this
+// scenario asserts the contract that was chosen instead:
+//   an ACHROMATIC surface   -> STILL BIT-IDENTICAL, at every level. Hue keeping is
+//                              (x / peak) * f(peak), which for a grey IS the per-channel
+//                              result, so this holds by construction — and it is what
+//                              confines the change to saturated content.
+//   saturated, below the
+//   shoulder                -> allowed to move, up to a stated ceiling (worst case 0.206
+//                              at peak 0.98, at twice the shipping strength). This is the
+//                              part that was traded away, made explicit instead of assumed.
 //   in the shoulder         -> chroma actually improves (the change is worth making)
-//   far above the shoulder  -> bit-identical again (a hot core still reaches white, §5.4)
+//   across a dense ramp     -> NO CHANNEL EVER GOES BACKWARDS. This is the property the
+//                              trade bought, and nothing guarded it before. Confirmed RED
+//                              on the pre-H shader (58 reversals, worst drop 0.070) before
+//                              being kept, per the "a guard that cannot fail on the
+//                              pre-fix code is not a guard" rule.
 // The dither in post_process.fs is a deterministic hash of gl_FragCoord, so it cancels
-// exactly between the two runs and "bit-identical" stays a testable claim.
+// exactly between two runs at the same pixel and these remain testable claims.
 static const char *sc_tonemap_shoulder(void)
 {
-    const int PW = 32, PH = 48, N = 9;
-    const float peaks[9] = { 0.2f, 0.5f, 0.9f, 1.5f, 2.5f, 4.0f, 7.0f, 10.0f, 14.0f };
+    // The first 9 entries are the original approval points and keep their meaning; the
+    // rest are a dense LOG ramp 0.30 -> 14, which is what the monotonicity check reads.
+    // Log, not linear: the shoulder does all of its work below peak ~9, and a linear ramp
+    // to 14 spends most of its samples in the clipped region where nothing can move.
+    enum { TMS_FIX = 9, TMS_RAMP = 40 };
+    const int PW = 12, PH = 48, N = TMS_FIX + TMS_RAMP;
+    float peaks[TMS_FIX + TMS_RAMP] = { 0.2f, 0.5f, 0.9f, 1.5f, 2.5f, 4.0f, 7.0f, 10.0f, 14.0f };
+    for (int i = 0; i < TMS_RAMP; i++)
+        peaks[TMS_FIX + i] = expf(logf(0.30f) + (logf(14.0f) - logf(0.30f)) * (float)i / (float)(TMS_RAMP - 1));
     const float hue[3] = { 1.0f, 0.35f, 0.08f };     // saturated warm; max channel is 1.0
+    const float neutral[3] = { 1.0f, 1.0f, 1.0f };   // achromatic control row
     RenderTexture2D scene = {0}, out = {0};
     Shader fx = {0}, post = {0};
     Texture2D white = {0}, dummy = {0};
     uint16_t *px = NULL;
-    float got[2][9][4];
+    float got[2][TMS_FIX + TMS_RAMP][4];      // [hueRestore off/on][patch][rgba], saturated row
+    float gotN[2][TMS_FIX + TMS_RAMP][4];     // ...and the neutral control row
     const char *why = NULL;
 
     SetTraceLogLevel(LOG_ERROR);
@@ -1798,16 +1827,27 @@ static const char *sc_tonemap_shoulder(void)
         ClearBackground(BLACK);
         BeginShaderMode(fx);
             setF(fx, "uMode", 3.0f);
-            for (int i = 0; i < N; i++)
+            // TWO ROWS. The top is the saturated warm hue; the bottom is NEUTRAL grey, and
+            // it is the row that makes the new low-end assertion mean something: hue
+            // keeping is (x / peak) * f(peak), which for a grey is identically the
+            // per-channel result, so an achromatic surface CANNOT move no matter what the
+            // weight does. That is what confines this whole-scene change to saturated
+            // content, and it is checkable rather than argued.
+            for (int row = 0; row < 2; row++)
             {
-                float c[3] = { hue[0]*peaks[i], hue[1]*peaks[i], hue[2]*peaks[i] };
-                setV3(fx, "uBody", c);
-                BeginBlendMode(BLEND_ALPHA);
-                    DrawTexturePro(white, (Rectangle){0,0,8,8},
-                                   (Rectangle){(float)(i*PW),0,(float)PW,(float)PH},
-                                   (Vector2){0,0}, 0.0f, WHITE);
-                    rlDrawRenderBatchActive();
-                EndBlendMode();
+                const float *h = row ? neutral : hue;
+                for (int i = 0; i < N; i++)
+                {
+                    float c[3] = { h[0]*peaks[i], h[1]*peaks[i], h[2]*peaks[i] };
+                    setV3(fx, "uBody", c);
+                    BeginBlendMode(BLEND_ALPHA);
+                        DrawTexturePro(white, (Rectangle){0,0,8,8},
+                                       (Rectangle){(float)(i*PW),(float)(row*(PH/2)),
+                                                   (float)PW,(float)(PH/2)},
+                                       (Vector2){0,0}, 0.0f, WHITE);
+                        rlDrawRenderBatchActive();
+                    EndBlendMode();
+                }
             }
         EndShaderMode();
     EndTextureMode();
@@ -1840,29 +1880,54 @@ static const char *sc_tonemap_shoulder(void)
         px = (uint16_t *)rlReadTexturePixels(out.texture.id, PW*N, PH,
                                              RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
         if (px == NULL) { why = "ramp readback returned nothing"; goto done; }
-        for (int i = 0; i < N; i++) sampleHalfRGBA(px, PW*N, i*PW + PW/2, PH/2, got[variant][i]);
+        for (int i = 0; i < N; i++)
+        {
+            sampleHalfRGBA(px, PW*N, i*PW + PW/2, PH/4,     got[variant][i]);
+            sampleHalfRGBA(px, PW*N, i*PW + PW/2, 3*(PH/4), gotN[variant][i]);
+        }
         RL_FREE(px); px = NULL;
     }
 
+    // (1) MAGNITUDE BOUND below the shoulder. Candidate H's weight is constant, so it no
+    //     longer vanishes under peak 1 and this can never be zero again. What still has to
+    //     hold is (a) that an ACHROMATIC surface still cannot move at all, and (b) that the
+    //     saturated shift stays under a stated ceiling. Measured worst case at
+    //     u_hueRestore = 1.0 — this scenario's value, i.e. TWICE the shipping 0.5 — is
+    //     0.206 at peak 0.98, and the analytic maximum is 0.212 as peak -> 1
+    //     (|aces(0.35) - 0.35*aces(1)|). The ceiling sits just above that with no slack to
+    //     spare, so any reformulation that grows the change trips this immediately.
+    const float TMS_SAT_LIMIT = 0.22f;
+    // The neutral row must not move AT ALL. This is the invariant that keeps the change
+    // confined to saturated content, and it is exact, not a tolerance.
+    const float TMS_NEUTRAL_LIMIT = 1.0e-4f;
     for (int i = 0; i < N; i++)
     {
-        float d = rgbDistanceMax(got[0][i], got[1][i]);
-        bool bounded = (peaks[i] < 1.0f) || (peaks[i] > 9.0f);
+        float d  = rgbDistanceMax(got[0][i],  got[1][i]);
+        float dn = rgbDistanceMax(gotN[0][i], gotN[1][i]);
         if (getenv("BRIGHT_DEBUG"))
-            printf("      peak %5.1f  off(%.4f %.4f %.4f) on(%.4f %.4f %.4f) d %.5f  chroma %.4f -> %.4f\n",
+            printf("      peak %5.1f  off(%.4f %.4f %.4f) on(%.4f %.4f %.4f) d %.5f  dNeutral %.5f  chroma %.4f -> %.4f\n",
                    peaks[i], got[0][i][0], got[0][i][1], got[0][i][2],
-                   got[1][i][0], got[1][i][1], got[1][i][2], d,
+                   got[1][i][0], got[1][i][1], got[1][i][2], d, dn,
                    chromaOf(got[0][i]), chromaOf(got[1][i]));
-        if (bounded && d > 1.0e-4f)
+        if (dn > TMS_NEUTRAL_LIMIT)
         {
             snprintf(s_brightWhy, sizeof(s_brightWhy),
-                     "hue restoration leaked outside its shoulder at peak %.1f (d %.5f):"
-                     " the change is NOT bounded and needs a full whole-scene approval",
-                     peaks[i], d);
+                     "hue restoration moved an ACHROMATIC surface at peak %.2f (d %.5f):"
+                     " the change is no longer confined to saturated content, which is the"
+                     " only thing keeping it out of a full whole-scene re-approval",
+                     peaks[i], dn);
+            why = s_brightWhy; goto done;
+        }
+        if (peaks[i] < 1.0f && d > TMS_SAT_LIMIT)
+        {
+            snprintf(s_brightWhy, sizeof(s_brightWhy),
+                     "hue restoration moves saturated material below the shoulder at peak %.2f"
+                     " by %.5f (ceiling %.2f) — larger than the approved whole-scene shift",
+                     peaks[i], d, TMS_SAT_LIMIT);
             why = s_brightWhy; goto done;
         }
     }
-    // It must also actually do something, or "bounded" is just "disabled".
+    // (2) It must also actually do something, or the trade bought nothing.
     {
         float gain = chromaOf(got[1][4]) - chromaOf(got[0][4]);   // peak 2.5, mid shoulder
         if (gain < 0.02f)
@@ -1870,6 +1935,31 @@ static const char *sc_tonemap_shoulder(void)
             snprintf(s_brightWhy, sizeof(s_brightWhy),
                      "hue restoration changed nothing in the shoulder (chroma gain %.4f)", gain);
             why = s_brightWhy; goto done;
+        }
+    }
+    // (3) MONOTONE. The point of the whole trade: on a strictly rising input, no channel
+    //     may go backwards. A channel that dips and recovers is a colour band with an edge
+    //     on each side — that is the "rainbow rim", and it is what this replaces the old
+    //     bit-identity assertion with. The tolerance covers the output dither (one LSB,
+    //     a position hash, so two neighbouring patches do not cancel) plus half-float
+    //     readback; the defect it exists to catch measured 0.070, an order of magnitude up.
+    {
+        const float TMS_MONO_TOL = 0.012f;
+        for (int i = TMS_FIX + 1; i < N; i++)
+        {
+            for (int c = 0; c < 3; c++)
+            {
+                float drop = got[1][i - 1][c] - got[1][i][c];
+                if (drop > TMS_MONO_TOL)
+                {
+                    snprintf(s_brightWhy, sizeof(s_brightWhy),
+                             "channel %d goes BACKWARDS across a rising ramp: peak %.2f -> %.2f"
+                             " drops %.4f (tol %.3f) — a non-monotone channel on a monotone"
+                             " input is a colour band",
+                             c, peaks[i - 1], peaks[i], drop, TMS_MONO_TOL);
+                    why = s_brightWhy; goto done;
+                }
+            }
         }
     }
 

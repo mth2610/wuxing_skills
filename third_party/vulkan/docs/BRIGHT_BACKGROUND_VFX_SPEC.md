@@ -925,7 +925,42 @@ measure. And these are three fixtures at three frames, not a survey.
 
 ## 12. Measured findings that are still open
 
-### 12.1 Hue-preserving tone map — candidate landed behind a knob, gates 0–1 PASS
+### 12.1 Hue-preserving tone map — MONOTONE form shipping since 18/08/2026
+
+> [!IMPORTANT]
+> **SUPERSEDED 18/08/2026 — the curve is now Candidate H (constant weight, monotone
+> whitening), and the "bump over ACES" framing below no longer describes it.** The
+> intensity-dependent weight was the cause of the "rainbow rim": turning the correction ON
+> across a rising input pulls the non-peak channels down and then releases them, which is a
+> colour band with an edge on each side. Isolated on a plain RECTANGLE through the real
+> pipeline (`sandbox/gradient_probe.c`), with no effect in the frame at all, and searched
+> across the whole weight family — **it is the LOWER bound that causes it, not the upper
+> one**, so "bit-identical below peak 1" and "monotone" cannot coexist.
+>
+> What replaced the old table:
+>
+> | exposed peak | behaviour now |
+> |---|---|
+> | any, ACHROMATIC input | bit-identical, exactly, at every level — hue keeping is `(x/peak)·f(peak)`, which for a grey IS the per-channel result. This is what confines the change to saturated content. |
+> | `< 1.0`, saturated | moves; worst case **0.206 at peak 0.98** at `u_hueRestore` 1.0, 0.103 at the shipping strength |
+> | rising | strictly monotone per channel — the property the trade bought |
+> | high | the hue-kept colour desaturates toward white over `smoothstep(5,12)`, so a hot core still reaches white per §5.4 — monotonically |
+>
+> Measured on ShieldShell across this section's five backgrounds, chroma is UP on **every**
+> plate (dark 0.301 → 0.316, mid 0.230 → 0.255, white 0.316 → 0.345, warm 0.351 → 0.410,
+> cool 0.138 → 0.212). Whole-scene cost on a real capture: 0.758 % of the frame moving more
+> than 2/255, mean 1.03/255, against a 0.043 % A/A floor.
+>
+> **Gate 0 (`tonemap_shoulder`) was REWRITTEN, not defeated** — it now asserts the
+> achromatic row is bit-identical, the saturated shift stays under a stated ceiling, chroma
+> still improves in the shoulder, and no channel goes backwards across a dense rising ramp.
+> That last check was confirmed RED on the pre-H shader before being kept. Suite 28/28.
+> **Gate 5 (Mali cost and `mediump` behaviour of the `x / peak` rescale) is still
+> OUTSTANDING**, and now also covers the added `mix`/`smoothstep`.
+>
+> Everything below is the record of the superseded bounded form. Keep it: the measurements
+> are still the reason the feature exists, and the blind A/B that chose the strength still
+> applies to `u_hueRestore` itself.
 
 > [!NOTE]
 > **DECIDED 17/08/2026: shipping at `postfx_hue_restore = 0.6`.** Chosen by the owner from a

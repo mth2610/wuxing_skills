@@ -4,6 +4,221 @@
 **Trạng thái:** **ĐÃ SỬA** — nguyên nhân gốc đã tìm ra và xác nhận bằng ảnh render.
 Nguyên nhân **không nằm ở rlvk**, không nằm ở shader, và không nằm ở màu.
 
+## 2026-08-18i — The blotchy silhouette was my own symmetry, not the mesh
+
+Owner, on the previous round: the sizes match now, but the sphere's rim is blotchy and a
+deeper colour than the ground line — "is it because both faces are drawn and the sphere's
+rim overlaps itself?" Good hypothesis, and it is a fifth of the answer.
+
+**Measured first.** Peak luminance sampled along the bottom arc every 2°, as a standard
+deviation: **10.6** on the reported build against **3.9** on the pre-session shader at a
+strength that does not clip. So it was real, it was new, and it was mine.
+
+**Four explanations measured and REJECTED, in order**, all of them plausible enough to have
+been shipped as the answer:
+
+| hypothesis | test | result |
+|---|---|---|
+| mesh tessellation — the band had become as narrow as a 40-gon's sagitta (0.00345 R vs 0.00308 R, a genuinely alarming coincidence) | force 40 → 56 → 72 → 96 rings | **no change**: 10.6 → 12.5 → 10.0 → 15.2 |
+| the `pattern` noise term | ablate | 10.0 |
+| the matcap | ablate | 11.2 |
+| both wall passes overlapping at the silhouette (the owner's guess) | rear glow → 0.0 | 8.4 — about a fifth, not the effect |
+| "the old rim only looked smooth because it CLIPPED at 253" | old shader at rim 0.6, peak 222 | 3.9 — still smooth, so no |
+
+**The cause was the one line I had been most pleased with.** Moving `rimHot` onto
+`smoothstep(0.75, 1.0, rimBand)` "so both rims are built the same way" is symmetric, reads
+well, and is wrong. `wallDensity` is built on `1 / max(|N.V|, 0.10)` — it SATURATES a few
+pixels before the silhouette, so the white core is simply pinned there and cannot chase
+anything. `rimBand` is `(1-|N.V|)^8` with no clamp: near the silhouette it carries every
+sub-pixel wobble of the rasterised edge, an eighth power amplifies it, and it was feeding a
+white-vs-hue mix. A hue that swings pixel to pixel along a rim is exactly "lem nhem".
+
+Reverted to the `wallDensity` window; `rimBand` stays, since the width fix is what worked.
+`shield_shell_rim` 3.0 → 2.0 in the same measurement: 3.0 existed to compensate for
+radiance the white-core mistake was costing.
+
+**Result, both of the owner's complaints, measured directly on the two rims:**
+
+| | width | peak | corona colour |
+|---|---|---|---|
+| silhouette, reported build | 7 px | 252,237,198 | `255,173,103` — deep, saturated |
+| ground contact | 9 px | 255,184,132 | `255,224,183` |
+| silhouette, now | 9 px | 252,248,220 | **`255,228,193`** |
+
+The coronas now agree to within 4/255 on every channel, and the wobble is 6.2 against 10.6.
+
+**Honest cost:** the harness's chroma over the whole footprint falls (dark 0.316 → 0.188,
+mid 0.255 → 0.166, white 0.345 → 0.104) because the silhouette is now the paler of the two
+colours rather than the more saturated one — which is the change that was asked for, not a
+defect, but it is a real move away from §5.4's "saturated corona" and worth knowing before
+the bright-background work resumes. `shield_shell_rim_power` and `shield_shell_rim` are both
+live if the balance should shift back.
+
+**Guard**: the source check added in 18h asserted the wrong invariant and has been replaced.
+`core/tests/shield_shell_test.c` now pins that the rim's white core rides a quantity that
+saturates at the silhouette, that the saturation is the path-length clamp specifically, and
+that `smoothstep(0.75, 1.0, rimBand)` does **not** come back. The rejected hypotheses are
+recorded at the site in `glass_shell.fs` so nobody re-derives them.
+
+Gates: core **70/75** (same five baseline failures), `tuning.cfg` untouched.
+
+## 2026-08-18h — The two rims are now the same size, and the white core is a sliver
+
+Owner: the sphere's silhouette rim and the ground-contact line should be the same size,
+and the silhouette's bright core is too big. Both true, and both the same root cause.
+
+**Measured before touching anything** (fixture 21, scan across each band):
+
+| | width at half max | white core | peak |
+|---|---|---|---|
+| silhouette rim | 16 px | ~5 px | 253, CLIPPED |
+| ground contact | 8 px | ~1 px | 226 |
+
+Exactly a factor of two on both counts, and it was structural. `contact` is a cubic over a
+distance the author sets (`u_contactThickness`); the silhouette rode `fresnel`, a **fixed**
+quartic whose screen width is simply whatever the sphere's radius makes it. Nobody had ever
+been able to author it.
+
+**Amplitude is not the lever, and the sweep says so plainly**: `shield_shell_rim`
+2.15 → 0.55 moved the band 18 px → 16 px while the peak fell 253 → 223. Width at half
+maximum is scale-invariant for a fixed profile, so brightness can only dim a band, never
+narrow it. (Same shape of mistake as the contact plateau — see `depthContact`.)
+
+**What changed.** `glass_shell.fs` gains `rimBand = pow(fresnelM, u_rimPower)`, used by the
+rim glow, the matcap sheen and the emission mask. The quartic `fresnel` stays exactly where
+it was for the wall alpha and the scene-through window — that is physics and must not move
+when the rim is restyled. `rimHot` was also moved onto `smoothstep(0.75, 1.0, rimBand)`, the same
+window shape `contactHot` uses on `contact` — **that half was WRONG and is reverted in
+2026-08-18i below**; it is what made the silhouette blotchy. New live knob `shield_shell_rim_power` (default 8.0),
+the counterpart of `shield_shell_contact_thickness`.
+
+Result: silhouette **7 px / 1 px core / peak 237** against the contact's **9 px / 1 px /
+228**. No clipped pixels anywhere on the rim.
+
+`shield_shell_rim` 2.15 → 3.0 in the same change, not independently: narrowing the band
+removed radiance in proportion to the width, and the peak fell to 218. Width and amplitude
+are separate controls now, so the energy comes back without the fat clipped core.
+
+**The cost, and it is on the bright plates.** With a thinner emission ring the glass
+carrier — which only subtracts light — is a larger share of what is visible, so `darken%`
+rises: mid 7.5 → 50.1, white 79.8 → 91.6, warm 62.7 → 86.4. Raising `shield_shell_rim`
+does **not** buy it back (54.6 → 50.1 for a 40 % strength increase), because it is the body
+pass, not the emission, that darkens. Everything else improved: chroma dark 0.316 → 0.454,
+mid 0.255 → 0.367, warm 0.410 → 0.451, cool 0.212 → 0.254 (white 0.345 → 0.341, flat), and
+detail roughly doubled on dark/warm. If the bright-background reading matters more than the
+rim's weight, `shield_shell_rim_power` is live in `tuning.cfg` — 4.0 is the old look.
+
+**Guard**: `core/tests/shield_shell_test.c` gets `GlassRimBandHalfWidthFrac(power)`, which
+derives the band's screen half-width from the exponent alone (no camera, no render). It
+asserts the shipped power scores < 0.005 **and** that the old quartic scores > 0.010, so
+the check demonstrates its own discrimination — 0.0035 vs 0.0127. Two source checks pin the
+structure: both rims take their white core from their own band's peak, and the rim band is
+separate from the wall's fresnel.
+
+Gates: core **70/75** (same five baseline failures), `tuning.cfg` untouched.
+
+## 2026-08-18g — Fixed at the tone map: the monotone curve is now the shipping one
+
+Owner: "vậy giải quyết nó đi." So it is solved, at the layer the probe pinned it to.
+
+**First, the space was proved closed rather than assumed.** The standing story was that
+`tonemap_shoulder`'s upper bound forces the weight back to zero and that is what bands.
+Searched the whole family instead of trusting it, and the story was wrong in an important
+way: **the LOWER bound is the cause.** Any weight that goes from zero to non-zero while
+the input is still climbing pulls the non-peak channels down and produces the trough.
+Evidence: widening the rise `smoothstep(1,2)` → `(1,7)` makes it WORSE (15 → 30
+reversals), because the drop is `~max(w·(perChannel − hueKept))` and is indifferent to how
+gently `w` arrived; and bolting a bottom gate onto the monotone candidate restores the
+banding exactly (0 → 59 reversals). So "bit-identical below peak 1" and "monotone through
+the shoulder" are the mutually exclusive pair, not "bounded vs banding".
+
+**Applied Candidate H** in `core/shaders/post_process.fs` — constant weight, whitening
+moved into a monotone desaturation of the hue-kept colour. Gradient probe band 1 goes from
+`+26 → +9 → -10 → +9` to `+17 +18 +18 +13 +9`: 0 reversals, 0 drop, 0 slope dips.
+
+**Measured, both sides of the trade:**
+
+| ShieldShell matrix, chroma | dark | mid | white | warm | cool |
+|---|---|---|---|---|---|
+| before | 0.301 | 0.230 | 0.316 | 0.351 | 0.138 |
+| after | **0.316** | **0.255** | **0.345** | **0.410** | **0.212** |
+
+Up on every plate, and structure up on warm/cool too. The knob sweep that was the
+alternative is now moot, and it was a bad trade in both directions: 0.25 killed the
+white-plate chroma (0.316 → 0.094) and structure (0.080 → 0.002) while 0.35 still left a
+reversal.
+
+**The cost, in full, because the handoff understated it.** `HANDOFF_TONEMAP_CANDIDATE_H.md`
+quoted d = 0.03 at peak 0.2 — that is the FIRST failing sample, not the worst. Below the
+shoulder at `u_hueRestore` 1.0: achromatic **0.000 exactly at every level**, mildly warm
+(1,.85,.7) 0.141, saturated 0.206 at peak 0.98 (analytic max 0.212 as peak → 1). Halve
+those for the shipping 0.5. The achromatic row is what makes it affordable — hue keeping is
+`(x/peak)·f(peak)`, which for a grey IS the per-channel result, so the change **cannot**
+touch a neutral surface. On a real capture: 0.758 % of the frame moves more than 2/255
+(mean 1.03/255) against a 0.043 % A/A floor, and the two frames are indistinguishable by
+eye outside the emissive content.
+
+**`tonemap_shoulder` was rewritten, not disabled.** New contract: the achromatic row is
+bit-identical; the saturated shift stays under a ceiling set just above the analytic
+maximum; chroma still improves in the shoulder; and — new, and the property the trade
+bought — no channel goes backwards across a 40-sample log ramp. Per the rule that a guard
+which cannot fail on the pre-fix code is not a guard, the monotonicity check was confirmed
+RED on the old shader first: *"channel 1 goes BACKWARDS: peak 1.32 → 1.45 drops 0.0332"*.
+
+Gates: rlvk visual **28/28**, core **70/75** (same five baseline failures), `tuning.cfg`
+untouched at `postfx_hue_restore = 0.5`. Revert is the one block in `toneMapScene()`; the
+shader hot-loads, so no rebuild in either direction.
+
+## 2026-08-18f — The gradient probe: the shell is not the one banding
+
+Owner's question, and it is the right one: "the shell's rim and its ground line are
+authored as one white→yellow→orange gradient and arrive as distinct colour patches —
+build a rectangle with that gradient and settle whether the fault is the effect or the
+foundation."
+
+Built it. `sandbox/gradient_probe.c` + `core/shaders/probe_gradient.fs`, in the same
+family as `colour_probe.c` (flat colours) and `fresnel_probe.c` (one convention) — but a
+RAMP, because banding is a defect of the derivative and a flat patch cannot show it.
+Press **G** in the VFX tester, or `WUXING_GRADIENT_PROBE=1` headless. It draws five
+bands into the HDR scene target inside `PostFX_Begin/End`, so they take the whole chain
+(bloom → exposure → tone map → grade → LUT → vignette → dither → FXAA) with NO geometry,
+NO normals, NO depth and NO texture in the frame, and draws the same ramps evaluated on
+the CPU through plain per-channel ACES AFTER `PostFX_Draw` as the control.
+
+**Verdict: the pipeline, not the shell.** Band 1 is literally what `glass_shell.fs`'s rim
+computes — one hue at a rising level — and its G slope reads `+26 → +9 → -10 → +9`: it
+stalls, goes backwards, and re-accelerates. The identical ramp in the control is monotone
+with 0 reversals. Nothing in that rectangle belongs to any effect.
+
+**Band 3 is the discriminator.** The same hues at a CONSTANT level come out perfectly
+smooth (`dG` constant across the band) at every knob setting. So the white→yellow→orange
+hues are innocent; the LEVEL dependence of §12.1's restoration weight is the whole
+mechanism.
+
+**Dose–response**, band 1's minimum G slope: `0.0 → +6`, `0.15 → +10`, `0.25 → +4`,
+`0.35 → -1`, `0.5 → -10` (worst G drop 0/0/0/2/12). The channel first goes backwards
+between 0.25 and 0.35. `postfx_hue_restore` is live in `tuning.cfg`, so this is a
+one-line owner choice with no rebuild.
+
+**Two measurement traps the probe hit on its own first run**, both worth remembering
+because they are exactly what it exists to catch elsewhere:
+* **Measure the middle of the screen.** Chromatic aberration and the vignette are radial;
+  full-width scans scored the achromatic grey band WORST of all five, and all of it was
+  vignette past the clipping point. Band 4 (one flat colour, no ramp) is now the
+  positional reference — it reads dead flat inside the window, which is what licenses
+  every other band's numbers.
+* **Score the slope, not the sign.** At the shipping strength the dip is spread over
+  enough pixels that no single-pixel step is negative — a reversal count alone reports
+  zero while the band is plainly visible. `slopeDips` (collapse then recovery over a
+  16 px baseline) is the metric that matches what the eye reads as an edge.
+* The level ramp is LOGARITHMIC. Linear to 12 squeezes the entire shoulder into the left
+  eighth and clips the rest.
+
+Gates: core **70/75** (the same five baseline failures, unchanged), `tuning.cfg` restored
+byte-identical after the sweep. No renderer or shell code changed — this session added an
+instrument and an attribution, not a fix. The fix is still the owner's call between
+`postfx_hue_restore ≤ 0.25` and Candidate H (`HANDOFF_TONEMAP_CANDIDATE_H.md`).
+
 ## 2026-08-18b — ShieldShell: the contact band's colour rings
 
 Owner confirmed the contact rim is now on both faces, and reported the remaining

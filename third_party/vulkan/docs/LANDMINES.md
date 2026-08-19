@@ -78,6 +78,29 @@
 These are decisions, not accidents — don't "simplify" them away: driver quirks live behind `Caps.*` flags with a repro scenario; error paths produce nothing (never leftovers); the ring/lifecycle is the single owner of frame progression. Full list in `HANDOFF.md` §9.
 
 ### Measurement traps
+- **A tone-map "bump" gated as bit-identical below the shoulder WILL band every smooth
+  ramp, and the lower bound is why.** Turning hue restoration on across a rising input
+  pulls the non-peak channels down and then releases them — a trough with an edge on each
+  side. Widening the rise makes it worse, not better. `tonemap_shoulder` was rewritten
+  18/08/2026 around the monotone curve: it now asserts an ACHROMATIC surface is still
+  bit-identical (which is what confines the change to saturated content), a ceiling on the
+  saturated shift, the chroma gain, and **monotonicity across a dense rising ramp** —
+  confirmed red on the pre-fix shader first. Full chain: root `ENGINE_LANDMINES.md`,
+  "Bounded change and no colour banding are the SAME knob"; spec §12.1.
+- **A smooth colour ramp does not stay smooth through this pipeline, and the effect is
+  usually blamed for it.** `sandbox/gradient_probe.c` + `core/shaders/probe_gradient.fs`
+  draw a RECTANGLE whose colour is an analytic function of x into the HDR scene target,
+  so it takes bloom → tone map → grade → LUT → vignette → dither → FXAA with no geometry,
+  no normals and no depth in the frame. Press **G** in the VFX tester or run with
+  `WUXING_GRADIENT_PROBE=1`. Its band 3 (same hues at a CONSTANT level) stays smooth while
+  band 1 (one hue at a rising level) dips and recovers, which pins §12.1's restoration
+  weight — not the hues, not the effect. Two traps it had to fix first and that any
+  successor will hit: measure the MIDDLE of the screen (chromatic aberration and the
+  vignette are radial and outscore real banding at the edges — band 4 is the flat
+  reference that shows it), and score the SLOPE, not the sign (at the shipping strength
+  no single-pixel step is negative, so a reversal count alone reports zero). Full chain,
+  dose–response table and the measured numbers: root `ENGINE_LANDMINES.md`, "Bounded
+  change and no colour banding are the SAME knob".
 - **A perf scenario cannot leave the frame from inside a render loop.** `perf_dispatch_count`'s "outside the frame" variant dispatches before `BeginDrawing`, and reported batching out-of-frame compute as noise — while the same change was worth **3.9 ms in the game**. `rlvkBeginFrame` is called lazily from several places (`rlEnableShader`, `rlClearBackground`, the render-pass helpers) with the comment "ensure a frame is active", so setting up dispatch state inside the loop very likely opens the frame first and the variant measures the in-frame path twice. A scenario that means to compare paths must PROVE which path it took (log it, or assert on a counter) before its numbers mean anything. Methodology rule 4, worked example.
 
 - **`perf_*` scenarios need `UNCAPPED=1`, and they will not tell you if you forget.**

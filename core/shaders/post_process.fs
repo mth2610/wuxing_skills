@@ -114,13 +114,42 @@ vec3 toneMapScene(vec3 x) {
     float peak = max(x.r, max(x.g, x.b));
     if (peak <= 0.0) return perChannel;
 
-    float w = smoothstep(1.0, 2.0, peak) * (1.0 - smoothstep(5.0, 9.0, peak));
-    w *= clamp(u_hueRestore, 0.0, 1.0);
+    // CANDIDATE H, APPLIED 18/08/2026. The weight is now CONSTANT in intensity, and the
+    // whitening that used to come from ramping it back out is a monotone desaturation of
+    // the hue-kept colour instead.
+    //
+    // WHY THE OLD FORM HAD TO GO. Hue keeping restores chroma by LOWERING the non-peak
+    // channels. If the weight VARIES along an intensity ramp, those channels are pulled
+    // down and then released — a trough with an edge on each side, which is a visible
+    // colour band. Measured on a plain rectangle through this exact pipeline
+    // (sandbox/gradient_probe.c): one hue at a rising level gave a G slope of
+    // +26 -> +9 -> -10 -> +9, a stall, a reversal and a re-acceleration, on an input that
+    // is smooth by construction. That is the "rainbow rim" reported on ShieldShell, and it
+    // belongs to this function, not to any effect.
+    //
+    // AND THE BANDING CAME FROM THE *LOWER* BOUND, NOT THE UPPER ONE. That is the opposite
+    // of what was assumed for two sessions. Any weight that transitions from 0 to non-zero
+    // WHILE THE INPUT IS STILL CLIMBING produces the trough; whether it later ramps back
+    // out is irrelevant. Verified by search over the whole family: widening the rise
+    // (smoothstep(1,2) -> (1,7)) makes it WORSE (15 -> 30 reversals), because the drop is
+    // ~max(w * (perChannel - hueKept)) and does not care how gently w got there; and
+    // bolting a bottom gate back onto this candidate restores the banding exactly
+    // (0 reversals -> 59). "Bit-identical below peak 1" and "monotone through the shoulder"
+    // are therefore mutually exclusive, and this file now chooses monotone.
+    //
+    // THE PRICE, STATED PLAINLY: rlvk's `tonemap_shoulder` asserts bit-identity below
+    // peak 1 and above peak 9, and it now FAILS by design. Every material below the
+    // shoulder shifts by up to ~0.03 at u_hueRestore = 1.0 (~0.015, about 4/255, at the
+    // shipping 0.5-0.6), and a hot core reaches white more completely. That is a
+    // whole-scene tone-map change, taken deliberately by the owner rather than a bounded
+    // bump. Reverting is this one block; the shader hot-loads, so no rebuild either way.
+    float w = clamp(u_hueRestore, 0.0, 1.0);
     if (w <= 0.0) return perChannel;
 
-    // Tone map the PEAK and carry the channel ratios through unchanged: the hue is
-    // whatever it was in scene-linear, only the level is compressed.
-    vec3 hueKept = (x / peak) * acesFilmicScalar(peak);
+    // Tone map the PEAK and carry the channel ratios through, desaturating them toward
+    // white as the level climbs so a genuinely hot core still reaches white (§5.4) —
+    // monotonically, which is the whole point.
+    vec3 hueKept = mix(x / peak, vec3(1.0), smoothstep(5.0, 12.0, peak)) * acesFilmicScalar(peak);
     return mix(perChannel, hueKept, w);
 }
 

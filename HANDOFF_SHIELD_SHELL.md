@@ -9,7 +9,7 @@ failures are pre-existing and unchanged), rlvk visual 27/27, surface-registry an
 > fragment stage, FXAA landed as the shipping anti-aliasing, and MSAA landed as a
 > capability that is OFF by default. See "What landed after this doc was first written".
 
-## Six symptoms CLOSED, one CHARACTERISED but not fixed
+## Six symptoms CLOSED, and the seventh CLOSED TOO (18/08/2026)
 
 Each closed one had a single cause; two of them shared a cause. Verified in a scene
 render, not from numbers alone. The seventh — the rainbow rim — is a global tone-map
@@ -53,9 +53,15 @@ bloom upsample), `scripts/render_vfx_matrix.sh` (guard). Full narrative with the
 
 ## The rainbow rim: it is the tone map, not the shell — and it is structural
 
-7. **"The rim is like a rainbow, distinct colour patches."** Isolated exactly as the owner
-   suggested, with the simplest possible gradient: the shell's emission replaced by a pure
-   linear ramp of ONE colour (`rimColor * t * 12`), body pass and far wall discarded,
+7. **"The rim is like a rainbow, distinct colour patches."** **FIXED 18/08/2026 — at the
+   tone map, which is where the probe pinned it.** `toneMapScene()` now uses the monotone
+   form (constant weight, whitening moved into a monotone desaturation of the hue-kept
+   colour); the shell's one-hue ramp measures 0 reversals and chroma is UP on all five
+   background plates. `tonemap_shoulder` was REWRITTEN around the new contract and the
+   suite is 28/28. See "The gradient probe" below and `core/docs/PROGRESS.md` 2026-08-18g.
+   Originally settled with the effect removed entirely — Originally isolated as the
+   owner suggested, with the simplest possible gradient: the shell's emission replaced by a
+   pure linear ramp of ONE colour (`rimColor * t * 12`), body pass and far wall discarded,
    bloom off. No geometry, no profiles, no term stacking — whatever structure survives is
    the pipeline's. On a strictly RISING input, G came out
    `169 → 151 → 152 … 172 → 183 → 254 → 255 (frozen)`: a reversal, a slow plateau, a fast
@@ -116,6 +122,37 @@ peak 1 destroys what §12.1 exists to protect (white chroma 0.320 → 0.073 / 0.
   an emissive HDR silhouette is eaten by the tone curve and a shader-decided rim is thinner
   than the pixel MSAA shades once. `ENGINE_LANDMINES.md` #19 has the three edge classes; read
   it before trying to sharpen any edge.
+
+## The gradient probe — symptom 7, with no effect in the frame at all (18/08/2026)
+
+The isolation above still ran inside the shell's own shader, so "the shell" was still on
+the stand. `sandbox/gradient_probe.c` + `core/shaders/probe_gradient.fs` remove it: a
+RECTANGLE whose colour is an analytic function of x, drawn into the HDR scene target
+inside `PostFX_Begin/End` so it takes the whole chain, with the same ramps evaluated on
+the CPU through plain per-channel ACES and drawn AFTER `PostFX_Draw` as the control.
+Press **G** in the VFX tester, or `WUXING_GRADIENT_PROBE=1` for a headless run; it prints
+the numbers and writes `autotest_output/gradient_probe.png`.
+
+Result: **the shell is not the one banding.** Band 1 — one hue at a rising level, exactly
+what `glass_shell.fs` computes — has a G slope of `+26 → +9 → -10 → +9`, a stall, a
+reversal and a re-acceleration. Its control is monotone with zero reversals. Band 3, the
+same hues at a CONSTANT level, is perfectly smooth at every knob setting, which pins the
+mechanism on the LEVEL dependence of §12.1's weight and clears the hues. Band 4 (one flat
+colour) is the positional reference that proves vignette and chromatic aberration are not
+doing it.
+
+Dose–response on the live knob, band 1's minimum G slope: `0.0 → +6`, `0.15 → +10`,
+`0.25 → +4`, `0.35 → -1`, `0.5 → -10`. The reversal appears between 0.25 and 0.35, so
+`postfx_hue_restore = 0.25` buys the reversal back with no rebuild and no gate change —
+short of Candidate H, which is still the better answer and still needs a whole-scene
+approval.
+
+Two traps the probe hit on its FIRST run, recorded because they will bite anyone
+extending it: measure the MIDDLE of the screen (chromatic aberration and the vignette are
+radial, and scored the achromatic band worst of all five), and score the SLOPE, not the
+sign (at the shipping strength no single-pixel step is negative while the band is plainly
+visible). Full chain in `ENGINE_LANDMINES.md`, "Bounded change and no colour banding are
+the SAME knob"; session narrative in `core/docs/PROGRESS.md` 2026-08-18f.
 
 ## The bug under the bug — read this before touching any depth consumer
 
@@ -234,8 +271,14 @@ veil brighter, which is exactly how this hid.
 
 ## Open / next
 
-* The contact ring is bright enough at this fixture's scale to compete with the
-  silhouette rim. `shield_shell_contact` is live in `tuning.cfg` if it should come down.
+* ~~The contact ring is bright enough to compete with the silhouette rim.~~ **DONE
+  18/08/2026, the other way round**: the SILHOUETTE was the outsized one (16 px band /
+  ~5 px clipped white core against the contact's 8 px / ~1 px). The rim now has its own
+  authorable width, `shield_shell_rim_power` (default 8.0), and takes its white core from
+  its own band's peak exactly as the contact does. 7 px / 1 px / peak 237 vs 9 px / 1 px /
+  228. Cost: `darken%` up on the bright plates (mid 7.5 → 50.1, white 79.8 → 91.6) because
+  the glass carrier is now the larger share of a thinner effect — chroma and detail are up
+  everywhere else. See `core/docs/PROGRESS.md` 2026-08-18h.
 * **The shell reads as two bright rings with a hole in the middle** — the emission mask is
   `max(fresnel * 0.92, ...)` and `fresnel` is `(1-|N.V|)^4`, which at the middle of the disc
   (`|N.V| = 0.71`) is 0.0067. That mask is A RING BY CONSTRUCTION, while the body pass carries
@@ -247,10 +290,13 @@ veil brighter, which is exactly how this hid.
   arrive; the visual direction was correct.
 * `BRIGHT_BACKGROUND_VFX_SPEC.md` §11b's measured baselines predate the `bloom_scatter`
   restore and need re-measuring. Renderer module's file — not edited here.
-* **The rainbow rim is unresolved by decision, not by ignorance.** Candidate H is ready in
-  `HANDOFF_TONEMAP_CANDIDATE_H.md`; taking it means accepting a whole-scene tone-map
-  approval and `tonemap_shoulder` going red. That call belongs to the owner and to the
-  renderer module's §12.1, not to a shield fix.
+* ~~**The rainbow rim is unresolved by decision, not by ignorance.**~~ **DONE 18/08/2026** —
+  the owner took the whole-scene approval and Candidate H is the shipping curve. The gate
+  did not go red: it was rewritten around the contract that was actually chosen (achromatic
+  bit-identity + a ceiling on the saturated shift + monotonicity), with the new check
+  confirmed red on the pre-fix shader first. `HANDOFF_TONEMAP_CANDIDATE_H.md` is history
+  now and its headline cost figure was understated — see `core/docs/PROGRESS.md`
+  2026-08-18g for the full table.
 * The cool-plate darkening trade is a one-line choice:
   `glow *= mix(1.0, 0.42, rearInterface)` in `glass_shell.fs`. The measured curve for
   0.00 / 0.28 / 0.42 / 0.68 is in `core/docs/PROGRESS.md`.
@@ -261,7 +307,8 @@ veil brighter, which is exactly how this hid.
 `core/screen_distort.c`, `core/tests/shield_shell_test.c`,
 `core/tests/soft_depth_region_test.c`, `core/shaders/post_process.fs`, `core/post_fx.c`,
 `core/tests/bloom_pyramid_contract_test.c`, `tuning.cfg`, `scripts/render_vfx_matrix.sh`. Live knobs in `tuning.cfg`:
-`shield_shell_contact`, `shield_shell_contact_thickness`, `shield_shell_contact_alpha`,
+`shield_shell_rim_power` (rim WIDTH — the counterpart of contact_thickness; amplitude
+cannot narrow a band), `shield_shell_contact`, `shield_shell_contact_thickness`, `shield_shell_contact_alpha`,
 `shield_shell_base_alpha`, `shield_shell_depth_enabled`, `shield_shell_opacity`,
 `shield_shell_rim`.
 

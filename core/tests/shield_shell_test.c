@@ -42,6 +42,25 @@ static float GlassFresnelPow4(float cosTheta)
    gave the ground line a FLAT TOP: 13 px of pinned R where no luminance gradient is left
    and only hue can vary, which the post FX hue-restoration blend then swung into visible
    colour rings. The cubic falls away immediately, so the pinned core is a sliver. */
+/* Screen half-width of the rim band, as a FRACTION of the sphere's screen radius.
+ *
+ * This is the guard for "the two rims are not the same size". The rim rides
+ * pow(1 - |N.V|, u_rimPower), and on a sphere |N.V| = sqrt(1 - s^2) with s = r/R, so the
+ * band's half-maximum sits at a screen radius that follows straight from the exponent —
+ * no camera, no scene, no render needed. It is the one number that says how WIDE the
+ * silhouette reads, and the whole complaint was that it read twice the ground line.
+ *
+ * Amplitude deliberately does not appear: width at half maximum is scale-invariant for a
+ * fixed profile, which is why sweeping u_rimStrength 2.15 -> 0.55 moved the measured band
+ * 18 px -> 16 px and nothing else. Only the exponent moves this. */
+static float GlassRimBandHalfWidthFrac(float power)
+{
+    float mHalf = powf(0.5f, 1.0f / power);       /* (1-|N.V|) where the band is half-max */
+    float ndotv = 1.0f - mHalf;
+    float s = sqrtf(1.0f - ndotv * ndotv);        /* r/R at that point */
+    return 1.0f - s;                              /* half-width, in units of R */
+}
+
 static float GlassContactMirror(float shellDepth, float sceneDepth, float thickness)
 {
     float gap = sceneDepth - shellDepth;
@@ -163,6 +182,54 @@ int main(void)
             prev = v;
         }
         CHECK(monotone, "contact falls monotonically across the whole band");
+    }
+
+    /* THE TWO RIMS MUST BE THE SAME SIZE — the owner's report, turned into a number.
+       Measured on the fixture before the fix: silhouette 16 px wide with a ~5 px white
+       core, ground contact 8 px with a ~1 px core. The cause was structural, not a value:
+       the contact is a cubic over a distance the author sets, while the silhouette rode a
+       FIXED quartic whose screen width is whatever the sphere's radius makes it. With the
+       exponent exposed as `shield_shell_rim_power`, the band is authorable.
+       The old quartic scores 0.0127 here and would fail this check, which is what makes it
+       a guard rather than a restatement of the current value. */
+    {
+        const float shipped = GlassRimBandHalfWidthFrac(8.0f);
+        const float quartic = GlassRimBandHalfWidthFrac(4.0f);
+        CHECK(shipped < 0.005f && quartic > 0.010f,
+              "the rim band is narrow enough to match the ground line (and the old quartic would fail)");
+        printf("      rim half-width vs sphere radius: power 8 = %.4f, old power 4 = %.4f\n",
+               (double)shipped, (double)quartic);
+    }
+    /* THE RIM'S WHITE CORE MUST NOT RIDE `rimBand`, however symmetric that would be with
+       the contact line. It was tried and shipped for one round, and the silhouette came
+       back blotchy: peak luminance along the bottom arc scattered with sd 10.6 against 4.3
+       for the form below. `wallDensity` is built on 1 / max(|N.V|, 0.10), so it SATURATES
+       a few pixels before the silhouette and the white core cannot chase anything;
+       `rimBand` is (1-|N.V|)^8 with no clamp, so it carries every sub-pixel wobble of the
+       rasterised edge — amplified by an eighth power — into a white-vs-hue mix.
+       Four other explanations were measured and rejected first (tessellation 40 -> 96:
+       no change; the pattern term: 10.0; the matcap: 11.2; both wall passes overlapping:
+       8.4). See glass_shell.fs for the full list; the point of this check is that the
+       symmetric-looking version must not come back. */
+    {
+        const char *fs = "core/shaders/glass_shell.fs";
+        CHECK(Has(fs, "smoothstep(0.90, 0.998, wallDensity) * 0.25") &&
+              !Has(fs, "smoothstep(0.75, 1.0, rimBand)"),
+              "the rim's white core rides a quantity that SATURATES at the silhouette");
+        /* ONE hot colour for both rims, not two that happen to be tuned alike. The
+           silhouette's peak measured 252,248,220 (chroma 0.125) against the ground line's
+           255,224,183 (0.282) while their saturated bodies already agreed to 1/255 — the
+           gap was whitening, not hue. Sharing `u_contactColor` is what keeps them matched
+           when the palette changes; a tuned multiplier on u_rimColor measures the same
+           today (total error 41 vs 40 over three pixels) and would drift tomorrow. */
+        CHECK(Has(fs, "mix(u_contactColor.rgb, vec3(1.0), smoothstep(0.90, 0.998, wallDensity)"),
+              "the silhouette takes the SAME hot colour the ground line uses");
+        CHECK(Has(fs, "1.0 / max(shieldNdotV, 0.10)"),
+              "...and that saturation is the path-length clamp, not an accident");
+        CHECK(Has(fs, "smoothstep(0.75, 1.0, contact)"),
+              "the contact band still keys its white on its own peak (a screen-space term, no clamp needed)");
+        CHECK(Has(fs, "pow(fresnelM, u_rimPower)") && !Has(fs, "rimHot * (fresnel * u_rimStrength)"),
+              "the rim band has its own authorable width, separate from the wall's fresnel");
     }
 
     const char *src = "core/composition/common/vc_shield_shell.inl";
@@ -303,9 +370,14 @@ int main(void)
     CHECK(Has("core/shaders/glass_shell.fs",
               "mix(u_contactColor.rgb, vec3(1.0), smoothstep(0.75, 1.0, contact))"),
           "the contact band has a white core on a window matched to its own peak");
+    /* Was: `mix(u_rimColor.rgb, vec3(1.0), smoothstep(` — the silhouette having its OWN
+       hot colour is exactly what the owner reported as the two rims not matching, so the
+       invariant is now that it shares the contact's. Kept as a check rather than deleted
+       so a revert to a private rim colour trips something. */
     CHECK(Has("core/shaders/glass_shell.fs",
-              "mix(u_rimColor.rgb, vec3(1.0), smoothstep("),
-          "the SILHOUETTE rim keeps its own, narrower white core");
+              "mix(u_contactColor.rgb, vec3(1.0), smoothstep(") &&
+          !Has("core/shaders/glass_shell.fs", "mix(u_rimColor.rgb, vec3(1.0), smoothstep("),
+          "the silhouette rim no longer keeps a private white core of its own");
     /* And it survives the far wall's attenuation: the contact line belongs to the surface
        the shell touches, not to which wall you are looking at, and half of it lives on
        the far wall. Adding it AFTER the rearInterface scale is what keeps that half. */

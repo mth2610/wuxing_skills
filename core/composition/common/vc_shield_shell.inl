@@ -66,7 +66,7 @@ typedef struct {
 
 typedef struct {
     Shader shader;
-    int bodyColor, rimColor, opacity, rimStrength, emissionOnly, wallPass;
+    int bodyColor, rimColor, opacity, rimStrength, rimPower, emissionOnly, wallPass;
     int bodyOpacity, emissionGain;
     int lightDirView, packedTex, hasPacked, flowTex, hasFlow, matcapTex, hasMatcap;
     int depthTex, hasDepth, depthEnabled, depthLod;
@@ -82,7 +82,8 @@ static VC_ShieldShell s_shieldShells[VFX_SHIELD_SHELL_MAX];
 static VC_ShieldShader s_shieldShader = {0};
 static bool s_shieldInit = false;
 static float s_shieldOpacity = 1.0f;
-static float s_shieldRim = 1.5f;
+static float s_shieldRim = 2.0f;
+static float s_shieldRimPower = 8.0f;   // exponent on (1-|N.V|) — the rim band's WIDTH
 // Refraction + contact payload (recipe):
 //   distortion = noise * strength | alpha = base + fresnel*A + contact*B
 static float s_shieldNoiseScale = 28.0f;      // screen-space noise tiling
@@ -123,6 +124,7 @@ static void ShieldShell_InitShared(void)
     s_shieldShader.rimColor = GetShaderLocation(s_shieldShader.shader, "u_rimColor");
     s_shieldShader.opacity = GetShaderLocation(s_shieldShader.shader, "u_opacity");
     s_shieldShader.rimStrength = GetShaderLocation(s_shieldShader.shader, "u_rimStrength");
+    s_shieldShader.rimPower = GetShaderLocation(s_shieldShader.shader, "u_rimPower");
     s_shieldShader.bodyOpacity = GetShaderLocation(s_shieldShader.shader, "u_bodyOpacity");
     s_shieldShader.emissionGain = GetShaderLocation(s_shieldShader.shader, "u_emissionGain");
     s_shieldShader.emissionOnly = GetShaderLocation(s_shieldShader.shader, "u_emissionOnly");
@@ -160,7 +162,16 @@ static void ShieldShell_InitShared(void)
     /* ShieldShell is a translucent carrier: keep its mass below the bright
      * background while letting the rim/emission carry the silhouette. */
     Tuning_RegisterFloat("shield_shell_opacity", &s_shieldOpacity, 0.78f);
-    Tuning_RegisterFloat("shield_shell_rim", &s_shieldRim, 2.15f);
+    /* 2.15 -> 2.0, chosen by measurement alongside rim_power: at this pair the silhouette
+       band and the ground-contact line come out the same width (9 px each) with the
+       silhouette a little brighter (peak 247 vs 228), which is the ordering the shapes
+       should have. It went to 3.0 briefly to compensate for a narrower band, back down
+       once the white core returned to `wallDensity` and stopped costing luminance. */
+    Tuning_RegisterFloat("shield_shell_rim", &s_shieldRim, 2.0f);
+    /* Rim WIDTH, the counterpart of shield_shell_contact_thickness. Higher = narrower.
+       The default is measured, not chosen: it is the exponent at which the silhouette
+       band's screen width matches the ground-contact line's. */
+    Tuning_RegisterFloat("shield_shell_rim_power", &s_shieldRimPower, 8.0f);
     Tuning_RegisterFloat("shield_shell_noise_scale", &s_shieldNoiseScale, 28.0f);
     Tuning_RegisterFloat("shield_shell_noise_speed", &s_shieldNoiseSpeed, 2.2f);
     Tuning_RegisterFloat("shield_shell_contact", &s_shieldContact, 1.0f);
@@ -343,6 +354,8 @@ static void ShieldShell_DrawPass(bool emissionOnly)
                                               s_shieldShader.matcapTex, shield->matcapMap);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.rimStrength,
                        &s_shieldRim, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.rimPower,
+                       &s_shieldRimPower, SHADER_UNIFORM_FLOAT);
         /* ShieldShell is a glass volume, not a solid Magic decal.  Keep the
          * shared Magic appearance, but attenuate only this fixture's carrier
          * so the scene-through region remains visibly transparent. */

@@ -8,6 +8,10 @@ uniform vec4 u_bodyColor;
 uniform vec4 u_rimColor;
 uniform float u_opacity;
 uniform float u_rimStrength;
+/* WIDTH of the silhouette rim band, as an exponent on (1 - |N.V|). Separate from the
+ * quartic `fresnel` below ON PURPOSE: that one also drives the wall alpha and the
+ * scene-through window, which are physics and must not move when the rim is restyled. */
+uniform float u_rimPower;
 uniform float u_bodyOpacity;
 uniform float u_emissionGain;
 uniform int u_emissionOnly;
@@ -172,10 +176,69 @@ void main() {
     // wider than it — the first attempt whitened from 0.62 density outward, which is
     // most of the visible rim, and cost 0.25 of chroma (0.553 -> 0.306 on the dark
     // background) for an edge that then read as pale rather than hot.
-    vec3 rimHot = mix(u_rimColor.rgb, vec3(1.0), smoothstep(0.90, 0.998, wallDensity));
-    vec3 glow = rimHot * (fresnel * u_rimStrength) +
+    //
+    // THE BAND'S WIDTH IS AUTHORABLE; ITS WHITE CORE IS DELIBERATELY NOT KEYED TO IT.
+    //
+    // Width first. The owner's report was that the silhouette and the ground line are not
+    // the same SIZE: measured, 16 px with a ~5 px white core against 8 px with a ~1 px
+    // core. That was structural — `contact` is a cubic over a distance the author sets
+    // (`u_contactThickness`), while the silhouette rode `fresnel`, a FIXED quartic whose
+    // screen width is whatever the sphere's radius makes it. `u_rimPower` fixes that.
+    //
+    // AMPLITUDE IS NOT THE LEVER, measured: u_rimStrength 2.15 -> 0.55 moved the width
+    // 18 px -> 16 px while the peak fell 253 -> 223. Width at half maximum is
+    // scale-invariant for a fixed profile, so brightness can only dim a band, never
+    // narrow it. (Same trap as the contact plateau: see depthContact.)
+    float rimBand = pow(fresnelM, u_rimPower);
+
+    // NOW THE WHITE CORE, AND WHY IT STAYS ON `wallDensity`. Making it key on `rimBand`
+    // instead — "then both rims are built the same way" — is symmetric, reads better, and
+    // is WRONG. It was tried, shipped for one round, and the owner reported the silhouette
+    // as blotchy and unevenly coloured. Measured along the bottom arc, peak luminance
+    // scattered with a standard deviation of 10.6 against 4.3 for this form.
+    //
+    // The reason is one clamp. `wallDensity` is built on `1 / max(|N.V|, 0.10)`, so it
+    // SATURATES before the silhouette: across the last few pixels it is simply pinned, and
+    // the white core cannot chase anything. `rimBand` is `(1-|N.V|)^8` with no clamp, so
+    // near the silhouette it carries every sub-pixel wobble of the rasterised edge — and
+    // an eighth power amplifies it — straight into a white-vs-hue mix. A hue that swings
+    // pixel to pixel along a rim is exactly what "lem nhem" describes.
+    //
+    // Four hypotheses were measured and REJECTED before this one, all of them plausible:
+    //   * mesh tessellation (the band had become as narrow as a 40-gon's sagitta) — 40 ->
+    //     96 rings changed nothing, 10.6 -> 15.2;
+    //   * the `pattern` noise term — ablated, 10.0;
+    //   * the matcap — ablated, 11.2;
+    //   * the two wall passes overlapping at the silhouette (the owner's own guess, and
+    //     the best of the four) — rear glow to 0.0 gives 8.4, so it contributes about a
+    //     fifth, not the effect;
+    //   * "the old rim only looked smooth because it was CLIPPED at 253" — the old shader
+    //     at a strength that does not clip (peak 222) still scores 3.9.
+    // Do not re-derive these. The lesson generalises: a term that decides HUE at a
+    // silhouette must ride a quantity that saturates there.
+    // ONE HOT COLOUR FOR BOTH RIMS. The owner asked for the silhouette to read as the
+    // ground line does, and measured, the only thing that still separated them was how far
+    // each went to WHITE at its peak: the silhouette's brightest pixel was 252,248,220
+    // (chroma 0.125) against the ground line's 255,224,183 (0.282). The saturated bodies
+    // behind them already agreed — 251,162,120 against 255,162,121 — so this was never a
+    // hue difference, only a whitening difference.
+    //
+    // So the silhouette now takes `u_contactColor`, the SAME hot colour the ground line
+    // uses (the element glow lifted 30% toward white, built once on the C side), and adds
+    // only a quarter of the old whitening on top. Measured result 252,223,178 (0.290)
+    // against the target 255,224,183 (0.282), and the two pixels behind it track as well.
+    // Written this way rather than as a multiplier on `u_rimColor` — which measures
+    // identically, total error 41 vs 40 across three pixels — because one shared colour is
+    // a thing that stays matched when the palette changes, and a tuned constant is not.
+    //
+    // The matcap is NOT the whitener, though it looks like a suspect: ablating it moves the
+    // peak's chroma 0.125 -> 0.133. Left alone.
+    //
+    // The WINDOW is still `wallDensity`, never `rimBand` — see the note below on why.
+    vec3 rimHot = mix(u_contactColor.rgb, vec3(1.0), smoothstep(0.90, 0.998, wallDensity) * 0.25);
+    vec3 glow = rimHot * (rimBand * u_rimStrength) +
                 u_rimColor.rgb * (pattern * 0.35 + ripple * 1.5);
-    glow += matcap * fresnel * 0.55;
+    glow += matcap * rimBand * 0.55;
     glow += u_rimColor.rgb * bottomGlow * (0.65 + pattern * 1.15);
     // A HOT CORE LIKE THE RIM'S, BUT THE WINDOW HAS TO MATCH THE BAND'S OWN PEAK.
     // The first attempt keyed the white on smoothstep(0.88, 0.995, contact) — copied from
@@ -239,7 +302,7 @@ void main() {
         // Emission is sparse radiance, not a second translucent body.  A
         // non-zero floor here paints the entire sphere on bright backgrounds
         // and defeats the shared Magic body/emission separation.
-        float emissionMask = max(fresnel * 0.92,
+        float emissionMask = max(rimBand * 0.92,
                                  max(filament * 0.0,
                                      max(contact * 0.90, ripple)));
         float emissionAlpha = u_opacity * clamp(emissionMask, 0.0, 1.0);

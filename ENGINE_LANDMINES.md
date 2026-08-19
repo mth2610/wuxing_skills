@@ -974,6 +974,46 @@ FAILS that round-trip — a guard that cannot fail on the old code is not a guar
 one. If the picture changes, the bug is in the region plumbing and not in
 anything the consumer computes from what it is handed.
 
+## A term that decides HUE at a silhouette must ride a quantity that SATURATES there (18/08/2026)
+
+**Symptom.** A rim that had been smooth came back blotchy: along the silhouette the colour
+swung pixel to pixel between white and a deep saturated hue, with no pattern to it.
+Measured as the standard deviation of peak luminance sampled every 2° around the arc, 10.6
+against 3.9 before.
+
+**Cause.** The white-hot core was keyed on `(1 - |N.V|)^8`. Near a silhouette `|N.V| -> 0`
+is exactly where the rasterised edge is uncertain at the sub-pixel level — the interpolated
+normal, the facet the fragment landed on and the coverage of that pixel all disagree
+slightly — and an eighth power AMPLIFIES that disagreement. Feeding it into a
+`mix(hue, white, ...)` turns a sub-pixel wobble into a visible hue swing.
+
+The form it replaced was stable for one reason that is easy to miss: `wallDensity` is built
+on `1 / max(|N.V|, 0.10)`, and that **clamp** makes it saturate a few pixels BEFORE the
+silhouette. Across the uncertain band it is simply pinned, so the white core has nothing to
+chase.
+
+**Why this is worth an entry rather than a fix note.** The change that caused it was the
+appealing one: "both rims should be built the same way, each taking its white core from its
+own band's peak." Symmetry between two terms is not a reason to move one of them onto a
+noisier variable, and the noise only exists in the last few pixels, which is precisely where
+a rim lives and precisely where a still frame at 1:1 does not show it.
+
+**Four other explanations were measured and rejected first**, and they are the ones anyone
+will reach for: mesh tessellation (40 -> 96 slices changed nothing, even though the band had
+become as narrow as the polygon's sagitta — a coincidence that looked like a smoking gun);
+an additive noise term; a matcap; and drawing both faces so the two silhouettes overlap
+(about a fifth of the effect, no more). Also rejected: "the old version only looked smooth
+because it was CLIPPED" — the old shader at a non-clipping strength still scored 3.9.
+
+**Rule.** Any term that selects COLOUR (as opposed to intensity) as a function of view angle
+must be driven by a quantity that is clamped or saturating at grazing angles. Raising an
+exponent to narrow a band is fine for the band's own falloff; it is not fine for anything
+that decides hue. And when a silhouette artifact appears, measure the ANGULAR spread of the
+rim, not a single scanline — one scanline through a wobble reports a value, not a variance.
+
+**Guard.** `core/tests/shield_shell_test.c` asserts the white core rides `wallDensity`, that
+the path-length clamp is what makes it saturate, and that the `rimBand` form does not return.
+
 ## Colour RINGS on a bright ramp are a PLATEAU, not a palette (18/08/2026)
 
 **Symptom.** ShieldShell's ground line read as two or three concentric bands of
@@ -1076,22 +1116,89 @@ Hue keeping means *lowering* the non-peak channels (that is what restores chroma
 down and then released: a trough with two edges. Measured G reversals on the pure
 ramp: 0 at `hueRestore = 0`, 1 at 0.5, 5 at 1.0.
 
-**The part that makes it structural.** `tonemap_shoulder` requires the change to
-be BOUNDED: identical to the approved curve for `peak < 1` **and** for `peak > 9`.
-A weight that is zero at both ends and non-zero between them cannot be monotone.
-So under a blend-two-curves architecture, "bounded" and "no banding" are the same
-knob pointed in opposite directions — you cannot have both, and §12.1 chose
-bounded deliberately.
+**The part that makes it structural — and it is the LOWER bound, not the upper one.**
+That correction cost two sessions. The obvious reading is that the weight ramping back
+OUT above peak 5 is what releases the channels, so the upper bound is the culprit. It is
+not. Any weight that transitions from zero to non-zero **while the input is still
+climbing** pulls the non-peak channels down and produces the trough; whether it later
+ramps out is irrelevant. Proved by search over the whole family (18/08/2026):
 
-**The monotone alternative exists and is better on every other axis.** Constant
-weight, with the whitening moved out of the weight and into a monotone
-desaturation of the hue-kept colour: 0 reversals, max hue rate 4.75°/step against
-7.18 shipping, and chroma UP on every plate (white 0.320 → 0.347, warm
-0.349 → 0.408, cool 0.140 → 0.215) at unchanged darkening. It fails
-`tonemap_shoulder` at peak 0.2 with d = 0.03 — which is the gate doing its job:
-it is a whole-scene approval, not a bounded fix.
+* widening the rise `smoothstep(1,2)` → `(1,7)` makes it **worse**, 15 → 30 reversals —
+  the drop is `~max(w · (perChannel − hueKept))` and does not care how gently `w` got
+  there;
+* bolting a bottom gate back onto the monotone candidate restores the banding **exactly**
+  (0 reversals → 59), while the candidate without it has none.
+
+So "bit-identical below `peak` 1" and "monotone through the shoulder" are the two
+properties that cannot coexist. `tonemap_shoulder` used to require the first.
+
+**RESOLVED 18/08/2026: the monotone alternative is now the shipping curve.** Constant
+weight, whitening moved out of the weight and into a monotone desaturation of the
+hue-kept colour (`core/shaders/post_process.fs`, `toneMapScene`). Measured on the
+ShieldShell across the five-background matrix, chroma is UP on **every** plate —
+dark 0.301 → 0.316, mid 0.230 → 0.255, white 0.316 → 0.345, warm 0.351 → 0.410,
+cool 0.138 → 0.212 — and the gradient probe's one-hue band goes from
+`+26 → +9 → -10 → +9` to a clean `+17 +18 +18 +13 +9`, 0 reversals.
+
+**The price, stated in full**, because the handoff's headline number (d = 0.03 at
+peak 0.2) is the FIRST failing sample, not the worst. The real shape:
+
+| surface below the shoulder | shift at `u_hueRestore` 1.0 | at the shipping 0.5 |
+|---|---|---|
+| achromatic grey | **0.000, exactly, at every level** | 0.000 |
+| mildly warm (1, .85, .7) | 0.141 | 0.071 |
+| saturated (1, .35, .08) @ peak 0.98 | 0.206 (analytic max 0.212 as peak → 1) | 0.103 |
+
+The grey row is why this is affordable: hue keeping is `(x/peak) · f(peak)`, which for an
+achromatic input IS the per-channel result, so the change **cannot** touch a neutral
+surface. It is confined to saturated content by construction. On a real capture the
+whole-scene cost is 0.758 % of the frame moving more than 2/255 (mean 1.03/255) against a
+0.043 % A/A noise floor — `scripts/run_tonemap_ab.sh --verify FIRE`.
+
+`tonemap_shoulder` was **rewritten**, not disabled: it now asserts the achromatic row is
+bit-identical, the saturated shift stays under a stated ceiling, chroma still improves in
+the shoulder, and — the property the trade actually bought — **no channel goes backwards
+across a dense rising ramp**. That last check was confirmed RED on the pre-fix shader
+first ("channel 1 goes BACKWARDS: peak 1.32 → 1.45 drops 0.0332"). Suite: 28/28.
+
+**Confirmed with NO effect present at all (18/08/2026), and there is now a tool for
+it.** The isolation above still replaced an effect's emission, so "the shell" was
+still in the frame. `sandbox/gradient_probe.c` (+ `core/shaders/probe_gradient.fs`)
+removes even that: a RECTANGLE whose colour is an analytic function of x, drawn into
+the HDR scene target so it takes the whole chain. Press **G** in the VFX tester, or
+`WUXING_GRADIENT_PROBE=1` for a headless run; it prints per-channel numbers and writes
+`autotest_output/gradient_probe.png`. Five bands, and the last two are what make it
+decisive:
+
+| band | content | result |
+|---|---|---|
+| 1 | ONE hue, rising level (`rimColor * level`) | G slope `+26 → +9 → -10 → +9`: dips and recovers |
+| 3 | same hues at a CONSTANT level | perfectly smooth, `dG` constant |
+| 4 | one flat colour, no ramp | flat — proves vignette/chroma are not the cause |
+| — | same ramp on plain per-channel ACES, drawn AFTER post | 0 reversals, monotone |
+
+Band 3 is the discriminator: the hues are innocent, the LEVEL dependence is the whole
+mechanism. Two measurement traps this probe had to fix first, both of which produced a
+wrong answer on its first run: **measure the middle of the screen**, because chromatic
+aberration and the vignette are radial and scored worse than any real banding; and
+**slope, not sign** — at the shipping strength the dip is spread over enough pixels that
+no single-pixel step is negative, so a reversal count alone reports zero.
+
+**Dose–response on the shipping knob** (band 1, minimum G slope over the shoulder):
+
+| `postfx_hue_restore` | 0.0 | 0.15 | 0.25 | 0.35 | 0.5 (this machine) |
+|---|---|---|---|---|---|
+| min dG | +6 | +10 | +4 | **-1** | **-10** |
+| worst G drop | 0 | 0 | 0 | 2 | 12 |
+
+The channel first goes BACKWARDS between 0.25 and 0.35. That is a live, no-rebuild knob:
+0.25 removes the reversal, 0.0 removes the plateau too — at the chroma cost §12.1 exists
+to avoid.
 
 **Rule.** Before attributing colour banding to an effect, run the one-hue ramp
-through the real pipeline. And when a tone-map contract says "bounded", read that
-as "the weight must return to zero", and expect a non-monotone channel response
-on every smooth ramp as the price. Neither is a bug; the trade is the design.
+through the real pipeline — `gradient_probe` does it in one keypress and needs no
+effect at all. And when a tone-map bump is gated as "bit-identical below the shoulder",
+know that you have just bought a non-monotone channel response on every smooth ramp:
+turning the correction ON across a rising input is itself the band. If you need both,
+the bound you give up is the LOWER one, and the thing that makes that affordable is
+proving the change cannot move an achromatic surface.

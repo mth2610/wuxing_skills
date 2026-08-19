@@ -5,6 +5,7 @@
 #include "sandbox/auto_test.h"
 #include "sandbox/colour_probe.h"
 #include "sandbox/fresnel_probe.h"
+#include "sandbox/gradient_probe.h"
 #include <stdio.h>
 #include <string.h>
 #include "core/decals/decal_system.h"
@@ -316,6 +317,11 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     /* I — thăm dò quy ước fresnel |N.V|. Xem sandbox/fresnel_probe.c. */
     if (IsKeyPressed(KEY_I))
         FresnelProbe_Arm();
+    /* G — thăm dò dải gradient: một hình chữ nhật đổ màu đi qua đúng đường ống
+     * của VFX, để tách "hiệu ứng vẽ sai" khỏi "đường ống làm vỡ dải màu".
+     * Xem sandbox/gradient_probe.c. */
+    if (IsKeyPressed(KEY_G))
+        GradientProbe_Arm();
     /* C — hiện/ẩn mannequin tham chiếu tỉ lệ. Mặc định ẩn: nó đứng đúng chỗ
      * camera xoay quanh và hiệu ứng sinh ra, nên luôn che/lẫn vào VFX đang test
      * (xem fresnel_probe.c — nó chính là thứ đã làm nhiễu phép đo lần trước). */

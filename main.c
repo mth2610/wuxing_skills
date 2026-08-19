@@ -38,6 +38,7 @@
 #include "sandbox/auto_test_cases.h"
 #include "sandbox/visual_verify.h"
 #include "sandbox/pool_stats.h"
+#include "sandbox/gradient_probe.h"
 #include "core/status_vfx.h"
 #include "core/afterimage.h"
 #include "game/game_screen.h"
@@ -1282,10 +1283,19 @@ int main(int argc, char **argv) {
     PostFX_Begin();
     ClearBackground(BLACK);
     ScreenDistort_Draw(camera);
+    /* Gradient probe (phím G / WUXING_GRADIENT_PROBE=1). Phải nằm TRONG đây: đích
+     * là target HDR mà VFX ghi vào, nên nó ăn nguyên chuỗi bloom -> tone map ->
+     * grade -> LUT -> vignette -> dither -> FXAA. Vẽ sau ScreenDistort_Draw để
+     * đè hẳn lên cảnh. Xem sandbox/gradient_probe.c. */
+    GradientProbe_DrawScene();
     PostFX_End();
 
     ClearBackground(BLACK);
     PostFX_Draw(&postFXConfig);
+    /* Chứng: CÙNG dải màu đó, tính bằng CPU qua đường cong ACES per-channel, vẽ
+     * SAU post nên không đi qua gì cả. Chênh lệch giữa hai dải chính là phần
+     * đường ống thêm vào. */
+    GradientProbe_DrawControl();
 
     // These are dev/debug overlays — skip them entirely on SCREEN_GAME so it
     // reads as a real production screen, not a test environment. Untouched
@@ -1388,6 +1398,8 @@ int main(int argc, char **argv) {
     if (currentScreen == SCREEN_SKILL_SANDBOX) {
         SkillDebugger_PostRender(uiState.activeSkillIndex, player.position, mouseTarget3D);
     }
+
+    GradientProbe_Readback();
 
     EndDrawing();
 
