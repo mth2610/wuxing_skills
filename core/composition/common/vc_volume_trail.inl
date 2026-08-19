@@ -232,12 +232,20 @@ static TrailLayer s_volLayers[VFX_VOLUME_KIND_COUNT][2] = {
      * from 62% to 12%. It costs ~12% of detail on dark, which is the trade the
      * owner accepted.
      *
+     * 0.85, NOT 1.00. At 1.00 the body pass — which is forced to BLEND_ALPHA
+     * for every trail (trail_system.c, the §5.3 BODY+EMISSION split) — becomes
+     * fully opaque and paints the DARK TAIL of the energy ramp straight over
+     * the background: 43 pixels of pure (0,0,0) at the silhouette, reported by
+     * the owner as "it goes black". The count scales with this value (43 at
+     * 1.00, 11 at 0.95, 0 at 0.85) because it is the alpha of that pass. 0.85
+     * keeps about 85% of the gain with none of the artefact.
+     *
      * SMOKE and FIRE below are deliberately UNCHANGED: smoke occludes with
      * straight alpha, so the additive-budget argument does not apply to it at
      * all, and fire is additive but was not measured. Same premise, but a
      * blanket multiply is what this whole exercise exists to stop. */
     {{.widthMul = 1.30f, .alphaMul = 0.35f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},
-     {.widthMul = 1.00f, .alphaMul = 1.00f, .whiten = 0.08f, .scrollMul = 1.00f, .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_ENERGY]}},
+     {.widthMul = 1.00f, .alphaMul = 0.85f, .whiten = 0.08f, .scrollMul = 1.00f, .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_ENERGY]}},
     {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},
      {.widthMul = 1.00f, .alphaMul = 0.46f, .whiten = 0.08f, .scrollMul = 1.00f, .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_SMOKE]}},
     {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},

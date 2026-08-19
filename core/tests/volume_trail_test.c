@@ -67,7 +67,7 @@ static const char *k_volSheetPath[VOL_KIND_COUNT] = {
 // pre-19/08 0.16/0.46 — smoke occludes with straight alpha so the additive
 // argument never applied to it, and fire is additive but has not been measured.
 static const float k_layerWidth[2]  = {1.30f, 1.00f};
-static const float k_layerAlpha[2]  = {0.35f, 1.00f};
+static const float k_layerAlpha[2]  = {0.35f, 0.85f};
 static const float k_layerScroll[2] = {0.55f, 1.00f};
 
 // GFX_UNLIT = 0, GFX_LOW = 1, GFX_MED = 2, GFX_HIGH = 3 (core/gfx_quality.h)
@@ -290,7 +290,9 @@ static void Test_AdditiveBudget(void)
     // 0.35/1.00 through the scene-target probe: p99 2.22, peak 6.50, i.e. the
     // corona sits in §7.6's 1.5-2.5 band and the hottest sliver just enters the
     // white-hot 5.5-12. On white that moved structure 0.076 -> 0.217 and detail
-    // 0.049 -> 0.099.
+    // 0.049 -> 0.099. The body sits at 0.85 rather than 1.00: the body pass is
+    // forced to BLEND_ALPHA, so at 1.00 it paints the ramp's dark tail opaquely
+    // over the background — 43 pure-black pixels at the silhouette.
     float sum = k_layerAlpha[0] + k_layerAlpha[1];
     CHECK_MSG(sum > 1.0f,
               "the body is authored ABOVE 1.0 — it is HDR, and a white "
