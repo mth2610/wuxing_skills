@@ -288,6 +288,26 @@ void UnloadParticleSystem(void);
 //
 // Gated to GFX_MED and above: per-fragment lighting on every particle is real
 // fill-rate, and Mali is the constraint.
+/* THE GLOW SPRITE — a second default, for the halo half of a glowing particle.
+ *
+ * The particle system's fallback sprite is a SPARK: a compact Gaussian core in a
+ * faint halo, which is the right shape for the thing that blooms. It is the
+ * wrong shape for a glow. Scaled up to serve as a halo it reads as a DISC WITH
+ * AN EDGE, because most of its falloff happens near the rim — measured as a
+ * visible circular boundary on mid-grey scenery (§7.6c).
+ *
+ * This one is (1 - r^2)^3: energy near the centre, a long tail, and — the
+ * property that matters for a large faint sprite — it reaches EXACTLY zero at
+ * r = 1 with ZERO SLOPE, so the quad's own boundary can never show. A Gaussian
+ * or a Lorentzian never reaches zero, has to be cut, and the cut is what the eye
+ * finds.
+ *
+ * A glowing particle is TWO particles, and they do not share a sprite:
+ *     core  small, saturated, ADDITIVE, unlit, high emissiveBoost, default sprite
+ *     halo  ~4x radius, same hue at low alpha, ADDITIVE, unlit, THIS sprite
+ * Created on first use; owned by the particle system, valid until shutdown. */
+Texture2D ParticleSystem_GlowSprite(void);
+
 void ParticleSystem_SetLighting(float strength01, float scatter01);
 void ParticleSystem_GetLighting(float *outStrength, float *outScatter);
 bool IsParticleSystemActive(void);

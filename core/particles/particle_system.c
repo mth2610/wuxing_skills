@@ -1703,6 +1703,32 @@ void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const Part
   }
 }
 
+static Texture2D s_glowSprite = {0};
+
+Texture2D ParticleSystem_GlowSprite(void)
+{
+    if (s_glowSprite.id != 0) return s_glowSprite;
+    const int N = 128;
+    Image img = GenImageColor(N, N, BLANK);
+    const float half = N * 0.5f;
+    for (int y = 0; y < N; y++) {
+        for (int x = 0; x < N; x++) {
+            float px = ((float)x + 0.5f - half) / half;
+            float py = ((float)y + 0.5f - half) / half;
+            float r2 = px * px + py * py;
+            /* (1 - r^2)^3 — zero value AND zero slope at r = 1, so nothing of
+               the quad can show through at the sprite's own edge. */
+            float v = (r2 >= 1.0f) ? 0.0f : (1.0f - r2);
+            float a = v * v * v;
+            ImageDrawPixel(&img, x, y, (Color){255, 255, 255, (unsigned char)(255.0f * a)});
+        }
+    }
+    s_glowSprite = LoadTextureFromImage(img);
+    SetTextureFilter(s_glowSprite, TEXTURE_FILTER_BILINEAR);
+    UnloadImage(img);
+    return s_glowSprite;
+}
+
 void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config) {
   if (!adj || adj->count == 0) return;
   Vector3 localPos = MeshAdjacency_SampleEdge(adj);

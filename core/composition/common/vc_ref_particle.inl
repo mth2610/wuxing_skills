@@ -35,42 +35,7 @@ static const float k_refParticleBoost[REF_PARTICLE_COUNT] = {
     0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 12.0f
 };
 
-/* A GLOW sprite, separate from the spark sprite the particle system defaults to.
- *
- * They are not interchangeable and that was learned the hard way: scaling the
- * default spark up 4.2x to serve as a halo produced a visible circular RIM on
- * mid-grey scenery. It is not a discontinuity — the profile was measured
- * decelerating smoothly to the background — it is the SHAPE. A compact Gaussian
- * windowed by smoothstep reads as a DISC with an edge once it is large, because
- * most of its falloff happens over a short span near the rim.
- *
- * A glow wants the opposite: most of its energy near the centre and a long, slow
- * tail. (1 - r^2)^3 gives exactly that, and it has the one property that matters
- * for a big faint sprite — it reaches EXACTLY zero at r = 1 with ZERO SLOPE, so
- * the quad's own boundary can never show. A Gaussian or a Lorentzian never
- * reaches zero and has to be cut, and the cut is what the eye finds. */
-static Texture2D s_refGlowTex = {0};
-
-static void RefParticle_EnsureGlowTex(void)
-{
-    if (s_refGlowTex.id != 0) return;
-    const int N = 128;
-    Image img = GenImageColor(N, N, BLANK);
-    const float half = N * 0.5f;
-    for (int y = 0; y < N; y++) {
-        for (int x = 0; x < N; x++) {
-            float px = ((float)x + 0.5f - half) / half;
-            float py = ((float)y + 0.5f - half) / half;
-            float r2 = px * px + py * py;
-            float v = (r2 >= 1.0f) ? 0.0f : (1.0f - r2);
-            float a = v * v * v;
-            ImageDrawPixel(&img, x, y, (Color){255, 255, 255, (unsigned char)(255.0f * a)});
-        }
-    }
-    s_refGlowTex = LoadTextureFromImage(img);
-    SetTextureFilter(s_refGlowTex, TEXTURE_FILTER_BILINEAR);
-    UnloadImage(img);
-}
+/* The glow sprite is the particle system's now — see ParticleSystem_GlowSprite. */
 
 static bool    s_refParticlesOn = false;
 static Vector3 s_refParticlePos = {0};
@@ -81,7 +46,6 @@ int VFX_ComposeRefParticles(Vector3 pos, float scale)
 {
     s_refParticlePos = pos;
     s_refParticleScale = (scale > 0.0f) ? scale : 1.0f;
-    RefParticle_EnsureGlowTex();
     s_refParticlesOn = true;
     s_refParticleTimer = 0.0f;
     TraceLog(LOG_INFO, "VFX_REF_PARTICLE: %d glow particles, boost %.1f .. %.1f, "
@@ -177,7 +141,7 @@ void VC_RefParticles_Update(float dt)
             .lifetime = 6.0f,
             .colorStart = (Color){70, 110, 255, 60},
             .colorEnd = (Color){70, 110, 255, 60},
-            .render.texture = s_refGlowTex,   /* NOT the spark sprite — see above */
+            .render.texture = ParticleSystem_GlowSprite(),   /* NOT the spark sprite — see above */
             .render.blendMode = VFX_BLEND_ADDITIVE,
             .render.unlit = 1,
             .render.emissiveBoost = k_refParticleBoost[i] * 0.30f,
@@ -212,7 +176,7 @@ void VC_RefParticles_Update(float dt)
             .lifetime = 6.0f,
             .colorStart = (Color){120, 170, 255, 90},
             .colorEnd = (Color){120, 170, 255, 90},
-            .render.texture = s_refGlowTex,
+            .render.texture = ParticleSystem_GlowSprite(),
             .render.blendMode = VFX_BLEND_ADDITIVE,
             .render.unlit = 1,
             .render.emissiveBoost = k_refParticleBoost[i],
