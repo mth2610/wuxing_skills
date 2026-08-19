@@ -724,6 +724,26 @@ achieves with a dim rim. The guidance to push the rim to "RGB x10+" is written f
 scene; on a white one it erases the core. **Keep the rim modest and let the core do the
 work** — the opposite of the instinct that has been wrong all session.
 
+**AND THE RIM MUST ADAPT — measured, and it overturned my own recommendation.** With the
+rim held at the shipped x0.30 ratio, `|d|` against each background across the boost ramp:
+
+| background | b0.5 | b1 | b2 | b4 | b8 | b12 |
+|---|---|---|---|---|---|---|
+| dark | 0.289 | 0.457 | 0.685 | 0.989 | 1.249 | **1.403** |
+| white | **0.384** | 0.349 | 0.245 | 0.203 | 0.132 | 0.190 |
+
+**The two slopes point in opposite directions.** On dark, more emission reads better,
+monotonically. On white, more emission reads WORSE — because the rim light fills back in the
+silhouette the core just cut out of the background. **No fixed rim ratio serves both**, which
+is why the structure alone is not the whole answer.
+
+The adaptive term is therefore real, but it is rim INTENSITY, not the rim colour inversion
+the received technique describes. The structure (dark core) already works on both — it costs
+about 17% on dark and gains 3x on white — so nothing needs switching between two looks. What
+needs to vary is one scalar: the halo's emissive contribution, falling toward zero as the
+background luminance rises. `ParticleSystem_SpawnGlow` is where that belongs, since it is
+already the one place the halo's boost is derived.
+
 This is also the missing half of the FLAME VOLUME result above. That effect already separates
 by occlusion, which is why tripling its emissive lost ground; what it is missing is not more
 light but a darker, more opaque core.

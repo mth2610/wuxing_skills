@@ -153,7 +153,10 @@ void VC_RefParticles_Update(float dt)
             .render.texture = ParticleSystem_GlowSprite(),
             .render.blendMode = VFX_BLEND_ADDITIVE,
             .render.unlit = 1,
-            .render.emissiveBoost = k_refParticleBoost[i],
+            /* x0.30, the same ratio ParticleSystem_SpawnGlow uses. At FULL boost
+               this rim swamped the core it exists to frame and |d| on white
+               collapsed to a third at mid boost (§7.6c). */
+            .render.emissiveBoost = k_refParticleBoost[i] * 0.30f,
         });
         /* the dark core, on top and opaque */
         SpawnParticle((ParticleConfig){
