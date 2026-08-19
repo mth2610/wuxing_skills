@@ -37,6 +37,22 @@ uniform vec2 u_resolution;
 #include "core/shaders/common/soft_particle.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
 
+/* BACKGROUND ADAPTATION — how bright is what this particle is in front of.
+ *
+ * Filled by SceneTargets_CaptureBackgroundLuma, taken after the world is drawn
+ * and BEFORE any VFX, so a particle is never told about its own light. Sampling
+ * a finished frame would close that loop and the effect would oscillate.
+ *
+ * Why emission has to fall as the background rises, measured on REF PARTICLES:
+ * against a dark backdrop more emission reads better, monotonically; against a
+ * white one it reads WORSE, because the added light fills back in the silhouette
+ * the particle cut out of the background. The two slopes point opposite ways, so
+ * no fixed emissive value serves both (BRIGHT_BACKGROUND_VFX_SPEC.md §7.6c).
+ *
+ * 0 = off, and that is the default: nothing changes until a caller asks. */
+uniform sampler2D u_bgLuma;
+uniform float u_bgAdapt;
+
 uniform float u_softFade;
 uniform float u_softDebug;
 
@@ -399,7 +415,16 @@ void main()
         // nothing despite the uniform arriving: sparks and glints are exactly
         // the population that never reaches the lit path.
         // At boost 1.0 this is still byte-identical to the pre-F1 shader.
-        finalColor = VFX_ResolveEmission(base.rgb, u_emissiveBoost, 1.0,
+        float emisBoost = u_emissiveBoost;
+        if (u_bgAdapt > 0.0 && u_resolution.x > 0.0) {
+            float bg = texture(u_bgLuma, gl_FragCoord.xy / u_resolution).r;
+            /* Hold full emission through the range the night arena lives in
+               (~0.02), and fall away over the range a bright map would occupy.
+               smoothstep, not a linear ramp: a particle crossing a lit/unlit
+               boundary must not step. */
+            emisBoost *= mix(1.0, 1.0 - smoothstep(0.15, 0.85, bg), u_bgAdapt);
+        }
+        finalColor = VFX_ResolveEmission(base.rgb, emisBoost, 1.0,
                                          base.a * soft);
         return;
     }

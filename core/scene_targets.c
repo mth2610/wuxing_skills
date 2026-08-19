@@ -161,6 +161,19 @@ static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height, 
  * soft-particle pass to one quarter of its former pixel cost. */
 #define SOFT_DEPTH_DOWNSCALE 2
 
+/* BACKGROUND LUMINANCE, for effects that must adapt to what is behind them.
+ *
+ * 1/16 on each axis, so 80x45 at 720p — deliberately tiny. What consumes it is a
+ * broad attenuation term, not a detail lookup, and a small target has two further
+ * virtues: it costs almost nothing to fill mid-frame, and it averages away the
+ * local structure that would otherwise make an effect's own attenuation flicker
+ * as it moves across a busy background. */
+#define BG_LUMA_DOWNSCALE 16
+static RenderTexture2D s_bgLuma;
+static Shader  s_bgLumaShader;
+static int     s_bgLumaTexelLoc = -1;
+static bool    s_bgLumaValid = false;
+
 static RenderTexture2D LoadLinearDepthTarget(int width, int height)
 {
   RenderTexture2D target = {0};
@@ -309,6 +322,27 @@ void SceneTargets_Init(int width, int height)
   }
 #endif
   TraceLog(LOG_INFO, "SceneTargets: scene target MSAA x%d", s_sceneSamples);
+  {
+    int lw = (width + BG_LUMA_DOWNSCALE - 1) / BG_LUMA_DOWNSCALE;
+    int lh = (height + BG_LUMA_DOWNSCALE - 1) / BG_LUMA_DOWNSCALE;
+    if (lw < 4) lw = 4;
+    if (lh < 4) lh = 4;
+    s_bgLuma = LoadRenderTextureWithDepthTexture(lw, lh, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    SetTextureFilter(s_bgLuma.texture, TEXTURE_FILTER_BILINEAR);
+    SetTextureWrap(s_bgLuma.texture, TEXTURE_WRAP_CLAMP);
+    s_bgLumaShader = LoadShader(0, "core/shaders/bg_luma.fs");
+    s_bgLumaTexelLoc = GetShaderLocation(s_bgLumaShader, "u_srcTexel");
+    /* Open the target's scope ONCE here. Under rlvk a framebuffer that has never
+       been entered through BeginTextureMode has no render-pass scope, and a
+       later rlEnableFramebuffer into it draws nothing at all — silently. That is
+       why renderTex can be re-entered mid-frame with rlEnableFramebuffer (the
+       refraction pass does exactly that) and this one could not. */
+    BeginTextureMode(s_bgLuma);
+    ClearBackground(BLACK);
+    EndTextureMode();
+    TraceLog(LOG_INFO, "SceneTargets: background-luma target %dx%d", lw, lh);
+  }
+
   depthCopyShader = LoadShader(0, "core/shaders/depth_copy.fs");
   depthCopyNearLoc = GetShaderLocation(depthCopyShader, "u_near");
   depthCopyFarLoc = GetShaderLocation(depthCopyShader, "u_far");
@@ -364,6 +398,8 @@ void SceneTargets_End(void)
   EndTextureMode();
   if (RenderTargetProbe_MatchesFrame(s_probeFrame))
     RenderTargetProbe_Dump(renderTex, "scene", true);
+  if (RenderTargetProbe_MatchesFrame(s_probeFrame) && s_bgLumaValid)
+    RenderTargetProbe_Dump(s_bgLuma, "bgluma", false);
   s_probeFrame++;
 }
 
@@ -567,6 +603,69 @@ void SceneTargets_SnapshotScene(void)
 }
 
 Texture2D SceneTargets_GetSceneSnapshotTexture(void) { return s_sceneSnapshot.texture; }
+
+/* CAPTURE THE BACKGROUND, mid-3D-pass, WITHOUT disturbing the camera.
+ *
+ * Called from the frame loop after the world is drawn and BEFORE any VFX, so
+ * what lands here is what an effect is standing in front of — not the effect.
+ * Sampling a finished frame instead would feed an effect its own light, and it
+ * would dim itself, brighten because it dimmed, and oscillate.
+ *
+ * NO BeginTextureMode, and NO MATRIX TOUCHING EITHER — both were tried.
+ *
+ * BeginTextureMode is out because raylib's EndTextureMode hard-resets projection
+ * and modelview without restoring the caller's, which would corrupt the camera
+ * for every VFX draw after this point (engine landmine #15 — it has cost this
+ * project a vanished shield once already).
+ *
+ * Pushing and popping the matrices by hand around an identity-space quad is ALSO
+ * out, and that one had to be bisected to believe: it changes the rendered frame
+ * even with the draw removed entirely and the pops in the correct reverse order.
+ * rlgl keeps one matrix stack across modes and defers application to the batch,
+ * so the round-trip is not the no-op it reads as.
+ *
+ * What works is leaving the matrices alone completely: bg_luma.vs ignores `mvp`
+ * and takes vertices already in clip space. The FBO is switched with
+ * rlEnableFramebuffer, exactly as SceneTargets_BeginVFXBody does. */
+void SceneTargets_CaptureBackgroundLuma(void)
+{
+    if (s_bgLuma.id == 0 || s_bgLumaShader.id == 0) return;
+    const int lw = s_bgLuma.texture.width, lh = s_bgLuma.texture.height;
+    const int sw = renderTex.texture.width, sh = renderTex.texture.height;
+    if (lw <= 0 || sw <= 0) return;
+
+    /* BeginTextureMode, because under rlvk nothing else renders into a target:
+       an rlEnableFramebuffer into a framebuffer whose scope the backend has not
+       opened draws NOTHING, silently — measured, the target came back all zeros.
+       The price is that EndTextureMode resets projection and modelview, so the
+       CALLER has to re-establish the camera afterwards; main.c brackets this
+       call with MyEndMode3D / MyBeginMode3D for exactly that reason. */
+    BeginTextureMode(s_bgLuma);
+    BeginShaderMode(s_bgLumaShader);
+    if (s_bgLumaTexelLoc >= 0) {
+        float texel[2] = {1.0f / (float)sw, 1.0f / (float)sh};
+        SetShaderValue(s_bgLumaShader, s_bgLumaTexelLoc, texel, SHADER_UNIFORM_VEC2);
+    }
+    rlDisableColorBlend();
+    DrawTexturePro(renderTex.texture,
+                   (Rectangle){0, 0, (float)sw, -(float)sh},
+                   (Rectangle){0, 0, (float)lw, (float)lh},
+                   (Vector2){0, 0}, 0.0f, WHITE);
+    rlDrawRenderBatchActive();      /* flush INSIDE the disabled-blend window */
+    rlEnableColorBlend();
+    EndShaderMode();
+    EndTextureMode();
+
+    /* EndTextureMode returns to the DEFAULT framebuffer, not to the scene. */
+    rlEnableFramebuffer(renderTex.id);
+    rlViewport(0, 0, sw, sh);
+    s_bgLumaValid = true;
+}
+
+Texture2D SceneTargets_GetBackgroundLuma(void)
+{
+    return s_bgLumaValid ? s_bgLuma.texture : (Texture2D){0};
+}
 
 void SceneTargets_SnapshotDepth(void)
 {

@@ -1327,6 +1327,16 @@ int main(int argc, char **argv) {
     // time after MyEndMode3D, and refractive draws run in a dedicated
     // post-pass (VFX_ShieldShell_DrawRefraction) so they see the complete
     // scene — see the block after SceneTargets_SnapshotDepth() below.
+    /* BACKGROUND LUMINANCE, captured here and nowhere else: the world is drawn,
+       no VFX are yet, so this is what the effects are standing in front of. One
+       line later and an effect would be measuring its own light.
+       Bracketed by MyEndMode3D/MyBeginMode3D because the capture must use
+       BeginTextureMode (nothing else renders into a target under rlvk) and
+       EndTextureMode resets the camera — see SceneTargets_CaptureBackgroundLuma. */
+    MyEndMode3D();
+    SceneTargets_CaptureBackgroundLuma();
+    MyBeginMode3D(camera);
+
     VFX_Compose_Draw3D(camera);
 
     // =========================================================================

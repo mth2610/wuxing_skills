@@ -744,6 +744,39 @@ needs to vary is one scalar: the halo's emissive contribution, falling toward ze
 background luminance rises. `ParticleSystem_SpawnGlow` is where that belongs, since it is
 already the one place the halo's boost is derived.
 
+**IMPLEMENTED, and it costs the shipping scene nothing.** `SceneTargets_CaptureBackgroundLuma`
+fills a 1/16 luma target from the scene AFTER the world is drawn and BEFORE any VFX — the
+ordering is the whole design, because an effect told about its own light dims itself,
+brightens because it dimmed, and oscillates. `particle_lit.fs` samples it at the fragment's
+screen UV and scales emission by `1 - smoothstep(0.15, 0.85, bg)`. Shipping at
+`particle_bg_adapt = 1.0`.
+
+| | dark | white, worst of the ramp |
+|---|---|---|
+| off | 0.289 … 1.403 | 0.132 |
+| on | 0.289 … 1.403 *(bit-identical)* | **0.324** |
+
+Legibility on a white backdrop rises 145% and the mid-boost collapse disappears, while the
+night arena does not change by a single digit — it sits at ~0.02 luma, below where the ramp
+begins.
+
+**Three ways to do this DO NOT WORK on rlvk, and each was measured, not reasoned:**
+
+- `BeginTextureMode` mid-3D-pass — `EndTextureMode` resets projection and modelview without
+  restoring the caller's, so the camera is wrong for every VFX draw after it (landmine #15).
+  The frame renders black.
+- `rlEnableFramebuffer` into a target the backend has never opened a scope for — draws
+  **nothing at all, silently**. The target came back all zeros on every background. This is
+  why `renderTex` can be re-entered that way mid-frame (the refraction pass does it) and a
+  fresh target cannot.
+- Push/pop rlgl's matrices around an identity-space quad — changes the rendered frame **even
+  with the draw removed entirely**, bisected. One matrix stack is shared across modes and
+  application is deferred to the batch, so the round-trip is not the no-op it reads as.
+
+What works is `MyEndMode3D` → capture through `BeginTextureMode` → `MyBeginMode3D`, with the
+caller re-establishing the camera. FLAME VOLUME reproduces its baseline to every digit across
+the whole change, which is what shows the restructured pass is invisible.
+
 This is also the missing half of the FLAME VOLUME result above. That effect already separates
 by occlusion, which is why tripling its emissive lost ground; what it is missing is not more
 light but a darker, more opaque core.

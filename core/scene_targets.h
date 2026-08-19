@@ -130,6 +130,22 @@ Texture2D SceneTargets_GetRawDepthTexture(void);
  * The request flag is per-frame: a full-resolution copy only happens while
  * some refractive effect is actually alive.
  * ==========================================================================*/
+/* BACKGROUND LUMINANCE — what an effect is standing in front of.
+ *
+ * Call ONCE per frame from inside the 3D pass, after the world is drawn and
+ * BEFORE any VFX. That ordering is the point: an effect asking how bright its
+ * background is must not be told about itself, or it dims itself, brightens
+ * because it dimmed, and oscillates at frame rate. A finished-frame snapshot
+ * cannot answer this question; only a capture taken before the effects can.
+ *
+ * The capture does NOT use BeginTextureMode — that would reset the camera for
+ * every VFX draw after it (landmine #15). Safe to call mid-pass.
+ *
+ * The texture is 1/16 on each axis and carries luma in all three channels.
+ * Sample it with the fragment's screen UV. id 0 until the first capture. */
+void SceneTargets_CaptureBackgroundLuma(void);
+Texture2D SceneTargets_GetBackgroundLuma(void);
+
 void SceneTargets_RequestSceneSnapshot(void);
 // Copy renderTex -> private snapshot; no-op unless requested this frame.
 void SceneTargets_SnapshotScene(void);

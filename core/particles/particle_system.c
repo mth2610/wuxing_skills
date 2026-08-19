@@ -617,6 +617,14 @@ static void SortParticlesByDepth(int *ids, int count, const float *depths)
 // (s_lightingStrength / s_scatterStrength are declared above InitParticleSystem,
 // which registers them as hot-reloadable tunables.)
 static Shader s_litShader = {0};
+static int   s_locBgLuma = -1;
+static int   s_locBgAdapt = -1;
+/* tuning.cfg -> particle_bg_adapt. SHIPPING AT 1.0: emission falls away as the
+   background brightens. Measured on REF PARTICLES, worst-case legibility on a
+   white backdrop rises 0.132 -> 0.324 while the DARK arena is bit-identical —
+   the night scene sits at ~0.02 luma, below where the ramp starts, so nothing
+   that ships today changes. Set 0 to disable. */
+static float s_bgAdapt = 1.0f;
 static bool   s_litShaderTried = false;
 static bool   s_litActive = false;
 static int s_locSunToLight, s_locSunColor, s_locAmbient, s_locViewPos;
@@ -735,6 +743,8 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locAmbient         = GetShaderLocation(s_litShader, "u_ambient");
       s_locViewPos         = GetShaderLocation(s_litShader, "viewPos");
       s_locLightStrength   = GetShaderLocation(s_litShader, "u_lightingStrength");
+      s_locBgLuma          = GetShaderLocation(s_litShader, "u_bgLuma");
+      s_locBgAdapt         = GetShaderLocation(s_litShader, "u_bgAdapt");
       s_locScatterStrength = GetShaderLocation(s_litShader, "u_scatterStrength");
       s_locVfxCount        = GetShaderLocation(s_litShader, "u_vfxLightCount");
       s_locVfxPos          = GetShaderLocation(s_litShader, "u_vfxLightPos");
@@ -797,6 +807,19 @@ static void ParticleLighting_Begin(Camera3D camera)
   SetShaderValue(s_litShader, s_locAmbient, &ambient, SHADER_UNIFORM_VEC3);
   SetShaderValue(s_litShader, s_locViewPos, &camera.position, SHADER_UNIFORM_VEC3);
   SetShaderValue(s_litShader, s_locLightStrength, &s_lightingStrength, SHADER_UNIFORM_FLOAT);
+  /* Background adaptation. Registered lazily and here rather than at Init —
+     Tuning_Init runs after the subsystem inits, so an early registration keeps
+     the default silently (core/docs/LANDMINES.md). */
+  {
+    static bool reg = false;
+    if (!reg) { Tuning_RegisterFloat("particle_bg_adapt", &s_bgAdapt, 1.0f); reg = true; }
+  }
+  if (s_locBgAdapt >= 0)
+    SetShaderValue(s_litShader, s_locBgAdapt, &s_bgAdapt, SHADER_UNIFORM_FLOAT);
+  if (s_locBgLuma >= 0) {
+    Texture2D bl = SceneTargets_GetBackgroundLuma();
+    if (bl.id != 0) SetShaderValueTexture(s_litShader, s_locBgLuma, bl);
+  }
   SetShaderValue(s_litShader, s_locScatterStrength, &s_scatterStrength, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_litShader, s_locDebugNormal, &s_debugNormal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_litShader, s_locNormalBulge, &s_normalBulge, SHADER_UNIFORM_FLOAT);
