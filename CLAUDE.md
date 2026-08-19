@@ -117,7 +117,11 @@ Never read, list, or touch any file under these.
 Out-of-source, everything (CMake cache, `_deps` incl. raylib checkout, object
 files, binary) lives under `build/` — keeps the repo root clean. `build/`
 (like `_deps/`, `android.wuxing_skills/`) is off-limits to agents to read/
-list/touch; only the human runs these commands directly.
+list/touch — that has not changed. **Agents MAY run the build commands below**
+(19/08/2026): several harnesses refuse to run against a stale binary on purpose
+(`render_vfx_matrix.sh` guards `main.c`, `core/`, `skills/`, `sandbox/`), so
+stopping to ask for a rebuild between measurements stalls the work. Report build
+failures; never work around them.
 ```bash
 cmake -S . -B build         # Configure once (or after CMakeLists.txt changes)
 cmake --build build -j4     # Build the whole project

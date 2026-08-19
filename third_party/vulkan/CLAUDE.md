@@ -72,7 +72,8 @@ significant, statics span them. Never include a fragment directly, never reorder
    already in `main.c`). `bright_vfx` is the synthetic oracle; this is how a shipping effect is
    held to the same contract. Details + measured baselines: `docs/BRIGHT_BACKGROUND_VFX_SPEC.md`
    §11b.
-4. Full game build (`cmake --build build`) — HUMAN-run only, final confirmation.
+4. Full game build (`cmake --build build -j4`) — final confirmation. Agents may run it
+   (19/08/2026); the ladder above is still cheapest-first, so do not START here.
 
 ## Debug tools (env vars, all off by default)
 `RLVK_DEBUG_FLUSH` (batch draws), `RLVK_DEBUG_VAO` (mesh buffers), `RLVK_DEBUG_FBO`
