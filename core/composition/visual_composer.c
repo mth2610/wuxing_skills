@@ -98,6 +98,7 @@ void VFX_Compose_Update(float dt)
     // `dt` is already post-TimeFX_Apply, the scaled clock sequences run on;
     // VFX_Sequence_Update takes the raw one itself for `unscaled` beats.
     VFX_Sequence_Update(dt);
+    VC_RefParticles_Update(dt);   /* calibration target — vc_ref_particle.inl */
     WaterOrb_Update(dt);
     WaterRing_Update(dt);
 }

@@ -607,6 +607,7 @@ int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, fl
 void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
 int VFX_ComposeRefBands(Vector3 pos, float scale);
+int VFX_ComposeRefParticles(Vector3 pos, float scale);
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
@@ -617,6 +618,7 @@ void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, floa
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
 void VFX_KillRefBands(int id);
+void VFX_KillRefParticles(int id);
 void VFX_SmokeTrail_Stop(int handle);
 void VFX_WaterRing_Stop(void);
 // @gen:vc_declarations end

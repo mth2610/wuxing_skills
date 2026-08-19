@@ -262,6 +262,18 @@
       "kill_fn": "VFX_KillRefBands"
     },
     {
+      "source": "common/vc_ref_particle.inl",
+      "fn": "VFX_ComposeRefParticles",
+      "label": "REF PARTICLES",
+      "category": "common",
+      "fixture": "static",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeRefParticles($POS, 1.5f)",
+      "kill_fn": "VFX_KillRefParticles"
+    },
+    {
       "source": "common/vc_rune_circle.inl",
       "fn": "VFX_ComposeRuneCircle",
       "label": "RUNE CIRCLE",

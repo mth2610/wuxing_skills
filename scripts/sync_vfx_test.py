@@ -116,6 +116,7 @@ LIFECYCLE_SPECS = {
     # harness wants to measure it: a fixture that fades or animates cannot be
     # the thing every other measurement is checked against.
     "VFX_ComposeRefBands":           ("trail",   "static",     "continuous"),
+    "VFX_ComposeRefParticles":       ("trail",   "static",     "continuous"),
     # THE trail (vc_trail.inl). One entry per PRESET rather than one per source
     # file: the presets are what a reader compares, and hiding the choice behind
     # a tuning knob is what let a stale `strandtrail_style` silently render the
