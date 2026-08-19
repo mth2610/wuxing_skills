@@ -137,8 +137,11 @@ vec3 toneMapScene(vec3 x) {
     // (0 reversals -> 59). "Bit-identical below peak 1" and "monotone through the shoulder"
     // are therefore mutually exclusive, and this file now chooses monotone.
     //
-    // THE PRICE, STATED PLAINLY: rlvk's `tonemap_shoulder` asserts bit-identity below
-    // peak 1 and above peak 9, and it now FAILS by design. Every material below the
+    // THE PRICE, STATED PLAINLY. (STALE CLAIM CORRECTED 19/08/2026: this used to say
+    // rlvk's `tonemap_shoulder` "now FAILS by design". It does not — the scenario was
+    // rewritten to assert MONOTONICITY instead of bit-identity, and it PASSES. A comment
+    // telling readers a suite is red on purpose is how a suite stops being read at all.)
+    // Every material below the
     // shoulder shifts by up to ~0.03 at u_hueRestore = 1.0 (~0.015, about 4/255, at the
     // shipping 0.5-0.6), and a hot core reaches white more completely. That is a
     // whole-scene tone-map change, taken deliberately by the owner rather than a bounded
