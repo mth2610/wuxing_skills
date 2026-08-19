@@ -76,6 +76,14 @@ static int lutStrengthLoc;
 static int lutParamsLoc;
 static int lutSizeLoc;
 static float s_lutStrengthOverride = 0.0f; // tuning.cfg -> lut_strength, 0 = caller's
+/* The display-referred grade, live. These were the only post knobs with no
+   tunable, which is why the pair below had never been re-examined: `saturation`
+   ships at 1.28 with the note "ACES desaturates — lift richness back", written
+   BEFORE the hue-preserving tone map existed (§12.1). Two corrections for the
+   same loss are now stacked, and neither could be moved without a rebuild.
+   0 = use the caller's value, same convention as the bloom overrides. */
+static float s_contrastOverride = 0.0f;
+static float s_saturationOverride = 0.0f;
 
 // Uniform locations — radial blur (E1a, lives in the composite shader)
 static int radialBlurEnabledLoc;
@@ -597,6 +605,8 @@ void PostFX_Draw(const PostFXConfig *config)
     Tuning_RegisterFloat("postfx_fxaa", &s_fxaa, 1.0f);
     Tuning_RegisterFloat("bloom_karis", &s_bloomKaris, 1.0f);
     Tuning_RegisterFloat("lut_strength", &s_lutStrengthOverride, 0.0f);
+    Tuning_RegisterFloat("postfx_contrast", &s_contrastOverride, 0.0f);
+    Tuning_RegisterFloat("postfx_saturation", &s_saturationOverride, 0.0f);
     s_tunablesReg = true;
   }
   config = &local;
@@ -719,10 +729,14 @@ void PostFX_Draw(const PostFXConfig *config)
   SetShaderValue(compositeShader, vignetteSoftnessLoc, &config->vignetteSoftness, SHADER_UNIFORM_FLOAT);
 
   float colorGradeEnabledVal = (float)(config->colorGradeEnabled || s_monochrome > 0.0f);
-  float saturationVal = config->colorGradeEnabled ? config->saturation : 1.0f;
+  float saturationVal = config->colorGradeEnabled
+                            ? ((s_saturationOverride > 0.0f) ? s_saturationOverride
+                                                             : config->saturation)
+                            : 1.0f;
   saturationVal *= (1.0f - s_monochrome);
   SetShaderValue(compositeShader, colorGradeEnabledLoc, &colorGradeEnabledVal, SHADER_UNIFORM_FLOAT);
-  SetShaderValue(compositeShader, contrastLoc, &config->contrast, SHADER_UNIFORM_FLOAT);
+  float contrastVal = (s_contrastOverride > 0.0f) ? s_contrastOverride : config->contrast;
+  SetShaderValue(compositeShader, contrastLoc, &contrastVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, saturationLoc, &saturationVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, colorTintLoc, &config->colorTint, SHADER_UNIFORM_VEC3);
 
