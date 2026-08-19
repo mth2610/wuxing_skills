@@ -469,6 +469,76 @@ If implemented:
 Auto exposure is complete only after rapid cuts between dark and bright fixtures show no flashing,
 pumping, or spell-caused exposure oscillation.
 
+### 7.6 The radiance anchor — what a number in the scene target MEANS
+
+Measured 19/08/2026 with the HDR probe wired into `SceneTargets_End`
+(`WUXING_VFX_PROBE_PREFIX` / `_FRAME`, `core/render_target_probe.h`), which dumps the
+scene target as float32 RGBA **before** the tone map. Until this existed there was no
+answer to "what radiance is this effect actually emitting", so every brightness decision
+in the project was made by eye against one background — which is most of why authoring for
+bright scenery has cost what it has.
+
+**The probe is trustworthy for levels.** Ground-truthed against known clears: `0x050505`
+reads back 0.0197, `0x2E2E2E` 0.1804, `0xFFFFFF` 1.0001, with p99 exactly the clear value
+in all three. So the 8-bit background lands in the HDR target **1:1 linear, no sRGB
+conversion**. (The header's own "R16F CPU readback is diagnostic only" warning is
+over-cautious for level questions; it may still hold for fine HDR *shape*.)
+
+#### The scale
+
+| band | scene-referred | what lives there |
+|---|---|---|
+| night arena background | **0.02** | the shipping maps |
+| mid / overcast | **0.18** | §8.1's mid tile |
+| a white surface, full daylight | **1.00** | the ceiling of ordinary scenery |
+| bloom threshold (shipping) | **1.25** | deliberately above that ceiling — §7.3 |
+| tone map's white-hot band | **5.0 → 12.0** | where `toneMapScene` desaturates a core to white |
+
+Ordinary scenery therefore occupies `[0.02, 1.0]`, and **1.0 is the number every authoring
+decision should be judged against** — not 255, not "looks bright".
+
+#### What the shipping effects actually emit (dark background, warmup 90)
+
+| | p99 | p99.9 | max | >1.0 | >4.0 |
+|---|---|---|---|---|---|
+| FLAME VOLUME | 0.53 | 2.12 | 2.68 | 0.72% | 0% |
+| VOLUME TRAIL | 1.25 | 1.74 | 3.34 | 1.93% | 0% |
+| ENERGY ORB | 1.29 | 2.49 | 26.72 | 6.42% | 0.05% |
+
+**Two findings fall straight out of this table, and neither was visible before.**
+
+**1. A flame's bright body is DIMMER THAN A WHITE WALL.** FLAME's p99 is 0.53 — half the
+radiance of a 1.0 background. It cannot separate from bright scenery by luminance at all;
+everything it has left is chroma and the §5.7 darkening budget. That is not an authoring
+mistake to be fixed by turning it up — it is the quantitative form of §5.5, and it explains
+why `detail` collapses ~3x from dark to white on all three fixtures (§11b baseline) while
+`cover%` barely moves.
+
+**2. Two of the three flagship effects never reach the tone map's own white-hot band.**
+`toneMapScene` desaturates toward white over `smoothstep(5.0, 12.0, peak)` (§12.1). FLAME
+peaks at 2.68 and TRAIL at 3.34 — **neither ever enters it**. Only the ORB (26.72) does.
+So the curve was tuned for a range two of the three effects are not authored in, and no
+amount of tuning either one in isolation could reveal that.
+
+#### The anchor, as authoring targets
+
+Derived from the measurements above, not invented:
+
+| layer | target | why |
+|---|---|---|
+| BODY | **0.3 – 1.0** | reads on dark scenery; on bright it must earn its place by coverage and darkening, never by brightness |
+| CORONA | **1.5 – 2.5** | clears the 1.25 threshold, so it blooms against **any** background |
+| CORE | **5 – 12** | enters the tone map's white-hot band; below 5 a core cannot read as hot no matter how saturated |
+
+An effect with no pixel above 1.25 will not bloom on a white background, and one with no
+pixel above 5.0 has no white-hot core — both are now checkable before anyone renders a
+frame, which is the whole point of writing the scale down.
+
+> [!NOTE]
+> **(project convention):** state an effect's intended band in its composer, and check it
+> with the probe rather than by eye. The three rows above are the measured reference, not a
+> ceiling — an effect may deliberately sit outside them, but it should say so.
+
 ## 8. Objective acceptance oracle
 
 ### 8.1 Test chart

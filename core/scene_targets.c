@@ -26,6 +26,7 @@
  */
 #include "core/scene_targets.h"
 #include "core/vfx_render.h"
+#include "core/render_target_probe.h"
 #include "rlgl.h"
 #include <math.h>
 #include <string.h>
@@ -351,9 +352,19 @@ void SceneTargets_Begin(void)
   s_softDepthRegionValid = false;
 }
 
+/* Frame index for the opt-in HDR probe (WUXING_VFX_PROBE_PREFIX/_FRAME). The
+ * scene target is the ONE place scene-referred radiance can still be read
+ * before the tone map turns it into a display value, and nothing was calling
+ * the probe — so "what radiance is this effect actually emitting" had no
+ * answer, and every brightness decision was made by eye. */
+static int s_probeFrame = 0;
+
 void SceneTargets_End(void)
 {
   EndTextureMode();
+  if (RenderTargetProbe_MatchesFrame(s_probeFrame))
+    RenderTargetProbe_Dump(renderTex, "scene", true);
+  s_probeFrame++;
 }
 
 // Both "layers" are the scene target. Kept as distinct entry points so call
