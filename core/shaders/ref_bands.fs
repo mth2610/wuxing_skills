@@ -13,6 +13,12 @@
 // contain N. Anything else is the pipeline, and there is nowhere else to look.
 
 uniform vec3 u_radiance;   // scene-referred, may exceed 1.0 — that is the point
+// Coverage, which selects WHICH blend law this patch is a reference for:
+//   1.0  additive row      — rgb goes in whole, alpha is irrelevant to the blend
+//   a<1  premultiplied row — rgb is pre-scaled by a, so the hardware computes
+//                            src + dst*(1-a), i.e. §5.2's law, and the expected
+//                            scene value is exactly radiance*a + background*(1-a)
+uniform float u_coverage;
 
 out vec4 finalColor;
 
@@ -20,5 +26,5 @@ void main() {
     // Alpha 1.0 by the same rule distortion.fs follows: whatever writes the
     // scene target defines its own alpha rather than leaving it undefined
     // (core/scene_targets.h).
-    finalColor = vec4(u_radiance, 1.0);
+    finalColor = vec4(u_radiance * u_coverage, u_coverage);
 }

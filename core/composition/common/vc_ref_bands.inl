@@ -44,6 +44,12 @@ static Vector3 s_refBandsPos = {0};
 static float s_refBandsScale = 1.0f;
 static Shader s_refBandsShader = {0};
 static int   s_refBandsRadianceLoc = -1;
+static int   s_refBandsCoverageLoc = -1;
+
+/* The premultiplied row's coverage. 0.5 on purpose: it is the one value where
+ * "src + dst*(1-a)" and a naive "src + dst" and a naive "mix(dst,src,a)" all
+ * give DIFFERENT answers, so a wrong blend cannot pass by coincidence. */
+#define REF_BAND_COVERAGE 0.5f
 static bool  s_refBandsInit = false;
 
 /* Achromatic ON PURPOSE. A grey patch makes "the value changed" and "the hue
@@ -54,6 +60,7 @@ int VFX_ComposeRefBands(Vector3 pos, float scale)
     if (!s_refBandsInit) {
         s_refBandsShader = LoadShader(0, "core/shaders/ref_bands.fs");
         s_refBandsRadianceLoc = GetShaderLocation(s_refBandsShader, "u_radiance");
+        s_refBandsCoverageLoc = GetShaderLocation(s_refBandsShader, "u_coverage");
         s_refBandsInit = true;
     }
     s_refBandsPos = pos;
@@ -86,36 +93,54 @@ void VC_RefBands_Draw3D(Camera3D cam)
     const float h = 0.45f * s_refBandsScale;   /* half-height              */
     const float pitch = 0.50f * s_refBandsScale;
 
-    VFXRenderScope scope =
-        VFXRender_BeginDraw(VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
-    BeginShaderMode(s_refBandsShader);
-
-    for (int i = 0; i < REF_BAND_COUNT; i++)
+    /* TWO ROWS, one per blend law in §5.2. Same eight levels, so the rows are
+       directly comparable and the only variable is how the fragment reaches the
+       target.
+         top    ADDITIVE       coverage 1.0 -> scene = level + background
+         bottom PREMULTIPLIED  coverage 0.5 -> scene = level*0.5 + background*0.5
+       The second expectation is the blend law written as arithmetic; if the
+       hardware or the backend does anything else, the number says so. */
+    for (int row = 0; row < 2; row++)
     {
-        float lvl = k_refBandLevel[i];
-        float rgb[3] = {lvl, lvl, lvl};
-        if (s_refBandsRadianceLoc >= 0)
-            SetShaderValue(s_refBandsShader, s_refBandsRadianceLoc, rgb, SHADER_UNIFORM_VEC3);
-        /* One patch per draw: the uniform changes between them, so they cannot
-           share a batch. Flushed explicitly rather than trusting the batcher —
-           an unflushed uniform change is how every patch ends up the same
-           value and the whole instrument silently reads as a pass. */
-        rlDrawRenderBatchActive();
+        const bool additive = (row == 0);
+        const float cov = additive ? 1.0f : REF_BAND_COVERAGE;
+        const float yOff = additive ? (h * 1.15f) : (-h * 1.15f);
 
-        float off = ((float)i - (float)(REF_BAND_COUNT - 1) * 0.5f) * pitch;
-        Vector3 c = Vector3Add(s_refBandsPos, Vector3Scale(right, off));
-        Vector3 rw = Vector3Scale(right, w), uh = Vector3Scale(up, h);
+        VFXRenderScope scope = VFXRender_BeginDraw(
+            VFX_RENDER_PASS_EMISSION,
+            additive ? VFX_SURFACE_ADDITIVE : VFX_SURFACE_PREMULTIPLIED, false);
+        BeginShaderMode(s_refBandsShader);
 
-        rlBegin(RL_QUADS);
-        rlColor4ub(255, 255, 255, 255);   /* unused by the shader; kept legal */
-        rlTexCoord2f(0.0f, 0.0f); rlVertex3f(c.x - rw.x - uh.x, c.y - rw.y - uh.y, c.z - rw.z - uh.z);
-        rlTexCoord2f(1.0f, 0.0f); rlVertex3f(c.x + rw.x - uh.x, c.y + rw.y - uh.y, c.z + rw.z - uh.z);
-        rlTexCoord2f(1.0f, 1.0f); rlVertex3f(c.x + rw.x + uh.x, c.y + rw.y + uh.y, c.z + rw.z + uh.z);
-        rlTexCoord2f(0.0f, 1.0f); rlVertex3f(c.x - rw.x + uh.x, c.y - rw.y + uh.y, c.z - rw.z + uh.z);
-        rlEnd();
-        rlDrawRenderBatchActive();
+        for (int i = 0; i < REF_BAND_COUNT; i++)
+        {
+            float lvl = k_refBandLevel[i];
+            float rgb[3] = {lvl, lvl, lvl};
+            if (s_refBandsRadianceLoc >= 0)
+                SetShaderValue(s_refBandsShader, s_refBandsRadianceLoc, rgb, SHADER_UNIFORM_VEC3);
+            if (s_refBandsCoverageLoc >= 0)
+                SetShaderValue(s_refBandsShader, s_refBandsCoverageLoc, &cov, SHADER_UNIFORM_FLOAT);
+            /* One patch per draw: the uniform changes between them, so they cannot
+               share a batch. Flushed explicitly rather than trusting the batcher —
+               an unflushed uniform change is how every patch ends up the same
+               value and the whole instrument silently reads as a pass. */
+            rlDrawRenderBatchActive();
+
+            float off = ((float)i - (float)(REF_BAND_COUNT - 1) * 0.5f) * pitch;
+            Vector3 c = Vector3Add(s_refBandsPos, Vector3Scale(right, off));
+            c = Vector3Add(c, Vector3Scale(up, yOff));
+            Vector3 rw = Vector3Scale(right, w), uh = Vector3Scale(up, h * 0.55f);
+
+            rlBegin(RL_QUADS);
+            rlColor4ub(255, 255, 255, 255);   /* unused by the shader; kept legal */
+            rlTexCoord2f(0.0f, 0.0f); rlVertex3f(c.x - rw.x - uh.x, c.y - rw.y - uh.y, c.z - rw.z - uh.z);
+            rlTexCoord2f(1.0f, 0.0f); rlVertex3f(c.x + rw.x - uh.x, c.y + rw.y - uh.y, c.z + rw.z - uh.z);
+            rlTexCoord2f(1.0f, 1.0f); rlVertex3f(c.x + rw.x + uh.x, c.y + rw.y + uh.y, c.z + rw.z + uh.z);
+            rlTexCoord2f(0.0f, 1.0f); rlVertex3f(c.x - rw.x + uh.x, c.y - rw.y + uh.y, c.z - rw.z + uh.z);
+            rlEnd();
+            rlDrawRenderBatchActive();
+        }
+
+        EndShaderMode();
+        VFXRender_EndDraw(&scope);
     }
-
-    EndShaderMode();
-    VFXRender_EndDraw(&scope);
 }

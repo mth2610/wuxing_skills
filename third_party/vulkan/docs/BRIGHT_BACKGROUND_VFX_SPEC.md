@@ -655,6 +655,25 @@ The entire top of the radiance scale collapses to one value.
 is the simpler reason nothing visible changed: above scene 2.0 there is no display range
 left to change into.
 
+**Result 3 — BOTH blend laws hold, at the real draw site.** A second row was added at
+coverage 0.5, drawn `VFX_SURFACE_PREMULTIPLIED`. Measured against arithmetic on a mid
+(0.1804) background, all sixteen patches across both rows:
+
+| law | expectation | worst error |
+|---|---|---|
+| additive | `scene = level + background` | 0.08% |
+| premultiplied | `scene = level*0.5 + background*0.5` | 0.21% |
+
+The second line is §5.2's `src + dst*(1-a)` written as arithmetic and checked. `bright_vfx`
+already pins this, but in its own analogue of the pipeline; this pins it through VFXRender's
+policy into the actual scene target, which is where effects live.
+
+Coverage 0.5 is chosen because it is the one value where the correct law, a naive
+`src + dst`, and a naive `mix(dst, src, a)` all give different answers — a wrong blend
+cannot pass by coincidence. A pleasing confirmation falls out of it: the premultiplied patch
+at level 0.18 over a 0.18 background is invisible, because `0.18*0.5 + 0.18*0.5 = 0.18`
+exactly. If that patch is ever visible, the blend is wrong.
+
 **FIXED, and measured again.** `highlightTint` went (1.10, 1.02, 0.90) → (1.00, 0.96, 0.90):
 the warmth now comes from lowering G and B rather than raising R, so the tint redistributes
 colour instead of amplifying it. R's clip moved from scene-referred **2.0 to 5.0** — the
