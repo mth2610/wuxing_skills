@@ -18,20 +18,40 @@ static int Has(const char *needle)
     return 0;
 }
 
+static int g_failures = 0;
+
+/* Per-needle reporting. This suite used to accumulate a counter and print one
+ * bare "FAIL", so finding out WHICH claim broke meant re-deriving every needle
+ * by hand — which is how it sat red for a week. */
+static void Require(const char *needle, const char *why)
+{
+    if (Has(needle)) printf("PASS: %s\n", why);
+    else { printf("FAIL: %s  [missing: %s]\n", why, needle); g_failures++; }
+}
+static void Forbid(const char *needle, const char *why)
+{
+    if (!Has(needle)) printf("PASS: %s\n", why);
+    else { printf("FAIL: %s  [still present: %s]\n", why, needle); g_failures++; }
+}
+
 int main(void)
 {
-    int bad = 0;
-    bad += !Has("ENERGY_BURST_FIELD_INSTANCES 6");
-    bad += !Has("EnergyBurstField_Spawn(pos, matId, scale, ity);");
-    bad += !Has("VFXLayeredAnnulus_DrawBody");
-    bad += !Has("VFXLayeredAnnulus_DrawEmission");
-    bad += !Has("WUXING_VFX_FIELD_DEBUG_LAYER");
-    bad += !Has(".render.blendMode = VFX_BLEND_ALPHA");
-    bad += !Has(".render.contrastProfile = VFX_CONTRAST_ENERGY");
-    bad += Has("ParticleConfig transitionBody =");
-    bad += Has("ParticleConfig coreRadiance =");
-    bad += Has("Random01() <");
-    puts(bad ? "energy burst semantic layers: FAIL"
-             : "energy burst semantic layers: PASS");
-    return bad;
+    printf("=== energy burst: matter and radiance are populations ===\n");
+    /* The five layered-annulus claims that used to open this suite went with
+     * core/vfx_layered_field (deleted 19/08/2026): that system was never wired
+     * into the build, and vc_energy_burst.inl was rewritten off it on 11/08.
+     * What remains is what the burst still actually guarantees. */
+    /* PREMULTIPLIED, not ALPHA. Changed deliberately by e7f5833 / 92df536
+     * ("the bands were the BLEND MODE — pure light belongs in emission"): pure
+     * light composited with straight alpha is what produced the banding. This
+     * assertion asked for ALPHA for a week after the fix landed, i.e. it was
+     * defending the defect. */
+    Require(".render.blendMode = VFX_BLEND_PREMULTIPLIED",
+            "emission composites premultiplied, not straight-alpha");
+    Require(".render.contrastProfile = VFX_CONTRAST_ENERGY", "and carries the energy profile");
+    Forbid("ParticleConfig transitionBody =", "no hand-rolled transition body");
+    Forbid("ParticleConfig coreRadiance =", "no hand-rolled core radiance");
+    Forbid("Random01() <", "no per-frame coin flip in the layer split");
+    printf("---- %d failures\n", g_failures);
+    return g_failures ? 1 : 0;
 }

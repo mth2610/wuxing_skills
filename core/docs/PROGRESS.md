@@ -1,8 +1,66 @@
 # PROGRESS — VFX contrast và strand trail
 
-**Cập nhật:** 10/08/2026
+**Cập nhật:** 19/08/2026
 **Trạng thái:** **ĐÃ SỬA** — nguyên nhân gốc đã tìm ra và xác nhận bằng ảnh render.
 Nguyên nhân **không nằm ở rlvk**, không nằm ở shader, và không nằm ở màu.
+
+## 2026-08-19 — The five red suites were test rot, and the suite had stopped being a gate
+
+`run_core_tests.sh` had been reporting **70/75** with the same five names
+(`energy_burst_semantic_layers`, `tube_frame`, `uv_deform`,
+`vfx_layered_field_contract`, `volume_trail`). Proved pre-existing by running the suite in a
+detached worktree at HEAD: identical count, identical names, so none of it belonged to the
+uncommitted ShieldShell/tone-map work.
+
+**All five were the same defect, and none indicated a live bug.** These are source-grep
+contract tests, and the code they mirror was deliberately restructured underneath them:
+
+| suite | what rotted |
+|---|---|
+| `tube_frame`, `volume_trail` | greped `pm_sweep_legacy.inl` and `vc_ribbon_trail.inl`, both deleted by f44a6b2 on 10/08 — 107 commits earlier. `Has()` returns 0 on a missing file, so ~25 assertions cascaded red. |
+| `energy_burst` | required `.render.blendMode = VFX_BLEND_ALPHA` — the exact value e7f5833 changed to `PREMULTIPLIED` to kill the banding. **The test was defending the defect.** |
+| `uv_deform` | required `glass_shell.fs` to call the shared `calcFresnel`; d901486 deliberately gave it a local quartic, and glass_shell.fs:11 says why (that curve also drives wall alpha and the scene-through window — physics, which must not move when the rim is restyled). |
+| `vfx_layered_field` | required `core/vfx_layered_field.c` in CMakeLists. It was not there, no glob covers `core/*.c`, and `bodySupport` in `distortion.fs` **never existed at all**. |
+
+**The suite had already stopped working as a gate, and the docs prove it.** These reds are
+recorded five separate times across this file and two HANDOFF docs, phrased as "red before
+that session". Several sessions saw them, wrote them down, and moved on — which is the same
+end state as not having the tests.
+
+**Repaired**, each assertion re-pointed at what the current design actually guarantees rather
+than deleted wholesale: `tube_frame` 45 checks green (the sweep split three ways into
+`pm_tube`/`pm_capsule`/`pm_droplet`, each with its own copy of the transport frame);
+`volume_trail` 61 green (per-kind table count 5 → 6, the sixth being the flow map that came
+with the surface-profile migration — one more channel of the same surface, not a new
+parameter, so the "a seventh is the alarm" rule stands); `uv_deform` 62 green, with the
+fresnel check now asserted NEGATIVELY so a future "use the shared helper everywhere" cleanup
+goes red instead of silently recoupling styling to physics.
+
+**`core/vfx_layered_field` deleted** (module, shader, contract test) — never wired into the
+build, nothing referenced it, last touched 09/08, and `vc_energy_burst.inl` was rewritten off
+it on 11/08. An abandoned in-progress feature. `energy_burst_semantic_layers_test` was
+trimmed rather than deleted: the blend-mode, contrast-profile and three no-hand-rolled-
+particle assertions still protect live behaviour.
+
+### The new guard — `core/tests/contract_path_test.c`
+
+72 of 75 suites own a private copy of `FILE *f = fopen(path); if (!f) return 0;`. That has two
+failure modes, and the silent one is worse: a positive assertion goes red for the wrong
+reason, but a **negative** assertion (`!FileHas(dead_path, x)`) goes green forever while
+protecting nothing. Rewriting 72 helpers was the wrong trade, so one new suite reads every
+other suite and checks that each repo-relative path it names still resolves. It distinguishes
+haystacks from needles (a path in a later argument is something being searched FOR, e.g.
+`RequireNot(cmake, "core/lightning/lightning_trail.c", ...)`) and skips negated existence
+checks (`!FileExists("old.inl")` is correct precisely when the path is gone).
+
+Verified it detects rather than merely passes: run against pristine HEAD it flags all 10 dead
+uses. On first run against the working tree it caught **two suites that were passing green
+while protecting nothing** — `debris_shards` and `lightning_trail_contract` — neither of which
+appeared among the five reds.
+
+**Suite now 75/75.** It cannot tell whether a NEEDLE still means something — only a person
+can — but "the file moved" is now caught in one place, which is the failure this session
+spent its whole budget on.
 
 ## 2026-08-18i — The blotchy silhouette was my own symmetry, not the mesh
 

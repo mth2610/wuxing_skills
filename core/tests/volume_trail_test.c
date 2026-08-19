@@ -368,7 +368,9 @@ static void Test_MirrorMatchesTheSource(void)
 {
     const char *inl = "core/composition/common/vc_volume_trail.inl";
     const char *cmn = "core/composition/common/vc_common.inl";
-    const char *swp = "core/composition/common/vc_ribbon_trail.inl";
+    /* vc_ribbon_trail.inl was merged into the one data-described trail
+     * (f44a6b2, 10/08/2026). */
+    const char *swp = "core/composition/common/vc_trail.inl";
     const char *hdr = "core/composition/visual_composer.h";
 
     // The three columns, exactly as mirrored above.
@@ -376,7 +378,8 @@ static void Test_MirrorMatchesTheSource(void)
           "the noise column is the number this test mirrors");
     CHECK(FileHas(inl, "static const float k_volSwirl[VFX_VOLUME_KIND_COUNT] = {-2.60f, -0.55f, -4.20f};"),
           "so is the swirl column");
-    CHECK(FileHas(inl, "\"assets/textures/smoke_volume.png\","),
+    CHECK(FileHas(inl, "VFX_SURFACE_SMOKE_TUBE,") &&
+              FileHas("assets/vfx_surface_profiles.json", "smoke_volume.png"),
           "and the sheets are the purpose-built volume ones");
 
     // THE STRUCTURAL CLAIM OF P1, and the only mechanical way to state it: there
@@ -384,8 +387,8 @@ static void Test_MirrorMatchesTheSource(void)
     // textures they name, and the layer tables that hold them. A sixth is how a
     // parameter quietly becomes three implementations, and it arrives one
     // innocent field at a time (VFX_PLAN §4.1).
-    CHECK_MSG(CountIn(inl, "[VFX_VOLUME_KIND_COUNT]") == 5,
-              "exactly five per-kind tables — sheet path, texture, noise, swirl, layers",
+    CHECK_MSG(CountIn(inl, "[VFX_VOLUME_KIND_COUNT]") == 6,
+              "exactly six per-kind tables — surface id, sheet, flow map, noise, swirl, layers",
               "found %d", CountIn(inl, "[VFX_VOLUME_KIND_COUNT]"));
 
     // It REUSES the tube. This is the assertion the whole file exists under: the
@@ -470,7 +473,7 @@ static void Test_MirrorMatchesTheSource(void)
           "the swept trail now CALLS the shared ramp");
     CHECK(!FileHas(swp, "ColorGradient_AddStop(&s_sweptGrad[i], 0.00f, m->body);"),
           "and no longer contains a copy of it");
-    CHECK(FileHas(swp, "return VC_TrailNodesForLifetime(lifetime, SWEPT_SAMPLE_HZ);"),
+    CHECK(FileHas(swp, "return VC_TrailNodesForLifetime(lifetime, TrailMotionOf(kind)->sampleHz);"),
           "and calls the shared node arithmetic too");
 }
 

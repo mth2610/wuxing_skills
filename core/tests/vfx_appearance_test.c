@@ -178,9 +178,6 @@ int main(void)
               "VFX_ResolveBody"));
     CHECK(Has("core/trails/shaders/trail_deform.fs",
               "VFX_ResolveEmission"));
-    CHECK(Has("core/shaders/vfx_layered_annulus.fs",
-              "VFX_ResolvePremultiplied") ||
-          Has("core/shaders/vfx_layered_annulus.fs", "VFX_ResolveBody"));
     CHECK(Has("core/shaders/aura_shell.fs", "VFX_ResolveBody"));
     CHECK(Has("core/shaders/ground_aura.fs", "VFX_ResolveBody"));
     CHECK(Has("core/shaders/smoke_column.fs", "VFX_ResolveBody"));

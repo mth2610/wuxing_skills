@@ -605,9 +605,17 @@ static void Test_MirrorStillMatchesSource(void) {
         "and so is the old inline tile-or-stretch");
 
   // ── The other two consumers ──
-  CHECK(FileHas("core/shaders/glass_shell.fs", "calcFresnel(facingNormal, viewDir") &&
-            FileHas("core/shaders/glass_shell.fs", "u_emissionOnly"),
-        "the shield now uses a transparent shared-Fresnel glass shell");
+  // The shield migrated onto the shared glass shell — that half still holds. It
+  // does NOT use the shared calcFresnel(), and that is a decision, not a gap:
+  // glass_shell.fs's quartic also drives the wall alpha and the scene-through
+  // window (physics), which must not move when the rim is restyled — the reason
+  // is written at glass_shell.fs:11. Asserted NEGATIVELY so a later "use the
+  // shared helper everywhere" cleanup goes red here instead of silently
+  // recoupling styling to physics.
+  CHECK(FileHas("core/shaders/glass_shell.fs", "u_emissionOnly") &&
+            FileHas("core/shaders/glass_shell.fs", "float fresnel = fresnelX2 * fresnelX2;") &&
+            !FileHas("core/shaders/glass_shell.fs", "calcFresnel("),
+        "the shield uses the shared glass shell, with its OWN quartic fresnel");
   CHECK(!FileHasCode("core/composition/common/vc_shield_shell.inl", "SurfaceFlow_Apply") &&
             !FileHasCode("core/composition/common/vc_shield_shell.inl", "shield_shell.fs"),
         "the shield shell no longer owns a flow-map shader path");

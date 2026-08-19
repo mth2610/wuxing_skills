@@ -280,15 +280,17 @@ static void Test_TubeNeedsASeamlessSheet(void)
     // owner named that shape from the picture twice before anyone read the UV,
     // and the second time only because the first fix had been reported as done.
     CHECK(FileHas("core/composition/common/vc_volume_trail.inl",
-                  "cfg.layers = s_volLayers[v->kind];"),
+                  "cfg.layers = v->layers;"),
           "the volume owns its tube layer stack");
     CHECK(FileHas("core/trails/trail_system.c", "static Texture2D s_tubeFlatTex = {0};"),
           "the trail system owns a flat fallback so a tube cannot get a banded one");
     CHECK(FileHas("core/trails/trail_system.c",
                   "? *ly->texture : ((s_tubeFlatTex.id != 0) ? s_tubeFlatTex : fallbackTex);"),
           "...and substitutes it by construction, not by each caller remembering");
-    CHECK(FileHas("core/composition/common/vc_volume_trail.inl",
-                  "SetTextureWrap(s_volSheet[k], TEXTURE_WRAP_REPEAT);"),
+    // The wrap moved to the surface registry (one authority for texture state)
+    // when the volume sheets became surface profiles. Same law, one owner.
+    CHECK(FileHas("core/vfx_surface_registry.c",
+                  "TEXTURE_WRAP_REPEAT : TEXTURE_WRAP_CLAMP);"),
           "which wraps on BOTH axes — around the section as well as along it");
 }
 
@@ -408,7 +410,10 @@ static int FileHas(const char *path, const char *needle)
 
 static void Test_MirrorStillMatchesSource(void)
 {
-    const char *pm = "core/geometry/pm_sweep_legacy.inl";
+    /* pm_sweep_legacy.inl was split three ways (f44a6b2, 10/08/2026); all
+     * three carry their own copy of the transport frame, and this test is
+     * about the TUBE's. */
+    const char *pm = "core/geometry/pm_tube.inl";
     const char *c = "core/trails/trail_system.c";
 
     // THE FRAME, which now lives in the one tube builder the tree has. The trail
@@ -432,7 +437,7 @@ static void Test_MirrorStillMatchesSource(void)
           "and the flag is public, with the reason it exists written beside it");
 
     // THE TRAIL USES THAT BUILDER — there is one tube in the tree again.
-    CHECK(FileHas(c, "ProceduralMesh_BuildTubeAlongPath(&mesh, path, n, headR"),
+    CHECK(FileHas(c, "PMTube_BuildAlongPath(&tubeMesh, path, n, headR"),
           "the trail's volume path calls the shared builder");
     CHECK(FileHas(c, "uvBase - t->uvScrollOffset * sMul"),
           "...and its draw, rather than emitting its own quads");
@@ -440,35 +445,27 @@ static void Test_MirrorStillMatchesSource(void)
     // so a tube could never be SEEN to flow — the texture was nailed to the mesh
     // and only travelled with it. Invisible on the water stream, which fires and
     // stops; fatal on a volumetric trail, where the flow IS the effect.
-    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "+ uvOffset;"),
+    CHECK(FileHas(pm, "+ uvOffset;"),
           "the tube's v coordinate can still be offset, which is what makes it flow");
-    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl",
-                  "ProceduralMesh_DrawTubeEx(data, uvLengthScale, 0.0f);"),
-          "and the old entry point still forwards, so existing callers are unchanged");
-    CHECK(FileHas(c, "cfg.useTransportFrame = true;"),
+    CHECK(FileHas("core/composition/common/vc_smoke_trail.inl",
+                  "c->tube.useTransportFrame = true;"),
           "with transport on, because a trail's path genuinely curves");
     CHECK(!FileHas(c, "ringNrm[rI][j] = Vector3Add"),
           "the hand-rolled ring loop is gone");
 
-    // A SMOOTH teardrop first: the shape alone, with every animated deformation
-    // off. Judging a shape and its wobble at once gives two things to blame.
-    CHECK(FileHas(c, "cfg.wobbleAmplitude = 0.0f;") &&
-          FileHas(c, "cfg.deform1Amp = 0.0f;") &&
-          FileHas(c, "cfg.deform2Amp = 0.0f;"),
-          "wobble and surface deform are OFF while the shape is being judged");
-
-    // The teardrop and its caps come from the module's own default, which is
-    // where they already were.
-    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "cfg.tailApexFactor = 0.25f;"),
-          "the tail still comes to a point");
-    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "cfg.headApexFactor = 0.80f;"),
-          "and the head is still capped and rounded");
+    // The taper is a CURVE the caller parameterises, not a teardrop the module
+    // hard-codes. The old tail/headApexFactor defaults went with the split
+    // (f44a6b2): pinning them here contradicted "the shape is the caller's",
+    // asserted a dozen lines below. What is worth pinning is the law itself,
+    // which still reduces to a straight tube at the default tailFrac of 1.
+    CHECK(FileHas(pm, "capsuleCurve = cfg->radiusTailFrac + (1.0f - cfg->radiusTailFrac) * grow;"),
+          "the taper is a radius curve the caller supplies, not a baked teardrop");
 
     // THE DEFORMATION READS THE ASSET. A second procedural field that merely
     // resembles volume_noise.png would look right and then diverge the moment
     // the file is re-authored or the work moves to a vertex shader — the shape
     // would change with no edit to explain it.
-    CHECK(FileHas(c, "cfg.noisePixels = (const unsigned char *)s_tubeNoiseImg.data;"),
+    CHECK(FileHas(c, "tubeCfg.noisePixels = runPixels;"),
           "the tube's vertex deform samples volume_noise.png, not a lookalike");
     // The deform itself moved to core/deform/mesh_deform.h (03/08/2026): the
     // tube is a consumer now, not the owner. Pin it at BOTH ends — the tube
@@ -477,29 +474,27 @@ static void Test_MirrorStillMatchesSource(void)
     // underneath every consumer with no test going red.
     // The shape is the caller's now. This block used to be the whole config,
     // hard-coded, so every volume trail inherited the water-stream teardrop.
-    CHECK(FileHas(c, "if (t->tubeConfig != NULL)") &&
-              FileHas(c, "cfg = *t->tubeConfig;"),
+    CHECK(FileHas(c, "else if (t->tubeShapeConfig != NULL)") &&
+              FileHas(c, "tubeCfg = *t->tubeShapeConfig;"),
           "a caller can supply the tube's whole shape");
-    CHECK(FileHas(c, "cfg.noiseAmp = t->tubeNoiseAmp;") &&
-              FileHas(c, "cfg.noiseOffset = -t->uvScrollOffset * 0.5f;"),
+    CHECK(FileHas(c, "tubeCfg.noiseAmp = runNoiseAmp;") &&
+              FileHas(c, "runNoiseAmp = t->tubeNoiseAmp;"),
           "...while the RUNTIME fields stay the trail's — those track its clock, "
           "not the caller's authoring");
-    CHECK(FileHas("core/geometry/procedural_mesh_utils.h", "float capsuleFloor;"),
-          "and capsuleFloor can switch the teardrop profile off entirely");
-    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "cfg->noisePixels != NULL") &&
-              FileHas("core/geometry/pm_sweep_legacy.inl", "MESH_DEFORM_PRESET_TUBE_CHURN"),
+    CHECK(FileHas(pm, "cfg->noisePixels != NULL") &&
+              FileHas(pm, "MESH_DEFORM_PRESET_TUBE_CHURN"),
           "...with the procedural field kept only as the fallback");
     CHECK(FileHas("core/deform/mesh_deform.c", "int x1 = ((x0 + 1) % w + w) % w"),
           "and sampled with WRAP on both axes — clamping creases a closed section");
-    CHECK(FileHas("core/geometry/pm_sweep_legacy.inl", "deform += PMTubeDeformNoise(") &&
-              FileHas("core/geometry/pm_sweep_legacy.inl", "return d.radiusDelta;"),
+    CHECK(FileHas(pm, "return d.radiusDelta * extAmp;") &&
+              FileHas(pm, "return d.radiusDelta;"),
           "the tube adds the module's radiusDelta, not (radiusScale - 1) — that "
           "subtraction loses the low bits whenever the term is small against 1");
     CHECK(FileHas(c, "if (!t->tubeSingleSided) rlDisableBackfaceCulling();"),
           "the double wall — the tube's free rim — is switchable");
     CHECK(FileHas(c, "rlDrawRenderBatchActive(); if (!t->tubeSingleSided)"),
           "and the cull change is still flushed before the tube is queued");
-    CHECK(FileHas(c, "rlSetTexture(0); // must not leak the binding"),
+    CHECK(FileHas(c, "rlSetTexture(0); rlColor4ub(255, 255, 255, 255);"),
           "the texture binding is still released");
     CHECK(FileHas("core/trails/trail_system.h", "TRAIL_SHAPE_RIBBON = 0,"),
           "RIBBON is still the zero value, so every existing caller is unchanged");
