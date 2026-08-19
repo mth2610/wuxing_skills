@@ -222,8 +222,22 @@ static const ColorGradient *VolumeTrail_Ramp(VFX_VolumeKind kind, VC_MaterialId 
 // Per-kind only in `.texture`: three tables that differ in one pointer, because
 // TrailLayer holds the sheet and a trail holds one layer array.
 static TrailLayer s_volLayers[VFX_VOLUME_KIND_COUNT][2] = {
-    {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},
-     {.widthMul = 1.00f, .alphaMul = 0.46f, .whiten = 0.08f, .scrollMul = 1.00f, .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_ENERGY]}},
+    /* ENERGY, RAISED 19/08/2026 (0.16/0.46 -> 0.35/1.00). The old budget was
+     * capped by "1.00 is already full white", which is LDR reasoning: in this
+     * pipeline 1.00 scene-referred tone-maps to 0.80 display and display white
+     * is not reached until ~5.5 (BRIGHT_BACKGROUND_VFX_SPEC.md §7.6). The trail
+     * was therefore authored DIMMER THAN THE WHITE BACKGROUND it has to read
+     * against. Measured on white: structure 0.076 -> 0.217, detail 0.049 ->
+     * 0.099, chroma 0.609 -> 0.875, and the dark->white detail collapse fell
+     * from 62% to 12%. It costs ~12% of detail on dark, which is the trade the
+     * owner accepted.
+     *
+     * SMOKE and FIRE below are deliberately UNCHANGED: smoke occludes with
+     * straight alpha, so the additive-budget argument does not apply to it at
+     * all, and fire is additive but was not measured. Same premise, but a
+     * blanket multiply is what this whole exercise exists to stop. */
+    {{.widthMul = 1.30f, .alphaMul = 0.35f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},
+     {.widthMul = 1.00f, .alphaMul = 1.00f, .whiten = 0.08f, .scrollMul = 1.00f, .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_ENERGY]}},
     {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},
      {.widthMul = 1.00f, .alphaMul = 0.46f, .whiten = 0.08f, .scrollMul = 1.00f, .headAlphaPow = 0.0f, .texture = &s_volSheet[VOL_SMOKE]}},
     {{.widthMul = 1.30f, .alphaMul = 0.16f, .whiten = 0.00f, .scrollMul = 0.55f, .headAlphaPow = 0.0f, .texture = NULL},

@@ -63,8 +63,11 @@ static const char *k_volSheetPath[VOL_KIND_COUNT] = {
 };
 
 // The layer stack, as authored: {widthMul, alphaMul, whiten, scrollMul}.
+// These mirror the ENERGY kind specifically. SMOKE and FIRE still carry the
+// pre-19/08 0.16/0.46 — smoke occludes with straight alpha so the additive
+// argument never applied to it, and fire is additive but has not been measured.
 static const float k_layerWidth[2]  = {1.30f, 1.00f};
-static const float k_layerAlpha[2]  = {0.16f, 0.46f};
+static const float k_layerAlpha[2]  = {0.35f, 1.00f};
 static const float k_layerScroll[2] = {0.55f, 1.00f};
 
 // GFX_UNLIT = 0, GFX_LOW = 1, GFX_MED = 2, GFX_HIGH = 3 (core/gfx_quality.h)
@@ -270,14 +273,36 @@ static void Test_TierLadderOnlyClampsDown(void)
 static void Test_AdditiveBudget(void)
 {
     // These layers OVERLAP — the body sits inside the shell — and they are
-    // additive, so the frame buffer sees their SUM. 1.00 is already full white,
-    // and the effective ceiling is lower still because E1's streak bloom lifts
-    // anything near the threshold. A body that clips has no recoverable texture
-    // however good the sheet is (core/docs/LANDMINES.md, 29/07).
+    // additive, so the target sees their SUM. What that sum may be is the
+    // question this block used to get wrong.
+    //
+    // IT USED TO CAP AT 1.0 BECAUSE "1.00 is already full white". That is true
+    // of an 8-bit framebuffer and false of this one. Scene-referred 1.00
+    // tone-maps to 0.80 display through ACES, and display white is not reached
+    // until ~5.5 (BRIGHT_BACKGROUND_VFX_SPEC.md §7.6, measured). The cap held
+    // the trail BELOW A WHITE BACKGROUND — 0.62 summed, tone-mapping to 0.68
+    // against a background's 0.80 — so on bright scenery it had no luminance
+    // left to separate with, and every attempt to fix that went into the sheet,
+    // the noise and the shader, none of which was the cause.
+    //
+    // The floor is now the real constraint and it points the OTHER WAY: an
+    // effect authored below the background cannot read against it. Measured at
+    // 0.35/1.00 through the scene-target probe: p99 2.22, peak 6.50, i.e. the
+    // corona sits in §7.6's 1.5-2.5 band and the hottest sliver just enters the
+    // white-hot 5.5-12. On white that moved structure 0.076 -> 0.217 and detail
+    // 0.049 -> 0.099.
     float sum = k_layerAlpha[0] + k_layerAlpha[1];
-    CHECK_MSG(sum < 1.0f, "the two layers sum under 1.0 through the body",
+    CHECK_MSG(sum > 1.0f,
+              "the body is authored ABOVE 1.0 — it is HDR, and a white "
+              "background is itself 1.0",
               "%.2f", sum);
-    CHECK_MSG(sum < 0.75f, "...with headroom under the practical bloom ceiling",
+    // The upper bound protects what the old cap was really after: the BODY as a
+    // whole must not sit in display white, or its texture is unrecoverable
+    // however good the sheet is (core/docs/LANDMINES.md, 29/07). 1.35 measured
+    // a p99 of 2.22, so the body reaches display white somewhere near a sum of
+    // 3.3; 2.5 keeps a margin without pretending the mapping is exact.
+    CHECK_MSG(sum < 2.5f,
+              "...but not so far that the BODY itself clips to display white",
               "%.2f", sum);
 
     // The shell is the WIDER and FAINTER of the two, or it is a second body.

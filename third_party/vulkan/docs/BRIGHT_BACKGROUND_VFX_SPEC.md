@@ -921,11 +921,11 @@ Warmup 90, the middle of each fixture's life:
 | | white | 1.604 | 1.15 | 93.4 | 0.118 | 0.017 | 0.578 | 0.285 |
 | | warm | 1.479 | 0.61 | 61.4 | 0.181 | 0.021 | 0.747 | 0.120 |
 | | cool | 1.601 | 1.31 | 21.8 | 0.142 | 0.022 | 0.470 | 0.496 |
-| VOLUME TRAIL (34) | dark | 6.056 | 6.00 | 0.0 | 0.277 | 0.129 | 0.800 | 0.804 |
-| | mid | 6.141 | 6.00 | 3.2 | 0.217 | 0.095 | 0.780 | 0.606 |
-| | white | 6.026 | 5.98 | 99.9 | 0.076 | 0.049 | 0.609 | 0.439 |
-| | warm | 5.992 | 5.23 | 99.9 | 0.100 | 0.053 | 0.838 | 0.185 |
-| | cool | 6.061 | 5.99 | 56.5 | 0.104 | 0.049 | 0.501 | 0.591 |
+| VOLUME TRAIL (34) † | dark | 6.368 | 6.06 | 0.0 | 0.243 | 0.113 | 0.871 | 0.873 |
+| | mid | 7.712 | 6.21 | 1.9 | 0.228 | 0.091 | 0.853 | 0.565 |
+| | white | 6.097 | 6.00 | 99.8 | 0.217 | 0.099 | 0.875 | 0.696 |
+| | warm | 6.038 | 5.43 | 99.0 | 0.213 | 0.092 | 0.886 | 0.251 |
+| | cool | 6.880 | 6.04 | 71.3 | 0.214 | 0.086 | 0.870 | 0.729 |
 | ENERGY ORB (11) | dark | 10.174 | 10.14 | 0.0 | 0.160 | 0.053 | 0.854 | 0.931 |
 | | mid | 10.171 | 10.14 | 0.0 | 0.118 | 0.026 | 0.818 | 0.722 |
 | | white | 10.160 | 10.10 | 99.6 | 0.068 | 0.030 | 0.684 | 0.465 |
@@ -947,6 +947,13 @@ Warmup 90, the middle of each fixture's life:
 > **Use FLAME VOLUME + VOLUME TRAIL for any bit-exact comparison.** ENERGY ORB stays in
 > the table as a level reference, but a difference under roughly 0.01 chroma or 2 points
 > of `darken%` on it means nothing.
+
+† **VOLUME TRAIL's rows were re-baselined on 19/08/2026** when its ENERGY layers were
+raised out of the LDR cap (0.16/0.46 → 0.35/1.00, see the survey below). The pre-change
+row read `white 6.026 / 5.98 / 99.9 / 0.076 / 0.049 / 0.609 / 0.439`; keep it in mind only
+as the before-picture, never as a target. FLAME VOLUME and ENERGY ORB are untouched, and
+FLAME reproduced every digit across that change, which is what proved the edit was scoped
+to the one kind it named.
 
 `autotest_output/` is gitignored, so the captures themselves do not survive a clean — these
 rows are the durable record, and each run's `config.txt` states the pin, the binary
