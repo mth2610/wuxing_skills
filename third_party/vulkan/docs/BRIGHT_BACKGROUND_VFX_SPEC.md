@@ -743,6 +743,22 @@ to `src`, so the particle COVERS the bright background with its own colour; wher
 falls to zero it is `src + dst`, so the skirt still adds light. That is the entire reason to
 have a premultiplied mode, and this codebase has had one all along.
 
+#### The project's blend policy
+
+Stated by the owner after the measurement above, and it matches it:
+
+| blend | when |
+|---|---|
+| **premultiplied** | the default choice for anything that EMITS — covers a bright background and adds light in one draw |
+| **additive** | the exception: sparse, light-only effects with no body to speak of |
+| **alpha** | only for effects that do NOT glow |
+
+Surveyed 19/08/2026 across `core/composition` and `skills`, **the tree is the inverse of
+that policy: 20 additive, 8 alpha, 4 premultiplied.** `ParticleSystem_SpawnGlow` now emits
+premultiplied, so anything built on the recipe follows it; the existing 20 are per-effect
+work, because each migration changes appearance and has to be measured (§11b) rather than
+done in bulk.
+
 > [!CAUTION]
 > **The engine default is `VFX_BLEND_ALPHA` (zero), which is neither.** So a particle that
 > declares nothing is neither emissive nor premultiplied — it occludes and gets lit. Of the

@@ -308,28 +308,33 @@ void UnloadParticleSystem(void);
  * Created on first use; owned by the particle system, valid until shutdown. */
 Texture2D ParticleSystem_GlowSprite(void);
 
-/* SPAWN A GLOWING PARTICLE — the whole recipe, not just the hot bit.
+/* SPAWN A GLOWING PARTICLE — ONE draw, premultiplied.
  *
- * A glowing particle is TWO particles and it took a while to establish why.
- * Post-process bloom spreads in proportion to the SIZE of what feeds it: a core
- * a few pixels across is sub-pixel by the third pyramid level, so the deep
- * levels that would carry a wide haze receive nothing. Measured on REF
- * PARTICLES, switching bloom off entirely changes the frame by 0.09/255 — the
- * glow you see around a spark is DRAWN, not post-processed.
+ * This used to spawn two: an additive core plus a large faint halo, because
+ * post-process bloom cannot spread from a source a few pixels across (measured:
+ * switching bloom off changes the frame by 0.09/255, so the glow around a spark
+ * is DRAWN, not post-processed).
  *
- * So this spawns `core` as given, then derives its halo companion:
- *     radius x 4.2      big enough to read as light around the core
- *     alpha   x 0.24     faint; it is atmosphere, not a second core
- *     boost   x 0.30     ditto — a bright halo ERASES the core it frames (§7.6c)
- *     sprite  = ParticleSystem_GlowSprite(), never the core's spark sprite:
- *               a Gaussian scaled up reads as a disc with an edge.
+ * Measured again with the blend the rest of this project already had, a single
+ * premultiplied particle beats that pair outright:
  *
- * Everything else — position, velocity, lifetime, curves, blend, colour — is
- * inherited, so the pair moves and dies as one thing.
+ *     structure                    draws   |d| white   |d| dark
+ *     one premultiplied particle     1       0.801      ~1.65
+ *     additive core + halo           2       0.132      ~1.70
  *
- * The core should be ADDITIVE, unlit, and SATURATED. White at high boost is
- * still white; a saturated colour splits into a white core and a coloured skirt,
- * which is what reads as a spark. Numbers to author against are in §7.6. */
+ * §5.2's law does both jobs at once. Where coverage is high the equation reduces
+ * to `src`, so the particle COVERS a bright background with its own colour and
+ * keeps a silhouette; where coverage falls to zero it is `src + dst`, so the
+ * skirt still adds light. Additive can only ever add, which is why it dissolves
+ * into anything already near 1.0.
+ *
+ * The caller's blendMode is overridden on purpose: this function is the answer to
+ * "make it glow", and premultiplied is that answer. Pass a SATURATED colour —
+ * white at high boost is still white, while a saturated one splits into a white
+ * core and a coloured skirt, which is what reads as a spark.
+ *
+ * Still spawn a second, wider particle by hand when an effect wants a deliberately
+ * broad haze; that is a look, not the baseline. */
 void ParticleSystem_SpawnGlow(ParticleConfig core);
 
 void ParticleSystem_SetLighting(float strength01, float scatter01);

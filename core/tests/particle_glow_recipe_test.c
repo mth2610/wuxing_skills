@@ -1,24 +1,33 @@
-/* THE GLOW RECIPE, pinned where it can be read.
+/* THE GLOW RECIPE — one premultiplied particle.
  *
- * A glowing particle is TWO particles, and the reason is a property of the
- * pipeline rather than a style choice: post-process bloom spreads in proportion
- * to the SIZE of what feeds it, so a core a few pixels across is sub-pixel by
- * the third pyramid level and the deep levels that would carry a wide haze get
- * nothing. Measured on REF PARTICLES, switching bloom off changes the frame by
- * 0.09/255. The glow around a spark is DRAWN.
+ * This test used to pin a two-particle recipe: an additive core plus a large
+ * faint halo, on the reasoning that post-process bloom cannot spread from a
+ * source a few pixels across. That reasoning is correct and still recorded —
+ * switching bloom off changes the frame by 0.09/255, so a spark's glow is DRAWN.
+ * What was wrong was the blend.
  *
- * ParticleSystem_SpawnGlow is that recipe. This test pins the three ratios and
- * the sprite choice, because each of them was measured and each is easy to
- * "tidy" into something worse:
+ * Measured on REF PARTICLES against a white backdrop and a dark one:
  *
- *   radius x4.20  small enough to belong to the core, large enough to read
- *   alpha  x0.24  atmosphere, not a second core
- *   boost  x0.30  a BRIGHT halo erases the core it frames — measured, §7.6c:
- *                 the dark-core row's legibility fell to a third at mid boost
- *   sprite = ParticleSystem_GlowSprite(), never the core's spark sprite. The
- *            spark is a Gaussian under a smoothstep window; scaled up it reads
- *            as a DISC WITH AN EDGE. The glow sprite is (1-r^2)^3, which is
- *            exactly zero at r=1 with ZERO SLOPE, so its quad cannot show. */
+ *     structure                    draws   |d| white   |d| dark
+ *     one premultiplied particle     1       0.801      ~1.65
+ *     dark core + emissive rim       2       0.384      ~1.66
+ *     additive core + halo           2       0.132      ~1.70
+ *
+ * Six times additive's legibility on white, in one draw. §5.2's law does both
+ * jobs at once: at high coverage the equation reduces to `src` so the particle
+ * COVERS a bright background and keeps its silhouette; as coverage falls to zero
+ * it becomes `src + dst` so the skirt still adds light. Additive can only add,
+ * which is why it dissolves into anything already near 1.0.
+ *
+ * THE PROJECT'S BLEND POLICY, stated by the owner and matching the measurements:
+ *   premultiplied  the default choice for anything that emits
+ *   additive       the exception, for sparse light-only effects with no body
+ *   alpha          only for effects that do NOT glow
+ *
+ * Surveyed 19/08/2026 across core/composition and skills, the tree is the
+ * inverse of that: 20 additive, 8 alpha, 4 premultiplied. Migrating is per-effect
+ * work — each one changes appearance and has to be measured (§11b) — so this
+ * test pins the RECIPE, not the population. */
 #include <stdio.h>
 #include <string.h>
 
@@ -43,32 +52,28 @@ static void Check(int cond, const char *why)
 
 int main(void)
 {
-    printf("=== the glow recipe: a spark is two particles ===\n");
+    printf("=== the glow recipe: one premultiplied particle ===\n");
     const char *sys = "core/particles/particle_system.c";
     const char *hdr = "core/particles/particle_system.h";
 
-    Check(Has(sys, "#define PARTICLE_GLOW_HALO_RADIUS 4.20f"), "halo radius ratio is 4.20");
-    Check(Has(sys, "#define PARTICLE_GLOW_HALO_ALPHA  0.24f"), "halo alpha ratio is 0.24");
-    Check(Has(sys, "#define PARTICLE_GLOW_HALO_BOOST  0.30f"),
-          "halo boost ratio is 0.30 — a brighter halo erases its own core");
-    Check(Has(sys, "halo.render.texture = ParticleSystem_GlowSprite();"),
-          "the halo takes the GLOW sprite, not the core's spark sprite");
-    Check(Has(sys, "ParticleConfig halo = core;"),
-          "and inherits the core's motion, life and curves, so the pair dies as one");
-
-    /* The glow sprite's kernel. Written as the exact expression: a Gaussian or a
-       Lorentzian here would not reach zero at the quad edge, and the cut is what
-       produced the visible rim this whole thread started from. */
-    Check(Has(sys, "float a = v * v * v;") && Has(sys, "(1.0f - r2)"),
-          "the glow sprite is (1-r^2)^3 — zero value AND zero slope at r=1");
-
+    Check(Has(sys, "core.render.blendMode = VFX_BLEND_PREMULTIPLIED;"),
+          "the recipe is PREMULTIPLIED — covers a bright background AND adds light");
+    Check(Has(sys, "core.render.unlit = 1;"),
+          "and unlit, because lighting is a multiply and an emitter must not go through it");
+    Check(!Has(sys, "PARTICLE_GLOW_HALO_RADIUS"),
+          "the halo companion is gone — it was compensation for using additive");
     Check(Has(hdr, "void ParticleSystem_SpawnGlow(ParticleConfig core);"),
           "the recipe is public, so an effect need not re-derive it");
 
-    /* The reference fixture must keep exercising the shipped recipe, or it stops
-       being evidence for it. */
+    /* The glow sprite stays: a second, wider particle is still the way to author
+       a deliberately broad haze, and it must not use the compact spark sprite. */
+    Check(Has(sys, "float a = v * v * v;") && Has(sys, "(1.0f - r2)"),
+          "the glow sprite remains (1-r^2)^3 — zero value AND slope at r=1");
+
     Check(Has("core/composition/common/vc_ref_particle.inl", "ParticleSystem_SpawnGlow("),
           "REF PARTICLES calls the recipe rather than spelling it out");
+    Check(Has("core/composition/common/vc_ref_particle.inl", "VFX_BLEND_PREMULTIPLIED"),
+          "...and keeps a premultiplied row, which is the evidence for it");
 
     printf("---- %d failures\n", g_failures);
     return g_failures ? 1 : 0;
