@@ -753,6 +753,21 @@ Six hues x five backgrounds x three exposures (0.5/1/2), in two passes:
 scripts/render_vfx_matrix.sh 35 40 90 140     # fixture index, then lifetime frames
 ```
 
+> [!WARNING]
+> **Every baseline recorded below §11b before 19/08/2026 was taken with `tuning.cfg`
+> UNPINNED, and none of them recorded its contents.** `Tuning_Init` runs before the
+> headless branch in `main.c`, so `--render-vfx` inherits the working copy of that file —
+> which persists across sessions. When this was found it held `bloom_threshold = 0.9`
+> (below 1.0, so every diffuse surface blooms itself and veils the frame — §7.3 says the
+> threshold must sit ABOVE the brightest expected background), `bloom_intensity = 0.35`
+> against a shipping 0.12, and `postfx_hue_restore = 0.5` against a shipping 0.6. Treat
+> the older numbers as indicative, not reproducible, and do not diff them against a run
+> taken after the pin.
+>
+> The harness now pins to the shipping defaults (`WUXING_TUNING=none`) and writes the pin,
+> the binary's timestamp and the git HEAD into `config.txt` beside the captures. Pass
+> `WUXING_TUNING=<path>` to measure a specific configuration on purpose.
+
 It renders one fixture at identical camera, resolution and frame across the §8.1
 backgrounds via `WUXING_VFX_BG` (which also skips map+skybox — the skybox would paint over
 the clear), plus a **background plate per colour** rendered with no fixture, and reports
@@ -777,6 +792,44 @@ Three methodology notes, all learned by getting them wrong here first:
   can only ever add light, so a drop in *luminance* is the honest coverage test, and the
   saturation operator is luma-preserving by construction. Note this is the SAME assumption
   — per-channel monotonicity — that §12.1's tone-map candidate also breaks.
+
+### PINNED BASELINE — 19/08/2026, `WUXING_TUNING=none`, git 9fce0d0
+
+The first matrix taken with the tuning pin in place, and therefore the first one that can
+be re-run and diffed. **This is the reference for the `core/scene_targets` extraction:**
+that refactor moves render-target ownership without changing a pixel, so re-running these
+three fixtures afterwards must reproduce these numbers exactly. Any drift is the refactor,
+not the effect.
+
+Warmup 90, the middle of each fixture's life:
+
+| fixture | bg | cover% | body% | darken% | structure | detail | chroma | \|d\| |
+|---|---|---|---|---|---|---|---|---|
+| FLAME VOLUME (37) | dark | 1.536 | 1.38 | 0.0 | 0.474 | 0.056 | 0.648 | 0.724 |
+| | mid | 1.664 | 1.39 | 2.7 | 0.312 | 0.040 | 0.619 | 0.531 |
+| | white | 1.604 | 1.15 | 93.4 | 0.118 | 0.017 | 0.578 | 0.285 |
+| | warm | 1.479 | 0.61 | 61.4 | 0.181 | 0.021 | 0.747 | 0.120 |
+| | cool | 1.601 | 1.31 | 21.8 | 0.142 | 0.022 | 0.470 | 0.496 |
+| VOLUME TRAIL (34) | dark | 6.056 | 6.00 | 0.0 | 0.277 | 0.129 | 0.800 | 0.804 |
+| | mid | 6.141 | 6.00 | 3.2 | 0.217 | 0.095 | 0.780 | 0.606 |
+| | white | 6.026 | 5.98 | 99.9 | 0.076 | 0.049 | 0.609 | 0.439 |
+| | warm | 5.992 | 5.23 | 99.9 | 0.100 | 0.053 | 0.838 | 0.185 |
+| | cool | 6.061 | 5.99 | 56.5 | 0.104 | 0.049 | 0.501 | 0.591 |
+| ENERGY ORB (11) | dark | 10.174 | 10.14 | 0.0 | 0.160 | 0.053 | 0.854 | 0.931 |
+| | mid | 10.171 | 10.14 | 0.0 | 0.118 | 0.026 | 0.818 | 0.722 |
+| | white | 10.160 | 10.10 | 99.6 | 0.068 | 0.030 | 0.684 | 0.465 |
+| | warm | 10.124 | 9.93 | 98.8 | 0.067 | 0.020 | 0.845 | 0.216 |
+| | cool | 10.105 | 10.09 | 91.2 | 0.070 | 0.015 | 0.630 | 0.673 |
+
+`autotest_output/` is gitignored, so the captures themselves do not survive a clean — these
+rows are the durable record, and each run's `config.txt` states the pin, the binary
+timestamp and the git HEAD that produced it.
+
+One reading worth carrying forward, visible in all three: **`detail` collapses from dark to
+white** (FLAME 0.056 → 0.017, TRAIL 0.129 → 0.049, ORB 0.053 → 0.030) while `cover%` barely
+moves. The silhouettes hold; the internal texture is what the bright background eats. That
+is §5.5, and it is not an authoring failure in any of the three — it is what §7.6's missing
+radiance anchor leaves unresolved.
 
 ### First result — VOLUME TRAIL (fixture 35), the largest in-band effect
 

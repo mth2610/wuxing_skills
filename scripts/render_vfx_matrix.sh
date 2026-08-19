@@ -13,6 +13,16 @@
 #                              (main.c:1174 — skipping the map is not optional, the
 #                              skybox would paint over the clear)
 #   --render-vfx <i> --warmup <n> --out <path>   headless, pinned timestep + RNG seed
+#   WUXING_TUNING=none         code defaults, NOT the working copy of tuning.cfg
+#
+# THE TUNING PIN IS NOT OPTIONAL. tuning.cfg persists across sessions and is loaded
+# before the headless branch (main.c), so an un-pinned run measures whatever that file
+# happens to hold and reports it as a property of the EFFECT. It was found parked
+# mid-sweep at bloom_threshold = 0.9 — below 1.0 every diffuse surface blooms itself and
+# veils the frame, which costs every effect chroma no matter how it is authored
+# (BRIGHT_BACKGROUND_VFX_SPEC.md §7.3). This harness therefore pins to the SHIPPING
+# defaults by default, and records what it used in config.txt beside the captures.
+# Override with WUXING_TUNING=<path> to measure a specific configuration on purpose.
 #
 # Backgrounds match BRIGHT_BACKGROUND_VFX_SPEC.md §8.1 so this and the synthetic
 # `bright_vfx` chart speak the same language: 0.02 / 0.18 / 1.00 neutral, plus bright
@@ -56,7 +66,11 @@ WARMUPS=("$@"); [ ${#WARMUPS[@]} -gt 0 ] || WARMUPS=(40 90 140)
 # make ./build/wuxing stale. Including them made the guard cry wolf every time a
 # regression test was added alongside a fix — and a guard that fires when nothing is
 # wrong is one people learn to route around, which is exactly what it exists to prevent.
-NEWER=$(find core skills sandbox \( -name '*.c' -o -name '*.h' -o -name '*.inl' \) \
+# main.c IS in this list. It was not, and that is a hole of exactly the kind this guard
+# exists to close: main.c owns the frame chain, the headless capture path and the tuning
+# init, so a change there is as invisible-until-rebuilt as any .inl — and the guard would
+# have waved through a run measuring the previous binary.
+NEWER=$(find main.c core skills sandbox \( -name '*.c' -o -name '*.h' -o -name '*.inl' \) \
              -not -path 'core/tests/*' \
              -newer ./build/wuxing 2>/dev/null | head -5 || true)
 if [ -n "$NEWER" ]; then
@@ -75,6 +89,22 @@ VKENV=()
 OUT="autotest_output/vfx_matrix/idx$IDX"
 rm -rf "$OUT"; mkdir -p "$OUT"
 
+# Pin the live-tuning file, and RECORD the pin next to the captures. A measurement
+# whose inputs are not written down cannot be compared with one taken next week.
+TUNING="${WUXING_TUNING:-none}"
+{
+  echo "fixture   : ${ARG1}  (index $IDX)"
+  echo "warmups   : ${WARMUPS[*]}"
+  echo "tuning    : $TUNING"
+  echo "binary    : $(date -r ./build/wuxing '+%Y-%m-%d %H:%M:%S')"
+  echo "git HEAD  : $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  echo "git dirty : $(git status --porcelain 2>/dev/null | wc -l | tr -d ' ') file(s)"
+  if [ "$TUNING" != "none" ] && [ -f "$TUNING" ]; then
+    echo "--- $TUNING ---"; grep -vE '^\s*(#|$)' "$TUNING" || true
+  fi
+} > "$OUT/config.txt"
+echo "  tuning pinned to '$TUNING' (recorded in $OUT/config.txt)"
+
 # name:hex  — hex is RGBA; the 8-bit value lands in the HDR target as value/255 linear
 BGS=(dark:0x050505FF mid:0x2E2E2EFF white:0xFFFFFFFF warm:0xFFB859FF cool:0x59B8FFFF)
 
@@ -87,7 +117,7 @@ BGS=(dark:0x050505FF mid:0x2E2E2EFF white:0xFFFFFFFF warm:0xFFB859FF cool:0x59B8
 # about the measurement, not the effect.
 for entry in "${BGS[@]}"; do
   name="${entry%%:*}"; hex="${entry##*:}"
-  env "${VKENV[@]}" WUXING_VFX_BG="$hex" \
+  env "${VKENV[@]}" WUXING_TUNING="$TUNING" WUXING_VFX_BG="$hex" \
       ./build/wuxing --render-vfx 999 --warmup 90 \
                      --out "$OUT/plate_${name}.png" >/dev/null 2>&1 || true
 done
@@ -96,7 +126,7 @@ echo "  background plates done"
 for w in "${WARMUPS[@]}"; do
   for entry in "${BGS[@]}"; do
     name="${entry%%:*}"; hex="${entry##*:}"
-    env "${VKENV[@]}" WUXING_VFX_BG="$hex" \
+    env "${VKENV[@]}" WUXING_TUNING="$TUNING" WUXING_VFX_BG="$hex" \
         ./build/wuxing --render-vfx "$IDX" --warmup "$w" \
                        --out "$OUT/${name}_w${w}.png" >/dev/null 2>&1 || true
     [ -f "$OUT/${name}_w${w}.png" ] || echo "  MISSING ${name}_w${w}"

@@ -360,7 +360,31 @@ int main(int argc, char **argv) {
   UnloadImage(atlasImg);
 
   ResourceManager_Init();
-  Tuning_Init("tuning.cfg");
+  /* WUXING_TUNING pins the live-tuning file for a measurement run.
+   *
+   * tuning.cfg PERSISTS ACROSS SESSIONS and silently rescales what any capture
+   * shows. It is loaded here, before the headless branch, so --render-vfx and
+   * scripts/render_vfx_matrix.sh inherit whatever it happens to hold — and the
+   * harness recorded none of it, which means §11b's "objective oracle" was not
+   * reproducible. Found parked mid-sweep at bloom_threshold = 0.9: below 1.0
+   * every diffuse surface blooms itself and veils the frame, which costs every
+   * effect chroma no matter how the effect is authored
+   * (BRIGHT_BACKGROUND_VFX_SPEC.md §7.3 — the threshold must sit ABOVE the
+   * brightest expected background in exposed space).
+   *
+   *   unset      -> tuning.cfg, the interactive behaviour, unchanged
+   *   <path>     -> that file instead
+   *   "none"     -> no file at all: code defaults, i.e. the SHIPPING values
+   */
+  const char *tuningPath = getenv("WUXING_TUNING");
+  if (tuningPath == NULL) {
+    tuningPath = "tuning.cfg";
+  } else {
+    if (strcmp(tuningPath, "none") == 0) tuningPath = "";
+    TraceLog(LOG_INFO, "TUNING: pinned to '%s' via WUXING_TUNING%s",
+             tuningPath, tuningPath[0] ? "" : " (code defaults)");
+  }
+  Tuning_Init(tuningPath);
   InitSkillManager(screenWidth, screenHeight);
   if (autoTestMode) AutoTestCases_Register(&player);
   DamageVolume_Init();
