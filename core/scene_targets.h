@@ -43,6 +43,14 @@ void SceneTargets_End(void);
 // Low-level compatibility hooks used by the core/vfx_render.h implementation.
 // New feature code uses VFXRender so target/blend/depth state cannot drift
 // between particle, trail, ribbon, decal, map and skill renderers.
+/* NOTE THAT EndVFXLayer RE-BINDS THE SCENE TARGET rather than unbinding. That
+ * is deliberate — these are called many times inside the 3D pass, where the
+ * scene target is already the destination — but it means the frame does NOT
+ * return to the default framebuffer on its own. Anything that draws to the
+ * SCREEN after this point must bind it explicitly. Skipping the distort copy
+ * (PostFX_UseDirectSource) removed the BeginTextureMode/EndTextureMode pair
+ * that had been doing that silently, and the screen went black until main.c
+ * said it out loud. */
 void SceneTargets_BeginVFXBody(void);
 void SceneTargets_BeginVFXEmission(void);
 void SceneTargets_EndVFXLayer(void);

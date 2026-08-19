@@ -23,6 +23,9 @@ static int fxaaTexelLoc = -1;
 // LDR path) so nothing goes black on weak hardware. Query via PostFX_IsHDR().
 static bool s_hdrActive = false;
 
+/* Set for ONE frame by PostFX_UseDirectSource, and consumed by PostFX_Draw. */
+static Texture2D s_directSource = {0};
+
 // Bloom pyramid below the 1/4 bright-pass target: dfTex[0]=1/8 … dfTex[4]=1/128.
 //
 // Was 2 levels (stopping at 1/16). That is the single biggest reason the old
@@ -597,8 +600,22 @@ void PostFX_Draw(const PostFXConfig *config)
     s_tunablesReg = true;
   }
   config = &local;
-  int width = mainRenderTex.texture.width;
-  int height = mainRenderTex.texture.height;
+
+  /* THE SOURCE. Normally PostFX's own full-resolution copy, which the distortion
+     pass writes. On a frame with no live distortion source that copy is a
+     read+write of a full-screen HDR target (~15 MB at 720p) performing an
+     identity transform, so the frame loop points us straight at the scene
+     target instead and skips PostFX_Begin/End altogether.
+
+     Both targets are created at the same size, but the dimensions are taken
+     from whichever is actually in use rather than assumed equal — a quality
+     tier or a resize that changed one and not the other would otherwise scale
+     the whole frame silently. */
+  const Texture2D srcTex = (s_directSource.id != 0) ? s_directSource
+                                                    : mainRenderTex.texture;
+  s_directSource = (Texture2D){0};   // one frame only
+  int width = srcTex.width;
+  int height = srcTex.height;
 
   if (config->bloomEnabled)
   {
@@ -625,7 +642,7 @@ void PostFX_Draw(const PostFXConfig *config)
                    SHADER_UNIFORM_VEC2);
 
     rlDisableColorBlend();
-    DrawTexturePro(mainRenderTex.texture,
+    DrawTexturePro(srcTex,
                    (Rectangle){0, 0, (float)width, -(float)height},
                    (Rectangle){0, 0, (float)bloomTex.texture.width,
                                (float)bloomTex.texture.height},
@@ -786,7 +803,7 @@ void PostFX_Draw(const PostFXConfig *config)
   const float outW = useFxaa ? (float)width : (float)GetRenderWidth();
   const float outH = useFxaa ? (float)height : (float)GetRenderHeight();
   rlDisableColorBlend();
-  DrawTexturePro(mainRenderTex.texture,
+  DrawTexturePro(srcTex,
                  (Rectangle){0, 0, (float)width, -(float)height},
                  (Rectangle){0, 0, outW, outH},
                  (Vector2){0, 0}, 0.0f, WHITE);
@@ -833,6 +850,8 @@ void PostFX_Draw(const PostFXConfig *config)
 
   PostFX_PerfSample(config, width, height);
 }
+
+void PostFX_UseDirectSource(Texture2D sceneTex) { s_directSource = sceneTex; }
 
 void PostFX_SetMonochrome(float intensity01)
 {

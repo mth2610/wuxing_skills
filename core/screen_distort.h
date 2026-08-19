@@ -31,4 +31,9 @@ void ScreenDistort_Update(float dt);
 // Vẽ kết quả màn hình kèm theo biến dạng bằng Shader
 void ScreenDistort_Draw(Camera3D camera);
 
+/* False when no source is alive, i.e. ScreenDistort_Draw would be an identity
+ * copy of the scene target. The frame loop uses this to skip a full-resolution
+ * HDR read+write that changes nothing. */
+bool ScreenDistort_HasLiveSources(void);
+
 #endif // SCREEN_DISTORT_H

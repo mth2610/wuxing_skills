@@ -1308,15 +1308,56 @@ int main(int argc, char **argv) {
     MyEndMode3D();
     CompositeScreenSpaceVFX(camera);
 
-    PostFX_Begin();
-    ClearBackground(BLACK);
-    ScreenDistort_Draw(camera);
-    /* Gradient probe (phím G / WUXING_GRADIENT_PROBE=1). Phải nằm TRONG đây: đích
-     * là target HDR mà VFX ghi vào, nên nó ăn nguyên chuỗi bloom -> tone map ->
-     * grade -> LUT -> vignette -> dither -> FXAA. Vẽ sau ScreenDistort_Draw để
-     * đè hẳn lên cảnh. Xem sandbox/gradient_probe.c. */
-    GradientProbe_DrawScene();
-    PostFX_End();
+    /* THE DISTORT COPY IS SKIPPED WHEN NOTHING WOULD DISTORT. With no live
+     * shockwave source, ScreenDistort_Draw is an identity copy of the scene
+     * target into PostFX's own full-resolution HDR target — a read and a write
+     * of ~15 MB at 720p, every frame, for no change. The composite is pointed
+     * straight at the scene target instead.
+     *
+     * The gradient probe forces the copy back on, because it DRAWS into that
+     * target: it has to sit inside the post chain to be worth anything (it
+     * exists to answer "is the banding the effect or the pipeline"), and there
+     * is nowhere to put it on the direct path. */
+    const bool needsDistortCopy =
+        ScreenDistort_HasLiveSources() || GradientProbe_IsActive();
+    if (needsDistortCopy)
+    {
+        PostFX_Begin();
+        ClearBackground(BLACK);
+        ScreenDistort_Draw(camera);
+        /* Gradient probe (phím G / WUXING_GRADIENT_PROBE=1). Phải nằm TRONG đây: đích
+         * là target HDR mà VFX ghi vào, nên nó ăn nguyên chuỗi bloom -> tone map ->
+         * grade -> LUT -> vignette -> dither -> FXAA. Vẽ sau ScreenDistort_Draw để
+         * đè hẳn lên cảnh. Xem sandbox/gradient_probe.c. */
+        GradientProbe_DrawScene();
+        PostFX_End();
+    }
+    else
+    {
+        /* The Begin/End pair was also doing the job EndTextureMode does for
+           free: returning to the default framebuffer and its viewport. Nothing
+           else in the frame guarantees that — SceneTargets_EndVFXLayer, for
+           one, leaves the SCENE target bound on purpose — so the direct path
+           has to say it. Without this the composite renders into whatever was
+           last bound and the screen stays black. */
+        rlDrawRenderBatchActive();
+        rlDisableFramebuffer();
+        rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
+        PostFX_UseDirectSource(SceneTargets_GetSceneTexture());
+    }
+    /* Announce on CHANGE, not once at startup: the mode flips with gameplay, and
+     * "did my skip actually engage" is otherwise unanswerable without a profiler
+     * (same reasoning as PostFX_ApplyQualityTier's tier line). */
+    {
+        static int s_lastCopyMode = -1;
+        if ((int)needsDistortCopy != s_lastCopyMode)
+        {
+            s_lastCopyMode = (int)needsDistortCopy;
+            TraceLog(LOG_INFO, "POSTFX source: %s",
+                     needsDistortCopy ? "distort copy (a source is live)"
+                                      : "scene target DIRECT (copy skipped)");
+        }
+    }
 
     ClearBackground(BLACK);
     PostFX_Draw(&postFXConfig);

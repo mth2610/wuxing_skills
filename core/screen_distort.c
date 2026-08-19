@@ -67,6 +67,8 @@ void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lif
   activeSourcesCount++;
 }
 
+bool ScreenDistort_HasLiveSources(void) { return activeSourcesCount > 0; }
+
 void ScreenDistort_Update(float dt)
 {
   for (int i = activeSourcesCount - 1; i >= 0; i--)

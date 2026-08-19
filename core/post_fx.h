@@ -97,6 +97,16 @@ void PostFX_Draw(const PostFXConfig *config);
 // the ONE main canvas — no extra render target. intensity 0..1 blends the
 // composite's saturation toward 0 (1 = full black-and-white), overriding
 // the config's color grade while > 0. Cheap to call every frame.
+/* Point this frame's composite at a texture other than PostFX's own copy —
+ * used to skip that copy entirely on frames where the distortion pass would
+ * only have performed an identity transform. Call INSTEAD of the
+ * PostFX_Begin/End block, before PostFX_Draw; it lasts exactly one frame.
+ *
+ * The source's alpha is not consumed: post_process.fs writes a literal 1.0, so
+ * handing it the scene target (whose alpha is accumulated VFX coverage and
+ * means nothing) is safe. See core/scene_targets.h. */
+void PostFX_UseDirectSource(Texture2D sceneTex);
+
 void PostFX_SetMonochrome(float intensity01);
 
 // ── Transient radial burst (Đợt E1a) ─────────────────────────────────────────
