@@ -35,6 +35,43 @@ static const float k_refParticleBoost[REF_PARTICLE_COUNT] = {
     0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 12.0f
 };
 
+/* A GLOW sprite, separate from the spark sprite the particle system defaults to.
+ *
+ * They are not interchangeable and that was learned the hard way: scaling the
+ * default spark up 4.2x to serve as a halo produced a visible circular RIM on
+ * mid-grey scenery. It is not a discontinuity — the profile was measured
+ * decelerating smoothly to the background — it is the SHAPE. A compact Gaussian
+ * windowed by smoothstep reads as a DISC with an edge once it is large, because
+ * most of its falloff happens over a short span near the rim.
+ *
+ * A glow wants the opposite: most of its energy near the centre and a long, slow
+ * tail. (1 - r^2)^3 gives exactly that, and it has the one property that matters
+ * for a big faint sprite — it reaches EXACTLY zero at r = 1 with ZERO SLOPE, so
+ * the quad's own boundary can never show. A Gaussian or a Lorentzian never
+ * reaches zero and has to be cut, and the cut is what the eye finds. */
+static Texture2D s_refGlowTex = {0};
+
+static void RefParticle_EnsureGlowTex(void)
+{
+    if (s_refGlowTex.id != 0) return;
+    const int N = 128;
+    Image img = GenImageColor(N, N, BLANK);
+    const float half = N * 0.5f;
+    for (int y = 0; y < N; y++) {
+        for (int x = 0; x < N; x++) {
+            float px = ((float)x + 0.5f - half) / half;
+            float py = ((float)y + 0.5f - half) / half;
+            float r2 = px * px + py * py;
+            float v = (r2 >= 1.0f) ? 0.0f : (1.0f - r2);
+            float a = v * v * v;
+            ImageDrawPixel(&img, x, y, (Color){255, 255, 255, (unsigned char)(255.0f * a)});
+        }
+    }
+    s_refGlowTex = LoadTextureFromImage(img);
+    SetTextureFilter(s_refGlowTex, TEXTURE_FILTER_BILINEAR);
+    UnloadImage(img);
+}
+
 static bool    s_refParticlesOn = false;
 static Vector3 s_refParticlePos = {0};
 static float   s_refParticleScale = 1.0f;
@@ -44,6 +81,7 @@ int VFX_ComposeRefParticles(Vector3 pos, float scale)
 {
     s_refParticlePos = pos;
     s_refParticleScale = (scale > 0.0f) ? scale : 1.0f;
+    RefParticle_EnsureGlowTex();
     s_refParticlesOn = true;
     s_refParticleTimer = 0.0f;
     TraceLog(LOG_INFO, "VFX_REF_PARTICLE: %d glow particles, boost %.1f .. %.1f, "
@@ -72,7 +110,7 @@ void VC_RefParticles_Update(float dt)
         float off = ((float)i - (float)(REF_PARTICLE_COUNT - 1) * 0.5f) * pitch;
         SpawnParticle((ParticleConfig){
             .position = {s_refParticlePos.x + off,
-                         s_refParticlePos.y + 0.45f * s_refParticleScale,
+                         s_refParticlePos.y - 0.30f * s_refParticleScale,
                          s_refParticlePos.z},
             .velocity = {0.0f, 0.0f, 0.0f},      /* stands still: measurable */
             .radius = 0.22f * s_refParticleScale,
@@ -103,7 +141,7 @@ void VC_RefParticles_Update(float dt)
         float off = ((float)i - (float)(REF_PARTICLE_COUNT - 1) * 0.5f) * pitch;
         SpawnParticle((ParticleConfig){
             .position = {s_refParticlePos.x + off,
-                         s_refParticlePos.y + 1.25f * s_refParticleScale,
+                         s_refParticlePos.y + 0.30f * s_refParticleScale,
                          s_refParticlePos.z},
             .velocity = {0.0f, 0.0f, 0.0f},
             .radius = 0.22f * s_refParticleScale,
@@ -132,16 +170,62 @@ void VC_RefParticles_Update(float dt)
            vc_glint_sparkle pairs an alpha body with an additive halo. */
         SpawnParticle((ParticleConfig){
             .position = {s_refParticlePos.x + off,
-                         s_refParticlePos.y + 1.25f * s_refParticleScale,
+                         s_refParticlePos.y + 0.30f * s_refParticleScale,
                          s_refParticlePos.z},
             .velocity = {0.0f, 0.0f, 0.0f},
             .radius = 0.22f * 4.2f * s_refParticleScale,
             .lifetime = 6.0f,
             .colorStart = (Color){70, 110, 255, 60},
             .colorEnd = (Color){70, 110, 255, 60},
+            .render.texture = s_refGlowTex,   /* NOT the spark sprite — see above */
             .render.blendMode = VFX_BLEND_ADDITIVE,
             .render.unlit = 1,
             .render.emissiveBoost = k_refParticleBoost[i] * 0.30f,
+        });
+    }
+
+    /* ROW 3 — DARK CORE + EMISSIVE RIM, the bright-background structure.
+     *
+     * On a background already at 1.0 an effect CANNOT be made brighter than its
+     * surroundings; adding light only pushes an already-clipped pixel further
+     * past the clip. Measured here twice: FLAME VOLUME lost ground when its
+     * emissive was tripled, and additive rows on a white plate collapse to a
+     * pale smudge. What is left is NEGATIVE contrast — an opaque, dark core that
+     * cuts a silhouette out of the bright background, with the emission moved to
+     * a rim that surrounds it and blooms outward.
+     *
+     * Built from two particles because that is what the engine offers: an
+     * additive glow BEHIND, and a premultiplied dark core ON TOP that covers the
+     * middle of it. Premultiplied, not alpha: at coverage 1 it replaces (so the
+     * core reads dark), at coverage 0 it adds (so the core's own faint edge
+     * still emits) — §5.2's law doing exactly the job it exists for. */
+    for (int i = 0; i < REF_PARTICLE_COUNT; i++)
+    {
+        float off = ((float)i - (float)(REF_PARTICLE_COUNT - 1) * 0.5f) * pitch;
+        Vector3 at = {s_refParticlePos.x + off,
+                      s_refParticlePos.y + 0.95f * s_refParticleScale,
+                      s_refParticlePos.z};
+        /* the emissive rim, behind and wider */
+        SpawnParticle((ParticleConfig){
+            .position = at, .velocity = {0},
+            .radius = 0.22f * 3.0f * s_refParticleScale,
+            .lifetime = 6.0f,
+            .colorStart = (Color){120, 170, 255, 90},
+            .colorEnd = (Color){120, 170, 255, 90},
+            .render.texture = s_refGlowTex,
+            .render.blendMode = VFX_BLEND_ADDITIVE,
+            .render.unlit = 1,
+            .render.emissiveBoost = k_refParticleBoost[i],
+        });
+        /* the dark core, on top and opaque */
+        SpawnParticle((ParticleConfig){
+            .position = at, .velocity = {0},
+            .radius = 0.22f * s_refParticleScale,
+            .lifetime = 6.0f,
+            .colorStart = (Color){16, 10, 34, 235},
+            .colorEnd = (Color){16, 10, 34, 235},
+            .render.blendMode = VFX_BLEND_PREMULTIPLIED,
+            .render.unlit = 1,
         });
     }
 
@@ -150,7 +234,7 @@ void VC_RefParticles_Update(float dt)
        ever blooms, the blend law is not being applied per particle. */
     SpawnParticle((ParticleConfig){
         .position = {s_refParticlePos.x,
-                     s_refParticlePos.y - 0.45f * s_refParticleScale,
+                     s_refParticlePos.y - 0.95f * s_refParticleScale,
                      s_refParticlePos.z},
         .velocity = {0.0f, 0.0f, 0.0f},
         .radius = 0.22f * s_refParticleScale,

@@ -699,6 +699,35 @@ vignette. That darkened the extremes and made the blue channel read NON-MONOTONE
 vignette-free centre, all three channels are monotone. A calibration target must be
 measured where nothing else is acting on it.
 
+#### 7.6c Negative contrast — measured, and it refines the received advice
+
+The received technique for bright backgrounds (dark opaque core, emissive rim, premultiplied)
+was put through `REF PARTICLES` as its own row and measured against the additive rows beside
+it. Distance from a white background, `|d|`:
+
+| row | boost 0.5 | boost 2.0 | boost 12 |
+|---|---|---|---|
+| **dark core + rim** | **0.297** | 0.115 | 0.321 |
+| additive, saturated blue | 0.092 | 0.187 | 0.326 |
+| additive, white | 0.101 | 0.257 | 0.330 |
+
+**The technique works, and what it buys is not peak contrast — it is contrast CHEAPLY.** At
+boost 0.5 the dark core reads three times better than either additive row. By boost 12 all
+three converge near 0.33, because everything is clipping and the background has no more room
+to be pushed away from. So negative contrast is what makes an effect legible on bright
+scenery *without* spending emission it cannot afford.
+
+**But the rim fights its own core, and that is not in the received advice.** The dark row's
+`|d|` is NOT monotone — 0.297 → 0.115 → 0.321. At mid boost the emissive rim washes over the
+silhouette it exists to frame, and legibility falls to a THIRD of what the same structure
+achieves with a dim rim. The guidance to push the rim to "RGB x10+" is written for a dark
+scene; on a white one it erases the core. **Keep the rim modest and let the core do the
+work** — the opposite of the instinct that has been wrong all session.
+
+This is also the missing half of the FLAME VOLUME result above. That effect already separates
+by occlusion, which is why tripling its emissive lost ground; what it is missing is not more
+light but a darker, more opaque core.
+
 > [!CAUTION]
 > **Do not read §7.6 as "raise everything into the bands".** Two effects, same diagnosis
 > from the anchor, opposite outcomes: the trail was capped BELOW the background by a stale
