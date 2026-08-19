@@ -428,6 +428,8 @@ void SceneTargets_End(void)
     RenderTargetProbe_Dump(renderTex, "scene", true);
   if (RenderTargetProbe_MatchesFrame(s_probeFrame) && s_bgLumaValid)
     RenderTargetProbe_Dump(s_bgLuma, "bgluma", false);
+  if (RenderTargetProbe_MatchesFrame(s_probeFrame) && s_exposureReady)
+    RenderTargetProbe_Dump(s_exposure[s_exposureCur], "exposure", false);
   s_probeFrame++;
 }
 

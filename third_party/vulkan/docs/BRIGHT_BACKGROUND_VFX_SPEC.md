@@ -477,6 +477,29 @@ collapsed and that the owner reported as the effect looking flat. `chroma` falls
 down, so everything sits lower in the display range, and what is bought with it is the
 internal texture that was previously crushed against the ceiling.
 
+**AND HOW MUCH IT ACTUALLY DOES, measured per background.** The owner could see no
+difference with it on, and was right — there is almost none in the scene that ships:
+
+| background | scene-referred | vs the real arena | exposure computed |
+|---|---|---|---|
+| **the real arena** | **0.196** | — | **0.887** |
+| §8.1 mid tile | 0.180 | x0.9 | 0.998 |
+| a plausible daylight map | 0.502 | x2.6 | 0.372 |
+| §8.1 white tile | 1.000 | **x5.1** | 0.199 |
+
+**The arena already meters at mid-grey.** 0.196 against a 0.18 target leaves exposure at
+0.887 — an 11% darkening of the whole frame, which the eye normalises away. Auto exposure is
+not doing nothing wrong; it has nothing to do.
+
+> [!IMPORTANT]
+> **The §8.1 white tile is FIVE TIMES brighter than anything this game currently contains.**
+> Every "bright background" result in this document was measured against a stress case well
+> beyond the shipping content. That does not make the findings wrong — premultiplied still
+> beats additive sixfold, the grade still clipped at scene 2.0, hue restoration still faked
+> occlusion — but it should calibrate how urgent any of it is. On a plausible daylight map at
+> 0.5, auto exposure alone contributes a 0.372 scalar and the problem is far milder than at
+> 1.0.
+
 **Why it works, in one line:** with exposure pinned at 1.0 a white background occupies 0.804
 of the display range and leaves 0.196 for everything brighter than it. Exposed to mid-grey
 it occupies 0.267 and leaves 0.733 — 3.7x the room, for every effect at once, for one scalar.
