@@ -88,6 +88,63 @@ void VC_RefParticles_Update(float dt)
         });
     }
 
+    /* THE SATURATED ROW — and this is the row that answers "why does it not
+       look like it glows".
+       A WHITE particle at boost 12 is still just white: there is no hue for the
+       falloff to pass through, so it reads as a grey blob however bright it is.
+       A SATURATED one at the same boost splits: its strong channel goes past the
+       display white point and clips, while the weak channels stay in range. The
+       core therefore burns to white and the skirt keeps the colour — which is
+       exactly the look of a real spark, and what the owner's reference image
+       shows. The hue is not decoration on top of the brightness; at high boost
+       it IS the structure. */
+    for (int i = 0; i < REF_PARTICLE_COUNT; i++)
+    {
+        float off = ((float)i - (float)(REF_PARTICLE_COUNT - 1) * 0.5f) * pitch;
+        SpawnParticle((ParticleConfig){
+            .position = {s_refParticlePos.x + off,
+                         s_refParticlePos.y + 1.25f * s_refParticleScale,
+                         s_refParticlePos.z},
+            .velocity = {0.0f, 0.0f, 0.0f},
+            .radius = 0.22f * s_refParticleScale,
+            .lifetime = 6.0f,
+            /* Blue-violet, strongly weighted to one channel. At boost B the
+               peak channel reaches B and the others ~0.35B and ~0.18B, so the
+               three cross the white point at three different boosts — which is
+               what makes the core-to-skirt gradient. */
+            .colorStart = (Color){70, 110, 255, 255},
+            .colorEnd = (Color){70, 110, 255, 255},
+            .render.blendMode = VFX_BLEND_ADDITIVE,
+            .render.unlit = 1,
+            .render.emissiveBoost = k_refParticleBoost[i],
+        });
+
+        /* THE HALO COMPANION — and this is the part a single particle cannot do.
+           Post-process bloom spreads in proportion to the SIZE of what feeds it:
+           a core a few pixels across is sub-pixel by the third pyramid level, so
+           the deep levels that carry the wide haze receive nothing from it.
+           Measured on this fixture, turning bloom off entirely changes the frame
+           by 0.09/255 on average — the visible skirt is the SPRITE's falloff, not
+           bloom.
+           A wide glow therefore has to be DRAWN, as a second much larger and much
+           fainter additive particle behind the core. That is the idiom the tree
+           already uses: vc_ember_trail.inl spawns its halo at radius x4.20, and
+           vc_glint_sparkle pairs an alpha body with an additive halo. */
+        SpawnParticle((ParticleConfig){
+            .position = {s_refParticlePos.x + off,
+                         s_refParticlePos.y + 1.25f * s_refParticleScale,
+                         s_refParticlePos.z},
+            .velocity = {0.0f, 0.0f, 0.0f},
+            .radius = 0.22f * 4.2f * s_refParticleScale,
+            .lifetime = 6.0f,
+            .colorStart = (Color){70, 110, 255, 60},
+            .colorEnd = (Color){70, 110, 255, 60},
+            .render.blendMode = VFX_BLEND_ADDITIVE,
+            .render.unlit = 1,
+            .render.emissiveBoost = k_refParticleBoost[i] * 0.30f,
+        });
+    }
+
     /* THE SOLID CONTROL. Same sprite, same size, same position row — the only
        differences are the two fields that define "does not emit". If this one
        ever blooms, the blend law is not being applied per particle. */
