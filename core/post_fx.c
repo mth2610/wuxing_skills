@@ -348,8 +348,18 @@ static void DualFilterPass(Shader sh, int texSizeLoc, Texture2D src,
   else
   {
     // [TỐI ƯU 1]: Tắt Alpha Blending để GPU ghi đè 100% pixel ảnh thay vì trộn màu
+    //
+    // AND FLUSH INSIDE THE WINDOW. rlDisableColorBlend() is flush-scoped on both
+    // backends: without the flush the toggle never reaches the GPU before it is
+    // undone, so this draw goes through the blender after all. It happens to be
+    // harmless today only because bloom_downsample.fs writes a literal 1.0
+    // alpha, which makes BLEND_ALPHA an exact no-op — i.e. the correctness of
+    // this line currently lives in a different file that says nothing about it.
+    // Same defect as the final composite below, where it was NOT harmless.
+    // Found by core/tests/scene_target_alpha_contract_test.c.
     rlDisableColorBlend();
     DrawTexturePro(src, srcRect, dstRect, (Vector2){0, 0}, 0.0f, WHITE);
+    rlDrawRenderBatchActive();
     rlEnableColorBlend();
   }
 
