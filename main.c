@@ -332,7 +332,53 @@ int main(int argc, char **argv) {
   Atmosphere_Configure((Vector3){6.0f, 3.0f, 4.4f}, (Vector3){15.0f, 5.0f, 15.0f},
                        340, (Color){160, 190, 235, 255});
   MetaballFX_Init(screenWidth, screenHeight);
-  Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLANK);
+  /* THE DEFAULT PARTICLE SPRITE.
+   *
+   * Was GenImageGradientRadial(64, 64, 0.0f, WHITE, BLANK) — raylib's built-in,
+   * whose alpha falls off LINEARLY. Two things were wrong with it and the second
+   * is the one that matters:
+   *
+   *   64 px, magnified. A large billboard stretches 64 texels, which is why
+   *   BILINEAR had to be forced below (the note there records the hard square
+   *   edges it produced on Android).
+   *
+   *   A LINEAR CONE HAS NO CORE. Alpha falling off evenly makes the bright
+   *   region WIDE AND DIM. A glowing particle needs the opposite — a small
+   *   region hot enough to cross the bloom threshold (1.25 scene-referred,
+   *   BRIGHT_BACKGROUND_VFX_SPEC.md §7.6) sitting inside a much fainter halo.
+   *   No emissiveBoost can fix the shape: it scales the whole disc together.
+   *
+   * The formula below is the one scripts/gen_default_particle_sprite.py wrote
+   * and nothing ever loaded — a compact Gaussian core, a faint wide halo, and a
+   * smoothstep edge. It is generated here rather than shipped as an asset
+   * because this IS the fallback: a fallback that can fail to load is not one.
+   *
+   * RGB stays white through the entire falloff on purpose. Baking a dark rim
+   * turns alpha-blended fire into a dirty brown ring on coloured backgrounds;
+   * the particle's own tint decides the colour. */
+  const int kPartTexSize = 256;
+  Image img = GenImageColor(kPartTexSize, kPartTexSize, BLANK);
+  {
+    const float half = kPartTexSize * 0.5f;
+    for (int y = 0; y < kPartTexSize; y++) {
+      for (int x = 0; x < kPartTexSize; x++) {
+        float px = ((float)x + 0.5f - half) / half;
+        float py = ((float)y + 0.5f - half) / half;
+        float r2 = px * px + py * py;
+        float r = sqrtf(r2);
+        /* smoothstep(0.66, 0.94, r), inverted: the sprite is gone by its own
+           edge, so a square texel never shows at the quad's corner. */
+        float t = (r - 0.66f) / (0.94f - 0.66f);
+        t = (t < 0.0f) ? 0.0f : (t > 1.0f ? 1.0f : t);
+        float edge = 1.0f - t * t * (3.0f - 2.0f * t);
+        float core = expf(-r2 / 0.034f);   /* compact — this is what blooms */
+        float halo = expf(-r2 / 0.20f);    /* wide and faint — this is the glow */
+        float cov = edge * (0.92f * core + 0.08f * halo);
+        if (cov < 0.0f) cov = 0.0f; else if (cov > 1.0f) cov = 1.0f;
+        ImageDrawPixel(&img, x, y, (Color){255, 255, 255, (unsigned char)(255.0f * cov)});
+      }
+    }
+  }
   Texture2D globalParticleTex = LoadTextureFromImage(img);
   // BILINEAR bắt buộc: mặc định raylib là POINT (GL_NEAREST) — hạt billboard
   // phóng to (vd Fire) stretch texel 64x64 thành khối vuông cứng lộ viền rõ
