@@ -474,7 +474,17 @@ int main(int argc, char **argv) {
                                .colorTint = {1.0f, 1.0f, 1.0f},
                                // Split-tone: cool moonlit shadows, warm highlights (Moonlight Blade mood).
                                .shadowTint = {0.90f, 0.97f, 1.12f},
-                               .highlightTint = {1.10f, 1.02f, 0.90f},
+                               /* MAX CHANNEL 1.0, not 1.10 (19/08/2026). This is a
+                                  multiply applied AFTER the tone map, so any channel
+                                  above 1.0 spends display range the curve had already
+                                  allocated: at 1.10, R reached white at scene-referred
+                                  2.0 against ACES's own 7.2, and 2.0 / 5.0 / 8.0 / 12.0
+                                  all came out the same colour. Measured with REF BANDS
+                                  (fixture 20) — see §7.6b. The warmth now comes from
+                                  LOWERING G and B rather than raising R, so the tint
+                                  redistributes colour instead of amplifying it. B lands
+                                  at 0.90, the same value it already had. */
+                               .highlightTint = {1.00f, 0.96f, 0.90f},
                                // Đợt G1 — cinematic tone mapping on by default.
                                .tonemapEnabled = true,
                                .exposure = 1.00f,

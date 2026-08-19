@@ -528,7 +528,7 @@ Derived from the measurements above, not invented:
 |---|---|---|
 | BODY | **0.3 – 1.0** | reads on dark scenery; on bright it must earn its place by coverage and darkening, never by brightness |
 | CORONA | **1.5 – 2.5** | clears the 1.25 threshold, so it blooms against **any** background |
-| CORE | **5 – 12** | enters the tone map's white-hot band; below 5 a core cannot read as hot no matter how saturated |
+| CORE | **2 – 5** | measured, not theoretical — see 7.6b. The tone map's white-hot band starts at 5.5, but the display-referred grade clips before it, and above ~7 ACES itself saturates so nothing is distinguishable in any configuration |
 
 An effect with no pixel above 1.25 will not bloom on a white background, and one with no
 pixel above 5.0 has no white-hot core — both are now checkable before anyone renders a
@@ -654,6 +654,24 @@ The entire top of the radiance scale collapses to one value.
 *entirely inside the clipped region*. The darkening trade recorded there is real, but this
 is the simpler reason nothing visible changed: above scene 2.0 there is no display range
 left to change into.
+
+**FIXED, and measured again.** `highlightTint` went (1.10, 1.02, 0.90) → (1.00, 0.96, 0.90):
+the warmth now comes from lowering G and B rather than raising R, so the tint redistributes
+colour instead of amplifying it. R's clip moved from scene-referred **2.0 to 5.0** — the
+usable highlight range more than doubled — and B is unchanged, so the look barely moves.
+
+What remains is NOT a defect, and the reference target is what makes that statable:
+
+| grade | R at scene 2 / 5 / 8 / 12 | steps still distinguishable |
+|---|---|---|
+| contrast 1.12 *(ships)* | 0.975 / 1.000 / 1.000 / 1.000 | 1 of 3 |
+| contrast 1.00 | 0.923 / 0.990 / 1.000 / 1.000 | 2 of 3 |
+
+Dropping the contrast boost entirely buys exactly **one** more step, and 8 against 12 stays
+invisible in every configuration — because **ACES itself reaches display 1.0 at ~7.2**. That
+is the curve working as designed. So the shipping contrast costs one step of core headroom,
+which is a look trade the owner already made knowingly, and §7.6's core band is corrected to
+the measured **2 – 5** rather than the shoulder's theoretical 5 – 12.
 
 **A lesson about the instrument itself, recorded because it nearly produced a false
 report.** The first version spanned the full frame, so its outermost patches sat in the
@@ -1010,16 +1028,16 @@ Warmup 90, the middle of each fixture's life:
 
 | fixture | bg | cover% | body% | darken% | structure | detail | chroma | \|d\| |
 |---|---|---|---|---|---|---|---|---|
-| FLAME VOLUME (37) | dark | 1.563 | 1.40 | 0.0 | 0.518 | 0.055 | 0.601 | 0.737 |
-| | mid | 1.705 | 1.43 | 4.5 | 0.355 | 0.038 | 0.565 | 0.538 |
-| | white | 1.460 | 0.72 | 56.6 | 0.085 | 0.014 | 0.527 | 0.195 |
-| | warm | 1.527 | 0.89 | 45.9 | 0.132 | 0.016 | 0.621 | 0.170 |
-| | cool | 1.647 | 1.31 | 27.8 | 0.121 | 0.017 | 0.355 | 0.417 |
-| VOLUME TRAIL (34) † | dark | 6.369 | 6.08 | 0.0 | 0.280 | 0.118 | 0.881 | 0.903 |
-| | mid | 7.684 | 6.21 | 1.4 | 0.267 | 0.099 | 0.862 | 0.592 |
-| | white | 6.060 | 5.97 | 89.4 | 0.228 | 0.085 | 0.870 | 0.656 |
-| | warm | 6.021 | 5.34 | 67.3 | 0.233 | 0.087 | 0.907 | 0.279 |
-| | cool | 7.152 | 6.08 | 43.1 | 0.233 | 0.083 | 0.854 | 0.659 |
+| FLAME VOLUME (37) | dark | 1.563 | 1.40 | 0.0 | 0.512 | 0.054 | 0.581 | 0.719 |
+| | mid | 1.704 | 1.42 | 4.5 | 0.347 | 0.037 | 0.541 | 0.520 |
+| | white | 1.438 | 0.90 | 53.6 | 0.095 | 0.013 | 0.455 | 0.205 |
+| | warm | 1.524 | 0.87 | 43.3 | 0.133 | 0.016 | 0.597 | 0.173 |
+| | cool | 1.627 | 1.30 | 27.2 | 0.120 | 0.016 | 0.335 | 0.413 |
+| VOLUME TRAIL (34) † | dark | 6.368 | 6.08 | 0.0 | 0.277 | 0.117 | 0.861 | 0.885 |
+| | mid | 7.626 | 6.19 | 1.4 | 0.262 | 0.097 | 0.845 | 0.583 |
+| | white | 6.044 | 5.99 | 86.2 | 0.226 | 0.083 | 0.847 | 0.658 |
+| | warm | 6.009 | 5.65 | 63.3 | 0.229 | 0.084 | 0.878 | 0.279 |
+| | cool | 7.027 | 6.06 | 42.3 | 0.231 | 0.082 | 0.836 | 0.671 |
 | ENERGY ORB (11) ‡ | dark | 10.175 | 10.14 | 0.0 | 0.179 | 0.053 | 0.904 | 0.973 |
 | | mid | 10.172 | 10.14 | 0.0 | 0.133 | 0.031 | 0.824 | 0.755 |
 | | white | 10.130 | 10.01 | 97.8 | 0.052 | 0.014 | 0.564 | 0.336 |
