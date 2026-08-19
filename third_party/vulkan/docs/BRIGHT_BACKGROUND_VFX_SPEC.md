@@ -575,6 +575,44 @@ machinery that almost never engages.
 > level it sits far below either threshold. The misconfiguration is real and worth having
 > fixed, but it does not explain those ceilings.
 
+#### FLAME VOLUME — where the anchor's remedy does NOT transfer
+
+VOLUME TRAIL's fix was a single number, so the obvious next move was the same number on
+the next-dimmest effect. It does not work, and the reason is worth more than the fix was.
+
+Measured, `flame_emissive` 4.8 → 9.0 → 14.0 (the shipping population's boost; scene-referred
+peak 2.68 → 4.99 → 7.75, i.e. all the way into the white-hot band):
+
+| on white | cover% | structure | detail | chroma | \|d\| | darken% |
+|---|---|---|---|---|---|---|
+| 4.8 *(ship)* | 1.604 | 0.118 | 0.017 | 0.578 | 0.285 | **93.4** |
+| 9.0 | 1.676 | 0.108 | 0.016 | 0.576 | 0.278 | **87.2** |
+| 14.0 | 1.736 | 0.108 | 0.018 | 0.559 | 0.263 | **82.6** |
+
+**Three times the radiance buys nothing.** Structure falls, detail is flat, and both chroma
+and distance-from-background get slightly WORSE.
+
+The `darken%` column says why, and it is the §5.7 budget read backwards: on white this
+flame is separating by **occlusion, not by luminance** — 93.4% of its footprint attenuates
+the background. Adding emission spends that. The body brightens, so it darkens less, while
+never getting bright enough to out-shine a 1.0 background. The two mechanisms trade against
+each other and the trade is roughly break-even.
+
+**The structural reason it cannot be fixed with a knob.** Since Đợt H the shipping build is
+ONE population off a packed sheet (`flame_volume = 1`); the three-population build with a
+separate additive core is kept only for A/B. So body and core share a single
+`emissiveBoost`, and there is no way to put the body in §7.6's 0.3–1.0 band *and* a compact
+core in 5–12 — at 9.0 the body is already at 0.97 and the core still only 4.99. A
+white-hot heart inside a translucent body needs the temperature ramp to concentrate it, or
+a second population; it is not a gain.
+
+> [!CAUTION]
+> **Do not read §7.6 as "raise everything into the bands".** Two effects, same diagnosis
+> from the anchor, opposite outcomes: the trail was capped BELOW the background by a stale
+> LDR premise and gained +186% structure on white; the flame is already separating the way
+> §5.7 says it should and loses ground when pushed. The anchor tells you where an effect
+> SITS. What to do about it is still per-effect, and the harness is what decides.
+
 > [!NOTE]
 > **(project convention):** state an effect's intended band in its composer, and check it
 > with the probe rather than by eye. The three rows above are the measured reference, not a
