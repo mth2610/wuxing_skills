@@ -1,5 +1,5 @@
 #include "core/resource_manager.h"
-#include "core/shader_preprocessor.h"
+#include "core/shading/shader_preprocessor.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

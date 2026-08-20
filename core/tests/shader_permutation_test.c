@@ -132,7 +132,7 @@ static void Test_TheTwoHeadersExposeTheSameInterface(void)
 }
 
 // ── 4. No include directive may sit inside a comment ────────────────────────
-// shader_preprocessor.c is a purely textual expander with no notion of
+// core/shading/shader_preprocessor.c is a purely textual expander with no notion of
 // comments. An include written inside a // comment is STILL expanded — and
 // when the file doing it is the file being included, that is infinite
 // recursion, stopped only by the depth limit after eight nested copies.

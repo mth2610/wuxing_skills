@@ -1,5 +1,5 @@
 /*
- * shader_preprocessor.h / shader_preprocessor.c
+ * core/shading/shader_preprocessor.h / .c
  * ─────────────────────────────────────────────────────────────────────────────
  * WUXING — GLSL #include Preprocessor
  *

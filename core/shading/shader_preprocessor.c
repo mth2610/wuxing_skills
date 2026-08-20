@@ -186,25 +186,3 @@ char *ShaderPreprocessor_LoadWithDefines(const char *filePath, const char *defin
 char *ShaderPreprocessor_Load(const char *filePath) {
     return ShaderPreprocessor_LoadWithDefines(filePath, NULL);
 }
-
-// ── Thay đổi cần thiết trong resource_manager.c ──────────────────────────────
-/*
-   Tìm đoạn code hiện tại nạp shader (dạng):
-
-     Shader shader = LoadShaderFromMemory(...) hoặc LoadShader(vsPath, fsPath);
-
-   Thay bằng:
-
-     #include "core/shader_preprocessor.h"   // thêm ở đầu file
-
-     // Bên trong ResourceManager_LoadShader():
-     char *vsCode = vsFilePath ? ShaderPreprocessor_Load(vsFilePath) : NULL;
-     char *fsCode = fsFilePath ? ShaderPreprocessor_Load(fsFilePath) : NULL;
-
-     Shader shader = LoadShaderFromMemory(vsCode, fsCode);
-
-     if (vsCode) RL_FREE(vsCode);
-     if (fsCode) RL_FREE(fsCode);
-
-   Phần còn lại (cache lookup, cache store, return) giữ nguyên.
-*/

@@ -568,7 +568,7 @@ static void Test_MirrorStillMatchesSource(void) {
   // combination breaks compilation (rlvk/shaderc: "Missing entry point"),
   // because this file ALREADY includes uv_deform.glsl/surface_flow.glsl
   // directly above and uv_field.glsl re-includes both — ShaderPreprocessor_Load
-  // (core/shader_preprocessor.c) is a naive recursive text substitution with
+  // (core/shading/shader_preprocessor.c) is a naive recursive text substitution with
   // NO include-path dedup, so their bodies land in the flattened source
   // twice. u_uvField/u_uvMeta are declared directly instead (see there).
   CHECK(!FileHasCode(trail, "#include \"core/uv/shaders/uv_field.glsl\"") &&

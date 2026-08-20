@@ -102,7 +102,7 @@ static int MentionsQuoted(const char *src, const char *name)
     return strstr(src, pat) != NULL;
 }
 
-// Resolve #include "..." the way core/shader_preprocessor.c does, appending the
+// Resolve #include "..." the way core/shading/shader_preprocessor.c does, appending the
 // included text. WITHOUT this the test silently stops covering any uniform that
 // moves into a shared block — it counts fewer uniforms and passes for the wrong
 // reason, which is precisely the drift it exists to catch. (Observed: moving the
