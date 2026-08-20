@@ -91,6 +91,19 @@ execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_reg
 execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_map_registry.py)
 execute_process(COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_vfx_surface_registry.py)
 
+# Compile core/shading/materials/*.mat -> core/shaders/<name>.fs plus the C
+# parameter tables. A .mat is the ONE list the shader's uniforms and the C table
+# are both generated from; they used to be two hand-kept lists that drifted.
+# Failure is fatal on purpose: a half-generated material would compile into a
+# shader whose table binds uniforms it no longer declares.
+execute_process(
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_materials.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    RESULT_VARIABLE GEN_MATERIALS_RESULT)
+if(NOT GEN_MATERIALS_RESULT EQUAL 0)
+    message(FATAL_ERROR "gen_materials.py failed (see above) - material sources are inconsistent")
+endif()
+
 # Texture packing is a HARD rule, not a convention: assets/TEXTURE_PACKING.md is
 # enforced here, at configure time, so a non-conforming sheet cannot reach a
 # build. The validator existed before this line and was wired to nothing — it

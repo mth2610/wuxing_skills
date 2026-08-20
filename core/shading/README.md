@@ -33,3 +33,69 @@ on that line. See `ENGINE_LANDMINES.md` #20; guarded by
 `core/tests/shader_permutation_test.c`.
 
 Headless test: `core/tests/shader_permutation_test.c`.
+
+## Materials (`materials/*.mat`)
+
+A `.mat` is the ONE list a material's uniforms are described in.
+`scripts/gen_materials.py` compiles it at CMake configure time into two outputs,
+both of which carry a generated banner and both of which are overwritten on every
+configure:
+
+```
+core/shading/materials/<name>.mat
+        │
+        ├── core/shaders/<name>.fs                 the fragment program
+        └── core/material/materials.generated.inl  the VfxParamDesc table
+```
+
+Build-time, not runtime, for the same reason Filament's `matc` is: the inputs
+never change after the build, and a runtime parser would mean allocation and
+parse errors on a player's device. Every other generated artefact in this repo
+works this way too.
+
+### What it is for
+
+The uniform list used to exist twice — as `uniform` lines in the `.fs`, and as a
+hand-written table in `material_system.c` — with nothing comparing them. They
+drifted. Authoring the first `.mat` immediately turned up `u_topY`: the C table
+had been fetching a location for a uniform **no shader in the tree declares**,
+getting -1 and pushing nothing, while `vc_energy_orb.inl` carefully set its value
+with a comment explaining what it was supposed to do.
+
+### Shape
+
+```
+material {
+    name    : aura_shell,
+    output  : body,              // body | emission | premultiplied
+    vertex  : "core/shaders/aura_shell.vs",
+    includes : [ ... ],
+    table   : AURA_PARAMS,               // the C symbol to generate
+    struct  : AuraShellMaterialParams,   // whose fields the params bind to
+    parameters : [
+        { uniform: u_bodyColor, kind: color, field: bodyColor },
+        { uniform: u_opacity,   kind: float, field: opacity },
+        { uniform: u_displaceAmp, kind: float, field: displaceAmp, stage: vertex }
+    ]
+}
+fragment { /* GLSL, no uniform declarations — those are generated */ }
+```
+
+`kind` is one of `float`, `color`, `texture`, `texflag`. `stage: vertex` means the
+uniform is declared in the hand-written `.vs`, so the fragment stage must not
+redeclare it — the C table still binds it, because a uniform is program-wide once
+linked.
+
+### What the compiler refuses
+
+Each of these fails the build rather than producing a material that renders
+something slightly wrong:
+
+- an `output` that is not one of the three
+- a parameter with no `field`, or listed twice
+- **a parameter the fragment block never reads** — that is the `u_topY` class of
+  drift, caught at its source
+- **`u_time`** — auto-bound by `SkillManager_BeginShader` and only by it. A
+  material pushing its own replaces a clock accumulated from the pinned delta
+  with the wall clock, and the effect stops being reproducible under
+  `render_vfx_matrix.sh`. See `ENGINE_LANDMINES.md`.

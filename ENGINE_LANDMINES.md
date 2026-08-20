@@ -1309,3 +1309,32 @@ symptom is corollary 1's — the effect gets SMALLER, not more present.
 
 Measured before/after for all of it: `BRIGHT_BACKGROUND_VFX_SPEC.md` §7.6d, "Second
 migration, 20/08/2026".
+
+## A shader phase on the WALL clock makes the VFX matrix lie (20/08/2026)
+
+**Symptom.** `render_vfx_matrix.sh` gave different numbers for the same fixture on
+the same binary. ENERGY ORB's warm `body%` came out 3.97 on one run and 5.39 on the
+next; `cool darken%` moved 46.1 → 57.7. Big enough to read as "the change helped"
+or "the change hurt" when nothing had changed at all.
+
+**Cause.** `material_system.c` pushed `GetTime()` into `u_time`. `GetTime()` is
+wall-clock seconds since `InitWindow`, so an animated shader's phase at the
+captured frame depends on how long the process took to get there — how warm the
+shader cache was, what else the machine was doing. The harness pins the timestep
+and the RNG seed; it cannot pin that. Worse, the push happened one call AFTER
+`MatBeginCommon` → `SkillManager_BeginShader` had already set `u_time` correctly
+from `g_skillManagerTime`, which accumulates the pinned delta — so the material
+was overwriting a reproducible clock with an unreproducible one.
+`core/shaders/common/fs_header.glsl` already said `u_time` is auto-bound by
+`SkillManager_BeginShader` "VÀ CHỈ BỞI NÓ", and `core/time_fx.h:57` already
+described this exact trap. Both were right and neither was being followed.
+
+**Rule.** A shader's animation phase reads the pinned clock — the auto-bound
+`u_time`, or `TimeFX_Elapsed()` — never `GetTime()`. Nothing but
+`SkillManager_BeginShader` writes `u_time`. `scripts/gen_materials.py` refuses a
+`.mat` that declares one.
+
+**And before trusting any before/after from that harness:** run the SAME binary
+twice first. Two identical rows are the only evidence that a third row differing
+means anything. This bug survived a long time because nobody had a reason to
+measure the same thing twice.

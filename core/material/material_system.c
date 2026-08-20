@@ -17,10 +17,17 @@
  * fetched and pushed. Adding a uniform is one row in a table.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+/* There is NO time kind. u_time is auto-bound by SkillManager_BeginShader and,
+ * as core/shaders/common/fs_header.glsl puts it, ONLY by it — from
+ * g_skillManagerTime, which accumulates the pinned delta. This table used to
+ * push GetTime() on top of that, i.e. overwrite a reproducible clock with the
+ * wall clock, one call after MatBeginCommon had set it correctly. Measured
+ * cost: ENERGY ORB's warm body%% swung 3.97 to 5.39 and its cool darken%% 46.1
+ * to 57.7 between runs of the SAME binary, because the wisp noise phase
+ * depended on how long the process took to reach the captured frame. */
 typedef enum
 {
-    VFXP_TIME = 0, /* GetTime(), no field                                      */
-    VFXP_FLOAT,    /* float field, pushed as a + b*x clamped to [lo,hi]        */
+    VFXP_FLOAT = 0,    /* float field, pushed as a + b*x clamped to [lo,hi]        */
     VFXP_COLOR,    /* Color field -> ColorNormalize -> vec4                    */
     VFXP_TEXTURE,  /* Texture2D field -> rlSetTexture + SetShaderValueTexture  */
     VFXP_TEXFLAG,  /* Texture2D field -> int (id != 0), the "has texture" bool */
@@ -36,7 +43,6 @@ struct VfxParamDesc
     float lo, hi;        /* FLOAT: clamp range                            */
 };
 
-#define P_TIME(n)                 { n, VFXP_TIME,    0, 0.0f, 0.0f, 0.0f, 0.0f }
 #define P_CONST(n, V)             { n, VFXP_CONST,   0, (V),  0.0f, 0.0f, 0.0f }
 #define P_FLOAT(n, T, f)          { n, VFXP_FLOAT,   (unsigned short)offsetof(T, f), 0.0f, 1.0f, -1e30f, 1e30f }
 #define P_AFFINE(n, T, f, A, B, LO, HI) \
@@ -56,7 +62,6 @@ struct VfxParamDesc
  * they stay in the table (and in the public params struct) only so the public
  * API does not change here. Their locs resolve to -1 and cost nothing. */
 static const VfxParamDesc EFFECT_PARAMS[] = {
-    P_TIME("u_time"),
     P_COLOR("u_baseColor", EffectMaterialParams, baseColor),
     P_FLOAT("u_translucency", EffectMaterialParams, translucency),
     P_FLOAT("u_rimStrength", EffectMaterialParams, rimStrength),
@@ -73,7 +78,6 @@ static const VfxParamDesc EFFECT_PARAMS[] = {
 VFX_STATIC_ASSERT(sizeof(EFFECT_PARAMS) / sizeof(EFFECT_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, effect);
 
 static const VfxParamDesc CRYSTAL_PARAMS[] = {
-    P_TIME("u_time"),
     P_COLOR("u_baseColor", CrystalMaterialParams, baseColor),
     P_COLOR("u_edgeColor", CrystalMaterialParams, edgeColor),
     /* roughness 0..1 -> fresnelPower 8..1, floored at 1. Rougher = broader rim. */
@@ -94,7 +98,6 @@ static const VfxParamDesc CRYSTAL_PARAMS[] = {
 VFX_STATIC_ASSERT(sizeof(CRYSTAL_PARAMS) / sizeof(CRYSTAL_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, crystal);
 
 static const VfxParamDesc PLASMA_PARAMS[] = {
-    P_TIME("u_time"),
     P_COLOR("u_baseColor", PlasmaMaterialParams, baseColor),
     P_COLOR("u_wispColor", PlasmaMaterialParams, wispColor),
     P_FLOAT("u_noiseScale", PlasmaMaterialParams, noiseScale),
@@ -107,24 +110,12 @@ static const VfxParamDesc PLASMA_PARAMS[] = {
 };
 VFX_STATIC_ASSERT(sizeof(PLASMA_PARAMS) / sizeof(PLASMA_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, plasma);
 
-static const VfxParamDesc AURA_PARAMS[] = {
-    P_TIME("u_time"),
-    P_COLOR("u_bodyColor", AuraShellMaterialParams, bodyColor),
-    P_COLOR("u_glowColor", AuraShellMaterialParams, glowColor),
-    P_FLOAT("u_opacity", AuraShellMaterialParams, opacity),
-    P_FLOAT("u_fresnelPower", AuraShellMaterialParams, fresnelPower),
-    P_FLOAT("u_rimStrength", AuraShellMaterialParams, rimStrength),
-    P_FLOAT("u_scrollSpeed", AuraShellMaterialParams, scrollSpeed),
-    P_FLOAT("u_noiseScale", AuraShellMaterialParams, noiseScale),
-    P_FLOAT("u_heightScale", AuraShellMaterialParams, heightScale),
-    P_FLOAT("u_scanFreq", AuraShellMaterialParams, scanFreq),
-    P_FLOAT("u_scanSpeed", AuraShellMaterialParams, scanSpeed),
-    P_FLOAT("u_scanStrength", AuraShellMaterialParams, scanStrength),
-    P_FLOAT("u_displaceAmp", AuraShellMaterialParams, displaceAmp),
-    P_FLOAT("u_topY", AuraShellMaterialParams, topY),
-    P_FLOAT("u_heightFadeOff", AuraShellMaterialParams, heightFadeOff),
-    P_FLOAT("u_coverFloor", AuraShellMaterialParams, coverFloor),
-};
+/* AURA_PARAMS is GENERATED from core/shading/materials/aura_shell.mat, which is
+ * also where core/shaders/aura_shell.fs comes from. That is the point: the
+ * uniform list used to exist twice — once as `uniform` lines in the .fs, once as
+ * this table — and the two drifted with nothing to catch it. Included here, after
+ * the P_* macros and the params structs it references. */
+#include "materials.generated.inl"
 VFX_STATIC_ASSERT(sizeof(AURA_PARAMS) / sizeof(AURA_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, aura);
 
 /* ── The engine ──────────────────────────────────────────────────────────── */
@@ -148,12 +139,6 @@ static void MatApply(Shader shader, const VfxParamDesc *layout, int count,
 
         switch (layout[i].kind)
         {
-        case VFXP_TIME:
-        {
-            float t = (float)GetTime();
-            SetShaderValue(shader, locs[i], &t, SHADER_UNIFORM_FLOAT);
-            break;
-        }
         case VFXP_CONST:
         {
             float v = layout[i].a;
