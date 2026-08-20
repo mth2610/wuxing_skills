@@ -846,6 +846,87 @@ SWEEP SLASH measures identically because it is not visible at warmup 90 on eithe
 background — a fast effect already gone by that frame. It is migrated but unverified; pick a
 warmup inside its life before trusting anything about it.
 
+#### Second migration, 20/08/2026 — the trail and geometry halves, and what the swap alone is not
+
+**THE ONE RULE THIS PASS ESTABLISHED: the blend state and the source's own formula are ONE
+decision, never two.** A particle site is a single field because the particle system already
+premultiplies for you. Nothing else in the engine does.
+
+| the blend | GL function | who multiplies by alpha |
+|---|---|---|
+| `BLEND_ALPHA` | `(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)` | the hardware |
+| `BLEND_ADDITIVE` | `(SRC_ALPHA, ONE)` | the hardware |
+| `BLEND_ALPHA_PREMULTIPLY` | `(ONE, ONE_MINUS_SRC_ALPHA)` | **you do** |
+
+Flipping only the blend state therefore multiplies every soft edge by `1/alpha`. It was
+measured on the trail presets, and the giveaway is which background moved:
+
+- `cover%` rose **~4x on the DARK background** — where the premultiplied law itself changes
+  almost nothing, since `dst ~ 0.02` makes `src + dst*(1-a)` and `src + dst` the same picture.
+  A large change on dark is proof the change was not the blend law.
+- `darken%` fell to **0.0 on every background**, because the extra light swamped the body
+  pass. TRAIL BACKDROP on white went 98.3 → 0.0 — backwards from the entire point.
+
+For a fixed-function draw (an immediate-mode ribbon, a raw `rlBegin` quad) there are **three**
+halves, not two: the blend, the vertex tint (`VC_Premultiply`, next to `VC_WithAlpha`), and
+**the sheet**. A white-RGB alpha mask scales A without scaling RGB, which hands the
+premultiplied blend a straight source everywhere the mask is not 1 — so a generated mask must
+be written `(a, a, a, a)`, not `(255, 255, 255, a)`.
+
+Migrated and measured, warmup 90 unless noted:
+
+| effect | bg | darken% | chroma | \|d\| |
+|---|---|---|---|---|
+| TRAIL MAIN | white | 4.6 → **86.4** | 0.291 → 0.306 | 0.076 → **0.124** |
+| TRAIL BLADE | white | 46.2 → **90.6** | 0.279 → 0.285 | 0.084 → **0.114** |
+| | warm | *(invisible)* → **70.0** | → 0.696 | → 0.093 |
+| TRAIL WISP | white | *(invisible)* → **71.1** | → 0.267 | → 0.090 |
+| TRAIL ENERGY | white | 0.0 → 0.5 | 0.254 → **0.407** | 0.104 → 0.120 |
+| TRAIL BACKDROP | white | 98.3 → 98.6 | 0.232 → 0.229 | 0.074 → 0.078 |
+| LIGHTNING ARC *(w15)* | white | 3.2 → **60.3** | 0.058 → 0.065 | 0.074 → 0.077 |
+| SHOCK RING *(w40)* | white | 0.9 → **81.5** | 0.257 → **0.346** | 0.120 → 0.109 |
+| SHOCK RING *(w20)* | white | 2.4 → **52.0** | 0.266 → **0.372** | 0.120 → 0.127 |
+| LIGHT SHAFT | white | 0.0 → **100.0** | 0.147 → **0.280** | 0.102 → 0.097 |
+| | warm | 0.0 → **42.3** | 0.350 → 0.298 | 0.198 → 0.138 |
+
+TRAIL SMOKE is the control for the trail pass: it does not emit, keeps `BLEND_ALPHA`, and
+measured **bit-identical**. FLAME VOLUME reproduced its §11b baseline to every digit across
+all three commits.
+
+**Where premultiplied did NOT win, and why each answer is different:**
+
+- **A MULTI-PASS ADDITIVE STACK DOES NOT SURVIVE THE SWAP.** Additive passes SUM; premultiplied
+  passes OCCLUDE EACH OTHER. SWEEP SLASH is three passes sharing one outer edge: migrated, its
+  white footprint over threshold HALVED (1501 px → 639) while the peak delta barely moved
+  (33 → 37), `|d|` fell 4–13% and `chroma` fell on three of four backgrounds. **Reverted.**
+  LIGHT SHAFT is two passes and paid the same tax in the same direction — its dark `|d|` fell
+  10%, against the 2–7% every single-draw migration cost — but its white result was large
+  enough to keep. Collapsing a stack into one draw is authoring, not policy.
+- **ALPHA WITH A STRAIGHT SOURCE ALREADY IS THE PREMULTIPLIED LAW.**
+  `(SRC_ALPHA, 1-SRC_ALPHA)` over `col` and `(ONE, 1-SRC_ALPHA)` over `col*a` are both
+  `col*a + dst*(1-a)`. ENERGY ORB draws that way and already darkens 99.7% on white; the swap
+  is algebraically a no-op there. What premultiplied actually buys is **emission ABOVE
+  coverage**, and asking for that is an authoring decision, not a policy migration.
+- **A SHARED SHEET CAN BLOCK IT OUTRIGHT.** RUNE CIRCLE's emission halo samples the same
+  `rune_line.png` and glyph sheets its BODY pass needs straight, and there is no shader in that
+  path to resolve the difference. Premultiplying would mean shipping a second copy of every
+  sheet. It already darkens 93.4% on white through the body pass.
+- **DECALS ARE CORRECTLY ALPHA, and the reason is not "they do not glow".** The decal system
+  blends by PASS — body groups `BLEND_ALPHA`/`BLEND_MULTIPLIED`, the emissive group
+  `BLEND_ADDITIVE` — and `decal_system.c` explicitly refuses `appearance.surface` and warns
+  rather than silently dropping it. Measured, the DECAL fixture darkens 97.7–100% on white,
+  warm and cool. Nothing to fix.
+- SHIELD SHELL was already premultiplied on both counts (`VFX_APPEARANCE_MAGIC` resolves to
+  `VFX_SURFACE_PREMULTIPLIED`, `glass_shell.fs` outputs through `VFX_ResolvePremultiplied`) and
+  measures darken 92.1% on white. Its emission pass is forced additive by
+  `VFXRender_BeginAppearance` for EVERY named appearance — that is a global policy worth
+  revisiting, not this effect's setting.
+- LIGHTNING IMPACT shares LIGHTNING ARC's draw path, so it moved with it, and it lost: on white
+  at warmup 5 it drops from 682 px over threshold to under the harness's 200-pixel floor. Its
+  radiance and its coverage are near-equal, so premultiplied lands it exactly ON white where
+  additive left it a hair above. Recorded rather than hidden; it was at the noise floor either
+  way and every other background is flat.
+
 > [!CAUTION]
 > **The engine default is `VFX_BLEND_ALPHA` (zero), which is neither.** So a particle that
 > declares nothing is neither emissive nor premultiplied — it occludes and gets lit. Of the
@@ -1867,6 +1948,7 @@ The project is done with this specification only when all of the following are t
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-08-20 | Claude | §7.6d "Second migration" — the trail and geometry halves of the premultiplied policy; the blend-state-and-formula-are-one-decision rule and its three-halves form for fixed-function draws; why SWEEP SLASH was reverted, and why ENERGY ORB / RUNE CIRCLE / SHIELD SHELL / DECAL need nothing | `render_vfx_matrix.sh` before/after on 13 fixtures at `WUXING_TUNING=none`; `core/composition/common/{vc_trail,vc_lightning_arc,vc_shock_ring,vc_light_shaft}.inl`; `core/trails/{trail_system.c,shaders/trail_deform.fs}`; `core/lightning/shaders/lightning_stroke.fs`; `core/shaders/shock_ring.fs`; `core/presets/vc_material.h` | Ground-truth: every number measured; TRAIL SMOKE bit-identical and FLAME VOLUME reproduced §11b to every digit as controls |
 | 2026-08-16 | Codex | Initial research and complete implementation specification | Epic Unreal blend/exposure/bloom/tonemapper docs; Unity tonemapping docs; Hogwarts Legacy GDC 2024; Call of Duty: Advanced Warfare SIGGRAPH 2014; Prototype 2 Game Developer article; Khronos blend docs; local headers/shaders/backend files named in §3 | External ground-truth + local ground-truth + marked project conventions |
 | 2026-08-16 | Codex | Implemented RGBA16F readback, `bright_vfx` Vulkan oracle, shared compositor include, fire/smoke resolver wiring, and Magic premultiplied appearance policy | `third_party/vulkan/rlvk/rlvk_format.inl`; `third_party/vulkan/tests/rlvk_visual_test.c`; `core/shaders/common/vfx_composite.glsl`; `core/shaders/{fire_funnel,energy_smoke}.fs`; `core/vfx_contrast.c` | Code complete for these slices; compile/visual gates pending dependency cache |
 | 2026-08-16 | Codex | Migrated ShieldShell to `VFX_APPEARANCE_MAGIC`; body now uses premultiplied output and emission uses the shared emission resolver | `core/composition/common/vc_shield_shell.inl`; `core/shaders/glass_shell.fs`; `core/tests/shield_shell_test.c`; `core/tests/vfx_render_layers_contract_test.c` | Core ShieldShell contract passes; Vulkan visual capture still pending dependency cache |
