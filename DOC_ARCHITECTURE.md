@@ -8,7 +8,7 @@
 
 ---
 
-## 1. Three doc archetypes — split by RATE OF CHANGE, not by topic
+## 1. Two doc archetypes — split by RATE OF CHANGE, not by topic
 
 This is the root rule. Every doc is exactly one archetype. Never mix them.
 
@@ -16,11 +16,15 @@ This is the root rule. Every doc is exactly one archetype. Never mix them.
 |---|---|---|---|---|
 | **API** | `docs/API.md` | Only on a breaking change | Signatures, contracts, invariants, calling conventions — pure interface | Status/progress, plans, debugging stories ("fixed bug X yesterday"), TODOs |
 | **LANDMINES** | `docs/LANDMINES.md` | Append when a lesson is distilled after debugging | Lessons already learned. Each entry has 3 parts: **Symptom → Cause → Rule** | Backlog, unfinished work, TODOs |
-| **PROGRESS** | `docs/PROGRESS.md` | Frequently — most sessions | Done / in-progress / backlog / pending decisions | Duplication of API or landmine content (link to it instead) |
 
-**Why split by rate of change:** API is stable so it can be read-to-use; landmines only grow (append-only); progress churns constantly. Mixing them forces an agent that wants one signature to wade through progress + debugging notes — wasted tokens, and diffs that are hard to review.
+**There is no PROGRESS archetype, and no plan/spec/handoff docs.** All of them were deleted
+on 20/08/2026 and must not be recreated. They churned every session, went stale faster than
+the code, and every agent paid to re-read them before doing anything. Work state belongs in
+the session that is doing the work.
 
-**"API is pure API" means:** if a sentence in `API.md` is not describing the interface (it's progress, or a lesson), move it to `PROGRESS.md` / `LANDMINES.md`. Do not leave it in API.
+**Why split by rate of change:** API is stable so it can be read-to-use; landmines only grow (append-only). Mixing them forces an agent that wants one signature to wade through debugging notes — wasted tokens, and diffs that are hard to review.
+
+**"API is pure API" means:** if a sentence in `API.md` is not describing the interface (it's a lesson), move it to `LANDMINES.md`. If it is work status, delete it.
 
 ---
 
@@ -30,9 +34,9 @@ A module's docs live in a **`docs/` subfolder inside that module**, next to its 
 
 ```
 core/CLAUDE.md
-core/docs/API.md   core/docs/LANDMINES.md   core/docs/PROGRESS.md
+core/docs/API.md   core/docs/LANDMINES.md
 skills/CLAUDE.md
-skills/docs/API.md skills/docs/LANDMINES.md skills/docs/PROGRESS.md
+skills/docs/API.md skills/docs/LANDMINES.md
 ...
 ```
 
@@ -62,7 +66,6 @@ When the API is index-only, pair it with a hand-maintained **usage guide** (`API
 | `AGENT_CODE_STANDARD.md` | Code standard for every agent |
 | `DOC_MAINTENANCE.md` | How to WRITE a doc (fact vs inferred, patch log) |
 | `DOC_ARCHITECTURE.md` | (this file) How to ORGANIZE docs |
-| `ROADMAP.md` | The **one** project-wide plan/progress (consolidates the scattered plan docs) |
 | `ENGINE_LANDMINES.md` | **Cross-cutting** lessons — see section 5 |
 | `nguhanhtyvo_kehoach.md` | Design doc — source of truth for gameplay intent (Vietnamese) |
 
@@ -92,14 +95,14 @@ Write each lesson in exactly 3 parts, concise — so it skims fast:
 - **Rule:** what to DO/AVOID so it never repeats. One imperative sentence.
 ```
 
-Do not write a landmine as a long diary entry. If an entry has been permanently fixed in code (no longer a trap), consider removing it from LANDMINES and leaving a one-line note in PROGRESS.
+Do not write a landmine as a long diary entry. If an entry has been permanently fixed in code (no longer a trap), remove it from LANDMINES outright — there is nowhere else for it to go.
 
 ---
 
 ## 7. Checklist when adding/editing a doc
 
-- [ ] Is this content in the right archetype? (interface → API, lesson → LANDMINES, progress → PROGRESS)
-- [ ] Is `API.md` free of progress / debugging stories? If not, move them out.
+- [ ] Is this content in the right archetype? (interface → API, lesson → LANDMINES, work status → nowhere: leave it in the session)
+- [ ] Is `API.md` free of progress / debugging stories? If not, move the lessons to LANDMINES and delete the rest.
 - [ ] Is the doc under the correct module's `docs/` folder (not dumped at the repo root)?
 - [ ] Is the just-distilled lesson cross-cutting? If so, was it promoted to `ENGINE_LANDMINES.md`?
 - [ ] Is the landmine written in the 3 parts Symptom/Cause/Rule, concise?

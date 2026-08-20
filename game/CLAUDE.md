@@ -10,7 +10,7 @@ Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
 Owns the real, production-bound gameplay screen (`game/game_screen.h/.c`) —
 distinct from `sandbox/`, which stays the dev/test harness (debug panels,
 tuning sliders, autotest) and must never be modified by this agent. This IS
-`../ROADMAP.md` Module 7 (landed 07/2026, see `game/docs/API.md`): the full
+Module 7 (landed 07/2026, see `game/docs/API.md`): the full
 match state machine (INTRO → FIGHTING → VICTORY/DEFEAT) against Boss Hắc
 Diện Tôn Giả on DEFAULT_ARENA, movement/cast via `control/`
 (Control_ReadIntent/Apply), boss HP bar + state overlays in the HUD, and the

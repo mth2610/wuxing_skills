@@ -7,7 +7,7 @@
 Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
 
 ## Role
-Owns `formations/` — Trận Pháp (ROADMAP.md Module 10). Engine/data
+Owns `formations/` — Trận Pháp (Module 10). Engine/data
 split identical to boss/:
 - `formation_system.h/.c` — ENGINE, written once: `formationPool[4]`,
   mana-gated `Formation_Deploy`, duration ticks, zone resonance decided once

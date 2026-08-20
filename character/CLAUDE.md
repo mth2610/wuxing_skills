@@ -11,7 +11,7 @@ character", not a generic reusable utility like particle/shader/mesh) and not
 `entities/` (which forbids rendering entirely) — hence its own module.
 
 This module is new and intentionally minimal — one shared model instance,
-player-only for now. Not in `../ROADMAP.md`'s original module list; added
+player-only for now. Not in the original module list; added
 because `entities/entities.h`'s `BasicAttackType` (punch/kick/đá/chưởng)
 needed a real visual to play, and neither `core/` nor `entities/` was the
 right home (see git history / conversation that created this module for the

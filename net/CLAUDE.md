@@ -8,7 +8,7 @@
 Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
 
 ## Role
-Owns `net/` — networking (ROADMAP.md Module 11), peer-hosted model:
+Owns `net/` — networking (Module 11), peer-hosted model:
 clients send serialized `PlayerIntent` to the host; the host runs the one
 true simulation (combat resolves host-side only) and broadcasts agent-pool
 snapshots. **Current state: fully landed** — wire core (`net.c`), ENet

@@ -3,7 +3,6 @@
 ## Docs layout
 - `docs/API.md` — pure interface (this module's public API)
 - `docs/LANDMINES.md` — distilled module-local debugging lessons
-- `docs/REAL_SHADING_PLAN.md` / `docs/REAL_SHADING_SPEC.md` / `docs/REAL_SHADING_P6_NOTES.md` — real-shading plan/spec/handoff notes
 - Root `ENGINE_LANDMINES.md` — cross-cutting engine lessons (read before touching GL/shaders)
 
 ## Role

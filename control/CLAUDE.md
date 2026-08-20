@@ -7,7 +7,7 @@
 Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
 
 ## Role
-Owns `control/` — the player controller (../ROADMAP.md Module 4).
+Owns `control/` — the player controller (Module 4).
 Splits INPUT (device: keyboard/mouse today, touch/gamepad/net later) from
 INTENT (`PlayerIntent`), and applies intents through entities/skill_manager
 APIs only. `net/` will serialize `PlayerIntent` verbatim — keep the struct

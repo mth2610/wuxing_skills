@@ -8,7 +8,7 @@ Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
 
 ## Role
 Owns `combat/` — Đấu Pháp: the immediate-mode projectile collider registry +
-5x5 Clash Matrix (../ROADMAP.md Module 3). Skills keep owning projectile
+5x5 Clash Matrix (Module 3). Skills keep owning projectile
 motion/VFX; they submit colliders every frame, combat resolves
 projectile↔projectile clashes and projectile↔agent damage, skills poll
 `ClashEvent`s to despawn and draw clash VFX.

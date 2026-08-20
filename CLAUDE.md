@@ -3,13 +3,9 @@
 C / Raylib 6.0 game project. Rendering backend: **Vulkan 1.1 via `rlvk` (priority)**, with OpenGL 3.3 Core / GLES 3.x as fallback paths (see `third_party/vulkan/docs/HANDOFF.md`). Isometric Night-time Arena. 6 elements: Water, Wood, Fire, Earth, Metal, Taiji.
 
 ## Reference docs
-- `DOC_ARCHITECTURE.md` — **How docs are organized** (3 archetypes: API/LANDMINES/PROGRESS, per-module placement, cross-cutting landmine promotion). Read before adding/moving any doc.
+- `DOC_ARCHITECTURE.md` — **How docs are organized** (2 archetypes: API/LANDMINES, per-module placement, cross-cutting landmine promotion). Read before adding/moving any doc.
 - `DOC_MAINTENANCE.md` — How to WRITE a doc (ground-truth vs inferred, patch log).
 - `ENGINE_LANDMINES.md` — **Cross-cutting traps** every module can hit (read before touching GL/shaders or the Android build).
-- `ROADMAP.md` — The one project-wide plan/progress doc.
-- `core/docs/VFX_PLAN.md` — **the active VFX plan (Đợt H)**: what is left of E/F, why the
-  look still falls short (the toolkit is all particles, the geometry half is unused), and
-  the ordered task list. `core/docs/ELDEN_VFX_SPEC.md` is now history.
 - `core/docs/API.md` — Full engine API (particle, trail, force field, shader, mesh...)
 - `third_party/vulkan/docs/BRIGHT_BACKGROUND_VFX_SPEC.md` — **how a VFX must behave on bright
   scenery**, and §11b the harness that measures whether yours does. Read §5 before authoring
@@ -27,7 +23,7 @@ C / Raylib 6.0 game project. Rendering backend: **Vulkan 1.1 via `rlvk` (priorit
 - `ui/docs/API.md` — HUD + auto-targeting (đối-đòn priority)
 - `formations/docs/API.md` — Trận Pháp engine/data split + zone resonance
 - `net/docs/API.md` — PlayerIntent/snapshot wire formats (transport gated)
-- `third_party/vulkan/docs/HANDOFF.md` — rlvk Vulkan 1.1 backend (architecture + §7 debugging case studies); `docs/LANDMINES.md` = trap index, `docs/PROGRESS.md` = status
+- `third_party/vulkan/docs/HANDOFF.md` — rlvk Vulkan 1.1 backend (architecture + §7 debugging case studies); `docs/LANDMINES.md` = trap index
 - `core/docs/VFX_ARCHITECTURE.md` — Overall VFX architecture
 - `WUXING_ART_DIRECTION.md` — Art style and aesthetic laws
 - `assets/TEXTURE_PACKING.md` — **What each RGBA channel of a VFX sheet may carry.** Normative and machine-enforced (`scripts/validate_vfx_surface_registry.py` runs at CMake configure time and fails the build). Read before adding or changing any texture in `assets/vfx_surface_profiles.json`.
@@ -70,11 +66,14 @@ Two rules the harness exists to enforce, both of which produced wrong conclusion
   background's own bloom breaks any in-frame estimate.
 
 ### Where to write
-- **Work in progress / status / backlog / session notes** → your module's **`docs/PROGRESS.md`**. Project-wide milestones → **`ROADMAP.md`**.
+- **No progress / status / backlog / plan / spec / handoff docs.** They were deleted on
+  20/08/2026 and are not to be recreated: they went stale faster than the code and every
+  session paid to re-read them. Session state belongs in the session. Only two doc
+  archetypes survive — **API** (what exists) and **LANDMINES** (traps already paid for).
 - **A reusable lesson learned from a bug** → your module's **`docs/LANDMINES.md`**, as **Symptom → Cause → Rule**. If another module could hit it, **promote to `ENGINE_LANDMINES.md`** (leave a one-line pointer behind).
 - **API changed** (signature/struct/enum) → edit the `.h`. `core/docs/API.md` is **generated** (`scripts/gen_core_api_index.sh`) — never hand-edit it; usage prose goes in `core/docs/API_GUIDE.md`. Other modules' `API.md` are hand-written — edit the specific section, never rewrite the file.
 - **A new code rule / gotcha for all agents** → `AGENT_CODE_STANDARD.md` (same turn as the code).
-- *How to WRITE a doc* (fact vs inferred, patch log, edit scope): `DOC_MAINTENANCE.md`. *How docs are ORGANIZED* (the 3 archetypes, placement): `DOC_ARCHITECTURE.md`.
+- *How to WRITE a doc* (fact vs inferred, patch log, edit scope): `DOC_MAINTENANCE.md`. *How docs are ORGANIZED* (the 2 archetypes, placement): `DOC_ARCHITECTURE.md`.
 
 Never edit another module's files — ask that module's agent. Never read/list/touch `build/`, `_deps/`, `android.wuxing_skills/`.
 

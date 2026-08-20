@@ -7,7 +7,7 @@
 Read root `ENGINE_LANDMINES.md` before touching GL/shaders.
 
 ## Role
-Owns `ai/` — minion brain (../ROADMAP.md Module 8). Minions are plain
+Owns `ai/` — minion brain (Module 8). Minions are plain
 `ARCH_MINION` agents in the shared entities pool (no pool of its own); this
 module adds behavior only: march toward the enemy boss, self-destruct AoE.
 Later grows hero-AI brains for AI teammates/opponents.
