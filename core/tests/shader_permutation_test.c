@@ -139,11 +139,11 @@ static void Test_TheTwoHeadersExposeTheSameInterface(void)
 // This test exists because vs_instanced_header.glsl did exactly that on the
 // day it was written, in its own usage example.
 //
-// Scope is core/ — the module this test belongs to. maps/toolkit/shaders has
-// two pre-existing instances (prop_lit.vs, grass_material.vs) that say
-// "does NOT #include ..." in prose; grass_material.vs is the live one, because
-// the parser takes the next double-quote ANYWHERE after the directive as the
-// path and there is one further down that file. Those belong to the Map Agent.
+// The two maps/toolkit shaders are in the list on purpose even though they
+// belong to another module: both used to carry the token in a "does NOT
+// #include ..." note, grass_material.vs in the live form (a quote further down
+// the file for the parser to adopt). They were reworded on 20/08/2026 and are
+// listed here so they cannot drift back.
 
 static int LineIsCommentedInclude(const char *line)
 {
@@ -179,7 +179,7 @@ static int ScanForCommentedIncludes(const char *path)
 
 static void Test_NoIncludeDirectiveHidesInAComment(void)
 {
-    printf("\n-- no include directive inside a comment (core/) --\n");
+    printf("\n-- no include directive inside a comment --\n");
 
     // Listed explicitly rather than walked: this tier links nothing, and the
     // shared headers plus the two permutation consumers are what the seam
@@ -199,13 +199,15 @@ static void Test_NoIncludeDirectiveHidesInAComment(void)
         "core/shaders/common/vfx_lights.glsl",
         "core/shaders/effect_material.vs",
         "core/shaders/crystal.vs",
+        "maps/toolkit/shaders/grass_material.vs",
+        "maps/toolkit/shaders/prop_lit.vs",
     };
     int n = (int)(sizeof(files) / sizeof(files[0]));
 
     int total = 0;
     for (int i = 0; i < n; i++) total += ScanForCommentedIncludes(files[i]);
 
-    CHECK(total == 0, "no shared shader source hides an include in a comment");
+    CHECK(total == 0, "no listed shader source hides an include in a comment");
 }
 
 int main(void)

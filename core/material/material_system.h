@@ -100,8 +100,9 @@ void Material_End(void);
  * tách khỏi CrystalMaterial (location của cùng 1 tên uniform có thể khác
  * nhau giữa 2 program đã link khác nhau). Dùng với DrawMeshInstanced để vẽ
  * N mesh giống nhau (rock, shard...) bằng ĐÚNG 1 draw call thay vì N lần
- * DrawMesh — xem VFX_ComposeFloatingStones (vc_earth.inl) và
- * CORE_ISSUES.md Item 40. Chỉ dùng cho hiệu ứng backed bởi EffectMaterial
+ * DrawMesh. KHÔNG còn consumer nào kể từ khi F0 xoá VFX_ComposeFloatingStones
+ * — đường instanced của EffectMaterial hiện chỉ được canh bởi autotest
+ * `shader_permutation`. Chỉ dùng cho hiệu ứng backed bởi EffectMaterial
  * (Material_Get/Material_LoadCustom) — hiệu ứng dùng CrystalMaterial thì
  * dùng CrystalMaterialInstanced ở trên thay vì cái này. */
 /* Same struct, same layout table, same shader source — the ONLY difference

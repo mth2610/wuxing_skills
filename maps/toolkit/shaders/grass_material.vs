@@ -6,7 +6,7 @@
 //
 // Texture-blend hybrid ground material. Drawn via raylib's Material +
 // DrawModel()/DrawModelEx() pipeline (like prop_lit, CORE_ISSUES.md
-// Item 36) — NOT a skill VFX shader, so it does NOT #include
+// Item 36) — NOT a skill VFX shader, so it deliberately does not pull in
 // core/shaders/common/vs_header.glsl (that header's uniforms are only
 // auto-bound by SkillManager_BeginShader, which never runs for a plain
 // DrawModel() call).

@@ -2,6 +2,7 @@
 
 #include "sandbox/auto_test.h"
 #include "core/skill_manager.h"
+#include "core/material/material_system.h"
 #include "core/map_manager.h"
 #include "entities/entities.h"
 #include "combat/combat.h"
@@ -826,6 +827,74 @@ static AutoTestResult AutoTest_BossStep(int frameInCase, char *outReason, int ou
   Entity_ApplyDamage(hero, 1e9f, (Vector3){ 0 });
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
+// M3 guard — the INSTANCED shader permutation, on a real graphics context.
+//
+// This is the one thing core/tests/shader_permutation_test.c cannot answer: it
+// checks the seam textually, but whether the variant COMPILES and LINKS needs a
+// device. No VFX-test fixture reaches these programs (sandbox's harness takes
+// one primary API per .inl, and water/ice_crystal.inl's is VFX_ComposeIceCrystal
+// rather than the instanced VFX_DrawIceCrystalBurst beside it), so without this
+// case the instanced path is first exercised by a player casting Glacial Cannon.
+//
+// The decisive check is the attribute, not the link. `in mat4 instanceTransform`
+// must exist in the instanced program and must NOT exist in the other one —
+// reading it unbound on a plain DrawMesh is undefined behaviour across drivers,
+// and that is the entire reason this is a compile-time define rather than a
+// runtime branch. rlvk resolves the name through its canonical attribute table
+// (RLVK_ATTRIB_INSTANCE_TX), so a -1 here really does mean "not declared".
+static AutoTestResult AutoTest_ShaderPermutationStep(int frameInCase, char *outReason, int outReasonSize) {
+  (void)frameInCase;
+
+  EffectMaterial            effect;   Material_LoadCustom(&effect, NULL);
+  EffectMaterialInstanced   effectI;  EffectMaterialInstanced_Load(&effectI, NULL);
+  CrystalMaterial           crystal;  CrystalMaterial_Load(&crystal, NULL);
+  CrystalMaterialInstanced  crystalI; CrystalMaterialInstanced_Load(&crystalI, NULL);
+
+  bool ok = true;
+
+  ok &= AutoTest_ExpectTrue(effectI.shader.id != 0 && effectI.shader.locs != NULL,
+                            "instanced effect_material program compiled and linked",
+                            outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(crystalI.shader.id != 0 && crystalI.shader.locs != NULL,
+                            "instanced crystal program compiled and linked",
+                            outReason, outReasonSize);
+
+  // Same .vs/.fs pair, different defines => different programs. If the cache
+  // keyed on paths alone it would hand back the non-instanced program here, and
+  // every instanced draw would read a matModel that is not per-instance.
+  ok &= AutoTest_ExpectTrue(effectI.shader.id != effect.shader.id,
+                            "shader cache keys on the defines (effect_material)",
+                            outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(crystalI.shader.id != crystal.shader.id,
+                            "shader cache keys on the defines (crystal)",
+                            outReason, outReasonSize);
+
+  ok &= AutoTest_ExpectTrue(GetShaderLocationAttrib(effectI.shader, "instanceTransform") >= 0,
+                            "instanced effect variant declares instanceTransform",
+                            outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(GetShaderLocationAttrib(effect.shader, "instanceTransform") < 0,
+                            "non-instanced effect variant does NOT declare it",
+                            outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(GetShaderLocationAttrib(crystalI.shader, "instanceTransform") >= 0,
+                            "instanced crystal variant declares instanceTransform",
+                            outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(GetShaderLocationAttrib(crystal.shader, "instanceTransform") < 0,
+                            "non-instanced crystal variant does NOT declare it",
+                            outReason, outReasonSize);
+
+  // And the parameter table resolved against the real program: a table that
+  // silently matched nothing would leave every material at shader defaults,
+  // which renders as something rather than as an error.
+  int resolved = 0;
+  for (int i = 0; i < crystalI.layoutCount; i++)
+    if (crystalI.locs[i] >= 0) resolved++;
+  ok &= AutoTest_ExpectTrue(crystalI.layoutCount > 0 && resolved >= 8,
+                            "the crystal parameter table resolved against the instanced program",
+                            outReason, outReasonSize);
+
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
 void AutoTestCases_Register(PlayerEntity *player)
 {
   s_player = player;
@@ -844,4 +913,5 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("net_wire_format", AutoTest_NetWireStep, 5);
   AutoTest_Register("team_elimination", AutoTest_TeamEliminationStep, 5);
   AutoTest_Register("hero_bot_handicap", AutoTest_HeroBotHandicapStep, 5);
+  AutoTest_Register("shader_permutation", AutoTest_ShaderPermutationStep, 5);
 }

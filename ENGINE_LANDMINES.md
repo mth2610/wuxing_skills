@@ -56,8 +56,9 @@ anywhere in the rest of the file**, not on that line. So a prose comment like
 `// Deliberately does NOT #include vs_header.glsl` (no quotes on its own line) silently adopts a
 quote from further down and tries to include whatever text sits between it and the next one.
 With no quote left in the file it merely warns; with one, it loads a garbage path.
-`maps/toolkit/shaders/grass_material.vs` is in the live form today (Map Agent's file);
-`maps/toolkit/shaders/prop_lit.vs` is in the harmless form.
+`maps/toolkit/shaders/grass_material.vs` was in the live form and
+`maps/toolkit/shaders/prop_lit.vs` in the harmless one; both were reworded on 20/08/2026,
+and the tree now has **no** shader carrying the token inside a comment.
 
 **Rule.** **Never write the token `#include` inside a shader comment** — not as an example, not
 in a "does NOT include X" note. Describe it in prose ("an include directive", "pulls in

@@ -28,43 +28,6 @@ static void EarthFx_InitShared(void)
     s_earthFxInit = true;
 }
 
-static ForceField s_earthGravFld = {0};
-static ForceField *EarthGravField(void)
-{
-    if (s_earthGravFld.layerCount == 0)
-        ForceField_AddLayer(&s_earthGravFld, (ForceLayer){
-                                                 .type = FORCE_GRAVITY_DIR,
-                                                 .direction = (Vector3){0.0f, -1.0f, 0.0f},
-                                                 .strength = 9.8f});
-    return &s_earthGravFld;
-}
-
-static Mesh GetFloatingStoneTemplateMesh(void)
-{
-    static Mesh s_template = {0};
-    static bool s_ready = false;
-    if (!s_ready)
-    {
-        s_template = ProceduralMesh_BuildRockTemplateMesh(1.0f, 0.5f, 733, 1);
-        s_ready = true;
-    }
-    return s_template;
-}
-
-static EffectMaterialInstanced GetFloatingStoneMaterialInstanced(void)
-{
-    static EffectMaterialInstanced s_rockMatI;
-    static bool s_rockMatILoaded = false;
-    if (!s_rockMatILoaded)
-    {
-        EffectMaterial nonInstanced;
-        Material_Get(&nonInstanced, MAT_ROCK);
-        EffectMaterialInstanced_Load(&s_rockMatI, &nonInstanced.params);
-        s_rockMatILoaded = true;
-    }
-    return s_rockMatI;
-}
-
 #include "stone_pillar.inl"
 #include "fissure_streak.inl"
 // @gen:earth_includes begin

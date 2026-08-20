@@ -5,7 +5,7 @@
 //
 // Lit material for map terrain/props, driven by raylib's own
 // Material + DrawModel()/DrawModelEx() pipeline — NOT a skill VFX shader.
-// Deliberately does NOT #include core/shaders/common/vs_header.glsl: that
+// Deliberately does not pull in core/shaders/common/vs_header.glsl: that
 // header's u_time/viewPos/u_resolution uniforms are auto-bound by
 // SkillManager_BeginShader(), which never runs for a plain DrawModel()
 // call, and its VS_FinalOutput() doesn't know about tangents. Only the
