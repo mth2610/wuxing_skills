@@ -18,3 +18,31 @@ static const VfxParamDesc AURA_PARAMS[] = {
     P_FLOAT("u_heightFadeOff", AuraShellMaterialParams, heightFadeOff),
     P_FLOAT("u_coverFloor", AuraShellMaterialParams, coverFloor),
 };
+
+/* core/shading/materials/crystal.mat — 12 parameters, output: premultiplied */
+static const VfxParamDesc CRYSTAL_PARAMS[] = {
+    P_COLOR("u_baseColor", CrystalMaterialParams, baseColor),
+    P_COLOR("u_edgeColor", CrystalMaterialParams, edgeColor),
+    P_AFFINE("u_fresnelPower", CrystalMaterialParams, roughness, 8.0f, -7.0f, 1.0f, 1e30f),
+    P_FLOAT("u_rimStrength", CrystalMaterialParams, fresnel),
+    P_FLOAT("u_refraction", CrystalMaterialParams, refraction),
+    P_FLOAT("u_sparkle", CrystalMaterialParams, sparkle),
+    P_FLOAT("u_crack", CrystalMaterialParams, crack),
+    P_FLOAT("u_emission", CrystalMaterialParams, emission),
+    P_FLOAT("u_thickness", CrystalMaterialParams, thickness),
+    P_FLOAT("u_dissolve", CrystalMaterialParams, dissolve),
+    P_TEX("texture1", CrystalMaterialParams, texture1),
+    P_CONST("u_growProgress", 1.0f),
+};
+
+/* core/shading/materials/effect_material.mat — 9 parameters, output: premultiplied */
+static const VfxParamDesc EFFECT_PARAMS[] = {
+    P_COLOR("u_baseColor", EffectMaterialParams, baseColor),
+    P_FLOAT("u_translucency", EffectMaterialParams, translucency),
+    P_FLOAT("u_rimStrength", EffectMaterialParams, rimStrength),
+    P_FLOAT("u_fresnelPower", EffectMaterialParams, fresnelPower),
+    P_FLOAT("u_emissiveIntensity", EffectMaterialParams, emissiveIntensity),
+    P_TEXFLAG("u_hasTexture1", EffectMaterialParams, texture1),
+    P_TEX("texture1", EffectMaterialParams, texture1),
+    P_FLOAT("u_distortionStrength", EffectMaterialParams, distortionStrength),
+};

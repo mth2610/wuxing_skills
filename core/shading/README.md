@@ -81,7 +81,18 @@ material {
 fragment { /* GLSL, no uniform declarations — those are generated */ }
 ```
 
-`kind` is one of `float`, `color`, `texture`, `texflag`. `stage: vertex` means the
+`kind` is one of:
+
+| kind | means |
+|---|---|
+| `float` | a float field; add `a`/`b`/`lo`/`hi` for an affine map `a + b*field` clamped to `[lo,hi]` — crystal's `roughness 0..1 -> u_fresnelPower 8..1` is one |
+| `color` | a `Color` field, pushed as a normalized `vec4` |
+| `texture` | a `Texture2D` field |
+| `texflag` | the same `Texture2D` field pushed as `int(id != 0)`; list it BEFORE the sampler when the shader gates on it |
+| `const` | a literal the material re-pushes on every Begin; needs `value`, has no field |
+| `extern` | declared in GLSL but NOT bound by the table — something sets it by name at runtime (`Material_SetFloat`). Without this the shader would reference an undeclared uniform |
+
+`stage: vertex` means the
 uniform is declared in the hand-written `.vs`, so the fragment stage must not
 redeclare it — the C table still binds it, because a uniform is program-wide once
 linked.

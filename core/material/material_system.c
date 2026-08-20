@@ -58,43 +58,23 @@ struct VfxParamDesc
 
 /* ── The tables ──────────────────────────────────────────────────────────── */
 
-/* u_customParam1/2 have no consumer in any shader and no caller sets them;
- * they stay in the table (and in the public params struct) only so the public
- * API does not change here. Their locs resolve to -1 and cost nothing. */
-static const VfxParamDesc EFFECT_PARAMS[] = {
-    P_COLOR("u_baseColor", EffectMaterialParams, baseColor),
-    P_FLOAT("u_translucency", EffectMaterialParams, translucency),
-    P_FLOAT("u_rimStrength", EffectMaterialParams, rimStrength),
-    P_FLOAT("u_fresnelPower", EffectMaterialParams, fresnelPower),
-    P_FLOAT("u_emissiveIntensity", EffectMaterialParams, emissiveIntensity),
-    P_FLOAT("u_distortionStrength", EffectMaterialParams, distortionStrength),
-    /* ORDER MATTERS: the flag is pushed before the sampler, as the hand-written
-     * code did — the fragment shader gates its texture1 fetch on it. */
-    P_TEXFLAG("u_hasTexture1", EffectMaterialParams, texture1),
-    P_TEX("texture1", EffectMaterialParams, texture1),
-    P_FLOAT("u_customParam1", EffectMaterialParams, customParam1),
-    P_FLOAT("u_customParam2", EffectMaterialParams, customParam2),
-};
+/* EFFECT_PARAMS, CRYSTAL_PARAMS and AURA_PARAMS are GENERATED from
+ * core/shading/materials/*.mat, which is also where their .fs files come from.
+ * That is the point: a material's uniform list used to exist twice — once as
+ * `uniform` lines in the shader, once as a table here — and the two drifted with
+ * nothing to compare them. Included after the P_* macros and the params structs
+ * it references, and before the size assertions below.
+ *
+ * PLASMA_PARAMS is still hand-written, on purpose. PlasmaMaterial has no
+ * consumer: converting it would be building format support for something
+ * nothing calls. It is not deleted either — unlike the shaders removed this
+ * session, which each had a live replacement, plasma is a capability with none
+ * (a shell that is empty face-on, which EffectMaterial's 0.3 alpha floor cannot
+ * produce). It converts the day it gains a caller. */
+#include "materials.generated.inl"
+
 VFX_STATIC_ASSERT(sizeof(EFFECT_PARAMS) / sizeof(EFFECT_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, effect);
 
-static const VfxParamDesc CRYSTAL_PARAMS[] = {
-    P_COLOR("u_baseColor", CrystalMaterialParams, baseColor),
-    P_COLOR("u_edgeColor", CrystalMaterialParams, edgeColor),
-    /* roughness 0..1 -> fresnelPower 8..1, floored at 1. Rougher = broader rim. */
-    P_AFFINE("u_fresnelPower", CrystalMaterialParams, roughness, 8.0f, -7.0f, 1.0f, 1e30f),
-    P_FLOAT("u_rimStrength", CrystalMaterialParams, fresnel),
-    P_FLOAT("u_refraction", CrystalMaterialParams, refraction),
-    P_FLOAT("u_sparkle", CrystalMaterialParams, sparkle),
-    P_FLOAT("u_crack", CrystalMaterialParams, crack),
-    P_FLOAT("u_emission", CrystalMaterialParams, emission),
-    P_FLOAT("u_thickness", CrystalMaterialParams, thickness),
-    P_FLOAT("u_dissolve", CrystalMaterialParams, dissolve),
-    P_TEX("texture1", CrystalMaterialParams, texture1),
-    /* Safe default: legacy immediate-mode crystal draws already baked their
-     * grow progress on the CPU and must not be scaled down a second time.
-     * CrystalMaterial_SetGrowProgress overrides it after Begin. */
-    P_CONST("u_growProgress", 1.0f),
-};
 VFX_STATIC_ASSERT(sizeof(CRYSTAL_PARAMS) / sizeof(CRYSTAL_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, crystal);
 
 static const VfxParamDesc PLASMA_PARAMS[] = {
@@ -110,12 +90,6 @@ static const VfxParamDesc PLASMA_PARAMS[] = {
 };
 VFX_STATIC_ASSERT(sizeof(PLASMA_PARAMS) / sizeof(PLASMA_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, plasma);
 
-/* AURA_PARAMS is GENERATED from core/shading/materials/aura_shell.mat, which is
- * also where core/shaders/aura_shell.fs comes from. That is the point: the
- * uniform list used to exist twice — once as `uniform` lines in the .fs, once as
- * this table — and the two drifted with nothing to catch it. Included here, after
- * the P_* macros and the params structs it references. */
-#include "materials.generated.inl"
 VFX_STATIC_ASSERT(sizeof(AURA_PARAMS) / sizeof(AURA_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, aura);
 
 /* ── The engine ──────────────────────────────────────────────────────────── */
