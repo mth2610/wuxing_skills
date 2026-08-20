@@ -5,7 +5,12 @@
 #include <string.h>
 
 #define MAX_CACHED_TEXTURES 32
-#define MAX_CACHED_SHADERS 32
+/* Raised from 32 when the output permutation landed (M1/M3, 20/08/2026): a
+ * permutation turns one .vs/.fs pair into several cache entries by design, so
+ * the old ceiling was one that a few more variants would quietly cross. Going
+ * over it is not fatal — the loader warns and returns an uncached program —
+ * but that recompiles on every request. */
+#define MAX_CACHED_SHADERS 64
 #define MAX_CACHED_SOUNDS 32
 #define MAX_CACHED_FONTS 8
 #define MAX_CACHED_MODELS 8

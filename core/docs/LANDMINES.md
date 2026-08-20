@@ -4,6 +4,30 @@
 > Cross-cutting traps (batching hazard, depth-test-vs-mask, `rlFrustum near<1.0`, lit-material-dark, emitter collision) live in root `ENGINE_LANDMINES.md` — read that too.
 > Long session logs and open backlog are in `PROGRESS.md`, not here.
 
+### A source-scanning test starts FAILING because the file it scans grew
+`decal_system_test.c` failed on "Read-only render statistics expose CPU culling
+results" the moment an unrelated change added ~50 lines to `decal_system.c`.
+Every string the assertion looks for was still there, spelled correctly.
+
+- **Cause.** These tests assert on source text: `Has(path, needle)` reads the
+  file and runs `strstr`. It read into a **fixed buffer** — `static char
+  text[48000]` — and `decal_system.c` had just crossed 49,273 bytes. Everything
+  below offset 48,000 became invisible, so assertions about the bottom of a file
+  fail while the code is correct.
+- **Why it is worse than a normal flake.** It degrades *silently and by
+  position*. Nothing reports truncation; the failure names an assertion whose
+  subject is fine, so the search starts in the wrong file. And the polarity can
+  invert: an assertion of the form `!Has(...)` — "this file must NOT mention X" —
+  starts PASSING for every file that outgrows the buffer, which is a guard that
+  quietly stops guarding.
+- **Rule.** A source-scanning helper reads the WHOLE file — size it with
+  `fseek`/`ftell` and allocate — or streams with an overlap window like
+  `particle_manager_contract_test.c` does. Never a fixed buffer. Fixed on
+  20/08/2026 in `decal_system_test.c` (48 KB) and `smoke_fire_emitter_test.c`
+  (64 KB against a 51 KB input — one edit from the cliff). Other tests in
+  `core/tests/` still use 300–600 KB buffers; those have room today, and the
+  same trap tomorrow.
+
 ### A generated sheet renders EMPTY while every term still looks right — two range bugs
 Both were hit generating `assets/textures/shock_ring_smoke.png`. Each produces the
 same symptom (the consumer draws almost nothing) and neither shows up as a wrong

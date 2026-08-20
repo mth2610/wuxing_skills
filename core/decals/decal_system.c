@@ -1,5 +1,6 @@
 #include "decal_system.h"
 #include "core/resource_manager.h"
+#include "core/vfx_render.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <stddef.h>
@@ -26,11 +27,20 @@ static int s_renderConformalSubmissions = 0;
 static int s_renderMaterialSwitches = 0;
 static int s_renderTextureSwitches = 0;
 
-// Gom 2 shader thành 1 shader duy nhất để tránh switch trạng thái shader (Shader State Changes)
-static Shader g_DecalShader;
+/* One decal_flow.fs SOURCE, one compiled program per blend law it is drawn
+ * under. A decal picks its blend per instance, so the shader cannot know
+ * statically which resolver it owes; the OUTPUT_* define decides, and the
+ * consumer asks for the variant matching the blend it is about to set. That
+ * makes the (blend, resolver) pair structural — a mismatch cannot be expressed
+ * here, whereas a runtime `if` inside the shader would still allow one. */
+typedef struct {
+    Shader shader;
+    int    locTime;
+    bool   loaded;
+} DecalFlowVariant;
+static DecalFlowVariant s_flowVariants[3]; /* indexed by VFXSurfaceMode */
 static Shader g_MaterialDecalShader;
 // Uniform locations của uber-shader (decal_flow.fs), cache 1 lần ở Init
-static int s_locFlowTime = -1;
 static int s_locMaterialEmissivePass = -1;
 static int s_locMaterialBaseTint = -1;
 static int s_locMaterialEmissiveTint = -1;
@@ -61,6 +71,41 @@ static int Decal_ResolveHandle(DecalHandle handle)
         !g_DecalPool[idx].active || g_DecalPool[idx].generation != generation)
         return -1;
     return idx;
+}
+
+/* BLEND_MULTIPLIED maps to the BODY form, which is what this shader already
+ * produced for it. Worth knowing, but NOT changed here: raylib's multiplied
+ * blend is (DST_COLOR, ZERO), so it ignores alpha outright — a multiplied decal
+ * therefore does not fade at its edges or over its lifetime, however its alpha
+ * is computed. No caller creates one today (the draw group exists but nothing
+ * passes BLEND_MULTIPLIED to DecalSystem_Add*), so this is recorded rather than
+ * fixed; fixing it means a real multiply resolver, mix(vec3(1), tint, coverage),
+ * and that is a visible change, not a migration. */
+static VFXSurfaceMode Decal_SurfaceFor(BlendMode blendMode)
+{
+    switch (blendMode)
+    {
+    case BLEND_ADDITIVE: return VFX_SURFACE_ADDITIVE;
+    case BLEND_ALPHA:
+    case BLEND_MULTIPLIED:
+    default:             return VFX_SURFACE_ALPHA;
+    }
+}
+
+static DecalFlowVariant *Decal_FlowVariant(BlendMode blendMode)
+{
+    VFXSurfaceMode surface = Decal_SurfaceFor(blendMode);
+    DecalFlowVariant *v = &s_flowVariants[(int)surface];
+    if (!v->loaded)
+    {
+        v->shader = ResourceManager_LoadShaderVariant(
+            "core/decals/shaders/decal_material.vs",
+            "core/decals/shaders/decal_flow.fs",
+            VFXRender_OutputDefines(surface));
+        v->locTime = GetShaderLocation(v->shader, "u_time");
+        v->loaded = true;
+    }
+    return v;
 }
 
 static void Decal_BeginWorldPass(BlendMode blendMode)
@@ -469,11 +514,13 @@ void DecalSystem_Init(void)
     // uniform = 0 rút gọn ĐÚNG về decal.fs (cùng edge mask radial, texture
     // đứng yên) — không cần file decal_uber.fs riêng (chưa từng tồn tại;
     // trước đây load hụt → rơi về default shader, mất edge fade + flow).
-    g_DecalShader   = ResourceManager_LoadShader("core/decals/shaders/decal_material.vs",
-                                                 "core/decals/shaders/decal_flow.fs");
+    /* Warm the two blends decals are actually drawn under. Lazy-loading works
+     * (Decal_FlowVariant handles it), but the first additive decal would then
+     * compile a program mid-frame. */
+    Decal_FlowVariant(BLEND_ALPHA);
+    Decal_FlowVariant(BLEND_ADDITIVE);
     g_MaterialDecalShader = ResourceManager_LoadShader("core/decals/shaders/decal_material.vs",
                                                         "core/decals/shaders/decal_material.fs");
-    s_locFlowTime     = GetShaderLocation(g_DecalShader, "u_time");
     s_locMaterialEmissivePass = GetShaderLocation(g_MaterialDecalShader, "u_emissivePass");
     s_locMaterialBaseTint = GetShaderLocation(g_MaterialDecalShader, "u_baseTint");
     s_locMaterialEmissiveTint = GetShaderLocation(g_MaterialDecalShader, "u_emissiveTint");
@@ -884,9 +931,10 @@ static void DrawGroup(BlendMode mode, bool flowOnly)
         if (!shaderActive)
         {
             Decal_BeginWorldPass(mode);
-            BeginShaderMode(g_DecalShader);
+            DecalFlowVariant *variant = Decal_FlowVariant(mode);
+            BeginShaderMode(variant->shader);
             float frameTime = (float)GetTime();
-            SetShaderValue(g_DecalShader, s_locFlowTime, &frameTime, SHADER_UNIFORM_FLOAT);
+            SetShaderValue(variant->shader, variant->locTime, &frameTime, SHADER_UNIFORM_FLOAT);
             shaderActive = true;
         }
 

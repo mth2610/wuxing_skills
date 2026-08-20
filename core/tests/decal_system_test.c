@@ -1,19 +1,35 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 static int failures = 0;
 #define CHECK(c, n) do { if (c) printf("PASS: %s\n", n); else { printf("FAIL: %s\n", n); failures++; } } while (0)
 
 static int Has(const char *path, const char *needle)
 {
+    /* Reads the WHOLE file. It used to read the first N bytes into a fixed
+     * buffer, and that silently degrades: the day the implementation file grows
+     * past N, assertions about anything below that offset start failing with no
+     * hint that truncation — rather than the code — is the cause. It happened
+     * here on 20/08/2026 at 48000 bytes. See core/docs/LANDMINES.md. */
     FILE *file = fopen(path, "rb");
-    static char text[48000];
+    char *text;
+    long size;
     size_t count;
+    int found;
     if (!file) return 0;
-    count = fread(text, 1, sizeof(text) - 1, file);
+    if (fseek(file, 0, SEEK_END) != 0) { fclose(file); return 0; }
+    size = ftell(file);
+    if (size < 0) { fclose(file); return 0; }
+    rewind(file);
+    text = (char *)malloc((size_t)size + 1);
+    if (!text) { fclose(file); return 0; }
+    count = fread(text, 1, (size_t)size, file);
     fclose(file);
     text[count] = '\0';
-    return strstr(text, needle) != NULL;
+    found = (strstr(text, needle) != NULL);
+    free(text);
+    return found;
 }
 
 static int Exists(const char *path)

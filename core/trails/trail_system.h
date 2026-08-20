@@ -679,7 +679,11 @@ typedef struct
 Shader Trail_GetVolumeShader(void);
 
 void TrailSystem_SetGlobalTexture(Texture2D tex);
-void InitTrailSystem(Shader defaultShader);
+/* Loads its own default trail material (trail_glow.fs, one program per blend
+ * law). Took a Shader until 20/08/2026; the caller cannot pick it any more,
+ * because which variant a trail needs depends on the blend that trail resolves
+ * to. Pass a per-trail shader through TrailConfig.shader to override. */
+void InitTrailSystem(void);
 int SpawnTrailEntity(TrailConfig config);
 TrailEntity *GetTrail(int id);
 void KillTrail(int id);

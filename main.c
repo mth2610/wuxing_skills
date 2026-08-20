@@ -316,8 +316,7 @@ int main(int argc, char **argv) {
   // KHỞI TẠO CÁC HỆ THỐNG ĐỒ HỌA VFX
   // -----------------------------------------------------------------
   ParticleManager_Init();
-  Shader defaultTrailShader = LoadShader(0, "core/trails/shaders/trail_glow.fs");
-  InitTrailSystem(defaultTrailShader);
+  InitTrailSystem();
   VFXLight_Init();
   DecalSystem_Init();
   /* Scene targets FIRST: PostFX_Init reads SceneTargets_IsHDR(), and the distort

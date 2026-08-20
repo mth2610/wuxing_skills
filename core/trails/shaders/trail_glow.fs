@@ -1,4 +1,5 @@
 #version 330 core
+#include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
@@ -104,5 +105,11 @@ void main() {
         finalRGB = mix(finalRGB, coreColor, coreMask);
     }
 
-    finalColor = vec4(finalRGB, finalAlpha);
+    // A trail picks BLEND_ALPHA or BLEND_ADDITIVE per instance (trail_system.c
+    // maps a premultiplied appearance onto "alpha body + additive emission", so
+    // those two are the only outcomes), which is why this is the permutation
+    // form rather than a fixed resolver. The variant is chosen by the OUTPUT_*
+    // define ResolveShader asked the loader for.
+    finalColor = VFX_ResolveOutput(finalRGB, 1.0, finalAlpha,
+                                   finalRGB, 1.0, 1.0);
 }

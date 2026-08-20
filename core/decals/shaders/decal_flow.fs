@@ -12,6 +12,7 @@ uniform float u_texScale;      // Scale UV cho vân nước (mặc định 1.0)
 uniform int u_useFlowTex;      // có dùng texture1 (water_flow) không?
 uniform sampler2D texture1;    // water_flow.png
 
+#include "core/shaders/common/vfx_composite.glsl"
 #include "core/shaders/common/fx.glsl"
 
 // Output fragment color
@@ -70,5 +71,10 @@ void main()
     float baseAlpha = texelColor.a * fragColor.a;
     float alpha = max(baseAlpha, glowAmount) * edgeMask;
 
-    finalColor = vec4(finalRGB, alpha);
+    // The decal system picks its blend per decal (alpha / additive /
+    // multiplied), so this shader is compiled once per surface and the resolver
+    // is chosen by the OUTPUT_* define the loader was given — see
+    // VFXRender_OutputDefines. mask stays 1.0: alpha is already this decal's
+    // authored coverage, and passing it twice would square it.
+    finalColor = VFX_ResolveOutput(finalRGB, 1.0, alpha, finalRGB, 1.0, 1.0);
 }

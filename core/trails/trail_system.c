@@ -4,6 +4,7 @@
 #include "core/composition/visual_composer.h"
 #include "core/geometry/procedural_mesh_utils.h"
 #include "core/resource_manager.h"
+#include "core/vfx_render.h"
 #include "core/tuning.h"
 #include "core/uv/surface_flow.h"
 // core/deform/mesh_deform.h already arrives transitively via
@@ -21,10 +22,6 @@ static int activeCount = 0;
 static int s_activeIds[MAX_TRAIL_PARTICLES];
 static int s_slotListIndex[MAX_TRAIL_PARTICLES];
 // Loc index cache cho Flowmap Shader Uniforms
-static int s_locFlowMap = -1;
-static int s_locFlowTime = -1;
-static int s_locFlowStrength = -1;
-static int s_locFlowTiling = -1;
 
 typedef struct
 {
@@ -36,7 +33,13 @@ static Texture2D s_tubeFlatTex = {0};
 static Image s_tubeNoiseImg = {0};
 static Texture2D s_globalTrailTex = {0};
 void TrailSystem_SetGlobalTexture(Texture2D tex) { s_globalTrailTex = tex; }
-static Shader defaultShader;
+/* One trail_glow.fs source, one program per blend law a trail can be drawn
+ * under — body (BLEND_ALPHA) and emission (BLEND_ADDITIVE). Those two are the
+ * only outcomes: a premultiplied appearance is mapped onto alpha body plus
+ * additive emission below, not passed through. Indexed by
+ * TrailUsesAdditiveBlend(). */
+enum { TRAIL_SHADER_BODY = 0, TRAIL_SHADER_EMISSION = 1 };
+static Shader s_defaultShader[2];
 static Shader s_bodyShader;
 static bool s_bodyShaderTried = false;
 static int s_bodyContrastParamsLoc = -1;
@@ -259,16 +262,19 @@ static float scratchSegRatio[TRAIL_HISTORY_COUNT];
 
 #define WISP_CONSTRAINT_ITERS 2
 
-static inline Shader ResolveShader(const TrailEntity *t)
-{
-    return (t->shader.id != 0) ? t->shader : defaultShader;
-}
-
 static bool TrailUsesAdditiveBlend(const TrailEntity *t)
 {
     BlendMode blend = t->useCustomBlendMode ? t->blendMode
                                              : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
     return blend != BLEND_ALPHA;
+}
+
+/* A trail carrying its own shader keeps it — that caller owns the pairing. */
+static inline Shader ResolveShader(const TrailEntity *t)
+{
+    if (t->shader.id != 0) return t->shader;
+    return s_defaultShader[TrailUsesAdditiveBlend(t) ? TRAIL_SHADER_EMISSION
+                                                     : TRAIL_SHADER_BODY];
 }
 
 static void EnsureTrailBodyShader(void)
@@ -1060,16 +1066,17 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
     }
 }
 
-void InitTrailSystem(Shader defaultShaderIn)
+void InitTrailSystem(void)
 {
-    defaultShader = defaultShaderIn;
-    if (defaultShader.id > 0)
-    {
-        s_locFlowMap = GetShaderLocation(defaultShader, "flowMap");
-        s_locFlowTime = GetShaderLocation(defaultShader, "u_flowTime");
-        s_locFlowStrength = GetShaderLocation(defaultShader, "u_flowStrength");
-        s_locFlowTiling = GetShaderLocation(defaultShader, "u_flowTiling");
-    }
+    /* The module loads its own default material now. It used to be handed one
+     * Shader by main.c, which cannot work once the shader is a permutation: the
+     * caller would have to know which blend each trail ends up using. */
+    s_defaultShader[TRAIL_SHADER_BODY] = ResourceManager_LoadShaderVariant(
+        NULL, "core/trails/shaders/trail_glow.fs",
+        VFXRender_OutputDefines(VFX_SURFACE_ALPHA));
+    s_defaultShader[TRAIL_SHADER_EMISSION] = ResourceManager_LoadShaderVariant(
+        NULL, "core/trails/shaders/trail_glow.fs",
+        VFXRender_OutputDefines(VFX_SURFACE_ADDITIVE));
     shaderCacheCount = 0;
     for (int i = 0; i < MAX_TRAIL_PARTICLES; i++)
     {
