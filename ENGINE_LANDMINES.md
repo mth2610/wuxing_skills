@@ -1202,3 +1202,63 @@ know that you have just bought a non-monotone channel response on every smooth r
 turning the correction ON across a rising input is itself the band. If you need both,
 the bound you give up is the LOWER one, and the thing that makes that affordable is
 proving the change cannot move an achromatic surface.
+
+## Selecting BLEND_ALPHA_PREMULTIPLY does not make a source premultiplied (20/08/2026)
+
+**Symptom.** An effect is switched from additive to premultiplied to make it cut a
+silhouette out of a bright background. It comes back *brighter* instead: `cover%` grows,
+soft edges bloom out, and `darken%` — the number the change was made for — drops to
+**0.0 on every background**, including the ones where it used to be non-zero. On the trail
+presets, TRAIL BACKDROP went 98.3% → 0.0% on white, i.e. exactly backwards.
+
+**Cause.** The three blends the engine uses are not three flavours of the same law:
+
+| the blend | GL function | who multiplies RGB by alpha |
+|---|---|---|
+| `BLEND_ALPHA` | `(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)` | the hardware |
+| `BLEND_ADDITIVE` | `(SRC_ALPHA, ONE)` | the hardware |
+| `BLEND_ALPHA_PREMULTIPLY` | `(ONE, ONE_MINUS_SRC_ALPHA)` | **nobody — you do** |
+
+Every producer in this engine authors STRAIGHT colour with coverage in alpha, because the
+other two blends apply the alpha for it. Hand that source to the premultiplied blend and
+every fragment is scaled by `1/alpha`: opaque cores are unchanged, and the soft edge — the
+majority of a VFX's area — is multiplied by up to 255. The added light then swamps whatever
+body pass was providing the coverage, which is why the metric moves the wrong way.
+
+**The tell that separates this from a genuine blend-law result.** Look at the DARK
+background. There `dst ~ 0.02`, so `src + dst*(1-a)` and `src + dst` are the same picture —
+the premultiplied law itself can barely change anything. Measured, `cover%` rose **~4x on
+dark**. A large change on dark is proof the change was not the blend law.
+
+**Rule. The blend state and the source's own output formula are ONE decision, never two.**
+Whatever selects the blend must also tell the source which law it is under:
+
+- **shader producer** — carry it in a uniform (`u_renderPass` in `trail_deform.fs` grew a
+  third value; `shock_ring.fs` got `u_premultiply`) and pick the resolver:
+  `VFX_ResolvePremultiplied` for premultiplied, `VFX_ResolveBody` for alpha,
+  `VFX_ResolveEmission` for additive (`core/shaders/common/vfx_composite.glsl`).
+- **fixed-function producer** (immediate-mode ribbon, raw `rlBegin` quad) — there are
+  **three** halves, not two: the blend, the vertex tint (`VC_Premultiply`, next to
+  `VC_WithAlpha` in `core/presets/vc_material.h`), **and the sheet**. The fixed-function
+  path multiplies vertex colour by the texel, so a white-RGB alpha mask scales A without
+  scaling RGB and hands the blend a straight source across the whole gradient. A generated
+  mask must be written `(a, a, a, a)`, never `(255, 255, 255, a)`.
+- **particle producer** — one field, `.render.blendMode = VFX_BLEND_PREMULTIPLIED`. This is
+  the only case where the swap really is one line, because `particle_system.c` premultiplies
+  for you. Do not generalise from it.
+
+**Two corollaries worth knowing before the next migration:**
+
+1. **A MULTI-PASS ADDITIVE STACK DOES NOT SURVIVE THE SWAP.** Additive passes SUM;
+   premultiplied passes OCCLUDE EACH OTHER. `VFX_ComposeSweepSlash` draws its band three
+   times sharing one outer edge — migrated, its white footprint over threshold halved
+   (1501 px → 639) while the peak delta barely moved, and it was reverted.
+   `VFX_ComposeLightShaft` is two passes and paid the same tax in the same direction (dark
+   `|d|` −10%, against the 2–7% every single-draw migration cost).
+2. **ALPHA OVER A STRAIGHT SOURCE ALREADY IS THE PREMULTIPLIED LAW.**
+   `(SRC_ALPHA, 1-SRC_ALPHA)` over `col` and `(ONE, 1-SRC_ALPHA)` over `col*a` are both
+   `col*a + dst*(1-a)`. Swapping an already-alpha effect (ENERGY ORB) is a no-op. What
+   premultiplied buys is emission ABOVE coverage — an authoring decision, not a migration.
+
+Measured before/after for all of it: `BRIGHT_BACKGROUND_VFX_SPEC.md` §7.6d, "Second
+migration, 20/08/2026".

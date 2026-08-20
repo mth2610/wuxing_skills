@@ -2602,3 +2602,17 @@ just moves the material away from correct.
   the A/B is against the real previous path, not a second code path. Guard:
   `core/tests/fxaa_pass_test.c`. A true MSAA HDR target remains the better fix
   and belongs to the renderer module.
+
+## Selecting BLEND_ALPHA_PREMULTIPLY does not make a source premultiplied (20/08/2026)
+
+- **Symptom:** an effect swapped from additive to premultiplied comes back BRIGHTER, with
+  `darken%` at 0.0 on every background instead of appearing where it was 0.
+- **Cause:** `BLEND_ALPHA_PREMULTIPLY` is `(ONE, ONE_MINUS_SRC_ALPHA)` — unlike the other two
+  blends, it does not apply alpha for you. A straight source handed to it is scaled by
+  `1/alpha`, which blows out every soft edge.
+- **Rule:** the blend state and the source's output formula are ONE decision. Shader
+  producers carry it in a uniform and pick the matching resolver; fixed-function producers
+  need the blend, the vertex tint (`VC_Premultiply`) AND the sheet (`(a,a,a,a)`, not
+  `(255,255,255,a)`) all premultiplied. Only particle sites are genuinely one line.
+- **Full write-up, including how to tell this apart from a real blend-law result (look at the
+  DARK background) and the two migration corollaries:** `ENGINE_LANDMINES.md`, same title.
