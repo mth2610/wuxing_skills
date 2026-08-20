@@ -807,7 +807,8 @@ static const char *sc_ui_after_rt(void)
 }
 
 // GPU-particle draw path: vertex shader reads a per-instance SSBO by gl_InstanceID
-// (mirrors core/shaders/particles.vs + compute/gpu_particle_system.c's draw half).
+// (mirrors the GPU particle draw half: core/particles/shaders/gpu/particle_gpu_ssbo.vs
+// + compute/gpu_particle_system.c; the old core/shaders/particles.vs was deleted unused).
 // Guards: graphics set0 SSBO bindings, rlvkRebaseStorageBuffers, rlvkBindShaderSsbos.
 static const char *sc_ssbo_vs(void)
 {

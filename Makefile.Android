@@ -399,7 +399,7 @@ copy_project_resources: create_temp_project_dirs
 	cp -f core/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true
 	cp -f core/shaders/common/*.glsl $(PROJECT_BUILD_PATH)/assets/core/shaders/common/ 2>/dev/null || true
 	@# core/uv shared includes (flow_map.glsl moved here from core/shaders/common).
-	@# These are #include'd by shield_shell.fs and aura_shell.fs, which ARE copied
+	@# These are #include'd by aura_shell.fs and glass_shell.fs, which ARE copied
 	@# above — without this pair they resolve to nothing and the shader fails to
 	@# compile, which raylib answers with the DEFAULT shader at a nonzero id.
 	@# core/trails/shaders IS copied now — trail_volume.vs/.fs is not optional the
