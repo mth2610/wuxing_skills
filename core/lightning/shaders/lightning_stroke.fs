@@ -104,7 +104,16 @@ void main()
         vec3 radiance = (outerColour * fieldWeight * u_haloColor.a * u_haloEmission +
                          innerColour * coronaWeight * u_haloColor.a * u_haloEmission * coronaEnergy +
                          u_coreColor.rgb * emissionCore * u_coreColor.a * u_coreEmission) * dischargeBoost;
-        finalColor = VFX_ResolveEmission(radiance / max(energy, 0.001),
-                                          1.0, 1.0, energy);
+        // PREMULTIPLIED, not additive (20/08/2026). The one caller —
+        // vc_lightning_arc.inl, which is also what draws LIGHTNING IMPACT —
+        // opens this pass with VFX_SURFACE_PREMULTIPLIED, i.e.
+        // (ONE, ONE_MINUS_SRC_ALPHA): the hardware no longer multiplies by
+        // alpha, so `radiance` goes out as-is and `energy` becomes the
+        // occlusion term instead of the scale factor. The additive form was
+        // `radiance / energy` with alpha `energy`, which is the same light and
+        // no occlusion at all — a bolt that could not cut a silhouette out of a
+        // bright sky. Changing the scope without changing this line divides the
+        // radiance by nothing and blows the bolt out; the two belong together.
+        finalColor = VFX_ResolveEmission(radiance, 1.0, 1.0, energy);
     }
 }

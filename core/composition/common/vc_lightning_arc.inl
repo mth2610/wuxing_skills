@@ -17,8 +17,11 @@ static void LightningArc_Draw3D(Camera3D camera)
     LightningStroke_DrawLayer(camera, LIGHTNING_STROKE_RENDER_BODY);
     VFXRender_EndDraw(&bodyScope);
 
+    // PREMULTIPLIED, paired with lightning_stroke.fs's u_mode >= 0.5 branch —
+    // see the comment there. Additive could only add, and a bolt against a
+    // bright sky has nothing left to add to.
     VFXRenderScope emissionScope = VFXRender_BeginDraw(
-        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_PREMULTIPLIED, false);
     LightningStroke_DrawLayer(camera, LIGHTNING_STROKE_RENDER_HALO);
     VFXRender_EndDraw(&emissionScope);
 }

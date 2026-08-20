@@ -138,6 +138,7 @@ typedef struct
     int layerPhase;
     int layerDetail;
     int hole;
+    int premultiply;
 } ShockRingShader;
 
 static ShockRingShader s_shockShader = {0};
@@ -184,6 +185,7 @@ static void ShockRing_InitShader(void)
     s_shockShader.layerPhase = GetShaderLocation(s_shockShader.shader, "u_layerPhase");
     s_shockShader.layerDetail = GetShaderLocation(s_shockShader.shader, "u_layerDetail");
     s_shockShader.hole = GetShaderLocation(s_shockShader.shader, "u_hole");
+    s_shockShader.premultiply = GetShaderLocation(s_shockShader.shader, "u_premultiply");
 }
 
 static bool ShockRing_HasShader(void)
@@ -319,7 +321,7 @@ static float ShockRing_Detail(void)
 
 static void ShockRing_SetUniforms(const VFX_ElementMaterial *m, float opacity,
                                   float emission, float t01, float seed,
-                                  int hasSmoke)
+                                  int hasSmoke, float premultiply)
 {
     Vector4 body = ColorNormalize(m->body);
     Vector4 glow = ColorNormalize(VC_Whiten(m->glow, 0.32f));
@@ -345,6 +347,12 @@ static void ShockRing_SetUniforms(const VFX_ElementMaterial *m, float opacity,
     SetShaderValue(s_shockShader.shader, s_shockShader.layerDetail, &layerDetail,
                    SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shockShader.shader, s_shockShader.hole, &s_shockHole,
+                   SHADER_UNIFORM_FLOAT);
+    // The blend state and the fragment formula are ONE decision. The emission
+    // pass is drawn premultiplied (ONE, ONE_MINUS_SRC_ALPHA), where the hardware
+    // no longer applies coverage — so the shader has to. Setting one without the
+    // other divides the two apart and brightens every soft edge by 1/alpha.
+    SetShaderValue(s_shockShader.shader, s_shockShader.premultiply, &premultiply,
                    SHADER_UNIFORM_FLOAT);
 }
 
@@ -482,7 +490,10 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
     {
         VFXRenderScope renderScope = VFXRender_BeginDraw(
             pass == 0 ? VFX_RENDER_PASS_BODY : VFX_RENDER_PASS_EMISSION,
-            pass == 0 ? VFX_SURFACE_ALPHA : VFX_SURFACE_ADDITIVE, false);
+            // PREMULTIPLIED emission, not additive (20/08/2026): the ring is a
+            // glowing thing, and additive over a bright destination can only
+            // add to something already at 1.0. Paired with u_premultiply below.
+            pass == 0 ? VFX_SURFACE_ALPHA : VFX_SURFACE_PREMULTIPLIED, false);
         rlDrawRenderBatchActive();
         rlDisableBackfaceCulling();
         rlDrawRenderBatchActive();
@@ -492,7 +503,8 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
 
         if (shaded)
             ShockRing_SetUniforms(m, (pass == 0) ? alpha : alpha * 0.70f,
-                                  (pass == 0) ? 1.0f : 2.50f, t01, seed, hasSmoke);
+                                  (pass == 0) ? 1.0f : 2.50f, t01, seed, hasSmoke,
+                                  (pass == 0) ? 0.0f : 1.0f);
         rlSetTexture(shaded && hasSmoke ? smokeSurface->body.id : 0);
         rlBegin(RL_QUADS);
         // TWO SWEEPS, at +offset and -offset: the cross-section is a LENS, not a

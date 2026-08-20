@@ -73,8 +73,24 @@ int main(void)
     failed += Require(strokeSource, "LIGHTNING_STROKE_MAX_BRANCHES", "secondary-branch budget is missing");
     failed += Require(arc, "VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false",
                       "coloured alpha body scope is missing");
-    failed += Require(arc, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false",
-                      "additive emission scope is missing");
+    /* PREMULTIPLIED since 20/08/2026, and the shader line below is half of the
+       same decision — one without the other is a bug, so they are pinned
+       together. Measured on LIGHTNING ARC at warmup 15, white background:
+       darken 3.2 -> 60.3, structure 0.019 -> 0.061, detail 0.027 -> 0.062,
+       chroma 0.058 -> 0.065. The dark background is unchanged to three digits
+       (|d| 0.377 -> 0.374), which is what a correct premultiplied source looks
+       like: on dst ~ 0.02 the law degenerates to src + dst.
+       RECORDED AGAINST IT: LIGHTNING IMPACT, which shares this draw path, drops
+       below the harness's visibility floor on white at warmup 5 (682 px -> under
+       200). Its radiance and its coverage are near-equal there, so premultiplied
+       lands it exactly ON white instead of just above it. It was at the noise
+       floor either way, and every other background is flat. */
+    failed += Require(arc, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_PREMULTIPLIED, false",
+                      "premultiplied emission scope is missing");
+    failed += Require(shader,
+                      "finalColor = VFX_ResolveEmission(radiance, 1.0, 1.0, energy);",
+                      "...and the shader emits radiance straight, since the hardware "
+                      "no longer multiplies by alpha");
     failed += RequireNot(arc, "VFXLight_Spawn(",
                          "reusable lightning must leave contact-light decisions to its owning skill");
     failed += RequireNot(arc, "Vector3 midpoint =",

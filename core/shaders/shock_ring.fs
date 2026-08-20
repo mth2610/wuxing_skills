@@ -100,6 +100,7 @@ uniform float u_seed;   // per-ring, so two rings are not the same ring
 uniform float u_layerPhase;
 uniform float u_layerDetail;
 uniform float u_hole; // v below this is cut away; the size of the empty middle
+uniform float u_premultiply; // 0 = BODY (BLEND_ALPHA), 1 = EMISSION (premultiplied)
 
 // u spans 2*PI*R, v spans SHOCK_CANVAS_MUL * SHOCK_CORE_RATIO * R = 0.66*R.
 const float U_PER_V = 9.5;
@@ -338,6 +339,16 @@ void main()
     float cover = clamp(smoke * 0.60 + hot * 0.95, 0.0, 1.0) * edge;
     vec3 col = mix(u_bodyColor.rgb, u_glowColor.rgb, hot);
 
-    finalColor = VFX_ResolveBody(col, u_emission,
-                                 cover * u_opacity * u_bodyColor.a);
+    float a = cover * u_opacity * u_bodyColor.a;
+    // ONE formula per blend state, never one for both. BLEND_ALPHA is
+    // (SRC_ALPHA, ONE_MINUS_SRC_ALPHA), so the body pass hands over straight
+    // RGB and the hardware applies coverage. BLEND_ALPHA_PREMULTIPLY is
+    // (ONE, ONE_MINUS_SRC_ALPHA) and does not, so the emission pass has to
+    // multiply by `a` itself — which is the same light additive delivered, plus
+    // the dst*(1-a) term additive never had.
+    if (u_premultiply > 0.5)
+        finalColor = VFX_ResolvePremultiplied(col, u_emission, a,
+                                              vec3(0.0), 0.0, 0.0);
+    else
+        finalColor = VFX_ResolveBody(col, u_emission, a);
 }

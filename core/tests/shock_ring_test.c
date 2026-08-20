@@ -402,15 +402,30 @@ static void Test_MirrorMatchesTheSource(void)
     // The blend law and the flushes — depth mask, culling AND blend, both sides.
     // BODY carries the colour and EMISSION is the bloom on top: a purely additive
     // ring washes towards white and loses the element it was cast with.
+    //
+    // EMISSION became PREMULTIPLIED on 20/08/2026. Additive can only add, and on
+    // a background already at 1.0 there is nothing to add to — the ring measured
+    // darken 0.9% of its own footprint on white at warmup 40. Premultiplied,
+    // white reads 81.5 (warmup 20: 2.4 -> 52.0), and chroma rises on EVERY
+    // background (white 0.257 -> 0.346, warm 0.442 -> 0.483, cool 0.173 -> 0.200,
+    // dark 0.340 -> 0.357). The trade is |d| on the warm plate, 0.157 -> 0.119.
     CHECK(FileHas(inl, "pass == 0 ? VFX_RENDER_PASS_BODY : VFX_RENDER_PASS_EMISSION") &&
-          FileHas(inl, "pass == 0 ? VFX_SURFACE_ALPHA : VFX_SURFACE_ADDITIVE"),
+          FileHas(inl, "pass == 0 ? VFX_SURFACE_ALPHA : VFX_SURFACE_PREMULTIPLIED"),
           "it draws its colour in BODY and its bloom in EMISSION");
+    // Blend state and fragment formula are ONE decision: (ONE, ONE_MINUS_SRC_ALPHA)
+    // does not apply coverage, so the shader must. Selecting the blend alone was
+    // measured on the trail presets as a 1/alpha brightening of every soft edge.
+    CHECK(FileHas("core/shaders/shock_ring.fs", "if (u_premultiply > 0.5)") &&
+          FileHas("core/shaders/shock_ring.fs", "VFX_ResolvePremultiplied(col, u_emission, a,"),
+          "...and the emission pass premultiplies in the shader, since the blend no longer does");
     CHECK(FileHas(inl, "VFXRender_BeginDraw(") &&
           FileHas(inl, "false);") && FileHas(inl, "rlDisableBackfaceCulling();"),
           "no depth write, both walls — flushed on both sides");
-    CHECK(FileHas(inl, "ShockRing_SetUniforms(m, (pass == 0) ? alpha : alpha * 0.70f, "
-                       "(pass == 0) ? 1.0f : 2.50f, t01, seed, hasSmoke);"),
-          "the additive pass carries enough energy and coverage to cross the bloom threshold");
+    CHECK(FileHas(inl, "ShockRing_SetUniforms(m, (pass == 0) ? alpha : alpha * 0.70f,") &&
+          FileHas(inl, "(pass == 0) ? 1.0f : 2.50f, t01, seed, hasSmoke,") &&
+          FileHas(inl, "(pass == 0) ? 0.0f : 1.0f);"),
+          "the emission pass carries enough energy and coverage to cross the bloom "
+          "threshold — and tells the shader which blend law it is under");
     CHECK(FileHas(inl, "rlEnableBackfaceCulling();") &&
           FileHas(inl, "VFXRender_EndDraw(&renderScope);"),
           "and the restore is flushed too");
