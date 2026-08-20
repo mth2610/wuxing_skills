@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // ĐÃ XÓA u_center. Không cần C code truyền toạ độ nữa!
 uniform float u_radius;
@@ -82,5 +83,7 @@ void main() {
         sum.rgb /= sum.a;
     }
     
-    finalColor = sum;
+    // BODY / ALPHA scope (volume_smoke_skill.c). sum.rgb was divided back out
+    // of its alpha just above, which is the straight-alpha form ResolveBody wants.
+    finalColor = VFX_ResolveBody(sum.rgb, 1.0, sum.a);
 }

@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 /* Varyings */
 in vec2 fragTexCoord;
@@ -53,5 +54,6 @@ void main() {
     // Fade out near the outer bounds of the quad
     float alpha = crackMask * smoothstep(0.5, 0.45, d) * fragColor.a;
 
-    finalColor = vec4(col, alpha);
+    // BODY / ALPHA scope (stone_prison_skill.c).
+    finalColor = VFX_ResolveBody(col, 1.0, alpha);
 }

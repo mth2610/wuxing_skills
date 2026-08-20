@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
-#include "core/shaders/common/lighting.glsl"  
+#include "core/shaders/common/lighting.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 // ============================================================
 // Water Stream Skill — Fragment Shader
@@ -64,5 +65,6 @@ void main() {
 
     // 6. Composite + dissolve fade-out
     float alpha = mix(0.3, 0.9, fresnel) * (1.0 - u_dissolve);
-    finalColor  = vec4(baseColor + vec3(specular), alpha);
+    // BODY / ALPHA scope (water_stream.inl).
+    finalColor  = VFX_ResolveBody(baseColor + vec3(specular), 1.0, alpha);
 }

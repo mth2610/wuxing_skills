@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 /* Varyings */
 in vec2 fragTexCoord;
@@ -95,5 +96,6 @@ void main()
         diffuse.rgb += vec3(1.0, 0.4, 0.0) * edge * 4.0;
     }
 
-    finalColor = diffuse;
+    // Occluding rock on the default alpha blend — a body producer.
+    finalColor = VFX_ResolveBody(diffuse.rgb, 1.0, diffuse.a);
 }

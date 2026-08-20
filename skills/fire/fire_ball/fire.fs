@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
@@ -40,5 +41,9 @@ void main() {
     float alphaOut = smoothstep(0.05, 0.4, density); 
     float visibilityMask = step(0.05, circleAlpha);
 
-    finalColor = vec4(mixedColor, alphaOut * fragColor.a * visibilityMask);
+    // Drawn as VFX_RENDER_PASS_EMISSION / VFX_SURFACE_ADDITIVE (fire_skill.c),
+    // so the emission resolver is the matching one. mask stays 1.0 because
+    // alphaOut IS this effect's mask — feeding it to both would square it.
+    finalColor = VFX_ResolveEmission(mixedColor, 1.0,
+                                     1.0, alphaOut * fragColor.a * visibilityMask);
 }
