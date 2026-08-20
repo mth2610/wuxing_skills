@@ -1260,5 +1260,15 @@ Whatever selects the blend must also tell the source which law it is under:
    `col*a + dst*(1-a)`. Swapping an already-alpha effect (ENERGY ORB) is a no-op. What
    premultiplied buys is emission ABOVE coverage — an authoring decision, not a migration.
 
+**And one rule the framework used to enforce and no longer does (20/08/2026).**
+`VFXRender_BeginAppearance` forced EMISSION to additive for every named appearance, exactly to
+stop corollary 1 from happening across a body/emission pair. That blanket was removed after
+measuring — SHIELD SHELL's white `structure` tripled (0.035 → 0.105) and its white body area
+went 0.26% → 1.12% without it — because the predicate was wrong: what matters is not "is this
+the emission pass" but "does this emission cover the same area the body already covered", and
+only the effect knows that. **So: an appearance whose EMISSION is a second FULL-COVERAGE copy
+of its BODY must not declare a premultiplied surface.** Nothing will catch it for you; the
+symptom is corollary 1's — the effect gets SMALLER, not more present.
+
 Measured before/after for all of it: `BRIGHT_BACKGROUND_VFX_SPEC.md` §7.6d, "Second
 migration, 20/08/2026".

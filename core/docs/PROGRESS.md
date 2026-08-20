@@ -2061,8 +2061,15 @@ tint + sheet changed alongside the blend state — never the blend alone.
 
 **Open, if the policy is ever pushed further:**
 
-- `VFXRender_BeginAppearance` forces EVERY named appearance's EMISSION pass to
-  `VFX_SURFACE_ADDITIVE` (`core/scene_targets.c`). That is a global decision, not any one
-  effect's, and it is what keeps SHIELD SHELL's and RUNE CIRCLE's emission additive.
+- ~~`VFXRender_BeginAppearance` forces every named appearance's EMISSION pass to additive.~~
+  **CLOSED the same day.** Two claims had to be corrected before it could even be judged:
+  it does NOT block RUNE CIRCLE (rune circle opens its own `VFXRender_BeginDraw` scope and
+  never touches `BeginAppearance` — its blocker is the shared glyph sheet), and it is not
+  "global": one shipping caller, `vc_shield_shell.inl`, plus `DrawRibbonStripAppearanceEx`,
+  which nothing calls. Removed after measuring — SHIELD SHELL's white `structure` went
+  0.035 → 0.105 and its white body area 0.26% → 1.12%, with FLAME VOLUME and TRAIL MAIN
+  bit-identical as the blast-radius controls. The guard rail it provided is now an authoring
+  rule in `ENGINE_LANDMINES.md`: an appearance whose EMISSION is a second FULL-COVERAGE copy
+  of its BODY must not declare a premultiplied surface.
 - Particle ribbon trails cannot go premultiplied until they compute a coverage alpha
   (`core/particles/particle_system.c`, the `trailBlend` selection).

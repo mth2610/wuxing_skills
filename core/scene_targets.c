@@ -506,11 +506,37 @@ VFXRenderScope VFXRender_BeginAppearance(VFXRenderPass pass,
   if (outResolved != NULL) *outResolved = resolved;
   if (!VFXRender_AppearanceDrawsPass(resolved, pass))
     return (VFXRenderScope){0};
-  /* EMISSION is radiance by definition. Named dual-layer looks such as FIRE
-   * keep their authored body surface, but their second semantic draw must add
-   * light rather than alpha/premult composite the same geometry twice. */
-  VFXSurfaceMode passSurface = pass == VFX_RENDER_PASS_EMISSION
-                                   ? VFX_SURFACE_ADDITIVE : resolved.surface;
+  /* THE APPEARANCE'S OWN SURFACE GOVERNS BOTH PASSES (20/08/2026).
+   *
+   * This used to force EMISSION to VFX_SURFACE_ADDITIVE for every named
+   * appearance, on the reasoning that a second semantic draw must ADD light
+   * rather than composite the same geometry's coverage twice. That reasoning is
+   * real — SWEEP SLASH was migrated to premultiplied, measured, and REVERTED for
+   * exactly it: three passes sharing one edge stopped summing and started
+   * occluding each other, and its footprint over threshold halved.
+   *
+   * But the predicate was wrong. What decides is not "is this the emission
+   * pass"; it is "does this emission cover the SAME AREA the body already
+   * covered", and only the effect knows that. Applied as a blanket it was
+   * costing the one shipping caller that reaches this function. Measured on
+   * SHIELD SHELL, whose emission mask is deliberately sparse (rim band, contact,
+   * ripple — see glass_shell.fs), forcing removed:
+   *
+   *   white  darken 92.1 -> 95.5   structure 0.035 -> 0.105   body 0.26 -> 1.12
+   *   cool   darken 81.9 -> 85.6   structure 0.138 -> 0.168   chroma 0.179 -> 0.313
+   *   mid    darken 72.9 -> 77.0   structure 0.506 -> 0.615
+   *   warm   darken 87.4 -> 91.3   body 1.90 -> 2.31
+   *
+   * |d| rises or holds on every background INCLUDING dark; the only cost is
+   * structure on dark, -4%. FLAME VOLUME and TRAIL MAIN measured bit-identical
+   * across the change, which is what bounds the blast radius: this function has
+   * exactly one shipping caller (vc_shield_shell.inl) plus
+   * DrawRibbonStripAppearanceEx, which nothing calls.
+   *
+   * SO: AN APPEARANCE WHOSE EMISSION IS A SECOND FULL-COVERAGE COPY OF ITS BODY
+   * MUST NOT DECLARE A PREMULTIPLIED SURFACE. The framework no longer catches
+   * that for you, because the framework cannot see it. */
+  VFXSurfaceMode passSurface = resolved.surface;
   return VFXRender_BeginDraw(pass, passSurface, depthWrite);
 }
 

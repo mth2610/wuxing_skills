@@ -294,9 +294,27 @@ int main(void)
     CHECK(Has("core/shaders/glass_shell.fs", "u_emissionOnly") &&
           Has("core/shaders/glass_shell.fs", "fresnelX2 * fresnelX2"),
           "Fresnel uses multiply-chain math, evaluated per fragment");
+    /* BOTH passes premultiplied since 20/08/2026 — VFX_ResolveEmission is gone
+       from this shader, and that is the assertion, not an omission.
+       VFXRender_BeginAppearance used to force EMISSION to additive for every
+       named appearance; it no longer does, so the shader's emission branch had
+       to stop emitting straight colour built for (SRC_ALPHA, ONE). Measured on
+       this fixture at warmup 90:
+
+         white  darken 92.1 -> 95.5  structure 0.035 -> 0.105  body 0.26 -> 1.12
+         cool   darken 81.9 -> 85.6  structure 0.138 -> 0.168  chroma 0.179 -> 0.313
+         mid    darken 72.9 -> 77.0  structure 0.506 -> 0.615
+         warm   darken 87.4 -> 91.3  body 1.90 -> 2.31
+
+       |d| rises or holds on every background including dark; the one cost is
+       structure on dark, -4%. It works HERE because the emission mask is sparse
+       (rimBand / contact / ripple, with a deliberate zero floor) so the two
+       passes do not composite the same coverage twice — which is the failure the
+       old blanket rule existed to prevent, and which really does happen: see
+       SWEEP SLASH, migrated and reverted for exactly it. */
     CHECK(Has("core/shaders/glass_shell.fs", "VFX_ResolvePremultiplied") &&
-          Has("core/shaders/glass_shell.fs", "VFX_ResolveEmission"),
-          "the shell resolves body and emission through the shared compositor");
+          !Has("core/shaders/glass_shell.fs", "VFX_ResolveEmission"),
+          "the shell resolves BOTH passes through the premultiplied compositor");
     CHECK(Has("core/shaders/glass_shell.fs", "bodyStructure") &&
           Has(src, "appearance.bodyOpacity") &&
           Has(src, "appearance.emissionIntensity"),

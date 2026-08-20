@@ -58,9 +58,27 @@ int main(void)
           "the scene-target owner must implement the unified scope", &failed);
     Check(Has("core/scene_targets.c", "BLEND_ALPHA_PREMULTIPLY"),
           "the unified scope must preserve premultiplied coverage", &failed);
-    Check(Has("core/scene_targets.c", "pass == VFX_RENDER_PASS_EMISSION") &&
-          Has("core/scene_targets.c", "VFX_SURFACE_ADDITIVE : resolved.surface"),
-          "semantic emission from a dual-layer appearance must use additive radiance", &failed);
+    /* THIS PINNED THE OPPOSITE UNTIL 20/08/2026. The old rule forced EMISSION to
+       VFX_SURFACE_ADDITIVE for every named appearance, so that a second semantic
+       draw would ADD light instead of compositing the same geometry's coverage
+       twice. The mechanism is real — SWEEP SLASH was migrated to premultiplied,
+       measured, and reverted for exactly it (three passes over one edge stopped
+       summing and began occluding each other; its white footprint over threshold
+       halved). But the PREDICATE was wrong: what decides is whether the emission
+       covers the same area as the body, which only the effect knows.
+
+       Applied as a blanket it cost the one shipping caller that reaches this
+       function. Removing it moved SHIELD SHELL's white structure 0.035 -> 0.105
+       and its white body area 0.26% -> 1.12%, with darken% up on all four bright
+       backgrounds and |d| up or flat on all five. FLAME VOLUME and TRAIL MAIN
+       measured bit-identical, bounding the blast radius to that one effect.
+
+       What replaces the guard rail is a rule an author has to know, recorded in
+       ENGINE_LANDMINES.md: an appearance whose emission is a second FULL-COVERAGE
+       copy of its body must not declare a premultiplied surface. */
+    Check(Has("core/scene_targets.c", "VFXSurfaceMode passSurface = resolved.surface;") &&
+          !Has("core/scene_targets.c", "VFX_SURFACE_ADDITIVE : resolved.surface"),
+          "a named appearance's own surface governs BOTH of its semantic passes", &failed);
 
     Check(Has("main.c", "VFXRender_BeginPass(VFX_RENDER_PASS_BODY)"),
           "main must use the unified body pass", &failed);

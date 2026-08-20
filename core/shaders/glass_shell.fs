@@ -306,7 +306,7 @@ void main() {
                                  max(filament * 0.0,
                                      max(contact * 0.90, ripple)));
         float emissionAlpha = u_opacity * clamp(emissionMask, 0.0, 1.0);
-        finalColor = VFX_ResolveEmission(glow, u_emissionGain, 1.0, emissionAlpha);
+        finalColor = VFX_ResolvePremultiplied(glow, u_emissionGain, emissionAlpha, vec3(0.0), 0.0, 0.0);
         return;
     }
     /* Keep the rear interface for thickness/parallax, but make it a light

@@ -923,11 +923,51 @@ all three commits.
   "the trail is a solid-colour strip, and premultiplied output would need an alpha it does
   not compute". Setting the field there is a no-op; migrating it means teaching the particle
   ribbon trail to compute coverage, which is an engine change.
-- SHIELD SHELL was already premultiplied on both counts (`VFX_APPEARANCE_MAGIC` resolves to
-  `VFX_SURFACE_PREMULTIPLIED`, `glass_shell.fs` outputs through `VFX_ResolvePremultiplied`) and
-  measures darken 92.1% on white. Its emission pass is forced additive by
-  `VFXRender_BeginAppearance` for EVERY named appearance — that is a global policy worth
-  revisiting, not this effect's setting.
+- SHIELD SHELL's BODY pass was already premultiplied on both counts (`VFX_APPEARANCE_MAGIC`
+  resolves to `VFX_SURFACE_PREMULTIPLIED`, `glass_shell.fs` outputs through
+  `VFX_ResolvePremultiplied`), measuring darken 92.1% on white. **Its EMISSION pass was forced
+  additive by `VFXRender_BeginAppearance`, and that rule was removed the same day — below.**
+
+##### The blanket "emission is always additive" rule, and why its predicate was wrong
+
+`VFXRender_BeginAppearance` forced `VFX_SURFACE_ADDITIVE` on the EMISSION pass of every named
+appearance, so that a second semantic draw would ADD light rather than composite the same
+geometry's coverage twice.
+
+**The mechanism it guards against is real** — it is the same one that killed SWEEP SLASH
+above. **The predicate is not.** What decides is not *"is this the emission pass"*; it is
+*"does this emission cover the SAME AREA the body already covered"*, and only the effect
+knows that. SHIELD SHELL's emission mask is deliberately sparse — rim band, contact, ripple,
+with an explicit zero floor, because `glass_shell.fs` already records that "a non-zero floor
+here paints the entire sphere on bright backgrounds". Sparse emission is exactly the case the
+blanket rule was wrong about.
+
+Measured on SHIELD SHELL at warmup 90, forcing removed and the shader's emission branch moved
+to `VFX_ResolvePremultiplied`:
+
+| bg | darken% | structure | detail | body% | chroma | \|d\| |
+|---|---|---|---|---|---|---|
+| dark | 0.1 → 0.1 | 0.820 → 0.786 | 0.547 → 0.531 | 1.37 → 1.24 | 0.354 → 0.366 | 0.358 → **0.364** |
+| mid | 72.9 → **77.0** | 0.506 → **0.615** | 0.278 → **0.306** | 1.88 → **2.10** | 0.247 → 0.240 | 0.129 → 0.128 |
+| white | 92.1 → **95.5** | 0.035 → **0.105** | 0.030 → **0.056** | 0.26 → **1.12** | 0.179 → 0.176 | 0.075 → **0.084** |
+| warm | 87.4 → **91.3** | 0.154 → 0.133 | 0.057 → 0.058 | 1.90 → **2.31** | 0.551 → **0.577** | 0.096 → **0.101** |
+| cool | 81.9 → **85.6** | 0.138 → **0.168** | 0.082 → 0.074 | 1.13 → **1.96** | 0.179 → **0.313** | 0.114 → 0.115 |
+
+White `structure` triples and white body area rises 4.3x; cool `chroma` rises 75%; `darken%`
+rises on all four bright backgrounds and `|d|` rises or holds on all five **including dark**.
+The single cost is `structure` on dark, −4%.
+
+**The blast radius is one effect, and that was measured too**, not assumed: FLAME VOLUME and
+TRAIL MAIN came back bit-identical across the change. `VFXRender_BeginAppearance` has exactly
+one shipping caller (`vc_shield_shell.inl`); the only other entry point that reaches it,
+`DrawRibbonStripAppearanceEx`, is called by nothing.
+
+> [!WARNING]
+> **What replaces the guard rail is a rule an author now has to know.** An appearance whose
+> EMISSION is a second FULL-COVERAGE copy of its BODY must not declare a premultiplied
+> surface — the framework no longer catches that, because the framework cannot see it. The
+> failure it produces is SWEEP SLASH's: passes that used to sum start occluding each other,
+> and the effect gets *smaller* rather than more present.
 - LIGHTNING IMPACT shares LIGHTNING ARC's draw path, so it moved with it, and it lost: on white
   at warmup 5 it drops from 682 px over threshold to under the harness's 200-pixel floor. Its
   radiance and its coverage are near-equal, so premultiplied lands it exactly ON white where
@@ -1955,6 +1995,7 @@ The project is done with this specification only when all of the following are t
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-08-20 | Claude | §7.6d — removed the blanket "named appearance EMISSION is always additive" rule after measuring it, and recorded the authoring rule that replaces it | `core/scene_targets.c`; `core/shaders/glass_shell.fs`; SHIELD SHELL matrix before/after at `WUXING_TUNING=none` | Ground-truth: white structure 0.035 -> 0.105, white body 0.26% -> 1.12%; FLAME VOLUME and TRAIL MAIN bit-identical, bounding the blast radius to one effect |
 | 2026-08-20 | Claude | §7.6d "Second migration" — the trail and geometry halves of the premultiplied policy; the blend-state-and-formula-are-one-decision rule and its three-halves form for fixed-function draws; why SWEEP SLASH was reverted, and why ENERGY ORB / RUNE CIRCLE / SHIELD SHELL / DECAL need nothing | `render_vfx_matrix.sh` before/after on 13 fixtures at `WUXING_TUNING=none`; `core/composition/common/{vc_trail,vc_lightning_arc,vc_shock_ring,vc_light_shaft}.inl`; `core/trails/{trail_system.c,shaders/trail_deform.fs}`; `core/lightning/shaders/lightning_stroke.fs`; `core/shaders/shock_ring.fs`; `core/presets/vc_material.h` | Ground-truth: every number measured; TRAIL SMOKE bit-identical and FLAME VOLUME reproduced §11b to every digit as controls |
 | 2026-08-16 | Codex | Initial research and complete implementation specification | Epic Unreal blend/exposure/bloom/tonemapper docs; Unity tonemapping docs; Hogwarts Legacy GDC 2024; Call of Duty: Advanced Warfare SIGGRAPH 2014; Prototype 2 Game Developer article; Khronos blend docs; local headers/shaders/backend files named in §3 | External ground-truth + local ground-truth + marked project conventions |
 | 2026-08-16 | Codex | Implemented RGBA16F readback, `bright_vfx` Vulkan oracle, shared compositor include, fire/smoke resolver wiring, and Magic premultiplied appearance policy | `third_party/vulkan/rlvk/rlvk_format.inl`; `third_party/vulkan/tests/rlvk_visual_test.c`; `core/shaders/common/vfx_composite.glsl`; `core/shaders/{fire_funnel,energy_smoke}.fs`; `core/vfx_contrast.c` | Code complete for these slices; compile/visual gates pending dependency cache |
