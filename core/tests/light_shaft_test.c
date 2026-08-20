@@ -194,9 +194,25 @@ static void Test_MirrorStillMatchesSource(void)
           "camera-facing ribbons (a shaft is seen from wherever the viewer is)");
     CHECK(strstr(src, "VC_Breathe(time + (float)sIdx") != NULL,
           "each shaft breathes on its OWN clock (one clock reads as a lamp)");
-    CHECK(strstr(src, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false") != NULL &&
+    /* PREMULTIPLIED since 20/08/2026. A shaft measured darken 0.0% of its own
+       footprint on ALL FIVE backgrounds — pure light, and a destination already
+       at 1.0 has no room for more of it. After: white 0.0 -> 100.0, warm
+       0.0 -> 42.3, and chroma nearly doubles on white (0.147 -> 0.280) because
+       the element hue now survives instead of washing out. The trade is |d|:
+       dark 0.510 -> 0.458 (-10%), warm 0.198 -> 0.138. That dark cost is larger
+       than the 2-7% the particle and trail migrations paid, and the reason is
+       structural — a shaft is TWO overlapping passes, and premultiplied passes
+       occlude each other where additive ones only summed. */
+    CHECK(strstr(src, "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_PREMULTIPLIED, false") != NULL &&
           strstr(src, "VFXRender_EndDraw(&renderScope)") != NULL,
           "depth-state change is batch-flushed (ENGINE_LANDMINES §1)");
+    /* All three halves of one decision. The blend does not apply coverage, so
+       the tint must (VC_Premultiply) AND the sheet must (RGB = its own alpha) —
+       a white-RGB alpha mask would scale A without scaling RGB and hand the
+       premultiplied blend a straight source across the whole gradient. */
+    CHECK(strstr(src, "pts[i].tint = VC_Premultiply(c, a);") != NULL &&
+          strstr(src, "(Color){m8, m8, m8, m8}") != NULL,
+          "...and the tint AND the sheet are premultiplied to match the blend");
     CHECK(strstr(src, "u_cameraDepthTex") == NULL && strstr(src, "sampler2D") == NULL,
           "no second sampler (soft particles are parked — rlvk binding landmine)");
     CHECK(strstr(src, "CameraShake") == NULL && strstr(src, "Camera_Shake") == NULL,

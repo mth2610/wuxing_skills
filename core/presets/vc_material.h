@@ -48,6 +48,34 @@ const VFX_ElementMaterial* VFX_Material(VC_MaterialId id);
 // cường độ (alpha) là quyết định của từng layer.
 static inline Color VC_WithAlpha(Color c, unsigned char a) { c.a = a; return c; }
 
+// PREMULTIPLIED tint for a fixed-function draw (an immediate-mode ribbon or a
+// raw rlBegin quad) submitted under BLEND_ALPHA_PREMULTIPLY.
+//
+// WHY THIS EXISTS AT ALL. `ColorAlpha(c, a)` is STRAIGHT: RGB is the colour and
+// A is coverage, and every blend state we use except this one re-multiplies
+// them in hardware — raylib's BLEND_ALPHA is (SRC_ALPHA, ONE_MINUS_SRC_ALPHA)
+// and its BLEND_ADDITIVE is (SRC_ALPHA, ONE), both of which apply the alpha
+// themselves. BLEND_ALPHA_PREMULTIPLY is (ONE, ONE_MINUS_SRC_ALPHA) and does
+// not, so a straight tint handed to it is every soft edge scaled by 1/alpha.
+// Measured 20/08/2026 on the trail presets, that mistake raised cover% ~4x on a
+// DARK background — where the blend law itself changes almost nothing — and
+// drove darken% to 0.0 everywhere, because the extra light swamped the body.
+//
+// NOTE THE TEXTURE IS HALF OF THIS. The fixed-function path multiplies vertex
+// colour by the texel, so the SHEET must be premultiplied too (RGB = its own
+// alpha) or the mask scales A without scaling RGB and the result is straight
+// again over the mask's gradient. A white-RGB alpha mask is exactly that trap.
+static inline Color VC_Premultiply(Color c, float a)
+{
+    if (a < 0.0f) a = 0.0f;
+    if (a > 1.0f) a = 1.0f;
+    c.r = (unsigned char)((float)c.r * a);
+    c.g = (unsigned char)((float)c.g * a);
+    c.b = (unsigned char)((float)c.b * a);
+    c.a = (unsigned char)(a * 255.0f);
+    return c;
+}
+
 // Pha màu material về phía trắng (t: 0 = giữ nguyên, 1 = trắng). Dùng cho "lõi
 // nóng": một màu nguyên tố bão hòa (vd. glow của LIGHTNING = 0,185,255) khi cộng
 // dồn additive sẽ kẹt ở đúng hue đó và không bao giờ ra trắng — muốn có lõi

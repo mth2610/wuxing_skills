@@ -58,8 +58,13 @@ static void LightShaft_BuildTexture(void)
             // perfectly even shaft reads as a solid object. Shallow — deep
             // enough to see is deep enough to look like a dashed line.
             a *= 0.85f + 0.15f * sinf(v * PI * 3.0f + u * 4.0f);
-            ImageDrawPixel(&img, x, y, (Color){255, 255, 255,
-                                               (unsigned char)(Clamp(a, 0.0f, 1.0f) * 255.0f)});
+            // PREMULTIPLIED SHEET: RGB carries the mask, not white. The
+            // fixed-function path multiplies vertex colour by the texel, so a
+            // white-RGB alpha mask would scale A without scaling RGB and hand
+            // BLEND_ALPHA_PREMULTIPLY a straight source across the whole
+            // gradient. Both halves have to be premultiplied or neither is.
+            unsigned char m8 = (unsigned char)(Clamp(a, 0.0f, 1.0f) * 255.0f);
+            ImageDrawPixel(&img, x, y, (Color){m8, m8, m8, m8});
         }
     }
     s_shaftTex = LoadTextureFromImage(img);
@@ -135,8 +140,12 @@ void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
     Color glow = m->glow;
     float time = TimeFX_Elapsed();
 
+    // PREMULTIPLIED, not additive (20/08/2026). A shaft measured darken 0.0% on
+    // EVERY background — it was pure light, and on a destination already at 1.0
+    // pure light has nothing to say. Requires the premultiplied sheet above and
+    // the premultiplied tint below; all three are one decision.
     VFXRenderScope renderScope = VFXRender_BeginDraw(
-        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
+        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_PREMULTIPLIED, false);
 
     static RibbonPoint pts[LIGHT_SHAFT_POINTS];
 
@@ -184,7 +193,7 @@ void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
                 // distance — the same "hue travels" rule the slash uses.
                 Color c = VC_Whiten(VC_MixColor(glow, soft, SmoothStep01(t)),
                                     passWhite[pass]);
-                pts[i].tint = ColorAlpha(c, Clamp(a, 0.0f, 1.0f));
+                pts[i].tint = VC_Premultiply(c, a);
             }
 
             Ribbon_ComputeArcLengthUV(pts, LIGHT_SHAFT_POINTS);
