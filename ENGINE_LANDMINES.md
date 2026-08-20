@@ -27,6 +27,42 @@
 | 17 | A shader redefining a function its `#include` exports renders as the DEFAULT shader, silently | Anyone adding a shared `#include` to an existing shader |
 | 18 | Shaders hot-load from disk, C does not — a measurement after a `.inl` edit describes the OLD binary | Anyone measuring a C-side fix through the game |
 | 19 | The MSAA window hint anti-aliases nothing when the scene renders into an FBO; and MSAA cannot touch a shader-decided edge | Anyone judging edge quality, adding a render target, or authoring a `step()`/`discard` silhouette |
+| 20 | The GLSL `#include` expander does not understand comments — a commented-out include is still expanded | Anyone writing a usage example, or a "does NOT include X" note, inside a shader comment |
+
+---
+
+## 20. The `#include` expander does not understand comments — a commented directive is STILL expanded (20/08/2026)
+
+**Symptom.** A newly written shared header would not load. The log showed the same file opened
+eight times in a row, then `WARNING: SHADER: Vượt giới hạn include depth (8)`. Nothing in the
+shader's live code included anything twice.
+
+**Cause.** `core/shader_preprocessor.c` is a purely textual expander: it does `strstr(src,
+"#include")` and knows nothing about `//` or `/* */`. The header's own doc comment carried a
+usage example —
+
+```
+//   #ifdef INSTANCED
+//   #include "core/shaders/common/vs_instanced_header.glsl"
+```
+
+— so the file included **itself**, once per depth level, until the limit stopped it. The depth
+limit is what turns this from a hang into a warning, which is also why it is easy to miss: the
+outer shader still compiles, because the eight nested copies land inside an `#ifdef` arm that
+the GLSL compiler then skips.
+
+**Second, nastier form.** The parser takes `strchr(includeKw, '"')` — **the next double-quote
+anywhere in the rest of the file**, not on that line. So a prose comment like
+`// Deliberately does NOT #include vs_header.glsl` (no quotes on its own line) silently adopts a
+quote from further down and tries to include whatever text sits between it and the next one.
+With no quote left in the file it merely warns; with one, it loads a garbage path.
+`maps/toolkit/shaders/grass_material.vs` is in the live form today (Map Agent's file);
+`maps/toolkit/shaders/prop_lit.vs` is in the harmless form.
+
+**Rule.** **Never write the token `#include` inside a shader comment** — not as an example, not
+in a "does NOT include X" note. Describe it in prose ("an include directive", "pulls in
+vs_header.glsl") or point at a real file that shows the form. Guarded for `core/`'s shared
+headers by `core/tests/shader_permutation_test.c`.
 
 ---
 

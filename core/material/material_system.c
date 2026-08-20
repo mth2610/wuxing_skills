@@ -3,22 +3,241 @@
 #include "core/skill_manager.h"
 #include "rlgl.h"
 #include "raymath.h"
+#include <stddef.h>
+#include <string.h>
 
-static void Material_FetchLocs(EffectMaterial *mat)
+/* ═══════════════════════════════════════════════════════════════════════════
+ * The parameter-table engine (M2, 20/08/2026)
+ *
+ * Replaces 6 hand-written FetchLocs() + 6 hand-written Begin() bodies, which
+ * between them held 75 GetShaderLocation calls and 75 SetShaderValue calls
+ * that differed only in which field of which struct they read.
+ *
+ * A material declares WHAT its uniforms are; this file owns HOW they are
+ * fetched and pushed. Adding a uniform is one row in a table.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef enum
 {
-    mat->uTimeLoc = GetShaderLocation(mat->shader, "u_time");
-    mat->uDissolveLoc = GetShaderLocation(mat->shader, "u_dissolve");
-    mat->uBaseColorLoc = GetShaderLocation(mat->shader, "u_baseColor");
-    mat->uTranslucencyLoc = GetShaderLocation(mat->shader, "u_translucency");
-    mat->uRimStrengthLoc = GetShaderLocation(mat->shader, "u_rimStrength");
-    mat->uFresnelPowerLoc = GetShaderLocation(mat->shader, "u_fresnelPower");
-    mat->uEmissiveIntensityLoc = GetShaderLocation(mat->shader, "u_emissiveIntensity");
-    mat->uDistortionStrengthLoc = GetShaderLocation(mat->shader, "u_distortionStrength");
-    mat->uHasTexture1Loc = GetShaderLocation(mat->shader, "u_hasTexture1");
-    mat->uTexture1Loc = GetShaderLocation(mat->shader, "texture1");
-    mat->uCustomParam1Loc = GetShaderLocation(mat->shader, "u_customParam1");
-    mat->uCustomParam2Loc = GetShaderLocation(mat->shader, "u_customParam2");
+    VFXP_TIME = 0, /* GetTime(), no field                                      */
+    VFXP_FLOAT,    /* float field, pushed as a + b*x clamped to [lo,hi]        */
+    VFXP_COLOR,    /* Color field -> ColorNormalize -> vec4                    */
+    VFXP_TEXTURE,  /* Texture2D field -> rlSetTexture + SetShaderValueTexture  */
+    VFXP_TEXFLAG,  /* Texture2D field -> int (id != 0), the "has texture" bool */
+    VFXP_CONST     /* literal float, no field                                  */
+} VfxParamKind;
+
+struct VfxParamDesc
+{
+    const char *name;    /* uniform name                                  */
+    VfxParamKind kind;
+    unsigned short offset; /* byte offset into the material's params struct */
+    float a, b;          /* FLOAT: a + b*x   CONST: a                     */
+    float lo, hi;        /* FLOAT: clamp range                            */
+};
+
+#define P_TIME(n)                 { n, VFXP_TIME,    0, 0.0f, 0.0f, 0.0f, 0.0f }
+#define P_CONST(n, V)             { n, VFXP_CONST,   0, (V),  0.0f, 0.0f, 0.0f }
+#define P_FLOAT(n, T, f)          { n, VFXP_FLOAT,   (unsigned short)offsetof(T, f), 0.0f, 1.0f, -1e30f, 1e30f }
+#define P_AFFINE(n, T, f, A, B, LO, HI) \
+                                  { n, VFXP_FLOAT,   (unsigned short)offsetof(T, f), (A), (B), (LO), (HI) }
+#define P_COLOR(n, T, f)          { n, VFXP_COLOR,   (unsigned short)offsetof(T, f), 0.0f, 0.0f, 0.0f, 0.0f }
+#define P_TEX(n, T, f)            { n, VFXP_TEXTURE, (unsigned short)offsetof(T, f), 0.0f, 0.0f, 0.0f, 0.0f }
+#define P_TEXFLAG(n, T, f)        { n, VFXP_TEXFLAG, (unsigned short)offsetof(T, f), 0.0f, 0.0f, 0.0f, 0.0f }
+
+/* A table longer than the locs[] array would silently lose its tail uniforms,
+ * which is exactly the invisible-failure mode this refactor exists to remove.
+ * Fail the BUILD instead. */
+#define VFX_STATIC_ASSERT(cond, tag) typedef char vfx_assert_##tag[(cond) ? 1 : -1]
+
+/* ── The tables ──────────────────────────────────────────────────────────── */
+
+/* u_customParam1/2 have no consumer in any shader and no caller sets them;
+ * they stay in the table (and in the public params struct) only so the public
+ * API does not change here. Their locs resolve to -1 and cost nothing. */
+static const VfxParamDesc EFFECT_PARAMS[] = {
+    P_TIME("u_time"),
+    P_COLOR("u_baseColor", EffectMaterialParams, baseColor),
+    P_FLOAT("u_translucency", EffectMaterialParams, translucency),
+    P_FLOAT("u_rimStrength", EffectMaterialParams, rimStrength),
+    P_FLOAT("u_fresnelPower", EffectMaterialParams, fresnelPower),
+    P_FLOAT("u_emissiveIntensity", EffectMaterialParams, emissiveIntensity),
+    P_FLOAT("u_distortionStrength", EffectMaterialParams, distortionStrength),
+    /* ORDER MATTERS: the flag is pushed before the sampler, as the hand-written
+     * code did — the fragment shader gates its texture1 fetch on it. */
+    P_TEXFLAG("u_hasTexture1", EffectMaterialParams, texture1),
+    P_TEX("texture1", EffectMaterialParams, texture1),
+    P_FLOAT("u_customParam1", EffectMaterialParams, customParam1),
+    P_FLOAT("u_customParam2", EffectMaterialParams, customParam2),
+};
+VFX_STATIC_ASSERT(sizeof(EFFECT_PARAMS) / sizeof(EFFECT_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, effect);
+
+static const VfxParamDesc CRYSTAL_PARAMS[] = {
+    P_TIME("u_time"),
+    P_COLOR("u_baseColor", CrystalMaterialParams, baseColor),
+    P_COLOR("u_edgeColor", CrystalMaterialParams, edgeColor),
+    /* roughness 0..1 -> fresnelPower 8..1, floored at 1. Rougher = broader rim. */
+    P_AFFINE("u_fresnelPower", CrystalMaterialParams, roughness, 8.0f, -7.0f, 1.0f, 1e30f),
+    P_FLOAT("u_rimStrength", CrystalMaterialParams, fresnel),
+    P_FLOAT("u_refraction", CrystalMaterialParams, refraction),
+    P_FLOAT("u_sparkle", CrystalMaterialParams, sparkle),
+    P_FLOAT("u_crack", CrystalMaterialParams, crack),
+    P_FLOAT("u_emission", CrystalMaterialParams, emission),
+    P_FLOAT("u_thickness", CrystalMaterialParams, thickness),
+    P_FLOAT("u_dissolve", CrystalMaterialParams, dissolve),
+    P_TEX("texture1", CrystalMaterialParams, texture1),
+    /* Safe default: legacy immediate-mode crystal draws already baked their
+     * grow progress on the CPU and must not be scaled down a second time.
+     * CrystalMaterial_SetGrowProgress overrides it after Begin. */
+    P_CONST("u_growProgress", 1.0f),
+};
+VFX_STATIC_ASSERT(sizeof(CRYSTAL_PARAMS) / sizeof(CRYSTAL_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, crystal);
+
+static const VfxParamDesc PLASMA_PARAMS[] = {
+    P_TIME("u_time"),
+    P_COLOR("u_baseColor", PlasmaMaterialParams, baseColor),
+    P_COLOR("u_wispColor", PlasmaMaterialParams, wispColor),
+    P_FLOAT("u_noiseScale", PlasmaMaterialParams, noiseScale),
+    P_FLOAT("u_noiseSpeed", PlasmaMaterialParams, noiseSpeed),
+    P_FLOAT("u_fresnelPower", PlasmaMaterialParams, fresnelPower),
+    P_FLOAT("u_rimStrength", PlasmaMaterialParams, rimStrength),
+    P_FLOAT("u_emissive", PlasmaMaterialParams, emissive),
+    P_FLOAT("u_opacity", PlasmaMaterialParams, opacity),
+    P_FLOAT("u_displaceAmp", PlasmaMaterialParams, displaceAmp),
+};
+VFX_STATIC_ASSERT(sizeof(PLASMA_PARAMS) / sizeof(PLASMA_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, plasma);
+
+static const VfxParamDesc AURA_PARAMS[] = {
+    P_TIME("u_time"),
+    P_COLOR("u_bodyColor", AuraShellMaterialParams, bodyColor),
+    P_COLOR("u_glowColor", AuraShellMaterialParams, glowColor),
+    P_FLOAT("u_opacity", AuraShellMaterialParams, opacity),
+    P_FLOAT("u_fresnelPower", AuraShellMaterialParams, fresnelPower),
+    P_FLOAT("u_rimStrength", AuraShellMaterialParams, rimStrength),
+    P_FLOAT("u_scrollSpeed", AuraShellMaterialParams, scrollSpeed),
+    P_FLOAT("u_noiseScale", AuraShellMaterialParams, noiseScale),
+    P_FLOAT("u_heightScale", AuraShellMaterialParams, heightScale),
+    P_FLOAT("u_scanFreq", AuraShellMaterialParams, scanFreq),
+    P_FLOAT("u_scanSpeed", AuraShellMaterialParams, scanSpeed),
+    P_FLOAT("u_scanStrength", AuraShellMaterialParams, scanStrength),
+    P_FLOAT("u_displaceAmp", AuraShellMaterialParams, displaceAmp),
+    P_FLOAT("u_topY", AuraShellMaterialParams, topY),
+    P_FLOAT("u_heightFadeOff", AuraShellMaterialParams, heightFadeOff),
+    P_FLOAT("u_coverFloor", AuraShellMaterialParams, coverFloor),
+};
+VFX_STATIC_ASSERT(sizeof(AURA_PARAMS) / sizeof(AURA_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, aura);
+
+/* ── The engine ──────────────────────────────────────────────────────────── */
+
+static void MatFetchLocs(Shader shader, const VfxParamDesc *layout, int count, int *locs)
+{
+    for (int i = 0; i < count; i++)
+    {
+        locs[i] = GetShaderLocation(shader, layout[i].name);
+    }
 }
+
+static void MatApply(Shader shader, const VfxParamDesc *layout, int count,
+                     const int *locs, const void *paramsBlob)
+{
+    const unsigned char *base = (const unsigned char *)paramsBlob;
+
+    for (int i = 0; i < count; i++)
+    {
+        if (locs[i] < 0) continue; /* uniform absent or optimized out */
+
+        switch (layout[i].kind)
+        {
+        case VFXP_TIME:
+        {
+            float t = (float)GetTime();
+            SetShaderValue(shader, locs[i], &t, SHADER_UNIFORM_FLOAT);
+            break;
+        }
+        case VFXP_CONST:
+        {
+            float v = layout[i].a;
+            SetShaderValue(shader, locs[i], &v, SHADER_UNIFORM_FLOAT);
+            break;
+        }
+        case VFXP_FLOAT:
+        {
+            float x;
+            memcpy(&x, base + layout[i].offset, sizeof(x));
+            float v = layout[i].a + layout[i].b * x;
+            if (v < layout[i].lo) v = layout[i].lo;
+            if (v > layout[i].hi) v = layout[i].hi;
+            SetShaderValue(shader, locs[i], &v, SHADER_UNIFORM_FLOAT);
+            break;
+        }
+        case VFXP_COLOR:
+        {
+            Color c;
+            memcpy(&c, base + layout[i].offset, sizeof(c));
+            Vector4 v = ColorNormalize(c);
+            SetShaderValue(shader, locs[i], &v, SHADER_UNIFORM_VEC4);
+            break;
+        }
+        case VFXP_TEXFLAG:
+        {
+            Texture2D t;
+            memcpy(&t, base + layout[i].offset, sizeof(t));
+            int has = (t.id != 0);
+            SetShaderValue(shader, locs[i], &has, SHADER_UNIFORM_INT);
+            break;
+        }
+        case VFXP_TEXTURE:
+        {
+            Texture2D t;
+            memcpy(&t, base + layout[i].offset, sizeof(t));
+            if (t.id != 0)
+            {
+                rlSetTexture(t.id);
+                SetShaderValueTexture(shader, locs[i], t);
+            }
+            break;
+        }
+        }
+    }
+}
+
+/* Look a uniform up by name within a material's own table. Used by the few
+ * setters that push a value outside Begin(); a strcmp over ~13 short names is
+ * nothing next to the draw call that follows, and unlike a hard-coded index it
+ * cannot drift when a row is inserted. */
+static int MatLocByName(const VfxParamDesc *layout, int count, const int *locs, const char *name)
+{
+    for (int i = 0; i < count; i++)
+    {
+        if (strcmp(layout[i].name, name) == 0) return locs[i];
+    }
+    return -1;
+}
+
+/* Every material opens and closes the same way. */
+static void MatBeginCommon(Shader shader)
+{
+    /* Raylib batching hazard: flush the active batch before changing shader or
+     * texture state, or queued geometry is drawn with the NEW state. */
+    rlDrawRenderBatchActive();
+    SkillManager_BeginShader(shader);
+}
+
+static void MatEndCommon(void)
+{
+    rlDrawRenderBatchActive();
+    rlSetTexture(0);
+    SkillManager_EndShader();
+}
+
+/* The INSTANCED permutation. One source .vs, two programs — see
+ * core/shaders/common/vs_instanced_header.glsl for why this must be a
+ * compile-time define and not a runtime branch. */
+#define VFX_DEFINE_INSTANCED "#define INSTANCED 1\n"
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * EffectMaterial
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 void MaterialSystem_Init(void)
 {
@@ -103,25 +322,34 @@ void Material_Get(EffectMaterial *outMat, MaterialPreset preset)
     outMat->preset = preset;
 }
 
-void Material_LoadCustom(EffectMaterial *outMat, const EffectMaterialParams *params)
+/* One place that binds a shader to the Effect table, so the four Effect
+ * loaders below cannot disagree about it. */
+static void EffectMaterial_Bind(EffectMaterial *outMat, Shader shader,
+                                const EffectMaterialParams *params)
 {
-    if (!outMat) return;
     *outMat = (EffectMaterial){0};
     outMat->preset = MAT_CUSTOM;
-    outMat->shader = ResourceManager_LoadShader("core/shaders/effect_material.vs",
-                                            "core/shaders/effect_material.fs");
-    Material_FetchLocs(outMat);
+    outMat->shader = shader;
+    outMat->layout = EFFECT_PARAMS;
+    outMat->layoutCount = (int)(sizeof(EFFECT_PARAMS) / sizeof(EFFECT_PARAMS[0]));
+    MatFetchLocs(outMat->shader, outMat->layout, outMat->layoutCount, outMat->locs);
     if (params) outMat->params = *params;
 }
 
-void Material_LoadCustomShader(EffectMaterial *outMat, const EffectMaterialParams *params, const char* vsPath, const char* fsPath)
+void Material_LoadCustom(EffectMaterial *outMat, const EffectMaterialParams *params)
 {
     if (!outMat) return;
-    *outMat = (EffectMaterial){0};
-    outMat->preset = MAT_CUSTOM;
-    outMat->shader = ResourceManager_LoadShader(vsPath, fsPath);
-    Material_FetchLocs(outMat);
-    if (params) outMat->params = *params;
+    EffectMaterial_Bind(outMat,
+                        ResourceManager_LoadShader("core/shaders/effect_material.vs",
+                                                   "core/shaders/effect_material.fs"),
+                        params);
+}
+
+void Material_LoadCustomShader(EffectMaterial *outMat, const EffectMaterialParams *params,
+                               const char *vsPath, const char *fsPath)
+{
+    if (!outMat) return;
+    EffectMaterial_Bind(outMat, ResourceManager_LoadShader(vsPath, fsPath), params);
 }
 
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val)
@@ -135,474 +363,158 @@ void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val)
 
 void Material_Begin(EffectMaterial mat)
 {
-    // Đảm bảo an toàn Raylib Batching Hazard: xả sạch batch trước khi thay đổi trạng thái shader/texture
-    rlDrawRenderBatchActive();
-
-    SkillManager_BeginShader(mat.shader);
-    float time = (float)GetTime();
-    if (mat.uTimeLoc >= 0)
-    {
-        SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
-    }
-    if (mat.uBaseColorLoc >= 0)
-    {
-        Vector4 baseColorVec = ColorNormalize(mat.params.baseColor);
-        SetShaderValue(mat.shader, mat.uBaseColorLoc, &baseColorVec, SHADER_UNIFORM_VEC4);
-    }
-    if (mat.uTranslucencyLoc >= 0)
-        SetShaderValue(mat.shader, mat.uTranslucencyLoc, &mat.params.translucency, SHADER_UNIFORM_FLOAT);
-    if (mat.uRimStrengthLoc >= 0)
-        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.rimStrength, SHADER_UNIFORM_FLOAT);
-    if (mat.uFresnelPowerLoc >= 0)
-        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &mat.params.fresnelPower, SHADER_UNIFORM_FLOAT);
-    if (mat.uEmissiveIntensityLoc >= 0)
-        SetShaderValue(mat.shader, mat.uEmissiveIntensityLoc, &mat.params.emissiveIntensity, SHADER_UNIFORM_FLOAT);
-    if (mat.uDistortionStrengthLoc >= 0)
-        SetShaderValue(mat.shader, mat.uDistortionStrengthLoc, &mat.params.distortionStrength, SHADER_UNIFORM_FLOAT);
-    if (mat.uHasTexture1Loc >= 0)
-    {
-        int hasTexture1 = mat.params.texture1.id != 0;
-        SetShaderValue(mat.shader, mat.uHasTexture1Loc, &hasTexture1, SHADER_UNIFORM_INT);
-    }
-    if (mat.uTexture1Loc >= 0 && mat.params.texture1.id != 0)
-    {
-        rlSetTexture(mat.params.texture1.id);
-        SetShaderValueTexture(mat.shader, mat.uTexture1Loc, mat.params.texture1);
-    }
-    if (mat.uCustomParam1Loc >= 0)
-        SetShaderValue(mat.shader, mat.uCustomParam1Loc, &mat.params.customParam1, SHADER_UNIFORM_FLOAT);
-    if (mat.uCustomParam2Loc >= 0)
-        SetShaderValue(mat.shader, mat.uCustomParam2Loc, &mat.params.customParam2, SHADER_UNIFORM_FLOAT);
+    MatBeginCommon(mat.shader);
+    MatApply(mat.shader, mat.layout, mat.layoutCount, mat.locs, &mat.params);
 }
 
 void Material_End(void)
 {
-    rlDrawRenderBatchActive();
-    rlSetTexture(0);
-    SkillManager_EndShader();
-}
-
-static void EffectMaterialInstanced_FetchLocs(EffectMaterialInstanced *mat)
-{
-    mat->uTimeLoc = GetShaderLocation(mat->shader, "u_time");
-    mat->uDissolveLoc = GetShaderLocation(mat->shader, "u_dissolve");
-    mat->uBaseColorLoc = GetShaderLocation(mat->shader, "u_baseColor");
-    mat->uTranslucencyLoc = GetShaderLocation(mat->shader, "u_translucency");
-    mat->uRimStrengthLoc = GetShaderLocation(mat->shader, "u_rimStrength");
-    mat->uFresnelPowerLoc = GetShaderLocation(mat->shader, "u_fresnelPower");
-    mat->uEmissiveIntensityLoc = GetShaderLocation(mat->shader, "u_emissiveIntensity");
-    mat->uDistortionStrengthLoc = GetShaderLocation(mat->shader, "u_distortionStrength");
-    mat->uHasTexture1Loc = GetShaderLocation(mat->shader, "u_hasTexture1");
-    mat->uTexture1Loc = GetShaderLocation(mat->shader, "texture1");
+    MatEndCommon();
 }
 
 void EffectMaterialInstanced_Load(EffectMaterialInstanced *outMat, const EffectMaterialParams *params)
 {
     if (!outMat) return;
-    *outMat = (EffectMaterialInstanced){0};
-    outMat->preset = MAT_CUSTOM;
-    outMat->shader = ResourceManager_LoadShader("core/shaders/effect_material_instanced.vs",
-                                            "core/shaders/effect_material.fs");
-    EffectMaterialInstanced_FetchLocs(outMat);
-    if (params) outMat->params = *params;
+    EffectMaterial_Bind(outMat,
+                        ResourceManager_LoadShaderVariant("core/shaders/effect_material.vs",
+                                                          "core/shaders/effect_material.fs",
+                                                          VFX_DEFINE_INSTANCED),
+                        params);
 }
 
 void EffectMaterialInstanced_Begin(EffectMaterialInstanced mat)
 {
-    rlDrawRenderBatchActive();
-
-    SkillManager_BeginShader(mat.shader);
-    float time = (float)GetTime();
-    if (mat.uTimeLoc >= 0)
-    {
-        SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
-    }
-    if (mat.uBaseColorLoc >= 0)
-    {
-        Vector4 baseColorVec = ColorNormalize(mat.params.baseColor);
-        SetShaderValue(mat.shader, mat.uBaseColorLoc, &baseColorVec, SHADER_UNIFORM_VEC4);
-    }
-    if (mat.uTranslucencyLoc >= 0)
-        SetShaderValue(mat.shader, mat.uTranslucencyLoc, &mat.params.translucency, SHADER_UNIFORM_FLOAT);
-    if (mat.uRimStrengthLoc >= 0)
-        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.rimStrength, SHADER_UNIFORM_FLOAT);
-    if (mat.uFresnelPowerLoc >= 0)
-        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &mat.params.fresnelPower, SHADER_UNIFORM_FLOAT);
-    if (mat.uEmissiveIntensityLoc >= 0)
-        SetShaderValue(mat.shader, mat.uEmissiveIntensityLoc, &mat.params.emissiveIntensity, SHADER_UNIFORM_FLOAT);
-    if (mat.uDistortionStrengthLoc >= 0)
-        SetShaderValue(mat.shader, mat.uDistortionStrengthLoc, &mat.params.distortionStrength, SHADER_UNIFORM_FLOAT);
-    if (mat.uHasTexture1Loc >= 0)
-    {
-        int hasTexture1 = mat.params.texture1.id != 0;
-        SetShaderValue(mat.shader, mat.uHasTexture1Loc, &hasTexture1, SHADER_UNIFORM_INT);
-    }
-    if (mat.uTexture1Loc >= 0 && mat.params.texture1.id != 0)
-    {
-        rlSetTexture(mat.params.texture1.id);
-        SetShaderValueTexture(mat.shader, mat.uTexture1Loc, mat.params.texture1);
-    }
+    Material_Begin(mat);
 }
 
 void EffectMaterialInstanced_End(void)
 {
-    rlDrawRenderBatchActive();
-    rlSetTexture(0);
-    SkillManager_EndShader();
+    MatEndCommon();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * CrystalMaterial
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static void CrystalMaterial_Bind(CrystalMaterial *outMat, Shader shader,
+                                 const CrystalMaterialParams *params)
+{
+    *outMat = (CrystalMaterial){0};
+    outMat->shader = shader;
+    outMat->layout = CRYSTAL_PARAMS;
+    outMat->layoutCount = (int)(sizeof(CRYSTAL_PARAMS) / sizeof(CRYSTAL_PARAMS[0]));
+    if (params) outMat->params = *params;
+
+    if (outMat->params.texture1.id == 0)
+    {
+        outMat->params.texture1 = ResourceManager_LoadTexture("assets/textures/tex_crystal.png");
+    }
+
+    MatFetchLocs(outMat->shader, outMat->layout, outMat->layoutCount, outMat->locs);
 }
 
 void CrystalMaterial_Load(CrystalMaterial *outMat, const CrystalMaterialParams *params)
 {
     if (!outMat) return;
-    *outMat = (CrystalMaterial){0};
-    outMat->shader = ResourceManager_LoadShader("core/shaders/crystal.vs", "core/shaders/crystal.fs");
-    if (params) outMat->params = *params;
-
-    if (outMat->params.texture1.id == 0)
-    {
-        outMat->params.texture1 = ResourceManager_LoadTexture("assets/textures/tex_crystal.png");
-    }
-
-    outMat->uBaseColorLoc = GetShaderLocation(outMat->shader, "u_baseColor");
-    outMat->uEdgeColorLoc = GetShaderLocation(outMat->shader, "u_edgeColor");
-    outMat->uFresnelPowerLoc = GetShaderLocation(outMat->shader, "u_fresnelPower");
-    outMat->uRimStrengthLoc = GetShaderLocation(outMat->shader, "u_rimStrength");
-    outMat->uRefractionLoc = GetShaderLocation(outMat->shader, "u_refraction");
-    outMat->uSparkleLoc = GetShaderLocation(outMat->shader, "u_sparkle");
-    outMat->uCrackLoc = GetShaderLocation(outMat->shader, "u_crack");
-    outMat->uEmissionLoc = GetShaderLocation(outMat->shader, "u_emission");
-    outMat->uThicknessLoc = GetShaderLocation(outMat->shader, "u_thickness");
-    outMat->uDissolveLoc = GetShaderLocation(outMat->shader, "u_dissolve");
-    outMat->uTexture1Loc = GetShaderLocation(outMat->shader, "texture1");
-    outMat->uTimeLoc = GetShaderLocation(outMat->shader, "u_time");
-    outMat->uGrowProgressLoc = GetShaderLocation(outMat->shader, "u_growProgress");
+    CrystalMaterial_Bind(outMat,
+                         ResourceManager_LoadShader("core/shaders/crystal.vs",
+                                                    "core/shaders/crystal.fs"),
+                         params);
 }
 
 void CrystalMaterial_Begin(CrystalMaterial mat)
 {
-    rlDrawRenderBatchActive();
-    SkillManager_BeginShader(mat.shader);
-
-    float time = (float)GetTime();
-    if (mat.uTimeLoc >= 0)
-    {
-        SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
-    }
-
-    if (mat.uBaseColorLoc >= 0)
-    {
-        Vector4 baseColorVec = ColorNormalize(mat.params.baseColor);
-        SetShaderValue(mat.shader, mat.uBaseColorLoc, &baseColorVec, SHADER_UNIFORM_VEC4);
-    }
-
-    if (mat.uEdgeColorLoc >= 0)
-    {
-        Vector4 edgeColorVec = ColorNormalize(mat.params.edgeColor);
-        SetShaderValue(mat.shader, mat.uEdgeColorLoc, &edgeColorVec, SHADER_UNIFORM_VEC4);
-    }
-
-    if (mat.uFresnelPowerLoc >= 0)
-    {
-        float fresnelPower = 8.0f - mat.params.roughness * 7.0f;
-        if (fresnelPower < 1.0f)
-            fresnelPower = 1.0f;
-        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &fresnelPower, SHADER_UNIFORM_FLOAT);
-    }
-
-    if (mat.uRimStrengthLoc >= 0)
-        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.fresnel, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uRefractionLoc >= 0)
-        SetShaderValue(mat.shader, mat.uRefractionLoc, &mat.params.refraction, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uSparkleLoc >= 0)
-        SetShaderValue(mat.shader, mat.uSparkleLoc, &mat.params.sparkle, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uCrackLoc >= 0)
-        SetShaderValue(mat.shader, mat.uCrackLoc, &mat.params.crack, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uEmissionLoc >= 0)
-        SetShaderValue(mat.shader, mat.uEmissionLoc, &mat.params.emission, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uThicknessLoc >= 0)
-        SetShaderValue(mat.shader, mat.uThicknessLoc, &mat.params.thickness, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uDissolveLoc >= 0)
-        SetShaderValue(mat.shader, mat.uDissolveLoc, &mat.params.dissolve, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uTexture1Loc >= 0 && mat.params.texture1.id != 0)
-    {
-        rlSetTexture(mat.params.texture1.id);
-        SetShaderValueTexture(mat.shader, mat.uTexture1Loc, mat.params.texture1);
-    }
-
-    // Default an toàn: các lệnh vẽ crystal immediate-mode cũ (progress đã
-    // bake ở CPU) không được co lại theo trục Y lần nữa.
-    if (mat.uGrowProgressLoc >= 0)
-    {
-        float fullGrown = 1.0f;
-        SetShaderValue(mat.shader, mat.uGrowProgressLoc, &fullGrown, SHADER_UNIFORM_FLOAT);
-    }
+    MatBeginCommon(mat.shader);
+    MatApply(mat.shader, mat.layout, mat.layoutCount, mat.locs, &mat.params);
 }
 
 void CrystalMaterial_SetGrowProgress(CrystalMaterial mat, float progress)
 {
-    if (mat.uGrowProgressLoc < 0)
-        return;
-    SetShaderValue(mat.shader, mat.uGrowProgressLoc, &progress, SHADER_UNIFORM_FLOAT);
+    int loc = MatLocByName(mat.layout, mat.layoutCount, mat.locs, "u_growProgress");
+    if (loc < 0) return;
+    SetShaderValue(mat.shader, loc, &progress, SHADER_UNIFORM_FLOAT);
 }
 
 void CrystalMaterial_End(void)
 {
-    rlDrawRenderBatchActive();
-    rlSetTexture(0);
-    SkillManager_EndShader();
+    MatEndCommon();
 }
 
 void CrystalMaterialInstanced_Load(CrystalMaterialInstanced *outMat, const CrystalMaterialParams *params)
 {
     if (!outMat) return;
-    *outMat = (CrystalMaterialInstanced){0};
-    outMat->shader = ResourceManager_LoadShader("core/shaders/crystal_instanced.vs", "core/shaders/crystal.fs");
-    if (params) outMat->params = *params;
-
-    if (outMat->params.texture1.id == 0)
-    {
-        outMat->params.texture1 = ResourceManager_LoadTexture("assets/textures/tex_crystal.png");
-    }
-
-    outMat->uBaseColorLoc = GetShaderLocation(outMat->shader, "u_baseColor");
-    outMat->uEdgeColorLoc = GetShaderLocation(outMat->shader, "u_edgeColor");
-    outMat->uFresnelPowerLoc = GetShaderLocation(outMat->shader, "u_fresnelPower");
-    outMat->uRimStrengthLoc = GetShaderLocation(outMat->shader, "u_rimStrength");
-    outMat->uRefractionLoc = GetShaderLocation(outMat->shader, "u_refraction");
-    outMat->uSparkleLoc = GetShaderLocation(outMat->shader, "u_sparkle");
-    outMat->uCrackLoc = GetShaderLocation(outMat->shader, "u_crack");
-    outMat->uEmissionLoc = GetShaderLocation(outMat->shader, "u_emission");
-    outMat->uThicknessLoc = GetShaderLocation(outMat->shader, "u_thickness");
-    outMat->uDissolveLoc = GetShaderLocation(outMat->shader, "u_dissolve");
-    outMat->uTexture1Loc = GetShaderLocation(outMat->shader, "texture1");
-    outMat->uTimeLoc = GetShaderLocation(outMat->shader, "u_time");
-    outMat->uGrowProgressLoc = GetShaderLocation(outMat->shader, "u_growProgress");
+    CrystalMaterial_Bind(outMat,
+                         ResourceManager_LoadShaderVariant("core/shaders/crystal.vs",
+                                                           "core/shaders/crystal.fs",
+                                                           VFX_DEFINE_INSTANCED),
+                         params);
 }
 
 void CrystalMaterialInstanced_Begin(CrystalMaterialInstanced mat)
 {
-    rlDrawRenderBatchActive();
-    SkillManager_BeginShader(mat.shader);
-
-    float time = (float)GetTime();
-    if (mat.uTimeLoc >= 0)
-        SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uBaseColorLoc >= 0)
-    {
-        Vector4 baseColorVec = ColorNormalize(mat.params.baseColor);
-        SetShaderValue(mat.shader, mat.uBaseColorLoc, &baseColorVec, SHADER_UNIFORM_VEC4);
-    }
-
-    if (mat.uEdgeColorLoc >= 0)
-    {
-        Vector4 edgeColorVec = ColorNormalize(mat.params.edgeColor);
-        SetShaderValue(mat.shader, mat.uEdgeColorLoc, &edgeColorVec, SHADER_UNIFORM_VEC4);
-    }
-
-    if (mat.uFresnelPowerLoc >= 0)
-    {
-        float fresnelPower = 8.0f - mat.params.roughness * 7.0f;
-        if (fresnelPower < 1.0f)
-            fresnelPower = 1.0f;
-        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &fresnelPower, SHADER_UNIFORM_FLOAT);
-    }
-
-    if (mat.uRimStrengthLoc >= 0)
-        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.fresnel, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uRefractionLoc >= 0)
-        SetShaderValue(mat.shader, mat.uRefractionLoc, &mat.params.refraction, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uSparkleLoc >= 0)
-        SetShaderValue(mat.shader, mat.uSparkleLoc, &mat.params.sparkle, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uCrackLoc >= 0)
-        SetShaderValue(mat.shader, mat.uCrackLoc, &mat.params.crack, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uEmissionLoc >= 0)
-        SetShaderValue(mat.shader, mat.uEmissionLoc, &mat.params.emission, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uThicknessLoc >= 0)
-        SetShaderValue(mat.shader, mat.uThicknessLoc, &mat.params.thickness, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uDissolveLoc >= 0)
-        SetShaderValue(mat.shader, mat.uDissolveLoc, &mat.params.dissolve, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uTexture1Loc >= 0 && mat.params.texture1.id != 0)
-    {
-        rlSetTexture(mat.params.texture1.id);
-        SetShaderValueTexture(mat.shader, mat.uTexture1Loc, mat.params.texture1);
-    }
-
-    if (mat.uGrowProgressLoc >= 0)
-    {
-        float fullGrown = 1.0f;
-        SetShaderValue(mat.shader, mat.uGrowProgressLoc, &fullGrown, SHADER_UNIFORM_FLOAT);
-    }
+    CrystalMaterial_Begin(mat);
 }
 
 void CrystalMaterialInstanced_SetGrowProgress(CrystalMaterialInstanced mat, float progress)
 {
-    if (mat.uGrowProgressLoc < 0)
-        return;
-    SetShaderValue(mat.shader, mat.uGrowProgressLoc, &progress, SHADER_UNIFORM_FLOAT);
+    CrystalMaterial_SetGrowProgress(mat, progress);
 }
 
 void CrystalMaterialInstanced_End(void)
 {
-    rlDrawRenderBatchActive();
-    rlSetTexture(0);
-    SkillManager_EndShader();
+    MatEndCommon();
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * PlasmaMaterial
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 void PlasmaMaterial_Load(PlasmaMaterial *outMat, const PlasmaMaterialParams *params)
 {
     if (!outMat) return;
     *outMat = (PlasmaMaterial){0};
     outMat->shader = ResourceManager_LoadShader("core/shaders/plasma_shell.vs",
-                                            "core/shaders/plasma_shell.fs");
+                                                "core/shaders/plasma_shell.fs");
+    outMat->layout = PLASMA_PARAMS;
+    outMat->layoutCount = (int)(sizeof(PLASMA_PARAMS) / sizeof(PLASMA_PARAMS[0]));
     if (params) outMat->params = *params;
-
-    outMat->uBaseColorLoc = GetShaderLocation(outMat->shader, "u_baseColor");
-    outMat->uWispColorLoc = GetShaderLocation(outMat->shader, "u_wispColor");
-    outMat->uNoiseScaleLoc = GetShaderLocation(outMat->shader, "u_noiseScale");
-    outMat->uNoiseSpeedLoc = GetShaderLocation(outMat->shader, "u_noiseSpeed");
-    outMat->uFresnelPowerLoc = GetShaderLocation(outMat->shader, "u_fresnelPower");
-    outMat->uRimStrengthLoc = GetShaderLocation(outMat->shader, "u_rimStrength");
-    outMat->uEmissiveLoc = GetShaderLocation(outMat->shader, "u_emissive");
-    outMat->uOpacityLoc = GetShaderLocation(outMat->shader, "u_opacity");
-    outMat->uDisplaceAmpLoc = GetShaderLocation(outMat->shader, "u_displaceAmp");
-    outMat->uTimeLoc = GetShaderLocation(outMat->shader, "u_time");
+    MatFetchLocs(outMat->shader, outMat->layout, outMat->layoutCount, outMat->locs);
 }
 
 void PlasmaMaterial_Begin(PlasmaMaterial mat)
 {
-    rlDrawRenderBatchActive();
-    SkillManager_BeginShader(mat.shader);
-
-    float time = (float)GetTime();
-    if (mat.uTimeLoc >= 0)
-        SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uBaseColorLoc >= 0)
-    {
-        Vector4 c = ColorNormalize(mat.params.baseColor);
-        SetShaderValue(mat.shader, mat.uBaseColorLoc, &c, SHADER_UNIFORM_VEC4);
-    }
-    if (mat.uWispColorLoc >= 0)
-    {
-        Vector4 c = ColorNormalize(mat.params.wispColor);
-        SetShaderValue(mat.shader, mat.uWispColorLoc, &c, SHADER_UNIFORM_VEC4);
-    }
-    if (mat.uNoiseScaleLoc >= 0)
-        SetShaderValue(mat.shader, mat.uNoiseScaleLoc, &mat.params.noiseScale, SHADER_UNIFORM_FLOAT);
-    if (mat.uNoiseSpeedLoc >= 0)
-        SetShaderValue(mat.shader, mat.uNoiseSpeedLoc, &mat.params.noiseSpeed, SHADER_UNIFORM_FLOAT);
-    if (mat.uFresnelPowerLoc >= 0)
-        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &mat.params.fresnelPower, SHADER_UNIFORM_FLOAT);
-    if (mat.uRimStrengthLoc >= 0)
-        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.rimStrength, SHADER_UNIFORM_FLOAT);
-    if (mat.uEmissiveLoc >= 0)
-        SetShaderValue(mat.shader, mat.uEmissiveLoc, &mat.params.emissive, SHADER_UNIFORM_FLOAT);
-    if (mat.uOpacityLoc >= 0)
-        SetShaderValue(mat.shader, mat.uOpacityLoc, &mat.params.opacity, SHADER_UNIFORM_FLOAT);
-    if (mat.uDisplaceAmpLoc >= 0)
-        SetShaderValue(mat.shader, mat.uDisplaceAmpLoc, &mat.params.displaceAmp, SHADER_UNIFORM_FLOAT);
+    MatBeginCommon(mat.shader);
+    MatApply(mat.shader, mat.layout, mat.layoutCount, mat.locs, &mat.params);
 }
 
 void PlasmaMaterial_End(void)
 {
-    rlDrawRenderBatchActive();
-    rlSetTexture(0);
-    SkillManager_EndShader();
+    MatEndCommon();
 }
 
-// ── AuraShellMaterial ─────────────────────────────────────────────────────
+/* ═══════════════════════════════════════════════════════════════════════════
+ * AuraShellMaterial
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 void AuraShellMaterial_Load(AuraShellMaterial *outMat, const AuraShellMaterialParams *params)
 {
     if (!outMat) return;
     *outMat = (AuraShellMaterial){0};
     outMat->shader = ResourceManager_LoadShader("core/shaders/aura_shell.vs",
-                                            "core/shaders/aura_shell.fs");
+                                                "core/shaders/aura_shell.fs");
+    outMat->layout = AURA_PARAMS;
+    outMat->layoutCount = (int)(sizeof(AURA_PARAMS) / sizeof(AURA_PARAMS[0]));
     if (params) outMat->params = *params;
-
-    outMat->uBodyColorLoc    = GetShaderLocation(outMat->shader, "u_bodyColor");
-    outMat->uGlowColorLoc    = GetShaderLocation(outMat->shader, "u_glowColor");
-    outMat->uOpacityLoc      = GetShaderLocation(outMat->shader, "u_opacity");
-    outMat->uFresnelPowerLoc = GetShaderLocation(outMat->shader, "u_fresnelPower");
-    outMat->uRimStrengthLoc  = GetShaderLocation(outMat->shader, "u_rimStrength");
-    outMat->uScrollSpeedLoc  = GetShaderLocation(outMat->shader, "u_scrollSpeed");
-    outMat->uNoiseScaleLoc   = GetShaderLocation(outMat->shader, "u_noiseScale");
-    outMat->uHeightScaleLoc  = GetShaderLocation(outMat->shader, "u_heightScale");
-    outMat->uScanFreqLoc     = GetShaderLocation(outMat->shader, "u_scanFreq");
-    outMat->uScanSpeedLoc    = GetShaderLocation(outMat->shader, "u_scanSpeed");
-    outMat->uScanStrengthLoc = GetShaderLocation(outMat->shader, "u_scanStrength");
-    outMat->uDisplaceAmpLoc  = GetShaderLocation(outMat->shader, "u_displaceAmp");
-    outMat->uTopYLoc         = GetShaderLocation(outMat->shader, "u_topY");
-    outMat->uHeightFadeOffLoc = GetShaderLocation(outMat->shader, "u_heightFadeOff");
-    outMat->uCoverFloorLoc    = GetShaderLocation(outMat->shader, "u_coverFloor");
-    outMat->uTimeLoc         = GetShaderLocation(outMat->shader, "u_time");
+    MatFetchLocs(outMat->shader, outMat->layout, outMat->layoutCount, outMat->locs);
 }
 
 void AuraShellMaterial_Begin(AuraShellMaterial mat)
 {
-    rlDrawRenderBatchActive();
-    SkillManager_BeginShader(mat.shader);
-
-    float time = (float)GetTime();
-    if (mat.uTimeLoc >= 0)
-        SetShaderValue(mat.shader, mat.uTimeLoc, &time, SHADER_UNIFORM_FLOAT);
-
-    if (mat.uBodyColorLoc >= 0)
-    {
-        Vector4 c = ColorNormalize(mat.params.bodyColor);
-        SetShaderValue(mat.shader, mat.uBodyColorLoc, &c, SHADER_UNIFORM_VEC4);
-    }
-    if (mat.uGlowColorLoc >= 0)
-    {
-        Vector4 c = ColorNormalize(mat.params.glowColor);
-        SetShaderValue(mat.shader, mat.uGlowColorLoc, &c, SHADER_UNIFORM_VEC4);
-    }
-    if (mat.uOpacityLoc >= 0)
-        SetShaderValue(mat.shader, mat.uOpacityLoc, &mat.params.opacity, SHADER_UNIFORM_FLOAT);
-    if (mat.uFresnelPowerLoc >= 0)
-        SetShaderValue(mat.shader, mat.uFresnelPowerLoc, &mat.params.fresnelPower, SHADER_UNIFORM_FLOAT);
-    if (mat.uRimStrengthLoc >= 0)
-        SetShaderValue(mat.shader, mat.uRimStrengthLoc, &mat.params.rimStrength, SHADER_UNIFORM_FLOAT);
-    if (mat.uScrollSpeedLoc >= 0)
-        SetShaderValue(mat.shader, mat.uScrollSpeedLoc, &mat.params.scrollSpeed, SHADER_UNIFORM_FLOAT);
-    if (mat.uNoiseScaleLoc >= 0)
-        SetShaderValue(mat.shader, mat.uNoiseScaleLoc, &mat.params.noiseScale, SHADER_UNIFORM_FLOAT);
-    if (mat.uHeightScaleLoc >= 0)
-        SetShaderValue(mat.shader, mat.uHeightScaleLoc, &mat.params.heightScale, SHADER_UNIFORM_FLOAT);
-    if (mat.uScanFreqLoc >= 0)
-        SetShaderValue(mat.shader, mat.uScanFreqLoc, &mat.params.scanFreq, SHADER_UNIFORM_FLOAT);
-    if (mat.uScanSpeedLoc >= 0)
-        SetShaderValue(mat.shader, mat.uScanSpeedLoc, &mat.params.scanSpeed, SHADER_UNIFORM_FLOAT);
-    if (mat.uScanStrengthLoc >= 0)
-        SetShaderValue(mat.shader, mat.uScanStrengthLoc, &mat.params.scanStrength, SHADER_UNIFORM_FLOAT);
-    if (mat.uDisplaceAmpLoc >= 0)
-        SetShaderValue(mat.shader, mat.uDisplaceAmpLoc, &mat.params.displaceAmp, SHADER_UNIFORM_FLOAT);
-    if (mat.uTopYLoc >= 0)
-        SetShaderValue(mat.shader, mat.uTopYLoc, &mat.params.topY, SHADER_UNIFORM_FLOAT);
-    if (mat.uHeightFadeOffLoc >= 0)
-        SetShaderValue(mat.shader, mat.uHeightFadeOffLoc, &mat.params.heightFadeOff, SHADER_UNIFORM_FLOAT);
-    if (mat.uCoverFloorLoc >= 0)
-        SetShaderValue(mat.shader, mat.uCoverFloorLoc, &mat.params.coverFloor, SHADER_UNIFORM_FLOAT);
+    MatBeginCommon(mat.shader);
+    MatApply(mat.shader, mat.layout, mat.layoutCount, mat.locs, &mat.params);
 }
 
 void AuraShellMaterial_End(void)
 {
-    rlDrawRenderBatchActive();
-    rlSetTexture(0);
-    SkillManager_EndShader();
+    MatEndCommon();
 }

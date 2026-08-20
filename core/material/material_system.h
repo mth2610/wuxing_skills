@@ -3,6 +3,27 @@
 
 #include "raylib.h"
 
+/* ─────────────────────────────────────────────────────────────────────────
+ * Parameter table (M2, 20/08/2026)
+ *
+ * Every material used to carry its own hand-written list of `int u*Loc`
+ * fields — 66 of them across 6 structs — plus a matching FetchLocs() and a
+ * matching Begin() that repeated `if (loc >= 0) SetShaderValue(...)` once per
+ * uniform. Adding one uniform meant editing three places, and forgetting the
+ * third failed silently: an unset uniform reads as 0 and still renders.
+ *
+ * Now each material names a static table of VfxParamDesc (uniform name, kind,
+ * offset into its own params struct). One fetch loop and one apply loop serve
+ * all of them, and `locs[i]` corresponds to `layout[i]`. Adding a uniform is
+ * one table row.
+ *
+ * VfxParamDesc is opaque here on purpose: the tables live in
+ * material_system.c and nothing outside needs their shape.
+ * ───────────────────────────────────────────────────────────────────────── */
+#define VFX_MAT_MAX_PARAMS 20
+
+typedef struct VfxParamDesc VfxParamDesc;
+
 typedef enum
 {
     MAT_FIRE,
@@ -43,18 +64,9 @@ typedef struct
 {
     Shader shader;
     MaterialPreset preset;
-    int uTimeLoc;
-    int uDissolveLoc;
-    int uBaseColorLoc;
-    int uTranslucencyLoc;
-    int uRimStrengthLoc;
-    int uFresnelPowerLoc;
-    int uEmissiveIntensityLoc;
-    int uDistortionStrengthLoc;
-    int uHasTexture1Loc;
-    int uTexture1Loc;
-    int uCustomParam1Loc;
-    int uCustomParam2Loc;
+    const VfxParamDesc *layout; // static table in material_system.c, not owned
+    int layoutCount;
+    int locs[VFX_MAT_MAX_PARAMS]; // locs[i] belongs to layout[i]
     EffectMaterialParams params;
 } EffectMaterial;
 
@@ -92,22 +104,11 @@ void Material_End(void);
  * CORE_ISSUES.md Item 40. Chỉ dùng cho hiệu ứng backed bởi EffectMaterial
  * (Material_Get/Material_LoadCustom) — hiệu ứng dùng CrystalMaterial thì
  * dùng CrystalMaterialInstanced ở trên thay vì cái này. */
-typedef struct
-{
-    Shader shader;
-    MaterialPreset preset;
-    int uTimeLoc;
-    int uDissolveLoc;
-    int uBaseColorLoc;
-    int uTranslucencyLoc;
-    int uRimStrengthLoc;
-    int uFresnelPowerLoc;
-    int uEmissiveIntensityLoc;
-    int uDistortionStrengthLoc;
-    int uHasTexture1Loc;
-    int uTexture1Loc;
-    EffectMaterialParams params;
-} EffectMaterialInstanced;
+/* Same struct, same layout table, same shader source — the ONLY difference
+ * is the INSTANCED permutation passed to the shader loader. It was a separate
+ * struct (and a separate hand-copied .vs) until 20/08/2026; the copy had
+ * already drifted from its original. */
+typedef EffectMaterial EffectMaterialInstanced;
 
 void EffectMaterialInstanced_Load(EffectMaterialInstanced *outMat, const EffectMaterialParams *params);
 void EffectMaterialInstanced_Begin(EffectMaterialInstanced mat);
@@ -124,7 +125,8 @@ typedef struct
 {
     Color baseColor;
     Color edgeColor;
-    float roughness;    // mapped to u_fresnelPower (fresnelPower = mix(1.0, 8.0, roughness))
+    float roughness;    // mapped to u_fresnelPower = clamp(8.0 - 7.0*roughness, 1.0, +inf)
+                        // (rougher = LOWER fresnel power = broader rim)
     float fresnel;      // mapped to u_rimStrength
     float refraction;   // mapped to u_refraction (distortion)
     float sparkle;      // mapped to u_sparkle (specular sparkle)
@@ -139,19 +141,9 @@ typedef struct
 {
     Shader shader;
     CrystalMaterialParams params;
-    int uBaseColorLoc;
-    int uEdgeColorLoc;
-    int uFresnelPowerLoc;
-    int uRimStrengthLoc;
-    int uRefractionLoc;
-    int uSparkleLoc;
-    int uCrackLoc;
-    int uEmissionLoc;
-    int uThicknessLoc;
-    int uDissolveLoc;
-    int uTexture1Loc;
-    int uTimeLoc;
-    int uGrowProgressLoc;
+    const VfxParamDesc *layout;
+    int layoutCount;
+    int locs[VFX_MAT_MAX_PARAMS];
 } CrystalMaterial;
 
 void CrystalMaterial_Load(CrystalMaterial *outMat, const CrystalMaterialParams *params);
@@ -174,24 +166,8 @@ void CrystalMaterial_SetGrowProgress(CrystalMaterial mat, float progress);
  * ĐÁNH ĐỔI: u_growProgress dùng chung cho cả batch (không per-instance được
  * — instancing chỉ có 1 bộ uniform/draw call), nên không hỗ trợ "mọc so le"
  * như bản CrystalMaterial thường. */
-typedef struct
-{
-    Shader shader;
-    CrystalMaterialParams params;
-    int uBaseColorLoc;
-    int uEdgeColorLoc;
-    int uFresnelPowerLoc;
-    int uRimStrengthLoc;
-    int uRefractionLoc;
-    int uSparkleLoc;
-    int uCrackLoc;
-    int uEmissionLoc;
-    int uThicknessLoc;
-    int uDissolveLoc;
-    int uTexture1Loc;
-    int uTimeLoc;
-    int uGrowProgressLoc;
-} CrystalMaterialInstanced;
+/* See EffectMaterialInstanced: same struct, INSTANCED permutation only. */
+typedef CrystalMaterial CrystalMaterialInstanced;
 
 void CrystalMaterialInstanced_Load(CrystalMaterialInstanced *outMat, const CrystalMaterialParams *params);
 void CrystalMaterialInstanced_Begin(CrystalMaterialInstanced mat);
@@ -224,16 +200,9 @@ typedef struct
 {
     Shader shader;
     PlasmaMaterialParams params;
-    int uBaseColorLoc;
-    int uWispColorLoc;
-    int uNoiseScaleLoc;
-    int uNoiseSpeedLoc;
-    int uFresnelPowerLoc;
-    int uRimStrengthLoc;
-    int uEmissiveLoc;
-    int uOpacityLoc;
-    int uDisplaceAmpLoc;
-    int uTimeLoc;
+    const VfxParamDesc *layout;
+    int layoutCount;
+    int locs[VFX_MAT_MAX_PARAMS];
 } PlasmaMaterial;
 
 void PlasmaMaterial_Load(PlasmaMaterial *outMat, const PlasmaMaterialParams *params);
@@ -277,22 +246,9 @@ typedef struct
 {
     Shader shader;
     AuraShellMaterialParams params;
-    int uBodyColorLoc;
-    int uGlowColorLoc;
-    int uOpacityLoc;
-    int uFresnelPowerLoc;
-    int uRimStrengthLoc;
-    int uScrollSpeedLoc;
-    int uNoiseScaleLoc;
-    int uHeightScaleLoc;
-    int uScanFreqLoc;
-    int uScanSpeedLoc;
-    int uScanStrengthLoc;
-    int uDisplaceAmpLoc;
-    int uTopYLoc;
-    int uHeightFadeOffLoc;
-    int uCoverFloorLoc;
-    int uTimeLoc;
+    const VfxParamDesc *layout;
+    int layoutCount;
+    int locs[VFX_MAT_MAX_PARAMS];
 } AuraShellMaterial;
 
 void AuraShellMaterial_Load(AuraShellMaterial *outMat, const AuraShellMaterialParams *params);

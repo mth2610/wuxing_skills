@@ -19,6 +19,10 @@ typedef struct {
 typedef struct {
   char vsPath[128];
   char fsPath[128];
+  /* Permutation key. Two variants of one .vs/.fs pair are DIFFERENT programs,
+   * so the cache key is the triple — keying on paths alone would hand the
+   * instanced caller the non-instanced program and vice versa. */
+  char defines[128];
   Shader shader;
   bool active;
 } CachedShader;
@@ -53,12 +57,13 @@ static CachedModel s_models[MAX_CACHED_MODELS];
 // Nạp shader có xử lý #include. Dùng thay cho LoadShader() ở mọi nơi trong file
 // này.
 static Shader LoadShaderProcessed(const char *vsFilePath,
-                                  const char *fsFilePath) {
+                                  const char *fsFilePath,
+                                  const char *defines) {
   char *vsCode = (vsFilePath && vsFilePath[0])
-                     ? ShaderPreprocessor_Load(vsFilePath)
+                     ? ShaderPreprocessor_LoadWithDefines(vsFilePath, defines)
                      : NULL;
   char *fsCode = (fsFilePath && fsFilePath[0])
-                     ? ShaderPreprocessor_Load(fsFilePath)
+                     ? ShaderPreprocessor_LoadWithDefines(fsFilePath, defines)
                      : NULL;
 
 #ifdef __ANDROID__
@@ -102,6 +107,7 @@ void ResourceManager_Init(void) {
     s_shaders[i].active = false;
     s_shaders[i].vsPath[0] = '\0';
     s_shaders[i].fsPath[0] = '\0';
+    s_shaders[i].defines[0] = '\0';
   }
   for (int i = 0; i < MAX_CACHED_SOUNDS; i++) {
     s_sounds[i].active = false;
@@ -133,6 +139,7 @@ void ResourceManager_Unload(void) {
     if (s_shaders[i].active) {
       UnloadShader(s_shaders[i].shader);
       s_shaders[i].active = false;
+      s_shaders[i].defines[0] = '\0';
       s_shaders[i].vsPath[0] = '\0';
       s_shaders[i].fsPath[0] = '\0';
     }
@@ -198,15 +205,18 @@ Texture2D ResourceManager_LoadTexture(const char *filePath) {
   return LoadTexture(filePath);
 }
 
-Shader ResourceManager_LoadShader(const char *vsFilePath,
-                                  const char *fsFilePath) {
+Shader ResourceManager_LoadShaderVariant(const char *vsFilePath,
+                                         const char *fsFilePath,
+                                         const char *defines) {
   const char *vs = (vsFilePath == NULL) ? "" : vsFilePath;
   const char *fs = (fsFilePath == NULL) ? "" : fsFilePath;
+  const char *df = (defines == NULL) ? "" : defines;
 
   // 1. Search in cache
   for (int i = 0; i < MAX_CACHED_SHADERS; i++) {
     if (s_shaders[i].active && strcmp(s_shaders[i].vsPath, vs) == 0 &&
-        strcmp(s_shaders[i].fsPath, fs) == 0) {
+        strcmp(s_shaders[i].fsPath, fs) == 0 &&
+        strcmp(s_shaders[i].defines, df) == 0) {
       return s_shaders[i].shader;
     }
   }
@@ -214,23 +224,29 @@ Shader ResourceManager_LoadShader(const char *vsFilePath,
   // 2. Load and add to cache
   for (int i = 0; i < MAX_CACHED_SHADERS; i++) {
     if (!s_shaders[i].active) {
-      s_shaders[i].shader = LoadShaderProcessed(vsFilePath, fsFilePath);
+      s_shaders[i].shader = LoadShaderProcessed(vsFilePath, fsFilePath, df);
       // raylib 5.5 returns {id=0, locs=NULL} on compile failure — do NOT cache
       // an invalid shader; callers guard via SkillManager_BeginShader.
       if (s_shaders[i].shader.id == 0 || s_shaders[i].shader.locs == NULL) {
-        TraceLog(LOG_WARNING, "SHADER: compile failed, not caching (vs=%s fs=%s)", vs, fs);
+        TraceLog(LOG_WARNING, "SHADER: compile failed, not caching (vs=%s fs=%s defines=%s)", vs, fs, df);
         return s_shaders[i].shader;
       }
       snprintf(s_shaders[i].vsPath, sizeof(s_shaders[i].vsPath), "%s", vs);
       snprintf(s_shaders[i].fsPath, sizeof(s_shaders[i].fsPath), "%s", fs);
+      snprintf(s_shaders[i].defines, sizeof(s_shaders[i].defines), "%s", df);
       s_shaders[i].active = true;
       return s_shaders[i].shader;
     }
   }
 
   // Fallback if cache is full
-  TraceLog(LOG_WARNING, "SHADER: cache full, loading un-cached: vs=%s fs=%s", vs, fs);
-  return LoadShaderProcessed(vsFilePath, fsFilePath);
+  TraceLog(LOG_WARNING, "SHADER: cache full, loading un-cached: vs=%s fs=%s defines=%s", vs, fs, df);
+  return LoadShaderProcessed(vsFilePath, fsFilePath, df);
+}
+
+Shader ResourceManager_LoadShader(const char *vsFilePath,
+                                  const char *fsFilePath) {
+  return ResourceManager_LoadShaderVariant(vsFilePath, fsFilePath, NULL);
 }
 
 Sound ResourceManager_LoadSound(const char *filePath) {

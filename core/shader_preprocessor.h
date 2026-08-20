@@ -32,4 +32,19 @@
 // Trả về NULL nếu file không tồn tại hoặc vượt giới hạn include.
 char *ShaderPreprocessor_Load(const char *filePath);
 
+// Như trên, nhưng chèn `defines` ngay SAU dòng #version — nền của permutation
+// (một shader nguồn, N biến thể compile-time). `defines` là chuỗi GLSL thô,
+// ví dụ "#define INSTANCED 1\n"; NULL hoặc "" cho ra kết quả y hệt
+// ShaderPreprocessor_Load.
+//
+// Chèn SAU rewrite GLES (không phải trước) là bắt buộc: trên Android
+// "#version 330" bị thay bằng một header 3 dòng, nên vị trí chèn tính theo
+// dòng #version CUỐI CÙNG, không theo offset ban đầu.
+//
+// Vì sao là compile-time chứ không phải `if` runtime: attribute chỉ tồn tại ở
+// một biến thể (`in mat4 instanceTransform`) — đọc nó khi KHÔNG vẽ bằng
+// DrawMeshInstanced là undefined behaviour tuỳ driver. #ifdef loại hẳn khai
+// báo khỏi biến thể không instancing; một nhánh `if` thì không.
+char *ShaderPreprocessor_LoadWithDefines(const char *filePath, const char *defines);
+
 #endif // SHADER_PREPROCESSOR_H

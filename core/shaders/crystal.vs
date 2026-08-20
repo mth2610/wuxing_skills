@@ -1,5 +1,9 @@
 #version 330
+#ifdef INSTANCED
+#include "core/shaders/common/vs_instanced_header.glsl"
+#else
 #include "core/shaders/common/vs_header.glsl"
+#endif
 
 // GPU-side "mọc lên" cho crystal cluster mesh tĩnh (xem
 // ProceduralMesh_BuildCrystalClusterMesh trong core/geometry/pm_crystal.inl):

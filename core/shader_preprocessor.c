@@ -149,12 +149,42 @@ static void RewriteVersionForGLES(char *buf, int maxLen) {
 }
 #endif
 
-char *ShaderPreprocessor_Load(const char *filePath) {
+// Chèn `defines` ngay sau dòng #version. Buffer do ProcessIncludes cấp phát
+// luôn có kích thước MAX_SHADER_SIZE nên chèn tại chỗ được, miễn còn chỗ.
+static void InjectDefines(char *buf, int maxLen, const char *defines) {
+    if (!buf || !defines || !defines[0]) return;
+
+    char *ver = strstr(buf, "#version");
+    // Không có #version thì chèn ngay đầu file (raylib chấp nhận GLSL 110).
+    char *insertAt = buf;
+    if (ver) {
+        char *lineEnd = strchr(ver, '\n');
+        insertAt = lineEnd ? lineEnd + 1 : ver + strlen(ver);
+    }
+
+    int defLen = (int)strlen(defines);
+    int tail = (int)strlen(insertAt) + 1; // kèm NUL
+    int used = (int)(insertAt - buf);
+    if (used + defLen + tail > maxLen) {
+        TraceLog(LOG_ERROR, "SHADER: không đủ chỗ chèn defines (%d byte)", defLen);
+        return;
+    }
+    memmove(insertAt + defLen, insertAt, tail);
+    memcpy(insertAt, defines, defLen);
+}
+
+char *ShaderPreprocessor_LoadWithDefines(const char *filePath, const char *defines) {
     char *result = ProcessIncludes(filePath, 0);
 #if defined(__ANDROID__) && !defined(GRAPHICS_API_VULKAN)
     if (result) RewriteVersionForGLES(result, MAX_SHADER_SIZE);
 #endif
+    // SAU rewrite GLES: dòng #version có thể đã đổi cả nội dung lẫn độ dài.
+    if (result) InjectDefines(result, MAX_SHADER_SIZE, defines);
     return result;
+}
+
+char *ShaderPreprocessor_Load(const char *filePath) {
+    return ShaderPreprocessor_LoadWithDefines(filePath, NULL);
 }
 
 // ── Thay đổi cần thiết trong resource_manager.c ──────────────────────────────

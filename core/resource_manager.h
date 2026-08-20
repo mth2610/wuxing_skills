@@ -15,6 +15,17 @@ Texture2D ResourceManager_LoadTexture(const char *filePath);
 // Load shader (returns cached instance if already loaded)
 Shader ResourceManager_LoadShader(const char *vsFilePath, const char *fsFilePath);
 
+// Load one PERMUTATION of a shader: `defines` (e.g. "#define INSTANCED 1\n")
+// is injected after #version, and is part of the cache key — the same .vs/.fs
+// pair with different defines are different programs, and therefore have
+// different uniform locations. NULL/"" is identical to ResourceManager_LoadShader.
+//
+// Use this instead of copying a .vs to make a variant: a copy drifts from its
+// original silently (the two instanced copies deleted on 20/08/2026 had both
+// already diverged in comments and in one wobble term).
+Shader ResourceManager_LoadShaderVariant(const char *vsFilePath, const char *fsFilePath,
+                                         const char *defines);
+
 // Load sound (returns cached instance if already loaded)
 Sound ResourceManager_LoadSound(const char *filePath);
 

@@ -36,6 +36,7 @@
   void ResourceManager_Unload(void);
   Texture2D ResourceManager_LoadTexture(const char *filePath);
   Shader ResourceManager_LoadShader(const char *vsFilePath, const char *fsFilePath);
+  Shader ResourceManager_LoadShaderVariant(const char *vsFilePath, const char *fsFilePath, const char *defines);
   Sound ResourceManager_LoadSound(const char *filePath);
   Font ResourceManager_LoadFont(const char *filePath, int baseSize);
   Model ResourceManager_LoadModel(const char *filePath);
@@ -237,6 +238,8 @@
   void DrawParticlesBody(Camera3D camera, Texture2D texture);
   void DrawParticlesEmission(Camera3D camera, Texture2D texture);
   void UnloadParticleSystem(void);
+  Texture2D ParticleSystem_GlowSprite(void);
+  void ParticleSystem_SpawnGlow(ParticleConfig core);
   void ParticleSystem_SetLighting(float strength01, float scatter01);
   void ParticleSystem_GetLighting(float *outStrength, float *outScatter);
   bool IsParticleSystemActive(void);
@@ -405,27 +408,12 @@
 
 ### `core/screen_distort.h`
 ```c
-  void ScreenDistort_Init(int width, int height);
-  bool ScreenDistort_IsHDR(void);
+  void ScreenDistort_Init(void);
   void ScreenDistort_Unload(void);
-  void ScreenDistort_Begin(void);
-  void ScreenDistort_End(void);
-  void ScreenDistort_BeginVFXBody(void);
-  void ScreenDistort_BeginVFXEmission(void);
-  void ScreenDistort_EndVFXLayer(void);
   void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed);
   void ScreenDistort_Update(float dt);
   void ScreenDistort_Draw(Camera3D camera);
-  void ScreenDistort_SnapshotDepth(void);
-  void ScreenDistort_RequestSoftDepthRegion(Rectangle screenRegion);
-  Texture2D ScreenDistort_GetDepthTexture(void);
-  Texture2D ScreenDistort_GetSceneTexture(void);
-  Texture2D ScreenDistort_GetRawDepthTexture(void);
-  void ScreenDistort_RequestSceneSnapshot(void);
-  void ScreenDistort_SnapshotScene(void);
-  Texture2D ScreenDistort_GetSceneSnapshotTexture(void);
-  void ScreenDistort_BindDepthForSoftParticles(Shader shader, int textureSlot);
-  void ScreenDistort_UnbindSoftParticleDepth(int textureSlot);
+  bool ScreenDistort_HasLiveSources(void);
 ```
 **Structs** (fields in header): DistortionSource
 
@@ -569,6 +557,7 @@ _Inline helpers / macros only — see header._
   void PostFX_Begin(void);
   void PostFX_End(void);
   void PostFX_Draw(const PostFXConfig *config);
+  void PostFX_UseDirectSource(Texture2D sceneTex);
   void PostFX_SetMonochrome(float intensity01);
   void PostFX_RadialBurst(Vector3 worldPos, float strength, float duration);
   void PostFX_UpdateTransient(Camera3D cam, float dt);
@@ -697,7 +686,7 @@ _Inline helpers / macros only — see header._
   void AuraShellMaterial_End(void);
 ```
 **Enums:** MaterialPreset { MAT_FIRE,MAT_ICE,MAT_WATER,MAT_PORTAL,MAT_ROCK,MAT_METAL,MAT_GLASS,MAT_CUSTOM }
-**Structs** (fields in header): EffectMaterialParams, EffectMaterial, EffectMaterialInstanced, CrystalMaterialParams, CrystalMaterial, CrystalMaterialInstanced, PlasmaMaterialParams, PlasmaMaterial, AuraShellMaterialParams, AuraShellMaterial
+**Structs** (fields in header): EffectMaterialParams, EffectMaterial, CrystalMaterialParams, CrystalMaterial, PlasmaMaterialParams, PlasmaMaterial, AuraShellMaterialParams, AuraShellMaterial, VfxParamDesc
 
 ### `core/geometry/procedural_mesh_utils.h`
 ```c
@@ -845,8 +834,6 @@ _Inline helpers / macros only — see header._
   float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
   bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition, Vector3 *outNormal, void *unused);
   int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId, float length, float life);
-  int VFX_ComposeProjectile(const Matrix *followTransform, VC_MaterialId mat, float radius);
-  void VFX_KillProjectile(int handle);
   void VFX_BeginWaterStreams(float time);
   void VFX_EndWaterStreams(void);
   void VFX_Trail_Stop(int trailId);
@@ -864,6 +851,8 @@ _Inline helpers / macros only — see header._
   int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
   void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);
+  int VFX_ComposeRefBands(Vector3 pos, float scale);
+  int VFX_ComposeRefParticles(Vector3 pos, float scale);
   int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
   void VFX_ComposeStonePillar(Vector3 basePos, float progress);
@@ -873,6 +862,8 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
   void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
+  void VFX_KillRefBands(int id);
+  void VFX_KillRefParticles(int id);
   void VFX_SmokeTrail_Stop(int handle);
   void VFX_WaterRing_Stop(void);
   void VFX_Compose_SubmitScreenSpaceVFX(void);
