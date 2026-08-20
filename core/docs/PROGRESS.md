@@ -2033,3 +2033,36 @@ byte-identical to the C generator's output. `glslangValidator -S frag` clean;
 NOT VERIFIED: anything on screen. Two samplers now live in the composite shader
 (bloom + LUT) and that combination has never run under rlvk here — worth a look
 first when checking the build.
+
+## Premultiplied migration — 20/08/2026, second pass
+
+The owner's policy: premultiplied is the default for anything that emits; additive is the
+exception for sparse pure-light effects with no body; alpha is for anything that does not
+emit. Full before/after tables and the reasoning: `BRIGHT_BACKGROUND_VFX_SPEC.md` §7.6d,
+"Second migration, 20/08/2026". The trap that cost the first attempt is in
+`ENGINE_LANDMINES.md` ("Selecting BLEND_ALPHA_PREMULTIPLY does not make a source
+premultiplied").
+
+**Migrated this pass** — trail presets (MAIN/BLADE/WISP/BACKDROP/ENERGY; SMOKE stays alpha
+and measured bit-identical as the control), LIGHTNING ARC + LIGHTNING IMPACT (one shared
+draw path), SHOCK RING, LIGHT SHAFT. Each needed the producing shader or the vertex
+tint + sheet changed alongside the blend state — never the blend alone.
+
+**Deliberately not migrated, with the reason recorded rather than left to be rediscovered:**
+
+| effect | why not |
+|---|---|
+| SWEEP SLASH | three-pass stack: premultiplied passes occlude each other. Tried, measured worse, reverted. Needs the passes collapsed into one draw — authoring. |
+| ENERGY ORB | already alpha over a straight source, which IS the premultiplied law. Swap is a no-op; it already darkens 99.7% on white. |
+| RUNE CIRCLE | its emission halo shares the shipped glyph sheets with its BODY pass, which needs them straight, and there is no shader in that path. |
+| CHARGE CONVERGE | no draw of its own — CORE GLOW (already done) + a `trailOnly` particle whose ribbon trail `particle_system.c` keeps additive by design. |
+| SHIELD SHELL | already premultiplied end to end. |
+| DECAL | blends by pass and already darkens 97.7–100% on bright backgrounds. |
+
+**Open, if the policy is ever pushed further:**
+
+- `VFXRender_BeginAppearance` forces EVERY named appearance's EMISSION pass to
+  `VFX_SURFACE_ADDITIVE` (`core/scene_targets.c`). That is a global decision, not any one
+  effect's, and it is what keeps SHIELD SHELL's and RUNE CIRCLE's emission additive.
+- Particle ribbon trails cannot go premultiplied until they compute a coverage alpha
+  (`core/particles/particle_system.c`, the `trailBlend` selection).

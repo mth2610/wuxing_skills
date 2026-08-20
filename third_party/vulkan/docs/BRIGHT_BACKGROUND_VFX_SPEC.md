@@ -916,6 +916,13 @@ all three commits.
   `BLEND_ADDITIVE` — and `decal_system.c` explicitly refuses `appearance.surface` and warns
   rather than silently dropping it. Measured, the DECAL fixture darkens 97.7–100% on white,
   warm and cool. Nothing to fix.
+- **CHARGE CONVERGE has no draw of its own.** It is `VFX_ComposeConvergeMotes` +
+  `VFX_ComposeCoreGlow`, and CORE GLOW was migrated on 19/08. The motes are a `trailOnly`
+  particle, i.e. their entire visual is the ribbon trail — and `particle_system.c` keeps
+  ribbon trails ADDITIVE on purpose even behind a `VFX_BLEND_PREMULTIPLIED` head, because
+  "the trail is a solid-colour strip, and premultiplied output would need an alpha it does
+  not compute". Setting the field there is a no-op; migrating it means teaching the particle
+  ribbon trail to compute coverage, which is an engine change.
 - SHIELD SHELL was already premultiplied on both counts (`VFX_APPEARANCE_MAGIC` resolves to
   `VFX_SURFACE_PREMULTIPLIED`, `glass_shell.fs` outputs through `VFX_ResolvePremultiplied`) and
   measures darken 92.1% on white. Its emission pass is forced additive by
