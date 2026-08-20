@@ -133,7 +133,8 @@ uniform vec3  u_colHot;     // HDR core colour (hot centre of a strand)
 uniform vec3  u_colTail;    // colour at the TAIL; vColor.rgb is the head
 uniform float u_wavePhase;  // per-spawn random phase — desyncs simultaneous casts
 uniform vec2  u_waveEnv;    // x = head fade fraction (band welded to the emitter)
-uniform float u_renderPass; // 0 = BODY (alpha, occludes), 1 = EMISSION (additive)
+uniform float u_renderPass; // 0 = BODY (alpha), 1 = EMISSION additive,
+                            // 2 = EMISSION premultiplied
 uniform float u_bodyOpacity;// coverage scale for the body pass, 0..1
 uniform vec4  u_contrastParams; // enabled, edgeSharpness, coreSize, coreIntensity
 
@@ -159,9 +160,24 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
         float coverage = clamp(bodyMask * vAlpha * u_bodyOpacity, 0.0, 1.0);
         return VFX_ResolveBody(colour, 1.0, coverage);
     }
-    // Raylib additive blend applies src alpha. Keep intensity in alpha so it is
-    // applied exactly once; pre-scaling RGB here would square soft edges.
-    return VFX_ResolveEmission(colour, gain, 1.0, inten * vAlpha);
+    if (u_renderPass < 1.5)
+    {
+        // Raylib additive blend applies src alpha. Keep intensity in alpha so it
+        // is applied exactly once; pre-scaling RGB here would square soft edges.
+        return VFX_ResolveEmission(colour, gain, 1.0, inten * vAlpha);
+    }
+    // PREMULTIPLIED emission (BLEND_ALPHA_PREMULTIPLY = ONE, ONE_MINUS_SRC_ALPHA).
+    // The hardware no longer multiplies by alpha, so THIS branch has to — and
+    // that single fact is the whole reason a blend swap alone was wrong here.
+    // Measured 20/08/2026: flipping the trail presets to premultiplied while
+    // still returning straight RGB scaled every soft edge by 1/alpha, cover%
+    // rose 4x on a DARK background (where the blend law itself changes almost
+    // nothing) and darken% fell to 0.0 on every background — the added light
+    // simply swamped the body pass. Emitting `rgb * a` restores exactly the
+    // additive radiance and adds the `dst*(1-a)` occlusion term on top, which
+    // is what §5.2 is for.
+    float cover = clamp(inten * vAlpha, 0.0, 1.0);
+    return vec4(VFX_Finite3(colour * max(gain, 0.0) * cover), cover);
 }
 
 void main()

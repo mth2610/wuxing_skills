@@ -2026,7 +2026,18 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         // EMISSION formula, which is what the combined path has always drawn.
         // Getting this wrong is invisible in a dark scene and washes the whole
         // effect out in a bright one — see trail_deform.fs's header.
-        float pass = (s_drawLayerFilter == 0) ? 0.0f : 1.0f;
+        // 2 = the EMISSION pass drawn under BLEND_ALPHA_PREMULTIPLY. The blend
+        // state and the fragment formula are ONE decision: additive is
+        // (SRC_ALPHA, ONE), so the hardware applies coverage; premultiplied is
+        // (ONE, ONE_MINUS_SRC_ALPHA) and the shader must apply it instead.
+        // Selecting the blend without telling the shader is a 1/alpha
+        // brightening of every soft edge, which is what it measured as.
+        BlendMode srcBm = t->useCustomBlendMode
+                              ? t->blendMode
+                              : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+        float pass = (s_drawLayerFilter == 0)
+                         ? 0.0f
+                         : ((srcBm == BLEND_ALPHA_PREMULTIPLY) ? 2.0f : 1.0f);
         // Vertex colour already carries the profile's alpha multiplier. Keep
         // the separately-authored body coverage unchanged so a deform trail
         // does not apply the same opacity policy twice.

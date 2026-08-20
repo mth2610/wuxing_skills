@@ -1596,9 +1596,20 @@ static void Test_MirrorStillMatchesSource(void)
           "node motion still comes from a ForceField, not hand-written sin()");
     CHECK(FileHas(inl, "cfg.uvMetresPerTile"),
           "the flow UV is still the MATERIAL one, not segRatio");
-    CHECK(FileHas(inl, "cfg.blendMode = rec->additive ? BLEND_ADDITIVE : BLEND_ALPHA;") &&
+    /* THE BLEND LAW CHANGED ON 20/08/2026, and the predicate did not: an
+       emitting preset is PREMULTIPLIED now, a non-emitting one (SMOKE) is still
+       alpha. Additive can only add, so on a background already near 1.0 an
+       emitting trail had nothing left to say. Measured at warmup 90 on white,
+       before -> after:
+         MAIN      darken  4.6 -> 86.4   |d| 0.076 -> 0.124  chroma 0.291 -> 0.306
+         BLADE     darken 46.2 -> 90.6   |d| 0.084 -> 0.114  (warm: invisible -> 70.0)
+         WISP      invisible -> visible, darken 71.1
+         ENERGY    chroma 0.254 -> 0.407 |d| 0.104 -> 0.120
+         SMOKE     bit-identical, which is the control that proves the scope.
+       The dark background pays 2-5% of |d| for it, uniformly. */
+    CHECK(FileHas(inl, "cfg.blendMode = rec->additive ? BLEND_ALPHA_PREMULTIPLY : BLEND_ALPHA;") &&
           FileHas(inl, "cfg.useCustomBlendMode = true;"),
-          "a trail still EMITS: additive, per the blend law");
+          "a trail still EMITS — premultiplied, per the blend law");
     CHECK(FileHas(inl, "cfg.disableInnerCore = true;"),
           "the engine's legacy sub-pixel core is still off — the stack replaces it");
     CHECK(FileHas(inl, "cfg.material.contrastProfile = rec->colour.contrast;") &&

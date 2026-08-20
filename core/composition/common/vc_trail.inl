@@ -1242,7 +1242,16 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     cfg.forceField = mot->cloth ? &s_sweptCloth[s->kind] : NULL;
     cfg.ownerTag = SWEPT_TAG_BASE | (slot << 4) | strand;
     cfg.priority = VFX_PRIORITY_LOW;
-    cfg.blendMode = rec->additive ? BLEND_ADDITIVE : BLEND_ALPHA;
+    // PREMULTIPLIED, not additive, for every emitting preset (19-20/08/2026).
+    // The predicate is unchanged — what it SELECTS changed. Additive can only
+    // add, so on a background already near 1.0 an emitting trail has nothing
+    // left to say: measured at warmup 90 on white, MAIN / ENERGY / WISP each
+    // darkened 0.0% of their own footprint, i.e. they were pure light on a
+    // surface that was already full. §5.2's law does both jobs from one draw —
+    // high coverage pulls toward `src` (it cuts a silhouette), coverage near 0
+    // decays to `src + dst` (it still adds light). SMOKE keeps BLEND_ALPHA: it
+    // does not emit, and the policy puts non-emitting effects on alpha.
+    cfg.blendMode = rec->additive ? BLEND_ALPHA_PREMULTIPLY : BLEND_ALPHA;
     // BLEND_ALPHA is enum value 0, so without this flag the legacy fallback
     // reads zero as "unspecified" and silently draws additive — which for the
     // smoke preset turns an occluding plume back into a glow.

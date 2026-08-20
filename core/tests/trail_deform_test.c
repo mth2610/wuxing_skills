@@ -869,8 +869,19 @@ static void Test_MirrorStillMatchesSource(void)
           "the surviving material still routes its colour through the resolver");
     CHECK(!FileHas(fs, "intenWisp"),
           "and the mode that could have drifted from it is gone");
-    CHECK(FileHas(c, "float pass = (s_drawLayerFilter == 0) ? 0.0f : 1.0f;"),
-          "the C layer still tells the shader which pass it is drawing");
+    /* THREE values now, not two (20/08/2026). The blend state and the fragment
+       formula are ONE decision: additive is (SRC_ALPHA, ONE) so the hardware
+       applies coverage, premultiplied is (ONE, ONE_MINUS_SRC_ALPHA) and the
+       shader must apply it instead. Swapping the blend WITHOUT this uniform was
+       measured: every soft edge came out scaled by 1/alpha, cover% rose ~4x on a
+       DARK background (where the blend law itself changes almost nothing —
+       dst ~ 0.02), and darken% fell to 0.0 on EVERY background because the extra
+       light swamped the body pass. TRAIL BACKDROP on white went 98.3 -> 0.0
+       darken that way. With pass 2 emitting `rgb * a` it reads 98.6. */
+    CHECK(FileHas(c, "((srcBm == BLEND_ALPHA_PREMULTIPLY) ? 2.0f : 1.0f);"),
+          "the C layer still tells the shader which pass — and which blend law");
+    CHECK(FileHas(fs, "return vec4(VFX_Finite3(colour * max(gain, 0.0) * cover), cover);"),
+          "and the premultiplied branch premultiplies, since the hardware no longer does");
     CHECK(FileHas(fs, "u_tailFadeA >= u_tailFadeB"),
           "the tail ramp keeps its disabled guard (start >= end)");
 
