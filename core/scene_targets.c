@@ -473,6 +473,17 @@ bool VFXRender_AppearanceDrawsPass(VFXResolvedAppearance appearance,
              : VFXResolvedAppearance_UsesBody(appearance);
 }
 
+const char *VFXRender_OutputDefines(VFXSurfaceMode surface)
+{
+    switch (surface)
+    {
+    case VFX_SURFACE_ADDITIVE:      return "#define OUTPUT_EMISSION 1\n";
+    case VFX_SURFACE_PREMULTIPLIED: return "#define OUTPUT_PREMULTIPLIED 1\n";
+    case VFX_SURFACE_ALPHA:
+    default:                        return "#define OUTPUT_BODY 1\n";
+    }
+}
+
 VFXContrastLayer VFXRender_ContrastLayer(VFXRenderPass pass)
 {
   return pass == VFX_RENDER_PASS_EMISSION

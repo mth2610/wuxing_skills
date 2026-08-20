@@ -33,3 +33,34 @@ vec4 VFX_ResolveEmission(vec3 emissionColor, float gain, float mask,
     return vec4(VFX_Finite3(emissionColor * max(gain, 0.0) * max(mask, 0.0)),
                 clamp(authoredAlpha, 0.0, 1.0));
 }
+
+// ── The output permutation ───────────────────────────────────────────────────
+// A producer whose consumer picks its blend at RUNTIME cannot know statically
+// which resolver above it owes. Writing `if (u_additive)` inside the shader
+// does not fix that: it still lets the consumer set one blend while the shader
+// resolves for another, and a mismatched pair does not fail — the effect still
+// draws, just composited wrong, with nothing to notice it by.
+//
+// So the choice is a DEFINE, and the consumer loads the variant that matches
+// the blend it is about to set (VFXRender_OutputDefines in core/vfx_render.h
+// hands out the block). The pairing becomes structural rather than a
+// convention someone has to remember.
+//
+// Declared only when one of the three is defined, so that the 25+ shaders that
+// legitimately call VFX_ResolveBody/Emission/Premultiplied directly — because
+// their blend is fixed — keep compiling untouched. A shader that CALLS this
+// without a define gets an undeclared-function error, which is the point.
+#if defined(OUTPUT_BODY) || defined(OUTPUT_EMISSION) || defined(OUTPUT_PREMULTIPLIED)
+vec4 VFX_ResolveOutput(vec3 bodyColor, float bodyIntensity, float coverage,
+                       vec3 emissionColor, float coreMask, float emissionGain)
+{
+#if defined(OUTPUT_EMISSION)
+    return VFX_ResolveEmission(emissionColor, emissionGain, coreMask, coverage);
+#elif defined(OUTPUT_PREMULTIPLIED)
+    return VFX_ResolvePremultiplied(bodyColor, bodyIntensity, coverage,
+                                    emissionColor, coreMask, emissionGain);
+#else
+    return VFX_ResolveBody(bodyColor, bodyIntensity, coverage);
+#endif
+}
+#endif

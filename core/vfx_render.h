@@ -38,6 +38,20 @@ void VFXRender_EndDraw(VFXRenderScope *scope);
 
 bool VFXRender_AppearanceDrawsPass(VFXResolvedAppearance appearance,
                                    VFXRenderPass pass);
+
+/* The `#define` block a producer's fragment shader must be COMPILED with so
+ * that its VFX_ResolveOutput() resolves the way `surface` blends. Pass it to
+ * ResourceManager_LoadShaderVariant; the result is cached per define set, so
+ * asking repeatedly is free after the first compile.
+ *
+ * This exists for producers whose consumer chooses a blend at runtime (decals
+ * per profile, trails per appearance, ref bands per call). A producer with ONE
+ * fixed blend does not need it — it calls the matching VFX_Resolve* directly.
+ *
+ * Never build this string by hand at a call site: the whole value of the
+ * mechanism is that one function maps surface to define, so the two cannot
+ * drift apart. */
+const char *VFXRender_OutputDefines(VFXSurfaceMode surface);
 VFXContrastLayer VFXRender_ContrastLayer(VFXRenderPass pass);
 
 #endif

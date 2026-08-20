@@ -22,6 +22,12 @@ uniform float u_coverage;
 
 out vec4 finalColor;
 
+// DELIBERATELY NOT on VFX_ResolveOutput, unlike every other producer (M1,
+// 20/08/2026). This patch exists to measure the compositing pipeline, so it
+// must write the exact values the two blend laws expect and nothing else. Route
+// it through the shared resolver and the instrument starts measuring the
+// resolver too — a bug in VFX_Resolve* would then be invisible in the one place
+// built to see it. Same reason probe_gradient.fs and probe_fresnel.fs stay out.
 void main() {
     // Alpha 1.0 by the same rule distortion.fs follows: whatever writes the
     // scene target defines its own alpha rather than leaving it undefined
