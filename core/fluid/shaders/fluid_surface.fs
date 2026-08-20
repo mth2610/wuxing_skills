@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 fragTexCoord;
 out vec4 finalColor;
@@ -868,5 +869,7 @@ void main() {
     if (liquidClass == FLUID_CLASS_EMISSIVE) specular *= (1.0 - 0.80 * crustMask);
 
     vec3 water = base + specular + foam + rimLight + emission;
-    finalColor = vec4(water, surfaceCoverage);
+    /* BLEND_ALPHA composite (fluid_surface.c:826) — a body producer, and
+     * surfaceCoverage is already the coverage term the contract names. */
+    finalColor = VFX_ResolveBody(water, 1.0, surfaceCoverage);
 }

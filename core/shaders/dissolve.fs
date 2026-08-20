@@ -1,4 +1,5 @@
 #version 330 core
+#include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
@@ -47,5 +48,6 @@ void main() {
         finalTex.rgb = mix(finalTex.rgb, edgeColor.rgb * 3.0, edgeLerp);
     }
     
-    finalColor = finalTex;
+    // BODY / ALPHA scope (vc_dissolve_exit.inl:137).
+    finalColor = VFX_ResolveBody(finalTex.rgb, 1.0, finalTex.a);
 }
