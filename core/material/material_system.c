@@ -82,7 +82,9 @@ static void MatApplyTextureDefaults(const VfxTextureDefault *defaults, int count
 /* ── The tables ──────────────────────────────────────────────────────────── */
 
 /* EFFECT_PARAMS, CRYSTAL_PARAMS and AURA_PARAMS are GENERATED from
- * core/shading/materials/*.mat, which is also where their .fs files come from.
+ * the .mat files under core/shading/materials, which are also where their .fs
+ * files come from. (Spelled out rather than globbed: a "/" followed by a "*"
+ * inside a block comment is a nested comment opener, and -Wcomment says so.)
  * That is the point: a material's uniform list used to exist twice — once as
  * `uniform` lines in the shader, once as a table here — and the two drifted with
  * nothing to compare them. Included after the P_* macros and the params structs
