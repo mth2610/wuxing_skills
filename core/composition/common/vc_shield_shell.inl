@@ -66,7 +66,7 @@ typedef struct {
 
 typedef struct {
     Shader shader;
-    int bodyColor, rimColor, opacity, rimStrength, rimPower, emissionOnly, wallPass;
+    int bodyColor, rimColor, opacity, rimStrength, rimPower, emissionOnly;
     int bodyOpacity, emissionGain;
     int lightDirView, packedTex, hasPacked, flowTex, hasFlow, matcapTex, hasMatcap;
     int depthTex, hasDepth, depthEnabled, depthLod;
@@ -86,7 +86,7 @@ static float s_shieldRim = 2.0f;
 static float s_shieldRimPower = 8.0f;   // exponent on (1-|N.V|) — the rim band's WIDTH
 // Refraction + contact payload (recipe):
 //   distortion = noise * strength | alpha = base + fresnel*A + contact*B
-static float s_shieldNoiseScale = 28.0f;      // screen-space noise tiling
+static float s_shieldNoiseScale = 28.0f;
 static float s_shieldNoiseSpeed = 2.2f;       // noise scroll speed
 static float s_shieldContact = 1.0f;          // contact glow strength
 static float s_shieldContactThickness = 0.35f; // meters of depth gap = "touching"
@@ -128,7 +128,6 @@ static void ShieldShell_InitShared(void)
     s_shieldShader.bodyOpacity = GetShaderLocation(s_shieldShader.shader, "u_bodyOpacity");
     s_shieldShader.emissionGain = GetShaderLocation(s_shieldShader.shader, "u_emissionGain");
     s_shieldShader.emissionOnly = GetShaderLocation(s_shieldShader.shader, "u_emissionOnly");
-    s_shieldShader.wallPass = GetShaderLocation(s_shieldShader.shader, "u_wallPass");
     s_shieldShader.lightDirView = GetShaderLocation(s_shieldShader.shader, "u_lightDirView");
     s_shieldShader.packedTex = GetShaderLocation(s_shieldShader.shader, "u_packedTex");
     s_shieldShader.hasPacked = GetShaderLocation(s_shieldShader.shader, "u_hasPacked");
@@ -237,9 +236,11 @@ void VFX_ShieldShell_SetIntensity(int handle, float intensity01)
 void VFX_ShieldShell_SetSurface(int handle, const VFX_ShieldSurface *surface)
 {
     if (handle >= 0 && handle < VFX_SHIELD_SHELL_MAX && s_shieldShells[handle].active && surface)
+    {
         s_shieldShells[handle].packedMap = surface->packedMap.id ? surface->packedMap : surface->body;
         s_shieldShells[handle].flowMap = surface->flowMap;
         s_shieldShells[handle].matcapMap = surface->matcapMap;
+    }
 }
 
 void VFX_ShieldShell_SetImpact(int handle, Vector3 impactWorld, float timeSinceImpact)
@@ -322,9 +323,13 @@ static void ShieldShell_DrawPass(bool emissionOnly)
             VFX_APPEARANCE_MAGIC,
             (VFXResolvedAppearance){ VFX_SURFACE_ALPHA, VFX_CONTRAST_MAGIC,
                                      1.0f, 1.0f, 0.78f, true });
+        /* The glass centre is made transparent by its spatial coverage, not
+         * by starving the complete carrier.  This preserves a readable
+         * membrane through the middle-to-edge gradient. */
+        float bodyCoverage = appearance.bodyOpacity * 4.0f;
         float opacity = ShieldShell_Clamp01(
             shield->level * s_shieldOpacity *
-            (emissionOnly ? appearance.emissionIntensity : appearance.bodyOpacity));
+            (emissionOnly ? appearance.emissionIntensity : bodyCoverage));
         int emission = emissionOnly ? 1 : 0;
         int hasPacked = shield->packedMap.id != 0 ? 1 : 0;
         int hasFlow = shield->flowMap.id != 0 ? 1 : 0;
@@ -356,10 +361,7 @@ static void ShieldShell_DrawPass(bool emissionOnly)
                        &s_shieldRim, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.rimPower,
                        &s_shieldRimPower, SHADER_UNIFORM_FLOAT);
-        /* ShieldShell is a glass volume, not a solid Magic decal.  Keep the
-         * shared Magic appearance, but attenuate only this fixture's carrier
-         * so the scene-through region remains visibly transparent. */
-        float bodyOpacity = emissionOnly ? 0.0f : appearance.bodyOpacity * 0.42f;
+        float bodyOpacity = emissionOnly ? 0.0f : bodyCoverage;
         float emissionGain = emissionOnly ? appearance.emissionIntensity : 0.0f;
         SetShaderValue(s_shieldShader.shader, s_shieldShader.bodyOpacity,
                        &bodyOpacity, SHADER_UNIFORM_FLOAT);
@@ -443,75 +445,44 @@ void VFX_ShieldShell_DrawRefraction(Camera3D cam)
         VFX_RENDER_PASS_BODY, VFX_APPEARANCE_MAGIC, shieldLegacy, false,
         &shieldAppearance);
     rlDrawRenderBatchActive();
-    rlEnableBackfaceCulling();
     SkillManager_BeginShader(s_shieldShader.shader);
     ShieldShell_BindInputs(cam);
     if (s_shieldShader.lightDirView >= 0)
         SetShaderValue(s_shieldShader.shader, s_shieldShader.lightDirView,
                        &lightView, SHADER_UNIFORM_VEC3);
-    /* Back interface first, then front interface: this supplies thickness
-     * without drawing both sides of every triangle in one overdraw-heavy pass. */
-    rlSetCullFace(RL_CULL_FACE_FRONT);
-    {
-        int wall = 0;
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.wallPass,
-                       &wall, SHADER_UNIFORM_INT);
-    }
-    ShieldShell_DrawPass(false);
+    /* This is a closed transparent volume, so both windings must reach BOTH
+     * optical passes.  Culling a wall by render state is fragile: a later
+     * pass can inherit the previous cull face and leave the far wall with
+     * coverage but no radiance.  The fragment shader classifies the face via
+     * gl_FrontFacing instead, which makes the two interfaces inseparable from
+     * the one submission that draws them. */
+    rlDisableBackfaceCulling();
     rlDrawRenderBatchActive();
-    rlSetCullFace(RL_CULL_FACE_BACK);
-    {
-        int wall = 1;
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.wallPass,
-                       &wall, SHADER_UNIFORM_INT);
-    }
     ShieldShell_DrawPass(false);
     rlDrawRenderBatchActive();
     SkillManager_EndShader();
-    rlSetCullFace(RL_CULL_FACE_BACK);
+    rlEnableBackfaceCulling();
+    rlDrawRenderBatchActive();
     VFXRender_EndDraw(&body);
 
     VFXRenderScope emission = VFXRender_BeginAppearance(
         VFX_RENDER_PASS_EMISSION, VFX_APPEARANCE_MAGIC, shieldLegacy, false,
         &shieldAppearance);
     rlDrawRenderBatchActive();
-    rlEnableBackfaceCulling();
     SkillManager_BeginShader(s_shieldShader.shader);
     ShieldShell_BindInputs(cam);
     if (s_shieldShader.lightDirView >= 0)
         SetShaderValue(s_shieldShader.shader, s_shieldShader.lightDirView,
                        &lightView, SHADER_UNIFORM_VEC3);
-    /* BOTH INTERFACES, exactly like the body pass above. This pass used to run once,
-     * inheriting RL_CULL_FACE_BACK from the body pass, so emission covered FRONT faces
-     * only — and every consequence the owner reported follows from that one line:
-     *
-     *   - the far wall got the body pass (which only takes light out) and no glow at
-     *     all, so it rendered as a colourless dark shape;
-     *   - `contact` still raised the far wall's ALPHA (`contact * u_contactAlpha`), but
-     *     the matching `glow += contactColor * contact` never reached the framebuffer,
-     *     so the rear ground line drew as a BLACK rim — extra coverage, zero radiance.
-     *
-     * The far wall is where the shell meets the ground on its far side; it needs the
-     * same radiance the near wall gets, attenuated by the `rearInterface` weight the
-     * shader already applies, not omitted. */
-    rlSetCullFace(RL_CULL_FACE_FRONT);
-    {
-        int wall = 0;
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.wallPass,
-                       &wall, SHADER_UNIFORM_INT);
-    }
-    ShieldShell_DrawPass(true);
+    /* Mirror the body submission: the far interface owns half of the ground
+     * contact line, so it must emit in the same draw that gives it coverage. */
+    rlDisableBackfaceCulling();
     rlDrawRenderBatchActive();
-    rlSetCullFace(RL_CULL_FACE_BACK);
-    {
-        int wall = 1;
-        SetShaderValue(s_shieldShader.shader, s_shieldShader.wallPass,
-                       &wall, SHADER_UNIFORM_INT);
-    }
     ShieldShell_DrawPass(true);
     rlDrawRenderBatchActive();
     SkillManager_EndShader();
-    rlSetCullFace(RL_CULL_FACE_BACK);
+    rlEnableBackfaceCulling();
+    rlDrawRenderBatchActive();
     VFXRender_EndDraw(&emission);
 }
 

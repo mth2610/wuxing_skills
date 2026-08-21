@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_camera_fx_h", "label": "camera_fx.h", "file_type": "code", "source_file": "camera_fx.h", "source_location": "L1"}], "edges": [{"source": "$graphify-root$_camera_fx_h", "target": "raylib", "relation": "imports", "context": "import", "confidence": "EXTRACTED", "source_file": "camera_fx.h", "source_location": "L4", "weight": 1.0}], "raw_calls": []}

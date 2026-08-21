@@ -1,0 +1,75 @@
+{
+  "generated_at": "2026-08-21T03:22:01.779741+00:00",
+  "nodes": {
+    "particles_particle_system_particleconfig": {
+      "code_fingerprint": "517786f274bfad7d7ef4e5f6882291eb09a5b7da9a35121bb575fa269a8e44ca",
+      "label": "ParticleConfig",
+      "last": "2026-08-21T03:11:04.581550+00:00",
+      "neg": 1,
+      "provenance": [
+        {
+          "date": "2026-08-21T03:11:04.581550+00:00",
+          "outcome": "corrected",
+          "q": "Đánh giá kiến trúc core"
+        },
+        {
+          "date": "2026-08-21T03:06:19.054149+00:00",
+          "outcome": "useful",
+          "q": "dùng tiếng việt, dựa vào kết quả này, bạn kiến trúc của core hiện nay thế nào? so sánh với các game egine lớn thì kiến trúc có gì sai? có gì quan trọng mà bị thiếu sót?"
+        }
+      ],
+      "score": -7.6339e-05,
+      "source_file": "particles/particle_system.h",
+      "status": "contested",
+      "uses": 1,
+      "verdict": "dead end"
+    },
+    "resource_manager_resourcemanager_loadshader": {
+      "code_fingerprint": "8db33c1c31354148894c05e7c5f2190ffceb8c19b8276bd13d6ac86c66867dc2",
+      "label": "ResourceManager_LoadShader()",
+      "last": "2026-08-21T03:11:04.581550+00:00",
+      "neg": 1,
+      "provenance": [
+        {
+          "date": "2026-08-21T03:11:04.581550+00:00",
+          "outcome": "corrected",
+          "q": "Đánh giá kiến trúc core"
+        },
+        {
+          "date": "2026-08-21T03:06:19.054149+00:00",
+          "outcome": "useful",
+          "q": "dùng tiếng việt, dựa vào kết quả này, bạn kiến trúc của core hiện nay thế nào? so sánh với các game egine lớn thì kiến trúc có gì sai? có gì quan trọng mà bị thiếu sót?"
+        }
+      ],
+      "score": -7.6339e-05,
+      "source_file": "resource_manager.c",
+      "status": "contested",
+      "uses": 1,
+      "verdict": "dead end"
+    },
+    "skill_manager_c_skill_manager": {
+      "code_fingerprint": "6f0dfc0cd9077771538ca3b051c749d669cfc0001b8bf781c12c2d004e214721",
+      "label": "skill_manager.c",
+      "last": "2026-08-21T03:11:04.581550+00:00",
+      "neg": 1,
+      "provenance": [
+        {
+          "date": "2026-08-21T03:11:04.581550+00:00",
+          "outcome": "corrected",
+          "q": "Đánh giá kiến trúc core"
+        },
+        {
+          "date": "2026-08-21T03:06:19.054149+00:00",
+          "outcome": "useful",
+          "q": "dùng tiếng việt, dựa vào kết quả này, bạn kiến trúc của core hiện nay thế nào? so sánh với các game egine lớn thì kiến trúc có gì sai? có gì quan trọng mà bị thiếu sót?"
+        }
+      ],
+      "score": -7.6339e-05,
+      "source_file": "skill_manager.c",
+      "status": "contested",
+      "uses": 1,
+      "verdict": "dead end"
+    }
+  },
+  "version": 1
+}

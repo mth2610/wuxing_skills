@@ -83,6 +83,31 @@ static float GlassContactPlateau(float shellDepth, float sceneDepth, float thick
     return 1.0f - (t * t * (3.0f - 2.0f * t));
 }
 
+/* Mirrors the untextured bubble carrier in glass_shell.fs.  Source checks below
+ * pin the matching shader expressions; this cannot verify blend accumulation. */
+static float BubbleWallDensity(float ndotv)
+{
+    float pathLen = 1.0f / (ndotv > 0.10f ? ndotv : 0.10f);
+    return 1.0f - expf(-0.34f * 3.0f * (pathLen - 1.0f));
+}
+
+static float BubbleCarrierAlpha(float ndotv, int rearInterface)
+{
+    const float opacity = 0.78f * 0.24f * 4.0f;
+    float wallDensity = BubbleWallDensity(ndotv);
+    float bubbleDensity = SmoothStep(0.02f, 0.34f, wallDensity);
+    float alpha = opacity * (0.025f * 0.12f + wallDensity * (0.28f + 0.72f * bubbleDensity));
+    if (rearInterface)
+        alpha += opacity * (0.015f + 0.45f * wallDensity * (0.28f + 0.72f * bubbleDensity));
+    return alpha;
+}
+
+static float BubbleSceneMix(float bubbleDensity)
+{
+    float clearWindow = 1.0f - bubbleDensity;
+    return 0.86f * clearWindow * clearWindow;
+}
+
 /* The source text from the emission render scope to the end of the draw function. Checks
    about the emission pass have to be scoped to it, or the body pass's own front/back pair
    satisfies them and the guard never fails. */
@@ -235,6 +260,8 @@ int main(void)
     const char *src = "core/composition/common/vc_shield_shell.inl";
     CHECK(Has(src, "ResourceManager_LoadShader") && Has(src, "glass_shell.fs"),
           "shield uses the dedicated glass shell shader");
+    CHECK(!Has(src, "ResourceManager_LoadTexture") && !Has(src, "shield_verdant"),
+          "default bubble shell is procedural and has no texture or flow-map dependency");
     CHECK(!Has(src, "PlasmaMaterial_Load") && !Has(src, "SurfaceFlow_Apply") &&
           !Has(src, "Material_LoadCustom"),
           "legacy plasma, flow, and opaque material shell are removed");
@@ -246,22 +273,19 @@ int main(void)
           Has(src, "VFX_RENDER_PASS_EMISSION, VFX_APPEARANCE_MAGIC") &&
           !Has(src, "VFX_SURFACE_MULTIPLIED"),
           "the shell uses the shared Magic body+emission appearance");
-    CHECK(Has(src, "rlEnableBackfaceCulling") &&
-          Has(src, "RL_CULL_FACE_BACK") && Has(src, "RL_CULL_FACE_FRONT"),
-          "mobile shell composites back then front glass interfaces");
-    /* BOTH INTERFACES IN BOTH PASSES. The emission scope used to run one draw and inherit
-       the body pass's cull state, so it covered the near wall only: the far wall received
-       the body pass — which only takes light out — and no radiance at all, which is why
-       it rendered as a colourless dark shape and why its ground line drew as a BLACK rim
-       (the contact term still raised that wall's alpha, but its glow never reached the
-       framebuffer). Scoped to the emission block so this cannot be satisfied by the body
-       pass's own pair of draws. */
-    CHECK(EmissionBlockHas(src, "RL_CULL_FACE_FRONT") &&
-          EmissionBlockHas(src, "RL_CULL_FACE_BACK") &&
-          CountIn(EmissionBlock(src), "ShieldShell_DrawPass(true)") == 2,
-          "the emission pass composites BOTH glass interfaces, not the near wall alone");
-    CHECK(CountIn(EmissionBlock(src), "s_shieldShader.wallPass") == 2,
-          "each emission interface declares which wall it is drawing");
+    /* A sphere is a closed transparent volume.  Selecting its walls with mutable cull
+       state was fragile: an inherited face silently erased the far interface, leaving
+       its alpha/contact coverage without radiance.  Submit both windings explicitly and
+       classify the interface in the fragment shader, where the fact cannot leak across
+       passes.  Scoped to emission so the body pass cannot satisfy this by accident. */
+    CHECK(Has(src, "rlDisableBackfaceCulling") &&
+          !Has(src, "rlSetCullFace") &&
+          Has(src, "ShieldShell_DrawPass(false)") &&
+          CountIn(EmissionBlock(src), "ShieldShell_DrawPass(true)") == 1,
+          "each pass submits both shield interfaces in one cull-independent draw");
+    CHECK(Has("core/shaders/glass_shell.fs", "gl_FrontFacing") &&
+          !Has("core/shaders/glass_shell.fs", "u_wallPass"),
+          "the shader classifies front and rear interfaces per fragment");
     CHECK(Has(src, "SceneTargets_RequestSceneSnapshot") &&
           Has(src, "SceneTargets_GetSceneSnapshotTexture") &&
           Has(src, "SceneTargets_GetDepthTexture") &&
@@ -323,18 +347,30 @@ int main(void)
           Has("core/shaders/glass_shell.fs", "pattern * 0.35") &&
           !Has("core/shaders/glass_shell.fs", "0.20 + fresnel"),
           "emission has no full-sphere alpha floor on bright backgrounds");
-    CHECK(Has("core/shaders/glass_shell.fs", "u_packedTex") &&
-          Has("core/shaders/glass_shell.fs", "flowSample.rg") &&
-          Has("core/shaders/glass_shell.fs", "packed.b"),
-          "flow vector and energy mask use the packed texture");
+    CHECK(Has("core/shaders/glass_shell.fs", "bubbleDensity") &&
+          Has("core/shaders/glass_shell.fs", "bubbleVariation") &&
+          Has("core/shaders/glass_shell.fs", "smoothstep(0.02, 0.34, wallDensity)") &&
+          Has("core/shaders/glass_shell.fs", "float sceneMix") &&
+          Has("core/shaders/glass_shell.fs", "u_baseAlpha * 0.12") &&
+          Has("core/shaders/glass_shell.fs", "0.015 + 0.45 * wallDensity * (0.28 + 0.72 * bubbleDensity)"),
+          "procedural bubble density keeps the centre transparent while retaining a visible membrane");
+    CHECK(BubbleCarrierAlpha(1.0f, 1) < BubbleCarrierAlpha(0.75f, 0) * 0.20f &&
+          BubbleCarrierAlpha(0.75f, 0) < BubbleCarrierAlpha(0.15f, 0) &&
+          BubbleCarrierAlpha(0.75f, 0) > 0.10f &&
+          Has(src, "float bodyCoverage = appearance.bodyOpacity * 4.0f"),
+          "carrier alpha is visible through the mid shell while the centre stays transparent");
+    CHECK(BubbleSceneMix(0.0f) > 0.80f && BubbleSceneMix(0.50f) < 0.25f &&
+          BubbleSceneMix(1.0f) < 0.001f,
+          "scene-through is concentrated at the centre instead of washing out the membrane");
     CHECK(Has("core/shaders/glass_shell.fs", "u_flowTex") &&
           Has("core/shaders/glass_shell.fs", "u_hasFlow"),
-          "legacy body plus RG flow-map fixtures remain supported");
+          "optional custom body and RG flow-map surfaces remain supported");
     CHECK(Has("core/shaders/glass_shell.fs", "u_lightDirView") &&
           Has(src, "Environment_GetSunDirection") && Has(src, "lightView"),
           "glass body and rim include the camera-relative environment light");
-    CHECK(Has(src, "wallPass") && Has("core/shaders/glass_shell.fs", "u_wallPass") &&
-          Has("core/shaders/glass_shell.fs", "wallWeight"),
+    CHECK(Has("core/shaders/glass_shell.fs", "gl_FrontFacing") &&
+          Has("core/shaders/glass_shell.fs", "wallWeight") &&
+          Has("core/shaders/glass_shell.fs", "rearInterface"),
           "front and back glass interfaces receive separate optical weights");
 
     // The glass recipe: fresnel = pow(1 - saturate(dot(N,V)), 4), contact from
@@ -412,11 +448,11 @@ int main(void)
     CHECK(Has("CMakeLists.txt", "configure_file(core/shaders/glass_shell.fs") &&
           Has("CMakeLists.txt", "configure_file(core/shaders/glass_shell.vs"),
           "glass shader stages are copied into desktop build trees");
-    CHECK(Has("sandbox/vfx_test.c", "VFX_ShieldShell_SpawnEx(pos, VC_MAT_FIRE, 1.5f, 1.0f,") &&
-          Has("sandbox/vfx_test.c", "VFXTest_ShieldFlowSurface()") &&
-          Has("sandbox/vfx_test.c", "assets/textures/energy_volume.png") &&
-          Has("sandbox/vfx_test.c", "assets/textures/energy_volume_flow.png"),
-          "shield fixture supplies a separate body and RG flow-map profile");
+    CHECK(Has("sandbox/vfx_test.c", "VFX_ShieldShell_Spawn(pos, VC_MAT_WOOD, 1.5f, 1.0f)") &&
+          !Has("sandbox/vfx_test.c", "VFXTest_ShieldFlowSurface") &&
+          Has("scripts/sync_vfx_test.py", "VFX_ShieldShell_Spawn($POS, VC_MAT_WOOD, 1.5f, 1.0f)") &&
+          Has("scripts/vfx_test_manifest.json", "VFX_ShieldShell_Spawn($POS, VC_MAT_WOOD, 1.5f, 1.0f)"),
+          "shield fixture and its generators use the untextured wood bubble profile");
 
     return failures ? 1 : 0;
 }

@@ -178,16 +178,16 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeLiquidBench":        ("draw",    "timed",      "continuous"),
 }
 
-# A fixture may supply a semantic preview surface while the public composition
-# stays asset-agnostic. These are generated-call overrides, never edits inside
-# sandbox/vfx_test.c's @gen block.
+# Generated-call overrides keep fixtures readable without changing public
+# composition contracts.  The shield intentionally has no surface override:
+# its default is the procedural, transparent bubble profile.
 FIXTURE_SPAWN_OVERRIDES = {
     # The style is an enum; the inferred call would pass a bare 0. Flip it live
     # instead with the `strandtrail_style` tunable (-1 = as spawned, 0/1 = force).
     "VFX_ComposeStrandTrail":
         "VFX_ComposeStrandTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, VFX_STRAND_ENERGY)",
     "VFX_ComposeShieldShell":
-        "VFX_ShieldShell_SpawnEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, VFXTest_ShieldFlowSurface())",
+        "VFX_ShieldShell_Spawn($POS, VC_MAT_WOOD, 1.5f, 1.0f)",
     # The kind is an enum and the inferred call would pass a bare 0; the
     # inferred radius (1.5 m) is a fireball, not a column. funnel=true,
     # height=5.0 — the owner's own hand-tuned values (05/08/2026); do not

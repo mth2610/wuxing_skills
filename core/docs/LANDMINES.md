@@ -2506,24 +2506,20 @@ just moves the material away from correct.
   `ENGINE_LANDMINES.md` — "A fixed timestep that only pins the LOOP".
   Guard: `core/tests/frame_delta_determinism_test.c`.
 
-### A second render pass inherits the FIRST pass's cull face
+### Culling cannot carry a closed volume's optical-interface identity
 - **Symptom:** the ShieldShell's far wall rendered as a colourless dark shape,
   and its ground line drew as a BLACK rim — extra coverage with zero radiance.
-- **Cause:** the shell composites two optical interfaces, and the body pass sets
-  `RL_CULL_FACE_FRONT` then `RL_CULL_FACE_BACK` around two draws. The emission
-  scope ran ONE draw and inherited whatever cull face the body pass left behind,
-  so emission covered the near wall only. The far wall then received the body
-  pass — which only takes light out — and nothing else. The contact term still
-  raised that wall's alpha (`contact * u_contactAlpha`), but its matching
-  `glow += contactColor * contact` never reached the framebuffer: darkening
-  without the light that was supposed to justify it.
-- **Rule:** cull face is render state, not an argument — a pass that draws a
-  two-sided volume declares its own, in every pass that draws it. When a term
-  appears in both an alpha and a colour expression, check that both passes it
-  splits across actually run; a coverage term whose emission half is missing
-  looks exactly like a black outline. Guard: the emission-scoped checks in
-  `core/tests/shield_shell_test.c` (scoped to the emission block, or the body
-  pass's own front/back pair satisfies them and the guard never fails).
+- **Cause:** the shell selected its back and front interfaces by changing cull
+  state around separate body draws. The emission scope could inherit one face,
+  so the far wall received the body pass — which only takes light out — but no
+  glow. The contact term still raised that wall's alpha
+  (`contact * u_contactAlpha`), while its matching `contactGlow` did not run.
+- **Rule:** for a closed transparent volume, disable culling in *every* optical
+  pass and classify the fragment with `gl_FrontFacing`. Culling is render state,
+  not an interface argument; fragment-facing is local to the submitted surface.
+  Keep the state changes batch-flushed on both sides. Guard:
+  `core/tests/shield_shell_test.c` requires one explicitly two-sided submission
+  in each pass and `gl_FrontFacing` in the shader.
 
 ### A partial render-texture blit lands in the wrong rows
 - **Symptom:** the soft-depth snapshot reported the scene 0.35–1.5 m too far

@@ -91,32 +91,6 @@ static Matrix s_vfxFixtureXf[VFXTEST_FIXTURE_SLOTS];
 static int s_vfxFixtureHandle[VFXTEST_FIXTURE_SLOTS];
 static float s_vfxFixtureLastTime[VFXTEST_FIXTURE_SLOTS];
 static bool s_vfxFixturesReady = false;
-static VFX_ShieldSurface s_shieldFlowPreview = {0};
-static bool s_shieldFlowPreviewLoaded = false;
-
-// Tester-only semantic profile. Production compositions still receive a
-// VFX_ShieldSurface from their owner and never invent asset paths.
-static const VFX_ShieldSurface *VFXTest_ShieldFlowSurface(void)
-{
-    if (!s_shieldFlowPreviewLoaded)
-    {
-        s_shieldFlowPreviewLoaded = true;
-        s_shieldFlowPreview.body = ResourceManager_LoadTexture("assets/textures/energy_volume.png");
-        s_shieldFlowPreview.flowMap = ResourceManager_LoadTexture("assets/textures/energy_volume_flow.png");
-        if (s_shieldFlowPreview.body.id != 0 && s_shieldFlowPreview.flowMap.id != 0)
-        {
-            SetTextureFilter(s_shieldFlowPreview.body, TEXTURE_FILTER_BILINEAR);
-            SetTextureWrap(s_shieldFlowPreview.body, TEXTURE_WRAP_REPEAT);
-            SetTextureFilter(s_shieldFlowPreview.flowMap, TEXTURE_FILTER_BILINEAR);
-            SetTextureWrap(s_shieldFlowPreview.flowMap, TEXTURE_WRAP_REPEAT);
-            s_shieldFlowPreview.flowSpeed = 0.85f;
-            s_shieldFlowPreview.flowStrength = 0.12f;
-            s_shieldFlowPreview.flowTiling = 1.25f;
-            s_shieldFlowPreview.maskTiling = 1.0f;
-        }
-    }
-    return s_shieldFlowPreview.body.id != 0 ? &s_shieldFlowPreview : NULL;
-}
 
 static void VFXTest_InitFixtures(void)
 {
@@ -225,7 +199,7 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
     case 18: VFX_ComposeLightningGroundRicochet(pos, VC_MAT_LIGHTNING, 1.0f, posSeed); return true;
     case 23:
         if (s_vfxFixtureHandle[23] >= 0) VFX_KillShieldShell(s_vfxFixtureHandle[23]);
-        s_vfxFixtureHandle[23] = VFX_ShieldShell_SpawnEx(pos, VC_MAT_FIRE, 1.5f, 1.0f, VFXTest_ShieldFlowSurface());
+        s_vfxFixtureHandle[23] = VFX_ShieldShell_Spawn(pos, VC_MAT_WOOD, 1.5f, 1.0f);
         return true;
     case 26: VFX_ComposeSmokePuff(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
     case 28: VFX_ComposeSparkTrail(pos, (Vector3){1.4f, 2.2f, 0.5f}, VC_MAT_FIRE, 1.0f, 2.0f); return true;

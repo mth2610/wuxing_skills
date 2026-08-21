@@ -15,7 +15,6 @@ uniform float u_rimPower;
 uniform float u_bodyOpacity;
 uniform float u_emissionGain;
 uniform int u_emissionOnly;
-uniform int u_wallPass;
 uniform vec3 u_lightDirView;
 
 /* One lookup: R=hexagon, G=Perlin-like scrolling noise, B=soft mask. */
@@ -131,11 +130,23 @@ void main() {
     float contact = depthContact(gl_FragCoord.xy / u_resolution);
     float ripple = impactRipple();
     vec3 lightDir = normalize(u_lightDirView);
-    float rearInterface = (u_wallPass == 0) ? 1.0 : 0.0;
+    /* The C side deliberately disables culling for this closed volume in both
+     * body and emission passes.  Derive the optical interface from the actual
+     * fragment instead of a mutable cull-face pass, so the rear wall can never
+     * receive contact alpha without the matching contact glow. */
+    float rearInterface = gl_FrontFacing ? 0.0 : 1.0;
     // Wall thickness: path length through the shell, 1/|N.V|, turned into density by
     // Beer-Lambert. Hoisted here because it drives BOTH the rim colour and the alpha.
     float pathLen = 1.0 / max(shieldNdotV, 0.10);
     float wallDensity = 1.0 - exp(-u_fresnelAlpha * 3.0 * (pathLen - 1.0));
+    /* A bubble is clearest where it is viewed straight through.  This keeps the
+     * centre as a real window, while the Beer-Lambert wall thickens naturally
+     * toward the silhouette.  The small world-space modulation avoids a flat,
+     * uniformly dyed disc without introducing a texture or a flow-map. */
+    float bubbleVariation = 0.85 + 0.15 *
+        sin(fragPosition.x * 2.7 + fragPosition.y * 1.9 + u_time * 0.45) *
+        sin(fragPosition.z * 3.1 - fragPosition.y * 1.3 - u_time * 0.31);
+    float bubbleDensity = smoothstep(0.02, 0.34, wallDensity) * bubbleVariation;
     float light = max(dot(normal, lightDir), 0.0);
     float pattern = smoothstep(0.22, 0.78, energy) * (0.35 + 0.65 * noise);
     float filament = smoothstep(0.58, 0.82, energy) *
@@ -160,7 +171,9 @@ void main() {
     /* Preserve hue without laying a milky, high-luminance film over a bright
      * destination.  The carrier is deliberately darker/sparser; rim + the
      * separate additive emission pass provide the perceived brightness. */
-    vec3 body = u_bodyColor.rgb * (0.055 + 0.11 * light + bodyStructure * 0.24);
+    vec3 body = u_bodyColor.rgb * (0.12 + 0.35 * light + bodyStructure * 0.42);
+    body += u_rimColor.rgb * energy * 0.12;
+    body *= mix(0.10, 1.10, bubbleDensity);
     body = pow(max(body, vec3(0.0)), vec3(1.12));
     body += u_rimColor.rgb * bottomGlow * 0.75;
     vec2 matcapUV = normal.xy * 0.5 + 0.5;
@@ -294,8 +307,9 @@ void main() {
         /* Scene dominates the membrane; the authored tint only colours the
          * glass, otherwise a flat QA background makes this indistinguishable
          * from the legacy opaque carrier. */
-        vec3 glassTint = mix(behind * 0.92, body, 0.18 + 0.22 * pattern);
-        body = mix(body, glassTint, 0.92 * softMask);
+        float clearWindow = 1.0 - bubbleDensity;
+        float sceneMix = 0.86 * clearWindow * clearWindow;
+        body = mix(body, behind, sceneMix);
     }
 
     if (u_emissionOnly != 0) {
@@ -303,7 +317,7 @@ void main() {
         // non-zero floor here paints the entire sphere on bright backgrounds
         // and defeats the shared Magic body/emission separation.
         float emissionMask = max(rimBand * 0.92,
-                                 max(filament * 0.0,
+                                 max(filament * 0.32,
                                      max(contact * 0.90, ripple)));
         float emissionAlpha = u_opacity * clamp(emissionMask, 0.0, 1.0);
         finalColor = VFX_ResolvePremultiplied(glow, u_emissionGain, emissionAlpha, vec3(0.0), 0.0, 0.0);
@@ -312,7 +326,7 @@ void main() {
     /* Keep the rear interface for thickness/parallax, but make it a light
      * optical contribution.  Removing it flattens the shell; weighting it too
      * strongly is what creates the milky full-sphere wash on bright backdrops. */
-    float wallWeight = (u_wallPass == 0) ? 0.86 : 1.0;
+    float wallWeight = mix(1.0, 0.86, rearInterface);
     // WALL THICKNESS, not a fresnel band. The rim term used to be shieldFresnel, which
     // is (1-|N·V|)^4: essentially zero across the middle of the sphere and then a spike
     // at the silhouette, so the shell read as a flat interior with a hard ring stuck to
@@ -321,7 +335,7 @@ void main() {
     // centre out. At |N·V| = 0.75 this gives 0.064 against the old 0.004 — sixteen times
     // more presence in the mid-region, which is the whole of the "rim to centre" ramp.
     float alpha = u_opacity * wallWeight * softMask *
-                  (u_baseAlpha + wallDensity +
+                  (u_baseAlpha * 0.12 + wallDensity * (0.28 + 0.72 * bubbleDensity) +
                    contact * u_contactAlpha + ripple * 0.18);
     /* Rear glass carries interior volume — but SHAPED BY ITS OWN THICKNESS, not as a
      * constant. A flat term veils the whole interior evenly, which is a milky film with
@@ -334,7 +348,8 @@ void main() {
      * front wall uses, which is what puts a second, inner falloff inside the outer rim.
      * The small constant that remains is the residue that keeps the very centre from
      * vanishing entirely. */
-    alpha += rearInterface * u_opacity * softMask * (0.10 + 0.62 * wallDensity);
+    alpha += rearInterface * u_opacity * softMask *
+             (0.015 + 0.45 * wallDensity * (0.28 + 0.72 * bubbleDensity));
     /* The 0.35 that used to be here was compensation for a model that no longer
      * exists. It was added to tame a milky sphere back when the rim term was a
      * (1-|N.V|)^4 band with a flat rear-wall veil on top: both of those laid coverage
