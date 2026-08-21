@@ -1338,3 +1338,26 @@ described this exact trap. Both were right and neither was being followed.
 twice first. Two identical rows are the only evidence that a third row differing
 means anything. This bug survived a long time because nobody had a reason to
 measure the same thing twice.
+
+## An assertion on STATE is not an assertion on the EVENT (20/08/2026)
+
+**Symptom.** `hero_bot_handicap` failed "bot cast at least once (mana spent)" on
+4 runs out of 6, on the same binary, with the RNG already pinned
+(`srand(20260814u)` in `main.c`). It read as flakiness in the bot brain.
+
+**Cause.** The check was `ba->mana < ba->maxMana - 0.01f`. Mana regenerates at
+5/s (`MANA_REGEN_PER_SEC`), the case simulates 5 seconds, so a bot that cast
+early was back at full before the assertion ran — and the assertion failed on a
+bot that had done exactly what was asked. The RNG behind the think cadence only
+decided WHEN the cast happened, which is what made a deterministic bug look
+random. Note that the seeding was never the problem, and hunting the RNG would
+have found nothing wrong with it.
+
+**Rule.** When the thing you care about is an event, assert on a record of the
+event, not on a state it happens to leave behind. `AI_PollHeroCasts` already
+existed and counts casts directly. A state proxy is only sound if nothing else
+can restore that state within the measurement window — regeneration, decay,
+cooldown expiry and clamping all can.
+
+**Smell to look for:** an assertion whose message names an event ("cast at least
+once", "took damage", "spawned") while its expression reads a level.

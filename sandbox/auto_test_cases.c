@@ -595,6 +595,12 @@ static AutoTestResult AutoTest_HeroBotHandicapStep(int frameInCase, char *outRea
       if (idx >= 0) Entity_SetEquippedSkill(bot, slot, idx, kBotLoad[slot].element);
     }
   }
+  /* Drain anything an earlier case logged, so the poll after the loop counts
+   * only this bot's casts. */
+  {
+    HeroBotCast drain[16];
+    AI_PollHeroCasts(drain, 16);
+  }
   for (int i = 0; i < 300; i++) { // ~5s @60fps
     AI_Update(1.0f / 60.0f);
     Entity_Update(1.0f / 60.0f);
@@ -606,8 +612,17 @@ static AutoTestResult AutoTest_HeroBotHandicapStep(int frameInCase, char *outRea
     float ex = ba->position.x - 6.0f, ez = ba->position.z - 4.4f;
     ok = ok && AutoTest_ExpectTrue(sqrtf(ex * ex + ez * ez) < 18.0f,
                                    "bot stayed on the arena", outReason, outReasonSize);
-    ok = ok && AutoTest_ExpectTrue(ba->mana < ba->maxMana - 0.01f,
-                                   "bot cast at least once (mana spent)", outReason, outReasonSize);
+    /* Ask the cast LOG, not the mana level. "mana is below max right now" is a
+     * state standing in for an event, and the two come apart: mana regenerates
+     * at 5/s (entities.c MANA_REGEN_PER_SEC), so over these 5 simulated seconds
+     * a bot that casts early is back at full before the check runs and the
+     * assertion fails on a bot that did exactly what was asked. Measured 4
+     * failures in 6 runs that way; the RNG behind the bot's think cadence only
+     * decides WHEN it casts, which is what made it look random. */
+    HeroBotCast casts[16];
+    int castCount = AI_PollHeroCasts(casts, 16);
+    ok = ok && AutoTest_ExpectTrue(castCount > 0,
+                                   "bot cast at least once", outReason, outReasonSize);
   }
 
   // Đợt A5: free-cast mode bypasses the mana gate (client VFX replay) —
