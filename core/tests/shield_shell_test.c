@@ -91,21 +91,35 @@ static float BubbleWallDensity(float ndotv)
     return 1.0f - expf(-0.34f * 3.0f * (pathLen - 1.0f));
 }
 
+static float BubbleDensityForFilm(float wallDensity, float membraneField);
+
 static float BubbleCarrierAlpha(float ndotv, int rearInterface)
 {
     const float opacity = 0.78f * 0.24f * 4.0f;
     float wallDensity = BubbleWallDensity(ndotv);
-    float bubbleDensity = SmoothStep(0.02f, 0.34f, wallDensity);
-    float alpha = opacity * (0.025f * 0.12f + wallDensity * (0.28f + 0.72f * bubbleDensity));
+    float bubbleDensity = BubbleDensityForFilm(wallDensity, 0.5f);
+    float membraneCoverage = bubbleDensity;
+    float alpha = opacity * (0.025f * 2.2f +
+                             wallDensity * (0.18f + 0.82f * membraneCoverage));
     if (rearInterface)
-        alpha += opacity * (0.015f + 0.45f * wallDensity * (0.28f + 0.72f * bubbleDensity));
+        alpha += opacity * (0.030f +
+                            0.45f * wallDensity * (0.18f + 0.82f * membraneCoverage));
     return alpha;
 }
 
 static float BubbleSceneMix(float bubbleDensity)
 {
     float clearWindow = 1.0f - bubbleDensity;
-    return 0.86f * clearWindow * clearWindow;
+    return 0.62f * clearWindow;
+}
+
+static float BubbleDensityForFilm(float wallDensity, float membraneField)
+{
+    float angularGradient = wallDensity / (wallDensity + 0.28f);
+    float density = 0.22f + 0.78f * angularGradient + (membraneField - 0.5f) * 0.22f;
+    if (density < 0.08f) density = 0.08f;
+    if (density > 1.0f) density = 1.0f;
+    return density;
 }
 
 /* The source text from the emission render scope to the end of the draw function. Checks
@@ -348,20 +362,29 @@ int main(void)
           !Has("core/shaders/glass_shell.fs", "0.20 + fresnel"),
           "emission has no full-sphere alpha floor on bright backgrounds");
     CHECK(Has("core/shaders/glass_shell.fs", "bubbleDensity") &&
-          Has("core/shaders/glass_shell.fs", "bubbleVariation") &&
-          Has("core/shaders/glass_shell.fs", "smoothstep(0.02, 0.34, wallDensity)") &&
+          Has("core/shaders/glass_shell.fs", "membraneField = fbm3(membraneDomain)") &&
+          Has("core/shaders/glass_shell.fs", "float shellAngle = fragTexCoord.x * 6.2831853") &&
+          Has("core/shaders/glass_shell.fs", "membraneDomain = membraneDomain * 2.40") &&
+          Has("core/shaders/glass_shell.fs", "float angularGradient = wallDensity / (wallDensity + 0.28)") &&
+          Has("core/shaders/glass_shell.fs", "float membraneCoverage = bubbleDensity") &&
+          !Has("core/shaders/glass_shell.fs", "windowStart") &&
           Has("core/shaders/glass_shell.fs", "float sceneMix") &&
-          Has("core/shaders/glass_shell.fs", "u_baseAlpha * 0.12") &&
-          Has("core/shaders/glass_shell.fs", "0.015 + 0.45 * wallDensity * (0.28 + 0.72 * bubbleDensity)"),
-          "procedural bubble density keeps the centre transparent while retaining a visible membrane");
-    CHECK(BubbleCarrierAlpha(1.0f, 1) < BubbleCarrierAlpha(0.75f, 0) * 0.20f &&
+          Has("core/shaders/glass_shell.fs", "u_baseAlpha * (1.8 + 0.8 * membraneField)") &&
+          Has("core/shaders/glass_shell.fs", "0.030 + 0.45 * wallDensity * (0.18 + 0.82 * membraneCoverage)"),
+          "surface-anchored film thickness gives one continuous water membrane");
+    CHECK(BubbleCarrierAlpha(1.0f, 1) > 0.05f &&
+          BubbleCarrierAlpha(1.0f, 1) < BubbleCarrierAlpha(0.75f, 0) * 0.55f &&
           BubbleCarrierAlpha(0.75f, 0) < BubbleCarrierAlpha(0.15f, 0) &&
           BubbleCarrierAlpha(0.75f, 0) > 0.10f &&
           Has(src, "float bodyCoverage = appearance.bodyOpacity * 4.0f"),
-          "carrier alpha is visible through the mid shell while the centre stays transparent");
-    CHECK(BubbleSceneMix(0.0f) > 0.80f && BubbleSceneMix(0.50f) < 0.25f &&
+          "carrier alpha rises as a gradient from a translucent centre to the rim");
+    CHECK(BubbleSceneMix(0.0f) > 0.60f && BubbleSceneMix(0.50f) < 0.35f &&
           BubbleSceneMix(1.0f) < 0.001f,
-          "scene-through is concentrated at the centre instead of washing out the membrane");
+          "scene-through fades continuously without washing out the membrane");
+    CHECK(BubbleDensityForFilm(0.0f, 0.5f) > 0.20f &&
+          BubbleDensityForFilm(0.15f, 1.0f) > BubbleDensityForFilm(0.15f, 0.0f) + 0.18f &&
+          BubbleDensityForFilm(0.15f, 0.5f) < BubbleDensityForFilm(0.65f, 0.5f),
+          "continuous film density has no clear centre disc and still varies across the shell");
     CHECK(Has("core/shaders/glass_shell.fs", "u_flowTex") &&
           Has("core/shaders/glass_shell.fs", "u_hasFlow"),
           "optional custom body and RG flow-map surfaces remain supported");
@@ -448,11 +471,11 @@ int main(void)
     CHECK(Has("CMakeLists.txt", "configure_file(core/shaders/glass_shell.fs") &&
           Has("CMakeLists.txt", "configure_file(core/shaders/glass_shell.vs"),
           "glass shader stages are copied into desktop build trees");
-    CHECK(Has("sandbox/vfx_test.c", "VFX_ShieldShell_Spawn(pos, VC_MAT_WOOD, 1.5f, 1.0f)") &&
+    CHECK(Has("sandbox/vfx_test.c", "VFX_ShieldShell_Spawn(pos, VC_MAT_WATER, 1.5f, 1.0f)") &&
           !Has("sandbox/vfx_test.c", "VFXTest_ShieldFlowSurface") &&
-          Has("scripts/sync_vfx_test.py", "VFX_ShieldShell_Spawn($POS, VC_MAT_WOOD, 1.5f, 1.0f)") &&
-          Has("scripts/vfx_test_manifest.json", "VFX_ShieldShell_Spawn($POS, VC_MAT_WOOD, 1.5f, 1.0f)"),
-          "shield fixture and its generators use the untextured wood bubble profile");
+          Has("scripts/sync_vfx_test.py", "VFX_ShieldShell_Spawn($POS, VC_MAT_WATER, 1.5f, 1.0f)") &&
+          Has("scripts/vfx_test_manifest.json", "VFX_ShieldShell_Spawn($POS, VC_MAT_WATER, 1.5f, 1.0f)"),
+          "shield fixture and its generators use the untextured water bubble profile");
 
     return failures ? 1 : 0;
 }

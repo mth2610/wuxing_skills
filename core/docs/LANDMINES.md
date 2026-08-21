@@ -2636,3 +2636,8 @@ just moves the material away from correct.
   `(255,255,255,a)`) all premultiplied. Only particle sites are genuinely one line.
 - **Full write-up, including how to tell this apart from a real blend-law result (look at the
   DARK background) and the two migration corollaries:** `ENGINE_LANDMINES.md`, same title.
+### Angle-only transparency makes a shield's window visibly concentric
+
+- **Symptom:** a bubble shield has a technically transparent centre, but it reads as a perfect circular hole surrounded by a uniform band.
+- **Cause:** its opacity/window mask is derived only from `N·V` (Fresnel or path length), which is radial by construction on a sphere.
+- **Rule:** reserve `N·V` for rim/reflection and broad optical depth. Modulate the window with a low-frequency, surface-anchored thickness field; use a seam-safe domain for spherical UVs and a shared `fbm3`, not independent sine bands or a view-space noise field.

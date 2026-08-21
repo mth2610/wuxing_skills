@@ -293,7 +293,7 @@
       "lifecycle": "emitter",
       "_auto": true,
       "type": "persistent",
-      "spawn_call": "VFX_ShieldShell_Spawn($POS, VC_MAT_WOOD, 1.5f, 1.0f)",
+      "spawn_call": "VFX_ShieldShell_Spawn($POS, VC_MAT_WATER, 1.5f, 1.0f)",
       "kill_fn": "VFX_KillShieldShell"
     },
     {

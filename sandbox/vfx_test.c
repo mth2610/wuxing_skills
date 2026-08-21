@@ -199,7 +199,7 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
     case 18: VFX_ComposeLightningGroundRicochet(pos, VC_MAT_LIGHTNING, 1.0f, posSeed); return true;
     case 23:
         if (s_vfxFixtureHandle[23] >= 0) VFX_KillShieldShell(s_vfxFixtureHandle[23]);
-        s_vfxFixtureHandle[23] = VFX_ShieldShell_Spawn(pos, VC_MAT_WOOD, 1.5f, 1.0f);
+        s_vfxFixtureHandle[23] = VFX_ShieldShell_Spawn(pos, VC_MAT_WATER, 1.5f, 1.0f);
         return true;
     case 26: VFX_ComposeSmokePuff(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
     case 28: VFX_ComposeSparkTrail(pos, (Vector3){1.4f, 2.2f, 0.5f}, VC_MAT_FIRE, 1.0f, 2.0f); return true;

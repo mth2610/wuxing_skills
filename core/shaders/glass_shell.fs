@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
+#include "core/shaders/common/noise.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
 
 in vec3 shieldViewDir;
@@ -139,14 +140,25 @@ void main() {
     // Beer-Lambert. Hoisted here because it drives BOTH the rim colour and the alpha.
     float pathLen = 1.0 / max(shieldNdotV, 0.10);
     float wallDensity = 1.0 - exp(-u_fresnelAlpha * 3.0 * (pathLen - 1.0));
-    /* A bubble is clearest where it is viewed straight through.  This keeps the
-     * centre as a real window, while the Beer-Lambert wall thickens naturally
-     * toward the silhouette.  The small world-space modulation avoids a flat,
-     * uniformly dyed disc without introducing a texture or a flow-map. */
-    float bubbleVariation = 0.85 + 0.15 *
-        sin(fragPosition.x * 2.7 + fragPosition.y * 1.9 + u_time * 0.45) *
-        sin(fragPosition.z * 3.1 - fragPosition.y * 1.3 - u_time * 0.31);
-    float bubbleDensity = smoothstep(0.02, 0.34, wallDensity) * bubbleVariation;
+    /* Fresnel only describes the viewing angle.  If it also controls the
+     * transparent window, that window is a mathematically perfect concentric
+     * disc.  A bubble instead varies in film thickness over its own surface.
+     * Embed the seamless sphere UV in a ring, then use low-frequency 3D FBM so
+     * the field stays attached to the shell, crosses the U seam cleanly, and
+     * gently drifts instead of reading as a painted texture. */
+    float shellAngle = fragTexCoord.x * 6.2831853;
+    vec3 membraneDomain = vec3(cos(shellAngle), fragTexCoord.y * 2.0 - 1.0,
+                               sin(shellAngle));
+    membraneDomain = membraneDomain * 2.40 + vec3(0.0, -u_time * 0.045, 0.0);
+    float membraneField = fbm3(membraneDomain);
+    /* No opacity threshold: thresholds cut a clear disc out of the middle.
+     * This is one continuous density field — a thin base membrane at the
+     * centre, increasing optical depth toward the rim, and broad thickness
+     * variation across the surface. */
+    float angularGradient = wallDensity / (wallDensity + 0.28);
+    float bubbleDensity = clamp(0.22 + 0.78 * angularGradient +
+                                (membraneField - 0.5) * 0.22, 0.08, 1.0);
+    float membraneCoverage = bubbleDensity;
     float light = max(dot(normal, lightDir), 0.0);
     float pattern = smoothstep(0.22, 0.78, energy) * (0.35 + 0.65 * noise);
     float filament = smoothstep(0.58, 0.82, energy) *
@@ -173,7 +185,7 @@ void main() {
      * separate additive emission pass provide the perceived brightness. */
     vec3 body = u_bodyColor.rgb * (0.12 + 0.35 * light + bodyStructure * 0.42);
     body += u_rimColor.rgb * energy * 0.12;
-    body *= mix(0.10, 1.10, bubbleDensity);
+    body *= mix(0.10, 1.10, bubbleDensity) * mix(0.72, 1.18, membraneField);
     body = pow(max(body, vec3(0.0)), vec3(1.12));
     body += u_rimColor.rgb * bottomGlow * 0.75;
     vec2 matcapUV = normal.xy * 0.5 + 0.5;
@@ -308,7 +320,7 @@ void main() {
          * glass, otherwise a flat QA background makes this indistinguishable
          * from the legacy opaque carrier. */
         float clearWindow = 1.0 - bubbleDensity;
-        float sceneMix = 0.86 * clearWindow * clearWindow;
+        float sceneMix = 0.62 * clearWindow;
         body = mix(body, behind, sceneMix);
     }
 
@@ -335,7 +347,8 @@ void main() {
     // centre out. At |N·V| = 0.75 this gives 0.064 against the old 0.004 — sixteen times
     // more presence in the mid-region, which is the whole of the "rim to centre" ramp.
     float alpha = u_opacity * wallWeight * softMask *
-                  (u_baseAlpha * 0.12 + wallDensity * (0.28 + 0.72 * bubbleDensity) +
+                  (u_baseAlpha * (1.8 + 0.8 * membraneField) +
+                   wallDensity * (0.18 + 0.82 * membraneCoverage) +
                    contact * u_contactAlpha + ripple * 0.18);
     /* Rear glass carries interior volume — but SHAPED BY ITS OWN THICKNESS, not as a
      * constant. A flat term veils the whole interior evenly, which is a milky film with
@@ -349,7 +362,7 @@ void main() {
      * The small constant that remains is the residue that keeps the very centre from
      * vanishing entirely. */
     alpha += rearInterface * u_opacity * softMask *
-             (0.015 + 0.45 * wallDensity * (0.28 + 0.72 * bubbleDensity));
+             (0.030 + 0.45 * wallDensity * (0.18 + 0.82 * membraneCoverage));
     /* The 0.35 that used to be here was compensation for a model that no longer
      * exists. It was added to tame a milky sphere back when the rim term was a
      * (1-|N.V|)^4 band with a flat rear-wall veil on top: both of those laid coverage

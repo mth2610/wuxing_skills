@@ -187,7 +187,7 @@ FIXTURE_SPAWN_OVERRIDES = {
     "VFX_ComposeStrandTrail":
         "VFX_ComposeStrandTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, VFX_STRAND_ENERGY)",
     "VFX_ComposeShieldShell":
-        "VFX_ShieldShell_Spawn($POS, VC_MAT_WOOD, 1.5f, 1.0f)",
+        "VFX_ShieldShell_Spawn($POS, VC_MAT_WATER, 1.5f, 1.0f)",
     # The kind is an enum and the inferred call would pass a bare 0; the
     # inferred radius (1.5 m) is a fireball, not a column. funnel=true,
     # height=5.0 — the owner's own hand-tuned values (05/08/2026); do not
