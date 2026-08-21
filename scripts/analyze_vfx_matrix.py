@@ -82,6 +82,14 @@ def measure(path, plate_path):
     lumfull = img @ LUMA
     lum = lumfull[core]
     structure = float(lum.std() / max(lum.mean(), 1e-6))
+    # ABSVAR is `structure`'s numerator on its own: the spread of the effect's OWN
+    # contribution, background subtracted. Report both, because `structure` is a
+    # ratio and a bright plate moves its denominator too — measured on SHIELD
+    # SHELL, structure fell 7.8x from dark to white while the actual variation
+    # fell 3.4x; the other 2.3x was the mean rising. Reading the ratio alone
+    # overstates the loss by that factor, and "structure collapsed" is the kind of
+    # sentence that starts a shader rewrite.
+    absvar = float((lumfull - (bg @ LUMA))[core].std())
     # DETAIL separates fine internal texture from a smooth gradient, which `structure`
     # cannot: the coefficient of variation is just as high for a broad top-to-bottom fade
     # as for a filament network. That mattered the first time it was used — ENERGY ORB's
@@ -92,7 +100,8 @@ def measure(path, plate_path):
     detail_cv = float(detail[core].std() / max(lum.mean(), 1e-6))
     chroma = float((img[core].max(axis=1) - img[core].min(axis=1)).mean())
     return dict(cover=100.0 * foot.mean(), body=100.0 * core.mean(),
-                darken=100.0 * darken, structure=structure, detail=detail_cv,
+                darken=100.0 * darken, structure=structure, absvar=absvar,
+                detail=detail_cv,
                 chroma=chroma / 255.0, dist=float(dist[foot].mean()) / 255.0)
 
 
@@ -122,7 +131,7 @@ def main():
     rows.sort()
 
     print(f"{'warmup':>6} {'background':10} {'cover%':>7} {'body%':>6} {'darken%':>8} "
-          f"{'structure':>10} {'detail':>7} {'chroma':>7} {'|d|':>6}")
+          f"{'structure':>10} {'absvar':>7} {'detail':>7} {'chroma':>7} {'|d|':>6}")
     last = None
     for w, _, name, r in rows:
         if last is not None and w != last:
@@ -132,8 +141,12 @@ def main():
             print(f"{w:6} {name:10}   (effect not visible at this frame)")
             continue
         print(f"{w:6} {name:10} {r['cover']:6.3f}% {r['body']:5.2f}% {r['darken']:7.1f}% "
-              f"{r['structure']:10.3f} {r['detail']:7.3f} {r['chroma']:7.3f} "
+              f"{r['structure']:10.3f} {r['absvar']:7.1f} {r['detail']:7.3f} {r['chroma']:7.3f} "
               f"{r['dist']:6.3f}")
+    print("\nabsvar is structure's numerator alone (the effect's own spread, background "
+          "removed).\nCompare THAT across backgrounds before concluding anything from "
+          "structure: the ratio\nfalls partly because a bright plate raises its "
+          "denominator.")
     print("\ncover% should be roughly background-independent; a big drop means the "
           "silhouette itself is failing.\ndarken% near 0 on bright backgrounds = the "
           "effect only adds light (§5.7).\nstructure collapsing from dark to bright = the "
