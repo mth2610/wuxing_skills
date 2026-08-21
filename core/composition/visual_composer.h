@@ -174,6 +174,7 @@ void VFX_KillShieldShell(int handle);
 // does not sample the framebuffer; it draws the packed-texture/Fresnel shell.
 // Safe to call even when none are alive.
 void VFX_ShieldShell_DrawRefraction(Camera3D camera);
+void VFX_FlowShield_DrawRefraction(Camera3D camera);
 
 // ── F4. Character aura ──────────────────────────────────────────────────────
 // Three layers: discrete motes crossing the silhouette (the layer that actually
@@ -600,6 +601,7 @@ void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, floa
 void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
 int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
+int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 void VFX_ComposeFluidImpact(Vector3 pos);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
@@ -617,6 +619,11 @@ void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, floa
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
+void VFX_FlowShield_SetIntensity(int handle, float intensity01);
+void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
+int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
+void VFX_FlowShield_Stop(int handle);
+void VFX_KillFlowShield(int handle);
 void VFX_KillRefBands(int id);
 void VFX_KillRefParticles(int id);
 void VFX_SmokeTrail_Stop(int handle);

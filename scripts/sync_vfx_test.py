@@ -147,6 +147,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeContactSpark":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeEmberTrail":         ("emitter", "persistent", "persistent"),
     "VFX_ComposeShieldShell":        ("emitter", "persistent", "persistent"),
+    "VFX_ComposeFlowShield":         ("emitter", "persistent", "persistent"),
     "VFX_ComposeDecal":              ("event",   "burst",      "oneshot"),
     "VFX_ComposeLightShaft":         ("draw",    "timed",      "continuous"),
     "VFX_ComposePortalDisc":         ("draw",    "timed",      "continuous"),
@@ -188,6 +189,8 @@ FIXTURE_SPAWN_OVERRIDES = {
         "VFX_ComposeStrandTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, VFX_STRAND_ENERGY)",
     "VFX_ComposeShieldShell":
         "VFX_ShieldShell_Spawn($POS, VC_MAT_WATER, 1.5f, 1.0f)",
+    "VFX_ComposeFlowShield":
+        "VFX_FlowShield_Spawn($POS, VC_MAT_WATER, 1.5f, 1.0f)",
     # The kind is an enum and the inferred call would pass a bare 0; the
     # inferred radius (1.5 m) is a fireball, not a column. funnel=true,
     # height=5.0 — the owner's own hand-tuned values (05/08/2026); do not

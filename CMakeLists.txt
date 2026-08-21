@@ -350,6 +350,7 @@ configure_file(core/shaders/shock_ring.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shade
 configure_file(core/shaders/shock_ring.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/shock_ring.vs COPYONLY)
 configure_file(core/shaders/glass_shell.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/glass_shell.fs COPYONLY)
 configure_file(core/shaders/glass_shell.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/glass_shell.vs COPYONLY)
+configure_file(core/shaders/shield_flow_shell.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/shield_flow_shell.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_smooth.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_capture.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_capture_particle.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture_particle.fs COPYONLY)

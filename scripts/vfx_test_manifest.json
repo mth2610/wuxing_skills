@@ -162,6 +162,18 @@
       "draw_call": "VFX_ComposeEnergyOrb($POS, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
+      "source": "common/vc_flow_shield.inl",
+      "fn": "VFX_ComposeFlowShield",
+      "label": "FLOW SHIELD",
+      "category": "common",
+      "fixture": "persistent",
+      "lifecycle": "emitter",
+      "_auto": true,
+      "type": "persistent",
+      "spawn_call": "VFX_FlowShield_Spawn($POS, VC_MAT_WATER, 1.5f, 1.0f)",
+      "kill_fn": "VFX_KillFlowShield"
+    },
+    {
       "source": "common/vc_glint_sparkle.inl",
       "fn": "VFX_ComposeGlintSparkle",
       "label": "GLINT SPARKLE",

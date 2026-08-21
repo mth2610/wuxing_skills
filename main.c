@@ -1379,6 +1379,7 @@ int main(int argc, char **argv) {
     SceneTargets_SnapshotScene();
     MyBeginMode3D(camera);
     VFX_ShieldShell_DrawRefraction(camera);
+    VFX_FlowShield_DrawRefraction(camera);
     MyEndMode3D();
     CompositeScreenSpaceVFX(camera);
 

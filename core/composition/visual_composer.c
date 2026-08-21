@@ -68,6 +68,7 @@
 #include "common/vc_debris_shards.inl"
 #include "common/vc_ember_trail.inl"
 #include "common/vc_shield_shell.inl"
+#include "common/vc_flow_shield.inl"
 #include "common/vc_smoke_column.inl"
 #include "common/vc_smoke_trail.inl"
 #include "common/vc_beam.inl"
@@ -83,6 +84,7 @@ void VFX_Compose_Update(float dt)
     VC_DebrisShards_Update(dt);
     VC_EmberTrail_Update(dt);
     VC_ShieldShell_Update(dt);
+    VC_FlowShield_Update(dt);
     VC_SmokeColumn_Update(dt);
     VC_SmokeTrail_Update(dt);
     VC_Beam_Update(dt);
@@ -113,6 +115,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_DebrisShards_Draw3D(cam);
     VC_EmberTrail_Draw3D(cam);
     VC_ShieldShell_Draw3D(cam);
+    VC_FlowShield_Draw3D(cam);
     VC_SmokeColumn_Draw3D(cam);
     VC_SmokeTrail_Draw3D(cam);
     VC_Beam_Draw3D(cam);
