@@ -36,7 +36,14 @@ material {
         { uniform: u_emission,    kind: float,   field: emission },
         { uniform: u_thickness,   kind: float,   field: thickness },
         { uniform: u_dissolve,    kind: float,   field: dissolve },
-        { uniform: texture1,      kind: texture, field: texture1 },
+        // The caustics sheet the fake refraction reads. Declared here rather
+        // than hardcoded in CrystalMaterial_Load: a material naming its own asset
+        // is the material's business, and C holding the string is how a path
+        // outlives the thing that wanted it. NOT a vfx_surface_registry role —
+        // assets/TEXTURE_PACKING.md puts conventional detail maps outside that
+        // registry, which is exactly what this is.
+        { uniform: texture1,      kind: texture, field: texture1,
+          default: "assets/textures/tex_crystal.png" },
 
         // Safe default, re-pushed on every Begin: legacy immediate-mode crystal
         // draws baked their grow progress on the CPU and must not be scaled down

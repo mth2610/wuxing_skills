@@ -51,6 +51,29 @@ struct VfxParamDesc
 #define P_TEX(n, T, f)            { n, VFXP_TEXTURE, (unsigned short)offsetof(T, f), 0.0f, 0.0f, 0.0f, 0.0f }
 #define P_TEXFLAG(n, T, f)        { n, VFXP_TEXFLAG, (unsigned short)offsetof(T, f), 0.0f, 0.0f, 0.0f, 0.0f }
 
+/* A texture a material falls back to when the caller supplies none. Generated
+ * from a `.mat`'s `default:`, so no asset path is spelled in C. */
+typedef struct
+{
+    unsigned short offset; /* byte offset of the Texture2D field */
+    const char    *path;
+} VfxTextureDefault;
+
+/* Fill in every default whose field the caller left empty. */
+static void MatApplyTextureDefaults(const VfxTextureDefault *defaults, int count,
+                                    void *paramsBlob)
+{
+    unsigned char *base = (unsigned char *)paramsBlob;
+    for (int i = 0; i < count; i++)
+    {
+        Texture2D existing;
+        memcpy(&existing, base + defaults[i].offset, sizeof(existing));
+        if (existing.id != 0) continue;
+        Texture2D loaded = ResourceManager_LoadTexture(defaults[i].path);
+        memcpy(base + defaults[i].offset, &loaded, sizeof(loaded));
+    }
+}
+
 /* A table longer than the locs[] array would silently lose its tail uniforms,
  * which is exactly the invisible-failure mode this refactor exists to remove.
  * Fail the BUILD instead. */
@@ -364,10 +387,10 @@ static void CrystalMaterial_Bind(CrystalMaterial *outMat, Shader shader,
     outMat->layoutCount = (int)(sizeof(CRYSTAL_PARAMS) / sizeof(CRYSTAL_PARAMS[0]));
     if (params) outMat->params = *params;
 
-    if (outMat->params.texture1.id == 0)
-    {
-        outMat->params.texture1 = ResourceManager_LoadTexture("assets/textures/tex_crystal.png");
-    }
+    MatApplyTextureDefaults(CRYSTAL_PARAMS_DEFAULTS,
+                            (int)(sizeof(CRYSTAL_PARAMS_DEFAULTS) /
+                                  sizeof(CRYSTAL_PARAMS_DEFAULTS[0])),
+                            &outMat->params);
 
     MatFetchLocs(outMat->shader, outMat->layout, outMat->layoutCount, outMat->locs);
 }

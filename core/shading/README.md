@@ -90,6 +90,7 @@ fragment { /* GLSL, no uniform declarations — those are generated */ }
 | `texture` | a `Texture2D` field |
 | `texflag` | the same `Texture2D` field pushed as `int(id != 0)`; list it BEFORE the sampler when the shader gates on it |
 | `const` | a literal the material re-pushes on every Begin; needs `value`, has no field |
+| `texture` + `default` | the asset the loader falls back to when the caller left the field at id 0, so the path lives in the material rather than in C |
 | `extern` | declared in GLSL but NOT bound by the table — something sets it by name at runtime (`Material_SetFloat`). Without this the shader would reference an undeclared uniform |
 
 `stage: vertex` means the
@@ -110,3 +111,16 @@ something slightly wrong:
   material pushing its own replaces a clock accumulated from the pinned delta
   with the wall clock, and the effect stops being reproducible under
   `render_vfx_matrix.sh`. See `ENGINE_LANDMINES.md`.
+
+### Why a texture default is a PATH and not a registry role
+
+`assets/TEXTURE_PACKING.md` scopes `vfx_surface_registry` to packed VFX sheets
+with a machine-checked channel grammar, and puts conventional albedo/detail maps
+explicitly outside it. Every texture a material here wants — `tex_crystal.png`,
+`tex_ice_crystal.png`, `tex_rock_albedo.png` — is the second kind. Routing them
+through the registry would mean either registering sheets that break its channel
+contract, or widening a normative document to fit two call sites.
+
+So a material names its asset directly. The goal was never "use the registry"; it
+was "C should not be the thing holding an asset path", and a `default:` in the
+`.mat` achieves that without bending something else out of shape.

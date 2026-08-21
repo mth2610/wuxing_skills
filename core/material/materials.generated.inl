@@ -35,6 +35,11 @@ static const VfxParamDesc CRYSTAL_PARAMS[] = {
     P_CONST("u_growProgress", 1.0f),
 };
 
+/* Texture defaults: applied when the caller left the field at id 0. */
+static const VfxTextureDefault CRYSTAL_PARAMS_DEFAULTS[] = {
+    { offsetof(CrystalMaterialParams, texture1), "assets/textures/tex_crystal.png" },
+};
+
 /* core/shading/materials/effect_material.mat — 9 parameters, output: premultiplied */
 static const VfxParamDesc EFFECT_PARAMS[] = {
     P_COLOR("u_baseColor", EffectMaterialParams, baseColor),
