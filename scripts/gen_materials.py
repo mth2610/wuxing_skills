@@ -137,18 +137,79 @@ def parse_list(body, key):
     return [v.strip().strip('"') for v in m.group(1).split(",") if v.strip()]
 
 
-def parse_parameters(body, src):
-    m = re.search(r"\bparameters\s*:\s*\[(.*)\]", body, re.S)
+def extract_list(body, key):
+    """The [...] that follows `key:`, matched by BRACKET DEPTH.
+
+    A greedy regex runs to the last ] in the whole block, so with two list keys
+    present (`presets` and `parameters`) it hands back both concatenated. That is
+    how the first attempt at presets fed parameter entries into the preset parser.
+    """
+    m = re.search(r"\b%s\s*:\s*\[" % key, body)
     if not m:
+        return None
+    depth, i = 0, m.end() - 1
+    while i < len(body):
+        if body[i] == "[":
+            depth += 1
+        elif body[i] == "]":
+            depth -= 1
+            if depth == 0:
+                return body[m.end():i]
+        i += 1
+    raise MatError("`%s` list is never closed" % key)
+
+
+def split_entries(text):
+    r"""Every brace-balanced {...} body in `text`, at nesting depth 1.
+
+    A regex like \{([^}]*)\} cannot do this: a preset value is a C expression
+    and may itself contain braces — `(Color){170, 220, 255, 150}` — which would
+    end the entry early and silently truncate it.
+    """
+    out, depth, start = [], 0, None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            depth += 1
+            if depth == 1:
+                start = i + 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                out.append(text[start:i])
+                start = None
+    return out
+
+
+def split_fields(entry):
+    """`key: value` pairs, splitting only on commas at brace depth 0.
+
+    Same reason as above: `baseColor: (Color){170, 220, 255, 150}` holds three
+    commas that belong to the value, not to the field list.
+    """
+    fields, depth, buf = {}, 0, []
+    for ch in entry + ",":
+        if ch in "{([":
+            depth += 1
+        elif ch in "})]":
+            depth -= 1
+        if ch == "," and depth == 0:
+            piece = "".join(buf).strip()
+            buf = []
+            if ":" in piece:
+                k, v = piece.split(":", 1)
+                fields[k.strip()] = v.strip()
+            continue
+        buf.append(ch)
+    return fields
+
+
+def parse_parameters(body, src):
+    listing = extract_list(body, "parameters")
+    if listing is None:
         raise MatError("%s: material block has no `parameters`" % src)
     params = []
-    for entry in re.findall(r"\{([^}]*)\}", m.group(1)):
-        fields = {}
-        for pair in entry.split(","):
-            if ":" not in pair:
-                continue
-            k, v = pair.split(":", 1)
-            fields[k.strip()] = v.strip()
+    for entry in split_entries(listing):
+        fields = split_fields(entry)
         if "uniform" not in fields or "kind" not in fields:
             raise MatError("%s: parameter needs both `uniform` and `kind`: {%s}"
                            % (src, entry.strip()))
@@ -181,6 +242,23 @@ def parse_parameters(body, src):
     return params
 
 
+def parse_presets(body, src):
+    """Optional. A preset is a named set of param-struct defaults — the Material
+    Instance idea: one shader, one table, many authored looks. Values are C
+    expressions and are emitted verbatim, so a preset can say ELEMENT_COLOR_FIRE
+    and mean the engine's constant."""
+    listing = extract_list(body, "presets")
+    if listing is None:
+        return []
+    presets = []
+    for entry in split_entries(listing):
+        fields = split_fields(entry)
+        if "name" not in fields:
+            raise MatError("%s: a preset needs a `name` (the MaterialPreset enum)" % src)
+        presets.append(fields)
+    return presets
+
+
 def parse_mat(path):
     raw = path.read_text()
     src = str(path.relative_to(ROOT))
@@ -195,6 +273,7 @@ def parse_mat(path):
         "struct": parse_scalar(material, "struct", src),
         "includes": parse_list(material, "includes"),
         "parameters": parse_parameters(material, src),
+        "presets": parse_presets(material, src),
         "fragment": fragment,
     }
     if mat["output"] not in OUTPUTS:
@@ -206,6 +285,19 @@ def parse_mat(path):
         if p["uniform"] in seen:
             raise MatError("%s: `%s` listed twice" % (src, p["uniform"]))
         seen.add(p["uniform"])
+
+    # A preset may only set fields the parameters actually bind. Catching a typo
+    # here beats emitting a C initializer for a field that does not exist and
+    # letting the compiler point at generated code.
+    known = {p["field"] for p in mat["parameters"] if "field" in p}
+    for preset in mat["presets"]:
+        for key in preset:
+            if key in ("name", "texture_path"):
+                continue
+            if key not in known:
+                raise MatError("%s: preset %s sets `%s`, which no parameter binds "
+                               "(known: %s)"
+                               % (src, preset["name"], key, ", ".join(sorted(known))))
 
     # A parameter the fragment stage neither declares nor mentions is the drift
     # this whole format exists to stop. Vertex-stage ones are exempt: they are
@@ -257,6 +349,23 @@ def emit_table(mat):
     out = ("/* %s — %d parameters, output: %s */\nstatic const VfxParamDesc %s[] = {\n%s\n};\n"
            % (mat["src"], len(mat["parameters"]), mat["output"], mat["table"],
               "\n".join(rows)))
+
+    if mat["presets"]:
+        rows = []
+        for preset in mat["presets"]:
+            sets = ", ".join(".%s = %s" % (k, v) for k, v in preset.items()
+                             if k not in ("name", "texture_path"))
+            rows.append("    [%s] = { %s }," % (preset["name"], sets))
+        out += ("\n/* Presets: authored parameter sets, indexed by the enum. */\n"
+                "static const %s %s_PRESETS[] = {\n%s\n};\n"
+                % (mat["struct"], mat["table"], "\n".join(rows)))
+        tex = [p for p in mat["presets"] if p.get("texture_path")]
+        if tex:
+            rows = ['    [%s] = %s,' % (p["name"], p["texture_path"]) for p in tex]
+            out += ("\n/* A preset's texture is LOADED, so it cannot live in the\n"
+                    " * initializer above — it is a path resolved at Get() time. */\n"
+                    "static const char *%s_PRESET_TEXTURES[] = {\n%s\n};\n"
+                    % (mat["table"], "\n".join(rows)))
 
     defaults = [p for p in mat["parameters"] if p.get("default")]
     if defaults:

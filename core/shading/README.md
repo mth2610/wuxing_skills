@@ -112,6 +112,36 @@ something slightly wrong:
   with the wall clock, and the effect stops being reproducible under
   `render_vfx_matrix.sh`. See `ENGINE_LANDMINES.md`.
 
+### Presets — the Material Instance idea
+
+A `.mat` may carry a `presets` block: named sets of parameter-struct defaults for
+one shader and one table. `Material_Get(&mat, MAT_FIRE)` reads a generated
+`EffectMaterialParams` array indexed by the enum instead of the ~70-line `switch`
+that used to hold the same numbers in code.
+
+```
+presets : [
+    { name: MAT_FIRE, baseColor: ELEMENT_COLOR_FIRE, rimStrength: 1.2f },
+    { name: MAT_ICE,  baseColor: ((Color){170, 220, 255, 150}),
+      texture_path: "assets/textures/tex_ice_crystal.png" }
+]
+```
+
+Values are C expressions emitted verbatim, so a preset can name the engine's own
+colour constants. `texture_path` is separate from the rest because a texture is
+LOADED rather than initialised; it becomes a parallel table of paths that
+`Material_Get` resolves.
+
+The compiler rejects a preset that sets a key **no parameter binds** — a typo
+there would otherwise become a C initializer for a nonexistent field and the
+error would point at generated code.
+
+Two parsing details exist because presets broke the naive versions: entries are
+split by BRACE depth (a value like `(Color){170, 220, 255, 150}` carries commas
+and braces of its own) and the `[...]` after a key is matched by BRACKET depth (a
+greedy regex ran to the last `]` in the block and fed `parameters` entries into
+the preset parser).
+
 ### Why a texture default is a PATH and not a registry role
 
 `assets/TEXTURE_PACKING.md` scopes `vfx_surface_registry` to packed VFX sheets

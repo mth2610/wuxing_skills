@@ -51,3 +51,21 @@ static const VfxParamDesc EFFECT_PARAMS[] = {
     P_TEX("texture1", EffectMaterialParams, texture1),
     P_FLOAT("u_distortionStrength", EffectMaterialParams, distortionStrength),
 };
+
+/* Presets: authored parameter sets, indexed by the enum. */
+static const EffectMaterialParams EFFECT_PARAMS_PRESETS[] = {
+    [MAT_FIRE] = { .baseColor = ELEMENT_COLOR_FIRE, .rimStrength = 1.2f, .fresnelPower = 3.0f, .emissiveIntensity = 1.5f, .distortionStrength = 0.4f, .translucency = 0.0f },
+    [MAT_ICE] = { .baseColor = ((Color){170, 220, 255, 150}), .rimStrength = 1.5f, .fresnelPower = 5.0f, .emissiveIntensity = 0.5f, .distortionStrength = 0.0f, .translucency = 0.6f },
+    [MAT_WATER] = { .baseColor = ELEMENT_COLOR_WATER, .rimStrength = 1.0f, .fresnelPower = 4.0f, .emissiveIntensity = 0.6f, .distortionStrength = 0.25f, .translucency = 0.85f },
+    [MAT_PORTAL] = { .baseColor = ELEMENT_COLOR_TAIJI, .rimStrength = 2.0f, .fresnelPower = 2.0f, .emissiveIntensity = 2.0f, .distortionStrength = 0.6f, .translucency = 0.3f },
+    [MAT_ROCK] = { .baseColor = ((Color){150, 110, 80, 255}), .rimStrength = 0.3f, .fresnelPower = 2.0f, .distortionStrength = 0.0f, .translucency = 0.0f },
+    [MAT_METAL] = { .baseColor = ELEMENT_COLOR_METAL, .rimStrength = 1.8f, .fresnelPower = 6.0f, .emissiveIntensity = 1.0f, .distortionStrength = 0.08f, .translucency = 0.2f },
+    [MAT_GLASS] = { .baseColor = ((Color){200, 230, 255, 100}), .rimStrength = 1.5f, .fresnelPower = 4.0f, .emissiveIntensity = 0.2f, .distortionStrength = 0.1f, .translucency = 0.9f },
+};
+
+/* A preset's texture is LOADED, so it cannot live in the
+ * initializer above — it is a path resolved at Get() time. */
+static const char *EFFECT_PARAMS_PRESET_TEXTURES[] = {
+    [MAT_ICE] = "assets/textures/tex_ice_crystal.png",
+    [MAT_ROCK] = "assets/textures/tex_rock_albedo.png",
+};

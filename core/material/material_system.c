@@ -235,69 +235,27 @@ void MaterialSystem_Unload(void)
 void Material_Get(EffectMaterial *outMat, MaterialPreset preset)
 {
     if (!outMat) return;
-    EffectMaterialParams p = {0};
 
-    switch (preset)
+    /* The preset table is GENERATED from effect_material.mat. It used to be a
+     * ~70-line switch here, which is the wrong shape for what it is: seven sets
+     * of authored numbers, differing only in their values. A preset outside the
+     * table (MAT_CUSTOM, or a value from a future enum) yields zeroed params,
+     * exactly as the switch's `default: break;` did. */
+    EffectMaterialParams p = {0};
+    const int presetCount = (int)(sizeof(EFFECT_PARAMS_PRESETS) /
+                                  sizeof(EFFECT_PARAMS_PRESETS[0]));
+    if ((int)preset >= 0 && (int)preset < presetCount)
     {
-    case MAT_FIRE:
-        p.baseColor = ELEMENT_COLOR_FIRE;
-        p.rimStrength = 1.2f;
-        p.fresnelPower = 3.0f;
-        p.emissiveIntensity = 1.5f;
-        p.distortionStrength = 0.4f;
-        p.translucency = 0.0f;
-        break;
-    case MAT_ICE:
-        p.baseColor = (Color){170, 220, 255, 150}; // pale blue (Alpha 150 để trong suốt)
-        p.rimStrength = 1.5f;
-        p.fresnelPower = 5.0f;
-        p.emissiveIntensity = 0.5f;
-        p.distortionStrength = 0.0f;
-        p.translucency = 0.6f;
-        p.texture1 = ResourceManager_LoadTexture("assets/textures/tex_ice_crystal.png");
-        break;
-    case MAT_WATER:
-        p.baseColor = ELEMENT_COLOR_WATER;
-        p.rimStrength = 1.0f;
-        p.fresnelPower = 4.0f;
-        p.emissiveIntensity = 0.6f;
-        p.distortionStrength = 0.25f;
-        p.translucency = 0.85f;
-        break;
-    case MAT_PORTAL:
-        p.baseColor = ELEMENT_COLOR_TAIJI;
-        p.rimStrength = 2.0f;
-        p.fresnelPower = 2.0f;
-        p.emissiveIntensity = 2.0f;
-        p.distortionStrength = 0.6f;
-        p.translucency = 0.3f;
-        break;
-    case MAT_ROCK:
-        p.baseColor = (Color){150, 110, 80, 255}; // Màu đá đất nung
-        p.rimStrength = 0.3f;
-        p.fresnelPower = 2.0f;
-        p.distortionStrength = 0.0f;
-        p.translucency = 0.0f;
-        p.texture1 = ResourceManager_LoadTexture("assets/textures/tex_rock_albedo.png");
-        break;
-    case MAT_METAL:
-        p.baseColor = ELEMENT_COLOR_METAL;
-        p.rimStrength = 1.8f;
-        p.fresnelPower = 6.0f;
-        p.emissiveIntensity = 1.0f;
-        p.distortionStrength = 0.08f;
-        p.translucency = 0.2f;
-        break;
-    case MAT_GLASS:
-        p.baseColor = (Color){200, 230, 255, 100};
-        p.rimStrength = 1.5f;
-        p.fresnelPower = 4.0f;
-        p.emissiveIntensity = 0.2f;
-        p.distortionStrength = 0.1f;
-        p.translucency = 0.9f;
-        break;
-    default:
-        break;
+        p = EFFECT_PARAMS_PRESETS[preset];
+
+        /* A texture is loaded, not initialised, so it cannot sit in the table
+         * above. Its path can, which is the point: no asset path in C. */
+        const int texCount = (int)(sizeof(EFFECT_PARAMS_PRESET_TEXTURES) /
+                                   sizeof(EFFECT_PARAMS_PRESET_TEXTURES[0]));
+        if ((int)preset < texCount && EFFECT_PARAMS_PRESET_TEXTURES[preset])
+        {
+            p.texture1 = ResourceManager_LoadTexture(EFFECT_PARAMS_PRESET_TEXTURES[preset]);
+        }
     }
 
     Material_LoadCustom(outMat, &p);
