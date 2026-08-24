@@ -1387,8 +1387,15 @@ conclusion from structure, and never quote a structure ratio as the size of a
 regression.
 
 **What the decomposition showed here**, which the ratio hid: measured as the
-effect's own contribution, SHIELD SHELL swings +246.7/-140.0 luma on dark and
-only +45.0/-37.7 on white. The additive half is clipped by the ceiling on a
-bright plate, so all that survives is attenuation — and its attenuation barely
-varies between strand and gap. On a bright background an effect's contrast is
-bounded by variation in its COVERAGE, not in its colour.
+effect's own contribution, SHIELD SHELL swung +246.7/-140.0 luma on dark and only
++45.0/-37.7 on white. The additive half is clipped by the ceiling on a bright
+plate, so all that survives is attenuation — and its attenuation barely varied
+between strand and gap. On a bright background an effect's contrast is bounded by
+variation in its COVERAGE, not in its colour.
+
+Those figures are the shell as of `d2b5f32`. The coverage work in `e8795cb` moved
+them the way the diagnosis predicted — on a white plate `absvar` 19.9 -> 26.2,
+`body%` 1.07 -> 5.17, and `cover%` became far more background-independent (the
+dark-plate outlier narrowed from 4x to 2.3x). Kept here because the MECHANISM is
+the reusable part, and because it is the worked example of reading `absvar`
+instead of the ratio.
