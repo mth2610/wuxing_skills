@@ -303,8 +303,14 @@ static void ShieldShell_BindInputs(Camera3D cam)
     SetShaderValue(s_shieldShader.shader, s_shieldShader.depthLod, &s_shieldDepthLod, SHADER_UNIFORM_FLOAT);
 }
 
-/* `pos` is where the shell RESTS, not its centre: the sphere is lifted by its own
- * radius so it sits on the plane through `pos`.
+/* `pos` is the shell's GROUND POINT, not its centre: the sphere is lifted by half
+ * its radius, which leaves three quarters of it above the plane through `pos` and
+ * one quarter buried.
+ *
+ * The arithmetic, so the next change to it is not guesswork: for radius r and
+ * centre height h the fraction above ground is (h + r) / 2r. Setting that to 3/4
+ * gives h = r/2, and the lowest point lands at -r/2 — a quarter of the sphere's
+ * 2r height. A full-radius lift (h = r) is the tangent case, 100% above.
  *
  * It used to be the centre, and every caller passed a character's feet — so half
  * the bubble was underground. The shell draws after the 3D pass, against a depth
@@ -319,10 +325,18 @@ static void ShieldShell_BindInputs(Camera3D cam)
  * Resolved here rather than at the call site because a caller that forgets the
  * lift reproduces exactly this, and nothing about the result says "you passed the
  * wrong height". */
-static Vector3 ShieldCentre(Vector3 restPos, float radius)
+/* Centre height as a multiple of the radius: 0.5 => three quarters above
+ * ground. 1.0 would make the sphere tangent to it. */
+/* Both shells live in the same translation unit (visual_composer.c pulls every
+ * .inl in), so this is guarded rather than defined twice. */
+#ifndef SHIELD_BURIED_LIFT
+#define SHIELD_BURIED_LIFT 0.5f
+#endif
+
+static Vector3 ShieldCentre(Vector3 groundPos, float radius)
 {
-    restPos.y += radius;
-    return restPos;
+    groundPos.y += radius * SHIELD_BURIED_LIFT;
+    return groundPos;
 }
 
 static void ShieldShell_DrawPass(bool emissionOnly)

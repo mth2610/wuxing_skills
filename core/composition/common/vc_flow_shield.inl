@@ -170,12 +170,20 @@ static void FlowShield_BindInputs(void)
                    &s_flowShieldRefraction, SHADER_UNIFORM_FLOAT);
 }
 
-/* Same contract as the glass shell: `pos` is where the shell rests.
- * See vc_shield_shell.inl for why. */
-static Vector3 FlowShieldCentre(Vector3 restPos, float radius)
+/* Same contract as the glass shell: `pos` is the ground point and the
+ * sphere sits three quarters above it. See vc_shield_shell.inl. */
+/* Centre height as a multiple of the radius: 0.5 => three quarters above
+ * ground. 1.0 would make the sphere tangent to it. */
+/* Both shells live in the same translation unit (visual_composer.c pulls every
+ * .inl in), so this is guarded rather than defined twice. */
+#ifndef SHIELD_BURIED_LIFT
+#define SHIELD_BURIED_LIFT 0.5f
+#endif
+
+static Vector3 FlowShieldCentre(Vector3 groundPos, float radius)
 {
-    restPos.y += radius;
-    return restPos;
+    groundPos.y += radius * SHIELD_BURIED_LIFT;
+    return groundPos;
 }
 
 static void FlowShield_DrawPass(bool emissionOnly)
