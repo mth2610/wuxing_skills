@@ -170,6 +170,14 @@ static void FlowShield_BindInputs(void)
                    &s_flowShieldRefraction, SHADER_UNIFORM_FLOAT);
 }
 
+/* Same contract as the glass shell: `pos` is where the shell rests.
+ * See vc_shield_shell.inl for why. */
+static Vector3 FlowShieldCentre(Vector3 restPos, float radius)
+{
+    restPos.y += radius;
+    return restPos;
+}
+
 static void FlowShield_DrawPass(bool emissionOnly)
 {
     int activeCount = 0;
@@ -217,7 +225,8 @@ static void FlowShield_DrawPass(bool emissionOnly)
                        &s_flowShieldTiling, SHADER_UNIFORM_FLOAT);
         SetShaderValueTexture(s_flowShieldShader.shader, s_flowShieldShader.flowTex,
                               s_flowShieldFlowMap);
-        DrawCoreSphere(shield->pos, shield->radius, rings, rings, WHITE);
+        DrawCoreSphere(FlowShieldCentre(shield->pos, shield->radius),
+                       shield->radius, rings, rings, WHITE);
     }
 }
 
@@ -236,8 +245,33 @@ void VFX_FlowShield_DrawRefraction(Camera3D cam)
     SkillManager_BeginShader(s_flowShieldShader.shader);
     FlowShield_BindInputs();
     rlSetTexture(s_flowShieldMembrane.id);
-    rlDisableBackfaceCulling();
+    /* FAR WALL FIRST, THEN NEAR — two culled submissions, not one unculled one.
+     *
+     * This used to be a single rlDisableBackfaceCulling() draw, with the shader
+     * classifying each fragment by gl_FrontFacing. That gives both walls into one
+     * submission, but it gives them NO ORDER: a closed transparent volume has two
+     * surfaces over almost every pixel, and with depth-write off the winner is
+     * whichever the mesh happened to emit last. Measured by colouring
+     * gl_FrontFacing and sign(normal.y) into two channels, the sphere came out in
+     * three bands — far-upper, near-upper, near-lower — and the FAR-LOWER wall
+     * never appeared at all. The band boundary is where the emission order flips,
+     * which on a sphere projects to an ellipse: the hard seam across the middle.
+     *
+     * Culling per pass restores the order. The old comment here warned that
+     * "culling a wall by render state is fragile: a later pass can inherit the
+     * previous cull face" — true, and the answer is to SET the face explicitly on
+     * every pass rather than to avoid culling. Both passes still flush around the
+     * state change: ENGINE_LANDMINES says the batch-flush rule covers cull face,
+     * not just depth. */
+    rlEnableBackfaceCulling();
+    rlSetCullFace(RL_CULL_FACE_FRONT);   /* keep back faces: the FAR wall */
+    rlDrawRenderBatchActive();
     FlowShield_DrawPass(false);
+    rlDrawRenderBatchActive();
+    rlSetCullFace(RL_CULL_FACE_BACK);    /* keep front faces: the NEAR wall */
+    rlDrawRenderBatchActive();
+    FlowShield_DrawPass(false);
+    rlDrawRenderBatchActive();
     rlDrawRenderBatchActive();
     rlSetTexture(0);
     rlEnableBackfaceCulling();
@@ -250,8 +284,33 @@ void VFX_FlowShield_DrawRefraction(Camera3D cam)
     SkillManager_BeginShader(s_flowShieldShader.shader);
     FlowShield_BindInputs();
     rlSetTexture(s_flowShieldMembrane.id);
-    rlDisableBackfaceCulling();
+    /* FAR WALL FIRST, THEN NEAR — two culled submissions, not one unculled one.
+     *
+     * This used to be a single rlDisableBackfaceCulling() draw, with the shader
+     * classifying each fragment by gl_FrontFacing. That gives both walls into one
+     * submission, but it gives them NO ORDER: a closed transparent volume has two
+     * surfaces over almost every pixel, and with depth-write off the winner is
+     * whichever the mesh happened to emit last. Measured by colouring
+     * gl_FrontFacing and sign(normal.y) into two channels, the sphere came out in
+     * three bands — far-upper, near-upper, near-lower — and the FAR-LOWER wall
+     * never appeared at all. The band boundary is where the emission order flips,
+     * which on a sphere projects to an ellipse: the hard seam across the middle.
+     *
+     * Culling per pass restores the order. The old comment here warned that
+     * "culling a wall by render state is fragile: a later pass can inherit the
+     * previous cull face" — true, and the answer is to SET the face explicitly on
+     * every pass rather than to avoid culling. Both passes still flush around the
+     * state change: ENGINE_LANDMINES says the batch-flush rule covers cull face,
+     * not just depth. */
+    rlEnableBackfaceCulling();
+    rlSetCullFace(RL_CULL_FACE_FRONT);   /* keep back faces: the FAR wall */
+    rlDrawRenderBatchActive();
     FlowShield_DrawPass(true);
+    rlDrawRenderBatchActive();
+    rlSetCullFace(RL_CULL_FACE_BACK);    /* keep front faces: the NEAR wall */
+    rlDrawRenderBatchActive();
+    FlowShield_DrawPass(true);
+    rlDrawRenderBatchActive();
     rlDrawRenderBatchActive();
     rlSetTexture(0);
     rlEnableBackfaceCulling();
@@ -277,9 +336,10 @@ static void VC_FlowShield_Draw3D(Camera3D cam)
     {
         const VC_FlowShield *shield = &s_flowShields[i];
         if (!shield->active) continue;
-        float distance = Vector3Length(Vector3Subtract(shield->pos, cam.position));
+        Vector3 centrePos = FlowShieldCentre(shield->pos, shield->radius);
+        float distance = Vector3Length(Vector3Subtract(centrePos, cam.position));
         if (distance <= 0.001f) continue;
-        Vector2 centre = GetWorldToScreen(shield->pos, cam);
+        Vector2 centre = GetWorldToScreen(centrePos, cam);
         float radiusPx = shield->radius * screenH / (2.0f * distance * tanf(halfFovy));
         Rectangle r = {centre.x - radiusPx, centre.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f};
         if (!hasBounds) { bounds = r; hasBounds = true; }

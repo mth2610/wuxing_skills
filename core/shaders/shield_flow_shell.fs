@@ -42,6 +42,15 @@ float DepthContact(vec2 uv)
     float sceneDepth = texture(u_depthTex, uv).r;
     float fragmentDepth = max(-fragPosition.z, 0.0001);
     float gap = sceneDepth - fragmentDepth;
+    // NOTHING BEHIND IS NOT CONTACT. Where no geometry was drawn the depth
+    // texture reads 0, so `gap` goes negative, `t` clamps to 0 and the falloff
+    // below returns 1 — maximum contact across every pixel of sky. It renders as
+    // the shell's whole upper half blown to white with a razor-straight edge at
+    // the horizon, which is where the scene stops writing depth. Invisible until
+    // the shell was lifted to rest on the ground, because before that it never
+    // reached above the horizon. glass_shell.fs already carries this guard;
+    // this shader was written without it.
+    if (gap <= 0.0) return 0.0;
     float t = clamp(gap / max(u_contactThickness, 0.0001), 0.0, 1.0);
     float falloff = 1.0 - t;
     // Quadratic keeps a broad liquid transition around the terrain contact;

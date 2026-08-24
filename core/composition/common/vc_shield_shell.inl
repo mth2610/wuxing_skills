@@ -303,6 +303,28 @@ static void ShieldShell_BindInputs(Camera3D cam)
     SetShaderValue(s_shieldShader.shader, s_shieldShader.depthLod, &s_shieldDepthLod, SHADER_UNIFORM_FLOAT);
 }
 
+/* `pos` is where the shell RESTS, not its centre: the sphere is lifted by its own
+ * radius so it sits on the plane through `pos`.
+ *
+ * It used to be the centre, and every caller passed a character's feet — so half
+ * the bubble was underground. The shell draws after the 3D pass, against a depth
+ * buffer that already holds the floor, so the floor correctly rejected the FAR
+ * wall's lower half while the NEAR wall's lower half (in front of the floor)
+ * survived. What that renders as is a dome with a hard bright ellipse across the
+ * middle: the ellipse is the sphere meeting the floor, and the missing far wall
+ * is why the lower body looked hollow. Bisected by forcing alpha to 1 and drawing
+ * the far wall alone — still a crescent, so neither the shader nor draw order nor
+ * winding was responsible.
+ *
+ * Resolved here rather than at the call site because a caller that forgets the
+ * lift reproduces exactly this, and nothing about the result says "you passed the
+ * wrong height". */
+static Vector3 ShieldCentre(Vector3 restPos, float radius)
+{
+    restPos.y += radius;
+    return restPos;
+}
+
 static void ShieldShell_DrawPass(bool emissionOnly)
 {
     int activeCount = 0;
@@ -409,7 +431,7 @@ static void ShieldShell_DrawPass(bool emissionOnly)
         SetShaderValue(s_shieldShader.shader, s_shieldShader.contactColor,
                        &contactColor, SHADER_UNIFORM_VEC4);
 
-        DrawCoreSphere(shield->pos, radius, rings, rings, WHITE);
+        DrawCoreSphere(ShieldCentre(shield->pos, radius), radius, rings, rings, WHITE);
     }
 }
 
@@ -456,7 +478,30 @@ void VFX_ShieldShell_DrawRefraction(Camera3D cam)
      * coverage but no radiance.  The fragment shader classifies the face via
      * gl_FrontFacing instead, which makes the two interfaces inseparable from
      * the one submission that draws them. */
-    rlDisableBackfaceCulling();
+    /* FAR WALL FIRST, THEN NEAR — two culled submissions, not one unculled one.
+     *
+     * This used to be a single rlDisableBackfaceCulling() draw, with the shader
+     * classifying each fragment by gl_FrontFacing. That gives both walls into one
+     * submission, but it gives them NO ORDER: a closed transparent volume has two
+     * surfaces over almost every pixel, and with depth-write off the winner is
+     * whichever the mesh happened to emit last. Measured by colouring
+     * gl_FrontFacing and sign(normal.y) into two channels, the sphere came out in
+     * three bands — far-upper, near-upper, near-lower — and the FAR-LOWER wall
+     * never appeared at all. The band boundary is where the emission order flips,
+     * which on a sphere projects to an ellipse: the hard seam across the middle.
+     *
+     * Culling per pass restores the order. The old comment here warned that
+     * "culling a wall by render state is fragile: a later pass can inherit the
+     * previous cull face" — true, and the answer is to SET the face explicitly on
+     * every pass rather than to avoid culling. Both passes still flush around the
+     * state change: ENGINE_LANDMINES says the batch-flush rule covers cull face,
+     * not just depth. */
+    rlEnableBackfaceCulling();
+    rlSetCullFace(RL_CULL_FACE_FRONT);   /* keep back faces: the FAR wall */
+    rlDrawRenderBatchActive();
+    ShieldShell_DrawPass(false);
+    rlDrawRenderBatchActive();
+    rlSetCullFace(RL_CULL_FACE_BACK);    /* keep front faces: the NEAR wall */
     rlDrawRenderBatchActive();
     ShieldShell_DrawPass(false);
     rlDrawRenderBatchActive();
@@ -476,7 +521,30 @@ void VFX_ShieldShell_DrawRefraction(Camera3D cam)
                        &lightView, SHADER_UNIFORM_VEC3);
     /* Mirror the body submission: the far interface owns half of the ground
      * contact line, so it must emit in the same draw that gives it coverage. */
-    rlDisableBackfaceCulling();
+    /* FAR WALL FIRST, THEN NEAR — two culled submissions, not one unculled one.
+     *
+     * This used to be a single rlDisableBackfaceCulling() draw, with the shader
+     * classifying each fragment by gl_FrontFacing. That gives both walls into one
+     * submission, but it gives them NO ORDER: a closed transparent volume has two
+     * surfaces over almost every pixel, and with depth-write off the winner is
+     * whichever the mesh happened to emit last. Measured by colouring
+     * gl_FrontFacing and sign(normal.y) into two channels, the sphere came out in
+     * three bands — far-upper, near-upper, near-lower — and the FAR-LOWER wall
+     * never appeared at all. The band boundary is where the emission order flips,
+     * which on a sphere projects to an ellipse: the hard seam across the middle.
+     *
+     * Culling per pass restores the order. The old comment here warned that
+     * "culling a wall by render state is fragile: a later pass can inherit the
+     * previous cull face" — true, and the answer is to SET the face explicitly on
+     * every pass rather than to avoid culling. Both passes still flush around the
+     * state change: ENGINE_LANDMINES says the batch-flush rule covers cull face,
+     * not just depth. */
+    rlEnableBackfaceCulling();
+    rlSetCullFace(RL_CULL_FACE_FRONT);   /* keep back faces: the FAR wall */
+    rlDrawRenderBatchActive();
+    ShieldShell_DrawPass(true);
+    rlDrawRenderBatchActive();
+    rlSetCullFace(RL_CULL_FACE_BACK);    /* keep front faces: the NEAR wall */
     rlDrawRenderBatchActive();
     ShieldShell_DrawPass(true);
     rlDrawRenderBatchActive();
@@ -513,9 +581,10 @@ static void VC_ShieldShell_Draw3D(Camera3D cam)
     {
         const VC_ShieldShell *sh = &s_shieldShells[i];
         if (!sh->active) continue;
-        float distance = Vector3Length(Vector3Subtract(sh->pos, cam.position));
+        Vector3 centrePos = ShieldCentre(sh->pos, sh->radius);
+        float distance = Vector3Length(Vector3Subtract(centrePos, cam.position));
         if (distance <= 0.001f) continue;
-        Vector2 centre = GetWorldToScreen(sh->pos, cam);
+        Vector2 centre = GetWorldToScreen(centrePos, cam);
         float radiusPx = sh->radius * screenH / (2.0f * distance * tanf(halfFovy));
         Rectangle r = {centre.x - radiusPx, centre.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f};
         if (!hasBounds) { bounds = r; hasBounds = true; }

@@ -287,16 +287,15 @@ int main(void)
           Has(src, "VFX_RENDER_PASS_EMISSION, VFX_APPEARANCE_MAGIC") &&
           !Has(src, "VFX_SURFACE_MULTIPLIED"),
           "the shell uses the shared Magic body+emission appearance");
-    /* A sphere is a closed transparent volume.  Selecting its walls with mutable cull
-       state was fragile: an inherited face silently erased the far interface, leaving
-       its alpha/contact coverage without radiance.  Submit both windings explicitly and
-       classify the interface in the fragment shader, where the fact cannot leak across
-       passes.  Scoped to emission so the body pass cannot satisfy this by accident. */
-    CHECK(Has(src, "rlDisableBackfaceCulling") &&
-          !Has(src, "rlSetCullFace") &&
-          Has(src, "ShieldShell_DrawPass(false)") &&
-          CountIn(EmissionBlock(src), "ShieldShell_DrawPass(true)") == 1,
-          "each pass submits both shield interfaces in one cull-independent draw");
+    /* A sphere is a closed transparent volume, so each optical pass must submit BOTH
+       walls — and in distance order, far first. This was one unculled draw with the
+       fragment shader classifying by gl_FrontFacing, which does give both walls but
+       gives them no order. The inherited-cull-face risk that motivated it is real; the
+       answer is to SET the face on every pass, not to stop culling. Scoped to emission
+       so the body pass cannot satisfy the count by accident. */
+    CHECK(Has(src, "RL_CULL_FACE_FRONT") && Has(src, "RL_CULL_FACE_BACK") &&
+          CountIn(EmissionBlock(src), "ShieldShell_DrawPass(true)") == 2,
+          "each pass draws the far wall then the near wall, culling explicitly");
     CHECK(Has("core/shaders/glass_shell.fs", "gl_FrontFacing") &&
           !Has("core/shaders/glass_shell.fs", "u_wallPass"),
           "the shader classifies front and rear interfaces per fragment");
