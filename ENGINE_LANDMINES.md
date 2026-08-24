@@ -1361,3 +1361,34 @@ cooldown expiry and clamping all can.
 
 **Smell to look for:** an assertion whose message names an event ("cast at least
 once", "took damage", "spawned") while its expression reads a level.
+
+## `structure` is a RATIO — read `absvar` before concluding anything (20/08/2026)
+
+**Symptom.** SHIELD SHELL's `structure` reads 0.821 on a dark plate and 0.105 on a
+white one. That 7.8x drop has been quoted as "the internal depth was the
+background showing through", and it is the sentence that starts a shader rewrite.
+
+**Cause.** `structure = lum.std() / lum.mean()` over the effect's core, on the
+FINAL image — background included. A bright plate raises the denominator. Split
+apart on the actual captures:
+
+| plate | mean | std | structure |
+|---|---|---|---|
+| dark  |  81.7 | 67.1 | 0.821 |
+| white | 189.2 | 19.8 | 0.105 |
+
+The mean rises 2.3x and the real variation falls 3.4x. Both are true; the ratio
+multiplies them and reports 7.8x. The effect IS losing contrast, by a third of
+what the headline says.
+
+**Rule.** `scripts/analyze_vfx_matrix.py` now prints `absvar` — the numerator on
+its own, background subtracted. Compare absvar across plates before drawing a
+conclusion from structure, and never quote a structure ratio as the size of a
+regression.
+
+**What the decomposition showed here**, which the ratio hid: measured as the
+effect's own contribution, SHIELD SHELL swings +246.7/-140.0 luma on dark and
+only +45.0/-37.7 on white. The additive half is clipped by the ceiling on a
+bright plate, so all that survives is attenuation — and its attenuation barely
+varies between strand and gap. On a bright background an effect's contrast is
+bounded by variation in its COVERAGE, not in its colour.
