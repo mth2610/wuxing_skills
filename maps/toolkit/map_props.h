@@ -31,12 +31,34 @@
 
 // --- Ground plane -------------------------------------------------------
 
+// XZ bin grid over the ground mesh's triangles, so a height query touches the
+// handful of triangles that can actually contain (x,z) instead of all of them.
+// It is a pure ACCELERATOR: it indexes the same triangle array
+// GetRayCollisionMesh would walk, and answers from the same vertex data, so it
+// cannot reintroduce the class of bug the SampleGroundHeight comment below
+// warns about. Nothing here is owned by the caller; MapProp_UnloadGround frees
+// it. Built by MapProp_Create*; a surface whose grid failed to build silently
+// falls back to the raycast.
+typedef struct
+{
+    bool  built;
+    int   nx, nz;                  // bins along local X / Z
+    float minX, minZ;              // local-space origin of the grid
+    float invCellX, invCellZ;      // 1 / bin size
+    int   triCount;
+    int  *cellStart;               // nx*nz + 1 CSR offsets
+    int  *cellItems;               // triangle indices, binned
+    const float *verts;            // borrowed from Mesh.vertices
+    const unsigned short *indices; // borrowed from Mesh.indices, may be NULL
+} MapGroundLookup;
+
 typedef struct
 {
     Model model;
     Vector3 drawOffset; // added to worldCenter in MapProp_DrawGround — lets
                         // Create* pick where the model's local origin sits
                         // without ever mutating the mesh's own vertex data
+    MapGroundLookup lookup;
     bool ready;
 } MapGroundSurface;
 
@@ -71,11 +93,30 @@ void MapProp_UnloadGround(MapGroundSurface *ground);
 // resolution vs the smooth rendered surface — never fully pinned down) badly
 // enough to bury ground-hugging effects (FISSURE) meters underground.
 // Raycasting the real mesh can't have that class of bug — it reads the
-// exact same triangles DrawModel renders, no formula to get wrong. Slightly
-// more expensive per call (real ray-triangle test over the mesh) but this is
-// a low-frequency query (VFX placement, not per-frame-per-particle), so
-// correctness wins here. See CORE_API.md's DrawCoreGroundPatch for the
-// GroundHeightSampleFn signature this is meant to be wrapped for.
+// exact same triangles DrawModel renders, no formula to get wrong.
+//
+// COST, and why it is no longer a reason to ration the call (25/08/2026).
+// `GetRayCollisionMesh` tests EVERY triangle of the mesh. On VERDANT_PATH's
+// 7,938-triangle island that was enough to force every consumer to ration
+// itself: vc_ground_wave.inl down from 455 samples/frame (which took the grass
+// map to 13 fps) to 48, and vc_rune_circle.inl behind a cache on top of that.
+//
+// It now goes through MapGroundLookup, an XZ bin grid over the SAME triangle
+// array — ~2 candidate triangles instead of 7,938. Measured at map load with
+// WUXING_GROUND_LOOKUP_VERIFY=1, 4,096 probes over the island:
+//     raycast   232-292 us/sample   (varies run to run)
+//     grid         ~0.59 us/sample    (~400-500x, and that figure still
+//                                      carries the verifier's own overhead)
+//     agreement 4096/4096, 0 hit mismatches, max |dY| = 0.000204 m
+// 0.2 mm is float rounding between barycentric interpolation and the raycast's
+// Moller-Trumbore, not a difference in what was hit. The correctness argument
+// above is untouched: the grid changes which triangles are TESTED, never how a
+// height is derived. Set the env var to re-run the comparison whenever this
+// file, or raylib's mesh generation, changes.
+//
+// The raycast remains as the fallback for any surface whose grid did not build.
+// See CORE_API.md's DrawCoreGroundPatch for the GroundHeightSampleFn signature
+// this is meant to be wrapped for.
 float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z);
 
 // Same real-mesh raycast as MapProp_SampleGroundHeight, but preserves the

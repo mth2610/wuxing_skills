@@ -37,13 +37,18 @@
 // Azimuthal HEIGHT samples, deliberately far fewer than the slices and
 // deliberately independent of the tier.
 //
-// `MapProp_SampleGroundHeight` is a real RAY-TRIANGLE TEST against the terrain
-// mesh, and its own header says so in as many words: "slightly more expensive
-// per call ... but this is a low-frequency query (VFX placement, NOT
-// per-frame-per-particle)". The first version of this file sampled it once per
-// vertex — 65 slices x 7 radials = 455 raycasts EVERY FRAME — and the grass map
-// dropped to 13 fps. That is not the map being slow; that is this file using a
-// documented low-frequency query as a per-vertex one.
+// HISTORICAL, and kept because the shape of the sampling is still right.
+// `MapProp_SampleGroundHeight` used to be a real RAY-TRIANGLE TEST against
+// every triangle of the terrain mesh. The first version of this file sampled it
+// once per vertex — 65 slices x 7 radials = 455 raycasts EVERY FRAME — and the
+// grass map dropped to 13 fps, which is what drove the budget below.
+//
+// That cost is GONE as of 25/08/2026: the query now goes through an XZ bin grid
+// over the same triangles (232-292 us -> ~0.59 us per sample, ENGINE_LANDMINES.md
+// 21), so 455 samples would today cost ~0.27 ms rather than most of a frame.
+// The 24-azimuth budget is therefore no longer a performance ration — it stays
+// because it is ENOUGH, for the reason below, and raising it would change the
+// wave's silhouette for nothing. Raise it only if the shape needs it.
 //
 // The ground under a 5 m ring does not need 455 samples to be described. 24
 // azimuths gives a 15-degree arc between samples, and the height in between is

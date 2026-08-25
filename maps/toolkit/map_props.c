@@ -7,6 +7,7 @@
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
+#include <stdlib.h>   // getenv (WUXING_GROUND_LOOKUP_VERIFY)
 
 // Split into one .inl per prop kind (ground/strip/rocks) — each grew its own
 // shader + statics and stopped reading well as one flat file. #include'd

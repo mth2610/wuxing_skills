@@ -28,6 +28,7 @@
 | 18 | Shaders hot-load from disk, C does not — a measurement after a `.inl` edit describes the OLD binary | Anyone measuring a C-side fix through the game |
 | 19 | The MSAA window hint anti-aliases nothing when the scene renders into an FBO; and MSAA cannot touch a shader-decided edge | Anyone judging edge quality, adding a render target, or authoring a `step()`/`discard` silhouette |
 | 20 | The GLSL `#include` expander does not understand comments — a commented-out include is still expanded | Anyone writing a usage example, or a "does NOT include X" note, inside a shader comment |
+| 21 | Terrain height sampling was O(every triangle) — FIXED, and the rations it forced are obsolete; `GetGroundHeightAt` still answers `0.0` for "no data" | Anyone conforming a VFX, decal or formation to the ground |
 
 ---
 
@@ -1399,3 +1400,46 @@ them the way the diagnosis predicted — on a white plate `absvar` 19.9 -> 26.2,
 dark-plate outlier narrowed from 4x to 2.3x). Kept here because the MECHANISM is
 the reusable part, and because it is the worked example of reading `absvar`
 instead of the ratio.
+
+## 21. Terrain height sampling WAS O(every triangle) — fixed 25/08/2026, and the ration it forced is now obsolete
+
+**Symptom (historical).** Any per-frame terrain conforming cost milliseconds.
+`vc_ground_wave.inl` records the extreme version: 455 height samples a frame
+took the grass map to **13 fps**, and it rationed itself to 48. Adding a second
+consumer (`vc_rune_circle.inl`, 49 samples for a draped disc) cost **~6 ms of
+CPU per frame** on VERDANT_PATH and needed a round-robin cache of its own.
+
+**Cause.** `MapManager_GetGroundHeightAt` → `MapProp_SampleGroundHeight` →
+raylib `GetRayCollisionMesh`, which loops **every triangle** of the ground mesh.
+VERDANT_PATH's island is 7,938 triangles — not a huge mesh, which is exactly why
+this stayed unexamined: the per-call cost looks like it should be small and is
+not. Measured: **232-292 µs per sample.**
+
+**Fix.** `MapGroundLookup` (`maps/toolkit/map_props_ground.inl`) — an XZ bin
+grid built over the same triangle array at map load, so a query tests ~2
+candidate triangles instead of 7,938:
+
+    raycast   232-292 µs/sample    (varies run to run)
+    grid         ~0.59 µs/sample     (400-500x)
+    agreement 4096/4096 probes, 0 hit mismatches, max |dY| = 0.000204 m
+
+It is an ACCELERATOR, not a re-derivation. `map_props.h` carries a hard-won
+warning that re-deriving height from the source heightmap image was tried and
+buried effects metres underground; the grid does not do that — it indexes the
+same triangles the raycast walked and interpolates inside the one the raycast
+would have hit. `WUXING_GROUND_LOOKUP_VERIFY=1` re-runs the comparison against
+the real mesh at map load, and should be run after any change to that file or
+to raylib's mesh generation.
+
+**Rule, going forward.** Terrain conforming is now cheap enough to do plainly —
+`vc_rune_circle.inl` samples 49 points a frame (~29 µs) and caches nothing.
+Two things still apply:
+- Any surface whose grid fails to build silently falls back to the raycast, so a
+  conforming consumer should still be measured on a new map rather than assumed
+  fast.
+- `MapManager_GetGroundHeightAt` returns `0.0` when there is no map or the map
+  has no height hook, and 0.0 is a plausible height. Gate conforming on
+  `MapManager_SampleGroundSurfaceAt`, whose **bool return** distinguishes "no
+  data" from "height is zero" — otherwise every conformed effect teleports to
+  y = 0 on the flat arena and in the headless VFX harness. See
+  `core/docs/LANDMINES.md`, "A flat quad on the ground is not 'on the ground'".
