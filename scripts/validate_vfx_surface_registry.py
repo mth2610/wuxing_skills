@@ -74,6 +74,40 @@ def fail(message):
 
 DEBT = []
 LIES = []
+GHOSTS = []
+
+
+# ── Does the CODE agree that a profile is unused? ───────────────────────────
+#
+# Same class of defect as check_pixels(), found the same day and from the same
+# root: the manifest makes claims about things it never checks. Three profiles
+# carried `consumers: []` and an `orphaned` block while vc_smoke_trail.inl,
+# vc_smoke_column.inl and vc_beam.inl were all reading them by enum id. The
+# build printed "ORPHANED" for each at every configure, and R9 says an orphan is
+# deleted — so a stale empty list is a standing instruction to delete a sheet
+# that three live effects depend on, one of them the reference the others are
+# judged against.
+#
+# ONE DIRECTION ONLY, and the asymmetry is deliberate. "Declared orphaned but
+# referenced" is always wrong and is the direction that destroys work. The
+# reverse — declared consumed but no enum reference — is NOT a defect: decal
+# profiles are resolved by role and appearance rather than by id, so grepping
+# the enum would report four false alarms. Checking only the dangerous direction
+# is what keeps this check trustworthy enough to act on.
+def find_enum_references(enum_id, source_roots):
+    hits = []
+    for root in source_roots:
+        for path in sorted(root.rglob("*")):
+            if path.suffix not in (".c", ".inl"):
+                continue
+            if "generated" in path.name or "/tests/" in path.as_posix():
+                continue
+            try:
+                if enum_id in path.read_text(errors="ignore"):
+                    hits.append(path.name)
+            except OSError:
+                pass
+    return hits
 
 
 # ── Does the FILE carry the channels the declaration promises? ──────────────
@@ -241,6 +275,12 @@ def main():
         if not profile.get("provenance"):
             failures += fail(f"{name}: provenance is required")
         if not profile.get("consumers"):
+            refs = find_enum_references(profile.get("id", ""), [ROOT / "core"])
+            if refs:
+                GHOSTS.append(
+                    f"{name}: declares no consumer, but {', '.join(sorted(set(refs)))} "
+                    f"reference {profile.get('id')} directly"
+                )
             if not orphaned:
                 failures += fail(
                     f"{name}: no consumer — delete the profile and its assets, or declare "
@@ -370,6 +410,12 @@ def main():
     # — has been told something untrue about the asset. Not a hard failure only
     # because the three known cases predate the check and the fix is a
     # regeneration, not a one-line edit.
+    if GHOSTS:
+        print(f"\nDECLARED-ORPHAN BUT REFERENCED — {len(GHOSTS)}:")
+        for item in GHOSTS:
+            print(f"  ! {item}")
+        print("  R9 deletes an orphan, so an empty consumers list on a profile the")
+        print("  code still reads is an instruction to delete something in use.")
     if LIES:
         print(f"\nDECLARED-BUT-ABSENT — {len(LIES)} channel(s) the file does not carry:")
         for item in LIES:

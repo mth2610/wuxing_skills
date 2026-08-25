@@ -611,12 +611,11 @@
         0
       ],
       "seam": "tileable_both_axes",
-      "provenance": "packed 4-channel STRAND material sheet, all channels TILE. NOT interchangeable with smoke_strand.png, which is a SHAPE stretched once over a trail. Built by scripts/gen_volume_surface.py.",
-      "consumers": [],
-      "orphaned": {
-        "since": "2026-08-03",
-        "reason": "Generated ahead of its consumer: the volume smoke/fire column that core/deform was built for is not composed yet. Delete this profile and its sheet if that consumer does not land — the validator will keep printing this line until then."
-      },
+      "provenance": "packed 4-channel STRAND material sheet, all channels TILE. NOT interchangeable with smoke_strand.png, which is a SHAPE stretched once over a trail. Built by scripts/gen_volume_surface.py. The 'ORPHANED since 2026-08-03' note this carried was stale: the consumer it was generated ahead of arrived, and the empty consumers list then printed it as orphaned at every configure while three live effects read it. R9 says an orphan is deleted, so a stale empty list is an instruction to delete a sheet that is in use. Corrected 25/08/2026 against a grep of the enum id.",
+      "consumers": [
+        "VFX_ComposeSmokeTrail (vc_smoke_trail.inl)",
+        "VFX_ComposeSmokeColumn (vc_smoke_column.inl)"
+      ],
       "assets": {
         "body": {
           "path": "assets/textures/volume_surface_smoke.png",
@@ -649,12 +648,12 @@
         0
       ],
       "seam": "tileable_both_axes",
-      "provenance": "packed 4-channel STRAND material sheet, fire profile. Built by scripts/gen_volume_surface.py.",
-      "consumers": [],
-      "orphaned": {
-        "since": "2026-08-03",
-        "reason": "Generated ahead of its consumer: the volume smoke/fire column that core/deform was built for is not composed yet. Delete this profile and its sheet if that consumer does not land — the validator will keep printing this line until then."
-      },
+      "provenance": "packed 4-channel STRAND material sheet, fire profile. Built by scripts/gen_volume_surface.py. The 'ORPHANED since 2026-08-03' note this carried was stale: the consumer it was generated ahead of arrived, and the empty consumers list then printed it as orphaned at every configure while three live effects read it. R9 says an orphan is deleted, so a stale empty list is an instruction to delete a sheet that is in use. Corrected 25/08/2026 against a grep of the enum id.",
+      "consumers": [
+        "VFX_ComposeSmokeTrail (vc_smoke_trail.inl)",
+        "VFX_ComposeSmokeColumn (vc_smoke_column.inl)",
+        "VFX_ComposeBeam (vc_beam.inl)"
+      ],
       "assets": {
         "body": {
           "path": "assets/textures/volume_surface_fire.png",
@@ -687,12 +686,11 @@
         0
       ],
       "seam": "tileable_both_axes",
-      "provenance": "packed 4-channel STRAND material sheet, steam profile. Built by scripts/gen_volume_surface.py.",
-      "consumers": [],
-      "orphaned": {
-        "since": "2026-08-03",
-        "reason": "Generated ahead of its consumer: the volume smoke/fire column that core/deform was built for is not composed yet. Delete this profile and its sheet if that consumer does not land — the validator will keep printing this line until then."
-      },
+      "provenance": "packed 4-channel STRAND material sheet, steam profile. Built by scripts/gen_volume_surface.py. The 'ORPHANED since 2026-08-03' note this carried was stale: the consumer it was generated ahead of arrived, and the empty consumers list then printed it as orphaned at every configure while three live effects read it. R9 says an orphan is deleted, so a stale empty list is an instruction to delete a sheet that is in use. Corrected 25/08/2026 against a grep of the enum id.",
+      "consumers": [
+        "VFX_ComposeSmokeTrail (vc_smoke_trail.inl)",
+        "VFX_ComposeSmokeColumn (vc_smoke_column.inl)"
+      ],
       "assets": {
         "body": {
           "path": "assets/textures/volume_surface_steam.png",
