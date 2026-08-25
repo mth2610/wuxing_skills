@@ -168,6 +168,23 @@ that pairing for the terrain and is the reference.
 
 ### R6 — No channel may be constant
 
+**And "constant" includes "absent", which nothing checked until 25/08/2026.**
+A declaration in `vfx_surface_profiles.json` is a claim about the FILE, and for
+four registered assets it was false: three tube sheets declared `A:opacity`
+while shipping as palette or greyscale PNGs with no alpha channel at all, and
+`volume_noise.png` declares `A:field` as a plain RGB file. raylib expands the
+missing channel to a constant 255, so the consumer reads a constant and the
+grammar check above — which matches a STRING — cannot tell. VOLUME TRAIL is
+what that cost: its sheet painted filaments onto a surface that was opaque
+everywhere, and the effect read as crumpled foil because there were no gaps.
+
+`scripts/validate_vfx_surface_registry.py` now opens every registered PNG and
+cross-checks its IHDR (and `tRNS`) against the declaration, reporting anything
+declared but absent under **DECLARED-BUT-ABSENT**. It reads the header only, so
+it costs nothing at configure time. It does not yet detect a channel that
+exists but is constant in its pixels; that needs the decompressed image.
+
+
 A packed sheet exists to use all four. `unused` is not a legal slot. If a
 layout leaves a channel with nothing to carry, the sheet does not belong in
 that layout.
@@ -223,3 +240,4 @@ registry unexplained.
 |---|---|---|---|---|
 | 2026-08-03 | AI (Core Agent) | all | `assets/vfx_surface_profiles.json`, `scripts/gen_smoke_strand_texture.py`, `scripts/gen_flow_maps.py`, `core/vfx_surface_registry.c`, `core/trails/shaders/trail_deform.fs` | 1 ground-truth; §2 layouts `FLOW`/`OPAQUE`/`FLIPBOOK` are 3 project convention, newly decided |
 | 2026-08-25 | AI (Core Agent) | R5 | `assets/TEXTURE_PACKING.md`, `core/tests/texture_packing_test.c` | R5's outcome unchanged (still no mipmaps); its REASON corrected from a global claim to a per-layout classification — ground truth is the audit of all 21 live registered assets, the mippability verdict per layout is inferred from what each channel means |
+| 2026-08-25 | AI (Core Agent) | R6 | `scripts/validate_vfx_surface_registry.py`, `assets/TEXTURE_PACKING.md` | ground truth: 4 registered assets declare a channel their PNG does not carry (found by the new header cross-check, not inferred); the check itself reads IHDR/tRNS only, so absent-channel detection is exact and constant-pixel detection is still missing |

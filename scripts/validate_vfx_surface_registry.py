@@ -8,6 +8,7 @@ because the alternative already cost a debugging session.
 
 import json
 import re
+import struct
 import sys
 from pathlib import Path
 
@@ -72,6 +73,76 @@ def fail(message):
 
 
 DEBT = []
+LIES = []
+
+
+# ── Does the FILE carry the channels the declaration promises? ──────────────
+#
+# Added 25/08/2026 after the whole of this validator turned out to check only
+# what the JSON SAYS. All three VOLUME TRAIL tube sheets declared
+# `A:opacity` and shipped with no alpha channel at all — energy_volume.png is a
+# palette PNG with no tRNS, smoke_volume.png and fire_volume.png are plain
+# greyscale — so raylib expanded alpha to a constant 255 and the sheets painted
+# filaments onto a surface that was opaque everywhere. The effect read as
+# crumpled foil, the declaration had been wrong since the file was written, and
+# nothing in the build could see it, because the grammar check above matches a
+# STRING.
+#
+# Existence is read from IHDR and tRNS alone — no decompression, so this costs
+# nothing at configure time and is exact. Constant-value detection needs the
+# pixels and is done only for small sheets; see check_pixels().
+def png_header(path):
+    """(width, height, bit_depth, colour_type, has_trns) or None if unreadable."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if len(data) < 33 or data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    width, height, depth, ctype = struct.unpack(">IIBB", data[16:26])
+    interlace = data[28]
+    return width, height, depth, ctype, (b"tRNS" in data), interlace
+
+
+# Which of R/G/B/A a PNG colour type physically carries. Greyscale duplicates
+# its one channel across R/G/B, which is why a grey sheet can legitimately
+# declare three colour channels and still be lying about the fourth.
+CTYPE_CHANNELS = {
+    0: {"R", "G", "B"},           # greyscale
+    2: {"R", "G", "B"},           # truecolour
+    3: {"R", "G", "B"},           # palette (A only via tRNS)
+    4: {"R", "G", "B", "A"},      # greyscale + alpha
+    6: {"R", "G", "B", "A"},      # truecolour + alpha
+}
+
+
+def check_pixels(label, path, text):
+    """Cross-check a channels declaration against the actual PNG."""
+    match = CHANNEL_RE.match((text or "").strip())
+    if match is None:
+        return 0          # the grammar check already reported this
+    hdr = png_header(path)
+    if hdr is None:
+        return 0          # missing-file is reported by the caller
+    _w, _h, _depth, ctype, has_trns, _interlace = hdr
+
+    present = set(CTYPE_CHANNELS.get(ctype, {"R", "G", "B", "A"}))
+    if ctype == 3 and has_trns:
+        present.add("A")
+
+    for channel in ("R", "G", "B", "A"):
+        slot = match.group(f"{channel.lower()}_slot")
+        if slot == "unused":
+            continue      # already counted as debt by check_channels()
+        if channel not in present:
+            LIES.append(
+                f"{label}: declares {channel}:{slot} but {path.name} is PNG colour "
+                f"type {ctype}"
+                + (" with no tRNS" if ctype == 3 else "")
+                + f" — it has no {channel} channel, so the consumer reads a "
+                f"constant (TEXTURE_PACKING.md R6)"
+            )
+    return 0
 
 
 def check_channels(label, text, flipbook):
@@ -214,6 +285,8 @@ def main():
                 continue
             if not (ROOT / path).is_file():
                 failures += fail(f"{name}/{role}: missing file {path}")
+            else:
+                failures += check_pixels(f"{name}/{role}", ROOT / path, channels)
             if not channels:
                 failures += fail(f"{name}/{role}: missing channel semantics")
             else:
@@ -290,6 +363,21 @@ def main():
         for item in DEBT:
             print(f"  · {item}")
         print("  Fold each into its body sheet as FLOW (assets/TEXTURE_PACKING.md §4).")
+    # Reported separately from DEBT, and worded harder, because it is a
+    # different kind of problem. DEBT is a sheet that ADMITS to a constant
+    # channel; this is a sheet whose declaration and whose pixels disagree, so
+    # every reader of the manifest — including this validator, until 25/08/2026
+    # — has been told something untrue about the asset. Not a hard failure only
+    # because the three known cases predate the check and the fix is a
+    # regeneration, not a one-line edit.
+    if LIES:
+        print(f"\nDECLARED-BUT-ABSENT — {len(LIES)} channel(s) the file does not carry:")
+        for item in LIES:
+            print(f"  ! {item}")
+        print("  Regenerate the sheet with the channel, or correct the declaration.")
+        print("  Reference recipe: scripts/gen_volume_surface.py derives RGB and A")
+        print("  from one field with DIFFERENT curves — a floor and a gamma for")
+        print("  colour, a threshold for coverage.")
     return 0
 
 
