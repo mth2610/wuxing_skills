@@ -21,6 +21,7 @@ uniform float     u_scanSpeed;
 uniform float     u_scanStrength;
 uniform float     u_heightFadeOff;
 uniform float     u_coverFloor;
+uniform float     u_sphereDomain;
 
 float aura_vnoise3(vec3 p) {
     vec3 i = floor(p);
@@ -50,8 +51,21 @@ float aura_fbm3(vec3 p) {
 }
 
 void main() {
+    // THE VIEW VECTOR WAS GEOMETRICALLY MEANINGLESS, on a shader whose whole
+    // job is a rim. This material is drawn on immediate-mode geometry
+    // (DrawCoreSphere), so BeginMode3D has already applied model-view on the CPU
+    // and the attributes arrive in VIEW SPACE — matModel would apply it a second
+    // time, which is why aura_shell.vs no longer calls VS_FinalOutput
+    // (glass_shell.vs carries the same note for the same reason). And in view
+    // space the camera sits at the ORIGIN, so the view vector is
+    // normalize(-fragPosition); `viewPos - fragPosition` subtracted a
+    // view-space point from a world-space camera. The result is still a unit
+    // vector and still produces a plausible-looking gradient, which is exactly
+    // why it survived — ENGINE_LANDMINES 9 and the fs_header.glsl comment both
+    // warn that this failure does not look like a failure. Measured: the ENERGY
+    // ORB had no visible fresnel rim at all.
     vec3 nrm     = normalize(fragNormal);
-    vec3 viewDir = normalize(viewPos - fragPosition);
+    vec3 viewDir = normalize(-fragPosition);
     float fresnel = calcFresnel(nrm, viewDir, u_fresnelPower);
 
     // NOT folded, deliberately. This feeds fbm3 — an APERIODIC domain — so
@@ -59,13 +73,35 @@ void main() {
     // The fold that core/uv offers is exact for a sine and for a REPEAT-wrapped
     // sampler, and for nothing else; the scan below qualifies and this does not.
     float yScroll = fragPosition.y * u_heightScale - u_time * u_scrollSpeed;
-    vec3 dom = vec3(nrm.x * u_noiseScale, yScroll, nrm.z * u_noiseScale);
-
-    float n1    = aura_fbm3(dom);
-    float n2    = aura_fbm3(dom * 1.6 + vec3(3.7, -2.1, 5.3));
-    float ridge = 1.0 - abs(2.0 * n1 - 1.0);
-    float wisp  = ridge * (0.3 + 0.7 * n2);
-    wisp = smoothstep(0.25, 0.75, wisp);
+    float wisp;
+    if (u_sphereDomain > 0.5) {
+        // A SPHERE HAS NO "AROUND AND UP". The cylinder domain below is
+        // (radial x, height, radial z), which on a ball smears the field into
+        // vertical bands and keys it to a view-space normal that turns with the
+        // camera. Rebuilt from the mesh UV instead: the sphere's own direction
+        // is stable under rotation, and continuous across the u seam and both
+        // poles where 2D noise on the raw UV is not.
+        float th = fragTexCoord.x * 6.28318530718;
+        float ph = fragTexCoord.y * 3.14159265;
+        float sp = sin(ph);
+        vec3 dir = vec3(sp * cos(th), cos(ph), sp * sin(th));
+        vec3 dom = dir * u_noiseScale
+                 + vec3(0.0, -u_time * u_scrollSpeed * 0.35, 0.0);
+        // AND THE OLD PATH ERASED ITS OWN STRUCTURE. It computed a ridge — the
+        // right primitive — and then ran it through smoothstep(0.25, 0.75), a
+        // band wide enough to turn every crest back into a blob. That is why
+        // the orb measured detail 0.062: the filament field was there and was
+        // deliberately smoothed away. Keep the crest, and warp the domain so it
+        // curls (core/shaders/common/noise.glsl).
+        wisp = pow(smoothstep(0.30, 0.98, filaments3(dom, 2.6)), 3.2);
+    } else {
+        vec3 dom = vec3(nrm.x * u_noiseScale, yScroll, nrm.z * u_noiseScale);
+        float n1    = aura_fbm3(dom);
+        float n2    = aura_fbm3(dom * 1.6 + vec3(3.7, -2.1, 5.3));
+        float ridge = 1.0 - abs(2.0 * n1 - 1.0);
+        wisp  = ridge * (0.3 + 0.7 * n2);
+        wisp = smoothstep(0.25, 0.75, wisp);
+    }
     
     // Periodic, so the clock CAN be folded — and must be, or u_time*u_scanSpeed
     // outgrows float32's ability to resolve a fraction of a cycle and the scan
@@ -99,7 +135,23 @@ void main() {
     alpha *= mix(1.0 - fragTexCoord.y, 1.0, clamp(u_heightFadeOff, 0.0, 1.0));
 
     float glowBlend = clamp(wisp * 0.5 + scan * 0.2, 0.0, 1.0);
-    vec3  col       = mix(u_bodyColor.rgb, u_glowColor.rgb, glowBlend);
+    // HEADROOM. A rim cannot be brighter than a body that is already at the top
+    // of the range: the orb's body and glow are both saturated warm, so
+    // `col += glow * fresnel` added more of a hue the surface already had at a
+    // value the tone map could not separate, and the rim simply did not appear
+    // however far u_rimStrength was pushed. Dropping the sphere's base opens the
+    // room the rim and the filaments need. Same lesson the rune circle paid for:
+    // spend the budget on contrast, not on brightness.
+    vec3 baseCol = mix(u_bodyColor.rgb * mix(1.0, 0.30, u_sphereDomain),
+                       u_glowColor.rgb, glowBlend);
+    vec3  col       = baseCol;
+    // A VALUE RAMP, not just a hue ramp. With the coverage floor holding alpha
+    // near constant, colour is the ONLY channel left that can carry internal
+    // contrast — and mixing body to glow spans two similar values, so the ball
+    // came out uniformly mid. The filament crests get a third, much brighter
+    // tier so there is something for the eye (and for bloom) to find.
+    vec3 hot = mix(u_glowColor.rgb, vec3(1.0), 0.62);
+    col = mix(col, hot, clamp(pow(wisp, 1.6) * u_sphereDomain, 0.0, 1.0));
     col += u_glowColor.rgb * fresnel * u_rimStrength * 0.5;
 
     finalColor = VFX_ResolveBody(col, 1.0, alpha);

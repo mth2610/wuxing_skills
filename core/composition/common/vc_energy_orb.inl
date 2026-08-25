@@ -155,6 +155,9 @@ void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius,
         // area on a dark background and 1.04% on a white one — see §11b.
         s_orbShell.params.heightFadeOff = 1.0f;
         s_orbShell.params.coverFloor = s_orbCoverFloor;
+        // This is a sphere: take the sphere noise domain and the filament field
+        // rather than the cylinder's around-and-up wisps.
+        s_orbShell.params.sphereDomain = 1.0f;
         AuraShellMaterial_Begin(s_orbShell);
         DrawCoreSphere(center, r * k_orbShells[i].radiusScale, 20, 20, WHITE);
         // Flush before the next shell's uniforms land, or the batch draws all

@@ -241,6 +241,7 @@ typedef struct
     float topY;         // world Y of cylinder top rim (for top-edge fade)
     float heightFadeOff;// 1 = cancel the cylinder bottom-to-top alpha fade (0 = keep it)
     float coverFloor;   // base coverage the noise modulates instead of gating (0 = off)
+    float sphereDomain; // 1 = build the noise domain from a SPHERE's own direction (0 = cylinder)
 } AuraShellMaterialParams;
 
 typedef struct

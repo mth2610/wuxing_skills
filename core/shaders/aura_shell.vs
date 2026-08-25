@@ -31,5 +31,33 @@ void main() {
            * u_displaceAmp * 0.25;
     disp.z = n.z * wobble * u_displaceAmp;
 
-    VS_FinalOutput(vertexPosition + disp);
+    // NOT VS_FinalOutput. The only consumer draws this with DrawCoreSphere,
+    // i.e. immediate mode, and BeginMode3D has already applied model-view on
+    // the CPU — VS_FinalOutput would multiply matModel (= model x view for every
+    // draw inside MyBeginMode3D, ENGINE_LANDMINES 9) a SECOND time and skew both
+    // the position and the normal. glass_shell.vs carries the same note for the
+    // same mesh; this file did not, and the fragment stage's fresnel was reading
+    // a doubly-transformed normal against a world-space camera.
+    // POSITION AND NORMAL NEED DIFFERENT TREATMENT HERE, and that is the whole
+    // trap. rlgl immediate mode transforms VERTICES on the CPU but passes
+    // NORMALS through raw, so DrawCoreSphere hands this stage a view-space
+    // position next to a world-space normal. Proved, not assumed: rendering
+    // fract(length(fragPosition)) gives a gradient CONCENTRIC with the
+    // silhouette, which is only true if the minimum is the fragment nearest the
+    // camera (ENGINE_LANDMINES 9's prescribed probe).
+    //
+    //   position: already view space -> pass through, do NOT re-apply matModel
+    //   normal:   still world space  -> matModel (= model x view) puts it in
+    //             view space, which is what VS_FinalOutput was doing correctly
+    //
+    // The original code applied matModel to BOTH, so the position was
+    // double-transformed; a first attempt at this fix removed it from both, so
+    // the normal was left in world space and dotted against a view-space view
+    // vector. Either way the fresnel is meaningless, and both look like a
+    // plausible gradient rather than like a bug.
+    vec3 dp = vertexPosition + disp;
+    fragPosition = dp;
+    fragNormal   = normalize(vec3(matModel * vec4(vertexNormal, 0.0)));
+    fragTexCoord = vertexTexCoord;
+    gl_Position  = mvp * vec4(dp, 1.0);
 }

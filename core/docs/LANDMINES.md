@@ -2856,3 +2856,64 @@ and a one-line comment telling the next consumer to do the same is what a
 missing index looks like from above. The tell here was that a SECOND consumer
 independently arrived at the same workaround — that is not two effects being
 expensive, that is one query being wrong.
+
+## rlgl immediate mode transforms VERTICES on the CPU and passes NORMALS through raw (25/08/2026)
+
+**Symptom.** ENERGY ORB, drawn with `aura_shell.fs` — a shader whose whole job
+is a fresnel rim — had **no visible rim at all**, at any `rimStrength`. It read
+as a flat mottled ball. `detail` 0.062, `absvar` 21.3.
+
+**Cause.** `DrawCoreSphere` is immediate mode, and the two attributes do not
+arrive in the same space:
+
+| attribute | space on arrival | what it needs |
+|---|---|---|
+| `vertexPosition` | **view** (rlgl transformed it on the CPU) | pass through |
+| `vertexNormal` | **world** (passed through raw) | × `matModel` (= model × view) |
+
+`aura_shell.vs` called `VS_FinalOutput`, which applies `matModel` to BOTH — so
+the position was transformed twice and the normal was right. The fragment stage
+then used `normalize(viewPos - fragPosition)`, subtracting a doubly-transformed
+view-space point from a world-space camera. Every term downstream was garbage,
+and — the reason it survived — garbage that still produces a smooth plausible
+gradient.
+
+A first attempt at the fix removed `matModel` from both, following
+`glass_shell.vs`. That left the normal in WORLD space, dotted against a
+view-space view vector: a different wrong answer, also smooth, also plausible.
+It moved `detail` 0.062 → 0.060, which correctly reported that nothing had been
+fixed.
+
+**Rule.** For immediate-mode geometry: `fragPosition = vertexPosition`,
+`fragNormal = normalize(vec3(matModel * vec4(vertexNormal, 0.0)))`,
+`viewDir = normalize(-fragPosition)` — the camera is at the origin in view
+space, so `viewPos` must not appear at all. Do not copy one line of that from a
+working shader without the other two.
+
+**And use §9's prescribed probe rather than reasoning about it.** Two of my
+three guesses here were wrong. Rendering `fract(length(fragPosition))` settles
+it in one capture: the gradient is CONCENTRIC with the silhouette if the space
+is view (minimum = nearest the camera) and an OFF-CENTRE crescent if it is
+world (minimum = facing the world origin). Two notes on running it: keep the
+output below the 1.25 bloom threshold or the post chain smears one region into
+another, and never encode the answer as a NUMBER — ACES plus grade makes any
+numeric readout unrecoverable. A threshold or a shape survives; a value does
+not.
+
+## A rim cannot be brighter than a body that is already at the top of the range (25/08/2026)
+
+**Symptom.** With the space bug above fixed, ENERGY ORB *still* had no rim.
+
+**Cause.** `col += u_glowColor.rgb * fresnel * u_rimStrength * 0.5` adds the
+element's glow hue on top of a body already mixed toward that same glow, on a
+material whose coverage floor holds alpha near constant. Both are saturated
+warm and both are near the top of the tone map's range, so the rim added more
+of a hue the surface already had, at a value ACES could not separate. Pushing
+`rimStrength` does nothing, which is the tell.
+
+**Rule.** A rim is VALUE contrast, not extra hue. Make room for it by dropping
+the body — the orb's base went to 0.30 of the material colour on the sphere
+path and `detail` went 0.062 → 0.174, `absvar` 21.3 → 42.5. Same lesson the
+rune circle paid for from the other direction ("an effect that is uniformly hot
+has no internal contrast left to read"); this is its mirror image, and both say
+spend the budget on contrast rather than on brightness.
