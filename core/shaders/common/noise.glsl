@@ -126,3 +126,42 @@ float vnoise3(vec3 p) {
 float fbm3(vec3 p) {
     return (vnoise3(p) * 0.667 + vnoise3(p * 2.13 + vec3(17.3, 5.7, 11.1)) * 0.333);
 }
+
+// ── Ridged filaments ────────────────────────────────────────────────────────
+//
+// Value noise gives BLOBS. Folding it about its mid-level — `1 - |n - 0.5|*2` —
+// turns that contour into a sharp crest, and the maxima of a crest field are
+// CONNECTED BRANCHING LINES. That is the difference between an effect that
+// looks like weather on a ball and one that looks like energy running through
+// a shell, and it is two instructions.
+//
+// Added 25/08/2026 after the same field was wanted by three effects in a row
+// (flow shield, energy orb, volume trail); it lived in shield_flow_shell.fs
+// first. Anything sampling this on a sphere should feed it the surface
+// DIRECTION, not a UV: 2D noise on a sphere's raw UV seams at u = 0 and
+// pinwheels at both poles.
+float ridged3(vec3 p) {
+    return 1.0 - abs(vnoise3(p) - 0.5) * 2.0;
+}
+
+// Three octaves, and the third is what makes the network BRANCH: two give a set
+// of parallel-ish crests, the third breaks them into a web.
+float ridgedFbm3(vec3 p) {
+    float v = 0.54 * ridged3(p);
+    v += 0.30 * ridged3(p * 2.17 + vec3(11.3, -4.7, 6.1));
+    v += 0.16 * ridged3(p * 4.61 - vec3(5.9, 8.2, -3.4));
+    return clamp(v, 0.0, 1.0);
+}
+
+// DOMAIN-WARPED ridged filaments — the one the owner picked off a four-way
+// capture on 25/08/2026. Displacing the sample point by a coarser noise before
+// ridging it stops the crests running in statistically straight lines and makes
+// them CURL, which is what a fluid does and what more octaves alone never buy.
+// `warp` is how far the domain is displaced, in sample-space units; ~2.6 is the
+// shipping value on the flow shield.
+float filaments3(vec3 p, float warp) {
+    vec3 w = vec3(vnoise3(p * 0.63 + 4.1),
+                  vnoise3(p * 0.63 + 19.7),
+                  vnoise3(p * 0.63 - 8.3)) - 0.5;
+    return ridgedFbm3(p + w * warp);
+}

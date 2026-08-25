@@ -95,24 +95,10 @@ vec3 ShieldDir(vec2 uv)
     return vec3(s * cos(th), cos(ph), s * sin(th));
 }
 
-// Ridged noise: the |x - 0.5| fold turns a smooth field's mid-level CONTOUR
-// into a sharp crest, so the maxima form connected branching lines instead of
-// blobs. This is the whole difference between the previous cloud mottling and
-// the reference's veins, and it is two extra instructions.
-float ShieldRidge(vec3 p)
-{
-    return 1.0 - abs(vnoise3(p) - 0.5) * 2.0;
-}
-
-// Three octaves, and the third is what makes the network BRANCH: two give a
-// set of parallel-ish crests, the third breaks them into a web.
-float ShieldRidgedFbm(vec3 p)
-{
-    float v = 0.54 * ShieldRidge(p);
-    v += 0.30 * ShieldRidge(p * 2.17 + vec3(11.3, -4.7, 6.1));
-    v += 0.16 * ShieldRidge(p * 4.61 - vec3(5.9, 8.2, -3.4));
-    return clamp(v, 0.0, 1.0);
-}
+// ShieldRidge / ShieldRidgedFbm / the warped variant moved to
+// core/shaders/common/noise.glsl as ridged3 / ridgedFbm3 / filaments3 on
+// 25/08/2026, once the energy orb and the volume trail wanted the same field.
+// Only the mode selector and the cellular candidate remain local.
 
 // Cellular F2-F1: the boundary between neighbouring feature points, which is a
 // CRACK network rather than a ridge network — hard straight-ish joints meeting
@@ -140,26 +126,18 @@ float ShieldCells(vec3 p)
 
 float ShieldVeins(vec3 p)
 {
-    if (u_veinMode == 1) {
-        // DOMAIN WARP: displace the sample point by a second, coarser noise
-        // before ridging it. The crests stop running in statistically straight
-        // lines and start curling, which is what fluid does and what a pure
-        // fbm never does however many octaves it is given.
-        vec3 w = vec3(vnoise3(p * 0.63 + 4.1),
-                      vnoise3(p * 0.63 + 19.7),
-                      vnoise3(p * 0.63 - 8.3)) - 0.5;
-        return ShieldRidgedFbm(p + w * 2.6);
-    }
+    if (u_veinMode == 1)
+        return filaments3(p, 2.6);
     if (u_veinMode == 2)
-        return clamp(ShieldCells(p * 0.72) * 0.82 + ShieldRidgedFbm(p) * 0.28, 0.0, 1.0);
+        return clamp(ShieldCells(p * 0.72) * 0.82 + ridgedFbm3(p) * 0.28, 0.0, 1.0);
     if (u_veinMode == 3) {
         // STRETCHED: compress one axis of the sample domain so features
         // elongate across it. Filaments become currents running one way rather
         // than an isotropic web.
         vec3 q = vec3(p.x, p.y * 0.28, p.z);
-        return ShieldRidgedFbm(q);
+        return ridgedFbm3(q);
     }
-    return ShieldRidgedFbm(p);
+    return ridgedFbm3(p);
 }
 
 // Where the sample point travels over the shell's life.

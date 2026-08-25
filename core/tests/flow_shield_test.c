@@ -76,15 +76,18 @@ int main(void)
 
     /* The three things that make it a bubble rather than a planet, each of
      * which was measured absent before 25/08/2026. */
-    CHECK(Has(shader, "ShieldVeins") && Has(shader, "ShieldRidge"),
-          "structure is a ridged-noise filament network — an area fbm gives "
-          "evenly-spread blobs, which is what the cloud sheet was doing");
+    CHECK(Has(shader, "ShieldVeins") && Has(shader, "filaments3") &&
+              Has("core/shaders/common/noise.glsl", "float filaments3("),
+          "structure is a warped-ridged filament network from the shared noise "
+          "header — an area fbm gives evenly-spread blobs, which is what the "
+          "cloud sheet was doing");
     /* NOT asserted: that the network is clumped. It was, briefly; the owner
      * judged it against the reference and chose an even distribution, which is
      * a look decision and not this file's to pin. Nor that sparks exist —
      * specks are a particle job and were deliberately removed from the shader.
      * Both are recorded in the shader's own comments instead. */
-    CHECK(Has(shader, "ShieldDir") && Has(shader, "vnoise3"),
+    CHECK(Has(shader, "ShieldDir") &&
+              Has("core/shaders/common/noise.glsl", "float ridged3("),
           "the noise is anchored to the sphere's own direction in 3D: view-space "
           "fragNormal swims under camera rotation, and 2D noise on the raw UV "
           "seams at u = 0 and pinwheels at the poles");
