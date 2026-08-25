@@ -561,10 +561,10 @@
       "projection": "conformal_mesh_stamp_receiver_normal",
       "max_slope_degrees": 34.0,
       "seam": "symbol_boundary_alpha_required",
-      "provenance": "P4 Decal Rework contract; rune glyph needs authored alpha and radial-symbol review",
+      "provenance": "P4 Decal Rework contract. SUPERSEDED 25/08/2026: VFX_ComposeRuneCircle was rebuilt as a procedural annulus (core/shaders/rune_circle.fs) and samples no sheet at all, so the decal migration this profile was reserved for is no longer wanted. The slot is kept rather than removed because VFX_SurfaceId is positional and deleting an entry renumbers every id after it.",
       "approval": "blocked_visual_owner",
       "consumers": [
-        "VFX_ComposeRuneCircle surface migration (blocked)"
+        "none - VFX_ComposeRuneCircle went procedural instead (25/08/2026)"
       ],
       "lifecycle": {
         "seconds": 3.0,
@@ -583,7 +583,7 @@
       "assets": {},
       "fallback_policy": {
         "status": "no_legacy_fallback",
-        "reason": "owner rejected every legacy decal; wait for a newly authored rune glyph with true boundary alpha"
+        "reason": "owner rejected every legacy decal. No longer waiting on art: the only consumer went procedural. Kept unapproved and asset-free so nothing can quietly start using it without a fresh review."
       }
     },
     {

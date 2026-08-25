@@ -1,33 +1,112 @@
 // ── E5.2 — VFX_ComposeRuneCircle ─────────────────────────────────────────────
 //
-// AAA ORGANIC RUNE CIRCLE:
-// 1. BODY (alpha): a material-colour underlay beneath a saturated inscription
-//    keeps the element hue legible on pale ground without a black fringe.
-// 2. EMISSION (additive): a soft outer halo and compact luminous core give the
-//    circle a readable bloom footprint without whitening its elemental hue.
-// 3. Particle-free focal geometry: a pair of nested squares and a centre ring
-//    restore the ritual hierarchy without motes, spokes, or radial clutter.
-// 4. Living material: small, phase-shifted radial breathing and travelling arc
-//    emphasis keep the perfect construction from reading as a static UI decal.
+// ONE QUAD. Every ring, rune, dash, tick and square is computed in
+// core/shaders/rune_circle.fs over the local coordinate of a single flat quad.
+//
+// WHAT THIS REPLACED, AND WHY IT HAD TO GO (measured 24/08/2026 with
+// scripts/render_vfx_matrix.sh "RUNE CIRCLE"):
+//
+//   28 DrawRibbonStripEx calls per frame — 4 rings x 2 sub-layers x 2 passes,
+//   plus 12 focus polygons — each ending in a forced rlDrawRenderBatchActive(),
+//   to trace a path that cos/sin gives in closed form. ~8k vertices and 28
+//   batch flushes for a circle.
+//
+//   And the cost bought a WORSE image, for a reason no amount of tuning could
+//   reach: a ribbon is geometry, so a stroke narrower than a pixel is hit or
+//   missed by the rasteriser, never partially covered. Every stroke measured
+//   1-5 px (most 1-3), so the rings crawled and broke into dashes as they
+//   turned. Analytic coverage in the fragment stage has no such floor — see
+//   Band() in the shader.
+//
+//   The numbers that made the case, at warmup 90:
+//     cover%   1.24 (dark) -> 0.71 (white)   silhouette losing 46% of itself
+//     absvar   26.4 (dark) -> 13.4 (white)   over half the "structure" was
+//                                            background showing through gaps
+//     darken%  0.0 on dark AND mid           the BODY pass contributed nothing
+//                                            on the only backgrounds the game
+//                                            actually has
+//
+// WHAT IT LOOKED LIKE: an orange wireframe. cover% of 1.5 means the effect was
+// stroke and nothing else — no fill, no interior, no skirt — so bloom had no
+// area to bleed from and the circle could be bright without ever looking like
+// it was giving off light. The shader header explains the three things that
+// replace that; this file's job is to hand it clean parameters and submit the
+// quad twice.
+//
+// THE BODY PASS IS KEPT DELIBERATELY. Measuring PORTAL DISC and SHOCK RING on
+// the same harness: both are INVISIBLE on a white plate. This effect was not,
+// and the alpha body pass carrying elemental pigment is the only structural
+// difference. Moving to a shader must not quietly drop it.
 
 #include "core/vfx_contrast.h"
-#include "core/geometry/procedural_mesh_utils.h"
-
-#define RUNE_MAX_RINGS   4
-#define RUNE_RING_POINTS 97      // 96 segments + the duplicated closing point
 
 static SkillCurve s_runeOpen = {0};   // radius vs t01: snaps open, eases shut
 static SkillCurve s_runeFade = {0};   // alpha vs t01
 static bool       s_runeInit = false;
 
-static float s_runeWhite = 0.25f;     // how white the band is (element = tint)
-static float s_runeWidth = 1.0f;      // x on band thickness
-static float s_runeSpin  = 1.0f;      // x on rotation speed
-static float s_runeDash  = 1.0f;      // x on dash density
+static float s_runeWhite  = 0.86f;    // how far the hot ramp goes toward white
+static float s_runeWidth  = 1.0f;     // x on stroke thickness
+static float s_runeSpin   = 1.0f;     // x on rotation speed
+static float s_runeDash   = 1.0f;     // x on comet-head speed
+static float s_runeEnergy = 1.0f;     // x on interior, pulses, halo, sweeps
+static float s_runeGlow   = 1.0f;     // x on emission gain
+static float s_runeConform = 1.0f;    // 0 = flat quad, ignore the terrain (free)
 
-static Texture2D s_runeTex = {0};
-#define RUNE_GLYPH_SHEETS 4
-static Texture2D s_runeGlyph[RUNE_GLYPH_SHEETS] = {0};
+// ── SITTING ON THE GROUND ───────────────────────────────────────────────────
+//
+// A single flat quad at the caster's Y is COPLANAR with the terrain under it,
+// and terrain is not flat. Both halves of that bite:
+//   - Where the two surfaces agree to within depth precision, they z-fight: the
+//     24/08 grass capture shows a stipple band straight across the inscription.
+//   - Where the ground rises even slightly above the quad's plane, the depth
+//     test simply hides that part of the circle. On rolling grass most of the
+//     circle disappears and what is left reads as unrelated arcs.
+//
+// So the surface is TESSELLATED and draped over the real ground, and lifted a
+// few centimetres clear of it. Two constraints shape how:
+//
+// COST — and this file briefly carried an elaborate answer to the wrong
+// question. Sampling a 7x7 grid every frame originally cost ~6 ms of CPU,
+// because `MapManager_GetGroundHeightAt` tested the ray against every triangle
+// of the terrain mesh. That got a round-robin cache with an LRU of slots and a
+// seeding schedule, all of which worked and none of which should have existed:
+// the real defect was in the query, and it was fixed at the source on the same
+// day (`MapGroundLookup` in maps/toolkit/map_props_ground.inl — an XZ bin grid
+// over the same triangles, 232-292 us -> ~0.59 us per sample, verified identical
+// on 4,096 probes). 49 samples a frame is now ~29 us, so this file samples them
+// plainly and keeps nothing.
+//
+// If that ever regresses, the symptom will be frame time rather than anything
+// visible; ENGINE_LANDMINES.md 21 has the measurement and the reproduction.
+//
+// A 7x7 grid of samples is bilinearly interpolated onto a 16x16 mesh, and that
+// part is NOT about cost: the terrain under VERDANT_PATH is a 64x64 heightmap
+// over the whole map, so 7x7 across a few-metre circle is already finer than
+// the surface it is describing, and interpolation is exact on a planar slope.
+//
+// RELATIVE, NOT ABSOLUTE. Vertices take the ground's height DIFFERENCE from the
+// centre, not its absolute height. Snapping to absolute ground would drag a
+// circle a caller deliberately placed in mid-air down onto the floor; taking
+// the difference makes it follow the terrain's SHAPE at whatever height it was
+// asked for.
+#define RUNE_MESH_CELLS 16          // NxN quads submitted
+#define RUNE_H_SAMPLES  7           // NxN terrain height grid (49 samples)
+#define RUNE_Y_LIFT     0.035f      // metres clear of the receiver
+
+// How far past the nominal radius the quad reaches. The halo is a gaussian
+// skirt centred on the rim; clipping it at r = 1 would put a straight polygon
+// edge across the glow, which is the one artefact a single-quad effect can
+// still produce.
+#define RUNE_QUAD_EXT 1.32f
+
+typedef struct {
+    Shader shader;
+    int bodyColor, glowColor, hotColor;
+    int params, style, spin, sweep, pulse, flow;
+} RuneShader;
+
+static RuneShader s_runeFx = {0};
+static bool s_runeShaderTried = false;
 
 static void Rune_InitShared(void)
 {
@@ -44,34 +123,52 @@ static void Rune_InitShared(void)
     FloatCurve_AddStop(&s_runeFade, 0.80f, 1.0f);
     FloatCurve_AddStop(&s_runeFade, 1.00f, 0.0f);
 
-    Tuning_RegisterFloat("rune_white", &s_runeWhite, 0.25f);
-    Tuning_RegisterFloat("rune_width", &s_runeWidth, 1.0f);
-    Tuning_RegisterFloat("rune_spin",  &s_runeSpin,  1.0f);
-    Tuning_RegisterFloat("rune_dash",  &s_runeDash,  1.0f);
-
-    s_runeTex = ResourceManager_LoadTexture("assets/textures/rune_line.png");
-    if (s_runeTex.id == 0)
-    {
-        TraceLog(LOG_WARNING, "RuneCircle: rune_line.png missing, using flat white band");
-        Image wimg = GenImageColor(4, 4, WHITE);
-        s_runeTex = LoadTextureFromImage(wimg);
-        UnloadImage(wimg);
-    }
-    else SetTextureFilter(s_runeTex, TEXTURE_FILTER_BILINEAR);
-
-    for (int g = 0; g < RUNE_GLYPH_SHEETS; g++)
-    {
-        char path[96];
-        snprintf(path, sizeof(path), "assets/textures/rune_glyphs_%d.png", g);
-        s_runeGlyph[g] = ResourceManager_LoadTexture(path);
-        if (s_runeGlyph[g].id != 0)
-        {
-            SetTextureFilter(s_runeGlyph[g], TEXTURE_FILTER_BILINEAR);
-            SetTextureWrap(s_runeGlyph[g], TEXTURE_WRAP_REPEAT);
-        }
-    }
+    // Lazily, never from a subsystem Init (core/docs/LANDMINES.md).
+    Tuning_RegisterFloat("rune_white",  &s_runeWhite,  0.86f);
+    Tuning_RegisterFloat("rune_width",  &s_runeWidth,  1.0f);
+    Tuning_RegisterFloat("rune_spin",   &s_runeSpin,   1.0f);
+    Tuning_RegisterFloat("rune_dash",   &s_runeDash,   1.0f);
+    Tuning_RegisterFloat("rune_energy", &s_runeEnergy, 1.0f);
+    Tuning_RegisterFloat("rune_glow",   &s_runeGlow,   1.0f);
+    Tuning_RegisterFloat("rune_conform", &s_runeConform, 1.0f);
 
     s_runeInit = true;
+}
+
+static void Rune_InitShader(void)
+{
+    if (s_runeShaderTried) return;
+    s_runeShaderTried = true;
+
+    s_runeFx.shader = ResourceManager_LoadShader("core/shaders/rune_circle.vs",
+                                                 "core/shaders/rune_circle.fs");
+    if (s_runeFx.shader.id == 0)
+    {
+        // Say it in the shader's own words. A missing or failed shader
+        // otherwise reports as "the effect stopped appearing", which sends the
+        // next reader looking at the composition (ENGINE_LANDMINES, "A missing
+        // shader file does not report as a shader problem").
+        TraceLog(LOG_WARNING, "RuneCircle: rune_circle.vs/.fs failed to load - "
+                              "the rune circle will not draw");
+        return;
+    }
+    s_runeFx.bodyColor = GetShaderLocation(s_runeFx.shader, "u_bodyColor");
+    s_runeFx.glowColor = GetShaderLocation(s_runeFx.shader, "u_glowColor");
+    s_runeFx.hotColor  = GetShaderLocation(s_runeFx.shader, "u_hotColor");
+    s_runeFx.params    = GetShaderLocation(s_runeFx.shader, "u_params");
+    s_runeFx.style     = GetShaderLocation(s_runeFx.shader, "u_style");
+    s_runeFx.spin      = GetShaderLocation(s_runeFx.shader, "u_spin");
+    s_runeFx.sweep     = GetShaderLocation(s_runeFx.shader, "u_sweep");
+    s_runeFx.pulse     = GetShaderLocation(s_runeFx.shader, "u_pulse");
+    s_runeFx.flow      = GetShaderLocation(s_runeFx.shader, "u_flow");
+}
+
+static bool Rune_HasShader(void)
+{
+    return s_runeFx.shader.id != 0 && s_runeFx.bodyColor >= 0 &&
+           s_runeFx.glowColor >= 0 && s_runeFx.hotColor >= 0 &&
+           s_runeFx.params >= 0 && s_runeFx.style >= 0 && s_runeFx.spin >= 0 &&
+           s_runeFx.sweep >= 0 && s_runeFx.pulse >= 0 && s_runeFx.flow >= 0;
 }
 
 static void Rune_PlaneBasis(Vector3 normal, Vector3 *outU, Vector3 *outV)
@@ -83,215 +180,289 @@ static void Rune_PlaneBasis(Vector3 normal, Vector3 *outU, Vector3 *outV)
     *outV = Vector3CrossProduct(n, *outU);
 }
 
-// Dynamic sweeping energy modulation along the arc.
-static float Rune_ArcCharacter(int ring, float a01, float time)
+// Every rotating phase is folded into its period HERE, on the CPU, in double
+// precision, and handed to the shader already wrapped. Folding it in GLSL with
+// fract() cannot recover precision the float lost on the way in — u_time
+// reaches four digits in a match, and by then a term like time*speed*count has
+// no fractional bits left to fract (ENGINE_LANDMINES, "fract() for float
+// precision: fold each product ONCE, never nest").
+static float Rune_WrapTau(double x)
 {
-    float dir = (ring % 2 == 0) ? 1.0f : -1.0f;
-    float longSweep = sinf(a01 * 2.0f * PI * (float)(2 + ring)
-                         + time * (1.15f + 0.18f * (float)ring) * dir);
-    float fineSweep = sinf(a01 * 2.0f * PI * (float)(7 + ring * 2)
-                         - time * (0.55f + 0.09f * (float)ring) * dir
-                         + (float)ring * 1.71f);
-    return 0.75f + 0.25f * longSweep;
+    const double tau = 6.283185307179586;
+    double m = fmod(x, tau);
+    if (m < 0.0) m += tau;
+    return (float)m;
 }
 
-static float Rune_DashMask(int ring, float a01)
+static float Rune_Wrap01(double x)
 {
-    float teeth = (float)(7 + ring * 5) * s_runeDash;
-    float phase = (float)ring * 0.37f;
-    float x = (a01 * teeth + phase);
-    float f = x - floorf(x);
-    float duty = 0.62f - 0.10f * (float)(ring % 3);
-    if (f > duty) return 0.0f;
-    float edge = 0.12f;
-    float head = (f < edge) ? (f / edge) : 1.0f;
-    float tail = (f > duty - edge) ? ((duty - f) / edge) : 1.0f;
-    return fminf(head, tail);
+    double m = fmod(x, 1.0);
+    if (m < 0.0) m += 1.0;
+    return (float)m;
 }
 
-static float Rune_OrganicRadiusOffset(int ring, float angle, float time, float radius)
+static void Rune_SetUniforms(Color bodyCol, Color glowCol, Color hotCol,
+                             float fade, float open, float emission,
+                             float coverGain, float premultiply,
+                             double time, float seed)
 {
-    float phase = (float)ring * 1.37f;
-    float slow = sinf(angle * (3.0f + (float)ring) + time * 0.63f + phase);
-    float fine = sinf(angle * (8.0f + 2.0f * (float)ring) - time * 0.31f + phase * 2.1f);
-    float breath = 0.72f + 0.28f * sinf(time * 0.91f + phase);
-    return radius * breath * (slow * 0.0034f + fine * 0.0015f);
+    Vector4 b = ColorNormalize(bodyCol);
+    Vector4 g = ColorNormalize(glowCol);
+    Vector4 h = ColorNormalize(hotCol);
+    SetShaderValue(s_runeFx.shader, s_runeFx.bodyColor, &b, SHADER_UNIFORM_VEC4);
+    SetShaderValue(s_runeFx.shader, s_runeFx.glowColor, &g, SHADER_UNIFORM_VEC4);
+    SetShaderValue(s_runeFx.shader, s_runeFx.hotColor,  &h, SHADER_UNIFORM_VEC4);
+
+    float params[4] = { fade, emission, open, premultiply };
+    float style[4]  = { s_runeWidth, s_runeEnergy, coverGain, seed };
+    SetShaderValue(s_runeFx.shader, s_runeFx.params, params, SHADER_UNIFORM_VEC4);
+    SetShaderValue(s_runeFx.shader, s_runeFx.style,  style,  SHADER_UNIFORM_VEC4);
+
+    // Three rings turning at three speeds, the middle one against the other
+    // two. Equal-and-opposite pairs are what make a ring assembly read as a
+    // mechanism rather than as one picture being spun.
+    double sp = (double)s_runeSpin;
+    float spin[3] = {
+        Rune_WrapTau( time * 0.115 * sp),
+        Rune_WrapTau(-time * 0.185 * sp),
+        Rune_WrapTau( time * 0.255 * sp),
+    };
+    SetShaderValue(s_runeFx.shader, s_runeFx.spin, spin, SHADER_UNIFORM_VEC3);
+
+    // The comet heads run much faster than the rings carry them, so charge
+    // visibly travels THROUGH the construction instead of riding on it.
+    double sw = (double)s_runeDash;
+    float sweep[3] = {
+        Rune_WrapTau( time * 1.35 * sw),
+        Rune_WrapTau(-time * 2.05 * sw + 2.1),
+        Rune_WrapTau( time * 0.78 * sw + 4.3),
+    };
+    SetShaderValue(s_runeFx.shader, s_runeFx.sweep, sweep, SHADER_UNIFORM_VEC3);
+
+    // Two outward pulses, half a period apart, so the circle never sits still
+    // between beats.
+    float pulse[2] = {
+        Rune_Wrap01(time * 0.34),
+        Rune_Wrap01(time * 0.34 + 0.5),
+    };
+    SetShaderValue(s_runeFx.shader, s_runeFx.pulse, pulse, SHADER_UNIFORM_VEC2);
+
+    float flow[2] = { Rune_WrapTau(time * 0.21), Rune_WrapTau(time * 0.33) };
+    SetShaderValue(s_runeFx.shader, s_runeFx.flow, flow, SHADER_UNIFORM_VEC2);
 }
 
-static void Rune_DrawPolygon(Vector3 center, Vector3 u, Vector3 v, Vector3 normal,
-                             float radius, float angleOffset, int sides,
-                             float halfWidth, Color tint, Texture2D tex, Camera3D cam)
-{
-    if (sides < 3 || sides > 32 || radius <= 0.001f || halfWidth <= 0.0001f) return;
+// The surface. Texture coordinates carry the disc's OWN frame in rune radii, so
+// the fragment stage never has to reconstruct it from fragPosition — which
+// would be view space, not world space, for every draw inside MyBeginMode3D
+// (ENGINE_LANDMINES 9). They are computed from the grid index alone and are
+// therefore unaffected by the draping: the circle is a PROJECTION onto the
+// ground, so its pattern must not stretch when the ground under it does.
+#define RUNE_GRID_VERTS ((RUNE_MESH_CELLS + 1) * (RUNE_MESH_CELLS + 1))
+#define RUNE_H_COUNT    (RUNE_H_SAMPLES * RUNE_H_SAMPLES)
+static Vector3 s_runeVerts[RUNE_GRID_VERTS];
+static float   s_runeH[RUNE_H_COUNT];
+static int     s_runeCells = 1;   // 1 when flat, RUNE_MESH_CELLS when draped
 
-    RibbonPoint polyPts[33];
-    for (int i = 0; i <= sides; i++)
+static float Rune_SampleGrid(float fx, float fz)
+{
+    const int S = RUNE_H_SAMPLES;
+    float gx = (fx * 0.5f + 0.5f) * (float)(S - 1);
+    float gz = (fz * 0.5f + 0.5f) * (float)(S - 1);
+    int i0 = (int)floorf(gx), j0 = (int)floorf(gz);
+    if (i0 < 0) i0 = 0; if (i0 > S - 2) i0 = S - 2;
+    if (j0 < 0) j0 = 0; if (j0 > S - 2) j0 = S - 2;
+    float tx = gx - (float)i0, tz = gz - (float)j0;
+    float h00 = s_runeH[j0 * S + i0],       h10 = s_runeH[j0 * S + i0 + 1];
+    float h01 = s_runeH[(j0 + 1) * S + i0], h11 = s_runeH[(j0 + 1) * S + i0 + 1];
+    return Math_Mix(Math_Mix(h00, h10, tx), Math_Mix(h01, h11, tx), tz);
+}
+
+// Returns the number of cells per axis actually built (1 = a plain quad).
+static int Rune_BuildSurface(Vector3 center, Vector3 u, Vector3 v, Vector3 n,
+                             float radius)
+{
+    const float e = RUNE_QUAD_EXT;
+    float half = radius * e;
+    Vector3 lift = Vector3Scale(n, RUNE_Y_LIFT);
+
+    // Conform only on a ground-plane circle, and only where the active map can
+    // actually answer. SampleGroundSurfaceAt returns FALSE when there is no map
+    // or the map has no receiver hook — and that distinction matters, because
+    // MapManager_GetGroundHeightAt answers 0.0 in exactly those cases and 0.0 is
+    // a perfectly plausible height. Draping on it would silently teleport every
+    // circle to y = 0 on the flat arena and in the headless harness.
+    Vector3 probePos; Vector3 probeNrm;
+    bool conform = (s_runeConform >= 0.5f) && (n.y > 0.94f) &&
+                   MapManager_SampleGroundSurfaceAt(center.x, center.z,
+                                                    &probePos, &probeNrm);
+
+    int cells = conform ? RUNE_MESH_CELLS : 1;
+    const int S = RUNE_H_SAMPLES;
+
+    if (conform)
     {
-        float angle = angleOffset + (float)i * (2.0f * PI / (float)sides);
-        polyPts[i].position = Vector3Add(center,
-            Vector3Add(Vector3Scale(u, cosf(angle) * radius),
-                       Vector3Scale(v, sinf(angle) * radius)));
-        polyPts[i].halfWidth = halfWidth;
-        polyPts[i].v = (float)i / (float)sides;
-        polyPts[i].tint = tint;
+        float base = MapManager_GetGroundHeightAt(center.x, center.z);
+        for (int j = 0; j < S; j++)
+        {
+            float fz = -1.0f + 2.0f * (float)j / (float)(S - 1);
+            for (int i = 0; i < S; i++)
+            {
+                float fx = -1.0f + 2.0f * (float)i / (float)(S - 1);
+                Vector3 wp = Vector3Add(center,
+                    Vector3Add(Vector3Scale(u, fx * half),
+                               Vector3Scale(v, fz * half)));
+                s_runeH[j * S + i] =
+                    MapManager_GetGroundHeightAt(wp.x, wp.z) - base;
+            }
+        }
     }
-    DrawRibbonStripEx(polyPts, sides + 1, tex, cam, RIBBON_FIXED_NORMAL, normal);
+
+    for (int j = 0; j <= cells; j++)
+    {
+        float fz = -1.0f + 2.0f * (float)j / (float)cells;
+        for (int i = 0; i <= cells; i++)
+        {
+            float fx = -1.0f + 2.0f * (float)i / (float)cells;
+            Vector3 p = Vector3Add(center,
+                Vector3Add(Vector3Scale(u, fx * half),
+                           Vector3Scale(v, fz * half)));
+            if (conform) p.y += Rune_SampleGrid(fx, fz);
+            s_runeVerts[j * (cells + 1) + i] = Vector3Add(p, lift);
+        }
+    }
+    return cells;
 }
 
-static void Rune_DrawFocusGlyph(Vector3 center, Vector3 normal, Vector3 u, Vector3 v,
-                                float radius, float time, float halfWidth, Color tint)
+static void Rune_SubmitSurface(Vector3 n, int cells)
 {
-    float pulse = 1.0f + 0.022f * sinf(time * 1.35f);
-    float squareRadius = radius * 0.44f * pulse;
-    float squareSpin = time * 0.18f * s_runeSpin;
-    Rune_DrawPolygon(center, u, v, normal, squareRadius, squareSpin,
-                     4, halfWidth, tint, s_runeTex, camera);
-    Rune_DrawPolygon(center, u, v, normal, squareRadius, squareSpin + PI * 0.25f,
-                     4, halfWidth, tint, s_runeTex, camera);
-    Rune_DrawPolygon(center, u, v, normal, radius * 0.21f * pulse, -squareSpin,
-                     32, halfWidth * 0.78f, tint, s_runeTex, camera);
+    const float e = RUNE_QUAD_EXT;
+    float step = 2.0f * e / (float)cells;
+    int stride = cells + 1;
+
+    rlColor4ub(255, 255, 255, 255);
+    for (int j = 0; j < cells; j++)
+    {
+        float t0 = -e + step * (float)j;
+        float t1 = t0 + step;
+        for (int i = 0; i < cells; i++)
+        {
+            float s0 = -e + step * (float)i;
+            float s1 = s0 + step;
+            Vector3 a = s_runeVerts[j * stride + i];
+            Vector3 b = s_runeVerts[j * stride + i + 1];
+            Vector3 c = s_runeVerts[(j + 1) * stride + i + 1];
+            Vector3 d = s_runeVerts[(j + 1) * stride + i];
+
+            // A normal on every vertex even though the fragment stage ignores
+            // it: VS_FinalOutput normalises it, and normalize((0,0,0)) is NaN,
+            // which shows up on Android as a white surface rather than as a
+            // missing one (AGENT_CODE_STANDARD 7a).
+            rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(s0, t0); rlVertex3f(a.x, a.y, a.z);
+            rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(s1, t0); rlVertex3f(b.x, b.y, b.z);
+            rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(s1, t1); rlVertex3f(c.x, c.y, c.z);
+            rlNormal3f(n.x, n.y, n.z); rlTexCoord2f(s0, t1); rlVertex3f(d.x, d.y, d.z);
+        }
+    }
 }
 
 // Continuous: call once per frame with the caster's progress.
+//
+// `ringCount` no longer selects how many ribbons are built — the ring hierarchy
+// is fixed in the shader, which is what lets it stay a single draw. It now
+// scales how much of the assembly is lit, so the parameter still means "how
+// elaborate is this circle" to every existing caller.
 void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat,
                            float radius, float t01, int ringCount)
 {
     Rune_InitShared();
+    Rune_InitShader();
+    if (!Rune_HasShader()) return;
+
     if (radius <= 0.0f) radius = 1.0f;
     if (t01 < 0.0f) t01 = 0.0f;
     if (t01 > 1.0f) t01 = 1.0f;
     if (ringCount < 1) ringCount = 1;
-    if (ringCount > RUNE_MAX_RINGS) ringCount = RUNE_MAX_RINGS;
+    if (ringCount > 4) ringCount = 4;
 
     const VFX_ElementMaterial *m = VFX_Material(mat);
-    float open  = SkillCurve_Eval(&s_runeOpen, t01);
-    float fade  = SkillCurve_Eval(&s_runeFade, t01);
+    float open = SkillCurve_Eval(&s_runeOpen, t01);
+    float fade = SkillCurve_Eval(&s_runeFade, t01);
     if (fade <= 0.001f) return;
+
+    // Elaboration rides on the caller's ring count without changing the draw.
+    float elaborate = 0.55f + 0.15f * (float)ringCount;
+
+    Color bodyInk = VFXContrast_ApplyColor(m->body, VFX_CONTRAST_MAGIC,
+                                           VFX_CONTRAST_BODY);
+    Color glowCol = VFXContrast_ApplyColor(m->glow, VFX_CONTRAST_MAGIC,
+                                           VFX_CONTRAST_EMISSION);
+    // The top of the value ramp. A luminous thing goes toward white where it is
+    // hottest; keeping the peak at the material hue is exactly what made the
+    // previous version read as a coloured drawing rather than as light.
+    Color hotCol = VC_Whiten(glowCol, s_runeWhite);
 
     Vector3 u, v;
     Rune_PlaneBasis(normal, &u, &v);
-    float time = TimeFX_Elapsed();
+    Vector3 n = Vector3Normalize(normal);
+    double time = (double)TimeFX_Elapsed();
+    float seed = 0.0f;
 
-    Color inscriptionCol = m->glow;
-    Color bodyInk = VFXContrast_ApplyColor(m->body, VFX_CONTRAST_MAGIC, VFX_CONTRAST_BODY);
-    Color saturatedInscription = VFXContrast_ApplyColor(inscriptionCol, VFX_CONTRAST_MAGIC, VFX_CONTRAST_BODY);
+    // Built ONCE and submitted twice — the two passes draw the same surface.
+    s_runeCells = Rune_BuildSurface(center, u, v, n, radius);
 
-    static RibbonPoint pts[RUNE_RING_POINTS];
-
-    // ── PASS 1: BODY (Alpha Core & Contrast Keyline) ─────────────────────────
-    VFXRenderScope bodyScope = VFXRender_BeginDraw(
-        VFX_RENDER_PASS_BODY, VFX_SURFACE_ALPHA, false);
-
-    static const float bodyW[2][2] = {
-        { 1.06f, 1.02f },  // sub-layer 0: material-colour underlay width
-        { 0.94f, 0.88f }   // sub-layer 1: saturated inscription width
-    };
-    static const float bodyA[2] = { 0.72f, 0.96f };
-
-    for (int r = 0; r < ringCount; r++)
+    for (int pass = 0; pass < 2; pass++)
     {
-        float dir   = (r % 2 == 0) ? 1.0f : -1.0f;
-        float speed = (0.55f + 0.22f * (float)r) * dir * s_runeSpin;
-        float spin  = time * speed;
+        bool emissive = (pass == 1);
+        VFXRenderScope scope = VFXRender_BeginDraw(
+            emissive ? VFX_RENDER_PASS_EMISSION : VFX_RENDER_PASS_BODY,
+            // PREMULTIPLIED, not ADDITIVE, for the glow. Additive over a bright
+            // destination can only add to something already at 1.0, which is
+            // why the two other disc composers measure as invisible on a white
+            // plate; premultiplied keeps the (1 - a) term that lets the ink
+            // still bite. Paired with the u_params.w branch in the shader —
+            // blend state and fragment formula are ONE decision.
+            emissive ? VFX_SURFACE_PREMULTIPLIED : VFX_SURFACE_ALPHA, false);
 
-        bool isGlyph = (r % 2 == 0) && (s_runeGlyph[r % RUNE_GLYPH_SHEETS].id != 0);
-        float rr = radius * open * (1.0f - 0.19f * (float)r);
-        float halfW = radius * (isGlyph ? 0.052f : (0.016f - 0.002f * (float)r))
-                             * s_runeWidth;
-        halfW *= VC_Breathe(time + (float)r, 2.1f + 0.4f * (float)r, 0.12f);
+        // Culling off so the circle is legible from below as well as above.
+        // Flushed on BOTH sides: rlgl draws the queued geometry LATER and the
+        // state at DRAW time is what applies (ENGINE_LANDMINES 1, and its
+        // 30/07 postscript establishing that this covers culling too).
+        rlDrawRenderBatchActive();
+        rlDisableBackfaceCulling();
+        rlDrawRenderBatchActive();
 
-        for (int sub = 0; sub < 2; sub++)
-        {
-            Texture2D tex = isGlyph ? s_runeGlyph[r % RUNE_GLYPH_SHEETS] : s_runeTex;
-            Color passCol = (sub == 0) ? bodyInk : saturatedInscription;
+        SkillManager_BeginShader(s_runeFx.shader);
+        Rune_SetUniforms(bodyInk, glowCol, hotCol,
+                         fade * (emissive ? 1.0f : 0.94f),
+                         open,
+                         emissive ? (1.00f * s_runeGlow * elaborate) : 1.0f,
+                         // COVERAGE GAIN, per pass. Premultiplied blending is
+                         // (ONE, ONE_MINUS_SRC_ALPHA), so whatever coverage the
+                         // emission pass declares BITES INTO the destination a
+                         // second time on top of the body pass. On black that
+                         // costs nothing; on bright scenery it is the only
+                         // thing keeping a glowing ring from saturating into
+                         // the background. Swept against the white plate:
+                         //   0.30 -> darken 2.9%   absvar 17.7
+                         //   0.55 -> darken 6.7%   absvar 20.6
+                         //   0.80 -> darken 12.5%  absvar 23.9
+                         //   1.00 -> darken 15.4%  absvar 26.6
+                         // and the dark-plate figures did not move at any of
+                         // them (cover 7.64 -> 7.46, detail 0.524 -> 0.523).
+                         // A free axis, so it is spent in full.
+                         1.0f,
+                         emissive ? 1.0f : 0.0f,
+                         time, seed);
 
-            for (int i = 0; i < RUNE_RING_POINTS; i++)
-            {
-                float a01 = (float)i / (float)(RUNE_RING_POINTS - 1);
-                float ang = a01 * 2.0f * PI + spin;
-                float rPerturbed = rr + Rune_OrganicRadiusOffset(r, ang, time, radius);
+        rlSetTexture(0);
+        rlBegin(RL_QUADS);
+        Rune_SubmitSurface(n, s_runeCells);
+        rlEnd();
+        rlDrawRenderBatchActive();
+        SkillManager_EndShader();
 
-                Vector3 p = Vector3Add(center,
-                              Vector3Add(Vector3Scale(u, cosf(ang) * rPerturbed),
-                                         Vector3Scale(v, sinf(ang) * rPerturbed)));
-                pts[i].position  = p;
-                pts[i].halfWidth = halfW * (isGlyph ? bodyW[sub][1] : bodyW[sub][0]);
-                pts[i].v         = a01;
-
-                bool solid = isGlyph || (r == ringCount - 1);
-                float mask = solid ? 1.0f : Rune_DashMask(r, a01);
-                float arcMod = Rune_ArcCharacter(r, a01, time);
-                float a = fade * mask * arcMod * bodyA[sub] * (0.95f - 0.10f * (float)r);
-                pts[i].tint = ColorAlpha(passCol, a);
-            }
-
-            DrawRibbonStripEx(pts, RUNE_RING_POINTS, tex, camera,
-                              RIBBON_FIXED_NORMAL, normal);
-        }
+        rlEnableBackfaceCulling();
+        rlDrawRenderBatchActive();
+        VFXRender_EndDraw(&scope);
     }
-
-    float focusHalfW = radius * 0.0085f * s_runeWidth;
-    Rune_DrawFocusGlyph(center, normal, u, v, radius * open, time, focusHalfW * 1.42f,
-                        ColorAlpha(bodyInk, fade * 0.95f));
-    Rune_DrawFocusGlyph(center, normal, u, v, radius * open, time, focusHalfW * 0.82f,
-                        ColorAlpha(saturatedInscription, fade * 0.96f));
-    VFXRender_EndDraw(&bodyScope);
-
-    // ── PASS 2: EMISSION (soft halo + compact luminous core) ─────────────────
-    VFXRenderScope emissionScope = VFXRender_BeginDraw(
-        VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false);
-
-    static const float haloW[2] = { 1.70f, 0.42f };
-    static const float haloA[2] = { 0.18f, 0.70f };
-    Color emissionCol = VFXContrast_ApplyColor(m->glow,
-                                                VFX_CONTRAST_MAGIC,
-                                                VFX_CONTRAST_EMISSION);
-
-    for (int r = 0; r < ringCount; r++)
-    {
-        float dir   = (r % 2 == 0) ? 1.0f : -1.0f;
-        float speed = (0.55f + 0.22f * (float)r) * dir * s_runeSpin;
-        float spin  = time * speed;
-
-        bool isGlyph = (r % 2 == 0) && (s_runeGlyph[r % RUNE_GLYPH_SHEETS].id != 0);
-        float rr = radius * open * (1.0f - 0.19f * (float)r);
-        float halfW = radius * (isGlyph ? 0.052f : (0.016f - 0.002f * (float)r))
-                             * s_runeWidth;
-        halfW *= VC_Breathe(time + (float)r, 2.1f + 0.4f * (float)r, 0.12f);
-
-        for (int pass = 0; pass < 2; pass++)
-        {
-            Texture2D tex = isGlyph ? s_runeGlyph[r % RUNE_GLYPH_SHEETS] : s_runeTex;
-            Color passTint = emissionCol;
-
-            for (int i = 0; i < RUNE_RING_POINTS; i++)
-            {
-                float a01 = (float)i / (float)(RUNE_RING_POINTS - 1);
-                float ang = a01 * 2.0f * PI + spin;
-                float rPerturbed = rr + Rune_OrganicRadiusOffset(r, ang, time, radius);
-
-                Vector3 p = Vector3Add(center,
-                              Vector3Add(Vector3Scale(u, cosf(ang) * rPerturbed),
-                                         Vector3Scale(v, sinf(ang) * rPerturbed)));
-                pts[i].position  = p;
-                pts[i].halfWidth = halfW * haloW[pass];
-                pts[i].v         = a01;
-
-                bool solid = isGlyph || (r == ringCount - 1);
-                float mask = solid ? 1.0f : Rune_DashMask(r, a01);
-                float arcMod = Rune_ArcCharacter(r, a01, time);
-                float a = fade * mask * arcMod * haloA[pass] * (0.90f - 0.08f * (float)r);
-                pts[i].tint = ColorAlpha(passTint, a);
-            }
-
-            DrawRibbonStripEx(pts, RUNE_RING_POINTS, tex, camera,
-                              RIBBON_FIXED_NORMAL, normal);
-        }
-    }
-
-    Rune_DrawFocusGlyph(center, normal, u, v, radius * open, time, focusHalfW * haloW[0],
-                        ColorAlpha(emissionCol, fade * haloA[0]));
-    Rune_DrawFocusGlyph(center, normal, u, v, radius * open, time, focusHalfW * haloW[1],
-                        ColorAlpha(emissionCol, fade * haloA[1]));
-    VFXRender_EndDraw(&emissionScope);
 }

@@ -907,10 +907,17 @@ all three commits.
   `col*a + dst*(1-a)`. ENERGY ORB draws that way and already darkens 99.7% on white; the swap
   is algebraically a no-op there. What premultiplied actually buys is **emission ABOVE
   coverage**, and asking for that is an authoring decision, not a policy migration.
-- **A SHARED SHEET CAN BLOCK IT OUTRIGHT.** RUNE CIRCLE's emission halo samples the same
-  `rune_line.png` and glyph sheets its BODY pass needs straight, and there is no shader in that
-  path to resolve the difference. Premultiplying would mean shipping a second copy of every
-  sheet. It already darkens 93.4% on white through the body pass.
+- **A SHARED SHEET CAN BLOCK IT OUTRIGHT — until the sheet goes away.** RUNE CIRCLE's emission
+  halo used to sample the same `rune_line.png` and glyph sheets its BODY pass needed straight,
+  with no shader in that path to resolve the difference; premultiplying would have meant
+  shipping a second copy of every sheet. **Superseded 25/08/2026:** the effect was rebuilt as a
+  single procedural annulus (`core/shaders/rune_circle.fs`), samples no sheet at all, and its
+  emission pass is now premultiplied through `VFX_ResolvePremultiplied`. The 93.4% darken figure
+  quoted here was measured on the old ribbon version, whose white-plate coverage was 0.71% —
+  i.e. it scored well by being a pencil drawing with no glow. The rebuilt effect measures
+  darken 56.8% on 6.64% coverage. **The lesson that survives is the general one:** a shared
+  sheet blocks the migration only while both passes have to read it *straight*; a shader in the
+  path removes the blocker.
 - **DECALS ARE CORRECTLY ALPHA, and the reason is not "they do not glow".** The decal system
   blends by PASS — body groups `BLEND_ALPHA`/`BLEND_MULTIPLIED`, the emissive group
   `BLEND_ADDITIVE` — and `decal_system.c` explicitly refuses `appearance.surface` and warns

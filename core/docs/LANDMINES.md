@@ -2641,3 +2641,218 @@ just moves the material away from correct.
 - **Symptom:** a bubble shield has a technically transparent centre, but it reads as a perfect circular hole surrounded by a uniform band.
 - **Cause:** its opacity/window mask is derived only from `N·V` (Fresnel or path length), which is radial by construction on a sphere.
 - **Rule:** reserve `N·V` for rim/reflection and broad optical depth. Modulate the window with a low-frequency, surface-anchored thickness field; use a seam-safe domain for spherical UVs and a shared `fbm3`, not independent sine bands or a view-space noise field.
+
+## When the path is ANALYTIC, the fix for sub-pixel strokes is not a wider strip — it is leaving geometry (24/08/2026)
+
+**Symptom.** `VFX_ComposeRuneCircle` rendered as an orange wireframe: rings
+broken into dashes, glyphs an unreadable smear, the whole thing crawling as it
+turned. A pixel scan of the capture put every stroke at 1–5 px, most at 1–3.
+On a white plate it measured `cover%` 0.71 against 1.24 on black — the
+silhouette was losing 46% of itself to the background.
+
+**Cause.** The same sub-pixel-geometry trap as "A strip thinner than a pixel
+renders as DASHES" above, but reached from the other direction: nothing here
+was tapering, and no camera move was needed. The strokes were authored thin —
+`halfWidth = radius * 0.016` — and a ribbon is geometry, so a triangle narrower
+than a pixel is hit or missed, never partially covered. The screen-space width
+floor that fixes the trail case would have worked, and would also have been the
+wrong tool, because **this path was a circle**. 28 `DrawRibbonStripEx` calls,
+~8k vertices and 28 forced batch flushes per frame were being spent to trace
+something `cos`/`sin` gives in closed form, and every one of those vertices
+inherited the rasteriser's binary coverage.
+
+**Rule.** Before flooring a ribbon's width, ask whether the path has a closed
+form. If it does — a circle, an annulus, a polygon, a disc — submit ONE quad or
+annulus and compute the shape in the fragment stage against `fwidth`. Analytic
+coverage has no sub-pixel floor to work around: a band narrower than a pixel
+widens to the pixel and dims by exactly the ratio it widened by, so it reads as
+a faint continuous line instead of a bright broken one, at any distance, with no
+MSAA and nothing to tune per camera. `core/shaders/rune_circle.fs` `Band()` is
+the two-line version; `vc_shock_ring.inl` was already the reference for the
+one-`rlBegin`, one-shader annulus. Measured after the move, warmup 90:
+`cover%` 7.46 dark / 5.50 white (was 1.24 / 0.71), `absvar` 55.7 / 26.6 (was
+26.4 / 13.4), 28 draws → 2.
+
+Ribbon stays correct for paths that are genuinely dynamic — a trail from motion
+history, a bolt, a body. It is the wrong primitive for a shape you can write
+down.
+
+## A gaussian on a CLAMPED distance is 1.0 across the whole clamped side (24/08/2026)
+
+**Symptom.** The first rune-circle shader draft painted its entire quad as a
+flat orange square — corners included — with the intended circle sitting inside
+it. `cover%` read 15% and was identical on every background, which looks like a
+pass until you notice `detail` had fallen from 0.66 to 0.056.
+
+**Cause.** The halo was built as `exp(-(max(r - k, 0.0) / w) * (max(r - k, 0.0) / w))`,
+read as "a skirt starting at `k` and fading outward". It is not. On the clamped
+side the numerator is exactly zero, so the exponent is zero and the term is
+**1.0 everywhere over there** — a flood with no shape at all. The inward-facing
+skirt written that way therefore covered every fragment outside its centre,
+which is the entire rest of the quad.
+
+**Rule.** A falloff needs a two-sided bell: `x = (r - k) / w; exp(-x*x)`. Reach
+for `max(..., 0.0)` inside a gaussian only when you actually want the clamped
+side SOLID, and say so in a comment when you do. And on a single-quad effect,
+carry a `rim` guard — `1.0 - smoothstep(a, b, r)` multiplied into both coverage
+and emission — so no term can reach the polygon boundary no matter how it is
+later retuned; a straight edge drawn across a glow is the one artefact this
+primitive can still produce. Pinned as arithmetic, not as a string, in
+`core/tests/rune_circle_quality_test.c`.
+
+## An effect that is uniformly hot has no internal contrast left to read (24/08/2026)
+
+**Symptom.** Driving the whole rune circle bright to make it "glow" raised
+`cover%` to 15% and stable across backgrounds, and simultaneously destroyed it:
+`detail` 0.66 → 0.056, `darken%` 0.0 on every plate including white, `absvar`
+62.9 dark → 5.9 white. Visually a luminous smear with the rings still nominally
+present inside it.
+
+**Cause, two halves.** Emission can only ADD, so an effect that is hot
+everywhere has no way to be darker than bright scenery anywhere, and measures as
+absent on it (`BRIGHT_BACKGROUND_VFX_SPEC.md` §5.7). And on a dark background,
+uniform brightness is uniform: the internal structure that made the effect
+legible was gone even where the effect was clearly visible.
+
+**Rule.** Split the graphic into what is PIGMENT and what is LIGHT, and let only
+the second cross the bloom threshold (1.25 HDR luma, `main.c:500`). In the rune
+circle that is `line` (keylines, dashes, star — hot, blooms) against `mark`
+(the runes — occluding pigment that only flares when a travelling head passes
+over it). Two corollaries found while tuning it:
+- **Nothing crossing the bloom threshold means every "glow" on screen is
+  hand-painted, and a dim orange skirt over black is brown.** The fix for a
+  muddy halo is usually to make the source bright enough for the post chain to
+  spread it, not to widen the skirt.
+- **The emission pass's own coverage is a free axis on dark backgrounds.**
+  Premultiplied blending is `(ONE, ONE_MINUS_SRC_ALPHA)`, so coverage declared
+  there bites the destination a second time. Sweeping it 0.30 → 1.00 moved
+  `darken%` on white from 2.9% to 15.4% and `absvar` from 17.7 to 26.6, while
+  the dark-plate figures did not move at all.
+
+## `fbm2(vec2(atan(...), r))` prints a hard radial seam — and a WRAPPED phase used as a noise offset pops (24/08/2026)
+
+**Symptom.** Two separate discontinuities showed up the moment the rune circle
+grew noise fields. One is static: a straight radial line down one side of the
+disc, through every layer that read the field. The other is periodic: the whole
+field jumping, once every several seconds, with nothing in the animation to
+explain it.
+
+**Cause.**
+1. `atan(y, x)` jumps by 2π at its branch cut, so an angle used directly as a
+   noise coordinate is discontinuous there. The field is fine everywhere else,
+   which is why it reads as "a seam" rather than as "the noise is broken".
+2. Every rotating phase in this effect is folded to `[0, 2π)` on the CPU, which
+   is correct and necessary — `u_time` reaches four digits in a match and
+   `fract()` cannot recover precision lost before it. But a folded value used as
+   an **additive offset into a noise DOMAIN** (`fbm(vec2(a, r + u_flow.y))`)
+   steps by a whole period every time it wraps. Folding fixed the precision and
+   introduced a pop.
+
+**Rule.**
+- Walk the angle around a **circle** in the noise domain and put the radius on a
+  third axis: `fbm3(vec3(cos(a), sin(a), r * k) * scale)`. The path is closed, so
+  there is nothing to seam. `ground_aura.fs` already did this and says why —
+  reuse it rather than rediscovering it. When the field needs no radial
+  structure at all (radial rays), a periodic 1-D value noise on a lattice whose
+  index `mod()`s is two hashes against fbm3's twenty-four.
+- Drive a noise domain with `sin(wrappedPhase)`, never the wrapped phase itself.
+  It is bounded and continuous across the wrap. For erosion this is also the
+  better look: a field that breathes back and forth beats one that crawls.
+
+## "Bright core, coloured rim" is three terms off one distance, not a brighter colour (24/08/2026)
+
+**Symptom.** The rune circle's strokes were bright, correctly hued and
+antialiased, and still read as clean vector art rather than as filaments of
+light. Raising the emission made them a brighter flat orange, then a flat
+yellow, then white — never a glowing line.
+
+**Cause.** Every fragment of a stroke had the same colour and the same
+intensity. A real filament does not: its centre has run out of colour, its
+shoulders still have it, and there is a wash of hue around it that the centre is
+throwing off. One coverage value cannot express any of that.
+
+**Rule.** Take three terms off the single distance you already computed —
+coverage, a centreline weight (`cov * prof^3`), and a wide soft aura at ~3.5x
+the half-width that is NOT counted in coverage. Then spend most of the emission
+budget on the centreline term and let the tone map do the desaturation: an
+intensely bright saturated colour whitens on its own past ACES, so the colour
+ramp only has to finish the job. `Band3()` in `core/shaders/rune_circle.fs`.
+Deriving the core from a second, narrower `Band()` is the obvious alternative
+and is wrong — a narrower band is itself sub-pixel on every thin stroke, so the
+core disappears exactly where it is most wanted.
+
+## A coverage-only pigment plate is free on a dark background and decisive on a bright one (24/08/2026)
+
+**Symptom.** The rune circle held its silhouette across backgrounds (`cover%`
+within 15%) but `darken%` on the white plate sat at 2.4%, i.e. it was effectively
+pure added light there — the runes floated as isolated marks with nothing under
+them.
+
+**Cause.** Everything in the composition was either a stroke or a glow. Strokes
+are thin by definition, so the total area able to attenuate bright scenery was
+tiny no matter how opaque each stroke was.
+
+**Rule.** Give a ground-plane effect a soft disc of elemental pigment in
+**coverage only** — no emission term at all — torn by whatever field already
+textures its interior. On a night arena it is dark-on-dark and costs nothing
+measurable; on stone or snow it is what the inscription sits on. Measured on the
+white plate: `darken%` 2.4% → 56.6%, `absvar` 12.0 → 18.3, `|d|` 0.108 → 0.167,
+with the dark-plate figures unchanged. Cheapest bright-background win found so
+far, and it applies to any decal-like effect, not just this one.
+
+## A flat quad on the ground is not "on the ground" — it z-fights it, then disappears into it (25/08/2026)
+
+**Symptom.** On grass, the rune circle showed a stipple band straight across the
+inscription; on rolling ground most of the circle was simply gone, leaving two
+unrelated-looking arcs.
+
+**Cause.** One quad at the caster's Y is COPLANAR with the terrain, and terrain
+is not a plane. Two failures from one cause: where the depth values agree to
+within precision the two surfaces z-fight, and where the ground rises even
+slightly above the quad's plane the depth test hides that part of the circle
+outright. Neither is visible in the `render_vfx_matrix.sh` captures, because
+`WUXING_VFX_BG` skips `MapManager_DrawActive` — there is no receiver in that
+harness to fight with. `WUXING_MAP=<name> WUXING_VFX_DAYLIGHT=1
+WUXING_VFX_TOPDOWN=1 --render-vfx <i>` is the combination that reproduces it
+headlessly, and it should be run for anything that lives on a surface.
+
+**Rule.** Tessellate and drape: a grid mesh whose vertices take the ground's
+height DIFFERENCE from the centre (never its absolute height — that would drag a
+deliberately airborne circle to the floor), lifted a few cm along the normal.
+Keep the texture coordinates on the flat grid index so the pattern does not
+stretch where the ground does; the circle is a projection, not a decal painted
+on a curved surface.
+
+**And the guard that is easy to miss:** `MapManager_GetGroundHeightAt` answers
+`0.0` when there is no map or the map has no height hook, and 0.0 is a perfectly
+plausible height. Draping on it teleports every circle to y = 0 on the flat
+arena and in the headless harness. Gate on
+`MapManager_SampleGroundSurfaceAt(...)`, whose **return value** distinguishes "no
+data" from "height is zero"; only its bool carries that information.
+
+## A per-frame cost that was really a defect one layer down (25/08/2026)
+
+**Symptom.** Draping the rune circle over a 7x7 height grid — 49 samples a
+frame, deliberately matched to the budget `vc_ground_wave.inl` had already
+settled on — cost about **6 ms of CPU per frame** on VERDANT_PATH.
+
+**Cause.** `MapManager_GetGroundHeightAt` bottoms out in raylib's
+`GetRayCollisionMesh`, which tests the ray against every triangle of the terrain
+mesh — 232-292 µs per sample on VERDANT_PATH's 7,938-triangle island.
+
+**What was built first, and why it was the wrong repair.** This file grew a
+round-robin cache: a 4-slot LRU keyed on centre and radius, six samples a frame
+while seeding, one a frame after, flat on a miss. It worked — 6.0 ms/frame down
+to 0.2 — and every line of it was answering the wrong question. The defect was
+in the query, one module down, and fixing it there
+(`MapGroundLookup`, ENGINE_LANDMINES.md 21: 232-292 µs → ~0.59 µs, verified
+identical on 4,096 probes) deleted the cache, the LRU, the seeding schedule and
+their whole class of staleness bugs, and made `vc_ground_wave.inl`'s 48-sample
+ration obsolete at the same time.
+
+**Rule.** When a VFX has to ration a shared engine query to stay in budget, cost
+the query itself before building the ration. A ~90-line cache in one consumer
+and a one-line comment telling the next consumer to do the same is what a
+missing index looks like from above. The tell here was that a SECOND consumer
+independently arrived at the same workaround — that is not two effects being
+expensive, that is one query being wrong.

@@ -453,7 +453,7 @@
         .gradientChannels = NULL,
         .seam = "symbol_boundary_alpha_required",
         .projection = "conformal_mesh_stamp_receiver_normal",
-        .provenance = "P4 Decal Rework contract; rune glyph needs authored alpha and radial-symbol review",
+        .provenance = "P4 Decal Rework contract. SUPERSEDED 25/08/2026: VFX_ComposeRuneCircle was rebuilt as a procedural annulus (core/shaders/rune_circle.fs) and samples no sheet at all, so the decal migration this profile was reserved for is no longer wanted. The slot is kept rather than removed because VFX_SurfaceId is positional and deleting an entry renumbers every id after it.",
         .approval = "blocked_visual_owner",
         .lifetimeSeconds = 3.0f,
         .fadeInSeconds = 0.18f,
