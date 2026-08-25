@@ -59,14 +59,40 @@ int main(void)
     CHECK(Has(recipe, "SceneTargets_RequestSoftDepthRegion") &&
           Has(shader, "DepthContact") && Has(shader, "u_depthTex"),
           "FlowShield uses the scene-depth intersection for its contact rim");
-    CHECK(Has(shader, "float liquidCarrier = 0.34 + 1.28 * flowDetail") &&
-          Has(shader, "float bodyCoverage = u_opacity * interfaceWeight") &&
-          Has(shader, "float lowerVolume") && Has(shader, "liquidDensity") &&
-          Has(shader, "brightCurrent") && Has(shader, "crestWater") &&
+    /* This assertion used to pin `float liquidCarrier = 0.34 + 1.28 * flowDetail`
+     * by its literal text, along with two variable names that no longer exist.
+     * A test that spells out a tuning constant does not protect a look, it
+     * freezes a revision — and this one froze the exact coefficient that made
+     * the shell an opaque ball (a single layer reached ~0.70 coverage, twice,
+     * for ~0.91 total). It failed the moment the shell was made transparent,
+     * which was the whole point of the change. Assert the STRUCTURE instead. */
+    CHECK(Has(shader, "float bodyCoverage = u_opacity * interfaceWeight") &&
+          Has(shader, "float veinCoverage") && Has(shader, "float rimCoverage") &&
           Has(shader, "edgeGradient") && Has(shader, "rimCore") &&
           Has(shader, "contactCore") &&
           Has(shader, "VFX_ResolvePremultiplied") && !Has(shader, "VFX_ResolveEmission"),
-          "flow decorates a continuous premultiplied liquid carrier with lower-volume energy");
+          "coverage is built from separable body / vein / rim terms on one "
+          "premultiplied carrier");
+
+    /* The three things that make it a bubble rather than a planet, each of
+     * which was measured absent before 25/08/2026. */
+    CHECK(Has(shader, "ShieldVeins") && Has(shader, "ShieldRidge"),
+          "structure is a ridged-noise filament network — an area fbm gives "
+          "evenly-spread blobs, which is what the cloud sheet was doing");
+    /* NOT asserted: that the network is clumped. It was, briefly; the owner
+     * judged it against the reference and chose an even distribution, which is
+     * a look decision and not this file's to pin. Nor that sparks exist —
+     * specks are a particle job and were deliberately removed from the shader.
+     * Both are recorded in the shader's own comments instead. */
+    CHECK(Has(shader, "ShieldDir") && Has(shader, "vnoise3"),
+          "the noise is anchored to the sphere's own direction in 3D: view-space "
+          "fragNormal swims under camera rotation, and 2D noise on the raw UV "
+          "seams at u = 0 and pinwheels at the poles");
+    CHECK(Has(shader, "veinInk"),
+          "veins carry saturated element pigment in the BODY pass — tinting them "
+          "white there is invisible against white scenery");
+    CHECK(Has(recipe, "VFXLight_Spawn"),
+          "the shell lights the ground it sits on");
     CHECK(Has(recipe, "flow_shield_glow") &&
           Has(recipe, "appearance.emissionIntensity * s_flowShieldGlow"),
           "filament emission has an independent HDR glow control");

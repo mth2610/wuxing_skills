@@ -18,6 +18,7 @@ typedef struct {
     int bodyColor, rimColor, opacity, bodyOpacity, emissionGain, emissionOnly;
     int flowTex, sceneTex, hasScene, depthTex, hasDepth, depthEnabled, contactThickness;
     int time, flowSpeed, flowStrength, flowTiling, refractionStrength;
+    int veinScale, veinSharp, veinMode, flowMode;
 } VC_FlowShieldShader;
 
 static VC_FlowShield s_flowShields[VFX_FLOW_SHIELD_MAX];
@@ -34,6 +35,18 @@ static float s_flowShieldSpeed = 0.22f;
 static float s_flowShieldStrength = 0.16f;
 static float s_flowShieldTiling = 1.15f;
 static float s_flowShieldRefraction = 0.014f;
+static float s_flowShieldVeinScale = 9.5f;   // filament frequency over the sphere
+static float s_flowShieldVeinSharp = 5.4f;   // how thin each filament is drawn
+// VARIANT SELECTORS, not tuning values — they choose which code the shader
+// runs (ENGINE_LANDMINES.md 13). Kept so "which noise, which flow" is settled
+// by comparing captures. 0/0 is the shipping look; anything else must be
+// declared when reporting a measurement.
+// 1 (warped) is the CHOSEN look, picked by the owner off a four-way capture on
+// 25/08/2026. A plain ridged fbm runs its crests in statistically straight
+// lines; displacing the sample point by a coarser noise first makes them curl,
+// which is what a fluid does and what more octaves alone never buy.
+static float s_flowShieldVeinMode = 1.0f;    // 0 ridged 1 warped 2 cellular 3 stretched
+static float s_flowShieldFlowMode = 0.0f;    // 0 drift  1 swirl  2 convection
 static float s_flowShieldDepthEnabled = 1.0f;
 static float s_flowShieldContactThickness = 0.62f;
 
@@ -75,11 +88,19 @@ static void FlowShield_InitShared(void)
     s_flowShieldShader.flowStrength = GetShaderLocation(s_flowShieldShader.shader, "u_flowStrength");
     s_flowShieldShader.flowTiling = GetShaderLocation(s_flowShieldShader.shader, "u_flowTiling");
     s_flowShieldShader.refractionStrength = GetShaderLocation(s_flowShieldShader.shader, "u_refractionStrength");
+    s_flowShieldShader.veinScale = GetShaderLocation(s_flowShieldShader.shader, "u_veinScale");
+    s_flowShieldShader.veinSharp = GetShaderLocation(s_flowShieldShader.shader, "u_veinSharp");
+    s_flowShieldShader.veinMode = GetShaderLocation(s_flowShieldShader.shader, "u_veinMode");
+    s_flowShieldShader.flowMode = GetShaderLocation(s_flowShieldShader.shader, "u_flowMode");
 
     Tuning_RegisterFloat("flow_shield_opacity", &s_flowShieldOpacity, 0.82f);
     Tuning_RegisterFloat("flow_shield_glow", &s_flowShieldGlow, 1.15f);
     Tuning_RegisterFloat("flow_shield_flow_speed", &s_flowShieldSpeed, 0.22f);
     Tuning_RegisterFloat("flow_shield_flow_strength", &s_flowShieldStrength, 0.16f);
+    Tuning_RegisterFloat("flow_shield_vein_scale", &s_flowShieldVeinScale, 9.5f);
+    Tuning_RegisterFloat("flow_shield_vein_sharp", &s_flowShieldVeinSharp, 5.4f);
+    Tuning_RegisterFloat("flow_shield_vein_mode", &s_flowShieldVeinMode, 1.0f);
+    Tuning_RegisterFloat("flow_shield_flow_mode", &s_flowShieldFlowMode, 0.0f);
     Tuning_RegisterFloat("flow_shield_flow_tiling", &s_flowShieldTiling, 1.15f);
     Tuning_RegisterFloat("flow_shield_refraction", &s_flowShieldRefraction, 0.014f);
     Tuning_RegisterFloat("flow_shield_depth_enabled", &s_flowShieldDepthEnabled, 1.0f);
@@ -133,6 +154,9 @@ void VFX_FlowShield_Stop(int handle)
 void VFX_KillFlowShield(int handle)
 { if (handle >= 0 && handle < VFX_FLOW_SHIELD_MAX) s_flowShields[handle].active = false; }
 
+// Defined below, next to the draw path it shares the convention with.
+static Vector3 FlowShieldCentre(Vector3 groundPos, float radius);
+
 static void VC_FlowShield_Update(float dt)
 {
     bool anyActive = false;
@@ -144,6 +168,22 @@ static void VC_FlowShield_Update(float dt)
         shield->elapsed += dt;
         shield->level += (shield->target - shield->level) * (1.0f - expf(-dt * 7.0f));
         if (shield->stopping && shield->level < 0.004f) shield->active = false;
+
+        // GROUND SPILL. A glowing shell that lights nothing around it reads as
+        // a decal of a shell — the reference's clearest tell is the pool of
+        // colour it throws on the rock it is sitting on. Spawned per frame with
+        // a lifetime just over one, the standard pattern for a continuous
+        // emitter (vc_character_aura.inl does the same), so the light tracks a
+        // moving shield and dies with it instead of needing its own handle.
+        if (shield->level > 0.02f)
+        {
+            const VFX_ElementMaterial *m = VFX_Material(shield->mat);
+            Vector3 lightPos = FlowShieldCentre(shield->pos, shield->radius);
+            lightPos.y -= shield->radius * 0.35f;   // biased low: the spill is on the ground
+            VFXLight_Spawn(lightPos, m ? m->glow : WHITE,
+                           shield->radius * (2.1f + 0.5f * shield->level),
+                           0.10f, VFX_PRIORITY_LOW);
+        }
     }
     if (anyActive) SceneTargets_RequestSceneSnapshot();
 }
@@ -168,6 +208,16 @@ static void FlowShield_BindInputs(void)
                    &s_flowShieldContactThickness, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_flowShieldShader.shader, s_flowShieldShader.refractionStrength,
                    &s_flowShieldRefraction, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_flowShieldShader.shader, s_flowShieldShader.veinScale,
+                   &s_flowShieldVeinScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_flowShieldShader.shader, s_flowShieldShader.veinSharp,
+                   &s_flowShieldVeinSharp, SHADER_UNIFORM_FLOAT);
+    int veinMode = (int)(s_flowShieldVeinMode + 0.5f);
+    int flowMode = (int)(s_flowShieldFlowMode + 0.5f);
+    SetShaderValue(s_flowShieldShader.shader, s_flowShieldShader.veinMode,
+                   &veinMode, SHADER_UNIFORM_INT);
+    SetShaderValue(s_flowShieldShader.shader, s_flowShieldShader.flowMode,
+                   &flowMode, SHADER_UNIFORM_INT);
 }
 
 /* Same contract as the glass shell: `pos` is the ground point and the
