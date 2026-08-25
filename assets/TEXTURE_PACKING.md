@@ -116,7 +116,7 @@ This is load-bearing: raylib's `BLEND_ALPHA` is `glBlendFunc(SRC_ALPHA,
 ONE_MINUS_SRC_ALPHA)` and the hardware multiplies RGB by A itself. A sheet
 whose A is a dissolve field would be silently used as an opacity mask.
 
-### R5 — There are no mipmaps
+### R5 — There are no mipmaps, and for most layouts there cannot be
 
 `ResourceManager_LoadTexture` calls raylib `LoadTexture`, and
 `core/vfx_surface_registry.c:19-25` sets only filter and wrap. Every sheet has
@@ -127,6 +127,44 @@ it is drawn at. Reusing a sheet on a surface more than ~2x narrower makes every
 frequency in it that much higher with nothing to filter it down, and fine
 detail breaks into dashes. Author a second sheet instead of scaling an existing
 one, and record the intended width in `provenance`.
+
+**Why this is stated as ground truth rather than as a defect** (audited
+25/08/2026). "No mipmaps" reads like an oversight, and the obvious reaction is
+to switch them on globally. Classifying every registered asset says otherwise —
+a mip level is an AVERAGE of four texels, and averaging is only meaningful for
+the layouts whose channels are colour:
+
+| Layout | Live assets | Mippable? | Why |
+|---|---|---|---|
+| `OPAQUE` | 8 | **yes** | RGB is colour, A is opacity; averaging both is correct |
+| `FLIPBOOK` | 5 | **no, not as a flag** | an unpadded atlas bleeds neighbouring cells into each other as the chain shrinks — needs cell padding and a clamped mip count, not a boolean |
+| `VOLUME` | 1 | **no, same reason** | also an 8x8 atlas, and its channels are emission/density/shadow, not colour |
+| `FLOW` / `SPLIT_LEGACY` flow | 4 | **never** | RG is a direction VECTOR; the average of two opposing flows is no flow |
+| `STRAND` | 2 | **never** | `distort` is a signed scalar and `dissolve` is a threshold — averaging a threshold moves *when* a thing dissolves |
+| `NOISE` | 1 | pointless | it is a field sampled at an authored frequency; mipping changes its statistics |
+
+So R5's OUTCOME is right for 13 of 21 live assets and its stated REASON is what
+is wrong: it treats a per-layout property as a global one, and it prescribes
+"author a second sheet" for a problem some layouts could simply filter away.
+
+**And the one effect that was actually being destroyed by it no longer reads a
+sheet at all.** `VFX_ComposeRuneCircle` mapped a 128x4096 glyph strip onto an
+~18 px band over ~1100 px of circumference — 7x and 3.7x minification with
+nothing to filter it — so all 44 glyphs collapsed into the same grey smear. It
+was rebuilt procedurally (`core/shaders/rune_circle.fs`) and the sheets were
+deleted. Re-checked at grazing angle on VERDANT_PATH, the largest remaining
+consumers — the 1254x1254 decals — carry low-frequency authored content and
+show no visible aliasing.
+
+**Therefore: do not wire mipmaps speculatively.** The work, when something
+measurably shimmers, is a per-layout `mipmaps` field in
+`assets/vfx_surface_profiles.json` enforced by
+`scripts/validate_vfx_surface_registry.py` — never a global
+`GenTextureMipmaps`. Pair it with anisotropic filtering for anything stamped on
+the ground: mips assume a square pixel footprint, and at this game's isometric
+grazing angle the footprint is a long thin ellipse, so plain mips over-blur
+along the short axis. `maps/toolkit/map_props_ground.inl` already does exactly
+that pairing for the terrain and is the reference.
 
 ### R6 — No channel may be constant
 
@@ -184,3 +222,4 @@ registry unexplained.
 | Date | Editor | Section | Source | Tier |
 |---|---|---|---|---|
 | 2026-08-03 | AI (Core Agent) | all | `assets/vfx_surface_profiles.json`, `scripts/gen_smoke_strand_texture.py`, `scripts/gen_flow_maps.py`, `core/vfx_surface_registry.c`, `core/trails/shaders/trail_deform.fs` | 1 ground-truth; §2 layouts `FLOW`/`OPAQUE`/`FLIPBOOK` are 3 project convention, newly decided |
+| 2026-08-25 | AI (Core Agent) | R5 | `assets/TEXTURE_PACKING.md`, `core/tests/texture_packing_test.c` | R5's outcome unchanged (still no mipmaps); its REASON corrected from a global claim to a per-layout classification — ground truth is the audit of all 21 live registered assets, the mippability verdict per layout is inferred from what each channel means |

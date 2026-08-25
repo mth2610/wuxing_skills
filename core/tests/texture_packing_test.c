@@ -200,14 +200,32 @@ static void Test_ReferenceSheetsMatchTheSpecsClaim(void) {
         "instead of fighting a colour baked into the sheet");
 }
 
-// ── 5. R5's ground truth: nothing generates mipmaps ─────────────────────────
-static void Test_NoMipmapsIsStillTrue(void) {
-  CHECK(!FileHas("core/vfx_surface_registry.c", "GenTextureMipmaps"),
-        "the surface registry generates no mipmaps, so R5's frequency warning "
-        "still applies");
-  CHECK(FileHas("core/vfx_surface_registry.c", "SetTextureFilter") &&
-            FileHas("core/vfx_surface_registry.c", "SetTextureWrap"),
-        "...it sets only filter and wrap, which is what R5 cites");
+// ── 5. R5: the mipmap decision is per LAYOUT, and must stay written down ────
+//
+// This used to assert `!FileHas(..., "GenTextureMipmaps")` — "the registry
+// generates no mipmaps, so R5's frequency warning still applies". That is a
+// test pinning a DEFECT so it cannot be fixed: it fails the moment anyone
+// enables mipmaps for the one layout where they are unambiguously correct, and
+// it enforces nothing about the layouts where they would be actively wrong.
+//
+// The 25/08/2026 audit found the real shape of it. A mip level is an average of
+// four texels, so it is meaningful only where the channel is colour: OPAQUE
+// yes; FLOW and STRAND never (a direction vector and a dissolve threshold do
+// not average); FLIPBOOK and VOLUME not as a flag, because an unpadded atlas
+// bleeds neighbouring cells as the chain shrinks. What has to be protected is
+// therefore not the absence of a call — it is that the reasoning stays written
+// down where the next person will look for it.
+static void Test_MipmapDecisionIsRecordedPerLayout(void) {
+  CHECK(FileHas("assets/TEXTURE_PACKING.md",
+                "### R5 — There are no mipmaps, and for most layouts there cannot be"),
+        "R5 states the mipmap position as a per-layout decision");
+  CHECK(FileHas("assets/TEXTURE_PACKING.md", "bleeds neighbouring cells"),
+        "...and records why an atlas cannot simply take a mipmap flag");
+  CHECK(FileHas("assets/TEXTURE_PACKING.md", "the average of two opposing flows is no flow"),
+        "...and why a FLOW sheet can never take one at all");
+  CHECK(FileHas("assets/TEXTURE_PACKING.md", "anisotropic"),
+        "...and that ground-stamped sheets need aniso alongside mips, because "
+        "mips assume a square pixel footprint and this game is isometric");
 }
 
 int main(void) {
@@ -216,7 +234,7 @@ int main(void) {
   Test_TheRuleIsActuallyWired();
   Test_EveryAssetDeclaresALayout();
   Test_ReferenceSheetsMatchTheSpecsClaim();
-  Test_NoMipmapsIsStillTrue();
+  Test_MipmapDecisionIsRecordedPerLayout();
   printf("---- %d checks, %d failures\n", g_checks, g_failures);
   return g_failures ? 1 : 0;
 }
