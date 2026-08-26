@@ -2857,48 +2857,50 @@ missing index looks like from above. The tell here was that a SECOND consumer
 independently arrived at the same workaround — that is not two effects being
 expensive, that is one query being wrong.
 
-## rlgl immediate mode transforms VERTICES on the CPU and passes NORMALS through raw (25/08/2026)
+## Immediate mode transforms BOTH position and normal on the CPU — pass them through untouched (25/08/2026, corrected 26/08/2026)
 
 **Symptom.** ENERGY ORB, drawn with `aura_shell.fs` — a shader whose whole job
 is a fresnel rim — had **no visible rim at all**, at any `rimStrength`. It read
 as a flat mottled ball. `detail` 0.062, `absvar` 21.3.
 
-**Cause.** `DrawCoreSphere` is immediate mode, and the two attributes do not
-arrive in the same space:
+**Cause.** `MyBeginMode3D` calls `rlPushMatrix()` in `RL_MODELVIEW`, which arms
+rlgl's `transformRequired`, so `rlVertex3f` AND `rlNormal3f` both transform on
+the CPU (rlgl.h:1529/1612). Every attribute of an immediate-mode draw therefore
+arrives **already in view space**, and `matModel` is that same view matrix — so
+`VS_FinalOutput` applies it a second time to both. `aura_shell.vs` did exactly
+that, and the fragment stage then used `normalize(viewPos - fragPosition)`,
+subtracting a doubly-transformed view-space point from a world-space camera.
 
-| attribute | space on arrival | what it needs |
-|---|---|---|
-| `vertexPosition` | **view** (rlgl transformed it on the CPU) | pass through |
-| `vertexNormal` | **world** (passed through raw) | × `matModel` (= model × view) |
+**Rule.** For immediate-mode geometry: pass position and normal through
+untouched, and take the view vector as `normalize(-fragPosition)` — in view
+space the camera is at the origin, so `viewPos` must not appear at all.
+`glass_shell.vs` and `core/trails/shaders/trail_volume.vs` both do this; the
+latter carries the full derivation.
 
-`aura_shell.vs` called `VS_FinalOutput`, which applies `matModel` to BOTH — so
-the position was transformed twice and the normal was right. The fragment stage
-then used `normalize(viewPos - fragPosition)`, subtracting a doubly-transformed
-view-space point from a world-space camera. Every term downstream was garbage,
-and — the reason it survived — garbage that still produces a smooth plausible
-gradient.
+**THIS ENTRY SHIPPED WRONG FOR A DAY, and how it went wrong is the useful part.**
+The first version said position passes through but the normal still needs
+`matModel`, on the reasoning that rlgl transforms vertices but not normals.
+That is false — `rlNormal3f` transforms too — and the tree already contained a
+dedicated regression test proving it, which I did not look for:
 
-A first attempt at the fix removed `matModel` from both, following
-`glass_shell.vs`. That left the normal in WORLD space, dotted against a
-view-space view vector: a different wrong answer, also smooth, also plausible.
-It moved `detail` 0.062 → 0.060, which correctly reported that nothing had been
-fixed.
+    third_party/vulkan/tests/rlvk_visual_test.c, scenario `imm_normal`
+        raw vertexNormal      -> view * N          (delta 0.002)
+        matModel*vertexNormal -> view * view * N   (delta 0.005)
 
-**Rule.** For immediate-mode geometry: `fragPosition = vertexPosition`,
-`fragNormal = normalize(vec3(matModel * vec4(vertexNormal, 0.0)))`,
-`viewDir = normalize(-fragPosition)` — the camera is at the origin in view
-space, so `viewPos` must not appear at all. Do not copy one line of that from a
-working shader without the other two.
+Three guesses were made about this space question and two were wrong, each
+producing a smooth plausible gradient rather than anything that looked like a
+bug. **Before reasoning about which space an attribute is in, grep the tests for
+one that already measures it.** `imm_normal` is that test, and
+`trail_volume.vs` is a 40-line write-up of the same finding sitting in the tree
+the whole time.
 
-**And use §9's prescribed probe rather than reasoning about it.** Two of my
-three guesses here were wrong. Rendering `fract(length(fragPosition))` settles
-it in one capture: the gradient is CONCENTRIC with the silhouette if the space
-is view (minimum = nearest the camera) and an OFF-CENTRE crescent if it is
-world (minimum = facing the world origin). Two notes on running it: keep the
-output below the 1.25 bloom threshold or the post chain smears one region into
-another, and never encode the answer as a NUMBER — ACES plus grade makes any
-numeric readout unrecoverable. A threshold or a shape survives; a value does
-not.
+**And use §9's prescribed probe when there is no test.** Rendering
+`fract(length(fragPosition))` settles it in one capture: the gradient is
+CONCENTRIC with the silhouette if the space is view (minimum = nearest the
+camera) and an OFF-CENTRE crescent if it is world. Two things that probe needs:
+keep the output below the 1.25 bloom threshold or the post chain smears one
+region into another, and never encode the answer as a NUMBER — ACES plus grade
+makes a numeric readout unrecoverable, while a threshold or a shape survives.
 
 ## A rim cannot be brighter than a body that is already at the top of the range (25/08/2026)
 

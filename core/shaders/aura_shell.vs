@@ -38,26 +38,27 @@ void main() {
     // the position and the normal. glass_shell.vs carries the same note for the
     // same mesh; this file did not, and the fragment stage's fresnel was reading
     // a doubly-transformed normal against a world-space camera.
-    // POSITION AND NORMAL NEED DIFFERENT TREATMENT HERE, and that is the whole
-    // trap. rlgl immediate mode transforms VERTICES on the CPU but passes
-    // NORMALS through raw, so DrawCoreSphere hands this stage a view-space
-    // position next to a world-space normal. Proved, not assumed: rendering
-    // fract(length(fragPosition)) gives a gradient CONCENTRIC with the
-    // silhouette, which is only true if the minimum is the fragment nearest the
-    // camera (ENGINE_LANDMINES 9's prescribed probe).
+    // PASS BOTH ATTRIBUTES THROUGH UNTOUCHED. This material's only consumer
+    // draws with DrawCoreSphere, i.e. immediate mode, and MyBeginMode3D's
+    // rlPushMatrix() in RL_MODELVIEW arms rlgl's transformRequired — so
+    // rlVertex3f AND rlNormal3f both transform on the CPU (rlgl.h:1529/1612)
+    // and the attributes arrive ALREADY IN VIEW SPACE. matModel is then that
+    // same view matrix, so VS_FinalOutput applies it a second time.
     //
-    //   position: already view space -> pass through, do NOT re-apply matModel
-    //   normal:   still world space  -> matModel (= model x view) puts it in
-    //             view space, which is what VS_FinalOutput was doing correctly
+    // MEASURED, not reasoned: third_party/vulkan/tests/rlvk_visual_test.c
+    // scenario `imm_normal` sends a known normal down this exact path —
+    //     raw vertexNormal      -> view * N        (delta 0.002)
+    //     matModel*vertexNormal -> view * view * N (delta 0.005)
+    // core/trails/shaders/trail_volume.vs carries the same finding at length.
     //
-    // The original code applied matModel to BOTH, so the position was
-    // double-transformed; a first attempt at this fix removed it from both, so
-    // the normal was left in world space and dotted against a view-space view
-    // vector. Either way the fresnel is meaningless, and both look like a
-    // plausible gradient rather than like a bug.
+    // A first pass at this file kept matModel for the NORMAL on the reasoning
+    // that rlgl transforms positions but not normals. That reasoning is wrong
+    // and the test above says so; the frag stage's |N.V| was inverted for a day
+    // because of it. In view space the camera is at the origin, so the view
+    // vector is normalize(-fragPosition) and viewPos must not appear at all.
     vec3 dp = vertexPosition + disp;
     fragPosition = dp;
-    fragNormal   = normalize(vec3(matModel * vec4(vertexNormal, 0.0)));
+    fragNormal   = normalize(vertexNormal);
     fragTexCoord = vertexTexCoord;
     gl_Position  = mvp * vec4(dp, 1.0);
 }
