@@ -159,6 +159,10 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeSparkTrail":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeSweepSlash":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeVolumeTrail":        ("trail",   "follower",   "continuous"),
+    # Its replacement, same lifecycle in every respect: a managed follower that
+    # runs until killed. Both are listed while the old one is still in the tree
+    # so the two can be measured against each other on the same harness.
+    "VFX_ComposeFilamentTrail":      ("trail",   "follower",   "continuous"),
     "VFX_ComposeFissureStreak":      ("draw",    "timed",      "continuous"),
     "VFX_ComposeStonePillar":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeFlameVolume":        ("emitter", "timed",      "continuous"),

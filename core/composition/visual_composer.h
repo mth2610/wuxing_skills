@@ -529,6 +529,22 @@ int  VFX_ComposeVolumeTrailEx(const Matrix *followTransform, VC_MaterialId mat,
                                const VFX_TrailSurface *surface);
 void VFX_KillVolumeTrail(int handle);
 
+// ── FILAMENT TRAIL — the swept volume, rebuilt (26/08/2026) ─────────────────
+//
+// Replaces VFX_ComposeVolumeTrail. Same swept droplet, same UVs, same path
+// history; the structure moves out of an authored sheet and into a 3D filament
+// field, so the near and far walls of the volume cut it at different depths and
+// show DIFFERENT strands. A sheet cannot do that — both walls carry the same
+// picture in the same place, which is why the old effect read as a painted skin
+// however good its sheet was.
+//
+// `radius` is a ceiling: the drawn radius is also bounded by the length the
+// emitter has actually swept, so a trail that has not moved yet stays thin.
+// Managed: keep the handle, call VFX_KillFilamentTrail when the owner dies.
+int  VFX_ComposeFilamentTrail(const Matrix *followTransform, VC_MaterialId mat,
+                              float radius, float lifetime);
+void VFX_KillFilamentTrail(int handle);
+
 // ── H2. Ground wave ─────────────────────────────────────────────────────────
 // An expanding ring of ground-CONFORMING geometry: it rises, it has a lip whose
 // crest leads, and its inner face is brighter than its outer one — the thing a

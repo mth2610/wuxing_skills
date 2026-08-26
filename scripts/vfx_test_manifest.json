@@ -162,6 +162,18 @@
       "draw_call": "VFX_ComposeEnergyOrb($POS, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
+      "source": "common/vc_filament_trail.inl",
+      "fn": "VFX_ComposeFilamentTrail",
+      "label": "FILAMENT TRAIL",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeFilamentTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f)",
+      "kill_fn": "VFX_KillFilamentTrail"
+    },
+    {
       "source": "common/vc_flow_shield.inl",
       "fn": "VFX_ComposeFlowShield",
       "label": "FLOW SHIELD",
