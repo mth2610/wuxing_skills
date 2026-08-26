@@ -59,19 +59,22 @@ The uniform list used to exist twice — as `uniform` lines in the `.fs`, and as
 hand-written table in `material_system.c` — with nothing comparing them. They
 drifted. Authoring the first `.mat` immediately turned up `u_topY`: the C table
 had been fetching a location for a uniform **no shader in the tree declares**,
-getting -1 and pushing nothing, while `vc_energy_orb.inl` carefully set its value
-with a comment explaining what it was supposed to do.
+getting -1 and pushing nothing, while the composition using it carefully set its
+value with a comment explaining what it was supposed to do. (That first `.mat`
+was `aura_shell`; it and its only consumer, ENERGY ORB, were deleted on
+26/08/2026, so the example below has been moved to a material that still
+exists.)
 
 ### Shape
 
 ```
 material {
-    name    : aura_shell,
+    name    : crystal,
     output  : body,              // body | emission | premultiplied
-    vertex  : "core/shaders/aura_shell.vs",
+    vertex  : "core/shaders/crystal.vs",
     includes : [ ... ],
-    table   : AURA_PARAMS,               // the C symbol to generate
-    struct  : AuraShellMaterialParams,   // whose fields the params bind to
+    table   : CRYSTAL_PARAMS,            // the C symbol to generate
+    struct  : CrystalMaterialParams,     // whose fields the params bind to
     parameters : [
         { uniform: u_bodyColor, kind: color, field: bodyColor },
         { uniform: u_opacity,   kind: float, field: opacity },

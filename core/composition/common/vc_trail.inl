@@ -303,6 +303,15 @@ static const TrailMotion k_trailMotion[TRAIL_PRESET_COUNT] = {
     [TRAIL_PRESET_SMOKE]    = {0.0f, false, false, 0, 0, 0, 0, 1, false, false,
                                30.0f, 0.05f, 25.0f,
                                false, TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN},
+    // MAGIC is SMOKE's MOTION, byte for byte — same clock, same idle
+    // threshold, same widening envelope. Copied deliberately rather than
+    // retuned: the request was "the same plume, glowing", and motion is not
+    // where glowing lives. Any difference here would make the two impossible
+    // to compare on the bench, which is the only way to judge whether the
+    // emission changes alone did the job.
+    [TRAIL_PRESET_MAGIC]    = {0.0f, false, false, 0, 0, 0, 0, 1, false, false,
+                               30.0f, 0.05f, 25.0f,
+                               false, TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN},
 };
 
 static const TrailMotion *TrailMotionOf(TrailPresetId p)
@@ -752,6 +761,7 @@ static const TrailLayer k_sweptLayers[TRAIL_PRESET_COUNT][3] = {
     // mask is the silhouette, so there is no wider halo to stack.
     [TRAIL_PRESET_ENERGY] = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
     [TRAIL_PRESET_SMOKE]  = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_MAGIC]  = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
 };
 
 // ── THE RECIPE TABLE — what each preset LOOKS like ──────────────────────────
@@ -989,6 +999,80 @@ static void TrailPresets_Build(void)
         // stretched once over the trail. Tiling a shape sheet gives a rope of
         // identical segments; the authoring decides this, not taste.
         UVFx_SyncStretch(&r->deform, &r->flow, true);
+    }
+
+    // ── MAGIC — SMOKE's plume, lit from inside ─────────────────────────────
+    //
+    // AUTHORED AS A DIFF AGAINST SMOKE, and the diff is the whole point. Sheet,
+    // topology, strand read, wave field, flow pan, mask and stretch mode are
+    // COPIED from the block above without a single number changed, so this is
+    // demonstrably the same material moving the same way; only the six fields
+    // that decide "does this surface emit" are different. Retuning anything
+    // else would have made the pair uncomparable on the bench and turned the
+    // one question that matters — did emission alone do it — into a guess.
+    //
+    // WHY THE SAME SHEET, not a new energy one. smoke_strand.png's authored
+    // hairs and its baked taper ARE the flow the request asked to keep, and
+    // core/vfx_surface_registry.h's own note on ENERGY_RIBBON says the two
+    // strand styles ("many thin faint hairs" vs "few strong ones") are not
+    // interchangeable on one sheet. Swapping to ENERGY_RIBBON would have
+    // changed the structure, which is exactly what was to stay.
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_MAGIC];
+        TrailRecipe *src = &k_trailPresets[TRAIL_PRESET_SMOKE];
+        // Struct copy first, THEN the diff. Field-by-field re-listing is how
+        // the two rows drift apart the first time someone tunes SMOKE and
+        // forgets this one — the copy makes divergence impossible except where
+        // it is written below. Safe because every pointer in the recipe
+        // (`layers`, `sheetOverride`) is either NULL or into a static table,
+        // and `deform`/`flow` are by-value layer stacks.
+        *r = *src;
+        r->layers = k_sweptLayers[TRAIL_PRESET_MAGIC];
+
+        // 1. IT CARRIES THE ELEMENT. SMOKE is NEUTRAL on purpose — a
+        //    combustion product has no element identity, so tinting it made
+        //    fire's smoke red. Conjured energy is the opposite case: the
+        //    element IS what is glowing, so it takes the hot tone.
+        r->tintSource = TRAIL_TINT_GLOW;
+        // SMOKE's 205 lets the grey plume sit back; magic reads as a body of
+        // light and wants its coverage at full strength before bodyOpacity
+        // scales it.
+        r->tintAlpha = 235;
+
+        // 2. IT EMITS. `additive` selects BLEND_ALPHA_PREMULTIPLY at the spawn
+        //    site below — NOT plain additive, and the distinction is the whole
+        //    reason this preset can exist without failing the bright-background
+        //    spec. Pure additive over a near-white background has nothing left
+        //    to say (measured 0.0% darkening for MAIN/ENERGY/WISP on white);
+        //    premultiplied cuts a silhouette where coverage is high and still
+        //    adds light where it is low, from one draw.
+        r->additive = true;
+        r->hdrGain = 1.70f;
+        // 3. IT IS TRANSLUCENT. SMOKE's 0.96 is a wall — the one number that
+        //    would fight the glow hardest, because coverage that near 1 leaves
+        //    the premultiplied law nothing to decay toward. Roughly half hides
+        //    what is behind it and lets the rest through, which is what
+        //    separates luminous gas from lit soot.
+        r->bodyOpacity = 0.52f;
+
+        // 4. IT HAS A CORE. SMOKE zeroes these ("no hot core in smoke");
+        //    narrower and cooler than ENERGY's 0.18/0.72 because the plume's
+        //    support is far broader than a braided filament — the same core
+        //    energy spread over that width reads as a blown-out slab.
+        r->colour.coreWidth = 0.13f;
+        r->colour.coreIntensity = 0.50f;
+        // 5. IT COOLS TOWARD THE ELEMENT, NOT TOWARD GREY. SMOKE ramps to a
+        //    neutral {112,112,120} because what tints a plume is the light on
+        //    it. A self-lit plume has no such excuse: the far end is the same
+        //    light, dimmer. Zeroing `tail` hands the ramp to `tailDarken`,
+        //    which cools toward the material's OWN dark tone.
+        r->colour.tail = (Color){0, 0, 0, 0};
+        r->colour.tailDarken = 0.42f;
+        // 6. ITS CONTRAST POLICY IS MAGIC, not SMOKE. The profile is what
+        //    resolves body vs emission for bloom (core/vfx_contrast.h); left
+        //    on SMOKE the emission half is authored for something that does
+        //    not emit.
+        r->colour.contrast = VFX_CONTRAST_MAGIC;
     }
 }
 

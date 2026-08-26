@@ -619,11 +619,6 @@ static void Test_MirrorStillMatchesSource(void) {
   CHECK(!FileHasCode("core/composition/common/vc_shield_shell.inl", "SurfaceFlow_Apply") &&
             !FileHasCode("core/composition/common/vc_shield_shell.inl", "shield_shell.fs"),
         "the shield shell no longer owns a flow-map shader path");
-  CHECK(FileHas("core/shaders/aura_shell.fs", "sin(UVDeform_FoldAngle("),
-        "aura_shell's periodic scan folds its clock through the module");
-  CHECK(FileHas("core/shaders/aura_shell.fs", "float yScroll = fragPosition.y * u_heightScale - u_time * u_scrollSpeed;"),
-        "...while the fbm3 domain scroll right above it stays UNFOLDED — the "
-        "fold is exact for a sine and would make an aperiodic field jump");
 
   // ── Build wiring. A missing shader file does not report as a shader problem ──
   CHECK(FileHas("CMakeLists.txt", "file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/uv/shaders)"),

@@ -288,7 +288,7 @@
 ```c
   Shader Trail_GetVolumeShader(void);
   void TrailSystem_SetGlobalTexture(Texture2D tex);
-  void InitTrailSystem(Shader defaultShader);
+  void InitTrailSystem(void);
   int SpawnTrailEntity(TrailConfig config);
   TrailEntity *GetTrail(int id);
   void KillTrail(int id);
@@ -401,6 +401,7 @@
   VFXRenderScope VFXRender_BeginAppearance(VFXRenderPass pass, VFXAppearanceId appearanceId, VFXResolvedAppearance legacy, bool depthWrite, VFXResolvedAppearance *outResolved);
   void VFXRender_EndDraw(VFXRenderScope *scope);
   bool VFXRender_AppearanceDrawsPass(VFXResolvedAppearance appearance, VFXRenderPass pass);
+  const char *VFXRender_OutputDefines(VFXSurfaceMode surface);
   VFXContrastLayer VFXRender_ContrastLayer(VFXRenderPass pass);
 ```
 **Enums:** VFXRenderPass { VFX_RENDER_PASS_BODY,VFX_RENDER_PASS_EMISSION }
@@ -681,12 +682,9 @@ _Inline helpers / macros only — see header._
   void PlasmaMaterial_Load(PlasmaMaterial *outMat, const PlasmaMaterialParams *params);
   void PlasmaMaterial_Begin(PlasmaMaterial mat);
   void PlasmaMaterial_End(void);
-  void AuraShellMaterial_Load(AuraShellMaterial *outMat, const AuraShellMaterialParams *params);
-  void AuraShellMaterial_Begin(AuraShellMaterial mat);
-  void AuraShellMaterial_End(void);
 ```
 **Enums:** MaterialPreset { MAT_FIRE,MAT_ICE,MAT_WATER,MAT_PORTAL,MAT_ROCK,MAT_METAL,MAT_GLASS,MAT_CUSTOM }
-**Structs** (fields in header): EffectMaterialParams, EffectMaterial, CrystalMaterialParams, CrystalMaterial, PlasmaMaterialParams, PlasmaMaterial, AuraShellMaterialParams, AuraShellMaterial, VfxParamDesc
+**Structs** (fields in header): EffectMaterialParams, EffectMaterial, CrystalMaterialParams, CrystalMaterial, PlasmaMaterialParams, PlasmaMaterial, VfxParamDesc
 
 ### `core/geometry/procedural_mesh_utils.h`
 ```c
@@ -800,13 +798,13 @@ _Inline helpers / macros only — see header._
   void VFX_ShieldShell_Stop(int handle);
   void VFX_KillShieldShell(int handle);
   void VFX_ShieldShell_DrawRefraction(Camera3D camera);
+  void VFX_FlowShield_DrawRefraction(Camera3D camera);
   int VFX_ComposeCharacterAura(int agentId, VC_MaterialId matId, float intensity);
   void VFX_AuraSetIntensity(int handle, float intensity01);
   void VFX_KillCharacterAura(int handle);
   void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, float time);
   void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01, int ringCount);
   void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
-  void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
   void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01);
   void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01);
   void VFX_ComposeDebrisShards(Vector3 pos, Vector3 vel, VC_MaterialId mat, float scale, int count);
@@ -845,6 +843,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
   int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
+  int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   void VFX_ComposeFluidImpact(Vector3 pos);
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
@@ -862,6 +861,11 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
   void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
+  void VFX_FlowShield_SetIntensity(int handle, float intensity01);
+  void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
+  int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
+  void VFX_FlowShield_Stop(int handle);
+  void VFX_KillFlowShield(int handle);
   void VFX_KillRefBands(int id);
   void VFX_KillRefParticles(int id);
   void VFX_SmokeTrail_Stop(int handle);

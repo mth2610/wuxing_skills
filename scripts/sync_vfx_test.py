@@ -103,6 +103,7 @@ FIXTURE_PRESET_VARIANTS = {
         ("WISP",     "TRAIL_PRESET_WISP",     "0.1f"),
         ("BACKDROP", "TRAIL_PRESET_BACKDROP", "0.15f"),
         ("SMOKE",    "TRAIL_PRESET_SMOKE",    "0.0f"),
+        ("MAGIC",    "TRAIL_PRESET_MAGIC",    "0.0f"),
     ],
 }
 

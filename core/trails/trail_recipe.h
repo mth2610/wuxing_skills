@@ -226,6 +226,15 @@ typedef enum {
     TRAIL_PRESET_BACKDROP,  // wide dim underlay meant to sit behind another trail
     TRAIL_PRESET_ENERGY,    // braided hot filaments with a gold core
     TRAIL_PRESET_SMOKE,     // many faint strands piling into occluding mass
+    // SMOKE's plume, lit from inside. Same sheet, same strand read, same wave
+    // field and the same flow pan — the ONLY differences are the ones that
+    // decide whether a surface emits: it takes the element's glow tint instead
+    // of neutral grey, resolves premultiplied (silhouette AND light) instead of
+    // plain alpha, and carries a hot core. Authored as a row rather than as a
+    // flag on SMOKE because "occludes" vs "emits" is what every field below the
+    // pass split exists to express, and a bool would have to fan out over six
+    // of them.
+    TRAIL_PRESET_MAGIC,
     TRAIL_PRESET_COUNT      // range-check against THIS, never the last by name
 } TrailPresetId;
 

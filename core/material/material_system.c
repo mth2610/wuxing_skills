@@ -81,7 +81,7 @@ static void MatApplyTextureDefaults(const VfxTextureDefault *defaults, int count
 
 /* ── The tables ──────────────────────────────────────────────────────────── */
 
-/* EFFECT_PARAMS, CRYSTAL_PARAMS and AURA_PARAMS are GENERATED from
+/* EFFECT_PARAMS and CRYSTAL_PARAMS are GENERATED from
  * the .mat files under core/shading/materials, which are also where their .fs
  * files come from. (Spelled out rather than globbed: a "/" followed by a "*"
  * inside a block comment is a nested comment opener, and -Wcomment says so.)
@@ -115,7 +115,6 @@ static const VfxParamDesc PLASMA_PARAMS[] = {
 };
 VFX_STATIC_ASSERT(sizeof(PLASMA_PARAMS) / sizeof(PLASMA_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, plasma);
 
-VFX_STATIC_ASSERT(sizeof(AURA_PARAMS) / sizeof(AURA_PARAMS[0]) <= VFX_MAT_MAX_PARAMS, aura);
 
 /* ── The engine ──────────────────────────────────────────────────────────── */
 
@@ -434,29 +433,3 @@ void PlasmaMaterial_End(void)
     MatEndCommon();
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * AuraShellMaterial
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-void AuraShellMaterial_Load(AuraShellMaterial *outMat, const AuraShellMaterialParams *params)
-{
-    if (!outMat) return;
-    *outMat = (AuraShellMaterial){0};
-    outMat->shader = ResourceManager_LoadShader("core/shaders/aura_shell.vs",
-                                                "core/shaders/aura_shell.fs");
-    outMat->layout = AURA_PARAMS;
-    outMat->layoutCount = (int)(sizeof(AURA_PARAMS) / sizeof(AURA_PARAMS[0]));
-    if (params) outMat->params = *params;
-    MatFetchLocs(outMat->shader, outMat->layout, outMat->layoutCount, outMat->locs);
-}
-
-void AuraShellMaterial_Begin(AuraShellMaterial mat)
-{
-    MatBeginCommon(mat.shader);
-    MatApply(mat.shader, mat.layout, mat.layoutCount, mat.locs, &mat.params);
-}
-
-void AuraShellMaterial_End(void)
-{
-    MatEndCommon();
-}

@@ -444,6 +444,19 @@
       "_variant": "TRAIL_PRESET_SMOKE"
     },
     {
+      "source": "common/vc_trail.inl",
+      "fn": "VFX_ComposeTrail",
+      "label": "TRAIL MAGIC",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, TRAIL_PRESET_MAGIC)",
+      "kill_fn": "VFX_KillTrail",
+      "_variant": "TRAIL_PRESET_MAGIC"
+    },
+    {
       "source": "common/vc_volume_trail.inl",
       "fn": "VFX_ComposeVolumeTrail",
       "label": "VOLUME TRAIL",
