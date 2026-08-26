@@ -139,7 +139,6 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeDebrisShards":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeDissolveExit":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeEnergyBurst":        ("event",   "burst",      "oneshot"),
-    "VFX_ComposeEnergyOrb":          ("draw",    "timed",      "continuous"),
     "VFX_ComposeGlintSparkle":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeGroundWave":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeImpactPackage":      ("event",   "burst",      "oneshot"),
@@ -159,10 +158,6 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeSparkTrail":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeSweepSlash":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeVolumeTrail":        ("trail",   "follower",   "continuous"),
-    # Its replacement, same lifecycle in every respect: a managed follower that
-    # runs until killed. Both are listed while the old one is still in the tree
-    # so the two can be measured against each other on the same harness.
-    "VFX_ComposeFilamentTrail":      ("trail",   "follower",   "continuous"),
     "VFX_ComposeFissureStreak":      ("draw",    "timed",      "continuous"),
     "VFX_ComposeStonePillar":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeFlameVolume":        ("emitter", "timed",      "continuous"),

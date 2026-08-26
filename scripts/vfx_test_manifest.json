@@ -151,29 +151,6 @@
       "trigger_call": "VFX_ComposeEnergyBurst($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
     },
     {
-      "source": "common/vc_energy_orb.inl",
-      "fn": "VFX_ComposeEnergyOrb",
-      "label": "ENERGY ORB",
-      "category": "common",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeEnergyOrb($POS, VC_MAT_FIRE, 1.5f, $PROG)"
-    },
-    {
-      "source": "common/vc_filament_trail.inl",
-      "fn": "VFX_ComposeFilamentTrail",
-      "label": "FILAMENT TRAIL",
-      "category": "common",
-      "fixture": "follower",
-      "lifecycle": "trail",
-      "_auto": true,
-      "type": "continuous",
-      "spawn_call": "VFX_ComposeFilamentTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f)",
-      "kill_fn": "VFX_KillFilamentTrail"
-    },
-    {
       "source": "common/vc_flow_shield.inl",
       "fn": "VFX_ComposeFlowShield",
       "label": "FLOW SHIELD",

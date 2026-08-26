@@ -62,7 +62,6 @@ int main(void)
     bad += !Has("core/composition/common/vc_ground_wave.inl", "VFX_RENDER_PASS_EMISSION");
     bad += !Has("core/composition/common/vc_shock_ring.inl", "VFXRender_BeginDraw");
     bad += !Has("core/composition/common/vc_portal_disc.inl", "VFXRender_BeginDraw");
-    bad += !Has("core/composition/common/vc_energy_orb.inl", "VFXRender_BeginDraw");
     bad += !Has("core/composition/common/vc_sweep_slash.inl", "VFXRender_BeginDraw");
     bad += !Has("core/composition/earth/fissure_streak.inl", "VFXRender_BeginDraw");
     bad += !Has("core/composition/taiji/vc_black_hole.inl", "VFXRender_BeginDraw");

@@ -72,7 +72,6 @@
 #include "common/vc_smoke_column.inl"
 #include "common/vc_smoke_trail.inl"
 #include "common/vc_beam.inl"
-#include "common/vc_filament_trail.inl"
 // @gen:archetype_includes end
 
 void VFX_Compose_Update(float dt)
@@ -89,7 +88,6 @@ void VFX_Compose_Update(float dt)
     VC_SmokeColumn_Update(dt);
     VC_SmokeTrail_Update(dt);
     VC_Beam_Update(dt);
-    VC_FilamentTrail_Update(dt);
     VC_FlameEmitter_Update(dt);
 // @gen:archetype_update end
     LightningArc_Update(dt);
@@ -121,7 +119,6 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_SmokeColumn_Draw3D(cam);
     VC_SmokeTrail_Draw3D(cam);
     VC_Beam_Draw3D(cam);
-    VC_FilamentTrail_Draw3D(cam);
     VC_FlameEmitter_Draw3D(cam);
 // @gen:archetype_draw end
     LightningArc_Draw3D(cam);

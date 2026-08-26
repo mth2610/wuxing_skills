@@ -34,7 +34,6 @@ int main(void)
         "core/composition/common/vc_ground_wave.inl",
         "core/composition/common/vc_shock_ring.inl",
         "core/composition/common/vc_portal_disc.inl",
-        "core/composition/common/vc_energy_orb.inl",
         "core/composition/common/vc_sweep_slash.inl",
         "core/composition/common/vc_lightning_arc.inl",
         "core/composition/common/vc_dissolve_exit.inl",

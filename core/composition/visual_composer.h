@@ -220,15 +220,6 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat, fl
 // `intensity01` drives brightness, size and the point light together.
 void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
 
-// ── PRIMARY. Energy orb ─────────────────────────────────────────────────────
-// A sphere that reads as a VOLUME: dark interior, bright limb, filaments
-// crawling over the surface, white-hot point at the centre. The head of a
-// projectile, an orb skill, a held charge.
-//
-// The rim is a fresnel term (`aura_shell.fs`), not stacked additive shells —
-// additive stacking is brightest through the CENTRE, which is exactly backwards
-// for an orb. Immediate mode; call every frame it should exist.
-void VFX_ComposeEnergyOrb(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
 
 // ── PRIMARY. Shock ring ─────────────────────────────────────────────────────
 // The expanding ring, OFF the ground: an impact in the air, a parry, a barrier
@@ -528,23 +519,6 @@ int  VFX_ComposeVolumeTrailEx(const Matrix *followTransform, VC_MaterialId mat,
                                float radius, float lifetime, VFX_VolumeKind kind,
                                const VFX_TrailSurface *surface);
 void VFX_KillVolumeTrail(int handle);
-
-// ── FILAMENT TRAIL — the swept volume, rebuilt (26/08/2026) ─────────────────
-//
-// Replaces VFX_ComposeVolumeTrail. Same swept droplet, same UVs, same path
-// history; the structure moves out of an authored sheet and into a 3D filament
-// field, so the near and far walls of the volume cut it at different depths and
-// show DIFFERENT strands. A sheet cannot do that — both walls carry the same
-// picture in the same place, which is why the old effect read as a painted skin
-// however good its sheet was.
-//
-// `radius` is a ceiling: the drawn radius is also bounded by the length the
-// emitter has actually swept, so a trail that has not moved yet stays thin.
-// Managed: keep the handle, call VFX_KillFilamentTrail when the owner dies.
-int  VFX_ComposeFilamentTrail(const Matrix *followTransform, VC_MaterialId mat,
-                              float radius, float lifetime);
-void VFX_KillFilamentTrail(int handle);
-
 // ── H2. Ground wave ─────────────────────────────────────────────────────────
 // An expanding ring of ground-CONFORMING geometry: it rises, it has a lip whose
 // crest leads, and its inner face is brighter than its outer one — the thing a

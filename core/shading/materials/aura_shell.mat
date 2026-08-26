@@ -1,3 +1,14 @@
+// ORPHANED 26/08/2026. Its only live consumer was VFX_ComposeEnergyOrb, and
+// that effect was deleted at the owner's request. Nothing in the tree calls
+// AuraShellMaterial_Load any more — the material, its generated .fs, its
+// hand-written .vs and the AURA_PARAMS table are all dead code.
+//
+// Kept rather than deleted only because two tests (core/tests/uv_deform_test.c,
+// core/tests/vfx_appearance_test.c) assert on the generated shader's contents,
+// so removing it is a change with its own test work rather than a file
+// deletion. Delete all of it, or give it a consumer — do not leave this note
+// standing indefinitely.
+
 material {
     name    : aura_shell,
     output  : body,
