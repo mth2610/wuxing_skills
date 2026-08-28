@@ -45,6 +45,27 @@ static inline Vector3 VC_MotionHelix(Vector3 base, float radius, float riseSpeed
     return p;
 }
 
+// Quỹ đạo tròn quanh MỘT TRỤC BẤT KỲ, không phải quanh Y.
+//
+// VC_MotionOrbit/VC_MotionHelix ở trên đều đi qua VC_RingPointXZ, tức là chúng
+// xoay quanh trục Y của THẾ GIỚI. Cái đó đúng cho thứ đứng yên tại chỗ (rune,
+// aura, cột), nhưng sai cho thứ đang BAY: một viên đạn bay chéo mà có các sợi
+// xoắn quanh trục Y sẽ thấy vòng xoắn dẹt đi rồi bẹp hẳn khi hướng bay gần
+// thẳng đứng, vì mặt phẳng quỹ đạo không liên quan gì tới hướng đi của nó.
+//
+// `right` và `up` là hai vector đơn vị TRỰC GIAO với trục cần xoay quanh (dựng
+// từ chính hướng bay). Người gọi tịnh tiến `center` theo trục đó, nên kết quả
+// là một đường xoắn ốc quanh đường bay — dùng cho các sợi đuôi bện quanh một
+// projectile (core/composition/common/vc_rift_bolt.inl là consumer đầu tiên).
+static inline Vector3 VC_MotionOrbitAxis(Vector3 center, Vector3 right, Vector3 up,
+                                         float radius, float angle)
+{
+    float c = cosf(angle) * radius, s = sinf(angle) * radius;
+    return (Vector3){ center.x + right.x * c + up.x * s,
+                      center.y + right.y * c + up.y * s,
+                      center.z + right.z * c + up.z * s };
+}
+
 // Xoáy hút vào tâm: t01 đi 0→1, bán kính co startRadius→0 sau `turns` vòng.
 // Dùng cho hiệu ứng "năng lượng bị hút vào" (charge, absorb).
 static inline Vector3 VC_MotionSpiralIn(Vector3 center, float startRadius, float turns, float phase, float t01)

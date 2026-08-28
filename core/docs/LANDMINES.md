@@ -4,6 +4,103 @@
 > Cross-cutting traps (batching hazard, depth-test-vs-mask, `rlFrustum near<1.0`, lit-material-dark, emitter collision) live in root `ENGINE_LANDMINES.md` — read that too.
 > Long session logs and open backlog are in `PROGRESS.md`, not here.
 
+### An emissive mask that WIDENS with intensity spends the coverage it needs on bright ground
+RIFT BOLT (`vc_rift_bolt.inl`) is a dark crust with light escaping through a
+fissure network, built specifically so the darkening budget
+(`BRIGHT_BACKGROUND_VFX_SPEC.md` §5.7) is structural rather than a tuning value.
+Its first measured matrix said otherwise: on white, `darken%` 9.9 and `body%`
+0.77 against 4.62 on dark — an 83% collapse, i.e. exactly the additive-only
+failure the construction exists to prevent, on an effect whose whole premise is
+that it cannot fail that way.
+
+- **Cause.** The fissure gate was `u_crackGate - breathe - 0.05 * u_intensity`.
+  That extra term opens the crust WIDER the more alive the bolt is, which reads
+  as a good idea and is backwards: coverage is `1 - crackMask`, so at full
+  intensity the fissures took most of the shell, coverage went to ~0 over it,
+  and what remained was emission over an almost transparent sphere. The gate
+  base (0.70) was also below the ridge field's useful range — `ridgedFbm3`
+  averages ~0.5 and its branching crests sit near 0.85, so 0.70 selected the
+  crests' broad shoulders instead of the crests.
+- **The tell.** `body%` divided by its own dark-background value, not `darken%`
+  alone. `cover%` looked fine (the additive halo and the sparks hold it up on a
+  dark plate) and `structure` looked fine (read `absvar` — it barely moved). The
+  number that named the defect was body area collapsing while total footprint
+  did not.
+- **Rule.** In a coverage-and-emission surface, the emissive mask is the
+  COMPLEMENT of the thing that darkens: anything that grows it — intensity,
+  charge, a "more energy" knob — spends the darkening budget. Drive those into
+  the emission GAIN, which is HDR and free, never into the mask's area. And gate
+  a ridge field against the level its crests actually reach, not against its
+  mean. Gate 0.70 -> 0.79 with the intensity term removed took white `darken%`
+  9.9 -> 83.8 and `|d|` 0.098 -> 0.387 with no other change.
+- **Sixth: N spirals inside a sphere is a PIXEL BUDGET, not a taste question.**
+  With the twist radii finally inside the shell, all three threads merged into
+  one rope (owner: "sao giờ chỉ còn thấy 1 trail?"). The arithmetic says why:
+  each ribbon was 10-14 px wide on orbits only 8-16 px from the axis, i.e. **as
+  wide as the circle it travelled on**. Three competing constraints share one
+  number — the room between the axis and the surface: a strand must stay inside
+  the shell (orbit <= 1 radius) or it detaches; it must stay above ~5 px or it
+  dashes; and for N strands to READ as N their orbit spacing must exceed their
+  ribbon width. So **N strands need roughly N x (ribbon width) of radial room**,
+  and at a 20 px radius that caps N at two, not three. Check this budget BEFORE
+  authoring the count — it is three lines of arithmetic and it decides a shape
+  that no amount of tuning can produce afterwards.
+
+- **Fifth: the twist radius was in the wrong unit, and the threads came off the
+  ball.** The wake's spiral radii were authored as multiples of the head's
+  DIAMETER while everything they had to stay inside — the shell — is one RADIUS
+  from the axis. 0.78 diameters is 1.56 radii, so all three helices ran entirely
+  OUTSIDE the sphere and the threads visibly detached from it (owner: "những
+  sợi trail xoắn nó tách rời khỏi quả cầu"). **Anything that must stay inside a
+  sphere is expressed in its RADIUS; only things measured across it are in
+  diameters** — and when one table mixes both (widths in diameters, orbits in
+  radii here) each column says which, because the two differ by exactly the
+  factor that hides a bug of this shape.
+  Worth knowing before hand-rolling the next one: `Trail_SetFollowerOrbit(id,
+  radius, speed, axis, phase)` already exists in `core/trails/trail_system.h`.
+  It was not used here only because it cannot wander or breathe, which is what
+  keeps three helices from reading as machined springs.
+
+- **Fourth, when the wake was given a twist.** Two of the bolt's ribbons were
+  put on helices about the flight axis so they braid around the head. At 1.00
+  diameter and 24 rad/s against a ~5 m/s emitter the strand left the husk, shot
+  to a hard point and folded back — a chevron welded to the head, not a
+  corkscrew. **A helix reads as a twist only while its TANGENTIAL speed stays
+  well under its FORWARD speed** (`radius * spin` vs `speed`; past roughly 0.35
+  the pitch angle is steep enough that consecutive history nodes step across the
+  path instead of down it, and every ordering constraint in the trail system
+  then fights the motion). So the authored spin is a CEILING and the rate used
+  is `min(spin, 0.35 * speed / radius)` — which also means a decelerating
+  emitter stops twisting instead of thrashing in place. Because the rate varies,
+  the angle must be INTEGRATED per frame; `elapsed * spin` snaps visibly every
+  time the clamp moves. Reusable helper: `VC_MotionOrbitAxis` in
+  `core/composition/common/vc_motion.h` — the pre-existing orbit/helix helpers
+  all go through `VC_RingPointXZ` and turn about WORLD Y, which flattens to
+  nothing on anything flying steeply.
+
+- **Third finding, when the body was rescaled.** The husk shipped at 0.35 m
+  radius and the owner cut it to 0.12 — inside root `CLAUDE.md`'s 0.10-0.20
+  mesh band, where every other projectile in the tree lives. The fissure
+  frequency did NOT survive the move: `crackScale = 5.6` had half the pixels to
+  live in and the connected network broke into SPECKLE, isolated bright dots,
+  with `detail` on white falling 0.203 -> 0.146. **A noise-detail field is
+  authored against the body's SIZE ON SCREEN, not against the body.** Halving
+  the radius means roughly halving the frequency (5.6 -> 3.0) and widening the
+  threshold band (0.065 -> 0.095) so each feature keeps a shoulder to be read
+  by; leaving both alone silently converts structure into aliasing, and the
+  post-FX then picks the aliasing up as coloured fringing.
+
+- **Second finding from the same matrix, and it ended a primary.** One shed
+  debris strand spawned at the bolt's CENTRE at 3.2 radii long crossed the husk
+  as a bright bar — with a post-FX streak star on it — and cut the fissure
+  network, the one thing the effect is read by. Shortening it and moving it
+  behind the shell fixed the capture, and the owner then cut the layer and
+  `VFX_ComposeSparkTrail` with it (27/08/2026): a primary whose entire subject
+  is one additive dash reads as a dash at every size that registers on screen.
+  The general rule survives the deletion — **debris belongs BEHIND the body that
+  threw it and subordinate to it in size**, and an additive strand laid across a
+  coverage-carrying body erases exactly the structure that body exists to show.
+
 ### A source-scanning test starts FAILING because the file it scans grew
 `decal_system_test.c` failed on "Read-only render statistics expose CPU culling
 results" the moment an unrelated change added ~50 lines to `decal_system.c`.

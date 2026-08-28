@@ -831,7 +831,10 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius, float t01, GroundHeightSampleFn heightFn, void *ud);
   float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
   bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition, Vector3 *outNormal, void *unused);
-  int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId, float length, float life);
+  int VFX_ComposeRiftBolt(const Matrix *followTransform, VC_MaterialId mat, float radius);
+  void VFX_RiftBolt_SetIntensity(int handle, float intensity01);
+  void VFX_RiftBolt_Stop(int handle);
+  void VFX_KillRiftBolt(int handle);
   void VFX_BeginWaterStreams(float time);
   void VFX_EndWaterStreams(void);
   void VFX_Trail_Stop(int trailId);

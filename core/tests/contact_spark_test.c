@@ -1,20 +1,21 @@
-// core headless test — VFX_ComposeSparkTrail's shape and its wiring into the
-// WISP trail type.
+// core headless test — CONTACT SPARK's radial strand geometry.
 //
-// This primary exists because Charge Converge and the deleted Spirit Swarm read
-// as DOTS. Everything that decides whether a spark reads as a spark rather than
-// a dash or a leaf is arithmetic — its aspect against its own length, whether
-// both ends come to a point, whether its alpha falls at least as fast as its
-// width — and none of it needs a GPU (core/CLAUDE.md §1).
+// INHERITED FROM spark_trail_test.c, which was deleted with SPARK TRAIL itself
+// on 27/08/2026. The arithmetic it pinned did not go with that effect: the
+// curves, the 1:28 aspect and the WISP head-end fact moved into
+// vc_contact_spark.inl, which was always their other reader, so the guard moved
+// with them. What is gone from here is only what was specific to the deleted
+// primary — its element force field, and its velocity-derived strand direction.
 //
-// It also pins the ONE thing about the WISP type that a signature cannot tell
-// you and that would silently draw the tail out in FRONT: which end of the
-// strand is the head.
+// Everything that decides whether a strand reads as a spark rather than a dash
+// or a leaf is arithmetic — its aspect against its own length, whether both
+// ends come to a point, whether its alpha falls at least as fast as its width —
+// and none of it needs a GPU (core/CLAUDE.md §1).
 //
-// This mirrors core/composition/common/vc_spark_trail.inl.
+// This mirrors core/composition/common/vc_contact_spark.inl.
 //
-// What the mirror CANNOT see: whether a spiral of these reads as energy being
-// pulled in, and whether the element force field carries them convincingly.
+// What the mirror CANNOT see: whether a burst of these reads as one contact
+// rather than as unrelated lines that happened to cross a position.
 
 #include <stdio.h>
 #include <string.h>
@@ -35,9 +36,10 @@ static int g_checks = 0;
     else { printf("FAIL: %s\n", name); g_failures++; } \
 } while (0)
 
-#define SPARK_TRAIL_NODES  12
-#define SPARK_TRAIL_ASPECT (1.0f / 28.0f)
-#define TRAIL_HISTORY_COUNT 60
+#define CONTACT_SPARK_NODES  12
+#define CONTACT_SPARK_ASPECT (1.0f / 28.0f)
+#define CONTACT_SPARK_MAX    12
+#define TRAIL_HISTORY_COUNT  60
 
 typedef struct { float t, v; } Stop;
 
@@ -53,11 +55,11 @@ static float CurveEval(const Stop *s, int n, float t)
     return 0.0f;
 }
 
-// segRatio 1 = HEAD (history[0], where the spark is), 0 = the tail's tip.
+// segRatio 1 = HEAD (history[0], where the strand's tip is), 0 = the tail's end.
 static const Stop k_w[] = {{0.00f,0.00f},{0.30f,0.62f},{0.80f,1.00f},{1.00f,0.20f}};
 static const Stop k_a[] = {{0.00f,0.00f},{0.30f,0.45f},{0.85f,1.00f},{1.00f,1.00f}};
 
-// The WISP type's BUILT-IN taper, which this primary deliberately overrides.
+// The WISP type's BUILT-IN taper, which this composition deliberately overrides.
 static float SmoothStepC(float e0, float e1, float x)
 {
     float t = (x - e0) / (e1 - e0);
@@ -77,19 +79,20 @@ static void Test_Aspect(void)
     // The WISP draw uses `thick` as a HALF-width, so the full width is twice it.
     float worst = 0.0f;
     for (float len = 0.1f; len < 4.0f; len += 0.05f) {
-        float full = 2.0f * (len * SPARK_TRAIL_ASPECT);
+        float full = 2.0f * (len * CONTACT_SPARK_ASPECT);
         float ratio = len / full;
         float e = fabsf(ratio - 14.0f) / 14.0f;
         if (e > worst) worst = e;
     }
     // INVARIANCE is the assertion that matters: a ratio measured at one length
     // passes on the broken formula too (core/docs/LANDMINES.md).
-    CHECK_MSG(worst < 1e-4f, "the 1:14 comet aspect holds at EVERY tail length",
+    CHECK_MSG(worst < 1e-4f, "the 1:14 comet aspect holds at EVERY strand length",
               "worst relative error %.5f", worst);
 
-    float full = 2.0f * (0.45f * SPARK_TRAIL_ASPECT);
-    CHECK_MSG(fabsf(full - 0.0321f) < 1e-3f,
-              "the bench's 45 cm spark is about 3 cm across", "%.4f m", full);
+    // The composition's own range is 0.90..2.20 m before its scale argument.
+    float full = 2.0f * (0.90f * CONTACT_SPARK_ASPECT);
+    CHECK_MSG(fabsf(full - 0.0643f) < 1e-3f,
+              "the shortest strand is about 6 cm across", "%.4f m", full);
 }
 
 // ── 2. Both ends come to a point ─────────────────────────────────────────────
@@ -112,7 +115,7 @@ static void Test_Lens(void)
 
     // THE REASON THIS CURVE EXISTS. The WISP type's own taper is pointed at the
     // tail and FLAT at the head — full width from segRatio 0.5 onward — so a
-    // spark drawn with the default ends in a rectangle exactly where the eye is
+    // strand drawn with the default ends in a rectangle exactly where the eye is
     // looking. Asserting the built-in is flat there keeps that justification
     // honest if the trail system ever changes it.
     CHECK_MSG(WispBuiltinTaper(1.0f) > 0.95f && WispBuiltinTaper(0.7f) > 0.95f,
@@ -141,18 +144,17 @@ static void Test_TailFadesFasterThanItThins(void)
 
 static void Test_Budget(void)
 {
-    CHECK_MSG(SPARK_TRAIL_NODES <= TRAIL_HISTORY_COUNT,
+    CHECK_MSG(CONTACT_SPARK_NODES <= TRAIL_HISTORY_COUNT,
               "the node count fits the trail system's history", "%d of %d",
-              SPARK_TRAIL_NODES, TRAIL_HISTORY_COUNT);
-    // A tail, not a rope. These are spawned by the DOZEN at a rate, so the node
-    // count is the whole cost story: 40/s x 0.7 s life x 12 nodes is ~340 nodes
-    // live, inside a 500-entity pool.
-    CHECK_MSG(SPARK_TRAIL_NODES <= 16, "a spark keeps a short history, not a long one",
-              "%d nodes", SPARK_TRAIL_NODES);
-    float liveAtBenchRate = 40.0f * 0.7f;
-    CHECK_MSG(liveAtBenchRate < 500.0f,
-              "the bench's emission rate stays inside the trail pool",
-              "%.0f live vs 500", liveAtBenchRate);
+              CONTACT_SPARK_NODES, TRAIL_HISTORY_COUNT);
+    // A tail, not a rope. A burst is 8..12 strands at once, so the node count
+    // is the whole cost story.
+    CHECK_MSG(CONTACT_SPARK_NODES <= 16, "a strand keeps a short history, not a long one",
+              "%d nodes", CONTACT_SPARK_NODES);
+    float liveAtWorstBurst = (float)(CONTACT_SPARK_MAX * CONTACT_SPARK_NODES);
+    CHECK_MSG(liveAtWorstBurst < 500.0f,
+              "the worst single burst stays inside the trail pool",
+              "%.0f nodes vs a 500-entity pool", liveAtWorstBurst);
 }
 
 // ── the mirror guard ─────────────────────────────────────────────────────────
@@ -170,36 +172,41 @@ static int FileHas(const char *path, const char *needle)
 
 static void Test_MirrorStillMatchesSource(void)
 {
-    const char *inl = "core/composition/common/vc_spark_trail.inl";
-    CHECK(FileHas(inl, "#define SPARK_TRAIL_ASPECT (1.0f / 28.0f)"),
+    const char *inl = "core/composition/common/vc_contact_spark.inl";
+    CHECK(FileHas(inl, "#define CONTACT_SPARK_ASPECT (1.0f / 28.0f)"),
           "the aspect still matches this mirror");
-    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_sparkWidth, 1.00f, 0.20f);"),
+    CHECK(FileHas(inl, "FloatCurve_AddStop(&s_contactSparkWidth, 1.00f, 0.20f);"),
           "the head still tapers to a point");
 
     // THE WIRING FACT A SIGNATURE CANNOT CARRY. SpawnTrailEntity lays a WISP as
     // pos + strandDir * u * len, and the WISP draw maps segRatio 1 to
     // history[0] — so `target` is the direction the TAIL trails in. Point it
-    // along the velocity instead and every spark grows its tail out in FRONT of
-    // itself, which is not a subtle failure but is a very easy edit to make.
-    CHECK(FileHas(inl, "Vector3Scale(Vector3Normalize(vel), -1.0f)"),
-          "the strand is still laid AGAINST the velocity (tail behind, not ahead)");
+    // along the flight direction instead and every strand grows its tail out in
+    // FRONT of itself, which is not a subtle failure but is a very easy edit to
+    // make.
+    CHECK(FileHas(inl, "cfg.target = Vector3Scale(dir, -1.0f); // history trails behind the head"),
+          "the strand is still laid AGAINST the flight direction (tail behind, not ahead)");
 
     // Contracts, not tuning.
-    CHECK(FileHas(inl, "cfg.blendMode        = BLEND_ADDITIVE;"),
+    CHECK(FileHas(inl, "cfg.blendMode = BLEND_ADDITIVE;"),
           "a spark still EMITS: additive, per the blend law");
-    CHECK(FileHas(inl, "cfg.ribbonMode       = RIBBON_CAMERA_FACING;"),
+    CHECK(FileHas(inl, "cfg.ribbonMode = RIBBON_CAMERA_FACING;"),
           "still camera-facing — the mode that does not dash on a curve");
     CHECK(FileHas(inl, "cfg.disableInnerCore = true;"),
           "still no second sub-pixel core strip");
-    CHECK(FileHas(inl, "cfg.forceField  = m->fld;"),
-          "drift still comes from the element's material, not from this file");
-    CHECK(FileHas(inl, "cfg.priority    = VFX_PRIORITY_LOW;"),
-          "a spark still cannot evict an ultimate's trail");
+    CHECK(FileHas(inl, "cfg.forceField = NULL;"),
+          "still straight radial flight — a contact burst is not element drift");
+    CHECK(FileHas(inl, "cfg.priority = VFX_PRIORITY_LOW;"),
+          "a contact spark still cannot evict an ultimate's trail");
+
+    // The purge is load-bearing: the deleted primary must not come back by name.
+    CHECK(!FileHas(inl, "SPARK_TRAIL_ASPECT") && !FileHas(inl, "s_sparkWidth"),
+          "and no SPARK_TRAIL_* name survived the effect it was named for");
 }
 
 int main(void)
 {
-    printf("=== spark trail (primary) ===\n");
+    printf("=== contact spark (radial strands) ===\n");
     Test_Aspect();
     Test_Lens();
     Test_TailFadesFasterThanItThins();

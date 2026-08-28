@@ -275,6 +275,18 @@
       "kill_fn": "VFX_KillRefParticles"
     },
     {
+      "source": "common/vc_rift_bolt.inl",
+      "fn": "VFX_ComposeRiftBolt",
+      "label": "RIFT BOLT",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeRiftBolt($XFORM, VC_MAT_FIRE, 0.08f)",
+      "kill_fn": "VFX_RiftBolt_Stop"
+    },
+    {
       "source": "common/vc_rune_circle.inl",
       "fn": "VFX_ComposeRuneCircle",
       "label": "RUNE CIRCLE",
@@ -342,17 +354,6 @@
       "type": "continuous",
       "spawn_call": "VFX_ComposeSmokeTrail($XFORM, VC_MAT_METAL, 0.18f, 1.0f, VFX_COLUMN_SMOKE, true)",
       "kill_fn": "VFX_SmokeTrail_Stop"
-    },
-    {
-      "source": "common/vc_spark_trail.inl",
-      "fn": "VFX_ComposeSparkTrail",
-      "label": "SPARK TRAIL",
-      "category": "common",
-      "fixture": "burst",
-      "lifecycle": "event",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeSparkTrail($POS, $VELOCITY, VC_MAT_FIRE, 1.0f, 2.0f)"
     },
     {
       "source": "common/vc_sweep_slash.inl",

@@ -540,18 +540,17 @@ float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
 bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition,
                               Vector3 *outNormal, void *unused);
 
-// ── PRIMARY: spark trail ────────────────────────────────────────────────────
-// ONE small moving thing with a CURVED tail, self-terminating. The piece Charge
-// Converge and the old Spirit Swarm were missing: motes that are dots read as
-// dots, and a stretched sprite cannot help because a stretch is a straight
-// segment while a mote spiralling inward is doing nothing but turning.
-// `vel` m/s sets the motion and the direction the tail lays in; `length` is the
-// tail in metres, `life` in seconds. Returns a trail id, or -1 when the pool is
-// full — an emitter running at a rate can ignore it.
-// One-shot per spark: the CALLER spawns these at a rate, never one per frame
-// per mote.
-int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId,
-                          float length, float life);
+// PURGE (27/08/2026): `VFX_ComposeSparkTrail` and `vc_spark_trail.inl` are DELETED
+// at the owner's call — "nó rất xấu". It was a primary whose entire subject was ONE
+// additive dash with a curved tail, and at any size that actually read on screen it
+// read as a dash: RIFT BOLT's first capture had a single shed spark crossing the husk
+// as a bright bar with a post-FX streak star on it. Same rule as the F0 purge in
+// `core/skill_helper.h` — the NAME is gone rather than pointed at something else.
+//
+// Its two consumers went with it: RIFT BOLT's debris layer was cut, and CONTACT SPARK
+// — which only ever used the shared curves and the 1:28 aspect, never the entry point —
+// now owns them itself as `CONTACT_SPARK_ASPECT` / `s_contactSparkWidth`. A future
+// debris primitive is a fresh authoring job, not a revival of this one.
 
 // PURGE (17/08/2026): `VFX_ComposeProjectile` / `VFX_KillProjectile` and
 // `vc_projectile.inl` are DELETED, with deliberately no successor. It was measured, not
@@ -570,6 +569,86 @@ int VFX_ComposeSparkTrail(Vector3 pos, Vector3 vel, VC_MaterialId matId,
 // it is also a fixture of its own and its shader `core/trails/shaders/trail_volume.fs` is
 // shared with the trail system's volume tubes and with SMOKE COLUMN — deleting the
 // projectile does not remove the structure-collapse defect measured in that shader.
+
+// ── PRIMARY: RIFT BOLT — the projectile head the purge above asked for ──────
+// A flying HOLLOW SHELL with a wake of one straight spine and three loose
+// spiralling threads. It composes rather than renders: the head is a FlowShield
+// instance, the wake is four swept trails, and this composition owns the
+// lifecycle, the heading, the speed and the geometry that ties them together.
+//
+// IT DRAWS NOTHING ITSELF (owner, 27/08/2026: "bản rỗng thì cứ dùng flow shield
+// thôi sao phải phức tạp?"). An earlier version carried its own two-wall shell
+// shader — a second copy of the hollow membrane, the far-then-near draw order
+// and the refraction that vc_flow_shield.inl already owned. `rift_bolt.fs` is
+// deleted rather than kept behind a flag.
+//
+// KNOWN COST OF THAT REUSE, measured: FlowShield's vein field is authored for a
+// ~1.5 m dome (`flow_shield_vein_scale`, a GLOBAL tunable it shares with the
+// real shield). On a 0.08 m bolt the same filament count lives in about a
+// twentieth of the screen area and averages out, so the head has very little
+// internal contrast: `absvar` on white 6.7 against 33.2 for the purpose-built
+// shell it replaced, `darken%` 73.7 against 84.2. Giving FlowShield a
+// per-instance vein scale would fix it and is an API change to an
+// owner-approved effect, so it is not made here.
+//
+// `followTransform` is sampled at its ORIGIN every frame and must stay valid
+// until the handle is released (a static Matrix on the owning skill, exactly
+// like the trails). The bolt DERIVES its heading and speed from that motion —
+// there is no direction argument — so a skill that steers its projectile only
+// moves the matrix it was already moving.
+//
+// SCALE. `radius` is the shell radius in metres; the authoring band is
+// 0.06-0.12 and the default is 0.08 (0.16 m across, a fist). That is BELOW root
+// CLAUDE.md's 0.10-0.20 mesh band, on the owner's call: a thrown bolt is the
+// smallest thing the band covers and reads as a projectile rather than an orb
+// only well under fire_ball's 0.25 m combat collider. Every wake width and
+// twist radius is a multiple of this, so one number rescales the whole effect.
+//
+// NOTE FlowShield takes a GROUND point and lifts the sphere half a radius above
+// it (SHIELD_BURIED_LIFT); this composition cancels that, so `pos` here really
+// is the centre. See RiftBolt_ShieldAnchor.
+//
+// ONE-SHOT + POOLED (6). Call once from a state transition, keep the handle,
+// release it. Stop ends the FEED — shell and ribbons each fade over their own
+// ramp; Kill is the cancellation cut.
+//
+//   static Matrix xf;   // updated by the skill each frame
+//   int bolt = VFX_ComposeRiftBolt(&xf, VC_MAT_FIRE, 0.08f);
+//   ...
+//   VFX_RiftBolt_Stop(bolt);
+//
+// THE WAKE is one MAIN spine plus TWO threads, and they do different jobs: the
+// spine rides the flight axis dead straight and is the longest thing in the
+// effect (0.95 s of memory); the threads are thinner, shorter than it and than
+// each other (0.78 / 0.48 s), on opposite sides of their own helices about that
+// axis at 0.45 and 1.00 of the shell's RADIUS.
+//
+// TWO AND NOT THREE, because three constraints compete for the room between the
+// axis and the shell's surface — 20 px at the authored size. A thread must stay
+// inside the shell (orbit <= 1 radius) or it visibly detaches; it must not
+// narrow to sub-pixel or it breaks into dashes (>= ~5 px); and for N threads to
+// read as N rather than as one rope, their orbit SPACING must exceed their
+// ribbon WIDTH. Three demand 15-21 px of the 20 available and came out as a
+// single braided rope. Two, at 9 and 20 px with 10 and 8 px ribbons, have 11 px
+// of clear air. Three would need a shell around 0.14 m.
+//
+// Four things keep the helices from reading as machined springs: non-harmonic
+// rates, a wandering angular rate, an inward-only breathing orbit radius, and a
+// pitch clamp against the bolt's actual speed. The threads use MAIN at thread
+// width rather than WISP: WISP's `strand.gain` is the only one above 1 in the
+// swept table, which pushes the sheet's hairs APART — correct for an inner core
+// inside another ribbon, and a row of dots when it is the whole ribbon.
+//
+// How many ribbons a bolt gets is decided ONCE at spawn from the live bolt
+// count: a lone bolt takes all three, two bolts take spine + longer thread,
+// three or more take the spine alone, and the composition never commits more
+// than 6 of the shared 8-trail pool.
+//
+// It also spawns a moving VFXLight; that needs no wiring.
+int  VFX_ComposeRiftBolt(const Matrix *followTransform, VC_MaterialId mat, float radius);
+void VFX_RiftBolt_SetIntensity(int handle, float intensity01);
+void VFX_RiftBolt_Stop(int handle);   // wind-down: the husk dims out
+void VFX_KillRiftBolt(int handle);    // immediate cut, for cancellation
 
 // Batch helpers for the restored water stream: bind the tube shader once and
 // draw N streams inside, instead of a Begin/End per projectile. Not generated —

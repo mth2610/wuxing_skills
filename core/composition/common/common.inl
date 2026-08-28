@@ -28,7 +28,6 @@
 #include "vc_light_shaft.inl"
 #include "vc_particle_upgrades_test.inl"
 #include "vc_ground_wave.inl"
-#include "vc_spark_trail.inl"
 #include "vc_converge_motes.inl"
 #include "vc_portal_disc.inl"
 #include "vc_shock_ring.inl"
