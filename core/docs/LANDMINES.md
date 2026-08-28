@@ -3016,3 +3016,175 @@ path and `detail` went 0.062 → 0.174, `absvar` 21.3 → 42.5. Same lesson the
 rune circle paid for from the other direction ("an effect that is uniformly hot
 has no internal contrast left to read"); this is its mirror image, and both say
 spend the budget on contrast rather than on brightness.
+
+## A pass GATE that copied its sibling's rule — trail-only particles rendered as nothing (28/08/2026)
+`VFX_ComposeConvergeMotes` is authored as trail-only threads
+(`render.trailOnly = 1`: no head billboard, the ribbon IS the effect). The
+headless capture showed the core glow and **not one thread** — not dim, not thin,
+absent — while the particles existed, their trail history filled, and the ribbon
+pass was sitting ready to draw them.
+
+- **Cause.** `main.c` runs the emission pass only when
+  `ParticleSystem_HasAdditiveParticles()` says there is something in it, and that
+  predicate carried `&& !p->trailOnly`. That is the HEAD pass's rule
+  (`DrawParticlesLayer` skips a trailOnly particle's billboard) copied into a
+  test that also governs the RIBBON pass twenty lines below it, where the same
+  particle is the entire content. So the gate reported "no emission particles",
+  main.c skipped the pass, and both halves of it went missing.
+- **What made it expensive.** Every cheap probe pointed away from the bug. The
+  trail draw code was correct, `trailStepTime`/`trailLength`/history were
+  correct, and turning `trailOnly` OFF made the arcs appear — which reads as
+  "trailOnly is broken" and invites a rewrite of the ribbon path. The thing that
+  named it was instrumenting the ribbon loop and finding it **never ran**: zero
+  iterations, no particle with `trailLength > 0` ever reaching it, because the
+  whole pass above it was never entered.
+- **Rule.** A predicate that decides whether a PASS RUNS must admit everything
+  that pass DRAWS — check it against every draw loop inside the pass, not just
+  the first one. A per-particle skip inside a loop makes one particle invisible;
+  the same expression in the gate makes the entire layer invisible, and the
+  symptom is indistinguishable from "the effect was authored wrong". Guard:
+  `core/tests/trail_only_emission_test.c` sweeps every mode combination and fails
+  if the gate rejects anything the ribbon pass would draw. The comment above the
+  predicate had already warned that a mode missing from it "is never drawn" — a
+  paragraph did not stop it; a test now does.
+
+## A shell primitive that STANDS ON the ground cuts itself in half when it floats (28/08/2026)
+`VFX_ComposeShieldShell` is the engine's refracted-glass sphere, and the
+re-scored charge converge used it as the ball the threads are drawn into (it has
+since moved to `VFX_ComposeFlowShield`, which is lit throughout — the lesson
+below is about the shell primitive and still stands for any caller of it). It rendered with a hard
+bright ellipse straight across its middle and a dull, flat lower half — a cut
+sphere, not a glass ball.
+
+- **Cause, two of them stacked.** The shell's `pos` is a GROUND POINT: it lifts
+  the sphere by half its radius and leaves the bottom quarter buried, because its
+  first job was a bubble around a character's feet. And its depth term does two
+  things at once — it draws the bright terrain-CONTACT band, and it rejects the
+  far wall wherever the scene is nearer. Both are right for a bubble on the floor
+  and both are wrong in mid-air: the contact band has no surface to sit on, and
+  the far-wall rejection leaves a seam with nothing to explain it.
+- **The trap in the fix.** `shield_shell_depth_enabled = 0` removes both, and it
+  is a GLOBAL tunable — it would take the contact band away from the ground
+  shields too, which is most of what makes those read as standing on terrain. A
+  floating shell and a ground shell can be alive in the same frame.
+- **Rule.** Whether a shell rests on something is a property OF THE SHELL, not of
+  the scene: `VFX_ShieldShell_SetGroundContact(handle, false)` (default true, so
+  no existing caller changed) zeroes that shell's contact strength, contact alpha
+  and depth term inside the per-shell uniform loop. And a caller that wants the
+  sphere CENTRED on a point must hand the shell `centre.y - radius *
+  SHIELD_BURIED_LIFT`, reading the shell's own macro rather than copying 0.5 —
+  every .inl lands in one translation unit, so it compiles against the real value
+  instead of silently disagreeing with it.
+
+## Timing an orbital effect in SECONDS breaks it at every other scale (28/08/2026)
+The re-authored converge (arcs orbiting a hot core, `vc_converge_motes.inl`) was
+tuned at the 1.5 m fixture: an 8-point ribbon at 0.16 s per point drew a clean
+120° arc. At the 0.5 m the taiji core test calls it at, the same numbers draw a
+**267° closed hoop**, which stops reading as qi being drawn inward at all.
+
+- **Cause.** Under `FORCE_GRAVITY_POINT` (a = strength/(dist+1)) the orbit rate
+  goes as sqrt(pull/(r(r+1))), so a small converge turns several times faster
+  than a large one. Every duration authored in seconds — ribbon span, lifetime,
+  drag — therefore means a different SHAPE at every radius. The old ballistic
+  version had the same class of bug hidden inside a test that asserted "flight
+  time is scale-invariant" against a constant-acceleration model the engine does
+  not implement.
+- **Rule.** When motion comes from a force field, author durations as fractions
+  of that motion's own period, not as seconds: compute the orbital period once
+  and express ribbon span (0.30 turn), lifetime (0.55–0.85 turn) and drag (1.4
+  per turn) against it. Then the tell reads identically at 0.3 m and at 3 m, and
+  a test can sweep the scale range and assert the swept ANGLE does not move —
+  `core/tests/converge_motes_test.c`, which is what caught the 267°.
+
+## A dim preset's SHAPE with a bright instance: lift the copy, never the row (28/08/2026)
+The charge converge wants `TRAIL_PRESET_BACKDROP`'s geometry — the widest swept
+recipe there is, 1:10 half-width against travelled length — but BACKDROP is
+authored as a DIM underlay meant to sit behind another trail, so alone it is grey.
+
+- **The wrong fix, and why it is tempting.** Raising `hdrGain` in the shared row
+  is one number and makes the effect look right immediately. It also changes
+  every other consumer and every fixture that MEASURES BACKDROP: this repo has a
+  recorded bright-background figure for it (TRAIL BACKDROP 98.3% → 0.0% on white,
+  ENGINE_LANDMINES.md), which would silently stop describing the thing it names.
+- **Rule.** A trail keeps an instance COPY of its preset row, so per-instance
+  brightness is available without touching the shared authoring:
+  `VFX_TrailSetHdrGain(handle, gain)`. One catch found while wiring it — the
+  instance recipe is not enough on its own: each strand ENTITY takes its own copy
+  of the material when it is created (`trail_system.c`, the appearance resolve),
+  and that copy is what the draw reads, so the setter has to push through to
+  `Trail_SetHdrGain` for every live strand. Setting only the composition-side
+  recipe compiles, looks correct in a debugger, and changes nothing on screen.
+
+## An effect that ends on a CONDITION needs its fallback timer measured, not felt (28/08/2026)
+The charge converge's streamers are supposed to end by ARRIVING at the ball — a
+distance test — with a lifetime behind it as a fallback. The owner's report was
+that ribbons "biến mất" before reaching it, and they were right: integrating the
+shipped launch spread against the shipped attractor showed only **4-35%** of
+streamers ever reached the sink. The rest hit the life timer at 1.3-1.9 sink
+radii out and vanished in open space, pointing at a ball they never touched.
+
+- **Why nothing looked wrong.** Every number involved was individually sensible —
+  a launch a bit under orbital speed, a drag quoted per turn, a life of about
+  half a turn — and the arrival condition was right there in the code. What was
+  missing was the RELATION between them, which no single value can show and which
+  the eye reads instantly as "the effect is broken".
+- **The measurement is cheap and the guard is now permanent.** A ~40-line mirror
+  of the integrator in `core/tests/converge_motes_test.c` sweeps radius 0.3-3 m
+  and t01 0-1 and reports the share that arrive; 0.42-0.60 of a turn scored 4-35%,
+  1.2-1.7 scores 95-100%. It is a behavioural test, not a source-string one, and
+  it would have failed the day the effect was authored.
+- **Rule.** When an effect's exit is a condition (arrival, contact, a threshold)
+  with a timer as backstop, the timer is not a look value — it is a claim about
+  the motion, and it has to be integrated against that motion. And a second-order
+  trap in the same fix: `VFX_TrailSetWidth` scales the WHOLE strip, so tapering a
+  ribbon by proximity to its destination thins it while it is still crossing open
+  space. Keep such a taper to the last half-radius of the run-in.
+
+## A sparse effect launched by RATE reads as drifting, whatever the paths are (28/08/2026)
+The charge converge's four ribbons all moved correctly — right curve, right
+speed, arriving at the ball — and the owner's read was still that they were
+"bay lượn lờ", floating rather than being cast. Nothing about any single path was
+wrong.
+
+- **Cause.** A rate-driven emitter launches independently, so with a population of
+  four you are always looking at four ribbons at four unrelated stages of four
+  unrelated flights. With hundreds of particles that averages into a texture; with
+  four it averages into nothing and the eye reads the absence of a pattern as
+  aimlessness. A cast tell has a BEAT — everything appears, everything is drawn
+  in, a breath, again.
+- **Rule.** Below roughly a dozen elements, drive the population as WAVES: launch
+  the whole set at once, spread the directions with a lattice (rotated Fibonacci)
+  rather than independent samples — four independent samples clump often enough
+  that "from every side" never happens — and clock the next wave off the last
+  one's arrival plus a gap. And the part that is easy to get wrong: **flight time
+  has to be a property of the WAVE**, not of each element. Birth radius and launch
+  speed set the arrival time, so drawing those per element spreads four arrivals
+  over more than a full turn and dissolves the beat back into the drifting you
+  were trying to remove. One value per wave, jittered a few percent per element.
+
+## "Absorbed" is a CUT, not a wind-down — and reaching the middle needs a capture term (28/08/2026)
+Two related complaints about the charge converge's ribbons, both of the form
+"they linger": they stopped at the ball's SURFACE rather than going into it, and
+after the head was gone the strip kept drifting and fading in open space.
+
+- **The wind-down was the wrong default.** `VFX_Trail_Stop` and `VFX_KillTrail`
+  both DETACH and let the strip drain its own history — correct for a weapon
+  trail, which would pop if it vanished mid-swing. A ribbon that is ABSORBED is
+  the opposite case: it ended because something took it, and the leftover strip
+  is exactly the drifting the effect is trying not to do. `VFX_Trail_Extinguish`
+  is the immediate cut, and it is only safe paired with a width ramp to nothing
+  over the last stretch — cutting a full-width strip pops.
+- **The last stretch needs its own rule.** A launch curved enough to look like qi
+  keeps sideways speed all the way in, so it swings around the destination
+  instead of entering it: at the smallest size NOT ONE streamer reached a target
+  a quarter of the ball's radius across. Aiming the launch straighter fixes the
+  arithmetic and produces the wheel-of-spokes look that was rejected two rounds
+  earlier. The answer is a CAPTURE term — inside ~1.5 destination radii, steer
+  the velocity toward the centre at a rate that rises as it closes — so the curve
+  lives outside and the destination takes over at the end.
+- **Rule.** When an effect ends AT something, decide two things separately: how it
+  travels (the look) and how it is taken (the ending). Mixing them makes the
+  travel serve the ending and the motion goes stiff. And measure the ending —
+  `core/tests/converge_motes_test.c` mirrors the integrator and reports the share
+  that actually arrive; it caught the 0% the eye would only have read as "they
+  vanish before they get there".

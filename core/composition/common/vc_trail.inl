@@ -862,7 +862,10 @@ static void TrailPresets_Build(void)
         r->layers = k_sweptLayers[p];
         r->layerCount = k_sweptStrand[p].layers;
         r->colour.useElementRamp = true;      // the element's authored N-stop ramp
-        r->colour.coreWidth = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.16f;
+        // 0.18, NOT the 0.16 this line carried until 27/08/2026: nothing read
+        // the field, and trail_deform.fs hardcoded 0.18. Writing the shipped
+        // number in is what makes wiring the field a no-op here.
+        r->colour.coreWidth = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.18f;
         r->colour.coreIntensity = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.55f;
         r->strand.bundleWidth = k_sweptStrand[p].bundle;
         r->strand.gain = k_sweptStrand[p].gain;
@@ -1047,20 +1050,82 @@ static void TrailPresets_Build(void)
         //    premultiplied cuts a silhouette where coverage is high and still
         //    adds light where it is low, from one draw.
         r->additive = true;
-        r->hdrGain = 1.70f;
-        // 3. IT IS TRANSLUCENT. SMOKE's 0.96 is a wall — the one number that
-        //    would fight the glow hardest, because coverage that near 1 leaves
-        //    the premultiplied law nothing to decay toward. Roughly half hides
-        //    what is behind it and lets the rest through, which is what
-        //    separates luminous gas from lit soot.
-        r->bodyOpacity = 0.52f;
+        //    1.90, and the CEILING here is §5.7, not taste. The project ships
+        //    `bloomIntensity = 0.12` (main.c), so a visible halo wants gain
+        //    well clear of the 1.25 bright-pass threshold — but emission that
+        //    clears it too far swamps the body pass and the effect stops
+        //    attenuating the background at all, the exact failure
+        //    BRIGHT_BACKGROUND_VFX_SPEC §5.7 exists to catch. Measured,
+        //    warmup 90, darken% on white / warm:
+        //        gain 1.70 -> 86.5% / 74.1%   occludes most, least structure
+        //             1.90 -> 81.0% / 39.6%   <- shipped
+        //             2.05 -> 62.4% /  8.7%
+        //             2.20 -> 30.5% /  0.0%
+        //             2.60 ->  0-7% /  0.0%   pure light, fails §5.7
+        //    1.70 scores better on darken and worse where it matters more
+        //    here: its absvar on white falls to 5.1 against 1.90's 8.6, i.e.
+        //    the filaments stop being separable on bright scenery, which is
+        //    the whole subject of this preset. 1.90 is the most emission that
+        //    keeps both.
+        //    The thin core above is what makes even 1.90 read as a glow: the
+        //    same energy over a filament is a halo, over the whole body a veil.
+        r->hdrGain = 1.90f;
+        // 3. IT OCCLUDES NEARLY AS HARD AS SMOKE, and that is what pays for
+        //    the emission. This field was DEAD until the sweptKnobs gate went
+        //    into SweptTrail_ConfigureLayers on the same day — `swept_body`
+        //    defaults to 1.0 and overwrote it — so EVERY number in this block
+        //    was measured after that fix. Anything measured before it was
+        //    measured against a forced 1.0 and does not mean what it says;
+        //    one such reading briefly made "lower bodyOpacity occludes MORE"
+        //    look like a real effect, and it was an artefact of comparing a
+        //    pre-fix run against a post-fix one.
+        //
+        //    Measured post-fix, warmup 90, darken% white / warm:
+        //        gain 1.90, 0.62 -> 45.5% /  3.3%
+        //        gain 1.90, 0.80 -> 72.9% / 19.5%
+        //        gain 1.90, 0.92 -> 81.0% / 39.6%   <- shipped
+        //    More body coverage means more occlusion, in the ordinary
+        //    direction. The premultiplied law is what keeps 0.92 from reading
+        //    as a wall the way SMOKE's 0.96 does: coverage pulls toward `src`
+        //    where the plume is dense and decays to `src + dst` at the soft
+        //    edges, so it buys a silhouette without closing the fringes.
+        r->bodyOpacity = 0.92f;
 
-        // 4. IT HAS A CORE. SMOKE zeroes these ("no hot core in smoke");
-        //    narrower and cooler than ENERGY's 0.18/0.72 because the plume's
-        //    support is far broader than a braided filament — the same core
-        //    energy spread over that width reads as a blown-out slab.
-        r->colour.coreWidth = 0.13f;
-        r->colour.coreIntensity = 0.50f;
+        // 4. IT HAS A WHITE CORE. SMOKE zeroes these ("no hot core in smoke").
+        //    `hot` is the load-bearing one and it is why the first cut read as
+        //    a flat saturated orange: without it the centre lerps toward the
+        //    MATERIAL's hot gradient, and Fire's is gold ({255,180,50}), so
+        //    the "hot" centre came out at {255,135,35} — another orange. There
+        //    was no white anywhere in the effect to find. White here says the
+        //    centre is hotter than the element's own palette goes, which is
+        //    what conjured light looks like and what an element's authored
+        //    ramp can never express.
+        r->colour.hot = (Color){255, 255, 255, 255};
+
+        //    THE CORE IS A FILAMENT, AND THAT TOOK THREE FIELDS, NOT ONE.
+        //    `coreIntensity` alone cannot make one: it sets how WHITE the hot
+        //    colour is, never how much surface wears it. Pushed to 0.85 against
+        //    a white target it whitened the plume's entire packed body and read
+        //    as a slab, because the shader's other route to hot —
+        //    `smoothstep(gate, 1.0, inten)` — took every fragment denser than
+        //    the gate, and a plume read with a gap-filling `strand.gain` of
+        //    0.75 is dense almost everywhere. That route is right for a braided
+        //    filament, whose density peaks ARE its strands; it is exactly wrong
+        //    here.
+        //
+        //    So the gate goes UP and the geometric centreline goes NARROW, and
+        //    only then can `coreIntensity` go to nearly pure white without
+        //    blowing out: the white now lands on a thin thread inside a broad
+        //    soft body instead of on the body itself.
+        //
+        //    `strand.gain` is the obvious-looking alternative and is the wrong
+        //    one — measured: 0.75 -> 1.35 thinned the WHOLE trail (lit area
+        //    17.2k -> 13.5k px) while the white stayed at ~2.6k, so the core's
+        //    SHARE went up, and it changed the plume's fill, the one thing this
+        //    preset exists to keep identical to SMOKE.
+        r->colour.coreWidth = 0.055f;      // vs 0.18 everywhere else
+        r->colour.coreDensityGate = 0.85f; // vs the shader's old 0.45
+        r->colour.coreIntensity = 0.95f;   // safe to near-white once it is thin
         // 5. IT COOLS TOWARD THE ELEMENT, NOT TOWARD GREY. SMOKE ramps to a
         //    neutral {112,112,120} because what tints a plume is the light on
         //    it. A self-lit plume has no such excuse: the far end is the same
@@ -1154,7 +1219,21 @@ static void TrailRecipe_ToLegacyMaterial(const TrailRecipe *r,
     // The core colour comes from the material's authored hot gradient. For Fire
     // this moves orange-red toward gold instead of toward pink-white, which is
     // what whitening a red glow directly produced.
-    Color hotTarget = ColorGradient_Sample(m->hotGrad, 0.20f);
+    //
+    // AN AUTHORED `colour.hot` WINS — same rule, same reason, as the tail
+    // below, and `hot` existed as a documented field with NO reader until
+    // 26/08/2026: every preset assigned it and nothing consumed it, so the
+    // header's "the hot centre" described a value that could not reach the
+    // shader. Gated on alpha exactly like `tail`, so the four presets that
+    // leave it zeroed keep the material-derived colour byte for byte.
+    //
+    // What it is FOR: the gradient route walks toward the element's own hot
+    // tone, which for Fire is gold ({255,180,50} at 0.20) — an element that
+    // burns hotter than its own palette has no way to say so. Conjured light
+    // is that case: its centre is white, not a deeper shade of its hue.
+    Color hotTarget = (r->colour.hot.a > 0)
+                          ? r->colour.hot
+                          : ColorGradient_Sample(m->hotGrad, 0.20f);
     out->hotColor = ColorLerp(base, hotTarget, r->colour.coreIntensity);
     out->hotColor.a = 255;
     // An AUTHORED tail wins. The computed blend walks `base` toward `m->body`,
@@ -1177,6 +1256,11 @@ static void TrailRecipe_ToLegacyMaterial(const TrailRecipe *r,
     // The archetype, straight off the recipe. These were derived from unrelated
     // mask/colour fields so that no constant had to be written down; the result
     // was that editing a tail knob re-sampled the surface. TrailStrandConfig.
+    // WHERE THE CORE IS, both halves. Zero means "unset" on each and the
+    // shader falls back to its own former hardcode, so a preset that authors
+    // neither is bit-identical to before they existed.
+    out->coreHalfWidth = r->colour.coreWidth;
+    out->coreDensityGate = r->colour.coreDensityGate;
     out->wispMix = r->strand.fineMix;
     out->strandGain = r->strand.gain;
     out->flowStrength = r->strand.flowDistort;
@@ -1208,7 +1292,21 @@ static void SweptTrail_ConfigureLayers(VC_SweptTrail *s)
     s->recipe = *TrailPresetRecipe(s->kind);
     s->recipe.layers = s->layers;
     s->recipe.layerCount = count;
-    s->recipe.bodyOpacity = s_sweptBodyOpacity;
+    // GATED ON sweptKnobs, 27/08/2026 — it was unconditional, and that made
+    // TrailRecipe::bodyOpacity DEAD for every preset: `swept_body` defaults to
+    // 1.0, so SMOKE's authored 0.96, ENERGY's 0.90 and MAGIC's own value were
+    // all overwritten with 1.0 before they ever reached a draw. Found by
+    // measuring: moving MAGIC's bodyOpacity 0.52 -> 0.78 produced a
+    // byte-identical bright-background table.
+    //
+    // This is TrailMotion::sweptKnobs' entire reason for existing, and its own
+    // doc already named the failure: "A unified composer inherits one family's
+    // GLOBAL multipliers, and applying them to a family that never had them is
+    // the §1 bug wearing different clothes." The strand presets never had a
+    // `swept_body` knob; they had authored values, and the knob was silently
+    // eating them.
+    if (TrailMotionOf(s->kind)->sweptKnobs)
+        s->recipe.bodyOpacity = s_sweptBodyOpacity;
 
     // WHERE THE SHEET COMES FROM, in priority order: a per-instance surface, the
     // preset's runtime-generated sheet, or the registry profile it names. The
@@ -1494,6 +1592,29 @@ int VFX_ComposeTrail(const Matrix *followTransform, VC_MaterialId mat,
     return VFX_ComposeTrailEx(followTransform, mat, width, lifetime, kind, NULL);
 }
 
+// Per-instance EMISSION lift. `hdrGain` is the recipe field bloom actually
+// catches (> 1 is what clears the bright pass's threshold), and every trail
+// carries its OWN copy of the row — so this brightens one ribbon without
+// touching the preset, which several other effects are measured against.
+//
+// It exists because BACKDROP is authored as a wide DIM underlay meant to sit
+// behind another trail, and the charge converge wants that same broad soft shape
+// as the visible thing: bright and blooming, alone. Raising the shared row would
+// have taken the fixtures that measure BACKDROP's darkening with it.
+void VFX_TrailSetHdrGain(int handle, float gain)
+{
+    if (handle < 0 || handle >= SWEPT_MAX || !s_swept[handle].active)
+        return;
+    if (gain < 0.0f) gain = 0.0f;
+    if (gain > 12.0f) gain = 12.0f;   // past the tone map's white-hot band
+    VC_SweptTrail *s = &s_swept[handle];
+    s->recipe.hdrGain = gain;
+    // The recipe copy alone is not enough: every strand ENTITY took its own copy
+    // of the material when it was created, and that copy is what the draw reads.
+    for (int c = 0; c < s->strands; c++)
+        if (s->strandId[c] >= 0) Trail_SetHdrGain(s->strandId[c], gain);
+}
+
 void VFX_TrailSetWidth(int handle, float width01)
 {
     if (handle < 0 || handle >= SWEPT_MAX || !s_swept[handle].active)
@@ -1519,6 +1640,38 @@ void VFX_Trail_Stop(int trailId)
     {
         if (s->strandId[c] >= 0)
             Trail_AttachToTransform(s->strandId[c], NULL, (Vector3){0.0f, 0.0f, 0.0f});
+    }
+    s->active = false;
+    s->xf = NULL;
+}
+
+// IMMEDIATE CUT — the ribbon is GONE this frame, history and all.
+//
+// Stop and Kill both DETACH and let the strip drain, because a weapon trail that
+// vanished mid-swing would pop. An ABSORBED ribbon is the opposite case: the
+// charge converge's streamers are drawn into a ball and are supposed to end
+// there, and a strip that keeps drifting and fading in open space after its head
+// arrived is exactly the "lượn lờ" the effect exists not to do.
+//
+// Pair it with a width ramp to nothing over the last stretch (VFX_TrailSetWidth)
+// — cutting a full-width strip is still a pop; cutting one that has already
+// tapered to a thread is not.
+void VFX_Trail_Extinguish(int handle)
+{
+    if (handle < 0 || handle >= SWEPT_MAX)
+        return;
+    VC_SweptTrail *s = &s_swept[handle];
+    for (int k = 0; k < SWEPT_STRANDS_MAX; k++)
+    {
+        if (s->strandId[k] >= 0)
+        {
+            // Detach FIRST: the entity holds the caller's Matrix, and killing it
+            // while still attached leaves one frame where the pool entry is read
+            // with a pointer the caller may already have dropped.
+            Trail_AttachToTransform(s->strandId[k], NULL, (Vector3){0.0f, 0.0f, 0.0f});
+            KillTrail(s->strandId[k]);
+        }
+        s->strandId[k] = -1;
     }
     s->active = false;
     s->xf = NULL;
@@ -1662,7 +1815,11 @@ static void VC_SweptTrail_Update(float dt)
             // tunable, and a long-lived trail (cfg.life = 1e6) would otherwise
             // hold the value it was born with — the sweep would move nothing
             // until something respawned, which reads as "the knob is dead".
-            t->material.bodyOpacity = s_sweptBodyOpacity;
+            // SAME sweptKnobs GATE as SweptTrail_ConfigureLayers: without it
+            // this line re-killed the authored value once per frame, so even
+            // fixing the spawn path alone would have changed nothing.
+            if (TrailMotionOf(s->kind)->sweptKnobs)
+                t->material.bodyOpacity = s_sweptBodyOpacity;
 
             // FREEZE, and it fills first: freezing a trail with one node holds
             // an EMPTY ribbon, and a dial that shows nothing reads as broken.

@@ -1663,8 +1663,20 @@ bool ParticleSystem_HasAdditiveParticles(void)
     // with the layer filter in DrawParticlesLayer: ADDITIVE is the only mode
     // that goes to emission (PREMULTIPLIED is drawn in the body pass, see the
     // note there). If the two ever disagree, particles vanish silently.
-    if (p->blendMode != VFX_BLEND_ALPHA && p->renderMode != 3 && !p->trailOnly)
-      return true;
+    //
+    // AND THEY DID, 28/08/2026. `!p->trailOnly` was in this test, which is the
+    // head pass's rule, not this one's: DrawParticlesLayer skips a trailOnly
+    // particle's BILLBOARD and then draws its RIBBON in the same emission pass
+    // a few lines further down. So a converge made entirely of additive
+    // trail-only threads reported "no emission particles", main.c skipped the
+    // whole pass, and the effect rendered as nothing at all — the exact silent
+    // vanishing the paragraph above is warning about. A trailOnly particle
+    // counts once its ribbon has something to draw (>= 2 history points), and
+    // not before, or an effect whose threads have only just spawned would open
+    // an empty pass.
+    if (p->blendMode == VFX_BLEND_ALPHA || p->renderMode == 3) continue;
+    if (p->trailOnly && !(p->trailLength > 0 && p->trailHistoryCount >= 2)) continue;
+    return true;
   }
   return false;
 }

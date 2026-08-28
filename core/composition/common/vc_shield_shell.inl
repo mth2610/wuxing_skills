@@ -62,6 +62,12 @@ typedef struct {
     Vector3 impactWorld;
     float impactAge;
     float radius, target, level, elapsed;
+    /* Does this shell STAND ON something? A bubble around a character's feet
+     * does, and the bright band where the sphere meets the terrain is most of
+     * what sells it. A shell that FLOATS — a charge ball held in the air — does
+     * not, and the band then cuts a hard ellipse across the middle of it with no
+     * surface to justify it. Per shell, because both kinds are alive at once. */
+    bool groundContact;
 } VC_ShieldShell;
 
 typedef struct {
@@ -205,7 +211,10 @@ int VFX_ShieldShell_SpawnEx(Vector3 pos, VC_MaterialId mat, float radius,
             .packedMap = surface ? (surface->packedMap.id ? surface->packedMap : surface->body) : (Texture2D){0},
             .flowMap = surface ? surface->flowMap : (Texture2D){0},
             .matcapMap = surface ? surface->matcapMap : (Texture2D){0},
-            .impactAge = 1000000.0f
+            .impactAge = 1000000.0f,
+            /* Default ON: every caller before 28/08/2026 was a ground bubble,
+             * and a new field must not change what they already look like. */
+            .groundContact = true
         };
         return i;
     }
@@ -214,6 +223,13 @@ int VFX_ShieldShell_SpawnEx(Vector3 pos, VC_MaterialId mat, float radius,
 
 int VFX_ShieldShell_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity)
 { return VFX_ShieldShell_SpawnEx(pos, mat, radius, intensity, NULL); }
+
+void VFX_ShieldShell_SetGroundContact(int handle, bool onGround)
+{
+    if (handle < 0 || handle >= VFX_SHIELD_SHELL_MAX) return;
+    if (!s_shieldShells[handle].active) return;
+    s_shieldShells[handle].groundContact = onGround;
+}
 
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity)
 { return VFX_ShieldShell_Spawn(pos, mat, radius, intensity); }
@@ -409,8 +425,23 @@ static void ShieldShell_DrawPass(bool emissionOnly)
                        &s_shieldNoiseScale, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.noiseSpeed,
                        &s_shieldNoiseSpeed, SHADER_UNIFORM_FLOAT);
+        /* A floating shell has no terrain to meet, so its contact band is
+         * switched off HERE rather than by the global tunable: both kinds can be
+         * on screen at once, and shield_shell_depth_enabled would take the band
+         * away from the ground bubbles too. */
+        float contactStrength = shield->groundContact ? s_shieldContact : 0.0f;
+        float contactAlpha    = shield->groundContact ? s_shieldContactAlpha : 0.0f;
+        /* The depth term does two things, and a floating shell wants NEITHER:
+         * it draws the contact band, and it rejects the far wall wherever the
+         * scene is nearer — which on a ground bubble correctly hides the buried
+         * half, and on a ball in mid-air leaves a hard horizontal seam across
+         * the glass with nothing to explain it. Written per shell, so the global
+         * shield_shell_depth_enabled still governs the ground bubbles. */
+        float depthEnabled = shield->groundContact ? s_shieldDepthEnabled : 0.0f;
+        SetShaderValue(s_shieldShader.shader, s_shieldShader.depthEnabled,
+                       &depthEnabled, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.contactStrength,
-                       &s_shieldContact, SHADER_UNIFORM_FLOAT);
+                       &contactStrength, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.contactThickness,
                        &s_shieldContactThickness, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.baseAlpha,
@@ -418,7 +449,7 @@ static void ShieldShell_DrawPass(bool emissionOnly)
         SetShaderValue(s_shieldShader.shader, s_shieldShader.fresnelAlpha,
                        &s_shieldFresnelAlpha, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.contactAlpha,
-                       &s_shieldContactAlpha, SHADER_UNIFORM_FLOAT);
+                       &contactAlpha, SHADER_UNIFORM_FLOAT);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.impactView,
                        &impactView, SHADER_UNIFORM_VEC3);
         SetShaderValue(s_shieldShader.shader, s_shieldShader.impactAge,

@@ -119,9 +119,24 @@ typedef struct {
     // while the broad support stayed visible.
     Color hot;
     // Half-width of that centre, in the same units the deform layers swing in
-    // (fraction of the strip half-width). 0 disables the core entirely, which
-    // is correct for anything with no deform layers to have a centreline.
+    // (fraction of the strip half-width). 0 = "unset", and it falls back to
+    // the 0.18 the strand shader hardcoded before this reached it.
+    //
+    // HAD NO READER UNTIL 27/08/2026, and the four presets that predate the
+    // wiring said 0.16 while trail_deform.fs used 0.18 — the assignment was
+    // decorative, so the doc above it described a value the shader never saw.
+    // They now say 0.18: the number that actually shipped, not the number that
+    // was written down. Do not "restore" 0.16; it was never in a frame.
     float coreWidth;
+    // Strand density above which the BODY ITSELF burns toward `hot`, on top of
+    // the geometric centreline `coreWidth` describes. This is the term that
+    // decides whether a hot core reads as a FILAMENT or as a slab: at 0.45
+    // (the shader's old hardcode) every reasonably dense fragment turns hot, so
+    // on a preset whose sheet is read with a gap-filling `strand.gain` the
+    // whole packed body goes hot at once. Raising it confines the hot colour to
+    // the true peaks and lets the geometric centreline do the work.
+    // 0 = unset, falls back to 0.45.
+    float coreDensityGate;
     // How hard the core burns toward `hot`. The BODY pass takes a narrower,
     // lower-energy copy so its hue stays readable on bright maps; EMISSION
     // takes the full HDR one.

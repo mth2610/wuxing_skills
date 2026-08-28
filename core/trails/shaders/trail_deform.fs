@@ -137,6 +137,19 @@ uniform float u_renderPass; // 0 = BODY (alpha), 1 = EMISSION additive,
                             // 2 = EMISSION premultiplied
 uniform float u_bodyOpacity;// coverage scale for the body pass, 0..1
 uniform vec4  u_contrastParams; // enabled, edgeSharpness, coreSize, coreIntensity
+// WHERE THE HOT CORE IS. Both were literals in this file until 27/08/2026, and
+// the pair is what decides whether a hot core reads as a FILAMENT or a slab:
+//   x = geometric centreline half-width, in the across-strip units the bundle
+//       distances d0/d1/d2 are measured in. The inner/outer ratio of the
+//       centreline's falloff is preserved (the old pair was 0.02 : 0.18), so
+//       passing 0.18 reproduces the old constants exactly.
+//   y = the strand DENSITY above which the body itself burns toward u_colHot.
+//       The old 0.45 turns any reasonably dense fragment hot, which on a
+//       gap-filling `strandGain` means the whole packed body goes hot at once —
+//       a slab. Raising it confines the hot colour to the true peaks.
+// trail_system.c resolves 0 to the old literals before pushing, so this shader
+// never carries the defaults itself.
+uniform vec2  u_coreShape;
 
 in vec2 vSegUV;
 in vec4 vColor;
@@ -365,10 +378,15 @@ void main()
         // centre, and doing so made hotSignal identically zero while the red
         // support remained visible. Texture owns fine gaps; geometry guarantees
         // one narrow hot centreline for each live bundle.
-        float core0 = (1.0 - smoothstep(0.02, 0.18, d0)) * end0;
-        float core1 = (1.0 - smoothstep(0.02, 0.18, d1)) * end1 *
+        // 0.1111 = the old inner/outer ratio (0.02 / 0.18) kept as a ratio, so
+        // narrowing the core narrows its falloff with it instead of turning a
+        // thin core into a hard-edged wire.
+        float coreOut = max(u_coreShape.x, 0.004);
+        float coreIn  = coreOut * 0.1111;
+        float core0 = (1.0 - smoothstep(coreIn, coreOut, d0)) * end0;
+        float core1 = (1.0 - smoothstep(coreIn, coreOut, d1)) * end1 *
                       clamp(u_wispMix, 0.0, 1.0);
-        float core2 = (1.0 - smoothstep(0.02, 0.18, d2)) * end2 *
+        float core2 = (1.0 - smoothstep(coreIn, coreOut, d2)) * end2 *
                       clamp(u_strandFlow.y, 0.0, 1.0);
         float centreCore = max(max(core0, core1), core2);
 
@@ -427,7 +445,13 @@ void main()
         //     burns toward u_colHot. Without it a coloured strand is a neon
         //     stripe rather than something hot.
         vec3 lengthCol = mix(vColor.rgb, u_colTail, along);
-        float hotMix = max(smoothstep(0.45, 1.0, inten),
+        // TWO ROUTES TO HOT, and only the second is a core. The first is the
+        // BODY going hot where the sheet is dense — legitimate for a braided
+        // filament whose density peaks ARE its strands, ruinous for a plume
+        // read with a gap-filling gain, where "dense" is most of the effect.
+        // u_coreShape.y is what separates those two cases per preset.
+        float densGate = clamp(u_coreShape.y, 0.05, 0.98);
+        float hotMix = max(smoothstep(densGate, 1.0, inten),
                            smoothstep(0.08, 0.45, hotSignal));
         vec3 hot = mix(lengthCol, u_colHot, hotMix);
         // Feed the structural centreline into radiance/coverage too. It is

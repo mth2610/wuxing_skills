@@ -106,7 +106,7 @@ typedef struct
     int wavePhase, waveEnv, waveStrength, curlScale, stripNormal;
     int matMode, wispMix, dissolve, dissolveSoft;
     int tiling, panSpeed, tailFadeA, tailFadeB;
-    int bandShape, pathArc, colHot, strandFlow;
+    int bandShape, pathArc, colHot, strandFlow, coreShape;
     int renderPass, bodyOpacity, contrastParams, colTail, tailShape;
     // The mode-2 sine warp's coordinate half, generalised 05/08/2026 onto
     // core/uv's UVDeformField (u_sinWave is GONE — see the "SIN-WAVE STRAND
@@ -148,6 +148,7 @@ static void FillDeformLocs(Shader shader, DeformLocs *l)
     l->uvWarp        = UVDeform_CacheLocations(shader);
     l->meshWarp      = MeshDeform_CacheLocations(shader);
     l->bandShape     = GetShaderLocation(shader, "u_bandShape");
+    l->coreShape     = GetShaderLocation(shader, "u_coreShape");
     l->pathArc       = GetShaderLocation(shader, "u_pathArc");
     l->colHot        = GetShaderLocation(shader, "u_colHot");
     l->strandFlow    = GetShaderLocation(shader, "u_strandFlow");
@@ -1433,6 +1434,17 @@ void Trail_SetFrozen(int id, bool frozen)
     trailPool[id].frozen = frozen;
 }
 
+// Per-entity EMISSION lift, after creation. The material is a COPY taken when
+// the entity is created (see the appearance resolve above), so editing a
+// composition's recipe afterwards reaches nothing — this is the only way in.
+void Trail_SetHdrGain(int id, float gain)
+{
+    if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
+        return;
+    if (gain < 0.0f) gain = 0.0f;
+    trailPool[id].material.hdrGain = gain;
+}
+
 void Trail_SetStaticPath(int id, Vector3 tail, Vector3 head, int nodeCount)
 {
     if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
@@ -2140,6 +2152,13 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         float strandFlow[4] = {m->flowStrength, m->bundleWeight, m->stretchUV, 0.0f};
         if (L->bandShape >= 0) SetShaderValue(s_deformShader, L->bandShape, band, SHADER_UNIFORM_VEC4);
         if (L->strandFlow >= 0) SetShaderValue(s_deformShader, L->strandFlow, strandFlow, SHADER_UNIFORM_VEC4);
+        // ZERO MEANS UNSET, and the fallbacks are the literals trail_deform.fs
+        // used to carry (0.18 half-width, 0.45 density gate). Resolved HERE
+        // rather than in the shader so a material that leaves them at zero
+        // cannot render differently depending on which shader variant loads.
+        float coreShape[2] = {(m->coreHalfWidth > 0.0f) ? m->coreHalfWidth : 0.18f,
+                              (m->coreDensityGate > 0.0f) ? m->coreDensityGate : 0.45f};
+        if (L->coreShape >= 0) SetShaderValue(s_deformShader, L->coreShape, coreShape, SHADER_UNIFORM_VEC2);
 
         float tailShape[4] = {m->tailStagger, m->tailDissolve,
                               (m->tailNarrow > 0.0f) ? m->tailNarrow : 1.0f, 0.0f};

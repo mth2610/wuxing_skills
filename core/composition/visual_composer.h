@@ -167,6 +167,11 @@ void VFX_ShieldShell_SetTransform(int handle, Vector3 pos);
 void VFX_ShieldShell_SetIntensity(int handle, float intensity01);
 void VFX_ShieldShell_SetSurface(int handle, const VFX_ShieldSurface *surface);
 void VFX_ShieldShell_SetImpact(int handle, Vector3 impactWorld, float timeSinceImpact);
+// Whether this shell STANDS ON terrain (default true). A ground bubble's bright
+// contact band is most of what sells it; a shell that floats has nothing to meet,
+// and the same band cuts a hard ellipse across the middle of it. Per shell, not a
+// global — a floating charge ball and a ground shield can be alive at once.
+void VFX_ShieldShell_SetGroundContact(int handle, bool onGround);
 void VFX_ShieldShell_Stop(int handle);
 void VFX_KillShieldShell(int handle);
 
@@ -284,20 +289,38 @@ void VFX_ComposeDebrisShards(Vector3 pos, Vector3 vel, VC_MaterialId mat,
                              float scale, int count);
 
 // ── PRIMARY. Converge motes ─────────────────────────────────────────────────
-// Motes peeling off the surface of a SHELL and being drawn in along curved
-// threads. The emitter is a real sphere mesh (so the launch points have an
-// outline a formula cannot give) and the motion is a point attractor + vortex +
-// drag (so no two threads sweep the same arc, which is what an analytic spiral
-// always does).
+// A FEW broad luminous ribbons that appear at random points in the space around
+// a centre and are swept into it along a curve. Each one is a swept trail
+// (TRAIL_PRESET_BACKDROP, lifted per instance with VFX_TrailSetHdrGain) whose
+// head this composition integrates: launched sideways at a fraction of the
+// orbital speed of a point attractor, so it cannot hold station and falls in
+// along an arc rather than down a spoke.
+//
+// IN WAVES, NOT AS A STREAM. The whole population appears at once, on directions
+// spread evenly over the sphere, is drawn in together, and the next wave follows
+// after a breath that shortens as the charge fills. A rate-driven emitter puts
+// four ribbons at four unrelated stages of four unrelated flights, which reads as
+// drifting rather than as a cast.
+//
+// SPARSE BY CONSTRUCTION. `charge_streams` (4) is the whole population, and a
+// streamer is a simulated trail out of the engine's pool of EIGHT — so this is a
+// look decision and a budget at the same time. `moteCount` scales the BEAT (more
+// of it = a shorter breath between waves), not a spawn rate.
+//
+// Every timing inside is a fraction of the orbital PERIOD, never a number of
+// seconds, so the tell reads the same at 0.3 m and at 3 m — see
+// vc_converge_motes.inl for the arithmetic and core/docs/LANDMINES.md for what
+// went wrong when it was seconds.
 //
 // A converge is not a charge: a summon draws motes into a rune, a drain pulls
 // them off a victim, an absorb takes them into a weapon, and none of those wants
 // a hot core in the middle. Add `VFX_ComposeCoreGlow` when you do — that is
 // exactly what `VFX_ComposeChargeConverge` now is.
 //
-// Continuous — call every frame while it should exist. `radius` is the emitter
-// shell in metres, `t01` 0→1 drives density/pull/brightness, `moteCount` is
-// threads per SECOND (a rate; the mesh decides where, this decides how many).
+// Continuous — call every frame while it should exist. `radius` is the scale of
+// the tell in metres (ribbons appear between 1.5 and 4 of it out), `t01` 0→1
+// drives the beat/pull/brightness, `moteCount` scales how urgently waves follow
+// one another.
 void VFX_ComposeConvergeMotes(Vector3 center, VC_MaterialId mat, float radius,
                               float t01, int moteCount);
 // The `charge_size` dial, readable by the composite below. Internal to the
@@ -307,6 +330,11 @@ void VFX_ComposeConvergeMotes(Vector3 center, VC_MaterialId mat, float radius,
 // core/tests/composition_tu_test.c exists to catch, and that guard cannot tell a
 // second declaration of one symbol from two different symbols.
 float VC_ConvergeMotesSizeMul(void);
+// The streamers' SINK radius as a fraction of the converge radius: where a
+// ribbon stops feeding because it has arrived. A score that draws something at
+// the middle must size it with THIS, or the ribbons and the thing they pour into
+// disagree about where the destination's surface is.
+float VC_ConvergeMotesSinkFrac(void);
 
 // ── E5.3. Charge converge ───────────────────────────────────────────────────
 // COMPOSITE, and a pure score over two primaries with no visual idea of its own:
@@ -439,7 +467,16 @@ int  VFX_ComposeTrailEx(const Matrix *followTransform, VC_MaterialId mat,
                         float width, float lifetime, TrailPresetId preset,
                         const VFX_TrailSurface *surface);
 void VFX_TrailSetWidth(int handle, float width01); // ramped, for wind-down
+// Per-instance EMISSION lift (the recipe's `hdrGain`, which is what bloom
+// catches). Each trail owns a copy of its preset row, so this brightens ONE
+// ribbon without editing the shared preset — use it when a dim preset's SHAPE is
+// what you want and its brightness is not. 1.0 = the preset's own value.
+void VFX_TrailSetHdrGain(int handle, float gain);
 void VFX_KillTrail(int handle);
+// Immediate cut: the strip is gone this frame instead of draining. For a ribbon
+// that is ABSORBED at a destination rather than left behind — pair it with a
+// width ramp to nothing over the last stretch, or the cut pops.
+void VFX_Trail_Extinguish(int handle);
 
 // ── PRIMARY. Volume trail ───────────────────────────────────────────────────
 // A swept VOLUME, and nothing else. The tube that `VFX_TRAIL_HAZE` proved out on

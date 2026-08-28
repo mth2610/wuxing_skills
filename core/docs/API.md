@@ -795,6 +795,7 @@ _Inline helpers / macros only — see header._
   void VFX_ShieldShell_SetIntensity(int handle, float intensity01);
   void VFX_ShieldShell_SetSurface(int handle, const VFX_ShieldSurface *surface);
   void VFX_ShieldShell_SetImpact(int handle, Vector3 impactWorld, float timeSinceImpact);
+  void VFX_ShieldShell_SetGroundContact(int handle, bool onGround);
   void VFX_ShieldShell_Stop(int handle);
   void VFX_KillShieldShell(int handle);
   void VFX_ShieldShell_DrawRefraction(Camera3D camera);

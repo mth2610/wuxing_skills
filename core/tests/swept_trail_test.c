@@ -1540,7 +1540,14 @@ static void Test_MirrorStillMatchesSource(void)
     CHECK(FileHas(inl, "out->strandGain = r->strand.gain;") &&
               FileHas(inl, "out->bundleWeight = r->strand.thirdWeight;"),
           "the bridge READS the archetype instead of inferring it from mask fields");
-    CHECK(FileHas(inl, "r->colour.coreWidth = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.16f;"),
+    // 0.18, not the 0.16 this asserted until 27/08/2026. The field had NO
+    // reader then, so the literal here only proved that an unused assignment
+    // still said what it always had; the shader used 0.18. Wiring the field
+    // made the number load-bearing, and it was corrected to the one that
+    // actually shipped — verified by rendering all six trail fixtures against
+    // the pre-wiring shader with the same binary: <= 11 px of 921600 differed,
+    // all by 1/255 (float rounding on the falloff's inner edge).
+    CHECK(FileHas(inl, "r->colour.coreWidth = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.18f;"),
           "and no hot core at all — it is meant to sit BEHIND another trail");
     CHECK(FileHas(inl, "A wisp has a CONTINUOUS inner core."),
           "WISP keeps a continuous, thinner inner core");

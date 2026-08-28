@@ -73,6 +73,8 @@
 #include "common/vc_smoke_trail.inl"
 #include "common/vc_beam.inl"
 #include "common/vc_rift_bolt.inl"
+#include "common/vc_charge_converge.inl"
+#include "common/vc_converge_motes.inl"
 // @gen:archetype_includes end
 
 void VFX_Compose_Update(float dt)
@@ -90,6 +92,8 @@ void VFX_Compose_Update(float dt)
     VC_SmokeTrail_Update(dt);
     VC_Beam_Update(dt);
     VC_RiftBolt_Update(dt);
+    VC_ChargeConverge_Update(dt);
+    VC_ConvergeMotes_Update(dt);
     VC_FlameEmitter_Update(dt);
 // @gen:archetype_update end
     LightningArc_Update(dt);
@@ -122,6 +126,8 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_SmokeTrail_Draw3D(cam);
     VC_Beam_Draw3D(cam);
     VC_RiftBolt_Draw3D(cam);
+    VC_ChargeConverge_Draw3D(cam);
+    VC_ConvergeMotes_Draw3D(cam);
     VC_FlameEmitter_Draw3D(cam);
 // @gen:archetype_draw end
     LightningArc_Draw3D(cam);

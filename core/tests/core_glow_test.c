@@ -251,18 +251,23 @@ static void Test_ExtractionChangedTheAddressAndNothingElse(void)
     CHECK(FileHas(glow, "if (s_lightAccum >= 0.07f)"),
           "the point light still runs on its own timer, not per frame");
 
-    // And the composite actually got smaller — an extraction that leaves the
-    // original intact is a copy, which is worse than not extracting.
-    // The scale expression changed shape on 30/07 when P2 extracted the MOTES as
-    // well: `s_chargeSize` moved into vc_converge_motes.inl with the threads it
-    // scales, so the composite reads it through an accessor. The number is the
-    // same number — the dial, at the same key — and that is what this pins.
-    CHECK(FileHas(chg, "VFX_ComposeCoreGlow(center, mat, radius * VC_ConvergeMotesSizeMul(), t01);"),
-          "the composite now CALLS the primary, still at the charge_size scale");
+    // WHAT THE COMPOSITE IT CAME OUT OF STILL OWES IT: nothing, as of
+    // 28/08/2026. VFX_ComposeChargeConverge no longer calls this primary at all —
+    // its destination became a FlowShield, which is a LIT membrane rather than
+    // refracted glass and therefore needs no hot core burning inside it (owner:
+    // "dùng flow shield ko cần lõi sáng nữa").
+    //
+    // That is worth an assertion rather than a deletion, because the extraction
+    // argument survives it and this is the evidence: the primary outlived the
+    // composite's need for it, which is exactly what extracting it was for. It
+    // has its own fixture (NEW FX "CORE GLOW") and any other effect wanting a
+    // hot point can call it.
+    CHECK(!FileHas(chg, "VFX_ComposeCoreGlow("),
+          "the charge converge no longer needs a core glow — its ball is lit itself");
     CHECK(!FileHas(chg, "MID GLOW — the layer that actually buys bloom"),
-          "and no longer contains a copy of it");
+          "and it never kept a copy of the layers either");
     CHECK(!FileHas(chg, "VFXLight_Spawn(center, m->soft,"),
-          "the point light moved with the layers it belongs to");
+          "the point light stayed with the layers it belongs to");
 }
 
 int main(void)

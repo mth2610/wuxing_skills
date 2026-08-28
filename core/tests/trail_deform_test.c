@@ -764,8 +764,16 @@ static void Test_MirrorStillMatchesSource(void)
           "each bundle tapers across its full width instead of retaining an 80% solid plateau");
     CHECK(FileHas(fs, "float centreCore = max(max(core0, core1), core2);"),
           "strand bundles carry an explicit thin centre core independent of broad sheet density");
-    CHECK(FileHas(fs, "float core0 = (1.0 - smoothstep(0.02, 0.18, d0)) * end0;"),
+    CHECK(FileHas(fs, "float core0 = (1.0 - smoothstep(coreIn, coreOut, d0)) * end0;"),
           "the primary hot core does not disappear when the texture centre is dark");
+    // The centreline's WIDTH is now a per-preset value, and the ratio between
+    // its inner and outer edge is what has to survive that: scaling only the
+    // outer edge would turn a narrow core into a hard-edged wire. 0.1111 is the
+    // old pair (0.02 / 0.18) re-expressed, so passing 0.18 reproduces it.
+    CHECK(FileHas(fs, "float coreIn  = coreOut * 0.1111;"),
+          "and narrowing it narrows its falloff with it, rather than sharpening it");
+    CHECK(FileHas(c, "(m->coreHalfWidth > 0.0f) ? m->coreHalfWidth : 0.18f"),
+          "zero still means UNSET, resolved to the shader's old literal on the C side");
     CHECK(!FileHas(fs, "float core0 = s0 *"),
           "texture density no longer gates the guaranteed structural hot core");
     CHECK(FileHas(fs, "float edgeMask = 1.0 - smoothstep(1.0 - max(u_bandShape.y, 0.01), 1.0, abs(across));"),
@@ -800,8 +808,17 @@ static void Test_MirrorStillMatchesSource(void)
     // whole ribbon one flat hue down its length.
     CHECK(FileHas(fs, "vec3 lengthCol = mix(vColor.rgb, u_colTail, along);"),
           "the colour still ramps head -> tail along the trail");
-    CHECK(FileHas(fs, "float hotMix = max(smoothstep(0.45, 1.0, inten), smoothstep(0.08, 0.45, hotSignal));"),
+    CHECK(FileHas(fs, "float hotMix = max(smoothstep(densGate, 1.0, inten), smoothstep(0.08, 0.45, hotSignal));"),
           "the hot colour follows both texture density and the structural centreline");
+    // BOTH ROUTES STAY, and the gate is why they can coexist. The density route
+    // is correct for a braided filament (its density peaks ARE its strands) and
+    // ruinous for a plume read with a gap-filling gain, where "dense" is most
+    // of the effect and the whole body turns hot at once — a slab, not a core.
+    // A preset now says which case it is instead of every preset getting 0.45.
+    CHECK(FileHas(fs, "float densGate = clamp(u_coreShape.y, 0.05, 0.98);"),
+          "and the density route's threshold is per-preset, clamped off both ends");
+    CHECK(FileHas(c, "(m->coreDensityGate > 0.0f) ? m->coreDensityGate : 0.45f"),
+          "with the same zero-means-unset fallback to the old literal");
     CHECK(FileHas(fs, "? max(inten, hotSignal * 0.65) : max(inten, hotSignal);"),
           "the hot centreline has a coloured BODY core plus a full EMISSION core");
     CHECK(FileHas(c, "l->colTail       = GetShaderLocation(shader, \"u_colTail\");"),
@@ -907,10 +924,24 @@ static void Test_MirrorStillMatchesSource(void)
           "the smoke style still occludes instead of glowing");
     CHECK(FileHas(inl, "cfg.material.bodyOpacity = rec->bodyOpacity;"),
           "and every style still declares how much it survives into the body pass");
-    CHECK(FileHas(inl, "Color hotTarget = ColorGradient_Sample(m->hotGrad, 0.20f);"),
-          "spawned strand cores use the material hot gradient");
-    CHECK(FileHas(inl, "Color hotTarget = ColorGradient_Sample(m->hotGrad, 0.20f);"),
-          "live-tuned strand cores keep using the material hot gradient");
+    // BOTH HALVES OF THE RULE, because only one of them was ever asserted and
+    // the unasserted half was DEAD. `TrailColorConfig::hot` was a documented
+    // field every preset assigned and nothing read (26/08/2026); the gradient
+    // was the only route to the core, so an effect that burns hotter than its
+    // element's own palette had no way to say so. The fallback is what these
+    // two lines guarded and it still holds — what is new is that it is a
+    // FALLBACK.
+    CHECK(FileHas(inl, "ColorGradient_Sample(m->hotGrad, 0.20f);"),
+          "strand cores still fall back to the material hot gradient");
+    CHECK(FileHas(inl, "Color hotTarget = (r->colour.hot.a > 0)"),
+          "...and an authored colour.hot wins over it — the field has a reader");
+    // Gated on ALPHA, exactly like colour.tail one block below it. That is what
+    // makes wiring the field a no-op for the four presets that leave it zeroed:
+    // a designated-initialiser struct starts at {0,0,0,0}, so `a > 0` is false
+    // and they keep the gradient colour byte for byte. A truthiness test on the
+    // RGB would have caught a legitimately black authored core instead.
+    CHECK(FileHas(inl, "if (r->colour.tail.a > 0)"),
+          "and it uses the same alpha gate the authored tail already used");
     CHECK(!FileHas(inl, "255 - base.r") && !FileHas(inl, "255 - lbase.r"),
           "strand no longer creates a pink core by whitening red glow");
     CHECK(FileHas(inl, "out->tailColor = (Color){"),

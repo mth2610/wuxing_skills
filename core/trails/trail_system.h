@@ -173,6 +173,11 @@ typedef struct
     float tailNarrow;   // bundle half-width multiplier at the tip (1 = none).
                         // Below 1 the trail thins to threads before it goes.
     Color hotColor;     // HDR core colour (the hot centre of a strand)
+    // The two halves of "where is the core". Both 0 = the values trail_deform.fs
+    // hardcoded before they were exposed (0.18 / 0.45), so a material that does
+    // not set them renders exactly as it did.
+    float coreHalfWidth;    // geometric centreline half-width, 0..1 of half-width
+    float coreDensityGate;  // strand density above which the body burns hot too
     // Colour at the TAIL of the trail; the head uses the entity tint. The
     // along-trail ramp is what makes a trail read as cooling (or as smoke
     // thinning); without it the whole ribbon is one flat hue. Leave black to
@@ -705,6 +710,10 @@ void Trail_SetFrozen(int id, bool frozen);
 // UV/flow clocks still advance in UpdateTrailSystem, making this useful for
 // isolating texture motion from emitter movement.
 void Trail_SetStaticPath(int id, Vector3 tail, Vector3 head, int nodeCount);
+// EMISSION lift for one live trail (> 1 is what bloom catches). The entity keeps
+// a COPY of the material it was created with, so a composition that wants one
+// instance brighter than its preset has to come through here.
+void Trail_SetHdrGain(int id, float gain);
 
 // API mở rộng hỗ trợ cập nhật FlowMap động thời gian thực
 void Trail_SetFlowMap(int id, Texture2D flowMap, float speed, float strength, float tiling);
