@@ -113,33 +113,42 @@ void main()
     float u = fragTexCoord.x; // around the ring, 0 -> 1, wraps
     float v = fragTexCoord.y; // across the canvas, 0 = inner base, 1 = outer
 
-    // ── 1. WAVEFRONT POSITION & AERODYNAMIC MICRO-TURBULENCE ─────────────────
-    // Subtle aerodynamic ripples along the shockwave
-    float frontWob = FbmRing(vec2(u * 6.0, 7.0 + u_seed), 6.0, 2) - 0.5;
-    float frontRip = FbmRing(vec2(u * 24.0, 31.0 + u_seed), 24.0, 2) - 0.5;
-    float frontFine = FbmRing(vec2(u * 64.0, 83.0 + u_seed), 64.0, 1) - 0.5;
+    // ── 1. ORGANIC WAVEFRONT CONTOUR & MULTI-FREQUENCY TURBULENCE ─────────────
+    // Multi-scale aerodynamic turbulence gives an organic, living shockwave contour
+    // that expands with explosive power without looking like a synthetic CAD circle.
+    float frontWob  = FbmRing(vec2(u * 5.0, 7.0 + u_seed), 5.0, 2) - 0.5;
+    float frontRip  = FbmRing(vec2(u * 16.0, 31.0 + u_seed), 16.0, 2) - 0.5;
+    float frontFine = FbmRing(vec2(u * 48.0, 83.0 + u_seed), 48.0, 2) - 0.5;
 
-    // Front sits near the crest of the canvas
-    float coreV = u_coreV + frontWob * 0.03;
-    float frontV = coreV + 0.03 + (frontWob * 0.02 + frontRip * 0.012 + frontFine * 0.006);
+    // Organic wavefront location with natural radial wander
+    float coreV = u_coreV + frontWob * 0.06;
+    float frontV = coreV + 0.03 + (frontWob * 0.04 + frontRip * 0.028 + frontFine * 0.012);
 
-    // ── 2. RAZOR-SHARP SUPERSONIC LEADING EDGE ──────────────────────────────
+    // ── 2. VARIABLE ARC ENERGY & INTENSITY MODULATION ────────────────────────
+    // Explosions release energy unevenly around their perimeter: some arcs
+    // burn fiercely with intense plasma, while others are thinner and cooler.
+    float arcNoise = FbmRing(vec2(u * 4.0, 119.0 + u_seed), 4.0, 2);
+    float arcEnergy = mix(0.55, 1.40, smoothstep(0.15, 0.85, arcNoise));
+
+    // Dynamic leading edge thickness that breathes naturally around the circumference
+    float rimT = FbmRing(vec2(u * 8.0, 101.0 + u_seed), 8.0, 2);
+    float frontWidth = mix(0.012, 0.032, rimT) * mix(1.0, 0.65, u_t01);
+
+    // ── 3. RAZOR-SHARP SUPERSONIC LEADING EDGE ──────────────────────────────
     float dR = v - frontV; // > 0: ahead of shock (outside), < 0: behind shock (inside wake)
 
-    // Leading edge:
-    // Ahead of front (dR > 0): collapses immediately to 0 (supersonic discontinuity, no outer artifacts)
-    // Behind front (dR <= 0): concentrated plasma crest
+    // Razor-sharp outer falloff (strictly 0 ahead of the shockwave)
     float leadEdge = 0.0;
     if (dR >= 0.0) {
-        leadEdge = exp(-dR * 180.0) * (1.0 - smoothstep(0.01, 0.03, dR));
+        leadEdge = exp(-dR / (frontWidth * 0.25)) * (1.0 - smoothstep(0.01, 0.035, dR));
     } else {
-        leadEdge = exp(dR * 55.0);
+        leadEdge = exp(dR / (frontWidth * 1.6));
     }
 
-    // Ultra-fine white-hot core line
-    float coreLine = exp(-abs(dR) * 260.0);
+    // Ultra-fine white-hot core line with arc modulation
+    float coreLine = exp(-abs(dR) * 220.0) * arcEnergy;
 
-    // ── 3. SUPERSONIC TRAILING PLASMA WAKE & RADIAL RAYS ─────────────────────
+    // ── 4. IRREGULAR TRAILING PLASMA WAKE & JET TENDRILS ─────────────────────
     // Trailing wake ONLY exists behind the shockfront (dR <= 0.0). Ahead of it is empty air.
     float wake = 0.0;
     float rays = 0.0;
@@ -148,47 +157,48 @@ void main()
     if (dR <= 0.0)
     {
         // Tangential vortex shear slightly curls trailing wisps
-        float shear = (wd * 0.012 + wd * wd * 0.02) * (FbmRing(vec2(u * 4.0, 41.0 + u_seed), 4.0, 2) - 0.5);
+        float shear = (wd * 0.015 + wd * wd * 0.03) * (FbmRing(vec2(u * 4.0, 41.0 + u_seed), 4.0, 2) - 0.5);
         float uw = u + shear;
 
         // Directional radial speedline rays
         float ray1 = ShockNoise(vec2(uw * 36.0, 17.0 + u_seed), 36.0);
         float ray2 = ShockNoise(vec2(uw * 84.0, 59.0 + u_seed), 84.0);
         float ray3 = ShockNoise(vec2(uw * 168.0, 113.0 + u_seed), 168.0);
-        float rayComb = pow(ray1 * 0.45 + ray2 * 0.35 + ray3 * 0.20, 2.0) * 2.5;
+        float rayComb = pow(ray1 * 0.45 + ray2 * 0.35 + ray3 * 0.20, 2.0) * 2.8;
 
-        // Radial ray reach & aerodynamic decay
-        float rayLen = mix(0.10, 0.22, u_t01) * mix(0.70, 1.30, ray1);
+        // Irregular tail reach: some tendrils stretch deep inward, others stay compact
+        float tailReach = FbmRing(vec2(u * 7.0, 203.0 + u_seed), 7.0, 2);
+        float rayLen = mix(0.12, 0.28, u_t01) * mix(0.45, 1.55, tailReach);
         float rayDecay = exp(-wd / max(rayLen * 0.40, 0.02));
-        rays = rayComb * rayDecay;
+        rays = rayComb * rayDecay * arcEnergy;
 
         // Aerodynamic plasma body trailing behind the front
-        float wakeBody = exp(-wd * 22.0) * (1.0 - smoothstep(0.0, 0.24, wd));
+        float wakeBody = exp(-wd * 20.0) * (1.0 - smoothstep(0.0, max(rayLen, 0.15), wd));
 
-        // Acoustic pressure ripple
-        float pressureRipple = (sin(wd * 90.0 - u_t01 * 10.0) * 0.5 + 0.5) * exp(-wd * 30.0);
+        // Concentric acoustic pressure ripple
+        float pressureRipple = (sin(wd * 85.0 - u_t01 * 10.0) * 0.5 + 0.5) * exp(-wd * 26.0);
 
-        // Organic shredding mask as shockwave expands
+        // Organic shredding & arc tear as shockwave expands
         float shredNoise = ShockNoise(vec2(uw * 48.0, wd * 14.0 + 77.0 + u_seed), 48.0);
-        float tearThreshold = mix(0.06, 0.60, u_t01 * u_t01);
-        float shredMask = smoothstep(tearThreshold, tearThreshold + 0.20, shredNoise);
+        float tearThreshold = mix(0.06, 0.55, u_t01 * u_t01) + (1.0 - arcEnergy * 0.7) * 0.15;
+        float shredMask = smoothstep(tearThreshold, tearThreshold + 0.22, shredNoise);
 
-        wake = clamp((wakeBody * 0.85 + rays * 0.60 + pressureRipple * 0.25) * shredMask, 0.0, 1.0);
+        wake = clamp((wakeBody * 0.85 + rays * 0.65 + pressureRipple * 0.25) * shredMask, 0.0, 1.0);
     }
 
-    // Hot filament sparks
-    float ember = pow(rays * 0.65 + leadEdge * 0.35, 2.0) * mix(1.1, 0.3, u_t01);
+    // Hot filament sparks & ember nodes
+    float ember = pow(rays * 0.65 + leadEdge * 0.35, 2.0) * mix(1.2, 0.3, u_t01) * arcEnergy;
 
-    // Life falloff (fast arrival, smooth dissipation)
+    // Life falloff (fast arrival, smooth organic dissipation)
     float lifeAlpha = pow(max(1.0 - u_t01, 0.0), 1.8);
-    float frontIntensity = (leadEdge * 1.5 + coreLine * 2.0) * lifeAlpha;
+    float frontIntensity = (leadEdge * 1.5 + coreLine * 2.0) * lifeAlpha * arcEnergy;
     float wakeIntensity = wake * lifeAlpha;
 
     // Canvas boundary & inner hole protection (strictly 0 at mesh edges)
     float edge = smoothstep(0.0, 0.04, v) * (1.0 - smoothstep(0.94, 1.0, v));
     edge *= smoothstep(u_hole * 0.4, u_hole * 1.1, v);
 
-    // ── 4. DUAL-PASS COMPOSITING (BRIGHT-BACKGROUND VFX CONTRACT) ────────────
+    // ── 5. DUAL-PASS COMPOSITING (BRIGHT-BACKGROUND VFX CONTRACT) ────────────
     if (u_premultiply > 0.5)
     {
         // EMISSION PASS: Luminous bloom for razor-sharp wavefront + filaments

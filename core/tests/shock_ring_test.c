@@ -547,8 +547,8 @@ static void Test_TheWakeIsProceduralAndGraded(void)
           "multi-scale directional radial streaking");
 
     // SUPERSONIC DISCONTINUITY
-    CHECK(FileHas(fs, "leadEdge = exp(-dR * 180.0)") &&
-          FileHas(fs, "float coreLine = exp(-abs(dR) * 260.0);"),
+    CHECK(FileHas(fs, "leadEdge = exp(-dR / (frontWidth * 0.25))") &&
+          FileHas(fs, "float coreLine = exp(-abs(dR) * 220.0) * arcEnergy;"),
           "razor-sharp supersonic leading knife edge and white-hot core");
 
     // EMISSION CARRIES LIGHT
@@ -669,19 +669,19 @@ static void Test_TheFrontIsTheIdentity(void)
     CHECK(FileHas(fs, "float dR = v - frontV;"),
           "the leading edge is a band on the canvas coordinate, not a level set");
 
-    CHECK(FileHas(fs, "leadEdge = exp(-dR * 180.0)") &&
-          FileHas(fs, "float coreLine = exp(-abs(dR) * 260.0);"),
+    CHECK(FileHas(fs, "leadEdge = exp(-dR / (frontWidth * 0.25))") &&
+          FileHas(fs, "float coreLine = exp(-abs(dR) * 220.0) * arcEnergy;"),
           "razor-sharp supersonic leading knife edge and white-hot core");
 
-    CHECK(FileHas(fs, "float frontWob = FbmRing(vec2(u * 6.0, 7.0 + u_seed), 6.0, 2) - 0.5;") &&
-          FileHas(fs, "float frontRip = FbmRing(vec2(u * 24.0, 31.0 + u_seed), 24.0, 2) - 0.5;"),
+    CHECK(FileHas(fs, "float frontWob = FbmRing(vec2(u * 5.0, 7.0 + u_seed), 5.0, 2) - 0.5;") &&
+          FileHas(fs, "float frontRip = FbmRing(vec2(u * 16.0, 31.0 + u_seed), 16.0, 2) - 0.5;"),
           "aerodynamic micro-ripples along the wavefront");
 
     CHECK(FileHas(fs, "float lifeAlpha = pow(max(1.0 - u_t01, 0.0), 1.8);"),
           "smooth aerodynamic life dispersal");
 
-    CHECK(FileHas(fs, "float coreV = u_coreV + frontWob * 0.03;"),
-          "circular expansion with subtle organic turbulence");
+    CHECK(FileHas(fs, "float coreV = u_coreV + frontWob * 0.06;"),
+          "organic circular expansion with dynamic turbulence");
 
     // COLOUR RANGE COMES FROM NOT PRE-WHITENING.
     CHECK(FileHas(inl, "ColorNormalize(VC_Whiten(m->glow, 0.08f))"),
