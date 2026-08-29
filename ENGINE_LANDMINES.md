@@ -1443,3 +1443,157 @@ Two things still apply:
   data" from "height is zero" — otherwise every conformed effect teleports to
   y = 0 on the flat arena and in the headless VFX harness. See
   `core/docs/LANDMINES.md`, "A flat quad on the ground is not 'on the ground'".
+
+## A sheet wrapped N times around a ring is minified N·W/P — and nothing here mipmaps (25/08/2026)
+
+**Symptom.** SHOCK RING looked permanently out of focus: a soft matte band with
+grain in it, on every background, at every phase. `structure` and `absvar` said
+the field HAD internal contrast (absvar 37 on a mid plate) while the picture had
+none of it. No term in the shader looked wrong, so the search kept going to the
+coverage ramps, the erosion threshold and the colour — none of which was the
+cause.
+
+**Cause.** The shape comes from an authored 2048x512 smoke strip that
+`shock_ring.fs` wrapped **4 and 7 times** around the ring's `u`, on the reasoning
+that "texels should stay smaller than the wisps". Count it instead of reasoning
+about it: the fixture ring's circumference is ~800 screen pixels, so ONE wrap is
+already 2048/800 = 2.6 texels per pixel; four wraps is 10.4 and seven is 18. The
+sheet's own features autocorrelate over ~24 texels, so a wisp was being drawn
+about two pixels wide.
+
+There is no mip chain anywhere in this engine — `grep -rn GenTextureMipmaps`
+returns no call sites — so bilinear at 10x minification does not gracefully blur.
+It point-samples roughly one texel in ten, which is grain; the soft coverage
+ramps downstream then average that grain into flat haze. Authored structure went
+in and none of it came out.
+
+**Rule.** A texture W texels wide wrapped N times around a silhouette P pixels
+long is minified `N*W/P`, and with no mip chain there is nothing to catch it.
+Compute that number when you choose a tiling rate — a rate chosen to avoid
+MAGNIFICATION overshoots into minification without any visual tell except a
+softness you will blame on something else. Dropping the rates to 1 and 2
+(2.6 and 5.2 texels/pixel) brought the wisps back: `absvar` 37 -> 53 and `detail`
+0.185 -> 0.215 on a mid plate, with nothing else changed.
+
+Corollary for the ring case specifically: the rate must also be a WHOLE number,
+because a strip that is periodic in x only closes its seam at integer wraps.
+
+## An effect that does not cross the bloom threshold does not glow, and no single term shows it (25/08/2026)
+
+**Symptom.** SHOCK RING's emission pass was configured, premultiplied correctly,
+and given a 2.5x gain — and the ring rendered as matte orange paper with no glow
+at all. Every term in the chain looked reasonable.
+
+**Cause.** `main.c` sets `bloomThreshold = 1.25` in HDR luma. The delivered value
+was `col * gain * a` where `a = coverage(~0.7) * 0.70 * lifeAlpha(~0.6) = 0.29`,
+and `col` was a whitened fire glow of luma 0.64: `0.64 * 2.5 * 0.29 = 0.47`.
+Under half of what blooms, from three innocuous multiplications, none of which is
+wrong on its own.
+
+**Rule.** When an effect is meant to glow, do the multiplication out to the
+number the bloom prefilter actually tests, including the life envelope and the
+coverage — "the gain is 2.5" is not evidence of anything. And keep coverage and
+brightness on SEPARATE arguments: `VFX_ResolvePremultiplied`'s six-argument form
+(`emissionColor, coreMask, emissionGain`) adds light without adding alpha.
+Delivering the glow through `bodyColor * intensity * a` instead ties them
+together, so the only way to reach the threshold is near-opacity — and the
+premultiplied `dst*(1-a)` term then erases whatever body pass was drawn
+underneath (SHOCK RING came out as bare white filaments with no smoke around
+them until this was split).
+
+Second half of the same trade, and it is a real cost: a strong glow spreads a
+bloom veil across the effect's whole footprint, and `darken%` is measured over
+that footprint. SHOCK RING's white-plate `darken%` went 81.5 -> 21 when it
+started glowing, and was recovered to ~36 only by keeping the BODY pass in
+saturated element hue (`u_bodyColor * 0.85`, luma 0.42) instead of letting it
+drift to the whitened glow (luma 0.64) wherever the effect was hot. Saturated
+pigment in the body pass, white-hot only at the core — the same split
+`shield_flow_shell.fs` documents.
+
+## A feature on a two-sided swept sheet is drawn TWICE, as far apart as the sheet is thick (25/08/2026)
+
+**Symptom.** SHOCK RING's new leading edge — one thin band in the shader, one
+`smoothstep` on one coordinate — rendered as **two** concentric bright circles
+half a radius apart. Nothing in the shader draws two of anything, and switching
+the smoke off to look at the edge alone showed a single clean loop, which made it
+look like a compositing bug.
+
+**Cause.** The primitive sweeps its section twice, once displaced `+normal` and
+once `-normal`, so that a mid-air ring still reads when seen along its own plane.
+Every fragment feature therefore exists on both sheets. That is invisible while
+the two are close together or while the feature is diffuse — and it becomes two
+distinct objects the moment the section FLARES, because the flare is exactly a
+statement about how far apart the two sheets are at a given point across it. The
+front sat where the flare was widest, so it was drawn twice, that far apart.
+
+**Rule.** On any two-sided swept sheet, a sharp feature must be placed where the
+two sheets COINCIDE — at the fold, the crest, the zero of the offset function —
+or it will double. This is a placement constraint, not a tuning one: no amount of
+narrowing the band removes the second copy, and thinning the sheet only makes the
+two lines closer together. The fix here was to reverse the flare so that it opens
+away from the front, which was also the more physical shape (nothing is thrown
+ahead of a shock front, so a skirt outside it is smoke that arrived before the
+shock did).
+
+Corollary: the same geometry gives the effect its free rim brightening, so the
+double sheet is not the thing to remove. Move the feature, not the sheet.
+
+*Postscript 26/08/2026: SHOCK RING's flare and leading edge were reverted and then
+restored on the owner's call; the code is live again in `vc_shock_ring.inl`. The
+constraint is a property of any two-sided swept sheet regardless.*
+
+## An fbm you AVERAGE has no range left for a threshold to bite on — and an fbm you over-stretch has none either (26/08/2026)
+
+**Symptom.** SHOCK RING's procedural tail behaved as if its erosion threshold
+were a switch for the whole effect rather than a carve: at one setting the tail
+was a smooth airbrushed band with no internal structure, and 0.18 higher it was
+gone entirely, with nothing in between. Later, after over-correcting, sweeping
+the same threshold from 0.30 to 0.92 across the ring's entire life barely changed
+the picture at all. Both times every individual term read as reasonable.
+
+**Cause, first half — AVERAGING.** The field was
+`FbmRing(..., 3) * 0.66 + FbmRing(..., 2) * 0.42`. Each octave of a value noise
+is an independent sample near 0.5 and the fbm divides by its total amplitude, so
+three octaves already sit in a narrow band around the mean; summing two such
+fields narrows it again by the same central-limit argument. Measured by painting
+the field straight out through a debug pass, it was flat grey — roughly
+0.54 ± 0.08. Every constant downstream was written against 0..1 and therefore
+either passed everything or cut everything.
+
+**Cause, second half — CLAMPING BIMODAL.** Rescaled `(x - 0.5) * 3.2 + 0.5` the
+same field clamps to mostly exact 0 and exact 1. A threshold sweeping the middle
+of a range the data no longer occupies does nothing, which is the identical
+symptom arrived at from the opposite direction.
+
+**Rule.** Before writing any constant against a noise field, know the range the
+field actually occupies — a normalised n-octave value-noise fbm is much narrower
+than 0..1, and it narrows further with every octave and every field you add to
+it. Then set the contrast deliberately: `clamp((x - 0.5) * k + 0.5, 0, 1)` with
+k chosen so the result spans roughly 0.15..0.85 (k ≈ 1.9 for two octaves here),
+which leaves a graded field a climbing threshold can erode gradually. Combine
+detail by MULTIPLYING it in, never by adding — addition is the averaging that
+destroyed the contrast in the first place.
+
+Corollary, and it is the cheapest instrument in this whole file: when structure
+is missing and no term looks wrong, paint the field itself out as the fragment
+colour for one capture. It took four rounds of tuning to guess at this and one
+debug render to see it.
+
+## Every gate in a chain is a fraction, and their product is not (26/08/2026)
+
+**Symptom.** SHOCK RING's tail was present in the arithmetic — non-zero at every
+step, correct in every term — and invisible on screen.
+
+**Cause.** Five multiplicative factors: a radial falloff (~0.25 at mid-tail), a
+grain shading term (~0.5), an erosion mask (~0.6) and two angular gates (~0.6
+each). Each is individually reasonable and their product is 0.027. Coverage of
+0.03 is not a dim effect, it is no effect.
+
+**Rule.** When several independent masks multiply, multiply their *typical*
+values out before believing the result is visible, and compensate ONCE at the end
+(`clamp(x * k, 0, 1)`) rather than by inflating each gate until none of them
+gates any more. The second approach is how a mask chain quietly becomes decorative.
+
+*Both this and the fbm-range entry above were found building SHOCK RING's
+procedural tail, which is the shipping version — but the lessons are about noise
+fields and mask chains generally, not about that tail.*

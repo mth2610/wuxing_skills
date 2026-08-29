@@ -40,13 +40,15 @@ static int g_checks = 0;
 #define PI 3.1415926535f
 #endif
 
-#define SHOCK_MAX_SLICES   64
-#define SHOCK_RADIALS      7
+#define SHOCK_MAX_SLICES   96
+#define SHOCK_RADIALS      13
 #define SHOCK_CREST_U      0.5f
 #define SHOCK_CREST_K      1.0f
 #define SHOCK_CORE_RATIO   0.22f
 #define SHOCK_CANVAS_MUL   5.2f
 #define SHOCK_THICK_RATIO  0.30f
+#define SHOCK_FLARE_RATIO  0.34f
+#define SHOCK_FLARE_K      1.35f
 #define SHOCK_SHADE_FLOOR  0.30f
 #define SHOCK_FACE_DIM     0.60f
 
@@ -71,9 +73,23 @@ static float HalfThickness(float core, float t01)
     if (t01 <= 0.0f || t01 >= 1.0f) return 0.0f;
     return core * SHOCK_THICK_RATIO * SmoothStep01(t01 / 0.10f) * powf(1.0f - t01, 1.1f);
 }
+static float Flare(float u)
+{
+    if (u >= SHOCK_CREST_U) return 0.0f;
+    return powf((SHOCK_CREST_U - u) / SHOCK_CREST_U, SHOCK_FLARE_K);
+}
+static float FlareHeight(float canvas, float t01)
+{
+    if (t01 <= 0.0f || t01 >= 1.0f) return 0.0f;
+    return canvas * SHOCK_FLARE_RATIO * SmoothStep01(t01 / 0.45f);
+}
+// Mirrors ShockRing_Detail's tier table (the even-rounding there is identity at
+// s_shockDetail = 1). It read 96/72/48/32 long after the shader stopped wanting
+// a high cell count, which made the "detail exceeds slices" assertion below
+// pass on a stale number rather than on the code.
 static float Detail(int tier)
 {
-    switch (tier) { case 3: return 96.0f; case 2: return 72.0f; case 1: return 48.0f; default: return 32.0f; }
+    switch (tier) { case 3: return 32.0f; case 2: return 26.0f; case 1: return 20.0f; default: return 16.0f; }
 }
 static float Profile(float u)
 {
@@ -95,7 +111,7 @@ static float Alpha01(float t01)
 }
 static int Slices(int tier)
 {
-    switch (tier) { case 3: return SHOCK_MAX_SLICES; case 2: return 40; case 1: return 24; default: return 16; }
+    switch (tier) { case 3: return SHOCK_MAX_SLICES; case 2: return 64; case 1: return 40; default: return 16; }
 }
 
 // ── 1. It is NOT a ground wave with the raycast switched off ────────────────
@@ -416,13 +432,29 @@ static void Test_MirrorMatchesTheSource(void)
     // does not apply coverage, so the shader must. Selecting the blend alone was
     // measured on the trail presets as a 1/alpha brightening of every soft edge.
     CHECK(FileHas("core/shaders/shock_ring.fs", "if (u_premultiply > 0.5)") &&
-          FileHas("core/shaders/shock_ring.fs", "VFX_ResolvePremultiplied(col, u_emission, a,"),
+          FileHas("core/shaders/shock_ring.fs",
+                  "finalColor = VFX_ResolvePremultiplied(hotCol, u_emission * 0.30, ga,"),
           "...and the emission pass premultiplies in the shader, since the blend no longer does");
+    // COVERAGE AND BRIGHTNESS MUST STAY SEPARATE ARGUMENTS. Delivered as
+    // bodyColor * intensity * a, the only way to make a core bright enough to
+    // bloom is to make it nearly opaque — and the premultiplied dst*(1-a) term
+    // then erases the BODY pass drawn underneath, so the ring comes out as bare
+    // white filaments with no smoke around them. The six-argument form adds
+    // light without adding coverage.
+    CHECK(FileHas("core/shaders/shock_ring.fs", "hotCol, glowMask, u_emission);"),
+          "the glow is delivered as the emission triple, so it does not erase the body pass");
     CHECK(FileHas(inl, "VFXRender_BeginDraw(") &&
           FileHas(inl, "false);") && FileHas(inl, "rlDisableBackfaceCulling();"),
           "no depth write, both walls — flushed on both sides");
-    CHECK(FileHas(inl, "ShockRing_SetUniforms(m, (pass == 0) ? alpha : alpha * 0.70f,") &&
-          FileHas(inl, "(pass == 0) ? 1.0f : 2.50f, t01, seed, hasSmoke,") &&
+    // THE GAIN IS 7.0 AND IT IS NOT A TASTE SETTING — IT IS A THRESHOLD.
+    // main.c sets bloomThreshold = 1.25 in HDR luma, so an emission pass that
+    // never reaches it does not glow, however "bright" its numbers look. At the
+    // previous 2.50 the arithmetic was: coverage(~0.7) * 0.70 * life alpha(~0.6)
+    // = 0.29, times a whitened fire glow of luma 0.64, times 2.50 = 0.47 — less
+    // than half of what blooms. Every term looked reasonable on its own and the
+    // ring rendered as matte orange paper. Lower this and it stops glowing.
+    CHECK(FileHas(inl, "ShockRing_SetUniforms(m, (pass == 0) ? alpha * 1.75f : alpha * 0.90f,") &&
+          FileHas(inl, "(pass == 0) ? 1.0f : 7.00f, t01, seed,") &&
           FileHas(inl, "(pass == 0) ? 0.0f : 1.0f);"),
           "the emission pass carries enough energy and coverage to cross the bloom "
           "threshold — and tells the shader which blend law it is under");
@@ -461,223 +493,138 @@ static void Test_MirrorMatchesTheSource(void)
 // a clean hoop while every numeric test above stays green. It cannot tell you
 // the ring looks right — only that the mechanism is still wired up.
 
-static void Test_ItIsAnErodedRopeNotGeneratedStrands(void)
+static void Test_TheSheetIsGone(void)
 {
     const char *fs = "core/shaders/shock_ring.fs";
     const char *inl = "core/composition/common/vc_shock_ring.inl";
 
-    CHECK(FileHas(inl, "ResourceManager_LoadShader(\"core/shaders/shock_ring.vs\", "
-                       "\"core/shaders/shock_ring.fs\")"),
-          "the composer loads the smoke shader through ResourceManager");
+    // 26/08/2026, owner decision. Every visible part of this ring used to come
+    // out of an authored thin-smoke strip; once the shader grew a real leading
+    // edge, the sheet's smoke read as lint around it. The asset and its
+    // generator stay in the tree — nothing here binds them.
+    CHECK(!FileHas(fs, "sampler2D") && !FileHas(fs, "texture(texture0"),
+          "the shader samples no texture at all");
+    CHECK(!FileHas(inl, "VFX_SurfaceRegistry_Get(") && !FileHas(inl, "rlSetTexture("),
+          "and the composer looks up and binds no surface");
 
-    // THE SHADER MUST BE COPIED INTO THE BUILD TREE (ENGINE_LANDMINES, "every
-    // runtime-loaded shader must be configure_file'd"). Worth a test rather than
-    // a comment because of HOW it fails: the load returns id 0,
-    // ShockRing_HasShader() goes false, and the composer quietly draws its
-    // fallback — the clean analytic hoop this whole rewrite exists to replace.
-    // Nothing errors. The ring renders. It looks exactly like the version before
-    // the change, which is indistinguishable from "the new code did not work"
-    // and sends you debugging a shader that never ran.
-    CHECK(FileHas("CMakeLists.txt",
-                  "configure_file(core/shaders/shock_ring.fs "
-                  "${CMAKE_CURRENT_BINARY_DIR}/core/shaders/shock_ring.fs COPYONLY)"),
-          "the fragment shader is copied into the build tree");
-    CHECK(FileHas("CMakeLists.txt",
-                  "configure_file(core/shaders/shock_ring.vs "
-                  "${CMAKE_CURRENT_BINARY_DIR}/core/shaders/shock_ring.vs COPYONLY)"),
-          "...and so is the vertex shader");
+    // THE UNIFORM SET MUST SHRINK WITH IT, and this is the trap in removing a
+    // texture path rather than a cosmetic tidy-up: a uniform the shader no
+    // longer reads is optimised out, GetShaderLocation returns -1, and
+    // ShockRing_HasShader — which requires every location to be >= 0 — then
+    // reports the shader as unusable. The primitive silently falls back to the
+    // old clean analytic hoop, with no error anywhere.
+    CHECK(!FileHas(inl, "u_hasSmoke") && !FileHas(inl, "u_layerDetail") &&
+          !FileHas(inl, "u_layerPhase") && !FileHas(inl, "u_detail"),
+          "and the dead uniforms went too, or HasShader would fail the whole shader");
+    CHECK(!FileHas(inl, "ShockRing_Detail(") && !FileHas(inl, "SHOCK_DETAIL_EARLY"),
+          "...along with the tier ladder that fed them");
+}
 
-    // THE WISPS ARE LIT DIRECTLY, NOT AS A CONTOUR. An earlier version lit the
-    // level set {dens == thr}. That is right for a procedural field, but across
-    // the rope the density is a single HUMP — up from the inner edge, peak at the
-    // centre-line, down to the outer edge — so any threshold below the peak is
-    // crossed TWICE and the contour draws an inner rim AND an outer rim. The ring
-    // then reads as double-edged no matter how many ropes exist, which is exactly
-    // how it was misdiagnosed as a leftover second rope. A level set of a hump
-    // has to look like that; the fix is not to take a level set.
-    CHECK(!FileHas(fs, "abs(dens - thrA)"),
-          "no iso-contour: a level set across a hump is crossed twice and double-edges");
-    CHECK(FileHas(fs, "float hot = alive * smoothstep(0.26, 0.78, dens) * "
-                      "mix(1.0, 0.30, u_t01);"),
-          "the wisps are lit by their own density instead");
-    // AND THE CORES COOL. Young smoke has bright dense cores, old smoke has
-    // none. Held constant, the ring is at its brightest when it should be at its
-    // faintest — it reads as stopping rather than as dispersing.
-    CHECK(!FileHas(fs, "smoothstep(0.26, 0.78, dens);"),
-          "...and they cool over the ring's life rather than staying hot");
+static void Test_TheWakeIsProceduralAndGraded(void)
+{
+    const char *fs = "core/shaders/shock_ring.fs";
 
-    // SHAPED, NOT POWERED. The sheet's alpha lives mostly between 0.3 and 0.6 —
-    // it is thin smoke — so pow(dens, 2.6) maps nearly all of it below 0.2 and
-    // the ring goes dim and sparse while every other term still looks correct.
-    CHECK(!FileHas(fs, "pow(clamp(dens, 0.0, 1.0), 2.6)"),
-          "...over the range the data actually occupies, not the top of it");
-    CHECK(FileHas(fs, "float cover = clamp(smoke * 0.60 + hot * 0.95, 0.0, 1.0) * edge;"),
-          "and the dim body sits under the hot cores");
+    // WHAT THE WAKE IS FOR. The mesh's bell opens INWARD of the front, so with
+    // nothing drawn behind the line the whole three-dimensional section is
+    // invisible and the ring is a flat glowing loop. The wake is the front's own
+    // trailing tail and it is what the bell is drawn on.
+    CHECK(FileHas(fs, "float wx = clamp((frontV - v) / max(wakeLen, 0.03), 0.0, 1.0);") &&
+          FileHas(fs, "float wake = (dR > 0.0) ? 0.0 : fall * fall;"),
+          "the tail hangs INWARD off the front, never ahead of it");
 
-    // SUBTRACTIVE, NOT GENERATIVE. Nothing here indexes a per-feature cell. The
-    // previous version did — one strand per angular cell — and that is a comb by
-    // definition: evenly spaced features, which the eye reads long before it
-    // reads any per-strand variation. Warp and jitter do not touch the period.
-    CHECK(!FileHas(fs, "u_fibers"), "no per-strand cell decomposition survives");
-    CHECK(!FileHas(fs, "float halfW"), "...no per-strand width");
-    CHECK(!FileHas(fs, "float tipV"), "...no per-strand length");
+    // LENGTH IS IN v UNITS AND v ONLY SPANS 1.0. Written with the wrong factors
+    // the tail reached 1.5 — one and a half canvases — so it ran past the hole
+    // and the ring rendered as a filled blob with a bright outline.
+    CHECK(FileHas(fs, "float wakeLen = widA * outGain * mix(1.30, 1.70, u_t01) * mix(0.35, 1.55, wakeN);"),
+          "...and its length stays a fraction of the section, not a multiple of the canvas");
 
-    // THE ROPE IS CLOSED BEFORE IT IS TORN, and it is torn by a threshold that
-    // CLIMBS. Erosion at a fixed threshold is a static stencil, not a tear.
-    CHECK(FileHas(fs, "float thrA = mix(0.02, 0.82, t2) + clumpT;") &&
+    // ── THE CONTRAST CLIFF, WHICH COST FOUR RENDERS TO FIND ─────────────────
+    //
+    // Each octave of a value noise is an independent sample near 0.5 and FbmRing
+    // divides by the total amplitude, so a three-octave field already sits in a
+    // narrow band around the mean; SUMMING two such fields narrows it again. The
+    // first version of this tail did both and measured essentially constant — a
+    // debug pass that painted the field straight out came back flat grey — so
+    // every threshold written against 0..1 stopped carving and started acting as
+    // an on/off switch for the whole ring: smooth airbrushed band at one
+    // setting, bare wire 0.18 higher, nothing in between.
+    //
+    // Over-correcting has a cliff of its own. Stretched 3.2x the field clamps
+    // BIMODAL, mostly exact 0 and exact 1, and the threshold again has nothing
+    // to bite on — sweeping the tear from 0.30 to 0.92 across the whole life
+    // changed the late ring almost not at all.
+    CHECK(FileHas(fs, "float streak = FbmRing(vec2(u * 30.0, wx * 0.85 + 31.0 + u_seed), 30.0, 2);"),
+          "two octaves, not three, so the field keeps a usable range");
+    CHECK(FileHas(fs, "float grain = clamp((streak - 0.5) * 1.90 + 0.5, 0.0, 1.0);"),
+          "...stretched enough for a threshold to carve, not so far that it clamps bimodal");
+    CHECK(FileHas(fs, "grain = clamp(grain * (0.55 + 0.90 * fine), 0.0, 1.0);") &&
+          !FileHas(fs, "streak * 0.66 + fine * 0.42"),
+          "...and the detail is MULTIPLIED in, since adding it is the averaging that flattened it");
+
+    // FEATURES LONG IN THE RADIAL DIRECTION. This is why a procedural field is
+    // acceptable here where the one it replaced was a "necklace": the shape of
+    // the sample domain does the work — high angular frequency against a low
+    // radial one — rather than a warp trying to hide a period.
+    CHECK(FileHas(fs, "u * 30.0, wx * 0.85") && FileHas(fs, "u * 64.0, wx * 1.70"),
+          "the sample domain is stretched radially, so the tail is streaks not blobs");
+
+    // FOUR MULTIPLICATIVE GATES EACH AVERAGING A HALF LEAVE A SIXTEENTH. The
+    // falloff, the shading, the tear and the two angular gates are all
+    // fractions; their product put the tail at ~0.06 coverage — present in the
+    // arithmetic, invisible on screen. Gained back in ONE place rather than by
+    // inflating each gate until none of them gates.
+    CHECK(FileHas(fs, "wake = clamp(wake * 2.10, 0.0, 1.0) * mix(1.0, 0.55, u_t01);"),
+          "the gate product is compensated once, and the tail still thins with age");
+
+    // THE TEARING climbs quadratically, so the tail comes apart from a
+    // continuous skirt into separate strands as the ring ages.
+    CHECK(FileHas(fs, "float tear = mix(0.30, 0.92, t2) + (clump - 0.5) * 0.30;") &&
           FileHas(fs, "float t2 = u_t01 * u_t01;"),
-          "erosion begins during expansion, not only after the ring has stopped");
-    CHECK(FileHas(fs, "float clumpT = (clump - 0.5) * 0.28;"),
-          "the newborn ring's erosion variance is narrow enough to remain closed");
-    CHECK(FileHas(inl, "static float s_shockHole = 0.16f;") &&
-          FileHas(inl, "Tuning_RegisterFloat(\"shock_hole\", &s_shockHole, 0.16f);"),
-          "the low smoke tail is not cut back into an oversized empty middle");
+          "erosion begins during the expansion and finishes it off");
 
-    // A fast ease-out and quadratic erosion overlap: the circular front settles
-    // while its smoke keeps reshaping, as in the reference sequence.
-    CHECK(FileHas(fs, "float t2 = u_t01 * u_t01;") && FileHas(inl, "return 1.0f - powf(1.0f - t01, 2.6f);"),
-          "the front settles early while erosion continues to reshape it");
+    // THE TAIL IS LIT BY ITS FILAMENTS, NOT AS A MASS. At 0.30 with a gain of 7
+    // every fragment of the skirt arrives at 2.1 in HDR — clipped, so the whole
+    // thing tone-maps to one flat saturated orange and every bit of structure
+    // behind it is thrown away.
+    CHECK(FileHas(fs, "float glowMask = clamp(rim * 2.80 + ember * 1.15 + wake * 0.08, 0.0, 1.0) *"),
+          "the tail's mass is barely emissive; its filaments carry the light");
+    CHECK(FileHas(fs, "float ember = pow(smoothstep(0.74, 0.98, grain), 2.0) * wake *"),
+          "...and those filaments are the top of the grain range, thinned");
 
-    // ONE ROPE. The second, thinner one riding outside it was judged wrong
-    // against the render: sharing this one's noise field made the pair move as a
-    // single object rather than as two, and it only muddied the inner rope's
-    // behaviour. A second ring should be a second CALL at its own radius and
-    // phase, not a second lobe on this field.
-    CHECK(FileHas(fs, "float ropeA = Rope(v, coreV, widA, u_t01);"), "there is one rope");
-    CHECK(!FileHas(fs, "ropeB") && !FileHas(fs, "thrB") && !FileHas(fs, "float widB"),
-          "...and no second lobe sharing its field (sA/sB are texture layers, not ropes)");
+    // VALUE LIVES ON THE RADIUS.
+    CHECK(FileHas(fs, "float heat = 1.0 - wx;") &&
+          FileHas(fs, "vec3 coal = u_bodyColor.rgb * mix(0.16, 1.00, heat * heat);"),
+          "and the tail cools behind the front rather than being one flat colour");
 
-    // EXPANSION STRETCHES THE SAMPLE SPACE. This is where the radial tendrils
-    // come from; nothing animates a wisp length.
-    CHECK(FileHas(fs, "float vs = coreV + (v - coreV) * mix(1.0, 0.40, u_t01);"),
-          "the sample space compresses radially, so the smoke is pulled outward");
-    CHECK(FileHas(fs, "float radialRuffle = (FbmRing(vec2(u * 6.0, 47.0 + u_seed), 6.0, 2) - 0.5) *") &&
-          FileHas(fs, "vs += radialRuffle;"),
-          "noise continuously ruffles smoke coverage radially without moving the mesh");
-    CHECK(FileHas(fs, "float reach = (d < 0.0) ? w * mix(1.42, 1.15, u_t01) : w;"),
-          "young smoke has a long inward tail, then pulls outward instead of filling the disc");
-    // NOT FURTHER. At 0.16 the compression is over six times by the end and the
-    // sheet's texels smear into straight rays — a starburst, not stretched smoke.
-    CHECK(!FileHas(fs, "mix(1.0, 0.16, u_t01)"),
-          "...but not so far that the wisps become radial rays");
+    // Driven by the ring's own life, never by wall clock.
+    CHECK(!FileHas(fs, "u_time"), "nothing in the silhouette is driven by u_time");
 
-    // WORLD-SQUARE CELLS. u spans 2*PI*R, v spans 0.66*R, so a cell square in UV
-    // is nine times wider than tall in metres and the field smears sideways.
-    CHECK(FileHas(fs, "const float U_PER_V = 9.5;") &&
-          FileHas(fs, "float nV = nU / U_PER_V;"),
-          "the noise cells are square in the WORLD, not in UV");
-    CHECK(FileHas(fs, "float us = u + drift * 0.85 * (0.35 + u_t01) / U_PER_V;"),
-          "...and the motion-noise amplitude is converted through the same ratio");
-
-    // THE SHAPE IS AUTHORED. An fbm is statistically homogeneous — every region
-    // looks like every other — so eroding one gives evenly distributed features
-    // of one size all the way round, which is the "too regular" failure. The
-    // sheet supplies the non-uniformity; noise only distorts its UVs.
-    CHECK(FileHas(fs, "float sheet = clamp(sA * 0.85 + sB * 0.55, 0.0, 1.0);"),
-          "the density field comes from the simulated smoke sheet, summed not maxed");
-    CHECK(FileHas(fs, "float dens = mix(proc, sheet, float(u_hasSmoke));"),
-          "...with the procedural field kept only as the sheet-missing fallback");
-    CHECK(FileHas(inl, "VFX_SurfaceRegistry_Get(VFX_SURFACE_SHOCK_RING_SMOKE)"),
-          "and the composer binds the ring's OWN sheet, not the impact disc's");
-
-    // REMAP THE SHEET'S OCCUPIED BAND. Thin smoke leaves three quarters of the
-    // sheet empty and most of the rest under 0.3. Every threshold downstream is
-    // written against a full-range field, so without this line they all measure
-    // against a range the data never reaches and the ring renders as a few stray
-    // flecks — with no single term looking wrong. Retune HERE when the sheet is
-    // regenerated, not in the erosion or the hot-core curve.
-    CHECK(FileHas(fs, "sheet = smoothstep(0.03 + 0.06 * (u_layerDetail - 1.0),"),
-          "the sheet is remapped into the range the thresholds below assume");
-
-    // THE RESOLUTION LADDER IS ON THE TIME AXIS. Reference shows a small sharp
-    // ring and softer, fainter smoke further out — the SAME ring at three
-    // moments, not three rings at one moment. So one draw, whose sharpness runs
-    // from HIGH to LOW over its own life; young smoke really is sharper than old.
-    // Drawn as three near-coincident instances instead, it only thickens one
-    // edge and closes the middle; drawn as time-staggered echoes it puts three
-    // fronts on screen at once and stops being one object.
-    CHECK(FileHas(inl, "#define SHOCK_DETAIL_EARLY 1.60f") &&
-          FileHas(inl, "#define SHOCK_DETAIL_LATE  0.50f"),
-          "sharpness runs from HIGH to LOW across the ring's own life");
-    CHECK(FileHas(inl, "float layerDetail = Math_Mix(SHOCK_DETAIL_EARLY, SHOCK_DETAIL_LATE, t01);"),
-          "...driven straight off t01, on ONE ring");
-    CHECK(!FileHas(inl, "s_shockLayerTable"),
-          "and there is no layer table: not three instances, not three echoes");
-
-    // DETAIL MUST NOT SCALE THE ANGULAR SAMPLE RATE. At 0.5 late in life that
-    // leaves about one repeat of the sheet around the whole circumference, so
-    // every texel column is magnified into a wide radial band and the ring reads
-    // as a starburst exactly when it should be at its softest.
-    CHECK(FileHas(fs, "float tuA = fract(us * 4.0 + u_layerPhase * 0.11);"),
-          "the angular sample rate is fixed and coprime, independent of detail");
-    CHECK(!FileHas(fs, "us * 2.0 * u_layerDetail"),
-          "...so softening never stretches the sheet into rays");
-
-    // FLOOR THE SAMPLING DIVISOR. Early in the ring's life the rope is narrow,
-    // and dividing by that width magnifies the sheet several times across the
-    // band — the texels smear into radial streaks converging on the centre and
-    // the ring reads as a starburst. The floor caps the stretch; it is not a
-    // divide-by-zero guard, and 0.04 (which is one) does not do the job.
-    CHECK(FileHas(fs, "float tvA = 0.5 + (vs - coreV) / max(widA * 2.2, 0.26) + pan;"),
-          "the sheet cannot be stretched without limit when the rope is narrow");
-
-    // THE STRIP'S EMPTY MARGINS MUST NOT BE SAMPLED. The sheet is authored
-    // non-tiling and its ends are deliberately blank; wrapped with a bare
-    // fract() those blanks land at fixed angles and punch the same large hole in
-    // every ring, which reads as a bug rather than as a tear.
-    // THE SHEET TILES, so it wraps directly. The previous strip did not, and its
-    // blank ends had to be squeezed out with a 0.06..0.94 remap — a workaround
-    // for a texture that should simply have been periodic. Making the generator
-    // wrap its noise lattice and its particles removed the need for it.
-    CHECK(!FileHas(fs, "0.06 + 0.88"),
-          "the sampler wraps the strip directly, with no margin workaround");
-    CHECK(FileHas(inl, "VFX_SURFACE_SHOCK_RING_SMOKE") &&
-          !FileHas(fs, "0.06 + 0.88"),
-          "...because the sheet it binds is periodic in x");
-
-    // THE SHEET IS SIMULATED, AND REPRODUCIBLY SO. An fbm is statistically
-    // homogeneous, so a ring eroded from one is a necklace of identical beads
-    // however it is tuned; advection gives long strokes next to fine detail next
-    // to nothing, because neighbouring regions have different histories.
-    CHECK(FileHas("scripts/gen_shock_ring_smoke.py", "def _velocity(") &&
-          FileHas("scripts/gen_shock_ring_smoke.py", "Curl of a scalar potential"),
-          "the sheet's generator advects particles through a curl-noise field");
-    CHECK(FileHas("scripts/gen_shock_ring_smoke.py", "px -= math.floor(px)"),
-          "...wrapping them in x, which is what makes the sheet tileable");
-
-    // PERCENTILE NORMALISATION. A handful of pixels where many streaks crossed
-    // accumulate several times more than anything else; dividing by that maximum
-    // pushed 88% of the sheet under alpha 0.1 and the ring rendered EMPTY while
-    // every term in the generator still looked correct.
-    CHECK(FileHas("scripts/gen_shock_ring_smoke.py", "target = int(nonzero * 0.992)"),
-          "and the accumulation is normalised on a percentile, never on the maximum");
-
-    // THE SEAM. u wraps at 1.0, so every hash taken at u * N must wrap at N, and
-    // every octave must double the period along with the frequency.
-    CHECK(FileHas(fs, "float x0 = mod(i.x, period);") &&
-          FileHas(fs, "float x1 = mod(i.x + 1.0, period);"),
-          "the noise lattice wraps in x, so the ring's u seam cannot show a line");
-    CHECK(FileHas(fs, "p *= 2.0; period *= 2.0;"),
-          "...and octaves double the period too, or the seam reopens at octave two");
-
-    // The canvas fade on RAW v: coverage that survives to the mesh boundary is
-    // clipped into a straight chord across the smoke.
+    // The canvas fade is taken on RAW v, so no polygon edge cuts the tail.
     CHECK(FileHas(fs, "float edge = smoothstep(0.0, 0.05, v) * "
                       "(1.0 - smoothstep(0.93, 1.0, v));"),
-          "the canvas fade is taken on RAW v, so no polygon edge cuts the smoke");
+          "the canvas fade is taken on RAW v, so no polygon edge cuts the tail");
 
-    // Driven by the ring's own life, never by wall clock: two rings at different
-    // phases must not share a pattern.
-    CHECK(!FileHas(fs, "u_time"), "nothing in the silhouette is driven by u_time");
+    // The noise lattice still wraps, or the u seam shows a bright radius.
+    CHECK(FileHas(fs, "float x0 = mod(i.x, period);") &&
+          FileHas(fs, "p *= 2.0;") && FileHas(fs, "period *= 2.0;"),
+          "every hash wraps at its period, and octaves double the period too");
 }
 
 static void Test_DetailIsPixelsNotVertices(void)
 {
-    // The noise cell count is a fragment-stage pattern, so it is allowed to be —
-    // and must be — larger than the slice count. Tying detail to geometry is how
-    // the ring ends up either cheap and clean or expensive and lumpy.
-    CHECK_MSG(Detail(3) > (float)Slices(3) * 1.2f,
-              "there is more angular detail than there are slices: pixels, not vertices",
+    // The noise cell count is a fragment-stage pattern and is INDEPENDENT of the
+    // slice count — the two ladders are allowed to disagree, which is the point.
+    //
+    // THE OLD ASSERTION HERE WAS "detail > slices", and it is obsolete twice
+    // over. The cell count was deliberately dropped to ~32 because a high one
+    // produces a necklace (see ShockRing_Detail's own comment), and the slice
+    // count was raised to 96 because the leading edge is a LINE and a line shows
+    // faceting a diffuse band hid. Both moved for good reasons and in opposite
+    // directions; what still has to hold is that neither is derived from the
+    // other, and that the cell count stays in the range that reads as clumps
+    // rather than as a chain of beads.
+    CHECK_MSG(Detail(3) >= 16.0f && Detail(3) <= 48.0f,
+              "the angular cell count stays in the clump range, not the necklace range",
               "%.0f cells vs %d slices", Detail(3), Slices(3));
 
     int monotone = 1;
@@ -698,6 +645,123 @@ static void Test_DetailIsPixelsNotVertices(void)
     CHECK(ok, "and every tier's cell count is EVEN, so the half-frequency mask closes too");
 }
 
+// ── The 2026-08-25 redesign: a bell with a leading edge ────────────────────
+//
+// What the ring was before this, and why none of it is a taste argument: a flat
+// annulus (half-thickness 6% of the radius) of evenly-lit torn smoke, with no
+// front. It read as a decal — correct in every part and inert as a whole.
+
+static void Test_TheSectionIsABellOpeningInward(void)
+{
+    const char *inl = "core/composition/common/vc_shock_ring.inl";
+
+    // THE BELL EXISTS AND IT IS NOT A TOKEN. Against a canvas of 1.14 * radius,
+    // a flare ratio of 0.34 puts the inner lip about a third of a radius out of
+    // the plane — the same order as the ring's own visible width, which is what
+    // it takes to read as a volume rather than as a thicker line.
+    CHECK(FileHas(inl, "#define SHOCK_FLARE_RATIO 0.34f"),
+          "the section flares out of the ring's plane by a real fraction of itself");
+
+    // IT OPENS INWARD. Outward it was drawn twice, half a radius apart, because
+    // the two sheets at ±offset are widest exactly where the front sits — the
+    // bright leading edge came out as two concentric wire circles. Inward, the
+    // front lands where the sheets COINCIDE.
+    CHECK_MSG(Flare(SHOCK_CREST_U) == 0.0f && Flare(1.0f) == 0.0f,
+              "and it is flat at the crest and everywhere outside it",
+              "crest %.4f outer %.4f", Flare(SHOCK_CREST_U), Flare(1.0f));
+    CHECK_MSG(Flare(0.0f) > 0.99f,
+              "...opening toward the INNER base, where the trailing smoke is",
+              "%.4f", Flare(0.0f));
+    int rises = 1;
+    for (float u = 0.0f; u < SHOCK_CREST_U - 0.01f; u += 0.01f)
+        if (Flare(u) < Flare(u + 0.01f) - 1e-5f) rises = 0;
+    CHECK(rises, "...monotonically, so the skirt cannot fold back on itself");
+
+    // A BELL, NOT A CONE. The exponent keeps the section flat near the crest and
+    // opens it late; a straight ramp reads as a folded paper funnel.
+    CHECK_MSG(Flare(SHOCK_CREST_U * 0.5f) < 0.5f,
+              "and the exponent holds it flat near the crest, so it is a bell",
+              "half-way %.4f vs linear 0.5", Flare(SHOCK_CREST_U * 0.5f));
+
+    // IT OPENS OVER THE LIFE. At release nothing has had time to be thrown out
+    // of the plane.
+    float canvas = CanvasWidth(3.0f);
+    CHECK_MSG(FlareHeight(canvas, 0.02f) < FlareHeight(canvas, 0.60f) * 0.20f,
+              "the lip opens as the ring travels rather than being born open",
+              "%.4f vs %.4f", FlareHeight(canvas, 0.02f), FlareHeight(canvas, 0.60f));
+
+    // A BELL'S SILHOUETTE IS WHAT THE EYE READS, so it needs samples across it.
+    // Seven was plenty for a flat lens and is a visible polyline for this.
+    CHECK_MSG(SHOCK_RADIALS >= 11 && (SHOCK_RADIALS % 2) == 1,
+              "enough radials to draw the bell, and odd so the crest still lands on one",
+              "%d", SHOCK_RADIALS);
+
+    // AND THE SLICE COUNT WENT UP FOR THE SAME KIND OF REASON: the leading edge
+    // is a LINE, and a line makes faceting visible that a diffuse band hid.
+    CHECK_MSG(SHOCK_MAX_SLICES >= 96, "and enough slices that the front is not a polygon",
+              "%d", SHOCK_MAX_SLICES);
+}
+
+static void Test_TheFrontIsTheIdentity(void)
+{
+    const char *fs = "core/shaders/shock_ring.fs";
+    const char *inl = "core/composition/common/vc_shock_ring.inl";
+
+    // NOT AN ISO-CONTOUR. The band is taken on `v`, the canvas COORDINATE, which
+    // is monotonic across the section — one crossing, one line. Taken on a
+    // density field (a hump) any level below the peak is crossed twice and the
+    // ring double-edges; the shader header records that failure at length.
+    CHECK(FileHas(fs, "float dR = v - frontV;"),
+          "the leading edge is a band on the canvas coordinate, not a level set");
+
+    // ASYMMETRIC. Symmetric it is a tube: equally soft both sides, so nothing in
+    // it says which way the ring is travelling and it reads as a glowing wire
+    // laid on the smoke.
+    CHECK(FileHas(fs, "float rimOut = max(rimW * 0.34, 0.005);") &&
+          FileHas(fs, "float rimIn = max(rimW * 1.30, 0.011);"),
+          "...hard on the leading side and trailing behind, like a discontinuity");
+
+    // IT IS NOT A CIRCLE, at three scales: it rides the rope's own wandering
+    // centre-line, it carries a slow and a fast radial wander of its own, and
+    // its width varies along its length.
+    CHECK(FileHas(fs, "float frontF = FbmRing(vec2(u * 23.0, 151.0 + u_seed), 23.0, 2) - 0.5;") &&
+          FileHas(fs, "frontN * 1.30 + frontF * 0.70"),
+          "...and it wanders at two frequencies, so it is never locally straight");
+    CHECK(FileHas(fs, "float rimT = FbmRing(vec2(u * 6.0, 101.0 + u_seed), 6.0, 2);"),
+          "...with its thickness varying along its length");
+
+    // IT BURNS IN ARCS. Measured on its own with the tail switched off, an
+    // evenly bright front is a neon hoop. The gate reaches 0.10, i.e. some arcs
+    // have no leading edge at all.
+    CHECK(FileHas(fs, "mix(0.10, 1.35, rimArc)"),
+          "...and it is violent in places and absent in others");
+
+    // AND IT DIES FIRST. On t01^2 it was still at 47% three quarters through the
+    // life, so the late ring read as a thick unbroken rope instead of shreds.
+    CHECK(FileHas(fs, "float rimLife = pow(max(1.0 - u_t01, 0.0), 2.4);"),
+          "...and it is gone well before the tail has finished dispersing");
+
+    // THE SILHOUETTE VARIES AT LOW FREQUENCY. A rope of constant section is the
+    // "necklace" one level up: however irregular the erosion inside it, the
+    // outline is still a circle and the eye reads that first.
+    CHECK(FileHas(fs, "float lobeN = FbmRing(vec2(u * 4.0, 61.0 + u_seed), 4.0, 2);") &&
+          FileHas(fs, "float outGain = 1.0 + lobe * 2.60 * (0.30 + u_t01);"),
+          "a few arcs throw the front much further out than the rest");
+    CHECK(FileHas(fs, "float coreV = u_coreV + wob * 0.42;"),
+          "...and the centre-line's own wander is large enough to read in RADIUS");
+
+    // COLOUR RANGE COMES FROM NOT PRE-WHITENING. Whitened 0.32 the glow is
+    // already (1.00, 0.56, 0.37), so at the emission gain every lit part
+    // saturates to the same cream and the effect has one colour. Near the
+    // element's own hue the tone map clips the channels in order and does the
+    // black-body ramp — white core, yellow shoulder, orange falloff, red edge —
+    // for free. Measured: chroma 0.357 -> 0.521 on a dark plate, 0.284 -> 0.420
+    // on mid, with nothing else changed.
+    CHECK(FileHas(inl, "ColorNormalize(VC_Whiten(m->glow, 0.08f))"),
+          "the glow keeps the element hue, so the HDR gain can ramp it to white");
+}
+
+
 int main(void)
 {
     printf("=== P5 shock ring (the ring off the ground) ===\n");
@@ -707,8 +771,11 @@ int main(void)
     Test_LifeEnvelope();
     Test_TierLadder();
     Test_DetailIsPixelsNotVertices();
+    Test_TheSectionIsABellOpeningInward();
+    Test_TheFrontIsTheIdentity();
     Test_MirrorMatchesTheSource();
-    Test_ItIsAnErodedRopeNotGeneratedStrands();
+    Test_TheSheetIsGone();
+    Test_TheWakeIsProceduralAndGraded();
     printf("---- %d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

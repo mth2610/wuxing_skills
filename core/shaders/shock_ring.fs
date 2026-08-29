@@ -3,77 +3,64 @@
 #include "core/shaders/common/noise.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
 
-// ── VFX_ComposeShockRing: two closed smoke ropes, eroded open ────────────────
+// ── VFX_ComposeShockRing: a leading edge, and the tail behind it ─────────────
 //
-// THE WISPS ARE THE TEXTURE. Light the authored smoke directly — its alpha
-// raised to a power gives hot cores inside thin wisps and a soft falloff around
-// them — and use the erosion threshold ONLY to tear the band open over time.
+// ── WHAT THIS USED TO BE, AND WHY NONE OF IT IS HERE ────────────────────────
 //
-// AN ISO-CONTOUR IS THE WRONG TOOL HERE AND FAILS IN A VERY SPECIFIC WAY. An
-// earlier version lit the narrow band where the field crossed the threshold,
-// {dens == thr}. That reasoning is sound for a procedural field, and the level
-// set of an fbm really is the thin meandering branching filament reference
-// footage shows. But across the rope the density is a single HUMP: it rises
-// from nothing at the inner edge, peaks at the centre-line, and falls to nothing
-// at the outer edge. Any threshold below the peak is therefore crossed TWICE —
-// once on the way up and once on the way down — so the contour draws an inner
-// rim AND an outer rim, and the ring reads as double-edged no matter how many
-// ropes there are. It is not a leftover second rope; it is what a level set of a
-// hump has to look like.
+// Everything this shader drew came out of an authored thin-smoke strip
+// (VFX_SURFACE_SHOCK_RING_SMOKE): a closed rope of texture, torn open by an
+// erosion threshold that climbed over the ring's life. The sheet was removed on
+// 26/08/2026 by owner decision, after the redesign that put a real leading edge
+// on the ring — with a front to look at, the sheet's smoke read as lint around
+// it rather than as the thing itself.
 //
-// With an authored sheet none of that is needed: the wisps are already the
-// shape, so they only have to be lit.
+// The history is kept because it is expensive and it is all still true of the
+// next person who reaches for a sheet here:
 //
-// ONE ROPE. There was a second, thinner one riding outside it, on the reading
-// that reference footage shows an inner dense ring and an outer one separating
-// from it. Judged against the render that outer rope was wrong — the inner
-// one's behaviour was right on its own and the outer only muddied it. If it
-// comes back it should be a second CALL at a different radius and phase, not a
-// second lobe sharing this one's field: sharing the field is what made the two
-// move as one object instead of as two.
+//   · A SHEET WRAPPED N TIMES AROUND A RING IS MINIFIED N*W/P, and nothing in
+//     this engine builds mip chains. Wrapped 4 and 7 times, a 2048-wide strip
+//     put 10 to 18 texels on every screen pixel of an 800-pixel circumference,
+//     so features that autocorrelate over ~24 texels were drawn two pixels wide
+//     — grain, which the coverage ramps then averaged into flat haze. That is
+//     the whole of why this effect looked out of focus for as long as it did.
+//     (ENGINE_LANDMINES.md carries the general form.)
 //
-// THE TWO FORCES OVERLAP OVER THE LIFE. Expansion is strongly ease-out and
-// front-loaded, while quadratic erosion begins during that release.  The front
-// therefore settles at its final radius as the smoke continues to reshape,
-// rather than becoming a static clean ring before it tears apart.
+//   · AN ISO-CONTOUR OF A DENSITY FIELD DOUBLE-EDGES. Lighting {dens == thr}
+//     is right for a procedural field, but across a rope the density is a single
+//     HUMP: any threshold below the peak is crossed twice, once going up and
+//     once coming down, so the contour draws an inner rim AND an outer one. The
+//     front below is a band on `v`, the canvas COORDINATE, which is monotonic
+//     across the section — one crossing by construction.
 //
-// WHERE THE TENDRILS COME FROM. The sample space is COMPRESSED radially as the
-// ring expands, so one feature of the field covers more and more of the band as
-// it travels. The wisps are stretched smoke, and they lengthen over the ring's
-// life without anything animating a length.
+//   · A GENERATIVE FIELD WITH ONE FEATURE PER ANGULAR CELL IS A COMB. Evenly
+//     spaced features, by definition; domain warp and per-strand jitter make a
+//     prettier comb because none of them touch the period. Do not propose one
+//     again without an answer to that. The wake below is procedural and avoids
+//     it by the SHAPE of its sample domain rather than by hiding the period:
+//     high angular frequency against a low radial one gives features long in the
+//     radial direction, which is what a tail off a front actually looks like.
 //
-// THE SHAPE IS AUTHORED, NOT PROCEDURAL, and this is the last thing that made
-// the ring read as machine-made. An fbm is STATISTICALLY HOMOGENEOUS: every
-// region of it looks like every other region, so eroding one gives features of
-// one size, evenly distributed, all the way round — a necklace. Real reference
-// footage has long sweeping strokes next to fine detail next to nothing at all,
-// which is a property of authored or simulated data and cannot be recovered by
-// clumping noise. Lowering the base frequency trades a fine necklace for a
-// coarse one; it does not remove the necklace.
+// ── WHAT IT IS NOW ──────────────────────────────────────────────────────────
 //
-// So `texture0` is a thin-smoke strip (VFX_SURFACE_SHOCK_RING_SMOKE) mapped ONCE
-// around u — a SHAPE, never a tiled material — and its alpha is the density
-// field everything below reads. Noise still runs, but only to DISTORT the UVs
-// and to break the boundary. This mirrors the reference material setup exactly:
-// Tiling 1.0/1.0, a smooth-wave distortion texture, and a pan along the strip's
-// short axis so the smoke flows outward across the band.
+// Two things, and no texture at all:
 //
-// The procedural field is kept as the sheet-missing fallback, so a lost asset
-// degrades to a visibly worse ring rather than to nothing.
+//   THE FRONT — a thin band riding the outer side of the section, hard on its
+//   leading face and trailing behind it, irregular in radius at two frequencies,
+//   varying in thickness along its length, burning in arcs, and gone well before
+//   the ring has finished dispersing. It is the effect's identity: a torn ring
+//   of burning cloud can be beautiful and still not read as a SHOCK, because
+//   nothing in it says which way it is going.
 //
-// WHAT THIS REPLACED. A generative version that cut the angular coordinate into
-// cells and grew one strand per cell. That has a comb built into it: one feature
-// per cell means the features are evenly spaced BY DEFINITION, and the eye reads
-// the spacing long before it reads any per-strand variation. Domain warp and
-// per-strand jitter made it a prettier comb — eyelashes rather than spokes —
-// because none of them touch the period. Do not propose anything generative here
-// again without an answer to that.
+//   THE WAKE — what the front has already burned, trailing inward, torn into
+//   strands by a threshold that climbs quadratically. It is also what the mesh's
+//   flared bell is drawn on: the bell opens INWARD of the front (see
+//   ShockRing_Flare), so with nothing behind the line the entire
+//   three-dimensional section would be invisible.
 //
 // CELLS ARE SQUARE IN THE WORLD, NOT IN UV. u spans the whole circumference
 // (2*PI*R), v spans the canvas (0.66*R), so a cell square in UV is nine times
-// wider than tall in metres and the field produces smeared blobs. Every angular
-// frequency and amplitude below is converted through U_PER_V. See
-// core/docs/LANDMINES.md, "In a polar UV, u and v are not the same scale".
+// wider than tall in metres. Every angular frequency here is chosen knowing
+// that; where an elongated feature is wanted it is obtained on purpose.
 //
 // Everything is driven by u_t01, never by the wall clock: two rings alive at
 // different phases must not share a pattern, and a ring must look identical
@@ -81,29 +68,15 @@
 // grepping for the wall-clock uniform's name, so do not name it in a comment
 // either.)
 
-uniform sampler2D texture0; // the authored thin-smoke strip, mapped ONCE around u
-uniform int   u_hasSmoke;   // 0 = sheet missing, fall back to the procedural field
 uniform vec4  u_bodyColor;
 uniform vec4  u_glowColor;
 uniform float u_opacity;
 uniform float u_emission;
-uniform float u_t01;    // 0 -> 1 over the ring's life, drives erosion and stretch
-uniform float u_detail; // EVEN INTEGER angular cell count; the u-period of the noise
-uniform float u_coreV;  // where the inner rope sits across the canvas
-uniform float u_seed;   // per-ring, so two rings are not the same ring
-// HIGH / MID / LOW. One master shader, three instances — the reference workflow
-// (Thomas Pluys, 80.lv). `u_layerDetail` above 1 sharpens (thinner wisps, higher
-// angular sample rate); below 1 smooths. `u_layerPhase` slides the sheet around
-// u so the three layers' torn boundaries never coincide, which is the entire
-// point: one layer has one silhouette and no setting gives both a crisp edge and
-// a soft one.
-uniform float u_layerPhase;
-uniform float u_layerDetail;
-uniform float u_hole; // v below this is cut away; the size of the empty middle
+uniform float u_t01;   // 0 -> 1 over the ring's life, drives the tear and the fade
+uniform float u_coreV; // where the section's centre-line sits across the canvas
+uniform float u_seed;  // per-ring, so two rings are not the same ring
+uniform float u_hole;  // v below this is cut away; the size of the empty middle
 uniform float u_premultiply; // 0 = BODY (BLEND_ALPHA), 1 = EMISSION (premultiplied)
-
-// u spans 2*PI*R, v spans SHOCK_CANVAS_MUL * SHOCK_CORE_RATIO * R = 0.66*R.
-const float U_PER_V = 9.5;
 
 // Periodic value noise. `period` counts CELLS of x. The ring's u wraps at 1.0,
 // so a hash sampled at u * N must wrap at N — the shared vnoise() does not, and
@@ -139,216 +112,230 @@ float FbmRing(vec2 p, float period, int octaves)
     return sum / tot;
 }
 
-// One closed rope: 1 at its centre-line, 0 at its edges. `w` is its half-width
-// in v units.
-float Rope(float v, float centre, float w, float u_t01)
-{
-    // Squared falloff, soft from the centre out. A rope with a defined edge
-    // reads as a painted band and the erosion then looks like cracks in paint
-    // rather than like smoke thinning out.
-    // ASYMMETRIC: a longer tail INWARD. Smoke thrown outward still trails back
-    // towards where it came from, and a rope that falls off symmetrically leaves
-    // a clean circular hole in the middle that no reference has.
-    // A new front throws a broad trail back toward its centre, closing the
-    // oversized hollow that a symmetric rope leaves.  As the ring settles that
-    // tail retracts before it can turn the late effect into a filled disc.
-    float d = v - centre;
-    float reach = (d < 0.0) ? w * mix(1.42, 1.15, u_t01) : w;
-    float x = clamp(abs(d) / max(reach, 0.02), 0.0, 1.0);
-    float f = 1.0 - x * x;
-    return f * f;
-}
-
 void main()
 {
     float u = fragTexCoord.x; // around the ring, 0 -> 1, wraps
     float v = fragTexCoord.y; // across the canvas, 0 = inner base, 1 = outer
 
-    float nU = u_detail;       // angular cells, even integer
-    float nV = nU / U_PER_V;   // radial cells at the SAME world size
-
-    // ── 1. THE TWO CLOSED ROPES ─────────────────────────────────────────────
-    // Before anything is taken away these are continuous, unbroken bands. The
-    // centre-line wanders and the widths breathe at low frequency — the DEFORM
-    // step, and what stops the inner boundary reading as a circle once the
-    // erosion starts.
-    // THE OUTER BOUNDARY IS WHAT READS AS A CIRCLE. The eye locks onto the
-    // silhouette long before it reads any surface detail, so a centre-line and a
-    // width that barely vary give a perfectly round ring however torn its inside
-    // looks. Both wander much harder now, and the width uses its own frequency so
-    // the widest arcs are not the outermost ones.
+    // ── 1. THE CENTRE-LINE, THE WIDTH, THE LOBES ────────────────────────────
+    // All low frequency, all angular. This is where the ring stops being a
+    // circle: the centre-line wanders, the section breathes, and a few arcs
+    // throw everything much further out than the rest.
     float wob = FbmRing(vec2(u * 3.0, 7.0 + u_seed), 3.0, 2) - 0.5;
     float widN = FbmRing(vec2(u * 5.0, 19.0 + u_seed), 5.0, 2);
-    float coreV = u_coreV + wob * 0.26;
-
-    // A front spreads as it travels. The rope must also stay at least as wide as
-    // a noise cell, or the contour has no room to wander radially and every
-    // feature comes out the same size.
-    // The band widens as the front spreads, but only a little. At 0.50 it more
-    // than doubles as a FRACTION of a canvas that is itself already growing with
-    // the radius — so the annulus swallows its own middle and the ring ends its
-    // life as a filled disc, which is the opposite of dispersing.
+    // THE AMPLITUDE HAS TO BE READ IN RADIUS, NOT IN v. `wob` is a two-octave
+    // FbmRing, whose normalised range is roughly ±0.25 rather than ±0.5, so at
+    // 0.26 the centre-line moved ±0.065 of the canvas — about 7% of the ring's
+    // radius, which is invisible. At 0.42 it is ±0.11 of the canvas, ~12% of the
+    // radius, and the outline stops reading as a drawn circle.
+    float coreV = u_coreV + wob * 0.42;
     float widA = mix(0.18, 0.30, u_t01) * mix(0.42, 1.55, widN);
-    float ropeA = Rope(v, coreV, widA, u_t01);
 
-    // ── 2. EXPANSION ────────────────────────────────────────────────────────
-    // The sample space is COMPRESSED radially as the ring grows, so a feature
-    // that covered 0.1 of the band early covers 0.3 of it late: it is being
-    // pulled outward. The tendrils are this, and nothing else.
-    // 0.16 compresses the sample space more than six times by the end, which
-    // stops reading as stretched smoke and starts reading as a STARBURST: the
-    // sheet's texels are smeared into straight radial rays. 0.40 still lengthens
-    // the wisps visibly without turning them into rays.
-    float vs = coreV + (v - coreV) * mix(1.0, 0.40, u_t01);
-    // This is a coverage warp, never vertex displacement.  It is already
-    // present at birth so the small closed ring is smoky rather than analytic,
-    // then grows as the front settles.  Keep it radial: a comparable angular
-    // displacement would become a multi-metre tangential smear in polar UV.
-    float radialRuffle = (FbmRing(vec2(u * 6.0, 47.0 + u_seed), 6.0, 2) - 0.5) *
-                          mix(0.035, 0.14, u_t01);
-    vs += radialRuffle;
+    // A handful of arcs where the front is thrown much further out than the
+    // rest. LOW frequency on purpose: at 4 cells around the whole ring this is
+    // three or four big irregular tongues, not a scallop pattern — the moment
+    // this number goes up it stops being an explosion and becomes a doily.
+    float lobeN = FbmRing(vec2(u * 4.0, 61.0 + u_seed), 4.0, 2);
+    float lobe = smoothstep(0.40, 0.78, lobeN);
+    // They GROW with the ring: at release everything is still travelling
+    // together, and the tongues only separate as the front decelerates.
+    float outGain = 1.0 + lobe * 2.60 * (0.30 + u_t01);
 
-    // ── 3. MOTION NOISE ─────────────────────────────────────────────────────
-    // A slow angular drift growing with the ring's life, so the torn pieces
-    // slide against each other instead of expanding rigidly. The amplitude is in
-    // v units and converted — unconverted, 0.55 here would be five metres.
-    float drift = FbmRing(vec2(u * 3.0, 31.0 + u_seed), 3.0, 2) - 0.5;
-    float us = u + drift * 0.85 * (0.35 + u_t01) / U_PER_V;
-
-    // ── 4. THE FIELD ────────────────────────────────────────────────────────
-    // The strip maps ONCE around u. Its short axis is the rope's own
-    // cross-section, PANNED outward over the ring's life: the smoke slides
-    // across the band and off it, which is both the outward flow and the
-    // dissipation, for one multiply. Sampling is clamped, and the sheet's top
-    // and bottom rows are empty, so panning past the edge simply runs out of
-    // smoke instead of repeating it.
-    float pan = -0.46 * u_t01;
-
-    // THREE LAYERS AT COPRIME ANGULAR SCALES. The sheet is authored as a single
-    // non-tiling strip, and mapping it once around a ring this size stretches
-    // 512 texels over the whole circumference — the texels become visible as
-    // stair-stepping along every edge. Sampling it 2x, 3x and 5x instead puts
-    // real texels back on screen, and because 2, 3 and 5 are coprime the
-    // combined pattern only repeats after thirty revolutions, so it still reads
-    // as one non-repeating strip rather than as tiled wallpaper.
-    //
-    // Each layer also reads a DIFFERENT, NARROWER slice of the sheet's height,
-    // stretched across the rope's full width. That is what turns the sheet's
-    // compact puffs into the long sweeping streaks the reference material shows:
-    // it is the same smoke, scaled anisotropically.
-    // FLOOR THE DIVISOR, not just guard it against zero. Early in the life widA can
-    // fall to 0.08, and dividing by that magnifies the sheet six times across the
-    // band — the texels smear into radial streaks converging on the centre, which
-    // reads as a starburst rather than as smoke. The floor caps how far the sheet
-    // may ever be stretched.
-    float tvA = 0.5 + (vs - coreV) / max(widA * 2.2, 0.26) + pan;
-    float tvB = 0.5 + (vs - coreV) / max(widA * 3.4, 0.38) + pan * 0.7 + 0.21;
-
-    // The sheet is PERIODIC IN X, so it wraps directly. The previous strip was
-    // not, and its blank ends had to be remapped away with a 0.06..0.94 squeeze
-    // — a workaround for a texture that should simply have tiled. Making the
-    // generator wrap its noise lattice and its particles removed the need.
-    // u_layerDetail MUST NOT scale the angular sample rate. Scaling it down for
-    // the LOW layer leaves barely one repeat of the sheet around the entire
-    // circumference, so each texel column is magnified into a wide radial band
-    // and the ring reads as a STARBURST. The layer differences belong in the
-    // range remap below, which changes how the sheet is READ, not how far it is
-    // stretched. Rates are 4 and 7 — coprime, so their combination does not
-    // repeat, and high enough that texels stay smaller than the wisps.
-    float tuA = fract(us * 4.0 + u_layerPhase * 0.11);
-    float tuB = fract(us * 7.0 + u_layerPhase * 0.17 + 0.37);
-
-    float sA = texture(texture0, vec2(tuA, clamp(tvA, 0.002, 0.998))).a;
-    float sB = texture(texture0, vec2(tuB, clamp(tvB, 0.002, 0.998))).a;
-    // WEIGHTED SUM, NOT max, AND ONLY TWO LAYERS. Three layers combined with max
-    // saturate — every fragment takes whichever sheet is densest there, so the
-    // rope fills in solid — and the third layer's 5x angular scale put more
-    // texels on screen than the sheet has, which broke the whole ring into
-    // speckle. Two coprime scales summed keeps the density low and the gaps real.
-    float sheet = clamp(sA * 0.85 + sB * 0.55, 0.0, 1.0);
-    // REMAP THE BAND THE DATA ACTUALLY OCCUPIES. This sheet is thin smoke:
-    // three quarters of it is empty and most of the rest sits under 0.3, so
-    // every threshold downstream — the erosion, the hot-core curve — was
-    // measuring against a range the field never reaches, and the ring rendered
-    // as a handful of stray flecks with no single term looking wrong. The
-    // constants below are written against a full-range field; this is what makes
-    // that true. Re-tune this line, not them, when the sheet is regenerated.
-    // Sharper layers keep a narrower slice of the range, so their wisps come out
-    // thin and hard; smoothed layers open it up into broad soft mass.
-    sheet = smoothstep(0.03 + 0.06 * (u_layerDetail - 1.0),
-                       0.45 - 0.14 * (u_layerDetail - 1.0), sheet);
-
-    // Procedural fallback only. Kept deliberately, because a missing sheet must
-    // degrade to a worse ring and not to an empty one.
-    float fine   = FbmRing(vec2(us * nU, vs * nV + u_seed), nU, 3);
-    float coarse = FbmRing(vec2(us * nU * 0.5, vs * nV * 0.5 + 13.0 + u_seed),
-                           nU * 0.5, 2);
-    float proc = fine * 0.58 + coarse * 0.42;
-
-    float dens = mix(proc, sheet, float(u_hasSmoke));
-
-    // ── 4b. CLUMPING ────────────────────────────────────────────────────────
-    // Still worth having on top of an authored sheet: it varies WHERE the rope
-    // tears first, at a scale larger than anything in the sheet.
+    // Where the ring is thick and where it is thin, at a scale larger than
+    // anything else here.
     float clump = FbmRing(vec2(u * 5.0, 3.0 + u_seed), 5.0, 2);
 
-    // ── 5. THE EROSION ──────────────────────────────────────────────────────
-    // Quadratic starts reshaping the smoke while the front still travels.  The
-    // low initial threshold keeps that first tiny ring closed; later it opens
-    // unevenly into the fading fragments seen after the radius has settled.
-    float t2 = u_t01 * u_t01;
-    // The clump offset staggers tearing around the ring.  Keep it narrow enough
-    // that the newborn smoke band remains closed rather than popping into arcs.
-    float clumpT = (clump - 0.5) * 0.28;
-    float thrA = mix(0.02, 0.82, t2) + clumpT;
-
-    // The rope itself is thin in some arcs and full in others.
-    ropeA *= mix(0.55, 1.00, clump);
-
-    // The tear is an ALPHA CUT, not a lit band: the threshold decides what still
-    // exists, and what exists is then lit by its own density.
-    float alive = ropeA * smoothstep(thrA, thrA + 0.20, dens);
-
-    // Hot cores inside the wisps, soft everywhere else. This is the reference
-    // material's HDR intensity on the smoke texture, not a rim.
+    // ── 2. THE FRONT ────────────────────────────────────────────────────────
     //
-    // SHAPED, NOT POWERED. The sheet's alpha lives mostly between 0.3 and 0.6 —
-    // it is thin smoke — so pow(dens, 2.6) maps almost all of it to under 0.2
-    // and the whole ring goes dim and sparse. A smoothstep across the range the
-    // data actually occupies uses the full output range instead of the top of it.
-    // THE HOT CORES COOL. Young smoke has bright dense cores; old smoke is a
-    // diffuse mass with none. Holding this constant is what made the late ring
-    // the brightest thing on screen when it should have been the faintest.
-    float hot = alive * smoothstep(0.26, 0.78, dens) * mix(1.0, 0.30, u_t01);
-    float smoke = alive * smoothstep(0.04, 0.46, dens);
+    // NOT AN ISO-CONTOUR. The band is taken on `v`, the canvas COORDINATE, which
+    // is monotonic across the section — one crossing, one line, by construction.
+    // Taken on a density field instead, any level below the peak is crossed
+    // twice (up one side of the hump and down the other) and the ring
+    // double-edges no matter how it is tuned.
+    //
+    // It must not be a circle, and three separate things keep it off one: it
+    // rides the wandering centre-line above, it carries a slow and a fast radial
+    // wander of its own, and its thickness varies along its length.
+    float frontN = FbmRing(vec2(u * 9.0, 83.0 + u_seed), 9.0, 2) - 0.5;
+    float frontF = FbmRing(vec2(u * 23.0, 151.0 + u_seed), 23.0, 2) - 0.5;
+    float frontV = coreV + widA * outGain * (0.58 + frontN * 1.30 + frontF * 0.70);
+
+    float rimT = FbmRing(vec2(u * 6.0, 101.0 + u_seed), 6.0, 2);
+    float rimW = widA * outGain * mix(0.09, 0.22, u_t01) * mix(0.40, 1.85, rimT);
+
+    // ASYMMETRIC, AND THIS IS THE WHOLE DIFFERENCE BETWEEN A SHOCK FRONT AND A
+    // GLOWING WIRE. Symmetric, the band is a tube: equally soft on both sides,
+    // so it reads as a rope laid on the ring and nothing in it says which way it
+    // is travelling. A real front is a discontinuity — hard on the leading side,
+    // with everything it has already burned trailing behind it.
+    float dR = v - frontV;
+    float rimOut = max(rimW * 0.34, 0.005);
+    float rimIn = max(rimW * 1.30, 0.011);
+    float rimX = clamp((dR > 0.0) ? dR / rimOut : -dR / rimIn, 0.0, 1.0);
+    float rimBand = 1.0 - rimX;
+    rimBand *= rimBand;
+
+    // AND IT BURNS IN ARCS. Measured on its own, an evenly bright front is a
+    // neon hoop. The gate reaches 0.10, i.e. some arcs have no leading edge.
+    float rimArc = smoothstep(0.18, 0.72,
+                              FbmRing(vec2(u * 5.0, 127.0 + u_seed), 5.0, 2));
+    // A FRONT OUTLIVES NOTHING. Faded on t01^2 it was still at 47% of full
+    // brightness three quarters of the way through the life, so the late ring
+    // read as a thick unbroken rope. pow(1 - t, 2.4) has it gone by about 0.7.
+    float rimLife = pow(max(1.0 - u_t01, 0.0), 2.4);
+    float rim = rimBand * rimLife * mix(0.55, 1.00, clump) * mix(0.10, 1.35, rimArc);
+
+    // ── 3. THE WAKE ─────────────────────────────────────────────────────────
+    //
+    // WHY THIS EXISTS AT ALL. The authored smoke sheet was removed on
+    // 26/08/2026 by owner decision — everything the ring showed used to come out
+    // of it, and what is left is the front. But a front on its own is a flat
+    // glowing loop: the bell the mesh sweeps (see SHOCK_FLARE_RATIO) is zero at
+    // the crest and opens INWARD of the front, so with nothing drawn behind the
+    // line the whole three-dimensional section is invisible. The wake is the
+    // front's own trailing tail — the material it has already burned through —
+    // and it is what the bell is drawn ON.
+    //
+    // It is entirely procedural. That was the failure mode of the field this
+    // replaced ("an fbm is statistically homogeneous, so eroding one gives
+    // features of one size evenly distributed — a necklace"), and the reason it
+    // is not that here is the SHAPE of the sample domain: the u frequency is
+    // high and the radial one is low, so features come out long in the radial
+    // direction. Streaks trailing off a front, not blobs on a band.
+    float wakeN = FbmRing(vec2(u * 17.0, 199.0 + u_seed), 17.0, 2);
+    float wakeM = FbmRing(vec2(u * 8.0, 211.0 + u_seed), 8.0, 2);
+    // The tail LENGTHENS over the life, and it is a different length at every
+    // angle — that variation is what makes it read as torn rather than as an
+    // annulus of constant width.
+    // LENGTH IS IN v UNITS AND v ONLY SPANS 1.0. Written as widA * outGain *
+    // 2.6 * 1.6 the tail reached 1.5 — one and a half canvases — so it ran past
+    // the hole, past the inner base, and the ring rendered as a filled blob with
+    // a bright outline. It has to stay a FRACTION of the section.
+    float wakeLen = widA * outGain * mix(1.30, 1.70, u_t01) * mix(0.35, 1.55, wakeN);
+    float wx = clamp((frontV - v) / max(wakeLen, 0.03), 0.0, 1.0);
+    float fall = 1.0 - wx;
+    float wake = (dR > 0.0) ? 0.0 : fall * fall;
+    // ── AND THIS IS WHERE THE STRUCTURE KEPT DISAPPEARING ───────────────────
+    //
+    // Written as `FbmRing(..., 3) * 0.66 + FbmRing(..., 2) * 0.42` this field
+    // measured essentially CONSTANT — a debug pass that painted it straight out
+    // came back flat grey, roughly 0.54 ± 0.08. Both halves of that are the same
+    // mistake: averaging. Each octave of a value noise is an independent sample
+    // near 0.5 and the fbm divides by the total amplitude, so three octaves
+    // already sit in a narrow band around the mean; summing two such fields
+    // narrows it again. Against a field that narrow, every threshold written for
+    // 0..1 stops carving and becomes an on/off switch for the whole ring — which
+    // is exactly how this tail behaved: smooth airbrushed band at one setting,
+    // bare wire 0.18 higher, nothing in between.
+    //
+    // TWO OCTAVES, STRETCHED, AND THE DETAIL MULTIPLIED IN RATHER THAN ADDED.
+    // Multiplication keeps contrast; addition is the averaging that destroyed it.
+    //
+    // Sampled with a HIGH angular and a LOW radial frequency, so the features
+    // come out long in the radial direction — streaks trailing off a front, not
+    // blobs on a band. That domain shape is also why a procedural field is
+    // acceptable here where the one it replaced was a "necklace": it is not a
+    // warp trying to hide a period.
+    float streak = FbmRing(vec2(u * 30.0, wx * 0.85 + 31.0 + u_seed), 30.0, 2);
+    float fine = FbmRing(vec2(u * 64.0, wx * 1.70 + 53.0 + u_seed), 64.0, 1);
+    // THE STRETCH IS A CONTRAST KNOB WITH A CLIFF AT BOTH ENDS. Too little and
+    // the field sits in a narrow band around 0.5, as above. Too much and it
+    // clamps BIMODAL — mostly exact 0 and exact 1 — at which point the threshold
+    // has nothing left to bite on either, and sweeping the tear from 0.30 to
+    // 0.92 across the ring's whole life changed the picture almost not at all.
+    // 1.9 on a two-octave field leaves roughly 0.15..0.85, graded, which is what
+    // a climbing threshold needs in order to erode something gradually.
+    float grain = clamp((streak - 0.5) * 1.90 + 0.5, 0.0, 1.0);
+    grain = clamp(grain * (0.55 + 0.90 * fine), 0.0, 1.0);
+
+    // TWO USES OF THE SAME FIELD, AND THEY MUST BE SEPARATE TERMS. Thresholding
+    // alone gives no structure at all: pushed through one smoothstep the field
+    // saturates, so the threshold stops carving and starts acting as an on/off
+    // switch for the whole ring — one setting rendered a smooth airbrushed band,
+    // and a setting 0.18 higher rendered a bare wire. The first term is
+    // permanent shading (the tail is never uniform), the second is the tear.
+    wake *= 0.06 + 0.94 * smoothstep(0.34, 0.92, grain);
+    // THE TEARING climbs quadratically, so the tail comes apart from a
+    // continuous skirt into separate strands as the ring ages, which is the
+    // whole late-life read.
+    float t2 = u_t01 * u_t01;
+    float tear = mix(0.30, 0.92, t2) + (clump - 0.5) * 0.30;
+    wake *= smoothstep(tear, tear + 0.14, grain);
+    wake *= mix(0.30, 1.00, wakeM) * mix(0.40, 1.00, rimArc);
+    // FOUR MULTIPLICATIVE GATES EACH AVERAGING A HALF LEAVE A SIXTEENTH. The
+    // radial falloff, the grain shading, the tear and the two angular gates are
+    // all fractions, and their product put the tail at ~0.06 coverage — present
+    // in the arithmetic and invisible on screen, so the ring looked like a bare
+    // front with nothing behind it. Gained back up and clamped, deliberately, in
+    // one place rather than by inflating each gate until none of them gates.
+    wake = clamp(wake * 2.10, 0.0, 1.0) * mix(1.0, 0.55, u_t01);
+
+    // Hot filaments inside the tail: the top of the grain range, thinned. A wide
+    // ramp shades the whole tail and cannot BE its bright centres.
+    float ember = pow(smoothstep(0.74, 0.98, grain), 2.0) * wake *
+                  mix(1.0, 0.35, u_t01);
+
+    // ── 4. THE VALUE LADDER ─────────────────────────────────────────────────
+    // 1 at the front, 0 at the far end of the tail. A shock ring's brightness
+    // lives on the RADIUS: lighting the section evenly is what makes one read as
+    // a printed decal however good its internal detail is.
+    float heat = 1.0 - wx;
 
     // The canvas fade is taken on the RAW v: the mesh has a hard boundary at
     // v = 0 and v = 1, and any coverage surviving to it is clipped by geometry
     // into a straight chord — a polygon edge drawn across the smoke.
     float edge = smoothstep(0.0, 0.05, v) * (1.0 - smoothstep(0.93, 1.0, v));
-
-    // THE HOLE. Three overlapping layers each reach inward, so between them they
-    // close the middle completely — the ring becomes a disc. This is the one
-    // explicit control over how big the empty centre is, independent of how many
-    // layers there are or how wide the canvas is, and it is exposed as the live
-    // tunable `shock_hole` because it is a judgement call, not a derivation.
+    // THE HOLE. The one explicit control over how big the empty centre is,
+    // independent of how far the tail reaches, exposed as the live tunable
+    // `shock_hole` because it is a judgement call, not a derivation.
     edge *= smoothstep(u_hole * 0.35, u_hole, v);
 
-    // The body is DIM and the rim is hot. Lighting the body is what makes this
-    // read as fire instead of as smoke with burning edges.
-    float cover = clamp(smoke * 0.60 + hot * 0.95, 0.0, 1.0) * edge;
-    vec3 col = mix(u_bodyColor.rgb, u_glowColor.rgb, hot);
-
-    float a = cover * u_opacity * u_bodyColor.a;
-    // ONE formula per blend state, never one for both. BLEND_ALPHA is
-    // (SRC_ALPHA, ONE_MINUS_SRC_ALPHA), so the body pass hands over straight
-    // RGB and the hardware applies coverage. BLEND_ALPHA_PREMULTIPLY is
-    // (ONE, ONE_MINUS_SRC_ALPHA) and does not, so the emission pass has to
-    // multiply by `a` itself — which is the same light additive delivered, plus
-    // the dst*(1-a) term additive never had.
+    // ── 5. THE TWO PASSES CARRY DIFFERENT SIGNALS ───────────────────────────
+    //
+    // The BODY pass is pigment: saturated element hue, which is what lets the
+    // ring attenuate bright scenery instead of only adding to it. The EMISSION
+    // pass is light, driven by the front and the tail's hot filaments, with a
+    // gain that clears main.c's bloomThreshold of 1.25 — see the note in
+    // vc_shock_ring.inl for the arithmetic, which is the whole reason this
+    // effect did not glow for as long as it did not.
     if (u_premultiply > 0.5)
-        finalColor = VFX_ResolvePremultiplied(col, u_emission, a,
-                                              vec3(0.0), 0.0, 0.0);
+    {
+        // THE TAIL MUST NOT BE LIT AS A MASS. At 0.30 with a gain of 7 every
+        // fragment of it arrives at 2.1 in HDR — clipped, so the whole skirt
+        // tone-maps to one flat saturated orange and every bit of structure in
+        // the field behind it is thrown away. The tail is lit by its FILAMENTS
+        // (`ember`); the mass itself only needs enough to sit under them.
+        float glowMask = clamp(rim * 2.80 + ember * 1.15 + wake * 0.08, 0.0, 1.0) *
+                         edge * u_opacity * u_bodyColor.a;
+        // COVERAGE AND BRIGHTNESS ARE SEPARATE ARGUMENTS HERE, and that is the
+        // reason this calls the six-argument resolver. Delivered as
+        // bodyColor * intensity * a the two are tied together: the only way to
+        // reach the bloom threshold is near-opacity, and the premultiplied
+        // dst*(1-a) term then ERASES the body pass drawn underneath.
+        float ga = clamp(rim * 0.42 + ember * 0.30 + wake * 0.14, 0.0, 1.0) *
+                   edge * u_opacity * u_bodyColor.a;
+        // WHITE ONLY AT THE FRONT. Whitening the whole pass is what makes an
+        // effect vanish on a white plate; the hue has to survive everywhere the
+        // front is not (BRIGHT_BACKGROUND_VFX_SPEC.md §5).
+        vec3 hotCol = mix(u_glowColor.rgb, vec3(1.0),
+                          clamp(rim * 0.40 + ember * 0.10, 0.0, 1.0));
+        finalColor = VFX_ResolvePremultiplied(hotCol, u_emission * 0.30, ga,
+                                              hotCol, glowMask, u_emission);
+    }
     else
+    {
+        float cover = clamp(rim * 0.90 + wake * 1.05 + ember * 0.55, 0.0, 1.0) * edge;
+        // THE TAIL COOLS BEHIND THE FRONT. Deep ember at the far end, bright
+        // where the material is still travelling with the edge.
+        vec3 coal = u_bodyColor.rgb * mix(0.16, 1.00, heat * heat);
+        vec3 col = mix(coal, u_glowColor.rgb,
+                       clamp(ember * 0.45 + rim * 0.75, 0.0, 1.0));
+        float a = cover * u_opacity * u_bodyColor.a;
+        // ONE formula per blend state, never one for both. BLEND_ALPHA is
+        // (SRC_ALPHA, ONE_MINUS_SRC_ALPHA), so the body pass hands over straight
+        // RGB and the hardware applies coverage; BLEND_ALPHA_PREMULTIPLY is
+        // (ONE, ONE_MINUS_SRC_ALPHA) and does not, which is why the branch above
+        // multiplies by its own alpha itself.
         finalColor = VFX_ResolveBody(col, u_emission, a);
+    }
 }

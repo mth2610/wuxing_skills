@@ -4,6 +4,33 @@
 > Cross-cutting traps (batching hazard, depth-test-vs-mask, `rlFrustum near<1.0`, lit-material-dark, emitter collision) live in root `ENGINE_LANDMINES.md` — read that too.
 > Long session logs and open backlog are in `PROGRESS.md`, not here.
 
+### Noise range and gate chains — promoted
+Both from removing SHOCK RING's texture and rebuilding its tail procedurally
+(which is the shipping version)
+(`ENGINE_LANDMINES.md`): *An fbm you AVERAGE has no range left for a threshold to
+bite on* (and over-stretching clamps it bimodal, which looks the same), and
+*Every gate in a chain is a fraction, and their product is not*. The instrument
+that settled the first one — painting the field out as the fragment colour for a
+single capture — is worth reaching for far earlier than it was here.
+
+### A sharp feature on a two-sided swept sheet doubles — promoted
+`ENGINE_LANDMINES.md`, *A feature on a two-sided swept sheet is drawn TWICE*.
+SHOCK RING's leading edge came out as two concentric circles: the primitive
+sweeps its section at ±normal, so a sharp feature placed where the section is
+widest is drawn once per sheet. Put sharp features at the fold, where the sheets
+coincide.
+
+### A wrapped sheet's minification, and the bloom threshold — both promoted
+Two SHOCK RING lessons live in root `ENGINE_LANDMINES.md` because any module with
+a shader can repeat them:
+- *A sheet wrapped N times around a ring is minified N·W/P — and nothing here
+  mipmaps.* Choosing a tiling rate to avoid magnification overshot into 10x
+  minification, which with no mip chain is grain, which the coverage ramps then
+  average into flat haze.
+- *An effect that does not cross the bloom threshold does not glow, and no single
+  term shows it.* Multiply the chain out to the number the prefilter tests, and
+  keep coverage and brightness on separate resolver arguments.
+
 ### An emissive mask that WIDENS with intensity spends the coverage it needs on bright ground
 RIFT BOLT (`vc_rift_bolt.inl`) is a dark crust with light escaping through a
 fissure network, built specifically so the darkening budget
