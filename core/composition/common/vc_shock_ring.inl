@@ -505,10 +505,24 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
         // material is thinnest and moving fastest.
         Color c = VC_MixColor(m->body, m->glow, h);
         ringCol[i] = VC_WithAlpha(c, (unsigned char)(alpha * ShockRing_Shade(u) * 255.0f));
-        // The lens bump (thin, centred on the crest) PLUS the bell (zero at the
-        // crest, opening inward). Together they give a section that is a fat
-        // line at the front and a wide flared skirt behind it.
-        ringOff[i] = half * h + flareH * ShockRing_Flare(u);
+        // ONE displacement function, and it is ZERO AT AND BEYOND THE CREST.
+        //
+        // This was `half * h + flareH * Flare(u)` — a lens bump centred on the
+        // crest, plus the bell. The bump is the problem: the front sits OUTSIDE
+        // the crest (frontV is about 0.58 of the rope's half-width past it), and
+        // sin(PI*u) is still 0.71 there, so the two sheets swept at ±half were a
+        // visible distance apart exactly where the effect's sharpest feature is.
+        // The leading edge rendered as TWO parallel bright lines, which is the
+        // same failure the flare's direction was chosen to avoid, arriving by a
+        // different term (ENGINE_LANDMINES.md, "a feature on a two-sided swept
+        // sheet is drawn TWICE").
+        //
+        // Folding the lens into the bell means the section has no thickness
+        // where the front is — so the front is one line — and all of its volume
+        // behind, which is where the material is anyway. The edge-on case that
+        // the lens existed for is now carried by the bell, which is far deeper
+        // than the lens ever was.
+        ringOff[i] = (half + flareH) * ShockRing_Flare(u);
         // The CREST sits at rNow — that is where the front is. The canvas hangs
         // off it in both directions, mostly outward.
         ringRad[i] = rNow + canvas * (u - SHOCK_CREST_U);

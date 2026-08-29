@@ -212,8 +212,29 @@ void main()
     // the hole, past the inner base, and the ring rendered as a filled blob with
     // a bright outline. It has to stay a FRACTION of the section.
     float wakeLen = widA * outGain * mix(1.30, 1.70, u_t01) * mix(0.35, 1.55, wakeN);
+    // A SECOND, FASTER VARIATION IN LENGTH. With only `wakeN` (17 cells) the
+    // tail's inner boundary is a smooth scalloped curve — the fringe reads as
+    // pleats cut in cloth rather than as strands of different lengths.
+    wakeLen *= mix(0.62, 1.45, FbmRing(vec2(u * 11.0, 233.0 + u_seed), 11.0, 2));
+    // AND IT IS CAPPED. Late in the life widA, outGain and the two length
+    // noises all peak together and the tail reaches most of the canvas — at
+    // which point the ring is not a ring, it is a BOWL seen at an angle, with
+    // the flared bell filling what should be the empty middle. That is exactly
+    // the "flower/shell" this effect kept turning into. The empty centre is
+    // part of the silhouette, not a leftover.
+    wakeLen = min(wakeLen, 0.36);
     float wx = clamp((frontV - v) / max(wakeLen, 0.03), 0.0, 1.0);
     float fall = 1.0 - wx;
+    // ── THE FIELD IS SAMPLED ON ABSOLUTE DEPTH, NOT ON `wx` ─────────────────
+    // `wx` is normalised by wakeLen, so sampling the grain on it ties the
+    // feature size to the tail's LENGTH: as the tail grows over the life the
+    // same features are stretched with it, and the late ring — which is where
+    // the tail is longest — came out as broad smeared strokes with no internal
+    // detail at all, like torn paper. `wd` is how far behind the front the
+    // fragment is in canvas units, so a strand stays the same width whether the
+    // tail is short or long. Only the falloff and the shear stay on `wx`,
+    // because those really are proportional to the tail.
+    float wd = max(frontV - v, 0.0);
     float wake = (dR > 0.0) ? 0.0 : fall * fall;
     // ── AND THIS IS WHERE THE STRUCTURE KEPT DISAPPEARING ───────────────────
     //
@@ -236,8 +257,44 @@ void main()
     // blobs on a band. That domain shape is also why a procedural field is
     // acceptable here where the one it replaced was a "necklace": it is not a
     // warp trying to hide a period.
-    float streak = FbmRing(vec2(u * 30.0, wx * 0.85 + 31.0 + u_seed), 30.0, 2);
-    float fine = FbmRing(vec2(u * 64.0, wx * 1.70 + 53.0 + u_seed), 64.0, 1);
+    // ── SHEAR, WHICH IS WHAT STOPS THE TONGUES BEING PLEATS ─────────────────
+    //
+    // Sampled on `u` directly, every feature runs dead straight along a radius,
+    // and thirty of them evenly spaced around a ring is a pleated skirt however
+    // irregular each one is. Real smoke behind a ring front does not travel
+    // radially — the ring is a vortex and the material shears tangentially as it
+    // falls behind. Offsetting the sample angle by a function of how far back it
+    // is makes the strands sweep and curl, and it costs one fbm.
+    //
+    // MEASURE THE OFFSET AGAINST THE FEATURE SPACING, NOT AGAINST 1.0. It is in
+    // u units — fractions of the WHOLE circumference — and at 30 angular cells
+    // one feature is 1/30 = 0.033 of that. Written as 0.045 + 0.030 scaled by a
+    // noise reaching 0.95, the offset peaked near 0.071: more than TWO feature
+    // widths, so every strand was dragged sideways past its neighbour and the
+    // late tail rendered as long tangential smears — torn paper, not smoke.
+    // Held to about two thirds of one cell it bends the strands instead.
+    // (U_PER_V is the other half of this: an angular displacement here is nine
+    // times the metres a radial one of the same number would be.)
+    float shearN = FbmRing(vec2(u * 3.0, 71.0 + u_seed), 3.0, 2) - 0.5;
+    float uw = u + (wx * 0.014 + wx * wx * 0.010) * (0.55 + 1.60 * shearN);
+
+    // THREE SCALES, MULTIPLIED. The tail had two and read as smooth wedges: a
+    // single coarse field decides the shape and there is nothing inside it, so
+    // every tongue is a flat plane of colour. Detail has to be present at the
+    // scale of the tongue AND inside it. Multiplied, not summed — summing is the
+    // averaging that flattened this field once already, and each factor here has
+    // a mean of 1.0 so the product keeps the mean and multiplies the variance.
+    // THE RADIAL FREQUENCY IS SET AGAINST THE TAIL'S LENGTH, and getting it
+    // wrong is what made the late ring read as torn paper. At 3.2 cycles per
+    // unit of v, one feature spans 1.1 cells across a tail 0.36 long — i.e. a
+    // single feature covers the WHOLE tail radially, so every strand is one
+    // unbroken wedge from the front to the inner edge. At 7.0 a strand is about
+    // 40% of the tail: long enough to read as a streak, short enough to break up
+    // along its own length. Still far below the angular frequency, which is what
+    // keeps the features radial rather than round.
+    float streak = FbmRing(vec2(uw * 30.0, wd * 7.00 + 31.0 + u_seed), 30.0, 2);
+    float mid = FbmRing(vec2(uw * 68.0, wd * 15.0 + 53.0 + u_seed), 68.0, 2);
+    float fine = FbmRing(vec2(uw * 148.0, wd * 30.0 + 97.0 + u_seed), 148.0, 1);
     // THE STRETCH IS A CONTRAST KNOB WITH A CLIFF AT BOTH ENDS. Too little and
     // the field sits in a narrow band around 0.5, as above. Too much and it
     // clamps BIMODAL — mostly exact 0 and exact 1 — at which point the threshold
@@ -246,7 +303,7 @@ void main()
     // 1.9 on a two-octave field leaves roughly 0.15..0.85, graded, which is what
     // a climbing threshold needs in order to erode something gradually.
     float grain = clamp((streak - 0.5) * 1.90 + 0.5, 0.0, 1.0);
-    grain = clamp(grain * (0.55 + 0.90 * fine), 0.0, 1.0);
+    grain = clamp(grain * (0.62 + 0.76 * mid) * (0.74 + 0.52 * fine), 0.0, 1.0);
 
     // TWO USES OF THE SAME FIELD, AND THEY MUST BE SEPARATE TERMS. Thresholding
     // alone gives no structure at all: pushed through one smoothstep the field
@@ -254,12 +311,17 @@ void main()
     // switch for the whole ring — one setting rendered a smooth airbrushed band,
     // and a setting 0.18 higher rendered a bare wire. The first term is
     // permanent shading (the tail is never uniform), the second is the tear.
-    wake *= 0.06 + 0.94 * smoothstep(0.34, 0.92, grain);
+    // THE FLOOR IS A WASH. At 0.14 there is coverage EVERYWHERE in the tail no
+    // matter what the field says, and that constant term is a smooth gradient
+    // under all of the structure — from a distance the strands disappear into it
+    // and the tail reads as a soft painted mass. 0.03 leaves the field in charge
+    // of where the tail exists at all.
+    wake *= 0.03 + 0.97 * smoothstep(0.30, 0.86, grain);
     // THE TEARING climbs quadratically, so the tail comes apart from a
     // continuous skirt into separate strands as the ring ages, which is the
     // whole late-life read.
     float t2 = u_t01 * u_t01;
-    float tear = mix(0.30, 0.92, t2) + (clump - 0.5) * 0.30;
+    float tear = mix(0.18, 0.86, t2) + (clump - 0.5) * 0.30;
     wake *= smoothstep(tear, tear + 0.14, grain);
     wake *= mix(0.30, 1.00, wakeM) * mix(0.40, 1.00, rimArc);
     // FOUR MULTIPLICATIVE GATES EACH AVERAGING A HALF LEAVE A SIXTEENTH. The
@@ -268,7 +330,7 @@ void main()
     // in the arithmetic and invisible on screen, so the ring looked like a bare
     // front with nothing behind it. Gained back up and clamped, deliberately, in
     // one place rather than by inflating each gate until none of them gates.
-    wake = clamp(wake * 2.10, 0.0, 1.0) * mix(1.0, 0.55, u_t01);
+    wake = clamp(wake * 3.40, 0.0, 1.0) * mix(1.0, 0.55, u_t01);
 
     // Hot filaments inside the tail: the top of the grain range, thinned. A wide
     // ramp shades the whole tail and cannot BE its bright centres.

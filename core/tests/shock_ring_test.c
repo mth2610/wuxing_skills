@@ -130,8 +130,20 @@ static void Test_ItHasThicknessOutOfItsOwnPlane(void)
     // Below about a tenth of the band it would not survive the first frame of
     // foreshortening.
     CHECK_MSG(half / band > 0.08f,
-              "the section is a LENS, not a plane with a nudge",
+              "the section has real depth, not a plane with a nudge",
               "%.2f of the band's width", half / band);
+
+    // BUT THE DEPTH IS ALL BEHIND THE FRONT. `half` and the bell are one
+    // displacement now, scaled by Flare(u), which is zero at and beyond the
+    // crest: the front is where the two swept sheets COINCIDE, so it draws as
+    // one line instead of two parallel ones. Everything the ring has out of its
+    // plane is inward of the crest, where the trailing material is.
+    float canvas3 = CanvasWidth(3.0f);
+    float depthAtFront = (half + FlareHeight(canvas3, 0.35f)) * Flare(0.78f);
+    float depthBehind = (half + FlareHeight(canvas3, 0.35f)) * Flare(0.10f);
+    CHECK_MSG(depthAtFront == 0.0f && depthBehind > half,
+              "...and all of it is behind the crest, so the front is a single line",
+              "front %.4f behind %.4f half %.4f", depthAtFront, depthBehind, half);
 
     // A RATIO AGAINST THE BAND'S OWN WIDTH, which is itself a ratio of the
     // radius — so nothing grows without bound. Keyed to the radius directly the
