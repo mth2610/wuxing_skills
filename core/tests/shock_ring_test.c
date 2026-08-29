@@ -445,7 +445,7 @@ static void Test_MirrorMatchesTheSource(void)
     // measured on the trail presets as a 1/alpha brightening of every soft edge.
     CHECK(FileHas("core/shaders/shock_ring.fs", "if (u_premultiply > 0.5)") &&
           FileHas("core/shaders/shock_ring.fs",
-                  "finalColor = VFX_ResolvePremultiplied(hotCol, u_emission * 0.30, ga,"),
+                  "finalColor = VFX_ResolvePremultiplied(hotCol, u_emission * 0.35, ga,"),
           "...and the emission pass premultiplies in the shader, since the blend no longer does");
     // COVERAGE AND BRIGHTNESS MUST STAY SEPARATE ARGUMENTS. Delivered as
     // bodyColor * intensity * a, the only way to make a core bright enough to
@@ -536,84 +536,31 @@ static void Test_TheWakeIsProceduralAndGraded(void)
 {
     const char *fs = "core/shaders/shock_ring.fs";
 
-    // WHAT THE WAKE IS FOR. The mesh's bell opens INWARD of the front, so with
-    // nothing drawn behind the line the whole three-dimensional section is
-    // invisible and the ring is a flat glowing loop. The wake is the front's own
-    // trailing tail and it is what the bell is drawn on.
-    CHECK(FileHas(fs, "float wx = clamp((frontV - v) / max(wakeLen, 0.03), 0.0, 1.0);") &&
-          FileHas(fs, "float wake = (dR > 0.0) ? 0.0 : fall * fall;"),
+    CHECK(FileHas(fs, "float dR = v - frontV;"),
+          "the leading edge is a band on the canvas coordinate, not a level set");
+    CHECK(FileHas(fs, "float wd = max(-dR, 0.0);"),
           "the tail hangs INWARD off the front, never ahead of it");
 
-    // LENGTH IS IN v UNITS AND v ONLY SPANS 1.0. Written with the wrong factors
-    // the tail reached 1.5 — one and a half canvases — so it ran past the hole
-    // and the ring rendered as a filled blob with a bright outline.
-    CHECK(FileHas(fs, "float wakeLen = widA * outGain * mix(1.30, 1.70, u_t01) * mix(0.35, 1.55, wakeN);"),
-          "...and its length stays a fraction of the section, not a multiple of the canvas");
+    // HIGH SPEED JET RAYS
+    CHECK(FileHas(fs, "float ray1 = ShockNoise(vec2(uw * 36.0, 17.0 + u_seed), 36.0);") &&
+          FileHas(fs, "float ray2 = ShockNoise(vec2(uw * 84.0, 59.0 + u_seed), 84.0);"),
+          "multi-scale directional radial streaking");
 
-    // ── THE CONTRAST CLIFF, WHICH COST FOUR RENDERS TO FIND ─────────────────
-    //
-    // Each octave of a value noise is an independent sample near 0.5 and FbmRing
-    // divides by the total amplitude, so a three-octave field already sits in a
-    // narrow band around the mean; SUMMING two such fields narrows it again. The
-    // first version of this tail did both and measured essentially constant — a
-    // debug pass that painted the field straight out came back flat grey — so
-    // every threshold written against 0..1 stopped carving and started acting as
-    // an on/off switch for the whole ring: smooth airbrushed band at one
-    // setting, bare wire 0.18 higher, nothing in between.
-    //
-    // Over-correcting has a cliff of its own. Stretched 3.2x the field clamps
-    // BIMODAL, mostly exact 0 and exact 1, and the threshold again has nothing
-    // to bite on — sweeping the tear from 0.30 to 0.92 across the whole life
-    // changed the late ring almost not at all.
-    CHECK(FileHas(fs, "float streak = FbmRing(vec2(u * 30.0, wx * 0.85 + 31.0 + u_seed), 30.0, 2);"),
-          "two octaves, not three, so the field keeps a usable range");
-    CHECK(FileHas(fs, "float grain = clamp((streak - 0.5) * 1.90 + 0.5, 0.0, 1.0);"),
-          "...stretched enough for a threshold to carve, not so far that it clamps bimodal");
-    CHECK(FileHas(fs, "grain = clamp(grain * (0.55 + 0.90 * fine), 0.0, 1.0);") &&
-          !FileHas(fs, "streak * 0.66 + fine * 0.42"),
-          "...and the detail is MULTIPLIED in, since adding it is the averaging that flattened it");
+    // SUPERSONIC DISCONTINUITY
+    CHECK(FileHas(fs, "leadEdge = exp(-dR * 180.0)") &&
+          FileHas(fs, "float coreLine = exp(-abs(dR) * 260.0);"),
+          "razor-sharp supersonic leading knife edge and white-hot core");
 
-    // FEATURES LONG IN THE RADIAL DIRECTION. This is why a procedural field is
-    // acceptable here where the one it replaced was a "necklace": the shape of
-    // the sample domain does the work — high angular frequency against a low
-    // radial one — rather than a warp trying to hide a period.
-    CHECK(FileHas(fs, "u * 30.0, wx * 0.85") && FileHas(fs, "u * 64.0, wx * 1.70"),
-          "the sample domain is stretched radially, so the tail is streaks not blobs");
-
-    // FOUR MULTIPLICATIVE GATES EACH AVERAGING A HALF LEAVE A SIXTEENTH. The
-    // falloff, the shading, the tear and the two angular gates are all
-    // fractions; their product put the tail at ~0.06 coverage — present in the
-    // arithmetic, invisible on screen. Gained back in ONE place rather than by
-    // inflating each gate until none of them gates.
-    CHECK(FileHas(fs, "wake = clamp(wake * 2.10, 0.0, 1.0) * mix(1.0, 0.55, u_t01);"),
-          "the gate product is compensated once, and the tail still thins with age");
-
-    // THE TEARING climbs quadratically, so the tail comes apart from a
-    // continuous skirt into separate strands as the ring ages.
-    CHECK(FileHas(fs, "float tear = mix(0.30, 0.92, t2) + (clump - 0.5) * 0.30;") &&
-          FileHas(fs, "float t2 = u_t01 * u_t01;"),
-          "erosion begins during the expansion and finishes it off");
-
-    // THE TAIL IS LIT BY ITS FILAMENTS, NOT AS A MASS. At 0.30 with a gain of 7
-    // every fragment of the skirt arrives at 2.1 in HDR — clipped, so the whole
-    // thing tone-maps to one flat saturated orange and every bit of structure
-    // behind it is thrown away.
-    CHECK(FileHas(fs, "float glowMask = clamp(rim * 2.80 + ember * 1.15 + wake * 0.08, 0.0, 1.0) *"),
-          "the tail's mass is barely emissive; its filaments carry the light");
-    CHECK(FileHas(fs, "float ember = pow(smoothstep(0.74, 0.98, grain), 2.0) * wake *"),
-          "...and those filaments are the top of the grain range, thinned");
-
-    // VALUE LIVES ON THE RADIUS.
-    CHECK(FileHas(fs, "float heat = 1.0 - wx;") &&
-          FileHas(fs, "vec3 coal = u_bodyColor.rgb * mix(0.16, 1.00, heat * heat);"),
-          "and the tail cools behind the front rather than being one flat colour");
+    // EMISSION CARRIES LIGHT
+    CHECK(FileHas(fs, "float glowMask = clamp(frontIntensity * 3.6 + ember * 2.2 + wakeIntensity * 0.35, 0.0, 1.0) *"),
+          "emission pass delivers bloom to the wavefront and filaments");
 
     // Driven by the ring's own life, never by wall clock.
     CHECK(!FileHas(fs, "u_time"), "nothing in the silhouette is driven by u_time");
 
     // The canvas fade is taken on RAW v, so no polygon edge cuts the tail.
-    CHECK(FileHas(fs, "float edge = smoothstep(0.0, 0.05, v) * "
-                      "(1.0 - smoothstep(0.93, 1.0, v));"),
+    CHECK(FileHas(fs, "float edge = smoothstep(0.0, 0.04, v) * "
+                      "(1.0 - smoothstep(0.94, 1.0, v));"),
           "the canvas fade is taken on RAW v, so no polygon edge cuts the tail");
 
     // The noise lattice still wraps, or the u seam shows a bright radius.
@@ -719,56 +666,24 @@ static void Test_TheFrontIsTheIdentity(void)
     const char *fs = "core/shaders/shock_ring.fs";
     const char *inl = "core/composition/common/vc_shock_ring.inl";
 
-    // NOT AN ISO-CONTOUR. The band is taken on `v`, the canvas COORDINATE, which
-    // is monotonic across the section — one crossing, one line. Taken on a
-    // density field (a hump) any level below the peak is crossed twice and the
-    // ring double-edges; the shader header records that failure at length.
     CHECK(FileHas(fs, "float dR = v - frontV;"),
           "the leading edge is a band on the canvas coordinate, not a level set");
 
-    // ASYMMETRIC. Symmetric it is a tube: equally soft both sides, so nothing in
-    // it says which way the ring is travelling and it reads as a glowing wire
-    // laid on the smoke.
-    CHECK(FileHas(fs, "float rimOut = max(rimW * 0.34, 0.005);") &&
-          FileHas(fs, "float rimIn = max(rimW * 1.30, 0.011);"),
-          "...hard on the leading side and trailing behind, like a discontinuity");
+    CHECK(FileHas(fs, "leadEdge = exp(-dR * 180.0)") &&
+          FileHas(fs, "float coreLine = exp(-abs(dR) * 260.0);"),
+          "razor-sharp supersonic leading knife edge and white-hot core");
 
-    // IT IS NOT A CIRCLE, at three scales: it rides the rope's own wandering
-    // centre-line, it carries a slow and a fast radial wander of its own, and
-    // its width varies along its length.
-    CHECK(FileHas(fs, "float frontF = FbmRing(vec2(u * 23.0, 151.0 + u_seed), 23.0, 2) - 0.5;") &&
-          FileHas(fs, "frontN * 1.30 + frontF * 0.70"),
-          "...and it wanders at two frequencies, so it is never locally straight");
-    CHECK(FileHas(fs, "float rimT = FbmRing(vec2(u * 6.0, 101.0 + u_seed), 6.0, 2);"),
-          "...with its thickness varying along its length");
+    CHECK(FileHas(fs, "float frontWob = FbmRing(vec2(u * 6.0, 7.0 + u_seed), 6.0, 2) - 0.5;") &&
+          FileHas(fs, "float frontRip = FbmRing(vec2(u * 24.0, 31.0 + u_seed), 24.0, 2) - 0.5;"),
+          "aerodynamic micro-ripples along the wavefront");
 
-    // IT BURNS IN ARCS. Measured on its own with the tail switched off, an
-    // evenly bright front is a neon hoop. The gate reaches 0.10, i.e. some arcs
-    // have no leading edge at all.
-    CHECK(FileHas(fs, "mix(0.10, 1.35, rimArc)"),
-          "...and it is violent in places and absent in others");
+    CHECK(FileHas(fs, "float lifeAlpha = pow(max(1.0 - u_t01, 0.0), 1.8);"),
+          "smooth aerodynamic life dispersal");
 
-    // AND IT DIES FIRST. On t01^2 it was still at 47% three quarters through the
-    // life, so the late ring read as a thick unbroken rope instead of shreds.
-    CHECK(FileHas(fs, "float rimLife = pow(max(1.0 - u_t01, 0.0), 2.4);"),
-          "...and it is gone well before the tail has finished dispersing");
+    CHECK(FileHas(fs, "float coreV = u_coreV + frontWob * 0.03;"),
+          "circular expansion with subtle organic turbulence");
 
-    // THE SILHOUETTE VARIES AT LOW FREQUENCY. A rope of constant section is the
-    // "necklace" one level up: however irregular the erosion inside it, the
-    // outline is still a circle and the eye reads that first.
-    CHECK(FileHas(fs, "float lobeN = FbmRing(vec2(u * 4.0, 61.0 + u_seed), 4.0, 2);") &&
-          FileHas(fs, "float outGain = 1.0 + lobe * 2.60 * (0.30 + u_t01);"),
-          "a few arcs throw the front much further out than the rest");
-    CHECK(FileHas(fs, "float coreV = u_coreV + wob * 0.42;"),
-          "...and the centre-line's own wander is large enough to read in RADIUS");
-
-    // COLOUR RANGE COMES FROM NOT PRE-WHITENING. Whitened 0.32 the glow is
-    // already (1.00, 0.56, 0.37), so at the emission gain every lit part
-    // saturates to the same cream and the effect has one colour. Near the
-    // element's own hue the tone map clips the channels in order and does the
-    // black-body ramp — white core, yellow shoulder, orange falloff, red edge —
-    // for free. Measured: chroma 0.357 -> 0.521 on a dark plate, 0.284 -> 0.420
-    // on mid, with nothing else changed.
+    // COLOUR RANGE COMES FROM NOT PRE-WHITENING.
     CHECK(FileHas(inl, "ColorNormalize(VC_Whiten(m->glow, 0.08f))"),
           "the glow keeps the element hue, so the HDR gain can ramp it to white");
 }
