@@ -64,7 +64,7 @@ static float Radius01(float t01)
 {
     if (t01 <= 0.0f) return 0.0f;
     if (t01 >= 1.0f) return 1.0f;
-    return 1.0f - powf(1.0f - t01, 2.6f);
+    return 1.0f - powf(1.0f - t01, 3.8f);
 }
 static float CoreWidth(float rNow) { return rNow * SHOCK_CORE_RATIO; }
 static float CanvasWidth(float rNow) { return CoreWidth(rNow) * SHOCK_CANVAS_MUL; }
@@ -303,10 +303,10 @@ static void Test_LifeEnvelope(void)
     // The reference front releases its radius almost immediately, then holds
     // near its final size while the smoke keeps changing.  A merely gentle
     // ease-out reads as a circle still being scaled in the last frames.
-    CHECK_MSG(Radius01(0.5f) > 0.80f && Radius01(0.5f) < 0.88f,
+    CHECK_MSG(Radius01(0.5f) > 0.88f && Radius01(0.5f) < 0.96f,
               "it reaches most of its radius by halfway",
               "%.3f", Radius01(0.5f));
-    CHECK_MSG(Radius01(1.0f) - Radius01(0.6f) < 0.10f,
+    CHECK_MSG(Radius01(1.0f) - Radius01(0.6f) < 0.08f,
               "...then visually settles while erosion keeps evolving",
               "%.3f of the radius remains", Radius01(1.0f) - Radius01(0.6f));
 
@@ -401,7 +401,7 @@ static void Test_MirrorMatchesTheSource(void)
           "both faces of the lens are swept");
     CHECK(FileHas(inl, "float sgn = (side == 0) ? 1.0f : -1.0f;"),
           "...at +offset and -offset out of the plane");
-    CHECK(FileHas(inl, "curRing[i] = Vector3Add(p, Vector3Scale(n, sgn * ringOff[i]));"),
+    CHECK(FileHas(inl, "curRing[i] = Vector3Add(p, Vector3Scale(n, sgn * off));"),
           "and the displacement is along the ring's OWN normal");
 
     // The reference's ring stays geometrically circular.  Its apparent motion

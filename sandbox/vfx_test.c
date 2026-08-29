@@ -873,8 +873,12 @@ void VFXTest_Draw3D(void)
                       s_vfxFixtureHandle[22] = VFX_ComposeRiftBolt(&s_vfxFixtureXf[22], VC_MAT_FIRE, 0.08f);
                   break;
               }
-              case 23: VFX_ComposeRuneCircle(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress, 5); break;
-              case 25: VFX_ComposeShockRing(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, progress); break;
+              case 25:
+              {
+                  float shockT = fmodf(s_meshTime, 0.60f) / 0.60f;
+                  VFX_ComposeShockRing(s_prefabStartPos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 2.4f, shockT);
+                  break;
+              }
               case 26:
               {
                   if (s_meshTime < s_vfxFixtureLastTime[26] && s_vfxFixtureHandle[26] >= 0)

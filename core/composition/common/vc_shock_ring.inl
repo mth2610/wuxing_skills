@@ -250,7 +250,7 @@ static float ShockRing_Radius01(float t01)
 {
     if (t01 <= 0.0f) return 0.0f;
     if (t01 >= 1.0f) return 1.0f;
-    return 1.0f - powf(1.0f - t01, 2.6f);
+    return 1.0f - powf(1.0f - t01, 3.8f);
 }
 
 // The width of the front the eye is meant to read.
@@ -393,6 +393,9 @@ static void ShockRing_SetUniforms(const VFX_ElementMaterial *m, float opacity,
                    SHADER_UNIFORM_FLOAT);
 }
 
+// Metres lifted clear of the ground receiver to eliminate coplanar Z-fighting.
+#define SHOCK_GROUND_LIFT 0.05f
+
 // One sweep of the lens at `sgn` * offset, emitting UVs for the fragment stage:
 // u runs around the ring and WRAPS at 1.0, v runs across the canvas from the
 // inner base to the outer.
@@ -416,7 +419,9 @@ static void ShockRing_SweepFace(Vector3 center, Vector3 n, Vector3 axA, Vector3 
             Vector3 p = Vector3Add(center,
                                    Vector3Add(Vector3Scale(axA, ca * ringRad[i]),
                                               Vector3Scale(axB, sa * ringRad[i])));
-            curRing[i] = Vector3Add(p, Vector3Scale(n, sgn * ringOff[i]));
+            // When sweeping the underside (-n), clamp displacement so it stays above ground plane.
+            float off = (sgn < 0.0f) ? fminf(ringOff[i], SHOCK_GROUND_LIFT * 0.8f) : ringOff[i];
+            curRing[i] = Vector3Add(p, Vector3Scale(n, sgn * off));
         }
 
         if (s > 0)
@@ -464,6 +469,9 @@ void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
     Vector3 n = Vector3Normalize(normal);
     Vector3 axA, axB;
     VC_PlaneFrame(n, &axA, &axB);
+
+    // Lift center along normal so ring bases clear ground/terrain to prevent Z-fighting
+    center = Vector3Add(center, Vector3Scale(n, SHOCK_GROUND_LIFT));
 
     float alpha = ShockRing_Alpha01(t01) * s_shockAlpha;
     if (alpha <= 0.004f) return;
