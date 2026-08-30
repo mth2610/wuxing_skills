@@ -130,6 +130,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeGasPlume":           ("trail",   "static",     "continuous"),
     "VFX_ComposeGasShockwave":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeGasVortex":          ("trail",   "static",     "continuous"),
+    "VFX_ComposeFlameJet":           ("event",   "burst",      "oneshot"),
     # P4 beam. "static" like the column and for the same reason: it owns a
     # handle and its endpoints are POSITIONS, not a follower transform. The
     # heuristic below would have guessed "timed" off the name alone, which is
@@ -239,6 +240,11 @@ FIXTURE_SPAWN_OVERRIDES = {
 # separate from persistent spawn overrides: a trigger call has no stored handle
 # and must not be treated as a frame-fed fixture.
 FIXTURE_EVENT_OVERRIDES = {
+    # A directed fire primary needs a visible segment, not the generic point
+    # that an inferred event call would provide. The standard line fixture is
+    # long enough to judge nozzle taper, flame-front width and hot-smoke wake.
+    "VFX_ComposeFlameJet":
+        "VFX_ComposeFlameJet($SOURCE, $TARGET, VC_MAT_FIRE, NULL)",
     # A purple emissive smoke ring is easier to distinguish from both the
     # orange plume and the cyan vortex. NULL selects the authored wave timing.
     "VFX_ComposeGasShockwave":

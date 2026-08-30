@@ -163,6 +163,17 @@
       "trigger_call": "VFX_ComposeEnergyBurst($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
     },
     {
+      "source": "common/vc_flame_jet.inl",
+      "fn": "VFX_ComposeFlameJet",
+      "label": "FLAME JET",
+      "category": "fire",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeFlameJet($SOURCE, $TARGET, VC_MAT_FIRE, NULL)"
+    },
+    {
       "source": "common/vc_flow_shield.inl",
       "fn": "VFX_ComposeFlowShield",
       "label": "FLOW SHIELD",

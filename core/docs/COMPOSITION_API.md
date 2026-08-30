@@ -148,6 +148,13 @@ Automatically assign shader, texture, material, and manage the appropriate blend
   their roll-up and fading wake. Gameplay that needs cancellation can use
   `VFX_GasShockwave_Spawn`, then `VFX_GasShockwave_Stop` or
   `VFX_KillGasShockwave`. It shares Gas v1's single admitted volume.
+- `VFX_ComposeFlameJet(start, end, material, config)`: fires a directed primary
+  cone of simulated flame. Every fixed-rate pulse lays four overlapping lobes
+  from the narrow nozzle to the broad flame front, while velocity and mild
+  turbulence carry the body toward `end`. Reaction burns out before retained
+  density, producing a cooling smoky tail without a separate sprite layer.
+  `VFX_FlameJet_Spawn` exposes Stop/Kill lifecycle control. It shares Gas v1's
+  single admitted volume and may replace an equal/lower-priority gas effect.
 - `VFX_ComposeStrandTrail`: the sin-wave strand trail. `VFX_STRAND_ENERGY` = bright filaments, `VFX_STRAND_SMOKE` = heavy occluding smoke (this replaced `VFX_ComposeSmokeTrail`).
 - `VFX_ComposeFissureStreak(start, end, width, progress, time)` (`vc_earth.inl`, rewritten 2026-07-10, fixed a 2nd time the same day): uses `ProceduralMesh_BuildFissure` (`pm_magic_effects.inl`) to build a 5-vertex cross-section (edge–shoulder–bottom–shoulder–edge) along the centerline, jittered by a noise seed derived from `start`/`end` (stable across frames, not re-randomized every call) — a built-in light "midpoint displacement" style. 3 layers: ① structural mesh drawn with `ProceduralMesh_DrawFissureShaded` (dedicated geometry for a crack shape — see note below), ② an "ember seam" — a wide quad strip (`width*0.55`) running along the crack's bottom, `BLEND_ADDITIVE`, alpha pulsing with `time` (kept dim — earth is the least-glowing element, not lava); ③ sparse dust falling near the leading edge of the spreading crack (probability-gated per frame, not scattered along the whole length). `progress` (0..1) controls how many cross-section slices are drawn → the crack "runs" A→B; `time` is used only for the ember seam's pulse.
   > [!NOTE]

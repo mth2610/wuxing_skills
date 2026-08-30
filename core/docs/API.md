@@ -820,6 +820,12 @@ _Inline helpers / macros only — see header._
   int VFX_GasShockwave_Spawn(Vector3 pos, VC_MaterialId mat, const VFX_GasShockwaveConfig *config);
   void VFX_GasShockwave_Stop(int handle);
   void VFX_KillGasShockwave(int handle);
+  VFX_FlameJetConfig VFX_FlameJet_DefaultConfig(void);
+  void VFX_ComposeFlameJet(Vector3 start, Vector3 end, VC_MaterialId mat, const VFX_FlameJetConfig *config);
+  int VFX_FlameJet_Spawn(Vector3 start, Vector3 end, VC_MaterialId mat, const VFX_FlameJetConfig *config);
+  void VFX_FlameJet_SetIntensity(int handle, float intensity01);
+  void VFX_FlameJet_Stop(int handle);
+  void VFX_KillFlameJet(int handle);
   int VFX_EmberTrail_Spawn(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
   void VFX_EmberTrail_SetTransform(int handle, Vector3 pos, Vector3 velocity);
   void VFX_EmberTrail_Stop(int handle);
@@ -919,7 +925,7 @@ _Inline helpers / macros only — see header._
   void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
 **Enums:** VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_KIND_COUNT }
-**Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_GasPlumeConfig, VFX_GasVortexConfig, VFX_GasShockwaveConfig, VFX_ShieldSurface, VFX_TrailSurface
+**Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_GasPlumeConfig, VFX_GasVortexConfig, VFX_GasShockwaveConfig, VFX_FlameJetConfig, VFX_ShieldSurface, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`
 ```c

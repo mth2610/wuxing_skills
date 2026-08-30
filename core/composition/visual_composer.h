@@ -210,6 +210,33 @@ int  VFX_GasShockwave_Spawn(Vector3 pos, VC_MaterialId mat,
 void VFX_GasShockwave_Stop(int handle);
 void VFX_KillGasShockwave(int handle);
 
+// ── PRIMARY. Volumetric flame jet ──────────────────────────────────────────
+// A directed cone of simulated fire from start to end. Each fixed-rate pulse
+// lays overlapping lobes along the whole segment, so the attack reads
+// immediately; reaction supplies the hot core while retained density cools
+// into a dark smoky tail. Mobile Gas v1 admits one volume at a time.
+typedef struct {
+    GasPriority priority;
+    float radius;           // terminal half-width in metres; default 0.62
+    float emitDuration;     // seconds of active fire feeding; default 0.85
+    float decayDuration;    // retained cooling smoke time; default 1.35
+    float intensity;        // 0..1 density/emission scale; default 1
+    float pulsesPerSecond;  // complete four-lobe pulses/sec; default 20
+    float speed;            // forward gas velocity in m/s; default 4.8
+    float turbulence;       // lateral edge breakup in m/s; default 1.10
+    float lift;             // upward velocity mixed toward the tip; default 0.55
+    unsigned int seed;      // deterministic edge variation
+} VFX_FlameJetConfig;
+
+VFX_FlameJetConfig VFX_FlameJet_DefaultConfig(void);
+void VFX_ComposeFlameJet(Vector3 start, Vector3 end, VC_MaterialId mat,
+                         const VFX_FlameJetConfig *config);
+int  VFX_FlameJet_Spawn(Vector3 start, Vector3 end, VC_MaterialId mat,
+                        const VFX_FlameJetConfig *config);
+void VFX_FlameJet_SetIntensity(int handle, float intensity01);
+void VFX_FlameJet_Stop(int handle);
+void VFX_KillFlameJet(int handle);
+
 // ── P4. Ember trail ────────────────────────────────────────────────────────
 // Handle-owned moving source: Spawn once, update its transform while the owner
 // moves, then Stop (preserve spawned embers) or Kill (stop source immediately).
