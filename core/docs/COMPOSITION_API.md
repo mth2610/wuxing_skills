@@ -135,6 +135,19 @@ Automatically assign shader, texture, material, and manage the appropriate blend
   dissipate, while `VFX_KillGasPlume` removes it immediately. Mobile v1 admits
   one plume, so keep the returned handle and treat a zero result as admission
   failure.
+- `VFX_GasVortex_Spawn(pos, material, config)`: creates a depth-aware energy-gas
+  vortex through `core/gas`. A moving source climbs a narrowing orbit while
+  injecting tangential, inward, and upward velocity, producing a luminous
+  spiral instead of the plume's fixed vertical column. Injection spacing is
+  carried across frames; `VFX_GasVortex_Stop` preserves the dissipating coil
+  and `VFX_KillGasVortex` removes it immediately. It shares Gas v1's single
+  admitted volume, so a zero handle is a normal admission failure.
+- `VFX_ComposeGasShockwave(pos, material, config)`: fires a one-shot expanding
+  ring of simulated energy smoke. Each fixed-rate ring event injects sixteen
+  outward-moving sources around the full circumference; the gas solver owns
+  their roll-up and fading wake. Gameplay that needs cancellation can use
+  `VFX_GasShockwave_Spawn`, then `VFX_GasShockwave_Stop` or
+  `VFX_KillGasShockwave`. It shares Gas v1's single admitted volume.
 - `VFX_ComposeStrandTrail`: the sin-wave strand trail. `VFX_STRAND_ENERGY` = bright filaments, `VFX_STRAND_SMOKE` = heavy occluding smoke (this replaced `VFX_ComposeSmokeTrail`).
 - `VFX_ComposeFissureStreak(start, end, width, progress, time)` (`vc_earth.inl`, rewritten 2026-07-10, fixed a 2nd time the same day): uses `ProceduralMesh_BuildFissure` (`pm_magic_effects.inl`) to build a 5-vertex cross-section (edge–shoulder–bottom–shoulder–edge) along the centerline, jittered by a noise seed derived from `start`/`end` (stable across frames, not re-randomized every call) — a built-in light "midpoint displacement" style. 3 layers: ① structural mesh drawn with `ProceduralMesh_DrawFissureShaded` (dedicated geometry for a crack shape — see note below), ② an "ember seam" — a wide quad strip (`width*0.55`) running along the crack's bottom, `BLEND_ADDITIVE`, alpha pulsing with `time` (kept dim — earth is the least-glowing element, not lava); ③ sparse dust falling near the leading edge of the spreading crack (probability-gated per frame, not scattered along the whole length). `progress` (0..1) controls how many cross-section slices are drawn → the crack "runs" A→B; `time` is used only for the ember seam's pulse.
   > [!NOTE]

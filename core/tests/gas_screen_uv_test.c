@@ -15,6 +15,9 @@ int main(void) {
     float reconstructionY = 1.0f - renderTargetY;
     CHECK(fabsf(reconstructionY - clickedScreenY) < 0.000001f,
           "screen click and reconstructed ray must address the same vertical point");
+    float sceneDepthTextureY = reconstructionY;
+    CHECK(fabsf(sceneDepthTextureY - clickedScreenY) < 0.000001f,
+          "scene depth and reconstructed ray must address the same vertical point");
 
     FILE *file = fopen("core/gas/shaders/gas_volume.fs", "rb");
     CHECK(file != NULL, "gas shader must exist");
@@ -25,9 +28,10 @@ int main(void) {
     CHECK(strstr(source,
                  "vec2 uv = vec2(fragTexCoord.x, 1.0 - fragTexCoord.y);") != NULL,
           "raymarch must undo the final RenderTexture display inversion");
-    CHECK(strstr(source, "vec2 framebufferUV = fragTexCoord;") != NULL &&
-          strstr(source, "texture(u_sceneDepthTex, framebufferUV)") != NULL,
-          "scene depth must stay in framebuffer texture coordinates");
+    CHECK(strstr(source, "texture(u_sceneDepthTex, uv)") != NULL,
+          "scene depth must use the same display-corrected UV as world reconstruction");
+    CHECK(strstr(source, "texture(u_sceneDepthTex, framebufferUV)") == NULL,
+          "scene depth must not sample the vertically mirrored framebuffer row");
     CHECK(strstr(source, "vec2 uv = fragTexCoord;") == NULL,
           "raymarch must not reconstruct from the vertically displaced ray");
 

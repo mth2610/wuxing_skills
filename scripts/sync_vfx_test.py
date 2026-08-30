@@ -128,6 +128,8 @@ LIFECYCLE_SPECS = {
     # follower transform.
     "VFX_ComposeSmokeColumn":        ("trail",   "static",     "continuous"),
     "VFX_ComposeGasPlume":           ("trail",   "static",     "continuous"),
+    "VFX_ComposeGasShockwave":       ("event",   "burst",      "oneshot"),
+    "VFX_ComposeGasVortex":          ("trail",   "static",     "continuous"),
     # P4 beam. "static" like the column and for the same reason: it owns a
     # handle and its endpoints are POSITIONS, not a follower transform. The
     # heuristic below would have guessed "timed" off the name alone, which is
@@ -190,6 +192,11 @@ LIFECYCLE_SPECS = {
 # composition contracts.  The shield intentionally has no surface override:
 # its default is the procedural, transparent bubble profile.
 FIXTURE_SPAWN_OVERRIDES = {
+    # The vortex is magical energy rather than fire. Lightning supplies a
+    # purple body and cyan emission, visibly distinct from the orange plume.
+    # The config pointer is optional; NULL selects the corkscrew defaults.
+    "VFX_ComposeGasVortex":
+        "VFX_ComposeGasVortex($POS, VC_MAT_LIGHTNING, NULL)",
     # The generic radius inference is 1.5 m; Astral Spear is authored as a
     # hand-thrown dart. Keep the bench at its 0.10 m body radius so its long
     # head, broken halos, and wake are judged at gameplay scale.
@@ -232,6 +239,10 @@ FIXTURE_SPAWN_OVERRIDES = {
 # separate from persistent spawn overrides: a trigger call has no stored handle
 # and must not be treated as a frame-fed fixture.
 FIXTURE_EVENT_OVERRIDES = {
+    # A purple emissive smoke ring is easier to distinguish from both the
+    # orange plume and the cyan vortex. NULL selects the authored wave timing.
+    "VFX_ComposeGasShockwave":
+        "VFX_ComposeGasShockwave($POS, VC_MAT_VOID, NULL)",
     # The panel preview uses a generic line; direct world clicks use the real
     # player socket and click target in sandbox/vfx_test.c.
     "VFX_ComposeLightningArc":

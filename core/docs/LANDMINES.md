@@ -20,11 +20,14 @@ the flip missed by only 1.51 px. Atlas reversal only compensated the apparent
 motion: it mirrored density inside the world volume, and a full-row reversal
 also remapped vertical rows of Z-slice tiles. The Real-Shading §7.26 matrix leak
 is a related symptom but not this cause; its `shadow_pipeline` guard passes.
+The same correction owns scene depth: sampling depth at the uncorrected
+`fragTexCoord` while reconstructing with corrected `uv` pairs the current ray
+with the vertically opposite scene row.
 
 **Rule.** Keep `GasSystem_UploadAtlas` in direct `(tileY*height+y)` order, undo
 the RenderTexture display inversion once in `gas_volume.fs` for inverse
-projection, but sample the scene-depth FBO at the original `fragTexCoord`; then
-retain the final negative-height draw. Guard the atlas and ray boundaries
+projection, and sample scene depth with that same corrected `uv`; then retain
+the final negative-height draw. Guard the atlas and ray boundaries
 separately with `gas_atlas_orientation_test`, `gas_screen_uv_test`, and Vulkan
 scenario `gas_projection`.
 
@@ -45,6 +48,26 @@ centres them on the supplied world point, and reserves grid space below that
 point so boundary clipping does not move the source. Test solver motion and the
 authored injection sequence separately: a positive density-centre velocity does
 not prove that successive rendered lobes communicate upward motion.
+
+### A depth row mirrored from its ray turns a gas ring into a half-ring
+
+**Symptom.** A raymarched shockwave is complete over sky/empty background but
+loses its far half over terrain, sometimes only at particular map positions.
+It resembles unstable draw ordering, yet the missing region follows opaque
+scene coverage.
+
+**Cause.** The gas composite reconstructed its ray from display-corrected `uv`
+but sampled scene depth at uncorrected `fragTexCoord`. On a flat ground plane,
+a shader debug view of reconstructed world Y was correct only along the middle
+horizontal strip and diverged symmetrically above and below it: the exact
+signature of pairing row `y` with depth from row `1-y`. `WUXING_VFX_BG` masked
+the bug because it skips the map, leaving no receiver depth to clip against.
+
+**Rule.** Ray direction, sampled depth, and inverse reconstruction must all use
+the same display-corrected UV. Validate depth reconstruction on a flat receiver:
+its recovered world Y must stay constant over the whole gas box, not merely at
+the screen centre. Keep depth clipping enabled so actors and props still occlude
+gas correctly.
 
 ### Noise range and gate chains — promoted
 Both from removing SHOCK RING's texture and rebuilding its tail procedurally

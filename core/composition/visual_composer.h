@@ -160,6 +160,56 @@ void VFX_GasPlume_SetIntensity(int handle, float intensity01);
 void VFX_GasPlume_Stop(int handle);
 void VFX_KillGasPlume(int handle);
 
+// ── Volumetric gas vortex ──────────────────────────────────────────────────
+// A rotating energy-gas composition. Orbiting sources inject tangential,
+// inward, and upward velocity into one depth-aware simulated volume, producing
+// a rising corkscrew rather than a stationary plume. Mobile v1 admits one gas
+// volume, so spawning this may replace an equal/lower-priority gas effect.
+typedef struct {
+    GasPriority priority;
+    float radius;           // outer vortex radius in metres; default 1.35
+    float height;           // simulation volume height; default 3.4
+    float emitDuration;     // seconds of active orbit feeding; default 2.6
+    float decayDuration;    // seconds retained after feed ends; default 2.0
+    float intensity;        // 0..1 density/emission scale; default 1
+    float pulsesPerSecond;  // moving sources per second; default 30
+    float angularSpeed;     // source orbit speed in radians/second; default 5.2
+    float lift;             // world-space upward injection speed; default 1.15
+} VFX_GasVortexConfig;
+
+VFX_GasVortexConfig VFX_GasVortex_DefaultConfig(void);
+int  VFX_ComposeGasVortex(Vector3 pos, VC_MaterialId mat,
+                          const VFX_GasVortexConfig *config);
+int  VFX_GasVortex_Spawn(Vector3 pos, VC_MaterialId mat,
+                         const VFX_GasVortexConfig *config);
+void VFX_GasVortex_SetIntensity(int handle, float intensity01);
+void VFX_GasVortex_Stop(int handle);
+void VFX_KillGasVortex(int handle);
+
+// ── Volumetric gas shockwave ───────────────────────────────────────────────
+// A one-shot expanding ring of simulated energy smoke. Sixteen sources cover
+// each ring event and push the gas radially outward; the volume remains alive
+// after expansion so its luminous wake rolls up and dissipates naturally.
+typedef struct {
+    GasPriority priority;
+    float radius;           // final wave radius in metres; default 2.8
+    float height;           // simulation volume height; default 3.0
+    float expandDuration;   // active expansion time; default 0.72 seconds
+    float decayDuration;    // retained smoke time after expansion; default 1.7
+    float intensity;        // 0..1 density/emission scale; default 1
+    float ringsPerSecond;   // complete injection rings per second; default 18
+    float outwardSpeed;     // residual radial gas velocity in m/s; default 1.0
+    float lift;             // upward gas velocity in m/s; default 0.42
+} VFX_GasShockwaveConfig;
+
+VFX_GasShockwaveConfig VFX_GasShockwave_DefaultConfig(void);
+void VFX_ComposeGasShockwave(Vector3 pos, VC_MaterialId mat,
+                             const VFX_GasShockwaveConfig *config);
+int  VFX_GasShockwave_Spawn(Vector3 pos, VC_MaterialId mat,
+                            const VFX_GasShockwaveConfig *config);
+void VFX_GasShockwave_Stop(int handle);
+void VFX_KillGasShockwave(int handle);
+
 // ── P4. Ember trail ────────────────────────────────────────────────────────
 // Handle-owned moving source: Spawn once, update its transform while the owner
 // moves, then Stop (preserve spawned embers) or Kill (stop source immediately).

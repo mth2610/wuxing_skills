@@ -77,6 +77,8 @@
 #include "common/vc_converge_motes.inl"
 #include "common/vc_astral_spear.inl"
 #include "common/vc_gas_plume.inl"
+#include "common/vc_gas_vortex.inl"
+#include "common/vc_gas_shockwave.inl"
 // @gen:archetype_includes end
 
 void VFX_Compose_Update(float dt)
@@ -98,6 +100,8 @@ void VFX_Compose_Update(float dt)
     VC_ConvergeMotes_Update(dt);
     VC_AstralSpear_Update(dt);
     VC_GasPlume_Update(dt);
+    VC_GasVortex_Update(dt);
+    VC_GasShockwave_Update(dt);
     VC_FlameEmitter_Update(dt);
 // @gen:archetype_update end
     LightningArc_Update(dt);
@@ -134,6 +138,8 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_ConvergeMotes_Draw3D(cam);
     VC_AstralSpear_Draw3D(cam);
     VC_GasPlume_Draw3D(cam);
+    VC_GasVortex_Draw3D(cam);
+    VC_GasShockwave_Draw3D(cam);
     VC_FlameEmitter_Draw3D(cam);
 // @gen:archetype_draw end
     LightningArc_Draw3D(cam);

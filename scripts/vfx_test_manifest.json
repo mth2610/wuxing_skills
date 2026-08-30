@@ -187,6 +187,29 @@
       "kill_fn": "VFX_KillGasPlume"
     },
     {
+      "source": "common/vc_gas_shockwave.inl",
+      "fn": "VFX_ComposeGasShockwave",
+      "label": "GAS SHOCKWAVE",
+      "category": "water",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeGasShockwave($POS, VC_MAT_VOID, NULL)"
+    },
+    {
+      "source": "common/vc_gas_vortex.inl",
+      "fn": "VFX_ComposeGasVortex",
+      "label": "GAS VORTEX",
+      "category": "common",
+      "fixture": "static",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeGasVortex($POS, VC_MAT_LIGHTNING, NULL)",
+      "kill_fn": "VFX_KillGasVortex"
+    },
+    {
       "source": "common/vc_glint_sparkle.inl",
       "fn": "VFX_ComposeGlintSparkle",
       "label": "GLINT SPARKLE",
