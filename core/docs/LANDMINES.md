@@ -4,6 +4,26 @@
 > Cross-cutting traps (batching hazard, depth-test-vs-mask, `rlFrustum near<1.0`, lit-material-dark, emitter collision) live in root `ENGINE_LANDMINES.md` — read that too.
 > Long session logs and open backlog are in `PROGRESS.md`, not here.
 
+### Do not add coordinate flips inside a RenderTexture raymarch
+
+**Symptom.** A gas volume appeared above its world-space spawn point and its
+positive-Y buoyancy rendered as downward motion.
+
+**Cause.** Two explicit Y conversions were added inside the gas renderer: the
+CPU atlas reversed simulation rows, and the fragment shader reconstructed rays
+from `1-fragTexCoord.y`. Raylib/rlvk already keep uploaded texture rows,
+fragment UV, scene depth, and clip reconstruction in one GL-style texture
+space. Those conversions therefore mirrored the volume data and its screen ray
+independently. The negative source height used when displaying the completed
+RenderTexture is the separate, final screen-orientation conversion.
+
+**Rule.** Pack grid `y` directly to atlas row `y`, reconstruct from
+`fragTexCoord` directly, and flip only the final RenderTexture draw with a
+negative source height. Never infer shader sampling orientation from CPU image
+row terminology alone; verify the complete upload → sample → RenderTexture
+composite chain. `gas_atlas_orientation_test` and `gas_screen_uv_test` pin the
+three boundaries.
+
 ### Noise range and gate chains — promoted
 Both from removing SHOCK RING's texture and rebuilding its tail procedurally
 (which is the shipping version)

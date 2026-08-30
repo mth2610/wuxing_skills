@@ -16,6 +16,7 @@ HEADERS=(
   core/fluid/fluid_impact.h
   core/fluid/fluid_surface.h
   core/fluid/fluid_orb.h
+  core/gas/gas_system.h
   core/force_field.h core/particles/particle_system.h core/particles/particle_manager.h core/mesh_adjacency.h
   core/trails/trail_system.h core/ribbon_strip.h core/decals/decal_system.h
   core/lightning/lightning_stroke.h

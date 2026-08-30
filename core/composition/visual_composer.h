@@ -37,6 +37,7 @@
 #include "core/presets/vc_material.h"            // Element Material Table (VC_MaterialId)
 #include "core/geometry/procedural_mesh_utils.h" // GroundHeightSampleFn (H2 ground wave)
 #include "core/trails/trail_recipe.h"            // TrailPresetId + what a preset row contains
+#include "core/gas/gas_system.h"                 // Volumetric smoke/fire/energy simulation
 
 // ── Per-frame drivers ───────────────────────────────────────────────────────
 // The pooled components (character aura) and the E3 sequencer ride these two
@@ -132,6 +133,32 @@ void VFX_FlameEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
 void VFX_FlameEmitter_SetIntensity(int handle, float intensity01);
 void VFX_FlameEmitter_Stop(int handle);
 void VFX_KillFlameEmitter(int handle);
+
+// ── Volumetric gas plume ───────────────────────────────────────────────────
+// A stationary simulated volume. Unlike SmokeColumn/FlameVolume, this advects
+// density, heat and reaction through the gas grid and is depth-aware against
+// scene geometry. Spawn once; Stop ends feeding and preserves the dissipating
+// volume, while Kill removes it immediately. Mobile v1 admits one plume.
+typedef struct {
+    GasKind kind;
+    GasPriority priority;
+    float radius;           // half-width in metres; default 0.9
+    float height;           // volume height in metres; default 3.2
+    float emitDuration;     // seconds of active feeding; default 1.8
+    float decayDuration;    // seconds retained after feed ends; default 2.2
+    float intensity;        // 0..1 density/emission scale; default 1
+    float pulsesPerSecond;  // fixed-rate injections; default 12
+    Vector3 wind;           // world-space drift velocity in m/s
+} VFX_GasPlumeConfig;
+
+VFX_GasPlumeConfig VFX_GasPlume_DefaultConfig(GasKind kind);
+int  VFX_ComposeGasPlume(Vector3 pos, VC_MaterialId mat,
+                         const VFX_GasPlumeConfig *config);
+int  VFX_GasPlume_Spawn(Vector3 pos, VC_MaterialId mat,
+                        const VFX_GasPlumeConfig *config);
+void VFX_GasPlume_SetIntensity(int handle, float intensity01);
+void VFX_GasPlume_Stop(int handle);
+void VFX_KillGasPlume(int handle);
 
 // ── P4. Ember trail ────────────────────────────────────────────────────────
 // Handle-owned moving source: Spawn once, update its transform while the owner
@@ -606,6 +633,21 @@ bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition,
 // it is also a fixture of its own and its shader `core/trails/shaders/trail_volume.fs` is
 // shared with the trail system's volume tubes and with SMOKE COLUMN — deleting the
 // projectile does not remove the structure-collapse defect measured in that shader.
+
+// ── PRIMARY: ASTRAL SPEAR — directional crystal projectile ────────────────
+// Independent of Rift Bolt and FlowShield: a faceted dart with a coverage body,
+// narrow hot seams, two broken counter-rotating halos, and one tapered turbulent
+// wake. `followTransform` is sampled at its origin every frame and must remain
+// valid until Stop finishes or Kill is called. Heading is derived from motion.
+// `radius` is the body radius in metres and is clamped to 0.07-0.15.
+//
+// ONE-SHOT + POOLED (6). Stop eases the whole composition out; Kill is the
+// immediate cancellation cut.
+int  VFX_ComposeAstralSpear(const Matrix *followTransform, VC_MaterialId mat,
+                            float radius);
+void VFX_AstralSpear_SetIntensity(int handle, float intensity01);
+void VFX_AstralSpear_Stop(int handle);
+void VFX_KillAstralSpear(int handle);
 
 // ── PRIMARY: RIFT BOLT — the projectile head the purge above asked for ──────
 // A flying HOLLOW SHELL with a wake of one straight spine and three loose

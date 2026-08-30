@@ -27,6 +27,18 @@
   },
   "entries": [
     {
+      "source": "common/vc_astral_spear.inl",
+      "fn": "VFX_ComposeAstralSpear",
+      "label": "ASTRAL SPEAR",
+      "category": "common",
+      "fixture": "follower",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeAstralSpear($XFORM, VC_MAT_FIRE, 0.10f)",
+      "kill_fn": "VFX_AstralSpear_Stop"
+    },
+    {
       "source": "common/vc_beam.inl",
       "fn": "VFX_ComposeBeam",
       "label": "BEAM",
@@ -161,6 +173,18 @@
       "type": "persistent",
       "spawn_call": "VFX_FlowShield_Spawn($POS, VC_MAT_WATER, 1.5f, 1.0f)",
       "kill_fn": "VFX_KillFlowShield"
+    },
+    {
+      "source": "common/vc_gas_plume.inl",
+      "fn": "VFX_ComposeGasPlume",
+      "label": "GAS PLUME",
+      "category": "common",
+      "fixture": "static",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeGasPlume($POS, VC_MAT_FIRE, NULL)",
+      "kill_fn": "VFX_KillGasPlume"
     },
     {
       "source": "common/vc_glint_sparkle.inl",

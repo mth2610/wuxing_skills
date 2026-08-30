@@ -127,6 +127,7 @@ LIFECYCLE_SPECS = {
     # rises from a fixed point, so the fixture is a position rather than a
     # follower transform.
     "VFX_ComposeSmokeColumn":        ("trail",   "static",     "continuous"),
+    "VFX_ComposeGasPlume":           ("trail",   "static",     "continuous"),
     # P4 beam. "static" like the column and for the same reason: it owns a
     # handle and its endpoints are POSITIONS, not a follower transform. The
     # heuristic below would have guessed "timed" off the name alone, which is
@@ -138,6 +139,7 @@ LIFECYCLE_SPECS = {
     # show a stationary husk with no nose, no shed flakes and no wake direction
     # — i.e. would hide every property the effect was authored for.
     "VFX_ComposeRiftBolt":           ("trail",   "follower",   "continuous"),
+    "VFX_ComposeAstralSpear":        ("trail",   "follower",   "continuous"),
     "VFX_ComposeLightningArc":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeLightningGroundRicochet": ("event", "burst",    "oneshot"),
     # The moving counterpart (vc_smoke_trail.inl) — first arg is a
@@ -188,6 +190,11 @@ LIFECYCLE_SPECS = {
 # composition contracts.  The shield intentionally has no surface override:
 # its default is the procedural, transparent bubble profile.
 FIXTURE_SPAWN_OVERRIDES = {
+    # The generic radius inference is 1.5 m; Astral Spear is authored as a
+    # hand-thrown dart. Keep the bench at its 0.10 m body radius so its long
+    # head, broken halos, and wake are judged at gameplay scale.
+    "VFX_ComposeAstralSpear":
+        "VFX_ComposeAstralSpear($XFORM, VC_MAT_FIRE, 0.10f)",
     # A bolt is a projectile head, not a shield: the generic float rule fills
     # any "radius" with 1.5f, which here is a three-metre ball and reads as an
     # orb rather than as something in flight. 0.12 m is the authored default —
@@ -493,6 +500,8 @@ def infer_kill_fn(fn_name, available_fns):
     # cancellation path and not what a bench fixture should demonstrate.
     if fn_name == 'VFX_ComposeRiftBolt':
         return 'VFX_RiftBolt_Stop'
+    if fn_name == 'VFX_ComposeAstralSpear':
+        return 'VFX_AstralSpear_Stop'
     if fn_name.startswith('VFX_Compose'):
         candidate = 'VFX_Kill' + fn_name[len('VFX_Compose'):]
         if candidate in available_fns:

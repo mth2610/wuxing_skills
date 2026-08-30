@@ -3,6 +3,7 @@
 #include "core/decals/decal_system.h"
 #include "core/fluid/fluid_impact.h"
 #include "core/fluid/fluid_surface.h"
+#include "core/gas/gas_system.h"
 #include "core/metaball_fx.h"
 #include "core/particles/particle_manager.h"
 #include "core/post_fx.h"
@@ -189,12 +190,15 @@ static void CompositeScreenSpaceVFX(Camera3D camera)
   VFX_Compose_SubmitScreenSpaceVFX();
   bool hasFluid = FluidSurface_HasPending();
   bool hasMetaballs = MetaballFX_HasRegisteredBlobs();
-  if (!hasFluid && !hasMetaballs) return;
+  bool hasGas = GasSystem_HasPending();
+  if (!hasFluid && !hasMetaballs && !hasGas) return;
   if (hasFluid) FluidSurface_Capture(camera);
   if (hasMetaballs) MetaballFX_Prepare(camera, ELEMENT_COLOR_WATER, 0.3f, 0.12f);
+  if (hasGas) GasSystem_Prepare(camera);
   VFXRender_BeginPass(VFX_RENDER_PASS_BODY);
   if (hasFluid) FluidSurface_Composite();
   if (hasMetaballs) MetaballFX_Composite();
+  if (hasGas) GasSystem_Composite();
   VFXRender_EndPass();
 }
 
@@ -327,6 +331,7 @@ int main(int argc, char **argv) {
   PostFX_Init(screenWidth, screenHeight);
   SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
   GfxQuality_Set(GfxQuality_Default()); // Real Shading P0 — platform-appropriate tier
+  GasSystem_Init(screenWidth, screenHeight);
   Atmosphere_Init();      // G3 — ambient dust motes over the arena
   Atmosphere_Configure((Vector3){6.0f, 3.0f, 4.4f}, (Vector3){15.0f, 5.0f, 15.0f},
                        340, (Color){160, 190, 235, 255});
@@ -1174,6 +1179,7 @@ int main(int argc, char **argv) {
     Afterimage_Update(dt);
     ParticleManager_Update(dt);
     FluidImpact_Update(dt);
+    GasSystem_Update(dt);
     UpdateTrailSystem(dt);
     VFXLight_Update(dt);
     // Đợt E1a — decay any live radial burst and project its focal point.
@@ -1581,6 +1587,7 @@ int main(int argc, char **argv) {
   UnloadTrailSystem();
   DecalSystem_Unload();
   ScreenDistort_Unload();
+  GasSystem_Unload();
   SceneTargets_Unload();
   FluidSurface_Unload();
   Atmosphere_Unload();

@@ -184,6 +184,8 @@ add_executable(wuxing
     core/fluid/fluid_pbd.c
     core/fluid/fluid_pbd_gpu.c
     core/fluid/fluid_surface.c
+    core/gas/gas_sim.c
+    core/gas/gas_system.c
     core/path_spline.c
     core/post_fx.c
     core/color_grade_lut.c
@@ -360,6 +362,8 @@ configure_file(core/fluid/shaders/fluid_thickness_resolve.fs ${CMAKE_CURRENT_BIN
 configure_file(core/fluid/shaders/fluid_thickness_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_thickness_blur.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_depth_narrow_range.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_narrow_range.fs COPYONLY)
 configure_file(core/fluid/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface.fs COPYONLY)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders)
+configure_file(core/gas/shaders/gas_volume.fs ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders/gas_volume.fs COPYONLY)
 
 configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)
 configure_file(core/shaders/common/fs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/fs_header.glsl COPYONLY)

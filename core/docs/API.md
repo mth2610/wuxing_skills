@@ -207,6 +207,23 @@
 **Enums:** FluidLiquidClass { FLUID_LIQUID_DIELECTRIC,FLUID_LIQUID_EMISSIVE,FLUID_LIQUID_CONDUCTOR };FluidSurfacePriority { FLUID_PRIORITY_MINION,FLUID_PRIORITY_BASIC,FLUID_PRIORITY_CAST,FLUID_PRIORITY_ULTIMATE }
 **Structs** (fields in header): FluidLiquidDesc
 
+### `core/gas/gas_system.h`
+```c
+  GasVolumeDesc GasVolume_Preset(GasKind kind);
+  GasVolumeHandle GasVolume_Create(const GasVolumeDesc *desc);
+  void GasVolume_Destroy(GasVolumeHandle handle);
+  bool GasVolume_IsAlive(GasVolumeHandle handle);
+  void GasVolume_Inject(GasVolumeHandle handle, const GasInjection *injection);
+  void GasSystem_Init(int width, int height);
+  void GasSystem_Update(float dt);
+  bool GasSystem_HasPending(void);
+  void GasSystem_Prepare(Camera3D camera);
+  void GasSystem_Composite(void);
+  void GasSystem_Unload(void);
+```
+**Enums:** GasKind { GAS_SMOKE,GAS_FIRE,GAS_ENERGY };GasPriority { GAS_PRIORITY_AMBIENT,GAS_PRIORITY_CAST,GAS_PRIORITY_ULTIMATE }
+**Structs** (fields in header): GasVolumeDesc, GasInjection
+
 ### `core/force_field.h`
 ```c
   float Noise_Perlin3D(float x, float y, float z);
@@ -306,6 +323,7 @@
   void Trail_SetLateralOffset(int id, Vector3 worldOffset);
   void Trail_SetFrozen(int id, bool frozen);
   void Trail_SetStaticPath(int id, Vector3 tail, Vector3 head, int nodeCount);
+  void Trail_SetHdrGain(int id, float gain);
   void Trail_SetFlowMap(int id, Texture2D flowMap, float speed, float strength, float tiling);
 ```
 **Enums:** TrailType { TRAIL_TYPE_PROJECTILE,TRAIL_TYPE_WISP,TRAIL_TYPE_PORTAL,TRAIL_TYPE_FOLLOWER };TrailShape { TRAIL_SHAPE_RIBBON,TRAIL_SHAPE_TUBE } TrailWidthEnvelopeType { TRAIL_WIDTH_ENVELOPE_UNIFORM,TRAIL_WIDTH_ENVELOPE_TAPER_TAIL,TRAIL_WIDTH_ENVELOPE_TAPER_BOTH,TRAIL_WIDTH_ENVELOPE_PULSE,TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE,TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN,TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE }
@@ -785,6 +803,12 @@ _Inline helpers / macros only — see header._
   void VFX_FlameEmitter_SetIntensity(int handle, float intensity01);
   void VFX_FlameEmitter_Stop(int handle);
   void VFX_KillFlameEmitter(int handle);
+  VFX_GasPlumeConfig VFX_GasPlume_DefaultConfig(GasKind kind);
+  int VFX_ComposeGasPlume(Vector3 pos, VC_MaterialId mat, const VFX_GasPlumeConfig *config);
+  int VFX_GasPlume_Spawn(Vector3 pos, VC_MaterialId mat, const VFX_GasPlumeConfig *config);
+  void VFX_GasPlume_SetIntensity(int handle, float intensity01);
+  void VFX_GasPlume_Stop(int handle);
+  void VFX_KillGasPlume(int handle);
   int VFX_EmberTrail_Spawn(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
   void VFX_EmberTrail_SetTransform(int handle, Vector3 pos, Vector3 velocity);
   void VFX_EmberTrail_Stop(int handle);
@@ -811,6 +835,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeDebrisShards(Vector3 pos, Vector3 vel, VC_MaterialId mat, float scale, int count);
   void VFX_ComposeConvergeMotes(Vector3 center, VC_MaterialId mat, float radius, float t01, int moteCount);
   float VC_ConvergeMotesSizeMul(void);
+  float VC_ConvergeMotesSinkFrac(void);
   void VFX_ComposeChargeConverge(Vector3 center, VC_MaterialId mat, float radius, float t01, int moteCount);
   void VFX_ComposeDissolveExit(Vector3 pos, VC_MaterialId mat, float scale, float t01);
   void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat, float length, float arcRad, float t01);
@@ -823,7 +848,9 @@ _Inline helpers / macros only — see header._
   int VFX_ComposeTrail(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, TrailPresetId preset);
   int VFX_ComposeTrailEx(const Matrix *followTransform, VC_MaterialId mat, float width, float lifetime, TrailPresetId preset, const VFX_TrailSurface *surface);
   void VFX_TrailSetWidth(int handle, float width01);
+  void VFX_TrailSetHdrGain(int handle, float gain);
   void VFX_KillTrail(int handle);
+  void VFX_Trail_Extinguish(int handle);
   int VFX_ComposeSmokeColumn(Vector3 pos, VC_MaterialId mat, float radius, float height, VFX_ColumnKind kind, bool funnel);
   void VFX_SmokeColumn_Stop(int handle);
   int VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_VolumeKind kind);
@@ -832,6 +859,10 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius, float t01, GroundHeightSampleFn heightFn, void *ud);
   float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
   bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition, Vector3 *outNormal, void *unused);
+  int VFX_ComposeAstralSpear(const Matrix *followTransform, VC_MaterialId mat, float radius);
+  void VFX_AstralSpear_SetIntensity(int handle, float intensity01);
+  void VFX_AstralSpear_Stop(int handle);
+  void VFX_KillAstralSpear(int handle);
   int VFX_ComposeRiftBolt(const Matrix *followTransform, VC_MaterialId mat, float radius);
   void VFX_RiftBolt_SetIntensity(int handle, float intensity01);
   void VFX_RiftBolt_Stop(int handle);
@@ -877,7 +908,7 @@ _Inline helpers / macros only — see header._
   void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
 **Enums:** VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_KIND_COUNT }
-**Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_ShieldSurface, VFX_TrailSurface
+**Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_GasPlumeConfig, VFX_ShieldSurface, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`
 ```c

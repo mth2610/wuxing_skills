@@ -129,6 +129,12 @@ Automatically assign shader, texture, material, and manage the appropriate blend
 - `VFX_ComposeIceCrystal`: builds a clustered translucent prismatic ice crystal, glowing, using the `MAT_ICE` material (alpha blend + depth-write off).
 - `VFX_ComposeMagicPuddle`: builds a rippling magical puddle with dynamic flow via the `puddle.fs` shader, sampling a multi-config slot for `water_caustics.png` (slot 0) and `water_flow.png` (slot 1) in `REPEAT` mode.
 - `VFX_ComposeSmokePuff`: bursts a puff of dense smoke at a point via `ParticleSystem_SpawnRadialBurst`.
+- `VFX_GasPlume_Spawn(pos, material, config)`: creates one depth-aware simulated
+  smoke, fire, or energy plume through `core/gas`. The fixed-rate injector is
+  frame-rate independent; `VFX_GasPlume_Stop` ends feeding but lets the volume
+  dissipate, while `VFX_KillGasPlume` removes it immediately. Mobile v1 admits
+  one plume, so keep the returned handle and treat a zero result as admission
+  failure.
 - `VFX_ComposeStrandTrail`: the sin-wave strand trail. `VFX_STRAND_ENERGY` = bright filaments, `VFX_STRAND_SMOKE` = heavy occluding smoke (this replaced `VFX_ComposeSmokeTrail`).
 - `VFX_ComposeFissureStreak(start, end, width, progress, time)` (`vc_earth.inl`, rewritten 2026-07-10, fixed a 2nd time the same day): uses `ProceduralMesh_BuildFissure` (`pm_magic_effects.inl`) to build a 5-vertex cross-section (edge–shoulder–bottom–shoulder–edge) along the centerline, jittered by a noise seed derived from `start`/`end` (stable across frames, not re-randomized every call) — a built-in light "midpoint displacement" style. 3 layers: ① structural mesh drawn with `ProceduralMesh_DrawFissureShaded` (dedicated geometry for a crack shape — see note below), ② an "ember seam" — a wide quad strip (`width*0.55`) running along the crack's bottom, `BLEND_ADDITIVE`, alpha pulsing with `time` (kept dim — earth is the least-glowing element, not lava); ③ sparse dust falling near the leading edge of the spreading crack (probability-gated per frame, not scattered along the whole length). `progress` (0..1) controls how many cross-section slices are drawn → the crack "runs" A→B; `time` is used only for the ember seam's pulse.
   > [!NOTE]
