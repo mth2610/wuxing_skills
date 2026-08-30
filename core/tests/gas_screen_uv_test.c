@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -6,12 +7,13 @@
 } while (0)
 
 int main(void) {
-    /* Raylib/rlvk keep fragment UV, scene depth, and clip reconstruction in
-     * one GL-style texture space. RenderTexture display inversion belongs only
-     * to the final negative-height source rectangle. */
+    /* The completed raymarch target is displayed with a negative source
+     * height. A displayed screen Y therefore reaches the raymarch shader as
+     * 1-screenY, and the shader must undo that before inverse projection. */
     float clickedScreenY = 0.2f;
-    float reconstructionY = clickedScreenY;
-    CHECK(reconstructionY == clickedScreenY,
+    float renderTargetY = 1.0f - clickedScreenY;
+    float reconstructionY = 1.0f - renderTargetY;
+    CHECK(fabsf(reconstructionY - clickedScreenY) < 0.000001f,
           "screen click and reconstructed ray must address the same vertical point");
 
     FILE *file = fopen("core/gas/shaders/gas_volume.fs", "rb");
@@ -20,10 +22,14 @@ int main(void) {
     size_t count = fread(source, 1, sizeof(source) - 1u, file);
     fclose(file);
     source[count] = '\0';
-    CHECK(strstr(source, "vec2 uv = fragTexCoord;") != NULL,
-          "raymarch must preserve the fullscreen quad UV for reconstruction");
-    CHECK(strstr(source, "1.0 - fragTexCoord.y") == NULL,
-          "raymarch must not vertically mirror the reconstructed screen ray");
+    CHECK(strstr(source,
+                 "vec2 uv = vec2(fragTexCoord.x, 1.0 - fragTexCoord.y);") != NULL,
+          "raymarch must undo the final RenderTexture display inversion");
+    CHECK(strstr(source, "vec2 framebufferUV = fragTexCoord;") != NULL &&
+          strstr(source, "texture(u_sceneDepthTex, framebufferUV)") != NULL,
+          "scene depth must stay in framebuffer texture coordinates");
+    CHECK(strstr(source, "vec2 uv = fragTexCoord;") == NULL,
+          "raymarch must not reconstruct from the vertically displaced ray");
 
     file = fopen("core/gas/gas_system.c", "rb");
     CHECK(file != NULL, "gas renderer source must exist");

@@ -1008,6 +1008,21 @@ sampler's row mapping and assert the identity. Guarded by
 `core/tests/soft_depth_region_test.c`, which also asserts the pre-fix formula
 FAILS that round-trip — a guard that cannot fail on the old code is not a guard.
 
+## A fullscreen raymarch must invert its final RenderTexture display flip (30/08/2026)
+
+- **Symptom:** A world-space volume rises in the intended screen direction but
+  appears above or below its requested point; compensating in its data atlas can
+  split it into multiple unequal lobes.
+- **Cause:** A final `DrawTexturePro` with negative source height maps displayed
+  `screenY` to raymarch `fragTexCoord.y = 1-screenY`. Passing that coordinate
+  directly into inverse projection casts a vertically displaced ray. Vulkan
+  scenario `gas_projection` measured 61.79 px error with direct UV and 1.51 px
+  after the inverse; `core/gas/shaders/gas_volume.fs` is the concrete consumer.
+- **Rule:** For a raymarch rendered to a texture and displayed with negative
+  source height, undo that display flip before inverse projection, but sample
+  FBO textures such as scene depth at the original framebuffer UV; never
+  compensate by mirroring CPU volume data.
+
 **And the diagnostic that found it:** swap the partial region for a full-frame
 one. If the picture changes, the bug is in the region plumbing and not in
 anything the consumer computes from what it is handed.

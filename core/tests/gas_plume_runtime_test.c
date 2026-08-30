@@ -33,6 +33,9 @@ static int s_mockNextGas = 1;
 static GasVolumeHandle s_mockAliveGas;
 static int s_mockInjectionCount;
 static int s_mockDestroyCount;
+static GasVolumeDesc s_mockLastVolume;
+static GasInjection s_mockLastInjection;
+static bool s_mockHasInjection;
 
 static Vector3 Vector3Add(Vector3 a, Vector3 b) {
     return (Vector3){a.x + b.x, a.y + b.y, a.z + b.z};
@@ -62,6 +65,7 @@ GasVolumeDesc GasVolume_Preset(GasKind kind) {
 
 GasVolumeHandle GasVolume_Create(const GasVolumeDesc *desc) {
     if (desc == NULL) return GAS_VOLUME_INVALID;
+    s_mockLastVolume = *desc;
     s_mockAliveGas = s_mockNextGas++;
     return s_mockAliveGas;
 }
@@ -78,8 +82,11 @@ bool GasVolume_IsAlive(GasVolumeHandle handle) {
 }
 
 void GasVolume_Inject(GasVolumeHandle handle, const GasInjection *injection) {
-    if (GasVolume_IsAlive(handle) && injection != NULL && injection->density > 0.0f)
+    if (GasVolume_IsAlive(handle) && injection != NULL && injection->density > 0.0f) {
+        s_mockLastInjection = *injection;
+        s_mockHasInjection = true;
         ++s_mockInjectionCount;
+    }
 }
 
 #include "core/composition/common/vc_gas_plume.inl"
@@ -110,6 +117,26 @@ int main(void) {
     CHECK(at30 >= 11 && at30 <= 12, "30 fps plume must emit at the authored rate");
     CHECK(abs(at30 - at60) <= 1 && abs(at60 - at120) <= 1,
           "actual plume injection must be frame-rate independent");
+
+    VFX_GasPlumeConfig grounded = VFX_GasPlume_DefaultConfig(GAS_FIRE);
+    Vector3 requestedPosition = {1.0f, 2.0f, 3.0f};
+    s_mockHasInjection = false;
+    int groundedHandle = VFX_GasPlume_Spawn(requestedPosition, 0, &grounded);
+    CHECK(groundedHandle != 0, "grounded plume must spawn");
+    for (int i = 0; i < 12 && !s_mockHasInjection; ++i)
+        VC_GasPlume_Update(1.0f / 60.0f);
+    CHECK(s_mockHasInjection, "grounded plume must feed during its opening frames");
+    CHECK(fabsf(s_mockLastInjection.position.x - requestedPosition.x) < 0.0001f &&
+          fabsf(s_mockLastInjection.position.z - requestedPosition.z) < 0.0001f,
+          "gas source position must not wander around the requested click point");
+    CHECK(fabsf(s_mockLastInjection.position.y - requestedPosition.y) < 0.0001f,
+          "gas source must be centered on the requested world point, not above it");
+    float volumeMinY = s_mockLastVolume.center.y - s_mockLastVolume.size.y * 0.5f;
+    CHECK(volumeMinY < requestedPosition.y,
+          "gas volume must reserve space below the source so its sphere is not clipped upward");
+    CHECK(grounded.pulsesPerSecond >= 24.0f,
+          "default fire feed must be continuous enough to avoid descending pulse lobes");
+    VFX_KillGasPlume(groundedHandle);
 
     VFX_GasPlumeConfig config = VFX_GasPlume_DefaultConfig(GAS_SMOKE);
     config.emitDuration = 5.0f;

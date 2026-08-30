@@ -15,6 +15,8 @@
 //   fbo_switch     FBO-to-FBO scope switch makes the outgoing colour sampleable
 //   winding_rt     front-face triangle visible on screen AND inside a render texture
 //                  (flip-Y winding/culling class - mesh see-through)
+//   gas_projection raymarched world point survives RT display inversion and prior
+//                  MODELVIEW push/pop pollution at the GetWorldToScreen position
 //   instanced      DrawMeshInstanced + instanceTransform attribute
 //   imm_normal     immediate-mode rlNormal3f round-trip + what matModel really is
 //                  inside MyBeginMode3D (volume-tube |N.V| inversion class)
@@ -578,6 +580,97 @@ static const char *sc_winding_rt(void)
     UnloadImage(im); UnloadRenderTexture(rt);
     if (direct.g < 120) return "front-face triangle culled on the swapchain path";
     if (inRt.g < 120)   return "triangle culled INSIDE render texture: flip-Y winding mismatch";
+    return NULL;
+}
+
+static const char *sc_gas_projection(void)
+{
+    const char *FS =
+        "#version 330\n"
+        "in vec2 fragTexCoord; out vec4 finalColor;\n"
+        "uniform mat4 uInvProj; uniform mat4 uViewToWorld;\n"
+        "uniform vec3 uCamera; uniform vec3 uSource; uniform int uFlipY;\n"
+        "void main(){\n"
+        " vec2 uv=fragTexCoord; if(uFlipY!=0) uv.y=1.0-uv.y;\n"
+        " vec4 clip=vec4(uv*2.0-1.0,1.0,1.0);\n"
+        " vec4 v=uInvProj*clip; v.xyz/=v.w;\n"
+        " vec3 farWorld=(uViewToWorld*vec4(v.xyz,1.0)).xyz;\n"
+        " vec3 d=normalize(farWorld-uCamera); vec3 oc=uCamera-uSource;\n"
+        " float b=dot(oc,d), c=dot(oc,oc)-0.20*0.20;\n"
+        " if(b*b-c<0.0) discard; finalColor=vec4(1.0,0.0,0.0,1.0);\n"
+        "}\n";
+    Camera3D cam = {0};
+    cam.position = (Vector3){3.4f, 4.8f, 4.95f};
+    cam.target = (Vector3){0.0f, 0.2f, 0.0f};
+    cam.up = (Vector3){0.0f, 1.0f, 0.0f};
+    cam.fovy = 45.0f;
+    cam.projection = CAMERA_PERSPECTIVE;
+    Vector3 source = {0.7f, 1.0f, -0.4f};
+    Vector2 expected = GetWorldToScreen(source, cam);
+    Matrix projection = MatrixPerspective(cam.fovy*DEG2RAD, (double)W/(double)H,
+                                          1.0, 1000.0);
+    Matrix invProjection = MatrixInvert(projection);
+    Matrix viewToWorld = MatrixInvert(GetCameraMatrix(cam));
+    Shader shader = LoadShaderFromMemory(NULL, FS);
+    RenderTexture2D rt = LoadRenderTexture(W/4, H/4);
+    Image wi = GenImageColor(4, 4, WHITE);
+    Texture2D white = LoadTextureFromImage(wi);
+    UnloadImage(wi);
+    int invLoc = GetShaderLocation(shader, "uInvProj");
+    int viewLoc = GetShaderLocation(shader, "uViewToWorld");
+    int cameraLoc = GetShaderLocation(shader, "uCamera");
+    int sourceLoc = GetShaderLocation(shader, "uSource");
+    int flipLoc = GetShaderLocation(shader, "uFlipY");
+    float error[2] = {9999.0f, 9999.0f};
+    int pixels[2] = {0, 0};
+
+    for (int flip = 0; flip < 2; ++flip)
+    {
+        BeginDrawing();
+        ClearBackground(BLACK);
+        BeginMode3D(cam);
+        DrawCube((Vector3){-2.0f, 0.0f, 0.0f}, 0.5f, 0.5f, 0.5f, BLUE);
+        EndMode3D();
+        BeginTextureMode(rt);
+        ClearBackground(BLANK);
+        BeginShaderMode(shader);
+        SetShaderValueMatrix(shader, invLoc, invProjection);
+        SetShaderValueMatrix(shader, viewLoc, viewToWorld);
+        SetShaderValue(shader, cameraLoc, &cam.position, SHADER_UNIFORM_VEC3);
+        SetShaderValue(shader, sourceLoc, &source, SHADER_UNIFORM_VEC3);
+        SetShaderValue(shader, flipLoc, &flip, SHADER_UNIFORM_INT);
+        DrawTexturePro(white, (Rectangle){0,0,4,4},
+                       (Rectangle){0,0,(float)rt.texture.width,(float)rt.texture.height},
+                       (Vector2){0,0}, 0.0f, WHITE);
+        EndShaderMode();
+        EndTextureMode();
+        DrawTexturePro(rt.texture, (Rectangle){0,0,(float)rt.texture.width,-(float)rt.texture.height},
+                       (Rectangle){0,0,W,H}, (Vector2){0,0}, 0.0f, WHITE);
+        EndDrawing();
+
+        Image im = snap();
+        double sx = 0.0, sy = 0.0;
+        for (int y = 0; y < im.height; ++y) for (int x = 0; x < im.width; ++x)
+        {
+            Color c = at(im, x, y);
+            if (c.r > 180 && c.g < 40 && c.b < 40)
+            { sx += x; sy += y; pixels[flip]++; }
+        }
+        if (pixels[flip] > 0)
+        {
+            float cx = (float)(sx/pixels[flip]), cy = (float)(sy/pixels[flip]);
+            error[flip] = Vector2Distance((Vector2){cx, cy}, expected);
+        }
+        UnloadImage(im);
+    }
+    printf("  [gas_projection] expected=(%.1f,%.1f) directErr=%.2f flipErr=%.2f pixels=%d/%d\n",
+           expected.x, expected.y, error[0], error[1], pixels[0], pixels[1]);
+    UnloadTexture(white);
+    UnloadRenderTexture(rt);
+    UnloadShader(shader);
+    if (pixels[1] == 0) return "display-corrected gas ray produced no marker";
+    if (error[1] > 6.0f) return "display-corrected gas ray does not match GetWorldToScreen";
+    if (error[1] >= error[0]) return "direct gas ray unexpectedly matches better than the display-corrected ray";
     return NULL;
 }
 
@@ -3131,6 +3224,7 @@ static const Scenario SCENARIOS[] = {
     { "soft_depth",     sc_soft_depth },
     { "soft_ground",    sc_soft_ground },
     { "winding_rt",     sc_winding_rt },
+    { "gas_projection", sc_gas_projection },
     { "instanced",      sc_instanced },
     { "ssbo_vs",        sc_ssbo_vs },
     { "imm_normal",     sc_imm_normal },

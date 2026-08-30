@@ -64,7 +64,8 @@ vec4 Gas_SampleVolume(vec3 localPosition) {
 }
 
 void main() {
-    vec2 uv = fragTexCoord;
+    vec2 framebufferUV = fragTexCoord;
+    vec2 uv = vec2(fragTexCoord.x, 1.0 - fragTexCoord.y);
     vec3 farWorld = Gas_ReconstructWorld(uv, 1.0);
     vec3 rayOrigin = u_cameraPosition;
     vec3 rayDirection = normalize(farWorld - u_cameraPosition);
@@ -78,7 +79,7 @@ void main() {
     if (!Gas_IntersectBox(rayOrigin, rayDirection, nearHit, farHit)) discard;
     nearHit = max(nearHit, 0.0);
     if (u_hasSceneDepth != 0) {
-        float sceneDepth = texture(u_sceneDepthTex, uv).r;
+        float sceneDepth = texture(u_sceneDepthTex, framebufferUV).r;
         if (sceneDepth < 0.99999) {
             vec3 sceneWorld = Gas_ReconstructWorld(uv, sceneDepth);
             float sceneDistance = dot(sceneWorld - rayOrigin, rayDirection);

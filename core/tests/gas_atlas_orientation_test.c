@@ -26,7 +26,7 @@ int main(void) {
     CHECK(strstr(source, "tileY * s_sim.height + y") != NULL,
           "atlas upload must preserve simulation Y for shader v sampling");
     CHECK(strstr(source, "s_sim.height - 1 - y") == NULL,
-          "atlas upload must not add a second vertical inversion");
+          "atlas upload must not mirror the source inside its world volume");
 
     puts("gas_atlas_orientation_test: PASS");
     return 0;

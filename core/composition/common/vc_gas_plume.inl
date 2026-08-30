@@ -99,19 +99,19 @@ VFX_GasPlumeConfig VFX_GasPlume_DefaultConfig(GasKind kind)
     config.emitDuration = 1.8f;
     config.decayDuration = 2.2f;
     config.intensity = 1.0f;
-    config.pulsesPerSecond = 12.0f;
+    config.pulsesPerSecond = 24.0f;
     if (kind == GAS_SMOKE) {
         config.radius = 1.1f;
         config.height = 3.8f;
         config.emitDuration = 2.4f;
         config.decayDuration = 3.0f;
-        config.pulsesPerSecond = 10.0f;
+        config.pulsesPerSecond = 20.0f;
     } else if (kind == GAS_ENERGY) {
         config.radius = 1.0f;
         config.height = 2.4f;
         config.emitDuration = 1.4f;
         config.decayDuration = 1.8f;
-        config.pulsesPerSecond = 14.0f;
+        config.pulsesPerSecond = 30.0f;
     }
     return config;
 }
@@ -121,21 +121,17 @@ static void GasPlume_EmitPulse(VC_GasPlume *plume, float envelope)
     if (envelope <= 0.0f) return;
     float intensity = GasPlume_Clamp01(plume->config.intensity) * envelope;
     float angle = GasPlume_Random01(plume) * 2.0f * PI;
-    float spread = plume->config.kind == GAS_ENERGY ? 0.24f :
-                   (plume->config.kind == GAS_FIRE ? 0.38f : 0.46f);
-    float sourceRadius = plume->config.kind == GAS_ENERGY ? 0.24f : 0.32f;
-    float diskRadius = sqrtf(GasPlume_Random01(plume)) * plume->config.radius *
-                       spread * s_gasPlumeSpreadMul;
+    float sourceRadius = plume->config.kind == GAS_ENERGY ? 0.16f : 0.22f;
+    float referenceRate = plume->config.kind == GAS_ENERGY ? 14.0f :
+                          (plume->config.kind == GAS_FIRE ? 12.0f : 10.0f);
+    float pulseMass = referenceRate / fmaxf(plume->config.pulsesPerSecond, 1.0f);
     float sideSpeed = plume->config.radius *
-                      (0.32f + 0.30f * GasPlume_Random01(plume));
+                      (0.32f + 0.30f * GasPlume_Random01(plume)) *
+                      s_gasPlumeSpreadMul;
     float lift = fmaxf(0.6f, plume->config.height * 0.36f) * s_gasPlumeLiftMul;
 
     GasInjection injection = {0};
-    injection.position = Vector3Add(plume->position, (Vector3){
-        cosf(angle) * diskRadius,
-        plume->config.radius * 0.08f,
-        sinf(angle) * diskRadius
-    });
+    injection.position = plume->position;
     injection.radius = plume->config.radius *
                        (sourceRadius + 0.10f * GasPlume_Random01(plume));
     injection.velocity = Vector3Add(plume->config.wind, (Vector3){
@@ -143,16 +139,16 @@ static void GasPlume_EmitPulse(VC_GasPlume *plume, float envelope)
         lift,
         sinf(angle) * sideSpeed
     });
-    injection.density = 0.48f * intensity * s_gasPlumeDensityMul;
+    injection.density = 0.48f * pulseMass * intensity * s_gasPlumeDensityMul;
 
     if (plume->config.kind == GAS_FIRE) {
-        injection.temperature = 0.95f * intensity;
-        injection.reaction = 1.0f * intensity * s_gasPlumeEmissionMul;
+        injection.temperature = 0.95f * pulseMass * intensity;
+        injection.reaction = pulseMass * intensity * s_gasPlumeEmissionMul;
     } else if (plume->config.kind == GAS_ENERGY) {
-        injection.temperature = 0.45f * intensity;
-        injection.reaction = 0.85f * intensity * s_gasPlumeEmissionMul;
+        injection.temperature = 0.45f * pulseMass * intensity;
+        injection.reaction = 0.85f * pulseMass * intensity * s_gasPlumeEmissionMul;
     } else {
-        injection.temperature = 0.30f * intensity;
+        injection.temperature = 0.30f * pulseMass * intensity;
         injection.reaction = 0.0f;
     }
     GasVolume_Inject(plume->gasHandle, &injection);
@@ -178,8 +174,14 @@ int VFX_GasPlume_Spawn(Vector3 pos, VC_MaterialId mat,
     const VFX_ElementMaterial *element = VFX_Material(mat);
     GasVolumeDesc volume = GasVolume_Preset(config.kind);
     volume.priority = config.priority;
-    volume.center = Vector3Add(pos, (Vector3){0.0f, config.height * 0.5f, 0.0f});
-    volume.size = (Vector3){config.radius * 2.0f, config.height,
+    /* Keep the authored height above the source, but reserve a shallow buffer
+     * below it. Otherwise the spherical source is cut in half by grid y=0 and
+     * its visible density centroid starts above the requested world point. */
+    float belowSource = config.radius * 0.45f;
+    volume.center = Vector3Add(pos, (Vector3){
+        0.0f, (config.height - belowSource) * 0.5f, 0.0f
+    });
+    volume.size = (Vector3){config.radius * 2.0f, config.height + belowSource,
                             config.radius * 2.0f};
     volume.lifetime = config.emitDuration + config.decayDuration;
     volume.bodyColor = element->body;

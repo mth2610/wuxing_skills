@@ -147,7 +147,7 @@ typedef struct {
     float emitDuration;     // seconds of active feeding; default 1.8
     float decayDuration;    // seconds retained after feed ends; default 2.2
     float intensity;        // 0..1 density/emission scale; default 1
-    float pulsesPerSecond;  // fixed-rate injections; default 12
+    float pulsesPerSecond;  // fixed-rate micro-injections; fire default 24
     Vector3 wind;           // world-space drift velocity in m/s
 } VFX_GasPlumeConfig;
 
