@@ -94,12 +94,79 @@ GasSimConfig GasSim_DefaultConfig(void) {
     GasSimConfig config;
     config.buoyancy = 3.0f;
     config.smokeWeight = 0.25f;
+    config.vorticityStrength = 1.6f;
     config.velocityDissipation = 0.15f;
     config.densityDissipation = 0.35f;
     config.temperatureDissipation = 1.0f;
     config.reactionDissipation = 1.8f;
     config.pressureIterations = 8;
     return config;
+}
+
+static void GasSim_ApplyVorticityConfinement(GasSim *sim, float dt,
+                                              float strength) {
+    if (strength <= 0.0f) return;
+
+    /* Reuse the advected-velocity scratch fields for curl. scalarScratchA is
+     * free until scalar advection below. This keeps the mobile path allocation
+     * free while restoring the small eddies lost by semi-Lagrangian advection. */
+    for (int z = 1; z < sim->depth - 1; ++z) {
+        for (int y = 1; y < sim->height - 1; ++y) {
+            for (int x = 1; x < sim->width - 1; ++x) {
+                int i = GasSim_Index(sim, x, y, z);
+                float curlX = 0.5f * (
+                    sim->velocityZ[GasSim_Index(sim, x, y + 1, z)] -
+                    sim->velocityZ[GasSim_Index(sim, x, y - 1, z)] -
+                    sim->velocityY[GasSim_Index(sim, x, y, z + 1)] +
+                    sim->velocityY[GasSim_Index(sim, x, y, z - 1)]);
+                float curlY = 0.5f * (
+                    sim->velocityX[GasSim_Index(sim, x, y, z + 1)] -
+                    sim->velocityX[GasSim_Index(sim, x, y, z - 1)] -
+                    sim->velocityZ[GasSim_Index(sim, x + 1, y, z)] +
+                    sim->velocityZ[GasSim_Index(sim, x - 1, y, z)]);
+                float curlZ = 0.5f * (
+                    sim->velocityY[GasSim_Index(sim, x + 1, y, z)] -
+                    sim->velocityY[GasSim_Index(sim, x - 1, y, z)] -
+                    sim->velocityX[GasSim_Index(sim, x, y + 1, z)] +
+                    sim->velocityX[GasSim_Index(sim, x, y - 1, z)]);
+                sim->velocityScratchX[i] = curlX;
+                sim->velocityScratchY[i] = curlY;
+                sim->velocityScratchZ[i] = curlZ;
+                sim->scalarScratchA[i] = sqrtf(curlX * curlX + curlY * curlY +
+                                               curlZ * curlZ);
+            }
+        }
+    }
+    GasSim_ClearBoundary(sim, sim->scalarScratchA);
+
+    for (int z = 1; z < sim->depth - 1; ++z) {
+        for (int y = 1; y < sim->height - 1; ++y) {
+            for (int x = 1; x < sim->width - 1; ++x) {
+                int i = GasSim_Index(sim, x, y, z);
+                float nx = 0.5f * (
+                    sim->scalarScratchA[GasSim_Index(sim, x + 1, y, z)] -
+                    sim->scalarScratchA[GasSim_Index(sim, x - 1, y, z)]);
+                float ny = 0.5f * (
+                    sim->scalarScratchA[GasSim_Index(sim, x, y + 1, z)] -
+                    sim->scalarScratchA[GasSim_Index(sim, x, y - 1, z)]);
+                float nz = 0.5f * (
+                    sim->scalarScratchA[GasSim_Index(sim, x, y, z + 1)] -
+                    sim->scalarScratchA[GasSim_Index(sim, x, y, z - 1)]);
+                float inverseLength = 1.0f / fmaxf(sqrtf(nx * nx + ny * ny +
+                                                         nz * nz), 1.0e-5f);
+                nx *= inverseLength;
+                ny *= inverseLength;
+                nz *= inverseLength;
+                float curlX = sim->velocityScratchX[i];
+                float curlY = sim->velocityScratchY[i];
+                float curlZ = sim->velocityScratchZ[i];
+                float scale = dt * strength;
+                sim->velocityX[i] += (ny * curlZ - nz * curlY) * scale;
+                sim->velocityY[i] += (nz * curlX - nx * curlZ) * scale;
+                sim->velocityZ[i] += (nx * curlY - ny * curlX) * scale;
+            }
+        }
+    }
 }
 
 bool GasSim_Init(GasSim *sim, int width, int height, int depth) {
@@ -274,6 +341,7 @@ void GasSim_Step(GasSim *sim, float dt, const GasSimConfig *config) {
         sim->velocityY[i] += dt * (config->buoyancy * sim->temperature[i] -
                                    config->smokeWeight * sim->density[i]);
     }
+    GasSim_ApplyVorticityConfinement(sim, dt, config->vorticityStrength);
     GasSim_ProjectVelocity(sim, config->pressureIterations);
 
     GasSim_Advect(sim, sim->density, sim->scalarScratchA,

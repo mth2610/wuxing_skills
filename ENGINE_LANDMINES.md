@@ -1612,3 +1612,19 @@ gates any more. The second approach is how a mask chain quietly becomes decorati
 *Both this and the fbm-range entry above were found building SHOCK RING's
 procedural tail, which is the shipping version — but the lessons are about noise
 fields and mask chains generally, not about that tail.*
+
+## A volume raymarch with one shared phase prints discretization as stripes (30/08/2026)
+
+- **Symptom:** A low-resolution volume carries stable horizontal or vertical
+  stripes even though the simulated density itself contains no such layers; the
+  bands survive color tuning and become clearer after bilinear upsampling.
+- **Cause:** `core/gas/shaders/gas_volume.fs` started every pixel at the same
+  half-step along its ray. Atlas quantization and finite-step integration error
+  were therefore spatially correlated, so the low-resolution composite enlarged
+  the error into bands. This is the same sampling-coherence family as SSF's
+  separable-filter cross-hatch, but it is not the same pass and does not need an
+  expensive 2D depth filter.
+- **Rule:** Decorrelate the first ray sample in both screen axes with a stable,
+  mobile-safe hash while retaining dense fixed steps; use isotropic `fbm3` for
+  spatial breakup, never a single `sin(dot(position, k))` grating. Guarded by
+  `core/tests/gas_volume_quality_test.c`.

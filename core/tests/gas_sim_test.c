@@ -14,6 +14,7 @@
 } while (0)
 
 static GasSim s_sim;
+static GasSim s_control;
 
 static GasSimConfig TestConfig(void) {
     GasSimConfig config = GasSim_DefaultConfig();
@@ -81,9 +82,74 @@ static int TestBuoyancyAndDissipation(void) {
     return 0;
 }
 
+static float MeanCurl(const GasSim *sim) {
+    double sum = 0.0;
+    int count = 0;
+    for (int z = 1; z < sim->depth - 1; ++z) {
+        for (int y = 1; y < sim->height - 1; ++y) {
+            for (int x = 1; x < sim->width - 1; ++x) {
+                float curlX = 0.5f * (
+                    sim->velocityZ[GasSim_Index(sim, x, y + 1, z)] -
+                    sim->velocityZ[GasSim_Index(sim, x, y - 1, z)] -
+                    sim->velocityY[GasSim_Index(sim, x, y, z + 1)] +
+                    sim->velocityY[GasSim_Index(sim, x, y, z - 1)]);
+                float curlY = 0.5f * (
+                    sim->velocityX[GasSim_Index(sim, x, y, z + 1)] -
+                    sim->velocityX[GasSim_Index(sim, x, y, z - 1)] -
+                    sim->velocityZ[GasSim_Index(sim, x + 1, y, z)] +
+                    sim->velocityZ[GasSim_Index(sim, x - 1, y, z)]);
+                float curlZ = 0.5f * (
+                    sim->velocityY[GasSim_Index(sim, x + 1, y, z)] -
+                    sim->velocityY[GasSim_Index(sim, x - 1, y, z)] -
+                    sim->velocityX[GasSim_Index(sim, x, y + 1, z)] +
+                    sim->velocityX[GasSim_Index(sim, x, y - 1, z)]);
+                sum += sqrtf(curlX * curlX + curlY * curlY + curlZ * curlZ);
+                ++count;
+            }
+        }
+    }
+    return count > 0 ? (float)(sum / (double)count) : 0.0f;
+}
+
+static int TestVorticityConfinement(void) {
+    CHECK(GasSim_Init(&s_sim, 16, 16, 16));
+    for (int z = 1; z < s_sim.depth - 1; ++z) {
+        for (int y = 1; y < s_sim.height - 1; ++y) {
+            for (int x = 1; x < s_sim.width - 1; ++x) {
+                float dx = (float)x - 7.5f;
+                float dy = (float)y - 7.5f;
+                float dz = (float)z - 7.5f;
+                float radius2 = dx * dx + dy * dy + dz * dz;
+                float envelope = expf(-radius2 / 18.0f);
+                int index = GasSim_Index(&s_sim, x, y, z);
+                s_sim.velocityX[index] = -dy * envelope * 0.7f;
+                s_sim.velocityY[index] = dx * envelope * 0.7f;
+                s_sim.velocityZ[index] = sinf((float)y * 0.73f) * envelope * 0.35f;
+            }
+        }
+    }
+    s_control = s_sim;
+
+    GasSimConfig turbulent = TestConfig();
+    turbulent.buoyancy = 0.0f;
+    turbulent.pressureIterations = 12;
+    turbulent.vorticityStrength = 2.4f;
+    GasSimConfig control = turbulent;
+    control.vorticityStrength = 0.0f;
+    for (int i = 0; i < 5; ++i) {
+        GasSim_Step(&s_sim, 1.0f / 30.0f, &turbulent);
+        GasSim_Step(&s_control, 1.0f / 30.0f, &control);
+    }
+
+    CHECK(MeanCurl(&s_sim) > MeanCurl(&s_control) * 1.015f);
+    CHECK(GasSim_IsFinite(&s_sim));
+    return 0;
+}
+
 int main(void) {
     if (TestInjectionAndProjection() != 0) return 1;
     if (TestBuoyancyAndDissipation() != 0) return 1;
+    if (TestVorticityConfinement() != 0) return 1;
     puts("gas_sim_test: PASS");
     return 0;
 }

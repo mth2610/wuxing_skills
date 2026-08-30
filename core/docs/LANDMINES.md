@@ -78,6 +78,20 @@ bite on* (and over-stretching clamps it bimodal, which looks the same), and
 that settled the first one — painting the field out as the fragment colour for a
 single capture — is worth reaching for far earlier than it was here.
 
+### Gas breakup needs both solver curl and low-density erosion
+
+- **Symptom:** Fire and smoke advect in the right direction but remain soft
+  tubes with little tearing; fire is one orange tone with no readable hot core.
+- **Cause:** `core/gas/gas_sim.c` previously combined semi-Lagrangian advection,
+  buoyancy and pressure projection without restoring dissipated curl, while
+  `core/gas/shaders/gas_volume.fs` mapped all density through one body color and
+  all heat through one emission color.
+- **Rule:** Preserve small eddies with bounded vorticity confinement, erode only
+  low-density boundaries with multiplicative world-space `fbm3`, and gate a
+  narrow orange-to-yellow-to-near-white core from pre-erosion reaction,
+  temperature and density. Raymarch striping is the separate promoted rule in
+  `ENGINE_LANDMINES.md`.
+
 ### A sharp feature on a two-sided swept sheet doubles — promoted
 `ENGINE_LANDMINES.md`, *A feature on a two-sided swept sheet is drawn TWICE*.
 SHOCK RING's leading edge came out as two concentric circles: the primitive

@@ -26,6 +26,7 @@ typedef struct GasSimInjection {
 typedef struct GasSimConfig {
     float buoyancy;
     float smokeWeight;
+    float vorticityStrength;
     float velocityDissipation;
     float densityDissipation;
     float temperatureDissipation;

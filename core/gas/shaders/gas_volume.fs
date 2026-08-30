@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/vfx_composite.glsl"
+#include "core/shaders/common/noise.glsl"
 
 in vec2 fragTexCoord;
 out vec4 finalColor;
@@ -22,6 +23,14 @@ uniform float u_densityScale;
 uniform vec3 u_bodyColor;
 uniform vec3 u_emissionColor;
 uniform float u_emissionGain;
+uniform int u_kind;
+
+/* A fixed half-step start gives neighbouring rays identical integration error;
+ * after low-resolution upsampling that error reads as bands. This mobile-safe
+ * interleaved hash decorrelates the phase in both screen axes. */
+float Gas_RayJitter(vec2 pixel) {
+    return fract(52.9829189 * fract(dot(pixel, vec2(0.06711056, 0.00583715))));
+}
 
 vec3 Gas_ReconstructWorld(vec2 uv, float depth) {
     vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -89,7 +98,7 @@ void main() {
 
     int stepCount = clamp(u_steps, 1, 48);
     float stepLength = (farHit - nearHit) / float(stepCount);
-    float travel = nearHit + stepLength * 0.5;
+    float travel = nearHit + stepLength * Gas_RayJitter(gl_FragCoord.xy);
     vec3 volumeSize = max(u_volumeMax - u_volumeMin, vec3(1e-5));
     vec3 accumulatedBody = vec3(0.0);
     vec3 accumulatedEmission = vec3(0.0);
@@ -100,7 +109,22 @@ void main() {
         vec3 worldPosition = rayOrigin + rayDirection * travel;
         vec3 localPosition = (worldPosition - u_volumeMin) / volumeSize;
         vec4 gas = Gas_SampleVolume(localPosition);
-        float density = max(gas.r, 0.0);
+        float rawDensity = max(gas.r, 0.0);
+        float density = rawDensity;
+        /* World-space 3D noise breaks voxel-soft blobs without introducing the
+         * plane-wave stripes caused by sin(dot(position, k)). Multiplication
+         * keeps the two bands distinct instead of averaging fbm back to grey. */
+        float coarseNoise = fbm3(worldPosition * 1.35 + vec3(3.7, 11.2, -5.4));
+        float detailNoise = fbm3(worldPosition * 3.10 + vec3(-8.1, 2.6, 14.7));
+        float breakup = clamp(smoothstep(0.24, 0.76, coarseNoise) *
+                              mix(0.62, 1.16, detailNoise), 0.0, 1.0);
+        if (u_kind == 1) {
+            density = max(density - (1.0 - breakup) * 0.14, 0.0) *
+                      mix(0.78, 1.35, breakup);
+        } else {
+            density = max(density - (1.0 - breakup) * 0.06, 0.0) *
+                      mix(0.72, 1.24, breakup);
+        }
         float sampleAlpha = 1.0 - exp(-density * u_densityScale * stepLength);
         float transmittance = 1.0 - coverage;
 
@@ -108,10 +132,25 @@ void main() {
         float densityAbove = Gas_SampleVolume(localPosition + vec3(0.0, gradientStep.y, 0.0)).r;
         float softLight = clamp(0.42 + (density - densityAbove) * 1.8 + localPosition.y * 0.18,
                                 0.2, 1.0);
-        accumulatedBody += transmittance * sampleAlpha * u_bodyColor * softLight;
+        vec3 bodyTone = u_bodyColor * mix(0.72, 1.18, coarseNoise);
+        accumulatedBody += transmittance * sampleAlpha * bodyTone * softLight;
         float heat = max(gas.g * 0.35 + gas.b, 0.0);
-        accumulatedEmission += transmittance * sampleAlpha * u_emissionColor *
-                               heat * u_emissionGain;
+        vec3 emittedColor = u_emissionColor;
+        float emittedHeat = heat;
+        if (u_kind == 1) {
+            float shoulderWeight = smoothstep(0.10, 0.90, heat) * 0.72;
+            float hotProduct = gas.b * gas.g;
+            float coreWeight = smoothstep(0.50, 0.90, hotProduct) *
+                               smoothstep(0.45, 0.85, rawDensity) *
+                               mix(0.45, 1.0,
+                                   smoothstep(0.40, 0.75, detailNoise));
+            vec3 hotColor = mix(u_emissionColor, vec3(1.0, 0.58, 0.10),
+                                shoulderWeight);
+            emittedColor = mix(hotColor, vec3(1.0, 0.92, 0.72), coreWeight);
+            emittedHeat *= mix(0.26, 1.28, coreWeight);
+        }
+        accumulatedEmission += transmittance * sampleAlpha * emittedColor *
+                               emittedHeat * u_emissionGain;
         coverage += transmittance * sampleAlpha;
         travel += stepLength;
     }

@@ -34,6 +34,7 @@ typedef struct GasShaderLocations {
     int bodyColor;
     int emissionColor;
     int emissionGain;
+    int kind;
 } GasShaderLocations;
 
 static GasSim s_sim;
@@ -125,6 +126,7 @@ static void GasSystem_CacheLocations(void) {
     s_locations.bodyColor = GetShaderLocation(s_raymarchShader, "u_bodyColor");
     s_locations.emissionColor = GetShaderLocation(s_raymarchShader, "u_emissionColor");
     s_locations.emissionGain = GetShaderLocation(s_raymarchShader, "u_emissionGain");
+    s_locations.kind = GetShaderLocation(s_raymarchShader, "u_kind");
 }
 
 static void GasSystem_UploadAtlas(void) {
@@ -159,6 +161,7 @@ GasVolumeDesc GasVolume_Preset(GasKind kind) {
     desc.densityScale = 1.8f;
     desc.buoyancy = 3.0f;
     desc.smokeWeight = 0.2f;
+    desc.turbulence = 2.4f;
     desc.densityDissipation = 0.35f;
     desc.temperatureDissipation = 1.0f;
     desc.reactionDissipation = 1.8f;
@@ -167,11 +170,13 @@ GasVolumeDesc GasVolume_Preset(GasKind kind) {
         desc.emissionColor = (Color){255, 104, 18, 255};
         desc.emissionGain = 4.0f;
         desc.buoyancy = 4.5f;
+        desc.turbulence = 3.6f;
     } else if (kind == GAS_ENERGY) {
         desc.bodyColor = (Color){28, 38, 78, 255};
         desc.emissionColor = (Color){78, 176, 255, 255};
         desc.emissionGain = 3.0f;
         desc.buoyancy = 1.2f;
+        desc.turbulence = 1.6f;
         desc.smokeWeight = 0.0f;
         desc.densityDissipation = 0.22f;
         desc.reactionDissipation = 0.65f;
@@ -233,6 +238,7 @@ GasVolumeHandle GasVolume_Create(const GasVolumeDesc *desc) {
     s_config = GasSim_DefaultConfig();
     s_config.buoyancy = s_desc.buoyancy;
     s_config.smokeWeight = s_desc.smokeWeight;
+    s_config.vorticityStrength = fmaxf(0.0f, s_desc.turbulence);
     s_config.densityDissipation = s_desc.densityDissipation;
     s_config.temperatureDissipation = s_desc.temperatureDissipation;
     s_config.reactionDissipation = s_desc.reactionDissipation;
@@ -323,6 +329,7 @@ void GasSystem_Prepare(Camera3D camera) {
     int hasDepth = sceneDepth.id ? 1 : 0;
     int orthographic = camera.projection == CAMERA_ORTHOGRAPHIC ? 1 : 0;
     int tilesX = GAS_ATLAS_TILES_X;
+    int kind = (int)s_desc.kind;
     int gridWidth, gridHeight, gridDepth, divisor, steps;
     GasSystem_SelectGrid(&gridWidth, &gridHeight, &gridDepth, &divisor, &steps);
     (void)gridWidth; (void)gridHeight; (void)gridDepth; (void)divisor;
@@ -346,6 +353,7 @@ void GasSystem_Prepare(Camera3D camera) {
     SetShaderValue(s_raymarchShader, s_locations.bodyColor, &bodyColor, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locations.emissionColor, &emissionColor, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locations.emissionGain, &s_desc.emissionGain, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_raymarchShader, s_locations.kind, &kind, SHADER_UNIFORM_INT);
     if (hasDepth)
         SetShaderValueTexture(s_raymarchShader, s_locations.sceneDepth, sceneDepth);
     DrawTexturePro(s_atlas,

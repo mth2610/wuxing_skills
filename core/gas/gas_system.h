@@ -31,6 +31,9 @@ typedef struct GasVolumeDesc {
     float emissionGain;
     float buoyancy;
     float smokeWeight;
+    /* Vorticity confinement strength. Higher values preserve more rolling,
+     * torn structure after semi-Lagrangian advection; 0 disables it. */
+    float turbulence;
     float densityDissipation;
     float temperatureDissipation;
     float reactionDissipation;
