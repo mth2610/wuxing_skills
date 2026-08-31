@@ -1613,7 +1613,7 @@ gates any more. The second approach is how a mask chain quietly becomes decorati
 procedural tail, which is the shipping version — but the lessons are about noise
 fields and mask chains generally, not about that tail.*
 
-## A volume raymarch with one shared phase prints discretization as stripes (30/08/2026)
+## A volume raymarch with one shared phase prints discretization as stripes (31/08/2026)
 
 - **Symptom:** A low-resolution volume carries stable horizontal or vertical
   stripes even though the simulated density itself contains no such layers; the

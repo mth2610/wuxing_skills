@@ -35,6 +35,7 @@ typedef struct GasShaderLocations {
     int emissionColor;
     int emissionGain;
     int kind;
+    int qualityTier;
 } GasShaderLocations;
 
 static GasSim s_sim;
@@ -127,6 +128,7 @@ static void GasSystem_CacheLocations(void) {
     s_locations.emissionColor = GetShaderLocation(s_raymarchShader, "u_emissionColor");
     s_locations.emissionGain = GetShaderLocation(s_raymarchShader, "u_emissionGain");
     s_locations.kind = GetShaderLocation(s_raymarchShader, "u_kind");
+    s_locations.qualityTier = GetShaderLocation(s_raymarchShader, "u_qualityTier");
 }
 
 static void GasSystem_UploadAtlas(void) {
@@ -171,6 +173,10 @@ GasVolumeDesc GasVolume_Preset(GasKind kind) {
         desc.emissionGain = 4.0f;
         desc.buoyancy = 4.5f;
         desc.turbulence = 3.6f;
+        /* Keep reaction close enough to density that a rising flame retains
+         * colour before handing off to smoke; the former 1.8 rate left only
+         * 24% as much reaction as density after one second. */
+        desc.reactionDissipation = 0.95f;
     } else if (kind == GAS_ENERGY) {
         desc.bodyColor = (Color){28, 38, 78, 255};
         desc.emissionColor = (Color){78, 176, 255, 255};
@@ -330,6 +336,7 @@ void GasSystem_Prepare(Camera3D camera) {
     int orthographic = camera.projection == CAMERA_ORTHOGRAPHIC ? 1 : 0;
     int tilesX = GAS_ATLAS_TILES_X;
     int kind = (int)s_desc.kind;
+    int qualityTier = (int)GfxQuality_Get();
     int gridWidth, gridHeight, gridDepth, divisor, steps;
     GasSystem_SelectGrid(&gridWidth, &gridHeight, &gridDepth, &divisor, &steps);
     (void)gridWidth; (void)gridHeight; (void)gridDepth; (void)divisor;
@@ -354,6 +361,7 @@ void GasSystem_Prepare(Camera3D camera) {
     SetShaderValue(s_raymarchShader, s_locations.emissionColor, &emissionColor, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locations.emissionGain, &s_desc.emissionGain, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locations.kind, &kind, SHADER_UNIFORM_INT);
+    SetShaderValue(s_raymarchShader, s_locations.qualityTier, &qualityTier, SHADER_UNIFORM_INT);
     if (hasDepth)
         SetShaderValueTexture(s_raymarchShader, s_locations.sceneDepth, sceneDepth);
     DrawTexturePro(s_atlas,

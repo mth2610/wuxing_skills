@@ -39,6 +39,22 @@ static float PlumeEnvelope(float elapsed, float emitDuration) {
     return fadeIn * fadeOut;
 }
 
+static int TestFireReadabilityBudget(void) {
+    /* The shared FIRE renderer intentionally lowers hot-body coverage. The
+     * authored plume must restore enough optical mass at composition level to
+     * remain a primary-readable column at its default 0.9 m radius. */
+    float oldBodyBudget = 0.48f * 12.0f * 1.8f * 0.32f;
+    float bodyBudget = 0.62f * 12.0f * 2.6f * 0.32f;
+    CHECK(bodyBudget > oldBodyBudget * 1.80f,
+          "fire plume body budget must recover the low-opacity FIRE carrier");
+
+    float oldEmissionBudget = 1.0f * 12.0f * 4.0f;
+    float emissionBudget = 1.20f * 12.0f * 4.0f * 1.35f;
+    CHECK(emissionBudget > oldEmissionBudget * 1.60f,
+          "fire plume reaction budget must remain readable through tone mapping");
+    return 0;
+}
+
 static char *ReadText(const char *path) {
     FILE *file = fopen(path, "rb");
     if (file == NULL) return NULL;
@@ -54,6 +70,8 @@ static char *ReadText(const char *path) {
 }
 
 int main(void) {
+    if (TestFireReadabilityBudget() != 0) return 1;
+
     int p30 = SimulatePulseCount(30.0f, 2.0f, 12.0f);
     int p60 = SimulatePulseCount(60.0f, 2.0f, 12.0f);
     int p120 = SimulatePulseCount(120.0f, 2.0f, 12.0f);
@@ -74,6 +92,14 @@ int main(void) {
     CHECK(strstr(source, "VFX_Material") != NULL, "plume colors must come from the material table");
     CHECK(strstr(source, "pulseAccumulator += dt * pulseRate") != NULL,
           "plume injection must be driven by a carried rate accumulator");
+    CHECK(strstr(source, "float densityCoefficient = plume->config.kind == GAS_FIRE ? 0.62f : 0.48f") != NULL,
+          "only FIRE plume density should receive the readability lift");
+    CHECK(strstr(source, "injection.reaction = 1.20f * pulseMass * intensity") != NULL,
+          "fire plume reaction injection must match its readability budget");
+    CHECK(strstr(source, "volume.densityScale = 2.6f") != NULL,
+          "fire plume must restore optical depth after shared FIRE opacity");
+    CHECK(strstr(source, "float fireOpticalGain = config.kind == GAS_FIRE ? 1.35f : 1.0f") != NULL,
+          "fire plume radiance lift must not affect smoke or energy kinds");
     free(source);
 
     puts("gas_plume_test: PASS");

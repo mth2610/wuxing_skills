@@ -139,11 +139,14 @@ static void GasPlume_EmitPulse(VC_GasPlume *plume, float envelope)
         lift,
         sinf(angle) * sideSpeed
     });
-    injection.density = 0.48f * pulseMass * intensity * s_gasPlumeDensityMul;
+    float densityCoefficient = plume->config.kind == GAS_FIRE ? 0.62f : 0.48f;
+    injection.density = densityCoefficient * pulseMass * intensity *
+                        s_gasPlumeDensityMul;
 
     if (plume->config.kind == GAS_FIRE) {
         injection.temperature = 0.95f * pulseMass * intensity;
-        injection.reaction = pulseMass * intensity * s_gasPlumeEmissionMul;
+        injection.reaction = 1.20f * pulseMass * intensity *
+                             s_gasPlumeEmissionMul;
     } else if (plume->config.kind == GAS_ENERGY) {
         injection.temperature = 0.45f * pulseMass * intensity;
         injection.reaction = 0.85f * pulseMass * intensity * s_gasPlumeEmissionMul;
@@ -186,7 +189,10 @@ int VFX_GasPlume_Spawn(Vector3 pos, VC_MaterialId mat,
     volume.lifetime = config.emitDuration + config.decayDuration;
     volume.bodyColor = element->body;
     if (config.kind != GAS_SMOKE) volume.emissionColor = element->glow;
-    volume.emissionGain *= config.intensity * s_gasPlumeEmissionMul;
+    float fireOpticalGain = config.kind == GAS_FIRE ? 1.35f : 1.0f;
+    if (config.kind == GAS_FIRE) volume.densityScale = 2.6f;
+    volume.emissionGain *= config.intensity * fireOpticalGain *
+                           s_gasPlumeEmissionMul;
 
     GasVolumeHandle gasHandle = GasVolume_Create(&volume);
     if (gasHandle == GAS_VOLUME_INVALID) return 0;

@@ -89,8 +89,63 @@ single capture — is worth reaching for far earlier than it was here.
 - **Rule:** Preserve small eddies with bounded vorticity confinement, erode only
   low-density boundaries with multiplicative world-space `fbm3`, and gate a
   narrow orange-to-yellow-to-near-white core from pre-erosion reaction,
-  temperature and density. Raymarch striping is the separate promoted rule in
-  `ENGINE_LANDMINES.md`.
+  temperature and density. Keep multi-octave breakup HIGH-only;
+  `core/gas/shaders/gas_volume.fs` uses single-octave `vnoise3` on MED/LOW.
+  Raymarch striping is the separate promoted rule in `ENGINE_LANDMINES.md`.
+
+### A fire volume cannot shade its hot body like cooling smoke
+
+- **Symptom:** The reaction ramp contains orange, yellow and a pale core, but
+  the rendered flame is still muddy and dark. On a blue background it develops
+  a brown-purple veil, most visibly around Gas Plume and Flame Jet.
+- **Cause:** Density outlives temperature and reaction, yet all `GAS_FIRE`
+  density used one dark carrier and one diffuse-light factor. The latter could
+  fall to `0.2`, so even a hot self-emitting sample first contributed a nearly
+  black body before emission was added. The first attempted fix lowered that
+  carrier's opacity but reused the same reduced alpha for emission, trading the
+  dark veil for a dim, milky flame. Cooling density then kept absorbing the
+  background after the bright channels dissipated.
+- **Rule:** Treat fire extinction, body tone and emission as separate optical
+  signals. Hot density is warm, less opaque and self-lit; cooling smoke is
+  neutral, moderately opaque and may retain volume shading. Derive emission
+  transport from full density alpha gated by reaction and heat, never from smoke
+  coverage; keep the near-white gain confined to the narrower
+  reaction/temperature/density core mask. Reaction may decay faster than density
+  to hand fire off to smoke, but should retain at least half its density-relative
+  strength after one second for a readable flame body.
+
+### A small fire composition must repay opacity removed by the shared shader
+
+- **Symptom:** The shared fire renderer no longer has a dark veil, yet Gas Plume
+  becomes a faint beige smudge while Gas Vortex remains clearly readable.
+- **Cause:** Gas Vortex uses `GAS_ENERGY` with full carrier opacity, density scale
+  `2.2` and an extra `1.6x` emission gain. Gas Plume retained the generic FIRE
+  preset's lower injection, `1.8` density scale and unscaled emission after the
+  FIRE shader deliberately reduced hot-body coverage.
+- **Rule:** When shared optics reduce coverage, measure the composition's
+  normalized per-second density and reaction budgets rather than compensating
+  with another shader-wide gain. Restore the small primary at its authoring
+  site, gate the lift by `GasKind`, and leave smoke/energy variants unchanged.
+
+### Ray-integrated fire can look hot while never crossing the bloom threshold
+
+- **Symptom:** A volumetric flame has a pale center but no readable post-process
+  halo, even though the scene target is HDR and bloom is enabled.
+- **Cause:** Integrating emission through many low-alpha raymarch samples can
+  keep the final HDR fragment below the `1.25` bright-pass threshold. Multiplying
+  the bloom candidate by heat and density again after already gating on those
+  fields compounds the loss. The opposite compensation is also wrong: taking
+  the maximum hot voxel anywhere on the ray and adding it without transmittance
+  lets a hidden rear voxel paint a broad white patch over the visible flame.
+  Raising all fire emission likewise turns the plume beige and erases its orange
+  shoulder.
+- **Rule:** Accumulate a separate HDR core radiance with the same front-to-back
+  visibility as the volume: `transmittance * densityAlpha * coreWeight`. Add
+  that narrow physical signal before the shared premultiplied resolver. The
+  carrier remains below threshold, rear hotspots remain attenuated, and only
+  the visible reaction/temperature/density core may clear the threshold. Test
+  an above-threshold core, a far-below-threshold edge, and front-versus-rear
+  contribution.
 
 ### A sharp feature on a two-sided swept sheet doubles — promoted
 `ENGINE_LANDMINES.md`, *A feature on a two-sided swept sheet is drawn TWICE*.

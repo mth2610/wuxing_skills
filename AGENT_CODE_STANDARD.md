@@ -92,7 +92,10 @@
 - Keep `highp` precision for any uniform shared between VS+FS (lesson: `mediump`→`highp` fix was required for Android, see commit "fs_header.glsl — đổi precision mediump float → precision highp float"). Don't introduce `mediump`/`lowp` regressions.
 - New common code only runs through the `#include` path (runtime-rewritten to `#version 300 es`) — must stay valid under both `#version 330` (desktop) and `#version 300 es` (Android) syntax.
 - Lightning is not a broad ribbon: use `core/lightning/`'s endpoint-pinned canvas, FBM-warped distance-field centreline, and one continuous core→corona→field colour profile. Reveal it with the shared `travelDuration`/`u_travel` phase, taper body/core/halo at both endpoints, and never leave the canvas edge visible.
-- Volume raymarches must decorrelate the first step in both screen axes; a shared fixed phase turns finite-step error into stripes after upsampling. Use world-space `fbm3`, never `sin(dot(position, k))`, for volumetric breakup.
+- Volume raymarches must decorrelate the first step in both screen axes; a shared fixed phase turns finite-step error into stripes after upsampling. Use world-space noise, never `sin(dot(position, k))`; keep multi-octave `fbm3` HIGH-only and use `vnoise3` on mobile tiers.
+- Volumetric fire must not reuse smoke/body opacity as emission alpha: gate full-density emission transport with reaction+heat, and keep reaction persistence measured against density decay.
+- After lowering shared volume coverage, compare each composition's per-second density/reaction budget; restore undersized primaries at the `GasKind`-gated caller, not with another global shader gain.
+- Volume bloom must come from visible, front-to-back-integrated HDR core radiance above the global bright-pass threshold; never use an unattenuated max-along-ray seed or raise the whole carrier to manufacture a halo.
 
 ### 10.3 GPU particle backend (`core/particles/gpu/`)
 - Read `core/particles/docs/GPU_BACKEND_API.md` first. New VFX code uses `core/particles/particle_manager.h`.

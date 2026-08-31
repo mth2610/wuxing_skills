@@ -219,7 +219,10 @@ int VFX_FlameJet_Spawn(Vector3 start, Vector3 end, VC_MaterialId mat,
     volume.smokeWeight = 0.10f;
     volume.densityDissipation = 0.48f;
     volume.temperatureDissipation = 1.30f;
-    volume.reactionDissipation = 1.48f;
+    /* Preserve the emissive channel along the directed body. It still decays
+     * faster than density, so the jet hands off to smoke rather than glowing
+     * for its entire decay lifetime. */
+    volume.reactionDissipation = 0.95f;
 
     GasVolumeHandle gasHandle = GasVolume_Create(&volume);
     if (gasHandle == GAS_VOLUME_INVALID) return 0;
