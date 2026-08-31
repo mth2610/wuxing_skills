@@ -37,6 +37,12 @@ typedef struct GasVolumeDesc {
     float densityDissipation;
     float temperatureDissipation;
     float reactionDissipation;
+    /* Optical shaping applied after simulation. Zero inherits the material
+     * preset, negative disables the control, and positive values are clamped.
+     * detail/shadow accept [0, 2]; backgroundAdapt accepts [0, 1]. */
+    float detailStrength;
+    float shadowStrength;
+    float backgroundAdapt;
 } GasVolumeDesc;
 
 typedef struct GasInjection {
@@ -47,6 +53,27 @@ typedef struct GasInjection {
     float temperature;
     float reaction;
 } GasInjection;
+
+/* One-second rolling averages for the active gas volume. Draw timings are CPU
+ * command-submission cost, not GPU execution time; use renderer timestamp
+ * tracing on a presented surface for authoritative GPU milliseconds. */
+typedef struct GasPerfStats {
+    float updateCpuMsAvg;
+    float atlasUploadCpuMsAvg;
+    float raymarchSubmitCpuMsAvg;
+    float compositeSubmitCpuMsAvg;
+    float simSubstepsAvg;
+    unsigned int sampleFrames;
+    unsigned int atlasUploads;
+    unsigned long long atlasUploadBytesTotal;
+    int gridWidth;
+    int gridHeight;
+    int gridDepth;
+    int raymarchWidth;
+    int raymarchHeight;
+    int raymarchSteps;
+    unsigned long long raymarchAtlasTapUpperBound;
+} GasPerfStats;
 
 /* Returns a tuned starting point for smoke, fire, or magical energy gas. */
 GasVolumeDesc GasVolume_Preset(GasKind kind);
@@ -64,6 +91,8 @@ void GasSystem_Update(float dt);
 bool GasSystem_HasPending(void);
 void GasSystem_Prepare(Camera3D camera);
 void GasSystem_Composite(void);
+GasPerfStats GasSystem_GetPerfStats(void);
+void GasSystem_ResetPerfStats(void);
 void GasSystem_Unload(void);
 
 #endif

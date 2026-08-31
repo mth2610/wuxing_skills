@@ -33,6 +33,9 @@ static float s_gasPlumeSpreadMul = 1.0f;
 static float s_gasPlumeLiftMul = 1.0f;
 static float s_gasPlumeDensityMul = 1.0f;
 static float s_gasPlumeEmissionMul = 1.0f;
+/* Diagnostic capture override: -1 keeps the authored kind; 0/1/2 select the
+ * complete smoke/fire/energy defaults so one fixture can cover every path. */
+static float s_gasPlumeKindOverride = -1.0f;
 
 static float GasPlume_Clamp01(float value)
 {
@@ -76,6 +79,7 @@ static void GasPlume_EnsureTuning(void)
     Tuning_RegisterFloat("gasplume_lift", &s_gasPlumeLiftMul, 1.0f);
     Tuning_RegisterFloat("gasplume_density", &s_gasPlumeDensityMul, 1.0f);
     Tuning_RegisterFloat("gasplume_emission", &s_gasPlumeEmissionMul, 1.0f);
+    Tuning_RegisterFloat("gasplume_kind_override", &s_gasPlumeKindOverride, -1.0f);
 }
 
 static int GasPlume_Handle(const VC_GasPlume *plume)
@@ -165,6 +169,18 @@ int VFX_GasPlume_Spawn(Vector3 pos, VC_MaterialId mat,
         ? *requested : VFX_GasPlume_DefaultConfig(GAS_FIRE);
     if (config.kind < GAS_SMOKE || config.kind > GAS_ENERGY)
         config.kind = GAS_SMOKE;
+    int forcedKind = (int)floorf(s_gasPlumeKindOverride + 0.5f);
+    bool hasKindOverride = s_gasPlumeKindOverride >= 0.0f &&
+                           forcedKind >= GAS_SMOKE && forcedKind <= GAS_ENERGY;
+    if (hasKindOverride) {
+        GasPriority priority = config.priority;
+        float intensity = config.intensity;
+        Vector3 wind = config.wind;
+        config = VFX_GasPlume_DefaultConfig((GasKind)forcedKind);
+        config.priority = priority;
+        config.intensity = intensity;
+        config.wind = wind;
+    }
     VFX_GasPlumeConfig defaults = VFX_GasPlume_DefaultConfig(config.kind);
     if (config.radius <= 0.0f) config.radius = defaults.radius;
     if (config.height <= 0.0f) config.height = defaults.height;
@@ -187,8 +203,14 @@ int VFX_GasPlume_Spawn(Vector3 pos, VC_MaterialId mat,
     volume.size = (Vector3){config.radius * 2.0f, config.height + belowSource,
                             config.radius * 2.0f};
     volume.lifetime = config.emitDuration + config.decayDuration;
-    volume.bodyColor = element->body;
-    if (config.kind != GAS_SMOKE) volume.emissionColor = element->glow;
+    /* Shipping compositions remain material-tintable. The capture override is
+     * specifically a complete kind diagnostic, so retain its preset palette;
+     * otherwise smoke/fire/energy all inherit the fixture's fire material and
+     * the matrix cannot distinguish material optics from colour choice. */
+    if (!hasKindOverride) {
+        volume.bodyColor = element->body;
+        if (config.kind != GAS_SMOKE) volume.emissionColor = element->glow;
+    }
     float fireOpticalGain = config.kind == GAS_FIRE ? 1.35f : 1.0f;
     if (config.kind == GAS_FIRE) volume.densityScale = 2.6f;
     volume.emissionGain *= config.intensity * fireOpticalGain *

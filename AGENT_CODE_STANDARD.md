@@ -96,6 +96,7 @@
 - Volumetric fire must not reuse smoke/body opacity as emission alpha: gate full-density emission transport with reaction+heat, and keep reaction persistence measured against density decay.
 - After lowering shared volume coverage, compare each composition's per-second density/reaction budget; restore undersized primaries at the `GasKind`-gated caller, not with another global shader gain.
 - Volume bloom must come from visible, front-to-back-integrated HDR core radiance above the global bright-pass threshold; never use an unattenuated max-along-ray seed or raise the whole carrier to manufacture a halo.
+- Bright-background gas must pair negative body/extinction structure with attenuation of broad emission; sample pre-VFX luma once per output pixel and preserve only a bounded reaction+density HDR core.
 
 ### 10.3 GPU particle backend (`core/particles/gpu/`)
 - Read `core/particles/docs/GPU_BACKEND_API.md` first. New VFX code uses `core/particles/particle_manager.h`.

@@ -4,16 +4,20 @@
 #include "core/gfx_quality.h"
 #include "core/resource_manager.h"
 #include "core/scene_targets.h"
+#include "core/tuning.h"
+#include "core/gas/gas_perf_internal.inl"
+#include "core/gas/gas_optics_internal.inl"
+#include "core/gas/gas_profile_internal.inl"
 #include "raymath.h"
 #include "rlgl.h"
 
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
-#define GAS_ATLAS_WIDTH 256
-#define GAS_ATLAS_HEIGHT 128
-#define GAS_ATLAS_TILES_X 8
+#define GAS_ATLAS_MAX_WIDTH 256
+#define GAS_ATLAS_MAX_HEIGHT 128
 #define GAS_MAX_SUBSTEPS 3
 
 typedef struct GasShaderLocations {
@@ -36,6 +40,11 @@ typedef struct GasShaderLocations {
     int emissionGain;
     int kind;
     int qualityTier;
+    int bgLuma;
+    int hasBgLuma;
+    int bgAdapt;
+    int detailStrength;
+    int shadowStrength;
 } GasShaderLocations;
 
 static GasSim s_sim;
@@ -45,15 +54,26 @@ static GasVolumeHandle s_handle;
 static int s_nextHandle = 1;
 static float s_lifetime;
 static float s_accumulator;
-static float s_fixedStep = 1.0f / 15.0f;
 static bool s_initialized;
 static bool s_atlasDirty;
 static bool s_prepared;
-static unsigned char s_atlasPixels[GAS_ATLAS_WIDTH * GAS_ATLAS_HEIGHT * 4];
+static unsigned char s_atlasPixels[GAS_ATLAS_MAX_WIDTH * GAS_ATLAS_MAX_HEIGHT * 4];
 static Texture2D s_atlas;
 static RenderTexture2D s_raymarchTarget;
 static Shader s_raymarchShader;
 static GasShaderLocations s_locations;
+static GasPerfWindow s_perfWindow;
+static GasPerfFrameSample s_perfFrame;
+static GasPerfStats s_perfStats;
+static bool s_perfFrameActive;
+static bool s_perfTuningReady;
+static float s_perfLog;
+static float s_bgAdapt = 1.0f;
+static GasOpticalControls s_optics;
+static GasQualityProfile s_profile;
+static int s_screenWidth;
+static int s_screenHeight;
+static int s_deferredTier = -1;
 
 static Vector3 GasSystem_Color3(Color color) {
     return (Vector3){color.r / 255.0f, color.g / 255.0f, color.b / 255.0f};
@@ -91,24 +111,6 @@ static Matrix GasSystem_MakeProjection(Camera3D camera) {
     return MatrixFrustum(-right, right, -top, top, 1.0, 1000.0);
 }
 
-static void GasSystem_SelectGrid(int *width, int *height, int *depth,
-                                 int *renderDivisor, int *steps) {
-    GfxQuality quality = GfxQuality_Get();
-    if (quality >= GFX_HIGH) {
-        *width = 28; *height = 32; *depth = 28;
-        *renderDivisor = 3; *steps = 40;
-        s_fixedStep = 1.0f / 20.0f;
-    } else if (quality >= GFX_MED) {
-        *width = 20; *height = 28; *depth = 20;
-        *renderDivisor = 4; *steps = 24;
-        s_fixedStep = 1.0f / 15.0f;
-    } else {
-        *width = 16; *height = 24; *depth = 16;
-        *renderDivisor = 4; *steps = 16;
-        s_fixedStep = 1.0f / 10.0f;
-    }
-}
-
 static void GasSystem_CacheLocations(void) {
     s_locations.atlasInvSize = GetShaderLocation(s_raymarchShader, "u_atlasInvSize");
     s_locations.gridSize = GetShaderLocation(s_raymarchShader, "u_gridSize");
@@ -129,20 +131,83 @@ static void GasSystem_CacheLocations(void) {
     s_locations.emissionGain = GetShaderLocation(s_raymarchShader, "u_emissionGain");
     s_locations.kind = GetShaderLocation(s_raymarchShader, "u_kind");
     s_locations.qualityTier = GetShaderLocation(s_raymarchShader, "u_qualityTier");
+    s_locations.bgLuma = GetShaderLocation(s_raymarchShader, "u_bgLuma");
+    s_locations.hasBgLuma = GetShaderLocation(s_raymarchShader, "u_hasBgLuma");
+    s_locations.bgAdapt = GetShaderLocation(s_raymarchShader, "u_bgAdapt");
+    s_locations.detailStrength = GetShaderLocation(s_raymarchShader, "u_detailStrength");
+    s_locations.shadowStrength = GetShaderLocation(s_raymarchShader, "u_shadowStrength");
 }
 
-static void GasSystem_UploadAtlas(void) {
-    if (!s_atlasDirty || !s_atlas.id) return;
-    memset(s_atlasPixels, 0, sizeof(s_atlasPixels));
+static void GasSystem_RebuildProfile(int requestedTier) {
+    if (s_atlas.id) UnloadTexture(s_atlas);
+    if (s_raymarchTarget.id) UnloadRenderTexture(s_raymarchTarget);
+    s_atlas = (Texture2D){0};
+    s_raymarchTarget = (RenderTexture2D){0};
+
+    s_profile = GasQualityProfile_Make(requestedTier, s_screenWidth, s_screenHeight);
+    GasSim_Init(&s_sim, s_profile.gridWidth, s_profile.gridHeight,
+                s_profile.gridDepth);
+    memset(s_atlasPixels, 0, s_profile.atlasBytes);
+    Image atlasImage = {0};
+    atlasImage.data = s_atlasPixels;
+    atlasImage.width = s_profile.atlasWidth;
+    atlasImage.height = s_profile.atlasHeight;
+    atlasImage.mipmaps = 1;
+    atlasImage.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    s_atlas = LoadTextureFromImage(atlasImage);
+    SetTextureFilter(s_atlas, TEXTURE_FILTER_BILINEAR);
+    SetTextureWrap(s_atlas, TEXTURE_WRAP_CLAMP);
+
+    int format = SceneTargets_IsHDR() ? RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16
+                                      : RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    s_raymarchTarget = GasSystem_LoadColorTarget(s_profile.targetWidth,
+                                                 s_profile.targetHeight, format);
+    s_atlasDirty = false;
+    s_prepared = false;
+    s_accumulator = 0.0f;
+    GasSystem_ResetPerfStats();
+    TraceLog(LOG_INFO,
+             "GasSystem: tier %d, %dx%dx%d grid, %dx%d atlas (%u bytes), "
+             "%dx%d target, %d steps",
+             s_profile.effectiveTier, s_profile.gridWidth, s_profile.gridHeight,
+             s_profile.gridDepth, s_profile.atlasWidth, s_profile.atlasHeight,
+             s_profile.atlasBytes, s_profile.targetWidth, s_profile.targetHeight,
+             s_profile.raymarchSteps);
+}
+
+static void GasSystem_ReconfigureIfIdle(void) {
+    int requestedTier = (int)GfxQuality_Get();
+    if (!GasQualityProfile_NeedsRebuild(s_profile, requestedTier)) {
+        s_deferredTier = -1;
+        return;
+    }
+    if (s_handle != GAS_VOLUME_INVALID) {
+        int effective = requestedTier < 1 ? 1 :
+                        (requestedTier > 3 ? 3 : requestedTier);
+        if (effective != s_deferredTier) {
+            s_deferredTier = effective;
+            TraceLog(LOG_INFO,
+                     "GasSystem: tier %d deferred until the active volume retires",
+                     effective);
+        }
+        return;
+    }
+    GasSystem_RebuildProfile(requestedTier);
+    s_deferredTier = -1;
+}
+
+static unsigned int GasSystem_UploadAtlas(void) {
+    if (!s_atlasDirty || !s_atlas.id) return 0;
+    memset(s_atlasPixels, 0, s_profile.atlasBytes);
     for (int z = 0; z < s_sim.depth; ++z) {
-        int tileX = z % GAS_ATLAS_TILES_X;
-        int tileY = z / GAS_ATLAS_TILES_X;
+        int tileX = z % s_profile.atlasTilesX;
+        int tileY = z / s_profile.atlasTilesX;
         for (int y = 0; y < s_sim.height; ++y) {
             for (int x = 0; x < s_sim.width; ++x) {
                 int source = (z * s_sim.height + y) * s_sim.width + x;
                 int atlasX = tileX * s_sim.width + x;
                 int atlasY = tileY * s_sim.height + y;
-                int target = (atlasY * GAS_ATLAS_WIDTH + atlasX) * 4;
+                int target = (atlasY * s_atlas.width + atlasX) * 4;
                 s_atlasPixels[target + 0] = (unsigned char)(fminf(1.0f, fmaxf(0.0f, s_sim.density[source])) * 255.0f + 0.5f);
                 s_atlasPixels[target + 1] = (unsigned char)(fminf(1.0f, fmaxf(0.0f, s_sim.temperature[source])) * 255.0f + 0.5f);
                 s_atlasPixels[target + 2] = (unsigned char)(fminf(1.0f, fmaxf(0.0f, s_sim.reaction[source])) * 255.0f + 0.5f);
@@ -152,6 +217,16 @@ static void GasSystem_UploadAtlas(void) {
     }
     UpdateTexture(s_atlas, s_atlasPixels);
     s_atlasDirty = false;
+    return s_profile.atlasBytes;
+}
+
+static void GasSystem_EnsurePerfTuning(void) {
+    if (s_perfTuningReady) return;
+    s_perfTuningReady = true;
+    const char *env = getenv("WUXING_GAS_PERF");
+    s_perfLog = (env != NULL && env[0] != '\0' && env[0] != '0') ? 1.0f : 0.0f;
+    Tuning_RegisterFloat("gas_perf_log", &s_perfLog, s_perfLog);
+    Tuning_RegisterFloat("gas_bg_adapt", &s_bgAdapt, 1.0f);
 }
 
 GasVolumeDesc GasVolume_Preset(GasKind kind) {
@@ -191,44 +266,27 @@ GasVolumeDesc GasVolume_Preset(GasKind kind) {
         desc.emissionColor = BLACK;
         desc.emissionGain = 0.0f;
     }
+    GasOpticalControls optics = GasOpticalControls_Resolve((int)kind, 0.0f, 0.0f, 0.0f);
+    desc.detailStrength = optics.detailStrength;
+    desc.shadowStrength = optics.shadowStrength;
+    desc.backgroundAdapt = optics.backgroundAdapt;
     return desc;
 }
 
 void GasSystem_Init(int width, int height) {
     if (s_initialized) return;
-    int gridWidth, gridHeight, gridDepth, renderDivisor, unusedSteps;
-    GasSystem_SelectGrid(&gridWidth, &gridHeight, &gridDepth,
-                         &renderDivisor, &unusedSteps);
-    GasSim_Init(&s_sim, gridWidth, gridHeight, gridDepth);
+    s_screenWidth = width;
+    s_screenHeight = height;
     s_config = GasSim_DefaultConfig();
-
-    memset(s_atlasPixels, 0, sizeof(s_atlasPixels));
-    Image atlasImage = {0};
-    atlasImage.data = s_atlasPixels;
-    atlasImage.width = GAS_ATLAS_WIDTH;
-    atlasImage.height = GAS_ATLAS_HEIGHT;
-    atlasImage.mipmaps = 1;
-    atlasImage.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-    s_atlas = LoadTextureFromImage(atlasImage);
-    SetTextureFilter(s_atlas, TEXTURE_FILTER_BILINEAR);
-    SetTextureWrap(s_atlas, TEXTURE_WRAP_CLAMP);
-
-    int targetWidth = width / renderDivisor;
-    int targetHeight = height / renderDivisor;
-    if (targetWidth < 1) targetWidth = 1;
-    if (targetHeight < 1) targetHeight = 1;
-    int format = SceneTargets_IsHDR() ? RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16
-                                      : RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-    s_raymarchTarget = GasSystem_LoadColorTarget(targetWidth, targetHeight, format);
     s_raymarchShader = ResourceManager_LoadShader(NULL, "core/gas/shaders/gas_volume.fs");
     GasSystem_CacheLocations();
+    GasSystem_RebuildProfile((int)GfxQuality_Get());
     s_initialized = true;
-    TraceLog(LOG_INFO, "GasSystem: %dx%dx%d grid, %dx%d raymarch target",
-             gridWidth, gridHeight, gridDepth, targetWidth, targetHeight);
 }
 
 GasVolumeHandle GasVolume_Create(const GasVolumeDesc *desc) {
     if (!s_initialized || desc == NULL) return GAS_VOLUME_INVALID;
+    GasSystem_ReconfigureIfIdle();
     if (desc->size.x <= 0.0f || desc->size.y <= 0.0f || desc->size.z <= 0.0f)
         return GAS_VOLUME_INVALID;
     if (s_handle != GAS_VOLUME_INVALID && desc->priority < s_desc.priority)
@@ -237,6 +295,13 @@ GasVolumeHandle GasVolume_Create(const GasVolumeDesc *desc) {
         return GAS_VOLUME_INVALID;
 
     s_desc = *desc;
+    s_optics = GasOpticalControls_Resolve((int)s_desc.kind,
+                                          s_desc.detailStrength,
+                                          s_desc.shadowStrength,
+                                          s_desc.backgroundAdapt);
+    s_desc.detailStrength = s_optics.detailStrength;
+    s_desc.shadowStrength = s_optics.shadowStrength;
+    s_desc.backgroundAdapt = s_optics.backgroundAdapt;
     if (s_desc.lifetime <= 0.0f) s_desc.lifetime = 5.0f;
     if (s_desc.densityScale <= 0.0f) s_desc.densityScale = 1.0f;
     s_lifetime = s_desc.lifetime;
@@ -289,25 +354,33 @@ void GasVolume_Inject(GasVolumeHandle handle, const GasInjection *injection) {
 }
 
 void GasSystem_Update(float dt) {
-    if (!s_initialized || s_handle == GAS_VOLUME_INVALID || dt <= 0.0f) return;
+    if (!s_initialized) return;
+    GasSystem_ReconfigureIfIdle();
+    if (s_handle == GAS_VOLUME_INVALID || dt <= 0.0f) return;
+    s_perfFrame = (GasPerfFrameSample){0};
+    s_perfFrameActive = true;
+    double updateStart = GetTime();
     if (dt > 0.25f) dt = 0.25f;
     s_lifetime -= dt;
     if (s_lifetime <= 0.0f) {
         GasVolume_Destroy(s_handle);
+        s_perfFrame.updateCpuMs = (float)((GetTime() - updateStart) * 1000.0);
         return;
     }
     s_accumulator += dt;
     int substeps = 0;
-    while (s_accumulator >= s_fixedStep && substeps < GAS_MAX_SUBSTEPS) {
-        GasSim_Step(&s_sim, s_fixedStep, &s_config);
-        s_accumulator -= s_fixedStep;
+    while (s_accumulator >= s_profile.fixedStep && substeps < GAS_MAX_SUBSTEPS) {
+        GasSim_Step(&s_sim, s_profile.fixedStep, &s_config);
+        s_accumulator -= s_profile.fixedStep;
         ++substeps;
         s_atlasDirty = true;
     }
-    if (substeps == GAS_MAX_SUBSTEPS && s_accumulator > s_fixedStep)
-        s_accumulator = s_fixedStep;
+    if (substeps == GAS_MAX_SUBSTEPS && s_accumulator > s_profile.fixedStep)
+        s_accumulator = s_profile.fixedStep;
     if (GasSim_GetTotalDensity(&s_sim) < 0.001f && s_lifetime < s_desc.lifetime * 0.5f)
         GasVolume_Destroy(s_handle);
+    s_perfFrame.simSubsteps = substeps;
+    s_perfFrame.updateCpuMs = (float)((GetTime() - updateStart) * 1000.0);
 }
 
 bool GasSystem_HasPending(void) {
@@ -318,7 +391,19 @@ bool GasSystem_HasPending(void) {
 void GasSystem_Prepare(Camera3D camera) {
     s_prepared = false;
     if (!GasSystem_HasPending() || !s_raymarchTarget.id || !s_raymarchShader.id) return;
-    GasSystem_UploadAtlas();
+    GasSystem_EnsurePerfTuning();
+    if (!s_perfFrameActive) {
+        s_perfFrame = (GasPerfFrameSample){0};
+        s_perfFrameActive = true;
+    }
+    double uploadStart = GetTime();
+    unsigned int uploadBytes = GasSystem_UploadAtlas();
+    if (uploadBytes > 0) {
+        s_perfFrame.atlasUploadCpuMs =
+            (float)((GetTime() - uploadStart) * 1000.0);
+        s_perfFrame.atlasUploadBytes = uploadBytes;
+    }
+    double raymarchStart = GetTime();
 
     Matrix projection = GasSystem_MakeProjection(camera);
     Matrix inverseProjection = MatrixInvert(projection);
@@ -328,18 +413,21 @@ void GasSystem_Prepare(Camera3D camera) {
     Vector3 volumeMin = Vector3Subtract(s_desc.center, volumeHalf);
     Vector3 volumeMax = Vector3Add(s_desc.center, volumeHalf);
     Vector3 gridSize = {(float)s_sim.width, (float)s_sim.height, (float)s_sim.depth};
-    Vector2 atlasInvSize = {1.0f / GAS_ATLAS_WIDTH, 1.0f / GAS_ATLAS_HEIGHT};
+    Vector2 atlasInvSize = {1.0f / (float)s_atlas.width,
+                            1.0f / (float)s_atlas.height};
     Vector3 bodyColor = GasSystem_Color3(s_desc.bodyColor);
     Vector3 emissionColor = GasSystem_Color3(s_desc.emissionColor);
     Texture2D sceneDepth = SceneTargets_GetRawDepthTexture();
     int hasDepth = sceneDepth.id ? 1 : 0;
     int orthographic = camera.projection == CAMERA_ORTHOGRAPHIC ? 1 : 0;
-    int tilesX = GAS_ATLAS_TILES_X;
+    int tilesX = s_profile.atlasTilesX;
     int kind = (int)s_desc.kind;
-    int qualityTier = (int)GfxQuality_Get();
-    int gridWidth, gridHeight, gridDepth, divisor, steps;
-    GasSystem_SelectGrid(&gridWidth, &gridHeight, &gridDepth, &divisor, &steps);
-    (void)gridWidth; (void)gridHeight; (void)gridDepth; (void)divisor;
+    int qualityTier = s_profile.effectiveTier;
+    Texture2D bgLuma = SceneTargets_GetBackgroundLuma();
+    int hasBgLuma = bgLuma.id != 0 ? 1 : 0;
+    float bgAdapt = fmaxf(0.0f, fminf(s_bgAdapt, 1.0f)) *
+                    s_optics.backgroundAdapt;
+    int steps = s_profile.raymarchSteps;
 
     BeginTextureMode(s_raymarchTarget);
     ClearBackground(BLANK);
@@ -362,6 +450,14 @@ void GasSystem_Prepare(Camera3D camera) {
     SetShaderValue(s_raymarchShader, s_locations.emissionGain, &s_desc.emissionGain, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locations.kind, &kind, SHADER_UNIFORM_INT);
     SetShaderValue(s_raymarchShader, s_locations.qualityTier, &qualityTier, SHADER_UNIFORM_INT);
+    SetShaderValue(s_raymarchShader, s_locations.hasBgLuma, &hasBgLuma, SHADER_UNIFORM_INT);
+    SetShaderValue(s_raymarchShader, s_locations.bgAdapt, &bgAdapt, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_raymarchShader, s_locations.detailStrength,
+                   &s_optics.detailStrength, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_raymarchShader, s_locations.shadowStrength,
+                   &s_optics.shadowStrength, SHADER_UNIFORM_FLOAT);
+    if (hasBgLuma)
+        SetShaderValueTexture(s_raymarchShader, s_locations.bgLuma, bgLuma);
     if (hasDepth)
         SetShaderValueTexture(s_raymarchShader, s_locations.sceneDepth, sceneDepth);
     DrawTexturePro(s_atlas,
@@ -371,12 +467,21 @@ void GasSystem_Prepare(Camera3D camera) {
                    (Vector2){0, 0}, 0.0f, WHITE);
     EndShaderMode();
     EndTextureMode();
+    s_perfFrame.raymarchSubmitCpuMs =
+        (float)((GetTime() - raymarchStart) * 1000.0);
+    s_perfFrame.gridWidth = s_sim.width;
+    s_perfFrame.gridHeight = s_sim.height;
+    s_perfFrame.gridDepth = s_sim.depth;
+    s_perfFrame.raymarchWidth = s_raymarchTarget.texture.width;
+    s_perfFrame.raymarchHeight = s_raymarchTarget.texture.height;
+    s_perfFrame.raymarchSteps = steps;
     s_prepared = true;
 }
 
 void GasSystem_Composite(void) {
     if (!s_prepared) return;
     s_prepared = false;
+    double compositeStart = GetTime();
     BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
     DrawTexturePro(s_raymarchTarget.texture,
                    (Rectangle){0, 0, (float)s_raymarchTarget.texture.width,
@@ -384,6 +489,39 @@ void GasSystem_Composite(void) {
                    (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
                    (Vector2){0, 0}, 0.0f, WHITE);
     EndBlendMode();
+    s_perfFrame.compositeSubmitCpuMs =
+        (float)((GetTime() - compositeStart) * 1000.0);
+
+    GasSystem_EnsurePerfTuning();
+    bool published = GasPerfWindow_Add(&s_perfWindow, &s_perfFrame,
+                                       GetFrameTime(), &s_perfStats);
+    s_perfFrameActive = false;
+    if (published && s_perfLog >= 0.5f) {
+        TraceLog(LOG_INFO,
+                 "GAS perf: update %.3fms upload %.3fms ray-submit %.3fms "
+                 "composite-submit %.3fms | substeps %.2f uploads %u/%u "
+                 "bytes %llu | grid %dx%dx%d target %dx%d steps %d tap-max %llu",
+                 s_perfStats.updateCpuMsAvg, s_perfStats.atlasUploadCpuMsAvg,
+                 s_perfStats.raymarchSubmitCpuMsAvg,
+                 s_perfStats.compositeSubmitCpuMsAvg, s_perfStats.simSubstepsAvg,
+                 s_perfStats.atlasUploads, s_perfStats.sampleFrames,
+                 s_perfStats.atlasUploadBytesTotal, s_perfStats.gridWidth,
+                 s_perfStats.gridHeight, s_perfStats.gridDepth,
+                 s_perfStats.raymarchWidth, s_perfStats.raymarchHeight,
+                 s_perfStats.raymarchSteps,
+                 s_perfStats.raymarchAtlasTapUpperBound);
+    }
+}
+
+GasPerfStats GasSystem_GetPerfStats(void) {
+    return s_perfStats;
+}
+
+void GasSystem_ResetPerfStats(void) {
+    GasPerfWindow_Reset(&s_perfWindow);
+    s_perfFrame = (GasPerfFrameSample){0};
+    s_perfStats = (GasPerfStats){0};
+    s_perfFrameActive = false;
 }
 
 void GasSystem_Unload(void) {
@@ -395,4 +533,7 @@ void GasSystem_Unload(void) {
     s_handle = GAS_VOLUME_INVALID;
     s_initialized = false;
     s_prepared = false;
+    s_profile = (GasQualityProfile){0};
+    s_deferredTier = -1;
+    GasSystem_ResetPerfStats();
 }

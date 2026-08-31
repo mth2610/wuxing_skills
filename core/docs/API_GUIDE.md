@@ -2392,7 +2392,7 @@ Stylized-realism forward lighting for opaque scene meshes (characters/props/map/
 typedef enum { GFX_UNLIT = 0, GFX_LOW = 1, GFX_MED = 2, GFX_HIGH = 3 } GfxQuality;
 void       GfxQuality_Set(GfxQuality q);
 GfxQuality GfxQuality_Get(void);
-GfxQuality GfxQuality_Default(void); // GFX_HIGH desktop, GFX_MED __ANDROID__
+GfxQuality GfxQuality_Default(void); // platform default, or WUXING_GFX_QUALITY
 
 // core/surface_material.h
 void   SurfaceMaterial_Init(void);              // once, after window/GL is up
@@ -2466,7 +2466,69 @@ SurfaceMaterial_UpdateFrame(camera);  // once per frame, before drawing any lit 
 ```
 Currently applied to `character/character_model.c` hero models. Map props and boss models are NOT yet wired — call `SurfaceMaterial_Apply` on them the same way to bring them into the same lighting model.
 
-`GfxQuality_Set`/`Get` changes take effect immediately (just flips `u_qualityTier`, never reloads a shader or re-applies materials) — safe to call from a debug hotkey or options menu. In-game: **L** cycles UNLIT→LOW→MED→HIGH, current tier shown in the corner HUD text.
+`GfxQuality_Set`/`Get` changes take effect immediately for ordinary material
+shaders. Gas owns tier-sized simulation/atlas/raymarch resources, so a gas tier
+change is recorded immediately but rebuilt only after the active volume retires;
+this avoids destroying resources still used by a submitted frame. In-game: **L**
+cycles UNLIT→LOW→MED→HIGH, current tier shown in the corner HUD text.
+
+For deterministic startup and capture automation, set
+`WUXING_GFX_QUALITY=unlit|low|med|high` (numeric `0..3` is also accepted) before
+the process starts. Invalid values retain the platform default.
+
+### Volumetric gas quality, optics, and telemetry
+
+`GasVolume_Preset(kind)` provides distinct smoke, fire, and energy optics. The
+append-only `GasVolumeDesc` controls `detailStrength`, `shadowStrength`, and
+`backgroundAdapt` are applied after simulation. A zero-initialized field inherits
+the kind preset for compatibility; a negative value disables that control; positive
+values are clamped to `[0,2]`, `[0,2]`, and `[0,1]` respectively. Background
+adaptation samples the pre-VFX scene luma once per output pixel: dense body structure
+darkens over bright scenery while broad emission is reduced, but the narrow
+reaction/density-gated fire or energy core remains HDR.
+
+Gas uses compact, tier-specific resources at a 1280x720 reference size:
+
+| Tier | Grid | Ray target | Steps | Sim rate | Atlas RGBA8 | Noise/step | Atlas-tap upper bound |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| LOW / UNLIT | 16x24x16 | 320x180 | 16 | 10 Hz | 128x48 / 24,576 B | 1 | 3,686,400 |
+| MED | 20x28x20 | 320x180 | 24 | 15 Hz | 160x84 / 53,760 B | 2 | 5,529,600 |
+| HIGH | 28x32x28 | 426x240 | 40 | 20 Hz | 224x128 / 114,688 B | 2 FBM fields | 16,358,400 |
+
+The atlas-tap bound includes trilinear sampling for both the primary density and
+directional light probe. LOW derives its detail value from the first noise sample;
+MED uses two value-noise samples and HIGH enables two FBM fields.
+
+`GasSystem_GetPerfStats()` publishes rolling one-second averages for active gas:
+CPU simulation/update, atlas upload, raymarch submission, composite submission,
+substep count, upload bytes, grid/target dimensions, step count, and a conservative
+four-atlas-taps-per-step workload bound. `GasSystem_ResetPerfStats()` clears both
+the published sample and its partial window.
+
+Set `WUXING_GAS_PERF=1` or `gas_perf_log = 1` in the pinned tuning file to print
+the same snapshot once per second. The two `*SubmitCpuMs` fields measure CPU
+command submission only; they are deliberately not called GPU time. For GPU
+cost, compare gas on/off with `RLVK_GPU_TRACE=1` on a real presented surface.
+Never use hidden `--render-vfx` wall time as a GPU benchmark.
+
+The repeatable visual sweep is:
+
+```sh
+scripts/run_gas_phase0_visuals.sh
+```
+
+It drives the `GAS PLUME` fixture through smoke/fire/energy and bloom off/on,
+pins the chosen quality tier, records every input, and stores a separate child
+log for every background capture. Use `WUXING_GAS_KINDS`,
+`WUXING_GAS_BLOOM_MODES`, `WUXING_GAS_WARMUP`, and
+`WUXING_GAS_PHASE0_OUT` to reduce or redirect a run.
+
+Desktop regression is not a substitute for a device result. When physical mobile
+testing resumes, package and install with `make -f Makefile.Android` followed by
+`make -f Makefile.Android install`; capture shader/runtime diagnostics with
+`make -f Makefile.Android logcat`. Compare gas on/off on the same presented scene,
+record `GasSystem_GetPerfStats()` plus renderer GPU timestamps, and exercise LOW,
+MED, thermal throttling, pause/resume, and a quality change during an active plume.
 
 ## 19. Visual Composition & Procedural Meshes
 

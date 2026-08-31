@@ -135,6 +135,16 @@ Automatically assign shader, texture, material, and manage the appropriate blend
   dissipate, while `VFX_KillGasPlume` removes it immediately. Mobile v1 admits
   one plume, so keep the returned handle and treat a zero result as admission
   failure.
+  `GasVolumeDesc.detailStrength`, `shadowStrength`, and `backgroundAdapt` may be
+  adjusted by lower-level gas compositions without changing simulation. Zero
+  inherits the kind preset, negative disables the control, and authored positive
+  values are bounded before reaching the shader. Runtime quality changes are
+  deferred until the admitted gas volume retires because grid/atlas/target sizes
+  differ by tier.
+  Diagnostic captures may pin `gasplume_kind_override = 0|1|2` in their
+  temporary tuning file; `-1` keeps the authored kind. The override selects the
+  complete smoke/fire/energy defaults, including its preset palette, and is not
+  a gameplay control. Shipping compositions remain tinted by their material.
 - `VFX_GasVortex_Spawn(pos, material, config)`: creates a depth-aware energy-gas
   vortex through `core/gas`. A moving source climbs a narrowing orbit while
   injecting tangential, inward, and upward velocity, producing a luminous

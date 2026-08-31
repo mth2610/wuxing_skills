@@ -3349,3 +3349,16 @@ after the head was gone the strip kept drifting and fading in open space.
   `core/tests/converge_motes_test.c` mirrors the integrator and reports the share
   that actually arrive; it caught the 0% the eye would only have read as "they
   vanish before they get there".
+## Bright-background gas needs negative structure and a bounded HDR core (31/08/2026)
+
+- **Symptom:** smoke becomes a flat pale patch, while fire and energy disappear
+  into a white or same-hue background even though they look luminous on black.
+- **Cause:** additive radiance can only increase the background, and multiplying
+  the whole emission field to compensate either clips the carrier white or makes
+  bloom replace the material. A single global alpha adjustment cannot preserve
+  both body depth and a compact luminous core.
+- **Rule:** sample the pre-VFX background luma once per output pixel. On a bright
+  plate, strengthen dense extinction while thinning low density, darken the body,
+  and attenuate broad emission. Preserve only a front-to-back-integrated,
+  reaction-and-density-gated HDR core for fire/energy. Keep the background sample
+  outside the ray loop and never use an unattenuated max-along-ray bloom seed.

@@ -27,6 +27,12 @@ int main(void) {
           "atlas upload must preserve simulation Y for shader v sampling");
     CHECK(strstr(source, "s_sim.height - 1 - y") == NULL,
           "atlas upload must not mirror the source inside its world volume");
+    CHECK(strstr(source, "atlasY * s_atlas.width + atlasX") != NULL,
+          "atlas upload stride must follow the compact live texture width");
+    CHECK(strstr(source, "atlasImage.width = s_profile.atlasWidth") != NULL,
+          "atlas allocation must use the tier's compact width");
+    CHECK(strstr(source, "return s_profile.atlasBytes") != NULL,
+          "upload telemetry must report compact bytes, not the max backing array");
 
     puts("gas_atlas_orientation_test: PASS");
     return 0;

@@ -4,6 +4,7 @@
 #include "core/screen_distort.h" // SceneTargets_IsHDR — scene buffer is the HDR authority
 #include "core/gfx_quality.h"    // E8 — the tier budget for the two new passes
 #include "core/color_grade_lut.h" // G5 — display-referred grading strip
+#include "core/post_fx_debug_internal.inl"
 #include "rlgl.h"
 #include <string.h>
 
@@ -479,6 +480,7 @@ void PostFX_ApplyTransient(PostFXConfig *config)
 static float s_tuneStreak       = 0.0f;  // >0 = force streak on, value = strength
 static float s_tuneStreakAngle  = 0.0f;  // radians
 static float s_tuneRadial       = 0.0f;  // >0 = force a constant radial blur, value = strength
+static float s_tuneBloom        = -1.0f; // -1 caller, 0 forced off, 1 forced on
 static bool  s_tuneReg          = false;
 
 static void PostFX_ApplyTuning(PostFXConfig *c)
@@ -489,7 +491,9 @@ static void PostFX_ApplyTuning(PostFXConfig *c)
     Tuning_RegisterFloat("postfx_streak", &s_tuneStreak, 0.0f);
     Tuning_RegisterFloat("postfx_streak_angle", &s_tuneStreakAngle, 0.0f);
     Tuning_RegisterFloat("postfx_radial", &s_tuneRadial, 0.0f);
+    Tuning_RegisterFloat("postfx_bloom", &s_tuneBloom, -1.0f);
   }
+  c->bloomEnabled = PostFX_ApplyBloomOverrideValue(c->bloomEnabled, s_tuneBloom);
   if (s_tuneStreak > 0.0f)
   {
     c->bloomStreakEnabled  = true;

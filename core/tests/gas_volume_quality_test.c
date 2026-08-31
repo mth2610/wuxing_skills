@@ -82,6 +82,39 @@ static float SmoothStep(float edge0, float edge1, float value) {
     return t * t * (3.0f - 2.0f * t);
 }
 
+static int CountSubstring(const char *text, const char *needle) {
+    int count = 0;
+    size_t length = strlen(needle);
+    while ((text = strstr(text, needle)) != NULL) {
+        ++count;
+        text += length;
+    }
+    return count;
+}
+
+/* Mirrors the one-sample background response planned for gas_volume.fs. The
+ * response shapes optical signals; it must not add a second raymarch tap. */
+static float BackgroundAdapt(float luma) {
+    return SmoothStep(0.22f, 0.88f, luma);
+}
+
+static float AdaptDensity(float density, float adapt) {
+    float shape = 0.78f + (1.38f - 0.78f) *
+                  SmoothStep(0.08f, 0.52f, density);
+    return density * (1.0f + (shape - 1.0f) * adapt);
+}
+
+static float AdaptBodyTone(int kind, float adapt) {
+    const float brightGain[3] = {0.72f, 0.78f, 0.66f};
+    return 1.0f + (brightGain[kind] - 1.0f) * adapt;
+}
+
+static float AdaptEmission(int kind, float coreWeight, float adapt) {
+    float floorGain = kind == 1 ? 0.52f : 0.38f;
+    float brightGain = floorGain + (1.0f - floorGain) * coreWeight;
+    return 1.0f + (brightGain - 1.0f) * adapt;
+}
+
 static TestColor3 Scale(TestColor3 color, float scale) {
     return (TestColor3){color.r * scale, color.g * scale, color.b * scale};
 }
@@ -255,6 +288,30 @@ static int TestFireChannelPersistence(void) {
     return 0;
 }
 
+static int TestBackgroundAdaptiveOptics(void) {
+    float dark = BackgroundAdapt(0.02f);
+    float bright = BackgroundAdapt(1.0f);
+    CHECK(dark == 0.0f);
+    CHECK(bright == 1.0f);
+
+    /* Bright scenes separate wispy edges from dense structure instead of
+     * raising all coverage through one nonlinear alpha curve. */
+    CHECK(AdaptDensity(0.04f, bright) < 0.04f);
+    CHECK(AdaptDensity(0.75f, bright) > 0.75f * 1.30f);
+    CHECK(AdaptDensity(0.75f, dark) == 0.75f);
+
+    CHECK(AdaptBodyTone(0, bright) <= 0.72f);
+    CHECK(AdaptBodyTone(1, bright) <= 0.78f);
+    CHECK(AdaptBodyTone(2, bright) <= 0.66f);
+
+    /* Broad radiance falls on white, but the authored narrow core survives. */
+    CHECK(AdaptEmission(1, 0.0f, bright) <= 0.52f);
+    CHECK(AdaptEmission(2, 0.0f, bright) <= 0.38f);
+    CHECK(AdaptEmission(1, 1.0f, bright) == 1.0f);
+    CHECK(AdaptEmission(2, 1.0f, bright) == 1.0f);
+    return 0;
+}
+
 static int TestShaderContract(void) {
     char *shader = ReadFile("core/gas/shaders/gas_volume.fs");
     CHECK(shader != NULL);
@@ -262,8 +319,10 @@ static int TestShaderContract(void) {
     CHECK(strstr(shader, "travel = nearHit + stepLength * Gas_RayJitter(gl_FragCoord.xy)") != NULL);
     CHECK(strstr(shader, "fbm3(") != NULL);
     CHECK(strstr(shader, "u_qualityTier >= 3") != NULL);
-    CHECK(strstr(shader, ": vnoise3(coarseDomain)") != NULL);
-    CHECK(strstr(shader, ": vnoise3(detailDomain)") != NULL);
+    CHECK(strstr(shader, "coarseNoise = vnoise3(coarseDomain)") != NULL);
+    CHECK(strstr(shader, "detailNoise = vnoise3(detailDomain)") != NULL);
+    CHECK(strstr(shader, "if (u_qualityTier <= 1)") != NULL);
+    CHECK(strstr(shader, "detailNoise = fract(coarseNoise * 1.618") != NULL);
     CHECK(strstr(shader, "float coreWeight") != NULL);
     CHECK(strstr(shader, "float hotGate = smoothstep(0.20, 0.72, hotProduct)") != NULL);
     CHECK(strstr(shader, "float densityGate = smoothstep(0.30, 0.75, rawDensity)") != NULL);
@@ -279,14 +338,30 @@ static int TestShaderContract(void) {
     CHECK(strstr(shader, "smoothstep(0.06, 0.60, gas.b)") != NULL);
     CHECK(strstr(shader, "float emissionAlpha = mix(sampleAlpha, densityAlpha, flameTransport)") != NULL);
     CHECK(strstr(shader, "emittedHeat *= mix(0.34, 1.85, coreWeight)") != NULL);
+    CHECK(strstr(shader, "uniform sampler2D u_bgLuma") != NULL);
+    CHECK(strstr(shader, "uniform int u_hasBgLuma") != NULL);
+    CHECK(strstr(shader, "uniform float u_bgAdapt") != NULL);
+    CHECK(strstr(shader, "uniform float u_detailStrength") != NULL);
+    CHECK(strstr(shader, "uniform float u_shadowStrength") != NULL);
+    CHECK(strstr(shader, "smoothstep(0.22, 0.88, backgroundLuma)") != NULL);
+    CHECK(strstr(shader, "mix(0.78, 1.38, smoothstep(0.08, 0.52, density))") != NULL);
+    CHECK(strstr(shader, "const vec3 GAS_BRIGHT_BODY_GAIN = vec3(0.72, 0.78, 0.66)") != NULL);
+    CHECK(strstr(shader, "float broadEmissionGain") != NULL);
+    CHECK(strstr(shader, "float energyCoreWeight") != NULL);
+    CHECK(strstr(shader, "accumulatedCoreRadiance += transmittance * densityAlpha * energyCoreWeight") != NULL);
+    CHECK(strstr(shader, "energyBloomColor * accumulatedCoreRadiance * 4.80") != NULL);
+    CHECK(CountSubstring(shader, "texture(u_bgLuma") == 1);
     CHECK(strstr(shader, "if (u_kind == 1)") != NULL);
     free(shader);
 
     char *host = ReadFile("core/gas/gas_system.c");
     CHECK(host != NULL);
     CHECK(strstr(host, "GetShaderLocation(s_raymarchShader, \"u_qualityTier\")") != NULL);
-    CHECK(strstr(host, "int qualityTier = (int)GfxQuality_Get()") != NULL);
+    CHECK(strstr(host, "int qualityTier = s_profile.effectiveTier") != NULL);
     CHECK(strstr(host, "s_locations.qualityTier, &qualityTier") != NULL);
+    CHECK(strstr(host, "SceneTargets_GetBackgroundLuma()") != NULL);
+    CHECK(strstr(host, "Tuning_RegisterFloat(\"gas_bg_adapt\"") != NULL);
+    CHECK(strstr(host, "GasOpticalControls_Resolve") != NULL);
     CHECK(strstr(host, "desc.reactionDissipation = 0.95f") != NULL);
     free(host);
 
@@ -303,6 +378,7 @@ int main(void) {
     if (TestFireBloomSeed() != 0) return 1;
     if (TestFireBodyOptics() != 0) return 1;
     if (TestFireChannelPersistence() != 0) return 1;
+    if (TestBackgroundAdaptiveOptics() != 0) return 1;
     if (TestShaderContract() != 0) return 1;
     puts("gas_volume_quality_test: PASS");
     return 0;

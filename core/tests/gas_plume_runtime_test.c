@@ -60,6 +60,12 @@ GasVolumeDesc GasVolume_Preset(GasKind kind) {
     desc.kind = kind;
     desc.densityScale = 1.0f;
     desc.emissionGain = kind == GAS_SMOKE ? 0.0f : 2.0f;
+    desc.bodyColor = kind == GAS_ENERGY ? (Color){28, 38, 78, 255} :
+                     (kind == GAS_FIRE ? (Color){72, 35, 22, 255} :
+                                         (Color){92, 98, 106, 255});
+    desc.emissionColor = kind == GAS_ENERGY ? (Color){78, 176, 255, 255} :
+                         (kind == GAS_FIRE ? (Color){255, 104, 18, 255} :
+                                             (Color){0, 0, 0, 255});
     return desc;
 }
 
@@ -138,6 +144,27 @@ int main(void) {
           "default fire feed must be continuous enough to avoid descending pulse lobes");
     VFX_KillGasPlume(groundedHandle);
 
+    /* Phase-0 capture control: one fixture can exercise each real GasKind path
+     * without adding three near-identical sandbox entries. The override must
+     * select the complete preset, not merely recolor a FIRE injection. */
+    s_gasPlumeKindOverride = (float)GAS_SMOKE;
+    s_mockHasInjection = false;
+    VFX_GasPlumeConfig forced = VFX_GasPlume_DefaultConfig(GAS_FIRE);
+    int forcedHandle = VFX_GasPlume_Spawn((Vector3){0}, 0, &forced);
+    CHECK(forcedHandle != 0, "diagnostic kind override must still spawn");
+    CHECK(s_mockLastVolume.kind == GAS_SMOKE,
+          "diagnostic kind override must select the smoke volume preset");
+    CHECK(fabsf(s_mockLastVolume.size.x - 2.2f) < 0.0001f,
+          "diagnostic kind override must select the complete smoke plume defaults");
+    CHECK(s_mockLastVolume.bodyColor.r == 92 && s_mockLastVolume.bodyColor.g == 98,
+          "diagnostic kind override must preserve the preset palette");
+    for (int i = 0; i < 20 && !s_mockHasInjection; ++i)
+        VC_GasPlume_Update(1.0f / 60.0f);
+    CHECK(s_mockHasInjection && s_mockLastInjection.reaction == 0.0f,
+          "forced smoke must use smoke injection semantics, not fire reaction");
+    VFX_KillGasPlume(forcedHandle);
+    s_gasPlumeKindOverride = -1.0f;
+
     VFX_GasPlumeConfig config = VFX_GasPlume_DefaultConfig(GAS_SMOKE);
     config.emitDuration = 5.0f;
     config.decayDuration = 0.5f;
@@ -151,7 +178,7 @@ int main(void) {
     CHECK(GasVolume_IsAlive(s_mockAliveGas), "Stop must preserve the dissipating volume");
     for (int i = 0; i < 30; ++i) VC_GasPlume_Update(1.0f / 60.0f);
     CHECK(!GasVolume_IsAlive(s_mockAliveGas), "plume must release gas after decay");
-    CHECK(s_mockDestroyCount >= 4, "every test plume must release its gas handle");
+    CHECK(s_mockDestroyCount >= 5, "every test plume must release its gas handle");
 
     puts("gas_plume_runtime_test: PASS");
     return 0;

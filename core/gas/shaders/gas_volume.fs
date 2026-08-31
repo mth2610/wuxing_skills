@@ -25,6 +25,13 @@ uniform vec3 u_emissionColor;
 uniform float u_emissionGain;
 uniform int u_kind;
 uniform int u_qualityTier;
+uniform sampler2D u_bgLuma;
+uniform int u_hasBgLuma;
+uniform float u_bgAdapt;
+uniform float u_detailStrength;
+uniform float u_shadowStrength;
+
+const vec3 GAS_BRIGHT_BODY_GAIN = vec3(0.72, 0.78, 0.66);
 
 /* A fixed half-step start gives neighbouring rays identical integration error;
  * after low-resolution upsampling that error reads as bands. This mobile-safe
@@ -105,6 +112,12 @@ void main() {
     vec3 accumulatedEmission = vec3(0.0);
     float accumulatedCoreRadiance = 0.0;
     float coverage = 0.0;
+    float backgroundLuma = 0.0;
+    if (u_hasBgLuma != 0) backgroundLuma = texture(u_bgLuma, uv).r;
+    float backgroundAdapt = smoothstep(0.22, 0.88, backgroundLuma) *
+                            clamp(u_bgAdapt, 0.0, 1.0);
+    vec3 lightDirection = normalize(vec3(0.45, 0.78, 0.32));
+    float forwardScatter = pow(max(dot(rayDirection, -lightDirection), 0.0), 2.0);
 
     for (int i = 0; i < 48; ++i) {
         if (i >= stepCount || coverage > 0.985) break;
@@ -118,19 +131,38 @@ void main() {
          * keeps the two bands distinct instead of averaging fbm back to grey. */
         vec3 coarseDomain = worldPosition * 1.35 + vec3(3.7, 11.2, -5.4);
         vec3 detailDomain = worldPosition * 3.10 + vec3(-8.1, 2.6, 14.7);
-        float coarseNoise = (u_qualityTier >= 3) ? fbm3(coarseDomain)
-                                                 : vnoise3(coarseDomain);
-        float detailNoise = (u_qualityTier >= 3) ? fbm3(detailDomain)
-                                                 : vnoise3(detailDomain);
+        float coarseNoise;
+        float detailNoise;
+        if (u_qualityTier <= 1) {
+            coarseNoise = vnoise3(coarseDomain);
+            /* LOW spends one noise evaluation per step. This irrational remap
+             * is decorrelation, not new spatial detail; MED/HIGH retain the
+             * independent second field. */
+            detailNoise = fract(coarseNoise * 1.618 +
+                                dot(localPosition, vec3(0.31, 0.57, 0.83)));
+        } else if (u_qualityTier >= 3) {
+            coarseNoise = fbm3(coarseDomain);
+            detailNoise = fbm3(detailDomain);
+        } else {
+            coarseNoise = vnoise3(coarseDomain);
+            detailNoise = vnoise3(detailDomain);
+        }
         float breakup = clamp(smoothstep(0.24, 0.76, coarseNoise) *
                               mix(0.62, 1.16, detailNoise), 0.0, 1.0);
+        float shapedDensity;
         if (u_kind == 1) {
-            density = max(density - (1.0 - breakup) * 0.14, 0.0) *
-                      mix(0.78, 1.35, breakup);
+            shapedDensity = max(density - (1.0 - breakup) * 0.14, 0.0) *
+                            mix(0.78, 1.35, breakup);
         } else {
-            density = max(density - (1.0 - breakup) * 0.06, 0.0) *
-                      mix(0.72, 1.24, breakup);
+            shapedDensity = max(density - (1.0 - breakup) * 0.06, 0.0) *
+                            mix(0.72, 1.24, breakup);
         }
+        float detailStrength = clamp(u_detailStrength, 0.0, 2.0);
+        density = mix(rawDensity, shapedDensity, min(detailStrength, 1.0));
+        density *= mix(1.0, mix(0.86, 1.14, breakup),
+                       max(detailStrength - 1.0, 0.0));
+        float brightDensityShape = mix(0.78, 1.38, smoothstep(0.08, 0.52, density));
+        density *= mix(1.0, brightDensityShape, backgroundAdapt);
         float densityAlpha = 1.0 - exp(-density * u_densityScale * stepLength);
         float heat = max(gas.g * 0.35 + gas.b, 0.0);
         float coolSmoke = 1.0 - smoothstep(0.08, 0.62, heat);
@@ -147,8 +179,11 @@ void main() {
         float transmittance = 1.0 - coverage;
 
         vec3 gradientStep = 1.0 / max(u_gridSize - 1.0, vec3(1.0));
-        float densityAbove = Gas_SampleVolume(localPosition + vec3(0.0, gradientStep.y, 0.0)).r;
-        float softLight = clamp(0.42 + (density - densityAbove) * 1.8 + localPosition.y * 0.18,
+        vec3 lightProbeOffset = lightDirection * gradientStep;
+        float densityTowardLight = Gas_SampleVolume(localPosition + lightProbeOffset).r;
+        float softLight = clamp(0.38 + (density - densityTowardLight) *
+                                (2.1 * clamp(u_shadowStrength, 0.0, 2.0)) +
+                                localPosition.y * 0.16 + forwardScatter * 0.12,
                                 0.2, 1.0);
         float bodyLight = softLight;
         vec3 bodyTone = u_bodyColor * mix(0.72, 1.18, coarseNoise);
@@ -162,10 +197,20 @@ void main() {
              * a muddy brown/black rim even when its emission ramp is bright. */
             float litSmoke = max(softLight, 0.50);
             bodyLight = mix(litSmoke, 1.0, 1.0 - coolSmoke);
+        } else if (u_kind == 2) {
+            bodyTone = mix(u_bodyColor, u_emissionColor * 0.28,
+                           smoothstep(0.18, 0.72, heat));
+            bodyLight = mix(max(softLight, 0.48), 1.0,
+                            smoothstep(0.30, 0.82, heat));
         }
+        float brightBodyGain = u_kind == 0 ? GAS_BRIGHT_BODY_GAIN.x :
+                               (u_kind == 1 ? GAS_BRIGHT_BODY_GAIN.y :
+                                              GAS_BRIGHT_BODY_GAIN.z);
+        bodyTone *= mix(1.0, brightBodyGain, backgroundAdapt);
         accumulatedBody += transmittance * sampleAlpha * bodyTone * bodyLight;
         vec3 emittedColor = u_emissionColor;
         float emittedHeat = heat;
+        float visibleCoreWeight = 0.0;
         if (u_kind == 1) {
             float shoulderWeight = smoothstep(0.10, 0.90, heat) * 0.72;
             float hotProduct = gas.b * gas.g;
@@ -175,6 +220,7 @@ void main() {
                                mix(0.35, 1.0,
                                    smoothstep(0.40, 0.75, detailNoise));
             accumulatedCoreRadiance += transmittance * densityAlpha * coreWeight;
+            visibleCoreWeight = coreWeight;
             vec3 hotColor = mix(u_emissionColor, vec3(1.0, 0.58, 0.10),
                                 shoulderWeight);
             emittedColor = mix(hotColor, vec3(1.0, 0.92, 0.72), coreWeight);
@@ -182,7 +228,21 @@ void main() {
              * here, on the already-narrow core mask, rather than broadening
              * emission transport and washing the whole flame beige. */
             emittedHeat *= mix(0.34, 1.85, coreWeight);
+        } else if (u_kind == 2) {
+            float energyCoreWeight = smoothstep(0.18, 0.72, heat) *
+                                     smoothstep(0.12, 0.62, rawDensity) *
+                                     mix(0.55, 1.0,
+                                         smoothstep(0.38, 0.76, detailNoise));
+            accumulatedCoreRadiance += transmittance * densityAlpha * energyCoreWeight;
+            visibleCoreWeight = energyCoreWeight;
+            emittedColor = mix(u_emissionColor, vec3(0.72, 0.92, 1.0),
+                               energyCoreWeight);
+            emittedHeat *= mix(0.58, 1.42, energyCoreWeight);
         }
+        float emissionFloor = u_kind == 1 ? 0.52 :
+                              (u_kind == 2 ? 0.38 : 1.0);
+        float broadEmissionGain = mix(emissionFloor, 1.0, visibleCoreWeight);
+        emittedHeat *= mix(1.0, broadEmissionGain, backgroundAdapt);
         accumulatedEmission += transmittance * emissionAlpha * emittedColor *
                                emittedHeat * u_emissionGain;
         coverage += transmittance * sampleAlpha;
@@ -194,6 +254,12 @@ void main() {
          * as a narrow HDR seed so bloom comes from the real scene pipeline. */
         vec3 bloomColor = mix(u_emissionColor, vec3(1.0, 0.92, 0.72), 0.72);
         accumulatedEmission += bloomColor * accumulatedCoreRadiance * 7.20;
+    } else if (u_kind == 2) {
+        /* Energy needs a compact HDR filament, not a brighter translucent
+         * carrier. Keeping this on the reaction+density core preserves hue and
+         * remains visible over a bright plate without turning the cloud white. */
+        vec3 energyBloomColor = mix(u_emissionColor, vec3(0.72, 0.92, 1.0), 0.62);
+        accumulatedEmission += energyBloomColor * accumulatedCoreRadiance * 4.80;
     }
     if (coverage <= 0.001) discard;
     vec3 unpremultipliedBody = accumulatedBody / max(coverage, 1e-5);

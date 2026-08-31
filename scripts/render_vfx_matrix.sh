@@ -86,8 +86,17 @@ VKENV=()
 [ -n "${VSDK:-}" ] && [ -d "$VSDK" ] && VKENV=(
   VK_ICD_FILENAMES="$VSDK/share/vulkan/icd.d/MoltenVK_icd.json" DYLD_LIBRARY_PATH="$VSDK/lib")
 
-OUT="autotest_output/vfx_matrix/idx$IDX"
-rm -rf "$OUT"; mkdir -p "$OUT"
+OUT="${WUXING_VFX_MATRIX_OUT:-autotest_output/vfx_matrix/idx$IDX}"
+CAPTURE_TIMEOUT="${WUXING_CAPTURE_TIMEOUT:-180}"
+[[ "$CAPTURE_TIMEOUT" =~ ^[1-9][0-9]*$ ]] || {
+  echo "WUXING_CAPTURE_TIMEOUT must be a positive integer"; exit 2;
+}
+case "$OUT" in
+  autotest_output/*|/tmp/*|/private/tmp/*) ;;
+  *) echo "REFUSING unsafe matrix output path: $OUT"; exit 2 ;;
+esac
+rm -rf "$OUT"
+mkdir -p "$OUT/logs"
 
 # Pin the live-tuning file, and RECORD the pin next to the captures. A measurement
 # whose inputs are not written down cannot be compared with one taken next week.
@@ -96,6 +105,8 @@ TUNING="${WUXING_TUNING:-none}"
   echo "fixture   : ${ARG1}  (index $IDX)"
   echo "warmups   : ${WARMUPS[*]}"
   echo "tuning    : $TUNING"
+  echo "quality   : ${WUXING_GFX_QUALITY:-platform-default}"
+  echo "timeout   : ${CAPTURE_TIMEOUT}s per capture"
   echo "binary    : $(date -r ./build/wuxing '+%Y-%m-%d %H:%M:%S')"
   echo "git HEAD  : $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
   echo "git dirty : $(git status --porcelain 2>/dev/null | wc -l | tr -d ' ') file(s)"
@@ -104,6 +115,44 @@ TUNING="${WUXING_TUNING:-none}"
   fi
 } > "$OUT/config.txt"
 echo "  tuning pinned to '$TUNING' (recorded in $OUT/config.txt)"
+
+run_capture() {
+  local label="$1" fixture="$2" warmup="$3" background="$4" output="$5"
+  local log="$OUT/logs/${label}.log"
+  local started now pid status
+  echo "  START $label (warmup=$warmup, timeout=${CAPTURE_TIMEOUT}s)"
+  started=$(date +%s)
+  env "${VKENV[@]}" WUXING_TUNING="$TUNING" WUXING_VFX_BG="$background" \
+      ./build/wuxing --render-vfx "$fixture" --warmup "$warmup" --out "$output" \
+      >"$log" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    now=$(date +%s)
+    if [ $((now - started)) -ge "$CAPTURE_TIMEOUT" ]; then
+      kill -TERM "$pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      echo "  TIMEOUT $label after ${CAPTURE_TIMEOUT}s — see $log"
+      return 124
+    fi
+    sleep 1
+  done
+  if wait "$pid"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [ "$status" -ne 0 ]; then
+    echo "  FAILED $label (exit $status) — see $log"
+    return "$status"
+  fi
+  if [ ! -f "$output" ]; then
+    echo "  FAILED $label: renderer exited 0 but produced no $output — see $log"
+    return 1
+  fi
+  echo "  DONE  $label in $(( $(date +%s) - started ))s"
+}
 
 # name:hex  — hex is RGBA; the 8-bit value lands in the HDR target as value/255 linear
 BGS=(dark:0x050505FF mid:0x2E2E2EFF white:0xFFFFFFFF warm:0xFFB859FF cool:0x59B8FFFF)
@@ -117,19 +166,14 @@ BGS=(dark:0x050505FF mid:0x2E2E2EFF white:0xFFFFFFFF warm:0xFFB859FF cool:0x59B8
 # about the measurement, not the effect.
 for entry in "${BGS[@]}"; do
   name="${entry%%:*}"; hex="${entry##*:}"
-  env "${VKENV[@]}" WUXING_TUNING="$TUNING" WUXING_VFX_BG="$hex" \
-      ./build/wuxing --render-vfx 999 --warmup 90 \
-                     --out "$OUT/plate_${name}.png" >/dev/null 2>&1 || true
+  run_capture "plate_${name}" 999 90 "$hex" "$OUT/plate_${name}.png"
 done
 echo "  background plates done"
 
 for w in "${WARMUPS[@]}"; do
   for entry in "${BGS[@]}"; do
     name="${entry%%:*}"; hex="${entry##*:}"
-    env "${VKENV[@]}" WUXING_TUNING="$TUNING" WUXING_VFX_BG="$hex" \
-        ./build/wuxing --render-vfx "$IDX" --warmup "$w" \
-                       --out "$OUT/${name}_w${w}.png" >/dev/null 2>&1 || true
-    [ -f "$OUT/${name}_w${w}.png" ] || echo "  MISSING ${name}_w${w}"
+    run_capture "${name}_w${w}" "$IDX" "$w" "$hex" "$OUT/${name}_w${w}.png"
   done
   echo "  warmup $w done"
 done

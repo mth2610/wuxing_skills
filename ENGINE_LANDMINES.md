@@ -29,6 +29,7 @@
 | 19 | The MSAA window hint anti-aliases nothing when the scene renders into an FBO; and MSAA cannot touch a shader-decided edge | Anyone judging edge quality, adding a render target, or authoring a `step()`/`discard` silhouette |
 | 20 | The GLSL `#include` expander does not understand comments — a commented-out include is still expanded | Anyone writing a usage example, or a "does NOT include X" note, inside a shader comment |
 | 21 | Terrain height sampling was O(every triangle) — FIXED, and the rations it forced are obsolete; `GetGroundHeightAt` still answers `0.0` for "no data" | Anyone conforming a VFX, decal or formation to the ground |
+| 22 | A silent headless capture looks hung and hides failures | Anyone maintaining visual regression harnesses |
 
 ---
 
@@ -1628,3 +1629,13 @@ fields and mask chains generally, not about that tail.*
   mobile-safe hash while retaining dense fixed steps; use isotropic `fbm3` for
   spatial breakup, never a single `sin(dot(position, k))` grating. Guarded by
   `core/tests/gas_volume_quality_test.c`.
+## 22. Headless capture scripts can look dead when they hide long-running children (31/08/2026)
+
+- **Symptom:** a visual-matrix command prints nothing for minutes and appears
+  hung, although individual captures eventually complete.
+- **Cause:** each software/headless capture can take tens of seconds, while the
+  harness redirects both streams to `/dev/null` and ignores failure status.
+- **Rule:** every capture harness must print START/DONE progress, keep one log
+  per child, enforce a configurable timeout, verify the requested artifact, and
+  propagate non-zero exits. Headless captures are for deterministic images and
+  counters, never authoritative GPU frame timing.

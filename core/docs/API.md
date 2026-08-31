@@ -219,10 +219,12 @@
   bool GasSystem_HasPending(void);
   void GasSystem_Prepare(Camera3D camera);
   void GasSystem_Composite(void);
+  GasPerfStats GasSystem_GetPerfStats(void);
+  void GasSystem_ResetPerfStats(void);
   void GasSystem_Unload(void);
 ```
 **Enums:** GasKind { GAS_SMOKE,GAS_FIRE,GAS_ENERGY };GasPriority { GAS_PRIORITY_AMBIENT,GAS_PRIORITY_CAST,GAS_PRIORITY_ULTIMATE }
-**Structs** (fields in header): GasVolumeDesc, GasInjection
+**Structs** (fields in header): GasVolumeDesc, GasInjection, GasPerfStats
 
 ### `core/force_field.h`
 ```c
