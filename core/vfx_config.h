@@ -23,6 +23,7 @@ typedef enum {
 #include "core/color_gradient.h"
 #include "core/sprite_anim.h"
 #include "core/skill_curve.h"
+#include "core/particles/particle_travel.h"
 #include "core/vfx_contrast.h"
 #include "core/vfx_appearance.h"
 
@@ -48,6 +49,13 @@ typedef struct {
     Vector3 velocity;
     float speed;
     const ForceField *forceField;
+
+    // Optional guided travel. External force is evaluated first; path steering
+    // then guides the resulting velocity toward the next waypoint. NULL keeps
+    // ordinary ballistic particle motion.
+    const ParticleTravelPath *travelPath;
+    const struct ParticleConfig *onTargetEmit;
+    int onTargetEmitCount;
     
     // Impact/Collision upgrades
     bool collisionEnabled;

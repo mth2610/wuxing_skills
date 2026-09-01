@@ -56,23 +56,27 @@ typedef struct {
     float   lifetime;  // seconds
     float   drag;      // 0.0 = no drag | 0.98 = light drag | 1.0 = stop instantly
 
-    // Optional ForceField — ONLY effective on the COMPUTE path. The CPU/VBO
-    // fallback (macOS, or a device where the compute shader fails to compile)
-    // ignores this field, and particles run drag-only. axisOrigin/axisDir:
+    // Optional ForceField. NULL evaluates to zero acceleration. The COMPUTE
+    // shader and CPU/VBO fallback use the same force-field contract. axisOrigin/axisDir:
     // the dynamic axis for a FORCE_RADIAL_AXIS/FORCE_VORTEX_AXIS layer inside
     // forceField (ignored if you don't use those layer types).
     const ForceField *forceField;
     Vector3 axisOrigin;
     Vector3 axisDir;
+
+    // Optional shared waypoint route. Force/drag run first, then finite path
+    // steering; NULL keeps ballistic integration. onTargetEmit is spawned when
+    // the swept arrival test reaches the final target.
+    const ParticleTravelPath *travelPath;
+    const ParticleConfig *onTargetEmit;
+    int onTargetEmitCount;
 } GpuParticleConfig;
 ```
 
 > [!NOTE]
 > The `forceField` pointer is registered into an internal registry and re-packed EVERY FRAME
-> — it must point to long-lived memory (static/pool), never a local stack variable. See
-> `../../core/docs/PROGRESS.md` Item 5 if the COMPUTE path fails to compile on a device
-> (a common mobile-GPU driver limitation: SSBO unsupported at the vertex-shader stage) —
-> the system auto-falls back to CPU/VBO, but then `forceField` has no effect.
+> — it must point to long-lived memory (static/pool), never a local stack variable. If
+> compute is unavailable, the system falls back to CPU/VBO and evaluates the same field.
 
 **Rain-spawn example:**
 ```c
@@ -145,7 +149,10 @@ ForceField_AddLayer(&s_smokeField, (ForceLayer){
 #define GPU_VECTOR_FIELD_SLOTS 2  // Concurrent vector-field textures
 ```
 
-Each particle occupies 80 bytes in the SSBO. Fixed-size pool, no malloc.
+Each particle occupies 128 bytes in the SSBO (eight `vec4`s). Routes are not
+copied per particle: up to 32 shared routes live in a separate fixed 9 KiB path
+SSBO, while each particle stores only route-slot and waypoint indices. No runtime
+allocation is performed.
 
 ---
 
@@ -155,7 +162,7 @@ All shaders live in `core/particles/shaders/gpu/`:
 
 | File | Used by | Description |
 |---|---|---|
-| `gpu_particles.comp` | COMPUTE path | Physics update: lifetime, drag, integrate |
+| `gpu_particles.comp` | COMPUTE path | Lifetime, force/drag, guided path steering, swept target arrival |
 | `gpu_particles_ssbo.vs` | COMPUTE path | Vertex: billboard from SSBO + gl_VertexID |
 | `gpu_particles.fs` | Compute path | Fragment: texture * color interpolate + previous-frame scene-depth soft fade |
 | `gpu_particles_vbo.vs` | CPU/VBO path | Vertex: consumes the VBO built on the CPU |

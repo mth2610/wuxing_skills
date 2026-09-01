@@ -63,6 +63,12 @@ typedef struct
 
   // --- COLD DATA (Con trỏ, ít khi rẽ nhánh) ---
   const ForceField *forceField;
+  Vector3 forceAxisOrigin;
+  Vector3 forceAxisDir;
+  const ParticleTravelPath *travelPath;
+  int travelWaypoint;
+  bool travelImpactActive;
+  float travelImpactAge;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
   float spriteAnimPhase;
@@ -112,6 +118,10 @@ typedef struct
   ParticleConfig onCollisionConfig;
   int onCollisionCount;
   bool hasCollisionEmit;
+
+  ParticleConfig onTargetConfig;
+  int onTargetCount;
+  bool hasTargetEmit;
 
   // Particle trails history (static buffer, no malloc!)
   int trailLength;
@@ -252,6 +262,12 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->renderMode = renderMode;
 
   p->forceField = config.forceField;
+  p->forceAxisOrigin = config.forceAxisOrigin;
+  p->forceAxisDir = config.forceAxisDir;
+  p->travelPath = config.travelPath;
+  p->travelWaypoint = 0;
+  p->travelImpactActive = false;
+  p->travelImpactAge = 0.0f;
   p->gradient = config.gradient;
   p->spriteAnim = config.spriteAnim;
   p->spriteAnimPhase = config.spriteAnimPhase;
@@ -382,6 +398,21 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
     p->hasCollisionEmit = false;
   }
 
+  if (config.physics.onTargetEmit && config.physics.onTargetEmitCount > 0)
+  {
+    p->onTargetConfig = *config.physics.onTargetEmit;
+    p->onTargetConfig.onDeathEmit = NULL;
+    p->onTargetConfig.onLiveEmit = NULL;
+    p->onTargetConfig.physics.onCollisionEmit = NULL;
+    p->onTargetConfig.physics.onTargetEmit = NULL;
+    p->onTargetCount = config.physics.onTargetEmitCount;
+    p->hasTargetEmit = true;
+  }
+  else
+  {
+    p->hasTargetEmit = false;
+  }
+
   p->trailLength = config.render.trailLength;
   if (p->trailLength > 8) p->trailLength = 8; // clamp to static buffer size
   p->trailWidthRatio = config.render.trailWidthRatio;
@@ -498,16 +529,23 @@ void UpdateParticles(float dt)
     }
 
     // TỐI ƯU 3: Inline Math Scalar (Tính toán trục tiếp trên x, y, z)
-    if (p->forceField)
+    const ForceField *activeField = p->forceField;
+    if (p->travelImpactActive && p->travelPath &&
+        p->travelPath->arrivalForceField &&
+        (p->travelPath->arrivalForceDuration <= 0.0f ||
+         p->travelImpactAge <= p->travelPath->arrivalForceDuration))
+      activeField = p->travelPath->arrivalForceField;
+    if (activeField)
     {
       Vector3 pos = {p->x, p->y, p->z};
       Vector3 vel = {p->vx, p->vy, p->vz};
-      Vector3 force = ForceField_Evaluate(p->forceField, pos, vel, p->lifetime, (Vector3){0}, (Vector3){0});
+      Vector3 force = ForceField_Evaluate(activeField, pos, vel, p->lifetime,
+                                          p->forceAxisOrigin, p->forceAxisDir);
       p->vx += force.x * dt;
       p->vy += force.y * dt;
       p->vz += force.z * dt;
 
-      float viscDamp = ForceField_GetViscosityDamping(p->forceField, dt);
+      float viscDamp = ForceField_GetViscosityDamping(activeField, dt);
       p->vx *= viscDamp;
       p->vy *= viscDamp;
       p->vz *= viscDamp;
@@ -529,9 +567,61 @@ void UpdateParticles(float dt)
     }
 
     float step = dt * speedMul;
-    p->x += p->vx * step;
-    p->y += p->vy * step;
-    p->z += p->vz * step;
+    bool reachedTarget = false;
+    if (p->travelPath && !p->travelImpactActive)
+    {
+      Vector3 position = {p->x, p->y, p->z};
+      Vector3 velocity = {p->vx, p->vy, p->vz};
+      reachedTarget = ParticleTravel_Step(p->travelPath, step, &position,
+                                          &velocity, &p->travelWaypoint);
+      p->x = position.x;
+      p->y = position.y;
+      p->z = position.z;
+      p->vx = velocity.x;
+      p->vy = velocity.y;
+      p->vz = velocity.z;
+    }
+    else
+    {
+      p->x += p->vx * step;
+      p->y += p->vy * step;
+      p->z += p->vz * step;
+      if (p->travelImpactActive) p->travelImpactAge += dt;
+    }
+
+    if (reachedTarget)
+    {
+      if (p->travelPath->arrivalForceField)
+      {
+        Vector3 position = {p->x, p->y, p->z};
+        Vector3 velocity = {p->vx, p->vy, p->vz};
+        ParticleTravel_ApplyImpactEntry(p->travelPath, &position, &velocity);
+        p->x = position.x;
+        p->y = position.y;
+        p->z = position.z;
+        p->vx = velocity.x;
+        p->vy = velocity.y;
+        p->vz = velocity.z;
+        p->travelImpactActive = true;
+        p->travelImpactAge = 0.0f;
+        continue;
+      }
+      if (p->hasTargetEmit && p->onTargetCount > 0)
+      {
+        for (int c = 0; c < p->onTargetCount; c++)
+        {
+          ParticleConfig impact = p->onTargetConfig;
+          impact.position = (Vector3){p->x, p->y, p->z};
+          impact.physics.position = impact.position;
+          impact.velocity.x += p->vx * impact.velocityInheritance;
+          impact.velocity.y += p->vy * impact.velocityInheritance;
+          impact.velocity.z += p->vz * impact.velocityInheritance;
+          SpawnParticle(impact);
+        }
+      }
+      Particle_Deactivate(i);
+      continue;
+    }
 
     // Ground Collision
     if (p->collisionEnabled && p->y <= p->collisionFloorY)
@@ -1344,7 +1434,10 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
           rVec = right;
         }
 
+        // Prevent a strong impact kick from stretching the billboard into a
+        // sub-pixel line, which reads as a blink/disappearance.
         float stretchFactor = 1.0f + speed * p->stretchStrength;
+        if (stretchFactor > 3.5f) stretchFactor = 3.5f;
         rx = rVec.x * drawRadius;
         ry = rVec.y * drawRadius;
         rz = rVec.z * drawRadius;

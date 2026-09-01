@@ -47,8 +47,28 @@ typedef enum ParticleModuleFlags {
     PARTICLE_MODULE_DEPTH_COLLISION   = 1u << 9, /* GPU preferred */
     /* Used only by SpawnParticle's wrapper until a legacy descriptor is fully
      * canonicalized. It preserves visual behaviour by selecting CPU. */
-    PARTICLE_MODULE_LEGACY_COMPAT     = 1u << 10
+    PARTICLE_MODULE_LEGACY_COMPAT     = 1u << 10,
+    PARTICLE_MODULE_PATH_FOLLOW       = 1u << 11 /* GPU preferred; CPU parity */
 } ParticleModuleFlags;
+
+struct MeshAdjacency;
+typedef enum ParticleEmissionSourceType {
+    /* Backward-compatible default: use ParticleConfig.position. */
+    PARTICLE_SOURCE_CONFIG_POSITION = 0,
+    PARTICLE_SOURCE_POINT,
+    PARTICLE_SOURCE_MESH_VERTEX,
+    PARTICLE_SOURCE_MESH_EDGE
+} ParticleEmissionSourceType;
+
+/* Emitter-level source sampled once per emitted particle. Mesh modes use a
+ * prebuilt MeshAdjacency, so spawning stays O(1); source data is caller-owned
+ * and must outlive the emitter. */
+typedef struct ParticleEmissionSource {
+    ParticleEmissionSourceType type;
+    Vector3 point;
+    const struct MeshAdjacency *mesh;
+    Matrix transform;
+} ParticleEmissionSource;
 
 typedef struct ParticleEmitterDesc {
     ParticleSimulationPolicy simulationPolicy;
@@ -56,6 +76,7 @@ typedef struct ParticleEmitterDesc {
     ParticleConfig particle;
     unsigned int moduleFlags;
     const char *debugName; /* static string, used only for one-shot warnings */
+    ParticleEmissionSource source;
 } ParticleEmitterDesc;
 
 typedef int ParticleEmitterHandle;

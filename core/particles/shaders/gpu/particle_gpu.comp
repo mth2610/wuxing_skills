@@ -17,7 +17,8 @@ struct GpuParticleData {
     vec4 color_end;      // rgba normalized (0..1)
     vec4 life_data;      // x = life_remaining, y = life_max, z = phase, w = active (0/1)
     vec4 ff_data;        // x = force field slot (-1 = none), yzw = reserved
-    vec4 route_data;     // x = emitter id, y = ParticleRenderMode
+    vec4 route_data;     // x=emitter id, y=render mode, z=travel slot, w=waypoint
+    vec4 impact_data;    // x=impact age, y=impact active
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {
@@ -45,6 +46,19 @@ struct ForceFieldGPU {
 
 layout(std430, binding = 1) readonly buffer ForceFieldBuffer {
     ForceFieldGPU uFields[];
+};
+
+#define TRAVEL_MAX_WAYPOINTS 16
+#define MAX_GPU_TRAVEL_PATHS 32
+struct ParticleTravelPathGPU {
+    vec4 points[TRAVEL_MAX_WAYPOINTS];
+    vec4 params; // x=count, y=speed, z=steering, w=max acceleration
+    vec4 radii;  // x=waypoint radius, y=target radius
+    vec4 arrival; // x=arrival force slot, y=offset, z=kick
+};
+
+layout(std430, binding = 2) readonly buffer ParticleTravelPathBuffer {
+    ParticleTravelPathGPU uTravelPaths[];
 };
 
 // Phải khớp thứ tự enum ForceType trong core/force_field.h
@@ -247,6 +261,73 @@ vec3 evalForceField(int idx, vec3 pos, vec3 vel, float time, out float outTotalV
     return totalAcc;
 }
 
+float segmentDistanceSq(vec3 a, vec3 b, vec3 point) {
+    vec3 ab = b - a;
+    float denom = dot(ab, ab);
+    float t = denom > 1e-8 ? clamp(dot(point - a, ab) / denom, 0.0, 1.0) : 0.0;
+    vec3 delta = a + ab * t - point;
+    return dot(delta, delta);
+}
+
+// Mirrors ParticleTravel_Step. Force and drag have already modified `vel`;
+// finite steering guides that result instead of erasing field deflection.
+bool evalTravelPath(int pathIndex, inout vec3 pos, inout vec3 vel,
+                    inout float waypointValue, float dt) {
+    if (pathIndex < 0 || pathIndex >= MAX_GPU_TRAVEL_PATHS) return false;
+    int count = clamp(int(uTravelPaths[pathIndex].params.x + 0.5),
+                      0, TRAVEL_MAX_WAYPOINTS);
+    if (count <= 0) return false;
+    int finalIndex = count - 1;
+    int waypoint = clamp(int(waypointValue + 0.5), 0, finalIndex);
+    float waypointRadius = uTravelPaths[pathIndex].radii.x > 0.0
+                               ? uTravelPaths[pathIndex].radii.x : 0.10;
+    float targetRadius = uTravelPaths[pathIndex].radii.y > 0.0
+                             ? uTravelPaths[pathIndex].radii.y : waypointRadius;
+
+    for (int i = 0; i < TRAVEL_MAX_WAYPOINTS - 1; ++i) {
+        if (waypoint >= finalIndex) break;
+        vec3 occupiedGoal = uTravelPaths[pathIndex].points[waypoint].xyz;
+        vec3 occupiedDelta = pos - occupiedGoal;
+        if (dot(occupiedDelta, occupiedDelta) > waypointRadius * waypointRadius)
+            break;
+        waypoint++;
+    }
+
+    vec3 goal = uTravelPaths[pathIndex].points[waypoint].xyz;
+    vec3 toGoal = goal - pos;
+    float distanceToGoal = length(toGoal);
+    float speed = uTravelPaths[pathIndex].params.y;
+    if (speed <= 0.0) {
+        speed = length(vel);
+        if (speed <= 1e-4) speed = 1.0;
+    }
+    vec3 desired = distanceToGoal > 1e-5 ? toGoal * (speed / distanceToGoal)
+                                          : vec3(0.0);
+    float steering = uTravelPaths[pathIndex].params.z > 0.0
+                         ? uTravelPaths[pathIndex].params.z : 8.0;
+    vec3 velocityDelta = (desired - vel) * (1.0 - exp(-steering * dt));
+    float maxAcceleration = uTravelPaths[pathIndex].params.w;
+    float changeLength = length(velocityDelta);
+    if (maxAcceleration > 0.0 && changeLength > maxAcceleration * dt &&
+        changeLength > 1e-6)
+        velocityDelta *= (maxAcceleration * dt) / changeLength;
+    vel += velocityDelta;
+
+    vec3 next = pos + vel * dt;
+    float hitRadius = waypoint == finalIndex ? targetRadius : waypointRadius;
+    if (segmentDistanceSq(pos, next, goal) <= hitRadius * hitRadius) {
+        if (waypoint == finalIndex) {
+            pos = goal;
+            waypointValue = float(waypoint);
+            return true;
+        }
+        waypoint++;
+    }
+    pos = next;
+    waypointValue = float(waypoint);
+    return false;
+}
+
 void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= uint(particles.length())) return;
@@ -264,8 +345,15 @@ void main() {
         return;
     }
 
+    int pathIndex = int(p.route_data.z);
+    bool impactActive = p.impact_data.y > 0.5;
+    int forceIndex = int(p.ff_data.x);
+    if (impactActive && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
+        (uTravelPaths[pathIndex].radii.z <= 0.0 ||
+         p.impact_data.x <= uTravelPaths[pathIndex].radii.z))
+        forceIndex = int(uTravelPaths[pathIndex].arrival.x + 0.5);
     float totalVisc = 0.0;
-    vec3 ffAccel = evalForceField(int(p.ff_data.x), p.pos_radius.xyz, p.vel_drag.xyz, u_time, totalVisc);
+    vec3 ffAccel = evalForceField(forceIndex, p.pos_radius.xyz, p.vel_drag.xyz, u_time, totalVisc);
     
     p.vel_drag.xyz += ffAccel * u_dt;
 
@@ -279,8 +367,31 @@ void main() {
     drag_factor = max(drag_factor, 0.0);
     p.vel_drag.xyz *= drag_factor;
 
-    // Integrate position
-    p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
+    // Guided travel owns integration when a path slot is present.
+    bool reachedTarget = false;
+    if (!impactActive)
+        reachedTarget = evalTravelPath(pathIndex, p.pos_radius.xyz,
+                                       p.vel_drag.xyz, p.route_data.w, u_dt);
+    else {
+        p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
+        p.impact_data.x += u_dt;
+    }
+    if (reachedTarget && uTravelPaths[pathIndex].arrival.x >= -0.5) {
+        vec3 outward = normalize(p.vel_drag.xyz);
+        if (dot(outward, outward) < 1e-6) outward = vec3(1.0, 0.0, 0.0);
+        if (uTravelPaths[pathIndex].arrival.w > 0.0)
+            p.vel_drag.xyz *= uTravelPaths[pathIndex].arrival.w;
+        p.pos_radius.xyz += outward * uTravelPaths[pathIndex].arrival.y;
+        p.vel_drag.xyz += outward * uTravelPaths[pathIndex].arrival.z;
+        p.impact_data.x = 0.0;
+        p.impact_data.y = 1.0;
+    } else if (reachedTarget) {
+        p.life_data.w = 0.0;
+        particles[idx] = p;
+        return;
+    }
+    if (p.route_data.z < 0.0)
+        p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
 
     // Ground Collision Y-bounce
     float elasticity = p.ff_data.z; // ff_pad1

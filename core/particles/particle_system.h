@@ -33,6 +33,13 @@ struct ParticleConfig {
   Vector3 forceAxisOrigin;
   Vector3 forceAxisDir;
 
+  // Optional route to a final target. Force fields are applied first, then the
+  // path steers the resulting velocity. The path and all pointers it contains
+  // are caller-owned and must outlive this particle.
+  const ParticleTravelPath *travelPath;
+  const ParticleConfig *onTargetEmit;
+  int onTargetEmitCount;
+
   // Tùy chọn chuyển màu dải stop và ảnh hoạt cảnh atlas
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
@@ -148,6 +155,11 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
     cfg->physics.followStrength = cfg->followStrength;
     cfg->physics.followCurve = cfg->followCurve;
   }
+  if (cfg->physics.travelPath == NULL && cfg->travelPath != NULL) {
+    cfg->physics.travelPath = cfg->travelPath;
+    cfg->physics.onTargetEmit = cfg->onTargetEmit;
+    cfg->physics.onTargetEmitCount = cfg->onTargetEmitCount;
+  }
   if (cfg->physics.collisionEnabled == false && cfg->collisionEnabled != false) {
     cfg->physics.collisionEnabled = cfg->collisionEnabled;
     cfg->physics.collisionElasticity = cfg->collisionElasticity;
@@ -196,6 +208,11 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
   }
   if (cfg->forceField == NULL && cfg->physics.forceField != NULL) {
     cfg->forceField = cfg->physics.forceField;
+  }
+  if (cfg->travelPath == NULL && cfg->physics.travelPath != NULL) {
+    cfg->travelPath = cfg->physics.travelPath;
+    cfg->onTargetEmit = cfg->physics.onTargetEmit;
+    cfg->onTargetEmitCount = cfg->physics.onTargetEmitCount;
   }
   if (cfg->followTarget == NULL && cfg->physics.followTarget != NULL) {
     cfg->followTarget = cfg->physics.followTarget;

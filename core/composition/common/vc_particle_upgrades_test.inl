@@ -9,6 +9,225 @@
 static ForceField s_testGravityField;
 static bool s_testGravityInit = false;
 
+// Guided-travel diagnostic.  The route, moving target, force field and impact
+// template are pointer-backed, so every active cast owns stable storage until
+// its longest parent particle has expired.  The pool is intentionally small:
+// this fixture is a one-shot visual proof, not a gameplay emitter farm.
+#define GUIDED_PARTICLE_TEST_MAX 4
+#define GUIDED_PARTICLE_TEST_POINTS 6
+
+typedef struct GuidedParticleTestState {
+    bool active;
+    float age;
+    Vector3 target;
+    Vector3 points[GUIDED_PARTICLE_TEST_POINTS];
+    ParticleTravelPath path;
+    ForceField field;
+    ForceField impactField;
+    ParticleEmitterHandle meshEmitter;
+    ParticleEmitterHandle pointEmitter;
+} GuidedParticleTestState;
+
+static GuidedParticleTestState s_guidedParticleTests[GUIDED_PARTICLE_TEST_MAX];
+static MeshAdjacency s_guidedParticleSourceMesh;
+static bool s_guidedParticleSharedInit = false;
+
+static void GuidedParticleTest_InitShared(void)
+{
+    if (s_guidedParticleSharedInit) return;
+
+    // A vertical torus makes the mesh-emission source readable as a portal.
+    // Build adjacency once; every cast only supplies a cheap world transform.
+    Mesh source = GenMeshTorus(0.16f, 2.0f, 24, 8);
+    MeshAdjacency_Build(&s_guidedParticleSourceMesh, source);
+    UnloadMesh(source);
+
+    s_guidedParticleSharedInit = true;
+}
+
+static void GuidedParticleTest_Clear(GuidedParticleTestState *state)
+{
+    if (state->meshEmitter != PARTICLE_EMITTER_INVALID)
+        ParticleManager_DestroyEmitter(state->meshEmitter);
+    if (state->pointEmitter != PARTICLE_EMITTER_INVALID)
+        ParticleManager_DestroyEmitter(state->pointEmitter);
+    state->meshEmitter = PARTICLE_EMITTER_INVALID;
+    state->pointEmitter = PARTICLE_EMITTER_INVALID;
+    state->active = false;
+}
+
+static GuidedParticleTestState *GuidedParticleTest_Allocate(void)
+{
+    for (int i = 0; i < GUIDED_PARTICLE_TEST_MAX; ++i) {
+        if (!s_guidedParticleTests[i].active) return &s_guidedParticleTests[i];
+    }
+    return NULL;
+}
+
+static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
+{
+    GuidedParticleTest_InitShared();
+    GuidedParticleTestState *state = GuidedParticleTest_Allocate();
+    if (!state) return;
+
+    *state = (GuidedParticleTestState){
+        .active = true,
+        .meshEmitter = PARTICLE_EMITTER_INVALID,
+        .pointEmitter = PARTICLE_EMITTER_INVALID,
+    };
+    state->target = target;
+    Vector3 span = Vector3Subtract(target, source);
+    float spanLength = Vector3Length(span);
+    Vector3 forward = spanLength > 0.001f ? Vector3Scale(span, 1.0f / spanLength)
+                                         : (Vector3){1.0f, 0.0f, 0.0f};
+    Vector3 lateral = Vector3Normalize(Vector3CrossProduct((Vector3){0.0f, 1.0f, 0.0f}, forward));
+    if (Vector3LengthSqr(lateral) < 0.001f) lateral = (Vector3){0.0f, 0.0f, 1.0f};
+    // Sample one cubic Bezier spline. The travel solver consumes line
+    // segments, so these samples approximate one smooth route.
+    Vector3 up = (Vector3){0.0f, 1.0f, 0.0f};
+    Vector3 controlA = Vector3Add(source,
+        Vector3Add(Vector3Scale(forward, spanLength * 0.30f),
+                   Vector3Add(Vector3Scale(lateral, spanLength * 0.22f),
+                              Vector3Scale(up, spanLength * 0.10f))));
+    Vector3 controlB = Vector3Add(source,
+        Vector3Add(Vector3Scale(forward, spanLength * 0.70f),
+                   Vector3Add(Vector3Scale(lateral, -spanLength * 0.22f),
+                              Vector3Scale(up, spanLength * 0.06f))));
+    const float t[GUIDED_PARTICLE_TEST_POINTS] = {0.10f, 0.24f, 0.40f, 0.58f, 0.76f, 0.90f};
+    for (int i = 0; i < GUIDED_PARTICLE_TEST_POINTS; ++i) {
+        float u = 1.0f - t[i];
+        float b0 = u * u * u;
+        float b1 = 3.0f * u * u * t[i];
+        float b2 = 3.0f * u * t[i] * t[i];
+        float b3 = t[i] * t[i] * t[i];
+        state->points[i] = (Vector3){
+            source.x * b0 + controlA.x * b1 + controlB.x * b2 + target.x * b3,
+            source.y * b0 + controlA.y * b1 + controlB.y * b2 + target.y * b3,
+            source.z * b0 + controlA.z * b1 + controlB.z * b2 + target.z * b3,
+        };
+    }
+    state->path = (ParticleTravelPath){
+        .points = state->points,
+        .pointCount = GUIDED_PARTICLE_TEST_POINTS,
+        .target = &state->target,
+        .speed = 4.0f,
+        .steering = 5.0f,
+        .maxAcceleration = 6.0f,
+        .waypointRadius = 0.22f,
+        .targetRadius = 0.12f,
+        .arrivalForceField = &state->impactField,
+        // Snap the impact phase to the actual click target; the radial force
+        // should be the visible separation, not an authored positional bias.
+        .arrivalOffset = 0.0f,
+        .arrivalKick = 0.0f,
+        .arrivalVelocityScale = 0.001f,
+        .arrivalForceDuration = 0.12f,
+    };
+
+    ForceField_Clear(&state->field);
+    ForceField_AddLayer(&state->field, (ForceLayer){
+        .type = FORCE_NOISE_CURL,
+        .strength = 3.00f,
+        .noiseScale = 4.00f,
+        .noiseSpeed = 0.70f,
+    });
+
+    ForceField_Clear(&state->impactField);
+    ForceField_AddLayer(&state->impactField, (ForceLayer){
+        .type = FORCE_GRAVITY_POINT,
+        .origin = target,
+        .strength = -4.0f,
+        .radius = 3.5f,
+        .falloff = 1.0f,
+    });
+    ForceField_AddLayer(&state->impactField, (ForceLayer){
+        .type = FORCE_NOISE_CURL,
+        .strength = 0.15f,
+        .noiseScale = 2.2f,
+        .noiseSpeed = 1.7f,
+    });
+    ForceField_AddLayer(&state->impactField, (ForceLayer){
+        .type = FORCE_VISCOSITY,
+        .strength = 0.85f,
+    });
+
+    ParticleConfig follower = {
+        .position = source,
+        .velocity = (Vector3){1.2f, 0.25f, 0.0f},
+        .lifetime = 7.0f,
+        .radius = 0.105f,
+        .colorStart = (Color){90, 235, 255, 245},
+        .colorEnd = (Color){130, 70, 255, 0},
+        .forceField = &state->field,
+        .travelPath = &state->path,
+        .stretchStrength = 0.014f,
+        .stretchMinSpeed = 0.35f,
+        .render.blendMode = VFX_BLEND_ADDITIVE,
+        .render.unlit = 1,
+        .render.emissiveBoost = 4.2f,
+    };
+    Matrix sourceTransform = MatrixMultiply(
+        MatrixMultiply(MatrixRotateY(PI * 0.5f), MatrixScale(0.60f, 0.60f, 0.60f)),
+        MatrixTranslate(source.x, source.y, source.z));
+    ParticleEmitterDesc meshDesc = {
+        .simulationPolicy = PARTICLE_SIM_AUTO,
+        .renderMode = PARTICLE_RENDER_BILLBOARD,
+        .particle = follower,
+        .moduleFlags = PARTICLE_MODULE_FORCE_FIELD |
+                       PARTICLE_MODULE_VELOCITY_STRETCH |
+                       PARTICLE_MODULE_PATH_FOLLOW,
+        .debugName = "Guided test mesh source",
+        .source = {
+            .type = PARTICLE_SOURCE_MESH_EDGE,
+            .mesh = &s_guidedParticleSourceMesh,
+            .transform = sourceTransform,
+        },
+    };
+    state->meshEmitter = ParticleManager_CreateEmitter(&meshDesc);
+    if (state->meshEmitter != PARTICLE_EMITTER_INVALID)
+        ParticleManager_Emit(state->meshEmitter, 512);
+
+    // One larger leader starts from an exact point and makes the second source
+    // mode easy to distinguish from the surrounding mesh-sampled formation.
+    ParticleEmitterDesc pointDesc = meshDesc;
+    pointDesc.debugName = "Guided test point source";
+    pointDesc.source = (ParticleEmissionSource){
+        .type = PARTICLE_SOURCE_POINT,
+        .point = source,
+    };
+    pointDesc.particle.radius = 0.22f;
+    pointDesc.particle.colorStart = (Color){255, 255, 255, 255};
+    pointDesc.particle.colorEnd = (Color){50, 205, 255, 0};
+    pointDesc.particle.render.emissiveBoost = 6.0f;
+    state->pointEmitter = ParticleManager_CreateEmitter(&pointDesc);
+    if (state->pointEmitter != PARTICLE_EMITTER_INVALID)
+        ParticleManager_Emit(state->pointEmitter, 1);
+
+    if (state->meshEmitter == PARTICLE_EMITTER_INVALID &&
+        state->pointEmitter == PARTICLE_EMITTER_INVALID)
+        GuidedParticleTest_Clear(state);
+}
+
+static void GuidedParticleTest_Update(float dt)
+{
+    for (int i = 0; i < GUIDED_PARTICLE_TEST_MAX; ++i) {
+        GuidedParticleTestState *state = &s_guidedParticleTests[i];
+        if (!state->active) continue;
+        state->age += dt;
+        state->impactField.layers[0].origin = state->target;
+        // Parent lifetime is 7.0 s.  Keep pointer-backed route data alive past
+        // that bound; the same particles own the impact phase until expiry.
+        if (state->age >= 7.25f) GuidedParticleTest_Clear(state);
+    }
+}
+
+// Public one-shot entry so sync_vfx_test.py exposes this diagnostic as its own
+// NEW FX button. The internal name above intentionally remains test-specific.
+void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target)
+{
+    GuidedParticleTest_Spawn(source, target);
+}
+
 static void ShardSplash_Init(void) {
     if (s_testGravityInit) return;
     ForceField_Clear(&s_testGravityField);
@@ -22,6 +241,8 @@ static void ShardSplash_Init(void) {
 
 void VFX_ComposeParticleUpgradesTest(Vector3 pos) {
     ShardSplash_Init();
+    GuidedParticleTest_Spawn(Vector3Add(pos, (Vector3){-2.7f, 0.65f, 0.0f}),
+                             Vector3Add(pos, (Vector3){2.7f, 0.85f, 0.0f}));
     
     Vector3 cpuPos = Vector3Subtract(pos, (Vector3){1.5f, 0.0f, 0.0f});
     Vector3 gpuPos = Vector3Add(pos, (Vector3){1.5f, 0.0f, 0.0f});

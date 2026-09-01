@@ -98,10 +98,18 @@ typedef struct {
 
 #define FORCE_FIELD_MAX_LAYERS 8
 
-typedef struct {
+#ifdef CORE_FORCE_FIELD_TYPE_DECLARED
+struct ForceField {
+  ForceLayer layers[FORCE_FIELD_MAX_LAYERS];
+  int layerCount;
+};
+#else
+typedef struct ForceField {
   ForceLayer layers[FORCE_FIELD_MAX_LAYERS];
   int layerCount;
 } ForceField;
+#define CORE_FORCE_FIELD_TYPE_DECLARED 1
+#endif
 
 // Xóa toàn bộ layer, trả về ForceField rỗng
 void ForceField_Clear(ForceField *ff);

@@ -176,6 +176,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeStonePillar":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeFlameVolume":        ("emitter", "timed",      "continuous"),
     "VFX_ComposeBlackHole":          ("draw",    "timed",      "continuous"),
+    "VFX_ComposeGuidedParticle":     ("event",   "burst",      "oneshot"),
     "VFX_ComposeIceCrystal":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterStream":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeFluidImpact":        ("event",   "burst",      "oneshot"),
@@ -243,6 +244,13 @@ FIXTURE_SPAWN_OVERRIDES = {
 # separate from persistent spawn overrides: a trigger call has no stored handle
 # and must not be treated as a frame-fed fixture.
 FIXTURE_EVENT_OVERRIDES = {
+    # Long gameplay-scale run: character socket five metres behind the click
+    # point, so the spline and the post-arrival radial burst have room to read.
+    "VFX_ComposeGuidedParticle":
+        # Use the harness' actual character source and mouse target.  Using
+        # POS for both made the diagnostic silently invent a second endpoint,
+        # so the visible route was offset from both gameplay locations.
+        "VFX_ComposeGuidedParticle($SOURCE, $TARGET)",
     # A directed fire primary needs a visible segment, not the generic point
     # that an inferred event call would provide. The standard line fixture is
     # long enough to judge nozzle taper, flame-front width and hot-smoke wake.
@@ -1291,6 +1299,17 @@ def gen_stop_function(entries):
 
 def gen_trigger_block(entries):
     lines = ["// @gen:newfx_trigger begin"]
+    # Guided travel is an interaction fixture: unlike the static preview
+    # buttons, a world click must provide the real player socket and raycast
+    # target instead of the generic POS-relative preview endpoints.
+    guided_idx = next((i for i, e in enumerate(entries)
+                       if e.get("fn") == "VFX_ComposeGuidedParticle"), None)
+    if guided_idx is not None:
+        lines += [f"        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex == {guided_idx}) {{",
+                  "            Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});",
+                  "            VFX_ComposeGuidedParticle(castSocket, mouseTarget3D);",
+                  "            return false;",
+                  "        }"]
     lines += [f"{INDENT}if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {{",
               f"{INDENT}    /* continuous — handled per-frame in VFXTest_Draw3D */",
               f"{INDENT}    switch (s_testIndex) {{"]

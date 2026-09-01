@@ -226,6 +226,7 @@ manager logs a warning once per emitter and exposes the rejection counter.
 | Module | CPU | GPU |
 | --- | --- | --- |
 | Gravity, drag, colour/size over life, velocity stretch, basic force field | yes | yes |
+| Guided waypoint path + moving final target + arrival VFX | yes | yes (preferred) |
 | Vector-field texture | no | yes |
 | Gameplay callback/collision | yes | no |
 | Depth collision | fallback raycast/disable by policy | preferred |
@@ -233,7 +234,8 @@ manager logs a warning once per emitter and exposes the rejection counter.
 | Fluid SSF input | surface stream | direct raster stream |
 
 Descriptors are copied into a fixed 128-emitter pool. Their pointer members
-(`ForceField`, gradients, curves, sprite animation, and textures) are borrowed:
+(`ForceField`, travel paths/points/targets, impact configs, gradients, curves,
+sprite animation, mesh sources, and textures) are borrowed:
 they must outlive every emitted particle. No allocation or shader compilation is
 performed by emit/update. `SpawnParticle` remains a compatibility AUTO burst and
 currently carries the legacy-compat module, so existing CPU effects retain their
@@ -253,6 +255,9 @@ typedef struct {
     Color colorStart, colorEnd;
     float radius, lifetime;
     const ForceField *forceField;        // Dynamic steering
+    const ParticleTravelPath *travelPath;// Force first, then guided waypoints
+    const ParticleConfig *onTargetEmit;  // VFX spawned at final-target arrival
+    int onTargetEmitCount;
     const ColorGradient *gradient;       // Overrides colorStart/colorEnd
     const SpriteAnim *spriteAnim;        // Optional sprite animation
     float spriteAnimPhase;               // Per-particle time offset (seconds)
@@ -274,6 +279,7 @@ typedef struct {
 ```
 * **Color Priority:** If `gradient` is not `NULL`, `colorStart` and `colorEnd` are ignored. Always prefer `ColorGradient` for multi-stage color shifts (e.g. fire core white -> orange -> dark ash).
 * **Sub-Emitter Lifecycle:** Sub-emitters (`onDeathEmit` and `onLiveEmit`) inherit the parent position but **do not** inherit velocity. Configs passed to sub-emitters **MUST** be declared static (persistent scope).
+* **Guided travel:** `travelPath == NULL` keeps ordinary motion. Otherwise each update applies the optional force field first and then steers the resulting velocity toward the current waypoint. A swept segment test prevents a fast particle from tunnelling through the target. `ParticleTravelPath.target` is read fresh every frame, so it may point to a moving target; the path, its point array, target pointer, and optional `arrivalForceField` must remain valid for the particle lifetime. With `arrivalForceField`, arrival does not spawn a sub-emitter: the same particle receives `arrivalKick`/`arrivalOffset`, switches to that force field, and continues until its normal lifetime expires. `PARTICLE_SIM_AUTO` is the default and chooses GPU compute when available; CPU behavior is the semantic fallback.
 * **Flipbook variation:** A reusable, directionless flipbook should use a randomized `spriteAnimPhase`, a slightly slower `spriteAnimRate` (never make an `ANIM_ONCE` sheet overrun its last authored frame), and X/Y flips. Shape still comes from emitter distribution, velocity and force fields.
 * **Emitter follow:** `followTarget` carries only source displacement, then releases the particle through `followCurve` (or a default linear release). Its target pointer must remain valid for the particle lifetime. For pooled emitters, provide `followTargetGeneration` and the captured `followGeneration`, otherwise particles can attach to an unrelated effect after the slot is reused.
 * **Over-lifetime curves (`radiusCurve`/`speedCurve`/`alphaCurve`, `core/skill_curve.h`):** all three are `NULL` by default (today's exact legacy behavior — fixed radius, physics-only velocity, colorStart/colorEnd/gradient's own alpha). When set, each is sampled fresh every frame at `t01 = 1.0 - lifeRatio` (0 at spawn, 1 at death — same "age fraction" convention `gradient` already uses) via `SkillCurve_Eval`, and **multiplies** the corresponding base value: `radiusCurve` scales the drawn radius, `speedCurve` scales only this frame's position step from `velocity` (the stored velocity itself is untouched, so it composes cleanly with `forceField`/`WindZone` physics instead of compounding), `alphaCurve` scales `colorStart.a` and overrides whatever alpha `colorStart`/`colorEnd`/`gradient` would have produced (RGB is unaffected). This is the mechanism for a skill's per-phase "particle size/speed/opacity over its own short lifetime" tunables — see `fire_skill.c`/`thunder_orb_skill.c` for the pattern: one `static SkillCurve` per phase per property, seeded flat at `1.0` via `SkillCurve_SetConstant` (a no-op multiplier), registered as a curve-kind `SkillTunableEntry`, and pointed to by every `ParticleConfig` spawned in that phase.
@@ -317,6 +323,45 @@ decalMaterial.contrastProfile = VFX_CONTRAST_FIRE;
 ### Mesh-based Particle Emission
 * `void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config);`
 Spawns a particle at a random edge position on the mesh, transforming its position into world space using the given transform matrix.
+
+For reusable emitters, prefer `ParticleEmitterDesc.source`: point, mesh vertex,
+and mesh edge modes all feed the same CPU/GPU path. Mesh modes sample a prebuilt
+`MeshAdjacency` in O(1), rather than scanning mesh data per particle.
+
+```c
+static Vector3 s_routePoints[] = {
+    {2.0f, 0.8f, 1.0f}, {4.0f, 1.4f, 2.5f}
+};
+static Vector3 s_target;
+static ParticleTravelPath s_route = {
+    .points = s_routePoints,
+    .pointCount = 2,
+    .target = &s_target,
+    .speed = 2.5f,
+    .steering = 8.0f,
+    .maxAcceleration = 7.0f,
+    .waypointRadius = 0.12f,
+    .targetRadius = 0.18f
+};
+static ParticleConfig s_impact;
+
+ParticleEmitterDesc desc = {0};
+desc.simulationPolicy = PARTICLE_SIM_AUTO; /* GPU compute by default */
+desc.renderMode = PARTICLE_RENDER_BILLBOARD;
+desc.source = (ParticleEmissionSource){
+    .type = PARTICLE_SOURCE_MESH_EDGE,
+    .mesh = &meshAdjacency,
+    .transform = meshWorldTransform
+};
+desc.particle = particleTemplate;
+desc.particle.travelPath = &s_route;
+ParticleEmitterHandle emitter = ParticleManager_CreateEmitter(&desc);
+ParticleManager_Emit(emitter, 64);
+```
+
+For a same-particle impact phase, author the route with
+`s_route.arrivalForceField` (for example a negative-strength point field for a
+radial outward burst), then set `s_route.arrivalOffset` and `s_route.arrivalKick`.
 
 ### Mesh Adjacency Graph (`#include "core/mesh_adjacency.h"`)
 Used to construct topological adjacency graphs of 3D meshes (welding vertices within a small threshold) to enable path walking and edge sampling.

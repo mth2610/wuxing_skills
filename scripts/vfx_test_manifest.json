@@ -310,6 +310,17 @@
       "trigger_call": "VFX_ComposeLightningGroundRicochet($POS, VC_MAT_LIGHTNING, 1.0f, $SEED)"
     },
     {
+      "source": "common/vc_particle_upgrades_test.inl",
+      "fn": "VFX_ComposeGuidedParticle",
+      "label": "GUIDED PARTICLE",
+      "category": "common",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeGuidedParticle($SOURCE, $TARGET)"
+    },
+    {
       "source": "common/vc_portal_disc.inl",
       "fn": "VFX_ComposePortalDisc",
       "label": "PORTAL DISC",

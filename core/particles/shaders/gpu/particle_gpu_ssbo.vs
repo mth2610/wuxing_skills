@@ -17,7 +17,8 @@ struct GpuParticleData {
     vec4 color_end;
     vec4 life_data;
     vec4 ff_data; // không dùng ở VS, giữ để khớp stride với GPU/CPU struct
-    vec4 route_data;
+    vec4 route_data;     // x=emitter id, y=render mode, z=travel slot, w=waypoint
+    vec4 impact_data;    // x=impact age, y=impact active
 };
 
 layout(std430, binding = 0) readonly buffer ParticleBuffer {
@@ -76,7 +77,7 @@ void main() {
             rVec = u_right;
         }
         
-        float stretchFactor = 1.0 + speed * stretchStrength;
+        float stretchFactor = min(1.0 + speed * stretchStrength, 3.5);
         worldPos = center
                  + rVec * (corner.x * r)
                  + tangent * (corner.y * r * stretchFactor);

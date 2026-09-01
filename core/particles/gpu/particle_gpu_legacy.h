@@ -22,9 +22,11 @@
 
 #include "raylib.h"
 #include "core/force_field.h"
+#include "core/particles/particle_travel.h"
 #include <stdbool.h>
 
 #define MAX_GPU_PARTICLES 8192
+#define GPU_PARTICLE_DATA_STRIDE_BYTES 128 /* eight std430 vec4 values */
 
 // Số slot texture "vector field" đồng thời hỗ trợ cho FORCE_VECTOR_TEXTURE
 // (xem core/force_field.h) — PHẢI khớp uVectorField0/uVectorField1 trong
@@ -40,8 +42,8 @@ typedef struct {
     float   lifetime;  // giây
     float   drag;      // 0.0 = không cản, 0.98 = cản nhẹ, 1.0 = dừng ngay
 
-    // Force field áp dụng cho particle này (chỉ có hiệu lực ở COMPUTE path —
-    // CPU/VBO fallback bỏ qua field này). NULL = không có force field.
+    // Optional force field. NULL = zero acceleration. Compute and CPU/VBO
+    // fallback paths evaluate the same field contract.
     // Con trỏ được đăng ký vào registry nội bộ và re-pack MỖI FRAME, nên
     // ForceField phải sống ít nhất bằng đời particle dài nhất dùng nó
     // (dùng static/pool, không dùng biến local trên stack).
@@ -55,6 +57,13 @@ typedef struct {
     // frame với cùng forceField sẽ dùng chung trục mới nhất.
     Vector3 axisOrigin;
     Vector3 axisDir;
+
+    // Shared guided route. Registered once and packed into a small path SSBO;
+    // NULL keeps ballistic motion. The route and target-effect pointer must
+    // remain alive for the particle lifetime.
+    const ParticleTravelPath *travelPath;
+    const struct ParticleConfig *onTargetEmit;
+    int onTargetEmitCount;
 
     // Velocity-stretch rendering
     float   stretchStrength;

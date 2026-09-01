@@ -26,11 +26,25 @@ typedef struct
     float life_rem, life_max, phase, active;
     float ff_index, ff_pad0, ff_pad1, ff_pad2; // ff_index: slot vào ForceFieldBuffer, -1 = none
     float emitter_id, render_mode, route_pad0, route_pad1;
+    float impact_age, impact_active, impact_pad0, impact_pad1;
 } GpuParticleData;
+
+#define MAX_GPU_TRAVEL_PATHS 32
+#define MAX_GPU_IMPACT_EFFECTS 32
+
+/* std430 mirror of ParticleTravelPathGPU in particle_gpu.comp. All paths are
+ * shared: 8192 particles store only a slot + waypoint, never waypoint arrays. */
+typedef struct
+{
+    Vector4 points[PARTICLE_TRAVEL_MAX_WAYPOINTS];
+    Vector4 params; /* x=count, y=speed, z=steering, w=max acceleration */
+    Vector4 radii;  /* x=waypoint radius, y=target radius */
+    Vector4 arrival; /* x=arrival force-field slot, y=offset, z=kick */
+} ParticleTravelPathGPU;
 
 // ---------------------------------------------------------------------------
 // Force field registry — map con trỏ ForceField (CPU) -> slot GPU.
-// Chỉ có hiệu lực ở COMPUTE path; CPU/VBO fallback bỏ qua force field.
+// Compute packs fields into binding 1; CPU/VBO evaluates the same pointers.
 // Không sửa core/force_field.h — dùng nguyên ForceFieldGPU/ForceField_PackGPU
 // đã khai báo sẵn ở đó.
 // ---------------------------------------------------------------------------
@@ -68,6 +82,90 @@ static int RegisterField(const ForceField *ff, Vector3 axisOrigin, Vector3 axisD
     return idx;
 }
 
+static const ParticleTravelPath *s_pathRegistry[MAX_GPU_TRAVEL_PATHS];
+static int s_pathRefs[MAX_GPU_TRAVEL_PATHS];
+static int s_activePathSlots;
+static const ParticleConfig *s_impactRegistry[MAX_GPU_IMPACT_EFFECTS];
+static int s_impactRefs[MAX_GPU_IMPACT_EFFECTS];
+static int s_particleImpactIndex[MAX_GPU_PARTICLES];
+static int s_particleImpactCount[MAX_GPU_PARTICLES];
+
+static int RegisterPath(const ParticleTravelPath *path)
+{
+    int freeSlot = -1;
+    if (!path || ParticleTravel_WaypointCount(path) <= 0) return -1;
+    for (int i = 0; i < MAX_GPU_TRAVEL_PATHS; ++i) {
+        if (s_pathRegistry[i] == path) {
+            s_pathRefs[i]++;
+            return i;
+        }
+        if (freeSlot < 0 && s_pathRefs[i] == 0) freeSlot = i;
+    }
+    if (freeSlot < 0) {
+        TraceLog(LOG_WARNING, "GPU_PARTICLES: travel path registry full (%d), ignoring",
+                 MAX_GPU_TRAVEL_PATHS);
+        return -1;
+    }
+    s_pathRegistry[freeSlot] = path;
+    s_pathRefs[freeSlot] = 1;
+    s_activePathSlots++;
+    return freeSlot;
+}
+
+static void ReleasePath(int slot)
+{
+    if (slot < 0 || slot >= MAX_GPU_TRAVEL_PATHS || s_pathRefs[slot] <= 0) return;
+    if (--s_pathRefs[slot] == 0) {
+        s_pathRegistry[slot] = NULL;
+        if (s_activePathSlots > 0) s_activePathSlots--;
+    }
+}
+
+static int RegisterImpact(const ParticleConfig *impact)
+{
+    int freeSlot = -1;
+    if (!impact) return -1;
+    for (int i = 0; i < MAX_GPU_IMPACT_EFFECTS; ++i) {
+        if (s_impactRegistry[i] == impact) {
+            s_impactRefs[i]++;
+            return i;
+        }
+        if (freeSlot < 0 && s_impactRefs[i] == 0) freeSlot = i;
+    }
+    if (freeSlot < 0) {
+        TraceLog(LOG_WARNING, "GPU_PARTICLES: target-impact registry full (%d), ignoring",
+                 MAX_GPU_IMPACT_EFFECTS);
+        return -1;
+    }
+    s_impactRegistry[freeSlot] = impact;
+    s_impactRefs[freeSlot] = 1;
+    return freeSlot;
+}
+
+static void ReleaseImpact(int slot)
+{
+    if (slot < 0 || slot >= MAX_GPU_IMPACT_EFFECTS || s_impactRefs[slot] <= 0) return;
+    if (--s_impactRefs[slot] == 0) s_impactRegistry[slot] = NULL;
+}
+
+static void PackTravelPath(const ParticleTravelPath *path,
+                           ParticleTravelPathGPU *packed)
+{
+    int count = ParticleTravel_WaypointCount(path);
+    memset(packed, 0, sizeof(*packed));
+    for (int i = 0; i < count; ++i) {
+        Vector3 point = ParticleTravel_GetWaypoint(path, i);
+        packed->points[i] = (Vector4){point.x, point.y, point.z, 0.0f};
+    }
+    packed->params = (Vector4){(float)count, path->speed, path->steering,
+                               path->maxAcceleration};
+    packed->radii = (Vector4){path->waypointRadius, path->targetRadius,
+                              path->arrivalForceDuration, 0.0f};
+    packed->arrival = (Vector4){
+        (float)RegisterField(path->arrivalForceField, (Vector3){0}, (Vector3){0}),
+        path->arrivalOffset, path->arrivalKick, path->arrivalVelocityScale};
+}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -76,6 +174,7 @@ static bool s_use_compute = false;
 
 static unsigned int s_ssbo = 0;
 static unsigned int s_ff_ssbo = 0; // ForceFieldBuffer, binding = 1
+static unsigned int s_path_ssbo = 0; // ParticleTravelPathBuffer, binding = 2
 static unsigned int s_compute_prog = 0;
 static unsigned int s_draw_vao = 0;
 static unsigned int s_draw_quad_vbo = 0; // template quad, attribute 0
@@ -186,6 +285,15 @@ void GpuParticleSystem_Init(void)
     s_spawn_start_this_frame = -1;
     s_spawn_count_this_frame = 0;
     s_fieldCount = 0;
+    memset(s_pathRegistry, 0, sizeof(s_pathRegistry));
+    memset(s_pathRefs, 0, sizeof(s_pathRefs));
+    s_activePathSlots = 0;
+    memset(s_impactRegistry, 0, sizeof(s_impactRegistry));
+    memset(s_impactRefs, 0, sizeof(s_impactRefs));
+    for (int i = 0; i < MAX_GPU_PARTICLES; ++i) {
+        s_particleImpactIndex[i] = -1;
+        s_particleImpactCount[i] = 0;
+    }
     s_elapsed_time = 0.0f;
 
 #if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
@@ -219,6 +327,7 @@ void GpuParticleSystem_Init(void)
         s_ssbo = rlLoadShaderBuffer(MAX_GPU_PARTICLES * (ptrdiff_t)sizeof(GpuParticleData), NULL, RL_DYNAMIC_DRAW);
 
         s_ff_ssbo = rlLoadShaderBuffer(MAX_GPU_FORCE_FIELDS * (ptrdiff_t)sizeof(ForceFieldGPU), NULL, RL_DYNAMIC_DRAW);
+        s_path_ssbo = rlLoadShaderBuffer(MAX_GPU_TRAVEL_PATHS * (ptrdiff_t)sizeof(ParticleTravelPathGPU), NULL, RL_DYNAMIC_DRAW);
 
         s_draw_shader_gpu = ResourceManager_LoadShader(ssbo_vs_path, fs_path);
         if (s_draw_shader_gpu.id == 0)
@@ -231,6 +340,8 @@ void GpuParticleSystem_Init(void)
             s_ssbo = 0;
             rlUnloadShaderBuffer(s_ff_ssbo);
             s_ff_ssbo = 0;
+            rlUnloadShaderBuffer(s_path_ssbo);
+            s_path_ssbo = 0;
             goto cpu_path;
         }
         s_surface_capture_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/fluid_surface_capture.vs", "core/fluid/shaders/fluid_capture_particle.fs");
@@ -302,6 +413,11 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
     int idx = s_spawn_cursor % MAX_GPU_PARTICLES;
     s_spawn_cursor++;
 
+    if (s_cpu_pool[idx].active >= 0.5f) {
+        ReleasePath((int)s_cpu_pool[idx].route_pad0);
+        ReleaseImpact(s_particleImpactIndex[idx]);
+    }
+
     GpuParticleData d;
     d.px = cfg.position.x;
     d.py = cfg.position.y;
@@ -330,7 +446,18 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
     d.ff_pad2 = cfg.collisionFloorY;
     d.emitter_id = (float)cfg.emitterId;
     d.render_mode = (float)cfg.renderMode;
-    d.route_pad0 = d.route_pad1 = 0.0f;
+    if (cfg.travelPath)
+        (void)RegisterField(cfg.travelPath->arrivalForceField,
+                            (Vector3){0}, (Vector3){0});
+    d.route_pad0 = (float)RegisterPath(cfg.travelPath);
+    d.route_pad1 = 0.0f;
+    d.impact_age = 0.0f;
+    d.impact_active = 0.0f;
+    d.impact_pad0 = 0.0f;
+    d.impact_pad1 = 0.0f;
+    s_particleImpactIndex[idx] = cfg.onTargetEmitCount > 0
+                                     ? RegisterImpact(cfg.onTargetEmit) : -1;
+    s_particleImpactCount[idx] = cfg.onTargetEmitCount > 0 ? cfg.onTargetEmitCount : 0;
 
     s_cpu_pool[idx] = d;
 
@@ -398,6 +525,20 @@ void GpuParticleSystem_Update(float dt)
             rlUpdateShaderBuffer(s_ff_ssbo, packed, s_fieldCount * (ptrdiff_t)sizeof(ForceFieldGPU), 0);
         }
 
+        if (s_activePathSlots > 0) {
+            ParticleTravelPathGPU packed[MAX_GPU_TRAVEL_PATHS];
+            int highestSlot = -1;
+            memset(packed, 0, sizeof(packed));
+            for (int i = 0; i < MAX_GPU_TRAVEL_PATHS; ++i) {
+                if (s_pathRegistry[i] && s_pathRefs[i] > 0) {
+                    PackTravelPath(s_pathRegistry[i], &packed[i]);
+                    highestSlot = i;
+                }
+            }
+            rlUpdateShaderBuffer(s_path_ssbo, packed,
+                                 (highestSlot + 1) * (ptrdiff_t)sizeof(packed[0]), 0);
+        }
+
         rlEnableShader(s_compute_prog);
         int loc_dt = rlGetLocationUniform(s_compute_prog, "u_dt");
         if (loc_dt >= 0)
@@ -421,6 +562,7 @@ void GpuParticleSystem_Update(float dt)
 
         rlBindShaderBuffer(s_ssbo, 0);
         rlBindShaderBuffer(s_ff_ssbo, 1);
+        rlBindShaderBuffer(s_path_ssbo, 2);
         unsigned int groups = (MAX_GPU_PARTICLES + 255) / 256;
         rlComputeShaderDispatch(groups, 1, 1);
         rlDisableShader();
@@ -445,14 +587,26 @@ void GpuParticleSystem_Update(float dt)
         p->life_rem -= dt;
         if (p->life_rem <= 0.0f)
         {
+            ReleasePath((int)p->route_pad0);
+            p->route_pad0 = -1.0f;
+            ReleaseImpact(s_particleImpactIndex[i]);
+            s_particleImpactIndex[i] = -1;
             p->active = 0.0f;
             continue;
         }
 
+        int pathIndex = (int)p->route_pad0;
+        bool impactActive = p->impact_active > 0.5f;
+        int forceIndex = (int)p->ff_index;
+        if (impactActive && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
+            s_pathRegistry[pathIndex])
+            forceIndex = RegisterField(s_pathRegistry[pathIndex]->arrivalForceField,
+                                       (Vector3){0}, (Vector3){0});
+
         // 1. Evaluate Force Field on CPU
-        if (p->ff_index >= 0.0f)
+        if (forceIndex >= 0)
         {
-            int ff_idx = (int)p->ff_index;
+            int ff_idx = forceIndex;
             if (ff_idx < s_fieldCount)
             {
                 const ForceField *ff = s_fieldRegistry[ff_idx];
@@ -478,10 +632,57 @@ void GpuParticleSystem_Update(float dt)
         p->vy *= drag_f;
         p->vz *= drag_f;
 
-        // 3. Integrate position
-        p->px += p->vx * dt;
-        p->py += p->vy * dt;
-        p->pz += p->vz * dt;
+        // 3. Path steering runs after force/drag, then owns integration.
+        bool reachedTarget = false;
+        if (!impactActive && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
+            s_pathRegistry[pathIndex]) {
+            Vector3 position = {p->px, p->py, p->pz};
+            Vector3 velocity = {p->vx, p->vy, p->vz};
+            int waypoint = (int)p->route_pad1;
+            reachedTarget = ParticleTravel_Step(s_pathRegistry[pathIndex], dt,
+                                                &position, &velocity, &waypoint);
+            p->px = position.x; p->py = position.y; p->pz = position.z;
+            p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
+            p->route_pad1 = (float)waypoint;
+        } else {
+            p->px += p->vx * dt;
+            p->py += p->vy * dt;
+            p->pz += p->vz * dt;
+            if (impactActive) p->impact_age += dt;
+        }
+
+        if (reachedTarget && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
+            s_pathRegistry[pathIndex] && s_pathRegistry[pathIndex]->arrivalForceField) {
+            Vector3 position = {p->px, p->py, p->pz};
+            Vector3 velocity = {p->vx, p->vy, p->vz};
+            ParticleTravel_ApplyImpactEntry(s_pathRegistry[pathIndex], &position, &velocity);
+            p->px = position.x; p->py = position.y; p->pz = position.z;
+            p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
+            p->impact_age = 0.0f;
+            p->impact_active = 1.0f;
+            continue;
+        }
+        if (reachedTarget) {
+            int impactIndex = s_particleImpactIndex[i];
+            if (impactIndex >= 0 && impactIndex < MAX_GPU_IMPACT_EFFECTS &&
+                s_impactRegistry[impactIndex]) {
+                for (int c = 0; c < s_particleImpactCount[i]; ++c) {
+                    ParticleConfig impact = *s_impactRegistry[impactIndex];
+                    impact.position = (Vector3){p->px, p->py, p->pz};
+                    impact.physics.position = impact.position;
+                    impact.velocity.x += p->vx * impact.velocityInheritance;
+                    impact.velocity.y += p->vy * impact.velocityInheritance;
+                    impact.velocity.z += p->vz * impact.velocityInheritance;
+                    SpawnParticle(impact);
+                }
+            }
+            ReleasePath(pathIndex);
+            p->route_pad0 = -1.0f;
+            ReleaseImpact(impactIndex);
+            s_particleImpactIndex[i] = -1;
+            p->active = 0.0f;
+            continue;
+        }
 
         // 4. Ground/Floor collision check (which triggers dust puffs on CPU)
         if (p->ff_pad1 >= 0.0f)
@@ -697,6 +898,7 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
                     }
                     
                     float stretchFactor = 1.0f + speed * stretchStrength;
+                    if (stretchFactor > 3.5f) stretchFactor = 3.5f;
                     rx = rVec.x * r;
                     ry = rVec.y * r;
                     rz = rVec.z * r;
@@ -869,6 +1071,11 @@ void GpuParticleSystem_Unload(void)
         {
             rlUnloadShaderBuffer(s_ff_ssbo);
             s_ff_ssbo = 0;
+        }
+        if (s_path_ssbo)
+        {
+            rlUnloadShaderBuffer(s_path_ssbo);
+            s_path_ssbo = 0;
         }
         if (s_draw_vao)
         {

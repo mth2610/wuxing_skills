@@ -8,10 +8,10 @@
 - **Cause:** `core/shader_preprocessor.c`'s `RewriteVersionForGLES()` (runs on every `ResourceManager_LoadShader`) unconditionally rewrote `#version 310 es` → `300 es` *after* the file was read — invisible to an APK byte-compare. `std430`/`binding`/`readonly` are ES-3.1-only.
 - **Rule:** only downgrade a shader to `300 es` when it does **not** contain `std430`; real SSBO shaders must keep `310 es`.
 
-### Vertex-stage SSBO reads are unreliable on Mali → compute path off on Android
+### Vertex-stage SSBO reads are unreliable on Mali GLES → GLES compute path off
 - **Symptom:** compute path compiles and dispatches, `Pool` count increments, but particles are invisible on Mali/Exynos.
 - **Cause:** reading an SSBO in the vertex shader (or using one buffer as both SSBO and VBO) silently fails on many Mali drivers.
-- **Rule:** compute path is permanently disabled on Android (`#if defined(__ANDROID__) gl43=false;`); the CPU/ring-buffer immediate-mode path handles 4000–8000 particles fine on mobile. Don't re-enable it or write TBO hacks.
+- **Rule:** the OpenGL ES backend disables compute on Android and uses the CPU/ring-buffer path. The Vulkan backend has its own validated SSBO path and is not covered by that GLES workaround. Do not re-enable the GLES path or add TBO hacks.
 
 ### Immediate-mode quad math must exactly match `particle_system.c`
 - **Symptom:** CPU/VBO particles invisible on *all* platforms despite valid data.

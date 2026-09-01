@@ -244,6 +244,10 @@
 **Enums:** ForceType { FORCE_GRAVITY_DIR,FORCE_GRAVITY_POINT,FORCE_VORTEX,FORCE_WIND,FORCE_NOISE_PERLIN,FORCE_NOISE_CURL,FORCE_DRAG,FORCE_VISCOSITY,FORCE_RADIAL_AXIS,FORCE_VORTEX_AXIS,FORCE_VECTOR_TEXTURE }
 **Structs** (fields in header): ForceLayer, ForceField, ForceLayerGPU, ForceFieldGPU
 
+### `core/particles/particle_travel.h`
+_Inline helpers / macros only — see header._
+**Structs** (fields in header): ParticleTravelPath
+
 ### `core/particles/particle_system.h`
 ```c
   void InitParticleSystem(void);
@@ -292,7 +296,7 @@
   void ParticleManager_GetStats(ParticleManagerStats *outStats);
   void ParticleManager_SpawnCompatibility(ParticleConfig config);
 ```
-**Structs** (fields in header): ParticleGPUCaps, ParticleEmitterDesc, ParticleRenderStream, ParticleManagerStats
+**Structs** (fields in header): ParticleGPUCaps, ParticleEmissionSource, ParticleEmitterDesc, ParticleRenderStream, ParticleManagerStats
 
 ### `core/mesh_adjacency.h`
 ```c
