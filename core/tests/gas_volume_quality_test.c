@@ -110,9 +110,10 @@ static float AdaptBodyTone(int kind, float adapt) {
 }
 
 static float AdaptEmission(int kind, float coreWeight, float adapt) {
-    float floorGain = kind == 1 ? 0.52f : 0.38f;
-    float brightGain = floorGain + (1.0f - floorGain) * coreWeight;
-    return 1.0f + (brightGain - 1.0f) * adapt;
+    float floorGain = kind == 1 ? 0.48f : 0.62f;
+    float brightScale = kind == 1 ? 0.50f : 0.68f;
+    float broadGain = floorGain + (1.0f - floorGain) * coreWeight;
+    return broadGain * (1.0f + (brightScale - 1.0f) * adapt);
 }
 
 static TestColor3 Scale(TestColor3 color, float scale) {
@@ -127,18 +128,26 @@ typedef struct TestFireOptics {
 
 /* Mirror of the GAS_FIRE body branch. This describes how much background the
  * carrier absorbs and prevents self-lit flame from inheriting smoke shadows. */
-static TestFireOptics FireOptics(float heat, TestColor3 body,
+static TestFireOptics FireOptics(float heat, float reaction, TestColor3 body,
                                  TestColor3 emission, float coarseNoise,
                                  float softLight) {
-    float coolSmoke = 1.0f - SmoothStep(0.08f, 0.62f, heat);
-    float bodyOpacity = 0.32f + (0.52f - 0.32f) * coolSmoke;
-    TestColor3 smokeBody = Mix(body, (TestColor3){0.22f, 0.23f, 0.25f}, 0.92f);
-    TestColor3 hotBody = Mix(body, Scale(emission, 0.55f), 0.82f);
-    TestColor3 bodyTone = Mix(smokeBody, hotBody, 1.0f - coolSmoke);
-    bodyTone = Scale(bodyTone, 0.88f + (1.16f - 0.88f) * coarseNoise);
-    float litSmoke = fmaxf(softLight, 0.50f);
-    float bodyLight = litSmoke + (1.0f - litSmoke) * (1.0f - coolSmoke);
+    float flameBody = SmoothStep(0.05f, 0.55f, heat);
+    float fireActivity = SmoothStep(0.10f, 0.60f, heat) *
+                         SmoothStep(0.06f, 0.55f, reaction);
+    float bodyOpacity = 0.26f * fireActivity;
+    TestColor3 coolBody = Mix(body, Scale(emission, 0.46f), 0.68f);
+    TestColor3 hotBody = Mix(body, Scale(emission, 0.72f), 0.88f);
+    TestColor3 bodyTone = Mix(coolBody, hotBody, flameBody);
+    bodyTone = Scale(bodyTone, 0.94f + (1.08f - 0.94f) * coarseNoise);
+    float litResidue = fmaxf(softLight, 0.55f);
+    float bodyLight = litResidue + (1.0f - litResidue) * flameBody;
     return (TestFireOptics){bodyOpacity, bodyTone, bodyLight};
+}
+
+static float EnergyBodyOpacity(float heat, float reaction) {
+    float energyActivity = SmoothStep(0.08f, 0.52f, heat) *
+                           SmoothStep(0.04f, 0.45f, reaction);
+    return 0.28f * energyActivity;
 }
 
 /* Hot reaction must carry radiance independently from the smoke/body coverage.
@@ -204,8 +213,8 @@ static int TestRayPhaseDecorrelation(void) {
 
 static int TestFireCoreRamp(void) {
     TestColor3 outer = {1.0f, 0.22f, 0.025f};
-    TestColor3 shoulder = Mix(outer, (TestColor3){1.0f, 0.58f, 0.10f}, 0.72f);
-    TestColor3 core = Mix(shoulder, (TestColor3){1.0f, 0.92f, 0.72f}, 0.88f);
+    TestColor3 shoulder = Mix(outer, (TestColor3){1.0f, 0.62f, 0.12f}, 0.72f);
+    TestColor3 core = Mix(shoulder, (TestColor3){1.0f, 0.88f, 0.55f}, 0.90f);
     CHECK(Luma(shoulder) > Luma(outer) * 1.45f);
     CHECK(Luma(core) > Luma(shoulder) * 1.35f);
     CHECK(Chroma(core) < Chroma(shoulder) * 0.55f);
@@ -214,11 +223,30 @@ static int TestFireCoreRamp(void) {
 }
 
 static float FireCoreWeight(float hotProduct, float rawDensity,
-                            float detailNoise) {
-    float hotGate = SmoothStep(0.20f, 0.72f, hotProduct);
-    float densityGate = SmoothStep(0.30f, 0.75f, rawDensity);
-    float detail = 0.35f + 0.65f * SmoothStep(0.40f, 0.75f, detailNoise);
-    return fminf(hotGate, densityGate) * detail;
+                            float coarseNoise, float detailNoise) {
+    float hotGate = SmoothStep(0.34f, 0.78f, hotProduct);
+    float densityGate = SmoothStep(0.30f, 0.72f, rawDensity);
+    float detailCore = 0.58f + 0.42f *
+                       SmoothStep(0.28f, 0.82f, detailNoise);
+    float coarseCore = 0.72f + 0.28f *
+                       SmoothStep(0.32f, 0.80f, coarseNoise);
+    return hotGate * densityGate * detailCore * coarseCore * 0.42f;
+}
+
+static float EnergyCoreWeight(float heat, float reaction, float rawDensity,
+                              float coarseNoise, float detailNoise) {
+    float energyGate = SmoothStep(0.30f, 0.75f, heat) *
+                       SmoothStep(0.16f, 0.58f, reaction);
+    float densityGate = SmoothStep(0.25f, 0.68f, rawDensity);
+    float detailCore = 0.72f + 0.28f *
+                       SmoothStep(0.28f, 0.82f, detailNoise);
+    float coarseCore = 0.80f + 0.20f *
+                       SmoothStep(0.32f, 0.80f, coarseNoise);
+    return energyGate * densityGate * detailCore * coarseCore * 0.56f;
+}
+
+static float ResolveCoreRadiance(float integratedCore, float gain) {
+    return integratedCore * integratedCore * gain;
 }
 
 static float FireBloomSample(float transmittance, float densityAlpha,
@@ -230,10 +258,15 @@ static int TestFireBloomSeed(void) {
     const float bloomThreshold = 1.25f;
     float frontSample = FireBloomSample(0.82f, 0.18f, 0.75f);
     float backSample = FireBloomSample(0.12f, 0.18f, 0.75f);
-    float coreSeed = (frontSample +
-                      FireBloomSample(0.65f, 0.17f, 0.70f) +
-                      FireBloomSample(0.45f, 0.16f, 0.65f)) * 7.20f;
-    float edgeSeed = (FireBloomSample(0.90f, 0.10f, 0.04f) * 3.0f) * 7.20f;
+    float coreIntegral = FireBloomSample(0.90f, 0.35f, 0.40f) +
+                         FireBloomSample(0.82f, 0.34f, 0.39f) +
+                         FireBloomSample(0.72f, 0.32f, 0.38f) +
+                         FireBloomSample(0.62f, 0.30f, 0.37f) +
+                         FireBloomSample(0.50f, 0.28f, 0.36f) +
+                         FireBloomSample(0.40f, 0.24f, 0.34f);
+    float edgeIntegral = FireBloomSample(0.90f, 0.10f, 0.04f) * 3.0f;
+    float coreSeed = ResolveCoreRadiance(coreIntegral, 8.00f);
+    float edgeSeed = ResolveCoreRadiance(edgeIntegral, 8.00f);
 
     /* A rear hotspot must not paint over the visible front of the ray. The old
      * max-along-ray seed gave these two samples identical influence. */
@@ -244,24 +277,53 @@ static int TestFireBloomSeed(void) {
     return 0;
 }
 
+static int TestHotCoreSelectivity(void) {
+    /* Temperature/reaction selects the core; noise only breaks up its edge.
+     * Making noise the selector prints random white islands through the plume. */
+    float coolFire = FireCoreWeight(0.20f, 0.88f, 0.92f, 0.92f);
+    float hotQuietFire = FireCoreWeight(0.92f, 0.88f, 0.60f, 0.20f);
+    float coolEnergy = EnergyCoreWeight(0.20f, 0.10f, 0.88f, 0.92f, 0.92f);
+    float hotQuietEnergy = EnergyCoreWeight(0.92f, 0.92f, 0.88f, 0.20f, 0.20f);
+    float filamentFire = FireCoreWeight(0.92f, 0.88f, 0.92f, 0.92f);
+    float filamentEnergy = EnergyCoreWeight(0.92f, 0.92f, 0.88f, 0.92f, 0.92f);
+    CHECK(coolFire < 0.05f);
+    CHECK(hotQuietFire > 0.14f);
+    CHECK(filamentFire < hotQuietFire * 2.0f);
+    CHECK(filamentFire <= 0.42f);
+    CHECK(coolEnergy < 0.02f);
+    CHECK(hotQuietEnergy > 0.18f);
+    CHECK(filamentEnergy < hotQuietEnergy * 2.0f);
+    CHECK(filamentEnergy <= 0.56f);
+
+    /* The post-loop seed must reject a weak ray and keep a strong ray above the
+     * bloom threshold. Linear gain makes both rays bloom and widens the core. */
+    CHECK(ResolveCoreRadiance(0.14f, 8.00f) < 0.20f);
+    CHECK(ResolveCoreRadiance(0.40f, 8.00f) > 1.25f);
+    return 0;
+}
+
 static int TestFireBodyOptics(void) {
     TestColor3 darkCarrier = {0.08f, 0.04f, 0.02f};
     TestColor3 orangeEmission = {1.0f, 0.40f, 0.07f};
-    TestFireOptics hot = FireOptics(1.0f, darkCarrier, orangeEmission, 0.5f,
+    TestFireOptics hot = FireOptics(1.0f, 1.0f, darkCarrier, orangeEmission, 0.5f,
                                     0.20f);
-    TestFireOptics cool = FireOptics(0.0f, darkCarrier, orangeEmission, 0.5f,
+    TestFireOptics cool = FireOptics(0.0f, 0.0f, darkCarrier, orangeEmission, 0.5f,
                                      0.20f);
 
-    CHECK(hot.bodyOpacity < cool.bodyOpacity * 0.65f);
-    CHECK(cool.bodyOpacity <= 0.52f);
+    CHECK(cool.bodyOpacity == 0.0f);
+    CHECK(hot.bodyOpacity >= 0.24f && hot.bodyOpacity <= 0.28f);
+    CHECK(EnergyBodyOpacity(0.0f, 0.0f) == 0.0f);
+    CHECK(EnergyBodyOpacity(1.0f, 1.0f) >= 0.26f);
     CHECK(Luma(hot.bodyTone) * hot.bodyLight >
           Luma(cool.bodyTone) * cool.bodyLight * 1.35f);
     CHECK(hot.bodyTone.r > hot.bodyTone.g * 1.8f);
+    CHECK(cool.bodyTone.r > cool.bodyTone.g * 1.7f);
+    CHECK(cool.bodyTone.g > cool.bodyTone.b * 1.5f);
     CHECK(hot.bodyLight >= 0.99f);
     CHECK(cool.bodyLight >= 0.50f);
 
-    /* A hot reaction restores full emission transport while cold density keeps
-     * only its smoke coverage. This is the separation the old coupling lost. */
+    /* A hot reaction restores full emission transport while inactive FIRE
+     * density contributes no smoke-like body coverage. */
     float densityAlpha = 0.75f;
     float hotBodyAlpha = densityAlpha * hot.bodyOpacity;
     float hotEmissionAlpha = FireEmissionAlpha(densityAlpha, hot.bodyOpacity,
@@ -269,12 +331,19 @@ static int TestFireBodyOptics(void) {
     float coolEmissionAlpha = FireEmissionAlpha(densityAlpha, cool.bodyOpacity,
                                                  0.0f, 0.0f);
     CHECK(hotEmissionAlpha > hotBodyAlpha * 2.9f);
-    CHECK(fabsf(coolEmissionAlpha - densityAlpha * cool.bodyOpacity) < 1.0e-6f);
+    CHECK(coolEmissionAlpha == 0.0f);
 
     float outerEnergy = hotEmissionAlpha * 0.34f;
     float coreEnergy = hotEmissionAlpha * 1.85f;
     CHECK(coreEnergy > outerEnergy * 5.4f);
     CHECK(coreEnergy > densityAlpha * 1.8f);
+    return 0;
+}
+
+static int TestWhiteSmokePalette(void) {
+    TestColor3 smoke = {214.0f / 255.0f, 218.0f / 255.0f, 224.0f / 255.0f};
+    CHECK(Luma(smoke) > 0.84f);
+    CHECK(Chroma(smoke) < 0.05f);
     return 0;
 }
 
@@ -304,11 +373,14 @@ static int TestBackgroundAdaptiveOptics(void) {
     CHECK(AdaptBodyTone(1, bright) <= 0.78f);
     CHECK(AdaptBodyTone(2, bright) <= 0.66f);
 
-    /* Broad radiance falls on white, but the authored narrow core survives. */
-    CHECK(AdaptEmission(1, 0.0f, bright) <= 0.52f);
-    CHECK(AdaptEmission(2, 0.0f, bright) <= 0.38f);
-    CHECK(AdaptEmission(1, 1.0f, bright) == 1.0f);
-    CHECK(AdaptEmission(2, 1.0f, bright) == 1.0f);
+    /* Broad radiance stays bounded even on dark scenes and falls farther on a
+     * bright plate. The independently integrated core owns the HDR range. */
+    CHECK(AdaptEmission(1, 0.0f, dark) <= 0.48f);
+    CHECK(AdaptEmission(2, 0.0f, dark) <= 0.62f);
+    CHECK(AdaptEmission(1, 0.0f, bright) <= 0.24f);
+    CHECK(AdaptEmission(2, 0.0f, bright) <= 0.43f);
+    CHECK(AdaptEmission(1, 1.0f, bright) <= 0.50f);
+    CHECK(AdaptEmission(2, 1.0f, bright) <= 0.68f);
     return 0;
 }
 
@@ -324,16 +396,23 @@ static int TestShaderContract(void) {
     CHECK(strstr(shader, "if (u_qualityTier <= 1)") != NULL);
     CHECK(strstr(shader, "detailNoise = fract(coarseNoise * 1.618") != NULL);
     CHECK(strstr(shader, "float coreWeight") != NULL);
-    CHECK(strstr(shader, "float hotGate = smoothstep(0.20, 0.72, hotProduct)") != NULL);
-    CHECK(strstr(shader, "float densityGate = smoothstep(0.30, 0.75, rawDensity)") != NULL);
-    CHECK(strstr(shader, "float coreWeight = min(hotGate, densityGate)") != NULL);
+    CHECK(strstr(shader, "float hotGate = smoothstep(0.34, 0.78, hotProduct)") != NULL);
+    CHECK(strstr(shader, "float densityGate = smoothstep(0.30, 0.72, rawDensity)") != NULL);
+    CHECK(strstr(shader, "float detailCore = mix(0.58, 1.0,") != NULL);
+    CHECK(strstr(shader, "float coreWeight = hotGate * densityGate * detailCore * coarseCore * 0.42") != NULL);
     CHECK(strstr(shader, "accumulatedCoreRadiance += transmittance * densityAlpha * coreWeight") != NULL);
     CHECK(strstr(shader, "max(bloomSeed") == NULL);
-    CHECK(strstr(shader, "accumulatedEmission += bloomColor * accumulatedCoreRadiance * 7.20") != NULL);
-    CHECK(strstr(shader, "vec3(1.0, 0.92, 0.72)") != NULL);
-    CHECK(strstr(shader, "float bodyOpacity = mix(0.32, 0.52, coolSmoke)") != NULL);
-    CHECK(strstr(shader, "vec3 hotBody = mix(u_bodyColor, u_emissionColor * 0.55, 0.82)") != NULL);
-    CHECK(strstr(shader, "float litSmoke = max(softLight, 0.50)") != NULL);
+    CHECK(strstr(shader, "float resolvedCoreRadiance = accumulatedCoreRadiance * accumulatedCoreRadiance") != NULL);
+    CHECK(strstr(shader, "bloomColor * resolvedCoreRadiance * 8.00") != NULL);
+    CHECK(strstr(shader, "vec3(1.0, 0.88, 0.55)") != NULL);
+    CHECK(strstr(shader, "bodyOpacity = 0.26 * fireActivity") != NULL);
+    CHECK(strstr(shader, "float energyActivity = smoothstep(0.08, 0.52, heat)") != NULL);
+    CHECK(strstr(shader, "bodyOpacity = 0.28 * energyActivity") != NULL);
+    CHECK(strstr(shader, "bodyTone = mix(u_emissionColor * 0.28") != NULL);
+    CHECK(strstr(shader, "vec3 hotBody = mix(u_bodyColor, u_emissionColor * 0.72, 0.88)") != NULL);
+    CHECK(strstr(shader, "float litResidue = max(softLight, 0.55)") != NULL);
+    CHECK(strstr(shader, "vec3 smokeBody") == NULL);
+    CHECK(strstr(shader, "vec3(0.22, 0.23, 0.25)") == NULL);
     CHECK(strstr(shader, "float flameTransport = smoothstep(0.08, 0.55, heat)") != NULL);
     CHECK(strstr(shader, "smoothstep(0.06, 0.60, gas.b)") != NULL);
     CHECK(strstr(shader, "float emissionAlpha = mix(sampleAlpha, densityAlpha, flameTransport)") != NULL);
@@ -348,8 +427,11 @@ static int TestShaderContract(void) {
     CHECK(strstr(shader, "const vec3 GAS_BRIGHT_BODY_GAIN = vec3(0.72, 0.78, 0.66)") != NULL);
     CHECK(strstr(shader, "float broadEmissionGain") != NULL);
     CHECK(strstr(shader, "float energyCoreWeight") != NULL);
+    CHECK(strstr(shader, "float energyDetailCore = mix(0.72, 1.0,") != NULL);
+    CHECK(strstr(shader, "float energyCoreWeight = energyGate * energyDensityGate") != NULL);
     CHECK(strstr(shader, "accumulatedCoreRadiance += transmittance * densityAlpha * energyCoreWeight") != NULL);
-    CHECK(strstr(shader, "energyBloomColor * accumulatedCoreRadiance * 4.80") != NULL);
+    CHECK(strstr(shader, "energyBloomColor * resolvedCoreRadiance * 5.00") != NULL);
+    CHECK(strstr(shader, "bodyLight = max(softLight, 0.62)") != NULL);
     CHECK(CountSubstring(shader, "texture(u_bgLuma") == 1);
     CHECK(strstr(shader, "if (u_kind == 1)") != NULL);
     free(shader);
@@ -363,6 +445,7 @@ static int TestShaderContract(void) {
     CHECK(strstr(host, "Tuning_RegisterFloat(\"gas_bg_adapt\"") != NULL);
     CHECK(strstr(host, "GasOpticalControls_Resolve") != NULL);
     CHECK(strstr(host, "desc.reactionDissipation = 0.95f") != NULL);
+    CHECK(strstr(host, "desc.bodyColor = (Color){214, 218, 224, 255}") != NULL);
     free(host);
 
     char *jet = ReadFile("core/composition/common/vc_flame_jet.inl");
@@ -376,7 +459,9 @@ int main(void) {
     if (TestRayPhaseDecorrelation() != 0) return 1;
     if (TestFireCoreRamp() != 0) return 1;
     if (TestFireBloomSeed() != 0) return 1;
+    if (TestHotCoreSelectivity() != 0) return 1;
     if (TestFireBodyOptics() != 0) return 1;
+    if (TestWhiteSmokePalette() != 0) return 1;
     if (TestFireChannelPersistence() != 0) return 1;
     if (TestBackgroundAdaptiveOptics() != 0) return 1;
     if (TestShaderContract() != 0) return 1;

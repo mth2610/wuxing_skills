@@ -97,7 +97,9 @@ single capture — is worth reaching for far earlier than it was here.
 
 - **Symptom:** The reaction ramp contains orange, yellow and a pale core, but
   the rendered flame is still muddy and dark. On a blue background it develops
-  a brown-purple veil, most visibly around Gas Plume and Flame Jet.
+  a brown-purple veil, most visibly around Gas Plume and Flame Jet. Once the
+  volume is reconstructed smoothly, this can read as a black smoke blanket with
+  random white islands inside it.
 - **Cause:** Density outlives temperature and reaction, yet all `GAS_FIRE`
   density used one dark carrier and one diffuse-light factor. The latter could
   fall to `0.2`, so even a hot self-emitting sample first contributed a nearly
@@ -106,21 +108,49 @@ single capture — is worth reaching for far earlier than it was here.
   dark veil for a dim, milky flame. Cooling density then kept absorbing the
   background after the bright channels dissipated.
 - **Rule:** Treat fire extinction, body tone and emission as separate optical
-  signals. Hot density is warm, less opaque and self-lit; cooling smoke is
-  neutral, moderately opaque and may retain volume shading. Derive emission
-  transport from full density alpha gated by reaction and heat, never from smoke
-  coverage; keep the near-white gain confined to the narrower
-  reaction/temperature/density core mask. Reaction may decay faster than density
+  signals. Hot density is warm, less opaque and self-lit; a separate explicit
+  `GAS_SMOKE` volume is neutral, moderately opaque and may retain volume
+  shading. Derive emission transport from full density alpha gated by reaction
+  and heat, never from smoke coverage. `GAS_FIRE` cooling residue must fade
+  while remaining palette-warm;
+  create a separate `GAS_SMOKE` layer when an effect actually needs smoke.
+  Temperature, reaction and density select the near-white core, while procedural
+  noise may only modulate that selection. Reaction may decay faster than density
   to hand fire off to smoke, but should retain at least half its density-relative
   strength after one second for a readable flame body.
+
+### Emissive gas cannot use dormant density as a body shell
+
+- **Symptom:** Fire and energy are surrounded by a dark smoke-like rim. ENERGY
+  also develops detached pale points that move randomly through an otherwise
+  smooth plasma body.
+- **Cause:** ENERGY assigned full body opacity to every density sample, even
+  when reaction and temperature were dormant. Its HDR core then used a
+  high-threshold procedural noise sample as a selector, so unrelated noise peaks
+  became isolated white cores.
+- **Rule:** Gate FIRE and ENERGY body coverage by reaction/heat activity; dormant
+  density has zero body opacity. Temperature, reaction and density select their
+  coherent HDR cores. Noise may modulate a selected core, but its minimum weight
+  must remain high enough that noise alone cannot create or erase the core.
+
+### White smoke needs both a bright preset and a lighting floor
+
+- **Symptom:** Nominally neutral smoke reads as black soot, especially on dark
+  scenes or in the shadowed half of the volume.
+- **Cause:** A mid-grey preset was multiplied by a diffuse floor as low as
+  `0.2`, allowing ordinary internal shading to push smoke close to black.
+- **Rule:** Default smoke uses a high-luminance, low-chroma preset. Keep material
+  tint subtle and retain a grey lighting floor high enough to preserve internal
+  depth without turning shadows black. Strongly coloured or black smoke must be
+  an explicit authored variant, not the shared `GAS_SMOKE` default.
 
 ### A small fire composition must repay opacity removed by the shared shader
 
 - **Symptom:** The shared fire renderer no longer has a dark veil, yet Gas Plume
   becomes a faint beige smudge while Gas Vortex remains clearly readable.
-- **Cause:** Gas Vortex uses `GAS_ENERGY` with full carrier opacity, density scale
-  `2.2` and an extra `1.6x` emission gain. Gas Plume retained the generic FIRE
-  preset's lower injection, `1.8` density scale and unscaled emission after the
+- **Cause:** At the time, Gas Vortex used `GAS_ENERGY` with full carrier opacity,
+  density scale `2.2` and an extra `1.6x` emission gain. Gas Plume retained the
+  generic FIRE preset's lower injection, `1.8` density scale and unscaled emission after the
   FIRE shader deliberately reduced hot-body coverage.
 - **Rule:** When shared optics reduce coverage, measure the composition's
   normalized per-second density and reaction budgets rather than compensating
@@ -3362,3 +3392,25 @@ after the head was gone the strip kept drifting and fading in open space.
   and attenuate broad emission. Preserve only a front-to-back-integrated,
   reaction-and-density-gated HDR core for fire/energy. Keep the background sample
   outside the ray loop and never use an unattenuated max-along-ray bloom seed.
+- **Follow-up symptom:** the volume keeps its silhouette but fire/energy still
+  resolves as one uniform white core on both dark and bright plates.
+- **Follow-up cause:** a `min()` gate plus a non-zero noise floor labels nearly
+  every hot dense voxel as core; a large linear post-loop gain then pushes weak
+  neighbouring rays over the bloom threshold too.
+- **Follow-up rule:** multiply the independent reaction, density, and detail
+  gates, let the detail gate reach zero, and square the bounded front-to-back
+  core integral before its modest HDR gain. Broad carrier emission must remain
+  sub-threshold on dark backgrounds as well as bright ones.
+- **Second follow-up symptom:** once the core became compact, a stable diagonal
+  screen-door pattern appeared across smoke, fire, and energy. It was especially
+  obvious in the white-hot islands.
+- **Second follow-up cause:** MED/LOW raymarch at quarter resolution. Per-pixel
+  ray-phase jitter correctly replaced coherent volume bands with decorrelated
+  error, but the 4x bilinear enlargement turned each low-resolution error sample
+  into a visible block. The old broad clipping had merely hidden the lattice.
+- **Second follow-up rule:** keep the full-range jitter (reducing it biases the
+  ray integral back toward the shared midpoint), then reconstruct the
+  premultiplied low-resolution result with a 3x3 tent before enlargement. Four
+  diagonal half-texel bilinear taps implement that tent exactly and add only one
+  low-resolution pass; at MED its tap count is 1/24 of the raymarch atlas bound
+  and the extra HDR target is about 450 KiB at 1280x720.

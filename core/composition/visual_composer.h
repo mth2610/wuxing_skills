@@ -149,6 +149,14 @@ typedef struct {
     float intensity;        // 0..1 density/emission scale; default 1
     float pulsesPerSecond;  // fixed-rate micro-injections; fire default 24
     Vector3 wind;           // world-space drift velocity in m/s
+    /* Optional post-simulation optics. Zero inherits the GasKind preset;
+     * negative disables a control. See GasVolumeDesc for bounded ranges. */
+    float detailStrength;
+    float shadowStrength;
+    float backgroundAdapt;
+    /* False keeps shipping material tinting. True retains the GasKind preset
+     * palette for diagnostics or effects whose identity is kind-driven. */
+    bool usePresetPalette;
 } VFX_GasPlumeConfig;
 
 VFX_GasPlumeConfig VFX_GasPlume_DefaultConfig(GasKind kind);
@@ -828,6 +836,7 @@ int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, floa
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
 int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 void VFX_ComposeFluidImpact(Vector3 pos);
+int VFX_ComposeGasMaterialLab(Vector3 pos, VC_MaterialId mat);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
@@ -849,6 +858,7 @@ void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
 int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 void VFX_FlowShield_Stop(int handle);
 void VFX_KillFlowShield(int handle);
+void VFX_KillGasMaterialLab(int handle);
 void VFX_KillRefBands(int id);
 void VFX_KillRefParticles(int id);
 void VFX_SmokeTrail_Stop(int handle);

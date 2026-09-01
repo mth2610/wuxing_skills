@@ -27,6 +27,10 @@ typedef struct {
     float intensity;
     float pulsesPerSecond;
     Vector3 wind;
+    float detailStrength;
+    float shadowStrength;
+    float backgroundAdapt;
+    bool usePresetPalette;
 } VFX_GasPlumeConfig;
 
 static int s_mockNextGas = 1;
@@ -62,7 +66,7 @@ GasVolumeDesc GasVolume_Preset(GasKind kind) {
     desc.emissionGain = kind == GAS_SMOKE ? 0.0f : 2.0f;
     desc.bodyColor = kind == GAS_ENERGY ? (Color){28, 38, 78, 255} :
                      (kind == GAS_FIRE ? (Color){72, 35, 22, 255} :
-                                         (Color){92, 98, 106, 255});
+                                         (Color){214, 218, 224, 255});
     desc.emissionColor = kind == GAS_ENERGY ? (Color){78, 176, 255, 255} :
                          (kind == GAS_FIRE ? (Color){255, 104, 18, 255} :
                                              (Color){0, 0, 0, 255});
@@ -144,6 +148,22 @@ int main(void) {
           "default fire feed must be continuous enough to avoid descending pulse lobes");
     VFX_KillGasPlume(groundedHandle);
 
+    VFX_GasPlumeConfig optical = VFX_GasPlume_DefaultConfig(GAS_ENERGY);
+    optical.detailStrength = 1.75f;
+    optical.shadowStrength = -1.0f;
+    optical.backgroundAdapt = 0.65f;
+    optical.usePresetPalette = true;
+    int opticalHandle = VFX_GasPlume_Spawn((Vector3){0}, 0, &optical);
+    CHECK(opticalHandle != 0, "authored optical plume must spawn");
+    CHECK(fabsf(s_mockLastVolume.detailStrength - 1.75f) < 0.0001f &&
+          fabsf(s_mockLastVolume.shadowStrength + 1.0f) < 0.0001f &&
+          fabsf(s_mockLastVolume.backgroundAdapt - 0.65f) < 0.0001f,
+          "plume config must forward bounded optical controls to the gas volume");
+    CHECK(s_mockLastVolume.bodyColor.r == 28 &&
+          s_mockLastVolume.emissionColor.b == 255,
+          "preset-palette mode must retain the selected GasKind identity");
+    VFX_KillGasPlume(opticalHandle);
+
     /* Phase-0 capture control: one fixture can exercise each real GasKind path
      * without adding three near-identical sandbox entries. The override must
      * select the complete preset, not merely recolor a FIRE injection. */
@@ -156,7 +176,7 @@ int main(void) {
           "diagnostic kind override must select the smoke volume preset");
     CHECK(fabsf(s_mockLastVolume.size.x - 2.2f) < 0.0001f,
           "diagnostic kind override must select the complete smoke plume defaults");
-    CHECK(s_mockLastVolume.bodyColor.r == 92 && s_mockLastVolume.bodyColor.g == 98,
+    CHECK(s_mockLastVolume.bodyColor.r == 214 && s_mockLastVolume.bodyColor.g == 218,
           "diagnostic kind override must preserve the preset palette");
     for (int i = 0; i < 20 && !s_mockHasInjection; ++i)
         VC_GasPlume_Update(1.0f / 60.0f);

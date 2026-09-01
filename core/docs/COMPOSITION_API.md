@@ -145,6 +145,12 @@ Automatically assign shader, texture, material, and manage the appropriate blend
   temporary tuning file; `-1` keeps the authored kind. The override selects the
   complete smoke/fire/energy defaults, including its preset palette, and is not
   a gameplay control. Shipping compositions remain tinted by their material.
+- `VFX_ComposeGasMaterialLab(pos, material)`: diagnostic-only, handle-owned gas
+  showcase. It reuses `VFX_GasPlume_Spawn` and cycles smoke/fire/energy once per
+  second, so deterministic 60 Hz captures at frames 40/90/140 land on those
+  three kinds. The lab uses a larger comparison volume and preset palettes by
+  default; `VFX_KillGasMaterialLab` releases its current plume. It still obeys
+  Gas v1's one-volume limit and must not be used as a gameplay effect.
 - `VFX_GasVortex_Spawn(pos, material, config)`: creates a depth-aware energy-gas
   vortex through `core/gas`. A moving source climbs a narrowing orbit while
   injecting tangential, inward, and upward velocity, producing a luminous

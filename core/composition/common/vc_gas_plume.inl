@@ -207,10 +207,16 @@ int VFX_GasPlume_Spawn(Vector3 pos, VC_MaterialId mat,
      * specifically a complete kind diagnostic, so retain its preset palette;
      * otherwise smoke/fire/energy all inherit the fixture's fire material and
      * the matrix cannot distinguish material optics from colour choice. */
-    if (!hasKindOverride) {
+    if (!hasKindOverride && !config.usePresetPalette) {
         volume.bodyColor = element->body;
         if (config.kind != GAS_SMOKE) volume.emissionColor = element->glow;
     }
+    if (config.detailStrength != 0.0f)
+        volume.detailStrength = config.detailStrength;
+    if (config.shadowStrength != 0.0f)
+        volume.shadowStrength = config.shadowStrength;
+    if (config.backgroundAdapt != 0.0f)
+        volume.backgroundAdapt = config.backgroundAdapt;
     float fireOpticalGain = config.kind == GAS_FIRE ? 1.35f : 1.0f;
     if (config.kind == GAS_FIRE) volume.densityScale = 2.6f;
     volume.emissionGain *= config.intensity * fireOpticalGain *

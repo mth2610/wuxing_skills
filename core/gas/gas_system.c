@@ -60,7 +60,10 @@ static bool s_prepared;
 static unsigned char s_atlasPixels[GAS_ATLAS_MAX_WIDTH * GAS_ATLAS_MAX_HEIGHT * 4];
 static Texture2D s_atlas;
 static RenderTexture2D s_raymarchTarget;
+static RenderTexture2D s_denoiseTarget;
 static Shader s_raymarchShader;
+static Shader s_denoiseShader;
+static int s_denoiseTexelSizeLoc = -1;
 static GasShaderLocations s_locations;
 static GasPerfWindow s_perfWindow;
 static GasPerfFrameSample s_perfFrame;
@@ -141,8 +144,10 @@ static void GasSystem_CacheLocations(void) {
 static void GasSystem_RebuildProfile(int requestedTier) {
     if (s_atlas.id) UnloadTexture(s_atlas);
     if (s_raymarchTarget.id) UnloadRenderTexture(s_raymarchTarget);
+    if (s_denoiseTarget.id) UnloadRenderTexture(s_denoiseTarget);
     s_atlas = (Texture2D){0};
     s_raymarchTarget = (RenderTexture2D){0};
+    s_denoiseTarget = (RenderTexture2D){0};
 
     s_profile = GasQualityProfile_Make(requestedTier, s_screenWidth, s_screenHeight);
     GasSim_Init(&s_sim, s_profile.gridWidth, s_profile.gridHeight,
@@ -162,6 +167,8 @@ static void GasSystem_RebuildProfile(int requestedTier) {
                                       : RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
     s_raymarchTarget = GasSystem_LoadColorTarget(s_profile.targetWidth,
                                                  s_profile.targetHeight, format);
+    s_denoiseTarget = GasSystem_LoadColorTarget(s_profile.targetWidth,
+                                                s_profile.targetHeight, format);
     s_atlasDirty = false;
     s_prepared = false;
     s_accumulator = 0.0f;
@@ -262,7 +269,7 @@ GasVolumeDesc GasVolume_Preset(GasKind kind) {
         desc.densityDissipation = 0.22f;
         desc.reactionDissipation = 0.65f;
     } else {
-        desc.bodyColor = (Color){92, 98, 106, 255};
+        desc.bodyColor = (Color){214, 218, 224, 255};
         desc.emissionColor = BLACK;
         desc.emissionGain = 0.0f;
     }
@@ -279,6 +286,8 @@ void GasSystem_Init(int width, int height) {
     s_screenHeight = height;
     s_config = GasSim_DefaultConfig();
     s_raymarchShader = ResourceManager_LoadShader(NULL, "core/gas/shaders/gas_volume.fs");
+    s_denoiseShader = ResourceManager_LoadShader(NULL, "core/gas/shaders/gas_denoise.fs");
+    s_denoiseTexelSizeLoc = GetShaderLocation(s_denoiseShader, "u_texelSize");
     GasSystem_CacheLocations();
     GasSystem_RebuildProfile((int)GfxQuality_Get());
     s_initialized = true;
@@ -327,6 +336,28 @@ void GasVolume_Destroy(GasVolumeHandle handle) {
     s_lifetime = 0.0f;
     s_prepared = false;
     GasSim_Clear(&s_sim);
+}
+
+static void GasSystem_DenoiseRaymarch(void) {
+    if (!s_raymarchTarget.id || !s_denoiseTarget.id || !s_denoiseShader.id)
+        return;
+    Vector2 texelSize = {
+        1.0f / (float)s_raymarchTarget.texture.width,
+        1.0f / (float)s_raymarchTarget.texture.height
+    };
+    BeginTextureMode(s_denoiseTarget);
+    ClearBackground(BLANK);
+    BeginShaderMode(s_denoiseShader);
+    SetShaderValue(s_denoiseShader, s_denoiseTexelSizeLoc, &texelSize,
+                   SHADER_UNIFORM_VEC2);
+    DrawTexturePro(s_raymarchTarget.texture,
+                   (Rectangle){0, 0, (float)s_raymarchTarget.texture.width,
+                               -(float)s_raymarchTarget.texture.height},
+                   (Rectangle){0, 0, (float)s_denoiseTarget.texture.width,
+                               (float)s_denoiseTarget.texture.height},
+                   (Vector2){0, 0}, 0.0f, WHITE);
+    EndShaderMode();
+    EndTextureMode();
 }
 
 bool GasVolume_IsAlive(GasVolumeHandle handle) {
@@ -467,6 +498,7 @@ void GasSystem_Prepare(Camera3D camera) {
                    (Vector2){0, 0}, 0.0f, WHITE);
     EndShaderMode();
     EndTextureMode();
+    GasSystem_DenoiseRaymarch();
     s_perfFrame.raymarchSubmitCpuMs =
         (float)((GetTime() - raymarchStart) * 1000.0);
     s_perfFrame.gridWidth = s_sim.width;
@@ -482,10 +514,12 @@ void GasSystem_Composite(void) {
     if (!s_prepared) return;
     s_prepared = false;
     double compositeStart = GetTime();
+    Texture2D compositeTexture = s_denoiseTarget.id ? s_denoiseTarget.texture :
+                                                       s_raymarchTarget.texture;
     BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
-    DrawTexturePro(s_raymarchTarget.texture,
-                   (Rectangle){0, 0, (float)s_raymarchTarget.texture.width,
-                               -(float)s_raymarchTarget.texture.height},
+    DrawTexturePro(compositeTexture,
+                   (Rectangle){0, 0, (float)compositeTexture.width,
+                               -(float)compositeTexture.height},
                    (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
                    (Vector2){0, 0}, 0.0f, WHITE);
     EndBlendMode();
@@ -528,8 +562,10 @@ void GasSystem_Unload(void) {
     if (!s_initialized) return;
     if (s_atlas.id) UnloadTexture(s_atlas);
     if (s_raymarchTarget.id) UnloadRenderTexture(s_raymarchTarget);
+    if (s_denoiseTarget.id) UnloadRenderTexture(s_denoiseTarget);
     s_atlas = (Texture2D){0};
     s_raymarchTarget = (RenderTexture2D){0};
+    s_denoiseTarget = (RenderTexture2D){0};
     s_handle = GAS_VOLUME_INVALID;
     s_initialized = false;
     s_prepared = false;

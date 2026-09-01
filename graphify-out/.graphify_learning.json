@@ -1,6 +1,27 @@
 {
-  "generated_at": "2026-08-31T15:35:13.027271+00:00",
+  "generated_at": "2026-09-01T07:18:33.155463+00:00",
   "nodes": {
+    "composition_visual_composer_c_composition_visual_composer": {
+      "code_fingerprint": "02879d51c39f2ec77a284c1c541a1cbef29b82d39ebcdab53105989656ea7e66",
+      "label": "visual_composer.c",
+      "last": "2026-09-01T03:22:17.027486+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-01T03:22:17.027486+00:00",
+          "outcome": "useful",
+          "q": "thực thi đi"
+        },
+        {
+          "date": "2026-09-01T02:52:30.553048+00:00",
+          "outcome": "useful",
+          "q": "giờ có cần tạo 1 vfx mới để thử nghiệm ko? vì thấy các vfx cũ đâu có gì thay đổi nhiều?"
+        }
+      ],
+      "score": 1.991956639,
+      "source_file": "composition/visual_composer.c",
+      "status": "preferred",
+      "uses": 2
+    },
     "fluid_fluid_pbd_gpu_fluidpbdgpu_update": {
       "code_fingerprint": "91419fa07a5d416169487fd76169773f16c88b9ebaa429bd23e7ae9ed0e962fd",
       "label": "FluidPBDGPU_Update()",
@@ -12,7 +33,7 @@
           "q": "liệu chúng ta có thể tạo ra một module để mô phỏng khói,lửa, năng lượng, chân thật giống module fluid hiện có"
         }
       ],
-      "score": 0.965457525,
+      "score": 0.950954504,
       "source_file": "fluid/fluid_pbd_gpu.c",
       "status": "tentative",
       "uses": 1
@@ -28,7 +49,7 @@
           "q": "liệu chúng ta có thể tạo ra một module để mô phỏng khói,lửa, năng lượng, chân thật giống module fluid hiện có"
         }
       ],
-      "score": 0.965457525,
+      "score": 0.950954504,
       "source_file": "fluid/fluid_surface.c",
       "status": "tentative",
       "uses": 1
@@ -54,7 +75,7 @@
           "q": "giờ điều quan trọng,là có đủ để tạo ra hiệu ứng đẹp chất lượng AAA chưa"
         }
       ],
-      "score": 2.715415653,
+      "score": 2.674624909,
       "source_file": "fluid/fluid_surface.c",
       "status": "preferred",
       "uses": 3
@@ -70,7 +91,7 @@
           "q": "có khả thi trên mobile ko"
         }
       ],
-      "score": 0.965535657,
+      "score": 0.951031463,
       "source_file": "fluid/fluid_surface.c",
       "status": "tentative",
       "uses": 1
@@ -86,7 +107,7 @@
           "q": "tiến hành đi phase 0"
         }
       ],
-      "score": 0.99994188,
+      "score": 0.984920838,
       "source_file": "gfx_quality.c",
       "status": "tentative",
       "uses": 1
@@ -94,20 +115,35 @@
     "gfx_quality_gfxquality_get": {
       "code_fingerprint": "01d5e184b92cfe61b845ca8f204853591a9dbfe5efe4e2f25bb09a954296de31",
       "label": "GfxQuality_Get()",
-      "last": "2026-08-31T13:44:55.272396+00:00",
+      "last": "2026-09-01T03:22:17.027486+00:00",
       "neg": 1,
       "provenance": [
+        {
+          "date": "2026-09-01T03:22:17.027486+00:00",
+          "outcome": "useful",
+          "q": "thực thi đi"
+        },
+        {
+          "date": "2026-09-01T02:52:30.553048+00:00",
+          "outcome": "useful",
+          "q": "giờ có cần tạo 1 vfx mới để thử nghiệm ko? vì thấy các vfx cũ đâu có gì thay đổi nhiều?"
+        },
+        {
+          "date": "2026-09-01T02:08:05.442448+00:00",
+          "outcome": "useful",
+          "q": "Bây giờ, chưa cần test thực trên mobile, hãy tiến hành tiếp các phase tiếp theo (viết lại kế hoạch nếu cần)"
+        },
         {
           "date": "2026-08-30T03:09:21.570748+00:00",
           "outcome": "useful",
           "q": "có khả thi trên mobile ko"
         }
       ],
-      "score": -0.032696202,
+      "score": 2.954782599,
       "source_file": "gfx_quality.c",
       "status": "contested",
-      "uses": 1,
-      "verdict": "dead end"
+      "uses": 4,
+      "verdict": "useful"
     },
     "particles_particle_system_particleconfig": {
       "code_fingerprint": "517786f274bfad7d7ef4e5f6882291eb09a5b7da9a35121bb575fa269a8e44ca",
@@ -141,7 +177,7 @@
           "q": "dùng tiếng việt, dựa vào kết quả này, bạn kiến trúc của core hiện nay thế nào? so sánh với các game egine lớn thì kiến trúc có gì sai? có gì quan trọng mà bị thiếu sót?"
         }
       ],
-      "score": 2.715355771,
+      "score": 2.674565927,
       "source_file": "particles/particle_system.h",
       "status": "contested",
       "uses": 4,
@@ -158,7 +194,7 @@
           "q": "giờ điều quan trọng,là có đủ để tạo ra hiệu ứng đẹp chất lượng AAA chưa"
         }
       ],
-      "score": 0.784422471,
+      "score": 0.772638943,
       "source_file": "post_fx.c",
       "status": "tentative",
       "uses": 1
@@ -174,8 +210,24 @@
           "q": "tiến hành đi phase 0"
         }
       ],
-      "score": 0.99994188,
+      "score": 0.984920838,
       "source_file": "post_fx.c",
+      "status": "tentative",
+      "uses": 1
+    },
+    "presets_vfx_presets_vfx_materialfrompreset": {
+      "code_fingerprint": "fadb169cd2383010fb157f86a8fedd47717752bcd1541534bac44fb3f24e56c1",
+      "label": "VFX_MaterialFromPreset()",
+      "last": "2026-09-01T02:52:30.553048+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-01T02:52:30.553048+00:00",
+          "outcome": "useful",
+          "q": "giờ có cần tạo 1 vfx mới để thử nghiệm ko? vì thấy các vfx cũ đâu có gì thay đổi nhiều?"
+        }
+      ],
+      "score": 0.995740412,
+      "source_file": "presets/vfx_presets.c",
       "status": "tentative",
       "uses": 1
     },
@@ -196,7 +248,7 @@
           "q": "dùng tiếng việt, dựa vào kết quả này, bạn kiến trúc của core hiện nay thế nào? so sánh với các game egine lớn thì kiến trúc có gì sai? có gì quan trọng mà bị thiếu sót?"
         }
       ],
-      "score": -5.9882e-05,
+      "score": -5.8982e-05,
       "source_file": "resource_manager.c",
       "status": "contested",
       "uses": 1,
@@ -219,11 +271,58 @@
           "q": "dùng tiếng việt, dựa vào kết quả này, bạn kiến trúc của core hiện nay thế nào? so sánh với các game egine lớn thì kiến trúc có gì sai? có gì quan trọng mà bị thiếu sót?"
         }
       ],
-      "score": -5.9882e-05,
+      "score": -5.8982e-05,
       "source_file": "skill_manager.c",
       "status": "contested",
       "uses": 1,
       "verdict": "dead end"
+    },
+    "tests_silhouette_test_test_combinedandresolution": {
+      "code_fingerprint": "f91c30a14e2e71b19219a5db46d321a271f726a5003204a4c3ba6b9b50d37083",
+      "label": "Test_CombinedAndResolution()",
+      "last": "2026-09-01T03:53:10.356352+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-01T03:53:10.356352+00:00",
+          "outcome": "useful",
+          "q": "giờ nó hạt hạt pixel nè"
+        }
+      ],
+      "score": 0.996710087,
+      "source_file": "tests/silhouette_test.c",
+      "status": "tentative",
+      "uses": 1
+    },
+    "tests_volume_optical_depth_test": {
+      "code_fingerprint": "218eb7eff221018fdfa58e0b42794f6405fd1f96a307cebf76f6fad57e312316",
+      "label": "volume_optical_depth_test.c",
+      "last": "2026-09-01T03:39:55.024768+00:00",
+      "provenance": [
+        {
+          "date": "2026-09-01T03:39:55.024768+00:00",
+          "outcome": "useful",
+          "q": "vậy sửa đi"
+        },
+        {
+          "date": "2026-09-01T03:22:17.027486+00:00",
+          "outcome": "useful",
+          "q": "thực thi đi"
+        },
+        {
+          "date": "2026-09-01T02:52:30.553048+00:00",
+          "outcome": "useful",
+          "q": "giờ có cần tạo 1 vfx mới để thử nghiệm ko? vì thấy các vfx cũ đâu có gì thay đổi nhiều?"
+        },
+        {
+          "date": "2026-09-01T02:08:05.442448+00:00",
+          "outcome": "useful",
+          "q": "Bây giờ, chưa cần test thực trên mobile, hãy tiến hành tiếp các phase tiếp theo (viết lại kế hoạch nếu cần)"
+        }
+      ],
+      "score": 3.983485764,
+      "source_file": "tests/volume_optical_depth_test.c",
+      "status": "preferred",
+      "uses": 4
     },
     "trails_trail_system_drawtrailentitieslayer": {
       "code_fingerprint": "794443c318cd51f3885639f8dc95a73732d0e894dd98bf1a5d5e2e731f112d14",
@@ -236,7 +335,7 @@
           "q": "giờ điều quan trọng,là có đủ để tạo ra hiệu ứng đẹp chất lượng AAA chưa"
         }
       ],
-      "score": 0.784422471,
+      "score": 0.772638943,
       "source_file": "trails/trail_system.c",
       "status": "tentative",
       "uses": 1

@@ -128,6 +128,9 @@ LIFECYCLE_SPECS = {
     # follower transform.
     "VFX_ComposeSmokeColumn":        ("trail",   "static",     "continuous"),
     "VFX_ComposeGasPlume":           ("trail",   "static",     "continuous"),
+    # Diagnostic-only sequential smoke/fire/energy bench. It owns a stable
+    # point and one GasPlume handle, so it follows the same static lifecycle.
+    "VFX_ComposeGasMaterialLab":     ("trail",   "static",     "continuous"),
     "VFX_ComposeGasShockwave":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeGasVortex":          ("trail",   "static",     "continuous"),
     "VFX_ComposeFlameJet":           ("event",   "burst",      "oneshot"),

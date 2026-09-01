@@ -899,6 +899,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   void VFX_ComposeFluidImpact(Vector3 pos);
+  int VFX_ComposeGasMaterialLab(Vector3 pos, VC_MaterialId mat);
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
@@ -920,6 +921,7 @@ _Inline helpers / macros only — see header._
   int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   void VFX_FlowShield_Stop(int handle);
   void VFX_KillFlowShield(int handle);
+  void VFX_KillGasMaterialLab(int handle);
   void VFX_KillRefBands(int id);
   void VFX_KillRefParticles(int id);
   void VFX_SmokeTrail_Stop(int handle);

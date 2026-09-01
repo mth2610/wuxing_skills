@@ -186,6 +186,18 @@
       "kill_fn": "VFX_KillFlowShield"
     },
     {
+      "source": "common/vc_gas_material_lab.inl",
+      "fn": "VFX_ComposeGasMaterialLab",
+      "label": "GAS MATERIAL LAB",
+      "category": "common",
+      "fixture": "static",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeGasMaterialLab($POS, VC_MAT_FIRE)",
+      "kill_fn": "VFX_KillGasMaterialLab"
+    },
+    {
       "source": "common/vc_gas_plume.inl",
       "fn": "VFX_ComposeGasPlume",
       "label": "GAS PLUME",

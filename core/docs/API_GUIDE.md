@@ -2523,6 +2523,22 @@ log for every background capture. Use `WUXING_GAS_KINDS`,
 `WUXING_GAS_BLOOM_MODES`, `WUXING_GAS_WARMUP`, and
 `WUXING_GAS_PHASE0_OUT` to reduce or redirect a run.
 
+For close optical inspection use the `GAS MATERIAL LAB` fixture. It fills a
+larger comparison volume and cycles smoke/fire/energy at one-second boundaries;
+the standard matrix maps frame 40 to smoke, frame 90 to fire, and frame 140 to
+energy:
+
+```sh
+scripts/render_vfx_matrix.sh "GAS MATERIAL LAB" 40 90 140
+```
+
+Live diagnostic controls are `gaslab_stage_override` (`-1` cycles, `0/1/2`
+freezes smoke/fire/energy), `gaslab_material_palette` (`0` GasKind preset, `1`
+gameplay material), `gaslab_detail`, `gaslab_shadow`,
+`gaslab_background_adapt`, `gaslab_scale`, and `gaslab_stage_duration`. A
+changed control rebuilds only the lab's current single volume so frozen-stage
+A/B comparisons update immediately.
+
 Desktop regression is not a substitute for a device result. When physical mobile
 testing resumes, package and install with `make -f Makefile.Android` followed by
 `make -f Makefile.Android install`; capture shader/runtime diagnostics with

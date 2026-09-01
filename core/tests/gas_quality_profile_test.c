@@ -17,6 +17,11 @@ static unsigned long long TapBound(GasQualityProfile profile) {
            (unsigned long long)profile.raymarchSteps * 4ull;
 }
 
+static unsigned long long DenoiseTapBound(GasQualityProfile profile) {
+    return (unsigned long long)profile.targetWidth *
+           (unsigned long long)profile.targetHeight * 4ull;
+}
+
 int main(void) {
     GasQualityProfile low = GasQualityProfile_Make(1, 1280, 720);
     GasQualityProfile med = GasQualityProfile_Make(2, 1280, 720);
@@ -42,6 +47,9 @@ int main(void) {
     CHECK(GasQualityProfile_NeedsRebuild(low, 2));
     CHECK(GasQualityProfile_NeedsRebuild(high, 2));
     CHECK(TapBound(low) < TapBound(med) && TapBound(med) < TapBound(high));
+    CHECK(DenoiseTapBound(med) * 20ull <= TapBound(med));
+    CHECK((unsigned long long)high.targetWidth *
+          (unsigned long long)high.targetHeight * 8ull < 1024ull * 1024ull);
 
     FILE *file = fopen("core/gas/gas_system.c", "rb");
     CHECK(file != NULL);

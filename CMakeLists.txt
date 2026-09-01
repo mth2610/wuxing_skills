@@ -364,6 +364,7 @@ configure_file(core/fluid/shaders/fluid_depth_narrow_range.fs ${CMAKE_CURRENT_BI
 configure_file(core/fluid/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface.fs COPYONLY)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders)
 configure_file(core/gas/shaders/gas_volume.fs ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders/gas_volume.fs COPYONLY)
+configure_file(core/gas/shaders/gas_denoise.fs ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders/gas_denoise.fs COPYONLY)
 
 configure_file(core/shaders/common/vs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/vs_header.glsl COPYONLY)
 configure_file(core/shaders/common/fs_header.glsl ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/common/fs_header.glsl COPYONLY)

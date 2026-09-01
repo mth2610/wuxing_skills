@@ -165,14 +165,18 @@ void main() {
         density *= mix(1.0, brightDensityShape, backgroundAdapt);
         float densityAlpha = 1.0 - exp(-density * u_densityScale * stepLength);
         float heat = max(gas.g * 0.35 + gas.b, 0.0);
-        float coolSmoke = 1.0 - smoothstep(0.08, 0.62, heat);
-        float bodyOpacity = mix(0.32, 0.52, coolSmoke);
-        if (u_kind != 1) bodyOpacity = 1.0;
+        float flameBody = smoothstep(0.05, 0.55, heat);
+        float fireActivity = smoothstep(0.10, 0.60, heat) *
+                             smoothstep(0.06, 0.55, gas.b);
+        float energyActivity = smoothstep(0.08, 0.52, heat) *
+                               smoothstep(0.04, 0.45, gas.b);
+        float bodyOpacity = 1.0;
+        if (u_kind == 1) bodyOpacity = 0.26 * fireActivity;
+        else if (u_kind == 2) bodyOpacity = 0.28 * energyActivity;
         float sampleAlpha = densityAlpha * bodyOpacity;
-        /* Extinction and radiance are different signals. Reaction-rich fire
-         * emits through the full density footprint; cooling density keeps only
-         * its smoke/body coverage. Coupling both to bodyOpacity made every
-         * attempt to remove the dark carrier dim the flame by the same amount. */
+        /* Extinction and radiance are different signals. Reaction-rich gas
+         * emits through the full density footprint; inactive FIRE/ENERGY
+         * density contributes no smoke-like body coverage. */
         float flameTransport = smoothstep(0.08, 0.55, heat) *
                                smoothstep(0.06, 0.60, gas.b);
         float emissionAlpha = mix(sampleAlpha, densityAlpha, flameTransport);
@@ -187,21 +191,29 @@ void main() {
                                 0.2, 1.0);
         float bodyLight = softLight;
         vec3 bodyTone = u_bodyColor * mix(0.72, 1.18, coarseNoise);
-        if (u_kind == 1) {
-            vec3 smokeBody = mix(u_bodyColor, vec3(0.22, 0.23, 0.25), 0.92);
-            vec3 hotBody = mix(u_bodyColor, u_emissionColor * 0.55, 0.82);
-            bodyTone = mix(smokeBody, hotBody, 1.0 - coolSmoke) *
-                       mix(0.88, 1.16, coarseNoise);
-            /* Fire is self-lit. Let cooling smoke retain volume shading, but
-             * never multiply hot flame by the 0.2 shadow floor: that creates
-             * a muddy brown/black rim even when its emission ramp is bright. */
-            float litSmoke = max(softLight, 0.50);
-            bodyLight = mix(litSmoke, 1.0, 1.0 - coolSmoke);
+        if (u_kind == 0) {
+            /* The smoke preset is white, and material tint is only a subtle
+             * bias. A high lighting floor preserves grey internal depth without
+             * turning the volume into black soot. */
+            vec3 smokeBase = mix(vec3(0.84, 0.86, 0.89), u_bodyColor, 0.20);
+            bodyTone = smokeBase * mix(0.92, 1.08, coarseNoise);
+            bodyLight = max(softLight, 0.62);
+        } else if (u_kind == 1) {
+            /* GAS_FIRE is flame matter, not an implicit smoke layer. Residual
+             * low-reaction density fades with a warm tint; compositions that
+             * need black smoke spawn a separate GAS_SMOKE volume. */
+            vec3 coolBody = mix(u_bodyColor, u_emissionColor * 0.46, 0.68);
+            vec3 hotBody = mix(u_bodyColor, u_emissionColor * 0.72, 0.88);
+            bodyTone = mix(coolBody, hotBody, flameBody) *
+                       mix(0.94, 1.08, coarseNoise);
+            float litResidue = max(softLight, 0.55);
+            bodyLight = mix(litResidue, 1.0, flameBody);
         } else if (u_kind == 2) {
-            bodyTone = mix(u_bodyColor, u_emissionColor * 0.28,
-                           smoothstep(0.18, 0.72, heat));
-            bodyLight = mix(max(softLight, 0.48), 1.0,
-                            smoothstep(0.30, 0.82, heat));
+            /* Plasma carries its hue through self-emission. Reusing the dark
+             * body preset as an absorptive shell creates a smoke rim. */
+            bodyTone = mix(u_emissionColor * 0.28,
+                           u_emissionColor * 0.62, energyActivity);
+            bodyLight = mix(0.72, 1.0, energyActivity);
         }
         float brightBodyGain = u_kind == 0 ? GAS_BRIGHT_BODY_GAIN.x :
                                (u_kind == 1 ? GAS_BRIGHT_BODY_GAIN.y :
@@ -212,54 +224,82 @@ void main() {
         float emittedHeat = heat;
         float visibleCoreWeight = 0.0;
         if (u_kind == 1) {
-            float shoulderWeight = smoothstep(0.10, 0.90, heat) * 0.72;
+            float shoulderWeight = smoothstep(0.10, 0.72, heat);
             float hotProduct = gas.b * gas.g;
-            float hotGate = smoothstep(0.20, 0.72, hotProduct);
-            float densityGate = smoothstep(0.30, 0.75, rawDensity);
-            float coreWeight = min(hotGate, densityGate) *
-                               mix(0.35, 1.0,
-                                   smoothstep(0.40, 0.75, detailNoise));
+            float hotGate = smoothstep(0.34, 0.78, hotProduct);
+            float densityGate = smoothstep(0.30, 0.72, rawDensity);
+            float detailCore = mix(0.58, 1.0,
+                                   smoothstep(0.28, 0.82, detailNoise));
+            float coarseCore = mix(0.72, 1.0,
+                                   smoothstep(0.32, 0.80, coarseNoise));
+            /* Keep the coherent thermal mask alive at every noise value, but
+             * reserve headroom for the orange/yellow carrier. A unit-strength
+             * weight made every hot ray resolve to cream-white after the
+             * squared ray integral, even though its spatial selection was
+             * correct. */
+            float coreWeight = hotGate * densityGate * detailCore * coarseCore * 0.42;
             accumulatedCoreRadiance += transmittance * densityAlpha * coreWeight;
             visibleCoreWeight = coreWeight;
-            vec3 hotColor = mix(u_emissionColor, vec3(1.0, 0.58, 0.10),
+            vec3 hotColor = mix(u_emissionColor, vec3(1.0, 0.62, 0.12),
                                 shoulderWeight);
-            emittedColor = mix(hotColor, vec3(1.0, 0.92, 0.72), coreWeight);
+            emittedColor = mix(hotColor, vec3(1.0, 0.88, 0.55), coreWeight);
             /* Body opacity is deliberately lower for fire. Compensate energy
              * here, on the already-narrow core mask, rather than broadening
              * emission transport and washing the whole flame beige. */
             emittedHeat *= mix(0.34, 1.85, coreWeight);
         } else if (u_kind == 2) {
-            float energyCoreWeight = smoothstep(0.18, 0.72, heat) *
-                                     smoothstep(0.12, 0.62, rawDensity) *
-                                     mix(0.55, 1.0,
-                                         smoothstep(0.38, 0.76, detailNoise));
+            /* ENERGY follows the same ownership rule as FIRE: simulation
+             * channels select the core; procedural fields only roughen its
+             * edge. A thresholded detailNoise term printed detached white
+             * sparks throughout otherwise uniform plasma. */
+            float energyGate = smoothstep(0.30, 0.75, heat) *
+                               smoothstep(0.16, 0.58, gas.b);
+            float energyDensityGate = smoothstep(0.25, 0.68, rawDensity);
+            float energyDetailCore = mix(0.72, 1.0,
+                                         smoothstep(0.28, 0.82, detailNoise));
+            float energyCoarseCore = mix(0.80, 1.0,
+                                         smoothstep(0.32, 0.80, coarseNoise));
+            float energyCoreWeight = energyGate * energyDensityGate *
+                                     energyDetailCore * energyCoarseCore * 0.56;
             accumulatedCoreRadiance += transmittance * densityAlpha * energyCoreWeight;
             visibleCoreWeight = energyCoreWeight;
             emittedColor = mix(u_emissionColor, vec3(0.72, 0.92, 1.0),
                                energyCoreWeight);
             emittedHeat *= mix(0.58, 1.42, energyCoreWeight);
         }
-        float emissionFloor = u_kind == 1 ? 0.52 :
-                              (u_kind == 2 ? 0.38 : 1.0);
-        float broadEmissionGain = mix(emissionFloor, 1.0, visibleCoreWeight);
-        emittedHeat *= mix(1.0, broadEmissionGain, backgroundAdapt);
+        /* Keep the carrier coloured but sub-threshold on every background.
+         * The ray-integrated core below owns the HDR budget; otherwise dark
+         * scenes also turn every hot voxel into one uniformly blooming mass. */
+        float emissionFloor = u_kind == 1 ? 0.48 :
+                              (u_kind == 2 ? 0.62 : 1.0);
+        float brightEmissionScale = u_kind == 1 ? 0.50 :
+                                    (u_kind == 2 ? 0.68 : 1.0);
+        float broadEmissionGain = mix(emissionFloor, 1.0, visibleCoreWeight) *
+                                  mix(1.0, brightEmissionScale, backgroundAdapt);
+        emittedHeat *= broadEmissionGain;
         accumulatedEmission += transmittance * emissionAlpha * emittedColor *
                                emittedHeat * u_emissionGain;
         coverage += transmittance * sampleAlpha;
         travel += stepLength;
     }
+    /* Squaring the bounded front-to-back integral is a coverage selector:
+     * weak neighbouring rays collapse, while coherent hot filaments retain
+     * enough radiance to cross the bloom threshold. */
+    float resolvedCoreRadiance = accumulatedCoreRadiance * accumulatedCoreRadiance;
     if (u_kind == 1) {
         /* A ray-integrated volume can look bright while every fragment remains
          * below the post-process threshold. Preserve the hottest sparse voxel
          * as a narrow HDR seed so bloom comes from the real scene pipeline. */
-        vec3 bloomColor = mix(u_emissionColor, vec3(1.0, 0.92, 0.72), 0.72);
-        accumulatedEmission += bloomColor * accumulatedCoreRadiance * 7.20;
+        vec3 bloomColor = mix(u_emissionColor, vec3(1.0, 0.88, 0.55), 0.62);
+        /* coreWeight is capped at 0.42, so only a nearly coherent hot ray can
+         * cross the HDR threshold; isolated samples and shoulders stay amber. */
+        accumulatedEmission += bloomColor * resolvedCoreRadiance * 8.00;
     } else if (u_kind == 2) {
         /* Energy needs a compact HDR filament, not a brighter translucent
          * carrier. Keeping this on the reaction+density core preserves hue and
          * remains visible over a bright plate without turning the cloud white. */
         vec3 energyBloomColor = mix(u_emissionColor, vec3(0.72, 0.92, 1.0), 0.62);
-        accumulatedEmission += energyBloomColor * accumulatedCoreRadiance * 4.80;
+        accumulatedEmission += energyBloomColor * resolvedCoreRadiance * 5.00;
     }
     if (coverage <= 0.001) discard;
     vec3 unpremultipliedBody = accumulatedBody / max(coverage, 1e-5);
