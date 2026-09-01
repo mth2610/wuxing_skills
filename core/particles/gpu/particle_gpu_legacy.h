@@ -26,7 +26,7 @@
 #include <stdbool.h>
 
 #define MAX_GPU_PARTICLES 8192
-#define GPU_PARTICLE_DATA_STRIDE_BYTES 128 /* eight std430 vec4 values */
+#define GPU_PARTICLE_DATA_STRIDE_BYTES 144 /* nine std430 vec4 values */
 
 // Số slot texture "vector field" đồng thời hỗ trợ cho FORCE_VECTOR_TEXTURE
 // (xem core/force_field.h) — PHẢI khớp uVectorField0/uVectorField1 trong

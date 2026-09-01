@@ -66,6 +66,7 @@ typedef struct
   Vector3 forceAxisOrigin;
   Vector3 forceAxisDir;
   const ParticleTravelPath *travelPath;
+  Vector3 travelFormationOffset;
   int travelWaypoint;
   bool travelImpactActive;
   float travelImpactAge;
@@ -265,6 +266,10 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->forceAxisOrigin = config.forceAxisOrigin;
   p->forceAxisDir = config.forceAxisDir;
   p->travelPath = config.travelPath;
+  p->travelFormationOffset = (Vector3){0};
+  if (config.travelPath && config.travelPath->formationOrigin)
+    p->travelFormationOffset = Vector3Subtract(config.position,
+                                                *config.travelPath->formationOrigin);
   p->travelWaypoint = 0;
   p->travelImpactActive = false;
   p->travelImpactAge = 0.0f;
@@ -572,8 +577,9 @@ void UpdateParticles(float dt)
     {
       Vector3 position = {p->x, p->y, p->z};
       Vector3 velocity = {p->vx, p->vy, p->vz};
-      reachedTarget = ParticleTravel_Step(p->travelPath, step, &position,
-                                          &velocity, &p->travelWaypoint);
+      reachedTarget = ParticleTravel_StepFormation(p->travelPath, step, &position,
+                                          &velocity, &p->travelWaypoint,
+                                          p->travelFormationOffset);
       p->x = position.x;
       p->y = position.y;
       p->z = position.z;

@@ -27,6 +27,7 @@ typedef struct ParticleTravelPath {
     const Vector3 *points;
     int pointCount;
     const Vector3 *target;
+    const Vector3 *formationOrigin;
     float speed;
     float steering;
     float maxAcceleration;
@@ -86,6 +87,37 @@ static inline float ParticleTravel_SegmentDistanceSq(Vector3 a, Vector3 b,
     return dx * dx + dy * dy + dz * dz;
 }
 
+static inline Vector3 ParticleTravel_TransportOffset(const ParticleTravelPath *path,
+                                                      int waypoint, Vector3 offset)
+{
+    Vector3 a, b, axis;
+    float la, lb, c, s, k;
+    int count = ParticleTravel_WaypointCount(path);
+    if (!path || count <= 1 || (offset.x*offset.x + offset.y*offset.y + offset.z*offset.z) < 1e-10f) return offset;
+    a = path->formationOrigin ? *path->formationOrigin
+                              : ParticleTravel_GetWaypoint(path, 0);
+    b = ParticleTravel_GetWaypoint(path, 0);
+    if (waypoint > 0) {
+        a = ParticleTravel_GetWaypoint(path, waypoint - 1);
+        b = ParticleTravel_GetWaypoint(path, waypoint);
+    }
+    if (waypoint >= count - 1) {
+        a = ParticleTravel_GetWaypoint(path, count - 2);
+        b = ParticleTravel_GetWaypoint(path, count - 1);
+    }
+    a = (Vector3){b.x-a.x, b.y-a.y, b.z-a.z};
+    if (path->formationOrigin) { Vector3 p0 = ParticleTravel_GetWaypoint(path, 0); b = (Vector3){p0.x-path->formationOrigin->x, p0.y-path->formationOrigin->y, p0.z-path->formationOrigin->z}; }
+    la = sqrtf(a.x*a.x+a.y*a.y+a.z*a.z); lb = sqrtf(b.x*b.x+b.y*b.y+b.z*b.z);
+    if (la < 1e-5f || lb < 1e-5f) return offset;
+    a.x/=la; a.y/=la; a.z/=la; b.x/=lb; b.y/=lb; b.z/=lb;
+    axis = (Vector3){b.y*a.z-b.z*a.y, b.z*a.x-b.x*a.z, b.x*a.y-b.y*a.x};
+    s = sqrtf(axis.x*axis.x+axis.y*axis.y+axis.z*axis.z); c = b.x*a.x+b.y*a.y+b.z*a.z;
+    if (s < 1e-5f) return c >= 0.0f ? offset : (Vector3){-offset.x,-offset.y,-offset.z};
+    axis.x/=s; axis.y/=s; axis.z/=s; k = axis.x*offset.x+axis.y*offset.y+axis.z*offset.z;
+    Vector3 cross = {axis.y*offset.z-axis.z*offset.y, axis.z*offset.x-axis.x*offset.z, axis.x*offset.y-axis.y*offset.x};
+    return (Vector3){offset.x*c+cross.x*s+axis.x*k*(1.0f-c), offset.y*c+cross.y*s+axis.y*k*(1.0f-c), offset.z*c+cross.z*s+axis.z*k*(1.0f-c)};
+}
+
 static inline void ParticleTravel_ApplyImpactEntry(const ParticleTravelPath *path,
                                                     Vector3 *position,
                                                     Vector3 *velocity)
@@ -126,14 +158,15 @@ static inline void ParticleTravel_ApplyImpactEntry(const ParticleTravelPath *pat
 /* Apply path steering after external forces/drag, integrate once, advance the
  * route, and return true on final-target arrival. The swept test prevents fast
  * particles tunnelling through a small target between frames. */
-static inline bool ParticleTravel_Step(const ParticleTravelPath *path, float dt,
+static inline bool ParticleTravel_StepFormation(const ParticleTravelPath *path, float dt,
                                        Vector3 *position, Vector3 *velocity,
-                                       int *waypointIndex)
+                                       int *waypointIndex, Vector3 formationOffset)
 {
     int count, waypoint, finalIndex;
     Vector3 goal, desired, delta, next;
     float dx, dy, dz, distance, speed, steering, blend, changeLength;
     float waypointRadius, targetRadius, hitRadius;
+    Vector3 transportedOffset;
 
     if (!path || !position || !velocity || !waypointIndex || dt <= 0.0f)
         return false;
@@ -143,6 +176,7 @@ static inline bool ParticleTravel_Step(const ParticleTravelPath *path, float dt,
     waypoint = *waypointIndex;
     if (waypoint < 0) waypoint = 0;
     if (waypoint > finalIndex) waypoint = finalIndex;
+    transportedOffset = ParticleTravel_TransportOffset(path, waypoint, formationOffset);
 
     waypointRadius = path->waypointRadius > 0.0f ? path->waypointRadius : 0.10f;
     targetRadius = path->targetRadius > 0.0f ? path->targetRadius : waypointRadius;
@@ -150,6 +184,7 @@ static inline bool ParticleTravel_Step(const ParticleTravelPath *path, float dt,
     /* Consume waypoints already occupied at the start of the step. */
     while (waypoint < finalIndex) {
         goal = ParticleTravel_GetWaypoint(path, waypoint);
+        goal.x += transportedOffset.x; goal.y += transportedOffset.y; goal.z += transportedOffset.z;
         dx = position->x - goal.x;
         dy = position->y - goal.y;
         dz = position->z - goal.z;
@@ -159,6 +194,7 @@ static inline bool ParticleTravel_Step(const ParticleTravelPath *path, float dt,
     }
 
     goal = ParticleTravel_GetWaypoint(path, waypoint);
+    goal.x += transportedOffset.x; goal.y += transportedOffset.y; goal.z += transportedOffset.z;
     dx = goal.x - position->x;
     dy = goal.y - position->y;
     dz = goal.z - position->z;
@@ -209,6 +245,14 @@ static inline bool ParticleTravel_Step(const ParticleTravelPath *path, float dt,
     *position = next;
     *waypointIndex = waypoint;
     return false;
+}
+
+static inline bool ParticleTravel_Step(const ParticleTravelPath *path, float dt,
+                                       Vector3 *position, Vector3 *velocity,
+                                       int *waypointIndex)
+{
+    return ParticleTravel_StepFormation(path, dt, position, velocity,
+                                        waypointIndex, (Vector3){0});
 }
 
 #endif /* CORE_PARTICLES_PARTICLE_TRAVEL_H */

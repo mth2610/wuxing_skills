@@ -19,6 +19,7 @@ static bool s_testGravityInit = false;
 typedef struct GuidedParticleTestState {
     bool active;
     float age;
+    Vector3 source;
     Vector3 target;
     Vector3 points[GUIDED_PARTICLE_TEST_POINTS];
     ParticleTravelPath path;
@@ -36,9 +37,9 @@ static void GuidedParticleTest_InitShared(void)
 {
     if (s_guidedParticleSharedInit) return;
 
-    // A vertical torus makes the mesh-emission source readable as a portal.
+    // A compact sphere keeps the flight formation readable as one moving orb.
     // Build adjacency once; every cast only supplies a cheap world transform.
-    Mesh source = GenMeshTorus(0.16f, 2.0f, 24, 8);
+    Mesh source = GenMeshSphere(0.70f, 16, 10);
     MeshAdjacency_Build(&s_guidedParticleSourceMesh, source);
     UnloadMesh(source);
 
@@ -76,6 +77,7 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
         .pointEmitter = PARTICLE_EMITTER_INVALID,
     };
     state->target = target;
+    state->source = source;
     Vector3 span = Vector3Subtract(target, source);
     float spanLength = Vector3Length(span);
     Vector3 forward = spanLength > 0.001f ? Vector3Scale(span, 1.0f / spanLength)
@@ -110,9 +112,10 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
         .points = state->points,
         .pointCount = GUIDED_PARTICLE_TEST_POINTS,
         .target = &state->target,
+        .formationOrigin = &state->source,
         .speed = 4.0f,
-        .steering = 5.0f,
-        .maxAcceleration = 6.0f,
+        .steering = 3.0f,
+        .maxAcceleration = 5.0f,
         .waypointRadius = 0.22f,
         .targetRadius = 0.12f,
         .arrivalForceField = &state->impactField,
@@ -121,34 +124,34 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
         .arrivalOffset = 0.0f,
         .arrivalKick = 0.0f,
         .arrivalVelocityScale = 0.001f,
-        .arrivalForceDuration = 0.12f,
+        .arrivalForceDuration = 0.18f,
     };
 
     ForceField_Clear(&state->field);
     ForceField_AddLayer(&state->field, (ForceLayer){
         .type = FORCE_NOISE_CURL,
-        .strength = 3.00f,
-        .noiseScale = 4.00f,
-        .noiseSpeed = 0.70f,
+        .strength = 1.60f,
+        .noiseScale = 2.40f,
+        .noiseSpeed = 0.90f,
     });
 
     ForceField_Clear(&state->impactField);
     ForceField_AddLayer(&state->impactField, (ForceLayer){
         .type = FORCE_GRAVITY_POINT,
         .origin = target,
-        .strength = -4.0f,
+        .strength = -3.0f,
         .radius = 3.5f,
         .falloff = 1.0f,
     });
     ForceField_AddLayer(&state->impactField, (ForceLayer){
         .type = FORCE_NOISE_CURL,
-        .strength = 0.15f,
-        .noiseScale = 2.2f,
-        .noiseSpeed = 1.7f,
+        .strength = 6.00f,
+        .noiseScale = 4.50f,
+        .noiseSpeed = 2.8f,
     });
     ForceField_AddLayer(&state->impactField, (ForceLayer){
         .type = FORCE_VISCOSITY,
-        .strength = 0.85f,
+        .strength = 6.00f,
     });
 
     ParticleConfig follower = {
@@ -164,10 +167,10 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
         .stretchMinSpeed = 0.35f,
         .render.blendMode = VFX_BLEND_ADDITIVE,
         .render.unlit = 1,
-        .render.emissiveBoost = 4.2f,
+        .render.emissiveBoost = 10.0f,
     };
     Matrix sourceTransform = MatrixMultiply(
-        MatrixMultiply(MatrixRotateY(PI * 0.5f), MatrixScale(0.60f, 0.60f, 0.60f)),
+        MatrixScale(0.1375f, 0.1375f, 0.1375f),
         MatrixTranslate(source.x, source.y, source.z));
     ParticleEmitterDesc meshDesc = {
         .simulationPolicy = PARTICLE_SIM_AUTO,
@@ -198,7 +201,7 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
     pointDesc.particle.radius = 0.22f;
     pointDesc.particle.colorStart = (Color){255, 255, 255, 255};
     pointDesc.particle.colorEnd = (Color){50, 205, 255, 0};
-    pointDesc.particle.render.emissiveBoost = 6.0f;
+    pointDesc.particle.render.emissiveBoost = 12.0f;
     state->pointEmitter = ParticleManager_CreateEmitter(&pointDesc);
     if (state->pointEmitter != PARTICLE_EMITTER_INVALID)
         ParticleManager_Emit(state->pointEmitter, 1);

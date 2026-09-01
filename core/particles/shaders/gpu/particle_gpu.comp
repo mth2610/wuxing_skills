@@ -19,6 +19,7 @@ struct GpuParticleData {
     vec4 ff_data;        // x = force field slot (-1 = none), yzw = reserved
     vec4 route_data;     // x=emitter id, y=render mode, z=travel slot, w=waypoint
     vec4 impact_data;    // x=impact age, y=impact active
+    vec4 formation_data; // xyz = per-particle offset from formation origin
 };
 
 layout(std430, binding = 0) buffer ParticleBuffer {
@@ -55,6 +56,7 @@ struct ParticleTravelPathGPU {
     vec4 params; // x=count, y=speed, z=steering, w=max acceleration
     vec4 radii;  // x=waypoint radius, y=target radius
     vec4 arrival; // x=arrival force slot, y=offset, z=kick
+    vec4 formation_origin;
 };
 
 layout(std430, binding = 2) readonly buffer ParticleTravelPathBuffer {
@@ -272,13 +274,29 @@ float segmentDistanceSq(vec3 a, vec3 b, vec3 point) {
 // Mirrors ParticleTravel_Step. Force and drag have already modified `vel`;
 // finite steering guides that result instead of erasing field deflection.
 bool evalTravelPath(int pathIndex, inout vec3 pos, inout vec3 vel,
-                    inout float waypointValue, float dt) {
+                    inout float waypointValue, float dt, vec3 formationOffset) {
     if (pathIndex < 0 || pathIndex >= MAX_GPU_TRAVEL_PATHS) return false;
     int count = clamp(int(uTravelPaths[pathIndex].params.x + 0.5),
                       0, TRAVEL_MAX_WAYPOINTS);
     if (count <= 0) return false;
     int finalIndex = count - 1;
     int waypoint = clamp(int(waypointValue + 0.5), 0, finalIndex);
+    vec3 baseA = waypoint > 0 ? uTravelPaths[pathIndex].points[waypoint - 1].xyz
+                              : uTravelPaths[pathIndex].formation_origin.xyz;
+    vec3 baseB = uTravelPaths[pathIndex].points[min(waypoint, finalIndex)].xyz;
+    vec3 fromT = normalize(uTravelPaths[pathIndex].points[0].xyz -
+                           uTravelPaths[pathIndex].formation_origin.xyz);
+    vec3 toT = normalize(baseB - baseA);
+    vec3 rotAxis = cross(fromT, toT);
+    float rotSin = length(rotAxis);
+    float rotCos = clamp(dot(fromT, toT), -1.0, 1.0);
+    vec3 transportedOffset = formationOffset;
+    if (rotSin > 1e-5) {
+        rotAxis /= rotSin;
+        transportedOffset = formationOffset * rotCos +
+            cross(rotAxis, formationOffset) * rotSin +
+            rotAxis * dot(rotAxis, formationOffset) * (1.0 - rotCos);
+    } else if (rotCos < 0.0) transportedOffset = -formationOffset;
     float waypointRadius = uTravelPaths[pathIndex].radii.x > 0.0
                                ? uTravelPaths[pathIndex].radii.x : 0.10;
     float targetRadius = uTravelPaths[pathIndex].radii.y > 0.0
@@ -286,14 +304,14 @@ bool evalTravelPath(int pathIndex, inout vec3 pos, inout vec3 vel,
 
     for (int i = 0; i < TRAVEL_MAX_WAYPOINTS - 1; ++i) {
         if (waypoint >= finalIndex) break;
-        vec3 occupiedGoal = uTravelPaths[pathIndex].points[waypoint].xyz;
+        vec3 occupiedGoal = uTravelPaths[pathIndex].points[waypoint].xyz + transportedOffset;
         vec3 occupiedDelta = pos - occupiedGoal;
         if (dot(occupiedDelta, occupiedDelta) > waypointRadius * waypointRadius)
             break;
         waypoint++;
     }
 
-    vec3 goal = uTravelPaths[pathIndex].points[waypoint].xyz;
+    vec3 goal = uTravelPaths[pathIndex].points[waypoint].xyz + transportedOffset;
     vec3 toGoal = goal - pos;
     float distanceToGoal = length(toGoal);
     float speed = uTravelPaths[pathIndex].params.y;
@@ -371,7 +389,8 @@ void main() {
     bool reachedTarget = false;
     if (!impactActive)
         reachedTarget = evalTravelPath(pathIndex, p.pos_radius.xyz,
-                                       p.vel_drag.xyz, p.route_data.w, u_dt);
+                                       p.vel_drag.xyz, p.route_data.w, u_dt,
+                                       p.formation_data.xyz);
     else {
         p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
         p.impact_data.x += u_dt;

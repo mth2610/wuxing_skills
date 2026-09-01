@@ -19,6 +19,7 @@ struct GpuParticleData {
     vec4 ff_data; // không dùng ở VS, giữ để khớp stride với GPU/CPU struct
     vec4 route_data;     // x=emitter id, y=render mode, z=travel slot, w=waypoint
     vec4 impact_data;    // x=impact age, y=impact active
+    vec4 formation_data; // xyz = per-particle offset from formation origin
 };
 
 layout(std430, binding = 0) readonly buffer ParticleBuffer {

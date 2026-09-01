@@ -149,7 +149,7 @@ ForceField_AddLayer(&s_smokeField, (ForceLayer){
 #define GPU_VECTOR_FIELD_SLOTS 2  // Concurrent vector-field textures
 ```
 
-Each particle occupies 128 bytes in the SSBO (eight `vec4`s). Routes are not
+Each particle occupies 144 bytes in the SSBO (nine `vec4`s). Routes are not
 copied per particle: up to 32 shared routes live in a separate fixed 9 KiB path
 SSBO, while each particle stores only route-slot and waypoint indices. No runtime
 allocation is performed.

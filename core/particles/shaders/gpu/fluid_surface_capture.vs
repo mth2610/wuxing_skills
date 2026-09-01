@@ -11,6 +11,8 @@ struct GpuParticleData {
     vec4 life_data;
     vec4 ff_data;
     vec4 route_data;     // x=emitter id, y=render mode, z=travel slot, w=waypoint
+    vec4 impact_data;
+    vec4 formation_data;
 };
 layout(std430, binding = 0) readonly buffer ParticleBuffer { GpuParticleData particles[]; };
 

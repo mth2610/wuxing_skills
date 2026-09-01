@@ -27,6 +27,7 @@ typedef struct
     float ff_index, ff_pad0, ff_pad1, ff_pad2; // ff_index: slot vào ForceFieldBuffer, -1 = none
     float emitter_id, render_mode, route_pad0, route_pad1;
     float impact_age, impact_active, impact_pad0, impact_pad1;
+    float formation_x, formation_y, formation_z, formation_pad;
 } GpuParticleData;
 
 #define MAX_GPU_TRAVEL_PATHS 32
@@ -40,6 +41,7 @@ typedef struct
     Vector4 params; /* x=count, y=speed, z=steering, w=max acceleration */
     Vector4 radii;  /* x=waypoint radius, y=target radius */
     Vector4 arrival; /* x=arrival force-field slot, y=offset, z=kick */
+    Vector4 formation_origin;
 } ParticleTravelPathGPU;
 
 // ---------------------------------------------------------------------------
@@ -164,6 +166,11 @@ static void PackTravelPath(const ParticleTravelPath *path,
     packed->arrival = (Vector4){
         (float)RegisterField(path->arrivalForceField, (Vector3){0}, (Vector3){0}),
         path->arrivalOffset, path->arrivalKick, path->arrivalVelocityScale};
+    if (path->formationOrigin) {
+        packed->formation_origin = (Vector4){path->formationOrigin->x,
+                                             path->formationOrigin->y,
+                                             path->formationOrigin->z, 0.0f};
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -455,6 +462,12 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
     d.impact_active = 0.0f;
     d.impact_pad0 = 0.0f;
     d.impact_pad1 = 0.0f;
+    d.formation_x = d.formation_y = d.formation_z = d.formation_pad = 0.0f;
+    if (cfg.travelPath && cfg.travelPath->formationOrigin) {
+        d.formation_x = cfg.position.x - cfg.travelPath->formationOrigin->x;
+        d.formation_y = cfg.position.y - cfg.travelPath->formationOrigin->y;
+        d.formation_z = cfg.position.z - cfg.travelPath->formationOrigin->z;
+    }
     s_particleImpactIndex[idx] = cfg.onTargetEmitCount > 0
                                      ? RegisterImpact(cfg.onTargetEmit) : -1;
     s_particleImpactCount[idx] = cfg.onTargetEmitCount > 0 ? cfg.onTargetEmitCount : 0;
@@ -639,8 +652,9 @@ void GpuParticleSystem_Update(float dt)
             Vector3 position = {p->px, p->py, p->pz};
             Vector3 velocity = {p->vx, p->vy, p->vz};
             int waypoint = (int)p->route_pad1;
-            reachedTarget = ParticleTravel_Step(s_pathRegistry[pathIndex], dt,
-                                                &position, &velocity, &waypoint);
+            reachedTarget = ParticleTravel_StepFormation(s_pathRegistry[pathIndex], dt,
+                                                &position, &velocity, &waypoint,
+                                                (Vector3){p->formation_x, p->formation_y, p->formation_z});
             p->px = position.x; p->py = position.y; p->pz = position.z;
             p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
             p->route_pad1 = (float)waypoint;
