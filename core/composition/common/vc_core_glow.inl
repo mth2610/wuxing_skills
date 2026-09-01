@@ -5,12 +5,100 @@
 #define CORE_GLOW_BATCH_MAX 4    // clamp after a frame hitch
 
 static SkillCurve s_coreGlowFade;
+static Texture2D s_coreGlowFlareTex = {0};
 static bool s_coreGlowInit = false;
 
 // x on the whole thing's size, and a kill switch for the point light. Both are
 // look decisions, and the alternative to a tunable is a rebuild per guess.
 static float s_coreGlowSize = 1.0f;
 static float s_coreGlowLight = 1.0f;
+
+// One camera-facing sheet carries the circular shoulder and every flare ray.
+// Building those marks from separate stretched particles costs more pool slots,
+// more overdraw, and lets their lifetimes drift out of symmetry. A dedicated
+// shader would add a program/state switch for a profile that never changes.
+// This 128x128 closed-form mask is generated once, uses one quad, and remains
+// material-agnostic because RGB stays white and the particle supplies the tint.
+static void CoreGlow_BuildFlareTexture(void)
+{
+    const int S = 128;
+    Image img = GenImageColor(S, S, BLANK);
+    for (int y = 0; y < S; ++y)
+    {
+        for (int x = 0; x < S; ++x)
+        {
+            float u = ((float)x + 0.5f) / (float)S * 2.0f - 1.0f;
+            float v = ((float)y + 0.5f) / (float)S * 2.0f - 1.0f;
+            float r2 = u * u + v * v;
+            float alpha = 0.0f;
+
+            if (r2 < 1.0f)
+            {
+                float r = sqrtf(r2);
+                float edge = 1.0f - r2;
+                float edge2 = edge * edge;
+
+                // The ring is broad and slightly uneven, like radiance moving
+                // through haze rather than a geometry-perfect wire circle. The
+                // second faint shoulder breaks the single stamped boundary.
+                float angle = atan2f(v, u);
+                float ringMod = 0.88f + 0.07f * sinf(angle * 5.0f + 0.7f)
+                                         + 0.04f * sinf(angle * 9.0f - 0.4f);
+                if (ringMod < 0.72f) ringMod = 0.72f;
+                if (ringMod > 1.0f) ringMod = 1.0f;
+                float halo = edge2 * edge2 * 0.24f;
+                float ringD = (r - 0.56f) / 0.085f;
+                float ring = expf(-(ringD * ringD)) * edge * 0.40f * ringMod;
+                float ghostD = (r - 0.72f) / 0.050f;
+                float ghost = expf(-(ghostD * ghostD)) * edge2 * 0.06f
+                            * (1.35f - ringMod);
+
+                // Long cardinal rays and shorter diagonal rays. max(), rather
+                // than sum(), keeps each crossed pair from making a square core.
+                float au = fabsf(u), av = fabsf(v);
+                float horizontal = powf(fmaxf(0.0f, 1.0f - au), 1.10f)
+                                 * expf(-av * 22.0f);
+                float vertical = powf(fmaxf(0.0f, 1.0f - av), 1.25f)
+                               * expf(-au * 24.0f);
+                float cardinal = fmaxf(horizontal * 1.15f, vertical * 0.72f);
+
+                const float INV_SQRT2 = 0.70710678f;
+                float du = (u + v) * INV_SQRT2;
+                float dv = (v - u) * INV_SQRT2;
+                float adu = fabsf(du), adv = fabsf(dv);
+                float diagonal = fmaxf(
+                    powf(fmaxf(0.0f, 1.0f - adu / 0.92f), 1.35f) * expf(-adv * 26.0f),
+                    powf(fmaxf(0.0f, 1.0f - adv / 0.92f), 1.35f) * expf(-adu * 26.0f));
+
+                // Keep spokes from meeting as a mechanical hub. The compact
+                // white particle owns the centre; these rays bloom outward.
+                float cardT = (r - 0.08f) / 0.24f;
+                if (cardT < 0.0f) cardT = 0.0f;
+                if (cardT > 1.0f) cardT = 1.0f;
+                float cardGate = 0.12f + 0.88f * cardT * cardT
+                                             * (3.0f - 2.0f * cardT);
+                float diagT = (r - 0.18f) / 0.20f;
+                if (diagT < 0.0f) diagT = 0.0f;
+                if (diagT > 1.0f) diagT = 1.0f;
+                float diagGate = diagT * diagT * (3.0f - 2.0f * diagT);
+                float core = expf(-r2 * 26.0f) * 0.72f;
+                alpha = halo + ring + ghost
+                      + edge2 * (cardinal * 2.10f * cardGate
+                               + diagonal * 1.15f * diagGate)
+                      + core;
+                if (alpha > 1.0f) alpha = 1.0f;
+            }
+
+            ImageDrawPixel(&img, x, y,
+                           (Color){255, 255, 255, (unsigned char)(alpha * 255.0f)});
+        }
+    }
+
+    s_coreGlowFlareTex = LoadTextureFromImage(img);
+    UnloadImage(img);
+    if (s_coreGlowFlareTex.id != 0)
+        SetTextureFilter(s_coreGlowFlareTex, TEXTURE_FILTER_BILINEAR);
+}
 
 static void CoreGlow_InitShared(void)
 {
@@ -21,6 +109,8 @@ static void CoreGlow_InitShared(void)
     FloatCurve_AddStop(&s_coreGlowFade, 0.00f, 1.00f);
     FloatCurve_AddStop(&s_coreGlowFade, 0.55f, 0.85f);
     FloatCurve_AddStop(&s_coreGlowFade, 1.00f, 0.00f);
+
+    CoreGlow_BuildFlareTexture();
 
     // Lazily, never from a subsystem Init — Tuning_Init runs after those and an
     // early registration silently keeps the default (core/docs/LANDMINES.md).
@@ -99,6 +189,7 @@ void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius,
         .colorStart = VC_WithAlpha(m->soft, (unsigned char)(40 + 90 * i01)),
         .colorEnd = VC_WithAlpha(m->soft, 0),
         .alphaCurve = &s_coreGlowFade,
+        .render.texture = s_coreGlowFlareTex,
         .render.blendMode = VFX_BLEND_PREMULTIPLIED,
         .render.unlit = 1,
         // NO boost. This is the glow around the hot spot; boosting it would make

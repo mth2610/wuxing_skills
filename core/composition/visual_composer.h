@@ -324,14 +324,16 @@ void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat, fl
 
 // ── PRIMARY. Core glow ──────────────────────────────────────────────────────
 // One hot point of light: a near-white core, a mid glow kept just over the bloom
-// threshold, and a wide falloff around them. Every composite that needs a
+// threshold, and a camera-facing circular starburst (soft falloff, ring, four
+// long cardinal rays and four shorter diagonals). Every composite that needs a
 // destination or a source wants exactly this — a charge's centre, an orb's
 // heart, a muzzle, a rune's hub.
 //
 // THREE sprites and not one, and the reason is not taste: the bright pass clamps
 // each pixel's contribution, so bloom SIZE comes from how many pixels clear the
 // threshold, not how far one clears it. The mid layer is the one that buys the
-// bloom; the core supplies the white; the halo stops it ending at a sprite edge.
+// bloom; the core supplies the white; the outer procedural sheet supplies the
+// ring/rays and reaches zero smoothly before the billboard edge.
 //
 // Immediate mode — call every frame while the glow should exist. Emits by rate.
 // `intensity01` drives brightness, size and the point light together.

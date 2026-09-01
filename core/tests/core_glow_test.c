@@ -45,6 +45,55 @@ static float HaloRadius(float i01)  { return 0.22f  + 0.30f  * i01; }
 static float CoreBoost(float i01)   { return Mix(4.0f, 14.0f, i01); }
 static float MidBoost(float i01)    { return Mix(1.6f, 3.2f,  i01); }
 
+// CPU mirror of the generated flare sheet. This validates the authored 2D
+// profile numerically; it cannot validate texture filtering or final bloom.
+static float FlareAlpha(float u, float v)
+{
+    float r2 = u * u + v * v;
+    if (r2 >= 1.0f) return 0.0f;
+
+    float r = sqrtf(r2);
+    float edge = 1.0f - r2;
+    float edge2 = edge * edge;
+    float angle = atan2f(v, u);
+    float ringMod = 0.88f + 0.07f * sinf(angle * 5.0f + 0.7f)
+                             + 0.04f * sinf(angle * 9.0f - 0.4f);
+    if (ringMod < 0.72f) ringMod = 0.72f;
+    if (ringMod > 1.0f) ringMod = 1.0f;
+    float halo = edge2 * edge2 * 0.24f;
+    float ringD = (r - 0.56f) / 0.085f;
+    float ring = expf(-(ringD * ringD)) * edge * 0.40f * ringMod;
+    float ghostD = (r - 0.72f) / 0.050f;
+    float ghost = expf(-(ghostD * ghostD)) * edge2 * 0.06f * (1.35f - ringMod);
+
+    float au = fabsf(u), av = fabsf(v);
+    float horizontal = powf(fmaxf(0.0f, 1.0f - au), 1.10f) * expf(-av * 22.0f);
+    float vertical = powf(fmaxf(0.0f, 1.0f - av), 1.25f) * expf(-au * 24.0f);
+    float cardinal = fmaxf(horizontal * 1.15f, vertical * 0.72f);
+
+    const float INV_SQRT2 = 0.70710678f;
+    float du = (u + v) * INV_SQRT2;
+    float dv = (v - u) * INV_SQRT2;
+    float adu = fabsf(du), adv = fabsf(dv);
+    float diagonal = fmaxf(
+        powf(fmaxf(0.0f, 1.0f - adu / 0.92f), 1.35f) * expf(-adv * 26.0f),
+        powf(fmaxf(0.0f, 1.0f - adv / 0.92f), 1.35f) * expf(-adu * 26.0f));
+
+    float cardT = (r - 0.08f) / 0.24f;
+    if (cardT < 0.0f) cardT = 0.0f;
+    if (cardT > 1.0f) cardT = 1.0f;
+    float cardGate = 0.12f + 0.88f * cardT * cardT * (3.0f - 2.0f * cardT);
+    float diagT = (r - 0.18f) / 0.20f;
+    if (diagT < 0.0f) diagT = 0.0f;
+    if (diagT > 1.0f) diagT = 1.0f;
+    float diagGate = diagT * diagT * (3.0f - 2.0f * diagT);
+    float core = expf(-r2 * 26.0f) * 0.72f;
+    float a = halo + ring + ghost
+            + edge2 * (cardinal * 2.10f * cardGate
+                     + diagonal * 1.15f * diagGate) + core;
+    return fminf(a, 1.0f);
+}
+
 // ── 1. The layers are ordered, and each does a different job ────────────────
 
 static void Test_ThreeLayersAreDistinct(void)
@@ -148,6 +197,37 @@ static void Test_GrowthDoesNotDimTheCore(void)
 
 // ── 4. It emits by RATE ─────────────────────────────────────────────────────
 
+static void Test_FlareSpriteProfile(void)
+{
+    CHECK_MSG(FlareAlpha(0.0f, 0.0f) > 0.99f,
+              "the flare has a solid hot centre",
+              "alpha %.3f", FlareAlpha(0.0f, 0.0f));
+
+    // 22.5 degrees lies between the cardinal and diagonal spikes.
+    float ring = FlareAlpha(0.517f, 0.214f);
+    float inside = FlareAlpha(0.425f, 0.176f);
+    float outside = FlareAlpha(0.610f, 0.253f);
+    CHECK_MSG(ring > inside * 1.25f && ring > outside * 2.5f,
+              "the orange shoulder contains a distinct circular ring",
+              "inside %.3f, ring %.3f, outside %.3f", inside, ring, outside);
+
+    float cardinal = FlareAlpha(0.78f, 0.0f);
+    float offCardinal = FlareAlpha(0.78f, 0.08f);
+    CHECK_MSG(cardinal > offCardinal * 3.0f,
+              "the cardinal flare rays are long and narrow",
+              "on %.3f vs off %.3f", cardinal, offCardinal);
+
+    float diagonal = FlareAlpha(0.509f, 0.509f);
+    float offDiagonal = FlareAlpha(0.600f, 0.400f);
+    CHECK_MSG(diagonal > offDiagonal * 2.0f,
+              "four shorter diagonal rays complete the eight-point star",
+              "on %.3f vs off %.3f", diagonal, offDiagonal);
+
+    CHECK_MSG(FlareAlpha(0.99f, 0.0f) < 0.001f && FlareAlpha(1.0f, 0.0f) == 0.0f,
+              "the generated sheet reaches transparent before its quad edge",
+              "near-edge %.6f", FlareAlpha(0.99f, 0.0f));
+}
+
 static void Test_RateNotCount(void)
 {
     // A count per call makes density a function of the frame rate. This is the
@@ -222,6 +302,10 @@ static void Test_ExtractionChangedTheAddressAndNothingElse(void)
           "the core is still whitened at the SOURCE, not left saturated");
     CHECK(FileHas(glow, "VC_WithAlpha(m->soft, (unsigned char)(40 + 90 * i01))"),
           "the halo still uses the material's SOFT colour, not its glow");
+    CHECK(FileHas(glow, "static void CoreGlow_BuildFlareTexture(void)"),
+          "the circular starburst sheet is generated once inside Core");
+    CHECK(FileHas(glow, ".render.texture = s_coreGlowFlareTex,"),
+          "only the outer halo uses the ring-and-rays sheet");
 
     /* THE BLEND LAW, and it changed on 19/08/2026: an emitter is PREMULTIPLIED,
        not additive. Additive can only ever add, so it dissolves into anything
@@ -276,6 +360,7 @@ int main(void)
     Test_ThreeLayersAreDistinct();
     Test_BloomBudgetJustifiesTheMidLayer();
     Test_GrowthDoesNotDimTheCore();
+    Test_FlareSpriteProfile();
     Test_RateNotCount();
     Test_ExtractionChangedTheAddressAndNothingElse();
     printf("---- %d checks, %d failures\n", g_checks, g_failures);
