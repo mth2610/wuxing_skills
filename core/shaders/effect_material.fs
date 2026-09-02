@@ -16,6 +16,10 @@ uniform float     u_emissiveIntensity;
 uniform int       u_hasTexture1;
 uniform sampler2D texture1;
 uniform float     u_dissolve;
+uniform float     u_vfxBodyOpacity;
+uniform vec4      u_vfxEmissionColor;
+uniform float     u_vfxEmissionIntensity;
+uniform float     u_vfxCoreMask;
 
 void main() {
     vec3 normal   = normalize(fragNormal);
@@ -44,7 +48,10 @@ void main() {
         baseColor = baseColor * mix(0.5, 2.0, detailMask);
     }
 
+#if !defined(OUTPUT_BODY) && !defined(OUTPUT_EMISSION) && !defined(OUTPUT_PREMULTIPLIED)
+    // Compatibility path used by Material_LoadCustom and all existing presets.
     baseColor += baseColor * u_emissiveIntensity;
+#endif
 
     // Weight the rim by how much this fragment faces the light, not just the
     // camera — plain view-only Fresnel glows evenly all the way around the
@@ -79,5 +86,18 @@ void main() {
     // (BeginBlendMode/EndBlendMode) for the alpha<1 case to actually blend.
     float glassAlpha = mix(0.3, 0.9, fresnel);
     float alpha = mix(u_baseColor.a, glassAlpha, u_translucency);
+#if defined(OUTPUT_BODY) || defined(OUTPUT_EMISSION) || defined(OUTPUT_PREMULTIPLIED)
+    float outputCoverage = alpha * clamp(u_vfxBodyOpacity, 0.0, 1.0);
+#if defined(OUTPUT_EMISSION)
+    // Additive has no BODY coverage. Its alpha is the blend-unit energy/fade,
+    // so bodyOpacity=0 must not erase a pure glow surface.
+    outputCoverage = alpha;
+#endif
+    finalColor = VFX_ResolveOutput(
+        baseColor, 1.0, outputCoverage,
+        u_vfxEmissionColor.rgb, clamp(u_vfxCoreMask, 0.0, 1.0),
+        max(u_vfxEmissionIntensity, 0.0));
+#else
     finalColor = VFX_ResolveBody(baseColor, 1.0, alpha);
+#endif
 }

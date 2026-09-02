@@ -69,6 +69,16 @@ KINDS = {
     "extern":  ("float",     None,        False),
 }
 OUTPUTS = {"body", "emission", "premultiplied"}
+OUTPUT_RESOLVER = {
+    "body": "VFX_ResolveBody",
+    "emission": "VFX_ResolveEmission",
+    "premultiplied": "VFX_ResolvePremultiplied",
+}
+OUTPUT_SURFACE = {
+    "body": "VFX_SURFACE_ALPHA",
+    "emission": "VFX_SURFACE_ADDITIVE",
+    "premultiplied": "VFX_SURFACE_PREMULTIPLIED",
+}
 
 
 class MatError(Exception):
@@ -280,6 +290,16 @@ def parse_mat(path):
         raise MatError("%s: output `%s` is not one of %s"
                        % (src, mat["output"], ", ".join(sorted(OUTPUTS))))
 
+    # `output` is a render contract, not documentation. A material may call its
+    # fixed resolver or use VFX_ResolveOutput with a loader-selected permutation.
+    fragment_code = strip_comments(mat["fragment"])
+    expected_resolver = OUTPUT_RESOLVER[mat["output"]]
+    if ("VFX_ResolveOutput" not in fragment_code and
+            expected_resolver not in fragment_code):
+        raise MatError(
+            "%s: output `%s` requires %s or VFX_ResolveOutput"
+            % (src, mat["output"], expected_resolver))
+
     seen = set()
     for p in mat["parameters"]:
         if p["uniform"] in seen:
@@ -346,8 +366,11 @@ def emit_table(mat):
         else:
             rows.append('    %s("%s", %s, %s),'
                         % (macro, p["uniform"], mat["struct"], p["field"]))
-    out = ("/* %s — %d parameters, output: %s */\nstatic const VfxParamDesc %s[] = {\n%s\n};\n"
-           % (mat["src"], len(mat["parameters"]), mat["output"], mat["table"],
+    out = ("#define %s_OUTPUT_SURFACE %s\n"
+           "/* %s — %d parameters, output: %s */\n"
+           "static const VfxParamDesc %s[] = {\n%s\n};\n"
+           % (mat["table"], OUTPUT_SURFACE[mat["output"]], mat["src"],
+              len(mat["parameters"]), mat["output"], mat["table"],
               "\n".join(rows)))
 
     if mat["presets"]:

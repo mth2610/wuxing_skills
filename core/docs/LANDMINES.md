@@ -4,6 +4,26 @@
 > Cross-cutting traps (batching hazard, depth-test-vs-mask, `rlFrustum near<1.0`, lit-material-dark, emitter collision) live in root `ENGINE_LANDMINES.md` — read that too.
 > Long session logs and open backlog are in `PROGRESS.md`, not here.
 
+### A material `output` label that does not select code is documentation, not a contract
+
+**Symptom.** A generated material declares `premultiplied`, calls
+`VFX_ResolveBody`, and is drawn under caller-owned blend state. It still renders,
+but its soft edges, HDR energy and bright-background colour depend on whichever
+blend happened to be active rather than on the declared material model.
+
+**Cause.** The `.mat` compiler validated the spelling of `output` and copied it
+into a generated comment, but neither checked the fragment resolver nor emitted
+a value the runtime could consume. Both `effect_material` and `crystal` carried
+this silent mismatch.
+
+**Rule.** Treat material output, resolver permutation and blend state as one
+decision. The compiler rejects a fixed-resolver mismatch and emits
+`*_OUTPUT_SURFACE`; opt-in EffectMaterial VFX draws load the matching `OUTPUT_*`
+variant and enter it through `Material_BeginVFX`, which rejects an additive/BODY
+or alpha-premultiplied/EMISSION mismatch before touching render state. Guards:
+`material_output_contract_test.c` and `material_vfx_runtime_test.c`. Keep legacy
+loaders isolated until a VFX is deliberately migrated and visually approved.
+
 ### A raymarched RenderTexture needs the inverse of its final display flip
 
 **Symptom.** `core/gas/gas_system.c` injected at the exact clicked world point,

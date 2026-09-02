@@ -18,6 +18,7 @@
 - **Metaballs:** call `MetaballFX_RegisterBlob` every frame per blob (1-frame lifetime); never call `MetaballFX_Prepare`, `MetaballFX_Composite`, or `MetaballFX_DrawRegistered` from skill code.
 - **ScreenDistort:** skills only call `ScreenDistort_Add` (auto-expires after `lifetime`); the rest is engine lifecycle.
 - **VFX rendering:** manager batches enter `VFXRender_BeginPass(BODY/EMISSION)` once per frame-wide pass. Standalone particle/ribbon/mesh draws use `VFXRender_BeginAppearance` or `VFXRender_BeginDraw`; the scope owns target, blend, depth-write and mandatory flushes. Never call `ScreenDistort_BeginVFX*` or hand-roll blend/depth state in feature code.
+- **EffectMaterial:** existing `Material_Begin/End` is the compatibility path and does not own blend state. New surface-aware materials load through `Material_LoadCustomVFX`/`Material_LoadCustomShaderVFX` and must draw through `Material_BeginVFX/EndVFX`, which structurally pairs the shader output permutation with its blend law and rejects additive/BODY or alpha-premultiplied/EMISSION drift before changing state.
 - **Custom shader textures:** bind via `SetShaderValueTexture`, not `rlActiveTextureSlot`/`rlEnableTexture` — see `LANDMINES.md`.
 - **Cooldowns** are keyed `(skillIndex, agentId)`; call `SkillManager_TriggerCooldown` at cast, `SkillManager_CanCast` to gate.
 - **Composition rule:** element colors/gradients/force-fields come from `VFX_Material(VC_MAT_*)`; motion math (orbit/ring/jitter/breathe) from `vc_motion.h`. Assemble new `VFX_Compose*` from material + motion + primitives — hard-coded colors only for deliberate identity breaks, with a comment.
@@ -689,9 +690,13 @@ _Inline helpers / macros only — see header._
   void Material_Get(EffectMaterial *outMat, MaterialPreset preset);
   void Material_LoadCustom(EffectMaterial *outMat, const EffectMaterialParams *params);
   void Material_LoadCustomShader(EffectMaterial *outMat, const EffectMaterialParams *params, const char* vsPath, const char* fsPath);
+  void Material_LoadCustomVFX(EffectMaterial *outMat, const EffectMaterialParams *params, const EffectMaterialVFXOutput *output);
+  void Material_LoadCustomShaderVFX(EffectMaterial *outMat, const EffectMaterialParams *params, const char *vsPath, const char *fsPath, const EffectMaterialVFXOutput *output);
   void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
   void Material_Begin(EffectMaterial mat);
   void Material_End(void);
+  bool Material_BeginVFX(EffectMaterial mat, VFXRenderPass pass, bool depthWrite, VFXRenderScope *outScope);
+  void Material_EndVFX(VFXRenderScope *scope);
   void EffectMaterialInstanced_Load(EffectMaterialInstanced *outMat, const EffectMaterialParams *params);
   void EffectMaterialInstanced_Begin(EffectMaterialInstanced mat);
   void EffectMaterialInstanced_End(void);
@@ -708,7 +713,7 @@ _Inline helpers / macros only — see header._
   void PlasmaMaterial_End(void);
 ```
 **Enums:** MaterialPreset { MAT_FIRE,MAT_ICE,MAT_WATER,MAT_PORTAL,MAT_ROCK,MAT_METAL,MAT_GLASS,MAT_CUSTOM }
-**Structs** (fields in header): EffectMaterialParams, EffectMaterial, CrystalMaterialParams, CrystalMaterial, PlasmaMaterialParams, PlasmaMaterial, VfxParamDesc
+**Structs** (fields in header): EffectMaterialParams, EffectMaterialVFXOutput, EffectMaterial, CrystalMaterialParams, CrystalMaterial, PlasmaMaterialParams, PlasmaMaterial, VfxParamDesc
 
 ### `core/geometry/procedural_mesh_utils.h`
 ```c

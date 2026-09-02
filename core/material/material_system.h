@@ -2,6 +2,7 @@
 #define MATERIAL_SYSTEM_H
 
 #include "raylib.h"
+#include "core/vfx_render.h"
 
 /* ─────────────────────────────────────────────────────────────────────────
  * Parameter table (M2, 20/08/2026)
@@ -60,6 +61,17 @@ typedef struct
     float customParam2;       // second custom generic float param passed to shader
 } EffectMaterialParams;
 
+/* Explicit output semantics for the opt-in VFX path. Legacy loaders never read
+ * this struct and retain their caller-managed alpha BODY behavior exactly. */
+typedef struct
+{
+    VFXSurfaceMode surface;
+    float bodyOpacity;       /* Coverage multiplier; clamped to 0..1 in GLSL. */
+    Color emissionColor;     /* Base hue normalized to 0..1; HDR gain is separate. */
+    float emissionIntensity; /* HDR gain; may exceed 1.0. */
+    float coreMask;          /* Uniform emission mask, 0..1. */
+} EffectMaterialVFXOutput;
+
 typedef struct
 {
     Shader shader;
@@ -68,6 +80,14 @@ typedef struct
     int layoutCount;
     int locs[VFX_MAT_MAX_PARAMS]; // locs[i] belongs to layout[i]
     EffectMaterialParams params;
+    /* Append-only: old aggregate/zero initialization remains valid. */
+    VFXSurfaceMode surface;
+    int vfxOutputEnabled;
+    EffectMaterialVFXOutput vfxOutput;
+    int vfxBodyOpacityLoc;
+    int vfxEmissionColorLoc;
+    int vfxEmissionIntensityLoc;
+    int vfxCoreMaskLoc;
 } EffectMaterial;
 
 // Khởi tạo hệ thống chất liệu (Load sẵn Shader/Texture cho các preset)
@@ -85,6 +105,17 @@ void Material_LoadCustom(EffectMaterial *outMat, const EffectMaterialParams *par
 // Load chất liệu tùy biến với shader file riêng (chỉ dùng khi cần thay thế shader gốc)
 void Material_LoadCustomShader(EffectMaterial *outMat, const EffectMaterialParams *params, const char* vsPath, const char* fsPath);
 
+/* Surface-aware opt-in loaders. `surface` selects the OUTPUT_* shader
+ * permutation. A custom fragment shader must include vfx_composite.glsl and
+ * finish through VFX_ResolveOutput(). */
+void Material_LoadCustomVFX(EffectMaterial *outMat,
+                            const EffectMaterialParams *params,
+                            const EffectMaterialVFXOutput *output);
+void Material_LoadCustomShaderVFX(EffectMaterial *outMat,
+                                  const EffectMaterialParams *params,
+                                  const char *vsPath, const char *fsPath,
+                                  const EffectMaterialVFXOutput *output);
+
 // Gán uniform float cho shader
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val);
 
@@ -93,6 +124,13 @@ void Material_Begin(EffectMaterial mat);
 
 // Kết thúc dùng chất liệu
 void Material_End(void);
+
+/* Owns target + blend + depth + shader as one scope. Returns false for legacy
+ * materials and mismatched pairs: ADDITIVE requires EMISSION; ALPHA and
+ * PREMULTIPLIED require BODY. No render state changes on rejection. */
+bool Material_BeginVFX(EffectMaterial mat, VFXRenderPass pass, bool depthWrite,
+                       VFXRenderScope *outScope);
+void Material_EndVFX(VFXRenderScope *scope);
 
 /* Biến thể GPU-instancing của EffectMaterial — dùng shader program RIÊNG
  * (core/shaders/effect_material_instanced.vs, cùng effect_material.fs) nên

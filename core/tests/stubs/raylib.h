@@ -38,4 +38,18 @@ typedef struct Matrix {
     float m3, m7, m11, m15;
 } Matrix;
 
+typedef struct Texture {
+    unsigned int id;
+    int width;
+    int height;
+    int mipmaps;
+    int format;
+} Texture;
+typedef Texture Texture2D;
+
+typedef struct Shader {
+    unsigned int id;
+    int *locs;
+} Shader;
+
 #endif // RAYLIB_H

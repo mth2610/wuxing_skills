@@ -5,7 +5,7 @@
 
 material {
     name   : crystal,
-    output : premultiplied,
+    output : body,
     vertex : "core/shaders/crystal.vs",
 
     includes : [

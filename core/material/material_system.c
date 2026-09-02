@@ -266,7 +266,8 @@ void Material_Get(EffectMaterial *outMat, MaterialPreset preset)
 /* One place that binds a shader to the Effect table, so the four Effect
  * loaders below cannot disagree about it. */
 static void EffectMaterial_Bind(EffectMaterial *outMat, Shader shader,
-                                const EffectMaterialParams *params)
+                                const EffectMaterialParams *params,
+                                const EffectMaterialVFXOutput *output)
 {
     *outMat = (EffectMaterial){0};
     outMat->preset = MAT_CUSTOM;
@@ -275,6 +276,21 @@ static void EffectMaterial_Bind(EffectMaterial *outMat, Shader shader,
     outMat->layoutCount = (int)(sizeof(EFFECT_PARAMS) / sizeof(EFFECT_PARAMS[0]));
     MatFetchLocs(outMat->shader, outMat->layout, outMat->layoutCount, outMat->locs);
     if (params) outMat->params = *params;
+    outMat->surface = EFFECT_PARAMS_OUTPUT_SURFACE;
+    if (output)
+    {
+        VFXSurfaceMode surface = output->surface;
+        if (surface < VFX_SURFACE_ALPHA || surface > VFX_SURFACE_PREMULTIPLIED)
+            surface = VFX_SURFACE_ALPHA;
+        outMat->vfxOutputEnabled = 1;
+        outMat->surface = surface;
+        outMat->vfxOutput = *output;
+        outMat->vfxOutput.surface = surface;
+        outMat->vfxBodyOpacityLoc = GetShaderLocation(shader, "u_vfxBodyOpacity");
+        outMat->vfxEmissionColorLoc = GetShaderLocation(shader, "u_vfxEmissionColor");
+        outMat->vfxEmissionIntensityLoc = GetShaderLocation(shader, "u_vfxEmissionIntensity");
+        outMat->vfxCoreMaskLoc = GetShaderLocation(shader, "u_vfxCoreMask");
+    }
 }
 
 void Material_LoadCustom(EffectMaterial *outMat, const EffectMaterialParams *params)
@@ -283,14 +299,49 @@ void Material_LoadCustom(EffectMaterial *outMat, const EffectMaterialParams *par
     EffectMaterial_Bind(outMat,
                         ResourceManager_LoadShader("core/shaders/effect_material.vs",
                                                    "core/shaders/effect_material.fs"),
-                        params);
+                        params, NULL);
 }
 
 void Material_LoadCustomShader(EffectMaterial *outMat, const EffectMaterialParams *params,
                                const char *vsPath, const char *fsPath)
 {
     if (!outMat) return;
-    EffectMaterial_Bind(outMat, ResourceManager_LoadShader(vsPath, fsPath), params);
+    EffectMaterial_Bind(outMat, ResourceManager_LoadShader(vsPath, fsPath),
+                        params, NULL);
+}
+
+void Material_LoadCustomVFX(EffectMaterial *outMat,
+                            const EffectMaterialParams *params,
+                            const EffectMaterialVFXOutput *output)
+{
+    VFXSurfaceMode surface;
+    if (!outMat || !output) return;
+    surface = output->surface;
+    if (surface < VFX_SURFACE_ALPHA || surface > VFX_SURFACE_PREMULTIPLIED)
+        surface = VFX_SURFACE_ALPHA;
+    EffectMaterial_Bind(
+        outMat,
+        ResourceManager_LoadShaderVariant("core/shaders/effect_material.vs",
+                                          "core/shaders/effect_material.fs",
+                                          VFXRender_OutputDefines(surface)),
+        params, output);
+}
+
+void Material_LoadCustomShaderVFX(EffectMaterial *outMat,
+                                  const EffectMaterialParams *params,
+                                  const char *vsPath, const char *fsPath,
+                                  const EffectMaterialVFXOutput *output)
+{
+    VFXSurfaceMode surface;
+    if (!outMat || !output) return;
+    surface = output->surface;
+    if (surface < VFX_SURFACE_ALPHA || surface > VFX_SURFACE_PREMULTIPLIED)
+        surface = VFX_SURFACE_ALPHA;
+    EffectMaterial_Bind(
+        outMat,
+        ResourceManager_LoadShaderVariant(vsPath, fsPath,
+                                          VFXRender_OutputDefines(surface)),
+        params, output);
 }
 
 void Material_SetFloat(EffectMaterial *mat, const char *uniformName, float val)
@@ -306,11 +357,47 @@ void Material_Begin(EffectMaterial mat)
 {
     MatBeginCommon(mat.shader);
     MatApply(mat.shader, mat.layout, mat.layoutCount, mat.locs, &mat.params);
+    if (mat.vfxOutputEnabled)
+    {
+        Vector4 emission = ColorNormalize(mat.vfxOutput.emissionColor);
+        if (mat.vfxBodyOpacityLoc >= 0)
+            SetShaderValue(mat.shader, mat.vfxBodyOpacityLoc,
+                           &mat.vfxOutput.bodyOpacity, SHADER_UNIFORM_FLOAT);
+        if (mat.vfxEmissionColorLoc >= 0)
+            SetShaderValue(mat.shader, mat.vfxEmissionColorLoc,
+                           &emission, SHADER_UNIFORM_VEC4);
+        if (mat.vfxEmissionIntensityLoc >= 0)
+            SetShaderValue(mat.shader, mat.vfxEmissionIntensityLoc,
+                           &mat.vfxOutput.emissionIntensity, SHADER_UNIFORM_FLOAT);
+        if (mat.vfxCoreMaskLoc >= 0)
+            SetShaderValue(mat.shader, mat.vfxCoreMaskLoc,
+                           &mat.vfxOutput.coreMask, SHADER_UNIFORM_FLOAT);
+    }
 }
 
 void Material_End(void)
 {
     MatEndCommon();
+}
+
+bool Material_BeginVFX(EffectMaterial mat, VFXRenderPass pass, bool depthWrite,
+                       VFXRenderScope *outScope)
+{
+    VFXRenderPass expectedPass;
+    if (!mat.vfxOutputEnabled || outScope == NULL) return false;
+    expectedPass = mat.surface == VFX_SURFACE_ADDITIVE
+                       ? VFX_RENDER_PASS_EMISSION : VFX_RENDER_PASS_BODY;
+    if (pass != expectedPass) return false;
+    *outScope = VFXRender_BeginDraw(pass, mat.surface, depthWrite);
+    Material_Begin(mat);
+    return true;
+}
+
+void Material_EndVFX(VFXRenderScope *scope)
+{
+    if (scope == NULL || !scope->active) return;
+    Material_End();
+    VFXRender_EndDraw(scope);
 }
 
 void EffectMaterialInstanced_Load(EffectMaterialInstanced *outMat, const EffectMaterialParams *params)
@@ -320,7 +407,7 @@ void EffectMaterialInstanced_Load(EffectMaterialInstanced *outMat, const EffectM
                         ResourceManager_LoadShaderVariant("core/shaders/effect_material.vs",
                                                           "core/shaders/effect_material.fs",
                                                           VFX_DEFINE_INSTANCED),
-                        params);
+                        params, NULL);
 }
 
 void EffectMaterialInstanced_Begin(EffectMaterialInstanced mat)
@@ -432,4 +519,3 @@ void PlasmaMaterial_End(void)
 {
     MatEndCommon();
 }
-
