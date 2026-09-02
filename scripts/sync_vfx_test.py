@@ -162,6 +162,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeImpactPackage":      ("event",   "burst",      "oneshot"),
     "VFX_ComposeImpactDust":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeContactSpark":       ("event",   "burst",      "oneshot"),
+    "VFX_ComposeContactSparkMode":   ("event",   "burst",      "oneshot"),
     "VFX_ComposeEmberTrail":         ("emitter", "persistent", "persistent"),
     "VFX_ComposeShieldShell":        ("emitter", "persistent", "persistent"),
     "VFX_ComposeFlowShield":         ("emitter", "persistent", "persistent"),
@@ -249,6 +250,8 @@ FIXTURE_SPAWN_OVERRIDES = {
 # separate from persistent spawn overrides: a trigger call has no stored handle
 # and must not be treated as a frame-fed fixture.
 FIXTURE_EVENT_OVERRIDES = {
+    "VFX_ComposeContactSparkMode":
+        "VFX_ComposeContactSparkMode($POS, VC_MAT_FIRE, 1.5f, $PROG, CONTACT_SPARK_CENTRIFUGAL)",
     # Long gameplay-scale run: character socket five metres behind the click
     # point, so the spline and the post-arrival radial burst have room to read.
     "VFX_ComposeGuidedParticle":

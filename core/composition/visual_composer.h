@@ -844,7 +844,17 @@ void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
 void VFX_Beam_Stop(int handle);
 int VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
+typedef enum {
+    CONTACT_SPARK_STATIC = 0,
+    CONTACT_SPARK_CENTRIFUGAL
+} ContactSparkMode;
+
+// Legacy/default contact flash: radial strands stay composed around the hit.
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+// Centrifugal mode launches each strand from the hit; its bright head travels
+// outward while its tail remains behind it.
+void VFX_ComposeContactSparkMode(Vector3 pos, VC_MaterialId matId, float scale,
+                                 float severity01, ContactSparkMode mode);
 void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
 int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);

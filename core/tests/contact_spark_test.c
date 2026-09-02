@@ -38,7 +38,7 @@ static int g_checks = 0;
 
 #define CONTACT_SPARK_NODES  12
 #define CONTACT_SPARK_ASPECT (1.0f / 28.0f)
-#define CONTACT_SPARK_MAX    12
+#define CONTACT_SPARK_MAX    28
 #define TRAIL_HISTORY_COUNT  60
 
 typedef struct { float t, v; } Stop;
@@ -147,7 +147,7 @@ static void Test_Budget(void)
     CHECK_MSG(CONTACT_SPARK_NODES <= TRAIL_HISTORY_COUNT,
               "the node count fits the trail system's history", "%d of %d",
               CONTACT_SPARK_NODES, TRAIL_HISTORY_COUNT);
-    // A tail, not a rope. A burst is 8..12 strands at once, so the node count
+    // A tail, not a rope. A burst is 18..28 strands at once, so the node count
     // is the whole cost story.
     CHECK_MSG(CONTACT_SPARK_NODES <= 16, "a strand keeps a short history, not a long one",
               "%d nodes", CONTACT_SPARK_NODES);
@@ -192,10 +192,10 @@ static void Test_MirrorStillMatchesSource(void)
           "a spark still EMITS: additive, per the blend law");
     CHECK(FileHas(inl, "cfg.ribbonMode = RIBBON_CAMERA_FACING;"),
           "still camera-facing — the mode that does not dash on a curve");
-    CHECK(FileHas(inl, "cfg.disableInnerCore = true;"),
-          "still no second sub-pixel core strip");
-    CHECK(FileHas(inl, "cfg.forceField = NULL;"),
-          "still straight radial flight — a contact burst is not element drift");
+    CHECK(FileHas(inl, "cfg.disableInnerCore = false;"),
+          "each strand retains its narrow white inner core");
+    CHECK(FileHas(inl, "&s_contactSparkCentrifugalField : NULL;"),
+          "centrifugal strands integrate outward without an authored force");
     CHECK(FileHas(inl, "cfg.priority = VFX_PRIORITY_LOW;"),
           "a contact spark still cannot evict an ultimate's trail");
 

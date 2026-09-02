@@ -10,7 +10,7 @@
 // exactly the alias-that-changes-meaning the F0 purge rule forbids.
 #include "core/tuning.h"
 
-#define CONTACT_SPARK_MAX 12
+#define CONTACT_SPARK_MAX 28
 
 // History nodes per radial strand — a tail, not a rope.
 #define CONTACT_SPARK_NODES 12
@@ -25,6 +25,32 @@ static float s_contactSparkCount = 1.0f;
 static float s_contactSparkScale = 1.0f;
 static SkillCurve s_contactSparkWidth = {0};
 static SkillCurve s_contactSparkAlpha = {0};
+static ForceField s_contactSparkCentrifugalField = {0};
+static ColorGradient s_contactSparkHeat[VC_MAT_COUNT] = {0};
+static bool s_contactSparkHeatReady[VC_MAT_COUNT] = {0};
+
+static const ColorGradient *ContactSpark_HeatGradient(VC_MaterialId matId,
+                                                       const VFX_ElementMaterial *mat)
+{
+    int i = (int)matId;
+    if (i < 0 || i >= VC_MAT_COUNT) i = VC_MAT_TAIJI;
+    if (!s_contactSparkHeatReady[i])
+    {
+        // Same hot-source → pastel-distance profile as LightShaft. It is
+        // deliberately not a guessed black-body palette: each material's
+        // glow/soft pair is already calibrated together by that composition.
+        ColorGradient_AddStop(&s_contactSparkHeat[i], 0.00f,
+                              VC_WithAlpha(VC_Whiten(mat->glow, 0.85f), 255));
+        ColorGradient_AddStop(&s_contactSparkHeat[i], 0.24f,
+                              VC_WithAlpha(VC_Whiten(VC_MixColor(mat->glow, mat->soft, 0.24f), 0.55f), 255));
+        ColorGradient_AddStop(&s_contactSparkHeat[i], 0.62f,
+                              VC_WithAlpha(VC_Whiten(VC_MixColor(mat->glow, mat->soft, 0.62f), 0.15f), 230));
+        ColorGradient_AddStop(&s_contactSparkHeat[i], 1.00f,
+                              VC_WithAlpha(mat->soft, 0));
+        s_contactSparkHeatReady[i] = true;
+    }
+    return &s_contactSparkHeat[i];
+}
 
 static void ContactSpark_Init(void)
 {
@@ -53,50 +79,54 @@ static void ContactSpark_Init(void)
     s_contactSparkInit = true;
 }
 
-// Event — call once at contact. Cost budget: 8..12 low-priority wisp trails,
+// Event — call once at contact. Cost budget: 18..28 low-priority wisp trails,
 // each capped at 12 history nodes, plus one additive bloom core.
-void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01)
+void VFX_ComposeContactSparkMode(Vector3 pos, VC_MaterialId matId, float scale,
+                                 float severity01, ContactSparkMode mode)
 {
     ContactSpark_Init();
     if (scale <= 0.0f) return;
     severity01 = severity01 < 0.0f ? 0.0f : (severity01 > 1.0f ? 1.0f : severity01);
-    int count = (int)((8.0f + severity01 * 4.0f) * s_contactSparkCount);
+    int count = (int)((18.0f + severity01 * 10.0f) * s_contactSparkCount);
     if (count < 1) count = 1;
     if (count > CONTACT_SPARK_MAX) count = CONTACT_SPARK_MAX;
     scale *= s_contactSparkScale;
     const VFX_ElementMaterial *mat = VFX_Material(matId);
+    const ColorGradient *heat = ContactSpark_HeatGradient(matId, mat);
 
-    // One hot point at the origin makes the burst read as a single contact,
-    // rather than unrelated lines that happened to cross a position.
-    Glint_InitShared();
-    SpawnParticle((ParticleConfig){
-        .position = pos, .radius = 0.16f * scale, .lifetime = 0.06f,
-        .colorStart = VC_WithAlpha(VC_Whiten(mat->glow, 0.82f), 255),
-        .colorEnd = VC_WithAlpha(WHITE, 0), .alphaCurve = &s_glintFade,
-        .render.texture = s_glintTex, .render.blendMode = VFX_BLEND_ADDITIVE,
-        .render.unlit = 1, .render.emissiveBoost = 1.0f,
-    });
     for (int i = 0; i < count; ++i) {
         // Uniform directions over a sphere, rather than a ground-plane fan.
         float angle = Random01() * 2.0f * PI;
         float y = Random01() * 2.0f - 1.0f;
         float r = sqrtf(fmaxf(0.0f, 1.0f - y * y));
         Vector3 dir = {cosf(angle) * r, y, sinf(angle) * r};
-        float speed = Math_Mix(6.0f, 12.0f, Random01()) * scale;
-        float length = Math_Mix(0.90f, 2.20f, Random01()) * scale;
+        float speed = Math_Mix(4.0f, 9.0f, Random01()) * scale;
+        float length = Math_Mix(0.45f, 1.45f, Random01()) * scale;
         TrailConfig cfg = {0};
         cfg.type = TRAIL_TYPE_WISP; cfg.pos = pos;
-        cfg.vel = Vector3Scale(dir, speed);
+        cfg.vel = mode == CONTACT_SPARK_CENTRIFUGAL ? Vector3Scale(dir, speed)
+                                                    : (Vector3){0.0f, 0.0f, 0.0f};
         cfg.target = Vector3Scale(dir, -1.0f); // history trails behind the head
         cfg.len = length; cfg.thick = length * CONTACT_SPARK_ASPECT;
         cfg.trailLength = CONTACT_SPARK_NODES;
         cfg.life = Math_Mix(0.35f, 0.60f, Random01());
-        cfg.tint = VC_WithAlpha(VC_Whiten(mat->glow, 0.64f), 250);
-        cfg.forceField = NULL;                 // straight radial flight
+        // Centre → edge: white-hot, yellow, then a cooling orange tail.
+        cfg.tint = WHITE;
+        cfg.gradient = heat;
+        // WISP integrates node velocity only when a field/wind is present. An
+        // empty field is therefore intentional: it supplies no acceleration,
+        // but lets CENTRIFUGAL strands actually travel outward.
+        cfg.forceField = mode == CONTACT_SPARK_CENTRIFUGAL
+            ? &s_contactSparkCentrifugalField : NULL;
         cfg.widthCurve = &s_contactSparkWidth; cfg.alphaCurve = &s_contactSparkAlpha;
         cfg.smoothSpline = true; cfg.blendMode = BLEND_ADDITIVE;
-        cfg.ribbonMode = RIBBON_CAMERA_FACING; cfg.disableInnerCore = true;
+        cfg.ribbonMode = RIBBON_CAMERA_FACING; cfg.disableInnerCore = false;
         cfg.priority = VFX_PRIORITY_LOW;
         (void)SpawnTrailEntity(cfg);
     }
+}
+
+void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01)
+{
+    VFX_ComposeContactSparkMode(pos, matId, scale, severity01, CONTACT_SPARK_CENTRIFUGAL);
 }
