@@ -93,7 +93,8 @@ material {
         { uniform: u_vfxBodyOpacity,       kind: extern },
         { uniform: u_vfxEmissionColor,     kind: extern, glsl: vec4 },
         { uniform: u_vfxEmissionIntensity, kind: extern },
-        { uniform: u_vfxCoreMask,          kind: extern }
+        { uniform: u_vfxCoreMask,          kind: extern },
+        { uniform: u_lightDirView,          kind: extern, glsl: vec3 }
 
         // u_customParam1 and u_customParam2 are ABSENT. EffectMaterialParams
         // still has both fields, and the hand-written table bound both — to a
@@ -106,9 +107,17 @@ material {
 
 fragment {
 void main() {
-    vec3 normal   = normalize(fragNormal);
-    vec3 viewDir  = normalize(viewPos - fragPosition);
+    vec3 normal = normalize(fragNormal);
+#if defined(OUTPUT_BODY) || defined(OUTPUT_EMISSION) || defined(OUTPUT_PREMULTIPLIED)
+    // The opt-in path uses one coordinate contract: VS output, view vector and
+    // sun direction are all view-space. Legacy output stays byte-for-byte on
+    // its old convention until individual VFX are deliberately migrated.
+    vec3 viewDir = normalize(-fragPosition);
+    vec3 lightDir = normalize(u_lightDirView);
+#else
+    vec3 viewDir = normalize(viewPos - fragPosition);
     vec3 lightDir = normalize(u_lightDir);
+#endif
 
     float diffuse = calcDiffuse(normal, lightDir, 0.2);
     float fresnel = calcFresnel(normal, viewDir, u_fresnelPower);

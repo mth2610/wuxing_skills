@@ -25,5 +25,15 @@ void main() {
     float wobble = sin(vertexNormal.x * 6.0 + u_time * 4.0)
                  * cos(vertexNormal.z * 6.0 - u_time * 3.0);
     vec3 displacedPos = vertexPosition + vertexNormal * wobble * u_distortionStrength;
+#if defined(EFFECT_MATERIAL_IMMEDIATE)
+    // MyBeginMode3D makes rlgl transform immediate vertices AND normals on the
+    // CPU. They arrive in view space; applying matModel here would rotate both
+    // a second time (guarded by rlvk's imm_normal scenario).
+    fragPosition = displacedPos;
+    fragNormal = normalize(vertexNormal);
+    fragTexCoord = vertexTexCoord;
+    gl_Position = mvp * vec4(displacedPos, 1.0);
+#else
     VS_FinalOutput(displacedPos);
+#endif
 }

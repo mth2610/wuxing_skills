@@ -20,11 +20,20 @@ uniform float     u_vfxBodyOpacity;
 uniform vec4      u_vfxEmissionColor;
 uniform float     u_vfxEmissionIntensity;
 uniform float     u_vfxCoreMask;
+uniform vec3      u_lightDirView;
 
 void main() {
-    vec3 normal   = normalize(fragNormal);
-    vec3 viewDir  = normalize(viewPos - fragPosition);
+    vec3 normal = normalize(fragNormal);
+#if defined(OUTPUT_BODY) || defined(OUTPUT_EMISSION) || defined(OUTPUT_PREMULTIPLIED)
+    // The opt-in path uses one coordinate contract: VS output, view vector and
+    // sun direction are all view-space. Legacy output stays byte-for-byte on
+    // its old convention until individual VFX are deliberately migrated.
+    vec3 viewDir = normalize(-fragPosition);
+    vec3 lightDir = normalize(u_lightDirView);
+#else
+    vec3 viewDir = normalize(viewPos - fragPosition);
     vec3 lightDir = normalize(u_lightDir);
+#endif
 
     float diffuse = calcDiffuse(normal, lightDir, 0.2);
     float fresnel = calcFresnel(normal, viewDir, u_fresnelPower);

@@ -218,6 +218,24 @@ static void MatEndCommon(void)
  * compile-time define and not a runtime branch. */
 #define VFX_DEFINE_INSTANCED "#define INSTANCED 1\n"
 
+static const char *EffectMaterial_OutputDefines(
+    VFXSurfaceMode surface, EffectMaterialGeometryMode geometryMode)
+{
+    if (geometryMode != EFFECT_MATERIAL_GEOMETRY_IMMEDIATE)
+        return VFXRender_OutputDefines(surface);
+
+    switch (surface)
+    {
+    case VFX_SURFACE_ADDITIVE:
+        return "#define OUTPUT_EMISSION 1\n#define EFFECT_MATERIAL_IMMEDIATE 1\n";
+    case VFX_SURFACE_PREMULTIPLIED:
+        return "#define OUTPUT_PREMULTIPLIED 1\n#define EFFECT_MATERIAL_IMMEDIATE 1\n";
+    case VFX_SURFACE_ALPHA:
+    default:
+        return "#define OUTPUT_BODY 1\n#define EFFECT_MATERIAL_IMMEDIATE 1\n";
+    }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * EffectMaterial
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -323,7 +341,8 @@ void Material_LoadCustomVFX(EffectMaterial *outMat,
         outMat,
         ResourceManager_LoadShaderVariant("core/shaders/effect_material.vs",
                                           "core/shaders/effect_material.fs",
-                                          VFXRender_OutputDefines(surface)),
+                                          EffectMaterial_OutputDefines(surface,
+                                              output->geometryMode)),
         params, output);
 }
 
@@ -340,7 +359,8 @@ void Material_LoadCustomShaderVFX(EffectMaterial *outMat,
     EffectMaterial_Bind(
         outMat,
         ResourceManager_LoadShaderVariant(vsPath, fsPath,
-                                          VFXRender_OutputDefines(surface)),
+                                          EffectMaterial_OutputDefines(surface,
+                                              output->geometryMode)),
         params, output);
 }
 

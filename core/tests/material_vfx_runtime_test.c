@@ -236,6 +236,14 @@ int main(void)
     Check(material.vfxOutputEnabled && material.surface == VFX_SURFACE_ADDITIVE,
           "loaded material must retain its selected surface");
 
+    output.geometryMode = EFFECT_MATERIAL_GEOMETRY_IMMEDIATE;
+    Material_LoadCustomVFX(&material, &params, &output);
+    Check(variantLoads == 2 && lastDefines != NULL &&
+              strstr(lastDefines, "#define OUTPUT_EMISSION 1") != NULL &&
+              strstr(lastDefines, "#define EFFECT_MATERIAL_IMMEDIATE 1") != NULL,
+          "immediate geometry must select output and view-space vertex permutations together");
+    output.geometryMode = EFFECT_MATERIAL_GEOMETRY_MESH;
+
     ResetTrace();
     Check(!Material_BeginVFX(material, VFX_RENDER_PASS_BODY, false, &scope),
           "additive output must be rejected from the BODY pass");

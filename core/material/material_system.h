@@ -61,8 +61,16 @@ typedef struct
     float customParam2;       // second custom generic float param passed to shader
 } EffectMaterialParams;
 
+typedef enum
+{
+    EFFECT_MATERIAL_GEOMETRY_MESH = 0,
+    EFFECT_MATERIAL_GEOMETRY_IMMEDIATE
+} EffectMaterialGeometryMode;
+
 /* Explicit output semantics for the opt-in VFX path. Legacy loaders never read
- * this struct and retain their caller-managed alpha BODY behavior exactly. */
+ * this struct and retain their caller-managed alpha BODY behavior exactly.
+ * geometryMode is required because rlgl immediate vertices and normals have
+ * already been transformed into view space before the shader runs. */
 typedef struct
 {
     VFXSurfaceMode surface;
@@ -70,6 +78,7 @@ typedef struct
     Color emissionColor;     /* Base hue normalized to 0..1; HDR gain is separate. */
     float emissionIntensity; /* HDR gain; may exceed 1.0. */
     float coreMask;          /* Uniform emission mask, 0..1. */
+    EffectMaterialGeometryMode geometryMode;
 } EffectMaterialVFXOutput;
 
 typedef struct

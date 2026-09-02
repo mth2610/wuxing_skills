@@ -712,7 +712,7 @@ _Inline helpers / macros only — see header._
   void PlasmaMaterial_Begin(PlasmaMaterial mat);
   void PlasmaMaterial_End(void);
 ```
-**Enums:** MaterialPreset { MAT_FIRE,MAT_ICE,MAT_WATER,MAT_PORTAL,MAT_ROCK,MAT_METAL,MAT_GLASS,MAT_CUSTOM }
+**Enums:** MaterialPreset { MAT_FIRE,MAT_ICE,MAT_WATER,MAT_PORTAL,MAT_ROCK,MAT_METAL,MAT_GLASS,MAT_CUSTOM };EffectMaterialGeometryMode { EFFECT_MATERIAL_GEOMETRY_MESH,EFFECT_MATERIAL_GEOMETRY_IMMEDIATE }
 **Structs** (fields in header): EffectMaterialParams, EffectMaterialVFXOutput, EffectMaterial, CrystalMaterialParams, CrystalMaterial, PlasmaMaterialParams, PlasmaMaterial, VfxParamDesc
 
 ### `core/geometry/procedural_mesh_utils.h`

@@ -35,11 +35,14 @@ static int Has(const char *text, const char *needle)
 
 int main(void)
 {
-    static char effectMatBuf[24000], crystalMatBuf[24000];
+    static char effectMatBuf[24000], effectVsBuf[12000], crystalMatBuf[24000];
     static char generatorBuf[30000], generatedBuf[24000];
     static char headerBuf[30000], implBuf[40000];
+    static char fixtureBuf[70000];
     const char *effectMat = ReadFile("core/shading/materials/effect_material.mat",
                                      effectMatBuf, sizeof(effectMatBuf));
+    const char *effectVs = ReadFile("core/shaders/effect_material.vs",
+                                    effectVsBuf, sizeof(effectVsBuf));
     const char *crystalMat = ReadFile("core/shading/materials/crystal.mat",
                                       crystalMatBuf, sizeof(crystalMatBuf));
     const char *generator = ReadFile("scripts/gen_materials.py", generatorBuf,
@@ -50,9 +53,12 @@ int main(void)
                                   sizeof(headerBuf));
     const char *impl = ReadFile("core/material/material_system.c", implBuf,
                                 sizeof(implBuf));
+    const char *fixture = ReadFile("sandbox/vfx_test.c", fixtureBuf,
+                                   sizeof(fixtureBuf));
 
-    Check(effectMat != NULL && crystalMat != NULL && generator != NULL &&
-              generated != NULL && header != NULL && impl != NULL,
+    Check(effectMat != NULL && effectVs != NULL && crystalMat != NULL && generator != NULL &&
+              generated != NULL && header != NULL && impl != NULL &&
+              fixture != NULL,
           "contract inputs must be readable");
 
     Check(Has(effectMat, "output : body") || Has(effectMat, "output  : body"),
@@ -67,6 +73,9 @@ int main(void)
 
     Check(Has(header, "EffectMaterialVFXOutput"),
           "EffectMaterial needs explicit body/emission output parameters");
+    Check(Has(header, "EFFECT_MATERIAL_GEOMETRY_IMMEDIATE") &&
+          Has(header, "geometryMode"),
+          "surface-aware EffectMaterial must declare its mesh/immediate geometry contract");
     Check(Has(header, "Material_LoadCustomVFX"),
           "EffectMaterial needs a surface-aware shared-shader loader");
     Check(Has(header, "Material_LoadCustomShaderVFX"),
@@ -81,11 +90,31 @@ int main(void)
 
     Check(Has(effectMat, "VFX_ResolveOutput"),
           "the new EffectMaterial path must resolve through its output permutation");
+    Check(Has(effectVs, "#if defined(EFFECT_MATERIAL_IMMEDIATE)") &&
+          Has(effectVs, "fragPosition = displacedPos") &&
+          Has(effectVs, "fragNormal = normalize(vertexNormal)"),
+          "immediate EffectMaterial vertices/normals must bypass the second matModel transform");
+    Check(Has(effectMat, "normalize(-fragPosition)") &&
+          Has(effectMat, "u_lightDirView"),
+          "surface-aware EffectMaterial lighting must compare view-space operands");
     Check(Has(effectMat, "outputCoverage = alpha;") &&
               Has(effectMat, "defined(OUTPUT_EMISSION)"),
           "a pure additive material must not be erased by zero body opacity");
     Check(Has(effectMat, "baseColor += baseColor * u_emissiveIntensity"),
           "the legacy EffectMaterial formula must remain available unchanged");
+    Check(Has(fixture, "MATERIAL_OUTPUT_FIXTURE_INDEX") &&
+              Has(fixture, ".surface = VFX_SURFACE_ALPHA") &&
+              Has(fixture, ".surface = VFX_SURFACE_ADDITIVE") &&
+              Has(fixture, ".surface = VFX_SURFACE_PREMULTIPLIED") &&
+              Has(fixture, ".geometryMode = EFFECT_MATERIAL_GEOMETRY_IMMEDIATE"),
+          "sandbox fixture must keep all three output surfaces side by side");
+    Check(Has(fixture, "VFX_RENDER_PASS_BODY") &&
+              Has(fixture, "VFX_RENDER_PASS_EMISSION") &&
+              Has(fixture, "Material_BeginVFX") &&
+              Has(fixture, "Material_EndVFX") &&
+              Has(fixture, "DrawCoreSphere(pos, 0.62f, 28, 28, WHITE)") &&
+              !Has(fixture, "DrawSphere(pos, 0.62f, WHITE)"),
+          "sandbox fixture must exercise the owned VFX render scope");
 
     /* Mirror VFX_ResolvePremultiplied: emission is independent of coverage. */
     {

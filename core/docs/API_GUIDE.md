@@ -2031,6 +2031,7 @@ typedef struct {
     Color emissionColor;
     float emissionIntensity;
     float coreMask;
+    EffectMaterialGeometryMode geometryMode;
 } EffectMaterialVFXOutput;
 
 void Material_Get(EffectMaterial *out, MaterialPreset preset);
@@ -2055,7 +2056,7 @@ void Material_EndVFX(VFXRenderScope *scope);
 * **`Material_Load` (4 presets):** all presets are `effect_material`-backed — each is a hardcoded `EffectMaterialParams` over the same shared `core/shaders/effect_material.vs/.fs` that `Material_LoadCustom` uses (the old per-skill shaders these presets borrowed were deleted from the repo). Signature and enum unchanged. Preset params: FIRE = `ELEMENT_COLOR_FIRE`, rim 1.2/fresnel 3/emissive 1.5/distortion 0.4/translucency 0; ICE = pale blue `(170,220,255)`, rim 1.5/fresnel 5/emissive 0.5/distortion 0.05/translucency 0.6; WATER = `ELEMENT_COLOR_WATER`, rim 1.0/fresnel 4/emissive 0.6/distortion 0.25/translucency 0.85; PORTAL = `ELEMENT_COLOR_TAIJI`, rim 2.0/fresnel 2/emissive 2.0/distortion 0.6/translucency 0.3.
 * **`Material_LoadCustom` (new):** always backed by the shared `core/shaders/effect_material.vs/.fs` — one shader, look configured entirely via `EffectMaterialParams` uniforms (`u_baseColor`, `u_rimStrength`, `u_fresnelPower`, `u_emissiveIntensity`, `u_distortionStrength`, `u_translucency`, optional `texture1`). No new GLSL needed per combination.
 * **Legacy output is intentionally frozen.** `Material_Get`, `Material_LoadCustom`, `Material_LoadCustomShader`, `Material_Begin` and `Material_End` remain caller-managed BODY draws. Their `emissiveIntensity` keeps the historical `baseColor * (1 + emissiveIntensity)` formula so existing VFX do not change.
-* **The `*VFX` path is opt-in and surface-aware.** `EffectMaterialVFXOutput` separates coverage from HDR emission. Its surface selects both an `OUTPUT_BODY`/`OUTPUT_EMISSION`/`OUTPUT_PREMULTIPLIED` shader permutation and the matching blend law owned by `Material_BeginVFX`/`Material_EndVFX`. `Material_BeginVFX` rejects surface/pass drift before changing render state: additive requires EMISSION; alpha and premultiplied require BODY. A custom fragment shader passed to `Material_LoadCustomShaderVFX` must include `common/vfx_composite.glsl` and call `VFX_ResolveOutput`.
+* **The `*VFX` path is opt-in and surface-aware.** `EffectMaterialVFXOutput` separates coverage from HDR emission. Its surface selects both an `OUTPUT_BODY`/`OUTPUT_EMISSION`/`OUTPUT_PREMULTIPLIED` shader permutation and the matching blend law owned by `Material_BeginVFX`/`Material_EndVFX`. `Material_BeginVFX` rejects surface/pass drift before changing render state: additive requires EMISSION; alpha and premultiplied require BODY. `geometryMode` defaults to `EFFECT_MATERIAL_GEOMETRY_MESH`; set `EFFECT_MATERIAL_GEOMETRY_IMMEDIATE` for `DrawCoreSphere`, `rlBegin` and procedural immediate-mode builders because rlgl has already transformed their vertices and normals into view space. A custom fragment shader passed to `Material_LoadCustomShaderVFX` must include `common/vfx_composite.glsl` and call `VFX_ResolveOutput`.
 * **Material source `output` is enforced.** `scripts/gen_materials.py` rejects a `.mat` whose declared `body`/`emission`/`premultiplied` output has neither the matching fixed resolver nor `VFX_ResolveOutput`, and emits a machine-readable `*_OUTPUT_SURFACE` for C. It is not descriptive metadata.
 
 Opt-in example for a covered HDR surface (new code only; do not mechanically
@@ -2068,13 +2069,14 @@ EffectMaterialVFXOutput output = {
     .emissionColor = (Color){80, 150, 255, 255},
     .emissionIntensity = 4.0f,
     .coreMask = 1.0f,
+    .geometryMode = EFFECT_MATERIAL_GEOMETRY_IMMEDIATE,
 };
 EffectMaterial material;
 VFXRenderScope scope;
 
 Material_LoadCustomVFX(&material, &params, &output);
 if (Material_BeginVFX(material, VFX_RENDER_PASS_BODY, false, &scope)) {
-    DrawSphere(center, radius, WHITE); /* representative geometry */
+    DrawCoreSphere(center, radius, 28, 28, WHITE);
     Material_EndVFX(&scope);
 }
 ```
@@ -2082,6 +2084,19 @@ if (Material_BeginVFX(material, VFX_RENDER_PASS_BODY, false, &scope)) {
 For a bloom-only/additive surface use `VFX_SURFACE_ADDITIVE` together with
 `VFX_RENDER_PASS_EMISSION`. A mismatched pair returns `false` without changing
 the active framebuffer, blend, depth or shader state.
+
+The opt-in shader evaluates Fresnel and directional lighting entirely in view
+space (`-fragPosition`, `u_lightDirView`). This avoids both the immediate-mode
+double transform and the old world-light/view-normal mismatch. Legacy loaders
+retain their previous shader path and visuals.
+
+Equal numeric intensity is **not** equal displayed colour across surface modes.
+Alpha outputs a lit body, additive outputs only emission, and premultiplied adds
+independent emission on top of its covered body; ACES then compresses their
+different HDR luminance differently. Use alpha/premultiplied BODY for identity
+colour and additive only for low-energy halo. The sandbox `MESH → VFX OUTPUT`
+fixture deliberately shows this distinction; it is a contract check, not a
+three-spheres-must-match reference image.
 * **Rim glow is weighted by light-facing direction**, not view angle alone: plain Fresnel glows evenly around the whole silhouette regardless of where the light is, which reads as "rim doesn't match the light". `rim = fresnel * mix(0.3, 1.0, max(dot(normal, lightDir), 0.0))` — dimmed (not zeroed) on the backlit side.
 * **`translucency`** (default 0 = opaque, unchanged from initial implementation): set to `1.0` for the same "center see-through, edges more solid" look as `tube.fs` (`alpha = mix(0.3, 0.9, fresnel)`), driven by the same fresnel term as the rim. **Caller must wrap the draw in `BeginBlendMode(BLEND_ALPHA)`/`EndBlendMode()`** for alpha < 1 to actually blend — `Material_Begin`/`Material_End` do not manage blend mode themselves.
 * **This shader ignores per-vertex color** (`vs_header.glsl`/`fs_header.glsl`'s 3D-lighting convention doesn't carry a `fragColor` varying) — tint comes only from `u_baseColor`. The `Color` argument passed to whatever mesh-draw call you use inside `Material_Begin`/`Material_End` has no visual effect with this material.

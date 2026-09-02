@@ -16,6 +16,7 @@
 #include "core/post_fx.h"
 #include "core/presets/vfx_presets.h"
 #include "core/composition/visual_composer.h"
+#include "core/material/material_system.h"
 #include "core/skill_helper.h"
 #include "core/path_spline.h"
 
@@ -91,6 +92,85 @@ static Matrix s_vfxFixtureXf[VFXTEST_FIXTURE_SLOTS];
 static int s_vfxFixtureHandle[VFXTEST_FIXTURE_SLOTS];
 static float s_vfxFixtureLastTime[VFXTEST_FIXTURE_SLOTS];
 static bool s_vfxFixturesReady = false;
+
+/* Sandbox-only contract fixture. It deliberately bypasses every production
+ * composition so adopting the new EffectMaterial path here cannot migrate or
+ * visually change an existing VFX. */
+#define MATERIAL_OUTPUT_FIXTURE_INDEX 9
+static EffectMaterial s_materialOutputFixture[3];
+static bool s_materialOutputFixtureReady = false;
+
+static void VFXTest_InitMaterialOutputFixture(void)
+{
+    if (s_materialOutputFixtureReady)
+        return;
+
+    EffectMaterialParams params = {
+        .baseColor = (Color){70, 135, 255, 255},
+        .rimStrength = 0.8f,
+        .fresnelPower = 3.5f,
+        .translucency = 0.25f,
+    };
+    EffectMaterialVFXOutput outputs[3] = {
+        {
+            .surface = VFX_SURFACE_ALPHA,
+            .bodyOpacity = 0.72f,
+            .emissionColor = (Color){70, 135, 255, 255},
+            .emissionIntensity = 0.0f,
+            .coreMask = 0.0f,
+            .geometryMode = EFFECT_MATERIAL_GEOMETRY_IMMEDIATE,
+        },
+        {
+            .surface = VFX_SURFACE_PREMULTIPLIED,
+            .bodyOpacity = 0.72f,
+            .emissionColor = (Color){70, 135, 255, 255},
+            .emissionIntensity = 2.2f,
+            .coreMask = 1.0f,
+            .geometryMode = EFFECT_MATERIAL_GEOMETRY_IMMEDIATE,
+        },
+        {
+            .surface = VFX_SURFACE_ADDITIVE,
+            .bodyOpacity = 0.0f,
+            .emissionColor = (Color){70, 135, 255, 255},
+            .emissionIntensity = 2.2f,
+            .coreMask = 1.0f,
+            .geometryMode = EFFECT_MATERIAL_GEOMETRY_IMMEDIATE,
+        },
+    };
+
+    for (int i = 0; i < 3; i++)
+        Material_LoadCustomVFX(&s_materialOutputFixture[i], &params, &outputs[i]);
+    s_materialOutputFixtureReady = true;
+}
+
+static void VFXTest_DrawMaterialOutputFixture(Vector3 center)
+{
+    static const float offsets[3] = {-1.25f, 0.0f, 1.25f};
+    static const VFXRenderPass passes[3] = {
+        VFX_RENDER_PASS_BODY,
+        VFX_RENDER_PASS_BODY,
+        VFX_RENDER_PASS_EMISSION,
+    };
+    Vector3 cameraForward = Vector3Normalize(
+        Vector3Subtract(s_lastCam.target, s_lastCam.position));
+    Vector3 cameraRight = Vector3CrossProduct(cameraForward, s_lastCam.up);
+    if (Vector3LengthSqr(cameraRight) < 0.0001f)
+        cameraRight = (Vector3){1.0f, 0.0f, 0.0f};
+    else
+        cameraRight = Vector3Normalize(cameraRight);
+
+    VFXTest_InitMaterialOutputFixture();
+    for (int i = 0; i < 3; i++)
+    {
+        VFXRenderScope scope;
+        Vector3 pos = Vector3Add(center, Vector3Scale(cameraRight, offsets[i]));
+        pos.y += 0.72f;
+        if (!Material_BeginVFX(s_materialOutputFixture[i], passes[i], false, &scope))
+            continue;
+        DrawCoreSphere(pos, 0.62f, 28, 28, WHITE);
+        Material_EndVFX(&scope);
+    }
+}
 
 static void VFXTest_InitFixtures(void)
 {
@@ -249,9 +329,10 @@ static bool s_isPanelOpen = true;
 static bool s_clickedOnUI = false;
 static int s_newfxFilter = NEWFX_CAT_COMMON;
 
-// MESH: 0-8=DrawEffectMesh presets (raw meshes)
+// MESH: 0-8=DrawEffectMesh presets; 9=sandbox-only material output contract.
 static const char *s_meshNames[] = {
-    "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON"};
+    "DISC", "RING", "CONE", "TORNADO", "CYLINDER", "SPHERE", "SHOCKWAVE", "PYRAMID", "TETRAHEDRON",
+    "VFX OUTPUT"};
 
 // @gen:newfx_names begin
 // 57 entries — auto-managed by sync_vfx_test.py
@@ -586,7 +667,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     if (s_isPlayingMesh && s_testCategory == TEST_CAT_MESH)
     {
         s_meshTime += TimeFX_RawDelta();
-        if (s_meshTime > 5.0f)
+        if (s_testIndex != MATERIAL_OUTPUT_FIXTURE_INDEX && s_meshTime > 5.0f)
             s_isPlayingMesh = false;
     }
 
@@ -661,7 +742,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
 
         if (s_testCategory == TEST_CAT_MESH)
         {
-            int maxIdx = 9;
+            int maxIdx = (int)(sizeof(s_meshNames) / sizeof(s_meshNames[0]));
             int i;
             for (i = 0; i < maxIdx; i++)
             {
@@ -847,13 +928,21 @@ void VFXTest_Draw3D(void)
 
         if (s_testCategory == TEST_CAT_MESH)
         {
-            // DrawEffectMesh preset (0-8)
-            Color color = WHITE;
-            if (s_testIndex == 0)
-                color = (Color){200, 200, 255, 180}; // Disc
-            else if (s_testIndex == 1)
-                color = (Color){255, 200, 100, 180}; // Ring
-            DrawEffectMesh((MeshPresetType)s_testIndex, s_prefabStartPos, (Vector3){2.0f, 2.0f, 2.0f}, color);
+            if (s_testIndex == MATERIAL_OUTPUT_FIXTURE_INDEX)
+            {
+                VFXTest_DrawMaterialOutputFixture(s_prefabStartPos);
+            }
+            else
+            {
+                // DrawEffectMesh preset (0-8)
+                Color color = WHITE;
+                if (s_testIndex == 0)
+                    color = (Color){200, 200, 255, 180}; // Disc
+                else if (s_testIndex == 1)
+                    color = (Color){255, 200, 100, 180}; // Ring
+                DrawEffectMesh((MeshPresetType)s_testIndex, s_prefabStartPos,
+                               (Vector3){2.0f, 2.0f, 2.0f}, color);
+            }
         }
         else if (s_testCategory == TEST_CAT_NEWFX)
         {
@@ -1136,6 +1225,14 @@ void VFXTest_DrawHUD(void)
                         s_hideCharacterRef ? "hidden" : "shown",
                         s_hideDebugOverlays ? "hidden" : "shown"),
              10, 590, 16, GRAY);
+    if (s_testCategory == TEST_CAT_MESH &&
+        s_testIndex == MATERIAL_OUTPUT_FIXTURE_INDEX && s_isPlayingMesh)
+    {
+        DrawText("VFX OUTPUT: LEFT ALPHA | CENTER PREMULT | RIGHT ADDITIVE",
+                 10, 570, 16, SKYBLUE);
+        DrawText("Contract check: same hue family; brightness is intentionally not equal",
+                 10, 550, 14, LIGHTGRAY);
+    }
     if (!s_hideDebugOverlays)
     {
         VFXLightData activeLights[MAX_VFX_LIGHTS];
@@ -1254,7 +1351,7 @@ void VFXTest_DrawHUD(void)
     // Draw button grid
     if (s_testCategory == TEST_CAT_MESH)
     {
-        int maxIdx = 9;
+        int maxIdx = (int)(sizeof(s_meshNames) / sizeof(s_meshNames[0]));
         int i;
         for (i = 0; i < maxIdx; i++)
         {

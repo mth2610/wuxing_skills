@@ -1284,6 +1284,22 @@ void SkillManager_BeginShader(Shader shader)
     SetShaderValue(shader, lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
   }
 
+  /* Opt-in view-space lighting contract. Keep u_lightDir world-space for all
+   * legacy shaders; only shaders that explicitly declare this name adopt it. */
+  int lightDirViewLoc = GetShaderLocation(shader, "u_lightDirView");
+  if (lightDirViewLoc >= 0)
+  {
+    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+    Matrix view = GetCameraMatrix(camera);
+    Vector3 lightDirView = {
+      view.m0*lightDir.x + view.m4*lightDir.y + view.m8*lightDir.z,
+      view.m1*lightDir.x + view.m5*lightDir.y + view.m9*lightDir.z,
+      view.m2*lightDir.x + view.m6*lightDir.y + view.m10*lightDir.z
+    };
+    lightDirView = Vector3Normalize(lightDirView);
+    SetShaderValue(shader, lightDirViewLoc, &lightDirView, SHADER_UNIFORM_VEC3);
+  }
+
   // matModel: Raylib chỉ upload matModel khi dùng DrawMesh/DrawModel.
   // Khi skill dùng rlgl immediate mode, matModel giữ giá trị 0 trên Android GLES 3.0
   // → normalize(mat4(0) * normal) = normalize(vec3(0)) = NaN → toàn màu trắng.

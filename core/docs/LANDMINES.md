@@ -3210,6 +3210,27 @@ keep the output below the 1.25 bloom threshold or the post chain smears one
 region into another, and never encode the answer as a NUMBER — ACES plus grade
 makes a numeric readout unrecoverable, while a threshold or a shape survives.
 
+### Surface mode does not define vertex space
+
+**Symptom.** The surface-output fixture showed a strong diagonal dark band on
+its Alpha sphere while the premultiplied and additive spheres looked flat. It
+resembled a broken Vulkan shadow, but `shadow_pipeline` passed and `imm_normal`
+measured the real cause: `DrawCoreSphere` is immediate-mode, so its normal already
+arrives as `view * N`; the shared mesh vertex path applied `matModel` again.
+The fragment stage also dotted that view-space normal with a world-space sun.
+
+**Cause.** Blend/output (`BODY`, `EMISSION`, `PREMULTIPLIED`) and geometry input
+space are independent contracts. The first surface-aware material API encoded
+only the former and silently assumed mesh input.
+
+**Rule.** Opt-in `EffectMaterialVFXOutput` must declare `geometryMode`. Use
+`EFFECT_MATERIAL_GEOMETRY_IMMEDIATE` for `DrawCoreSphere`, raw `rlBegin` and
+procedural immediate builders; use the zero-default `MESH` mode for DrawMesh.
+The opt-in fragment path keeps normal, view vector and `u_lightDirView` in view
+space. Do not patch rlvk's normal delivery: `imm_normal` proves it is correct.
+Guard: `material_output_contract_test` plus Vulkan `imm_normal` and
+`shadow_pipeline`.
+
 ## A rim cannot be brighter than a body that is already at the top of the range (25/08/2026)
 
 **Symptom.** With the space bug above fixed, ENERGY ORB *still* had no rim.

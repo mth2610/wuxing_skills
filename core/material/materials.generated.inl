@@ -24,7 +24,7 @@ static const VfxTextureDefault CRYSTAL_PARAMS_DEFAULTS[] = {
 };
 
 #define EFFECT_PARAMS_OUTPUT_SURFACE VFX_SURFACE_ALPHA
-/* core/shading/materials/effect_material.mat — 13 parameters, output: body */
+/* core/shading/materials/effect_material.mat — 14 parameters, output: body */
 static const VfxParamDesc EFFECT_PARAMS[] = {
     P_COLOR("u_baseColor", EffectMaterialParams, baseColor),
     P_FLOAT("u_translucency", EffectMaterialParams, translucency),
