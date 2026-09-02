@@ -33,10 +33,31 @@ static int Has(const char *text, const char *needle)
     return text != NULL && strstr(text, needle) != NULL;
 }
 
+static float Aces(float x)
+{
+    float y = (x * (2.51f*x + 0.03f)) / (x * (2.43f*x + 0.59f) + 0.14f);
+    if (y < 0.0f) return 0.0f;
+    if (y > 1.0f) return 1.0f;
+    return y;
+}
+
+static float AcesInverse(float y)
+{
+    float a, b, c, d;
+    if (y < 0.0f) y = 0.0f;
+    if (y > 0.9999f) y = 0.9999f;
+    a = y*2.43f - 2.51f;
+    b = y*0.59f - 0.03f;
+    c = y*0.14f;
+    d = b*b - 4.0f*a*c;
+    if (d < 0.0f) d = 0.0f;
+    return fmaxf((-b - sqrtf(d)) / (2.0f*a), 0.0f);
+}
+
 int main(void)
 {
     static char effectMatBuf[24000], effectVsBuf[12000], crystalMatBuf[24000];
-    static char generatorBuf[30000], generatedBuf[24000];
+    static char generatorBuf[30000], generatedBuf[24000], compositeBuf[18000];
     static char headerBuf[30000], implBuf[40000];
     static char fixtureBuf[70000];
     const char *effectMat = ReadFile("core/shading/materials/effect_material.mat",
@@ -49,6 +70,8 @@ int main(void)
                                      sizeof(generatorBuf));
     const char *generated = ReadFile("core/material/materials.generated.inl",
                                      generatedBuf, sizeof(generatedBuf));
+    const char *composite = ReadFile("core/shaders/common/vfx_composite.glsl",
+                                     compositeBuf, sizeof(compositeBuf));
     const char *header = ReadFile("core/material/material_system.h", headerBuf,
                                   sizeof(headerBuf));
     const char *impl = ReadFile("core/material/material_system.c", implBuf,
@@ -57,7 +80,7 @@ int main(void)
                                    sizeof(fixtureBuf));
 
     Check(effectMat != NULL && effectVs != NULL && crystalMat != NULL && generator != NULL &&
-              generated != NULL && header != NULL && impl != NULL &&
+              generated != NULL && composite != NULL && header != NULL && impl != NULL &&
               fixture != NULL,
           "contract inputs must be readable");
 
@@ -83,7 +106,7 @@ int main(void)
     Check(Has(header, "Material_BeginVFX") && Has(header, "Material_EndVFX"),
           "material scope must own target/blend/depth and shader together");
     Check(Has(impl, "ResourceManager_LoadShaderVariant") &&
-              Has(impl, "VFXRender_OutputDefines"),
+              Has(impl, "VFX_TONEMAP_SAFE_EMISSION"),
           "surface-aware material loading must select the matching shader permutation");
     Check(Has(impl, "VFXRender_BeginDraw") && Has(impl, "VFXRender_EndDraw"),
           "surface-aware material drawing must use the unified render scope");
@@ -97,6 +120,12 @@ int main(void)
     Check(Has(effectMat, "normalize(-fragPosition)") &&
           Has(effectMat, "u_lightDirView"),
           "surface-aware EffectMaterial lighting must compare view-space operands");
+    Check(Has(composite, "VFX_TonemapSafeEmission") &&
+          Has(composite, "VFX_AcesInverse") &&
+          Has(composite, "VFX_ResolveOutput"),
+          "opt-in emission must preserve its authored hue before scene compositing");
+    Check(Has(composite, "VFX_TonemapSafeHDR(body + glow)"),
+          "premultiplied output must preserve the combined body-plus-emission hue");
     Check(Has(effectMat, "outputCoverage = alpha;") &&
               Has(effectMat, "defined(OUTPUT_EMISSION)"),
           "a pure additive material must not be erased by zero body opacity");
@@ -115,6 +144,26 @@ int main(void)
               Has(fixture, "DrawCoreSphere(pos, 0.62f, 28, 28, WHITE)") &&
               !Has(fixture, "DrawSphere(pos, 0.62f, WHITE)"),
           "sandbox fixture must exercise the owned VFX render scope");
+
+    /* Mirror the opt-in pre-compensation at the fixture's exact blue and gain.
+     * This proves the arithmetic, but cannot validate actual GPU colour-space
+     * conversion, bloom filtering or framebuffer blending. */
+    {
+        const float hue[3] = {70.0f/255.0f, 135.0f/255.0f, 1.0f};
+        const float gain = 2.2f;
+        float oldDisplay[3], safeDisplay[3];
+        float displayPeak = Aces(gain);
+        for (int i = 0; i < 3; i++) {
+            oldDisplay[i] = Aces(hue[i] * gain);
+            safeDisplay[i] = Aces(AcesInverse(hue[i] * displayPeak));
+        }
+        Check(fabsf(safeDisplay[0]/safeDisplay[2] - hue[0]) < 0.002f &&
+                  fabsf(safeDisplay[1]/safeDisplay[2] - hue[1]) < 0.002f,
+              "tone-map-safe emission must retain the authored blue channel ratios");
+        Check((safeDisplay[2] - safeDisplay[0]) >
+                  2.0f * (oldDisplay[2] - oldDisplay[0]),
+              "tone-map-safe emission must materially reduce ACES washout");
+    }
 
     /* Mirror VFX_ResolvePremultiplied: emission is independent of coverage. */
     {

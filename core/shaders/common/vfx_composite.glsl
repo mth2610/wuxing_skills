@@ -11,6 +11,50 @@
 float VFX_Finite(float v) { return (v == v) ? min(v, 65504.0) : 0.0; }
 vec3 VFX_Finite3(vec3 v) { return vec3(VFX_Finite(v.x), VFX_Finite(v.y), VFX_Finite(v.z)); }
 
+// Inverse of post_process.fs' unclamped ACES fit. This is deliberately kept
+// private to the opt-in output resolver below: applying hue restoration after
+// scene compositing cannot distinguish the emitter from a bright background
+// and can therefore manufacture occlusion. Here the emitter is still isolated.
+float VFX_AcesInverse(float y)
+{
+    y = clamp(y, 0.0, 0.9999);
+    float a = y * 2.43 - 2.51;
+    float b = y * 0.59 - 0.03;
+    float c = y * 0.14;
+    float discriminant = max(b * b - 4.0 * a * c, 0.0);
+    return max((-b - sqrt(discriminant)) / (2.0 * a), 0.0);
+}
+
+float VFX_AcesScalar(float x)
+{
+    return clamp((x * (2.51 * x + 0.03)) /
+                 (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+
+vec3 VFX_TonemapSafeHDR(vec3 hdr)
+{
+    hdr = VFX_Finite3(max(hdr, vec3(0.0)));
+    float peak = max(hdr.r, max(hdr.g, hdr.b));
+    if (peak <= 0.0) return vec3(0.0);
+
+    // Tone-map the peak once, retain channel ratios, then analytically invert
+    // each target channel. The later per-channel ACES pass reconstructs the
+    // authored hue instead of rolling it toward cyan/white. A genuinely hot
+    // core still becomes white, monotonically, over the same 5..12 range used
+    // by the documented post-process candidate.
+    vec3 ratio = hdr / peak;
+    ratio = mix(ratio, vec3(1.0), smoothstep(5.0, 12.0, peak));
+    vec3 target = ratio * VFX_AcesScalar(peak);
+    return VFX_Finite3(vec3(VFX_AcesInverse(target.r),
+                            VFX_AcesInverse(target.g),
+                            VFX_AcesInverse(target.b)));
+}
+
+vec3 VFX_TonemapSafeEmission(vec3 emissionColor, float gain, float mask)
+{
+    return VFX_TonemapSafeHDR(emissionColor * max(gain, 0.0) * max(mask, 0.0));
+}
+
 vec4 VFX_ResolveBody(vec3 bodyColor, float bodyIntensity, float coverage)
 {
     float a = clamp(coverage, 0.0, 1.0);
@@ -55,10 +99,22 @@ vec4 VFX_ResolveOutput(vec3 bodyColor, float bodyIntensity, float coverage,
                        vec3 emissionColor, float coreMask, float emissionGain)
 {
 #if defined(OUTPUT_EMISSION)
+#if defined(VFX_TONEMAP_SAFE_EMISSION)
+    vec3 glow = VFX_TonemapSafeEmission(emissionColor, emissionGain, coreMask);
+    return vec4(glow, clamp(coverage, 0.0, 1.0));
+#else
     return VFX_ResolveEmission(emissionColor, emissionGain, coreMask, coverage);
+#endif
 #elif defined(OUTPUT_PREMULTIPLIED)
+#if defined(VFX_TONEMAP_SAFE_EMISSION)
+    float a = clamp(VFX_Finite(coverage), 0.0, 1.0);
+    vec3 body = bodyColor * max(bodyIntensity, 0.0) * a;
+    vec3 glow = emissionColor * max(coreMask, 0.0) * max(emissionGain, 0.0);
+    return vec4(VFX_TonemapSafeHDR(body + glow), a);
+#else
     return VFX_ResolvePremultiplied(bodyColor, bodyIntensity, coverage,
                                     emissionColor, coreMask, emissionGain);
+#endif
 #else
     return VFX_ResolveBody(bodyColor, bodyIntensity, coverage);
 #endif

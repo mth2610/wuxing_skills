@@ -3231,6 +3231,30 @@ space. Do not patch rlvk's normal delivery: `imm_normal` proves it is correct.
 Guard: `material_output_contract_test` plus Vulkan `imm_normal` and
 `shadow_pipeline`.
 
+### Hue preservation belongs before compositing, while emission is isolated
+
+**Symptom.** After the normal-space fix, the Alpha sphere shaded correctly but
+the 2.2x HDR Premultiplied/Additive spheres still became pale cyan. The input
+blue `(70,135,255)` reached per-channel ACES as roughly `(0.60,1.16,2.20)`;
+independent channel compression collapsed their separation toward white.
+
+**Cause.** The old full-screen hue restoration knew only
+`background + emitter`. Treating that sum's ratio as the emitter hue pulled
+channels below a bright background and fabricated occlusion, so it correctly
+ships disabled. The surface-aware material path had not implemented the safe
+stage identified by that investigation: before compositing, while emission is
+still isolated.
+
+**Rule.** Only the opt-in EffectMaterial permutation defines
+`VFX_TONEMAP_SAFE_EMISSION`. Additive preserves its isolated emission;
+premultiplied preserves the complete `body * coverage + emission` source rather
+than correcting emission and then invalidating that correction by adding body.
+Both retain the source ratio through the known ACES curve without modifying its
+peak bloom energy; fixed resolvers, decals and legacy VFX keep their arithmetic.
+Keep its ACES constants synchronized with `post_process.fs`. Guard:
+`material_output_contract_test` mirrors the fixture hue/gain numerically and
+`material_vfx_runtime_test` verifies that only the opt-in loader selects it.
+
 ## A rim cannot be brighter than a body that is already at the top of the range (25/08/2026)
 
 **Symptom.** With the space bug above fixed, ENERGY ORB *still* had no rim.

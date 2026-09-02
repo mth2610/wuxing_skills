@@ -221,18 +221,22 @@ static void MatEndCommon(void)
 static const char *EffectMaterial_OutputDefines(
     VFXSurfaceMode surface, EffectMaterialGeometryMode geometryMode)
 {
-    if (geometryMode != EFFECT_MATERIAL_GEOMETRY_IMMEDIATE)
-        return VFXRender_OutputDefines(surface);
-
+    const bool immediate = geometryMode == EFFECT_MATERIAL_GEOMETRY_IMMEDIATE;
     switch (surface)
     {
     case VFX_SURFACE_ADDITIVE:
-        return "#define OUTPUT_EMISSION 1\n#define EFFECT_MATERIAL_IMMEDIATE 1\n";
+        return immediate
+            ? "#define OUTPUT_EMISSION 1\n#define VFX_TONEMAP_SAFE_EMISSION 1\n#define EFFECT_MATERIAL_IMMEDIATE 1\n"
+            : "#define OUTPUT_EMISSION 1\n#define VFX_TONEMAP_SAFE_EMISSION 1\n";
     case VFX_SURFACE_PREMULTIPLIED:
-        return "#define OUTPUT_PREMULTIPLIED 1\n#define EFFECT_MATERIAL_IMMEDIATE 1\n";
+        return immediate
+            ? "#define OUTPUT_PREMULTIPLIED 1\n#define VFX_TONEMAP_SAFE_EMISSION 1\n#define EFFECT_MATERIAL_IMMEDIATE 1\n"
+            : "#define OUTPUT_PREMULTIPLIED 1\n#define VFX_TONEMAP_SAFE_EMISSION 1\n";
     case VFX_SURFACE_ALPHA:
     default:
-        return "#define OUTPUT_BODY 1\n#define EFFECT_MATERIAL_IMMEDIATE 1\n";
+        return immediate
+            ? "#define OUTPUT_BODY 1\n#define VFX_TONEMAP_SAFE_EMISSION 1\n#define EFFECT_MATERIAL_IMMEDIATE 1\n"
+            : "#define OUTPUT_BODY 1\n#define VFX_TONEMAP_SAFE_EMISSION 1\n";
     }
 }
 

@@ -2090,6 +2090,16 @@ space (`-fragPosition`, `u_lightDirView`). This avoids both the immediate-mode
 double transform and the old world-light/view-normal mismatch. Legacy loaders
 retain their previous shader path and visuals.
 
+Opt-in additive variants precondition their isolated emission with
+`VFX_TonemapSafeEmission`; premultiplied variants apply the same operation to
+their complete `body * coverage + emission` source. It tone-maps the peak,
+retains the authored channel ratios, then analytically inverts the project's
+ACES fit. The normal post-process therefore reconstructs the intended hue
+instead of pushing a moderate HDR blue toward cyan/white. This happens before
+scene compositing, where the VFX source is still distinguishable from a bright
+background; global `postfx_hue_restore` remains off. Fixed resolvers and legacy
+VFX do not select this permutation and remain unchanged.
+
 Equal numeric intensity is **not** equal displayed colour across surface modes.
 Alpha outputs a lit body, additive outputs only emission, and premultiplied adds
 independent emission on top of its covered body; ACES then compresses their

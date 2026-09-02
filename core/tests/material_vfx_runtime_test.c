@@ -231,8 +231,10 @@ int main(void)
     Material_LoadCustomVFX(&material, &params, &output);
     Check(variantLoads == 1 && material.shader.id == 22u,
           "VFX loader must load a shader permutation");
-    Check(lastDefines != NULL && strcmp(lastDefines, "#define OUTPUT_EMISSION 1\n") == 0,
-          "additive surface must select OUTPUT_EMISSION");
+    Check(lastDefines != NULL &&
+              strstr(lastDefines, "#define OUTPUT_EMISSION 1") != NULL &&
+              strstr(lastDefines, "#define VFX_TONEMAP_SAFE_EMISSION 1") != NULL,
+          "additive surface must select OUTPUT_EMISSION with isolated hue preservation");
     Check(material.vfxOutputEnabled && material.surface == VFX_SURFACE_ADDITIVE,
           "loaded material must retain its selected surface");
 
@@ -277,7 +279,8 @@ int main(void)
     output.surface = VFX_SURFACE_PREMULTIPLIED;
     Material_LoadCustomShaderVFX(&material, &params,
                                  "custom_surface.vs", "custom_surface.fs", &output);
-    Check(strcmp(lastDefines, "#define OUTPUT_PREMULTIPLIED 1\n") == 0,
+    Check(strstr(lastDefines, "#define OUTPUT_PREMULTIPLIED 1") != NULL &&
+              strstr(lastDefines, "#define VFX_TONEMAP_SAFE_EMISSION 1") != NULL,
           "premultiplied surface must select OUTPUT_PREMULTIPLIED");
     Check(strcmp(lastVsPath, "custom_surface.vs") == 0 &&
               strcmp(lastFsPath, "custom_surface.fs") == 0,
@@ -286,7 +289,8 @@ int main(void)
     output.surface = (VFXSurfaceMode)99;
     Material_LoadCustomVFX(&material, &params, &output);
     Check(material.surface == VFX_SURFACE_ALPHA &&
-              strcmp(lastDefines, "#define OUTPUT_BODY 1\n") == 0,
+              strstr(lastDefines, "#define OUTPUT_BODY 1") != NULL &&
+              strstr(lastDefines, "#define VFX_TONEMAP_SAFE_EMISSION 1") != NULL,
           "invalid surfaces must fall back to a matching alpha BODY pair");
 
     puts(failures ? "material VFX runtime: FAIL" : "material VFX runtime: PASS");
