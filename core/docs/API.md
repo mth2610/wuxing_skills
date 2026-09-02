@@ -246,7 +246,7 @@
 
 ### `core/particles/particle_travel.h`
 _Inline helpers / macros only — see header._
-**Structs** (fields in header): ParticleTravelPath
+**Structs** (fields in header): ParticleTravelPath, ForceField
 
 ### `core/particles/particle_system.h`
 ```c
@@ -851,6 +851,8 @@ _Inline helpers / macros only — see header._
   void VFX_AuraSetIntensity(int handle, float intensity01);
   void VFX_KillCharacterAura(int handle);
   void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, float time);
+  void VFX_ComposeRadiantStarburst(Vector3 center, VC_MaterialId mat, float radius, float t01);
+  void VFX_ComposeRadiantStarburstHead(Vector3 center, VC_MaterialId mat, float radius, float time);
   void VFX_ComposeRuneCircle(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01, int ringCount);
   void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
   void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat, float radius, float t01);
@@ -901,9 +903,11 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
   int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
+  void VFX_ComposeFlare(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
   int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   void VFX_ComposeFluidImpact(Vector3 pos);
   int VFX_ComposeGasMaterialLab(Vector3 pos, VC_MaterialId mat);
+  void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target);
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);

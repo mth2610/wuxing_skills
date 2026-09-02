@@ -112,6 +112,9 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeChargeConverge":     ("draw",    "timed",      "continuous"),
     "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),
     "VFX_ComposeCoreGlow":           ("draw",    "timed",      "continuous"),
+    "VFX_ComposeFlare":              ("draw",    "timed",      "continuous"),
+    "VFX_ComposeRadiantStarburst":   ("draw",    "timed",      "continuous"),
+    "VFX_ComposeRadiantStarburstHead": ("draw",  "timed",      "continuous"),
     # NOT an effect — the HDR pipeline's calibration target. "static" and
     # "continuous" because it must be on screen unchanged for as long as the
     # harness wants to measure it: a fixture that fades or animates cannot be
@@ -197,6 +200,8 @@ LIFECYCLE_SPECS = {
 # composition contracts.  The shield intentionally has no surface override:
 # its default is the procedural, transparent bubble profile.
 FIXTURE_SPAWN_OVERRIDES = {
+    "VFX_ComposeRadiantStarburstHead":
+        "VFX_ComposeRadiantStarburstHead($POS, VC_MAT_FIRE, 1.5f, $TIME)",
     # The vortex is magical energy rather than fire. Lightning supplies a
     # purple body and cyan emission, visibly distinct from the orange plume.
     # The config pointer is optional; NULL selects the corkscrew defaults.

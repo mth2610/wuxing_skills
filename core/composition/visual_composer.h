@@ -316,6 +316,18 @@ void VFX_KillCharacterAura(int handle);
 // asset: falls back to a generated 4-point star if glint_star_4pt.png is absent.
 void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, float time);
 
+// ── E5.1b. Radiant starburst ───────────────────────────────────────────────
+// A one-shot camera-facing flash: compact hot centre, asymmetric tapered rays,
+// and a restrained haze. `t01` drives appear → expand → dissipate; call it
+// every frame during that interval. For a projectile head, use the continuous
+// function below instead.
+void VFX_ComposeRadiantStarburst(Vector3 center, VC_MaterialId mat, float radius,
+                                 float t01);
+// A continuous projectile-head flare. `time` is a running clock; it changes ray
+// lengths and corona energy without rotating the whole silhouette like a wheel.
+void VFX_ComposeRadiantStarburstHead(Vector3 center, VC_MaterialId mat,
+                                     float radius, float time);
+
 // ── E5.2. Rune circle ───────────────────────────────────────────────────────
 // A summoning seal: concentric ribbon rings, alternating written/plain, each on
 // its own spin and breathe. `normal` = the plane's normal ((0,1,0) = flat on the
@@ -836,6 +848,7 @@ void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, floa
 void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
 int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
+void VFX_ComposeFlare(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
 int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 void VFX_ComposeFluidImpact(Vector3 pos);
 int VFX_ComposeGasMaterialLab(Vector3 pos, VC_MaterialId mat);
