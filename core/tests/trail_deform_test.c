@@ -897,7 +897,8 @@ static void Test_MirrorStillMatchesSource(void)
        darken that way. With pass 2 emitting `rgb * a` it reads 98.6. */
     CHECK(FileHas(c, "((srcBm == BLEND_ALPHA_PREMULTIPLY) ? 2.0f : 1.0f);"),
           "the C layer still tells the shader which pass — and which blend law");
-    CHECK(FileHas(fs, "return vec4(VFX_Finite3(colour * max(gain, 0.0) * cover), cover);"),
+    CHECK(FileHas(fs, "vec3 radiance = VFX_Finite3(colour * max(gain, 0.0) * cover);") &&
+          FileHas(fs, "return vec4(radiance, cover);"),
           "and the premultiplied branch premultiplies, since the hardware no longer does");
     CHECK(FileHas(fs, "u_tailFadeA >= u_tailFadeB"),
           "the tail ramp keeps its disabled guard (start >= end)");

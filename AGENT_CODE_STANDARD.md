@@ -85,6 +85,7 @@
 
 ### 10.2 Adding functions to common shaders (`core/shaders/common/*.glsl`)
 - A material's `.mat output`, GLSL resolver, render pass and runtime blend are one contract: fixed outputs use the matching `VFX_Resolve*`; surface-aware EffectMaterial uses `VFX_ResolveOutput` plus `Material_BeginVFX/EndVFX` (ADDITIVE→EMISSION, ALPHA/PREMULTIPLIED→BODY). Legacy `Material_Begin/End` remains caller-managed.
+- Tone-map-safe colour is explicit per producer: custom trail/particle shaders do not inherit EffectMaterial's permutation. For structured emitters preserve the sub-Bloom carrier and correct only HDR excess after coverage; if additive submits that completed value, use unit source alpha so coverage is not applied twice.
 - File by domain: hash/noise/fbm → `noise.glsl`; lighting (diffuse/specular/fresnel/normal) → `lighting.glsl`; generic effects (dissolve/flow/emissive) → `fx.glsl`; world-space/no-UV projection → `triplanar.glsl`. Don't mix domains.
 - Check name doesn't collide with GLSL builtins (lesson: `noise2` clashed with builtin `noise()` → renamed `vnoise`).
 - No `f` float suffixes in new GLSL — affects every skill that includes the file.

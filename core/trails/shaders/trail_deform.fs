@@ -136,6 +136,7 @@ uniform vec2  u_waveEnv;    // x = head fade fraction (band welded to the emitte
 uniform float u_renderPass; // 0 = BODY (alpha), 1 = EMISSION additive,
                             // 2 = EMISSION premultiplied
 uniform float u_bodyOpacity;// coverage scale for the body pass, 0..1
+uniform float u_tonemapSafe;// 1 only for migrated MAGIC trail radiance
 uniform vec4  u_contrastParams; // enabled, edgeSharpness, coreSize, coreIntensity
 // WHERE THE HOT CORE IS. Both were literals in this file until 27/08/2026, and
 // the pair is what decides whether a hot core reads as a FILAMENT or a slab:
@@ -156,6 +157,18 @@ in vec4 vColor;
 
 const float TAU = 6.2831853;
 
+// A ribbon is not a uniform emitter: most of its area is the colour-bearing
+// carrier and only the dense crest is HDR excess. Fully inverse-tonemapping the
+// whole source preserves a numeric hue but flattens that density hierarchy into
+// a saturated neon band. Preserve only the fraction above the project's 1.25
+// bloom threshold; sub-threshold material remains byte-identical.
+vec3 TrailToneMapSafeRadiance(vec3 radiance)
+{
+    float peak = max(radiance.r, max(radiance.g, radiance.b));
+    float safeWeight = clamp((peak - 1.25) / max(peak, 0.00001), 0.0, 1.0);
+    return mix(radiance, VFX_TonemapSafeHDR(radiance), safeWeight);
+}
+
 // The one place the two passes differ. Every mode routes its final colour
 // through here so the split cannot drift apart per mode.
 //   colour : the material's own hue, NOT scaled by intensity
@@ -173,10 +186,19 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
         float coverage = clamp(bodyMask * vAlpha * u_bodyOpacity, 0.0, 1.0);
         return VFX_ResolveBody(colour, 1.0, coverage);
     }
+    float cover = clamp(inten * vAlpha, 0.0, 1.0);
+    vec3 radiance = VFX_Finite3(colour * max(gain, 0.0) * cover);
+    if (u_tonemapSafe > 0.5)
+        radiance = TrailToneMapSafeRadiance(radiance);
+
     if (u_renderPass < 1.5)
     {
         // Raylib additive blend applies src alpha. Keep intensity in alpha so it
         // is applied exactly once; pre-scaling RGB here would square soft edges.
+        // A migrated source is already the complete post-alpha radiance, so use
+        // unit alpha rather than asking the blend unit to multiply it twice.
+        if (u_tonemapSafe > 0.5)
+            return vec4(radiance, 1.0);
         return VFX_ResolveEmission(colour, gain, 1.0, inten * vAlpha);
     }
     // PREMULTIPLIED emission (BLEND_ALPHA_PREMULTIPLY = ONE, ONE_MINUS_SRC_ALPHA).
@@ -189,8 +211,7 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
     // simply swamped the body pass. Emitting `rgb * a` restores exactly the
     // additive radiance and adds the `dst*(1-a)` occlusion term on top, which
     // is what §5.2 is for.
-    float cover = clamp(inten * vAlpha, 0.0, 1.0);
-    return vec4(VFX_Finite3(colour * max(gain, 0.0) * cover), cover);
+    return vec4(radiance, cover);
 }
 
 void main()

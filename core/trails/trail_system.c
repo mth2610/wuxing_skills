@@ -107,7 +107,7 @@ typedef struct
     int matMode, wispMix, dissolve, dissolveSoft;
     int tiling, panSpeed, tailFadeA, tailFadeB;
     int bandShape, pathArc, colHot, strandFlow, coreShape;
-    int renderPass, bodyOpacity, contrastParams, colTail, tailShape;
+    int renderPass, bodyOpacity, toneMapSafe, contrastParams, colTail, tailShape;
     // The mode-2 sine warp's coordinate half, generalised 05/08/2026 onto
     // core/uv's UVDeformField (u_sinWave is GONE — see the "SIN-WAVE STRAND
     // TRAIL" push site for the reproduction). uv_field.glsl is shape-neutral
@@ -154,6 +154,7 @@ static void FillDeformLocs(Shader shader, DeformLocs *l)
     l->strandFlow    = GetShaderLocation(shader, "u_strandFlow");
     l->renderPass    = GetShaderLocation(shader, "u_renderPass");
     l->bodyOpacity   = GetShaderLocation(shader, "u_bodyOpacity");
+    l->toneMapSafe   = GetShaderLocation(shader, "u_tonemapSafe");
     l->contrastParams = GetShaderLocation(shader, "u_contrastParams");
     l->colTail       = GetShaderLocation(shader, "u_colTail");
     l->tailShape     = GetShaderLocation(shader, "u_tailShape");
@@ -2061,9 +2062,11 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         // the separately-authored body coverage unchanged so a deform trail
         // does not apply the same opacity policy twice.
         float bodyOpacity = (m->bodyOpacity > 0.0f) ? m->bodyOpacity : 0.0f;
+        float toneMapSafe = (m->contrastProfile == VFX_CONTRAST_MAGIC) ? 1.0f : 0.0f;
         if (bodyOpacity > 1.0f) bodyOpacity = 1.0f;
         if (L->renderPass >= 0) SetShaderValue(s_deformShader, L->renderPass, &pass, SHADER_UNIFORM_FLOAT);
         if (L->bodyOpacity >= 0) SetShaderValue(s_deformShader, L->bodyOpacity, &bodyOpacity, SHADER_UNIFORM_FLOAT);
+        if (L->toneMapSafe >= 0) SetShaderValue(s_deformShader, L->toneMapSafe, &toneMapSafe, SHADER_UNIFORM_FLOAT);
     }
 
     if (L->matMode >= 0) SetShaderValue(s_deformShader, L->matMode, &m->mode, SHADER_UNIFORM_FLOAT);

@@ -3255,6 +3255,32 @@ Keep its ACES constants synchronized with `post_process.fs`. Guard:
 `material_output_contract_test` mirrors the fixture hue/gain numerically and
 `material_vfx_runtime_test` verifies that only the opt-in loader selects it.
 
+### A shared tone-map helper does not migrate a custom producer
+
+**Symptom.** The surface-aware EffectMaterial probe retained its blue hue, but
+applying the same full inverse-ACES correction to MAGIC Trail made it worse:
+the broad orange-red density ramp became a flat saturated neon band.
+
+**Cause.** `VFX_TonemapSafeHDR` being visible to a shader changes no output by
+itself. EffectMaterial activates it through a shader permutation; the trail
+uber-shader uses uniform-selected passes and continued to call its fixed
+BODY/EMISSION arithmetic. More importantly, a ribbon is not a uniform emitter:
+most of its area is the colour-bearing carrier and only its dense crest is HDR
+excess. Correcting the entire source forced every density level toward the same
+display hue and erased the colour roll-off that supplied its internal depth.
+
+**Rule.** Migrate each non-EffectMaterial producer explicitly at its last
+isolated-radiance boundary, and preserve its sub-threshold carrier. MAGIC Trail
+sets `u_tonemapSafe` from `VFX_CONTRAST_MAGIC`, builds
+`colour * gain * coverage`, and blends toward `VFX_TonemapSafeHDR` only by the
+HDR-excess fraction `(peak - 1.25) / peak`. Its additive branch submits that
+completed radiance with unit source alpha, while its premultiplied branch
+retains coverage for destination attenuation. Every other trail profile sends
+zero and keeps the old resolver path. This restored the recorded warmup-90
+baseline exactly on white (`darken 81.0%`, `absvar 8.6`) and warm
+(`39.6%`, `19.5`). Guard: `magic_trail_tonemap_test` pins the preset, C-to-GLSL
+wiring, threshold gate and the shipped 1.90-gain ACES arithmetic.
+
 ## A rim cannot be brighter than a body that is already at the top of the range (25/08/2026)
 
 **Symptom.** With the space bug above fixed, ENERGY ORB *still* had no rim.
