@@ -108,6 +108,19 @@ void MapProp_UnloadCloudSea(MapCloudSea *cloud);
 * Calling convention: `Create*` is called exactly once in `Init{Prefix}Map`, `Draw*` is called every frame in `Draw{Prefix}Map`, `Unload*` is called in `Unload{Prefix}Map` if the map declares an Unload function. `MapProp_GenerateMountainRing` is the exception — it doesn't load any resource, it only fills an array with numbers, so it can be called anywhere inside `Init`, even with no corresponding `Unload`.
 * Rocks using `prop_lit` (all 3 paths supplied) need `PropLit_UpdateLighting()` called **once per frame before drawing** (see the full example in section 6). Ground/strip/cloud sea each push their own lighting uniforms inside their own `Draw*`, no extra call needed.
 
+### Reusable meadow, flower, and water surfaces
+
+`map_props.h` also exposes three geometry-batched natural surfaces:
+
+- `MapProp_CreateMeadow` builds curved multi-segment blade clumps from caller-owned placements. The geometry uploads once; `MapProp_DrawMeadow` applies spatial GPU wind, sun/ambient lighting, back-lighting, and VFX point lights in one draw call.
+- `MapProp_GenerateMeadowPlacements` provides deterministic jittered-grid distribution over arbitrary bounds. A map-supplied density callback returns `[0,1]`, allowing biome masks and hard exclusions for roads, water, cliffs, or gameplay clearings; generated roots sample the real ground mesh height.
+- `MapProp_CreateFlowerField` builds volumetric crossed stems, raised petals, and flower centers. Each placement supplies its own petal color, scale, rotation, and wind phase; the whole field remains one draw call.
+- `MapProp_CreateWaterSurface` builds an elliptical tessellated lake plus an irregular opaque bank. Its shader provides multi-directional displacement, reconstructed wave normals, Fresnel response, sun glint, depth color, broken shoreline foam, and VFX point-light response. Alpha is always `1.0`.
+
+The caller owns layout and art direction through placement/config structs; the toolkit owns geometry, shaders, rendering, and cleanup. This lets maps reuse the same rendering quality without sharing identical layouts. Every created surface must be paired with its corresponding `MapProp_Unload*` call.
+
+Use `MapProp_SetGroundTint` to grade the tiled terrain into the same palette as its 3D vegetation. This prevents the common failure where the ground reads as a bright photographic carpet while foliage reads as dark disconnected props.
+
 ### `maps/toolkit/prop_lit.h` — real-lit material for rocks/paths
 
 ```c

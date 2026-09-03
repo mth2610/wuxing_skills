@@ -1,11 +1,11 @@
 #include "verdant_path.h"
-#include "raylib.h"
-#include "rlgl.h"
+
 #include "environment/environment_system.h"
-#include "maps/toolkit/prop_lit.h"
 #include "maps/toolkit/map_props.h"
-#include "maps/toolkit/ground_shadow.h"
+#include "maps/toolkit/prop_lit.h"
 #include "core/map_manager.h"
+#include "raylib.h"
+
 #include <math.h>
 #include <stddef.h>
 
@@ -13,170 +13,246 @@
 #define PI 3.14159265358979323846f
 #endif
 
-// Virtual Trigger Zones (MAP_API.md §13) — the grass island's nature
-// pockets, all on the flat plateau interior (y = 0 there; heightmap only
-// falls off past ~34m from center (50, 37.5)). Modifier rules live in
-// game/game_rules.c, never here.
+#define MAP_WIDTH 100.0f
+#define MAP_DEPTH 75.0f
+#define CLIFF_DEPTH 8.0f
+#define CLOUD_SEA_Y -12.0f
+#define PATH_UNIT_LENGTH 11.0f
+#define PATH_WIDTH 3.6f
+#define MOUNTAIN_RING_WIDTH 82.0f
+#define MOUNTAIN_RING_DEPTH 58.0f
+#define MOUNTAIN_ROCK_COUNT 40
+#define ROCK_COUNT 10
+#define GRASS_TUFT_CAPACITY 3200
+#define FLOWER_COUNT 720
+#define REED_COUNT 140
+
+static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
+static const Vector3 kLakeCenter = {63.0f, 0.0f, 25.5f};
+static const float kLakeRadiusX = 11.5f;
+static const float kLakeRadiusZ = 8.2f;
+
 static const MapZone ISLAND_ZONES[] = {
-    { NAT_RIVER,       { 40.0f, 0.0f, 30.0f }, 4.0f },
-    { NAT_FOREST,      { 61.0f, 0.0f, 31.0f }, 4.5f },
-    { NAT_DESERT_ZONE, { 50.0f, 0.0f, 47.0f }, 4.0f },
+    {NAT_RIVER,  {63.0f, 0.0f, 25.5f}, 8.0f},
+    {NAT_FOREST, {27.0f, 0.0f, 20.0f}, 8.5f},
+    {NAT_FOREST, {76.0f, 0.0f, 52.0f}, 8.0f},
 };
 #define ISLAND_ZONE_COUNT (int)(sizeof(ISLAND_ZONES) / sizeof(ISLAND_ZONES[0]))
 
-// Radial-gradient ground disc, self-lit vertex colors (alpha 255 rule; lit
-// materials read black in the night scene) — same technique as
-// default_arena's zone cues, lifted slightly above the terrain mesh.
-static void DrawIslandZoneDisc(Vector3 center, float radius, Color cCenter, Color cEdge)
-{
-    rlDisableBackfaceCulling();
-    rlSetTexture(0);
-    GroundShadow_Begin(); // Real Shading P6 — receive the real shadow map (no-op if disabled)
-    rlBegin(RL_TRIANGLES);
-    int segments = 48;
-    float y = 0.05f;
-    for (int i = 0; i < segments; i++) {
-        float a1 = ((float)i / segments) * 2.0f * PI;
-        float a2 = ((float)(i + 1) / segments) * 2.0f * PI;
-        Vector3 p1 = { center.x + cosf(a1) * radius, y, center.z + sinf(a1) * radius };
-        Vector3 p2 = { center.x + cosf(a2) * radius, y, center.z + sinf(a2) * radius };
-        rlColor4ub(cCenter.r, cCenter.g, cCenter.b, 255);
-        rlVertex3f(center.x, y, center.z);
-        rlColor4ub(cEdge.r, cEdge.g, cEdge.b, 255);
-        rlVertex3f(p2.x, p2.y, p2.z);
-        rlColor4ub(cEdge.r, cEdge.g, cEdge.b, 255);
-        rlVertex3f(p1.x, p1.y, p1.z);
-    }
-    rlEnd();
-    GroundShadow_End();
-    rlEnableBackfaceCulling();
-}
+static const Vector3 kMainPath[] = {
+    {10.0f, 0.0f, 39.0f}, {20.0f, 0.0f, 36.5f}, {30.0f, 0.0f, 38.5f},
+    {40.0f, 0.0f, 35.2f}, {49.5f, 0.0f, 38.2f}, {59.0f, 0.0f, 41.5f},
+    {69.0f, 0.0f, 43.5f}, {79.0f, 0.0f, 40.5f}, {90.0f, 0.0f, 37.0f},
+};
+#define MAIN_PATH_POINT_COUNT (int)(sizeof(kMainPath) / sizeof(kMainPath[0]))
 
-// Rectangle sized so a corner-to-corner diagonal walk takes ~30-45s at the
-// game screen's 3.5 m/s walk speed (game/game_screen.c): 100m x 75m is a
-// 4:3 rectangle (a 3-4-5 triangle scaled x25), giving an exact 125m
-// diagonal -> 125 / 3.5 = ~35.7s.
-#define MAP_WIDTH 100.0f
-#define MAP_DEPTH 75.0f
-static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
+static const Vector3 kLakePath[] = {
+    {44.0f, 0.0f, 36.0f}, {48.0f, 0.0f, 31.0f}, {52.5f, 0.0f, 27.5f},
+};
+#define LAKE_PATH_POINT_COUNT (int)(sizeof(kLakePath) / sizeof(kLakePath[0]))
 
-// Stone path runs along the long (X) axis, centered on the map. Kept well
-// short of the flat plateau's own edge (~45m from center before the cliff
-// falloff starts, see generate_island_heightmap.py's plateau_edge=0.90) so
-// the path never reaches the point where the ground drops away underneath
-// it — a too-long path used to visibly "float" past the cliff edge over
-// the cloud sea.
-#define PATH_LENGTH 50.0f
-#define PATH_WIDTH 4.0f
-
-// Floating-island shape (MapProp_CreateGroundHeightmap): plateau at Y=0,
-// edge sinks CLIFF_DEPTH meters down. CLOUD_SEA_Y must stay more negative
-// than -CLIFF_DEPTH so the cliff mesh never pokes through the cloud plane.
-#define CLIFF_DEPTH 8.0f
-#define CLOUD_SEA_Y -12.0f
-
-// Mountain-ring rocks don't sample the heightmap — they sink a fixed amount
-// assuming flat Y=0 ground (MapProp_DrawRocks' convention). Kept comfortably
-// inside the flat plateau boundary (~45m/~33.75m from center — see
-// generate_island_heightmap.py's plateau_edge=0.90) so the ring never lands
-// on the sloped cliff band, which would leave a visible gap/seam between
-// rock bottom and the (already-lower) actual ground surface there.
-#define MOUNTAIN_RING_WIDTH 80.0f
-#define MOUNTAIN_RING_DEPTH 56.0f
-
-// Scattered across the field, clear of the path band (Z in
-// [MAP_DEPTH/2 - PATH_WIDTH, MAP_DEPTH/2 + PATH_WIDTH]).
-#define ROCK_COUNT 6
 static const MapRockPlacement kRocks[ROCK_COUNT] = {
-    {{15.0f, 0.0f, 10.0f}, 0.6f, 0.5f, 20.0f},
-    {{30.0f, 0.0f, 60.0f}, 0.9f, 0.7f, 100.0f},
-    {{70.0f, 0.0f, 15.0f}, 0.5f, 0.45f, 200.0f},
-    {{85.0f, 0.0f, 55.0f}, 1.1f, 0.8f, 60.0f},
-    {{45.0f, 0.0f, 65.0f}, 0.7f, 0.55f, 320.0f},
-    {{20.0f, 0.0f, 45.0f}, 0.8f, 0.6f, 150.0f},
+    {{14.0f, 0.0f, 13.0f}, 0.65f, 0.48f, 18.0f},
+    {{22.0f, 0.0f, 58.0f}, 0.90f, 0.62f, 92.0f},
+    {{39.0f, 0.0f, 61.0f}, 0.55f, 0.42f, 205.0f},
+    {{84.0f, 0.0f, 57.0f}, 1.05f, 0.72f, 63.0f},
+    {{82.0f, 0.0f, 17.0f}, 0.70f, 0.48f, 318.0f},
+    {{52.0f, 0.0f, 18.0f}, 0.48f, 0.36f, 148.0f},
+    {{74.0f, 0.0f, 23.0f}, 0.62f, 0.40f, 41.0f},
+    {{57.0f, 0.0f, 33.5f}, 0.52f, 0.34f, 260.0f},
+    {{67.0f, 0.0f, 34.0f}, 0.42f, 0.30f, 112.0f},
+    {{76.0f, 0.0f, 29.0f}, 0.58f, 0.38f, 226.0f},
 };
 
 static MapGroundSurface s_ground;
 static MapStripSurface s_path;
 static MapRockSet s_rocks;
-static MapRockSet s_mountainRockSet; // separate, plain-textured (no prop_lit, no shadow) — see InitVerdantPathMap
+static MapRockSet s_mountainRockSet;
 static MapCloudSea s_cloudSea;
+static MapRockPlacement s_mountainRocks[MOUNTAIN_ROCK_COUNT];
+static MapMeadowPlacement s_grassPlacements[GRASS_TUFT_CAPACITY];
+static MapFlowerPlacement s_flowerPlacements[FLOWER_COUNT];
+static MapMeadowPlacement s_reedPlacements[REED_COUNT];
+static MapMeadowSurface s_meadow;
+static MapMeadowSurface s_reedMeadow;
+static MapFlowerField s_flowerField;
+static MapWaterSurface s_lake;
+static int s_grassCount = 0;
+static float s_time = 0.0f;
 static bool s_ready = false;
 
-// Floating-island motif every map shares (kehoach/world direction): a ring
-// of mountain rocks bordering the playable ground, with a scrolling sea of
-// clouds far below. Same rock_diffuse.png texture as s_rocks, but its own
-// MapRockSet (s_mountainRockSet, plain material, no shadow) — see
-// InitVerdantPathMap.
-#define MOUNTAIN_ROCK_COUNT 36
-static MapRockPlacement s_mountainRocks[MOUNTAIN_ROCK_COUNT];
+static unsigned int NextRandom(unsigned int *state)
+{
+    *state = *state * 1664525u + 1013904223u;
+    return *state;
+}
+
+static float Random01(unsigned int *state)
+{
+    return (float)(NextRandom(state) & 0x00ffffffu) / 16777215.0f;
+}
+
+static float RandomRange(unsigned int *state, float minValue, float maxValue)
+{
+    return minValue + (maxValue - minValue) * Random01(state);
+}
+
+static bool IsInsideLake(float x, float z, float margin)
+{
+    float dx = (x - kLakeCenter.x) / (kLakeRadiusX + margin);
+    float dz = (z - kLakeCenter.z) / (kLakeRadiusZ + margin);
+    return dx * dx + dz * dz < 1.0f;
+}
+
+static float DistanceToSegmentXZ(float x, float z, Vector3 a, Vector3 b)
+{
+    float vx = b.x - a.x;
+    float vz = b.z - a.z;
+    float wx = x - a.x;
+    float wz = z - a.z;
+    float lengthSquared = vx * vx + vz * vz;
+    float t = (lengthSquared > 0.0001f) ? (wx * vx + wz * vz) / lengthSquared : 0.0f;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    float dx = x - (a.x + vx * t);
+    float dz = z - (a.z + vz * t);
+    return sqrtf(dx * dx + dz * dz);
+}
+
+static bool IsNearPath(float x, float z, float margin)
+{
+    for (int i = 0; i < MAIN_PATH_POINT_COUNT - 1; i++) {
+        if (DistanceToSegmentXZ(x, z, kMainPath[i], kMainPath[i + 1]) < margin)
+            return true;
+    }
+    for (int i = 0; i < LAKE_PATH_POINT_COUNT - 1; i++) {
+        if (DistanceToSegmentXZ(x, z, kLakePath[i], kLakePath[i + 1]) < margin)
+            return true;
+    }
+    return false;
+}
+
+static Color FlowerColor(int cluster, bool secondary)
+{
+    static const Color dominant[3] = {
+        {205, 185, 213, 255}, {226, 211, 160, 255}, {174, 201, 215, 255},
+    };
+    static const Color accent[3] = {
+        {224, 198, 205, 255}, {205, 181, 116, 255}, {197, 184, 216, 255},
+    };
+    return secondary ? accent[cluster] : dominant[cluster];
+}
+
+static float VerdantGrassDensity(float x, float z, void *userData)
+{
+    (void)userData;
+    if (IsInsideLake(x, z, 1.35f) || IsNearPath(x, z, 2.05f))
+        return 0.0f;
+    float nx = (x - kMapCenter.x) / 43.0f;
+    float nz = (z - kMapCenter.z) / 29.5f;
+    float edge = nx * nx + nz * nz;
+    if (edge >= 1.0f)
+        return 0.0f;
+    float edgeFade = 1.0f - fmaxf(0.0f, (edge - 0.72f) / 0.28f);
+    float macro = 0.76f + sinf(x * 0.19f + z * 0.11f) * 0.11f
+                         + sinf(x * -0.07f + z * 0.23f) * 0.08f;
+    return fmaxf(0.0f, fminf(1.0f, macro * edgeFade));
+}
+
+static void BuildMeadowLayout(void)
+{
+    unsigned int rng = 0x51a7c3u;
+    s_grassCount = MapProp_GenerateMeadowPlacements(
+        s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
+        (MapMeadowDistribution){
+            .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
+            .spacing = 1.08f, .jitter = 0.82f,
+            .minRadius = 0.105f, .maxRadius = 0.19f,
+            .minHeight = 0.17f, .maxHeight = 0.39f,
+            .yOffset = 0.035f, .seed = 0x51a7c3u,
+        }, VerdantGrassDensity, NULL);
+
+    const Vector3 centers[3] = {
+        {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f}, {77.0f, 0.0f, 53.0f},
+    };
+    const Vector3 radii[3] = {
+        {11.5f, 0.0f, 8.0f}, {13.0f, 0.0f, 7.0f}, {10.5f, 0.0f, 8.5f},
+    };
+    for (int i = 0; i < FLOWER_COUNT; i++) {
+        int cluster = i % 3;
+        float angle = RandomRange(&rng, 0.0f, 2.0f * PI);
+        float radius = powf(Random01(&rng), 1.18f);
+        float x = centers[cluster].x + cosf(angle) * radii[cluster].x * radius;
+        float z = centers[cluster].z + sinf(angle) * radii[cluster].z * radius;
+        s_flowerPlacements[i].position = (Vector3){x, 0.055f, z};
+        s_flowerPlacements[i].height = RandomRange(&rng, 0.24f, 0.52f);
+        s_flowerPlacements[i].bloomRadius = RandomRange(&rng, 0.065f, 0.125f);
+        s_flowerPlacements[i].rotationDeg = RandomRange(&rng, 0.0f, 360.0f);
+        s_flowerPlacements[i].phase = Random01(&rng);
+        s_flowerPlacements[i].petalColor = FlowerColor(cluster, Random01(&rng) > 0.82f);
+    }
+
+    for (int i = 0; i < REED_COUNT; i++) {
+        float angle = ((float)i / (float)REED_COUNT) * 2.0f * PI + RandomRange(&rng, -0.055f, 0.055f);
+        float rim = RandomRange(&rng, 0.96f, 1.10f);
+        s_reedPlacements[i].position = (Vector3){
+            kLakeCenter.x + cosf(angle) * kLakeRadiusX * rim,
+            0.075f,
+            kLakeCenter.z + sinf(angle) * kLakeRadiusZ * rim,
+        };
+        s_reedPlacements[i].radius = RandomRange(&rng, 0.11f, 0.18f);
+        s_reedPlacements[i].height = RandomRange(&rng, 0.62f, 1.12f);
+        s_reedPlacements[i].rotationDeg = angle * 180.0f / PI;
+        s_reedPlacements[i].phase = Random01(&rng);
+    }
+}
+
+static void DrawPathChain(const Vector3 *points, int count, float widthScale)
+{
+    for (int i = 0; i < count - 1; i++) {
+        float dx = points[i + 1].x - points[i].x;
+        float dz = points[i + 1].z - points[i].z;
+        float length = sqrtf(dx * dx + dz * dz) + 0.75f;
+        Vector3 midpoint = {
+            (points[i].x + points[i + 1].x) * 0.5f,
+            0.0f,
+            (points[i].z + points[i + 1].z) * 0.5f,
+        };
+        float rotation = atan2f(dz, dx) * 180.0f / PI;
+        MapProp_DrawStripEx(&s_path, midpoint, 0.035f, -rotation,
+                            (Vector3){length / PATH_UNIT_LENGTH, 1.0f, widthScale});
+    }
+}
 
 void InitVerdantPathMap(void)
 {
-    // Cool, clear moonlight — bright enough to read the ground/rock
-    // textures clearly, while staying within the project's always-night
-    // identity (see nguhanhtyvo_kehoach.md §I).
-    //
-    // Dimmed from the original (60,65,85)/(200,205,220): bloom is a
-    // whole-screen effect (core/post_fx.c's bloomTex is shared, not
-    // per-object — see post_process.fs's `sceneCol.rgb += bloomTex`), and
-    // prop_lit.fs's `albedo * (ambient + diff*sunColor)` pushed sun-facing
-    // grass patches above the 0.5 bloom threshold at the old brightness.
-    // That made grass itself bloom and bleed into any nearby skill VFX's
-    // bloom halo, visibly tinting/washing out the VFX's own color compared
-    // to a map with a dark, non-blooming floor (default_arena). Reduced so
-    // lit grass stays under threshold; skill VFX bloom is unaffected since
-    // it comes from the VFX's own emissive shader, not this ambient/sun.
-    Environment_SetAmbientColor((Color){38, 42, 55, 255});
-    Environment_SetSunColor((Color){125, 130, 145, 255});
-    Environment_SetSunDirection((Vector3){0.5f, -0.7f, -0.3f}); // Real Shading P6 — moderate elevation (was y=-0.8 near-steep, then debug-era y=-0.5): visible raking shadow without over-stretching
-    Environment_SetShadowColor((Color){10, 10, 15, 150});
+    if (s_ready)
+        return;
 
-    EnvFogConfig fog = {0};
-    fog.enabled = true;
-    fog.color = (Color){40, 45, 60, 255};
-    fog.start = 60.0f;
-    fog.end = 140.0f;
-    fog.density = 1.0f;
-    Environment_SetFogConfig(fog);
+    Environment_SetTimeOfDaySpeed(0.0f);
+    Environment_SetAmbientColor((Color){42, 48, 59, 255});
+    Environment_SetSunColor((Color){139, 146, 160, 255});
+    Environment_SetSunDirection((Vector3){0.48f, -0.72f, -0.34f});
+    Environment_SetShadowColor((Color){9, 12, 16, 158});
+    Environment_SetFogConfig((EnvFogConfig){
+        .color = {43, 50, 62, 255}, .start = 62.0f, .end = 145.0f,
+        .density = 0.92f, .enabled = true,
+    });
 
-    // Nền dạng đảo nổi: cao nguyên phẳng ở giữa (từ heightmap trắng), sụp
-    // xuống thành vách đá ở viền (đen) — CLIFF_DEPTH phải nhỏ hơn độ sâu
-    // yOffset của MapProp_DrawCloudSea bên dưới để vách không đâm xuyên mây.
-    s_ground = MapProp_CreateGroundHeightmap("assets/heightmaps/verdant_path_island.png",
-                                    MAP_WIDTH, MAP_DEPTH, CLIFF_DEPTH, 12.0f,
-                                    "assets/textures/grass_ground_diffuse.png", // Tạm dùng làm Splatmap
-                                    "assets/textures/grass_ground_diffuse.png", // Texture Cỏ
-                                    "assets/textures/dirt_diffuse.png");        // Tạm dùng làm Texture Đường đi
-
-    // [ĐÃ SỬA LỖI 2]: Truyền đúng PATH_LENGTH và PATH_WIDTH cho con đường
-    s_path = MapProp_CreateStrip(PATH_LENGTH, PATH_WIDTH, 2.0f,
-                                 "assets/textures/stone_path_diffuse.png",
-                                 "assets/textures/stone_path_normal.png",
-                                 "assets/textures/stone_path_roughness.png");
-
+    s_ground = MapProp_CreateGroundHeightmap(
+        "assets/heightmaps/verdant_path_island.png", MAP_WIDTH, MAP_DEPTH,
+        CLIFF_DEPTH, 8.0f, "assets/textures/grass_ground_diffuse.png",
+        "assets/textures/grass_ground_diffuse.png", "assets/textures/dirt_diffuse.png");
+    MapProp_SetGroundTint(&s_ground, (Color){168, 181, 157, 255});
+    s_path = MapProp_CreateStrip(PATH_UNIT_LENGTH, PATH_WIDTH, 1.8f,
+        "assets/textures/stone_path_diffuse.png",
+        "assets/textures/stone_path_normal.png",
+        "assets/textures/stone_path_roughness.png");
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
-                                  "assets/textures/rock_normal.png",
-                                  "assets/textures/rock_roughness.png");
-
-    // Mountain ring: its OWN plain-textured MapRockSet (NULL normal/roughness
-    // -> no prop_lit) — a border of dozens of rocks running the full PBR
-    // lighting shader per-pixel over a large chunk of the screen was a real,
-    // measured FPS cost, not just the scattered decorative rocks' concern.
+        "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
     s_mountainRockSet = MapProp_CreateRocks("assets/textures/rock_diffuse.png", NULL, NULL);
-
-    // Low profile on purpose — just a bit taller than ground level
-    // (heightScale small), NOT towering peaks; the actual cliff drop comes
-    // from the heightmap ground itself (CLIFF_DEPTH), these just mark the
-    // edge. Fixed seed so the layout is reproducible across runs.
-    // Generated in its own smaller [0,MOUNTAIN_RING_WIDTH]x[0,MOUNTAIN_RING_DEPTH]
-    // space, then re-centered onto the map's actual coordinate system below —
-    // keeps the ring on the flat plateau instead of the true (sloped) edge.
     MapProp_GenerateMountainRing(s_mountainRocks, MOUNTAIN_ROCK_COUNT,
-                                 MOUNTAIN_RING_WIDTH, MOUNTAIN_RING_DEPTH,
-                                 3.0f, 6.0f,   // radiusScale range
-                                 1.0f, 2.5f,   // heightScale range
-                                 1337);
+        MOUNTAIN_RING_WIDTH, MOUNTAIN_RING_DEPTH, 2.6f, 5.4f, 0.9f, 2.2f, 1337u);
     {
         float offsetX = (MAP_WIDTH - MOUNTAIN_RING_WIDTH) * 0.5f;
         float offsetZ = (MAP_DEPTH - MOUNTAIN_RING_DEPTH) * 0.5f;
@@ -185,14 +261,38 @@ void InitVerdantPathMap(void)
             s_mountainRocks[i].position.z += offsetZ;
         }
     }
-
-    // Sea of clouds, far below the ground — bigger than the map so it reads
-    // as an endless void floor past the mountain ring.
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
-
+    BuildMeadowLayout();
+    s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
+        (MapMeadowStyle){
+            .rootColor = {59, 78, 43, 255}, .tipColor = {100, 122, 69, 255},
+            .bladesPerClump = 5, .bladeSegments = 2, .bladeWidthScale = 0.30f,
+        });
+    s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
+        (MapMeadowStyle){
+            .rootColor = {42, 57, 28, 255}, .tipColor = {112, 119, 57, 255},
+            .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.20f,
+        });
+    s_flowerField = MapProp_CreateFlowerField(s_flowerPlacements, FLOWER_COUNT,
+        (Color){61, 91, 48, 255}, (Color){188, 142, 63, 255});
+    s_lake = MapProp_CreateWaterSurface((MapWaterConfig){
+        .center = {63.0f, 0.075f, 25.5f},
+        .radiusX = 11.5f, .radiusZ = 8.2f, .bankWidth = 1.65f,
+        .waveHeight = 0.055f, .waveScale = 0.82f, .waveSpeed = 0.88f,
+        .segments = 112, .rings = 14, .seed = 9173u,
+        .deepColor = {8, 35, 48, 255}, .shallowColor = {47, 91, 91, 255},
+        .foamColor = {141, 165, 154, 255},
+        .bankInnerColor = {76, 78, 58, 255}, .bankOuterColor = {39, 61, 37, 255},
+    });
     MapManager_SetZones(ISLAND_ZONES, ISLAND_ZONE_COUNT);
-
+    s_time = 0.0f;
     s_ready = true;
+}
+
+void UpdateVerdantPathMap(float dt)
+{
+    if (s_ready)
+        s_time += dt;
 }
 
 float GetGroundHeightVerdantPathMap(float x, float z)
@@ -210,18 +310,32 @@ void DrawVerdantPathMap(void)
     if (!s_ready)
         return;
 
-    PropLit_UpdateLighting(); // per-frame contract for s_path/s_rocks (both prop_lit)
-
+    PropLit_UpdateLighting();
     MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
     MapProp_DrawGround(&s_ground, kMapCenter);
-    MapProp_DrawStrip(&s_path, kMapCenter, 0.01f);
-    MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, MOUNTAIN_ROCK_COUNT, false); // no shadow, plain material
-    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true); // decorative — keep shadow + prop_lit
+    DrawPathChain(kMainPath, MAIN_PATH_POINT_COUNT, 1.0f);
+    DrawPathChain(kLakePath, LAKE_PATH_POINT_COUNT, 0.72f);
+    MapProp_DrawWaterSurface(&s_lake, s_time);
+    MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, MOUNTAIN_ROCK_COUNT, false);
+    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true);
+    MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
+    MapProp_DrawMeadow(&s_reedMeadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.11f);
+    MapProp_DrawFlowerField(&s_flowerField, (Vector3){0}, s_time,
+                            (Vector2){0.86f, 0.51f}, 0.032f);
+}
 
-    // Nature-zone cues (No Tutorial — the ground itself says what it is):
-    // deep-water blue, forest green, dry sand, all fading into the grass.
-    Color grassEdge = (Color){ 26, 38, 24, 255 };
-    DrawIslandZoneDisc(ISLAND_ZONES[0].center, ISLAND_ZONES[0].radius, (Color){ 30, 84, 118, 255 }, grassEdge);
-    DrawIslandZoneDisc(ISLAND_ZONES[1].center, ISLAND_ZONES[1].radius, (Color){ 22, 70, 38, 255 },  grassEdge);
-    DrawIslandZoneDisc(ISLAND_ZONES[2].center, ISLAND_ZONES[2].radius, (Color){ 96, 80, 42, 255 },  grassEdge);
+void UnloadVerdantPathMap(void)
+{
+    if (!s_ready)
+        return;
+    MapProp_UnloadWaterSurface(&s_lake);
+    MapProp_UnloadFlowerField(&s_flowerField);
+    MapProp_UnloadMeadow(&s_reedMeadow);
+    MapProp_UnloadMeadow(&s_meadow);
+    MapProp_UnloadCloudSea(&s_cloudSea);
+    MapProp_UnloadRocks(&s_mountainRockSet);
+    MapProp_UnloadRocks(&s_rocks);
+    MapProp_UnloadStrip(&s_path);
+    MapProp_UnloadGround(&s_ground);
+    s_ready = false;
 }

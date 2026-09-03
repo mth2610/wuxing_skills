@@ -81,6 +81,9 @@ MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float 
                                                const char *grassTexPath,
                                                const char *pathTexPath);
 void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter);
+// Per-map biome grading. The tint is multiplied into both tiled ground
+// textures through the material's standard colDiffuse uniform.
+void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint);
 void MapProp_UnloadGround(MapGroundSurface *ground);
 
 // Absolute world-space ground Y at (x,z) — for a flat MapProp_CreateGround
@@ -139,6 +142,10 @@ typedef struct
 MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
                                     const char *diffusePath, const char *normalPath, const char *roughnessPath);
 void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float yOffset);
+// Rotated/scaled draw for composing curved roads from short overlapping
+// segments. Rotation is around world Y; scale is local X/Y/Z.
+void MapProp_DrawStripEx(const MapStripSurface *strip, Vector3 worldCenter, float yOffset,
+                         float rotationDeg, Vector3 scale);
 void MapProp_UnloadStrip(MapStripSurface *strip);
 
 // --- Rock props (one mesh/texture set, many placements) -----------------
@@ -200,5 +207,113 @@ typedef struct
 MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize);
 void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float yOffset);
 void MapProp_UnloadCloudSea(MapCloudSea *cloud);
+
+// --- Reusable natural surfaces -----------------------------------------
+
+typedef struct
+{
+    Vector3 position;
+    float radius;
+    float height;
+    float rotationDeg;
+    float phase;
+} MapMeadowPlacement;
+
+typedef struct
+{
+    Color rootColor;
+    Color tipColor;
+    int bladesPerClump;
+    int bladeSegments;
+    float bladeWidthScale; // relative to placement.radius; <= 0 uses 0.24
+} MapMeadowStyle;
+
+typedef struct
+{
+    Model model;
+    bool ready;
+} MapMeadowSurface;
+
+typedef struct
+{
+    Vector2 minBounds;
+    Vector2 maxBounds;
+    float spacing;
+    float jitter;
+    float minRadius;
+    float maxRadius;
+    float minHeight;
+    float maxHeight;
+    float yOffset;
+    unsigned int seed;
+} MapMeadowDistribution;
+
+// Return density in [0,1]. Returning zero is also the universal exclusion
+// mechanism for roads, water, cliffs, gameplay clearings, or authored masks.
+typedef float (*MapFoliageDensityFn)(float x, float z, void *userData);
+
+int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxCount,
+                                     const MapGroundSurface *ground, Vector3 groundCenter,
+                                     MapMeadowDistribution distribution,
+                                     MapFoliageDensityFn densityFn, void *userData);
+
+MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int count,
+                                      MapMeadowStyle style);
+void MapProp_DrawMeadow(const MapMeadowSurface *meadow, Vector3 worldOffset, float time,
+                        Vector2 windDirection, float windStrength);
+void MapProp_UnloadMeadow(MapMeadowSurface *meadow);
+
+typedef struct
+{
+    Vector3 position;
+    float height;
+    float bloomRadius;
+    float rotationDeg;
+    float phase;
+    Color petalColor;
+} MapFlowerPlacement;
+
+typedef struct
+{
+    Model model;
+    bool ready;
+} MapFlowerField;
+
+MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, int count,
+                                         Color stemColor, Color centerColor);
+void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, float time,
+                             Vector2 windDirection, float windStrength);
+void MapProp_UnloadFlowerField(MapFlowerField *field);
+
+typedef struct
+{
+    Vector3 center;
+    float radiusX;
+    float radiusZ;
+    float bankWidth;
+    float waveHeight;
+    float waveScale;
+    float waveSpeed;
+    int segments;
+    int rings;
+    unsigned int seed;
+    Color deepColor;
+    Color shallowColor;
+    Color foamColor;
+    Color bankInnerColor;
+    Color bankOuterColor;
+} MapWaterConfig;
+
+typedef struct
+{
+    Model waterModel;
+    Model bankModel;
+    MapWaterConfig config;
+    bool ready;
+} MapWaterSurface;
+
+MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config);
+void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time);
+void MapProp_UnloadWaterSurface(MapWaterSurface *water);
 
 #endif // MAP_PROPS_H

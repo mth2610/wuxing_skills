@@ -56,12 +56,8 @@ MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
     return strip;
 }
 
-void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float yOffset)
+static void MapProp_UpdateStripLighting(const MapStripSurface *strip)
 {
-    if (!strip->ready)
-        return;
-
-    // --- Cập nhật Ánh sáng Môi trường cho con đường ---
     Vector3 lightDir = Environment_GetSunDirection();
     Color sunCol = Environment_GetSunColor();
     Color ambCol = Environment_GetAmbientColor();
@@ -73,11 +69,27 @@ void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float 
     SetShaderValue(strip->model.materials[0].shader, locPathLightDir, lightDirArr, SHADER_UNIFORM_VEC3);
     SetShaderValue(strip->model.materials[0].shader, locPathLightCol, sunColArr, SHADER_UNIFORM_VEC4);
     SetShaderValue(strip->model.materials[0].shader, locPathAmbCol, ambColArr, SHADER_UNIFORM_VEC4);
+}
 
+void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float yOffset)
+{
+    if (!strip->ready)
+        return;
 
-
+    MapProp_UpdateStripLighting(strip);
     Vector3 pos = {worldCenter.x, worldCenter.y + yOffset, worldCenter.z};
     DrawModel(strip->model, pos, 1.0f, WHITE);
+}
+
+void MapProp_DrawStripEx(const MapStripSurface *strip, Vector3 worldCenter, float yOffset,
+                         float rotationDeg, Vector3 scale)
+{
+    if (!strip->ready)
+        return;
+
+    MapProp_UpdateStripLighting(strip);
+    Vector3 pos = {worldCenter.x, worldCenter.y + yOffset, worldCenter.z};
+    DrawModelEx(strip->model, pos, (Vector3){0.0f, 1.0f, 0.0f}, rotationDeg, scale, WHITE);
 }
 
 void MapProp_UnloadStrip(MapStripSurface *strip)

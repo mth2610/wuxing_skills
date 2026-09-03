@@ -445,6 +445,14 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     DrawModel(ground->model, pos, 1.0f, WHITE);
 }
 
+void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint)
+{
+    if (!ground || !ground->ready)
+        return;
+    tint.a = 255;
+    ground->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].color = tint;
+}
+
 void MapProp_UnloadGround(MapGroundSurface *ground)
 {
     if (!ground->ready)

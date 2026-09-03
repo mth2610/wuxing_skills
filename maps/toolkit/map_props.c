@@ -4,6 +4,7 @@
 #include "environment/environment_system.h"
 #include "core/vfx_light.h"   // Đợt E / E2 — VFXLight_BindToShader on the ground
 #include "core/gfx_quality.h"
+#include "core/camera_context.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
@@ -36,3 +37,4 @@ static void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength, float 
 #include "maps/toolkit/map_props_strip.inl"
 #include "maps/toolkit/map_props_rocks.inl"
 #include "maps/toolkit/map_props_cloud.inl"
+#include "maps/toolkit/map_props_nature.inl"
