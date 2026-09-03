@@ -7,15 +7,22 @@
 
 in vec2 fragTexCoord;
 in vec3 fragPosition;   // world space, from path_blend.vs (E2)
+in vec3 fragTangent;
+in vec3 fragBitangent;
+in vec3 fragNormal;
 
 uniform sampler2D texture0; // Texture đường
+uniform sampler2D texture2; // optional tangent-space normal
+uniform sampler2D texture3; // optional roughness
 uniform vec2 tiling;
 uniform vec4 colDiffuse;
+uniform int u_hasSurfaceMaps;
 
 // Thông số ánh sáng
 uniform vec3 lightDir;
 uniform vec4 lightColor;
 uniform vec4 ambientColor;
+uniform vec3 viewPos;
 
 out vec4 finalColor;
 
@@ -37,22 +44,30 @@ void main()
     // Đọc màu texture lặp lại của con đường
     vec2 tiledUV = fragTexCoord * tiling;
     vec4 texColor = texture(texture0, tiledUV);
+    vec2 rotatedUV = vec2(-tiledUV.y * 0.47 + 13.7, tiledUV.x * 0.47 + 8.3);
+    texColor.rgb = mix(texColor.rgb, texture(texture0, rotatedUV).rgb, 0.16);
 
     // --- TẠO LỀ ĐƯỜNG MỜ & MÉO MÓ ---
     // Dùng nhiễu (noise) để phá vỡ đường thẳng hình học của Mesh
-    float n = noise(tiledUV * 2.0) * 0.1;
-    
-    // fragTexCoord.y đại diện cho chiều rộng của con đường (từ lề trái 0.0 đến lề phải 1.0)
-    float edgeV = fragTexCoord.y + (n - 0.1); 
-
-    // Smoothstep: Làm mờ 25% diện tích ở hai bên lề đường
-    float alpha = smoothstep(0.0, 0.25, edgeV) * smoothstep(1.0, 0.75, edgeV);
-
-    // Khử Z-fighting: Cắt bỏ luôn các điểm ảnh quá trong suốt để tránh nhấp nháy với mặt cỏ
-    if (alpha < 0.1) discard; 
+    float n = noise(fragPosition.xz * 1.35);
+    float edgeDistance = min(fragTexCoord.y, 1.0 - fragTexCoord.y);
+    float edgeLimit = 0.055 + (n - 0.5) * 0.075;
+    float coverage = smoothstep(edgeLimit, edgeLimit + 0.085, edgeDistance);
+    if (coverage < 0.52) discard;
+    float edgeWear = 1.0 - smoothstep(0.08, 0.31, edgeDistance);
+    vec3 edgeTint = texColor.rgb * vec3(0.61, 0.69, 0.53);
+    texColor.rgb = mix(texColor.rgb, edgeTint, edgeWear * (0.14 + n * 0.18));
 
     // --- ÁNH SÁNG ---
-    vec3 normal = vec3(0.0, 1.0, 0.0);
+    vec3 normal = normalize(fragNormal);
+    float roughness = 0.82;
+    if (u_hasSurfaceMaps != 0) {
+        vec3 tangentNormal = texture(texture2, tiledUV).xyz * 2.0 - 1.0;
+        normal = normalize(fragTangent * tangentNormal.x
+                         + fragBitangent * tangentNormal.y
+                         + fragNormal * tangentNormal.z);
+        roughness = clamp(texture(texture3, tiledUV).r, 0.22, 1.0);
+    }
     vec3 light = vec3(0.0, 1.0, 0.0);
     if (length(lightDir) > 0.1) light = normalize(-lightDir);
     float NdotL = max(dot(normal, light), 0.0);
@@ -65,8 +80,11 @@ void main()
     // (Đợt G) src alpha không bị kẹp [0,1] → blend hoá điên, biển mây lòi qua
     // đường. Alpha chỉ = texture.a * tint.a * độ-mờ-lề (đều ≤1); lit chỉ ở rgb.
     vec3 pathLit = (texColor * colDiffuse * totalLight).rgb;
+    vec3 viewDir = normalize(viewPos - fragPosition);
+    vec3 halfDir = normalize(light + viewDir);
+    float specular = pow(max(dot(normal, halfDir), 0.0), mix(54.0, 10.0, roughness));
+    pathLit += actualLight.rgb * specular * (1.0 - roughness) * 0.18;
     pathLit += VFXLights_AccumulateFlat(fragPosition, (texColor * colDiffuse).rgb);
 
-    finalColor = vec4(pathLit,
-                      texColor.a * colDiffuse.a * alpha);
+    finalColor = vec4(pathLit, 1.0);
 }

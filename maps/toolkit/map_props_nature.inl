@@ -17,6 +17,17 @@ static Color Nature_LerpColor(Color a, Color b, float t)
     return result;
 }
 
+static Color Nature_ScaleColor(Color color, float scale)
+{
+    int r = (int)(color.r * scale);
+    int g = (int)(color.g * scale);
+    int b = (int)(color.b * scale);
+    if (r > 255) r = 255;
+    if (g > 255) g = 255;
+    if (b > 255) b = 255;
+    return (Color){(unsigned char)r, (unsigned char)g, (unsigned char)b, 255};
+}
+
 static Shader Nature_GetShader(void)
 {
     if (!s_natureShaderReady) {
@@ -45,6 +56,7 @@ static Shader Water_GetShader(void)
         s_waterShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(s_waterShader, "mvp");
         s_waterShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(s_waterShader, "matModel");
         s_waterShader.locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(s_waterShader, "colDiffuse");
+        s_waterShader.locs[SHADER_LOC_MAP_DIFFUSE] = GetShaderLocation(s_waterShader, "texture0");
         VFXLight_RegisterShader(s_waterShader);
         s_waterShaderReady = true;
     }
@@ -78,6 +90,18 @@ static void Nature_AddQuad(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
     Nature_SetVertex(mesh, (*cursor)++, p0, normal, phase, h0, c0);
     Nature_SetVertex(mesh, (*cursor)++, p2, normal, phase, h1, c1);
     Nature_SetVertex(mesh, (*cursor)++, p3, normal, phase, h1, c1);
+}
+
+static void Nature_AddQuad4(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
+                            Vector3 p2, Vector3 p3, Vector3 normal,
+                            float phase, Color c0, Color c1, Color c2, Color c3)
+{
+    Nature_SetVertex(mesh, (*cursor)++, p0, normal, phase, 0.0f, c0);
+    Nature_SetVertex(mesh, (*cursor)++, p1, normal, phase, 0.0f, c1);
+    Nature_SetVertex(mesh, (*cursor)++, p2, normal, phase, 0.0f, c2);
+    Nature_SetVertex(mesh, (*cursor)++, p0, normal, phase, 0.0f, c0);
+    Nature_SetVertex(mesh, (*cursor)++, p2, normal, phase, 0.0f, c2);
+    Nature_SetVertex(mesh, (*cursor)++, p3, normal, phase, 0.0f, c3);
 }
 
 static Mesh Nature_AllocMesh(int vertexCount)
@@ -177,24 +201,37 @@ int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxC
     return count;
 }
 
-MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int count,
-                                      MapMeadowStyle style)
+static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int count,
+                                     MapMeadowStyle style, float minX, float maxX,
+                                     float minZ, float maxZ, int sampleStride,
+                                     int bladesPerClump, int bladeSegments,
+                                     float widthMultiplier, int *outPlacementCount)
 {
-    MapMeadowSurface meadow = {0};
-    if (!placements || count <= 0) return meadow;
-    if (style.bladesPerClump < 1) style.bladesPerClump = 1;
-    if (style.bladesPerClump > 10) style.bladesPerClump = 10;
-    if (style.bladeSegments < 1) style.bladeSegments = 1;
-    if (style.bladeSegments > 4) style.bladeSegments = 4;
-    if (style.bladeWidthScale <= 0.0f) style.bladeWidthScale = 0.24f;
+    int selected = 0;
+    int ordinal = 0;
+    for (int i = 0; i < count; i++) {
+        Vector3 p = placements[i].position;
+        if (p.x < minX || p.x >= maxX || p.z < minZ || p.z >= maxZ)
+            continue;
+        if ((ordinal++ % sampleStride) == 0)
+            selected++;
+    }
+    if (outPlacementCount) *outPlacementCount = selected;
+    if (selected <= 0) return (Model){0};
 
-    int vertexCount = count * style.bladesPerClump * style.bladeSegments * 6;
+    int vertexCount = selected * bladesPerClump * bladeSegments * 6;
     Mesh mesh = Nature_AllocMesh(vertexCount);
     int cursor = 0;
     const float golden = 2.39996323f;
+    ordinal = 0;
     for (int i = 0; i < count; i++) {
         const MapMeadowPlacement *clump = &placements[i];
-        for (int blade = 0; blade < style.bladesPerClump; blade++) {
+        if (clump->position.x < minX || clump->position.x >= maxX ||
+            clump->position.z < minZ || clump->position.z >= maxZ)
+            continue;
+        if ((ordinal++ % sampleStride) != 0)
+            continue;
+        for (int blade = 0; blade < bladesPerClump; blade++) {
             float angle = clump->rotationDeg * DEG2RAD + blade * golden;
             float radial = clump->radius * (0.12f + 0.72f * (float)(blade % 3) / 2.0f);
             float bx = clump->position.x + cosf(angle * 1.73f) * radial;
@@ -202,13 +239,13 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             float height = clump->height * (0.74f + 0.26f * sinf((float)(i * 13 + blade * 7)) * 0.5f + 0.13f);
             // Slightly widen alternating blades. Sub-pixel-thin vegetation
             // aliases into black needles at gameplay camera distance.
-            float width = clump->radius * style.bladeWidthScale
+            float width = clump->radius * style.bladeWidthScale * widthMultiplier
                         * (0.88f + 0.20f * (float)(blade & 1));
             Vector3 side = {-sinf(angle), 0.0f, cosf(angle)};
             Vector3 facing = {cosf(angle), 0.12f, sinf(angle)};
-            for (int segment = 0; segment < style.bladeSegments; segment++) {
-                float t0 = (float)segment / style.bladeSegments;
-                float t1 = (float)(segment + 1) / style.bladeSegments;
+            for (int segment = 0; segment < bladeSegments; segment++) {
+                float t0 = (float)segment / bladeSegments;
+                float t1 = (float)(segment + 1) / bladeSegments;
                 float bend0 = t0 * t0 * height * 0.16f;
                 float bend1 = t1 * t1 * height * 0.16f;
                 float w0 = width * (1.0f - t0 * 0.82f);
@@ -226,7 +263,75 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             }
         }
     }
-    meadow.model = Nature_ModelFromMesh(mesh, Nature_GetShader());
+    return Nature_ModelFromMesh(mesh, Nature_GetShader());
+}
+
+MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int count,
+                                      MapMeadowStyle style)
+{
+    MapMeadowSurface meadow = {0};
+    if (!placements || count <= 0) return meadow;
+    if (style.bladesPerClump < 1) style.bladesPerClump = 1;
+    if (style.bladesPerClump > 10) style.bladesPerClump = 10;
+    if (style.bladeSegments < 1) style.bladeSegments = 1;
+    if (style.bladeSegments > 4) style.bladeSegments = 4;
+    if (style.bladeWidthScale <= 0.0f) style.bladeWidthScale = 0.24f;
+    if (style.chunkSize <= 0.0f) style.chunkSize = 12.0f;
+
+    float minX = placements[0].position.x;
+    float maxX = minX;
+    float minZ = placements[0].position.z;
+    float maxZ = minZ;
+    for (int i = 1; i < count; i++) {
+        if (placements[i].position.x < minX) minX = placements[i].position.x;
+        if (placements[i].position.x > maxX) maxX = placements[i].position.x;
+        if (placements[i].position.z < minZ) minZ = placements[i].position.z;
+        if (placements[i].position.z > maxZ) maxZ = placements[i].position.z;
+    }
+    maxX += 0.001f;
+    maxZ += 0.001f;
+    int columns = (int)ceilf((maxX - minX) / style.chunkSize);
+    int rows = (int)ceilf((maxZ - minZ) / style.chunkSize);
+    if (columns < 1) columns = 1;
+    if (rows < 1) rows = 1;
+    int capacity = columns * rows;
+    meadow.chunks = MemAlloc((unsigned int)capacity * sizeof(MapMeadowChunk));
+    meadow.lodDistance = style.lodDistance;
+    meadow.drawDistance = style.drawDistance;
+
+    for (int row = 0; row < rows; row++) {
+        for (int column = 0; column < columns; column++) {
+            float x0 = minX + column * style.chunkSize;
+            float x1 = x0 + style.chunkSize;
+            float z0 = minZ + row * style.chunkSize;
+            float z1 = z0 + style.chunkSize;
+            int nearCount = 0;
+            Model nearModel = Nature_BuildMeadowChunk(
+                placements, count, style, x0, x1, z0, z1, 1,
+                style.bladesPerClump, style.bladeSegments, 1.0f, &nearCount);
+            if (nearCount <= 0)
+                continue;
+
+            int farBlades = style.bladesPerClump / 2;
+            if (farBlades < 2) farBlades = 2;
+            int farCount = 0;
+            Model farModel = Nature_BuildMeadowChunk(
+                placements, count, style, x0, x1, z0, z1, 2,
+                farBlades, 1, 1.65f, &farCount);
+            MapMeadowChunk *chunk = &meadow.chunks[meadow.chunkCount++];
+            *chunk = (MapMeadowChunk){
+                .nearModel = nearModel,
+                .farModel = farModel,
+                .center = {(x0 + x1) * 0.5f, 0.0f, (z0 + z1) * 0.5f},
+                .ready = true,
+            };
+        }
+    }
+    if (meadow.chunkCount <= 0) {
+        MemFree(meadow.chunks);
+        meadow.chunks = NULL;
+        return meadow;
+    }
     meadow.ready = true;
     return meadow;
 }
@@ -237,14 +342,33 @@ void MapProp_DrawMeadow(const MapMeadowSurface *meadow, Vector3 worldOffset, flo
     if (!meadow || !meadow->ready) return;
     Nature_UpdateShader(time, windDirection, windStrength);
     rlDisableBackfaceCulling();
-    DrawModel(meadow->model, worldOffset, 1.0f, WHITE);
+    float lodDistanceSq = meadow->lodDistance * meadow->lodDistance;
+    float drawDistanceSq = meadow->drawDistance * meadow->drawDistance;
+    for (int i = 0; i < meadow->chunkCount; i++) {
+        const MapMeadowChunk *chunk = &meadow->chunks[i];
+        float dx = camera.position.x - (chunk->center.x + worldOffset.x);
+        float dz = camera.position.z - (chunk->center.z + worldOffset.z);
+        float distanceSq = dx * dx + dz * dz;
+        if (meadow->drawDistance > 0.0f && distanceSq > drawDistanceSq)
+            continue;
+        if (meadow->lodDistance > 0.0f && distanceSq > lodDistanceSq)
+            DrawModel(chunk->farModel, worldOffset, 1.0f, WHITE);
+        else
+            DrawModel(chunk->nearModel, worldOffset, 1.0f, WHITE);
+    }
     rlEnableBackfaceCulling();
 }
 
 void MapProp_UnloadMeadow(MapMeadowSurface *meadow)
 {
     if (!meadow || !meadow->ready) return;
-    UnloadModel(meadow->model);
+    for (int i = 0; i < meadow->chunkCount; i++) {
+        UnloadModel(meadow->chunks[i].nearModel);
+        UnloadModel(meadow->chunks[i].farModel);
+    }
+    MemFree(meadow->chunks);
+    meadow->chunks = NULL;
+    meadow->chunkCount = 0;
     meadow->ready = false;
 }
 
@@ -253,8 +377,14 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
 {
     MapFlowerField field = {0};
     if (!placements || count <= 0) return field;
-    const int verticesPerFlower = 54;
-    Mesh mesh = Nature_AllocMesh(count * verticesPerFlower);
+    int vertexCount = 0;
+    for (int i = 0; i < count; i++) {
+        int petals = placements[i].petalCount ? placements[i].petalCount : 5;
+        if (petals < 4) petals = 4;
+        if (petals > 6) petals = 6;
+        vertexCount += 30 + petals * 6; // stems + one leaf + petals + center pyramid
+    }
+    Mesh mesh = Nature_AllocMesh(vertexCount);
     int cursor = 0;
     for (int i = 0; i < count; i++) {
         const MapFlowerPlacement *flower = &placements[i];
@@ -262,34 +392,83 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         float h = flower->height;
         float stemWidth = fmaxf(0.018f, flower->bloomRadius * 0.22f);
         Vector3 base = flower->position;
-        Vector3 head = {base.x, base.y + h, base.z};
+        float leanAngle = flower->rotationDeg * DEG2RAD * 0.73f + phase * 4.1f;
+        float lean = h * (0.025f + 0.055f * (0.5f + 0.5f * sinf((float)i * 2.37f)));
+        Vector3 head = {base.x + cosf(leanAngle) * lean, base.y + h,
+                        base.z + sinf(leanAngle) * lean};
+        float headTilt = 0.24f + 0.28f * (0.5f + 0.5f * sinf((float)i * 1.91f + phase));
+        float tiltX = cosf(leanAngle) * headTilt;
+        float tiltZ = sinf(leanAngle) * headTilt;
+        Vector3 bloomNormal = {-tiltX, 1.0f, -tiltZ};
         for (int cross = 0; cross < 2; cross++) {
             float angle = flower->rotationDeg * DEG2RAD + cross * PI * 0.5f;
             Vector3 side = {cosf(angle) * stemWidth, 0.0f, sinf(angle) * stemWidth};
-            Vector3 normal = {-sinf(angle), 0.05f, cosf(angle)};
+            Vector3 normal = {-sinf(angle), 0.08f, cosf(angle)};
             Vector3 p0 = {base.x - side.x, base.y, base.z - side.z};
             Vector3 p1 = {base.x + side.x, base.y, base.z + side.z};
             Vector3 p2 = {head.x + side.x * 0.45f, head.y, head.z + side.z * 0.45f};
             Vector3 p3 = {head.x - side.x * 0.45f, head.y, head.z - side.z * 0.45f};
             Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, normal, phase, 0.0f, 1.0f, stemColor, stemColor);
         }
-        for (int petal = 0; petal < 5; petal++) {
-            float angle = flower->rotationDeg * DEG2RAD + (float)petal * 2.0f * PI / 5.0f;
+        {
+            float leafAngle = flower->rotationDeg * DEG2RAD + 1.37f;
+            Vector3 leafDir = {cosf(leafAngle), 0.0f, sinf(leafAngle)};
+            Vector3 leafSide = {-leafDir.z, 0.0f, leafDir.x};
+            float leafLength = flower->bloomRadius * 0.88f;
+            float leafWidth = leafLength * 0.19f;
+            Vector3 root = {
+                base.x + (head.x - base.x) * 0.43f,
+                base.y + h * 0.43f,
+                base.z + (head.z - base.z) * 0.43f,
+            };
+            Vector3 leafTip = {root.x + leafDir.x * leafLength, root.y + leafLength * 0.32f,
+                               root.z + leafDir.z * leafLength};
+            Vector3 l0 = {root.x - leafSide.x * leafWidth, root.y, root.z - leafSide.z * leafWidth};
+            Vector3 l1 = {root.x + leafSide.x * leafWidth, root.y, root.z + leafSide.z * leafWidth};
+            Vector3 l2 = {leafTip.x + leafSide.x * leafWidth * 0.10f, leafTip.y,
+                          leafTip.z + leafSide.z * leafWidth * 0.10f};
+            Vector3 l3 = {leafTip.x - leafSide.x * leafWidth * 0.10f, leafTip.y,
+                          leafTip.z - leafSide.z * leafWidth * 0.10f};
+            Nature_AddQuad(&mesh, &cursor, l0, l1, l2, l3,
+                           (Vector3){-leafDir.x * 0.25f, 1.0f, -leafDir.z * 0.25f},
+                           phase, 0.35f, 0.72f, stemColor, Nature_ScaleColor(stemColor, 1.12f));
+        }
+        int petalCount = flower->petalCount ? flower->petalCount : 5;
+        if (petalCount < 4) petalCount = 4;
+        if (petalCount > 6) petalCount = 6;
+        float petalScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
+        for (int petal = 0; petal < petalCount; petal++) {
+            float angle = flower->rotationDeg * DEG2RAD + (float)petal * 2.0f * PI / petalCount;
             Vector3 radial = {cosf(angle), 0.0f, sinf(angle)};
             Vector3 side = {-radial.z, 0.0f, radial.x};
-            float r = flower->bloomRadius;
-            Vector3 p0 = {head.x + radial.x * r * 0.10f, head.y + 0.018f, head.z + radial.z * r * 0.10f};
-            Vector3 p1 = {head.x + radial.x * r * 0.48f + side.x * r * 0.34f, head.y + r * 0.10f, head.z + radial.z * r * 0.48f + side.z * r * 0.34f};
-            Vector3 p2 = {head.x + radial.x * r, head.y - r * 0.08f, head.z + radial.z * r};
-            Vector3 p3 = {head.x + radial.x * r * 0.48f - side.x * r * 0.34f, head.y + r * 0.10f, head.z + radial.z * r * 0.48f - side.z * r * 0.34f};
-            Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, (Vector3){0.0f, 1.0f, 0.0f},
-                           phase, 1.0f, 1.0f, centerColor, flower->petalColor);
+            float irregularity = 0.92f + 0.08f * sinf((float)(i * 17 + petal * 11));
+            float r = flower->bloomRadius * petalScale * irregularity;
+            float cup = r * (0.035f + 0.055f * sinf((float)(i * 13 + petal * 7)));
+            float tipDrop = r * (0.07f + 0.10f * (0.5f + 0.5f * sinf((float)(i * 5 + petal * 19))));
+            float ox0 = radial.x * r * 0.10f;
+            float oz0 = radial.z * r * 0.10f;
+            float ox1 = radial.x * r * 0.48f + side.x * r * 0.29f;
+            float oz1 = radial.z * r * 0.48f + side.z * r * 0.29f;
+            float ox2 = radial.x * r;
+            float oz2 = radial.z * r;
+            float ox3 = radial.x * r * 0.48f - side.x * r * 0.29f;
+            float oz3 = radial.z * r * 0.48f - side.z * r * 0.29f;
+            Vector3 p0 = {head.x + ox0, head.y + 0.018f + tiltX * ox0 + tiltZ * oz0, head.z + oz0};
+            Vector3 p1 = {head.x + ox1, head.y + cup + tiltX * ox1 + tiltZ * oz1, head.z + oz1};
+            Vector3 p2 = {head.x + ox2, head.y - tipDrop + tiltX * ox2 + tiltZ * oz2, head.z + oz2};
+            Vector3 p3 = {head.x + ox3, head.y + cup * 0.72f + tiltX * ox3 + tiltZ * oz3, head.z + oz3};
+            Vector3 petalNormal = {bloomNormal.x - radial.x * 0.12f,
+                                   bloomNormal.y, bloomNormal.z - radial.z * 0.12f};
+            Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, petalNormal,
+                           phase, 1.0f, 1.0f, flower->petalColor, flower->petalColor);
         }
-        float c = flower->bloomRadius * 0.22f;
+        float c = flower->bloomRadius * 0.17f;
         Vector3 top = {head.x, head.y + c * 0.75f, head.z};
         Vector3 corners[4] = {
-            {head.x - c, head.y, head.z - c}, {head.x + c, head.y, head.z - c},
-            {head.x + c, head.y, head.z + c}, {head.x - c, head.y, head.z + c},
+            {head.x - c, head.y - tiltX * c - tiltZ * c, head.z - c},
+            {head.x + c, head.y + tiltX * c - tiltZ * c, head.z - c},
+            {head.x + c, head.y + tiltX * c + tiltZ * c, head.z + c},
+            {head.x - c, head.y - tiltX * c + tiltZ * c, head.z + c},
         };
         for (int face = 0; face < 4; face++) {
             Nature_SetVertex(&mesh, cursor++, top, (Vector3){0.0f, 1.0f, 0.0f}, phase, 1.0f, centerColor);
@@ -332,6 +511,17 @@ static void Water_SetVertex(Mesh *mesh, int index, Vector3 p, Vector2 uv, Color 
     mesh->colors[index * 4 + 3] = 255;
 }
 
+static float Water_EdgeScale(float angle, float radial, unsigned int seed)
+{
+    float seedPhase = (float)(seed & 1023u) * 0.0173f;
+    float shorelineNoise = sinf(angle * 5.0f + seedPhase) * 0.024f
+                         + sinf(angle * 11.0f - seedPhase * 0.63f) * 0.013f
+                         + sinf(angle * 17.0f + 1.7f) * 0.006f;
+    float edgeWeight = radial * radial;
+    edgeWeight *= edgeWeight;
+    return 1.0f + shorelineNoise * edgeWeight;
+}
+
 MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
 {
     MapWaterSurface water = {0};
@@ -340,6 +530,9 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
     if (config.segments > 192) config.segments = 192;
     if (config.rings < 2) config.rings = 2;
     if (config.rings > 32) config.rings = 32;
+    if (config.detailScale <= 0.0f) config.detailScale = 0.18f;
+    if (config.detailStrength < 0.0f) config.detailStrength = 0.0f;
+    if (config.detailStrength > 0.24f) config.detailStrength = 0.24f;
     water.config = config;
 
     Mesh lakeMesh = {0};
@@ -356,14 +549,20 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
         for (int segment = 0; segment < config.segments; segment++) {
             float a0 = (float)segment * 2.0f * PI / config.segments;
             float a1 = (float)(segment + 1) * 2.0f * PI / config.segments;
-            Vector3 p00 = {cosf(a0) * config.radiusX * r0, 0.0f, sinf(a0) * config.radiusZ * r0};
-            Vector3 p01 = {cosf(a1) * config.radiusX * r0, 0.0f, sinf(a1) * config.radiusZ * r0};
-            Vector3 p10 = {cosf(a0) * config.radiusX * r1, 0.0f, sinf(a0) * config.radiusZ * r1};
-            Vector3 p11 = {cosf(a1) * config.radiusX * r1, 0.0f, sinf(a1) * config.radiusZ * r1};
-            Vector2 uv00 = {p00.x / config.radiusX * 0.5f + 0.5f, p00.z / config.radiusZ * 0.5f + 0.5f};
-            Vector2 uv01 = {p01.x / config.radiusX * 0.5f + 0.5f, p01.z / config.radiusZ * 0.5f + 0.5f};
-            Vector2 uv10 = {p10.x / config.radiusX * 0.5f + 0.5f, p10.z / config.radiusZ * 0.5f + 0.5f};
-            Vector2 uv11 = {p11.x / config.radiusX * 0.5f + 0.5f, p11.z / config.radiusZ * 0.5f + 0.5f};
+            float e00 = Water_EdgeScale(a0, r0, config.seed);
+            float e01 = Water_EdgeScale(a1, r0, config.seed);
+            float e10 = Water_EdgeScale(a0, r1, config.seed);
+            float e11 = Water_EdgeScale(a1, r1, config.seed);
+            Vector3 p00 = {cosf(a0) * config.radiusX * r0 * e00, 0.0f, sinf(a0) * config.radiusZ * r0 * e00};
+            Vector3 p01 = {cosf(a1) * config.radiusX * r0 * e01, 0.0f, sinf(a1) * config.radiusZ * r0 * e01};
+            Vector3 p10 = {cosf(a0) * config.radiusX * r1 * e10, 0.0f, sinf(a0) * config.radiusZ * r1 * e10};
+            Vector3 p11 = {cosf(a1) * config.radiusX * r1 * e11, 0.0f, sinf(a1) * config.radiusZ * r1 * e11};
+            // Keep radial UVs idealized while geometry meanders, so depth
+            // grading and foam remain locked exactly to the visible edge.
+            Vector2 uv00 = {cosf(a0) * r0 * 0.5f + 0.5f, sinf(a0) * r0 * 0.5f + 0.5f};
+            Vector2 uv01 = {cosf(a1) * r0 * 0.5f + 0.5f, sinf(a1) * r0 * 0.5f + 0.5f};
+            Vector2 uv10 = {cosf(a0) * r1 * 0.5f + 0.5f, sinf(a0) * r1 * 0.5f + 0.5f};
+            Vector2 uv11 = {cosf(a1) * r1 * 0.5f + 0.5f, sinf(a1) * r1 * 0.5f + 0.5f};
             Water_SetVertex(&lakeMesh, cursor++, p00, uv00, WHITE);
             Water_SetVertex(&lakeMesh, cursor++, p01, uv01, WHITE);
             Water_SetVertex(&lakeMesh, cursor++, p11, uv11, WHITE);
@@ -373,26 +572,74 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
         }
     }
     water.waterModel = Nature_ModelFromMesh(lakeMesh, Water_GetShader());
+    Texture2D waterDetail = ResourceManager_LoadTexture("assets/textures/noise.png");
+    SetTextureWrap(waterDetail, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(waterDetail, TEXTURE_FILTER_BILINEAR);
+    water.waterModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = waterDetail;
 
-    Mesh bankMesh = Nature_AllocMesh(config.segments * 6);
+    const int bankRings = 3;
+    Mesh bankMesh = Nature_AllocMesh(config.segments * bankRings * 6);
     cursor = 0;
-    for (int segment = 0; segment < config.segments; segment++) {
-        float a0 = (float)segment * 2.0f * PI / config.segments;
-        float a1 = (float)(segment + 1) * 2.0f * PI / config.segments;
-        float noise0 = 1.0f + 0.035f * sinf(a0 * 7.0f + (float)config.seed * 0.013f);
-        float noise1 = 1.0f + 0.035f * sinf(a1 * 7.0f + (float)config.seed * 0.013f);
-        float outerX = config.radiusX + config.bankWidth;
-        float outerZ = config.radiusZ + config.bankWidth * 0.72f;
-        Vector3 i0 = {cosf(a0) * config.radiusX * 0.985f, -0.018f, sinf(a0) * config.radiusZ * 0.985f};
-        Vector3 i1 = {cosf(a1) * config.radiusX * 0.985f, -0.018f, sinf(a1) * config.radiusZ * 0.985f};
-        Vector3 o0 = {cosf(a0) * outerX * noise0, -0.035f, sinf(a0) * outerZ * noise0};
-        Vector3 o1 = {cosf(a1) * outerX * noise1, -0.035f, sinf(a1) * outerZ * noise1};
-        Nature_AddQuad(&bankMesh, &cursor, i0, i1, o1, o0, (Vector3){0.0f, 1.0f, 0.0f},
-                       0.0f, 0.0f, 0.0f, config.bankInnerColor, config.bankOuterColor);
+    float bankOuterY = config.bankGroundY - config.center.y;
+    for (int ring = 0; ring < bankRings; ring++) {
+        float t0 = (float)ring / bankRings;
+        float t1 = (float)(ring + 1) / bankRings;
+        float s0 = t0 * t0 * (3.0f - 2.0f * t0);
+        float s1 = t1 * t1 * (3.0f - 2.0f * t1);
+        Color c0 = Nature_LerpColor(config.bankInnerColor, config.bankOuterColor, s0);
+        Color c1 = Nature_LerpColor(config.bankInnerColor, config.bankOuterColor, s1);
+        for (int segment = 0; segment < config.segments; segment++) {
+            float a0 = (float)segment * 2.0f * PI / config.segments;
+            float a1 = (float)(segment + 1) * 2.0f * PI / config.segments;
+            float inner0 = Water_EdgeScale(a0, 1.0f, config.seed);
+            float inner1 = Water_EdgeScale(a1, 1.0f, config.seed);
+            float seedPhase = (float)(config.seed & 1023u) * 0.0173f;
+            float habitat0 = 0.5f + 0.34f * sinf(a0 * 4.0f + seedPhase)
+                                   + 0.16f * sinf(a0 * 9.0f - seedPhase * 0.61f);
+            float habitat1 = 0.5f + 0.34f * sinf(a1 * 4.0f + seedPhase)
+                                   + 0.16f * sinf(a1 * 9.0f - seedPhase * 0.61f);
+            habitat0 = fmaxf(0.0f, fminf(1.0f, habitat0));
+            habitat1 = fmaxf(0.0f, fminf(1.0f, habitat1));
+            float width0 = config.bankWidth * (0.10f + 1.04f * habitat0 * habitat0);
+            float width1 = config.bankWidth * (0.10f + 1.04f * habitat1 * habitat1);
+            float rx00 = config.radiusX * 0.985f * inner0 + width0 * s0;
+            float rz00 = config.radiusZ * 0.985f * inner0 + width0 * 0.72f * s0;
+            float rx01 = config.radiusX * 0.985f * inner1 + width1 * s0;
+            float rz01 = config.radiusZ * 0.985f * inner1 + width1 * 0.72f * s0;
+            float rx10 = config.radiusX * 0.985f * inner0 + width0 * s1;
+            float rz10 = config.radiusZ * 0.985f * inner0 + width0 * 0.72f * s1;
+            float rx11 = config.radiusX * 0.985f * inner1 + width1 * s1;
+            float rz11 = config.radiusZ * 0.985f * inner1 + width1 * 0.72f * s1;
+            float y0 = -0.018f + (bankOuterY + 0.018f) * s0;
+            float y1 = -0.018f + (bankOuterY + 0.018f) * s1;
+            Vector3 p00 = {cosf(a0) * rx00, y0, sinf(a0) * rz00};
+            Vector3 p01 = {cosf(a1) * rx01, y0, sinf(a1) * rz01};
+            Vector3 p10 = {cosf(a0) * rx10, y1, sinf(a0) * rz10};
+            Vector3 p11 = {cosf(a1) * rx11, y1, sinf(a1) * rz11};
+            float shade0 = 0.88f + 0.16f * (0.5f + 0.5f * sinf(a0 * 7.0f - seedPhase * 0.7f));
+            float shade1 = 0.88f + 0.16f * (0.5f + 0.5f * sinf(a1 * 7.0f - seedPhase * 0.7f));
+            Nature_AddQuad4(&bankMesh, &cursor, p00, p01, p11, p10,
+                            (Vector3){0.0f, 1.0f, 0.0f}, 0.0f,
+                            Nature_ScaleColor(c0, shade0), Nature_ScaleColor(c0, shade1),
+                            Nature_ScaleColor(c1, shade1), Nature_ScaleColor(c1, shade0));
+        }
     }
     water.bankModel = Nature_ModelFromMesh(bankMesh, Nature_GetShader());
     water.ready = true;
     return water;
+}
+
+Vector3 MapProp_GetWaterEdgePoint(const MapWaterSurface *water, float angleRad,
+                                  float radialScale)
+{
+    if (!water)
+        return (Vector3){0};
+    float edge = Water_EdgeScale(angleRad, 1.0f, water->config.seed);
+    return (Vector3){
+        water->config.center.x + cosf(angleRad) * water->config.radiusX * radialScale * edge,
+        water->config.center.y,
+        water->config.center.z + sinf(angleRad) * water->config.radiusZ * radialScale * edge,
+    };
 }
 
 void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time)
@@ -419,6 +666,8 @@ void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time)
     SetShaderValue(shader, GetShaderLocation(shader, "u_waveHeight"), &water->config.waveHeight, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, GetShaderLocation(shader, "u_waveScale"), &water->config.waveScale, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, GetShaderLocation(shader, "u_waveSpeed"), &water->config.waveSpeed, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_detailScale"), &water->config.detailScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_detailStrength"), &water->config.detailStrength, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightDir"), &lightDir, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightColor"), &sunRgb, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_ambientColor"), &ambientRgb, SHADER_UNIFORM_VEC3);

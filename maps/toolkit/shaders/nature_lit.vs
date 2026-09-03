@@ -21,8 +21,12 @@ void main()
     vec3 local = vertexPosition;
     vec3 world = vec3(matModel * vec4(local, 1.0));
     float rootMask = vertexTexCoord.y * vertexTexCoord.y;
-    float gust = sin(u_time * 1.17 + dot(world.xz, vec2(0.21, 0.17)) + vertexTexCoord.x * 6.2831);
-    gust += sin(u_time * 0.43 + dot(world.xz, vec2(-0.08, 0.13))) * 0.45;
+    // Broad gusts stay coherent across the field; per-plant phase only
+    // contributes a restrained high-frequency flutter.
+    float gust = sin(u_time * 0.74 + dot(world.xz, vec2(0.145, 0.096)));
+    gust += sin(u_time * 0.31 + dot(world.xz, vec2(-0.052, 0.081))) * 0.48;
+    gust += sin(u_time * 2.35 + dot(world.xz, vec2(0.61, -0.38))
+                + vertexTexCoord.x * 6.2831) * 0.16;
     local.xz += u_windDirection * gust * u_windStrength * rootMask;
     world = vec3(matModel * vec4(local, 1.0));
 

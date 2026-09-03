@@ -23,14 +23,14 @@
 #define MOUNTAIN_RING_DEPTH 58.0f
 #define MOUNTAIN_ROCK_COUNT 40
 #define ROCK_COUNT 10
-#define GRASS_TUFT_CAPACITY 3200
-#define FLOWER_COUNT 720
-#define REED_COUNT 140
+#define GRASS_TUFT_CAPACITY 6400
+#define FLOWER_COUNT 1500
+#define REED_COUNT 180
 
 static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
 static const Vector3 kLakeCenter = {63.0f, 0.0f, 25.5f};
-static const float kLakeRadiusX = 11.5f;
-static const float kLakeRadiusZ = 8.2f;
+static const float kLakeRadiusX = 10.5f;
+static const float kLakeRadiusZ = 7.4f;
 
 static const MapZone ISLAND_ZONES[] = {
     {NAT_RIVER,  {63.0f, 0.0f, 25.5f}, 8.0f},
@@ -135,10 +135,10 @@ static bool IsNearPath(float x, float z, float margin)
 static Color FlowerColor(int cluster, bool secondary)
 {
     static const Color dominant[3] = {
-        {205, 185, 213, 255}, {226, 211, 160, 255}, {174, 201, 215, 255},
+        {164, 107, 135, 255}, {190, 154, 72, 255}, {88, 135, 156, 255},
     };
     static const Color accent[3] = {
-        {224, 198, 205, 255}, {205, 181, 116, 255}, {197, 184, 216, 255},
+        {201, 174, 157, 255}, {167, 111, 57, 255}, {131, 103, 160, 255},
     };
     return secondary ? accent[cluster] : dominant[cluster];
 }
@@ -166,9 +166,9 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 1.08f, .jitter = 0.82f,
-            .minRadius = 0.105f, .maxRadius = 0.19f,
-            .minHeight = 0.17f, .maxHeight = 0.39f,
+            .spacing = 0.78f, .jitter = 0.86f,
+            .minRadius = 0.07f, .maxRadius = 0.135f,
+            .minHeight = 0.12f, .maxHeight = 0.29f,
             .yOffset = 0.035f, .seed = 0x51a7c3u,
         }, VerdantGrassDensity, NULL);
 
@@ -180,28 +180,45 @@ static void BuildMeadowLayout(void)
     };
     for (int i = 0; i < FLOWER_COUNT; i++) {
         int cluster = i % 3;
-        float angle = RandomRange(&rng, 0.0f, 2.0f * PI);
-        float radius = powf(Random01(&rng), 1.18f);
-        float x = centers[cluster].x + cosf(angle) * radii[cluster].x * radius;
-        float z = centers[cluster].z + sinf(angle) * radii[cluster].z * radius;
+        float x = centers[cluster].x;
+        float z = centers[cluster].z;
+        for (int attempt = 0; attempt < 16; attempt++) {
+            float angle = RandomRange(&rng, 0.0f, 2.0f * PI);
+            float radius = powf(Random01(&rng), 0.92f);
+            x = centers[cluster].x + cosf(angle) * radii[cluster].x * radius;
+            z = centers[cluster].z + sinf(angle) * radii[cluster].z * radius;
+            if (!IsInsideLake(x, z, 0.85f) && !IsNearPath(x, z, 1.92f))
+                break;
+        }
         s_flowerPlacements[i].position = (Vector3){x, 0.055f, z};
-        s_flowerPlacements[i].height = RandomRange(&rng, 0.24f, 0.52f);
-        s_flowerPlacements[i].bloomRadius = RandomRange(&rng, 0.065f, 0.125f);
+        s_flowerPlacements[i].height = RandomRange(&rng, 0.13f, 0.30f);
+        s_flowerPlacements[i].bloomRadius = RandomRange(&rng, 0.045f, 0.085f);
         s_flowerPlacements[i].rotationDeg = RandomRange(&rng, 0.0f, 360.0f);
         s_flowerPlacements[i].phase = Random01(&rng);
-        s_flowerPlacements[i].petalColor = FlowerColor(cluster, Random01(&rng) > 0.82f);
+        int colorCluster = cluster;
+        if (Random01(&rng) > 0.72f)
+            colorCluster = (cluster + 1 + (Random01(&rng) > 0.5f ? 1 : 0)) % 3;
+        s_flowerPlacements[i].petalColor = FlowerColor(colorCluster, Random01(&rng) > 0.80f);
+        int basePetals = colorCluster == 0 ? 5 : (colorCluster == 1 ? 6 : 4);
+        if (Random01(&rng) > 0.76f)
+            basePetals += (Random01(&rng) > 0.5f) ? 1 : -1;
+        s_flowerPlacements[i].petalCount = (unsigned char)basePetals;
+        s_flowerPlacements[i].petalLengthScale = RandomRange(&rng, 0.88f, 1.12f);
     }
 
     for (int i = 0; i < REED_COUNT; i++) {
-        float angle = ((float)i / (float)REED_COUNT) * 2.0f * PI + RandomRange(&rng, -0.055f, 0.055f);
-        float rim = RandomRange(&rng, 0.96f, 1.10f);
-        s_reedPlacements[i].position = (Vector3){
-            kLakeCenter.x + cosf(angle) * kLakeRadiusX * rim,
-            0.075f,
-            kLakeCenter.z + sinf(angle) * kLakeRadiusZ * rim,
-        };
-        s_reedPlacements[i].radius = RandomRange(&rng, 0.11f, 0.18f);
-        s_reedPlacements[i].height = RandomRange(&rng, 0.62f, 1.12f);
+        float angle;
+        float habitat;
+        do {
+            angle = RandomRange(&rng, 0.0f, 2.0f * PI);
+            habitat = 0.5f + 0.5f * sinf(angle * 3.0f + 0.8f);
+            habitat *= habitat;
+        } while (Random01(&rng) > 0.18f + habitat * 0.72f);
+        float rim = RandomRange(&rng, 0.985f, 1.085f);
+        s_reedPlacements[i].position = MapProp_GetWaterEdgePoint(&s_lake, angle, rim);
+        s_reedPlacements[i].position.y -= 0.03f;
+        s_reedPlacements[i].radius = RandomRange(&rng, 0.08f, 0.14f);
+        s_reedPlacements[i].height = RandomRange(&rng, 0.38f, 0.82f);
         s_reedPlacements[i].rotationDeg = angle * 180.0f / PI;
         s_reedPlacements[i].phase = Random01(&rng);
     }
@@ -230,13 +247,13 @@ void InitVerdantPathMap(void)
         return;
 
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){42, 48, 59, 255});
-    Environment_SetSunColor((Color){139, 146, 160, 255});
-    Environment_SetSunDirection((Vector3){0.48f, -0.72f, -0.34f});
-    Environment_SetShadowColor((Color){9, 12, 16, 158});
+    Environment_SetAmbientColor((Color){51, 58, 67, 255});
+    Environment_SetSunColor((Color){171, 161, 140, 255});
+    Environment_SetSunDirection((Vector3){0.44f, -0.76f, -0.31f});
+    Environment_SetShadowColor((Color){11, 14, 19, 150});
     Environment_SetFogConfig((EnvFogConfig){
-        .color = {43, 50, 62, 255}, .start = 62.0f, .end = 145.0f,
-        .density = 0.92f, .enabled = true,
+        .color = {56, 64, 73, 255}, .start = 68.0f, .end = 152.0f,
+        .density = 0.84f, .enabled = true,
     });
 
     s_ground = MapProp_CreateGroundHeightmap(
@@ -262,28 +279,31 @@ void InitVerdantPathMap(void)
         }
     }
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
+    s_lake = MapProp_CreateWaterSurface((MapWaterConfig){
+        .center = {63.0f, 0.075f, 25.5f},
+        .radiusX = kLakeRadiusX, .radiusZ = kLakeRadiusZ, .bankWidth = 0.56f,
+        .waveHeight = 0.042f, .waveScale = 0.96f, .waveSpeed = 0.72f,
+        .bankGroundY = 0.008f, .detailScale = 0.075f, .detailStrength = 0.17f,
+        .segments = 112, .rings = 14, .seed = 9173u,
+        .deepColor = {10, 31, 39, 255}, .shallowColor = {45, 79, 74, 255},
+        .foamColor = {112, 132, 116, 255},
+        .bankInnerColor = {52, 58, 43, 255}, .bankOuterColor = {65, 84, 51, 255},
+    });
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {59, 78, 43, 255}, .tipColor = {100, 122, 69, 255},
-            .bladesPerClump = 5, .bladeSegments = 2, .bladeWidthScale = 0.30f,
+            .rootColor = {57, 75, 42, 255}, .tipColor = {95, 116, 67, 255},
+            .bladesPerClump = 4, .bladeSegments = 2, .bladeWidthScale = 0.27f,
+            .chunkSize = 12.0f, .lodDistance = 30.0f, .drawDistance = 78.0f,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
         (MapMeadowStyle){
             .rootColor = {42, 57, 28, 255}, .tipColor = {112, 119, 57, 255},
             .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.20f,
+            .chunkSize = 18.0f, .lodDistance = 34.0f, .drawDistance = 72.0f,
         });
     s_flowerField = MapProp_CreateFlowerField(s_flowerPlacements, FLOWER_COUNT,
         (Color){61, 91, 48, 255}, (Color){188, 142, 63, 255});
-    s_lake = MapProp_CreateWaterSurface((MapWaterConfig){
-        .center = {63.0f, 0.075f, 25.5f},
-        .radiusX = 11.5f, .radiusZ = 8.2f, .bankWidth = 1.65f,
-        .waveHeight = 0.055f, .waveScale = 0.82f, .waveSpeed = 0.88f,
-        .segments = 112, .rings = 14, .seed = 9173u,
-        .deepColor = {8, 35, 48, 255}, .shallowColor = {47, 91, 91, 255},
-        .foamColor = {141, 165, 154, 255},
-        .bankInnerColor = {76, 78, 58, 255}, .bankOuterColor = {39, 61, 37, 255},
-    });
     MapManager_SetZones(ISLAND_ZONES, ISLAND_ZONE_COUNT);
     s_time = 0.0f;
     s_ready = true;

@@ -33,6 +33,8 @@ void main()
     // Lấy màu Texture
     vec2 tiledUV = fragTexCoord * tiling;
     vec4 colorGrass = texture(texGrass, tiledUV);
+    vec2 broadUV = vec2(tiledUV.y * 0.43 + 17.0, -tiledUV.x * 0.43 + 9.0);
+    colorGrass.rgb = mix(colorGrass.rgb, texture(texGrass, broadUV).rgb, 0.34);
     vec4 colorPath  = texture(texPath, tiledUV);
     vec4 mixedTex = mix(colorPath, colorGrass, mask);
 
@@ -40,8 +42,9 @@ void main()
     // saturated photographic carpet competing with the geometry above it.
     // The slow world-space variation also breaks visible texture tiling.
     float groundLuma = dot(mixedTex.rgb, vec3(0.2126, 0.7152, 0.0722));
-    mixedTex.rgb = mix(vec3(groundLuma), mixedTex.rgb, 0.76);
-    float macroTone = 0.94 + 0.055 * sin(fragPosition.x * 0.105 + fragPosition.z * 0.073);
+    mixedTex.rgb = mix(vec3(groundLuma), mixedTex.rgb, 0.58);
+    mixedTex.rgb = mix(mixedTex.rgb, vec3(0.20, 0.29, 0.16), 0.24);
+    float macroTone = 0.95 + 0.045 * sin(fragPosition.x * 0.105 + fragPosition.z * 0.073);
     mixedTex.rgb *= macroTone;
 
     // 2. Tính toán Pháp tuyến (Normal) tĩnh cho mặt phẳng ngang

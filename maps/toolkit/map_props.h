@@ -18,8 +18,8 @@
 // splatmap's red channel — WIP, tune splatMapPath/the shader together.
 // Strip uses its own noise-feathered-edge shader (maps/toolkit/shaders/
 // path_blend.fs, see MapProp_CreateStrip) — normalPath/roughnessPath are
-// currently accepted but unused (kept in the signature for a future prop_lit
-// strip variant). Rocks use prop_lit (maps/toolkit/prop_lit.h) when
+// enable tangent-space surface lighting when both are supplied. Rocks use
+// prop_lit (maps/toolkit/prop_lit.h) when
 // normal+roughness paths are given, otherwise a plain-textured material.
 // maps/toolkit/grass_material.h is a shelved alternative ground material
 // (CORE_ISSUES.md Item 38) — swap in a custom Material after MapProp_Create*
@@ -133,12 +133,14 @@ bool MapProp_SampleGroundSurface(const MapGroundSurface *ground, Vector3 worldCe
 typedef struct
 {
     Model model;
+    Vector2 tiling;
+    bool useSurfaceMaps;
     bool ready;
 } MapStripSurface;
 
 // length = extent along the strip's own long axis, width = across it.
-// normalPath/roughnessPath: pass NULL for both to use a plain-textured
-// strip; pass all 3 paths for a full prop_lit strip (matches MapRockSet).
+// normalPath/roughnessPath: pass both for lit stone/soil micro-surface detail;
+// pass NULL for both for a cheaper diffuse-only strip.
 MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
                                     const char *diffusePath, const char *normalPath, const char *roughnessPath);
 void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float yOffset);
@@ -226,11 +228,25 @@ typedef struct
     int bladesPerClump;
     int bladeSegments;
     float bladeWidthScale; // relative to placement.radius; <= 0 uses 0.24
+    float chunkSize;       // world meters; <= 0 uses 12
+    float lodDistance;     // near->simplified transition; <= 0 disables LOD
+    float drawDistance;    // <= 0 draws all chunks
 } MapMeadowStyle;
 
 typedef struct
 {
-    Model model;
+    Model nearModel;
+    Model farModel;
+    Vector3 center;
+    bool ready;
+} MapMeadowChunk;
+
+typedef struct
+{
+    MapMeadowChunk *chunks;
+    int chunkCount;
+    float lodDistance;
+    float drawDistance;
     bool ready;
 } MapMeadowSurface;
 
@@ -271,6 +287,8 @@ typedef struct
     float rotationDeg;
     float phase;
     Color petalColor;
+    unsigned char petalCount; // clamped to 4..6; zero defaults to 5
+    float petalLengthScale;   // <= 0 defaults to 1
 } MapFlowerPlacement;
 
 typedef struct
@@ -294,6 +312,9 @@ typedef struct
     float waveHeight;
     float waveScale;
     float waveSpeed;
+    float bankGroundY;   // absolute terrain height reached by the outer bank
+    float detailScale;   // world-space water detail frequency; <= 0 uses default
+    float detailStrength;// subtle texture-driven normal/color breakup
     int segments;
     int rings;
     unsigned int seed;
@@ -313,6 +334,8 @@ typedef struct
 } MapWaterSurface;
 
 MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config);
+Vector3 MapProp_GetWaterEdgePoint(const MapWaterSurface *water, float angleRad,
+                                  float radialScale);
 void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time);
 void MapProp_UnloadWaterSurface(MapWaterSurface *water);
 

@@ -19,11 +19,17 @@ uniform mat4 matModel;
 out vec2 fragTexCoord;
 out vec4 fragColor;
 out vec3 fragPosition;   // world space — what the VFX lights need
+out vec3 fragTangent;
+out vec3 fragBitangent;
+out vec3 fragNormal;
 
 void main()
 {
     fragTexCoord = vertexTexCoord;
     fragColor    = vertexColor;
     fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
+    fragTangent = normalize(mat3(matModel) * vec3(1.0, 0.0, 0.0));
+    fragBitangent = normalize(mat3(matModel) * vec3(0.0, 0.0, 1.0));
+    fragNormal = normalize(mat3(matModel) * vec3(0.0, 1.0, 0.0));
     gl_Position  = mvp * vec4(vertexPosition, 1.0);
 }
