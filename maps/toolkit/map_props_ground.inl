@@ -285,6 +285,9 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         // a point light — silently receives nothing. See ENGINE_LANDMINES.md.
         groundShader.locs[SHADER_LOC_MATRIX_MODEL] =
             GetShaderLocation(groundShader, "matModel");
+        groundShader.locs[SHADER_LOC_VERTEX_NORMAL] =
+            GetShaderLocationAttrib(groundShader, "vertexNormal");
+        MapShadow_ConfigureShader(groundShader);
 
         // Cache lại các vị trí uniform ánh sáng để dùng trong hàm Draw
         locLightDir = GetShaderLocation(groundShader, "lightDir");
@@ -302,6 +305,7 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
     ground.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = texSplat;  // Slot 0
     ground.model.materials[0].maps[MATERIAL_MAP_SPECULAR].texture = texGrass; // Slot 1
     ground.model.materials[0].maps[MATERIAL_MAP_NORMAL].texture = texPath;    // Slot 2
+    MapShadow_AttachMaterial(&ground.model.materials[0]);
 
     // 4. Khai báo khe cắm (slot) cho Shader
     int grassTexSlot = 1;
@@ -432,6 +436,7 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     SetShaderValue(groundShader, locLightDir, lightDirArr, SHADER_UNIFORM_VEC3);
     SetShaderValue(groundShader, locLightColor, sunColArr, SHADER_UNIFORM_VEC4);
     SetShaderValue(groundShader, locAmbientColor, ambColArr, SHADER_UNIFORM_VEC4);
+    MapShadow_UpdateShader(groundShader);
 
 
 

@@ -45,6 +45,17 @@ void Environment_Init(void);
 void Environment_Update(float dt);
 ```
 
+The optional real directional-shadow layer can follow a large map instead of
+remaining fixed over the default arena:
+
+```c
+void EnvShadow_SetFocus(Vector3 center, float halfExtent); // light-space texel stabilized
+```
+
+Call it before the frame's shadow capture. `halfExtent` is clamped to 8–96 m;
+maps should keep it as tight as their visible gameplay region permits so the
+shadow map retains useful texel density.
+
 ---
 
 ## 3. Smart Fake Shadow System — Most Important

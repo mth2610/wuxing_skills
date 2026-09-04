@@ -30,6 +30,12 @@ void EnvShadow_Init(void); // once, after Environment_Init + SurfaceMaterial_Ini
 void       EnvShadow_SetEnabled(bool enabled);
 bool       EnvShadow_IsEnabled(void);   // false also when Init failed (e.g. FBO incomplete)
 
+// Moves and sizes the single directional-shadow coverage region. The center
+// should follow the camera/player for large maps; halfExtent is clamped to a
+// safe range. Focus is snapped in light space to keep shadow texels stable.
+// Existing arena users need not call this.
+void       EnvShadow_SetFocus(Vector3 center, float halfExtent);
+
 void       EnvShadow_BeginCapture(void); // begins the light-space depth pass
 void       EnvShadow_EndCapture(void);   // ends it, restores default framebuffer/viewport
 bool       EnvShadow_IsCapturing(void);  // true between Begin/EndCapture — scene draw code should

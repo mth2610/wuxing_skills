@@ -4,6 +4,7 @@
 // stands on, so an effect that lights the grass but not the stone underfoot
 // still reads as pasted on — which is exactly how it looked before this.
 #include "core/shaders/common/vfx_lights.glsl"
+#include "maps/toolkit/shaders/map_shadow.glsl"
 
 in vec2 fragTexCoord;
 in vec3 fragPosition;   // world space, from path_blend.vs (E2)
@@ -74,16 +75,17 @@ void main()
     
     vec4 actualAmbient = ambientColor.a == 0.0 ? vec4(0.4, 0.4, 0.4, 1.0) : ambientColor;
     vec4 actualLight = lightColor.a == 0.0 ? vec4(1.0, 1.0, 1.0, 1.0) : lightColor;
-    vec4 totalLight = actualAmbient + (actualLight * NdotL);
+    float shadow = MapShadowVisibility(fragPosition, normal, light);
+    vec3 totalLight = actualAmbient.rgb + actualLight.rgb * NdotL * shadow;
 
     // Alpha KHÔNG được nhân totalLight.a (tới ~2): trên scene buffer HDR float
     // (Đợt G) src alpha không bị kẹp [0,1] → blend hoá điên, biển mây lòi qua
     // đường. Alpha chỉ = texture.a * tint.a * độ-mờ-lề (đều ≤1); lit chỉ ở rgb.
-    vec3 pathLit = (texColor * colDiffuse * totalLight).rgb;
+    vec3 pathLit = texColor.rgb * colDiffuse.rgb * totalLight;
     vec3 viewDir = normalize(viewPos - fragPosition);
     vec3 halfDir = normalize(light + viewDir);
     float specular = pow(max(dot(normal, halfDir), 0.0), mix(54.0, 10.0, roughness));
-    pathLit += actualLight.rgb * specular * (1.0 - roughness) * 0.18;
+    pathLit += actualLight.rgb * specular * (1.0 - roughness) * 0.18 * shadow;
     pathLit += VFXLights_AccumulateFlat(fragPosition, (texColor * colDiffuse).rgb);
 
     finalColor = vec4(pathLit, 1.0);

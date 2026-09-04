@@ -4,11 +4,11 @@
 // characters and the smoke about where the light is; a private copy of the
 // falloff drifts the moment one of them is edited.
 #include "core/shaders/common/vfx_lights.glsl"
+#include "maps/toolkit/shaders/map_shadow.glsl"
 
 in vec2 fragTexCoord;
 in vec3 fragPosition;   // world space, from ground_splat.vs (E2)
-
-// Đã XÓA biến: in vec3 fragNormal;
+in vec3 fragNormal;
 
 uniform vec4 colDiffuse;
 uniform sampler2D texture0; // Splatmap
@@ -47,8 +47,9 @@ void main()
     float macroTone = 0.95 + 0.045 * sin(fragPosition.x * 0.105 + fragPosition.z * 0.073);
     mixedTex.rgb *= macroTone;
 
-    // 2. Tính toán Pháp tuyến (Normal) tĩnh cho mặt phẳng ngang
-    vec3 normal = vec3(0.0, 1.0, 0.0); 
+    // Use the actual heightmap normal so slopes and lake banks respond to the
+    // sun instead of receiving one constant brightness across the whole map.
+    vec3 normal = normalize(fragNormal);
 
     // 3. Bảo vệ hướng sáng (Phòng trường hợp vector lightDir bị bằng 0 từ code C)
     vec3 light = vec3(0.0, 1.0, 0.0);
@@ -69,14 +70,19 @@ void main()
         actualLight = vec4(1.0, 1.0, 1.0, 1.0);
     }
 
-    vec4 totalLight = actualAmbient + (actualLight * NdotL);
+    float shadow = MapShadowVisibility(fragPosition, normal, light);
+    float skyWeight = normal.y * 0.5 + 0.5;
+    vec3 skyAmbient = actualAmbient.rgb * vec3(1.08, 1.12, 1.20);
+    vec3 groundBounce = actualAmbient.rgb * vec3(0.47, 0.40, 0.32);
+    vec3 ambient = mix(groundBounce, skyAmbient, skyWeight);
+    vec3 totalLight = ambient + actualLight.rgb * NdotL * shadow;
 
     // Xuất màu cuối — alpha PHẢI = 1.0 (mặt đất đục). totalLight.a có thể tới ~2
     // (ambient.a + sun.a*NdotL); trên scene buffer HDR float (Đợt G) alpha
     // nguồn KHÔNG bị kẹp [0,1] như RGBA8 cũ → src alpha 2.0 làm blend
     // (GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA) hoá điên: dst = 2*đất - mây → biển
     // mây dưới đảo lòi/cộng màu xuyên qua nền. Ép alpha 1 để nền luôn đục.
-    vec3 groundLit = (mixedTex * colDiffuse * totalLight).rgb;
+    vec3 groundLit = mixedTex.rgb * colDiffuse.rgb * totalLight;
     // Flat variant: the splat plane has no per-vertex normal worth trusting, and
     // a floor faces up.
     groundLit += VFXLights_AccumulateFlat(fragPosition, (mixedTex * colDiffuse).rgb);

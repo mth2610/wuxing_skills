@@ -3,6 +3,7 @@
 // Đợt E / E2 — spell/effect point lights. Same shared block as the ground and
 // the character so a fireball agrees with every surface it stands on.
 #include "core/shaders/common/vfx_lights.glsl"
+#include "maps/toolkit/shaders/map_shadow.glsl"
 
 // ============================================================
 // WUXING — prop_lit Fragment Shader (CORE_ISSUES.md Item 36)
@@ -70,7 +71,9 @@ void main() {
     float specStrength = mix(0.05, 0.6, 1.0 - roughness);
     float spec = calcSpecular(normal, lightDir, viewDir, shininess) * specStrength;
 
-    vec3 lit = albedo.rgb * (u_ambientColor + diff * u_lightColor) + spec * u_lightColor;
+    float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
+    vec3 lit = albedo.rgb * (u_ambientColor + diff * u_lightColor * shadow)
+             + spec * u_lightColor * shadow;
 
     // `normal` is the TBN-perturbed normal built from fragNormal, which prop_lit.vs
     // derives via mat3(matModel) — the same model*view matrix the lights are

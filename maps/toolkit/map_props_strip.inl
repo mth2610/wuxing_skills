@@ -34,6 +34,7 @@ MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
         pathShader.locs[SHADER_LOC_MAP_DIFFUSE] = GetShaderLocation(pathShader, "texture0");
         pathShader.locs[SHADER_LOC_MAP_NORMAL] = GetShaderLocation(pathShader, "texture2");
         pathShader.locs[SHADER_LOC_MAP_ROUGHNESS] = GetShaderLocation(pathShader, "texture3");
+        MapShadow_ConfigureShader(pathShader);
 
         VFXLight_RegisterShader(pathShader);   // main.c binds it each frame
         locPathLightDir = GetShaderLocation(pathShader, "lightDir");
@@ -69,6 +70,7 @@ MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
         strip.model.materials[0].maps[MATERIAL_MAP_NORMAL].texture = normal;
         strip.model.materials[0].maps[MATERIAL_MAP_ROUGHNESS].texture = roughness;
     }
+    MapShadow_AttachMaterial(&strip.model.materials[0]);
 
     // 4. Truyền Tiling xuống shader để lặp texture
     strip.tiling = (Vector2){length / tileSize, width / tileSize};
@@ -94,6 +96,7 @@ static void MapProp_UpdateStripLighting(const MapStripSurface *strip)
     SetShaderValue(strip->model.materials[0].shader, locPathViewPos, &camera.position, SHADER_UNIFORM_VEC3);
     SetShaderValue(strip->model.materials[0].shader, locPathTiling, &strip->tiling, SHADER_UNIFORM_VEC2);
     SetShaderValue(strip->model.materials[0].shader, locPathSurfaceMaps, &hasSurfaceMaps, SHADER_UNIFORM_INT);
+    MapShadow_UpdateShader(strip->model.materials[0].shader);
 }
 
 void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float yOffset)

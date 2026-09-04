@@ -22,6 +22,9 @@ static int s_resolution = 0;
 static Shader s_depthShader;
 static Matrix s_lightView, s_lightProj, s_lightVP;
 static Texture2D s_depthTex2D; // wraps s_depthTexId, source for the copy pass below
+static Vector3 s_shadowFocus = ARENA_CENTER;
+static float s_shadowHalfExtent = ARENA_RADIUS + 2.0f;
+static float s_captureDistance = ARENA_RADIUS + 6.0f;
 
 // The depth attachment above is NOT directly sampled anywhere — this
 // project's rlvk (Vulkan/MoltenVK) backend has a device quirk
@@ -34,6 +37,8 @@ static Texture2D s_shadowMapTex; // this is what callers get
 
 // TỐI ƯU: Biến cache hướng nắng để tránh tính toán lại ma trận mỗi frame
 static Vector3 s_lastSunDir = {0};
+static Vector3 s_lastShadowFocus = {1e30f, 1e30f, 1e30f};
+static float s_lastShadowHalfExtent = -1.0f;
 
 void EnvShadow_Init(void)
 {
@@ -139,26 +144,56 @@ void EnvShadow_SetEnabled(bool enabled) { s_enabled = s_ready && enabled; }
 bool EnvShadow_IsEnabled(void) { return s_ready && s_enabled; }
 bool EnvShadow_IsCapturing(void) { return s_capturing; }
 
+void EnvShadow_SetFocus(Vector3 center, float halfExtent)
+{
+    if (halfExtent < 8.0f) halfExtent = 8.0f;
+    if (halfExtent > 96.0f) halfExtent = 96.0f;
+    // Stabilize the orthographic projection in the light plane. Without this,
+    // every sub-centimetre camera movement shifts all shadow texels and makes
+    // fine grass/contact edges shimmer even when the scene is otherwise still.
+    if (s_resolution > 0) {
+        Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
+        Vector3 up = fabsf(sunDir.y) > 0.98f
+            ? (Vector3){0.0f, 0.0f, 1.0f}
+            : (Vector3){0.0f, 1.0f, 0.0f};
+        Vector3 lightRight = Vector3Normalize(Vector3CrossProduct(up, sunDir));
+        Vector3 lightUp = Vector3Normalize(Vector3CrossProduct(sunDir, lightRight));
+        float texelWorld = (halfExtent * 2.0f) / (float)s_resolution;
+        float rightCoord = Vector3DotProduct(center, lightRight);
+        float upCoord = Vector3DotProduct(center, lightUp);
+        float snappedRight = roundf(rightCoord / texelWorld) * texelWorld;
+        float snappedUp = roundf(upCoord / texelWorld) * texelWorld;
+        center = Vector3Add(center, Vector3Scale(lightRight, snappedRight - rightCoord));
+        center = Vector3Add(center, Vector3Scale(lightUp, snappedUp - upCoord));
+    }
+    s_shadowFocus = center;
+    s_shadowHalfExtent = halfExtent;
+}
+
 static Matrix ComputeLightVP(void)
 {
     Vector3 currentSunDir = Environment_GetSunDirection();
 
     // TỐI ƯU: Cache lại VP matrix. Bỏ qua các phép toán Normalize, Multiply, LookAt
     // nếu hướng nắng không thay đổi giữa các frame.
-    if (Vector3DistanceSqr(currentSunDir, s_lastSunDir) < 0.000001f)
+    if (Vector3DistanceSqr(currentSunDir, s_lastSunDir) < 0.000001f &&
+        Vector3DistanceSqr(s_shadowFocus, s_lastShadowFocus) < 0.000001f &&
+        fabsf(s_shadowHalfExtent - s_lastShadowHalfExtent) < 0.0001f)
     {
         return s_lightVP;
     }
     s_lastSunDir = currentSunDir;
+    s_lastShadowFocus = s_shadowFocus;
+    s_lastShadowHalfExtent = s_shadowHalfExtent;
 
     Vector3 sunDir = Vector3Normalize(currentSunDir); // direction light TRAVELS
-    float distance = ARENA_RADIUS + 6.0f;
-    Vector3 lightPos = Vector3Subtract(ARENA_CENTER, Vector3Scale(sunDir, distance));
+    s_captureDistance = fmaxf(s_shadowHalfExtent * 1.65f, 24.0f);
+    Vector3 lightPos = Vector3Subtract(s_shadowFocus, Vector3Scale(sunDir, s_captureDistance));
     Vector3 up = (Vector3){0.0f, 1.0f, 0.0f};
     if (fabsf(sunDir.y) > 0.98f)
         up = (Vector3){0.0f, 0.0f, 1.0f}; // avoid degenerate look-at
 
-    s_lightView = MatrixLookAt(lightPos, ARENA_CENTER, up);
+    s_lightView = MatrixLookAt(lightPos, s_shadowFocus, up);
     // ARENA_RADIUS+2: covers the 18m-radius arena with margin. (A debug
     // session once "measured" the character outside this frustum and bumped
     // it to 45 — but that measurement used the pre-fix TRANSPOSED matrix in
@@ -167,8 +202,9 @@ static Matrix ComputeLightVP(void)
     // doubles texel density: at 45, a 0.5m character was ~6 texels wide with
     // rasterization holes — the shadow existed but as a near-invisible
     // speckle, which is exactly what "no shadow visible" looked like.)
-    float halfExtent = ARENA_RADIUS + 2.0f;
-    s_lightProj = MatrixOrtho(-halfExtent, halfExtent, -halfExtent, halfExtent, 0.1f, distance * 2.0f);
+    float halfExtent = s_shadowHalfExtent;
+    s_lightProj = MatrixOrtho(-halfExtent, halfExtent, -halfExtent, halfExtent,
+                              0.1f, s_captureDistance * 2.0f);
     Matrix vp = MatrixMultiply(s_lightView, s_lightProj);
     return vp;
 }
@@ -208,8 +244,8 @@ void EnvShadow_BeginCapture(void)
     // stored depth against the far plane (bug 3, REAL_SHADING_P6_NOTES.md).
     // Must match the params used to build s_lightProj (MatrixOrtho) so the
     // captured depth agrees with the FS's proj.z.
-    float distance = ARENA_RADIUS + 6.0f;
-    float halfExtent = ARENA_RADIUS + 2.0f; // MUST match ComputeLightVP
+    float distance = s_captureDistance;
+    float halfExtent = s_shadowHalfExtent; // MUST match ComputeLightVP
     rlMatrixMode(RL_PROJECTION);
     rlPushMatrix();
     rlLoadIdentity();

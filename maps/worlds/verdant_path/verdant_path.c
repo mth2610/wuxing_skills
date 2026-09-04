@@ -1,8 +1,10 @@
 #include "verdant_path.h"
 
 #include "environment/environment_system.h"
+#include "environment/env_shadow.h"
 #include "maps/toolkit/map_props.h"
 #include "maps/toolkit/prop_lit.h"
+#include "core/camera_context.h"
 #include "core/map_manager.h"
 #include "raylib.h"
 
@@ -24,7 +26,9 @@
 #define MOUNTAIN_ROCK_COUNT 40
 #define ROCK_COUNT 10
 #define GRASS_TUFT_CAPACITY 6400
-#define FLOWER_COUNT 1500
+#define FLOWER_CLUSTER_COUNT 3
+#define FLOWERS_PER_CLUSTER 800
+#define FLOWER_COUNT (FLOWER_CLUSTER_COUNT * FLOWERS_PER_CLUSTER)
 #define REED_COUNT 180
 
 static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
@@ -75,9 +79,10 @@ static MapFlowerPlacement s_flowerPlacements[FLOWER_COUNT];
 static MapMeadowPlacement s_reedPlacements[REED_COUNT];
 static MapMeadowSurface s_meadow;
 static MapMeadowSurface s_reedMeadow;
-static MapFlowerField s_flowerField;
+static MapFlowerField s_flowerFields[FLOWER_CLUSTER_COUNT];
 static MapWaterSurface s_lake;
 static int s_grassCount = 0;
+static bool s_shadowWasEnabled = false;
 static float s_time = 0.0f;
 static bool s_ready = false;
 
@@ -132,15 +137,20 @@ static bool IsNearPath(float x, float z, float margin)
     return false;
 }
 
-static Color FlowerColor(int cluster, bool secondary)
+static Color FlowerSpeciesColor(int variant, bool accent)
 {
-    static const Color dominant[3] = {
-        {164, 107, 135, 255}, {190, 154, 72, 255}, {88, 135, 156, 255},
+    static const Color primary[8] = {
+        {242, 235, 211, 255}, {240, 205, 104, 255}, {232, 126, 99, 255},
+        {132, 180, 225, 255}, {215, 178, 205, 255}, {232, 187, 204, 255},
+        {177, 160, 218, 255}, {228, 219, 183, 255},
     };
-    static const Color accent[3] = {
-        {201, 174, 157, 255}, {167, 111, 57, 255}, {131, 103, 160, 255},
+    static const Color secondary[8] = {
+        {255, 246, 216, 255}, {226, 179, 72, 255}, {215, 91, 76, 255},
+        {105, 154, 211, 255}, {192, 145, 187, 255}, {218, 155, 182, 255},
+        {151, 130, 202, 255}, {245, 228, 167, 255},
     };
-    return secondary ? accent[cluster] : dominant[cluster];
+    variant &= 7;
+    return accent ? secondary[variant] : primary[variant];
 }
 
 static float VerdantGrassDensity(float x, float z, void *userData)
@@ -172,39 +182,51 @@ static void BuildMeadowLayout(void)
             .yOffset = 0.035f, .seed = 0x51a7c3u,
         }, VerdantGrassDensity, NULL);
 
-    const Vector3 centers[3] = {
+    const Vector3 centers[FLOWER_CLUSTER_COUNT] = {
         {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f}, {77.0f, 0.0f, 53.0f},
     };
-    const Vector3 radii[3] = {
+    const Vector3 radii[FLOWER_CLUSTER_COUNT] = {
         {11.5f, 0.0f, 8.0f}, {13.0f, 0.0f, 7.0f}, {10.5f, 0.0f, 8.5f},
     };
     for (int i = 0; i < FLOWER_COUNT; i++) {
-        int cluster = i % 3;
+        // Keep each authored meadow contiguous so it can become an independent
+        // GPU submission and be culled without touching the other clusters.
+        int cluster = i / FLOWERS_PER_CLUSTER;
         float x = centers[cluster].x;
         float z = centers[cluster].z;
         for (int attempt = 0; attempt < 16; attempt++) {
             float angle = RandomRange(&rng, 0.0f, 2.0f * PI);
-            float radius = powf(Random01(&rng), 0.92f);
+            float radius = powf(Random01(&rng), 1.30f);
             x = centers[cluster].x + cosf(angle) * radii[cluster].x * radius;
             z = centers[cluster].z + sinf(angle) * radii[cluster].z * radius;
             if (!IsInsideLake(x, z, 0.85f) && !IsNearPath(x, z, 1.92f))
                 break;
         }
-        s_flowerPlacements[i].position = (Vector3){x, 0.055f, z};
-        s_flowerPlacements[i].height = RandomRange(&rng, 0.13f, 0.30f);
-        s_flowerPlacements[i].bloomRadius = RandomRange(&rng, 0.045f, 0.085f);
+        s_flowerPlacements[i].position = (Vector3){x, 0.014f, z};
         s_flowerPlacements[i].rotationDeg = RandomRange(&rng, 0.0f, 360.0f);
         s_flowerPlacements[i].phase = Random01(&rng);
-        int colorCluster = cluster;
-        if (Random01(&rng) > 0.72f)
-            colorCluster = (cluster + 1 + (Random01(&rng) > 0.5f ? 1 : 0)) % 3;
-        s_flowerPlacements[i].petalColor = FlowerColor(colorCluster, Random01(&rng) > 0.80f);
-        int basePetals = colorCluster == 0 ? 5 : (colorCluster == 1 ? 6 : 4);
-        if (Random01(&rng) > 0.76f)
-            basePetals += (Random01(&rng) > 0.5f) ? 1 : -1;
-        s_flowerPlacements[i].petalCount = (unsigned char)basePetals;
-        s_flowerPlacements[i].bloomVariant = (unsigned char)(NextRandom(&rng) % 4u);
-        s_flowerPlacements[i].petalLengthScale = RandomRange(&rng, 0.88f, 1.12f);
+        static const unsigned char speciesByCluster[FLOWER_CLUSTER_COUNT][4] = {
+            {0, 5, 7, 6}, // pale daisy/cosmos meadow
+            {1, 0, 2, 7}, // warm buttercup/poppy meadow
+            {3, 6, 4, 0}, // cool cornflower/aster meadow
+        };
+        float speciesRoll = Random01(&rng);
+        int speciesSlot = speciesRoll < 0.56f ? 0
+                        : speciesRoll < 0.80f ? 1
+                        : speciesRoll < 0.94f ? 2 : 3;
+        int variant = speciesByCluster[cluster][speciesSlot];
+        bool tallAccent = variant == 2 || variant == 4 || variant == 6;
+        s_flowerPlacements[i].height = tallAccent
+            ? RandomRange(&rng, 0.20f, 0.35f)
+            : RandomRange(&rng, 0.085f, 0.22f);
+        s_flowerPlacements[i].bloomRadius = tallAccent
+            ? RandomRange(&rng, 0.040f, 0.068f)
+            : RandomRange(&rng, 0.028f, 0.057f);
+        s_flowerPlacements[i].petalColor = FlowerSpeciesColor(
+            variant, Random01(&rng) > 0.84f);
+        s_flowerPlacements[i].petalCount = (unsigned char)(4 + (variant % 3));
+        s_flowerPlacements[i].bloomVariant = (unsigned char)variant;
+        s_flowerPlacements[i].petalLengthScale = RandomRange(&rng, 0.86f, 1.10f);
     }
 
     for (int i = 0; i < REED_COUNT; i++) {
@@ -248,14 +270,21 @@ void InitVerdantPathMap(void)
         return;
 
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){51, 58, 67, 255});
-    Environment_SetSunColor((Color){171, 161, 140, 255});
-    Environment_SetSunDirection((Vector3){0.44f, -0.76f, -0.31f});
-    Environment_SetShadowColor((Color){11, 14, 19, 150});
+    // Warm sunset key plus cool sky fill: enough energy for flower colour,
+    // with a lower light angle that makes terrain and vegetation shadows read.
+    Environment_SetAmbientColor((Color){88, 94, 118, 255});
+    Environment_SetSunColor((Color){255, 194, 132, 255});
+    Environment_SetSunDirection((Vector3){0.58f, -0.50f, -0.64f});
+    Environment_SetShadowColor((Color){30, 37, 58, 148});
     Environment_SetFogConfig((EnvFogConfig){
-        .color = {56, 64, 73, 255}, .start = 68.0f, .end = 152.0f,
-        .density = 0.84f, .enabled = true,
+        .color = {96, 86, 102, 255}, .start = 68.0f, .end = 152.0f,
+        .density = 0.78f, .enabled = true,
     });
+
+#if !defined(__ANDROID__)
+    s_shadowWasEnabled = EnvShadow_IsEnabled();
+    EnvShadow_SetEnabled(true);
+#endif
 
     s_ground = MapProp_CreateGroundHeightmap(
         "assets/heightmaps/verdant_path_island.png", MAP_WIDTH, MAP_DEPTH,
@@ -268,7 +297,10 @@ void InitVerdantPathMap(void)
         "assets/textures/stone_path_roughness.png");
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
         "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
-    s_mountainRockSet = MapProp_CreateRocks("assets/textures/rock_diffuse.png", NULL, NULL);
+    // Border rocks must participate in the same lighting response as nearby
+    // rocks; an unlit fallback turns the skyline into a flat white cut-out.
+    s_mountainRockSet = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
+        "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
     MapProp_GenerateMountainRing(s_mountainRocks, MOUNTAIN_ROCK_COUNT,
         MOUNTAIN_RING_WIDTH, MOUNTAIN_RING_DEPTH, 2.6f, 5.4f, 0.9f, 2.2f, 1337u);
     {
@@ -293,21 +325,25 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {57, 75, 42, 255}, .tipColor = {95, 116, 67, 255},
-            .bladesPerClump = 5, .bladeSegments = 2, .bladeWidthScale = 0.20f,
+            .rootColor = {70, 91, 50, 255}, .tipColor = {122, 143, 82, 255},
+            .bladesPerClump = 5, .bladeSegments = 2, .bladeWidthScale = 0.25f,
             .chunkSize = 12.0f, .lodDistance = 30.0f, .drawDistance = 78.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
         (MapMeadowStyle){
-            .rootColor = {42, 57, 28, 255}, .tipColor = {112, 119, 57, 255},
-            .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.20f,
+            .rootColor = {55, 73, 34, 255}, .tipColor = {128, 139, 66, 255},
+            .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.23f,
             .chunkSize = 18.0f, .lodDistance = 34.0f, .drawDistance = 72.0f,
             .texturePath = NULL,
         });
-    s_flowerField = MapProp_CreateFlowerField(s_flowerPlacements, FLOWER_COUNT,
-        (Color){61, 91, 48, 255}, (Color){188, 142, 63, 255},
-        "maps/toolkit/textures/wildflower_bloom_atlas.png", 0.34f, 2, 2);
+    for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
+        s_flowerFields[cluster] = MapProp_CreateFlowerField(
+            &s_flowerPlacements[cluster * FLOWERS_PER_CLUSTER], FLOWERS_PER_CLUSTER,
+            (Color){91, 120, 65, 255}, (Color){199, 157, 69, 255},
+            "maps/toolkit/textures/wildflower_bloom_atlas_v2.png", 0.36f, 4, 2);
+        MapProp_SetFlowerFieldDrawDistance(&s_flowerFields[cluster], 78.0f);
+    }
     MapManager_SetZones(ISLAND_ZONES, ISLAND_ZONE_COUNT);
     s_time = 0.0f;
     s_ready = true;
@@ -315,8 +351,28 @@ void InitVerdantPathMap(void)
 
 void UpdateVerdantPathMap(float dt)
 {
-    if (s_ready)
+    if (s_ready) {
         s_time += dt;
+        Vector3 view = {
+            camera.target.x - camera.position.x,
+            0.0f,
+            camera.target.z - camera.position.z,
+        };
+        float viewLength = sqrtf(view.x * view.x + view.z * view.z);
+        if (viewLength > 0.001f) {
+            view.x /= viewLength;
+            view.z /= viewLength;
+        }
+        Vector3 focus = {
+            camera.position.x + view.x * 10.0f,
+            0.0f,
+            camera.position.z + view.z * 10.0f,
+        };
+        EnvShadow_SetFocus(focus, 30.0f);
+        MapProp_BeginNatureInteraction(camera.target, dt);
+        MapProp_AddNatureInteractor(camera.target, 1.25f, 0.34f);
+        MapProp_EndNatureInteraction();
+    }
 }
 
 float GetGroundHeightVerdantPathMap(float x, float z)
@@ -334,6 +390,7 @@ void DrawVerdantPathMap(void)
     if (!s_ready)
         return;
 
+    MapProp_ResetNatureRenderStats();
     PropLit_UpdateLighting();
     MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
     MapProp_DrawGround(&s_ground, kMapCenter);
@@ -344,8 +401,10 @@ void DrawVerdantPathMap(void)
     MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true);
     MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
     MapProp_DrawMeadow(&s_reedMeadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.11f);
-    MapProp_DrawFlowerField(&s_flowerField, (Vector3){0}, s_time,
-                            (Vector2){0.86f, 0.51f}, 0.032f);
+    for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
+        MapProp_DrawFlowerField(&s_flowerFields[cluster], (Vector3){0}, s_time,
+                                (Vector2){0.86f, 0.51f}, 0.032f);
+    }
 }
 
 void UnloadVerdantPathMap(void)
@@ -353,7 +412,8 @@ void UnloadVerdantPathMap(void)
     if (!s_ready)
         return;
     MapProp_UnloadWaterSurface(&s_lake);
-    MapProp_UnloadFlowerField(&s_flowerField);
+    for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++)
+        MapProp_UnloadFlowerField(&s_flowerFields[cluster]);
     MapProp_UnloadMeadow(&s_reedMeadow);
     MapProp_UnloadMeadow(&s_meadow);
     MapProp_UnloadCloudSea(&s_cloudSea);
@@ -361,5 +421,9 @@ void UnloadVerdantPathMap(void)
     MapProp_UnloadRocks(&s_rocks);
     MapProp_UnloadStrip(&s_path);
     MapProp_UnloadGround(&s_ground);
+    MapProp_ClearNatureInteraction();
+#if !defined(__ANDROID__)
+    EnvShadow_SetEnabled(s_shadowWasEnabled);
+#endif
     s_ready = false;
 }

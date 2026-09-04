@@ -1,4 +1,5 @@
 #include "maps/toolkit/prop_lit.h"
+#include "maps/toolkit/map_shadow.h"
 #include "core/resource_manager.h"
 #include "core/camera_context.h"
 #include "core/vfx_light.h"
@@ -50,6 +51,7 @@ Shader PropLit_GetShader(void) {
         GetShaderLocation(shader, "texture2");
     shader.locs[SHADER_LOC_MAP_ROUGHNESS] =
         GetShaderLocation(shader, "texture3");
+    MapShadow_ConfigureShader(shader);
 
     // Đợt E / E2 — opt into the VFX point-light pool. Registration is all it
     // needs: main.c's VFXLight_BindAll pushes the pool to every registered
@@ -76,6 +78,7 @@ Material PropLit_MakeMaterial(Texture2D diffuse, Texture2D normal,
   mat.maps[MATERIAL_MAP_DIFFUSE].color = WHITE; // colDiffuse base; DrawModelEx's tint multiplies into this per-draw
   mat.maps[MATERIAL_MAP_NORMAL].texture = normal;
   mat.maps[MATERIAL_MAP_ROUGHNESS].texture = roughness;
+  MapShadow_AttachMaterial(&mat);
 
   return mat;
 }
@@ -115,4 +118,5 @@ void PropLit_UpdateLighting(void) {
     Vector3 viewPos = camera.position;
     SetShaderValue(shader, viewPosLoc, &viewPos, SHADER_UNIFORM_VEC3);
   }
+  MapShadow_UpdateShader(shader);
 }

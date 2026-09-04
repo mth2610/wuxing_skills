@@ -240,6 +240,8 @@ typedef struct
     Model nearModel;
     Model farModel;
     Vector3 center;
+    float radius; // conservative chunk sphere used by view-frustum culling
+    bool farLod;  // persistent state for hysteresis; avoids boundary thrashing
     bool ready;
 } MapMeadowChunk;
 
@@ -279,7 +281,31 @@ int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxC
 
 MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int count,
                                       MapMeadowStyle style);
-void MapProp_DrawMeadow(const MapMeadowSurface *meadow, Vector3 worldOffset, float time,
+// Persistent mobile-safe interaction field shared by meadows and flowers.
+// Begin scrolls/decays the 64x64 local field, Add stamps any number of actors,
+// and End uploads it once. Strength is displacement in world metres.
+void MapProp_BeginNatureInteraction(Vector3 focus, float dt);
+void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength);
+void MapProp_EndNatureInteraction(void);
+void MapProp_ClearNatureInteraction(void);
+typedef struct
+{
+    int meadowChunksTested;
+    int meadowChunksVisible;
+    int meadowFrustumCulled;
+    int meadowDistanceCulled;
+    int meadowNearDraws;
+    int meadowFarDraws;
+    int flowerFieldsTested;
+    int flowerFieldsFrustumCulled;
+    int flowerFieldsDistanceCulled;
+    int flowerDraws;
+    int flowerShadowDraws;
+} MapNatureRenderStats;
+
+void MapProp_ResetNatureRenderStats(void);
+MapNatureRenderStats MapProp_GetNatureRenderStats(void);
+void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float time,
                         Vector2 windDirection, float windStrength);
 void MapProp_UnloadMeadow(MapMeadowSurface *meadow);
 
@@ -299,8 +325,13 @@ typedef struct
 typedef struct
 {
     Model model;
+    Model shadowModel;
     bool textured;
+    bool shadowReady;
     float alphaCutoff;
+    Vector3 boundsCenter;
+    float boundsRadius;
+    float drawDistance;
     bool ready;
 } MapFlowerField;
 
@@ -308,6 +339,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                                          Color stemColor, Color centerColor,
                                          const char *petalTexturePath, float alphaCutoff,
                                          int atlasColumns, int atlasRows);
+// Sets the field-level culling range in world metres. The default is 78 m;
+// zero or a negative value disables distance culling.
+void MapProp_SetFlowerFieldDrawDistance(MapFlowerField *field, float drawDistance);
 void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, float time,
                              Vector2 windDirection, float windStrength);
 void MapProp_UnloadFlowerField(MapFlowerField *field);
