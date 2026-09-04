@@ -1,5 +1,6 @@
 #include "maps/toolkit/map_shadow.h"
 
+#include "core/gfx_quality.h"
 #include "environment/env_shadow.h"
 
 #include <stddef.h>
@@ -35,6 +36,17 @@ void MapShadow_UpdateShader(Shader shader)
     int enabledLoc = GetShaderLocation(shader, "u_shadowEnabled");
     if (enabledLoc >= 0)
         SetShaderValue(shader, enabledLoc, &enabled, SHADER_UNIFORM_FLOAT);
+
+    float filterQuality = GfxQuality_Get() >= GFX_HIGH ? 2.0f
+                        : GfxQuality_Get() >= GFX_MED ? 1.0f : 0.0f;
+    int filterQualityLoc = GetShaderLocation(shader, "u_shadowFilterQuality");
+    if (filterQualityLoc >= 0)
+        SetShaderValue(shader, filterQualityLoc, &filterQuality, SHADER_UNIFORM_FLOAT);
+
+    float thinFeatureBoost = GfxQuality_Get() >= GFX_HIGH ? 0.62f : 0.0f;
+    int thinFeatureBoostLoc = GetShaderLocation(shader, "u_shadowThinFeatureBoost");
+    if (thinFeatureBoostLoc >= 0)
+        SetShaderValue(shader, thinFeatureBoostLoc, &thinFeatureBoost, SHADER_UNIFORM_FLOAT);
 
     float staticEnabled = EnvShadow_HasStaticCache() ? 1.0f : 0.0f;
     int staticEnabledLoc = GetShaderLocation(shader, "u_staticShadowEnabled");

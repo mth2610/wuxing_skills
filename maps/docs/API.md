@@ -126,7 +126,17 @@ At HIGH quality, a map may register an Environment dynamic-caster callback and
 call `MapProp_DrawMeadowShadowCasters` / `MapProp_DrawFlowerFieldShadowCaster`
 inside it. Both submit full near geometry with the visible wind/interaction
 deformation; flowers preserve their atlas alpha silhouette in the depth pass.
-MED uses projected contact meshes, while LOW/UNLIT omit vegetation shadows.
+HIGH combines those real silhouettes with a short, subdued root-contact layer;
+it is 16% of the fallback projection length and cannot visually replace the
+directional silhouette. MED uses the full projected fallback, while LOW/UNLIT
+omit vegetation shadows. Set `WUXING_NATURE_SHADOW_MODE=real` to disable the
+contact layer for shadow-map validation, or `projected` to suppress vegetation
+casters and compare the fallback in isolation. The default is `hybrid`.
+For automated caster isolation, `WUXING_NATURE_SHADOW_CASTERS=flower` records
+only flower geometry and `meadow` records only grass/reeds. An active filter
+also bypasses gameplay distance culling so an off-camera diagnostic region can
+still be captured. Combine it with `WUXING_SHADOW_FOCUS_X/Z` and
+`WUXING_SHADOW_DYNAMIC_VERIFY=1` to log occupied dynamic shadow-map texels.
 Always unregister the callback before unloading map-owned models.
 
 Opaque toolkit materials use `map_shadow.glsl` through `MapShadow_ConfigureShader`,
@@ -137,6 +147,19 @@ static layer once with `MapProp_DrawGroundShadowCaster` and
 `MapProp_DrawRockShadowCasters` between Environment's static Begin/End calls.
 Ground and path light their real mesh normals, while nature materials use a
 cheaper two-sided thin-foliage response suitable for dense fields.
+Shadow receivers select PCF cost from `GfxQuality`: HIGH uses a stable nine-tap
+tent kernel for fine grass/flower silhouettes, MED uses four taps, and LOW/UNLIT
+uses one comparison. Both capture layers fade across the outer 3.5% of their
+coverage so a moving focus cannot reveal a hard square boundary.
+HIGH also blends a restrained 62% darkest-sample term into the dynamic tent
+resolve while leaving the static-cache filter untouched. Textured vegetation
+casters add derivative-based conservative alpha coverage in the depth pass;
+this retains minified petal tips without changing the visible geometry or atlas
+silhouette. The dynamic receiver uses a smaller vegetation-safe depth bias so
+short flowers are not erased. For large maps, treat the dynamic target as a
+near cascade with `EnvShadow_SetFocus`; Verdant Path uses a 20 m half-extent
+(about 1.95 cm/texel at 2048²), while the static cache supplies distant terrain
+and rock occlusion.
 
 Use `MapProp_SetGroundTint` to grade the tiled terrain into the same palette as its 3D vegetation. This prevents the common failure where the ground reads as a bright photographic carpet while foliage reads as dark disconnected props.
 

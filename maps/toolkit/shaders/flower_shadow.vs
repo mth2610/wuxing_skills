@@ -7,6 +7,8 @@ in vec4 vertexColor;
 
 uniform mat4 mvp;
 uniform vec3 u_lightTravel;
+uniform float u_projectionScale;
+uniform float u_widthScale;
 
 out vec4 fragColor;
 
@@ -21,8 +23,9 @@ void main()
     vec2 direction = travelLength > 0.001 ? travel / travelLength : vec2(1.0, 0.0);
     vec2 perpendicular = vec2(-direction.y, direction.x);
     vec3 position = vertexPosition;
-    position.xz += travel * plantHeight * along;
-    position.xz += perpendicular * shadowWidth * across * mix(1.0, 0.34, along);
+    position.xz += travel * plantHeight * along * u_projectionScale;
+    position.xz += perpendicular * shadowWidth * across * mix(1.0, 0.34, along)
+                 * u_widthScale;
     fragColor = vertexColor;
     gl_Position = mvp * vec4(position, 1.0);
 }

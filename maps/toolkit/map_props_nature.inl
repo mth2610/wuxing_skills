@@ -25,6 +25,45 @@ static bool s_natureInteractionReady = false;
 static bool s_natureInteractionOpen = false;
 static MapNatureRenderStats s_natureRenderStats = {0};
 
+// Runtime A/B switch for validating the two vegetation-shadow layers without
+// rebuilding a map.  The default is the production hybrid path; the explicit
+// modes are intentionally diagnostics and are shared by every map using this
+// toolkit.
+typedef enum NatureShadowMode {
+    NATURE_SHADOW_HYBRID = 0,
+    NATURE_SHADOW_REAL_ONLY,
+    NATURE_SHADOW_PROJECTED_ONLY,
+} NatureShadowMode;
+
+static NatureShadowMode Nature_GetShadowMode(void)
+{
+    const char *mode = getenv("WUXING_NATURE_SHADOW_MODE");
+    if (mode != NULL && (mode[0] == 'r' || mode[0] == 'R'))
+        return NATURE_SHADOW_REAL_ONLY;
+    if (mode != NULL && (mode[0] == 'p' || mode[0] == 'P'))
+        return NATURE_SHADOW_PROJECTED_ONLY;
+    return NATURE_SHADOW_HYBRID;
+}
+
+static bool Nature_ShadowCasterTypeEnabled(bool flower)
+{
+    const char *filter = getenv("WUXING_NATURE_SHADOW_CASTERS");
+    if (filter == NULL || filter[0] == '\0' || filter[0] == 'a' || filter[0] == 'A')
+        return true;
+    if (filter[0] == 'f' || filter[0] == 'F')
+        return flower;
+    if (filter[0] == 'm' || filter[0] == 'M' || filter[0] == 'g' || filter[0] == 'G')
+        return !flower;
+    return true;
+}
+
+static bool Nature_ShadowCasterFilterActive(void)
+{
+    const char *filter = getenv("WUXING_NATURE_SHADOW_CASTERS");
+    return filter != NULL && filter[0] != '\0' &&
+           filter[0] != 'a' && filter[0] != 'A';
+}
+
 void MapProp_ResetNatureRenderStats(void)
 {
     s_natureRenderStats = (MapNatureRenderStats){0};
@@ -269,6 +308,30 @@ static Shader FlowerShadow_GetShader(void)
     return s_flowerShadowShader;
 }
 
+static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowActive)
+{
+    Vector3 lightTravel = Environment_GetSunDirection();
+    Vector4 shadowColor = ColorNormalize(Environment_GetShadowColor());
+    Vector3 shadowTint = {shadowColor.x, shadowColor.y, shadowColor.z};
+    // With a real directional map this mesh is only micro-contact occlusion at
+    // the root.  Long projected wedges visually replaced the actual animated
+    // blade/bloom silhouette and made both paths impossible to distinguish.
+    // MED and SHADOW OFF retain the full inexpensive fallback.
+    float projectionScale = realShadowActive ? 0.16f : 1.0f;
+    float widthScale = realShadowActive ? 0.72f : 1.0f;
+    float shadowStrength = realShadowActive ? 0.68f : 1.0f;
+    SetShaderValue(shader, GetShaderLocation(shader, "u_lightTravel"),
+                   &lightTravel, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_shadowTint"),
+                   &shadowTint, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_projectionScale"),
+                   &projectionScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_widthScale"),
+                   &widthScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_shadowStrength"),
+                   &shadowStrength, SHADER_UNIFORM_FLOAT);
+}
+
 static void Nature_SetVertex(Mesh *mesh, int index, Vector3 p, Vector3 n,
                              float phase, float heightMask, Color color)
 {
@@ -508,6 +571,12 @@ static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDir
                    &textured, SHADER_UNIFORM_INT);
     SetShaderValue(shader, GetShaderLocation(shader, "u_alphaCutoff"),
                    &alphaCutoff, SHADER_UNIFORM_FLOAT);
+    // Conservative alpha coverage is applied only in the shadow capture. It
+    // keeps sub-pixel petal tips represented without changing the visible mesh
+    // or replacing its authored atlas silhouette with a blob.
+    float alphaCoverage = useTexture ? 0.75f : 0.0f;
+    SetShaderValue(shader, GetShaderLocation(shader, "u_alphaCoverage"),
+                   &alphaCoverage, SHADER_UNIFORM_FLOAT);
     int interactionEnabled = s_natureInteractionReady ? 1 : 0;
     SetShaderValue(shader, GetShaderLocation(shader, "u_interactionEnabled"),
                    &interactionEnabled, SHADER_UNIFORM_INT);
@@ -830,17 +899,14 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
 
     }
 
+    NatureShadowMode shadowMode = Nature_GetShadowMode();
+    bool realShadowActive = quality >= GFX_HIGH && EnvShadow_IsEnabled() &&
+                            shadowMode != NATURE_SHADOW_PROJECTED_ONLY;
     bool useProjectedShadows = quality >= GFX_MED &&
-                               (quality < GFX_HIGH || !EnvShadow_IsEnabled());
+                               shadowMode != NATURE_SHADOW_REAL_ONLY;
     if (useProjectedShadows && meadow->shadowDistance > 0.0f) {
         Shader shadowShader = FlowerShadow_GetShader();
-        Vector3 lightTravel = Environment_GetSunDirection();
-        Vector4 shadowColor = ColorNormalize(Environment_GetShadowColor());
-        Vector3 shadowTint = {shadowColor.x, shadowColor.y, shadowColor.z};
-        SetShaderValue(shadowShader, GetShaderLocation(shadowShader, "u_lightTravel"),
-                       &lightTravel, SHADER_UNIFORM_VEC3);
-        SetShaderValue(shadowShader, GetShaderLocation(shadowShader, "u_shadowTint"),
-                       &shadowTint, SHADER_UNIFORM_VEC3);
+        Nature_UpdateProjectedShadowShader(shadowShader, realShadowActive);
         float shadowScale = quality >= GFX_HIGH ? 1.0f : 0.76f;
         float shadowDistance = meadow->shadowDistance * shadowScale;
         rlDisableDepthMask();
@@ -887,7 +953,9 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
                                      float time, Vector2 windDirection, float windStrength)
 {
     if (!meadow || !meadow->ready || GfxQuality_Get() < GFX_HIGH ||
-        meadow->shadowDistance <= 0.0f)
+        meadow->shadowDistance <= 0.0f ||
+        Nature_GetShadowMode() == NATURE_SHADOW_PROJECTED_ONLY ||
+        !Nature_ShadowCasterTypeEnabled(false))
         return;
     Shader shader = NatureShadow_GetShader();
     Nature_UpdateShadowShader(shader, time, windDirection, windStrength,
@@ -900,7 +968,7 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
         float dx = camera.position.x - center.x;
         float dz = camera.position.z - center.z;
         float visibleDistance = sqrtf(dx * dx + dz * dz) - chunk->radius;
-        if (visibleDistance > casterRange)
+        if (visibleDistance > casterRange && !Nature_ShadowCasterFilterActive())
             continue;
         Shader previous = chunk->nearModel.materials[0].shader;
         chunk->nearModel.materials[0].shader = shader;
@@ -1244,17 +1312,14 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
     float shadowScale = quality >= GFX_HIGH ? 1.0f : 0.78f;
     bool shadowInRange = field->shadowDistance <= 0.0f ||
                          visibleDistance <= field->shadowDistance * shadowScale;
+    NatureShadowMode shadowMode = Nature_GetShadowMode();
+    bool realShadowActive = quality >= GFX_HIGH && EnvShadow_IsEnabled() &&
+                            shadowMode != NATURE_SHADOW_PROJECTED_ONLY;
     bool useProjectedShadows = quality >= GFX_MED &&
-                               (quality < GFX_HIGH || !EnvShadow_IsEnabled());
+                               shadowMode != NATURE_SHADOW_REAL_ONLY;
     if (field->shadowReady && useProjectedShadows && shadowInRange) {
         Shader shadowShader = FlowerShadow_GetShader();
-        Vector3 lightTravel = Environment_GetSunDirection();
-        Vector4 shadowColor = ColorNormalize(Environment_GetShadowColor());
-        Vector3 shadowTint = {shadowColor.x, shadowColor.y, shadowColor.z};
-        SetShaderValue(shadowShader, GetShaderLocation(shadowShader, "u_lightTravel"),
-                       &lightTravel, SHADER_UNIFORM_VEC3);
-        SetShaderValue(shadowShader, GetShaderLocation(shadowShader, "u_shadowTint"),
-                       &shadowTint, SHADER_UNIFORM_VEC3);
+        Nature_UpdateProjectedShadowShader(shadowShader, realShadowActive);
         rlDisableDepthMask();
         BeginBlendMode(BLEND_MULTIPLIED);
         DrawModel(field->shadowModel, worldOffset, 1.0f, WHITE);
@@ -1279,7 +1344,9 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
 void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOffset,
                                          float time, Vector2 windDirection, float windStrength)
 {
-    if (!field || !field->ready || GfxQuality_Get() < GFX_HIGH)
+    if (!field || !field->ready || GfxQuality_Get() < GFX_HIGH ||
+        Nature_GetShadowMode() == NATURE_SHADOW_PROJECTED_ONLY ||
+        !Nature_ShadowCasterTypeEnabled(true))
         return;
     Vector3 center = Vector3Add(field->boundsCenter, worldOffset);
     float dx = camera.position.x - center.x;
@@ -1287,7 +1354,7 @@ void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOff
     float visibleDistance = sqrtf(dx * dx + dz * dz) - field->boundsRadius;
     float casterRange = field->shadowDistance > 0.0f
         ? field->shadowDistance + 4.0f : 30.0f;
-    if (visibleDistance > casterRange)
+    if (visibleDistance > casterRange && !Nature_ShadowCasterFilterActive())
         return;
 
     Shader shader = NatureShadow_GetShader();

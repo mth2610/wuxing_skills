@@ -49,6 +49,7 @@ static Texture2D s_staticShadowMapTex;
 static Vector3 s_staticSunDir = {0};
 static bool s_staticTargetReady = false;
 static bool s_staticCacheValid = false;
+static bool s_dynamicVerifyDumped = false;
 static EnvShadowMapCasterCallback s_mapCasterCallback = NULL;
 static void *s_mapCasterUserData = NULL;
 
@@ -173,6 +174,15 @@ bool EnvShadow_IsCapturing(void) { return s_capturing; }
 
 void EnvShadow_SetFocus(Vector3 center, float halfExtent)
 {
+    // Reusable diagnostic override for inspecting a known caster region while
+    // the gameplay camera remains elsewhere. Both coordinates are required so
+    // a partially configured run cannot move only one axis by accident.
+    const char *focusX = getenv("WUXING_SHADOW_FOCUS_X");
+    const char *focusZ = getenv("WUXING_SHADOW_FOCUS_Z");
+    if (focusX != NULL && focusZ != NULL) {
+        center.x = strtof(focusX, NULL);
+        center.z = strtof(focusZ, NULL);
+    }
     if (halfExtent < 8.0f) halfExtent = 8.0f;
     if (halfExtent > 96.0f) halfExtent = 96.0f;
     // Stabilize the orthographic projection in the light plane. Without this,
@@ -322,6 +332,27 @@ void EnvShadow_EndCapture(void)
     if (!s_ready || !s_enabled || !s_capturing || s_staticCaptureOpen)
         return;
     EndCaptureTarget();
+    if (!s_dynamicVerifyDumped && getenv("WUXING_SHADOW_DYNAMIC_VERIFY") != NULL) {
+        s_dynamicVerifyDumped = true;
+        float *pixels = (float *)rlReadTexturePixels(
+            s_shadowMapTex.id, s_resolution, s_resolution,
+            RL_PIXELFORMAT_UNCOMPRESSED_R32);
+        if (pixels != NULL) {
+            int occupied = 0;
+            float minDepth = 1.0f;
+            int total = s_resolution * s_resolution;
+            for (int i = 0; i < total; i++) {
+                if (pixels[i] < minDepth) minDepth = pixels[i];
+                if (pixels[i] < 0.999f) occupied++;
+            }
+            TraceLog(LOG_INFO,
+                     "ENV_SHADOW: dynamic verify minDepth=%.4f occupied=%d/%d",
+                     minDepth, occupied, total);
+            MemFree(pixels);
+        } else {
+            TraceLog(LOG_WARNING, "ENV_SHADOW: dynamic verify readback failed");
+        }
+    }
 }
 
 Shader EnvShadow_GetDepthShader(void) { return s_depthShader; }

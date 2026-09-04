@@ -393,11 +393,14 @@ void UpdateVerdantPathMap(float dt)
             view.z /= viewLength;
         }
         Vector3 focus = {
-            camera.position.x + view.x * 10.0f,
+            camera.position.x + view.x * 7.0f,
             0.0f,
-            camera.position.z + view.z * 10.0f,
+            camera.position.z + view.z * 7.0f,
         };
-        EnvShadow_SetFocus(focus, 30.0f);
+        // Dynamic vegetation/character shadows are the near cascade. Static
+        // terrain and rocks remain covered by the world-fixed cache, so a
+        // tighter 40 m box spends 1.5x more texels across thin grass blades.
+        EnvShadow_SetFocus(focus, 20.0f);
         MapProp_BeginNatureInteraction(camera.target, dt);
         MapProp_AddNatureInteractor(camera.target, 1.25f, 0.34f);
         MapProp_EndNatureInteraction();

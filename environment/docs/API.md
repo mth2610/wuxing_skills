@@ -69,6 +69,10 @@ dynamic projection remains camera-following (2048²/1024²). Receivers combine
 the two visibility layers. Changing the sun direction invalidates the cached
 layer automatically; rebuild it at the map's chosen day/night cadence. Set
 `WUXING_SHADOW_STATIC_VERIFY=1` to read it back once and log occupied texels.
+Use `WUXING_SHADOW_DYNAMIC_VERIFY=1` for the equivalent one-shot readback of
+the camera-following dynamic target after its first completed capture. To
+inspect an off-camera region, set both `WUXING_SHADOW_FOCUS_X` and
+`WUXING_SHADOW_FOCUS_Z`; the ordinary camera focus remains the default.
 
 Maps with animated or camera-local geometry can register one
 `EnvShadowMapCasterCallback`. It runs inside the existing dynamic shadow pass,

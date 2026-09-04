@@ -33,6 +33,8 @@ bool       EnvShadow_IsEnabled(void);   // false also when Init failed (e.g. FBO
 // should follow the camera/player for large maps; halfExtent is clamped to a
 // safe range. Focus is snapped in light space to keep shadow texels stable.
 // Existing arena users need not call this.
+// Diagnostics may override X/Z with WUXING_SHADOW_FOCUS_X and
+// WUXING_SHADOW_FOCUS_Z; both variables must be present.
 void       EnvShadow_SetFocus(Vector3 center, float halfExtent);
 
 void       EnvShadow_BeginCapture(void); // begins the light-space depth pass
@@ -72,5 +74,9 @@ Texture2D  EnvShadow_GetStaticShadowMap(void);
 // stored depth at both texels. One call = full numeric picture, no more
 // color-guessing from screenshots.
 void EnvShadow_DebugDump(Vector3 worldPos);
+
+// Set WUXING_SHADOW_DYNAMIC_VERIFY=1 for a one-shot R32F readback after the
+// first completed dynamic capture. The log reports minimum depth and occupied
+// texels; intended for automated caster validation, never normal gameplay.
 
 #endif // ENV_SHADOW_H
