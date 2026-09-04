@@ -3505,3 +3505,22 @@ after the head was gone the strip kept drifting and fading in open space.
   diagonal half-texel bilinear taps implement that tent exactly and add only one
   low-resolution pass; at MED its tap count is 1/24 of the raymarch atlas bound
   and the extra HDR target is about 450 KiB at 1280x720.
+
+## Premultiplied gas passes must write to FBO targets without BLEND_ALPHA (04/09/2026)
+
+- **Symptom:** smoke, fire and energy develop a prominent dark/black fringe or halo
+  along their entire perimeter, even over dark blue scenes where smoke should be
+  lighter than the background.
+- **Cause:** `gas_volume.fs` outputs premultiplied RGBA `(body * a + glow, a)`.
+  The intermediate passes in `core/gas/gas_system.c` (`s_raymarchTarget` and
+  `s_denoiseTarget`) were rendered under raylib's default `BLEND_ALPHA`.
+  The hardware blend unit multiplied RGB by alpha a second (and in denoise, a third)
+  time against the cleared target (`dst.rgb = src.rgb * src.a`). When final
+  `GasSystem_Composite` blended with `BLEND_ALPHA_PREMULTIPLY`, the color term
+  was nearly zero while alpha subtracted background light (`bg * (1 - a)`),
+  creating a dark border.
+- **Rule:** intermediate offscreen render target draws that output premultiplied
+  data must disable blending via `rlDisableColorBlend()` and flush via
+  `rlDrawRenderBatchActive()` before re-enabling (`rlEnableColorBlend()`).
+  Guarded by `core/tests/gas_blend_contract_test.c`.
+

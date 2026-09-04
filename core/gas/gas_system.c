@@ -350,12 +350,15 @@ static void GasSystem_DenoiseRaymarch(void) {
     BeginShaderMode(s_denoiseShader);
     SetShaderValue(s_denoiseShader, s_denoiseTexelSizeLoc, &texelSize,
                    SHADER_UNIFORM_VEC2);
+    rlDisableColorBlend();
     DrawTexturePro(s_raymarchTarget.texture,
                    (Rectangle){0, 0, (float)s_raymarchTarget.texture.width,
                                -(float)s_raymarchTarget.texture.height},
                    (Rectangle){0, 0, (float)s_denoiseTarget.texture.width,
                                (float)s_denoiseTarget.texture.height},
                    (Vector2){0, 0}, 0.0f, WHITE);
+    rlDrawRenderBatchActive();
+    rlEnableColorBlend();
     EndShaderMode();
     EndTextureMode();
 }
@@ -491,11 +494,14 @@ void GasSystem_Prepare(Camera3D camera) {
         SetShaderValueTexture(s_raymarchShader, s_locations.bgLuma, bgLuma);
     if (hasDepth)
         SetShaderValueTexture(s_raymarchShader, s_locations.sceneDepth, sceneDepth);
+    rlDisableColorBlend();
     DrawTexturePro(s_atlas,
                    (Rectangle){0, 0, (float)s_atlas.width, (float)s_atlas.height},
                    (Rectangle){0, 0, (float)s_raymarchTarget.texture.width,
                                (float)s_raymarchTarget.texture.height},
                    (Vector2){0, 0}, 0.0f, WHITE);
+    rlDrawRenderBatchActive();
+    rlEnableColorBlend();
     EndShaderMode();
     EndTextureMode();
     GasSystem_DenoiseRaymarch();

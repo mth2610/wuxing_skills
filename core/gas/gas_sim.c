@@ -84,6 +84,88 @@ static void GasSim_Advect(const GasSim *sim, const float *source, float *target,
     GasSim_ClearBoundary(sim, target);
 }
 
+static void GasSim_Advect3(const GasSim *sim,
+                           const float *src0, const float *src1, const float *src2,
+                           float *dst0, float *dst1, float *dst2,
+                           float dt, float diss0, float diss1, float diss2)
+{
+    float decay0 = expf(-fmaxf(0.0f, diss0) * dt);
+    float decay1 = expf(-fmaxf(0.0f, diss1) * dt);
+    float decay2 = expf(-fmaxf(0.0f, diss2) * dt);
+    float maxX = (float)(sim->width - 1);
+    float maxY = (float)(sim->height - 1);
+    float maxZ = (float)(sim->depth - 1);
+    int strideY = sim->width;
+    int strideZ = sim->width * sim->height;
+
+    for (int z = 0; z < sim->depth; ++z) {
+        int zOffset = z * strideZ;
+        for (int y = 0; y < sim->height; ++y) {
+            int rowOffset = zOffset + y * strideY;
+            int i = rowOffset;
+            for (int x = 0; x < sim->width; ++x, ++i) {
+                float px = (float)x - sim->velocityX[i] * dt;
+                float py = (float)y - sim->velocityY[i] * dt;
+                float pz = (float)z - sim->velocityZ[i] * dt;
+
+                px = fmaxf(0.0f, fminf(px, maxX));
+                py = fmaxf(0.0f, fminf(py, maxY));
+                pz = fmaxf(0.0f, fminf(pz, maxZ));
+
+                int x0 = (int)floorf(px);
+                int y0 = (int)floorf(py);
+                int z0 = (int)floorf(pz);
+                int x1 = GasSim_ClampInt(x0 + 1, 0, sim->width - 1);
+                int y1 = GasSim_ClampInt(y0 + 1, 0, sim->height - 1);
+                int z1 = GasSim_ClampInt(z0 + 1, 0, sim->depth - 1);
+
+                float tx = px - (float)x0;
+                float ty = py - (float)y0;
+                float tz = pz - (float)z0;
+
+                int i000 = z0 * strideZ + y0 * strideY + x0;
+                int i100 = z0 * strideZ + y0 * strideY + x1;
+                int i010 = z0 * strideZ + y1 * strideY + x0;
+                int i110 = z0 * strideZ + y1 * strideY + x1;
+                int i001 = z1 * strideZ + y0 * strideY + x0;
+                int i101 = z1 * strideZ + y0 * strideY + x1;
+                int i011 = z1 * strideZ + y1 * strideY + x0;
+                int i111 = z1 * strideZ + y1 * strideY + x1;
+
+                /* Field 0 */
+                float c00 = src0[i000] + (src0[i100] - src0[i000]) * tx;
+                float c10 = src0[i010] + (src0[i110] - src0[i010]) * tx;
+                float c01 = src0[i001] + (src0[i101] - src0[i001]) * tx;
+                float c11 = src0[i011] + (src0[i111] - src0[i011]) * tx;
+                float c0 = c00 + (c10 - c00) * ty;
+                float c1 = c01 + (c11 - c01) * ty;
+                dst0[i] = (c0 + (c1 - c0) * tz) * decay0;
+
+                /* Field 1 */
+                c00 = src1[i000] + (src1[i100] - src1[i000]) * tx;
+                c10 = src1[i010] + (src1[i110] - src1[i010]) * tx;
+                c01 = src1[i001] + (src1[i101] - src1[i001]) * tx;
+                c11 = src1[i011] + (src1[i111] - src1[i011]) * tx;
+                c0 = c00 + (c10 - c00) * ty;
+                c1 = c01 + (c11 - c01) * ty;
+                dst1[i] = (c0 + (c1 - c0) * tz) * decay1;
+
+                /* Field 2 */
+                c00 = src2[i000] + (src2[i100] - src2[i000]) * tx;
+                c10 = src2[i010] + (src2[i110] - src2[i010]) * tx;
+                c01 = src2[i001] + (src2[i101] - src2[i001]) * tx;
+                c11 = src2[i011] + (src2[i111] - src2[i011]) * tx;
+                c0 = c00 + (c10 - c00) * ty;
+                c1 = c01 + (c11 - c01) * ty;
+                dst2[i] = (c0 + (c1 - c0) * tz) * decay2;
+            }
+        }
+    }
+    GasSim_ClearBoundary(sim, dst0);
+    GasSim_ClearBoundary(sim, dst1);
+    GasSim_ClearBoundary(sim, dst2);
+}
+
 static void GasSim_Swap(float **a, float **b) {
     float *temp = *a;
     *a = *b;
@@ -264,54 +346,71 @@ void GasSim_ProjectVelocity(GasSim *sim, int pressureIterations) {
     memset(sim->pressure, 0, (size_t)sim->cellCount * sizeof(float));
     memset(sim->pressureScratch, 0, (size_t)sim->cellCount * sizeof(float));
 
-    for (int z = 1; z < sim->depth - 1; ++z) {
-        for (int y = 1; y < sim->height - 1; ++y) {
-            for (int x = 1; x < sim->width - 1; ++x) {
-                int i = GasSim_Index(sim, x, y, z);
+    int w = sim->width;
+    int h = sim->height;
+    int d = sim->depth;
+    int strideY = w;
+    int strideZ = w * h;
+
+    for (int z = 1; z < d - 1; ++z) {
+        int zOffset = z * strideZ;
+        for (int y = 1; y < h - 1; ++y) {
+            int rowOffset = zOffset + y * strideY;
+            int i = rowOffset + 1;
+            for (int x = 1; x < w - 1; ++x, ++i) {
                 sim->divergence[i] = -0.5f * (
-                    sim->velocityX[GasSim_Index(sim, x + 1, y, z)] -
-                    sim->velocityX[GasSim_Index(sim, x - 1, y, z)] +
-                    sim->velocityY[GasSim_Index(sim, x, y + 1, z)] -
-                    sim->velocityY[GasSim_Index(sim, x, y - 1, z)] +
-                    sim->velocityZ[GasSim_Index(sim, x, y, z + 1)] -
-                    sim->velocityZ[GasSim_Index(sim, x, y, z - 1)]);
+                    sim->velocityX[i + 1] -
+                    sim->velocityX[i - 1] +
+                    sim->velocityY[i + strideY] -
+                    sim->velocityY[i - strideY] +
+                    sim->velocityZ[i + strideZ] -
+                    sim->velocityZ[i - strideZ]);
             }
         }
     }
 
     float *pressure = sim->pressure;
     float *scratch = sim->pressureScratch;
+    const float inv6 = 1.0f / 6.0f;
     for (int iteration = 0; iteration < pressureIterations; ++iteration) {
-        for (int z = 1; z < sim->depth - 1; ++z) {
-            for (int y = 1; y < sim->height - 1; ++y) {
-                for (int x = 1; x < sim->width - 1; ++x) {
-                    int i = GasSim_Index(sim, x, y, z);
+        for (int z = 1; z < d - 1; ++z) {
+            int zOffset = z * strideZ;
+            for (int y = 1; y < h - 1; ++y) {
+                int rowOffset = zOffset + y * strideY;
+                int i = rowOffset + 1;
+                for (int x = 1; x < w - 1; ++x, ++i) {
                     scratch[i] = (sim->divergence[i] +
-                        pressure[GasSim_Index(sim, x - 1, y, z)] +
-                        pressure[GasSim_Index(sim, x + 1, y, z)] +
-                        pressure[GasSim_Index(sim, x, y - 1, z)] +
-                        pressure[GasSim_Index(sim, x, y + 1, z)] +
-                        pressure[GasSim_Index(sim, x, y, z - 1)] +
-                        pressure[GasSim_Index(sim, x, y, z + 1)]) / 6.0f;
+                        pressure[i - 1] +
+                        pressure[i + 1] +
+                        pressure[i - strideY] +
+                        pressure[i + strideY] +
+                        pressure[i - strideZ] +
+                        pressure[i + strideZ]) * inv6;
                 }
             }
         }
         GasSim_Swap(&pressure, &scratch);
     }
 
-    for (int z = 1; z < sim->depth - 1; ++z) {
-        for (int y = 1; y < sim->height - 1; ++y) {
-            for (int x = 1; x < sim->width - 1; ++x) {
-                int i = GasSim_Index(sim, x, y, z);
+    if (pressure != sim->pressure) {
+        memcpy(sim->pressure, pressure, (size_t)sim->cellCount * sizeof(float));
+    }
+
+    for (int z = 1; z < d - 1; ++z) {
+        int zOffset = z * strideZ;
+        for (int y = 1; y < h - 1; ++y) {
+            int rowOffset = zOffset + y * strideY;
+            int i = rowOffset + 1;
+            for (int x = 1; x < w - 1; ++x, ++i) {
                 sim->velocityX[i] -= 0.5f * (
-                    pressure[GasSim_Index(sim, x + 1, y, z)] -
-                    pressure[GasSim_Index(sim, x - 1, y, z)]);
+                    sim->pressure[i + 1] -
+                    sim->pressure[i - 1]);
                 sim->velocityY[i] -= 0.5f * (
-                    pressure[GasSim_Index(sim, x, y + 1, z)] -
-                    pressure[GasSim_Index(sim, x, y - 1, z)]);
+                    sim->pressure[i + strideY] -
+                    sim->pressure[i - strideY]);
                 sim->velocityZ[i] -= 0.5f * (
-                    pressure[GasSim_Index(sim, x, y, z + 1)] -
-                    pressure[GasSim_Index(sim, x, y, z - 1)]);
+                    sim->pressure[i + strideZ] -
+                    sim->pressure[i - strideZ]);
             }
         }
     }
@@ -324,12 +423,10 @@ void GasSim_Step(GasSim *sim, float dt, const GasSimConfig *config) {
     if (sim == NULL || config == NULL || sim->cellCount <= 0 || dt <= 0.0f) return;
     if (dt > 0.1f) dt = 0.1f;
 
-    GasSim_Advect(sim, sim->velocityX, sim->velocityScratchX,
-                  dt, config->velocityDissipation);
-    GasSim_Advect(sim, sim->velocityY, sim->velocityScratchY,
-                  dt, config->velocityDissipation);
-    GasSim_Advect(sim, sim->velocityZ, sim->velocityScratchZ,
-                  dt, config->velocityDissipation);
+    GasSim_Advect3(sim, sim->velocityX, sim->velocityY, sim->velocityZ,
+                   sim->velocityScratchX, sim->velocityScratchY, sim->velocityScratchZ,
+                   dt, config->velocityDissipation, config->velocityDissipation,
+                   config->velocityDissipation);
     memcpy(sim->velocityX, sim->velocityScratchX,
            (size_t)sim->cellCount * sizeof(float));
     memcpy(sim->velocityY, sim->velocityScratchY,
@@ -344,12 +441,10 @@ void GasSim_Step(GasSim *sim, float dt, const GasSimConfig *config) {
     GasSim_ApplyVorticityConfinement(sim, dt, config->vorticityStrength);
     GasSim_ProjectVelocity(sim, config->pressureIterations);
 
-    GasSim_Advect(sim, sim->density, sim->scalarScratchA,
-                  dt, config->densityDissipation);
-    GasSim_Advect(sim, sim->temperature, sim->scalarScratchB,
-                  dt, config->temperatureDissipation);
-    GasSim_Advect(sim, sim->reaction, sim->scalarScratchC,
-                  dt, config->reactionDissipation);
+    GasSim_Advect3(sim, sim->density, sim->temperature, sim->reaction,
+                   sim->scalarScratchA, sim->scalarScratchB, sim->scalarScratchC,
+                   dt, config->densityDissipation, config->temperatureDissipation,
+                   config->reactionDissipation);
     memcpy(sim->density, sim->scalarScratchA,
            (size_t)sim->cellCount * sizeof(float));
     memcpy(sim->temperature, sim->scalarScratchB,
