@@ -309,7 +309,10 @@ typedef struct
     int flowerFieldsFrustumCulled;
     int flowerFieldsDistanceCulled;
     int flowerDraws;
+    int flowerNearDraws;
+    int flowerFarDraws;
     int flowerShadowDraws;
+    int flowerShadowDistanceCulled;
 } MapNatureRenderStats;
 
 void MapProp_ResetNatureRenderStats(void);
@@ -334,13 +337,17 @@ typedef struct
 typedef struct
 {
     Model model;
+    Model farModel;
     Model shadowModel;
     bool textured;
+    bool farReady;
     bool shadowReady;
     float alphaCutoff;
     Vector3 boundsCenter;
     float boundsRadius;
     float drawDistance;
+    float lodDistance;
+    float shadowDistance;
     bool ready;
 } MapFlowerField;
 
@@ -351,6 +358,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
 // Sets the field-level culling range in world metres. The default is 78 m;
 // zero or a negative value disables distance culling.
 void MapProp_SetFlowerFieldDrawDistance(MapFlowerField *field, float drawDistance);
+// Sets the near-to-far geometry switch and contact-shadow range in world
+// metres. Defaults are 34 m and 26 m; non-positive values disable each limit.
+void MapProp_SetFlowerFieldLod(MapFlowerField *field, float lodDistance, float shadowDistance);
 void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, float time,
                              Vector2 windDirection, float windStrength);
 void MapProp_UnloadFlowerField(MapFlowerField *field);

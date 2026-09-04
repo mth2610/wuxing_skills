@@ -343,6 +343,7 @@ void InitVerdantPathMap(void)
             (Color){91, 120, 65, 255}, (Color){199, 157, 69, 255},
             "maps/toolkit/textures/wildflower_bloom_atlas_v2.png", 0.36f, 4, 2);
         MapProp_SetFlowerFieldDrawDistance(&s_flowerFields[cluster], 78.0f);
+        MapProp_SetFlowerFieldLod(&s_flowerFields[cluster], 34.0f, 26.0f);
     }
     // World-fixed layer: terrain relief and static rocks are captured once.
     // Characters remain in the smaller camera-following map updated each frame.

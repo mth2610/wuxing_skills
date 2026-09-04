@@ -747,6 +747,78 @@ void MapProp_UnloadMeadow(MapMeadowSurface *meadow)
     meadow->ready = false;
 }
 
+static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, int count,
+                                        Color stemColor, bool texturedBloom,
+                                        int atlasColumns, int atlasRows)
+{
+    // Far flowers retain their authored position, lean, tint, and atlas species,
+    // but collapse crossed stems/leaves/centres into one stem plane + one bloom.
+    Mesh mesh = Nature_AllocMesh(count * 12);
+    int cursor = 0;
+    for (int i = 0; i < count; i++) {
+        const MapFlowerPlacement *flower = &placements[i];
+        float phase = flower->phase;
+        float h = flower->height;
+        float stemWidth = fmaxf(0.018f, flower->bloomRadius * 0.22f);
+        Vector3 base = flower->position;
+        float leanAngle = flower->rotationDeg * DEG2RAD * 0.73f + phase * 4.1f;
+        float lean = h * (0.025f + 0.055f * (0.5f + 0.5f * sinf((float)i * 2.37f)));
+        Vector3 head = {base.x + cosf(leanAngle) * lean, base.y + h,
+                        base.z + sinf(leanAngle) * lean};
+        float stemAngle = flower->rotationDeg * DEG2RAD;
+        Vector3 side = {cosf(stemAngle) * stemWidth, 0.0f,
+                        sinf(stemAngle) * stemWidth};
+        Vector3 stemNormal = {-sinf(stemAngle), 0.08f, cosf(stemAngle)};
+        Vector3 s0 = {base.x - side.x, base.y, base.z - side.z};
+        Vector3 s1 = {base.x + side.x, base.y, base.z + side.z};
+        Vector3 s2 = {head.x + side.x * 0.45f, head.y, head.z + side.z * 0.45f};
+        Vector3 s3 = {head.x - side.x * 0.45f, head.y, head.z - side.z * 0.45f};
+        Nature_AddQuad(&mesh, &cursor, s0, s1, s2, s3, stemNormal,
+                       phase, 0.0f, 1.0f, stemColor, stemColor);
+
+        float headTilt = 0.24f + 0.28f * (0.5f + 0.5f * sinf((float)i * 1.91f + phase));
+        float tiltX = cosf(leanAngle) * headTilt;
+        float tiltZ = sinf(leanAngle) * headTilt;
+        Vector3 bloomNormal = {-tiltX, 1.0f, -tiltZ};
+        Vector3 right = {cosf(stemAngle), 0.0f, sinf(stemAngle)};
+        Vector3 forward = {-sinf(stemAngle), 0.0f, cosf(stemAngle)};
+        float petalScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
+        float radius = flower->bloomRadius * petalScale * 1.08f;
+        float ox0 = (-right.x - forward.x) * radius;
+        float oz0 = (-right.z - forward.z) * radius;
+        float ox1 = ( right.x - forward.x) * radius;
+        float oz1 = ( right.z - forward.z) * radius;
+        float ox2 = ( right.x + forward.x) * radius;
+        float oz2 = ( right.z + forward.z) * radius;
+        float ox3 = (-right.x + forward.x) * radius;
+        float oz3 = (-right.z + forward.z) * radius;
+        Vector3 p0 = {head.x + ox0, head.y + tiltX * ox0 + tiltZ * oz0, head.z + oz0};
+        Vector3 p1 = {head.x + ox1, head.y + tiltX * ox1 + tiltZ * oz1, head.z + oz1};
+        Vector3 p2 = {head.x + ox2, head.y + tiltX * ox2 + tiltZ * oz2, head.z + oz2};
+        Vector3 p3 = {head.x + ox3, head.y + tiltX * ox3 + tiltZ * oz3, head.z + oz3};
+        if (texturedBloom) {
+            int variantCount = atlasColumns * atlasRows;
+            int variant = flower->bloomVariant % variantCount;
+            int column = variant % atlasColumns;
+            int row = variant / atlasColumns;
+            float insetU = 0.008f / atlasColumns;
+            float insetV = 0.008f / atlasRows;
+            Vector4 uvRect = {
+                (float)column / atlasColumns + insetU,
+                (float)row / atlasRows + insetV,
+                (float)(column + 1) / atlasColumns - insetU,
+                (float)(row + 1) / atlasRows - insetV,
+            };
+            Nature_AddTexturedBloom(&mesh, &cursor, p0, p1, p2, p3, bloomNormal,
+                                    phase, flower->petalColor, uvRect);
+        } else {
+            Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, bloomNormal,
+                           phase, 1.0f, 1.0f, flower->petalColor, flower->petalColor);
+        }
+    }
+    return Nature_ModelFromMesh(mesh, Nature_GetShader(texturedBloom));
+}
+
 MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, int count,
                                          Color stemColor, Color centerColor,
                                          const char *petalTexturePath, float alphaCutoff,
@@ -902,6 +974,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         }
     }
     field.model = Nature_ModelFromMesh(mesh, Nature_GetShader(texturedBloom));
+    field.farModel = Nature_BuildFlowerFarModel(placements, count, stemColor,
+                                                 texturedBloom, atlasColumns, atlasRows);
+    field.farReady = field.farModel.meshCount > 0;
     field.shadowModel = Nature_BuildFlowerShadowModel(placements, count);
     field.shadowReady = field.shadowModel.meshCount > 0;
     field.textured = petalTexturePath != NULL;
@@ -909,12 +984,15 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
     field.boundsCenter = Vector3Scale(Vector3Add(boundsMin, boundsMax), 0.5f);
     field.boundsRadius = Vector3Distance(boundsMin, boundsMax) * 0.5f;
     field.drawDistance = 78.0f;
+    field.lodDistance = 34.0f;
+    field.shadowDistance = 26.0f;
     if (field.textured) {
         Texture2D petalTexture = ResourceManager_LoadTexture(petalTexturePath);
         GenTextureMipmaps(&petalTexture);
         SetTextureFilter(petalTexture, TEXTURE_FILTER_ANISOTROPIC_16X);
         SetTextureWrap(petalTexture, TEXTURE_WRAP_CLAMP);
         field.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = petalTexture;
+        field.farModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = petalTexture;
     }
     field.ready = true;
     return field;
@@ -924,6 +1002,13 @@ void MapProp_SetFlowerFieldDrawDistance(MapFlowerField *field, float drawDistanc
 {
     if (!field) return;
     field->drawDistance = drawDistance;
+}
+
+void MapProp_SetFlowerFieldLod(MapFlowerField *field, float lodDistance, float shadowDistance)
+{
+    if (!field) return;
+    field->lodDistance = lodDistance;
+    field->shadowDistance = shadowDistance;
 }
 
 void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, float time,
@@ -949,7 +1034,15 @@ void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, f
         s_natureRenderStats.flowerFieldsDistanceCulled++;
         return;
     }
-    if (field->shadowReady && quality >= GFX_MED) {
+    float lodScale = quality >= GFX_HIGH ? 1.0f
+                   : quality == GFX_MED ? 0.82f
+                   : quality == GFX_LOW ? 0.58f : 0.45f;
+    bool useFarModel = field->farReady && field->lodDistance > 0.0f &&
+                       visibleDistance > field->lodDistance * lodScale;
+    float shadowScale = quality >= GFX_HIGH ? 1.0f : 0.78f;
+    bool shadowInRange = field->shadowDistance <= 0.0f ||
+                         visibleDistance <= field->shadowDistance * shadowScale;
+    if (field->shadowReady && quality >= GFX_MED && shadowInRange) {
         Shader shadowShader = FlowerShadow_GetShader();
         Vector3 lightTravel = Environment_GetSunDirection();
         Vector4 shadowColor = ColorNormalize(Environment_GetShadowColor());
@@ -964,12 +1057,18 @@ void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, f
         s_natureRenderStats.flowerShadowDraws++;
         EndBlendMode();
         rlEnableDepthMask();
+    } else if (field->shadowReady && quality >= GFX_MED && !shadowInRange) {
+        s_natureRenderStats.flowerShadowDistanceCulled++;
     }
     Nature_UpdateShader(Nature_GetShader(field->textured), time, windDirection, windStrength,
                         field->textured, field->alphaCutoff);
     rlDisableBackfaceCulling();
-    DrawModel(field->model, worldOffset, 1.0f, WHITE);
+    DrawModel(useFarModel ? field->farModel : field->model, worldOffset, 1.0f, WHITE);
     s_natureRenderStats.flowerDraws++;
+    if (useFarModel)
+        s_natureRenderStats.flowerFarDraws++;
+    else
+        s_natureRenderStats.flowerNearDraws++;
     rlEnableBackfaceCulling();
 }
 
@@ -978,7 +1077,10 @@ void MapProp_UnloadFlowerField(MapFlowerField *field)
     if (!field || !field->ready) return;
     if (field->shadowReady)
         UnloadModel(field->shadowModel);
+    if (field->farReady)
+        UnloadModel(field->farModel);
     UnloadModel(field->model);
+    field->farReady = false;
     field->shadowReady = false;
     field->boundsRadius = 0.0f;
     field->ready = false;
