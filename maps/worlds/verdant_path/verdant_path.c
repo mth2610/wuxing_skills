@@ -203,6 +203,7 @@ static void BuildMeadowLayout(void)
         if (Random01(&rng) > 0.76f)
             basePetals += (Random01(&rng) > 0.5f) ? 1 : -1;
         s_flowerPlacements[i].petalCount = (unsigned char)basePetals;
+        s_flowerPlacements[i].bloomVariant = (unsigned char)(NextRandom(&rng) % 4u);
         s_flowerPlacements[i].petalLengthScale = RandomRange(&rng, 0.88f, 1.12f);
     }
 
@@ -293,17 +294,20 @@ void InitVerdantPathMap(void)
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
             .rootColor = {57, 75, 42, 255}, .tipColor = {95, 116, 67, 255},
-            .bladesPerClump = 4, .bladeSegments = 2, .bladeWidthScale = 0.27f,
+            .bladesPerClump = 5, .bladeSegments = 2, .bladeWidthScale = 0.20f,
             .chunkSize = 12.0f, .lodDistance = 30.0f, .drawDistance = 78.0f,
+            .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
         (MapMeadowStyle){
             .rootColor = {42, 57, 28, 255}, .tipColor = {112, 119, 57, 255},
             .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.20f,
             .chunkSize = 18.0f, .lodDistance = 34.0f, .drawDistance = 72.0f,
+            .texturePath = NULL,
         });
     s_flowerField = MapProp_CreateFlowerField(s_flowerPlacements, FLOWER_COUNT,
-        (Color){61, 91, 48, 255}, (Color){188, 142, 63, 255});
+        (Color){61, 91, 48, 255}, (Color){188, 142, 63, 255},
+        "maps/toolkit/textures/wildflower_bloom_atlas.png", 0.34f, 2, 2);
     MapManager_SetZones(ISLAND_ZONES, ISLAND_ZONE_COUNT);
     s_time = 0.0f;
     s_ready = true;

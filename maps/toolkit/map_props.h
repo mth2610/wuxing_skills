@@ -231,6 +231,8 @@ typedef struct
     float chunkSize;       // world meters; <= 0 uses 12
     float lodDistance;     // near->simplified transition; <= 0 disables LOD
     float drawDistance;    // <= 0 draws all chunks
+    const char *texturePath; // optional alpha-cutout blade texture
+    float alphaCutoff;       // <= 0 uses 0.42
 } MapMeadowStyle;
 
 typedef struct
@@ -247,6 +249,8 @@ typedef struct
     int chunkCount;
     float lodDistance;
     float drawDistance;
+    bool textured;
+    float alphaCutoff;
     bool ready;
 } MapMeadowSurface;
 
@@ -288,17 +292,22 @@ typedef struct
     float phase;
     Color petalColor;
     unsigned char petalCount; // clamped to 4..6; zero defaults to 5
+    unsigned char bloomVariant; // atlas cell, wrapped by atlasColumns*atlasRows
     float petalLengthScale;   // <= 0 defaults to 1
 } MapFlowerPlacement;
 
 typedef struct
 {
     Model model;
+    bool textured;
+    float alphaCutoff;
     bool ready;
 } MapFlowerField;
 
 MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, int count,
-                                         Color stemColor, Color centerColor);
+                                         Color stemColor, Color centerColor,
+                                         const char *petalTexturePath, float alphaCutoff,
+                                         int atlasColumns, int atlasRows);
 void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, float time,
                              Vector2 windDirection, float windStrength);
 void MapProp_UnloadFlowerField(MapFlowerField *field);

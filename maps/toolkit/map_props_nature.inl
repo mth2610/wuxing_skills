@@ -35,11 +35,13 @@ static Shader Nature_GetShader(void)
                                                     "maps/toolkit/shaders/nature_lit.fs");
         s_natureShader.locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(s_natureShader, "vertexPosition");
         s_natureShader.locs[SHADER_LOC_VERTEX_TEXCOORD01] = GetShaderLocationAttrib(s_natureShader, "vertexTexCoord");
+        s_natureShader.locs[SHADER_LOC_VERTEX_TEXCOORD02] = GetShaderLocationAttrib(s_natureShader, "vertexTexCoord2");
         s_natureShader.locs[SHADER_LOC_VERTEX_NORMAL] = GetShaderLocationAttrib(s_natureShader, "vertexNormal");
         s_natureShader.locs[SHADER_LOC_VERTEX_COLOR] = GetShaderLocationAttrib(s_natureShader, "vertexColor");
         s_natureShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(s_natureShader, "mvp");
         s_natureShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(s_natureShader, "matModel");
         s_natureShader.locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(s_natureShader, "colDiffuse");
+        s_natureShader.locs[SHADER_LOC_MAP_DIFFUSE] = GetShaderLocation(s_natureShader, "texture0");
         VFXLight_RegisterShader(s_natureShader);
         s_natureShaderReady = true;
     }
@@ -74,10 +76,18 @@ static void Nature_SetVertex(Mesh *mesh, int index, Vector3 p, Vector3 n,
     mesh->normals[index * 3 + 2] = n.z;
     mesh->texcoords[index * 2 + 0] = phase;
     mesh->texcoords[index * 2 + 1] = heightMask;
+    mesh->texcoords2[index * 2 + 0] = -1.0f;
+    mesh->texcoords2[index * 2 + 1] = heightMask;
     mesh->colors[index * 4 + 0] = color.r;
     mesh->colors[index * 4 + 1] = color.g;
     mesh->colors[index * 4 + 2] = color.b;
     mesh->colors[index * 4 + 3] = 255;
+}
+
+static void Nature_SetUv2(Mesh *mesh, int index, float u, float v)
+{
+    mesh->texcoords2[index * 2 + 0] = u;
+    mesh->texcoords2[index * 2 + 1] = v;
 }
 
 static void Nature_AddQuad(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
@@ -90,6 +100,48 @@ static void Nature_AddQuad(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
     Nature_SetVertex(mesh, (*cursor)++, p0, normal, phase, h0, c0);
     Nature_SetVertex(mesh, (*cursor)++, p2, normal, phase, h1, c1);
     Nature_SetVertex(mesh, (*cursor)++, p3, normal, phase, h1, c1);
+}
+
+static void Nature_AddTexturedQuad(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
+                                   Vector3 p2, Vector3 p3, Vector3 normal,
+                                   float phase, float h0, float h1, Color c0, Color c1)
+{
+    int base = *cursor;
+    Nature_AddQuad(mesh, cursor, p0, p1, p2, p3, normal, phase, h0, h1, c0, c1);
+    Nature_SetUv2(mesh, base + 0, 0.0f, h0);
+    Nature_SetUv2(mesh, base + 1, 1.0f, h0);
+    Nature_SetUv2(mesh, base + 2, 1.0f, h1);
+    Nature_SetUv2(mesh, base + 3, 0.0f, h0);
+    Nature_SetUv2(mesh, base + 4, 1.0f, h1);
+    Nature_SetUv2(mesh, base + 5, 0.0f, h1);
+}
+
+static void Nature_AddTexturedBloom(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
+                                    Vector3 p2, Vector3 p3, Vector3 normal,
+                                    float phase, Color color, Vector4 uvRect)
+{
+    int base = *cursor;
+    Nature_AddQuad(mesh, cursor, p0, p1, p2, p3, normal,
+                   phase, 1.0f, 1.0f, color, color);
+    Nature_SetUv2(mesh, base + 0, uvRect.x, uvRect.y);
+    Nature_SetUv2(mesh, base + 1, uvRect.z, uvRect.y);
+    Nature_SetUv2(mesh, base + 2, uvRect.z, uvRect.w);
+    Nature_SetUv2(mesh, base + 3, uvRect.x, uvRect.y);
+    Nature_SetUv2(mesh, base + 4, uvRect.z, uvRect.w);
+    Nature_SetUv2(mesh, base + 5, uvRect.x, uvRect.w);
+}
+
+static void Nature_AddPointedBladeTip(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
+                                      Vector3 tip, Vector3 normal, float phase,
+                                      float h0, Color c0, Color c1)
+{
+    int base = *cursor;
+    Nature_SetVertex(mesh, (*cursor)++, p0, normal, phase, h0, c0);
+    Nature_SetVertex(mesh, (*cursor)++, p1, normal, phase, h0, c0);
+    Nature_SetVertex(mesh, (*cursor)++, tip, normal, phase, 1.0f, c1);
+    Nature_SetUv2(mesh, base + 0, 0.0f, h0);
+    Nature_SetUv2(mesh, base + 1, 1.0f, h0);
+    Nature_SetUv2(mesh, base + 2, 0.5f, 1.0f);
 }
 
 static void Nature_AddQuad4(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
@@ -112,6 +164,7 @@ static Mesh Nature_AllocMesh(int vertexCount)
     mesh.vertices = MemAlloc((unsigned int)vertexCount * 3u * sizeof(float));
     mesh.normals = MemAlloc((unsigned int)vertexCount * 3u * sizeof(float));
     mesh.texcoords = MemAlloc((unsigned int)vertexCount * 2u * sizeof(float));
+    mesh.texcoords2 = MemAlloc((unsigned int)vertexCount * 2u * sizeof(float));
     mesh.colors = MemAlloc((unsigned int)vertexCount * 4u * sizeof(unsigned char));
     return mesh;
 }
@@ -124,7 +177,8 @@ static Model Nature_ModelFromMesh(Mesh mesh, Shader shader)
     return model;
 }
 
-static void Nature_UpdateShader(float time, Vector2 windDirection, float windStrength)
+static void Nature_UpdateShader(float time, Vector2 windDirection, float windStrength,
+                                bool useTexture, float alphaCutoff)
 {
     Shader shader = Nature_GetShader();
     float windLength = sqrtf(windDirection.x * windDirection.x + windDirection.y * windDirection.y);
@@ -144,6 +198,9 @@ static void Nature_UpdateShader(float time, Vector2 windDirection, float windStr
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightColor"), &sunRgb, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_ambientColor"), &ambientRgb, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_viewPos"), &camera.position, SHADER_UNIFORM_VEC3);
+    int textured = useTexture ? 1 : 0;
+    SetShaderValue(shader, GetShaderLocation(shader, "u_useTexture"), &textured, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_alphaCutoff"), &alphaCutoff, SHADER_UNIFORM_FLOAT);
 }
 
 static unsigned int Nature_NextRandom(unsigned int *state)
@@ -219,7 +276,8 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
     if (outPlacementCount) *outPlacementCount = selected;
     if (selected <= 0) return (Model){0};
 
-    int vertexCount = selected * bladesPerClump * bladeSegments * 6;
+    int verticesPerBlade = (bladeSegments - 1) * 6 + 3;
+    int vertexCount = selected * bladesPerClump * verticesPerBlade;
     Mesh mesh = Nature_AllocMesh(vertexCount);
     int cursor = 0;
     const float golden = 2.39996323f;
@@ -256,10 +314,15 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Vector3 p1 = {center0.x + side.x * w0, center0.y, center0.z + side.z * w0};
                 Vector3 p2 = {center1.x + side.x * w1, center1.y, center1.z + side.z * w1};
                 Vector3 p3 = {center1.x - side.x * w1, center1.y, center1.z - side.z * w1};
-                Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, facing,
-                               clump->phase, t0, t1,
-                               Nature_LerpColor(style.rootColor, style.tipColor, t0),
-                               Nature_LerpColor(style.rootColor, style.tipColor, t1));
+                Color color0 = Nature_LerpColor(style.rootColor, style.tipColor, t0);
+                Color color1 = Nature_LerpColor(style.rootColor, style.tipColor, t1);
+                if (segment == bladeSegments - 1) {
+                    Nature_AddPointedBladeTip(&mesh, &cursor, p0, p1, center1, facing,
+                                              clump->phase, t0, color0, color1);
+                } else {
+                    Nature_AddTexturedQuad(&mesh, &cursor, p0, p1, p2, p3, facing,
+                                           clump->phase, t0, t1, color0, color1);
+                }
             }
         }
     }
@@ -277,6 +340,16 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     if (style.bladeSegments > 4) style.bladeSegments = 4;
     if (style.bladeWidthScale <= 0.0f) style.bladeWidthScale = 0.24f;
     if (style.chunkSize <= 0.0f) style.chunkSize = 12.0f;
+    if (style.alphaCutoff <= 0.0f) style.alphaCutoff = 0.42f;
+    if (style.alphaCutoff > 0.9f) style.alphaCutoff = 0.9f;
+    Texture2D foliageTexture = {0};
+    bool textured = style.texturePath != NULL;
+    if (textured) {
+        foliageTexture = ResourceManager_LoadTexture(style.texturePath);
+        GenTextureMipmaps(&foliageTexture);
+        SetTextureFilter(foliageTexture, TEXTURE_FILTER_ANISOTROPIC_16X);
+        SetTextureWrap(foliageTexture, TEXTURE_WRAP_CLAMP);
+    }
 
     float minX = placements[0].position.x;
     float maxX = minX;
@@ -319,6 +392,10 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
                 placements, count, style, x0, x1, z0, z1, 2,
                 farBlades, 1, 1.65f, &farCount);
             MapMeadowChunk *chunk = &meadow.chunks[meadow.chunkCount++];
+            if (textured) {
+                nearModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
+                farModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
+            }
             *chunk = (MapMeadowChunk){
                 .nearModel = nearModel,
                 .farModel = farModel,
@@ -333,6 +410,8 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
         return meadow;
     }
     meadow.ready = true;
+    meadow.textured = textured;
+    meadow.alphaCutoff = style.alphaCutoff;
     return meadow;
 }
 
@@ -340,7 +419,8 @@ void MapProp_DrawMeadow(const MapMeadowSurface *meadow, Vector3 worldOffset, flo
                         Vector2 windDirection, float windStrength)
 {
     if (!meadow || !meadow->ready) return;
-    Nature_UpdateShader(time, windDirection, windStrength);
+    Nature_UpdateShader(time, windDirection, windStrength,
+                        meadow->textured, meadow->alphaCutoff);
     rlDisableBackfaceCulling();
     float lodDistanceSq = meadow->lodDistance * meadow->lodDistance;
     float drawDistanceSq = meadow->drawDistance * meadow->drawDistance;
@@ -373,16 +453,21 @@ void MapProp_UnloadMeadow(MapMeadowSurface *meadow)
 }
 
 MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, int count,
-                                         Color stemColor, Color centerColor)
+                                         Color stemColor, Color centerColor,
+                                         const char *petalTexturePath, float alphaCutoff,
+                                         int atlasColumns, int atlasRows)
 {
     MapFlowerField field = {0};
     if (!placements || count <= 0) return field;
+    bool texturedBloom = petalTexturePath != NULL;
+    if (atlasColumns < 1) atlasColumns = 1;
+    if (atlasRows < 1) atlasRows = 1;
     int vertexCount = 0;
     for (int i = 0; i < count; i++) {
         int petals = placements[i].petalCount ? placements[i].petalCount : 5;
         if (petals < 4) petals = 4;
         if (petals > 6) petals = 6;
-        vertexCount += 30 + petals * 6; // stems + one leaf + petals + center pyramid
+        vertexCount += texturedBloom ? 36 : 30 + petals * 6;
     }
     Mesh mesh = Nature_AllocMesh(vertexCount);
     int cursor = 0;
@@ -437,30 +522,59 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         if (petalCount < 4) petalCount = 4;
         if (petalCount > 6) petalCount = 6;
         float petalScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
-        for (int petal = 0; petal < petalCount; petal++) {
-            float angle = flower->rotationDeg * DEG2RAD + (float)petal * 2.0f * PI / petalCount;
-            Vector3 radial = {cosf(angle), 0.0f, sinf(angle)};
-            Vector3 side = {-radial.z, 0.0f, radial.x};
-            float irregularity = 0.92f + 0.08f * sinf((float)(i * 17 + petal * 11));
-            float r = flower->bloomRadius * petalScale * irregularity;
-            float cup = r * (0.035f + 0.055f * sinf((float)(i * 13 + petal * 7)));
-            float tipDrop = r * (0.07f + 0.10f * (0.5f + 0.5f * sinf((float)(i * 5 + petal * 19))));
-            float ox0 = radial.x * r * 0.10f;
-            float oz0 = radial.z * r * 0.10f;
-            float ox1 = radial.x * r * 0.48f + side.x * r * 0.29f;
-            float oz1 = radial.z * r * 0.48f + side.z * r * 0.29f;
-            float ox2 = radial.x * r;
-            float oz2 = radial.z * r;
-            float ox3 = radial.x * r * 0.48f - side.x * r * 0.29f;
-            float oz3 = radial.z * r * 0.48f - side.z * r * 0.29f;
-            Vector3 p0 = {head.x + ox0, head.y + 0.018f + tiltX * ox0 + tiltZ * oz0, head.z + oz0};
-            Vector3 p1 = {head.x + ox1, head.y + cup + tiltX * ox1 + tiltZ * oz1, head.z + oz1};
-            Vector3 p2 = {head.x + ox2, head.y - tipDrop + tiltX * ox2 + tiltZ * oz2, head.z + oz2};
-            Vector3 p3 = {head.x + ox3, head.y + cup * 0.72f + tiltX * ox3 + tiltZ * oz3, head.z + oz3};
-            Vector3 petalNormal = {bloomNormal.x - radial.x * 0.12f,
-                                   bloomNormal.y, bloomNormal.z - radial.z * 0.12f};
-            Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, petalNormal,
-                           phase, 1.0f, 1.0f, flower->petalColor, flower->petalColor);
+        if (texturedBloom) {
+            float angle = flower->rotationDeg * DEG2RAD;
+            Vector3 right = {cosf(angle), 0.0f, sinf(angle)};
+            Vector3 forward = {-sinf(angle), 0.0f, cosf(angle)};
+            float r = flower->bloomRadius * petalScale * 1.08f;
+            float ox0 = (-right.x - forward.x) * r;
+            float oz0 = (-right.z - forward.z) * r;
+            float ox1 = ( right.x - forward.x) * r;
+            float oz1 = ( right.z - forward.z) * r;
+            float ox2 = ( right.x + forward.x) * r;
+            float oz2 = ( right.z + forward.z) * r;
+            float ox3 = (-right.x + forward.x) * r;
+            float oz3 = (-right.z + forward.z) * r;
+            Vector3 p0 = {head.x + ox0, head.y + tiltX * ox0 + tiltZ * oz0, head.z + oz0};
+            Vector3 p1 = {head.x + ox1, head.y + tiltX * ox1 + tiltZ * oz1, head.z + oz1};
+            Vector3 p2 = {head.x + ox2, head.y + tiltX * ox2 + tiltZ * oz2, head.z + oz2};
+            Vector3 p3 = {head.x + ox3, head.y + tiltX * ox3 + tiltZ * oz3, head.z + oz3};
+            int variantCount = atlasColumns * atlasRows;
+            int variant = flower->bloomVariant % variantCount;
+            int column = variant % atlasColumns;
+            int row = variant / atlasColumns;
+            float insetU = 0.008f / atlasColumns;
+            float insetV = 0.008f / atlasRows;
+            Vector4 uvRect = {
+                (float)column / atlasColumns + insetU,
+                (float)row / atlasRows + insetV,
+                (float)(column + 1) / atlasColumns - insetU,
+                (float)(row + 1) / atlasRows - insetV,
+            };
+            Nature_AddTexturedBloom(&mesh, &cursor, p0, p1, p2, p3, bloomNormal,
+                                    phase, flower->petalColor, uvRect);
+        } else {
+            for (int petal = 0; petal < petalCount; petal++) {
+                float angle = flower->rotationDeg * DEG2RAD + (float)petal * 2.0f * PI / petalCount;
+                Vector3 radial = {cosf(angle), 0.0f, sinf(angle)};
+                Vector3 side = {-radial.z, 0.0f, radial.x};
+                float irregularity = 0.92f + 0.08f * sinf((float)(i * 17 + petal * 11));
+                float r = flower->bloomRadius * petalScale * irregularity;
+                float ox0 = radial.x * r * 0.10f;
+                float oz0 = radial.z * r * 0.10f;
+                float ox1 = radial.x * r * 0.48f + side.x * r * 0.29f;
+                float oz1 = radial.z * r * 0.48f + side.z * r * 0.29f;
+                float ox2 = radial.x * r;
+                float oz2 = radial.z * r;
+                float ox3 = radial.x * r * 0.48f - side.x * r * 0.29f;
+                float oz3 = radial.z * r * 0.48f - side.z * r * 0.29f;
+                Vector3 p0 = {head.x + ox0, head.y + 0.018f + tiltX * ox0 + tiltZ * oz0, head.z + oz0};
+                Vector3 p1 = {head.x + ox1, head.y + tiltX * ox1 + tiltZ * oz1, head.z + oz1};
+                Vector3 p2 = {head.x + ox2, head.y - r * 0.10f + tiltX * ox2 + tiltZ * oz2, head.z + oz2};
+                Vector3 p3 = {head.x + ox3, head.y + tiltX * ox3 + tiltZ * oz3, head.z + oz3};
+                Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, bloomNormal,
+                               phase, 1.0f, 1.0f, flower->petalColor, flower->petalColor);
+            }
         }
         float c = flower->bloomRadius * 0.17f;
         Vector3 top = {head.x, head.y + c * 0.75f, head.z};
@@ -477,6 +591,15 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         }
     }
     field.model = Nature_ModelFromMesh(mesh, Nature_GetShader());
+    field.textured = petalTexturePath != NULL;
+    field.alphaCutoff = alphaCutoff > 0.0f ? fminf(alphaCutoff, 0.9f) : 0.38f;
+    if (field.textured) {
+        Texture2D petalTexture = ResourceManager_LoadTexture(petalTexturePath);
+        GenTextureMipmaps(&petalTexture);
+        SetTextureFilter(petalTexture, TEXTURE_FILTER_ANISOTROPIC_16X);
+        SetTextureWrap(petalTexture, TEXTURE_WRAP_CLAMP);
+        field.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = petalTexture;
+    }
     field.ready = true;
     return field;
 }
@@ -485,7 +608,8 @@ void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, f
                              Vector2 windDirection, float windStrength)
 {
     if (!field || !field->ready) return;
-    Nature_UpdateShader(time, windDirection, windStrength);
+    Nature_UpdateShader(time, windDirection, windStrength,
+                        field->textured, field->alphaCutoff);
     rlDisableBackfaceCulling();
     DrawModel(field->model, worldOffset, 1.0f, WHITE);
     rlEnableBackfaceCulling();
@@ -646,7 +770,7 @@ void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time)
 {
     if (!water || !water->ready) return;
     Vector3 position = water->config.center;
-    Nature_UpdateShader(time, (Vector2){0.0f, 0.0f}, 0.0f);
+    Nature_UpdateShader(time, (Vector2){0.0f, 0.0f}, 0.0f, false, 1.0f);
     rlDisableBackfaceCulling();
     DrawModel(water->bankModel, position, 1.0f, WHITE);
 

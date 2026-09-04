@@ -2,6 +2,7 @@
 
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
+in vec2 vertexTexCoord2;
 in vec3 vertexNormal;
 in vec4 vertexColor;
 
@@ -15,6 +16,7 @@ out vec3 fragPosition;
 out vec3 fragNormal;
 out vec4 fragColor;
 out float fragHeight;
+out vec2 fragTexCoord;
 
 void main()
 {
@@ -34,5 +36,6 @@ void main()
     fragNormal = normalize(mat3(matModel) * vertexNormal);
     fragColor = vertexColor;
     fragHeight = vertexTexCoord.y;
+    fragTexCoord = vertexTexCoord2;
     gl_Position = mvp * vec4(local, 1.0);
 }
