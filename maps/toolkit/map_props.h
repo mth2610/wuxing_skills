@@ -240,6 +240,7 @@ typedef struct
     float chunkSize;       // world meters; <= 0 uses 12
     float lodDistance;     // near->simplified transition; <= 0 disables LOD
     float drawDistance;    // <= 0 draws all chunks
+    float shadowDistance;  // close contact-shadow range; <= 0 disables it
     const char *texturePath; // optional alpha-cutout blade texture
     float alphaCutoff;       // <= 0 uses 0.42
 } MapMeadowStyle;
@@ -248,9 +249,12 @@ typedef struct
 {
     Model nearModel;
     Model farModel;
+    Model shadowModel;
     Vector3 center;
     float radius; // conservative chunk sphere used by view-frustum culling
     bool farLod;  // persistent state for hysteresis; avoids boundary thrashing
+    bool shadowReady;
+    bool visibleThisFrame;
     bool ready;
 } MapMeadowChunk;
 
@@ -260,6 +264,7 @@ typedef struct
     int chunkCount;
     float lodDistance;
     float drawDistance;
+    float shadowDistance;
     bool textured;
     float alphaCutoff;
     bool ready;
@@ -305,6 +310,8 @@ typedef struct
     int meadowDistanceCulled;
     int meadowNearDraws;
     int meadowFarDraws;
+    int meadowShadowDraws;
+    int meadowShadowDistanceCulled;
     int flowerFieldsTested;
     int flowerFieldsFrustumCulled;
     int flowerFieldsDistanceCulled;
@@ -319,6 +326,10 @@ void MapProp_ResetNatureRenderStats(void);
 MapNatureRenderStats MapProp_GetNatureRenderStats(void);
 void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float time,
                         Vector2 windDirection, float windStrength);
+// HIGH-tier dynamic shadow-map submission using the same near geometry and
+// deformation as the visible meadow. Call only from an EnvShadow map callback.
+void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffset,
+                                     float time, Vector2 windDirection, float windStrength);
 void MapProp_UnloadMeadow(MapMeadowSurface *meadow);
 
 typedef struct
@@ -341,6 +352,7 @@ typedef struct
     Model shadowModel;
     bool textured;
     bool farReady;
+    bool farLod; // persistent hysteresis state
     bool shadowReady;
     float alphaCutoff;
     Vector3 boundsCenter;
@@ -361,8 +373,11 @@ void MapProp_SetFlowerFieldDrawDistance(MapFlowerField *field, float drawDistanc
 // Sets the near-to-far geometry switch and contact-shadow range in world
 // metres. Defaults are 34 m and 26 m; non-positive values disable each limit.
 void MapProp_SetFlowerFieldLod(MapFlowerField *field, float lodDistance, float shadowDistance);
-void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, float time,
+void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float time,
                              Vector2 windDirection, float windStrength);
+// HIGH-tier alpha-clipped shadow-map submission of the full near flower mesh.
+void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOffset,
+                                         float time, Vector2 windDirection, float windStrength);
 void MapProp_UnloadFlowerField(MapFlowerField *field);
 
 typedef struct

@@ -264,6 +264,20 @@ static void DrawPathChain(const Vector3 *points, int count, float widthScale)
     }
 }
 
+static void DrawVerdantShadowCasters(Shader depthShader, void *userData)
+{
+    (void)depthShader;
+    (void)userData;
+    Vector3 offset = {0};
+    Vector2 wind = {0.86f, 0.51f};
+    MapProp_DrawMeadowShadowCasters(&s_meadow, offset, s_time, wind, 0.035f);
+    MapProp_DrawMeadowShadowCasters(&s_reedMeadow, offset, s_time, wind, 0.11f);
+    for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
+        MapProp_DrawFlowerFieldShadowCaster(&s_flowerFields[cluster], offset,
+                                             s_time, wind, 0.032f);
+    }
+}
+
 void InitVerdantPathMap(void)
 {
     if (s_ready)
@@ -328,6 +342,7 @@ void InitVerdantPathMap(void)
             .rootColor = {70, 91, 50, 255}, .tipColor = {122, 143, 82, 255},
             .bladesPerClump = 5, .bladeSegments = 2, .bladeWidthScale = 0.25f,
             .chunkSize = 12.0f, .lodDistance = 30.0f, .drawDistance = 78.0f,
+            .shadowDistance = 18.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
@@ -335,6 +350,7 @@ void InitVerdantPathMap(void)
             .rootColor = {55, 73, 34, 255}, .tipColor = {128, 139, 66, 255},
             .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.23f,
             .chunkSize = 18.0f, .lodDistance = 34.0f, .drawDistance = 72.0f,
+            .shadowDistance = 16.0f,
             .texturePath = NULL,
         });
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
@@ -345,6 +361,7 @@ void InitVerdantPathMap(void)
         MapProp_SetFlowerFieldDrawDistance(&s_flowerFields[cluster], 78.0f);
         MapProp_SetFlowerFieldLod(&s_flowerFields[cluster], 34.0f, 26.0f);
     }
+    EnvShadow_SetMapCasterCallback(DrawVerdantShadowCasters, NULL);
     // World-fixed layer: terrain relief and static rocks are captured once.
     // Characters remain in the smaller camera-following map updated each frame.
     EnvShadow_BeginStaticCapture(kMapCenter, 64.0f);
@@ -423,6 +440,7 @@ void UnloadVerdantPathMap(void)
 {
     if (!s_ready)
         return;
+    EnvShadow_SetMapCasterCallback(NULL, NULL);
     EnvShadow_InvalidateStaticCache();
     MapProp_UnloadWaterSurface(&s_lake);
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++)

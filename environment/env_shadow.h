@@ -47,6 +47,12 @@ Shader     EnvShadow_GetDepthShader(void); // assign to casters during BeginCapt
 Matrix     EnvShadow_GetLightVP(void);     // combined light view*projection, for the main pass
 Texture2D  EnvShadow_GetShadowMap(void);   // sampleable depth texture, for the main pass
 
+// Optional map-owned caster hook. Called inside the dynamic light-space pass
+// after its target/matrices are active and before engine-owned casters draw.
+// Register at map init and clear it before unloading map resources.
+typedef void (*EnvShadowMapCasterCallback)(Shader depthShader, void *userData);
+void EnvShadow_SetMapCasterCallback(EnvShadowMapCasterCallback callback, void *userData);
+
 // Cached world-scale layer for terrain and other static map casters. A map
 // captures this once after its static models are built; the normal Begin/End
 // pass remains camera-focused and updates dynamic casters every frame. The

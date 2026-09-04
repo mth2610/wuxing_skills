@@ -75,7 +75,11 @@ void main()
     vec3 skyAmbient = actualAmbient.rgb * vec3(1.08, 1.12, 1.20);
     vec3 groundBounce = actualAmbient.rgb * vec3(0.47, 0.40, 0.32);
     vec3 ambient = mix(groundBounce, skyAmbient, skyWeight);
-    vec3 totalLight = ambient + actualLight.rgb * NdotL * shadow;
+    // Preserve sky fill, but do not let a bright environment erase the
+    // shape-accurate shadow-map silhouette as it did after the sunset pass.
+    float ambientVisibility = mix(0.58, 1.0, shadow);
+    vec3 totalLight = ambient * ambientVisibility
+                    + actualLight.rgb * NdotL * shadow;
 
     // Xuất màu cuối — alpha PHẢI = 1.0 (mặt đất đục). totalLight.a có thể tới ~2
     // (ambient.a + sun.a*NdotL); trên scene buffer HDR float (Đợt G) alpha

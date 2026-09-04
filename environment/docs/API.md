@@ -50,6 +50,8 @@ remaining fixed over the default arena:
 
 ```c
 void EnvShadow_SetFocus(Vector3 center, float halfExtent); // light-space texel stabilized
+typedef void (*EnvShadowMapCasterCallback)(Shader depthShader, void *userData);
+void EnvShadow_SetMapCasterCallback(EnvShadowMapCasterCallback callback, void *userData);
 void EnvShadow_BeginStaticCapture(Vector3 center, float halfExtent);
 void EnvShadow_EndStaticCapture(void);
 void EnvShadow_InvalidateStaticCache(void);
@@ -67,6 +69,12 @@ dynamic projection remains camera-following (2048²/1024²). Receivers combine
 the two visibility layers. Changing the sun direction invalidates the cached
 layer automatically; rebuild it at the map's chosen day/night cadence. Set
 `WUXING_SHADOW_STATIC_VERIFY=1` to read it back once and log occupied texels.
+
+Maps with animated or camera-local geometry can register one
+`EnvShadowMapCasterCallback`. It runs inside the existing dynamic shadow pass,
+so the map can submit real caster geometry without opening a second target.
+Clear the callback before unloading the map-owned models. The callback is an
+extension point only; Environment still owns the render target and matrices.
 
 ---
 

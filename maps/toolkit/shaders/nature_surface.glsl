@@ -21,7 +21,8 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambientFloor = max(u_ambientColor, vec3(0.20, 0.225, 0.17));
     vec3 direct = u_lightColor * mix(frontDiffuse, wrappedDiffuse, 0.42) * shadow;
     vec3 subsurfaceColor = mix(baseColor, baseColor * vec3(1.12, 1.20, 0.72), 0.48);
-    vec3 lit = baseColor * ambientFloor * horizon;
+    float ambientVisibility = mix(0.72, 1.0, shadow);
+    vec3 lit = baseColor * ambientFloor * horizon * ambientVisibility;
     lit += baseColor * direct * 0.94;
     lit += subsurfaceColor * u_lightColor * transmission * shadow * 0.30;
     float rootOcclusion = mix(0.74, 1.0, smoothstep(0.0, 0.58, heightAlongPlant));

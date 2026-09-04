@@ -3,6 +3,7 @@
 #include "maps/toolkit/prop_lit.h"
 #include "maps/toolkit/map_shadow.h"
 #include "environment/environment_system.h"
+#include "environment/env_shadow.h"
 #include "core/vfx_light.h"   // Đợt E / E2 — VFXLight_BindToShader on the ground
 #include "core/gfx_quality.h"
 #include "core/camera_context.h"

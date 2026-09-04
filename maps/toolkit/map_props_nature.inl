@@ -3,10 +3,12 @@
 
 static Shader s_natureOpaqueShader = {0};
 static Shader s_natureCutoutShader = {0};
+static Shader s_natureShadowShader = {0};
 static Shader s_flowerShadowShader = {0};
 static Shader s_waterShader = {0};
 static bool s_natureOpaqueShaderReady = false;
 static bool s_natureCutoutShaderReady = false;
+static bool s_natureShadowShaderReady = false;
 static bool s_flowerShadowShaderReady = false;
 static bool s_waterShaderReady = false;
 
@@ -204,6 +206,29 @@ static Shader Nature_GetShader(bool cutout)
     return *shader;
 }
 
+static Shader NatureShadow_GetShader(void)
+{
+    if (!s_natureShadowShaderReady) {
+        s_natureShadowShader = ResourceManager_LoadShader(
+            "maps/toolkit/shaders/nature_shadow.vs",
+            "maps/toolkit/shaders/nature_shadow.fs");
+        s_natureShadowShader.locs[SHADER_LOC_VERTEX_POSITION] =
+            GetShaderLocationAttrib(s_natureShadowShader, "vertexPosition");
+        s_natureShadowShader.locs[SHADER_LOC_VERTEX_TEXCOORD01] =
+            GetShaderLocationAttrib(s_natureShadowShader, "vertexTexCoord");
+        s_natureShadowShader.locs[SHADER_LOC_VERTEX_TEXCOORD02] =
+            GetShaderLocationAttrib(s_natureShadowShader, "vertexTexCoord2");
+        s_natureShadowShader.locs[SHADER_LOC_MATRIX_MVP] =
+            GetShaderLocation(s_natureShadowShader, "mvp");
+        s_natureShadowShader.locs[SHADER_LOC_MATRIX_MODEL] =
+            GetShaderLocation(s_natureShadowShader, "matModel");
+        s_natureShadowShader.locs[SHADER_LOC_MAP_DIFFUSE] =
+            GetShaderLocation(s_natureShadowShader, "texture0");
+        s_natureShadowShaderReady = true;
+    }
+    return s_natureShadowShader;
+}
+
 static Shader Water_GetShader(void)
 {
     if (!s_waterShaderReady) {
@@ -377,6 +402,45 @@ static Model Nature_BuildFlowerShadowModel(const MapFlowerPlacement *placements,
     return Nature_ModelFromMesh(mesh, FlowerShadow_GetShader());
 }
 
+static Model Nature_BuildMeadowShadowChunk(const MapMeadowPlacement *placements, int count,
+                                           float minX, float maxX, float minZ, float maxZ)
+{
+    int selected = 0;
+    for (int i = 0; i < count; i++) {
+        Vector3 p = placements[i].position;
+        if (p.x >= minX && p.x < maxX && p.z >= minZ && p.z < maxZ)
+            selected++;
+    }
+    if (selected <= 0) return (Model){0};
+
+    Mesh mesh = Nature_AllocMesh(selected * 6);
+    int cursor = 0;
+    const Vector2 uv[6] = {
+        {0.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 0.68f},
+        {0.0f, 0.0f}, {1.0f, 0.68f}, {1.0f, 0.32f},
+    };
+    for (int i = 0; i < count; i++) {
+        const MapMeadowPlacement *clump = &placements[i];
+        if (clump->position.x < minX || clump->position.x >= maxX ||
+            clump->position.z < minZ || clump->position.z >= maxZ)
+            continue;
+        Vector3 root = clump->position;
+        root.y += 0.0012f;
+        float width = fmaxf(clump->radius * 0.52f, 0.022f);
+        Vector3 encoded = {clump->height * 0.92f, width, clump->phase};
+        Color rootShade = {82, 82, 82, 255};
+        Color tipShade = {28, 28, 28, 255};
+        for (int vertex = 0; vertex < 6; vertex++) {
+            Color shade = vertex < 2 || vertex == 3 ? rootShade : tipShade;
+            Nature_SetVertex(&mesh, cursor, root, encoded, clump->phase, 0.0f, shade);
+            mesh.texcoords[cursor * 2 + 0] = uv[vertex].x;
+            mesh.texcoords[cursor * 2 + 1] = uv[vertex].y;
+            cursor++;
+        }
+    }
+    return Nature_ModelFromMesh(mesh, FlowerShadow_GetShader());
+}
+
 static Model Nature_ModelFromMesh(Mesh mesh, Shader shader)
 {
     UploadMesh(&mesh, false);
@@ -423,6 +487,39 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
         SetShaderValueTexture(shader, GetShaderLocation(shader, "u_interactionMap"),
                               s_natureInteractionTexture);
     MapShadow_UpdateShader(shader);
+}
+
+static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDirection,
+                                      float windStrength, bool useTexture, float alphaCutoff)
+{
+    float windLength = sqrtf(windDirection.x * windDirection.x + windDirection.y * windDirection.y);
+    if (windLength > 0.0001f) {
+        windDirection.x /= windLength;
+        windDirection.y /= windLength;
+    }
+    SetShaderValue(shader, GetShaderLocation(shader, "u_time"),
+                   &time, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windDirection"),
+                   &windDirection, SHADER_UNIFORM_VEC2);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windStrength"),
+                   &windStrength, SHADER_UNIFORM_FLOAT);
+    int textured = useTexture ? 1 : 0;
+    SetShaderValue(shader, GetShaderLocation(shader, "u_useTexture"),
+                   &textured, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_alphaCutoff"),
+                   &alphaCutoff, SHADER_UNIFORM_FLOAT);
+    int interactionEnabled = s_natureInteractionReady ? 1 : 0;
+    SetShaderValue(shader, GetShaderLocation(shader, "u_interactionEnabled"),
+                   &interactionEnabled, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_interactionCenter"),
+                   &s_natureInteractionCenter, SHADER_UNIFORM_VEC2);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_interactionWorldSize"),
+                   &kNatureInteractionWorldSize, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_interactionMaxBend"),
+                   &kNatureInteractionMaxBend, SHADER_UNIFORM_FLOAT);
+    if (s_natureInteractionReady)
+        SetShaderValueTexture(shader, GetShaderLocation(shader, "u_interactionMap"),
+                              s_natureInteractionTexture);
 }
 
 static unsigned int Nature_NextRandom(unsigned int *state)
@@ -564,6 +661,8 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     if (style.chunkSize <= 0.0f) style.chunkSize = 12.0f;
     if (style.alphaCutoff <= 0.0f) style.alphaCutoff = 0.42f;
     if (style.alphaCutoff > 0.9f) style.alphaCutoff = 0.9f;
+    if (style.shadowDistance > 0.0f && GfxQuality_Get() >= GFX_HIGH)
+        (void)NatureShadow_GetShader();
     Texture2D foliageTexture = {0};
     bool textured = style.texturePath != NULL;
     if (textured) {
@@ -593,6 +692,8 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     meadow.chunks = MemAlloc((unsigned int)capacity * sizeof(MapMeadowChunk));
     meadow.lodDistance = style.lodDistance;
     meadow.drawDistance = style.drawDistance;
+    meadow.shadowDistance = style.shadowDistance;
+    bool buildContactShadows = style.shadowDistance > 0.0f && GfxQuality_Get() >= GFX_MED;
 
     for (int row = 0; row < rows; row++) {
         for (int column = 0; column < columns; column++) {
@@ -613,6 +714,10 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             Model farModel = Nature_BuildMeadowChunk(
                 placements, count, style, x0, x1, z0, z1, 2,
                 farBlades, 1, 1.65f, &farCount);
+            Model shadowModel = {0};
+            if (buildContactShadows)
+                shadowModel = Nature_BuildMeadowShadowChunk(
+                    placements, count, x0, x1, z0, z1);
             MapMeadowChunk *chunk = &meadow.chunks[meadow.chunkCount++];
             if (textured) {
                 nearModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
@@ -621,8 +726,10 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             *chunk = (MapMeadowChunk){
                 .nearModel = nearModel,
                 .farModel = farModel,
+                .shadowModel = shadowModel,
                 .center = {(x0 + x1) * 0.5f, 0.0f, (z0 + z1) * 0.5f},
                 .radius = style.chunkSize * 0.72f + 1.5f,
+                .shadowReady = shadowModel.meshCount > 0,
                 .ready = true,
             };
         }
@@ -677,10 +784,6 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
                         Vector2 windDirection, float windStrength)
 {
     if (!meadow || !meadow->ready) return;
-    Shader shader = Nature_GetShader(meadow->textured);
-    Nature_UpdateShader(shader, time, windDirection, windStrength,
-                        meadow->textured, meadow->alphaCutoff);
-    rlDisableBackfaceCulling();
     GfxQuality quality = GfxQuality_Get();
     float rangeScale = quality >= GFX_HIGH ? 1.0f
                      : quality == GFX_MED ? 0.84f
@@ -692,6 +795,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     float drawDistanceSq = drawDistance * drawDistance;
     for (int i = 0; i < meadow->chunkCount; i++) {
         MapMeadowChunk *chunk = &meadow->chunks[i];
+        chunk->visibleThisFrame = false;
         s_natureRenderStats.meadowChunksTested++;
         Vector3 center = Vector3Add(chunk->center, worldOffset);
         if (!Nature_IsChunkVisible(center, chunk->radius)) {
@@ -706,6 +810,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             continue;
         }
         s_natureRenderStats.meadowChunksVisible++;
+        chunk->visibleThisFrame = true;
 
         if (lodDistance > 0.0f) {
             float spatialHash = sinf(chunk->center.x * 12.9898f + chunk->center.z * 78.233f);
@@ -723,6 +828,50 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             chunk->farLod = false;
         }
 
+    }
+
+    bool useProjectedShadows = quality >= GFX_MED &&
+                               (quality < GFX_HIGH || !EnvShadow_IsEnabled());
+    if (useProjectedShadows && meadow->shadowDistance > 0.0f) {
+        Shader shadowShader = FlowerShadow_GetShader();
+        Vector3 lightTravel = Environment_GetSunDirection();
+        Vector4 shadowColor = ColorNormalize(Environment_GetShadowColor());
+        Vector3 shadowTint = {shadowColor.x, shadowColor.y, shadowColor.z};
+        SetShaderValue(shadowShader, GetShaderLocation(shadowShader, "u_lightTravel"),
+                       &lightTravel, SHADER_UNIFORM_VEC3);
+        SetShaderValue(shadowShader, GetShaderLocation(shadowShader, "u_shadowTint"),
+                       &shadowTint, SHADER_UNIFORM_VEC3);
+        float shadowScale = quality >= GFX_HIGH ? 1.0f : 0.76f;
+        float shadowDistance = meadow->shadowDistance * shadowScale;
+        rlDisableDepthMask();
+        BeginBlendMode(BLEND_MULTIPLIED);
+        for (int i = 0; i < meadow->chunkCount; i++) {
+            MapMeadowChunk *chunk = &meadow->chunks[i];
+            if (!chunk->visibleThisFrame || !chunk->shadowReady)
+                continue;
+            Vector3 center = Vector3Add(chunk->center, worldOffset);
+            float dx = camera.position.x - center.x;
+            float dz = camera.position.z - center.z;
+            float visibleDistance = sqrtf(dx * dx + dz * dz) - chunk->radius;
+            if (visibleDistance > shadowDistance) {
+                s_natureRenderStats.meadowShadowDistanceCulled++;
+                continue;
+            }
+            DrawModel(chunk->shadowModel, worldOffset, 1.0f, WHITE);
+            s_natureRenderStats.meadowShadowDraws++;
+        }
+        EndBlendMode();
+        rlEnableDepthMask();
+    }
+
+    Shader shader = Nature_GetShader(meadow->textured);
+    Nature_UpdateShader(shader, time, windDirection, windStrength,
+                        meadow->textured, meadow->alphaCutoff);
+    rlDisableBackfaceCulling();
+    for (int i = 0; i < meadow->chunkCount; i++) {
+        MapMeadowChunk *chunk = &meadow->chunks[i];
+        if (!chunk->visibleThisFrame)
+            continue;
         if (chunk->farLod) {
             DrawModel(chunk->farModel, worldOffset, 1.0f, WHITE);
             s_natureRenderStats.meadowFarDraws++;
@@ -734,48 +883,84 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     rlEnableBackfaceCulling();
 }
 
+void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffset,
+                                     float time, Vector2 windDirection, float windStrength)
+{
+    if (!meadow || !meadow->ready || GfxQuality_Get() < GFX_HIGH ||
+        meadow->shadowDistance <= 0.0f)
+        return;
+    Shader shader = NatureShadow_GetShader();
+    Nature_UpdateShadowShader(shader, time, windDirection, windStrength,
+                              meadow->textured, meadow->alphaCutoff);
+    float casterRange = meadow->shadowDistance + 4.0f;
+    rlDisableBackfaceCulling();
+    for (int i = 0; i < meadow->chunkCount; i++) {
+        MapMeadowChunk *chunk = &meadow->chunks[i];
+        Vector3 center = Vector3Add(chunk->center, worldOffset);
+        float dx = camera.position.x - center.x;
+        float dz = camera.position.z - center.z;
+        float visibleDistance = sqrtf(dx * dx + dz * dz) - chunk->radius;
+        if (visibleDistance > casterRange)
+            continue;
+        Shader previous = chunk->nearModel.materials[0].shader;
+        chunk->nearModel.materials[0].shader = shader;
+        DrawModel(chunk->nearModel, worldOffset, 1.0f, WHITE);
+        chunk->nearModel.materials[0].shader = previous;
+    }
+    rlDrawRenderBatchActive();
+    rlEnableBackfaceCulling();
+}
+
 void MapProp_UnloadMeadow(MapMeadowSurface *meadow)
 {
     if (!meadow || !meadow->ready) return;
     for (int i = 0; i < meadow->chunkCount; i++) {
         UnloadModel(meadow->chunks[i].nearModel);
         UnloadModel(meadow->chunks[i].farModel);
+        if (meadow->chunks[i].shadowReady)
+            UnloadModel(meadow->chunks[i].shadowModel);
     }
     MemFree(meadow->chunks);
     meadow->chunks = NULL;
     meadow->chunkCount = 0;
+    meadow->shadowDistance = 0.0f;
     meadow->ready = false;
 }
 
+static bool Nature_KeepFarFlower(const MapFlowerPlacement *flower)
+{
+    float hash = sinf(flower->position.x * 12.9898f + flower->position.z * 78.233f
+                      + flower->phase * 37.719f) * 43758.5453f;
+    return hash - floorf(hash) < 0.56f;
+}
+
 static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, int count,
-                                        Color stemColor, bool texturedBloom,
+                                        bool texturedBloom,
                                         int atlasColumns, int atlasRows)
 {
-    // Far flowers retain their authored position, lean, tint, and atlas species,
-    // but collapse crossed stems/leaves/centres into one stem plane + one bloom.
-    Mesh mesh = Nature_AllocMesh(count * 12);
+    // At distance, stems are sub-pixel and alpha-cutout bloom overdraw dominates.
+    // Keep a stable world-space subset and slightly compensate bloom coverage.
+    int selected = 0;
+    for (int i = 0; i < count; i++) {
+        if (Nature_KeepFarFlower(&placements[i]))
+            selected++;
+    }
+    bool forceFirst = selected == 0;
+    if (forceFirst) selected = 1;
+    Mesh mesh = Nature_AllocMesh(selected * 6);
     int cursor = 0;
     for (int i = 0; i < count; i++) {
         const MapFlowerPlacement *flower = &placements[i];
+        if (!Nature_KeepFarFlower(flower) && !(forceFirst && i == 0))
+            continue;
         float phase = flower->phase;
         float h = flower->height;
-        float stemWidth = fmaxf(0.018f, flower->bloomRadius * 0.22f);
         Vector3 base = flower->position;
         float leanAngle = flower->rotationDeg * DEG2RAD * 0.73f + phase * 4.1f;
         float lean = h * (0.025f + 0.055f * (0.5f + 0.5f * sinf((float)i * 2.37f)));
         Vector3 head = {base.x + cosf(leanAngle) * lean, base.y + h,
                         base.z + sinf(leanAngle) * lean};
         float stemAngle = flower->rotationDeg * DEG2RAD;
-        Vector3 side = {cosf(stemAngle) * stemWidth, 0.0f,
-                        sinf(stemAngle) * stemWidth};
-        Vector3 stemNormal = {-sinf(stemAngle), 0.08f, cosf(stemAngle)};
-        Vector3 s0 = {base.x - side.x, base.y, base.z - side.z};
-        Vector3 s1 = {base.x + side.x, base.y, base.z + side.z};
-        Vector3 s2 = {head.x + side.x * 0.45f, head.y, head.z + side.z * 0.45f};
-        Vector3 s3 = {head.x - side.x * 0.45f, head.y, head.z - side.z * 0.45f};
-        Nature_AddQuad(&mesh, &cursor, s0, s1, s2, s3, stemNormal,
-                       phase, 0.0f, 1.0f, stemColor, stemColor);
-
         float headTilt = 0.24f + 0.28f * (0.5f + 0.5f * sinf((float)i * 1.91f + phase));
         float tiltX = cosf(leanAngle) * headTilt;
         float tiltZ = sinf(leanAngle) * headTilt;
@@ -783,7 +968,7 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
         Vector3 right = {cosf(stemAngle), 0.0f, sinf(stemAngle)};
         Vector3 forward = {-sinf(stemAngle), 0.0f, cosf(stemAngle)};
         float petalScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
-        float radius = flower->bloomRadius * petalScale * 1.08f;
+        float radius = flower->bloomRadius * petalScale * 1.08f * 1.12f;
         float ox0 = (-right.x - forward.x) * radius;
         float oz0 = (-right.z - forward.z) * radius;
         float ox1 = ( right.x - forward.x) * radius;
@@ -834,6 +1019,8 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
     boundsMax.y += placements[0].height + placements[0].bloomRadius;
     boundsMax.z += placements[0].bloomRadius;
     bool texturedBloom = petalTexturePath != NULL;
+    if (GfxQuality_Get() >= GFX_HIGH)
+        (void)NatureShadow_GetShader();
     if (atlasColumns < 1) atlasColumns = 1;
     if (atlasRows < 1) atlasRows = 1;
     int vertexCount = 0;
@@ -974,10 +1161,11 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         }
     }
     field.model = Nature_ModelFromMesh(mesh, Nature_GetShader(texturedBloom));
-    field.farModel = Nature_BuildFlowerFarModel(placements, count, stemColor,
-                                                 texturedBloom, atlasColumns, atlasRows);
+    field.farModel = Nature_BuildFlowerFarModel(placements, count, texturedBloom,
+                                                 atlasColumns, atlasRows);
     field.farReady = field.farModel.meshCount > 0;
-    field.shadowModel = Nature_BuildFlowerShadowModel(placements, count);
+    if (GfxQuality_Get() >= GFX_MED)
+        field.shadowModel = Nature_BuildFlowerShadowModel(placements, count);
     field.shadowReady = field.shadowModel.meshCount > 0;
     field.textured = petalTexturePath != NULL;
     field.alphaCutoff = alphaCutoff > 0.0f ? fminf(alphaCutoff, 0.9f) : 0.38f;
@@ -1011,7 +1199,7 @@ void MapProp_SetFlowerFieldLod(MapFlowerField *field, float lodDistance, float s
     field->shadowDistance = shadowDistance;
 }
 
-void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, float time,
+void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float time,
                              Vector2 windDirection, float windStrength)
 {
     if (!field || !field->ready) return;
@@ -1037,12 +1225,28 @@ void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, f
     float lodScale = quality >= GFX_HIGH ? 1.0f
                    : quality == GFX_MED ? 0.82f
                    : quality == GFX_LOW ? 0.58f : 0.45f;
-    bool useFarModel = field->farReady && field->lodDistance > 0.0f &&
-                       visibleDistance > field->lodDistance * lodScale;
+    if (field->farReady && field->lodDistance > 0.0f) {
+        float spatialHash = sinf(field->boundsCenter.x * 12.9898f
+                                 + field->boundsCenter.z * 78.233f);
+        spatialHash -= floorf(spatialHash);
+        float threshold = field->lodDistance * lodScale + (spatialHash - 0.5f) * 3.0f;
+        float hysteresis = quality >= GFX_HIGH ? 1.25f : 2.0f;
+        if (field->farLod) {
+            if (visibleDistance < threshold - hysteresis)
+                field->farLod = false;
+        } else if (visibleDistance > threshold + hysteresis) {
+            field->farLod = true;
+        }
+    } else {
+        field->farLod = false;
+    }
+    bool useFarModel = field->farReady && field->farLod;
     float shadowScale = quality >= GFX_HIGH ? 1.0f : 0.78f;
     bool shadowInRange = field->shadowDistance <= 0.0f ||
                          visibleDistance <= field->shadowDistance * shadowScale;
-    if (field->shadowReady && quality >= GFX_MED && shadowInRange) {
+    bool useProjectedShadows = quality >= GFX_MED &&
+                               (quality < GFX_HIGH || !EnvShadow_IsEnabled());
+    if (field->shadowReady && useProjectedShadows && shadowInRange) {
         Shader shadowShader = FlowerShadow_GetShader();
         Vector3 lightTravel = Environment_GetSunDirection();
         Vector4 shadowColor = ColorNormalize(Environment_GetShadowColor());
@@ -1057,7 +1261,7 @@ void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, f
         s_natureRenderStats.flowerShadowDraws++;
         EndBlendMode();
         rlEnableDepthMask();
-    } else if (field->shadowReady && quality >= GFX_MED && !shadowInRange) {
+    } else if (field->shadowReady && useProjectedShadows && !shadowInRange) {
         s_natureRenderStats.flowerShadowDistanceCulled++;
     }
     Nature_UpdateShader(Nature_GetShader(field->textured), time, windDirection, windStrength,
@@ -1072,6 +1276,32 @@ void MapProp_DrawFlowerField(const MapFlowerField *field, Vector3 worldOffset, f
     rlEnableBackfaceCulling();
 }
 
+void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOffset,
+                                         float time, Vector2 windDirection, float windStrength)
+{
+    if (!field || !field->ready || GfxQuality_Get() < GFX_HIGH)
+        return;
+    Vector3 center = Vector3Add(field->boundsCenter, worldOffset);
+    float dx = camera.position.x - center.x;
+    float dz = camera.position.z - center.z;
+    float visibleDistance = sqrtf(dx * dx + dz * dz) - field->boundsRadius;
+    float casterRange = field->shadowDistance > 0.0f
+        ? field->shadowDistance + 4.0f : 30.0f;
+    if (visibleDistance > casterRange)
+        return;
+
+    Shader shader = NatureShadow_GetShader();
+    Nature_UpdateShadowShader(shader, time, windDirection, windStrength,
+                              field->textured, field->alphaCutoff);
+    Shader previous = field->model.materials[0].shader;
+    field->model.materials[0].shader = shader;
+    rlDisableBackfaceCulling();
+    DrawModel(field->model, worldOffset, 1.0f, WHITE);
+    rlDrawRenderBatchActive();
+    rlEnableBackfaceCulling();
+    field->model.materials[0].shader = previous;
+}
+
 void MapProp_UnloadFlowerField(MapFlowerField *field)
 {
     if (!field || !field->ready) return;
@@ -1081,6 +1311,7 @@ void MapProp_UnloadFlowerField(MapFlowerField *field)
         UnloadModel(field->farModel);
     UnloadModel(field->model);
     field->farReady = false;
+    field->farLod = false;
     field->shadowReady = false;
     field->boundsRadius = 0.0f;
     field->ready = false;

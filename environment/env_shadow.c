@@ -49,6 +49,8 @@ static Texture2D s_staticShadowMapTex;
 static Vector3 s_staticSunDir = {0};
 static bool s_staticTargetReady = false;
 static bool s_staticCacheValid = false;
+static EnvShadowMapCasterCallback s_mapCasterCallback = NULL;
+static void *s_mapCasterUserData = NULL;
 
 // TỐI ƯU: Biến cache hướng nắng để tránh tính toán lại ma trận mỗi frame
 static Vector3 s_lastSunDir = {0};
@@ -307,6 +309,12 @@ void EnvShadow_BeginCapture(void)
     s_lightVP = ComputeLightVP();
     BeginCaptureTarget(s_fboId, s_resolution, s_lightView,
                        s_shadowHalfExtent, s_captureDistance);
+    if (s_mapCasterCallback != NULL) {
+        s_mapCasterCallback(s_depthShader, s_mapCasterUserData);
+        // DrawModel uses its material shader and disables it afterward. Restore
+        // the environment depth shader for engine-owned casters that follow.
+        BeginShaderMode(s_depthShader);
+    }
 }
 
 void EnvShadow_EndCapture(void)
@@ -320,6 +328,12 @@ Shader EnvShadow_GetDepthShader(void) { return s_depthShader; }
 Matrix EnvShadow_GetLightVP(void) { return s_lightVP; }
 // The R32F color attachment the depth shader wrote gl_FragCoord.z into (depth-as-color).
 Texture2D EnvShadow_GetShadowMap(void) { return s_shadowMapTex; }
+
+void EnvShadow_SetMapCasterCallback(EnvShadowMapCasterCallback callback, void *userData)
+{
+    s_mapCasterCallback = callback;
+    s_mapCasterUserData = callback != NULL ? userData : NULL;
+}
 
 void EnvShadow_BeginStaticCapture(Vector3 center, float halfExtent)
 {
