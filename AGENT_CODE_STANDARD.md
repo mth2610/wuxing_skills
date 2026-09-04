@@ -78,6 +78,7 @@
 
 ### 10.1 General
 - New/changed core API must stay backward compatible with every skill caller — don't change existing signatures; add new functions or append-only struct fields instead.
+- Large-map directional shadows keep static casters in a world-fixed cached layer and dynamic casters in the camera-following layer; bind both samplers explicitly, and invalidate/rebuild the static cache when the sun direction changes.
 - Before changing a public function's behavior: `grep -r` across `skills/` for callers. Breaking changes must be documented (`core/docs/API.md` etc.) BEFORE landing, per `CLAUDE.md` cross-module rule.
 - No dynamic allocation in core runtime paths — static pools matching existing patterns (`MAX_DECALS`, `MAX_VFX_LIGHTS`, `MAX_DISTORTION_SOURCES`).
 - New modules follow existing Init/Update/Draw/Unload lifecycle shape (see `decal_system.h`, `vfx_light.h`).

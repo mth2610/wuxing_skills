@@ -50,11 +50,23 @@ remaining fixed over the default arena:
 
 ```c
 void EnvShadow_SetFocus(Vector3 center, float halfExtent); // light-space texel stabilized
+void EnvShadow_BeginStaticCapture(Vector3 center, float halfExtent);
+void EnvShadow_EndStaticCapture(void);
+void EnvShadow_InvalidateStaticCache(void);
+bool EnvShadow_HasStaticCache(void);
+Matrix EnvShadow_GetStaticLightVP(void);
+Texture2D EnvShadow_GetStaticShadowMap(void);
 ```
 
-Call it before the frame's shadow capture. `halfExtent` is clamped to 8–96 m;
-maps should keep it as tight as their visible gameplay region permits so the
-shadow map retains useful texel density.
+Call `EnvShadow_SetFocus` before the frame's dynamic capture. Its `halfExtent`
+is clamped to 8–96 m and should stay tight around the camera/player. For large
+maps, call `EnvShadow_BeginStaticCapture` after static models are created, draw
+only their geometry with `EnvShadow_GetDepthShader`, then end the capture. The
+static projection is world-fixed (1024² desktop, 512² Android), while the
+dynamic projection remains camera-following (2048²/1024²). Receivers combine
+the two visibility layers. Changing the sun direction invalidates the cached
+layer automatically; rebuild it at the map's chosen day/night cadence. Set
+`WUXING_SHADOW_STATIC_VERIFY=1` to read it back once and log occupied texels.
 
 ---
 

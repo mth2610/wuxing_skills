@@ -253,14 +253,17 @@ int main(void)
     CheckPairMulti("core/shaders/surface_lit.fs", surfaceSrc);
     static const char *grassSrc[] = { "maps/toolkit/grass_material.c", "core/vfx_light.c", NULL };
     CheckPairMulti("maps/toolkit/shaders/grass_material.fs", grassSrc);
-    static const char *groundSrc[] = { "maps/toolkit/map_props_ground.inl", "core/vfx_light.c", NULL };
+    static const char *groundSrc[] = { "maps/toolkit/map_props_ground.inl",
+                                       "maps/toolkit/map_shadow.c", "core/vfx_light.c", NULL };
     CheckPairMulti("maps/toolkit/shaders/ground_splat.fs", groundSrc);
-    static const char *pathSrc[] = { "maps/toolkit/map_props_strip.inl", "core/vfx_light.c", NULL };
+    static const char *pathSrc[] = { "maps/toolkit/map_props_strip.inl",
+                                     "maps/toolkit/map_shadow.c", "core/vfx_light.c", NULL };
     CheckPairMulti("maps/toolkit/shaders/path_blend.fs", pathSrc);
     // Đợt E / E2 — props (rocks) and the immediate-mode floor plate / zone discs.
     // Both are lit shaders that gained the VFX-light block; both upload their
     // u_vfxLight* uniforms from core/vfx_light.c via VFXLight_BindToShader.
-    static const char *propSrc[] = { "maps/toolkit/prop_lit.c", "core/vfx_light.c", NULL };
+    static const char *propSrc[] = { "maps/toolkit/prop_lit.c",
+                                     "maps/toolkit/map_shadow.c", "core/vfx_light.c", NULL };
     CheckPairMulti("maps/toolkit/shaders/prop_lit.fs", propSrc);
     static const char *floorSrc[] = { "maps/toolkit/ground_shadow.c", "core/vfx_light.c", NULL };
     CheckPairMulti("maps/toolkit/shaders/ground_shadow.fs", floorSrc);

@@ -72,6 +72,10 @@ uniform float     u_shadowEnabled;
 uniform float     u_shadowTexel; // 1.0/resolution, pushed from C (map is 2048
                                  // desktop / 512 Mali) — do NOT use textureSize()
                                  // (returns 0 under rlvk -> texel INF -> NaN PCF).
+uniform sampler2D staticShadowMap;
+uniform mat4      u_staticLightVP;
+uniform float     u_staticShadowEnabled;
+uniform float     u_staticShadowTexel;
 
 out vec4 finalColor;
 
@@ -109,7 +113,27 @@ float ShadowFactor(vec3 worldPos, float ndl) {
             shadow += mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
         }
     }
-    return shadow * 0.25;
+    float dynamicShadow = shadow * 0.25;
+    float staticShadow = 1.0;
+    if (u_staticShadowEnabled > 0.5) {
+        vec4 staticPosLS = u_staticLightVP * vec4(worldPos, 1.0);
+        vec3 staticProj = staticPosLS.xyz / max(staticPosLS.w, 0.00001);
+        staticProj = staticProj * 0.5 + 0.5;
+        if (staticProj.z > 0.0 && staticProj.z < 1.0 &&
+            staticProj.x > 0.0 && staticProj.x < 1.0 &&
+            staticProj.y > 0.0 && staticProj.y < 1.0) {
+            float staticBias = max(0.0042 * (1.0 - ndl), 0.0012);
+            float staticZ = staticProj.z - staticBias;
+            vec2 tap = vec2(u_staticShadowTexel * 1.25);
+            staticShadow = 0.0;
+            staticShadow += step(staticZ, texture(staticShadowMap, staticProj.xy + vec2(-tap.x, -tap.y)).r);
+            staticShadow += step(staticZ, texture(staticShadowMap, staticProj.xy + vec2( tap.x, -tap.y)).r);
+            staticShadow += step(staticZ, texture(staticShadowMap, staticProj.xy + vec2(-tap.x,  tap.y)).r);
+            staticShadow += step(staticZ, texture(staticShadowMap, staticProj.xy + vec2( tap.x,  tap.y)).r);
+            staticShadow *= 0.25;
+        }
+    }
+    return min(dynamicShadow, staticShadow);
 }
 
 void main() {

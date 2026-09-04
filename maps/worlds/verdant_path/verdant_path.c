@@ -344,6 +344,17 @@ void InitVerdantPathMap(void)
             "maps/toolkit/textures/wildflower_bloom_atlas_v2.png", 0.36f, 4, 2);
         MapProp_SetFlowerFieldDrawDistance(&s_flowerFields[cluster], 78.0f);
     }
+    // World-fixed layer: terrain relief and static rocks are captured once.
+    // Characters remain in the smaller camera-following map updated each frame.
+    EnvShadow_BeginStaticCapture(kMapCenter, 64.0f);
+    if (EnvShadow_IsCapturing()) {
+        Shader depthShader = EnvShadow_GetDepthShader();
+        MapProp_DrawGroundShadowCaster(&s_ground, kMapCenter, depthShader);
+        MapProp_DrawRockShadowCasters(&s_mountainRockSet, s_mountainRocks,
+                                      MOUNTAIN_ROCK_COUNT, depthShader);
+        MapProp_DrawRockShadowCasters(&s_rocks, kRocks, ROCK_COUNT, depthShader);
+        EnvShadow_EndStaticCapture();
+    }
     MapManager_SetZones(ISLAND_ZONES, ISLAND_ZONE_COUNT);
     s_time = 0.0f;
     s_ready = true;
@@ -411,6 +422,7 @@ void UnloadVerdantPathMap(void)
 {
     if (!s_ready)
         return;
+    EnvShadow_InvalidateStaticCache();
     MapProp_UnloadWaterSurface(&s_lake);
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++)
         MapProp_UnloadFlowerField(&s_flowerFields[cluster]);

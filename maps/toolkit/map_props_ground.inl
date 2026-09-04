@@ -450,6 +450,19 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     DrawModel(ground->model, pos, 1.0f, WHITE);
 }
 
+void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCenter,
+                                    Shader depthShader)
+{
+    if (!ground || !ground->ready || ground->model.materialCount < 1)
+        return;
+    Shader previous = ground->model.materials[0].shader;
+    ground->model.materials[0].shader = depthShader;
+    Vector3 pos = Vector3Add(worldCenter, ground->drawOffset);
+    DrawModel(ground->model, pos, 1.0f, WHITE);
+    rlDrawRenderBatchActive();
+    ground->model.materials[0].shader = previous;
+}
+
 void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint)
 {
     if (!ground || !ground->ready)

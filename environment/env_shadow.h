@@ -3,11 +3,10 @@
 
 #include "raylib.h"
 
-// Real Shading P6 — single directional shadow map (Environment Agent owns).
-// The one genuinely heavy technique in the plan: a depth-only pass from the
-// sun's POV into a sampleable depth texture, PCF-filtered by surface_lit.fs
-// at HIGH tier only. Fake blob shadows (Environment_DrawSmartShadow) remain
-// the default everywhere else; this is an opt-in "+Shadow" layer on top.
+// Real Shading P6 — two-layer directional shadows (Environment Agent owns).
+// A camera-following target updates dynamic casters each frame; an optional
+// world-fixed target caches static map geometry. Receivers combine both maps.
+// Fake blob shadows (Environment_DrawSmartShadow) remain the low-cost fallback.
 //
 // Usage (once per frame, BEFORE the normal camera 3D pass):
 //   if (EnvShadow_IsEnabled()) {
@@ -30,7 +29,7 @@ void EnvShadow_Init(void); // once, after Environment_Init + SurfaceMaterial_Ini
 void       EnvShadow_SetEnabled(bool enabled);
 bool       EnvShadow_IsEnabled(void);   // false also when Init failed (e.g. FBO incomplete)
 
-// Moves and sizes the single directional-shadow coverage region. The center
+// Moves and sizes the dynamic directional-shadow coverage region. The center
 // should follow the camera/player for large maps; halfExtent is clamped to a
 // safe range. Focus is snapped in light space to keep shadow texels stable.
 // Existing arena users need not call this.
@@ -47,6 +46,18 @@ bool       EnvShadow_IsCapturing(void);  // true between Begin/EndCapture — sc
 Shader     EnvShadow_GetDepthShader(void); // assign to casters during BeginCapture..EndCapture
 Matrix     EnvShadow_GetLightVP(void);     // combined light view*projection, for the main pass
 Texture2D  EnvShadow_GetShadowMap(void);   // sampleable depth texture, for the main pass
+
+// Cached world-scale layer for terrain and other static map casters. A map
+// captures this once after its static models are built; the normal Begin/End
+// pass remains camera-focused and updates dynamic casters every frame. The
+// cache becomes unavailable if the directional-light vector changes, so a
+// day/night transition must rebuild it at its chosen update cadence.
+void       EnvShadow_BeginStaticCapture(Vector3 center, float halfExtent);
+void       EnvShadow_EndStaticCapture(void);
+void       EnvShadow_InvalidateStaticCache(void);
+bool       EnvShadow_HasStaticCache(void);
+Matrix     EnvShadow_GetStaticLightVP(void);
+Texture2D  EnvShadow_GetStaticShadowMap(void);
 
 // TEMP diagnostic (P6 bug 3) — CPU-readback of the shadow map + numeric
 // projection of a reference world position. Prints, via TraceLog: stored

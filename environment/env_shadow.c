@@ -6,6 +6,7 @@
 #include <math.h>   // fabsf
 #include <stddef.h> // NULL
 #include <stdio.h>  // snprintf (EnvShadow_DebugDump)
+#include <stdlib.h> // getenv (one-shot static-cache verification)
 
 // Arena bounds (root CLAUDE.md "Standard coordinates & scale") — the light's
 // orthographic frustum is sized to cover this, not the whole level.
@@ -15,13 +16,13 @@
 static bool s_ready = false;
 static bool s_enabled = false;
 static bool s_capturing = false; // true between Begin/EndCapture (EnvShadow_IsCapturing)
+static bool s_staticCaptureOpen = false;
 static unsigned int s_fboId = 0;
 static unsigned int s_depthTexId = 0;
 static unsigned int s_colorTexId = 0;
 static int s_resolution = 0;
 static Shader s_depthShader;
 static Matrix s_lightView, s_lightProj, s_lightVP;
-static Texture2D s_depthTex2D; // wraps s_depthTexId, source for the copy pass below
 static Vector3 s_shadowFocus = ARENA_CENTER;
 static float s_shadowHalfExtent = ARENA_RADIUS + 2.0f;
 static float s_captureDistance = ARENA_RADIUS + 6.0f;
@@ -35,10 +36,59 @@ static float s_captureDistance = ARENA_RADIUS + 6.0f;
 // ghi trực tiếp gl_FragCoord.z vào s_colorTexId (R32F). Tiết kiệm ~16MB VRAM.
 static Texture2D s_shadowMapTex; // this is what callers get
 
+// Static map casters live in a separate, lower-frequency target. Keeping its
+// projection world-fixed avoids invalidating it when the camera-following
+// dynamic focus moves, while the receiver combines both visibility terms.
+static unsigned int s_staticFboId = 0;
+static unsigned int s_staticDepthTexId = 0;
+static unsigned int s_staticColorTexId = 0;
+static int s_staticResolution = 0;
+static Matrix s_staticLightView, s_staticLightProj, s_staticLightVP;
+static float s_staticCaptureDistance = 0.0f;
+static Texture2D s_staticShadowMapTex;
+static Vector3 s_staticSunDir = {0};
+static bool s_staticTargetReady = false;
+static bool s_staticCacheValid = false;
+
 // TỐI ƯU: Biến cache hướng nắng để tránh tính toán lại ma trận mỗi frame
 static Vector3 s_lastSunDir = {0};
 static Vector3 s_lastShadowFocus = {1e30f, 1e30f, 1e30f};
 static float s_lastShadowHalfExtent = -1.0f;
+
+static bool CreateShadowTarget(int resolution, unsigned int *outFbo,
+                               unsigned int *outDepth, unsigned int *outColor,
+                               Texture2D *outMap)
+{
+    *outColor = rlLoadTexture(NULL, resolution, resolution,
+                              RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
+    *outDepth = rlLoadTextureDepth(resolution, resolution, false);
+    *outFbo = rlLoadFramebuffer();
+    if (*outFbo == 0 || *outDepth == 0 || *outColor == 0)
+        return false;
+
+    rlEnableFramebuffer(*outFbo);
+    rlFramebufferAttach(*outFbo, *outColor, RL_ATTACHMENT_COLOR_CHANNEL0,
+                        RL_ATTACHMENT_TEXTURE2D, 0);
+    rlFramebufferAttach(*outFbo, *outDepth, RL_ATTACHMENT_DEPTH,
+                        RL_ATTACHMENT_TEXTURE2D, 0);
+    bool complete = rlFramebufferComplete(*outFbo);
+    rlDisableFramebuffer();
+    if (!complete)
+        return false;
+
+    *outMap = (Texture2D){
+        .id = *outColor,
+        .width = resolution,
+        .height = resolution,
+        .mipmaps = 1,
+        .format = RL_PIXELFORMAT_UNCOMPRESSED_R32,
+    };
+    // R32F linear filtering is optional on Vulkan/GLES. Receiver shaders
+    // interpolate comparison results explicitly, so POINT is intentional.
+    SetTextureFilter(*outMap, TEXTURE_FILTER_POINT);
+    SetTextureWrap(*outMap, TEXTURE_WRAP_CLAMP);
+    return true;
+}
 
 void EnvShadow_Init(void)
 {
@@ -54,6 +104,7 @@ void EnvShadow_Init(void)
     // G68 should be well under that. VERIFY on device with the ms HUD before going further to
     // 2048 — this is a mid-range mobile GPU and the budget is 16.6 ms.
     s_resolution = 1024;
+    s_staticResolution = 512;
 #else
     // 2048: at the raking sun angle the shadow is very elongated, so a lower resolution shows
     // coarse diagonal texel STREAKS across the shadow (projective aliasing). Keep it high for a
@@ -62,6 +113,7 @@ void EnvShadow_Init(void)
     // there is no perf reason to lower it. Session 3's "1024 = no shadow" was the projection bug,
     // now fixed (§7.26 + the MyBeginMode3D inverse-view fold in ground_shadow.c).
     s_resolution = 2048;
+    s_staticResolution = 1024;
 #endif
 
     // Depth + throwaway color attachment — same recipe as
@@ -73,7 +125,6 @@ void EnvShadow_Init(void)
     // The color attachment IS the shadow map now: the depth shader writes gl_FragCoord.z into it
     // (R32F), so it's sampled directly — no depth->R32F copy pass. Depth attachment is only for the
     // capture's depth TEST (nearest caster wins); it is never sampled.
-    s_colorTexId = rlLoadTexture(NULL, s_resolution, s_resolution, RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
     // NOTE (§7.27, OPEN PERF ISSUE): this depth attachment is only ever depth-TESTED against — the
     // shadow map we sample is the R32F COLOR attachment above. But rlvk still builds a
     // Caps.noSampledDepth "sampleable twin" for it and bounces depth->buffer->twin at EVERY scope
@@ -81,27 +132,19 @@ void EnvShadow_Init(void)
     // remaining shadow cost. Do NOT "fix" it by passing useRenderBuffer=true here: raylib's own
     // LoadRenderTexture also passes true, so honouring it in rlvk strips the twin from every render
     // texture and breaks soft-particle depth sampling (VUID-…-oldLayout-01211). See the notes.
-    s_depthTexId = rlLoadTextureDepth(s_resolution, s_resolution, false); // real texture, not a renderbuffer
-    s_fboId = rlLoadFramebuffer();
-    if (s_fboId == 0 || s_depthTexId == 0 || s_colorTexId == 0)
+    if (!CreateShadowTarget(s_resolution, &s_fboId, &s_depthTexId,
+                            &s_colorTexId, &s_shadowMapTex))
     {
         TraceLog(LOG_WARNING, "ENV_SHADOW: failed to allocate depth FBO/texture, shadow map disabled");
         s_ready = false;
         return;
     }
 
-    rlEnableFramebuffer(s_fboId);
-    rlFramebufferAttach(s_fboId, s_colorTexId, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
-    rlFramebufferAttach(s_fboId, s_depthTexId, RL_ATTACHMENT_DEPTH, RL_ATTACHMENT_TEXTURE2D, 0);
-    bool complete = rlFramebufferComplete(s_fboId);
-    rlDisableFramebuffer();
-
-    if (!complete)
-    {
-        TraceLog(LOG_WARNING, "ENV_SHADOW: depth FBO incomplete, shadow map disabled");
-        s_ready = false;
-        return;
-    }
+    s_staticTargetReady = CreateShadowTarget(
+        s_staticResolution, &s_staticFboId, &s_staticDepthTexId,
+        &s_staticColorTexId, &s_staticShadowMapTex);
+    if (!s_staticTargetReady)
+        TraceLog(LOG_WARNING, "ENV_SHADOW: static cache target unavailable; dynamic shadows remain active");
 
     s_depthShader = ResourceManager_LoadShader("environment/shaders/shadow_depth.vs",
                                                "environment/shaders/shadow_depth.fs");
@@ -113,31 +156,13 @@ void EnvShadow_Init(void)
         return;
     }
 
-    s_depthTex2D = (Texture2D){
-        .id = s_depthTexId,
-        .width = s_resolution,
-        .height = s_resolution,
-        .mipmaps = 1,
-        .format = 19 // DEPTH_COMPONENT_24BIT (rlgl internal format id) — matches core/screen_distort.c's depth-texture convention
-    };
-    // The shadow map is now the capture FBO's R32F color attachment (depth-as-color), sampled
-    // directly — the s_copyRT copy target is retained only for EnvShadow_DebugDump readback.
-    s_shadowMapTex = (Texture2D){
-        .id = s_colorTexId,
-        .width = s_resolution,
-        .height = s_resolution,
-        .mipmaps = 1,
-        .format = RL_PIXELFORMAT_UNCOMPRESSED_R32,
-    };
-    // R32F is not linear-filterable on many GL3.3 drivers (same note as
-    // screen_distort.c) — force POINT/CLAMP.
-    SetTextureFilter(s_shadowMapTex, TEXTURE_FILTER_POINT);
-    SetTextureWrap(s_shadowMapTex, TEXTURE_WRAP_CLAMP);
-
     s_ready = true;
     s_enabled = false; // opt-in only, per plan §7 "do NOT ship enabled on Mali until profiled"
     TraceLog(LOG_INFO, "ENV_SHADOW: ready, %dx%d depth target (fbo=%u depthTex=%u shadowMapTex=%u)",
              s_resolution, s_resolution, s_fboId, s_depthTexId, s_colorTexId);
+    if (s_staticTargetReady)
+        TraceLog(LOG_INFO, "ENV_SHADOW: static cache target ready, %dx%d (fbo=%u shadowMapTex=%u)",
+                 s_staticResolution, s_staticResolution, s_staticFboId, s_staticColorTexId);
 }
 
 void EnvShadow_SetEnabled(bool enabled) { s_enabled = s_ready && enabled; }
@@ -209,87 +234,153 @@ static Matrix ComputeLightVP(void)
     return vp;
 }
 
-void EnvShadow_BeginCapture(void)
+static Matrix ComputeStaticLightVP(Vector3 center, float halfExtent)
 {
-    if (!s_ready || !s_enabled)
-        return;
+    if (halfExtent < 8.0f) halfExtent = 8.0f;
+    if (halfExtent > 128.0f) halfExtent = 128.0f;
+    Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
+    Vector3 up = fabsf(sunDir.y) > 0.98f
+        ? (Vector3){0.0f, 0.0f, 1.0f}
+        : (Vector3){0.0f, 1.0f, 0.0f};
+    Vector3 lightRight = Vector3Normalize(Vector3CrossProduct(up, sunDir));
+    Vector3 lightUp = Vector3Normalize(Vector3CrossProduct(sunDir, lightRight));
+    float texelWorld = halfExtent * 2.0f / (float)s_staticResolution;
+    float rightCoord = Vector3DotProduct(center, lightRight);
+    float upCoord = Vector3DotProduct(center, lightUp);
+    center = Vector3Add(center, Vector3Scale(
+        lightRight, roundf(rightCoord / texelWorld) * texelWorld - rightCoord));
+    center = Vector3Add(center, Vector3Scale(
+        lightUp, roundf(upCoord / texelWorld) * texelWorld - upCoord));
 
-    s_lightVP = ComputeLightVP();
-    s_capturing = true; // scene draw code skips non-casters while this is set
+    s_staticCaptureDistance = fmaxf(halfExtent * 1.65f, 24.0f);
+    Vector3 lightPos = Vector3Subtract(
+        center, Vector3Scale(sunDir, s_staticCaptureDistance));
+    s_staticLightView = MatrixLookAt(lightPos, center, up);
+    s_staticLightProj = MatrixOrtho(-halfExtent, halfExtent, -halfExtent, halfExtent,
+                                    0.1f, s_staticCaptureDistance * 2.0f);
+    return MatrixMultiply(s_staticLightView, s_staticLightProj);
+}
 
-    rlDrawRenderBatchActive(); // flush the main pass's pending batch before switching FBO/matrices
-
-    // Force depth test/write ON before the clear+capture: whatever state the
-    // previous frame's 2D/UI drawing left behind (commonly OFF) would
-    // otherwise make rlClearScreenBuffers()'s depth clear a no-op (GL only
-    // clears the depth buffer when the depth mask is enabled) and every
-    // subsequent draw would fail to WRITE depth too — silently producing an
-    // all-far shadow map (nothing ever occludes -> ShadowFactor always 1.0).
+static void BeginCaptureTarget(unsigned int fbo, int resolution, Matrix lightView,
+                               float halfExtent, float captureDistance)
+{
+    s_capturing = true;
+    rlDrawRenderBatchActive();
     rlEnableDepthTest();
     rlEnableDepthMask();
-
-    rlEnableFramebuffer(s_fboId);
-    rlViewport(0, 0, s_resolution, s_resolution);
-    // Clear the R32F color to WHITE (1.0 = far / "no occluder") so untouched texels read as lit;
-    // depth clears to 1.0 too. Without this the color would clear to black (0.0) and every ground
-    // fragment would test as shadowed. (Matches shadow_cast's ClearBackground(WHITE).)
+    rlEnableFramebuffer(fbo);
+    rlViewport(0, 0, resolution, resolution);
     rlClearColor(255, 255, 255, 255);
     rlClearScreenBuffers();
 
-    // Projection: use rlOrtho (rlgl builds the matrix internally) rather than
-    // rlMultMatrixf(MatrixToFloat(s_lightProj)). main.c's proven-working
-    // MyBeginMode3D uses rlOrtho/rlFrustum for the projection and only uses
-    // rlMultMatrixf(MatrixToFloat(...)) for the VIEW — the manual-Matrix path
-    // is untested-under-rlvk for projection matrices and was cramming the
-    // stored depth against the far plane (bug 3, REAL_SHADING_P6_NOTES.md).
-    // Must match the params used to build s_lightProj (MatrixOrtho) so the
-    // captured depth agrees with the FS's proj.z.
-    float distance = s_captureDistance;
-    float halfExtent = s_shadowHalfExtent; // MUST match ComputeLightVP
     rlMatrixMode(RL_PROJECTION);
     rlPushMatrix();
     rlLoadIdentity();
-    rlOrtho(-halfExtent, halfExtent, -halfExtent, halfExtent, 0.1, distance * 2.0);
-
+    rlOrtho(-halfExtent, halfExtent, -halfExtent, halfExtent,
+            0.1, captureDistance * 2.0);
     rlMatrixMode(RL_MODELVIEW);
     rlPushMatrix();
     rlLoadIdentity();
-    rlMultMatrixf(MatrixToFloat(s_lightView));
+    rlMultMatrixf(MatrixToFloat(lightView));
+    BeginShaderMode(s_depthShader);
+}
 
-    BeginShaderMode(s_depthShader); // primitive/shape draws (DrawSphere etc.) pick this up automatically;
-                                    // Model draws don't — see SurfaceMaterial_BeginShadowCast.
+static void EndCaptureTarget(void)
+{
+    EndShaderMode();
+    rlDrawRenderBatchActive();
+    rlMatrixMode(RL_PROJECTION);
+    rlPopMatrix();
+    rlMatrixMode(RL_MODELVIEW);
+    rlPopMatrix();
+    rlLoadIdentity();
+    rlDisableFramebuffer();
+    rlViewport(0, 0, GetScreenWidth(), GetScreenHeight());
+    s_capturing = false;
+}
+
+void EnvShadow_BeginCapture(void)
+{
+    if (!s_ready || !s_enabled || s_capturing)
+        return;
+
+    s_lightVP = ComputeLightVP();
+    BeginCaptureTarget(s_fboId, s_resolution, s_lightView,
+                       s_shadowHalfExtent, s_captureDistance);
 }
 
 void EnvShadow_EndCapture(void)
 {
-    if (!s_ready || !s_enabled)
+    if (!s_ready || !s_enabled || !s_capturing || s_staticCaptureOpen)
         return;
-
-    EndShaderMode();
-    rlDrawRenderBatchActive();
-
-    rlMatrixMode(RL_PROJECTION);
-    rlPopMatrix();
-    rlMatrixMode(RL_MODELVIEW);
-    rlPopMatrix();
-    rlLoadIdentity();
-
-    rlDisableFramebuffer(); // scope close transitions the R32F color attachment to SHADER_READ_ONLY
-
-    // NO copy pass: the depth shader already wrote gl_FragCoord.z into the R32F color attachment
-    // (s_colorTexId = s_shadowMapTex), which the receivers sample directly. This removes a full
-    // render pass + the §7.10 depth-sample twin bounce per frame (the P6 FPS cost on MoltenVK/Intel).
-
-    rlViewport(0, 0, GetScreenWidth(), GetScreenHeight());
-    s_capturing = false;
-    // Modelview/projection get overwritten again by the normal camera's
-    // BeginMode3D right after this returns — no explicit restore needed.
+    EndCaptureTarget();
 }
 
 Shader EnvShadow_GetDepthShader(void) { return s_depthShader; }
 Matrix EnvShadow_GetLightVP(void) { return s_lightVP; }
 // The R32F color attachment the depth shader wrote gl_FragCoord.z into (depth-as-color).
 Texture2D EnvShadow_GetShadowMap(void) { return s_shadowMapTex; }
+
+void EnvShadow_BeginStaticCapture(Vector3 center, float halfExtent)
+{
+    if (!s_ready || !s_enabled || !s_staticTargetReady || s_capturing)
+        return;
+    if (halfExtent < 8.0f) halfExtent = 8.0f;
+    if (halfExtent > 128.0f) halfExtent = 128.0f;
+    s_staticCacheValid = false;
+    s_staticLightVP = ComputeStaticLightVP(center, halfExtent);
+    s_staticCaptureOpen = true;
+    BeginCaptureTarget(s_staticFboId, s_staticResolution, s_staticLightView,
+                       halfExtent, s_staticCaptureDistance);
+}
+
+void EnvShadow_EndStaticCapture(void)
+{
+    if (!s_staticCaptureOpen || !s_capturing)
+        return;
+    EndCaptureTarget();
+    s_staticCaptureOpen = false;
+    s_staticSunDir = Vector3Normalize(Environment_GetSunDirection());
+    s_staticCacheValid = true;
+    TraceLog(LOG_INFO, "ENV_SHADOW: static cache captured (%dx%d)",
+             s_staticResolution, s_staticResolution);
+    if (getenv("WUXING_SHADOW_STATIC_VERIFY") != NULL) {
+        float *pixels = (float *)rlReadTexturePixels(
+            s_staticShadowMapTex.id, s_staticResolution, s_staticResolution,
+            RL_PIXELFORMAT_UNCOMPRESSED_R32);
+        if (pixels != NULL) {
+            int occupied = 0;
+            float minDepth = 1.0f;
+            int total = s_staticResolution * s_staticResolution;
+            for (int i = 0; i < total; i++) {
+                if (pixels[i] < minDepth) minDepth = pixels[i];
+                if (pixels[i] < 0.999f) occupied++;
+            }
+            TraceLog(LOG_INFO,
+                     "ENV_SHADOW: static verify minDepth=%.4f occupied=%d/%d",
+                     minDepth, occupied, total);
+            MemFree(pixels);
+        } else {
+            TraceLog(LOG_WARNING, "ENV_SHADOW: static verify readback failed");
+        }
+    }
+}
+
+void EnvShadow_InvalidateStaticCache(void)
+{
+    s_staticCacheValid = false;
+}
+
+bool EnvShadow_HasStaticCache(void)
+{
+    if (!s_ready || !s_enabled || !s_staticTargetReady || !s_staticCacheValid)
+        return false;
+    Vector3 current = Vector3Normalize(Environment_GetSunDirection());
+    return Vector3DistanceSqr(current, s_staticSunDir) < 0.000001f;
+}
+
+Matrix EnvShadow_GetStaticLightVP(void) { return s_staticLightVP; }
+Texture2D EnvShadow_GetStaticShadowMap(void) { return s_staticShadowMapTex; }
 
 // ---------------------------------------------------------------------------
 // TEMP diagnostic (P6 bug 3) — numeric ground truth via CPU readback.

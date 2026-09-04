@@ -124,9 +124,12 @@ The caller owns layout and art direction through placement/config structs; the t
 
 Opaque toolkit materials use `map_shadow.glsl` through `MapShadow_ConfigureShader`,
 `MapShadow_AttachMaterial`, and `MapShadow_UpdateShader`. The Environment module
-owns shadow capture and projection; map materials only receive and filter the
-result. Ground and path light their real mesh normals, while nature materials
-use a cheaper two-sided thin-foliage response suitable for dense fields.
+owns separate camera-following dynamic and world-fixed static capture layers;
+map materials explicitly bind both and take the minimum visibility. Build the
+static layer once with `MapProp_DrawGroundShadowCaster` and
+`MapProp_DrawRockShadowCasters` between Environment's static Begin/End calls.
+Ground and path light their real mesh normals, while nature materials use a
+cheaper two-sided thin-foliage response suitable for dense fields.
 
 Use `MapProp_SetGroundTint` to grade the tiled terrain into the same palette as its 3D vegetation. This prevents the common failure where the ground reads as a bright photographic carpet while foliage reads as dark disconnected props.
 

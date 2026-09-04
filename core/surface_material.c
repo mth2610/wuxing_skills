@@ -18,6 +18,8 @@ static int s_locMatcapTex, s_locHasMatcap, s_locMatcapAmount;
 static int s_locNormalMap, s_locHasNormalMap;
 static int s_locAniso, s_locAnisoShininess, s_locSssStrength, s_locSssPower;
 static int s_locLightVP, s_locShadowMap, s_locShadowEnabled, s_locShadowTexel;
+static int s_locStaticLightVP, s_locStaticShadowMap;
+static int s_locStaticShadowEnabled, s_locStaticShadowTexel;
 
 static inline Vector3 ColorToVec3(Color c) {
     return (Vector3){ c.r / 255.0f, c.g / 255.0f, c.b / 255.0f };
@@ -58,6 +60,10 @@ void SurfaceMaterial_Init(void) {
     s_locShadowMap      = GetShaderLocation(s_shader, "shadowMap");
     s_locShadowEnabled  = GetShaderLocation(s_shader, "u_shadowEnabled");
     s_locShadowTexel    = GetShaderLocation(s_shader, "u_shadowTexel");
+    s_locStaticLightVP = GetShaderLocation(s_shader, "u_staticLightVP");
+    s_locStaticShadowMap = GetShaderLocation(s_shader, "staticShadowMap");
+    s_locStaticShadowEnabled = GetShaderLocation(s_shader, "u_staticShadowEnabled");
+    s_locStaticShadowTexel = GetShaderLocation(s_shader, "u_staticShadowTexel");
 
     // Material constants — the stylized "moonlight" identity. Cool blue-white
     // rim traces the silhouette; a tight Blinn sheen adds a wet/silk highlight.
@@ -91,6 +97,7 @@ void SurfaceMaterial_Init(void) {
     SetShaderValue(s_shader, s_locAniso,        &zero, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shader, s_locSssStrength,  &zero, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shader, s_locShadowEnabled,&zero, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_shader, s_locStaticShadowEnabled, &zero, SHADER_UNIFORM_FLOAT);
 
     s_ready = true;
 }
@@ -152,6 +159,20 @@ void SurfaceMaterial_UpdateFrame(Camera3D camera) {
         // Mali), not a hardcoded 1/1024 — see ground_shadow.c's texel push.
         float texel = (shadowMap.width > 0) ? (1.0f / (float)shadowMap.width) : (1.0f / 1024.0f);
         SetShaderValue(s_shader, s_locShadowTexel, &texel, SHADER_UNIFORM_FLOAT);
+
+        float staticEnabled = EnvShadow_HasStaticCache() ? 1.0f : 0.0f;
+        SetShaderValue(s_shader, s_locStaticShadowEnabled, &staticEnabled,
+                       SHADER_UNIFORM_FLOAT);
+        if (staticEnabled > 0.5f) {
+            Matrix staticLightVP = EnvShadow_GetStaticLightVP();
+            SetShaderValueMatrix(s_shader, s_locStaticLightVP, staticLightVP);
+            Texture2D staticShadowMap = EnvShadow_GetStaticShadowMap();
+            SetShaderValueTexture(s_shader, s_locStaticShadowMap, staticShadowMap);
+            float staticTexel = staticShadowMap.width > 0
+                ? 1.0f / (float)staticShadowMap.width : 1.0f / 512.0f;
+            SetShaderValue(s_shader, s_locStaticShadowTexel, &staticTexel,
+                           SHADER_UNIFORM_FLOAT);
+        }
     }
 }
 

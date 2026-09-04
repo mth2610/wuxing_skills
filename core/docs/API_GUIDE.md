@@ -2538,17 +2538,7 @@ void SurfaceMaterial_SetSSS(float strength, float power);     void SurfaceMateri
 - **Fake SSS** — cheap back-scatter (`pow(dot(V,-L), power) * strength`) for jade/skin/thin-robe edges glowing with the moon behind them.
 No authored normal-map textures exist yet either (Art/Character task) — the plumbing is done and inert until one is supplied.
 
-**Real shadow map** (P6, HIGH+Shadow, Environment-owned — `#include "environment/env_shadow.h"`): single directional depth pass + 3×3 PCF, an opt-in layer on top of HIGH; fake blob shadows (`Environment_DrawSmartShadow`) remain the default everywhere else. **OFF by default on every platform** — not yet profiled on Mali.
-
-> [!NOTE]
-> **STATUS (2026-07-19, session 3): PARTIALLY working — paused, not a shipped feature.**
-> Renders a coherent caster-following shadow on the ground, but its position/size drift with the
-> caster's distance from the arena center (unresolved rlvk-side scale mismatch; plus several open
-> contradictions — e.g. identical code shows no shadow at 1024² but a displaced one at 2048²).
-> Full evidence log, the numeric debug instrument (**H** hotkey → `EnvShadow_DebugDump`), and the
-> recommended Renderer-agent next steps are in **`environment/docs/REAL_SHADING_P6_NOTES.md`** —
-> read it before touching this code again. Harmless as-is: `EnvShadow_SetEnabled` defaults `false`
-> everywhere, so none of this runs unless a developer explicitly enables it (**J** in-game).
+**Real shadow maps** (P6, HIGH+Shadow, Environment-owned — `#include "environment/env_shadow.h"`): the dynamic layer follows the camera and updates moving casters every frame; a second world-fixed layer caches terrain/static props once per map or sun-direction change. `surface_lit.fs` explicitly binds both R32F samplers, keeps the dynamic layer's high-quality comparison filter, uses four taps for broad static occlusion, and takes the minimum visibility. Fake blob shadows (`Environment_DrawSmartShadow`) remain the lower-tier fallback. The feature remains opt-in globally; Verdant Path enables it on desktop and owns its static cache lifecycle.
 ```c
 void       EnvShadow_Init(void);           // once, after Environment_Init + SurfaceMaterial_Init
 void       EnvShadow_SetEnabled(bool enabled);

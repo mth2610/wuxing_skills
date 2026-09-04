@@ -77,6 +77,26 @@ void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placemen
     }
 }
 
+void MapProp_DrawRockShadowCasters(MapRockSet *rocks,
+                                   const MapRockPlacement *placements, int count,
+                                   Shader depthShader)
+{
+    if (!rocks || !rocks->ready || !placements || count <= 0 ||
+        rocks->model.materialCount < 1)
+        return;
+    Shader previous = rocks->model.materials[0].shader;
+    rocks->model.materials[0].shader = depthShader;
+    Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
+    for (int i = 0; i < count; i++) {
+        const MapRockPlacement *p = &placements[i];
+        Vector3 pos = {p->position.x, -0.3f * p->heightScale, p->position.z};
+        Vector3 scale = {p->radiusScale, p->heightScale, p->radiusScale};
+        DrawModelEx(rocks->model, pos, rotAxis, p->rotationDeg, scale, WHITE);
+    }
+    rlDrawRenderBatchActive();
+    rocks->model.materials[0].shader = previous;
+}
+
 void MapProp_UnloadRocks(MapRockSet *rocks)
 {
     if (!rocks->ready)

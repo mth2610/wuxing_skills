@@ -10,6 +10,7 @@ void MapShadow_ConfigureShader(Shader shader)
         return;
 
     shader.locs[SHADER_LOC_MAP_OCCLUSION] = GetShaderLocation(shader, "shadowMap");
+    shader.locs[SHADER_LOC_MAP_HEIGHT] = GetShaderLocation(shader, "staticShadowMap");
 }
 
 void MapShadow_AttachMaterial(Material *material)
@@ -20,6 +21,9 @@ void MapShadow_AttachMaterial(Material *material)
     Texture2D shadowMap = EnvShadow_GetShadowMap();
     if (shadowMap.id != 0)
         material->maps[MATERIAL_MAP_OCCLUSION].texture = shadowMap;
+    Texture2D staticShadowMap = EnvShadow_GetStaticShadowMap();
+    if (staticShadowMap.id != 0)
+        material->maps[MATERIAL_MAP_HEIGHT].texture = staticShadowMap;
 }
 
 void MapShadow_UpdateShader(Shader shader)
@@ -31,6 +35,11 @@ void MapShadow_UpdateShader(Shader shader)
     int enabledLoc = GetShaderLocation(shader, "u_shadowEnabled");
     if (enabledLoc >= 0)
         SetShaderValue(shader, enabledLoc, &enabled, SHADER_UNIFORM_FLOAT);
+
+    float staticEnabled = EnvShadow_HasStaticCache() ? 1.0f : 0.0f;
+    int staticEnabledLoc = GetShaderLocation(shader, "u_staticShadowEnabled");
+    if (staticEnabledLoc >= 0)
+        SetShaderValue(shader, staticEnabledLoc, &staticEnabled, SHADER_UNIFORM_FLOAT);
 
     if (enabled < 0.5f)
         return;
@@ -44,4 +53,17 @@ void MapShadow_UpdateShader(Shader shader)
     int texelLoc = GetShaderLocation(shader, "u_shadowTexel");
     if (texelLoc >= 0)
         SetShaderValue(shader, texelLoc, &texel, SHADER_UNIFORM_FLOAT);
+
+    if (staticEnabled < 0.5f)
+        return;
+
+    int staticLightVpLoc = GetShaderLocation(shader, "u_staticLightVP");
+    if (staticLightVpLoc >= 0)
+        SetShaderValueMatrix(shader, staticLightVpLoc, EnvShadow_GetStaticLightVP());
+    Texture2D staticMap = EnvShadow_GetStaticShadowMap();
+    float staticTexel = staticMap.width > 0
+        ? 1.0f / (float)staticMap.width : 1.0f / 512.0f;
+    int staticTexelLoc = GetShaderLocation(shader, "u_staticShadowTexel");
+    if (staticTexelLoc >= 0)
+        SetShaderValue(shader, staticTexelLoc, &staticTexel, SHADER_UNIFORM_FLOAT);
 }

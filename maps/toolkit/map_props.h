@@ -81,6 +81,10 @@ MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float 
                                                const char *grassTexPath,
                                                const char *pathTexPath);
 void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter);
+// Geometry-only depth pass used by EnvShadow's cached static-map capture.
+// Call only between EnvShadow_BeginStaticCapture/EndStaticCapture.
+void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCenter,
+                                    Shader depthShader);
 // Per-map biome grading. The tint is multiplied into both tiled ground
 // textures through the material's standard colDiffuse uniform.
 void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint);
@@ -175,6 +179,11 @@ MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, 
 // (measured FPS cost, not theoretical) for a case where the shadow barely
 // reads anyway. Pass true for normal scattered decorative rocks.
 void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placements, int count, bool drawShadow);
+// Geometry-only counterpart to MapProp_DrawRocks for a static shadow capture.
+// It never emits fake blob shadows or updates lighting uniforms.
+void MapProp_DrawRockShadowCasters(MapRockSet *rocks,
+                                   const MapRockPlacement *placements, int count,
+                                   Shader depthShader);
 void MapProp_UnloadRocks(MapRockSet *rocks);
 
 // Fills outPlacements[] (capacity maxCount) with a ring of giant rock
