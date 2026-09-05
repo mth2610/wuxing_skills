@@ -342,7 +342,7 @@ void InitVerdantPathMap(void)
             .rootColor = {70, 91, 50, 255}, .tipColor = {122, 143, 82, 255},
             .bladesPerClump = 5, .bladeSegments = 2, .bladeWidthScale = 0.25f,
             .chunkSize = 12.0f, .lodDistance = 30.0f, .drawDistance = 78.0f,
-            .shadowDistance = 18.0f,
+            .shadowDistance = 24.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
@@ -350,7 +350,7 @@ void InitVerdantPathMap(void)
             .rootColor = {55, 73, 34, 255}, .tipColor = {128, 139, 66, 255},
             .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.23f,
             .chunkSize = 18.0f, .lodDistance = 34.0f, .drawDistance = 72.0f,
-            .shadowDistance = 16.0f,
+            .shadowDistance = 22.0f,
             .texturePath = NULL,
         });
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
@@ -359,7 +359,7 @@ void InitVerdantPathMap(void)
             (Color){91, 120, 65, 255}, (Color){199, 157, 69, 255},
             "maps/toolkit/textures/wildflower_bloom_atlas_v2.png", 0.36f, 4, 2);
         MapProp_SetFlowerFieldDrawDistance(&s_flowerFields[cluster], 78.0f);
-        MapProp_SetFlowerFieldLod(&s_flowerFields[cluster], 34.0f, 26.0f);
+        MapProp_SetFlowerFieldLod(&s_flowerFields[cluster], 34.0f, 30.0f);
     }
     EnvShadow_SetMapCasterCallback(DrawVerdantShadowCasters, NULL);
     // World-fixed layer: terrain relief and static rocks are captured once.

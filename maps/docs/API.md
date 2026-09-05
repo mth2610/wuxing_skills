@@ -127,8 +127,9 @@ call `MapProp_DrawMeadowShadowCasters` / `MapProp_DrawFlowerFieldShadowCaster`
 inside it. Both submit full near geometry with the visible wind/interaction
 deformation; flowers preserve their atlas alpha silhouette in the depth pass.
 HIGH combines those real silhouettes with a short, subdued root-contact layer;
-it is 16% of the fallback projection length and cannot visually replace the
-directional silhouette. MED uses the full projected fallback, while LOW/UNLIT
+it is 34% of the fallback projection length, ends with a broad rounded profile,
+and cannot visually replace the directional silhouette. MED uses the full
+projected fallback, while LOW/UNLIT
 omit vegetation shadows. Set `WUXING_NATURE_SHADOW_MODE=real` to disable the
 contact layer for shadow-map validation, or `projected` to suppress vegetation
 casters and compare the fallback in isolation. The default is `hybrid`.
@@ -137,6 +138,15 @@ only flower geometry and `meadow` records only grass/reeds. An active filter
 also bypasses gameplay distance culling so an off-camera diagnostic region can
 still be captured. Combine it with `WUXING_SHADOW_FOCUS_X/Z` and
 `WUXING_SHADOW_DYNAMIC_VERIFY=1` to log occupied dynamic shadow-map texels.
+The same diagnostic also projects a 256x256 ground grid through the receiver
+comparison and reports normal/flipped texture coverage, catching a sampler
+orientation regression that caster occupancy alone cannot detect.
+The 2026-09-05 Vulkan validation at Verdant Path's first flower meadow
+(`focus=(27,20)`, 2048²) recorded `16079` occupied texels in flower-real mode
+and `419/65536` shadowed ground probes in the correct orientation, versus
+`202/65536` if flipped; vegetation casters suppressed recorded `0` occupied
+texels. This is the regression baseline:
+the atlas-cutout flower geometry is demonstrably present in the R32F map.
 Always unregister the callback before unloading map-owned models.
 
 Opaque toolkit materials use `map_shadow.glsl` through `MapShadow_ConfigureShader`,
@@ -151,8 +161,10 @@ Shadow receivers select PCF cost from `GfxQuality`: HIGH uses a stable nine-tap
 tent kernel for fine grass/flower silhouettes, MED uses four taps, and LOW/UNLIT
 uses one comparison. Both capture layers fade across the outer 3.5% of their
 coverage so a moving focus cannot reveal a hard square boundary.
-HIGH also blends a restrained 62% darkest-sample term into the dynamic tent
-resolve while leaving the static-cache filter untouched. Textured vegetation
+HIGH also blends an 84% darkest-sample term into the dynamic tent resolve and
+applies a modest post-PCF contrast curve, while leaving the static-cache filter
+untouched. Its 1.55-texel dynamic footprint stabilizes sub-pixel blades without
+changing caster geometry. Textured vegetation
 casters add derivative-based conservative alpha coverage in the depth pass;
 this retains minified petal tips without changing the visible geometry or atlas
 silhouette. The dynamic receiver uses a smaller vegetation-safe depth bias so

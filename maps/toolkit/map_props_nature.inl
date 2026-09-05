@@ -313,13 +313,14 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
     Vector3 lightTravel = Environment_GetSunDirection();
     Vector4 shadowColor = ColorNormalize(Environment_GetShadowColor());
     Vector3 shadowTint = {shadowColor.x, shadowColor.y, shadowColor.z};
-    // With a real directional map this mesh is only micro-contact occlusion at
-    // the root.  Long projected wedges visually replaced the actual animated
-    // blade/bloom silhouette and made both paths impossible to distinguish.
+    // With a real directional map this mesh is a short grounding/contact layer.
+    // Keep it visibly shorter than the true animated silhouette, but broad and
+    // rounded enough to survive a high gameplay camera and the grass texture.
     // MED and SHADOW OFF retain the full inexpensive fallback.
-    float projectionScale = realShadowActive ? 0.16f : 1.0f;
-    float widthScale = realShadowActive ? 0.72f : 1.0f;
-    float shadowStrength = realShadowActive ? 0.68f : 1.0f;
+    float projectionScale = realShadowActive ? 0.34f : 1.0f;
+    float widthScale = realShadowActive ? 0.90f : 1.0f;
+    float tipWidth = realShadowActive ? 0.72f : 0.34f;
+    float shadowStrength = 1.0f;
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightTravel"),
                    &lightTravel, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_shadowTint"),
@@ -328,6 +329,8 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
                    &projectionScale, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, GetShaderLocation(shader, "u_widthScale"),
                    &widthScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_tipWidth"),
+                   &tipWidth, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, GetShaderLocation(shader, "u_shadowStrength"),
                    &shadowStrength, SHADER_UNIFORM_FLOAT);
 }
@@ -448,11 +451,11 @@ static Model Nature_BuildFlowerShadowModel(const MapFlowerPlacement *placements,
         Vector3 root = flower->position;
         root.y += 0.0015f;
         Vector3 encoded = {flower->height, width, flower->phase};
-        Color rootShade = {118, 118, 118, 255};
-        Color tipShade = {48, 48, 48, 255};
+        Color rootShade = {210, 210, 210, 255};
+        Color tipShade = {150, 150, 150, 255};
         const Vector2 uv[6] = {
-            {0.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 0.68f},
-            {0.0f, 0.0f}, {1.0f, 0.68f}, {1.0f, 0.32f},
+            {0.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f},
+            {0.0f, 0.0f}, {1.0f, 1.0f}, {1.0f, 0.0f},
         };
         for (int vertex = 0; vertex < 6; vertex++) {
             Color shade = vertex < 2 || vertex == 3 ? rootShade : tipShade;
@@ -479,8 +482,8 @@ static Model Nature_BuildMeadowShadowChunk(const MapMeadowPlacement *placements,
     Mesh mesh = Nature_AllocMesh(selected * 6);
     int cursor = 0;
     const Vector2 uv[6] = {
-        {0.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 0.68f},
-        {0.0f, 0.0f}, {1.0f, 0.68f}, {1.0f, 0.32f},
+        {0.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f},
+        {0.0f, 0.0f}, {1.0f, 1.0f}, {1.0f, 0.0f},
     };
     for (int i = 0; i < count; i++) {
         const MapMeadowPlacement *clump = &placements[i];
@@ -491,8 +494,8 @@ static Model Nature_BuildMeadowShadowChunk(const MapMeadowPlacement *placements,
         root.y += 0.0012f;
         float width = fmaxf(clump->radius * 0.52f, 0.022f);
         Vector3 encoded = {clump->height * 0.92f, width, clump->phase};
-        Color rootShade = {82, 82, 82, 255};
-        Color tipShade = {28, 28, 28, 255};
+        Color rootShade = {200, 200, 200, 255};
+        Color tipShade = {135, 135, 135, 255};
         for (int vertex = 0; vertex < 6; vertex++) {
             Color shade = vertex < 2 || vertex == 3 ? rootShade : tipShade;
             Nature_SetVertex(&mesh, cursor, root, encoded, clump->phase, 0.0f, shade);

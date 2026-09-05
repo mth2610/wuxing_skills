@@ -53,6 +53,8 @@ static bool s_dynamicVerifyDumped = false;
 static EnvShadowMapCasterCallback s_mapCasterCallback = NULL;
 static void *s_mapCasterUserData = NULL;
 
+static Vector3 ProjectLS(Matrix vp, Vector3 wp);
+
 // TỐI ƯU: Biến cache hướng nắng để tránh tính toán lại ma trận mỗi frame
 static Vector3 s_lastSunDir = {0};
 static Vector3 s_lastShadowFocus = {1e30f, 1e30f, 1e30f};
@@ -339,15 +341,47 @@ void EnvShadow_EndCapture(void)
             RL_PIXELFORMAT_UNCOMPRESSED_R32);
         if (pixels != NULL) {
             int occupied = 0;
+            int receiverShadowed = 0;
+            int receiverShadowedFlipped = 0;
             float minDepth = 1.0f;
             int total = s_resolution * s_resolution;
             for (int i = 0; i < total; i++) {
                 if (pixels[i] < minDepth) minDepth = pixels[i];
                 if (pixels[i] < 0.999f) occupied++;
             }
+            // Exercise the same projection/depth comparison used by map
+            // receivers over a regular ground grid. Reporting both readback
+            // orientations makes a backend Y-flip regression unambiguous.
+            const int receiverGrid = 256;
+            for (int z = 0; z < receiverGrid; z++) {
+                for (int x = 0; x < receiverGrid; x++) {
+                    float fx = ((float)x + 0.5f) / (float)receiverGrid;
+                    float fz = ((float)z + 0.5f) / (float)receiverGrid;
+                    Vector3 world = {
+                        s_shadowFocus.x + (fx * 2.0f - 1.0f) * s_shadowHalfExtent,
+                        0.0f,
+                        s_shadowFocus.z + (fz * 2.0f - 1.0f) * s_shadowHalfExtent,
+                    };
+                    Vector3 projected = ProjectLS(s_lightVP, world);
+                    if (projected.x <= 0.0f || projected.x >= 1.0f ||
+                        projected.y <= 0.0f || projected.y >= 1.0f ||
+                        projected.z <= 0.0f || projected.z >= 1.0f)
+                        continue;
+                    int tx = (int)(projected.x * (float)(s_resolution - 1));
+                    int ty = (int)(projected.y * (float)(s_resolution - 1));
+                    float compareDepth = projected.z - 0.00018f;
+                    if (compareDepth > pixels[ty * s_resolution + tx])
+                        receiverShadowed++;
+                    int flippedY = s_resolution - 1 - ty;
+                    if (compareDepth > pixels[flippedY * s_resolution + tx])
+                        receiverShadowedFlipped++;
+                }
+            }
             TraceLog(LOG_INFO,
-                     "ENV_SHADOW: dynamic verify minDepth=%.4f occupied=%d/%d",
-                     minDepth, occupied, total);
+                     "ENV_SHADOW: dynamic verify minDepth=%.4f occupied=%d/%d receiver=%d/%d flipped=%d/%d",
+                     minDepth, occupied, total, receiverShadowed,
+                     receiverGrid * receiverGrid, receiverShadowedFlipped,
+                     receiverGrid * receiverGrid);
             MemFree(pixels);
         } else {
             TraceLog(LOG_WARNING, "ENV_SHADOW: dynamic verify readback failed");

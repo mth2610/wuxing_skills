@@ -83,9 +83,13 @@ float MapDynamicShadowVisibility(vec3 worldPos, float slope)
     // several centimetres in light depth and erased short flower shadows.
     float compareDepth = projected.z - mix(0.00018, 0.00055, slope);
     float visibility = MapShadowFilteredVisibility(
-        shadowMap, projected.xy, compareDepth, u_shadowTexel, 0.88,
+        shadowMap, projected.xy, compareDepth, u_shadowTexel, 1.55,
         u_shadowThinFeatureBoost);
-    return mix(1.0, visibility, MapShadowCoverageFade(projected.xy));
+    float edgeFade = MapShadowCoverageFade(projected.xy);
+    float resolved = mix(1.0, visibility, edgeFade);
+    // A modest contrast resolve makes sub-texel blades and petals readable
+    // after PCF without dilating or replacing their captured silhouette.
+    return pow(clamp(resolved, 0.0, 1.0), 1.28);
 }
 
 float MapStaticShadowVisibility(vec3 worldPos, float slope)

@@ -67,16 +67,17 @@ bool       EnvShadow_HasStaticCache(void);
 Matrix     EnvShadow_GetStaticLightVP(void);
 Texture2D  EnvShadow_GetStaticShadowMap(void);
 
-// TEMP diagnostic (P6 bug 3) — CPU-readback of the shadow map + numeric
+// Set WUXING_SHADOW_DYNAMIC_VERIFY=1 for a one-shot R32F readback after the
+// first completed dynamic capture. The log reports minimum depth, occupied
+// texels, and projected ground-receiver coverage in both texture orientations;
+// intended for automated caster validation, never normal gameplay.
+//
+// Manual diagnostic — CPU-readback of the shadow map + numeric
 // projection of a reference world position. Prints, via TraceLog: stored
 // depth min/max/histogram, the projected texel of `worldPos` (the caster,
 // e.g. player position) and of the ground point underneath it, and the
 // stored depth at both texels. One call = full numeric picture, no more
 // color-guessing from screenshots.
 void EnvShadow_DebugDump(Vector3 worldPos);
-
-// Set WUXING_SHADOW_DYNAMIC_VERIFY=1 for a one-shot R32F readback after the
-// first completed dynamic capture. The log reports minimum depth and occupied
-// texels; intended for automated caster validation, never normal gameplay.
 
 #endif // ENV_SHADOW_H
