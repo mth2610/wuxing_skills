@@ -286,7 +286,11 @@ static void CaptureVerdantStaticShadows(void)
     if (!EnvShadow_IsCapturing())
         return;
     Shader depthShader = EnvShadow_GetDepthShader();
-    MapProp_DrawGroundShadowCaster(&s_ground, kMapCenter, depthShader);
+    // Do not capture the heightmap against itself. At this low sunset angle,
+    // receiver/caster depth quantization turns its shallow slopes into long
+    // parallel acne bands across the whole meadow. Terrain still receives
+    // static rock shadows, dynamic vegetation shadows, and its own normal-based
+    // lighting; only unstable terrain self-shadowing is omitted.
     MapProp_DrawRockShadowCasters(&s_mountainRockSet, s_mountainRocks,
                                   MOUNTAIN_ROCK_COUNT, depthShader);
     MapProp_DrawRockShadowCasters(&s_rocks, kRocks, ROCK_COUNT, depthShader);

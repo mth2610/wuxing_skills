@@ -769,6 +769,7 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     meadow.drawDistance = style.drawDistance;
     meadow.shadowDistance = style.shadowDistance;
     bool buildContactShadows = style.shadowDistance > 0.0f && GfxQuality_Get() >= GFX_MED;
+    bool buildRealShadowLod = style.shadowDistance > 0.0f && GfxQuality_Get() >= GFX_HIGH;
 
     for (int row = 0; row < rows; row++) {
         for (int column = 0; column < columns; column++) {
@@ -793,18 +794,33 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             if (buildContactShadows)
                 shadowModel = Nature_BuildMeadowShadowChunk(
                     placements, count, x0, x1, z0, z1);
+            // Shadow-only geometry keeps one of every two clumps and two real
+            // pointed blades per survivor. Rendering the full near meadow into
+            // a low-angle shadow map creates coherent parallel-line moire over
+            // the entire terrain; this stable LOD preserves real silhouettes
+            // while cutting depth geometry to roughly 13% of the near mesh.
+            Model realShadowModel = {0};
+            int realShadowCount = 0;
+            if (buildRealShadowLod)
+                realShadowModel = Nature_BuildMeadowChunk(
+                    placements, count, style, x0, x1, z0, z1, 2,
+                    2, 1, 1.0f, &realShadowCount);
             MapMeadowChunk *chunk = &meadow.chunks[meadow.chunkCount++];
             if (textured) {
                 nearModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
                 farModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
+                if (realShadowCount > 0)
+                    realShadowModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
             }
             *chunk = (MapMeadowChunk){
                 .nearModel = nearModel,
                 .farModel = farModel,
                 .shadowModel = shadowModel,
+                .realShadowModel = realShadowModel,
                 .center = {(x0 + x1) * 0.5f, 0.0f, (z0 + z1) * 0.5f},
                 .radius = style.chunkSize * 0.72f + 1.5f,
                 .shadowReady = shadowModel.meshCount > 0,
+                .realShadowReady = realShadowCount > 0,
                 .ready = true,
             };
         }
@@ -988,14 +1004,16 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
     rlDisableBackfaceCulling();
     for (int i = 0; i < meadow->chunkCount; i++) {
         MapMeadowChunk *chunk = &meadow->chunks[i];
+        if (!chunk->realShadowReady)
+            continue;
         Vector3 center = Vector3Add(chunk->center, worldOffset);
         if (!Nature_IntersectsDynamicShadowCoverage(center, chunk->radius) &&
             !Nature_ShadowCasterFilterActive())
             continue;
-        Shader previous = chunk->nearModel.materials[0].shader;
-        chunk->nearModel.materials[0].shader = shader;
-        DrawModel(chunk->nearModel, worldOffset, 1.0f, WHITE);
-        chunk->nearModel.materials[0].shader = previous;
+        Shader previous = chunk->realShadowModel.materials[0].shader;
+        chunk->realShadowModel.materials[0].shader = shader;
+        DrawModel(chunk->realShadowModel, worldOffset, 1.0f, WHITE);
+        chunk->realShadowModel.materials[0].shader = previous;
     }
     rlDrawRenderBatchActive();
     rlEnableBackfaceCulling();
@@ -1009,6 +1027,8 @@ void MapProp_UnloadMeadow(MapMeadowSurface *meadow)
         UnloadModel(meadow->chunks[i].farModel);
         if (meadow->chunks[i].shadowReady)
             UnloadModel(meadow->chunks[i].shadowModel);
+        if (meadow->chunks[i].realShadowReady)
+            UnloadModel(meadow->chunks[i].realShadowModel);
     }
     MemFree(meadow->chunks);
     meadow->chunks = NULL;

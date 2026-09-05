@@ -250,10 +250,12 @@ typedef struct
     Model nearModel;
     Model farModel;
     Model shadowModel;
+    Model realShadowModel; // sparse geometry LOD for the directional depth pass
     Vector3 center;
     float radius; // conservative chunk sphere used by view-frustum culling
     bool farLod;  // persistent state for hysteresis; avoids boundary thrashing
     bool shadowReady;
+    bool realShadowReady;
     bool visibleThisFrame;
     bool ready;
 } MapMeadowChunk;
@@ -326,8 +328,8 @@ void MapProp_ResetNatureRenderStats(void);
 MapNatureRenderStats MapProp_GetNatureRenderStats(void);
 void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float time,
                         Vector2 windDirection, float windStrength);
-// HIGH-tier dynamic shadow-map submission using the same near geometry and
-// deformation as the visible meadow. Call only from an EnvShadow map callback.
+// HIGH-tier dynamic shadow-map submission using a stable sparse geometry LOD
+// with the same blade silhouette/deformation. Call only from an EnvShadow map callback.
 void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffset,
                                      float time, Vector2 windDirection, float windStrength);
 void MapProp_UnloadMeadow(MapMeadowSurface *meadow);

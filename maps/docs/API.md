@@ -124,8 +124,11 @@ The caller owns layout and art direction through placement/config structs; the t
 
 At HIGH quality, a map may register an Environment dynamic-caster callback and
 call `MapProp_DrawMeadowShadowCasters` / `MapProp_DrawFlowerFieldShadowCaster`
-inside it. Both submit full near geometry with the visible wind/interaction
-deformation; flowers preserve their atlas alpha silhouette in the depth pass.
+inside it. Flowers submit full near geometry and preserve their atlas alpha
+silhouette in the depth pass. Meadows use a stable shadow-only geometry LOD:
+one of every two clumps and two pointed blades per retained clump, with the same
+wind/interaction deformation. This prevents thousands of parallel low-sun blade
+shadows from forming full-screen moire while retaining shape-accurate casters.
 HIGH combines those real silhouettes with a short, subdued root-contact layer;
 it is 10% of the authored projection length, remains a single six-vertex quad
 per plant, and uses analytic side/tip feathering instead of a hard black wedge.
@@ -156,8 +159,13 @@ Opaque toolkit materials use `map_shadow.glsl` through `MapShadow_ConfigureShade
 `MapShadow_AttachMaterial`, and `MapShadow_UpdateShader`. The Environment module
 owns separate camera-following dynamic and world-fixed static capture layers;
 map materials explicitly bind both and take the minimum visibility. Build the
-static layer once with `MapProp_DrawGroundShadowCaster` and
-`MapProp_DrawRockShadowCasters` between Environment's static Begin/End calls.
+static layer once with `MapProp_DrawRockShadowCasters` between Environment's
+static Begin/End calls. Terrain self-shadow capture is optional: shallow
+heightmaps under a low sun can quantize into full-screen parallel acne bands,
+so Verdant Path deliberately leaves its ground out of the static caster layer.
+The heightmap still receives rock and vegetation shadows and retains its
+normal-based terrain lighting. Use `MapProp_DrawGroundShadowCaster` only when a
+map has sufficiently steep relief and a verified receiver bias.
 Maps that support runtime shadow toggles or moving directional light should
 repeat that capture only when `EnvShadow_NeedsStaticCapture()` returns true;
 this also handles a mobile user enabling the optional layer after map init.
