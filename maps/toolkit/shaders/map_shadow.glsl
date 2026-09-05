@@ -16,6 +16,26 @@ float MapShadowCompare(sampler2D mapTexture, vec2 uv, float compareDepth)
     return step(compareDepth, texture(mapTexture, uv).r);
 }
 
+// R32F shadow targets intentionally use POINT filtering because linear
+// filtering is not portable across Vulkan/GLES devices. Interpolate the four
+// comparison results ourselves: interpolating depth before comparison causes
+// light leaks, while interpolating binary coverage produces a genuinely soft,
+// sub-texel edge without exposing the shadow-map grid.
+float MapShadowCompareBilinear(sampler2D mapTexture, vec2 uv,
+                               float compareDepth, float texelSize)
+{
+    float resolution = 1.0 / max(texelSize, 0.0000001);
+    vec2 texelPosition = uv * resolution - 0.5;
+    vec2 fraction = fract(texelPosition);
+    vec2 base = (floor(texelPosition) + 0.5) * texelSize;
+    float s00 = MapShadowCompare(mapTexture, base, compareDepth);
+    float s10 = MapShadowCompare(mapTexture, base + vec2(texelSize, 0.0), compareDepth);
+    float s01 = MapShadowCompare(mapTexture, base + vec2(0.0, texelSize), compareDepth);
+    float s11 = MapShadowCompare(mapTexture, base + vec2(texelSize), compareDepth);
+    return mix(mix(s00, s10, fraction.x),
+               mix(s01, s11, fraction.x), fraction.y);
+}
+
 // Quality-scaled deterministic PCF. HIGH uses a compact 3x3 tent kernel so
 // fine foliage silhouettes stay stable without the checker pattern produced
 // by four equally weighted diagonal taps. Lower tiers retain cheaper kernels
@@ -37,25 +57,20 @@ float MapShadowFilteredVisibility(sampler2D mapTexture, vec2 uv,
         return visibility * 0.25;
     }
 
-    float center = MapShadowCompare(mapTexture, uv, compareDepth);
-    float left = MapShadowCompare(mapTexture, uv + vec2(-tap.x, 0.0), compareDepth);
-    float right = MapShadowCompare(mapTexture, uv + vec2(tap.x, 0.0), compareDepth);
-    float down = MapShadowCompare(mapTexture, uv + vec2(0.0, -tap.y), compareDepth);
-    float up = MapShadowCompare(mapTexture, uv + vec2(0.0, tap.y), compareDepth);
-    float downLeft = MapShadowCompare(mapTexture, uv + vec2(-tap.x, -tap.y), compareDepth);
-    float downRight = MapShadowCompare(mapTexture, uv + vec2(tap.x, -tap.y), compareDepth);
-    float upLeft = MapShadowCompare(mapTexture, uv + vec2(-tap.x, tap.y), compareDepth);
-    float upRight = MapShadowCompare(mapTexture, uv + vec2(tap.x, tap.y), compareDepth);
-    float tentVisibility = (center * 4.0
-                          + (left + right + down + up) * 2.0
-                          + downLeft + downRight + upLeft + upRight) * 0.0625;
-    // Tent PCF alone can average a one-texel grass blade into near invisibility.
-    // Preserve a restrained amount of the darkest covered sample on HIGH;
-    // this behaves like a stable contact-preserving resolve, not a larger caster.
-    float darkestVisibility = min(center, min(min(left, right), min(down, up)));
-    darkestVisibility = min(darkestVisibility,
-                            min(min(downLeft, downRight), min(upLeft, upRight)));
-    return mix(tentVisibility, darkestVisibility, thinFeatureBoost);
+    float downLeft = MapShadowCompareBilinear(
+        mapTexture, uv + vec2(-tap.x, -tap.y), compareDepth, texelSize);
+    float downRight = MapShadowCompareBilinear(
+        mapTexture, uv + vec2(tap.x, -tap.y), compareDepth, texelSize);
+    float upLeft = MapShadowCompareBilinear(
+        mapTexture, uv + vec2(-tap.x, tap.y), compareDepth, texelSize);
+    float upRight = MapShadowCompareBilinear(
+        mapTexture, uv + vec2(tap.x, tap.y), compareDepth, texelSize);
+    float smoothVisibility = (downLeft + downRight + upLeft + upRight) * 0.25;
+    // A small darkest-sample contribution retains narrow blades without the
+    // old 84% binary minimum that expanded every covered texel into black,
+    // comb-shaped blocks.
+    float darkestVisibility = min(min(downLeft, downRight), min(upLeft, upRight));
+    return mix(smoothVisibility, darkestVisibility, thinFeatureBoost);
 }
 
 float MapShadowCoverageFade(vec2 uv)
@@ -83,13 +98,13 @@ float MapDynamicShadowVisibility(vec3 worldPos, float slope)
     // several centimetres in light depth and erased short flower shadows.
     float compareDepth = projected.z - mix(0.00018, 0.00055, slope);
     float visibility = MapShadowFilteredVisibility(
-        shadowMap, projected.xy, compareDepth, u_shadowTexel, 1.55,
+        shadowMap, projected.xy, compareDepth, u_shadowTexel, 1.20,
         u_shadowThinFeatureBoost);
     float edgeFade = MapShadowCoverageFade(projected.xy);
     float resolved = mix(1.0, visibility, edgeFade);
     // A modest contrast resolve makes sub-texel blades and petals readable
     // after PCF without dilating or replacing their captured silhouette.
-    return pow(clamp(resolved, 0.0, 1.0), 1.28);
+    return pow(clamp(resolved, 0.0, 1.0), 1.08);
 }
 
 float MapStaticShadowVisibility(vec3 worldPos, float slope)

@@ -317,10 +317,13 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
     // Keep it visibly shorter than the true animated silhouette, but broad and
     // rounded enough to survive a high gameplay camera and the grass texture.
     // MED and SHADOW OFF retain the full inexpensive fallback.
-    float projectionScale = realShadowActive ? 0.34f : 1.0f;
-    float widthScale = realShadowActive ? 0.90f : 1.0f;
-    float tipWidth = realShadowActive ? 0.72f : 0.34f;
-    float shadowStrength = 1.0f;
+    // Hybrid contact is root occlusion, not a second directional silhouette.
+    // Keep it short, broad and restrained so the real animated shadow owns the
+    // readable shape. SHADOW OFF retains a softer projected fallback.
+    float projectionScale = realShadowActive ? 0.10f : 0.62f;
+    float widthScale = realShadowActive ? 1.15f : 1.0f;
+    float tipWidth = realShadowActive ? 0.82f : 0.60f;
+    float shadowStrength = realShadowActive ? 0.32f : 0.68f;
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightTravel"),
                    &lightTravel, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_shadowTint"),

@@ -18,7 +18,8 @@ uniform mat4 matModel;
 
 out vec2 fragTexCoord;
 out vec4 fragColor;
-out vec3 fragPosition;   // world space — what the VFX lights need
+// Project surface/view space; MapShadow_UpdateShader compensates its light VP.
+out vec3 fragPosition;
 out vec3 fragTangent;
 out vec3 fragBitangent;
 out vec3 fragNormal;

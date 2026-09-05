@@ -7,7 +7,7 @@
 #include "maps/toolkit/shaders/map_shadow.glsl"
 
 in vec2 fragTexCoord;
-in vec3 fragPosition;   // world space, from path_blend.vs (E2)
+in vec3 fragPosition;   // project surface space; see path_blend.vs
 in vec3 fragTangent;
 in vec3 fragBitangent;
 in vec3 fragNormal;

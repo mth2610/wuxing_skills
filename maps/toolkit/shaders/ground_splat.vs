@@ -19,7 +19,10 @@ uniform mat4 matModel;
 
 out vec2 fragTexCoord;
 out vec4 fragColor;
-out vec3 fragPosition;   // world space — what the VFX lights need
+// DrawMesh under this project's custom 3D pass includes view in matModel.
+// This is therefore the shared surface/view space used by VFX lights; the
+// shadow uploader folds inverse(view) into its light projection.
+out vec3 fragPosition;
 out vec3 fragNormal;
 
 void main()

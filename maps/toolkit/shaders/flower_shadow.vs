@@ -12,6 +12,7 @@ uniform float u_widthScale;
 uniform float u_tipWidth;
 
 out vec4 fragColor;
+out vec2 fragShadowUV;
 
 void main()
 {
@@ -28,5 +29,6 @@ void main()
     position.xz += perpendicular * shadowWidth * across * mix(1.0, u_tipWidth, along)
                  * u_widthScale;
     fragColor = vertexColor;
+    fragShadowUV = vec2(along, across);
     gl_Position = mvp * vec4(position, 1.0);
 }

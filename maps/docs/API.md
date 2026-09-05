@@ -127,11 +127,12 @@ call `MapProp_DrawMeadowShadowCasters` / `MapProp_DrawFlowerFieldShadowCaster`
 inside it. Both submit full near geometry with the visible wind/interaction
 deformation; flowers preserve their atlas alpha silhouette in the depth pass.
 HIGH combines those real silhouettes with a short, subdued root-contact layer;
-it is 34% of the fallback projection length, remains a single six-vertex quad
-per plant, and cannot visually replace the directional silhouette. Distance
+it is 10% of the authored projection length, remains a single six-vertex quad
+per plant, and uses analytic side/tip feathering instead of a hard black wedge.
+Its reduced strength prevents it from replacing the directional silhouette. Distance
 rejection stays at batch/chunk level; no backend-dependent model-matrix fade
-can silently turn the multiplied pass white. MED uses the full
-projected fallback, while LOW/UNLIT
+can silently turn the multiplied pass white. MED/SHADOW OFF use a softer 62%
+projection-length fallback, while LOW/UNLIT
 omit vegetation shadows. Set `WUXING_NATURE_SHADOW_MODE=real` to disable the
 contact layer for shadow-map validation, or `projected` to suppress vegetation
 casters and compare the fallback in isolation. The default is `hybrid`.
@@ -162,14 +163,21 @@ repeat that capture only when `EnvShadow_NeedsStaticCapture()` returns true;
 this also handles a mobile user enabling the optional layer after map init.
 Ground and path light their real mesh normals, while nature materials use a
 cheaper two-sided thin-foliage response suitable for dense fields.
-Shadow receivers select PCF cost from `GfxQuality`: HIGH uses a stable nine-tap
-tent kernel for fine grass/flower silhouettes, MED uses four taps, and LOW/UNLIT
-uses one comparison. Both capture layers fade across the outer 3.5% of their
+`MapShadow_UpdateShader` also folds `inverse(rlGetMatrixTransform())` into both
+light projections. This is required by the project's custom 3D pass, where
+DrawMesh exposes model-plus-view shader space rather than raw world space;
+uploading an uncorrected world light-VP leaves a valid shadow map but samples it
+at unrelated coordinates on Vulkan.
+Shadow receivers select PCF cost from `GfxQuality`: HIGH uses four manually
+bilinear PCF taps (16 point samples) for sub-texel grass/flower edges, MED uses
+four direct taps, and LOW/UNLIT uses one comparison. Comparing first and then
+interpolating coverage avoids both unsupported R32F linear filtering and the
+block grid caused by interpolating stored depth. Both capture layers fade across the outer 3.5% of their
 coverage so a moving focus cannot reveal a hard square boundary.
-HIGH also blends an 84% darkest-sample term into the dynamic tent resolve and
-applies a modest post-PCF contrast curve, while leaving the static-cache filter
-untouched. Its 1.55-texel dynamic footprint stabilizes sub-pixel blades without
-changing caster geometry. Textured vegetation
+HIGH blends only a restrained 28% darkest-sample term into that smooth dynamic
+resolve and applies a mild post-PCF contrast curve, while leaving the static-cache
+filter untouched. Its 1.20-texel dynamic footprint stabilizes sub-pixel blades
+without turning individual depth texels into black blocks. Textured vegetation
 casters add derivative-based conservative alpha coverage in the depth pass;
 this retains minified petal tips without changing the visible geometry or atlas
 silhouette. The dynamic receiver uses a smaller vegetation-safe depth bias so

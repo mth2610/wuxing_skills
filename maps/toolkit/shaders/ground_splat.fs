@@ -7,7 +7,7 @@
 #include "maps/toolkit/shaders/map_shadow.glsl"
 
 in vec2 fragTexCoord;
-in vec3 fragPosition;   // world space, from ground_splat.vs (E2)
+in vec3 fragPosition;   // project surface space; see ground_splat.vs
 in vec3 fragNormal;
 
 uniform vec4 colDiffuse;
@@ -77,7 +77,9 @@ void main()
     vec3 ambient = mix(groundBounce, skyAmbient, skyWeight);
     // Preserve sky fill, but do not let a bright environment erase the
     // shape-accurate shadow-map silhouette as it did after the sunset pass.
-    float ambientVisibility = mix(0.58, 1.0, shadow);
+    // Outdoor vegetation shadows lose direct sun but retain cool sky fill;
+    // crushing ambient here turns every fine silhouette into a black decal.
+    float ambientVisibility = mix(0.74, 1.0, shadow);
     vec3 totalLight = ambient * ambientVisibility
                     + actualLight.rgb * NdotL * shadow;
 
