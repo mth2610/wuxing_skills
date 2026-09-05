@@ -127,10 +127,10 @@ call `MapProp_DrawMeadowShadowCasters` / `MapProp_DrawFlowerFieldShadowCaster`
 inside it. Both submit full near geometry with the visible wind/interaction
 deformation; flowers preserve their atlas alpha silhouette in the depth pass.
 HIGH combines those real silhouettes with a short, subdued root-contact layer;
-it is 34% of the fallback projection length and uses an analytic soft rounded
-cap on the existing six-vertex quad (no extra per-plant geometry),
-fades per plant over the final 16% of its authored range, and cannot visually
-replace the directional silhouette. MED uses the full
+it is 34% of the fallback projection length, remains a single six-vertex quad
+per plant, and cannot visually replace the directional silhouette. Distance
+rejection stays at batch/chunk level; no backend-dependent model-matrix fade
+can silently turn the multiplied pass white. MED uses the full
 projected fallback, while LOW/UNLIT
 omit vegetation shadows. Set `WUXING_NATURE_SHADOW_MODE=real` to disable the
 contact layer for shadow-map validation, or `projected` to suppress vegetation
@@ -177,8 +177,10 @@ short flowers are not erased. For large maps, treat the dynamic target as a
 near cascade with `EnvShadow_SetFocus`; Verdant Path uses a 20 m half-extent
 (about 1.95 cm/texel at 2048²) centered on `camera.target`, while the static
 cache supplies distant terrain and rock occlusion. Real vegetation casters are
-culled against this light-space capture region—not camera distance or the
-shorter contact-shadow range—so orbit/zoom changes cannot remove valid casters.
+culled conservatively in world space around this capture region—not against the
+shorter contact-shadow range. The bound expands for low sun angles, avoiding
+false-negative caster rejection across Vulkan/OpenGL matrix conventions while
+still skipping distant field chunks.
 
 Use `MapProp_SetGroundTint` to grade the tiled terrain into the same palette as its 3D vegetation. This prevents the common failure where the ground reads as a bright photographic carpet while foliage reads as dark disconnected props.
 
