@@ -79,7 +79,7 @@ void main()
     // shape-accurate shadow-map silhouette as it did after the sunset pass.
     // Outdoor vegetation shadows lose direct sun but retain cool sky fill;
     // crushing ambient here turns every fine silhouette into a black decal.
-    float ambientVisibility = mix(0.74, 1.0, shadow);
+    float ambientVisibility = mix(0.78, 1.0, shadow);
     vec3 totalLight = ambient * ambientVisibility
                     + actualLight.rgb * NdotL * shadow;
 

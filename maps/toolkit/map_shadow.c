@@ -45,7 +45,7 @@ void MapShadow_UpdateShader(Shader shader)
     if (filterQualityLoc >= 0)
         SetShaderValue(shader, filterQualityLoc, &filterQuality, SHADER_UNIFORM_FLOAT);
 
-    float thinFeatureBoost = GfxQuality_Get() >= GFX_HIGH ? 0.28f : 0.0f;
+    float thinFeatureBoost = GfxQuality_Get() >= GFX_HIGH ? 0.18f : 0.0f;
     int thinFeatureBoostLoc = GetShaderLocation(shader, "u_shadowThinFeatureBoost");
     if (thinFeatureBoostLoc >= 0)
         SetShaderValue(shader, thinFeatureBoostLoc, &thinFeatureBoost, SHADER_UNIFORM_FLOAT);

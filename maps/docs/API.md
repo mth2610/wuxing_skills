@@ -176,15 +176,17 @@ light projections. This is required by the project's custom 3D pass, where
 DrawMesh exposes model-plus-view shader space rather than raw world space;
 uploading an uncorrected world light-VP leaves a valid shadow map but samples it
 at unrelated coordinates on Vulkan.
-Shadow receivers select PCF cost from `GfxQuality`: HIGH uses four manually
-bilinear PCF taps (16 point samples) for sub-texel grass/flower edges, MED uses
+Shadow receivers select PCF cost from `GfxQuality`: HIGH uses one center plus
+four diagonal manually-bilinear PCF taps (20 point samples) for sub-texel
+grass/flower edges, MED uses
 four direct taps, and LOW/UNLIT uses one comparison. Comparing first and then
 interpolating coverage avoids both unsupported R32F linear filtering and the
 block grid caused by interpolating stored depth. Both capture layers fade across the outer 3.5% of their
 coverage so a moving focus cannot reveal a hard square boundary.
-HIGH blends only a restrained 28% darkest-sample term into that smooth dynamic
+The center carries 50% of the smooth resolve so thin stems cannot fall between
+the diagonal taps. HIGH blends only a restrained 18% darkest-sample term into that smooth dynamic
 resolve and applies a mild post-PCF contrast curve, while leaving the static-cache
-filter untouched. Its 1.20-texel dynamic footprint stabilizes sub-pixel blades
+filter untouched. Its 0.95-texel dynamic footprint stabilizes sub-pixel blades
 without turning individual depth texels into black blocks. Textured vegetation
 casters add derivative-based conservative alpha coverage in the depth pass;
 this retains minified petal tips without changing the visible geometry or atlas
