@@ -50,24 +50,31 @@ remaining fixed over the default arena:
 
 ```c
 void EnvShadow_SetFocus(Vector3 center, float halfExtent); // light-space texel stabilized
+Vector3 EnvShadow_GetFocus(void);
+float EnvShadow_GetHalfExtent(void);
 typedef void (*EnvShadowMapCasterCallback)(Shader depthShader, void *userData);
 void EnvShadow_SetMapCasterCallback(EnvShadowMapCasterCallback callback, void *userData);
 void EnvShadow_BeginStaticCapture(Vector3 center, float halfExtent);
 void EnvShadow_EndStaticCapture(void);
 void EnvShadow_InvalidateStaticCache(void);
 bool EnvShadow_HasStaticCache(void);
+bool EnvShadow_NeedsStaticCapture(void);
 Matrix EnvShadow_GetStaticLightVP(void);
 Texture2D EnvShadow_GetStaticShadowMap(void);
 ```
 
 Call `EnvShadow_SetFocus` before the frame's dynamic capture. Its `halfExtent`
 is clamped to 8–96 m and should stay tight around the camera/player. For large
-maps, call `EnvShadow_BeginStaticCapture` after static models are created, draw
+maps, the getters expose the stabilized capture region so map-owned caster
+culling can follow the shadow cascade instead of guessing from camera range.
+Call `EnvShadow_BeginStaticCapture` after static models are created, draw
 only their geometry with `EnvShadow_GetDepthShader`, then end the capture. The
 static projection is world-fixed (1024² desktop, 512² Android), while the
 dynamic projection remains camera-following (2048²/1024²). Receivers combine
-the two visibility layers. Changing the sun direction invalidates the cached
-layer automatically; rebuild it at the map's chosen day/night cadence. Set
+the two visibility layers. `EnvShadow_NeedsStaticCapture` becomes true when
+shadows are enabled without a cache or the directional light has changed;
+maps should rebuild then, avoiding both stale lighting and per-frame retries
+when the platform has no static target. Set
 `WUXING_SHADOW_STATIC_VERIFY=1` to read it back once and log occupied texels.
 Use `WUXING_SHADOW_DYNAMIC_VERIFY=1` for the equivalent one-shot readback of
 the camera-following dynamic target after its first completed capture. To

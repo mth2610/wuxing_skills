@@ -209,6 +209,9 @@ void EnvShadow_SetFocus(Vector3 center, float halfExtent)
     s_shadowHalfExtent = halfExtent;
 }
 
+Vector3 EnvShadow_GetFocus(void) { return s_shadowFocus; }
+float EnvShadow_GetHalfExtent(void) { return s_shadowHalfExtent; }
+
 static Matrix ComputeLightVP(void)
 {
     Vector3 currentSunDir = Environment_GetSunDirection();
@@ -456,6 +459,12 @@ bool EnvShadow_HasStaticCache(void)
         return false;
     Vector3 current = Vector3Normalize(Environment_GetSunDirection());
     return Vector3DistanceSqr(current, s_staticSunDir) < 0.000001f;
+}
+
+bool EnvShadow_NeedsStaticCapture(void)
+{
+    return s_ready && s_enabled && s_staticTargetReady &&
+           !EnvShadow_HasStaticCache();
 }
 
 Matrix EnvShadow_GetStaticLightVP(void) { return s_staticLightVP; }

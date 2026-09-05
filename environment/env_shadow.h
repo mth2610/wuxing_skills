@@ -36,6 +36,8 @@ bool       EnvShadow_IsEnabled(void);   // false also when Init failed (e.g. FBO
 // Diagnostics may override X/Z with WUXING_SHADOW_FOCUS_X and
 // WUXING_SHADOW_FOCUS_Z; both variables must be present.
 void       EnvShadow_SetFocus(Vector3 center, float halfExtent);
+Vector3    EnvShadow_GetFocus(void);
+float      EnvShadow_GetHalfExtent(void);
 
 void       EnvShadow_BeginCapture(void); // begins the light-space depth pass
 void       EnvShadow_EndCapture(void);   // ends it, restores default framebuffer/viewport
@@ -64,6 +66,7 @@ void       EnvShadow_BeginStaticCapture(Vector3 center, float halfExtent);
 void       EnvShadow_EndStaticCapture(void);
 void       EnvShadow_InvalidateStaticCache(void);
 bool       EnvShadow_HasStaticCache(void);
+bool       EnvShadow_NeedsStaticCapture(void);
 Matrix     EnvShadow_GetStaticLightVP(void);
 Texture2D  EnvShadow_GetStaticShadowMap(void);
 

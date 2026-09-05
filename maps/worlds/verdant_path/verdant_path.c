@@ -278,6 +278,21 @@ static void DrawVerdantShadowCasters(Shader depthShader, void *userData)
     }
 }
 
+static void CaptureVerdantStaticShadows(void)
+{
+    if (!EnvShadow_NeedsStaticCapture())
+        return;
+    EnvShadow_BeginStaticCapture(kMapCenter, 64.0f);
+    if (!EnvShadow_IsCapturing())
+        return;
+    Shader depthShader = EnvShadow_GetDepthShader();
+    MapProp_DrawGroundShadowCaster(&s_ground, kMapCenter, depthShader);
+    MapProp_DrawRockShadowCasters(&s_mountainRockSet, s_mountainRocks,
+                                  MOUNTAIN_ROCK_COUNT, depthShader);
+    MapProp_DrawRockShadowCasters(&s_rocks, kRocks, ROCK_COUNT, depthShader);
+    EnvShadow_EndStaticCapture();
+}
+
 void InitVerdantPathMap(void)
 {
     if (s_ready)
@@ -362,17 +377,9 @@ void InitVerdantPathMap(void)
         MapProp_SetFlowerFieldLod(&s_flowerFields[cluster], 34.0f, 30.0f);
     }
     EnvShadow_SetMapCasterCallback(DrawVerdantShadowCasters, NULL);
-    // World-fixed layer: terrain relief and static rocks are captured once.
-    // Characters remain in the smaller camera-following map updated each frame.
-    EnvShadow_BeginStaticCapture(kMapCenter, 64.0f);
-    if (EnvShadow_IsCapturing()) {
-        Shader depthShader = EnvShadow_GetDepthShader();
-        MapProp_DrawGroundShadowCaster(&s_ground, kMapCenter, depthShader);
-        MapProp_DrawRockShadowCasters(&s_mountainRockSet, s_mountainRocks,
-                                      MOUNTAIN_ROCK_COUNT, depthShader);
-        MapProp_DrawRockShadowCasters(&s_rocks, kRocks, ROCK_COUNT, depthShader);
-        EnvShadow_EndStaticCapture();
-    }
+    // World-fixed terrain/rocks are captured now when enabled, or lazily after
+    // a runtime toggle. Dynamic vegetation/characters use the near cascade.
+    CaptureVerdantStaticShadows();
     MapManager_SetZones(ISLAND_ZONES, ISLAND_ZONE_COUNT);
     s_time = 0.0f;
     s_ready = true;
@@ -382,25 +389,14 @@ void UpdateVerdantPathMap(float dt)
 {
     if (s_ready) {
         s_time += dt;
-        Vector3 view = {
-            camera.target.x - camera.position.x,
-            0.0f,
-            camera.target.z - camera.position.z,
-        };
-        float viewLength = sqrtf(view.x * view.x + view.z * view.z);
-        if (viewLength > 0.001f) {
-            view.x /= viewLength;
-            view.z /= viewLength;
-        }
-        Vector3 focus = {
-            camera.position.x + view.x * 7.0f,
-            0.0f,
-            camera.position.z + view.z * 7.0f,
-        };
+        Vector3 focus = {camera.target.x, 0.0f, camera.target.z};
         // Dynamic vegetation/character shadows are the near cascade. Static
-        // terrain and rocks remain covered by the world-fixed cache, so a
-        // tighter 40 m box spends 1.5x more texels across thin grass blades.
+        // terrain and rocks remain covered by the world-fixed cache. Centering
+        // the 40 m box on the actual viewed/gameplay target keeps orbit and
+        // top-down camera zoom from pushing visible vegetation into the edge
+        // fade; Environment performs the light-space texel snapping.
         EnvShadow_SetFocus(focus, 20.0f);
+        CaptureVerdantStaticShadows();
         MapProp_BeginNatureInteraction(camera.target, dt);
         MapProp_AddNatureInteractor(camera.target, 1.25f, 0.34f);
         MapProp_EndNatureInteraction();

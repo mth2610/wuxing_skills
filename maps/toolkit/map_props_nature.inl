@@ -308,7 +308,8 @@ static Shader FlowerShadow_GetShader(void)
     return s_flowerShadowShader;
 }
 
-static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowActive)
+static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowActive,
+                                                float shadowDistance)
 {
     Vector3 lightTravel = Environment_GetSunDirection();
     Vector4 shadowColor = ColorNormalize(Environment_GetShadowColor());
@@ -321,6 +322,10 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
     float widthScale = realShadowActive ? 0.90f : 1.0f;
     float tipWidth = realShadowActive ? 0.72f : 0.34f;
     float shadowStrength = 1.0f;
+    Vector2 cameraXZ = {camera.position.x, camera.position.z};
+    float distance = shadowDistance > 0.0f ? shadowDistance : 100000.0f;
+    float fadeBand = shadowDistance > 0.0f
+        ? fminf(fmaxf(shadowDistance * 0.16f, 2.0f), 5.0f) : 1.0f;
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightTravel"),
                    &lightTravel, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_shadowTint"),
@@ -333,6 +338,12 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
                    &tipWidth, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, GetShaderLocation(shader, "u_shadowStrength"),
                    &shadowStrength, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_cameraXZ"),
+                   &cameraXZ, SHADER_UNIFORM_VEC2);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_shadowDistance"),
+                   &distance, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_shadowFadeBand"),
+                   &fadeBand, SHADER_UNIFORM_FLOAT);
 }
 
 static void Nature_SetVertex(Mesh *mesh, int index, Vector3 p, Vector3 n,
@@ -852,6 +863,29 @@ static bool Nature_IsChunkVisible(Vector3 center, float radius)
            verticalDistance <= halfVertical + radius;
 }
 
+// Shadow casters belong to the light-space cascade, not to a camera-distance
+// sphere. Project the conservative bounds into the active orthographic map so
+// zoom/orbit changes cannot cull geometry that still contributes on screen.
+static bool Nature_IntersectsDynamicShadowCoverage(Vector3 center, float radius)
+{
+    Matrix lightVP = EnvShadow_GetLightVP();
+    float clipX = center.x * lightVP.m0 + center.y * lightVP.m4
+                + center.z * lightVP.m8 + lightVP.m12;
+    float clipY = center.x * lightVP.m1 + center.y * lightVP.m5
+                + center.z * lightVP.m9 + lightVP.m13;
+    float clipW = center.x * lightVP.m3 + center.y * lightVP.m7
+                + center.z * lightVP.m11 + lightVP.m15;
+    if (fabsf(clipW) < 0.00001f)
+        return true;
+    float extent = fmaxf(EnvShadow_GetHalfExtent(), 8.0f);
+    // A sphere projected onto either orthographic axis cannot grow beyond this
+    // conservative normalized margin. Slight padding covers wind deformation.
+    float margin = radius * 1.12f / extent;
+    float ndcX = clipX / clipW;
+    float ndcY = clipY / clipW;
+    return fabsf(ndcX) <= 1.0f + margin && fabsf(ndcY) <= 1.0f + margin;
+}
+
 void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float time,
                         Vector2 windDirection, float windStrength)
 {
@@ -908,10 +942,11 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     bool useProjectedShadows = quality >= GFX_MED &&
                                shadowMode != NATURE_SHADOW_REAL_ONLY;
     if (useProjectedShadows && meadow->shadowDistance > 0.0f) {
-        Shader shadowShader = FlowerShadow_GetShader();
-        Nature_UpdateProjectedShadowShader(shadowShader, realShadowActive);
         float shadowScale = quality >= GFX_HIGH ? 1.0f : 0.76f;
         float shadowDistance = meadow->shadowDistance * shadowScale;
+        Shader shadowShader = FlowerShadow_GetShader();
+        Nature_UpdateProjectedShadowShader(shadowShader, realShadowActive,
+                                            shadowDistance);
         rlDisableDepthMask();
         BeginBlendMode(BLEND_MULTIPLIED);
         for (int i = 0; i < meadow->chunkCount; i++) {
@@ -963,15 +998,12 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
     Shader shader = NatureShadow_GetShader();
     Nature_UpdateShadowShader(shader, time, windDirection, windStrength,
                               meadow->textured, meadow->alphaCutoff);
-    float casterRange = meadow->shadowDistance + 4.0f;
     rlDisableBackfaceCulling();
     for (int i = 0; i < meadow->chunkCount; i++) {
         MapMeadowChunk *chunk = &meadow->chunks[i];
         Vector3 center = Vector3Add(chunk->center, worldOffset);
-        float dx = camera.position.x - center.x;
-        float dz = camera.position.z - center.z;
-        float visibleDistance = sqrtf(dx * dx + dz * dz) - chunk->radius;
-        if (visibleDistance > casterRange && !Nature_ShadowCasterFilterActive())
+        if (!Nature_IntersectsDynamicShadowCoverage(center, chunk->radius) &&
+            !Nature_ShadowCasterFilterActive())
             continue;
         Shader previous = chunk->nearModel.materials[0].shader;
         chunk->nearModel.materials[0].shader = shader;
@@ -1322,7 +1354,8 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
                                shadowMode != NATURE_SHADOW_REAL_ONLY;
     if (field->shadowReady && useProjectedShadows && shadowInRange) {
         Shader shadowShader = FlowerShadow_GetShader();
-        Nature_UpdateProjectedShadowShader(shadowShader, realShadowActive);
+        Nature_UpdateProjectedShadowShader(shadowShader, realShadowActive,
+                                            field->shadowDistance * shadowScale);
         rlDisableDepthMask();
         BeginBlendMode(BLEND_MULTIPLIED);
         DrawModel(field->shadowModel, worldOffset, 1.0f, WHITE);
@@ -1352,12 +1385,8 @@ void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOff
         !Nature_ShadowCasterTypeEnabled(true))
         return;
     Vector3 center = Vector3Add(field->boundsCenter, worldOffset);
-    float dx = camera.position.x - center.x;
-    float dz = camera.position.z - center.z;
-    float visibleDistance = sqrtf(dx * dx + dz * dz) - field->boundsRadius;
-    float casterRange = field->shadowDistance > 0.0f
-        ? field->shadowDistance + 4.0f : 30.0f;
-    if (visibleDistance > casterRange && !Nature_ShadowCasterFilterActive())
+    if (!Nature_IntersectsDynamicShadowCoverage(center, field->boundsRadius) &&
+        !Nature_ShadowCasterFilterActive())
         return;
 
     Shader shader = NatureShadow_GetShader();

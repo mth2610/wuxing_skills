@@ -127,8 +127,10 @@ call `MapProp_DrawMeadowShadowCasters` / `MapProp_DrawFlowerFieldShadowCaster`
 inside it. Both submit full near geometry with the visible wind/interaction
 deformation; flowers preserve their atlas alpha silhouette in the depth pass.
 HIGH combines those real silhouettes with a short, subdued root-contact layer;
-it is 34% of the fallback projection length, ends with a broad rounded profile,
-and cannot visually replace the directional silhouette. MED uses the full
+it is 34% of the fallback projection length and uses an analytic soft rounded
+cap on the existing six-vertex quad (no extra per-plant geometry),
+fades per plant over the final 16% of its authored range, and cannot visually
+replace the directional silhouette. MED uses the full
 projected fallback, while LOW/UNLIT
 omit vegetation shadows. Set `WUXING_NATURE_SHADOW_MODE=real` to disable the
 contact layer for shadow-map validation, or `projected` to suppress vegetation
@@ -155,6 +157,9 @@ owns separate camera-following dynamic and world-fixed static capture layers;
 map materials explicitly bind both and take the minimum visibility. Build the
 static layer once with `MapProp_DrawGroundShadowCaster` and
 `MapProp_DrawRockShadowCasters` between Environment's static Begin/End calls.
+Maps that support runtime shadow toggles or moving directional light should
+repeat that capture only when `EnvShadow_NeedsStaticCapture()` returns true;
+this also handles a mobile user enabling the optional layer after map init.
 Ground and path light their real mesh normals, while nature materials use a
 cheaper two-sided thin-foliage response suitable for dense fields.
 Shadow receivers select PCF cost from `GfxQuality`: HIGH uses a stable nine-tap
@@ -170,8 +175,10 @@ this retains minified petal tips without changing the visible geometry or atlas
 silhouette. The dynamic receiver uses a smaller vegetation-safe depth bias so
 short flowers are not erased. For large maps, treat the dynamic target as a
 near cascade with `EnvShadow_SetFocus`; Verdant Path uses a 20 m half-extent
-(about 1.95 cm/texel at 2048²), while the static cache supplies distant terrain
-and rock occlusion.
+(about 1.95 cm/texel at 2048²) centered on `camera.target`, while the static
+cache supplies distant terrain and rock occlusion. Real vegetation casters are
+culled against this light-space capture region—not camera distance or the
+shorter contact-shadow range—so orbit/zoom changes cannot remove valid casters.
 
 Use `MapProp_SetGroundTint` to grade the tiled terrain into the same palette as its 3D vegetation. This prevents the common failure where the ground reads as a bright photographic carpet while foliage reads as dark disconnected props.
 
