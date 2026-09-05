@@ -666,6 +666,7 @@ typedef enum {
     VFX_COLUMN_SMOKE = 0,
     VFX_COLUMN_FIRE,
     VFX_COLUMN_STEAM,
+    VFX_COLUMN_ENERGY,
     // Not a kind — the count. Range-check against THIS, never the last kind by
     // name: a check written against a named member starts clamping silently the
     // day someone appends one (core/docs/LANDMINES.md).

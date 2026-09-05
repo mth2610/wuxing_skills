@@ -68,6 +68,7 @@ static const VFX_SurfaceId k_columnSurface[VFX_COLUMN_KIND_COUNT] = {
     [VFX_COLUMN_SMOKE] = VFX_SURFACE_VOLUME_SMOKE,
     [VFX_COLUMN_FIRE] = VFX_SURFACE_VOLUME_FIRE,
     [VFX_COLUMN_STEAM] = VFX_SURFACE_VOLUME_STEAM,
+    [VFX_COLUMN_ENERGY] = VFX_SURFACE_ENERGY_TUBE,
 };
 static Texture2D s_columnSheet[VFX_COLUMN_KIND_COUNT];
 
@@ -76,7 +77,7 @@ static Texture2D s_columnSheet[VFX_COLUMN_KIND_COUNT];
 // it looks like a jet. Fire is the one that genuinely accelerates.
 // How fast the surface churns and how fast the sheet climbs. These two ARE the
 // effect: with the path frozen, nothing else moves.
-static const float k_columnNoise[VFX_COLUMN_KIND_COUNT] = {0.34f, 0.30f, 0.22f};
+static const float k_columnNoise[VFX_COLUMN_KIND_COUNT] = {0.34f, 0.30f, 0.22f, 0.45f};
 // POSITIVE, and the sign is the whole point: the column was flowing DOWNWARD.
 //
 // DrawLayeredTube passes `uvBase - uvScrollOffset` as the tube's v offset, so a
@@ -85,7 +86,7 @@ static const float k_columnNoise[VFX_COLUMN_KIND_COUNT] = {0.34f, 0.30f, 0.22f};
 // clock through `runNoiseOffset = -uvScrollOffset * 0.5`, so both the sheet and
 // the lumps marched toward the base. Smoke that sinks reads as wrong long before
 // anyone can say why. Water is the effect where the old sign was right.
-static const float k_columnScroll[VFX_COLUMN_KIND_COUNT] = {0.55f, 0.95f, 0.40f};
+static const float k_columnScroll[VFX_COLUMN_KIND_COUNT] = {0.55f, 0.95f, 0.40f, 1.60f};
 
 // Live knobs. Registered lazily on first use, never from an Init: Tuning_Init
 // runs after subsystem inits in main.c, so early registration silently keeps
@@ -348,7 +349,7 @@ static int SmokeColumn_Spawn(VC_SmokeColumn *c, int slot, float height, bool fun
     cfg.layerCount = 2;
     cfg.uvMetresPerTile = (s_columnTile > 0.05f) ? s_columnTile : 0.05f;
     cfg.uvScrollSpeed = k_columnScroll[c->kind] * s_columnScrollMul;
-    cfg.blendMode = (c->kind == VFX_COLUMN_FIRE) ? BLEND_ADDITIVE : BLEND_ALPHA;
+    cfg.blendMode = (c->kind == VFX_COLUMN_FIRE || c->kind == VFX_COLUMN_ENERGY) ? BLEND_ADDITIVE : BLEND_ALPHA;
     cfg.useCustomBlendMode = true; // BLEND_ALPHA is 0 and cannot be detected by > 0
 
     // A STATIONARY emitter still has to lay nodes, and it does — but not

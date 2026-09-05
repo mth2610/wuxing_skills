@@ -455,7 +455,7 @@
       "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
-      "spawn_call": "VFX_ComposeSmokeTrail($XFORM, VC_MAT_METAL, 0.18f, 1.0f, VFX_COLUMN_SMOKE, true)",
+      "spawn_call": "VFX_ComposeSmokeTrail($XFORM, VC_MAT_METAL, 0.55f, 1.0f, VFX_COLUMN_SMOKE, true)",
       "kill_fn": "VFX_SmokeTrail_Stop"
     },
     {

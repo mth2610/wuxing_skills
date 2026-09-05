@@ -77,6 +77,7 @@ static const VFX_SurfaceId k_smokeTrailSurface[VFX_COLUMN_KIND_COUNT] = {
     [VFX_COLUMN_SMOKE] = VFX_SURFACE_VOLUME_SMOKE,
     [VFX_COLUMN_FIRE] = VFX_SURFACE_VOLUME_FIRE,
     [VFX_COLUMN_STEAM] = VFX_SURFACE_VOLUME_STEAM,
+    [VFX_COLUMN_ENERGY] = VFX_SURFACE_ENERGY_TUBE,
 };
 static Texture2D s_smokeTrailSheet[VFX_COLUMN_KIND_COUNT];
 
@@ -86,8 +87,8 @@ static Texture2D s_smokeTrailSheet[VFX_COLUMN_KIND_COUNT];
 // core/tests/pm_tube_offset_clamp_test.c) — see the churn block in
 // SmokeTrail_BuildShape for why only the CLAMP MECHANISM differs from the
 // column now, not these amplitudes.
-static const float k_smokeTrailNoise[VFX_COLUMN_KIND_COUNT] = {0.34f, 0.30f, 0.22f};
-static const float k_smokeTrailScroll[VFX_COLUMN_KIND_COUNT] = {0.55f, 0.95f, 0.40f};
+static const float k_smokeTrailNoise[VFX_COLUMN_KIND_COUNT] = {0.34f, 0.30f, 0.22f, 0.45f};
+static const float k_smokeTrailScroll[VFX_COLUMN_KIND_COUNT] = {0.55f, 0.95f, 0.40f, 1.60f};
 
 // Live knobs, own namespace from the column's (smokecolumn_*) so tuning one
 // archetype never silently retunes the other. Registered lazily on first use
@@ -184,11 +185,10 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     c->tube.deform1Amp = 0.0f;
     c->tube.deform2Amp = 0.0f;
 
-    /* Keep a near-point mouth for the funnel, but use the larger fixture
-     * radius and ring billow below so the rest of the moving wake remains a
-     * volume rather than a thin sheet. Zero is not valid here: pm_tube uses
-     * it as the sentinel for “no taper”. */
-    if (funnel) { c->tube.radiusTailFrac = 0.08f; c->tube.radiusPow = 1.45f; }
+    /* Keep a proportional mouth for the funnel, but avoid collapsing to a
+     * needle so the moving wake remains a volume rather than a thin sheet.
+     * Zero is not valid here: pm_tube uses it as the sentinel for “no taper”. */
+    if (funnel) { c->tube.radiusTailFrac = 0.22f; c->tube.radiusPow = 1.40f; }
     else        { c->tube.radiusTailFrac = 0.70f; c->tube.radiusPow = 1.15f; }
     // THE re-anchor. headR (the caller's requested radius) lands on the
     // BACK (t=0) instead of pm_tube.inl's default FRONT (t=1) — see the
@@ -360,7 +360,7 @@ static int SmokeTrail_Spawn(VC_SmokeTrail *c, int slot, const Matrix *followTran
     cfg.layerCount = 2;
     cfg.uvMetresPerTile = (s_smokeTrailTile > 0.05f) ? s_smokeTrailTile : 0.05f;
     cfg.uvScrollSpeed = k_smokeTrailScroll[c->kind] * s_smokeTrailScrollMul;
-    cfg.blendMode = (c->kind == VFX_COLUMN_FIRE) ? BLEND_ADDITIVE : BLEND_ALPHA;
+    cfg.blendMode = (c->kind == VFX_COLUMN_FIRE || c->kind == VFX_COLUMN_ENERGY) ? BLEND_ADDITIVE : BLEND_ALPHA;
     cfg.useCustomBlendMode = true; // BLEND_ALPHA is 0 and cannot be detected by > 0
 
     // Real node laying — the whole point of this file. Same constants
@@ -430,7 +430,7 @@ int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat,
     c->pos = Vector3Transform((Vector3){0.0f, 0.0f, 0.0f}, *followTransform);
     c->matId = mat;
     c->kind = kind;
-    c->radius = (radius > 0.01f) ? radius : 0.35f;
+    c->radius = (radius > 0.01f) ? radius : 0.55f;
     c->lifetime = (lifetime > 0.05f) ? lifetime : 0.5f;
     c->serial = ++s_smokeTrailSerial;
 
