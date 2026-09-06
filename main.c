@@ -61,6 +61,14 @@
 Camera3D camera = {0};
 PlayerEntity player = {0};
 
+// Capture coordinates are explicit world metres, independent of arena layout.
+static bool ParseCaptureVector(const char *text, Vector3 *out)
+{
+    char trailing;
+    return sscanf(text, "%f,%f,%f%c", &out->x, &out->y, &out->z, &trailing) == 3 &&
+           isfinite(out->x) && isfinite(out->y) && isfinite(out->z);
+}
+
 static void MyBeginMode3D(Camera3D camera) {
   rlDrawRenderBatchActive();
   rlMatrixMode(RL_PROJECTION);
@@ -220,6 +228,11 @@ int main(int argc, char **argv) {
   int         renderVFXIndex  = 0;
   int         renderVFXWarmup = 90;
   const char *renderVFXOut    = "autotest_output/vfx_eval.png";
+  Vector3 captureOrigin = {6.0f, 0.0f, 4.4f};
+  Vector3 captureEye = {0};
+  bool captureEyeSet = false;
+  bool captureExportFailed = false;
+  bool captureNeutralSmoke = false;
   int         netHostPort     = 0;      // --host [port]
   const char *netJoinIp       = NULL;   // --join <ip> [port]
   int         netJoinPort     = NET_DEFAULT_PORT;
@@ -238,10 +251,30 @@ int main(int argc, char **argv) {
           netJoinCode = argv[++i];
       else if (strcmp(argv[i], "--render-vfx") == 0 && i + 1 < argc)
           { renderVFXIndex = atoi(argv[++i]); renderVFXMode = true; }
+      else if (strcmp(argv[i], "--render-neutral-smoke") == 0)
+          { captureNeutralSmoke = true; renderVFXMode = true; }
       else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc)
           renderVFXWarmup = atoi(argv[++i]);
       else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc)
           renderVFXOut = argv[++i];
+      else if (strcmp(argv[i], "--origin") == 0 || strcmp(argv[i], "--eye") == 0) {
+          bool eye = strcmp(argv[i], "--eye") == 0;
+          Vector3 value;
+          if (i + 1 >= argc || !ParseCaptureVector(argv[++i], &value)) {
+              fprintf(stderr, "Capture coordinates must be finite x,y,z world metres.\n");
+              return 2;
+          }
+          if (eye) { captureEye = value; captureEyeSet = true; }
+          else captureOrigin = value;
+      }
+  }
+
+  if (renderVFXMode && (renderVFXWarmup < 1 ||
+      (captureEyeSet && (Vector3Distance(captureEye,
+          Vector3Add(captureOrigin, (Vector3){0, 0.2f, 0})) < 1.0f ||
+          hypotf(captureEye.x - captureOrigin.x, captureEye.z - captureOrigin.z) < 0.001f)))) {
+      fprintf(stderr, "Capture needs positive warmup, eye >= 1 metre from target and a nonvertical view.\n");
+      return 2;
   }
 
   bool autoTestMode     = AutoTest_IsEnabled();
@@ -600,8 +633,16 @@ int main(int argc, char **argv) {
   int renderVFXFrame = 0;
   if (renderVFXMode) {
       currentScreen    = SCREEN_VFX_TESTER;
-      player.position  = (Vector3){6.0f, 0.0f, 4.4f}; // arena center
-      VFXTest_SetRenderTarget(renderVFXIndex, player.position);
+      player.position  = captureOrigin;
+      if (captureNeutralSmoke) VFXTest_SetNeutralSmokeRenderTarget(player.position);
+      else VFXTest_SetRenderTarget(renderVFXIndex, player.position);
+      TraceLog(LOG_INFO, "CAPTURE: fixture=%s index=%d",
+          captureNeutralSmoke ? "neutral-smoke" : "newfx",
+          captureNeutralSmoke ? -1 : renderVFXIndex);
+      TraceLog(LOG_INFO, "CAPTURE: map=%s origin=%.3f,%.3f,%.3f warmup=%d tuning=%s",
+          getenv("WUXING_MAP") ? getenv("WUXING_MAP") : "default",
+          captureOrigin.x, captureOrigin.y, captureOrigin.z, renderVFXWarmup,
+          getenv("WUXING_TUNING") ? getenv("WUXING_TUNING") : "tuning.cfg");
   }
   while (autoTestMode     ? !AutoTest_IsFinished()      :
          visualVerifyMode ? !VisualVerify_IsFinished()  :
@@ -989,6 +1030,11 @@ int main(int argc, char **argv) {
             }
         }
 
+        if (renderVFXMode && captureEyeSet) {
+            camera.position = captureEye;
+            camera.target = Vector3Add(captureOrigin, (Vector3){0, 0.2f, 0});
+        }
+
         // Intersect against the flat Y=0 plane first (cheap, works for the
         // common flat-map case), then snap the result's Y to the ACTIVE
         // map's real ground height — on a heightmap map (e.g. VERDANT_PATH)
@@ -1001,11 +1047,12 @@ int main(int argc, char **argv) {
         float mtX = mouseRay.position.x + mouseRay.direction.x * t;
         float mtZ = mouseRay.position.z + mouseRay.direction.z * t;
         mouseTarget3D = (Vector3){ mtX, MapManager_GetGroundHeightAt(mtX, mtZ), mtZ };
+        if (renderVFXMode) mouseTarget3D = captureOrigin;
 
         if (VFXTest_UpdateAndHandleInput(player.position, mouseTarget3D, testAtlasTex, globalParticleTex)) {
             currentScreen = SCREEN_MAIN_MENU;
         }
-        CameraFX_Update(&camera, dt);
+        if (!renderVFXMode) CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_GAME) {
         // Spatial-audio ears follow the local player; night bed loops (both
         // no-ops until assets/audio/ has files — Audio_PlayMusic self-guards
@@ -1563,16 +1610,27 @@ int main(int argc, char **argv) {
     if (renderVFXMode) {
         renderVFXFrame++;
         if (renderVFXFrame >= renderVFXWarmup) {
+            Color captureAmbient = Environment_GetAmbientColor();
+            Color captureSun = Environment_GetSunColor();
+            Vector3 captureLight = Environment_GetSunDirection();
+            TraceLog(LOG_INFO, "CAPTURE: ambient=%d,%d,%d sun=%d,%d,%d lightTravel=%.4f,%.4f,%.4f",
+                captureAmbient.r, captureAmbient.g, captureAmbient.b,
+                captureSun.r, captureSun.g, captureSun.b,
+                captureLight.x, captureLight.y, captureLight.z);
+            TraceLog(LOG_INFO, "CAPTURE: eye=%.3f,%.3f,%.3f target=%.3f,%.3f,%.3f shadow=%d output=%s",
+                camera.position.x, camera.position.y, camera.position.z,
+                camera.target.x, camera.target.y, camera.target.z,
+                EnvShadow_IsEnabled(), renderVFXOut);
             if (!DirectoryExists("autotest_output")) MakeDirectory("autotest_output");
             Image img = LoadImageFromScreen();
-            ExportImage(img, renderVFXOut);
+            captureExportFailed = !ExportImage(img, renderVFXOut);
             UnloadImage(img);
             break;
         }
     }
   }
 
-  int exitCode = 0;
+  int exitCode = captureExportFailed ? 1 : 0;
   if (autoTestMode) {
       AutoTest_PrintSummary();
       exitCode = AutoTest_GetExitCode();

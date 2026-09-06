@@ -30,22 +30,23 @@ void main()
     // float mask = texture(texture0, fragTexCoord).r;
     float mask = 1.0; 
 
-    // Lấy màu Texture
+    // Terrain textures supply neutral detail; the material tint owns biome
+    // colour. Two rotated scales suppress obvious photographic repetition.
     vec2 tiledUV = fragTexCoord * tiling;
     vec4 colorGrass = texture(texGrass, tiledUV);
     vec2 broadUV = vec2(tiledUV.y * 0.43 + 17.0, -tiledUV.x * 0.43 + 9.0);
-    colorGrass.rgb = mix(colorGrass.rgb, texture(texGrass, broadUV).rgb, 0.34);
+    vec3 broadGrass = texture(texGrass, broadUV).rgb;
     vec4 colorPath  = texture(texPath, tiledUV);
-    vec4 mixedTex = mix(colorPath, colorGrass, mask);
-
-    // Keep the terrain as the low-frequency base of the biome instead of a
-    // saturated photographic carpet competing with the geometry above it.
-    // The slow world-space variation also breaks visible texture tiling.
-    float groundLuma = dot(mixedTex.rgb, vec3(0.2126, 0.7152, 0.0722));
-    mixedTex.rgb = mix(vec3(groundLuma), mixedTex.rgb, 0.58);
-    mixedTex.rgb = mix(mixedTex.rgb, vec3(0.20, 0.29, 0.16), 0.24);
-    float macroTone = 0.95 + 0.045 * sin(fragPosition.x * 0.105 + fragPosition.z * 0.073);
-    mixedTex.rgb *= macroTone;
+    float fineLuma = dot(colorGrass.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float broadLuma = dot(broadGrass, vec3(0.2126, 0.7152, 0.0722));
+    float detail = 0.93 + (fineLuma - 0.50) * 0.24
+                        + (broadLuma - 0.50) * 0.12;
+    detail = clamp(detail, 0.82, 1.06);
+    vec4 grassDetail = vec4(vec3(detail), colorGrass.a);
+    vec4 mixedTex = mix(colorPath, grassDetail, mask);
+    float macroA = sin(fragPosition.x * 0.071 + fragPosition.z * 0.047);
+    float macroB = sin(fragPosition.x * -0.039 + fragPosition.z * 0.083 + 1.7);
+    mixedTex.rgb *= 0.985 + 0.018 * macroA + 0.012 * macroB;
 
     // Use the actual heightmap normal so slopes and lake banks respond to the
     // sun instead of receiving one constant brightness across the whole map.
@@ -79,7 +80,7 @@ void main()
     // shape-accurate shadow-map silhouette as it did after the sunset pass.
     // Outdoor vegetation shadows lose direct sun but retain cool sky fill;
     // crushing ambient here turns every fine silhouette into a black decal.
-    float ambientVisibility = mix(0.78, 1.0, shadow);
+    float ambientVisibility = mix(0.94, 1.0, shadow);
     vec3 totalLight = ambient * ambientVisibility
                     + actualLight.rgb * NdotL * shadow;
 

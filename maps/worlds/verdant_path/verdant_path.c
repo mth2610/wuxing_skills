@@ -25,7 +25,7 @@
 #define MOUNTAIN_RING_DEPTH 58.0f
 #define MOUNTAIN_ROCK_COUNT 40
 #define ROCK_COUNT 10
-#define GRASS_TUFT_CAPACITY 6400
+#define GRASS_TUFT_CAPACITY 12000
 #define FLOWER_CLUSTER_COUNT 3
 #define FLOWERS_PER_CLUSTER 800
 #define FLOWER_COUNT (FLOWER_CLUSTER_COUNT * FLOWERS_PER_CLUSTER)
@@ -176,9 +176,9 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.78f, .jitter = 0.86f,
-            .minRadius = 0.07f, .maxRadius = 0.135f,
-            .minHeight = 0.12f, .maxHeight = 0.29f,
+            .spacing = 0.56f, .jitter = 0.94f,
+            .minRadius = 0.045f, .maxRadius = 0.09f,
+            .minHeight = 0.08f, .maxHeight = 0.20f,
             .yOffset = 0.035f, .seed = 0x51a7c3u,
         }, VerdantGrassDensity, NULL);
 
@@ -188,17 +188,26 @@ static void BuildMeadowLayout(void)
     const Vector3 radii[FLOWER_CLUSTER_COUNT] = {
         {11.5f, 0.0f, 8.0f}, {13.0f, 0.0f, 7.0f}, {10.5f, 0.0f, 8.5f},
     };
+    static const Vector2 patchOffsets[4] = {
+        {-0.42f, -0.18f}, {0.18f, -0.31f}, {0.38f, 0.20f}, {-0.12f, 0.36f},
+    };
     for (int i = 0; i < FLOWER_COUNT; i++) {
         // Keep each authored meadow contiguous so it can become an independent
         // GPU submission and be culled without touching the other clusters.
         int cluster = i / FLOWERS_PER_CLUSTER;
         float x = centers[cluster].x;
         float z = centers[cluster].z;
-        for (int attempt = 0; attempt < 16; attempt++) {
+        for (int attempt = 0; attempt < 24; attempt++) {
+            float patchRoll = Random01(&rng);
+            int patch = patchRoll < 0.32f ? 0 : patchRoll < 0.59f ? 1
+                      : patchRoll < 0.82f ? 2 : 3;
             float angle = RandomRange(&rng, 0.0f, 2.0f * PI);
-            float radius = powf(Random01(&rng), 1.30f);
-            x = centers[cluster].x + cosf(angle) * radii[cluster].x * radius;
-            z = centers[cluster].z + sinf(angle) * radii[cluster].z * radius;
+            float radius = sqrtf(Random01(&rng));
+            float patchRadius = 0.31f + 0.08f * (float)((patch + cluster) & 1);
+            x = centers[cluster].x + patchOffsets[patch].x * radii[cluster].x
+              + cosf(angle) * radii[cluster].x * patchRadius * radius;
+            z = centers[cluster].z + patchOffsets[patch].y * radii[cluster].z
+              + sinf(angle) * radii[cluster].z * patchRadius * radius;
             if (!IsInsideLake(x, z, 0.85f) && !IsNearPath(x, z, 1.92f))
                 break;
         }
@@ -297,22 +306,31 @@ static void CaptureVerdantStaticShadows(void)
     EnvShadow_EndStaticCapture();
 }
 
+static void ApplyVerdantEnvironment(void)
+{
+    Environment_SetTimeOfDaySpeed(0.0f);
+    Environment_SetAmbientColor((Color){122, 134, 154, 255});
+    Environment_SetSunColor((Color){255, 226, 184, 255});
+    Environment_SetSunDirection((Vector3){0.42f, -0.78f, -0.46f});
+    Environment_SetShadowColor((Color){42, 49, 67, 118});
+    Environment_SetFogConfig((EnvFogConfig){
+        .color = {116, 111, 124, 255}, .start = 72.0f, .end = 158.0f,
+        .density = 0.68f, .enabled = true,
+    });
+}
+
 void InitVerdantPathMap(void)
 {
-    if (s_ready)
+    // Map activation also calls Init for already-loaded worlds. Restore all
+    // global environment state before the resource guard so another map cannot
+    // leave Verdant using stale light/fog values.
+    ApplyVerdantEnvironment();
+    if (s_ready) {
+        EnvShadow_SetMapCasterCallback(DrawVerdantShadowCasters, NULL);
+        EnvShadow_InvalidateStaticCache();
+        MapManager_SetZones(ISLAND_ZONES, ISLAND_ZONE_COUNT);
         return;
-
-    Environment_SetTimeOfDaySpeed(0.0f);
-    // Warm sunset key plus cool sky fill: enough energy for flower colour,
-    // with a lower light angle that makes terrain and vegetation shadows read.
-    Environment_SetAmbientColor((Color){88, 94, 118, 255});
-    Environment_SetSunColor((Color){255, 194, 132, 255});
-    Environment_SetSunDirection((Vector3){0.58f, -0.50f, -0.64f});
-    Environment_SetShadowColor((Color){30, 37, 58, 148});
-    Environment_SetFogConfig((EnvFogConfig){
-        .color = {96, 86, 102, 255}, .start = 68.0f, .end = 152.0f,
-        .density = 0.78f, .enabled = true,
-    });
+    }
 
 #if !defined(__ANDROID__)
     s_shadowWasEnabled = EnvShadow_IsEnabled();
@@ -321,9 +339,12 @@ void InitVerdantPathMap(void)
 
     s_ground = MapProp_CreateGroundHeightmap(
         "assets/heightmaps/verdant_path_island.png", MAP_WIDTH, MAP_DEPTH,
-        CLIFF_DEPTH, 8.0f, "assets/textures/grass_ground_diffuse.png",
-        "assets/textures/grass_ground_diffuse.png", "assets/textures/dirt_diffuse.png");
-    MapProp_SetGroundTint(&s_ground, (Color){168, 181, 157, 255});
+        CLIFF_DEPTH, 10.0f, "maps/toolkit/textures/meadow_floor_neutral_v1.png",
+        "maps/toolkit/textures/meadow_floor_neutral_v1.png", "assets/textures/dirt_diffuse.png");
+    // Shader consumes normalized linear values; keep outdoor soil/grass albedo
+    // in a plausible midrange instead of treating an sRGB display color as
+    // linear reflectance and washing the whole field toward white.
+    MapProp_SetGroundTint(&s_ground, (Color){80, 108, 62, 255});
     s_path = MapProp_CreateStrip(PATH_UNIT_LENGTH, PATH_WIDTH, 1.8f,
         "assets/textures/stone_path_diffuse.png",
         "assets/textures/stone_path_normal.png",
@@ -358,9 +379,9 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {70, 91, 50, 255}, .tipColor = {122, 143, 82, 255},
-            .bladesPerClump = 5, .bladeSegments = 2, .bladeWidthScale = 0.25f,
-            .chunkSize = 12.0f, .lodDistance = 30.0f, .drawDistance = 78.0f,
+            .rootColor = {82, 108, 52, 255}, .tipColor = {144, 166, 87, 255},
+            .bladesPerClump = 8, .bladeSegments = 2, .bladeWidthScale = 0.17f,
+            .chunkSize = 12.0f, .lodDistance = 38.0f, .drawDistance = 78.0f,
             .shadowDistance = 24.0f,
             .texturePath = NULL,
         });

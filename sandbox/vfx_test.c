@@ -825,14 +825,14 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         // static display line. Its fixed generated preview remains available
         // from the panel button, but clicking the world must originate at the
         // actual character socket and terminate exactly at this frame's raycast.
-        if (s_testCategory == TEST_CAT_NEWFX &&
+        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 &&
             strcmp(s_newFxNames[s_testIndex], "LIGHTNING ARC") == 0)
         {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
             VFX_ComposeLightningArc(castSocket, mouseTarget3D, VC_MAT_LIGHTNING, 0.055f);
             return false;
         }
-        if (s_testCategory == TEST_CAT_NEWFX &&
+        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 &&
             strcmp(s_newFxNames[s_testIndex], "GUIDED PARTICLE") == 0)
         {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
@@ -1407,4 +1407,12 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     // @gen:newfx_render_trigger begin
     (void)VFXTest_FireNewFx(newfxIndex, spawnPos);
 // @gen:newfx_render_trigger end
+}
+
+void VFXTest_SetNeutralSmokeRenderTarget(Vector3 spawnPos)
+{
+    // -1 selects no generated fixture. The ordinary tester still updates and
+    // draws the particle systems, but cannot retrigger an elemental preset.
+    VFXTest_SetRenderTarget(-1, spawnPos);
+    VFX_ComposeSmokePuff(spawnPos, VC_MAT_EARTH, 1.5f, 1.0f);
 }

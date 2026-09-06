@@ -784,12 +784,14 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             if (nearCount <= 0)
                 continue;
 
-            int farBlades = style.bladesPerClump / 2;
+            // Preserve coverage: removing every second clump turns a meadow
+            // into isolated spikes. Far LOD reduces each clump instead.
+            int farBlades = (style.bladesPerClump + 1) / 2;
             if (farBlades < 2) farBlades = 2;
             int farCount = 0;
             Model farModel = Nature_BuildMeadowChunk(
-                placements, count, style, x0, x1, z0, z1, 2,
-                farBlades, 1, 1.65f, &farCount);
+                placements, count, style, x0, x1, z0, z1, 1,
+                farBlades, 1, 1.16f, &farCount);
             Model shadowModel = {0};
             if (buildContactShadows)
                 shadowModel = Nature_BuildMeadowShadowChunk(
@@ -1147,7 +1149,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         int petals = placements[i].petalCount ? placements[i].petalCount : 5;
         if (petals < 4) petals = 4;
         if (petals > 6) petals = 6;
-        vertexCount += texturedBloom ? 36 : 30 + petals * 6;
+        // Two foliage leaves (12 vertices) keep a close flower from reading as
+        // a colored disc on a bare pole. Bloom/center counts remain unchanged.
+        vertexCount += texturedBloom ? 42 : 36 + petals * 6;
     }
     Mesh mesh = Nature_AllocMesh(vertexCount);
     int cursor = 0;
@@ -1155,7 +1159,7 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         const MapFlowerPlacement *flower = &placements[i];
         float phase = flower->phase;
         float h = flower->height;
-        float stemWidth = fmaxf(0.018f, flower->bloomRadius * 0.22f);
+        float stemWidth = fmaxf(0.007f, flower->bloomRadius * 0.16f);
         Vector3 base = flower->position;
         float leanAngle = flower->rotationDeg * DEG2RAD * 0.73f + phase * 4.1f;
         float lean = h * (0.025f + 0.055f * (0.5f + 0.5f * sinf((float)i * 2.37f)));
@@ -1175,28 +1179,35 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
             Vector3 p3 = {head.x - side.x * 0.45f, head.y, head.z - side.z * 0.45f};
             Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, normal, phase, 0.0f, 1.0f, stemColor, stemColor);
         }
-        {
-            float leafAngle = flower->rotationDeg * DEG2RAD + 1.37f;
+        for (int leaf = 0; leaf < 2; leaf++) {
+            float rootT = leaf == 0 ? 0.34f : 0.61f;
+            float leafAngle = flower->rotationDeg * DEG2RAD
+                            + (leaf == 0 ? 1.37f : -0.83f);
             Vector3 leafDir = {cosf(leafAngle), 0.0f, sinf(leafAngle)};
             Vector3 leafSide = {-leafDir.z, 0.0f, leafDir.x};
-            float leafLength = flower->bloomRadius * 0.88f;
-            float leafWidth = leafLength * 0.19f;
+            float leafLength = fmaxf(flower->bloomRadius * 0.88f,
+                                     h * (leaf == 0 ? 0.22f : 0.16f));
+            float leafWidth = leafLength * (leaf == 0 ? 0.18f : 0.15f);
             Vector3 root = {
-                base.x + (head.x - base.x) * 0.43f,
-                base.y + h * 0.43f,
-                base.z + (head.z - base.z) * 0.43f,
+                base.x + (head.x - base.x) * rootT,
+                base.y + h * rootT,
+                base.z + (head.z - base.z) * rootT,
             };
-            Vector3 leafTip = {root.x + leafDir.x * leafLength, root.y + leafLength * 0.32f,
+            Vector3 leafTip = {root.x + leafDir.x * leafLength,
+                               root.y + leafLength * (leaf == 0 ? 0.30f : 0.20f),
                                root.z + leafDir.z * leafLength};
-            Vector3 l0 = {root.x - leafSide.x * leafWidth, root.y, root.z - leafSide.z * leafWidth};
-            Vector3 l1 = {root.x + leafSide.x * leafWidth, root.y, root.z + leafSide.z * leafWidth};
+            Vector3 l0 = {root.x - leafSide.x * leafWidth, root.y,
+                          root.z - leafSide.z * leafWidth};
+            Vector3 l1 = {root.x + leafSide.x * leafWidth, root.y,
+                          root.z + leafSide.z * leafWidth};
             Vector3 l2 = {leafTip.x + leafSide.x * leafWidth * 0.10f, leafTip.y,
                           leafTip.z + leafSide.z * leafWidth * 0.10f};
             Vector3 l3 = {leafTip.x - leafSide.x * leafWidth * 0.10f, leafTip.y,
                           leafTip.z - leafSide.z * leafWidth * 0.10f};
             Nature_AddQuad(&mesh, &cursor, l0, l1, l2, l3,
                            (Vector3){-leafDir.x * 0.25f, 1.0f, -leafDir.z * 0.25f},
-                           phase, 0.35f, 0.72f, stemColor, Nature_ScaleColor(stemColor, 1.12f));
+                           phase, rootT, fminf(rootT + 0.35f, 0.86f), stemColor,
+                           Nature_ScaleColor(stemColor, 1.12f));
         }
         int petalCount = flower->petalCount ? flower->petalCount : 5;
         if (petalCount < 4) petalCount = 4;

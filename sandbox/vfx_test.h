@@ -25,4 +25,8 @@ bool VFXTest_ShouldHideDebugOverlays(void);
 // s_isPlayingMesh. Call once before the main loop, then run warmup frames.
 void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos);
 
+// Capture-only neutral smoke; independent of the generated NEWFX catalog.
+// Neutral means no elemental tint, not a white unshaded calibration material.
+void VFXTest_SetNeutralSmokeRenderTarget(Vector3 spawnPos);
+
 #endif // VFX_TEST_H
