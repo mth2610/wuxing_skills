@@ -243,7 +243,7 @@ static void VFXTest_StopFixtures(void)
     s_vfxFixtureHandle[35] = -1;
     s_vfxFixtureLastTime[35] = -1.0f;
     if (s_vfxFixtureHandle[37] >= 0)
-        VFX_SmokeTrail_Stop(s_vfxFixtureHandle[37]);
+        VFX_VolumeTrail_Stop(s_vfxFixtureHandle[37]);
     s_vfxFixtureHandle[37] = -1;
     s_vfxFixtureLastTime[37] = -1.0f;
     if (s_vfxFixtureHandle[39] >= 0)
@@ -1065,12 +1065,12 @@ void VFXTest_Draw3D(void)
                   Vector3 fixturePos = Vector3Add(s_prefabStartPos,
                       (Vector3){3.0f * sinf(a), 1.5f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a * 1.3f)});
                   if (s_meshTime < s_vfxFixtureLastTime[37] && s_vfxFixtureHandle[37] >= 0)
-                      VFX_SmokeTrail_Stop(s_vfxFixtureHandle[37]);
+                      VFX_VolumeTrail_Stop(s_vfxFixtureHandle[37]);
                   if (s_meshTime < s_vfxFixtureLastTime[37]) s_vfxFixtureHandle[37] = -1;
                   s_vfxFixtureLastTime[37] = s_meshTime;
                   s_vfxFixtureXf[37] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
                   if (s_vfxFixtureHandle[37] < 0)
-                      s_vfxFixtureHandle[37] = VFX_ComposeSmokeTrail(&s_vfxFixtureXf[37], VC_MAT_LIGHTNING, 0.45f, 1.2f, VFX_COLUMN_ENERGY, true);
+                      s_vfxFixtureHandle[37] = VFX_ComposeVolumeTrail(&s_vfxFixtureXf[37], VC_MAT_LIGHTNING, 0.22f, 1.2f, VFX_VOLUME_ENERGY, true);
                   break;
               }
               case 38: VFX_ComposeSweepSlash(s_prefabStartPos, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 90.0f, progress); break;
@@ -1183,7 +1183,7 @@ void VFXTest_Draw3D(void)
                   s_vfxFixtureLastTime[46] = s_meshTime;
                   s_vfxFixtureXf[46] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
                   if (s_vfxFixtureHandle[46] < 0)
-                      s_vfxFixtureHandle[46] = VFX_ComposeVolumeTrail(&s_vfxFixtureXf[46], VC_MAT_FIRE, 1.5f, 2.0f, VOL_ENERGY);
+                      s_vfxFixtureHandle[46] = VFX_ComposeVolumeTrail(&s_vfxFixtureXf[46], VC_MAT_FIRE, 0.35f, 2.0f, VFX_VOLUME_ENERGY, true);
                   break;
               }
               case 47: VFX_ComposeFissureStreak(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.1f, progress, s_meshTime); break;

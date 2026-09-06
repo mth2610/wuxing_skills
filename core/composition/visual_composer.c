@@ -70,7 +70,6 @@
 #include "common/vc_shield_shell.inl"
 #include "common/vc_flow_shield.inl"
 #include "common/vc_smoke_column.inl"
-#include "common/vc_smoke_trail.inl"
 #include "common/vc_beam.inl"
 #include "common/vc_rift_bolt.inl"
 #include "common/vc_charge_converge.inl"
@@ -95,7 +94,6 @@ void VFX_Compose_Update(float dt)
     VC_ShieldShell_Update(dt);
     VC_FlowShield_Update(dt);
     VC_SmokeColumn_Update(dt);
-    VC_SmokeTrail_Update(dt);
     VC_Beam_Update(dt);
     VC_RiftBolt_Update(dt);
     VC_ChargeConverge_Update(dt);
@@ -136,7 +134,6 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_ShieldShell_Draw3D(cam);
     VC_FlowShield_Draw3D(cam);
     VC_SmokeColumn_Draw3D(cam);
-    VC_SmokeTrail_Draw3D(cam);
     VC_Beam_Draw3D(cam);
     VC_RiftBolt_Draw3D(cam);
     VC_ChargeConverge_Draw3D(cam);

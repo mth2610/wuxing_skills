@@ -610,24 +610,30 @@ void main()
 
     if (u_volBloom > 0.0)
     {
-        // 1. Cường độ trục lõi: dày và sáng nhất ở tâm trục hình trụ (d -> 1.0),
-        //    tỏa đều từ đầu phát xạ (fade) về đuôi
-        float spineGlow = pow(d, 1.35) * smoothstep(0.02, 0.85, fade);
+        // 1. Vi dao động xung điện cao tần (Micro-shimmer & High-frequency pulse)
+        // Chạy dọc theo luồng năng lượng để dải plasma luôn "sống", có xung điện sực sôi
+        float pulse = sin(u_time * 24.0 + fragTexCoord.y * 35.0);
+        float shimmer = 0.92 + 0.08 * pulse;
 
-        // 2. Chuyển động vân cuộn ma thuật mềm mại từ texture khói (không cắt ngưỡng)
+        // 2. Cường độ trục lõi:
+        // - Quầng mana bao ngoài: pow(d, 1.2) trải rộng êm dịu
+        // - Sợi tia plasma ở giữa: pow(d, 3.2) tập trung mảnh và cực nét ở tâm trục
+        float spineGlow = pow(d, 1.2) * smoothstep(0.02, 0.85, fade);
+        float coreFilament = pow(d, 3.2) * smoothstep(0.05, 0.90, fade);
+
+        // 3. Chuyển động vân cuộn ma thuật từ texture khói kết hợp gợn sóng tơ điện
         float plasmaTexture = 0.45 + 0.55 * s1.r;
-        float energyIntensity = spineGlow * plasmaTexture;
+        float energyIntensity = spineGlow * plasmaTexture * shimmer;
 
-        // 3. Hệ số Bloom tăng mượt mà về phía lõi
-        float bloomFactor = smoothstep(0.12, 0.78, energyIntensity);
-
-        // 4. Tăng ích HDR để vượt ngưỡng bloom (bloom_threshold = 0.9)
-        float hdrGain = 1.0 + u_volBloom * bloomFactor * 1.8;
+        // 4. Hệ số Bloom bao ngoài
+        float bloomFactor = smoothstep(0.15, 0.75, energyIntensity);
+        float hdrGain = 1.0 + u_volBloom * bloomFactor * 1.6;
         vec3 bloomColour = colour * hdrGain;
 
-        // 5. Chuyển dần sang trắng nóng (white-hot) tại tâm lõi mà không bị gián đoạn hay loang lổ
-        float whiteHot = smoothstep(0.42, 0.88, energyIntensity);
-        bloomColour = mix(bloomColour, vec3(hdrGain * 1.05), whiteHot * 0.60);
+        // 5. Lõi tia plasma trắng nóng (White-hot Filament):
+        // Chỉ xuất hiện tập trung ở sợi tia trung tâm (coreFilament) chứ không tràn hết thân
+        float whiteHot = smoothstep(0.35, 0.85, coreFilament * (0.65 + 0.35 * s1.r) * shimmer);
+        bloomColour = mix(bloomColour, vec3(hdrGain * 1.15), whiteHot * 0.75);
 
         finalColor = VFX_ResolveBody(bloomColour, 1.0, alpha);
     }

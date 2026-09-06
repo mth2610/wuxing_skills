@@ -636,13 +636,15 @@ void VFX_Trail_Extinguish(int handle);
 // outlive the handle. Kill stops the FEED rather than cutting the volume out of
 // existence, so it drains its own history and fades.
 typedef enum {
-    VOL_ENERGY = 0, // strands, tight surface, fast flow — a bolt's wake
-    VOL_SMOKE  = 1, // reserved: P2 SmokeEmitter, not a shipping tube
-    VOL_FIRE   = 2, // reserved: P2 FlameEmitter, not a shipping tube
-    // Not a kind — the count. Range-check against THIS. `VFX_ComposeVolumeTrail`
-    // validated against the last style by name and silently clamped every HAZE
-    // request to BLADE for a day (core/docs/LANDMINES.md, 30/07).
-    VFX_VOLUME_KIND_COUNT
+    VFX_VOLUME_SMOKE  = 0, // absorbing gaseous volume wake (smoke, dark miasma, dust)
+    VFX_VOLUME_FIRE   = 1, // blazing flame volume wake
+    VFX_VOLUME_STEAM  = 2, // wispy water vapor / steam wake
+    VFX_VOLUME_ENERGY = 3, // glowing magical energy / plasma wake with white-hot core
+    VFX_VOLUME_KIND_COUNT,
+    // Compatibility aliases
+    VOL_ENERGY = VFX_VOLUME_ENERGY,
+    VOL_SMOKE  = VFX_VOLUME_SMOKE,
+    VOL_FIRE   = VFX_VOLUME_FIRE,
 } VFX_VolumeKind;
 
 // ── H. Smoke / fire COLUMN — a volume that rises from a FIXED source ────────
@@ -678,10 +680,11 @@ int  VFX_ComposeSmokeColumn(Vector3 pos, VC_MaterialId mat, float radius,
 void VFX_SmokeColumn_Stop(int handle);
 
 int  VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat,
-                            float radius, float lifetime, VFX_VolumeKind kind);
+                            float radius, float lifetime, VFX_VolumeKind kind, bool funnel);
 int  VFX_ComposeVolumeTrailEx(const Matrix *followTransform, VC_MaterialId mat,
                                float radius, float lifetime, VFX_VolumeKind kind,
                                const VFX_TrailSurface *surface);
+void VFX_VolumeTrail_Stop(int handle);
 void VFX_KillVolumeTrail(int handle);
 // ── H2. Ground wave ─────────────────────────────────────────────────────────
 // An expanding ring of ground-CONFORMING geometry: it rises, it has a lip whose

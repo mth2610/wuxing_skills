@@ -447,16 +447,16 @@
       "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
     },
     {
-      "source": "common/vc_smoke_trail.inl",
-      "fn": "VFX_ComposeSmokeTrail",
-      "label": "SMOKE TRAIL",
+      "source": "common/vc_volume_trail.inl",
+      "fn": "VFX_ComposeVolumeTrail",
+      "label": "VOLUME TRAIL",
       "category": "common",
       "fixture": "follower",
       "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
-      "spawn_call": "VFX_ComposeSmokeTrail($XFORM, VC_MAT_LIGHTNING, 0.45f, 1.2f, VFX_COLUMN_ENERGY, true)",
-      "kill_fn": "VFX_SmokeTrail_Stop"
+      "spawn_call": "VFX_ComposeVolumeTrail($XFORM, VC_MAT_LIGHTNING, 0.22f, 1.2f, VFX_VOLUME_ENERGY, true)",
+      "kill_fn": "VFX_VolumeTrail_Stop"
     },
     {
       "source": "common/vc_sweep_slash.inl",
@@ -569,8 +569,8 @@
       "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
-      "spawn_call": "VFX_ComposeVolumeTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f, VOL_ENERGY)",
-      "kill_fn": "VFX_KillVolumeTrail"
+      "spawn_call": "VFX_ComposeVolumeTrail($XFORM, VC_MAT_FIRE, 0.35f, 2.0f, VFX_VOLUME_ENERGY, true)",
+      "kill_fn": "VFX_VolumeTrail_Stop"
     },
     {
       "source": "earth/fissure_streak.inl",
