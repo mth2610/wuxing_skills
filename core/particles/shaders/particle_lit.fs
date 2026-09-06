@@ -36,6 +36,9 @@ uniform vec2 u_resolution;
 
 #include "core/shaders/common/soft_particle.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
+#include "core/shaders/common/noise.glsl"
+
+uniform float u_time;
 
 /* BACKGROUND ADAPTATION — how bright is what this particle is in front of.
  *
@@ -382,7 +385,25 @@ vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, v
 
 void main()
 {
-    vec4 texelColor = texture(texture0, fragTexCoord);
+    vec2 sampleUV = fragTexCoord;
+    if (u_volumeSheet > 0.5)
+    {
+        // ── UV NOISE DISTORTION (Unreal Panner Noise) ────────────────────────
+        // Perturbs UV coordinates with continuous dynamic curl turbulence,
+        // turning static billboards into undulating, living flame tongues.
+        vec2 grid = max(u_atlasGrid, vec2(1.0));
+        vec2 localUV = (grid.x > 1.5 || grid.y > 1.5) ? fract(fragTexCoord * grid) : fragTexCoord;
+
+        vec2 pNoise = localUV * 2.6 + vec2(fragPosition.x * 0.85, fragPosition.y * 1.35 - u_time * 2.8);
+        float dX = vnoise(pNoise) - 0.5;
+        float dY = vnoise(pNoise + vec2(17.3, 31.7)) - 0.5;
+
+        // Stronger wave distortion at the top of the flame lick
+        vec2 uvWarp = vec2(dX, dY) * (0.042 * (0.35 + localUV.y * 0.65));
+        sampleUV += uvWarp / grid;
+    }
+
+    vec4 texelColor = texture(texture0, sampleUV);
     float soft = (u_softFade > 0.0) ? SoftParticle_Factor(u_softFade) : 1.0;
 
     // ── PACKED VOLUME SHEET ──────────────────────────────────────────────────
@@ -401,18 +422,49 @@ void main()
         }
         if (u_softDebug > 0.5) { finalColor = vec4(vec3(soft), 1.0); return; }
 
-        float emis = texelColor.r;               // flame emission
-        float rawSoot = texelColor.g;            // smoke density, as simulated
-        float soot = clamp(rawSoot * u_smokeGain, 0.0, 1.0);
-        float shad = texelColor.b;   // self-shadowed smoke (B/G = light surviving)
-        float opac = texelColor.a;   // true opacity
+        float emis;
+        float rawSoot;
+        float soot;
+        float shad;
+        float opac;
+
+        if (u_sixWayLighting > 1.5)
+        {
+            // True 6-Way Flame Volume:
+            // Texture 0 (Map A): RGB = (+X, +Y, +Z directional lightmaps), A = Opacity
+            // u_sixWayTexB (Map B): RGB = (-X, -Y, -Z directional lightmaps), A = Flame Emission
+            emis = texture(u_sixWayTexB, sampleUV).a;
+            opac = texelColor.a;
+            rawSoot = clamp(opac * clamp(1.0 - emis * 0.45, 0.0, 1.0), 0.0, 1.0);
+            soot = clamp(rawSoot * u_smokeGain, 0.0, 1.0);
+            shad = soot;
+        }
+        else
+        {
+            emis = texelColor.r;               // flame emission
+            rawSoot = texelColor.g;            // smoke density, as simulated
+            soot = clamp(rawSoot * u_smokeGain, 0.0, 1.0);
+            shad = texelColor.b;   // self-shadowed smoke (B/G = light surviving)
+            opac = texelColor.a;   // true opacity
+        }
+
+        // ── ALPHA EROSION (Unreal Age-based Noise Dissolve) ───────────────────
+        // Shreds the flame edges into sharp licking tongues as it ascends,
+        // preventing a foggy/milky blob when particles fade out.
+        float age = fragColor.g; // Normalized age from ParticleSystem (0.0 -> 1.0)
+        vec2 grid = max(u_atlasGrid, vec2(1.0));
+        vec2 localUV = (grid.x > 1.5 || grid.y > 1.5) ? fract(sampleUV * grid) : sampleUV;
+        vec2 eCoord = localUV * 4.2 + vec2(fragPosition.z * 1.15, fragPosition.y * 2.1 - u_time * 3.2);
+        float erodeNoise = vnoise(eCoord);
+
+        float erosionThresh = smoothstep(0.18, 0.95, age) * 0.80;
+        float flameEnergy = (emis * 1.35 + opac * 0.45) * (0.35 + 0.65 * erodeNoise);
+        float erodeFactor = smoothstep(erosionThresh, erosionThresh + 0.22, flameEnergy);
 
         // fragColor.a is the particle's own fade (alphaCurve x colorStart.a).
         // fragColor.r is its HEAT scale over life — in volume mode the C side
-        // writes a GREY vertex colour whose level is the cooling curve, because
-        // hue now comes from the ramp and the vertex slot is free to carry a
-        // scalar instead. See ParticleSystem's volume branch.
-        float fade = fragColor.a * soft;
+        // writes a GREY vertex colour whose level is the cooling curve.
+        float fade = fragColor.a * soft * erodeFactor;
         if (fade < 0.004 || (emis < 0.004 && soot * opac < 0.004)) discard;
 
         // FLAME — emission indexes the ramp, so a single sprite carries a
@@ -512,9 +564,16 @@ void main()
         // occluded — the pair is what premultiplied blending exists for.
         float sootFrac = clamp(soot / max(matNow, 1e-4), 0.0, 1.0);
 
+        // Soot occludes background strongly (opaque billow with 6-way lighting).
+        // Flame is hot luminous plasma: it has light occlusion (translucent),
+        // allowing flame parcels to shine through each other without circular
+        // patch borders, while retaining enough presence against bright skies.
+        float flameOcclusion = 0.18;
+        float blendAlpha = alpha * mix(flameOcclusion, 1.0, sootFrac);
+
         // NOT clamped to 1: ACES in post_fx rolls the highlights off, and
         // clamping here would flatten the blown-out core and kill its bloom.
-        finalColor = vec4(flame * fade + smoke * alpha * sootFrac, alpha);
+        finalColor = vec4(flame * fade + smoke * alpha * sootFrac, blendAlpha);
         return;
     }
 

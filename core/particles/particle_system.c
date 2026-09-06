@@ -11,6 +11,7 @@
 #include "core/tuning.h"
 #include "core/scene_targets.h"
 #include "core/screen_distort.h"
+#include "core/time_fx.h"
 #include "environment/environment_system.h"
 #include <string.h>
 #include <math.h>
@@ -744,6 +745,7 @@ static int s_locVolumeSheet = -1, s_locRampLUT = -1, s_locHeatGain = -1,
 static int s_locSixWayLighting = -1, s_locSixWayTexB = -1,
            s_locSixWayScattering = -1, s_locSixWayAbsorption = -1,
            s_locAmbientGround = -1, s_locAmbientHorizon = -1;
+static int s_locTime = -1;
 
 #define PARTICLE_MAX_VFX_LIGHTS 4
 
@@ -881,6 +883,7 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locSixWayAbsorption = GetShaderLocation(s_litShader, "u_sixWayAbsorption");
       s_locAmbientGround    = GetShaderLocation(s_litShader, "u_ambientGround");
       s_locAmbientHorizon   = GetShaderLocation(s_litShader, "u_ambientHorizon");
+      s_locTime             = GetShaderLocation(s_litShader, "u_time");
     }
     else
     {
@@ -949,6 +952,11 @@ static void ParticleLighting_Begin(Camera3D camera)
   SetShaderValue(s_litShader, s_locAmbientGain, &s_ambientGain, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_litShader, s_locLightAzimuth, &s_lightAzimuth, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_litShader, s_locAnalyticUV, &s_analyticUV, SHADER_UNIFORM_FLOAT);
+  if (s_locTime >= 0)
+  {
+    float timeNow = TimeFX_Elapsed();
+    SetShaderValue(s_litShader, s_locTime, &timeNow, SHADER_UNIFORM_FLOAT);
+  }
   { float one = 1.0f;   // lit default; flipped per batch for emissive particles
     if (s_locEmissiveBoost >= 0) SetShaderValue(s_litShader, s_locEmissiveBoost, &one, SHADER_UNIFORM_FLOAT); }
   // SOFT PARTICLES — bind the previous frame's linearised scene depth.
@@ -1466,7 +1474,9 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       if (heat < 0.0f) heat = 0.0f;
       else if (heat > 1.0f) heat = 1.0f;
       unsigned char h = (unsigned char)(heat * 255.0f);
-      c.r = c.g = c.b = h;
+      c.r = h;
+      c.g = (unsigned char)(invRatio * 255.0f); // Normalized age for shader erosion
+      c.b = h;
     }
 
     float drawRadius = p->radius;

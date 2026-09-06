@@ -36,6 +36,10 @@ def main():
     ap.add_argument("--density-scale", type=float, default=2.8, help="extinction multiplier")
     ap.add_argument("--light-scale", type=float, default=1.6, help="shadow extinction multiplier")
     ap.add_argument("--ambient-floor", type=float, default=0.08, help="shadow floor")
+    ap.add_argument("--flame-scale", type=float, default=2.5, help="flame emission scale")
+    ap.add_argument("--flame-extinction", type=float, default=0.14, help="hot gas opacity multiplier")
+    ap.add_argument("--emission-gamma", type=float, default=0.85, help="gamma exponent for flame emission")
+    ap.add_argument("--flame-projection", default="integral", choices=["peak", "integral"], help="flame projection mode")
     ap.add_argument("--zoom", default="auto", help="auto or float zoom")
     ap.add_argument("--arch", default="gpu", choices=["gpu", "cpu"])
     args = ap.parse_args()
@@ -51,6 +55,7 @@ def main():
     rz, ry, rx = first["density"].shape
     S = args.cell * max(1, args.supersample)
 
+    has_flame = "flame" in first
     aspect = rx / rz
     autofit = str(args.zoom).lower() == "auto"
     zoom = 1.0 if autofit else float(args.zoom)
@@ -58,6 +63,7 @@ def main():
     fit_h = min(1.0, 1.0 / aspect) * zoom
 
     dens = ti.field(ti.f32, shape=(rz, ry, rx))
+    flame = ti.field(ti.f32, shape=(rz, ry, rx)) if has_flame else ti.field(ti.f32, shape=(1, 1, 1))
 
     # 6 directional transmittance shadow fields
     shad_posX = ti.field(ti.f32, shape=(rz, ry, rx))  # +X (Right)
@@ -87,7 +93,7 @@ def main():
         return c0 * (1 - fz) + c1 * fz
 
     @ti.kernel
-    def march_sixway(ks: ti.f32, fw: ti.f32, fh: ti.f32):
+    def march_sixway(ks: ti.f32, kf: ti.f32, kfe: ti.f32, fw: ti.f32, fh: ti.f32, peak_flame: ti.i32):
         for px, py in out_a:
             u = ((px + 0.5) / S - 0.5) / fw + 0.5
             v = ((py + 0.5) / S - 0.5) / fh + 0.5
@@ -96,6 +102,8 @@ def main():
 
             trans = 1.0
             smoke = 0.0
+            emis = 0.0
+            hot_envelope = 0.0
             v_posX = 0.0
             v_negX = 0.0
             v_posY = 0.0
@@ -110,8 +118,12 @@ def main():
             for s in range(steps):
                 gy = s * dstep
                 d = sample(dens, gx, gy, gz)
-                ext = d * ks * dstep
+                f = sample(flame, gx, gy, gz) if ti.static(has_flame) else 0.0
+                ext = (d * ks + f * kfe) * dstep
                 weight = d * ks * trans * dstep
+                if ti.static(has_flame):
+                    emis += f * kf * trans * dstep
+                    hot_envelope = ti.max(hot_envelope, f * kf)
 
                 v_posX += weight * sample(shad_posX, gx, gy, gz)
                 v_negX += weight * sample(shad_negX, gx, gy, gz)
@@ -130,6 +142,8 @@ def main():
             t_fade = ti.math.clamp((opac - 0.005) / 0.025, 0.0, 1.0)
             fade = t_fade * t_fade * (3.0 - 2.0 * t_fade)
 
+            flame_out = (hot_envelope if peak_flame != 0 else emis) if ti.static(has_flame) else opac
+
             # Map A: R = +X (Right), G = +Y (Top), B = +Z (Backlight), A = Opacity
             out_a[px, py] = ti.Vector([
                 (v_posX / norm) * fade,
@@ -138,12 +152,12 @@ def main():
                 opac
             ])
 
-            # Map B: R = -X (Left), G = -Y (Bottom), B = -Z (Front), A = Opacity
+            # Map B: R = -X (Left), G = -Y (Bottom), B = -Z (Front), A = Flame Emission (or Opacity)
             out_b[px, py] = ti.Vector([
                 (v_negX / norm) * fade,
                 (v_negY / norm) * fade,
                 (v_negZ / norm) * fade,
-                opac
+                flame_out
             ])
 
     t0 = time.time()
@@ -184,7 +198,11 @@ def main():
             above_nz = np.cumsum(d, axis=1) - d
             shad_negZ.from_numpy(np.ascontiguousarray(fl + (1.0 - fl) * np.exp(-k_sh * above_nz), np.float32))
 
-            march_sixway(args.density_scale, fw, fh)
+            if has_flame:
+                flame.from_numpy(np.ascontiguousarray(z["flame"], np.float32))
+
+            march_sixway(args.density_scale, args.flame_scale, args.flame_extinction,
+                         fw, fh, 1 if args.flame_projection == "peak" else 0)
 
             img_a = out_a.to_numpy().transpose(1, 0, 2)
             img_b = out_b.to_numpy().transpose(1, 0, 2)
@@ -216,6 +234,16 @@ def main():
             print("6-WAY RENDER: autofit reach %.3f -> zoom %.2f" % (reach, zoom))
 
     frames_a, frames_b = render_all(fit_w, fit_h)
+
+    if has_flame:
+        stack_b = np.stack(frames_b)
+        e_max = max(1e-5, float(np.percentile(stack_b[..., 3], 99.5)))
+        print("6-WAY RENDER: normalising flame emission / %.4f" % e_max)
+        for i in range(len(files)):
+            e = np.clip(frames_b[i][..., 3] / e_max, 0.0, 1.0)
+            if args.emission_gamma != 1.0:
+                e = e ** max(args.emission_gamma, 0.05)
+            frames_b[i][..., 3] = e
 
     dir_a = os.path.join(args.cache_dir, "frames_a")
     dir_b = os.path.join(args.cache_dir, "frames_b")

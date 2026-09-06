@@ -45,12 +45,10 @@ static float s_fvolSmokeAmt = 1.0f;
 // here: a 1 m flame whose particles travel 1-2 m in their 0.5 s lifetime reads as
 // a blowtorch, not as fire — the embers outrun the flame that made them. Visible
 // rise for a flame this size is more like 0.3-0.5 m over a particle's life.
-static float s_fvolRiseMul = 1.15f;
+static float s_fvolRiseMul = 1.35f;
 // Base width. A flame is TALL and narrow; the ratio of base radius to rise
-// height is what decides whether it reads as a flame or as a fireball. A wide
-// base with a short rise blurs into a ball no matter how good the colour ramp
-// is — and enlarging the particles to fill it makes that worse, not better.
-static float s_fvolWidthMul = 0.75f;
+// height is what decides whether it reads as a flame or as a fireball.
+static float s_fvolWidthMul = 0.55f;
 
 // E4 flipbook. Two simulated sheets, and they are not interchangeable:
 //
@@ -83,7 +81,7 @@ static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
 // without raising the other is how this looked WORSE at each half-step. Note
 // the owner already measured the other direction — cutting the count to 26 made
 // the patchiness more visible, not less, because it exposes each silhouette.
-static float s_fvolBodyLive = 190.0f;
+static float s_fvolBodyLive = 55.0f;
 // Multiplier on the puff body's radius. Count and size buy the same cohesion at
 // the same fill cost; size is the cheaper one in draw calls. Which is right is
 // a look judgement, so both are tunables.
@@ -235,11 +233,11 @@ static void FVol_InitShared(void)
 
     Tuning_RegisterFloat("flame_core_alpha", &s_fvolCoreAlpha, 0.55f);
     Tuning_RegisterFloat("flame_smoke_amount", &s_fvolSmokeAmt, 1.0f);
-    Tuning_RegisterFloat("flame_rise_mul", &s_fvolRiseMul, 1.15f);
-    Tuning_RegisterFloat("flame_width_mul", &s_fvolWidthMul, 0.75f);
+    Tuning_RegisterFloat("flame_rise_mul", &s_fvolRiseMul, 1.35f);
+    Tuning_RegisterFloat("flame_width_mul", &s_fvolWidthMul, 0.55f);
     Tuning_RegisterFloat("flame_atlas", &s_fvolAtlas, 1.0f); // 0 sprites/1 puff/2 column
     Tuning_RegisterFloat("flame_body_count", &s_fvolBodyCount, 1.0f);
-    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 190.0f);
+    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 55.0f);
     Tuning_RegisterFloat("flame_body_size", &s_fvolBodySize, 1.0f);
     Tuning_RegisterFloat("flame_spread", &s_fvolSpread, 1.0f);
     Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 0.0f);
@@ -366,9 +364,10 @@ static void FVol_InitShared(void)
     FloatCurve_AddStop(&s_fvolCool, 1.0f, 0.05f);
 
     // Narrows as it rises — a flame tapers, unlike smoke which only expands.
-    FloatCurve_AddStop(&s_fvolGrow, 0.0f, 0.7f);
-    FloatCurve_AddStop(&s_fvolGrow, 0.3f, 1.0f);
-    FloatCurve_AddStop(&s_fvolGrow, 1.0f, 0.55f);
+    FloatCurve_AddStop(&s_fvolGrow, 0.0f, 0.70f);
+    FloatCurve_AddStop(&s_fvolGrow, 0.25f, 1.00f);
+    FloatCurve_AddStop(&s_fvolGrow, 0.60f, 0.75f);
+    FloatCurve_AddStop(&s_fvolGrow, 1.0f, 0.35f);
 
     ForceField_AddLayer(&s_fvolFld, (ForceLayer){
                                         .type = FORCE_GRAVITY_DIR,
@@ -575,18 +574,19 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
             // silhouette author. A compact foot plus a longer vertical travel
             // reads as flame; the old 0.34 m disk made a wide fireball even
             // when the asset itself was completely directionless.
-            float rad = sqrtf(Random01()) * 0.28f * s_fvolSpread * scale * s_fvolWidthMul;
+            // Compact foot plus a longer vertical travel gives a tapered flame cone.
+            float rad = sqrtf(Random01()) * 0.16f * s_fvolSpread * scale * s_fvolWidthMul;
             Vector3 p = {pos.x + cosf(ang) * rad,
-                         pos.y + Random01() * 0.06f * scale,
+                         pos.y + Random01() * 0.05f * scale,
                          pos.z + sinf(ang) * rad};
-            float life = Math_Mix(0.75f, FVOL_BODY_LIFE_MAX, Random01());
+            float life = Math_Mix(0.80f, FVOL_BODY_LIFE_MAX, Random01());
 
             SpawnParticle((ParticleConfig){
                 .position = p,
-                .velocity = {cosf(ang) * 0.035f * scale,
-                             Math_Mix(0.55f, 0.80f, Random01()) * scale * s_fvolRiseMul,
-                             sinf(ang) * 0.035f * scale},
-                .radius = Math_Mix(0.20f, 0.54f, powf(Random01(), 1.6f))
+                .velocity = {cosf(ang) * 0.025f * scale,
+                             Math_Mix(0.65f, 0.95f, Random01()) * scale * s_fvolRiseMul,
+                             sinf(ang) * 0.025f * scale},
+                .radius = Math_Mix(0.18f, 0.44f, powf(Random01(), 1.4f))
                           * s_fvolBodySize * scale,
                 .lifetime = life,
                 // In volume mode colorStart.a is a per-billboard coverage
@@ -628,7 +628,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 // a directionless asset without baking directional tongues.
                 .spriteAnimRate = Math_Mix(0.82f, 1.0f, Random01()),
                 .spriteFlipX = Random01() < 0.5f,
-                .spriteFlipY = Random01() < 0.5f,
+                .spriteFlipY = false,
                 // A moving source carries its youngest billows along, then
                 // releases them into the force field. Generation makes this
                 // safe when the 12-slot emitter pool is recycled.
@@ -636,8 +636,8 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .followTargetGeneration = &emitter->generation,
                 .followGeneration = emitter->generation,
                 .followStrength = 0.70f,
-                .rotation = Random01() * 2.0f * PI,
-                .angularVelocity = (Random01() - 0.5f) * 0.5f,
+                .rotation = (Random01() - 0.5f) * 0.35f,
+                .angularVelocity = (Random01() - 0.5f) * 0.15f,
             });
         }
 
