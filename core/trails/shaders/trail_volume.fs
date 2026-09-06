@@ -128,6 +128,7 @@ uniform float u_volNormalSrc;
  * UBO của rlvk, ENGINE_LANDMINES §8). */
 uniform float u_volErode;       /* 0 = tắt (mặc định); 1 = cắn mạnh nhất */
 uniform float u_volErodeBand;   /* bề rộng vùng tưa tính ngược vào trong, theo b/R */
+uniform float u_volBloom;       /* 0 = tắt (khói thường); > 0 = HDR gain cho lõi năng lượng phát sáng */
 
 void main()
 {
@@ -315,6 +316,10 @@ void main()
     float rimTerm = calcOpticalDepthRim(d, u_volMask.y);
     float thickBase = combineOpticalDepth(body, rimTerm, u_volMask.x, u_volRim);
     float depth = thickBase;
+    if (u_volBloom > 0.0) {
+        // Trail năng lượng / ma thuật: phát xạ thể tích dày nhất tại tâm trục, không rỗng ruột
+        depth = pow(d, 1.2);
+    }
     // rim vẫn giữ: cùng chiều tăng với depth nên không đục lỗ ở giữa, chỉ
     // làm mềm thêm đúng vùng sát viền. u_volMask.z vẫn là "độ mềm viền".
     float rim = smoothstep(0.0, max(u_volMask.z, 0.001), d);
@@ -595,9 +600,39 @@ void main()
         return;
     }
 
-    float alpha = pattern * fade * edge * u_volMask.w;
+    float effPattern = (u_volBloom > 0.0)
+                           ? mix(0.38, 1.0, sqrt(clamp(pattern, 0.0, 1.0)))
+                           : pattern;
+    float alpha = effPattern * fade * edge * u_volMask.w;
     if (u_volDebug < 0.5 && alpha < 0.003) discard;
 
     vec3 colour = s1.rgb * vColor.rgb * colDiffuse.rgb;
-    finalColor = VFX_ResolveBody(colour, 1.0, alpha);
+
+    if (u_volBloom > 0.0)
+    {
+        // 1. Cường độ trục lõi: dày và sáng nhất ở tâm trục hình trụ (d -> 1.0),
+        //    tỏa đều từ đầu phát xạ (fade) về đuôi
+        float spineGlow = pow(d, 1.35) * smoothstep(0.02, 0.85, fade);
+
+        // 2. Chuyển động vân cuộn ma thuật mềm mại từ texture khói (không cắt ngưỡng)
+        float plasmaTexture = 0.45 + 0.55 * s1.r;
+        float energyIntensity = spineGlow * plasmaTexture;
+
+        // 3. Hệ số Bloom tăng mượt mà về phía lõi
+        float bloomFactor = smoothstep(0.12, 0.78, energyIntensity);
+
+        // 4. Tăng ích HDR để vượt ngưỡng bloom (bloom_threshold = 0.9)
+        float hdrGain = 1.0 + u_volBloom * bloomFactor * 1.8;
+        vec3 bloomColour = colour * hdrGain;
+
+        // 5. Chuyển dần sang trắng nóng (white-hot) tại tâm lõi mà không bị gián đoạn hay loang lổ
+        float whiteHot = smoothstep(0.42, 0.88, energyIntensity);
+        bloomColour = mix(bloomColour, vec3(hdrGain * 1.05), whiteHot * 0.60);
+
+        finalColor = VFX_ResolveBody(bloomColour, 1.0, alpha);
+    }
+    else
+    {
+        finalColor = VFX_ResolveBody(colour, 1.0, alpha);
+    }
 }

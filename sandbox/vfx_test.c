@@ -1070,7 +1070,7 @@ void VFXTest_Draw3D(void)
                   s_vfxFixtureLastTime[37] = s_meshTime;
                   s_vfxFixtureXf[37] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
                   if (s_vfxFixtureHandle[37] < 0)
-                      s_vfxFixtureHandle[37] = VFX_ComposeSmokeTrail(&s_vfxFixtureXf[37], VC_MAT_METAL, 0.55f, 1.0f, VFX_COLUMN_SMOKE, true);
+                      s_vfxFixtureHandle[37] = VFX_ComposeSmokeTrail(&s_vfxFixtureXf[37], VC_MAT_LIGHTNING, 0.45f, 1.2f, VFX_COLUMN_ENERGY, true);
                   break;
               }
               case 38: VFX_ComposeSweepSlash(s_prefabStartPos, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 90.0f, progress); break;

@@ -77,7 +77,7 @@ static const VFX_SurfaceId k_smokeTrailSurface[VFX_COLUMN_KIND_COUNT] = {
     [VFX_COLUMN_SMOKE] = VFX_SURFACE_VOLUME_SMOKE,
     [VFX_COLUMN_FIRE] = VFX_SURFACE_VOLUME_FIRE,
     [VFX_COLUMN_STEAM] = VFX_SURFACE_VOLUME_STEAM,
-    [VFX_COLUMN_ENERGY] = VFX_SURFACE_ENERGY_TUBE,
+    [VFX_COLUMN_ENERGY] = VFX_SURFACE_VOLUME_SMOKE, // Uses original smoke texture for voluminous magic/energy
 };
 static Texture2D s_smokeTrailSheet[VFX_COLUMN_KIND_COUNT];
 
@@ -87,8 +87,8 @@ static Texture2D s_smokeTrailSheet[VFX_COLUMN_KIND_COUNT];
 // core/tests/pm_tube_offset_clamp_test.c) — see the churn block in
 // SmokeTrail_BuildShape for why only the CLAMP MECHANISM differs from the
 // column now, not these amplitudes.
-static const float k_smokeTrailNoise[VFX_COLUMN_KIND_COUNT] = {0.34f, 0.30f, 0.22f, 0.45f};
-static const float k_smokeTrailScroll[VFX_COLUMN_KIND_COUNT] = {0.55f, 0.95f, 0.40f, 1.60f};
+static const float k_smokeTrailNoise[VFX_COLUMN_KIND_COUNT] = {0.34f, 0.30f, 0.22f, 0.34f};
+static const float k_smokeTrailScroll[VFX_COLUMN_KIND_COUNT] = {0.55f, 0.95f, 0.40f, 0.85f};
 
 // Live knobs, own namespace from the column's (smokecolumn_*) so tuning one
 // archetype never silently retunes the other. Registered lazily on first use
@@ -98,6 +98,10 @@ static float s_smokeTrailNoiseMul = 1.0f;
 static float s_smokeTrailScrollMul = 1.0f;
 static float s_smokeTrailAlphaMul = 1.0f;
 static float s_smokeTrailTile = 3.00f;
+static float s_smokeTrailSwirlAmp = 0.22f;
+static float s_smokeTrailSwirlSpeed = 2.5f;
+static float s_smokeTrailKind = -1.0f;
+static float s_smokeTrailMat = -1.0f;
 static void SmokeTrail_EnsureTuning(void)
 {
     static bool done = false;
@@ -107,6 +111,10 @@ static void SmokeTrail_EnsureTuning(void)
     Tuning_RegisterFloat("smoketrail2_scroll", &s_smokeTrailScrollMul, 1.0f);
     Tuning_RegisterFloat("smoketrail2_alpha", &s_smokeTrailAlphaMul, 1.0f);
     Tuning_RegisterFloat("smoketrail2_tile", &s_smokeTrailTile, 3.00f);
+    Tuning_RegisterFloat("smoketrail2_swirl_amp", &s_smokeTrailSwirlAmp, 0.22f);
+    Tuning_RegisterFloat("smoketrail2_swirl_speed", &s_smokeTrailSwirlSpeed, 2.5f);
+    Tuning_RegisterFloat("smoketrail2_kind", &s_smokeTrailKind, -1.0f);
+    Tuning_RegisterFloat("smoketrail2_mat", &s_smokeTrailMat, -1.0f);
 }
 
 static void SmokeTrail_InitShared(void)
@@ -120,10 +128,30 @@ static void SmokeTrail_InitShared(void)
     }
 }
 
-// Verbatim copy of SmokeColumn_ConfigureLayers.
+// Configures dual trail layers. For energy: outer luminous sheath + inner glowing magical core.
 static void SmokeTrail_ConfigureLayers(VC_SmokeTrail *c)
 {
     const Texture2D *sheet = &s_smokeTrailSheet[c->kind];
+    if (c->kind == VFX_COLUMN_ENERGY)
+    {
+        // Outer glowing magical vapor volume
+        c->layers[0] = (TrailLayer){
+            .widthMul = 1.0f,
+            .alphaMul = 0.80f * s_smokeTrailAlphaMul,
+            .whiten = 0.0f,
+            .scrollMul = 1.0f,
+            .texture = sheet,
+        };
+        // Subtle secondary swirling vapor layer for organic depth
+        c->layers[1] = (TrailLayer){
+            .widthMul = 0.80f,
+            .alphaMul = 0.35f * s_smokeTrailAlphaMul,
+            .whiten = 0.05f,
+            .scrollMul = 1.40f,
+            .texture = sheet,
+        };
+        return;
+    }
     c->layers[0] = (TrailLayer){
         .widthMul = 1.0f,
         .alphaMul = 0.85f * s_smokeTrailAlphaMul,
@@ -181,9 +209,44 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
 {
     c->tube = PMTube_DefaultConfig();
 
-    c->tube.wobbleAmplitude = 0.0f;
-    c->tube.deform1Amp = 0.0f;
-    c->tube.deform2Amp = 0.0f;
+    if (c->kind == VFX_COLUMN_ENERGY)
+    {
+        c->tube.wobbleAmplitude = 0.12f;
+        c->tube.wobbleFrequency = 1.4f;
+        c->tube.wobbleSpeed = s_smokeTrailSwirlSpeed * 1.0f;
+
+        // Helical corkscrew swirl (vortex motion):
+        // Elegant flowing spirals for magical energy vapor
+        c->tube.deform1Amp = s_smokeTrailSwirlAmp * 1.1f;
+        c->tube.deform1FreqT = 6.0f;
+        c->tube.deform1FreqPhi = 1.0f;
+        c->tube.deform1Speed = s_smokeTrailSwirlSpeed * 1.3f;
+
+        // Secondary counter-rotating twist to break symmetry
+        c->tube.deform2Amp = s_smokeTrailSwirlAmp * 0.45f;
+        c->tube.deform2FreqT = 12.0f;
+        c->tube.deform2FreqPhi = 2.0f;
+        c->tube.deform2Speed = -s_smokeTrailSwirlSpeed * 1.5f;
+    }
+    else
+    {
+        c->tube.wobbleAmplitude = 0.12f;
+        c->tube.wobbleFrequency = 1.2f;
+        c->tube.wobbleSpeed = s_smokeTrailSwirlSpeed * 0.7f;
+
+        // Helical corkscrew swirl (vortex motion):
+        // 1 eccentric lobe around circumference, spiraling along t, rotating in time
+        c->tube.deform1Amp = s_smokeTrailSwirlAmp;
+        c->tube.deform1FreqT = 7.0f;
+        c->tube.deform1FreqPhi = 1.0f;
+        c->tube.deform1Speed = s_smokeTrailSwirlSpeed;
+
+        // Secondary turbulent twist (counter-rotating 2 lobes to break drill-bit symmetry)
+        c->tube.deform2Amp = s_smokeTrailSwirlAmp * 0.40f;
+        c->tube.deform2FreqT = 14.0f;
+        c->tube.deform2FreqPhi = 2.0f;
+        c->tube.deform2Speed = -s_smokeTrailSwirlSpeed * 1.3f;
+    }
 
     /* Keep a proportional mouth for the funnel, but avoid collapsing to a
      * needle so the moving wake remains a volume rather than a thin sheet.
@@ -267,20 +330,20 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     // procedural_mesh_utils.h for the full "two clocks" rationale).
     MeshDeform_Clear(&c->churn);
     c->churn.amplitude = 1.0f;
-    c->churn.timeScale = 0.75f;
+    c->churn.timeScale = (c->kind == VFX_COLUMN_ENERGY) ? 1.15f : 0.75f;
     c->churn.latticeAround = 3;
     c->churn.latticeAlong = 3;
     MeshDeform_AddLayer(&c->churn, (MeshDeformLayer){
         .kind = MESH_DEFORM_NOISE_CHANNEL,
         .direction = MESH_DEFORM_DIR_NORMAL_SCALE,
-        .tiling = {1.0f, 1.0f}, .amplitude = 4.2f, .speed = 1.0f,
+        .tiling = {1.0f, 1.0f}, .amplitude = (c->kind == VFX_COLUMN_ENERGY) ? 4.0f : 4.2f, .speed = 1.0f,
         .latticeMul = 1.0f, .latticeAroundMul = 1.0f, .env = UV_ENV_HEAD_WELD,
         .envStart = 0.0f, .envEnd = 0.22f,
     });
     MeshDeform_AddLayer(&c->churn, (MeshDeformLayer){
         .kind = MESH_DEFORM_NOISE_CHANNEL,
         .direction = MESH_DEFORM_DIR_NORMAL_OFFSET,
-        .tiling = {1.0f, 1.9f}, .amplitude = 1.30f, .speed = 1.7f,
+        .tiling = {1.0f, 1.9f}, .amplitude = (c->kind == VFX_COLUMN_ENERGY) ? 1.25f : 1.30f, .speed = 1.7f,
         .timeOffset = 11.0f, .latticeMul = 3.0f, .latticeAroundMul = 2.0f,
         .env = UV_ENV_HEAD_WELD_SQ, .envStart = 0.0f, .envEnd = 0.35f,
     });
@@ -289,7 +352,7 @@ static void SmokeTrail_BuildShape(VC_SmokeTrail *c, bool funnel)
     // the skin of a straight sweep; this moves whole rings and is the large-
     // scale bend that makes the column read as a volume. The follower path
     // supplies the travelling direction, while this adds the column's billow.
-    c->tube.centerlineAmp = c->radius * 1.6f;
+    c->tube.centerlineAmp = (c->kind == VFX_COLUMN_ENERGY) ? (c->radius * 1.5f) : (c->radius * 1.6f);
     c->tube.noiseWavelength = 5.0f;      // column's own height — see above
     c->tube.noiseOffsetScrollMul = 0.0f; // no fake clock-drift on a real mover
 }
@@ -306,7 +369,13 @@ static int SmokeTrail_Spawn(VC_SmokeTrail *c, int slot, const Matrix *followTran
     cfg.tint = WHITE;
     cfg.gradient = NULL; // the material carries the colour
     const VFX_ElementMaterial *m = VFX_Material(c->matId);
-    if (m != NULL) cfg.tint = m->body;
+    if (m != NULL)
+    {
+        if (c->kind == VFX_COLUMN_ENERGY || c->kind == VFX_COLUMN_FIRE)
+            cfg.tint = m->glow;
+        else
+            cfg.tint = m->body;
+    }
 
     // NULL — not a simulation, same reasoning as the column: a cloth step
     // here would make the tube writhe like a snake.
@@ -406,6 +475,11 @@ int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat,
         TraceLog(LOG_WARNING, "VFX_SMOKE_TRAIL: NULL transform — no trail created");
         return -1;
     }
+    if (s_smokeTrailKind >= 0.0f && (int)s_smokeTrailKind < VFX_COLUMN_KIND_COUNT)
+        kind = (VFX_ColumnKind)(int)s_smokeTrailKind;
+    if (s_smokeTrailMat >= 0.0f && (int)s_smokeTrailMat < VC_MAT_COUNT)
+        mat = (VC_MaterialId)(int)s_smokeTrailMat;
+
     if ((int)kind < 0 || (int)kind >= VFX_COLUMN_KIND_COUNT)
     {
         TraceLog(LOG_WARNING,
@@ -465,6 +539,22 @@ static void VC_SmokeTrail_Update(float dt)
         {
             c->active = false;
             continue;
+        }
+
+        if (s_smokeTrailKind >= 0.0f && (int)s_smokeTrailKind < VFX_COLUMN_KIND_COUNT)
+        {
+            VFX_ColumnKind targetKind = (VFX_ColumnKind)(int)s_smokeTrailKind;
+            if (c->kind != targetKind)
+            {
+                c->kind = targetKind;
+                t->blendMode = (c->kind == VFX_COLUMN_FIRE || c->kind == VFX_COLUMN_ENERGY) ? BLEND_ADDITIVE : BLEND_ALPHA;
+                const VFX_ElementMaterial *m = VFX_Material(c->matId);
+                if (m != NULL)
+                {
+                    Color baseCol = (c->kind == VFX_COLUMN_ENERGY || c->kind == VFX_COLUMN_FIRE) ? m->glow : m->body;
+                    t->tint = baseCol;
+                }
+            }
         }
 
         // Re-push every live knob so a tuning.cfg reload takes effect without

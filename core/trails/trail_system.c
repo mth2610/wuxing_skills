@@ -74,6 +74,7 @@ static float s_volCull = 1.0f;       /* u_volCull   — 0 = vẽ cả hai mặt 
 static float s_volNormalSrc = 0.0f;  /* u_volNormalSrc — 1 = dFdx thay attribute */
 static float s_volErode = 0.0f;      /* u_volErode    — noise erosion biên, 0 = tắt */
 static float s_volErodeBand = 0.2f;  /* u_volErodeBand — bề rộng vùng tưa theo b/R */
+static float s_volBloom = 2.5f;      /* u_volBloom    — HDR bloom gain cho lõi thể tích năng lượng */
 /* Set only while DrawTrailEntitiesLayer owns the draw; layered helpers use it
  * to keep alpha body to the one textured material layer. */
 static int s_drawLayerFilter = -1;
@@ -381,6 +382,7 @@ static void EnsureTrailVolumeShader(void)
      * trail_volume.fs. Mặc định 0 = biên mềm như cũ; bật lên cho biên tưa. */
     Tuning_RegisterFloat("vol_erode", &s_volErode, 0.0f);
     Tuning_RegisterFloat("vol_erode_band", &s_volErodeBand, 0.2f);
+    Tuning_RegisterFloat("vol_bloom", &s_volBloom, 2.5f);
     /* `vol_view_src` is GONE (06/08/2026): the view vector is settled at
      * normalize(-fragPosition) — see the viewPos comment further down and
      * trail_volume.vs's header. A switch over a settled question only rots. */
@@ -2734,6 +2736,12 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             int dbgLoc = GetShaderLocation(fullShader, "u_volDebug");
             if (dbgLoc >= 0)
                 SetShaderValue(fullShader, dbgLoc, &s_volDebug, SHADER_UNIFORM_FLOAT);
+            int bloomLoc = GetShaderLocation(fullShader, "u_volBloom");
+            if (bloomLoc >= 0)
+            {
+                float bloomGain = (groups[g].bm == BLEND_ADDITIVE) ? s_volBloom : 0.0f;
+                SetShaderValue(fullShader, bloomLoc, &bloomGain, SHADER_UNIFORM_FLOAT);
+            }
             /* ONCE. Proves the volume path is the one drawing, and with what —
              * "it looks the same" and "this code never ran" are the same
              * picture. */
