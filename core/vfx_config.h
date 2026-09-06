@@ -214,6 +214,15 @@ typedef struct {
     // Noise/Flow Distortion for Trails & Ribbons
     float distortionStrength; // 0.0 = disabled (default)
     float distortionSpeed;    // time multiplier for distortion noise
+
+    // ── 6-WAY VOLUMETRIC LIGHTING (Unity VFX Graph technique) ────────────────
+    // 0 = standard hemisphere lighting (default)
+    // 1 = synthetic 6-way directional scattering (evaluated from single volume sheet / quad)
+    // 2 = dual-texture 6-way lightmap pair (texture = Map A, sixWayTexB = Map B)
+    int sixWayLighting;
+    Texture2D sixWayTexB;      // Lightmap B (-X Left, -Y Bottom, -Z Front, Alpha Emissive)
+    float sixWayScattering;    // Forward scatter / backlit multiplier (0 = default 1.0)
+    float sixWayAbsorption;    // Multi-axis extinction factor (0 = default 1.0)
 } VFX_RenderConfig;
 
 #endif // CORE_VFX_CONFIG_H

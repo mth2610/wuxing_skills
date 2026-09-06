@@ -148,6 +148,17 @@ uniform vec3  u_vfxLightPos[MAX_VFX_LIGHTS];
 uniform vec3  u_vfxLightColor[MAX_VFX_LIGHTS];
 uniform float u_vfxLightRadius[MAX_VFX_LIGHTS];
 
+// ── 6-WAY VOLUMETRIC LIGHTING (Unity VFX Graph technique) ────────────────────
+// 0 = standard hemisphere lighting (default)
+// 1 = synthetic 6-way directional scattering (evaluated from volume sheet / quad)
+// 2 = dual-texture 6-way lightmap pair (texture0 = Map A, u_sixWayTexB = Map B)
+uniform float u_sixWayLighting;
+uniform sampler2D u_sixWayTexB;
+uniform float u_sixWayScattering;  // forward-scatter / backlit multiplier
+uniform float u_sixWayAbsorption;  // multi-axis extinction factor
+uniform vec3  u_ambientGround;     // multi-directional ambient ground bounce (-Y)
+uniform vec3  u_ambientHorizon;    // multi-directional ambient horizon fill (sides)
+
 // ── Shared shading pieces ────────────────────────────────────────────────────
 // Extracted so the legacy path and the packed-volume path cannot drift apart.
 // A second copy of this maths is exactly how a mirror rots into fiction
@@ -262,6 +273,113 @@ vec3 ParticleLightTerm(vec3 N, vec3 L, out float wrapOut)
     return lit;
 }
 
+// ── 6-WAY VOLUMETRIC LIGHTING ────────────────────────────────────────────────
+// Unity VFX Graph 6-way directional transmission & scattering model.
+// Evaluates light along 6 cardinal directions in particle billboard space:
+//   Map A: (+X Right, +Y Top,    +Z Back / Transmitted through volume)
+//   Map B: (-X Left,  -Y Bottom, -Z Front / Camera-facing reflection)
+vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, vec3 L, out float wrapOut)
+{
+    // Billboard local coordinate basis:
+    // R = Right (+X), U = Up (+Y), -V = Back (+Z, light shining towards camera through particle)
+    vec3 V = normalize(viewPos - fragPosition);
+    vec3 upRef = abs(V.y) > 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+    vec3 R = normalize(cross(upRef, V));
+    vec3 U = cross(V, R);
+
+    vec3 mapA;
+    vec3 mapB;
+    float ao = 1.0;
+
+    if (u_sixWayLighting > 1.5)
+    {
+        // Dual-texture 6-way lightmap pair (Unity standard):
+        // texture0 = Map A (+X Right, +Y Top, +Z Backlight, Alpha: Opacity)
+        // u_sixWayTexB = Map B (-X Left, -Y Bottom, -Z Front, Alpha: Opacity)
+        mapA = texture(texture0, fragTexCoord).rgb;
+        mapB = texture(u_sixWayTexB, fragTexCoord).rgb;
+        ao = clamp(dot(mapA + mapB, vec3(1.0 / 6.0)), 0.05, 1.0);
+
+        // Modulate with scattering and absorption controls
+        float scFactor = (u_sixWayScattering > 0.0 ? u_sixWayScattering : 1.0);
+        float absFactor = (u_sixWayAbsorption > 0.0 ? u_sixWayAbsorption : 1.0);
+        mapA.b *= scFactor;
+        if (abs(absFactor - 1.0) > 0.01)
+        {
+            mapA = pow(clamp(mapA, 0.0, 1.0), vec3(absFactor));
+            mapB = pow(clamp(mapB, 0.0, 1.0), vec3(absFactor));
+        }
+    }
+    else
+    {
+        // Synthetic 6-way directional scattering from single sheet or procedural puff
+        vec2 q = luv * 2.0 - 1.0;
+        float rQuad = length(q);
+        float dens = clamp(max(soot, opac), 0.0, 1.0);
+        float bulge = max(u_normalBulge, 0.2);
+        float pX_pos = clamp(0.5 - 0.5 * q.x * bulge, 0.0, 1.0);
+        float pX_neg = clamp(0.5 + 0.5 * q.x * bulge, 0.0, 1.0);
+        float pY_pos = clamp(0.5 - 0.5 * q.y * bulge, 0.0, 1.0);
+        float pY_neg = clamp(0.5 + 0.5 * q.y * bulge, 0.0, 1.0);
+
+        float ext = clamp((u_sixWayAbsorption > 0.0 ? u_sixWayAbsorption : 1.0) * 1.6, 0.2, 5.0);
+        float tX_pos = pow(clamp(1.0 - pX_pos * dens * ext, 0.0, 1.0), 1.6);
+        float tX_neg = pow(clamp(1.0 - pX_neg * dens * ext, 0.0, 1.0), 1.6);
+        float tY_pos = pow(clamp(1.0 - pY_pos * dens * ext, 0.0, 1.0), 1.6);
+        float tY_neg = pow(clamp(1.0 - pY_neg * dens * ext, 0.0, 1.0), 1.6);
+
+        // +Z is forward scatter: light coming from BEHIND puff bleeding through to camera
+        float scFactor = (u_sixWayScattering > 0.0 ? u_sixWayScattering : 1.0);
+        float backlit = max(0.0, dot(L, -V));
+        float fwdScatter = clamp(1.0 + scFactor * 3.5 * pow(backlit, 4.0), 1.0, 6.0);
+        float tZ_back = pow(clamp(selfShadow, 0.0, 1.0), 0.6) * fwdScatter;
+
+        // -Z is front reflection from camera side
+        float tZ_front = clamp(1.0 - dens * 0.45, 0.15, 1.0) * clamp(1.0 - rQuad * 0.35, 0.1, 1.0);
+
+        mapA = vec3(tX_pos, tY_pos, tZ_back);
+        mapB = vec3(tX_neg, tY_neg, tZ_front);
+    }
+
+    // Direct directional light (Sun) transformed into billboard local coordinates
+    vec3 L_local = vec3(dot(L, R), dot(L, U), dot(L, -V));
+    vec3 L_pos = max(vec3(0.0), L_local);
+    vec3 L_neg = max(vec3(0.0), -L_local);
+    float dirLit = dot(L_pos, mapA) + dot(L_neg, mapB);
+    wrapOut = dirLit;
+
+    float effectiveSunGain = max(u_sunGain, 1.8);
+    vec3 lit = u_sunColor * (effectiveSunGain * dirLit);
+
+    // Multi-directional ambient environment lighting
+    vec3 ambGround = (length(u_ambientGround) > 1e-4) ? u_ambientGround : (u_ambient * 0.35);
+    vec3 ambHorizon = (length(u_ambientHorizon) > 1e-4) ? u_ambientHorizon : (u_ambient * 0.65);
+
+    vec3 ambLit = (u_ambient * u_ambientGain * mapA.g
+                + ambGround * mapB.g
+                + ambHorizon * ((mapA.r + mapB.r + mapA.b + mapB.b) * 0.25)) * ao;
+    lit += ambLit;
+
+    // VFX point lights evaluated in 6-way billboard space
+    for (int i = 0; i < MAX_VFX_LIGHTS; i++)
+    {
+        if (i >= u_vfxLightCount) break;
+        vec3 toL = u_vfxLightPos[i] - fragPosition;
+        float dist = length(toL);
+        float att = clamp(1.0 - dist / max(u_vfxLightRadius[i], 0.001), 0.0, 1.0);
+        att *= att;
+        if (att <= 0.0) continue;
+
+        vec3 Lpt = toL / max(dist, 0.001);
+        vec3 Lpt_local = vec3(dot(Lpt, R), dot(Lpt, U), dot(Lpt, -V));
+        vec3 Lpt_pos = max(vec3(0.0), Lpt_local);
+        vec3 Lpt_neg = max(vec3(0.0), -Lpt_local);
+        float ptTransmission = dot(Lpt_pos, mapA) + dot(Lpt_neg, mapB);
+        lit += u_vfxLightColor[i] * ptTransmission * att;
+    }
+    return lit;
+}
+
 void main()
 {
     vec4 texelColor = texture(texture0, fragTexCoord);
@@ -319,8 +437,11 @@ void main()
         float selfShadow = (soot > 0.004) ? clamp(shad / soot, 0.0, 1.0) : 1.0;
         float wrap;
         vec3  N   = ParticleNormalWorld(ParticleNormalLocal(opac));
-        vec3  lit = ParticleLightTerm(N, ParticleLightDir(), wrap);
-        vec3  smoke = u_smokeTint * lit * selfShadow;
+        vec3  lit = (u_sixWayLighting > 0.5)
+            ? ParticleLightTerm6Way((u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5) ? fract(fragTexCoord * u_atlasGrid) : fragTexCoord,
+                                    soot, selfShadow, opac, ParticleLightDir(), wrap)
+            : ParticleLightTerm(N, ParticleLightDir(), wrap);
+        vec3  smoke = u_smokeTint * lit * (u_sixWayLighting > 0.5 ? 1.0 : selfShadow);
 
         // COVERAGE IS `opac`, NOT `soot * opac`.
         //
@@ -407,7 +528,11 @@ void main()
         return;
     }
 
-    if (u_lightingStrength <= 0.0)
+    float effLightingStrength = (u_sixWayLighting > 0.5)
+        ? (u_lightingStrength > 0.0 ? u_lightingStrength : 1.0)
+        : u_lightingStrength;
+
+    if (effLightingStrength <= 0.0)
     {
         // EMISSIVE particles take this branch — strength is set to 0 for them
         // per batch — so the HDR boost has to be applied HERE, not only at the
@@ -424,7 +549,8 @@ void main()
                boundary must not step. */
             emisBoost *= mix(1.0, 1.0 - smoothstep(0.15, 0.85, bg), u_bgAdapt);
         }
-        finalColor = VFX_ResolveEmission(base.rgb, emisBoost, 1.0,
+        vec3 unlitRgb = (u_sixWayLighting > 1.5) ? fragColor.rgb : base.rgb;
+        finalColor = VFX_ResolveEmission(unlitRgb, emisBoost, 1.0,
                                          base.a * soft);
         return;
     }
@@ -465,7 +591,10 @@ void main()
     }
 
     float wrap;
-    vec3  lit = ParticleLightTerm(N, L, wrap);
+    vec3  lit = (u_sixWayLighting > 0.5)
+        ? ParticleLightTerm6Way((u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5) ? fract(fragTexCoord * u_atlasGrid) : fragTexCoord,
+                                base.a, 1.0 - base.a * 0.5, base.a, L, wrap)
+        : ParticleLightTerm(N, L, wrap);
 
     // Mode 2 — pure lighting, opaque. No texture colour, no alpha falloff, so a
     // bright centre here CANNOT be alpha stacking. Each sprite shows as a hard
@@ -480,8 +609,14 @@ void main()
     // Additive-free: modulate the body colour. Deliberately NOT clamped to 1 —
     // ACES in post_fx rolls the highlights off, and clamping here would flatten
     // exactly the bright rim this whole shader exists to produce.
-    vec3 shaded = base.rgb * lit;
+    //
+    // For 6-way dual lightmap pairs (Mode 2), texture0 holds directional lightmaps
+    // (+X, +Y, +Z) rather than diffuse surface albedo. Diffuse albedo comes from
+    // fragColor.rgb. Multiplying directional maps directly into base.rgb would paint
+    // the lobes raw red/green/blue.
+    vec3 albedo = (u_sixWayLighting > 1.5) ? fragColor.rgb : base.rgb;
+    vec3 shaded = albedo * lit;
     // Boost is 1.0 for lit batches, so this is a no-op for smoke and dust.
-    finalColor = VFX_ResolveBody(mix(base.rgb, shaded, u_lightingStrength),
+    finalColor = VFX_ResolveBody(mix(albedo, shaded, effLightingStrength),
                                  u_emissiveBoost, base.a * soft);
 }

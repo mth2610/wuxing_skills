@@ -313,6 +313,9 @@ void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
             .render.smokeGain = s_ebDensity,
             .render.smokeTint = EnergyBurst_DenseTint(matId),
             .render.emissiveBoost = s_ebEmissive * Math_Mix(0.85f, 1.1f, ity),
+            .render.sixWayLighting = 1,
+            .render.sixWayScattering = 1.40f,
+            .render.sixWayAbsorption = 0.90f,
             // PREMULTIPLIED, and now that it is routed to the EMISSION pass
             // rather than BODY it no longer cuts bands. Body was only ever
             // chosen because the old emission TARGET discarded coverage; that

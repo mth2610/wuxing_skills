@@ -91,6 +91,10 @@ typedef struct
   float heatGain;       // exposure on the sheet's emission before the ramp
   float smokeGain;      // multiplier on the sheet's soot density
   Color smokeTint;      // colour of the soot half (black/white smoke)
+  int sixWayLighting;   // 0 = off, 1 = synthetic 6-way, 2 = dual-texture 6-way pair
+  unsigned int sixWayTexBId; // Map B texture id for dual-texture 6-way
+  float sixWayScattering; // forward scatter / backlit boost factor
+  float sixWayAbsorption; // multi-axis extinction factor
   VFXContrastProfileId contrastProfile;
   const SkillCurve *radiusCurve;
   const SkillCurve *speedCurve;
@@ -326,6 +330,10 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   // would silently delete the smoke half of every volume sheet.
   p->smokeTint = (config.render.smokeTint.a != 0) ? config.render.smokeTint
                                                   : (Color){82, 74, 69, 255};
+  p->sixWayLighting = p->unlit ? 0 : config.render.sixWayLighting;
+  p->sixWayTexBId = config.render.sixWayTexB.id;
+  p->sixWayScattering = (config.render.sixWayScattering > 0.0f) ? config.render.sixWayScattering : 1.0f;
+  p->sixWayAbsorption = (config.render.sixWayAbsorption > 0.0f) ? config.render.sixWayAbsorption : 1.0f;
   // A volume sheet with no ramp would index an unbound sampler, which reads
   // black — the flame would vanish while everything else said it was drawing.
   // Fall back to the legacy path instead: the sprite looks wrong (its RGB is
@@ -733,6 +741,9 @@ static int s_locDebugNormal, s_locNormalBulge, s_locSunGain, s_locAmbientGain;
 static int s_locLightAzimuth, s_locAnalyticUV;
 static int s_locVolumeSheet = -1, s_locRampLUT = -1, s_locHeatGain = -1,
            s_locSmokeTint = -1, s_locSmokeGain = -1;
+static int s_locSixWayLighting = -1, s_locSixWayTexB = -1,
+           s_locSixWayScattering = -1, s_locSixWayAbsorption = -1,
+           s_locAmbientGround = -1, s_locAmbientHorizon = -1;
 
 #define PARTICLE_MAX_VFX_LIGHTS 4
 
@@ -864,6 +875,12 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locHeatGain        = GetShaderLocation(s_litShader, "u_heatGain");
       s_locSmokeTint       = GetShaderLocation(s_litShader, "u_smokeTint");
       s_locSmokeGain       = GetShaderLocation(s_litShader, "u_smokeGain");
+      s_locSixWayLighting   = GetShaderLocation(s_litShader, "u_sixWayLighting");
+      s_locSixWayTexB       = GetShaderLocation(s_litShader, "u_sixWayTexB");
+      s_locSixWayScattering = GetShaderLocation(s_litShader, "u_sixWayScattering");
+      s_locSixWayAbsorption = GetShaderLocation(s_litShader, "u_sixWayAbsorption");
+      s_locAmbientGround    = GetShaderLocation(s_litShader, "u_ambientGround");
+      s_locAmbientHorizon   = GetShaderLocation(s_litShader, "u_ambientHorizon");
     }
     else
     {
@@ -904,6 +921,12 @@ static void ParticleLighting_Begin(Camera3D camera)
   SetShaderValue(s_litShader, s_locSunToLight, &sunToLight, SHADER_UNIFORM_VEC3);
   SetShaderValue(s_litShader, s_locSunColor, &sunColor, SHADER_UNIFORM_VEC3);
   SetShaderValue(s_litShader, s_locAmbient, &ambient, SHADER_UNIFORM_VEC3);
+  Vector3 ambientGround = {ambient.x * 0.45f, ambient.y * 0.42f, ambient.z * 0.38f};
+  Vector3 ambientHorizon = {ambient.x * 0.70f, ambient.y * 0.70f, ambient.z * 0.72f};
+  if (s_locAmbientGround >= 0)
+    SetShaderValue(s_litShader, s_locAmbientGround, &ambientGround, SHADER_UNIFORM_VEC3);
+  if (s_locAmbientHorizon >= 0)
+    SetShaderValue(s_litShader, s_locAmbientHorizon, &ambientHorizon, SHADER_UNIFORM_VEC3);
   SetShaderValue(s_litShader, s_locViewPos, &camera.position, SHADER_UNIFORM_VEC3);
   SetShaderValue(s_litShader, s_locLightStrength, &s_lightingStrength, SHADER_UNIFORM_FLOAT);
   /* Background adaptation. Registered lazily and here rather than at Init —
@@ -982,6 +1005,12 @@ static void ParticleLighting_Begin(Camera3D camera)
       float tint[3] = {0.32f, 0.29f, 0.27f};
       SetShaderValue(s_litShader, s_locSmokeTint, tint, SHADER_UNIFORM_VEC3);
     }
+  }
+  { // default: 6-way lighting off. Flipped per batch in the draw loop.
+    float zero = 0.0f, one = 1.0f;
+    if (s_locSixWayLighting >= 0)   SetShaderValue(s_litShader, s_locSixWayLighting, &zero, SHADER_UNIFORM_FLOAT);
+    if (s_locSixWayScattering >= 0) SetShaderValue(s_litShader, s_locSixWayScattering, &one, SHADER_UNIFORM_FLOAT);
+    if (s_locSixWayAbsorption >= 0) SetShaderValue(s_litShader, s_locSixWayAbsorption, &one, SHADER_UNIFORM_FLOAT);
   }
 
   // VFX point lights — the caster's own fireball lighting the smoke inside it.
@@ -1182,6 +1211,11 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   float curHeat = -1.0f;
   float curSmokeGain = -1.0f;
   unsigned int curSmokeTint = 0xFFFFFFFFu;
+  int curSixWay = -1;
+  unsigned int curSixWayTexB = 0xFFFFFFFFu;
+  float curSixWayScat = -1.0f;
+  float curSixWayAbs = -1.0f;
+  float curStrength = -1.0f;
 
   for (int a = 0; a < s_activeCount; a++)
   {
@@ -1230,17 +1264,20 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // Global multiplier on top of the per-particle value, so the whole look can
     // be dialled without touching every call site.
     float wantBoost = p->emissiveBoost * s_emissiveBoost;
+    float wantStrength = p->unlit ? 0.0f : ((p->sixWayLighting && s_lightingStrength <= 0.0f) ? 1.0f : s_lightingStrength);
     // The body pass normally forces ALPHA so a glow sheet cannot smear its
     // black surround into the body layer. PREMULTIPLIED is the exception it has
     // to keep: its RGB is already scaled by its own coverage, so forcing it to
     // ALPHA would make the hardware multiply by alpha a second time and the
     // flame would come out roughly its own coverage darker.
     int drawBlend = (layerFilter == 0) ? VFX_BLEND_ALPHA : p->blendMode;
-    if (want != curTex || drawBlend != curBlend || p->unlit != curUnlit ||
+    if (want != curTex || drawBlend != curBlend || wantStrength != curStrength ||
         wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost ||
         p->volumeSheet != curVolume || p->rampTexId != curRamp ||
         p->heatGain != curHeat || p->smokeGain != curSmokeGain ||
-        VFXPackColor(p->smokeTint) != curSmokeTint)
+        VFXPackColor(p->smokeTint) != curSmokeTint ||
+        p->sixWayLighting != curSixWay || p->sixWayTexBId != curSixWayTexB ||
+        p->sixWayScattering != curSixWayScat || p->sixWayAbsorption != curSixWayAbs)
     {
       if (curTex != 0xFFFFFFFFu) rlEnd();
       s_perfBatches++;
@@ -1298,13 +1335,40 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         curSmokeGain = p->smokeGain;
         curSmokeTint = VFXPackColor(p->smokeTint);
       }
-      if (p->unlit != curUnlit)
+      if (p->sixWayLighting != curSixWay || p->sixWayTexBId != curSixWayTexB ||
+          p->sixWayScattering != curSixWayScat || p->sixWayAbsorption != curSixWayAbs)
+      {
+        rlDrawRenderBatchActive();
+        float sw = (float)p->sixWayLighting;
+        float scat = p->sixWayScattering;
+        float absVal = p->sixWayAbsorption;
+        if (s_litActive && s_locSixWayLighting >= 0)
+          SetShaderValue(s_litShader, s_locSixWayLighting, &sw, SHADER_UNIFORM_FLOAT);
+        if (s_litActive && s_locSixWayScattering >= 0)
+          SetShaderValue(s_litShader, s_locSixWayScattering, &scat, SHADER_UNIFORM_FLOAT);
+        if (s_litActive && s_locSixWayAbsorption >= 0)
+          SetShaderValue(s_litShader, s_locSixWayAbsorption, &absVal, SHADER_UNIFORM_FLOAT);
+        if (s_litActive && p->sixWayLighting > 1 && p->sixWayTexBId != 0 && s_locSixWayTexB >= 0)
+        {
+          Texture2D texB = {0};
+          texB.id = p->sixWayTexBId;
+          texB.width = 1; texB.height = 1; texB.mipmaps = 1;
+          texB.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+          SetShaderValueTexture(s_litShader, s_locSixWayTexB, texB);
+        }
+        curSixWay = p->sixWayLighting;
+        curSixWayTexB = p->sixWayTexBId;
+        curSixWayScat = p->sixWayScattering;
+        curSixWayAbs = p->sixWayAbsorption;
+      }
+      if (wantStrength != curStrength)
       {
         // Emissive particles skip the lighting multiply. Flipping the STRENGTH
         // uniform rather than unbinding the shader keeps one pipeline: at 0 the
         // shader takes its early-out and returns texel*colour, which is exactly
-        // the legacy unlit result.
-        ParticleLighting_SetStrength(p->unlit ? 0.0f : s_lightingStrength);
+        // the legacy unlit result. 6-way particles default to strength 1.0 when active.
+        ParticleLighting_SetStrength(wantStrength);
+        curStrength = wantStrength;
         curUnlit = p->unlit;
       }
       if (wantBoost != curBoost)
@@ -1746,7 +1810,7 @@ bool ParticleSystem_HasVolumeParticles(void)
   for (int i = 0; i < s_activeCount; ++i)
   {
     const ParticleInternal *p = &g_Particles[s_activeIds[i]];
-    if (p->volumeSheet && p->renderMode != 3 && !p->trailOnly)
+    if ((p->volumeSheet || p->sixWayLighting) && p->renderMode != 3 && !p->trailOnly)
       return true;
   }
   return false;

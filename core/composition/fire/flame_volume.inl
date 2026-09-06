@@ -611,6 +611,9 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .render.emissiveBoost = s_fvolEmissive,
                 .render.smokeGain = s_fvolSmokeGain,
                 .render.smokeTint = FVol_SmokeTint(),
+                .render.sixWayLighting = 1,
+                .render.sixWayScattering = 1.35f,
+                .render.sixWayAbsorption = 1.20f,
                 .render.blendMode = VFX_BLEND_PREMULTIPLIED,
                 .render.texture = s_fvolVolumeTex,
                 // NOT unlit. The volume branch lights only the SOOT half and
@@ -724,6 +727,9 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
             .forceField = &s_smokePuffFld,
             .radiusCurve = &s_smokePuffGrow,
             .render.texture = s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
+            .render.sixWayLighting = 1,
+            .render.sixWayScattering = 1.25f,
+            .render.sixWayAbsorption = 1.10f,
             .rotation = Random01() * 2.0f * PI,
             .angularVelocity = (Random01() - 0.5f) * 0.7f,
         };

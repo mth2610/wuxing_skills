@@ -307,6 +307,36 @@ static int FileContains(const char *path, const char *needle)
     return strstr(buf, needle) != NULL;
 }
 
+static void Test_6WayLightingBasisAndAxes(void)
+{
+    V3 V = TestViewDir();
+    V3 upRef = (fabsf(V.y) > 0.99f) ? v3(0, 0, 1) : v3(0, 1, 0);
+    V3 R = v3norm(v3cross(upRef, V));
+    V3 U = v3cross(V, R);
+    V3 Back = v3scale(V, -1.0f);
+
+    // Light from right (+X)
+    V3 L_right = R;
+    V3 L_local_right = v3(v3dot(L_right, R), v3dot(L_right, U), v3dot(L_right, Back));
+    CHECK_MSG(L_local_right.x > 0.99f && fabsf(L_local_right.y) < 0.01f && fabsf(L_local_right.z) < 0.01f,
+              "6-way: +X maps to billboard right", "got (%.2f, %.2f, %.2f)",
+              L_local_right.x, L_local_right.y, L_local_right.z);
+
+    // Light from top (+Y)
+    V3 L_top = U;
+    V3 L_local_top = v3(v3dot(L_top, R), v3dot(L_top, U), v3dot(L_top, Back));
+    CHECK_MSG(L_local_top.y > 0.99f && fabsf(L_local_top.x) < 0.01f && fabsf(L_local_top.z) < 0.01f,
+              "6-way: +Y maps to billboard up", "got (%.2f, %.2f, %.2f)",
+              L_local_top.x, L_local_top.y, L_local_top.z);
+
+    // Light from behind (+Z Back / forward scattering)
+    V3 L_back = Back;
+    V3 L_local_back = v3(v3dot(L_back, R), v3dot(L_back, U), v3dot(L_back, Back));
+    CHECK_MSG(L_local_back.z > 0.99f && fabsf(L_local_back.x) < 0.01f && fabsf(L_local_back.y) < 0.01f,
+              "6-way: +Z maps to backlight (forward-scatter direction)", "got (%.2f, %.2f, %.2f)",
+              L_local_back.x, L_local_back.y, L_local_back.z);
+}
+
 static void Test_ShaderSourceMatchesMirror(void)
 {
     // A C mirror of GLSL is only as good as its agreement with the original.
@@ -327,6 +357,10 @@ static void Test_ShaderSourceMatchesMirror(void)
         { "u_ambient * u_ambientGain + u_sunColor * u_sunGain * wrap", "gain formula" },
         { "#include \"core/shaders/common/soft_particle.glsl\"", "soft-depth shader block" },
         { "SoftParticle_Factor(u_softFade)",       "soft-particle alpha factor" },
+        { "ParticleLightTerm6Way",                 "6-way volumetric lighting integrator" },
+        { "u_sixWayLighting",                      "6-way lighting uniform toggle" },
+        { "u_ambientGround",                       "6-way multi-directional ground ambient" },
+        { "u_ambientHorizon",                      "6-way multi-directional horizon ambient" },
     };
     int missing = 0;
     for (unsigned i = 0; i < sizeof(req)/sizeof(req[0]); i++)
@@ -352,6 +386,7 @@ int main(void)
     Test_ScatterIsUniformAcrossSprite();
     Test_AmbientGainFlattens();
     Test_SoftParticleFade();
+    Test_6WayLightingBasisAndAxes();
     Test_ShaderSourceMatchesMirror();
 
     printf("---\n%d/%d checks passed\n", g_checks - g_failures, g_checks);

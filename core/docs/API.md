@@ -883,8 +883,9 @@ _Inline helpers / macros only — see header._
   void VFX_Trail_Extinguish(int handle);
   int VFX_ComposeSmokeColumn(Vector3 pos, VC_MaterialId mat, float radius, float height, VFX_ColumnKind kind, bool funnel);
   void VFX_SmokeColumn_Stop(int handle);
-  int VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_VolumeKind kind);
+  int VFX_ComposeVolumeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_VolumeKind kind, bool funnel);
   int VFX_ComposeVolumeTrailEx(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_VolumeKind kind, const VFX_TrailSurface *surface);
+  void VFX_VolumeTrail_Stop(int handle);
   void VFX_KillVolumeTrail(int handle);
   void VFX_ComposeGroundWave(Vector3 center, VC_MaterialId mat, float radius, float t01, GroundHeightSampleFn heightFn, void *ud);
   float VFX_GroundHeightFromMap(float worldX, float worldZ, void *unused);
@@ -942,7 +943,7 @@ _Inline helpers / macros only — see header._
   void VFX_WaterRing_Stop(void);
   void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
-**Enums:** VFX_VolumeKind { VOL_ENERGY,VOL_SMOKE,VOL_FIRE,VFX_VOLUME_KIND_COUNT };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_KIND_COUNT } ContactSparkMode { CONTACT_SPARK_STATIC,CONTACT_SPARK_CENTRIFUGAL }
+**Enums:** VFX_VolumeKind { VFX_VOLUME_SMOKE,VFX_VOLUME_FIRE,VFX_VOLUME_STEAM,VFX_VOLUME_ENERGY,VFX_VOLUME_KIND_COUNT,VOL_ENERGY,VOL_SMOKE,VOL_FIRE };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_ENERGY,VFX_COLUMN_KIND_COUNT } ContactSparkMode { CONTACT_SPARK_STATIC,CONTACT_SPARK_CENTRIFUGAL }
 **Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_GasPlumeConfig, VFX_GasVortexConfig, VFX_GasShockwaveConfig, VFX_FlameJetConfig, VFX_ShieldSurface, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`

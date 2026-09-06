@@ -95,6 +95,7 @@ static Texture2D s_smokePuffTex[SMOKE_PUFF_VARIANTS];
 // to keep a procedural/asset-free path so a build never depends on an asset
 // landing, and this one costs nothing to keep.
 static Texture2D s_smokeFbTex = {0};
+static Texture2D s_smokeFbTexB = {0};
 // FOUR templates, not one, at slightly different playback rates.
 //
 // SpriteAnim_CalculateUV derives the frame from the particle's ABSOLUTE age
@@ -143,6 +144,9 @@ static float s_smokePuffFbSizeMul  = 1.45f;
 // alpha curve finishes the fade — the puff still thins out and vanishes, it just
 // stops crawling while it does. 64 = play the whole sheet.
 static float s_smokePuffFbFrames   = 50.0f;
+static float s_smokePuff6WayLighting = 1.0f;
+static float s_smokePuff6WayScat     = 1.6f;
+static float s_smokePuff6WayAbs      = 1.3f;
 
 static void SmokePuff_InitShared(void)
 {
@@ -161,6 +165,9 @@ static void SmokePuff_InitShared(void)
     Tuning_RegisterFloat("smokepuff_fb_count", &s_smokePuffFbCountMul, 0.55f);
     Tuning_RegisterFloat("smokepuff_fb_size", &s_smokePuffFbSizeMul, 1.45f);
     Tuning_RegisterFloat("smokepuff_fb_frames", &s_smokePuffFbFrames, 50.0f);
+    Tuning_RegisterFloat("smokepuff_6way_lighting", &s_smokePuff6WayLighting, 1.0f);
+    Tuning_RegisterFloat("smokepuff_6way_scat", &s_smokePuff6WayScat, 1.6f);
+    Tuning_RegisterFloat("smokepuff_6way_abs", &s_smokePuff6WayAbs, 1.3f);
 
     // Grows to ~2.2x over its life and never shrinks back — smoke does not
     // contract, it dissipates. The fade curve is what removes it.
@@ -243,19 +250,32 @@ static void SmokePuff_InitShared(void)
     // the lighting pass shades a BILLBOARD and knows nothing about the depth
     // inside the puff, so an unshaded sheet stacks into flat cards — measured at
     // value spread 0.00, which is what "những mảng màu riêng biệt" was.
-    const VFX_SurfaceProfile *smokeProfile =
-        VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_PUFF);
-    s_smokeFbTex = smokeProfile != NULL ? smokeProfile->body : (Texture2D){0};
-    if (s_smokeFbTex.id == 0 && smokeProfile != NULL)
-        s_smokeFbTex = smokeProfile->fallbackBody;
-    // WHICH sheet loaded, said out loud. Until now a silent fallback from the
-    // new sheet to the old one — or from either to the three static sprites —
-    // looked identical on screen to a working flipbook, and "the sprites hold
-    // one frame" had no way to be told apart from "the sprites animate".
+    if (FileExists("assets/textures/smoke_puff_6way_a.png") &&
+        FileExists("assets/textures/smoke_puff_6way_b.png"))
+    {
+        s_smokeFbTex = ResourceManager_LoadTexture("assets/textures/smoke_puff_6way_a.png");
+        s_smokeFbTexB = ResourceManager_LoadTexture("assets/textures/smoke_puff_6way_b.png");
+        if (s_smokeFbTex.id != 0 && s_smokeFbTexB.id != 0)
+        {
+            SetTextureFilter(s_smokeFbTex, TEXTURE_FILTER_BILINEAR);
+            SetTextureFilter(s_smokeFbTexB, TEXTURE_FILTER_BILINEAR);
+            TraceLog(LOG_INFO, "SMOKE PUFF: Loaded 6-way lightmap pair (Map A %u, Map B %u)",
+                     s_smokeFbTex.id, s_smokeFbTexB.id);
+        }
+    }
+    if (s_smokeFbTex.id == 0)
+    {
+        const VFX_SurfaceProfile *smokeProfile =
+            VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_PUFF);
+        s_smokeFbTex = smokeProfile != NULL ? smokeProfile->body : (Texture2D){0};
+        if (s_smokeFbTex.id == 0 && smokeProfile != NULL)
+            s_smokeFbTex = smokeProfile->fallbackBody;
+    }
+    // WHICH sheet loaded, said out loud.
     TraceLog(s_smokeFbTex.id != 0 ? LOG_INFO : LOG_WARNING,
-             "SMOKE PUFF: flipbook %s (tex id %u)",
+             "SMOKE PUFF: flipbook %s (tex id %u, 6-way texB %u)",
              s_smokeFbTex.id != 0 ? "loaded" : "MISSING",
-             (unsigned)s_smokeFbTex.id);
+             (unsigned)s_smokeFbTex.id, (unsigned)s_smokeFbTexB.id);
 
     if (s_smokeFbTex.id != 0)
     {
@@ -345,17 +365,28 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
         Color c = ColorGradient_Sample(&s_smokePuffGrad, Random01());
         if (useFb)
         {
-            // THE FLIPBOOK ALREADY CARRIES ITS OWN VALUE. The atlas is a shaded
-            // render (mean RGB ~121/255 inside the puff), while this gradient is
-            // deliberately near-black because the static sprites are flat masks
-            // that the lighting pass is supposed to lift. Multiplying the two
-            // lands at ~33/255 — measured — and the puff reads as a black smudge.
-            // With the flipbook the sprite supplies the value, so the vertex
-            // colour must step back and only TINT. This is what the spec's name
-            // `fb_smoke_lit_*` means: the sheet is already lit.
-            c.r = (unsigned char)(160 + (c.r >> 2));
-            c.g = (unsigned char)(160 + (c.g >> 2));
-            c.b = (unsigned char)(160 + (c.b >> 2));
+            if (s_smokeFbTexB.id != 0)
+            {
+                // Dynamic 6-way lighting carries full directional shadows and highlights.
+                // Maintain clean natural body color so internal shadows stay dark and rims bright!
+                c.r = (unsigned char)(215 + (c.r >> 3));
+                c.g = (unsigned char)(215 + (c.g >> 3));
+                c.b = (unsigned char)(215 + (c.b >> 3));
+            }
+            else
+            {
+                // THE FLIPBOOK ALREADY CARRIES ITS OWN VALUE. The atlas is a shaded
+                // render (mean RGB ~121/255 inside the puff), while this gradient is
+                // deliberately near-black because the static sprites are flat masks
+                // that the lighting pass is supposed to lift. Multiplying the two
+                // lands at ~33/255 — measured — and the puff reads as a black smudge.
+                // With the flipbook the sprite supplies the value, so the vertex
+                // colour must step back and only TINT. This is what the spec's name
+                // `fb_smoke_lit_*` means: the sheet is already lit.
+                c.r = (unsigned char)(160 + (c.r >> 2));
+                c.g = (unsigned char)(160 + (c.g >> 2));
+                c.b = (unsigned char)(160 + (c.b >> 2));
+            }
         }
         if (!neutral)
         {
@@ -389,6 +420,10 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
             // lifetimes (so they are on different frames) plus the per-sprite
             // spin below — SpriteAnim has no per-particle frame offset.
             .render.texture = (useFb ? s_smokeFbTex : s_smokePuffTex[i % SMOKE_PUFF_VARIANTS]),
+            .render.sixWayLighting = (useFb && s_smokeFbTexB.id != 0) ? 2 : (int)s_smokePuff6WayLighting,
+            .render.sixWayTexB = s_smokeFbTexB,
+            .render.sixWayScattering = s_smokePuff6WayScat,
+            .render.sixWayAbsorption = s_smokePuff6WayAbs,
             .spriteAnim = (useFb ? &s_smokeFbAnim[i % SMOKE_FB_RATES] : NULL),
             .rotation = Random01() * 2.0f * PI,
             // Spin is all but OFF for the flipbook (see s_smokePuffFbSpin): the
