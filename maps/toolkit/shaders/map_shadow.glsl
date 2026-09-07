@@ -59,22 +59,29 @@ float MapShadowFilteredVisibility(sampler2D mapTexture, vec2 uv,
 
     float center = MapShadowCompareBilinear(
         mapTexture, uv, compareDepth, texelSize);
+    float left = MapShadowCompareBilinear(
+        mapTexture, uv + vec2(-tap.x, 0.0), compareDepth, texelSize);
+    float right = MapShadowCompareBilinear(
+        mapTexture, uv + vec2(tap.x, 0.0), compareDepth, texelSize);
+    float down = MapShadowCompareBilinear(
+        mapTexture, uv + vec2(0.0, -tap.y), compareDepth, texelSize);
+    float up = MapShadowCompareBilinear(
+        mapTexture, uv + vec2(0.0, tap.y), compareDepth, texelSize);
     float downLeft = MapShadowCompareBilinear(
-        mapTexture, uv + vec2(-tap.x, -tap.y), compareDepth, texelSize);
+        mapTexture, uv + vec2(-tap.x * 0.707, -tap.y * 0.707), compareDepth, texelSize);
     float downRight = MapShadowCompareBilinear(
-        mapTexture, uv + vec2(tap.x, -tap.y), compareDepth, texelSize);
+        mapTexture, uv + vec2(tap.x * 0.707, -tap.y * 0.707), compareDepth, texelSize);
     float upLeft = MapShadowCompareBilinear(
-        mapTexture, uv + vec2(-tap.x, tap.y), compareDepth, texelSize);
+        mapTexture, uv + vec2(-tap.x * 0.707, tap.y * 0.707), compareDepth, texelSize);
     float upRight = MapShadowCompareBilinear(
-        mapTexture, uv + vec2(tap.x, tap.y), compareDepth, texelSize);
-    float smoothVisibility = center * 0.50
-                           + (downLeft + downRight + upLeft + upRight) * 0.125;
-    // A small darkest-sample contribution retains narrow blades without the
-    // old 84% binary minimum that expanded every covered texel into black,
-    // comb-shaped blocks.
+        mapTexture, uv + vec2(tap.x * 0.707, tap.y * 0.707), compareDepth, texelSize);
+
+    float smoothVisibility = center * 0.28
+                           + (left + right + down + up) * 0.11
+                           + (downLeft + downRight + upLeft + upRight) * 0.07;
     float darkestVisibility = min(center,
-        min(min(downLeft, downRight), min(upLeft, upRight)));
-    return mix(smoothVisibility, darkestVisibility, thinFeatureBoost);
+        min(min(left, right), min(down, up)));
+    return mix(smoothVisibility, darkestVisibility, thinFeatureBoost * 0.25);
 }
 
 float MapShadowCoverageFade(vec2 uv)
@@ -97,12 +104,10 @@ float MapDynamicShadowVisibility(vec3 worldPos, float slope)
         projected.y <= 0.0 || projected.y >= 1.0)
         return 1.0;
 
-    // Dynamic capture contains vegetation/characters but no terrain receiver,
-    // so it does not need the large static-terrain acne bias. The old bias was
-    // several centimetres in light depth and erased short flower shadows.
-    float compareDepth = projected.z - mix(0.00018, 0.00055, slope);
+    // Smooth slope-aware bias eliminating stair-stepping acne bands
+    float compareDepth = projected.z - mix(0.00028, 0.00085, slope);
     float visibility = MapShadowFilteredVisibility(
-        shadowMap, projected.xy, compareDepth, u_shadowTexel, 0.95,
+        shadowMap, projected.xy, compareDepth, u_shadowTexel, 1.15,
         u_shadowThinFeatureBoost);
     float edgeFade = MapShadowCoverageFade(projected.xy);
     float resolved = mix(1.0, visibility, edgeFade);

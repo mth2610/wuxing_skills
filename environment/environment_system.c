@@ -268,14 +268,16 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
     rlEnableDepthTest();
 }
 
+static unsigned int s_lightingVersion = 1;
+
 Vector3 Environment_GetSunDirection(void) { return s_sunDirection; }
-void Environment_SetSunDirection(Vector3 dir) { s_sunDirection = Vector3Normalize(dir); }
+void Environment_SetSunDirection(Vector3 dir) { s_sunDirection = Vector3Normalize(dir); s_lightingVersion++; }
 
 Color Environment_GetSunColor(void) { return s_sunColor; }
-void Environment_SetSunColor(Color col) { s_sunColor = col; }
+void Environment_SetSunColor(Color col) { s_sunColor = col; s_lightingVersion++; }
 
 Color Environment_GetAmbientColor(void) { return s_ambientColor; }
-void Environment_SetAmbientColor(Color col) { s_ambientColor = col; }
+void Environment_SetAmbientColor(Color col) { s_ambientColor = col; s_lightingVersion++; }
 
 // Real Shading P1c — hemispheric split derived from the existing flat
 // ambient (no preset-struct change yet): sky brighter/cooler, ground dimmer
@@ -305,10 +307,32 @@ Color Environment_GetGroundAmbient(void) {
 }
 
 Color Environment_GetShadowColor(void) { return s_shadowColor; }
-void Environment_SetShadowColor(Color col) { s_shadowColor = col; }
+void Environment_SetShadowColor(Color col) { s_shadowColor = col; s_lightingVersion++; }
 
 EnvFogConfig Environment_GetFogConfig(void) { return s_fogConfig; }
-void Environment_SetFogConfig(EnvFogConfig config) { s_fogConfig = config; }
+void Environment_SetFogConfig(EnvFogConfig config) { s_fogConfig = config; s_lightingVersion++; }
+
+EnvFrameLighting Environment_GetFrameLighting(void) {
+    EnvFrameLighting frame;
+    frame.sunDirection = s_sunDirection;
+    frame.sunColor = s_sunColor;
+    frame.skyAmbient = Environment_GetSkyAmbient();
+    frame.groundBounce = Environment_GetGroundAmbient();
+    frame.shadowColor = s_shadowColor;
+    frame.fog = s_fogConfig;
+    frame.version = s_lightingVersion;
+    return frame;
+}
+
+void Environment_ApplyProfile(const EnvLightingPreset *profile) {
+    if (!profile) return;
+    s_ambientColor = profile->ambientColor;
+    s_sunColor = profile->sunColor;
+    s_sunDirection = Vector3Normalize(profile->sunDirection);
+    s_shadowColor = profile->shadowColor;
+    s_fogConfig = profile->fog;
+    s_lightingVersion++;
+}
 
 void Environment_SetTimeOfDayPresets(const EnvLightingPreset *presets, const float *timePoints, int count) {
     if (count < 0) count = 0;
@@ -333,3 +357,4 @@ void Environment_SetTimeOfDay(float t) {
 }
 
 float Environment_GetTimeOfDay(void) { return s_todCurrentTime; }
+

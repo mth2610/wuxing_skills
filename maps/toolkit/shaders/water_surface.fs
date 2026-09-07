@@ -53,35 +53,45 @@ void main()
     vec3 normal = normalize(vec3(-slope.x, 1.0, -slope.y));
 
     float radial = length(fragLakeCoord);
-    float depth = smoothstep(0.32, 0.94, radial);
+    // Depth absorption: deep center turquoise to clear shallow shore
+    float depth = smoothstep(0.25, 0.92, radial);
     vec3 base = mix(u_deepColor, u_shallowColor, depth);
     vec3 viewDir = normalize(u_viewPos - fragPosition);
-    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 4.0);
+    float NdotV = max(dot(normal, viewDir), 0.0);
+    float fresnel = pow(1.0 - NdotV, 3.5);
     vec3 halfDir = normalize(u_lightDir + viewDir);
-    float glint = pow(max(dot(normal, halfDir), 0.0), 92.0);
-    float broadGlint = pow(max(dot(normal, halfDir), 0.0), 14.0) * 0.16;
-    float roughGlint = pow(max(dot(normal, halfDir), 0.0), 28.0) * 0.12;
+    float glint = pow(max(dot(normal, halfDir), 0.0), 96.0);
+    float broadGlint = pow(max(dot(normal, halfDir), 0.0), 16.0) * 0.18;
+    float roughGlint = pow(max(dot(normal, halfDir), 0.0), 32.0) * 0.14;
 
-    float shallows = smoothstep(0.72, 0.985, radial);
-    float shoreline = smoothstep(0.952, 0.996, radial);
-    float broken = sin(fragWorldXZ.x * 3.7 + t * 0.45)
-                 + sin(fragWorldXZ.y * 4.3 - t * 0.38);
-    float foam = shoreline * smoothstep(1.25, 1.82, broken) * 0.16;
+    float shallows = smoothstep(0.68, 0.98, radial);
+    float shoreline = smoothstep(0.92, 0.995, radial);
+    float broken = sin(fragWorldXZ.x * 4.2 + t * 0.48)
+                 + sin(fragWorldXZ.y * 4.8 - t * 0.42);
+    float foam = shoreline * smoothstep(0.85, 1.65, broken) * 0.28;
 
     vec3 reflectionDir = reflect(-viewDir, normal);
-    float skyFacing = smoothstep(-0.10, 0.88, reflectionDir.y);
-    vec3 reflectedSky = mix(u_ambientColor * 0.48, u_lightColor * 0.62, skyFacing);
-    vec3 color = base * (0.46 + u_ambientColor * 0.72 + u_lightColor * 0.12);
-    color += reflectedSky * (0.18 + fresnel * 0.48);
-    color = mix(color, u_shallowColor * 0.84, shallows * 0.34);
-    float rippleLight = sin(fragWorldXZ.x * 1.36 + t * 0.62)
-                      * sin(fragWorldXZ.y * 1.71 - t * 0.51);
-    color += reflectedSky * max(rippleLight, 0.0) * 0.035;
+    float skyFacing = smoothstep(-0.15, 0.85, reflectionDir.y);
+    vec3 reflectedSky = mix(u_ambientColor * vec3(0.65, 0.75, 0.95), u_lightColor * 0.72, skyFacing);
+
+    vec3 color = base * (0.42 + u_ambientColor * 0.75 + u_lightColor * 0.15);
+    color += reflectedSky * (0.22 + fresnel * 0.58);
+    color = mix(color, u_shallowColor * 0.92, shallows * 0.42);
+
+    // Caustics & ripple reflections
+    float rippleLight = sin(fragWorldXZ.x * 1.52 + t * 0.65)
+                      * sin(fragWorldXZ.y * 1.88 - t * 0.55);
+    color += reflectedSky * max(rippleLight, 0.0) * 0.045;
     float waveFacet = sin(p0) * 0.52 + sin(p1) * 0.31 + sin(p2) * 0.17;
-    float crest = smoothstep(0.52, 0.96, waveFacet) * 0.026;
-    color += reflectedSky * (waveFacet * 0.045 + crest);
-    color *= 0.985 + dot(normal.xz, normalize(vec2(0.74, -0.67))) * 0.28;
-    color += u_lightColor * (glint * 0.34 + broadGlint * 0.48 + roughGlint);
+    float crest = smoothstep(0.48, 0.95, waveFacet) * 0.035;
+    color += reflectedSky * (waveFacet * 0.048 + crest);
+
+    // Soft bank transition: blend water edge toward wet silt tone to erase dark seam
+    vec3 bankSiltTone = vec3(0.28, 0.32, 0.26);
+    color = mix(color, bankSiltTone, shoreline * 0.65);
+
+    color *= 0.985 + dot(normal.xz, normalize(vec2(0.74, -0.67))) * 0.25;
+    color += u_lightColor * (glint * 0.42 + broadGlint * 0.52 + roughGlint);
     color = mix(color, u_foamColor, foam);
     color += VFXLights_Accumulate(fragPosition, normal, base) * 0.65;
     finalColor = vec4(color, 1.0);

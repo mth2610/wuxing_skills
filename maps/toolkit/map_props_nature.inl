@@ -320,10 +320,10 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
     // Hybrid contact is root occlusion, not a second directional silhouette.
     // Keep it short, broad and restrained so the real animated shadow owns the
     // readable shape. SHADOW OFF retains a softer projected fallback.
-    float projectionScale = realShadowActive ? 0.10f : 0.62f;
-    float widthScale = realShadowActive ? 1.15f : 1.0f;
-    float tipWidth = realShadowActive ? 0.82f : 0.60f;
-    float shadowStrength = realShadowActive ? 0.32f : 0.68f;
+    float projectionScale = realShadowActive ? 0.36f : 0.62f;
+    float widthScale = realShadowActive ? 1.45f : 1.15f;
+    float tipWidth = realShadowActive ? 0.95f : 0.70f;
+    float shadowStrength = realShadowActive ? 0.68f : 0.75f;
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightTravel"),
                    &lightTravel, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_shadowTint"),
@@ -404,6 +404,22 @@ static void Nature_AddTexturedBloom(Mesh *mesh, int *cursor, Vector3 p0, Vector3
     Nature_SetUv2(mesh, base + 5, uvRect.x, uvRect.w);
 }
 
+static void Nature_AddTexturedQuadUV(Mesh *mesh, int *cursor,
+                                     Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
+                                     Vector3 normal, float phase, float h0, float h1,
+                                     Color c0, Color c1,
+                                     float u0, float v0, float u1, float v1)
+{
+    int base = *cursor;
+    Nature_AddQuad(mesh, cursor, p0, p1, p2, p3, normal, phase, h0, h1, c0, c1);
+    Nature_SetUv2(mesh, base + 0, u0, v1);
+    Nature_SetUv2(mesh, base + 1, u1, v1);
+    Nature_SetUv2(mesh, base + 2, u1, v0);
+    Nature_SetUv2(mesh, base + 3, u0, v1);
+    Nature_SetUv2(mesh, base + 4, u1, v0);
+    Nature_SetUv2(mesh, base + 5, u0, v0);
+}
+
 static void Nature_AddPointedBladeTip(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
                                       Vector3 tip, Vector3 normal, float phase,
                                       float h0, Color c0, Color c1)
@@ -450,12 +466,12 @@ static Model Nature_BuildFlowerShadowModel(const MapFlowerPlacement *placements,
     int cursor = 0;
     for (int i = 0; i < count; i++) {
         const MapFlowerPlacement *flower = &placements[i];
-        float width = fmaxf(flower->bloomRadius * 0.42f, 0.014f);
+        float width = fmaxf(flower->bloomRadius * 0.95f, 0.045f);
         Vector3 root = flower->position;
         root.y += 0.0015f;
         Vector3 encoded = {flower->height, width, flower->phase};
-        Color rootShade = {210, 210, 210, 255};
-        Color tipShade = {150, 150, 150, 255};
+        Color rootShade = {180, 180, 180, 255};
+        Color tipShade = {110, 110, 110, 255};
         const Vector2 uv[6] = {
             {0.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f},
             {0.0f, 0.0f}, {1.0f, 1.0f}, {1.0f, 0.0f},
@@ -671,7 +687,8 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
     if (selected <= 0) return (Model){0};
 
     int verticesPerBlade = (bladeSegments - 1) * 6 + 3;
-    int vertexCount = selected * bladesPerClump * verticesPerBlade;
+    int extraPerClump = style.hasPlumes ? 66 : 0;
+    int vertexCount = selected * (bladesPerClump * verticesPerBlade + extraPerClump);
     Mesh mesh = Nature_AllocMesh(vertexCount);
     int cursor = 0;
     const float golden = 2.39996323f;
@@ -689,28 +706,63 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             float bx = clump->position.x + cosf(angle * 1.73f) * radial;
             float bz = clump->position.z + sinf(angle * 1.73f) * radial;
             float height = clump->height * (0.74f + 0.26f * sinf((float)(i * 13 + blade * 7)) * 0.5f + 0.13f);
-            // Slightly widen alternating blades. Sub-pixel-thin vegetation
-            // aliases into black needles at gameplay camera distance.
             float width = clump->radius * style.bladeWidthScale * widthMultiplier
                         * (0.88f + 0.20f * (float)(blade & 1));
-            Vector3 side = {-sinf(angle), 0.0f, cosf(angle)};
-            Vector3 facing = {cosf(angle), 0.12f, sinf(angle)};
+            float leanAngle = angle + 0.35f * sinf((float)(i * 17 + blade));
+            float lean = clump->radius * 0.45f * (0.6f + 0.4f * (float)blade / (float)bladesPerClump);
+            Vector3 pBase = {bx, clump->position.y, bz};
+            Vector3 pMid_b = {bx + cosf(leanAngle) * lean * 0.5f,
+                              pBase.y + height * 0.55f,
+                              bz + sinf(leanAngle) * lean * 0.5f};
+            Vector3 pTip_b = {bx + cosf(leanAngle) * lean * 1.25f,
+                              pBase.y + height * 0.95f,
+                              bz + sinf(leanAngle) * lean * 1.25f};
+
+            Vector3 facing = {-sinf(leanAngle), 0.08f, cosf(leanAngle)};
+
             for (int segment = 0; segment < bladeSegments; segment++) {
-                float t0 = (float)segment / bladeSegments;
-                float t1 = (float)(segment + 1) / bladeSegments;
-                float bend0 = t0 * t0 * height * 0.16f;
-                float bend1 = t1 * t1 * height * 0.16f;
-                float w0 = width * (1.0f - t0 * 0.82f);
-                float w1 = width * (1.0f - t1 * 0.82f);
-                Vector3 center0 = {bx + cosf(angle) * bend0, clump->position.y + height * t0, bz + sinf(angle) * bend0};
-                Vector3 center1 = {bx + cosf(angle) * bend1, clump->position.y + height * t1, bz + sinf(angle) * bend1};
+                float t0 = (float)segment / (float)bladeSegments;
+                float t1 = (float)(segment + 1) / (float)bladeSegments;
+
+                float omt0 = 1.0f - t0;
+                float omt1 = 1.0f - t1;
+
+                Vector3 center0 = {
+                    omt0 * omt0 * pBase.x + 2.0f * omt0 * t0 * pMid_b.x + t0 * t0 * pTip_b.x,
+                    omt0 * omt0 * pBase.y + 2.0f * omt0 * t0 * pMid_b.y + t0 * t0 * pTip_b.y,
+                    omt0 * omt0 * pBase.z + 2.0f * omt0 * t0 * pMid_b.z + t0 * t0 * pTip_b.z
+                };
+                Vector3 center1 = {
+                    omt1 * omt1 * pBase.x + 2.0f * omt1 * t1 * pMid_b.x + t1 * t1 * pTip_b.x,
+                    omt1 * omt1 * pBase.y + 2.0f * omt1 * t1 * pMid_b.y + t1 * t1 * pTip_b.y,
+                    omt1 * omt1 * pBase.z + 2.0f * omt1 * t1 * pMid_b.z + t1 * t1 * pTip_b.z
+                };
+
+                Vector3 dir = Vector3Normalize(Vector3Subtract(center1, center0));
+                Vector3 side = Vector3Normalize(Vector3CrossProduct(dir, (Vector3){0, 1, 0}));
+                if (Vector3Length(side) < 0.01f) side = (Vector3){1, 0, 0};
+
+                float w0 = width * powf(1.0f - t0, 1.15f);
+                float w1 = width * powf(1.0f - t1, 1.15f);
+
                 Vector3 p0 = {center0.x - side.x * w0, center0.y, center0.z - side.z * w0};
                 Vector3 p1 = {center0.x + side.x * w0, center0.y, center0.z + side.z * w0};
                 Vector3 p2 = {center1.x + side.x * w1, center1.y, center1.z + side.z * w1};
                 Vector3 p3 = {center1.x - side.x * w1, center1.y, center1.z - side.z * w1};
+
                 Color color0 = Nature_LerpColor(style.rootColor, style.tipColor, t0);
                 Color color1 = Nature_LerpColor(style.rootColor, style.tipColor, t1);
-                if (segment == bladeSegments - 1) {
+
+                if (style.hasPlumes) {
+                    if (segment == bladeSegments - 1) {
+                        Nature_SetVertex(&mesh, cursor++, p0, facing, clump->phase, t0, color0);
+                        Nature_SetVertex(&mesh, cursor++, p1, facing, clump->phase, t0, color0);
+                        Nature_SetVertex(&mesh, cursor++, center1, facing, clump->phase, 1.0f, color1);
+                    } else {
+                        Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, facing,
+                                       clump->phase, t0, t1, color0, color1);
+                    }
+                } else if (segment == bladeSegments - 1) {
                     Nature_AddPointedBladeTip(&mesh, &cursor, p0, p1, center1, facing,
                                               clump->phase, t0, color0, color1);
                 } else {
@@ -718,6 +770,110 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                                            clump->phase, t0, t1, color0, color1);
                 }
             }
+        }
+
+        // Shore reeds: 3D fluted silky plumes and arching lateral leaves (54 + 12 = 66 vertices)
+        if (style.hasPlumes) {
+            float caneHeight = clump->height * 1.35f;
+            float caneAngle = clump->rotationDeg * DEG2RAD + 0.22f * sinf((float)i * 1.7f);
+            float caneLean = caneHeight * 0.32f;
+            Vector3 caneP0 = {clump->position.x, clump->position.y, clump->position.z};
+            Vector3 caneP1 = {clump->position.x + cosf(caneAngle) * caneLean * 0.45f,
+                              clump->position.y + caneHeight * 0.55f,
+                              clump->position.z + sinf(caneAngle) * caneLean * 0.45f};
+            Vector3 caneP2 = {clump->position.x + cosf(caneAngle) * caneLean,
+                              clump->position.y + caneHeight,
+                              clump->position.z + sinf(caneAngle) * caneLean};
+
+            // 4 knot points along curved plume spindle (t = 0.65 to 1.0)
+            float tKnots[4] = {0.65f, 0.78f, 0.90f, 1.00f};
+            Vector3 plPts[4];
+            for (int k = 0; k < 4; k++) {
+                float tk = tKnots[k];
+                float omtk = 1.0f - tk;
+                plPts[k] = (Vector3){
+                    omtk*omtk*caneP0.x + 2*omtk*tk*caneP1.x + tk*tk*caneP2.x,
+                    omtk*omtk*caneP0.y + 2*omtk*tk*caneP1.y + tk*tk*caneP2.y,
+                    omtk*omtk*caneP0.z + 2*omtk*tk*caneP1.z + tk*tk*caneP2.z
+                };
+            }
+
+            // Parametric Reed Plume Density Envelope: R(u) = R_max * sin(pi * u^0.8)^0.6
+            // Volumetric envelope with feathery fiber alpha texture mapping
+            float rMax = fmaxf(0.12f, clump->radius * 0.85f);
+            float uKnots[4] = {0.05f, 0.42f, 0.74f, 0.98f};
+            float plWidths[4];
+            for (int k = 0; k < 4; k++) {
+                float u = uKnots[k];
+                float s = sinf(PI * powf(u, 0.80f));
+                if (s < 0.0f) s = 0.0f;
+                plWidths[k] = fmaxf(0.015f, rMax * powf(s, 0.60f));
+            }
+            Color plColors[4] = {
+                {245, 238, 220, 255}, // Base: warm straw golden tan
+                {252, 248, 238, 255}, // Lower mid: soft ivory cream
+                {255, 252, 246, 255}, // Upper mid: light airy cream
+                {255, 255, 255, 255}  // Tip: pure pale plume highlight
+            };
+
+            // 3 intersecting ribbon strips (60 deg apart -> 6-pointed star cross section in 3D: 54 vertices)
+            for (int s = 0; s < 3; s++) {
+                float stripAngle = caneAngle + (float)s * 1.04719755f;
+                Vector3 side = {-sinf(stripAngle), 0.0f, cosf(stripAngle)};
+                Vector3 norm = Vector3Normalize((Vector3){cosf(stripAngle), 0.25f, sinf(stripAngle)});
+
+                for (int seg = 0; seg < 3; seg++) {
+                    float w0 = plWidths[seg];
+                    float w1 = plWidths[seg + 1];
+                    Color c0 = plColors[seg];
+                    Color c1 = plColors[seg + 1];
+                    Vector3 q0 = {plPts[seg].x - side.x * w0, plPts[seg].y, plPts[seg].z - side.z * w0};
+                    Vector3 q1 = {plPts[seg].x + side.x * w0, plPts[seg].y, plPts[seg].z + side.z * w0};
+                    Vector3 q2 = {plPts[seg + 1].x + side.x * w1, plPts[seg + 1].y, plPts[seg + 1].z + side.z * w1};
+                    Vector3 q3 = {plPts[seg + 1].x - side.x * w1, plPts[seg + 1].y, plPts[seg + 1].z - side.z * w1};
+                    if (style.texturePath != NULL) {
+                        float vBot = 1.0f - (float)seg / 3.0f;
+                        float vTop = 1.0f - (float)(seg + 1) / 3.0f;
+                        Nature_AddTexturedQuadUV(&mesh, &cursor, q0, q1, q2, q3, norm,
+                                                 clump->phase, tKnots[seg], tKnots[seg + 1],
+                                                 c0, c1, 0.0f, vTop, 1.0f, vBot);
+                    } else {
+                        Nature_AddQuad(&mesh, &cursor, q0, q1, q2, q3, norm,
+                                       clump->phase, tKnots[seg], tKnots[seg + 1], c0, c1);
+                    }
+                }
+            }
+
+            // Two lateral arching leaves along reed stalk
+            float tL0 = 0.32f, tL1 = 0.52f;
+            float omtL0 = 1.0f - tL0, omtL1 = 1.0f - tL1;
+            Vector3 leafRoot0 = {
+                omtL0*omtL0*caneP0.x + 2*omtL0*tL0*caneP1.x + tL0*tL0*caneP2.x,
+                omtL0*omtL0*caneP0.y + 2*omtL0*tL0*caneP1.y + tL0*tL0*caneP2.y,
+                omtL0*omtL0*caneP0.z + 2*omtL0*tL0*caneP1.z + tL0*tL0*caneP2.z
+            };
+            Vector3 leafRoot1 = {
+                omtL1*omtL1*caneP0.x + 2*omtL1*tL1*caneP1.x + tL1*tL1*caneP2.x,
+                omtL1*omtL1*caneP0.y + 2*omtL1*tL1*caneP1.y + tL1*tL1*caneP2.y,
+                omtL1*omtL1*caneP0.z + 2*omtL1*tL1*caneP1.z + tL1*tL1*caneP2.z
+            };
+            float lAng0 = caneAngle + 1.42f;
+            float lAng1 = caneAngle - 1.42f;
+            Vector3 lDir0 = {cosf(lAng0), 0.0f, sinf(lAng0)};
+            Vector3 lDir1 = {cosf(lAng1), 0.0f, sinf(lAng1)};
+            Vector3 lSide0 = {-lDir0.z * 0.024f, 0.0f, lDir0.x * 0.024f};
+            Vector3 lSide1 = {-lDir1.z * 0.022f, 0.0f, lDir1.x * 0.022f};
+            Vector3 lTip0 = {leafRoot0.x + lDir0.x * 0.45f, leafRoot0.y - 0.12f, leafRoot0.z + lDir0.z * 0.45f};
+            Vector3 lTip1 = {leafRoot1.x + lDir1.x * 0.40f, leafRoot1.y - 0.10f, leafRoot1.z + lDir1.z * 0.40f};
+            Color leafCol = {88, 122, 50, 255};
+            Nature_AddQuad(&mesh, &cursor,
+                           Vector3Subtract(leafRoot0, lSide0), Vector3Add(leafRoot0, lSide0),
+                           Vector3Add(lTip0, Vector3Scale(lSide0, 0.15f)), Vector3Subtract(lTip0, Vector3Scale(lSide0, 0.15f)),
+                           (Vector3){0, 1, 0}, clump->phase, 0.3f, 0.5f, leafCol, Nature_ScaleColor(leafCol, 1.15f));
+            Nature_AddQuad(&mesh, &cursor,
+                           Vector3Subtract(leafRoot1, lSide1), Vector3Add(leafRoot1, lSide1),
+                           Vector3Add(lTip1, Vector3Scale(lSide1, 0.15f)), Vector3Subtract(lTip1, Vector3Scale(lSide1, 0.15f)),
+                           (Vector3){0, 1, 0}, clump->phase, 0.4f, 0.6f, leafCol, Nature_ScaleColor(leafCol, 1.15f));
         }
     }
     return Nature_ModelFromMesh(mesh, Nature_GetShader(style.texturePath != NULL));
@@ -1116,6 +1272,166 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
     return Nature_ModelFromMesh(mesh, Nature_GetShader(texturedBloom));
 }
 
+static inline int Nature_FlowerBloomVertexCount(int variant)
+{
+    int morph = variant % 4;
+    switch (morph) {
+        case 0: return 114; // 2-layer Rose/Poppy: 5 outer (60) + 3 inner (36) + dome (18) = 114
+        case 1: return 114; // 8 spatulate daisy petals (96) + phyllotaxis disc (18) = 114
+        case 2: return 114; // Lavender spike: 4 whorls x 2 florets (96) + tip bud dome (18) = 114
+        case 3: return 90;  // 6 reflexed lanceolate petals (72) + center dome (18) = 90
+        default: return 114;
+    }
+}
+
+typedef enum {
+    PETAL_SHAPE_OVAL,       // w(t) = W_max * sin(pi*t)^n
+    PETAL_SHAPE_LANCEOLATE, // asymmetric: rapid bulge, long taper to sharp tip
+    PETAL_SHAPE_OBCORDATE,  // heart-shaped with notched apex: w_base(t) - notch
+    PETAL_SHAPE_SPATULATE,  // spoon-shaped: slender base, rounded wide tip
+} PetalShapeType;
+
+typedef struct {
+    PetalShapeType shape;
+    float wMax;
+    float length;
+    float exponent;     // n for oval/obcordate power
+    float tPeak;        // peak location (e.g. 0.30 for lanceolate, 0.75 for spatulate)
+    float notchDepth;   // notch depth for obcordate apex
+    float curveAmount;  // vertical cupping / reflex (dy = curveAmount * t^2.5)
+    float twistAmount;  // twist angle around petal axis (radians)
+} PetalParams;
+
+static inline float Nature_EvalPetalWidth(float t, const PetalParams *p)
+{
+    if (t <= 0.0f) return 0.002f;
+    if (t >= 1.0f) return 0.002f;
+
+    switch (p->shape) {
+        case PETAL_SHAPE_OVAL: {
+            float s = sinf(PI * t);
+            if (s < 0.0f) s = 0.0f;
+            float n = p->exponent > 0.0f ? p->exponent : 1.2f;
+            return p->wMax * powf(s, n);
+        }
+        case PETAL_SHAPE_LANCEOLATE: {
+            float tPeak = p->tPeak > 0.05f ? p->tPeak : 0.30f;
+            if (t < tPeak) {
+                return p->wMax * powf(t / tPeak, 0.50f);
+            } else {
+                return p->wMax * powf((1.0f - t) / (1.0f - tPeak), 1.80f);
+            }
+        }
+        case PETAL_SHAPE_OBCORDATE: {
+            float s = sinf(PI * t);
+            if (s < 0.0f) s = 0.0f;
+            float wBase = p->wMax * powf(s, 1.20f);
+            float notch = 0.0f;
+            if (t > 0.80f) {
+                float dt = (t - 1.0f) / 0.08f;
+                float depth = p->notchDepth > 0.0f ? p->notchDepth : p->wMax * 0.40f;
+                notch = depth * expf(-0.5f * dt * dt);
+            }
+            return fmaxf(0.003f, wBase - notch);
+        }
+        case PETAL_SHAPE_SPATULATE: {
+            float tPeak = p->tPeak > 0.05f ? p->tPeak : 0.75f;
+            if (t < tPeak) {
+                return p->wMax * powf(t / tPeak, 0.65f);
+            } else {
+                return p->wMax * powf((1.0f - t) / (1.0f - tPeak), 1.40f);
+            }
+        }
+        default:
+            return p->wMax * sinf(PI * t);
+    }
+}
+
+static inline float Nature_EvalPetalElevation(float t, const PetalParams *p)
+{
+    return p->curveAmount * powf(t, 2.5f);
+}
+
+static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
+                                     Vector3 head, Vector3 dir, Vector3 side,
+                                     const PetalParams *p, float phase,
+                                     Color cBase, Color cMid, Color cTip)
+{
+    float len = p->length;
+    float t1 = 0.52f;
+
+    float w0 = Nature_EvalPetalWidth(0.06f, p);
+    float dy0 = Nature_EvalPetalElevation(0.0f, p);
+
+    float w1 = Nature_EvalPetalWidth(t1, p);
+    float dy1 = Nature_EvalPetalElevation(t1, p);
+
+    float w2 = Nature_EvalPetalWidth(0.96f, p);
+    float dy2 = Nature_EvalPetalElevation(1.0f, p);
+
+    Vector3 side0 = side;
+    Vector3 side1 = side;
+    Vector3 side2 = side;
+    if (fabsf(p->twistAmount) > 0.001f) {
+        float phi1 = p->twistAmount * t1;
+        float phi2 = p->twistAmount * 1.0f;
+        side1 = (Vector3){side.x * cosf(phi1), sinf(phi1) * len * 0.12f, side.z * cosf(phi1)};
+        side2 = (Vector3){side.x * cosf(phi2), sinf(phi2) * len * 0.18f, side.z * cosf(phi2)};
+    }
+
+    Vector3 pMid = {head.x + dir.x * (len * t1), head.y + dy1, head.z + dir.z * (len * t1)};
+    Vector3 pTip = {head.x + dir.x * len, head.y + dy2, head.z + dir.z * len};
+
+    // Analytical normals across parabolic curved petal
+    Vector3 n0 = Vector3Normalize((Vector3){dir.x * 0.15f, 0.98f, dir.z * 0.15f});
+    Vector3 n1 = Vector3Normalize((Vector3){dir.x * 0.35f, 0.90f, dir.z * 0.35f});
+    Vector3 n2 = Vector3Normalize((Vector3){dir.x * 0.65f, 0.70f + (dy2 < dy1 ? -0.35f : 0.25f), dir.z * 0.65f});
+
+    // Segment 0: Base to Mid (6 vertices)
+    Vector3 b0 = {head.x - side0.x * w0, head.y + dy0 + 0.003f, head.z - side0.z * w0};
+    Vector3 b1 = {head.x + side0.x * w0, head.y + dy0 + 0.003f, head.z + side0.z * w0};
+    Vector3 m0 = {pMid.x - side1.x * w1, pMid.y, pMid.z - side1.z * w1};
+    Vector3 m1 = {pMid.x + side1.x * w1, pMid.y, pMid.z + side1.z * w1};
+
+    Nature_SetVertex(mesh, (*cursor)++, b0, n0, phase, 0.85f, cBase);
+    Nature_SetVertex(mesh, (*cursor)++, b1, n0, phase, 0.85f, cBase);
+    Nature_SetVertex(mesh, (*cursor)++, m1, n1, phase, 0.95f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, b0, n0, phase, 0.85f, cBase);
+    Nature_SetVertex(mesh, (*cursor)++, m1, n1, phase, 0.95f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, m0, n1, phase, 0.95f, cMid);
+
+    // Segment 1: Mid to Tip (6 vertices)
+    Vector3 tL = {pTip.x - side2.x * w2, pTip.y, pTip.z - side2.z * w2};
+    Vector3 tR = {pTip.x + side2.x * w2, pTip.y, pTip.z + side2.z * w2};
+
+    Nature_SetVertex(mesh, (*cursor)++, m0, n1, phase, 0.95f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, m1, n1, phase, 0.95f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, tR, n2, phase, 1.00f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, m0, n1, phase, 0.95f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, tR, n2, phase, 1.00f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, tL, n2, phase, 1.00f, cTip);
+}
+
+static void Nature_AddFlowerCenterDome(Mesh *mesh, int *cursor, Vector3 head, float cR, float cHeight, float phase, Color centerColor)
+{
+    Vector3 apex = {head.x, head.y + cHeight, head.z};
+    Color apexColor = Nature_ScaleColor(centerColor, 1.28f);
+    Color rimColor = Nature_ScaleColor(centerColor, 0.78f);
+    // 6-sided dome with golden angle phyllotaxis micro-modulation
+    for (int s = 0; s < 6; s++) {
+        float a0 = (float)s * 1.04719755f;
+        float a1 = (float)(s + 1) * 1.04719755f;
+        float goldMod0 = 1.0f + 0.05f * sinf((float)s * 2.39996f);
+        float goldMod1 = 1.0f + 0.05f * sinf((float)(s + 1) * 2.39996f);
+        Vector3 r0 = {head.x + cosf(a0) * cR * goldMod0, head.y + 0.004f, head.z + sinf(a0) * cR * goldMod0};
+        Vector3 r1 = {head.x + cosf(a1) * cR * goldMod1, head.y + 0.004f, head.z + sinf(a1) * cR * goldMod1};
+        Vector3 norm = Vector3Normalize((Vector3){cosf((a0 + a1) * 0.5f) * 0.40f, 0.90f, sinf((a0 + a1) * 0.5f) * 0.40f});
+        Nature_SetVertex(mesh, (*cursor)++, apex, (Vector3){0.0f, 1.0f, 0.0f}, phase, 1.0f, apexColor);
+        Nature_SetVertex(mesh, (*cursor)++, r0, norm, phase, 0.95f, rimColor);
+        Nature_SetVertex(mesh, (*cursor)++, r1, norm, phase, 0.95f, rimColor);
+    }
+}
+
 MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, int count,
                                          Color stemColor, Color centerColor,
                                          const char *petalTexturePath, float alphaCutoff,
@@ -1125,33 +1441,28 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
     if (!placements || count <= 0) return field;
     Vector3 boundsMin = placements[0].position;
     Vector3 boundsMax = placements[0].position;
-    boundsMin.x -= placements[0].bloomRadius;
-    boundsMin.z -= placements[0].bloomRadius;
-    boundsMax.x += placements[0].bloomRadius;
-    boundsMax.y += placements[0].height + placements[0].bloomRadius;
-    boundsMax.z += placements[0].bloomRadius;
-    bool texturedBloom = petalTexturePath != NULL;
+    boundsMin.x -= placements[0].bloomRadius * 1.5f;
+    boundsMin.z -= placements[0].bloomRadius * 1.5f;
+    boundsMax.x += placements[0].bloomRadius * 1.5f;
+    boundsMax.y += placements[0].height + placements[0].bloomRadius * 1.5f;
+    boundsMax.z += placements[0].bloomRadius * 1.5f;
     if (GfxQuality_Get() >= GFX_HIGH)
         (void)NatureShadow_GetShader();
     if (atlasColumns < 1) atlasColumns = 1;
     if (atlasRows < 1) atlasRows = 1;
+
+    // Calculate exact vertex count: 18 (basal rosette) + 24 (curved stem) + 12 (mid leaves) + bloom
     int vertexCount = 0;
     for (int i = 0; i < count; i++) {
         const MapFlowerPlacement *flower = &placements[i];
-        float extent = flower->bloomRadius * 1.15f;
+        float extent = flower->bloomRadius * 1.6f;
         boundsMin.x = fminf(boundsMin.x, flower->position.x - extent);
         boundsMin.y = fminf(boundsMin.y, flower->position.y);
         boundsMin.z = fminf(boundsMin.z, flower->position.z - extent);
         boundsMax.x = fmaxf(boundsMax.x, flower->position.x + extent);
-        boundsMax.y = fmaxf(boundsMax.y,
-                            flower->position.y + flower->height + extent);
+        boundsMax.y = fmaxf(boundsMax.y, flower->position.y + flower->height + extent);
         boundsMax.z = fmaxf(boundsMax.z, flower->position.z + extent);
-        int petals = placements[i].petalCount ? placements[i].petalCount : 5;
-        if (petals < 4) petals = 4;
-        if (petals > 6) petals = 6;
-        // Two foliage leaves (12 vertices) keep a close flower from reading as
-        // a colored disc on a bare pole. Bloom/center counts remain unchanged.
-        vertexCount += texturedBloom ? 42 : 36 + petals * 6;
+        vertexCount += 54 + Nature_FlowerBloomVertexCount(flower->bloomVariant);
     }
     Mesh mesh = Nature_AllocMesh(vertexCount);
     int cursor = 0;
@@ -1159,137 +1470,208 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         const MapFlowerPlacement *flower = &placements[i];
         float phase = flower->phase;
         float h = flower->height;
-        float stemWidth = fmaxf(0.007f, flower->bloomRadius * 0.16f);
         Vector3 base = flower->position;
+        float petalScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
+        float r = flower->bloomRadius * petalScale;
+
+        // 1. Basal leaf rosette: 3 leaves hugging the soil to anchor the flower
+        for (int b = 0; b < 3; b++) {
+            float bAngle = flower->rotationDeg * DEG2RAD + (float)b * 2.0944f;
+            Vector3 bDir = {cosf(bAngle), 0.0f, sinf(bAngle)};
+            Vector3 bSide = {-bDir.z * 0.016f, 0.0f, bDir.x * 0.016f};
+            float bLen = fmaxf(0.065f, flower->bloomRadius * 0.95f);
+            Vector3 r0 = {base.x - bSide.x, base.y + 0.002f, base.z - bSide.z};
+            Vector3 r1 = {base.x + bSide.x, base.y + 0.002f, base.z + bSide.z};
+            Vector3 r2 = {base.x + bDir.x * bLen + bSide.x * 0.2f, base.y + 0.006f, base.z + bDir.z * bLen + bSide.z * 0.2f};
+            Vector3 r3 = {base.x + bDir.x * bLen - bSide.x * 0.2f, base.y + 0.006f, base.z + bDir.z * bLen - bSide.z * 0.2f};
+            Color basalColor = {52, 80, 36, 255};
+            Nature_AddQuad(&mesh, &cursor, r0, r1, r2, r3, (Vector3){0.0f, 1.0f, 0.0f},
+                           phase, 0.0f, 0.2f, basalColor, Nature_ScaleColor(basalColor, 1.25f));
+        }
+
+        // 2. Curved stem using quadratic Bezier (bowing organically under wind/gravity)
+        float stemWidth = fmaxf(0.005f, flower->bloomRadius * 0.08f);
         float leanAngle = flower->rotationDeg * DEG2RAD * 0.73f + phase * 4.1f;
-        float lean = h * (0.025f + 0.055f * (0.5f + 0.5f * sinf((float)i * 2.37f)));
-        Vector3 head = {base.x + cosf(leanAngle) * lean, base.y + h,
-                        base.z + sinf(leanAngle) * lean};
-        float headTilt = 0.24f + 0.28f * (0.5f + 0.5f * sinf((float)i * 1.91f + phase));
-        float tiltX = cosf(leanAngle) * headTilt;
-        float tiltZ = sinf(leanAngle) * headTilt;
-        Vector3 bloomNormal = {-tiltX, 1.0f, -tiltZ};
+        float leanDist = h * (0.06f + 0.08f * (0.5f + 0.5f * sinf((float)i * 2.37f)));
+        Vector3 stemP0 = base;
+        Vector3 stemP1 = {base.x + cosf(leanAngle) * leanDist * 0.40f,
+                          base.y + h * 0.52f,
+                          base.z + sinf(leanAngle) * leanDist * 0.40f};
+        Vector3 head = {base.x + cosf(leanAngle) * leanDist, base.y + h,
+                        base.z + sinf(leanAngle) * leanDist};
+
+        // Mid point on Bezier curve
+        Vector3 midStem = {
+            0.25f * stemP0.x + 0.50f * stemP1.x + 0.25f * head.x,
+            0.25f * stemP0.y + 0.50f * stemP1.y + 0.25f * head.y,
+            0.25f * stemP0.z + 0.50f * stemP1.z + 0.25f * head.z
+        };
+
         for (int cross = 0; cross < 2; cross++) {
             float angle = flower->rotationDeg * DEG2RAD + cross * PI * 0.5f;
             Vector3 side = {cosf(angle) * stemWidth, 0.0f, sinf(angle) * stemWidth};
             Vector3 normal = {-sinf(angle), 0.08f, cosf(angle)};
-            Vector3 p0 = {base.x - side.x, base.y, base.z - side.z};
-            Vector3 p1 = {base.x + side.x, base.y, base.z + side.z};
-            Vector3 p2 = {head.x + side.x * 0.45f, head.y, head.z + side.z * 0.45f};
-            Vector3 p3 = {head.x - side.x * 0.45f, head.y, head.z - side.z * 0.45f};
-            Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, normal, phase, 0.0f, 1.0f, stemColor, stemColor);
+
+            // Segment 0: base to mid
+            Vector3 s0_0 = Vector3Subtract(stemP0, side);
+            Vector3 s0_1 = Vector3Add(stemP0, side);
+            Vector3 s0_2 = Vector3Add(midStem, Vector3Scale(side, 0.8f));
+            Vector3 s0_3 = Vector3Subtract(midStem, Vector3Scale(side, 0.8f));
+            Nature_AddQuad(&mesh, &cursor, s0_0, s0_1, s0_2, s0_3, normal, phase, 0.0f, 0.5f, stemColor, stemColor);
+
+            // Segment 1: mid to head
+            Vector3 s1_0 = s0_3;
+            Vector3 s1_1 = s0_2;
+            Vector3 s1_2 = Vector3Add(head, Vector3Scale(side, 0.5f));
+            Vector3 s1_3 = Vector3Subtract(head, Vector3Scale(side, 0.5f));
+            Nature_AddQuad(&mesh, &cursor, s1_0, s1_1, s1_2, s1_3, normal, phase, 0.5f, 1.0f, stemColor, stemColor);
         }
+
+        // 3. Mid-stem foliage leaves
         for (int leaf = 0; leaf < 2; leaf++) {
-            float rootT = leaf == 0 ? 0.34f : 0.61f;
-            float leafAngle = flower->rotationDeg * DEG2RAD
-                            + (leaf == 0 ? 1.37f : -0.83f);
-            Vector3 leafDir = {cosf(leafAngle), 0.0f, sinf(leafAngle)};
-            Vector3 leafSide = {-leafDir.z, 0.0f, leafDir.x};
-            float leafLength = fmaxf(flower->bloomRadius * 0.88f,
-                                     h * (leaf == 0 ? 0.22f : 0.16f));
-            float leafWidth = leafLength * (leaf == 0 ? 0.18f : 0.15f);
-            Vector3 root = {
-                base.x + (head.x - base.x) * rootT,
-                base.y + h * rootT,
-                base.z + (head.z - base.z) * rootT,
+            float rootT = leaf == 0 ? 0.35f : 0.65f;
+            float leafAngle = leanAngle + (leaf == 0 ? 1.40f : -1.40f);
+            Vector3 lDir = {cosf(leafAngle), 0.0f, sinf(leafAngle)};
+            Vector3 lSide = {-lDir.z * 0.012f, 0.0f, lDir.x * 0.012f};
+            float lLen = fmaxf(0.045f, flower->bloomRadius * 0.75f);
+            float omt = 1.0f - rootT;
+            Vector3 lRoot = {
+                omt*omt*stemP0.x + 2*omt*rootT*stemP1.x + rootT*rootT*head.x,
+                omt*omt*stemP0.y + 2*omt*rootT*stemP1.y + rootT*rootT*head.y,
+                omt*omt*stemP0.z + 2*omt*rootT*stemP1.z + rootT*rootT*head.z
             };
-            Vector3 leafTip = {root.x + leafDir.x * leafLength,
-                               root.y + leafLength * (leaf == 0 ? 0.30f : 0.20f),
-                               root.z + leafDir.z * leafLength};
-            Vector3 l0 = {root.x - leafSide.x * leafWidth, root.y,
-                          root.z - leafSide.z * leafWidth};
-            Vector3 l1 = {root.x + leafSide.x * leafWidth, root.y,
-                          root.z + leafSide.z * leafWidth};
-            Vector3 l2 = {leafTip.x + leafSide.x * leafWidth * 0.10f, leafTip.y,
-                          leafTip.z + leafSide.z * leafWidth * 0.10f};
-            Vector3 l3 = {leafTip.x - leafSide.x * leafWidth * 0.10f, leafTip.y,
-                          leafTip.z - leafSide.z * leafWidth * 0.10f};
-            Nature_AddQuad(&mesh, &cursor, l0, l1, l2, l3,
-                           (Vector3){-leafDir.x * 0.25f, 1.0f, -leafDir.z * 0.25f},
-                           phase, rootT, fminf(rootT + 0.35f, 0.86f), stemColor,
-                           Nature_ScaleColor(stemColor, 1.12f));
+            Vector3 lTip = {lRoot.x + lDir.x * lLen, lRoot.y + lLen * 0.35f, lRoot.z + lDir.z * lLen};
+            Nature_AddQuad(&mesh, &cursor,
+                           Vector3Subtract(lRoot, lSide), Vector3Add(lRoot, lSide),
+                           Vector3Add(lTip, Vector3Scale(lSide, 0.2f)), Vector3Subtract(lTip, Vector3Scale(lSide, 0.2f)),
+                           (Vector3){0, 1, 0}, phase, rootT, rootT + 0.3f, stemColor, Nature_ScaleColor(stemColor, 1.15f));
         }
-        int petalCount = flower->petalCount ? flower->petalCount : 5;
-        if (petalCount < 4) petalCount = 4;
-        if (petalCount > 6) petalCount = 6;
-        float petalScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
-        if (texturedBloom) {
-            float angle = flower->rotationDeg * DEG2RAD;
-            Vector3 right = {cosf(angle), 0.0f, sinf(angle)};
-            Vector3 forward = {-sinf(angle), 0.0f, cosf(angle)};
-            float r = flower->bloomRadius * petalScale * 1.08f;
-            float ox0 = (-right.x - forward.x) * r;
-            float oz0 = (-right.z - forward.z) * r;
-            float ox1 = ( right.x - forward.x) * r;
-            float oz1 = ( right.z - forward.z) * r;
-            float ox2 = ( right.x + forward.x) * r;
-            float oz2 = ( right.z + forward.z) * r;
-            float ox3 = (-right.x + forward.x) * r;
-            float oz3 = (-right.z + forward.z) * r;
-            Vector3 p0 = {head.x + ox0, head.y + tiltX * ox0 + tiltZ * oz0, head.z + oz0};
-            Vector3 p1 = {head.x + ox1, head.y + tiltX * ox1 + tiltZ * oz1, head.z + oz1};
-            Vector3 p2 = {head.x + ox2, head.y + tiltX * ox2 + tiltZ * oz2, head.z + oz2};
-            Vector3 p3 = {head.x + ox3, head.y + tiltX * ox3 + tiltZ * oz3, head.z + oz3};
-            int variantCount = atlasColumns * atlasRows;
-            int variant = flower->bloomVariant % variantCount;
-            int column = variant % atlasColumns;
-            int row = variant / atlasColumns;
-            float insetU = 0.008f / atlasColumns;
-            float insetV = 0.008f / atlasRows;
-            Vector4 uvRect = {
-                (float)column / atlasColumns + insetU,
-                (float)row / atlasRows + insetV,
-                (float)(column + 1) / atlasColumns - insetU,
-                (float)(row + 1) / atlasRows - insetV,
-            };
-            Nature_AddTexturedBloom(&mesh, &cursor, p0, p1, p2, p3, bloomNormal,
-                                    phase, flower->petalColor, uvRect);
-        } else {
-            for (int petal = 0; petal < petalCount; petal++) {
-                float angle = flower->rotationDeg * DEG2RAD + (float)petal * 2.0f * PI / petalCount;
-                Vector3 radial = {cosf(angle), 0.0f, sinf(angle)};
-                Vector3 side = {-radial.z, 0.0f, radial.x};
-                float irregularity = 0.92f + 0.08f * sinf((float)(i * 17 + petal * 11));
-                float r = flower->bloomRadius * petalScale * irregularity;
-                float ox0 = radial.x * r * 0.10f;
-                float oz0 = radial.z * r * 0.10f;
-                float ox1 = radial.x * r * 0.48f + side.x * r * 0.29f;
-                float oz1 = radial.z * r * 0.48f + side.z * r * 0.29f;
-                float ox2 = radial.x * r;
-                float oz2 = radial.z * r;
-                float ox3 = radial.x * r * 0.48f - side.x * r * 0.29f;
-                float oz3 = radial.z * r * 0.48f - side.z * r * 0.29f;
-                Vector3 p0 = {head.x + ox0, head.y + 0.018f + tiltX * ox0 + tiltZ * oz0, head.z + oz0};
-                Vector3 p1 = {head.x + ox1, head.y + tiltX * ox1 + tiltZ * oz1, head.z + oz1};
-                Vector3 p2 = {head.x + ox2, head.y - r * 0.10f + tiltX * ox2 + tiltZ * oz2, head.z + oz2};
-                Vector3 p3 = {head.x + ox3, head.y + tiltX * ox3 + tiltZ * oz3, head.z + oz3};
-                Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, bloomNormal,
-                               phase, 1.0f, 1.0f, flower->petalColor, flower->petalColor);
+
+        // 4. Assemble 3D Flower Head from Parametric Curved Petals
+        int morph = flower->bloomVariant % 4;
+        Color cBase = Nature_ScaleColor(flower->petalColor, 0.72f);
+        Color cMid = flower->petalColor;
+        Color cTip = Nature_ScaleColor(flower->petalColor, 1.15f);
+
+        switch (morph) {
+            case 0: { // Multi-layer Rose / Poppy: 5 outer (60) + 3 inner (36) + dome (18) = 114 verts
+                // Layer 0: 5 outer obcordate petals with apical notch
+                PetalParams pOuter = {
+                    .shape = PETAL_SHAPE_OBCORDATE,
+                    .wMax = r * 0.48f,
+                    .length = r * 1.05f,
+                    .exponent = 1.25f,
+                    .notchDepth = r * 0.16f,
+                    .curveAmount = r * 0.28f,
+                    .twistAmount = 0.08f,
+                };
+                for (int k = 0; k < 5; k++) {
+                    float angle = flower->rotationDeg * DEG2RAD + (float)k * 1.256637f;
+                    Vector3 dir = {cosf(angle), 0.0f, sinf(angle)};
+                    Vector3 side = {-dir.z, 0.0f, dir.x};
+                    Nature_AddParametricPetal(&mesh, &cursor, head, dir, side, &pOuter,
+                                             phase, cBase, cMid, cTip);
+                }
+                // Layer 1: 3 inner petals with phase offset (pi/5) and tighter curl
+                PetalParams pInner = {
+                    .shape = PETAL_SHAPE_OBCORDATE,
+                    .wMax = r * 0.38f,
+                    .length = r * 0.78f,
+                    .exponent = 1.15f,
+                    .notchDepth = r * 0.12f,
+                    .curveAmount = r * 0.38f,
+                    .twistAmount = -0.10f,
+                };
+                Color cInBase = Nature_ScaleColor(cBase, 0.90f);
+                Color cInMid = Nature_ScaleColor(cMid, 0.95f);
+                for (int k = 0; k < 3; k++) {
+                    float angle = flower->rotationDeg * DEG2RAD + 0.628318f + (float)k * 2.094395f;
+                    Vector3 dir = {cosf(angle), 0.0f, sinf(angle)};
+                    Vector3 side = {-dir.z, 0.0f, dir.x};
+                    Nature_AddParametricPetal(&mesh, &cursor, head, dir, side, &pInner,
+                                             phase, cInBase, cInMid, cTip);
+                }
+                // Center dome
+                Nature_AddFlowerCenterDome(&mesh, &cursor, head, r * 0.20f, r * 0.12f, phase, centerColor);
+                break;
+            }
+            case 1: { // 8-petal Daisy / Cosmos: spatulate petals (96 verts) + phyllotaxis dome (18 verts) = 114 verts
+                PetalParams pDaisy = {
+                    .shape = PETAL_SHAPE_SPATULATE,
+                    .wMax = r * 0.24f,
+                    .length = r * 1.15f,
+                    .tPeak = 0.75f,
+                    .curveAmount = -r * 0.06f,
+                    .twistAmount = 0.05f,
+                };
+                for (int k = 0; k < 8; k++) {
+                    float angle = flower->rotationDeg * DEG2RAD + (float)k * 0.785398f;
+                    Vector3 dir = {cosf(angle), 0.0f, sinf(angle)};
+                    Vector3 side = {-dir.z, 0.0f, dir.x};
+                    Nature_AddParametricPetal(&mesh, &cursor, head, dir, side, &pDaisy,
+                                             phase, cBase, cMid, cTip);
+                }
+                Nature_AddFlowerCenterDome(&mesh, &cursor, head, r * 0.32f, r * 0.09f, phase, centerColor);
+                break;
+            }
+            case 2: { // Lavender Spike Inflorescence: 4 whorls x 2 florets (96 verts) + tip bud (18 verts) = 114 verts
+                float spH = r * 2.2f;
+                float phaseSpiral = 0.38f; // ~22 deg rotation per tier
+                for (int k = 0; k < 4; k++) {
+                    float s = 0.22f + (float)k * 0.24f;
+                    Vector3 tierHead = {head.x, head.y + spH * s, head.z};
+                    // Botanical bloomFactor: lower florets fully open, top florets budding
+                    float bloomFactor = (s < 0.65f) ? 1.0f : fmaxf(0.40f, 1.0f - (s - 0.65f) / 0.35f);
+                    PetalParams pFloret = {
+                        .shape = PETAL_SHAPE_OVAL,
+                        .wMax = r * 0.22f * bloomFactor,
+                        .length = r * 0.60f * bloomFactor,
+                        .exponent = 1.10f,
+                        .curveAmount = r * 0.18f * bloomFactor,
+                        .twistAmount = 0.04f,
+                    };
+                    for (int j = 0; j < 2; j++) {
+                        float angle = flower->rotationDeg * DEG2RAD + (float)k * phaseSpiral + (float)j * PI;
+                        Vector3 dir = {cosf(angle), 0.0f, sinf(angle)};
+                        Vector3 side = {-dir.z, 0.0f, dir.x};
+                        Nature_AddParametricPetal(&mesh, &cursor, tierHead, dir, side, &pFloret,
+                                                 phase, cBase, cMid, cTip);
+                    }
+                }
+                Vector3 tipApex = {head.x, head.y + spH, head.z};
+                Nature_AddFlowerCenterDome(&mesh, &cursor, tipApex, r * 0.14f, r * 0.16f, phase, centerColor);
+                break;
+            }
+            case 3: { // 6-petal Bell / Campanula / Star: lanceolate reflexed petals (72) + dome (18) = 90 verts
+                PetalParams pBell = {
+                    .shape = PETAL_SHAPE_LANCEOLATE,
+                    .wMax = r * 0.34f,
+                    .length = r * 1.12f,
+                    .tPeak = 0.28f,
+                    .curveAmount = r * 0.26f,
+                    .twistAmount = 0.06f,
+                };
+                for (int k = 0; k < 6; k++) {
+                    float angle = flower->rotationDeg * DEG2RAD + (float)k * 1.04719755f;
+                    Vector3 dir = {cosf(angle), 0.0f, sinf(angle)};
+                    Vector3 side = {-dir.z, 0.0f, dir.x};
+                    Nature_AddParametricPetal(&mesh, &cursor, head, dir, side, &pBell,
+                                             phase, cBase, cMid, cTip);
+                }
+                Nature_AddFlowerCenterDome(&mesh, &cursor, head, r * 0.18f, r * 0.08f, phase, centerColor);
+                break;
             }
         }
-        float c = flower->bloomRadius * 0.17f;
-        Vector3 top = {head.x, head.y + c * 0.75f, head.z};
-        Vector3 corners[4] = {
-            {head.x - c, head.y - tiltX * c - tiltZ * c, head.z - c},
-            {head.x + c, head.y + tiltX * c - tiltZ * c, head.z - c},
-            {head.x + c, head.y + tiltX * c + tiltZ * c, head.z + c},
-            {head.x - c, head.y - tiltX * c + tiltZ * c, head.z + c},
-        };
-        for (int face = 0; face < 4; face++) {
-            Nature_SetVertex(&mesh, cursor++, top, (Vector3){0.0f, 1.0f, 0.0f}, phase, 1.0f, centerColor);
-            Nature_SetVertex(&mesh, cursor++, corners[face], (Vector3){0.0f, 1.0f, 0.0f}, phase, 1.0f, centerColor);
-            Nature_SetVertex(&mesh, cursor++, corners[(face + 1) & 3], (Vector3){0.0f, 1.0f, 0.0f}, phase, 1.0f, centerColor);
-        }
     }
-    field.model = Nature_ModelFromMesh(mesh, Nature_GetShader(texturedBloom));
-    field.farModel = Nature_BuildFlowerFarModel(placements, count, texturedBloom,
+    field.textured = (petalTexturePath != NULL);
+    field.model = Nature_ModelFromMesh(mesh, Nature_GetShader(field.textured));
+    field.farModel = Nature_BuildFlowerFarModel(placements, count, field.textured,
                                                  atlasColumns, atlasRows);
     field.farReady = field.farModel.meshCount > 0;
     if (GfxQuality_Get() >= GFX_MED)
         field.shadowModel = Nature_BuildFlowerShadowModel(placements, count);
     field.shadowReady = field.shadowModel.meshCount > 0;
-    field.textured = petalTexturePath != NULL;
-    field.alphaCutoff = alphaCutoff > 0.0f ? fminf(alphaCutoff, 0.9f) : 0.38f;
+    field.alphaCutoff = alphaCutoff > 0.0f ? fminf(alphaCutoff, 0.9f) : 0.35f;
     field.boundsCenter = Vector3Scale(Vector3Add(boundsMin, boundsMax), 0.5f);
     field.boundsRadius = Vector3Distance(boundsMin, boundsMax) * 0.5f;
     field.drawDistance = 78.0f;

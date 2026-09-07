@@ -8,6 +8,15 @@ static bool shaderLoaded = false;
 static int locLightDir = -1;
 static int locLightColor = -1;
 static int locAmbientColor = -1;
+static int locViewPos = -1;
+static int locPathSegs = -1;
+static int locPathSegCount = -1;
+static int locLakeParams = -1;
+
+#define MAX_GROUND_PATH_SEGS 16
+static Vector4 s_groundPathSegs[MAX_GROUND_PATH_SEGS];
+static int s_groundPathSegCount = 0;
+static Vector4 s_groundLakeParams = {0};
 
 // Shared by MapProp_CreateGround (flat) and MapProp_CreateGroundHeightmap
 // (sloped island) — both just build a different Mesh, then hand it here for
@@ -289,10 +298,13 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
             GetShaderLocationAttrib(groundShader, "vertexNormal");
         MapShadow_ConfigureShader(groundShader);
 
-        // Cache lại các vị trí uniform ánh sáng để dùng trong hàm Draw
         locLightDir = GetShaderLocation(groundShader, "lightDir");
         locLightColor = GetShaderLocation(groundShader, "lightColor");
         locAmbientColor = GetShaderLocation(groundShader, "ambientColor");
+        locViewPos = GetShaderLocation(groundShader, "viewPos");
+        locPathSegs = GetShaderLocation(groundShader, "u_pathSegs");
+        locPathSegCount = GetShaderLocation(groundShader, "u_pathSegCount");
+        locLakeParams = GetShaderLocation(groundShader, "u_lakeParams");
         VFXLight_RegisterShader(groundShader);   // main.c binds it each frame
 
         shaderLoaded = true;
@@ -436,9 +448,15 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     SetShaderValue(groundShader, locLightDir, lightDirArr, SHADER_UNIFORM_VEC3);
     SetShaderValue(groundShader, locLightColor, sunColArr, SHADER_UNIFORM_VEC4);
     SetShaderValue(groundShader, locAmbientColor, ambColArr, SHADER_UNIFORM_VEC4);
+    if (locViewPos >= 0)
+        SetShaderValue(groundShader, locViewPos, &camera.position, SHADER_UNIFORM_VEC3);
+    if (locPathSegCount >= 0)
+        SetShaderValue(groundShader, locPathSegCount, &s_groundPathSegCount, SHADER_UNIFORM_INT);
+    if (locPathSegs >= 0 && s_groundPathSegCount > 0)
+        SetShaderValueV(groundShader, locPathSegs, s_groundPathSegs, SHADER_UNIFORM_VEC4, s_groundPathSegCount);
+    if (locLakeParams >= 0)
+        SetShaderValue(groundShader, locLakeParams, &s_groundLakeParams, SHADER_UNIFORM_VEC4);
     MapShadow_UpdateShader(groundShader);
-
-
 
     // Vẽ mặt đất — drawOffset (0,0,0) for the flat plane, non-zero for the
     // heightmap variant (see MapProp_CreateGroundHeightmap).
@@ -448,6 +466,19 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
         worldCenter.z + ground->drawOffset.z,
     };
     DrawModel(ground->model, pos, 1.0f, WHITE);
+}
+
+void MapProp_SetGroundHabitat(MapGroundSurface *ground,
+                              const Vector4 *pathSegments, int segmentCount,
+                              Vector4 lakeParams)
+{
+    (void)ground;
+    if (segmentCount > MAX_GROUND_PATH_SEGS) segmentCount = MAX_GROUND_PATH_SEGS;
+    s_groundPathSegCount = segmentCount;
+    for (int i = 0; i < segmentCount; i++) {
+        s_groundPathSegs[i] = pathSegments[i];
+    }
+    s_groundLakeParams = lakeParams;
 }
 
 void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCenter,

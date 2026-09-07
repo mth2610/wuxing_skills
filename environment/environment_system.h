@@ -45,11 +45,6 @@ void Environment_SetShadowColor(Color col);
 EnvFogConfig Environment_GetFogConfig(void);
 void Environment_SetFogConfig(EnvFogConfig config);
 
-// --- Time-of-Day dynamic lighting cycle ---
-// Opt-in system layered on top of the static Environment_Set*() calls above.
-// A map that never calls the functions below keeps its old, static, one-shot
-// lighting behavior with ZERO changes: Environment_Update() only touches the
-// blended state when a speed != 0 AND at least one preset has been set.
 #define MAX_TIME_OF_DAY_PRESETS 8
 
 typedef struct {
@@ -59,6 +54,29 @@ typedef struct {
     Color        shadowColor;
     EnvFogConfig fog;
 } EnvLightingPreset;
+
+// --- Resolved Frame Lighting Snapshot (E10) ---
+typedef struct {
+    Vector3      sunDirection;  // Normalized travel direction (from light into scene)
+    Color        sunColor;      // Direct linear sunlight
+    Color        skyAmbient;    // Upper hemisphere sky fill
+    Color        groundBounce;  // Lower hemisphere warm earth bounce
+    Color        shadowColor;   // Directional shadow attenuation
+    EnvFogConfig fog;           // Distance and height fog parameters
+    unsigned int version;       // Increments when lighting changes
+} EnvFrameLighting;
+
+// Supplies one resolved snapshot; consumers do not independently infer light direction/tint.
+EnvFrameLighting Environment_GetFrameLighting(void);
+
+// Validates and activates a complete profile atomically, incrementing lighting version.
+void Environment_ApplyProfile(const EnvLightingPreset *profile);
+
+// --- Time-of-Day dynamic lighting cycle ---
+// Opt-in system layered on top of the static Environment_Set*() calls above.
+// A map that never calls the functions below keeps its old, static, one-shot
+// lighting behavior with ZERO changes: Environment_Update() only touches the
+// blended state when a speed != 0 AND at least one preset has been set.
 
 // Defines the keyframes of a full lighting cycle (e.g. dawn/noon/dusk/night).
 // - `timePoints` are normalized [0,1), MUST be sorted ascending, count <= MAX_TIME_OF_DAY_PRESETS.

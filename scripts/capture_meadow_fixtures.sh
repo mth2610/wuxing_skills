@@ -30,11 +30,19 @@ capture() {
         printf 'Capture failed: %s (see log)\n' "$name" >&2
         exit 1
     fi
-    if rg -i 'shader.*(failed|error)|failed.*shader' "$capture_dir/$name.log"; then
-        printf 'Shader error in %s\n' "$name" >&2
-        exit 1
+    if command -v rg >/dev/null 2>&1; then
+        if rg -i 'shader.*(failed|error)|failed.*shader' "$capture_dir/$name.log"; then
+            printf 'Shader error in %s\n' "$name" >&2
+            exit 1
+        fi
+        rg 'CAPTURE:|WUXING_MAP:|Device:|HDR float|Render size:' "$capture_dir/$name.log" || true
+    else
+        if grep -E -i 'shader.*(failed|error)|failed.*shader' "$capture_dir/$name.log"; then
+            printf 'Shader error in %s\n' "$name" >&2
+            exit 1
+        fi
+        grep -E 'CAPTURE:|WUXING_MAP:|Device:|HDR float|Render size:' "$capture_dir/$name.log" || true
     fi
-    rg 'CAPTURE:|WUXING_MAP:|Device:|HDR float|Render size:' "$capture_dir/$name.log"
 }
 
 capture flowers 27,0,20 30,5,25

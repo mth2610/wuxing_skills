@@ -48,16 +48,16 @@ void main()
     vec2 rotatedUV = vec2(-tiledUV.y * 0.47 + 13.7, tiledUV.x * 0.47 + 8.3);
     texColor.rgb = mix(texColor.rgb, texture(texture0, rotatedUV).rgb, 0.16);
 
-    // --- TẠO LỀ ĐƯỜNG MỜ & MÉO MÓ ---
-    // Dùng nhiễu (noise) để phá vỡ đường thẳng hình học của Mesh
-    float n = noise(fragPosition.xz * 1.35);
+    // --- TẠO LỀ ĐƯỜNG MỜ & MÉO MÓ HÒA VÀO ĐẤT ---
+    float n = noise(fragPosition.xz * 1.42);
     float edgeDistance = min(fragTexCoord.y, 1.0 - fragTexCoord.y);
-    float edgeLimit = 0.055 + (n - 0.5) * 0.075;
-    float coverage = smoothstep(edgeLimit, edgeLimit + 0.085, edgeDistance);
-    if (coverage < 0.52) discard;
-    float edgeWear = 1.0 - smoothstep(0.08, 0.31, edgeDistance);
-    vec3 edgeTint = texColor.rgb * vec3(0.61, 0.69, 0.53);
-    texColor.rgb = mix(texColor.rgb, edgeTint, edgeWear * (0.14 + n * 0.18));
+    float edgeLimit = 0.048 + (n - 0.5) * 0.065;
+    float coverage = smoothstep(edgeLimit, edgeLimit + 0.075, edgeDistance);
+    if (coverage < 0.50) discard;
+    float edgeWear = 1.0 - smoothstep(0.06, 0.36, edgeDistance);
+    // Hòa trộn mép đá với màu đất và rêu bụi
+    vec3 soilTone = vec3(0.68, 0.58, 0.44);
+    texColor.rgb = mix(texColor.rgb, soilTone * (0.85 + n * 0.3), edgeWear * 0.62);
 
     // --- ÁNH SÁNG ---
     vec3 normal = normalize(fragNormal);

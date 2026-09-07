@@ -88,6 +88,10 @@ void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCente
 // Per-map biome grading. The tint is multiplied into both tiled ground
 // textures through the material's standard colDiffuse uniform.
 void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint);
+// Configure multi-layer habitat blending (path corridors, shoreline wetness, soil transitions)
+void MapProp_SetGroundHabitat(MapGroundSurface *ground,
+                              const Vector4 *pathSegments, int segmentCount,
+                              Vector4 lakeParams);
 void MapProp_UnloadGround(MapGroundSurface *ground);
 
 // Absolute world-space ground Y at (x,z) — for a flat MapProp_CreateGround
@@ -243,6 +247,7 @@ typedef struct
     float shadowDistance;  // close contact-shadow range; <= 0 disables it
     const char *texturePath; // optional alpha-cutout blade texture
     float alphaCutoff;       // <= 0 uses 0.42
+    bool hasPlumes;          // shore reeds: adds fluffy ivory plumes on top and arching side leaves
 } MapMeadowStyle;
 
 typedef struct
