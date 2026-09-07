@@ -433,6 +433,39 @@ static void Nature_AddPointedBladeTip(Mesh *mesh, int *cursor, Vector3 p0, Vecto
     Nature_SetUv2(mesh, base + 2, 0.5f, 1.0f);
 }
 
+static void Nature_AddCurvedBladeQuad(Mesh *mesh, int *cursor,
+                                      Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
+                                      Vector3 n0, Vector3 n1, Vector3 n2, Vector3 n3,
+                                      float phase, float h0, float h1, Color c0, Color c1)
+{
+    int base = *cursor;
+    Nature_SetVertex(mesh, (*cursor)++, p0, n0, phase, h0, c0);
+    Nature_SetVertex(mesh, (*cursor)++, p1, n1, phase, h0, c0);
+    Nature_SetVertex(mesh, (*cursor)++, p2, n2, phase, h1, c1);
+    Nature_SetVertex(mesh, (*cursor)++, p0, n0, phase, h0, c0);
+    Nature_SetVertex(mesh, (*cursor)++, p2, n2, phase, h1, c1);
+    Nature_SetVertex(mesh, (*cursor)++, p3, n3, phase, h1, c1);
+    Nature_SetUv2(mesh, base + 0, 0.0f, h0);
+    Nature_SetUv2(mesh, base + 1, 1.0f, h0);
+    Nature_SetUv2(mesh, base + 2, 1.0f, h1);
+    Nature_SetUv2(mesh, base + 3, 0.0f, h0);
+    Nature_SetUv2(mesh, base + 4, 1.0f, h1);
+    Nature_SetUv2(mesh, base + 5, 0.0f, h1);
+}
+
+static void Nature_AddCurvedBladeTip(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
+                                     Vector3 tip, Vector3 n0, Vector3 n1, Vector3 nTip,
+                                     float phase, float h0, Color c0, Color c1)
+{
+    int base = *cursor;
+    Nature_SetVertex(mesh, (*cursor)++, p0, n0, phase, h0, c0);
+    Nature_SetVertex(mesh, (*cursor)++, p1, n1, phase, h0, c0);
+    Nature_SetVertex(mesh, (*cursor)++, tip, nTip, phase, 1.0f, c1);
+    Nature_SetUv2(mesh, base + 0, 0.0f, h0);
+    Nature_SetUv2(mesh, base + 1, 1.0f, h0);
+    Nature_SetUv2(mesh, base + 2, 0.5f, 1.0f);
+}
+
 static void Nature_AddQuad4(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
                             Vector3 p2, Vector3 p3, Vector3 normal,
                             float phase, Color c0, Color c1, Color c2, Color c3)
@@ -687,7 +720,7 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
     if (selected <= 0) return (Model){0};
 
     int verticesPerBlade = (bladeSegments - 1) * 6 + 3;
-    int extraPerClump = style.hasPlumes ? 66 : 0;
+    int extraPerClump = style.hasPlumes ? 18 : 0;
     int vertexCount = selected * (bladesPerClump * verticesPerBlade + extraPerClump);
     Mesh mesh = Nature_AllocMesh(vertexCount);
     int cursor = 0;
@@ -720,6 +753,22 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
 
             Vector3 facing = {-sinf(leanAngle), 0.08f, cosf(leanAngle)};
 
+            float bladeHash = sinf((float)(i * 37 + blade * 19)) * 43758.5453f;
+            bladeHash -= floorf(bladeHash);
+            float hueShift = (bladeHash - 0.5f) * 0.18f;
+            int rR = (int)(style.rootColor.r * (1.0f + hueShift * 0.4f));
+            int rG = (int)(style.rootColor.g * (1.0f + hueShift));
+            int rB = (int)(style.rootColor.b * (1.0f - hueShift * 0.3f));
+            int tR = (int)(style.tipColor.r * (1.0f + hueShift * 0.7f));
+            int tG = (int)(style.tipColor.g * (1.0f + hueShift * 1.1f));
+            int tB = (int)(style.tipColor.b * (1.0f - hueShift * 0.5f));
+            Color bladeRoot = {(unsigned char)fminf(255, fmaxf(0, rR)),
+                               (unsigned char)fminf(255, fmaxf(0, rG)),
+                               (unsigned char)fminf(255, fmaxf(0, rB)), 255};
+            Color bladeTip = {(unsigned char)fminf(255, fmaxf(0, tR)),
+                              (unsigned char)fminf(255, fmaxf(0, tG)),
+                              (unsigned char)fminf(255, fmaxf(0, tB)), 255};
+
             for (int segment = 0; segment < bladeSegments; segment++) {
                 float t0 = (float)segment / (float)bladeSegments;
                 float t1 = (float)(segment + 1) / (float)bladeSegments;
@@ -750,24 +799,37 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Vector3 p2 = {center1.x + side.x * w1, center1.y, center1.z + side.z * w1};
                 Vector3 p3 = {center1.x - side.x * w1, center1.y, center1.z - side.z * w1};
 
-                Color color0 = Nature_LerpColor(style.rootColor, style.tipColor, t0);
-                Color color1 = Nature_LerpColor(style.rootColor, style.tipColor, t1);
+                // Root ground occlusion: ground ambient darkening for smooth soil blend
+                float occ0 = (t0 < 0.28f) ? (0.68f + 0.32f * (t0 / 0.28f)) : 1.0f;
+                float occ1 = (t1 < 0.28f) ? (0.68f + 0.32f * (t1 / 0.28f)) : 1.0f;
+                Color color0 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t0), occ0);
+                Color color1 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t1), occ1);
+
+                // Blade curvature normals across width (PixelAnt Games / Ghost of Tsushima blade volume)
+                Vector3 nL0 = Vector3Normalize(Vector3Subtract(facing, Vector3Scale(side, 0.42f)));
+                Vector3 nR0 = Vector3Normalize(Vector3Add(facing, Vector3Scale(side, 0.42f)));
+                Vector3 nL1 = Vector3Normalize(Vector3Subtract(facing, Vector3Scale(side, 0.38f)));
+                Vector3 nR1 = Vector3Normalize(Vector3Add(facing, Vector3Scale(side, 0.38f)));
+                Vector3 nTip = Vector3Normalize((Vector3){facing.x, 0.55f, facing.z});
 
                 if (style.hasPlumes) {
                     if (segment == bladeSegments - 1) {
-                        Nature_SetVertex(&mesh, cursor++, p0, facing, clump->phase, t0, color0);
-                        Nature_SetVertex(&mesh, cursor++, p1, facing, clump->phase, t0, color0);
-                        Nature_SetVertex(&mesh, cursor++, center1, facing, clump->phase, 1.0f, color1);
+                        Nature_SetVertex(&mesh, cursor++, p0, nL0, clump->phase, t0, color0);
+                        Nature_SetVertex(&mesh, cursor++, p1, nR0, clump->phase, t0, color0);
+                        Nature_SetVertex(&mesh, cursor++, center1, nTip, clump->phase, 1.0f, color1);
                     } else {
-                        Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, facing,
-                                       clump->phase, t0, t1, color0, color1);
+                        Nature_AddCurvedBladeQuad(&mesh, &cursor, p0, p1, p2, p3,
+                                                  nL0, nR0, nR1, nL1,
+                                                  clump->phase, t0, t1, color0, color1);
                     }
                 } else if (segment == bladeSegments - 1) {
-                    Nature_AddPointedBladeTip(&mesh, &cursor, p0, p1, center1, facing,
-                                              clump->phase, t0, color0, color1);
+                    Nature_AddCurvedBladeTip(&mesh, &cursor, p0, p1, center1,
+                                             nL0, nR0, nTip,
+                                             clump->phase, t0, color0, color1);
                 } else {
-                    Nature_AddTexturedQuad(&mesh, &cursor, p0, p1, p2, p3, facing,
-                                           clump->phase, t0, t1, color0, color1);
+                    Nature_AddCurvedBladeQuad(&mesh, &cursor, p0, p1, p2, p3,
+                                              nL0, nR0, nR1, nL1,
+                                              clump->phase, t0, t1, color0, color1);
                 }
             }
         }
@@ -800,48 +862,31 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
 
             // Parametric Reed Plume Density Envelope: R(u) = R_max * sin(pi * u^0.8)^0.6
             // Volumetric envelope with feathery fiber alpha texture mapping
-            float rMax = fmaxf(0.12f, clump->radius * 0.85f);
-            float uKnots[4] = {0.05f, 0.42f, 0.74f, 0.98f};
-            float plWidths[4];
-            for (int k = 0; k < 4; k++) {
-                float u = uKnots[k];
-                float s = sinf(PI * powf(u, 0.80f));
-                if (s < 0.0f) s = 0.0f;
-                plWidths[k] = fmaxf(0.015f, rMax * powf(s, 0.60f));
-            }
-            Color plColors[4] = {
-                {245, 238, 220, 255}, // Base: warm straw golden tan
-                {252, 248, 238, 255}, // Lower mid: soft ivory cream
-                {255, 252, 246, 255}, // Upper mid: light airy cream
-                {255, 255, 255, 255}  // Tip: pure pale plume highlight
-            };
+            // Single flat textured plume quad (1 quad: 6 vertices)
+            float stripAngle = caneAngle + 1.5707963f;
+            Vector3 side = {-sinf(stripAngle), 0.0f, cosf(stripAngle)};
+            Vector3 norm = Vector3Normalize((Vector3){cosf(stripAngle), 0.25f, sinf(stripAngle)});
 
-            // 3 intersecting ribbon strips (60 deg apart -> 6-pointed star cross section in 3D: 54 vertices)
-            for (int s = 0; s < 3; s++) {
-                float stripAngle = caneAngle + (float)s * 1.04719755f;
-                Vector3 side = {-sinf(stripAngle), 0.0f, cosf(stripAngle)};
-                Vector3 norm = Vector3Normalize((Vector3){cosf(stripAngle), 0.25f, sinf(stripAngle)});
+            Vector3 qBase = plPts[0];
+            Vector3 qTip = plPts[3];
+            float plumeH = Vector3Length(Vector3Subtract(qTip, qBase));
+            float halfW = fmaxf(0.12f, plumeH * 0.28f);
 
-                for (int seg = 0; seg < 3; seg++) {
-                    float w0 = plWidths[seg];
-                    float w1 = plWidths[seg + 1];
-                    Color c0 = plColors[seg];
-                    Color c1 = plColors[seg + 1];
-                    Vector3 q0 = {plPts[seg].x - side.x * w0, plPts[seg].y, plPts[seg].z - side.z * w0};
-                    Vector3 q1 = {plPts[seg].x + side.x * w0, plPts[seg].y, plPts[seg].z + side.z * w0};
-                    Vector3 q2 = {plPts[seg + 1].x + side.x * w1, plPts[seg + 1].y, plPts[seg + 1].z + side.z * w1};
-                    Vector3 q3 = {plPts[seg + 1].x - side.x * w1, plPts[seg + 1].y, plPts[seg + 1].z - side.z * w1};
-                    if (style.texturePath != NULL) {
-                        float vBot = 1.0f - (float)seg / 3.0f;
-                        float vTop = 1.0f - (float)(seg + 1) / 3.0f;
-                        Nature_AddTexturedQuadUV(&mesh, &cursor, q0, q1, q2, q3, norm,
-                                                 clump->phase, tKnots[seg], tKnots[seg + 1],
-                                                 c0, c1, 0.0f, vTop, 1.0f, vBot);
-                    } else {
-                        Nature_AddQuad(&mesh, &cursor, q0, q1, q2, q3, norm,
-                                       clump->phase, tKnots[seg], tKnots[seg + 1], c0, c1);
-                    }
-                }
+            Vector3 q0 = {qBase.x - side.x * halfW, qBase.y, qBase.z - side.z * halfW};
+            Vector3 q1 = {qBase.x + side.x * halfW, qBase.y, qBase.z + side.z * halfW};
+            Vector3 q2 = {qTip.x + side.x * halfW * 0.70f, qTip.y, qTip.z + side.z * halfW * 0.70f};
+            Vector3 q3 = {qTip.x - side.x * halfW * 0.70f, qTip.y, qTip.z - side.z * halfW * 0.70f};
+
+            Color c0 = {245, 238, 220, 255};
+            Color c1 = {255, 255, 255, 255};
+
+            if (style.texturePath != NULL) {
+                Nature_AddTexturedQuadUV(&mesh, &cursor, q0, q1, q2, q3, norm,
+                                         clump->phase, 0.52f, 1.0f,
+                                         c0, c1, 0.0f, 0.0f, 1.0f, 1.0f);
+            } else {
+                Nature_AddQuad(&mesh, &cursor, q0, q1, q2, q3, norm,
+                               clump->phase, 0.52f, 1.0f, c0, c1);
             }
 
             // Two lateral arching leaves along reed stalk
@@ -1276,11 +1321,11 @@ static inline int Nature_FlowerBloomVertexCount(int variant)
 {
     int morph = variant % 4;
     switch (morph) {
-        case 0: return 114; // 2-layer Rose/Poppy: 5 outer (60) + 3 inner (36) + dome (18) = 114
-        case 1: return 114; // 8 spatulate daisy petals (96) + phyllotaxis disc (18) = 114
-        case 2: return 114; // Lavender spike: 4 whorls x 2 florets (96) + tip bud dome (18) = 114
-        case 3: return 90;  // 6 reflexed lanceolate petals (72) + center dome (18) = 90
-        default: return 114;
+        case 0: return 210; // 2-layer Rose/Poppy: 5 outer + 3 inner (192) + dome (18) = 210
+        case 1: return 210; // 8 oval daisy petals (192) + phyllotaxis disc (18) = 210
+        case 2: return 210; // Lavender spike: 4 whorls x 2 florets (192) + tip bud dome (18) = 210
+        case 3: return 162; // 6 reflexed lanceolate petals (144) + center dome (18) = 162
+        default: return 210;
     }
 }
 
@@ -1305,14 +1350,17 @@ typedef struct {
 static inline float Nature_EvalPetalWidth(float t, const PetalParams *p)
 {
     if (t <= 0.0f) return 0.002f;
-    if (t >= 1.0f) return 0.002f;
+    if (t >= 1.0f) return 0.000f;
 
     switch (p->shape) {
         case PETAL_SHAPE_OVAL: {
-            float s = sinf(PI * t);
+            // Chamomile / Daisy oval petal: wide body, soft smoothly rounded apex
+            // Base at t=0 narrows to receptacle; mid reaches max width; smoothly rounds to zero at apex
+            float s = sinf(PI * powf(t, 0.55f));
             if (s < 0.0f) s = 0.0f;
-            float n = p->exponent > 0.0f ? p->exponent : 1.2f;
-            return p->wMax * powf(s, n);
+            float n = p->exponent > 0.0f ? p->exponent : 0.60f;
+            float baseTaper = fminf(1.0f, t / 0.15f);
+            return p->wMax * powf(s, n) * baseTaper;
         }
         case PETAL_SHAPE_LANCEOLATE: {
             float tPeak = p->tPeak > 0.05f ? p->tPeak : 0.30f;
@@ -1358,41 +1406,64 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
                                      Color cBase, Color cMid, Color cTip)
 {
     float len = p->length;
-    float t1 = 0.52f;
+    float t0 = 0.05f;
+    float t1 = 0.42f;
+    float t2 = 0.70f;
+    float t3 = 0.88f;
 
-    float w0 = Nature_EvalPetalWidth(0.06f, p);
-    float dy0 = Nature_EvalPetalElevation(0.0f, p);
+    float w0 = Nature_EvalPetalWidth(t0, p);
+    float dy0 = Nature_EvalPetalElevation(t0, p);
 
     float w1 = Nature_EvalPetalWidth(t1, p);
     float dy1 = Nature_EvalPetalElevation(t1, p);
 
-    float w2 = Nature_EvalPetalWidth(0.96f, p);
-    float dy2 = Nature_EvalPetalElevation(1.0f, p);
+    float w2 = Nature_EvalPetalWidth(t2, p);
+    float dy2 = Nature_EvalPetalElevation(t2, p);
+
+    float w3 = Nature_EvalPetalWidth(t3, p);
+    float dy3 = Nature_EvalPetalElevation(t3, p);
+
+    float dy4 = Nature_EvalPetalElevation(1.0f, p);
 
     Vector3 side0 = side;
     Vector3 side1 = side;
     Vector3 side2 = side;
+    Vector3 side3 = side;
     if (fabsf(p->twistAmount) > 0.001f) {
         float phi1 = p->twistAmount * t1;
-        float phi2 = p->twistAmount * 1.0f;
-        side1 = (Vector3){side.x * cosf(phi1), sinf(phi1) * len * 0.12f, side.z * cosf(phi1)};
-        side2 = (Vector3){side.x * cosf(phi2), sinf(phi2) * len * 0.18f, side.z * cosf(phi2)};
+        float phi2 = p->twistAmount * t2;
+        float phi3 = p->twistAmount * t3;
+        side1 = (Vector3){side.x * cosf(phi1), sinf(phi1) * len * 0.10f, side.z * cosf(phi1)};
+        side2 = (Vector3){side.x * cosf(phi2), sinf(phi2) * len * 0.15f, side.z * cosf(phi2)};
+        side3 = (Vector3){side.x * cosf(phi3), sinf(phi3) * len * 0.18f, side.z * cosf(phi3)};
     }
 
-    Vector3 pMid = {head.x + dir.x * (len * t1), head.y + dy1, head.z + dir.z * (len * t1)};
-    Vector3 pTip = {head.x + dir.x * len, head.y + dy2, head.z + dir.z * len};
+    Vector3 p0 = {head.x + dir.x * (len * t0), head.y + dy0 + 0.003f, head.z + dir.z * (len * t0)};
+    Vector3 p1 = {head.x + dir.x * (len * t1), head.y + dy1,          head.z + dir.z * (len * t1)};
+    Vector3 p2 = {head.x + dir.x * (len * t2), head.y + dy2,          head.z + dir.z * (len * t2)};
+    Vector3 p3 = {head.x + dir.x * (len * t3), head.y + dy3,          head.z + dir.z * (len * t3)};
+    Vector3 pApex = {head.x + dir.x * len,     head.y + dy4,          head.z + dir.z * len};
 
-    // Analytical normals across parabolic curved petal
+    // Analytical normals along curved petal
     Vector3 n0 = Vector3Normalize((Vector3){dir.x * 0.15f, 0.98f, dir.z * 0.15f});
-    Vector3 n1 = Vector3Normalize((Vector3){dir.x * 0.35f, 0.90f, dir.z * 0.35f});
-    Vector3 n2 = Vector3Normalize((Vector3){dir.x * 0.65f, 0.70f + (dy2 < dy1 ? -0.35f : 0.25f), dir.z * 0.65f});
+    Vector3 n1 = Vector3Normalize((Vector3){dir.x * 0.32f, 0.92f, dir.z * 0.32f});
+    Vector3 n2 = Vector3Normalize((Vector3){dir.x * 0.55f, 0.82f + (dy2 < dy1 ? -0.25f : 0.20f), dir.z * 0.55f});
+    Vector3 n3 = Vector3Normalize((Vector3){dir.x * 0.70f, 0.68f + (dy4 < dy3 ? -0.30f : 0.22f), dir.z * 0.70f});
+
+    // Lateral points for each cross-section
+    Vector3 b0 = {p0.x - side0.x * w0, p0.y, p0.z - side0.z * w0};
+    Vector3 b1 = {p0.x + side0.x * w0, p0.y, p0.z + side0.z * w0};
+
+    Vector3 m0 = {p1.x - side1.x * w1, p1.y, p1.z - side1.z * w1};
+    Vector3 m1 = {p1.x + side1.x * w1, p1.y, p1.z + side1.z * w1};
+
+    Vector3 s0 = {p2.x - side2.x * w2, p2.y, p2.z - side2.z * w2};
+    Vector3 s1 = {p2.x + side2.x * w2, p2.y, p2.z + side2.z * w2};
+
+    Vector3 c0 = {p3.x - side3.x * w3, p3.y, p3.z - side3.z * w3};
+    Vector3 c1 = {p3.x + side3.x * w3, p3.y, p3.z + side3.z * w3};
 
     // Segment 0: Base to Mid (6 vertices)
-    Vector3 b0 = {head.x - side0.x * w0, head.y + dy0 + 0.003f, head.z - side0.z * w0};
-    Vector3 b1 = {head.x + side0.x * w0, head.y + dy0 + 0.003f, head.z + side0.z * w0};
-    Vector3 m0 = {pMid.x - side1.x * w1, pMid.y, pMid.z - side1.z * w1};
-    Vector3 m1 = {pMid.x + side1.x * w1, pMid.y, pMid.z + side1.z * w1};
-
     Nature_SetVertex(mesh, (*cursor)++, b0, n0, phase, 0.85f, cBase);
     Nature_SetVertex(mesh, (*cursor)++, b1, n0, phase, 0.85f, cBase);
     Nature_SetVertex(mesh, (*cursor)++, m1, n1, phase, 0.95f, cMid);
@@ -1400,16 +1471,32 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
     Nature_SetVertex(mesh, (*cursor)++, m1, n1, phase, 0.95f, cMid);
     Nature_SetVertex(mesh, (*cursor)++, m0, n1, phase, 0.95f, cMid);
 
-    // Segment 1: Mid to Tip (6 vertices)
-    Vector3 tL = {pTip.x - side2.x * w2, pTip.y, pTip.z - side2.z * w2};
-    Vector3 tR = {pTip.x + side2.x * w2, pTip.y, pTip.z + side2.z * w2};
-
+    // Segment 1: Mid to Shoulder (6 vertices)
     Nature_SetVertex(mesh, (*cursor)++, m0, n1, phase, 0.95f, cMid);
     Nature_SetVertex(mesh, (*cursor)++, m1, n1, phase, 0.95f, cMid);
-    Nature_SetVertex(mesh, (*cursor)++, tR, n2, phase, 1.00f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, s1, n2, phase, 0.98f, cMid);
     Nature_SetVertex(mesh, (*cursor)++, m0, n1, phase, 0.95f, cMid);
-    Nature_SetVertex(mesh, (*cursor)++, tR, n2, phase, 1.00f, cTip);
-    Nature_SetVertex(mesh, (*cursor)++, tL, n2, phase, 1.00f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, s1, n2, phase, 0.98f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, s0, n2, phase, 0.98f, cMid);
+
+    // Segment 2: Shoulder to Rounding Shoulders (6 vertices)
+    Nature_SetVertex(mesh, (*cursor)++, s0, n2, phase, 0.98f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, s1, n2, phase, 0.98f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, c1, n3, phase, 1.00f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, s0, n2, phase, 0.98f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, c1, n3, phase, 1.00f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, c0, n3, phase, 1.00f, cTip);
+
+    // Segment 3: Botanical Rounded Dome Apex (6 vertices, 2 fan triangles to pApex)
+    Vector3 nTipL = Vector3Normalize((Vector3){dir.x * 0.70f - side.x * 0.35f, 0.60f, dir.z * 0.70f - side.z * 0.35f});
+    Vector3 nTipR = Vector3Normalize((Vector3){dir.x * 0.70f + side.x * 0.35f, 0.60f, dir.z * 0.70f + side.z * 0.35f});
+    Nature_SetVertex(mesh, (*cursor)++, c0,    nTipL, phase, 1.00f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, p3,    n3,    phase, 1.00f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, pApex, nTipL, phase, 1.00f, cTip);
+
+    Nature_SetVertex(mesh, (*cursor)++, p3,    n3,    phase, 1.00f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, c1,    nTipR, phase, 1.00f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, pApex, nTipR, phase, 1.00f, cTip);
 }
 
 static void Nature_AddFlowerCenterDome(Mesh *mesh, int *cursor, Vector3 head, float cR, float cHeight, float phase, Color centerColor)
@@ -1595,14 +1682,14 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 Nature_AddFlowerCenterDome(&mesh, &cursor, head, r * 0.20f, r * 0.12f, phase, centerColor);
                 break;
             }
-            case 1: { // 8-petal Daisy / Cosmos: spatulate petals (96 verts) + phyllotaxis dome (18 verts) = 114 verts
+            case 1: { // 8-petal Daisy / Chrysanthemum: oval rounded petals (96 verts) + phyllotaxis dome (18 verts) = 114 verts
                 PetalParams pDaisy = {
-                    .shape = PETAL_SHAPE_SPATULATE,
-                    .wMax = r * 0.24f,
-                    .length = r * 1.15f,
-                    .tPeak = 0.75f,
-                    .curveAmount = -r * 0.06f,
-                    .twistAmount = 0.05f,
+                    .shape = PETAL_SHAPE_OVAL,
+                    .wMax = r * 0.32f,
+                    .length = r * 1.18f,
+                    .exponent = 0.48f,
+                    .curveAmount = -r * 0.04f,
+                    .twistAmount = 0.03f,
                 };
                 for (int k = 0; k < 8; k++) {
                     float angle = flower->rotationDeg * DEG2RAD + (float)k * 0.785398f;

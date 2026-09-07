@@ -37,9 +37,17 @@ void main()
     vec2 broadGrassUV = vec2(tiledUV.y * 0.38 + 17.0, -tiledUV.x * 0.38 + 9.0);
     vec3 broadGrass = texture(texGrass, broadGrassUV).rgb;
     float fineGrassLuma = dot(colorGrass.rgb, vec3(0.2126, 0.7152, 0.0722));
-    float broadGrassLuma = dot(broadGrass, vec3(0.2126, 0.7152, 0.0722));
-    float grassDetail = clamp(0.93 + (fineGrassLuma - 0.50) * 0.28 + (broadGrassLuma - 0.50) * 0.16, 0.75, 1.15);
-    vec3 grassAlbedo = grassDetail * colDiffuse.rgb;
+
+    // Multi-scale grass blending preserving real blade & moss texture details
+    vec3 blendedGrass = mix(colorGrass.rgb, broadGrass, 0.35);
+    vec3 grassAlbedo = blendedGrass * (colDiffuse.rgb * 1.65);
+
+    // Subtle organic turf warmth variation across open meadow
+    float turfNoise = sin(fragPosition.x * 0.28 + fragPosition.z * 0.19) * 0.5
+                    + sin(fragPosition.x * -0.14 + fragPosition.z * 0.38 + 1.7) * 0.35;
+    vec3 warmTurf = grassAlbedo * vec3(1.08, 1.03, 0.90);
+    vec3 coolTurf = grassAlbedo * vec3(0.94, 1.02, 0.96);
+    grassAlbedo = mix(coolTurf, warmTurf, smoothstep(-0.35, 0.55, turfNoise));
 
     // Soil detail from dirt texture
     vec4 colorDirt = texture(texPath, tiledUV * 0.85);
@@ -80,13 +88,19 @@ void main()
     float wDrySoil = clamp(wPathMargin * 0.88 + wSlope * 0.92, 0.0, 1.0);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
-    // Normalize weights
-    float totalW = wGrass + wDrySoil + wWetSoil + wPath;
+    // Height-blended layer modulation (PixelAnt / AAA terrain splatting)
+    // Co-locates grass fringe with dirt crevices rather than blurry fade
+    float hGrass = wGrass + (fineGrassLuma - 0.5) * 0.16;
+    float hDry = wDrySoil + (dirtDetail.r - 0.5) * 0.14;
+    float hWet = wWetSoil + (1.0 - dirtDetail.g * 0.8) * 0.12;
+    float hPath = wPath + (colorDirt.r - 0.5) * 0.15;
+
+    float totalW = max(hGrass, 0.0) + max(hDry, 0.0) + max(hWet, 0.0) + max(hPath, 0.0);
     if (totalW > 0.0001) {
-        wGrass /= totalW;
-        wDrySoil /= totalW;
-        wWetSoil /= totalW;
-        wPath /= totalW;
+        wGrass = max(hGrass, 0.0) / totalW;
+        wDrySoil = max(hDry, 0.0) / totalW;
+        wWetSoil = max(hWet, 0.0) / totalW;
+        wPath = max(hPath, 0.0) / totalW;
     } else {
         wGrass = 1.0;
     }
@@ -101,10 +115,13 @@ void main()
                        + wetSoilColor * wWetSoil
                        + pathMarginColor * wPath;
 
-    // Macro landscape noise
-    float macroA = sin(fragPosition.x * 0.061 + fragPosition.z * 0.043);
-    float macroB = sin(fragPosition.x * -0.033 + fragPosition.z * 0.077 + 1.4);
-    blendedAlbedo *= 0.985 + 0.02 * macroA + 0.015 * macroB;
+    // Multi-harmonic macro terrain modulation (warm sun ridges, rich emerald depressions)
+    float macroA = sin(fragPosition.x * 0.055 + fragPosition.z * 0.038);
+    float macroB = sin(fragPosition.x * -0.028 + fragPosition.z * 0.064 + 1.35);
+    float macroC = sin(fragPosition.x * 0.12 + fragPosition.z * -0.09 + 2.1);
+    float macroField = 0.50 + 0.28 * macroA + 0.16 * macroB + 0.06 * macroC;
+    vec3 macroTint = mix(vec3(0.94, 0.98, 0.92), vec3(1.04, 1.02, 0.95), macroField);
+    blendedAlbedo *= macroTint;
 
     // Lighting
     vec3 light = vec3(0.0, 1.0, 0.0);

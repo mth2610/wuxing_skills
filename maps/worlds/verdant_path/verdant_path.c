@@ -198,9 +198,9 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.56f, .jitter = 0.94f,
-            .minRadius = 0.045f, .maxRadius = 0.09f,
-            .minHeight = 0.08f, .maxHeight = 0.20f,
+            .spacing = 0.40f, .jitter = 0.94f,
+            .minRadius = 0.08f, .maxRadius = 0.16f,
+            .minHeight = 0.12f, .maxHeight = 0.26f,
             .yOffset = 0.035f, .seed = 0x51a7c3u,
         }, VerdantGrassDensity, NULL);
 
@@ -386,11 +386,11 @@ void InitVerdantPathMap(void)
 
     s_ground = MapProp_CreateGroundHeightmap(
         "assets/heightmaps/verdant_path_island.png", MAP_WIDTH, MAP_DEPTH,
-        CLIFF_DEPTH, 10.0f, "maps/toolkit/textures/meadow_floor_neutral_v1.png",
-        "maps/toolkit/textures/meadow_floor_neutral_v1.png", "assets/textures/dirt_diffuse.png");
+        CLIFF_DEPTH, 3.8f, "assets/textures/grass_ground_diffuse.png",
+        "assets/textures/grass_ground_diffuse.png", "assets/textures/dirt_diffuse.png");
     ApplyHabitatToGround();
-    // Shader consumes normalized linear values; calibrated martial-arts olive meadow tint
-    MapProp_SetGroundTint(&s_ground, (Color){92, 122, 68, 255});
+    // Shader consumes normalized linear values; calibrated vibrant martial-arts meadow tint
+    MapProp_SetGroundTint(&s_ground, (Color){96, 128, 72, 255});
     s_path = MapProp_CreateStrip(PATH_UNIT_LENGTH, PATH_WIDTH, 1.8f,
         "assets/textures/stone_path_diffuse.png",
         "assets/textures/stone_path_normal.png",
@@ -425,21 +425,20 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {68, 92, 44, 255}, .tipColor = {152, 178, 88, 255},
-            .bladesPerClump = 7, .bladeSegments = 3, .bladeWidthScale = 0.20f,
+            .rootColor = {46, 68, 28, 255}, .tipColor = {152, 185, 82, 255},
+            .bladesPerClump = 9, .bladeSegments = 3, .bladeWidthScale = 0.32f,
             .chunkSize = 12.0f, .lodDistance = 38.0f, .drawDistance = 78.0f,
             .shadowDistance = 24.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
         (MapMeadowStyle){
-            .rootColor = {48, 65, 30, 255}, .tipColor = {136, 148, 72, 255},
-            .bladesPerClump = 5, .bladeSegments = 4, .bladeWidthScale = 0.24f,
+            .rootColor = {38, 55, 24, 255}, .tipColor = {112, 138, 62, 255},
+            .bladesPerClump = 5, .bladeSegments = 4, .bladeWidthScale = 0.28f,
             .chunkSize = 18.0f, .lodDistance = 34.0f, .drawDistance = 72.0f,
             .shadowDistance = 22.0f,
-            .texturePath = "maps/toolkit/textures/reed_plume_atlas.png",
-            .alphaCutoff = 0.22f,
-            .hasPlumes = true,
+            .texturePath = NULL,
+            .hasPlumes = false,
         });
     static const Color clusterCenters[FLOWER_CLUSTER_COUNT] = {
         {218, 185, 65, 255},  // Cluster 0: pale daisy golden center
