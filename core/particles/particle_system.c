@@ -1311,7 +1311,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         // here; the flush is still required, because the uniform and the
         // texture unit must not change under vertices already queued.
         rlDrawRenderBatchActive();
-        float vs = p->volumeSheet ? 1.0f : 0.0f;
+        float vs = (float)p->volumeSheet;
         float hg = p->heatGain;
         if (s_litActive && s_locVolumeSheet >= 0)
           SetShaderValue(s_litShader, s_locVolumeSheet, &vs, SHADER_UNIFORM_FLOAT);
@@ -1475,7 +1475,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       else if (heat > 1.0f) heat = 1.0f;
       unsigned char h = (unsigned char)(heat * 255.0f);
       c.r = h;
-      c.g = (unsigned char)(invRatio * 255.0f); // Normalized age for shader erosion
+      c.g = (p->volumeSheet == 2) ? (unsigned char)(invRatio * 255.0f) : h;
       c.b = h;
     }
 

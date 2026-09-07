@@ -45,10 +45,10 @@ static float s_fvolSmokeAmt = 1.0f;
 // here: a 1 m flame whose particles travel 1-2 m in their 0.5 s lifetime reads as
 // a blowtorch, not as fire — the embers outrun the flame that made them. Visible
 // rise for a flame this size is more like 0.3-0.5 m over a particle's life.
-static float s_fvolRiseMul = 1.35f;
+static float s_fvolRiseMul = 1.45f;
 // Base width. A flame is TALL and narrow; the ratio of base radius to rise
 // height is what decides whether it reads as a flame or as a fireball.
-static float s_fvolWidthMul = 0.55f;
+static float s_fvolWidthMul = 0.50f;
 
 // E4 flipbook. Two simulated sheets, and they are not interchangeable:
 //
@@ -81,11 +81,11 @@ static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
 // without raising the other is how this looked WORSE at each half-step. Note
 // the owner already measured the other direction — cutting the count to 26 made
 // the patchiness more visible, not less, because it exposes each silhouette.
-static float s_fvolBodyLive = 55.0f;
+static float s_fvolBodyLive = 68.0f;
 // Multiplier on the puff body's radius. Count and size buy the same cohesion at
 // the same fill cost; size is the cheaper one in draw calls. Which is right is
 // a look judgement, so both are tunables.
-static float s_fvolBodySize = 1.0f;
+static float s_fvolBodySize = 0.88f;
 static float s_fvolSpread = 1.0f;      // x on how wide the licks are spread
 // Body blend: 0 = ALPHA (default), 1 = ADDITIVE.
 //
@@ -157,18 +157,11 @@ static SpriteAnim s_fvolVolumeAnim = {0};
 // the flame is white-hot". The sim normalises emission to its own 99.5th
 // percentile and has no idea how bright this effect should read, so this is
 // the knob that decides incandescent vs smouldering.
-static float s_fvolHeatGain = 1.05f;
+static float s_fvolHeatGain = 0.88f;
 // Radiance gain on the flame half. SEPARATE from heatGain on purpose: heatGain
 // moves the sprite along the ramp (what COLOUR it is), this moves how much light
-// it throws (how BRIGHT it is). Conflating them means you cannot have a deep-red
-// flame that is genuinely bright, or a pale one that is dim.
-//
-// It has to be well above 1: the sheet's emission averages 0.13 of full scale
-// (it is normalised to its own 99.5th percentile), so at unity gain the whole
-// flame lands near black once ACES has had it. Above ~4 the hottest texels cross
-// 1.0 into the HDR buffer's headroom, which is what finally makes the core blow
-// out and bloom instead of clipping to a flat orange.
-static float s_fvolEmissive = 4.8f;
+// it throws (how BRIGHT it is).
+static float s_fvolEmissive = 2.6f;
 // ── SMOKINESS IS A COMPOSITION DECISION, NOT AN ASSET ONE ───────────────────
 //
 // The sheet is directionless by construction (the puff sim runs at zero gravity
@@ -186,7 +179,7 @@ static float s_fvolEmissive = 4.8f;
 // Measured on the shipping sheet: emission averages 37.5 against soot 155.1, a
 // ratio of 0.24 — heavily smoke-dominated, which is why the default reads as a
 // large sooty fire rather than a torch.
-static float s_fvolSmokeGain = 0.95f;
+static float s_fvolSmokeGain = 0.0f;
 static float s_fvolSmokeR = 82.0f, s_fvolSmokeG = 74.0f, s_fvolSmokeB = 69.0f;
 // Ramp LUTs, one per material, baked lazily. THIS is where fire's colour lives
 // now — the sheet is greyscale on purpose, so pointing this at another gradient
@@ -232,22 +225,22 @@ static void FVol_InitShared(void)
         return;
 
     Tuning_RegisterFloat("flame_core_alpha", &s_fvolCoreAlpha, 0.55f);
-    Tuning_RegisterFloat("flame_smoke_amount", &s_fvolSmokeAmt, 1.0f);
-    Tuning_RegisterFloat("flame_rise_mul", &s_fvolRiseMul, 1.35f);
-    Tuning_RegisterFloat("flame_width_mul", &s_fvolWidthMul, 0.55f);
+    Tuning_RegisterFloat("flame_smoke_amount", &s_fvolSmokeAmt, 0.0f);
+    Tuning_RegisterFloat("flame_rise_mul", &s_fvolRiseMul, 1.45f);
+    Tuning_RegisterFloat("flame_width_mul", &s_fvolWidthMul, 0.50f);
     Tuning_RegisterFloat("flame_atlas", &s_fvolAtlas, 1.0f); // 0 sprites/1 puff/2 column
     Tuning_RegisterFloat("flame_body_count", &s_fvolBodyCount, 1.0f);
-    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 55.0f);
-    Tuning_RegisterFloat("flame_body_size", &s_fvolBodySize, 1.0f);
+    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 68.0f);
+    Tuning_RegisterFloat("flame_body_size", &s_fvolBodySize, 0.88f);
     Tuning_RegisterFloat("flame_spread", &s_fvolSpread, 1.0f);
     Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 0.0f);
     /* The default here WINS over the static initialiser above — Tuning_RegisterFloat
        assigns it. Changing one without the other is a silent no-op, and was. */
     Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.35f);
     Tuning_RegisterFloat("flame_volume", &s_fvolVolume, 1.0f);
-    Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 1.05f);
-    Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 4.8f);
-    Tuning_RegisterFloat("flame_smoke_gain", &s_fvolSmokeGain, 0.95f);
+    Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 0.88f);
+    Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 2.6f);
+    Tuning_RegisterFloat("flame_smoke_gain", &s_fvolSmokeGain, 0.0f);
     Tuning_RegisterFloat("flame_smoke_r", &s_fvolSmokeR, 82.0f);
     Tuning_RegisterFloat("flame_smoke_g", &s_fvolSmokeG, 74.0f);
     Tuning_RegisterFloat("flame_smoke_b", &s_fvolSmokeB, 69.0f);
@@ -424,15 +417,15 @@ static const ColorGradient *FVol_HeatGradient(VC_MaterialId matId)
 
     if (matId == VC_MAT_FIRE)
     {
-        // Authored black-body. Weighted so most of the range is orange and only
-        // the top lands on white — an even spread reads as a gradient swatch
-        // rather than as burning.
-        ColorGradient_AddStop(g, 0.00f, (Color){18, 6, 3, 255});      // cold soot
-        ColorGradient_AddStop(g, 0.18f, (Color){120, 26, 8, 255});    // dull red
-        ColorGradient_AddStop(g, 0.40f, (Color){214, 74, 18, 255});   // red-orange
-        ColorGradient_AddStop(g, 0.62f, (Color){255, 140, 34, 255});  // orange
-        ColorGradient_AddStop(g, 0.82f, (Color){255, 206, 104, 255}); // amber
-        ColorGradient_AddStop(g, 1.00f, (Color){255, 250, 232, 255}); // white-hot
+        // Authored vibrant radiant fire: glowing ruby wisps, rich crimson, fiery scarlet,
+        // vivid cadmium orange and glowing amber gold, with white-hot strictly reserved for peak core.
+        ColorGradient_AddStop(g, 0.00f, (Color){60, 5, 0, 255});       // glowing deep ruby wisp
+        ColorGradient_AddStop(g, 0.15f, (Color){180, 16, 2, 255});     // radiant crimson tongue
+        ColorGradient_AddStop(g, 0.35f, (Color){240, 55, 4, 255});     // fiery scarlet
+        ColorGradient_AddStop(g, 0.60f, (Color){255, 125, 8, 255});    // vivid cadmium fiery orange
+        ColorGradient_AddStop(g, 0.82f, (Color){255, 195, 25, 255});   // radiant amber gold
+        ColorGradient_AddStop(g, 0.94f, (Color){255, 240, 110, 255});  // incandescent core
+        ColorGradient_AddStop(g, 1.00f, (Color){255, 255, 220, 255});  // white-hot peak
         return g;
     }
 
@@ -575,7 +568,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
             // reads as flame; the old 0.34 m disk made a wide fireball even
             // when the asset itself was completely directionless.
             // Compact foot plus a longer vertical travel gives a tapered flame cone.
-            float rad = sqrtf(Random01()) * 0.16f * s_fvolSpread * scale * s_fvolWidthMul;
+            float rad = sqrtf(Random01()) * 0.18f * s_fvolSpread * scale * s_fvolWidthMul;
             Vector3 p = {pos.x + cosf(ang) * rad,
                          pos.y + Random01() * 0.05f * scale,
                          pos.z + sinf(ang) * rad};
@@ -583,10 +576,10 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
 
             SpawnParticle((ParticleConfig){
                 .position = p,
-                .velocity = {cosf(ang) * 0.025f * scale,
-                             Math_Mix(0.65f, 0.95f, Random01()) * scale * s_fvolRiseMul,
-                             sinf(ang) * 0.025f * scale},
-                .radius = Math_Mix(0.18f, 0.44f, powf(Random01(), 1.4f))
+                .velocity = {cosf(ang) * 0.03f * scale,
+                             Math_Mix(0.70f, 1.05f, Random01()) * scale * s_fvolRiseMul,
+                             sinf(ang) * 0.03f * scale},
+                .radius = Math_Mix(0.16f, 0.36f, powf(Random01(), 1.2f))
                           * s_fvolBodySize * scale,
                 .lifetime = life,
                 // In volume mode colorStart.a is a per-billboard coverage
@@ -605,7 +598,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .emissiveCurve = &s_fvolCool,
                 .radiusCurve = &s_fvolGrow,
                 .forceField = &s_fvolFld,
-                .render.volumeSheet = 1,
+                .render.volumeSheet = 2,
                 .render.rampLUT = ramp,
                 .render.heatGain = s_fvolHeatGain,
                 .render.emissiveBoost = s_fvolEmissive,

@@ -386,21 +386,23 @@ vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, v
 void main()
 {
     vec2 sampleUV = fragTexCoord;
-    if (u_volumeSheet > 0.5)
+    if (u_volumeSheet > 1.5)
     {
-        // ── UV NOISE DISTORTION (Unreal Panner Noise) ────────────────────────
+        // ── UV NOISE DISTORTION (FLAME VOLUME ONLY: u_volumeSheet > 1.5) ─────
         // Perturbs UV coordinates with continuous dynamic curl turbulence,
         // turning static billboards into undulating, living flame tongues.
         vec2 grid = max(u_atlasGrid, vec2(1.0));
         vec2 localUV = (grid.x > 1.5 || grid.y > 1.5) ? fract(fragTexCoord * grid) : fragTexCoord;
+        vec2 cellBase = floor(fragTexCoord * grid);
 
-        vec2 pNoise = localUV * 2.6 + vec2(fragPosition.x * 0.85, fragPosition.y * 1.35 - u_time * 2.8);
+        vec2 pNoise = localUV * 2.8 + vec2(fragPosition.x * 0.9, fragPosition.y * 1.6 - u_time * 3.0);
         float dX = vnoise(pNoise) - 0.5;
         float dY = vnoise(pNoise + vec2(17.3, 31.7)) - 0.5;
 
-        // Stronger wave distortion at the top of the flame lick
-        vec2 uvWarp = vec2(dX, dY) * (0.042 * (0.35 + localUV.y * 0.65));
-        sampleUV += uvWarp / grid;
+        // Warp grows stronger towards the top (tongues lick), staying stable at the base
+        vec2 uvWarp = vec2(dX, dY) * (0.12 * (0.10 + localUV.y * 0.90));
+        vec2 warpedLocalUV = clamp(localUV + uvWarp, 0.01, 0.99);
+        sampleUV = (cellBase + warpedLocalUV) / grid;
     }
 
     vec4 texelColor = texture(texture0, sampleUV);
@@ -448,44 +450,78 @@ void main()
             opac = texelColor.a;   // true opacity
         }
 
-        // ── ALPHA EROSION (Unreal Age-based Noise Dissolve) ───────────────────
-        // Shreds the flame edges into sharp licking tongues as it ascends,
-        // preventing a foggy/milky blob when particles fade out.
-        float age = fragColor.g; // Normalized age from ParticleSystem (0.0 -> 1.0)
-        vec2 grid = max(u_atlasGrid, vec2(1.0));
-        vec2 localUV = (grid.x > 1.5 || grid.y > 1.5) ? fract(sampleUV * grid) : sampleUV;
-        vec2 eCoord = localUV * 4.2 + vec2(fragPosition.z * 1.15, fragPosition.y * 2.1 - u_time * 3.2);
-        float erodeNoise = vnoise(eCoord);
+        // =====================================================================
+        // PATH A: FLAME VOLUME (u_volumeSheet > 1.5)
+        // High-translucency incandescent plasma, licking tongues, cohesive root.
+        // =====================================================================
+        if (u_volumeSheet > 1.5)
+        {
+            float age = fragColor.g; // Normalized age from ParticleSystem
+            vec2 grid = max(u_atlasGrid, vec2(1.0));
+            vec2 localUV = (grid.x > 1.5 || grid.y > 1.5) ? fract(sampleUV * grid) : sampleUV;
 
-        float erosionThresh = smoothstep(0.18, 0.95, age) * 0.80;
-        float flameEnergy = (emis * 1.35 + opac * 0.45) * (0.35 + 0.65 * erodeNoise);
-        float erodeFactor = smoothstep(erosionThresh, erosionThresh + 0.22, flameEnergy);
+            // Progressive tongue carving: strictly active above base (age > 0.20 and localUV.y > 0.20)
+            float wispProgress = smoothstep(0.20, 0.85, max(age, localUV.y * 0.8));
+            vec2 eCoord = localUV * 3.6 + vec2(fragPosition.x * 0.9, fragPosition.y * 1.8 - u_time * 3.2);
+            float erodeNoise = vnoise(eCoord) * 0.65 + vnoise(eCoord * 2.0 + vec2(0.0, -u_time * 1.4)) * 0.35;
 
-        // fragColor.a is the particle's own fade (alphaCurve x colorStart.a).
-        // fragColor.r is its HEAT scale over life — in volume mode the C side
-        // writes a GREY vertex colour whose level is the cooling curve.
-        float fade = fragColor.a * soft * erodeFactor;
+            // At the base: dissolveThreshold is 0 (100% solid, cohesive root of fire).
+            // Towards the top: dissolveThreshold carves away outer margins into licking wisps.
+            float dissolveThreshold = wispProgress * (0.80 - erodeNoise * 0.60);
+            float flameMask = smoothstep(dissolveThreshold, dissolveThreshold + 0.16, emis * 1.5 + opac * 0.4);
+
+            float fade = fragColor.a * soft * flameMask;
+            if (fade < 0.004 || (emis < 0.004 && soot * opac < 0.004)) discard;
+
+            // Convective rolling ripples along vertical axis without slicing the particle
+            vec2 tongueCoord = vec2(localUV.x * 4.2 + fragPosition.x * 0.8, localUV.y * 2.2 - u_time * 3.6);
+            float tongueNoise = vnoise(tongueCoord);
+            float plumeRipples = mix(0.75, 1.18, smoothstep(0.25, 0.75, tongueNoise));
+            emis *= plumeRipples;
+
+            float heat = clamp(emis * u_heatGain * fragColor.r, 0.0, 1.0);
+            float radianceGating = pow(clamp(emis * 1.25, 0.0, 1.0), 1.15) * flameMask;
+            vec3 flame = texture(u_rampLUT, vec2(heat, 0.5)).rgb
+                         * radianceGating * u_emissiveBoost;
+
+            if (u_smokeGain <= 0.0)
+            {
+                float flameTranslucency = 0.015;
+                finalColor = vec4(flame * fade, clamp(fade * flameTranslucency, 0.0, 1.0));
+                return;
+            }
+
+            float selfShadow = (soot > 0.004) ? clamp(shad / soot, 0.0, 1.0) : 1.0;
+            float wrap;
+            vec3 N = ParticleNormalWorld(ParticleNormalLocal(opac));
+            vec3 lit = (u_sixWayLighting > 0.5)
+                ? ParticleLightTerm6Way((u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5) ? fract(fragTexCoord * u_atlasGrid) : fragTexCoord,
+                                        soot, selfShadow, opac, ParticleLightDir(), wrap)
+                : ParticleLightTerm(N, ParticleLightDir(), wrap);
+            vec3 smoke = u_smokeTint * lit * (u_sixWayLighting > 0.5 ? 1.0 : selfShadow);
+
+            float matNow  = soot + emis;
+            float matOrig = max(rawSoot + emis, 1e-4);
+            float alpha = clamp(opac * clamp(matNow / matOrig, 0.0, 1.0) * fade, 0.0, 1.0);
+            float sootFrac = clamp(soot / max(matNow, 1e-4), 0.0, 1.0);
+            float flameOcclusion = 0.015;
+            float blendAlpha = alpha * mix(flameOcclusion, 1.0, sootFrac);
+
+            finalColor = vec4(flame * fade + smoke * alpha * sootFrac, blendAlpha);
+            return;
+        }
+
+        // =====================================================================
+        // PATH B: STANDARD VOLUME SHEET (u_volumeSheet <= 1.5, e.g. EnergyBurst)
+        // Authentic, isotropic volumetric detonation and soft smoke puff.
+        // =====================================================================
+        float fade = fragColor.a * soft;
         if (fade < 0.004 || (emis < 0.004 && soot * opac < 0.004)) discard;
 
-        // FLAME — emission indexes the ramp, so a single sprite carries a
-        // white-hot core, a yellow shoulder and a deep-red rim. This is the
-        // whole reason the volume path exists: the legacy path multiplies the
-        // entire quad by ONE vertex colour and cannot zone colour at all.
         float heat  = clamp(emis * u_heatGain * fragColor.r, 0.0, 1.0);
-        // Radiance is gated by COVERAGE as well as by emission. Without the
-        // `opac` factor a texel with a whisker of emission still radiates at
-        // full strength, so the faint tail of every cell lights up and each
-        // sprite shows as a glowing SQUARE — the quad's own boundary becomes
-        // visible because nothing makes the light fall off where the gas stops.
-        // Multiplying by opacity is also what the physics says: a ray radiates
-        // in proportion to how much hot gas it crossed, which is exactly what A
-        // integrates.
         vec3  flame = texture(u_rampLUT, vec2(heat, 0.5)).rgb
                       * emis * opac * u_emissiveBoost;
 
-        // SMOKE — B/G is the fraction of light that survived to each texel,
-        // baked at sim time. A billboard cannot compute that at runtime, and
-        // without it stacked puffs read as flat cards (scripts/flipbook/render.py).
         float selfShadow = (soot > 0.004) ? clamp(shad / soot, 0.0, 1.0) : 1.0;
         float wrap;
         vec3  N   = ParticleNormalWorld(ParticleNormalLocal(opac));
@@ -495,61 +531,8 @@ void main()
             : ParticleLightTerm(N, ParticleLightDir(), wrap);
         vec3  smoke = u_smokeTint * lit * (u_sixWayLighting > 0.5 ? 1.0 : selfShadow);
 
-        // COVERAGE IS `opac`, NOT `soot * opac`.
-        //
-        // The first version gated alpha on soot, reasoning that only smoke
-        // occludes and flame is pure light. That is wrong twice over. The sim
-        // already answers the question: A is 1 - transmittance with the flame's
-        // own extinction folded in (render.py --flame-extinction), so hot gas
-        // DOES block what is behind it. And gating on soot put the LEAST alpha
-        // exactly where emission is strongest — hot gas carries little soot —
-        // so the bright core had almost no coverage and simply added light to
-        // whatever was behind it. Over a night sky that passes; over a bright
-        // sky the core turns milky and the whole flame washes out, because
-        // adding light to an already-bright destination only pushes it toward
-        // white and strips the colour out.
-        //
-        // With coverage from `opac` the core REPLACES its background instead of
-        // tinting it, so the flame holds the same colour on any sky — which is
-        // the actual requirement, and the thing the additive-core build could
-        // never satisfy at all.
-        // Coverage has to follow the smoke dial too, or a flame with its soot
-        // turned off still occludes as if the soot were there. `opac` is the
-        // whole gas column's 1 - transmittance; scale it by how much material
-        // survives the dial. At u_smokeGain 1 the ratio is exactly 1, so this
-        // is an identity for everything already authored.
-        // ── PURE LIGHT: no soot means no silhouette ──────────────────────
-        //
-        // u_smokeGain 0 declares an effect with no soot at all — an energy
-        // burst, not a fire. Such a thing cannot occlude, so it emits alpha 0,
-        // and premultiplied blending (`src.rgb + dst*(1-0)`) degenerates to
-        // EXACT addition. One blend mode therefore serves both: fire occludes
-        // with the coverage it earns, energy adds and never darkens anything.
-        //
-        // Taking the branch matters rather than just letting the arithmetic
-        // trend to zero: below, coverage is opac*(soot+emis)/(rawSoot+emis),
-        // which stays NON-zero at smokeGain 0 because emission is in both
-        // terms. An energy burst would keep punching a faint hole in the scene.
         if (u_smokeGain <= 0.0)
         {
-            // ALPHA 1, NOT 0 — and the difference is the routing.
-            //
-            // Pure light belongs in the EMISSION pass with BLEND_ADDITIVE,
-            // which rlvk defines as `src*SRC_ALPHA + dst`: alpha SCALES the
-            // contribution, so emitting 0 here deletes the effect entirely.
-            // The intensity is already in rgb (flame * fade), so alpha 1 makes
-            // the hardware add exactly that.
-            //
-            // The first attempt emitted alpha 0 and asked for
-            // VFX_BLEND_PREMULTIPLIED instead, reasoning that `src.rgb +
-            // dst*(1-0)` is also exact addition. It is — but PREMULTIPLIED is
-            // routed to the BODY pass, alongside trails, decals and
-            // afterimages and inside their depth-mask handling, and drawn
-            // there this produced sharp horizontal bands cut out of the
-            // effect. Swapping the blend mode alone made them vanish, which is
-            // what identified it after six other causes had been eliminated.
-            // Emission is where something with no silhouette belongs anyway —
-            // it is the rule particle_system.h already states.
             finalColor = vec4(flame * fade, 1.0);
             return;
         }
@@ -557,22 +540,10 @@ void main()
         float matNow  = soot + emis;
         float matOrig = max(rawSoot + emis, 1e-4);
         float alpha = clamp(opac * clamp(matNow / matOrig, 0.0, 1.0) * fade, 0.0, 1.0);
-
-        // Split that coverage between the two populations by what is actually
-        // in the texel. The soot half is lit and can be DARKER than the sky;
-        // the flame half is emission, added on top of the background it just
-        // occluded — the pair is what premultiplied blending exists for.
         float sootFrac = clamp(soot / max(matNow, 1e-4), 0.0, 1.0);
-
-        // Soot occludes background strongly (opaque billow with 6-way lighting).
-        // Flame is hot luminous plasma: it has light occlusion (translucent),
-        // allowing flame parcels to shine through each other without circular
-        // patch borders, while retaining enough presence against bright skies.
         float flameOcclusion = 0.18;
         float blendAlpha = alpha * mix(flameOcclusion, 1.0, sootFrac);
 
-        // NOT clamped to 1: ACES in post_fx rolls the highlights off, and
-        // clamping here would flatten the blown-out core and kill its bloom.
         finalColor = vec4(flame * fade + smoke * alpha * sootFrac, blendAlpha);
         return;
     }
