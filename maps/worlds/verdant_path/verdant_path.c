@@ -398,6 +398,7 @@ static void DrawVerdantShadowCasters(Shader depthShader, void *userData)
     // Ghost of Tsushima: Meadow grass relies on internal Root AO & wrapped diffuse
     // rather than cascade shadow maps, preventing shadow cascade box artifacts.
     // Tall reeds and flowers cast dynamic shadows onto the meadow.
+    MapProp_DrawMeadowShadowCasters(&s_meadow, offset, s_time, wind, 0.035f);
     MapProp_DrawMeadowShadowCasters(&s_reedMeadow, offset, s_time, wind, 0.11f);
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
         MapProp_DrawFlowerFieldShadowCaster(&s_flowerFields[cluster], offset,
@@ -512,9 +513,9 @@ void InitVerdantPathMap(void)
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
             .rootColor = {46, 76, 26, 255}, .tipColor = {130, 202, 48, 255},
-            .bladesPerClump = 8, .bladeSegments = 4, .bladeWidthScale = 0.115f,
+            .bladesPerClump = 8, .bladeSegments = 5, .bladeWidthScale = 0.115f,
             .chunkSize = 12.0f, .lodDistance = 32.0f, .drawDistance = 88.0f,
-            .shadowDistance = 0.0f,
+            .shadowDistance = 28.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,

@@ -320,10 +320,10 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
     // Hybrid contact is root occlusion, not a second directional silhouette.
     // Keep it short, broad and restrained so the real animated shadow owns the
     // readable shape. SHADOW OFF retains a softer projected fallback.
-    float projectionScale = realShadowActive ? 0.36f : 0.62f;
-    float widthScale = realShadowActive ? 1.45f : 1.15f;
-    float tipWidth = realShadowActive ? 0.95f : 0.70f;
-    float shadowStrength = realShadowActive ? 0.68f : 0.75f;
+    float projectionScale = realShadowActive ? 0.42f : 0.68f;
+    float widthScale = realShadowActive ? 1.50f : 1.25f;
+    float tipWidth = realShadowActive ? 0.92f : 0.75f;
+    float shadowStrength = realShadowActive ? 0.85f : 0.92f;
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightTravel"),
                    &lightTravel, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_shadowTint"),
@@ -545,10 +545,10 @@ static Model Nature_BuildMeadowShadowChunk(const MapMeadowPlacement *placements,
             continue;
         Vector3 root = clump->position;
         root.y += 0.0012f;
-        float width = fmaxf(clump->radius * 0.52f, 0.022f);
-        Vector3 encoded = {clump->height * 0.92f, width, clump->phase};
-        Color rootShade = {200, 200, 200, 255};
-        Color tipShade = {135, 135, 135, 255};
+        float width = fmaxf(clump->radius * 0.72f, 0.038f);
+        Vector3 encoded = {clump->height * 1.05f, width, clump->phase};
+        Color rootShade = {240, 240, 240, 255};
+        Color tipShade = {170, 170, 170, 255};
         for (int vertex = 0; vertex < 6; vertex++) {
             Color shade = vertex < 2 || vertex == 3 ? rootShade : tipShade;
             Nature_SetVertex(&mesh, cursor, root, encoded, clump->phase, 0.0f, shade);
@@ -839,6 +839,36 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                     bladeRoot = (Color){24, 40, 18, 255};
                     bladeTip  = (Color){152, 196, 68, 255};
                 }
+            } else if (bladeSegments <= 2) {
+                // Shadow Caster / Far LOD: upright arching culms casting distinct, pointed blade silhouettes
+                float baseAngle = (float)blade * (2.0f * PI / (float)bladesPerClump) + (float)(i & 3) * 0.785f;
+                float bladeAzimuth = baseAngle + (bHash - 0.5f) * 0.35f;
+                float radX = cosf(bladeAzimuth);
+                float radZ = sinf(bladeAzimuth);
+                float windWeight = 0.72f;
+                float combX = radX * (1.0f - windWeight) + flowX * windWeight;
+                float combZ = radZ * (1.0f - windWeight) + flowZ * windWeight;
+                float combLen = sqrtf(combX * combX + combZ * combZ);
+                if (combLen < 0.01f) { combX = flowX; combZ = flowZ; combLen = 1.0f; }
+                bladeLeanAngle = atan2f(combZ / combLen, combX / combLen);
+
+                float collarRadius = clump->radius * 0.10f;
+                float bx = clump->position.x + radX * collarRadius;
+                float bz = clump->position.z + radZ * collarRadius;
+
+                float lengthScale = 0.92f + 0.22f * (float)blade / (float)bladesPerClump;
+                height = clump->height * lengthScale;
+                width = clump->radius * style.bladeWidthScale * widthMultiplier;
+                lean = height * 0.46f;
+                droopY = height * 0.10f;
+
+                pBase = (Vector3){bx, clump->position.y, bz};
+                pP1 = (Vector3){bx + cosf(bladeLeanAngle) * lean * 0.10f, pBase.y + height * 0.40f, bz + sinf(bladeLeanAngle) * lean * 0.10f};
+                pP2 = (Vector3){bx + cosf(bladeLeanAngle) * lean * 0.48f, pBase.y + height * 0.82f, bz + sinf(bladeLeanAngle) * lean * 0.48f};
+                pP3 = (Vector3){bx + cosf(bladeLeanAngle) * lean * 1.00f, pBase.y + (height * 0.76f - droopY), bz + sinf(bladeLeanAngle) * lean * 1.00f};
+
+                bladeRoot = style.rootColor;
+                bladeTip = style.tipColor;
             } else {
                 // 3-Tier Canopy Architecture (Ghost of Tsushima style bunchgrass tuft):
                 // Tier 0: Basal Ground-Cover Skirt (blades 0..1): broad, low-arching blades blanketing root collar & soil
@@ -910,19 +940,19 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
 
                     pBase = (Vector3){bx, clump->position.y, bz};
                     pP1 = (Vector3){
-                        bx + cosf(bladeLeanAngle) * lean * 0.12f,
+                        bx + cosf(bladeLeanAngle) * lean * 0.10f,
                         pBase.y + height * 0.38f,
-                        bz + sinf(bladeLeanAngle) * lean * 0.12f
+                        bz + sinf(bladeLeanAngle) * lean * 0.10f
                     };
                     pP2 = (Vector3){
-                        bx + cosf(bladeLeanAngle) * lean * 0.48f,
-                        pBase.y + height * 0.72f,
-                        bz + sinf(bladeLeanAngle) * lean * 0.48f
+                        bx + cosf(bladeLeanAngle) * lean * 0.44f,
+                        pBase.y + height * 0.76f,
+                        bz + sinf(bladeLeanAngle) * lean * 0.44f
                     };
                     pP3 = (Vector3){
-                        bx + cosf(bladeLeanAngle) * lean * 0.95f,
-                        pBase.y + (height * 0.84f - droopY),
-                        bz + sinf(bladeLeanAngle) * lean * 0.95f
+                        bx + cosf(bladeLeanAngle) * lean * 0.88f,
+                        pBase.y + (height * 0.82f - droopY * 0.60f),
+                        bz + sinf(bladeLeanAngle) * lean * 0.88f
                     };
                 } else {
                     // Tier 2: Crown Weeping Ribbons
@@ -951,18 +981,18 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                     pBase = (Vector3){bx, clump->position.y, bz};
                     pP1 = (Vector3){
                         bx + cosf(bladeLeanAngle) * lean * 0.10f,
-                        pBase.y + height * 0.34f,
+                        pBase.y + height * 0.36f,
                         bz + sinf(bladeLeanAngle) * lean * 0.10f
                     };
                     pP2 = (Vector3){
-                        bx + cosf(bladeLeanAngle) * lean * 0.52f,
-                        pBase.y + height * 0.78f,
-                        bz + sinf(bladeLeanAngle) * lean * 0.52f
+                        bx + cosf(bladeLeanAngle) * lean * 0.48f,
+                        pBase.y + height * 0.82f,
+                        bz + sinf(bladeLeanAngle) * lean * 0.48f
                     };
                     pP3 = (Vector3){
-                        bx + cosf(bladeLeanAngle) * lean * 1.10f,
-                        pBase.y + (height * 0.78f - droopY),
-                        bz + sinf(bladeLeanAngle) * lean * 1.10f
+                        bx + cosf(bladeLeanAngle) * lean * 1.00f,
+                        pBase.y + (height * 0.76f - droopY * 0.65f),
+                        bz + sinf(bladeLeanAngle) * lean * 1.00f
                     };
                 }
 
@@ -1241,20 +1271,14 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
                 placements, count, style, x0, x1, z0, z1, 1,
                 farBlades, 1, 1.35f, &farCount);
             Model shadowModel = {0};
-            if (buildContactShadows)
-                shadowModel = Nature_BuildMeadowShadowChunk(
-                    placements, count, x0, x1, z0, z1);
-            // Shadow-only geometry keeps one of every two clumps and two real
-            // pointed blades per survivor. Rendering the full near meadow into
-            // a low-angle shadow map creates coherent parallel-line moire over
-            // the entire terrain; this stable LOD preserves real silhouettes
-            // while cutting depth geometry to roughly 13% of the near mesh.
+            // Eliminate crude 6-vertex trapezoid wedges.
+            // Grass uses real dynamic shadow map casting via realShadowModel.
             Model realShadowModel = {0};
             int realShadowCount = 0;
             if (buildRealShadowLod)
                 realShadowModel = Nature_BuildMeadowChunk(
-                    placements, count, style, x0, x1, z0, z1, 2,
-                    2, 1, 1.0f, &realShadowCount);
+                    placements, count, style, x0, x1, z0, z1, 1,
+                    3, 2, 2.4f, &realShadowCount);
             MapMeadowChunk *chunk = &meadow.chunks[meadow.chunkCount++];
             if (textured) {
                 nearModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
