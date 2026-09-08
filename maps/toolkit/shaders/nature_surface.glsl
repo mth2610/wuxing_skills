@@ -49,12 +49,12 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float directDiffuse = wrapped * wrapped;
 
     // Two-sided Subsurface Scattering (SSS) Transmission:
-    // Light penetrates thin foliage membranes when looking towards the sun,
-    // producing radiant back-lit glow across grass blades and delicate petals.
-    // In Ghost of Tsushima: I_trans = max(0, -L · V)^gamma * C_SSS * (1 - Thickness(t))
+    // Light penetrates thin foliage membranes both via direct back-face sun illumination
+    // and forward-scatter when looking toward the sun (Ghost of Tsushima / CryEngine foliage).
+    float backfaceSun = max(-dot(faceNormal, u_lightDir), 0.0);
     float viewSunAlign = max(dot(-u_lightDir, viewDir), 0.0);
-    float transmissionAngle = pow(viewSunAlign, 2.4);
-    float thinness = mix(0.12, 1.0, smoothstep(0.08, 0.70, heightAlongPlant));
+    float transmissionAngle = pow(backfaceSun, 1.6) * 0.70 + pow(viewSunAlign, 2.2) * 0.50;
+    float thinness = mix(0.18, 1.0, smoothstep(0.06, 0.65, heightAlongPlant));
     float transmission = transmissionAngle * thinness;
 
     vec3 subsurfaceColor = mix(
@@ -94,7 +94,7 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     // Root Contact AO: grounds foliage naturally into the soil without harsh pitch-black ink spots
     float hNorm = clamp(heightAlongPlant, 0.0, 1.0);
-    float rootAO = clamp(0.40 + 0.60 * (hNorm * (2.0 - hNorm)), 0.40, 1.0);
+    float rootAO = clamp(0.72 + 0.28 * (hNorm * (2.0 - hNorm)), 0.72, 1.0);
     lit *= rootAO;
 
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);

@@ -25,7 +25,7 @@
 #define MOUNTAIN_RING_DEPTH 58.0f
 #define MOUNTAIN_ROCK_COUNT 40
 #define ROCK_COUNT 10
-#define GRASS_TUFT_CAPACITY 36000
+#define GRASS_TUFT_CAPACITY 42000
 #define FLOWER_CLUSTER_COUNT 3
 #define FLOWERS_PER_CLUSTER 120
 #define FLOWER_COUNT (FLOWER_CLUSTER_COUNT * FLOWERS_PER_CLUSTER)
@@ -219,9 +219,9 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.22f, .jitter = 0.85f,
-            .minRadius = 0.20f, .maxRadius = 0.32f,
-            .minHeight = 0.46f, .maxHeight = 0.72f,
+            .spacing = 0.20f, .jitter = 0.85f,
+            .minRadius = 0.22f, .maxRadius = 0.34f,
+            .minHeight = 0.48f, .maxHeight = 0.74f,
             .yOffset = 0.035f, .seed = 0x51a7c3u,
         }, VerdantGrassDensity, NULL);
 
@@ -511,8 +511,8 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {16, 34, 12, 255}, .tipColor = {116, 186, 42, 255},
-            .bladesPerClump = 7, .bladeSegments = 4, .bladeWidthScale = 0.115f,
+            .rootColor = {46, 76, 26, 255}, .tipColor = {130, 202, 48, 255},
+            .bladesPerClump = 8, .bladeSegments = 4, .bladeWidthScale = 0.115f,
             .chunkSize = 12.0f, .lodDistance = 32.0f, .drawDistance = 88.0f,
             .shadowDistance = 0.0f,
             .texturePath = NULL,

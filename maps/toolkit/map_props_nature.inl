@@ -765,7 +765,7 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             continue;
         const float golden = 2.39996323f;
         for (int blade = 0; blade < bladesPerClump; blade++) {
-            bool isReed = (clump->height > 0.60f);
+            bool isReed = (clump->height > 0.95f);
             float clumpAngle = clump->rotationDeg * DEG2RAD;
 
             // Natural per-blade organic variations (Structured Procedural Variation)
@@ -776,53 +776,45 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             float bHash3 = sinf((float)(i * 89 + blade * 13)) * 19283.4721f;
             bHash3 -= floorf(bHash3);
 
-            // Radial base azimuth with organic jitter
-            float baseAngle = (float)blade * (2.0f * PI / (float)bladesPerClump);
-            float bladeAzimuth = baseAngle + (bHash - 0.5f) * 0.95f;
-            float radX = cosf(bladeAzimuth);
-            float radZ = sinf(bladeAzimuth);
-
             float flowX = cosf(clumpAngle);
             float flowZ = sinf(clumpAngle);
 
-            // Controlled blend: broad prevailing wind bias + individual blade outward growth
-            // Some blades strictly follow the wind, some arch outward to give the clump 3D bush volume
-            float windWeight = isReed ? 0.65f : (0.42f + 0.36f * bHash2); // 0.42 to 0.78
-            float radWeight = 1.0f - windWeight;
-            float combX = radX * radWeight + flowX * windWeight;
-            float combZ = radZ * radWeight + flowZ * windWeight;
-            float combLen = sqrtf(combX * combX + combZ * combZ);
-            if (combLen < 0.01f) { combX = flowX; combZ = flowZ; combLen = 1.0f; }
-            combX /= combLen;
-            combZ /= combLen;
-            float bladeLeanAngle = atan2f(combZ, combX);
+            float height = 0.0f;
+            float width = 0.0f;
+            float lean = 0.0f;
+            float droopY = 0.0f;
+            float bladeLeanAngle = 0.0f;
+            Vector3 pBase = {0};
+            Vector3 pP1 = {0}, pP2 = {0}, pP3 = {0};
+            Color bladeRoot = {0};
+            Color bladeTip = {0};
 
-            // Base collar
-            float collarRadius = clump->radius * (isReed ? 0.20f : 0.16f) * (0.75f + 0.50f * bHash3);
-            float bx = clump->position.x + radX * collarRadius;
-            float bz = clump->position.z + radZ * collarRadius;
-
-            // Varied canopy: understory, medium culms, sweeping weeping ribbons
-            float tierFrac = (float)blade / (float)bladesPerClump;
-            float lengthScale = isReed ? (0.85f + 0.30f * sinf((float)(i * 13 + blade * 7)))
-                                       : (0.72f + 0.45f * tierFrac + 0.22f * (bHash - 0.5f));
-            float height = clump->height * lengthScale;
-            float width = clump->radius * style.bladeWidthScale * widthMultiplier
-                        * (0.82f + 0.36f * bHash2);
-
-            // Outward reach & droop variation:
-            float lean = height * (isReed ? (0.35f + 0.20f * tierFrac)
-                                          : (0.32f + 0.25f * tierFrac + 0.14f * (bHash3 - 0.5f)));
-            float droopY = height * (0.06f + 0.18f * bHash2);
-
-            // Section 1.1: Cubic Bézier Control Points
-            // P0: root
-            // P1: lower control (stiff lower stem, defining initial shoot angle)
-            // P2: upper control (smooth arch of middle stem)
-            // P3: tip (maximum deflection, graceful bow)
-            Vector3 pBase = {bx, clump->position.y, bz};
-            Vector3 pP1, pP2, pP3;
             if (isReed) {
+                float baseAngle = (float)blade * (2.0f * PI / (float)bladesPerClump);
+                float bladeAzimuth = baseAngle + (bHash - 0.5f) * 0.95f;
+                float radX = cosf(bladeAzimuth);
+                float radZ = sinf(bladeAzimuth);
+
+                float windWeight = 0.65f;
+                float radWeight = 1.0f - windWeight;
+                float combX = radX * radWeight + flowX * windWeight;
+                float combZ = radZ * radWeight + flowZ * windWeight;
+                float combLen = sqrtf(combX * combX + combZ * combZ);
+                if (combLen < 0.01f) { combX = flowX; combZ = flowZ; combLen = 1.0f; }
+                bladeLeanAngle = atan2f(combZ / combLen, combX / combLen);
+
+                float collarRadius = clump->radius * 0.20f * (0.75f + 0.50f * bHash3);
+                float bx = clump->position.x + radX * collarRadius;
+                float bz = clump->position.z + radZ * collarRadius;
+
+                float tierFrac = (float)blade / (float)bladesPerClump;
+                float lengthScale = 0.85f + 0.30f * sinf((float)(i * 13 + blade * 7));
+                height = clump->height * lengthScale;
+                width = clump->radius * style.bladeWidthScale * widthMultiplier * (0.82f + 0.36f * bHash2);
+                lean = height * (0.35f + 0.20f * tierFrac);
+                droopY = height * (0.06f + 0.18f * bHash2);
+
+                pBase = (Vector3){bx, clump->position.y, bz};
                 pP1 = (Vector3){
                     bx + cosf(bladeLeanAngle) * lean * 0.08f,
                     pBase.y + height * 0.42f,
@@ -838,45 +830,161 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                     pBase.y + height * 0.65f,
                     bz + sinf(bladeLeanAngle) * lean * 1.25f
                 };
-            } else {
-                pP1 = (Vector3){
-                    bx + cosf(bladeLeanAngle) * lean * 0.10f,
-                    pBase.y + height * 0.35f,
-                    bz + sinf(bladeLeanAngle) * lean * 0.10f
-                };
-                pP2 = (Vector3){
-                    bx + cosf(bladeLeanAngle) * lean * 0.48f,
-                    pBase.y + height * 0.72f,
-                    bz + sinf(bladeLeanAngle) * lean * 0.48f
-                };
-                pP3 = (Vector3){
-                    bx + cosf(bladeLeanAngle) * lean * 0.95f,
-                    pBase.y + (height * 0.82f - droopY),
-                    bz + sinf(bladeLeanAngle) * lean * 0.95f
-                };
-            }
 
-            float hueShift = (bHash - 0.5f) * 0.20f;
-            int rR = (int)(style.rootColor.r * (1.0f + hueShift * 0.4f));
-            int rG = (int)(style.rootColor.g * (1.0f + hueShift));
-            int rB = (int)(style.rootColor.b * (1.0f - hueShift * 0.3f));
-            int tR = (int)(style.tipColor.r * (1.0f + hueShift * 0.7f));
-            int tG = (int)(style.tipColor.g * (1.0f + hueShift * 1.1f));
-            int tB = (int)(style.tipColor.b * (1.0f - hueShift * 0.5f));
-            Color bladeRoot = {(unsigned char)fminf(255, fmaxf(0, rR)),
-                               (unsigned char)fminf(255, fmaxf(0, rG)),
-                               (unsigned char)fminf(255, fmaxf(0, rB)), 255};
-            Color bladeTip = {(unsigned char)fminf(255, fmaxf(0, tR)),
-                              (unsigned char)fminf(255, fmaxf(0, tG)),
-                              (unsigned char)fminf(255, fmaxf(0, tB)), 255};
-            if (isReed) {
                 bool isOuterDrySheath = (blade < 2);
                 if (isOuterDrySheath) {
-                    bladeRoot = (Color){38, 30, 16, 255}; // dark wet peat base
-                    bladeTip  = (Color){188, 154, 76, 255}; // warm golden-straw dried reed leaf
+                    bladeRoot = (Color){42, 34, 18, 255};
+                    bladeTip  = (Color){192, 160, 82, 255};
                 } else {
-                    bladeRoot = (Color){20, 36, 16, 255}; // deep aquatic green
-                    bladeTip  = (Color){148, 192, 62, 255}; // fresh bamboo celadon reed
+                    bladeRoot = (Color){24, 40, 18, 255};
+                    bladeTip  = (Color){152, 196, 68, 255};
+                }
+            } else {
+                // 3-Tier Canopy Architecture (Ghost of Tsushima style bunchgrass tuft):
+                // Tier 0: Basal Ground-Cover Skirt (blades 0..1): broad, low-arching blades blanketing root collar & soil
+                // Tier 1: Mid-Story Volume Culms (middle blades): lush 3D tuft body with balanced wind-spread
+                // Tier 2: Crown Weeping Ribbons (last 2 blades): tall sweeping ribbons & botanical seedhead straw
+                int understoryCount = (bladesPerClump <= 6) ? 1 : 2;
+                int crownCount = 2;
+                int midCount = bladesPerClump - understoryCount - crownCount;
+                if (midCount < 1) midCount = 1;
+
+                if (blade < understoryCount) {
+                    // Tier 0: Basal Understory Skirt
+                    float baseAngle = (float)blade * PI + (float)(i & 3) * 1.5708f;
+                    float bladeAzimuth = baseAngle + (bHash - 0.5f) * 0.50f;
+                    float radX = cosf(bladeAzimuth);
+                    float radZ = sinf(bladeAzimuth);
+                    bladeLeanAngle = bladeAzimuth;
+
+                    float collarRadius = clump->radius * 0.10f;
+                    float bx = clump->position.x + radX * collarRadius;
+                    float bz = clump->position.z + radZ * collarRadius;
+
+                    float lengthScale = 0.38f + 0.10f * bHash;
+                    height = clump->height * lengthScale;
+                    width = clump->radius * style.bladeWidthScale * widthMultiplier * (1.30f + 0.20f * bHash2);
+                    lean = height * 1.45f;
+
+                    pBase = (Vector3){bx, clump->position.y, bz};
+                    pP1 = (Vector3){
+                        bx + cosf(bladeLeanAngle) * lean * 0.32f,
+                        pBase.y + height * 0.48f,
+                        bz + sinf(bladeLeanAngle) * lean * 0.32f
+                    };
+                    pP2 = (Vector3){
+                        bx + cosf(bladeLeanAngle) * lean * 0.72f,
+                        pBase.y + height * 0.30f,
+                        bz + sinf(bladeLeanAngle) * lean * 0.72f
+                    };
+                    pP3 = (Vector3){
+                        bx + cosf(bladeLeanAngle) * lean * 1.05f,
+                        fmaxf(pBase.y + 0.035f, pBase.y + height * 0.10f),
+                        bz + sinf(bladeLeanAngle) * lean * 1.05f
+                    };
+                } else if (blade < bladesPerClump - crownCount) {
+                    // Tier 1: Mid-Story Volume Culms
+                    int midIdx = blade - understoryCount;
+                    float baseAngle = (float)midIdx * (2.0f * PI / (float)midCount);
+                    float bladeAzimuth = baseAngle + (bHash - 0.5f) * 0.85f;
+                    float radX = cosf(bladeAzimuth);
+                    float radZ = sinf(bladeAzimuth);
+
+                    float windWeight = 0.52f + 0.28f * bHash2;
+                    float combX = radX * (1.0f - windWeight) + flowX * windWeight;
+                    float combZ = radZ * (1.0f - windWeight) + flowZ * windWeight;
+                    float combLen = sqrtf(combX * combX + combZ * combZ);
+                    if (combLen < 0.01f) { combX = flowX; combZ = flowZ; combLen = 1.0f; }
+                    bladeLeanAngle = atan2f(combZ / combLen, combX / combLen);
+
+                    float collarRadius = clump->radius * 0.14f * (0.80f + 0.40f * bHash3);
+                    float bx = clump->position.x + radX * collarRadius;
+                    float bz = clump->position.z + radZ * collarRadius;
+
+                    float midFrac = (midCount > 1) ? ((float)midIdx / (float)(midCount - 1)) : 0.5f;
+                    float lengthScale = 0.72f + 0.22f * midFrac + 0.12f * (bHash - 0.5f);
+                    height = clump->height * lengthScale;
+                    width = clump->radius * style.bladeWidthScale * widthMultiplier * (0.98f + 0.22f * bHash2);
+                    lean = height * (0.35f + 0.18f * midFrac + 0.12f * (bHash3 - 0.5f));
+                    droopY = height * (0.05f + 0.12f * bHash2);
+
+                    pBase = (Vector3){bx, clump->position.y, bz};
+                    pP1 = (Vector3){
+                        bx + cosf(bladeLeanAngle) * lean * 0.12f,
+                        pBase.y + height * 0.38f,
+                        bz + sinf(bladeLeanAngle) * lean * 0.12f
+                    };
+                    pP2 = (Vector3){
+                        bx + cosf(bladeLeanAngle) * lean * 0.48f,
+                        pBase.y + height * 0.72f,
+                        bz + sinf(bladeLeanAngle) * lean * 0.48f
+                    };
+                    pP3 = (Vector3){
+                        bx + cosf(bladeLeanAngle) * lean * 0.95f,
+                        pBase.y + (height * 0.84f - droopY),
+                        bz + sinf(bladeLeanAngle) * lean * 0.95f
+                    };
+                } else {
+                    // Tier 2: Crown Weeping Ribbons
+                    int crownIdx = blade - (bladesPerClump - crownCount);
+                    float crownAngle = clumpAngle + (float)(crownIdx - 0.5f) * 0.42f + (bHash - 0.5f) * 0.30f;
+                    float radX = cosf(crownAngle);
+                    float radZ = sinf(crownAngle);
+
+                    float windWeight = 0.78f + 0.18f * bHash2;
+                    float combX = radX * (1.0f - windWeight) + flowX * windWeight;
+                    float combZ = radZ * (1.0f - windWeight) + flowZ * windWeight;
+                    float combLen = sqrtf(combX * combX + combZ * combZ);
+                    if (combLen < 0.01f) { combX = flowX; combZ = flowZ; combLen = 1.0f; }
+                    bladeLeanAngle = atan2f(combZ / combLen, combX / combLen);
+
+                    float collarRadius = clump->radius * 0.10f;
+                    float bx = clump->position.x + radX * collarRadius;
+                    float bz = clump->position.z + radZ * collarRadius;
+
+                    float lengthScale = 1.05f + 0.18f * (float)crownIdx + 0.10f * (bHash - 0.5f);
+                    height = clump->height * lengthScale;
+                    width = clump->radius * style.bladeWidthScale * widthMultiplier * (0.88f + 0.15f * bHash2);
+                    lean = height * (0.48f + 0.18f * (bHash3 - 0.5f));
+                    droopY = height * (0.10f + 0.14f * bHash2);
+
+                    pBase = (Vector3){bx, clump->position.y, bz};
+                    pP1 = (Vector3){
+                        bx + cosf(bladeLeanAngle) * lean * 0.10f,
+                        pBase.y + height * 0.34f,
+                        bz + sinf(bladeLeanAngle) * lean * 0.10f
+                    };
+                    pP2 = (Vector3){
+                        bx + cosf(bladeLeanAngle) * lean * 0.52f,
+                        pBase.y + height * 0.78f,
+                        bz + sinf(bladeLeanAngle) * lean * 0.52f
+                    };
+                    pP3 = (Vector3){
+                        bx + cosf(bladeLeanAngle) * lean * 1.10f,
+                        pBase.y + (height * 0.78f - droopY),
+                        bz + sinf(bladeLeanAngle) * lean * 1.10f
+                    };
+                }
+
+                bool isGoldenStraw = (blade == bladesPerClump - 1) && (bHash3 > 0.40f);
+                if (isGoldenStraw) {
+                    // Botanical Accent: Golden-amber dried seedhead / ripe culm (Ghost of Tsushima meadow style)
+                    bladeRoot = (Color){54, 72, 28, 255};  // warm golden-green sheath
+                    bladeTip  = (Color){218, 192, 92, 255}; // ripe golden-wheat amber straw tip
+                } else {
+                    float hueShift = (bHash - 0.5f) * 0.18f;
+                    int rR = (int)(style.rootColor.r * (1.0f + hueShift * 0.3f));
+                    int rG = (int)(style.rootColor.g * (1.0f + hueShift));
+                    int rB = (int)(style.rootColor.b * (1.0f - hueShift * 0.3f));
+                    int tR = (int)(style.tipColor.r * (1.0f + hueShift * 0.6f));
+                    int tG = (int)(style.tipColor.g * (1.0f + hueShift * 1.0f));
+                    int tB = (int)(style.tipColor.b * (1.0f - hueShift * 0.4f));
+                    bladeRoot = (Color){(unsigned char)fminf(255, fmaxf(0, rR)),
+                                        (unsigned char)fminf(255, fmaxf(0, rG)),
+                                        (unsigned char)fminf(255, fmaxf(0, rB)), 255};
+                    bladeTip  = (Color){(unsigned char)fminf(255, fmaxf(0, tR)),
+                                        (unsigned char)fminf(255, fmaxf(0, tG)),
+                                        (unsigned char)fminf(255, fmaxf(0, tB)), 255};
                 }
             }
 
@@ -929,9 +1037,9 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Vector3 p2 = Vector3Add(Vector3Add(center1, Vector3Scale(S1, halfW1)), fold1);
                 Vector3 p3 = Vector3Add(Vector3Subtract(center1, Vector3Scale(S1, halfW1)), fold1);
 
-                // Deep root ambient occlusion
-                float occ0 = (t0 < 0.28f) ? (0.74f + 0.26f * (t0 / 0.28f)) : 1.0f;
-                float occ1 = (t1 < 0.28f) ? (0.74f + 0.26f * (t1 / 0.28f)) : 1.0f;
+                // Root ambient occlusion: soft, natural ground grounding without harsh pitch-black spots
+                float occ0 = (t0 < 0.22f) ? (0.88f + 0.12f * (t0 / 0.22f)) : 1.0f;
+                float occ1 = (t1 < 0.22f) ? (0.88f + 0.12f * (t1 / 0.22f)) : 1.0f;
                 Color color0 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t0), occ0);
                 Color color1 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t1), occ1);
 
