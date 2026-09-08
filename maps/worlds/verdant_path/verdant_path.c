@@ -25,7 +25,7 @@
 #define MOUNTAIN_RING_DEPTH 58.0f
 #define MOUNTAIN_ROCK_COUNT 40
 #define ROCK_COUNT 10
-#define GRASS_TUFT_CAPACITY 26000
+#define GRASS_TUFT_CAPACITY 36000
 #define FLOWER_CLUSTER_COUNT 3
 #define FLOWERS_PER_CLUSTER 120
 #define FLOWER_COUNT (FLOWER_CLUSTER_COUNT * FLOWERS_PER_CLUSTER)
@@ -187,21 +187,27 @@ static float VerdantGrassDensity(float x, float z, void *userData)
                       + sinf(x * 0.32f - z * 0.28f + 2.7f) * 0.20f;
     float macro = 0.68f + carpetNoise * 0.48f;
 
-    // Boost grass density under flower clusters for a rich, lush base
+    // Suppress grass in flower clusters: flowers need clear open ground to bloom cleanly
     const Vector3 flowerCenters[FLOWER_CLUSTER_COUNT] = {
         {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f}, {77.0f, 0.0f, 53.0f},
     };
     const Vector3 flowerRadii[FLOWER_CLUSTER_COUNT] = {
         {11.5f, 0.0f, 8.0f}, {13.0f, 0.0f, 7.0f}, {10.5f, 0.0f, 8.5f},
     };
+    float flowerSuppression = 1.0f;
     for (int c = 0; c < FLOWER_CLUSTER_COUNT; c++) {
         float dx = (x - flowerCenters[c].x) / flowerRadii[c].x;
         float dz = (z - flowerCenters[c].z) / flowerRadii[c].z;
-        if (dx * dx + dz * dz < 1.15f) {
-            macro += 0.35f;
-            break;
+        float d2 = dx * dx + dz * dz;
+        if (d2 < 1.25f) {
+            // Core flower zone (d2 < 0.65) has 0 grass; gently fades in toward border
+            float localFactor = fmaxf(0.0f, (d2 - 0.65f) / 0.60f);
+            if (localFactor < flowerSuppression) {
+                flowerSuppression = localFactor;
+            }
         }
     }
+    macro *= flowerSuppression;
 
     return fmaxf(0.0f, fminf(1.0f, macro * edgeFade * pathFade));
 }
@@ -213,11 +219,58 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.23f, .jitter = 0.92f,
-            .minRadius = 0.11f, .maxRadius = 0.22f,
-            .minHeight = 0.15f, .maxHeight = 0.35f,
+            .spacing = 0.22f, .jitter = 0.85f,
+            .minRadius = 0.20f, .maxRadius = 0.32f,
+            .minHeight = 0.46f, .maxHeight = 0.72f,
             .yOffset = 0.035f, .seed = 0x51a7c3u,
         }, VerdantGrassDensity, NULL);
+
+    // Ghost of Tsushima / AAA Reference: Structured procedural variation with macro flow field
+    for (int i = 0; i < s_grassCount; i++) {
+        MapMeadowPlacement *clump = &s_grassPlacements[i];
+        float cx = clump->position.x;
+        float cz = clump->position.z;
+
+        // Multi-frequency wind noise & directional flow:
+        // 1. Broad landscape waves (macro scale ~16m)
+        float wave1 = sinf(cx * 0.07f + cz * 0.05f) * 0.60f
+                    + sinf(cx * -0.05f + cz * 0.11f + 1.2f) * 0.40f;
+        // 2. Medium organic turbulence / Voronoi eddies (~4.5m)
+        float eddy = sinf(cx * 0.22f - cz * 0.18f + 0.8f) * 0.55f
+                   + sinf(cx * 0.14f + cz * 0.26f + 2.3f) * 0.45f;
+        // 3. Micro gust ripple (~1.8m)
+        float micro = sinf(cx * 0.55f + cz * 0.45f + 3.1f) * 0.5f
+                    + sinf(cx * -0.42f + cz * 0.62f) * 0.5f;
+
+        float flowAngle = 45.0f + wave1 * 32.0f + eddy * 24.0f + micro * 16.0f;
+
+        // 4. Clump-level Yaw Jitter (AAA standard: organic diversity)
+        float hash = sinf((float)(i * 47)) * 43758.5453f;
+        hash -= floorf(hash);
+        clump->rotationDeg = flowAngle + (hash - 0.5f) * 54.0f;
+
+        // Cellular noise field for macro-biomes (scale ~7 meters)
+        float cell1 = sinf(cx * 0.15f + cz * 0.10f) * 0.5f + 0.5f;
+        float cell2 = sinf(cx * -0.11f + cz * 0.20f + 1.8f) * 0.5f + 0.5f;
+        float biome = cell1 * 0.6f + cell2 * 0.4f;
+
+        if (biome > 0.60f) {
+            // Biome 1: Tall Deep Meadow (long sweeping weeping ribbons)
+            float t = (biome - 0.60f) / 0.40f;
+            clump->height = 0.58f + t * 0.16f + (clump->height - 0.55f) * 0.25f;
+            clump->radius = 0.24f + t * 0.08f;
+        } else if (biome < 0.35f) {
+            // Biome 2: Meadow clearing (dense arching grass)
+            float t = biome / 0.35f;
+            clump->height = 0.44f + t * 0.10f + (clump->height - 0.55f) * 0.20f;
+            clump->radius = 0.20f + t * 0.06f;
+        } else {
+            // Biome 3: Wild flowing grass
+            float t = (biome - 0.35f) / 0.25f;
+            clump->height = 0.50f + t * 0.12f + (clump->height - 0.55f) * 0.22f;
+            clump->radius = 0.22f + t * 0.07f;
+        }
+    }
 
     const Vector3 centers[FLOWER_CLUSTER_COUNT] = {
         {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f}, {77.0f, 0.0f, 53.0f},
@@ -342,7 +395,9 @@ static void DrawVerdantShadowCasters(Shader depthShader, void *userData)
     (void)userData;
     Vector3 offset = {0};
     Vector2 wind = {0.86f, 0.51f};
-    MapProp_DrawMeadowShadowCasters(&s_meadow, offset, s_time, wind, 0.035f);
+    // Ghost of Tsushima: Meadow grass relies on internal Root AO & wrapped diffuse
+    // rather than cascade shadow maps, preventing shadow cascade box artifacts.
+    // Tall reeds and flowers cast dynamic shadows onto the meadow.
     MapProp_DrawMeadowShadowCasters(&s_reedMeadow, offset, s_time, wind, 0.11f);
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
         MapProp_DrawFlowerFieldShadowCaster(&s_flowerFields[cluster], offset,
@@ -456,10 +511,10 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {26, 42, 18, 255}, .tipColor = {148, 182, 64, 255},
-            .bladesPerClump = 8, .bladeSegments = 3, .bladeWidthScale = 0.22f,
-            .chunkSize = 12.0f, .lodDistance = 44.0f, .drawDistance = 88.0f,
-            .shadowDistance = 30.0f,
+            .rootColor = {16, 34, 12, 255}, .tipColor = {116, 186, 42, 255},
+            .bladesPerClump = 7, .bladeSegments = 4, .bladeWidthScale = 0.115f,
+            .chunkSize = 12.0f, .lodDistance = 32.0f, .drawDistance = 88.0f,
+            .shadowDistance = 0.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,

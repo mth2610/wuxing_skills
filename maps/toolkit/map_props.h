@@ -302,6 +302,7 @@ int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxC
 
 MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int count,
                                       MapMeadowStyle style);
+float MapProp_GetMacroFlowAngle(float x, float z);
 // Persistent mobile-safe interaction field shared by meadows and flowers.
 // Begin scrolls/decays the 64x64 local field, Add stamps any number of actors,
 // and End uploads it once. Strength is displacement in world metres.

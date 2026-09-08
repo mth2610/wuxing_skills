@@ -29,5 +29,5 @@ void main()
         // green after tone mapping without turning them into emissive lines.
         albedo *= vec3(1.10, 1.16, 1.06);
     }
-    finalColor = vec4(NatureShade(albedo, fragPosition, fragNormal, fragHeight), 1.0);
+    finalColor = vec4(NatureShade(albedo, fragPosition, fragNormal, fragHeight, fragTexCoord.x), 1.0);
 }

@@ -14,5 +14,5 @@ out vec4 finalColor;
 void main()
 {
     vec3 albedo = fragColor.rgb * colDiffuse.rgb;
-    finalColor = vec4(NatureShade(albedo, fragPosition, fragNormal, fragHeight), 1.0);
+    finalColor = vec4(NatureShade(albedo, fragPosition, fragNormal, fragHeight, fragTexCoord.x), 1.0);
 }
