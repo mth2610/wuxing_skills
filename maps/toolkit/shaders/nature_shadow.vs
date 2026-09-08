@@ -22,11 +22,13 @@ void main()
     vec3 local = vertexPosition;
     vec3 world = vec3(matModel * vec4(local, 1.0));
     float rootMask = vertexTexCoord.y * vertexTexCoord.y;
-    float gust = sin(u_time * 0.74 + dot(world.xz, vec2(0.145, 0.096)));
-    gust += sin(u_time * 0.31 + dot(world.xz, vec2(-0.052, 0.081))) * 0.48;
-    gust += sin(u_time * 2.35 + dot(world.xz, vec2(0.61, -0.38))
-                + vertexTexCoord.x * 6.2831) * 0.16;
-    local.xz += u_windDirection * gust * u_windStrength * rootMask;
+    // Multi-frequency wind dynamics matching nature_lit.vs
+    float baseSway = sin(u_time * 0.85 + dot(world.xz, vec2(0.11, 0.08))) * 0.35;
+    float windCoord = dot(world.xz, u_windDirection) * 0.42 - u_time * 1.85;
+    float gustWave = pow(sin(windCoord) * 0.5 + 0.5, 2.0) * 0.85;
+    float tipJitter = sin(u_time * 4.20 + dot(world.xz, vec2(0.55, -0.45)) + vertexTexCoord.x * 6.2831) * 0.12;
+    float windDeflection = (baseSway + gustWave + tipJitter) * u_windStrength;
+    local.xz += u_windDirection * windDeflection * rootMask;
 
     if (u_interactionEnabled != 0) {
         vec2 interactionUV = (world.xz - u_interactionCenter) / u_interactionWorldSize + 0.5;

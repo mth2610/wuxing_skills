@@ -28,13 +28,16 @@ void main()
     vec3 local = vertexPosition;
     vec3 world = vec3(matModel * vec4(local, 1.0));
     float rootMask = vertexTexCoord.y * vertexTexCoord.y;
-    // Broad gusts stay coherent across the field; per-plant phase only
-    // contributes a restrained high-frequency flutter.
-    float gust = sin(u_time * 0.74 + dot(world.xz, vec2(0.145, 0.096)));
-    gust += sin(u_time * 0.31 + dot(world.xz, vec2(-0.052, 0.081))) * 0.48;
-    gust += sin(u_time * 2.35 + dot(world.xz, vec2(0.61, -0.38))
-                + vertexTexCoord.x * 6.2831) * 0.16;
-    local.xz += u_windDirection * gust * u_windStrength * rootMask;
+    // Multi-frequency wind dynamics (Ghost of Tsushima / Horizon model):
+    // 1. Base sway (low freq, broad landscape sway)
+    float baseSway = sin(u_time * 0.85 + dot(world.xz, vec2(0.11, 0.08))) * 0.35;
+    // 2. Gust waves (medium freq, sweeping ripples along wind vector)
+    float windCoord = dot(world.xz, u_windDirection) * 0.42 - u_time * 1.85;
+    float gustWave = pow(sin(windCoord) * 0.5 + 0.5, 2.0) * 0.85;
+    // 3. Tip jitter (high freq micro-flutter on blade tips and petals)
+    float tipJitter = sin(u_time * 4.20 + dot(world.xz, vec2(0.55, -0.45)) + vertexTexCoord.x * 6.2831) * 0.12;
+    float windDeflection = (baseSway + gustWave + tipJitter) * u_windStrength;
+    local.xz += u_windDirection * windDeflection * rootMask;
 
     if (u_interactionEnabled != 0) {
         vec2 interactionUV = (world.xz - u_interactionCenter) / u_interactionWorldSize + 0.5;
@@ -46,8 +49,12 @@ void main()
     }
     world = vec3(matModel * vec4(local, 1.0));
 
+    // Normal tilts dynamically with wind deflection, creating iconic specular ripples
+    vec3 bentNormal = vertexNormal;
+    bentNormal.xz -= u_windDirection * (windDeflection * 1.15) * vertexTexCoord.y;
+
     fragPosition = world;
-    fragNormal = normalize(mat3(matModel) * vertexNormal);
+    fragNormal = normalize(mat3(matModel) * bentNormal);
     fragColor = vertexColor;
     fragHeight = vertexTexCoord.y;
     fragTexCoord = vertexTexCoord2;

@@ -65,7 +65,7 @@
 // Per-frame flush arena STARTING capacity, as a multiple of one batch buffer; the arena
 // grows automatically (with a mid-frame drain on first overflow) when a frame demands more
 #ifndef RLVK_ARENA_SLOTS
-    #define RLVK_ARENA_SLOTS             2
+    #define RLVK_ARENA_SLOTS             4
 #endif
 // How many frames after the last bind the Caps.noSampledDepth depth twin keeps being refilled at
 // scope close (§7.27/§7.29). Must comfortably exceed the frames-in-flight count AND tolerate the

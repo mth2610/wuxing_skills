@@ -1,0 +1,4 @@
+M  maps/toolkit/map_props_nature.inl
+M  maps/toolkit/shaders/ground_splat.fs
+M  maps/worlds/verdant_path/verdant_path.c
+?? .test_out/baseline/

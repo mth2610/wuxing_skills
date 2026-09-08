@@ -38,17 +38,6 @@ void main()
     vec3 broadGrass = texture(texGrass, broadGrassUV).rgb;
     float fineGrassLuma = dot(colorGrass.rgb, vec3(0.2126, 0.7152, 0.0722));
 
-    // Multi-scale grass blending preserving real blade & moss texture details
-    vec3 blendedGrass = mix(colorGrass.rgb, broadGrass, 0.35);
-    vec3 grassAlbedo = blendedGrass * (colDiffuse.rgb * 1.65);
-
-    // Subtle organic turf warmth variation across open meadow
-    float turfNoise = sin(fragPosition.x * 0.28 + fragPosition.z * 0.19) * 0.5
-                    + sin(fragPosition.x * -0.14 + fragPosition.z * 0.38 + 1.7) * 0.35;
-    vec3 warmTurf = grassAlbedo * vec3(1.08, 1.03, 0.90);
-    vec3 coolTurf = grassAlbedo * vec3(0.94, 1.02, 0.96);
-    grassAlbedo = mix(coolTurf, warmTurf, smoothstep(-0.35, 0.55, turfNoise));
-
     // Soil detail from dirt texture
     vec4 colorDirt = texture(texPath, tiledUV * 0.85);
     vec2 broadDirtUV = vec2(-tiledUV.y * 0.31 + 8.5, tiledUV.x * 0.31 + 14.2);
@@ -77,8 +66,8 @@ void main()
     }
 
     // 3. Slope steepness
-    vec3 normal = normalize(fragNormal);
-    float slope = clamp(1.0 - normal.y, 0.0, 1.0);
+    vec3 geomNormal = normalize(fragNormal);
+    float slope = clamp(1.0 - geomNormal.y, 0.0, 1.0);
 
     // 4. Four-layer weights
     float wPath = 1.0 - smoothstep(1.2, 1.9, distToPath);
@@ -89,11 +78,10 @@ void main()
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
     // Height-blended layer modulation (PixelAnt / AAA terrain splatting)
-    // Co-locates grass fringe with dirt crevices rather than blurry fade
-    float hGrass = wGrass + (fineGrassLuma - 0.5) * 0.16;
-    float hDry = wDrySoil + (dirtDetail.r - 0.5) * 0.14;
-    float hWet = wWetSoil + (1.0 - dirtDetail.g * 0.8) * 0.12;
-    float hPath = wPath + (colorDirt.r - 0.5) * 0.15;
+    float hGrass = wGrass + (fineGrassLuma - 0.5) * 0.18;
+    float hDry = wDrySoil + (dirtDetail.r - 0.5) * 0.16;
+    float hWet = wWetSoil + (1.0 - dirtDetail.g * 0.8) * 0.14;
+    float hPath = wPath + (colorDirt.r - 0.5) * 0.16;
 
     float totalW = max(hGrass, 0.0) + max(hDry, 0.0) + max(hWet, 0.0) + max(hPath, 0.0);
     if (totalW > 0.0001) {
@@ -105,23 +93,55 @@ void main()
         wGrass = 1.0;
     }
 
-    // Layer albedo synthesis
-    vec3 drySoilColor = dirtDetail * vec3(0.85, 0.72, 0.54) * 1.05;
-    vec3 wetSoilColor = dirtDetail * vec3(0.30, 0.27, 0.22) * 0.88;
-    vec3 pathMarginColor = mix(drySoilColor, colorDirt.rgb * vec3(0.88, 0.84, 0.78), wPath);
+    // Botanical PBR Meadow Grass Albedo (calibrated rich natural green, never neon)
+    vec3 blendedGrass = mix(colorGrass.rgb, broadGrass, 0.32);
+    vec3 botanicalGreen = vec3(0.18, 0.29, 0.11);
+    vec3 sunlitGreen = vec3(0.38, 0.46, 0.20);
+    vec3 grassAlbedo = mix(blendedGrass * 0.65 + botanicalGreen * 0.45,
+                           blendedGrass * (colDiffuse.rgb * 1.08), 0.60);
+
+    // Multi-scale organic turf variation (deep damp swales vs warm sunny hummocks)
+    float turfNoise = sin(fragPosition.x * 0.16 + fragPosition.z * 0.11) * 0.5
+                    + sin(fragPosition.x * -0.08 + fragPosition.z * 0.24 + 1.7) * 0.35
+                    + sin(fragPosition.x * 0.45 - fragPosition.z * 0.38 + 3.1) * 0.15;
+    vec3 warmTurf = grassAlbedo * vec3(1.12, 1.06, 0.84);
+    vec3 coolTurf = grassAlbedo * vec3(0.90, 0.98, 0.92);
+    grassAlbedo = mix(coolTurf, warmTurf, smoothstep(-0.35, 0.55, turfNoise));
+
+    // Soil & Path PBR Albedos
+    vec3 drySoilColor = dirtDetail * vec3(0.48, 0.38, 0.26) * 1.10;
+    vec3 wetSoilColor = dirtDetail * vec3(0.24, 0.20, 0.15) * 0.90;
+    vec3 pathMarginColor = mix(drySoilColor, colorDirt.rgb * vec3(0.68, 0.64, 0.58), wPath);
 
     vec3 blendedAlbedo = grassAlbedo * wGrass
                        + drySoilColor * wDrySoil
                        + wetSoilColor * wWetSoil
                        + pathMarginColor * wPath;
 
-    // Multi-harmonic macro terrain modulation (warm sun ridges, rich emerald depressions)
-    float macroA = sin(fragPosition.x * 0.055 + fragPosition.z * 0.038);
-    float macroB = sin(fragPosition.x * -0.028 + fragPosition.z * 0.064 + 1.35);
-    float macroC = sin(fragPosition.x * 0.12 + fragPosition.z * -0.09 + 2.1);
-    float macroField = 0.50 + 0.28 * macroA + 0.16 * macroB + 0.06 * macroC;
-    vec3 macroTint = mix(vec3(0.94, 0.98, 0.92), vec3(1.04, 1.02, 0.95), macroField);
+    // Macro landscape modulation (warm golden sun ridges, deep emerald dips)
+    float macroA = sin(fragPosition.x * 0.042 + fragPosition.z * 0.028);
+    float macroB = sin(fragPosition.x * -0.022 + fragPosition.z * 0.048 + 1.35);
+    float macroField = 0.50 + 0.32 * macroA + 0.18 * macroB;
+    vec3 macroTint = mix(vec3(0.92, 0.96, 0.90), vec3(1.06, 1.03, 0.94), macroField);
     blendedAlbedo *= macroTint;
+
+    // Surface Gradient Bump Mapping (Morten Mikkelsen's method)
+    // Generates true 3D micro-relief from texture height derivatives across the terrain
+    vec3 normal = geomNormal;
+    float surfaceHeight = mix(fineGrassLuma, colorDirt.r, wDrySoil + wPath * 0.7);
+    vec3 dp1 = dFdx(fragPosition);
+    vec3 dp2 = dFdy(fragPosition);
+    vec3 m = cross(dp1, dp2);
+    float det = dot(m, m);
+    if (det > 0.000001) {
+        float dh_dx = dFdx(surfaceHeight);
+        float dh_dy = dFdy(surfaceHeight);
+        vec3 surfGrad = (dh_dx * cross(dp2, normal) + dh_dy * cross(normal, dp1)) / sqrt(det);
+        normal = normalize(normal - surfGrad * 0.38);
+    }
+
+    // Micro cavity ambient occlusion from texture relief
+    float cavityAO = clamp(0.35 + 0.65 * surfaceHeight * 1.5, 0.38, 1.0);
 
     // Lighting
     vec3 light = vec3(0.0, 1.0, 0.0);
@@ -135,11 +155,11 @@ void main()
 
     float shadow = MapShadowVisibility(fragPosition, normal, light);
     float skyWeight = normal.y * 0.5 + 0.5;
-    vec3 skyAmbient = actualAmbient.rgb * vec3(1.08, 1.12, 1.20);
-    vec3 groundBounce = actualAmbient.rgb * vec3(0.47, 0.40, 0.32);
-    vec3 ambient = mix(groundBounce, skyAmbient, skyWeight);
+    vec3 skyAmbient = actualAmbient.rgb * vec3(1.04, 1.08, 1.16);
+    vec3 groundBounce = actualAmbient.rgb * vec3(0.42, 0.38, 0.28);
+    vec3 ambient = mix(groundBounce, skyAmbient, skyWeight) * cavityAO;
 
-    float ambientVisibility = mix(0.94, 1.0, shadow);
+    float ambientVisibility = mix(0.92, 1.0, shadow);
     vec3 totalLight = ambient * ambientVisibility
                     + actualLight.rgb * NdotL * shadow;
 
@@ -149,8 +169,8 @@ void main()
     if (wWetSoil > 0.05) {
         vec3 viewDir = normalize(viewPos - fragPosition);
         vec3 halfDir = normalize(light + viewDir);
-        float wetSpec = pow(max(dot(normal, halfDir), 0.0), 28.0);
-        groundLit += actualLight.rgb * wetSpec * wWetSoil * 0.32 * shadow;
+        float wetSpec = pow(max(dot(normal, halfDir), 0.0), 32.0);
+        groundLit += actualLight.rgb * wetSpec * wWetSoil * 0.40 * shadow;
     }
 
     groundLit += VFXLights_AccumulateFlat(fragPosition, blendedAlbedo);
