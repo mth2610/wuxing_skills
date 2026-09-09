@@ -162,8 +162,8 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
                   sinf(angle) * speed * cosf(pitch)};
     cfg.radius = Math_Mix(s_impactSparkRadiusMin, s_impactSparkRadiusMax, Random01()) * sizeScale * 4.0f;
     cfg.lifetime = Math_Mix(s_impactSparkLifetimeMin, s_impactSparkLifetimeMax, Random01());
-    cfg.colorStart = (Color){255, 200, 40, 230};
-    cfg.colorEnd = (Color){200, 20, 0, 0};
+    cfg.colorStart = (Color){255, 245, 180, 255};
+    cfg.colorEnd = (Color){140, 12, 2, 0};
     cfg.forceField = &s_fireImpactField;
     cfg.radiusCurve = &s_impactRadiusCurve;
     cfg.speedCurve = &s_impactSpeedCurve;
@@ -185,8 +185,8 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
                   sinf(angle) * speed};
     cfg.radius = Math_Mix(s_disperseRadiusMin, s_disperseRadiusMax, Random01()) * sizeScale * 4.0f;
     cfg.lifetime = Math_Mix(s_disperseLifetimeMin, s_disperseLifetimeMax, Random01());
-    cfg.colorStart = (Color){255, 120, 20, 200};
-    cfg.colorEnd = (Color){120, 10, 0, 0};
+    cfg.colorStart = (Color){255, 140, 25, 220};
+    cfg.colorEnd = (Color){70, 8, 2, 0};
     cfg.forceField = &s_fireDisperseField;
     cfg.radiusCurve = &s_disperseRadiusCurve;
     cfg.speedCurve = &s_disperseSpeedCurve;
@@ -199,8 +199,8 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
   staticCore1.position = pos;
   staticCore1.radius = s_impactFlash1Radius * sizeScale * 4.0f;
   staticCore1.lifetime = s_impactFlash1Lifetime;
-  staticCore1.colorStart = (Color){255, 100, 10, 180};
-  staticCore1.colorEnd = (Color){0, 0, 0, 0};
+  staticCore1.colorStart = (Color){240, 70, 10, 210};
+  staticCore1.colorEnd = (Color){60, 5, 0, 0};
   staticCore1.radiusCurve = &s_impactRadiusCurve;
   staticCore1.alphaCurve = &s_impactAlphaCurve;
   staticCore1.emissiveCurve = &s_impactEmissiveCurve;
@@ -210,8 +210,8 @@ static void TriggerFireImpact(Vector3 pos, float sizeScale) {
   staticCore2.position = pos;
   staticCore2.radius = s_impactFlash2Radius * sizeScale * 4.0f;
   staticCore2.lifetime = s_impactFlash2Lifetime;
-  staticCore2.colorStart = (Color){255, 230, 80, 255};
-  staticCore2.colorEnd = (Color){100, 0, 0, 0};
+  staticCore2.colorStart = (Color){255, 250, 220, 255};
+  staticCore2.colorEnd = (Color){180, 20, 2, 0};
   staticCore2.radiusCurve = &s_impactRadiusCurve;
   staticCore2.alphaCurve = &s_impactAlphaCurve;
   staticCore2.emissiveCurve = &s_impactEmissiveCurve;
@@ -609,8 +609,8 @@ void UpdateFireSkill(float dt) {
         cfgCore.velocity = vel;
         cfgCore.radius = rad * s_flyCoreRadiusMult;
         cfgCore.lifetime = Math_Mix(s_flyCoreLifetimeMin, s_flyCoreLifetimeMax, Random01());
-        cfgCore.colorStart = (Color){255, 230, 100, 255};
-        cfgCore.colorEnd = (Color){255, 60, 0, 0};
+        cfgCore.colorStart = (Color){255, 245, 200, 255};
+        cfgCore.colorEnd = (Color){220, 45, 4, 0};
         cfgCore.forceField = &s_flameBodyField;
         cfgCore.radiusCurve = &s_flyRadiusCurve;
         cfgCore.speedCurve = &s_flySpeedCurve;
@@ -625,8 +625,8 @@ void UpdateFireSkill(float dt) {
         cfgAura.velocity = Vector3Scale(vel, 0.75f);
         cfgAura.radius = rad * s_flyAuraRadiusMult;
         cfgAura.lifetime = Math_Mix(s_flyAuraLifetimeMin, s_flyAuraLifetimeMax, Random01());
-        cfgAura.colorStart = (Color){255, 90, 15, 140};
-        cfgAura.colorEnd = (Color){100, 5, 0, 0};
+        cfgAura.colorStart = (Color){245, 80, 10, 160};
+        cfgAura.colorEnd = (Color){60, 5, 2, 0};
         cfgAura.forceField = &s_flameAuraField;
         cfgAura.radiusCurve = &s_flyRadiusCurve;
         cfgAura.speedCurve = &s_flySpeedCurve;
@@ -723,9 +723,9 @@ void DrawFireSkill(void) {
     DrawBillboardPro(camera, dragonHeadTex, sourceRec, headPos, camera.up,
                      (Vector2){size.x * 1.3f, size.y * 1.3f},
                      (Vector2){origin.x * 1.3f, origin.y * 1.3f}, rotation,
-                     (Color){255, 40, 0, (unsigned char)(alpha * 0.6f)});
+                     (Color){220, 25, 2, (unsigned char)(alpha * 0.6f)});
     DrawBillboardPro(camera, dragonHeadTex, sourceRec, headPos, camera.up, size,
-                     origin, rotation, (Color){255, 180, 40, alpha});
+                     origin, rotation, (Color){255, 220, 110, alpha});
   }
   VFXRender_EndDraw(&renderScope);
 }

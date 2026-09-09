@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/vfx_composite.glsl"
+#include "core/shaders/common/lighting.glsl"
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
@@ -30,7 +31,11 @@ void main()
     float emissiveMask = smoothstep(u_emissiveThreshold, 1.0, brightSignal) * body.a * erosion;
     if (u_emissivePass != 0)
     {
-        finalColor = VFX_ResolveEmission(u_emissiveTint.rgb,
+        // Ghost of Tsushima: Radiant energy for scorch & fracture decals
+        float crackHeat = clamp((brightSignal - u_emissiveThreshold) / max(1.0 - u_emissiveThreshold, 0.001), 0.0, 1.0);
+        float isWarm = step(u_emissiveTint.b, u_emissiveTint.r * 0.85);
+        vec3 radiantTint = calcRadiantEnergy(crackHeat, u_emissiveTint.rgb, vec3(1.0, 0.98, 0.92), isWarm, 1.0);
+        finalColor = VFX_ResolveEmission(radiantTint,
                                           u_emissiveIntensity, 1.0, emissiveMask);
     }
     else

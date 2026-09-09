@@ -1,5 +1,6 @@
 #version 330 core
 #include "core/shaders/common/vfx_composite.glsl"
+#include "core/shaders/common/lighting.glsl"
 
 in vec2 fragTexCoord;
 in vec4 fragColor;
@@ -79,7 +80,9 @@ void main() {
         // Smoke supplies no burn colour: erosion should make soft gaps, not
         // create an accidental orange energy rim. Effects that want a hot edge
         // must opt in by setting uBurnColor explicitly.
-        burnGlow = edge * max(uBurnColor, vec3(0.0)) * 2.5;
+        float isWarm = step(uBurnColor.b, uBurnColor.r * 0.85);
+        vec3 radiantBurn = calcRadiantEnergy(edge, max(uBurnColor, vec3(0.0)), vec3(1.0, 0.98, 0.92), isWarm, 2.5);
+        burnGlow = edge * radiantBurn;
     }
 
     // ==========================================
@@ -94,14 +97,15 @@ void main() {
     vec3 finalRGB = (fragColor.rgb * texColor.rgb * 1.5) + burnGlow;
     float finalAlpha = smokeAlpha;
 
-    // Lõi rực sáng ở giữa
+    // Lõi rực sáng ở giữa (Ghost of Tsushima Radiant Energy Core)
     if (uCoreStrength > 0.0) {
         float coreMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 5.5) * uCoreStrength;
         float coreAlpha = clamp(fragColor.a * 1.6, 0.0, 1.0) * alphaMask;
 
         finalAlpha = mix(smokeAlpha, coreAlpha, coreMask);
 
-        vec3 coreColor = vec3(3.6, 3.6, 3.6); // White HDR Overbright
+        float isWarm = step(fragColor.b, fragColor.r * 0.85);
+        vec3 coreColor = calcRadiantEnergy(coreMask, fragColor.rgb, vec3(1.0, 0.98, 0.92), isWarm, 3.6);
         finalRGB = mix(finalRGB, coreColor, coreMask);
     }
 

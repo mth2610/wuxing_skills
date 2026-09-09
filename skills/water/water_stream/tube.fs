@@ -60,8 +60,11 @@ void main() {
     float caustics = sin(scroll.x * 6.0) * cos(scroll.y * 5.0);
     baseColor += vec3(0.2, 0.5, 0.9) * pow(max(caustics, 0.0), 2.0) * 0.2;
 
-    // 5. Rim glow (Fresnel) màu xanh nhạt
-    baseColor += vec3(0.4, 0.8, 1.0) * fresnel * 0.1;
+    // 5. Rim glow (Fresnel) & Radiant Energy
+    float waterEnergy = clamp(upFactor * 0.5 + caustics * 0.3 + fresnel * 0.6, 0.0, 1.0);
+    vec3 waterRadiance = calcRadiantEnergy(waterEnergy, vec3(0.15, 0.65, 1.0), vec3(0.85, 0.95, 1.0), 0.0, 1.25);
+    baseColor = mix(baseColor, waterRadiance, 0.40);
+    baseColor += vec3(0.4, 0.8, 1.0) * fresnel * 0.15;
 
     // 6. Composite + dissolve fade-out
     float alpha = mix(0.3, 0.9, fresnel) * (1.0 - u_dissolve);

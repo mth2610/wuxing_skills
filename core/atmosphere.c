@@ -25,8 +25,9 @@ static int       s_count  = 0;
 static Texture2D s_dotTex = {0};
 static Vector3   s_center = { 6.0f, 3.0f, 4.4f };
 static Vector3   s_extent = { 15.0f, 5.0f, 15.0f };
-static Color     s_tint   = { 160, 190, 235, 255 };
-static bool      s_ready  = false;
+static Color          s_tint   = { 160, 190, 235, 255 };
+static AtmosphereMode s_mode   = ATMO_MODE_MOONLIGHT_DUST;
+static bool           s_ready  = false;
 
 static inline float Rand01(void) { return (float)rand() / (float)RAND_MAX; }
 static inline float RandRange(float a, float b) { return a + (b - a) * Rand01(); }
@@ -44,11 +45,28 @@ static void SeedMote(Mote *m) {
         s_center.y + RandRange(-s_extent.y, s_extent.y),
         s_center.z + RandRange(-s_extent.z, s_extent.z),
     };
-    m->drift   = (Vector3){ RandRange(-0.05f, 0.05f), RandRange(0.02f, 0.10f), RandRange(-0.05f, 0.05f) };
-    m->phase   = RandRange(0.0f, 6.2831853f);
-    m->swaySpd = RandRange(0.3f, 0.9f);
-    m->size    = RandRange(0.035f, 0.10f);
-    m->bright  = RandRange(0.5f, 1.0f);
+    if (s_mode == ATMO_MODE_WAR_EMBERS) {
+        // Tàn tro than hồng: luồng nhiệt bốc lên cao (+Y), nhấp nháy mạnh mẽ
+        m->drift   = (Vector3){ RandRange(-0.07f, 0.07f), RandRange(0.12f, 0.35f), RandRange(-0.07f, 0.07f) };
+        m->phase   = RandRange(0.0f, 6.2831853f);
+        m->swaySpd = RandRange(0.8f, 2.0f);
+        m->size    = RandRange(0.035f, 0.11f);
+        m->bright  = RandRange(0.7f, 1.8f);
+    } else if (s_mode == ATMO_MODE_SPIRIT_SPARKS) {
+        // Đốm sáng tiên khí: lơ lửng, nhẹ nhàng, huyền ảo
+        m->drift   = (Vector3){ RandRange(-0.05f, 0.05f), RandRange(-0.02f, 0.08f), RandRange(-0.05f, 0.05f) };
+        m->phase   = RandRange(0.0f, 6.2831853f);
+        m->swaySpd = RandRange(0.4f, 1.2f);
+        m->size    = RandRange(0.03f, 0.08f);
+        m->bright  = RandRange(0.6f, 1.4f);
+    } else {
+        // Bụi trôi ánh trăng (mặc định)
+        m->drift   = (Vector3){ RandRange(-0.05f, 0.05f), RandRange(0.02f, 0.10f), RandRange(-0.05f, 0.05f) };
+        m->phase   = RandRange(0.0f, 6.2831853f);
+        m->swaySpd = RandRange(0.3f, 0.9f);
+        m->size    = RandRange(0.035f, 0.10f);
+        m->bright  = RandRange(0.5f, 1.0f);
+    }
 }
 
 void Atmosphere_Init(void) {
@@ -84,6 +102,22 @@ void Atmosphere_Configure(Vector3 center, Vector3 extent, int count, Color tint)
     for (int i = 0; i < s_count; i++) SeedMote(&s_motes[i]);
 }
 
+void Atmosphere_SetMode(AtmosphereMode mode) {
+    s_mode = mode;
+    if (mode == ATMO_MODE_WAR_EMBERS) {
+        s_tint = (Color){ 255, 120, 24, 255 }; // Sắc cam than hồng rực lửa
+    } else if (mode == ATMO_MODE_SPIRIT_SPARKS) {
+        s_tint = (Color){ 160, 255, 210, 255 }; // Sắc ngọc bích / tiên khí
+    } else {
+        s_tint = (Color){ 160, 190, 235, 255 }; // Sắc trăng lạnh
+    }
+    for (int i = 0; i < s_count; i++) SeedMote(&s_motes[i]);
+}
+
+AtmosphereMode Atmosphere_GetMode(void) {
+    return s_mode;
+}
+
 void Atmosphere_Update(float dt, Camera3D camera) {
     if (!s_ready) return;
     // Volume locked to the look-at point so the field always fills the view.
@@ -108,10 +142,16 @@ void Atmosphere_Draw(Camera3D camera) {
 
     for (int i = 0; i < s_count; i++) {
         const Mote *m = &s_motes[i];
-        float tw = 0.7f + 0.3f * sinf(m->phase * 1.7f);
+        float tw = (s_mode == ATMO_MODE_WAR_EMBERS)
+            ? (0.4f + 0.6f * sinf(m->phase * 2.8f) * sinf(m->phase * 1.3f))
+            : (0.7f + 0.3f * sinf(m->phase * 1.7f));
         float b = m->bright * tw;
-        Color c = { (unsigned char)(s_tint.r * b), (unsigned char)(s_tint.g * b),
-                    (unsigned char)(s_tint.b * b), 255 };
+        int r = (int)(s_tint.r * b);
+        int g = (int)(s_tint.g * b);
+        int bCh = (int)(s_tint.b * b);
+        Color c = { (unsigned char)(r > 255 ? 255 : (r < 0 ? 0 : r)),
+                    (unsigned char)(g > 255 ? 255 : (g < 0 ? 0 : g)),
+                    (unsigned char)(bCh > 255 ? 255 : (bCh < 0 ? 0 : bCh)), 255 };
         DrawBillboard(camera, s_dotTex, m->pos, m->size, c);
     }
 

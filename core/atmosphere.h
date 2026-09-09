@@ -18,11 +18,21 @@
 //   Atmosphere_Draw(camera);   // inside the 3D pass, manages its own blend
 //   Atmosphere_Unload();                                // at shutdown
 
+typedef enum {
+    ATMO_MODE_MOONLIGHT_DUST = 0, // Bụi trôi ánh trăng dịu mát (mặc định)
+    ATMO_MODE_WAR_EMBERS,         // Tàn tro than hồng rực lửa từ chiến địa (Ghost of Tsushima style)
+    ATMO_MODE_SPIRIT_SPARKS       // Đốm sáng tiên khí lấp lánh (phong cách tiên hiệp)
+} AtmosphereMode;
+
 void Atmosphere_Init(void);
 
 // center/extent define the box the motes fill (extent = half-size per axis).
 // count is clamped to the internal pool. tint is the mote color (moonlight).
 void Atmosphere_Configure(Vector3 center, Vector3 extent, int count, Color tint);
+
+// Thiết lập chế độ hạt khí quyển (Ánh trăng, Tàn tro chiến địa, Tiên khí)
+void Atmosphere_SetMode(AtmosphereMode mode);
+AtmosphereMode Atmosphere_GetMode(void);
 
 void Atmosphere_Update(float dt, Camera3D camera);
 void Atmosphere_Draw(Camera3D camera);

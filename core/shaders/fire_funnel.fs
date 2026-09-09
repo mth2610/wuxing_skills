@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
 
 uniform vec4  u_baseColor;
@@ -60,16 +61,8 @@ void main() {
     float colorDetail = n3(vec3(circ.x*6.0, h*10.0 - u_time*1.2, u_time*0.4)) * 0.15;
     float flameColor = clamp(flame + colorDetail, 0.0, 1.0);
 
-    vec3 white  = vec3(1.0, 0.92, 0.55);
-    vec3 orange = vec3(1.0, 0.5, 0.07);
-    vec3 red    = vec3(0.7, 0.1, 0.03);
-    vec3 dark   = vec3(0.15, 0.02, 0.005);
-
-    // Color ramp branchless — không if/else
-    vec3 col = dark;
-    col = mix(col, red,    smoothstep(0.0,  0.35, flameColor));
-    col = mix(col, orange, smoothstep(0.35, 0.7,  flameColor));
-    col = mix(col, white,  smoothstep(0.7,  1.0,  flameColor));
+    // Ghost of Tsushima: Bức xạ quang phổ vật thể đen Planck theo nhiệt độ
+    vec3 col = calcBlackbodyNormalized(flameColor);
 
     float noiseA = n3(vec3(circ.x*2.5 + u_time*0.3, h*8.0 - u_time*0.5, u_time*0.15));
     float alpha = smoothstep(0.15, 0.65, flame);

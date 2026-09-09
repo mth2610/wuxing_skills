@@ -543,3 +543,16 @@ void PlasmaMaterial_End(void)
 {
     MatEndCommon();
 }
+
+void EffectMaterial_ConfigureRadiant(EffectMaterialParams *params, const RadiantMaterialConfig *config)
+{
+    if (!params || !config) return;
+    params->baseColor = config->baseColor;
+    params->emissiveIntensity = config->emissiveIntensity > 0.0f ? config->emissiveIntensity : 1.8f;
+    params->rimStrength = config->rimStrength > 0.0f ? config->rimStrength : 1.2f;
+    params->fresnelPower = config->fresnelPower > 0.0f ? config->fresnelPower : 2.5f;
+    params->translucency = config->translucency;
+    params->distortionStrength = config->blackbodyFactor * 0.25f; // Nhiệt năng uốn lượn
+    params->customParam1 = config->blackbodyFactor; // Truyền blackbodyFactor
+}
+

@@ -61,6 +61,23 @@ typedef struct
     float customParam2;       // second custom generic float param passed to shader
 } EffectMaterialParams;
 
+// ============================================================================
+// RADIANT MATERIAL CONFIGURATION (HỢP NHẤT LỬA & NĂNG LƯỢNG)
+// ============================================================================
+typedef struct
+{
+    Color baseColor;         // Màu nhận diện nguyên tố (Element Tint / Body)
+    Color coreColor;         // Màu lõi nóng phát sáng (mặc định WHITE hoặc ánh kim)
+    float blackbodyFactor;   // 1.0 = Lửa Planck, 0.0 = Năng lượng ma thuật nguyên tố
+    float emissiveIntensity; // Cường độ HDR phát quang đẩy vào Bloom (> 1.0)
+    float rimStrength;       // Độ dày viền hào quang Fresnel
+    float fresnelPower;      // Độ sắc bén viền hào quang
+    float translucency;      // Độ trong suốt xuyên thấu
+} RadiantMaterialConfig;
+
+// Cấu hình nhanh EffectMaterialParams theo quy chuẩn Radiant Plasma/Energy
+void EffectMaterial_ConfigureRadiant(EffectMaterialParams *params, const RadiantMaterialConfig *config);
+
 typedef enum
 {
     EFFECT_MATERIAL_GEOMETRY_MESH = 0,

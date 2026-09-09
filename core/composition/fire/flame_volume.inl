@@ -417,15 +417,15 @@ static const ColorGradient *FVol_HeatGradient(VC_MaterialId matId)
 
     if (matId == VC_MAT_FIRE)
     {
-        // Authored vibrant radiant fire: glowing ruby wisps, rich crimson, fiery scarlet,
-        // vivid cadmium orange and glowing amber gold, with white-hot strictly reserved for peak core.
-        ColorGradient_AddStop(g, 0.00f, (Color){60, 5, 0, 255});       // glowing deep ruby wisp
-        ColorGradient_AddStop(g, 0.15f, (Color){180, 16, 2, 255});     // radiant crimson tongue
-        ColorGradient_AddStop(g, 0.35f, (Color){240, 55, 4, 255});     // fiery scarlet
-        ColorGradient_AddStop(g, 0.60f, (Color){255, 125, 8, 255});    // vivid cadmium fiery orange
-        ColorGradient_AddStop(g, 0.82f, (Color){255, 195, 25, 255});   // radiant amber gold
-        ColorGradient_AddStop(g, 0.94f, (Color){255, 240, 110, 255});  // incandescent core
-        ColorGradient_AddStop(g, 1.00f, (Color){255, 255, 220, 255});  // white-hot peak
+        // Authored vibrant radiant fire (Ghost of Tsushima Planck Blackbody progression):
+        // 900K soot/ruby -> 1600K crimson -> 2200K fiery scarlet -> 2800K cadmium orange -> 3400K golden amber -> 4200K+ incandescent white-hot core
+        ColorGradient_AddStop(g, 0.00f, (Color){45, 5, 2, 255});       // glowing deep ruby wisp / soot
+        ColorGradient_AddStop(g, 0.12f, (Color){165, 15, 2, 255});     // radiant crimson tongue
+        ColorGradient_AddStop(g, 0.30f, (Color){235, 50, 4, 255});     // fiery scarlet
+        ColorGradient_AddStop(g, 0.55f, (Color){255, 120, 8, 255});    // vivid cadmium fiery orange
+        ColorGradient_AddStop(g, 0.78f, (Color){255, 195, 25, 255});   // radiant amber gold
+        ColorGradient_AddStop(g, 0.90f, (Color){255, 240, 120, 255});  // incandescent core
+        ColorGradient_AddStop(g, 1.00f, (Color){255, 255, 245, 255});  // white-hot peak (Planck high-energy)
         return g;
     }
 

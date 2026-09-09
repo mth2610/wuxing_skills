@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/noise.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
+#include "core/shaders/common/lighting.glsl"
 
 /* Varyings */
 in vec2 fragTexCoord;
@@ -40,16 +41,18 @@ void main() {
     // Mask crack based on texture alpha
     float crackMask = tex.r;
     
-    // Glowing lava/amber color inside the cracks
-    vec3 lavaCol = vec3(1.0, 0.45, 0.05) * (1.5 + 0.5 * sin(u_time * 5.0));
-    
-    // Core of the cracks glows white-hot
-    vec3 col = mix(vec3(0.08, 0.06, 0.05), lavaCol, crackMask);
-    col += vec3(1.0, 0.9, 0.7) * pow(crackMask, 4.0) * 1.5;
+    // Ghost of Tsushima: Molten rock cracks with Planck Blackbody radiation
+    float pulse = 0.85 + 0.15 * sin(u_time * 5.0);
+    float crackHeat = clamp(crackMask * pulse, 0.0, 1.0);
+    vec3 radiantCrack = calcBlackbodyNormalized(crackHeat);
+
+    // Core of the cracks glows white-hot with deep obsidian rock surround
+    vec3 rockCol = vec3(0.06, 0.05, 0.04);
+    vec3 col = mix(rockCol, radiantCrack, smoothstep(0.04, 0.35, crackMask));
 
     // Glowing border at the spreading edge of the fracture
     float border = smoothstep(revealRadius - 0.05, revealRadius, d);
-    col += vec3(1.0, 0.35, 0.0) * border * 2.2;
+    col += calcBlackbodyNormalized(0.75) * border * 1.6;
 
     // Fade out near the outer bounds of the quad
     float alpha = crackMask * smoothstep(0.5, 0.45, d) * fragColor.a;

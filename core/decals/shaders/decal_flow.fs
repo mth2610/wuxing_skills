@@ -14,6 +14,7 @@ uniform sampler2D texture1;    // water_flow.png
 
 #include "core/shaders/common/vfx_composite.glsl"
 #include "core/shaders/common/fx.glsl"
+#include "core/shaders/common/lighting.glsl"
 
 // Output fragment color
 out vec4 finalColor;
@@ -56,7 +57,8 @@ void main()
     float luma = dot(texelColor.rgb, vec3(0.2126, 0.7152, 0.0722));
     float glowMask = smoothstep(0.5, 0.85, luma);
     float glowAmount = clamp(glowMask * fragFlow.z, 0.0, 1.0);
-    vec3 glowColor = fragColor.rgb * 2.5;
+    float isWarm = step(fragColor.b, fragColor.r * 0.85);
+    vec3 glowColor = calcRadiantEnergy(glowAmount, fragColor.rgb, vec3(1.0, 0.98, 0.92), isWarm, 2.5);
 
     vec3 tintedColor = texelColor.rgb * fragColor.rgb;
     vec3 finalRGB = mix(tintedColor, glowColor, glowAmount);

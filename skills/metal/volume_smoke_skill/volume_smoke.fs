@@ -2,6 +2,7 @@
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
+#include "core/shaders/common/lighting.glsl"
 
 // ĐÃ XÓA u_center. Không cần C code truyền toạ độ nữa!
 uniform float u_radius;
@@ -52,13 +53,16 @@ void main() {
         // Nếu điểm này có khói, ta tiến hành tích luỹ màu
         if (den > 0.05) {
             // Khói dày ở lõi (den cao) -> Xám tối. Khói mỏng ở viền -> Xám sáng
-            vec3 col = mix(vec3(0.85, 0.85, 0.9), vec3(0.35, 0.35, 0.4), clamp(den, 0.0, 1.0));
+            vec3 baseCol = mix(vec3(0.85, 0.85, 0.90), vec3(0.35, 0.35, 0.40), clamp(den, 0.0, 1.0));
+            vec3 localNorm = normalize(p);
+            vec3 litCol = calcLitVolume(baseCol, localNorm, u_lightDir, vec3(1.0, 0.95, 0.85),
+                                        vec3(0.45, 0.50, 0.65), vec3(0.20, 0.18, 0.15), den, 2.0);
             
             // Tính Alpha cho step hiện tại
             float alpha = clamp(den * stepSize * 4.0, 0.0, 1.0);
             
             // Tích luỹ Alpha Blend có che khuất (Khói phía trước che khói phía sau)
-            sum.rgb += col * alpha * (1.0 - sum.a);
+            sum.rgb += litCol * alpha * (1.0 - sum.a);
             sum.a += alpha * (1.0 - sum.a);
         }
         

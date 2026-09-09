@@ -20,7 +20,7 @@
 |---|---|---|
 | `vs_header.glsl` | Every `.vs` | Attributes, uniforms, varyings, `VS_FinalOutput()` |
 | `fs_header.glsl` | Every `.fs` | Incoming varyings, environment uniforms, `finalColor` |
-| `lighting.glsl` | `.fs` needing lighting | `perturbNormal`, one-/two-sided Fresnel, optical-depth body/rim, specular, diffuse |
+| `lighting.glsl` | `.fs` needing lighting/combustion | `perturbNormal`, Fresnel, optical depth, specular, diffuse, `calcBlackbody`, `calcLitVolume` |
 | `noise.glsl` | `.vs` / `.fs` needing noise | `hash2`, `hash3`, `vnoise`, `fbm2`, `fbm2N` |
 | `fx.glsl` | `.fs` needing effects | `dissolveCalc`, `flowBlend`, `emissiveMask`, edge-erosion macros |
 | `triplanar.glsl` | `.fs` for meshes without stable UVs | `triplanarWeights`, `triplanarNoise`, `triplanarSample` |
@@ -141,6 +141,10 @@ float calcOpticalDepthRim(float absNdotV, float power);
 float combineOpticalDepth(float body, float rim, float bodyWeight, float rimWeight);
 float calcSpecular(vec3 normal, vec3 lightDir, vec3 viewDir, float shininess);
 float calcDiffuse(vec3 normal, vec3 lightDir, float ambient);
+vec3  calcBlackbody(float tempKelvin);
+vec3  calcBlackbodyNormalized(float t);
+vec3  calcLitVolume(vec3 baseColor, vec3 normal, vec3 sunToLight, vec3 sunColor, vec3 skyAmbient, vec3 groundAmbient, float density, float shadowExt);
+vec3  calcRadiantEnergy(float energy, vec3 elementHue, vec3 coreHue, float blackbodyFactor, float hdrGain);
 ```
 
 * **`perturbNormal(baseNormal, heightDelta, strength)`** — Perturbs a base normal using the gradient of a skill-supplied height field, to fake surface roughness (water ripples, lava bubbling, bark texture...) without extra geometry.
@@ -155,6 +159,10 @@ float calcDiffuse(vec3 normal, vec3 lightDir, float ambient);
 * **`calcDiffuse(normal, lightDir, ambient)`** — Lambertian diffuse with an ambient floor, returns `[ambient..1.0]`.
   - `ambient`: minimum background light, typically `0.10 – 0.25`.
   - Multiply directly into baseColor: `baseColor *= calcDiffuse(normal, lightDir, 0.15);`
+* **`calcBlackbody(tempKelvin)`** — Ghost of Tsushima physically-based Planck blackbody radiation. Generates incandescent emission spectrum based on absolute temperature in Kelvin (`800K` soot/ember $\to$ `1400K` deep crimson $\to$ `2200K` fire orange $\to$ `3000K` yellow $\to$ `4000K+` white-hot, values $> 1.0$ enter HDR Bloom).
+* **`calcBlackbodyNormalized(t)`** — Convenience wrapper mapping normalized progression `t ∈ [0..1]` to the flame combustion range `900K..4200K`.
+* **`calcLitVolume(baseColor, normal, sunToLight, sunColor, skyAmbient, groundAmbient, density, shadowExt)`** — Ghost of Tsushima volumetric smoke lighting with directional wrap, Beer-Lambert self-shadowing ($T = \exp(-\sigma_t \cdot \text{density})$), and hemispherical ambient fill (sky vs ground bounce).
+* **`calcRadiantEnergy(energy, elementHue, coreHue, blackbodyFactor, hdrGain)`** — Unified radiant spectrum solver for fire, elemental plasma/magic, and glowing particles. Blends seamlessly between physical Planck combustion (`blackbodyFactor = 1.0`) and elemental magic (`blackbodyFactor = 0.0`) with white-hot core and HDR bloom gain.
 
 **Project-standard `lightDir`** (hard-coded in every skill):
 ```glsl

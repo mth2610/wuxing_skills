@@ -1,11 +1,11 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
 
-// Highly optimized rising-column smoke density field.
-// Uses 2D value noise and 2D FBM with domain warping and seed generation based
-// on world-space fragment coordinates. Minimizes GPU fill rate footprint.
+// Highly optimized rising-column smoke density field with Ghost of Tsushima lit volume & self-shadowing.
+// Uses 2D value noise and 2D FBM with domain warping and hemispherical pseudo-normals.
 
 uniform vec4  u_color;
 uniform float u_progress;   // looped birth->climb->dissolve ramp, 0..1
@@ -14,6 +14,11 @@ uniform float u_noiseScale; // turbulence warp domain frequency
 uniform float u_driftSpeed; // turbulence warp animation speed
 uniform float u_riseSpeed;  // vertical advection speed
 uniform float u_seed;       // optional seed offset
+
+// Optional environmental lighting uniforms (fallback automatically if unbound)
+uniform vec3  u_sunColor;
+uniform vec3  u_skyAmbient;
+uniform vec3  u_groundAmbient;
 
 void main() {
     vec2 uv = fragTexCoord * 2.0 - 1.0; 
@@ -108,5 +113,20 @@ void main() {
     alpha *= 1.0 - smoothstep(0.15, 1.0, abs(warpedUV.x));
     alpha *= 1.0 - smoothstep(0.97, 1.0, warpedH);
 
-    finalColor = VFX_ResolveBody(u_color.rgb, 1.0, alpha * u_color.a);
+    // ==========================================
+    // 6. PHÁP TUYẾN BÁN CẦU & ÁNH SÁNG THỂ TÍCH (Ghost of Tsushima Lit Smoke)
+    // ==========================================
+    float nx = clamp(dx / max(sqrt(2.0 * sigmaSq), 0.01), -1.0, 1.0);
+    float nz = sqrt(max(0.0, 1.0 - nx * nx));
+    float ny = (billowNoise - 0.5) * 0.6;
+    vec3 pseudoNormal = normalize(vec3(nx, ny, nz));
+
+    vec3 sunCol = (length(u_sunColor) > 0.001) ? u_sunColor : vec3(1.15, 1.05, 0.92);
+    vec3 skyAmb = (length(u_skyAmbient) > 0.001) ? u_skyAmbient : vec3(0.35, 0.40, 0.50);
+    vec3 gndAmb = (length(u_groundAmbient) > 0.001) ? u_groundAmbient : vec3(0.25, 0.22, 0.20);
+    vec3 lightDir = (length(u_lightDir) > 0.001) ? normalize(u_lightDir) : normalize(vec3(0.5, 0.8, 0.5));
+
+    vec3 litColor = calcLitVolume(u_color.rgb, pseudoNormal, lightDir, sunCol, skyAmb, gndAmb, density, 2.2);
+
+    finalColor = VFX_ResolveBody(litColor, 1.0, alpha * u_color.a);
 }

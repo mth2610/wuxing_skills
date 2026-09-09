@@ -3,6 +3,7 @@
 #include "core/shaders/common/fx.glsl"
 #include "core/shaders/common/vfx_contrast.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
+#include "core/shaders/common/lighting.glsl"
 #include "core/uv/shaders/uv_deform.glsl"
 #include "core/uv/shaders/surface_flow.glsl"
 
@@ -187,7 +188,9 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
         return VFX_ResolveBody(colour, 1.0, coverage);
     }
     float cover = clamp(inten * vAlpha, 0.0, 1.0);
-    vec3 radiance = VFX_Finite3(colour * max(gain, 0.0) * cover);
+    float isWarm = step(colour.b, colour.r * 0.85);
+    vec3 radiantHue = calcRadiantEnergy(cover, colour, vec3(1.0, 0.98, 0.92), isWarm * 0.5, 1.0);
+    vec3 radiance = VFX_Finite3(radiantHue * max(gain, 0.0) * cover);
     if (u_tonemapSafe > 0.5)
         radiance = TrailToneMapSafeRadiance(radiance);
 
@@ -199,7 +202,7 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
         // unit alpha rather than asking the blend unit to multiply it twice.
         if (u_tonemapSafe > 0.5)
             return vec4(radiance, 1.0);
-        return VFX_ResolveEmission(colour, gain, 1.0, inten * vAlpha);
+        return VFX_ResolveEmission(radiantHue, gain, 1.0, inten * vAlpha);
     }
     // PREMULTIPLIED emission (BLEND_ALPHA_PREMULTIPLY = ONE, ONE_MINUS_SRC_ALPHA).
     // The hardware no longer multiplies by alpha, so THIS branch has to — and

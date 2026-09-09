@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/noise.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
+#include "core/shaders/common/lighting.glsl"
 
 /* Varyings */
 in vec2 fragTexCoord;
@@ -59,8 +60,8 @@ void main()
     // Animate glowing pulse
     float pulse = 0.8 + 0.3 * sin(u_time * 5.0 - fragPosition.y * 0.5);
     
-    // Super bright glowing magma!
-    vec3 emissive = magmaColor * (3.5 + pulse * 1.5) * veinMask * 0.95;
+    // Ghost of Tsushima: Thermal Planck blackbody magma radiation
+    vec3 emissive = calcBlackbodyNormalized(veinMask * (0.65 + pulse * 0.25)) * veinMask * 3.2;
 
     // Dynamic 3D lighting calculation for the non-emissive rock surface
     vec3 V = normalize(u_camPos - fragPosition);
@@ -91,9 +92,9 @@ void main()
             discard;
         }
         
-        // Burning edges
+        // Burning edges with Planck radiant glow
         float edge = exp(-threshold * 12.0);
-        diffuse.rgb += vec3(1.0, 0.4, 0.0) * edge * 4.0;
+        diffuse.rgb += calcBlackbodyNormalized(0.85) * edge * 3.5;
     }
 
     // Occluding rock on the default alpha blend — a body producer.

@@ -37,6 +37,7 @@ uniform vec2 u_resolution;
 #include "core/shaders/common/soft_particle.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/lighting.glsl"
 
 uniform float u_time;
 
@@ -481,7 +482,9 @@ void main()
 
             float heat = clamp(emis * u_heatGain * fragColor.r, 0.0, 1.0);
             float radianceGating = pow(clamp(emis * 1.25, 0.0, 1.0), 1.15) * flameMask;
-            vec3 flame = texture(u_rampLUT, vec2(heat, 0.5)).rgb
+            vec3 rampCol = texture(u_rampLUT, vec2(heat, 0.5)).rgb;
+            vec3 bbCol = calcBlackbodyNormalized(heat);
+            vec3 flame = mix(rampCol, bbCol, 0.55)
                          * radianceGating * u_emissiveBoost;
 
             if (u_smokeGain <= 0.0)
@@ -519,7 +522,9 @@ void main()
         if (fade < 0.004 || (emis < 0.004 && soot * opac < 0.004)) discard;
 
         float heat  = clamp(emis * u_heatGain * fragColor.r, 0.0, 1.0);
-        vec3  flame = texture(u_rampLUT, vec2(heat, 0.5)).rgb
+        vec3  rampCol = texture(u_rampLUT, vec2(heat, 0.5)).rgb;
+        vec3  bbCol = calcBlackbodyNormalized(heat);
+        vec3  flame = mix(rampCol, bbCol, 0.45)
                       * emis * opac * u_emissiveBoost;
 
         float selfShadow = (soot > 0.004) ? clamp(shad / soot, 0.0, 1.0) : 1.0;
@@ -580,6 +585,12 @@ void main()
             emisBoost *= mix(1.0, 1.0 - smoothstep(0.15, 0.85, bg), u_bgAdapt);
         }
         vec3 unlitRgb = (u_sixWayLighting > 1.5) ? fragColor.rgb : base.rgb;
+        float lum = dot(unlitRgb, vec3(0.299, 0.587, 0.114));
+        if (lum > 0.05) {
+            vec3 coreTint = vec3(1.0, 0.98, 0.92);
+            float coreFactor = smoothstep(0.45, 1.0, lum);
+            unlitRgb = mix(unlitRgb, coreTint * (1.0 + coreFactor * 1.5), coreFactor * 0.7);
+        }
         finalColor = VFX_ResolveEmission(unlitRgb, emisBoost, 1.0,
                                          base.a * soft);
         return;

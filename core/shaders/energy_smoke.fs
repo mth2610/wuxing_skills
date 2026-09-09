@@ -1,9 +1,10 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
 
-// Highly optimized energy smoke puff shader.
+// Highly optimized energy smoke puff shader with Ghost of Tsushima lit volume & self-shadowing.
 // Replaced custom 3D noise with optimized 2D noise, saving 86% GPU cost.
 
 uniform vec4  u_color;
@@ -12,6 +13,11 @@ uniform float u_diffusion;
 uniform float u_noiseScale;
 uniform float u_driftSpeed;
 uniform vec2  u_sourcePos;   // origin of the puff in quad-local uv space, {0,0} = center
+
+// Optional environmental lighting uniforms (fallback automatically if unbound)
+uniform vec3  u_sunColor;
+uniform vec3  u_skyAmbient;
+uniform vec3  u_groundAmbient;
 
 void main() {
     vec2 uv = fragTexCoord * 2.0 - 1.0; 
@@ -68,5 +74,20 @@ void main() {
     
     alpha *= smoothstep(0.0, 0.05, u_progress);
 
-    finalColor = VFX_ResolveBody(u_color.rgb, 1.0, alpha * u_color.a);
+    // ==========================================
+    // PHÁP TUYẾN BÁN CẦU VÀ ÁNH SÁNG THỂ TÍCH (Ghost of Tsushima Lit Smoke)
+    // ==========================================
+    vec2 d = uvw - u_sourcePos;
+    float rDome = clamp(dist / max(pushRadius + 0.45, 0.05), 0.0, 1.0);
+    vec2 dirDome = (dist > 1e-4) ? (d / dist) : vec2(0.0);
+    vec3 hemiNormal = normalize(vec3(dirDome * rDome, sqrt(max(0.0, 1.0 - rDome * rDome))));
+
+    vec3 sunCol = (length(u_sunColor) > 0.001) ? u_sunColor : vec3(1.15, 1.05, 0.92);
+    vec3 skyAmb = (length(u_skyAmbient) > 0.001) ? u_skyAmbient : vec3(0.35, 0.40, 0.50);
+    vec3 gndAmb = (length(u_groundAmbient) > 0.001) ? u_groundAmbient : vec3(0.25, 0.22, 0.20);
+    vec3 lightDir = (length(u_lightDir) > 0.001) ? normalize(u_lightDir) : normalize(vec3(0.5, 0.8, 0.5));
+
+    vec3 litColor = calcLitVolume(u_color.rgb, hemiNormal, lightDir, sunCol, skyAmb, gndAmb, density, 2.0);
+
+    finalColor = VFX_ResolveBody(litColor, 1.0, alpha * u_color.a);
 }

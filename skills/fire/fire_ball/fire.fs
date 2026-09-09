@@ -1,5 +1,6 @@
 #version 330
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
 
 in vec2 fragTexCoord;
@@ -24,18 +25,10 @@ void main() {
     n += vnoise(warpUV * 8.0 - flow * 0.5) * 0.5;
     
     float density = circleAlpha * n * fragColor.r * 2.5;
-    
-    vec3 darkFire   = vec3(0.60, 0.10, 0.02);
-    vec3 orangeFire = vec3(1.00, 0.40, 0.00);
-    vec3 coreFire   = vec3(1.00, 0.90, 0.40);
 
-    // TỐI ƯU 1: Ép biên an toàn chống crash driver trên mọi dòng GPU
-    float safeDensity = clamp(density, 0.0, 1.2);
-    float t1 = clamp((safeDensity - 0.3) / 0.4, 0.0, 1.0); 
-    float t2 = clamp((safeDensity - 0.7) / 0.5, 0.0, 1.0); 
-
-    // Hòa trộn màu song song (Branchless)
-    vec3 mixedColor = mix(mix(darkFire, orangeFire, t1), coreFire, t2);
+    // Ghost of Tsushima: Bức xạ vật thể đen Planck theo nhiệt độ ngọn lửa
+    float flameTemp = clamp(density / 1.1, 0.0, 1.0);
+    vec3 mixedColor = calcBlackbodyNormalized(flameTemp);
     
     // TỐI ƯU 2: Khử nốt nhánh Rẽ nhánh 'if (circleAlpha < 0.05)' ban đầu bằng mặt nạ toán học
     float alphaOut = smoothstep(0.05, 0.4, density); 
