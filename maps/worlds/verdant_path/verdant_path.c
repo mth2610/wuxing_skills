@@ -25,7 +25,7 @@
 #define MOUNTAIN_RING_DEPTH 58.0f
 #define MOUNTAIN_ROCK_COUNT 40
 #define ROCK_COUNT 10
-#define GRASS_TUFT_CAPACITY 48000
+#define GRASS_TUFT_CAPACITY 65000
 #define FLOWER_CLUSTER_COUNT 3
 #define FLOWERS_PER_CLUSTER 120
 #define FLOWER_COUNT (FLOWER_CLUSTER_COUNT * FLOWERS_PER_CLUSTER)
@@ -219,10 +219,10 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.22f, .jitter = 0.65f,
-            .minRadius = 0.28f, .maxRadius = 0.38f,
-            .minHeight = 0.48f, .maxHeight = 0.70f,
-            .yOffset = 0.035f, .seed = 0x51a7c3u,
+            .spacing = 0.18f, .jitter = 0.65f,
+            .minRadius = 0.22f, .maxRadius = 0.28f,
+            .minHeight = 0.22f, .maxHeight = 0.38f,
+            .yOffset = 0.025f, .seed = 0x51a7c3u,
         }, VerdantGrassDensity, NULL);
 
     // Ghost of Tsushima / AAA Reference: Structured procedural variation with macro flow field
@@ -255,20 +255,20 @@ static void BuildMeadowLayout(void)
         float biome = cell1 * 0.6f + cell2 * 0.4f;
 
         if (biome > 0.60f) {
-            // Biome 1: Tall Deep Meadow (long sweeping weeping ribbons)
+            // Biome 1: Tall Deep Meadow (long sweeping weeping ribbons, height < 0.40m)
             float t = (biome - 0.60f) / 0.40f;
-            clump->height = 0.56f + t * 0.16f;
-            clump->radius = 0.32f + t * 0.08f;
+            clump->height = 0.30f + t * 0.08f;
+            clump->radius = 0.25f + t * 0.03f;
         } else if (biome < 0.35f) {
-            // Biome 2: Meadow clearing (dense arching grass)
+            // Biome 2: Meadow clearing (dense arching grass, height ~0.20 - 0.26m)
             float t = biome / 0.35f;
-            clump->height = 0.44f + t * 0.10f;
-            clump->radius = 0.28f + t * 0.06f;
+            clump->height = 0.20f + t * 0.06f;
+            clump->radius = 0.20f + t * 0.03f;
         } else {
-            // Biome 3: Wild flowing grass
+            // Biome 3: Wild flowing grass (height ~0.24 - 0.32m)
             float t = (biome - 0.35f) / 0.25f;
-            clump->height = 0.50f + t * 0.12f;
-            clump->radius = 0.30f + t * 0.08f;
+            clump->height = 0.24f + t * 0.08f;
+            clump->radius = 0.22f + t * 0.04f;
         }
     }
 
@@ -511,10 +511,10 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {30, 52, 18, 255}, .tipColor = {140, 210, 52, 255},
-            .bladesPerClump = 4, .bladeSegments = 3, .bladeWidthScale = 0.16f,
-            .chunkSize = 12.0f, .lodDistance = 22.0f, .drawDistance = 46.0f,
-            .shadowDistance = 12.0f,
+            .rootColor = {26, 44, 16, 255}, .tipColor = {138, 206, 50, 255},
+            .bladesPerClump = 4, .bladeSegments = 4, .bladeWidthScale = 0.075f,
+            .chunkSize = 12.0f, .lodDistance = 18.0f, .drawDistance = 42.0f,
+            .shadowDistance = 10.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,

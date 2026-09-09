@@ -50,20 +50,6 @@ void main()
     }
     world = vec3(matModel * vec4(local, 1.0));
 
-    // Ghost of Tsushima: View-Dependent Blade Thickening (Anti-Grazing Thinning)
-    // When the camera views the blade edge-on (|N · V| -> 0), the projected silhouette
-    // drops toward 0 pixels, causing harsh aliasing and sub-pixel dropout.
-    // We gently expand the lateral edges along the camera-perpendicular direction.
-    float isGrass = 1.0 - smoothstep(0.70, 0.92, vertexTexCoord.y);
-    vec3 viewDir = normalize(u_viewPos - world);
-    vec3 worldNormal = normalize(mat3(matModel) * vertexNormal);
-    float NdotV = abs(dot(worldNormal, viewDir));
-    float grazing = clamp(1.0 - NdotV, 0.0, 1.0);
-    float edgeThicken = pow(grazing, 2.5) * 0.35 * isGrass;
-    float uWidth = clamp(vertexTexCoord2.x, -1.0, 1.0);
-    vec3 camSide = normalize(cross(viewDir, vec3(0.0, 1.0, 0.0)));
-    local.xz += camSide.xz * (uWidth * edgeThicken * 0.038);
-
     // Normal tilts dynamically with wind deflection, creating iconic specular ripples
     vec3 bentNormal = vertexNormal;
     bentNormal.xz -= u_windDirection * (windDeflection * 1.15) * vertexTexCoord.y;

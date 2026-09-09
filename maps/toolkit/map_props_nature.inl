@@ -879,45 +879,45 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
 
                 if (blade == 0) {
                     // Tier 0: Basal Ground-Cover Skirt (wide leaf embracing base and hiding terrain gaps)
-                    float lengthScale = 0.56f + 0.10f * bHash;
+                    float lengthScale = 0.62f + 0.08f * bHash;
                     height = clump->height * lengthScale;
-                    width = clump->radius * style.bladeWidthScale * widthMultiplier * 1.35f;
-                    lean = height * 0.52f;
-                    droopY = height * 0.05f;
+                    width = clump->radius * style.bladeWidthScale * widthMultiplier * 1.25f;
+                    lean = height * 0.50f;
+                    droopY = height * 0.04f;
                 } else if (blade < bladesPerClump - 1) {
                     // Tier 1: Mid-Story Arching Culms (lush body of the tuft)
                     int midIdx = blade - 1;
                     float midFrac = (bladesPerClump > 2) ? (float)midIdx / (float)(bladesPerClump - 2) : 0.0f;
-                    float lengthScale = 0.86f + 0.20f * midFrac + 0.08f * (bHash - 0.5f);
+                    float lengthScale = 0.88f + 0.16f * midFrac + 0.06f * (bHash - 0.5f);
                     height = clump->height * lengthScale;
-                    width = clump->radius * style.bladeWidthScale * widthMultiplier * 1.12f;
-                    lean = height * 0.46f;
-                    droopY = height * 0.08f;
+                    width = clump->radius * style.bladeWidthScale * widthMultiplier * 1.05f;
+                    lean = height * 0.44f;
+                    droopY = height * 0.06f;
                 } else {
-                    // Tier 2: Crown Nodding Weeping Ribbon (tallest, graceful specular culm)
-                    float lengthScale = 1.18f + 0.12f * bHash2;
+                    // Tier 2: Crown Nodding Ribbon (tallest, graceful specular culm, height < 0.45m)
+                    float lengthScale = 1.10f + 0.08f * bHash2;
                     height = clump->height * lengthScale;
-                    width = clump->radius * style.bladeWidthScale * widthMultiplier * 0.96f;
-                    lean = height * 0.50f;
-                    droopY = height * 0.12f;
+                    width = clump->radius * style.bladeWidthScale * widthMultiplier * 0.95f;
+                    lean = height * 0.48f;
+                    droopY = height * 0.08f;
                 }
 
                 // Cantilever progressive Bézier curve (monotonically increasing curvature, zero kinks)
                 pBase = (Vector3){bx, clump->position.y, bz};
                 pP1 = (Vector3){
-                    bx + cosf(bladeLeanAngle) * lean * 0.10f,
+                    bx + cosf(bladeLeanAngle) * lean * 0.08f,
                     pBase.y + height * 0.38f,
-                    bz + sinf(bladeLeanAngle) * lean * 0.10f
+                    bz + sinf(bladeLeanAngle) * lean * 0.08f
                 };
                 pP2 = (Vector3){
-                    bx + cosf(bladeLeanAngle) * lean * 0.42f,
+                    bx + cosf(bladeLeanAngle) * lean * 0.40f,
                     pBase.y + height * 0.74f,
-                    bz + sinf(bladeLeanAngle) * lean * 0.42f
+                    bz + sinf(bladeLeanAngle) * lean * 0.40f
                 };
                 pP3 = (Vector3){
-                    bx + cosf(bladeLeanAngle) * lean * 0.92f,
-                    pBase.y + fmaxf(height * 0.25f, height * 0.88f - droopY),
-                    bz + sinf(bladeLeanAngle) * lean * 0.92f
+                    bx + cosf(bladeLeanAngle) * lean * 0.90f,
+                    pBase.y + fmaxf(height * 0.28f, height * 0.88f - droopY),
+                    bz + sinf(bladeLeanAngle) * lean * 0.90f
                 };
 
                 // Coherent Macro Seedhead Biome Field (scale ~18m):
@@ -980,16 +980,19 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Ngeo1 = Vector3Normalize(Ngeo1);
 
                 // Botanical Spear Blade Profile: wide sheath, lush belly, needle tip
-                float profile0 = (0.75f + 0.25f * sinf(PI * t0)) * (1.0f - powf(t0, 1.4f));
-                float profile1 = (0.75f + 0.25f * sinf(PI * t1)) * (1.0f - powf(t1, 1.4f));
+                float profile0 = (0.78f + 0.22f * sinf(PI * t0)) * (1.0f - powf(t0, 1.4f));
+                float profile1 = (0.78f + 0.22f * sinf(PI * t1)) * (1.0f - powf(t1, 1.4f));
                 float halfW0 = (width * 0.5f) * fmaxf(profile0, 0.08f);
                 float halfW1 = (width * 0.5f) * fmaxf(profile1, 0.03f);
 
-                // Vertices V_left and V_right cleanly centered on Bézier curve
-                Vector3 p0 = Vector3Subtract(center0, Vector3Scale(S0, halfW0));
-                Vector3 p1 = Vector3Add(center0, Vector3Scale(S0, halfW0));
-                Vector3 p2 = Vector3Add(center1, Vector3Scale(S1, halfW1));
-                Vector3 p3 = Vector3Subtract(center1, Vector3Scale(S1, halfW1));
+                // Section 1.2: V-shaped cross section (creased spine, winged edges)
+                Vector3 fold0 = Vector3Scale(Ngeo0, halfW0 * 0.18f);
+                Vector3 fold1 = Vector3Scale(Ngeo1, halfW1 * 0.18f);
+
+                Vector3 p0 = Vector3Add(Vector3Subtract(center0, Vector3Scale(S0, halfW0)), fold0);
+                Vector3 p1 = Vector3Add(Vector3Add(center0, Vector3Scale(S0, halfW0)), fold0);
+                Vector3 p2 = Vector3Add(Vector3Add(center1, Vector3Scale(S1, halfW1)), fold1);
+                Vector3 p3 = Vector3Add(Vector3Subtract(center1, Vector3Scale(S1, halfW1)), fold1);
 
                 // Root ambient occlusion: soft, natural ground grounding without harsh pitch-black spots
                 float occ0 = (t0 < 0.22f) ? (0.88f + 0.12f * (t0 / 0.22f)) : 1.0f;
@@ -997,21 +1000,34 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Color color0 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t0), occ0);
                 Color color1 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t1), occ1);
 
-                // Section 1.3: Pixel Normal Rounding: N_pixel(t, v) = normalize(N_geo(t) + alpha * v * S(t))
-                Vector3 nL0 = Vector3Normalize(Vector3Subtract(Ngeo0, Vector3Scale(S0, 0.40f)));
-                Vector3 nR0 = Vector3Normalize(Vector3Add(Ngeo0, Vector3Scale(S0, 0.40f)));
-                Vector3 nL1 = Vector3Normalize(Vector3Subtract(Ngeo1, Vector3Scale(S1, 0.36f)));
-                Vector3 nR1 = Vector3Normalize(Vector3Add(Ngeo1, Vector3Scale(S1, 0.36f)));
-                Vector3 nTip = Vector3Normalize((Vector3){Ngeo1.x, 0.72f, Ngeo1.z});
+                // Ghost of Tsushima / AAA Reference: Bent Vertex Normals
+                // Blend polygon normal with Spherical Clump Normal + Upward Ground Normal
+                Vector3 clumpSphereCenter = (Vector3){clump->position.x, clump->position.y - 0.04f, clump->position.z};
 
-                // Section 3.2: Shape Normal Blending with terrain normal
-                float blend0 = powf(t0, 0.70f);
-                float blend1 = powf(t1, 0.70f);
-                nL0 = Vector3Normalize(Vector3Lerp(terrainNormal, nL0, blend0));
-                nR0 = Vector3Normalize(Vector3Lerp(terrainNormal, nR0, blend0));
-                nL1 = Vector3Normalize(Vector3Lerp(terrainNormal, nL1, blend1));
-                nR1 = Vector3Normalize(Vector3Lerp(terrainNormal, nR1, blend1));
-                nTip = Vector3Normalize(Vector3Lerp(terrainNormal, nTip, 0.85f));
+                Vector3 dSphere0L = Vector3Normalize(Vector3Subtract(p0, clumpSphereCenter));
+                Vector3 dSphere0R = Vector3Normalize(Vector3Subtract(p1, clumpSphereCenter));
+                Vector3 dSphere1L = Vector3Normalize(Vector3Subtract(p3, clumpSphereCenter));
+                Vector3 dSphere1R = Vector3Normalize(Vector3Subtract(p2, clumpSphereCenter));
+                Vector3 dSphereTip = Vector3Normalize(Vector3Subtract(center1, clumpSphereCenter));
+
+                Vector3 nTarget0L = Vector3Normalize(Vector3Lerp(dSphere0L, terrainNormal, 0.45f));
+                Vector3 nTarget0R = Vector3Normalize(Vector3Lerp(dSphere0R, terrainNormal, 0.45f));
+                Vector3 nTarget1L = Vector3Normalize(Vector3Lerp(dSphere1L, terrainNormal, 0.45f));
+                Vector3 nTarget1R = Vector3Normalize(Vector3Lerp(dSphere1R, terrainNormal, 0.45f));
+                Vector3 nTargetTip = Vector3Normalize(Vector3Lerp(dSphereTip, terrainNormal, 0.55f));
+
+                // Blade edge transverse tilt
+                Vector3 nMesh0L = Vector3Normalize(Vector3Subtract(Ngeo0, Vector3Scale(S0, 0.35f)));
+                Vector3 nMesh0R = Vector3Normalize(Vector3Add(Ngeo0, Vector3Scale(S0, 0.35f)));
+                Vector3 nMesh1L = Vector3Normalize(Vector3Subtract(Ngeo1, Vector3Scale(S1, 0.32f)));
+                Vector3 nMesh1R = Vector3Normalize(Vector3Add(Ngeo1, Vector3Scale(S1, 0.32f)));
+
+                // 72% Bent Normal blending for silky, continuous velvet lighting
+                Vector3 nL0 = Vector3Normalize(Vector3Lerp(nMesh0L, nTarget0L, 0.72f));
+                Vector3 nR0 = Vector3Normalize(Vector3Lerp(nMesh0R, nTarget0R, 0.72f));
+                Vector3 nL1 = Vector3Normalize(Vector3Lerp(nMesh1L, nTarget1L, 0.72f));
+                Vector3 nR1 = Vector3Normalize(Vector3Lerp(nMesh1R, nTarget1R, 0.72f));
+                Vector3 nTip = Vector3Normalize(Vector3Lerp(Ngeo1, nTargetTip, 0.78f));
 
                 if (style.hasPlumes) {
                     if (segment == bladeSegments - 1) {
