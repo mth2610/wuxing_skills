@@ -181,11 +181,8 @@ static float VerdantGrassDensity(float x, float z, void *userData)
         return 0.0f;
     float edgeFade = 1.0f - fmaxf(0.0f, (edge - 0.72f) / 0.28f);
 
-    // Multi-harmonic organic patch noise (Ghost of Tsushima natural lawn layering)
-    float carpetNoise = sinf(x * 0.14f + z * 0.09f) * 0.45f
-                      + sinf(x * -0.08f + z * 0.21f + 1.3f) * 0.35f
-                      + sinf(x * 0.32f - z * 0.28f + 2.7f) * 0.20f;
-    float macro = 0.68f + carpetNoise * 0.48f;
+    // Uniform, solid meadow lawn coverage: every grid point produces grass
+    float macro = 1.0f;
 
     // Suppress grass in flower clusters: flowers need clear open ground to bloom cleanly
     const Vector3 flowerCenters[FLOWER_CLUSTER_COUNT] = {
@@ -255,20 +252,20 @@ static void BuildMeadowLayout(void)
         float biome = cell1 * 0.6f + cell2 * 0.4f;
 
         if (biome > 0.60f) {
-            // Biome 1: Tall Deep Meadow (long sweeping weeping ribbons, height < 0.40m)
+            // Biome 1: Tall Deep Meadow (long sweeping weeping ribbons, height ~0.36 - 0.42m)
             float t = (biome - 0.60f) / 0.40f;
-            clump->height = 0.30f + t * 0.08f;
-            clump->radius = 0.25f + t * 0.03f;
+            clump->height = 0.36f + t * 0.06f;
+            clump->radius = 0.26f + t * 0.04f;
         } else if (biome < 0.35f) {
-            // Biome 2: Meadow clearing (dense arching grass, height ~0.20 - 0.26m)
+            // Biome 2: Meadow clearing (dense arching grass, height ~0.30 - 0.34m)
             float t = biome / 0.35f;
-            clump->height = 0.20f + t * 0.06f;
-            clump->radius = 0.20f + t * 0.03f;
+            clump->height = 0.30f + t * 0.04f;
+            clump->radius = 0.23f + t * 0.03f;
         } else {
-            // Biome 3: Wild flowing grass (height ~0.24 - 0.32m)
+            // Biome 3: Wild flowing grass (height ~0.33 - 0.37m)
             float t = (biome - 0.35f) / 0.25f;
-            clump->height = 0.24f + t * 0.08f;
-            clump->radius = 0.22f + t * 0.04f;
+            clump->height = 0.33f + t * 0.04f;
+            clump->radius = 0.24f + t * 0.03f;
         }
     }
 
@@ -512,8 +509,8 @@ void InitVerdantPathMap(void)
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
             .rootColor = {26, 44, 16, 255}, .tipColor = {138, 206, 50, 255},
-            .bladesPerClump = 4, .bladeSegments = 4, .bladeWidthScale = 0.075f,
-            .chunkSize = 12.0f, .lodDistance = 18.0f, .drawDistance = 42.0f,
+            .bladesPerClump = 6, .bladeSegments = 4, .bladeWidthScale = 0.11f,
+            .chunkSize = 12.0f, .lodDistance = 22.0f, .drawDistance = 42.0f,
             .shadowDistance = 10.0f,
             .texturePath = NULL,
         });

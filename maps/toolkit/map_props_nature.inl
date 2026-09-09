@@ -843,27 +843,27 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 }
             } else if (bladeSegments <= 2) {
                 // Shadow Caster / Far LOD: 1 wide arching blade aligned with wind flow
-                bladeLeanAngle = clumpAngle + (bHash - 0.5f) * 0.22f;
+                bladeLeanAngle = clumpAngle + (bHash - 0.5f) * 0.20f;
                 float bx = clump->position.x;
                 float bz = clump->position.z;
 
-                height = clump->height * 1.08f;
+                height = clump->height * 1.00f;
                 width = clump->radius * style.bladeWidthScale * widthMultiplier;
-                lean = height * 0.46f;
-                droopY = height * 0.08f;
+                lean = height * 0.44f;
+                droopY = height * 0.06f;
 
                 pBase = (Vector3){bx, clump->position.y, bz};
-                pP1 = (Vector3){bx + cosf(bladeLeanAngle) * lean * 0.12f, pBase.y + height * 0.38f, bz + sinf(bladeLeanAngle) * lean * 0.12f};
-                pP2 = (Vector3){bx + cosf(bladeLeanAngle) * lean * 0.44f, pBase.y + height * 0.74f, bz + sinf(bladeLeanAngle) * lean * 0.44f};
-                pP3 = (Vector3){bx + cosf(bladeLeanAngle) * lean * 0.92f, pBase.y + (height * 0.88f - droopY), bz + sinf(bladeLeanAngle) * lean * 0.92f};
+                pP1 = (Vector3){bx + cosf(bladeLeanAngle) * lean * 0.08f, pBase.y + height * 0.38f, bz + sinf(bladeLeanAngle) * lean * 0.08f};
+                pP2 = (Vector3){bx + cosf(bladeLeanAngle) * lean * 0.40f, pBase.y + height * 0.74f, bz + sinf(bladeLeanAngle) * lean * 0.40f};
+                pP3 = (Vector3){bx + cosf(bladeLeanAngle) * lean * 0.90f, pBase.y + (height * 0.88f - droopY), bz + sinf(bladeLeanAngle) * lean * 0.90f};
 
                 bladeRoot = style.rootColor;
                 bladeTip = style.tipColor;
             } else {
-                // Ghost of Tsushima / AAA Reference: 3D Volumetric Clump Architecture
-                // 360-degree radial base emergence + harmonious macro wind deflection
+                // Ghost of Tsushima / AAA Reference: 3D Volumetric Clump Architecture (6 Blades)
+                // All 6 blades emerge upright from root collar and arch gracefully
                 float baseAzimuth = ((float)blade / (float)bladesPerClump) * (2.0f * PI)
-                                  + (bHash - 0.5f) * 0.65f;
+                                  + (bHash - 0.5f) * 0.45f;
                 float collarRadius = clump->radius * (0.16f + 0.12f * bHash3);
                 float bx = clump->position.x + cosf(baseAzimuth) * collarRadius;
                 float bz = clump->position.z + sinf(baseAzimuth) * collarRadius;
@@ -877,30 +877,12 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 if (combLen < 0.01f) { combX = flowX; combZ = flowZ; combLen = 1.0f; }
                 bladeLeanAngle = atan2f(combZ / combLen, combX / combLen);
 
-                if (blade == 0) {
-                    // Tier 0: Basal Ground-Cover Skirt (wide leaf embracing base and hiding terrain gaps)
-                    float lengthScale = 0.62f + 0.08f * bHash;
-                    height = clump->height * lengthScale;
-                    width = clump->radius * style.bladeWidthScale * widthMultiplier * 1.25f;
-                    lean = height * 0.50f;
-                    droopY = height * 0.04f;
-                } else if (blade < bladesPerClump - 1) {
-                    // Tier 1: Mid-Story Arching Culms (lush body of the tuft)
-                    int midIdx = blade - 1;
-                    float midFrac = (bladesPerClump > 2) ? (float)midIdx / (float)(bladesPerClump - 2) : 0.0f;
-                    float lengthScale = 0.88f + 0.16f * midFrac + 0.06f * (bHash - 0.5f);
-                    height = clump->height * lengthScale;
-                    width = clump->radius * style.bladeWidthScale * widthMultiplier * 1.05f;
-                    lean = height * 0.44f;
-                    droopY = height * 0.06f;
-                } else {
-                    // Tier 2: Crown Nodding Ribbon (tallest, graceful specular culm, height < 0.45m)
-                    float lengthScale = 1.10f + 0.08f * bHash2;
-                    height = clump->height * lengthScale;
-                    width = clump->radius * style.bladeWidthScale * widthMultiplier * 0.95f;
-                    lean = height * 0.48f;
-                    droopY = height * 0.08f;
-                }
+                float tierFrac = (float)blade / (float)(bladesPerClump - 1);
+                float lengthScale = 0.84f + 0.22f * tierFrac + 0.06f * (bHash - 0.5f);
+                height = clump->height * lengthScale;
+                width = clump->radius * style.bladeWidthScale * widthMultiplier * (0.95f + 0.15f * (1.0f - tierFrac));
+                lean = height * (0.42f + 0.08f * tierFrac);
+                droopY = height * (0.05f + 0.04f * tierFrac);
 
                 // Cantilever progressive Bézier curve (monotonically increasing curvature, zero kinks)
                 pBase = (Vector3){bx, clump->position.y, bz};
@@ -979,9 +961,9 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Ngeo1.y = fmaxf(Ngeo1.y, 0.25f);
                 Ngeo1 = Vector3Normalize(Ngeo1);
 
-                // Botanical Spear Blade Profile: wide sheath, lush belly, needle tip
-                float profile0 = (0.78f + 0.22f * sinf(PI * t0)) * (1.0f - powf(t0, 1.4f));
-                float profile1 = (0.78f + 0.22f * sinf(PI * t1)) * (1.0f - powf(t1, 1.4f));
+                // Botanical Spear Blade Profile: fuller mid-body for lush coverage, needle tip
+                float profile0 = (0.85f + 0.25f * sinf(PI * t0)) * (1.0f - powf(t0, 1.8f));
+                float profile1 = (0.85f + 0.25f * sinf(PI * t1)) * (1.0f - powf(t1, 1.8f));
                 float halfW0 = (width * 0.5f) * fmaxf(profile0, 0.08f);
                 float halfW1 = (width * 0.5f) * fmaxf(profile1, 0.03f);
 
@@ -1204,12 +1186,13 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
 
             // Preserve coverage: removing every second clump turns a meadow
             // into isolated spikes. Far LOD reduces each clump instead.
-            int farBlades = (style.bladesPerClump + 1) / 2;
-            if (farBlades < 2) farBlades = 2;
+            // Procedural Blade Widening (Ghost of Tsushima model):
+            // Far clumps use exactly 2 blades with 1.8x width to preserve full coverage with minimal triangles.
+            int farBlades = 2;
             int farCount = 0;
             Model farModel = Nature_BuildMeadowChunk(
                 placements, count, style, x0, x1, z0, z1, 1,
-                farBlades, 1, 1.35f, &farCount);
+                farBlades, 1, 1.45f, &farCount);
             Model shadowModel = {0};
             // Eliminate crude 6-vertex trapezoid wedges.
             // Grass uses real dynamic shadow map casting via realShadowModel.
@@ -1218,7 +1201,7 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             if (buildRealShadowLod)
                 realShadowModel = Nature_BuildMeadowChunk(
                     placements, count, style, x0, x1, z0, z1, 1,
-                    1, 2, 2.2f, &realShadowCount);
+                    1, 2, 2.0f, &realShadowCount);
             MapMeadowChunk *chunk = &meadow.chunks[meadow.chunkCount++];
             if (textured) {
                 nearModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
