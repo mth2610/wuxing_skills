@@ -189,10 +189,11 @@ void VFX_ComposeLightShaft(Vector3 from, Vector3 to, VC_MaterialId mat,
 
                 float a = LightShaft_Alpha(t) * passA[pass] * ity * s_shaftGain
                           * breathe;
-                // Hot at the source, cooling into the material's pastel with
-                // distance — the same "hue travels" rule the slash uses.
-                Color c = VC_Whiten(VC_MixColor(glow, soft, SmoothStep01(t)),
-                                    passWhite[pass]);
+                // Bức xạ quang năng: Trục lõi (pass 1) và đầu nguồn sáng (t gần 0) đạt năng lượng cao nhất
+                float energy = (pass == 1) ? (1.0f - t * 0.45f) : ((1.0f - t) * 0.40f);
+                float coreTrans = SmoothStep01((energy - 0.55f) / 0.45f);
+                float whiten = Math_Mix(passWhite[pass], 0.96f, coreTrans * (pass == 1 ? 0.85f : 0.45f));
+                Color c = VC_Whiten(VC_MixColor(glow, soft, SmoothStep01(t)), whiten);
                 pts[i].tint = VC_Premultiply(c, a);
             }
 

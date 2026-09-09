@@ -1,6 +1,7 @@
 #version 330
 #include "core/shaders/common/fs_header.glsl"
 #include "core/shaders/common/noise.glsl"
+#include "core/shaders/common/lighting.glsl"
 #include "core/shaders/common/vfx_composite.glsl"
 
 // Textured water-energy shield.  Unlike glass_shell.fs, this shader has no
@@ -312,8 +313,14 @@ void main()
         // carry their own presence.
         float glowCoverage = clamp(emissionMask * (0.55 + 0.45 * coverage) *
                                    u_opacity * interfaceWeight, 0.0, 1.0);
-        vec3 contactHot = mix(u_rimColor.rgb, vec3(0.72, 0.92, 1.0), contact * 0.45);
-        finalColor = VFX_ResolvePremultiplied(contactHot, u_emissionGain,
+
+        // Bức xạ năng lượng nguyên tố cho mạng lưới gân ma thuật và viền tiếp xúc (Ghost of Tsushima Radiant Energy)
+        // Mật độ gân (veins) và điểm tiếp xúc (contactCore) tập trung năng lượng cao nhất -> Lõi trắng nóng chói lóa
+        float energy = clamp(veins * 1.35 + contactCore * 0.90 + rimCore * 0.40, 0.0, 1.0);
+        float isWarm = step(u_rimColor.b, u_rimColor.r * 0.85);
+        vec3 radiantCol = calcRadiantEnergy(energy, u_rimColor.rgb, vec3(0.95, 0.98, 1.0), isWarm, u_emissionGain);
+
+        finalColor = VFX_ResolvePremultiplied(radiantCol, 1.0,
                                                glowCoverage, vec3(0.0), 0.0, 0.0);
     }
     else

@@ -22,7 +22,7 @@ uniform float uStrength;      // = 0.0 nếu không dùng Flow Map
 uniform float uTiling;
 
 // Glow & HDR Core Controls
-uniform float uCoreStrength;  // 0.0 = Không lõi, > 0.0 = Lõi rực sáng HDR
+uniform float u_coreStrength;  // 0.0 = Không lõi, > 0.0 = Lõi rực sáng HDR
 
 // Noise Dissolve / Erosion Controls (XÉ RÁCH VỆT KHÓI)
 uniform float uDissolve;      // Dải [0.0 - 1.0]: Độ tan biến/xé rách (0 = nguyên vẹn, 1 = biến mất)
@@ -98,8 +98,8 @@ void main() {
     float finalAlpha = smokeAlpha;
 
     // Lõi rực sáng ở giữa (Ghost of Tsushima Radiant Energy Core)
-    if (uCoreStrength > 0.0) {
-        float coreMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 5.5) * uCoreStrength;
+    if (u_coreStrength > 0.0) {
+        float coreMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 5.5) * u_coreStrength;
         float coreAlpha = clamp(fragColor.a * 1.6, 0.0, 1.0) * alphaMask;
 
         finalAlpha = mix(smokeAlpha, coreAlpha, coreMask);
