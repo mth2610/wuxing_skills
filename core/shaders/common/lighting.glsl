@@ -183,19 +183,15 @@ vec3 calcLitVolume(vec3 baseColor, vec3 normal, vec3 sunToLight, vec3 sunColor,
 vec3 calcRadiantEnergy(float energy, vec3 elementHue, vec3 coreHue, float blackbodyFactor, float hdrGain) {
     float e = clamp(energy, 0.0, 1.0);
     
-    // 1. Phổ bức xạ nhiệt vật thể đen Planck (dành cho Lửa vật lý)
-    // Điều biến quang phổ theo sắc tố nguyên tố để không phá vỡ gam màu nghệ thuật (tránh biến viền thành đỏ thô)
-    float maxC = max(elementHue.r, max(elementHue.g, elementHue.b));
-    vec3 normalizedHue = (maxC > 0.001) ? (elementHue / maxC) : vec3(1.0);
+    // 1. Phổ bức xạ nhiệt vật thể đen Planck (dành cho Lửa vật lý chuẩn Ghost of Tsushima)
     vec3 bb = calcBlackbodyNormalized(e);
-    vec3 fireSpec = bb * normalizedHue;
     
     // 2. Phổ năng lượng nguyên tố ma thuật (dành cho Lôi điện, Băng lam, Tiên khí)
     float coreTransition = smoothstep(0.60, 1.0, e);
     vec3 energySpec = mix(elementHue * e, coreHue * (1.0 + coreTransition * 2.0), coreTransition);
     
-    // 3. Hòa trộn mượt mà giữa Lửa vật lý và Năng lượng nguyên tố
-    vec3 finalSpec = mix(energySpec, fireSpec, clamp(blackbodyFactor, 0.0, 1.0));
+    // 3. Hòa trộn mượt mà giữa Năng lượng nguyên tố và Lửa vật lý Planck
+    vec3 finalSpec = mix(energySpec, bb, clamp(blackbodyFactor, 0.0, 1.0));
     
     return finalSpec * max(hdrGain, 0.0);
 }

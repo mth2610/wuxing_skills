@@ -511,9 +511,8 @@ static void Test_ProfilesAreThreeDifferentShapes(void) {
         "water stream draws a real droplet, from the droplet module");
   CHECK(FileHas("skills/water/water_stream/tube_skill.c", "s_waterTubeConfig = PMDroplet_DefaultConfig();"),
         "so does water stream on path");
-  CHECK(FileHas("core/composition/common/vc_volume_trail.inl", "s_volTube = PMDroplet_DefaultConfig();") &&
-            FileHas("core/composition/common/vc_volume_trail.inl", "cfg.dropletConfig = VolumeTrail_Shape();"),
-        "and the volume trail, through the trail system's droplet hook");
+  CHECK(FileHas("core/composition/common/vc_volume_trail.inl", "c->tube = PMTube_DefaultConfig();"),
+        "and the volume trail, through the tube module");
   CHECK(FileHas("core/composition/common/vc_smoke_column.inl", "PMTube_DefaultConfig();"),
         "while the smoke column is the pipe");
 }
