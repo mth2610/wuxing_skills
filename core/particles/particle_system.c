@@ -12,6 +12,7 @@
 #include "core/scene_targets.h"
 #include "core/screen_distort.h"
 #include "core/time_fx.h"
+#include "core/wind/wind_system.h"
 #include "environment/environment_system.h"
 #include <string.h>
 #include <math.h>
@@ -544,11 +545,17 @@ void UpdateParticles(float dt)
 
     // TỐI ƯU 3: Inline Math Scalar (Tính toán trục tiếp trên x, y, z)
     const ForceField *activeField = p->forceField;
-    if (p->travelImpactActive && p->travelPath &&
-        p->travelPath->arrivalForceField &&
-        (p->travelPath->arrivalForceDuration <= 0.0f ||
-         p->travelImpactAge <= p->travelPath->arrivalForceDuration))
-      activeField = p->travelPath->arrivalForceField;
+    if (p->travelImpactActive)
+    {
+      // Sau khi tới target, không áp dụng trường lực thông thường (curl noise...)
+      // mà nhường toàn bộ quyền điều khiển cho Hệ thống Gió (Wind System).
+      if (p->travelPath && p->travelPath->arrivalForceField &&
+          p->travelPath->arrivalForceDuration > 0.0f &&
+          p->travelImpactAge <= p->travelPath->arrivalForceDuration)
+        activeField = p->travelPath->arrivalForceField;
+      else
+        activeField = NULL;
+    }
     if (activeField)
     {
       Vector3 pos = {p->x, p->y, p->z};
@@ -601,7 +608,15 @@ void UpdateParticles(float dt)
       p->x += p->vx * step;
       p->y += p->vy * step;
       p->z += p->vz * step;
-      if (p->travelImpactActive) p->travelImpactAge += dt;
+      if (p->travelImpactActive) {
+        p->travelImpactAge += dt;
+        // Khi hạt đã tới target (post-arrival), hòa trộn vận tốc theo luồng gió của Wind System
+        Vector3 windVel = Wind_EvaluateVelocity((Vector3){p->x, p->y, p->z}, s_particleTime);
+        float blendRate = Clamp(dt * 3.5f, 0.0f, 1.0f);
+        p->vx = Math_Mix(p->vx, windVel.x, blendRate);
+        p->vy = Math_Mix(p->vy, windVel.y, blendRate);
+        p->vz = Math_Mix(p->vz, windVel.z, blendRate);
+      }
     }
 
     if (reachedTarget)
@@ -619,6 +634,14 @@ void UpdateParticles(float dt)
         p->vz = velocity.z;
         p->travelImpactActive = true;
         p->travelImpactAge = 0.0f;
+
+        // Kích phát xung kích áp suất gió và lốc xoáy ngay tại điểm chạm đích (Target)
+        static float s_lastCpuArrivalWindTime = -10.0f;
+        if (s_particleTime - s_lastCpuArrivalWindTime > 0.35f) {
+          s_lastCpuArrivalWindTime = s_particleTime;
+          Wind_SpawnRadialBlast(position, 5.5f, 10.0f, 1.2f);
+          Wind_SpawnVortex(position, (Vector3){0.0f, 1.0f, 0.0f}, 4.5f, 8.0f, 3.0f, 1.8f);
+        }
         continue;
       }
       if (p->hasTargetEmit && p->onTargetCount > 0)

@@ -5,9 +5,14 @@
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h" // EnvShadow_IsCapturing — skip non-casters in the shadow pass
 #include "entities/entities.h"
+#include "core/wind/wind_system.h"
+#include "core/atmosphere.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <stddef.h>
+
+// Debug Wind Gizmo (tắt mặc định để không hiện khung cầu dây)
+static bool s_windDebugEnabled = false;
 
 // Biến toàn cục hiển thị phím ảo cảm ứng
 #if defined(PLATFORM_ANDROID)
@@ -455,6 +460,20 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
                  now ? "ON" : "OFF", player->agentId);
     }
 
+    // [F8 / 8] — Bật/tắt hiển thị Wind Debug Gizmo (hướng gió vĩ mô + mảng xoáy khí Vorticles)
+    if (IsKeyPressed(KEY_F8) || IsKeyPressed(KEY_EIGHT)) {
+        s_windDebugEnabled = !s_windDebugEnabled;
+        TraceLog(LOG_INFO, "SANDBOX: Wind Debug Gizmo %s", s_windDebugEnabled ? "ON" : "OFF");
+    }
+
+    // [F9 / 9] — Chuyển đổi trạng thái bầu không khí (Moonlight Dust <-> War Embers)
+    if (IsKeyPressed(KEY_F9) || IsKeyPressed(KEY_NINE)) {
+        AtmosphereMode current = Atmosphere_GetMode();
+        AtmosphereMode next = (current == ATMO_MODE_MOONLIGHT_DUST) ? ATMO_MODE_WAR_EMBERS : ATMO_MODE_MOONLIGHT_DUST;
+        Atmosphere_SetMode(next);
+        TraceLog(LOG_INFO, "SANDBOX: Atmosphere Mode -> %s", (next == ATMO_MODE_WAR_EMBERS) ? "War Embers (Tàn tro)" : "Moonlight Dust (Bụi trăng)");
+    }
+
     prevTouchJump = touchJump;
     prevTouchDash = touchDash;
     prevTouchFlyToggle = touchFlyToggle;
@@ -510,6 +529,25 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         if (targetPos.x != 0.0f || targetPos.y != 0.0f || targetPos.z != 0.0f) {
             Sandbox_FacePlayerToward(player, targetPos);
         }
+
+        // =========================================================================
+        // GHOST OF TSUSHIMA: TÁC ĐỘNG GIÓ VÀ ÁP SUẤT KHI TUNG ĐÒN ĐÁNH (WIND SYSTEM)
+        // =========================================================================
+        Vector3 forward = { sinf(g_playerModelYaw), 0.0f, cosf(g_playerModelYaw) };
+        if (targetPos.x != 0.0f || targetPos.z != 0.0f) {
+            Vector3 toTarget = Vector3Subtract(targetPos, player->position);
+            toTarget.y = 0.0f;
+            if (Vector3LengthSqr(toTarget) > 1e-4f) forward = Vector3Normalize(toTarget);
+        }
+        Vector3 attackOrigin = Vector3Add(player->position, (Vector3){ 0.0f, 1.0f, 0.0f });
+        // Luồng gió thẳng cuốn theo đòn đánh (punch/kick)
+        Wind_SpawnGust(attackOrigin, forward, 5.5f, 3.5f, 0.45f);
+        // Với đòn Chưởng (PALM) hoặc khi đánh trúng mục tiêu: tạo sóng xung kích áp suất tỏa tròn (Radial Blast)
+        if (randomType == BASIC_ATTACK_PALM || targetPos.x != 0.0f) {
+            Vector3 blastCenter = (targetPos.x != 0.0f) ? targetPos : Vector3Add(attackOrigin, Vector3Scale(forward, 1.5f));
+            Wind_SpawnRadialBlast(blastCenter, 4.5f, 4.5f, 0.50f);
+        }
+
         if (gotWallBonus && wallElement == 3 /* Earth — chỉ nguyên tố này có tường thật đợt này */) {
             // F0 purge: proc beam deleted, no one-shot successor.
             (void)wallPos;
@@ -539,6 +577,15 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         }
     } else {
         *outMouseTarget = (Vector3){0};
+    }
+
+    // [J] — Bắn Guided Particle VFX (bay tới mục tiêu rồi cuốn theo hệ thống Gió Wind System)
+    if (IsKeyPressed(KEY_J)) {
+        Vector3 castSocket = Vector3Add(player->position, (Vector3){ 0.0f, 1.0f, 0.0f });
+        Vector3 target = (outMouseTarget && (outMouseTarget->x != 0.0f || outMouseTarget->z != 0.0f))
+                         ? *outMouseTarget : enemy->position;
+        VFX_ComposeGuidedParticle(castSocket, target);
+        TraceLog(LOG_INFO, "SANDBOX: Cast Guided Particle VFX -> target (%.1f, %.1f, %.1f)", target.x, target.y, target.z);
     }
 
     // 2. DI CHUYỂN PLAYER (WASD & KEYBOARD / JOYSTICK)
@@ -997,6 +1044,10 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
         DrawCharacter3D(dummy->position, 0.3f, GetColor(0xE0E0E0FF), dummyClothes, WHITE, false, (Vector3){ 0 });
         if (!shadowPass) DrawAgentHealthBar3D(dummy->position, 0.5f, trainingDummyAgentId, ORANGE);
     }
+
+    if (!shadowPass && s_windDebugEnabled) {
+        Wind_DrawDebug(player->position);
+    }
 }
 
 void DrawSandboxHUD(void) {
@@ -1007,9 +1058,9 @@ void DrawSandboxHUD(void) {
 
     // Vị trí HUD góc dưới bên trái (chồng lên chỗ chữ cũ của main.c)
     int hudX = 10;
-    int hudY = 475;
+    int hudY = 460;
     int hudW = 560;
-    int hudH = 215;
+    int hudH = 255;
 
     // Vẽ panel nền tối sang trọng
     DrawRectangle(hudX, hudY, hudW, hudH, ColorAlpha(GetColor(0x15151CFF), 0.85f));
@@ -1034,8 +1085,11 @@ void DrawSandboxHUD(void) {
     DrawTextEx(defaultFont, "- R/F or Scroll  : Zoom Camera (Adjust Dist & Height)", (Vector2){ hudX + 25, hudY + 128 }, 10, 1.0f, LIGHTGRAY);
     DrawTextEx(defaultFont, "- WASD / Arrows  : Move Player (Relative to Camera View)", (Vector2){ hudX + 25, hudY + 143 }, 10, 1.0f, LIGHTGRAY);
     DrawTextEx(defaultFont, "- Space / X Key  : Jump / Dash character", (Vector2){ hudX + 25, hudY + 158 }, 10, 1.0f, LIGHTGRAY);
-    DrawTextEx(defaultFont, "- K Key / P Key  : Switch Map / Cycle Enemy AI Mode", (Vector2){ hudX + 25, hudY + 173 }, 10, 1.0f, LIGHTGRAY);
-    DrawTextEx(defaultFont, "- Left Mouse     : Cast Selected Element Skill", (Vector2){ hudX + 25, hudY + 188 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, "- Z / C Key      : Basic Attack (Spawn Linear Gust & Radial Shockwave)", (Vector2){ hudX + 25, hudY + 173 }, 10, 1.0f, LIGHTGRAY);
+    DrawTextEx(defaultFont, TextFormat("- F8 / 8 Key     : Toggle Wind Debug Gizmo [%s]", s_windDebugEnabled ? "ON" : "OFF"), (Vector2){ hudX + 25, hudY + 188 }, 10, 1.0f, s_windDebugEnabled ? LIME : LIGHTGRAY);
+    DrawTextEx(defaultFont, TextFormat("- F9 / 9 Key     : Cycle Atmosphere [%s]", Atmosphere_GetMode() == ATMO_MODE_WAR_EMBERS ? "War Embers (Tan tro)" : "Moonlight Dust (Bui trang)"), (Vector2){ hudX + 25, hudY + 203 }, 10, 1.0f, ORANGE);
+    DrawTextEx(defaultFont, "- J Key          : Cast Guided Particle (Travel -> Target -> Wind Flow)", (Vector2){ hudX + 25, hudY + 218 }, 10, 1.0f, YELLOW);
+    DrawTextEx(defaultFont, "- Left Mouse     : Cast Selected Element Skill", (Vector2){ hudX + 25, hudY + 233 }, 10, 1.0f, LIGHTGRAY);
 }
 
 static void DrawTouchButton(Vector2 center, float radius, const char* label, bool active, Color activeColor) {

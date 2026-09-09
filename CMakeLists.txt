@@ -196,6 +196,7 @@ add_executable(wuxing
     core/surface_material.c
     core/gfx_quality.c
     core/atmosphere.c
+    core/wind/wind_system.c
     core/skill_manager.c
     core/sprite_anim.c
     core/trails/trail_system.c

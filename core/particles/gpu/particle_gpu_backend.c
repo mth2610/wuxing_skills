@@ -1,6 +1,7 @@
 #include "particle_gpu_legacy.h"
 #include "core/resource_manager.h"
 #include "core/particles/particle_system.h"
+#include "core/wind/wind_system.h"
 #include "core/scene_targets.h"
 #include "core/screen_distort.h"
 #if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
@@ -659,10 +660,18 @@ void GpuParticleSystem_Update(float dt)
             p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
             p->route_pad1 = (float)waypoint;
         } else {
+            if (impactActive) {
+                p->impact_age += dt;
+                // Khi hạt đã tới target (post-arrival), hòa trộn vận tốc theo luồng gió của Wind System
+                Vector3 windVel = Wind_EvaluateVelocity((Vector3){p->px, p->py, p->pz}, s_elapsed_time);
+                float blendRate = Clamp(dt * 5.0f, 0.0f, 1.0f);
+                p->vx = p->vx + (windVel.x - p->vx) * blendRate;
+                p->vy = p->vy + (windVel.y - p->vy) * blendRate;
+                p->vz = p->vz + (windVel.z - p->vz) * blendRate;
+            }
             p->px += p->vx * dt;
             p->py += p->vy * dt;
             p->pz += p->vz * dt;
-            if (impactActive) p->impact_age += dt;
         }
 
         if (reachedTarget && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
@@ -674,6 +683,14 @@ void GpuParticleSystem_Update(float dt)
             p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
             p->impact_age = 0.0f;
             p->impact_active = 1.0f;
+
+            // Kích phát xung kích áp suất gió và lốc xoáy ngay tại điểm chạm đích (Target)
+            static float s_lastGpuArrivalWindTime = -10.0f;
+            if (s_elapsed_time - s_lastGpuArrivalWindTime > 0.35f) {
+                s_lastGpuArrivalWindTime = s_elapsed_time;
+                Wind_SpawnRadialBlast(position, 5.5f, 10.0f, 1.2f);
+                Wind_SpawnVortex(position, (Vector3){0.0f, 1.0f, 0.0f}, 4.5f, 8.0f, 3.0f, 1.8f);
+            }
             continue;
         }
         if (reachedTarget) {

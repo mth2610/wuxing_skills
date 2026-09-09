@@ -1,5 +1,6 @@
 #include "core/atmosphere.h"
 #include "core/vfx_render.h"
+#include "core/wind/wind_system.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -27,6 +28,7 @@ static Vector3   s_center = { 6.0f, 3.0f, 4.4f };
 static Vector3   s_extent = { 15.0f, 5.0f, 15.0f };
 static Color          s_tint   = { 160, 190, 235, 255 };
 static AtmosphereMode s_mode   = ATMO_MODE_MOONLIGHT_DUST;
+static float          s_time   = 0.0f;
 static bool           s_ready  = false;
 
 static inline float Rand01(void) { return (float)rand() / (float)RAND_MAX; }
@@ -120,15 +122,28 @@ AtmosphereMode Atmosphere_GetMode(void) {
 
 void Atmosphere_Update(float dt, Camera3D camera) {
     if (!s_ready) return;
+    s_time += dt;
     // Volume locked to the look-at point so the field always fills the view.
     s_center = camera.target;
+
+    // Ghost of Tsushima: Hệ số nhận gió phân tầng theo loại hạt.
+    // Tàn tro than hồng (WAR_EMBERS) nhẹ & phản ứng mãnh liệt với các luồng gió/kiếm chém/vụ nổ.
+    // Bụi trăng (MOONLIGHT_DUST) trôi êm dịu hơn.
+    float windWeight = (s_mode == ATMO_MODE_WAR_EMBERS) ? 0.70f : 0.30f;
+
     for (int i = 0; i < s_count; i++) {
         Mote *m = &s_motes[i];
         m->phase += dt * m->swaySpd;
         Vector3 sway = { cosf(m->phase) * 0.03f, 0.0f, sinf(m->phase * 0.8f) * 0.03f };
-        m->pos.x = WrapAxis(m->pos.x + (m->drift.x + sway.x) * dt, s_center.x, s_extent.x);
-        m->pos.y = WrapAxis(m->pos.y + (m->drift.y + sway.y) * dt, s_center.y, s_extent.y);
-        m->pos.z = WrapAxis(m->pos.z + (m->drift.z + sway.z) * dt, s_center.z, s_extent.z);
+
+        // Lấy mẫu vận tốc gió tức thời từ hệ thống Wind (Macro + Vorticles + Terrain)
+        Vector3 windVel = Wind_EvaluateVelocity(m->pos, s_time);
+        Vector3 totalVel = Vector3Add(m->drift, sway);
+        totalVel = Vector3Add(totalVel, Vector3Scale(windVel, windWeight));
+
+        m->pos.x = WrapAxis(m->pos.x + totalVel.x * dt, s_center.x, s_extent.x);
+        m->pos.y = WrapAxis(m->pos.y + totalVel.y * dt, s_center.y, s_extent.y);
+        m->pos.z = WrapAxis(m->pos.z + totalVel.z * dt, s_center.z, s_extent.z);
     }
 }
 

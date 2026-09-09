@@ -1,6 +1,7 @@
 #include "core/particles/particle_system.h"
 #include "core/resource_manager.h"
 #include "core/force_field.h"
+#include "core/wind/wind_system.h"
 #include "core/particles/gpu/particle_gpu_legacy.h"
 #include "raylib.h"
 #include "raymath.h"
@@ -19,6 +20,8 @@ static bool s_testGravityInit = false;
 typedef struct GuidedParticleTestState {
     bool active;
     float age;
+    float travelDuration;
+    bool arrivalWindTriggered;
     Vector3 source;
     Vector3 target;
     Vector3 points[GUIDED_PARTICLE_TEST_POINTS];
@@ -75,11 +78,13 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
         .active = true,
         .meshEmitter = PARTICLE_EMITTER_INVALID,
         .pointEmitter = PARTICLE_EMITTER_INVALID,
+        .arrivalWindTriggered = false,
     };
     state->target = target;
     state->source = source;
     Vector3 span = Vector3Subtract(target, source);
     float spanLength = Vector3Length(span);
+    state->travelDuration = (spanLength > 0.001f) ? (spanLength / 4.0f) : 0.1f;
     Vector3 forward = spanLength > 0.001f ? Vector3Scale(span, 1.0f / spanLength)
                                          : (Vector3){1.0f, 0.0f, 0.0f};
     Vector3 lateral = Vector3Normalize(Vector3CrossProduct((Vector3){0.0f, 1.0f, 0.0f}, forward));
@@ -121,10 +126,11 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
         .arrivalForceField = &state->impactField,
         // Snap the impact phase to the actual click target; the radial force
         // should be the visible separation, not an authored positional bias.
-        .arrivalOffset = 0.0f,
-        .arrivalKick = 0.0f,
-        .arrivalVelocityScale = 0.001f,
-        .arrivalForceDuration = 0.18f,
+        // Bung nhẹ khỏi tâm mục tiêu và truyền gia tốc ban đầu để các luồng gió và xoáy khí bắt lấy hạt
+        .arrivalOffset = 0.20f,
+        .arrivalKick = 2.5f,
+        .arrivalVelocityScale = 0.6f,
+        .arrivalForceDuration = 0.0f,
     };
 
     ForceField_Clear(&state->field);
@@ -136,23 +142,8 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
     });
 
     ForceField_Clear(&state->impactField);
-    ForceField_AddLayer(&state->impactField, (ForceLayer){
-        .type = FORCE_GRAVITY_POINT,
-        .origin = target,
-        .strength = -3.0f,
-        .radius = 3.5f,
-        .falloff = 1.0f,
-    });
-    ForceField_AddLayer(&state->impactField, (ForceLayer){
-        .type = FORCE_NOISE_CURL,
-        .strength = 6.00f,
-        .noiseScale = 4.50f,
-        .noiseSpeed = 2.8f,
-    });
-    ForceField_AddLayer(&state->impactField, (ForceLayer){
-        .type = FORCE_VISCOSITY,
-        .strength = 6.00f,
-    });
+    // Khi chạm target: Thay vì chịu các trường lực nhân tạo (lực ly tâm, curl noise, lực nhớt),
+    // các hạt guided particles sẽ hoàn toàn chịu tác động tự nhiên của Hệ thống Gió (Wind System).
 
     ParticleConfig follower = {
         .position = source,
@@ -217,7 +208,14 @@ static void GuidedParticleTest_Update(float dt)
         GuidedParticleTestState *state = &s_guidedParticleTests[i];
         if (!state->active) continue;
         state->age += dt;
-        state->impactField.layers[0].origin = state->target;
+
+        // Khi chùm hạt chạm target: Kích hoạt xung kích áp suất gió tỏa tròn và lốc xoáy tại tâm điểm va chạm
+        if (state->age >= state->travelDuration && !state->arrivalWindTriggered) {
+            state->arrivalWindTriggered = true;
+            Wind_SpawnRadialBlast(state->target, 4.0f, 6.0f, 0.75f);
+            Wind_SpawnVortex(state->target, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 4.5f, 2.0f, 1.2f);
+        }
+
         // Parent lifetime is 7.0 s.  Keep pointer-backed route data alive past
         // that bound; the same particles own the impact phase until expiry.
         if (state->age >= 7.25f) GuidedParticleTest_Clear(state);

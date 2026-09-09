@@ -14,6 +14,7 @@
 #include "core/surface_material.h"
 #include "core/gfx_quality.h"
 #include "core/atmosphere.h"
+#include "core/wind/wind_system.h"
 #include "sandbox/skill_debugger.h"
 #include "core/skill_manager.h"
 #include "core/trails/trail_system.h"
@@ -368,6 +369,7 @@ int main(int argc, char **argv) {
   Atmosphere_Init();      // G3 — ambient dust motes over the arena
   Atmosphere_Configure((Vector3){6.0f, 3.0f, 4.4f}, (Vector3){15.0f, 5.0f, 15.0f},
                        340, (Color){160, 190, 235, 255});
+  Wind_Init();            // Ghost of Tsushima: Global Macro Wind + Vorticles System
   MetaballFX_Init(screenWidth, screenHeight);
   /* THE DEFAULT PARTICLE SPRITE.
    *
@@ -1260,6 +1262,7 @@ int main(int argc, char **argv) {
     }
 
     MapManager_Update(dt);
+    Wind_Update(dt);               // Ghost of Tsushima: Tick Vorticles decay
     Atmosphere_Update(dt, camera); // G3 — drift dust motes
 
     SkillDebugger_PreRender();
@@ -1649,6 +1652,7 @@ int main(int argc, char **argv) {
   SceneTargets_Unload();
   FluidSurface_Unload();
   Atmosphere_Unload();
+  Wind_Unload();
   MetaballFX_Unload();
   UnloadSkillManager();
   DamageVolume_Unload();
