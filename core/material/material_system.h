@@ -62,7 +62,16 @@ typedef struct
 } EffectMaterialParams;
 
 // ============================================================================
-// RADIANT MATERIAL CONFIGURATION (HỢP NHẤT LỬA & NĂNG LƯỢNG)
+// PHÂN LOẠI VẬT LIỆU VFX: PHÁT XẠ (EMISSIVE) & HẤP THỤ (ABSORPTIVE)
+// ============================================================================
+typedef enum
+{
+    VFX_MAT_CLASS_EMISSIVE = 0,   // Phát xạ quang năng: Lửa, Sét, Năng lượng, Trail, Trận pháp (Coverage = 0)
+    VFX_MAT_CLASS_ABSORPTIVE,     // Hấp thụ cản quang: Khói, Bụi, Tro tàn, Bùn đất (Beer-Lambert, Ambient Lit)
+} VfxMaterialClass;
+
+// ============================================================================
+// RADIANT / EMISSIVE MATERIAL CONFIGURATION (LỬA & NĂNG LƯỢNG)
 // ============================================================================
 typedef struct
 {
@@ -75,8 +84,22 @@ typedef struct
     float translucency;      // Độ trong suốt xuyên thấu
 } RadiantMaterialConfig;
 
+// ============================================================================
+// ABSORPTIVE MATERIAL CONFIGURATION (KHÓI & BỤI TRO TÀN)
+// ============================================================================
+typedef struct
+{
+    Color baseColor;         // Màu khói / tro tàn / bụi
+    float density;           // Mật độ hấp thụ [0..1]
+    float shadowExtinction;  // Hệ số tự đổ bóng Beer-Lambert (1.5 - 3.0)
+    float ambientFill;       // Tỉ lệ đón sáng môi trường (bầu trời + mặt đất)
+} AbsorptiveMaterialConfig;
+
 // Cấu hình nhanh EffectMaterialParams theo quy chuẩn Radiant Plasma/Energy
 void EffectMaterial_ConfigureRadiant(EffectMaterialParams *params, const RadiantMaterialConfig *config);
+
+// Cấu hình nhanh EffectMaterialParams theo quy chuẩn Hấp thụ / Khói thể tích
+void EffectMaterial_ConfigureAbsorptive(EffectMaterialParams *params, const AbsorptiveMaterialConfig *config);
 
 typedef enum
 {

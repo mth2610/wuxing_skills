@@ -114,8 +114,10 @@ vec3 calcBlackbody(float tempKelvin) {
     b = pow(b, 1.8);
     
     // Độ bức xạ nhiệt năng lượng cao (Radiant Flux / Intensity)
-    // Nhiệt độ càng cao, thông lượng photon phát quang càng mạnh, vượt ngưỡng 1.0 để Bloom
-    float radiance = mix(0.4, 3.2, smoothstep(1200.0, 4500.0, T));
+    // T < 1000K: tàn tro nguội lạnh gần như không bức xạ quang năng (radiance -> 0.0)
+    // T > 1400K: bắt đầu phát quang ánh đỏ/cam
+    // T > 3500K: quang năng vượt ngưỡng 1.0 kích hoạt Bloom
+    float radiance = mix(0.0, 3.2, smoothstep(900.0, 4200.0, T));
     
     vec3 color = vec3(r, g * 0.88 + b * 0.12, b);
     return color * radiance;
@@ -182,7 +184,11 @@ vec3 calcRadiantEnergy(float energy, vec3 elementHue, vec3 coreHue, float blackb
     float e = clamp(energy, 0.0, 1.0);
     
     // 1. Phổ bức xạ nhiệt vật thể đen Planck (dành cho Lửa vật lý)
-    vec3 fireSpec = calcBlackbodyNormalized(e);
+    // Điều biến quang phổ theo sắc tố nguyên tố để không phá vỡ gam màu nghệ thuật (tránh biến viền thành đỏ thô)
+    float maxC = max(elementHue.r, max(elementHue.g, elementHue.b));
+    vec3 normalizedHue = (maxC > 0.001) ? (elementHue / maxC) : vec3(1.0);
+    vec3 bb = calcBlackbodyNormalized(e);
+    vec3 fireSpec = bb * normalizedHue;
     
     // 2. Phổ năng lượng nguyên tố ma thuật (dành cho Lôi điện, Băng lam, Tiên khí)
     float coreTransition = smoothstep(0.60, 1.0, e);

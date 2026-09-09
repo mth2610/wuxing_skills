@@ -180,6 +180,7 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
 {
     if (u_renderPass < 0.5)
     {
+        if (u_bodyOpacity <= 0.001) discard;
         // BLEND_ALPHA is not premultiplied: RGB stays straight and the hardware
         // applies coverage once. Producer-side structure shapes the edge; the
         // shared compositor deliberately does not reshape alpha again.
@@ -187,33 +188,19 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
         float coverage = clamp(bodyMask * vAlpha * u_bodyOpacity, 0.0, 1.0);
         return VFX_ResolveBody(colour, 1.0, coverage);
     }
-    float cover = clamp(inten * vAlpha, 0.0, 1.0);
-    float isWarm = step(colour.b, colour.r * 0.85);
-    vec3 radiantHue = calcRadiantEnergy(cover, colour, vec3(1.0, 0.98, 0.92), isWarm * 0.5, 1.0);
-    vec3 radiance = VFX_Finite3(radiantHue * max(gain, 0.0) * cover);
-    if (u_tonemapSafe > 0.5)
-        radiance = TrailToneMapSafeRadiance(radiance);
-
     if (u_renderPass < 1.5)
     {
         // Raylib additive blend applies src alpha. Keep intensity in alpha so it
         // is applied exactly once; pre-scaling RGB here would square soft edges.
-        // A migrated source is already the complete post-alpha radiance, so use
-        // unit alpha rather than asking the blend unit to multiply it twice.
-        if (u_tonemapSafe > 0.5)
-            return vec4(radiance, 1.0);
-        return VFX_ResolveEmission(radiantHue, gain, 1.0, inten * vAlpha);
+        return VFX_ResolveEmission(colour, gain, 1.0, inten * vAlpha);
     }
     // PREMULTIPLIED emission (BLEND_ALPHA_PREMULTIPLY = ONE, ONE_MINUS_SRC_ALPHA).
     // The hardware no longer multiplies by alpha, so THIS branch has to — and
     // that single fact is the whole reason a blend swap alone was wrong here.
-    // Measured 20/08/2026: flipping the trail presets to premultiplied while
-    // still returning straight RGB scaled every soft edge by 1/alpha, cover%
-    // rose 4x on a DARK background (where the blend law itself changes almost
-    // nothing) and darken% fell to 0.0 on every background — the added light
-    // simply swamped the body pass. Emitting `rgb * a` restores exactly the
-    // additive radiance and adds the `dst*(1-a)` occlusion term on top, which
-    // is what §5.2 is for.
+    float cover = clamp(inten * vAlpha, 0.0, 1.0);
+    vec3 radiance = VFX_Finite3(colour * max(gain, 0.0) * cover);
+    if (u_tonemapSafe > 0.5)
+        radiance = TrailToneMapSafeRadiance(radiance);
     return vec4(radiance, cover);
 }
 
@@ -477,7 +464,23 @@ void main()
         float densGate = clamp(u_coreShape.y, 0.05, 0.98);
         float hotMix = max(smoothstep(densGate, 1.0, inten),
                            smoothstep(0.08, 0.45, hotSignal));
-        vec3 hot = mix(lengthCol, u_colHot, hotMix);
+
+        // Ghost of Tsushima: Bức xạ vật thể đen Planck (khớp fire.fs)
+        // Thân ngọn lửa (inten) bức xạ ở mức nhiệt 1800K - 2800K (đỏ cam đến vàng kim rực rỡ, b=0 không bị tẩy trắng).
+        // Riêng tim lõi hình học (hotSignal) năng lượng hội tụ đạt nhiệt độ > 3800K (trắng chói bloom).
+        float flameTemp = clamp(mix(inten * 0.55, 1.0, hotSignal * hotSignal) * (1.0 - along * 0.30), 0.0, 1.0);
+        vec3 fireCol = calcBlackbodyNormalized(flameTemp);
+
+        // Nguyên tố ma thuật phi vật thể đen (Lôi điện cyan, Thủy lam, Băng tuyết):
+        float coreTrans = smoothstep(0.60, 1.0, hotMix);
+        vec3 elemCol = mix(lengthCol * (0.8 + inten * 0.4), vec3(1.0, 0.98, 0.92) * 3.2, coreTrans);
+
+        // Tự động nhận diện nguyên tố Hỏa qua phổ màu ấm (R vượt trội B)
+        float isFire = step(lengthCol.b, lengthCol.r * 0.65) * step(0.15, lengthCol.r);
+        vec3 hot = (u_renderPass < 0.5)
+                       ? mix(lengthCol, u_colHot, hotSignal * 0.65)
+                       : mix(elemCol, fireCol, isFire);
+
         // Feed the structural centreline into radiance/coverage too. It is
         // narrow, so this restores the hot filament without re-inflating the
         // surrounding support band.

@@ -450,10 +450,8 @@ void main()
     // 0.34 is measured, not chosen: against the white plate it gives darken
     // 56.6% / absvar 18.3, where 0.25 gives 50.4% / 15.9 and dropping it
     // entirely gives 2.4% / 12.0. The dark-plate figures do not move.
-    float plate = smoothstep(1.00, 0.60, r) * 0.34 * (0.62 + 0.58 * boil);
-
-    float coverage = clamp(mark * 0.99 + line * 0.88 + veil * 0.18
-                           + rays * 0.16 + core * 0.55 + plate, 0.0, 1.0)
+    float plate = 0.0;
+    float coverage = clamp(mark * 0.99 + line * 0.88 + core * 0.55 + rays * 0.16, 0.0, 1.0)
                    * rim * u_params.x * u_style.z;
 
     // The core term is deliberately the largest coefficient in this sum. Past
@@ -495,13 +493,7 @@ void main()
     // "BLEND_ALPHA is NOT premultiplied"). The consumer sets the blend that
     // matches the branch it asked for through u_params.w.
     if (u_params.w > 0.5)
-        // The emission pass carries NO pigment: the body pass already laid it
-        // down, and adding it twice is how a two-pass effect ends up looking
-        // washed out. What it does carry is coverage, because premultiplied
-        // blending is (ONE, ONE_MINUS_SRC_ALPHA) and that (1 - a) term is the
-        // only reason a glow is still visible against a white background
-        // instead of saturating into it.
-        finalColor = VFX_ResolvePremultiplied(vec3(0.0), 0.0, coverage,
+        finalColor = VFX_ResolvePremultiplied(vec3(0.0), 0.0, 0.0,
                                               emCol, emit, u_params.y);
     else
         finalColor = VFX_ResolveBody(bodyCol, u_params.y, coverage);

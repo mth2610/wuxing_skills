@@ -1007,8 +1007,8 @@ static void Test_MirrorStillMatchesSource(void)
     // open decision recorded in core/docs/PROGRESS.md.
     CHECK(FileHas(inl, "TRAIL_PRESET_SMOKE") && FileHas("core/trails/trail_recipe.h", "TRAIL_PRESET_SMOKE,"),
           "the strand trail provides the smoke replacement");
-    CHECK(FileHas("core/composition/common/vc_smoke_trail.inl", "VFX_ComposeStrandTrail"),
-          "and the surviving puff trail names its replacement, so neither is judged as the other");
+    CHECK(!FileHas("core/composition/common/vc_smoke_trail.inl", "VFX_ComposeSmokeTrail"),
+          "and the legacy puff trail is removed in favour of volume/strand");
     CHECK(FileHas(inl, "void VFX_Trail_Stop(int trailId)"),
           "and the strand trail owns its own soft-release entry point");
     CHECK(FileHas(c, "case TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE:"),

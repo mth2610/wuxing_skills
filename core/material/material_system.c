@@ -556,3 +556,16 @@ void EffectMaterial_ConfigureRadiant(EffectMaterialParams *params, const Radiant
     params->customParam1 = config->blackbodyFactor; // Truyền blackbodyFactor
 }
 
+void EffectMaterial_ConfigureAbsorptive(EffectMaterialParams *params, const AbsorptiveMaterialConfig *config)
+{
+    if (!params || !config) return;
+    params->baseColor = config->baseColor;
+    params->emissiveIntensity = 0.0f; // Hấp thụ cản quang: không tự phát bức xạ nhiệt
+    params->rimStrength = 0.0f;
+    params->fresnelPower = 1.0f;
+    params->translucency = 0.0f;
+    params->distortionStrength = 0.0f;
+    params->customParam1 = config->density > 0.0f ? config->density : 1.0f;
+    params->customParam2 = config->shadowExtinction > 0.0f ? config->shadowExtinction : 2.0f;
+}
+

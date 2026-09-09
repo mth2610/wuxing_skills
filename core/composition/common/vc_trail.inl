@@ -747,11 +747,7 @@ static const TrailLayer k_sweptLayers[TRAIL_PRESET_COUNT][3] = {
         // MAIN, but never gated by a head-only exponent or broken texture.
         {.widthMul = 0.18f, .alphaMul = 0.17f, .whiten = 0.12f, .scrollMul = 1.35f, .headAlphaPow = 0.0f, .texture = NULL},
     },
-    // BACKDROP's weights are LOWER than the others', not by the same budget but
-    // for a different reason: filling its gaps (strand gain 0.19) multiplied the
-    // lit area several times over, so the weights that made a sparse hairline
-    // read correctly made a solid one glare. Dim is also its job — it is an
-    // underlay, and it is judged behind another trail, not alone.
+    // BACKDROP sits BEHIND another trail, with a wide body and smooth emission
     [TRAIL_PRESET_BACKDROP] = {
         {.widthMul = 1.65f, .alphaMul = 0.025f, .whiten = 0.00f, .scrollMul = 0.45f, .headAlphaPow = 0.0f, .texture = NULL},
         {.widthMul = 1.00f, .alphaMul = 0.063f, .whiten = 0.02f, .scrollMul = 0.85f, .headAlphaPow = 0.0f, .texture = NULL},
@@ -867,6 +863,7 @@ static void TrailPresets_Build(void)
         // number in is what makes wiring the field a no-op here.
         r->colour.coreWidth = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.18f;
         r->colour.coreIntensity = (p == TRAIL_PRESET_BACKDROP) ? 0.0f : 0.55f;
+        r->hdrGain = 1.0f;
         r->strand.bundleWidth = k_sweptStrand[p].bundle;
         r->strand.gain = k_sweptStrand[p].gain;
         r->strand.fineMix = 0.70f;

@@ -2610,6 +2610,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
                      ? s_bodyShader : ResolveShader(t);
         BlendMode sourceBm = t->useCustomBlendMode ? t->blendMode
                                                    : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+        if (layerFilter == 0 && (sourceBm == BLEND_ADDITIVE || sourceBm == BLEND_ALPHA_PREMULTIPLY)) continue;
         if (layerFilter == 1 && sourceBm == BLEND_ALPHA) continue;
         BlendMode bm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;
         Texture2D tex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
@@ -2814,6 +2815,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
 
             BlendMode sourceBm = t->useCustomBlendMode ? t->blendMode
                                                        : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+            if (layerFilter == 0 && (sourceBm == BLEND_ADDITIVE || sourceBm == BLEND_ALPHA_PREMULTIPLY)) continue;
             if (layerFilter == 1 && sourceBm == BLEND_ALPHA) continue;
             BlendMode currentBm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;
             Texture2D currentTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
