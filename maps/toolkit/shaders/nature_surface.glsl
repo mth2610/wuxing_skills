@@ -4,6 +4,42 @@ uniform vec3 u_ambientColor;
 uniform vec3 u_viewPos;
 uniform vec4 colDiffuse;
 
+// Fast Foliage Shadow Reception:
+// Foliage consists of millions of thin overlapping blades where full 9-tap PCF
+// (36-72 texture fetches/pixel) causes catastrophic texture cache thrashing.
+// A single bilinear depth test provides smooth, artifact-free penumbra at 1/18th the GPU cost.
+float FoliageShadowVisibility(vec3 worldPos, vec3 normal, vec3 lightDir)
+{
+    float slope = 1.0 - max(dot(normalize(normal), normalize(lightDir)), 0.0);
+    float dynamicShadow = 1.0;
+    if (u_shadowEnabled > 0.5) {
+        vec4 lightSpace = u_lightVP * vec4(worldPos, 1.0);
+        vec3 projected = lightSpace.xyz / max(lightSpace.w, 0.00001) * 0.5 + 0.5;
+        if (projected.z > 0.0 && projected.z < 1.0 &&
+            projected.x > 0.0 && projected.x < 1.0 &&
+            projected.y > 0.0 && projected.y < 1.0) {
+            float compareDepth = projected.z - mix(0.00045, 0.0016, slope);
+            float vis = MapShadowCompareBilinear(shadowMap, projected.xy, compareDepth, u_shadowTexel);
+            float edgeFade = MapShadowCoverageFade(projected.xy);
+            dynamicShadow = mix(1.0, vis, edgeFade);
+        }
+    }
+    float staticShadow = 1.0;
+    if (u_staticShadowEnabled > 0.5) {
+        vec4 lightSpace = u_staticLightVP * vec4(worldPos, 1.0);
+        vec3 projected = lightSpace.xyz / max(lightSpace.w, 0.00001) * 0.5 + 0.5;
+        if (projected.z > 0.0 && projected.z < 1.0 &&
+            projected.x > 0.0 && projected.x < 1.0 &&
+            projected.y > 0.0 && projected.y < 1.0) {
+            float compareDepth = projected.z - mix(0.0012, 0.0032, slope);
+            float vis = MapShadowCompareBilinear(staticShadowMap, projected.xy, compareDepth, u_staticShadowTexel);
+            float edgeFade = MapShadowCoverageFade(projected.xy);
+            staticShadow = mix(1.0, vis, edgeFade);
+        }
+    }
+    return min(dynamicShadow, staticShadow);
+}
+
 vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                  float heightAlongPlant, float uTransverse)
 {
@@ -55,61 +91,61 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     // and forward-scatter when looking toward the sun (Ghost of Tsushima / CryEngine foliage).
     float backfaceSun = max(-dot(faceNormal, u_lightDir), 0.0);
     float viewSunAlign = max(dot(-u_lightDir, viewDir), 0.0);
-    float transmissionAngle = pow(backfaceSun, 1.6) * 0.70 + pow(viewSunAlign, 2.2) * 0.50;
-    float thinness = mix(0.18, 1.0, smoothstep(0.06, 0.65, heightAlongPlant));
+    float transmissionAngle = pow(backfaceSun, 1.5) * 0.70 + pow(viewSunAlign, 2.0) * 0.50;
+    float thinness = mix(0.20, 1.0, smoothstep(0.06, 0.65, heightAlongPlant));
     float transmission = transmissionAngle * thinness;
 
+    // Subsurface scattering color: radiant emerald-gold transmission
     vec3 subsurfaceColor = mix(
-        baseColor * vec3(1.38, 1.30, 0.55), // Grass: radiant emerald-gold backlit transmission
+        baseColor * vec3(1.48, 1.40, 0.62), // Grass: radiant emerald-gold backlit transmission
         baseColor * vec3(1.42, 1.22, 0.88) + vec3(0.08, 0.04, 0.02), // Petals: warm translucent glow
         bloomMask
     );
 
-    // Full Dynamic + Static Shadow Reception:
-    // Receives real-time shadows from sun, characters, vegetation, rocks and self-shadowing
-    float shadow = MapShadowVisibility(worldPosition, n, u_lightDir);
+    // Fast foliage shadow lookup (1 bilinear tap, 4 depth fetches instead of 72)
+    float shadow = FoliageShadowVisibility(worldPosition, n, u_lightDir);
 
-    // Intra-Canopy Self-Shadowing (Exponential Canopy Extinction):
-    // Direct sunlight is attenuated as it penetrates down through the grass canopy.
-    // Tips catch 100% unobstructed sun; middle & lower parts receive soft dappled light.
+    // Intra-Canopy Self-Shadowing:
+    // Soft, dappled attenuation as light filters through foliage canopy
+    // Tips catch 100% direct sun; lower canopy stays pleasantly verdant (never pitch black)
     float hNorm = clamp(heightAlongPlant, 0.0, 1.0);
-    float canopyExtinction = clamp(exp(-2.2 * (1.0 - hNorm)), 0.42, 1.0);
+    float canopyExtinction = clamp(exp(-1.2 * (1.0 - hNorm)), 0.58, 1.0);
 
     // Hemispheric Ambient Lighting:
     // Upper surface catches cool sky ambient; lower surface catches warm chlorophyll grass bounce
     float skyWeight = n.y * 0.5 + 0.5;
-    vec3 skyAmbient = max(u_ambientColor, vec3(0.25, 0.28, 0.22)) * vec3(1.04, 1.08, 1.16);
-    vec3 groundBounce = max(u_ambientColor, vec3(0.25, 0.28, 0.22)) * vec3(0.50, 0.54, 0.32);
-    float cupCavity = mix(0.55, 1.0, smoothstep(0.70, 0.98, heightAlongPlant));
+    vec3 skyAmbient = max(u_ambientColor, vec3(0.28, 0.32, 0.24)) * vec3(1.06, 1.10, 1.16);
+    vec3 groundBounce = max(u_ambientColor, vec3(0.28, 0.32, 0.24)) * vec3(0.65, 0.74, 0.44);
+    float cupCavity = mix(0.65, 1.0, smoothstep(0.70, 0.98, heightAlongPlant));
     vec3 ambientFloor = mix(groundBounce, skyAmbient, skyWeight) * mix(1.0, cupCavity, bloomMask);
 
-    float horizon = 0.72 + 0.28 * max(n.y, 0.0);
+    float horizon = 0.75 + 0.25 * max(n.y, 0.0);
     float ambientVisibility = mix(0.92, 1.0, shadow);
     vec3 lit = baseColor * ambientFloor * horizon * ambientVisibility;
 
     // Direct sun lighting scaled by dynamic shadow and intra-canopy extinction
     vec3 direct = u_lightColor * directDiffuse * shadow * canopyExtinction;
-    lit += baseColor * direct * 1.05;
+    lit += baseColor * direct * 1.10;
 
     // Subsurface transmission glow (shines radiantly on backlit blades and petals)
-    lit += subsurfaceColor * u_lightColor * transmission * mix(0.65, 0.88, bloomMask) * canopyExtinction;
+    lit += subsurfaceColor * u_lightColor * transmission * mix(0.75, 0.92, bloomMask) * canopyExtinction;
 
     // Anisotropic Specular Glint along curved blade spine:
     // Transverse curvature gives crisp, sparkling highlight along the longitudinal fibers
     vec3 halfDir = normalize(u_lightDir + viewDir);
     float NdotH = max(dot(faceNormal, halfDir), 0.0);
-    float specPower = mix(32.0, 16.0, bloomMask);
-    float specIntensity = mix(0.68 * (1.0 - antiShimmer * 0.75), 0.40, bloomMask);
+    float specPower = mix(28.0, 16.0, bloomMask);
+    float specIntensity = mix(0.75 * (1.0 - antiShimmer * 0.75), 0.45, bloomMask);
     float spec = pow(NdotH, specPower) * specIntensity;
     lit += u_lightColor * spec * (0.35 + 0.65 * shadow) * canopyExtinction;
 
     // Soft Fresnel rim lighting along curved edges
     float NdotV = max(dot(faceNormal, viewDir), 0.0);
-    float rim = pow(1.0 - NdotV, 2.8) * mix(0.20, 0.28, bloomMask);
+    float rim = pow(1.0 - NdotV, 2.8) * mix(0.22, 0.30, bloomMask);
     lit += baseColor * u_lightColor * rim * canopyExtinction;
 
     // Root Contact AO: grounds foliage naturally into the soil without harsh pitch-black ink spots
-    float rootAO = clamp(0.72 + 0.28 * (hNorm * (2.0 - hNorm)), 0.72, 1.0);
+    float rootAO = clamp(0.74 + 0.26 * pow(hNorm, 0.70), 0.74, 1.0);
     lit *= rootAO;
 
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);

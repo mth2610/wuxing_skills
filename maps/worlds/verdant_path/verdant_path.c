@@ -25,7 +25,7 @@
 #define MOUNTAIN_RING_DEPTH 58.0f
 #define MOUNTAIN_ROCK_COUNT 40
 #define ROCK_COUNT 10
-#define GRASS_TUFT_CAPACITY 42000
+#define GRASS_TUFT_CAPACITY 48000
 #define FLOWER_CLUSTER_COUNT 3
 #define FLOWERS_PER_CLUSTER 120
 #define FLOWER_COUNT (FLOWER_CLUSTER_COUNT * FLOWERS_PER_CLUSTER)
@@ -219,9 +219,9 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.20f, .jitter = 0.85f,
-            .minRadius = 0.22f, .maxRadius = 0.34f,
-            .minHeight = 0.48f, .maxHeight = 0.74f,
+            .spacing = 0.22f, .jitter = 0.65f,
+            .minRadius = 0.28f, .maxRadius = 0.38f,
+            .minHeight = 0.48f, .maxHeight = 0.70f,
             .yOffset = 0.035f, .seed = 0x51a7c3u,
         }, VerdantGrassDensity, NULL);
 
@@ -257,18 +257,18 @@ static void BuildMeadowLayout(void)
         if (biome > 0.60f) {
             // Biome 1: Tall Deep Meadow (long sweeping weeping ribbons)
             float t = (biome - 0.60f) / 0.40f;
-            clump->height = 0.58f + t * 0.16f + (clump->height - 0.55f) * 0.25f;
-            clump->radius = 0.24f + t * 0.08f;
+            clump->height = 0.56f + t * 0.16f;
+            clump->radius = 0.32f + t * 0.08f;
         } else if (biome < 0.35f) {
             // Biome 2: Meadow clearing (dense arching grass)
             float t = biome / 0.35f;
-            clump->height = 0.44f + t * 0.10f + (clump->height - 0.55f) * 0.20f;
-            clump->radius = 0.20f + t * 0.06f;
+            clump->height = 0.44f + t * 0.10f;
+            clump->radius = 0.28f + t * 0.06f;
         } else {
             // Biome 3: Wild flowing grass
             float t = (biome - 0.35f) / 0.25f;
-            clump->height = 0.50f + t * 0.12f + (clump->height - 0.55f) * 0.22f;
-            clump->radius = 0.22f + t * 0.07f;
+            clump->height = 0.50f + t * 0.12f;
+            clump->radius = 0.30f + t * 0.08f;
         }
     }
 
@@ -395,9 +395,8 @@ static void DrawVerdantShadowCasters(Shader depthShader, void *userData)
     (void)userData;
     Vector3 offset = {0};
     Vector2 wind = {0.86f, 0.51f};
-    // Ghost of Tsushima: Meadow grass relies on internal Root AO & wrapped diffuse
-    // rather than cascade shadow maps, preventing shadow cascade box artifacts.
-    // Tall reeds and flowers cast dynamic shadows onto the meadow.
+    // High-efficiency shadow caster: s_meadow casts real, dynamic, wind-swaying
+    // blade silhouettes into the shadow map within shadowDistance.
     MapProp_DrawMeadowShadowCasters(&s_meadow, offset, s_time, wind, 0.035f);
     MapProp_DrawMeadowShadowCasters(&s_reedMeadow, offset, s_time, wind, 0.11f);
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
@@ -512,10 +511,10 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {46, 76, 26, 255}, .tipColor = {130, 202, 48, 255},
-            .bladesPerClump = 8, .bladeSegments = 5, .bladeWidthScale = 0.115f,
-            .chunkSize = 12.0f, .lodDistance = 32.0f, .drawDistance = 88.0f,
-            .shadowDistance = 28.0f,
+            .rootColor = {30, 52, 18, 255}, .tipColor = {140, 210, 52, 255},
+            .bladesPerClump = 4, .bladeSegments = 3, .bladeWidthScale = 0.16f,
+            .chunkSize = 12.0f, .lodDistance = 22.0f, .drawDistance = 46.0f,
+            .shadowDistance = 12.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
