@@ -176,16 +176,24 @@ Vector3 Wind_GetMacroAt(Vector3 pos, float time) {
     float baseLen = Vector3Length(s_macroConfig.baseDirection);
     if (baseLen < 1e-4f) return (Vector3){ 0 };
 
-    // Sóng nhiễu Perlin cuộn theo không gian và thời gian
+    if (s_macroConfig.gustAmplitude <= 1e-4f) {
+        return s_macroConfig.baseDirection;
+    }
+
+    // 3D Perlin Noise đa chiều mô phỏng các xoáy loạn lưu chất lưu (Fluid Turbulent Eddies)
     float s = s_macroConfig.noiseScale;
     float spd = s_macroConfig.noiseSpeed;
-    float n = Noise_Perlin3D(pos.x * s - time * spd, pos.y * s, pos.z * s - time * spd * 0.7f);
+    float nx = Noise_Perlin3D(pos.x * s - time * spd, pos.y * s + 17.3f, pos.z * s - time * spd * 0.7f);
+    float ny = Noise_Perlin3D(pos.x * s + 37.1f, pos.y * s - time * spd * 0.8f, pos.z * s + 19.7f);
+    float nz = Noise_Perlin3D(pos.x * s - time * spd * 0.6f, pos.y * s + 53.9f, pos.z * s + time * spd * 0.5f);
 
-    // w_macro = w_base * (1.0 + A * noise)
-    float factor = 1.0f + s_macroConfig.gustAmplitude * n;
-    if (factor < 0.0f) factor = 0.0f;
-
-    return Vector3Scale(s_macroConfig.baseDirection, factor);
+    float amp = s_macroConfig.gustAmplitude * fmaxf(baseLen, 2.0f);
+    Vector3 turb = {
+        s_macroConfig.baseDirection.x * (1.0f + s_macroConfig.gustAmplitude * nx * 0.5f) + nx * amp * 0.5f,
+        s_macroConfig.baseDirection.y + ny * amp * 0.35f,
+        s_macroConfig.baseDirection.z * (1.0f + s_macroConfig.gustAmplitude * nz * 0.5f) + nz * amp * 0.5f
+    };
+    return turb;
 }
 
 Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
@@ -243,16 +251,18 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
             totalVel = Vector3Add(totalVel, blast);
 
         } else if (v->type == VORTICLE_VORTEX) {
-            // Lốc xoáy quanh trục
+            // Lốc xoáy quanh trục (Mô hình xoáy chất lưu Rankine/Lamb-Oseen: vận tốc bằng 0 tại tâm trục)
             Vector3 tangent = Vector3CrossProduct(v->direction, delta);
             float tanLen = Vector3Length(tangent);
+            float rCore = 0.10f * v->radius;
+            float coreFactor = (tanLen < rCore) ? (tanLen / rCore) : 1.0f;
             if (tanLen > 1e-4f) {
                 Vector3 tanDir = Vector3Scale(tangent, 1.0f / tanLen);
-                Vector3 rotVel = Vector3Scale(tanDir, v->strength * weight);
+                Vector3 rotVel = Vector3Scale(tanDir, v->strength * weight * coreFactor);
                 totalVel = Vector3Add(totalVel, rotVel);
             }
 
-            // Lực hút/đẩy xuyên tâm vuông góc trục
+            // Lực hút/đẩy xuyên tâm vuông góc trục (Áp suất thấp tâm xoáy Bernoulli)
             if (fabsf(v->inwardPull) > 1e-4f) {
                 float proj = Vector3DotProduct(delta, v->direction);
                 Vector3 closestOnAxis = Vector3Scale(v->direction, proj);
@@ -261,7 +271,7 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
                 if (radDist > 1e-4f) {
                     Vector3 radDir = Vector3Scale(radial, 1.0f / radDist);
                     // inwardPull > 0: hút vào tâm (-radDir); < 0: đẩy ra (+radDir)
-                    Vector3 pullVel = Vector3Scale(radDir, -v->inwardPull * weight);
+                    Vector3 pullVel = Vector3Scale(radDir, -v->inwardPull * weight * coreFactor);
                     totalVel = Vector3Add(totalVel, pullVel);
                 }
             }

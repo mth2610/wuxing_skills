@@ -367,16 +367,27 @@ bool evalTravelPath(int pathIndex, inout vec3 pos, inout vec3 vel,
 // Động lực học luồng gió mô phỏng theo Ghost of Tsushima Wind System
 vec3 evalWindVelocity(vec3 pos, float time) {
     vec3 totalVel = vec3(0.0);
-    // 1. Gió vĩ mô (Macro wind) cuộn sóng Perlin theo không gian và thời gian
+    // 1. Gió vĩ mô (Macro wind) cuộn sóng Perlin 3D theo không gian và thời gian
     vec3 baseDir = uWind.macro_dir_amp.xyz;
     float gustAmp = uWind.macro_dir_amp.w;
-    if (dot(baseDir, baseDir) > 1e-8) {
-        float s = uWind.macro_params.x;
-        float spd = uWind.macro_params.y;
-        vec3 sampleP = vec3(pos.x * s - time * spd, pos.y * s, pos.z * s - time * spd * 0.7);
-        float n = noiseScalar(sampleP);
-        float factor = max(1.0 + gustAmp * n, 0.0);
-        totalVel += baseDir * factor;
+    float baseLen = length(baseDir);
+    if (baseLen > 1e-4) {
+        if (gustAmp > 1e-4) {
+            float s = uWind.macro_params.x;
+            float spd = uWind.macro_params.y;
+            float nx = noiseScalar(vec3(pos.x * s - time * spd, pos.y * s + 17.3, pos.z * s - time * spd * 0.7));
+            float ny = noiseScalar(vec3(pos.x * s + 37.1, pos.y * s - time * spd * 0.8, pos.z * s + 19.7));
+            float nz = noiseScalar(vec3(pos.x * s - time * spd * 0.6, pos.y * s + 53.9, pos.z * s + time * spd * 0.5));
+            float amp = gustAmp * max(baseLen, 2.0);
+            vec3 turb = vec3(
+                baseDir.x * (1.0 + gustAmp * nx * 0.5) + nx * amp * 0.5,
+                baseDir.y + ny * amp * 0.35,
+                baseDir.z * (1.0 + gustAmp * nz * 0.5) + nz * amp * 0.5
+            );
+            totalVel += turb;
+        } else {
+            totalVel += baseDir;
+        }
     }
 
     // 2. Các xoáy khí cục bộ (Vorticles: Linear Gust, Radial Blast, Vortex)
@@ -405,11 +416,13 @@ vec3 evalWindVelocity(vec3 pos, float time) {
         } else if (vType == 1) { // VORTICLE_RADIAL_BLAST
             vec3 normOut = (dist > 1e-4) ? (delta / dist) : vec3(0.0, 1.0, 0.0);
             totalVel += normOut * (vStrength * weight);
-        } else if (vType == 2) { // VORTICLE_VORTEX
+        } else if (vType == 2) { // VORTICLE_VORTEX (Mô hình Rankine: rCore = 0.10 * R)
             vec3 tangent = cross(vDir, delta);
             float tanLen = length(tangent);
+            float rCore = 0.10 * vRadius;
+            float coreFactor = (tanLen < rCore) ? (tanLen / rCore) : 1.0;
             if (tanLen > 1e-4) {
-                totalVel += (tangent / tanLen) * (vStrength * weight);
+                totalVel += (tangent / tanLen) * (vStrength * weight * coreFactor);
             }
             float inwardPull = uWind.vorticles[i].params.w;
             if (abs(inwardPull) > 1e-4) {
@@ -419,7 +432,7 @@ vec3 evalWindVelocity(vec3 pos, float time) {
                 float radDist = length(radial);
                 if (radDist > 1e-4) {
                     vec3 radDir = radial / radDist;
-                    totalVel += radDir * (-inwardPull * weight);
+                    totalVel += radDir * (-inwardPull * weight * coreFactor);
                 }
             }
         }

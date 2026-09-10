@@ -550,8 +550,8 @@ void UpdateParticles(float dt)
       // Sau khi tới target, không áp dụng trường lực thông thường (curl noise...)
       // mà nhường toàn bộ quyền điều khiển cho Hệ thống Gió (Wind System).
       if (p->travelPath && p->travelPath->arrivalForceField &&
-          p->travelPath->arrivalForceDuration > 0.0f &&
-          p->travelImpactAge <= p->travelPath->arrivalForceDuration)
+          (p->travelPath->arrivalForceDuration <= 0.0f ||
+           p->travelImpactAge <= p->travelPath->arrivalForceDuration))
         activeField = p->travelPath->arrivalForceField;
       else
         activeField = NULL;
@@ -640,9 +640,9 @@ void UpdateParticles(float dt)
         static float s_lastCpuArrivalWindTime = -10.0f;
         if (s_particleTime - s_lastCpuArrivalWindTime > 0.35f) {
           s_lastCpuArrivalWindTime = s_particleTime;
-          Wind_SpawnRadialBlast(blastPos, 3.8f, 9.5f, 0.45f);
-          Wind_SpawnVortex(blastPos, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 6.0f, 1.0f, 0.60f);
-          Wind_SpawnVortex(blastPos, (Vector3){0.7f, 0.7f, 0.0f}, 2.5f, 4.5f, 0.5f, 0.50f);
+          Wind_SpawnRadialBlast(blastPos, 2.4f, 2.0f, 0.25f);
+          Wind_SpawnVortex(blastPos, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 7.2f, 2.2f, 0.75f);
+          Wind_SpawnVortex(blastPos, (Vector3){0.7f, 0.7f, 0.0f}, 2.6f, 5.0f, 1.4f, 0.60f);
         }
 
         // Hạt nhận vận tốc từ Hệ thống Gió nếu không cấu hình arrivalKick nhân tạo

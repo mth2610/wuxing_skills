@@ -141,23 +141,18 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
         .waypointRadius = 0.40f,
         .targetRadius = 0.35f,
         .arrivalForceField = &state->impactField,
-        // Khi tới đích: Vụ nổ được kích hoạt 100% bởi Hệ thống Gió (Wind System: Radial Blast + Micro-Vortices)
+        // Khi tới đích: Không dùng lực nhân tạo mà nhận trực tiếp vận tốc từ Wind System
         .arrivalOffset = 0.0f,
         .arrivalKick = 0.0f,
         .arrivalVelocityScale = 0.0f,
-        .arrivalForceDuration = 0.6f,
+        .arrivalForceDuration = 0.0f,
     };
 
     ForceField_Clear(&state->field);
 
+    // Xoá bỏ hoàn toàn Force Field khi tới target:
+    // Toàn bộ giai đoạn va chạm và chuyển động sau đó được điều khiển 100% bởi Hệ thống Gió (Wind System)
     ForceField_Clear(&state->impactField);
-    // Khi chạm target: Kết hợp sóng nhiễu 3D Perlin Noise cùng Hệ thống Gió (Wind System: Radial Blast + Vortices)
-    ForceField_AddLayer(&state->impactField, (ForceLayer){
-        .type = FORCE_NOISE_PERLIN,
-        .strength = 8.5f,
-        .noiseScale = 2.2f,
-        .noiseSpeed = 2.8f,
-    });
 
     ParticleConfig follower = {
         .position = source,
@@ -223,20 +218,28 @@ static void GuidedParticleTest_Update(float dt)
         if (!state->active) continue;
         state->age += dt;
 
-        // Khi hạt bay đến đích: Kích phát vụ nổ 100% bằng Hệ thống Gió (Wind System: Radial Blast + Micro-Vortices)
-        if (state->age >= state->travelDuration && !state->arrivalWindTriggered) {
-            state->arrivalWindTriggered = true;
-            Wind_SpawnRadialBlast(state->target, 3.8f, 9.5f, 0.45f);
-            Wind_SpawnVortex(state->target, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 6.0f, 1.0f, 0.60f);
-            Wind_SpawnVortex(state->target, (Vector3){0.7f, 0.7f, 0.0f}, 2.5f, 4.5f, 0.5f, 0.50f);
+        // Khi hạt bay đến đích: Kích phát hiệu ứng chất lưu bằng Hệ thống Gió (Wind System)
+        // Lực nổ toả tròn (radial blast) nhẹ nhàng (2.0 m/s, bán kính 2.4m, 0.25s) mô phỏng vỡ bung tự nhiên,
+        // để dòng xoáy (vortices) và loạn lưu 3D Perlin cuộn các hạt thành xoáy chất lưu tự nhiên.
+        if (state->age >= state->travelDuration) {
+            if (!state->arrivalWindTriggered) {
+                state->arrivalWindTriggered = true;
+                Wind_SpawnRadialBlast(state->target, 2.4f, 2.0f, 0.25f);
+                Wind_SpawnVortex(state->target, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 7.2f, 2.2f, 0.75f);
+                Wind_SpawnVortex(state->target, (Vector3){0.7f, 0.7f, 0.0f}, 2.6f, 5.0f, 1.4f, 0.60f);
+            }
 
-            // Tăng cường độ sóng nhiễu 3D Perlin Noise của Hệ thống Gió tại thời điểm va chạm
-            // để tạo độ hỗn loạn và xoáy cuộn tự nhiên tương xứng với lực xung kích 9.5 m/s
+            // Phân rã năng lượng loạn lưu 3D Perlin theo quy luật tiêu tán chất lưu (Kolmogorov Decay):
+            // Cực đại 45.0 m/s ngay khi blast va chạm, sau đó suy giảm hàm mũ mượt mà về mức nền 2.5 m/s
+            float tPost = state->age - state->travelDuration;
+            float decay = expf(-2.5f * tPost);
+            float currentGust = 2.5f + (45.0f - 2.5f) * decay;
+
             WindMacroConfig impactWind = {
-                .baseDirection = (Vector3){ 3.2f, 1.6f, 2.4f },
-                .gustAmplitude = 2.8f,
-                .noiseScale    = 0.25f,
-                .noiseSpeed    = 3.0f,
+                .baseDirection = (Vector3){ 0.8f, 0.5f, 0.8f },
+                .gustAmplitude = currentGust,
+                .noiseScale    = 0.90f,
+                .noiseSpeed    = 2.8f,
                 .terrainLiftK  = 1.2f,
             };
             Wind_SetMacro(&impactWind);
@@ -244,7 +247,17 @@ static void GuidedParticleTest_Update(float dt)
 
         // Parent lifetime is 3.5 s. Keep pointer-backed route data alive past
         // that bound; the same particles own the impact phase until expiry.
-        if (state->age >= 3.8f) GuidedParticleTest_Clear(state);
+        if (state->age >= 3.8f) {
+            GuidedParticleTest_Clear(state);
+            WindMacroConfig defaultWind = {
+                .baseDirection = (Vector3){ 1.5f, 0.0f, 0.8f },
+                .gustAmplitude = 0.6f,
+                .noiseScale    = 0.06f,
+                .noiseSpeed    = 1.0f,
+                .terrainLiftK  = 1.2f,
+            };
+            Wind_SetMacro(&defaultWind);
+        }
     }
 }
 
