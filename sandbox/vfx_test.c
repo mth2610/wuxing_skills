@@ -837,6 +837,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
             VFX_ComposeGuidedParticle(castSocket, mouseTarget3D);
+            s_prefabStartPos = mouseTarget3D;
             return false;
         }
 
@@ -915,6 +916,21 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     }
 
     return false;
+}
+
+static void VFXTest_DrawGroundCircle(Vector3 center, float radius, Color color) {
+    int segments = 32;
+    Vector3 prevPt = { center.x + radius, center.y, center.z };
+    for (int i = 1; i <= segments; i++) {
+        float angle = ((float)i / segments) * 2.0f * PI;
+        Vector3 currPt = {
+            center.x + cosf(angle) * radius,
+            center.y,
+            center.z + sinf(angle) * radius
+        };
+        DrawLine3D(prevPt, currPt, color);
+        prevPt = currPt;
+    }
 }
 
 void VFXTest_Draw3D(void)
@@ -1196,6 +1212,13 @@ void VFXTest_Draw3D(void)
           }
 // @gen:newfx_draw end
         }
+    }
+
+    if (s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 &&
+        strcmp(s_newFxNames[s_testIndex], "GUIDED PARTICLE") == 0 &&
+        (s_prefabStartPos.x != 0.0f || s_prefabStartPos.z != 0.0f)) {
+        VFXTest_DrawGroundCircle((Vector3){s_prefabStartPos.x, s_prefabStartPos.y + 0.015f, s_prefabStartPos.z}, 0.25f, ColorAlpha(SKYBLUE, 0.6f));
+        VFXTest_DrawGroundCircle((Vector3){s_prefabStartPos.x, s_prefabStartPos.y + 0.015f, s_prefabStartPos.z}, 0.06f, ColorAlpha(WHITE, 0.8f));
     }
 
     FresnelProbe_Draw3D(s_lastCam);

@@ -63,6 +63,24 @@ layout(std430, binding = 2) readonly buffer ParticleTravelPathBuffer {
     ParticleTravelPathGPU uTravelPaths[];
 };
 
+#define MAX_GPU_VORTICLES 16
+
+struct VorticleGPU {
+    vec4 pos_radius;      // xyz = position, w = radius
+    vec4 dir_strength;    // xyz = direction, w = strength
+    vec4 params;          // x = type, y = lifetime, z = maxLifetime, w = inwardPull
+};
+
+struct WindGPU {
+    vec4 macro_dir_amp;   // xyz = baseDirection, w = gustAmplitude
+    vec4 macro_params;    // x = noiseScale, y = noiseSpeed, z = activeCount, w = pad
+    VorticleGPU vorticles[MAX_GPU_VORTICLES];
+};
+
+layout(std430, binding = 3) readonly buffer WindBuffer {
+    WindGPU uWind;
+};
+
 // Phải khớp thứ tự enum ForceType trong core/force_field.h
 #define FT_GRAVITY_DIR   0
 #define FT_GRAVITY_POINT 1
@@ -346,6 +364,69 @@ bool evalTravelPath(int pathIndex, inout vec3 pos, inout vec3 vel,
     return false;
 }
 
+// Động lực học luồng gió mô phỏng theo Ghost of Tsushima Wind System
+vec3 evalWindVelocity(vec3 pos, float time) {
+    vec3 totalVel = vec3(0.0);
+    // 1. Gió vĩ mô (Macro wind) cuộn sóng Perlin theo không gian và thời gian
+    vec3 baseDir = uWind.macro_dir_amp.xyz;
+    float gustAmp = uWind.macro_dir_amp.w;
+    if (dot(baseDir, baseDir) > 1e-8) {
+        float s = uWind.macro_params.x;
+        float spd = uWind.macro_params.y;
+        vec3 sampleP = vec3(pos.x * s - time * spd, pos.y * s, pos.z * s - time * spd * 0.7);
+        float n = noiseScalar(sampleP);
+        float factor = max(1.0 + gustAmp * n, 0.0);
+        totalVel += baseDir * factor;
+    }
+
+    // 2. Các xoáy khí cục bộ (Vorticles: Linear Gust, Radial Blast, Vortex)
+    int vortCount = int(uWind.macro_params.z + 0.5);
+    for (int i = 0; i < vortCount && i < MAX_GPU_VORTICLES; ++i) {
+        vec3 vPos = uWind.vorticles[i].pos_radius.xyz;
+        float vRadius = uWind.vorticles[i].pos_radius.w;
+        vec3 delta = pos - vPos;
+        float distSq = dot(delta, delta);
+        float rSq = vRadius * vRadius;
+        if (distSq >= rSq || rSq < 1e-6) continue;
+
+        float dist = sqrt(distSq);
+        float spatialAtten = 1.0 - (dist / vRadius);
+        float lifetime = uWind.vorticles[i].params.y;
+        float maxLifetime = uWind.vorticles[i].params.z;
+        float temporalAtten = (maxLifetime > 1e-4) ? (lifetime / maxLifetime) : 1.0;
+        float weight = spatialAtten * temporalAtten;
+
+        int vType = int(uWind.vorticles[i].params.x + 0.5);
+        vec3 vDir = uWind.vorticles[i].dir_strength.xyz;
+        float vStrength = uWind.vorticles[i].dir_strength.w;
+
+        if (vType == 0) { // VORTICLE_LINEAR_GUST
+            totalVel += vDir * (vStrength * weight);
+        } else if (vType == 1) { // VORTICLE_RADIAL_BLAST
+            vec3 normOut = (dist > 1e-4) ? (delta / dist) : vec3(0.0, 1.0, 0.0);
+            totalVel += normOut * (vStrength * weight);
+        } else if (vType == 2) { // VORTICLE_VORTEX
+            vec3 tangent = cross(vDir, delta);
+            float tanLen = length(tangent);
+            if (tanLen > 1e-4) {
+                totalVel += (tangent / tanLen) * (vStrength * weight);
+            }
+            float inwardPull = uWind.vorticles[i].params.w;
+            if (abs(inwardPull) > 1e-4) {
+                float proj = dot(delta, vDir);
+                vec3 closestOnAxis = vDir * proj;
+                vec3 radial = delta - closestOnAxis;
+                float radDist = length(radial);
+                if (radDist > 1e-4) {
+                    vec3 radDir = radial / radDist;
+                    totalVel += radDir * (-inwardPull * weight);
+                }
+            }
+        }
+    }
+    return totalVel;
+}
+
 void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= uint(particles.length())) return;
@@ -392,16 +473,29 @@ void main() {
                                        p.vel_drag.xyz, p.route_data.w, u_dt,
                                        p.formation_data.xyz);
     else {
+        // Thuần túy chịu tác động khí động học từ Wind System (không dùng lực nhớt nhân tạo)
+        vec3 windVel = evalWindVelocity(p.pos_radius.xyz, u_time);
+        float blendRate = 1.0 - exp(-3.5 * u_dt);
+        p.vel_drag.xyz += (windVel - p.vel_drag.xyz) * blendRate;
         p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
         p.impact_data.x += u_dt;
     }
     if (reachedTarget && uTravelPaths[pathIndex].arrival.x >= -0.5) {
-        vec3 outward = normalize(p.vel_drag.xyz);
+        int ptCount = int(uTravelPaths[pathIndex].params.x + 0.5);
+        vec3 targetPos = ptCount > 0 ? uTravelPaths[pathIndex].points[ptCount - 1].xyz : p.pos_radius.xyz;
+        vec3 radial = p.pos_radius.xyz - targetPos;
+        vec3 outward = length(radial) > 1e-4 ? normalize(radial) : (length(p.vel_drag.xyz) > 1e-4 ? normalize(p.vel_drag.xyz) : vec3(0.0, 1.0, 0.0));
         if (dot(outward, outward) < 1e-6) outward = vec3(1.0, 0.0, 0.0);
         if (uTravelPaths[pathIndex].arrival.w > 0.0)
             p.vel_drag.xyz *= uTravelPaths[pathIndex].arrival.w;
-        p.pos_radius.xyz += outward * uTravelPaths[pathIndex].arrival.y;
-        p.vel_drag.xyz += outward * uTravelPaths[pathIndex].arrival.z;
+        if (uTravelPaths[pathIndex].arrival.y > 0.0)
+            p.pos_radius.xyz += outward * uTravelPaths[pathIndex].arrival.y;
+        if (uTravelPaths[pathIndex].arrival.z != 0.0)
+            p.vel_drag.xyz += outward * uTravelPaths[pathIndex].arrival.z;
+        else {
+            vec3 windVel = evalWindVelocity(p.pos_radius.xyz, u_time);
+            p.vel_drag.xyz = windVel;
+        }
         p.impact_data.x = 0.0;
         p.impact_data.y = 1.0;
     } else if (reachedTarget) {

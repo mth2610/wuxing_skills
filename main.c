@@ -1045,10 +1045,20 @@ int main(int argc, char **argv) {
         // which broke ground-hugging/multi-point NEWFX effects that assume
         // it's the real surface (e.g. FISSURE's start point).
         Ray mouseRay = GetScreenToWorldRay(GetMousePosition(), camera);
-        float t = -mouseRay.position.y / mouseRay.direction.y;
-        float mtX = mouseRay.position.x + mouseRay.direction.x * t;
-        float mtZ = mouseRay.position.z + mouseRay.direction.z * t;
-        mouseTarget3D = (Vector3){ mtX, MapManager_GetGroundHeightAt(mtX, mtZ), mtZ };
+        float mtX = 0.0f, mtZ = 0.0f, gh = 0.0f;
+        if (fabsf(mouseRay.direction.y) > 0.0001f) {
+            float t = -mouseRay.position.y / mouseRay.direction.y;
+            mtX = mouseRay.position.x + mouseRay.direction.x * t;
+            mtZ = mouseRay.position.z + mouseRay.direction.z * t;
+            gh = MapManager_GetGroundHeightAt(mtX, mtZ);
+            if (fabsf(gh) > 0.001f) {
+                t = (gh - mouseRay.position.y) / mouseRay.direction.y;
+                mtX = mouseRay.position.x + mouseRay.direction.x * t;
+                mtZ = mouseRay.position.z + mouseRay.direction.z * t;
+                gh = MapManager_GetGroundHeightAt(mtX, mtZ);
+            }
+        }
+        mouseTarget3D = (Vector3){ mtX, gh, mtZ };
         if (renderVFXMode) mouseTarget3D = captureOrigin;
 
         if (VFXTest_UpdateAndHandleInput(player.position, mouseTarget3D, testAtlasTex, globalParticleTex)) {

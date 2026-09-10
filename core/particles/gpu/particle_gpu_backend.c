@@ -177,12 +177,27 @@ static void PackTravelPath(const ParticleTravelPath *path,
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
+#define MAX_GPU_VORTICLES 16
+
+typedef struct {
+    Vector4 pos_radius;      // xyz = position, w = radius
+    Vector4 dir_strength;    // xyz = direction, w = strength
+    Vector4 params;          // x = type, y = lifetime, z = maxLifetime, w = inwardPull
+} VorticleGPU;
+
+typedef struct {
+    Vector4 macro_dir_amp;   // xyz = baseDirection, w = gustAmplitude
+    Vector4 macro_params;    // x = noiseScale, y = noiseSpeed, z = activeCount, w = pad
+    VorticleGPU vorticles[MAX_GPU_VORTICLES];
+} WindGPU;
+
 static bool s_initialized = false;
 static bool s_use_compute = false;
 
 static unsigned int s_ssbo = 0;
 static unsigned int s_ff_ssbo = 0; // ForceFieldBuffer, binding = 1
 static unsigned int s_path_ssbo = 0; // ParticleTravelPathBuffer, binding = 2
+static unsigned int s_wind_ssbo = 0; // WindBuffer, binding = 3
 static unsigned int s_compute_prog = 0;
 static unsigned int s_draw_vao = 0;
 static unsigned int s_draw_quad_vbo = 0; // template quad, attribute 0
@@ -336,6 +351,7 @@ void GpuParticleSystem_Init(void)
 
         s_ff_ssbo = rlLoadShaderBuffer(MAX_GPU_FORCE_FIELDS * (ptrdiff_t)sizeof(ForceFieldGPU), NULL, RL_DYNAMIC_DRAW);
         s_path_ssbo = rlLoadShaderBuffer(MAX_GPU_TRAVEL_PATHS * (ptrdiff_t)sizeof(ParticleTravelPathGPU), NULL, RL_DYNAMIC_DRAW);
+        s_wind_ssbo = rlLoadShaderBuffer((unsigned int)sizeof(WindGPU), NULL, RL_DYNAMIC_DRAW);
 
         s_draw_shader_gpu = ResourceManager_LoadShader(ssbo_vs_path, fs_path);
         if (s_draw_shader_gpu.id == 0)
@@ -350,6 +366,8 @@ void GpuParticleSystem_Init(void)
             s_ff_ssbo = 0;
             rlUnloadShaderBuffer(s_path_ssbo);
             s_path_ssbo = 0;
+            rlUnloadShaderBuffer(s_wind_ssbo);
+            s_wind_ssbo = 0;
             goto cpu_path;
         }
         s_surface_capture_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/fluid_surface_capture.vs", "core/fluid/shaders/fluid_capture_particle.fs");
@@ -574,9 +592,26 @@ void GpuParticleSystem_Update(float dt)
                 rlSetUniform(loc_tex, &slot, RL_SHADER_UNIFORM_INT, 1);
         }
 
+        // Pack Wind System state to GPU SSBO
+        WindGPU windData;
+        memset(&windData, 0, sizeof(windData));
+        WindMacroConfig macro = Wind_GetMacro();
+        windData.macro_dir_amp = (Vector4){ macro.baseDirection.x, macro.baseDirection.y, macro.baseDirection.z, macro.gustAmplitude };
+        int vortCount = 0;
+        const VorticleData *vArray = Wind_GetActiveVorticles(&vortCount);
+        if (vortCount > MAX_GPU_VORTICLES) vortCount = MAX_GPU_VORTICLES;
+        windData.macro_params = (Vector4){ macro.noiseScale, macro.noiseSpeed, (float)vortCount, 0.0f };
+        for (int v = 0; v < vortCount; v++) {
+            windData.vorticles[v].pos_radius = (Vector4){ vArray[v].position.x, vArray[v].position.y, vArray[v].position.z, vArray[v].radius };
+            windData.vorticles[v].dir_strength = (Vector4){ vArray[v].direction.x, vArray[v].direction.y, vArray[v].direction.z, vArray[v].strength };
+            windData.vorticles[v].params = (Vector4){ (float)vArray[v].type, vArray[v].lifetime, vArray[v].maxLifetime, vArray[v].inwardPull };
+        }
+        rlUpdateShaderBuffer(s_wind_ssbo, &windData, (unsigned int)sizeof(WindGPU), 0);
+
         rlBindShaderBuffer(s_ssbo, 0);
         rlBindShaderBuffer(s_ff_ssbo, 1);
         rlBindShaderBuffer(s_path_ssbo, 2);
+        rlBindShaderBuffer(s_wind_ssbo, 3);
         unsigned int groups = (MAX_GPU_PARTICLES + 255) / 256;
         rlComputeShaderDispatch(groups, 1, 1);
         rlDisableShader();
@@ -662,12 +697,12 @@ void GpuParticleSystem_Update(float dt)
         } else {
             if (impactActive) {
                 p->impact_age += dt;
-                // Khi hạt đã tới target (post-arrival), hòa trộn vận tốc theo luồng gió của Wind System
+                // Tiếp tục chịu tác động thuần túy từ luồng gió của Wind System (sóng xung kích tỏa tròn + lốc xoáy + gió nền)
                 Vector3 windVel = Wind_EvaluateVelocity((Vector3){p->px, p->py, p->pz}, s_elapsed_time);
-                float blendRate = Clamp(dt * 5.0f, 0.0f, 1.0f);
-                p->vx = p->vx + (windVel.x - p->vx) * blendRate;
-                p->vy = p->vy + (windVel.y - p->vy) * blendRate;
-                p->vz = p->vz + (windVel.z - p->vz) * blendRate;
+                float blendRate = 1.0f - expf(-3.5f * dt);
+                p->vx += (windVel.x - p->vx) * blendRate;
+                p->vy += (windVel.y - p->vy) * blendRate;
+                p->vz += (windVel.z - p->vz) * blendRate;
             }
             p->px += p->vx * dt;
             p->py += p->vy * dt;
@@ -684,13 +719,21 @@ void GpuParticleSystem_Update(float dt)
             p->impact_age = 0.0f;
             p->impact_active = 1.0f;
 
-            // Kích phát xung kích áp suất gió và lốc xoáy ngay tại điểm chạm đích (Target)
+            // VỤ NỔ HOÀN TOÀN BẰNG WIND SYSTEM: Kích phát sóng xung kích áp suất gió tỏa tròn (Radial Blast)
+            Vector3 blastPos = (s_pathRegistry[pathIndex] && s_pathRegistry[pathIndex]->target) ? *s_pathRegistry[pathIndex]->target : position;
             static float s_lastGpuArrivalWindTime = -10.0f;
             if (s_elapsed_time - s_lastGpuArrivalWindTime > 0.35f) {
                 s_lastGpuArrivalWindTime = s_elapsed_time;
-                Wind_SpawnRadialBlast(position, 5.5f, 10.0f, 1.2f);
-                Wind_SpawnVortex(position, (Vector3){0.0f, 1.0f, 0.0f}, 4.5f, 8.0f, 3.0f, 1.8f);
+                Wind_SpawnRadialBlast(blastPos, 3.8f, 9.5f, 0.45f);
+                Wind_SpawnVortex(blastPos, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 6.0f, 1.0f, 0.60f);
+                Wind_SpawnVortex(blastPos, (Vector3){0.7f, 0.7f, 0.0f}, 2.5f, 4.5f, 0.5f, 0.50f);
             }
+
+            Vector3 windVel = Wind_EvaluateVelocity(position, s_elapsed_time);
+            p->vx = windVel.x;
+            p->vy = windVel.y;
+            p->vz = windVel.z;
+
             continue;
         }
         if (reachedTarget) {
@@ -1107,6 +1150,11 @@ void GpuParticleSystem_Unload(void)
         {
             rlUnloadShaderBuffer(s_path_ssbo);
             s_path_ssbo = 0;
+        }
+        if (s_wind_ssbo)
+        {
+            rlUnloadShaderBuffer(s_wind_ssbo);
+            s_wind_ssbo = 0;
         }
         if (s_draw_vao)
         {

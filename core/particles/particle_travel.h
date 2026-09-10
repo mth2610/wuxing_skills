@@ -125,11 +125,34 @@ static inline void ParticleTravel_ApplyImpactEntry(const ParticleTravelPath *pat
     Vector3 direction;
     float length;
     if (!path || !position || !velocity) return;
-    direction = *velocity;
-    length = sqrtf(direction.x * direction.x + direction.y * direction.y +
-                   direction.z * direction.z);
+
+    if (path->target)
+    {
+        Vector3 radial = { position->x - path->target->x,
+                           position->y - path->target->y,
+                           position->z - path->target->z };
+        float rLen = sqrtf(radial.x * radial.x + radial.y * radial.y + radial.z * radial.z);
+        if (rLen > 1e-4f)
+        {
+            float invRLen = 1.0f / rLen;
+            direction = (Vector3){ radial.x * invRLen, radial.y * invRLen, radial.z * invRLen };
+            length = rLen;
+        }
+        else
+        {
+            direction = *velocity;
+            length = sqrtf(direction.x * direction.x + direction.y * direction.y +
+                           direction.z * direction.z);
+        }
+    }
+    else
+    {
+        direction = *velocity;
+        length = sqrtf(direction.x * direction.x + direction.y * direction.y +
+                       direction.z * direction.z);
+    }
     if (length <= 1e-5f) direction = (Vector3){1.0f, 0.0f, 0.0f};
-    else {
+    else if (!path->target || length <= 1e-4f) {
         float invLength = 1.0f / length;
         direction.x *= invLength;
         direction.y *= invLength;

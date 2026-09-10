@@ -219,7 +219,24 @@ int main(void) {
         TEST_NEAR(vNoLift.y, 0.0f, 0.01f, "Terrain lift removed when query is NULL");
     }
 
-    // 8. Dọn dẹp
+    // 8. Test Đa tầng Vorticles (Interacting Micro-Vortices Superposition)
+    {
+        Wind_Clear();
+        WindMacroConfig zeroMacro = {0};
+        Wind_SetMacro(&zeroMacro);
+
+        // Kích phát 2 Vorticles tương tác (1 radial blast + 1 vortex)
+        Wind_SpawnRadialBlast((Vector3){0, 0, 0}, 4.0f, 6.0f, 1.0f);
+        Wind_SpawnVortex((Vector3){0, 0, 0}, (Vector3){0, 1, 0}, 4.0f, 4.0f, 2.0f, 1.0f);
+        TEST_CHECK(Wind_GetActiveCount() == 2, "Active count is 2 for interacting vorticles");
+
+        // Điểm khảo sát chịu cả lực đẩy tâm và xoáy lốc
+        Vector3 vCombined = Wind_EvaluateVelocity((Vector3){ 2.0f, 0.0f, 0.0f }, 0.0f);
+        TEST_NEAR(vCombined.x, 2.0f, 0.05f, "Superposition of radial blast and inward pull");
+        TEST_NEAR(vCombined.z, -2.0f, 0.05f, "Superposition preserves vortex rotation");
+    }
+
+    // 9. Dọn dẹp
     Wind_Unload();
     TEST_CHECK(Wind_GetActiveCount() == 0, "Cleaned up after unload");
 

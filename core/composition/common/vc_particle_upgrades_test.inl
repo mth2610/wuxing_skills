@@ -62,10 +62,17 @@ static void GuidedParticleTest_Clear(GuidedParticleTestState *state)
 
 static GuidedParticleTestState *GuidedParticleTest_Allocate(void)
 {
+    int oldest = 0;
+    float maxAge = -1.0f;
     for (int i = 0; i < GUIDED_PARTICLE_TEST_MAX; ++i) {
         if (!s_guidedParticleTests[i].active) return &s_guidedParticleTests[i];
+        if (s_guidedParticleTests[i].age > maxAge) {
+            maxAge = s_guidedParticleTests[i].age;
+            oldest = i;
+        }
     }
-    return NULL;
+    GuidedParticleTest_Clear(&s_guidedParticleTests[oldest]);
+    return &s_guidedParticleTests[oldest];
 }
 
 static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
@@ -84,7 +91,7 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
     state->source = source;
     Vector3 span = Vector3Subtract(target, source);
     float spanLength = Vector3Length(span);
-    state->travelDuration = (spanLength > 0.001f) ? (spanLength / 4.0f) : 0.1f;
+    state->travelDuration = (spanLength > 0.001f) ? (spanLength / 12.0f) : 0.1f;
     Vector3 forward = spanLength > 0.001f ? Vector3Scale(span, 1.0f / spanLength)
                                          : (Vector3){1.0f, 0.0f, 0.0f};
     Vector3 lateral = Vector3Normalize(Vector3CrossProduct((Vector3){0.0f, 1.0f, 0.0f}, forward));
@@ -93,14 +100,13 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
     // segments, so these samples approximate one smooth route.
     Vector3 up = (Vector3){0.0f, 1.0f, 0.0f};
     Vector3 controlA = Vector3Add(source,
-        Vector3Add(Vector3Scale(forward, spanLength * 0.30f),
-                   Vector3Add(Vector3Scale(lateral, spanLength * 0.22f),
-                              Vector3Scale(up, spanLength * 0.10f))));
-    Vector3 controlB = Vector3Add(source,
-        Vector3Add(Vector3Scale(forward, spanLength * 0.70f),
-                   Vector3Add(Vector3Scale(lateral, -spanLength * 0.22f),
+        Vector3Add(Vector3Scale(forward, spanLength * 0.33f),
+                   Vector3Add(Vector3Scale(lateral, spanLength * 0.03f),
                               Vector3Scale(up, spanLength * 0.06f))));
-    const float t[GUIDED_PARTICLE_TEST_POINTS] = {0.10f, 0.24f, 0.40f, 0.58f, 0.76f, 0.90f};
+    Vector3 controlB = Vector3Add(source,
+        Vector3Add(Vector3Scale(forward, spanLength * 0.67f),
+                   Vector3Scale(up, spanLength * 0.02f)));
+    const float t[GUIDED_PARTICLE_TEST_POINTS] = {0.10f, 0.25f, 0.45f, 0.65f, 0.82f, 0.94f};
     for (int i = 0; i < GUIDED_PARTICLE_TEST_POINTS; ++i) {
         float u = 1.0f - t[i];
         float b0 = u * u * u;
@@ -118,28 +124,20 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
         .pointCount = GUIDED_PARTICLE_TEST_POINTS,
         .target = &state->target,
         .formationOrigin = &state->source,
-        .speed = 4.0f,
-        .steering = 3.0f,
-        .maxAcceleration = 5.0f,
-        .waypointRadius = 0.22f,
-        .targetRadius = 0.12f,
+        .speed = 12.0f,
+        .steering = 8.5f,
+        .maxAcceleration = 25.0f,
+        .waypointRadius = 0.40f,
+        .targetRadius = 0.35f,
         .arrivalForceField = &state->impactField,
-        // Snap the impact phase to the actual click target; the radial force
-        // should be the visible separation, not an authored positional bias.
-        // Bung nhẹ khỏi tâm mục tiêu và truyền gia tốc ban đầu để các luồng gió và xoáy khí bắt lấy hạt
-        .arrivalOffset = 0.20f,
-        .arrivalKick = 2.5f,
-        .arrivalVelocityScale = 0.6f,
-        .arrivalForceDuration = 0.0f,
+        // Khi tới đích: Vụ nổ được kích hoạt 100% bởi Hệ thống Gió (Wind System: Radial Blast + Micro-Vortices)
+        .arrivalOffset = 0.0f,
+        .arrivalKick = 0.0f,
+        .arrivalVelocityScale = 0.0f,
+        .arrivalForceDuration = 0.6f,
     };
 
     ForceField_Clear(&state->field);
-    ForceField_AddLayer(&state->field, (ForceLayer){
-        .type = FORCE_NOISE_CURL,
-        .strength = 1.60f,
-        .noiseScale = 2.40f,
-        .noiseSpeed = 0.90f,
-    });
 
     ForceField_Clear(&state->impactField);
     // Khi chạm target: Thay vì chịu các trường lực nhân tạo (lực ly tâm, curl noise, lực nhớt),
@@ -147,14 +145,14 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
 
     ParticleConfig follower = {
         .position = source,
-        .velocity = (Vector3){1.2f, 0.25f, 0.0f},
-        .lifetime = 7.0f,
-        .radius = 0.105f,
+        .velocity = Vector3Scale(forward, 12.0f),
+        .lifetime = 3.5f,
+        .radius = 0.11f,
         .colorStart = (Color){90, 235, 255, 245},
         .colorEnd = (Color){130, 70, 255, 0},
         .forceField = &state->field,
         .travelPath = &state->path,
-        .stretchStrength = 0.014f,
+        .stretchStrength = 0.016f,
         .stretchMinSpeed = 0.35f,
         .render.blendMode = VFX_BLEND_ADDITIVE,
         .render.unlit = 1,
@@ -209,16 +207,17 @@ static void GuidedParticleTest_Update(float dt)
         if (!state->active) continue;
         state->age += dt;
 
-        // Khi chùm hạt chạm target: Kích hoạt xung kích áp suất gió tỏa tròn và lốc xoáy tại tâm điểm va chạm
+        // Khi hạt bay đến đích: Kích phát vụ nổ 100% bằng Hệ thống Gió (Wind System: Radial Blast + Micro-Vortices)
         if (state->age >= state->travelDuration && !state->arrivalWindTriggered) {
             state->arrivalWindTriggered = true;
-            Wind_SpawnRadialBlast(state->target, 4.0f, 6.0f, 0.75f);
-            Wind_SpawnVortex(state->target, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 4.5f, 2.0f, 1.2f);
+            Wind_SpawnRadialBlast(state->target, 3.8f, 9.5f, 0.45f);
+            Wind_SpawnVortex(state->target, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 6.0f, 1.0f, 0.60f);
+            Wind_SpawnVortex(state->target, (Vector3){0.7f, 0.7f, 0.0f}, 2.5f, 4.5f, 0.5f, 0.50f);
         }
 
-        // Parent lifetime is 7.0 s.  Keep pointer-backed route data alive past
+        // Parent lifetime is 3.5 s. Keep pointer-backed route data alive past
         // that bound; the same particles own the impact phase until expiry.
-        if (state->age >= 7.25f) GuidedParticleTest_Clear(state);
+        if (state->age >= 3.8f) GuidedParticleTest_Clear(state);
     }
 }
 

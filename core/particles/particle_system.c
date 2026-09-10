@@ -610,12 +610,12 @@ void UpdateParticles(float dt)
       p->z += p->vz * step;
       if (p->travelImpactActive) {
         p->travelImpactAge += dt;
-        // Khi hạt đã tới target (post-arrival), hòa trộn vận tốc theo luồng gió của Wind System
+        // Tiếp tục chịu tác động thuần túy từ luồng gió của Wind System (sóng xung kích tỏa tròn + lốc xoáy + gió nền)
         Vector3 windVel = Wind_EvaluateVelocity((Vector3){p->x, p->y, p->z}, s_particleTime);
-        float blendRate = Clamp(dt * 3.5f, 0.0f, 1.0f);
-        p->vx = Math_Mix(p->vx, windVel.x, blendRate);
-        p->vy = Math_Mix(p->vy, windVel.y, blendRate);
-        p->vz = Math_Mix(p->vz, windVel.z, blendRate);
+        float blendRate = 1.0f - expf(-3.5f * dt);
+        p->vx += (windVel.x - p->vx) * blendRate;
+        p->vy += (windVel.y - p->vy) * blendRate;
+        p->vz += (windVel.z - p->vz) * blendRate;
       }
     }
 
@@ -635,13 +635,24 @@ void UpdateParticles(float dt)
         p->travelImpactActive = true;
         p->travelImpactAge = 0.0f;
 
-        // Kích phát xung kích áp suất gió và lốc xoáy ngay tại điểm chạm đích (Target)
+        // VỤ NỔ HOÀN TOÀN BẰNG WIND SYSTEM: Kích phát sóng xung kích áp suất gió tỏa tròn (Radial Blast)
+        Vector3 blastPos = (p->travelPath && p->travelPath->target) ? *p->travelPath->target : position;
         static float s_lastCpuArrivalWindTime = -10.0f;
         if (s_particleTime - s_lastCpuArrivalWindTime > 0.35f) {
           s_lastCpuArrivalWindTime = s_particleTime;
-          Wind_SpawnRadialBlast(position, 5.5f, 10.0f, 1.2f);
-          Wind_SpawnVortex(position, (Vector3){0.0f, 1.0f, 0.0f}, 4.5f, 8.0f, 3.0f, 1.8f);
+          Wind_SpawnRadialBlast(blastPos, 3.8f, 9.5f, 0.45f);
+          Wind_SpawnVortex(blastPos, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 6.0f, 1.0f, 0.60f);
+          Wind_SpawnVortex(blastPos, (Vector3){0.7f, 0.7f, 0.0f}, 2.5f, 4.5f, 0.5f, 0.50f);
         }
+
+        // Hạt nhận vận tốc từ Hệ thống Gió nếu không cấu hình arrivalKick nhân tạo
+        if (p->travelPath->arrivalKick <= 0.0f) {
+          Vector3 windVel = Wind_EvaluateVelocity(position, s_particleTime);
+          p->vx = windVel.x;
+          p->vy = windVel.y;
+          p->vz = windVel.z;
+        }
+
         continue;
       }
       if (p->hasTargetEmit && p->onTargetCount > 0)

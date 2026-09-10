@@ -7,6 +7,7 @@
 #include "entities/entities.h"
 #include "core/wind/wind_system.h"
 #include "core/atmosphere.h"
+#include "core/map_manager.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <stddef.h>
@@ -566,12 +567,38 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         }
     }
 
+    // Xoay và zoom camera trước để GetScreenToWorldRay sử dụng đúng ma trận camera của frame hiện tại
+    if (IsKeyDown(KEY_Q) || touchCamLeft) g_cameraAngle -= 2.5f * dt;
+    if (IsKeyDown(KEY_E) || touchCamRight) g_cameraAngle += 2.5f * dt;
+    float wheel = GetMouseWheelMove();
+    if (wheel != 0.0f) g_camDist -= wheel * 0.5f;
+    if (IsKeyDown(KEY_R)) g_camDist -= 3.0f * dt;
+    if (IsKeyDown(KEY_F)) g_camDist += 3.0f * dt;
+    if (g_camDist < 2.0f) g_camDist = 2.0f;
+    if (g_camDist > 15.0f) g_camDist = 15.0f;
+    g_camHeight = g_camDist * 0.75f;
+    camera.target = (Vector3){ player->position.x, player->position.y + 0.2f, player->position.z };
+    camera.position = (Vector3){ 
+        player->position.x + sinf(g_cameraAngle) * g_camDist, 
+        player->position.y + g_camHeight, 
+        player->position.z + cosf(g_cameraAngle) * g_camDist
+    };
+
     // 1. NGẮM BẮN CHUỘT 3D (Chỉ thực hiện ngắm nếu không tương tác với phím ảo)
     if (!uiState->clickedOnUI) {
         Ray mouseRay = GetScreenToWorldRay(mousePos, camera);
-        if (mouseRay.direction.y != 0.0f) {
+        if (fabsf(mouseRay.direction.y) > 0.0001f) {
             float t = -mouseRay.position.y / mouseRay.direction.y;
-            *outMouseTarget = Vector3Add(mouseRay.position, Vector3Scale(mouseRay.direction, t));
+            float mtX = mouseRay.position.x + mouseRay.direction.x * t;
+            float mtZ = mouseRay.position.z + mouseRay.direction.z * t;
+            float gh = MapManager_GetGroundHeightAt(mtX, mtZ);
+            if (fabsf(gh) > 0.001f) {
+                t = (gh - mouseRay.position.y) / mouseRay.direction.y;
+                mtX = mouseRay.position.x + mouseRay.direction.x * t;
+                mtZ = mouseRay.position.z + mouseRay.direction.z * t;
+                gh = MapManager_GetGroundHeightAt(mtX, mtZ);
+            }
+            *outMouseTarget = (Vector3){ mtX, gh, mtZ };
         } else {
             *outMouseTarget = (Vector3){0};
         }
@@ -863,29 +890,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
 
     } // !enemyCrowdControlled
 
-    // Xoay camera bằng phím Q/E hoặc phím ảo
-    if (IsKeyDown(KEY_Q) || touchCamLeft) g_cameraAngle -= 2.5f * dt;
-    if (IsKeyDown(KEY_E) || touchCamRight) g_cameraAngle += 2.5f * dt;
-
-    // Zoom camera bằng phím R và F, hoặc Mouse Wheel
-    float wheel = GetMouseWheelMove();
-    if (wheel != 0.0f) {
-        g_camDist -= wheel * 0.5f;
-    }
-    if (IsKeyDown(KEY_R)) g_camDist -= 3.0f * dt;
-    if (IsKeyDown(KEY_F)) g_camDist += 3.0f * dt;
-
-    // Lower bound gives margin above main.c's MyBeginMode3D near plane
-    // (1.0f) — total camera-to-target distance is camDist*1.25 (see
-    // g_camHeight below), so a 2.0f floor keeps ~1.5x margin above near.
-    if (g_camDist < 2.0f) g_camDist = 2.0f;
-    if (g_camDist > 15.0f) g_camDist = 15.0f;
-
-    g_camHeight = g_camDist * 0.75f;
-
-    // Cập nhật Camera góc nhìn thứ 3 (MMORPG)
+    // Cập nhật Camera góc nhìn thứ 3 theo vị trí mới của Player
     camera.target = (Vector3){ player->position.x, player->position.y + 0.2f, player->position.z };
-    
     camera.position = (Vector3){ 
         player->position.x + sinf(g_cameraAngle) * g_camDist, 
         player->position.y + g_camHeight, 
@@ -976,6 +982,11 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
     if (!shadowPass) {
         DrawCircleOutline3D((Vector3){ player->position.x, 0.0008f, player->position.z }, 0.25f, ColorAlpha(LIME, 0.6f));
         DrawCircleOutline3D((Vector3){ enemy->position.x, 0.0008f, enemy->position.z }, 0.3f, ColorAlpha(RED, 0.6f));
+        if (mouseTarget.x != 0.0f || mouseTarget.z != 0.0f) {
+            float gY = MapManager_GetGroundHeightAt(mouseTarget.x, mouseTarget.z);
+            DrawCircleOutline3D((Vector3){ mouseTarget.x, gY + 0.008f, mouseTarget.z }, 0.20f, ColorAlpha(SKYBLUE, 0.5f));
+            DrawCircleOutline3D((Vector3){ mouseTarget.x, gY + 0.008f, mouseTarget.z }, 0.05f, ColorAlpha(WHITE, 0.7f));
+        }
     }
 
     for (int i = 0; i < NUM_PILLARS; i++) {
