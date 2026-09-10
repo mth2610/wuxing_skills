@@ -950,36 +950,36 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
             if (stretchStrength > 0.0f)
             {
                 Vector3 vel = {p->vx, p->vy, p->vz};
-                float speed = sqrtf(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
-                if (speed > 0.2f)
+                float vx = vel.x * right.x + vel.y * right.y + vel.z * right.z;
+                float vy = vel.x * up.x + vel.y * up.y + vel.z * up.z;
+                float screenSpeed = sqrtf(vx * vx + vy * vy);
+                if (screenSpeed > 0.05f)
                 {
-                    Vector3 velDir = {vel.x / speed, vel.y / speed, vel.z / speed};
-                    Vector3 tangent = velDir;
-                    
-                    // Find perpendicular right vector using cross product
-                    Vector3 crossV = {
-                        camera.up.y * tangent.z - camera.up.z * tangent.y,
-                        camera.up.z * tangent.x - camera.up.x * tangent.z,
-                        camera.up.x * tangent.y - camera.up.y * tangent.x
-                    };
-                    float crossLen = sqrtf(crossV.x * crossV.x + crossV.y * crossV.y + crossV.z * crossV.z);
-                    Vector3 rVec = right;
-                    if (crossLen > 0.0f)
-                    {
-                        rVec.x = crossV.x / crossLen;
-                        rVec.y = crossV.y / crossLen;
-                        rVec.z = crossV.z / crossLen;
-                    }
-                    
-                    float stretchFactor = 1.0f + speed * stretchStrength;
-                    if (stretchFactor > 3.5f) stretchFactor = 3.5f;
-                    rx = rVec.x * r;
-                    ry = rVec.y * r;
-                    rz = rVec.z * r;
+                    float invSpeed = 1.0f / screenSpeed;
+                    float dirX = vx * invSpeed;
+                    float dirY = vy * invSpeed;
 
-                    ux = tangent.x * r * stretchFactor;
-                    uy = tangent.y * r * stretchFactor;
-                    uz = tangent.z * r * stretchFactor;
+                    Vector3 tangentDir = {
+                        right.x * dirX + up.x * dirY,
+                        right.y * dirX + up.y * dirY,
+                        right.z * dirX + up.z * dirY
+                    };
+                    Vector3 rightDir = {
+                        right.x * dirY - up.x * dirX,
+                        right.y * dirY - up.y * dirX,
+                        right.z * dirY - up.z * dirX
+                    };
+
+                    float stretchFactor = 1.0f + screenSpeed * stretchStrength;
+                    if (stretchFactor > 3.5f) stretchFactor = 3.5f;
+
+                    rx = rightDir.x * r;
+                    ry = rightDir.y * r;
+                    rz = rightDir.z * r;
+
+                    ux = tangentDir.x * r * stretchFactor;
+                    uy = tangentDir.y * r * stretchFactor;
+                    uz = tangentDir.z * r * stretchFactor;
                 }
             }
 

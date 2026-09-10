@@ -58,6 +58,17 @@ static void GuidedParticleTest_Clear(GuidedParticleTestState *state)
     state->meshEmitter = PARTICLE_EMITTER_INVALID;
     state->pointEmitter = PARTICLE_EMITTER_INVALID;
     state->active = false;
+    if (state->arrivalWindTriggered) {
+        state->arrivalWindTriggered = false;
+        WindMacroConfig defaultWind = {
+            .baseDirection = (Vector3){ 1.5f, 0.0f, 0.8f },
+            .gustAmplitude = 0.6f,
+            .noiseScale    = 0.06f,
+            .noiseSpeed    = 1.0f,
+            .terrainLiftK  = 1.2f,
+        };
+        Wind_SetMacro(&defaultWind);
+    }
 }
 
 static GuidedParticleTestState *GuidedParticleTest_Allocate(void)
@@ -140,8 +151,13 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
     ForceField_Clear(&state->field);
 
     ForceField_Clear(&state->impactField);
-    // Khi chạm target: Thay vì chịu các trường lực nhân tạo (lực ly tâm, curl noise, lực nhớt),
-    // các hạt guided particles sẽ hoàn toàn chịu tác động tự nhiên của Hệ thống Gió (Wind System).
+    // Khi chạm target: Kết hợp sóng nhiễu 3D Perlin Noise cùng Hệ thống Gió (Wind System: Radial Blast + Vortices)
+    ForceField_AddLayer(&state->impactField, (ForceLayer){
+        .type = FORCE_NOISE_PERLIN,
+        .strength = 8.5f,
+        .noiseScale = 2.2f,
+        .noiseSpeed = 2.8f,
+    });
 
     ParticleConfig follower = {
         .position = source,
@@ -213,6 +229,17 @@ static void GuidedParticleTest_Update(float dt)
             Wind_SpawnRadialBlast(state->target, 3.8f, 9.5f, 0.45f);
             Wind_SpawnVortex(state->target, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 6.0f, 1.0f, 0.60f);
             Wind_SpawnVortex(state->target, (Vector3){0.7f, 0.7f, 0.0f}, 2.5f, 4.5f, 0.5f, 0.50f);
+
+            // Tăng cường độ sóng nhiễu 3D Perlin Noise của Hệ thống Gió tại thời điểm va chạm
+            // để tạo độ hỗn loạn và xoáy cuộn tự nhiên tương xứng với lực xung kích 9.5 m/s
+            WindMacroConfig impactWind = {
+                .baseDirection = (Vector3){ 3.2f, 1.6f, 2.4f },
+                .gustAmplitude = 2.8f,
+                .noiseScale    = 0.25f,
+                .noiseSpeed    = 3.0f,
+                .terrainLiftK  = 1.2f,
+            };
+            Wind_SetMacro(&impactWind);
         }
 
         // Parent lifetime is 3.5 s. Keep pointer-backed route data alive past

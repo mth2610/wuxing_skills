@@ -1526,39 +1526,37 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     if (p->stretchStrength > 0.0f)
     {
       Vector3 vel = {p->vx, p->vy, p->vz};
-      float speed = sqrtf(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
-      if (speed > p->stretchMinSpeed)
+      float vx = vel.x * right.x + vel.y * right.y + vel.z * right.z;
+      float vy = vel.x * up.x + vel.y * up.y + vel.z * up.z;
+      float screenSpeed = sqrtf(vx * vx + vy * vy);
+      float minSpeed = p->stretchMinSpeed > 0.05f ? p->stretchMinSpeed : 0.05f;
+      if (screenSpeed > minSpeed)
       {
-        Vector3 velDir = {vel.x / speed, vel.y / speed, vel.z / speed};
-        Vector3 tangent = velDir;
-        Vector3 rVec = {
-          tangent.y * viewDir.z - tangent.z * viewDir.y,
-          tangent.z * viewDir.x - tangent.x * viewDir.z,
-          tangent.x * viewDir.y - tangent.y * viewDir.x
+        float invSpeed = 1.0f / screenSpeed;
+        float dirX = vx * invSpeed;
+        float dirY = vy * invSpeed;
+
+        Vector3 tangentDir = {
+          right.x * dirX + up.x * dirY,
+          right.y * dirX + up.y * dirY,
+          right.z * dirX + up.z * dirY
         };
-        float rVecLen = sqrtf(rVec.x * rVec.x + rVec.y * rVec.y + rVec.z * rVec.z);
-        if (rVecLen > 0.0f)
-        {
-          rVec.x /= rVecLen;
-          rVec.y /= rVecLen;
-          rVec.z /= rVecLen;
-        }
-        else
-        {
-          rVec = right;
-        }
+        Vector3 rightDir = {
+          right.x * dirY - up.x * dirX,
+          right.y * dirY - up.y * dirX,
+          right.z * dirY - up.z * dirX
+        };
 
-        // Prevent a strong impact kick from stretching the billboard into a
-        // sub-pixel line, which reads as a blink/disappearance.
-        float stretchFactor = 1.0f + speed * p->stretchStrength;
+        float stretchFactor = 1.0f + screenSpeed * p->stretchStrength;
         if (stretchFactor > 3.5f) stretchFactor = 3.5f;
-        rx = rVec.x * drawRadius;
-        ry = rVec.y * drawRadius;
-        rz = rVec.z * drawRadius;
 
-        ux = tangent.x * drawRadius * stretchFactor;
-        uy = tangent.y * drawRadius * stretchFactor;
-        uz = tangent.z * drawRadius * stretchFactor;
+        rx = rightDir.x * drawRadius;
+        ry = rightDir.y * drawRadius;
+        rz = rightDir.z * drawRadius;
+
+        ux = tangentDir.x * drawRadius * stretchFactor;
+        uy = tangentDir.y * drawRadius * stretchFactor;
+        uz = tangentDir.z * drawRadius * stretchFactor;
       }
     }
     // Xoay hạt quanh trục hướng camera (Billboard-space 2D Rotation, only if not stretched)

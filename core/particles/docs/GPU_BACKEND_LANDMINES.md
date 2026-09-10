@@ -17,3 +17,9 @@
 - **Symptom:** CPU/VBO particles invisible on *all* platforms despite valid data.
 - **Cause:** wrong `rx/ry/rz` signs and quad vertex order produced zero-area or culled-winding quads.
 - **Rule:** copy `core/particle_system.c`'s `DrawParticles()` billboard construction exactly (vertex order + winding), don't re-derive it.
+
+### Velocity-stretched billboards must project velocity onto the camera view plane
+- **Symptom:** Velocity-stretched particles disappear or flicker invisibly from side/horizontal angles (e.g. in guided particle VFX).
+- **Cause:** Quad basis was derived by crossing 3D velocity with `camera.up` or camera view direction in 3D world space. This tilted the billboard normal away from the camera (e.g. facing straight up to the sky), turning the billboard edge-on to horizontal camera views where its projected screen area collapses to zero.
+- **Rule:** Always project 3D particle velocity onto the camera view plane (`dot(vel, right)` and `dot(vel, up)`). Construct the stretched quad using in-plane basis vectors `tangentDir` and `rightDir` so the quad normal remains identically parallel to `viewDir` from every angle.
+

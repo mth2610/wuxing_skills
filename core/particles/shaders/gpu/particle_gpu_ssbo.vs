@@ -66,22 +66,19 @@ void main() {
     vec3 worldPos;
     float stretchStrength = particles[gl_InstanceID].ff_data.y; // ff_pad0
     vec3 vel = particles[gl_InstanceID].vel_drag.xyz;
-    float speed = length(vel);
+    float vx = dot(vel, u_right);
+    float vy = dot(vel, u_up);
+    float screenSpeed = length(vec2(vx, vy));
 
-    if (stretchStrength > 0.0 && speed > 0.2) {
-        vec3 tangent = vel / speed;
-        vec3 rVec = cross(u_up, tangent);
-        float rLen = length(rVec);
-        if (rLen > 0.0) {
-            rVec /= rLen;
-        } else {
-            rVec = u_right;
-        }
+    if (stretchStrength > 0.0 && screenSpeed > 0.05) {
+        vec2 dir2D = vec2(vx, vy) / screenSpeed;
+        vec3 tangentDir = u_right * dir2D.x + u_up * dir2D.y;
+        vec3 rightDir   = u_right * dir2D.y - u_up * dir2D.x;
         
-        float stretchFactor = min(1.0 + speed * stretchStrength, 3.5);
+        float stretchFactor = min(1.0 + screenSpeed * stretchStrength, 3.5);
         worldPos = center
-                 + rVec * (corner.x * r)
-                 + tangent * (corner.y * r * stretchFactor);
+                 + rightDir   * (corner.x * r)
+                 + tangentDir * (corner.y * r * stretchFactor);
     } else {
         worldPos = center
                  + u_right * (corner.x * r)
