@@ -141,10 +141,10 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
         .waypointRadius = 0.40f,
         .targetRadius = 0.35f,
         .arrivalForceField = &state->impactField,
-        // Khi tới đích: Không dùng lực nhân tạo mà nhận trực tiếp vận tốc từ Wind System
+        // Khi tới đích: Triệt tiêu đà bay (scale ~0) để Wind System điều khiển 100%
         .arrivalOffset = 0.0f,
         .arrivalKick = 0.0f,
-        .arrivalVelocityScale = 0.0f,
+        .arrivalVelocityScale = 0.01f,  // > 0 để trigger scale trong ApplyImpactEntry
         .arrivalForceDuration = 0.0f,
     };
 
@@ -218,44 +218,12 @@ static void GuidedParticleTest_Update(float dt)
         if (!state->active) continue;
         state->age += dt;
 
-        // Khi hạt bay đến đích: Kích phát hiệu ứng chất lưu bằng Hệ thống Gió (Wind System)
-        // Lực nổ toả tròn (radial blast) nhẹ nhàng (2.0 m/s, bán kính 2.4m, 0.25s) mô phỏng vỡ bung tự nhiên,
-        // để dòng xoáy (vortices) và loạn lưu 3D Perlin cuộn các hạt thành xoáy chất lưu tự nhiên.
-        if (state->age >= state->travelDuration) {
-            if (!state->arrivalWindTriggered) {
-                state->arrivalWindTriggered = true;
-                Wind_SpawnRadialBlast(state->target, 2.4f, 2.0f, 0.25f);
-            }
-
-            // Phân rã năng lượng loạn lưu 3D Perlin theo quy luật tiêu tán chất lưu (Kolmogorov Decay):
-            // Cực đại 45.0 m/s ngay khi blast va chạm, sau đó suy giảm hàm mũ mượt mà về mức nền 2.5 m/s
-            float tPost = state->age - state->travelDuration;
-            float decay = expf(-2.5f * tPost);
-            float currentGust = 2.5f + (45.0f - 2.5f) * decay;
-
-            WindMacroConfig impactWind = {
-                .baseDirection = (Vector3){ 0.8f, 0.5f, 0.8f },
-                .gustAmplitude = currentGust,
-                .noiseScale    = 0.90f,
-                .noiseSpeed    = 2.8f,
-                .terrainLiftK  = 1.2f,
-            };
-            Wind_SetMacro(&impactWind);
-        }
+        // Gió va chạm được kích phát bởi engine (particle_system.c) khi hạt thực sự chạm target
+        // dựa trên vị trí swept segment test, không cần trigger thủ công ở đây.
 
         // Parent lifetime is 3.5 s. Keep pointer-backed route data alive past
         // that bound; the same particles own the impact phase until expiry.
-        if (state->age >= 3.8f) {
-            GuidedParticleTest_Clear(state);
-            WindMacroConfig defaultWind = {
-                .baseDirection = (Vector3){ 1.5f, 0.0f, 0.8f },
-                .gustAmplitude = 0.6f,
-                .noiseScale    = 0.06f,
-                .noiseSpeed    = 1.0f,
-                .terrainLiftK  = 1.2f,
-            };
-            Wind_SetMacro(&defaultWind);
-        }
+        if (state->age >= 3.8f) GuidedParticleTest_Clear(state);
     }
 }
 

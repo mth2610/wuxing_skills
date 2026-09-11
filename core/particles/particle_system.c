@@ -610,8 +610,20 @@ void UpdateParticles(float dt)
       p->z += p->vz * step;
       if (p->travelImpactActive) {
         p->travelImpactAge += dt;
-        // Tiếp tục chịu tác động thuần túy từ luồng gió của Wind System (sóng xung kích tỏa tròn + lốc xoáy + gió nền)
-        Vector3 windVel = Wind_EvaluateVelocity((Vector3){p->x, p->y, p->z}, s_particleTime);
+        // Jitter per-particle: phá vỡ coherence Perlin khi tất cả hạt cùng vị trí target
+        float seed = (float)i;
+        float h1 = fmodf(sinf(seed * 127.1f) * 43758.5453f, 1.0f);
+        float h2 = fmodf(sinf(seed * 269.5f) * 43758.5453f, 1.0f);
+        float h3 = fmodf(sinf(seed * 419.2f) * 43758.5453f, 1.0f);
+        if (h1 < 0.0f) h1 += 1.0f;
+        if (h2 < 0.0f) h2 += 1.0f;
+        if (h3 < 0.0f) h3 += 1.0f;
+        Vector3 samplePos = {
+          p->x + (h1 - 0.5f) * 3.0f,
+          p->y + (h2 - 0.5f) * 3.0f,
+          p->z + (h3 - 0.5f) * 3.0f
+        };
+        Vector3 windVel = Wind_EvaluateVelocity(samplePos, s_particleTime);
         float blendRate = 1.0f - expf(-3.5f * dt);
         p->vx += (windVel.x - p->vx) * blendRate;
         p->vy += (windVel.y - p->vy) * blendRate;
@@ -635,21 +647,20 @@ void UpdateParticles(float dt)
         p->travelImpactActive = true;
         p->travelImpactAge = 0.0f;
 
-        // VỤ NỔ HOÀN TOÀN BẰNG WIND SYSTEM: Kích phát sóng xung kích áp suất gió tỏa tròn (Radial Blast)
+        // VỤ NỔ HOÀN TOÀN BẰNG WIND SYSTEM: Kích phát sóng xung kích + nhiễu loạn lưu cục bộ
         Vector3 blastPos = (p->travelPath && p->travelPath->target) ? *p->travelPath->target : position;
         static float s_lastCpuArrivalWindTime = -10.0f;
         if (s_particleTime - s_lastCpuArrivalWindTime > 0.35f) {
           s_lastCpuArrivalWindTime = s_particleTime;
           Wind_SpawnRadialBlast(blastPos, 2.4f, 2.0f, 0.25f);
+          // Nhiễu loạn lưu 3D Perlin cục bộ: bán kính 6m, 35 m/s, suy giảm tự nhiên trong 2.5s
+          Wind_SpawnTurbulence(blastPos, 6.0f, 35.0f, 0.90f, 2.8f, 2.5f);
         }
 
-        // Hạt nhận vận tốc từ Hệ thống Gió nếu không cấu hình arrivalKick nhân tạo
-        if (p->travelPath->arrivalKick <= 0.0f) {
-          Vector3 windVel = Wind_EvaluateVelocity(position, s_particleTime);
-          p->vx = windVel.x;
-          p->vy = windVel.y;
-          p->vz = windVel.z;
-        }
+        // Không gán cứng vận tốc = gió tại frame arrival (tất cả hạt cùng vị trí
+        // → cùng vector Perlin → bay ra cùng hướng). Per-frame blend (blendRate = 
+        // 1 - exp(-3.5*dt)) trong vòng lặp travelImpactActive sẽ kéo vận tốc 
+        // hạt về phía gió một cách mượt mà.
 
         continue;
       }

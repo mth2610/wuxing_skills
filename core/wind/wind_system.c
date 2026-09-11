@@ -167,6 +167,25 @@ int Wind_SpawnVortex(Vector3 pos, Vector3 axis, float radius, float strength, fl
     return idx;
 }
 
+int Wind_SpawnTurbulence(Vector3 pos, float radius, float strength, float noiseScale, float noiseSpeed, float duration) {
+    if (!s_initialized || duration <= 0.0f || radius <= 0.0f) return -1;
+    int idx = AllocVorticleSlot();
+
+    // Đóng gói noiseScale và noiseSpeed vào trường direction (không dùng hướng cho loại này)
+    s_vorticles[idx] = (VorticleData){
+        .position    = pos,
+        .direction   = (Vector3){ noiseScale, noiseSpeed, 0.0f },
+        .radius      = radius,
+        .strength    = strength,
+        .type        = VORTICLE_TURBULENCE,
+        .lifetime    = duration,
+        .maxLifetime = duration,
+        .inwardPull  = 0.0f,
+        .active      = true,
+    };
+    return idx;
+}
+
 // -----------------------------------------------------------------------------
 // Evaluators
 // -----------------------------------------------------------------------------
@@ -275,6 +294,18 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
                     totalVel = Vector3Add(totalVel, pullVel);
                 }
             }
+        } else if (v->type == VORTICLE_TURBULENCE) {
+            // Nhiễu loạn lưu 3D Perlin cục bộ: 3 kênh decorrelated Perlin Noise
+            float ns = v->direction.x; // noiseScale
+            float spd = v->direction.y; // noiseSpeed
+            float px_s = pos.x * ns, py_s = pos.y * ns, pz_s = pos.z * ns;
+            float t = time * spd;
+            float nx = Noise_Perlin3D(px_s + t,       py_s + 17.3f, pz_s - t * 0.7f);
+            float ny = Noise_Perlin3D(px_s + 37.1f,   py_s - t * 0.8f, pz_s + 19.7f);
+            float nz = Noise_Perlin3D(px_s - t * 0.6f, py_s + 53.9f, pz_s + t * 0.5f);
+            float turbStrength = v->strength * weight;
+            Vector3 turb = { nx * turbStrength, ny * turbStrength, nz * turbStrength };
+            totalVel = Vector3Add(totalVel, turb);
         }
     }
 

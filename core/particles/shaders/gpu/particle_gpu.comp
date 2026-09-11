@@ -435,6 +435,17 @@ vec3 evalWindVelocity(vec3 pos, float time) {
                     totalVel += radDir * (-inwardPull * weight * coreFactor);
                 }
             }
+        } else if (vType == 3) { // VORTICLE_TURBULENCE
+            // Nhiễu loạn lưu 3D Perlin cục bộ: 3 kênh decorrelated Perlin Noise
+            float ns = vDir.x; // noiseScale packed in direction.x
+            float spd = vDir.y; // noiseSpeed packed in direction.y
+            float px_s = pos.x * ns, py_s = pos.y * ns, pz_s = pos.z * ns;
+            float t = time * spd;
+            float nx = noiseScalar(vec3(px_s + t,       py_s + 17.3, pz_s - t * 0.7));
+            float ny = noiseScalar(vec3(px_s + 37.1,    py_s - t * 0.8, pz_s + 19.7));
+            float nz = noiseScalar(vec3(px_s - t * 0.6, py_s + 53.9, pz_s + t * 0.5));
+            float turbStrength = vStrength * weight;
+            totalVel += vec3(nx * turbStrength, ny * turbStrength, nz * turbStrength);
         }
     }
     return totalVel;
@@ -486,8 +497,14 @@ void main() {
                                        p.vel_drag.xyz, p.route_data.w, u_dt,
                                        p.formation_data.xyz);
     else {
-        // Thuần túy chịu tác động khí động học từ Wind System (không dùng lực nhớt nhân tạo)
-        vec3 windVel = evalWindVelocity(p.pos_radius.xyz, u_time);
+        // Thuần túy chịu tác động khí động học từ Wind System
+        // Jitter per-particle: mỗi hạt sample gió tại vị trí lệch riêng (hash từ idx)
+        // để phá vỡ coherence không gian của Perlin Noise khi tất cả hạt cùng vị trí target
+        float h1 = fract(sin(float(idx) * 127.1) * 43758.5453);
+        float h2 = fract(sin(float(idx) * 269.5) * 43758.5453);
+        float h3 = fract(sin(float(idx) * 419.2) * 43758.5453);
+        vec3 samplePos = p.pos_radius.xyz + vec3(h1 - 0.5, h2 - 0.5, h3 - 0.5) * 3.0;
+        vec3 windVel = evalWindVelocity(samplePos, u_time);
         float blendRate = 1.0 - exp(-3.5 * u_dt);
         p.vel_drag.xyz += (windVel - p.vel_drag.xyz) * blendRate;
         p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
@@ -505,10 +522,8 @@ void main() {
             p.pos_radius.xyz += outward * uTravelPaths[pathIndex].arrival.y;
         if (uTravelPaths[pathIndex].arrival.z != 0.0)
             p.vel_drag.xyz += outward * uTravelPaths[pathIndex].arrival.z;
-        else {
-            vec3 windVel = evalWindVelocity(p.pos_radius.xyz, u_time);
-            p.vel_drag.xyz = windVel;
-        }
+        // arrivalKick = 0: không gán cứng velocity = windVel tại frame arrival
+        // Per-frame blend (dòng 501-503) sẽ kéo velocity về gió mượt mà
         p.impact_data.x = 0.0;
         p.impact_data.y = 1.0;
     } else if (reachedTarget) {

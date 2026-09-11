@@ -697,8 +697,20 @@ void GpuParticleSystem_Update(float dt)
         } else {
             if (impactActive) {
                 p->impact_age += dt;
-                // Tiếp tục chịu tác động thuần túy từ luồng gió của Wind System (sóng xung kích tỏa tròn + lốc xoáy + gió nền)
-                Vector3 windVel = Wind_EvaluateVelocity((Vector3){p->px, p->py, p->pz}, s_elapsed_time);
+                // Jitter per-particle: phá vỡ coherence Perlin khi tất cả hạt cùng vị trí target
+                float seed = (float)i;
+                float h1 = fmodf(sinf(seed * 127.1f) * 43758.5453f, 1.0f);
+                float h2 = fmodf(sinf(seed * 269.5f) * 43758.5453f, 1.0f);
+                float h3 = fmodf(sinf(seed * 419.2f) * 43758.5453f, 1.0f);
+                if (h1 < 0.0f) h1 += 1.0f;
+                if (h2 < 0.0f) h2 += 1.0f;
+                if (h3 < 0.0f) h3 += 1.0f;
+                Vector3 samplePos = {
+                  p->px + (h1 - 0.5f) * 3.0f,
+                  p->py + (h2 - 0.5f) * 3.0f,
+                  p->pz + (h3 - 0.5f) * 3.0f
+                };
+                Vector3 windVel = Wind_EvaluateVelocity(samplePos, s_elapsed_time);
                 float blendRate = 1.0f - expf(-3.5f * dt);
                 p->vx += (windVel.x - p->vx) * blendRate;
                 p->vy += (windVel.y - p->vy) * blendRate;
@@ -719,19 +731,17 @@ void GpuParticleSystem_Update(float dt)
             p->impact_age = 0.0f;
             p->impact_active = 1.0f;
 
-            // VỤ NỔ HOÀN TOÀN BẰNG WIND SYSTEM: Kích phát sóng xung kích áp suất gió tỏa tròn (Radial Blast)
+            // VỤ NỔ HOÀN TOÀN BẰNG WIND SYSTEM: Kích phát sóng xung kích + nhiễu loạn lưu cục bộ
             Vector3 blastPos = (s_pathRegistry[pathIndex] && s_pathRegistry[pathIndex]->target) ? *s_pathRegistry[pathIndex]->target : position;
             static float s_lastGpuArrivalWindTime = -10.0f;
             if (s_elapsed_time - s_lastGpuArrivalWindTime > 0.35f) {
                 s_lastGpuArrivalWindTime = s_elapsed_time;
                 Wind_SpawnRadialBlast(blastPos, 2.4f, 2.0f, 0.25f);
+                // Nhiễu loạn lưu 3D Perlin cục bộ: bán kính 6m, 35 m/s, suy giảm tự nhiên trong 2.5s
+                Wind_SpawnTurbulence(blastPos, 6.0f, 35.0f, 0.90f, 2.8f, 2.5f);
             }
-
-            Vector3 windVel = Wind_EvaluateVelocity(position, s_elapsed_time);
-            p->vx = windVel.x;
-            p->vy = windVel.y;
-            p->vz = windVel.z;
-
+            // Per-frame blend sẽ kéo vận tốc hạt về phía gió mượt mà
+            // (không gán cứng tại frame arrival — tránh hạt bị bắn cùng hướng)
             continue;
         }
         if (reachedTarget) {

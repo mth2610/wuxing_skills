@@ -47,6 +47,9 @@ int Wind_SpawnRadialBlast(Vector3 pos, float radius, float strength, float durat
 // 3. Lốc xoáy quanh trục (dòng đối lưu nhiệt ngọn lửa, lốc xoáy)
 int Wind_SpawnVortex(Vector3 pos, Vector3 axis, float radius, float strength, float inwardPull, float duration);
 
+// 4. Nhiễu loạn lưu 3D Perlin cục bộ (va chạm skill gây xáo trộn dòng khí)
+int Wind_SpawnTurbulence(Vector3 pos, float radius, float strength, float noiseScale, float noiseSpeed, float duration);
+
 // -----------------------------------------------------------------------------
 // Receivers: Đánh giá vận tốc và gia tốc gió tại một điểm trong không gian
 // -----------------------------------------------------------------------------

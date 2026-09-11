@@ -20,12 +20,14 @@
 typedef enum {
     VORTICLE_LINEAR_GUST = 0, // Luồng gió thẳng có hướng (vệt chém kiếm, đạn phóng lướt)
     VORTICLE_RADIAL_BLAST,    // Sóng xung kích đẩy tỏa tròn (chưởng nổ, dậm chấn động)
-    VORTICLE_VORTEX           // Lốc xoáy quanh trục (lửa trại đối lưu, lốc xoáy)
+    VORTICLE_VORTEX,          // Lốc xoáy quanh trục (lửa trại đối lưu, lốc xoáy)
+    VORTICLE_TURBULENCE       // Nhiễu loạn lưu 3D Perlin cục bộ (va chạm skill, vụ nổ)
 } VorticleType;
 
 typedef struct {
     Vector3      position;    // Vị trí tâm quả cầu gió (world-space)
     Vector3      direction;   // Hướng luồng gió (GUST) hoặc trục xoáy (VORTEX, normalized)
+                              // Với TURBULENCE: x = noiseScale, y = noiseSpeed, z = unused
     float        radius;      // Bán kính ảnh hưởng (m)
     float        strength;    // Gia tốc tối đa tại tâm (m/s^2)
     VorticleType type;
