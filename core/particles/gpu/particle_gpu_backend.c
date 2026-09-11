@@ -725,8 +725,6 @@ void GpuParticleSystem_Update(float dt)
             if (s_elapsed_time - s_lastGpuArrivalWindTime > 0.35f) {
                 s_lastGpuArrivalWindTime = s_elapsed_time;
                 Wind_SpawnRadialBlast(blastPos, 2.4f, 2.0f, 0.25f);
-                Wind_SpawnVortex(blastPos, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 7.2f, 2.2f, 0.75f);
-                Wind_SpawnVortex(blastPos, (Vector3){0.7f, 0.7f, 0.0f}, 2.6f, 5.0f, 1.4f, 0.60f);
             }
 
             Vector3 windVel = Wind_EvaluateVelocity(position, s_elapsed_time);

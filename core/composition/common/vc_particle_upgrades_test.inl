@@ -225,8 +225,6 @@ static void GuidedParticleTest_Update(float dt)
             if (!state->arrivalWindTriggered) {
                 state->arrivalWindTriggered = true;
                 Wind_SpawnRadialBlast(state->target, 2.4f, 2.0f, 0.25f);
-                Wind_SpawnVortex(state->target, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 7.2f, 2.2f, 0.75f);
-                Wind_SpawnVortex(state->target, (Vector3){0.7f, 0.7f, 0.0f}, 2.6f, 5.0f, 1.4f, 0.60f);
             }
 
             // Phân rã năng lượng loạn lưu 3D Perlin theo quy luật tiêu tán chất lưu (Kolmogorov Decay):

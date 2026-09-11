@@ -641,8 +641,6 @@ void UpdateParticles(float dt)
         if (s_particleTime - s_lastCpuArrivalWindTime > 0.35f) {
           s_lastCpuArrivalWindTime = s_particleTime;
           Wind_SpawnRadialBlast(blastPos, 2.4f, 2.0f, 0.25f);
-          Wind_SpawnVortex(blastPos, (Vector3){0.0f, 1.0f, 0.0f}, 3.5f, 7.2f, 2.2f, 0.75f);
-          Wind_SpawnVortex(blastPos, (Vector3){0.7f, 0.7f, 0.0f}, 2.6f, 5.0f, 1.4f, 0.60f);
         }
 
         // Hạt nhận vận tốc từ Hệ thống Gió nếu không cấu hình arrivalKick nhân tạo
