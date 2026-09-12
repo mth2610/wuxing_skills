@@ -82,6 +82,7 @@
 - In this engine `matModel * vertexPosition` is shader/view space, not world space; positional map effects must inverse-transform it before comparing against world-space centres.
 - Never reduce a position-dependent Vortex/Turbulence field to one shared direction; keep it spatial, and derive Radial Blast direction independently at each receiver.
 - A vegetation Radial Blast must read briefly as a moving pressure front before a stronger Turbulence wake takes over. Ramp impact Turbulence in with a short attack instead of applying full strength on the spawn frame; mirror the envelope and authored budgets across CPU/GPU and lock them with tests.
+- Core Wind owns vegetation forcing, including world-space grass-wave noise; vegetation shaders may only filter that field through species-specific lag, compliance, flutter, and bend limits. Do not add standalone sine/noise motion that remains active when the sampled wind is zero, and keep visible/shadow deformation identical.
 - Large-map directional shadows keep static casters in a world-fixed cached layer and dynamic casters in the camera-following layer; bind both samplers explicitly, and invalidate/rebuild the static cache when the sun direction changes.
 - Before changing a public function's behavior: `grep -r` across `skills/` for callers. Breaking changes must be documented (`core/docs/API.md` etc.) BEFORE landing, per `CLAUDE.md` cross-module rule.
 - No dynamic allocation in core runtime paths — static pools matching existing patterns (`MAX_DECALS`, `MAX_VFX_LIGHTS`, `MAX_DISTORTION_SOURCES`).

@@ -27,8 +27,7 @@ static Vector2 s_natureInteractionCenter = {0};
 static bool s_natureInteractionReady = false;
 static bool s_natureInteractionOpen = false;
 static bool s_natureWindReceiverReady = false;
-static Vector2 s_natureWindDirection = {1.0f, 0.0f};
-static float s_natureWindSpeedScale = 1.0f;
+static WindMacroConfig s_natureWindMacro = {0};
 static float s_natureInteractionHeight = 0.0f;
 static bool s_natureWindImpactEnabled = false;
 static Vector2 s_natureWindImpactCenter = {0};
@@ -359,18 +358,7 @@ void MapProp_AddNatureWindVorticles(float time)
     if (!s_natureInteractionOpen)
         return;
 
-    WindMacroConfig macro = Wind_GetMacro();
-    float macroSpeed = sqrtf(macro.baseDirection.x * macro.baseDirection.x +
-                             macro.baseDirection.z * macro.baseDirection.z);
-    if (macroSpeed > 0.0001f) {
-        s_natureWindDirection = (Vector2){macro.baseDirection.x / macroSpeed,
-                                           macro.baseDirection.z / macroSpeed};
-        s_natureWindSpeedScale = macroSpeed / kNatureWindReferenceSpeed;
-        if (s_natureWindSpeedScale > 3.0f) s_natureWindSpeedScale = 3.0f;
-    } else {
-        s_natureWindDirection = (Vector2){1.0f, 0.0f};
-        s_natureWindSpeedScale = 0.0f;
-    }
+    s_natureWindMacro = Wind_GetMacro();
     s_natureWindReceiverReady = true;
 
     int vorticleCount = 0;
@@ -459,8 +447,7 @@ void MapProp_ClearNatureInteraction(void)
     s_natureInteractionReady = false;
     s_natureInteractionOpen = false;
     s_natureWindReceiverReady = false;
-    s_natureWindDirection = (Vector2){1.0f, 0.0f};
-    s_natureWindSpeedScale = 1.0f;
+    s_natureWindMacro = (WindMacroConfig){0};
     s_natureInteractionHeight = 0.0f;
     s_natureWindImpactEnabled = false;
     s_natureWindImpactCenter = (Vector2){0};
@@ -845,13 +832,61 @@ static Model Nature_ModelFromMesh(Mesh mesh, Shader shader)
     return model;
 }
 
-static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection, float windStrength,
-                                bool useTexture, float alphaCutoff)
+typedef enum NatureWindResponseKind {
+    NATURE_WIND_RESPONSE_GRASS = 0,
+    NATURE_WIND_RESPONSE_FLOWER,
+    NATURE_WIND_RESPONSE_STATIC,
+} NatureWindResponseKind;
+
+static Vector4 Nature_GetWindResponse(NatureWindResponseKind kind)
 {
-    if (s_natureWindReceiverReady) {
-        windDirection = s_natureWindDirection;
-        windStrength *= s_natureWindSpeedScale;
+    if (kind == NATURE_WIND_RESPONSE_FLOWER)
+        return (Vector4){0.12f, 0.08f, 3.2f, 0.72f};
+    if (kind == NATURE_WIND_RESPONSE_STATIC)
+        return (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
+    return (Vector4){0.035f, 0.14f, 6.8f, 1.0f};
+}
+
+static void Nature_UpdateWindFieldShader(Shader shader, Vector2 fallbackDirection,
+                                         NatureWindResponseKind responseKind)
+{
+    WindMacroConfig macro = s_natureWindMacro;
+    if (!s_natureWindReceiverReady) {
+        float directionLength = sqrtf(fallbackDirection.x * fallbackDirection.x +
+                                      fallbackDirection.y * fallbackDirection.y);
+        Vector2 direction = directionLength > 0.0001f
+            ? (Vector2){fallbackDirection.x / directionLength,
+                        fallbackDirection.y / directionLength}
+            : (Vector2){0.0f, 0.0f};
+        macro = (WindMacroConfig){
+            .baseDirection = {direction.x * kNatureWindReferenceSpeed, 0.0f,
+                              direction.y * kNatureWindReferenceSpeed},
+            .gustAmplitude = 0.6f,
+            .noiseScale = 0.06f,
+            .noiseSpeed = 1.0f,
+            .terrainLiftK = 0.0f,
+        };
     }
+    Vector4 response = Nature_GetWindResponse(responseKind);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windBaseVelocity"),
+                   &macro.baseDirection, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windGustAmplitude"),
+                   &macro.gustAmplitude, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windNoiseScale"),
+                   &macro.noiseScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windNoiseSpeed"),
+                   &macro.noiseSpeed, SHADER_UNIFORM_FLOAT);
+    int fieldDetail = GfxQuality_Get() >= GFX_MED ? 1 : 0;
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windFieldDetail"),
+                   &fieldDetail, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_natureWindResponse"),
+                   &response, SHADER_UNIFORM_VEC4);
+}
+
+static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection, float windStrength,
+                                bool useTexture, float alphaCutoff,
+                                NatureWindResponseKind responseKind)
+{
     float windLength = sqrtf(windDirection.x * windDirection.x + windDirection.y * windDirection.y);
     if (windLength > 0.0001f) {
         windDirection.x /= windLength;
@@ -867,8 +902,8 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
     if (worldFromShaderSpaceLoc >= 0)
         SetShaderValueMatrix(shader, worldFromShaderSpaceLoc, worldFromShaderSpace);
     SetShaderValue(shader, GetShaderLocation(shader, "u_time"), &time, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_windDirection"), &windDirection, SHADER_UNIFORM_VEC2);
     SetShaderValue(shader, GetShaderLocation(shader, "u_windStrength"), &windStrength, SHADER_UNIFORM_FLOAT);
+    Nature_UpdateWindFieldShader(shader, windDirection, responseKind);
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightDir"), &lightDir, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightColor"), &sunRgb, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_ambientColor"), &ambientRgb, SHADER_UNIFORM_VEC3);
@@ -931,12 +966,9 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
 }
 
 static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDirection,
-                                      float windStrength, bool useTexture, float alphaCutoff)
+                                      float windStrength, bool useTexture, float alphaCutoff,
+                                      NatureWindResponseKind responseKind)
 {
-    if (s_natureWindReceiverReady) {
-        windDirection = s_natureWindDirection;
-        windStrength *= s_natureWindSpeedScale;
-    }
     float windLength = sqrtf(windDirection.x * windDirection.x + windDirection.y * windDirection.y);
     if (windLength > 0.0001f) {
         windDirection.x /= windLength;
@@ -948,10 +980,9 @@ static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDir
         SetShaderValueMatrix(shader, worldFromShaderSpaceLoc, worldFromShaderSpace);
     SetShaderValue(shader, GetShaderLocation(shader, "u_time"),
                    &time, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_windDirection"),
-                   &windDirection, SHADER_UNIFORM_VEC2);
     SetShaderValue(shader, GetShaderLocation(shader, "u_windStrength"),
                    &windStrength, SHADER_UNIFORM_FLOAT);
+    Nature_UpdateWindFieldShader(shader, windDirection, responseKind);
     int textured = useTexture ? 1 : 0;
     SetShaderValue(shader, GetShaderLocation(shader, "u_useTexture"),
                    &textured, SHADER_UNIFORM_INT);
@@ -1739,7 +1770,8 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     Shader shader = Nature_GetShader(meadow->textured);
     Nature_BeginWindReceiverShader(shader);
     Nature_UpdateShader(shader, time, windDirection, windStrength,
-                        meadow->textured, meadow->alphaCutoff);
+                        meadow->textured, meadow->alphaCutoff,
+                        NATURE_WIND_RESPONSE_GRASS);
     rlDisableBackfaceCulling();
     for (int i = 0; i < meadow->chunkCount; i++) {
         MapMeadowChunk *chunk = &meadow->chunks[i];
@@ -1768,7 +1800,8 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
     Shader shader = NatureShadow_GetShader();
     Nature_BeginWindReceiverShader(shader);
     Nature_UpdateShadowShader(shader, time, windDirection, windStrength,
-                              meadow->textured, meadow->alphaCutoff);
+                              meadow->textured, meadow->alphaCutoff,
+                              NATURE_WIND_RESPONSE_GRASS);
     rlDisableBackfaceCulling();
     float maxDist = meadow->shadowDistance + 6.0f;
     float maxDistSq = maxDist * maxDist;
@@ -2510,7 +2543,8 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
     Shader shader = Nature_GetShader(field->textured);
     Nature_BeginWindReceiverShader(shader);
     Nature_UpdateShader(shader, time, windDirection, windStrength,
-                        field->textured, field->alphaCutoff);
+                        field->textured, field->alphaCutoff,
+                        NATURE_WIND_RESPONSE_FLOWER);
     rlDisableBackfaceCulling();
     DrawModel(useFarModel ? field->farModel : field->model, worldOffset, 1.0f, WHITE);
     Nature_EndWindReceiverShader();
@@ -2537,7 +2571,8 @@ void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOff
     Shader shader = NatureShadow_GetShader();
     Nature_BeginWindReceiverShader(shader);
     Nature_UpdateShadowShader(shader, time, windDirection, windStrength,
-                              field->textured, field->alphaCutoff);
+                              field->textured, field->alphaCutoff,
+                              NATURE_WIND_RESPONSE_FLOWER);
     Shader previous = field->model.materials[0].shader;
     field->model.materials[0].shader = shader;
     rlDisableBackfaceCulling();
@@ -2712,7 +2747,8 @@ void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time)
     Vector3 position = water->config.center;
     Shader bankShader = Nature_GetShader(false);
     Nature_BeginWindReceiverShader(bankShader);
-    Nature_UpdateShader(bankShader, time, (Vector2){0.0f, 0.0f}, 0.0f, false, 1.0f);
+    Nature_UpdateShader(bankShader, time, (Vector2){0.0f, 0.0f}, 0.0f,
+                        false, 1.0f, NATURE_WIND_RESPONSE_STATIC);
     int noInteraction = 0;
     SetShaderValue(bankShader, GetShaderLocation(bankShader, "u_interactionEnabled"),
                    &noInteraction, SHADER_UNIFORM_INT);

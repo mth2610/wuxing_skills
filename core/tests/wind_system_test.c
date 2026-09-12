@@ -213,6 +213,20 @@ int main(void) {
         TEST_CHECK(FileContains("core/particles/shaders/gpu/particle_gpu.comp",
                                 "f * f * (3.0 - 2.0 * f)"),
                    "GPU wind keeps the mirrored cubic interpolation");
+        TEST_CHECK(FileContains("maps/toolkit/shaders/nature_wind_field.glsl",
+                                "p = fract(p * vec3(0.1031, 0.1030, 0.0973))") &&
+                   FileContains("maps/toolkit/shaders/nature_wind_field.glsl",
+                                "baseVelocity.x * (1.0 + u_windGustAmplitude * nx * 0.5)") &&
+                   FileContains("maps/toolkit/shaders/nature_wind_field.glsl",
+                                "baseVelocity.z * (1.0 + u_windGustAmplitude * nz * 0.5)"),
+                   "Vegetation macro waves mirror the authoritative Core wind field");
+        TEST_CHECK(FileContains("maps/toolkit/shaders/nature_wind_field.glsl",
+                                "uniform int u_windFieldDetail;") &&
+                   FileContains("maps/toolkit/shaders/nature_wind_field.glsl",
+                                "if (u_windFieldDetail == 0)") &&
+                   FileContains("maps/toolkit/map_props_nature.inl",
+                                "u_windFieldDetail"),
+                   "Low-tier vegetation uses the cheaper one-channel Core wind field");
     }
 
     // Tắt macro wind để kiểm tra riêng từng Vorticle một cách chính xác
@@ -468,6 +482,27 @@ int main(void) {
                FileContains("maps/toolkit/shaders/nature_shadow.vs",
                             "NatureDominantWindImpact"),
                "Visible vegetation and dynamic shadow casters share the dominant impact bend");
+    TEST_CHECK(FileContains("maps/toolkit/shaders/nature_lit.vs",
+                            "NatureVegetationWindBend") &&
+               FileContains("maps/toolkit/shaders/nature_shadow.vs",
+                            "NatureVegetationWindBend") &&
+               FileContains("maps/toolkit/shaders/nature_wind_field.glsl",
+                            "NatureGlobalWindXZ") &&
+               !FileContains("maps/toolkit/shaders/nature_lit.vs", "baseSway") &&
+               !FileContains("maps/toolkit/shaders/nature_lit.vs", "gustWave") &&
+               !FileContains("maps/toolkit/shaders/nature_lit.vs", "tipJitter"),
+               "Vegetation has no independent procedural wind outside the Core field");
+    TEST_CHECK(FileContains("maps/toolkit/map_props_nature.inl",
+                            "u_windBaseVelocity") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "u_windGustAmplitude") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "u_windNoiseScale") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "u_natureWindResponse") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "NATURE_WIND_RESPONSE_FLOWER"),
+               "Vegetation receives Core macro parameters and species response controls");
     TEST_CHECK(FileContains("maps/toolkit/map_props_nature.inl",
                             "BeginShaderMode(shader); // WIND_RECEIVER_UNIFORM_SCOPE") &&
                FileContains("maps/toolkit/map_props_nature.inl",
