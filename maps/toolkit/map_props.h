@@ -308,6 +308,11 @@ float MapProp_GetMacroFlowAngle(float x, float z);
 // and End uploads it once. Strength is displacement in world metres.
 void MapProp_BeginNatureInteraction(Vector3 focus, float dt);
 void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength);
+// Sends the strongest Wind Vorticle through a direct uniform receiver, rasterizes
+// the remaining sources into the already-open interaction field, and synchronizes
+// macro direction/speed. Call once between Begin/End; grass and flowers share the
+// same visible + dynamic-shadow deformation.
+void MapProp_AddNatureWindVorticles(float time);
 void MapProp_EndNatureInteraction(void);
 void MapProp_ClearNatureInteraction(void);
 typedef struct

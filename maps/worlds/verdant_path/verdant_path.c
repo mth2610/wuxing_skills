@@ -559,6 +559,7 @@ void UpdateVerdantPathMap(float dt)
         CaptureVerdantStaticShadows();
         MapProp_BeginNatureInteraction(camera.target, dt);
         MapProp_AddNatureInteractor(camera.target, 1.25f, 0.34f);
+        MapProp_AddNatureWindVorticles(s_time);
         MapProp_EndNatureInteraction();
     }
 }

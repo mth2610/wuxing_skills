@@ -231,6 +231,12 @@ static void GuidedParticleTest_Update(float dt)
 // NEW FX button. The internal name above intentionally remains test-specific.
 void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target)
 {
+    const char *trace = getenv("WUXING_WIND_RECEIVER_TRACE");
+    if (trace != NULL && trace[0] != '\0' && trace[0] != '0') {
+        TraceLog(LOG_INFO,
+                 "[WIND_TRACE] guided_cast source=(%.2f,%.2f,%.2f) target=(%.2f,%.2f,%.2f)",
+                 source.x, source.y, source.z, target.x, target.y, target.z);
+    }
     GuidedParticleTest_Spawn(source, target);
 }
 

@@ -723,6 +723,24 @@ int main(int argc, char **argv) {
     if (IsKeyPressed(KEY_K)) {
         int nextMap = (MapManager_GetActiveIndex() + 1) % MapManager_GetCount();
         MapManager_SetActiveIndex(nextMap);
+        // The VFX tester normally pivots at DEFAULT_ARENA's (6, 4.4). After
+        // cycling to a large world that point can contain only ground texture,
+        // with the actual vegetation receivers tens of metres away. Move the
+        // fixture to the first authored forest zone so surface-reactive VFX are
+        // evaluated against real grass/flower geometry on the selected map.
+        if (currentScreen == SCREEN_VFX_TESTER) {
+            int zoneCount = Map_GetZoneCount();
+            for (int zoneIndex = 0; zoneIndex < zoneCount; zoneIndex++) {
+                const MapZone *zone = Map_GetZone(zoneIndex);
+                if (zone == NULL || zone->type != NAT_FOREST)
+                    continue;
+                player.position = zone->center;
+                player.position.y = MapManager_GetGroundHeightAt(
+                    player.position.x, player.position.z);
+                Entity_SetPosition(player.agentId, player.position);
+                break;
+            }
+        }
     }
     if (IsKeyPressed(KEY_L)) {
         GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4)); // Real Shading — cycle UNLIT..HIGH

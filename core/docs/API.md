@@ -683,6 +683,35 @@ _Inline helpers / macros only — see header._
   void Atmosphere_Unload(void);
 ```
 
+### `core/wind/wind_types.h`
+_Inline helpers / macros only — see header._
+**Enums:** VorticleType { VORTICLE_LINEAR_GUST,VORTICLE_RADIAL_BLAST,VORTICLE_VORTEX,VORTICLE_TURBULENCE }
+**Structs** (fields in header): VorticleData, WindMacroConfig, WindTerrainGrid
+
+### `core/wind/wind_system.h`
+```c
+  void Wind_Init(void);
+  void Wind_Update(float dt);
+  void Wind_Unload(void);
+  void Wind_Clear(void);
+  void Wind_SetMacro(const WindMacroConfig *cfg);
+  WindMacroConfig Wind_GetMacro(void);
+  void Wind_SetTerrainHeightQuery(TerrainHeightQueryFn queryFn, void *userData);
+  void Wind_RebuildTerrainGrid(Vector2 centerXZ, Vector2 halfExtentXZ);
+  const WindTerrainGrid *Wind_GetTerrainGrid(void);
+  int Wind_SpawnGust(Vector3 pos, Vector3 dir, float radius, float strength, float duration);
+  int Wind_SpawnRadialBlast(Vector3 pos, float radius, float strength, float duration);
+  int Wind_SpawnVortex(Vector3 pos, Vector3 axis, float radius, float strength, float inwardPull, float duration);
+  int Wind_SpawnTurbulence(Vector3 pos, float radius, float strength, float noiseScale, float noiseSpeed, float duration);
+  Vector3 Wind_EvaluateVelocity(Vector3 pos, float time);
+  Vector3 Wind_EvaluateVorticleVelocity(const VorticleData *vorticle, Vector3 pos, float time);
+  Vector3 Wind_EvaluateAcceleration(Vector3 pos, float time, Vector3 currentVel);
+  Vector3 Wind_GetMacroAt(Vector3 pos, float time);
+  const VorticleData* Wind_GetActiveVorticles(int *outCount);
+  int Wind_GetActiveCount(void);
+  void Wind_DrawDebug(Vector3 anchorPos);
+```
+
 ### `core/material/material_system.h`
 ```c
   void MaterialSystem_Init(void);

@@ -50,6 +50,10 @@ Wind_SpawnVortex(firePos, (Vector3){0, 1, 0}, 2.5f, 8.0f, 2.0f, 2.0f);
 // Hạt môi trường hoặc tro than lấy vận tốc gió tại vị trí hạt:
 Vector3 windVel = Wind_EvaluateVelocity(particlePos, GetTime());
 particlePos = Vector3Add(particlePos, Vector3Scale(windVel, dt));
+
+// Receiver dạng field (ví dụ grass/flower texture) đánh giá từng nguồn mà
+// không sao chép lại công thức Vorticle:
+Vector3 localWind = Wind_EvaluateVorticleVelocity(vorticle, samplePos, time);
 ```
 
 ---

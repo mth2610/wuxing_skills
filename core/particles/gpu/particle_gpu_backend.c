@@ -773,9 +773,17 @@ void GpuParticleSystem_Update(float dt)
             static float s_lastGpuArrivalWindTime = -10.0f;
             if (s_elapsed_time - s_lastGpuArrivalWindTime > 0.35f) {
                 s_lastGpuArrivalWindTime = s_elapsed_time;
-                Wind_SpawnRadialBlast(blastPos, 2.4f, 2.0f, 0.25f);
-                // Nhiễu loạn lưu 3D Perlin cục bộ: bán kính 6m, 35 m/s, suy giảm tự nhiên trong 2.5s
-                Wind_SpawnTurbulence(blastPos, 6.0f, 35.0f, 0.90f, 2.8f, 2.5f);
+                // Keep the radial impulse perceptually dominant; turbulence is
+                // only the weaker wake that follows the expanding wavefront.
+                int radialSlot = Wind_SpawnRadialBlast(blastPos, 4.5f, 7.5f, 0.75f);
+                int turbulenceSlot = Wind_SpawnTurbulence(blastPos, 6.0f, 18.0f, 0.90f, 2.8f, 3.0f);
+                const char *trace = getenv("WUXING_WIND_RECEIVER_TRACE");
+                if (trace != NULL && trace[0] != '\0' && trace[0] != '0') {
+                    TraceLog(LOG_INFO,
+                             "[WIND_TRACE] guided_arrival backend=gpu target=(%.2f,%.2f,%.2f) radial_slot=%d turbulence_slot=%d active=%d",
+                             blastPos.x, blastPos.y, blastPos.z, radialSlot,
+                             turbulenceSlot, Wind_GetActiveCount());
+                }
             }
             // Per-frame blend sẽ kéo vận tốc hạt về phía gió mượt mà
             // (không gán cứng tại frame arrival — tránh hạt bị bắn cùng hướng)

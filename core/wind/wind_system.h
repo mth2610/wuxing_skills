@@ -68,6 +68,12 @@ int Wind_SpawnTurbulence(Vector3 pos, float radius, float strength, float noiseS
 // Vorticles và Terrain Lift. Vorticle strength cũng dùng đơn vị m/s.
 Vector3 Wind_EvaluateVelocity(Vector3 pos, float time);
 
+// Evaluates one Vorticle using the same formula as the aggregate CPU/GPU wind
+// field. Receivers that spatially rasterize sources (for example vegetation)
+// use this to avoid maintaining a divergent copy of the Vorticle equations.
+Vector3 Wind_EvaluateVorticleVelocity(const VorticleData *vorticle,
+                                      Vector3 pos, float time);
+
 // Tính gia tốc kéo receiver về vận tốc khí mục tiêu, đơn vị m/s^2.
 Vector3 Wind_EvaluateAcceleration(Vector3 pos, float time, Vector3 currentVel);
 

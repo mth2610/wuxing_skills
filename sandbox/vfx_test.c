@@ -19,6 +19,7 @@
 #include "core/material/material_system.h"
 #include "core/skill_helper.h"
 #include "core/path_spline.h"
+#include "core/map_manager.h"
 
 #define TEST_PATH_POINT_COUNT 16
 static Vector3 s_testPathPoints[TEST_PATH_POINT_COUNT];
@@ -791,7 +792,12 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
                         // @gen:newfx_trigger begin
         if (s_testCategory == TEST_CAT_NEWFX && s_testIndex == 26) {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
-            VFX_ComposeGuidedParticle(castSocket, mouseTarget3D);
+            Vector3 guidedTarget = mouseTarget3D;
+            if (s_clickedOnUI) {
+                guidedTarget = Vector3Add(playerPos, (Vector3){2.5f, 0.0f, 0.8f});
+                guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
+            }
+            VFX_ComposeGuidedParticle(castSocket, guidedTarget);
             return false;
         }
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
@@ -900,7 +906,12 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             // @gen:newfx_trigger begin
         if (s_testCategory == TEST_CAT_NEWFX && s_testIndex == 26) {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
-            VFX_ComposeGuidedParticle(castSocket, mouseTarget3D);
+            Vector3 guidedTarget = mouseTarget3D;
+            if (s_clickedOnUI) {
+                guidedTarget = Vector3Add(playerPos, (Vector3){2.5f, 0.0f, 0.8f});
+                guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
+            }
+            VFX_ComposeGuidedParticle(castSocket, guidedTarget);
             return false;
         }
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {

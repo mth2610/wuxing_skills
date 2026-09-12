@@ -85,6 +85,24 @@ static float TestFract(float v) {
     return v - floorf(v);
 }
 
+static float TestSmoothStep(float edge0, float edge1, float value) {
+    float t = (value - edge0) / (edge1 - edge0);
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    return t * t * (3.0f - 2.0f * t);
+}
+
+static float TestVegetationBlastWave(float distance, float radius, float age01) {
+    float frontProgress = fminf(fmaxf(age01 / 0.75f, 0.0f), 1.0f);
+    float frontRadius = frontProgress * radius;
+    float bandWidth = fmaxf(0.45f, radius * 0.22f);
+    float distanceToFront = fabsf(distance - frontRadius);
+    float wavefront = 1.0f - TestSmoothStep(bandWidth * 0.35f,
+                                             bandWidth, distanceToFront);
+    float tailFade = 1.0f - TestSmoothStep(0.72f, 1.0f, age01);
+    return wavefront * tailFade;
+}
+
 // Numeric mirror of particle_gpu.comp's non-sine hash/noise path. This test
 // compares observable Wind output, not production helper internals.
 static Vector3 TestGpuHash3(Vector3 p) {
@@ -136,7 +154,10 @@ static float TestGpuNoiseScalar(Vector3 p) {
 static bool FileContains(const char *path, const char *needle) {
     FILE *file = fopen(path, "rb");
     if (!file) return false;
-    char buffer[65536];
+    // map_props_nature.inl is intentionally a large generated-style toolkit
+    // translation-unit fragment; read it in full so call-site guards do not
+    // silently inspect only the declarations at the front of the file.
+    char buffer[262144];
     size_t count = fread(buffer, 1, sizeof(buffer) - 1, file);
     fclose(file);
     buffer[count] = '\0';
@@ -221,6 +242,13 @@ int main(void) {
         // Vận tốc tại khoảng cách r/2 (2m theo trục X)
         Vector3 vHalf = Wind_EvaluateVelocity((Vector3){ 2.0f, 1.0f, 0.0f }, 0.0f);
         TEST_NEAR(vHalf.x, 5.0f, 0.05f, "Gust velocity at r/2 is 5.0 m/s (50% attenuation)");
+        int sourceCount = 0;
+        const VorticleData *sources = Wind_GetActiveVorticles(&sourceCount);
+        Vector3 directHalf = Wind_EvaluateVorticleVelocity(
+            sourceCount == 1 ? &sources[0] : NULL,
+            (Vector3){2.0f, 1.0f, 0.0f}, 0.0f);
+        TEST_NEAR(directHalf.x, vHalf.x, 0.0001f,
+                  "Single-source evaluator matches aggregate Vorticle velocity");
 
         // Vận tốc ngoài bán kính (5m > 4m)
         Vector3 vOutside = Wind_EvaluateVelocity((Vector3){ 5.0f, 1.0f, 0.0f }, 0.0f);
@@ -293,7 +321,12 @@ int main(void) {
         float py = pos.y * noiseScale;
         float pz = pos.z * noiseScale;
         float t = time * noiseSpeed;
-        float weight = 1.0f - Vector3Length(pos) / radius;
+        Vector3 initial = Wind_EvaluateVelocity(pos, time);
+        TEST_CHECK(Vector3Length(initial) < 0.0001f,
+                   "Turbulence attack leaves the opening blast readable at spawn");
+
+        Wind_Update(0.2f);
+        float weight = (1.0f - Vector3Length(pos) / radius) * 0.9f;
         Vector3 expected = {
             TestGpuNoiseScalar((Vector3){px + t, py + 17.3f, pz - t * 0.7f}) * strength * weight,
             TestGpuNoiseScalar((Vector3){px + 37.1f, py - t * 0.8f, pz + 19.7f}) * strength * weight,
@@ -393,6 +426,140 @@ int main(void) {
         Wind_SetTerrainHeightQuery(NULL, NULL);
         Vector3 vNoLift = Wind_EvaluateVelocity((Vector3){ 0.0f, 0.0f, 0.0f }, 0.0f);
         TEST_NEAR(vNoLift.y, 0.0f, 0.01f, "Terrain lift removed when query is NULL");
+    }
+
+    // Vegetation must consume the same Vorticle evaluator through the existing
+    // one-sample interaction texture path; no per-vertex source loop is allowed.
+    TEST_CHECK(FileContains("maps/toolkit/map_props.h",
+                            "MapProp_AddNatureWindVorticles") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "Wind_EvaluateVorticleVelocity") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "existingBend.x + airVelocity.x * kNatureWindBendPerMps") &&
+               FileContains("maps/worlds/verdant_path/verdant_path.c",
+                            "MapProp_AddNatureWindVorticles(s_time)"),
+               "Grass and flowers receive and superpose active Wind Vorticles");
+    TEST_CHECK(!FileContains("maps/toolkit/shaders/nature_lit.vs", "u_vorticles") &&
+               FileContains("maps/toolkit/shaders/nature_lit.vs",
+                            "texture(u_interactionMap"),
+               "Vegetation keeps one interaction-field lookup instead of a Vorticle loop");
+    TEST_CHECK(FileContains("maps/toolkit/map_props_nature.inl",
+                            "Nature_UpdateDominantWindImpact") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "Nature_ScrollAndDecayInteraction(windCenter, 0.0f)"),
+               "A remote Vorticle moves the vegetation receiver window to its impact");
+    TEST_CHECK(FileContains("main.c", "currentScreen == SCREEN_VFX_TESTER") &&
+               FileContains("main.c", "zone->type != NAT_FOREST") &&
+               FileContains("main.c", "player.position = zone->center"),
+               "Cycling maps in VFX Test moves the fixture camera to real vegetation");
+    TEST_CHECK(FileContains("sandbox/vfx_test.c", "Vector3 guidedTarget") &&
+               FileContains("sandbox/vfx_test.c", "if (s_clickedOnUI)") &&
+               FileContains("sandbox/vfx_test.c", "MapManager_GetGroundHeightAt"),
+               "Guided Particle panel trigger uses a nearby ground target, not the UI ray");
+    TEST_CHECK(FileContains("maps/toolkit/map_props_nature.inl",
+                            "Nature_UpdateDominantWindImpact") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "u_windImpactCenter") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "u_windImpactStrength"),
+               "Vegetation uploads the dominant live Vorticle without depending on texture upload");
+    TEST_CHECK(FileContains("maps/toolkit/shaders/nature_lit.vs",
+                            "NatureDominantWindImpact") &&
+               FileContains("maps/toolkit/shaders/nature_shadow.vs",
+                            "NatureDominantWindImpact"),
+               "Visible vegetation and dynamic shadow casters share the dominant impact bend");
+    TEST_CHECK(FileContains("maps/toolkit/map_props_nature.inl",
+                            "BeginShaderMode(shader); // WIND_RECEIVER_UNIFORM_SCOPE") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "EndShaderMode(); // WIND_RECEIVER_UNIFORM_SCOPE") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "Nature_BeginWindReceiverShader(shader);\n    Nature_UpdateShader") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "Nature_BeginWindReceiverShader(shader);\n    Nature_UpdateShadowShader"),
+               "Vegetation activates its shader before uploading wind uniforms on Vulkan");
+    TEST_CHECK(FileContains("core/particles/particle_system.c",
+                            "[WIND_TRACE] guided_arrival backend=cpu") &&
+               FileContains("core/particles/gpu/particle_gpu_backend.c",
+                            "[WIND_TRACE] guided_arrival backend=gpu") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "[WIND_TRACE] vegetation_receiver") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "[WIND_TRACE] vegetation_shader"),
+               "Opt-in trace observes guided arrival, vegetation receiver, and shader upload");
+    TEST_CHECK(FileContains("maps/toolkit/map_props_nature.inl",
+                            "MatrixInvert(rlGetMatrixTransform())") &&
+               FileContains("maps/toolkit/shaders/nature_lit.vs",
+                            "u_worldFromShaderSpace * vec4(shaderPosition, 1.0)") &&
+               FileContains("maps/toolkit/shaders/nature_shadow.vs",
+                            "u_worldFromShaderSpace * vec4(shaderPosition, 1.0)"),
+               "Vegetation converts shader/view positions back to world space before impact distance");
+    TEST_CHECK(FileContains("maps/toolkit/map_props_nature.inl",
+                            "vorticle->type == VORTICLE_LINEAR_GUST ||") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "vorticle->type == VORTICLE_RADIAL_BLAST") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "s_natureWindImpactType = (int)source->type") &&
+               FileContains("maps/toolkit/shaders/nature_wind_impact.glsl",
+                            "u_windImpactType == 1") &&
+               FileContains("maps/toolkit/shaders/nature_wind_impact.glsl",
+                            "pushDirection = delta / distanceToImpact"),
+               "Radial vegetation response points away from impact per plant");
+    TEST_CHECK(FileContains("maps/toolkit/map_props_nature.inl",
+                            "return directImpact;") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "i == directImpact"),
+               "Turbulence and vortices remain spatially sampled instead of becoming one patch-wide direction");
+    TEST_CHECK(FileContains("core/particles/particle_system.c",
+                            "Wind_SpawnRadialBlast(blastPos, 4.5f, 7.5f, 0.75f)") &&
+               FileContains("core/particles/gpu/particle_gpu_backend.c",
+                            "Wind_SpawnRadialBlast(blastPos, 4.5f, 7.5f, 0.75f)") &&
+               FileContains("core/particles/particle_system.c",
+                            "Wind_SpawnTurbulence(blastPos, 6.0f, 18.0f, 0.90f, 2.8f, 3.0f)") &&
+               FileContains("core/particles/gpu/particle_gpu_backend.c",
+                            "Wind_SpawnTurbulence(blastPos, 6.0f, 18.0f, 0.90f, 2.8f, 3.0f)"),
+               "CPU and GPU guided arrivals author a strong long-lived turbulence wake");
+    TEST_CHECK(FileContains("core/wind/wind_system.c",
+                            "Wind_TurbulenceAttackWeight") &&
+               FileContains("core/particles/shaders/gpu/particle_gpu.comp",
+                            "smoothstep(0.0, attackTime, age)"),
+               "CPU and GPU turbulence share a short attack envelope after the blast");
+    TEST_CHECK(FileContains("maps/toolkit/shaders/nature_wind_impact.glsl",
+                            "uniform float u_windImpactAge;") &&
+               FileContains("maps/toolkit/shaders/nature_wind_impact.glsl",
+                            "frontRadius = frontProgress * u_windImpactRadius") &&
+               FileContains("maps/toolkit/shaders/nature_wind_impact.glsl",
+                            "abs(distanceToImpact - frontRadius)") &&
+               FileContains("maps/toolkit/map_props_nature.inl",
+                            "s_natureWindImpactAge = fminf"),
+               "Radial vegetation blast is an expanding wavefront, not a filled Perlin-like patch");
+    {
+        float age01 = 0.45f;
+        float frontRadius = (age01 / 0.75f) * 4.5f;
+        float atCenter = TestVegetationBlastWave(0.0f, 4.5f, age01);
+        float atFront = TestVegetationBlastWave(frontRadius, 4.5f, age01);
+        float outside = TestVegetationBlastWave(5.5f, 4.5f, age01);
+        TEST_CHECK(atFront > 0.99f && atCenter < 0.01f && outside < 0.01f,
+                   "Blast response travels as a localized annulus instead of moving the whole grass patch");
+    }
+
+    // The engine's matModel includes the camera transform. At Verdant's first
+    // flower cluster, directly comparing that view-space result with a world
+    // impact centre rejects a source that is actually centred on the plant.
+    {
+        Vector2 impactWorld = {29.5f, 20.8f};
+        Vector2 cameraTranslation = {-27.0f, -20.0f};
+        Vector2 shaderPosition = {impactWorld.x + cameraTranslation.x,
+                                  impactWorld.y + cameraTranslation.y};
+        float mixedDx = shaderPosition.x - impactWorld.x;
+        float mixedDz = shaderPosition.y - impactWorld.y;
+        float mixedDistance = sqrtf(mixedDx * mixedDx + mixedDz * mixedDz);
+        Vector2 recoveredWorld = {shaderPosition.x - cameraTranslation.x,
+                                  shaderPosition.y - cameraTranslation.y};
+        float recoveredDx = recoveredWorld.x - impactWorld.x;
+        float recoveredDz = recoveredWorld.y - impactWorld.y;
+        float recoveredDistance = sqrtf(recoveredDx * recoveredDx + recoveredDz * recoveredDz);
+        TEST_CHECK(mixedDistance > 6.0f && recoveredDistance < 0.0001f,
+                   "Mixed view/world impact misses; inverse-view recovery restores the receiver point");
     }
 
     // 9. Test Đa tầng Vorticles (Interacting Micro-Vortices Superposition)

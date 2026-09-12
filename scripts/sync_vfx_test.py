@@ -1315,7 +1315,12 @@ def gen_trigger_block(entries):
     if guided_idx is not None:
         lines += [f"        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex == {guided_idx}) {{",
                   "            Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});",
-                  "            VFX_ComposeGuidedParticle(castSocket, mouseTarget3D);",
+                  "            Vector3 guidedTarget = mouseTarget3D;",
+                  "            if (s_clickedOnUI) {",
+                  "                guidedTarget = Vector3Add(playerPos, (Vector3){2.5f, 0.0f, 0.8f});",
+                  "                guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);",
+                  "            }",
+                  "            VFX_ComposeGuidedParticle(castSocket, guidedTarget);",
                   "            return false;",
                   "        }"]
     lines += [f"{INDENT}if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {{",

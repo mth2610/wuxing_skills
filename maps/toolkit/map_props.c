@@ -7,6 +7,7 @@
 #include "core/vfx_light.h"   // Đợt E / E2 — VFXLight_BindToShader on the ground
 #include "core/gfx_quality.h"
 #include "core/camera_context.h"
+#include "core/wind/wind_system.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>

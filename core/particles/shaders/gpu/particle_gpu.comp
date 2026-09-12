@@ -508,12 +508,16 @@ vec3 evalWindVelocity(vec3 pos, float time) {
             // Nhiễu hash-gradient 3D cục bộ: 3 kênh decorrelated
             float ns = vDir.x; // noiseScale packed in direction.x
             float spd = vDir.y; // noiseSpeed packed in direction.y
+            float attackTime = max(vDir.z, 0.0);
+            float age = max(maxLifetime - lifetime, 0.0);
+            float attackWeight = attackTime > 1e-4
+                ? smoothstep(0.0, attackTime, age) : 1.0;
             float px_s = pos.x * ns, py_s = pos.y * ns, pz_s = pos.z * ns;
             float t = time * spd;
             float nx = noiseScalar(vec3(px_s + t,       py_s + 17.3, pz_s - t * 0.7));
             float ny = noiseScalar(vec3(px_s + 37.1,    py_s - t * 0.8, pz_s + 19.7));
             float nz = noiseScalar(vec3(px_s - t * 0.6, py_s + 53.9, pz_s + t * 0.5));
-            float turbStrength = vStrength * weight;
+            float turbStrength = vStrength * weight * attackWeight;
             totalVel += vec3(nx * turbStrength, ny * turbStrength, nz * turbStrength);
         }
     }

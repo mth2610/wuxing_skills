@@ -1,4 +1,5 @@
 #version 330
+#include "maps/toolkit/shaders/nature_wind_impact.glsl"
 
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
@@ -8,6 +9,7 @@ in vec4 vertexColor;
 
 uniform mat4 mvp;
 uniform mat4 matModel;
+uniform mat4 u_worldFromShaderSpace;
 uniform float u_time;
 uniform vec2 u_windDirection;
 uniform float u_windStrength;
@@ -27,7 +29,8 @@ out vec2 fragTexCoord;
 void main()
 {
     vec3 local = vertexPosition;
-    vec3 world = vec3(matModel * vec4(local, 1.0));
+    vec3 shaderPosition = vec3(matModel * vec4(local, 1.0));
+    vec3 world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
     float rootMask = vertexTexCoord.y * vertexTexCoord.y;
     // Multi-frequency wind dynamics (Ghost of Tsushima / Horizon model):
     // 1. Base sway (low freq, broad landscape sway)
@@ -39,6 +42,7 @@ void main()
     float tipJitter = sin(u_time * 4.20 + dot(world.xz, vec2(0.55, -0.45)) + vertexTexCoord.x * 6.2831) * 0.12;
     float windDeflection = (baseSway + gustWave + tipJitter) * u_windStrength;
     local.xz += u_windDirection * windDeflection * rootMask;
+    local.xz += NatureDominantWindImpact(world) * rootMask;
 
     if (u_interactionEnabled != 0) {
         vec2 interactionUV = (world.xz - u_interactionCenter) / u_interactionWorldSize + 0.5;
@@ -48,13 +52,14 @@ void main()
         float interaction = interactionSample.b * inside.x * inside.y;
         local.xz += pushDirection * interaction * u_interactionMaxBend * rootMask;
     }
-    world = vec3(matModel * vec4(local, 1.0));
+    shaderPosition = vec3(matModel * vec4(local, 1.0));
+    world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
 
     // Normal tilts dynamically with wind deflection, creating iconic specular ripples
     vec3 bentNormal = vertexNormal;
     bentNormal.xz -= u_windDirection * (windDeflection * 1.15) * vertexTexCoord.y;
 
-    fragPosition = vec3(matModel * vec4(local, 1.0));
+    fragPosition = shaderPosition;
     fragNormal = normalize(mat3(matModel) * bentNormal);
     fragColor = vertexColor;
     fragHeight = vertexTexCoord.y;

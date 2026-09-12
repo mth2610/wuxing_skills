@@ -29,7 +29,8 @@ typedef enum {
 typedef struct {
     Vector3      position;    // Vị trí tâm quả cầu gió (world-space)
     Vector3      direction;   // Hướng luồng gió (GUST) hoặc trục xoáy (VORTEX, normalized)
-                              // Với TURBULENCE: x = noiseScale, y = noiseSpeed, z = unused
+                              // Với TURBULENCE: x = noiseScale, y = noiseSpeed,
+                              // z = attack time (s)
     float        radius;      // Bán kính ảnh hưởng (m)
     float        strength;    // Độ lớn vận tốc khí mục tiêu tối đa tại tâm (m/s)
     VorticleType type;

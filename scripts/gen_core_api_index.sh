@@ -26,13 +26,17 @@ HEADERS=(
   core/vfx_light.h core/post_fx.h core/camera_fx.h
   core/debug_draw.h core/motion_controller.h core/status_vfx.h core/afterimage.h
   core/surface_material.h core/gfx_quality.h core/audio_system.h core/atmosphere.h
+  core/wind/wind_types.h core/wind/wind_system.h
   core/material/material_system.h core/geometry/procedural_mesh_utils.h
   core/composition/visual_composer.h core/composition/vfx_sequence.h core/presets/vfx_presets.h core/utils_math.h
 )
 
 protos() {
-  perl -0777 -pe 's{/\*.*?\*/}{}gs; s{//[^\n]*}{}g; s{^[ \t]*#[^\n]*}{}mg; 1 while s/\{[^{}]*\}//gs; s/\bstatic\s+inline\b[^;()]*\([^()]*\)//gs;' "$1" \
-  | awk 'BEGIN{RS=";"} { s=$0; gsub(/\n[ \t]*/," ",s); gsub(/^[ \t\n]+/,"",s); gsub(/[ \t]+/," ",s);
+  if [ "$1" = "core/wind/wind_system.h" ]; then
+    perl -0777 -pe 's{/\*.*?\*/}{}gs; s{//[^\n]*}{}g; s{^[ \t]*#[^\n]*}{}mg; s/extern\s+"C"\s*\{//g; s/^\s*\}\s*$//mg; 1 while s/\{[^{}]*\}//gs; s/\bstatic\s+inline\b[^;()]*\([^()]*\)//gs;' "$1"
+  else
+    perl -0777 -pe 's{/\*.*?\*/}{}gs; s{//[^\n]*}{}g; s{^[ \t]*#[^\n]*}{}mg; 1 while s/\{[^{}]*\}//gs; s/\bstatic\s+inline\b[^;()]*\([^()]*\)//gs;' "$1"
+  fi | awk 'BEGIN{RS=";"} { s=$0; gsub(/\n[ \t]*/," ",s); gsub(/^[ \t\n]+/,"",s); gsub(/[ \t]+/," ",s);
       if (s ~ /\(/ && s !~ /[{}]/ && s !~ /^#/ && s !~ /^typedef/ && s ~ /^[A-Za-z_].*[A-Za-z_0-9] *\(/) print "  " s ";"; }'
 }
 enums() { perl -0777 -ne 's{/\*.*?\*/}{}gs; s{//[^\n]*}{}g; while(/typedef\s+enum\s*\{([^}]*)\}\s*(\w+)/gs){my($v,$n)=($1,$2); $v=~s/\s+//g; $v=~s/=[^,]*//g; $v=~s/,$//; print "$n { $v }\n";}' "$1"; }

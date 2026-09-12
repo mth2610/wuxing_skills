@@ -18,6 +18,15 @@ static inline float Wind_Fract(float v) {
     return v - floorf(v);
 }
 
+static float Wind_TurbulenceAttackWeight(const VorticleData *v) {
+    float attackTime = v->direction.z;
+    if (attackTime <= 1e-4f)
+        return 1.0f;
+    float age = fmaxf(0.0f, v->maxLifetime - v->lifetime);
+    float t = fminf(age / attackTime, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 static Vector3 Wind_Hash3(Vector3 p) {
     p.x = Wind_Fract(p.x * 0.1031f);
     p.y = Wind_Fract(p.y * 0.1030f);
@@ -321,10 +330,12 @@ int Wind_SpawnTurbulence(Vector3 pos, float radius, float strength, float noiseS
     if (!s_initialized || duration <= 0.0f || radius <= 0.0f) return -1;
     int idx = AllocVorticleSlot();
 
-    // Đóng gói noiseScale và noiseSpeed vào trường direction (không dùng hướng cho loại này)
+    // direction.z carries a short attack envelope. This gives an opening
+    // pressure blast a readable beat before the stronger turbulent wake.
+    float attackTime = fminf(0.20f, duration * 0.25f);
     s_vorticles[idx] = (VorticleData){
         .position    = pos,
-        .direction   = (Vector3){ noiseScale, noiseSpeed, 0.0f },
+        .direction   = (Vector3){ noiseScale, noiseSpeed, attackTime },
         .radius      = radius,
         .strength    = strength,
         .type        = VORTICLE_TURBULENCE,
@@ -365,6 +376,68 @@ Vector3 Wind_GetMacroAt(Vector3 pos, float time) {
     return turb;
 }
 
+Vector3 Wind_EvaluateVorticleVelocity(const VorticleData *v, Vector3 pos, float time) {
+    Vector3 velocity = {0};
+    if (v == NULL || !v->active)
+        return velocity;
+
+    Vector3 delta = Vector3Subtract(pos, v->position);
+    float distSq = Vector3LengthSqr(delta);
+    float rSq = v->radius * v->radius;
+    if (distSq >= rSq || rSq < 1e-6f)
+        return velocity;
+
+    float dist = sqrtf(distSq);
+    float spatialAtten = 1.0f - (dist / v->radius);
+    float temporalAtten = (v->maxLifetime > 1e-4f)
+        ? (v->lifetime / v->maxLifetime) : 1.0f;
+    float weight = spatialAtten * temporalAtten;
+
+    if (v->type == VORTICLE_LINEAR_GUST) {
+        velocity = Vector3Scale(v->direction, v->strength * weight);
+    } else if (v->type == VORTICLE_RADIAL_BLAST) {
+        Vector3 normOut = (dist > 1e-4f)
+            ? Vector3Scale(delta, 1.0f / dist)
+            : (Vector3){0.0f, 1.0f, 0.0f};
+        velocity = Vector3Scale(normOut, v->strength * weight);
+    } else if (v->type == VORTICLE_VORTEX) {
+        Vector3 tangent = Vector3CrossProduct(v->direction, delta);
+        float tanLen = Vector3Length(tangent);
+        float rCore = 0.10f * v->radius;
+        float coreFactor = (tanLen < rCore) ? (tanLen / rCore) : 1.0f;
+        if (tanLen > 1e-4f) {
+            Vector3 tanDir = Vector3Scale(tangent, 1.0f / tanLen);
+            velocity = Vector3Scale(tanDir, v->strength * weight * coreFactor);
+        }
+        if (fabsf(v->inwardPull) > 1e-4f) {
+            float proj = Vector3DotProduct(delta, v->direction);
+            Vector3 closestOnAxis = Vector3Scale(v->direction, proj);
+            Vector3 radial = Vector3Subtract(delta, closestOnAxis);
+            float radDist = Vector3Length(radial);
+            if (radDist > 1e-4f) {
+                Vector3 radDir = Vector3Scale(radial, 1.0f / radDist);
+                Vector3 pullVel = Vector3Scale(radDir,
+                    -v->inwardPull * weight * coreFactor);
+                velocity = Vector3Add(velocity, pullVel);
+            }
+        }
+    } else if (v->type == VORTICLE_TURBULENCE) {
+        float ns = v->direction.x;
+        float spd = v->direction.y;
+        float px = pos.x * ns;
+        float py = pos.y * ns;
+        float pz = pos.z * ns;
+        float t = time * spd;
+        float nx = Wind_NoiseScalar3D((Vector3){px + t, py + 17.3f, pz - t * 0.7f});
+        float ny = Wind_NoiseScalar3D((Vector3){px + 37.1f, py - t * 0.8f, pz + 19.7f});
+        float nz = Wind_NoiseScalar3D((Vector3){px - t * 0.6f, py + 53.9f, pz + t * 0.5f});
+        float strength = v->strength * weight *
+                         Wind_TurbulenceAttackWeight(v);
+        velocity = (Vector3){nx * strength, ny * strength, nz * strength};
+    }
+    return velocity;
+}
+
 Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
     if (!s_initialized) return (Vector3){ 0 };
 
@@ -396,69 +469,8 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
 
     // 3. Tổng hợp từ mảng Vorticles cục bộ (Brute-force O(N) với N <= 256)
     for (int i = 0; i < s_activeCount; i++) {
-        const VorticleData *v = &s_vorticles[i];
-        Vector3 delta = Vector3Subtract(pos, v->position);
-        float distSq = Vector3LengthSqr(delta);
-        float rSq = v->radius * v->radius;
-
-        if (distSq >= rSq || rSq < 1e-6f) continue;
-
-        float dist = sqrtf(distSq);
-        float spatialAtten = 1.0f - (dist / v->radius); // Tuyến tính từ tâm ra biên
-        float temporalAtten = (v->maxLifetime > 1e-4f) ? (v->lifetime / v->maxLifetime) : 1.0f;
-        float weight = spatialAtten * temporalAtten;
-
-        if (v->type == VORTICLE_LINEAR_GUST) {
-            // Luồng gió thẳng
-            Vector3 gust = Vector3Scale(v->direction, v->strength * weight);
-            totalVel = Vector3Add(totalVel, gust);
-
-        } else if (v->type == VORTICLE_RADIAL_BLAST) {
-            // Xung kích tỏa tròn
-            Vector3 normOut = (dist > 1e-4f)
-                ? Vector3Scale(delta, 1.0f / dist)
-                : (Vector3){ 0.0f, 1.0f, 0.0f };
-            Vector3 blast = Vector3Scale(normOut, v->strength * weight);
-            totalVel = Vector3Add(totalVel, blast);
-
-        } else if (v->type == VORTICLE_VORTEX) {
-            // Lốc xoáy quanh trục (Mô hình xoáy chất lưu Rankine/Lamb-Oseen: vận tốc bằng 0 tại tâm trục)
-            Vector3 tangent = Vector3CrossProduct(v->direction, delta);
-            float tanLen = Vector3Length(tangent);
-            float rCore = 0.10f * v->radius;
-            float coreFactor = (tanLen < rCore) ? (tanLen / rCore) : 1.0f;
-            if (tanLen > 1e-4f) {
-                Vector3 tanDir = Vector3Scale(tangent, 1.0f / tanLen);
-                Vector3 rotVel = Vector3Scale(tanDir, v->strength * weight * coreFactor);
-                totalVel = Vector3Add(totalVel, rotVel);
-            }
-
-            // Lực hút/đẩy xuyên tâm vuông góc trục (Áp suất thấp tâm xoáy Bernoulli)
-            if (fabsf(v->inwardPull) > 1e-4f) {
-                float proj = Vector3DotProduct(delta, v->direction);
-                Vector3 closestOnAxis = Vector3Scale(v->direction, proj);
-                Vector3 radial = Vector3Subtract(delta, closestOnAxis);
-                float radDist = Vector3Length(radial);
-                if (radDist > 1e-4f) {
-                    Vector3 radDir = Vector3Scale(radial, 1.0f / radDist);
-                    // inwardPull > 0: hút vào tâm (-radDir); < 0: đẩy ra (+radDir)
-                    Vector3 pullVel = Vector3Scale(radDir, -v->inwardPull * weight * coreFactor);
-                    totalVel = Vector3Add(totalVel, pullVel);
-                }
-            }
-        } else if (v->type == VORTICLE_TURBULENCE) {
-            // Nhiễu hash-gradient 3D cục bộ: 3 kênh decorrelated
-            float ns = v->direction.x; // noiseScale
-            float spd = v->direction.y; // noiseSpeed
-            float px_s = pos.x * ns, py_s = pos.y * ns, pz_s = pos.z * ns;
-            float t = time * spd;
-            float nx = Wind_NoiseScalar3D((Vector3){px_s + t, py_s + 17.3f, pz_s - t * 0.7f});
-            float ny = Wind_NoiseScalar3D((Vector3){px_s + 37.1f, py_s - t * 0.8f, pz_s + 19.7f});
-            float nz = Wind_NoiseScalar3D((Vector3){px_s - t * 0.6f, py_s + 53.9f, pz_s + t * 0.5f});
-            float turbStrength = v->strength * weight;
-            Vector3 turb = { nx * turbStrength, ny * turbStrength, nz * turbStrength };
-            totalVel = Vector3Add(totalVel, turb);
-        }
+        Vector3 localVelocity = Wind_EvaluateVorticleVelocity(&s_vorticles[i], pos, time);
+        totalVel = Vector3Add(totalVel, localVelocity);
     }
 
     return totalVel;

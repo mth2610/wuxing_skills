@@ -16,6 +16,7 @@
 #include "environment/environment_system.h"
 #include <string.h>
 #include <math.h>
+#include <stdlib.h>
 
 #define MAX_PARTICLES 2000
 
@@ -652,9 +653,17 @@ void UpdateParticles(float dt)
         static float s_lastCpuArrivalWindTime = -10.0f;
         if (s_particleTime - s_lastCpuArrivalWindTime > 0.35f) {
           s_lastCpuArrivalWindTime = s_particleTime;
-          Wind_SpawnRadialBlast(blastPos, 2.4f, 2.0f, 0.25f);
-          // Nhiễu loạn lưu 3D Perlin cục bộ: bán kính 6m, 35 m/s, suy giảm tự nhiên trong 2.5s
-          Wind_SpawnTurbulence(blastPos, 6.0f, 35.0f, 0.90f, 2.8f, 2.5f);
+          // Xung hướng tâm là chuyển động chính: đủ rộng và đủ lâu để mặt sóng
+          // quét qua vegetation. Turbulence chỉ là wake yếu hơn phía sau blast.
+          int radialSlot = Wind_SpawnRadialBlast(blastPos, 4.5f, 7.5f, 0.75f);
+          int turbulenceSlot = Wind_SpawnTurbulence(blastPos, 6.0f, 18.0f, 0.90f, 2.8f, 3.0f);
+          const char *trace = getenv("WUXING_WIND_RECEIVER_TRACE");
+          if (trace != NULL && trace[0] != '\0' && trace[0] != '0') {
+            TraceLog(LOG_INFO,
+                     "[WIND_TRACE] guided_arrival backend=cpu target=(%.2f,%.2f,%.2f) radial_slot=%d turbulence_slot=%d active=%d",
+                     blastPos.x, blastPos.y, blastPos.z, radialSlot,
+                     turbulenceSlot, Wind_GetActiveCount());
+          }
         }
 
         // Không gán cứng vận tốc = gió tại frame arrival (tất cả hạt cùng vị trí
