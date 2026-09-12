@@ -16,6 +16,8 @@
 // =============================================================================
 
 #define MAX_VORTICLES 256
+#define WIND_TERRAIN_GRID_SIZE 32
+#define WIND_TERRAIN_GRID_SAMPLES (WIND_TERRAIN_GRID_SIZE * WIND_TERRAIN_GRID_SIZE)
 
 typedef enum {
     VORTICLE_LINEAR_GUST = 0, // Luồng gió thẳng có hướng (vệt chém kiếm, đạn phóng lướt)
@@ -47,5 +49,17 @@ typedef struct {
 
 // Callback truy vấn độ cao địa hình tại tọa độ (worldX, worldZ)
 typedef float (*TerrainHeightQueryFn)(float worldX, float worldZ, void *userData);
+
+// CPU source of truth for the terrain approximation uploaded to compute.
+// `valid` prevents missing terrain from being interpreted as a real Y=0 sample.
+typedef struct {
+    float heights[WIND_TERRAIN_GRID_SAMPLES];
+    unsigned char valid[WIND_TERRAIN_GRID_SAMPLES];
+    Vector2 originXZ;
+    Vector2 cellSizeXZ;
+    bool built;
+    bool active;
+    unsigned int version;
+} WindTerrainGrid;
 
 #endif // WUXING_WIND_TYPES_H

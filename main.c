@@ -62,6 +62,41 @@
 Camera3D camera = {0};
 PlayerEntity player = {0};
 
+#define WIND_TERRAIN_HALF_EXTENT 24.0f
+#define WIND_TERRAIN_RECENTER_DISTANCE 8.0f
+
+static int s_windTerrainMapIndex = -1;
+static Vector2 s_windTerrainCenter = {0};
+static bool s_windTerrainGridReady = false;
+
+static float WindTerrainHeightFromActiveMap(float x, float z, void *userData)
+{
+  (void)userData;
+  Vector3 surfacePosition;
+  Vector3 surfaceNormal;
+  if (!MapManager_SampleGroundSurfaceAt(x, z, &surfacePosition, &surfaceNormal))
+    return NAN;
+  return surfacePosition.y;
+}
+
+static void WindRefreshTerrainGrid(Vector3 focus, bool force)
+{
+  int mapIndex = MapManager_GetActiveIndex();
+  float dx = focus.x - s_windTerrainCenter.x;
+  float dz = focus.z - s_windTerrainCenter.y;
+  bool moved = dx * dx + dz * dz >=
+               WIND_TERRAIN_RECENTER_DISTANCE * WIND_TERRAIN_RECENTER_DISTANCE;
+  if (!force && s_windTerrainGridReady && mapIndex == s_windTerrainMapIndex && !moved)
+    return;
+
+  s_windTerrainCenter = (Vector2){focus.x, focus.z};
+  s_windTerrainMapIndex = mapIndex;
+  s_windTerrainGridReady = true;
+  Wind_RebuildTerrainGrid(s_windTerrainCenter,
+                          (Vector2){WIND_TERRAIN_HALF_EXTENT,
+                                    WIND_TERRAIN_HALF_EXTENT});
+}
+
 // Capture coordinates are explicit world metres, independent of arena layout.
 static bool ParseCaptureVector(const char *text, Vector3 *out)
 {
@@ -488,10 +523,12 @@ int main(int argc, char **argv) {
   Environment_Init();
   EnvShadow_Init(); // Real Shading P6 — depth-only shadow map, OFF until toggled
   MapManager_Init();
+  Wind_SetTerrainHeightQuery(WindTerrainHeightFromActiveMap, NULL);
   Combat_Init();
 
   EnemyEntity enemy;
   InitSandbox(&player, &enemy);
+  WindRefreshTerrainGrid(player.position, true);
   GameScreen_Init(&player);
 
   // --host / --join (ENet, LAN) or --host-online / --join-online (EOS,
@@ -1228,6 +1265,10 @@ int main(int argc, char **argv) {
         }
       }
     }
+
+    // Map switches may originate in main.c or inside GameScreen_Update. Keep a
+    // local terrain tile around gameplay without coupling MapManager to wind.
+    WindRefreshTerrainGrid(player.position, false);
 
     Tuning_Update();
     UpdateSkillManager(dt, enemy.position, 0.35f);

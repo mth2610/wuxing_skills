@@ -8,6 +8,7 @@ static int                    s_activeCount = 0;
 static WindMacroConfig        s_macroConfig;
 static TerrainHeightQueryFn   s_terrainQuery = NULL;
 static void                  *s_terrainUserData = NULL;
+static WindTerrainGrid        s_terrainGrid;
 static bool                   s_initialized = false;
 
 // This hash-gradient noise is mirrored formula-for-formula in particle_gpu.comp.
@@ -78,6 +79,8 @@ void Wind_Init(void) {
     s_activeCount = 0;
     s_terrainQuery = NULL;
     s_terrainUserData = NULL;
+    memset(&s_terrainGrid, 0, sizeof(s_terrainGrid));
+    s_terrainGrid.version = 1;
 
     // Cấu hình gió vĩ mô mặc định (gió đêm thoang thoảng quét qua đấu trường)
     s_macroConfig = (WindMacroConfig){
@@ -101,6 +104,7 @@ void Wind_Unload(void) {
     Wind_Clear();
     s_terrainQuery = NULL;
     s_terrainUserData = NULL;
+    memset(&s_terrainGrid, 0, sizeof(s_terrainGrid));
     s_initialized = false;
 }
 
@@ -116,6 +120,92 @@ WindMacroConfig Wind_GetMacro(void) {
 void Wind_SetTerrainHeightQuery(TerrainHeightQueryFn queryFn, void *userData) {
     s_terrainQuery = queryFn;
     s_terrainUserData = userData;
+    s_terrainGrid.built = false;
+    s_terrainGrid.active = false;
+    s_terrainGrid.version++;
+}
+
+void Wind_RebuildTerrainGrid(Vector2 centerXZ, Vector2 halfExtentXZ) {
+    unsigned int nextVersion = s_terrainGrid.version + 1u;
+    memset(&s_terrainGrid, 0, sizeof(s_terrainGrid));
+    s_terrainGrid.version = nextVersion;
+    s_terrainGrid.built = true;
+
+    if (s_terrainQuery == NULL || halfExtentXZ.x <= 0.0f || halfExtentXZ.y <= 0.0f)
+        return;
+
+    s_terrainGrid.originXZ = (Vector2){centerXZ.x - halfExtentXZ.x,
+                                       centerXZ.y - halfExtentXZ.y};
+    s_terrainGrid.cellSizeXZ = (Vector2){
+        (halfExtentXZ.x * 2.0f) / (float)(WIND_TERRAIN_GRID_SIZE - 1),
+        (halfExtentXZ.y * 2.0f) / (float)(WIND_TERRAIN_GRID_SIZE - 1),
+    };
+
+    int validCount = 0;
+    for (int z = 0; z < WIND_TERRAIN_GRID_SIZE; ++z) {
+        for (int x = 0; x < WIND_TERRAIN_GRID_SIZE; ++x) {
+            int index = z * WIND_TERRAIN_GRID_SIZE + x;
+            float worldX = s_terrainGrid.originXZ.x +
+                           (float)x * s_terrainGrid.cellSizeXZ.x;
+            float worldZ = s_terrainGrid.originXZ.y +
+                           (float)z * s_terrainGrid.cellSizeXZ.y;
+            float height = s_terrainQuery(worldX, worldZ, s_terrainUserData);
+            if (isfinite(height)) {
+                s_terrainGrid.heights[index] = height;
+                s_terrainGrid.valid[index] = 1;
+                validCount++;
+            }
+        }
+    }
+    s_terrainGrid.active = validCount > 0;
+}
+
+const WindTerrainGrid *Wind_GetTerrainGrid(void) {
+    return &s_terrainGrid;
+}
+
+static bool Wind_SampleTerrainGrid(float worldX, float worldZ, float *outHeight) {
+    if (!s_terrainGrid.built || !s_terrainGrid.active || outHeight == NULL)
+        return false;
+
+    float gx = (worldX - s_terrainGrid.originXZ.x) / s_terrainGrid.cellSizeXZ.x;
+    float gz = (worldZ - s_terrainGrid.originXZ.y) / s_terrainGrid.cellSizeXZ.y;
+    float gridMax = (float)(WIND_TERRAIN_GRID_SIZE - 1);
+    if (gx < 0.0f || gz < 0.0f || gx > gridMax || gz > gridMax)
+        return false;
+
+    int x0 = (int)floorf(gx);
+    int z0 = (int)floorf(gz);
+    if (x0 >= WIND_TERRAIN_GRID_SIZE - 1) x0 = WIND_TERRAIN_GRID_SIZE - 2;
+    if (z0 >= WIND_TERRAIN_GRID_SIZE - 1) z0 = WIND_TERRAIN_GRID_SIZE - 2;
+    float fx = gx - (float)x0;
+    float fz = gz - (float)z0;
+    int i00 = z0 * WIND_TERRAIN_GRID_SIZE + x0;
+    int i10 = i00 + 1;
+    int i01 = i00 + WIND_TERRAIN_GRID_SIZE;
+    int i11 = i01 + 1;
+    if (!s_terrainGrid.valid[i00] || !s_terrainGrid.valid[i10] ||
+        !s_terrainGrid.valid[i01] || !s_terrainGrid.valid[i11])
+        return false;
+
+    float h0 = s_terrainGrid.heights[i00] +
+               (s_terrainGrid.heights[i10] - s_terrainGrid.heights[i00]) * fx;
+    float h1 = s_terrainGrid.heights[i01] +
+               (s_terrainGrid.heights[i11] - s_terrainGrid.heights[i01]) * fx;
+    *outHeight = h0 + (h1 - h0) * fz;
+    return true;
+}
+
+static bool Wind_SampleTerrain(float worldX, float worldZ, float *outHeight) {
+    if (s_terrainGrid.built)
+        return Wind_SampleTerrainGrid(worldX, worldZ, outHeight);
+    if (s_terrainQuery == NULL || outHeight == NULL)
+        return false;
+    float height = s_terrainQuery(worldX, worldZ, s_terrainUserData);
+    if (!isfinite(height))
+        return false;
+    *outHeight = height;
+    return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -282,18 +372,20 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
     Vector3 totalVel = Wind_GetMacroAt(pos, time);
 
     // 2. Thành phần nâng địa hình (Terrain-Aware Lift)
-    if (s_terrainQuery != NULL) {
+    if (s_terrainQuery != NULL && s_macroConfig.terrainLiftK > 0.0f) {
         float speedXZ = sqrtf(totalVel.x * totalVel.x + totalVel.z * totalVel.z);
         if (speedXZ > 1e-3f) {
             float dirX = totalVel.x / speedXZ;
             float dirZ = totalVel.z / speedXZ;
 
             const float sampleDist = 1.5f; // Khoảng cách nhìn trước dọc hướng gió (m)
-            float h0 = s_terrainQuery(pos.x, pos.z, s_terrainUserData);
-            float h1 = s_terrainQuery(pos.x + dirX * sampleDist, pos.z + dirZ * sampleDist, s_terrainUserData);
+            float h0 = 0.0f, h1 = 0.0f;
+            bool hasH0 = Wind_SampleTerrain(pos.x, pos.z, &h0);
+            bool hasH1 = Wind_SampleTerrain(pos.x + dirX * sampleDist,
+                                            pos.z + dirZ * sampleDist, &h1);
             float dH = h1 - h0;
 
-            if (dH > 0.0f) {
+            if (hasH0 && hasH1 && dH > 0.0f) {
                 // Độ dốc dương -> sinh luồng nâng thẳng đứng
                 float lift = (dH / sampleDist) * speedXZ * s_macroConfig.terrainLiftK;
                 if (lift > 12.0f) lift = 12.0f; // Kẹp giới hạn an toàn

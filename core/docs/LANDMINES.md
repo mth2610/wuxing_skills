@@ -3534,5 +3534,8 @@ after the head was gone the strip kept drifting and fading in open space.
   truncated the uploaded list to 16.
 - **Rule:** any CPU shadow of GPU simulation must share the observable field
   formula and the complete selected source set. Pin both the numeric field and
-  the C/GLSL capacity contract in one focused test. Guarded by
+  the C/GLSL capacity contract in one focused test. Terrain is part of that
+  field: both paths must sample the same baked grid and validity footprint;
+  treating a missing sample as Y=0 creates a false cliff at mesh boundaries.
+  Guarded by
   `core/tests/wind_system_test.c`.

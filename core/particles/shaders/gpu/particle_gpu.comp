@@ -73,12 +73,26 @@ struct VorticleGPU {
 
 struct WindGPU {
     vec4 macro_dir_amp;   // xyz = baseDirection, w = gustAmplitude
-    vec4 macro_params;    // x = noiseScale, y = noiseSpeed, z = activeCount, w = pad
+    vec4 macro_params;    // x = noiseScale, y = noiseSpeed, z = activeCount, w = terrainLiftK
     VorticleGPU vorticles[MAX_GPU_VORTICLES];
 };
 
 layout(std430, binding = 3) readonly buffer WindBuffer {
     WindGPU uWind;
+};
+
+#define WIND_TERRAIN_GRID_SIZE 32
+#define WIND_TERRAIN_PACKED_VEC4S 512
+
+struct WindTerrainGPU {
+    vec4 origin_cell; // xy = world XZ origin, zw = XZ cell size
+    ivec4 meta;       // x = active, y = grid width
+    // Two samples per vec4: (height0, valid0, height1, valid1).
+    vec4 samples[WIND_TERRAIN_PACKED_VEC4S];
+};
+
+layout(std430, binding = 4) readonly buffer WindTerrainBuffer {
+    WindTerrainGPU uWindTerrain;
 };
 
 // Phải khớp thứ tự enum ForceType trong core/force_field.h
@@ -364,6 +378,58 @@ bool evalTravelPath(int pathIndex, inout vec3 pos, inout vec3 vel,
     return false;
 }
 
+vec2 terrainHeightValidity(int sampleIndex) {
+    vec4 packed = uWindTerrain.samples[sampleIndex / 2];
+    return ((sampleIndex & 1) == 0) ? packed.xy : packed.zw;
+}
+
+bool sampleTerrainHeight(vec2 worldXZ, out float height) {
+    if (uWindTerrain.meta.x == 0 || uWindTerrain.meta.y != WIND_TERRAIN_GRID_SIZE)
+        return false;
+    vec2 cell = uWindTerrain.origin_cell.zw;
+    if (cell.x <= 0.0 || cell.y <= 0.0) return false;
+
+    vec2 grid = (worldXZ - uWindTerrain.origin_cell.xy) / cell;
+    float gridMax = float(WIND_TERRAIN_GRID_SIZE - 1);
+    if (grid.x < 0.0 || grid.y < 0.0 || grid.x > gridMax || grid.y > gridMax)
+        return false;
+
+    ivec2 base = ivec2(floor(grid));
+    base = min(base, ivec2(WIND_TERRAIN_GRID_SIZE - 2));
+    vec2 fraction = grid - vec2(base);
+    int i00 = base.y * WIND_TERRAIN_GRID_SIZE + base.x;
+    int i10 = i00 + 1;
+    int i01 = i00 + WIND_TERRAIN_GRID_SIZE;
+    int i11 = i01 + 1;
+    vec2 h00 = terrainHeightValidity(i00);
+    vec2 h10 = terrainHeightValidity(i10);
+    vec2 h01 = terrainHeightValidity(i01);
+    vec2 h11 = terrainHeightValidity(i11);
+    if (min(min(h00.y, h10.y), min(h01.y, h11.y)) < 0.5) return false;
+
+    float nearHeight = mix(h00.x, h10.x, fraction.x);
+    float farHeight = mix(h01.x, h11.x, fraction.x);
+    height = mix(nearHeight, farHeight, fraction.y);
+    return true;
+}
+
+float evalTerrainLift(vec3 pos, vec3 macroVelocity) {
+    float liftK = uWind.macro_params.w;
+    float speedXZ = length(macroVelocity.xz);
+    if (liftK <= 0.0 || speedXZ <= 1e-3) return 0.0;
+
+    const float sampleDist = 1.5;
+    vec2 directionXZ = macroVelocity.xz / speedXZ;
+    float h0 = 0.0;
+    float h1 = 0.0;
+    bool hasH0 = sampleTerrainHeight(pos.xz, h0);
+    bool hasH1 = sampleTerrainHeight(pos.xz + directionXZ * sampleDist, h1);
+    if (!hasH0 || !hasH1) return 0.0;
+
+    float positiveSlope = max((h1 - h0) / sampleDist, 0.0);
+    return clamp(positiveSlope * speedXZ * liftK, 0.0, 12.0);
+}
+
 // Động lực học luồng gió mô phỏng theo Ghost of Tsushima Wind System
 vec3 evalWindVelocity(vec3 pos, float time) {
     vec3 totalVel = vec3(0.0);
@@ -390,7 +456,10 @@ vec3 evalWindVelocity(vec3 pos, float time) {
         }
     }
 
-    // 2. Các xoáy khí cục bộ (Vorticles: Linear Gust, Radial Blast, Vortex)
+    // 2. Nâng luồng gió theo dốc địa hình từ lưới dùng chung CPU/GPU.
+    totalVel.y += evalTerrainLift(pos, totalVel);
+
+    // 3. Các xoáy khí cục bộ (Vorticles: Linear Gust, Radial Blast, Vortex)
     int vortCount = int(uWind.macro_params.z + 0.5);
     for (int i = 0; i < vortCount && i < MAX_GPU_VORTICLES; ++i) {
         vec3 vPos = uWind.vorticles[i].pos_radius.xyz;

@@ -29,8 +29,17 @@ void Wind_Clear(void); // Xóa toàn bộ Vorticle đang hoạt động
 void Wind_SetMacro(const WindMacroConfig *cfg);
 WindMacroConfig Wind_GetMacro(void);
 
-// Thiết lập hàm truy vấn độ cao địa hình để tính toán dòng khí lướt qua dốc (Terrain Lift)
+// Thiết lập hàm truy vấn độ cao địa hình để tính toán dòng khí lướt qua dốc.
+// Callback trả về NAN/Inf khi điểm không có receiver địa hình; giá trị không
+// hữu hạn được lưu là invalid thay vì bị hiểu nhầm thành mặt đất Y=0.
 void Wind_SetTerrainHeightQuery(TerrainHeightQueryFn queryFn, void *userData);
+
+// Bake lưới độ cao tĩnh dùng chung cho CPU và compute. halfExtentXZ phải dương;
+// grid có 32x32 mẫu và dùng nội suy song tuyến tính trong runtime path.
+void Wind_RebuildTerrainGrid(Vector2 centerXZ, Vector2 halfExtentXZ);
+
+// Inspection nội bộ cho GPU packer; con trỏ sống đến lần rebuild/unload kế tiếp.
+const WindTerrainGrid *Wind_GetTerrainGrid(void);
 
 // -----------------------------------------------------------------------------
 // Emitters: Kích phát luồng gió cục bộ (Vorticles)

@@ -73,6 +73,14 @@ static float MockTerrainSlope(float x, float z, void *userData) {
     return x * 0.5f;
 }
 
+// A finite terrain patch followed by missing receiver data. The validity mask
+// must stop the edge from becoming a fake cliff down to Y=0.
+static float MockTerrainHole(float x, float z, void *userData) {
+    (void)z;
+    (void)userData;
+    return x > 1.0f ? NAN : x * 0.5f;
+}
+
 static float TestFract(float v) {
     return v - floorf(v);
 }
@@ -341,6 +349,13 @@ int main(void) {
         };
         Wind_SetMacro(&slopeMacro);
         Wind_SetTerrainHeightQuery(MockTerrainSlope, NULL);
+        Wind_RebuildTerrainGrid((Vector2){0.0f, 0.0f}, (Vector2){4.0f, 4.0f});
+
+        const WindTerrainGrid *terrainGrid = Wind_GetTerrainGrid();
+        TEST_CHECK(terrainGrid->built && terrainGrid->active,
+                   "Terrain grid is built and contains valid samples");
+        TEST_CHECK(terrainGrid->cellSizeXZ.x > 0.0f && terrainGrid->cellSizeXZ.y > 0.0f,
+                   "Terrain grid exposes finite positive cell dimensions");
 
         // Gió theo +X gặp dốc dương (dH/dx = 0.5)
         // lift = (dH / sampleDist) * speedXZ * terrainLiftK
@@ -350,6 +365,29 @@ int main(void) {
         Vector3 vLift = Wind_EvaluateVelocity((Vector3){ 0.0f, 0.0f, 0.0f }, 0.0f);
         TEST_NEAR(vLift.x, 2.0f, 0.05f, "Macro wind X is 2.0 m/s");
         TEST_NEAR(vLift.y, 1.5f, 0.05f, "Terrain lift generated upward velocity Y = 1.5 m/s");
+
+        TEST_CHECK(FileContains("main.c", "MapManager_SampleGroundSurfaceAt") &&
+                   FileContains("main.c", "Wind_RebuildTerrainGrid"),
+                   "Runtime wires active-map terrain into the wind grid");
+        TEST_CHECK(FileContains("core/particles/gpu/particle_gpu_backend.c",
+                                "rlBindShaderBuffer(s_wind_terrain_ssbo, 4)"),
+                   "GPU backend binds the terrain wind grid");
+        TEST_CHECK(FileContains("core/particles/shaders/gpu/particle_gpu.comp",
+                                "evalTerrainLift"),
+                   "Compute wind evaluates terrain-aware lift");
+        TEST_CHECK(FileContains("core/particles/shaders/gpu/particle_gpu.comp",
+                                "uWindTerrain.samples[sampleIndex / 2]") &&
+                   FileContains("core/particles/shaders/gpu/particle_gpu.comp",
+                                "min(min(h00.y, h10.y), min(h01.y, h11.y)) < 0.5") &&
+                   FileContains("core/particles/shaders/gpu/particle_gpu.comp",
+                                "const float sampleDist = 1.5"),
+                   "Compute terrain sampling mirrors packing, validity, and look-ahead");
+
+        Wind_SetTerrainHeightQuery(MockTerrainHole, NULL);
+        Wind_RebuildTerrainGrid((Vector2){0.0f, 0.0f}, (Vector2){4.0f, 4.0f});
+        Vector3 vMissing = Wind_EvaluateVelocity((Vector3){0.0f, 0.0f, 0.0f}, 0.0f);
+        TEST_NEAR(vMissing.y, 0.0f, 0.01f,
+                  "Missing terrain samples do not create artificial edge lift");
 
         // Tháo callback địa hình
         Wind_SetTerrainHeightQuery(NULL, NULL);

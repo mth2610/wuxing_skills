@@ -156,7 +156,11 @@ SSBO, while each particle stores only route-slot and waypoint indices. No runtim
 allocation is performed. The wind SSBO accepts the complete 256-entry CPU
 vorticle pool; CPU collision/event shadowing and GPU compute use the same
 hash-gradient noise field so post-impact trajectories do not diverge merely
-because the backend changed.
+because the backend changed. A separate binding-4 terrain SSBO holds the shared
+32x32 height/validity tile (two samples per `vec4`, about 8 KiB) and uploads only
+when its version changes. Both evaluators reject a bilinear footprint if any of
+its four samples is invalid, preventing missing mesh coverage from producing a
+false lift edge.
 
 ---
 

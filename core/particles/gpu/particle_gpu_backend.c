@@ -187,9 +187,17 @@ typedef struct {
 
 typedef struct {
     Vector4 macro_dir_amp;   // xyz = baseDirection, w = gustAmplitude
-    Vector4 macro_params;    // x = noiseScale, y = noiseSpeed, z = activeCount, w = pad
+    Vector4 macro_params;    // x = noiseScale, y = noiseSpeed, z = activeCount, w = terrainLiftK
     VorticleGPU vorticles[MAX_GPU_VORTICLES];
 } WindGPU;
+
+#define WIND_TERRAIN_PACKED_VEC4S (WIND_TERRAIN_GRID_SAMPLES / 2)
+
+typedef struct {
+    Vector4 origin_cell; // xy = origin XZ, zw = cell size XZ
+    int meta[4];         // x = active, y = grid width
+    Vector4 samples[WIND_TERRAIN_PACKED_VEC4S]; // height, valid, height, valid
+} WindTerrainGPU;
 
 static bool s_initialized = false;
 static bool s_use_compute = false;
@@ -198,6 +206,8 @@ static unsigned int s_ssbo = 0;
 static unsigned int s_ff_ssbo = 0; // ForceFieldBuffer, binding = 1
 static unsigned int s_path_ssbo = 0; // ParticleTravelPathBuffer, binding = 2
 static unsigned int s_wind_ssbo = 0; // WindBuffer, binding = 3
+static unsigned int s_wind_terrain_ssbo = 0; // WindTerrainBuffer, binding = 4
+static unsigned int s_uploaded_wind_terrain_version = ~0u;
 static unsigned int s_compute_prog = 0;
 static unsigned int s_draw_vao = 0;
 static unsigned int s_draw_quad_vbo = 0; // template quad, attribute 0
@@ -352,6 +362,8 @@ void GpuParticleSystem_Init(void)
         s_ff_ssbo = rlLoadShaderBuffer(MAX_GPU_FORCE_FIELDS * (ptrdiff_t)sizeof(ForceFieldGPU), NULL, RL_DYNAMIC_DRAW);
         s_path_ssbo = rlLoadShaderBuffer(MAX_GPU_TRAVEL_PATHS * (ptrdiff_t)sizeof(ParticleTravelPathGPU), NULL, RL_DYNAMIC_DRAW);
         s_wind_ssbo = rlLoadShaderBuffer((unsigned int)sizeof(WindGPU), NULL, RL_DYNAMIC_DRAW);
+        s_wind_terrain_ssbo = rlLoadShaderBuffer((unsigned int)sizeof(WindTerrainGPU), NULL, RL_DYNAMIC_DRAW);
+        s_uploaded_wind_terrain_version = ~0u;
 
         s_draw_shader_gpu = ResourceManager_LoadShader(ssbo_vs_path, fs_path);
         if (s_draw_shader_gpu.id == 0)
@@ -368,6 +380,8 @@ void GpuParticleSystem_Init(void)
             s_path_ssbo = 0;
             rlUnloadShaderBuffer(s_wind_ssbo);
             s_wind_ssbo = 0;
+            rlUnloadShaderBuffer(s_wind_terrain_ssbo);
+            s_wind_terrain_ssbo = 0;
             goto cpu_path;
         }
         s_surface_capture_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/fluid_surface_capture.vs", "core/fluid/shaders/fluid_capture_particle.fs");
@@ -600,7 +614,8 @@ void GpuParticleSystem_Update(float dt)
         int vortCount = 0;
         const VorticleData *vArray = Wind_GetActiveVorticles(&vortCount);
         if (vortCount > MAX_GPU_VORTICLES) vortCount = MAX_GPU_VORTICLES;
-        windData.macro_params = (Vector4){ macro.noiseScale, macro.noiseSpeed, (float)vortCount, 0.0f };
+        windData.macro_params = (Vector4){ macro.noiseScale, macro.noiseSpeed,
+                                           (float)vortCount, macro.terrainLiftK };
         for (int v = 0; v < vortCount; v++) {
             windData.vorticles[v].pos_radius = (Vector4){ vArray[v].position.x, vArray[v].position.y, vArray[v].position.z, vArray[v].radius };
             windData.vorticles[v].dir_strength = (Vector4){ vArray[v].direction.x, vArray[v].direction.y, vArray[v].direction.z, vArray[v].strength };
@@ -608,10 +623,32 @@ void GpuParticleSystem_Update(float dt)
         }
         rlUpdateShaderBuffer(s_wind_ssbo, &windData, (unsigned int)sizeof(WindGPU), 0);
 
+        const WindTerrainGrid *terrainGrid = Wind_GetTerrainGrid();
+        if (terrainGrid->version != s_uploaded_wind_terrain_version) {
+            WindTerrainGPU terrainData;
+            memset(&terrainData, 0, sizeof(terrainData));
+            terrainData.origin_cell = (Vector4){
+                terrainGrid->originXZ.x, terrainGrid->originXZ.y,
+                terrainGrid->cellSizeXZ.x, terrainGrid->cellSizeXZ.y,
+            };
+            terrainData.meta[0] = terrainGrid->active ? 1 : 0;
+            terrainData.meta[1] = WIND_TERRAIN_GRID_SIZE;
+            for (int i = 0; i < WIND_TERRAIN_GRID_SAMPLES; i += 2) {
+                terrainData.samples[i / 2] = (Vector4){
+                    terrainGrid->heights[i], (float)terrainGrid->valid[i],
+                    terrainGrid->heights[i + 1], (float)terrainGrid->valid[i + 1],
+                };
+            }
+            rlUpdateShaderBuffer(s_wind_terrain_ssbo, &terrainData,
+                                 (unsigned int)sizeof(terrainData), 0);
+            s_uploaded_wind_terrain_version = terrainGrid->version;
+        }
+
         rlBindShaderBuffer(s_ssbo, 0);
         rlBindShaderBuffer(s_ff_ssbo, 1);
         rlBindShaderBuffer(s_path_ssbo, 2);
         rlBindShaderBuffer(s_wind_ssbo, 3);
+        rlBindShaderBuffer(s_wind_terrain_ssbo, 4);
         unsigned int groups = (MAX_GPU_PARTICLES + 255) / 256;
         rlComputeShaderDispatch(groups, 1, 1);
         rlDisableShader();
@@ -1163,6 +1200,11 @@ void GpuParticleSystem_Unload(void)
         {
             rlUnloadShaderBuffer(s_wind_ssbo);
             s_wind_ssbo = 0;
+        }
+        if (s_wind_terrain_ssbo)
+        {
+            rlUnloadShaderBuffer(s_wind_terrain_ssbo);
+            s_wind_terrain_ssbo = 0;
         }
         if (s_draw_vao)
         {
