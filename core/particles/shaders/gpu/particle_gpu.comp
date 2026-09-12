@@ -63,7 +63,7 @@ layout(std430, binding = 2) readonly buffer ParticleTravelPathBuffer {
     ParticleTravelPathGPU uTravelPaths[];
 };
 
-#define MAX_GPU_VORTICLES 16
+#define MAX_GPU_VORTICLES 256
 
 struct VorticleGPU {
     vec4 pos_radius;      // xyz = position, w = radius
@@ -367,7 +367,7 @@ bool evalTravelPath(int pathIndex, inout vec3 pos, inout vec3 vel,
 // Động lực học luồng gió mô phỏng theo Ghost of Tsushima Wind System
 vec3 evalWindVelocity(vec3 pos, float time) {
     vec3 totalVel = vec3(0.0);
-    // 1. Gió vĩ mô (Macro wind) cuộn sóng Perlin 3D theo không gian và thời gian
+    // 1. Gió vĩ mô cuộn gradient noise 3D theo không gian và thời gian
     vec3 baseDir = uWind.macro_dir_amp.xyz;
     float gustAmp = uWind.macro_dir_amp.w;
     float baseLen = length(baseDir);
@@ -436,7 +436,7 @@ vec3 evalWindVelocity(vec3 pos, float time) {
                 }
             }
         } else if (vType == 3) { // VORTICLE_TURBULENCE
-            // Nhiễu loạn lưu 3D Perlin cục bộ: 3 kênh decorrelated Perlin Noise
+            // Nhiễu hash-gradient 3D cục bộ: 3 kênh decorrelated
             float ns = vDir.x; // noiseScale packed in direction.x
             float spd = vDir.y; // noiseSpeed packed in direction.y
             float px_s = pos.x * ns, py_s = pos.y * ns, pz_s = pos.z * ns;

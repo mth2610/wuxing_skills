@@ -73,6 +73,68 @@ static float MockTerrainSlope(float x, float z, void *userData) {
     return x * 0.5f;
 }
 
+static float TestFract(float v) {
+    return v - floorf(v);
+}
+
+// Numeric mirror of particle_gpu.comp's non-sine hash/noise path. This test
+// compares observable Wind output, not production helper internals.
+static Vector3 TestGpuHash3(Vector3 p) {
+    p.x = TestFract(p.x * 0.1031f);
+    p.y = TestFract(p.y * 0.1030f);
+    p.z = TestFract(p.z * 0.0973f);
+    float d = p.x * (p.y + 33.33f) +
+              p.y * (p.x + 33.33f) +
+              p.z * (p.z + 33.33f);
+    p.x += d;
+    p.y += d;
+    p.z += d;
+    return (Vector3){
+        TestFract((p.x + p.y) * p.z) * 2.0f - 1.0f,
+        TestFract((p.x + p.x) * p.y) * 2.0f - 1.0f,
+        TestFract((p.y + p.x) * p.x) * 2.0f - 1.0f,
+    };
+}
+
+static float TestGpuNoiseScalar(Vector3 p) {
+    Vector3 i = {floorf(p.x), floorf(p.y), floorf(p.z)};
+    Vector3 f = {TestFract(p.x), TestFract(p.y), TestFract(p.z)};
+    Vector3 u = {
+        f.x * f.x * (3.0f - 2.0f * f.x),
+        f.y * f.y * (3.0f - 2.0f * f.y),
+        f.z * f.z * (3.0f - 2.0f * f.z),
+    };
+    float corners[2][2][2];
+    for (int z = 0; z < 2; ++z) {
+        for (int y = 0; y < 2; ++y) {
+            for (int x = 0; x < 2; ++x) {
+                Vector3 lattice = {i.x + (float)x, i.y + (float)y, i.z + (float)z};
+                Vector3 grad = TestGpuHash3(lattice);
+                corners[z][y][x] = grad.x * (f.x - (float)x) +
+                                   grad.y * (f.y - (float)y) +
+                                   grad.z * (f.z - (float)z);
+            }
+        }
+    }
+    float nx00 = corners[0][0][0] + (corners[0][0][1] - corners[0][0][0]) * u.x;
+    float nx10 = corners[0][1][0] + (corners[0][1][1] - corners[0][1][0]) * u.x;
+    float nx01 = corners[1][0][0] + (corners[1][0][1] - corners[1][0][0]) * u.x;
+    float nx11 = corners[1][1][0] + (corners[1][1][1] - corners[1][1][0]) * u.x;
+    float nxy0 = nx00 + (nx10 - nx00) * u.y;
+    float nxy1 = nx01 + (nx11 - nx01) * u.y;
+    return nxy0 + (nxy1 - nxy0) * u.z;
+}
+
+static bool FileContains(const char *path, const char *needle) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return false;
+    char buffer[65536];
+    size_t count = fread(buffer, 1, sizeof(buffer) - 1, file);
+    fclose(file);
+    buffer[count] = '\0';
+    return strstr(buffer, needle) != NULL;
+}
+
 int main(void) {
     printf("=== RUNNING WIND & VORTICLES SYSTEM TEST (Ghost of Tsushima) ===\n");
 
@@ -82,6 +144,47 @@ int main(void) {
 
     WindMacroConfig macro = Wind_GetMacro();
     TEST_CHECK(macro.baseDirection.x != 0.0f || macro.baseDirection.z != 0.0f, "Default macro wind exists");
+
+    // CPU collision/event shadowing and GPU compute must sample the same wind.
+    {
+        WindMacroConfig parityMacro = {
+            .baseDirection = {1.7f, 0.2f, -0.8f},
+            .gustAmplitude = 0.55f,
+            .noiseScale = 0.13f,
+            .noiseSpeed = 0.9f,
+            .terrainLiftK = 0.0f,
+        };
+        Vector3 pos = {2.3f, 1.1f, -4.7f};
+        float time = 1.35f;
+        Wind_SetMacro(&parityMacro);
+
+        float nx = TestGpuNoiseScalar((Vector3){pos.x * parityMacro.noiseScale - time * parityMacro.noiseSpeed,
+                                                pos.y * parityMacro.noiseScale + 17.3f,
+                                                pos.z * parityMacro.noiseScale - time * parityMacro.noiseSpeed * 0.7f});
+        float ny = TestGpuNoiseScalar((Vector3){pos.x * parityMacro.noiseScale + 37.1f,
+                                                pos.y * parityMacro.noiseScale - time * parityMacro.noiseSpeed * 0.8f,
+                                                pos.z * parityMacro.noiseScale + 19.7f});
+        float nz = TestGpuNoiseScalar((Vector3){pos.x * parityMacro.noiseScale - time * parityMacro.noiseSpeed * 0.6f,
+                                                pos.y * parityMacro.noiseScale + 53.9f,
+                                                pos.z * parityMacro.noiseScale + time * parityMacro.noiseSpeed * 0.5f});
+        float baseLen = Vector3Length(parityMacro.baseDirection);
+        float amp = parityMacro.gustAmplitude * fmaxf(baseLen, 2.0f);
+        Vector3 expected = {
+            parityMacro.baseDirection.x * (1.0f + parityMacro.gustAmplitude * nx * 0.5f) + nx * amp * 0.5f,
+            parityMacro.baseDirection.y + ny * amp * 0.35f,
+            parityMacro.baseDirection.z * (1.0f + parityMacro.gustAmplitude * nz * 0.5f) + nz * amp * 0.5f,
+        };
+        Vector3 actual = Wind_GetMacroAt(pos, time);
+        TEST_NEAR(actual.x, expected.x, 0.0002f, "CPU macro X matches GPU noise field");
+        TEST_NEAR(actual.y, expected.y, 0.0002f, "CPU macro Y matches GPU noise field");
+        TEST_NEAR(actual.z, expected.z, 0.0002f, "CPU macro Z matches GPU noise field");
+        TEST_CHECK(FileContains("core/particles/shaders/gpu/particle_gpu.comp",
+                                "p = fract(p * vec3(0.1031, 0.1030, 0.0973))"),
+                   "GPU wind keeps the mirrored non-sine hash constants");
+        TEST_CHECK(FileContains("core/particles/shaders/gpu/particle_gpu.comp",
+                                "f * f * (3.0 - 2.0 * f)"),
+                   "GPU wind keeps the mirrored cubic interpolation");
+    }
 
     // Tắt macro wind để kiểm tra riêng từng Vorticle một cách chính xác
     WindMacroConfig zeroMacro = {0};
@@ -165,7 +268,36 @@ int main(void) {
         TEST_NEAR(vVortex.y, 0.0f, 0.05f, "Vortex Y velocity is 0.0");
     }
 
-    // 5. Test Vòng đời & Tự thu hồi (Decay & Lifetime)
+    // 5. Test Turbulence CPU/GPU parity
+    {
+        Wind_Clear();
+        Wind_SetMacro(&zeroMacro);
+        Vector3 pos = {0.5f, 0.25f, -0.75f};
+        float time = 0.65f;
+        float radius = 4.0f;
+        float strength = 7.0f;
+        float noiseScale = 0.8f;
+        float noiseSpeed = 1.2f;
+        Wind_SpawnTurbulence((Vector3){0}, radius, strength,
+                             noiseScale, noiseSpeed, 2.0f);
+
+        float px = pos.x * noiseScale;
+        float py = pos.y * noiseScale;
+        float pz = pos.z * noiseScale;
+        float t = time * noiseSpeed;
+        float weight = 1.0f - Vector3Length(pos) / radius;
+        Vector3 expected = {
+            TestGpuNoiseScalar((Vector3){px + t, py + 17.3f, pz - t * 0.7f}) * strength * weight,
+            TestGpuNoiseScalar((Vector3){px + 37.1f, py - t * 0.8f, pz + 19.7f}) * strength * weight,
+            TestGpuNoiseScalar((Vector3){px - t * 0.6f, py + 53.9f, pz + t * 0.5f}) * strength * weight,
+        };
+        Vector3 actual = Wind_EvaluateVelocity(pos, time);
+        TEST_NEAR(actual.x, expected.x, 0.0002f, "CPU turbulence X matches GPU noise field");
+        TEST_NEAR(actual.y, expected.y, 0.0002f, "CPU turbulence Y matches GPU noise field");
+        TEST_NEAR(actual.z, expected.z, 0.0002f, "CPU turbulence Z matches GPU noise field");
+    }
+
+    // 6. Test Vòng đời & Tự thu hồi (Decay & Lifetime)
     {
         Wind_Clear();
         Wind_SpawnGust((Vector3){0,0,0}, (Vector3){1,0,0}, 4.0f, 10.0f, 1.0f);
@@ -182,16 +314,22 @@ int main(void) {
         TEST_CHECK(Wind_GetActiveCount() == 0, "Vorticle expired and active count returned to 0");
     }
 
-    // 6. Test Giới hạn Bộ nhớ Ring-buffer (256 slots)
+    // 7. Test Giới hạn Bộ nhớ Ring-buffer (256 slots)
     {
         Wind_Clear();
         for (int i = 0; i < 300; i++) {
             Wind_SpawnRadialBlast((Vector3){(float)i, 0, 0}, 2.0f, 5.0f, 1.0f);
         }
         TEST_CHECK(Wind_GetActiveCount() == MAX_VORTICLES, "Active count capped at MAX_VORTICLES (256)");
+        TEST_CHECK(FileContains("core/particles/gpu/particle_gpu_backend.c",
+                                "#define MAX_GPU_VORTICLES MAX_VORTICLES"),
+                   "GPU backend accepts the full CPU vorticle budget");
+        TEST_CHECK(FileContains("core/particles/shaders/gpu/particle_gpu.comp",
+                                "#define MAX_GPU_VORTICLES 256"),
+                   "Compute shader accepts the full CPU vorticle budget");
     }
 
-    // 7. Test Terrain-Aware Fluid Lift
+    // 8. Test Terrain-Aware Fluid Lift
     {
         Wind_Clear();
         WindMacroConfig slopeMacro = {
@@ -219,7 +357,7 @@ int main(void) {
         TEST_NEAR(vNoLift.y, 0.0f, 0.01f, "Terrain lift removed when query is NULL");
     }
 
-    // 8. Test Đa tầng Vorticles (Interacting Micro-Vortices Superposition)
+    // 9. Test Đa tầng Vorticles (Interacting Micro-Vortices Superposition)
     {
         Wind_Clear();
         WindMacroConfig zeroMacro = {0};
@@ -236,7 +374,7 @@ int main(void) {
         TEST_NEAR(vCombined.z, -2.0f, 0.05f, "Superposition preserves vortex rotation");
     }
 
-    // 9. Dọn dẹp
+    // 10. Dọn dẹp
     Wind_Unload();
     TEST_CHECK(Wind_GetActiveCount() == 0, "Cleaned up after unload");
 

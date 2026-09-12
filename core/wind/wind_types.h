@@ -9,7 +9,7 @@
 // GHOST OF TSUSHIMA WIND & VORTICLE ARCHITECTURE
 //
 // Mô hình động lực học gió phân tầng (Bill Rockenbeck, GDC 2021):
-// 1. Macro Wind: Vector gió cơ sở biến điệu theo không-thời gian bởi 2D/3D Noise.
+// 1. Macro Wind: Vector gió cơ sở biến điệu theo không-thời gian bởi 3D gradient noise.
 // 2. Terrain-Aware Lift: Xấp xỉ nâng dòng khí dựa trên độ dốc địa hình.
 // 3. Vorticles: Mảng hạt gió vô hình (tối đa 256) mô hình hóa tác động cục bộ
 //    từ đòn chém kiếm, đạn phi, vụ nổ, và đối lưu nhiệt từ ngọn lửa.
@@ -21,7 +21,7 @@ typedef enum {
     VORTICLE_LINEAR_GUST = 0, // Luồng gió thẳng có hướng (vệt chém kiếm, đạn phóng lướt)
     VORTICLE_RADIAL_BLAST,    // Sóng xung kích đẩy tỏa tròn (chưởng nổ, dậm chấn động)
     VORTICLE_VORTEX,          // Lốc xoáy quanh trục (lửa trại đối lưu, lốc xoáy)
-    VORTICLE_TURBULENCE       // Nhiễu loạn lưu 3D Perlin cục bộ (va chạm skill, vụ nổ)
+    VORTICLE_TURBULENCE       // Nhiễu loạn hash-gradient 3D cục bộ (va chạm skill, vụ nổ)
 } VorticleType;
 
 typedef struct {
@@ -29,7 +29,7 @@ typedef struct {
     Vector3      direction;   // Hướng luồng gió (GUST) hoặc trục xoáy (VORTEX, normalized)
                               // Với TURBULENCE: x = noiseScale, y = noiseSpeed, z = unused
     float        radius;      // Bán kính ảnh hưởng (m)
-    float        strength;    // Gia tốc tối đa tại tâm (m/s^2)
+    float        strength;    // Độ lớn vận tốc khí mục tiêu tối đa tại tâm (m/s)
     VorticleType type;
     float        lifetime;    // Thời gian còn lại (s)
     float        maxLifetime; // Thời gian sống ban đầu (s)

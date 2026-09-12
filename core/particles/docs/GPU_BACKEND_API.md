@@ -146,13 +146,17 @@ ForceField_AddLayer(&s_smokeField, (ForceLayer){
 
 ```c
 #define MAX_GPU_PARTICLES 8192  // Ring-buffer size
+#define MAX_VORTICLES 256       // Shared CPU/GPU wind-source budget
 #define GPU_VECTOR_FIELD_SLOTS 2  // Concurrent vector-field textures
 ```
 
 Each particle occupies 144 bytes in the SSBO (nine `vec4`s). Routes are not
 copied per particle: up to 32 shared routes live in a separate fixed 9 KiB path
 SSBO, while each particle stores only route-slot and waypoint indices. No runtime
-allocation is performed.
+allocation is performed. The wind SSBO accepts the complete 256-entry CPU
+vorticle pool; CPU collision/event shadowing and GPU compute use the same
+hash-gradient noise field so post-impact trajectories do not diverge merely
+because the backend changed.
 
 ---
 

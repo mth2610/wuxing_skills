@@ -3524,3 +3524,15 @@ after the head was gone the strip kept drifting and fading in open space.
   `rlDrawRenderBatchActive()` before re-enabling (`rlEnableColorBlend()`).
   Guarded by `core/tests/gas_blend_contract_test.c`.
 
+## A CPU simulation shadow is not a mirror when its field or source budget differs (12/09/2026)
+
+- **Symptom:** GPU particles render on one wind trajectory while the CPU copy used
+  for collision and arrival events follows another; the discrepancy grows under
+  gusts and when many local wind sources are active.
+- **Cause:** the CPU wind evaluator used permutation-table Perlin noise and all
+  256 vorticles, while the compute shader used hash-gradient noise and silently
+  truncated the uploaded list to 16.
+- **Rule:** any CPU shadow of GPU simulation must share the observable field
+  formula and the complete selected source set. Pin both the numeric field and
+  the C/GLSL capacity contract in one focused test. Guarded by
+  `core/tests/wind_system_test.c`.

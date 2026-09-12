@@ -10,6 +10,66 @@ static TerrainHeightQueryFn   s_terrainQuery = NULL;
 static void                  *s_terrainUserData = NULL;
 static bool                   s_initialized = false;
 
+// This hash-gradient noise is mirrored formula-for-formula in particle_gpu.comp.
+// Keeping Wind's CPU evaluator on the same field prevents the CPU collision /
+// event shadow simulation from drifting away from GPU particle trajectories.
+static inline float Wind_Fract(float v) {
+    return v - floorf(v);
+}
+
+static Vector3 Wind_Hash3(Vector3 p) {
+    p.x = Wind_Fract(p.x * 0.1031f);
+    p.y = Wind_Fract(p.y * 0.1030f);
+    p.z = Wind_Fract(p.z * 0.0973f);
+    float d = p.x * (p.y + 33.33f) +
+              p.y * (p.x + 33.33f) +
+              p.z * (p.z + 33.33f);
+    p.x += d;
+    p.y += d;
+    p.z += d;
+    return (Vector3){
+        Wind_Fract((p.x + p.y) * p.z) * 2.0f - 1.0f,
+        Wind_Fract((p.x + p.x) * p.y) * 2.0f - 1.0f,
+        Wind_Fract((p.y + p.x) * p.x) * 2.0f - 1.0f,
+    };
+}
+
+static float Wind_NoiseScalar3D(Vector3 p) {
+    Vector3 lattice = {floorf(p.x), floorf(p.y), floorf(p.z)};
+    Vector3 f = {Wind_Fract(p.x), Wind_Fract(p.y), Wind_Fract(p.z)};
+    Vector3 u = {
+        f.x * f.x * (3.0f - 2.0f * f.x),
+        f.y * f.y * (3.0f - 2.0f * f.y),
+        f.z * f.z * (3.0f - 2.0f * f.z),
+    };
+
+    Vector3 g000 = Wind_Hash3(lattice);
+    Vector3 g100 = Wind_Hash3((Vector3){lattice.x + 1.0f, lattice.y, lattice.z});
+    Vector3 g010 = Wind_Hash3((Vector3){lattice.x, lattice.y + 1.0f, lattice.z});
+    Vector3 g110 = Wind_Hash3((Vector3){lattice.x + 1.0f, lattice.y + 1.0f, lattice.z});
+    Vector3 g001 = Wind_Hash3((Vector3){lattice.x, lattice.y, lattice.z + 1.0f});
+    Vector3 g101 = Wind_Hash3((Vector3){lattice.x + 1.0f, lattice.y, lattice.z + 1.0f});
+    Vector3 g011 = Wind_Hash3((Vector3){lattice.x, lattice.y + 1.0f, lattice.z + 1.0f});
+    Vector3 g111 = Wind_Hash3((Vector3){lattice.x + 1.0f, lattice.y + 1.0f, lattice.z + 1.0f});
+
+    float n000 = g000.x * f.x + g000.y * f.y + g000.z * f.z;
+    float n100 = g100.x * (f.x - 1.0f) + g100.y * f.y + g100.z * f.z;
+    float n010 = g010.x * f.x + g010.y * (f.y - 1.0f) + g010.z * f.z;
+    float n110 = g110.x * (f.x - 1.0f) + g110.y * (f.y - 1.0f) + g110.z * f.z;
+    float n001 = g001.x * f.x + g001.y * f.y + g001.z * (f.z - 1.0f);
+    float n101 = g101.x * (f.x - 1.0f) + g101.y * f.y + g101.z * (f.z - 1.0f);
+    float n011 = g011.x * f.x + g011.y * (f.y - 1.0f) + g011.z * (f.z - 1.0f);
+    float n111 = g111.x * (f.x - 1.0f) + g111.y * (f.y - 1.0f) + g111.z * (f.z - 1.0f);
+
+    float nx00 = n000 + (n100 - n000) * u.x;
+    float nx10 = n010 + (n110 - n010) * u.x;
+    float nx01 = n001 + (n101 - n001) * u.x;
+    float nx11 = n011 + (n111 - n011) * u.x;
+    float nxy0 = nx00 + (nx10 - nx00) * u.y;
+    float nxy1 = nx01 + (nx11 - nx01) * u.y;
+    return nxy0 + (nxy1 - nxy0) * u.z;
+}
+
 // -----------------------------------------------------------------------------
 // Vòng đời
 // -----------------------------------------------------------------------------
@@ -199,12 +259,12 @@ Vector3 Wind_GetMacroAt(Vector3 pos, float time) {
         return s_macroConfig.baseDirection;
     }
 
-    // 3D Perlin Noise đa chiều mô phỏng các xoáy loạn lưu chất lưu (Fluid Turbulent Eddies)
+    // 3D hash-gradient noise đa chiều mô phỏng các xoáy loạn lưu chất lưu.
     float s = s_macroConfig.noiseScale;
     float spd = s_macroConfig.noiseSpeed;
-    float nx = Noise_Perlin3D(pos.x * s - time * spd, pos.y * s + 17.3f, pos.z * s - time * spd * 0.7f);
-    float ny = Noise_Perlin3D(pos.x * s + 37.1f, pos.y * s - time * spd * 0.8f, pos.z * s + 19.7f);
-    float nz = Noise_Perlin3D(pos.x * s - time * spd * 0.6f, pos.y * s + 53.9f, pos.z * s + time * spd * 0.5f);
+    float nx = Wind_NoiseScalar3D((Vector3){pos.x * s - time * spd, pos.y * s + 17.3f, pos.z * s - time * spd * 0.7f});
+    float ny = Wind_NoiseScalar3D((Vector3){pos.x * s + 37.1f, pos.y * s - time * spd * 0.8f, pos.z * s + 19.7f});
+    float nz = Wind_NoiseScalar3D((Vector3){pos.x * s - time * spd * 0.6f, pos.y * s + 53.9f, pos.z * s + time * spd * 0.5f});
 
     float amp = s_macroConfig.gustAmplitude * fmaxf(baseLen, 2.0f);
     Vector3 turb = {
@@ -295,14 +355,14 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
                 }
             }
         } else if (v->type == VORTICLE_TURBULENCE) {
-            // Nhiễu loạn lưu 3D Perlin cục bộ: 3 kênh decorrelated Perlin Noise
+            // Nhiễu hash-gradient 3D cục bộ: 3 kênh decorrelated
             float ns = v->direction.x; // noiseScale
             float spd = v->direction.y; // noiseSpeed
             float px_s = pos.x * ns, py_s = pos.y * ns, pz_s = pos.z * ns;
             float t = time * spd;
-            float nx = Noise_Perlin3D(px_s + t,       py_s + 17.3f, pz_s - t * 0.7f);
-            float ny = Noise_Perlin3D(px_s + 37.1f,   py_s - t * 0.8f, pz_s + 19.7f);
-            float nz = Noise_Perlin3D(px_s - t * 0.6f, py_s + 53.9f, pz_s + t * 0.5f);
+            float nx = Wind_NoiseScalar3D((Vector3){px_s + t, py_s + 17.3f, pz_s - t * 0.7f});
+            float ny = Wind_NoiseScalar3D((Vector3){px_s + 37.1f, py_s - t * 0.8f, pz_s + 19.7f});
+            float nz = Wind_NoiseScalar3D((Vector3){px_s - t * 0.6f, py_s + 53.9f, pz_s + t * 0.5f});
             float turbStrength = v->strength * weight;
             Vector3 turb = { nx * turbStrength, ny * turbStrength, nz * turbStrength };
             totalVel = Vector3Add(totalVel, turb);

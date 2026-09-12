@@ -7,12 +7,13 @@ Hệ thống khí động học và gió định hướng phỏng theo kiến tr
 ## 1. Triết Lý Thiết Kế
 
 Thay vì giải phương trình vi phân Navier-Stokes tốn kém tài nguyên không cần thiết cho góc nhìn thế giới game, hệ thống sử dụng **mô hình xấp xỉ phân tầng**:
-- **Cấp độ Vĩ mô (Macro Wind):** Vector gió nền tảng quét qua toàn bộ sàn đấu, được biến điệu bởi sóng nhiễu 3D Perlin để tạo cảm giác gió rít từng đợt.
+- **Cấp độ Vĩ mô (Macro Wind):** Vector gió nền tảng quét qua toàn bộ sàn đấu, được biến điệu bởi gradient noise 3D để tạo cảm giác gió rít từng đợt. CPU và GPU dùng cùng công thức trường nhiễu.
 - **Xấp xỉ Khí động Địa hình (Terrain-Aware Lift):** Lấy mẫu độ dốc địa hình phía trước dọc theo hướng gió để tạo luồng nâng thẳng đứng $\Delta v_y$, giúp các hạt bụi, lá bay và sương khói tự động lướt qua chướng ngại vật thay vì đâm xuyên vào vách đá.
-- **Cấp độ Vi mô (Vorticles):** Mảng phẳng tuyến tính $\le 256$ hạt gió vô hình mô hình hóa 3 dạng tác động khí quyển:
+- **Cấp độ Vi mô (Vorticles):** Mảng phẳng tuyến tính $\le 256$ hạt gió vô hình mô hình hóa 4 dạng tác động khí quyển:
   1. `VORTICLE_LINEAR_GUST`: Luồng gió thẳng định hướng (vệt chém kiếm, đạn phi lướt).
   2. `VORTICLE_RADIAL_BLAST`: Sóng xung kích đẩy tỏa tròn (chưởng nổ, tiếp đất chấn động).
   3. `VORTICLE_VORTEX`: Vòng lốc xoáy quanh trục (đối lưu bốc nhiệt từ ngọn lửa, lốc xoáy).
+  4. `VORTICLE_TURBULENCE`: Nhiễu hash-gradient 3D cục bộ (va chạm skill, vụ nổ).
 
 ---
 
@@ -57,3 +58,4 @@ particlePos = Vector3Add(particlePos, Vector3Scale(windVel, dt));
 - **Bộ nhớ:** Mảng tĩnh cố định 256 phần tử (`sizeof(VorticleData) * 256` $\approx$ 12 KB).
 - **Zero-Allocation:** Tuyệt đối không gọi `malloc`/`free` trong frame loop.
 - **Cache L1 Friendly:** Mảng được dồn liên tục (`compact`) trong `Wind_Update(dt)`, đảm bảo CPU duyệt mảng tuần tự không gián đoạn.
+- **CPU/GPU Parity:** Compute SSBO nhận đủ 256 Vorticle; không cắt ngầm xuống 16 nguồn.

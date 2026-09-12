@@ -177,7 +177,7 @@ static void PackTravelPath(const ParticleTravelPath *path,
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-#define MAX_GPU_VORTICLES 16
+#define MAX_GPU_VORTICLES MAX_VORTICLES
 
 typedef struct {
     Vector4 pos_radius;      // xyz = position, w = radius
