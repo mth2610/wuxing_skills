@@ -14,6 +14,7 @@
 #include "core/surface_material.h"
 #include "core/gfx_quality.h"
 #include "core/atmosphere.h"
+#include "core/volumetric/volumetric_fog.h"
 #include "core/wind/wind_system.h"
 #include "sandbox/skill_debugger.h"
 #include "core/skill_manager.h"
@@ -404,6 +405,7 @@ int main(int argc, char **argv) {
   Atmosphere_Init();      // G3 — ambient dust motes over the arena
   Atmosphere_Configure((Vector3){6.0f, 3.0f, 4.4f}, (Vector3){15.0f, 5.0f, 15.0f},
                        340, (Color){160, 190, 235, 255});
+  VolumetricFog_Init(screenWidth, screenHeight); // Ghost of Tsushima Volumetric Fog & God-Rays
   Wind_Init();            // Ghost of Tsushima: Global Macro Wind + Vorticles System
   MetaballFX_Init(screenWidth, screenHeight);
   /* THE DEFAULT PARTICLE SPRITE.
@@ -1425,6 +1427,7 @@ int main(int argc, char **argv) {
     VFXLight_BindAll(GfxQuality_Get() >= GFX_HIGH ? 4 : (GfxQuality_Get() >= GFX_MED ? 2 : 0));
     SurfaceMaterial_UpdateFrame(camera); // G2 — push sun/ambient/fog to lit models
     GroundShadow_UpdateFrame(); // Real Shading P6 — push shadow map to raw-immediate ground draws
+    VolumetricFog_PreFrame();   // Ghost of Tsushima: arm depth snapshot for volumetric raymarch
     if (!(currentScreen == SCREEN_VFX_TESTER && s_vfxDarkMode) && !vfxBgActive) {
         // Skipping the map is not optional for the bright harness: the skybox
         // paints over ClearBackground, so clearing alone leaves the same dark
@@ -1507,6 +1510,7 @@ int main(int argc, char **argv) {
     VFX_FlowShield_DrawRefraction(camera);
     MyEndMode3D();
     CompositeScreenSpaceVFX(camera);
+    VolumetricFog_Render(camera);
 
     /* THE DISTORT COPY IS SKIPPED WHEN NOTHING WOULD DISTORT. With no live
      * shockwave source, ScreenDistort_Draw is an identity copy of the scene
@@ -1721,6 +1725,7 @@ int main(int argc, char **argv) {
   SceneTargets_Unload();
   FluidSurface_Unload();
   Atmosphere_Unload();
+  VolumetricFog_Unload();
   Wind_Unload();
   MetaballFX_Unload();
   UnloadSkillManager();

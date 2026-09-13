@@ -13,7 +13,17 @@ static bool   s_ready = false;
 // Per-frame uniform locations
 static int s_locQualityTier;
 static int s_locSunToLight, s_locSunColor, s_locSky, s_locGround, s_locViewPos;
-static int s_locFogColor, s_locFogStart, s_locFogEnd, s_locFogEnabled;
+static int s_locFogColor   = -1;
+static int s_locFogStart   = -1;
+static int s_locFogEnd     = -1;
+static int s_locFogEnabled = -1;
+static int s_locFogHeightFalloff  = -1;
+static int s_locFogBaseAltitude   = -1;
+static int s_locFogSigmoidEnabled = -1;
+static int s_locFogSigmoidParams  = -1;
+static int s_locRayleighLMS       = -1;
+static int s_locMieAnisotropy     = -1;
+static int s_locMultipleScattAmp  = -1;
 static int s_locMatcapTex, s_locHasMatcap, s_locMatcapAmount;
 static int s_locNormalMap, s_locHasNormalMap;
 static int s_locAniso, s_locAnisoShininess, s_locSssStrength, s_locSssPower;
@@ -47,6 +57,13 @@ void SurfaceMaterial_Init(void) {
     s_locFogStart   = GetShaderLocation(s_shader, "u_fogStart");
     s_locFogEnd     = GetShaderLocation(s_shader, "u_fogEnd");
     s_locFogEnabled = GetShaderLocation(s_shader, "u_fogEnabled");
+    s_locFogHeightFalloff  = GetShaderLocation(s_shader, "u_fogHeightFalloff");
+    s_locFogBaseAltitude   = GetShaderLocation(s_shader, "u_fogBaseAltitude");
+    s_locFogSigmoidEnabled = GetShaderLocation(s_shader, "u_fogSigmoidEnabled");
+    s_locFogSigmoidParams  = GetShaderLocation(s_shader, "u_fogSigmoidParams");
+    s_locRayleighLMS       = GetShaderLocation(s_shader, "u_rayleighLMS");
+    s_locMieAnisotropy     = GetShaderLocation(s_shader, "u_mieAnisotropy");
+    s_locMultipleScattAmp  = GetShaderLocation(s_shader, "u_multipleScattAmp");
     s_locMatcapTex     = GetShaderLocation(s_shader, "matcapTex");
     s_locHasMatcap     = GetShaderLocation(s_shader, "u_hasMatcap");
     s_locMatcapAmount  = GetShaderLocation(s_shader, "u_matcapAmount");
@@ -144,6 +161,24 @@ void SurfaceMaterial_UpdateFrame(Camera3D camera) {
     SetShaderValue(s_shader, s_locFogStart,   &fog.start,   SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shader, s_locFogEnd,     &fog.end,     SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shader, s_locFogEnabled, &fogEnabled,  SHADER_UNIFORM_FLOAT);
+
+    // Advanced atmosphere & height fog (Ghost of Tsushima style)
+    AtmosphereProfile atmos = Environment_GetAtmosphereProfile();
+    float fogHeightFalloff  = atmos.density.heightFalloff;
+    float fogBaseAltitude   = atmos.density.baseAltitude;
+    float fogSigmoidEnabled = atmos.density.enableSigmoidLayer ? 1.0f : 0.0f;
+    Vector3 fogSigmoidParams = { atmos.density.layerAltitude, atmos.density.layerThickness, atmos.density.layerDensity };
+    Vector3 rayleighLMS     = atmos.optics.rayleighLMS;
+    float mieAnisotropy     = atmos.optics.mieAnisotropy;
+    float multScattAmp      = atmos.optics.multipleScatteringAmp;
+
+    SetShaderValue(s_shader, s_locFogHeightFalloff,  &fogHeightFalloff,  SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_shader, s_locFogBaseAltitude,   &fogBaseAltitude,   SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_shader, s_locFogSigmoidEnabled, &fogSigmoidEnabled, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_shader, s_locFogSigmoidParams,  &fogSigmoidParams,  SHADER_UNIFORM_VEC3);
+    SetShaderValue(s_shader, s_locRayleighLMS,       &rayleighLMS,       SHADER_UNIFORM_VEC3);
+    SetShaderValue(s_shader, s_locMieAnisotropy,     &mieAnisotropy,     SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_shader, s_locMultipleScattAmp,  &multScattAmp,      SHADER_UNIFORM_FLOAT);
 
     // Real Shading P6 — shadow map (HIGH tier only in-shader; harmless to
     // push always, EnvShadow_GetLightVP/GetShadowMap return stale-but-valid

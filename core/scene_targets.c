@@ -575,6 +575,7 @@ static int s_softDepthIdleFrames = SOFT_DEPTH_KEEPALIVE_FRAMES + 1; // start idl
 
 void SceneTargets_RequestSoftDepthRegion(Rectangle screenRegion)
 {
+  s_softDepthIdleFrames = 0;
   const float maxW = (float)renderTex.texture.width;
   const float maxH = (float)renderTex.texture.height;
   if (screenRegion.width <= 0.0f || screenRegion.height <= 0.0f || maxW <= 0.0f || maxH <= 0.0f)

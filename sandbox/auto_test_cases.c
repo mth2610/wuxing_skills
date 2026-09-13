@@ -16,6 +16,7 @@
 #include "net/net_transport.h"
 #include "ui/ui.h"
 #include "skills/taiji/taiji_phong/taiji_phong_skill.h"
+#include "environment/environment_system.h"
 #include "raymath.h"
 #include <math.h>
 #include <string.h>
@@ -910,6 +911,77 @@ static AutoTestResult AutoTest_ShaderPermutationStep(int frameInCase, char *outR
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
+static AutoTestResult AutoTest_AtmosphereFogStep(int frameInCase, char *outReason, int outReasonSize)
+{
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  bool ok = true;
+
+  // 1. Verify default AtmosphereProfile
+  AtmosphereProfile defaultAtmos = Environment_GetAtmosphereProfile();
+  ok &= AutoTest_ExpectTrue(defaultAtmos.optics.rayleighLMS.x > 0.005f,
+                            "default Rayleigh LMS X is valid", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(defaultAtmos.optics.multipleScatteringAmp > 2.0f,
+                            "default Multiple Scattering boost is ~2.16", outReason, outReasonSize);
+
+  // 2. Test 2-way synchronization between legacy EnvFogConfig and new AtmosphereProfile
+  EnvFogConfig originalFog = Environment_GetFogConfig();
+
+  EnvFogConfig customFog = {
+      .color = (Color){ 45, 55, 65, 255 },
+      .start = 150.0f,
+      .end = 850.0f,
+      .density = 0.008f,
+      .enabled = true
+  };
+  Environment_SetFogConfig(customFog);
+
+  AtmosphereProfile syncedAtmos = Environment_GetAtmosphereProfile();
+  ok &= AutoTest_ExpectTrue(syncedAtmos.color.r == 45 && syncedAtmos.color.g == 55,
+                            "Atmosphere color synced from EnvFogConfig", outReason, outReasonSize);
+  ok &= AutoTest_ExpectFloatNear(syncedAtmos.start, 150.0f, 0.01f,
+                                 "Atmosphere start distance synced", outReason, outReasonSize);
+  ok &= AutoTest_ExpectFloatNear(syncedAtmos.density.baseDensity, 0.008f, 0.0001f,
+                                 "Atmosphere base density synced", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(syncedAtmos.enabled == true,
+                            "Atmosphere enabled flag synced", outReason, outReasonSize);
+
+  // 3. Test LocalFogVolume lifecycle and pool constraints
+  FogVolume_ClearAll();
+  ok &= AutoTest_ExpectTrue(FogVolume_GetActiveCount() == 0,
+                            "FogVolume_ClearAll emptied pool", outReason, outReasonSize);
+
+  int idPermanent = FogVolume_SpawnTransient((Vector3){ 10.0f, 0.0f, 10.0f }, 15.0f, (Color){ 200, 220, 255, 255 }, 0.5f, 0.0f); // permanent (lifetime <= 0)
+  int idTransient = FogVolume_SpawnTransient((Vector3){ 0.0f, 0.0f, 0.0f }, 8.0f, (Color){ 100, 255, 100, 255 }, 0.8f, 0.5f);     // 0.5s lifetime
+  ok &= AutoTest_ExpectTrue(idPermanent > 0 && idTransient > 0,
+                            "Created 2 fog volumes with positive IDs", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(FogVolume_GetActiveCount() == 2,
+                            "Fog volume active count is 2", outReason, outReasonSize);
+
+  const LocalFogVolume *vPerm = FogVolume_GetById(idPermanent);
+  ok &= AutoTest_ExpectTrue(vPerm != NULL && vPerm->density == 0.5f,
+                            "Retrieved permanent fog volume correctly", outReason, outReasonSize);
+
+  // Simulate 1.0s passing — transient volume should expire, permanent volume should remain
+  Environment_Update(1.0f);
+  ok &= AutoTest_ExpectTrue(FogVolume_GetActiveCount() == 1,
+                            "Transient fog volume expired after lifetime", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(FogVolume_GetById(idTransient) == NULL,
+                            "Expired volume lookup returns NULL", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(FogVolume_GetById(idPermanent) != NULL,
+                            "Permanent volume still alive", outReason, outReasonSize);
+
+  // Clean up
+  FogVolume_Destroy(idPermanent);
+  ok &= AutoTest_ExpectTrue(FogVolume_GetActiveCount() == 0,
+                            "Destroyed remaining fog volume", outReason, outReasonSize);
+
+  // Restore original fog config
+  Environment_SetFogConfig(originalFog);
+
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
 void AutoTestCases_Register(PlayerEntity *player)
 {
   s_player = player;
@@ -929,4 +1001,6 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("team_elimination", AutoTest_TeamEliminationStep, 5);
   AutoTest_Register("hero_bot_handicap", AutoTest_HeroBotHandicapStep, 5);
   AutoTest_Register("shader_permutation", AutoTest_ShaderPermutationStep, 5);
+  AutoTest_Register("atmosphere_and_fog_volumes", AutoTest_AtmosphereFogStep, 5);
 }
+

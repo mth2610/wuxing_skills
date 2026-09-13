@@ -150,6 +150,20 @@ void Environment_SetShadowColor(Color col);
 // --- Fog ---
 EnvFogConfig Environment_GetFogConfig(void);
 void Environment_SetFogConfig(EnvFogConfig config);
+
+// --- Advanced Atmosphere & Physical Fog (Ghost of Tsushima style) ---
+AtmosphereProfile Environment_GetAtmosphereProfile(void);
+void              Environment_SetAtmosphereProfile(const AtmosphereProfile *profile);
+
+// --- Local Fog Volumes (Props, Map features, and Skill VFX) ---
+int                     FogVolume_Create(const LocalFogVolume *volume);
+void                    FogVolume_Update(int id, const LocalFogVolume *volume);
+void                    FogVolume_Destroy(int id);
+void                    FogVolume_ClearAll(void);
+int                     FogVolume_SpawnTransient(Vector3 pos, float radius, Color color, float density, float duration);
+int                     FogVolume_GetActiveCount(void);
+const LocalFogVolume*   FogVolume_GetByIndex(int index);
+const LocalFogVolume*   FogVolume_GetById(int id);
 ```
 
 ---

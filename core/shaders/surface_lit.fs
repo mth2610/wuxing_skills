@@ -57,11 +57,18 @@ uniform float     u_anisoShininess;
 uniform float     u_sssStrength;    // P5c — fake jade/skin back-scatter, 0 = off
 uniform float     u_sssPower;
 
-// Distance fog (matches environment fog config) — unchanged, not tier-gated.
+// Distance & Physical Height Fog (Ghost of Tsushima style)
 uniform vec3  u_fogColor;
 uniform float u_fogStart;
 uniform float u_fogEnd;
 uniform float u_fogEnabled;
+uniform float u_fogHeightFalloff;   // k_e along Y axis
+uniform float u_fogBaseAltitude;    // reference Y ground
+uniform float u_fogSigmoidEnabled;  // >0.5 enables sigmoid inversion/cloud blanket layer
+uniform vec3  u_fogSigmoidParams;   // x: layerAltitude, y: layerThickness (k_s), z: layerDensity
+uniform vec3  u_rayleighLMS;        // Rayleigh LMS scattering coefficients
+uniform float u_mieAnisotropy;      // g (forward scattering)
+uniform float u_multipleScattAmp;   // Multiple scattering boost (~2.16)
 
 // Real shadow map (P6, HIGH+Shadow) — single directional PCF shadow from
 // EnvShadow. Multiplies diffuse/spec only (not ambient), so shadowed areas
@@ -223,8 +230,59 @@ void main() {
 
     if (u_fogEnabled > 0.5) {
         float dist = length(u_viewPos - fragWorldPos);
-        float f = clamp((dist - u_fogStart) / max(u_fogEnd - u_fogStart, 0.001), 0.0, 1.0);
-        color = mix(color, u_fogColor, f);
+        float linearDistFactor = clamp((dist - u_fogStart) / max(u_fogEnd - u_fogStart, 0.001), 0.0, 1.0);
+
+        // Analytical exponential height falloff along view ray
+        float heightCoeff = 1.0;
+        if (u_fogHeightFalloff > 0.0001) {
+            float y1 = u_viewPos.y - u_fogBaseAltitude;
+            float y2 = fragWorldPos.y - u_fogBaseAltitude;
+            float dy = y2 - y1;
+            if (abs(dy) > 0.001) {
+                heightCoeff = (exp(-u_fogHeightFalloff * y1) - exp(-u_fogHeightFalloff * y2)) / (u_fogHeightFalloff * dy);
+            } else {
+                heightCoeff = exp(-u_fogHeightFalloff * (0.5 * (y1 + y2)));
+            }
+            heightCoeff = clamp(heightCoeff, 0.0, 4.0);
+        }
+
+        // Sigmoid thermal inversion layer / valley fog blanket
+        float sigmoidDensity = 0.0;
+        if (u_fogSigmoidEnabled > 0.5) {
+            float diff = (fragWorldPos.y - u_fogSigmoidParams.x) / max(u_fogSigmoidParams.y, 0.001);
+            // Bell-shaped density profile around the inversion layer
+            sigmoidDensity = (1.0 / (1.0 + diff * diff)) * u_fogSigmoidParams.z;
+        }
+
+        float totalOpticalDepth = linearDistFactor * (heightCoeff + sigmoidDensity);
+        float f = 1.0 - exp(-totalOpticalDepth);
+        f = clamp(f, 0.0, 1.0);
+
+        // Rayleigh LMS + Mie forward-scattering phase function (Patry/Schuler SIGGRAPH 2021)
+        vec3 fogTone = u_fogColor;
+        if (u_rayleighLMS.x > 0.0001) {
+            // Forward phase alignment with sun direction (L is from surface toward sun)
+            float cosTheta = clamp(dot(-V, L), -1.0, 1.0);
+            float g = clamp(u_mieAnisotropy, 0.1, 0.95);
+            float g2 = g * g;
+            float miePhase = (1.0 - g2) / (4.0 * 3.14159265 * pow(max(1.0 + g2 - 2.0 * g * cosTheta, 0.001), 1.5));
+
+            // LMS to Linear sRGB transformation matrix:
+            // [ 4.0628 -3.3102  0.2474 ]
+            // [-0.9693  1.8760  0.0416 ]
+            // [ 0.0556 -0.2040  1.0573 ]
+            vec3 scatterLMS = u_rayleighLMS * totalOpticalDepth;
+            vec3 scatterRGB = clamp(mat3(
+                 4.0628, -0.9693,  0.0556,
+                -3.3102,  1.8760, -0.2040,
+                 0.2474,  0.0416,  1.0573
+            ) * scatterLMS, 0.0, 2.0);
+
+            vec3 inScatteredSun = u_sunColor * (scatterRGB + miePhase * u_multipleScattAmp * 0.05);
+            fogTone = mix(u_fogColor, inScatteredSun, clamp(totalOpticalDepth * 0.5, 0.0, 0.8));
+        }
+
+        color = mix(color, fogTone, f);
     }
 
     finalColor = vec4(color, alpha);

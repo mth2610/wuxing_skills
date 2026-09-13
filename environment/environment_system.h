@@ -45,25 +45,96 @@ void Environment_SetShadowColor(Color col);
 EnvFogConfig Environment_GetFogConfig(void);
 void Environment_SetFogConfig(EnvFogConfig config);
 
+// =========================================================================
+// Advanced Volumetric Atmosphere & Fog (Ghost of Tsushima & Modern Optics)
+// =========================================================================
+
+typedef enum {
+    FOG_SHAPE_SPHERE,
+    FOG_SHAPE_BOX,
+    FOG_SHAPE_CYLINDER
+} FogVolumeShape;
+
+#define MAX_LOCAL_FOG_VOLUMES 32
+
+typedef struct {
+    int            id;              // Non-zero handle
+    FogVolumeShape shape;
+    Vector3        position;
+    Vector3        extents;         // Sphere: x=radius; Box: half-extents (x,y,z); Cylinder: x=radius, y=half-height
+    Color          color;           // Albedo / tint
+    float          density;         // Absorption + scattering density
+    float          edgeSoftness;    // 0.0=hard edge, 1.0=smooth cubic fade
+    float          emissive;        // Glow/luminance (useful for skill VFX)
+    Vector3        driftVelocity;   // Wind drift movement
+    float          lifetime;        // Remaining life (seconds); <=0 means permanent
+    float          maxLifetime;     // Total duration (for fade-out curve)
+    bool           active;
+} LocalFogVolume;
+
+// Optical scattering coefficients in LMS colour space (Patry/Schuler SIGGRAPH 2021)
+typedef struct {
+    Vector3 rayleighLMS;            // Rayleigh scattering in LMS space [km^-1] (default: 0.0076224, 0.012935, 0.024845)
+    float   mieScattering;          // Mie scattering coefficient
+    float   mieAnisotropy;          // Phase function forward-scattering g in [0.70..0.85]
+    float   multipleScatteringAmp;  // Multiple scattering boost (~2.16 for albedo 0.9)
+} OpticalScatteringCoeffs;
+
+// Analytical height density distribution: Exponential falloff + Sigmoid thermal inversion layer
+typedef struct {
+    float   baseDensity;            // Fog density at reference altitude
+    float   heightFalloff;          // Exponential decay rate k_e along Y axis (0 = uniform)
+    float   baseAltitude;           // Reference ground altitude (Y)
+    bool    enableSigmoidLayer;     // Enables valley fog / sea of clouds inversion layer
+    float   layerAltitude;          // Center altitude of cloud/fog blanket
+    float   layerThickness;         // Transition thickness k_s of sigmoid curve
+    float   layerDensity;           // Peak density of the blanket layer
+} AtmosphericDensityProfile;
+
+// Complete Atmosphere & Fog Profile (superset of EnvFogConfig)
+typedef struct {
+    Color                     color;         // Primary ambient fog albedo
+    float                     start;         // Near distance cutoff
+    float                     end;           // Far distance cutoff
+    bool                      enabled;       // Global master switch
+    OpticalScatteringCoeffs   optics;        // Physical scattering
+    AtmosphericDensityProfile density;       // Height and inversion profiles
+} AtmosphereProfile;
+
+AtmosphereProfile Environment_GetAtmosphereProfile(void);
+void              Environment_SetAtmosphereProfile(const AtmosphereProfile *profile);
+
+// Local Fog Volumes (props, map points, skill VFX)
+int                     FogVolume_Create(const LocalFogVolume *volume);
+void                    FogVolume_Update(int id, const LocalFogVolume *volume);
+void                    FogVolume_Destroy(int id);
+void                    FogVolume_ClearAll(void);
+int                     FogVolume_SpawnTransient(Vector3 pos, float radius, Color color, float density, float duration);
+int                     FogVolume_GetActiveCount(void);
+const LocalFogVolume*   FogVolume_GetByIndex(int index);
+const LocalFogVolume*   FogVolume_GetById(int id);
+
 #define MAX_TIME_OF_DAY_PRESETS 8
 
 typedef struct {
-    Color        ambientColor;
-    Color        sunColor;
-    Vector3      sunDirection;
-    Color        shadowColor;
-    EnvFogConfig fog;
+    Color             ambientColor;
+    Color             sunColor;
+    Vector3           sunDirection;
+    Color             shadowColor;
+    EnvFogConfig      fog;
+    AtmosphereProfile atmosphere;
 } EnvLightingPreset;
 
 // --- Resolved Frame Lighting Snapshot (E10) ---
 typedef struct {
-    Vector3      sunDirection;  // Normalized travel direction (from light into scene)
-    Color        sunColor;      // Direct linear sunlight
-    Color        skyAmbient;    // Upper hemisphere sky fill
-    Color        groundBounce;  // Lower hemisphere warm earth bounce
-    Color        shadowColor;   // Directional shadow attenuation
-    EnvFogConfig fog;           // Distance and height fog parameters
-    unsigned int version;       // Increments when lighting changes
+    Vector3           sunDirection;  // Normalized travel direction (from light into scene)
+    Color             sunColor;      // Direct linear sunlight
+    Color             skyAmbient;    // Upper hemisphere sky fill
+    Color             groundBounce;  // Lower hemisphere warm earth bounce
+    Color             shadowColor;   // Directional shadow attenuation
+    EnvFogConfig      fog;           // Distance and height fog parameters
+    AtmosphereProfile atmosphere;    // Full physical atmosphere profile
+    unsigned int      version;       // Increments when lighting changes
 } EnvFrameLighting;
 
 // Supplies one resolved snapshot; consumers do not independently infer light direction/tint.

@@ -6,7 +6,9 @@
 #include "maps/toolkit/prop_lit.h"
 #include "core/camera_context.h"
 #include "core/map_manager.h"
+#include "core/volumetric/volumetric_fog.h"
 #include "raylib.h"
+#include "raymath.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -424,14 +426,36 @@ static void CaptureVerdantStaticShadows(void)
 static void ApplyVerdantEnvironment(void)
 {
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){124, 146, 172, 255});
-    Environment_SetSunColor((Color){255, 242, 210, 255});
-    Environment_SetSunDirection((Vector3){0.45f, -0.74f, -0.50f});
+    Environment_SetAmbientColor((Color){135, 155, 180, 255}); // Cool clear morning sky ambient
+    Environment_SetSunColor((Color){255, 238, 200, 255});     // Warm morning sunlight
+    // Sun rises in the East-North ahead (X > 0, Z < 0), sunlight travels towards West-South (X < 0, Z > 0)
+    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.50f, -0.45f, 0.55f}));
     Environment_SetShadowColor((Color){28, 36, 48, 120});
-    Environment_SetFogConfig((EnvFogConfig){
-        .color = {148, 168, 186, 255}, .start = 55.0f, .end = 155.0f,
-        .density = 0.0035f, .enabled = true,
-    });
+
+    // Ghost of Tsushima style: Ground-hugging dew mist + lake inversion blanket + canopy light shafts
+    AtmosphereProfile atmos = {
+        .color = {175, 198, 220, 255},  // Crisp morning mist hue
+        .start = 1.2f,                  // Third-person camera distance ~6m; start fog close to view
+        .end = 90.0f,
+        .enabled = true,
+        .optics = {
+            .rayleighLMS = {0.0076224f, 0.012935f, 0.024845f},
+            .mieScattering = 0.0045f,
+            .mieAnisotropy = 0.72f,      // Forward scattering for brilliant sunlight shafts
+            .multipleScatteringAmp = 2.4f
+        },
+        .density = {
+            .baseDensity = 0.022f,      // Tangible morning ground mist
+            .heightFalloff = 0.45f,      // Hugs ground and rises softly into lower foliage (Y <= 2.2m)
+            .baseAltitude = 0.0f,
+            .enableSigmoidLayer = true,  // Soft lake & reed vapor blanket
+            .layerAltitude = 0.45f,
+            .layerThickness = 1.2f,
+            .layerDensity = 0.85f
+        }
+    };
+    Environment_SetAtmosphereProfile(&atmos);
+    VolumetricFog_SetGodRayIntensity(1.8f);
 }
 
 static void ApplyHabitatToGround(void)
@@ -448,12 +472,66 @@ static void ApplyHabitatToGround(void)
     MapProp_SetGroundHabitat(&s_ground, segs, segCount, lakeParams);
 }
 
+static void SpawnVerdantMistVolumes(void)
+{
+    FogVolume_ClearAll();
+
+    // 1. Lake & reed bed moisture mist (cylinder blanketing water surface from Y=0.0 to 2.4m)
+    LocalFogVolume lakeMist = {
+        .shape = FOG_SHAPE_CYLINDER,
+        .position = {63.0f, 0.85f, 25.5f},
+        .extents = {15.0f, 1.6f, 12.0f},
+        .color = {195, 230, 255, 255},
+        .density = 0.14f,
+        .edgeSoftness = 0.70f,
+        .emissive = 0.0f,
+        .driftVelocity = {0.12f, 0.0f, 0.06f},
+        .lifetime = 0.0f, // permanent
+        .maxLifetime = 0.0f,
+        .active = true
+    };
+    FogVolume_Create(&lakeMist);
+
+    // 2. West forest edge & wildflower hollow mist
+    LocalFogVolume forestMist = {
+        .shape = FOG_SHAPE_CYLINDER,
+        .position = {27.0f, 1.6f, 20.0f},
+        .extents = {14.0f, 2.0f, 12.0f},
+        .color = {190, 220, 235, 255},
+        .density = 0.10f,
+        .edgeSoftness = 0.75f,
+        .emissive = 0.0f,
+        .driftVelocity = {0.08f, 0.0f, 0.04f},
+        .lifetime = 0.0f,
+        .maxLifetime = 0.0f,
+        .active = true
+    };
+    FogVolume_Create(&forestMist);
+
+    // 3. East flower meadow mist (cylinder blanketing blooming blossom hill from Y=0.0 to 3.8m)
+    LocalFogVolume meadowMist = {
+        .shape = FOG_SHAPE_CYLINDER,
+        .position = {77.0f, 1.8f, 52.0f},
+        .extents = {14.0f, 2.0f, 12.0f},
+        .color = {220, 225, 255, 255},
+        .density = 0.12f,
+        .edgeSoftness = 0.75f,
+        .emissive = 0.0f,
+        .driftVelocity = {0.10f, 0.0f, 0.05f},
+        .lifetime = 0.0f,
+        .maxLifetime = 0.0f,
+        .active = true
+    };
+    FogVolume_Create(&meadowMist);
+}
+
 void InitVerdantPathMap(void)
 {
     // Map activation also calls Init for already-loaded worlds. Restore all
     // global environment state before the resource guard so another map cannot
     // leave Verdant using stale light/fog values.
     ApplyVerdantEnvironment();
+    SpawnVerdantMistVolumes();
     if (s_ready) {
         ApplyHabitatToGround();
         EnvShadow_SetMapCasterCallback(DrawVerdantShadowCasters, NULL);
@@ -602,6 +680,7 @@ void UnloadVerdantPathMap(void)
         return;
     EnvShadow_SetMapCasterCallback(NULL, NULL);
     EnvShadow_InvalidateStaticCache();
+    FogVolume_ClearAll();
     MapProp_UnloadWaterSurface(&s_lake);
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++)
         MapProp_UnloadFlowerField(&s_flowerFields[cluster]);

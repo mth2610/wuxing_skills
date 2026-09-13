@@ -2,6 +2,7 @@
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
+#include <stddef.h>
 
 #ifndef PI
 #define PI 3.14159265358979323846f
@@ -23,6 +24,31 @@ static EnvFogConfig s_fogConfig = {
     .density = 0.001f,
     .enabled = false
 };
+
+static AtmosphereProfile s_atmosphereProfile = {
+    .color = { 30, 30, 40, 255 },
+    .start = 200.0f,
+    .end = 1200.0f,
+    .enabled = false,
+    .optics = {
+        .rayleighLMS = { 0.0076224f, 0.012935f, 0.024845f }, // Schüler/Patry D65 LMS Rayleigh coefficients
+        .mieScattering = 0.002f,
+        .mieAnisotropy = 0.80f,                              // Strong forward crepuscular scattering
+        .multipleScatteringAmp = 2.16f                       // Multiple scattering boost for albedo ~0.9
+    },
+    .density = {
+        .baseDensity = 0.001f,
+        .heightFalloff = 0.05f,                              // Exponential decay along Y axis
+        .baseAltitude = 0.0f,
+        .enableSigmoidLayer = false,
+        .layerAltitude = 5.0f,
+        .layerThickness = 3.0f,
+        .layerDensity = 0.005f
+    }
+};
+
+static LocalFogVolume s_fogVolumes[MAX_LOCAL_FOG_VOLUMES] = { 0 };
+static int            s_nextFogVolumeId = 1;
 
 // --- Time-of-Day dynamic lighting cycle state ---
 // Static storage only (project-wide no-malloc rule). Inert until a map/system
@@ -68,9 +94,46 @@ static void EnvApplyBlendedPreset(const EnvLightingPreset *a, const EnvLightingP
     // fog.enabled can't be interpolated (bool) — see header comment: all
     // presets passed together must agree on it, so either side is fine.
     s_fogConfig.enabled = a->fog.enabled;
+
+    // Synchronize full AtmosphereProfile with blended results
+    s_atmosphereProfile.color   = s_fogConfig.color;
+    s_atmosphereProfile.start   = s_fogConfig.start;
+    s_atmosphereProfile.end     = s_fogConfig.end;
+    s_atmosphereProfile.enabled = s_fogConfig.enabled;
+    s_atmosphereProfile.density.baseDensity = s_fogConfig.density;
+
+    s_atmosphereProfile.optics.mieScattering = a->atmosphere.optics.mieScattering + (b->atmosphere.optics.mieScattering - a->atmosphere.optics.mieScattering) * t;
+    s_atmosphereProfile.optics.mieAnisotropy = a->atmosphere.optics.mieAnisotropy + (b->atmosphere.optics.mieAnisotropy - a->atmosphere.optics.mieAnisotropy) * t;
+    s_atmosphereProfile.optics.multipleScatteringAmp = a->atmosphere.optics.multipleScatteringAmp + (b->atmosphere.optics.multipleScatteringAmp - a->atmosphere.optics.multipleScatteringAmp) * t;
+
+    s_atmosphereProfile.density.heightFalloff = a->atmosphere.density.heightFalloff + (b->atmosphere.density.heightFalloff - a->atmosphere.density.heightFalloff) * t;
+    s_atmosphereProfile.density.baseAltitude  = a->atmosphere.density.baseAltitude  + (b->atmosphere.density.baseAltitude  - a->atmosphere.density.baseAltitude)  * t;
+    s_atmosphereProfile.density.enableSigmoidLayer = a->atmosphere.density.enableSigmoidLayer;
+    s_atmosphereProfile.density.layerAltitude = a->atmosphere.density.layerAltitude + (b->atmosphere.density.layerAltitude - a->atmosphere.density.layerAltitude) * t;
+    s_atmosphereProfile.density.layerThickness = a->atmosphere.density.layerThickness + (b->atmosphere.density.layerThickness - a->atmosphere.density.layerThickness) * t;
+    s_atmosphereProfile.density.layerDensity = a->atmosphere.density.layerDensity + (b->atmosphere.density.layerDensity - a->atmosphere.density.layerDensity) * t;
 }
 
 void Environment_Update(float dt) {
+    // 1. Update transient Local Fog Volumes (wind drift & lifetime decay)
+    for (int i = 0; i < MAX_LOCAL_FOG_VOLUMES; i++) {
+        if (!s_fogVolumes[i].active) continue;
+        if (s_fogVolumes[i].maxLifetime > 0.0f) {
+            s_fogVolumes[i].lifetime -= dt;
+            if (s_fogVolumes[i].lifetime <= 0.0f) {
+                s_fogVolumes[i].active = false;
+                s_fogVolumes[i].id = 0;
+                continue;
+            }
+        }
+        if (s_fogVolumes[i].driftVelocity.x != 0.0f || s_fogVolumes[i].driftVelocity.y != 0.0f || s_fogVolumes[i].driftVelocity.z != 0.0f) {
+            s_fogVolumes[i].position.x += s_fogVolumes[i].driftVelocity.x * dt;
+            s_fogVolumes[i].position.y += s_fogVolumes[i].driftVelocity.y * dt;
+            s_fogVolumes[i].position.z += s_fogVolumes[i].driftVelocity.z * dt;
+        }
+    }
+
+    // 2. Update Time-of-Day cycle
     if (s_todSpeed == 0.0f || s_todCount <= 0) return; // fully inert: zero behavior change
 
     s_todCurrentTime += s_todSpeed * dt;
@@ -310,7 +373,116 @@ Color Environment_GetShadowColor(void) { return s_shadowColor; }
 void Environment_SetShadowColor(Color col) { s_shadowColor = col; s_lightingVersion++; }
 
 EnvFogConfig Environment_GetFogConfig(void) { return s_fogConfig; }
-void Environment_SetFogConfig(EnvFogConfig config) { s_fogConfig = config; s_lightingVersion++; }
+void Environment_SetFogConfig(EnvFogConfig config) {
+    s_fogConfig = config;
+    s_atmosphereProfile.color = config.color;
+    s_atmosphereProfile.start = config.start;
+    s_atmosphereProfile.end = config.end;
+    s_atmosphereProfile.enabled = config.enabled;
+    s_atmosphereProfile.density.baseDensity = config.density;
+    s_lightingVersion++;
+}
+
+AtmosphereProfile Environment_GetAtmosphereProfile(void) { return s_atmosphereProfile; }
+void Environment_SetAtmosphereProfile(const AtmosphereProfile *profile) {
+    if (!profile) return;
+    s_atmosphereProfile = *profile;
+    s_fogConfig.color = profile->color;
+    s_fogConfig.start = profile->start;
+    s_fogConfig.end = profile->end;
+    s_fogConfig.density = profile->density.baseDensity;
+    s_fogConfig.enabled = profile->enabled;
+    s_lightingVersion++;
+}
+
+// Local Fog Volume Manager
+int FogVolume_Create(const LocalFogVolume *volume) {
+    if (!volume) return 0;
+    for (int i = 0; i < MAX_LOCAL_FOG_VOLUMES; i++) {
+        if (!s_fogVolumes[i].active) {
+            s_fogVolumes[i] = *volume;
+            s_fogVolumes[i].id = s_nextFogVolumeId++;
+            if (s_nextFogVolumeId <= 0) s_nextFogVolumeId = 1;
+            s_fogVolumes[i].active = true;
+            return s_fogVolumes[i].id;
+        }
+    }
+    return 0; // Pool full
+}
+
+void FogVolume_Update(int id, const LocalFogVolume *volume) {
+    if (id <= 0 || !volume) return;
+    for (int i = 0; i < MAX_LOCAL_FOG_VOLUMES; i++) {
+        if (s_fogVolumes[i].active && s_fogVolumes[i].id == id) {
+            int savedId = s_fogVolumes[i].id;
+            s_fogVolumes[i] = *volume;
+            s_fogVolumes[i].id = savedId;
+            s_fogVolumes[i].active = true;
+            return;
+        }
+    }
+}
+
+void FogVolume_Destroy(int id) {
+    if (id <= 0) return;
+    for (int i = 0; i < MAX_LOCAL_FOG_VOLUMES; i++) {
+        if (s_fogVolumes[i].active && s_fogVolumes[i].id == id) {
+            s_fogVolumes[i].active = false;
+            s_fogVolumes[i].id = 0;
+            return;
+        }
+    }
+}
+
+void FogVolume_ClearAll(void) {
+    for (int i = 0; i < MAX_LOCAL_FOG_VOLUMES; i++) {
+        s_fogVolumes[i].active = false;
+        s_fogVolumes[i].id = 0;
+    }
+}
+
+int FogVolume_SpawnTransient(Vector3 pos, float radius, Color color, float density, float duration) {
+    LocalFogVolume v = { 0 };
+    v.shape = FOG_SHAPE_SPHERE;
+    v.position = pos;
+    v.extents = (Vector3){ radius, radius, radius };
+    v.color = color;
+    v.density = density;
+    v.edgeSoftness = 0.8f;
+    v.lifetime = duration;
+    v.maxLifetime = duration;
+    v.active = true;
+    return FogVolume_Create(&v);
+}
+
+int FogVolume_GetActiveCount(void) {
+    int count = 0;
+    for (int i = 0; i < MAX_LOCAL_FOG_VOLUMES; i++) {
+        if (s_fogVolumes[i].active) count++;
+    }
+    return count;
+}
+
+const LocalFogVolume* FogVolume_GetByIndex(int index) {
+    int current = 0;
+    for (int i = 0; i < MAX_LOCAL_FOG_VOLUMES; i++) {
+        if (s_fogVolumes[i].active) {
+            if (current == index) return &s_fogVolumes[i];
+            current++;
+        }
+    }
+    return NULL;
+}
+
+const LocalFogVolume* FogVolume_GetById(int id) {
+    if (id <= 0) return NULL;
+    for (int i = 0; i < MAX_LOCAL_FOG_VOLUMES; i++) {
+        if (s_fogVolumes[i].active && s_fogVolumes[i].id == id) {
+            return &s_fogVolumes[i];
+        }
+    }
+    return NULL;
+}
 
 EnvFrameLighting Environment_GetFrameLighting(void) {
     EnvFrameLighting frame;
@@ -320,6 +492,7 @@ EnvFrameLighting Environment_GetFrameLighting(void) {
     frame.groundBounce = Environment_GetGroundAmbient();
     frame.shadowColor = s_shadowColor;
     frame.fog = s_fogConfig;
+    frame.atmosphere = s_atmosphereProfile;
     frame.version = s_lightingVersion;
     return frame;
 }
@@ -331,6 +504,12 @@ void Environment_ApplyProfile(const EnvLightingPreset *profile) {
     s_sunDirection = Vector3Normalize(profile->sunDirection);
     s_shadowColor = profile->shadowColor;
     s_fogConfig = profile->fog;
+    s_atmosphereProfile = profile->atmosphere;
+    // Keep them in sync
+    s_atmosphereProfile.color = s_fogConfig.color;
+    s_atmosphereProfile.start = s_fogConfig.start;
+    s_atmosphereProfile.end = s_fogConfig.end;
+    s_atmosphereProfile.enabled = s_fogConfig.enabled;
     s_lightingVersion++;
 }
 
@@ -357,4 +536,5 @@ void Environment_SetTimeOfDay(float t) {
 }
 
 float Environment_GetTimeOfDay(void) { return s_todCurrentTime; }
+
 
