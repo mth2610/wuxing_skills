@@ -321,6 +321,17 @@
       "trigger_call": "VFX_ComposeLightningGroundRicochet($POS, VC_MAT_LIGHTNING, 1.0f, $SEED)"
     },
     {
+      "source": "common/vc_mist_veil.inl",
+      "fn": "VFX_ComposeMistVeil",
+      "label": "MIST VEIL",
+      "category": "water",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeMistVeil($POS, 5.5f, 4.5f)"
+    },
+    {
       "source": "common/vc_particle_upgrades_test.inl",
       "fn": "VFX_ComposeGuidedParticle",
       "label": "GUIDED PARTICLE",
@@ -447,18 +458,6 @@
       "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
     },
     {
-      "source": "common/vc_volume_trail.inl",
-      "fn": "VFX_ComposeVolumeTrail",
-      "label": "VOLUME TRAIL",
-      "category": "common",
-      "fixture": "follower",
-      "lifecycle": "trail",
-      "_auto": true,
-      "type": "continuous",
-      "spawn_call": "VFX_ComposeVolumeTrail($XFORM, VC_MAT_LIGHTNING, 0.22f, 1.2f, VFX_VOLUME_ENERGY, true)",
-      "kill_fn": "VFX_VolumeTrail_Stop"
-    },
-    {
       "source": "common/vc_sweep_slash.inl",
       "fn": "VFX_ComposeSweepSlash",
       "label": "SWEEP SLASH",
@@ -569,8 +568,8 @@
       "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
-      "spawn_call": "VFX_ComposeVolumeTrail($XFORM, VC_MAT_FIRE, 0.35f, 2.0f, VFX_VOLUME_ENERGY, true)",
-      "kill_fn": "VFX_VolumeTrail_Stop"
+      "spawn_call": "VFX_ComposeVolumeTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f, VOL_ENERGY, false)",
+      "kill_fn": "VFX_KillVolumeTrail"
     },
     {
       "source": "earth/fissure_streak.inl",

@@ -844,22 +844,18 @@ void VFX_EndWaterStreams(void);
 // immediate cut.
 void VFX_Trail_Stop(int trailId);
 
-// @gen:vc_declarations begin
-void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
-void VFX_Beam_Stop(int handle);
-int VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
-void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 typedef enum {
     CONTACT_SPARK_STATIC = 0,
     CONTACT_SPARK_CENTRIFUGAL
 } ContactSparkMode;
 
-// Legacy/default contact flash: radial strands stay composed around the hit.
+// @gen:vc_declarations begin
+void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
+void VFX_Beam_Stop(int handle);
+int VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
+void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
-// Centrifugal mode launches each strand from the hit; its bright head travels
-// outward while its tail remains behind it.
-void VFX_ComposeContactSparkMode(Vector3 pos, VC_MaterialId matId, float scale,
-                                 float severity01, ContactSparkMode mode);
+void VFX_ComposeContactSparkMode(Vector3 pos, VC_MaterialId matId, float scale, float severity01, ContactSparkMode mode);
 void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
 int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
@@ -871,7 +867,9 @@ void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
-void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01);
+void VFX_ComposeLiquidBench(Vector3 center,float spacing,float t01);
+void VFX_ComposeMistVeil(Vector3 pos, float radius, float duration);
+void VFX_ComposeMistVeilEx(Vector3 pos, VC_MaterialId matId, float radius, float duration);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
 int VFX_ComposeRefBands(Vector3 pos, float scale);
 int VFX_ComposeRefParticles(Vector3 pos, float scale);
@@ -884,11 +882,11 @@ void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, floa
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
-void VFX_FluidOrb_Spawn(Vector3 start, Vector3 target, FluidMotionProfile profile);
 void VFX_FlowShield_SetIntensity(int handle, float intensity01);
 void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
 int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 void VFX_FlowShield_Stop(int handle);
+void VFX_FluidOrb_Spawn(Vector3 start, Vector3 target, FluidMotionProfile profile);
 void VFX_KillFlowShield(int handle);
 void VFX_KillGasMaterialLab(int handle);
 void VFX_KillRefBands(int id);
@@ -899,4 +897,5 @@ void VFX_WaterRing_Stop(void);
 
 // Screen-space producers that submit SSF streams before FluidSurface_HasPending().
 void VFX_Compose_SubmitScreenSpaceVFX(void);
+
 #endif // VISUAL_COMPOSER_H

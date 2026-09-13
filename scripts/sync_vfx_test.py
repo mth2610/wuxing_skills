@@ -174,6 +174,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeRuneCircle":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeShockRing":          ("draw",    "timed",      "continuous"),
     "VFX_ComposeSmokePuff":          ("event",   "burst",      "oneshot"),
+    "VFX_ComposeMistVeil":           ("event",   "burst",      "oneshot"),
     "VFX_ComposeSweepSlash":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeVolumeTrail":        ("trail",   "follower",   "continuous"),
     "VFX_ComposeFissureStreak":      ("draw",    "timed",      "continuous"),
@@ -277,6 +278,8 @@ FIXTURE_EVENT_OVERRIDES = {
     # of truth so a future sync cannot turn the preview brown.
     "VFX_ComposeLightningGroundRicochet":
         "VFX_ComposeLightningGroundRicochet($POS, VC_MAT_LIGHTNING, 1.0f, $SEED)",
+    "VFX_ComposeMistVeil":
+        "VFX_ComposeMistVeil($POS, 5.5f, 4.5f)",
 }
 
 # A few compositions deliberately combine a physical-surface word with an

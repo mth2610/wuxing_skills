@@ -184,18 +184,39 @@ void VolumetricFog_Render(Camera3D camera) {
     float mieAniso       = atmos.optics.mieAnisotropy;
     float density        = atmos.density.baseDensity;
 
-    // Truy xuất tối đa 4 khối sương mù cục bộ (hồ nước, hoa, rừng)
-    int volCount = FogVolume_GetActiveCount();
-    if (volCount > 4) volCount = 4;
+    // Truy xuất tối đa 4 khối sương mù cục bộ (hồ nước, hoa, rừng, skill VFX)
+    // Ưu tiên các khối sương mù nhất thời (transient VFX) để chiêu thức luôn hiển thị
     Vector4 volPosShape[4] = {0};
     Vector4 volExtentsDense[4] = {0};
     Vector4 volColorSoft[4] = {0};
-    for (int i = 0; i < volCount; i++) {
+    int volCount = 0;
+    int totalActive = FogVolume_GetActiveCount();
+
+    // 1. Nhặt các khối sương nhất thời (transient / skill VFX) với fade-in/fade-out mượt mà
+    for (int i = 0; i < totalActive && volCount < 4; i++) {
         const LocalFogVolume *v = FogVolume_GetByIndex(i);
-        if (v) {
-            volPosShape[i] = (Vector4){ v->position.x, v->position.y, v->position.z, (float)v->shape };
-            volExtentsDense[i] = (Vector4){ v->extents.x, v->extents.y, v->extents.z, v->density };
-            volColorSoft[i] = (Vector4){ (float)v->color.r / 255.0f, (float)v->color.g / 255.0f, (float)v->color.b / 255.0f, v->edgeSoftness };
+        if (v && v->maxLifetime > 0.0f) {
+            float effDensity = v->density;
+            float lifeRatio = v->lifetime / v->maxLifetime;
+            float fadeIn = (lifeRatio > 0.85f) ? (1.0f - lifeRatio) / 0.15f : 1.0f;
+            float fadeOut = (lifeRatio < 0.25f) ? (lifeRatio / 0.25f) : 1.0f;
+            effDensity *= (fadeIn < fadeOut ? fadeIn : fadeOut);
+
+            volPosShape[volCount] = (Vector4){ v->position.x, v->position.y, v->position.z, (float)v->shape };
+            volExtentsDense[volCount] = (Vector4){ v->extents.x, v->extents.y, v->extents.z, effDensity };
+            volColorSoft[volCount] = (Vector4){ (float)v->color.r / 255.0f, (float)v->color.g / 255.0f, (float)v->color.b / 255.0f, v->edgeSoftness };
+            volCount++;
+        }
+    }
+
+    // 2. Nhặt tiếp các khối sương cố định (hồ nước, hoa, rừng) cho đến khi đủ 4
+    for (int i = 0; i < totalActive && volCount < 4; i++) {
+        const LocalFogVolume *v = FogVolume_GetByIndex(i);
+        if (v && v->maxLifetime <= 0.0f) {
+            volPosShape[volCount] = (Vector4){ v->position.x, v->position.y, v->position.z, (float)v->shape };
+            volExtentsDense[volCount] = (Vector4){ v->extents.x, v->extents.y, v->extents.z, v->density };
+            volColorSoft[volCount] = (Vector4){ (float)v->color.r / 255.0f, (float)v->color.g / 255.0f, (float)v->color.b / 255.0f, v->edgeSoftness };
+            volCount++;
         }
     }
 
