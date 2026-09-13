@@ -96,6 +96,7 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
     t01 = Clamp(t01, 0.0f, 1.0f);
 
     const VFX_ElementMaterial *water = VFX_Material(VC_MAT_WATER);
+    FluidLiquidDesc material = FluidSurface_ProfileDesc(FLUID_MOTION_WATER);
     const MeshAdjacency *mesh = WaterRing_Mesh();
 
     /* Ask before spending the surface. A ring is a hero cast, so it MAY switch
@@ -184,7 +185,7 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
     ParticleManager_EmitBatch(s_waterRingEmitter, s_waterRingSpawn, spawn);
 
     if (useSurface) {
-        FluidSurface_SetMaterialColors(water->body, water->glow, water->soft);
+        FluidSurface_BindMaterial(&material);
         FluidSurface_SetReconstructionRadiusFor(FLUID_PRIORITY_CAST, kernel);
     }
     s_waterRingUsesSurface = useSurface;

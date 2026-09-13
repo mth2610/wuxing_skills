@@ -31,6 +31,16 @@ static float MaskCoverage(int insideNeighbours, int dilated)
                    : (0.5f + 0.125f * (float)insideNeighbours);
 }
 
+/* The shaded RGB already contains Beer-Lambert transmission of the scene.
+ * Thickness must therefore soften only the one-pixel borrowed fringe; using it
+ * as alpha over the whole body composites the bright backdrop a second time. */
+static float CompositeCoverage(float thicknessRamp, int insideNeighbours,
+                               int dilated)
+{
+    float geometricCoverage = MaskCoverage(insideNeighbours, dilated);
+    return (dilated ? thicknessRamp : 1.0f) * geometricCoverage;
+}
+
 static char *ReadFile(const char *path)
 {
     FILE *f = fopen(path, "rb");
@@ -50,6 +60,14 @@ int main(void)
      * fraction off every interior pixel would wash the whole body out, and the
      * body is 88% interior. */
     CHECK(fabsf(MaskCoverage(4, 0) - 1.0f) < 1e-6f);
+
+    /* A thin but valid interior pixel shades transmission once and remains a
+     * full geometric sample. At one kernel radius the old thickness ramp was
+     * 0.5, which blended the original scene over the already-transmitted scene
+     * and made clear water disappear specifically on bright receivers. */
+    CHECK(fabsf(CompositeCoverage(0.5f, 4, 0) - 1.0f) < 1e-6f);
+    CHECK(fabsf(CompositeCoverage(0.05f, 4, 0) - 1.0f) < 1e-6f);
+    CHECK(fabsf(CompositeCoverage(0.5f, 1, 1) - 0.125f) < 1e-6f);
 
     /* ---- A pixel whose centre is inside is at least half covered, whatever its
      * neighbours say. Letting an inside pixel reach zero would punch holes in a
@@ -102,6 +120,8 @@ int main(void)
             CHECK(strstr(shader, "bool dilatedFringe = false;") != NULL);
             CHECK(strstr(shader, "fluidDepth = min(min(dilateL, dilateR), min(dilateD, dilateU));") != NULL);
             CHECK(strstr(shader, "float maskCoverage = dilatedFringe ? (0.25 * insideCount)") != NULL);
+            CHECK(strstr(shader, "float geometricCoverage = dilatedFringe ? thicknessCoverage : 1.0;") != NULL);
+            CHECK(strstr(shader, "float surfaceCoverage = geometricCoverage") != NULL);
             CHECK(strstr(shader, "* intersectionVisibility * maskCoverage;") != NULL);
             /* The thickness tap has to be read BEFORE the mask test, or the
              * fringe cannot be told from empty space without a second fetch. */

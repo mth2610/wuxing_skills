@@ -2659,6 +2659,34 @@ through the middle — so the whole body sat at full emission with no gradient.
 washed-out result is as often a desaturated COLOUR as an excessive magnitude, and
 the two need opposite fixes. Guarded by `core/tests/fluid_liquid_material_test.c`.
 
+## An additive element colour is not a liquid transmission spectrum
+
+**Symptom.** The five-liquid bench moved correctly but water rendered as opaque
+blue slime, poison as flat green plastic, and the metal inherited the elemental
+blue-energy tint.
+
+**Cause.** `FluidSurface_ProfileDesc` fed the generic VFX body colours directly
+into Beer-Lambert absorption and conductor F0. Those colours were authored for
+additive readability, not for light transmitted through a sub-metre liquid.
+Separately, clear water received almost the same fixed in-scatter fill as mud.
+
+**Rule.** Author liquid transmission/F0 deliberately rather than assuming an
+additive palette is automatically correct. But preserve an existing bright-map
+reference when replacing it: at gameplay-scale thickness, the near-white
+"physically pure" water spectrum transmitted green grass almost unchanged,
+whereas WATER RING's established cyan spectrum retained a readable blue
+silhouette. The canonical water profile therefore shares WATER RING's preset;
+poison remains visible for a separate reason, its higher grey extinction and
+suspended scatter. Scale suspended-particle scatter from that extinction: clean
+water gets only a small floor, while opaque mud approaches the full response.
+Do not compensate for disappearing water with backdrop-dependent
+Fresnel or absorption: those terms change the material without fixing the
+composite. The shaded RGB already contains the transmitted scene, so interior
+alpha must represent geometric coverage only; applying a thickness ramp there
+blends the original scene a second time. Keep the thickness ramp only on the
+dilated silhouette fringe. Guarded by `fluid_profile_palette_test.c` and
+`fluid_silhouette_coverage_test.c`, and judged in LIQUID BENCH.
+
 ## Measure the OUTPUT pixel before retuning a colour
 
 **Symptom.** Lava's molten regions read as pale yellow. Two rounds of tuning

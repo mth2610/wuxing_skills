@@ -419,13 +419,15 @@ void main() {
     float maskCoverage = dilatedFringe ? (0.25 * insideCount)
                                        : (0.5 + 0.125 * insideCount);
 
-    /* Full opacity is reached at one kernel DIAMETER of water — the thinnest
-     * thing this reconstruction can represent is a single splat, so anything
-     * below that is a rim and should be translucent. Tying the ramp to the
-     * kernel keeps it correct when the caller changes the reconstruction
-     * radius; the previous literal band was calibrated against the saturating
-     * decode and turns into a two-pixel cliff once thickness is metres. */
-    float surfaceCoverage = smoothstep(0.0, 2.0 * u_kernelRadius, kernelThickness)
+    /* `water` below already contains the scene after Beer-Lambert transmission.
+     * Applying thickness as alpha to an interior pixel blends the original
+     * scene over that result a second time. At one kernel radius the old alpha
+     * was 0.5, so a clear liquid retained mostly unmodified backdrop and
+     * vanished on bright grass. Thickness is optical path, not geometric
+     * coverage: use it only to soften the one-pixel mask borrowed by dilation. */
+    float thicknessCoverage = smoothstep(0.0, 2.0 * u_kernelRadius, kernelThickness);
+    float geometricCoverage = dilatedFringe ? thicknessCoverage : 1.0;
+    float surfaceCoverage = geometricCoverage
                           * intersectionVisibility * maskCoverage;
     
     float sceneGap = 1.0;
@@ -540,7 +542,13 @@ void main() {
      * through. An OPAQUE liquid has no background to read, so the same falloff
      * just darkens its middle for no reason. Fade it out with opacity. */
     float grazingWeight = mix(mix(0.32, 1.0, pow(1.0 - ndv, 1.5)), 1.0, mediumOpacity);
-    vec3 inScatter = waterScatterColor * scatterAmount * (0.34 + illuminationEnergy * 0.42) * grazingWeight;
+    /* Suspended matter, not the mere fact that a surface exists, makes a liquid
+     * cloudy. The old fixed gain gave optically clear water almost the same
+     * milky body fill as mud; interpolate from a small clean-water floor to the
+     * fully turbid response already encoded by opacityPerMetre. */
+    float suspendedScatter = mix(0.24, 1.0, mediumOpacity);
+    vec3 inScatter = waterScatterColor * scatterAmount * (0.34 + illuminationEnergy * 0.42)
+                   * grazingWeight * suspendedScatter;
     /* An opaque medium's exit radiance is dominated by scattering in the first
      * millimetre, which is Lambert. Water gets none of this (mediumOpacity 0),
      * mud is almost entirely this, and lava's crust wants it too — cooled rock

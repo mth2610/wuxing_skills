@@ -482,36 +482,50 @@ FluidLiquidDesc FluidSurface_ProfileDesc(FluidMotionProfile profile) {
     switch (profile) {
     case FLUID_MOTION_POISON:
         m=VFX_Material(VC_MAT_POISON);
-        d=FluidSurface_DielectricDesc(m->body,m->glow,m->soft);
-        d.ior=1.36f; d.roughnessScale=1.25f; d.opacityPerMetre=1.8f; d.foam=0.55f;
+        (void)m;
+        /* Toxic liquid stays translucent, but its selective absorption is
+         * yellow-green rather than the flat primary green of an additive VFX. */
+        d=FluidSurface_DielectricDesc((Color){150,215,55,255},
+                                     (Color){190,255,45,255},
+                                     (Color){225,255,130,255});
+        d.ior=1.36f; d.roughnessScale=1.40f; d.opacityPerMetre=1.2f; d.foam=0.35f;
         return d;
     case FLUID_MOTION_MUD:
         m=VFX_Material(VC_MAT_EARTH);
-        /* Deliberately darker/desaturated than glowing earth VFX: wet slurry,
-           not caramel. The elemental glow/soft lanes still retain identity. */
-        d=FluidSurface_DielectricDesc((Color){84,60,41,255},m->glow,m->soft);
-        d.ior=1.45f; d.roughnessScale=4.5f; d.opacityPerMetre=40.0f; d.foam=0.0f;
+        /* Wet soil: opaque and broad-highlighted, but lifted enough that its
+         * brown hue survives the night arena instead of collapsing to black. */
+        d=FluidSurface_DielectricDesc((Color){96,63,38,255},m->glow,
+                                     (Color){130,92,58,255});
+        d.ior=1.45f; d.roughnessScale=5.0f; d.opacityPerMetre=32.0f; d.foam=0.0f;
         return d;
     case FLUID_MOTION_LAVA:
-        m=VFX_Material(VC_MAT_FIRE);
-        d=FluidSurface_DielectricDesc(m->body,(Color){255,140,30,255},m->soft);
+        m=VFX_Material(VC_MAT_FIRE); (void)m;
+        /* A dark cooled skin is essential: the warm HDR core then appears as
+         * molten material through cracks instead of a uniformly red slime. */
+        d=FluidSurface_DielectricDesc((Color){105,20,6,255},
+                                     (Color){255,190,45,255},
+                                     (Color){80,30,12,255});
         d.liquidClass=FLUID_LIQUID_EMISSIVE;
-        d.emission=1.1f; d.ior=1.60f; d.roughnessScale=3.2f;
-        d.opacityPerMetre=24.0f; d.foam=1.0f;
+        d.emission=1.35f; d.ior=1.60f; d.roughnessScale=3.8f;
+        d.opacityPerMetre=32.0f; d.foam=1.0f;
         return d;
     case FLUID_MOTION_LIQUID_METAL:
-        m=VFX_Material(VC_MAT_METAL);
-        /* VC_MAT_METAL is authored as blue elemental energy. A liquid conductor
-         * needs a high, nearly neutral F0 or it reads as opaque blue paint;
-         * retain the elemental cool tint only in the reflected/glow lanes. */
-        d=FluidSurface_DielectricDesc((Color){198,207,222,255},
-                                     (Color){205,226,255,255},m->soft);
+        m=VFX_Material(VC_MAT_METAL); (void)m;
+        /* Nearly neutral warm-silver F0. The elemental metal preset is blue
+         * energy; feeding that palette to a conductor tints every reflection. */
+        d=FluidSurface_DielectricDesc((Color){224,220,212,255},
+                                     (Color){238,242,248,255},
+                                     (Color){255,250,238,255});
         d.liquidClass=FLUID_LIQUID_CONDUCTOR;
-        d.roughnessScale=0.65f; d.opacityPerMetre=60.0f; d.foam=0.0f;
+        d.roughnessScale=0.80f; d.opacityPerMetre=60.0f; d.foam=0.0f;
         return d;
     case FLUID_MOTION_WATER:
     default:
         m=VFX_Material(VC_MAT_WATER);
+        /* Keep the canonical profile identical to WATER RING's proven cyan
+         * absorption. The near-white physically-pure spectrum transmitted a
+         * green receiver almost unchanged at this sub-metre gameplay scale,
+         * while poison stayed visible only because its extinction is higher. */
         return FluidSurface_DielectricDesc(m->body,m->glow,m->soft);
     }
 }
