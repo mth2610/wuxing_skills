@@ -41,6 +41,11 @@ typedef enum {
                         // TEXTURE FIELD" bên dưới. CHỈ có hiệu lực ở COMPUTE
                         // path (GpuParticleSystem); CPU evaluate là no-op,
                         // giống FORCE_VISCOSITY trên particle pool.
+  /* Particle-only post-integration receiver. origin = point, direction =
+   * outward normal, strength = restitution [0,1], falloff = tangential
+   * retention [0,1]. radius/noise parameters unused. Infinite plane; zero
+   * normal disables it. Evaluate returns no acceleration for this layer. */
+  FORCE_RECEIVER_PLANE,
   // LƯU Ý: thứ tự enum này PHẢI khớp với các #define FT_* trong particles.comp
   // (GLSL không include được header C, nên phải giữ đồng bộ thủ công).
   // Thêm type mới PHẢI append ở cuối — không chèn giữa hay đổi số thứ tự,
@@ -132,6 +137,11 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
 // Tính hệ số giảm chấn nhân lên velocity từ tất cả layer FORCE_VISCOSITY trong
 // field.
 float ForceField_GetViscosityDamping(const ForceField *ff, float dt);
+
+/* Particle backends call after integration; other ForceField consumers are
+ * unaffected. Preserves outgoing velocity and resolves penetration by radius. */
+void ForceField_ResolveParticleContacts(const ForceField *ff, float radius,
+                                        Vector3 *position, Vector3 *velocity);
 
 // ============================================================
 // GPU LAYOUT

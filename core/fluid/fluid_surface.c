@@ -7,6 +7,7 @@
 #include "core/fluid/fluid_pbd_gpu.h"
 #include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/gfx_quality.h"
+#include "core/presets/vc_material.h"
 #include "core/vfx_light.h"
 #include "environment/environment_system.h"
 #include "rlgl.h"
@@ -53,6 +54,16 @@ static Color s_materialBody = {41, 128, 185, 255};
 static Color s_materialGlow = {80, 180, 255, 255};
 static Color s_materialSoft = {160, 225, 255, 255};
 static float s_reconstructionRadius = 0.022f;
+static float s_frameBodyRadiusPx = -1.0f;
+static float s_frameKernelRadiusPx = -1.0f;
+/* 0 = adaptive shipping path; 1/2 force a side; 3 interleaves both sides in one
+ * uncapped WATER ORB process so pipeline warm-up and thermal drift cannot make
+ * a sequential A/B lie. Read once at init. */
+static int s_reconstructionRoundOverride;
+static unsigned int s_reconstructionABSeed=0x5f3759dfu;
+static int s_reconstructionABFrame, s_reconstructionABPrevRounds;
+static double s_reconstructionABMs[3];
+static int s_reconstructionABCount[3];
 
 /* --- Cost gates (FluidSurface_RequestBody) ------------------------------- */
 static Camera3D s_lastCamera;          /* previous frame's, from Capture */
@@ -284,6 +295,10 @@ static void FluidSurface_DrawEllipsoid(const FluidSurfaceParticle *sp) {
 
 
 void FluidSurface_Init(int width,int height) {
+    const char *roundOverride=getenv("WUXING_FLUID_RECON_ROUNDS");
+    s_reconstructionRoundOverride=roundOverride?atoi(roundOverride):0;
+    if (s_reconstructionRoundOverride<1 || s_reconstructionRoundOverride>3)
+        s_reconstructionRoundOverride=0;
     /* Keep the authored High surface at native resolution while its optical
      * look is being judged. R32F prevents the former zoom-dependent depth
      * bands; lower tiers retain the cheaper reconstruction path. */
@@ -441,6 +456,14 @@ bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center,
     return true;
 }
 
+void FluidSurface_HintBody(Vector3 center, float worldRadius) {
+    if (worldRadius <= 0.0f) return;
+    float bodyPx=FluidSurface_ProjectedRadiusPx(center,worldRadius);
+    float kernelPx=FluidSurface_ProjectedRadiusPx(center,s_reconstructionRadius);
+    if (bodyPx>s_frameBodyRadiusPx) s_frameBodyRadiusPx=bodyPx;
+    if (kernelPx>s_frameKernelRadiusPx) s_frameKernelRadiusPx=kernelPx;
+}
+
 FluidLiquidDesc FluidSurface_DielectricDesc(Color body, Color glow, Color soft) {
     FluidLiquidDesc d = {0};
     d.body=body; d.glow=glow; d.soft=soft;
@@ -451,6 +474,46 @@ FluidLiquidDesc FluidSurface_DielectricDesc(Color body, Color glow, Color soft) 
     d.opacityPerMetre=0.0f;  /* the shader's own FLUID_TURBIDITY_PER_M is enough */
     d.foam=1.0f;
     return d;
+}
+
+FluidLiquidDesc FluidSurface_ProfileDesc(FluidMotionProfile profile) {
+    const VFX_ElementMaterial *m;
+    FluidLiquidDesc d;
+    switch (profile) {
+    case FLUID_MOTION_POISON:
+        m=VFX_Material(VC_MAT_POISON);
+        d=FluidSurface_DielectricDesc(m->body,m->glow,m->soft);
+        d.ior=1.36f; d.roughnessScale=1.25f; d.opacityPerMetre=1.8f; d.foam=0.55f;
+        return d;
+    case FLUID_MOTION_MUD:
+        m=VFX_Material(VC_MAT_EARTH);
+        /* Deliberately darker/desaturated than glowing earth VFX: wet slurry,
+           not caramel. The elemental glow/soft lanes still retain identity. */
+        d=FluidSurface_DielectricDesc((Color){84,60,41,255},m->glow,m->soft);
+        d.ior=1.45f; d.roughnessScale=4.5f; d.opacityPerMetre=40.0f; d.foam=0.0f;
+        return d;
+    case FLUID_MOTION_LAVA:
+        m=VFX_Material(VC_MAT_FIRE);
+        d=FluidSurface_DielectricDesc(m->body,(Color){255,140,30,255},m->soft);
+        d.liquidClass=FLUID_LIQUID_EMISSIVE;
+        d.emission=1.1f; d.ior=1.60f; d.roughnessScale=3.2f;
+        d.opacityPerMetre=24.0f; d.foam=1.0f;
+        return d;
+    case FLUID_MOTION_LIQUID_METAL:
+        m=VFX_Material(VC_MAT_METAL);
+        /* VC_MAT_METAL is authored as blue elemental energy. A liquid conductor
+         * needs a high, nearly neutral F0 or it reads as opaque blue paint;
+         * retain the elemental cool tint only in the reflected/glow lanes. */
+        d=FluidSurface_DielectricDesc((Color){198,207,222,255},
+                                     (Color){205,226,255,255},m->soft);
+        d.liquidClass=FLUID_LIQUID_CONDUCTOR;
+        d.roughnessScale=0.65f; d.opacityPerMetre=60.0f; d.foam=0.0f;
+        return d;
+    case FLUID_MOTION_WATER:
+    default:
+        m=VFX_Material(VC_MAT_WATER);
+        return FluidSurface_DielectricDesc(m->body,m->glow,m->soft);
+    }
 }
 
 static bool FluidSurface_DescEqual(const FluidLiquidDesc *a, const FluidLiquidDesc *b) {
@@ -563,6 +626,26 @@ static void FluidSurface_TouchLiveMaterials(void) {
 
 void FluidSurface_Capture(Camera3D camera) {
     if(!FluidSurface_HasPending()) return;
+    if (s_reconstructionRoundOverride==3) {
+        s_reconstructionABFrame++;
+        /* GetFrameTime is the PREVIOUS completed frame, so charge it to the
+         * rounds selected by the previous capture. Twelve frames warm every
+         * pipeline before either bucket is observed. */
+        if (s_reconstructionABFrame>12 && s_reconstructionABPrevRounds>0) {
+            int r=s_reconstructionABPrevRounds;
+            s_reconstructionABMs[r]+=GetFrameTime()*1000.0;
+            s_reconstructionABCount[r]++;
+            int total=s_reconstructionABCount[1]+s_reconstructionABCount[2];
+            if (total==64)
+                TraceLog(LOG_INFO,
+                         "FLUID_PERF recon interleaved samples=%d one=%.3f ms two=%.3f ms delta=%.3f ms",
+                         total,
+                         s_reconstructionABMs[1]/(double)s_reconstructionABCount[1],
+                         s_reconstructionABMs[2]/(double)s_reconstructionABCount[2],
+                         s_reconstructionABMs[2]/(double)s_reconstructionABCount[2]-
+                         s_reconstructionABMs[1]/(double)s_reconstructionABCount[1]);
+        }
+    }
     FluidSurface_TouchLiveMaterials();
     /* Snapshot the scene for the refraction tap while it is still only a source.
      * The composite runs inside ScreenDistort's body pass, which now binds the
@@ -708,8 +791,20 @@ void FluidSurface_Capture(Camera3D camera) {
      * round's output, which is a feedback loop that amplifies whatever ripple
      * survived the last pass. Four rounds of that is where the standing bands
      * came from. Halving them also halves the filter's cost. */
-    int reconstructionRounds=GfxQuality_Get()>=GFX_HIGH?2:
+    bool compactHighBody=s_frameBodyRadiusPx>0.0f &&
+                         s_frameBodyRadiusPx<=FLUID_SURFACE_COMPACT_BODY_PX &&
+                         s_frameKernelRadiusPx<=FLUID_SURFACE_COMPACT_KERNEL_PX;
+    int reconstructionRounds=GfxQuality_Get()>=GFX_HIGH?(compactHighBody?1:2):
                              (GfxQuality_Get()>=GFX_MED?2:1);
+    if (s_reconstructionRoundOverride>=1 && s_reconstructionRoundOverride<=2 &&
+        GfxQuality_Get()>=GFX_HIGH)
+        reconstructionRounds=s_reconstructionRoundOverride;
+    else if (s_reconstructionRoundOverride==3 && GfxQuality_Get()>=GFX_HIGH) {
+        s_reconstructionABSeed=s_reconstructionABSeed*1664525u+1013904223u;
+        reconstructionRounds=1+(int)((s_reconstructionABSeed>>31)&1u);
+    }
+    if (s_reconstructionRoundOverride==3)
+        s_reconstructionABPrevRounds=reconstructionRounds;
     /* The TRUE 2D kernel at HIGH; the separable pair below at MED and LOW.
      *
      * Running the passes separately showed what the separation costs: the
@@ -859,6 +954,8 @@ void FluidSurface_Composite(void) {
     EndBlendMode();
     s_count=0;
     s_gpuStreamCount=0;
+    s_frameBodyRadiusPx=-1.0f;
+    s_frameKernelRadiusPx=-1.0f;
     /* Reaching this line is what "the surface is running" means to a basic
      * attack asking to join one. */
     s_surfaceRunStamp=GetTime();

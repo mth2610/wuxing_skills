@@ -107,6 +107,7 @@ layout(std430, binding = 4) readonly buffer WindTerrainBuffer {
 #define FT_RADIAL_AXIS   8
 #define FT_VORTEX_AXIS   9
 #define FT_VECTOR_TEXTURE 10
+#define FT_RECEIVER_PLANE 11
 
 uniform float u_dt;
 uniform float u_time;
@@ -607,6 +608,27 @@ void main() {
     if (p.route_data.z < 0.0)
         p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
 
+    // Same receiver contract as ParticlePlane_Resolve on both CPU paths.
+    if (forceIndex >= 0) {
+        int count = min(uFields[forceIndex].meta.x, FF_MAX_LAYERS);
+        for (int i = 0; i < count; ++i) {
+            ForceLayerGPU layer = uFields[forceIndex].layers[i];
+            if (int(layer.params0.w + 0.5) != FT_RECEIVER_PLANE) continue;
+            float normalLength = length(layer.direction.xyz);
+            if (normalLength < 1e-6) continue;
+            vec3 normal = layer.direction.xyz / normalLength;
+            float distance = dot(p.pos_radius.xyz - layer.origin.xyz, normal);
+            float radius = max(p.pos_radius.w, 0.0);
+            if (distance >= radius) continue;
+            p.pos_radius.xyz += normal * (radius - distance);
+            float speed = dot(p.vel_drag.xyz, normal);
+            if (speed < 0.0) {
+                float bounce = -speed * clamp(layer.params0.x, 0.0, 1.0);
+                float retain = clamp(layer.params0.z, 0.0, 1.0);
+                p.vel_drag.xyz = (p.vel_drag.xyz - normal * speed) * retain + normal * bounce;
+            }
+        }
+    }
     // Ground Collision Y-bounce
     float elasticity = p.ff_data.z; // ff_pad1
     if (elasticity >= 0.0) {

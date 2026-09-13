@@ -2,6 +2,7 @@
 #define CORE_FLUID_SURFACE_H
 
 #include "raylib.h"
+#include "core/fluid/fluid_motion.h"
 #include "core/particles/particle_manager.h"
 
 #define FLUID_SURFACE_MAX_PARTICLES 384
@@ -39,6 +40,10 @@ typedef struct {
 
 /* Water, unchanged from what FluidSurface_SetMaterialColors has always built. */
 FluidLiquidDesc FluidSurface_DielectricDesc(Color body, Color glow, Color soft);
+
+/* Canonical optical identity paired with FluidMotion_Get(profile). This is
+ * shared by impacts, force-field orbs, and deterministic material benches. */
+FluidLiquidDesc FluidSurface_ProfileDesc(FluidMotionProfile profile);
 
 /* Binds `desc` to a slot and makes it the material for every particle and every
  * stream registered AFTER this call, until the next bind. Returns the slot.
@@ -93,6 +98,13 @@ typedef enum {
  * for. */
 #define FLUID_SURFACE_BUDGET_MS 26.0f
 
+/* At HIGH, compact dense bodies need one 2D reconstruction round; larger or
+ * close-up bodies keep two. This is a BODY footprint threshold, not a quality
+ * downgrade: one round already spans a complete optical kernel, while the
+ * second exists to remove residual large-scale lumpiness on broad surfaces. */
+#define FLUID_SURFACE_COMPACT_BODY_PX 180.0f
+#define FLUID_SURFACE_COMPACT_KERNEL_PX 8.0f
+
 /* Ask BEFORE building a fluid body, every frame the body wants to exist.
  * `worldRadius` is the body's approximate bounding radius in metres.
  *
@@ -132,6 +144,10 @@ void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft);
 /* Approximate world-space radius of one optical kernel. It controls the
  * depth range used by screen-space surface reconstruction. */
 void FluidSurface_SetReconstructionRadius(float radius);
+/* Optional per-frame screen-footprint hint. Call immediately before submitting
+ * a coherent body. Multiple hints accumulate conservatively (largest wins).
+ * Callers that omit it keep the full two-round HIGH reconstruction path. */
+void FluidSurface_HintBody(Vector3 center, float worldRadius);
 void FluidSurface_RegisterParticle(Vector3 position, float radius);
 void FluidSurface_RegisterEllipsoid(Vector3 position, Vector3 radii);
 /* Accepts the same opaque stream from either particle backend. The GPU path

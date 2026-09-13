@@ -2627,14 +2627,17 @@ composite then inverted as near=1.0.
 **Why it survived.** Every other SSF input (GPU splat streams, the PBD crown) is
 an immediate-mode billboard that computes its own depth and never touches the
 matrix stack, so both defects were invisible to them. The CPU path had **no
-fixture** — no skill, no sandbox entry, nothing. It is now covered by
-NEW FX -> LIQUID BENCH (`core/composition/water/liquid_bench.inl`), which is
-built on it deliberately.
+fixture** — no skill, no sandbox entry, nothing. The first version of NEW FX ->
+LIQUID BENCH exposed both defects by building directly on it. The bench now uses
+surface-input force-field emitters: it still reaches this path through
+ParticleManager's automatic CPU fallback, while its normal compute run exercises
+the instanced GPU path. Keep the projection/unit regression tests; a successful
+compute capture alone does not prove the CPU fallback works.
 
 **Rule.** A code path with no fixture is not "probably fine"; it is a path where
 defects are unobservable. When adding a fixture for a new feature, prefer the
-untested path over the well-trodden one — the LIQUID BENCH found both of these on
-its first run.
+untested path over the well-trodden one — the original LIQUID BENCH found both
+of these on its first run.
 
 ## Isolate additive terms by SUBTRACTION, again: lava's washout was a COLOUR
 
@@ -3539,3 +3542,18 @@ after the head was gone the strip kept drifting and fading in open space.
   treating a missing sample as Y=0 creates a false cliff at mesh boundaries.
   Guarded by
   `core/tests/wind_system_test.c`.
+
+## A zero restitution receiver is active state, not an empty force layer (13/09/2026)
+
+**Symptom.** Force-field liquid settles correctly on CPU but passes through its
+receiver on the compute path when bounce is disabled.
+
+**Cause.** Force-field packing historically discarded every layer whose
+`strength` was zero. For `FORCE_RECEIVER_PLANE`, strength is restitution, so zero
+means a perfectly inelastic contact rather than a disabled layer.
+
+**Rule.** Filter inactive layers by their own semantics. Always pack receiver
+planes, including zero restitution, and keep their post-integration projection
+identical across the particle CPU, GPU-shadow and compute paths. Guarded by
+`core/tests/fluid_force_field_contract_test.c` and
+`core/tests/fluid_receiver_test.c`.

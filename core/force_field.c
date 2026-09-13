@@ -1,4 +1,5 @@
 #include "core/force_field.h"
+#include "core/particles/particle_plane.h"
 #include <math.h>
 #include <string.h>
 
@@ -482,6 +483,18 @@ float ForceField_GetViscosityDamping(const ForceField *ff, float dt)
   return factor;
 }
 
+void ForceField_ResolveParticleContacts(const ForceField *ff, float radius,
+                                      Vector3 *position, Vector3 *velocity)
+{
+  if (!ff || !position || !velocity) return;
+  for (int i = 0; i < ff->layerCount && i < FORCE_FIELD_MAX_LAYERS; ++i) {
+    const ForceLayer *layer = &ff->layers[i];
+    if (layer->type == FORCE_RECEIVER_PLANE)
+      ParticlePlane_Resolve(layer->origin, layer->direction, radius,
+                           layer->strength, layer->falloff, position, velocity);
+  }
+}
+
 // ============================================================
 // WIND ZONE GLOBAL
 // ============================================================
@@ -537,7 +550,7 @@ void ForceField_PackGPU(const ForceField *ff, Vector3 axisOrigin,
   for (int i = 0; i < ff->layerCount; i++)
   {
     const ForceLayer *L = &ff->layers[i];
-    if (fabsf(L->strength) < 1e-4f)
+    if (fabsf(L->strength) < 1e-4f && L->type != FORCE_RECEIVER_PLANE)
       continue;
 
     ForceLayerGPU *G = &out->layers[packed++];

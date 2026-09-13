@@ -451,7 +451,9 @@ void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, Part
 // ============================================================
 // CHỈ CÓ Ý NGHĨA Ở GPU COMPUTE MODE
 // ============================================================
-#define MAX_GPU_FORCE_FIELDS 8
+/* Four simultaneous fluid bodies may use separate shell/core fields; leave
+   additional slots for gravity and travel paths without another dispatch. */
+#define MAX_GPU_FORCE_FIELDS 16
 void ParticleSystem_ResetForceFieldRegistry(void);
 
 #endif // PARTICLE_SYSTEM_H

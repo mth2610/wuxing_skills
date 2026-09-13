@@ -38,6 +38,7 @@
 #include "core/geometry/procedural_mesh_utils.h" // GroundHeightSampleFn (H2 ground wave)
 #include "core/trails/trail_recipe.h"            // TrailPresetId + what a preset row contains
 #include "core/gas/gas_system.h"                 // Volumetric smoke/fire/energy simulation
+#include "core/fluid/fluid_motion.h"
 
 // ── Per-frame drivers ───────────────────────────────────────────────────────
 // The pooled components (character aura) and the E3 sequencer ride these two
@@ -883,6 +884,7 @@ void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, floa
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
+void VFX_FluidOrb_Spawn(Vector3 start, Vector3 target, FluidMotionProfile profile);
 void VFX_FlowShield_SetIntensity(int handle, float intensity01);
 void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
 int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);

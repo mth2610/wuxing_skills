@@ -177,6 +177,11 @@
   float SkillCurve_Eval(const SkillCurve *curve, float t01);
 ```
 
+### `core/fluid/fluid_motion.h`
+_Inline helpers / macros only — see header._
+**Enums:** FluidMotionProfile { FLUID_MOTION_WATER,FLUID_MOTION_POISON,FLUID_MOTION_MUD,FLUID_MOTION_LAVA,FLUID_MOTION_LIQUID_METAL }
+**Structs** (fields in header): FluidMotionDesc
+
 ### `core/fluid/fluid_impact.h`
 ```c
   void FluidImpact_SpawnWater(const FluidImpactEvent *event);
@@ -185,11 +190,13 @@
   void FluidImpact_Draw(void);
   void FluidImpact_GetStats(int *active, int *max);
 ```
+**Enums:** FluidImpactBackend { FLUID_IMPACT_BACKEND_FORCE_FIELD,FLUID_IMPACT_BACKEND_PBD }
 **Structs** (fields in header): FluidImpactCollision, FluidImpactEvent
 
 ### `core/fluid/fluid_surface.h`
 ```c
   FluidLiquidDesc FluidSurface_DielectricDesc(Color body, Color glow, Color soft);
+  FluidLiquidDesc FluidSurface_ProfileDesc(FluidMotionProfile profile);
   int FluidSurface_BindMaterial(const FluidLiquidDesc *desc);
   int FluidSurface_CurrentMaterial(void);
   bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center, float worldRadius, bool alreadyRunning);
@@ -198,6 +205,7 @@
   void FluidSurface_Unload(void);
   void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft);
   void FluidSurface_SetReconstructionRadius(float radius);
+  void FluidSurface_HintBody(Vector3 center, float worldRadius);
   void FluidSurface_RegisterParticle(Vector3 position, float radius);
   void FluidSurface_RegisterEllipsoid(Vector3 position, Vector3 radii);
   bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream);
@@ -236,13 +244,14 @@
   bool ForceField_AddLayer(ForceField *ff, ForceLayer layer);
   Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel, float time, Vector3 axisOrigin, Vector3 axisDir);
   float ForceField_GetViscosityDamping(const ForceField *ff, float dt);
+  void ForceField_ResolveParticleContacts(const ForceField *ff, float radius, Vector3 *position, Vector3 *velocity);
   void ForceField_PackGPU(const ForceField *ff, Vector3 axisOrigin, Vector3 axisDir, ForceFieldGPU *out);
   void WindZone_Set(Vector3 direction, float strength, float noiseAmp, float noiseFreq);
   void WindZone_Clear(void);
   bool WindZone_IsActive(void);
   Vector3 WindZone_Evaluate(Vector3 pos, Vector3 vel, float time);
 ```
-**Enums:** ForceType { FORCE_GRAVITY_DIR,FORCE_GRAVITY_POINT,FORCE_VORTEX,FORCE_WIND,FORCE_NOISE_PERLIN,FORCE_NOISE_CURL,FORCE_DRAG,FORCE_VISCOSITY,FORCE_RADIAL_AXIS,FORCE_VORTEX_AXIS,FORCE_VECTOR_TEXTURE }
+**Enums:** ForceType { FORCE_GRAVITY_DIR,FORCE_GRAVITY_POINT,FORCE_VORTEX,FORCE_WIND,FORCE_NOISE_PERLIN,FORCE_NOISE_CURL,FORCE_DRAG,FORCE_VISCOSITY,FORCE_RADIAL_AXIS,FORCE_VORTEX_AXIS,FORCE_VECTOR_TEXTURE,FORCE_RECEIVER_PLANE }
 **Structs** (fields in header): ForceLayer, ForceField, ForceLayerGPU, ForceFieldGPU
 
 ### `core/particles/particle_travel.h`
@@ -678,10 +687,13 @@ _Inline helpers / macros only — see header._
 ```c
   void Atmosphere_Init(void);
   void Atmosphere_Configure(Vector3 center, Vector3 extent, int count, Color tint);
+  void Atmosphere_SetMode(AtmosphereMode mode);
+  AtmosphereMode Atmosphere_GetMode(void);
   void Atmosphere_Update(float dt, Camera3D camera);
   void Atmosphere_Draw(Camera3D camera);
   void Atmosphere_Unload(void);
 ```
+**Enums:** AtmosphereMode { ATMO_MODE_MOONLIGHT_DUST,ATMO_MODE_WAR_EMBERS,ATMO_MODE_SPIRIT_SPARKS }
 
 ### `core/wind/wind_types.h`
 _Inline helpers / macros only — see header._
@@ -714,6 +726,8 @@ _Inline helpers / macros only — see header._
 
 ### `core/material/material_system.h`
 ```c
+  void EffectMaterial_ConfigureRadiant(EffectMaterialParams *params, const RadiantMaterialConfig *config);
+  void EffectMaterial_ConfigureAbsorptive(EffectMaterialParams *params, const AbsorptiveMaterialConfig *config);
   void MaterialSystem_Init(void);
   void MaterialSystem_Unload(void);
   void Material_Get(EffectMaterial *outMat, MaterialPreset preset);
@@ -741,8 +755,8 @@ _Inline helpers / macros only — see header._
   void PlasmaMaterial_Begin(PlasmaMaterial mat);
   void PlasmaMaterial_End(void);
 ```
-**Enums:** MaterialPreset { MAT_FIRE,MAT_ICE,MAT_WATER,MAT_PORTAL,MAT_ROCK,MAT_METAL,MAT_GLASS,MAT_CUSTOM };EffectMaterialGeometryMode { EFFECT_MATERIAL_GEOMETRY_MESH,EFFECT_MATERIAL_GEOMETRY_IMMEDIATE }
-**Structs** (fields in header): EffectMaterialParams, EffectMaterialVFXOutput, EffectMaterial, CrystalMaterialParams, CrystalMaterial, PlasmaMaterialParams, PlasmaMaterial, VfxParamDesc
+**Enums:** MaterialPreset { MAT_FIRE,MAT_ICE,MAT_WATER,MAT_PORTAL,MAT_ROCK,MAT_METAL,MAT_GLASS,MAT_CUSTOM };VfxMaterialClass { VFX_MAT_CLASS_EMISSIVE,VFX_MAT_CLASS_ABSORPTIVE } EffectMaterialGeometryMode { EFFECT_MATERIAL_GEOMETRY_MESH,EFFECT_MATERIAL_GEOMETRY_IMMEDIATE }
+**Structs** (fields in header): EffectMaterialParams, RadiantMaterialConfig, AbsorptiveMaterialConfig, EffectMaterialVFXOutput, EffectMaterial, CrystalMaterialParams, CrystalMaterial, PlasmaMaterialParams, PlasmaMaterial, VfxParamDesc
 
 ### `core/geometry/procedural_mesh_utils.h`
 ```c
@@ -960,6 +974,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
   void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
+  void VFX_FluidOrb_Spawn(Vector3 start, Vector3 target, FluidMotionProfile profile);
   void VFX_FlowShield_SetIntensity(int handle, float intensity01);
   void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
   int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);

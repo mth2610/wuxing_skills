@@ -51,8 +51,6 @@ typedef struct
 // Không sửa core/force_field.h — dùng nguyên ForceFieldGPU/ForceField_PackGPU
 // đã khai báo sẵn ở đó.
 // ---------------------------------------------------------------------------
-#define MAX_GPU_FORCE_FIELDS 8
-
 static const ForceField *s_fieldRegistry[MAX_GPU_FORCE_FIELDS];
 static Vector3 s_fieldAxisOrigin[MAX_GPU_FORCE_FIELDS];
 static Vector3 s_fieldAxisDir[MAX_GPU_FORCE_FIELDS];
@@ -811,6 +809,14 @@ void GpuParticleSystem_Update(float dt)
             continue;
         }
 
+        if (forceIndex >= 0 && forceIndex < s_fieldCount) {
+            Vector3 position = {p->px, p->py, p->pz};
+            Vector3 velocity = {p->vx, p->vy, p->vz};
+            ForceField_ResolveParticleContacts(s_fieldRegistry[forceIndex], p->radius,
+                                              &position, &velocity);
+            p->px = position.x; p->py = position.y; p->pz = position.z;
+            p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
+        }
         // 4. Ground/Floor collision check (which triggers dust puffs on CPU)
         if (p->ff_pad1 >= 0.0f)
         {

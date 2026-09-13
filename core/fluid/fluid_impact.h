@@ -5,8 +5,16 @@
 // hit point/normal; the VFX path never depends on compute shaders for contact.
 
 #include "raylib.h"
+#include "core/fluid/fluid_motion.h"
+#include <stdbool.h>
 
 #define FLUID_IMPACT_MAX_HERO_DROPLETS 48
+#define FLUID_IMPACT_MAX_BODIES 4
+
+typedef enum {
+    FLUID_IMPACT_BACKEND_FORCE_FIELD = 0,
+    FLUID_IMPACT_BACKEND_PBD = 1
+} FluidImpactBackend;
 
 typedef struct {
     Vector3 position;
@@ -33,13 +41,19 @@ typedef struct {
     Color bodyColor;
     Color glowColor;
     Color softColor;
-    /* Selects the bounded force-field/SSF fallback even on compute hardware.
-     * Use this for authored fluid projectiles that intentionally do not use
-     * a PBD solve. Zero preserves the legacy GPU-PBD impact path. */
+    /* Compatibility override: true always selects force fields, even when
+     * backend requests PBD. Zero-initialized events now also use force fields. */
     bool forceFieldOnly;
     /* The caller continues to render the same incoming particle body. Core
      * only creates residue/material state; it must not seed another volume. */
     bool externalBody;
+    /* PBD is opt-in and initialized lazily on the first admitted PBD impact.
+     * Unavailable/busy PBD falls back to a force-field body. External bodies
+     * never initialize or spawn either backend. */
+    FluidImpactBackend backend;
+    /* Zero is water. Selects both canonical motion and optical class; any
+     * non-zero body/glow/soft colors above override only those colour lanes. */
+    FluidMotionProfile motionProfile;
 } FluidImpactEvent;
 
 // One-shot water impact. Safe on both compute/SSBO and CPU/VBO particle paths.

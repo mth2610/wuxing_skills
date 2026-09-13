@@ -120,6 +120,7 @@ void VFX_Compose_Update(float dt)
     GuidedParticleTest_Update(dt); /* particle-upgrades guided GPU fixture */
     WaterOrb_Update(dt);
     WaterRing_Update(dt);
+    LiquidBench_Update(dt);
 }
 
 void VFX_Compose_Draw3D(Camera3D cam)
@@ -159,4 +160,5 @@ void VFX_Compose_SubmitScreenSpaceVFX(void)
 {
     WaterOrb_SubmitSurface();
     WaterRing_SubmitSurface();
+    LiquidBench_SubmitSurface();
 }

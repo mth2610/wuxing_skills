@@ -25,6 +25,8 @@
 #define MIN_RADIUS_PX 16.0f
 #define BUDGET_MS 26.0f
 #define STAMP_TTL 0.10
+#define COMPACT_BODY_PX 180.0f
+#define COMPACT_KERNEL_PX 8.0f
 
 /* Mirror of FluidSurface_ProjectedRadiusPx (perspective branch). */
 static float ProjectedRadiusPx(float distance, float worldRadius,
@@ -50,6 +52,14 @@ static int AdmitEx(int priority, float frameMs, double now, double surfaceRunSta
 static int Admit(int priority, float frameMs, double now, double surfaceRunStamp,
                  float projectedPx)
 { return AdmitEx(priority, frameMs, now, surfaceRunStamp, projectedPx, 0); }
+
+static int ReconstructionRounds(int quality, float bodyPx, float kernelPx,
+                                int hasHint)
+{
+    int compact = hasHint && bodyPx > 0.0f && bodyPx <= COMPACT_BODY_PX &&
+                  kernelPx <= COMPACT_KERNEL_PX;
+    return quality >= 3 ? (compact ? 1 : 2) : (quality >= 2 ? 2 : 1);
+}
 
 static char *ReadFile(const char *path)
 {
@@ -120,6 +130,16 @@ int main(void)
     }
     /* A camera inside the body is emphatically not "small". */
     CHECK(ProjectedRadiusPx(0.5f, 2.0f, 45.0f, 720) > 1e8f);
+
+    /* Compact dense force-field bodies already span a whole splat kernel in
+     * one 2D round. Broad/close-up bodies and unhinted legacy callers keep the
+     * authored two-round HIGH path. Lower tiers are unchanged. */
+    CHECK(ReconstructionRounds(3,120.0f,5.0f,1)==1);
+    CHECK(ReconstructionRounds(3,220.0f,5.0f,1)==2);
+    CHECK(ReconstructionRounds(3,120.0f,12.0f,1)==2);
+    CHECK(ReconstructionRounds(3,120.0f,5.0f,0)==2);
+    CHECK(ReconstructionRounds(2,120.0f,5.0f,1)==2);
+    CHECK(ReconstructionRounds(1,120.0f,5.0f,1)==1);
 
     /* --- The anti-STROBE property ---
      *
@@ -198,6 +218,11 @@ int main(void)
             }
             /* The stamp must be set where a composite actually completes. */
             CHECK(strstr(src, "s_surfaceRunStamp=GetTime();") != NULL);
+            CHECK(strstr(src, "void FluidSurface_HintBody") != NULL);
+            CHECK(strstr(src, "compactHighBody?1:2") != NULL);
+            CHECK(strstr(src, "WUXING_FLUID_RECON_ROUNDS") != NULL);
+            CHECK(strstr(src, "FLUID_PERF recon interleaved") != NULL);
+            CHECK(strstr(src, "s_reconstructionABSeed*1664525u+1013904223u") != NULL);
             free(src);
         }
     }

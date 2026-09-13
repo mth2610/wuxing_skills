@@ -690,6 +690,13 @@ void UpdateParticles(float dt)
       continue;
     }
 
+    if (activeField) {
+      Vector3 position = {p->x, p->y, p->z};
+      Vector3 velocity = {p->vx, p->vy, p->vz};
+      ForceField_ResolveParticleContacts(activeField, p->radius, &position, &velocity);
+      p->x = position.x; p->y = position.y; p->z = position.z;
+      p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
+    }
     // Ground Collision
     if (p->collisionEnabled && p->y <= p->collisionFloorY)
     {
