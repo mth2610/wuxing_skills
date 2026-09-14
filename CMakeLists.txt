@@ -207,6 +207,7 @@ add_executable(wuxing
     core/decals/decal_system.c
     core/geometry/procedural_mesh_utils.c
     core/geometry/mesh_cache.c
+    core/geometry/sdf_capsule.c
     core/material/material_system.c
     core/composition/visual_composer.c
     core/composition/vfx_sequence.c

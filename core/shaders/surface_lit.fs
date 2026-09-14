@@ -56,6 +56,8 @@ uniform float     u_aniso;          // P5b — >0.5 = anisotropic sheen (hair/si
 uniform float     u_anisoShininess;
 uniform float     u_sssStrength;    // P5c — fake jade/skin back-scatter, 0 = off
 uniform float     u_sssPower;
+uniform vec3      u_sssColor;       // Messiah SSS tint (warm flesh or jade green)
+uniform float     u_sssDistortion;  // Normal refraction weight (default ~0.35)
 
 // Distance & Physical Height Fog (Ghost of Tsushima style)
 uniform vec3  u_fogColor;
@@ -221,10 +223,27 @@ void main() {
             color += u_sunColor * pow(aniso, u_anisoShininess) * u_specStrength * shadow;
         }
         if (u_sssStrength > 0.0) {
-            // Fake jade/skin SSS — half-Lambert already wraps light; add
-            // cheap back-scatter so thin edges glow with the moon behind them.
-            float back = pow(max(dot(V, -L), 0.0), u_sssPower) * u_sssStrength;
-            color += albedo * u_sunColor * back;
+            // Messiah Engine / Valve / Frostbite SSS Translucency model:
+            // Light bends through thin geometry curved by surface normal
+            float distWeight = (u_sssDistortion > 0.001) ? u_sssDistortion : 0.35;
+            vec3 Lscatter = normalize(-L - N * distWeight);
+            float back = pow(max(dot(V, Lscatter), 0.0), u_sssPower) * u_sssStrength;
+            vec3 sssTint = (length(u_sssColor) > 0.01) ? u_sssColor : vec3(1.0, 0.48, 0.25);
+            color += albedo * sssTint * u_sunColor * back;
+
+            // Translucency from nearby VFX skill lights (chân khí hộ thể / fireballs / auras)
+            for (int i = 0; i < min(u_vfxLightCount, MAX_VFX_LIGHTS); ++i) {
+                vec3 vfxToPos = fragWorldPos - u_vfxLightPosRadius[i].xyz;
+                float vfxDist = length(vfxToPos);
+                float radius = u_vfxLightPosRadius[i].w;
+                if (vfxDist < radius && vfxDist > 0.001) {
+                    vec3 vfxL = -normalize(vfxToPos);
+                    vec3 vfxScatter = normalize(-vfxL - N * distWeight);
+                    float vfxBack = pow(max(dot(V, vfxScatter), 0.0), u_sssPower);
+                    float atten = clamp(1.0 - vfxDist / radius, 0.0, 1.0);
+                    color += albedo * sssTint * u_vfxLightColor[i].rgb * (vfxBack * atten * u_sssStrength * u_vfxLightGain * 0.5);
+                }
+            }
         }
     }
 

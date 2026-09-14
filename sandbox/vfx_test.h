@@ -6,6 +6,8 @@
 bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Texture2D testAtlasTex,
                                   Texture2D globalParticleTex);
 void VFXTest_Draw3D(void);
+/* Dedicated refraction post-pass (runs after SceneTargets_SnapshotScene) */
+void VFXTest_DrawRefraction(Camera3D cam);
 /* Nhớ camera của khung hình này, để ảnh chụp biết chiếu vùng hiệu ứng ra đâu.
  * Gọi trong pass 3D, trước VFXTest_Draw3D. */
 void VFXTest_SetCamera(Camera3D cam);

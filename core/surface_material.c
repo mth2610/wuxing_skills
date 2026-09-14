@@ -27,6 +27,7 @@ static int s_locMultipleScattAmp  = -1;
 static int s_locMatcapTex, s_locHasMatcap, s_locMatcapAmount;
 static int s_locNormalMap, s_locHasNormalMap;
 static int s_locAniso, s_locAnisoShininess, s_locSssStrength, s_locSssPower;
+static int s_locSssColor, s_locSssDistortion;
 static int s_locLightVP, s_locShadowMap, s_locShadowEnabled, s_locShadowTexel;
 static int s_locStaticLightVP, s_locStaticShadowMap;
 static int s_locStaticShadowEnabled, s_locStaticShadowTexel;
@@ -73,6 +74,8 @@ void SurfaceMaterial_Init(void) {
     s_locAnisoShininess = GetShaderLocation(s_shader, "u_anisoShininess");
     s_locSssStrength    = GetShaderLocation(s_shader, "u_sssStrength");
     s_locSssPower       = GetShaderLocation(s_shader, "u_sssPower");
+    s_locSssColor       = GetShaderLocation(s_shader, "u_sssColor");
+    s_locSssDistortion  = GetShaderLocation(s_shader, "u_sssDistortion");
     s_locLightVP        = GetShaderLocation(s_shader, "u_lightVP");
     s_locShadowMap      = GetShaderLocation(s_shader, "shadowMap");
     s_locShadowEnabled  = GetShaderLocation(s_shader, "u_shadowEnabled");
@@ -252,9 +255,16 @@ void SurfaceMaterial_ClearAniso(void) {
 }
 
 void SurfaceMaterial_SetSSS(float strength, float power) {
+    SurfaceMaterial_SetSSSExt(strength, power, (Color){ 255, 122, 64, 255 }, 0.35f);
+}
+
+void SurfaceMaterial_SetSSSExt(float strength, float power, Color sssColor, float distortion) {
     if (!s_ready) return;
-    SetShaderValue(s_shader, s_locSssStrength, &strength, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(s_shader, s_locSssPower,     &power,    SHADER_UNIFORM_FLOAT);
+    Vector3 col = ColorToVec3(sssColor);
+    SetShaderValue(s_shader, s_locSssStrength,   &strength,   SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_shader, s_locSssPower,      &power,      SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_shader, s_locSssColor,      &col,        SHADER_UNIFORM_VEC3);
+    SetShaderValue(s_shader, s_locSssDistortion, &distortion, SHADER_UNIFORM_FLOAT);
 }
 
 void SurfaceMaterial_ClearSSS(void) {

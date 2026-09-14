@@ -29,8 +29,18 @@ static bool s_hasTestPath = false;
 #include "sandbox/sandbox_core.h" // Sandbox_GetPlayerAgentId — CHARACTER AURA attaches to the real player agent
 #include "rlgl.h"
 #include "raymath.h"
-#include <math.h>
-#include <stddef.h>
+#include "core/geometry/sdf_capsule.h"
+#include "core/surface_material.h"
+
+// Messiah Engine Feature Demos (Items 2, 3, 4)
+static bool    s_demoMeshDistortActive = false;
+static float   s_demoMeshDistortTimer = 0.0f;
+static Vector3 s_demoMeshDistortPos = {0};
+
+static bool    s_demoSSSActive = false;
+static float   s_demoSSSAngle = 0.0f;
+
+static bool    s_demoSDFActive = false;
 
 // Prefab Tester UI config
 #define PREFAB_UI_X 20.0f
@@ -71,9 +81,11 @@ static bool s_shotWanted = false;
 static int s_shotSerial = 0;
 static float s_shotRadius = 3.2f;
 
-/* Mặc định ẨN — xem lời giải thích tại khai báo trong vfx_test.h. */
-static bool s_hideCharacterRef = true;
+/* Mặc định HIỆN nhân vật để tiện test VFX và SSS/Aura trực tiếp trên model. */
+static bool s_hideCharacterRef = false;
 bool VFXTest_ShouldHideCharacterRef(void) { return s_hideCharacterRef; }
+
+static Vector3 s_currentPlayerPos = {0};
 
 static bool s_hideDebugOverlays = true;
 bool VFXTest_ShouldHideDebugOverlays(void) { return s_hideDebugOverlays; }
@@ -391,6 +403,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     // Reset cache count each frame
     g_activeCountCache = 0;
     s_clickedOnUI = false;
+    s_currentPlayerPos = playerPos;
 
     if (!s_hasTestPath)
     {
@@ -433,10 +446,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
      * Xem sandbox/gradient_probe.c. */
     if (IsKeyPressed(KEY_G))
         GradientProbe_Arm();
-    /* C — hiện/ẩn mannequin tham chiếu tỉ lệ. Mặc định ẩn: nó đứng đúng chỗ
-     * camera xoay quanh và hiệu ứng sinh ra, nên luôn che/lẫn vào VFX đang test
-     * (xem fresnel_probe.c — nó chính là thứ đã làm nhiễu phép đo lần trước). */
-    if (IsKeyPressed(KEY_C))
+    /* B — hiện/ẩn nhân vật tham chiếu tỉ lệ. */
+    if (IsKeyPressed(KEY_B))
         s_hideCharacterRef = !s_hideCharacterRef;
     /* TAB — hiện/ẩn HUD debug (pool GPU particle, skill manager, core-test). */
     if (IsKeyPressed(KEY_TAB))
@@ -448,6 +459,39 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     {
         s_hideAllUI = !s_hideAllUI;
         TraceLog(LOG_INFO, "[VFXTest] UI %s (U de doi lai)", s_hideAllUI ? "AN" : "HIEN");
+    }
+
+    // -------------------------------------------------------------------------
+    // DEMO MESSIAH VFX FEATURES: [1] Mesh Distort | [2] SSS | [3] Capsule SDF
+    // -------------------------------------------------------------------------
+    if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1))
+    {
+        s_demoMeshDistortActive = true;
+        s_demoMeshDistortTimer = 0.0f;
+        s_demoMeshDistortPos = playerPos;
+        ScreenDistort_RequestMeshPass();
+        TraceLog(LOG_INFO, "[Messiah VFX Demo] 1: Mesh Distortion Triggered!");
+    }
+
+    if (IsKeyPressed(KEY_TWO) || IsKeyPressed(KEY_KP_2))
+    {
+        s_demoSSSActive = !s_demoSSSActive;
+        if (s_demoSSSActive)
+        {
+            SurfaceMaterial_SetSSSExt(2.2f, 6.0f, (Color){ 255, 120, 50, 255 }, 0.40f);
+            TraceLog(LOG_INFO, "[Messiah VFX Demo] 2: SSS Translucency ENABLED!");
+        }
+        else
+        {
+            SurfaceMaterial_ClearSSS();
+            TraceLog(LOG_INFO, "[Messiah VFX Demo] 2: SSS Translucency DISABLED!");
+        }
+    }
+
+    if (IsKeyPressed(KEY_THREE) || IsKeyPressed(KEY_KP_3))
+    {
+        s_demoSDFActive = !s_demoSDFActive;
+        TraceLog(LOG_INFO, "[Messiah VFX Demo] 3: Capsule SDF Hierarchy %s!", s_demoSDFActive ? "ENABLED" : "DISABLED");
     }
 
     if (IsKeyPressed(KEY_T))
@@ -952,10 +996,124 @@ static void VFXTest_DrawGroundCircle(Vector3 center, float radius, Color color) 
     }
 }
 
+static void DrawCrescentSlash(Vector3 center, float radius, float width, float startAngle, float endAngle, Color color)
+{
+    rlDisableBackfaceCulling();
+    rlBegin(RL_TRIANGLES);
+    rlColor4ub(color.r, color.g, color.b, color.a);
+    int segs = 36;
+    float da = (endAngle - startAngle) / (float)segs;
+    float tilt = 0.5f; // Nghiêng 3D tạo vết chém kiếm khí vút lên
+    for (int i = 0; i < segs; i++)
+    {
+        float a0 = startAngle + (float)i * da;
+        float a1 = a0 + da;
+        float t0 = (float)i / (float)segs;
+        float t1 = (float)(i + 1) / (float)segs;
+
+        float w0 = width * sinf(t0 * PI);
+        float w1 = width * sinf(t1 * PI);
+
+        float rIn0  = radius - w0 * 0.5f;
+        float rOut0 = radius + w0 * 0.5f;
+        float rIn1  = radius - w1 * 0.5f;
+        float rOut1 = radius + w1 * 0.5f;
+
+        Vector3 pIn0  = { center.x + cosf(a0) * rIn0,  center.y + sinf(a0) * rIn0 * tilt,  center.z + sinf(a0) * rIn0 };
+        Vector3 pOut0 = { center.x + cosf(a0) * rOut0, center.y + sinf(a0) * rOut0 * tilt, center.z + sinf(a0) * rOut0 };
+        Vector3 pIn1  = { center.x + cosf(a1) * rIn1,  center.y + sinf(a1) * rIn1 * tilt,  center.z + sinf(a1) * rIn1 };
+        Vector3 pOut1 = { center.x + cosf(a1) * rOut1, center.y + sinf(a1) * rOut1 * tilt, center.z + sinf(a1) * rOut1 };
+
+        rlTexCoord2f(t0, 0.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pIn0.x, pIn0.y, pIn0.z);
+        rlTexCoord2f(t0, 1.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pOut0.x, pOut0.y, pOut0.z);
+        rlTexCoord2f(t1, 1.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pOut1.x, pOut1.y, pOut1.z);
+
+        rlTexCoord2f(t0, 0.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pIn0.x, pIn0.y, pIn0.z);
+        rlTexCoord2f(t1, 1.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pOut1.x, pOut1.y, pOut1.z);
+        rlTexCoord2f(t1, 0.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pIn1.x, pIn1.y, pIn1.z);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
+}
+
+void VFXTest_DrawRefraction(Camera3D cam)
+{
+    (void)cam;
+    if (s_demoMeshDistortActive)
+    {
+        float progress = s_demoMeshDistortTimer / 1.3f;
+        if (progress <= 1.0f)
+        {
+            float radius = 1.3f + progress * 2.6f;
+            float width = 0.5f + sinf(progress * PI) * 0.45f;
+            float angleOffset = progress * 1.3f;
+
+            ScreenDistort_BeginMeshPass((Texture2D){0}, 0.08f, (Vector2){ 2.5f, 0.5f }, (Color){ 100, 220, 255, 140 });
+            Vector3 slashCenter = Vector3Add(s_currentPlayerPos, (Vector3){ 0.0f, 1.1f, progress * 3.2f });
+            DrawCrescentSlash(slashCenter, radius, width, -PI * 0.45f + angleOffset, PI * 0.45f + angleOffset, (Color){ 255, 255, 255, 255 });
+            ScreenDistort_EndMeshPass();
+        }
+        else
+        {
+            s_demoMeshDistortActive = false;
+        }
+    }
+}
+
 void VFXTest_Draw3D(void)
 {
     VFXTest_InitFixtures();
     float dt = TimeFX_RawDelta();
+
+    // -------------------------------------------------------------------------
+    // DEMO MESSIAH VFX: [1] Mesh Distort | [2] SSS | [3] Capsule SDF
+    // -------------------------------------------------------------------------
+    if (s_demoMeshDistortActive)
+    {
+        s_demoMeshDistortTimer += dt;
+        ScreenDistort_RequestMeshPass();
+        float progress = s_demoMeshDistortTimer / 1.3f;
+        if (progress <= 1.0f)
+        {
+            Vector3 slashCenter = Vector3Add(s_currentPlayerPos, (Vector3){ 0.0f, 1.1f, progress * 3.2f });
+            VFXLight_Spawn(slashCenter, (Color){ 100, 200, 255, 255 }, 2.5f, 0.04f, VFX_PRIORITY_HIGH_ULTIMATE);
+        }
+    }
+
+    if (s_demoSSSActive)
+    {
+        s_demoSSSAngle += dt * 2.2f;
+        Vector3 orbitPos = Vector3Add(s_currentPlayerPos, (Vector3){ cosf(s_demoSSSAngle) * 1.6f, 1.3f, sinf(s_demoSSSAngle) * 1.6f });
+        VFXLight_Spawn(orbitPos, (Color){ 255, 120, 30, 255 }, 2.5f, 0.05f, VFX_PRIORITY_HIGH_ULTIMATE);
+        DrawSphere(orbitPos, 0.12f, (Color){ 255, 220, 100, 255 });
+        DrawCircle3D(orbitPos, 0.35f, (Vector3){ 0.0f, 1.0f, 0.0f }, 0.0f, (Color){ 255, 150, 40, 150 });
+    }
+
+    if (s_demoSDFActive)
+    {
+        SdfCapsule capsules[12];
+        int count = 0;
+        Sdf_BuildHumanoidHierarchy(s_currentPlayerPos, 1.8f, 0.0f, capsules, 12, &count);
+
+        for (int i = 0; i < count; i++)
+        {
+            DrawCapsuleWires(capsules[i].a, capsules[i].b, capsules[i].radius + 0.02f, 6, 6, (Color){ 0, 220, 255, 140 });
+        }
+
+        static float auraPhase = 0.0f;
+        auraPhase += dt * 3.0f;
+        for (int i = 0; i < 24; i++)
+        {
+            float phi = (float)i * (2.0f * PI / 24.0f) + auraPhase;
+            float h = 0.2f + 1.4f * (float)i / 24.0f;
+            Vector3 testPt = Vector3Add(s_currentPlayerPos, (Vector3){ cosf(phi) * 0.8f, h, sinf(phi) * 0.8f });
+            Vector3 gradNormal;
+            float dist = Sdf_EvaluateHierarchyDistance(testPt, capsules, count, 0.06f, &gradNormal);
+
+            Vector3 surfacePt = Vector3Subtract(testPt, Vector3Scale(gradNormal, dist - 0.03f));
+            DrawSphere(surfacePt, 0.035f, (Color){ 255, 220, 80, 220 });
+        }
+    }
 
     if (s_isPlayingMesh)
     {
@@ -1248,7 +1406,9 @@ void VFXTest_DrawHUD(void)
     if (s_hideAllUI)
         return; // U — see UpdateAndHandleInput. Nothing below draws.
 
-    DrawText(TextFormat("C: character ref %s | TAB: debug HUD %s | N: dark bg | R: reset view",
+    DrawText("[1] DEMO 2: MESH DISTORT | [2] DEMO 3: SSS LIGHT | [3] DEMO 4: CAPSULE SDF",
+             10, 565, 16, YELLOW);
+    DrawText(TextFormat("B: character ref %s | Z/C: punch/kick | TAB: debug HUD %s | N: dark bg | R: reset view",
                         s_hideCharacterRef ? "hidden" : "shown",
                         s_hideDebugOverlays ? "hidden" : "shown"),
              10, 590, 16, GRAY);

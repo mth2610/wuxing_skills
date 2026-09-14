@@ -57,11 +57,13 @@
 #include "net/net_transport.h"
 #include "formations/formation_system.h"
 #include "net/net.h"
+#include "character/character_model.h"
 #include <stdio.h>
 
 // Biến camera toàn cục
 Camera3D camera = {0};
 PlayerEntity player = {0};
+static float s_vfxPlayerYaw = 0.0f;
 
 #define WIND_TERRAIN_HALF_EXTENT 24.0f
 #define WIND_TERRAIN_RECENTER_DISTANCE 8.0f
@@ -1051,10 +1053,34 @@ int main(int argc, char **argv) {
         float s = sinf(vfxCameraAngle);
         float c = cosf(vfxCameraAngle);
 
-        if (IsKeyDown(KEY_W)) { player.position.x -= s * speed * dt; player.position.z -= c * speed * dt; }
-        if (IsKeyDown(KEY_S)) { player.position.x += s * speed * dt; player.position.z += c * speed * dt; }
-        if (IsKeyDown(KEY_A)) { player.position.x -= c * speed * dt; player.position.z += s * speed * dt; }
-        if (IsKeyDown(KEY_D)) { player.position.x += c * speed * dt; player.position.z -= s * speed * dt; }
+        bool moved = false;
+        float dx = 0.0f, dz = 0.0f;
+        if (IsKeyDown(KEY_W)) { player.position.x -= s * speed * dt; player.position.z -= c * speed * dt; dx -= s; dz -= c; moved = true; }
+        if (IsKeyDown(KEY_S)) { player.position.x += s * speed * dt; player.position.z += c * speed * dt; dx += s; dz += c; moved = true; }
+        if (IsKeyDown(KEY_A)) { player.position.x -= c * speed * dt; player.position.z += s * speed * dt; dx -= c; dz += s; moved = true; }
+        if (IsKeyDown(KEY_D)) { player.position.x += c * speed * dt; player.position.z += s * speed * dt; dx += c; dz += s; moved = true; }
+
+        if (moved && (dx != 0.0f || dz != 0.0f)) {
+            s_vfxPlayerYaw = atan2f(dx, dz);
+        }
+
+        if (IsKeyPressed(KEY_Z)) {
+            CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.45f);
+            Vector3 forward = { sinf(s_vfxPlayerYaw), 0.0f, cosf(s_vfxPlayerYaw) };
+            Vector3 attackOrigin = Vector3Add(player.position, (Vector3){ 0.0f, 1.0f, 0.0f });
+            Wind_SpawnGust(attackOrigin, forward, 5.5f, 3.5f, 0.45f);
+        }
+        if (IsKeyPressed(KEY_C)) {
+            CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_KICK, 0.50f);
+            Vector3 forward = { sinf(s_vfxPlayerYaw), 0.0f, cosf(s_vfxPlayerYaw) };
+            Vector3 attackOrigin = Vector3Add(player.position, (Vector3){ 0.0f, 1.0f, 0.0f });
+            Wind_SpawnGust(attackOrigin, forward, 6.0f, 4.0f, 0.50f);
+        }
+        if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1)) {
+            CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_CAST, 0.60f);
+        }
+
+        CharacterModel_Update(&player.anim, dt, moved);
 
         if (IsKeyDown(KEY_Q)) vfxCameraAngle -= 2.5f * dt;
         if (IsKeyDown(KEY_E)) vfxCameraAngle += 2.5f * dt;
@@ -1371,6 +1397,11 @@ int main(int argc, char **argv) {
             Boss_Draw();
             Formation_Draw();
         }
+        if (currentScreen == SCREEN_VFX_TESTER && !VFXTest_ShouldHideCharacterRef()) {
+            if (CharacterModel_IsLoaded()) {
+                CharacterModel_Draw(&player.anim, player.position, s_vfxPlayerYaw, 1.0f, WHITE);
+            }
+        }
         if (CharacterModel_IsLoaded()) {
             SurfaceMaterial_EndShadowCast(charModel);
         }
@@ -1476,7 +1507,11 @@ int main(int argc, char **argv) {
 
         if (!renderVFXMode && !VFXTest_ShouldHideCharacterRef()) {
             Environment_DrawSmartShadow(player.position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
-            DrawCharacter3D(player.position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), GetColor(0xCCCCCCFF), true, mouseTarget3D);
+            if (CharacterModel_IsLoaded()) {
+                CharacterModel_Draw(&player.anim, player.position, s_vfxPlayerYaw, 1.0f, WHITE);
+            } else {
+                DrawCharacter3D(player.position, 0.25f, GetColor(0xFFD39BFF), GetColor(0x3B5998FF), GetColor(0xCCCCCCFF), true, mouseTarget3D);
+            }
         }
 
         VFXLight_DrawDebug();   // tuning.cfg → vfx_light_debug = 1
@@ -1508,6 +1543,7 @@ int main(int argc, char **argv) {
     MyBeginMode3D(camera);
     VFX_ShieldShell_DrawRefraction(camera);
     VFX_FlowShield_DrawRefraction(camera);
+    VFXTest_DrawRefraction(camera);
     MyEndMode3D();
     CompositeScreenSpaceVFX(camera);
     VolumetricFog_Render(camera);

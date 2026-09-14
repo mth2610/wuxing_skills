@@ -517,20 +517,46 @@ static float ComputeWidthEnvelopeFast(const TrailEntity *t, float segRatio, floa
     }
 }
 
+// Centripetal Catmull-Rom (alpha = 0.5) - Messiah Engine standard.
+// Eliminates loops and overshoot during erratic weapon velocity changes.
+static inline float Trail_KnotInterval(Vector3 a, Vector3 b)
+{
+    float dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    float distSq = dx * dx + dy * dy + dz * dz;
+    return (distSq > 1e-8f) ? sqrtf(sqrtf(distSq)) : 1e-4f;
+}
+
+static inline Vector3 Trail_V3LerpParam(Vector3 v1, Vector3 v2, float t1, float t2, float t)
+{
+    float denom = t2 - t1;
+    if (fabsf(denom) < 1e-5f) return v1;
+    float factor = (t - t1) / denom;
+    return (Vector3){
+        v1.x + factor * (v2.x - v1.x),
+        v1.y + factor * (v2.y - v1.y),
+        v1.z + factor * (v2.z - v1.z)};
+}
+
 static inline Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
 {
-    float t2 = t * t;
-    float t3 = t2 * t;
+    if (t <= 0.0f) return p1;
+    if (t >= 1.0f) return p2;
 
-    float f0 = -0.5f * t3 + t2 - 0.5f * t;
-    float f1 = 1.5f * t3 - 2.5f * t2 + 1.0f;
-    float f2 = -1.5f * t3 + 2.0f * t2 + 0.5f * t;
-    float f3 = 0.5f * t3 - 0.5f * t2;
+    float t0 = 0.0f;
+    float t1 = t0 + Trail_KnotInterval(p0, p1);
+    float t2 = t1 + Trail_KnotInterval(p1, p2);
+    float t3 = t2 + Trail_KnotInterval(p2, p3);
 
-    return (Vector3){
-        p0.x * f0 + p1.x * f1 + p2.x * f2 + p3.x * f3,
-        p0.y * f0 + p1.y * f1 + p2.y * f2 + p3.y * f3,
-        p0.z * f0 + p1.z * f1 + p2.z * f2 + p3.z * f3};
+    float evalT = t1 + t * (t2 - t1);
+
+    Vector3 a1 = Trail_V3LerpParam(p0, p1, t0, t1, evalT);
+    Vector3 a2 = Trail_V3LerpParam(p1, p2, t1, t2, evalT);
+    Vector3 a3 = Trail_V3LerpParam(p2, p3, t2, t3, evalT);
+
+    Vector3 b1 = Trail_V3LerpParam(a1, a2, t0, t2, evalT);
+    Vector3 b2 = Trail_V3LerpParam(a2, a3, t1, t3, evalT);
+
+    return Trail_V3LerpParam(b1, b2, t1, t2, evalT);
 }
 
 static inline int GetHistoryNodeIndex(const TrailEntity *t, int i)

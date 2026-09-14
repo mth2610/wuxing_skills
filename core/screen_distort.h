@@ -36,4 +36,22 @@ void ScreenDistort_Draw(Camera3D camera);
  * HDR read+write that changes nothing. */
 bool ScreenDistort_HasLiveSources(void);
 
+// ============================================================
+// MESH-DRIVEN DISTORTION PASS (Messiah Engine standard)
+// Allows sword trails, slash ribbons, or 3D energy palms to distort
+// the background scene using flow maps or normal maps.
+// ============================================================
+
+// Yêu cầu snapshot cảnh nền cho mesh distortion trong frame hiện tại
+void ScreenDistort_RequestMeshPass(void);
+
+// Lấy Shader Mesh Distortion dùng chung
+Shader ScreenDistort_GetMeshShader(void);
+
+// Bắt đầu chế độ vẽ Mesh Distortion (tự động bind snapshot texture và các thông số cần thiết)
+void ScreenDistort_BeginMeshPass(Texture2D flowMap, float strength, Vector2 flowSpeed, Color tintColor);
+
+// Kết thúc chế độ vẽ Mesh Distortion
+void ScreenDistort_EndMeshPass(void);
+
 #endif // SCREEN_DISTORT_H

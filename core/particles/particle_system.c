@@ -24,23 +24,46 @@
 #define PS_TRAIL_SUBDIV         4
 #define PS_TRAIL_MAX_RIBBON_PTS 32
 
-// Catmull-Rom through p1..p2 (p0/p3 are the neighbouring points that set the
-// tangents). Chosen over a Bezier because it INTERPOLATES the recorded points
-// — a smoothed trail must still pass through where the particle actually was.
+// Centripetal Catmull-Rom (alpha = 0.5) through p1..p2 - Messiah Engine standard.
+// Eliminates loops and overshoot when particles decelerate or change trajectory abruptly.
+static inline float PS_KnotInterval(Vector3 a, Vector3 b)
+{
+  float dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+  float distSq = dx * dx + dy * dy + dz * dz;
+  return (distSq > 1e-8f) ? sqrtf(sqrtf(distSq)) : 1e-4f;
+}
+
+static inline Vector3 PS_V3LerpParam(Vector3 v1, Vector3 v2, float t1, float t2, float t)
+{
+  float denom = t2 - t1;
+  if (fabsf(denom) < 1e-5f) return v1;
+  float factor = (t - t1) / denom;
+  return (Vector3){
+      v1.x + factor * (v2.x - v1.x),
+      v1.y + factor * (v2.y - v1.y),
+      v1.z + factor * (v2.z - v1.z)};
+}
+
 static inline Vector3 PS_CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
 {
-  float t2 = t * t, t3 = t2 * t;
-  Vector3 r;
-  r.x = 0.5f * ((2.0f * p1.x) + (-p0.x + p2.x) * t +
-                (2.0f * p0.x - 5.0f * p1.x + 4.0f * p2.x - p3.x) * t2 +
-                (-p0.x + 3.0f * p1.x - 3.0f * p2.x + p3.x) * t3);
-  r.y = 0.5f * ((2.0f * p1.y) + (-p0.y + p2.y) * t +
-                (2.0f * p0.y - 5.0f * p1.y + 4.0f * p2.y - p3.y) * t2 +
-                (-p0.y + 3.0f * p1.y - 3.0f * p2.y + p3.y) * t3);
-  r.z = 0.5f * ((2.0f * p1.z) + (-p0.z + p2.z) * t +
-                (2.0f * p0.z - 5.0f * p1.z + 4.0f * p2.z - p3.z) * t2 +
-                (-p0.z + 3.0f * p1.z - 3.0f * p2.z + p3.z) * t3);
-  return r;
+  if (t <= 0.0f) return p1;
+  if (t >= 1.0f) return p2;
+
+  float t0 = 0.0f;
+  float t1 = t0 + PS_KnotInterval(p0, p1);
+  float t2 = t1 + PS_KnotInterval(p1, p2);
+  float t3 = t2 + PS_KnotInterval(p2, p3);
+
+  float evalT = t1 + t * (t2 - t1);
+
+  Vector3 a1 = PS_V3LerpParam(p0, p1, t0, t1, evalT);
+  Vector3 a2 = PS_V3LerpParam(p1, p2, t1, t2, evalT);
+  Vector3 a3 = PS_V3LerpParam(p2, p3, t2, t3, evalT);
+
+  Vector3 b1 = PS_V3LerpParam(a1, a2, t0, t2, evalT);
+  Vector3 b2 = PS_V3LerpParam(a2, a3, t1, t3, evalT);
+
+  return PS_V3LerpParam(b1, b2, t1, t2, evalT);
 }
 
 // TỐI ƯU 1: Sắp xếp lại thứ tự biến (Data Alignment & Hot/Cold Split)

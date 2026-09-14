@@ -7,21 +7,34 @@
  */
 #include "core/screen_distort.h"
 #include "core/scene_targets.h"
+#include "core/resource_manager.h"
 #include "rlgl.h"
 #include <math.h>
 #include <string.h>
 
 static Shader distortShader;
+static Shader meshDistortShader;
+static bool s_meshDistortReady = false;
 static DistortionSource sources[MAX_DISTORTION_SOURCES];
 static int activeSourcesCount = 0;
 
-// Uniform locations
+// Uniform locations - shockwave
 static int centersLoc;
 static int radiiLoc;
 static int strengthsLoc;
 static int progressLoc;
 static int countLoc;
 static int aspectLoc;
+
+// Uniform locations - mesh distortion
+static int meshLocSceneTex;
+static int meshLocHasScene;
+static int meshLocStrength;
+static int meshLocFlowSpeed;
+static int meshLocTintColor;
+static int meshLocEdgeFade;
+static int meshLocTime;
+static int meshLocResolution;
 
 void ScreenDistort_Init(void)
 {
@@ -33,6 +46,20 @@ void ScreenDistort_Init(void)
   countLoc = GetShaderLocation(distortShader, "u_count");
   aspectLoc = GetShaderLocation(distortShader, "u_aspectRatio");
 
+  meshDistortShader = ResourceManager_LoadShader("core/shaders/distortion_mesh.vs", "core/shaders/distortion_mesh.fs");
+  if (meshDistortShader.id > 0)
+  {
+    meshLocSceneTex   = GetShaderLocation(meshDistortShader, "u_sceneTex");
+    meshLocHasScene   = GetShaderLocation(meshDistortShader, "u_hasScene");
+    meshLocStrength   = GetShaderLocation(meshDistortShader, "u_distortionStrength");
+    meshLocFlowSpeed  = GetShaderLocation(meshDistortShader, "u_flowSpeed");
+    meshLocTintColor  = GetShaderLocation(meshDistortShader, "u_tintColor");
+    meshLocEdgeFade   = GetShaderLocation(meshDistortShader, "u_edgeFade");
+    meshLocTime       = GetShaderLocation(meshDistortShader, "u_time");
+    meshLocResolution = GetShaderLocation(meshDistortShader, "u_resolution");
+    s_meshDistortReady = true;
+  }
+
   activeSourcesCount = 0;
   memset(sources, 0, sizeof(sources));
 }
@@ -40,6 +67,11 @@ void ScreenDistort_Init(void)
 void ScreenDistort_Unload(void)
 {
   UnloadShader(distortShader);
+  if (s_meshDistortReady)
+  {
+    UnloadShader(meshDistortShader);
+    s_meshDistortReady = false;
+  }
 }
 
 void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed)
@@ -150,5 +182,61 @@ void ScreenDistort_Draw(Camera3D camera)
                  (Rectangle){0, 0, (float)sceneTex.width, -(float)sceneTex.height},
                  (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
                  (Vector2){0, 0}, 0.0f, WHITE);
+  EndShaderMode();
+}
+
+void ScreenDistort_RequestMeshPass(void)
+{
+  SceneTargets_RequestSceneSnapshot();
+}
+
+Shader ScreenDistort_GetMeshShader(void)
+{
+  return meshDistortShader;
+}
+
+void ScreenDistort_BeginMeshPass(Texture2D flowMap, float strength, Vector2 flowSpeed, Color tintColor)
+{
+  (void)flowMap;
+  if (!s_meshDistortReady) return;
+
+  Texture2D snapshot = SceneTargets_GetSceneSnapshotTexture();
+  int hasScene = (snapshot.id > 0) ? 1 : 0;
+
+  SetShaderValue(meshDistortShader, meshLocHasScene, &hasScene, SHADER_UNIFORM_INT);
+  if (hasScene)
+  {
+    SetShaderValueTexture(meshDistortShader, meshLocSceneTex, snapshot);
+  }
+
+  SetShaderValue(meshDistortShader, meshLocStrength, &strength, SHADER_UNIFORM_FLOAT);
+  SetShaderValue(meshDistortShader, meshLocFlowSpeed, &flowSpeed, SHADER_UNIFORM_VEC2);
+
+  Vector4 tint = { (float)tintColor.r / 255.0f, (float)tintColor.g / 255.0f,
+                   (float)tintColor.b / 255.0f, (float)tintColor.a / 255.0f };
+  SetShaderValue(meshDistortShader, meshLocTintColor, &tint, SHADER_UNIFORM_VEC4);
+
+  float edgeFade = 1.2f;
+  SetShaderValue(meshDistortShader, meshLocEdgeFade, &edgeFade, SHADER_UNIFORM_FLOAT);
+
+  float time = (float)GetTime();
+  if (meshLocTime >= 0)
+    SetShaderValue(meshDistortShader, meshLocTime, &time, SHADER_UNIFORM_FLOAT);
+
+  Vector2 res = { (float)GetRenderWidth(), (float)GetRenderHeight() };
+  if (meshLocResolution >= 0)
+    SetShaderValue(meshDistortShader, meshLocResolution, &res, SHADER_UNIFORM_VEC2);
+
+  if (flowMap.id > 0)
+  {
+    SetShaderValueTexture(meshDistortShader, GetShaderLocation(meshDistortShader, "texture0"), flowMap);
+  }
+
+  BeginShaderMode(meshDistortShader);
+}
+
+void ScreenDistort_EndMeshPass(void)
+{
+  if (!s_meshDistortReady) return;
   EndShaderMode();
 }

@@ -48,6 +48,7 @@ void SurfaceMaterial_SetAniso(float anisoShininess); // hair/silk streaked highl
 void SurfaceMaterial_ClearAniso(void);
 
 void SurfaceMaterial_SetSSS(float strength, float power); // jade/skin back-scatter, strength=0 clears
+void SurfaceMaterial_SetSSSExt(float strength, float power, Color sssColor, float distortion);
 void SurfaceMaterial_ClearSSS(void);
 
 // Real Shading P6 — swap a model's materials to the shadow depth shader for
