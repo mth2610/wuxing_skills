@@ -67,6 +67,14 @@ static void Test_SurfaceProfile(void)
 {
     CHECK(FileContains("assets/vfx_surface_profiles.json", "pure_flame_puff_motion_8x8.png"),
           "vfx_surface_profiles.json registers pure_flame_puff_motion_8x8.png as flow texture for fire_volume");
+    CHECK(FileContains("assets/vfx_surface_profiles.json",
+                       "MOTION | R:flowx/CLAMP | G:flowy/CLAMP | B:speed/CLAMP | A:mask/CLAMP"),
+          "motion atlas uses the optical-flow flipbook channel contract");
+    CHECK(FileContains("scripts/validate_vfx_surface_registry.py", "\"MOTION\":"),
+          "surface validator recognizes optical-flow atlases");
+    CHECK(FileContains("scripts/validate_vfx_surface_registry.py",
+                       "CELLED = (\"FLIPBOOK\", \"VOLUME\", \"MOTION\")"),
+          "surface validator permits cells only on celled motion atlases");
     CHECK(FileContains("core/vfx_surface_registry.generated.inl", "pure_flame_puff_motion_8x8.png"),
           "vfx_surface_registry.generated.inl has generated flowPath for fire_volume");
 }

@@ -424,6 +424,8 @@ static int TestShaderContract(void) {
     CHECK(strstr(shader, "uniform float u_shadowStrength") != NULL);
     CHECK(strstr(shader, "smoothstep(0.22, 0.88, backgroundLuma)") != NULL);
     CHECK(strstr(shader, "mix(0.78, 1.38, smoothstep(0.08, 0.52, density))") != NULL);
+    CHECK(strstr(shader, "const vec3 GAS_BRIGHT_EXTINCTION_GAIN = vec3(1.85, 1.15, 1.00)") != NULL);
+    CHECK(strstr(shader, "density *= mix(1.0, brightExtinctionGain, backgroundAdapt)") != NULL);
     CHECK(strstr(shader, "const vec3 GAS_BRIGHT_BODY_GAIN = vec3(0.72, 0.78, 0.66)") != NULL);
     CHECK(strstr(shader, "float broadEmissionGain") != NULL);
     CHECK(strstr(shader, "float energyCoreWeight") != NULL);

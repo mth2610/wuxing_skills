@@ -3585,3 +3585,18 @@ planes, including zero restitution, and keep their post-integration projection
 identical across the particle CPU, GPU-shadow and compute paths. Guarded by
 `core/tests/fluid_force_field_contract_test.c` and
 `core/tests/fluid_receiver_test.c`.
+
+## Central gas injection survives turbulence as a capsule (14/09/2026)
+
+- **Symptom:** a simulated plume has moving internal values but its rendered
+  silhouette remains a smooth vertical capsule after raymarching and denoise.
+- **Cause:** every pulse deposits density at the exact same world point. Random
+  radial velocity and post-simulation noise disturb samples, but the persistent
+  density source and its time-integrated footprint remain rotationally
+  symmetric.
+- **Rule:** distribute overlapping micro-sources around the authored foot and
+  inject tangential velocity. Use a low-discrepancy angular sequence so short
+  windows cover both horizontal axes while their centroid stays at the requested
+  position. Preserve pulse mass and rate; shape diversity must not secretly
+  increase simulation load. Guarded by
+  `core/tests/gas_plume_runtime_test.c`.

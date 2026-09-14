@@ -32,6 +32,7 @@ uniform float u_detailStrength;
 uniform float u_shadowStrength;
 
 const vec3 GAS_BRIGHT_BODY_GAIN = vec3(0.72, 0.78, 0.66);
+const vec3 GAS_BRIGHT_EXTINCTION_GAIN = vec3(1.85, 1.15, 1.00);
 
 /* A fixed half-step start gives neighbouring rays identical integration error;
  * after low-resolution upsampling that error reads as bands. This mobile-safe
@@ -163,6 +164,15 @@ void main() {
                        max(detailStrength - 1.0, 0.0));
         float brightDensityShape = mix(0.78, 1.38, smoothstep(0.08, 0.52, density));
         density *= mix(1.0, brightDensityShape, backgroundAdapt);
+        /* A pale participating medium needs more extinction, not more emitted
+         * light, to retain its silhouette against sky/white geometry. This is
+         * a scalar Beer-Lambert adjustment on the already sampled density, so
+         * it costs no extra texture fetches or ray steps. Fire gets only a
+         * small shoulder lift; energy remains emission-led. */
+        float brightExtinctionGain = u_kind == 0 ? GAS_BRIGHT_EXTINCTION_GAIN.x :
+                                     (u_kind == 1 ? GAS_BRIGHT_EXTINCTION_GAIN.y :
+                                                    GAS_BRIGHT_EXTINCTION_GAIN.z);
+        density *= mix(1.0, brightExtinctionGain, backgroundAdapt);
         float densityAlpha = 1.0 - exp(-density * u_densityScale * stepLength);
         float heat = max(gas.g * 0.35 + gas.b, 0.0);
         float flameBody = smoothstep(0.05, 0.55, heat);

@@ -211,7 +211,8 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
                 .axisOrigin=p->forceAxisOrigin, .axisDir=p->forceAxisDir,
                 .travelPath=p->travelPath, .onTargetEmit=p->onTargetEmit,
                 .onTargetEmitCount=p->onTargetEmitCount,
-                .emissiveBoost=boost, .emitterId=e->ownerId,
+                .emissiveBoost=boost, .windInfluence=p->windInfluence,
+                .emitterId=e->ownerId,
                 .renderMode=(int)e->desc.renderMode });
         } else ParticleSystem_SpawnFromEmitter(spawned, e->ownerId, (int)e->desc.renderMode);
     }
@@ -248,7 +249,8 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
                 .axisOrigin=p->forceAxisOrigin, .axisDir=p->forceAxisDir,
                 .travelPath=p->travelPath, .onTargetEmit=p->onTargetEmit,
                 .onTargetEmitCount=p->onTargetEmitCount,
-                .emissiveBoost=boost, .emitterId=e->ownerId,
+                .emissiveBoost=boost, .windInfluence=p->windInfluence,
+                .emitterId=e->ownerId,
                 .renderMode=(int)e->desc.renderMode });
         } else {
             ParticleSystem_SpawnFromEmitter(*p, e->ownerId, (int)e->desc.renderMode);

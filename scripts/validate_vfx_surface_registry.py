@@ -40,6 +40,9 @@ LAYOUTS = {
     # LUT indexed by emission at draw time, which is what keeps one sheet usable
     # as orange fire and as purple magic fire.
     "VOLUME": {"R": {"emission"}, "G": {"density"}, "B": {"shadow"}, "A": {"opacity"}},
+    # Optical-flow data aligned one-for-one with a flipbook atlas. Unlike FLOW,
+    # this is not a drawable surface and its cells are clamped independently.
+    "MOTION": {"R": {"flowx"}, "G": {"flowy"}, "B": {"speed"}, "A": {"mask"}},
     # Pure data: four decorrelated scalar fields. Never drawn.
     "NOISE":    {"R": {"field"}, "G": {"field"}, "B": {"field"}, "A": {"field"}},
     # Pre-spec files: a standalone flow map or mask that leaves channels
@@ -235,7 +238,7 @@ def check_channels(label, text, flipbook):
     # celled too — it is the same ray-marched sheet as FLIPBOOK, differing in
     # what the channels MEAN (four scalar fields, no colour), not in whether it
     # is a grid of frames.
-    CELLED = ("FLIPBOOK", "VOLUME")
+    CELLED = ("FLIPBOOK", "VOLUME", "MOTION")
     has_cells = isinstance(flipbook, list) and len(flipbook) == 3 and flipbook[2] > 0
     if has_cells and layout not in CELLED:
         failures += fail(f"{label}: profile declares flipbook cells but layout is {layout}")

@@ -1,8 +1,9 @@
 /* Headless contract for the low-resolution gas reconstruction filter.
  *
  * The numeric mirror proves the 3x3 tent removes a one-pixel checker while
- * preserving constants and total premultiplied energy. It cannot render the
- * Vulkan target, so the source checks pin the four bilinear taps and host pass.
+ * preserving constants and premultiplied energy, then verifies that the depth
+ * term rejects colour across a geometry discontinuity. It cannot render the
+ * Vulkan target, so source checks pin the taps, depth wiring, and host pass.
  */
 #include <math.h>
 #include <stdio.h>
@@ -81,27 +82,52 @@ static int TestTentResponse(void) {
     return 0;
 }
 
+static float DepthWeight(float centerDepth, float sampleDepth) {
+    return exp2f(-fabsf(sampleDepth - centerDepth) * 1.5f);
+}
+
+static int TestDepthRejection(void) {
+    const float centerDepth = 4.0f;
+    const float nearColor = 0.0f;
+    const float farColor = 1.0f;
+    float nearWeight = DepthWeight(centerDepth, centerDepth);
+    float farWeight = DepthWeight(centerDepth, 20.0f);
+    float filtered = (nearColor * nearWeight + farColor * farWeight) /
+                     (nearWeight + farWeight);
+    CHECK(filtered < 1.0e-5f);
+    CHECK(fabsf(DepthWeight(centerDepth, centerDepth) - 1.0f) < 1.0e-6f);
+    return 0;
+}
+
 static int TestSourceContract(void) {
     char *shader = ReadFile("core/gas/shaders/gas_denoise.fs");
     CHECK(shader != NULL);
     CHECK(Count(shader, "texture(texture0") == 4);
     CHECK(strstr(shader, "vec2(-0.5, -0.5)") != NULL);
     CHECK(strstr(shader, "vec2( 0.5,  0.5)") != NULL);
-    CHECK(strstr(shader, "sum * 0.25") != NULL);
+    CHECK(strstr(shader, "u_sceneDepthTex") != NULL);
+    CHECK(strstr(shader, "u_hasSceneDepth") != NULL);
+    CHECK(strstr(shader, "u_inverseProjection") != NULL);
+    CHECK(strstr(shader, "Gas_ViewDepth") != NULL);
+    CHECK(strstr(shader, "exp2(-abs(sampleDepth - centerDepth) * 1.5)") != NULL);
     free(shader);
 
     char *host = ReadFile("core/gas/gas_system.c");
     CHECK(host != NULL);
     CHECK(strstr(host, "s_denoiseTarget") != NULL);
     CHECK(strstr(host, "core/gas/shaders/gas_denoise.fs") != NULL);
-    CHECK(strstr(host, "GasSystem_DenoiseRaymarch()") != NULL);
+    CHECK(strstr(host, "GasSystem_DenoiseRaymarch(") != NULL);
     CHECK(strstr(host, "s_denoiseTarget.texture") != NULL);
+    CHECK(strstr(host, "s_denoiseSceneDepthLoc") != NULL);
+    CHECK(strstr(host, "s_denoiseHasSceneDepthLoc") != NULL);
+    CHECK(strstr(host, "s_denoiseInverseProjectionLoc") != NULL);
     free(host);
     return 0;
 }
 
 int main(void) {
     if (TestTentResponse() != 0) return 1;
+    if (TestDepthRejection() != 0) return 1;
     if (TestSourceContract() != 0) return 1;
     puts("gas_denoise_test: PASS");
     return 0;

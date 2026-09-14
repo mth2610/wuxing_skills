@@ -35,6 +35,27 @@ static int FileContains(const char *path, const char *needle)
     return found;
 }
 
+static int FileCount(const char *path, const char *needle)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = (char *)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return -1; }
+    size_t readCount = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    buf[readCount] = '\0';
+    int count = 0;
+    const size_t needleLength = strlen(needle);
+    for (char *cursor = buf; (cursor = strstr(cursor, needle)) != NULL;
+         cursor += needleLength)
+        count++;
+    free(buf);
+    return count;
+}
+
 static void Test_WindInfluenceContracts(void)
 {
     VFX_PhysicsConfig phys;
@@ -52,6 +73,10 @@ static void Test_WindInfluenceContracts(void)
     const char *gpu_h = "core/particles/gpu/particle_gpu_legacy.h";
     CHECK(FileContains(gpu_h, "float   windInfluence;") == 1,
           "particle_gpu_legacy.h exposes windInfluence on GpuParticleConfig");
+
+    CHECK(FileCount("core/particles/particle_manager.c",
+                    ".windInfluence=p->windInfluence") == 2,
+          "ParticleManager forwards windInfluence through single and batch GPU emission");
 }
 
 static void Test_CompositionFilesCoupledToWind(void)

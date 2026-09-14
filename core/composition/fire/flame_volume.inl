@@ -81,7 +81,7 @@ static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
 // without raising the other is how this looked WORSE at each half-step. Note
 // the owner already measured the other direction — cutting the count to 26 made
 // the patchiness more visible, not less, because it exposes each silhouette.
-static float s_fvolBodyLive = 20.0f;
+static float s_fvolBodyLive = 68.0f;
 // Multiplier on the puff body's radius. Count and size buy the same cohesion at
 // the same fill cost; size is the cheaper one in draw calls. Which is right is
 // a look judgement, so both are tunables.
@@ -156,11 +156,11 @@ static SpriteAnim s_fvolVolumeAnim = {0};
 // the flame is white-hot". The sim normalises emission to its own 99.5th
 // percentile and has no idea how bright this effect should read, so this is
 // the knob that decides incandescent vs smouldering.
-static float s_fvolHeatGain = 0.85f;
+static float s_fvolHeatGain = 0.88f;
 // Radiance gain on the flame half. SEPARATE from heatGain on purpose: heatGain
 // moves the sprite along the ramp (what COLOUR it is), this moves how much light
 // it throws (how BRIGHT it is).
-static float s_fvolEmissive = 1.30f;
+static float s_fvolEmissive = 2.6f;
 // ── SMOKINESS IS A COMPOSITION DECISION, NOT AN ASSET ONE ───────────────────
 //
 // The sheet is directionless by construction (the puff sim runs at zero gravity

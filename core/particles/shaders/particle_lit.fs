@@ -324,7 +324,9 @@ vec3 ParticleLightTerm(vec3 N, vec3 L, out float wrapOut)
 //   Map A: (+X Right, +Y Top,    +Z Back / Transmitted through volume)
 //   Map B: (-X Left,  -Y Bottom, -Z Front / Camera-facing reflection)
 // Invariant to particle 2D rotation via screen derivative tangent frame reconstruction.
-vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, vec3 L, out float wrapOut)
+vec3 ParticleLightTerm6Way(vec2 luv, vec3 sampledMapA, vec3 sampledMapB,
+                           float soot, float selfShadow, float opac, vec3 L,
+                           out float wrapOut)
 {
     vec3 V = normalize(viewPos - fragPosition);
     vec3 quadT, quadB;
@@ -349,8 +351,11 @@ vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, v
         // Dual-texture 6-way lightmap pair (Unity standard):
         // texture0 = Map A (+X Right, +Y Top, +Z Backlight, Alpha: Opacity)
         // u_sixWayTexB = Map B (-X Left, -Y Bottom, -Z Front, Alpha: Opacity)
-        mapA = texture(texture0, fragTexCoord).rgb;
-        mapB = texture(u_sixWayTexB, fragTexCoord).rgb;
+        // Use the samples selected in main(). They may be optical-flow warped
+        // and cross-faded between two frames; sampling fragTexCoord again here
+        // would make lighting lag behind the advected density silhouette.
+        mapA = sampledMapA;
+        mapB = sampledMapB;
         ao = clamp(dot(mapA + mapB, vec3(1.0 / 6.0)), 0.05, 1.0);
 
         // Extinction / Contrast shaping: mapA and mapB remapped to expand dynamic range
@@ -393,6 +398,11 @@ vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, v
     vec3 L_local = vec3(dot(L, quadT), -dot(L, quadB), dot(L, -V));
     vec3 L_pos = max(vec3(0.0), L_local);
     vec3 L_neg = max(vec3(0.0), -L_local);
+    // Squared directional weights conserve energy for a normalized light
+    // vector: sum(L_local^2) == 1. Linear positive/negative weights made a
+    // diagonal light up to sqrt(3) brighter than an axis-aligned one.
+    L_pos *= L_pos;
+    L_neg *= L_neg;
     float dirLit = dot(L_pos, mapA) + dot(L_neg, mapB);
     wrapOut = dirLit;
 
@@ -422,6 +432,8 @@ vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, v
         vec3 Lpt_local = vec3(dot(Lpt, quadT), -dot(Lpt, quadB), dot(Lpt, -V));
         vec3 Lpt_pos = max(vec3(0.0), Lpt_local);
         vec3 Lpt_neg = max(vec3(0.0), -Lpt_local);
+        Lpt_pos *= Lpt_pos;
+        Lpt_neg *= Lpt_neg;
         float ptTransmission = dot(Lpt_pos, mapA) + dot(Lpt_neg, mapB);
         lit += u_vfxLightColor[i] * ptTransmission * att;
     }
@@ -600,6 +612,7 @@ void main()
             vec3 N = ParticleNormalWorld(ParticleNormalLocal(opac));
             vec3 lit = (u_sixWayLighting > 0.5)
                 ? ParticleLightTerm6Way((u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5) ? fract(fragTexCoord * u_atlasGrid) : fragTexCoord,
+                                        texelColor.rgb, texBColor.rgb,
                                         soot, selfShadow, opac, ParticleLightDir(), wrap)
                 : ParticleLightTerm(N, ParticleLightDir(), wrap);
             vec3 smoke = u_smokeTint * lit * (u_sixWayLighting > 0.5 ? 1.0 : selfShadow);
@@ -633,6 +646,7 @@ void main()
         vec3  N   = ParticleNormalWorld(ParticleNormalLocal(opac));
         vec3  lit = (u_sixWayLighting > 0.5)
             ? ParticleLightTerm6Way((u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5) ? fract(fragTexCoord * u_atlasGrid) : fragTexCoord,
+                                    texelColor.rgb, texBColor.rgb,
                                     soot, selfShadow, opac, ParticleLightDir(), wrap)
             : ParticleLightTerm(N, ParticleLightDir(), wrap);
         vec3  smoke = u_smokeTint * lit * (u_sixWayLighting > 0.5 ? 1.0 : selfShadow);
@@ -735,6 +749,7 @@ void main()
     float wrap;
     vec3  lit = (u_sixWayLighting > 0.5)
         ? ParticleLightTerm6Way((u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5) ? fract(fragTexCoord * u_atlasGrid) : fragTexCoord,
+                                texelColor.rgb, texBColor.rgb,
                                 base.a, 1.0 - base.a * 0.5, base.a, L, wrap)
         : ParticleLightTerm(N, L, wrap);
 

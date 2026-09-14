@@ -21,6 +21,8 @@ typedef struct {
     float endTime;
     float pulseAccumulator;
     unsigned int randomState;
+    unsigned int pulseIndex;
+    float sourcePhase;
 } VC_GasPlume;
 
 /* GasSystem v1 owns one volume, so the authored layer mirrors that capacity
@@ -124,8 +126,15 @@ static void GasPlume_EmitPulse(VC_GasPlume *plume, float envelope)
 {
     if (envelope <= 0.0f) return;
     float intensity = GasPlume_Clamp01(plume->config.intensity) * envelope;
-    float angle = GasPlume_Random01(plume) * 2.0f * PI;
+    /* A fixed central source integrates into a rotationally symmetric capsule.
+     * Walk one overlapping micro-source around the foot by the golden angle:
+     * short windows are already well distributed, while the phase keeps casts
+     * from sharing one silhouette. This changes shape, not total pulse mass. */
+    float angle = plume->sourcePhase + (float)plume->pulseIndex * 2.39996323f;
+    plume->pulseIndex++;
     float sourceRadius = plume->config.kind == GAS_ENERGY ? 0.16f : 0.22f;
+    float sourceOrbit = plume->config.kind == GAS_SMOKE ? 0.18f :
+                        (plume->config.kind == GAS_FIRE ? 0.15f : 0.13f);
     float referenceRate = plume->config.kind == GAS_ENERGY ? 14.0f :
                           (plume->config.kind == GAS_FIRE ? 12.0f : 10.0f);
     float pulseMass = referenceRate / fmaxf(plume->config.pulsesPerSecond, 1.0f);
@@ -135,14 +144,15 @@ static void GasPlume_EmitPulse(VC_GasPlume *plume, float envelope)
     float lift = fmaxf(0.6f, plume->config.height * 0.36f) * s_gasPlumeLiftMul;
 
     GasInjection injection = {0};
-    injection.position = plume->position;
+    injection.position = VC_RingPointXZ(plume->position,
+                                        plume->config.radius * sourceOrbit,
+                                        angle);
     injection.radius = plume->config.radius *
                        (sourceRadius + 0.10f * GasPlume_Random01(plume));
-    injection.velocity = Vector3Add(plume->config.wind, (Vector3){
-        cosf(angle) * sideSpeed,
-        lift,
-        sinf(angle) * sideSpeed
-    });
+    Vector3 tangent = VC_TangentXZ(angle, 0.0f);
+    injection.velocity = Vector3Add(plume->config.wind,
+                                    Vector3Scale(tangent, sideSpeed));
+    injection.velocity.y += lift;
     float densityCoefficient = plume->config.kind == GAS_FIRE ? 0.62f : 0.48f;
     injection.density = densityCoefficient * pulseMass * intensity *
                         s_gasPlumeDensityMul;
@@ -227,6 +237,8 @@ int VFX_GasPlume_Spawn(Vector3 pos, VC_MaterialId mat,
 
     s_gasPlumeSerial++;
     if (s_gasPlumeSerial <= 0) s_gasPlumeSerial = 1;
+    unsigned int randomState = 0x9E3779B9u ^
+                               (unsigned int)s_gasPlumeSerial * 747796405u;
     s_gasPlume = (VC_GasPlume){
         .active = true,
         .emitting = true,
@@ -238,7 +250,10 @@ int VFX_GasPlume_Spawn(Vector3 pos, VC_MaterialId mat,
         .elapsed = 0.0f,
         .endTime = config.emitDuration + config.decayDuration,
         .pulseAccumulator = 0.0f,
-        .randomState = 0x9E3779B9u ^ (unsigned int)s_gasPlumeSerial * 747796405u
+        .randomState = randomState,
+        .pulseIndex = 0u,
+        .sourcePhase = (float)((randomState >> 8) & 0x00FFFFFFu) *
+                       (2.0f * PI / 16777215.0f)
     };
     return GasPlume_Handle(&s_gasPlume);
 }

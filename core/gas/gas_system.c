@@ -64,6 +64,9 @@ static RenderTexture2D s_denoiseTarget;
 static Shader s_raymarchShader;
 static Shader s_denoiseShader;
 static int s_denoiseTexelSizeLoc = -1;
+static int s_denoiseSceneDepthLoc = -1;
+static int s_denoiseHasSceneDepthLoc = -1;
+static int s_denoiseInverseProjectionLoc = -1;
 static GasShaderLocations s_locations;
 static GasPerfWindow s_perfWindow;
 static GasPerfFrameSample s_perfFrame;
@@ -288,6 +291,12 @@ void GasSystem_Init(int width, int height) {
     s_raymarchShader = ResourceManager_LoadShader(NULL, "core/gas/shaders/gas_volume.fs");
     s_denoiseShader = ResourceManager_LoadShader(NULL, "core/gas/shaders/gas_denoise.fs");
     s_denoiseTexelSizeLoc = GetShaderLocation(s_denoiseShader, "u_texelSize");
+    s_denoiseSceneDepthLoc = GetShaderLocation(s_denoiseShader,
+                                                "u_sceneDepthTex");
+    s_denoiseHasSceneDepthLoc = GetShaderLocation(s_denoiseShader,
+                                                   "u_hasSceneDepth");
+    s_denoiseInverseProjectionLoc = GetShaderLocation(s_denoiseShader,
+                                                       "u_inverseProjection");
     GasSystem_CacheLocations();
     GasSystem_RebuildProfile((int)GfxQuality_Get());
     s_initialized = true;
@@ -338,7 +347,8 @@ void GasVolume_Destroy(GasVolumeHandle handle) {
     GasSim_Clear(&s_sim);
 }
 
-static void GasSystem_DenoiseRaymarch(void) {
+static void GasSystem_DenoiseRaymarch(Texture2D sceneDepth, int hasDepth,
+                                      Matrix inverseProjection) {
     if (!s_raymarchTarget.id || !s_denoiseTarget.id || !s_denoiseShader.id)
         return;
     Vector2 texelSize = {
@@ -350,6 +360,13 @@ static void GasSystem_DenoiseRaymarch(void) {
     BeginShaderMode(s_denoiseShader);
     SetShaderValue(s_denoiseShader, s_denoiseTexelSizeLoc, &texelSize,
                    SHADER_UNIFORM_VEC2);
+    SetShaderValue(s_denoiseShader, s_denoiseHasSceneDepthLoc, &hasDepth,
+                   SHADER_UNIFORM_INT);
+    SetShaderValueMatrix(s_denoiseShader, s_denoiseInverseProjectionLoc,
+                         inverseProjection);
+    if (hasDepth)
+        SetShaderValueTexture(s_denoiseShader, s_denoiseSceneDepthLoc,
+                              sceneDepth);
     rlDisableColorBlend();
     DrawTexturePro(s_raymarchTarget.texture,
                    (Rectangle){0, 0, (float)s_raymarchTarget.texture.width,
@@ -504,7 +521,7 @@ void GasSystem_Prepare(Camera3D camera) {
     rlEnableColorBlend();
     EndShaderMode();
     EndTextureMode();
-    GasSystem_DenoiseRaymarch();
+    GasSystem_DenoiseRaymarch(sceneDepth, hasDepth, inverseProjection);
     s_perfFrame.raymarchSubmitCpuMs =
         (float)((GetTime() - raymarchStart) * 1000.0);
     s_perfFrame.gridWidth = s_sim.width;

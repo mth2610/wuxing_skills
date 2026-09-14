@@ -348,6 +348,19 @@ static const char* s_newFxNames[] = {
 };
 // @gen:newfx_names end
 
+static int VFXTest_NewFxCount(void)
+{
+    return (int)(sizeof(s_newFxNames) / sizeof(s_newFxNames[0]));
+}
+
+static bool VFXTest_IsNewFxNamed(const char *name)
+{
+    return s_testCategory == TEST_CAT_NEWFX &&
+           s_testIndex >= 0 && s_testIndex < VFXTest_NewFxCount() &&
+           name != NULL && s_newFxNames[s_testIndex] != NULL &&
+           strcmp(s_newFxNames[s_testIndex], name) == 0;
+}
+
 // @gen:newfx_categories begin
 // NEWFX_CAT_FIRE=0 WATER=1 WOOD=2 METAL=3 EARTH=4 TAIJI=5 COMMON=6
 static const int s_newFxCategories[] = {
@@ -828,15 +841,13 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         // static display line. Its fixed generated preview remains available
         // from the panel button, but clicking the world must originate at the
         // actual character socket and terminate exactly at this frame's raycast.
-        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 &&
-            strcmp(s_newFxNames[s_testIndex], "LIGHTNING ARC") == 0)
+        if (VFXTest_IsNewFxNamed("LIGHTNING ARC"))
         {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
             VFX_ComposeLightningArc(castSocket, mouseTarget3D, VC_MAT_LIGHTNING, 0.055f);
             return false;
         }
-        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 &&
-            strcmp(s_newFxNames[s_testIndex], "GUIDED PARTICLE") == 0)
+        if (VFXTest_IsNewFxNamed("GUIDED PARTICLE"))
         {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
             VFX_ComposeGuidedParticle(castSocket, mouseTarget3D);
@@ -1208,8 +1219,7 @@ void VFXTest_Draw3D(void)
         }
     }
 
-    if (s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 &&
-        strcmp(s_newFxNames[s_testIndex], "GUIDED PARTICLE") == 0 &&
+    if (VFXTest_IsNewFxNamed("GUIDED PARTICLE") &&
         (s_prefabStartPos.x != 0.0f || s_prefabStartPos.z != 0.0f)) {
         VFXTest_DrawGroundCircle((Vector3){s_prefabStartPos.x, s_prefabStartPos.y + 0.015f, s_prefabStartPos.z}, 0.25f, ColorAlpha(SKYBLUE, 0.6f));
         VFXTest_DrawGroundCircle((Vector3){s_prefabStartPos.x, s_prefabStartPos.y + 0.015f, s_prefabStartPos.z}, 0.06f, ColorAlpha(WHITE, 0.8f));

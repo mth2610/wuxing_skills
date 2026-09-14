@@ -40,9 +40,26 @@ static int s_mockDestroyCount;
 static GasVolumeDesc s_mockLastVolume;
 static GasInjection s_mockLastInjection;
 static bool s_mockHasInjection;
+#define MOCK_INJECTION_CAPACITY 64
+static GasInjection s_mockInjections[MOCK_INJECTION_CAPACITY];
+static int s_mockStoredInjectionCount;
 
 static Vector3 Vector3Add(Vector3 a, Vector3 b) {
     return (Vector3){a.x + b.x, a.y + b.y, a.z + b.z};
+}
+
+static Vector3 Vector3Scale(Vector3 value, float scale) {
+    return (Vector3){value.x * scale, value.y * scale, value.z * scale};
+}
+
+static Vector3 VC_RingPointXZ(Vector3 center, float radius, float angle) {
+    return (Vector3){center.x + cosf(angle) * radius,
+                     center.y,
+                     center.z + sinf(angle) * radius};
+}
+
+static Vector3 VC_TangentXZ(float angle, float up) {
+    return (Vector3){-sinf(angle), up, cosf(angle)};
 }
 
 bool Tuning_RegisterFloat(const char *key, float *value, float defaultValue) {
@@ -95,6 +112,8 @@ void GasVolume_Inject(GasVolumeHandle handle, const GasInjection *injection) {
     if (GasVolume_IsAlive(handle) && injection != NULL && injection->density > 0.0f) {
         s_mockLastInjection = *injection;
         s_mockHasInjection = true;
+        if (s_mockStoredInjectionCount < MOCK_INJECTION_CAPACITY)
+            s_mockInjections[s_mockStoredInjectionCount++] = *injection;
         ++s_mockInjectionCount;
     }
 }
@@ -131,16 +150,47 @@ int main(void) {
     VFX_GasPlumeConfig grounded = VFX_GasPlume_DefaultConfig(GAS_FIRE);
     Vector3 requestedPosition = {1.0f, 2.0f, 3.0f};
     s_mockHasInjection = false;
+    s_mockStoredInjectionCount = 0;
     int groundedHandle = VFX_GasPlume_Spawn(requestedPosition, 0, &grounded);
     CHECK(groundedHandle != 0, "grounded plume must spawn");
-    for (int i = 0; i < 12 && !s_mockHasInjection; ++i)
+    for (int i = 0; i < 60 && s_mockStoredInjectionCount < 12; ++i)
         VC_GasPlume_Update(1.0f / 60.0f);
-    CHECK(s_mockHasInjection, "grounded plume must feed during its opening frames");
-    CHECK(fabsf(s_mockLastInjection.position.x - requestedPosition.x) < 0.0001f &&
-          fabsf(s_mockLastInjection.position.z - requestedPosition.z) < 0.0001f,
-          "gas source position must not wander around the requested click point");
-    CHECK(fabsf(s_mockLastInjection.position.y - requestedPosition.y) < 0.0001f,
-          "gas source must be centered on the requested world point, not above it");
+    CHECK(s_mockStoredInjectionCount >= 12,
+          "grounded plume must feed enough micro-sources to measure its footprint");
+    float minX = 1000.0f, maxX = -1000.0f;
+    float minZ = 1000.0f, maxZ = -1000.0f;
+    float meanX = 0.0f, meanZ = 0.0f;
+    for (int i = 0; i < s_mockStoredInjectionCount; ++i) {
+        GasInjection injection = s_mockInjections[i];
+        float dx = injection.position.x - requestedPosition.x;
+        float dz = injection.position.z - requestedPosition.z;
+        float radialOffset = sqrtf(dx * dx + dz * dz);
+        float radialVelocity = dx * injection.velocity.x +
+                               dz * injection.velocity.z;
+        float circulation = dz * injection.velocity.x -
+                            dx * injection.velocity.z;
+        CHECK(fabsf(injection.position.y - requestedPosition.y) < 0.0001f,
+              "micro-sources must remain grounded at the requested world height");
+        CHECK(radialOffset <= grounded.radius * 0.30f,
+              "micro-source orbit must stay inside the authored plume foot");
+        CHECK(fabsf(radialVelocity) <= 0.0001f,
+              "micro-source horizontal velocity must be tangent to its orbit");
+        CHECK(fabsf(circulation) >= grounded.radius * grounded.radius * 0.01f,
+              "micro-source orbit must inject measurable circulation");
+        if (injection.position.x < minX) minX = injection.position.x;
+        if (injection.position.x > maxX) maxX = injection.position.x;
+        if (injection.position.z < minZ) minZ = injection.position.z;
+        if (injection.position.z > maxZ) maxZ = injection.position.z;
+        meanX += dx;
+        meanZ += dz;
+    }
+    meanX /= (float)s_mockStoredInjectionCount;
+    meanZ /= (float)s_mockStoredInjectionCount;
+    CHECK(maxX - minX >= grounded.radius * 0.25f &&
+          maxZ - minZ >= grounded.radius * 0.25f,
+          "micro-sources must open an asymmetric two-axis footprint");
+    CHECK(sqrtf(meanX * meanX + meanZ * meanZ) <= grounded.radius * 0.08f,
+          "golden-angle source sequence must keep the plume centered on average");
     float volumeMinY = s_mockLastVolume.center.y - s_mockLastVolume.size.y * 0.5f;
     CHECK(volumeMinY < requestedPosition.y,
           "gas volume must reserve space below the source so its sphere is not clipped upward");

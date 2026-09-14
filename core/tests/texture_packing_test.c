@@ -92,6 +92,8 @@ static void Test_SpecIsPresentAndComplete(void) {
         "FLOW layout is defined — the one that folds a body+flow pair into one file");
   CHECK(FileHas(spec, "| `NOISE` | `field` | `field` | `field` | `field` |"),
         "NOISE layout is defined — pure data, four decorrelated fields, never drawn");
+  CHECK(FileHas(spec, "| `MOTION` | `flowx` | `flowy` | `speed` | `mask` |"),
+        "MOTION layout is defined for optical-flow flipbook data");
   CHECK(FileHas(spec, "`STRETCH` and `TILE` cannot be the same channel"),
         "R1: the SHAPE-vs-MATERIAL law is stated at channel granularity");
   CHECK(FileHas(spec, "A sheet MAY mix modes across channels"),
@@ -141,8 +143,8 @@ static void Test_EveryAssetDeclaresALayout(void) {
     return;
   }
 
-  static const char *kLayouts[] = {"STRAND", "FLOW",   "OPAQUE", "FLIPBOOK",
-                                   "VOLUME", "NOISE",  "SPLIT_LEGACY"};
+  static const char *kLayouts[] = {"STRAND", "FLOW",  "OPAQUE", "FLIPBOOK",
+                                   "VOLUME", "MOTION", "NOISE", "SPLIT_LEGACY"};
   const char *needle = "\"channels\": \"";
   int total = 0, ok = 0, packed = 0, legacy = 0;
   const char *p = manifest;

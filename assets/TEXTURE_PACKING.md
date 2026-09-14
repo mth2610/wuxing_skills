@@ -38,6 +38,7 @@ in R G B A order, even when a channel is unused.
 | `OPAQUE` | `color` | `color` | `color` | `opacity` |
 | `FLIPBOOK` | `color` | `color` | `color` | `opacity` |
 | `VOLUME` | `emission` | `density` | `shadow` | `opacity` |
+| `MOTION` | `flowx` | `flowy` | `speed` | `mask` |
 | `NOISE` | `field` | `field` | `field` | `field` |
 
 `STRAND` is the trail sheet read by `core/trails/shaders/trail_deform.fs` mode 2.
@@ -56,6 +57,11 @@ blue ghost-flame without a re-bake — and what lets a single sprite hold a
 white-hot core and a dark rim at once, which a `FLIPBOOK` tinted by one vertex
 colour cannot. Read by `core/particles/shaders/particle_lit.fs` (volume branch);
 its output is premultiplied, so the consumer must use `VFX_BLEND_PREMULTIPLIED`.
+
+`MOTION` is an optical-flow atlas paired one-for-one with a `FLIPBOOK` or
+`VOLUME` atlas. R/G are signed frame-to-frame displacement, B is speed, and A
+gates valid moving content. It is data, never drawable colour; its cell grid
+must match the companion atlas and every channel is `CLAMP`.
 
 `NOISE`
 is a pure DATA sheet: four independent scalar fields, decorrelated by
@@ -106,6 +112,8 @@ Such a sheet must never be handed to `BLEND_ALPHA` as-is; the shader computes
 coverage from the channels and emits it. Only `OPAQUE`, `FLIPBOOK` and `VOLUME`
 carry a true `opacity` in A.
 
+`MOTION` is data as well: its A channel is a validity mask, not coverage.
+
 `VOLUME`'s A is a real opacity, but it is still not the drawn alpha: only the
 `density` fraction of it occludes, because the `emission` fraction is light the
 texel adds rather than blocks. The shader computes the final alpha and emits
@@ -139,6 +147,7 @@ the layouts whose channels are colour:
 | `OPAQUE` | 8 | **yes** | RGB is colour, A is opacity; averaging both is correct |
 | `FLIPBOOK` | 5 | **no, not as a flag** | an unpadded atlas bleeds neighbouring cells into each other as the chain shrinks — needs cell padding and a clamped mip count, not a boolean |
 | `VOLUME` | 1 | **no, same reason** | also an 8x8 atlas, and its channels are emission/density/shadow, not colour |
+| `MOTION` | 1 | **no, same reason** | an unpadded celled atlas whose RG channels are signed vectors |
 | `FLOW` / `SPLIT_LEGACY` flow | 4 | **never** | RG is a direction VECTOR; the average of two opposing flows is no flow |
 | `STRAND` | 2 | **never** | `distort` is a signed scalar and `dissolve` is a threshold — averaging a threshold moves *when* a thing dissolves |
 | `NOISE` | 1 | pointless | it is a field sampled at an authored frequency; mipping changes its statistics |
@@ -219,6 +228,7 @@ registry unexplained.
 - A body that needs directional flow (two-phase, advection) → `FLOW`.
 - Anything with genuine per-texel opacity — puffs, decals, flipbooks →
   `OPAQUE` / `FLIPBOOK`.
+- Frame-to-frame optical flow paired with a flipbook → `MOTION`.
 - Two patterns AND a flow *vector* do not fit: that is five channels. Choose
   which the effect actually needs. `STRAND`'s `distort` is a scalar for exactly
   this reason.

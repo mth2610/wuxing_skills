@@ -372,7 +372,7 @@
       },
       "budget": {
         "max_draw_calls": 0,
-        "max_textures": 1
+        "max_textures": 2
       },
       "flipbook": [
         8,
@@ -387,11 +387,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/pure_flame_puff_8x8_volume.png",
-          "channels": "VOLUME | R:emission/CLAMP | G:flame/CLAMP | B:unused/CLAMP | A:opacity/CLAMP — pure directionless flame puff without smoke envelope: R is temperature field indexing ramp LUT, A is flame-only opacity."
+          "channels": "VOLUME | R:emission/CLAMP | G:density/CLAMP | B:shadow/CLAMP | A:opacity/CLAMP — directionless combustion parcel: runtime smokeGain may suppress density while retaining the authored volume fields."
         },
         "flow": {
           "path": "assets/textures/pure_flame_puff_motion_8x8.png",
-          "channels": "FLOW | R:Vx/CLAMP | G:Vy/CLAMP | B:speed/CLAMP | A:mask/CLAMP"
+          "channels": "MOTION | R:flowx/CLAMP | G:flowy/CLAMP | B:speed/CLAMP | A:mask/CLAMP — optical-flow data aligned one-for-one with the 8x8 volume flipbook cells"
         }
       }
     },
