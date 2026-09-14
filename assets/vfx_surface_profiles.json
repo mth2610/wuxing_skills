@@ -386,8 +386,12 @@
       ],
       "assets": {
         "body": {
-          "path": "assets/textures/fire_puff_8x8_volume.png",
-          "channels": "VOLUME | R:emission/CLAMP | G:density/CLAMP | B:shadow/CLAMP | A:opacity/CLAMP — colourless by design: R is a temperature field that indexes the ramp LUT, so the same sheet serves fire, purple magic fire and blue ghost-flame. B/G is the light fraction that survived to each texel."
+          "path": "assets/textures/pure_flame_puff_8x8_volume.png",
+          "channels": "VOLUME | R:emission/CLAMP | G:flame/CLAMP | B:unused/CLAMP | A:opacity/CLAMP — pure directionless flame puff without smoke envelope: R is temperature field indexing ramp LUT, A is flame-only opacity."
+        },
+        "flow": {
+          "path": "assets/textures/pure_flame_puff_motion_8x8.png",
+          "channels": "FLOW | R:Vx/CLAMP | G:Vy/CLAMP | B:speed/CLAMP | A:mask/CLAMP"
         }
       }
     },

@@ -76,6 +76,8 @@ typedef struct {
 
     // Emissive intensity boost for HDR Bloom (1.0 = default, >1.0 = glowing core)
     float   emissiveBoost;
+    // Aerodynamic wind & vorticle coupling [0.0 = none, 1.0 = full wind velocity]
+    float   windInfluence;
     /* Manager-owned routing metadata. Never authored by VFX code. */
     int     emitterId;
     int     renderMode;

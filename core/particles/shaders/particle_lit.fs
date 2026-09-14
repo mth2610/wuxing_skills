@@ -142,6 +142,11 @@ uniform vec3  u_smokeTint;        // body colour of the soot half
 // 1.0 is exactly today's look.
 uniform float u_smokeGain;
 
+// ── OPTICAL FLOW MOTION VECTOR WARPING (Flipbook Subframe Advection) ─────
+uniform float u_useMotionVectors;
+uniform sampler2D u_motionTex;
+uniform float u_motionWarp;
+
 uniform float u_lightAzimuth;     // <0 = use the real sun; >=0 = debug override
 uniform float u_sunGain;          // scales the directional term
 uniform float u_ambientGain;      // scales the flat fill (LOWER = more contrast)
@@ -187,7 +192,13 @@ vec3 ParticleNormalLocal(float texA)
         // Exact hemisphere: xy is the in-plane offset, z closes it to unit
         // length. Zero texture dependence, so no spokes and no dead core.
         float rc = min(rr, 1.0);
-        vec2  xy = (rr > 1e-5) ? (q / rr) * rc * u_normalBulge : vec2(0.0);
+        vec2  xyDome = (rr > 1e-5) ? (q / rr) * rc * u_normalBulge : vec2(0.0);
+        // Alpha erosion gradient perturbation (Ghost of Tsushima n ~ ∇ρ):
+        // Micro-surface billow perturbation along the density falloff edge.
+        vec2  gErosion = vec2(dFdx(texA), dFdy(texA));
+        float gLen = length(gErosion);
+        vec2  gDir = gLen > 1e-5 ? (gErosion / gLen) : vec2(0.0);
+        vec2  xy = mix(xyDome, -gDir * rc * u_normalBulge, 0.35 * clamp(gLen * 8.0, 0.0, 1.0));
         n = normalize(vec3(xy, sqrt(max(1.0 - rc * rc, 0.0))));
     }
     else
@@ -204,16 +215,42 @@ vec3 ParticleNormalLocal(float texA)
     return n;
 }
 
-// dFdx/dFdy are in screen space, so n is too — rebuild a world-space basis from
-// the view vector. Billboards face the camera, so camera right/up are the quad's
-// right/up to a very good approximation.
-vec3 ParticleNormalWorld(vec3 n)
+// Compute the tangent basis (T, B) of the quad in world space from screen derivatives.
+// Tangent T points along increasing u (+X Right in texture space).
+// Bitangent B points along increasing v (+Y Bottom in texture space).
+void ParticleTangentBasis(vec3 V, out vec3 quadT, out vec3 quadB)
 {
-    vec3 V = normalize(viewPos - fragPosition);
     vec3 upRef = abs(V.y) > 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
     vec3 R = normalize(cross(upRef, V));
     vec3 U = cross(V, R);
-    return normalize(n.x * R + n.y * U + n.z * V);
+
+    vec3 dP1 = dFdx(fragPosition);
+    vec3 dP2 = dFdy(fragPosition);
+    vec2 dU1 = dFdx(fragTexCoord);
+    vec2 dU2 = dFdy(fragTexCoord);
+
+    float det = dU1.x * dU2.y - dU1.y * dU2.x;
+    if (abs(det) > 1e-9)
+    {
+        quadT = normalize((dP1 * dU2.y - dP2 * dU1.y) / det);
+        quadB = normalize((-dP1 * dU2.x + dP2 * dU1.x) / det);
+    }
+    else
+    {
+        quadT = R;
+        quadB = -U; // v runs downward
+    }
+}
+
+// Rebuild a world-space normal from the quad-local normal.
+// Tangent basis aligns n.x with +u (quadT) and n.y with -v (-quadB),
+// ensuring the normal dome is invariant to particle rotation on CPU.
+vec3 ParticleNormalWorld(vec3 n)
+{
+    vec3 V = normalize(viewPos - fragPosition);
+    vec3 quadT, quadB;
+    ParticleTangentBasis(V, quadT, quadB);
+    return normalize(n.x * quadT - n.y * quadB + n.z * V);
 }
 
 // Debug: force a horizontal light at a chosen azimuth. Sweeping it MUST sweep
@@ -252,14 +289,18 @@ vec3 ParticleLightTerm(vec3 N, vec3 L, out float wrapOut)
 
     vec3 lit = u_ambient * u_ambientGain + u_sunColor * u_sunGain * wrap;
 
-    // ── Forward scatter — the backlit glow ───────────────────────────────────
+    // ── Forward scatter — the backlit glow (Henyey-Greenstein Two-Lobe Phase) ───
     // The single most convincing volumetric cue: light coming from BEHIND the
-    // puff bleeds through it. Peaks when the view vector aligns with the light.
+    // puff bleeds through it. Two-lobe Henyey-Greenstein produces the characteristic
+    // silver lining edge without flat exponent blow-out.
     if (u_scatterStrength > 0.0)
     {
         vec3  V = normalize(viewPos - fragPosition);
-        float backlit = max(0.0, dot(-V, L));
-        lit += u_sunColor * pow(backlit, 4.0) * u_scatterStrength;
+        float cosTheta = dot(-V, L);
+        float hgForward = (1.0 - 0.3025) / max(pow(1.3025 - 1.10 * cosTheta, 1.5), 1e-3); // g1 = 0.55
+        float hgBackward = (1.0 - 0.0625) / max(pow(1.0625 + 0.50 * cosTheta, 1.5), 1e-3); // g2 = -0.25
+        float hgPhase = mix(hgBackward, hgForward, 0.72);
+        lit += u_sunColor * hgPhase * (u_scatterStrength * 0.35);
     }
 
     // ── VFX point lights — a fireball lighting its own smoke ─────────────────
@@ -278,22 +319,30 @@ vec3 ParticleLightTerm(vec3 N, vec3 L, out float wrapOut)
 }
 
 // ── 6-WAY VOLUMETRIC LIGHTING ────────────────────────────────────────────────
-// Unity VFX Graph 6-way directional transmission & scattering model.
-// Evaluates light along 6 cardinal directions in particle billboard space:
+// Unity VFX Graph / Ghost of Tsushima 6-way directional transmission & scattering model.
+// Evaluates light along 6 cardinal directions in particle billboard texture space:
 //   Map A: (+X Right, +Y Top,    +Z Back / Transmitted through volume)
 //   Map B: (-X Left,  -Y Bottom, -Z Front / Camera-facing reflection)
+// Invariant to particle 2D rotation via screen derivative tangent frame reconstruction.
 vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, vec3 L, out float wrapOut)
 {
-    // Billboard local coordinate basis:
-    // R = Right (+X), U = Up (+Y), -V = Back (+Z, light shining towards camera through particle)
     vec3 V = normalize(viewPos - fragPosition);
-    vec3 upRef = abs(V.y) > 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
-    vec3 R = normalize(cross(upRef, V));
-    vec3 U = cross(V, R);
+    vec3 quadT, quadB;
+    ParticleTangentBasis(V, quadT, quadB);
 
     vec3 mapA;
     vec3 mapB;
     float ao = 1.0;
+
+    float scFactor = (u_sixWayScattering > 0.0 ? u_sixWayScattering : 1.0);
+    float absFactor = (u_sixWayAbsorption > 0.0 ? u_sixWayAbsorption : 1.0);
+
+    // Two-lobe Henyey-Greenstein forward scattering (silver lining when looking towards the sun)
+    float cosTheta = dot(L, -V);
+    float hgForward = (1.0 - 0.3364) / max(pow(1.3364 - 1.16 * cosTheta, 1.5), 1e-3); // g1 = 0.58
+    float hgBackward = (1.0 - 0.04) / max(pow(1.04 + 0.40 * cosTheta, 1.5), 1e-3);     // g2 = -0.20
+    float hgPhase = mix(hgBackward, hgForward, 0.75);
+    float fwdScatter = clamp(1.0 + scFactor * 2.2 * hgPhase, 1.0, 8.0);
 
     if (u_sixWayLighting > 1.5)
     {
@@ -304,15 +353,15 @@ vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, v
         mapB = texture(u_sixWayTexB, fragTexCoord).rgb;
         ao = clamp(dot(mapA + mapB, vec3(1.0 / 6.0)), 0.05, 1.0);
 
-        // Modulate with scattering and absorption controls
-        float scFactor = (u_sixWayScattering > 0.0 ? u_sixWayScattering : 1.0);
-        float absFactor = (u_sixWayAbsorption > 0.0 ? u_sixWayAbsorption : 1.0);
-        mapA.b *= scFactor;
-        if (abs(absFactor - 1.0) > 0.01)
-        {
-            mapA = pow(clamp(mapA, 0.0, 1.0), vec3(absFactor));
-            mapB = pow(clamp(mapB, 0.0, 1.0), vec3(absFactor));
-        }
+        // Extinction / Contrast shaping: mapA and mapB remapped to expand dynamic range
+        mapA = clamp((mapA - 0.04) / 0.96, 0.0, 1.0);
+        mapB = clamp((mapB - 0.04) / 0.96, 0.0, 1.0);
+        float contrast = max(absFactor, 1.0);
+        mapA = pow(mapA, vec3(contrast));
+        mapB = pow(mapB, vec3(contrast));
+
+        // +Z is forward-scattered backlight modulated by Henyey-Greenstein
+        mapA.b *= fwdScatter;
     }
     else
     {
@@ -326,45 +375,40 @@ vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, v
         float pY_pos = clamp(0.5 - 0.5 * q.y * bulge, 0.0, 1.0);
         float pY_neg = clamp(0.5 + 0.5 * q.y * bulge, 0.0, 1.0);
 
-        float ext = clamp((u_sixWayAbsorption > 0.0 ? u_sixWayAbsorption : 1.0) * 1.6, 0.2, 5.0);
+        float ext = clamp(absFactor * 1.6, 0.2, 5.0);
         float tX_pos = pow(clamp(1.0 - pX_pos * dens * ext, 0.0, 1.0), 1.6);
         float tX_neg = pow(clamp(1.0 - pX_neg * dens * ext, 0.0, 1.0), 1.6);
         float tY_pos = pow(clamp(1.0 - pY_pos * dens * ext, 0.0, 1.0), 1.6);
         float tY_neg = pow(clamp(1.0 - pY_neg * dens * ext, 0.0, 1.0), 1.6);
 
-        // +Z is forward scatter: light coming from BEHIND puff bleeding through to camera
-        float scFactor = (u_sixWayScattering > 0.0 ? u_sixWayScattering : 1.0);
-        float backlit = max(0.0, dot(L, -V));
-        float fwdScatter = clamp(1.0 + scFactor * 3.5 * pow(backlit, 4.0), 1.0, 6.0);
         float tZ_back = pow(clamp(selfShadow, 0.0, 1.0), 0.6) * fwdScatter;
-
-        // -Z is front reflection from camera side
         float tZ_front = clamp(1.0 - dens * 0.45, 0.15, 1.0) * clamp(1.0 - rQuad * 0.35, 0.1, 1.0);
 
         mapA = vec3(tX_pos, tY_pos, tZ_back);
         mapB = vec3(tX_neg, tY_neg, tZ_front);
     }
 
-    // Direct directional light (Sun) transformed into billboard local coordinates
-    vec3 L_local = vec3(dot(L, R), dot(L, U), dot(L, -V));
+    // Direct directional light (Sun) projected into the quad's local texture frame:
+    // quadT = +X (Right), -quadB = +Y (Top), -V = +Z (Backlight)
+    vec3 L_local = vec3(dot(L, quadT), -dot(L, quadB), dot(L, -V));
     vec3 L_pos = max(vec3(0.0), L_local);
     vec3 L_neg = max(vec3(0.0), -L_local);
     float dirLit = dot(L_pos, mapA) + dot(L_neg, mapB);
     wrapOut = dirLit;
 
-    float effectiveSunGain = max(u_sunGain, 1.8);
+    float effectiveSunGain = max(u_sunGain * 2.2, 2.2);
     vec3 lit = u_sunColor * (effectiveSunGain * dirLit);
 
-    // Multi-directional ambient environment lighting
+    // Multi-directional ambient environment lighting with controlled contrast
     vec3 ambGround = (length(u_ambientGround) > 1e-4) ? u_ambientGround : (u_ambient * 0.35);
     vec3 ambHorizon = (length(u_ambientHorizon) > 1e-4) ? u_ambientHorizon : (u_ambient * 0.65);
 
-    vec3 ambLit = (u_ambient * u_ambientGain * mapA.g
-                + ambGround * mapB.g
-                + ambHorizon * ((mapA.r + mapB.r + mapA.b + mapB.b) * 0.25)) * ao;
+    vec3 ambLit = (u_ambient * (u_ambientGain * 0.65) * mapA.g
+                + ambGround * (u_ambientGain * 0.45) * mapB.g
+                + ambHorizon * (u_ambientGain * 0.35) * ((mapA.r + mapB.r + mapA.b + mapB.b) * 0.25)) * ao;
     lit += ambLit;
 
-    // VFX point lights evaluated in 6-way billboard space
+    // VFX point lights evaluated in 6-way texture space
     for (int i = 0; i < MAX_VFX_LIGHTS; i++)
     {
         if (i >= u_vfxLightCount) break;
@@ -375,7 +419,7 @@ vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, v
         if (att <= 0.0) continue;
 
         vec3 Lpt = toL / max(dist, 0.001);
-        vec3 Lpt_local = vec3(dot(Lpt, R), dot(Lpt, U), dot(Lpt, -V));
+        vec3 Lpt_local = vec3(dot(Lpt, quadT), -dot(Lpt, quadB), dot(Lpt, -V));
         vec3 Lpt_pos = max(vec3(0.0), Lpt_local);
         vec3 Lpt_neg = max(vec3(0.0), -Lpt_local);
         float ptTransmission = dot(Lpt_pos, mapA) + dot(Lpt_neg, mapB);
@@ -384,29 +428,91 @@ vec3 ParticleLightTerm6Way(vec2 luv, float soot, float selfShadow, float opac, v
     return lit;
 }
 
+// Ghost of Tsushima: Chromaticity-preserving Planck radiance compression.
+// Keeps flame rich amber/orange in high HDR while allowing only the ultra-hot
+// core to reach incandescent white, avoiding flat white clipping.
+vec3 CompressFlameRadiance(vec3 col, float heat)
+{
+    float maxC = max(col.r, max(col.g, col.b));
+    if (maxC > 1.0)
+    {
+        float compressed = 1.0 + (maxC - 1.0) / (1.0 + (maxC - 1.0) * 0.40);
+        vec3 chrom = col / maxC;
+        float coreIncandescence = smoothstep(0.96, 1.0, heat);
+        vec3 coreColor = mix(chrom, vec3(1.0), coreIncandescence * 0.40);
+        return coreColor * compressed;
+    }
+    return col;
+}
+
 void main()
 {
     vec2 sampleUV = fragTexCoord;
-    if (u_volumeSheet > 1.5)
+    vec4 texelColor;
+    vec4 texBColor = vec4(0.0);
+
+    if (u_useMotionVectors > 0.5)
     {
-        // ── UV NOISE DISTORTION (FLAME VOLUME ONLY: u_volumeSheet > 1.5) ─────
-        // Perturbs UV coordinates with continuous dynamic curl turbulence,
-        // turning static billboards into undulating, living flame tongues.
         vec2 grid = max(u_atlasGrid, vec2(1.0));
-        vec2 localUV = (grid.x > 1.5 || grid.y > 1.5) ? fract(fragTexCoord * grid) : fragTexCoord;
-        vec2 cellBase = floor(fragTexCoord * grid);
+        vec2 cellBaseA = floor(fragTexCoord * grid);
+        vec2 localUV = fract(fragTexCoord * grid);
+        float subframeT = clamp(fragColor.b, 0.0, 1.0); // Subframe blend factor [0.0, 1.0]
 
-        vec2 pNoise = localUV * 2.8 + vec2(fragPosition.x * 0.9, fragPosition.y * 1.6 - u_time * 3.0);
-        float dX = vnoise(pNoise) - 0.5;
-        float dY = vnoise(pNoise + vec2(17.3, 31.7)) - 0.5;
+        // Next frame cell calculation
+        float frameIdx = cellBaseA.y * grid.x + cellBaseA.x;
+        float nextIdx = min(frameIdx + 1.0, grid.x * grid.y - 1.0);
+        vec2 cellBaseB = vec2(mod(nextIdx, grid.x), floor(nextIdx / grid.x));
 
-        // Warp grows stronger towards the top (tongues lick), staying stable at the base
-        vec2 uvWarp = vec2(dX, dY) * (0.12 * (0.10 + localUV.y * 0.90));
-        vec2 warpedLocalUV = clamp(localUV + uvWarp, 0.01, 0.99);
-        sampleUV = (cellBase + warpedLocalUV) / grid;
+        // Sample optical flow motion vector from u_motionTex
+        vec4 flowSamp = texture(u_motionTex, fragTexCoord);
+        // Flow encoding: R = Vx (+Right/-Left), G = Vy (+Up/-Down)
+        vec2 flow = (flowSamp.rg - 0.5) * 2.0;
+        // Invert Y because +G is Up (which is -V in texture coordinates)
+        vec2 flowUV = vec2(flow.x, -flow.y);
+        float warpScale = (u_motionWarp > 0.001) ? u_motionWarp * 0.08 : 0.06;
+
+        // Advect Frame A forward in time, Frame B backward in time
+        vec2 uvA_warped = (cellBaseA + clamp(localUV - flowUV * (subframeT * warpScale), 0.005, 0.995)) / grid;
+        vec2 uvB_warped = (cellBaseB + clamp(localUV + flowUV * ((1.0 - subframeT) * warpScale), 0.005, 0.995)) / grid;
+
+        vec4 colA = texture(texture0, uvA_warped);
+        vec4 colB = texture(texture0, uvB_warped);
+        texelColor = mix(colA, colB, subframeT);
+        sampleUV = uvA_warped;
+
+        if (u_sixWayLighting > 1.5)
+        {
+            vec4 bColA = texture(u_sixWayTexB, uvA_warped);
+            vec4 bColB = texture(u_sixWayTexB, uvB_warped);
+            texBColor = mix(bColA, bColB, subframeT);
+        }
+    }
+    else
+    {
+        if (u_volumeSheet > 1.5)
+        {
+            // UV noise distortion fallback for un-vectored volume sheets
+            vec2 grid = max(u_atlasGrid, vec2(1.0));
+            vec2 localUV = (grid.x > 1.5 || grid.y > 1.5) ? fract(fragTexCoord * grid) : fragTexCoord;
+            vec2 cellBase = floor(fragTexCoord * grid);
+
+            vec2 pNoise = localUV * 2.8 + vec2(fragPosition.x * 0.9, fragPosition.y * 1.6 - u_time * 3.0);
+            float dX = vnoise(pNoise) - 0.5;
+            float dY = vnoise(pNoise + vec2(17.3, 31.7)) - 0.5;
+
+            // Warp grows stronger towards the top (tongues lick), staying stable at the base
+            vec2 uvWarp = vec2(dX, dY) * (0.12 * (0.10 + localUV.y * 0.90));
+            vec2 warpedLocalUV = clamp(localUV + uvWarp, 0.01, 0.99);
+            sampleUV = (cellBase + warpedLocalUV) / grid;
+        }
+
+        texelColor = texture(texture0, sampleUV);
+        if (u_sixWayLighting > 1.5)
+        {
+            texBColor = texture(u_sixWayTexB, sampleUV);
+        }
     }
 
-    vec4 texelColor = texture(texture0, sampleUV);
     float soft = (u_softFade > 0.0) ? SoftParticle_Factor(u_softFade) : 1.0;
 
     // ── PACKED VOLUME SHEET ──────────────────────────────────────────────────
@@ -436,7 +542,7 @@ void main()
             // True 6-Way Flame Volume:
             // Texture 0 (Map A): RGB = (+X, +Y, +Z directional lightmaps), A = Opacity
             // u_sixWayTexB (Map B): RGB = (-X, -Y, -Z directional lightmaps), A = Flame Emission
-            emis = texture(u_sixWayTexB, sampleUV).a;
+            emis = texBColor.a;
             opac = texelColor.a;
             rawSoot = clamp(opac * clamp(1.0 - emis * 0.45, 0.0, 1.0), 0.0, 1.0);
             soot = clamp(rawSoot * u_smokeGain, 0.0, 1.0);
@@ -453,44 +559,39 @@ void main()
 
         // =====================================================================
         // PATH A: FLAME VOLUME (u_volumeSheet > 1.5)
-        // High-translucency incandescent plasma, licking tongues, cohesive root.
+        // Authentic, isotropic volumetric flame puff with clean boundary.
         // =====================================================================
         if (u_volumeSheet > 1.5)
         {
-            float age = fragColor.g; // Normalized age from ParticleSystem
-            vec2 grid = max(u_atlasGrid, vec2(1.0));
-            vec2 localUV = (grid.x > 1.5 || grid.y > 1.5) ? fract(sampleUV * grid) : sampleUV;
-
-            // Progressive tongue carving: strictly active above base (age > 0.20 and localUV.y > 0.20)
-            float wispProgress = smoothstep(0.20, 0.85, max(age, localUV.y * 0.8));
-            vec2 eCoord = localUV * 3.6 + vec2(fragPosition.x * 0.9, fragPosition.y * 1.8 - u_time * 3.2);
-            float erodeNoise = vnoise(eCoord) * 0.65 + vnoise(eCoord * 2.0 + vec2(0.0, -u_time * 1.4)) * 0.35;
-
-            // At the base: dissolveThreshold is 0 (100% solid, cohesive root of fire).
-            // Towards the top: dissolveThreshold carves away outer margins into licking wisps.
-            float dissolveThreshold = wispProgress * (0.80 - erodeNoise * 0.60);
-            float flameMask = smoothstep(dissolveThreshold, dissolveThreshold + 0.16, emis * 1.5 + opac * 0.4);
+            // Clean edge feathering based on emission and opacity
+            float flameMask = smoothstep(0.015, 0.08, emis + opac * 0.4);
+            if (flameMask < 0.005) discard;
 
             float fade = fragColor.a * soft * flameMask;
-            if (fade < 0.004 || (emis < 0.004 && soot * opac < 0.004)) discard;
-
-            // Convective rolling ripples along vertical axis without slicing the particle
-            vec2 tongueCoord = vec2(localUV.x * 4.2 + fragPosition.x * 0.8, localUV.y * 2.2 - u_time * 3.6);
-            float tongueNoise = vnoise(tongueCoord);
-            float plumeRipples = mix(0.75, 1.18, smoothstep(0.25, 0.75, tongueNoise));
-            emis *= plumeRipples;
+            if (fade < 0.005) discard;
 
             float heat = clamp(emis * u_heatGain * fragColor.r, 0.0, 1.0);
-            float radianceGating = pow(clamp(emis * 1.25, 0.0, 1.0), 1.15) * flameMask;
+            float radianceGating = pow(clamp(emis * 1.30, 0.0, 1.0), 1.10) * flameMask;
+
+            // Authoritative Planck Blackbody LUT from u_rampLUT (vibrant radiant colors)
             vec3 rampCol = texture(u_rampLUT, vec2(heat, 0.5)).rgb;
-            vec3 bbCol = calcBlackbodyNormalized(heat);
-            vec3 flame = mix(rampCol, bbCol, 0.55)
-                         * radianceGating * u_emissiveBoost;
+
+            // High-energy incandescent core peak (> 0.95)
+            float corePeak = smoothstep(0.95, 1.0, heat);
+            vec3 radiantFlame = mix(rampCol, vec3(1.0, 0.98, 0.92), corePeak * 0.50);
+
+            vec3 flame = radiantFlame * (radianceGating * u_emissiveBoost);
+            flame = CompressFlameRadiance(flame, heat);
+
+            // True Premultiplied Alpha: RGB is emitted radiance, Alpha is opacity
+            // Pure flame (smokeGain <= 0.0) has low optical occlusion so backgrounds don't get cut out
+            float flameOpacity = (u_smokeGain <= 0.0)
+                ? clamp(fade * emis * 0.35, 0.0, 0.50)
+                : clamp(fade * (0.15 * soot + emis * 0.45), 0.0, 0.95);
 
             if (u_smokeGain <= 0.0)
             {
-                float flameTranslucency = 0.015;
-                finalColor = vec4(flame * fade, clamp(fade * flameTranslucency, 0.0, 1.0));
+                finalColor = vec4(flame * fade, flameOpacity);
                 return;
             }
 
@@ -507,8 +608,7 @@ void main()
             float matOrig = max(rawSoot + emis, 1e-4);
             float alpha = clamp(opac * clamp(matNow / matOrig, 0.0, 1.0) * fade, 0.0, 1.0);
             float sootFrac = clamp(soot / max(matNow, 1e-4), 0.0, 1.0);
-            float flameOcclusion = 0.015;
-            float blendAlpha = alpha * mix(flameOcclusion, 1.0, sootFrac);
+            float blendAlpha = mix(flameOpacity, alpha, sootFrac);
 
             finalColor = vec4(flame * fade + smoke * alpha * sootFrac, blendAlpha);
             return;
@@ -526,6 +626,7 @@ void main()
         vec3  bbCol = calcBlackbodyNormalized(heat);
         vec3  flame = mix(rampCol, bbCol, 0.45)
                       * emis * opac * u_emissiveBoost;
+        flame = CompressFlameRadiance(flame, heat);
 
         float selfShadow = (soot > 0.004) ? clamp(shad / soot, 0.0, 1.0) : 1.0;
         float wrap;

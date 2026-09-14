@@ -120,6 +120,8 @@ struct ParticleConfig {
   float trailWidthRatio;
   Color trailColorStart;
   Color trailColorEnd;
+  // Aerodynamic wind & vorticle coupling [0.0 = none, 1.0 = full wind velocity]
+  float windInfluence;
 
   // Unified Config representation (Phase 3)
   VFX_GeneralConfig general;
@@ -147,6 +149,9 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
     cfg->physics.velocity = cfg->velocity;
     cfg->physics.speed = 0.0f;
     cfg->physics.forceField = cfg->forceField;
+  }
+  if (cfg->physics.windInfluence == 0.0f && cfg->windInfluence != 0.0f) {
+    cfg->physics.windInfluence = cfg->windInfluence;
   }
   if (cfg->physics.followTarget == NULL && cfg->followTarget != NULL) {
     cfg->physics.followTarget = cfg->followTarget;

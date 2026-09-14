@@ -125,12 +125,12 @@ static float s_smokePuffUseFlipbook = 1.0f;
 // as smoke. Reported as "từng khung hình thì giống khói, nhưng chuyển động giữa
 // các khung thì hỗn loạn, quay cuồng" — which is exactly this.
 static float s_smokePuffFbSpin     = 0.12f; // x on angular velocity (1.0 = the old spin)
-static float s_smokePuffFbCountMul = 0.55f; // x on sprite count
+static float s_smokePuffFbCountMul = 0.40f; // x on sprite count (fewer, larger billows maintain distinct volume)
 // Size compensation. Dropping the 0.45->2.2x curve for the flat one removes most
 // of the apparent growth, so without this the flipbook puff would simply be
 // SMALLER than the tuned static one — and this change is meant to be about
-// smoothness, not size. 1.45 ~ the ratio of the two curves' mean scale.
-static float s_smokePuffFbSizeMul  = 1.45f;
+// smoothness, not size.
+static float s_smokePuffFbSizeMul  = 1.65f;
 // How many of the sheet's 64 frames to actually play.
 //
 // The tail of the sim is where the puff breaks into thin wisps, and those wisps
@@ -145,8 +145,8 @@ static float s_smokePuffFbSizeMul  = 1.45f;
 // stops crawling while it does. 64 = play the whole sheet.
 static float s_smokePuffFbFrames   = 50.0f;
 static float s_smokePuff6WayLighting = 1.0f;
-static float s_smokePuff6WayScat     = 1.6f;
-static float s_smokePuff6WayAbs      = 1.3f;
+static float s_smokePuff6WayScat     = 1.8f;
+static float s_smokePuff6WayAbs      = 1.4f;
 
 static void SmokePuff_InitShared(void)
 {
@@ -162,12 +162,12 @@ static void SmokePuff_InitShared(void)
     Tuning_RegisterFloat("smokepuff_size_var", &s_smokePuffSizeVar, 1.4f);
     Tuning_RegisterFloat("smokepuff_flipbook", &s_smokePuffUseFlipbook, 1.0f);
     Tuning_RegisterFloat("smokepuff_fb_spin", &s_smokePuffFbSpin, 0.12f);
-    Tuning_RegisterFloat("smokepuff_fb_count", &s_smokePuffFbCountMul, 0.55f);
-    Tuning_RegisterFloat("smokepuff_fb_size", &s_smokePuffFbSizeMul, 1.45f);
+    Tuning_RegisterFloat("smokepuff_fb_count", &s_smokePuffFbCountMul, 0.40f);
+    Tuning_RegisterFloat("smokepuff_fb_size", &s_smokePuffFbSizeMul, 1.65f);
     Tuning_RegisterFloat("smokepuff_fb_frames", &s_smokePuffFbFrames, 50.0f);
     Tuning_RegisterFloat("smokepuff_6way_lighting", &s_smokePuff6WayLighting, 1.0f);
-    Tuning_RegisterFloat("smokepuff_6way_scat", &s_smokePuff6WayScat, 1.6f);
-    Tuning_RegisterFloat("smokepuff_6way_abs", &s_smokePuff6WayAbs, 1.3f);
+    Tuning_RegisterFloat("smokepuff_6way_scat", &s_smokePuff6WayScat, 1.8f);
+    Tuning_RegisterFloat("smokepuff_6way_abs", &s_smokePuff6WayAbs, 1.4f);
 
     // Grows to ~2.2x over its life and never shrinks back — smoke does not
     // contract, it dissipates. The fade curve is what removes it.
@@ -411,6 +411,7 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
                                s_smokePuffAlpha > 1.0f ? 1.0f : s_smokePuffAlpha))),
             .colorEnd = VC_WithAlpha(c, 0),
             .forceField = &s_smokePuffFld,
+            .windInfluence = 0.85f,
             .radiusCurve = (useFb ? &s_smokePuffGrowFb : &s_smokePuffGrow),
             .alphaCurve = &s_smokePuffFade,
             // Per-sprite spin. Without this the repeated texture is obvious no
@@ -425,11 +426,10 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
             .render.sixWayScattering = s_smokePuff6WayScat,
             .render.sixWayAbsorption = s_smokePuff6WayAbs,
             .spriteAnim = (useFb ? &s_smokeFbAnim[i % SMOKE_FB_RATES] : NULL),
-            .rotation = Random01() * 2.0f * PI,
-            // Spin is all but OFF for the flipbook (see s_smokePuffFbSpin): the
-            // sheet supplies its own motion, and rigid-body rotation on top of a
-            // billow that is already rolling is what reads as churning. A trace
-            // is kept so sprites are not perfectly static relative to each other.
+            // Flipbook carries an authentic simulated vertical plume; gentle tilt (+-10 deg)
+            // and random horizontal mirroring preserve upright billowing without turning upside-down.
+            .rotation = useFb ? (Random01() - 0.5f) * 0.35f : (Random01() * 2.0f * PI),
+            .spriteFlipX = useFb && (Random01() > 0.5f),
             .angularVelocity = (Random01() - 0.5f) * 0.9f * (useFb ? s_smokePuffFbSpin : 1.0f),
         });
     }

@@ -80,7 +80,21 @@ PRESETS = {
     #
     # This is intentionally separate from fire_puff.  The latter also feeds the
     # legacy split FLIPBOOK, whose existing look must not change when the volume
-    # path is tuned.
+    # Directionless pure flame puff: zero gravity, zero buoyancy, zero smoke, zero soot.
+    # An isotropic, turbulent incandescent plasma parcel with crisp flame tendrils
+    # that can be rotated freely without any preferred up vector.
+    "pure_flame_puff": dict(
+        dt=0.20, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22,
+        fuel_dens=0.45, burn=6.0, heat_yield=6.5, smoke_yield=0.0,
+        fuel_radius=0.085, fuel_frames=1.0,
+        source_lobes=1, source_variation=0.55,
+        radial=4.0, sustain_pressure=0.30, contain=0.80,
+        curl=32.0, swirl=30.0, shape_noise=0.45,
+        eddy=26.0, diffuse=0.008, viscosity=0.035, buoyancy=0.0,
+        cool=0.22, soot=0.0,
+        noise_phase_speed=1.0, source_pulse_rate=1.25,
+        warmup_frames=8, lock_center=1),
+
     "fire_volume_puff": dict(
         # 64 cells cover a short, actively burning interval, not 57.6 seconds
         # of a steady combustor.  The previous dt=0.9 let the gas converge to
@@ -218,6 +232,21 @@ PRESETS = {
     # not a reusable gas parcel.  A larger physical domain leaves headroom for
     # the plume; render.py later crops it to the cell without turning the roof
     # of the solver into a hard silhouette edge.
+    # Pure flame tongue: ZERO smoke yield, ZERO soot.
+    # High buoyancy and convection curl create crisp, leaping flame tongues
+    # with 100% transparent background outside the incandescent flame.
+    "pure_flame": dict(
+        dt=0.16, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22,
+        fuel_dens=0.42, burn=6.5, heat_yield=7.0, smoke_yield=0.0,
+        fuel_radius=0.075, fuel_frames=1.0,
+        radial=0.55, sustain_pressure=0.15, contain=0.25,
+        curl=22.0, swirl=20.0, shape_noise=0.65,
+        diffuse=0.010, eddy=24.0, viscosity=0.08, buoyancy=14.0,
+        cool=0.45, soot=0.0,
+        source_variation=0.50, source_pulse_rate=1.50,
+        noise_phase_speed=0.90, warmup_frames=6,
+        domain=1.4),
+
     "fire_tongue": dict(
         dt=0.16, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22,
         fuel_dens=0.35, burn=6.0, heat_yield=6.0, smoke_yield=0.15,

@@ -961,7 +961,9 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
-  void VFX_ComposeLiquidBench(Vector3 center, float spacing, float t01);
+  void VFX_ComposeLiquidBench(Vector3 center,float spacing,float t01);
+  void VFX_ComposeMistVeil(Vector3 pos, float radius, float duration);
+  void VFX_ComposeMistVeilEx(Vector3 pos, VC_MaterialId matId, float radius, float duration);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);
   int VFX_ComposeRefBands(Vector3 pos, float scale);
   int VFX_ComposeRefParticles(Vector3 pos, float scale);
@@ -974,11 +976,11 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
   void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
-  void VFX_FluidOrb_Spawn(Vector3 start, Vector3 target, FluidMotionProfile profile);
   void VFX_FlowShield_SetIntensity(int handle, float intensity01);
   void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
   int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   void VFX_FlowShield_Stop(int handle);
+  void VFX_FluidOrb_Spawn(Vector3 start, Vector3 target, FluidMotionProfile profile);
   void VFX_KillFlowShield(int handle);
   void VFX_KillGasMaterialLab(int handle);
   void VFX_KillRefBands(int id);

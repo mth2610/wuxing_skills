@@ -84,6 +84,7 @@ for h in "${HEADERS[@]}"; do
   echo "### \`$h\`"
   p=$(protos "$h")
   if [ -n "$p" ]; then printf '```c\n%s\n```\n' "$p"; else echo "_Inline helpers / macros only — see header._"; fi
-  e=$(enums "$h"); [ -n "$e" ] && echo "**Enums:** $(echo "$e" | paste -sd '; ' -)"
-  s=$(structs "$h"); [ -n "$s" ] && echo "**Structs** (fields in header): $(echo $s | sed 's/ *$//; s/ /, /g')"
+  e=$(enums "$h"); if [ -n "$e" ]; then echo "**Enums:** $(echo "$e" | paste -sd '; ' -)"; fi
+  s=$(structs "$h"); if [ -n "$s" ]; then echo "**Structs** (fields in header): $(echo $s | sed 's/ *$//; s/ /, /g')"; fi
 done
+true

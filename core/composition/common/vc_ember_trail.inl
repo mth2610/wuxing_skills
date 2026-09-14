@@ -111,6 +111,7 @@ static void VC_EmberTrail_Update(float dt)
                                       (Random01()-0.5f)*0.8f*e->scale}),
                 .radius = Math_Mix(0.025f, 0.060f, Random01()) * e->scale * 0.30f,
                 .lifetime = Math_Mix(0.40f, 0.80f, Random01()),
+                .windInfluence = 1.0f,
                 .colorStart = VC_WithAlpha(VC_Whiten(material->glow, 0.08f), 255),
                 .colorEnd = VC_WithAlpha(material->body, 0),
                 .render.texture = s_emberBodyTex,

@@ -81,7 +81,7 @@ static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
 // without raising the other is how this looked WORSE at each half-step. Note
 // the owner already measured the other direction — cutting the count to 26 made
 // the patchiness more visible, not less, because it exposes each silhouette.
-static float s_fvolBodyLive = 68.0f;
+static float s_fvolBodyLive = 20.0f;
 // Multiplier on the puff body's radius. Count and size buy the same cohesion at
 // the same fill cost; size is the cheaper one in draw calls. Which is right is
 // a look judgement, so both are tunables.
@@ -148,20 +148,19 @@ static SpriteAnim s_fvolPuffAnim = {0};
 //   emit and occlude at the same time.
 static float s_fvolVolume = 1.0f;
 static Texture2D s_fvolVolumeTex = {0};
+static Texture2D s_fvolMotionTex = {0};
+static float s_fvolMotionWarp = 1.0f;
 static SpriteAnim s_fvolVolumeAnim = {0};
-// Generated occupied bounds for the directionless puff. They reduce the cost
-// of its transparent margins while SpriteAnim keeps the original cell pivot,
-// so this is not an authored direction or a silhouette change.
-#include "flame_volume_puff_metadata.inl"
+#include "pure_flame_puff_metadata.inl"
 // Exposure on the sheet's emission before it indexes the ramp — "how much of
 // the flame is white-hot". The sim normalises emission to its own 99.5th
 // percentile and has no idea how bright this effect should read, so this is
 // the knob that decides incandescent vs smouldering.
-static float s_fvolHeatGain = 0.88f;
+static float s_fvolHeatGain = 0.85f;
 // Radiance gain on the flame half. SEPARATE from heatGain on purpose: heatGain
 // moves the sprite along the ramp (what COLOUR it is), this moves how much light
 // it throws (how BRIGHT it is).
-static float s_fvolEmissive = 2.6f;
+static float s_fvolEmissive = 1.30f;
 // ── SMOKINESS IS A COMPOSITION DECISION, NOT AN ASSET ONE ───────────────────
 //
 // The sheet is directionless by construction (the puff sim runs at zero gravity
@@ -238,6 +237,7 @@ static void FVol_InitShared(void)
        assigns it. Changing one without the other is a silent no-op, and was. */
     Tuning_RegisterFloat("flame_body_alpha", &s_fvolBodyAlpha, 0.35f);
     Tuning_RegisterFloat("flame_volume", &s_fvolVolume, 1.0f);
+    Tuning_RegisterFloat("flame_motion_warp", &s_fvolMotionWarp, 1.0f);
     Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 0.88f);
     Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 2.6f);
     Tuning_RegisterFloat("flame_smoke_gain", &s_fvolSmokeGain, 0.0f);
@@ -251,6 +251,11 @@ static void FVol_InitShared(void)
     const VFX_SurfaceProfile *volProfile =
         VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_VOLUME);
     s_fvolVolumeTex = volProfile != NULL ? volProfile->body : (Texture2D){0};
+    s_fvolMotionTex = volProfile != NULL ? volProfile->flowMap : (Texture2D){0};
+    if (s_fvolMotionTex.id != 0)
+    {
+        SetTextureFilter(s_fvolMotionTex, TEXTURE_FILTER_BILINEAR);
+    }
     if (s_fvolVolumeTex.id != 0)
     {
         SetTextureFilter(s_fvolVolumeTex, TEXTURE_FILTER_BILINEAR);
@@ -261,9 +266,9 @@ static void FVol_InitShared(void)
         SpriteAnim_Init(&s_fvolVolumeAnim, 8, 8, 64,
                         64.0f / (FVOL_BODY_LIFE_MAX + FVOL_BODY_PHASE_MAX),
                         ANIM_ONCE);
-        SpriteAnim_SetFrameMetadata(&s_fvolVolumeAnim, s_fvolVolumeFrameMeta,
-                                    (int)(sizeof(s_fvolVolumeFrameMeta) /
-                                          sizeof(s_fvolVolumeFrameMeta[0])));
+        SpriteAnim_SetFrameMetadata(&s_fvolVolumeAnim, s_fvolPureFlamePuffFrameMeta,
+                                    (int)(sizeof(s_fvolPureFlamePuffFrameMeta) /
+                                          sizeof(s_fvolPureFlamePuffFrameMeta[0])));
     }
     else
         TraceLog(LOG_WARNING, "FlameVolume: fire_puff_8x8_volume.png missing — "
@@ -423,8 +428,9 @@ static const ColorGradient *FVol_HeatGradient(VC_MaterialId matId)
         ColorGradient_AddStop(g, 0.12f, (Color){165, 15, 2, 255});     // radiant crimson tongue
         ColorGradient_AddStop(g, 0.30f, (Color){235, 50, 4, 255});     // fiery scarlet
         ColorGradient_AddStop(g, 0.55f, (Color){255, 120, 8, 255});    // vivid cadmium fiery orange
-        ColorGradient_AddStop(g, 0.78f, (Color){255, 195, 25, 255});   // radiant amber gold
-        ColorGradient_AddStop(g, 0.90f, (Color){255, 240, 120, 255});  // incandescent core
+        ColorGradient_AddStop(g, 0.78f, (Color){255, 175, 18, 255});   // radiant amber gold
+        ColorGradient_AddStop(g, 0.90f, (Color){255, 225, 55, 255});   // intense warm core
+        ColorGradient_AddStop(g, 0.97f, (Color){255, 250, 180, 255});  // incandescent core
         ColorGradient_AddStop(g, 1.00f, (Color){255, 255, 245, 255});  // white-hot peak (Planck high-energy)
         return g;
     }
@@ -598,12 +604,15 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .emissiveCurve = &s_fvolCool,
                 .radiusCurve = &s_fvolGrow,
                 .forceField = &s_fvolFld,
+                .windInfluence = 0.65f,
                 .render.volumeSheet = 2,
                 .render.rampLUT = ramp,
                 .render.heatGain = s_fvolHeatGain,
                 .render.emissiveBoost = s_fvolEmissive,
                 .render.smokeGain = s_fvolSmokeGain,
                 .render.smokeTint = FVol_SmokeTint(),
+                .render.motionTex = s_fvolMotionTex,
+                .render.motionWarpScale = s_fvolMotionWarp,
                 .render.sixWayLighting = 1,
                 .render.sixWayScattering = 1.35f,
                 .render.sixWayAbsorption = 1.20f,
@@ -629,6 +638,8 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .followTargetGeneration = &emitter->generation,
                 .followGeneration = emitter->generation,
                 .followStrength = 0.70f,
+                .stretchStrength = 0.45f,
+                .stretchMinSpeed = 0.10f,
                 .rotation = (Random01() - 0.5f) * 0.35f,
                 .angularVelocity = (Random01() - 0.5f) * 0.15f,
             });
@@ -718,6 +729,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
             .colorStart = (Color){52, 46, 42, (unsigned char)(70.0f * s_fvolSmokeAmt)},
             .colorEnd = (Color){30, 28, 27, 0},
             .forceField = &s_smokePuffFld,
+            .windInfluence = 0.85f,
             .radiusCurve = &s_smokePuffGrow,
             .render.texture = s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
             .render.sixWayLighting = 1,
@@ -756,6 +768,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
             .colorEnd = (Color){44, 40, 38, 0},
             .gradient = &s_fvolBodyGrad,
             .forceField = &s_fvolFld,
+            .windInfluence = 0.65f,
             .radiusCurve = &s_fvolGrow,
             .alphaCurve = &s_fvolFade,
             .speedCurve = &s_fvolRise,

@@ -337,6 +337,44 @@ static void Test_6WayLightingBasisAndAxes(void)
               L_local_back.x, L_local_back.y, L_local_back.z);
 }
 
+static void Test_RotationInvarianceTangentBasis(void)
+{
+    V3 V = TestViewDir();
+    V3 upRef = (fabsf(V.y) > 0.99f) ? v3(0, 0, 1) : v3(0, 1, 0);
+    V3 R = v3norm(v3cross(upRef, V));
+    V3 U = v3cross(V, R);
+
+    // Test across 4 rotation angles: 0, 45, 90, 180 degrees
+    float angles[] = { 0.0f, 0.785398f, 1.570796f, 3.141592f };
+    for (int i = 0; i < 4; i++)
+    {
+        float th = angles[i];
+        float c = cosf(th), s = sinf(th);
+        // Quad rotated by th on screen:
+        V3 quadT = v3norm(v3add(v3scale(R, c), v3scale(U, s)));
+        V3 quadB = v3norm(v3add(v3scale(R, s), v3scale(U, -c)));
+
+        // Light from camera Right (R)
+        V3 L = R;
+        // In quad local frame:
+        float Lx = v3dot(L, quadT);
+        float Ly = -v3dot(L, quadB);
+        // Re-projecting (Lx * quadT - Ly * quadB) back into world space MUST equal L!
+        V3 reconstructed = v3add(v3scale(quadT, Lx), v3scale(quadB, -Ly));
+        float err = sqrtf(v3dot(v3add(reconstructed, v3scale(L, -1.0f)),
+                                v3add(reconstructed, v3scale(L, -1.0f))));
+        CHECK_MSG(err < 1e-4f, "Rotation invariance: light reconstructed across quad matches world light",
+                  "angle=%.2f rad, err=%.5f", th, err);
+
+        // Normal dome: normal pointing local Right (1, 0, 0)
+        V3 N_local = v3(1.0f, 0.0f, 0.0f);
+        V3 N_world = v3norm(v3add(v3add(v3scale(quadT, N_local.x), v3scale(quadB, -N_local.y)), v3scale(V, N_local.z)));
+        float dotR = v3dot(N_world, quadT);
+        CHECK_MSG(fabsf(dotR - 1.0f) < 1e-4f, "Normal dome: local X aligns with quad tangent T",
+                  "angle=%.2f rad, dot=%.4f", th, dotR);
+    }
+}
+
 static void Test_ShaderSourceMatchesMirror(void)
 {
     // A C mirror of GLSL is only as good as its agreement with the original.
@@ -351,6 +389,7 @@ static void Test_ShaderSourceMatchesMirror(void)
         // per cell — which jumps every time the animation steps.
         { "vec2  q = luv * 2.0 - 1.0",            "quad-local UV" },
         { "fract(fragTexCoord * u_atlasGrid)",    "atlas -> quad-local UV recovery" },
+        { "ParticleTangentBasis",                 "screen-space quad tangent basis derivation" },
         { "sqrt(max(1.0 - rc * rc, 0.0))",        "analytic hemisphere z" },
         { "sqrt(clamp(1.0 - a, 0.0, 1.0))",       "derivative-fallback radius r" },
         { "pow(ndl * 0.5 + 0.5, 1.5)",            "half-Lambert wrap" },
@@ -387,6 +426,7 @@ int main(void)
     Test_AmbientGainFlattens();
     Test_SoftParticleFade();
     Test_6WayLightingBasisAndAxes();
+    Test_RotationInvarianceTangentBasis();
     Test_ShaderSourceMatchesMirror();
 
     printf("---\n%d/%d checks passed\n", g_checks - g_failures, g_checks);

@@ -73,6 +73,7 @@ typedef struct
   int travelWaypoint;
   bool travelImpactActive;
   float travelImpactAge;
+  float windInfluence;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
   float spriteAnimPhase;
@@ -98,6 +99,8 @@ typedef struct
   unsigned int sixWayTexBId; // Map B texture id for dual-texture 6-way
   float sixWayScattering; // forward scatter / backlit boost factor
   float sixWayAbsorption; // multi-axis extinction factor
+  unsigned int motionTexId; // 2D optical flow texture id for subframe advection
+  float motionWarpScale; // motion vector displacement scale
   VFXContrastProfileId contrastProfile;
   const SkillCurve *radiusCurve;
   const SkillCurve *speedCurve;
@@ -280,6 +283,7 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->travelWaypoint = 0;
   p->travelImpactActive = false;
   p->travelImpactAge = 0.0f;
+  p->windInfluence = config.physics.windInfluence > 0.0f ? config.physics.windInfluence : config.windInfluence;
   p->gradient = config.gradient;
   p->spriteAnim = config.spriteAnim;
   p->spriteAnimPhase = config.spriteAnimPhase;
@@ -337,6 +341,8 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->sixWayTexBId = config.render.sixWayTexB.id;
   p->sixWayScattering = (config.render.sixWayScattering > 0.0f) ? config.render.sixWayScattering : 1.0f;
   p->sixWayAbsorption = (config.render.sixWayAbsorption > 0.0f) ? config.render.sixWayAbsorption : 1.0f;
+  p->motionTexId = config.render.motionTex.id;
+  p->motionWarpScale = config.render.motionWarpScale;
   // A volume sheet with no ramp would index an unbound sampler, which reads
   // black — the flame would vanish while everything else said it was drawing.
   // Fall back to the legacy path instead: the sprite looks wrong (its RGB is
@@ -609,8 +615,8 @@ void UpdateParticles(float dt)
       p->x += p->vx * step;
       p->y += p->vy * step;
       p->z += p->vz * step;
-      if (p->travelImpactActive) {
-        p->travelImpactAge += dt;
+      if (p->travelImpactActive || p->windInfluence > 0.0f) {
+        if (p->travelImpactActive) p->travelImpactAge += dt;
         // Jitter per-particle: phá vỡ coherence Perlin khi tất cả hạt cùng vị trí target
         float seed = (float)i;
         float h1 = fmodf(sinf(seed * 127.1f) * 43758.5453f, 1.0f);
@@ -625,7 +631,8 @@ void UpdateParticles(float dt)
           p->z + (h3 - 0.5f) * 3.0f
         };
         Vector3 windVel = Wind_EvaluateVelocity(samplePos, s_particleTime);
-        float blendRate = 1.0f - expf(-3.5f * dt);
+        float infl = p->travelImpactActive ? 1.0f : p->windInfluence;
+        float blendRate = (1.0f - expf(-3.5f * dt)) * infl;
         p->vx += (windVel.x - p->vx) * blendRate;
         p->vy += (windVel.y - p->vy) * blendRate;
         p->vz += (windVel.z - p->vz) * blendRate;
@@ -804,6 +811,7 @@ static int s_locVolumeSheet = -1, s_locRampLUT = -1, s_locHeatGain = -1,
 static int s_locSixWayLighting = -1, s_locSixWayTexB = -1,
            s_locSixWayScattering = -1, s_locSixWayAbsorption = -1,
            s_locAmbientGround = -1, s_locAmbientHorizon = -1;
+static int s_locUseMotionVectors = -1, s_locMotionTex = -1, s_locMotionWarp = -1;
 static int s_locTime = -1;
 
 #define PARTICLE_MAX_VFX_LIGHTS 4
@@ -942,6 +950,9 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locSixWayAbsorption = GetShaderLocation(s_litShader, "u_sixWayAbsorption");
       s_locAmbientGround    = GetShaderLocation(s_litShader, "u_ambientGround");
       s_locAmbientHorizon   = GetShaderLocation(s_litShader, "u_ambientHorizon");
+      s_locUseMotionVectors = GetShaderLocation(s_litShader, "u_useMotionVectors");
+      s_locMotionTex        = GetShaderLocation(s_litShader, "u_motionTex");
+      s_locMotionWarp       = GetShaderLocation(s_litShader, "u_motionWarp");
       s_locTime             = GetShaderLocation(s_litShader, "u_time");
     }
     else
@@ -1282,6 +1293,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   unsigned int curSixWayTexB = 0xFFFFFFFFu;
   float curSixWayScat = -1.0f;
   float curSixWayAbs = -1.0f;
+  unsigned int curMotionTex = 0xFFFFFFFFu;
+  float curMotionWarp = -1.0f;
   float curStrength = -1.0f;
 
   for (int a = 0; a < s_activeCount; a++)
@@ -1344,7 +1357,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         p->heatGain != curHeat || p->smokeGain != curSmokeGain ||
         VFXPackColor(p->smokeTint) != curSmokeTint ||
         p->sixWayLighting != curSixWay || p->sixWayTexBId != curSixWayTexB ||
-        p->sixWayScattering != curSixWayScat || p->sixWayAbsorption != curSixWayAbs)
+        p->sixWayScattering != curSixWayScat || p->sixWayAbsorption != curSixWayAbs ||
+        p->motionTexId != curMotionTex || p->motionWarpScale != curMotionWarp)
     {
       if (curTex != 0xFFFFFFFFu) rlEnd();
       s_perfBatches++;
@@ -1427,6 +1441,26 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         curSixWayTexB = p->sixWayTexBId;
         curSixWayScat = p->sixWayScattering;
         curSixWayAbs = p->sixWayAbsorption;
+      }
+      if (p->motionTexId != curMotionTex || p->motionWarpScale != curMotionWarp)
+      {
+        rlDrawRenderBatchActive();
+        float useMotion = (p->motionTexId != 0 && p->motionWarpScale > 0.0f) ? 1.0f : 0.0f;
+        float warpScale = p->motionWarpScale;
+        if (s_litActive && s_locUseMotionVectors >= 0)
+          SetShaderValue(s_litShader, s_locUseMotionVectors, &useMotion, SHADER_UNIFORM_FLOAT);
+        if (s_litActive && s_locMotionWarp >= 0)
+          SetShaderValue(s_litShader, s_locMotionWarp, &warpScale, SHADER_UNIFORM_FLOAT);
+        if (s_litActive && p->motionTexId != 0 && s_locMotionTex >= 0)
+        {
+          Texture2D mTex = {0};
+          mTex.id = p->motionTexId;
+          mTex.width = 1; mTex.height = 1; mTex.mipmaps = 1;
+          mTex.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+          SetShaderValueTexture(s_litShader, s_locMotionTex, mTex);
+        }
+        curMotionTex = p->motionTexId;
+        curMotionWarp = p->motionWarpScale;
       }
       if (wantStrength != curStrength)
       {
@@ -1640,6 +1674,11 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         // everybody sees 20 fps. Dropping it is exactly a 2x fill saving on the
         // frames that need it, and it costs nothing on the frames that do not.
         else if ((float)s_activeCount > s_fbBlendMax) fbBlend = 0.0f;
+      }
+      if (p->motionTexId != 0 && p->motionWarpScale > 0.0f)
+      {
+        c.b = (unsigned char)(fminf(fmaxf(fbBlend, 0.0f), 1.0f) * 255.0f);
+        fbBlend = 0.0f; // Single quad drawn by CPU; GPU shader does subframe optical flow warping!
       }
     }
 

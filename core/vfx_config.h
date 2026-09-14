@@ -72,6 +72,9 @@ typedef struct {
     unsigned int followGeneration;
     float followStrength;              // 1 = inherit target displacement
     const SkillCurve *followCurve;     // NULL = linear release over lifetime
+
+    // Aerodynamic wind & vorticle coupling [0.0 = none, 1.0 = full wind velocity]
+    float windInfluence;
 } VFX_PhysicsConfig;
 
 // 4. Animation Config
@@ -223,6 +226,10 @@ typedef struct {
     Texture2D sixWayTexB;      // Lightmap B (-X Left, -Y Bottom, -Z Front, Alpha Emissive)
     float sixWayScattering;    // Forward scatter / backlit multiplier (0 = default 1.0)
     float sixWayAbsorption;    // Multi-axis extinction factor (0 = default 1.0)
+
+    // ── OPTICAL FLOW MOTION VECTOR WARPING (Flipbook Subframe Advection) ─────
+    Texture2D motionTex;       // 2D optical flow atlas (R = Vx, G = Vy, B = speed, A = mask)
+    float motionWarpScale;     // Warp strength multiplier (0 = disabled, 1.0 = standard)
 } VFX_RenderConfig;
 
 #endif // CORE_VFX_CONFIG_H

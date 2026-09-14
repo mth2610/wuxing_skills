@@ -27,7 +27,7 @@ typedef struct
     float life_rem, life_max, phase, active;
     float ff_index, ff_pad0, ff_pad1, ff_pad2; // ff_index: slot vào ForceFieldBuffer, -1 = none
     float emitter_id, render_mode, route_pad0, route_pad1;
-    float impact_age, impact_active, impact_pad0, impact_pad1;
+    float impact_age, impact_active, wind_influence, impact_pad1;
     float formation_x, formation_y, formation_z, formation_pad;
 } GpuParticleData;
 
@@ -491,7 +491,7 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
     d.route_pad1 = 0.0f;
     d.impact_age = 0.0f;
     d.impact_active = 0.0f;
-    d.impact_pad0 = 0.0f;
+    d.wind_influence = cfg.windInfluence;
     d.impact_pad1 = 0.0f;
     d.formation_x = d.formation_y = d.formation_z = d.formation_pad = 0.0f;
     if (cfg.travelPath && cfg.travelPath->formationOrigin) {
@@ -730,8 +730,8 @@ void GpuParticleSystem_Update(float dt)
             p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
             p->route_pad1 = (float)waypoint;
         } else {
-            if (impactActive) {
-                p->impact_age += dt;
+            if (impactActive || p->wind_influence > 0.0f) {
+                if (impactActive) p->impact_age += dt;
                 // Jitter per-particle: phá vỡ coherence Perlin khi tất cả hạt cùng vị trí target
                 float seed = (float)i;
                 float h1 = fmodf(sinf(seed * 127.1f) * 43758.5453f, 1.0f);
@@ -746,7 +746,8 @@ void GpuParticleSystem_Update(float dt)
                   p->pz + (h3 - 0.5f) * 3.0f
                 };
                 Vector3 windVel = Wind_EvaluateVelocity(samplePos, s_elapsed_time);
-                float blendRate = 1.0f - expf(-3.5f * dt);
+                float infl = impactActive ? 1.0f : p->wind_influence;
+                float blendRate = (1.0f - expf(-3.5f * dt)) * infl;
                 p->vx += (windVel.x - p->vx) * blendRate;
                 p->vy += (windVel.y - p->vy) * blendRate;
                 p->vz += (windVel.z - p->vz) * blendRate;

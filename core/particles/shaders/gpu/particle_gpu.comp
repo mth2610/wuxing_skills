@@ -18,7 +18,7 @@ struct GpuParticleData {
     vec4 life_data;      // x = life_remaining, y = life_max, z = phase, w = active (0/1)
     vec4 ff_data;        // x = force field slot (-1 = none), yzw = reserved
     vec4 route_data;     // x=emitter id, y=render mode, z=travel slot, w=waypoint
-    vec4 impact_data;    // x=impact age, y=impact active
+    vec4 impact_data;    // x=impact age, y=impact active, z=wind_influence
     vec4 formation_data; // xyz = per-particle offset from formation origin
 };
 
@@ -566,11 +566,24 @@ void main() {
 
     // Guided travel owns integration when a path slot is present.
     bool reachedTarget = false;
-    if (!impactActive)
+    float windInf = p.impact_data.z;
+    if (p.route_data.z < 0.0) {
+        // Hạt thông thường không có travel path: nhận gió và vorticles nếu wind_influence > 0
+        if (windInf > 0.0) {
+            float h1 = fract(sin(float(idx) * 127.1) * 43758.5453);
+            float h2 = fract(sin(float(idx) * 269.5) * 43758.5453);
+            float h3 = fract(sin(float(idx) * 419.2) * 43758.5453);
+            vec3 samplePos = p.pos_radius.xyz + vec3(h1 - 0.5, h2 - 0.5, h3 - 0.5) * 3.0;
+            vec3 windVel = evalWindVelocity(samplePos, u_time);
+            float blendRate = (1.0 - exp(-3.5 * u_dt)) * windInf;
+            p.vel_drag.xyz += (windVel - p.vel_drag.xyz) * blendRate;
+        }
+        p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
+    } else if (!impactActive) {
         reachedTarget = evalTravelPath(pathIndex, p.pos_radius.xyz,
                                        p.vel_drag.xyz, p.route_data.w, u_dt,
                                        p.formation_data.xyz);
-    else {
+    } else {
         // Thuần túy chịu tác động khí động học từ Wind System
         // Jitter per-particle: mỗi hạt sample gió tại vị trí lệch riêng (hash từ idx)
         // để phá vỡ coherence không gian của Perlin Noise khi tất cả hạt cùng vị trí target
@@ -605,8 +618,6 @@ void main() {
         particles[idx] = p;
         return;
     }
-    if (p.route_data.z < 0.0)
-        p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
 
     // Same receiver contract as ParticlePlane_Resolve on both CPU paths.
     if (forceIndex >= 0) {
