@@ -49,6 +49,8 @@ void ScreenDistort_Init(void)
   meshDistortShader = ResourceManager_LoadShader("core/shaders/distortion_mesh.vs", "core/shaders/distortion_mesh.fs");
   if (meshDistortShader.id > 0)
   {
+    meshDistortShader.locs[SHADER_LOC_MATRIX_MVP]   = GetShaderLocation(meshDistortShader, "mvp");
+    meshDistortShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(meshDistortShader, "matModel");
     meshLocSceneTex   = GetShaderLocation(meshDistortShader, "u_sceneTex");
     meshLocHasScene   = GetShaderLocation(meshDistortShader, "u_hasScene");
     meshLocStrength   = GetShaderLocation(meshDistortShader, "u_distortionStrength");
@@ -197,11 +199,17 @@ Shader ScreenDistort_GetMeshShader(void)
 
 void ScreenDistort_BeginMeshPass(Texture2D flowMap, float strength, Vector2 flowSpeed, Color tintColor)
 {
-  (void)flowMap;
   if (!s_meshDistortReady) return;
 
   Texture2D snapshot = SceneTargets_GetSceneSnapshotTexture();
   int hasScene = (snapshot.id > 0) ? 1 : 0;
+
+  // Re-enable the scene HDR target so the distortion pass writes directly to the scene buffer
+  SceneTargets_BeginVFXBody();
+  rlDisableDepthMask();
+  rlDisableColorBlend();
+
+  BeginShaderMode(meshDistortShader);
 
   SetShaderValue(meshDistortShader, meshLocHasScene, &hasScene, SHADER_UNIFORM_INT);
   if (hasScene)
@@ -216,14 +224,16 @@ void ScreenDistort_BeginMeshPass(Texture2D flowMap, float strength, Vector2 flow
                    (float)tintColor.b / 255.0f, (float)tintColor.a / 255.0f };
   SetShaderValue(meshDistortShader, meshLocTintColor, &tint, SHADER_UNIFORM_VEC4);
 
-  float edgeFade = 1.2f;
+  float edgeFade = 1.0f;
   SetShaderValue(meshDistortShader, meshLocEdgeFade, &edgeFade, SHADER_UNIFORM_FLOAT);
 
   float time = (float)GetTime();
   if (meshLocTime >= 0)
     SetShaderValue(meshDistortShader, meshLocTime, &time, SHADER_UNIFORM_FLOAT);
 
-  Vector2 res = { (float)GetRenderWidth(), (float)GetRenderHeight() };
+  Vector2 res = (snapshot.id > 0)
+      ? (Vector2){ (float)snapshot.width, (float)snapshot.height }
+      : (Vector2){ (float)GetRenderWidth(), (float)GetRenderHeight() };
   if (meshLocResolution >= 0)
     SetShaderValue(meshDistortShader, meshLocResolution, &res, SHADER_UNIFORM_VEC2);
 
@@ -231,12 +241,15 @@ void ScreenDistort_BeginMeshPass(Texture2D flowMap, float strength, Vector2 flow
   {
     SetShaderValueTexture(meshDistortShader, GetShaderLocation(meshDistortShader, "texture0"), flowMap);
   }
-
-  BeginShaderMode(meshDistortShader);
 }
 
 void ScreenDistort_EndMeshPass(void)
 {
   if (!s_meshDistortReady) return;
   EndShaderMode();
+  rlEnableColorBlend();
+  rlEnableDepthMask();
+  rlDrawRenderBatchActive();
+  SceneTargets_EndVFXLayer();
 }
+

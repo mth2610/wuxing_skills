@@ -1,60 +1,94 @@
 #version 330
-#include "core/shaders/common/fs_header.glsl"
+
+in vec3 fragPosition;
+in vec2 fragTexCoord;
+in vec3 fragNormal;
+in vec4 v_clipPos;
 
 // Messiah Engine / Where Winds Meet Style Screen-Space Mesh Distortion Pass
-// Allows arbitrary 3D geometry (sword slashes, energy palms, shockwaves)
-// to distort the background scene using normal/flow maps.
+// Supersonic sword shockwave & martial arts air slash refraction
+// High-energy optical lens warping, heat turbulence, and chromatic dispersion.
 
 uniform sampler2D texture0;            // Flow / Normal map texture
 uniform sampler2D u_sceneTex;          // Background scene snapshot texture
 uniform int       u_hasScene;
-uniform float     u_distortionStrength;// Displacement amplitude (e.g. 0.02 - 0.08)
+uniform float     u_distortionStrength;// Displacement amplitude
 uniform vec2      u_flowSpeed;         // UV scroll rate
 uniform vec4      u_tintColor;         // RGB tint, A = tint blend factor
-uniform float     u_edgeFade;          // Grazing angle falloff
+uniform float     u_time;              // Animation time
 
 out vec4 finalColor;
 
 void main() {
-    vec2 res = (u_resolution.x > 0.0 && u_resolution.y > 0.0) ? u_resolution : vec2(1920.0, 1080.0);
-    vec2 screenUV = gl_FragCoord.xy / res;
+    // Exact perspective-correct screen-space UV (0.0 to 1.0) derived directly from clip-space:
+    vec2 screenUV = (v_clipPos.xy / v_clipPos.w) * 0.5 + 0.5;
 
-    // Procedural ripple wave along blade UV + texture flow
-    float ripple = sin((fragTexCoord.x * 14.0 - u_time * 12.0) * 3.14159) * cos(fragTexCoord.y * 6.28);
-    vec2 procFlow = vec2(cos(fragTexCoord.x * 6.28), sin(fragTexCoord.y * 6.28)) * ripple;
+    // True screen-space forward cutting direction via partial derivatives:
+    vec2 gradY = vec2(dFdx(fragTexCoord.y), dFdy(fragTexCoord.y));
+    float gradYLen = length(gradY);
+    vec2 shockDir = (gradYLen > 0.00001) ? (gradY / gradYLen) : vec2(0.0, 1.0);
 
-    // Sample flow map with animated UV if present
+    // Strictly orthogonal lateral direction: dot(shockDir, perpDir) == 0.0.
+    // Mathematical guarantee: perpendicular vectors CANNOT cancel each other out!
+    vec2 perpDir = vec2(-shockDir.y, shockDir.x);
+
+    float x = clamp(fragTexCoord.x, 0.0, 1.0);
+    float y = clamp(fragTexCoord.y, 0.0, 1.0);
+
+    // Wave profile: strong compression at the leading edge (y -> 1.0), smooth aerodynamic wake
+    float wave = sin(y * 3.14159265) * (0.45 + 0.55 * y);
+
+    // Smooth, low-frequency dynamic heat turbulence (no speckle noise)
+    float ripple = sin(x * 4.0 - u_time * 8.0 + y * 2.5) * 0.12;
+
+    // Lateral expansion along the arc: -1.0 on left wing, +1.0 on right wing
+    float lateralCurve = (x - 0.5) * 2.0;
+
+    // Orthogonal displacement field: forward shock + symmetric lateral bow.
+    // Length is identical on both wings: length(a*shockDir + b*perpDir) == length(a*shockDir - b*perpDir)
+    vec2 lensVector = shockDir * (wave + ripple) + perpDir * (lateralCurve * wave * 0.22);
+
+    // Flow map texture sampling (optional)
     vec2 flowUV = fragTexCoord + u_flowSpeed * u_time;
     vec4 flowSample = texture(texture0, flowUV);
-
-    // Unpack flow direction to [-1, 1] + ripple
-    vec2 flowDir = (flowSample.rg * 2.0 - 1.0) * 0.5 + procFlow * 0.8;
-
-    // Alpha mask
-    float mask = (flowSample.a > 0.01) ? flowSample.a : 1.0;
-
-    // View direction: fragPosition in view-space has camera at origin
-    vec3 V = normalize(-fragPosition);
-    vec3 N = normalize(fragNormal);
-    float NdotV = clamp(abs(dot(N, V)), 0.0, 1.0);
-    float edgeFactor = pow(max(NdotV, 0.1), (u_edgeFade > 0.01 ? u_edgeFade : 1.0));
-
-    float distStrength = (u_distortionStrength > 0.0001) ? u_distortionStrength : 0.055;
-    vec2 distortedUV = screenUV + flowDir * (distStrength * mask * edgeFactor);
-
-    vec3 sceneColor;
-    if (u_hasScene != 0) {
-        sceneColor = texture(u_sceneTex, clamp(distortedUV, vec2(0.001), vec2(0.999))).rgb;
-    } else {
-        sceneColor = vec3(0.05, 0.08, 0.12);
+    if (flowSample.a > 0.05) {
+        lensVector += (flowSample.rg * 2.0 - 1.0) * 0.20;
     }
 
-    // Hot energy blade rim on grazing edges
-    float bladeRim = pow(1.0 - NdotV, 2.0) * 1.2;
-    // Core slash energy highlight
-    float coreGlow = pow(sin(clamp(fragTexCoord.y, 0.0, 1.0) * 3.14159), 2.5) * 0.85;
+    // Arc span envelope: maintains 75% - 100% displacement across the entire blade length.
+    // Only smoothly fades the extreme 8% tips so the wings never vanish or weaken prematurely!
+    float tipFade = smoothstep(0.0, 0.08, x) * smoothstep(1.0, 0.92, x);
+    float spanFactor = mix(0.75, 1.0, sin(x * 3.14159265));
+    float envelope = tipFade * spanFactor;
 
-    vec3 outRgb = mix(sceneColor, u_tintColor.rgb, clamp(u_tintColor.a, 0.0, 1.0)) 
-                + u_tintColor.rgb * (bladeRim + coreGlow);
-    finalColor = vec4(outRgb, 1.0);
+    // Pronounced, cinematic displacement magnitude
+    float strength = (u_distortionStrength > 0.0001) ? u_distortionStrength : 0.11;
+    vec2 disp = lensVector * strength * envelope;
+
+    // Clean, high-fidelity chromatic dispersion (tight 2.5% spread: crisp, optical, zero noise)
+    vec3 sceneColor;
+    if (u_hasScene != 0) {
+        vec2 uvR = clamp(screenUV + disp * 1.025, vec2(0.002), vec2(0.998));
+        vec2 uvG = clamp(screenUV + disp * 1.000, vec2(0.002), vec2(0.998));
+        vec2 uvB = clamp(screenUV + disp * 0.975, vec2(0.002), vec2(0.998));
+        sceneColor.r = texture(u_sceneTex, uvR).r;
+        sceneColor.g = texture(u_sceneTex, uvG).g;
+        sceneColor.b = texture(u_sceneTex, uvB).b;
+    } else {
+        sceneColor = vec3(0.06, 0.10, 0.18);
+    }
+
+    // Schlieren caustic compression edge at the Mach front (visible on any surface, including flat arena floor)
+    float caustic = pow(y, 10.0) * envelope;
+    vec3 causticGlow = vec3(0.95, 0.98, 1.0) * (caustic * 0.65);
+
+    // Subtle optical rarefaction shadow along the trailing wake for 3D depth
+    float wakeShadow = pow(1.0 - y, 6.0) * envelope * 0.12;
+    sceneColor *= (1.0 - wakeShadow);
+
+    // Ethereal sword qi tint (crystal clear, transparent)
+    vec3 qiTint = u_tintColor.rgb * (clamp(u_tintColor.a, 0.0, 1.0) * 0.10 * envelope * sin(y * 3.14159265));
+
+    // Refractive output: warped background + Schlieren caustic edge + translucent sword qi
+    finalColor = vec4(sceneColor + causticGlow + qiTint, 1.0);
 }

@@ -1049,35 +1049,56 @@ int main(int argc, char **argv) {
             }
         }
 
-        float speed = 20.0f;
-        float s = sinf(vfxCameraAngle);
-        float c = cosf(vfxCameraAngle);
+        float inputX = 0.0f;
+        float inputZ = 0.0f;
+        if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) inputZ -= 1.0f;
+        if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) inputZ += 1.0f;
+        if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) inputX -= 1.0f;
+        if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) inputX += 1.0f;
 
-        bool moved = false;
-        float dx = 0.0f, dz = 0.0f;
-        if (IsKeyDown(KEY_W)) { player.position.x -= s * speed * dt; player.position.z -= c * speed * dt; dx -= s; dz -= c; moved = true; }
-        if (IsKeyDown(KEY_S)) { player.position.x += s * speed * dt; player.position.z += c * speed * dt; dx += s; dz += c; moved = true; }
-        if (IsKeyDown(KEY_A)) { player.position.x -= c * speed * dt; player.position.z += s * speed * dt; dx -= c; dz += s; moved = true; }
-        if (IsKeyDown(KEY_D)) { player.position.x += c * speed * dt; player.position.z += s * speed * dt; dx += c; dz += s; moved = true; }
+        bool moved = (inputX != 0.0f || inputZ != 0.0f);
+        if (moved) {
+            Vector3 camForward = Vector3Subtract(camera.target, camera.position);
+            camForward.y = 0.0f;
+            camForward = Vector3Normalize(camForward);
 
-        if (moved && (dx != 0.0f || dz != 0.0f)) {
-            s_vfxPlayerYaw = atan2f(dx, dz);
+            Vector3 camRight = Vector3CrossProduct(camForward, camera.up);
+            camRight.y = 0.0f;
+            camRight = Vector3Normalize(camRight);
+
+            Vector3 moveDir = {
+                camForward.x * -inputZ + camRight.x * inputX,
+                0.0f,
+                camForward.z * -inputZ + camRight.z * inputX
+            };
+            moveDir = Vector3Normalize(moveDir);
+
+            float moveSpeed = 5.5f;
+            player.position.x += moveDir.x * moveSpeed * dt;
+            player.position.z += moveDir.z * moveSpeed * dt;
+            player.position.y = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
+
+            s_vfxPlayerYaw = atan2f(moveDir.x, moveDir.z);
         }
 
         if (IsKeyPressed(KEY_Z)) {
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.45f);
             Vector3 forward = { sinf(s_vfxPlayerYaw), 0.0f, cosf(s_vfxPlayerYaw) };
-            Vector3 attackOrigin = Vector3Add(player.position, (Vector3){ 0.0f, 1.0f, 0.0f });
-            Wind_SpawnGust(attackOrigin, forward, 5.5f, 3.5f, 0.45f);
+            Vector3 fistPos = Vector3Add(player.position, Vector3Scale(forward, 0.75f));
+            fistPos.y += 0.9f;
+            Wind_SpawnRadialBlast(fistPos, 1.4f, 4.0f, 0.25f);
+            Wind_SpawnGust(fistPos, forward, 1.2f, 3.0f, 0.20f);
         }
         if (IsKeyPressed(KEY_C)) {
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_KICK, 0.50f);
             Vector3 forward = { sinf(s_vfxPlayerYaw), 0.0f, cosf(s_vfxPlayerYaw) };
-            Vector3 attackOrigin = Vector3Add(player.position, (Vector3){ 0.0f, 1.0f, 0.0f });
-            Wind_SpawnGust(attackOrigin, forward, 6.0f, 4.0f, 0.50f);
+            Vector3 footPos = Vector3Add(player.position, Vector3Scale(forward, 0.9f));
+            footPos.y += 0.35f;
+            Wind_SpawnRadialBlast(footPos, 1.6f, 4.5f, 0.30f);
+            Wind_SpawnGust(footPos, forward, 1.5f, 3.5f, 0.25f);
         }
         if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1)) {
-            CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_CAST, 0.60f);
+            CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.40f);
         }
 
         CharacterModel_Update(&player.anim, dt, moved);
@@ -1144,6 +1165,7 @@ int main(int argc, char **argv) {
         mouseTarget3D = (Vector3){ mtX, gh, mtZ };
         if (renderVFXMode) mouseTarget3D = captureOrigin;
 
+        VFXTest_SetPlayerYaw(s_vfxPlayerYaw);
         if (VFXTest_UpdateAndHandleInput(player.position, mouseTarget3D, testAtlasTex, globalParticleTex)) {
             currentScreen = SCREEN_MAIN_MENU;
         }

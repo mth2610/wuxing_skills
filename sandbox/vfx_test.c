@@ -20,6 +20,7 @@
 #include "core/skill_helper.h"
 #include "core/path_spline.h"
 #include "core/map_manager.h"
+#include "core/wind/wind_system.h"
 
 #define TEST_PATH_POINT_COUNT 16
 static Vector3 s_testPathPoints[TEST_PATH_POINT_COUNT];
@@ -36,6 +37,12 @@ static bool s_hasTestPath = false;
 static bool    s_demoMeshDistortActive = false;
 static float   s_demoMeshDistortTimer = 0.0f;
 static Vector3 s_demoMeshDistortPos = {0};
+static float   s_demoMeshDistortYaw = 0.0f;
+static float   s_currentPlayerYaw = 0.0f;
+
+void VFXTest_SetPlayerYaw(float yaw) {
+    s_currentPlayerYaw = yaw;
+}
 
 static bool    s_demoSSSActive = false;
 static float   s_demoSSSAngle = 0.0f;
@@ -469,6 +476,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         s_demoMeshDistortActive = true;
         s_demoMeshDistortTimer = 0.0f;
         s_demoMeshDistortPos = playerPos;
+        s_demoMeshDistortYaw = s_currentPlayerYaw;
         ScreenDistort_RequestMeshPass();
         TraceLog(LOG_INFO, "[Messiah VFX Demo] 1: Mesh Distortion Triggered!");
     }
@@ -996,17 +1004,28 @@ static void VFXTest_DrawGroundCircle(Vector3 center, float radius, Color color) 
     }
 }
 
-static void DrawCrescentSlash(Vector3 center, float radius, float width, float startAngle, float endAngle, Color color)
+static void DrawCrescentSlash3D(Vector3 center, Vector3 forward, Vector3 right,
+                                float radius, float width, float arcAngle,
+                                float tiltAngle, Color color)
 {
     rlDisableBackfaceCulling();
     rlBegin(RL_TRIANGLES);
     rlColor4ub(color.r, color.g, color.b, color.a);
-    int segs = 36;
-    float da = (endAngle - startAngle) / (float)segs;
-    float tilt = 0.5f; // Nghiêng 3D tạo vết chém kiếm khí vút lên
+
+    const int segs = 32;
+    float da = arcAngle / (float)segs;
+    float startA = -arcAngle * 0.5f;
+
+    Vector3 baseUp = (Vector3){ 0.0f, 1.0f, 0.0f };
+    Vector3 tiltedUp = Vector3Normalize(Vector3Add(
+        Vector3Scale(baseUp, cosf(tiltAngle)),
+        Vector3Scale(right, sinf(tiltAngle))
+    ));
+    Vector3 slashRight = Vector3Normalize(Vector3CrossProduct(forward, tiltedUp));
+
     for (int i = 0; i < segs; i++)
     {
-        float a0 = startAngle + (float)i * da;
+        float a0 = startA + (float)i * da;
         float a1 = a0 + da;
         float t0 = (float)i / (float)segs;
         float t1 = (float)(i + 1) / (float)segs;
@@ -1014,43 +1033,63 @@ static void DrawCrescentSlash(Vector3 center, float radius, float width, float s
         float w0 = width * sinf(t0 * PI);
         float w1 = width * sinf(t1 * PI);
 
-        float rIn0  = radius - w0 * 0.5f;
-        float rOut0 = radius + w0 * 0.5f;
-        float rIn1  = radius - w1 * 0.5f;
-        float rOut1 = radius + w1 * 0.5f;
+        float sinA0 = sinf(a0);
+        float cosA0 = cosf(a0);
+        float sinA1 = sinf(a1);
+        float cosA1 = cosf(a1);
 
-        Vector3 pIn0  = { center.x + cosf(a0) * rIn0,  center.y + sinf(a0) * rIn0 * tilt,  center.z + sinf(a0) * rIn0 };
-        Vector3 pOut0 = { center.x + cosf(a0) * rOut0, center.y + sinf(a0) * rOut0 * tilt, center.z + sinf(a0) * rOut0 };
-        Vector3 pIn1  = { center.x + cosf(a1) * rIn1,  center.y + sinf(a1) * rIn1 * tilt,  center.z + sinf(a1) * rIn1 };
-        Vector3 pOut1 = { center.x + cosf(a1) * rOut1, center.y + sinf(a1) * rOut1 * tilt, center.z + sinf(a1) * rOut1 };
+        float chord0 = (cosA0 - cosf(arcAngle * 0.5f)) * radius * 0.5f;
+        float chord1 = (cosA1 - cosf(arcAngle * 0.5f)) * radius * 0.5f;
+        float lat0 = sinA0 * radius;
+        float lat1 = sinA1 * radius;
 
-        rlTexCoord2f(t0, 0.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pIn0.x, pIn0.y, pIn0.z);
-        rlTexCoord2f(t0, 1.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pOut0.x, pOut0.y, pOut0.z);
-        rlTexCoord2f(t1, 1.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pOut1.x, pOut1.y, pOut1.z);
+        Vector3 pBase0 = Vector3Add(center, Vector3Add(Vector3Scale(slashRight, lat0), Vector3Scale(forward, chord0)));
+        Vector3 pBase1 = Vector3Add(center, Vector3Add(Vector3Scale(slashRight, lat1), Vector3Scale(forward, chord1)));
 
-        rlTexCoord2f(t0, 0.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pIn0.x, pIn0.y, pIn0.z);
-        rlTexCoord2f(t1, 1.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pOut1.x, pOut1.y, pOut1.z);
-        rlTexCoord2f(t1, 0.0f); rlNormal3f(0.0f, 1.0f, 0.0f); rlVertex3f(pIn1.x, pIn1.y, pIn1.z);
+        Vector3 pFront0 = Vector3Add(pBase0, Vector3Scale(forward, w0 * 0.5f));
+        Vector3 pBack0  = Vector3Subtract(pBase0, Vector3Scale(forward, w0 * 0.5f));
+        Vector3 pFront1 = Vector3Add(pBase1, Vector3Scale(forward, w1 * 0.5f));
+        Vector3 pBack1  = Vector3Subtract(pBase1, Vector3Scale(forward, w1 * 0.5f));
+
+        rlNormal3f(tiltedUp.x, tiltedUp.y, tiltedUp.z);
+
+        rlTexCoord2f(t0, 1.0f); rlVertex3f(pFront0.x, pFront0.y, pFront0.z);
+        rlTexCoord2f(t0, 0.0f); rlVertex3f(pBack0.x,  pBack0.y,  pBack0.z);
+        rlTexCoord2f(t1, 1.0f); rlVertex3f(pFront1.x, pFront1.y, pFront1.z);
+
+        rlTexCoord2f(t0, 0.0f); rlVertex3f(pBack0.x,  pBack0.y,  pBack0.z);
+        rlTexCoord2f(t1, 0.0f); rlVertex3f(pBack1.x,  pBack1.y,  pBack1.z);
+        rlTexCoord2f(t1, 1.0f); rlVertex3f(pFront1.x, pFront1.y, pFront1.z);
     }
     rlEnd();
     rlEnableBackfaceCulling();
 }
+
+#define MESH_DISTORT_DEMO_DURATION 1.15f
 
 void VFXTest_DrawRefraction(Camera3D cam)
 {
     (void)cam;
     if (s_demoMeshDistortActive)
     {
-        float progress = s_demoMeshDistortTimer / 1.3f;
+        float progress = s_demoMeshDistortTimer / MESH_DISTORT_DEMO_DURATION;
         if (progress <= 1.0f)
         {
-            float radius = 1.3f + progress * 2.6f;
-            float width = 0.5f + sinf(progress * PI) * 0.45f;
-            float angleOffset = progress * 1.3f;
+            Vector3 forward = { sinf(s_demoMeshDistortYaw), 0.0f, cosf(s_demoMeshDistortYaw) };
+            Vector3 right   = { cosf(s_demoMeshDistortYaw), 0.0f, -sinf(s_demoMeshDistortYaw) };
 
-            ScreenDistort_BeginMeshPass((Texture2D){0}, 0.08f, (Vector2){ 2.5f, 0.5f }, (Color){ 100, 220, 255, 140 });
-            Vector3 slashCenter = Vector3Add(s_currentPlayerPos, (Vector3){ 0.0f, 1.1f, progress * 3.2f });
-            DrawCrescentSlash(slashCenter, radius, width, -PI * 0.45f + angleOffset, PI * 0.45f + angleOffset, (Color){ 255, 255, 255, 255 });
+            // Bay vút về phía trước theo hướng nhân vật đối diện: 0.8m -> 8.5m
+            float dist = 0.8f + progress * 7.7f;
+            Vector3 slashCenter = Vector3Add(s_demoMeshDistortPos, Vector3Scale(forward, dist));
+            slashCenter.y += 0.50f; // Quét sát mặt sàn 50cm để nhìn rõ sàn đấu bị bẻ cong
+
+            float radius = 1.8f + progress * 0.85f;
+            float width = 0.85f * (1.0f - progress * 0.25f);
+            float arcAngle = 2.4f; // Sải cánh cung rộng 137 độ
+            float tiltAngle = 0.18f;
+
+            ScreenDistort_BeginMeshPass((Texture2D){0}, 0.12f, (Vector2){ 2.0f, 0.5f }, (Color){ 160, 225, 255, 100 });
+            DrawCrescentSlash3D(slashCenter, forward, right, radius, width, arcAngle, tiltAngle, WHITE);
             ScreenDistort_EndMeshPass();
         }
         else
@@ -1072,11 +1111,17 @@ void VFXTest_Draw3D(void)
     {
         s_demoMeshDistortTimer += dt;
         ScreenDistort_RequestMeshPass();
-        float progress = s_demoMeshDistortTimer / 1.3f;
+        float progress = s_demoMeshDistortTimer / MESH_DISTORT_DEMO_DURATION;
         if (progress <= 1.0f)
         {
-            Vector3 slashCenter = Vector3Add(s_currentPlayerPos, (Vector3){ 0.0f, 1.1f, progress * 3.2f });
-            VFXLight_Spawn(slashCenter, (Color){ 100, 200, 255, 255 }, 2.5f, 0.04f, VFX_PRIORITY_HIGH_ULTIMATE);
+            Vector3 forward = { sinf(s_demoMeshDistortYaw), 0.0f, cosf(s_demoMeshDistortYaw) };
+            float dist = 0.8f + progress * 7.7f;
+            Vector3 slashCenter = Vector3Add(s_demoMeshDistortPos, Vector3Scale(forward, dist));
+            slashCenter.y += 0.50f;
+            VFXLight_Spawn(slashCenter, (Color){ 160, 220, 255, 255 }, 2.2f, 0.03f, VFX_PRIORITY_HIGH_ULTIMATE);
+            // Gió rẽ dạt cỏ tự nhiên ôm sát theo nhát kiếm khí đang lướt tới
+            Wind_SpawnRadialBlast(slashCenter, 1.8f, 3.5f, 0.08f);
+            Wind_SpawnGust(slashCenter, forward, 1.5f, 3.8f, 0.08f);
         }
     }
 
