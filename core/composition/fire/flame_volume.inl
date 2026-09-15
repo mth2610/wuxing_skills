@@ -25,6 +25,7 @@
 // unique to the file, not to the concept.
 #define FVOL_MAX_CORE 10
 #define FVOL_MAX_BODY 22
+#define FVOL_MAX_VOLUME_LIVE 18
 
 static ColorGradient s_fvolCoreGrad = {0}; // additive hot core
 static ColorGradient s_fvolBodyGrad = {0}; // black-body body, ends dark
@@ -40,7 +41,9 @@ static ParticleConfig s_fvolSmokeSeed; // what a dying body ember becomes
 static bool s_fvolInit = false;
 
 static float s_fvolCoreAlpha = 0.55f;
-static float s_fvolSmokeAmt = 1.0f;
+// Probability that a dying flame puff emits one independent smoke particle.
+// Zero is clean fire; smoke never comes from the packed flame shader.
+static float s_fvolSmokeAmt = 0.0f;
 // Rise speed, as a multiplier on everything vertical. Meter-scale is unforgiving
 // here: a 1 m flame whose particles travel 1-2 m in their 0.5 s lifetime reads as
 // a blowtorch, not as fire — the embers outrun the flame that made them. Visible
@@ -81,11 +84,11 @@ static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
 // without raising the other is how this looked WORSE at each half-step. Note
 // the owner already measured the other direction — cutting the count to 26 made
 // the patchiness more visible, not less, because it exposes each silhouette.
-static float s_fvolBodyLive = 68.0f;
+static float s_fvolBodyLive = 18.0f;
 // Multiplier on the puff body's radius. Count and size buy the same cohesion at
 // the same fill cost; size is the cheaper one in draw calls. Which is right is
 // a look judgement, so both are tunables.
-static float s_fvolBodySize = 0.88f;
+static float s_fvolBodySize = 1.05f;
 static float s_fvolSpread = 1.0f;      // x on how wide the licks are spread
 // Body blend: 0 = ALPHA (default), 1 = ADDITIVE.
 //
@@ -160,26 +163,10 @@ static float s_fvolHeatGain = 0.88f;
 // Radiance gain on the flame half. SEPARATE from heatGain on purpose: heatGain
 // moves the sprite along the ramp (what COLOUR it is), this moves how much light
 // it throws (how BRIGHT it is).
-static float s_fvolEmissive = 2.6f;
-// ── SMOKINESS IS A COMPOSITION DECISION, NOT AN ASSET ONE ───────────────────
-//
-// The sheet is directionless by construction (the puff sim runs at zero gravity
-// and zero buoyancy so sprites can be spun and scattered without reading as
-// copies), and these two keep its SMOKINESS directionless in the same sense:
-// nothing about "petrol fire" vs "burning leaves" vs "a clean flame" is baked
-// into the texture. The R:G ratio was the last thing that was, and a second
-// bake for it would have been the wrong unit — one greyscale puff has to serve
-// all three.
-//
-//   petrol      smokeGain 1.5  tint  20, 18, 17   (heavy, black)
-//   leaves      smokeGain 1.2  tint 214, 210, 198 (light, white)
-//   clean flame smokeGain 0.15 tint  90, 82, 76   (almost none)
-//
-// Measured on the shipping sheet: emission averages 37.5 against soot 155.1, a
-// ratio of 0.24 — heavily smoke-dominated, which is why the default reads as a
-// large sooty fire rather than a torch.
-static float s_fvolSmokeGain = 0.0f;
-static float s_fvolSmokeR = 82.0f, s_fvolSmokeG = 74.0f, s_fvolSmokeB = 69.0f;
+static float s_fvolEmissive = 1.8f;
+// Smoke is deliberately not decoded from the packed flame texture. Different
+// fuels request it through flame_smoke_amount, which attaches a separate death
+// sub-emitter with its own alpha blend, lighting, lifetime and wind response.
 // Ramp LUTs, one per material, baked lazily. THIS is where fire's colour lives
 // now — the sheet is greyscale on purpose, so pointing this at another gradient
 // turns the same simulation into purple or blue magic fire with no re-bake.
@@ -229,8 +216,8 @@ static void FVol_InitShared(void)
     Tuning_RegisterFloat("flame_width_mul", &s_fvolWidthMul, 0.50f);
     Tuning_RegisterFloat("flame_atlas", &s_fvolAtlas, 1.0f); // 0 sprites/1 puff/2 column
     Tuning_RegisterFloat("flame_body_count", &s_fvolBodyCount, 1.0f);
-    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 68.0f);
-    Tuning_RegisterFloat("flame_body_size", &s_fvolBodySize, 0.88f);
+    Tuning_RegisterFloat("flame_body_live", &s_fvolBodyLive, 18.0f);
+    Tuning_RegisterFloat("flame_body_size", &s_fvolBodySize, 1.05f);
     Tuning_RegisterFloat("flame_spread", &s_fvolSpread, 1.0f);
     Tuning_RegisterFloat("flame_body_blend", &s_fvolBodyBlend, 0.0f);
     /* The default here WINS over the static initialiser above — Tuning_RegisterFloat
@@ -239,11 +226,7 @@ static void FVol_InitShared(void)
     Tuning_RegisterFloat("flame_volume", &s_fvolVolume, 1.0f);
     Tuning_RegisterFloat("flame_motion_warp", &s_fvolMotionWarp, 1.0f);
     Tuning_RegisterFloat("flame_heat_gain", &s_fvolHeatGain, 0.88f);
-    Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 2.6f);
-    Tuning_RegisterFloat("flame_smoke_gain", &s_fvolSmokeGain, 0.0f);
-    Tuning_RegisterFloat("flame_smoke_r", &s_fvolSmokeR, 82.0f);
-    Tuning_RegisterFloat("flame_smoke_g", &s_fvolSmokeG, 74.0f);
-    Tuning_RegisterFloat("flame_smoke_b", &s_fvolSmokeB, 69.0f);
+    Tuning_RegisterFloat("flame_emissive", &s_fvolEmissive, 1.8f);
 
     // The packed VOLUME sheet — the same sim as the split above, delivered with
     // its temperature field intact. Missing file falls through to the legacy
@@ -451,17 +434,6 @@ static const ColorGradient *FVol_HeatGradient(VC_MaterialId matId)
     return g;
 }
 
-// Clamped here rather than at each tunable: tuning.cfg hot-reloads raw floats
-// straight into these, so a typo would wrap the byte cast instead of saturating.
-static Color FVol_SmokeTint(void)
-{
-    float r = s_fvolSmokeR, g = s_fvolSmokeG, b = s_fvolSmokeB;
-    if (r < 0.0f) r = 0.0f; else if (r > 255.0f) r = 255.0f;
-    if (g < 0.0f) g = 0.0f; else if (g > 255.0f) g = 255.0f;
-    if (b < 0.0f) b = 0.0f; else if (b > 255.0f) b = 255.0f;
-    return (Color){(unsigned char)r, (unsigned char)g, (unsigned char)b, 255};
-}
-
 static Texture2D FVol_RampLUT(VC_MaterialId matId)
 {
     if (matId < 0 || matId >= VC_MAT_COUNT)
@@ -558,7 +530,12 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                          s_fvolEmissive, s_fvolBodyLive, (int)matId);
             }
         }
-        const float live = s_fvolBodyLive * intensity * s_fvolBodyCount;
+        // Each atlas particle is a complete simulated flame puff. Letting a hot
+        // tuning value stack dozens of them drives the premultiplied centre to
+        // opaque white and destroys the baked internal structure. Keep this a
+        // small whole-puff population; intensity may only reduce the budget.
+        const float requestedLive = s_fvolBodyLive * intensity * s_fvolBodyCount;
+        const float live = fminf(requestedLive, FVOL_MAX_VOLUME_LIVE);
         *bodyAccum += dtNow * (live / FVOL_BODY_LIFE_AVG);
         int n = (int)*bodyAccum;
         *bodyAccum -= (float)n;
@@ -579,6 +556,33 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                          pos.y + Random01() * 0.05f * scale,
                          pos.z + sinf(ang) * rad};
             float life = Math_Mix(0.80f, FVOL_BODY_LIFE_MAX, Random01());
+
+            // Smoke is a separate material population. ParticleSystem copies
+            // this config into the parent at spawn, then places the child at the
+            // parent's death position; no packed soot/opacity enters flame RGB.
+            float smokeChance = s_fvolSmokeAmt;
+            if (smokeChance < 0.0f) smokeChance = 0.0f;
+            else if (smokeChance > 1.0f) smokeChance = 1.0f;
+            bool emitSmoke = s_smokePuffTex[i % SMOKE_PUFF_VARIANTS].id != 0 &&
+                             Random01() < smokeChance;
+            s_fvolSmokeSeed = (ParticleConfig){
+                .velocity = {0.0f, 0.18f * scale, 0.0f},
+                .velocityInheritance = 0.12f,
+                .radius = Math_Mix(0.16f, 0.25f, Random01()) * scale,
+                .lifetime = Math_Mix(1.0f, 1.6f, Random01()),
+                .colorStart = (Color){220, 220, 220, 72},
+                .colorEnd = (Color){190, 190, 190, 0},
+                .forceField = &s_smokePuffFld,
+                .windInfluence = 0.85f,
+                .radiusCurve = &s_smokePuffGrow,
+                .alphaCurve = &s_smokePuffFade,
+                .render.texture = s_smokePuffTex[i % SMOKE_PUFF_VARIANTS],
+                .render.sixWayLighting = 1,
+                .render.sixWayScattering = 1.25f,
+                .render.sixWayAbsorption = 1.10f,
+                .rotation = Random01() * 2.0f * PI,
+                .angularVelocity = (Random01() - 0.5f) * 0.35f,
+            };
 
             SpawnParticle((ParticleConfig){
                 .position = p,
@@ -609,8 +613,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .render.rampLUT = ramp,
                 .render.heatGain = s_fvolHeatGain,
                 .render.emissiveBoost = s_fvolEmissive,
-                .render.smokeGain = s_fvolSmokeGain,
-                .render.smokeTint = FVol_SmokeTint(),
+                .render.smokeGain = 0.0f,
                 .render.motionTex = s_fvolMotionTex,
                 .render.motionWarpScale = s_fvolMotionWarp,
                 .render.sixWayLighting = 1,
@@ -642,6 +645,8 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .stretchMinSpeed = 0.10f,
                 .rotation = (Random01() - 0.5f) * 0.35f,
                 .angularVelocity = (Random01() - 0.5f) * 0.15f,
+                .onDeathEmit = emitSmoke ? &s_fvolSmokeSeed : NULL,
+                .onDeathEmitCount = emitSmoke ? 1 : 0,
             });
         }
 

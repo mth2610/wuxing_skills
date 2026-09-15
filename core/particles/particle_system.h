@@ -96,7 +96,8 @@ struct ParticleConfig {
   // 3.1 SUB-EMITTER SYSTEM — MỞ RỘNG[cite: 4]
   // ============================================================
   const ParticleConfig
-      *onDeathEmit; // NULL = không dùng, hạt con nổ ra khi hạt mẹ chết[cite: 4]
+      *onDeathEmit; // NULL = không dùng. Hạt con sinh tại vị trí hạt mẹ và giữ
+                    // đúng velocity đã cấu hình, cộng velocityInheritance.
   int onDeathEmitCount; // Số lượng hạt con bùng nổ khi chết[cite: 4]
 
   const ParticleConfig

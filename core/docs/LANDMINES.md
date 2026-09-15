@@ -3600,3 +3600,22 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   position. Preserve pulse mass and rate; shape diversity must not secretly
   increase simulation load. Guarded by
   `core/tests/gas_plume_runtime_test.c`.
+
+## A baked whole-puff flipbook is a population, not a particle stamp (15/09/2026)
+
+- **Symptom:** particle flame volume becomes a soft orange/yellow slab with a
+  broad white centre; individual frames look plausible, but the stable emitter
+  loses internal structure and costs excessive fill rate.
+- **Cause:** each sprite already contains an entire simulated flame puff. At 68
+  concurrent premultiplied sprites, representative centre opacity converges past
+  98%, while a near-linear emission gate lets most of every puff add radiance.
+- **Rule:** give whole-puff atlases a hard live-count ceiling independent of hot
+  tuning values, size the smaller population to keep one connected silhouette,
+  and gate emission around authored hot regions rather than the full carrier.
+  A pure-flame decoder must derive both mask and radiance from emission alone;
+  packed soot/opacity belongs to neither. If a fuel needs smoke, attach a
+  separately shaded alpha sub-emitter instead of mixing it into flame output.
+  Death sub-emitters must obey their authored metre-scale velocity—never add an
+  implicit legacy-scale random burst in the particle system.
+  Validate on matched dark and bright plates; particle count alone cannot reveal
+  the overdraw. Guarded by `core/tests/flame_volume_optics_test.c`.

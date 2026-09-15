@@ -498,11 +498,6 @@ void UpdateParticles(float dt)
           tempChild.velocity.x += p->vx * p->onDeathConfig.velocityInheritance;
           tempChild.velocity.y += p->vy * p->onDeathConfig.velocityInheritance;
           tempChild.velocity.z += p->vz * p->onDeathConfig.velocityInheritance;
-
-          // Sử dụng float random nhanh qua Random01() thay cho GetRandomValue chậm
-          tempChild.velocity.x += (Random01() * 160.0f - 80.0f);
-          tempChild.velocity.y += (Random01() * 160.0f - 80.0f);
-          tempChild.velocity.z += (Random01() * 160.0f - 80.0f);
           SpawnParticle(tempChild);
         }
       }

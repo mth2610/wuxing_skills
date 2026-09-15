@@ -592,15 +592,22 @@ void main()
         // =====================================================================
         if (u_volumeSheet > 1.5)
         {
-            // Clean edge feathering based on emission and opacity
-            float flameMask = smoothstep(0.015, 0.08, emis + opac * 0.4);
+            // Pure flame owns emission only. Packed opacity also contains the
+            // simulated soot envelope; admitting it here grows a pale cloud
+            // around the flame and lets overlapping smoke edges bloom white.
+            float flameMask = smoothstep(0.015, 0.08, emis);
             if (flameMask < 0.005) discard;
 
             float fade = fragColor.a * soft * flameMask;
             if (fade < 0.005) discard;
 
             float heat = clamp(emis * u_heatGain * fragColor.r, 0.0, 1.0);
-            float radianceGating = pow(clamp(emis * 1.30, 0.0, 1.0), 1.10) * flameMask;
+            // The old near-linear gate emitted from most of the puff and made
+            // overlapping whole-volume sprites converge into one orange/white
+            // cloud. Keep radiance on the authored hot filaments while low
+            // emission remains transparent carrier material.
+            float compactEmission = smoothstep(0.06, 0.75, emis);
+            float radianceGating = pow(compactEmission, 1.35) * flameMask;
 
             // Authoritative Planck Blackbody LUT from u_rampLUT (vibrant radiant colors)
             vec3 rampCol = texture(u_rampLUT, vec2(heat, 0.5)).rgb;
@@ -612,35 +619,10 @@ void main()
             vec3 flame = radiantFlame * (radianceGating * u_emissiveBoost);
             flame = CompressFlameRadiance(flame, heat);
 
-            // True Premultiplied Alpha: RGB is emitted radiance, Alpha is opacity
-            // Pure flame (smokeGain <= 0.0) has low optical occlusion so backgrounds don't get cut out
-            float flameOpacity = (u_smokeGain <= 0.0)
-                ? clamp(fade * emis * 0.35, 0.0, 0.50)
-                : clamp(fade * (0.15 * soot + emis * 0.45), 0.0, 0.95);
-
-            if (u_smokeGain <= 0.0)
-            {
-                finalColor = vec4(flame * fade, flameOpacity);
-                return;
-            }
-
-            float selfShadow = (soot > 0.004) ? clamp(shad / soot, 0.0, 1.0) : 1.0;
-            float wrap;
-            vec3 N = ParticleNormalWorld(ParticleNormalLocal(opac));
-            vec3 lit = (u_sixWayLighting > 0.5)
-                ? ParticleLightTerm6Way((u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5) ? fract(fragTexCoord * u_atlasGrid) : fragTexCoord,
-                                        texelColor.rgb, texBColor.rgb, texBColor.a,
-                                        soot, selfShadow, opac, ParticleLightDir(), wrap)
-                : ParticleLightTerm(N, ParticleLightDir(), wrap);
-            vec3 smoke = u_smokeTint * lit * (u_sixWayLighting > 0.5 ? 1.0 : selfShadow);
-
-            float matNow  = soot + emis;
-            float matOrig = max(rawSoot + emis, 1e-4);
-            float alpha = clamp(opac * clamp(matNow / matOrig, 0.0, 1.0) * fade, 0.0, 1.0);
-            float sootFrac = clamp(soot / max(matNow, 1e-4), 0.0, 1.0);
-            float blendAlpha = mix(flameOpacity, alpha, sootFrac);
-
-            finalColor = vec4(flame * fade + smoke * alpha * sootFrac, blendAlpha);
+            // The premultiplied pass with zero alpha is additive radiance. Smoke
+            // is a separate sub-emitter and therefore owns its own alpha/body
+            // pass; never reconstruct soot from this packed flame sprite.
+            finalColor = vec4(flame * fade, 0.0);
             return;
         }
 

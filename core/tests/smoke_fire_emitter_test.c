@@ -55,15 +55,15 @@ int main(void) {
           Has(fire, "sqrtf(Random01()) * 0.18f") &&
           Has(fire, "Math_Mix(0.70f, 1.05f"),
           "packed volume emitter owns a compact foot and upward macro motion");
-    Check(Has(fire, "s_fvolBodyLive = 68.0f") &&
-          Has(fire, "&s_fvolBodyLive, 68.0f") &&
+    Check(Has(fire, "s_fvolBodyLive = 18.0f") &&
+          Has(fire, "&s_fvolBodyLive, 18.0f") &&
           Has(fire, "s_fvolBodyAlpha = 0.35f") &&
           Has(fire, "&s_fvolBodyAlpha, 0.35f") &&
           Has(fire, "(unsigned char)(255.0f * s_fvolBodyAlpha)") &&
           Has(fire, "s_fvolHeatGain = 0.88f") &&
           Has(fire, "&s_fvolHeatGain, 0.88f") &&
-          Has(fire, "s_fvolEmissive = 2.6f") &&
-          Has(fire, "&s_fvolEmissive, 2.6f") &&
+          Has(fire, "s_fvolEmissive = 1.8f") &&
+          Has(fire, "&s_fvolEmissive, 1.8f") &&
           Has(fire, ".render.volumeSheet = 2") &&
           Has(fire, ".render.motionTex = s_fvolMotionTex") &&
           Has(fire, ".render.sixWayLighting = 1") &&
