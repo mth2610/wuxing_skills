@@ -94,6 +94,8 @@ static void Test_SpecIsPresentAndComplete(void) {
         "NOISE layout is defined — pure data, four decorrelated fields, never drawn");
   CHECK(FileHas(spec, "| `MOTION` | `flowx` | `flowy` | `speed` | `mask` |"),
         "MOTION layout is defined for optical-flow flipbook data");
+  CHECK(FileHas(spec, "| `LIGHT6` | `lightx` | `lighty` | `lightz` | `opacity` or `ao` |"),
+        "LIGHT6 layout is defined for directional smoke flipbooks");
   CHECK(FileHas(spec, "`STRETCH` and `TILE` cannot be the same channel"),
         "R1: the SHAPE-vs-MATERIAL law is stated at channel granularity");
   CHECK(FileHas(spec, "A sheet MAY mix modes across channels"),
@@ -122,8 +124,8 @@ static void Test_TheRuleIsActuallyWired(void) {
   const char *v = "scripts/validate_vfx_surface_registry.py";
   CHECK(FileHas(v, "CHANNEL_RE = re.compile("),
         "the validator parses the grammar rather than substring-matching prose");
-  CHECK(FileHas(v, "r\"^(?P<layout>[A-Z_]+)\\s*\\|\\s*\""),
-        "the layout token accepts SPLIT_LEGACY's underscore");
+  CHECK(FileHas(v, "r\"^(?P<layout>[A-Z0-9_]+)\\s*\\|\\s*\""),
+        "the layout token accepts underscores and LIGHT6's digit");
   CHECK(FileHas(v, "\"STRAND\":   {\"R\": {\"pattern1\"}, \"G\": {\"pattern2\"}, \"B\": {\"distort\"}, \"A\": {\"dissolve\"}}"),
         "the validator's STRAND slots match the spec table");
   CHECK(FileHas(v, "SIGNED_SLOTS = {\"distort\", \"flowx\", \"flowy\"}"),
@@ -144,7 +146,7 @@ static void Test_EveryAssetDeclaresALayout(void) {
   }
 
   static const char *kLayouts[] = {"STRAND", "FLOW",  "OPAQUE", "FLIPBOOK",
-                                   "VOLUME", "MOTION", "NOISE", "SPLIT_LEGACY"};
+                                   "VOLUME", "MOTION", "LIGHT6", "NOISE", "SPLIT_LEGACY"};
   const char *needle = "\"channels\": \"";
   int total = 0, ok = 0, packed = 0, legacy = 0;
   const char *p = manifest;

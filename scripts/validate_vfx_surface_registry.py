@@ -20,7 +20,7 @@ PACKING_SPEC = ROOT / "assets" / "TEXTURE_PACKING.md"
 # ── The channel grammar (assets/TEXTURE_PACKING.md §2) ──────────────────────
 # <LAYOUT> | R:<slot>/<mode> | G:... | B:... | A:...  [— free prose]
 CHANNEL_RE = re.compile(
-    r"^(?P<layout>[A-Z_]+)\s*\|\s*"
+    r"^(?P<layout>[A-Z0-9_]+)\s*\|\s*"
     r"R:(?P<r_slot>\w+)/(?P<r_mode>\w+)\s*\|\s*"
     r"G:(?P<g_slot>\w+)/(?P<g_mode>\w+)\s*\|\s*"
     r"B:(?P<b_slot>\w+)/(?P<b_mode>\w+)\s*\|\s*"
@@ -43,6 +43,9 @@ LAYOUTS = {
     # Optical-flow data aligned one-for-one with a flipbook atlas. Unlike FLOW,
     # this is not a drawable surface and its cells are clamped independently.
     "MOTION": {"R": {"flowx"}, "G": {"flowy"}, "B": {"speed"}, "A": {"mask"}},
+    # One half of a six-direction smoke lightmap pair. Map A stores +XYZ and
+    # Map B stores -XYZ; A remains real opacity so either half is inspectable.
+    "LIGHT6": {"R": {"lightx"}, "G": {"lighty"}, "B": {"lightz"}, "A": {"opacity", "ao"}},
     # Pure data: four decorrelated scalar fields. Never drawn.
     "NOISE":    {"R": {"field"}, "G": {"field"}, "B": {"field"}, "A": {"field"}},
     # Pre-spec files: a standalone flow map or mask that leaves channels
@@ -220,8 +223,8 @@ def check_channels(label, text, flipbook):
                     f"constant channel in a packed layout"
                 )
         # A flipbook cell is never wrapped.
-        if layout == "FLIPBOOK" and mode != "CLAMP":
-            failures += fail(f"{label}: FLIPBOOK.{channel} must be CLAMP, got {mode}")
+        if layout in ("FLIPBOOK", "VOLUME", "MOTION", "LIGHT6") and mode != "CLAMP":
+            failures += fail(f"{label}: {layout}.{channel} must be CLAMP, got {mode}")
 
     # R1 — a channel cannot be both a shape and a seamless material. The
     # grammar makes this structurally impossible per channel; what is still
@@ -238,7 +241,7 @@ def check_channels(label, text, flipbook):
     # celled too — it is the same ray-marched sheet as FLIPBOOK, differing in
     # what the channels MEAN (four scalar fields, no colour), not in whether it
     # is a grid of frames.
-    CELLED = ("FLIPBOOK", "VOLUME", "MOTION")
+    CELLED = ("FLIPBOOK", "VOLUME", "MOTION", "LIGHT6")
     has_cells = isinstance(flipbook, list) and len(flipbook) == 3 and flipbook[2] > 0
     if has_cells and layout not in CELLED:
         failures += fail(f"{label}: profile declares flipbook cells but layout is {layout}")
@@ -321,7 +324,7 @@ def main():
             failures += fail(f"{name}: blocked decal requires a migration/fallback decision")
         for role, asset in assets.items():
             path, channels = asset.get("path"), asset.get("channels")
-            if role not in {"body", "flow", "mask", "gradient", "fallback_body"}:
+            if role not in {"body", "flow", "lightmap_b", "mask", "gradient", "fallback_body"}:
                 failures += fail(f"{name}: unknown asset role {role}")
             if not path or not path.startswith("assets/textures/"):
                 failures += fail(f"{name}/{role}: invalid runtime path")
@@ -370,7 +373,11 @@ def main():
             failures += fail(f"{name}: fades exceed lifetime")
         if not all(isinstance(budget.get(k), int) and budget[k] >= 0 for k in ("max_draw_calls", "max_textures")):
             failures += fail(f"{name}: budget needs non-negative draw/texture limits")
-        elif budget["max_textures"] and len(assets) > budget["max_textures"]:
+        # fallback_body is mutually exclusive with the primary body set and is
+        # loaded only when that set is incomplete; it is not simultaneous cost.
+        active_asset_count = sum(1 for role in assets if role != "fallback_body")
+        max_textures = budget.get("max_textures")
+        if isinstance(max_textures, int) and max_textures and active_asset_count > max_textures:
             failures += fail(f"{name}: assets exceed texture cost budget")
         if profile.get("primitive") == "decal":
             if profile.get("role") not in {"residue", "scorch", "impact", "rune"}:

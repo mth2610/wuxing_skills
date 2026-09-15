@@ -87,6 +87,9 @@ Used via `SpawnGroundDecal(DECAL_PRESET_GENERIC_*)`. White/tintable.
 | `fire_tongue_8x8_flame.png` | `VFX_SurfaceRegistry` FireTongue body | 8×8 directional +Z flame-column flipbook; white emission mask with a soft alpha rim | white flame + alpha |
 | `pure_flame_puff_8x8_volume.png` | `VFX_SurfaceRegistry` FireVolume body | 8×8 directionless VOLUME atlas: emission, density, self-shadow, opacity | data, 4-channel volume |
 | `pure_flame_puff_motion_8x8.png` | `VFX_SurfaceRegistry` FireVolume motion | 8×8 optical-flow atlas aligned with the volume cells: signed XY, speed, mask | data, 4-channel motion |
+| `smoke_puff_6way_a.png` | `VFX_SurfaceRegistry` SmokePuff body | 8×8 LIGHT6 Map A: +X/+Y/+Z transmission and opacity | data, directional lightmap |
+| `smoke_puff_6way_b.png` | `VFX_SurfaceRegistry` SmokePuff lightMapB | 8×8 LIGHT6 Map B: -X/-Y/-Z transmission and opacity | data, directional lightmap |
+| `smoke_puff_motion_8x8.png` | `VFX_SurfaceRegistry` SmokePuff motion | 8×8 optical flow generated from smoke opacity at 128px/cell | data, 4-channel motion |
 
 ### P1 semantic-surface migration map
 

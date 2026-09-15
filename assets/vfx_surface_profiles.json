@@ -255,7 +255,7 @@
       },
       "budget": {
         "max_draw_calls": 0,
-        "max_textures": 2
+        "max_textures": 3
       },
       "flipbook": [
         8,
@@ -263,19 +263,27 @@
         64
       ],
       "seam": "not_applicable",
-      "provenance": "Taichi smoke puff bake with pre-lit RGB and alpha density",
+      "provenance": "Taichi smoke puff bake exported as a dual LIGHT6 pair. Optical flow is regenerated from Map A opacity with: render_motion.py assets/textures/smoke_puff_6way_a.png --grid 8 --cell 128 --source-channel a --out assets/textures/smoke_puff_motion_8x8.png.",
       "consumers": [
         "VFX_ComposeSmokePuff",
         "SmokeEmitter"
       ],
       "assets": {
         "body": {
-          "path": "assets/textures/smoke_puff_8x8_smoke.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — RGB baked self-shadow, A true opacity"
+          "path": "assets/textures/smoke_puff_6way_a.png",
+          "channels": "LIGHT6 | R:lightx/CLAMP | G:lighty/CLAMP | B:lightz/CLAMP | A:opacity/CLAMP — Map A stores +X, +Y and +Z directional smoke transmission"
+        },
+        "lightmap_b": {
+          "path": "assets/textures/smoke_puff_6way_b.png",
+          "channels": "LIGHT6 | R:lightx/CLAMP | G:lighty/CLAMP | B:lightz/CLAMP | A:ao/CLAMP — Map B stores -X, -Y and -Z directional smoke transmission plus baked ambient occlusion"
+        },
+        "flow": {
+          "path": "assets/textures/smoke_puff_motion_8x8.png",
+          "channels": "MOTION | R:flowx/CLAMP | G:flowy/CLAMP | B:speed/CLAMP | A:mask/CLAMP — optical flow aligned with the 8x8 LIGHT6 pair"
         },
         "fallback_body": {
-          "path": "assets/textures/smoke_atlas_8x8.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — legacy smoke fallback"
+          "path": "assets/textures/smoke_puff_8x8_smoke.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — pre-lit smoke fallback when the LIGHT6 pair is incomplete"
         }
       }
     },

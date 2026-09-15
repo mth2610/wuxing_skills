@@ -223,7 +223,7 @@ typedef struct {
     // 1 = synthetic 6-way directional scattering (evaluated from single volume sheet / quad)
     // 2 = dual-texture 6-way lightmap pair (texture = Map A, sixWayTexB = Map B)
     int sixWayLighting;
-    Texture2D sixWayTexB;      // Lightmap B (-X Left, -Y Bottom, -Z Front, Alpha Emissive)
+    Texture2D sixWayTexB;      // Lightmap B (-X/-Y/-Z; alpha is AO or emission per surface contract)
     float sixWayScattering;    // Forward scatter / backlit multiplier (0 = default 1.0)
     float sixWayAbsorption;    // Multi-axis extinction factor (0 = default 1.0)
 

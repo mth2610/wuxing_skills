@@ -93,6 +93,7 @@ typedef struct {
     const char *name;
     const char *bodyPath;
     const char *flowPath;
+    const char *lightMapBPath;
     const char *maskPath;
     const char *gradientPath;
     const char *fallbackBodyPath;
@@ -106,6 +107,7 @@ typedef struct {
     // cost debugging time.
     const char *bodyChannels;
     const char *flowChannels;
+    const char *lightMapBChannels;
     const char *maskChannels;
     const char *gradientChannels;
     const char *seam;
@@ -123,6 +125,7 @@ typedef struct {
     int flipbookFrames;
     Texture2D body;
     Texture2D flowMap;
+    Texture2D lightMapB;
     Texture2D mask;
     Texture2D gradient;
     Texture2D fallbackBody;

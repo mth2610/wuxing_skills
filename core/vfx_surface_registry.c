@@ -39,12 +39,19 @@ const VFX_SurfaceProfile *VFX_SurfaceRegistry_Get(VFX_SurfaceId id)
                                                          profile->filter);
         profile->flowMap = VFX_SurfaceRegistry_LoadTexture(profile->flowPath, profile->wrap,
                                                             profile->filter);
+        profile->lightMapB = VFX_SurfaceRegistry_LoadTexture(profile->lightMapBPath,
+                                                              profile->wrap, profile->filter);
         profile->mask = VFX_SurfaceRegistry_LoadTexture(profile->maskPath, profile->wrap,
                                                          profile->filter);
         profile->gradient = VFX_SurfaceRegistry_LoadTexture(profile->gradientPath, profile->wrap,
                                                              profile->filter);
-        profile->fallbackBody = VFX_SurfaceRegistry_LoadTexture(profile->fallbackBodyPath,
-                                                                 profile->wrap, profile->filter);
+        // A fallback is mutually exclusive with the primary set. Avoid paying
+        // its VRAM cost when body + required 6-way companion loaded correctly.
+        if (profile->body.id == 0 ||
+            (profile->lightMapBPath != NULL && profile->lightMapBPath[0] != '\0' &&
+             profile->lightMapB.id == 0))
+            profile->fallbackBody = VFX_SurfaceRegistry_LoadTexture(profile->fallbackBodyPath,
+                                                                     profile->wrap, profile->filter);
         s_loaded[id] = true;
     }
     return profile;

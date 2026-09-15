@@ -39,6 +39,7 @@ in R G B A order, even when a channel is unused.
 | `FLIPBOOK` | `color` | `color` | `color` | `opacity` |
 | `VOLUME` | `emission` | `density` | `shadow` | `opacity` |
 | `MOTION` | `flowx` | `flowy` | `speed` | `mask` |
+| `LIGHT6` | `lightx` | `lighty` | `lightz` | `opacity` or `ao` |
 | `NOISE` | `field` | `field` | `field` | `field` |
 
 `STRAND` is the trail sheet read by `core/trails/shaders/trail_deform.fs` mode 2.
@@ -62,6 +63,12 @@ its output is premultiplied, so the consumer must use `VFX_BLEND_PREMULTIPLIED`.
 `VOLUME` atlas. R/G are signed frame-to-frame displacement, B is speed, and A
 gates valid moving content. It is data, never drawable colour; its cell grid
 must match the companion atlas and every channel is `CLAMP`.
+
+`LIGHT6` is one half of a directional smoke flipbook. Map A stores transmission
+from +X/+Y/+Z in RGB and true opacity in A; Map B stores -X/-Y/-Z and may use A
+for baked ambient occlusion. It is for participating, non-emissive material
+such as smoke—not the incandescent flame core. Its grid matches an optional
+`MOTION` atlas and every channel is `CLAMP`.
 
 `NOISE`
 is a pure DATA sheet: four independent scalar fields, decorrelated by
@@ -148,6 +155,7 @@ the layouts whose channels are colour:
 | `FLIPBOOK` | 5 | **no, not as a flag** | an unpadded atlas bleeds neighbouring cells into each other as the chain shrinks — needs cell padding and a clamped mip count, not a boolean |
 | `VOLUME` | 1 | **no, same reason** | also an 8x8 atlas, and its channels are emission/density/shadow, not colour |
 | `MOTION` | 1 | **no, same reason** | an unpadded celled atlas whose RG channels are signed vectors |
+| `LIGHT6` | 2 | **no, same reason** | an unpadded directional atlas pair; adjacent frames encode unrelated times |
 | `FLOW` / `SPLIT_LEGACY` flow | 4 | **never** | RG is a direction VECTOR; the average of two opposing flows is no flow |
 | `STRAND` | 2 | **never** | `distort` is a signed scalar and `dissolve` is a threshold — averaging a threshold moves *when* a thing dissolves |
 | `NOISE` | 1 | pointless | it is a field sampled at an authored frequency; mipping changes its statistics |

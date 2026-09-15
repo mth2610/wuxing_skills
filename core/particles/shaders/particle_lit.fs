@@ -324,7 +324,7 @@ vec3 ParticleLightTerm(vec3 N, vec3 L, out float wrapOut)
 //   Map A: (+X Right, +Y Top,    +Z Back / Transmitted through volume)
 //   Map B: (-X Left,  -Y Bottom, -Z Front / Camera-facing reflection)
 // Invariant to particle 2D rotation via screen derivative tangent frame reconstruction.
-vec3 ParticleLightTerm6Way(vec2 luv, vec3 sampledMapA, vec3 sampledMapB,
+vec3 ParticleLightTerm6Way(vec2 luv, vec3 sampledMapA, vec3 sampledMapB, float sampledMapBAux,
                            float soot, float selfShadow, float opac, vec3 L,
                            out float wrapOut)
 {
@@ -356,7 +356,12 @@ vec3 ParticleLightTerm6Way(vec2 luv, vec3 sampledMapA, vec3 sampledMapB,
         // would make lighting lag behind the advected density silhouette.
         mapA = sampledMapA;
         mapB = sampledMapB;
-        ao = clamp(dot(mapA + mapB, vec3(1.0 / 6.0)), 0.05, 1.0);
+        // LIGHT6 smoke stores authored AO in Map B.a. A future six-way VOLUME
+        // fire uses that same slot for emission, so retain the RGB-derived
+        // fallback there; emission itself must never be darkened as smoke AO.
+        ao = (u_volumeSheet < 0.5)
+           ? clamp(sampledMapBAux, 0.05, 1.0)
+           : clamp(dot(mapA + mapB, vec3(1.0 / 6.0)), 0.05, 1.0);
 
         // Extinction / Contrast shaping: mapA and mapB remapped to expand dynamic range
         mapA = clamp((mapA - 0.04) / 0.96, 0.0, 1.0);
@@ -436,6 +441,18 @@ vec3 ParticleLightTerm6Way(vec2 luv, vec3 sampledMapA, vec3 sampledMapB,
         Lpt_neg *= Lpt_neg;
         float ptTransmission = dot(Lpt_pos, mapA) + dot(Lpt_neg, mapB);
         lit += u_vfxLightColor[i] * ptTransmission * att;
+    }
+
+    // Baked smoke already contains rich internal shading. Preserve scene-light
+    // direction and luminance, but reject chroma so warm sunlight, coloured VFX
+    // lights, and ambient probes cannot turn white smoke yellow/purple or make
+    // its hue flicker as those contributions change.
+    // Volume fire keeps the full coloured-light response; its emission is handled
+    // separately by the blackbody path below.
+    if (u_sixWayLighting > 1.5 && u_volumeSheet < 0.5)
+    {
+        float smokeLightY = dot(lit, vec3(0.2126, 0.7152, 0.0722));
+        lit = vec3(smokeLightY);
     }
     return lit;
 }
@@ -612,7 +629,7 @@ void main()
             vec3 N = ParticleNormalWorld(ParticleNormalLocal(opac));
             vec3 lit = (u_sixWayLighting > 0.5)
                 ? ParticleLightTerm6Way((u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5) ? fract(fragTexCoord * u_atlasGrid) : fragTexCoord,
-                                        texelColor.rgb, texBColor.rgb,
+                                        texelColor.rgb, texBColor.rgb, texBColor.a,
                                         soot, selfShadow, opac, ParticleLightDir(), wrap)
                 : ParticleLightTerm(N, ParticleLightDir(), wrap);
             vec3 smoke = u_smokeTint * lit * (u_sixWayLighting > 0.5 ? 1.0 : selfShadow);
@@ -646,7 +663,7 @@ void main()
         vec3  N   = ParticleNormalWorld(ParticleNormalLocal(opac));
         vec3  lit = (u_sixWayLighting > 0.5)
             ? ParticleLightTerm6Way((u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5) ? fract(fragTexCoord * u_atlasGrid) : fragTexCoord,
-                                    texelColor.rgb, texBColor.rgb,
+                                    texelColor.rgb, texBColor.rgb, texBColor.a,
                                     soot, selfShadow, opac, ParticleLightDir(), wrap)
             : ParticleLightTerm(N, ParticleLightDir(), wrap);
         vec3  smoke = u_smokeTint * lit * (u_sixWayLighting > 0.5 ? 1.0 : selfShadow);
@@ -749,7 +766,7 @@ void main()
     float wrap;
     vec3  lit = (u_sixWayLighting > 0.5)
         ? ParticleLightTerm6Way((u_atlasGrid.x > 1.5 || u_atlasGrid.y > 1.5) ? fract(fragTexCoord * u_atlasGrid) : fragTexCoord,
-                                texelColor.rgb, texBColor.rgb,
+                                texelColor.rgb, texBColor.rgb, texBColor.a,
                                 base.a, 1.0 - base.a * 0.5, base.a, L, wrap)
         : ParticleLightTerm(N, L, wrap);
 
@@ -769,9 +786,10 @@ void main()
     //
     // For 6-way dual lightmap pairs (Mode 2), texture0 holds directional lightmaps
     // (+X, +Y, +Z) rather than diffuse surface albedo. Diffuse albedo comes from
-    // fragColor.rgb. Multiplying directional maps directly into base.rgb would paint
-    // the lobes raw red/green/blue.
-    vec3 albedo = (u_sixWayLighting > 1.5) ? fragColor.rgb : base.rgb;
+    // a neutral white carrier. Multiplying directional maps directly into base.rgb
+    // would paint the lobes raw red/green/blue; using fragColor.rgb would leak the
+    // caller's element tint into smoke that is explicitly authored as white.
+    vec3 albedo = (u_sixWayLighting > 1.5) ? vec3(1.0) : base.rgb;
     vec3 shaded = albedo * lit;
     // Boost is 1.0 for lit batches, so this is a no-op for smoke and dust.
     finalColor = VFX_ResolveBody(mix(albedo, shaded, effLightingStrength),

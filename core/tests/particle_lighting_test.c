@@ -337,6 +337,18 @@ static void Test_6WayLightingBasisAndAxes(void)
               L_local_back.x, L_local_back.y, L_local_back.z);
 }
 
+static void Test_6WaySmokeRejectsEnvironmentChroma(void)
+{
+    V3 colouredLight = v3(1.0f, 0.18f, 0.72f);
+    float y = v3dot(colouredLight, v3(0.2126f, 0.7152f, 0.0722f));
+    V3 smokeLight = v3(y, y, y);
+    float smokeRange = fmaxf(smokeLight.x, fmaxf(smokeLight.y, smokeLight.z)) -
+                       fminf(smokeLight.x, fminf(smokeLight.y, smokeLight.z));
+    CHECK_MSG(smokeRange <= 1e-6f,
+              "6-way smoke rejects all environment chroma",
+              "smoke RGB range %.6f", smokeRange);
+}
+
 static void Test_RotationInvarianceTangentBasis(void)
 {
     V3 V = TestViewDir();
@@ -399,6 +411,9 @@ static void Test_ShaderSourceMatchesMirror(void)
         { "ParticleLightTerm6Way",                 "6-way volumetric lighting integrator" },
         { "mapA = sampledMapA",                   "motion-warped 6-way Map A reuse" },
         { "mapB = sampledMapB",                   "motion-warped 6-way Map B reuse" },
+        { "clamp(sampledMapBAux, 0.05, 1.0)",     "baked LIGHT6 ambient occlusion" },
+        { "lit = vec3(smokeLightY)",              "white smoke rejects environment chroma" },
+        { "? vec3(1.0) : base.rgb",               "true 6-way smoke ignores material tint" },
         { "L_pos *= L_pos",                       "energy-stable squared sun direction weights" },
         { "Lpt_pos *= Lpt_pos",                   "energy-stable squared point-light weights" },
         { "u_sixWayLighting",                      "6-way lighting uniform toggle" },
@@ -430,6 +445,7 @@ int main(void)
     Test_AmbientGainFlattens();
     Test_SoftParticleFade();
     Test_6WayLightingBasisAndAxes();
+    Test_6WaySmokeRejectsEnvironmentChroma();
     Test_RotationInvarianceTangentBasis();
     Test_ShaderSourceMatchesMirror();
 

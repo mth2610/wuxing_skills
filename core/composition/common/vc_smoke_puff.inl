@@ -33,6 +33,7 @@
 #include "core/resource_manager.h"
 
 #define SMOKE_PUFF_MAX_SPRITES 28
+#define SMOKE_FB_MAX_SPRITES 8
 
 static SkillCurve s_smokePuffGrow  = {0};
 // A SECOND, much flatter growth curve used only with the flipbook.
@@ -96,6 +97,7 @@ static Texture2D s_smokePuffTex[SMOKE_PUFF_VARIANTS];
 // landing, and this one costs nothing to keep.
 static Texture2D s_smokeFbTex = {0};
 static Texture2D s_smokeFbTexB = {0};
+static Texture2D s_smokeFbMotionTex = {0};
 // FOUR templates, not one, at slightly different playback rates.
 //
 // SpriteAnim_CalculateUV derives the frame from the particle's ABSOLUTE age
@@ -147,6 +149,7 @@ static float s_smokePuffFbFrames   = 50.0f;
 static float s_smokePuff6WayLighting = 1.0f;
 static float s_smokePuff6WayScat     = 1.8f;
 static float s_smokePuff6WayAbs      = 1.4f;
+static float s_smokePuffMotionWarp   = 0.75f;
 
 static void SmokePuff_InitShared(void)
 {
@@ -168,6 +171,7 @@ static void SmokePuff_InitShared(void)
     Tuning_RegisterFloat("smokepuff_6way_lighting", &s_smokePuff6WayLighting, 1.0f);
     Tuning_RegisterFloat("smokepuff_6way_scat", &s_smokePuff6WayScat, 1.8f);
     Tuning_RegisterFloat("smokepuff_6way_abs", &s_smokePuff6WayAbs, 1.4f);
+    Tuning_RegisterFloat("smokepuff_motion_warp", &s_smokePuffMotionWarp, 0.75f);
 
     // Grows to ~2.2x over its life and never shrinks back — smoke does not
     // contract, it dissipates. The fade curve is what removes it.
@@ -250,32 +254,26 @@ static void SmokePuff_InitShared(void)
     // the lighting pass shades a BILLBOARD and knows nothing about the depth
     // inside the puff, so an unshaded sheet stacks into flat cards — measured at
     // value spread 0.00, which is what "những mảng màu riêng biệt" was.
-    if (FileExists("assets/textures/smoke_puff_6way_a.png") &&
-        FileExists("assets/textures/smoke_puff_6way_b.png"))
+    const VFX_SurfaceProfile *smokeProfile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_PUFF);
+    if (smokeProfile != NULL)
     {
-        s_smokeFbTex = ResourceManager_LoadTexture("assets/textures/smoke_puff_6way_a.png");
-        s_smokeFbTexB = ResourceManager_LoadTexture("assets/textures/smoke_puff_6way_b.png");
-        if (s_smokeFbTex.id != 0 && s_smokeFbTexB.id != 0)
+        s_smokeFbTex = smokeProfile->body;
+        s_smokeFbTexB = smokeProfile->lightMapB;
+        s_smokeFbMotionTex = smokeProfile->flowMap;
+        if (s_smokeFbTex.id == 0 || s_smokeFbTexB.id == 0)
         {
-            SetTextureFilter(s_smokeFbTex, TEXTURE_FILTER_BILINEAR);
-            SetTextureFilter(s_smokeFbTexB, TEXTURE_FILTER_BILINEAR);
-            TraceLog(LOG_INFO, "SMOKE PUFF: Loaded 6-way lightmap pair (Map A %u, Map B %u)",
-                     s_smokeFbTex.id, s_smokeFbTexB.id);
-        }
-    }
-    if (s_smokeFbTex.id == 0)
-    {
-        const VFX_SurfaceProfile *smokeProfile =
-            VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_PUFF);
-        s_smokeFbTex = smokeProfile != NULL ? smokeProfile->body : (Texture2D){0};
-        if (s_smokeFbTex.id == 0 && smokeProfile != NULL)
             s_smokeFbTex = smokeProfile->fallbackBody;
+            s_smokeFbTexB = (Texture2D){0};
+            s_smokeFbMotionTex = (Texture2D){0};
+        }
     }
     // WHICH sheet loaded, said out loud.
     TraceLog(s_smokeFbTex.id != 0 ? LOG_INFO : LOG_WARNING,
-             "SMOKE PUFF: flipbook %s (tex id %u, 6-way texB %u)",
+             "SMOKE PUFF: flipbook %s (tex id %u, 6-way texB %u, motion %u)",
              s_smokeFbTex.id != 0 ? "loaded" : "MISSING",
-             (unsigned)s_smokeFbTex.id, (unsigned)s_smokeFbTexB.id);
+             (unsigned)s_smokeFbTex.id, (unsigned)s_smokeFbTexB.id,
+             (unsigned)s_smokeFbMotionTex.id);
 
     if (s_smokeFbTex.id != 0)
     {
@@ -324,8 +322,7 @@ static void SmokePuff_InitShared(void)
 void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density)
 {
     SmokePuff_InitShared();
-
-    const VFX_ElementMaterial *mat = VFX_Material(matId);
+    (void)matId; // Smoke is neutral white/grey; the element may colour fire, never its smoke.
 
     if (density <= 0.0f) density = 1.0f;
     else if (density > 1.0f) density = 1.0f;
@@ -336,11 +333,8 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
     int count = (int)(SMOKE_PUFF_MAX_SPRITES * density * s_smokePuffCountMul
                       * (useFb ? s_smokePuffFbCountMul : 1.0f));
     if (count < 1) count = 1;
+    if (useFb && count > SMOKE_FB_MAX_SPRITES) count = SMOKE_FB_MAX_SPRITES;
     scale *= s_smokePuffSizeMul;
-
-    // Neutral dust by default; an element tints it. Kept subtle on purpose —
-    // heavily tinted smoke stops reading as smoke.
-    bool neutral = (matId == VC_MAT_EARTH || matId == VC_MAT_COUNT);
 
     for (int i = 0; i < count; i++)
     {
@@ -388,15 +382,6 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
                 c.b = (unsigned char)(160 + (c.b >> 2));
             }
         }
-        if (!neutral)
-        {
-            // Pull a third of the way toward the element body colour. Any more
-            // and it reads as coloured gas rather than lit smoke.
-            c.r = (unsigned char)((c.r * 2 + mat->body.r) / 3);
-            c.g = (unsigned char)((c.g * 2 + mat->body.g) / 3);
-            c.b = (unsigned char)((c.b * 2 + mat->body.b) / 3);
-        }
-
         SpawnParticle((ParticleConfig){
             .position = p,
             .velocity = vel,
@@ -425,6 +410,8 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
             .render.sixWayTexB = s_smokeFbTexB,
             .render.sixWayScattering = s_smokePuff6WayScat,
             .render.sixWayAbsorption = s_smokePuff6WayAbs,
+            .render.motionTex = s_smokeFbMotionTex,
+            .render.motionWarpScale = s_smokePuffMotionWarp,
             .spriteAnim = (useFb ? &s_smokeFbAnim[i % SMOKE_FB_RATES] : NULL),
             // Flipbook carries an authentic simulated vertical plume; gentle tilt (+-10 deg)
             // and random horizontal mirroring preserve upright billowing without turning upside-down.

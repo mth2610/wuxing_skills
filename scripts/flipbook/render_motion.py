@@ -22,13 +22,36 @@ import argparse
 import glob
 import math
 import os
+import shutil
 import struct
+import subprocess
 import sys
 import time
 import zlib
 from pathlib import Path
 
 import numpy as np
+
+
+def load_rgba8(path: str) -> np.ndarray:
+    """Load an RGBA PNG with Pillow, or ffmpeg when Pillow is unavailable."""
+    try:
+        from PIL import Image
+        return np.array(Image.open(path).convert("RGBA"), dtype=np.uint8)
+    except ImportError:
+        if shutil.which("ffmpeg") is None:
+            raise RuntimeError("reading a PNG requires Pillow or ffmpeg")
+        header = Path(path).read_bytes()[:24]
+        if len(header) < 24 or header[:8] != b"\x89PNG\r\n\x1a\n":
+            raise RuntimeError("source is not a valid PNG: %s" % path)
+        width, height = struct.unpack(">II", header[16:24])
+        decoded = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", path, "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+            check=True, stdout=subprocess.PIPE).stdout
+        expected = width * height * 4
+        if len(decoded) != expected:
+            raise RuntimeError("ffmpeg decoded %d bytes, expected %d" % (len(decoded), expected))
+        return np.frombuffer(decoded, dtype=np.uint8).reshape(height, width, 4)
 
 
 def resize_bilinear(img: np.ndarray, out_h: int, out_w: int) -> np.ndarray:
@@ -132,6 +155,8 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="output motion vector atlas PNG path")
     ap.add_argument("--max-speed", type=float, default=12.0, help="maximum speed normalization clamp in pixels")
     ap.add_argument("--alpha-reg", type=float, default=0.75, help="Horn-Schunck smoothness regularization")
+    ap.add_argument("--source-channel", choices=("r", "g", "b", "a", "luma"), default="r",
+                    help="atlas channel tracked by optical flow (default: r; use a for smoke opacity)")
     args = ap.parse_args()
 
     source_path = os.path.abspath(args.cache_dir)
@@ -143,12 +168,11 @@ def main() -> int:
     frames_mask = []
 
     if os.path.isfile(source_path) and source_path.lower().endswith(".png"):
-        from PIL import Image
-        src_img = Image.open(source_path).convert("RGBA")
-        src_w, src_h = src_img.size
+        src_pixels = load_rgba8(source_path)
+        src_h, src_w = src_pixels.shape[:2]
         c_w = src_w // args.grid
         c_h = src_h // args.grid
-        arr = np.array(src_img, dtype=np.float32) / 255.0
+        arr = src_pixels.astype(np.float32) / 255.0
 
         print("[render_motion] Loading %d frames directly from atlas %s (%dx%d cells)..."
               % (want, source_path, c_w, c_h))
@@ -156,8 +180,13 @@ def main() -> int:
         for f in range(want):
             r, c = divmod(f, args.grid)
             cell_data = arr[r * c_h:(r + 1) * c_h, c * c_w:(c + 1) * c_w]
-            # Channel 0 is flame emission, Channel 3 is opacity
-            c_proj = resize_bilinear(cell_data[..., 0], cell, cell)
+            channel_index = {"r": 0, "g": 1, "b": 2, "a": 3}
+            if args.source_channel == "luma":
+                source = (cell_data[..., 0] * 0.2126 + cell_data[..., 1] * 0.7152 +
+                          cell_data[..., 2] * 0.0722)
+            else:
+                source = cell_data[..., channel_index[args.source_channel]]
+            c_proj = resize_bilinear(source, cell, cell)
             c_mask = resize_bilinear(cell_data[..., 3], cell, cell)
             frames_proj.append(c_proj)
             frames_mask.append(c_mask)
