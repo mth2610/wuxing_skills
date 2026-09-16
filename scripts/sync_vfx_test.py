@@ -196,6 +196,11 @@ LIFECYCLE_SPECS = {
     # Registers CPU ellipsoids straight into the SSF surface every frame, so
     # it is a plain draw-phase composer with no handle and no emitter.
     "VFX_ComposeLiquidBench":        ("draw",    "timed",      "continuous"),
+    "VFX_ComposeOpticalFlare":       ("draw",    "timed",      "continuous"),
+    "VFX_ComposeSilhouetteGlow":     ("draw",    "timed",      "continuous"),
+    "VFX_ComposeVacuumArc":          ("draw",    "timed",      "continuous"),
+    "VFX_ComposeVacuumRing":         ("draw",    "timed",      "continuous"),
+    "VFX_ComposeIaidoStance":        ("draw",    "timed",      "continuous"),
 }
 
 # Generated-call overrides keep fixtures readable without changing public
@@ -290,6 +295,9 @@ FIXTURE_METADATA_OVERRIDES = {
         "label": "LIGHTNING IMPACT",
         "category": "common",
     },
+    "VFX_ComposeOpticalFlare": {
+        "category": "common",
+    },
 }
 
 # The same idea for per-frame (Draw) fixtures, whose generated call is a
@@ -297,6 +305,16 @@ FIXTURE_METADATA_OVERRIDES = {
 # merged dict so the entry itself says which fixture kind it belongs to — the
 # spawn table's contract (persistent, handle-owning) is not this one's.
 FIXTURE_DRAW_OVERRIDES = {
+    "VFX_ComposeOpticalFlare":
+        "VFX_ComposeOpticalFlare($POS, 0.65f, 2.6f, 1.0f, s_lastCam)",
+    "VFX_ComposeSilhouetteGlow":
+        "VFX_ComposeSilhouetteGlow(s_currentPlayerPos, s_currentPlayerYaw, 1.0f, s_lastCam)",
+    "VFX_ComposeVacuumArc":
+        "VFX_ComposeVacuumArc($POS, 0.0f, $PROG, 1.35f, s_lastCam)",
+    "VFX_ComposeVacuumRing":
+        "VFX_ComposeVacuumRing($POS, 2.2f, $PROG)",
+    "VFX_ComposeIaidoStance":
+        "VFX_ComposeIaidoStance(s_currentPlayerPos, s_currentPlayerYaw, $PROG, 1.35f, s_lastCam, NULL)",
     # The inferred call passes $PROG for t01, looping the ring's density 0->1
     # every two seconds. This fixture exists to JUDGE the fluid surface — you
     # stand in front of it and orbit — so density is pinned at 1.0 and the only

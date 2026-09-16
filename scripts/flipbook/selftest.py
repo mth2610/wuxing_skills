@@ -34,6 +34,19 @@ RZ, RY, RX = 96, 34, 34          # tall domain, exactly like the fire preset
 FRAMES = 16
 
 
+def check_directionless_source_motion():
+    from ti_sim import directionless_source_coefficients
+
+    phases = np.linspace(0.0, 2.0 * np.pi, 360, endpoint=False)
+    coeffs = np.asarray([directionless_source_coefficients(p) for p in phases])
+    trace_error = float(np.max(np.abs(coeffs.sum(axis=1))))
+    rms = np.sqrt(np.mean(coeffs * coeffs, axis=0))
+    energy_spread = float(rms.max() - rms.min())
+    print("  source quadrupole trace error %.2e (want < 1e-6)" % trace_error)
+    print("  source axis RMS spread %.2e (want < 1e-6)" % energy_spread)
+    return trace_error < 1e-6 and energy_spread < 1e-6
+
+
 def write_grids():
     os.makedirs(PROBE, exist_ok=True)
     zz, yy, xx = np.meshgrid(np.arange(RZ), np.arange(RY), np.arange(RX), indexing="ij")
@@ -84,6 +97,7 @@ def check(sheet_path, grid, cell):
 
 
 def main():
+    source_ok = check_directionless_source_motion()
     write_grids()
     cell = 128
     for cmd, label in (
@@ -98,7 +112,7 @@ def main():
             return 1
 
     sheet = os.path.join(ROOT, "assets", "textures", "_selftest.png")
-    ok = check(sheet, 4, cell)
+    ok = source_ok and check(sheet, 4, cell)
     os.remove(sheet)                      # a test must not leave assets behind
     print("SELFTEST: %s" % ("PASS" if ok else "FAIL"))
     return 0 if ok else 1

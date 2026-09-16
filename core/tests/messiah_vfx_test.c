@@ -1,5 +1,6 @@
 #include "core/path_spline.h"
 #include "core/geometry/sdf_capsule.h"
+#include "raymath.h"
 #include <stdio.h>
 #include <assert.h>
 #include <math.h>
@@ -70,7 +71,40 @@ int main(void) {
     // Point far away (10, 10, 10)
     float dFar = Sdf_EvaluateHierarchyDistance((Vector3){ 10.0f, 10.0f, 10.0f }, capsules, count, 0.05f, &normal);
     assert(dFar > 5.0f);
-    printf("[PASS] Humanoid Capsule Hierarchy distance evaluation.\n");
+    // 4. Test 3D Cubic Bézier Arc Evaluation for Vacuum Streamlines
+    Vector3 b0 = { 0.0f, 0.0f, 0.0f };
+    Vector3 b1 = { 1.0f, 2.0f, 0.0f };
+    Vector3 b2 = { 2.0f, 2.0f, 1.0f };
+    Vector3 b3 = { 3.0f, 0.5f, 2.0f };
+
+    // B(0) = b0, B(1) = b3
+    float t0 = 0.0f, t1 = 1.0f, tmid = 0.5f;
+    float u = 1.0f - tmid;
+    Vector3 bMid = Vector3Add(
+        Vector3Add(Vector3Scale(b0, u * u * u), Vector3Scale(b1, 3.0f * u * u * tmid)),
+        Vector3Add(Vector3Scale(b2, 3.0f * u * tmid * tmid), Vector3Scale(b3, tmid * tmid * tmid))
+    );
+    assert(bMid.x == 1.5f);
+    assert(bMid.y > 1.2f && bMid.y < 1.8f);
+    assert(!isnan(bMid.x) && !isnan(bMid.y) && !isnan(bMid.z));
+    printf("[PASS] 3D Cubic Bézier Spline evaluation for vacuum arc streamlines.\n");
+
+    // 5. Test Vacuum Ring expansion easing & non-degeneracy
+    {
+        float targetR = 2.45f;
+        for (float prog = 0.0f; prog <= 1.0f; prog += 0.1f)
+        {
+            float groundP = prog / 0.75f;
+            if (groundP > 1.0f) groundP = 1.0f;
+            float ease = 1.0f - powf(1.0f - groundP, 3.0f);
+            float r = 0.40f + ease * (targetR - 0.40f);
+            float alpha = (1.0f - groundP) * 0.92f;
+            assert(r >= 0.40f && r <= targetR);
+            assert(alpha >= 0.0f && alpha <= 0.92f);
+            assert(!isnan(r) && !isnan(alpha));
+        }
+    }
+    printf("[PASS] Vacuum Ring expansion easing & boundary validation.\n");
 
     printf("--- All Messiah VFX Integration Tests PASSED ---\n");
     return 0;

@@ -39,7 +39,7 @@ typedef enum {
 // drawn with different frames in the same frame would clobber each other.
 // Only the player uses this in this pass — flagging this for whoever wires up
 // a second animated instance later.
-typedef struct {
+typedef struct CharacterAnimState {
     int   frame;
     float frameTimer;
     CharacterAnimSlot currentSlot;

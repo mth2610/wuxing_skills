@@ -23,6 +23,7 @@ WHY IT REPLACED BLENDER/MANTAFLOW (28/07/2026)
 """
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -32,6 +33,20 @@ import taichi as ti
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.abspath(os.path.join(HERE, "..", "..", "build_cache"))
+
+
+def directionless_source_coefficients(phase):
+    """Cyclic trace-free quadrupole weights for a connected moving source.
+
+    The three weights always sum to zero, so no axis receives a persistent
+    expansion bias.  Their cyclic phase offsets also give every axis the same
+    RMS energy over a cycle.  The Taichi source kernel applies them to even
+    products (xy, yz, zx), keeping the source centred and star-shaped while its
+    macroscopic lobes turn over in time.
+    """
+    return (math.sin(phase),
+            math.sin(phase + 2.0 * math.pi / 3.0),
+            math.sin(phase + 4.0 * math.pi / 3.0))
 
 
 # Every preset number is quoted AT THIS RESOLUTION; everything that is not
@@ -117,6 +132,15 @@ PRESETS = {
         # chunks instead of one turbulent volume.
         source_lobes=1,
         source_variation=0.55,
+        # Animate the connected ignition volume itself.  Varying only fuel
+        # intensity changed the colour inside a nearly fixed silhouette; this
+        # trace-free quadrupole makes broad lobes grow and recede without lift,
+        # translation, a baked up-axis, or disconnected source islands.
+        source_deform=0.40,
+        # A rotating trace-free quadrupole pushes paired boundary lobes out and
+        # in.  Applying this at the gas boundary (not only inside the tiny fuel
+        # source) is what survives projection as macroscopic topology change.
+        shape_force=3.2,
         radial=4.5, sustain_pressure=0.32, contain=0.8, curl=29.0, swirl=32.0,
         shape_noise=0.38,
         # Fine eddies and low viscosity break the density into gas parcels.
@@ -358,6 +382,12 @@ def main():
     ap.add_argument("--source-variation", type=float, default=None,
                     help="amount of smooth, directionless fuel-flow variation inside "
                          "one connected source (0 = uniform ball)")
+    ap.add_argument("--source-deform", type=float, default=None,
+                    help="time-varying trace-free quadrupole deformation of one "
+                         "connected source (0 = spherical source)")
+    ap.add_argument("--shape-force", type=float, default=None,
+                    help="zero-translation quadrupole force that grows and retracts "
+                         "paired boundary lobes without a preferred axis")
     ap.add_argument("--noise-phase-speed", type=float, default=None,
                     help="radians per simulated second for blending two centred "
                          "turbulence fields (0 = static field)")
@@ -376,7 +406,8 @@ def main():
     for k in ("radial", "contain", "sustain_pressure", "shape_noise", "curl", "viscosity", "buoyancy", "cool", "swirl",
               "diffuse", "soot", "fuel_frames", "eddy", "gravity", "flat",
               "shell", "impulse", "fuel_dens", "dt", "dissipate",
-              "fuel_radius", "noise_phase_speed", "source_pulse_rate", "source_variation", "lock_center"):
+              "fuel_radius", "noise_phase_speed", "source_pulse_rate",
+              "source_variation", "source_deform", "shape_force", "lock_center"):
         if getattr(args, k) is not None:
             p[k] = getattr(args, k)
     if args.source_lobes is not None:
@@ -385,6 +416,8 @@ def main():
     p.setdefault("noise_phase_speed", 0.0)
     p.setdefault("source_pulse_rate", 0.0)
     p.setdefault("source_variation", 0.0)
+    p.setdefault("source_deform", 0.0)
+    p.setdefault("shape_force", 0.0)
     p.setdefault("lock_center", 0)
     p.setdefault("warmup_frames", 0)
     if args.warmup is not None:
@@ -429,7 +462,8 @@ def main():
     #   fuel_radius is a fraction of the domain -> 1/D, so the ignition stays
     #                                              the same PHYSICAL size
     dom_k = 1.0 / max(domain, 1e-3)
-    for k in ("radial", "contain", "sustain_pressure", "curl", "buoyancy", "swirl", "gravity"):
+    for k in ("radial", "contain", "sustain_pressure", "shape_force", "curl",
+              "buoyancy", "swirl", "gravity"):
         p[k] *= res_k * dom_k
     p["fuel_radius"] *= dom_k
 
@@ -594,7 +628,8 @@ def main():
     @ti.kernel
     def add_fuel(t: ti.f32, dt: ti.f32, rad: ti.f32, shell: ti.f32,
                  kfuel: ti.f32, source_lobes: ti.i32, pulse_rate: ti.f32,
-                 noise_phase_speed: ti.f32, source_variation: ti.f32):
+                 noise_phase_speed: ti.f32, source_variation: ti.f32,
+                 source_deform: ti.f32, qa: ti.f32, qb: ti.f32, qc: ti.f32):
         # Voxel centres run 0..N-1. `N*0.5` chooses the upper of the two
         # middle voxels for even grids, while every mirrored field is symmetric
         # about (N-1)*0.5; that half-voxel disagreement was a permanent source
@@ -611,8 +646,20 @@ def main():
             source_r = r
             m = 0.0
             if source_lobes <= 1:
-                if d < source_r:
-                    m = (1.0 - d / source_r) ** 0.7
+                local_r = source_r
+                if d > 1e-4 and source_deform > 0.0:
+                    q = p_local / d
+                    # A trace-free quadrupole: even under q -> -q, therefore
+                    # centred; cyclic coefficients give x/y/z identical energy
+                    # over time.  Scaling radius preserves one connected,
+                    # star-shaped source instead of spawning separate blobs.
+                    shape = 2.0 * (qa * q.x * q.y
+                                   + qb * q.y * q.z
+                                   + qc * q.z * q.x)
+                    local_r *= ti.math.clamp(1.0 + source_deform * shape,
+                                             0.52, 1.48)
+                if d < local_r:
+                    m = (1.0 - d / local_r) ** 0.7
             else:
                 # Up to five overlapping seed clumps. Their locations are fixed
                 # in local space so the event evolves coherently frame-to-frame;
@@ -670,7 +717,7 @@ def main():
                t: ti.f32, radial: ti.f32, decay: ti.f32,
                grav: ti.f32, flat: ti.f32, noise_phase_speed: ti.f32,
                contain: ti.f32, sustain_pressure: ti.f32, shape_noise: ti.f32,
-               pulse_rate: ti.f32):
+               shape_force: ti.f32, pulse_rate: ti.f32):
         c = ti.Vector([(N - 1) * 0.5, (N - 1) * 0.5, (N - 1) * 0.5])
         for I in ti.grouped(u):
             v = u[I]
@@ -707,6 +754,22 @@ def main():
                 # a stronger restoring force than the hot core.  It is part of
                 # the fluid force field, never a render-space squash/crop.
                 v -= dt * contain * (0.2 + dens[I] + temp[I]) * d / N
+                # Macro deformation is an odd force: the quadrupole scalar is
+                # even under d -> -d, while the radial direction is odd. Paired
+                # lobes therefore expand/retract with zero net translation.
+                # Cyclic coefficients rotate which pairs are active, so there
+                # is no persistent world axis and random billboard rotation
+                # remains valid for this directionless parcel.
+                q = d / dist
+                shape_phase = t * noise_phase_speed
+                qa = ti.sin(shape_phase)
+                qb = ti.sin(shape_phase + 2.09439510239)
+                qc = ti.sin(shape_phase + 4.18879020479)
+                macro_shape = 2.0 * (qa * q.x * q.y
+                                     + qb * q.y * q.z
+                                     + qc * q.z * q.x)
+                v += (dt * shape_force * macro_shape
+                      * (temp[I] + 0.35 * dens[I]) * d / dist)
             # UP IS Z, not Y. The renderer's image Y is the grid's z
             # (`gz = (1-v)*(rz-1)`) and its ray marches along y, so a force on
             # v.y pushes the puff straight AWAY FROM THE CAMERA. Measured with
@@ -975,9 +1038,12 @@ def main():
             # force injection depend on its own unprojected backtrace.
             advect_velocity(step_dt)
             if frac < p["fuel_frames"]:
+                qa, qb, qc = directionless_source_coefficients(
+                    force_time * p["noise_phase_speed"])
                 add_fuel(force_time, step_dt, p["fuel_radius"], p["shell"],
                          p["fuel_dens"], p["source_lobes"], p["source_pulse_rate"],
-                         p["noise_phase_speed"], p["source_variation"])
+                         p["noise_phase_speed"], p["source_variation"],
+                         p["source_deform"], qa, qb, qc)
             combust(step_dt, p["burn"], p["heat_yield"], p["smoke_yield"])
             # Impulse envelope: full push while the fuel burns, then off.
             # How long the radial impulse lasts, as a fraction of the sheet.
@@ -994,7 +1060,8 @@ def main():
             forces(step_dt, p["buoyancy"], p["curl"], p["viscosity"],
                    force_time, p["radial"], decay, p["gravity"],
                    p["flat"], p["noise_phase_speed"], p["contain"],
-                   p["sustain_pressure"], p["shape_noise"], p["source_pulse_rate"])
+                   p["sustain_pressure"], p["shape_noise"], p["shape_force"],
+                   p["source_pulse_rate"])
             calculate_vorticity()
             confine_vorticity(step_dt, p["swirl"])
             velocity_to_faces()

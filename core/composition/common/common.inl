@@ -43,3 +43,8 @@
 // than VFX_Compose*, so it is intentionally outside the fixture generator.
 #include "vc_lightning_arc.inl"
 #include "vc_lightning_trail.inl"
+#include "vc_optical_flare.inl"
+#include "vc_silhouette_glow.inl"
+#include "vc_vacuum_arc.inl"
+#include "vc_vacuum_ring.inl"
+#include "vc_iaido_stance.inl"

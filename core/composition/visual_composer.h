@@ -505,6 +505,64 @@ void VFX_ComposeCentripetalSlashEx(Vector3 origin, float yaw, Color coreColor, C
 void VFX_EmitCharacterSkinAura(Vector3 playerPos, float yaw, Color colorStart, Color colorEnd,
                               float speed, int count);
 
+// ── E6.5d. Optical Starburst & Anamorphic Cine Streak (VFX 1) ────────────────
+void VFX_DrawOpticalStarburstStreak(Vector3 pos, Color coreCol, Color streakCol,
+                                    float starRadius, float streakLength,
+                                    float streakThickness, float intensity, Camera3D camera);
+void VFX_ComposeOpticalFlare(Vector3 pos, float starRadius, float streakLength, float intensity, Camera3D camera);
+
+// ── E6.5e. Generic 3D Mesh & Character Silhouette Glow (VFX 2) ───────────────
+// Universal unlit emissive silhouette glow with Fresnel edge enhancement and
+// surface-conforming energy motes on ANY Raylib Model, Mesh, or Character.
+struct CharacterAnimState;
+
+typedef enum {
+    VFX_SILHOUETTE_AUTO = 0,    // Auto-detect: uses CharacterModel if loaded
+    VFX_SILHOUETTE_MODEL,       // Raylib Model pointer
+    VFX_SILHOUETTE_MESH,        // Raylib Mesh pointer + transform
+    VFX_SILHOUETTE_CHAR_ANIM,   // CharacterAnimState pointer
+} VFX_SilhouetteTargetType;
+
+typedef struct {
+    VFX_SilhouetteTargetType type;
+    const Model *model;
+    const Mesh *mesh;
+    Matrix transform;
+    const struct CharacterAnimState *animState;
+    Vector3 position;
+    float yaw;
+    float scale;
+} VFX_SilhouetteTarget;
+
+void VFX_SetActiveCharacterAnimState(const struct CharacterAnimState *animState);
+const struct CharacterAnimState *VFX_GetActiveCharacterAnimState(void);
+
+void VFX_DrawModelSilhouetteGlow(Model model, Matrix transform, Color glowColor, float intensity);
+void VFX_DrawModelSilhouetteGlowEx(Model model, Vector3 position, float yaw, float scale, Color glowColor, float intensity);
+void VFX_DrawMeshSilhouetteGlow(Mesh mesh, Matrix transform, Color glowColor, float intensity);
+void VFX_DrawCharacterSilhouetteGlowEx(Vector3 position, float yaw, float scale,
+                                      const struct CharacterAnimState *animState,
+                                      Color glowColor, float intensity);
+void VFX_DrawCharacterSilhouetteGlow(Vector3 playerPos, float yaw, Color auraColor,
+                                     float intensity, const void *targetMeshOrAnim);
+void VFX_ComposeSilhouetteGlow(Vector3 pos, float yaw, float intensity, Camera3D camera);
+
+// ── E6.5f. 3D Curved Parabolic Vacuum Wind Arc (VFX 3) ───────────────────────
+void VFX_DrawCurvedVacuumArc3D(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
+                              Color rimColor, Color bodyColor, float maxWidth,
+                              float progress, float duration, Camera3D camera);
+void VFX_ComposeVacuumArc(Vector3 pos, float yaw, float progress, float duration, Camera3D camera);
+
+// ── E6.5g. Thin Expanding Vacuum Ground Ring (VFX 4) ─────────────────────────
+void VFX_DrawExpandingVacuumRing(Vector3 center, float radius, float bandWidth,
+                                 Color ringColor, float alpha01);
+void VFX_ComposeVacuumRing(Vector3 center, float radius, float progress);
+
+// ── E6.5h. Composite: Iaido Quick-Draw / Counter Stance (VFX 5) ──────────────
+void VFX_ComposeIaidoStance(Vector3 playerPos, float yaw, float progress,
+                            float duration, Camera3D camera,
+                            const void *animStatePtr);
+
 // ── E6.6. Energy burst ──────────────────────────────────────────────────────
 // An expanding SHEET of energy: sprites thrown centrifugally from a RING (not a
 // disc), so nothing fills the centre and the burst reads as a shell opening. The

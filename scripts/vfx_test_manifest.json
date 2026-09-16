@@ -266,6 +266,17 @@
       "draw_call": "VFX_ComposeGroundWave($POS, VC_MAT_EARTH, 1.5f, $PROG, VFX_GroundHeightFromMap, NULL)"
     },
     {
+      "source": "common/vc_iaido_stance.inl",
+      "fn": "VFX_ComposeIaidoStance",
+      "label": "IAIDO STANCE",
+      "category": "common",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeIaidoStance(s_currentPlayerPos, s_currentPlayerYaw, $PROG, 1.35f, s_lastCam, NULL)"
+    },
+    {
       "source": "common/vc_impact_dust.inl",
       "fn": "VFX_ComposeImpactDust",
       "label": "IMPACT DUST",
@@ -330,6 +341,17 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeMistVeil($POS, 5.5f, 4.5f)"
+    },
+    {
+      "source": "common/vc_optical_flare.inl",
+      "fn": "VFX_ComposeOpticalFlare",
+      "label": "OPTICAL FLARE",
+      "category": "common",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeOpticalFlare($POS, 0.65f, 2.6f, 1.0f, s_lastCam)"
     },
     {
       "source": "common/vc_particle_upgrades_test.inl",
@@ -433,6 +455,17 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeShockRing($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG)"
+    },
+    {
+      "source": "common/vc_silhouette_glow.inl",
+      "fn": "VFX_ComposeSilhouetteGlow",
+      "label": "SILHOUETTE GLOW",
+      "category": "common",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeSilhouetteGlow(s_currentPlayerPos, s_currentPlayerYaw, 1.0f, s_lastCam)"
     },
     {
       "source": "common/vc_smoke_column.inl",
@@ -558,6 +591,28 @@
       "spawn_call": "VFX_ComposeTrail($XFORM, VC_MAT_FIRE, 0.0f, 2.0f, TRAIL_PRESET_MAGIC)",
       "kill_fn": "VFX_KillTrail",
       "_variant": "TRAIL_PRESET_MAGIC"
+    },
+    {
+      "source": "common/vc_vacuum_arc.inl",
+      "fn": "VFX_ComposeVacuumArc",
+      "label": "VACUUM ARC",
+      "category": "common",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeVacuumArc($POS, 0.0f, $PROG, 1.35f, s_lastCam)"
+    },
+    {
+      "source": "common/vc_vacuum_ring.inl",
+      "fn": "VFX_ComposeVacuumRing",
+      "label": "VACUUM RING",
+      "category": "common",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeVacuumRing($POS, 2.2f, $PROG)"
     },
     {
       "source": "common/vc_volume_trail.inl",
