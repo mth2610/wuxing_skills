@@ -1100,6 +1100,9 @@ int main(int argc, char **argv) {
         if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1)) {
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.40f);
         }
+        if (IsKeyPressed(KEY_FOUR) || IsKeyPressed(KEY_KP_4)) {
+            CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.55f);
+        }
 
         CharacterModel_Update(&player.anim, dt, moved);
 
