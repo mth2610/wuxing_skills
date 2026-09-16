@@ -487,6 +487,24 @@ void VFX_ComposeDissolveExit(Vector3 pos, VC_MaterialId mat, float scale, float 
 void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
                            float length, float arcRad, float t01);
 
+// ── E6.5b. Centripetal Catmull-Rom Martial Arts Slash ─────────────────────────
+// A dynamic crescent cleave evaluated via Centripetal Catmull-Rom Spline (alpha=0.5).
+// Features needle-sharp tapered tips, dual camera-facing aura and cutting core,
+// planar slicing disk presence, tip lighting, wind radial blast, and stretched sparks.
+// `origin` = character/weapon anchor, `yaw` = facing angle in radians,
+// `progress` = 0..1 swing progress over `duration` (seconds).
+void VFX_ComposeCentripetalSlash(Vector3 origin, float yaw, VC_MaterialId mat,
+                                float progress, float duration, Camera3D camera);
+
+void VFX_ComposeCentripetalSlashEx(Vector3 origin, float yaw, Color coreColor, Color rimColor,
+                                  float progress, float duration, Camera3D camera);
+
+// ── E6.5c. Skinned Mesh Surface Aura Emitter ─────────────────────────────────
+// Uniform O(1) barycentric surface sampling across the animated character mesh.
+// Emits elemental aura particles flowing outward along surface normals.
+void VFX_EmitCharacterSkinAura(Vector3 playerPos, float yaw, Color colorStart, Color colorEnd,
+                              float speed, int count);
+
 // ── E6.6. Energy burst ──────────────────────────────────────────────────────
 // An expanding SHEET of energy: sprites thrown centrifugally from a RING (not a
 // disc), so nothing fills the centre and the burst reads as a shell opening. The

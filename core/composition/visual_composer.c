@@ -11,6 +11,7 @@
 #include "core/camera_context.h"
 #include "environment/environment_system.h"
 #include "core/ribbon_strip.h"
+#include "character/character_model.h"
 #include "core/lightning/lightning_stroke.h"
 #include "core/path_spline.h"
 #include "core/scene_targets.h"
@@ -25,6 +26,7 @@
 #include "core/skill_manager.h"
 #include "core/map_manager.h"   // H2 ground wave: VFX_GroundHeightFromMap
 #include "core/gfx_quality.h"
+#include "core/wind/wind_system.h"
 #include "core/emitter_system.h"
 #include "core/composition/vfx_sequence.h"
 #include "core/color_gradient.h"

@@ -450,3 +450,179 @@ void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat,
         }
     }
 }
+
+// =============================================================================
+// CENTRIPETAL CATMULL-ROM MARTIAL ARTS SLASH (MESSIAH ENGINE FOUNDATION)
+// =============================================================================
+
+static inline float VC_SlashEaseOut(float x)
+{
+    x = Clamp(x, 0.0f, 1.0f);
+    return 1.0f - (1.0f - x) * (1.0f - x);
+}
+
+static Vector3 VC_EvaluateCrescentSpline(Vector3 c0, Vector3 c1, Vector3 c2, Vector3 c3, Vector3 c4, float t)
+{
+    t = Clamp(t, 0.0f, 1.0f);
+    if (t < 0.5f)
+    {
+        return CatmullRom_Centripetal(c0, c1, c2, c3, t * 2.0f);
+    }
+    else
+    {
+        return CatmullRom_Centripetal(c1, c2, c3, c4, (t - 0.5f) * 2.0f);
+    }
+}
+
+static Texture2D s_centripetalSlashTex = {0};
+
+static Texture2D VC_GetCentripetalSlashTexture(void)
+{
+    if (s_centripetalSlashTex.id == 0)
+    {
+        Image img = GenImageColor(64, 64, BLANK);
+        for (int y = 0; y < 64; y++)
+        {
+            for (int x = 0; x < 64; x++)
+            {
+                float u = (float)x / 63.0f;
+                float dist = fabsf(u - 0.5f) * 2.0f;
+                float alpha = fmaxf(0.0f, 1.0f - dist * dist);
+                alpha = alpha * alpha;
+                ImageDrawPixel(&img, x, y, (Color){ 255, 255, 255, (unsigned char)(255.0f * alpha) });
+            }
+        }
+        s_centripetalSlashTex = LoadTextureFromImage(img);
+        UnloadImage(img);
+        SetTextureFilter(s_centripetalSlashTex, TEXTURE_FILTER_BILINEAR);
+        SetTextureWrap(s_centripetalSlashTex, TEXTURE_WRAP_CLAMP);
+    }
+    return s_centripetalSlashTex;
+}
+
+void VFX_ComposeCentripetalSlashEx(Vector3 origin, float yaw, Color coreColor, Color rimColor,
+                                  float progress, float duration, Camera3D camera)
+{
+    if (progress < 0.0f || progress >= 1.0f || duration <= 0.001f) return;
+
+    float slashTime = duration * 0.51f; // ~0.28s for 0.55s
+    float cutPhase  = Clamp(progress * duration / slashTime, 0.0f, 1.0f);
+    float headT, tailT, alphaFade;
+
+    if (cutPhase < 1.0f)
+    {
+        headT = VC_SlashEaseOut(cutPhase);
+        tailT = fmaxf(0.0f, headT - 0.65f);
+        alphaFade = 1.0f;
+    }
+    else
+    {
+        headT = 1.0f;
+        float dissolvePhase = (progress * duration - slashTime) / (duration - slashTime);
+        tailT = 0.35f + dissolvePhase * 0.65f;
+        alphaFade = 1.0f - Clamp(dissolvePhase, 0.0f, 1.0f);
+    }
+
+    if (headT <= tailT || alphaFade <= 0.001f) return;
+
+    Vector3 fwd = (Vector3){ sinf(yaw), 0.0f, cosf(yaw) };
+    Vector3 rgt = (Vector3){ cosf(yaw), 0.0f, -sinf(yaw) };
+    Vector3 basePos = origin;
+    basePos.y += 0.95f; // Upper torso / shoulder level
+
+    Vector3 c0 = Vector3Add(basePos, Vector3Add(Vector3Scale(rgt,  0.6f), Vector3Add(Vector3Scale(fwd, -0.4f), (Vector3){ 0.0f,  0.45f, 0.0f })));
+    Vector3 c1 = Vector3Add(basePos, Vector3Add(Vector3Scale(rgt,  1.3f), Vector3Add(Vector3Scale(fwd,  0.3f), (Vector3){ 0.0f,  0.28f, 0.0f })));
+    Vector3 c2 = Vector3Add(basePos, Vector3Add(Vector3Scale(rgt,  0.0f), Vector3Add(Vector3Scale(fwd,  1.7f), (Vector3){ 0.0f,  0.05f, 0.0f })));
+    Vector3 c3 = Vector3Add(basePos, Vector3Add(Vector3Scale(rgt, -1.3f), Vector3Add(Vector3Scale(fwd,  0.4f), (Vector3){ 0.0f, -0.20f, 0.0f })));
+    Vector3 c4 = Vector3Add(basePos, Vector3Add(Vector3Scale(rgt, -0.6f), Vector3Add(Vector3Scale(fwd, -0.3f), (Vector3){ 0.0f, -0.35f, 0.0f })));
+
+    const int pointCount = 64;
+    static RibbonPoint outerPts[64];
+    static RibbonPoint innerPts[64];
+    static RibbonPoint planarPts[64];
+
+    Texture2D ribbonTex = VC_GetCentripetalSlashTexture();
+
+    for (int i = 0; i < pointCount; i++)
+    {
+        float u = (float)i / (float)(pointCount - 1);
+        float t = tailT + (headT - tailT) * u;
+        Vector3 pos = VC_EvaluateCrescentSpline(c0, c1, c2, c3, c4, t);
+
+        float trailEnv = sinf(u * PI);
+        trailEnv = powf(trailEnv, 0.75f);
+
+        float globalArc = sinf(Clamp(t, 0.02f, 0.98f) * PI);
+        float shape = trailEnv * (0.55f + 0.45f * globalArc);
+        float headGlow = 0.65f + 0.35f * u;
+
+        outerPts[i].position = pos;
+        outerPts[i].halfWidth = 0.28f * shape;
+        outerPts[i].tint = ColorAlpha(rimColor, Clamp(alphaFade * 0.90f * trailEnv * headGlow, 0.0f, 1.0f));
+        outerPts[i].v = u;
+
+        innerPts[i].position = pos;
+        innerPts[i].halfWidth = 0.09f * shape;
+        innerPts[i].tint = ColorAlpha(coreColor, Clamp(alphaFade * 0.98f * trailEnv * headGlow, 0.0f, 1.0f));
+        innerPts[i].v = u;
+
+        planarPts[i].position = pos;
+        planarPts[i].halfWidth = 0.24f * shape;
+        planarPts[i].tint = ColorAlpha(rimColor, Clamp(alphaFade * 0.65f * trailEnv * headGlow, 0.0f, 1.0f));
+        planarPts[i].v = u;
+    }
+
+    BeginBlendMode(BLEND_ADDITIVE);
+    rlDisableDepthMask();
+
+    DrawRibbonStrip(outerPts, pointCount, ribbonTex, camera);
+    DrawRibbonStrip(innerPts, pointCount, ribbonTex, camera);
+
+    Vector3 slashPlaneNormal = Vector3Normalize((Vector3){ 0.22f, 0.95f, 0.20f });
+    DrawRibbonStripEx(planarPts, pointCount, ribbonTex, camera, RIBBON_FIXED_NORMAL, slashPlaneNormal);
+
+    rlEnableDepthMask();
+    EndBlendMode();
+
+    if (cutPhase < 1.0f)
+    {
+        Vector3 tipPos = VC_EvaluateCrescentSpline(c0, c1, c2, c3, c4, headT);
+        VFXLight_Spawn(tipPos, rimColor, 3.5f, 0.04f, VFX_PRIORITY_HIGH_ULTIMATE);
+        Wind_SpawnRadialBlast(tipPos, 1.8f, 3.8f, 0.08f);
+
+        Vector3 prevTip = VC_EvaluateCrescentSpline(c0, c1, c2, c3, c4, fmaxf(0.0f, headT - 0.03f));
+        Vector3 tangent = Vector3Normalize(Vector3Subtract(tipPos, prevTip));
+
+        for (int sIdx = 0; sIdx < 4; sIdx++)
+        {
+            ParticleConfig sp = { 0 };
+            sp.position = tipPos;
+            sp.physics.position = tipPos;
+            Vector3 jitter = {
+                (float)GetRandomValue(-25, 25) / 100.0f,
+                (float)GetRandomValue(-10, 25) / 100.0f,
+                (float)GetRandomValue(-25, 25) / 100.0f
+            };
+            sp.velocity = Vector3Add(Vector3Scale(tangent, 3.2f + (float)GetRandomValue(0, 140) / 100.0f), jitter);
+            sp.radius = 0.055f + (float)GetRandomValue(0, 25) / 1000.0f;
+            sp.lifetime = 0.28f + (float)GetRandomValue(0, 12) / 100.0f;
+            sp.colorStart = coreColor;
+            sp.colorEnd   = ColorAlpha(rimColor, 0);
+            sp.render.blendMode = VFX_BLEND_ADDITIVE;
+            sp.render.unlit = 1;
+            sp.render.emissiveBoost = 2.0f;
+            sp.stretchStrength = 0.35f;
+            sp.stretchMinSpeed = 1.2f;
+            SpawnParticle(sp);
+        }
+    }
+}
+
+void VFX_ComposeCentripetalSlash(Vector3 origin, float yaw, VC_MaterialId mat,
+                                float progress, float duration, Camera3D camera)
+{
+    const VFX_ElementMaterial *m = VFX_Material(mat);
+    Color coreCol = m->glow;
+    Color rimCol  = m->body;
+    VFX_ComposeCentripetalSlashEx(origin, yaw, coreCol, rimCol, progress, duration, camera);
+}

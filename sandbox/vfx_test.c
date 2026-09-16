@@ -55,7 +55,6 @@ static bool    s_demoCatmullActive = false;
 static float   s_demoCatmullTimer = 0.0f;
 static Vector3 s_demoCatmullPos = {0};
 static float   s_demoCatmullYaw = 0.0f;
-static bool    s_slashBurstFired = false;
 static Texture2D s_demoParticleTex = {0};
 
 // Prefab Tester UI config
@@ -519,7 +518,6 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         s_demoCatmullTimer = 0.0f;
         s_demoCatmullPos = playerPos;
         s_demoCatmullYaw = s_currentPlayerYaw;
-        s_slashBurstFired = false;
         TraceLog(LOG_INFO, "[Messiah VFX Demo] 4: Centripetal Catmull-Rom Sword Arc Triggered!");
     }
 
@@ -1025,179 +1023,6 @@ static void VFXTest_DrawGroundCircle(Vector3 center, float radius, Color color) 
     }
 }
 
-static void DrawCrescentSlash3D(Vector3 center, Vector3 forward, Vector3 right,
-                                float radius, float width, float arcAngle,
-                                float tiltAngle, Color color)
-{
-    rlDisableBackfaceCulling();
-    rlBegin(RL_TRIANGLES);
-    rlColor4ub(color.r, color.g, color.b, color.a);
-
-    const int segs = 32;
-    float da = arcAngle / (float)segs;
-    float startA = -arcAngle * 0.5f;
-
-    Vector3 baseUp = (Vector3){ 0.0f, 1.0f, 0.0f };
-    Vector3 tiltedUp = Vector3Normalize(Vector3Add(
-        Vector3Scale(baseUp, cosf(tiltAngle)),
-        Vector3Scale(right, sinf(tiltAngle))
-    ));
-    Vector3 slashRight = Vector3Normalize(Vector3CrossProduct(forward, tiltedUp));
-
-    for (int i = 0; i < segs; i++)
-    {
-        float a0 = startA + (float)i * da;
-        float a1 = a0 + da;
-        float t0 = (float)i / (float)segs;
-        float t1 = (float)(i + 1) / (float)segs;
-
-        float w0 = width * sinf(t0 * PI);
-        float w1 = width * sinf(t1 * PI);
-
-        float sinA0 = sinf(a0);
-        float cosA0 = cosf(a0);
-        float sinA1 = sinf(a1);
-        float cosA1 = cosf(a1);
-
-        float chord0 = (cosA0 - cosf(arcAngle * 0.5f)) * radius * 0.5f;
-        float chord1 = (cosA1 - cosf(arcAngle * 0.5f)) * radius * 0.5f;
-        float lat0 = sinA0 * radius;
-        float lat1 = sinA1 * radius;
-
-        Vector3 pBase0 = Vector3Add(center, Vector3Add(Vector3Scale(slashRight, lat0), Vector3Scale(forward, chord0)));
-        Vector3 pBase1 = Vector3Add(center, Vector3Add(Vector3Scale(slashRight, lat1), Vector3Scale(forward, chord1)));
-
-        Vector3 pFront0 = Vector3Add(pBase0, Vector3Scale(forward, w0 * 0.5f));
-        Vector3 pBack0  = Vector3Subtract(pBase0, Vector3Scale(forward, w0 * 0.5f));
-        Vector3 pFront1 = Vector3Add(pBase1, Vector3Scale(forward, w1 * 0.5f));
-        Vector3 pBack1  = Vector3Subtract(pBase1, Vector3Scale(forward, w1 * 0.5f));
-
-        rlNormal3f(tiltedUp.x, tiltedUp.y, tiltedUp.z);
-
-        rlTexCoord2f(t0, 1.0f); rlVertex3f(pFront0.x, pFront0.y, pFront0.z);
-        rlTexCoord2f(t0, 0.0f); rlVertex3f(pBack0.x,  pBack0.y,  pBack0.z);
-        rlTexCoord2f(t1, 1.0f); rlVertex3f(pFront1.x, pFront1.y, pFront1.z);
-
-        rlTexCoord2f(t0, 0.0f); rlVertex3f(pBack0.x,  pBack0.y,  pBack0.z);
-        rlTexCoord2f(t1, 0.0f); rlVertex3f(pBack1.x,  pBack1.y,  pBack1.z);
-        rlTexCoord2f(t1, 1.0f); rlVertex3f(pFront1.x, pFront1.y, pFront1.z);
-    }
-    rlEnd();
-    rlEnableBackfaceCulling();
-}
-
-static inline float SlashEaseOut(float x)
-{
-    x = Clamp(x, 0.0f, 1.0f);
-    return 1.0f - (1.0f - x) * (1.0f - x);
-}
-
-static Vector3 EvaluateCrescentSpline(Vector3 c0, Vector3 c1, Vector3 c2, Vector3 c3, Vector3 c4, float t)
-{
-    t = Clamp(t, 0.0f, 1.0f);
-    if (t < 0.5f)
-    {
-        return CatmullRom_Centripetal(c0, c1, c2, c3, t * 2.0f);
-    }
-    else
-    {
-        return CatmullRom_Centripetal(c1, c2, c3, c4, (t - 0.5f) * 2.0f);
-    }
-}
-
-static Texture2D s_slashRibbonTex = {0};
-
-static Texture2D GetSlashRibbonTexture(void)
-{
-    if (s_slashRibbonTex.id == 0)
-    {
-        Image img = GenImageColor(64, 64, BLANK);
-        for (int y = 0; y < 64; y++)
-        {
-            for (int x = 0; x < 64; x++)
-            {
-                float u = (float)x / 63.0f;
-                float dist = fabsf(u - 0.5f) * 2.0f; // 0 at center, 1 at edge
-                float alpha = fmaxf(0.0f, 1.0f - dist * dist);
-                alpha = alpha * alpha; // punchy radiant core with smooth falloff
-                ImageDrawPixel(&img, x, y, (Color){ 255, 255, 255, (unsigned char)(255.0f * alpha) });
-            }
-        }
-        s_slashRibbonTex = LoadTextureFromImage(img);
-        UnloadImage(img);
-        SetTextureFilter(s_slashRibbonTex, TEXTURE_FILTER_BILINEAR);
-        SetTextureWrap(s_slashRibbonTex, TEXTURE_WRAP_CLAMP);
-    }
-    return s_slashRibbonTex;
-}
-
-static void DrawCentripetalSlashRibbon(Vector3 c0, Vector3 c1, Vector3 c2, Vector3 c3, Vector3 c4,
-                                      float headT, float tailT, float alphaFade, Camera3D camera)
-{
-    if (headT <= tailT || alphaFade <= 0.001f) return;
-
-    const int pointCount = 64;
-    static RibbonPoint outerPts[64];
-    static RibbonPoint innerPts[64];
-    static RibbonPoint planarPts[64];
-
-    Texture2D ribbonTex = GetSlashRibbonTexture();
-
-    for (int i = 0; i < pointCount; i++)
-    {
-        float u = (float)i / (float)(pointCount - 1);
-        float t = tailT + (headT - tailT) * u;
-        Vector3 pos = EvaluateCrescentSpline(c0, c1, c2, c3, c4, t);
-
-        // Sinusoidal tapering along the active ribbon: guaranteed 0 at tips (u=0, u=1)
-        // This eliminates all blunt rectangular cutoffs and gives razor-sharp needle tips!
-        float trailEnv = sinf(u * PI);
-        trailEnv = powf(trailEnv, 0.75f); // full body in middle, sharp needle at endpoints
-
-        // Global arc modulation (fullest at apex t=0.5)
-        float globalArc = sinf(Clamp(t, 0.02f, 0.98f) * PI);
-        float shape = trailEnv * (0.55f + 0.45f * globalArc);
-
-        // Leading tip glow
-        float headGlow = 0.65f + 0.35f * u;
-
-        // Outer cyan frost energy aura (sleek, radiant)
-        outerPts[i].position = pos;
-        outerPts[i].halfWidth = 0.28f * shape;
-        Color rimCol = (Color){ 65, 215, 255, 255 };
-        outerPts[i].tint = ColorAlpha(rimCol, Clamp(alphaFade * 0.90f * trailEnv * headGlow, 0.0f, 1.0f));
-        outerPts[i].v = u;
-
-        // Inner white-hot cutting edge core
-        innerPts[i].position = pos;
-        innerPts[i].halfWidth = 0.09f * shape;
-        Color coreCol = (Color){ 255, 255, 255, 255 };
-        innerPts[i].tint = ColorAlpha(coreCol, Clamp(alphaFade * 0.98f * trailEnv * headGlow, 0.0f, 1.0f));
-        innerPts[i].v = u;
-
-        // Planar cutting disc sheet (slanted blade plane)
-        planarPts[i].position = pos;
-        planarPts[i].halfWidth = 0.24f * shape;
-        planarPts[i].tint = ColorAlpha(rimCol, Clamp(alphaFade * 0.65f * trailEnv * headGlow, 0.0f, 1.0f));
-        planarPts[i].v = u;
-    }
-
-    BeginBlendMode(BLEND_ADDITIVE);
-    rlDisableDepthMask();
-
-    // 1. Camera-facing ribbon: always full visual presence to camera
-    DrawRibbonStrip(outerPts, pointCount, ribbonTex, camera);
-    DrawRibbonStrip(innerPts, pointCount, ribbonTex, camera);
-
-    // 2. Planar sheet: adds physical blade disc depth
-    Vector3 slashPlaneNormal = Vector3Normalize((Vector3){ 0.22f, 0.95f, 0.20f });
-    DrawRibbonStripEx(planarPts, pointCount, ribbonTex, camera, RIBBON_FIXED_NORMAL, slashPlaneNormal);
-
-    rlEnableDepthMask();
-    EndBlendMode();
-}
-
-
 #define MESH_DISTORT_DEMO_DURATION 1.15f
 
 void VFXTest_DrawRefraction(Camera3D cam)
@@ -1222,7 +1047,7 @@ void VFXTest_DrawRefraction(Camera3D cam)
             float tiltAngle = 0.18f;
 
             ScreenDistort_BeginMeshPass((Texture2D){0}, 0.12f, (Vector2){ 2.0f, 0.5f }, (Color){ 160, 225, 255, 100 });
-            DrawCrescentSlash3D(slashCenter, forward, right, radius, width, arcAngle, tiltAngle, WHITE);
+            ProceduralMesh_DrawCrescentSlash(slashCenter, forward, right, radius, width, arcAngle, tiltAngle, WHITE);
             ScreenDistort_EndMeshPass();
         }
         else
@@ -1269,35 +1094,13 @@ void VFXTest_Draw3D(void)
 
     if (s_demoMeshEmitterActive)
     {
-        // 1. Dynamic golden aura light centered at chest
+        // Dynamic golden aura light centered at chest
         Vector3 chestPos = Vector3Add(s_currentPlayerPos, (Vector3){ 0.0f, 1.10f, 0.0f });
         VFXLight_Spawn(chestPos, (Color){ 255, 200, 75, 255 }, 2.8f, 0.05f, VFX_PRIORITY_HIGH_ULTIMATE);
 
-        // 2. Uniform O(1) surface sampling across the animated character mesh
-        const int samplesPerFrame = 6;
-        for (int i = 0; i < samplesPerFrame; i++)
-        {
-            Vector3 surfPos = { 0 };
-            Vector3 surfNorm = { 0 };
-            if (CharacterModel_SampleSurfacePoint(s_currentPlayerPos, s_currentPlayerYaw, 1.0f, &surfPos, &surfNorm))
-            {
-                // Emit Wuxia Qi Aura particle flowing outward along surface normal + drifting upward
-                ParticleConfig p = { 0 };
-                p.position = surfPos;
-                p.physics.position = surfPos;
-
-                float speed = 0.30f + (float)GetRandomValue(0, 100) / 220.0f;
-                Vector3 vel = Vector3Scale(surfNorm, speed);
-                vel.y += 0.50f + (float)GetRandomValue(0, 100) / 200.0f;
-                p.velocity = vel;
-
-                p.radius = 0.042f + (float)GetRandomValue(0, 100) / 2200.0f;
-                p.lifetime = 0.32f + (float)GetRandomValue(0, 100) / 300.0f;
-                p.colorStart = (Color){ 255, 220, 80, 235 }; // Radiant golden core
-                p.colorEnd   = (Color){ 255, 85, 20, 0 };    // Fiery orange fade
-                SpawnParticle(p);
-            }
-        }
+        // Core API: Emit character skin aura
+        VFX_EmitCharacterSkinAura(s_currentPlayerPos, s_currentPlayerYaw,
+                                 (Color){ 255, 220, 80, 235 }, (Color){ 255, 85, 20, 0 }, 0.35f, 6);
     }
 
     if (s_demoCatmullActive)
@@ -1311,133 +1114,11 @@ void VFXTest_Draw3D(void)
         }
         else
         {
-            // Dynamic two-phase progression synchronized with punch animation (0.55s):
-            // Phase 1 (0.0s - 0.28s): Rapid forward cleave, trail streams behind blade tip
-            // Phase 2 (0.28s - 0.55s): Smooth follow-through & dissolution
-            float cutPhase = Clamp(progress / 0.28f, 0.0f, 1.0f);
-            float headT, tailT, alphaFade;
-            if (cutPhase < 1.0f)
-            {
-                headT = SlashEaseOut(cutPhase);
-                tailT = fmaxf(0.0f, headT - 0.65f);
-                alphaFade = 1.0f;
-            }
-            else
-            {
-                headT = 1.0f;
-                float dissolvePhase = (progress - 0.28f) / 0.27f;
-                tailT = 0.35f + dissolvePhase * 0.65f;
-                alphaFade = 1.0f - dissolvePhase;
-            }
-            alphaFade = Clamp(alphaFade, 0.0f, 1.0f);
+            Color primaryCol = WHITE;
+            Color accentCol = (Color){ 65, 215, 255, 255 };
 
-            // Compute 5 Catmull-Rom control points wrapping around character's reach
-            Vector3 fwd = (Vector3){ sinf(s_demoCatmullYaw), 0.0f, cosf(s_demoCatmullYaw) };
-            Vector3 rgt = (Vector3){ cosf(s_demoCatmullYaw), 0.0f, -sinf(s_demoCatmullYaw) };
-            Vector3 basePos = s_demoCatmullPos;
-            basePos.y += 0.95f; // Upper torso / shoulder level
-
-            // Natural martial arts slash arc (radius 1.3m - 1.7m, diagonal downward slice)
-            Vector3 c0 = Vector3Add(basePos, Vector3Add(Vector3Scale(rgt,  0.6f), Vector3Add(Vector3Scale(fwd, -0.4f), (Vector3){ 0.0f,  0.45f, 0.0f })));
-            Vector3 c1 = Vector3Add(basePos, Vector3Add(Vector3Scale(rgt,  1.3f), Vector3Add(Vector3Scale(fwd,  0.3f), (Vector3){ 0.0f,  0.28f, 0.0f })));
-            Vector3 c2 = Vector3Add(basePos, Vector3Add(Vector3Scale(rgt,  0.0f), Vector3Add(Vector3Scale(fwd,  1.7f), (Vector3){ 0.0f,  0.05f, 0.0f })));
-            Vector3 c3 = Vector3Add(basePos, Vector3Add(Vector3Scale(rgt, -1.3f), Vector3Add(Vector3Scale(fwd,  0.4f), (Vector3){ 0.0f, -0.20f, 0.0f })));
-            Vector3 c4 = Vector3Add(basePos, Vector3Add(Vector3Scale(rgt, -0.6f), Vector3Add(Vector3Scale(fwd, -0.3f), (Vector3){ 0.0f, -0.35f, 0.0f })));
-
-            DrawCentripetalSlashRibbon(c0, c1, c2, c3, c4, headT, tailT, alphaFade, s_lastCam);
-
-            if (cutPhase < 1.0f)
-            {
-                // Dynamic sword tip light & wind while blade cuts forward
-                Vector3 tipPos = EvaluateCrescentSpline(c0, c1, c2, c3, c4, headT);
-                VFXLight_Spawn(tipPos, (Color){ 160, 235, 255, 255 }, 3.5f, 0.04f, VFX_PRIORITY_HIGH_ULTIMATE);
-                Wind_SpawnRadialBlast(tipPos, 1.8f, 3.8f, 0.08f);
-
-                // High-velocity sharp sparks along tangent (refined 5.5cm - 8cm)
-                Vector3 prevTip = EvaluateCrescentSpline(c0, c1, c2, c3, c4, fmaxf(0.0f, headT - 0.03f));
-                Vector3 tangent = Vector3Normalize(Vector3Subtract(tipPos, prevTip));
-
-                for (int sIdx = 0; sIdx < 4; sIdx++)
-                {
-                    ParticleConfig sp = { 0 };
-                    sp.position = tipPos;
-                    sp.physics.position = tipPos;
-                    Vector3 jitter = {
-                        (float)GetRandomValue(-25, 25) / 100.0f,
-                        (float)GetRandomValue(-10, 25) / 100.0f,
-                        (float)GetRandomValue(-25, 25) / 100.0f
-                    };
-                    sp.velocity = Vector3Add(Vector3Scale(tangent, 3.2f + (float)GetRandomValue(0, 140) / 100.0f), jitter);
-                    sp.radius = 0.055f + (float)GetRandomValue(0, 25) / 1000.0f; // 5.5cm - 8.0cm
-                    sp.lifetime = 0.28f + (float)GetRandomValue(0, 12) / 100.0f; // 0.28s - 0.40s
-                    sp.colorStart = (Color){ 255, 255, 255, 255 }; // Blinding white core
-                    sp.colorEnd   = (Color){ 45, 175, 255, 0 };    // Vibrant cyan fade
-                    sp.render.blendMode = VFX_BLEND_ADDITIVE;
-                    sp.render.unlit = 1;
-                    sp.render.emissiveBoost = 2.0f;
-                    sp.stretchStrength = 0.35f;
-                    sp.stretchMinSpeed = 1.2f;
-                    SpawnParticle(sp);
-                }
-            }
-            else
-            {
-                // One-shot spark burst at slash apex/completion
-                if (!s_slashBurstFired)
-                {
-                    s_slashBurstFired = true;
-                    Vector3 endTip = EvaluateCrescentSpline(c0, c1, c2, c3, c4, 1.0f);
-                    VFXLight_Spawn(endTip, (Color){ 180, 240, 255, 255 }, 4.0f, 0.08f, VFX_PRIORITY_HIGH_ULTIMATE);
-                    Wind_SpawnRadialBlast(endTip, 2.2f, 4.2f, 0.10f);
-
-                    for (int b = 0; b < 10; b++)
-                    {
-                        ParticleConfig bp = { 0 };
-                        bp.position = endTip;
-                        bp.physics.position = endTip;
-                        float angle = (float)GetRandomValue(0, 360) * DEG2RAD;
-                        float speed = 2.0f + (float)GetRandomValue(0, 200) / 100.0f;
-                        bp.velocity = (Vector3){
-                            cosf(angle) * speed,
-                            0.2f + (float)GetRandomValue(0, 180) / 100.0f,
-                            sinf(angle) * speed
-                        };
-                        bp.radius = 0.06f + (float)GetRandomValue(0, 25) / 1000.0f; // 6cm - 8.5cm
-                        bp.lifetime = 0.35f + (float)GetRandomValue(0, 15) / 100.0f;
-                        bp.colorStart = (Color){ 255, 255, 255, 255 };
-                        bp.colorEnd   = (Color){ 35, 160, 255, 0 };
-                        bp.render.blendMode = VFX_BLEND_ADDITIVE;
-                        bp.render.unlit = 1;
-                        bp.render.emissiveBoost = 2.0f;
-                        bp.stretchStrength = 0.30f;
-                        bp.stretchMinSpeed = 1.0f;
-                        SpawnParticle(bp);
-                    }
-                }
-
-                // Shimmering radiant Qi motes during dissolve
-                if (GetRandomValue(0, 1) == 0)
-                {
-                    float randT = tailT + (headT - tailT) * ((float)GetRandomValue(10, 90) / 100.0f);
-                    Vector3 motePos = EvaluateCrescentSpline(c0, c1, c2, c3, c4, randT);
-                    ParticleConfig sp = { 0 };
-                    sp.position = motePos;
-                    sp.physics.position = motePos;
-                    sp.velocity = (Vector3){
-                        (float)GetRandomValue(-15, 15) / 100.0f,
-                        0.30f + (float)GetRandomValue(0, 30) / 100.0f,
-                        (float)GetRandomValue(-15, 15) / 100.0f
-                    };
-                    sp.radius = 0.045f + (float)GetRandomValue(0, 20) / 1000.0f; // 4.5cm - 6.5cm
-                    sp.lifetime = 0.30f;
-                    sp.colorStart = (Color){ 180, 240, 255, (unsigned char)(220 * alphaFade) };
-                    sp.colorEnd   = (Color){ 25, 120, 255, 0 };
-                    sp.render.blendMode = VFX_BLEND_ADDITIVE;
-                    sp.render.unlit = 1;
-                    sp.render.emissiveBoost = 1.8f;
-                    SpawnParticle(sp);
-                }
-            }
+            // Core API: Compose Centripetal Catmull-Rom Slash
+            VFX_ComposeCentripetalSlashEx(s_demoCatmullPos, s_demoCatmullYaw, primaryCol, accentCol, progress, duration, s_lastCam);
         }
     }
 

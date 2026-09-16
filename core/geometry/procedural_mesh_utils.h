@@ -42,6 +42,9 @@ void DrawCoreTorus(Vector3 center, float innerRadius, float outerRadius,
                    int sides, int rings, Color color);
 void DrawCorePrism(Vector3 bottom, Vector3 top, float radius, int sides,
                    Color color);
+void ProceduralMesh_DrawCrescentSlash(Vector3 center, Vector3 forward, Vector3 right,
+                                     float radius, float width, float arcAngle,
+                                     float tiltAngle, Color color);
 
 /* ============================================================================
  * TUBE MESH SYSTEM (MỚI)

@@ -567,3 +567,64 @@ void DrawCorePrism(Vector3 bottom, Vector3 top, float radius, int sides, Color c
 {
     DrawCoreCylinder(bottom, top, radius, radius, sides, color);
 }
+
+void ProceduralMesh_DrawCrescentSlash(Vector3 center, Vector3 forward, Vector3 right,
+                                     float radius, float width, float arcAngle,
+                                     float tiltAngle, Color color)
+{
+    rlDisableBackfaceCulling();
+    rlBegin(RL_TRIANGLES);
+    rlColor4ub(color.r, color.g, color.b, color.a);
+
+    const int segs = 32;
+    float da = arcAngle / (float)segs;
+    float startA = -arcAngle * 0.5f;
+
+    Vector3 baseUp = (Vector3){ 0.0f, 1.0f, 0.0f };
+    Vector3 tiltedUp = Vector3Normalize(Vector3Add(
+        Vector3Scale(baseUp, cosf(tiltAngle)),
+        Vector3Scale(right, sinf(tiltAngle))
+    ));
+    Vector3 slashRight = Vector3Normalize(Vector3CrossProduct(forward, tiltedUp));
+
+    for (int i = 0; i < segs; i++)
+    {
+        float a0 = startA + (float)i * da;
+        float a1 = a0 + da;
+        float t0 = (float)i / (float)segs;
+        float t1 = (float)(i + 1) / (float)segs;
+
+        float w0 = width * sinf(t0 * PI);
+        float w1 = width * sinf(t1 * PI);
+
+        float sinA0 = sinf(a0);
+        float cosA0 = cosf(a0);
+        float sinA1 = sinf(a1);
+        float cosA1 = cosf(a1);
+
+        float chord0 = (cosA0 - cosf(arcAngle * 0.5f)) * radius * 0.5f;
+        float chord1 = (cosA1 - cosf(arcAngle * 0.5f)) * radius * 0.5f;
+        float lat0 = sinA0 * radius;
+        float lat1 = sinA1 * radius;
+
+        Vector3 pBase0 = Vector3Add(center, Vector3Add(Vector3Scale(slashRight, lat0), Vector3Scale(forward, chord0)));
+        Vector3 pBase1 = Vector3Add(center, Vector3Add(Vector3Scale(slashRight, lat1), Vector3Scale(forward, chord1)));
+
+        Vector3 pFront0 = Vector3Add(pBase0, Vector3Scale(forward, w0 * 0.5f));
+        Vector3 pBack0  = Vector3Subtract(pBase0, Vector3Scale(forward, w0 * 0.5f));
+        Vector3 pFront1 = Vector3Add(pBase1, Vector3Scale(forward, w1 * 0.5f));
+        Vector3 pBack1  = Vector3Subtract(pBase1, Vector3Scale(forward, w1 * 0.5f));
+
+        rlNormal3f(tiltedUp.x, tiltedUp.y, tiltedUp.z);
+
+        rlTexCoord2f(t0, 1.0f); rlVertex3f(pFront0.x, pFront0.y, pFront0.z);
+        rlTexCoord2f(t0, 0.0f); rlVertex3f(pBack0.x,  pBack0.y,  pBack0.z);
+        rlTexCoord2f(t1, 1.0f); rlVertex3f(pFront1.x, pFront1.y, pFront1.z);
+
+        rlTexCoord2f(t0, 0.0f); rlVertex3f(pBack0.x,  pBack0.y,  pBack0.z);
+        rlTexCoord2f(t1, 0.0f); rlVertex3f(pBack1.x,  pBack1.y,  pBack1.z);
+        rlTexCoord2f(t1, 1.0f); rlVertex3f(pFront1.x, pFront1.y, pFront1.z);
+    }
+    rlEnd();
+    rlEnableBackfaceCulling();
+}

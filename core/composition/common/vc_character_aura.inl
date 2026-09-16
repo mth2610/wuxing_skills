@@ -388,3 +388,34 @@ static void VC_CharacterAura_Draw3D(Camera3D cam)
 {
     (void)cam;
 }
+
+void VFX_EmitCharacterSkinAura(Vector3 playerPos, float yaw, Color colorStart, Color colorEnd,
+                              float speed, int count)
+{
+    if (count <= 0) return;
+    for (int i = 0; i < count; i++)
+    {
+        Vector3 surfPos = { 0 };
+        Vector3 surfNorm = { 0 };
+        if (CharacterModel_SampleSurfacePoint(playerPos, yaw, 1.0f, &surfPos, &surfNorm))
+        {
+            ParticleConfig p = { 0 };
+            p.position = surfPos;
+            p.physics.position = surfPos;
+
+            float spd = speed * (0.85f + (float)GetRandomValue(0, 30) / 100.0f);
+            Vector3 vel = Vector3Scale(surfNorm, spd);
+            vel.y += 0.45f + (float)GetRandomValue(0, 30) / 100.0f;
+            p.velocity = vel;
+
+            p.radius = 0.042f + (float)GetRandomValue(0, 100) / 2200.0f;
+            p.lifetime = 0.32f + (float)GetRandomValue(0, 100) / 300.0f;
+            p.colorStart = colorStart;
+            p.colorEnd   = colorEnd;
+            p.render.blendMode = VFX_BLEND_ADDITIVE;
+            p.render.unlit = 1;
+            p.render.emissiveBoost = 1.6f;
+            SpawnParticle(p);
+        }
+    }
+}
