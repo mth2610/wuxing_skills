@@ -111,7 +111,6 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeCharacterAura":      ("emitter", "persistent", "persistent"),
     "VFX_ComposeChargeConverge":     ("draw",    "timed",      "continuous"),
     "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),
-    "VFX_ComposeCoreGlow":           ("draw",    "timed",      "continuous"),
     "VFX_ComposeFlare":              ("draw",    "timed",      "continuous"),
     "VFX_ComposeRadiantStarburst":   ("draw",    "timed",      "continuous"),
     "VFX_ComposeRadiantStarburstHead": ("draw",  "timed",      "continuous"),
@@ -298,6 +297,10 @@ FIXTURE_METADATA_OVERRIDES = {
     "VFX_ComposeOpticalFlare": {
         "category": "common",
     },
+    "VFX_ComposeVacuumArc": {
+        "label": "VACUUM CONVERGE",
+        "category": "common",
+    },
 }
 
 # The same idea for per-frame (Draw) fixtures, whose generated call is a
@@ -306,15 +309,16 @@ FIXTURE_METADATA_OVERRIDES = {
 # spawn table's contract (persistent, handle-owning) is not this one's.
 FIXTURE_DRAW_OVERRIDES = {
     "VFX_ComposeOpticalFlare":
-        "VFX_ComposeOpticalFlare($POS, 0.65f, 2.6f, 1.0f, s_lastCam)",
+        "VFX_ComposeOpticalFlare(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 0.55f, 2.4f, 1.0f, s_lastCam)",
     "VFX_ComposeSilhouetteGlow":
         "VFX_ComposeSilhouetteGlow(s_currentPlayerPos, s_currentPlayerYaw, 1.0f, s_lastCam)",
     "VFX_ComposeVacuumArc":
-        "VFX_ComposeVacuumArc($POS, 0.0f, $PROG, 1.35f, s_lastCam)",
+        "VFX_ComposeVacuumConverge(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 2.7f, $PROG, s_lastCam)",
     "VFX_ComposeVacuumRing":
-        "VFX_ComposeVacuumRing($POS, 2.2f, $PROG)",
+        "VFX_ComposeVacuumRing(s_currentPlayerPos, 2.2f, $PROG)",
     "VFX_ComposeIaidoStance":
         "VFX_ComposeIaidoStance(s_currentPlayerPos, s_currentPlayerYaw, $PROG, 1.35f, s_lastCam, NULL)",
+
     # The inferred call passes $PROG for t01, looping the ring's density 0->1
     # every two seconds. This fixture exists to JUDGE the fluid surface — you
     # stand in front of it and orbit — so density is pinned at 1.0 and the only

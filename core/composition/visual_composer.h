@@ -547,11 +547,11 @@ void VFX_DrawCharacterSilhouetteGlow(Vector3 playerPos, float yaw, Color auraCol
                                      float intensity, const void *targetMeshOrAnim);
 void VFX_ComposeSilhouetteGlow(Vector3 pos, float yaw, float intensity, Camera3D camera);
 
-// ── E6.5f. 3D Curved Parabolic Vacuum Wind Arc (VFX 3) ───────────────────────
-void VFX_DrawCurvedVacuumArc3D(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
-                              Color rimColor, Color bodyColor, float maxWidth,
-                              float progress, float duration, Camera3D camera);
+// ── E6.5f. 3D Vacuum Suction Vortex Converge (VFX 3) ─────────────────────────
+void VFX_ComposeVacuumConverge(Vector3 focalPoint, float sphereRadius,
+                              float progress, Camera3D camera);
 void VFX_ComposeVacuumArc(Vector3 pos, float yaw, float progress, float duration, Camera3D camera);
+
 
 // ── E6.5g. Thin Expanding Vacuum Ground Ring (VFX 4) ─────────────────────────
 void VFX_DrawExpandingVacuumRing(Vector3 center, float radius, float bandWidth,

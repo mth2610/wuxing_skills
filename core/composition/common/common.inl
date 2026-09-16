@@ -14,7 +14,7 @@
 // than editing it here, or the next sync will overwrite the edit.
 
 // @gen:common_includes begin
-// 22 include(s) — auto-managed by sync_vfx_test.py
+// 21 include(s) — auto-managed by sync_vfx_test.py
 #include "vc_common.inl"
 #include "vc_smoke_puff.inl"
 #include "vc_energy_burst.inl"
@@ -22,7 +22,6 @@
 #include "vc_glint_sparkle.inl"
 #include "vc_radiant_starburst.inl"
 #include "vc_rune_circle.inl"
-#include "vc_core_glow.inl"
 #include "vc_dissolve_exit.inl"
 #include "vc_sweep_slash.inl"
 #include "vc_light_shaft.inl"

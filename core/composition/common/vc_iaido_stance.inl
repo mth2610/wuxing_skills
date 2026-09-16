@@ -43,43 +43,17 @@ void VFX_ComposeIaidoStance(Vector3 playerPos, float yaw, float progress,
     VFX_DrawCharacterSilhouetteGlow(playerPos, yaw, silhColor, silhIntensity, animStatePtr);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // LAYER 3: 3D High-Altitude Parabolic Vacuum Streamlines
-    // ─────────────────────────────────────────────────────────────────────────
-    Color vacuumRim  = (Color){ 255, 255, 255, 255 };
-    Color vacuumBody = (Color){ 185, 220, 255, 255 };
-
-    // Arc 1: Left Swoop Arch (grand high-altitude arch matching reference)
-    Vector3 a1_p0 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt, -1.0f), Vector3Add(Vector3Scale(fwd, -0.7f), (Vector3){ 0.0f, 0.05f, 0.0f })));
-    Vector3 a1_p1 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt, -2.4f), Vector3Add(Vector3Scale(fwd, -0.1f), (Vector3){ 0.0f, 3.10f, 0.0f })));
-    Vector3 a1_p2 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt, -0.5f), Vector3Add(Vector3Scale(fwd,  1.6f), (Vector3){ 0.0f, 3.60f, 0.0f })));
-    Vector3 a1_p3 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt,  1.5f), Vector3Add(Vector3Scale(fwd,  2.2f), (Vector3){ 0.0f, 0.50f, 0.0f })));
-
-    float arc1Prog = Clamp((progress - 0.06f) / 0.84f, 0.0f, 1.0f);
-    VFX_DrawCurvedVacuumArc3D(a1_p0, a1_p1, a1_p2, a1_p3, vacuumRim, vacuumBody, 0.38f, arc1Prog, duration, camera);
-
-    // Arc 2: Overhead Crown Arch (spiraling across the player's silhouette)
-    Vector3 a2_p0 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt,  1.1f), Vector3Add(Vector3Scale(fwd, -0.5f), (Vector3){ 0.0f, 0.15f, 0.0f })));
-    Vector3 a2_p1 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt,  1.9f), Vector3Add(Vector3Scale(fwd,  0.3f), (Vector3){ 0.0f, 3.20f, 0.0f })));
-    Vector3 a2_p2 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt, -0.4f), Vector3Add(Vector3Scale(fwd,  1.3f), (Vector3){ 0.0f, 3.70f, 0.0f })));
-    Vector3 a2_p3 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt, -1.8f), Vector3Add(Vector3Scale(fwd,  0.4f), (Vector3){ 0.0f, 1.20f, 0.0f })));
-
-    float arc2Prog = Clamp((progress - 0.14f) / 0.80f, 0.0f, 1.0f);
-    VFX_DrawCurvedVacuumArc3D(a2_p0, a2_p1, a2_p2, a2_p3, vacuumRim, vacuumBody, 0.32f, arc2Prog, duration, camera);
-
-    // Arc 3: Forward Sweeping Streamline (reaching toward opponent/boss)
-    Vector3 a3_p0 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt, -0.2f), Vector3Add(Vector3Scale(fwd,  0.4f), (Vector3){ 0.0f, 0.40f, 0.0f })));
-    Vector3 a3_p1 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt,  1.2f), Vector3Add(Vector3Scale(fwd,  1.4f), (Vector3){ 0.0f, 1.40f, 0.0f })));
-    Vector3 a3_p2 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt,  2.4f), Vector3Add(Vector3Scale(fwd,  2.2f), (Vector3){ 0.0f, 2.10f, 0.0f })));
-    Vector3 a3_p3 = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt,  3.6f), Vector3Add(Vector3Scale(fwd,  3.0f), (Vector3){ 0.0f, 0.90f, 0.0f })));
-
-    float arc3Prog = Clamp((progress - 0.22f) / 0.74f, 0.0f, 1.0f);
-    VFX_DrawCurvedVacuumArc3D(a3_p0, a3_p1, a3_p2, a3_p3, vacuumRim, vacuumBody, 0.26f, arc3Prog, duration, camera);
-
-    // ─────────────────────────────────────────────────────────────────────────
     // LAYER 1: Optical Starburst & Anamorphic Cine Streak (Sword Hilt Focal Point)
     // ─────────────────────────────────────────────────────────────────────────
     // Anchored right at the left hip of the crouch stance (where the sword hilt is)
     Vector3 hiltPos = Vector3Add(playerPos, Vector3Add(Vector3Scale(rgt, -0.14f), Vector3Add(Vector3Scale(fwd, 0.10f), (Vector3){ 0.0f, 0.20f, 0.0f })));
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // LAYER 3: Vacuum Suction Vortex Streamlines Converging at Sword Hilt
+    // ─────────────────────────────────────────────────────────────────────────
+    float suctionProg = Clamp(progress / 0.88f, 0.0f, 1.0f);
+    VFX_ComposeVacuumConverge(hiltPos, 2.5f, suctionProg, camera);
+
 
     float flareIntensity = 0.0f;
     float streakLen = 0.0f;

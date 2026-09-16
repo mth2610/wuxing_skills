@@ -71,23 +71,37 @@ int main(void) {
     // Point far away (10, 10, 10)
     float dFar = Sdf_EvaluateHierarchyDistance((Vector3){ 10.0f, 10.0f, 10.0f }, capsules, count, 0.05f, &normal);
     assert(dFar > 5.0f);
-    // 4. Test 3D Cubic Bézier Arc Evaluation for Vacuum Streamlines
-    Vector3 b0 = { 0.0f, 0.0f, 0.0f };
-    Vector3 b1 = { 1.0f, 2.0f, 0.0f };
-    Vector3 b2 = { 2.0f, 2.0f, 1.0f };
-    Vector3 b3 = { 3.0f, 0.5f, 2.0f };
+    // 4. Test 3D Upper-Hemisphere Suction Vortex Path & Convergence
+    {
+        Vector3 focalPoint = { 1.0f, 1.05f, 2.0f };
+        float radius = 2.7f;
+        float theta = 0.5f * 3.14159f;
+        float phi = 0.6f; // > 0 (upper hemisphere)
+        float swirl = 2.2f * 3.14159f;
 
-    // B(0) = b0, B(1) = b3
-    float t0 = 0.0f, t1 = 1.0f, tmid = 0.5f;
-    float u = 1.0f - tmid;
-    Vector3 bMid = Vector3Add(
-        Vector3Add(Vector3Scale(b0, u * u * u), Vector3Scale(b1, 3.0f * u * u * tmid)),
-        Vector3Add(Vector3Scale(b2, 3.0f * u * tmid * tmid), Vector3Scale(b3, tmid * tmid * tmid))
-    );
-    assert(bMid.x == 1.5f);
-    assert(bMid.y > 1.2f && bMid.y < 1.8f);
-    assert(!isnan(bMid.x) && !isnan(bMid.y) && !isnan(bMid.z));
-    printf("[PASS] 3D Cubic Bézier Spline evaluation for vacuum arc streamlines.\n");
+        // Origin at u = 0: strictly on upper hemisphere (Y >= focalPoint.y * 0.65f > 0)
+        float rH0 = radius * cosf(phi);
+        float y0 = radius * sinf(phi);
+        assert(y0 > 0.0f); // Positive elevation above ground
+
+        // At u = 1.0 (end of suction): position must exactly equal focalPoint
+        float u1 = 1.0f;
+        float rH1 = rH0 * powf(1.0f - u1, 1.35f);
+        float y1 = focalPoint.y + (y0 - focalPoint.y * 0.35f) * (1.0f - powf(u1, 0.85f));
+        float curAngle = theta + swirl * powf(u1, 1.30f);
+        Vector3 endPos = {
+            focalPoint.x + rH1 * cosf(curAngle),
+            y1,
+            focalPoint.z + rH1 * sinf(curAngle)
+        };
+
+        assert(fabsf(endPos.x - focalPoint.x) < 1e-4f);
+        assert(fabsf(endPos.y - focalPoint.y) < 1e-4f);
+        assert(fabsf(endPos.z - focalPoint.z) < 1e-4f);
+        assert(!isnan(endPos.x) && !isnan(endPos.y) && !isnan(endPos.z));
+    }
+    printf("[PASS] 3D Upper-Hemisphere Suction Vortex converges exactly at focal point.\n");
+
 
     // 5. Test Vacuum Ring expansion easing & non-degeneracy
     {

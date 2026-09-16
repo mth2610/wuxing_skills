@@ -1,45 +1,53 @@
-# Session Summary: Messiah VFX Integration & Core API Modularization
+# Session Summary: Optical Flare Refinement & 3D Upper-Hemisphere Suction Vortex Overhaul
 
 ## 1. Context & Objectives
-- Nghiên cứu và hiện thực hóa các công nghệ đồ họa tiên tiến từ Messiah Engine / Elden Ring vào engine Wuxing Skills (C99 / Raylib):
-  1. **Lưới cánh cung 3D biến dạng khúc xạ (Mesh Refraction Distortion)** cho sóng xung kích chém gió.
-  2. **Tán xạ dưới bề mặt xấp xỉ (Subsurface Scattering / SSS)** trên mô hình nhân vật qua Screen-space Depth/Normal buffer.
-  3. **Bộc khí bề mặt nhân vật O(1) (Skinned Mesh Barycentric Aura Emitter)** thay thế vỏ cầu nhựa FBM cũ.
-  4. **Đại trảm kiếm khí Centripetal Catmull-Rom uốn cong 3D** mượt mà, vót nhọn kim châm hai đầu.
-- Tinh chỉnh hình dáng, độ dài, màu sắc, vận tốc, tia lửa (5.5cm - 8.0cm), luồng gió và ánh sáng theo feedback trực quan của người dùng.
-- Đóng gói toàn bộ các hiệu ứng kiểm thử thành các **Core API tổng quát**, dùng lại được cho mọi skill ngũ hành và boss, dọn dẹp sạch mã kiểm thử cục bộ trong `sandbox/vfx_test.c`.
+1. **Xóa VFX `CORE GLOW`**: Dọn dẹp hoàn toàn VFX cũ không còn cần thiết khỏi toàn bộ project.
+2. **Optical Flare**:
+   - Loại bỏ hoàn toàn cái quầng lens halo ring ("cái quần").
+   - Đặt lại vị trí ở chính giữa thân nhân vật (chiều cao `~1.05m`, di chuyển theo nhân vật).
+   - Tinh chỉnh 8 tia nhiễu xạ starburst và vệt anamorphic cine streak mượt mà, sắc nét.
+3. **Vacuum Suction Vortex Converge**:
+   - Thay thế toàn bộ nhát chém loạn xạ cũ thành **các luồng chân khí xuất hiện từ các điểm ngẫu nhiên trên một mặt bán cầu không gian phía trên mặt đất ($Y \ge 0$)**.
+   - Các luồng khí xoáy cuộn trong không gian 3D (3D corkscrew vortex), tăng tốc theo định luật bảo toàn mô-men động lượng và lao vào hội tụ tại một điểm tiêu điểm (như bị hút vào tâm Optical Flare) rồi biến mất.
+   - Thiết kế Core API tổng quát `VFX_ComposeVacuumConverge(focalPoint, radius, progress, camera)` cho phép áp dụng vào bất kỳ vị trí tiêu điểm nào (mũi kiếm, đan điền, bàn tay).
 
-## 2. Completed Implementations & Core APIs
+---
 
-### 2.1. Core Geometry: Procedural Crescent Mesh
-- **Files**: `core/geometry/procedural_mesh_utils.h`, `core/geometry/pm_core_shapes.inl`
-- **API**: `ProceduralMesh_DrawCrescentSlash(center, forward, right, radius, width, arcAngle, tiltAngle, color)`
-- **Tính năng**: Dựng hình dải lưới cánh cung 3D linh hoạt cho Refraction Pass bẻ cong không gian quang sai.
+## 2. Completed Implementations & Refactorings
 
-### 2.2. Core Composition: Skinned Mesh Barycentric Aura
-- **Files**: `core/composition/visual_composer.h`, `core/composition/common/vc_character_aura.inl`
-- **API**: `VFX_EmitCharacterSkinAura(playerPos, yaw, colorStart, colorEnd, speed, count)`
-- **Tính năng**: Lấy mẫu O(1) bề mặt mesh nhân vật theo diện tích tam giác có trọng số, phát tán hạt khí xuôi theo pháp tuyến bề mặt kết hợp bốc lên tự nhiên, giải quyết triệt để lỗi "vỏ nhựa FBM" (bubble shell).
+### 2.1. Xóa hoàn toàn VFX `CORE GLOW`
+- Xóa các tệp: `core/composition/common/vc_core_glow.inl`, `core/shaders/core_glow.fs`, `core/shaders/core_glow.vs`, `core/tests/core_glow_test.c`.
+- Dọn dẹp các khai báo và fixture trong `core/composition/visual_composer.h`, `core/composition/common/common.inl`, `scripts/vfx_test_manifest.json`, `scripts/sync_vfx_test.py`, `sandbox/vfx_test.c`.
 
-### 2.3. Core Composition: Centripetal Catmull-Rom Sword Arc
-- **Files**: `core/composition/visual_composer.h`, `core/composition/common/vc_sweep_slash.inl`
-- **API**:
-  - `VFX_ComposeCentripetalSlash(basePos, yawAngle, matId, progress, duration, camera)` (theo bảng màu ngũ hành `VC_MaterialId`).
-  - `VFX_ComposeCentripetalSlashEx(basePos, yawAngle, primaryColor, accentColor, progress, duration, camera)` (tùy biến màu tự do).
-- **Tính năng**:
-  - Dải Ribbon kép: Camera-facing + Planar disc giúp kiếm khí luôn dày dặn, nhìn rõ ở mọi góc camera.
-  - Tapering Sinusoidal vót nhọn đầu-đuôi kim châm, không còn vệt cắt cụt hình chữ nhật.
-  - Quản lý 2 pha: Vung chém chớp nhoáng (0.0s - 0.28s) & tan biến mượt mà (0.28s - 0.55s).
-  - Tự động sinh tia lửa tiếp tuyến sắc bén (5.5cm - 8.0cm), áp lực gió rẽ dạt cỏ (`Wind_SpawnRadialBlast`), đèn chớp phát quang `VFXLight_Spawn` và bộc phát tia sáng apex burst.
+### 2.2. Tinh chỉnh Optical Flare (`core/composition/common/vc_optical_flare.inl`)
+- Xóa bỏ hoàn toàn kết cấu quầng tròn `s_optHaloTex` / `OptFlare_GetHaloTexture`.
+- Cập nhật fixture trong `scripts/sync_vfx_test.py` đặt vị trí Optical Flare ở giữa thân nhân vật:
+  `Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f})`.
+- Giữ lại 8 tia nhiễu xạ starburst cardinal/diagonal và vệt anamorphic flare cực kỳ sắc nét.
 
-### 2.4. Refactor `sandbox/vfx_test.c`
-- Loại bỏ toàn bộ mã trùng lặp cục bộ (`DrawCrescentSlash3D`, `SlashEaseOut`, `EvaluateCrescentSpline`, `s_slashRibbonTex`, `GetSlashRibbonTexture`, `DrawCentripetalSlashRibbon`).
-- Các phím `[1]`, `[3]`, `[4]` chuyển sang gọi trực tiếp các Core API.
+### 2.3. 3D Upper-Hemisphere Suction Vortex Streamlines (`core/composition/common/vc_vacuum_arc.inl`)
+- **Mô hình toán học**:
+  - Sinh 10 luồng chân khí phân bố ngẫu nhiên trên mặt bán cầu bán kính $R \approx 2.2\text{m} - 2.95\text{m}$, góc nâng $\phi \in [0.18, 1.25\text{ rad}]$ đảm bảo $100\%$ điểm khởi phát nằm ở nửa không gian phía trên mặt đất ($Y \ge 0$).
+  - Phương trình co cụm và xoáy ốc:
+    $$r_H(u) = r_{H0} \cdot (1 - u)^{1.35}, \quad \alpha(u) = \theta_0 + \text{swirlTotal} \cdot u^{1.30}$$
+    $$y(u) = P_{\text{focal}}.y + (y_0 - 0.35 P_{\text{focal}}.y) \cdot (1 - u^{0.85})$$
+  - Khi $u \to 1.0$, tọa độ của các luồng khí hội tụ chính xác tuyệt đối về $P_{\text{focal}}$ và tự động tan biến (fade-out).
+  - Ribbon hai lớp: Lớp lõi sắc lẹm trắng tinh + lớp viền lam nhạt chân không (`BLEND_ADDITIVE`).
+- **Generic Core API**:
+  - `VFX_ComposeVacuumConverge(Vector3 focalPoint, float sphereRadius, float progress, Camera3D camera)`
+  - `VFX_ComposeVacuumArc(Vector3 pos, float yaw, float progress, float duration, Camera3D camera)` (backward-compatible wrapper).
+- **Iaido Stance (`vc_iaido_stance.inl`)**:
+  - Cập nhật chuỗi thế kiếm Iaido hút các luồng chân khí xoáy cuộn từ mặt bán cầu hội tụ thẳng vào chuôi kiếm (`hiltPos`), kết hợp hoàn hảo với Optical Flare khi tụ khí chuẩn bị rút kiếm.
 
-### 2.5. Tài liệu
-- Cập nhật catalog tại `core/docs/COMPOSITION_API.md`.
+### 2.4. Đồng bộ hóa Tester & Tài liệu
+- Đổi tên nhãn hiển thị trong menu NEW FX từ `VACUUM ARC` thành `VACUUM CONVERGE`.
+- Chạy `python3 scripts/sync_vfx_test.py` cập nhật 61 entries của `sandbox/vfx_test.c`.
+- Cập nhật tài liệu API catalog tại `core/docs/COMPOSITION_API.md`.
+
+---
 
 ## 3. Verification & Stability
-- **Build Status**: `cmake --build build -j8` đạt `[100%] Built target wuxing` thành công, không lỗi hay cảnh báo.
-- **Unit Tests**: `cmake --build build --target messiah_vfx_test` và chạy `./build/messiah_vfx_test`: **100% Passed**.
-- **Performance**: Duy trì ổn định 60 FPS.
+- **Build Status**: Biên dịch `cmake --build build -j8` đạt `[100%] Built target wuxing` thành công (0 warning, 0 error).
+- **Unit Tests**: Chạy `messiah_vfx_test` kiểm tra toán học đường xoáy bán cầu và độ chính xác hội tụ: **100% Passed**.
+- **Frame Rate**: Duy trì 60 FPS ổn định.
+
