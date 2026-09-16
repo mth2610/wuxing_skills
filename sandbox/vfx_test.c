@@ -32,6 +32,7 @@ static bool s_hasTestPath = false;
 #include "raymath.h"
 #include "core/geometry/sdf_capsule.h"
 #include "core/surface_material.h"
+#include "character/character_model.h"
 
 // Messiah Engine Feature Demos (Items 2, 3, 4)
 static bool    s_demoMeshDistortActive = false;
@@ -47,7 +48,7 @@ void VFXTest_SetPlayerYaw(float yaw) {
 static bool    s_demoSSSActive = false;
 static float   s_demoSSSAngle = 0.0f;
 
-static bool    s_demoSDFActive = false;
+static bool    s_demoMeshEmitterActive = false;
 
 // Prefab Tester UI config
 #define PREFAB_UI_X 20.0f
@@ -498,8 +499,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
 
     if (IsKeyPressed(KEY_THREE) || IsKeyPressed(KEY_KP_3))
     {
-        s_demoSDFActive = !s_demoSDFActive;
-        TraceLog(LOG_INFO, "[Messiah VFX Demo] 3: Capsule SDF Hierarchy %s!", s_demoSDFActive ? "ENABLED" : "DISABLED");
+        s_demoMeshEmitterActive = !s_demoMeshEmitterActive;
+        TraceLog(LOG_INFO, "[Messiah VFX Demo] 3: Skinned Mesh Emitter (O(1)) %s!", s_demoMeshEmitterActive ? "ENABLED" : "DISABLED");
     }
 
     if (IsKeyPressed(KEY_T))
@@ -1134,29 +1135,36 @@ void VFXTest_Draw3D(void)
         DrawCircle3D(orbitPos, 0.40f, (Vector3){ 0.0f, 1.0f, 0.0f }, 0.0f, (Color){ 255, 160, 40, 160 });
     }
 
-    if (s_demoSDFActive)
+    if (s_demoMeshEmitterActive)
     {
-        SdfCapsule capsules[12];
-        int count = 0;
-        Sdf_BuildHumanoidHierarchy(s_currentPlayerPos, 1.8f, 0.0f, capsules, 12, &count);
+        // 1. Dynamic golden aura light centered at chest
+        Vector3 chestPos = Vector3Add(s_currentPlayerPos, (Vector3){ 0.0f, 1.10f, 0.0f });
+        VFXLight_Spawn(chestPos, (Color){ 255, 200, 75, 255 }, 2.8f, 0.05f, VFX_PRIORITY_HIGH_ULTIMATE);
 
-        for (int i = 0; i < count; i++)
+        // 2. Uniform O(1) surface sampling across the animated character mesh
+        const int samplesPerFrame = 6;
+        for (int i = 0; i < samplesPerFrame; i++)
         {
-            DrawCapsuleWires(capsules[i].a, capsules[i].b, capsules[i].radius + 0.02f, 6, 6, (Color){ 0, 220, 255, 140 });
-        }
+            Vector3 surfPos = { 0 };
+            Vector3 surfNorm = { 0 };
+            if (CharacterModel_SampleSurfacePoint(s_currentPlayerPos, s_currentPlayerYaw, 1.0f, &surfPos, &surfNorm))
+            {
+                // Emit Wuxia Qi Aura particle flowing outward along surface normal + drifting upward
+                ParticleConfig p = { 0 };
+                p.position = surfPos;
+                p.physics.position = surfPos;
 
-        static float auraPhase = 0.0f;
-        auraPhase += dt * 3.0f;
-        for (int i = 0; i < 24; i++)
-        {
-            float phi = (float)i * (2.0f * PI / 24.0f) + auraPhase;
-            float h = 0.2f + 1.4f * (float)i / 24.0f;
-            Vector3 testPt = Vector3Add(s_currentPlayerPos, (Vector3){ cosf(phi) * 0.8f, h, sinf(phi) * 0.8f });
-            Vector3 gradNormal;
-            float dist = Sdf_EvaluateHierarchyDistance(testPt, capsules, count, 0.06f, &gradNormal);
+                float speed = 0.30f + (float)GetRandomValue(0, 100) / 220.0f;
+                Vector3 vel = Vector3Scale(surfNorm, speed);
+                vel.y += 0.50f + (float)GetRandomValue(0, 100) / 200.0f;
+                p.velocity = vel;
 
-            Vector3 surfacePt = Vector3Subtract(testPt, Vector3Scale(gradNormal, dist - 0.03f));
-            DrawSphere(surfacePt, 0.035f, (Color){ 255, 220, 80, 220 });
+                p.radius = 0.042f + (float)GetRandomValue(0, 100) / 2200.0f;
+                p.lifetime = 0.32f + (float)GetRandomValue(0, 100) / 300.0f;
+                p.colorStart = (Color){ 255, 220, 80, 235 }; // Radiant golden core
+                p.colorEnd   = (Color){ 255, 85, 20, 0 };    // Fiery orange fade
+                SpawnParticle(p);
+            }
         }
     }
 
@@ -1451,7 +1459,9 @@ void VFXTest_DrawHUD(void)
     if (s_hideAllUI)
         return; // U — see UpdateAndHandleInput. Nothing below draws.
 
-    DrawText("[1] DEMO 2: MESH DISTORT | [2] DEMO 3: SSS LIGHT | [3] DEMO 4: CAPSULE SDF",
+    DrawText(TextFormat("[1] DEMO 2: MESH DISTORT | [2] DEMO 3: SSS LIGHT %s | [3] DEMO 4: MESH EMITTER %s",
+                        s_demoSSSActive ? "[ON]" : "[OFF]",
+                        s_demoMeshEmitterActive ? "[ON]" : "[OFF]"),
              10, 565, 16, YELLOW);
     DrawText(TextFormat("B: character ref %s | Z/C: punch/kick | TAB: debug HUD %s | N: dark bg | R: reset view",
                         s_hideCharacterRef ? "hidden" : "shown",

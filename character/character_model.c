@@ -177,6 +177,9 @@ Model CharacterModel_GetModel(void) {
     return s_model;
 }
 
+#include "raymath.h"
+#include <math.h>
+
 MeshAdjacency* CharacterModel_GetAdjacency(void) {
     if (!s_charAdjacencyBuilt && s_loaded) {
         if (s_model.meshCount > 0) {
@@ -186,3 +189,101 @@ MeshAdjacency* CharacterModel_GetAdjacency(void) {
     }
     return s_charAdjacencyBuilt ? &s_charAdjacency : NULL;
 }
+
+bool CharacterModel_SampleSurfacePoint(Vector3 position, float yawRadians, float scale,
+                                      Vector3 *outWorldPos, Vector3 *outWorldNormal) {
+    if (!s_loaded || s_model.meshCount == 0) return false;
+
+    int meshIdx = (s_model.meshCount == 1) ? 0 : GetRandomValue(0, s_model.meshCount - 1);
+    Mesh mesh = s_model.meshes[meshIdx];
+    if (mesh.vertexCount <= 0) return false;
+
+    // Prefer CPU-skinned animVertices when available so samples track character animation
+    const float *vBuf = (mesh.animVertices != NULL) ? mesh.animVertices : mesh.vertices;
+    const float *nBuf = (mesh.animNormals != NULL) ? mesh.animNormals : mesh.normals;
+    if (!vBuf) return false;
+
+    Vector3 localPos = { 0 };
+    Vector3 localNorm = (Vector3){ 0.0f, 1.0f, 0.0f };
+
+    if (mesh.indices != NULL && mesh.triangleCount > 0) {
+        // Uniform O(1) triangle surface sampling via barycentric coords
+        int tri = GetRandomValue(0, mesh.triangleCount - 1);
+        int i0 = mesh.indices[tri * 3 + 0];
+        int i1 = mesh.indices[tri * 3 + 1];
+        int i2 = mesh.indices[tri * 3 + 2];
+
+        float r1 = (float)GetRandomValue(0, 10000) / 10000.0f;
+        float r2 = (float)GetRandomValue(0, 10000) / 10000.0f;
+        if (r1 + r2 > 1.0f) {
+            r1 = 1.0f - r1;
+            r2 = 1.0f - r2;
+        }
+        float r3 = 1.0f - r1 - r2;
+
+        localPos.x = r1 * vBuf[i0 * 3 + 0] + r2 * vBuf[i1 * 3 + 0] + r3 * vBuf[i2 * 3 + 0];
+        localPos.y = r1 * vBuf[i0 * 3 + 1] + r2 * vBuf[i1 * 3 + 1] + r3 * vBuf[i2 * 3 + 1];
+        localPos.z = r1 * vBuf[i0 * 3 + 2] + r2 * vBuf[i1 * 3 + 2] + r3 * vBuf[i2 * 3 + 2];
+
+        if (nBuf) {
+            localNorm.x = r1 * nBuf[i0 * 3 + 0] + r2 * nBuf[i1 * 3 + 0] + r3 * nBuf[i2 * 3 + 0];
+            localNorm.y = r1 * nBuf[i0 * 3 + 1] + r2 * nBuf[i1 * 3 + 1] + r3 * nBuf[i2 * 3 + 1];
+            localNorm.z = r1 * nBuf[i0 * 3 + 2] + r2 * nBuf[i1 * 3 + 2] + r3 * nBuf[i2 * 3 + 2];
+            float nLenSq = localNorm.x * localNorm.x + localNorm.y * localNorm.y + localNorm.z * localNorm.z;
+            if (nLenSq > 1e-6f) {
+                float invN = 1.0f / sqrtf(nLenSq);
+                localNorm.x *= invN;
+                localNorm.y *= invN;
+                localNorm.z *= invN;
+            }
+        }
+    } else {
+        // Fallback: pick random vertex in O(1)
+        int vIdx = GetRandomValue(0, mesh.vertexCount - 1);
+        localPos.x = vBuf[vIdx * 3 + 0];
+        localPos.y = vBuf[vIdx * 3 + 1];
+        localPos.z = vBuf[vIdx * 3 + 2];
+
+        if (nBuf) {
+            localNorm.x = nBuf[vIdx * 3 + 0];
+            localNorm.y = nBuf[vIdx * 3 + 1];
+            localNorm.z = nBuf[vIdx * 3 + 2];
+        }
+    }
+
+    // Model space -> World space (Scale, Rotate around Y by yawRadians, Translate)
+    float c = cosf(yawRadians);
+    float s = sinf(yawRadians);
+
+    Vector3 scaledPos = (Vector3){ localPos.x * scale, localPos.y * scale, localPos.z * scale };
+    Vector3 rotatedPos = (Vector3){
+        scaledPos.x * c + scaledPos.z * s,
+        scaledPos.y,
+        -scaledPos.x * s + scaledPos.z * c
+    };
+
+    if (outWorldPos) {
+        *outWorldPos = Vector3Add(rotatedPos, position);
+    }
+
+    if (outWorldNormal) {
+        Vector3 rotatedNorm = (Vector3){
+            localNorm.x * c + localNorm.z * s,
+            localNorm.y,
+            -localNorm.x * s + localNorm.z * c
+        };
+        float rnLenSq = rotatedNorm.x * rotatedNorm.x + rotatedNorm.y * rotatedNorm.y + rotatedNorm.z * rotatedNorm.z;
+        if (rnLenSq > 1e-6f) {
+            float invLen = 1.0f / sqrtf(rnLenSq);
+            rotatedNorm.x *= invLen;
+            rotatedNorm.y *= invLen;
+            rotatedNorm.z *= invLen;
+        } else {
+            rotatedNorm = (Vector3){ 0.0f, 1.0f, 0.0f };
+        }
+        *outWorldNormal = rotatedNorm;
+    }
+
+    return true;
+}
+

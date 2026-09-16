@@ -92,4 +92,11 @@ struct MeshAdjacency;
 Model CharacterModel_GetModel(void);
 struct MeshAdjacency* CharacterModel_GetAdjacency(void);
 
+// Samples a random point on the character's deformed animated mesh surface in O(1).
+// Uses CPU-skinned animVertices so particles follow whatever animation is currently active.
+// Computes outWorldPos and outWorldNormal in world space based on position, yawRadians, scale.
+// Returns false if the model is not loaded or has no valid mesh.
+bool CharacterModel_SampleSurfacePoint(Vector3 position, float yawRadians, float scale,
+                                      Vector3 *outWorldPos, Vector3 *outWorldNormal);
+
 #endif // CHARACTER_MODEL_H
