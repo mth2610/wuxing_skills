@@ -486,7 +486,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         s_demoSSSActive = !s_demoSSSActive;
         if (s_demoSSSActive)
         {
-            SurfaceMaterial_SetSSSExt(2.2f, 6.0f, (Color){ 255, 120, 50, 255 }, 0.40f);
+            SurfaceMaterial_SetSSSExt(1.6f, 2.5f, (Color){ 255, 120, 50, 255 }, 0.35f);
             TraceLog(LOG_INFO, "[Messiah VFX Demo] 2: SSS Translucency ENABLED!");
         }
         else
@@ -1127,11 +1127,11 @@ void VFXTest_Draw3D(void)
 
     if (s_demoSSSActive)
     {
-        s_demoSSSAngle += dt * 2.2f;
-        Vector3 orbitPos = Vector3Add(s_currentPlayerPos, (Vector3){ cosf(s_demoSSSAngle) * 1.6f, 1.3f, sinf(s_demoSSSAngle) * 1.6f });
-        VFXLight_Spawn(orbitPos, (Color){ 255, 120, 30, 255 }, 2.5f, 0.05f, VFX_PRIORITY_HIGH_ULTIMATE);
-        DrawSphere(orbitPos, 0.12f, (Color){ 255, 220, 100, 255 });
-        DrawCircle3D(orbitPos, 0.35f, (Vector3){ 0.0f, 1.0f, 0.0f }, 0.0f, (Color){ 255, 150, 40, 150 });
+        s_demoSSSAngle += dt * 1.8f;
+        Vector3 orbitPos = Vector3Add(s_currentPlayerPos, (Vector3){ cosf(s_demoSSSAngle) * 1.5f, 1.15f, sinf(s_demoSSSAngle) * 1.5f });
+        VFXLight_Spawn(orbitPos, (Color){ 255, 140, 40, 255 }, 3.8f, 0.05f, VFX_PRIORITY_HIGH_ULTIMATE);
+        DrawSphere(orbitPos, 0.14f, (Color){ 255, 230, 110, 255 });
+        DrawCircle3D(orbitPos, 0.40f, (Vector3){ 0.0f, 1.0f, 0.0f }, 0.0f, (Color){ 255, 160, 40, 160 });
     }
 
     if (s_demoSDFActive)

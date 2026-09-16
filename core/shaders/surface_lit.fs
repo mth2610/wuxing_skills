@@ -213,6 +213,7 @@ void main() {
 
     // --- HIGH adds (tier >= 3): aniso sheen + fake SSS (normal map already
     // perturbed N above, before any of the LOW/MED terms were computed) ---
+    // --- HIGH adds (tier >= 3): aniso sheen ---
     if (u_qualityTier >= 3) {
         if (u_aniso > 0.5) {
             // Anisotropic sheen — streaks the highlight along the tangent
@@ -222,27 +223,48 @@ void main() {
             float aniso = sqrt(max(0.0, 1.0 - ToH * ToH));
             color += u_sunColor * pow(aniso, u_anisoShininess) * u_specStrength * shadow;
         }
-        if (u_sssStrength > 0.0) {
-            // Messiah Engine / Valve / Frostbite SSS Translucency model:
-            // Light bends through thin geometry curved by surface normal
-            float distWeight = (u_sssDistortion > 0.001) ? u_sssDistortion : 0.35;
-            vec3 Lscatter = normalize(-L - N * distWeight);
-            float back = pow(max(dot(V, Lscatter), 0.0), u_sssPower) * u_sssStrength;
-            vec3 sssTint = (length(u_sssColor) > 0.01) ? u_sssColor : vec3(1.0, 0.48, 0.25);
-            color += albedo * sssTint * u_sunColor * back;
+    }
 
-            // Translucency from nearby VFX skill lights (chân khí hộ thể / fireballs / auras)
-            for (int i = 0; i < min(u_vfxLightCount, MAX_VFX_LIGHTS); ++i) {
-                vec3 vfxToPos = fragWorldPos - u_vfxLightPosRadius[i].xyz;
-                float vfxDist = length(vfxToPos);
-                float radius = u_vfxLightPosRadius[i].w;
-                if (vfxDist < radius && vfxDist > 0.001) {
-                    vec3 vfxL = -normalize(vfxToPos);
-                    vec3 vfxScatter = normalize(-vfxL - N * distWeight);
-                    float vfxBack = pow(max(dot(V, vfxScatter), 0.0), u_sssPower);
-                    float atten = clamp(1.0 - vfxDist / radius, 0.0, 1.0);
-                    color += albedo * sssTint * u_vfxLightColor[i].rgb * (vfxBack * atten * u_sssStrength * u_vfxLightGain * 0.5);
-                }
+    // --- Subsurface Scattering & Translucency (Messiah / Frostbite Thin-Tissue Model) ---
+    // Evaluates whenever SSS is explicitly requested by gameplay or test harness (u_sssStrength > 0.0)
+    if (u_sssStrength > 0.0) {
+        float distWeight = (u_sssDistortion > 0.001) ? u_sssDistortion : 0.35;
+        vec3 sssTint = (length(u_sssColor) > 0.01) ? u_sssColor : vec3(1.0, 0.40, 0.20);
+        vec3 sssAlbedo = mix(albedo, sssTint, 0.35);
+
+        // Thinness profile: geometry is thickest where N faces V directly (torso/core)
+        // and thinnest at grazing silhouette edges (ears, fingers, limbs, cloth rims)
+        float edgeFactor = pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 2.2);
+
+        // 1. Sun SSS: subtle back-scatter through thin parts
+        vec3 Lscatter = normalize(-L - N * distWeight);
+        float sunForward = pow(clamp(dot(V, Lscatter), 0.0, 1.0), u_sssPower) * (0.10 + 0.90 * edgeFactor);
+        float sunBackLight = clamp(dot(-N, -L), 0.0, 1.0);
+        float sunRim = edgeFactor * sunBackLight;
+        float sunTotal = (sunForward * 0.4 + sunRim * 0.9) * u_sssStrength;
+        color += sssAlbedo * sssTint * u_sunColor * sunTotal;
+
+        // 2. Translucency from nearby dynamic VFX lights (lanterns, fireballs, chân khí, orbs)
+        for (int i = 0; i < min(u_vfxLightCount, MAX_VFX_LIGHTS); ++i) {
+            vec3 toL = u_vfxLightPosRadius[i].xyz - fragWorldPos;
+            float vfxDist = length(toL);
+            float radius = u_vfxLightPosRadius[i].w;
+            if (vfxDist < radius && vfxDist > 0.001) {
+                vec3 vfxL = toL / vfxDist; // unit vector from fragment to light
+                vec3 vfxScatter = normalize(-vfxL - N * distWeight);
+                
+                // Light penetrates thin edges strongly; thick core absorbs most light
+                float vfxForward = pow(clamp(dot(V, vfxScatter), 0.0, 1.0), u_sssPower) * (0.12 + 0.88 * edgeFactor);
+                
+                // Backlight bleed: light striking the rear face radiates around silhouette edges
+                float vfxBackLight = clamp(dot(-N, vfxL), 0.0, 1.0);
+                float vfxRim = edgeFactor * vfxBackLight;
+
+                float atten = clamp(1.0 - vfxDist / radius, 0.0, 1.0);
+                atten *= atten; // quadratic falloff
+
+                float vfxTotal = (vfxForward * 0.5 + vfxRim * 1.3) * atten * u_sssStrength;
+                color += sssAlbedo * sssTint * u_vfxLightColor[i].rgb * (vfxTotal * u_vfxLightGain * 0.45);
             }
         }
     }
