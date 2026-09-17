@@ -47,3 +47,4 @@
 #include "vc_vacuum_arc.inl"
 #include "vc_vacuum_ring.inl"
 #include "vc_iaido_stance.inl"
+#include "vc_guiding_wind.inl"

@@ -46,6 +46,7 @@ typedef struct {
     float   noiseScale;     // Tần số không gian của sóng gió Perlin (mặc định ~0.08)
     float   noiseSpeed;     // Tốc độ trôi sóng gió theo thời gian (mặc định ~1.2)
     float   terrainLiftK;   // Hệ số nâng khí động học khi gặp dốc địa hình (mặc định ~1.5)
+    float   heightGradientK;// Hệ số gradient vận tốc theo cao độ (0.0 = đồng đều, 1.0 = lớp biên đầy đủ)
 } WindMacroConfig;
 
 // Callback truy vấn độ cao địa hình tại tọa độ (worldX, worldZ)
@@ -62,5 +63,18 @@ typedef struct {
     bool active;
     unsigned int version;
 } WindTerrainGrid;
+
+// Trạng thái đợt Gió Dẫn Đường toàn cục (Ghost of Tsushima Windicator State)
+typedef struct {
+    bool    active;      // Đang có đợt gió dẫn đường hoạt động
+    Vector3 playerPos;   // Vị trí người chơi khi gọi gió
+    Vector3 targetPos;   // Điểm mốc mục tiêu định hướng
+    Vector3 direction;   // Vector đơn vị V_main = normalize(targetPos - playerPos)
+    float   speed;       // Vận tốc gió cực đại của đợt gió (m/s, mặc định ~16.0)
+    float   duration;    // Tổng thời gian đợt gió thổi (s, mặc định ~2.2)
+    float   elapsed;     // Thời gian đã trôi qua trong đợt gió hiện tại
+    float   progress;    // Tiến trình chuẩn hóa [0.0 .. 1.0]
+    float   intensity;   // Hệ số cường độ tức thời theo phong bì attack/sustain/decay
+} WindGuidingGust;
 
 #endif // WUXING_WIND_TYPES_H

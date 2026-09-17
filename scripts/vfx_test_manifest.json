@@ -255,6 +255,17 @@
       "draw_call": "VFX_ComposeGroundWave($POS, VC_MAT_EARTH, 1.5f, $PROG, VFX_GroundHeightFromMap, NULL)"
     },
     {
+      "source": "common/vc_guiding_wind.inl",
+      "fn": "VFX_ComposeGuidingWind",
+      "label": "GUIDING WIND",
+      "category": "common",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeGuidingWind(s_currentPlayerPos, Vector3Add(s_currentPlayerPos, Vector3Scale((Vector3){sinf(s_currentPlayerYaw), 0.0f, cosf(s_currentPlayerYaw)}, 24.0f)), $PROG, s_lastCam)"
+    },
+    {
       "source": "common/vc_iaido_stance.inl",
       "fn": "VFX_ComposeIaidoStance",
       "label": "IAIDO STANCE",

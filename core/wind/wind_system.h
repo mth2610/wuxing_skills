@@ -80,11 +80,29 @@ Vector3 Wind_EvaluateAcceleration(Vector3 pos, float time, Vector3 currentVel);
 // Lấy riêng thành phần gió vĩ mô tại pos
 Vector3 Wind_GetMacroAt(Vector3 pos, float time);
 
+// Hệ số điều biến vận tốc gió theo độ cao tương đối so với mặt đất (Atmospheric Boundary Layer)
+// Trả về: 0.5 tại mặt đất -> 1.0 tại 2.5m -> 1.4 tại 12m+
+float Wind_HeightFactor(float hRel);
+
 // -----------------------------------------------------------------------------
 // Buffer & Inspection
 // -----------------------------------------------------------------------------
 const VorticleData* Wind_GetActiveVorticles(int *outCount);
 int Wind_GetActiveCount(void);
+
+// -----------------------------------------------------------------------------
+// Guiding Wind (Gió Dẫn Đường - Ghost of Tsushima Windicator Engine)
+// Kích phát đợt gió định hướng toàn cục: chuyển hướng gió chính V_main, tạo đợt
+// sóng cuộn Perlin hai tầng và kích hoạt tương tác cỏ/hoa/lá cây đồng bộ.
+// -----------------------------------------------------------------------------
+void Wind_TriggerGuidingWind(Vector3 playerPos, Vector3 targetPos, float speed, float duration);
+void Wind_StopGuidingWind(void);
+bool Wind_IsGuidingWindActive(void);
+float Wind_GetGuidingWindProgress(void);
+WindGuidingGust Wind_GetGuidingWindState(void);
+
+// Tương tác dạt gió cục bộ do chuyển động nhân vật/vung kiếm (Displacement D_displace)
+void Wind_AddDisplacement(Vector3 pos, Vector3 velocity, float radius, float duration);
 
 // -----------------------------------------------------------------------------
 // Debug Visualization (Gizmo trực quan hóa hướng gió và mảng quả cầu Vorticle)

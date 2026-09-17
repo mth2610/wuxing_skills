@@ -563,6 +563,9 @@ void VFX_ComposeIaidoStance(Vector3 playerPos, float yaw, float progress,
                             float duration, Camera3D camera,
                             const void *animStatePtr);
 
+// ── E6.5i. Ghost of Tsushima Guiding Wind Ribbon (VFX 6) ─────────────────────
+void VFX_ComposeGuidingWind(Vector3 startPos, Vector3 targetPos, float progress, Camera3D camera);
+
 // ── E6.6. Energy burst ──────────────────────────────────────────────────────
 // An expanding SHEET of energy: sprites thrown centrifugally from a RING (not a
 // disc), so nothing fills the centre and the burst reads as a shell opening. The

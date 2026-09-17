@@ -6,6 +6,7 @@
 static VorticleData           s_vorticles[MAX_VORTICLES];
 static int                    s_activeCount = 0;
 static WindMacroConfig        s_macroConfig;
+static WindGuidingGust        s_guidingGust = {0};
 static TerrainHeightQueryFn   s_terrainQuery = NULL;
 static void                  *s_terrainUserData = NULL;
 static WindTerrainGrid        s_terrainGrid;
@@ -86,6 +87,7 @@ static float Wind_NoiseScalar3D(Vector3 p) {
 void Wind_Init(void) {
     memset(s_vorticles, 0, sizeof(s_vorticles));
     s_activeCount = 0;
+    memset(&s_guidingGust, 0, sizeof(s_guidingGust));
     s_terrainQuery = NULL;
     s_terrainUserData = NULL;
     memset(&s_terrainGrid, 0, sizeof(s_terrainGrid));
@@ -98,6 +100,7 @@ void Wind_Init(void) {
         .noiseScale    = 0.06f,
         .noiseSpeed    = 1.0f,
         .terrainLiftK  = 1.2f,
+        .heightGradientK = 1.0f,
     };
     s_initialized = true;
 }
@@ -107,6 +110,8 @@ void Wind_Clear(void) {
         s_vorticles[i].active = false;
     }
     s_activeCount = 0;
+    s_guidingGust.active = false;
+    s_guidingGust.intensity = 0.0f;
 }
 
 void Wind_Unload(void) {
@@ -114,6 +119,7 @@ void Wind_Unload(void) {
     s_terrainQuery = NULL;
     s_terrainUserData = NULL;
     memset(&s_terrainGrid, 0, sizeof(s_terrainGrid));
+    memset(&s_guidingGust, 0, sizeof(s_guidingGust));
     s_initialized = false;
 }
 
@@ -221,9 +227,29 @@ static bool Wind_SampleTerrain(float worldX, float worldZ, float *outHeight) {
 // Quản lý mảng Vorticles (Ring-buffer / Active compaction)
 // -----------------------------------------------------------------------------
 void Wind_Update(float dt) {
-    if (!s_initialized || s_activeCount <= 0) return;
+    if (!s_initialized) return;
 
-    // 1. Cập nhật thời gian sống
+    // 1. Cập nhật tiến trình đợt Gió Dẫn Đường (Guiding Wind)
+    if (s_guidingGust.active) {
+        s_guidingGust.elapsed += dt;
+        s_guidingGust.progress = s_guidingGust.elapsed / s_guidingGust.duration;
+        if (s_guidingGust.progress >= 1.0f) {
+            s_guidingGust.active = false;
+            s_guidingGust.intensity = 0.0f;
+            s_guidingGust.progress = 1.0f;
+        } else {
+            // Phong bì khí động học: bùng nổ cực nhanh (attack), duy trì tốc độ (sustain),
+            // và hạ dần khi phân rã ở phía xa (decay)
+            float p = s_guidingGust.progress;
+            float attack = fminf(p / 0.15f, 1.0f);
+            float decay = (p > 0.60f) ? (1.0f - (p - 0.60f) / 0.40f) : 1.0f;
+            s_guidingGust.intensity = attack * decay;
+        }
+    }
+
+    if (s_activeCount <= 0) return;
+
+    // 2. Cập nhật thời gian sống Vorticles
     for (int i = 0; i < s_activeCount; i++) {
         s_vorticles[i].lifetime -= dt;
         if (s_vorticles[i].lifetime <= 0.0f) {
@@ -231,7 +257,7 @@ void Wind_Update(float dt) {
         }
     }
 
-    // 2. Dồn mảng (Compact contiguous array) để tối ưu cache L1 khi query
+    // 3. Dồn mảng (Compact contiguous array) để tối ưu cache L1 khi query
     int writeIdx = 0;
     for (int readIdx = 0; readIdx < s_activeCount; readIdx++) {
         if (s_vorticles[readIdx].active) {
@@ -376,6 +402,17 @@ Vector3 Wind_GetMacroAt(Vector3 pos, float time) {
     return turb;
 }
 
+float Wind_HeightFactor(float hRel) {
+    // Mô hình Lớp biên Khí quyển (Atmospheric Boundary Layer):
+    // hRel <= 0m (mặt đất): ma sát địa hình giảm tốc còn 50%
+    // hRel = 2.5m (người chơi / tán cây thấp): đạt 100% tốc độ danh nghĩa
+    // hRel >= 12.0m (trời cao / đỉnh đồi): dòng khí tự do tăng lên 140%
+    if (hRel <= 0.0f) return 0.5f;
+    float low  = fminf(hRel / 2.5f, 1.0f);
+    float high = (hRel > 2.5f) ? fminf((hRel - 2.5f) / 9.5f, 1.0f) : 0.0f;
+    return 0.5f + 0.5f * low + 0.4f * high;
+}
+
 Vector3 Wind_EvaluateVorticleVelocity(const VorticleData *v, Vector3 pos, float time) {
     Vector3 velocity = {0};
     if (v == NULL || !v->active)
@@ -444,7 +481,17 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
     // 1. Thành phần gió vĩ mô (Macro Wind)
     Vector3 totalVel = Wind_GetMacroAt(pos, time);
 
-    // 2. Thành phần nâng địa hình (Terrain-Aware Lift)
+    // 2. Điều biến vận tốc theo cao độ (Atmospheric Boundary Layer Height Gradient)
+    if (s_terrainQuery != NULL && s_macroConfig.heightGradientK > 0.0f) {
+        float h0 = 0.0f;
+        if (Wind_SampleTerrain(pos.x, pos.z, &h0)) {
+            float hRel = pos.y - h0;
+            float factor = 1.0f + s_macroConfig.heightGradientK * (Wind_HeightFactor(hRel) - 1.0f);
+            totalVel = Vector3Scale(totalVel, factor);
+        }
+    }
+
+    // 3. Thành phần nâng địa hình (Terrain-Aware Lift)
     if (s_terrainQuery != NULL && s_macroConfig.terrainLiftK > 0.0f) {
         float speedXZ = sqrtf(totalVel.x * totalVel.x + totalVel.z * totalVel.z);
         if (speedXZ > 1e-3f) {
@@ -473,6 +520,80 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
         totalVel = Vector3Add(totalVel, localVelocity);
     }
 
+    // 4. Đợt Gió Dẫn Đường toàn cục (Ghost of Tsushima Windicator Engine)
+    // Chỉ tác động tập trung trong hành lang dòng khí dọc theo vệt gió, không kéo toàn bộ hạt trên màn hình
+    if (s_guidingGust.active && s_guidingGust.intensity > 0.001f) {
+        float intensity = s_guidingGust.intensity;
+        Vector3 gDir = s_guidingGust.direction;
+        float gSpeed = s_guidingGust.speed;
+
+        // Tọa độ tương đối so với vị trí xuất phát đợt gió
+        Vector3 toPos = Vector3Subtract(pos, s_guidingGust.playerPos);
+        float dLong = toPos.x * gDir.x + toPos.z * gDir.z; // Khoảng cách dọc trục gió
+
+        Vector3 toTarget = Vector3Subtract(s_guidingGust.targetPos, s_guidingGust.playerPos);
+        float totalDist = sqrtf(toTarget.x * toTarget.x + toTarget.z * toTarget.z);
+        if (totalDist < 1.0f) totalDist = 24.0f;
+
+        // Giới hạn phạm vi dọc hành lang: từ sau lưng người chơi 1.5m tới quá đích 3.0m
+        if (dLong >= -1.5f && dLong <= totalDist + 3.0f) {
+            // Khoảng cách vuông góc tới trục tâm vệt gió (transverse distance)
+            float perpX = toPos.x - gDir.x * dLong;
+            float perpZ = toPos.z - gDir.z * dLong;
+            float dPerpSq = perpX * perpX + perpZ * perpZ;
+
+            const float corridorRadius = 3.8f; // Bán kính hành lang gió tập trung
+            if (dPerpSq < corridorRadius * corridorRadius) {
+                float dPerp = sqrtf(dPerpSq);
+                float lateralAtten = 1.0f - (dPerp / corridorRadius);
+                lateralAtten = lateralAtten * lateralAtten; // Suy giảm bậc 2 êm dịu
+
+                // Giới hạn chiều cao: trong khoảng 2.8m quanh độ cao xuất phát
+                float dY = fabsf(pos.y - s_guidingGust.playerPos.y);
+                float vertAtten = (dY < 2.8f) ? (1.0f - dY / 2.8f) : 0.0f;
+
+                float corridorWeight = lateralAtten * vertAtten * intensity;
+                if (corridorWeight > 0.001f) {
+                    // Two-layer Perlin modulation
+                    // Tầng thấp (N_low): Sóng cuộn trôi dọc theo hướng gió chính
+                    float waveLow = sinf(dLong * 0.20f - time * 3.5f) * 0.22f;
+                    float modulatedSpeed = gSpeed * (1.0f + waveLow) * corridorWeight;
+                    Vector3 guideVel = Vector3Scale(gDir, modulatedSpeed);
+
+                    // Tầng cao (N_high): Vi mô nhiễu loạn 3D
+                    float nx = Wind_NoiseScalar3D((Vector3){ pos.x * 0.35f, pos.y * 0.35f + time * 1.5f, pos.z * 0.35f });
+                    float ny = Wind_NoiseScalar3D((Vector3){ pos.x * 0.35f + 17.3f, pos.y * 0.35f - time * 1.2f, pos.z * 0.35f + 19.7f });
+                    float nz = Wind_NoiseScalar3D((Vector3){ pos.x * 0.35f - 23.5f, pos.y * 0.35f, pos.z * 0.35f + time * 1.6f });
+                    Vector3 flutter = (Vector3){ nx * 0.8f * corridorWeight, ny * 0.4f * corridorWeight, nz * 0.8f * corridorWeight };
+                    guideVel = Vector3Add(guideVel, flutter);
+
+                    // Look-ahead Terrain Lift & Safe Clearance H_safe
+                    if (s_terrainQuery != NULL) {
+                        float h0 = 0.0f, h1 = 0.0f;
+                        const float sampleDist = 2.4f;
+                        bool hasH0 = Wind_SampleTerrain(pos.x, pos.z, &h0);
+                        bool hasH1 = Wind_SampleTerrain(pos.x + gDir.x * sampleDist, pos.z + gDir.z * sampleDist, &h1);
+                        if (hasH0) {
+                            if (hasH1 && h1 > h0) {
+                                float dH = h1 - h0;
+                                float slopeLift = (dH / sampleDist) * gSpeed * 0.45f * corridorWeight;
+                                if (slopeLift > 6.0f) slopeLift = 6.0f;
+                                guideVel.y += slopeLift;
+                            }
+                            const float hSafe = 1.2f;
+                            if (pos.y < h0 + hSafe) {
+                                float safePenetration = (h0 + hSafe - pos.y);
+                                guideVel.y += fminf(safePenetration * 3.0f * corridorWeight, 8.0f);
+                            }
+                        }
+                    }
+
+                    totalVel = Vector3Add(totalVel, guideVel);
+                }
+            }
+        }
+    }
+
     return totalVel;
 }
 
@@ -492,6 +613,69 @@ const VorticleData* Wind_GetActiveVorticles(int *outCount) {
 
 int Wind_GetActiveCount(void) {
     return s_activeCount;
+}
+
+// -----------------------------------------------------------------------------
+// Guiding Wind Implementation
+// -----------------------------------------------------------------------------
+void Wind_TriggerGuidingWind(Vector3 playerPos, Vector3 targetPos, float speed, float duration) {
+    if (!s_initialized) return;
+
+    Vector3 diff = Vector3Subtract(targetPos, playerPos);
+    diff.y = 0.0f;
+    float len = Vector3Length(diff);
+    Vector3 dir = (len > 1e-4f) ? Vector3Scale(diff, 1.0f / len) : (Vector3){ 0.0f, 0.0f, 1.0f };
+
+    float spd = (speed > 0.0f) ? speed : 16.0f;
+    float dur = (duration > 0.0f) ? duration : 2.2f;
+
+    s_guidingGust.active = true;
+    s_guidingGust.playerPos = playerPos;
+    s_guidingGust.targetPos = targetPos;
+    s_guidingGust.direction = dir;
+    s_guidingGust.speed = spd;
+    s_guidingGust.duration = dur;
+    s_guidingGust.elapsed = 0.0f;
+    s_guidingGust.progress = 0.0f;
+    s_guidingGust.intensity = 0.0f;
+
+    // Spawn an aerodynamic corridor of Vorticles to propagate physical grass & particle deflection
+    float corridorStep = 6.5f;
+    int steps = (int)(len / corridorStep);
+    if (steps > 4) steps = 4;
+    if (steps < 2) steps = 2;
+
+    for (int i = 0; i < steps; i++) {
+        Vector3 p = Vector3Add(playerPos, Vector3Scale(dir, (float)i * corridorStep + 1.0f));
+        Wind_SpawnGust(p, dir, 3.8f, spd * 0.6f, dur * 0.75f);
+        Wind_SpawnTurbulence(p, 3.2f, spd * 0.25f, 0.22f, 2.0f, dur * 0.65f);
+    }
+}
+
+void Wind_StopGuidingWind(void) {
+    s_guidingGust.active = false;
+    s_guidingGust.intensity = 0.0f;
+    s_guidingGust.progress = 1.0f;
+}
+
+bool Wind_IsGuidingWindActive(void) {
+    return s_guidingGust.active;
+}
+
+float Wind_GetGuidingWindProgress(void) {
+    return s_guidingGust.progress;
+}
+
+WindGuidingGust Wind_GetGuidingWindState(void) {
+    return s_guidingGust;
+}
+
+void Wind_AddDisplacement(Vector3 pos, Vector3 velocity, float radius, float duration) {
+    if (!s_initialized) return;
+    float spd = Vector3Length(velocity);
+    if (spd < 0.01f || radius <= 0.0f || duration <= 0.0f) return;
+    Vector3 dir = Vector3Scale(velocity, 1.0f / spd);
+    Wind_SpawnGust(pos, dir, radius, spd, duration);
 }
 
 #if !defined(CORE_HEADLESS_TEST) && !defined(HEADLESS_TEST)

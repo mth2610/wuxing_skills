@@ -186,6 +186,7 @@ typedef struct {
 typedef struct {
     Vector4 macro_dir_amp;   // xyz = baseDirection, w = gustAmplitude
     Vector4 macro_params;    // x = noiseScale, y = noiseSpeed, z = activeCount, w = terrainLiftK
+    Vector4 macro_extra;     // x = heightGradientK, yzw = reserved
     VorticleGPU vorticles[MAX_GPU_VORTICLES];
 } WindGPU;
 
@@ -614,6 +615,7 @@ void GpuParticleSystem_Update(float dt)
         if (vortCount > MAX_GPU_VORTICLES) vortCount = MAX_GPU_VORTICLES;
         windData.macro_params = (Vector4){ macro.noiseScale, macro.noiseSpeed,
                                            (float)vortCount, macro.terrainLiftK };
+        windData.macro_extra  = (Vector4){ macro.heightGradientK, 0.0f, 0.0f, 0.0f };
         for (int v = 0; v < vortCount; v++) {
             windData.vorticles[v].pos_radius = (Vector4){ vArray[v].position.x, vArray[v].position.y, vArray[v].position.z, vArray[v].radius };
             windData.vorticles[v].dir_strength = (Vector4){ vArray[v].direction.x, vArray[v].direction.y, vArray[v].direction.z, vArray[v].strength };

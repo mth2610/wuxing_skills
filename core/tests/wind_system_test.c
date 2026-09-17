@@ -73,6 +73,13 @@ static float MockTerrainSlope(float x, float z, void *userData) {
     return x * 0.5f;
 }
 
+static float MockTerrainFlat(float x, float z, void *userData) {
+    (void)x;
+    (void)z;
+    (void)userData;
+    return 0.0f;
+}
+
 // A finite terrain patch followed by missing receiver data. The validity mask
 // must stop the edge from becoming a fake cliff down to Y=0.
 static float MockTerrainHole(float x, float z, void *userData) {
@@ -614,7 +621,70 @@ int main(void) {
         TEST_NEAR(vCombined.z, -2.0f, 0.05f, "Superposition preserves vortex rotation");
     }
 
-    // 10. Dọn dẹp
+    // 10. Test Guiding Wind (Gió Dẫn Đường - Ghost of Tsushima Windicator)
+    {
+        Wind_Clear();
+        WindMacroConfig zeroMacro = {0};
+        Wind_SetMacro(&zeroMacro);
+
+        // Kích phát đợt Gió Dẫn Đường hướng +Z
+        Vector3 playerPos = { 0.0f, 1.0f, 0.0f };
+        Vector3 targetPos = { 0.0f, 1.0f, 24.0f };
+        Wind_TriggerGuidingWind(playerPos, targetPos, 16.0f, 2.0f);
+
+        TEST_CHECK(Wind_IsGuidingWindActive() == true, "Guiding wind is active after trigger");
+        TEST_CHECK(Wind_GetActiveCount() > 0, "Guiding wind spawned wake corridor vorticles");
+
+        // Cập nhật thời gian 0.5s (tiến trình 25%)
+        Wind_Update(0.5f);
+        float progress = Wind_GetGuidingWindProgress();
+        TEST_CHECK(progress > 0.20f && progress < 0.30f, "Guiding wind progress advanced correctly");
+
+        // Đánh giá vận tốc tại điểm dọc theo hành lang gió
+        Vector3 vCorridor = Wind_EvaluateVelocity((Vector3){ 0.0f, 1.5f, 6.0f }, 0.5f);
+        TEST_CHECK(vCorridor.z > 5.0f, "Guiding wind imparts strong forward +Z velocity along corridor");
+
+        // Dừng đợt gió
+        Wind_StopGuidingWind();
+        TEST_CHECK(Wind_IsGuidingWindActive() == false, "Guiding wind stops on Wind_StopGuidingWind");
+
+        // Test tương tác dạt gió cục bộ (Displacement)
+        Wind_Clear();
+        Wind_AddDisplacement((Vector3){ 2.0f, 0.0f, 2.0f }, (Vector3){ 8.0f, 0.0f, 0.0f }, 3.5f, 0.4f);
+        TEST_CHECK(Wind_GetActiveCount() == 1, "Displacement created localized vorticle");
+        Vector3 vDisp = Wind_EvaluateVelocity((Vector3){ 2.0f, 0.0f, 2.0f }, 0.1f);
+        TEST_CHECK(vDisp.x > 3.0f, "Displacement imparts velocity in movement direction");
+    }
+
+    // 11. Test Gradient Vận Tốc Theo Cao Độ (Atmospheric Boundary Layer Wind Gradient)
+    {
+        Wind_Clear();
+        // 11.1 Kiểm tra hàm chuẩn hóa Wind_HeightFactor
+        TEST_NEAR(Wind_HeightFactor(0.0f), 0.5f, 0.001f, "Ground level height factor is 0.5 (50% friction drag)");
+        TEST_NEAR(Wind_HeightFactor(2.5f), 1.0f, 0.001f, "Eye/Canopy level height factor is 1.0 (100% nominal)");
+        TEST_NEAR(Wind_HeightFactor(12.0f), 1.4f, 0.001f, "Upper air height factor is 1.4 (140% free stream)");
+
+        // 11.2 Kiểm tra tích hợp vào Wind_EvaluateVelocity
+        WindMacroConfig gradMacro = {
+            .baseDirection   = (Vector3){ 4.0f, 0.0f, 0.0f },
+            .gustAmplitude   = 0.0f,
+            .terrainLiftK    = 0.0f,
+            .heightGradientK = 1.0f,
+        };
+        Wind_SetMacro(&gradMacro);
+        Wind_SetTerrainHeightQuery(MockTerrainFlat, NULL);
+
+        Vector3 vGround = Wind_EvaluateVelocity((Vector3){ 0.0f, 0.0f, 0.0f }, 0.0f);
+        TEST_NEAR(vGround.x, 2.0f, 0.05f, "Wind velocity at ground (Y=0) scales to 50% (2.0 m/s)");
+
+        Vector3 vMid = Wind_EvaluateVelocity((Vector3){ 0.0f, 2.5f, 0.0f }, 0.0f);
+        TEST_NEAR(vMid.x, 4.0f, 0.05f, "Wind velocity at eye level (Y=2.5m) is 100% (4.0 m/s)");
+
+        Vector3 vHigh = Wind_EvaluateVelocity((Vector3){ 0.0f, 12.0f, 0.0f }, 0.0f);
+        TEST_NEAR(vHigh.x, 5.6f, 0.05f, "Wind velocity in high air (Y=12m) scales to 140% (5.6 m/s)");
+    }
+
+    // 12. Dọn dẹp
     Wind_Unload();
     TEST_CHECK(Wind_GetActiveCount() == 0, "Cleaned up after unload");
 

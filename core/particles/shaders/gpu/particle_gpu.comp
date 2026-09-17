@@ -74,6 +74,7 @@ struct VorticleGPU {
 struct WindGPU {
     vec4 macro_dir_amp;   // xyz = baseDirection, w = gustAmplitude
     vec4 macro_params;    // x = noiseScale, y = noiseSpeed, z = activeCount, w = terrainLiftK
+    vec4 macro_extra;     // x = heightGradientK, yzw = reserved
     VorticleGPU vorticles[MAX_GPU_VORTICLES];
 };
 
@@ -457,7 +458,21 @@ vec3 evalWindVelocity(vec3 pos, float time) {
         }
     }
 
-    // 2. Nâng luồng gió theo dốc địa hình từ lưới dùng chung CPU/GPU.
+    // 2. Điều biến vận tốc theo cao độ (Atmospheric Boundary Layer Height Gradient)
+    float heightK = uWind.macro_extra.x;
+    if (heightK > 0.0) {
+        float h0 = 0.0;
+        if (sampleTerrainHeight(pos.xz, h0)) {
+            float hRel = max(pos.y - h0, 0.0);
+            float low = min(hRel / 2.5, 1.0);
+            float high = (hRel > 2.5) ? min((hRel - 2.5) / 9.5, 1.0) : 0.0;
+            float hFactor = 0.5 + 0.5 * low + 0.4 * high;
+            float factor = 1.0 + heightK * (hFactor - 1.0);
+            totalVel *= factor;
+        }
+    }
+
+    // 3. Nâng luồng gió theo dốc địa hình từ lưới dùng chung CPU/GPU.
     totalVel.y += evalTerrainLift(pos, totalVel);
 
     // 3. Các xoáy khí cục bộ (Vorticles: Linear Gust, Radial Blast, Vortex)

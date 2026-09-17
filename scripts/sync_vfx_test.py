@@ -200,6 +200,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeVacuumArc":          ("draw",    "timed",      "continuous"),
     "VFX_ComposeVacuumRing":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeIaidoStance":        ("draw",    "timed",      "continuous"),
+    "VFX_ComposeGuidingWind":        ("draw",    "timed",      "continuous"),
 }
 
 # Generated-call overrides keep fixtures readable without changing public
@@ -318,6 +319,8 @@ FIXTURE_DRAW_OVERRIDES = {
         "VFX_ComposeVacuumRing(s_currentPlayerPos, 2.2f, $PROG)",
     "VFX_ComposeIaidoStance":
         "VFX_ComposeIaidoStance(s_currentPlayerPos, s_currentPlayerYaw, $PROG, 1.35f, s_lastCam, NULL)",
+    "VFX_ComposeGuidingWind":
+        "VFX_ComposeGuidingWind(s_currentPlayerPos, Vector3Add(s_currentPlayerPos, Vector3Scale((Vector3){sinf(s_currentPlayerYaw), 0.0f, cosf(s_currentPlayerYaw)}, 24.0f)), $PROG, s_lastCam)",
 
     # The inferred call passes $PROG for t01, looping the ring's density 0->1
     # every two seconds. This fixture exists to JUDGE the fluid surface — you
