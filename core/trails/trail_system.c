@@ -1768,7 +1768,7 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fal
                 col.g = (unsigned char)(col.g + (255 - col.g) * w);
                 col.b = (unsigned char)(col.b + (255 - col.b) * w);
             }
-            col.a = (unsigned char)a;
+            col.a = (unsigned char)(a + 0.5f);
             scratchLayer[h].tint = col;
         }
         Texture2D tex = (ly->texture != NULL) ? *ly->texture : fallbackTex;

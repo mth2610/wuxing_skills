@@ -292,7 +292,7 @@ static const TrailMotion k_trailMotion[TRAIL_PRESET_COUNT] = {
                                true, TRAIL_WIDTH_ENVELOPE_TAPER_BOTH},
     [TRAIL_PRESET_BACKDROP] = {0.1000f, true, true, 1.35f, 0.28f, 4.4f, 0.75f, 1, true, true,
                                SWEPT_SAMPLE_HZ, SWEPT_IDLE_SPEED, SWEPT_TELEPORT_SPEED,
-                               true, TRAIL_WIDTH_ENVELOPE_TAPER_BOTH},
+                               true, TRAIL_WIDTH_ENVELOPE_TAPER_TAIL},
     // The two strand presets ran as plain followers with no cloth: their motion
     // is the wave field in the fragment stage, and adding a force field on top
     // fought it. Slower sample clock and a lower idle threshold than the swept
@@ -639,9 +639,12 @@ static void SweptTrail_InitShared(void)
     FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_WISP], 1.00f, 0.20f);
 
     FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BACKDROP], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BACKDROP], 0.24f, 0.82f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BACKDROP], 0.70f, 1.00f);
-    FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BACKDROP], 1.00f, 0.38f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BACKDROP], 0.25f, 0.65f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BACKDROP], 0.55f, 0.95f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BACKDROP], 0.82f, 1.00f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BACKDROP], 0.94f, 0.65f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BACKDROP], 0.98f, 0.30f);
+    FloatCurve_AddStop(&s_sweptWidthCurve[TRAIL_PRESET_BACKDROP], 1.00f, 0.00f);
 
     // Brightness rides toward the head, and — the rule that is not taste — the
     // tail's alpha must fall at least as fast as its width, or the last stretch
@@ -660,9 +663,9 @@ static void SweptTrail_InitShared(void)
     FloatCurve_AddStop(&s_sweptAlphaCurve[TRAIL_PRESET_WISP], 1.00f, 0.90f);
 
     FloatCurve_AddStop(&s_sweptAlphaCurve[TRAIL_PRESET_BACKDROP], 0.00f, 0.00f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[TRAIL_PRESET_BACKDROP], 0.28f, 0.28f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[TRAIL_PRESET_BACKDROP], 0.72f, 0.38f);
-    FloatCurve_AddStop(&s_sweptAlphaCurve[TRAIL_PRESET_BACKDROP], 1.00f, 0.18f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[TRAIL_PRESET_BACKDROP], 0.25f, 0.45f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[TRAIL_PRESET_BACKDROP], 0.65f, 0.85f);
+    FloatCurve_AddStop(&s_sweptAlphaCurve[TRAIL_PRESET_BACKDROP], 1.00f, 1.00f);
 
     // Lazily, never from a subsystem Init — Tuning_Init runs after those and an
     // early registration silently keeps the default (core/docs/LANDMINES.md).
@@ -749,8 +752,8 @@ static const TrailLayer k_sweptLayers[TRAIL_PRESET_COUNT][3] = {
     },
     // BACKDROP sits BEHIND another trail, with a wide body and smooth emission
     [TRAIL_PRESET_BACKDROP] = {
-        {.widthMul = 1.65f, .alphaMul = 0.025f, .whiten = 0.00f, .scrollMul = 0.45f, .headAlphaPow = 0.0f, .texture = NULL},
-        {.widthMul = 1.00f, .alphaMul = 0.063f, .whiten = 0.02f, .scrollMul = 0.85f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 1.45f, .alphaMul = 0.09f, .whiten = 0.00f, .scrollMul = 0.45f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 1.00f, .alphaMul = 0.22f, .whiten = 0.02f, .scrollMul = 0.85f, .headAlphaPow = 0.0f, .texture = NULL},
         {0},
     },
     // The strand presets are ONE quad: their waves swing inside it and the edge
