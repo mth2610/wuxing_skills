@@ -32,57 +32,75 @@ static int       s_gwindLocWindColor = -1;
 static Texture2D s_gwindSilkTex      = {0};
 static bool      s_gwindInitialized  = false;
 
-// Generate an ultra-smooth procedural Gaussian silk streamline texture
-// Features 5 fine undulating micro-filaments with translucent air channels
+static inline float GuidingWind_SmoothStep(float edge0, float edge1, float x)
+{
+    float t = Clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Generate an authentic procedural 3-strand smoke/silk wind texture:
+// 1 slightly bolder center strand + 2 faint side strands, all rolling & breaking intermittently like drifting smoke
 static Texture2D GuidingWind_GetSilkTexture(void)
 {
     if (s_gwindSilkTex.id == 0)
     {
-        const int W = 128; // Cross-width
-        const int H = 256; // Along-length
+        const int W = 256; // Cross-width
+        const int H = 512; // Along-length
         Image img = GenImageColor(W, H, BLANK);
 
         for (int y = 0; y < H; y++)
         {
             float normY = (float)y / (float)(H - 1); // [0..1]
-            // Serpentine undulation along streamline length
-            float wave1 = sinf(normY * 3.0f * PI) * 0.06f;
-            float wave2 = cosf(normY * 5.0f * PI + 0.7f) * 0.05f;
-            float wave3 = sinf(normY * 7.0f * PI + 1.8f) * 0.04f;
-            float wave4 = cosf(normY * 9.0f * PI + 2.5f) * 0.03f;
+
+            // 1. CẢ 3 SỢI CÙNG UỐN LƯỢN CUỘN CHẢY THEO LUỒNG GIÓ CHUNG (Chu kỳ êm dịu 1:1, không ngắt khúc)
+            float macroWave = sinf(normY * 2.0f * PI) * 0.014f;
+
+            // 2. SỢI Ở GIỮA: ĐẬM HƠN, LIÊN TỤC VÀ UYỂN CHUYỂN DỌC DẢI
+            float ampMid = 0.86f + 0.06f * sinf(normY * 2.0f * PI);
+            float widthMid = 0.024f;
+            float xMid = 0.50f + macroWave;
+
+            // 3. HAI SỢI Ở HAI BÊN: MỜ THANH THOÁT, CHỈ ĐỨT 1 CHÚT ĐỂ TẠO CẢM GIÁC KHÓI TRÔI
+            // Sợi trái: Hiện diện phần lớn (~80%), chỉ đứt nhẹ 1 quãng ngắn tại y ~ 0.28
+            float dipLeft = 1.0f - 0.62f * expf(-powf((normY - 0.28f) / 0.09f, 2.0f));
+            float ampLeft = 0.40f * dipLeft;
+            float xLeft = 0.35f + macroWave + cosf(normY * 2.0f * PI) * 0.008f;
+            float widthLeft = 0.019f;
+
+            // Sợi phải: Hiện diện phần lớn, so le đứt nhẹ 1 quãng ngắn tại y ~ 0.72
+            float dipRight = 1.0f - 0.62f * expf(-powf((normY - 0.72f) / 0.09f, 2.0f));
+            float ampRight = 0.38f * dipRight;
+            float xRight = 0.65f + macroWave - cosf(normY * 2.0f * PI) * 0.008f;
+            float widthRight = 0.019f;
 
             for (int x = 0; x < W; x++)
             {
                 float normX = (float)x / (float)(W - 1); // [0..1]
 
-                // Multiple fine, delicate Gaussian silk filaments
-                // 1. Central brilliant filament
-                float d0 = (normX - (0.50f + wave1)) / 0.065f;
-                float f0 = expf(-d0 * d0) * 1.0f;
+                // SỢI GIỮA: Đậm hơn xíu với lõi sáng trắng tinh tế
+                float dMid = (normX - xMid) / widthMid;
+                float fMid = expf(-dMid * dMid) * ampMid;
+                float dCore = (normX - xMid) / (widthMid * 0.45f);
+                float fCore = expf(-dCore * dCore) * (ampMid * 0.24f);
 
-                // 2. Left inner wisp
-                float d1 = (normX - (0.34f + wave2)) / 0.050f;
-                float f1 = expf(-d1 * d1) * 0.78f;
+                // HAI SỢI CẠNH: Mờ nhẹ và chỉ đứt một chút so le
+                float dL = (normX - xLeft) / widthLeft;
+                float fL = expf(-dL * dL) * ampLeft;
 
-                // 3. Right inner wisp
-                float d2 = (normX - (0.66f + wave3)) / 0.055f;
-                float f2 = expf(-d2 * d2) * 0.75f;
+                float dR = (normX - xRight) / widthRight;
+                float fR = expf(-dR * dR) * ampRight;
 
-                // 4. Left outer delicate thread
-                float d3 = (normX - (0.20f + wave4)) / 0.042f;
-                float f3 = expf(-d3 * d3) * 0.55f;
+                // Vi sương mỏng nhẹ kết nối (không làm bết dính thành 1 khối)
+                float dMist = (normX - 0.50f) / 0.26f;
+                float fMist = expf(-dMist * dMist) * 0.025f;
 
-                // 5. Right outer delicate thread
-                float d4 = (normX - (0.80f - wave1 * 0.8f)) / 0.045f;
-                float f4 = expf(-d4 * d4) * 0.50f;
+                // Parabolic boundary envelope (4 * V * (1 - V))
+                float envelope = 4.0f * normX * (1.0f - normX);
+                envelope = fmaxf(0.0f, envelope);
 
-                // Soft overall body envelope (tapers smoothly at lateral borders)
-                float body = sinf(normX * PI);
-                body = powf(body, 1.35f);
-
-                float filaments = fmaxf(f0, fmaxf(f1 * 0.85f, fmaxf(f2 * 0.82f, fmaxf(f3 * 0.65f, f4 * 0.60f))));
-                float val = filaments * 0.78f + (f0 + f1 + f2 + f3 + f4) * 0.16f + body * 0.12f;
-                float alpha = Clamp(val * body, 0.0f, 1.0f);
+                // Tổng hợp 3 sợi khói cuộn trôi
+                float stream = (fMid + fCore + fL + fR + fMist) * envelope;
+                float alpha = Clamp(stream, 0.0f, 1.0f);
 
                 ImageDrawPixel(&img, x, y, (Color){ 255, 255, 255, (unsigned char)(alpha * 255.0f) });
             }
@@ -132,13 +150,7 @@ typedef struct {
 } GuidingWindRibbonProfile;
 
 #define GWIND_WAYPOINTS 48
-#define GWIND_RIBBON_COUNT 4
-
-static inline float GuidingWind_SmoothStep(float edge0, float edge1, float x)
-{
-    float t = Clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
+#define GWIND_RIBBON_COUNT 1
 
 static inline Vector3 GuidingWind_EvalTrajectory(Vector3 startPos, Vector3 forwardDir,
                                                 float totalDist, Vector3 sideVec, Vector3 upVec,
@@ -151,9 +163,9 @@ static inline Vector3 GuidingWind_EvalTrajectory(Vector3 startPos, Vector3 forwa
 
     // 2. Gentle aerodynamic S-curve swoop (lượn lờ thanh thoát dọc triền không gian)
     float uClamped = Clamp(u, 0.0f, 1.0f);
-    float sPhase = u * PI;
-    float macroSide = sinf(sPhase) * 0.95f + sinf(u * 2.0f * PI) * 0.30f;
-    float macroUp   = sinf(sPhase) * 0.40f;
+    float sPhase = uClamped * PI;
+    float macroSide = sinf(sPhase) * 1.05f + sinf(sPhase) * sinf(uClamped * 2.0f * PI) * 0.20f;
+    float macroUp   = sinf(sPhase) * 0.42f;
     pos = Vector3Add(pos, Vector3Scale(sideVec, macroSide));
     pos = Vector3Add(pos, Vector3Scale(upVec,   macroUp));
 
@@ -250,7 +262,7 @@ static void GuidingWind_DrawRibbon(Vector3 rootStartPos, Vector3 forwardDir, flo
 
         pts[i].position = p;
         pts[i].halfWidth = profile->baseWidth * taper;
-        pts[i].tint = ColorAlpha(profile->color, Clamp(globalAlpha * taper, 0.0f, 1.0f));
+        pts[i].tint = ColorAlpha(profile->color, Clamp(globalAlpha, 0.0f, 1.0f));
     }
 
     // Normalized arc length mapping along path
@@ -293,36 +305,13 @@ void VFX_ComposeGuidingWind(Vector3 startPos, Vector3 targetPos, float progress,
 
     float time = TimeFX_Elapsed();
 
-    // ── 4 Dải lụa gió lượn lờ thanh thoát (Không xoay tròn hỗn loạn) ─────────
-    // Dải gió chính dẫn đường kèm 3 dải tơ lụa phụ bay song hành nhịp nhàng:
+    // ── CẤU TRÚC 3 SỢI KHÓI CUỘN TRÔI (baseWidth = 0.52m, tổng bề rộng 1.04m) ─────────
     static const GuidingWindRibbonProfile profiles[GWIND_RIBBON_COUNT] = {
-        // 1. Dải chính tâm: Lượn sóng nhẹ dẫn đầu
         {
             0.00f,  0.0f,  0.00f,
             0.00f,  0.00f,
-            0.16f,  0.48f, 0.00f,
-            (Color){ 248, 252, 255, 175 }
-        },
-        // 2. Dải tơ bên phải trên: Lướt nhẹ phía trên sang phải
-        {
-            0.00f,  0.0f,  0.85f,
-            0.38f,  0.22f,
-            0.11f,  0.42f, 0.05f,
-            (Color){ 230, 246, 255, 140 }
-        },
-        // 3. Dải tơ bên trái dưới: Lướt nhẹ là là mặt cỏ phía trái
-        {
-            0.00f,  0.0f,  2.10f,
-           -0.35f, -0.14f,
-            0.10f,  0.38f, 0.09f,
-            (Color){ 225, 245, 255, 130 }
-        },
-        // 4. Dải tơ thanh mảnh bay theo sau
-        {
-            0.00f,  0.0f,  3.50f,
-            0.12f,  0.34f,
-            0.08f,  0.32f, 0.14f,
-            (Color){ 240, 250, 255, 120 }
+            0.52f,  0.55f, 0.00f,
+            (Color){ 255, 255, 255, 245 }
         }
     };
 
