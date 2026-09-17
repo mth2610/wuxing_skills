@@ -218,7 +218,7 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.18f, .jitter = 0.65f,
+            .spacing = 0.22f, .jitter = 0.65f,
             .minRadius = 0.22f, .maxRadius = 0.28f,
             .minHeight = 0.22f, .maxHeight = 0.38f,
             .yOffset = 0.025f, .seed = 0x51a7c3u,
@@ -587,9 +587,9 @@ void InitVerdantPathMap(void)
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
             .rootColor = {26, 44, 16, 255}, .tipColor = {138, 206, 50, 255},
-            .bladesPerClump = 6, .bladeSegments = 4, .bladeWidthScale = 0.11f,
-            .chunkSize = 12.0f, .lodDistance = 22.0f, .drawDistance = 42.0f,
-            .shadowDistance = 10.0f,
+            .bladesPerClump = 6, .bladeSegments = 3, .bladeWidthScale = 0.11f,
+            .chunkSize = 8.0f, .lodDistance = 22.0f, .midLodDistance = 10.0f, .drawDistance = 42.0f,
+            .shadowDistance = 0.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,

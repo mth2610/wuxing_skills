@@ -1565,6 +1565,8 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     int capacity = columns * rows;
     meadow.chunks = MemAlloc((unsigned int)capacity * sizeof(MapMeadowChunk));
     meadow.lodDistance = style.lodDistance;
+    meadow.midLodDistance = style.midLodDistance > 0.0f ? style.midLodDistance
+                          : (style.lodDistance > 0.0f ? style.lodDistance * 0.45f : 0.0f);
     meadow.drawDistance = style.drawDistance;
     meadow.shadowDistance = style.shadowDistance;
     bool buildContactShadows = style.shadowDistance > 0.0f && GfxQuality_Get() >= GFX_MED;
@@ -1583,10 +1585,20 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             if (nearCount <= 0)
                 continue;
 
+            // Mid LOD: intermediate distance (e.g. 10m - 22m).
+            // Uses fewer blades and segments with slight widening (1.22x) to preserve silhouette and volume
+            // while drastically reducing subpixel polygon workload and overdraw.
+            int midBlades = (style.bladesPerClump >= 6) ? 4 : (style.bladesPerClump >= 4 ? 3 : 2);
+            int midSegments = (style.bladeSegments >= 3) ? 2 : 1;
+            int midCount = 0;
+            Model midModel = Nature_BuildMeadowChunk(
+                placements, count, style, x0, x1, z0, z1, 1,
+                midBlades, midSegments, 1.22f, &midCount);
+
             // Preserve coverage: removing every second clump turns a meadow
             // into isolated spikes. Far LOD reduces each clump instead.
             // Procedural Blade Widening (Ghost of Tsushima model):
-            // Far clumps use exactly 2 blades with 1.8x width to preserve full coverage with minimal triangles.
+            // Far clumps use exactly 2 blades with 1.45x width to preserve full coverage with minimal triangles.
             int farBlades = 2;
             int farCount = 0;
             Model farModel = Nature_BuildMeadowChunk(
@@ -1604,17 +1616,23 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             MapMeadowChunk *chunk = &meadow.chunks[meadow.chunkCount++];
             if (textured) {
                 nearModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
+                if (midCount > 0)
+                    midModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
                 farModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
                 if (realShadowCount > 0)
                     realShadowModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
             }
             *chunk = (MapMeadowChunk){
                 .nearModel = nearModel,
+                .midModel = midModel,
                 .farModel = farModel,
                 .shadowModel = shadowModel,
                 .realShadowModel = realShadowModel,
                 .center = {(x0 + x1) * 0.5f, 0.0f, (z0 + z1) * 0.5f},
                 .radius = style.chunkSize * 0.72f + 1.5f,
+                .lodLevel = 0,
+                .farLod = false,
+                .midReady = (midCount > 0),
                 .shadowReady = shadowModel.meshCount > 0,
                 .realShadowReady = realShadowCount > 0,
                 .ready = true,
@@ -1721,16 +1739,43 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         if (lodDistance > 0.0f) {
             float spatialHash = sinf(chunk->center.x * 12.9898f + chunk->center.z * 78.233f);
             spatialHash = spatialHash - floorf(spatialHash);
-            float threshold = lodDistance + (spatialHash - 0.5f) * 4.0f;
+            float farThreshold = lodDistance + (spatialHash - 0.5f) * 4.0f;
+            float midThreshold = (meadow->midLodDistance > 0.0f && chunk->midReady) ?
+                                 (meadow->midLodDistance * lodScale + (spatialHash - 0.5f) * 2.5f) : 0.0f;
             float hysteresis = quality >= GFX_HIGH ? 1.1f : 1.8f;
             float distance = sqrtf(distanceSq);
-            if (chunk->farLod) {
-                if (distance < threshold - hysteresis)
-                    chunk->farLod = false;
-            } else if (distance > threshold + hysteresis) {
-                chunk->farLod = true;
+
+            if (midThreshold > 0.0f) {
+                // 3-tier LOD with hysteresis to prevent edge thrashing
+                if (chunk->lodLevel == 2) { // currently Far
+                    if (distance < farThreshold - hysteresis) {
+                        chunk->lodLevel = (distance < midThreshold - hysteresis) ? 0 : 1;
+                    }
+                } else if (chunk->lodLevel == 1) { // currently Mid
+                    if (distance > farThreshold + hysteresis) {
+                        chunk->lodLevel = 2;
+                    } else if (distance < midThreshold - hysteresis) {
+                        chunk->lodLevel = 0;
+                    }
+                } else { // currently Near
+                    if (distance > farThreshold + hysteresis) {
+                        chunk->lodLevel = 2;
+                    } else if (distance > midThreshold + hysteresis) {
+                        chunk->lodLevel = 1;
+                    }
+                }
+            } else {
+                // 2-tier fallback
+                if (chunk->lodLevel == 2) {
+                    if (distance < farThreshold - hysteresis)
+                        chunk->lodLevel = 0;
+                } else if (distance > farThreshold + hysteresis) {
+                    chunk->lodLevel = 2;
+                }
             }
+            chunk->farLod = (chunk->lodLevel == 2);
         } else {
+            chunk->lodLevel = 0;
             chunk->farLod = false;
         }
 
@@ -1777,9 +1822,12 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         MapMeadowChunk *chunk = &meadow->chunks[i];
         if (!chunk->visibleThisFrame)
             continue;
-        if (chunk->farLod) {
+        if (chunk->lodLevel == 2) {
             DrawModel(chunk->farModel, worldOffset, 1.0f, WHITE);
             s_natureRenderStats.meadowFarDraws++;
+        } else if (chunk->lodLevel == 1 && chunk->midReady) {
+            DrawModel(chunk->midModel, worldOffset, 1.0f, WHITE);
+            s_natureRenderStats.meadowMidDraws++;
         } else {
             DrawModel(chunk->nearModel, worldOffset, 1.0f, WHITE);
             s_natureRenderStats.meadowNearDraws++;
@@ -1831,6 +1879,8 @@ void MapProp_UnloadMeadow(MapMeadowSurface *meadow)
     if (!meadow || !meadow->ready) return;
     for (int i = 0; i < meadow->chunkCount; i++) {
         UnloadModel(meadow->chunks[i].nearModel);
+        if (meadow->chunks[i].midReady)
+            UnloadModel(meadow->chunks[i].midModel);
         UnloadModel(meadow->chunks[i].farModel);
         if (meadow->chunks[i].shadowReady)
             UnloadModel(meadow->chunks[i].shadowModel);
@@ -2573,13 +2623,14 @@ void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOff
     Nature_UpdateShadowShader(shader, time, windDirection, windStrength,
                               field->textured, field->alphaCutoff,
                               NATURE_WIND_RESPONSE_FLOWER);
-    Shader previous = field->model.materials[0].shader;
-    field->model.materials[0].shader = shader;
+    Model castModel = field->farReady ? field->farModel : field->model;
+    Shader previous = castModel.materials[0].shader;
+    castModel.materials[0].shader = shader;
     rlDisableBackfaceCulling();
-    DrawModel(field->model, worldOffset, 1.0f, WHITE);
+    DrawModel(castModel, worldOffset, 1.0f, WHITE);
     Nature_EndWindReceiverShader();
     rlEnableBackfaceCulling();
-    field->model.materials[0].shader = previous;
+    castModel.materials[0].shader = previous;
 }
 
 void MapProp_UnloadFlowerField(MapFlowerField *field)

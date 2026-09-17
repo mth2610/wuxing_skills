@@ -70,6 +70,12 @@ float SampleShadow(vec3 worldPos) {
 
 // Ánh sáng qua kẽ lá (Canopy Foliage Light Shafts / God-Rays)
 float ComputeCanopyGodRay(vec3 worldPos, vec3 sunDir, float time) {
+    // Phạm vi độ cao: tia nắng rọi từ tán cây (Y ~ 7.5m) xuống mặt cỏ (Y ~ -0.5m)
+    float heightFade = smoothstep(8.5, 4.0, worldPos.y);
+    float groundFade = smoothstep(-1.5, 0.2, worldPos.y);
+    float fade = heightFade * groundFade;
+    if (fade <= 0.001) return 0.0;
+
     // Chiếu ngược theo tia nắng lên độ cao tán cây (Canopy Y ~ 6.5m)
     float canopyY = 6.5;
     float distToCanopy = (canopyY - worldPos.y) / max(-sunDir.y, 0.05);
@@ -93,11 +99,7 @@ float ComputeCanopyGodRay(vec3 worldPos, vec3 sunDir, float time) {
     float shaft = smoothstep(0.35, 0.75, pattern);
     shaft = pow(shaft, 1.4);
 
-    // Phạm vi độ cao: tia nắng rọi từ tán cây (Y ~ 7.5m) xuống mặt cỏ (Y ~ -0.5m)
-    float heightFade = smoothstep(8.5, 4.0, worldPos.y);
-    float groundFade = smoothstep(-1.5, 0.2, worldPos.y);
-
-    return shaft * heightFade * groundFade;
+    return shaft * fade;
 }
 
 // Đánh giá các khối sương mù cục bộ (hồ nước, vạt hoa, hốc rừng)

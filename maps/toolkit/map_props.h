@@ -243,6 +243,7 @@ typedef struct
     float bladeWidthScale; // relative to placement.radius; <= 0 uses 0.24
     float chunkSize;       // world meters; <= 0 uses 12
     float lodDistance;     // near->simplified transition; <= 0 disables LOD
+    float midLodDistance;  // near->mid transition; <= 0 defaults to 0.45 * lodDistance
     float drawDistance;    // <= 0 draws all chunks
     float shadowDistance;  // close contact-shadow range; <= 0 disables it
     const char *texturePath; // optional alpha-cutout blade texture
@@ -253,12 +254,15 @@ typedef struct
 typedef struct
 {
     Model nearModel;
+    Model midModel;
     Model farModel;
     Model shadowModel;
     Model realShadowModel; // sparse geometry LOD for the directional depth pass
     Vector3 center;
     float radius; // conservative chunk sphere used by view-frustum culling
+    int lodLevel; // 0 = Near, 1 = Mid, 2 = Far
     bool farLod;  // persistent state for hysteresis; avoids boundary thrashing
+    bool midReady;
     bool shadowReady;
     bool realShadowReady;
     bool visibleThisFrame;
@@ -270,6 +274,7 @@ typedef struct
     MapMeadowChunk *chunks;
     int chunkCount;
     float lodDistance;
+    float midLodDistance;
     float drawDistance;
     float shadowDistance;
     bool textured;
@@ -322,6 +327,7 @@ typedef struct
     int meadowFrustumCulled;
     int meadowDistanceCulled;
     int meadowNearDraws;
+    int meadowMidDraws;
     int meadowFarDraws;
     int meadowShadowDraws;
     int meadowShadowDistanceCulled;

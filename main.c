@@ -36,6 +36,7 @@
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
 #include "maps/toolkit/ground_shadow.h"
+#include "maps/toolkit/map_props.h"
 #include "core/map_manager.h"
 #include "skills/taiji/core_test/core_test_skill.h"
 #include "sandbox/auto_test.h"
@@ -267,6 +268,7 @@ int main(int argc, char **argv) {
   int         renderVFXIndex  = 0;
   int         renderVFXWarmup = 90;
   const char *renderVFXOut    = "autotest_output/vfx_eval.png";
+  const char *customMapName   = NULL;
   Vector3 captureOrigin = {6.0f, 0.0f, 4.4f};
   Vector3 captureEye = {0};
   bool captureEyeSet = false;
@@ -296,6 +298,8 @@ int main(int argc, char **argv) {
           renderVFXWarmup = atoi(argv[++i]);
       else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc)
           renderVFXOut = argv[++i];
+      else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc)
+          customMapName = argv[++i];
       else if (strcmp(argv[i], "--origin") == 0 || strcmp(argv[i], "--eye") == 0) {
           bool eye = strcmp(argv[i], "--eye") == 0;
           Vector3 value;
@@ -662,7 +666,7 @@ int main(int argc, char **argv) {
   // Dev: WUXING_MAP=<name substring> forces the active map (case-insensitive)
   // so headless verify/screenshot runs can target a specific world.
   {
-    const char *wantMap = getenv("WUXING_MAP");
+    const char *wantMap = customMapName ? customMapName : getenv("WUXING_MAP");
     if (wantMap != NULL && wantMap[0] != '\0') {
       for (int i = 0; i < MapManager_GetCount(); i++) {
         if (strcasestr(MapManager_GetName(i), wantMap) != NULL) {
@@ -683,7 +687,7 @@ int main(int argc, char **argv) {
           captureNeutralSmoke ? "neutral-smoke" : "newfx",
           captureNeutralSmoke ? -1 : renderVFXIndex);
       TraceLog(LOG_INFO, "CAPTURE: map=%s origin=%.3f,%.3f,%.3f warmup=%d tuning=%s",
-          getenv("WUXING_MAP") ? getenv("WUXING_MAP") : "default",
+          customMapName ? customMapName : (getenv("WUXING_MAP") ? getenv("WUXING_MAP") : "default"),
           captureOrigin.x, captureOrigin.y, captureOrigin.z, renderVFXWarmup,
           getenv("WUXING_TUNING") ? getenv("WUXING_TUNING") : "tuning.cfg");
   }
@@ -1746,8 +1750,23 @@ int main(int argc, char **argv) {
     if (autoTestMode)     AutoTest_RunFrame();
     if (visualVerifyMode) VisualVerify_RunFrame(g_totalElapsed);
     if (renderVFXMode) {
+        static double s_benchTimeSum = 0.0;
+        static int s_benchCount = 0;
+        if (renderVFXFrame > 10) {
+            s_benchTimeSum += GetFrameTime();
+            s_benchCount++;
+        }
         renderVFXFrame++;
         if (renderVFXFrame >= renderVFXWarmup) {
+            if (s_benchCount > 0) {
+                float avgMs = (float)(s_benchTimeSum / s_benchCount * 1000.0);
+                TraceLog(LOG_INFO, "BENCHMARK_FRAMETIME: frames=%d avg_ms=%.2f fps=%.1f",
+                         s_benchCount, avgMs, 1000.0f / (avgMs > 0.001f ? avgMs : 1.0f));
+            }
+            MapNatureRenderStats stats = MapProp_GetNatureRenderStats();
+            TraceLog(LOG_INFO, "NATURE_STATS: visible=%d (near=%d, mid=%d, far=%d) culled_frustum=%d culled_dist=%d",
+                     stats.meadowChunksVisible, stats.meadowNearDraws, stats.meadowMidDraws, stats.meadowFarDraws,
+                     stats.meadowFrustumCulled, stats.meadowDistanceCulled);
             Color captureAmbient = Environment_GetAmbientColor();
             Color captureSun = Environment_GetSunColor();
             Vector3 captureLight = Environment_GetSunDirection();

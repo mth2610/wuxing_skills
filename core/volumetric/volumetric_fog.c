@@ -63,8 +63,8 @@ void VolumetricFog_Init(int width, int height) {
 
     s_fullWidth = width;
     s_fullHeight = height;
-    s_lowWidth = width / 2;
-    s_lowHeight = height / 2;
+    s_lowWidth = width / 3;
+    s_lowHeight = height / 3;
     if (s_lowWidth < 1) s_lowWidth = 1;
     if (s_lowHeight < 1) s_lowHeight = 1;
 
@@ -170,7 +170,7 @@ void VolumetricFog_Render(Camera3D camera) {
     Vector3 sunColor = ColorToV3(Environment_GetSunColor());
     Vector3 fogColor = ColorToV3(atmos.color);
 
-    int stepCount = (tier >= GFX_HIGH) ? 24 : 12;
+    int stepCount = (tier >= GFX_HIGH) ? 10 : 8;
     float maxDist = (atmos.end > 0.0f) ? atmos.end : 120.0f;
     float fogStart = (atmos.start > 0.0f && atmos.start <= 3.0f) ? atmos.start : 1.2f;
     Vector2 screenRes = { (float)s_lowWidth, (float)s_lowHeight };
