@@ -1240,7 +1240,7 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                     bladeRoot = (Color){24, 40, 18, 255};
                     bladeTip  = (Color){152, 196, 68, 255};
                 }
-            } else if (bladeSegments <= 2) {
+            } else if (bladesPerClump <= 2 && bladeSegments <= 2) {
                 // Shadow Caster / Far LOD: 1 wide arching blade aligned with wind flow
                 bladeLeanAngle = clumpAngle + (bHash - 0.5f) * 0.20f;
                 float bx = clump->position.x;
@@ -1714,8 +1714,21 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
                      : quality == GFX_LOW ? 0.68f : 0.55f;
     float lodScale = quality >= GFX_HIGH ? 1.0f
                    : quality == GFX_MED ? 0.84f : 0.68f;
-    float lodDistance = meadow->lodDistance * lodScale;
-    float drawDistance = meadow->drawDistance * rangeScale;
+
+    // Camera focal-distance and zoom-aware LOD adjustment:
+    // In third-person/orbit view, camera.position is separated from the target by focal distance.
+    // Offsetting with horizontal focal distance ensures meadow->lodDistance measures radius around the player/target.
+    // Scaling with zoomFactor ensures zooming in (narrower FOV or closer view) extends Near LOD coverage on screen.
+    float focalDx = camera.position.x - camera.target.x;
+    float focalDz = camera.position.z - camera.target.z;
+    float focalDistH = sqrtf(focalDx * focalDx + focalDz * focalDz);
+    float fovyRad = fmaxf(camera.fovy, 15.0f) * DEG2RAD;
+    float zoomFactor = tanf(45.0f * 0.5f * DEG2RAD) / tanf(fovyRad * 0.5f);
+    if (zoomFactor < 0.8f) zoomFactor = 0.8f;
+    if (zoomFactor > 2.5f) zoomFactor = 2.5f;
+
+    float lodDistance = focalDistH + meadow->lodDistance * lodScale * zoomFactor;
+    float drawDistance = (meadow->drawDistance > 0.0f) ? (focalDistH + meadow->drawDistance * rangeScale * zoomFactor) : 0.0f;
     float drawDistanceSq = drawDistance * drawDistance;
     for (int i = 0; i < meadow->chunkCount; i++) {
         MapMeadowChunk *chunk = &meadow->chunks[i];
@@ -1741,7 +1754,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             spatialHash = spatialHash - floorf(spatialHash);
             float farThreshold = lodDistance + (spatialHash - 0.5f) * 4.0f;
             float midThreshold = (meadow->midLodDistance > 0.0f && chunk->midReady) ?
-                                 (meadow->midLodDistance * lodScale + (spatialHash - 0.5f) * 2.5f) : 0.0f;
+                                 (focalDistH + meadow->midLodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 2.5f) : 0.0f;
             float hysteresis = quality >= GFX_HIGH ? 1.1f : 1.8f;
             float distance = sqrtf(distanceSq);
 
@@ -2555,10 +2568,17 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
                    : quality == GFX_MED ? 0.82f
                    : quality == GFX_LOW ? 0.58f : 0.45f;
     if (field->farReady && field->lodDistance > 0.0f) {
+        float focalDx = camera.position.x - camera.target.x;
+        float focalDz = camera.position.z - camera.target.z;
+        float focalDistH = sqrtf(focalDx * focalDx + focalDz * focalDz);
+        float fovyRad = fmaxf(camera.fovy, 15.0f) * DEG2RAD;
+        float zoomFactor = tanf(45.0f * 0.5f * DEG2RAD) / tanf(fovyRad * 0.5f);
+        if (zoomFactor < 0.8f) zoomFactor = 0.8f;
+        if (zoomFactor > 2.5f) zoomFactor = 2.5f;
         float spatialHash = sinf(field->boundsCenter.x * 12.9898f
                                  + field->boundsCenter.z * 78.233f);
         spatialHash -= floorf(spatialHash);
-        float threshold = field->lodDistance * lodScale + (spatialHash - 0.5f) * 3.0f;
+        float threshold = focalDistH + field->lodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 3.0f;
         float hysteresis = quality >= GFX_HIGH ? 1.25f : 2.0f;
         if (field->farLod) {
             if (visibleDistance < threshold - hysteresis)

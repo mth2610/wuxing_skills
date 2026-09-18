@@ -70,11 +70,11 @@ float SampleShadow(vec3 worldPos) {
 
 // Ánh sáng qua kẽ lá (Canopy Foliage Light Shafts / God-Rays)
 float ComputeCanopyGodRay(vec3 worldPos, vec3 sunDir, float time) {
-    // Phạm vi độ cao: tia nắng rọi từ tán cây (Y ~ 7.5m) xuống mặt cỏ (Y ~ -0.5m)
-    float heightFade = smoothstep(8.5, 4.0, worldPos.y);
-    float groundFade = smoothstep(-1.5, 0.2, worldPos.y);
+    // Phạm vi độ cao: tia nắng rọi từ tán cây (Y ~ 12m) xuống mặt cỏ (Y ~ -2.5m)
+    float heightFade = smoothstep(12.0, 5.0, worldPos.y);
+    float groundFade = smoothstep(-2.5, 0.1, worldPos.y);
     float fade = heightFade * groundFade;
-    if (fade <= 0.001) return 0.0;
+    if (fade <= 0.0001) return 0.0;
 
     // Chiếu ngược theo tia nắng lên độ cao tán cây (Canopy Y ~ 6.5m)
     float canopyY = 6.5;
