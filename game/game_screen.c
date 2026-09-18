@@ -152,6 +152,7 @@ static void PlaceHeroesAtTeamSpawns(void)
         int t = (a->team == TEAM_ALLY) ? 0 : 1;
         Vector3 pos = TEAM_SPAWN[t];
         pos.z += (float)placed[t] * 1.8f - 2.7f;
+        pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
         Entity_SetPosition(i, pos);
         placed[t]++;
     }
@@ -265,6 +266,7 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         {
             // Hold the player at the spawn point through the title card.
             player->position = PLAYER_SPAWN;
+            player->position.y = MapManager_GetGroundHeightAt(player->position.x, player->position.z);
             Entity_SetPosition(player->agentId, player->position);
         }
         s_introTimer -= dt;

@@ -16,6 +16,7 @@ in vec4 vertexColor;
 
 uniform mat4 mvp;
 uniform mat4 matModel;
+uniform vec3 u_groundOffset;
 
 out vec2 fragTexCoord;
 out vec4 fragColor;
@@ -24,6 +25,7 @@ out vec4 fragColor;
 // shadow uploader folds inverse(view) into its light projection.
 out vec3 fragPosition;
 out vec3 fragNormal;
+out vec3 fragWorldPos;
 
 void main()
 {
@@ -31,5 +33,6 @@ void main()
     fragColor    = vertexColor;
     fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
     fragNormal   = normalize(mat3(matModel) * vertexNormal);
+    fragWorldPos = vertexPosition + u_groundOffset;
     gl_Position  = mvp * vec4(vertexPosition, 1.0);
 }

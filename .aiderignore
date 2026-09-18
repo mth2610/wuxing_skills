@@ -24,3 +24,7 @@ android.wuxing_skills/*.keystore
 wuxing
 *.apk
 wuxing_skills.apk
+
+# Unreal Engine Starter Content
+unreal-engine-starter-content-main/
+

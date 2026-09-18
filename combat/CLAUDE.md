@@ -20,7 +20,7 @@ projectile↔projectile clashes and projectile↔agent damage, skills poll
 - **Never:** any VFX/render header — combat is pure logic, events out only.
 
 ## Directories FULLY FORBIDDEN
-- `build/`, `_deps/`, `android.wuxing_skills/`
+- `build/`, `_deps/`, `android.wuxing_skills/`, `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Hard rules
 - Strict C99, static arrays only (`MAX_COMBAT_PROJECTILES 128`), no malloc.

@@ -34,6 +34,7 @@ Reproduce empirically before reading broadly. Do not start a Core bug hunt from 
 - `build/`
 - `_deps/`
 - `android.wuxing_skills/`
+- `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Directories NOT to read without explicit permission
 - `skills/` (header `.h` only, never a skill's `.c`)

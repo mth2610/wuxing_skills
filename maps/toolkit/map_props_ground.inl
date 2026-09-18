@@ -12,6 +12,7 @@ static int locViewPos = -1;
 static int locPathSegs = -1;
 static int locPathSegCount = -1;
 static int locLakeParams = -1;
+static int locGroundOffset = -1;
 
 #define MAX_GROUND_PATH_SEGS 16
 static Vector4 s_groundPathSegs[MAX_GROUND_PATH_SEGS];
@@ -305,6 +306,7 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locPathSegs = GetShaderLocation(groundShader, "u_pathSegs");
         locPathSegCount = GetShaderLocation(groundShader, "u_pathSegCount");
         locLakeParams = GetShaderLocation(groundShader, "u_lakeParams");
+        locGroundOffset = GetShaderLocation(groundShader, "u_groundOffset");
         VFXLight_RegisterShader(groundShader);   // main.c binds it each frame
 
         shaderLoaded = true;
@@ -465,6 +467,8 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
         worldCenter.y + ground->drawOffset.y,
         worldCenter.z + ground->drawOffset.z,
     };
+    if (locGroundOffset >= 0)
+        SetShaderValue(groundShader, locGroundOffset, &pos, SHADER_UNIFORM_VEC3);
     DrawModel(ground->model, pos, 1.0f, WHITE);
 }
 

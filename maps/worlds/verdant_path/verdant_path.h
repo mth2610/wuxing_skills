@@ -9,6 +9,7 @@
 // screen's 3.5 m/s pace takes ~36s (see verdant_path.c for the math).
 void InitVerdantPathMap(void);
 void DrawVerdantPathMap(void);
+void DrawTransparentVerdantPathMap(void);
 void UpdateVerdantPathMap(float dt);
 void UnloadVerdantPathMap(void);
 // Absolute world-space ground Y at (x,z) — real heightmap-based island

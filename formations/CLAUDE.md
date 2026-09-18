@@ -23,7 +23,7 @@ split identical to boss/:
   `core/map_manager.h`, `core/decals/decal_system.h` + core VFX `.h` (in `_def.c` only)
 
 ## Directories FULLY FORBIDDEN
-- `build/`, `_deps/`, `android.wuxing_skills/`
+- `build/`, `_deps/`, `android.wuxing_skills/`, `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Adding a formation
 1. New `formations/<ten_tran>_def.c` with static onTick/drawGround +

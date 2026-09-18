@@ -7,6 +7,7 @@
 ## 0. Before writing a skill
 - Read relevant `core/docs/API.md` section. Grep `core/*.h` to confirm function still exists (docs may lag).
 - Never edit `core/` files directly (Core Agent owns it) — read `.h` only. If you ARE Core Agent, go to §10.
+- **Forbidden directories:** Never read, list, or touch `build/`, `_deps/`, `android.wuxing_skills/`, or `unreal-engine-starter-content-main/` (strictly off-limits unless explicitly permitted by user).
 - **Auto-registered on build** by `scripts/generate_registry.py` — no manual registration step. Folder `skills/[element]/[skill_name]_skill/` holds `[skill]_skill.h` (lifecycle protos), `[skill]_skill.c` (logic + rlgl render), optional `.vs`/`.fs`/`.png` (auto-copied). Include your own header with the FULL path matching the folder exactly, incl. the `_skill` suffix (e.g. `#include "skills/wood/jade_burst_skill/jade_burst_skill.h"`).
 
 ## 1. C99 / Compile

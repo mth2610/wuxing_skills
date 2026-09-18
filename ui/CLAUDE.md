@@ -19,7 +19,7 @@ Result feeds `PlayerIntent.aimPoint` via game/ — control/ never sees ui/.
   `boss/boss_system.h`, `core/skill_manager.h` (names/colors/CanCast)
 
 ## Directories FULLY FORBIDDEN
-- `build/`, `_deps/`, `android.wuxing_skills/`
+- `build/`, `_deps/`, `android.wuxing_skills/`, `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Hard rules
 - Strict C99, static state, no malloc. 2D overlay pass only — never inside

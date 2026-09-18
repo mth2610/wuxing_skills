@@ -29,6 +29,7 @@ def main():
                             has_unload = f"Unload{prefix}Map" in content
                             has_ground_height = f"GetGroundHeight{prefix}Map" in content
                             has_ground_surface = f"SampleGroundSurface{prefix}Map" in content
+                            has_draw_transparent = f"DrawTransparent{prefix}Map" in content
 
                             generated_maps.append({
                                 "prefix": prefix,
@@ -37,7 +38,8 @@ def main():
                                 "has_update": has_update,
                                 "has_unload": has_unload,
                                 "has_ground_height": has_ground_height,
-                                "has_ground_surface": has_ground_surface
+                                "has_ground_surface": has_ground_surface,
+                                "has_draw_transparent": has_draw_transparent
                             })
                             
     gen_path = os.path.join(root_dir, "core", "maps_generated.h")
@@ -57,7 +59,8 @@ def main():
             unload_fn = f"Unload{m['prefix']}Map" if m["has_unload"] else "NULL"
             ground_height_fn = f"GetGroundHeight{m['prefix']}Map" if m["has_ground_height"] else "NULL"
             ground_surface_fn = f"SampleGroundSurface{m['prefix']}Map" if m["has_ground_surface"] else "NULL"
-            out.write(f'    MapManager_RegisterEx("{m["name"]}", Init{m["prefix"]}Map, {update_fn}, Draw{m["prefix"]}Map, {unload_fn}, {ground_height_fn}, {ground_surface_fn});\n')
+            draw_transparent_fn = f"DrawTransparent{m['prefix']}Map" if m["has_draw_transparent"] else "NULL"
+            out.write(f'    MapManager_RegisterEx("{m["name"]}", Init{m["prefix"]}Map, {update_fn}, Draw{m["prefix"]}Map, {unload_fn}, {ground_height_fn}, {ground_surface_fn}, {draw_transparent_fn});\n')
         out.write("}\n\n")
         out.write("#endif // MAPS_GENERATED_H\n")
         

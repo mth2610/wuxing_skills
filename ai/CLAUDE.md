@@ -19,7 +19,7 @@ Later grows hero-AI brains for AI teammates/opponents.
   (`AI_PollExplosions`), the render side composes the VFX.
 
 ## Directories FULLY FORBIDDEN
-- `build/`, `_deps/`, `android.wuxing_skills/`
+- `build/`, `_deps/`, `android.wuxing_skills/`, `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Hard rules
 - Strict C99, static arrays, no malloc. Brain is stateless — persistent

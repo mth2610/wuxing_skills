@@ -13,6 +13,7 @@ Manages `sandbox/` — the **dev/test integration harness** for the Wuxing Skill
 - `build/`
 - `_deps/`
 - `android.wuxing_skills/`
+- `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Current contents (grounded in actual headers, not assumptions)
 - `sandbox_core.c/h` — owns `PlayerEntity`/`EnemyEntity` test structs, 3D scene draw, touch controls, main update loop

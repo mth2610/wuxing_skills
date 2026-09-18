@@ -4,6 +4,7 @@
 #include "ai/ai.h"
 #include "core/skill_manager.h" // hero bots cast off equippedSkills
 #include "combat/combat.h"      // projectile snapshot for dash-dodging
+#include "core/map_manager.h"
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h> // rand
@@ -172,6 +173,7 @@ static void UpdateHeroBots(float dt) {
             float speed = BOT_MOVE_MPS * Entity_GetSpeedMult(bot->agentId);
             pos.x += mx * speed * dt;
             pos.z += mz * speed * dt;
+            pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
             // Edge guard: never walk past the ring-out margin.
             float ex = pos.x - arenaC.x, ez = pos.z - arenaC.z;
             if (sqrtf(ex * ex + ez * ez) <= arenaR - BOT_EDGE_MARGIN)
@@ -236,6 +238,7 @@ void AI_Update(float dt) {
         Vector3 pos = m->position;
         pos.x += (dx / dist) * speed * dt;
         pos.z += (dz / dist) * speed * dt;
+        pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
         Entity_SetPosition(i, pos);
     }
 }
@@ -249,6 +252,7 @@ int AI_SpawnMinionWave(int bossAgentId, int count) {
         float ang = ((float)k / (float)count) * 2.0f * 3.14159265f;
         Vector3 pos = { boss->position.x + cosf(ang) * WAVE_RING_RADIUS, 0.0f,
                         boss->position.z + sinf(ang) * WAVE_RING_RADIUS };
+        pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
         int id = Entity_SpawnAgent(pos, MINION_HP, boss->currentElement,
                                    boss->team, ARCH_MINION);
         if (id < 0) break; // pool full

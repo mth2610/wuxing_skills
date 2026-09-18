@@ -13,6 +13,7 @@ Provides GPU-side particle physics, designed to be extensible for rain, fog, and
 - `build/`
 - `_deps/`
 - `android.wuxing_skills/`
+- `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Directories NOT to read
 - `core/*.c`, `skills/`, `maps/`, `environment/*.c` — read `.h` only if needed

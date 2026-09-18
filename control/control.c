@@ -2,6 +2,7 @@
 #include "control/control.h"
 #include "entities/entities.h"
 #include "core/skill_manager.h"
+#include "core/map_manager.h"
 #include <math.h>
 #include <stddef.h>
 
@@ -96,6 +97,7 @@ void Control_Apply(const PlayerIntent *in, float dt) {
         Vector3 pos = a->position;
         pos.x += (in->moveDir.x / len) * speed * dt;
         pos.z += (in->moveDir.y / len) * speed * dt;
+        pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
         Entity_SetPosition(s_agentId, pos);
         s_yaw = atan2f(in->moveDir.x, in->moveDir.y);
     }

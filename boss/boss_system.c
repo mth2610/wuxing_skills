@@ -2,6 +2,7 @@
 // boss (new boss = new <name>_def.c data file). Pure logic — no VFX headers.
 #include "boss/boss_system.h"
 #include "core/skill_manager.h" // CastSkill/CanCast/TriggerCooldown/GetIndexByName
+#include "core/map_manager.h"
 #include <math.h>
 #include <stddef.h>
 
@@ -114,6 +115,7 @@ void Boss_Update(float dt) {
                     pos.x += -nz * dir * BOSS_STRAFE_MPS * dt;
                     pos.z +=  nx * dir * BOSS_STRAFE_MPS * dt;
                 }
+                pos.y = MapManager_GetGroundHeightAt(pos.x, pos.z);
                 Entity_SetPosition(s_agentId, pos);
                 self = Entity_GetAgent(s_agentId); // refreshed for the cast below
             }

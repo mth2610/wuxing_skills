@@ -18,6 +18,7 @@ Manages the entire **Maps** module of the Wuxing Skills project. Responsible for
 - `build/`
 - `_deps/`
 - `android.wuxing_skills/`
+- `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Directories NOT to read without permission
 - `core/` (`.h` only, never `.c`)

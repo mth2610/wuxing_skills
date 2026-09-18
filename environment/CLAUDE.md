@@ -18,6 +18,7 @@ Manages the **Environment System** module of the Wuxing Skills project. Responsi
 - `build/`
 - `_deps/`
 - `android.wuxing_skills/`
+- `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Directories NOT to read without permission
 - `skills/` (don't read anything unless explicitly requested)

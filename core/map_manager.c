@@ -41,12 +41,13 @@ void MapManager_Init(void) {
 }
 
 void MapManager_Register(const char* name, void (*init)(void), void (*update)(float), void (*draw)(void), void (*unload)(void)) {
-    MapManager_RegisterEx(name, init, update, draw, unload, NULL, NULL);
+    MapManager_RegisterEx(name, init, update, draw, unload, NULL, NULL, NULL);
 }
 
 void MapManager_RegisterEx(const char* name, void (*init)(void), void (*update)(float), void (*draw)(void),
                            void (*unload)(void), float (*getGroundHeight)(float x, float z),
-                           MapGroundSurfaceSampleFn sampleGroundSurface) {
+                           MapGroundSurfaceSampleFn sampleGroundSurface,
+                           void (*drawTransparent)(void)) {
     if (s_mapCount >= MAX_MAPS) return;
     s_maps[s_mapCount++] = (MapDefinition){
         .name = name,
@@ -55,7 +56,8 @@ void MapManager_RegisterEx(const char* name, void (*init)(void), void (*update)(
         .Draw = draw,
         .Unload = unload,
         .GetGroundHeight = getGroundHeight,
-        .SampleGroundSurface = sampleGroundSurface
+        .SampleGroundSurface = sampleGroundSurface,
+        .DrawTransparent = drawTransparent
     };
 }
 
@@ -84,6 +86,13 @@ void MapManager_DrawActive(void) {
     if (s_mapCount == 0) return;
     if (s_maps[s_activeMapIndex].Draw) {
         s_maps[s_activeMapIndex].Draw();
+    }
+}
+
+void MapManager_DrawTransparent(void) {
+    if (s_mapCount == 0) return;
+    if (s_maps[s_activeMapIndex].DrawTransparent) {
+        s_maps[s_activeMapIndex].DrawTransparent();
     }
 }
 

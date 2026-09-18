@@ -29,7 +29,7 @@ See `docs/API.md` §3b/3c.
   either, never print key values into logs or responses.
 
 ## Directories FULLY FORBIDDEN
-- `build/`, `_deps/`, `android.wuxing_skills/`
+- `build/`, `_deps/`, `android.wuxing_skills/`, `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Hard rules
 - Strict C99, static buffers only, no malloc.

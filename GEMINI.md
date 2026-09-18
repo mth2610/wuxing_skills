@@ -94,3 +94,8 @@
 - **Chất lượng hình ảnh:** Giữ nguyên 100% độ sắc nét, mềm mượt của sương mù, tia nắng tán cây, và độ cong tự nhiên của thảm cỏ 65.000 khóm.
 - **Autotest Suite:** **18/18 test cases PASSED (100%)**.
 
+---
+
+## 6. Quy Định Truy Cập Thư Mục Của Agent AI (Ràng Buộc Tuyệt Đối)
+- **Thư mục `unreal-engine-starter-content-main/`**: Chứa tài nguyên bên ngoài do người dùng thêm vào.
+- **Ràng buộc:** Mọi Agent AI (Gemini, Claude, Antigravity, v.v.) **TUYỆT ĐỐI CẤM** tự ý đọc nội dung (`view_file`), duyệt danh sách (`list_dir`, `find_by_name`), tìm kiếm nội dung (`grep_search`), nạp hoặc sửa đổi bất kỳ tệp tin nào thuộc `unreal-engine-starter-content-main/` khi **chưa được người dùng cho phép cụ thể**.

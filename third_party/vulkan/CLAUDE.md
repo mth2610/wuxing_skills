@@ -30,7 +30,7 @@ Follows the root `CLAUDE.md` "Agent working protocol"; the rlvk specifics:
 - **Read/write:** `third_party/vulkan/` (umbrella `rlvk.h`, `rlvk/*.inl`, `shaders/`,
   `tests/`, `include/`), `scripts/*rlvk*`
 - **Read (reference):** `docs/HANDOFF.md`, raylib headers in the test caches
-- **Never:** `build/`, `_deps/`, `android.wuxing_skills/`. Game modules (`core/`, `skills/`,
+- **Never:** `build/`, `_deps/`, `android.wuxing_skills/`, `unreal-engine-starter-content-main/`. Game modules (`core/`, `skills/`,
   `compute/`, ...) only via targeted grep to construct a repro — ask the owning agent instead
   of reading their `.c` files.
 

@@ -75,7 +75,7 @@ Two rules the harness exists to enforce, both of which produced wrong conclusion
 - **A new code rule / gotcha for all agents** → `AGENT_CODE_STANDARD.md` (same turn as the code).
 - *How to WRITE a doc* (fact vs inferred, patch log, edit scope): `DOC_MAINTENANCE.md`. *How docs are ORGANIZED* (the 2 archetypes, placement): `DOC_ARCHITECTURE.md`.
 
-Never edit another module's files — ask that module's agent. Never read/list/touch `build/`, `_deps/`, `android.wuxing_skills/`.
+Never edit another module's files — ask that module's agent. Never read/list/touch `build/`, `_deps/`, `android.wuxing_skills/`, and never read/list/touch `unreal-engine-starter-content-main/` unless explicitly permitted by the user.
 
 ## Module Agents — Ownership split
 
@@ -104,8 +104,9 @@ Never edit another module's files — ask that module's agent. Never read/list/t
 build/
 _deps/
 android.wuxing_skills/
+unreal-engine-starter-content-main/
 ```
-Never read, list, or touch any file under these.
+Never read, list, index, or touch any file under these (`unreal-engine-starter-content-main/` is strictly forbidden unless explicitly permitted by the user).
 
 ## Cross-module rules
 - A module agent only reads `.h` (interface) of other modules — **never `.c`**
@@ -146,7 +147,7 @@ Each sub-module `CLAUDE.md` (`core/`, `skills/`, `maps/`, `environment/`) has it
 4. **Cross-module communication: answer the question, don't hand over the file.** When an agent needs info from another module, the owning agent answers directly (signature, value, location) instead of pasting the whole file.
 5. **Don't dump full code/files into responses.** Cite `path:line`, paste only the directly relevant snippet.
 6. **Batch independent tool calls in one message** instead of calling them sequentially.
-7. **Skip generated/build-output files** (`*_generated.h`, `*_config.h`, anything under `build/`, `_deps/`, `android.wuxing_skills/`) unless debugging something specific to them — and never read the 3 forbidden directories.
+7. **Skip generated/build-output files** (`*_generated.h`, `*_config.h`, anything under `build/`, `_deps/`, `android.wuxing_skills/`, `unreal-engine-starter-content-main/`) unless debugging something specific to them — and never read the forbidden directories.
 8. **Summarize, don't re-list.** Report findings from multi-file surveys as key takeaways, not a replay of everything read.
 
 ## Agent response rules (MANDATORY)

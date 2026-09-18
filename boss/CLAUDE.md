@@ -23,7 +23,7 @@ engine/data split:
   `core/skill_manager.h`, core VFX `.h` (in `_def.c` files only)
 
 ## Directories FULLY FORBIDDEN
-- `build/`, `_deps/`, `android.wuxing_skills/`
+- `build/`, `_deps/`, `android.wuxing_skills/`, `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Adding a boss (the whole point of the split)
 1. New `boss/<ten_boss>_def.c` with a `static void Draw...(const Agent*, float)`

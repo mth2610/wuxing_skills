@@ -35,6 +35,7 @@ something is visible (§10).
 - `build/`
 - `_deps/`
 - `android.wuxing_skills/`
+- `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Directories NOT to read without permission
 - `maps/` (don't read any file unless there's a clear reason)

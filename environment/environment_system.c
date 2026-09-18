@@ -1,4 +1,5 @@
 #include "environment_system.h"
+#include "core/map_manager.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -176,7 +177,7 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
     float skewFactor = 1.0f / fabsf(s_sunDirection.y);
     Vector2 shadowOffset = { s_sunDirection.x * skewFactor, s_sunDirection.z * skewFactor };
     
-    float yGround = 0.09f; // Nâng nhẹ để tránh lỗi nhấp nháy Z-fighting và đè lên grid
+    float yGround = MapManager_GetGroundHeightAt(pos.x, pos.z) + 0.02f;
     
     rlSetTexture(0);
     rlDrawRenderBatchActive(); // Bắt buộc xả batch trước khi đổi state!
@@ -184,15 +185,16 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
     rlDisableDepthMask(); rlDisableBackfaceCulling();
     
     if (shape == ENV_SHAPE_SPHERE || shape == ENV_SHAPE_CYLINDER) {
-        float heightFactor = pos.y / 200.0f;
+        float hAboveGround = fmaxf(pos.y - yGround, 0.0f);
+        float heightFactor = hAboveGround / 200.0f;
         float shadowScale = fmaxf(1.0f - heightFactor * 0.4f, 0.1f);
         float shadowAlpha = fmaxf(1.0f - heightFactor * 1.2f, 0.0f);
         
         if (shadowAlpha <= 0.001f) return;
         
         // Đổ bóng trụ đứng xiên: capsule bóng mượt (smooth capsule shadow)
-        Vector3 baseCenter = { pos.x + shadowOffset.x * pos.y, yGround, pos.z + shadowOffset.y * pos.y };
-        Vector3 topCenter = { pos.x + shadowOffset.x * (pos.y + height * shadowScale), yGround, pos.z + shadowOffset.y * (pos.y + height * shadowScale) };
+        Vector3 baseCenter = { pos.x + shadowOffset.x * hAboveGround, yGround, pos.z + shadowOffset.y * hAboveGround };
+        Vector3 topCenter = { pos.x + shadowOffset.x * (hAboveGround + height * shadowScale), yGround, pos.z + shadowOffset.y * (hAboveGround + height * shadowScale) };
         
         float dx = topCenter.x - baseCenter.x;
         float dz = topCenter.z - baseCenter.z;

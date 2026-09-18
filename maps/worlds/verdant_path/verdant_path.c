@@ -574,13 +574,22 @@ void InitVerdantPathMap(void)
     }
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
     s_lake = MapProp_CreateWaterSurface((MapWaterConfig){
+        .shape = WATER_SHAPE_RADIAL,
+        .ecosystem = WATER_ECO_ALPINE_STREAM,
         .center = {63.0f, 0.075f, 25.5f},
         .radiusX = kLakeRadiusX, .radiusZ = kLakeRadiusZ, .bankWidth = 0.56f,
-        .waveHeight = 0.042f, .waveScale = 0.96f, .waveSpeed = 0.72f,
+        .waveHeight = 0.035f, .waveScale = 0.96f, .waveSpeed = 0.72f,
         .bankGroundY = 0.008f, .detailScale = 0.075f, .detailStrength = 0.17f,
+        .maxDepth = 0.85f,
+        .absorption = {0.70f, 0.20f, 0.05f},
+        .scatterColor = {0.26f, 0.90f, 0.78f},
+        .scatterCoeff = 0.48f,
+        .causticsStrength = 0.80f,
+        .causticsScale = 1.15f,
+        .foamThreshold = 0.12f,
         .segments = 112, .rings = 14, .seed = 9173u,
-        .deepColor = {10, 31, 39, 255}, .shallowColor = {45, 79, 74, 255},
-        .foamColor = {112, 132, 116, 255},
+        .deepColor = {14, 56, 64, 255}, .shallowColor = {52, 118, 108, 255},
+        .foamColor = {205, 228, 218, 255},
         .bankInnerColor = {52, 58, 43, 255}, .bankOuterColor = {65, 84, 51, 255},
     });
     BuildMeadowLayout();
@@ -644,11 +653,22 @@ void UpdateVerdantPathMap(float dt)
 
 float GetGroundHeightVerdantPathMap(float x, float z)
 {
+    float bedHeight;
+    if (MapProp_SampleWaterBed(&s_lake, x, z, &bedHeight, NULL)) {
+        return bedHeight;
+    }
     return MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
 }
 
 bool SampleGroundSurfaceVerdantPathMap(float x, float z, Vector3 *outPosition, Vector3 *outNormal)
 {
+    float bedHeight;
+    Vector3 bedNormal;
+    if (MapProp_SampleWaterBed(&s_lake, x, z, &bedHeight, &bedNormal)) {
+        if (outPosition) *outPosition = (Vector3){x, bedHeight, z};
+        if (outNormal) *outNormal = bedNormal;
+        return true;
+    }
     return MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, outPosition, outNormal);
 }
 
@@ -663,15 +683,22 @@ void DrawVerdantPathMap(void)
     MapProp_DrawGround(&s_ground, kMapCenter);
     DrawPathChain(kMainPath, MAIN_PATH_POINT_COUNT, 1.0f);
     DrawPathChain(kLakePath, LAKE_PATH_POINT_COUNT, 0.72f);
-    MapProp_DrawWaterSurface(&s_lake, s_time);
     MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, MOUNTAIN_ROCK_COUNT, false);
     MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true);
     MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
     MapProp_DrawMeadow(&s_reedMeadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.11f);
+    MapProp_DrawWaterBed(&s_lake, s_time);
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
         MapProp_DrawFlowerField(&s_flowerFields[cluster], (Vector3){0}, s_time,
                                 (Vector2){0.86f, 0.51f}, 0.032f);
     }
+}
+
+void DrawTransparentVerdantPathMap(void)
+{
+    if (!s_ready)
+        return;
+    MapProp_DrawWaterOverlay(&s_lake, s_time);
 }
 
 void UnloadVerdantPathMap(void)

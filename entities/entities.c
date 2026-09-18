@@ -1,6 +1,7 @@
 // entities/entities.c
 #include "entities.h"
 #include "core/skill_manager.h"
+#include "core/map_manager.h"
 #include "raymath.h"
 #include <math.h>
 #include <stddef.h>
@@ -101,6 +102,9 @@ void Entity_Update(float dt) {
             float step = (dt < a->dashTimer) ? dt : a->dashTimer;
             a->position.x += a->dashVelocity.x * step;
             a->position.z += a->dashVelocity.z * step;
+            if (a->vState == AGENT_GROUNDED) {
+                a->position.y = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
+            }
             a->dashTimer -= dt;
             if (a->dashTimer <= 0.0f) {
                 a->dashTimer = 0.0f;
@@ -120,6 +124,9 @@ void Entity_Update(float dt) {
                 a->position.x += (dx / dist) * step;
                 a->position.z += (dz / dist) * step;
             }
+            if (a->vState == AGENT_GROUNDED) {
+                a->position.y = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
+            }
             a->pullTimer -= dt;
             if (a->pullTimer < 0.0f) a->pullTimer = 0.0f;
         }
@@ -137,8 +144,9 @@ void Entity_Update(float dt) {
             a->position.x += a->velocity.x * dt;
             a->position.y += a->velocity.y * dt;
             a->position.z += a->velocity.z * dt;
-            if (a->position.y <= 0.0f) {
-                a->position.y = 0.0f;
+            float groundY = MapManager_GetGroundHeightAt(a->position.x, a->position.z);
+            if (a->position.y <= groundY) {
+                a->position.y = groundY;
                 a->velocity = (Vector3){ 0 };
                 a->vState = AGENT_GROUNDED;
             }

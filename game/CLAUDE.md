@@ -31,6 +31,7 @@ because it couples to character anim + VFX.
 - `build/`
 - `_deps/`
 - `android.wuxing_skills/`
+- `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Current scope (minimal, will grow)
 - Match state machine (`GameState`, see `game/docs/API.md` §2): 2s intro title

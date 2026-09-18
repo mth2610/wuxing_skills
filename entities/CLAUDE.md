@@ -14,6 +14,7 @@ This module is new and intentionally minimal. It is the foundational layer that 
 - `build/`
 - `_deps/`
 - `android.wuxing_skills/`
+- `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Directories NOT to read without permission
 - `skills/*.c`, `maps/*.c`, `environment/*.c`, `compute/*.c` — `.h` only

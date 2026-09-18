@@ -399,8 +399,25 @@ void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOff
                                          float time, Vector2 windDirection, float windStrength);
 void MapProp_UnloadFlowerField(MapFlowerField *field);
 
+typedef enum {
+    WATER_ECO_ALPINE_STREAM = 0,   // Suối núi / đá vôi trong vắt: ngọc bích sáng, độ trong cao
+    WATER_ECO_FOREST_SWAMP,        // Đầm lầy than bùn / vũng hoai mục: hổ phách / nâu đậm
+    WATER_ECO_TROPICAL_SHALLOW,    // Thềm cát nhiệt đới / vịnh nông: xanh lơ nhạt, tương phản cát vàng
+    WATER_ECO_STAGNANT_POND,       // Kênh rạch / vũng nước tù đọng: lục xỉn rêu phong
+    WATER_ECO_CUSTOM               // Tự định nghĩa hệ số hấp thụ và tán xạ riêng
+} MapWaterEcosystem;
+
+typedef enum {
+    WATER_SHAPE_RADIAL = 0,        // Hồ, ao, vụng nước tròn/elip có bờ uốn lượn ngẫu nhiên
+    WATER_SHAPE_RECT,              // Vũng nước sân đình, bể chứa, rãnh nước chữ nhật
+    WATER_SHAPE_STRIP              // Dải suối uốn lượn / dòng chảy có hướng theo vector
+} MapWaterShape;
+
 typedef struct
 {
+    MapWaterShape shape;           // Kiểu hình thái mặt nước (mặc định: WATER_SHAPE_RADIAL)
+    MapWaterEcosystem ecosystem;   // Preset sinh thái quang học Beer-Lambert
+
     Vector3 center;
     float radiusX;
     float radiusZ;
@@ -419,19 +436,42 @@ typedef struct
     Color foamColor;
     Color bankInnerColor;
     Color bankOuterColor;
+
+    // Các tham số chuyên sâu cho vùng nước nông (Độ sâu <= 1.3m):
+    float maxDepth;            // Độ sâu quang học tối đa tính bằng mét (giới hạn <= 1.3m, mặc định 1.2m)
+    Vector3 absorption;        // Hệ số hấp thụ Beer-Lambert beta_e(R, G, B) (đơn vị 1/m)
+    Vector3 scatterColor;      // Sắc màu tán xạ ngược SSS Single Layer Water khi ngược nắng
+    float scatterCoeff;        // Cường độ tán xạ ngược SSS (mặc định ~0.45)
+    Vector2 flowVelocity;      // Vector định hướng và tốc độ dòng chảy (suối/kênh, mặc định (0, 0))
+    float causticsStrength;    // Cường độ dải sáng tụ quang đáy nước (mặc định ~0.65)
+    float causticsScale;       // Tần số không gian của mạng lưới tụ quang (mặc định ~1.2)
+    float foamThreshold;       // Ngưỡng độ sâu xuất hiện bọt bờ (mặc định ~0.12m)
+    float refractionStrength;  // Cường độ khúc xạ lệch tia màn hình (mặc định ~0.04)
 } MapWaterConfig;
 
 typedef struct
 {
     Model waterModel;
     Model bankModel;
+    Model bedModel;            // Nền hồ / đáy suối 3D lõm thật (bathymetric basin)
     MapWaterConfig config;
+    Texture2D causticTex;      // Texture tụ quang ánh sáng (nếu có)
+    Texture2D bedDiffuseTex;   // Texture đá cuội/cát đáy hồ
     bool ready;
 } MapWaterSurface;
 
+MapWaterConfig MapProp_DefaultWaterConfig(MapWaterEcosystem eco);
 MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config);
+MapWaterSurface MapProp_CreateWaterStrip(Vector3 start, Vector3 end, float width, MapWaterConfig config);
+MapWaterSurface MapProp_CreateWaterPatch(Vector3 center, float width, float depth, MapWaterConfig config);
 Vector3 MapProp_GetWaterEdgePoint(const MapWaterSurface *water, float angleRad,
                                   float radialScale);
+// Truy vấn độ sâu vật lý của đáy hồ/suối tại tọa độ (x, z). Trả về true nếu nằm trong lòng nước,
+// kèm theo độ cao Y tuyệt đối của đáy hồ và pháp tuyến nghiêng của sườn đáy.
+bool MapProp_SampleWaterBed(const MapWaterSurface *water, float x, float z,
+                            float *outBedHeight, Vector3 *outNormal);
+void MapProp_DrawWaterBed(const MapWaterSurface *water, float time);
+void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time);
 void MapProp_UnloadWaterSurface(MapWaterSurface *water);
 

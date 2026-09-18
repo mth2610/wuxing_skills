@@ -681,6 +681,7 @@ int main(int argc, char **argv) {
   if (renderVFXMode) {
       currentScreen    = SCREEN_VFX_TESTER;
       player.position  = captureOrigin;
+      player.position.y = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
       if (captureNeutralSmoke) VFXTest_SetNeutralSmokeRenderTarget(player.position);
       else VFXTest_SetRenderTarget(renderVFXIndex, player.position);
       TraceLog(LOG_INFO, "CAPTURE: fixture=%s index=%d",
@@ -1031,8 +1032,9 @@ int main(int argc, char **argv) {
         // this pivot (vfx_test.c: s_prefabStartPos = playerPos), so this is
         // also where every new fixture appears. Re-fires on R so the view can
         // be recovered after WASD/QE/scroll drift without leaving the screen.
-        if (enteredVFXTester || IsKeyPressed(KEY_R)) {
+        if (!renderVFXMode && (enteredVFXTester || IsKeyPressed(KEY_R))) {
             player.position = (Vector3){6.0f, 0.0f, 4.4f};
+            player.position.y = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
             vfxCameraAngle = 0.6f;
             vfxCamDist = 6.0f;
         }
@@ -1535,7 +1537,7 @@ int main(int argc, char **argv) {
         VFXTest_SetCamera(camera); // để phím P chụp đúng vùng hiệu ứng
         VFXTest_Draw3D();
 
-        if (!renderVFXMode && !VFXTest_ShouldHideCharacterRef()) {
+        if ((!renderVFXMode || renderVFXIndex == -1) && !VFXTest_ShouldHideCharacterRef()) {
             Environment_DrawSmartShadow(player.position, ENV_SHAPE_SPHERE, 0.25f, 0.25f);
             if (CharacterModel_IsLoaded()) {
                 CharacterModel_Draw(&player.anim, player.position, s_vfxPlayerYaw, 1.0f, WHITE);
@@ -1556,6 +1558,7 @@ int main(int argc, char **argv) {
         Boss_Draw();
         Formation_Draw();
     }
+    MapManager_DrawTransparent();
     Afterimage_Draw();
     DrawParticleTrailVFXLayers(camera, globalParticleTex);
 

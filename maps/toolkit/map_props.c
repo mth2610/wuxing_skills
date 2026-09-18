@@ -5,6 +5,7 @@
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
 #include "core/vfx_light.h"   // Đợt E / E2 — VFXLight_BindToShader on the ground
+#include "core/scene_targets.h" // Depth buffer for soft particles & shallow water
 #include "core/gfx_quality.h"
 #include "core/camera_context.h"
 #include "core/wind/wind_system.h"

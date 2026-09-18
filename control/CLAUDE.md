@@ -21,7 +21,7 @@ POD and device-agnostic.
   `game/` (it reads `Control_GetYaw`/intent, control never draws).
 
 ## Directories FULLY FORBIDDEN
-- `build/`, `_deps/`, `android.wuxing_skills/`
+- `build/`, `_deps/`, `android.wuxing_skills/`, `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Hard rules
 - Strict C99, no malloc, module-static state only (one local player).

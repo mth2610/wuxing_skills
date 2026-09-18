@@ -11,6 +11,50 @@ static bool s_natureCutoutShaderReady = false;
 static bool s_natureShadowShaderReady = false;
 static bool s_flowerShadowShaderReady = false;
 static bool s_waterShaderReady = false;
+static Texture2D s_defaultCausticTex = {0};
+
+static int s_waterLocTime = -1;
+static int s_waterLocWaveHeight = -1;
+static int s_waterLocWaveScale = -1;
+static int s_waterLocWaveSpeed = -1;
+static int s_waterLocDetailScale = -1;
+static int s_waterLocDetailStrength = -1;
+static int s_waterLocFlowVelocity = -1;
+static int s_waterLocWaterShape = -1;
+static int s_waterLocLightDir = -1;
+static int s_waterLocLightColor = -1;
+static int s_waterLocAmbientColor = -1;
+static int s_waterLocViewPos = -1;
+static int s_waterLocMaxDepth = -1;
+static int s_waterLocAbsorption = -1;
+static int s_waterLocDeepColor = -1;
+static int s_waterLocShallowColor = -1;
+static int s_waterLocFoamColor = -1;
+static int s_waterLocScatterColor = -1;
+static int s_waterLocScatterCoeff = -1;
+static int s_waterLocCausticsStrength = -1;
+static int s_waterLocCausticsScale = -1;
+static int s_waterLocFoamThreshold = -1;
+static int s_waterLocCausticTex = -1;
+static int s_waterLocCameraDepthTex = -1;
+static int s_waterLocHasDepthTex = -1;
+static int s_waterLocModelPos = -1;
+
+static Shader s_waterBedShader = {0};
+static bool s_waterBedShaderReady = false;
+static int s_bedLocTime = -1;
+static int s_bedLocWaterHeight = -1;
+static int s_bedLocLightDir = -1;
+static int s_bedLocLightColor = -1;
+static int s_bedLocAmbientColor = -1;
+static int s_bedLocViewPos = -1;
+static int s_bedLocCausticsStrength = -1;
+static int s_bedLocCausticsScale = -1;
+static int s_bedLocAbsorption = -1;
+static int s_bedLocDeepColor = -1;
+static int s_bedLocShallowColor = -1;
+static int s_bedLocCausticTex = -1;
+static int s_bedLocModelPos = -1;
 
 #define NATURE_INTERACTION_RESOLUTION 64
 #define NATURE_INTERACTION_PIXEL_COUNT \
@@ -542,10 +586,84 @@ static Shader Water_GetShader(void)
         s_waterShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(s_waterShader, "matModel");
         s_waterShader.locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(s_waterShader, "colDiffuse");
         s_waterShader.locs[SHADER_LOC_MAP_DIFFUSE] = GetShaderLocation(s_waterShader, "texture0");
+
+        s_waterLocTime = GetShaderLocation(s_waterShader, "u_time");
+        s_waterLocWaveHeight = GetShaderLocation(s_waterShader, "u_waveHeight");
+        s_waterLocWaveScale = GetShaderLocation(s_waterShader, "u_waveScale");
+        s_waterLocWaveSpeed = GetShaderLocation(s_waterShader, "u_waveSpeed");
+        s_waterLocDetailScale = GetShaderLocation(s_waterShader, "u_detailScale");
+        s_waterLocDetailStrength = GetShaderLocation(s_waterShader, "u_detailStrength");
+        s_waterLocFlowVelocity = GetShaderLocation(s_waterShader, "u_flowVelocity");
+        s_waterLocWaterShape = GetShaderLocation(s_waterShader, "u_waterShape");
+        s_waterLocLightDir = GetShaderLocation(s_waterShader, "u_lightDir");
+        s_waterLocLightColor = GetShaderLocation(s_waterShader, "u_lightColor");
+        s_waterLocAmbientColor = GetShaderLocation(s_waterShader, "u_ambientColor");
+        s_waterLocViewPos = GetShaderLocation(s_waterShader, "u_viewPos");
+        s_waterLocMaxDepth = GetShaderLocation(s_waterShader, "u_maxDepth");
+        s_waterLocAbsorption = GetShaderLocation(s_waterShader, "u_absorption");
+        s_waterLocDeepColor = GetShaderLocation(s_waterShader, "u_deepColor");
+        s_waterLocShallowColor = GetShaderLocation(s_waterShader, "u_shallowColor");
+        s_waterLocFoamColor = GetShaderLocation(s_waterShader, "u_foamColor");
+        s_waterLocScatterColor = GetShaderLocation(s_waterShader, "u_scatterColor");
+        s_waterLocScatterCoeff = GetShaderLocation(s_waterShader, "u_scatterCoeff");
+        s_waterLocCausticsStrength = GetShaderLocation(s_waterShader, "u_causticsStrength");
+        s_waterLocCausticsScale = GetShaderLocation(s_waterShader, "u_causticsScale");
+        s_waterLocFoamThreshold = GetShaderLocation(s_waterShader, "u_foamThreshold");
+        s_waterLocCausticTex = GetShaderLocation(s_waterShader, "u_causticTex");
+        s_waterLocCameraDepthTex = GetShaderLocation(s_waterShader, "u_cameraDepthTex");
+        s_waterLocHasDepthTex = GetShaderLocation(s_waterShader, "u_hasDepthTex");
+        s_waterLocModelPos = GetShaderLocation(s_waterShader, "u_modelPos");
+
+        int causticSlot = 1;
+        if (s_waterLocCausticTex >= 0) {
+            SetShaderValue(s_waterShader, s_waterLocCausticTex, &causticSlot, SHADER_UNIFORM_INT);
+        }
+        int depthSlot = 2;
+        if (s_waterLocCameraDepthTex >= 0) {
+            SetShaderValue(s_waterShader, s_waterLocCameraDepthTex, &depthSlot, SHADER_UNIFORM_INT);
+        }
+
         VFXLight_RegisterShader(s_waterShader);
         s_waterShaderReady = true;
     }
     return s_waterShader;
+}
+
+static Shader Water_GetBedShader(void)
+{
+    if (!s_waterBedShaderReady) {
+        s_waterBedShader = ResourceManager_LoadShader("maps/toolkit/shaders/water_bed.vs",
+                                                      "maps/toolkit/shaders/water_bed.fs");
+        s_waterBedShader.locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(s_waterBedShader, "vertexPosition");
+        s_waterBedShader.locs[SHADER_LOC_VERTEX_TEXCOORD01] = GetShaderLocationAttrib(s_waterBedShader, "vertexTexCoord");
+        s_waterBedShader.locs[SHADER_LOC_VERTEX_NORMAL] = GetShaderLocationAttrib(s_waterBedShader, "vertexNormal");
+        s_waterBedShader.locs[SHADER_LOC_VERTEX_COLOR] = GetShaderLocationAttrib(s_waterBedShader, "vertexColor");
+        s_waterBedShader.locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(s_waterBedShader, "mvp");
+        s_waterBedShader.locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(s_waterBedShader, "matModel");
+        s_waterBedShader.locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(s_waterBedShader, "colDiffuse");
+        s_waterBedShader.locs[SHADER_LOC_MAP_DIFFUSE] = GetShaderLocation(s_waterBedShader, "texture0");
+
+        s_bedLocTime = GetShaderLocation(s_waterBedShader, "u_time");
+        s_bedLocWaterHeight = GetShaderLocation(s_waterBedShader, "u_waterHeight");
+        s_bedLocLightDir = GetShaderLocation(s_waterBedShader, "u_lightDir");
+        s_bedLocLightColor = GetShaderLocation(s_waterBedShader, "u_lightColor");
+        s_bedLocAmbientColor = GetShaderLocation(s_waterBedShader, "u_ambientColor");
+        s_bedLocViewPos = GetShaderLocation(s_waterBedShader, "u_viewPos");
+        s_bedLocCausticsStrength = GetShaderLocation(s_waterBedShader, "u_causticsStrength");
+        s_bedLocCausticsScale = GetShaderLocation(s_waterBedShader, "u_causticsScale");
+        s_bedLocAbsorption = GetShaderLocation(s_waterBedShader, "u_absorption");
+        s_bedLocDeepColor = GetShaderLocation(s_waterBedShader, "u_deepColor");
+        s_bedLocShallowColor = GetShaderLocation(s_waterBedShader, "u_shallowColor");
+        s_bedLocCausticTex = GetShaderLocation(s_waterBedShader, "u_causticTex");
+        s_bedLocModelPos = GetShaderLocation(s_waterBedShader, "u_modelPos");
+
+        int causticSlot = 1;
+        if (s_bedLocCausticTex >= 0) {
+            SetShaderValue(s_waterBedShader, s_bedLocCausticTex, &causticSlot, SHADER_UNIFORM_INT);
+        }
+        s_waterBedShaderReady = true;
+    }
+    return s_waterBedShader;
 }
 
 static Shader FlowerShadow_GetShader(void)
@@ -2681,6 +2799,22 @@ static void Water_SetVertex(Mesh *mesh, int index, Vector3 p, Vector2 uv, Color 
     mesh->colors[index * 4 + 3] = 255;
 }
 
+static void Water_SetBedVertex(Mesh *mesh, int index, Vector3 p, Vector3 n, Vector2 uv, Color color)
+{
+    mesh->vertices[index * 3 + 0] = p.x;
+    mesh->vertices[index * 3 + 1] = p.y;
+    mesh->vertices[index * 3 + 2] = p.z;
+    mesh->normals[index * 3 + 0] = n.x;
+    mesh->normals[index * 3 + 1] = n.y;
+    mesh->normals[index * 3 + 2] = n.z;
+    mesh->texcoords[index * 2 + 0] = uv.x;
+    mesh->texcoords[index * 2 + 1] = uv.y;
+    mesh->colors[index * 4 + 0] = color.r;
+    mesh->colors[index * 4 + 1] = color.g;
+    mesh->colors[index * 4 + 2] = color.b;
+    mesh->colors[index * 4 + 3] = color.a;
+}
+
 static float Water_EdgeScale(float angle, float radial, unsigned int seed)
 {
     float seedPhase = (float)(seed & 1023u) * 0.0173f;
@@ -2692,6 +2826,101 @@ static float Water_EdgeScale(float angle, float radial, unsigned int seed)
     return 1.0f + shorelineNoise * edgeWeight;
 }
 
+MapWaterConfig MapProp_DefaultWaterConfig(MapWaterEcosystem eco)
+{
+    MapWaterConfig c = {0};
+    c.shape = WATER_SHAPE_RADIAL;
+    c.ecosystem = eco;
+    c.maxDepth = 1.25f;
+    c.waveHeight = 0.038f;
+    c.waveScale = 0.95f;
+    c.waveSpeed = 0.72f;
+    c.detailScale = 0.10f;
+    c.detailStrength = 0.16f;
+    c.causticsStrength = 0.65f;
+    c.causticsScale = 1.20f;
+    c.foamThreshold = 0.12f;
+    c.refractionStrength = 0.04f;
+    c.scatterCoeff = 0.45f;
+    c.foamColor = (Color){215, 230, 222, 255};
+    c.bankInnerColor = (Color){52, 58, 43, 255};
+    c.bankOuterColor = (Color){65, 84, 51, 255};
+
+    switch (eco) {
+        case WATER_ECO_ALPINE_STREAM:
+            c.absorption = (Vector3){0.80f, 0.20f, 0.05f};
+            c.scatterColor = (Vector3){0.20f, 0.85f, 0.72f};
+            c.deepColor = (Color){10, 38, 42, 255};
+            c.shallowColor = (Color){48, 92, 85, 255};
+            c.causticsStrength = 0.72f;
+            break;
+        case WATER_ECO_FOREST_SWAMP:
+            c.absorption = (Vector3){0.30f, 0.70f, 1.30f};
+            c.scatterColor = (Vector3){0.80f, 0.55f, 0.22f};
+            c.deepColor = (Color){28, 20, 12, 255};
+            c.shallowColor = (Color){68, 52, 32, 255};
+            c.causticsStrength = 0.35f;
+            c.maxDepth = 0.65f;
+            break;
+        case WATER_ECO_TROPICAL_SHALLOW:
+            c.absorption = (Vector3){0.45f, 0.15f, 0.08f};
+            c.scatterColor = (Vector3){0.15f, 0.92f, 0.88f};
+            c.deepColor = (Color){12, 52, 68, 255};
+            c.shallowColor = (Color){58, 122, 118, 255};
+            c.causticsStrength = 0.80f;
+            break;
+        case WATER_ECO_STAGNANT_POND:
+            c.absorption = (Vector3){0.90f, 0.60f, 0.90f};
+            c.scatterColor = (Vector3){0.42f, 0.68f, 0.28f};
+            c.deepColor = (Color){20, 32, 16, 255};
+            c.shallowColor = (Color){50, 72, 40, 255};
+            c.causticsStrength = 0.40f;
+            c.maxDepth = 0.55f;
+            break;
+        case WATER_ECO_CUSTOM:
+        default:
+            c.absorption = (Vector3){0.80f, 0.20f, 0.05f};
+            c.scatterColor = (Vector3){0.20f, 0.85f, 0.72f};
+            c.deepColor = (Color){10, 38, 42, 255};
+            c.shallowColor = (Color){48, 92, 85, 255};
+            break;
+    }
+    return c;
+}
+
+static void Water_ApplyConfigDefaults(MapWaterConfig *config)
+{
+    if (config->maxDepth <= 0.0f) config->maxDepth = 1.25f;
+    if (config->maxDepth > 1.30f) config->maxDepth = 1.30f;
+
+    if (config->absorption.x <= 0.0f && config->absorption.y <= 0.0f && config->absorption.z <= 0.0f) {
+        MapWaterConfig def = MapProp_DefaultWaterConfig(config->ecosystem);
+        config->absorption = def.absorption;
+        if (config->scatterColor.x <= 0.0f && config->scatterColor.y <= 0.0f) {
+            config->scatterColor = def.scatterColor;
+        }
+        if (config->scatterCoeff <= 0.0f) config->scatterCoeff = def.scatterCoeff;
+        if (config->deepColor.a == 0) config->deepColor = def.deepColor;
+        if (config->shallowColor.a == 0) config->shallowColor = def.shallowColor;
+        if (config->foamColor.a == 0) config->foamColor = def.foamColor;
+        if (config->causticsStrength <= 0.0f) config->causticsStrength = def.causticsStrength;
+        if (config->causticsScale <= 0.0f) config->causticsScale = def.causticsScale;
+    }
+    if (config->scatterColor.x <= 0.0f && config->scatterColor.y <= 0.0f && config->scatterColor.z <= 0.0f) {
+        config->scatterColor = (Vector3){0.20f, 0.85f, 0.72f};
+    }
+    if (config->scatterCoeff <= 0.0f) config->scatterCoeff = 0.45f;
+    if (config->causticsStrength < 0.0f) config->causticsStrength = 0.0f;
+    if (config->causticsStrength == 0.0f) config->causticsStrength = 0.65f;
+    if (config->causticsScale <= 0.0f) config->causticsScale = 1.20f;
+    if (config->foamThreshold <= 0.0f) config->foamThreshold = 0.12f;
+    if (config->waveHeight <= 0.0f) config->waveHeight = 0.038f;
+    if (config->waveScale <= 0.0f) config->waveScale = 0.95f;
+    if (config->waveSpeed <= 0.0f) config->waveSpeed = 0.72f;
+    if (config->detailScale <= 0.0f) config->detailScale = 0.10f;
+    if (config->detailStrength <= 0.0f) config->detailStrength = 0.16f;
+}
+
 MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
 {
     MapWaterSurface water = {0};
@@ -2700,9 +2929,9 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
     if (config.segments > 192) config.segments = 192;
     if (config.rings < 2) config.rings = 2;
     if (config.rings > 32) config.rings = 32;
-    if (config.detailScale <= 0.0f) config.detailScale = 0.18f;
-    if (config.detailStrength < 0.0f) config.detailStrength = 0.0f;
-    if (config.detailStrength > 0.24f) config.detailStrength = 0.24f;
+
+    Water_ApplyConfigDefaults(&config);
+    config.shape = WATER_SHAPE_RADIAL;
     water.config = config;
 
     Mesh lakeMesh = {0};
@@ -2727,8 +2956,6 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
             Vector3 p01 = {cosf(a1) * config.radiusX * r0 * e01, 0.0f, sinf(a1) * config.radiusZ * r0 * e01};
             Vector3 p10 = {cosf(a0) * config.radiusX * r1 * e10, 0.0f, sinf(a0) * config.radiusZ * r1 * e10};
             Vector3 p11 = {cosf(a1) * config.radiusX * r1 * e11, 0.0f, sinf(a1) * config.radiusZ * r1 * e11};
-            // Keep radial UVs idealized while geometry meanders, so depth
-            // grading and foam remain locked exactly to the visible edge.
             Vector2 uv00 = {cosf(a0) * r0 * 0.5f + 0.5f, sinf(a0) * r0 * 0.5f + 0.5f};
             Vector2 uv01 = {cosf(a1) * r0 * 0.5f + 0.5f, sinf(a1) * r0 * 0.5f + 0.5f};
             Vector2 uv10 = {cosf(a0) * r1 * 0.5f + 0.5f, sinf(a0) * r1 * 0.5f + 0.5f};
@@ -2746,6 +2973,66 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
     SetTextureWrap(waterDetail, TEXTURE_WRAP_REPEAT);
     SetTextureFilter(waterDetail, TEXTURE_FILTER_BILINEAR);
     water.waterModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = waterDetail;
+
+    // ── Build 3D Concave Lake Bed (Nền hồ 3D thật) ─────────────────────────
+    Mesh bedMesh = {0};
+    int bedVertices = config.segments * config.rings * 6;
+    bedMesh.vertexCount = bedVertices;
+    bedMesh.triangleCount = bedVertices / 3;
+    bedMesh.vertices = MemAlloc((unsigned int)bedVertices * 3u * sizeof(float));
+    bedMesh.normals = MemAlloc((unsigned int)bedVertices * 3u * sizeof(float));
+    bedMesh.texcoords = MemAlloc((unsigned int)bedVertices * 2u * sizeof(float));
+    bedMesh.colors = MemAlloc((unsigned int)bedVertices * 4u * sizeof(unsigned char));
+    int bedCursor = 0;
+    for (int ring = 0; ring < config.rings; ring++) {
+        float r0 = (float)ring / config.rings;
+        float r1 = (float)(ring + 1) / config.rings;
+        float d0 = config.maxDepth * (1.0f - powf(r0, 1.6f)) + 0.015f;
+        float d1 = config.maxDepth * (1.0f - powf(r1, 1.6f)) + 0.015f;
+        float y0 = -d0;
+        float y1 = -d1;
+        Color c0 = Nature_LerpColor((Color){135, 128, 110, 255}, (Color){195, 185, 165, 255}, r0);
+        Color c1 = Nature_LerpColor((Color){135, 128, 110, 255}, (Color){195, 185, 165, 255}, r1);
+        for (int segment = 0; segment < config.segments; segment++) {
+            float a0 = (float)segment * 2.0f * PI / config.segments;
+            float a1 = (float)(segment + 1) * 2.0f * PI / config.segments;
+            float e00 = Water_EdgeScale(a0, r0, config.seed);
+            float e01 = Water_EdgeScale(a1, r0, config.seed);
+            float e10 = Water_EdgeScale(a0, r1, config.seed);
+            float e11 = Water_EdgeScale(a1, r1, config.seed);
+            Vector3 p00 = {cosf(a0) * config.radiusX * r0 * e00, y0, sinf(a0) * config.radiusZ * r0 * e00};
+            Vector3 p01 = {cosf(a1) * config.radiusX * r0 * e01, y0, sinf(a1) * config.radiusZ * r0 * e01};
+            Vector3 p10 = {cosf(a0) * config.radiusX * r1 * e10, y1, sinf(a0) * config.radiusZ * r1 * e10};
+            Vector3 p11 = {cosf(a1) * config.radiusX * r1 * e11, y1, sinf(a1) * config.radiusZ * r1 * e11};
+            Vector2 uv00 = {p00.x * 0.16f, p00.z * 0.16f};
+            Vector2 uv01 = {p01.x * 0.16f, p01.z * 0.16f};
+            Vector2 uv10 = {p10.x * 0.16f, p10.z * 0.16f};
+            Vector2 uv11 = {p11.x * 0.16f, p11.z * 0.16f};
+
+            float slope0 = 1.6f * powf(fmaxf(0.01f, r0), 0.6f) * (config.maxDepth / fmaxf(config.radiusX, config.radiusZ));
+            float slope1 = 1.6f * powf(fmaxf(0.01f, r1), 0.6f) * (config.maxDepth / fmaxf(config.radiusX, config.radiusZ));
+            Vector3 n00 = Vector3Normalize((Vector3){cosf(a0) * slope0, 1.0f, sinf(a0) * slope0});
+            Vector3 n01 = Vector3Normalize((Vector3){cosf(a1) * slope0, 1.0f, sinf(a1) * slope0});
+            Vector3 n10 = Vector3Normalize((Vector3){cosf(a0) * slope1, 1.0f, sinf(a0) * slope1});
+            Vector3 n11 = Vector3Normalize((Vector3){cosf(a1) * slope1, 1.0f, sinf(a1) * slope1});
+
+            Water_SetBedVertex(&bedMesh, bedCursor++, p00, n00, uv00, c0);
+            Water_SetBedVertex(&bedMesh, bedCursor++, p01, n01, uv01, c0);
+            Water_SetBedVertex(&bedMesh, bedCursor++, p11, n11, uv11, c1);
+            Water_SetBedVertex(&bedMesh, bedCursor++, p00, n00, uv00, c0);
+            Water_SetBedVertex(&bedMesh, bedCursor++, p11, n11, uv11, c1);
+            Water_SetBedVertex(&bedMesh, bedCursor++, p10, n10, uv10, c1);
+        }
+    }
+    water.bedModel = Nature_ModelFromMesh(bedMesh, Water_GetBedShader());
+    water.bedDiffuseTex = ResourceManager_LoadTexture("assets/textures/stone_path_diffuse.png");
+    SetTextureWrap(water.bedDiffuseTex, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(water.bedDiffuseTex, TEXTURE_FILTER_BILINEAR);
+    water.bedModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = water.bedDiffuseTex;
+
+    water.causticTex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+    SetTextureWrap(water.causticTex, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(water.causticTex, TEXTURE_FILTER_BILINEAR);
 
     const int bankRings = 3;
     Mesh bankMesh = Nature_AllocMesh(config.segments * bankRings * 6);
@@ -2799,6 +3086,258 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
     return water;
 }
 
+MapWaterSurface MapProp_CreateWaterPatch(Vector3 center, float width, float depth, MapWaterConfig config)
+{
+    MapWaterSurface water = {0};
+    if (width <= 0.0f || depth <= 0.0f) return water;
+
+    Water_ApplyConfigDefaults(&config);
+    config.center = center;
+    config.radiusX = width * 0.5f;
+    config.radiusZ = depth * 0.5f;
+    config.shape = WATER_SHAPE_RECT;
+    water.config = config;
+
+    int segX = config.segments >= 8 ? config.segments : 16;
+    int segZ = config.rings >= 8 ? config.rings : 16;
+    int totalVerts = segX * segZ * 6;
+
+    Mesh patchMesh = {0};
+    patchMesh.vertexCount = totalVerts;
+    patchMesh.triangleCount = totalVerts / 3;
+    patchMesh.vertices = MemAlloc((unsigned int)totalVerts * 3u * sizeof(float));
+    patchMesh.texcoords = MemAlloc((unsigned int)totalVerts * 2u * sizeof(float));
+    patchMesh.colors = MemAlloc((unsigned int)totalVerts * 4u * sizeof(unsigned char));
+
+    float halfW = width * 0.5f;
+    float halfD = depth * 0.5f;
+    int cursor = 0;
+
+    for (int iz = 0; iz < segZ; iz++) {
+        float z0 = -halfD + depth * ((float)iz / (float)segZ);
+        float z1 = -halfD + depth * ((float)(iz + 1) / (float)segZ);
+        float v0 = (float)iz / (float)segZ;
+        float v1 = (float)(iz + 1) / (float)segZ;
+
+        for (int ix = 0; ix < segX; ix++) {
+            float x0 = -halfW + width * ((float)ix / (float)segX);
+            float x1 = -halfW + width * ((float)(ix + 1) / (float)segX);
+            float u0 = (float)ix / (float)segX;
+            float u1 = (float)(ix + 1) / (float)segX;
+
+            Vector3 p00 = {x0, 0.0f, z0};
+            Vector3 p10 = {x1, 0.0f, z0};
+            Vector3 p11 = {x1, 0.0f, z1};
+            Vector3 p01 = {x0, 0.0f, z1};
+
+            Vector2 uv00 = {u0, v0};
+            Vector2 uv10 = {u1, v0};
+            Vector2 uv11 = {u1, v1};
+            Vector2 uv01 = {u0, v1};
+
+            Water_SetVertex(&patchMesh, cursor++, p00, uv00, WHITE);
+            Water_SetVertex(&patchMesh, cursor++, p10, uv10, WHITE);
+            Water_SetVertex(&patchMesh, cursor++, p11, uv11, WHITE);
+            Water_SetVertex(&patchMesh, cursor++, p00, uv00, WHITE);
+            Water_SetVertex(&patchMesh, cursor++, p11, uv11, WHITE);
+            Water_SetVertex(&patchMesh, cursor++, p01, uv01, WHITE);
+        }
+    }
+
+    water.waterModel = Nature_ModelFromMesh(patchMesh, Water_GetShader());
+    Texture2D waterDetail = ResourceManager_LoadTexture("assets/textures/noise.png");
+    SetTextureWrap(waterDetail, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(waterDetail, TEXTURE_FILTER_BILINEAR);
+    water.waterModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = waterDetail;
+
+    // ── Build 3D Concave Basin Bed for Patch ───────────────────────────────
+    Mesh patchBedMesh = {0};
+    patchBedMesh.vertexCount = totalVerts;
+    patchBedMesh.triangleCount = totalVerts / 3;
+    patchBedMesh.vertices = MemAlloc((unsigned int)totalVerts * 3u * sizeof(float));
+    patchBedMesh.normals = MemAlloc((unsigned int)totalVerts * 3u * sizeof(float));
+    patchBedMesh.texcoords = MemAlloc((unsigned int)totalVerts * 2u * sizeof(float));
+    patchBedMesh.colors = MemAlloc((unsigned int)totalVerts * 4u * sizeof(unsigned char));
+    int patchBedCursor = 0;
+    for (int iz = 0; iz < segZ; iz++) {
+        float z0 = -halfD + depth * ((float)iz / (float)segZ);
+        float z1 = -halfD + depth * ((float)(iz + 1) / (float)segZ);
+        float v0 = (float)iz / (float)segZ;
+        float v1 = (float)(iz + 1) / (float)segZ;
+
+        for (int ix = 0; ix < segX; ix++) {
+            float x0 = -halfW + width * ((float)ix / (float)segX);
+            float x1 = -halfW + width * ((float)(ix + 1) / (float)segX);
+            float u0 = (float)ix / (float)segX;
+            float u1 = (float)(ix + 1) / (float)segX;
+
+            float y00 = -config.maxDepth * sinf(PI * u0) * sinf(PI * v0) - 0.015f;
+            float y10 = -config.maxDepth * sinf(PI * u1) * sinf(PI * v0) - 0.015f;
+            float y11 = -config.maxDepth * sinf(PI * u1) * sinf(PI * v1) - 0.015f;
+            float y01 = -config.maxDepth * sinf(PI * u0) * sinf(PI * v1) - 0.015f;
+
+            Vector3 p00 = {x0, y00, z0};
+            Vector3 p10 = {x1, y10, z0};
+            Vector3 p11 = {x1, y11, z1};
+            Vector3 p01 = {x0, y01, z1};
+            Vector3 n = {0.0f, 1.0f, 0.0f};
+
+            Vector2 uv00 = {p00.x * 0.16f, p00.z * 0.16f};
+            Vector2 uv10 = {p10.x * 0.16f, p10.z * 0.16f};
+            Vector2 uv11 = {p11.x * 0.16f, p11.z * 0.16f};
+            Vector2 uv01 = {p01.x * 0.16f, p01.z * 0.16f};
+
+            Water_SetBedVertex(&patchBedMesh, patchBedCursor++, p00, n, uv00, WHITE);
+            Water_SetBedVertex(&patchBedMesh, patchBedCursor++, p10, n, uv10, WHITE);
+            Water_SetBedVertex(&patchBedMesh, patchBedCursor++, p11, n, uv11, WHITE);
+            Water_SetBedVertex(&patchBedMesh, patchBedCursor++, p00, n, uv00, WHITE);
+            Water_SetBedVertex(&patchBedMesh, patchBedCursor++, p11, n, uv11, WHITE);
+            Water_SetBedVertex(&patchBedMesh, patchBedCursor++, p01, n, uv01, WHITE);
+        }
+    }
+    water.bedModel = Nature_ModelFromMesh(patchBedMesh, Water_GetBedShader());
+    water.bedDiffuseTex = ResourceManager_LoadTexture("assets/textures/stone_path_diffuse.png");
+    SetTextureWrap(water.bedDiffuseTex, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(water.bedDiffuseTex, TEXTURE_FILTER_BILINEAR);
+    water.bedModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = water.bedDiffuseTex;
+
+    water.causticTex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+    SetTextureWrap(water.causticTex, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(water.causticTex, TEXTURE_FILTER_BILINEAR);
+
+    water.ready = true;
+    return water;
+}
+
+MapWaterSurface MapProp_CreateWaterStrip(Vector3 start, Vector3 end, float width, MapWaterConfig config)
+{
+    MapWaterSurface water = {0};
+    Vector3 diff = Vector3Subtract(end, start);
+    float length = Vector3Length(diff);
+    if (length < 0.1f || width <= 0.0f) return water;
+
+    Vector3 forward = Vector3Scale(diff, 1.0f / length);
+    Vector3 right = (Vector3){-forward.z, 0.0f, forward.x};
+
+    Water_ApplyConfigDefaults(&config);
+    config.center = start;
+    config.radiusX = length * 0.5f;
+    config.radiusZ = width * 0.5f;
+    config.shape = WATER_SHAPE_STRIP;
+
+    // If flow direction is unspecified, flow naturally along the stream channel
+    if (config.flowVelocity.x == 0.0f && config.flowVelocity.y == 0.0f) {
+        config.flowVelocity = (Vector2){forward.x * 0.85f, forward.z * 0.85f};
+    }
+    water.config = config;
+
+    int segL = config.segments >= 4 ? config.segments : (int)(length * 2.0f);
+    if (segL < 4) segL = 4;
+    if (segL > 128) segL = 128;
+    int segW = config.rings >= 2 ? config.rings : 4;
+    int totalVerts = segL * segW * 6;
+
+    Mesh stripMesh = {0};
+    stripMesh.vertexCount = totalVerts;
+    stripMesh.triangleCount = totalVerts / 3;
+    stripMesh.vertices = MemAlloc((unsigned int)totalVerts * 3u * sizeof(float));
+    stripMesh.texcoords = MemAlloc((unsigned int)totalVerts * 2u * sizeof(float));
+    stripMesh.colors = MemAlloc((unsigned int)totalVerts * 4u * sizeof(unsigned char));
+
+    float halfWidth = width * 0.5f;
+    int cursor = 0;
+
+    for (int il = 0; il < segL; il++) {
+        float f0 = (float)il / (float)segL;
+        float f1 = (float)(il + 1) / (float)segL;
+        Vector3 c0 = Vector3Scale(forward, f0 * length);
+        Vector3 c1 = Vector3Scale(forward, f1 * length);
+
+        for (int iw = 0; iw < segW; iw++) {
+            float w0 = -halfWidth + width * ((float)iw / (float)segW);
+            float w1 = -halfWidth + width * ((float)(iw + 1) / (float)segW);
+
+            Vector3 p00 = Vector3Add(c0, Vector3Scale(right, w0));
+            Vector3 p01 = Vector3Add(c0, Vector3Scale(right, w1));
+            Vector3 p11 = Vector3Add(c1, Vector3Scale(right, w1));
+            Vector3 p10 = Vector3Add(c1, Vector3Scale(right, w0));
+
+            Vector2 uv00 = {f0, (float)iw / (float)segW};
+            Vector2 uv01 = {f0, (float)(iw + 1) / (float)segW};
+            Vector2 uv11 = {f1, (float)(iw + 1) / (float)segW};
+            Vector2 uv10 = {f1, (float)iw / (float)segW};
+
+            Water_SetVertex(&stripMesh, cursor++, p00, uv00, WHITE);
+            Water_SetVertex(&stripMesh, cursor++, p01, uv01, WHITE);
+            Water_SetVertex(&stripMesh, cursor++, p11, uv11, WHITE);
+            Water_SetVertex(&stripMesh, cursor++, p00, uv00, WHITE);
+            Water_SetVertex(&stripMesh, cursor++, p11, uv11, WHITE);
+            Water_SetVertex(&stripMesh, cursor++, p10, uv10, WHITE);
+        }
+    }
+
+    water.waterModel = Nature_ModelFromMesh(stripMesh, Water_GetShader());
+    Texture2D waterDetail = ResourceManager_LoadTexture("assets/textures/noise.png");
+    SetTextureWrap(waterDetail, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(waterDetail, TEXTURE_FILTER_BILINEAR);
+    water.waterModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = waterDetail;
+
+    // ── Build 3D U-Channel Bed for Stream Strip ─────────────────────────────
+    Mesh stripBedMesh = {0};
+    stripBedMesh.vertexCount = totalVerts;
+    stripBedMesh.triangleCount = totalVerts / 3;
+    stripBedMesh.vertices = MemAlloc((unsigned int)totalVerts * 3u * sizeof(float));
+    stripBedMesh.normals = MemAlloc((unsigned int)totalVerts * 3u * sizeof(float));
+    stripBedMesh.texcoords = MemAlloc((unsigned int)totalVerts * 2u * sizeof(float));
+    stripBedMesh.colors = MemAlloc((unsigned int)totalVerts * 4u * sizeof(unsigned char));
+    int stripBedCursor = 0;
+    for (int il = 0; il < segL; il++) {
+        float f0 = (float)il / (float)segL;
+        float f1 = (float)(il + 1) / (float)segL;
+        Vector3 c0 = Vector3Scale(forward, f0 * length);
+        Vector3 c1 = Vector3Scale(forward, f1 * length);
+
+        for (int iw = 0; iw < segW; iw++) {
+            float w0 = -halfWidth + width * ((float)iw / (float)segW);
+            float w1 = -halfWidth + width * ((float)(iw + 1) / (float)segW);
+            float nw0 = w0 / halfWidth;
+            float nw1 = w1 / halfWidth;
+            float y0 = -config.maxDepth * (1.0f - nw0 * nw0) - 0.015f;
+            float y1 = -config.maxDepth * (1.0f - nw1 * nw1) - 0.015f;
+
+            Vector3 p00 = Vector3Add(c0, Vector3Scale(right, w0)); p00.y = y0;
+            Vector3 p01 = Vector3Add(c0, Vector3Scale(right, w1)); p01.y = y1;
+            Vector3 p11 = Vector3Add(c1, Vector3Scale(right, w1)); p11.y = y1;
+            Vector3 p10 = Vector3Add(c1, Vector3Scale(right, w0)); p10.y = y0;
+            Vector3 n = {0.0f, 1.0f, 0.0f};
+
+            Vector2 uv00 = {p00.x * 0.16f, p00.z * 0.16f};
+            Vector2 uv01 = {p01.x * 0.16f, p01.z * 0.16f};
+            Vector2 uv11 = {p11.x * 0.16f, p11.z * 0.16f};
+            Vector2 uv10 = {p10.x * 0.16f, p10.z * 0.16f};
+
+            Water_SetBedVertex(&stripBedMesh, stripBedCursor++, p00, n, uv00, WHITE);
+            Water_SetBedVertex(&stripBedMesh, stripBedCursor++, p01, n, uv01, WHITE);
+            Water_SetBedVertex(&stripBedMesh, stripBedCursor++, p11, n, uv11, WHITE);
+            Water_SetBedVertex(&stripBedMesh, stripBedCursor++, p00, n, uv00, WHITE);
+            Water_SetBedVertex(&stripBedMesh, stripBedCursor++, p11, n, uv11, WHITE);
+            Water_SetBedVertex(&stripBedMesh, stripBedCursor++, p10, n, uv10, WHITE);
+        }
+    }
+    water.bedModel = Nature_ModelFromMesh(stripBedMesh, Water_GetBedShader());
+    water.bedDiffuseTex = ResourceManager_LoadTexture("assets/textures/stone_path_diffuse.png");
+    SetTextureWrap(water.bedDiffuseTex, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(water.bedDiffuseTex, TEXTURE_FILTER_BILINEAR);
+    water.bedModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = water.bedDiffuseTex;
+
+    water.causticTex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+    SetTextureWrap(water.causticTex, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(water.causticTex, TEXTURE_FILTER_BILINEAR);
+
+    water.ready = true;
+    return water;
+}
+
 Vector3 MapProp_GetWaterEdgePoint(const MapWaterSurface *water, float angleRad,
                                   float radialScale)
 {
@@ -2812,24 +3351,146 @@ Vector3 MapProp_GetWaterEdgePoint(const MapWaterSurface *water, float angleRad,
     };
 }
 
-void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time)
+bool MapProp_SampleWaterBed(const MapWaterSurface *water, float x, float z,
+                            float *outBedHeight, Vector3 *outNormal)
+{
+    if (!water || !water->ready) return false;
+
+    if (water->config.shape == WATER_SHAPE_RADIAL) {
+        float dx = x - water->config.center.x;
+        float dz = z - water->config.center.z;
+        float angle = atan2f(dz, dx);
+        float edge = Water_EdgeScale(angle, 1.0f, water->config.seed);
+        float rx = water->config.radiusX * edge;
+        float rz = water->config.radiusZ * edge;
+        if (rx <= 0.001f || rz <= 0.001f) return false;
+
+        float nx = dx / rx;
+        float nz = dz / rz;
+        float r2 = nx * nx + nz * nz;
+        if (r2 >= 1.0f) return false; // Nằm ngoài chu vi mặt hồ
+
+        float r = sqrtf(r2);
+        float depth = water->config.maxDepth * (1.0f - powf(r, 1.6f));
+        if (outBedHeight) {
+            *outBedHeight = water->config.center.y - depth - 0.015f;
+        }
+        if (outNormal) {
+            float slope = 1.6f * powf(fmaxf(0.01f, r), 0.6f) * (water->config.maxDepth / fmaxf(rx, rz));
+            Vector3 n = {nx * slope, 1.0f, nz * slope};
+            *outNormal = Vector3Normalize(n);
+        }
+        return true;
+    } else if (water->config.shape == WATER_SHAPE_RECT) {
+        float dx = x - water->config.center.x;
+        float dz = z - water->config.center.z;
+        float halfW = water->config.radiusX;
+        float halfD = water->config.radiusZ;
+        if (fabsf(dx) >= halfW || fabsf(dz) >= halfD) return false;
+
+        float u = (dx + halfW) / (2.0f * halfW);
+        float v = (dz + halfD) / (2.0f * halfD);
+        float depth = water->config.maxDepth * sinf(PI * u) * sinf(PI * v);
+        if (outBedHeight) {
+            *outBedHeight = water->config.center.y - depth - 0.015f;
+        }
+        if (outNormal) {
+            *outNormal = (Vector3){0.0f, 1.0f, 0.0f};
+        }
+        return true;
+    } else if (water->config.shape == WATER_SHAPE_STRIP) {
+        float dx = x - water->config.center.x;
+        float dz = z - water->config.center.z;
+        Vector2 flowDir = {water->config.flowVelocity.x, water->config.flowVelocity.y};
+        float flowLen = Vector2Length(flowDir);
+        Vector3 forward = (flowLen > 0.001f) ? (Vector3){flowDir.x / flowLen, 0.0f, flowDir.y / flowLen} : (Vector3){1.0f, 0.0f, 0.0f};
+        Vector3 right = {-forward.z, 0.0f, forward.x};
+
+        float distLong = dx * forward.x + dz * forward.z;
+        float distCross = dx * right.x + dz * right.z;
+        float halfLen = water->config.radiusX;
+        float halfWid = water->config.radiusZ;
+        if (distLong < 0.0f || distLong > 2.0f * halfLen || fabsf(distCross) >= halfWid) return false;
+
+        float w = distCross / halfWid;
+        float depth = water->config.maxDepth * (1.0f - w * w);
+        if (outBedHeight) {
+            *outBedHeight = water->config.center.y - depth - 0.015f;
+        }
+        if (outNormal) {
+            *outNormal = (Vector3){0.0f, 1.0f, 0.0f};
+        }
+        return true;
+    }
+
+    return false;
+}
+
+void MapProp_DrawWaterBed(const MapWaterSurface *water, float time)
 {
     if (!water || !water->ready) return;
     Vector3 position = water->config.center;
-    Shader bankShader = Nature_GetShader(false);
-    Nature_BeginWindReceiverShader(bankShader);
-    Nature_UpdateShader(bankShader, time, (Vector2){0.0f, 0.0f}, 0.0f,
-                        false, 1.0f, NATURE_WIND_RESPONSE_STATIC);
-    int noInteraction = 0;
-    SetShaderValue(bankShader, GetShaderLocation(bankShader, "u_interactionEnabled"),
-                   &noInteraction, SHADER_UNIFORM_INT);
-    SetShaderValue(bankShader, GetShaderLocation(bankShader, "u_windImpactEnabled"),
-                   &noInteraction, SHADER_UNIFORM_INT);
-    rlDisableBackfaceCulling();
-    DrawModel(water->bankModel, position, 1.0f, WHITE);
-    Nature_EndWindReceiverShader();
 
-    Shader shader = Water_GetShader();
+    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+    Vector4 sun = ColorNormalize(Environment_GetSunColor());
+    Vector4 ambient = ColorNormalize(Environment_GetAmbientColor());
+    Vector4 deep = ColorNormalize(water->config.deepColor);
+    Vector4 shallow = ColorNormalize(water->config.shallowColor);
+    Vector3 sunRgb = {sun.x, sun.y, sun.z};
+    Vector3 ambientRgb = {ambient.x, ambient.y, ambient.z};
+    Vector3 deepRgb = {deep.x, deep.y, deep.z};
+    Vector3 shallowRgb = {shallow.x, shallow.y, shallow.z};
+
+    // 1. Draw 3D Concave Lake Bed (Nền hồ 3D thật có texture sỏi đá và tụ quang sóng)
+    if (water->bedModel.meshCount > 0) {
+        Shader bedShader = Water_GetBedShader();
+        SetShaderValue(bedShader, s_bedLocTime, &time, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(bedShader, s_bedLocWaterHeight, &water->config.center.y, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(bedShader, s_bedLocLightDir, &lightDir, SHADER_UNIFORM_VEC3);
+        SetShaderValue(bedShader, s_bedLocLightColor, &sunRgb, SHADER_UNIFORM_VEC3);
+        SetShaderValue(bedShader, s_bedLocAmbientColor, &ambientRgb, SHADER_UNIFORM_VEC3);
+        SetShaderValue(bedShader, s_bedLocViewPos, &camera.position, SHADER_UNIFORM_VEC3);
+        SetShaderValue(bedShader, s_bedLocCausticsStrength, &water->config.causticsStrength, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(bedShader, s_bedLocCausticsScale, &water->config.causticsScale, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(bedShader, s_bedLocAbsorption, &water->config.absorption, SHADER_UNIFORM_VEC3);
+        SetShaderValue(bedShader, s_bedLocDeepColor, &deepRgb, SHADER_UNIFORM_VEC3);
+        SetShaderValue(bedShader, s_bedLocShallowColor, &shallowRgb, SHADER_UNIFORM_VEC3);
+        if (s_bedLocModelPos >= 0) SetShaderValue(bedShader, s_bedLocModelPos, &position, SHADER_UNIFORM_VEC3);
+
+        Texture2D cTex = (water->causticTex.id > 0) ? water->causticTex : s_defaultCausticTex;
+        rlActiveTextureSlot(1);
+        rlEnableTexture(cTex.id);
+
+        rlActiveTextureSlot(0);
+        DrawModel(water->bedModel, position, 1.0f, WHITE);
+
+        rlActiveTextureSlot(1);
+        rlDisableTexture();
+        rlActiveTextureSlot(0);
+    }
+
+    // 2. Draw Shoreline Bank Rim (Dải bờ đất ven hồ)
+    if (water->bankModel.meshCount > 0) {
+        Shader bankShader = Nature_GetShader(false);
+        Nature_BeginWindReceiverShader(bankShader);
+        Nature_UpdateShader(bankShader, time, (Vector2){0.0f, 0.0f}, 0.0f,
+                            false, 1.0f, NATURE_WIND_RESPONSE_STATIC);
+        int noInteraction = 0;
+        SetShaderValue(bankShader, GetShaderLocation(bankShader, "u_interactionEnabled"),
+                       &noInteraction, SHADER_UNIFORM_INT);
+        SetShaderValue(bankShader, GetShaderLocation(bankShader, "u_windImpactEnabled"),
+                       &noInteraction, SHADER_UNIFORM_INT);
+        rlDisableBackfaceCulling();
+        DrawModel(water->bankModel, position, 1.0f, WHITE);
+        Nature_EndWindReceiverShader();
+    }
+}
+
+void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
+{
+    if (!water || !water->ready) return;
+    Vector3 position = water->config.center;
+
     Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
     Vector4 sun = ColorNormalize(Environment_GetSunColor());
     Vector4 ambient = ColorNormalize(Environment_GetAmbientColor());
@@ -2841,27 +3502,87 @@ void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time)
     Vector3 deepRgb = {deep.x, deep.y, deep.z};
     Vector3 shallowRgb = {shallow.x, shallow.y, shallow.z};
     Vector3 foamRgb = {foam.x, foam.y, foam.z};
-    SetShaderValue(shader, GetShaderLocation(shader, "u_time"), &time, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_waveHeight"), &water->config.waveHeight, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_waveScale"), &water->config.waveScale, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_waveSpeed"), &water->config.waveSpeed, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_detailScale"), &water->config.detailScale, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_detailStrength"), &water->config.detailStrength, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_lightDir"), &lightDir, SHADER_UNIFORM_VEC3);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_lightColor"), &sunRgb, SHADER_UNIFORM_VEC3);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_ambientColor"), &ambientRgb, SHADER_UNIFORM_VEC3);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_viewPos"), &camera.position, SHADER_UNIFORM_VEC3);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_deepColor"), &deepRgb, SHADER_UNIFORM_VEC3);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_shallowColor"), &shallowRgb, SHADER_UNIFORM_VEC3);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_foamColor"), &foamRgb, SHADER_UNIFORM_VEC3);
+
+    // Draw Crystal Clear Water Surface with Alpha Blending
+    Shader shader = Water_GetShader();
+    SetShaderValue(shader, s_waterLocTime, &time, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, s_waterLocWaveHeight, &water->config.waveHeight, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, s_waterLocWaveScale, &water->config.waveScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, s_waterLocWaveSpeed, &water->config.waveSpeed, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, s_waterLocDetailScale, &water->config.detailScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, s_waterLocDetailStrength, &water->config.detailStrength, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, s_waterLocFlowVelocity, &water->config.flowVelocity, SHADER_UNIFORM_VEC2);
+    int shapeInt = (int)water->config.shape;
+    SetShaderValue(shader, s_waterLocWaterShape, &shapeInt, SHADER_UNIFORM_INT);
+
+    SetShaderValue(shader, s_waterLocLightDir, &lightDir, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocLightColor, &sunRgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocAmbientColor, &ambientRgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocViewPos, &camera.position, SHADER_UNIFORM_VEC3);
+    if (s_waterLocModelPos >= 0) SetShaderValue(shader, s_waterLocModelPos, &position, SHADER_UNIFORM_VEC3);
+
+    SetShaderValue(shader, s_waterLocMaxDepth, &water->config.maxDepth, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, s_waterLocAbsorption, &water->config.absorption, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocDeepColor, &deepRgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocShallowColor, &shallowRgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocFoamColor, &foamRgb, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocScatterColor, &water->config.scatterColor, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_waterLocScatterCoeff, &water->config.scatterCoeff, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, s_waterLocCausticsStrength, &water->config.causticsStrength, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, s_waterLocCausticsScale, &water->config.causticsScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, s_waterLocFoamThreshold, &water->config.foamThreshold, SHADER_UNIFORM_FLOAT);
+
+    // Multi-Texture Bindings
+    Texture2D cTex = (water->causticTex.id > 0) ? water->causticTex : s_defaultCausticTex;
+    rlActiveTextureSlot(1);
+    rlEnableTexture(cTex.id);
+
+    Texture2D depthTex = SceneTargets_GetDepthTexture();
+    int hasDepth = (depthTex.id > 0) ? 1 : 0;
+    SetShaderValue(shader, s_waterLocHasDepthTex, &hasDepth, SHADER_UNIFORM_INT);
+    if (hasDepth) {
+        rlActiveTextureSlot(2);
+        rlEnableTexture(depthTex.id);
+    }
+
+    rlActiveTextureSlot(0);
+    rlDisableBackfaceCulling();
+    rlDrawRenderBatchActive();
+    rlDisableDepthMask();
+    BeginBlendMode(BLEND_ALPHA);
+
     DrawModel(water->waterModel, position, 1.0f, WHITE);
+
+    rlDrawRenderBatchActive();
+    EndBlendMode();
+    rlEnableDepthMask();
     rlEnableBackfaceCulling();
+
+    // Restore Texture Slots
+    if (hasDepth) {
+        rlActiveTextureSlot(2);
+        rlDisableTexture();
+    }
+    rlActiveTextureSlot(1);
+    rlDisableTexture();
+    rlActiveTextureSlot(0);
+}
+
+void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time)
+{
+    MapProp_DrawWaterBed(water, time);
+    MapProp_DrawWaterOverlay(water, time);
 }
 
 void MapProp_UnloadWaterSurface(MapWaterSurface *water)
 {
     if (!water || !water->ready) return;
     UnloadModel(water->waterModel);
-    UnloadModel(water->bankModel);
+    if (water->bankModel.meshCount > 0) {
+        UnloadModel(water->bankModel);
+    }
+    if (water->bedModel.meshCount > 0) {
+        UnloadModel(water->bedModel);
+    }
     water->ready = false;
 }

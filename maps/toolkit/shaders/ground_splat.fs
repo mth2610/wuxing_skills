@@ -9,6 +9,7 @@
 in vec2 fragTexCoord;
 in vec3 fragPosition;   // project surface space; see ground_splat.vs
 in vec3 fragNormal;
+in vec3 fragWorldPos;   // TRUE world space (x, y, z)
 
 uniform vec4 colDiffuse;
 uniform sampler2D texture0; // Splatmap (if provided)
@@ -50,19 +51,22 @@ void main()
         for (int i = 0; i < u_pathSegCount && i < MAX_PATH_SEGS; i++) {
             vec2 a = u_pathSegs[i].xy;
             vec2 b = u_pathSegs[i].zw;
-            vec2 pa = fragPosition.xz - a;
+            vec2 pa = fragWorldPos.xz - a;
             vec2 ba = b - a;
             float h = clamp(dot(pa, ba) / max(dot(ba, ba), 0.0001), 0.0, 1.0);
             distToPath = min(distToPath, length(pa - ba * h));
         }
     }
 
-    // 2. Shoreline wetness from lake parameters
+    // 2. Shoreline wetness from lake parameters & lake basin cutout
     float shoreFactor = 0.0;
     if (u_lakeParams.z > 0.0) {
-        vec2 lakeDelta = (fragPosition.xz - u_lakeParams.xy) / u_lakeParams.zw;
+        vec2 lakeDelta = (fragWorldPos.xz - u_lakeParams.xy) / u_lakeParams.zw;
         float lakeDist = length(lakeDelta);
-        shoreFactor = smoothstep(1.38, 1.0, lakeDist) * smoothstep(0.82, 1.0, lakeDist);
+        if (lakeDist < 0.98) {
+            discard; // Carve out lake hole so 3D bedModel, clear water, and wading character are exposed!
+        }
+        shoreFactor = smoothstep(1.38, 1.0, lakeDist) * smoothstep(0.98, 1.04, lakeDist);
     }
 
     // 3. Slope steepness
@@ -101,9 +105,9 @@ void main()
                            blendedGrass * (colDiffuse.rgb * 1.08), 0.60);
 
     // Multi-scale organic turf variation (deep damp swales vs warm sunny hummocks)
-    float turfNoise = sin(fragPosition.x * 0.16 + fragPosition.z * 0.11) * 0.5
-                    + sin(fragPosition.x * -0.08 + fragPosition.z * 0.24 + 1.7) * 0.35
-                    + sin(fragPosition.x * 0.45 - fragPosition.z * 0.38 + 3.1) * 0.15;
+    float turfNoise = sin(fragWorldPos.x * 0.16 + fragWorldPos.z * 0.11) * 0.5
+                    + sin(fragWorldPos.x * -0.08 + fragWorldPos.z * 0.24 + 1.7) * 0.35
+                    + sin(fragWorldPos.x * 0.45 - fragWorldPos.z * 0.38 + 3.1) * 0.15;
     vec3 warmTurf = grassAlbedo * vec3(1.12, 1.06, 0.84);
     vec3 coolTurf = grassAlbedo * vec3(0.90, 0.98, 0.92);
     grassAlbedo = mix(coolTurf, warmTurf, smoothstep(-0.35, 0.55, turfNoise));
@@ -119,8 +123,8 @@ void main()
                        + pathMarginColor * wPath;
 
     // Macro landscape modulation (warm golden sun ridges, deep emerald dips)
-    float macroA = sin(fragPosition.x * 0.042 + fragPosition.z * 0.028);
-    float macroB = sin(fragPosition.x * -0.022 + fragPosition.z * 0.048 + 1.35);
+    float macroA = sin(fragWorldPos.x * 0.042 + fragWorldPos.z * 0.028);
+    float macroB = sin(fragWorldPos.x * -0.022 + fragWorldPos.z * 0.048 + 1.35);
     float macroField = 0.50 + 0.32 * macroA + 0.18 * macroB;
     vec3 macroTint = mix(vec3(0.92, 0.96, 0.90), vec3(1.06, 1.03, 0.94), macroField);
     blendedAlbedo *= macroTint;
@@ -165,12 +169,16 @@ void main()
 
     vec3 groundLit = blendedAlbedo * totalLight;
 
-    // Wet soil specular sheen
-    if (wWetSoil > 0.05) {
+    // Capillary wetness mechanics: Albedo darkening & Roughness collapse (PBR Specular Sheen)
+    if (wWetSoil > 0.03) {
         vec3 viewDir = normalize(viewPos - fragPosition);
         vec3 halfDir = normalize(light + viewDir);
-        float wetSpec = pow(max(dot(normal, halfDir), 0.0), 32.0);
-        groundLit += actualLight.rgb * wetSpec * wWetSoil * 0.40 * shadow;
+        float NdotV_wet = max(dot(normal, viewDir), 0.0);
+        float fresnelWet = 0.02 + 0.98 * pow(1.0 - NdotV_wet, 5.0);
+        float wetSpecSharp = pow(max(dot(normal, halfDir), 0.0), 96.0);
+        float wetSpecBroad = pow(max(dot(normal, halfDir), 0.0), 24.0) * 0.25;
+        vec3 wetSheen = actualLight.rgb * (wetSpecSharp * 0.75 + wetSpecBroad) * (0.35 + fresnelWet * 0.65);
+        groundLit += wetSheen * wWetSoil * shadow;
     }
 
     groundLit += VFXLights_AccumulateFlat(fragPosition, blendedAlbedo);

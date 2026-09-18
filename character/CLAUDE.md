@@ -28,6 +28,7 @@ full reasoning).
 - `build/`
 - `_deps/`
 - `android.wuxing_skills/`
+- `unreal-engine-starter-content-main/` (off-limits without explicit permission)
 
 ## Current scope (minimal — DO NOT add beyond this without explicit instruction)
 

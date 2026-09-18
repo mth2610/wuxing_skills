@@ -76,3 +76,7 @@ android.wuxing_skills/*.keystore
 # EOS (Epic Online Services) — SDK va keys khong commit
 third_party/eos-sdk/
 eos_keys.cfg
+
+# Unreal Engine Starter Content
+unreal-engine-starter-content-main/
+
