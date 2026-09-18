@@ -39,6 +39,7 @@ static int s_waterLocCausticTex = -1;
 static int s_waterLocCameraDepthTex = -1;
 static int s_waterLocHasDepthTex = -1;
 static int s_waterLocModelPos = -1;
+static int s_waterLocResolution = -1;
 
 static Shader s_waterBedShader = {0};
 static bool s_waterBedShaderReady = false;
@@ -613,6 +614,7 @@ static Shader Water_GetShader(void)
         s_waterLocCameraDepthTex = GetShaderLocation(s_waterShader, "u_cameraDepthTex");
         s_waterLocHasDepthTex = GetShaderLocation(s_waterShader, "u_hasDepthTex");
         s_waterLocModelPos = GetShaderLocation(s_waterShader, "u_modelPos");
+        s_waterLocResolution = GetShaderLocation(s_waterShader, "u_resolution");
 
         int causticSlot = 1;
         if (s_waterLocCausticTex >= 0) {
@@ -3536,6 +3538,10 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     Texture2D cTex = (water->causticTex.id > 0) ? water->causticTex : s_defaultCausticTex;
     rlActiveTextureSlot(1);
     rlEnableTexture(cTex.id);
+
+    SceneTargets_RequestSoftDepthRegion((Rectangle){ 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() });
+    Vector2 screenRes = { (float)GetScreenWidth(), (float)GetScreenHeight() };
+    if (s_waterLocResolution >= 0) SetShaderValue(shader, s_waterLocResolution, &screenRes, SHADER_UNIFORM_VEC2);
 
     Texture2D depthTex = SceneTargets_GetDepthTexture();
     int hasDepth = (depthTex.id > 0) ? 1 : 0;

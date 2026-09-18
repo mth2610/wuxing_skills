@@ -12,6 +12,7 @@ uniform sampler2D u_causticTex;     // Dual-phase caustics texture
 uniform sampler2D u_cameraDepthTex; // Linear scene depth texture (if available)
 
 uniform int u_hasDepthTex;          // Flag: 1 if hardware scene depth is bound
+uniform vec2 u_resolution;          // Viewport resolution for depth sampling
 uniform float u_time;
 uniform float u_waveHeight;
 uniform float u_waveScale;
@@ -105,11 +106,15 @@ void main()
     float waterDepth = 0.0;
     bool hasValidDepth = false;
 
-    if (u_hasDepthTex > 0 && fragScreenPos.w > 0.001) {
-        vec2 screenUV = (fragScreenPos.xy / fragScreenPos.w) * 0.5 + 0.5;
+    if (u_hasDepthTex > 0 && u_resolution.x > 1.0) {
+        vec2 screenUV = gl_FragCoord.xy / u_resolution;
         float sceneLinear = texture(u_cameraDepthTex, screenUV).r;
-        float fragLinear = fragScreenPos.w;
-        if (sceneLinear > 0.05 && sceneLinear >= fragLinear) {
+        
+        // Linearize gl_FragCoord.z matching MyBeginMode3D & depth_copy.fs (near=1.0, far=1000.0)
+        float ndc = gl_FragCoord.z * 2.0 - 1.0;
+        float fragLinear = (2000.0) / (1001.0 - ndc * 999.0);
+        
+        if (sceneLinear > 1.01 && sceneLinear >= fragLinear - 0.05) {
             waterDepth = clamp(sceneLinear - fragLinear, 0.0, u_maxDepth);
             hasValidDepth = true;
         }
@@ -135,9 +140,6 @@ void main()
     float opticalPath = waterDepth / max(NdotV, 0.25);
     vec3 transmittance = exp(-u_absorption * opticalPath);
 
-    // Water volume body color (in-scattered aquatic tint)
-    vec3 waterVolumeColor = u_deepColor * (0.65 + u_ambientColor * 0.35 + u_lightColor * 0.15);
-
     // ── 4. WATER CAUSTICS (Dual-Layer Photon Focusing) ───────────────────────
     vec2 causticUv0 = fragWorldXZ * u_causticsScale * 0.32 + vec2(t * 0.038, t * 0.024);
     vec2 causticUv1 = fragWorldXZ * u_causticsScale * 0.45 + vec2(-t * 0.029, t * 0.043);
@@ -145,15 +147,13 @@ void main()
     float c1 = texture(u_causticTex, causticUv1).r;
     float causticWave = pow(min(c0, c1) * 2.2, 1.80);
 
-    // Surface wave refraction highlights in shallow water
-    float causticDepthFade = smoothstep(0.02, 0.10, waterDepth) * (1.0 - smoothstep(0.70, u_maxDepth, waterDepth));
-    float sunFacing = max(dot(vec3(0.0, 1.0, 0.0), u_lightDir), 0.0);
-    vec3 causticLight = u_lightColor * causticWave * (u_causticsStrength * 0.55) * causticDepthFade * sunFacing;
+    // Submerged photon focusing: caustics illuminate submerged geometry (legs, rocks, bed)
+    float causticIntensity = causticWave * u_causticsStrength * (1.0 - exp(-3.2 * waterDepth));
+    vec3 causticLight = u_lightColor * causticIntensity * 1.10;
 
     // ── 5. SINGLE-LAYER WATER SUBSURFACE SCATTERING (Backlight SSS) ──────────
     float backlight = max(0.0, dot(-u_lightDir, viewDir));
     float sssFactor = pow(backlight, 3.2) * u_scatterCoeff;
-    // SSS illuminates wave crests and ripples facing away from vertical
     float waveScatter = clamp(1.0 - normal.y * 0.8, 0.0, 1.0);
     vec3 sssLight = u_lightColor * u_scatterColor * sssFactor * (1.0 - exp(-2.4 * waterDepth)) * waveScatter;
 
@@ -170,39 +170,52 @@ void main()
     // Facet wave glints
     float waveFacet = sin(p0) * 0.52 + sin(p1) * 0.31 + sin(p2) * 0.17;
     float crest = smoothstep(0.48, 0.95, waveFacet) * 0.035;
-    vec3 waveHighlight = reflectedSky * (waveFacet * 0.025 + crest);
+    vec3 waveHighlight = reflectedSky * (waveFacet * 0.030 + crest);
 
-    // Multi-scale specular sun glint (governed strictly by Fresnel)
+    // Multi-scale specular sun glint
     vec3 halfDir = normalize(u_lightDir + viewDir);
     float NdotH = max(dot(normal, halfDir), 0.0);
     float glintSharp = pow(NdotH, 256.0);
     float glintMid = pow(NdotH, 48.0) * 0.20;
-    vec3 sunGlint = u_lightColor * (glintSharp * 3.2 + glintMid * 0.7) * (0.15 + fresnel * 0.85);
+    vec3 sunGlint = u_lightColor * (glintSharp * 3.5 + glintMid * 0.8) * (0.15 + fresnel * 0.85);
 
-    // ── 7. SHORELINE FOAM & SOFT BANK BLENDING ───────────────────────────────
-    float foamMask = clamp(1.0 - waterDepth / max(u_foamThreshold, 0.02), 0.0, 1.0);
-    float foamNoise = texture(texture0, fragWorldXZ * 0.32 + vec2(t * 0.012, -t * 0.009)).r;
-    float brokenFoam = smoothstep(0.42, 0.90, foamMask * 1.35 + (foamNoise - 0.5) * 0.8) * 0.75;
+    // ── 7. SHORELINE & SUBMERGED CONTACT WATERLINE MENISCUS ───────────────────
+    // Contact waterline: surface tension meniscus where water meets body/bank
+    float foamDist = max(u_foamThreshold, 0.16);
+    float contactMask = clamp(1.0 - waterDepth / foamDist, 0.0, 1.0);
+    float meniscusLip = smoothstep(0.0, 0.035, waterDepth) * (1.0 - smoothstep(0.035, 0.12, waterDepth));
 
-    // Edge capillary ripple along shore contours
-    float edgeRipple = sin(waterDepth * 36.0 - t * 4.0) * exp(-waterDepth * 6.0);
-    brokenFoam += max(edgeRipple, 0.0) * 0.20 * foamMask;
+    float foamNoise = texture(texture0, fragWorldXZ * 0.45 + vec2(t * 0.022, -t * 0.016)).r;
+    float contactRipple = sin(waterDepth * 36.0 - t * 4.8) * exp(-waterDepth * 6.5);
+    float brokenFoam = smoothstep(0.26, 0.78, contactMask * 1.35 + (foamNoise - 0.5) * 0.65);
+    brokenFoam = max(brokenFoam, meniscusLip * 0.90);
+    brokenFoam += max(contactRipple, 0.0) * 0.35 * contactMask;
     brokenFoam = clamp(brokenFoam, 0.0, 1.0);
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
-    // In shallow water, looking down gives pristine crystal clarity (Fresnel ~ 0.02).
-    // Surface film presence is very subtle (0.04 near shore, rising gently to 0.16 in deep water).
-    // Grazing angle reflects the sky mirror-like (Fresnel -> 1.0).
-    float surfaceFilm = 0.04 + smoothstep(0.02, 0.80, waterDepth) * 0.12;
-    float alpha = clamp(fresnel * 0.80 + surfaceFilm + brokenFoam * 0.90 + min(length(sunGlint) * 0.35, 0.60), 0.0, 0.96);
+    // Natural shallow water alpha:
+    // Transparent near shore, building smoothly down the water column
+    // Submerged geometry (character legs, lake bed) is visible yet unmistakably underwater
+    float waterColumnAlpha = 0.32 + 0.42 * (1.0 - exp(-2.0 * waterDepth));
+    float surfaceAlpha = fresnel * 0.82 + waterColumnAlpha + min(length(sunGlint) * 0.35, 0.60);
 
-    // Soft shoreline edge: smoothly dissolve alpha to 0 right at the bank boundary
-    float shoreEdgeFade = smoothstep(0.001, 0.035, waterDepth);
-    alpha *= shoreEdgeFade;
+    // Soft boundary fade right at shore edge (< 1.2cm)
+    float shoreEdgeFade = smoothstep(0.0005, 0.012, waterDepth);
+    surfaceAlpha *= shoreEdgeFade;
+
+    // Meniscus and contact foam sit firmly ON the surface — never dissolved!
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.94, 0.0, 0.98);
 
     // ── 9. COMPOSITION ───────────────────────────────────────────────────────
-    vec3 color = reflectedSky;
-    color = mix(color, u_deepColor * 0.55, 0.18); // subtle water volume hint
+    // Aquatic water column color (Beer-Lambert volumetric tint)
+    vec3 shallowTint = mix(u_shallowColor, vec3(0.16, 0.64, 0.60), 0.50);
+    vec3 deepTint = mix(u_deepColor, vec3(0.05, 0.34, 0.42), 0.50);
+    vec3 waterVolumeColor = mix(shallowTint, deepTint, smoothstep(0.05, 0.75, waterDepth));
+    waterVolumeColor *= (0.75 + u_ambientColor * 0.30 + u_lightColor * 0.20);
+
+    // Mix surface reflection (sky) and water volume color based on Fresnel
+    vec3 color = mix(waterVolumeColor, reflectedSky, fresnel * 0.68 + 0.24);
+    color += causticLight;
     color += sssLight;
     color += waveHighlight;
     color += sunGlint;
