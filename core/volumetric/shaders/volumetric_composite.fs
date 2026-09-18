@@ -12,33 +12,28 @@ uniform float     u_depthThreshold;  // Bilateral depth rejection threshold (~2.
 
 void main() {
     float fullDepth = texture(u_fullResDepthTex, fragTexCoord).r;
+    vec2 d = u_lowResTexel * 0.5;
 
-    // 2x2 tap cross with depth-aware bilateral weights
-    vec2 offsets[4] = vec2[](
-        vec2(-0.5, -0.5),
-        vec2( 0.5, -0.5),
-        vec2(-0.5,  0.5),
-        vec2( 0.5,  0.5)
-    );
+    // Unrolled 4-tap bilateral filter with hardware texture cache locality
+    vec2 uv0 = fragTexCoord + vec2(-d.x, -d.y);
+    vec2 uv1 = fragTexCoord + vec2( d.x, -d.y);
+    vec2 uv2 = fragTexCoord + vec2(-d.x,  d.y);
+    vec2 uv3 = fragTexCoord + vec2( d.x,  d.y);
 
-    vec4 accumVolumetric = vec4(0.0);
-    float totalWeight = 0.0001;
+    float d0 = abs(fullDepth - texture(u_lowResDepthTex, uv0).r);
+    float d1 = abs(fullDepth - texture(u_lowResDepthTex, uv1).r);
+    float d2 = abs(fullDepth - texture(u_lowResDepthTex, uv2).r);
+    float d3 = abs(fullDepth - texture(u_lowResDepthTex, uv3).r);
 
-    for (int i = 0; i < 4; i++) {
-        vec2 uv = fragTexCoord + offsets[i] * u_lowResTexel;
-        float lowDepth = texture(u_lowResDepthTex, uv).r;
+    float w0 = 1.0 / (1.0 + d0 * 2.0);
+    float w1 = 1.0 / (1.0 + d1 * 2.0);
+    float w2 = 1.0 / (1.0 + d2 * 2.0);
+    float w3 = 1.0 / (1.0 + d3 * 2.0);
 
-        // Depth difference penalty (bilateral range weight)
-        float depthDiff = abs(fullDepth - lowDepth);
-        float depthWeight = 1.0 / (1.0 + depthDiff * 2.0);
+    vec4 s0 = texture(texture0, uv0);
+    vec4 s1 = texture(texture0, uv1);
+    vec4 s2 = texture(texture0, uv2);
+    vec4 s3 = texture(texture0, uv3);
 
-        vec4 volSample = texture(texture0, uv);
-        accumVolumetric += volSample * depthWeight;
-        totalWeight += depthWeight;
-    }
-
-    vec4 filtered = accumVolumetric / totalWeight;
-
-    // Output radiance with alpha for additive blending into scene target
-    finalColor = filtered;
+    finalColor = (s0 * w0 + s1 * w1 + s2 * w2 + s3 * w3) / (w0 + w1 + w2 + w3);
 }

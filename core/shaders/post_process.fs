@@ -238,18 +238,14 @@ void main() {
         // nothing but smooth low frequencies and there was no detail to alias.
         //
         // The same 3x3 tent the upsample chain already uses (bloom_upsample.fs) is the
-        // standard final-upsample filter for exactly this reason. Eight extra taps in one
-        // fullscreen pass, no new render targets, and the halo's total energy is
-        // unchanged because the kernel is normalised.
-        vec3 bloomSum = texture(u_bloomTex, uv + vec2(-1.0,  1.0) * u_bloomTexel).rgb * 1.0
-                      + texture(u_bloomTex, uv + vec2( 0.0,  1.0) * u_bloomTexel).rgb * 2.0
-                      + texture(u_bloomTex, uv + vec2( 1.0,  1.0) * u_bloomTexel).rgb * 1.0
-                      + texture(u_bloomTex, uv + vec2(-1.0,  0.0) * u_bloomTexel).rgb * 2.0
-                      + texture(u_bloomTex, uv                                  ).rgb * 4.0
-                      + texture(u_bloomTex, uv + vec2( 1.0,  0.0) * u_bloomTexel).rgb * 2.0
-                      + texture(u_bloomTex, uv + vec2(-1.0, -1.0) * u_bloomTexel).rgb * 1.0
-                      + texture(u_bloomTex, uv + vec2( 0.0, -1.0) * u_bloomTexel).rgb * 2.0
-                      + texture(u_bloomTex, uv + vec2( 1.0, -1.0) * u_bloomTexel).rgb * 1.0;
+        // standard final-upsample filter for exactly this reason.
+        // 4 bilinear taps with half-texel offset evaluate the exact 3x3 tent filter
+        // (weights 1,2,1 / 2,4,2 / 1,2,1) using hardware texture filtering.
+        vec2 d = u_bloomTexel * 0.5;
+        vec3 bloomSum = (texture(u_bloomTex, uv + vec2(-d.x,  d.y)).rgb
+                       + texture(u_bloomTex, uv + vec2( d.x,  d.y)).rgb
+                       + texture(u_bloomTex, uv + vec2(-d.x, -d.y)).rgb
+                       + texture(u_bloomTex, uv + vec2( d.x, -d.y)).rgb) * 4.0;
         sceneCol.rgb += (bloomSum / 16.0) * u_bloomIntensity;
     }
 

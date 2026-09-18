@@ -11,6 +11,8 @@ in vec4 vertexColor;
 uniform mat4 mvp;
 uniform mat4 matModel;
 uniform mat4 u_worldFromShaderSpace;
+uniform mat4 u_lightVP;
+uniform mat4 u_staticLightVP;
 uniform float u_time;
 uniform float u_windStrength;
 uniform vec3 u_viewPos;
@@ -25,6 +27,8 @@ out vec3 fragNormal;
 out vec4 fragColor;
 out float fragHeight;
 out vec2 fragTexCoord;
+out vec4 v_lightSpace;
+out vec4 v_staticLightSpace;
 
 void main()
 {
@@ -48,7 +52,6 @@ void main()
     }
     local.xz += windBend * rootMask;
     shaderPosition = vec3(matModel * vec4(local, 1.0));
-    world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
 
     // Normal tilts dynamically with wind deflection, creating iconic specular ripples
     vec3 bentNormal = vertexNormal;
@@ -59,5 +62,7 @@ void main()
     fragColor = vertexColor;
     fragHeight = vertexTexCoord.y;
     fragTexCoord = vertexTexCoord2;
+    v_lightSpace = u_lightVP * vec4(shaderPosition, 1.0);
+    v_staticLightSpace = u_staticLightVP * vec4(shaderPosition, 1.0);
     gl_Position = mvp * vec4(local, 1.0);
 }

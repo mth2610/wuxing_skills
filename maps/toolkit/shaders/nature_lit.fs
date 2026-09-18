@@ -8,6 +8,8 @@ in vec3 fragNormal;
 in vec4 fragColor;
 in float fragHeight;
 in vec2 fragTexCoord;
+in vec4 v_lightSpace;
+in vec4 v_staticLightSpace;
 
 uniform sampler2D texture0;
 uniform int u_useTexture;
@@ -29,5 +31,5 @@ void main()
         // green after tone mapping without turning them into emissive lines.
         albedo *= vec3(1.10, 1.16, 1.06);
     }
-    finalColor = vec4(NatureShade(albedo, fragPosition, fragNormal, fragHeight, fragTexCoord.x), 1.0);
+    finalColor = vec4(NatureShade(albedo, fragPosition, fragNormal, fragHeight, fragTexCoord.x, v_lightSpace, v_staticLightSpace), 1.0);
 }

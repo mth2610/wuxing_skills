@@ -8,11 +8,13 @@ in vec3 fragNormal;
 in vec4 fragColor;
 in float fragHeight;
 in vec2 fragTexCoord;
+in vec4 v_lightSpace;
+in vec4 v_staticLightSpace;
 
 out vec4 finalColor;
 
 void main()
 {
     vec3 albedo = fragColor.rgb * colDiffuse.rgb;
-    finalColor = vec4(NatureShade(albedo, fragPosition, fragNormal, fragHeight, fragTexCoord.x), 1.0);
+    finalColor = vec4(GrassShade(albedo, fragPosition, fragNormal, fragHeight, fragTexCoord.x, v_lightSpace, v_staticLightSpace), 1.0);
 }

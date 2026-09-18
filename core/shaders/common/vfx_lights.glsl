@@ -71,6 +71,9 @@ uniform float u_vfxLightDebug;
 // as an explosion.
 vec3 VFXLights_Accumulate(vec3 worldPos, vec3 N, vec3 albedo)
 {
+    if (u_vfxLightDebug <= 0.5 && u_vfxLightCount <= 0)
+        return vec3(0.0);
+
     if (u_vfxLightDebug > 0.5 && u_vfxLightDebug < 1.5)
         return fract(worldPos) * 4.0;   // x4 so it dominates the surface colour
 

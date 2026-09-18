@@ -57,10 +57,8 @@ float HenyeyGreenstein(float cosTheta, float g) {
 }
 
 // Shadow factor from directional shadow map (1.0 = lit, 0.0 = shadowed)
-float SampleShadow(vec3 worldPos) {
-    vec4 posLS = u_lightVP * vec4(worldPos, 1.0);
-    vec3 proj = posLS.xyz / posLS.w;
-    proj = proj * 0.5 + 0.5;
+float SampleShadowLS(vec4 posLS) {
+    vec3 proj = posLS.xyz / max(posLS.w, 0.00001) * 0.5 + 0.5;
     if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) {
         return 1.0;
     }
@@ -172,6 +170,10 @@ void main() {
     vec3 accumRadiance = vec3(0.0);
     float transmittance = 1.0;
 
+    // Linear projection along ray in light homogeneous clip space
+    vec4 rayStartLS = u_lightVP * vec4(u_camPos + rayDir * startT, 1.0);
+    vec4 rayStepLS = u_lightVP * vec4(rayDir * stepSize, 0.0);
+
     for (int i = 0; i < steps; i++) {
         float t = startT + float(i) * stepSize;
         if (t >= rayDist) break;
@@ -194,17 +196,24 @@ void main() {
 
         // 3. Local fog volumes (lake, meadow, forest hollows)
         vec3 fogColor = u_fogColor;
-        float localDensity = EvaluateLocalFog(samplePos, fogColor);
+        float localDensity = 0.0;
+        if (u_volumeCount > 0 && samplePos.y <= 6.0 && samplePos.y >= -3.0) {
+            localDensity = EvaluateLocalFog(samplePos, fogColor);
+        }
 
         // 4. Canopy sunbeam scattering particles (airborne dust & mist motes catching light)
-        float canopyShaft = ComputeCanopyGodRay(samplePos, u_sunDir, u_time);
+        float canopyShaft = 0.0;
+        if (samplePos.y <= 12.0 && samplePos.y >= -2.5) {
+            canopyShaft = ComputeCanopyGodRay(samplePos, u_sunDir, u_time);
+        }
         float sunbeamHaze = 0.012 * canopyShaft * smoothstep(7.5, 2.0, samplePos.y);
 
         float density = (u_fogDensity * (heightCoeff + sigmoidDensity) + localDensity + sunbeamHaze) * camFade;
         if (density <= 0.00001) continue;
 
         // Sunlight transmission & canopy shaft modulation
-        float shadow = SampleShadow(samplePos);
+        vec4 posLS = rayStartLS + rayStepLS * float(i);
+        float shadow = SampleShadowLS(posLS);
         float directLight = shadow * (0.20 + 0.80 * canopyShaft) * u_godRayIntensity;
 
         // Radiance calculation: warm golden sunlight in-scattering + bright ambient mist
