@@ -44,71 +44,43 @@ static Texture2D GuidingWind_GetSilkTexture(void)
 {
     if (s_gwindSilkTex.id == 0)
     {
-        const int W = 256; // Cross-width
-        const int H = 512; // Along-length
-        Image img = GenImageColor(W, H, BLANK);
-
-        for (int y = 0; y < H; y++)
+        s_gwindSilkTex = ResourceManager_LoadTexture("assets/textures/smoke_strand.png");
+        if (s_gwindSilkTex.id != 0)
         {
-            float normY = (float)y / (float)(H - 1); // [0..1]
-
-            // 1. CẢ 3 SỢI CÙNG UỐN LƯỢN CUỘN CHẢY THEO LUỒNG GIÓ CHUNG (Chu kỳ êm dịu 1:1, không ngắt khúc)
-            float macroWave = sinf(normY * 2.0f * PI) * 0.014f;
-
-            // 2. SỢI Ở GIỮA: ĐẬM HƠN, LIÊN TỤC VÀ UYỂN CHUYỂN DỌC DẢI
-            float ampMid = 0.86f + 0.06f * sinf(normY * 2.0f * PI);
-            float widthMid = 0.024f;
-            float xMid = 0.50f + macroWave;
-
-            // 3. HAI SỢI Ở HAI BÊN: MỜ THANH THOÁT, CHỈ ĐỨT 1 CHÚT ĐỂ TẠO CẢM GIÁC KHÓI TRÔI
-            // Sợi trái: Hiện diện phần lớn (~80%), chỉ đứt nhẹ 1 quãng ngắn tại y ~ 0.28
-            float dipLeft = 1.0f - 0.62f * expf(-powf((normY - 0.28f) / 0.09f, 2.0f));
-            float ampLeft = 0.40f * dipLeft;
-            float xLeft = 0.35f + macroWave + cosf(normY * 2.0f * PI) * 0.008f;
-            float widthLeft = 0.019f;
-
-            // Sợi phải: Hiện diện phần lớn, so le đứt nhẹ 1 quãng ngắn tại y ~ 0.72
-            float dipRight = 1.0f - 0.62f * expf(-powf((normY - 0.72f) / 0.09f, 2.0f));
-            float ampRight = 0.38f * dipRight;
-            float xRight = 0.65f + macroWave - cosf(normY * 2.0f * PI) * 0.008f;
-            float widthRight = 0.019f;
-
-            for (int x = 0; x < W; x++)
-            {
-                float normX = (float)x / (float)(W - 1); // [0..1]
-
-                // SỢI GIỮA: Đậm hơn xíu với lõi sáng trắng tinh tế
-                float dMid = (normX - xMid) / widthMid;
-                float fMid = expf(-dMid * dMid) * ampMid;
-                float dCore = (normX - xMid) / (widthMid * 0.45f);
-                float fCore = expf(-dCore * dCore) * (ampMid * 0.24f);
-
-                // HAI SỢI CẠNH: Mờ nhẹ và chỉ đứt một chút so le
-                float dL = (normX - xLeft) / widthLeft;
-                float fL = expf(-dL * dL) * ampLeft;
-
-                float dR = (normX - xRight) / widthRight;
-                float fR = expf(-dR * dR) * ampRight;
-
-                // Vi sương mỏng nhẹ kết nối (không làm bết dính thành 1 khối)
-                float dMist = (normX - 0.50f) / 0.26f;
-                float fMist = expf(-dMist * dMist) * 0.025f;
-
-                // Parabolic boundary envelope (4 * V * (1 - V))
-                float envelope = 4.0f * normX * (1.0f - normX);
-                envelope = fmaxf(0.0f, envelope);
-
-                // Tổng hợp 3 sợi khói cuộn trôi
-                float stream = (fMid + fCore + fL + fR + fMist) * envelope;
-                float alpha = Clamp(stream, 0.0f, 1.0f);
-
-                ImageDrawPixel(&img, x, y, (Color){ 255, 255, 255, (unsigned char)(alpha * 255.0f) });
-            }
+            SetTextureFilter(s_gwindSilkTex, TEXTURE_FILTER_BILINEAR);
+            SetTextureWrap(s_gwindSilkTex, TEXTURE_WRAP_REPEAT);
         }
-        s_gwindSilkTex = LoadTextureFromImage(img);
-        UnloadImage(img);
-        SetTextureFilter(s_gwindSilkTex, TEXTURE_FILTER_BILINEAR);
-        SetTextureWrap(s_gwindSilkTex, TEXTURE_WRAP_REPEAT);
+        else
+        {
+            const int W = 256; // Cross-width
+            const int H = 512; // Along-length
+            Image img = GenImageColor(W, H, BLANK);
+
+            for (int y = 0; y < H; y++)
+            {
+                float normY = (float)y / (float)(H - 1);
+                for (int x = 0; x < W; x++)
+                {
+                    float normX = (float)x / (float)(W - 1);
+                    float d0 = (normX - 0.50f) / 0.12f;
+                    float r = expf(-d0 * d0);
+                    float d1 = (normX - 0.50f) / 0.08f;
+                    float g = expf(-d1 * d1);
+                    float b = 0.5f + 0.3f * sinf(normY * 2.0f * PI + normX * 4.0f);
+                    float a = 0.5f + 0.5f * sinf(normY * 4.0f * PI);
+                    ImageDrawPixel(&img, x, y, (Color){
+                        (unsigned char)(Clamp(r, 0.0f, 1.0f) * 255.0f),
+                        (unsigned char)(Clamp(g, 0.0f, 1.0f) * 255.0f),
+                        (unsigned char)(Clamp(b, 0.0f, 1.0f) * 255.0f),
+                        (unsigned char)(Clamp(a, 0.0f, 1.0f) * 255.0f)
+                    });
+                }
+            }
+            s_gwindSilkTex = LoadTextureFromImage(img);
+            UnloadImage(img);
+            SetTextureFilter(s_gwindSilkTex, TEXTURE_FILTER_BILINEAR);
+            SetTextureWrap(s_gwindSilkTex, TEXTURE_WRAP_REPEAT);
+        }
     }
     return s_gwindSilkTex;
 }
@@ -305,12 +277,12 @@ void VFX_ComposeGuidingWind(Vector3 startPos, Vector3 targetPos, float progress,
 
     float time = TimeFX_Elapsed();
 
-    // ── CẤU TRÚC 3 SỢI KHÓI CUỘN TRÔI (baseWidth = 0.52m, tổng bề rộng 1.04m) ─────────
+    // ── CẤU TRÚC 3 SỢI GIÓ CUỘN TRÔI THANH MẢNH (baseWidth = 0.18m, span = 0.28) ──
     static const GuidingWindRibbonProfile profiles[GWIND_RIBBON_COUNT] = {
         {
             0.00f,  0.0f,  0.00f,
             0.00f,  0.00f,
-            0.52f,  0.55f, 0.00f,
+            0.18f,  0.28f, 0.00f,
             (Color){ 255, 255, 255, 245 }
         }
     };
