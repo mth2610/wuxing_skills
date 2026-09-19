@@ -18,8 +18,8 @@
 
     {"path":"environment/fog_bank_dense.png","source":"T_FogBank_Seed0_NNOO","dimensions":[1024,512],"grid":[1,1],"frames":1,"channels":"RGB pre-lit fog, A coverage","role":"environment","status":"primary_candidate","rgba8_bytes":2097152},
     {"path":"environment/fog_bank_wisps.png","source":"T_FogBank_Whisps_Seed0_NNOO","dimensions":[1024,512],"grid":[1,1],"frames":1,"channels":"RGB pre-lit fog wisps, A coverage","role":"environment","status":"primary_candidate","rgba8_bytes":2097152},
-    {"path":"flares/lens_flare_ring.png","source":"LensFlare_02","dimensions":[1024,256],"grid":[1,1],"frames":1,"channels":"RGB flare radiance, A coverage","role":"flare","status":"primary_candidate","rgba8_bytes":1048576},
-    {"path":"flares/lens_flare_star.png","source":"LensFlare_01","dimensions":[512,512],"grid":[1,1],"frames":1,"channels":"RGB flare radiance, A coverage","role":"flare","status":"primary_candidate","rgba8_bytes":1048576},
+    {"path":"flares/lens_flare_ring.png","source":"LensFlare_02","dimensions":[1024,256],"grid":[1,1],"frames":1,"channels":"RGB anamorphic streak radiance, A coverage; filename is legacy and the pixels do not contain a ring","role":"flare","status":"registry_preview","rgba8_bytes":1048576},
+    {"path":"flares/lens_flare_star.png","source":"LensFlare_01","dimensions":[512,512],"grid":[1,1],"frames":1,"channels":"RGB radial star/corona radiance, A coverage","role":"flare","status":"registry_preview","rgba8_bytes":1048576},
 
     {"path":"flipbooks/explosion_burst_8x8.png","source":"T_ExplosionBurst_EOO_Loop","dimensions":[2048,2048],"grid":[8,8],"frames":64,"channels":"RGB pre-lit explosion emission/color, A coverage","role":"explosion","status":"primary_candidate","rgba8_bytes":16777216},
     {"path":"flipbooks/explosion_burst_normals_8x8.png","source":"T_ExplosionBurst_Normals_Loop","dimensions":[2048,2048],"grid":[8,8],"frames":64,"channels":"RGB tangent normal, A extracted source alpha","role":"explosion","status":"support","rgba8_bytes":16777216},

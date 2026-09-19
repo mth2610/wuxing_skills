@@ -74,8 +74,8 @@ Các texture này được dùng khi shader cần xử lý riêng rẽ độ ph�
 
 ## 5. `flares/`, `environment/` & `utilities/`
 
-- `flares/lens_flare_star.png`: Tia lóe ngôi sao 4 cánh cho chớp sáng cực đại.
-- `flares/lens_flare_ring.png`: Hào quang vòng tròn cho vụ nổ năng lượng.
+- `flares/lens_flare_star.png`: Star/corona tròn cho điểm lóe quang học.
+- `flares/lens_flare_ring.png`: Streak anamorphic ngang có lõi sao; tên `ring` là legacy, pixel không chứa vòng tròn.
 - `environment/fog_bank_dense.png` & `fog_bank_wisps.png`: Dải sương mù thể tích cuộn sát đất.
 - `utilities/cutout_mask_8x8.png`: Mask cắt khử viền đen cho atlas 8x8.
 - `utilities/number_grid_debug.png`: Lưới đánh số 0..63 dùng để debug chỉ số frame trong quá trình phát triển.

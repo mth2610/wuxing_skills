@@ -106,6 +106,8 @@ still needs matched dark/light-background approval.
 | `flipbooks/fireroil_8x8.png` | FireRoilNiagara / `VFX_FlameEmitter` | 2048×2048, 8×8, 64 frames | preview-only |
 | `flipbooks/fireball_8x8.png` | FireballNiagara / `VFX_FlameEmitter` | 2048×2048, 8×8, 64 frames | preview-only |
 | `flipbooks/plasma_wisps_8x8.png` | PlasmaWispsNiagara / `VFX_ComposeCharacterAura` | 4096×4096, 8×8, 64 frames | preview-only; high-memory source |
+| `flares/lens_flare_star.png` | LensFlareStarNiagara / `VFX_DrawOpticalStarburstStreak` | 512×512, static | preview-only |
+| `flares/lens_flare_ring.png` | LensFlareStreakNiagara / `VFX_DrawOpticalStarburstStreak` | 1024×256, static anamorphic streak; filename is legacy | preview-only |
 
 ### P1 semantic-surface migration map
 

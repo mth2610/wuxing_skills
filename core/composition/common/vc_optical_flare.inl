@@ -6,13 +6,16 @@
 //   2. 8 razor-sharp diffraction blades + 8 micro-diffraction tertiary rays.
 //   3. Secondary breathing starburst for organic optical scintillations.
 //   4. Dual-layer horizontal anamorphic streak (electric cyan halo + needle core).
-//   5. Subtle circular lens aperture reflection ring.
+// The extracted pack has no separate aperture ring: its legacy-named "ring"
+// file is the anamorphic streak used by layer 4.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #include "raylib.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include "core/vfx_light.h"
+#include "core/time_fx.h"
+#include "core/vfx_surface_registry.h"
 #include <math.h>
 
 #ifndef PI
@@ -26,6 +29,15 @@ static Texture2D OptFlare_GetStreakTexture(void)
 {
     if (s_optStreakTex.id == 0)
     {
+        const VFX_SurfaceProfile *profile =
+            VFX_SurfaceRegistry_Get(VFX_SURFACE_LENS_FLARE_STREAK_NIAGARA);
+        if (profile != NULL && profile->body.id != 0)
+        {
+            s_optStreakTex = profile->body;
+            return s_optStreakTex;
+        }
+
+        // Asset-free fallback for stripped/minimal builds.
         const int W = 512;
         const int H = 128;
         Image img = GenImageColor(W, H, BLANK);
@@ -72,6 +84,15 @@ static Texture2D OptFlare_GetStarburstTexture(void)
 {
     if (s_optStarburstTex.id == 0)
     {
+        const VFX_SurfaceProfile *profile =
+            VFX_SurfaceRegistry_Get(VFX_SURFACE_LENS_FLARE_STAR_NIAGARA);
+        if (profile != NULL && profile->body.id != 0)
+        {
+            s_optStarburstTex = profile->body;
+            return s_optStarburstTex;
+        }
+
+        // Asset-free fallback for stripped/minimal builds.
         const int S = 256;
         Image img = GenImageColor(S, S, BLANK);
         for (int y = 0; y < S; y++)
@@ -133,11 +154,13 @@ void VFX_DrawOpticalStarburstStreak(Vector3 pos, Color coreCol, Color streakCol,
     Vector3 camRight = Vector3Normalize(Vector3CrossProduct(camFwd, camera.up));
     Vector3 camUp = Vector3CrossProduct(camRight, camFwd);
 
+    rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ADDITIVE);
+    rlDrawRenderBatchActive();
     rlDisableDepthMask();
     rlDisableDepthTest();
 
-    float time = (float)GetTime();
+    float time = TimeFX_Elapsed();
 
     // 2. Multi-Ray Razor Diffraction Starburst Billboard (Primary + Secondary breathing shimmer)
     if (starRadius > 0.001f)
@@ -212,8 +235,10 @@ void VFX_DrawOpticalStarburstStreak(Vector3 pos, Color coreCol, Color streakCol,
         rlSetTexture(0);
     }
 
+    rlDrawRenderBatchActive();
     rlEnableDepthTest();
     rlEnableDepthMask();
+    rlDrawRenderBatchActive();
     EndBlendMode();
 
     VFXLight_Spawn(pos, coreCol, 3.2f * intensity, 0.04f, VFX_PRIORITY_HIGH_ULTIMATE);

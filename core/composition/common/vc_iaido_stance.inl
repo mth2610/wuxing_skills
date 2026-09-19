@@ -11,6 +11,7 @@
 #include "raylib.h"
 #include "rlgl.h"
 #include "raymath.h"
+#include "core/time_fx.h"
 #include <math.h>
 
 void VFX_ComposeIaidoStance(Vector3 playerPos, float yaw, float progress,
@@ -63,7 +64,7 @@ void VFX_ComposeIaidoStance(Vector3 playerPos, float yaw, float progress,
     {
         // Charging phase: starburst breathing and building up
         float chargeP = progress / 0.60f;
-        flareIntensity = chargeP * (0.80f + 0.20f * sinf(GetTime() * 18.0f));
+        flareIntensity = chargeP * (0.80f + 0.20f * sinf(TimeFX_Elapsed() * 18.0f));
         starRad = 0.25f + chargeP * 0.25f;
         streakLen = 0.5f + chargeP * 0.8f;
     }

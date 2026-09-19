@@ -565,6 +565,52 @@
       }
     },
     {
+      "id": "VFX_SURFACE_LENS_FLARE_STAR_NIAGARA",
+      "name": "lens_flare_star_niagara",
+      "primitive": "disc",
+      "role": "trail",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "additive",
+      "projection": "camera_facing_billboard",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
+      "budget": { "max_draw_calls": 2, "max_textures": 1 },
+      "flipbook": [0, 0, 0],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py. Source: LensFlare_01; visual inspection confirms a radial star/corona, not an atlas.",
+      "consumers": ["VFX_DrawOpticalStarburstStreak star layers"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/flares/lens_flare_star.png",
+          "channels": "OPAQUE | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — pre-lit optical star and corona"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_LENS_FLARE_STREAK_NIAGARA",
+      "name": "lens_flare_streak_niagara",
+      "primitive": "disc",
+      "role": "trail",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "additive",
+      "projection": "camera_facing_anamorphic_billboard",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
+      "budget": { "max_draw_calls": 2, "max_textures": 1 },
+      "flipbook": [0, 0, 0],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py. Source: LensFlare_02. The normalized filename says ring, but visual inspection confirms one horizontal anamorphic streak with a central star.",
+      "consumers": ["VFX_DrawOpticalStarburstStreak horizontal layers"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/flares/lens_flare_ring.png",
+          "channels": "OPAQUE | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — pre-lit horizontal anamorphic streak; legacy filename"
+        }
+      }
+    },
+    {
       "id": "VFX_SURFACE_DECAL_RESIDUE",
       "name": "decal_residue_material_blocked",
       "primitive": "decal",
