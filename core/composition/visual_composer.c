@@ -47,6 +47,7 @@
 // visual_composer.h for what remains and why.
 #include "common/common.inl"
 #include "fire/flame_volume.inl"   // F3 — reads vc_smoke_puff.inl's sheet, so it comes after it
+#include "common/vc_smoke_volume.inl" // Primary VFX: Smoke Volume (UE Niagara)
 
 // ── Restored after F0 (owner, 28/07/2026) ───────────────────────────────────
 // Brought back to rebuild the two water skills. These are pre-Đợt-E effects and
@@ -111,6 +112,7 @@ void VFX_Compose_Update(float dt)
     LightningArc_Update(dt);
     LightningRicochet_Update(dt);
     SmokeEmitter_Update(dt);
+    VC_SmokeVolumeEmitter_Update(dt);
     // E3 — the choreography layer rides the same single main.c wiring. Kept
     // OUTSIDE the generated block on purpose: sync_vfx_test.py rewrites what is
     // between the markers from the archetype scan, so a hand-written call in

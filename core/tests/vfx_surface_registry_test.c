@@ -24,8 +24,14 @@ int main(void)
           Has(header, "VFX_SURFACE_ENERGY_RIBBON") &&
           Has(header, "VFX_SURFACE_ENERGY_TUBE") &&
           Has(header, "VFX_SURFACE_SMOKE_PUFF") &&
+          Has(header, "VFX_SURFACE_SMOKE_ROIL_NIAGARA") &&
+          Has(header, "VFX_SURFACE_SMOKE_PUFF_DARK_NIAGARA") &&
+          Has(header, "VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA") &&
+          Has(header, "VFX_SURFACE_SMOKE_WISPY_NIAGARA") &&
           Has(header, "VFX_SURFACE_FIRE_TONGUE") &&
           Has(header, "VFX_SURFACE_FIRE_PUFF") &&
+          Has(header, "VFX_SURFACE_FIRE_ROIL_NIAGARA") &&
+          Has(header, "VFX_SURFACE_FIREBALL_NIAGARA") &&
           Has(header, "VFX_SURFACE_DECAL_RESIDUE") &&
           Has(header, "VFX_SURFACE_DECAL_SCORCH") &&
           Has(header, "VFX_SURFACE_DECAL_IMPACT") &&
@@ -52,6 +58,10 @@ int main(void)
     CHECK(Has("core/composition/common/vc_smoke_puff.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_SMOKE_PUFF)") &&
           Has("core/composition/fire/flame_volume.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_TONGUE)") &&
           Has("core/composition/fire/flame_volume.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_PUFF)") &&
+          Has("core/composition/fire/flame_volume.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_ROIL_NIAGARA)") &&
+          Has("core/composition/fire/flame_volume.inl", "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIREBALL_NIAGARA)") &&
+          Has("core/composition/common/vc_smoke_volume.inl", "VFX_SurfaceRegistry_Get(") &&
+          !Has("core/composition/common/vc_smoke_volume.inl", "assets/textures/") &&
           Has("core/composition/common/vc_trail.inl", "VFX_SURFACE_ENERGY_RIBBON") &&
           // VFX_SURFACE_SMOKE_RIBBON is deliberately absent: its only consumer,
           // VFX_ComposeSmokeTrail, was deleted (see docs/PROGRESS.md). The

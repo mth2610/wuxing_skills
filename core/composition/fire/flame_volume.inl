@@ -362,8 +362,11 @@ static void FVol_InitShared(void)
                               "falling back to the tongue sheet (bake it with "
                               "scripts/flipbook/ti_sim.py fire_puff)");
 
-    // UE5 Niagara 8x8 Flipbook: Fire Roil (cuộn đối lưu ngọn lửa)
-    s_fvolRoilTex = ResourceManager_LoadTexture("assets/textures/vfx/flipbooks/fireroil_8x8.png");
+    // Extracted Niagara sheets still go through the semantic registry: the
+    // composition owns behaviour, while the manifest owns paths and sampling.
+    const VFX_SurfaceProfile *roilProfile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_ROIL_NIAGARA);
+    s_fvolRoilTex = roilProfile != NULL ? roilProfile->body : (Texture2D){0};
     if (s_fvolRoilTex.id != 0)
     {
         SetTextureFilter(s_fvolRoilTex, TEXTURE_FILTER_BILINEAR);
@@ -372,8 +375,9 @@ static void FVol_InitShared(void)
                         ANIM_ONCE);
     }
 
-    // UE5 Niagara 8x8 Flipbook: Fireball (quả cầu lửa bùng cháy)
-    s_fvolFireballTex = ResourceManager_LoadTexture("assets/textures/vfx/flipbooks/fireball_8x8.png");
+    const VFX_SurfaceProfile *fireballProfile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_FIREBALL_NIAGARA);
+    s_fvolFireballTex = fireballProfile != NULL ? fireballProfile->body : (Texture2D){0};
     if (s_fvolFireballTex.id != 0)
     {
         SetTextureFilter(s_fvolFireballTex, TEXTURE_FILTER_BILINEAR);

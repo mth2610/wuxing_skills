@@ -55,6 +55,12 @@ typedef enum {
     VFX_SURFACE_SMOKE_TUBE,
     VFX_SURFACE_FIRE_TUBE,
     VFX_SURFACE_SMOKE_PUFF,
+    // Extracted Niagara whole-puff sheets. These are conventional RGBA
+    // flipbooks, not LIGHT6 data, and therefore remain distinct profiles.
+    VFX_SURFACE_SMOKE_ROIL_NIAGARA,
+    VFX_SURFACE_SMOKE_PUFF_DARK_NIAGARA,
+    VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA,
+    VFX_SURFACE_SMOKE_WISPY_NIAGARA,
     VFX_SURFACE_FIRE_TONGUE,
     // Directionless split flipbook for the legacy multi-sprite flame path.
     // Keep it distinct from FIRE_TONGUE: a tongue owns an authored +Z axis.
@@ -63,6 +69,8 @@ typedef enum {
     // (R emission / G density / B self-shadow / A opacity, no colour anywhere).
     // Decoded by particle_lit.fs's volume branch, coloured by a ramp LUT.
     VFX_SURFACE_FIRE_VOLUME,
+    VFX_SURFACE_FIRE_ROIL_NIAGARA,
+    VFX_SURFACE_FIREBALL_NIAGARA,
     // P4 contracts contain no runtime asset until visual-owner approval.
     VFX_SURFACE_DECAL_RESIDUE,
     VFX_SURFACE_DECAL_SCORCH,

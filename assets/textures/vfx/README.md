@@ -1,6 +1,6 @@
 # Cẩm Nang Quản Lý Thư Mục Assets VFX (`assets/textures/vfx/`)
 
-Thư mục này chứa toàn bộ 44 Texture/Flipbook nướng đa kênh chuẩn điện ảnh trích xuất từ Unreal Engine 5 Niagara VFX. Tất cả các frame đã được chuẩn hóa trục toạ độ $Y$-up và đặt tên theo chuẩn dễ đọc, dễ nạp vào C engine.
+Thư mục này chứa 44 texture/flipbook trích xuất từ Unreal Engine 5 Niagara VFX. Các frame đã được chuẩn hóa trục $Y$ theo từng cell. Tên file giữ lại một số tên legacy; metadata thực bên dưới mới là nguồn đúng cho grid và kích thước.
 
 ---
 
@@ -19,9 +19,9 @@ assets/textures/vfx/
 
 ---
 
-## 1. `flipbooks/` (Hoạt Họa Atlas Đa Khung Hình 8x8)
+## 1. `flipbooks/` (Hoạt Họa Atlas Đa Khung Hình)
 
-Mỗi file chứa lưới $8 \times 8$ (64 frame) hoặc $2 \times 16$ (32 frame).
+Phần lớn file là $8 \times 8$ (64 frame), nhưng có ngoại lệ $8 \times 16$ và $1 \times 16$. Không suy luận grid chỉ từ tên file.
 
 | Tên File | Quy Cách | Kênh Dữ Liệu | Ứng Dụng Trong Game |
 | :--- | :--- | :--- | :--- |
@@ -29,16 +29,16 @@ Mỗi file chứa lưới $8 \times 8$ (64 frame) hoặc $2 \times 16$ (32 frame
 | `explosion_burst_normals_8x8.png` | 2048x2048 (8x8) | Pháp tuyến Tangent Normal | Chiếu sáng lập thể cho tia chớp nổ |
 | `explosion_roil_8x8.png` | 2048x2048 (8x8) | RGB Albedo/Emission | Cuộn lửa quả cầu nổ chính (`NS_Explosion`) |
 | `explosion_roil_normals_8x8.png` | 2048x2048 (8x8) | Pháp tuyến Tangent Normal | Ánh sáng mặt trời chiếu lên khói cuộn |
-| `explosion_wide_8x8.png` | 2048x2048 (8x8) | RGB Albedo | Vụ nổ xòe ngang quét mặt đất |
-| `explosion_core_8x8.png` | 2048x2048 (8x8) | RGB Emission | Tim vụ nổ cực sáng (Core Flash) |
+| `explosion_wide_8x8.png` | 8192x8192 (8x16, 128 frame; tên legacy) | RGB Albedo | Vụ nổ xòe ngang quét mặt đất |
+| `explosion_core_8x8.png` | 4096x4096 (8x8) | RGB Emission | Tim vụ nổ cực sáng (Core Flash) |
 | `fireball_8x8.png` | 2048x2048 (8x8) | RGB Albedo/Emission | Đạn cầu lửa bay (`Fireball Skill`) |
 | `fireroil_8x8.png` | 2048x2048 (8x8) | RGB Albedo/Emission | Lửa đối lưu cuộn xoáy ngọn lửa lớn |
 | `smoke_puff_8x8.png` | 2048x2048 (8x8) | RGBA Albedo/Density | Khói đen bốc lên sau vụ nổ |
 | `smoke_puff_light_8x8.png` | 2048x2048 (8x8) | RGBA Albedo/Density | Khói trắng/xám mỏng cho va chạm đạn |
 | `smoke_roil_8x8.png` | 2048x2048 (8x8) | RGBA Density | Cột khói đối lưu bốc cao ống khói |
-| `smoke_trail_2x16.png` | 512x4096 (2x16) | RGBA Density | Đuôi khói tên lửa bay dài |
-| `smoke_wispy_8x8.png` | 2048x2048 (8x8) | RGBA Density | Khói tản mác mỏng nhẹ |
-| `plasma_wisps_8x8.png` | 2048x2048 (8x8) | RGBA Glow | Khí năng lượng thần thông, quả cầu nhặt |
+| `smoke_trail_2x16.png` | 2048x2048 (1x16, 16 frame; tên legacy) | RGBA Density | Đuôi khói tên lửa bay dài |
+| `smoke_wispy_8x8.png` | 4096x4096 (8x8) | RGBA Density | Khói tản mác mỏng nhẹ |
+| `plasma_wisps_8x8.png` | 4096x4096 (8x8) | RGBA Glow | Khí năng lượng thần thông, quả cầu nhặt |
 
 ---
 

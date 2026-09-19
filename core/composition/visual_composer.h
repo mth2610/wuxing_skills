@@ -116,12 +116,32 @@ void VFX_ComposeLightningGroundRicochet(Vector3 impactPos, VC_MaterialId materia
 // BLEND_ALPHA; a glowing puff is this plus a SECOND additive draw, never this
 // one flipped to additive. `density` 0..1 scales the sprite count. Needs
 // particle lighting on: tuning.cfg → particle_lighting_strength.
+void VFX_ComposeCloudPuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
 void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
 int  VFX_SmokeEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float density);
 void VFX_SmokeEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
 void VFX_SmokeEmitter_SetDensity(int handle, float density01);
 void VFX_SmokeEmitter_Stop(int handle);
 void VFX_KillSmokeEmitter(int handle);
+
+// ── Primary VFX: Smoke Volume (UE5 Niagara Architecture) ────────────────────
+// 4 specialized styles: heavy roil, dark puff, light puff, and wispy smoke.
+// Implements Morton-Taylor-Turner plume dynamics, radial entrainment, and 6-way lighting.
+typedef enum {
+    VFX_SMOKE_STYLE_ROIL = 0,        // Heavy thermal convection column (smoke_roil_8x8)
+    VFX_SMOKE_STYLE_PUFF_DARK = 1,   // Dense black detonation smoke (smoke_puff_8x8)
+    VFX_SMOKE_STYLE_PUFF_LIGHT = 2,  // Light hit / impact dust smoke (smoke_puff_light_8x8)
+    VFX_SMOKE_STYLE_WISPY = 3,       // Dispersed drifting smoke wisps (smoke_wispy_8x8)
+    VFX_SMOKE_STYLE_COUNT,
+    VFX_SMOKE_STYLE_DEFAULT = VFX_SMOKE_STYLE_ROIL,
+} VFX_SmokeStyle;
+
+void VFX_ComposeSmokeVolume(Vector3 pos, float scale, float density, VFX_SmokeStyle style);
+int  VFX_SmokeVolumeEmitter_Spawn(Vector3 pos, float scale, float density, VFX_SmokeStyle style);
+void VFX_SmokeVolumeEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
+void VFX_SmokeVolumeEmitter_SetDensity(int handle, float density01);
+void VFX_SmokeVolumeEmitter_Stop(int handle);
+void VFX_KillSmokeVolumeEmitter(int handle);
 
 // ── F3. Flame / Ambient Fire (Niagara NS_Fire & Flame Volume) ───────────────
 // Continuous fire with thermal buoyancy, Planck black-body cooling, vortex swirling

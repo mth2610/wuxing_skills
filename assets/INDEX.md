@@ -91,6 +91,21 @@ Used via `SpawnGroundDecal(DECAL_PRESET_GENERIC_*)`. White/tintable.
 | `smoke_puff_6way_b.png` | `VFX_SurfaceRegistry` SmokePuff lightMapB | 8×8 LIGHT6 Map B: -X/-Y/-Z transmission and opacity | data, directional lightmap |
 | `smoke_puff_motion_8x8.png` | `VFX_SurfaceRegistry` SmokePuff motion | 8×8 optical flow generated from smoke opacity at 128px/cell | data, 4-channel motion |
 
+## Textures — Extracted Niagara pack (`assets/textures/vfx/`)
+
+These sheets are imported source assets. Runtime consumers must select them via
+`VFX_SurfaceRegistry`; `preview-only` means the contract is valid but the look
+still needs matched dark/light-background approval.
+
+| File | Semantic profile / consumer | Dimensions and grid | State |
+|---|---|---|---|
+| `flipbooks/smoke_roil_8x8.png` | SmokeRoilNiagara / `VFX_ComposeSmokeVolume` | 2048×2048, 8×8, 64 frames | preview-only |
+| `flipbooks/smoke_puff_8x8.png` | SmokePuffDarkNiagara / `VFX_ComposeSmokeVolume` | 2048×2048, 8×8, 64 frames | preview-only |
+| `flipbooks/smoke_puff_light_8x8.png` | SmokePuffLightNiagara / `VFX_ComposeSmokeVolume` | 2048×2048, 8×8, 64 frames | preview-only |
+| `flipbooks/smoke_wispy_8x8.png` | SmokeWispyNiagara / `VFX_ComposeSmokeVolume` | 4096×4096, 8×8, 64 frames | preview-only; high-memory source |
+| `flipbooks/fireroil_8x8.png` | FireRoilNiagara / `VFX_FlameEmitter` | 2048×2048, 8×8, 64 frames | preview-only |
+| `flipbooks/fireball_8x8.png` | FireballNiagara / `VFX_FlameEmitter` | 2048×2048, 8×8, 64 frames | preview-only |
+
 ### P1 semantic-surface migration map
 
 No files are moved in this phase. New or refactored composition code asks for a
@@ -103,6 +118,8 @@ semantic profile; the registry owns the runtime path and sampler contract.
 | EnergyTube | tube | `VFX_ComposeVolumeTrail` | migrated, shipping |
 | SmokePuff | puff/card | `VFX_ComposeSmokePuff`, `SmokeEmitter` | migrated |
 | FireTongue | alpha tongue | `VFX_FlameEmitter` | migrated |
+| SmokeRoil/PuffDark/PuffLight/Wispy Niagara | puff/card | `VFX_ComposeSmokeVolume` | migrated; visual approval pending |
+| FireRoil/Fireball Niagara | puff/card | `VFX_FlameEmitter` | migrated; visual approval pending |
 
 ### P4 decal semantic migration map — visual-owner gate
 

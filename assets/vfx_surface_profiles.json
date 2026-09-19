@@ -288,6 +288,98 @@
       }
     },
     {
+      "id": "VFX_SURFACE_SMOKE_ROIL_NIAGARA",
+      "name": "smoke_roil_niagara",
+      "primitive": "puff",
+      "role": "trail",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
+      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "flipbook": [8, 8, 64],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Smoke_Roil_Flipbook.",
+      "consumers": ["VFX_ComposeSmokeVolume (ROIL)"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/flipbooks/smoke_roil_8x8.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit smoke roil"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_SMOKE_PUFF_DARK_NIAGARA",
+      "name": "smoke_puff_dark_niagara",
+      "primitive": "puff",
+      "role": "trail",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
+      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "flipbook": [8, 8, 64],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Smoke_Puff_Flipbook.",
+      "consumers": ["VFX_ComposeSmokeVolume (PUFF_DARK)"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/flipbooks/smoke_puff_8x8.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit dark smoke puff"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA",
+      "name": "smoke_puff_light_niagara",
+      "primitive": "puff",
+      "role": "trail",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
+      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "flipbook": [8, 8, 64],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Smoke_Puff_Light_Flipbook.",
+      "consumers": ["VFX_ComposeSmokeVolume (PUFF_LIGHT)"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/flipbooks/smoke_puff_light_8x8.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit light smoke puff"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_SMOKE_WISPY_NIAGARA",
+      "name": "smoke_wispy_niagara",
+      "primitive": "puff",
+      "role": "trail",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
+      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "flipbook": [8, 8, 64],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Smoke_Wispy_Flipbook.",
+      "consumers": ["VFX_ComposeSmokeVolume (WISPY)"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/flipbooks/smoke_wispy_8x8.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit wispy smoke"
+        }
+      }
+    },
+    {
       "id": "VFX_SURFACE_FIRE_TONGUE",
       "name": "fire_tongue",
       "primitive": "fire_tongue",
@@ -400,6 +492,52 @@
         "flow": {
           "path": "assets/textures/pure_flame_puff_motion_8x8.png",
           "channels": "MOTION | R:flowx/CLAMP | G:flowy/CLAMP | B:speed/CLAMP | A:mask/CLAMP — optical-flow data aligned one-for-one with the 8x8 volume flipbook cells"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_FIRE_ROIL_NIAGARA",
+      "name": "fire_roil_niagara",
+      "primitive": "puff",
+      "role": "trail",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
+      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "flipbook": [8, 8, 64],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_FireRoil_Flipbook.",
+      "consumers": ["VFX_FlameEmitter (NIAGARA_ROIL)"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/flipbooks/fireroil_8x8.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit fire roil"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_FIREBALL_NIAGARA",
+      "name": "fireball_niagara",
+      "primitive": "puff",
+      "role": "trail",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "consumer_defined",
+      "projection": "primitive_defined",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
+      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "flipbook": [8, 8, 64],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Fireball_Flipbook.",
+      "consumers": ["VFX_FlameEmitter (NIAGARA_FIREBALL)"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/flipbooks/fireball_8x8.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit fireball"
         }
       }
     },

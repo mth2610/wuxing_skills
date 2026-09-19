@@ -313,16 +313,18 @@ static void SmokePuff_InitShared(void)
     s_smokePuffInit = true;
 }
 
-// One dust/smoke puff at `pos`. `scale` 1.0 ≈ a 1 m ground impact.
+void VFX_ComposeCloudPuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
+
+// One dust/smoke/cloud puff at `pos`. `scale` 1.0 ≈ a 1 m ground impact.
 // `density` 0..1 scales sprite count (1.0 = SMOKE_PUFF_MAX_SPRITES).
 //
 // Draw it with BLEND_ALPHA. Adding an additive glow on top is fine and is how
 // glowing smoke is done — as a SECOND draw, never by flipping this one to
 // additive (ELDEN_VFX_SPEC.md F1b, the blend law).
-void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density)
+void VFX_ComposeCloudPuff(Vector3 pos, VC_MaterialId matId, float scale, float density)
 {
     SmokePuff_InitShared();
-    (void)matId; // Smoke is neutral white/grey; the element may colour fire, never its smoke.
+    (void)matId; // Cloud/smoke is neutral white/grey; the element may colour fire, never its smoke.
 
     if (density <= 0.0f) density = 1.0f;
     else if (density > 1.0f) density = 1.0f;
@@ -420,6 +422,12 @@ void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float d
             .angularVelocity = (Random01() - 0.5f) * 0.9f * (useFb ? s_smokePuffFbSpin : 1.0f),
         });
     }
+}
+
+// Backward-compatibility alias
+void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density)
+{
+    VFX_ComposeCloudPuff(pos, matId, scale, density);
 }
 
 // P2 persistent smoke source. The puff above remains the Event primary; this
