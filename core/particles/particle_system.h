@@ -124,6 +124,11 @@ struct ParticleConfig {
   // Aerodynamic wind & vorticle coupling [0.0 = none, 1.0 = full wind velocity]
   float windInfluence;
 
+  // Advanced facing & 3D Mesh
+  VFX_FacingMode facingMode;
+  Model meshModel;
+  Vector3 meshRotationRate;
+
   // Unified Config representation (Phase 3)
   VFX_GeneralConfig general;
   VFX_GeometryConfig geometry;
@@ -204,6 +209,13 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
     cfg->render.trailColorStart = cfg->trailColorStart;
     cfg->render.trailColorEnd = cfg->trailColorEnd;
   }
+  if (cfg->render.facingMode == 0 && cfg->facingMode != 0) {
+    cfg->render.facingMode = cfg->facingMode;
+  }
+  if (cfg->render.meshModel.meshCount == 0 && cfg->meshModel.meshCount != 0) {
+    cfg->render.meshModel = cfg->meshModel;
+    cfg->render.meshRotationRate = cfg->meshRotationRate;
+  }
 
   // 2. Populate legacy flat fields from unified if unified is set and legacy is empty
   if (cfg->lifetime == 0.0f && cfg->general.life != 0.0f) {
@@ -266,6 +278,13 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
     cfg->trailWidthRatio = cfg->render.trailWidthRatio;
     cfg->trailColorStart = cfg->render.trailColorStart;
     cfg->trailColorEnd = cfg->render.trailColorEnd;
+  }
+  if (cfg->facingMode == 0 && cfg->render.facingMode != 0) {
+    cfg->facingMode = cfg->render.facingMode;
+  }
+  if (cfg->meshModel.meshCount == 0 && cfg->render.meshModel.meshCount != 0) {
+    cfg->meshModel = cfg->render.meshModel;
+    cfg->meshRotationRate = cfg->render.meshRotationRate;
   }
 }
 

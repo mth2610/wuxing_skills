@@ -1,0 +1,3486 @@
+{
+  "systems": {
+    "NS_Player_Buff_Looping": {
+      "file": "NS_Player_Buff_Looping.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [
+        "T_Plasma_Wisps"
+      ],
+      "materials": [
+        "MI_Flare",
+        "M_Energy",
+        "M_Glow_Capsule"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "SkeletalMesh",
+        "Smoke"
+      ]
+    },
+    "NS_Weapon_DeBuff_Looping": {
+      "file": "NS_Weapon_DeBuff_Looping.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [
+        "T_Plasma_Wisps",
+        "T_t"
+      ],
+      "materials": [
+        "MI_Flare",
+        "M_Energy",
+        "M_Glow_Capsule"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "SkeletalMesh",
+        "Smoke"
+      ]
+    },
+    "NS_Player_Teleport_Out": {
+      "file": "NS_Player_Teleport_Out.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [
+        "T_f"
+      ],
+      "materials": [
+        "MI_BasicSprite",
+        "M_Glow_Capsule"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Initial",
+        "SkeletalMesh",
+        "Smoke"
+      ]
+    },
+    "NS_Player_Teleport_In": {
+      "file": "NS_Player_Teleport_In.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_BasicSprite",
+        "M_Glow_Capsule"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Initial",
+        "SkeletalMesh",
+        "Smoke"
+      ]
+    },
+    "NS_Player_DeBuff_Looping": {
+      "file": "NS_Player_DeBuff_Looping.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [
+        "T_Plasma_Wisps"
+      ],
+      "materials": [
+        "MI_Flare",
+        "M_Energy",
+        "M_Glow_Capsule"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "SkeletalMesh",
+        "Smoke"
+      ]
+    },
+    "NS_Weapon_Buff_Looping": {
+      "file": "NS_Weapon_Buff_Looping.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [
+        "T_Plasma_Wisps"
+      ],
+      "materials": [
+        "MI_Flare",
+        "M_Energy",
+        "M_Glow_Capsule"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "SkeletalMesh",
+        "Smoke"
+      ]
+    },
+    "NS_Player_Electricity_Looping": {
+      "file": "NS_Player_Electricity_Looping.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "RibbonRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [
+        "T_Plasma_Wisps"
+      ],
+      "materials": [
+        "MI_Flare",
+        "MI_SmokeWispy_8x8_Emissive",
+        "M_Decal_Glow",
+        "M_Energy",
+        "M_Glow_Capsule",
+        "M_Ribbon_Arc"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Object",
+        "PositionTarget",
+        "SkeletalMesh",
+        "Smoke"
+      ]
+    },
+    "NS_Fire": {
+      "file": "NS_Fire.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Flames",
+        "MI_SmokePuffLight_8x8"
+      ],
+      "meshes": [
+        "SM_Disk"
+      ],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "Drag",
+        "CurlNoise",
+        "Vortex",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "B_Lifetime",
+        "B_SpawnRate_A",
+        "Base",
+        "Flame",
+        "FlameColor",
+        "FlameScale",
+        "Float_Sprite",
+        "Lifetime",
+        "LifetimeScale",
+        "Light",
+        "Particles_LightSoftSourceRadius",
+        "Smoke",
+        "SmokeColor",
+        "Spawn",
+        "Sprite"
+      ]
+    },
+    "NS_SkeletalMeshTris_Loop": {
+      "file": "NS_SkeletalMeshTris_Loop.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_BasicSprite"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Accelleration",
+        "Camera",
+        "Color",
+        "Emitter",
+        "Flames",
+        "Inherit",
+        "Initial",
+        "Lifetime",
+        "Mesh",
+        "SkeletalMesh",
+        "Smoke",
+        "Spawn",
+        "Velocity"
+      ]
+    },
+    "NS_Boundary": {
+      "file": "NS_Boundary.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Flare",
+        "M_Decal_Boundary",
+        "M_Mesh_Add"
+      ],
+      "meshes": [
+        "SM_Box_1Unit"
+      ],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Dimensions"
+      ]
+    },
+    "NS_Bubble_Burst": {
+      "file": "NS_Bubble_Burst.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_BubbleSprite"
+      ],
+      "meshes": [],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_SkeletalMeshBones_Loop": {
+      "file": "NS_SkeletalMeshBones_Loop.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [
+        "T_Plasma_Wisps"
+      ],
+      "materials": [
+        "MI_Flare",
+        "M_Turbulent_SmokeSubUV"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Emitter",
+        "Initial",
+        "SkeletalMesh",
+        "Smoke",
+        "Spawn"
+      ]
+    },
+    "NS_SkeletalMeshBones_Burst": {
+      "file": "NS_SkeletalMeshBones_Burst.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_BasicSprite"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Accelleration",
+        "AccellerationForce",
+        "Camera",
+        "CameraOffset",
+        "Color",
+        "Inherit",
+        "InheritMeshPosition",
+        "InheritMeshVelocity",
+        "Initial",
+        "InitialColor",
+        "InitialRotation",
+        "InitialRotationRange",
+        "InitialVelocity",
+        "InitialVelocityRange",
+        "Lifetime",
+        "LifetimeRange",
+        "Mesh",
+        "MeshNormalVelocity",
+        "SkeletalMesh",
+        "Smoke",
+        "Spawn",
+        "Sprite",
+        "SpriteSize",
+        "SpriteSizeRange",
+        "Velocity",
+        "VelocityDrag"
+      ]
+    },
+    "NS_FireworkBurst": {
+      "file": "NS_FireworkBurst.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Fireworks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Bool_Color_True",
+        "Burst",
+        "BurstBrightness",
+        "BurstColor",
+        "Celebrate",
+        "Core",
+        "CoreBrightness",
+        "Enable",
+        "EnableBurst",
+        "False",
+        "Jet",
+        "JetBrightness",
+        "JetColor",
+        "Ring",
+        "RingRadius",
+        "Scale",
+        "Spawn",
+        "Spread"
+      ]
+    },
+    "NS_Boundary_Box": {
+      "file": "NS_Boundary_Box.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Flare",
+        "M_Decal_Boundary",
+        "M_Mesh_Add"
+      ],
+      "meshes": [
+        "SM_Box_1Unit"
+      ],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Dimensions"
+      ]
+    },
+    "NS_HitDissolve": {
+      "file": "NS_HitDissolve.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_SecondarySparks",
+        "NE_Sparks"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Sparks"
+      ],
+      "meshes": [
+        "SM_ToyCow"
+      ],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Burst",
+        "BurstDirection",
+        "Dissolve",
+        "DissolveDistance",
+        "Spark",
+        "SparkColorGain",
+        "Speed"
+      ]
+    },
+    "NS_Boundary_Sphere": {
+      "file": "NS_Boundary_Sphere.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Flare",
+        "M_Decal_Boundary",
+        "M_Mesh_Add"
+      ],
+      "meshes": [
+        "SM_Sphere_1Unit"
+      ],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Decal",
+        "Mesh",
+        "Particle",
+        "Particles",
+        "Radius",
+        "Value_System_Sprite"
+      ]
+    },
+    "NS_Boundary_Cylinder": {
+      "file": "NS_Boundary_Cylinder.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Boundary_TechGrid",
+        "MI_Flare",
+        "M_Decal_Boundary"
+      ],
+      "meshes": [
+        "SM_Cylinder_1Unit"
+      ],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Decal",
+        "Height",
+        "Mesh",
+        "Particles",
+        "Radius"
+      ]
+    },
+    "NS_SkeletalMeshTris_Burst": {
+      "file": "NS_SkeletalMeshTris_Burst.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [
+        "T_Fm3"
+      ],
+      "materials": [
+        "MI_BasicSprite"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Accelleration",
+        "AccellerationForce",
+        "Camera",
+        "CameraOffset",
+        "Color",
+        "Inherit",
+        "InheritMeshPosition",
+        "InheritMeshVelocity",
+        "Initial",
+        "InitialRotation",
+        "InitialRotationRange",
+        "InitialVelocity",
+        "InitialVelocityRange",
+        "Lifetime",
+        "LifetimeRange",
+        "Mesh",
+        "MeshNormalVelocity",
+        "SkeletalMesh",
+        "Smoke",
+        "Spawn",
+        "Sprite",
+        "SpriteSize",
+        "SpriteSizeRange",
+        "Velocity",
+        "VelocityDrag"
+      ]
+    },
+    "NS_Marker_Target": {
+      "file": "NS_Marker_Target.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Boundary_TechGrid",
+        "MI_Marker_Target"
+      ],
+      "meshes": [
+        "SM_Cylinder_1Unit"
+      ],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Decal",
+        "Height",
+        "Mesh",
+        "Particles",
+        "Radius"
+      ]
+    },
+    "NS_Marker_Location": {
+      "file": "NS_Marker_Location.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Boundary_TechGrid",
+        "MI_Mesh_Arrow",
+        "M_Decal_Boundary"
+      ],
+      "meshes": [
+        "SM_Arrow",
+        "SM_Cylinder_1Unit"
+      ],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Decal",
+        "Height",
+        "Mesh",
+        "Pillar",
+        "Radius"
+      ]
+    },
+    "NS_TeslaCoil": {
+      "file": "NS_TeslaCoil.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Arc"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "RibbonRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_Flare",
+        "MI_Flare_TeslaCoil",
+        "MI_SmokePuffLight_8x8_Emissive_Tesla",
+        "MI_Sparks",
+        "M_Decal_Glow",
+        "M_Ribbon_Arc"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "PositionTarget",
+        "Smoke",
+        "Speed"
+      ]
+    },
+    "NS_NDC_Footsteps": {
+      "file": "NS_NDC_Footsteps.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_SmokePuffLight_8x8",
+        "M_Footprint_Decal"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Debris",
+        "Directional",
+        "Lifetime",
+        "LifetimeScale",
+        "Smoke",
+        "SmokeColor",
+        "Spark",
+        "Speed"
+      ]
+    },
+    "NS_NDC_Footsteps_Bubbles": {
+      "file": "NS_NDC_Footsteps_Bubbles.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_BubbleSprite",
+        "M_Footprint_Decal"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Drag",
+        "CurlNoise",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_NDC_Impacts": {
+      "file": "NS_NDC_Impacts.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_BulletHole",
+        "MI_BulletHole_Glass",
+        "MI_ImpactFlash",
+        "MI_SimpleDebris",
+        "MI_SmokePuffLight_8x8",
+        "MI_SmokePuffLight_8x8_Emissive",
+        "MI_SmokeWispy_8x8_Emissive",
+        "MI_Sparks"
+      ],
+      "meshes": [
+        "SM_GlassShard_01",
+        "SM_GlassShard_02",
+        "SM_GlassShard_03"
+      ],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Size",
+        "Variability"
+      ]
+    },
+    "NS_NDC_Footsteps_Fire": {
+      "file": "NS_NDC_Footsteps_Fire.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_Flames",
+        "MI_SmokePuffLight_8x8",
+        "M_Footprint_Decal"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_Dino_Tris_Color_Burst": {
+      "file": "NS_Dino_Tris_Color_Burst.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_SimpleDebris"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "HitNormal",
+        "HitPosition",
+        "SkeletalMesh",
+        "Smoke",
+        "Texture"
+      ]
+    },
+    "NS_Dino_Tri_Loop": {
+      "file": "NS_Dino_Tri_Loop.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Flare"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Accelleration",
+        "Camera",
+        "Color",
+        "Emitter",
+        "Flames",
+        "Inherit",
+        "Initial",
+        "Lifetime",
+        "Mesh",
+        "SkeletalMesh",
+        "Smoke",
+        "Spawn",
+        "Texture",
+        "Velocity"
+      ]
+    },
+    "NS_Spark_Continuous": {
+      "file": "NS_Spark_Continuous.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Smoke",
+        "NE_SecondarySparks",
+        "NE_Sparks"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_SmokePuffLight_8x8",
+        "MI_Sparks",
+        "M_BrightCore"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Directional",
+        "DirectionalSpeed",
+        "Lifetime",
+        "Size",
+        "Smoke",
+        "Spark",
+        "SparkColorGain",
+        "Speed",
+        "Sprite",
+        "Uniform",
+        "Variation"
+      ]
+    },
+    "NS_Spark_Burst": {
+      "file": "NS_Spark_Burst.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_SecondarySparks",
+        "NE_Sparks"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_SmokePuffLight_8x8",
+        "MI_Sparks",
+        "M_BrightCore"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Directional",
+        "DirectionalSpeed",
+        "Lifetime",
+        "Size",
+        "Smoke",
+        "SmokeColor",
+        "Spark",
+        "SparkColorGain",
+        "Spawn",
+        "Speed",
+        "Sprite"
+      ]
+    },
+    "NS_Spark_Impact_Looping": {
+      "file": "NS_Spark_Impact_Looping.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Flare",
+        "MI_SmokePuffLight_8x8",
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Directional",
+        "Emitter_SecondaryProbability",
+        "Lifetime",
+        "Size",
+        "Smoke",
+        "SmokeColor",
+        "Spark",
+        "Speed",
+        "Variation",
+        "Velocity"
+      ]
+    },
+    "NS_Pickup_Success": {
+      "file": "NS_Pickup_Success.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_Plasma_Wisps"
+      ],
+      "materials": [
+        "MI_Flare",
+        "MI_Pickup_Sphere",
+        "M_Energy"
+      ],
+      "meshes": [
+        "SM_Sphere_1Unit"
+      ],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Dimensions"
+      ]
+    },
+    "NS_Pickup_Idle": {
+      "file": "NS_Pickup_Idle.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_Plasma_Wisps"
+      ],
+      "materials": [
+        "MI_Pickup_Flare",
+        "MI_Pickup_Sparkles",
+        "MI_Pickup_Sphere",
+        "M_Energy"
+      ],
+      "meshes": [
+        "SM_Sphere_1Unit"
+      ],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color"
+      ]
+    },
+    "NS_Pickup_Timeout": {
+      "file": "NS_Pickup_Timeout.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_Plasma_Wisps"
+      ],
+      "materials": [
+        "MI_Flare",
+        "MI_Pickup_Sphere",
+        "M_Energy"
+      ],
+      "meshes": [
+        "SM_Sphere_1Unit"
+      ],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "Dimensions"
+      ]
+    },
+    "NS_Pickup_Spawn": {
+      "file": "NS_Pickup_Spawn.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_Plasma_Wisps"
+      ],
+      "materials": [
+        "MI_Flare",
+        "MI_Pickup_Sphere",
+        "M_Energy"
+      ],
+      "meshes": [
+        "SM_Sphere_1Unit"
+      ],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color"
+      ]
+    },
+    "NS_Footstep_Bubbles": {
+      "file": "NS_Footstep_Bubbles.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_BubbleSprite",
+        "M_Footprint_Decal"
+      ],
+      "meshes": [],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Color",
+        "RightFoot"
+      ]
+    },
+    "NS_Footstep_Gravel": {
+      "file": "NS_Footstep_Gravel.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_SmokePuffLight_8x8",
+        "M_Footprint_Decal"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "DustInitialVelocity",
+        "RightFoot"
+      ]
+    },
+    "NS_Footstep_LW": {
+      "file": "NS_Footstep_LW.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_SmokePuffLight_8x8",
+        "M_Footprint_Decal"
+      ],
+      "meshes": [],
+      "modules": [
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Bool_System_Orientation",
+        "DustInitialVelocity",
+        "RightFoot"
+      ]
+    },
+    "NS_Footstep_Fire": {
+      "file": "NS_Footstep_Fire.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_Flames",
+        "MI_SmokePuffLight_8x8",
+        "M_Footprint_Decal"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Vortex",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "RightFoot"
+      ]
+    },
+    "NS_Smoke_Plume": {
+      "file": "NS_Smoke_Plume.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Smoke"
+      ],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_SmokePuffLight_8x8"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Smoke",
+        "SpawnRate",
+        "Sprite",
+        "Uniform"
+      ]
+    },
+    "NS_Chimney_Smoke": {
+      "file": "NS_Chimney_Smoke.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Smoke"
+      ],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_SmokePuffLight_8x8"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Smoke",
+        "SpawnRate",
+        "Sprite",
+        "Uniform"
+      ]
+    },
+    "NS_Explosion": {
+      "file": "NS_Explosion.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_GroundDust",
+        "NE_SparkDebris",
+        "NE_Debris",
+        "NE_Explosion",
+        "NE_PostProcess"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "RibbonRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_ExplosionRoil_EOO_Loop"
+      ],
+      "materials": [
+        "MI_ExplosionFlare",
+        "MI_ExplosionRoil_8x8",
+        "MI_Explosion_Decal",
+        "MI_Explosion_Decal_Frame0",
+        "MI_Pebbles",
+        "MI_SimpleDebris",
+        "MI_SmokeTrail_2x16",
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Decal",
+        "Dirt",
+        "DirtColor",
+        "Smoke",
+        "SmokeColor"
+      ]
+    },
+    "NS_Explosion_Medium": {
+      "file": "NS_Explosion_Medium.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_GroundDust",
+        "NE_SparkDebris",
+        "NE_Debris",
+        "NE_Explosion",
+        "NE_PostProcess"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_ExplosionRoil_EOO_Loop"
+      ],
+      "materials": [
+        "MI_ExplosionFlare",
+        "MI_ExplosionRoil_8x8",
+        "MI_Explosion_Decal",
+        "MI_Explosion_Decal_Frame0",
+        "MI_Pebbles",
+        "MI_SimpleDebris",
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Decal",
+        "Dirt",
+        "DirtColor",
+        "Smoke",
+        "SmokeColor"
+      ]
+    },
+    "NS_Explosion_Small": {
+      "file": "NS_Explosion_Small.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_GroundDust",
+        "NE_SparkDebris",
+        "NE_Debris",
+        "NE_Explosion",
+        "NE_PostProcess"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_ExplosionRoil_EOO_Loop"
+      ],
+      "materials": [
+        "MI_ExplosionFlare",
+        "MI_ExplosionRoil_8x8",
+        "MI_Explosion_Decal",
+        "MI_Explosion_Decal_Frame0",
+        "MI_Pebbles",
+        "MI_SimpleDebris",
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Decal",
+        "Dirt",
+        "DirtColor",
+        "Smoke",
+        "SmokeColor"
+      ]
+    },
+    "NS_Dirt_Explosion_Medium": {
+      "file": "NS_Dirt_Explosion_Medium.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_GroundDust",
+        "NE_SparkDebris",
+        "NE_Debris",
+        "NE_Explosion",
+        "NE_PostProcess"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_ExplosionRoil_EOO_Loop"
+      ],
+      "materials": [
+        "MI_ExplosionFlare",
+        "MI_ExplosionRoil_8x8",
+        "MI_Explosion_Decal",
+        "MI_Pebbles",
+        "MI_SimpleDebris",
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Decal",
+        "Dirt",
+        "DirtColor",
+        "Dust",
+        "DustColor"
+      ]
+    },
+    "NS_Dirt_Explosion": {
+      "file": "NS_Dirt_Explosion.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_GroundDust",
+        "NE_SparkDebris",
+        "NE_Debris",
+        "NE_Explosion",
+        "NE_PostProcess"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_ExplosionRoil_EOO_Loop"
+      ],
+      "materials": [
+        "MI_ExplosionFlare",
+        "MI_ExplosionRoil_8x8",
+        "MI_Explosion_Decal",
+        "MI_Pebbles",
+        "MI_SimpleDebris",
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Decal",
+        "Dirt",
+        "DirtColor",
+        "Dust",
+        "DustColor"
+      ]
+    },
+    "NS_Dirt_Explosion_Small": {
+      "file": "NS_Dirt_Explosion_Small.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_GroundDust",
+        "NE_SparkDebris",
+        "NE_Debris",
+        "NE_Explosion",
+        "NE_PostProcess"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_ExplosionRoil_EOO_Loop"
+      ],
+      "materials": [
+        "MI_ExplosionFlare",
+        "MI_ExplosionRoil_8x8",
+        "MI_Explosion_Decal",
+        "MI_Pebbles",
+        "MI_SimpleDebris",
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Decal",
+        "Dirt",
+        "DirtColor",
+        "Dust",
+        "DustColor"
+      ]
+    },
+    "NS_TestSprite": {
+      "file": "NS_TestSprite.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop",
+        "T_SmokePuffLight_Normals_Loop"
+      ],
+      "materials": [
+        "MI_TestSprite"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Base",
+        "Bool_Sprite",
+        "Box",
+        "Color",
+        "Emissive",
+        "Flatten",
+        "Flip",
+        "Normals",
+        "Particle",
+        "Random",
+        "Spawn",
+        "Sprite",
+        "Sub",
+        "Subsurface",
+        "Temperature"
+      ]
+    },
+    "NS_ExplosionRoil_BakedAtlas_Occlusion": {
+      "file": "NS_ExplosionRoil_BakedAtlas_Occlusion.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [],
+      "textures": [
+        "T_5W5",
+        "T_F",
+        "T_I",
+        "T_O",
+        "T_PI",
+        "T_U",
+        "T_X",
+        "T_kf8V",
+        "T_q",
+        "T_r",
+        "T_s",
+        "T_t",
+        "T_u",
+        "T_v"
+      ],
+      "materials": [
+        "M_8",
+        "M_B",
+        "M_K",
+        "M_No",
+        "M_Pt",
+        "M_U",
+        "M_a",
+        "M_aF",
+        "M_b",
+        "M_cdRF5DYQLB",
+        "M_dDI",
+        "M_iY",
+        "M_ko",
+        "M_ku",
+        "M_o",
+        "M_v"
+      ],
+      "meshes": [],
+      "modules": [],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_ExplosionRoil_BakedAtlas_Emissive": {
+      "file": "NS_ExplosionRoil_BakedAtlas_Emissive.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [],
+      "textures": [
+        "T_1",
+        "T_1C",
+        "T_5",
+        "T_E",
+        "T_H",
+        "T__",
+        "T_b",
+        "T_iZ",
+        "T_j",
+        "T_l",
+        "T_s",
+        "T_u"
+      ],
+      "materials": [
+        "M_2",
+        "M_5rt",
+        "M_9",
+        "M_A",
+        "M_B",
+        "M_BAS",
+        "M_E",
+        "M_G",
+        "M_L",
+        "M_O",
+        "M_Sh",
+        "M_V",
+        "M_W",
+        "M_Y",
+        "M_Z",
+        "M_a",
+        "M_d",
+        "M_g",
+        "M_i",
+        "M_l",
+        "M_m",
+        "M_qZ",
+        "M_r",
+        "M_u"
+      ],
+      "meshes": [],
+      "modules": [],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_ExplosionRoil": {
+      "file": "NS_ExplosionRoil.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_3DGas_Base",
+        "MI_DebugVolumeSlice",
+        "M_BakerBackgroundColor",
+        "M_SolidParticle"
+      ],
+      "meshes": [
+        "SM_InvertedSphere"
+      ],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Collide_GeometryCollection",
+        "Collide_PhysicsAsset",
+        "Collide_StaticMesh",
+        "DirectionalLight1",
+        "DirectionalLight2",
+        "DrawBounds",
+        "ResolutionMaxAxis",
+        "WorldSpaceSize"
+      ]
+    },
+    "NS_ExplosionRoil_BakedAtlas_Alpha": {
+      "file": "NS_ExplosionRoil_BakedAtlas_Alpha.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [],
+      "textures": [
+        "T_1",
+        "T_1p",
+        "T_4",
+        "T_5",
+        "T_7",
+        "T_B",
+        "T_D",
+        "T_Gg",
+        "T_J",
+        "T_O",
+        "T_P",
+        "T_Q",
+        "T_S",
+        "T_S1",
+        "T_T",
+        "T_Y",
+        "T_a",
+        "T_d",
+        "T_kN",
+        "T_m",
+        "T_o",
+        "T_p",
+        "T_t",
+        "T_uw",
+        "T_y"
+      ],
+      "materials": [
+        "M_2",
+        "M_7",
+        "M_C",
+        "M_G",
+        "M_Mz",
+        "M_U",
+        "M_W",
+        "M_Y",
+        "M_e",
+        "M_g",
+        "M_r",
+        "M_w",
+        "M_y",
+        "M_yg",
+        "M_zI"
+      ],
+      "meshes": [],
+      "modules": [],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_ExplosionRoil_BakedAtlas_Normals": {
+      "file": "NS_ExplosionRoil_BakedAtlas_Normals.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [],
+      "textures": [
+        "T_1",
+        "T_5f",
+        "T_6",
+        "T_8",
+        "T_G",
+        "T_H",
+        "T_KN",
+        "T_M",
+        "T_N",
+        "T_U",
+        "T_W",
+        "T_Y",
+        "T_Z",
+        "T__",
+        "T_c",
+        "T_e",
+        "T_f",
+        "T_g",
+        "T_g0",
+        "T_l",
+        "T_q",
+        "T_rO",
+        "T_us",
+        "T_w",
+        "T_x",
+        "T_z",
+        "T_zi"
+      ],
+      "materials": [
+        "M_1",
+        "M_1q",
+        "M_5",
+        "M_A",
+        "M_H",
+        "M_J",
+        "M_N",
+        "M_Rl",
+        "M_Rx3B",
+        "M_U",
+        "M_Y",
+        "M_cyQ",
+        "M_g",
+        "M_o",
+        "M_p",
+        "M_s",
+        "M_t",
+        "M_u"
+      ],
+      "meshes": [],
+      "modules": [],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_SmokePuffLight_BakedAtlas_Normals": {
+      "file": "NS_SmokePuffLight_BakedAtlas_Normals.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [],
+      "textures": [
+        "T_1y",
+        "T_L",
+        "T_N",
+        "T__",
+        "T_b",
+        "T_h",
+        "T_j",
+        "T_wo"
+      ],
+      "materials": [
+        "M_0",
+        "M_1q",
+        "M_I",
+        "M_J",
+        "M_Q",
+        "M_T",
+        "M_c",
+        "M_o",
+        "M_z",
+        "M_zR"
+      ],
+      "meshes": [],
+      "modules": [],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_SmokePuffLight_BakedAtlas_Smoke_2048_RGB": {
+      "file": "NS_SmokePuffLight_BakedAtlas_Smoke_2048_RGB.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [],
+      "textures": [
+        "T_9",
+        "T_J",
+        "T_g",
+        "T_x"
+      ],
+      "materials": [],
+      "meshes": [],
+      "modules": [],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_SmokePuffLight": {
+      "file": "NS_SmokePuffLight.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_3DGas_Base",
+        "MI_DebugVolumeSlice",
+        "M_BakerBackgroundColor"
+      ],
+      "meshes": [
+        "SM_InvertedSphere"
+      ],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Collide_GeometryCollection",
+        "Collide_PhysicsAsset",
+        "Collide_StaticMesh",
+        "DirectionalLight1",
+        "DirectionalLight2",
+        "DrawBounds",
+        "ResolutionMaxAxis",
+        "WorldSpaceSize"
+      ]
+    },
+    "NS_SmokePuffLight_BakedAtlas_Occlusion": {
+      "file": "NS_SmokePuffLight_BakedAtlas_Occlusion.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [],
+      "textures": [
+        "T_2",
+        "T_J",
+        "T_K",
+        "T_Pr",
+        "T_V",
+        "T__",
+        "T_ccVZ9",
+        "T_zD"
+      ],
+      "materials": [
+        "M_R",
+        "M_Y",
+        "M_t",
+        "M_yu"
+      ],
+      "meshes": [],
+      "modules": [],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_SmokePuffLight_BakedAtlas_Emissive": {
+      "file": "NS_SmokePuffLight_BakedAtlas_Emissive.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [],
+      "textures": [
+        "T_0",
+        "T_4u",
+        "T_7",
+        "T_D",
+        "T_Fu",
+        "T_N",
+        "T_U",
+        "T_X",
+        "T_d",
+        "T_k",
+        "T_m",
+        "T_o"
+      ],
+      "materials": [
+        "M_1",
+        "M_D",
+        "M_EU",
+        "M_Ew",
+        "M_dw_",
+        "M_h"
+      ],
+      "meshes": [],
+      "modules": [],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_RocketTrail": {
+      "file": "NS_RocketTrail.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_RocketFlareCore",
+        "MI_RocketTrail_8x8",
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Flare",
+        "Smoke",
+        "SmokeColor"
+      ]
+    },
+    "NS_SimpleRibbonTrail": {
+      "file": "NS_SimpleRibbonTrail.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "RibbonRenderer"
+      ],
+      "textures": [
+        "T_I"
+      ],
+      "materials": [],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "CameraOffset",
+        "RibbonWidth"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NS_BulletTracer": {
+      "file": "NS_BulletTracer.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer",
+        "RibbonRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_g"
+      ],
+      "materials": [
+        "MI_Tracer",
+        "M_TracerRibbon"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "SpawnPerUnit",
+        "InitializeParticle",
+        "CurlNoise",
+        "ScaleColor",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Hit",
+        "InitialSpeed",
+        "SpawnPosition",
+        "TrailDuration"
+      ]
+    },
+    "NS_Impact_Wood": {
+      "file": "NS_Impact_Wood.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Impact_LightDecal",
+        "NE_Impact_MeshAndSprite",
+        "NE_Impact_Sprite",
+        "NE_Impact_SecondarySprite"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_BulletHole",
+        "MI_ImpactFlash",
+        "MI_SimpleDebris",
+        "MI_SmokePuffLight_8x8",
+        "MI_SmokePuffLight_8x8_Emissive",
+        "MI_Sparks",
+        "M_BrightCore"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "MeshOrientation",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Base",
+        "BaseColor",
+        "Burst",
+        "Hit",
+        "Spawn",
+        "Variability"
+      ]
+    },
+    "NS_Impact_Metal": {
+      "file": "NS_Impact_Metal.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Impact_LightDecal",
+        "NE_Impact_Sprite",
+        "NE_Impact_SecondarySprite"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_BulletHole",
+        "MI_ImpactFlash",
+        "MI_SimpleDebris",
+        "MI_SmokePuffLight_8x8",
+        "MI_SmokeWispy_8x8_Emissive",
+        "MI_Sparks",
+        "M_BrightCore"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Base",
+        "BaseColor",
+        "Burst",
+        "Hit",
+        "Spawn",
+        "Variability"
+      ]
+    },
+    "NS_Impact_Glass": {
+      "file": "NS_Impact_Glass.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Impact_LightDecal",
+        "NE_Impact_MeshAndSprite",
+        "NE_Impact_Sprite",
+        "NE_Impact_SecondarySprite"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_BulletHole",
+        "MI_BulletHole_Glass",
+        "MI_ImpactFlash",
+        "MI_SimpleDebris",
+        "MI_SimpleDebris_Translucent",
+        "MI_SmokePuffLight_8x8",
+        "MI_SmokePuffLight_8x8_Emissive",
+        "MI_Sparks",
+        "M_BrightCore"
+      ],
+      "meshes": [
+        "SM_GlassShard_01",
+        "SM_GlassShard_02",
+        "SM_GlassShard_03"
+      ],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "MeshOrientation",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Base",
+        "BaseColor",
+        "Burst",
+        "Hit",
+        "Spawn",
+        "Variability"
+      ]
+    },
+    "NS_Impact_Concrete": {
+      "file": "NS_Impact_Concrete.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Impact_LightDecal",
+        "NE_Impact_MeshAndSprite",
+        "NE_Impact_Sprite",
+        "NE_Impact_SecondarySprite"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_SmokePuffLight_EOO_Loop"
+      ],
+      "materials": [
+        "MI_BulletHole",
+        "MI_ImpactFlash",
+        "MI_SimpleDebris",
+        "MI_SmokePuffLight_8x8",
+        "MI_SmokePuffLight_8x8_Emissive",
+        "MI_Sparks",
+        "M_BrightCore"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "MeshOrientation",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Base",
+        "BaseColor",
+        "Burst",
+        "Hit",
+        "Spawn",
+        "Variability"
+      ]
+    },
+    "NS_MuzzleFlash": {
+      "file": "NS_MuzzleFlash.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_MuzzleFlash_Base",
+        "NE_MuzzleFlash_Sparks_Base",
+        "NE_MuzzleFlash_Smoke",
+        "NE_BulletShells"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "RibbonRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_J",
+        "T_ThinSmoke_FX"
+      ],
+      "materials": [
+        "MI_BulletShell_FX",
+        "MI_Flipbook_Pyro_Muzzle",
+        "MI_Flipbook_Smoke_Muzzle",
+        "MI_MuzzleFlash_Sphere",
+        "MI_Sparks",
+        "MI_Stylized_Sparkes"
+      ],
+      "meshes": [
+        "SM_BulletShell"
+      ],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "CameraOffset",
+        "RibbonWidth"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Bullet",
+        "Flash",
+        "FlashBaseColor",
+        "Global",
+        "GlobalScale",
+        "Length",
+        "Shell",
+        "Side",
+        "Smoke",
+        "Use"
+      ]
+    },
+    "NS_SubUV_Utilities": {
+      "file": "NS_SubUV_Utilities.uasset",
+      "type": "NiagaraSystem",
+      "emitter_handles": [],
+      "ne_references": [],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "M_SubUV_Utilities"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    }
+  },
+  "emitters": {
+    "NE_GroundDust": {
+      "file": "NE_GroundDust.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_GroundDust"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_ExplosionRoil_EOO_Loop"
+      ],
+      "materials": [
+        "MI_ExplosionRoil_8x8"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "Drag",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_SparkDebris": {
+      "file": "NE_SparkDebris.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_SparkDebris"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Pebbles",
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleSpriteSize"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Core": {
+      "file": "NE_Core.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Core"
+      ],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [
+        "T_ExplosionRoil_EOO_Loop"
+      ],
+      "materials": [
+        "MI_ExplosionRoil_8x8"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_PostProcess": {
+      "file": "NE_PostProcess.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_PostProcess"
+      ],
+      "renderers": [],
+      "textures": [],
+      "materials": [],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "ScaleColor"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Debris": {
+      "file": "NE_Debris.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Debris"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_SimpleDebris"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleSpriteSize",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_DustExplosion": {
+      "file": "NE_DustExplosion.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_DustExplosion",
+        "NE_Explosion"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_ExplosionRoil_EOO_Loop"
+      ],
+      "materials": [
+        "MI_ExplosionRoil_8x8"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Drag",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Explosion": {
+      "file": "NE_Explosion.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Explosion"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [
+        "T_ExplosionRoil_EOO_Loop"
+      ],
+      "materials": [
+        "MI_ExplosionRoil_8x8"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Drag",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Smoke": {
+      "file": "NE_Smoke.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Smoke"
+      ],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_SmokePuffLight_8x8"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "Drag",
+        "CurlNoise",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Sprite",
+        "Uniform"
+      ]
+    },
+    "NE_SecondarySparks": {
+      "file": "NE_SecondarySparks.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_SecondarySparks"
+      ],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Sparks": {
+      "file": "NE_Sparks.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Sparks"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_MuzzleFlash_Base": {
+      "file": "NE_MuzzleFlash_Base.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_MuzzleFlash_Base"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "RibbonRenderer"
+      ],
+      "textures": [
+        "T_J"
+      ],
+      "materials": [
+        "MI_Flipbook_Pyro_Muzzle"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "Drag",
+        "ScaleColor",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_BulletShells": {
+      "file": "NE_BulletShells.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_BulletShells"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer"
+      ],
+      "textures": [],
+      "materials": [],
+      "meshes": [
+        "SM_BulletShell"
+      ],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_MuzzleFlash_Sparks_Base": {
+      "file": "NE_MuzzleFlash_Sparks_Base.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_MuzzleFlash_Sparks_Base"
+      ],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Stylized_Sparkes"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "Drag",
+        "ScaleColor",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": [
+        "Global"
+      ]
+    },
+    "NE_MuzzleFlash_Smoke": {
+      "file": "NE_MuzzleFlash_Smoke.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_MuzzleFlash_Smoke"
+      ],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [
+        "T_ThinSmoke_FX"
+      ],
+      "materials": [
+        "MI_Flipbook_Smoke_Muzzle"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "Drag",
+        "ScaleColor",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Impact_Sprite": {
+      "file": "NE_Impact_Sprite.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Impact_Sprite",
+        "NE_Impact"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_SimpleDebris"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "SubUVAnimation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Impact_LightDecal": {
+      "file": "NE_Impact_LightDecal.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Impact_LightDecal"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_BulletHole",
+        "M_BrightCore"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "SubUVAnimation",
+        "CameraOffset"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Impact_MeshAndSprite": {
+      "file": "NE_Impact_MeshAndSprite.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Impact",
+        "NE_Impact_MeshAndSprite"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_SimpleDebris"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleSpriteSize",
+        "SubUVAnimation",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Impact_Mesh": {
+      "file": "NE_Impact_Mesh.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Impact",
+        "NE_Impact_Mesh"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "SubUVAnimation",
+        "MeshOrientation"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Impact_SecondarySprite": {
+      "file": "NE_Impact_SecondarySprite.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Impact_SecondarySprite"
+      ],
+      "renderers": [
+        "SpriteRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "MI_Sparks"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnRate",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision",
+        "ScaleColor",
+        "ScaleSpriteSize",
+        "KillParticles"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Impact": {
+      "file": "NE_Impact.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Impact"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "InitializeParticle",
+        "AddVelocity",
+        "Gravity",
+        "Drag",
+        "CurlNoise",
+        "Collision"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    },
+    "NE_Arc": {
+      "file": "NE_Arc.uasset",
+      "type": "NiagaraEmitter",
+      "emitter_handles": [],
+      "ne_references": [
+        "NE_Arc"
+      ],
+      "renderers": [
+        "SpriteRenderer",
+        "RibbonRenderer",
+        "MeshRenderer",
+        "LightRenderer"
+      ],
+      "textures": [],
+      "materials": [
+        "M_Ribbon_Arc"
+      ],
+      "meshes": [],
+      "modules": [
+        "SpawnBurst",
+        "ScaleColor",
+        "RibbonWidth"
+      ],
+      "subuv_grid": null,
+      "user_parameters": []
+    }
+  }
+}

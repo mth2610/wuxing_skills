@@ -168,6 +168,12 @@ typedef struct
   Vector3 trailHistory[8];
   unsigned char trailHistoryCount;
   float trailHistoryTimer;
+
+  // Advanced facing & 3D Mesh (Niagara parity)
+  VFX_FacingMode facingMode;
+  Model meshModel;
+  Vector3 meshRotation;     // Euler angles (pitch, yaw, roll in radians)
+  Vector3 meshRotationRate; // Angular rotation speed in rad/s
 } ParticleInternal;
 
 static ParticleInternal g_Particles[MAX_PARTICLES];
@@ -468,6 +474,12 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->trailSmooth = config.render.trailSmooth;
   p->trailHistoryCount = 0;
   p->trailHistoryTimer = 0.0f;
+
+  // Advanced facing & 3D Mesh (Niagara parity)
+  p->facingMode = config.render.facingMode;
+  p->meshModel = config.render.meshModel;
+  p->meshRotation = (Vector3){ 0.0f, 0.0f, 0.0f };
+  p->meshRotationRate = config.render.meshRotationRate;
 }
 
 void UpdateParticles(float dt)
@@ -485,6 +497,9 @@ void UpdateParticles(float dt)
 
     p->lifetime -= dt;
     p->rotation += p->angularVelocity * dt;
+    p->meshRotation.x += p->meshRotationRate.x * dt;
+    p->meshRotation.y += p->meshRotationRate.y * dt;
+    p->meshRotation.z += p->meshRotationRate.z * dt;
 
     if (p->lifetime <= 0.0f)
     {
@@ -1596,11 +1611,58 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       drawRadius *= SkillCurve_Eval(p->radiusCurve, invRatio);
     }
 
+    // ── FEATURE 3: 3D MESH PARTICLE RENDERING (Niagara NE_Debris Parity) ─────
+    if (p->meshModel.meshCount > 0)
+    {
+      // Flush current quad batch before switching to mesh draw
+      if (curTex != 0xFFFFFFFFu) {
+        rlEnd();
+        curTex = 0xFFFFFFFFu;
+      }
+      rlDrawRenderBatchActive();
+
+      rlPushMatrix();
+      rlTranslatef(p->x, p->y, p->z);
+      rlRotatef(p->meshRotation.z * RAD2DEG, 0.0f, 0.0f, 1.0f);
+      rlRotatef(p->meshRotation.y * RAD2DEG, 0.0f, 1.0f, 0.0f);
+      rlRotatef(p->meshRotation.x * RAD2DEG, 1.0f, 0.0f, 0.0f);
+      rlScalef(drawRadius, drawRadius, drawRadius);
+
+      // Draw meshes in model with tint colour
+      for (int m = 0; m < p->meshModel.meshCount; m++)
+      {
+        Material mat = p->meshModel.materials[p->meshModel.meshMaterial[m]];
+        Color origColor = mat.maps[MATERIAL_MAP_DIFFUSE].color;
+        mat.maps[MATERIAL_MAP_DIFFUSE].color = c;
+        DrawMesh(p->meshModel.meshes[m], mat, MatrixIdentity());
+        mat.maps[MATERIAL_MAP_DIFFUSE].color = origColor;
+      }
+
+      rlPopMatrix();
+      rlDrawRenderBatchActive();
+      continue; // Skip quad billboard rendering for mesh particle
+    }
+
     float rx = right.x * drawRadius, ry = right.y * drawRadius, rz = right.z * drawRadius;
     float ux = up.x * drawRadius, uy = up.y * drawRadius, uz = up.z * drawRadius;
 
+    // ── FEATURE 1 & 2: ADVANCED FACING MODES (Ground Plane, Cross-Billboard, Velocity Stretch) ──
+    if (p->facingMode == VFX_FACING_GROUND_PLANE)
+    {
+      // Quad lies flat on XZ plane (normal pointing +Y)
+      float cosT = cosf(p->rotation);
+      float sinT = sinf(p->rotation);
+
+      rx = cosT * drawRadius;
+      ry = 0.0f;
+      rz = sinT * drawRadius;
+
+      ux = -sinT * drawRadius;
+      uy = 0.0f;
+      uz = cosT * drawRadius;
+    }
     // Velocity-stretch rendering (directional billboard)
-    if (p->stretchStrength > 0.0f)
+    else if (p->stretchStrength > 0.0f || p->facingMode == VFX_FACING_VELOCITY)
     {
       Vector3 vel = {p->vx, p->vy, p->vz};
       float vx = vel.x * right.x + vel.y * right.y + vel.z * right.z;
@@ -1624,7 +1686,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
           right.z * dirY - up.z * dirX
         };
 
-        float stretchFactor = 1.0f + screenSpeed * p->stretchStrength;
+        float stretchFactor = 1.0f + screenSpeed * (p->stretchStrength > 0.0f ? p->stretchStrength : 0.05f);
         if (stretchFactor > 3.5f) stretchFactor = 3.5f;
 
         rx = rightDir.x * drawRadius;
@@ -1757,6 +1819,27 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     {
       PS_EMIT_QUAD(sample, (float)c.a);
       s_perfQuads++;
+    }
+
+    // Cross-Billboard: emit orthogonal cross quad at 90 degrees
+    if (p->facingMode == VFX_FACING_CROSS_BILLBOARD)
+    {
+      // Swap/rotate rx and rz orthogonally
+      float tempRx = rx, tempRy = ry, tempRz = rz;
+      rx = -uz; ry = uy; rz = ux;
+      ux = tempRx; uy = tempRy; uz = tempRz;
+
+      if (fbBlend > 0.001f)
+      {
+        PS_EMIT_QUAD(sample,     (float)c.a * (1.0f - fbBlend));
+        PS_EMIT_QUAD(sampleNext, (float)c.a * fbBlend);
+        s_perfQuads += 2;
+      }
+      else
+      {
+        PS_EMIT_QUAD(sample, (float)c.a);
+        s_perfQuads++;
+      }
     }
     #undef PS_EMIT_QUAD
   }
