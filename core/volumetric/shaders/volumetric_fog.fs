@@ -130,9 +130,10 @@ float EvaluateLocalFog(vec3 worldPos, inout vec3 inoutFogColor) {
 
         if (dist < 1.0) {
             float fade = 1.0 - smoothstep(1.0 - softness, 1.0, dist);
+            fade = smoothstep(0.0, 1.0, fade);
             float volumeVal = baseDen * fade;
             localDense += volumeVal;
-            inoutFogColor = mix(inoutFogColor, col, clamp(fade * 0.7, 0.0, 1.0));
+            inoutFogColor = mix(inoutFogColor, col, clamp(fade * 0.85, 0.0, 1.0));
         }
     }
     return localDense;
@@ -206,7 +207,7 @@ void main() {
         if (samplePos.y <= 12.0 && samplePos.y >= -2.5) {
             canopyShaft = ComputeCanopyGodRay(samplePos, u_sunDir, u_time);
         }
-        float sunbeamHaze = 0.012 * canopyShaft * smoothstep(7.5, 2.0, samplePos.y);
+        float sunbeamHaze = 0.038 * canopyShaft * smoothstep(12.0, 1.5, samplePos.y);
 
         float density = (u_fogDensity * (heightCoeff + sigmoidDensity) + localDensity + sunbeamHaze) * camFade;
         if (density <= 0.00001) continue;
@@ -216,9 +217,9 @@ void main() {
         float shadow = SampleShadowLS(posLS);
         float directLight = shadow * (0.20 + 0.80 * canopyShaft) * u_godRayIntensity;
 
-        // Radiance calculation: warm golden sunlight in-scattering + bright ambient mist
+        // Radiance calculation: warm golden sunlight in-scattering + luminous morning sky ambient
         vec3 directTerm = u_sunColor * (directLight * shaftVisibility * 3.0);
-        vec3 ambientTerm = fogColor * 0.70;
+        vec3 ambientTerm = fogColor * 1.25;
         vec3 stepLight = directTerm + ambientTerm;
 
         float opticalThickness = density * stepSize;

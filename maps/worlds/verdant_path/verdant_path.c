@@ -432,11 +432,11 @@ static void ApplyVerdantEnvironment(void)
     Environment_SetSunDirection(Vector3Normalize((Vector3){-0.50f, -0.45f, 0.55f}));
     Environment_SetShadowColor((Color){28, 36, 48, 120});
 
-    // Ghost of Tsushima style: Ground-hugging dew mist + lake inversion blanket + canopy light shafts
+    // Ghost of Tsushima style: Clear morning air with radiant canopy god-rays and scattered ground-hugging dew mist
     AtmosphereProfile atmos = {
-        .color = {175, 198, 220, 255},  // Crisp morning mist hue
-        .start = 1.2f,                  // Third-person camera distance ~6m; start fog close to view
-        .end = 90.0f,
+        .color = {205, 228, 250, 255},  // Luminous morning mist hue
+        .start = 1.0f,                  // Close near-plane so sunbeams and nearby ground mist appear naturally
+        .end = 95.0f,
         .enabled = true,
         .optics = {
             .rayleighLMS = {0.0076224f, 0.012935f, 0.024845f},
@@ -445,17 +445,17 @@ static void ApplyVerdantEnvironment(void)
             .multipleScatteringAmp = 2.4f
         },
         .density = {
-            .baseDensity = 0.022f,      // Tangible morning ground mist
-            .heightFalloff = 0.45f,      // Hugs ground and rises softly into lower foliage (Y <= 2.2m)
+            .baseDensity = 0.006f,      // Subtle clear air; upper atmosphere is transparent
+            .heightFalloff = 0.85f,      // Hugs lowest ground level (Y <= 1.0m)
             .baseAltitude = 0.0f,
-            .enableSigmoidLayer = true,  // Soft lake & reed vapor blanket
-            .layerAltitude = 0.45f,
-            .layerThickness = 1.2f,
-            .layerDensity = 0.85f
+            .enableSigmoidLayer = false, // Disabled map-wide blanket; mist is strictly localized
+            .layerAltitude = 0.35f,
+            .layerThickness = 0.8f,
+            .layerDensity = 0.0f
         }
     };
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity(1.8f);
+    VolumetricFog_SetGodRayIntensity(2.4f);
 }
 
 static void ApplyHabitatToGround(void)
@@ -476,53 +476,69 @@ static void SpawnVerdantMistVolumes(void)
 {
     FogVolume_ClearAll();
 
-    // 1. Lake & reed bed moisture mist (cylinder blanketing water surface from Y=0.0 to 2.4m)
-    LocalFogVolume lakeMist = {
+    // 1. Đám sương mỏng lác đác trên vạt cỏ sát lối đi chính (sát đất ngọn cỏ Y=0.0 - 0.85m)
+    LocalFogVolume meadowPathMist = {
         .shape = FOG_SHAPE_CYLINDER,
-        .position = {63.0f, 0.85f, 25.5f},
-        .extents = {15.0f, 1.6f, 12.0f},
-        .color = {195, 230, 255, 255},
-        .density = 0.14f,
-        .edgeSoftness = 0.70f,
+        .position = {36.0f, 0.40f, 31.0f},
+        .extents = {5.0f, 0.45f, 4.2f},
+        .color = {240, 248, 255, 255},
+        .density = 0.15f,
+        .edgeSoftness = 0.85f,
         .emissive = 0.0f,
-        .driftVelocity = {0.12f, 0.0f, 0.06f},
+        .driftVelocity = {0.03f, 0.0f, 0.015f},
         .lifetime = 0.0f, // permanent
         .maxLifetime = 0.0f,
         .active = true
     };
-    FogVolume_Create(&lakeMist);
+    FogVolume_Create(&meadowPathMist);
 
-    // 2. West forest edge & wildflower hollow mist
-    LocalFogVolume forestMist = {
+    // 2. Đám sương nhỏ mỏng manh sát mép nước bãi sậy bờ hồ (sát mặt nước Y=0.0 - 0.75m)
+    LocalFogVolume lakeEdgeMist = {
         .shape = FOG_SHAPE_CYLINDER,
-        .position = {27.0f, 1.6f, 20.0f},
-        .extents = {14.0f, 2.0f, 12.0f},
-        .color = {190, 220, 235, 255},
-        .density = 0.10f,
-        .edgeSoftness = 0.75f,
+        .position = {53.0f, 0.35f, 27.5f},
+        .extents = {5.5f, 0.40f, 4.5f},
+        .color = {235, 246, 255, 255},
+        .density = 0.15f,
+        .edgeSoftness = 0.85f,
         .emissive = 0.0f,
-        .driftVelocity = {0.08f, 0.0f, 0.04f},
+        .driftVelocity = {0.04f, 0.0f, 0.02f},
         .lifetime = 0.0f,
         .maxLifetime = 0.0f,
         .active = true
     };
-    FogVolume_Create(&forestMist);
+    FogVolume_Create(&lakeEdgeMist);
 
-    // 3. East flower meadow mist (cylinder blanketing blooming blossom hill from Y=0.0 to 3.8m)
-    LocalFogVolume meadowMist = {
+    // 3. Đám sương nhỏ trong vùng trũng hoa cỏ phía Tây (sát hoa cỏ Y=0.0 - 0.80m)
+    LocalFogVolume westHollowMist = {
         .shape = FOG_SHAPE_CYLINDER,
-        .position = {77.0f, 1.8f, 52.0f},
-        .extents = {14.0f, 2.0f, 12.0f},
-        .color = {220, 225, 255, 255},
-        .density = 0.12f,
-        .edgeSoftness = 0.75f,
+        .position = {24.0f, 0.38f, 20.5f},
+        .extents = {5.0f, 0.42f, 4.2f},
+        .color = {235, 246, 255, 255},
+        .density = 0.14f,
+        .edgeSoftness = 0.85f,
         .emissive = 0.0f,
-        .driftVelocity = {0.10f, 0.0f, 0.05f},
+        .driftVelocity = {0.03f, 0.0f, 0.015f},
         .lifetime = 0.0f,
         .maxLifetime = 0.0f,
         .active = true
     };
-    FogVolume_Create(&meadowMist);
+    FogVolume_Create(&westHollowMist);
+
+    // 4. Đám sương nhỏ ven chân đồi hoa cỏ phía Đông (sát đất Y=0.0 - 0.80m)
+    LocalFogVolume eastMeadowMist = {
+        .shape = FOG_SHAPE_CYLINDER,
+        .position = {75.0f, 0.38f, 49.0f},
+        .extents = {5.2f, 0.42f, 4.4f},
+        .color = {238, 246, 255, 255},
+        .density = 0.14f,
+        .edgeSoftness = 0.85f,
+        .emissive = 0.0f,
+        .driftVelocity = {0.04f, 0.0f, 0.02f},
+        .lifetime = 0.0f,
+        .maxLifetime = 0.0f,
+        .active = true
+    };
+    FogVolume_Create(&eastMeadowMist);
 }
 
 void InitVerdantPathMap(void)

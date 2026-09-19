@@ -99,3 +99,44 @@
 ## 6. Quy Định Truy Cập Thư Mục Của Agent AI (Ràng Buộc Tuyệt Đối)
 - **Thư mục `unreal-engine-starter-content-main/`**: Chứa tài nguyên bên ngoài do người dùng thêm vào.
 - **Ràng buộc:** Mọi Agent AI (Gemini, Claude, Antigravity, v.v.) **TUYỆT ĐỐI CẤM** tự ý đọc nội dung (`view_file`), duyệt danh sách (`list_dir`, `find_by_name`), tìm kiếm nội dung (`grep_search`), nạp hoặc sửa đổi bất kỳ tệp tin nào thuộc `unreal-engine-starter-content-main/` khi **chưa được người dùng cho phép cụ thể**.
+
+---
+
+## 7. Session Summary: Sương Mù Cục Bộ Sát Đất & Phục Hồi Vệt Nắng (God-Rays)
+
+### 7.1. Bối Cảnh & Yêu Cầu
+- **Yêu cầu của người dùng:**
+  1. *"Hãy giảm diện tích sương mù, trên map chỉ lác đác vài đám sương mù nhỏ, sát đất."*
+  2. *"giờ ko thấy sương mù, và god ray luôn"*: Khắc phục hiện tượng tia nắng và sương mù bị biến mất khi giảm diện tích sương mù.
+- **Ràng buộc:** Giữ nguyên 100% mật độ cỏ 65.000 khóm, 4 phân đoạn Bézier, không can thiệp thư mục `unreal-engine-starter-content-main/`.
+
+### 7.2. Nguyên Nhân Kỹ Thuật
+1. **Mất Vệt Nắng (God-Rays) Khi Giảm Mật Độ Sương:**
+   - Thuật toán raymarch sương mù thể tích tính toán ánh sáng tán xạ theo công thức:
+     $$\text{stepRadiance} = \text{stepLight} \cdot (1.0 - e^{-\text{density} \cdot \text{stepSize}})$$
+   - Khi giảm `u_fogDensity` toàn bản đồ xuống mức rất thấp và tắt lớp sigmoid, độ dày quang học trên cao gần như bằng $0$. Do đó, dù thuật toán phát hiện có chùm sáng tán cây (`canopyShaft > 0`), không có hạt môi trường tán xạ ánh sáng nên $\text{stepRadiance} \to 0$, khiến vệt nắng biến mất hoàn toàn.
+2. **Sương Cục Bộ Bị Tối Màu (Giống Khói Xám):**
+   - Trong `volumetric_fog.fs`, `ambientTerm` chỉ nhân `fogColor * 0.70`, khiến độ chói tán xạ của sương thấp hơn độ chói của mặt cỏ xanh nắng ban mai (`sceneColor`). Khi hòa trộn alpha premultiplied, sương làm tối nền cỏ bên dưới thay vì làm sáng và mờ ảo, tạo cảm giác như đám khói bụi bẩn.
+
+### 7.3. Giải Pháp Triển Khai
+1. **Độc Lập Hóa Môi Trường Tán Xạ Của Vệt Nắng (`volumetric_fog.fs`):**
+   - Bổ sung mật độ tán xạ độc lập cho chùm tia nắng:
+     $$\text{sunbeamHaze} = 0.038 \cdot \text{canopyShaft} \cdot \text{smoothstep}(12.0, 1.5, \text{pos}.y)$$
+   - Ngay cả khi không khí trên cao trong suốt tuyệt đối, các luồng ánh sáng mặt trời rọi qua kẽ lá vẫn có hạt vi mô bắt sáng riêng, tạo nên những dải vệt nắng vàng rực rỡ, thi vị.
+2. **Khắc Phục Màu Sương Sớm & Làm Mịn Biên Khối Sương (`volumetric_fog.fs`):**
+   - Nâng `ambientTerm = fogColor * 1.25`, phản chiếu ánh sáng vòm trời ban mai, đảm bảo sương có độ chói cao hơn mặt đất, tạo ánh sương mai trắng bạc trong trẻo.
+   - Bổ sung `fade = smoothstep(0.0, 1.0, fade)` trong `EvaluateLocalFog`, triệt tiêu biên sắc cạnh.
+3. **Bố Trí 4 Khối Sương Nhỏ Lác Đác Sát Đất (`verdant_path.c`):**
+   - `AtmosphereProfile`: `baseDensity = 0.006f`, `heightFalloff = 0.85f` (tập trung sát mặt cỏ $Y \le 1.0\text{m}$, không khí tầm mắt hoàn toàn trong suốt), `enableSigmoidLayer = false`, `VolumetricFog_SetGodRayIntensity(2.4f)`.
+   - 4 khối sương nhỏ sát đất ($Y \in [0.0\text{m}, 0.8\text{m}]$, bán kính $4.5\text{m} - 5.5\text{m}$, mật độ $0.14 - 0.15$):
+     - `meadowPathMist`: Vạt sương mai trên thảm cỏ ven lối đi chính.
+     - `lakeEdgeMist`: Vạt sương mỏng sát bờ hồ, bãi sậy.
+     - `westHollowMist`: Vạt sương vùng trũng hoa cỏ phía Tây.
+     - `eastMeadowMist`: Vạt sương ven chân đồi hoa cỏ phía Đông.
+
+### 7.4. Kết Quả Kiểm Thử
+- Không gian bầu không khí trên cao hoàn toàn trong trẻo, khoáng đạt.
+- Các dải nắng tán cây (god-rays) rọi xuyên qua tán lá sáng ngời, lộng lẫy.
+- Sương mù chỉ xuất hiện lác đác ở 4 vạt nhỏ sát mặt đất, mềm mại, thanh khiết.
+- Bộ autotest suite: **18/18 test cases PASSED (100%)**.
+- Biên dịch CMake: **0 warning, 0 error**.
