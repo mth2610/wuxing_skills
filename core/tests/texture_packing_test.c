@@ -132,6 +132,8 @@ static void Test_TheRuleIsActuallyWired(void) {
         "and its signed-slot set matches R3");
   CHECK(FileHas(v, "failures += check_channels("),
         "every registered asset's channels string goes through the grammar");
+  CHECK(FileHas(v, "validate_extracted_catalog()"),
+        "the configure-time surface gate also validates the complete extracted catalog");
   CHECK(!FileHas(v, "if \"flow\" in assets and \"RG\" not in assets[\"flow\"]"),
         "the old substring check on the word 'RG' is gone — it passed on prose "
         "that merely mentioned RG, which is not a channel declaration");

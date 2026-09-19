@@ -12,6 +12,8 @@ import struct
 import sys
 from pathlib import Path
 
+from validate_extracted_vfx_catalog import main as validate_extracted_catalog
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "assets" / "vfx_surface_profiles.json"
 INDEX = ROOT / "assets" / "INDEX.md"
@@ -252,6 +254,8 @@ def check_channels(label, text, flipbook):
 
 
 def main():
+    if validate_extracted_catalog() != 0:
+        return 1
     doc = json.loads(MANIFEST.read_text(encoding="utf-8"))
     index = INDEX.read_text(encoding="utf-8")
     profiles = doc.get("profiles", [])

@@ -34,12 +34,10 @@
 // feet — NOT the old additive disc, which drew at a hard-coded 0.85 opacity and
 // blew out into a white starburst that owned the frame.
 //
-// Sprites are reused from F2 (`s_smokePuffTex`, authored lobed silhouettes):
-// common.inl is included before this file in visual_composer.c, so they are in
-// scope. A radial-gradient blob has no OUTLINE, and lighting a featureless blob
-// yields a lit featureless blob (§0.1b cause 3). E4 should eventually supply
-// aura-specific wisp sheets; until then the smoke silhouettes are far closer to
-// right than the stock particle dot.
+// The body and ground layers use the extracted Niagara plasma-wisp flipbook
+// through its semantic surface profile. The previous implementation borrowed
+// SmokePuff's private textures without initializing that primary first, so an
+// aura spawned before smoke could silently receive texture id 0.
 //
 // Managed archetype: owns a private pool, driven by VC_CharacterAura_Update /
 // _Draw3D from visual_composer.c. Per §0.3 a handle-returning composition needs
@@ -53,6 +51,11 @@
 #define VFX_AURA_BODY_HEIGHT   1.80f
 #define VFX_AURA_BODY_RADIUS   0.30f
 #define VFX_AURA_ORBIT_RADIUS  0.52f
+#define AURA_BODY_WISP_LIVE_MAX 10
+#define AURA_GROUND_WISP_LIVE_MAX 4
+#define AURA_WISP_LIFE_AVG 0.90f
+#define AURA_GROUND_WISP_LIFE_AVG 1.25f
+#define AURA_WISP_PHASE_MAX 0.30f
 
 typedef struct {
     bool    active;
@@ -75,6 +78,9 @@ static SkillCurve    s_auraWispGrow  = {0};
 static SkillCurve    s_auraWispFade  = {0};
 static SkillCurve    s_auraEmberFade = {0};
 static ForceField    s_auraRiseFld   = {0};
+static Texture2D     s_auraWispTex   = {0};
+static SpriteAnim    s_auraWispAnim  = {0};
+static bool          s_auraWispReady = false;
 static bool          s_auraInit      = false;
 
 // Live-tunable (tuning.cfg, no rebuild). An aura is judged by eye and every one
@@ -128,6 +134,21 @@ static void CharacterAura_InitShared(void)
     Tuning_RegisterFloat("aura_ember_rate", &s_auraEmberRate, 1.0f);
     Tuning_RegisterFloat("aura_wisp_alpha", &s_auraWispAlpha, 1.0f);
     Tuning_RegisterFloat("aura_wisp_rate",  &s_auraWispRate,  1.0f);
+
+    const VFX_SurfaceProfile *profile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_PLASMA_WISPS_NIAGARA);
+    if (profile != NULL && profile->body.id != 0)
+    {
+        s_auraWispTex = profile->body;
+        SpriteAnim_Init(&s_auraWispAnim,
+                        profile->flipbookColumns,
+                        profile->flipbookRows,
+                        profile->flipbookFrames,
+                        (float)profile->flipbookFrames /
+                            (1.60f + AURA_WISP_PHASE_MAX),
+                        ANIM_ONCE);
+        s_auraWispReady = true;
+    }
 
     s_auraInit = true;
 }
@@ -238,7 +259,10 @@ static void VC_CharacterAura_Update(float dt)
         // This is what replaces the shell. Emitted around a vertical band at the
         // body radius so the column traces the figure, then carried UP by the
         // force field: directional flow, not a uniform scroll on a bubble.
-        a->wispAccum += dt * (14.0f + 26.0f * lvl) * s_auraWispRate;
+        float bodyWispTarget = Math_Mix(4.0f, (float)AURA_BODY_WISP_LIVE_MAX, lvl) *
+                               fmaxf(0.0f, s_auraWispRate);
+        bodyWispTarget = fminf(bodyWispTarget, (float)AURA_BODY_WISP_LIVE_MAX);
+        a->wispAccum += dt * bodyWispTarget / AURA_WISP_LIFE_AVG;
         int wisps = (int)a->wispAccum;
         if (wisps > 7) wisps = 7;               // clamp after a hitch
         a->wispAccum -= (float)wisps;
@@ -283,8 +307,11 @@ static void VC_CharacterAura_Update(float dt)
                 .forceField = &s_auraRiseFld,
                 .radiusCurve = &s_auraWispGrow,
                 .alphaCurve = &s_auraWispFade,
-                .render.texture = s_smokePuffTex[w % SMOKE_PUFF_VARIANTS],
+                .render.texture = s_auraWispTex,
                 .render.blendMode = VFX_BLEND_ALPHA,   // occludes -> alpha, and lit
+                .spriteAnim = s_auraWispReady ? &s_auraWispAnim : NULL,
+                .spriteAnimPhase = Random01() * AURA_WISP_PHASE_MAX,
+                .spriteAnimRate = Math_Mix(0.85f, 1.0f, Random01()),
                 // Per-sprite spin: without it the repeated texture is obvious
                 // no matter how many sprites are stacked.
                 .rotation = Random01() * 2.0f * PI,
@@ -336,7 +363,10 @@ static void VC_CharacterAura_Update(float dt)
         // old additive ground disc: these are wide, slow, LIT alpha wisps that
         // creep outward at ankle height, so the contact is a soft skirt of
         // element-tinted haze rather than a glowing plate under the feet.
-        a->groundAccum += dt * (4.0f + 8.0f * lvl);
+        float groundWispTarget = Math_Mix(1.0f, (float)AURA_GROUND_WISP_LIVE_MAX, lvl) *
+                                 fmaxf(0.0f, s_auraWispRate);
+        groundWispTarget = fminf(groundWispTarget, (float)AURA_GROUND_WISP_LIVE_MAX);
+        a->groundAccum += dt * groundWispTarget / AURA_GROUND_WISP_LIFE_AVG;
         int gwisps = (int)a->groundAccum;
         if (gwisps > 3) gwisps = 3;
         a->groundAccum -= (float)gwisps;
@@ -362,8 +392,11 @@ static void VC_CharacterAura_Update(float dt)
                 .colorEnd = VC_WithAlpha(c, 0),
                 .radiusCurve = &s_auraWispGrow,
                 .alphaCurve = &s_auraWispFade,
-                .render.texture = s_smokePuffTex[g % SMOKE_PUFF_VARIANTS],
+                .render.texture = s_auraWispTex,
                 .render.blendMode = VFX_BLEND_ALPHA,
+                .spriteAnim = s_auraWispReady ? &s_auraWispAnim : NULL,
+                .spriteAnimPhase = Random01() * AURA_WISP_PHASE_MAX,
+                .spriteAnimRate = Math_Mix(0.85f, 1.0f, Random01()),
                 .rotation = Random01() * 2.0f * PI,
                 .angularVelocity = (Random01() - 0.5f) * 0.5f,
             });

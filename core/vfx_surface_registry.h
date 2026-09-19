@@ -71,6 +71,7 @@ typedef enum {
     VFX_SURFACE_FIRE_VOLUME,
     VFX_SURFACE_FIRE_ROIL_NIAGARA,
     VFX_SURFACE_FIREBALL_NIAGARA,
+    VFX_SURFACE_PLASMA_WISPS_NIAGARA,
     // P4 contracts contain no runtime asset until visual-owner approval.
     VFX_SURFACE_DECAL_RESIDUE,
     VFX_SURFACE_DECAL_SCORCH,

@@ -109,6 +109,8 @@ FIXTURE_PRESET_VARIANTS = {
 
 LIFECYCLE_SPECS = {
     "VFX_ComposeSmokeVolume":       ("emitter", "timed",      "continuous"),
+    "VFX_ComposeAmbientFire":       ("emitter", "timed",      "continuous"),
+    "VFX_ComposeFlame":             ("emitter", "timed",      "continuous"),
     "VFX_ComposeCharacterAura":      ("emitter", "persistent", "persistent"),
     "VFX_ComposeChargeConverge":     ("draw",    "timed",      "continuous"),
     "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),

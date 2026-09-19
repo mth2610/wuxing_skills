@@ -105,6 +105,7 @@ still needs matched dark/light-background approval.
 | `flipbooks/smoke_wispy_8x8.png` | SmokeWispyNiagara / `VFX_ComposeSmokeVolume` | 4096×4096, 8×8, 64 frames | preview-only; high-memory source |
 | `flipbooks/fireroil_8x8.png` | FireRoilNiagara / `VFX_FlameEmitter` | 2048×2048, 8×8, 64 frames | preview-only |
 | `flipbooks/fireball_8x8.png` | FireballNiagara / `VFX_FlameEmitter` | 2048×2048, 8×8, 64 frames | preview-only |
+| `flipbooks/plasma_wisps_8x8.png` | PlasmaWispsNiagara / `VFX_ComposeCharacterAura` | 4096×4096, 8×8, 64 frames | preview-only; high-memory source |
 
 ### P1 semantic-surface migration map
 
@@ -120,6 +121,7 @@ semantic profile; the registry owns the runtime path and sampler contract.
 | FireTongue | alpha tongue | `VFX_FlameEmitter` | migrated |
 | SmokeRoil/PuffDark/PuffLight/Wispy Niagara | puff/card | `VFX_ComposeSmokeVolume` | migrated; visual approval pending |
 | FireRoil/Fireball Niagara | puff/card | `VFX_FlameEmitter` | migrated; visual approval pending |
+| PlasmaWisps Niagara | puff/card | `VFX_ComposeCharacterAura` | migrated; visual approval pending |
 
 ### P4 decal semantic migration map — visual-owner gate
 
