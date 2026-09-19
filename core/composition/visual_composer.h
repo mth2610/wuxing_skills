@@ -123,15 +123,30 @@ void VFX_SmokeEmitter_SetDensity(int handle, float density01);
 void VFX_SmokeEmitter_Stop(int handle);
 void VFX_KillSmokeEmitter(int handle);
 
-// ── F3. Flame volume ────────────────────────────────────────────────────────
-// Legacy Emitter (P2 migration target): a fire that is a VOLUME rather than a sprite fan: black-body ramp, a core that
-// stays at the base, and a smoke hand-off as the body cools. Continuous — call
-// every frame; emission is a RATE derived from a live-count target, so density
-// does not move with the frame rate. `intensity` 0..1.
+// ── F3. Flame / Ambient Fire (Niagara NS_Fire & Flame Volume) ───────────────
+// Continuous fire with thermal buoyancy, Planck black-body cooling, vortex swirling
+// dynamics and smoke transition. Continuous — call every frame; emission is a RATE
+// derived from a live-count target, so density does not move with the frame rate.
+typedef enum {
+    VFX_FLAME_STYLE_NIAGARA_ROIL = 0, // UE5 Niagara Fire Roil 8x8 + Vortex Swirl (Default)
+    VFX_FLAME_STYLE_VOLUME = 1,       // Raymarched volume puff (4-channel packed sheet)
+    VFX_FLAME_STYLE_COLUMN = 2,       // Single vertical flame tongue column
+    VFX_FLAME_STYLE_PUFF = 3,         // Multi-sprite directionless puff
+    VFX_FLAME_STYLE_FIREBALL = 4,     // Dense swirling fireball
+    VFX_FLAME_STYLE_DEFAULT = VFX_FLAME_STYLE_NIAGARA_ROIL
+} VFX_FlameStyle;
+
+// Unified / Generalized API
+void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+void VFX_ComposeAmbientFire(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
 void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+
 int  VFX_FlameEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+int  VFX_FlameEmitter_SpawnEx(Vector3 pos, VC_MaterialId matId, float scale, float intensity, VFX_FlameStyle style);
 void VFX_FlameEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
 void VFX_FlameEmitter_SetIntensity(int handle, float intensity01);
+void VFX_FlameEmitter_SetStyle(int handle, VFX_FlameStyle style);
+void VFX_FlameEmitter_SetVortex(int handle, float strength);
 void VFX_FlameEmitter_Stop(int handle);
 void VFX_KillFlameEmitter(int handle);
 
