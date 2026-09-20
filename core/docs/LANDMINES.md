@@ -3672,3 +3672,16 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   G is density and B is self-shadow. Decode it as material mode 4, bind the
   paired `NORMAL_XY` atlas, and derive density as `1-G`. Guarded by
   `core/tests/fire_eoo_material_test.c`.
+
+## A complete default sprite must own its RGB (20/09/2026)
+
+- **Symptom:** the procedural default particle's white core becomes cyan or its
+  orange rim becomes yellow/red, depending on the emitter colour; CPU and GPU
+  variants disagree in the most visible region.
+- **Cause:** the billboard renderer multiplies texture RGB by particle RGB. A
+  structured default is a complete material, not a neutral alpha mask, so that
+  multiplication destroys its authored white-core/orange-rim hierarchy.
+- **Rule:** when no texture and no gradient is authored, retain the default
+  sprite's RGB and carry only particle alpha through its lifetime. Explicit
+  textures and gradients remain tintable. Apply the same rule before CPU and
+  GPU backend submission. Guarded by `core/tests/default_particle_sprite_test.c`.

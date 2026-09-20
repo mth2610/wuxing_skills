@@ -330,6 +330,10 @@ void DrawParticlesBody(Camera3D camera, Texture2D texture);
 void DrawParticlesEmission(Camera3D camera, Texture2D texture);
 void UnloadParticleSystem(void);
 
+/* Default CPU-particle sprite. It is a single soft round texture with a white
+ * hot core and orange rim; untextured particles receive it automatically. */
+Texture2D ParticleSystem_DefaultSprite(void);
+
 // ─── Đợt E / F1 — lit particles (core/docs/ELDEN_VFX_SPEC.md §0.1b, F1) ──────
 //
 // Flat-shaded smoke can only ever look like a decal OF smoke. Volume reads from
@@ -356,9 +360,9 @@ void UnloadParticleSystem(void);
 // fill-rate, and Mali is the constraint.
 /* THE GLOW SPRITE — a second default, for the halo half of a glowing particle.
  *
- * The particle system's fallback sprite is a SPARK: a compact Gaussian core in a
- * faint halo, which is the right shape for the thing that blooms. It is the
- * wrong shape for a glow. Scaled up to serve as a halo it reads as a DISC WITH
+ * The particle system's fallback sprite is a structured round spark: white core,
+ * orange rim, and soft coverage. It is the wrong shape for a large faint glow.
+ * Scaled up to serve as a halo it reads as a DISC WITH
  * AN EDGE, because most of its falloff happens near the rim — measured as a
  * visible circular boundary on mid-grey scenery (§7.6c).
  *

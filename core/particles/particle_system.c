@@ -307,6 +307,16 @@ void ParticleSystem_SpawnLegacy(ParticleConfig config)
 void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int renderMode)
 {
   ParticleConfig_Unify(&config);
+  if (config.render.texture.id == 0) {
+    config.render.texture = ParticleSystem_DefaultSprite();
+    /* This is a complete default appearance, not an alpha mask. Keep its
+       white-hot core/orange rim; authors still own lifetime alpha. A gradient
+       is an explicit colour treatment and remains authoritative. */
+    if (config.render.gradient == NULL) {
+      config.colorStart.r = config.colorStart.g = config.colorStart.b = 255;
+      config.colorEnd.r = config.colorEnd.g = config.colorEnd.b = 255;
+    }
+  }
   int targetIdx = Particle_AllocSlot();
   if (targetIdx == -1)
     return;
@@ -2220,8 +2230,43 @@ void ParticleSystem_SpawnGlow(ParticleConfig core)
     SpawnParticle(core);
 }
 
+static Texture2D s_defaultParticleSprite = {0};
 static Texture2D s_glowSprite = {0};
 static Texture2D s_sparkCapsuleSprite = {0};
+
+Texture2D ParticleSystem_DefaultSprite(void)
+{
+    if (s_defaultParticleSprite.id != 0) return s_defaultParticleSprite;
+    const int N = 128;
+    const float half = N * 0.5f;
+    const float radius = 0.84f;
+    const float feather = 0.22f;
+    Image img = GenImageColor(N, N, BLANK);
+    for (int y = 0; y < N; ++y) {
+        for (int x = 0; x < N; ++x) {
+            float px = ((float)x + 0.5f - half) / half;
+            float py = ((float)y + 0.5f - half) / half;
+            float dist = sqrtf(px * px + py * py);
+            float coverage = (radius - dist) / feather;
+            if (coverage < 0.0f) coverage = 0.0f;
+            if (coverage > 1.0f) coverage = 1.0f;
+            float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
+            float core = 1.0f - dist / 0.50f;
+            if (core < 0.0f) core = 0.0f;
+            if (core > 1.0f) core = 1.0f;
+            float whiteCore = core * core * (3.0f - 2.0f * core);
+            ImageDrawPixel(&img, x, y,
+                           (Color){255,
+                                   (unsigned char)(70.0f + 185.0f * whiteCore),
+                                   (unsigned char)(8.0f + 172.0f * whiteCore),
+                                   (unsigned char)(255.0f * alpha)});
+        }
+    }
+    s_defaultParticleSprite = LoadTextureFromImage(img);
+    SetTextureFilter(s_defaultParticleSprite, TEXTURE_FILTER_BILINEAR);
+    UnloadImage(img);
+    return s_defaultParticleSprite;
+}
 
 Texture2D ParticleSystem_GlowSprite(void)
 {

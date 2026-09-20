@@ -41,6 +41,16 @@ static bool ParticleManager_RequiresCpuFacing(const ParticleConfig *particle)
            (axis.x != 0.0f || axis.y != 0.0f || axis.z != 0.0f);
 }
 
+/* A textureless billboard selects the shared default material. Its RGB owns
+ * the white-core/orange-rim structure; particle authoring still controls alpha
+ * and lifetime. Gradients are explicit colour treatments, not defaults. */
+static Color ParticleManager_DefaultSpriteColor(Color color, bool defaultSprite)
+{
+    if (defaultSprite)
+        color.r = color.g = color.b = 255;
+    return color;
+}
+
 static void ParticleManager_ApplySource(ParticleEmitterRuntime *emitter,
                                         ParticleConfig *particle)
 {
@@ -201,6 +211,8 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
         ParticleManager_ApplySource(e, &spawned);
         if (e->gpu) {
             const ParticleConfig *p = &spawned;
+            bool defaultSpriteColors = p->render.texture.id == 0 &&
+                                       p->render.gradient == NULL;
             VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(p);
             VFXContrastLayer layer = appearance.surface == VFX_SURFACE_ADDITIVE
                                          ? VFX_CONTRAST_EMISSION
@@ -211,8 +223,8 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
                 boost = VFXContrast_ApplyEmissionIntensity(
                     boost, appearance.contrast);
             GpuParticleSystem_Spawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity,
-                .colorStart=VFXContrast_ApplyColor(p->colorStart, appearance.contrast, layer),
-                .colorEnd=VFXContrast_ApplyColor(p->colorEnd, appearance.contrast, layer), .radius=p->radius,
+                .colorStart=VFXContrast_ApplyColor(ParticleManager_DefaultSpriteColor(p->colorStart, defaultSpriteColors), appearance.contrast, layer),
+                .colorEnd=VFXContrast_ApplyColor(ParticleManager_DefaultSpriteColor(p->colorEnd, defaultSpriteColors), appearance.contrast, layer), .radius=p->radius,
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
                 .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
                 .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,
@@ -237,6 +249,8 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
         ParticleConfig_Unify(&canonical);
         const ParticleConfig *p = &canonical;
         VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(p);
+        bool defaultSpriteColors = p->render.texture.id == 0 &&
+                                   p->render.gradient == NULL;
         bool appearanceFitsGpu = p->render.appearance == VFX_APPEARANCE_INHERIT ||
                                  appearance.surface == VFX_SURFACE_ADDITIVE;
         if (e->gpu && appearanceFitsGpu && !ParticleManager_RequiresCpuFacing(p)) {
@@ -249,8 +263,8 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
                 boost = VFXContrast_ApplyEmissionIntensity(
                     boost, appearance.contrast);
             GpuParticleSystem_Spawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity,
-                .colorStart=VFXContrast_ApplyColor(p->colorStart, appearance.contrast, layer),
-                .colorEnd=VFXContrast_ApplyColor(p->colorEnd, appearance.contrast, layer), .radius=p->radius,
+                .colorStart=VFXContrast_ApplyColor(ParticleManager_DefaultSpriteColor(p->colorStart, defaultSpriteColors), appearance.contrast, layer),
+                .colorEnd=VFXContrast_ApplyColor(ParticleManager_DefaultSpriteColor(p->colorEnd, defaultSpriteColors), appearance.contrast, layer), .radius=p->radius,
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
                 .stretchMinSpeed=p->stretchMinSpeed, .collisionEnabled=p->collisionEnabled,
                 .collisionElasticity=p->collisionElasticity, .collisionFloorY=p->collisionFloorY,
@@ -314,7 +328,7 @@ void ParticleManager_Draw(Camera3D c, Texture2D t)
     DrawParticles(c, t);
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ADDITIVE);
-    GpuParticleSystem_Draw(c, t);
+    GpuParticleSystem_Draw(c, ParticleSystem_DefaultSprite());
     rlDrawRenderBatchActive();
     EndBlendMode();
     rlEnableDepthMask();
@@ -339,7 +353,7 @@ void ParticleManager_DrawEmission(Camera3D c, Texture2D t)
     rlDisableDepthMask();
     BeginBlendMode(BLEND_ADDITIVE);
     DrawParticlesEmission(c, t);
-    GpuParticleSystem_Draw(c, t);
+    GpuParticleSystem_Draw(c, ParticleSystem_DefaultSprite());
     rlDrawRenderBatchActive();
     EndBlendMode();
     rlEnableDepthMask();

@@ -467,13 +467,17 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
     d.vz = cfg.velocity.z;
     d.drag = cfg.drag;
     float boost = cfg.emissiveBoost > 0.0f ? cfg.emissiveBoost : 1.0f;
-    d.csr = (cfg.colorStart.r / 255.0f) * boost;
-    d.csg = (cfg.colorStart.g / 255.0f) * boost;
-    d.csb = (cfg.colorStart.b / 255.0f) * boost;
+    /* GPU particles use the shared structured default sprite. Its RGB is the
+       authored white-hot core/orange rim, so config colour contributes alpha
+       over lifetime only; multiplying cyan/yellow tint into it would erase the
+       material hierarchy. */
+    d.csr = boost;
+    d.csg = boost;
+    d.csb = boost;
     d.csa = cfg.colorStart.a / 255.0f;
-    d.cer = (cfg.colorEnd.r / 255.0f) * boost;
-    d.ceg = (cfg.colorEnd.g / 255.0f) * boost;
-    d.ceb = (cfg.colorEnd.b / 255.0f) * boost;
+    d.cer = boost;
+    d.ceg = boost;
+    d.ceb = boost;
     d.cea = cfg.colorEnd.a / 255.0f;
     d.life_rem = cfg.lifetime;
     d.life_max = cfg.lifetime;

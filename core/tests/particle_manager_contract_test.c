@@ -25,7 +25,7 @@ int main(void)
     bad += !Has("core/particles/particle_manager.c", "ParticleManager_Update(float dt) { if (!s_initialized) return; UpdateParticles(dt); GpuParticleSystem_Update(dt);");
     bad += !Has("core/particles/particle_manager.c", "void ParticleManager_DrawBody(Camera3D c, Texture2D t)");
     bad += !Has("core/particles/particle_manager.c", "void ParticleManager_DrawEmission(Camera3D c, Texture2D t)");
-    bad += !Has("core/particles/particle_manager.c", "GpuParticleSystem_Draw(c, t);");
+    bad += !Has("core/particles/particle_manager.c", "GpuParticleSystem_Draw(c, ParticleSystem_DefaultSprite());");
     bad += !Has("main.c", "VFXRender_BeginPass(VFX_RENDER_PASS_BODY);");
     bad += !Has("main.c", "VFXRender_BeginPass(VFX_RENDER_PASS_EMISSION);");
     bad += !Has("main.c", "ParticleManager_DrawBody(camera, particleTexture);");
