@@ -17,7 +17,7 @@ Tia lửa trong Niagara UE5 được xây dựng dựa trên nguyên lý **Phát
 
 | Thành Phần | Material / Texture Trong UE | Asset Đã Trích Xuất (`extracted_flipbooks/`) |
 | :--- | :--- | :--- |
-| **Sparks Billboard** | `MI_Sparks`, `T_Spark` | `extracted_flipbooks/Textures/T_MuzzleFlash.png` (dạng kéo dãn) |
+| **Sparks Billboard** | `MI_Sparks`, `T_Spark` | `extracted_flipbooks/Textures/T_MuzzleFlash.png` (dạng kéo dãn; raw `M_Sparks` còn dùng procedural `Sprite_Capsule` + `MF_MotionStretchSpark`, không phải hai layer sprite body/core) |
 | **Core Flash** | `M_BrightCore`, `MI_Flare` | `extracted_flipbooks/Flares/T_Flare_Round.png` |
 | **Smoke Puff Light**| `MI_SmokePuffLight_8x8`, `T_SmokePuffLight_EOO_Loop` | `extracted_flipbooks/Sprites/T_SmokePuff.png` |
 

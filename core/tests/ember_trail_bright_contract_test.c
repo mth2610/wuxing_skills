@@ -44,6 +44,8 @@ static int Has(const char *path, const char *needle)
 int main(void)
 {
     const char *path = "core/composition/common/vc_ember_trail.inl";
+    const char *sync = "scripts/sync_vfx_test.py";
+    const char *manifest = "scripts/vfx_test_manifest.json";
     int failed = 0;
 
 #define CHECK(text, message) do { \
@@ -87,6 +89,10 @@ int main(void)
        hot-core boost.  The centre must still clear PostFX's 1.25 threshold. */
     CHECK_NUM(0.90f * 0.80f * 5.0f > 1.25f,
               "the occluding hot core must contain real HDR bloom energy");
+    CHECK_NUM(Has(sync, "[PARTICLE] EMBER MOTES") &&
+              Has(sync, "\"modules\": [\"particle\"]") &&
+              Has(manifest, "\"label\": \"[PARTICLE] EMBER MOTES\""),
+              "the fixture must identify the current effect as particle ember motes, not a trail");
 
     puts(failed ? "ember trail bright contract: FAIL"
                 : "ember trail bright contract: PASS");

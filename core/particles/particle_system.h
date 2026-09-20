@@ -374,6 +374,11 @@ void UnloadParticleSystem(void);
  * Created on first use; owned by the particle system, valid until shutdown. */
 Texture2D ParticleSystem_GlowSprite(void);
 
+/* Straight-alpha-safe spark capsule for velocity-stretched particles. It bakes
+ * a white core, orange rim, and soft alpha in one sprite so HDR bloom widens
+ * the same silhouette rather than exposing a second geometry layer. */
+Texture2D ParticleSystem_SparkCapsuleSprite(void);
+
 /* SPAWN A GLOWING PARTICLE — ONE draw, premultiplied.
  *
  * This used to spawn two: an additive core plus a large faint halo, because

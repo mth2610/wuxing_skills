@@ -135,6 +135,27 @@ static inline Vector3 VC_DirCone(Vector3 dir, float coneRad, float u1, float u2)
                                  Vector3Scale(t2, s * sinf(phi))));
 }
 
+// Area-uniform direction inside a cone. VC_DirCone samples theta linearly,
+// which is useful when an authored effect wants a dense axis, but a physical
+// burst needs equal probability per unit solid angle or its sparks clump into
+// one bright central rope. `dir` must be non-zero; callers own that semantic
+// fallback because only they know which axis is meaningful.
+static inline Vector3 VC_DirConeUniform(Vector3 dir, float coneRad,
+                                        float u1, float u2)
+{
+    Vector3 d = Vector3Normalize(dir);
+    Vector3 ref = (fabsf(d.y) < 0.99f) ? (Vector3){0.0f, 1.0f, 0.0f}
+                                       : (Vector3){1.0f, 0.0f, 0.0f};
+    Vector3 t1 = Vector3Normalize(Vector3CrossProduct(d, ref));
+    Vector3 t2 = Vector3CrossProduct(d, t1);
+    float phi = u1 * 2.0f * PI;
+    float cosTheta = 1.0f - u2 * (1.0f - cosf(coneRad));
+    float sinTheta = sqrtf(fmaxf(0.0f, 1.0f - cosTheta * cosTheta));
+    return Vector3Add(Vector3Scale(d, cosTheta),
+                      Vector3Add(Vector3Scale(t1, sinTheta * cosf(phi)),
+                                 Vector3Scale(t2, sinTheta * sinf(phi))));
+}
+
 // ---------------------------------------------------------------------------
 // Shaper vô hướng (modifier cho size/alpha/emissive theo thời gian)
 // ---------------------------------------------------------------------------

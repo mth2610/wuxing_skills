@@ -2221,6 +2221,7 @@ void ParticleSystem_SpawnGlow(ParticleConfig core)
 }
 
 static Texture2D s_glowSprite = {0};
+static Texture2D s_sparkCapsuleSprite = {0};
 
 Texture2D ParticleSystem_GlowSprite(void)
 {
@@ -2244,6 +2245,43 @@ Texture2D ParticleSystem_GlowSprite(void)
     SetTextureFilter(s_glowSprite, TEXTURE_FILTER_BILINEAR);
     UnloadImage(img);
     return s_glowSprite;
+}
+
+Texture2D ParticleSystem_SparkCapsuleSprite(void)
+{
+    if (s_sparkCapsuleSprite.id != 0) return s_sparkCapsuleSprite;
+    const int N = 128;
+    const float half = N * 0.5f;
+    const float halfSegment = 0.62f;
+    const float capsuleRadius = 0.22f;
+    const float feather = 0.090f;
+    Image img = GenImageColor(N, N, BLANK);
+    for (int y = 0; y < N; ++y) {
+        for (int x = 0; x < N; ++x) {
+            float px = ((float)x + 0.5f - half) / half;
+            float py = ((float)y + 0.5f - half) / half;
+            float qy = fabsf(py) - halfSegment;
+            if (qy < 0.0f) qy = 0.0f;
+            float dist = sqrtf(px * px + qy * qy);
+            float coverage = (capsuleRadius - dist) / feather;
+            if (coverage < 0.0f) coverage = 0.0f;
+            if (coverage > 1.0f) coverage = 1.0f;
+            float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
+            float core = 1.0f - dist / (capsuleRadius * 0.72f);
+            if (core < 0.0f) core = 0.0f;
+            if (core > 1.0f) core = 1.0f;
+            float whiteCore = core * core * (3.0f - 2.0f * core);
+            ImageDrawPixel(&img, x, y,
+                           (Color){255,
+                                   (unsigned char)(70.0f + 185.0f * whiteCore),
+                                   (unsigned char)(8.0f + 172.0f * whiteCore),
+                                   (unsigned char)(255.0f * alpha)});
+        }
+    }
+    s_sparkCapsuleSprite = LoadTextureFromImage(img);
+    SetTextureFilter(s_sparkCapsuleSprite, TEXTURE_FILTER_BILINEAR);
+    UnloadImage(img);
+    return s_sparkCapsuleSprite;
 }
 
 void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config) {

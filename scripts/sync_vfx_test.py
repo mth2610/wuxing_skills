@@ -159,6 +159,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeDebrisShards":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeDissolveExit":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeEnergyBurst":        ("event",   "burst",      "oneshot"),
+    "VFX_ComposeEmberBurst":        ("event",   "burst",      "oneshot"),
     "VFX_ComposeGlintSparkle":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeGroundWave":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeImpactPackage":      ("event",   "burst",      "oneshot"),
@@ -260,6 +261,10 @@ FIXTURE_SPAWN_OVERRIDES = {
 # separate from persistent spawn overrides: a trigger call has no stored handle
 # and must not be treated as a frame-fed fixture.
 FIXTURE_EVENT_OVERRIDES = {
+    # Severity is intensity, not timeline progress. Exercise the full authored
+    # population so the bench reveals ribbon length, arc and bounce quality.
+    "VFX_ComposeEmberBurst":
+        "VFX_ComposeEmberBurst($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 1.0f)",
     # Event fixtures trigger at progress zero. Muzzle intensity is not a
     # timeline parameter, so the generic $PROG inference would spawn nothing.
     "VFX_ComposeMuzzleFlash":
@@ -314,6 +319,18 @@ FIXTURE_METADATA_OVERRIDES = {
     "VFX_ComposeGasPlume": {
         "label": "[GAS] GAS PLUME",
         "modules": ["gas"],
+    },
+    # This persistent follower sheds independent floating fire particles.  It
+    # does not build connected trail geometry, so calling the bench fixture a
+    # trail obscures both its visual role and its implementation cost.  Reserve
+    # EMBER BURST for the ballistic spark primary used by explosions.
+    "VFX_ComposeEmberTrail": {
+        "label": "[PARTICLE] EMBER MOTES",
+        "modules": ["particle"],
+    },
+    "VFX_ComposeEmberBurst": {
+        "label": "[PARTICLE] EMBER BURST",
+        "modules": ["particle"],
     },
     "VFX_ComposeLightningGroundRicochet": {
         "label": "LIGHTNING IMPACT",

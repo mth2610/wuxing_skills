@@ -776,6 +776,30 @@ spawn at: `strength = (factor - 1) / speed`. For a 4 m/s spark wanting a 5x
 streak, that is 1.0, not 0.1. Also set `stretchMinSpeed` below the slowest
 speed in the population, or the slow tail silently opts out of stretching.
 
+## A spark streak is not automatically a ribbon (20/09/2026)
+
+**Symptom.** A radial spark burst draws long, hair-thin orange wires with tiny
+bright dots at their tips. Increasing trail brightness makes the wires more
+obvious without making the particles read as hot fragments.
+
+**Cause.** The source Niagara material `M_Sparks` builds a masked analytic
+capsule (`Sprite_Capsule` + `MF_MotionStretchSpark`) on a velocity-facing sprite.
+Recreating that silhouette with particle trail history changes the primitive:
+the whole travelled path becomes persistent ribbon geometry.
+
+A second failure can survive that correction: a broad capsule mask combined
+with a strength that sends every particle into the renderer's 3.5x stretch cap,
+plus a nearly full-width high-energy additive duplicate, reads as one thick
+white lozenge. It loses both speed variation and the narrow hot filament.
+
+**Rule.** Inspect the source material graph before mapping a visual streak to a
+Core primitive. For `M_Sparks`, use one `ParticleSystem_SparkCapsuleSprite()`
+with velocity facing and `stretchStrength`; keep `trailLength = 0`. Its texture
+must own the soft alpha, orange rim, and white core; HDR intensity lets bloom
+blur that single silhouette into the visible glow. A second sprite layer turns
+the core and rim into exposed concentric borders. Add a ribbon only when the
+reference owns a continuous path, not merely an elongated particle silhouette.
+
 ## Thickness is a ratio against the thing's OWN length (28/07/2026)
 
 **Symptom.** A new VFX is not broken and not ugly, but reads as the wrong

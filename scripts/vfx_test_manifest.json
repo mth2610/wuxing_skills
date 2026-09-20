@@ -129,16 +129,33 @@
       "draw_call": "VFX_ComposeDissolveExit($POS, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
+      "source": "common/vc_ember_burst.inl",
+      "fn": "VFX_ComposeEmberBurst",
+      "label": "[PARTICLE] EMBER BURST",
+      "category": "fire",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeEmberBurst($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 1.0f)",
+      "modules": [
+        "particle"
+      ]
+    },
+    {
       "source": "common/vc_ember_trail.inl",
       "fn": "VFX_ComposeEmberTrail",
-      "label": "EMBER TRAIL",
+      "label": "[PARTICLE] EMBER MOTES",
       "category": "fire",
       "fixture": "persistent",
       "lifecycle": "emitter",
       "_auto": true,
       "type": "persistent",
       "spawn_call": "VFX_ComposeEmberTrail($POS, $VELOCITY, VC_MAT_FIRE, 1.5f, 14.0f)",
-      "kill_fn": "VFX_KillEmberTrail"
+      "kill_fn": "VFX_KillEmberTrail",
+      "modules": [
+        "particle"
+      ]
     },
     {
       "source": "common/vc_energy_burst.inl",

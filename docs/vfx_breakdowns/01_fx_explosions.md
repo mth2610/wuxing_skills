@@ -27,7 +27,7 @@ Một vụ nổ chuẩn điện ảnh (cinematic explosion) trong Unreal Engine 
 | **NE_Explosion** | `MI_ExplosionRoil_8x8`, `T_ExplosionRoil_EOO_Loop` | `extracted_flipbooks/Sprites/T_ExplosionRoil.png` (Atlas 8x8, 64 frames) |
 | **NE_DustExplosion**| `MI_ExplosionRoil_8x8` (Albedo + Normal) | `extracted_flipbooks/Sprites/T_SmokeRoil.png` / `T_SmokePuff.png` |
 | **NE_GroundDust** | `MI_ExplosionRoil_8x8` | `extracted_flipbooks/BakedAtlas/NS_ExplosionRoil_BakedAtlas_Alpha.png` |
-| **NE_SparkDebris** | `MI_Sparks`, `T_Spark` | `extracted_flipbooks/Textures/T_MuzzleFlash.png` (dạng stretch) |
+| **NE_SparkDebris** | `MI_Sparks`, `T_Spark` | `extracted_flipbooks/Textures/T_MuzzleFlash.png` (dạng stretch; raw material là procedural capsule + motion stretch, một sprite cho mỗi ember) |
 | **NE_Debris** | `MI_Pebbles`, `MI_SimpleDebris` | Mesh hình sỏi đa diện hoặc Billboard mảnh vụn |
 
 ---

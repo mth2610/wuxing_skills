@@ -14,7 +14,7 @@
 // than editing it here, or the next sync will overwrite the edit.
 
 // @gen:common_includes begin
-// 23 include(s) — auto-managed by sync_vfx_test.py
+// 24 include(s) — auto-managed by sync_vfx_test.py
 #include "vc_common.inl"
 #include "vc_smoke_puff.inl"
 #include "vc_smoke_volume.inl"
@@ -38,6 +38,7 @@
 #include "vc_flare.inl"
 #include "vc_mist_veil.inl"
 #include "vc_muzzle_flash.inl"
+#include "vc_ember_burst.inl"
 // @gen:common_includes end
 
 // Pool-owned one-shot primitive; its public API is VFX_LightningArc_* rather

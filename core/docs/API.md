@@ -272,6 +272,7 @@ _Inline helpers / macros only — see header._
   void DrawParticlesEmission(Camera3D camera, Texture2D texture);
   void UnloadParticleSystem(void);
   Texture2D ParticleSystem_GlowSprite(void);
+  Texture2D ParticleSystem_SparkCapsuleSprite(void);
   void ParticleSystem_SpawnGlow(ParticleConfig core);
   void ParticleSystem_SetLighting(float strength01, float scatter01);
   void ParticleSystem_GetLighting(float *outStrength, float *outScatter);
@@ -997,6 +998,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeContactSparkMode(Vector3 pos, VC_MaterialId matId, float scale, float severity01, ContactSparkMode mode);
   void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
+  void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
   int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   void VFX_ComposeFlare(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
