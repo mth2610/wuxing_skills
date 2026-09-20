@@ -98,6 +98,8 @@ static void Test_SpecIsPresentAndComplete(void) {
         "LIGHT6 layout is defined for directional smoke flipbooks");
   CHECK(FileHas(spec, "| `SMOKE_EOO` | `light` | `transmittance` | `unused` | `opacity` |"),
         "SMOKE_EOO layout is defined for extracted smoke data");
+  CHECK(FileHas(spec, "| `FIRE_EOO` | `emission` | `transmittance` | `unused` | `opacity` |"),
+        "FIRE_EOO layout is defined for extracted fire data");
   CHECK(FileHas(spec, "| `NORMAL_XY` | `normalx` | `normaly` | `unused` | `unused` |"),
         "NORMAL_XY layout is defined for the companion normal atlas");
   CHECK(FileHas(spec, "`STRETCH` and `TILE` cannot be the same channel"),
@@ -152,7 +154,7 @@ static void Test_EveryAssetDeclaresALayout(void) {
   }
 
   static const char *kLayouts[] = {"STRAND", "FLOW", "OPAQUE", "FLIPBOOK",
-                                   "VOLUME", "MOTION", "LIGHT6", "SMOKE_EOO",
+                                   "VOLUME", "MOTION", "LIGHT6", "SMOKE_EOO", "FIRE_EOO",
                                    "NORMAL_XY", "NOISE", "SPLIT_LEGACY"};
   const char *needle = "\"channels\": \"";
   int total = 0, ok = 0, packed = 0, legacy = 0;

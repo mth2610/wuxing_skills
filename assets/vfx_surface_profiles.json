@@ -522,7 +522,7 @@
       "projection": "primitive_defined",
       "approval": "preview_only",
       "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
-      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "budget": { "max_draw_calls": 1, "max_textures": 2 },
       "flipbook": [8, 8, 64],
       "seam": "not_applicable",
       "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_FireRoil_Flipbook.",
@@ -530,7 +530,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/vfx/flipbooks/fireroil_8x8.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit fire roil"
+          "channels": "FIRE_EOO | R:emission/CLAMP | G:transmittance/CLAMP | B:unused/CLAMP | A:opacity/CLAMP — measured extracted fire: emission plus extinction structure, not display RGB"
+        },
+        "normal": {
+          "path": "assets/textures/vfx/flipbooks/fireroil_normals_8x8.png",
+          "channels": "NORMAL_XY | R:normalx/CLAMP | G:normaly/CLAMP | B:unused/CLAMP | A:unused/CLAMP — signed tangent-space XY with shader-reconstructed positive Z"
         }
       }
     },
@@ -545,7 +549,7 @@
       "projection": "primitive_defined",
       "approval": "preview_only",
       "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
-      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "budget": { "max_draw_calls": 1, "max_textures": 2 },
       "flipbook": [8, 8, 64],
       "seam": "not_applicable",
       "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Fireball_Flipbook.",
@@ -553,7 +557,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/vfx/flipbooks/fireball_8x8.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit fireball"
+          "channels": "FIRE_EOO | R:emission/CLAMP | G:transmittance/CLAMP | B:unused/CLAMP | A:opacity/CLAMP — measured extracted fire: emission plus extinction structure, not display RGB"
+        },
+        "normal": {
+          "path": "assets/textures/vfx/flipbooks/fireball_normals_8x8.png",
+          "channels": "NORMAL_XY | R:normalx/CLAMP | G:normaly/CLAMP | B:unused/CLAMP | A:unused/CLAMP — signed tangent-space XY with shader-reconstructed positive Z"
         }
       }
     },

@@ -41,6 +41,7 @@ in R G B A order, even when a channel is unused.
 | `MOTION` | `flowx` | `flowy` | `speed` | `mask` |
 | `LIGHT6` | `lightx` | `lighty` | `lightz` | `opacity` or `ao` |
 | `SMOKE_EOO` | `light` | `transmittance` | `unused` | `opacity` |
+| `FIRE_EOO` | `emission` | `transmittance` | `unused` | `opacity` |
 | `NORMAL_XY` | `normalx` | `normaly` | `unused` | `unused` |
 | `NOISE` | `field` | `field` | `field` | `field` |
 
@@ -72,9 +73,10 @@ for baked ambient occlusion. It is for participating, non-emissive material
 such as smoke—not the incandescent flame core. Its grid matches an optional
 `MOTION` atlas and every channel is `CLAMP`.
 
-`SMOKE_EOO` + `NORMAL_XY` describe the imported Niagara smoke pair. They are
-not six-way maps: the first sheet carries measured baked internal light in R,
-transmittance/occlusion in G and coverage in A; the companion stores signed
+`SMOKE_EOO`/`FIRE_EOO` + `NORMAL_XY` describe imported Niagara material pairs.
+They are not six-way maps: smoke R carries measured internal light while fire R
+carries emission; both use G for transmittance, B is unused and A is coverage.
+The companion stores signed
 tangent-space normal XY in RG and reconstructs positive Z in the shader. Their
 constant source channels remain explicit packing debt while these profiles are
 `preview_only`; approval requires a lossless repack or a reviewed exception.

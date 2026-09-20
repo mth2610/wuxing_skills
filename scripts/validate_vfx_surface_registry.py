@@ -52,6 +52,7 @@ LAYOUTS = {
     # internal light, G is transmittance/occlusion, B is empty in this pack,
     # and A owns coverage. The companion is BC5-style tangent-space XY.
     "SMOKE_EOO": {"R": {"light"}, "G": {"transmittance"}, "B": {"unused"}, "A": {"opacity"}},
+    "FIRE_EOO": {"R": {"emission"}, "G": {"transmittance"}, "B": {"unused"}, "A": {"opacity"}},
     "NORMAL_XY": {"R": {"normalx"}, "G": {"normaly"}, "B": {"unused"}, "A": {"unused"}},
     # Pure data: four decorrelated scalar fields. Never drawn.
     "NOISE":    {"R": {"field"}, "G": {"field"}, "B": {"field"}, "A": {"field"}},
@@ -222,7 +223,7 @@ def check_channels(label, text, flipbook):
         # explicitly deprecated bucket may carry a constant one, and it is
         # counted as debt rather than waved through.
         if slot == "unused":
-            if layout in ("SPLIT_LEGACY", "SMOKE_EOO", "NORMAL_XY"):
+            if layout in ("SPLIT_LEGACY", "SMOKE_EOO", "FIRE_EOO", "NORMAL_XY"):
                 DEBT.append(f"{label}: {channel} constant (R6)")
             else:
                 failures += fail(
@@ -248,7 +249,7 @@ def check_channels(label, text, flipbook):
     # celled too — it is the same ray-marched sheet as FLIPBOOK, differing in
     # what the channels MEAN (four scalar fields, no colour), not in whether it
     # is a grid of frames.
-    CELLED = ("FLIPBOOK", "VOLUME", "MOTION", "LIGHT6", "SMOKE_EOO", "NORMAL_XY")
+    CELLED = ("FLIPBOOK", "VOLUME", "MOTION", "LIGHT6", "SMOKE_EOO", "FIRE_EOO", "NORMAL_XY")
     has_cells = isinstance(flipbook, list) and len(flipbook) == 3 and flipbook[2] > 0
     if has_cells and layout not in CELLED:
         failures += fail(f"{label}: profile declares flipbook cells but layout is {layout}")

@@ -70,6 +70,8 @@ static Texture2D s_fvolFlameTex = {0};   // the COLUMN sheet
 static Texture2D s_fvolPuffTex = {0};    // the PUFF sheet
 static Texture2D s_fvolRoilTex = {0};    // UE5 Niagara 8x8 Fire Roil (fireroil_8x8.png)
 static Texture2D s_fvolFireballTex = {0}; // UE5 Niagara 8x8 Fireball (fireball_8x8.png)
+static Texture2D s_fvolRoilNormalTex = {0};
+static Texture2D s_fvolFireballNormalTex = {0};
 static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
 // How many body sprites are ALIVE at once — the quantity the eye judges, and
 // the one the emission rate is derived from (rate = live / average lifetime).
@@ -367,6 +369,7 @@ static void FVol_InitShared(void)
     const VFX_SurfaceProfile *roilProfile =
         VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_ROIL_NIAGARA);
     s_fvolRoilTex = roilProfile != NULL ? roilProfile->body : (Texture2D){0};
+    s_fvolRoilNormalTex = roilProfile != NULL ? roilProfile->normalMap : (Texture2D){0};
     if (s_fvolRoilTex.id != 0)
     {
         SetTextureFilter(s_fvolRoilTex, TEXTURE_FILTER_BILINEAR);
@@ -378,6 +381,7 @@ static void FVol_InitShared(void)
     const VFX_SurfaceProfile *fireballProfile =
         VFX_SurfaceRegistry_Get(VFX_SURFACE_FIREBALL_NIAGARA);
     s_fvolFireballTex = fireballProfile != NULL ? fireballProfile->body : (Texture2D){0};
+    s_fvolFireballNormalTex = fireballProfile != NULL ? fireballProfile->normalMap : (Texture2D){0};
     if (s_fvolFireballTex.id != 0)
     {
         SetTextureFilter(s_fvolFireballTex, TEXTURE_FILTER_BILINEAR);
@@ -915,8 +919,10 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
             .alphaCurve = &s_fvolFade,
             .speedCurve = &s_fvolRise,
             .render.blendMode = (useRoil || useFireball) ? VFX_BLEND_PREMULTIPLIED : ((useAtlas && s_fvolBodyBlend > 0.5f) ? VFX_BLEND_ADDITIVE : VFX_BLEND_ALPHA),
-            .render.volumeSheet = (useRoil || useFireball) ? 2 : 0,
+            .render.volumeSheet = (useRoil || useFireball) ? 4 : 0,
             .render.rampLUT = (useRoil || useFireball) ? FVol_RampLUT(matId) : (Texture2D){0},
+            .render.normalTex = useRoil ? s_fvolRoilNormalTex
+                                        : (useFireball ? s_fvolFireballNormalTex : (Texture2D){0}),
             .render.heatGain = (useRoil || useFireball) ? s_fvolHeatGain : 1.0f,
             // Additive accumulates, so each sprite must contribute LESS or a few
             // overlapping tongues clip straight to white.

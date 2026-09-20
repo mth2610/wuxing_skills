@@ -3620,7 +3620,7 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   Validate on matched dark and bright plates; particle count alone cannot reveal
   the overdraw. Guarded by `core/tests/flame_volume_optics_test.c`.
 
-## Imported smoke channels are material data, not display RGB (20/09/2026)
+## Imported EOO channels are material data, not display RGB (20/09/2026)
 
 - **Symptom:** extracted smoke turns green when drawn as colour, or becomes flat,
   disconnected alpha patches after RGB is discarded.
@@ -3643,3 +3643,8 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   selector. EOO smoke is `u_volumeSheet == 3`, reusing the established packed
   material state boundary rather than introducing a parallel boolean. Keep the
   branch before the packed-fire decoder and exclude mode 3 from flame UV warp.
+- **Fire variant:** extracted fire uses R as emission, G as transmittance, B as
+  unused and A as coverage. It is not the engine-authored `VOLUME` layout where
+  G is density and B is self-shadow. Decode it as material mode 4, bind the
+  paired `NORMAL_XY` atlas, and derive density as `1-G`. Guarded by
+  `core/tests/fire_eoo_material_test.c`.

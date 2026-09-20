@@ -1522,7 +1522,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       if (p->smokeSheet != curSmokeSheet || p->normalTexId != curNormalTex)
       {
         rlDrawRenderBatchActive();
-        if (s_litActive && p->smokeSheet && p->normalTexId != 0 && s_locNormalTex >= 0)
+        if (s_litActive && p->normalTexId != 0 && s_locNormalTex >= 0)
         {
           Texture2D nTex = {0};
           nTex.id = p->normalTexId;

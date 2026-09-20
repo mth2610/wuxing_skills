@@ -73,7 +73,7 @@ static void Test_SurfaceProfile(void)
     CHECK(FileContains("scripts/validate_vfx_surface_registry.py", "\"MOTION\":"),
           "surface validator recognizes optical-flow atlases");
     CHECK(FileContains("scripts/validate_vfx_surface_registry.py",
-                       "CELLED = (\"FLIPBOOK\", \"VOLUME\", \"MOTION\", \"LIGHT6\", \"SMOKE_EOO\", \"NORMAL_XY\")"),
+                       "CELLED = (\"FLIPBOOK\", \"VOLUME\", \"MOTION\", \"LIGHT6\", \"SMOKE_EOO\", \"FIRE_EOO\", \"NORMAL_XY\")"),
           "surface validator permits cells only on celled motion atlases");
     CHECK(FileContains("core/vfx_surface_registry.generated.inl", "pure_flame_puff_motion_8x8.png"),
           "vfx_surface_registry.generated.inl has generated flowPath for fire_volume");

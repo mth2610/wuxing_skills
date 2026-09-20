@@ -224,6 +224,13 @@ vec3 ParticleNormalLocal(float texA)
     return n;
 }
 
+vec3 ParticleNormalXY(vec4 normalSample)
+{
+    vec2 xy = normalSample.rg * 2.0 - 1.0;
+    float z = sqrt(max(1.0 - dot(xy, xy), 0.0));
+    return normalize(vec3(xy, z));
+}
+
 // Compute the tangent basis (T, B) of the quad in world space from screen derivatives.
 // Tangent T points along increasing u (+X Right in texture space).
 // Bitangent B points along increasing v (+Y Bottom in texture space).
@@ -551,6 +558,30 @@ void main()
     }
 
     float soft = (u_softFade > 0.0) ? SoftParticle_Factor(u_softFade) : 1.0;
+
+    // ── EXTRACTED FIRE EOO + NORMAL ATLAS (MODE 4) ───────────────────────
+    // R is emission, G is transmittance, B is unused and A is coverage.
+    // This is neither display RGB nor the engine-authored VOLUME packing.
+    if (u_volumeSheet > 3.5)
+    {
+        vec4 normalSample = texture(u_normalTex, sampleUV);
+        vec3 fireN = ParticleNormalWorld(ParticleNormalXY(normalSample));
+        float wrap;
+        vec3 envLit = ParticleLightTerm(fireN, ParticleLightDir(), wrap);
+
+        float density = clamp(1.0 - texelColor.g, 0.0, 1.0);
+        float coverage = texelColor.a * fragColor.a * soft;
+        float heat = clamp(texelColor.r * u_heatGain * fragColor.r, 0.0, 1.0);
+        float flameMask = smoothstep(0.015, 0.55, texelColor.r);
+        vec3 rampCol = texture(u_rampLUT, vec2(heat, 0.5)).rgb;
+        vec3 flame = rampCol * flameMask * coverage * u_emissiveBoost;
+
+        float bodyAlpha = coverage * density;
+        vec3 smoke = u_smokeTint * envLit * bodyAlpha;
+        if (coverage < 0.005 && bodyAlpha < 0.005) discard;
+        finalColor = vec4(flame + smoke, bodyAlpha);
+        return;
+    }
 
     // ── EXTRACTED EOO SMOKE + NORMAL ATLAS (MODE 3) ──────────────────────
     // Keep the sheet's two independent structure signals. Alpha alone is only
