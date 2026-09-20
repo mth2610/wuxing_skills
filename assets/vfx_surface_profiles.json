@@ -298,7 +298,7 @@
       "projection": "primitive_defined",
       "approval": "preview_only",
       "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
-      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "budget": { "max_draw_calls": 1, "max_textures": 2 },
       "flipbook": [8, 8, 64],
       "seam": "not_applicable",
       "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Smoke_Roil_Flipbook.",
@@ -306,7 +306,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/vfx/flipbooks/smoke_roil_8x8.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit smoke roil"
+          "channels": "SMOKE_EOO | R:light/CLAMP | G:transmittance/CLAMP | B:unused/CLAMP | A:opacity/CLAMP — measured extracted smoke: R preserves internal light detail, G is inverse-correlated transmittance/occlusion, B is constant zero, A is coverage"
+        },
+        "normal": {
+          "path": "assets/textures/vfx/flipbooks/smoke_roil_normals_8x8.png",
+          "channels": "NORMAL_XY | R:normalx/CLAMP | G:normaly/CLAMP | B:unused/CLAMP | A:unused/CLAMP — signed tangent-space XY with shader-reconstructed positive Z; B near zero and A constant"
         }
       }
     },
@@ -321,7 +325,7 @@
       "projection": "primitive_defined",
       "approval": "preview_only",
       "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
-      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "budget": { "max_draw_calls": 1, "max_textures": 2 },
       "flipbook": [8, 8, 64],
       "seam": "not_applicable",
       "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Smoke_Puff_Flipbook.",
@@ -329,7 +333,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/vfx/flipbooks/smoke_puff_8x8.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit dark smoke puff"
+          "channels": "SMOKE_EOO | R:light/CLAMP | G:transmittance/CLAMP | B:unused/CLAMP | A:opacity/CLAMP — measured extracted smoke: R preserves internal light detail, G is inverse-correlated transmittance/occlusion, B is constant zero, A is coverage"
+        },
+        "normal": {
+          "path": "assets/textures/vfx/flipbooks/smoke_puff_normals_8x8.png",
+          "channels": "NORMAL_XY | R:normalx/CLAMP | G:normaly/CLAMP | B:unused/CLAMP | A:unused/CLAMP — signed tangent-space XY with shader-reconstructed positive Z; B near zero and A constant"
         }
       }
     },
@@ -344,7 +352,7 @@
       "projection": "primitive_defined",
       "approval": "preview_only",
       "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
-      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "budget": { "max_draw_calls": 1, "max_textures": 2 },
       "flipbook": [8, 8, 64],
       "seam": "not_applicable",
       "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Smoke_Puff_Light_Flipbook.",
@@ -352,7 +360,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/vfx/flipbooks/smoke_puff_light_8x8.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit light smoke puff"
+          "channels": "SMOKE_EOO | R:light/CLAMP | G:transmittance/CLAMP | B:unused/CLAMP | A:opacity/CLAMP — extracted EOO smoke data; alpha owns coverage"
+        },
+        "normal": {
+          "path": "assets/textures/vfx/flipbooks/smoke_puff_light_normals_8x8.png",
+          "channels": "NORMAL_XY | R:normalx/CLAMP | G:normaly/CLAMP | B:unused/CLAMP | A:unused/CLAMP — signed tangent-space XY with shader-reconstructed positive Z"
         }
       }
     },
@@ -367,7 +379,7 @@
       "projection": "primitive_defined",
       "approval": "preview_only",
       "lifecycle": { "seconds": 0.0, "fade_in": 0.0, "fade_out": 0.0 },
-      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "budget": { "max_draw_calls": 1, "max_textures": 2 },
       "flipbook": [8, 8, 64],
       "seam": "not_applicable",
       "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Smoke_Wispy_Flipbook.",
@@ -375,7 +387,11 @@
       "assets": {
         "body": {
           "path": "assets/textures/vfx/flipbooks/smoke_wispy_8x8.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — extracted pre-lit wispy smoke"
+          "channels": "SMOKE_EOO | R:light/CLAMP | G:transmittance/CLAMP | B:unused/CLAMP | A:opacity/CLAMP — extracted EOO smoke data; alpha owns coverage"
+        },
+        "normal": {
+          "path": "assets/textures/vfx/flipbooks/smoke_wispy_normals_8x8.png",
+          "channels": "NORMAL_XY | R:normalx/CLAMP | G:normaly/CLAMP | B:unused/CLAMP | A:unused/CLAMP — signed tangent-space XY with shader-reconstructed positive Z"
         }
       }
     },
@@ -607,6 +623,75 @@
         "body": {
           "path": "assets/textures/vfx/flares/lens_flare_ring.png",
           "channels": "OPAQUE | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — pre-lit horizontal anamorphic streak; legacy filename"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_MUZZLE_FLASH_FRONT_NIAGARA",
+      "name": "muzzle_flash_front_niagara",
+      "primitive": "puff",
+      "role": "impact",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "additive",
+      "projection": "camera_facing_billboard_variant_atlas",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.08, "fade_in": 0.0, "fade_out": 0.05 },
+      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "flipbook": [4, 1, 4],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py. Source: T_MuzzleFlash. Visual inspection confirms four tall spatial variants; consumers select and hold one cell per shot.",
+      "consumers": ["VFX_ComposeMuzzleFlash camera-facing fill"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/weapons/muzzle_flash_front.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — four pre-lit muzzle-flame spatial variants"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_MUZZLE_FLASH_SIDE_NIAGARA",
+      "name": "muzzle_flash_side_niagara",
+      "primitive": "fire_tongue",
+      "role": "impact",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "additive",
+      "projection": "authored_axis_cross_billboard_variant_atlas",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.08, "fade_in": 0.0, "fade_out": 0.05 },
+      "budget": { "max_draw_calls": 2, "max_textures": 1 },
+      "flipbook": [2, 1, 2],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py. Source: T_MuzzleFlash_Side. Visual inspection confirms two tall spatial variants; consumers align atlas +V to the barrel and hold one cell per shot.",
+      "consumers": ["VFX_ComposeMuzzleFlash authored-axis cross body"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/weapons/muzzle_flash_side.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — two pre-lit side-flame spatial variants"
+        }
+      }
+    },
+    {
+      "id": "VFX_SURFACE_MUZZLE_FLASH_SPHERE_NIAGARA",
+      "name": "muzzle_flash_sphere_niagara",
+      "primitive": "puff",
+      "role": "impact",
+      "wrap": "clamp",
+      "filter": "bilinear",
+      "blend": "additive",
+      "projection": "camera_facing_billboard_variant_atlas",
+      "approval": "preview_only",
+      "lifecycle": { "seconds": 0.06, "fade_in": 0.0, "fade_out": 0.04 },
+      "budget": { "max_draw_calls": 1, "max_textures": 1 },
+      "flipbook": [2, 2, 4],
+      "seam": "not_applicable",
+      "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py. Source: T_MuzzleFlash_Sphere. Visual inspection corrects the initial 1x1 assumption: this is a 2x2 atlas of four spatial burst variants.",
+      "consumers": ["VFX_ComposeMuzzleFlash spherical muzzle core"],
+      "assets": {
+        "body": {
+          "path": "assets/textures/vfx/weapons/muzzle_flash_sphere.png",
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — four pre-lit spherical flash spatial variants"
         }
       }
     },

@@ -110,6 +110,14 @@ void VFX_ComposeLightningGroundRicochet(Vector3 impactPos, VC_MaterialId materia
 // releases it. FlameVolume is the documented legacy exception until P2 turns it
 // into a per-instance FlameEmitter; its sandbox fixture is therefore timed.
 
+// ── Primary VFX: direction-bearing muzzle flash ────────────────────────────
+// One-shot event. `forward` is the barrel direction; the flash self-expires.
+// Three extracted variant atlases supply camera fill, an authored-axis cross,
+// and the compact pressure sphere. `scale` is metres relative to a rifle flash.
+void VFX_ComposeMuzzleFlash(Vector3 muzzlePos, Vector3 forward,
+                            VC_MaterialId matId, float scale,
+                            float intensity01);
+
 // ── F2. Smoke / dust puff ───────────────────────────────────────────────────
 // Layered alpha sprites with per-sprite spin that grow while they fade,
 // deliberately dark so the lighting pass supplies the brightness. Draw with

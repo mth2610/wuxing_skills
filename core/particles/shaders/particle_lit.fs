@@ -121,7 +121,9 @@ uniform vec2 u_atlasGrid;
 //
 // Output is PREMULTIPLIED (see VFX_BLEND_PREMULTIPLIED): emission adds light
 // without occluding, smoke both occludes and is lit, from ONE draw. That is why
-// this exists — the alternative is an additive core plus an alpha body, two
+// Modes 1/2 use the packed fire/volume contract below. Mode 3 selects the
+// extracted EOO smoke + normal contract documented beside u_normalTex.
+// This exists — the alternative is an additive core plus an alpha body, two
 // populations that interleave in the depth sort and cost a batch flush at every
 // alternation.
 //
@@ -167,6 +169,13 @@ uniform float u_sixWayScattering;  // forward-scatter / backlit multiplier
 uniform float u_sixWayAbsorption;  // multi-axis extinction factor
 uniform vec3  u_ambientGround;     // multi-directional ambient ground bounce (-Y)
 uniform vec3  u_ambientHorizon;    // multi-directional ambient horizon fill (sides)
+
+// Extracted Niagara smoke is an EOO sheet plus a tangent-space BC5-style
+// normal atlas. It is not a six-way lightmap. EOO: R=baked internal light,
+// G=transmittance/occlusion, B=unused, A=coverage. Normal RG is signed XY.
+// It uses u_volumeSheet mode 3 so all packed materials share one proven mode
+// selector across raylib and rlvk.
+uniform sampler2D u_normalTex;
 
 // ── Shared shading pieces ────────────────────────────────────────────────────
 // Extracted so the legacy path and the packed-volume path cannot drift apart.
@@ -443,10 +452,9 @@ vec3 ParticleLightTerm6Way(vec2 luv, vec3 sampledMapA, vec3 sampledMapB, float s
         lit += u_vfxLightColor[i] * ptTransmission * att;
     }
 
-    // Baked smoke already contains rich internal shading. Preserve scene-light
-    // direction and luminance, but reject chroma so warm sunlight, coloured VFX
-    // lights, and ambient probes cannot turn white smoke yellow/purple or make
-    // its hue flicker as those contributions change.
+    // Baked six-way smoke already contains rich internal shading. Preserve
+    // scene-light direction and luminance, but reject chroma so environment
+    // lighting cannot recolour neutral smoke.
     // Volume fire keeps the full coloured-light response; its emission is handled
     // separately by the blackbody path below.
     if (u_sixWayLighting > 1.5 && u_volumeSheet < 0.5)
@@ -518,7 +526,7 @@ void main()
     }
     else
     {
-        if (u_volumeSheet > 1.5)
+        if (u_volumeSheet > 1.5 && u_volumeSheet < 2.5)
         {
             // UV noise distortion fallback for un-vectored volume sheets
             vec2 grid = max(u_atlasGrid, vec2(1.0));
@@ -543,6 +551,31 @@ void main()
     }
 
     float soft = (u_softFade > 0.0) ? SoftParticle_Factor(u_softFade) : 1.0;
+
+    // ── EXTRACTED EOO SMOKE + NORMAL ATLAS (MODE 3) ──────────────────────
+    // Keep the sheet's two independent structure signals. Alpha alone is only
+    // the silhouette and turns overlapping sprites into featureless patches.
+    if (u_volumeSheet > 2.5)
+    {
+        vec4 normalSample = texture(u_normalTex, sampleUV);
+        vec2 smokeNxy = normalSample.rg * 2.0 - 1.0;
+        float smokeNz = sqrt(max(1.0 - dot(smokeNxy, smokeNxy), 0.0));
+        vec3 smokeN = ParticleNormalWorld(normalize(vec3(smokeNxy, smokeNz)));
+
+        float wrap;
+        vec3 envLit = ParticleLightTerm(smokeN, ParticleLightDir(), wrap);
+        // Neutral smoke keeps scene-light luminance and direction, not hue.
+        float lightY = dot(envLit, vec3(0.2126, 0.7152, 0.0722));
+        float ao = mix(0.35, 1.0, texelColor.g);
+        float bakedLight = 0.75 + 2.0 * texelColor.r;
+        vec3 carrier = fragColor.rgb * ao * bakedLight;
+        float strength = (u_lightingStrength > 0.0) ? u_lightingStrength : 1.0;
+        vec3 shaded = carrier * mix(1.0, lightY, strength);
+        float alpha = texelColor.a * fragColor.a * soft;
+        if (alpha < 0.01) discard;
+        finalColor = VFX_ResolveBody(shaded, 1.0, alpha);
+        return;
+    }
 
     // ── PACKED VOLUME SHEET ──────────────────────────────────────────────────
     // One draw that both EMITS and OCCLUDES, which the ALPHA/ADDITIVE binary
@@ -766,11 +799,7 @@ void main()
     // ACES in post_fx rolls the highlights off, and clamping here would flatten
     // exactly the bright rim this whole shader exists to produce.
     //
-    // For 6-way dual lightmap pairs (Mode 2), texture0 holds directional lightmaps
-    // (+X, +Y, +Z) rather than diffuse surface albedo. Diffuse albedo comes from
-    // a neutral white carrier. Multiplying directional maps directly into base.rgb
-    // would paint the lobes raw red/green/blue; using fragColor.rgb would leak the
-    // caller's element tint into smoke that is explicitly authored as white.
+    // In Mode 2, texture0 is a directional lightmap, never albedo.
     vec3 albedo = (u_sixWayLighting > 1.5) ? vec3(1.0) : base.rgb;
     vec3 shaded = albedo * lit;
     // Boost is 1.0 for lit batches, so this is a no-op for smoke and dust.

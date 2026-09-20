@@ -41,6 +41,8 @@ const VFX_SurfaceProfile *VFX_SurfaceRegistry_Get(VFX_SurfaceId id)
                                                             profile->filter);
         profile->lightMapB = VFX_SurfaceRegistry_LoadTexture(profile->lightMapBPath,
                                                               profile->wrap, profile->filter);
+        profile->normalMap = VFX_SurfaceRegistry_LoadTexture(profile->normalPath,
+                                                              profile->wrap, profile->filter);
         profile->mask = VFX_SurfaceRegistry_LoadTexture(profile->maskPath, profile->wrap,
                                                          profile->filter);
         profile->gradient = VFX_SurfaceRegistry_LoadTexture(profile->gradientPath, profile->wrap,

@@ -74,6 +74,9 @@ typedef enum {
     VFX_SURFACE_PLASMA_WISPS_NIAGARA,
     VFX_SURFACE_LENS_FLARE_STAR_NIAGARA,
     VFX_SURFACE_LENS_FLARE_STREAK_NIAGARA,
+    VFX_SURFACE_MUZZLE_FLASH_FRONT_NIAGARA,
+    VFX_SURFACE_MUZZLE_FLASH_SIDE_NIAGARA,
+    VFX_SURFACE_MUZZLE_FLASH_SPHERE_NIAGARA,
     // P4 contracts contain no runtime asset until visual-owner approval.
     VFX_SURFACE_DECAL_RESIDUE,
     VFX_SURFACE_DECAL_SCORCH,
@@ -105,6 +108,7 @@ typedef struct {
     const char *bodyPath;
     const char *flowPath;
     const char *lightMapBPath;
+    const char *normalPath;
     const char *maskPath;
     const char *gradientPath;
     const char *fallbackBodyPath;
@@ -119,6 +123,7 @@ typedef struct {
     const char *bodyChannels;
     const char *flowChannels;
     const char *lightMapBChannels;
+    const char *normalChannels;
     const char *maskChannels;
     const char *gradientChannels;
     const char *seam;
@@ -137,6 +142,7 @@ typedef struct {
     Texture2D body;
     Texture2D flowMap;
     Texture2D lightMapB;
+    Texture2D normalMap;
     Texture2D mask;
     Texture2D gradient;
     Texture2D fallbackBody;

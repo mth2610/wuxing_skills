@@ -48,8 +48,8 @@
     {"path":"utilities/cutout_mask_8x8.png","source":"CutoutMask_8x8","dimensions":[256,256],"grid":[8,8],"frames":64,"channels":"RGBA extracted cutout utility mask; per-channel semantics pending material audit","role":"utility","status":"support","rgba8_bytes":262144},
     {"path":"utilities/number_grid_debug.png","source":"NumberGrid","dimensions":[512,512],"grid":[8,8],"frames":64,"channels":"RGB frame numbers, A coverage; orientation reference only","role":"utility","status":"debug","rgba8_bytes":1048576},
     {"path":"weapons/gun_smoke_thin.png","source":"T_ThinSmoke_FX","dimensions":[2048,2048],"grid":[8,8],"frames":64,"channels":"RGB pre-lit thin smoke, A opacity","role":"weapon","status":"primary_candidate","rgba8_bytes":16777216},
-    {"path":"weapons/muzzle_flash_front.png","source":"T_MuzzleFlash","dimensions":[2048,1024],"grid":[4,1],"frames":4,"channels":"RGB pre-lit muzzle radiance, A coverage","role":"weapon","status":"primary_candidate","rgba8_bytes":8388608},
-    {"path":"weapons/muzzle_flash_side.png","source":"T_MuzzleFlash_Side","dimensions":[1024,1024],"grid":[2,1],"frames":2,"channels":"RGB pre-lit muzzle radiance, A coverage","role":"weapon","status":"primary_candidate","rgba8_bytes":4194304},
-    {"path":"weapons/muzzle_flash_sphere.png","source":"T_MuzzleFlash_Sphere","dimensions":[1024,1024],"grid":[1,1],"frames":1,"channels":"RGB pre-lit muzzle radiance, A coverage","role":"weapon","status":"primary_candidate","rgba8_bytes":4194304}
+    {"path":"weapons/muzzle_flash_front.png","source":"T_MuzzleFlash","dimensions":[2048,1024],"grid":[4,1],"frames":4,"channels":"RGB pre-lit muzzle radiance, A coverage; four spatial variants, not temporal frames","role":"weapon","status":"registry_preview","rgba8_bytes":8388608},
+    {"path":"weapons/muzzle_flash_side.png","source":"T_MuzzleFlash_Side","dimensions":[1024,1024],"grid":[2,1],"frames":2,"channels":"RGB pre-lit muzzle radiance, A coverage; two spatial variants, not temporal frames","role":"weapon","status":"registry_preview","rgba8_bytes":4194304},
+    {"path":"weapons/muzzle_flash_sphere.png","source":"T_MuzzleFlash_Sphere","dimensions":[1024,1024],"grid":[2,2],"frames":4,"channels":"RGB pre-lit muzzle radiance, A coverage; four spatial variants, not temporal frames","role":"weapon","status":"registry_preview","rgba8_bytes":4194304}
   ]
 }

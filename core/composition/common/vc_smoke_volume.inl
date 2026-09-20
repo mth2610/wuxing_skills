@@ -29,6 +29,7 @@ static bool s_svolInit = false;
 // Resolve each style lazily: a scene using one smoke vocabulary should not pay
 // texture memory for the other three whole-puff sheets.
 static Texture2D s_svolTextures[VFX_SMOKE_STYLE_COUNT] = {0};
+static Texture2D s_svolNormalTextures[VFX_SMOKE_STYLE_COUNT] = {0};
 static SpriteAnim s_svolAnims[VFX_SMOKE_STYLE_COUNT] = {0};
 static bool s_svolStyleInit[VFX_SMOKE_STYLE_COUNT] = {0};
 static const VFX_SurfaceId s_svolSurfaceIds[VFX_SMOKE_STYLE_COUNT] = {
@@ -50,9 +51,6 @@ static float s_svolSizeMul  = 1.15f;
 static float s_svolAlpha    = 0.55f;
 static float s_svolBuoyancy = 1.35f;
 static float s_svolDrag     = 1.20f;
-static float s_svolLighting = 1.0f;
-static float s_svolScatter  = 1.4f;
-static float s_svolAbsorb   = 1.2f;
 
 typedef struct {
     bool active;
@@ -80,7 +78,8 @@ static int SVol_StyleIndex(VFX_SmokeStyle style)
         ? (int)style : (int)VFX_SMOKE_STYLE_ROIL;
 }
 
-static bool SVol_ResolveStyle(int styleIndex, Texture2D *texture, SpriteAnim **anim)
+static bool SVol_ResolveStyle(int styleIndex, Texture2D *texture,
+                              Texture2D *normalTexture, SpriteAnim **anim)
 {
     if (!s_svolStyleInit[styleIndex])
     {
@@ -89,6 +88,7 @@ static bool SVol_ResolveStyle(int styleIndex, Texture2D *texture, SpriteAnim **a
         if (profile != NULL && profile->body.id != 0)
         {
             s_svolTextures[styleIndex] = profile->body;
+            s_svolNormalTextures[styleIndex] = profile->normalMap;
             SpriteAnim_Init(&s_svolAnims[styleIndex],
                             profile->flipbookColumns,
                             profile->flipbookRows,
@@ -100,6 +100,7 @@ static bool SVol_ResolveStyle(int styleIndex, Texture2D *texture, SpriteAnim **a
         s_svolStyleInit[styleIndex] = true;
     }
     *texture = s_svolTextures[styleIndex];
+    *normalTexture = s_svolNormalTextures[styleIndex];
     *anim = &s_svolAnims[styleIndex];
     return texture->id != 0;
 }
@@ -149,9 +150,6 @@ static void SVol_InitShared(void)
     Tuning_RegisterFloat("smoke_vol_alpha", &s_svolAlpha, 0.55f);
     Tuning_RegisterFloat("smoke_vol_buoyancy", &s_svolBuoyancy, 1.35f);
     Tuning_RegisterFloat("smoke_vol_drag", &s_svolDrag, 1.20f);
-    Tuning_RegisterFloat("smoke_vol_lighting", &s_svolLighting, 1.0f);
-    Tuning_RegisterFloat("smoke_vol_scatter", &s_svolScatter, 1.4f);
-    Tuning_RegisterFloat("smoke_vol_absorb", &s_svolAbsorb, 1.2f);
 
     // 1. Growth Curve (Morton-Taylor-Turner radial expansion with height)
     FloatCurve_AddStop(&s_svolGrow, 0.00f, 0.40f);
@@ -200,10 +198,11 @@ static void SVol_Emit(VC_SmokeVolumeEmitter *e, float dt)
     // Pick texture and anim based on requested style
     const int styleIndex = SVol_StyleIndex(e->style);
     Texture2D tex = {0};
+    Texture2D normalTex = {0};
     SpriteAnim *anim = NULL;
-    if (!SVol_ResolveStyle(styleIndex, &tex, &anim))
+    if (!SVol_ResolveStyle(styleIndex, &tex, &normalTex, &anim))
         return;
-    Color tint = (Color){68, 64, 62, 255}; // dark soot grey
+    Color tint = (Color){220, 224, 230, 255}; // neutral white smoke
     float baseSize = 0.55f;
 
     switch (e->style)
@@ -222,7 +221,9 @@ static void SVol_Emit(VC_SmokeVolumeEmitter *e, float dt)
         break;
     case VFX_SMOKE_STYLE_ROIL:
     default:
-        tint = (Color){72, 68, 66, 255};
+        // The primary/default vocabulary is white smoke. Keep soot as the
+        // explicit PUFF_DARK style rather than making every volume black.
+        tint = (Color){220, 224, 230, 255};
         baseSize = 0.55f;
         break;
     }
@@ -269,9 +270,8 @@ static void SVol_Emit(VC_SmokeVolumeEmitter *e, float dt)
             .windInfluence = 0.80f,
             .render.texture = tex,
             .render.blendMode = VFX_BLEND_ALPHA,
-            .render.sixWayLighting = (int)s_svolLighting,
-            .render.sixWayScattering = s_svolScatter,
-            .render.sixWayAbsorption = s_svolAbsorb,
+            .render.smokeSheet = 1,
+            .render.normalTex = normalTex,
             .spriteAnim = anim,
             .spriteAnimPhase = Random01() * SVOL_BODY_PHASE_MAX,
             .spriteAnimRate = Math_Mix(0.85f, 1.0f, Random01()),

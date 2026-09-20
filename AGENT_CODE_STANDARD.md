@@ -94,6 +94,12 @@
 - A material's `.mat output`, GLSL resolver, render pass and runtime blend are one contract: fixed outputs use the matching `VFX_Resolve*`; surface-aware EffectMaterial uses `VFX_ResolveOutput` plus `Material_BeginVFX/EndVFX` (ADDITIVE→EMISSION, ALPHA/PREMULTIPLIED→BODY). Legacy `Material_Begin/End` remains caller-managed.
 - Tone-map-safe colour is explicit per producer: custom trail/particle shaders do not inherit EffectMaterial's permutation. For structured emitters preserve the sub-Bloom carrier and correct only HDR excess after coverage; if additive submits that completed value, use unit source alpha so coverage is not applied twice.
 - File by domain: hash/noise/fbm → `noise.glsl`; lighting (diffuse/specular/fresnel/normal) → `lighting.glsl`; generic effects (dissolve/flow/emissive) → `fx.glsl`; world-space/no-UV projection → `triplanar.glsl`. Don't mix domains.
+- Treat imported channel-packed textures as data contracts, not display RGB. Audit
+  every channel and companion map before choosing a decoder; never infer six-way
+  lighting from a smoke flipbook or discard non-alpha structure.
+- Select mutually exclusive decoders with one numeric material-mode uniform;
+  do not accumulate parallel boolean mode uniforms whose default fallthrough can
+  reinterpret packed data as display colour.
 - Check name doesn't collide with GLSL builtins (lesson: `noise2` clashed with builtin `noise()` → renamed `vnoise`).
 - No `f` float suffixes in new GLSL — affects every skill that includes the file.
 - Don't redeclare existing `vs_header.glsl`/`fs_header.glsl` vars/uniforms.

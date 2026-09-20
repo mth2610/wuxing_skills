@@ -135,6 +135,10 @@ struct ParticleConfig {
   VFX_PhysicsConfig physics;
   VFX_AnimationConfig animation;
   VFX_RenderConfig render;
+
+  // Append-only legacy aliases for the authored billboard-axis contract.
+  Vector3 facingDirection;
+  float facingAspect;
 };
 
 static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
@@ -212,6 +216,16 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
   if (cfg->render.facingMode == 0 && cfg->facingMode != 0) {
     cfg->render.facingMode = cfg->facingMode;
   }
+  if (cfg->render.facingDirection.x == 0.0f &&
+      cfg->render.facingDirection.y == 0.0f &&
+      cfg->render.facingDirection.z == 0.0f &&
+      (cfg->facingDirection.x != 0.0f || cfg->facingDirection.y != 0.0f ||
+       cfg->facingDirection.z != 0.0f)) {
+    cfg->render.facingDirection = cfg->facingDirection;
+  }
+  if (cfg->render.facingAspect == 0.0f && cfg->facingAspect != 0.0f) {
+    cfg->render.facingAspect = cfg->facingAspect;
+  }
   if (cfg->render.meshModel.meshCount == 0 && cfg->meshModel.meshCount != 0) {
     cfg->render.meshModel = cfg->meshModel;
     cfg->render.meshRotationRate = cfg->meshRotationRate;
@@ -281,6 +295,16 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
   }
   if (cfg->facingMode == 0 && cfg->render.facingMode != 0) {
     cfg->facingMode = cfg->render.facingMode;
+  }
+  if (cfg->facingDirection.x == 0.0f && cfg->facingDirection.y == 0.0f &&
+      cfg->facingDirection.z == 0.0f &&
+      (cfg->render.facingDirection.x != 0.0f ||
+       cfg->render.facingDirection.y != 0.0f ||
+       cfg->render.facingDirection.z != 0.0f)) {
+    cfg->facingDirection = cfg->render.facingDirection;
+  }
+  if (cfg->facingAspect == 0.0f && cfg->render.facingAspect != 0.0f) {
+    cfg->facingAspect = cfg->render.facingAspect;
   }
   if (cfg->meshModel.meshCount == 0 && cfg->render.meshModel.meshCount != 0) {
     cfg->meshModel = cfg->render.meshModel;

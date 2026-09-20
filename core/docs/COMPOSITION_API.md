@@ -20,6 +20,28 @@
 
 ---
 
+## Naming: effect semantics vs. implementation module
+
+Public C APIs name the visual intent, not the current implementation: use
+`VFX_ComposeSmokeVolume`, not `VFX_ComposeParticleSmokeVolume`. This keeps a
+caller stable if the composition later changes from particles to a hybrid.
+
+Diagnostic fixtures and asset browsers must expose how the look is built. Use
+the label form `[PRIMARY MODULE] EFFECT`, plus a `modules` metadata array when
+the effect uses more than one Core system. Canonical module tags are
+`PARTICLE`, `TRAIL/FLOW`, `GAS`, `DECAL`, `RIBBON`, `MESH`, `FLUID`, and
+`SCREEN`. Examples:
+
+- `[PARTICLE] SMOKE VOLUME`, `modules: ["particle"]`
+- `[TRAIL/FLOW] VOLUME TRAIL`, `modules: ["trail", "flowmap", "deform"]`
+- `[GAS] GAS PLUME`, `modules: ["gas"]`
+
+The bracketed tag is a diagnostic/UI contract, not part of the effect's public
+API symbol. A composed gameplay VFX may list several modules, but its label
+uses only the system that owns its silhouette and lifetime as the primary tag.
+
+---
+
 ## 0. Cookbook Pattern → Concrete API (read alongside WUXING_ART_DIRECTION.md §6.1)
 
 Each row translates one of Chapter 6.1's abstract layer recipes into the
@@ -129,6 +151,12 @@ Automatically assign shader, texture, material, and manage the appropriate blend
 - `VFX_ComposeIceCrystal`: builds a clustered translucent prismatic ice crystal, glowing, using the `MAT_ICE` material (alpha blend + depth-write off).
 - `VFX_ComposeMagicPuddle`: builds a rippling magical puddle with dynamic flow via the `puddle.fs` shader, sampling a multi-config slot for `water_caustics.png` (slot 0) and `water_flow.png` (slot 1) in `REPEAT` mode.
 - `VFX_ComposeSmokePuff`: bursts a puff of dense smoke at a point via `ParticleSystem_SpawnRadialBurst`.
+- `VFX_ComposeMuzzleFlash(muzzlePos, forward, material, scale, intensity01)`:
+  one-shot direction-bearing weapon flash. It holds one random spatial variant
+  from each extracted front/side/sphere atlas for 40–55 ms, aligns the side
+  sheet's +V axis to `forward` as a true cross billboard, and emits one bounded
+  low-priority point light. The three semantic profiles remain preview-only
+  until dark/light-background visual approval.
 - `VFX_GasPlume_Spawn(pos, material, config)`: creates one depth-aware simulated
   smoke, fire, or energy plume through `core/gas`. The fixed-rate injector is
   frame-rate independent; `VFX_GasPlume_Stop` ends feeding but lets the volume

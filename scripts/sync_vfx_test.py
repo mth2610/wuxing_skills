@@ -177,6 +177,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeShockRing":          ("draw",    "timed",      "continuous"),
     "VFX_ComposeSmokePuff":          ("event",   "burst",      "oneshot"),
     "VFX_ComposeMistVeil":           ("event",   "burst",      "oneshot"),
+    "VFX_ComposeMuzzleFlash":        ("event",   "burst",      "oneshot"),
     "VFX_ComposeSweepSlash":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeVolumeTrail":        ("trail",   "follower",   "continuous"),
     "VFX_ComposeFissureStreak":      ("draw",    "timed",      "continuous"),
@@ -259,6 +260,10 @@ FIXTURE_SPAWN_OVERRIDES = {
 # separate from persistent spawn overrides: a trigger call has no stored handle
 # and must not be treated as a frame-fed fixture.
 FIXTURE_EVENT_OVERRIDES = {
+    # Event fixtures trigger at progress zero. Muzzle intensity is not a
+    # timeline parameter, so the generic $PROG inference would spawn nothing.
+    "VFX_ComposeMuzzleFlash":
+        "VFX_ComposeMuzzleFlash($POS, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 1.0f)",
     "VFX_ComposeContactSparkMode":
         "VFX_ComposeContactSparkMode($POS, VC_MAT_FIRE, 1.5f, $PROG, CONTACT_SPARK_CENTRIFUGAL)",
     # Long gameplay-scale run: character socket five metres behind the click
@@ -294,6 +299,22 @@ FIXTURE_EVENT_OVERRIDES = {
 # elemental visual. Inference remains useful for the broad registry, while
 # these authored names keep the tester panel describing the actual effect.
 FIXTURE_METADATA_OVERRIDES = {
+    # Public composition APIs remain semantic so their implementation may
+    # evolve. Diagnostic fixtures expose the backend family explicitly: these
+    # three can all produce a volumetric smoke vocabulary but have very
+    # different cost, motion and lifetime contracts.
+    "VFX_ComposeSmokeVolume": {
+        "label": "[PARTICLE] SMOKE VOLUME",
+        "modules": ["particle"],
+    },
+    "VFX_ComposeVolumeTrail": {
+        "label": "[TRAIL/FLOW] VOLUME TRAIL",
+        "modules": ["trail", "flowmap", "deform"],
+    },
+    "VFX_ComposeGasPlume": {
+        "label": "[GAS] GAS PLUME",
+        "modules": ["gas"],
+    },
     "VFX_ComposeLightningGroundRicochet": {
         "label": "LIGHTNING IMPACT",
         "category": "common",

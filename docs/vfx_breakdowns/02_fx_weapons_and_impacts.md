@@ -29,6 +29,12 @@ Lửa đầu nòng là một hiệu ứng cực nhanh ($0.03\text{s} - 0.08\text
 | **Impact Dust** | `extracted_flipbooks/Sprites/T_SmokePuff.png` (Atlas 8x8) | Bụi bốc lên tại điểm đạn cắm |
 | **Impact Decal** | `extracted_flipbooks/Decals/` (`T_BulletHole*`) | Vết nứt/lỗ đạn găm trên tường hoặc đất |
 
+> **Xác minh runtime (20/09/2026):** ba texture muzzle là atlas biến thể không
+> phải animation theo thời gian: `T_MuzzleFlash` = 4×1, `T_MuzzleFlash_Side` =
+> 2×1, `T_MuzzleFlash_Sphere` = 2×2. `VFX_ComposeMuzzleFlash` chọn một ô cho
+> mỗi phát và giữ nguyên trong suốt lifetime 40–55 ms. Sheet side dùng
+> `ParticleConfig.render.facingDirection` để +V bám đúng trục nòng súng.
+
 ---
 
 ## 2. Phân Tích Logic & Toán Học Đầu Nòng (Muzzle Flash Math)

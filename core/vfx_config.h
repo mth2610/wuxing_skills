@@ -22,7 +22,7 @@ typedef enum {
     VFX_FACING_CAMERA = 0,    // Default billboard: faces camera view
     VFX_FACING_VELOCITY,      // Stretched along velocity vector
     VFX_FACING_GROUND_PLANE,  // Flat on ground (XZ plane, normal = +Y)
-    VFX_FACING_CROSS_BILLBOARD // 3D cross quad (2 quads at 90 degrees along velocity or forward)
+    VFX_FACING_CROSS_BILLBOARD // 3D cross; facingDirection supplies its authored long axis
 } VFX_FacingMode;
 
 #include "raylib.h"
@@ -235,6 +235,14 @@ typedef struct {
     float sixWayScattering;    // Forward scatter / backlit multiplier (0 = default 1.0)
     float sixWayAbsorption;    // Multi-axis extinction factor (0 = default 1.0)
 
+    // ── EXTRACTED NIAGARA SMOKE (EOO + BC5 NORMAL) ────────────────────────
+    // 1 = texture is an EOO smoke sheet: R carries baked internal light,
+    // G carries transmittance/occlusion, B is unused, A is opacity. This is
+    // explicitly NOT a six-way lightmap. normalTex stores signed tangent XY
+    // in RG; the shader reconstructs +Z.
+    int smokeSheet;
+    Texture2D normalTex;
+
     // ── OPTICAL FLOW MOTION VECTOR WARPING (Flipbook Subframe Advection) ─────
     Texture2D motionTex;       // 2D optical flow atlas (R = Vx, G = Vy, B = speed, A = mask)
     float motionWarpScale;     // Warp strength multiplier (0 = disabled, 1.0 = standard)
@@ -243,6 +251,11 @@ typedef struct {
     VFX_FacingMode facingMode; // Camera, Velocity, Ground Plane, Cross Billboard
     Model meshModel;           // Optional 3D mesh model (SM_Debris / Pebbles). If meshModel.meshCount > 0, renders mesh
     Vector3 meshRotationRate;  // 3D angular rotation speed in rad/s (Euler pitch, yaw, roll)
+    // CROSS_BILLBOARD: atlas +V follows this world-space vector. Zero keeps the
+    // legacy camera-space cross. facingAspect is the +V half-extent / +U
+    // half-extent for every billboard mode; zero preserves the square shape.
+    Vector3 facingDirection;
+    float facingAspect;
 } VFX_RenderConfig;
 
 #endif // CORE_VFX_CONFIG_H

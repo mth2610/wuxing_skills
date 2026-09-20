@@ -34,6 +34,13 @@ static bool ParticleManager_IsZeroMatrix(Matrix m)
            m.m12 == 0.0f && m.m13 == 0.0f && m.m14 == 0.0f && m.m15 == 0.0f;
 }
 
+static bool ParticleManager_RequiresCpuFacing(const ParticleConfig *particle)
+{
+    const Vector3 axis = particle->render.facingDirection;
+    return particle->render.facingMode == VFX_FACING_CROSS_BILLBOARD &&
+           (axis.x != 0.0f || axis.y != 0.0f || axis.z != 0.0f);
+}
+
 static void ParticleManager_ApplySource(ParticleEmitterRuntime *emitter,
                                         ParticleConfig *particle)
 {
@@ -135,6 +142,7 @@ ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d
         if (e->desc.particle.travelPath)
             e->desc.moduleFlags |= PARTICLE_MODULE_PATH_FOLLOW;
         bool gpuOK = ParticleManager_GPUCanRun(e->desc.moduleFlags);
+        if (ParticleManager_RequiresCpuFacing(&e->desc.particle)) gpuOK = false;
         VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(&e->desc.particle);
         // The current GPU billboard draw is one additive batch. A named alpha
         // or premultiplied appearance must use the CPU renderer until blend is
@@ -231,7 +239,7 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
         VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(p);
         bool appearanceFitsGpu = p->render.appearance == VFX_APPEARANCE_INHERIT ||
                                  appearance.surface == VFX_SURFACE_ADDITIVE;
-        if (e->gpu && appearanceFitsGpu) {
+        if (e->gpu && appearanceFitsGpu && !ParticleManager_RequiresCpuFacing(p)) {
             VFXContrastLayer layer = appearance.surface == VFX_SURFACE_ADDITIVE
                                          ? VFX_CONTRAST_EMISSION
                                          : VFX_CONTRAST_BODY;

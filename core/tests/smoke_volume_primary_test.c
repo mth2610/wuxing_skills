@@ -29,6 +29,7 @@ int main(void)
     const char *manifest = "assets/vfx_surface_profiles.json";
     const char *flame = "core/composition/fire/flame_volume.inl";
     const char *sync = "scripts/sync_vfx_test.py";
+    const char *shader = "core/particles/shaders/particle_lit.fs";
 
     CHECK(TargetLive(1.0f, 1.0f) == 8.0f &&
           TargetLive(1.0f, 4.0f) == 8.0f &&
@@ -37,6 +38,9 @@ int main(void)
     CHECK(Has(header, "VFX_SMOKE_STYLE_DEFAULT = VFX_SMOKE_STYLE_ROIL") &&
           !Has(smoke, "case VFX_SMOKE_STYLE_DEFAULT:"),
           "default smoke style is an alias without a duplicate switch case");
+    CHECK(Has(smoke, "tint = (Color){220, 224, 230, 255}") &&
+          Has(smoke, "case VFX_SMOKE_STYLE_PUFF_DARK:"),
+          "default roil is white smoke while the explicit dark style remains available");
     CHECK(Has(smoke, "SVOL_MAX_LIVE_PER_EMITTER 8") &&
           Has(smoke, "fminf(targetLive, (float)SVOL_MAX_LIVE_PER_EMITTER)"),
           "runtime applies the whole-puff live ceiling");
@@ -52,9 +56,18 @@ int main(void)
           !Has(smoke, "ResourceManager_LoadTexture") &&
           !Has(smoke, "assets/textures/vfx/"),
           "smoke volume resolves all Niagara sheets semantically");
+    CHECK(Has(sync, "[PARTICLE] SMOKE VOLUME") &&
+          Has(sync, "[TRAIL/FLOW] VOLUME TRAIL") &&
+          Has(sync, "[GAS] GAS PLUME") &&
+          Has(sync, "\"modules\": [\"particle\"]"),
+          "ambiguous volume fixtures expose their backend family in generated metadata");
     CHECK(Has(manifest, "VFX_SURFACE_SMOKE_ROIL_NIAGARA") &&
           Has(manifest, "VFX_SURFACE_SMOKE_WISPY_NIAGARA"),
           "surface manifest owns the Niagara smoke contracts");
+    CHECK(Has(shader, "if (u_volumeSheet > 2.5)") &&
+          !Has(shader, "uniform float u_smokeSheet") &&
+          Has(shader, "uniform sampler2D u_normalTex"),
+          "single-sheet Niagara smoke has a dedicated EOO plus normal material path");
     CHECK(Has(flame, "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_ROIL_NIAGARA)") &&
           Has(flame, "VFX_SurfaceRegistry_Get(VFX_SURFACE_FIREBALL_NIAGARA)") &&
           !Has(flame, "ResourceManager_LoadTexture(\"assets/textures/vfx"),

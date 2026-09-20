@@ -200,14 +200,17 @@
     {
       "source": "common/vc_gas_plume.inl",
       "fn": "VFX_ComposeGasPlume",
-      "label": "GAS PLUME",
+      "label": "[GAS] GAS PLUME",
       "category": "common",
       "fixture": "static",
       "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
       "spawn_call": "VFX_ComposeGasPlume($POS, VC_MAT_FIRE, NULL)",
-      "kill_fn": "VFX_KillGasPlume"
+      "kill_fn": "VFX_KillGasPlume",
+      "modules": [
+        "gas"
+      ]
     },
     {
       "source": "common/vc_gas_shockwave.inl",
@@ -341,6 +344,17 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeMistVeil($POS, 5.5f, 4.5f)"
+    },
+    {
+      "source": "common/vc_muzzle_flash.inl",
+      "fn": "VFX_ComposeMuzzleFlash",
+      "label": "MUZZLE FLASH",
+      "category": "common",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeMuzzleFlash($POS, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 1.0f)"
     },
     {
       "source": "common/vc_optical_flare.inl",
@@ -491,6 +505,20 @@
       "trigger_call": "VFX_ComposeSmokePuff($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
     },
     {
+      "source": "common/vc_smoke_volume.inl",
+      "fn": "VFX_ComposeSmokeVolume",
+      "label": "[PARTICLE] SMOKE VOLUME",
+      "category": "common",
+      "fixture": "timed",
+      "lifecycle": "emitter",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_ComposeSmokeVolume($POS, 1.5f, 1.0f, 0)",
+      "modules": [
+        "particle"
+      ]
+    },
+    {
       "source": "common/vc_sweep_slash.inl",
       "fn": "VFX_ComposeSweepSlash",
       "label": "SWEEP SLASH",
@@ -617,14 +645,19 @@
     {
       "source": "common/vc_volume_trail.inl",
       "fn": "VFX_ComposeVolumeTrail",
-      "label": "VOLUME TRAIL",
+      "label": "[TRAIL/FLOW] VOLUME TRAIL",
       "category": "common",
       "fixture": "follower",
       "lifecycle": "trail",
       "_auto": true,
       "type": "continuous",
       "spawn_call": "VFX_ComposeVolumeTrail($XFORM, VC_MAT_FIRE, 1.5f, 2.0f, VOL_ENERGY, false)",
-      "kill_fn": "VFX_KillVolumeTrail"
+      "kill_fn": "VFX_KillVolumeTrail",
+      "modules": [
+        "trail",
+        "flowmap",
+        "deform"
+      ]
     },
     {
       "source": "earth/fissure_streak.inl",
@@ -650,14 +683,14 @@
     },
     {
       "source": "fire/flame_volume.inl",
-      "fn": "VFX_ComposeFlameVolume",
-      "label": "FLAME VOLUME",
+      "fn": "VFX_ComposeAmbientFire",
+      "label": "AMBIENT FIRE",
       "category": "fire",
       "fixture": "timed",
       "lifecycle": "emitter",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeFlameVolume($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
+      "draw_call": "VFX_ComposeAmbientFire($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
     },
     {
       "source": "taiji/vc_black_hole.inl",

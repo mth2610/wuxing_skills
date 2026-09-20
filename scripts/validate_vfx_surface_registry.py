@@ -48,6 +48,11 @@ LAYOUTS = {
     # One half of a six-direction smoke lightmap pair. Map A stores +XYZ and
     # Map B stores -XYZ; A remains real opacity so either half is inspectable.
     "LIGHT6": {"R": {"lightx"}, "G": {"lighty"}, "B": {"lightz"}, "A": {"opacity", "ao"}},
+    # Extracted Niagara smoke pair. The EOO sheet is not colour: R is baked
+    # internal light, G is transmittance/occlusion, B is empty in this pack,
+    # and A owns coverage. The companion is BC5-style tangent-space XY.
+    "SMOKE_EOO": {"R": {"light"}, "G": {"transmittance"}, "B": {"unused"}, "A": {"opacity"}},
+    "NORMAL_XY": {"R": {"normalx"}, "G": {"normaly"}, "B": {"unused"}, "A": {"unused"}},
     # Pure data: four decorrelated scalar fields. Never drawn.
     "NOISE":    {"R": {"field"}, "G": {"field"}, "B": {"field"}, "A": {"field"}},
     # Pre-spec files: a standalone flow map or mask that leaves channels
@@ -64,7 +69,7 @@ LAYOUTS = {
 }
 
 # R3: signed slots encode 128 as neutral and decode c*2-1.
-SIGNED_SLOTS = {"distort", "flowx", "flowy"}
+SIGNED_SLOTS = {"distort", "flowx", "flowy", "normalx", "normaly"}
 PRIMITIVES = {"ribbon", "tube", "puff", "fire_tongue", "decal", "disc"}
 WRAPS = {"clamp", "repeat"}
 TILE_SEAMS = {"tileable_both_axes", "crossfade_runtime"}
@@ -217,7 +222,7 @@ def check_channels(label, text, flipbook):
         # explicitly deprecated bucket may carry a constant one, and it is
         # counted as debt rather than waved through.
         if slot == "unused":
-            if layout == "SPLIT_LEGACY":
+            if layout in ("SPLIT_LEGACY", "SMOKE_EOO", "NORMAL_XY"):
                 DEBT.append(f"{label}: {channel} constant (R6)")
             else:
                 failures += fail(
@@ -243,7 +248,7 @@ def check_channels(label, text, flipbook):
     # celled too — it is the same ray-marched sheet as FLIPBOOK, differing in
     # what the channels MEAN (four scalar fields, no colour), not in whether it
     # is a grid of frames.
-    CELLED = ("FLIPBOOK", "VOLUME", "MOTION", "LIGHT6")
+    CELLED = ("FLIPBOOK", "VOLUME", "MOTION", "LIGHT6", "SMOKE_EOO", "NORMAL_XY")
     has_cells = isinstance(flipbook, list) and len(flipbook) == 3 and flipbook[2] > 0
     if has_cells and layout not in CELLED:
         failures += fail(f"{label}: profile declares flipbook cells but layout is {layout}")
@@ -328,7 +333,7 @@ def main():
             failures += fail(f"{name}: blocked decal requires a migration/fallback decision")
         for role, asset in assets.items():
             path, channels = asset.get("path"), asset.get("channels")
-            if role not in {"body", "flow", "lightmap_b", "mask", "gradient", "fallback_body"}:
+            if role not in {"body", "flow", "lightmap_b", "normal", "mask", "gradient", "fallback_body"}:
                 failures += fail(f"{name}: unknown asset role {role}")
             if not path or not path.startswith("assets/textures/"):
                 failures += fail(f"{name}/{role}: invalid runtime path")
@@ -413,10 +418,10 @@ def main():
         # Not a failure — but never silent either. These are the channels the
         # FLOW layout exists to reclaim, and the count is the migration's
         # progress bar.
-        print(f"\nPACKING DEBT — {len(DEBT)} constant channels across SPLIT_LEGACY assets:")
+        print(f"\nPACKING DEBT — {len(DEBT)} explicitly declared constant source channels:")
         for item in DEBT:
             print(f"  · {item}")
-        print("  Fold each into its body sheet as FLOW (assets/TEXTURE_PACKING.md §4).")
+        print("  Repack before approval; imported preview sources may keep explicit debt (TEXTURE_PACKING.md R6).")
     # Reported separately from DEBT, and worded harder, because it is a
     # different kind of problem. DEBT is a sheet that ADMITS to a constant
     # channel; this is a sheet whose declaration and whose pixels disagree, so

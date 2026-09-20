@@ -100,6 +100,12 @@ Draw billboard particles. Call in the 3D draw phase. On the compute path, normal
 billboards use the previous-frame ScreenDistort depth snapshot and fade over 0.35 m
 where they intersect scene geometry; fluid surface capture/thickness passes are excluded.
 
+`ParticleConfig.render.facingDirection` is a higher-level particle-manager
+contract and is not packed into this legacy GPU backend. An emitter requesting
+`VFX_FACING_CROSS_BILLBOARD` with a non-zero authored direction is therefore
+routed to the CPU renderer, which constructs two planes around that direction.
+This is an intentional visual fallback, not a simulation-capability failure.
+
 ### `GpuParticleSystem_Unload(void)`
 Free GPU buffers and shaders. Call at shutdown.
 

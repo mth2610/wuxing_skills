@@ -96,11 +96,15 @@ static void Test_SpecIsPresentAndComplete(void) {
         "MOTION layout is defined for optical-flow flipbook data");
   CHECK(FileHas(spec, "| `LIGHT6` | `lightx` | `lighty` | `lightz` | `opacity` or `ao` |"),
         "LIGHT6 layout is defined for directional smoke flipbooks");
+  CHECK(FileHas(spec, "| `SMOKE_EOO` | `light` | `transmittance` | `unused` | `opacity` |"),
+        "SMOKE_EOO layout is defined for extracted smoke data");
+  CHECK(FileHas(spec, "| `NORMAL_XY` | `normalx` | `normaly` | `unused` | `unused` |"),
+        "NORMAL_XY layout is defined for the companion normal atlas");
   CHECK(FileHas(spec, "`STRETCH` and `TILE` cannot be the same channel"),
         "R1: the SHAPE-vs-MATERIAL law is stated at channel granularity");
   CHECK(FileHas(spec, "A sheet MAY mix modes across channels"),
         "R2: mixing modes is legal, which is what smoke_strand actually does");
-  CHECK(FileHas(spec, "Slots `distort`, `flowx`, `flowy` are signed"),
+  CHECK(FileHas(spec, "Slots `distort`, `flowx`, `flowy`, `normalx`, `normaly` are signed"),
         "R3: the signed-channel encoding is pinned");
   CHECK(FileHas(spec, "A is DATA, not coverage"),
         "R4: a packed sheet's alpha is not an opacity mask");
@@ -128,7 +132,7 @@ static void Test_TheRuleIsActuallyWired(void) {
         "the layout token accepts underscores and LIGHT6's digit");
   CHECK(FileHas(v, "\"STRAND\":   {\"R\": {\"pattern1\"}, \"G\": {\"pattern2\"}, \"B\": {\"distort\"}, \"A\": {\"dissolve\"}}"),
         "the validator's STRAND slots match the spec table");
-  CHECK(FileHas(v, "SIGNED_SLOTS = {\"distort\", \"flowx\", \"flowy\"}"),
+  CHECK(FileHas(v, "SIGNED_SLOTS = {\"distort\", \"flowx\", \"flowy\", \"normalx\", \"normaly\"}"),
         "and its signed-slot set matches R3");
   CHECK(FileHas(v, "failures += check_channels("),
         "every registered asset's channels string goes through the grammar");
@@ -147,8 +151,9 @@ static void Test_EveryAssetDeclaresALayout(void) {
     return;
   }
 
-  static const char *kLayouts[] = {"STRAND", "FLOW",  "OPAQUE", "FLIPBOOK",
-                                   "VOLUME", "MOTION", "LIGHT6", "NOISE", "SPLIT_LEGACY"};
+  static const char *kLayouts[] = {"STRAND", "FLOW", "OPAQUE", "FLIPBOOK",
+                                   "VOLUME", "MOTION", "LIGHT6", "SMOKE_EOO",
+                                   "NORMAL_XY", "NOISE", "SPLIT_LEGACY"};
   const char *needle = "\"channels\": \"";
   int total = 0, ok = 0, packed = 0, legacy = 0;
   const char *p = manifest;

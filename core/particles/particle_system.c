@@ -66,6 +66,28 @@ static inline Vector3 PS_CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 
   return PS_V3LerpParam(b1, b2, t1, t2, evalT);
 }
 
+static bool PS_AxisCrossBasis(Vector3 authoredAxis, Vector3 viewDir,
+                              Vector3 cameraUp, Vector3 *sideA,
+                              Vector3 *sideB)
+{
+  const float facingDirectionLengthSq = Vector3LengthSqr(authoredAxis);
+  if (facingDirectionLengthSq < 1e-8f) return false;
+
+  Vector3 axis = Vector3Scale(authoredAxis, 1.0f / sqrtf(facingDirectionLengthSq));
+  Vector3 first = Vector3CrossProduct(axis, viewDir);
+  if (Vector3LengthSqr(first) < 1e-8f)
+    first = Vector3CrossProduct(axis, cameraUp);
+  if (Vector3LengthSqr(first) < 1e-8f)
+    first = Vector3CrossProduct(axis, (Vector3){1.0f, 0.0f, 0.0f});
+  if (Vector3LengthSqr(first) < 1e-8f)
+    first = Vector3CrossProduct(axis, (Vector3){0.0f, 0.0f, 1.0f});
+
+  first = Vector3Normalize(first);
+  *sideA = first;
+  *sideB = Vector3Normalize(Vector3CrossProduct(axis, first));
+  return true;
+}
+
 // TỐI ƯU 1: Sắp xếp lại thứ tự biến (Data Alignment & Hot/Cold Split)
 // Các biến hay dùng (Physics) đặt lên đầu để vừa khít 1 CPU Cache Line (64 bytes)
 typedef struct
@@ -122,6 +144,8 @@ typedef struct
   unsigned int sixWayTexBId; // Map B texture id for dual-texture 6-way
   float sixWayScattering; // forward scatter / backlit boost factor
   float sixWayAbsorption; // multi-axis extinction factor
+  int smokeSheet;       // 1 = extracted EOO smoke body + BC5 normal companion
+  unsigned int normalTexId;
   unsigned int motionTexId; // 2D optical flow texture id for subframe advection
   float motionWarpScale; // motion vector displacement scale
   VFXContrastProfileId contrastProfile;
@@ -171,6 +195,8 @@ typedef struct
 
   // Advanced facing & 3D Mesh (Niagara parity)
   VFX_FacingMode facingMode;
+  Vector3 facingDirection;
+  float facingAspect;
   Model meshModel;
   Vector3 meshRotation;     // Euler angles (pitch, yaw, roll in radians)
   Vector3 meshRotationRate; // Angular rotation speed in rad/s
@@ -370,6 +396,8 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->sixWayTexBId = config.render.sixWayTexB.id;
   p->sixWayScattering = (config.render.sixWayScattering > 0.0f) ? config.render.sixWayScattering : 1.0f;
   p->sixWayAbsorption = (config.render.sixWayAbsorption > 0.0f) ? config.render.sixWayAbsorption : 1.0f;
+  p->smokeSheet = config.render.smokeSheet;
+  p->normalTexId = config.render.normalTex.id;
   p->motionTexId = config.render.motionTex.id;
   p->motionWarpScale = config.render.motionWarpScale;
   // A volume sheet with no ramp would index an unbound sampler, which reads
@@ -477,6 +505,8 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
 
   // Advanced facing & 3D Mesh (Niagara parity)
   p->facingMode = config.render.facingMode;
+  p->facingDirection = config.render.facingDirection;
+  p->facingAspect = config.render.facingAspect > 0.0f ? config.render.facingAspect : 1.0f;
   p->meshModel = config.render.meshModel;
   p->meshRotation = (Vector3){ 0.0f, 0.0f, 0.0f };
   p->meshRotationRate = config.render.meshRotationRate;
@@ -844,6 +874,7 @@ static int s_locVolumeSheet = -1, s_locRampLUT = -1, s_locHeatGain = -1,
 static int s_locSixWayLighting = -1, s_locSixWayTexB = -1,
            s_locSixWayScattering = -1, s_locSixWayAbsorption = -1,
            s_locAmbientGround = -1, s_locAmbientHorizon = -1;
+static int s_locNormalTex = -1;
 static int s_locUseMotionVectors = -1, s_locMotionTex = -1, s_locMotionWarp = -1;
 static int s_locTime = -1;
 
@@ -983,6 +1014,7 @@ static void ParticleLighting_Begin(Camera3D camera)
       s_locSixWayAbsorption = GetShaderLocation(s_litShader, "u_sixWayAbsorption");
       s_locAmbientGround    = GetShaderLocation(s_litShader, "u_ambientGround");
       s_locAmbientHorizon   = GetShaderLocation(s_litShader, "u_ambientHorizon");
+      s_locNormalTex        = GetShaderLocation(s_litShader, "u_normalTex");
       s_locUseMotionVectors = GetShaderLocation(s_litShader, "u_useMotionVectors");
       s_locMotionTex        = GetShaderLocation(s_litShader, "u_motionTex");
       s_locMotionWarp       = GetShaderLocation(s_litShader, "u_motionWarp");
@@ -1273,7 +1305,11 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         if (lr < 0.0f) lr = 0.0f; else if (lr > 1.0f) lr = 1.0f;
         drawRadius *= SkillCurve_Eval(p->radiusCurve, 1.0f - lr);
       }
-      float radiusPx = drawRadius * screenH / (2.0f * distance * tanf(halfFovy));
+      // The copied depth region must cover the actual rectangular billboard,
+      // not only its short-axis radius, or tall muzzle sheets sample stale
+      // depth outside the square request and lose their tips.
+      float softDepthRadius = drawRadius * fmaxf(p->facingAspect, 1.0f);
+      float radiusPx = softDepthRadius * screenH / (2.0f * distance * tanf(halfFovy));
       Rectangle r = {center.x - radiusPx, center.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f};
       if (!hasBounds) { bounds = r; hasBounds = true; }
       else {
@@ -1326,6 +1362,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   unsigned int curSixWayTexB = 0xFFFFFFFFu;
   float curSixWayScat = -1.0f;
   float curSixWayAbs = -1.0f;
+  int curSmokeSheet = -1;
+  unsigned int curNormalTex = 0xFFFFFFFFu;
   unsigned int curMotionTex = 0xFFFFFFFFu;
   float curMotionWarp = -1.0f;
   float curStrength = -1.0f;
@@ -1377,7 +1415,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // Global multiplier on top of the per-particle value, so the whole look can
     // be dialled without touching every call site.
     float wantBoost = p->emissiveBoost * s_emissiveBoost;
-    float wantStrength = p->unlit ? 0.0f : ((p->sixWayLighting && s_lightingStrength <= 0.0f) ? 1.0f : s_lightingStrength);
+    float wantStrength = p->unlit ? 0.0f : (((p->sixWayLighting || p->smokeSheet) && s_lightingStrength <= 0.0f) ? 1.0f : s_lightingStrength);
     // The body pass normally forces ALPHA so a glow sheet cannot smear its
     // black surround into the body layer. PREMULTIPLIED is the exception it has
     // to keep: its RGB is already scaled by its own coverage, so forcing it to
@@ -1391,6 +1429,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         VFXPackColor(p->smokeTint) != curSmokeTint ||
         p->sixWayLighting != curSixWay || p->sixWayTexBId != curSixWayTexB ||
         p->sixWayScattering != curSixWayScat || p->sixWayAbsorption != curSixWayAbs ||
+        p->smokeSheet != curSmokeSheet || p->normalTexId != curNormalTex ||
         p->motionTexId != curMotionTex || p->motionWarpScale != curMotionWarp)
     {
       if (curTex != 0xFFFFFFFFu) rlEnd();
@@ -1407,7 +1446,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         rlDrawRenderBatchActive();
         curBlend = drawBlend;
       }
-      if (p->volumeSheet != curVolume || p->rampTexId != curRamp ||
+      if (p->volumeSheet != curVolume || p->smokeSheet != curSmokeSheet ||
+          p->rampTexId != curRamp ||
           p->heatGain != curHeat || p->smokeGain != curSmokeGain ||
           VFXPackColor(p->smokeTint) != curSmokeTint)
       {
@@ -1417,7 +1457,11 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         // here; the flush is still required, because the uniform and the
         // texture unit must not change under vertices already queued.
         rlDrawRenderBatchActive();
-        float vs = (float)p->volumeSheet;
+        // Keep all channel-packed particle materials on the established
+        // u_volumeSheet selector. A separate smoke-mode uniform was observed
+        // arriving as zero on the Vulkan path, which silently exposed the raw
+        // green EOO G channel. Mode 3 is EOO smoke; 1/2 retain their contracts.
+        float vs = p->smokeSheet ? 3.0f : (float)p->volumeSheet;
         float hg = p->heatGain;
         if (s_litActive && s_locVolumeSheet >= 0)
           SetShaderValue(s_litShader, s_locVolumeSheet, &vs, SHADER_UNIFORM_FLOAT);
@@ -1474,6 +1518,20 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         curSixWayTexB = p->sixWayTexBId;
         curSixWayScat = p->sixWayScattering;
         curSixWayAbs = p->sixWayAbsorption;
+      }
+      if (p->smokeSheet != curSmokeSheet || p->normalTexId != curNormalTex)
+      {
+        rlDrawRenderBatchActive();
+        if (s_litActive && p->smokeSheet && p->normalTexId != 0 && s_locNormalTex >= 0)
+        {
+          Texture2D nTex = {0};
+          nTex.id = p->normalTexId;
+          nTex.width = 1; nTex.height = 1; nTex.mipmaps = 1;
+          nTex.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+          SetShaderValueTexture(s_litShader, s_locNormalTex, nTex);
+        }
+        curSmokeSheet = p->smokeSheet;
+        curNormalTex = p->normalTexId;
       }
       if (p->motionTexId != curMotionTex || p->motionWarpScale != curMotionWarp)
       {
@@ -1645,9 +1703,34 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
 
     float rx = right.x * drawRadius, ry = right.y * drawRadius, rz = right.z * drawRadius;
     float ux = up.x * drawRadius, uy = up.y * drawRadius, uz = up.z * drawRadius;
+    bool authoredAxisCross = false;
+    Vector3 authoredCrossSideB = {0};
 
     // ── FEATURE 1 & 2: ADVANCED FACING MODES (Ground Plane, Cross-Billboard, Velocity Stretch) ──
-    if (p->facingMode == VFX_FACING_GROUND_PLANE)
+    if (p->facingMode == VFX_FACING_CROSS_BILLBOARD)
+    {
+      Vector3 sideA;
+      Vector3 particleView = Vector3Subtract(camera.position,
+                                             (Vector3){p->x, p->y, p->z});
+      if (Vector3LengthSqr(particleView) < 1e-8f) particleView = viewDir;
+      else particleView = Vector3Normalize(particleView);
+      authoredAxisCross = PS_AxisCrossBasis(p->facingDirection, particleView,
+                                            camera.up, &sideA,
+                                            &authoredCrossSideB);
+      if (authoredAxisCross)
+      {
+        Vector3 axis = Vector3Normalize(p->facingDirection);
+        rx = sideA.x * drawRadius;
+        ry = sideA.y * drawRadius;
+        rz = sideA.z * drawRadius;
+        ux = axis.x * drawRadius * p->facingAspect;
+        uy = axis.y * drawRadius * p->facingAspect;
+        uz = axis.z * drawRadius * p->facingAspect;
+      }
+      // A zero facingDirection deliberately falls through to the exact
+      // legacy camera-space cross basis initialized above.
+    }
+    else if (p->facingMode == VFX_FACING_GROUND_PLANE)
     {
       // Quad lies flat on XZ plane (normal pointing +Y)
       float cosT = cosf(p->rotation);
@@ -1714,6 +1797,13 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
 
       rx = rxRot; ry = ryRot; rz = rzRot;
       ux = uxRot; uy = uyRot; uz = uzRot;
+    }
+
+    if (!authoredAxisCross && p->facingAspect != 1.0f)
+    {
+      ux *= p->facingAspect;
+      uy *= p->facingAspect;
+      uz *= p->facingAspect;
     }
 
     // Đọc UV từ hoạt cảnh Sprite sheet atlas
@@ -1824,10 +1914,19 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // Cross-Billboard: emit orthogonal cross quad at 90 degrees
     if (p->facingMode == VFX_FACING_CROSS_BILLBOARD)
     {
-      // Swap/rotate rx and rz orthogonally
-      float tempRx = rx, tempRy = ry, tempRz = rz;
-      rx = -uz; ry = uy; rz = ux;
-      ux = tempRx; uy = tempRy; uz = tempRz;
+      if (authoredAxisCross)
+      {
+        rx = authoredCrossSideB.x * drawRadius;
+        ry = authoredCrossSideB.y * drawRadius;
+        rz = authoredCrossSideB.z * drawRadius;
+      }
+      else
+      {
+        // Preserve the legacy camera-space cross for all existing callers.
+        float tempRx = rx, tempRy = ry, tempRz = rz;
+        rx = -uz; ry = uy; rz = ux;
+        ux = tempRx; uy = tempRy; uz = tempRz;
+      }
 
       if (fbBlend > 0.001f)
       {
@@ -2017,7 +2116,7 @@ bool ParticleSystem_HasVolumeParticles(void)
   for (int i = 0; i < s_activeCount; ++i)
   {
     const ParticleInternal *p = &g_Particles[s_activeIds[i]];
-    if ((p->volumeSheet || p->sixWayLighting) && p->renderMode != 3 && !p->trailOnly)
+    if ((p->volumeSheet || p->sixWayLighting || p->smokeSheet) && p->renderMode != 3 && !p->trailOnly)
       return true;
   }
   return false;

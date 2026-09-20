@@ -40,6 +40,8 @@ in R G B A order, even when a channel is unused.
 | `VOLUME` | `emission` | `density` | `shadow` | `opacity` |
 | `MOTION` | `flowx` | `flowy` | `speed` | `mask` |
 | `LIGHT6` | `lightx` | `lighty` | `lightz` | `opacity` or `ao` |
+| `SMOKE_EOO` | `light` | `transmittance` | `unused` | `opacity` |
+| `NORMAL_XY` | `normalx` | `normaly` | `unused` | `unused` |
 | `NOISE` | `field` | `field` | `field` | `field` |
 
 `STRAND` is the trail sheet read by `core/trails/shaders/trail_deform.fs` mode 2.
@@ -69,6 +71,13 @@ from +X/+Y/+Z in RGB and true opacity in A; Map B stores -X/-Y/-Z and may use A
 for baked ambient occlusion. It is for participating, non-emissive material
 such as smoke—not the incandescent flame core. Its grid matches an optional
 `MOTION` atlas and every channel is `CLAMP`.
+
+`SMOKE_EOO` + `NORMAL_XY` describe the imported Niagara smoke pair. They are
+not six-way maps: the first sheet carries measured baked internal light in R,
+transmittance/occlusion in G and coverage in A; the companion stores signed
+tangent-space normal XY in RG and reconstructs positive Z in the shader. Their
+constant source channels remain explicit packing debt while these profiles are
+`preview_only`; approval requires a lossless repack or a reviewed exception.
 
 `NOISE`
 is a pure DATA sheet: four independent scalar fields, decorrelated by
@@ -107,7 +116,7 @@ sheet. Declare that in the profile's `consumers`.
 
 ### R3 — Signed channels use 128 as neutral
 
-Slots `distort`, `flowx`, `flowy` are signed: encode `128 + 127*v`, decode
+Slots `distort`, `flowx`, `flowy`, `normalx`, `normaly` are signed: encode `128 + 127*v`, decode
 `c * 2.0 - 1.0`. Every other slot is unsigned linear 0..1.
 
 A signed channel survives bilinear filtering safely — the average of two
@@ -202,7 +211,9 @@ it costs nothing at configure time. It does not yet detect a channel that
 exists but is constant in its pixels; that needs the decompressed image.
 
 
-A packed sheet exists to use all four. `unused` is not a legal slot. If a
+A packed sheet exists to use all four. `unused` is not legal for newly authored
+sheets. Imported `preview_only` `SMOKE_EOO`/`NORMAL_XY` files may declare it so
+the validator reports visible packing debt instead of inventing semantics. If a
 layout leaves a channel with nothing to carry, the sheet does not belong in
 that layout.
 

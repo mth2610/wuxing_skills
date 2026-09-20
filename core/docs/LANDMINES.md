@@ -3619,3 +3619,27 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   implicit legacy-scale random burst in the particle system.
   Validate on matched dark and bright plates; particle count alone cannot reveal
   the overdraw. Guarded by `core/tests/flame_volume_optics_test.c`.
+
+## Imported smoke channels are material data, not display RGB (20/09/2026)
+
+- **Symptom:** extracted smoke turns green when drawn as colour, or becomes flat,
+  disconnected alpha patches after RGB is discarded.
+- **Cause:** the Niagara smoke sheets are channel-packed EOO data rather than
+  six-way lightmaps or ordinary RGBA art. In this pack R carries internal light
+  detail, G carries transmittance/occlusion, B is unused, and A carries coverage;
+  a paired atlas stores signed tangent-space normal XY in RG.
+- **Rule:** audit every extracted channel numerically and visually before wiring
+  it. Decode `SMOKE_EOO` with its matching `NORMAL_XY` atlas, reconstruct positive
+  normal Z, and use the ordinary particle light path. Do not route these sheets
+  through six-way lighting and do not reduce them to alpha-only sprites. Guarded
+  by `core/tests/smoke_eoo_material_test.c`.
+- **Follow-up symptom:** the correct EOO shader code exists and all source-wiring
+  tests pass, but the runtime output is still saturated green.
+- **Follow-up cause:** a second boolean material selector remained at its default
+  on the rendered path, so the shader fell through to ordinary RGBA sampling;
+  EOO's dominant G channel then became visible colour. A source-string wiring
+  test cannot prove which mutually exclusive decoder actually ran on the GPU.
+- **Follow-up rule:** one particle shader must use one numeric material-mode
+  selector. EOO smoke is `u_volumeSheet == 3`, reusing the established packed
+  material state boundary rather than introducing a parallel boolean. Keep the
+  branch before the packed-fire decoder and exclude mode 3 from flame UV warp.
