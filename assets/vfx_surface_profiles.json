@@ -356,7 +356,7 @@
       "flipbook": [8, 8, 64],
       "seam": "not_applicable",
       "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Smoke_Puff_Light_Flipbook.",
-      "consumers": ["VFX_ComposeSmokeVolume (PUFF_LIGHT)"],
+      "consumers": ["VFX_ComposeSmokeVolume (PUFF_LIGHT)", "VFX_ComposeImpactDust"],
       "assets": {
         "body": {
           "path": "assets/textures/vfx/flipbooks/smoke_puff_light_8x8.png",

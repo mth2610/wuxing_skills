@@ -1,10 +1,10 @@
 // P4 — ImpactDust. A cold particulate event, distinct from smoke: authored
 // dust parcels burst outward close to the ground, grow briefly, then tear/fade.
-#include "core/resource_manager.h"
+#include "core/vfx_surface_registry.h"
 
 #define IMPACT_DUST_MAX_PARTICLES 14 // A/B: restore contact-cloud density
-#define IMPACT_DUST_PLAY_FRAMES 50   // A/B: SmokePuff's authored moving arc
 static Texture2D s_impactDustTex = {0};
+static Texture2D s_impactDustNormalTex = {0};
 #define IMPACT_DUST_ANIM_RATES 4
 static SpriteAnim s_impactDustAnim[IMPACT_DUST_ANIM_RATES];
 static SkillCurve s_impactDustGrow = {0};
@@ -15,16 +15,24 @@ static void ImpactDust_Init(void)
 {
     if (s_impactDustReady)
         return;
-    // TEMPORARY A/B: use the verified SmokePuff sheet. If this visibly rolls
-    // with the same particle primary, Dust's 4x4 content/timing is the cause.
-    s_impactDustTex = ResourceManager_LoadTexture("assets/textures/dust_puff_8x8_smoke.png");
-    if (s_impactDustTex.id != 0)
-        SetTextureFilter(s_impactDustTex, TEXTURE_FILTER_BILINEAR);
-    // Match SmokePuff exactly for this A/B: its 50-frame moving arc and rates.
+    const VFX_SurfaceProfile *profile = VFX_SurfaceRegistry_Get(
+        VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA);
+    if (profile != NULL && profile->body.id != 0) {
+        s_impactDustTex = profile->body;
+        s_impactDustNormalTex = profile->normalMap;
+    }
+    const int frames = (profile != NULL && profile->flipbookFrames > 0)
+        ? profile->flipbookFrames : 64;
+    const int columns = (profile != NULL && profile->flipbookColumns > 0)
+        ? profile->flipbookColumns : 8;
+    const int rows = (profile != NULL && profile->flipbookRows > 0)
+        ? profile->flipbookRows : 8;
+    // Use the complete extracted arc; per-particle rate variation breaks the
+    // obvious lockstep that turns a contact cloud into tiled cards.
     static const float rateMul[IMPACT_DUST_ANIM_RATES] = {1.0f, 0.91f, 0.82f, 0.74f};
     for (int i = 0; i < IMPACT_DUST_ANIM_RATES; ++i)
-        SpriteAnim_Init(&s_impactDustAnim[i], 8, 8, IMPACT_DUST_PLAY_FRAMES,
-                        ((float)IMPACT_DUST_PLAY_FRAMES / 2.0f) * rateMul[i], ANIM_ONCE);
+        SpriteAnim_Init(&s_impactDustAnim[i], columns, rows, frames,
+                        ((float)frames / 0.98f) * rateMul[i], ANIM_ONCE);
     FloatCurve_AddStop(&s_impactDustGrow, 0.0f, 0.72f);
     FloatCurve_AddStop(&s_impactDustGrow, 0.34f, 1.15f);
     FloatCurve_AddStop(&s_impactDustGrow, 1.0f, 1.38f);
@@ -78,6 +86,8 @@ void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float 
             // cloud instead of visibly separate coloured plates.
             .render.texture = s_impactDustTex,
             .render.blendMode = VFX_BLEND_ALPHA,
+            .render.smokeSheet = 1,
+            .render.normalTex = s_impactDustNormalTex,
             .spriteAnim = &s_impactDustAnim[i % IMPACT_DUST_ANIM_RATES],
             .spriteAnimPhase = (i == 0) ? 0.0f : Random01() * 0.22f,
             .rotation = Random01() * 2.0f * PI,
