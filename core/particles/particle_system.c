@@ -119,6 +119,11 @@ typedef struct
   bool travelImpactActive;
   float travelImpactAge;
   float windInfluence;
+  const ParticleDynamicsProfile *dynamics;
+  Vector3 dynamicsInitialImpulseNs;
+  Vector3 dynamicsInitialAccelerationMps2;
+  Vector3 dynamicsConstantForceNewtons;
+  bool dynamicsImpulsePending;
   const ColorGradient *gradient;
   const SpriteAnim *spriteAnim;
   float spriteAnimPhase;
@@ -349,6 +354,11 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->travelImpactActive = false;
   p->travelImpactAge = 0.0f;
   p->windInfluence = config.physics.windInfluence > 0.0f ? config.physics.windInfluence : config.windInfluence;
+  p->dynamics = config.physics.dynamics;
+  p->dynamicsInitialImpulseNs = config.physics.initialImpulseNs;
+  p->dynamicsInitialAccelerationMps2 = config.physics.initialAccelerationMps2;
+  p->dynamicsConstantForceNewtons = config.physics.constantForceNewtons;
+  p->dynamicsImpulsePending = p->dynamics != NULL;
   p->gradient = config.gradient;
   p->spriteAnim = config.spriteAnim;
   p->spriteAnimPhase = config.spriteAnimPhase;
@@ -623,8 +633,64 @@ void UpdateParticles(float dt)
         p->onLiveEmitTimer = 0.0f; // Reset backlog an toàn
     }
 
-    // TỐI ƯU 3: Inline Math Scalar (Tính toán trục tiếp trên x, y, z)
     const ForceField *activeField = p->forceField;
+    if (p->dynamics)
+    {
+      const ParticleDynamicsProfile *d = p->dynamics;
+      Vector3 position = {p->x, p->y, p->z};
+      Vector3 velocity = {p->vx, p->vy, p->vz};
+      Vector3 acceleration = p->dynamicsInitialAccelerationMps2;
+      float inverseMass = d->inverseMassKg > 0.0f ? d->inverseMassKg : 1.0f;
+      if (p->dynamicsImpulsePending) {
+        velocity = ParticleDynamics_ApplyImpulse(velocity,
+                                                  p->dynamicsInitialImpulseNs,
+                                                  inverseMass);
+        p->dynamicsImpulsePending = false;
+      }
+      acceleration.y -= 9.81f * d->gravityScale;
+      if (p->forceField) {
+        Vector3 fieldAcceleration = ForceField_Evaluate(
+            p->forceField, position, velocity, p->lifetime,
+            p->forceAxisOrigin, p->forceAxisDir);
+        acceleration.x += fieldAcceleration.x;
+        acceleration.y += fieldAcceleration.y;
+        acceleration.z += fieldAcceleration.z;
+      }
+      if (windActive) {
+        Vector3 windAcceleration = WindZone_Evaluate(position, velocity,
+                                                      s_particleTime);
+        float windScale = d->windAccelerationScale * d->windSusceptibility;
+        acceleration.x += windAcceleration.x * windScale;
+        acceleration.y += windAcceleration.y * windScale;
+        acceleration.z += windAcceleration.z * windScale;
+      }
+      velocity = ParticleDynamics_ApplyAccelerationAndForce(
+          velocity, acceleration, p->dynamicsConstantForceNewtons, inverseMass, dt);
+      if (p->forceField) {
+        float viscosity = ForceField_GetViscosityDamping(p->forceField, dt);
+        velocity.x *= viscosity; velocity.y *= viscosity; velocity.z *= viscosity;
+      }
+      velocity = ParticleDynamics_ApplyLinearDrag(velocity,
+                                                    d->linearDragPerSecond, dt);
+      if (d->terminalSpeedMps > 0.0f) {
+        float speed = Vector3Length(velocity);
+        if (speed > d->terminalSpeedMps)
+          velocity = Vector3Scale(velocity, d->terminalSpeedMps / speed);
+      }
+      if (d->windCouplingHz > 0.0f && d->windSusceptibility > 0.0f) {
+        float alpha = 1.0f - expf(-d->windCouplingHz * d->windSusceptibility * dt);
+        Vector3 airflow = Wind_EvaluateVelocity(position, s_particleTime);
+        velocity.x += (airflow.x - velocity.x) * alpha;
+        velocity.y += (airflow.y - velocity.y) * alpha;
+        velocity.z += (airflow.z - velocity.z) * alpha;
+      }
+      p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
+      p->x += velocity.x * dt; p->y += velocity.y * dt; p->z += velocity.z * dt;
+      goto particle_contacts;
+    }
+
+    // TỐI ƯU 3: Inline Math Scalar (Tính toán trục tiếp trên x, y, z)
+    activeField = p->forceField;
     if (p->travelImpactActive)
     {
       // Sau khi tới target, không áp dụng trường lực thông thường (curl noise...)
@@ -770,6 +836,7 @@ void UpdateParticles(float dt)
       continue;
     }
 
+particle_contacts:
     if (activeField) {
       Vector3 position = {p->x, p->y, p->z};
       Vector3 velocity = {p->vx, p->vy, p->vz};

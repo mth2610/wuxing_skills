@@ -90,6 +90,7 @@ typedef struct {
     const ParticleDynamicsProfile *dynamics;
     Vector3 initialImpulseNs;          /* Applied once: dv = impulse * inverseMass. */
     Vector3 initialAccelerationMps2;   /* Persistent authored acceleration field. */
+    Vector3 constantForceNewtons;      /* Persistent world-space force, converted by inverse mass. */
 } VFX_PhysicsConfig;
 
 // 4. Animation Config

@@ -44,11 +44,26 @@ static void Test_LinearDragIsFrameRateInvariant(void)
                "exponential linear drag is frame-rate invariant");
 }
 
+static void Test_ForceDependsOnMassButAccelerationDoesNot(void)
+{
+    Vector3 acceleration = {0.0f, 3.0f, 0.0f};
+    Vector3 force = {0.0f, 8.0f, 0.0f};
+    Vector3 light = ParticleDynamics_ApplyAccelerationAndForce(
+        (Vector3){0}, acceleration, force, 1.0f, 0.5f);
+    Vector3 heavy = ParticleDynamics_ApplyAccelerationAndForce(
+        (Vector3){0}, acceleration, force, 0.25f, 0.5f);
+    CHECK_NEAR(light.y, 5.5f, 1e-6f,
+               "Newton force response uses inverse mass");
+    CHECK_NEAR(heavy.y, 2.5f, 1e-6f,
+               "acceleration fields ignore particle mass");
+}
+
 int main(void)
 {
     Test_NullProfileKeepsLegacyPath();
     Test_ImpulseUsesInverseMass();
     Test_LinearDragIsFrameRateInvariant();
+    Test_ForceDependsOnMassButAccelerationDoesNot();
     printf("particle dynamics: %s\n", s_failures ? "FAIL" : "PASS");
     return s_failures ? 1 : 0;
 }

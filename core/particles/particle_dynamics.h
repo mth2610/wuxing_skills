@@ -38,6 +38,23 @@ static inline Vector3 ParticleDynamics_ApplyImpulse(Vector3 velocity,
                      velocity.z + impulseNs.z * inverseMassKg};
 }
 
+/* Acceleration fields use m/s^2 directly. Only the force input is converted
+ * from Newtons through inverse mass, so mass never changes ForceField/WindZone
+ * response. */
+static inline Vector3 ParticleDynamics_ApplyAccelerationAndForce(
+    Vector3 velocity, Vector3 accelerationMps2, Vector3 forceNewtons,
+    float inverseMassKg, float dt)
+{
+    Vector3 total = accelerationMps2;
+    if (inverseMassKg > 0.0f) {
+        total.x += forceNewtons.x * inverseMassKg;
+        total.y += forceNewtons.y * inverseMassKg;
+        total.z += forceNewtons.z * inverseMassKg;
+    }
+    return (Vector3){velocity.x + total.x * dt, velocity.y + total.y * dt,
+                     velocity.z + total.z * dt};
+}
+
 static inline Vector3 ParticleDynamics_ApplyLinearDrag(Vector3 velocity,
                                                          float dragPerSecond,
                                                          float dt)
