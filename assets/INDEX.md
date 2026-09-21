@@ -114,9 +114,6 @@ still needs matched dark/light-background approval.
 | `flipbooks/plasma_wisps_8x8.png` | PlasmaWispsNiagara / `VFX_MeshParticleEmitter` | 4096×4096, 8×8, 64 frames | preview-only; high-memory source |
 | `flares/lens_flare_star.png` | LensFlareStarNiagara / `VFX_DrawOpticalStarburstStreak` | 512×512, static | preview-only |
 | `flares/lens_flare_ring.png` | LensFlareStreakNiagara / `VFX_DrawOpticalStarburstStreak` | 1024×256, static anamorphic streak; filename is legacy | preview-only |
-| `weapons/muzzle_flash_front.png` | MuzzleFlashFrontNiagara / `VFX_ComposeMuzzleFlash` | 2048×1024, 4×1 spatial variants | preview-only |
-| `weapons/muzzle_flash_side.png` | MuzzleFlashSideNiagara / `VFX_ComposeMuzzleFlash` | 1024×1024, 2×1 spatial variants | preview-only |
-| `weapons/muzzle_flash_sphere.png` | MuzzleFlashSphereNiagara / `VFX_ComposeMuzzleFlash` | 1024×1024, 2×2 spatial variants | preview-only |
 
 ### P1 semantic-surface migration map
 
@@ -133,7 +130,6 @@ semantic profile; the registry owns the runtime path and sampler contract.
 | SmokeRoil/PuffDark/PuffLight/Wispy Niagara | puff/card | `VFX_ComposeSmokeVolume` | migrated; visual approval pending |
 | FireRoil/Fireball Niagara | puff/card | `VFX_FlameEmitter` | migrated; visual approval pending |
 | PlasmaWisps Niagara | puff/card | `VFX_MeshParticleEmitter` | migrated; visual approval pending |
-| MuzzleFlash Front/Side/Sphere Niagara | camera/card + authored-axis cross | `VFX_ComposeMuzzleFlash` | migrated; visual approval pending |
 
 ### P4 decal semantic migration map — visual-owner gate
 
@@ -339,8 +335,8 @@ No `_flame` split: the channel is spurious for a cold effect and `pack.py` skips
 writing it. Audited: coverage 18.1%, lobes 1.02, 0/16 clipped, wall-shell 0.0%,
 value spread 0.73.
 
-**Consumed by** nothing yet — intended for `VFX_ComposeImpactPackage` (E6 #6),
-footfalls, landings and Earth skills. Falls back to the static smoke sprites
+**Consumed by** nothing yet — intended for footfalls, landings and Earth skills.
+Falls back to the static smoke sprites
 wherever a consumer follows the `vc_smoke_puff.inl` pattern.
 
 **Visual review pending (31/07/2026):** `ImpactDust` currently uses the

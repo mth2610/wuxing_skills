@@ -1268,22 +1268,11 @@ int main(int argc, char **argv) {
                                botCasts[ci].aim);
     }
 
-    // Minion self-destruct VFX — ai/ is pure logic and reports explosions
-    // as events; the composition layer draws them (element-matched preset).
+    // Minion self-destructs remain gameplay/audio events.
     {
         MinionExplosion booms[8];
         int nBooms = AI_PollExplosions(booms, 8);
         for (int bi = 0; bi < nBooms; bi++) {
-            // F0 purge: VFX_ComposeImpact is gone. Its successor is the E6
-            // package — one call, tuned as a unit, severity as the single dial.
-            VC_MaterialId mat =
-                (booms[bi].element == 0) ? VC_MAT_WATER :
-                (booms[bi].element == 1) ? VC_MAT_WOOD :
-                (booms[bi].element == 2) ? VC_MAT_FIRE :
-                (booms[bi].element == 3) ? VC_MAT_EARTH :
-                                           VC_MAT_METAL;
-            VFX_ComposeImpactPackage(booms[bi].pos, (Vector3){0.0f, 1.0f, 0.0f},
-                                     mat, 0.8f, 0.40f);
             Audio_PlaySFXAt(SFX_EXPLOSION, booms[bi].pos);
         }
     }

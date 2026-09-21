@@ -103,13 +103,6 @@ static void RebuildMistField(void) {
     SkillForceMix_AddLayers(&s_mistForce, &s_mistFieldActive);
 }
 
-// F0 purge: the ImpactBurstConfig this used to fill is deleted along with
-// VFX_TriggerImpactBurst. The successor, VFX_ComposeImpactPackage, deliberately
-// exposes ONE dial (severity) instead of a 20-field struct — the whole point of
-// E6 #6 was that the pieces are tuned together, so a per-skill config would put
-// back exactly what it removed. The tunables below still exist and still
-// hot-reload; they simply have nothing to drive until a skill needs its own
-// variant, which is an E7 question.
 static void RebuildImpactConfig(void) {}
 
 void InitTubeSkill(int screenWidth, int screenHeight) {
@@ -220,8 +213,6 @@ void UpdateTubeSkill(float dt) {
       if (ev[k].outcome == CLASH_B_WINS || ev[k].outcome == CLASH_MUTUAL_DESTROY ||
           ev[k].outcome == CLASH_HIT_AGENT) {
         emitters[slot].active = false;
-        VFX_ComposeImpactPackage(ev[k].clashPoint, (Vector3){0.0f, 1.0f, 0.0f},
-                                 VC_MAT_WATER, emitters[slot].sizeScale, TUBE_IMPACT_SEVERITY);
       }
     }
   }
@@ -232,8 +223,6 @@ void UpdateTubeSkill(float dt) {
     emitters[e].progress += dt * TUBE_TRAVEL_SPEED;
     if (emitters[e].progress >= 1.0f) {
       emitters[e].active = false;
-      VFX_ComposeImpactPackage(emitters[e].p3, (Vector3){0.0f, 1.0f, 0.0f},
-                                 VC_MAT_WATER, emitters[e].sizeScale, TUBE_IMPACT_SEVERITY);
       continue;
     }
     emitters[e].headPos = ProceduralMesh_BezierPoint(
@@ -331,8 +320,6 @@ void DeactivateTubeProjectile(int index) {
     if (emitters[i].active) {
       if (count == index) {
         emitters[i].active = false;
-        VFX_ComposeImpactPackage(emitters[i].headPos, (Vector3){0.0f, 1.0f, 0.0f},
-                                 VC_MAT_WATER, emitters[i].sizeScale, TUBE_IMPACT_SEVERITY);
         return;
       }
       count++;

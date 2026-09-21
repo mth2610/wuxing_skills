@@ -112,11 +112,6 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeAmbientFire":       ("emitter", "timed",      "continuous"),
     "VFX_ComposeFlame":             ("emitter", "timed",      "continuous"),
     "VFX_ComposeMeshParticleEmitter": ("emitter", "persistent", "persistent"),
-    "VFX_ComposeChargeConverge":     ("draw",    "timed",      "continuous"),
-    "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),
-    "VFX_ComposeFlare":              ("draw",    "timed",      "continuous"),
-    "VFX_ComposeRadiantStarburst":   ("draw",    "timed",      "continuous"),
-    "VFX_ComposeRadiantStarburstHead": ("draw",  "timed",      "continuous"),
     # NOT an effect — the HDR pipeline's calibration target. "static" and
     # "continuous" because it must be on screen unchanged for as long as the
     # harness wants to measure it: a fixture that fades or animates cannot be
@@ -140,18 +135,12 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeGasVortex":          ("trail",   "static",     "continuous"),
     "VFX_ComposeFlameJet":           ("event",   "burst",      "oneshot"),
     "VFX_ComposeFireballBurst":      ("event",   "burst",      "oneshot"),
-    # P4 beam. "static" like the column and for the same reason: it owns a
-    # handle and its endpoints are POSITIONS, not a follower transform. The
-    # heuristic below would have guessed "timed" off the name alone, which is
-    # wrong — a beam is sustained, and it has no t01 to be timed by.
-    "VFX_ComposeBeam":               ("trail",   "static",     "continuous"),
     # RIFT BOLT (vc_rift_bolt.inl) — a projectile HEAD. "follower" because the
     # whole subject is a thing in flight: it derives its heading and its speed
     # from the transform it is fed, so a fixture that parks it at a point would
     # show a stationary husk with no nose, no shed flakes and no wake direction
     # — i.e. would hide every property the effect was authored for.
     "VFX_ComposeRiftBolt":           ("trail",   "follower",   "continuous"),
-    "VFX_ComposeAstralSpear":        ("trail",   "follower",   "continuous"),
     "VFX_ComposeLightningArc":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeLightningGroundRicochet": ("event", "burst",    "oneshot"),
     # The moving counterpart (vc_smoke_trail.inl) — first arg is a
@@ -159,28 +148,22 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeSmokeTrail":         ("trail",   "follower",   "continuous"),
     "VFX_ComposeDebrisShards":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeDissolveExit":       ("draw",    "timed",      "continuous"),
-    "VFX_ComposeEnergyBurst":        ("event",   "burst",      "oneshot"),
     "VFX_ComposeEmberBurst":        ("event",   "burst",      "oneshot"),
-    "VFX_ComposeGlintSparkle":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeGroundWave":         ("draw",    "timed",      "continuous"),
-    "VFX_ComposeImpactPackage":      ("event",   "burst",      "oneshot"),
     "VFX_ComposeImpactDust":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeGroundDustRing":     ("event",   "burst",      "oneshot"),
     "VFX_ComposeContactSpark":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeContactSparkMode":   ("event",   "burst",      "oneshot"),
-    "VFX_ComposeEmberTrail":         ("emitter", "persistent", "persistent"),
     "VFX_ComposeShieldShell":        ("emitter", "persistent", "persistent"),
     "VFX_ComposeFlowShield":         ("emitter", "persistent", "persistent"),
     "VFX_ComposeDecal":              ("event",   "burst",      "oneshot"),
     "VFX_ComposeLightShaft":         ("draw",    "timed",      "continuous"),
-    "VFX_ComposePortalDisc":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeProjectile":         ("trail",   "follower",   "continuous"),
     "VFX_ComposeRibbonTrail":        ("trail",   "follower",   "continuous"),
     "VFX_ComposeRuneCircle":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeShockRing":          ("draw",    "timed",      "continuous"),
     "VFX_ComposeSmokePuff":          ("event",   "burst",      "oneshot"),
     "VFX_ComposeMistVeil":           ("event",   "burst",      "oneshot"),
-    "VFX_ComposeMuzzleFlash":        ("event",   "burst",      "oneshot"),
     "VFX_ComposeSweepSlash":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeVolumeTrail":        ("trail",   "follower",   "continuous"),
     "VFX_ComposeFissureStreak":      ("draw",    "timed",      "continuous"),
@@ -192,8 +175,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeWaterStream":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeFluidImpact":        ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterOrb":           ("event",   "burst",      "oneshot"),
-    # SSF probe: per-frame like VFX_ComposeConvergeMotes, and for the same
-    # reason — a mesh emitter with no handle to hold. The fixture is "timed"
+    # SSF probe: it has no persistent handle to retain. The fixture is "timed"
     # because Draw fixtures are, but the bench call passes a CONSTANT t01
     # rather than $PROG: the ring exists to be stood in front of and orbited
     # while the surface is judged, and a density that loops 0->1 would hide
@@ -216,18 +198,11 @@ LIFECYCLE_SPECS = {
 FIXTURE_SPAWN_OVERRIDES = {
     "VFX_ComposeMeshParticleEmitter":
         "VFX_ComposeMeshParticleEmitter(&(VFX_MeshParticleEmitterDesc){.model=&s_meshParticleFixtureModel, .transform=MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), .variant=s_meshParticleFixtureVariant, .material=VC_MAT_LIGHTNING, .intensity=1.0f, .seed=0x4d455348u})",
-    "VFX_ComposeRadiantStarburstHead":
-        "VFX_ComposeRadiantStarburstHead($POS, VC_MAT_FIRE, 1.5f, $TIME)",
     # The vortex is magical energy rather than fire. Lightning supplies a
     # purple body and cyan emission, visibly distinct from the orange plume.
     # The config pointer is optional; NULL selects the corkscrew defaults.
     "VFX_ComposeGasVortex":
         "VFX_ComposeGasVortex($POS, VC_MAT_LIGHTNING, NULL)",
-    # The generic radius inference is 1.5 m; Astral Spear is authored as a
-    # hand-thrown dart. Keep the bench at its 0.10 m body radius so its long
-    # head, broken halos, and wake are judged at gameplay scale.
-    "VFX_ComposeAstralSpear":
-        "VFX_ComposeAstralSpear($XFORM, VC_MAT_FIRE, 0.10f)",
     # A bolt is a projectile head, not a shield: the generic float rule fills
     # any "radius" with 1.5f, which here is a three-metre ball and reads as an
     # orb rather than as something in flight. 0.12 m is the authored default —
@@ -271,10 +246,6 @@ FIXTURE_EVENT_OVERRIDES = {
     # population so the bench reveals ribbon length, arc and bounce quality.
     "VFX_ComposeEmberBurst":
         "VFX_ComposeEmberBurst($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 1.0f)",
-    # Event fixtures trigger at progress zero. Muzzle intensity is not a
-    # timeline parameter, so the generic $PROG inference would spawn nothing.
-    "VFX_ComposeMuzzleFlash":
-        "VFX_ComposeMuzzleFlash($POS, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 1.0f)",
     "VFX_ComposeGroundDustRing":
         "VFX_ComposeGroundDustRing($POS, VC_MAT_EARTH, 1.5f, 1.0f)",
     "VFX_ComposeContactSparkMode":
@@ -327,14 +298,6 @@ FIXTURE_METADATA_OVERRIDES = {
     "VFX_ComposeGasPlume": {
         "label": "[GAS] GAS PLUME",
         "modules": ["gas"],
-    },
-    # This persistent follower sheds independent floating fire particles.  It
-    # does not build connected trail geometry, so calling the bench fixture a
-    # trail obscures both its visual role and its implementation cost.  Reserve
-    # EMBER BURST for the ballistic spark primary used by explosions.
-    "VFX_ComposeEmberTrail": {
-        "label": "[PARTICLE] EMBER MOTES",
-        "modules": ["particle"],
     },
     "VFX_ComposeEmberBurst": {
         "label": "[PARTICLE] EMBER BURST",
@@ -512,14 +475,6 @@ def infer_arg(type_str, name, fn_name):
         return 'NULL'
 
     if t == 'float':
-        if fn_name == 'VFX_ComposeEmberTrail' and 'ember' in n and 'second' in n:
-            # A one-per-second persistent fixture only proves that the handle
-            # exists. EmberTrail needs a readable stream for visual review.
-            return '14.0f'
-        if fn_name == 'VFX_ComposeImpactPackage' and 'severity' in n:
-            # A bench click is an actual impact event, not a timeline draw.
-            # Stay below the package's hit-stop threshold (0.45).
-            return '0.4f'
         if fn_name == 'VFX_ComposeLightShaft' and any(k in n for k in ('width', 'thick')):
             return '0.8f'
         if fn_name == 'VFX_ComposeLightShaft' and any(k in n for k in ('intensity', 'strength', 'power')):
@@ -611,18 +566,12 @@ def infer_kill_fn(fn_name, available_fns):
     # VFX_KillSmokeTrail exists, the release is VFX_SmokeTrail_Stop.
     if fn_name == 'VFX_ComposeSmokeTrail':
         return 'VFX_SmokeTrail_Stop'
-    # P4 beam (vc_beam.inl), same convention again: a sustained effect is
-    # STOPPED, not killed, so the pool can release its two trails in order.
-    if fn_name == 'VFX_ComposeBeam':
-        return 'VFX_Beam_Stop'
     # Same convention once more (vc_rift_bolt.inl): a bolt in flight is STOPPED
     # so the husk dims over its own ramp. VFX_KillRiftBolt exists and would be
     # picked by the generic rule below, but it cuts mid-frame, which is the
     # cancellation path and not what a bench fixture should demonstrate.
     if fn_name == 'VFX_ComposeRiftBolt':
         return 'VFX_RiftBolt_Stop'
-    if fn_name == 'VFX_ComposeAstralSpear':
-        return 'VFX_AstralSpear_Stop'
     if fn_name.startswith('VFX_Compose'):
         candidate = 'VFX_Kill' + fn_name[len('VFX_Compose'):]
         if candidate in available_fns:
@@ -1527,7 +1476,7 @@ def validate_lifecycle_catalog(entries):
             raise SystemExit(f"[sync_vfx_test] {fn}: persistent Emitter requires Kill")
 
     by_fn = {e["fn"]: e for e in entries}
-    for event_fn in ("VFX_ComposeImpactPackage", "VFX_ComposeContactSpark"):
+    for event_fn in ("VFX_ComposeContactSpark",):
         e = by_fn.get(event_fn)
         if not e or e.get("type") != "oneshot" or "draw_call" in e:
             raise SystemExit(f"[sync_vfx_test] {event_fn}: Event must never be emitted every frame")

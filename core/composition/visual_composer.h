@@ -110,18 +110,6 @@ void VFX_ComposeLightningGroundRicochet(Vector3 impactPos, VC_MaterialId materia
 // releases it. FlameVolume is the documented legacy exception until P2 turns it
 // into a per-instance FlameEmitter; its sandbox fixture is therefore timed.
 
-// ── Primary VFX: direction-bearing muzzle flash ────────────────────────────
-// One-shot event. `forward` is the barrel direction; the flash self-expires.
-// Three extracted variant atlases supply camera fill, an authored-axis cross,
-// and the compact pressure sphere. `scale` is metres relative to a rifle flash.
-void VFX_ComposeMuzzleFlash(Vector3 muzzlePos, Vector3 forward,
-                            VC_MaterialId matId, float scale,
-                            float intensity01);
-// Neutral, alpha-body residual smoke for a weapon discharge. The forward
-// vector controls its short initial push; density01 controls opacity only.
-void VFX_ComposeMuzzleSmoke(Vector3 muzzlePos, Vector3 forward,
-                            float scale, float density01);
-
 // ── F2. Smoke / dust puff ───────────────────────────────────────────────────
 // Layered alpha sprites with per-sprite spin that grow while they fade,
 // deliberately dark so the lighting pass supplies the brightness. Draw with
@@ -297,15 +285,6 @@ void VFX_FlameJet_SetIntensity(int handle, float intensity01);
 void VFX_FlameJet_Stop(int handle);
 void VFX_KillFlameJet(int handle);
 
-// ── P4. Ember trail ────────────────────────────────────────────────────────
-// Handle-owned moving source: Spawn once, update its transform while the owner
-// moves, then Stop (preserve spawned embers) or Kill (stop source immediately).
-int  VFX_EmberTrail_Spawn(Vector3 pos, Vector3 velocity, VC_MaterialId mat,
-                          float scale, float embersPerSecond);
-void VFX_EmberTrail_SetTransform(int handle, Vector3 pos, Vector3 velocity);
-void VFX_EmberTrail_Stop(int handle);
-void VFX_KillEmberTrail(int handle);
-
 // ── P4. Shield shell ───────────────────────────────────────────────────────
 // Legacy surface payload retained for source compatibility. ShieldShell now
 // intentionally ignores these sheets and renders one shared glass sphere;
@@ -347,23 +326,6 @@ void VFX_FlowShield_DrawRefraction(Camera3D camera);
 
 // ── E5.1. Glint sparkle ─────────────────────────────────────────────────────
 // Anisotropic star glints over a Fibonacci point cloud (the holy/metal/faith
-// signature). Continuous: call once per frame with a running `time`. `scale` is
-// the cloud radius in metres. Additive + unlit per the blend law. Needs no
-// asset: falls back to a generated 4-point star if glint_star_4pt.png is absent.
-void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, float time);
-
-// ── E5.1b. Radiant starburst ───────────────────────────────────────────────
-// A one-shot camera-facing flash: compact hot centre, asymmetric tapered rays,
-// and a restrained haze. `t01` drives appear → expand → dissipate; call it
-// every frame during that interval. For a projectile head, use the continuous
-// function below instead.
-void VFX_ComposeRadiantStarburst(Vector3 center, VC_MaterialId mat, float radius,
-                                 float t01);
-// A continuous projectile-head flare. `time` is a running clock; it changes ray
-// lengths and corona energy without rotating the whole silhouette like a wheel.
-void VFX_ComposeRadiantStarburstHead(Vector3 center, VC_MaterialId mat,
-                                     float radius, float time);
-
 // ── E5.2. Rune circle ───────────────────────────────────────────────────────
 // A summoning seal: concentric ribbon rings, alternating written/plain, each on
 // its own spin and breathe. `normal` = the plane's normal ((0,1,0) = flat on the
@@ -407,26 +369,6 @@ void VFX_ComposeCoreGlow(Vector3 center, VC_MaterialId mat, float radius, float 
 void VFX_ComposeShockRing(Vector3 center, Vector3 normal, VC_MaterialId mat,
                           float radius, float t01);
 
-// ── PRIMARY. Portal disc ────────────────────────────────────────────────────
-// A flat disc lying in a plane the WORLD chose, with all its energy in the rim
-// and a dark middle — additive adds nothing through the centre, so the scene
-// behind shows through and it reads as a hole rather than a coin. The interior
-// swirls by scrolling POLAR UVs, so the material turns while the silhouette
-// stays rock steady.
-//
-// It deliberately does NOT use `TRAIL_TYPE_PORTAL`, which the plan named as the
-// unused primitive: that draws one camera-facing billboard, so it is the same
-// shape from every angle and has no rim. A portal that does not foreshorten as
-// you walk around it is a decal floating in front of the camera. TRAIL_TYPE_PORTAL
-// should be deleted rather than adopted.
-//
-// CONTINUOUS: call every frame, `t01` 0 → 1. It OPENS by growing from nothing,
-// holds, and COLLAPSES shut — unlike a beam, which stops being fed and goes out.
-// `normal` is the plane it lies in ((0,1,0) = flat on the ground, the summoning-
-// seal pose). `radius` is the disc's radius in metres at full open.
-void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat,
-                           float radius, float t01);
-
 
 // ── PRIMARY. Debris shards ──────────────────────────────────────────────────
 // Angular chips thrown off an impact or a break. NOT sprites, and that is the
@@ -449,62 +391,6 @@ void VFX_ComposePortalDisc(Vector3 center, Vector3 normal, VC_MaterialId mat,
 // quality tier and by a per-call ceiling of 24.
 void VFX_ComposeDebrisShards(Vector3 pos, Vector3 vel, VC_MaterialId mat,
                              float scale, int count);
-
-// ── PRIMARY. Converge motes ─────────────────────────────────────────────────
-// A FEW broad luminous ribbons that appear at random points in the space around
-// a centre and are swept into it along a curve. Each one is a swept trail
-// (TRAIL_PRESET_BACKDROP, lifted per instance with VFX_TrailSetHdrGain) whose
-// head this composition integrates: launched sideways at a fraction of the
-// orbital speed of a point attractor, so it cannot hold station and falls in
-// along an arc rather than down a spoke.
-//
-// IN WAVES, NOT AS A STREAM. The whole population appears at once, on directions
-// spread evenly over the sphere, is drawn in together, and the next wave follows
-// after a breath that shortens as the charge fills. A rate-driven emitter puts
-// four ribbons at four unrelated stages of four unrelated flights, which reads as
-// drifting rather than as a cast.
-//
-// SPARSE BY CONSTRUCTION. `charge_streams` (4) is the whole population, and a
-// streamer is a simulated trail out of the engine's pool of EIGHT — so this is a
-// look decision and a budget at the same time. `moteCount` scales the BEAT (more
-// of it = a shorter breath between waves), not a spawn rate.
-//
-// Every timing inside is a fraction of the orbital PERIOD, never a number of
-// seconds, so the tell reads the same at 0.3 m and at 3 m — see
-// vc_converge_motes.inl for the arithmetic and core/docs/LANDMINES.md for what
-// went wrong when it was seconds.
-//
-// A converge is not a charge: a summon draws motes into a rune, a drain pulls
-// them off a victim, an absorb takes them into a weapon, and none of those wants
-// a hot core in the middle. Add `VFX_ComposeCoreGlow` when you do — that is
-// exactly what `VFX_ComposeChargeConverge` now is.
-//
-// Continuous — call every frame while it should exist. `radius` is the scale of
-// the tell in metres (ribbons appear between 1.5 and 4 of it out), `t01` 0→1
-// drives the beat/pull/brightness, `moteCount` scales how urgently waves follow
-// one another.
-void VFX_ComposeConvergeMotes(Vector3 center, VC_MaterialId mat, float radius,
-                              float t01, int moteCount);
-// The `charge_size` dial, readable by the composite below. Internal to the
-// composition module, and it is a prototype here rather than a `static` forward
-// declaration in the composite because every .inl is pasted into ONE translation
-// unit — where a repeated file-scope `static` NAME is exactly what
-// core/tests/composition_tu_test.c exists to catch, and that guard cannot tell a
-// second declaration of one symbol from two different symbols.
-float VC_ConvergeMotesSizeMul(void);
-// The streamers' SINK radius as a fraction of the converge radius: where a
-// ribbon stops feeding because it has arrived. A score that draws something at
-// the middle must size it with THIS, or the ribbons and the thing they pour into
-// disagree about where the destination's surface is.
-float VC_ConvergeMotesSinkFrac(void);
-
-// ── E5.3. Charge converge ───────────────────────────────────────────────────
-// COMPOSITE, and a pure score over two primaries with no visual idea of its own:
-// converge motes, plus a core glow at the destination (which brings its own
-// point light). `charge_core = 0` drops the destination and leaves the motes.
-// The anticipation beat: motes spiralling INTO a point while it brightens.
-// Continuous, `t01` 0→1 over the wind-up.
-void VFX_ComposeChargeConverge(Vector3 center, VC_MaterialId mat, float radius, float t01, int moteCount);
 
 // ── E5.4. Dissolve exit ─────────────────────────────────────────────────────
 // The shared erosion-out: an alpha mask eaten away by noise with a bright
@@ -604,39 +490,6 @@ void VFX_ComposeIaidoStance(Vector3 playerPos, float yaw, float progress,
 
 // ── E6.5i. Ghost of Tsushima Guiding Wind Ribbon (VFX 6) ─────────────────────
 void VFX_ComposeGuidingWind(Vector3 startPos, Vector3 targetPos, float progress, Camera3D camera);
-
-// ── E6.6. Energy burst ──────────────────────────────────────────────────────
-// An expanding SHEET of energy: sprites thrown centrifugally from a RING (not a
-// disc), so nothing fills the centre and the burst reads as a shell opening. The
-// outward push is spent by drag, then curl noise takes over and the smoke
-// churns. One-shot. `intensity` 0..1 scales count, speed and brightness.
-void VFX_ComposeEnergyBurst(Vector3 pos, VC_MaterialId matId, float scale,
-                            float intensity);
-
-// ── E6.6b. Impact package ───────────────────────────────────────────────────
-// The impact as ONE sequence: light flash, the energy burst above, a distortion
-// and a decal, timed as a track. `severity01` is the single dial — it scales the
-// pieces together and gates the beats that must not fire on a light hit. It must
-// live in exactly ONE place; ramping it per-beat as well multiplies (a 1.69x
-// scale is 4.7x the fill). `normal` is the surface that was hit. No shake.
-//
-// **THE GATES ARE PART OF THE CONTRACT.** severity >= 0.45 fires HITSTOP, which
-// slows time; severity >= 0.35 fires the screen distortion. Replacing a purely
-// visual burst? Stay UNDER 0.45, or every hit in the game develops a stutter —
-// this is exactly what happened when the F0 purge mapped old impact calls onto
-// this one at 0.55-0.7 (owner: "như là thời gian bị chậm lại").
-void VFX_ComposeImpactPackage(Vector3 pos, Vector3 normal, VC_MaterialId matId,
-                              float scale, float severity01);
-// ...and its PRIMARIES, callable on their own. A skill that wants only the
-// flash, or only the mark, calls one of these instead of firing a package and
-// switching the rest off. Each carries its own tier gate and its own `impact_*`
-// budget switch, so reaching for a piece cannot bypass the budget.
-// `severity01` scales TIMES only (lifetime, strength); the SIZE ramp lives in
-// the package alone, or it multiplies. One-shot: call once from a state
-// transition, never from a draw path.
-void VFX_ComposeImpactFlash(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
-void VFX_ComposeImpactDistort(Vector3 pos, float scale, float severity01);
-void VFX_ComposeImpactDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 
 // ── E6.7. Light shaft ───────────────────────────────────────────────────────
 // Godrays. Camera-facing tapered ribbons that CONVERGE at `from` and widen
@@ -856,21 +709,6 @@ bool VFX_GroundSurfaceFromMap(float worldX, float worldZ, Vector3 *outPosition,
 // shared with the trail system's volume tubes and with SMOKE COLUMN — deleting the
 // projectile does not remove the structure-collapse defect measured in that shader.
 
-// ── PRIMARY: ASTRAL SPEAR — directional crystal projectile ────────────────
-// Independent of Rift Bolt and FlowShield: a faceted dart with a coverage body,
-// narrow hot seams, two broken counter-rotating halos, and one tapered turbulent
-// wake. `followTransform` is sampled at its origin every frame and must remain
-// valid until Stop finishes or Kill is called. Heading is derived from motion.
-// `radius` is the body radius in metres and is clamped to 0.07-0.15.
-//
-// ONE-SHOT + POOLED (6). Stop eases the whole composition out; Kill is the
-// immediate cancellation cut.
-int  VFX_ComposeAstralSpear(const Matrix *followTransform, VC_MaterialId mat,
-                            float radius);
-void VFX_AstralSpear_SetIntensity(int handle, float intensity01);
-void VFX_AstralSpear_Stop(int handle);
-void VFX_KillAstralSpear(int handle);
-
 // ── PRIMARY: RIFT BOLT — the projectile head the purge above asked for ──────
 // A flying HOLLOW SHELL with a wake of one straight spine and three loose
 // spiralling threads. It composes rather than renders: the head is a FlowShield
@@ -968,27 +806,19 @@ typedef enum {
 } ContactSparkMode;
 
 // @gen:vc_declarations begin
-void VFX_Beam_SetEndpoints(int handle, Vector3 from, Vector3 to);
-void VFX_Beam_Stop(int handle);
-int VFX_ComposeBeam(Vector3 from, Vector3 to, VC_MaterialId mat, float width);
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeContactSparkMode(Vector3 pos, VC_MaterialId matId, float scale, float severity01, ContactSparkMode mode);
 void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
 void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
-int VFX_ComposeEmberTrail(Vector3 pos, Vector3 velocity, VC_MaterialId mat, float scale, float embersPerSecond);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
-void VFX_ComposeFlare(Vector3 center, VC_MaterialId mat, float radius, float intensity01);
 int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 void VFX_ComposeFluidImpact(Vector3 pos);
 int VFX_ComposeGasMaterialLab(Vector3 pos, VC_MaterialId mat);
+void VFX_ComposeGroundDustRing(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
-// One-shot expanding annulus of alpha dust. Unlike GroundWave, this is the
-// physical ground layer from an explosion rather than an energy geometry.
-void VFX_ComposeGroundDustRing(Vector3 pos, VC_MaterialId matId, float scale,
-                               float severity01);
 int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
 void VFX_ComposeLiquidBench(Vector3 center,float spacing,float t01);
 void VFX_ComposeMistVeil(Vector3 pos, float radius, float duration);

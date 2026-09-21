@@ -28,12 +28,8 @@ typedef enum {
 // gone rather than pointed at something else — an alias that quietly changes
 // what it means is how a purge turns into a mystery.
 //
-// The successor for the impact case is `VFX_ComposeImpactPackage`, and
-// `SkillBuilder_Build` now calls it directly with the element mapped to a
-// VC_MaterialId. There is deliberately NO successor wired for cast or for
-// projectile trails: rebuilding those from the surviving set is E7's job, and
-// silently substituting something would hide exactly what the checkpoint is
-// meant to measure.
+// There is deliberately no automatic visual successor wired for cast, impact,
+// or projectile trails; rebuilding them belongs to the owning skill.
 
 // Element → material, for callers still holding an EffectPresetType. Kept next
 // to the enum so a new preset cannot be added without seeing it.

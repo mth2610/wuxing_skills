@@ -27,41 +27,6 @@
   },
   "entries": [
     {
-      "source": "common/vc_astral_spear.inl",
-      "fn": "VFX_ComposeAstralSpear",
-      "label": "ASTRAL SPEAR",
-      "category": "common",
-      "fixture": "follower",
-      "lifecycle": "trail",
-      "_auto": true,
-      "type": "continuous",
-      "spawn_call": "VFX_ComposeAstralSpear($XFORM, VC_MAT_FIRE, 0.10f)",
-      "kill_fn": "VFX_AstralSpear_Stop"
-    },
-    {
-      "source": "common/vc_beam.inl",
-      "fn": "VFX_ComposeBeam",
-      "label": "BEAM",
-      "category": "common",
-      "fixture": "static",
-      "lifecycle": "trail",
-      "_auto": true,
-      "type": "continuous",
-      "spawn_call": "VFX_ComposeBeam($SOURCE, $TARGET, VC_MAT_FIRE, 0.1f)",
-      "kill_fn": "VFX_Beam_Stop"
-    },
-    {
-      "source": "common/vc_charge_converge.inl",
-      "fn": "VFX_ComposeChargeConverge",
-      "label": "CHARGE CONVERGE",
-      "category": "common",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeChargeConverge($POS, VC_MAT_FIRE, 1.5f, $PROG, 5)"
-    },
-    {
       "source": "common/vc_contact_spark.inl",
       "fn": "VFX_ComposeContactSpark",
       "label": "CONTACT SPARK",
@@ -71,17 +36,6 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeContactSpark($POS, VC_MAT_FIRE, 1.5f, $PROG)"
-    },
-    {
-      "source": "common/vc_converge_motes.inl",
-      "fn": "VFX_ComposeConvergeMotes",
-      "label": "CONVERGE MOTES",
-      "category": "common",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeConvergeMotes($POS, VC_MAT_FIRE, 1.5f, $PROG, 5)"
     },
     {
       "source": "common/vc_debris_shards.inl",
@@ -131,32 +85,6 @@
       ]
     },
     {
-      "source": "common/vc_ember_trail.inl",
-      "fn": "VFX_ComposeEmberTrail",
-      "label": "[PARTICLE] EMBER MOTES",
-      "category": "fire",
-      "fixture": "persistent",
-      "lifecycle": "emitter",
-      "_auto": true,
-      "type": "persistent",
-      "spawn_call": "VFX_ComposeEmberTrail($POS, $VELOCITY, VC_MAT_FIRE, 1.5f, 14.0f)",
-      "kill_fn": "VFX_KillEmberTrail",
-      "modules": [
-        "particle"
-      ]
-    },
-    {
-      "source": "common/vc_energy_burst.inl",
-      "fn": "VFX_ComposeEnergyBurst",
-      "label": "ENERGY BURST",
-      "category": "common",
-      "fixture": "burst",
-      "lifecycle": "event",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeEnergyBurst($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
-    },
-    {
       "source": "common/vc_flame_jet.inl",
       "fn": "VFX_ComposeFlameJet",
       "label": "FLAME JET",
@@ -166,17 +94,6 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeFlameJet($SOURCE, $TARGET, VC_MAT_FIRE, NULL)"
-    },
-    {
-      "source": "common/vc_flare.inl",
-      "fn": "VFX_ComposeFlare",
-      "label": "FLARE",
-      "category": "fire",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeFlare($POS, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
       "source": "common/vc_flow_shield.inl",
@@ -241,17 +158,6 @@
       "kill_fn": "VFX_KillGasVortex"
     },
     {
-      "source": "common/vc_glint_sparkle.inl",
-      "fn": "VFX_ComposeGlintSparkle",
-      "label": "GLINT SPARKLE",
-      "category": "common",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeGlintSparkle($POS, VC_MAT_FIRE, 1.5f, $TIME)"
-    },
-    {
       "source": "common/vc_ground_dust_ring.inl",
       "fn": "VFX_ComposeGroundDustRing",
       "label": "GROUND DUST RING",
@@ -305,17 +211,6 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeImpactDust($POS, VC_MAT_EARTH, 1.5f, $PROG)"
-    },
-    {
-      "source": "common/vc_impact_package.inl",
-      "fn": "VFX_ComposeImpactPackage",
-      "label": "IMPACT PACKAGE",
-      "category": "common",
-      "fixture": "burst",
-      "lifecycle": "event",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeImpactPackage($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 0.4f)"
     },
     {
       "source": "common/vc_light_shaft.inl",
@@ -385,17 +280,6 @@
       "trigger_call": "VFX_ComposeMistVeil($POS, 5.5f, 4.5f)"
     },
     {
-      "source": "common/vc_muzzle_flash.inl",
-      "fn": "VFX_ComposeMuzzleFlash",
-      "label": "MUZZLE FLASH",
-      "category": "common",
-      "fixture": "burst",
-      "lifecycle": "event",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeMuzzleFlash($POS, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 1.0f)"
-    },
-    {
       "source": "common/vc_optical_flare.inl",
       "fn": "VFX_ComposeOpticalFlare",
       "label": "OPTICAL FLARE",
@@ -416,28 +300,6 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeGuidedParticle($SOURCE, $TARGET)"
-    },
-    {
-      "source": "common/vc_portal_disc.inl",
-      "fn": "VFX_ComposePortalDisc",
-      "label": "PORTAL DISC",
-      "category": "common",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposePortalDisc($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG)"
-    },
-    {
-      "source": "common/vc_radiant_starburst.inl",
-      "fn": "VFX_ComposeRadiantStarburst",
-      "label": "RADIANT STARBURST",
-      "category": "common",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeRadiantStarburst($POS, VC_MAT_FIRE, 1.5f, $PROG)"
     },
     {
       "source": "common/vc_ref_bands.inl",

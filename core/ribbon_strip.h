@@ -143,7 +143,7 @@ void Ribbon_ConstrainSegment(Vector3 *a, Vector3 *b, float restLen,
 void Ribbon_ComputeArcLengthUV(RibbonPoint *points, int count);
 
 // Tính CẶP trục vuông góc (axisA, axisB) tại MỖI điểm trên path — tổng quát
-// hoá cặp perp1/perp2 mà VFX_ComposeBeam từng tính 1 lần (path thẳng, chỉ
+// hoá cặp perp1/perp2 mà một caller đường thẳng từng tính 1 lần (path thẳng, chỉ
 // 2 điểm) cho path cong bất kỳ (trail, spiral, kênh gợn sóng...). axisA liên
 // tục điểm-tới-điểm (cùng cơ chế chống bowtie của DrawRibbonStripEx's side
 // vector), axisB = tangent × axisA. `mode`/`fixedNormal` chọn hướng ưu tiên
@@ -188,7 +188,7 @@ int Ribbon_GenerateMidpointDisplacement(Vector3 from, Vector3 to,
 // interference look, no real geometric twist needed), a bright untextured
 // hot core, or however many/whatever the caller configures. Lives in core/
 // (not composition/) because both core/vfx_proc_ray.c's EnergyFlow and
-// composition/vc_beam.inl's VFX_ComposeBeam need it — composition may
+// a composition caller needs it — composition may
 // depend on core, never the reverse.
 typedef struct {
   float widthRatio;  // half-width = width * widthRatio * breathe * (widthEnvelope[i] or 1)

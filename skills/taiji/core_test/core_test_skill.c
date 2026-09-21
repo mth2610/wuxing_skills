@@ -50,15 +50,7 @@ void UpdateCoreTestSkill(float dt, Vector3 enemyPos, float enemyRadius) {
 }
 
 void DrawCoreTestSkill(void) {
-    if (!s_plasmaActive)
-        return;
-    Vector3 fwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-    Vector3 orbPos = Vector3Add(camera.position, Vector3Scale(fwd, 2.5f));
-    // F0 purge: VFX_ComposePlasmaOrb is deleted. Nearest survivor for a held
-    // orb is VFX_ComposeChargeConverge — continuous, and this call site already
-    // has a running clock, so it maps cleanly.
-    VFX_ComposeChargeConverge(orbPos, VC_MAT_TAIJI, 0.5f,
-                              fmodf(s_plasmaTime, 1.6f) / 1.6f, 40);
+    (void)s_plasmaActive;
 }
 void DrawCoreTestSkillDebugHUD(void) {}
 void UnloadCoreTestSkill(void) {}

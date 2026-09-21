@@ -14,30 +14,23 @@
 // than editing it here, or the next sync will overwrite the edit.
 
 // @gen:common_includes begin
-// 25 include(s) — auto-managed by sync_vfx_test.py
+// 18 include(s) — auto-managed by sync_vfx_test.py
 #include "vc_common.inl"
 #include "vc_smoke_puff.inl"
 #include "vc_smoke_volume.inl"
-#include "vc_energy_burst.inl"
-#include "vc_impact_package.inl"
-#include "vc_glint_sparkle.inl"
-#include "vc_radiant_starburst.inl"
 #include "vc_rune_circle.inl"
 #include "vc_dissolve_exit.inl"
 #include "vc_sweep_slash.inl"
 #include "vc_light_shaft.inl"
 #include "vc_particle_upgrades_test.inl"
 #include "vc_ground_wave.inl"
-#include "vc_portal_disc.inl"
 #include "vc_shock_ring.inl"
 #include "vc_impact_dust.inl"
 #include "vc_contact_spark.inl"
 #include "vc_decal.inl"
 #include "vc_ref_bands.inl"
 #include "vc_ref_particle.inl"
-#include "vc_flare.inl"
 #include "vc_mist_veil.inl"
-#include "vc_muzzle_flash.inl"
 #include "vc_ember_burst.inl"
 #include "vc_ground_dust_ring.inl"
 // @gen:common_includes end

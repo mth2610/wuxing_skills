@@ -57,9 +57,6 @@ Các texture này được dùng khi shader cần xử lý riêng rẽ độ ph�
 
 ## 3. `weapons/` (Vũ Khí & Đầu Nòng)
 
-- `muzzle_flash_front.png`: Ngọn lửa nhìn chính diện nòng súng.
-- `muzzle_flash_side.png`: Ngọn lửa nhìn ngang (kết hợp với front tạo chữ thập `VFX_FACING_CROSS_BILLBOARD`).
-- `muzzle_flash_sphere.png`: Quầng sáng hình cầu bao quanh đầu nòng.
 - `gun_smoke_thin.png`: Tia khói thuốc súng phụt theo viên đạn.
 
 ---
