@@ -341,7 +341,7 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
     case 19:
         if (s_vfxFixtureHandle[19] >= 0) VFX_KillMeshParticleEmitter(s_vfxFixtureHandle[19]);
         s_vfxFixtureHandle[19] = VFX_ComposeMeshParticleEmitter(&(VFX_MeshParticleEmitterDesc){.model=&s_meshParticleFixtureModel, .transform=MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), .variant=s_meshParticleFixtureVariant, .material=VC_MAT_LIGHTNING, .intensity=1.0f, .seed=0x4d455348u});
-        return true;
+        return false;
     case 21: VFX_ComposeMistVeil(pos, 5.5f, 4.5f); return true;
     case 23: VFX_ComposeGuidedParticle(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
     case 28:

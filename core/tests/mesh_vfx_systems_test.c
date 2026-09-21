@@ -33,16 +33,19 @@ int main(void)
           "public mesh-particle variants are complete");
     CHECK(Has(emitter, "ParticleDynamicsProfile") &&
           Has(emitter, "VFX_MeshParticleEmitter_SetTransform") &&
+          Has(emitter, "s_meshParticleEmitters[handle].variant != variant") &&
           Has(emitter, "VFX_SurfaceRegistry_Get") && Has(emitter, "VFX_SURFACE_PLASMA_WISPS_NIAGARA") &&
           Has(emitter, "VFX_MESH_EMITTER_LIVE_MAX") &&
-          Has(emitter, "p.lifetime = variant == VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC ? 0.18f") &&
+          Has(emitter, "return variant == VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC ? 36.0f : 16.0f") &&
+          Has(emitter, "? 0.33f : 0.75f") &&
           !Has(emitter, "character/character_model.h"),
           "emitter is generic, transform-driven, and uses dynamics/profile data");
     CHECK(Has(emitter, "volumeSheet = 4") && Has(emitter, "normalTex") &&
           Has(emitter, "volumeSheet = 3"),
           "fire and smoke use packed decoders with companion normals");
     CHECK(Has(aura, "VFX_DrawMeshSurfaceAura") && Has(aura, "VFX_DrawModelSurfaceAura") &&
-          Has(aura, "u_rimWidth") && !Has(aura, "SpawnParticle") &&
+          Has(aura, "u_rimWidth") && Has(aura, "BeginShaderMode") &&
+          !Has(aura, "SpawnParticle") &&
           !Has(aura, "character/character_model.h"),
           "surface aura is shader-only and generic");
     return failures ? 1 : 0;

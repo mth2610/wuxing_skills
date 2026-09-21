@@ -115,7 +115,7 @@ static float MeshEmitter_Rate(VFX_MeshParticleVariant variant)
 {
     // Rate × bounded lifetime stays below VFX_MESH_EMITTER_LIVE_MAX per emitter;
     // the per-update cap also prevents a frame hitch from bypassing that budget.
-    return variant == VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC ? 45.0f : 14.0f;
+    return variant == VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC ? 36.0f : 16.0f;
 }
 
 static void MeshEmitter_SpawnOne(VC_MeshParticleEmitter *emitter)
@@ -139,7 +139,7 @@ static void MeshEmitter_SpawnOne(VC_MeshParticleEmitter *emitter)
     p.radius = 0.090f + 0.13f*MeshEmitter_Random01(&emitter->rng);
     // Static wisps are intentionally short-lived: each new sample follows a
     // moving target transform while never acquiring a physical rise velocity.
-    p.lifetime = variant == VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC ? 0.18f : 0.75f;
+    p.lifetime = variant == VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC ? 0.33f : 0.75f;
     p.colorStart = VC_WithAlpha(VFX_Material(emitter->material)->glow, (unsigned char)(240.0f*emitter->intensity));
     if (variant == VFX_MESH_PARTICLE_VARIANT_SMOKE_LIGHT_RISE)
         p.colorStart = (Color){220, 220, 220, (unsigned char)(205.0f*emitter->intensity)};
@@ -181,7 +181,7 @@ int VFX_MeshParticleEmitter_Spawn(const VFX_MeshParticleEmitterDesc *desc)
 }
 int VFX_ComposeMeshParticleEmitter(const VFX_MeshParticleEmitterDesc *desc) { return VFX_MeshParticleEmitter_Spawn(desc); }
 void VFX_MeshParticleEmitter_SetTransform(int handle, Matrix transform) { if (handle >= 0 && handle < VFX_MESH_EMITTER_MAX && s_meshParticleEmitters[handle].active) s_meshParticleEmitters[handle].transform = transform; }
-void VFX_MeshParticleEmitter_SetVariant(int handle, VFX_MeshParticleVariant variant) { if (handle >= 0 && handle < VFX_MESH_EMITTER_MAX && s_meshParticleEmitters[handle].active && variant >= 0 && variant < VFX_MESH_PARTICLE_VARIANT_COUNT) { s_meshParticleEmitters[handle].variant = variant; s_meshParticleEmitters[handle].spawnCarry = 1.0f; } }
+void VFX_MeshParticleEmitter_SetVariant(int handle, VFX_MeshParticleVariant variant) { if (handle >= 0 && handle < VFX_MESH_EMITTER_MAX && s_meshParticleEmitters[handle].active && variant >= 0 && variant < VFX_MESH_PARTICLE_VARIANT_COUNT && s_meshParticleEmitters[handle].variant != variant) { s_meshParticleEmitters[handle].variant = variant; s_meshParticleEmitters[handle].spawnCarry = 1.0f; } }
 void VFX_MeshParticleEmitter_SetIntensity(int handle, float intensity01) { if (handle >= 0 && handle < VFX_MESH_EMITTER_MAX && s_meshParticleEmitters[handle].active) s_meshParticleEmitters[handle].intensity = Clamp(intensity01, 0.0f, 1.0f); }
 void VFX_MeshParticleEmitter_Kill(int handle) { if (handle >= 0 && handle < VFX_MESH_EMITTER_MAX) s_meshParticleEmitters[handle].active = false; }
 void VFX_KillMeshParticleEmitter(int handle) { VFX_MeshParticleEmitter_Kill(handle); }

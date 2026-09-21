@@ -1320,7 +1320,10 @@ def gen_fire_function(entries):
             lines += [f"    case {idx}:",
                       f"        if (s_vfxFixtureHandle[{idx}] >= 0) {e['kill_fn']}(s_vfxFixtureHandle[{idx}]);",
                       f"        s_vfxFixtureHandle[{idx}] = {rexpand(e['spawn_call'])};",
-                      "        return true;"]
+                      # Mesh emitter has a caller-owned transform that must be
+                      # refreshed each frame; returning false enters the
+                      # generated continuous fixture path after the spawn.
+                      "        return false;" if e["fn"] == "VFX_ComposeMeshParticleEmitter" else "        return true;"]
         else:
             lines.append(f"    case {idx}: {rexpand(e['trigger_call'])}; return true;")
     lines += ["    default: return false;", "    }", "// @gen:newfx_fire end"]
