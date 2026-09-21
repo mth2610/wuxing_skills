@@ -6,6 +6,10 @@
 #include <math.h>
 #include <stdbool.h>
 
+#ifndef PI
+#define PI 3.1415926535f
+#endif
+
 #ifndef CORE_FORCE_FIELD_TYPE_DECLARED
 typedef struct ForceField ForceField;
 #define CORE_FORCE_FIELD_TYPE_DECLARED 1
@@ -176,6 +180,47 @@ static inline void ParticleTravel_ApplyImpactEntry(const ParticleTravelPath *pat
         velocity->y += direction.y * path->arrivalKick;
         velocity->z += direction.z * path->arrivalKick;
     }
+}
+
+/* Opt-in physical guidance: critically damped PD acceleration toward the
+ * transported formation waypoint. This deliberately never writes position or
+ * velocity; callers add it beside external acceleration before integration. */
+static inline Vector3 ParticleTravel_ComputeCriticalDampedAcceleration(
+    const ParticleTravelPath *path, Vector3 position, Vector3 velocity,
+    int *waypointIndex, Vector3 formationOffset, float frequencyHz,
+    float maxAccelerationMps2)
+{
+    int count, waypoint, finalIndex;
+    Vector3 goal, offset, delta, desiredVelocity, acceleration;
+    float distance, speed, omega, magnitude;
+    if (!path || !waypointIndex || frequencyHz <= 0.0f) return (Vector3){0};
+    count = ParticleTravel_WaypointCount(path);
+    if (count <= 0) return (Vector3){0};
+    finalIndex = count - 1;
+    waypoint = *waypointIndex;
+    if (waypoint < 0) waypoint = 0;
+    if (waypoint > finalIndex) waypoint = finalIndex;
+    offset = ParticleTravel_TransportOffset(path, waypoint, formationOffset);
+    goal = ParticleTravel_GetWaypoint(path, waypoint);
+    goal.x += offset.x; goal.y += offset.y; goal.z += offset.z;
+    delta = (Vector3){goal.x - position.x, goal.y - position.y, goal.z - position.z};
+    distance = sqrtf(delta.x*delta.x + delta.y*delta.y + delta.z*delta.z);
+    speed = path->speed > 0.0f ? path->speed : 1.0f;
+    desiredVelocity = distance > 1e-5f
+        ? (Vector3){delta.x * speed / distance, delta.y * speed / distance,
+                    delta.z * speed / distance}
+        : (Vector3){0};
+    omega = 2.0f * PI * frequencyHz;
+    acceleration = (Vector3){omega*omega*delta.x + 2.0f*omega*(desiredVelocity.x - velocity.x),
+                             omega*omega*delta.y + 2.0f*omega*(desiredVelocity.y - velocity.y),
+                             omega*omega*delta.z + 2.0f*omega*(desiredVelocity.z - velocity.z)};
+    magnitude = sqrtf(acceleration.x*acceleration.x + acceleration.y*acceleration.y + acceleration.z*acceleration.z);
+    if (maxAccelerationMps2 > 0.0f && magnitude > maxAccelerationMps2)
+        acceleration = (Vector3){acceleration.x * maxAccelerationMps2 / magnitude,
+                                 acceleration.y * maxAccelerationMps2 / magnitude,
+                                 acceleration.z * maxAccelerationMps2 / magnitude};
+    *waypointIndex = waypoint;
+    return acceleration;
 }
 
 /* Apply path steering after external forces/drag, integrate once, advance the

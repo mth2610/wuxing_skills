@@ -684,6 +684,18 @@ void UpdateParticles(float dt)
         velocity.y += (airflow.y - velocity.y) * alpha;
         velocity.z += (airflow.z - velocity.z) * alpha;
       }
+      if (p->travelPath && !p->travelImpactActive &&
+          d->steeringFrequencyHz > 0.0f) {
+        float maxSteering = d->maxSteeringAccelMps2 > 0.0f
+                                ? d->maxSteeringAccelMps2
+                                : p->travelPath->maxAcceleration;
+        Vector3 steering = ParticleTravel_ComputeCriticalDampedAcceleration(
+            p->travelPath, position, velocity, &p->travelWaypoint,
+            p->travelFormationOffset, d->steeringFrequencyHz, maxSteering);
+        velocity.x += steering.x * dt;
+        velocity.y += steering.y * dt;
+        velocity.z += steering.z * dt;
+      }
       p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
       p->x += velocity.x * dt; p->y += velocity.y * dt; p->z += velocity.z * dt;
       goto particle_contacts;

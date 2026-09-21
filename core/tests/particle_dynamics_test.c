@@ -1,6 +1,7 @@
 /* Phase-1 numerical contract for opt-in physical particle dynamics.
  * These checks exercise the header-only math shared by future CPU/GPU mirrors. */
 #include "core/particles/particle_dynamics.h"
+#include "core/particles/particle_travel.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -58,12 +59,27 @@ static void Test_ForceDependsOnMassButAccelerationDoesNot(void)
                "acceleration fields ignore particle mass");
 }
 
+static void Test_GuidanceIsBoundedAccelerationNotTeleport(void)
+{
+    Vector3 target = {10.0f, 0.0f, 0.0f};
+    ParticleTravelPath path = {.target = &target, .speed = 4.0f};
+    Vector3 acceleration = ParticleTravel_ComputeCriticalDampedAcceleration(
+        &path, (Vector3){0}, (Vector3){0}, &(int){0}, (Vector3){0}, 2.0f, 3.0f);
+    Vector3 velocity = ParticleDynamics_ApplyAccelerationAndForce(
+        (Vector3){0}, acceleration, (Vector3){0}, 1.0f, 0.1f);
+    CHECK_NEAR(acceleration.x, 3.0f, 1e-6f,
+               "guided steering acceleration is bounded");
+    CHECK_NEAR(velocity.x, 0.3f, 1e-6f,
+               "guided particle advances physically instead of snapping to target");
+}
+
 int main(void)
 {
     Test_NullProfileKeepsLegacyPath();
     Test_ImpulseUsesInverseMass();
     Test_LinearDragIsFrameRateInvariant();
     Test_ForceDependsOnMassButAccelerationDoesNot();
+    Test_GuidanceIsBoundedAccelerationNotTeleport();
     printf("particle dynamics: %s\n", s_failures ? "FAIL" : "PASS");
     return s_failures ? 1 : 0;
 }
