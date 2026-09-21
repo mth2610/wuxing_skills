@@ -83,6 +83,16 @@ static void Test_PhysicalGuidanceSweepsItsTarget(void)
                "physical guidance detects a swept final-target crossing");
 }
 
+static void Test_TerminalSpeedAndWindCoupling(void)
+{
+    Vector3 clamped = ParticleDynamics_ClampTerminalSpeed((Vector3){12.0f, 0.0f, 0.0f}, 5.0f);
+    Vector3 coupled = ParticleDynamics_CoupleToAirflow((Vector3){0},
+        (Vector3){10.0f, 0.0f, 0.0f}, 2.0f, 1.0f);
+    CHECK_NEAR(clamped.x, 5.0f, 1e-6f, "terminal-speed clamp bounds physical velocity");
+    CHECK_NEAR(coupled.x, 10.0f * (1.0f - expf(-2.0f)), 1e-5f,
+               "wind coupling uses exponential relaxation toward airflow");
+}
+
 int main(void)
 {
     Test_NullProfileKeepsLegacyPath();
@@ -91,6 +101,7 @@ int main(void)
     Test_ForceDependsOnMassButAccelerationDoesNot();
     Test_GuidanceIsBoundedAccelerationNotTeleport();
     Test_PhysicalGuidanceSweepsItsTarget();
+    Test_TerminalSpeedAndWindCoupling();
     printf("particle dynamics: %s\n", s_failures ? "FAIL" : "PASS");
     return s_failures ? 1 : 0;
 }

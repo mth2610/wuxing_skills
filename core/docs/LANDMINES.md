@@ -3685,3 +3685,13 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   sprite's RGB and carry only particle alpha through its lifetime. Explicit
   textures and gradients remain tintable. Apply the same rule before CPU and
   GPU backend submission. Guarded by `core/tests/default_particle_sprite_test.c`.
+
+## A new particle dynamics profile must never silently select an old GPU solver (21/09/2026)
+
+- **Symptom:** a physical profile appears correct in CPU fallback but diverges
+  under compute because impulse, mass, drag, wind relaxation, or PD steering
+  was not packed into the SSBO/shader.
+- **Cause:** adding public configuration data does not add a GPU semantic mirror.
+- **Rule:** until every load-bearing term is packed and tested, AUTO profiles
+  route to CPU and GPU_ONLY reports `PARTICLE_EMITTER_UNSUPPORTED_MODULE`.
+  Guarded by `core/tests/particle_manager_contract_test.c`.

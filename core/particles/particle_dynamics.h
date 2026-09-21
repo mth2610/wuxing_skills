@@ -64,4 +64,25 @@ static inline Vector3 ParticleDynamics_ApplyLinearDrag(Vector3 velocity,
     return (Vector3){velocity.x * factor, velocity.y * factor, velocity.z * factor};
 }
 
+static inline Vector3 ParticleDynamics_ClampTerminalSpeed(Vector3 velocity,
+                                                            float terminalSpeedMps)
+{
+    float speed = sqrtf(velocity.x*velocity.x + velocity.y*velocity.y + velocity.z*velocity.z);
+    if (terminalSpeedMps > 0.0f && speed > terminalSpeedMps)
+        return (Vector3){velocity.x * terminalSpeedMps / speed,
+                         velocity.y * terminalSpeedMps / speed,
+                         velocity.z * terminalSpeedMps / speed};
+    return velocity;
+}
+
+static inline Vector3 ParticleDynamics_CoupleToAirflow(Vector3 velocity,
+                                                         Vector3 airflowVelocity,
+                                                         float couplingHz, float dt)
+{
+    float alpha = couplingHz > 0.0f && dt > 0.0f ? 1.0f - expf(-couplingHz * dt) : 0.0f;
+    return (Vector3){velocity.x + (airflowVelocity.x - velocity.x) * alpha,
+                     velocity.y + (airflowVelocity.y - velocity.y) * alpha,
+                     velocity.z + (airflowVelocity.z - velocity.z) * alpha};
+}
+
 #endif

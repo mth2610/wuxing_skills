@@ -43,13 +43,14 @@ int main(void)
     CHECK(FileHas(src, "#define EMBER_BURST_MIN_COUNT 30") &&
           FileHas(src, "#define EMBER_BURST_MAX_COUNT 60"),
           "the one-shot population matches the NE_SparkDebris tier");
-    CHECK(FileHas(src, "Math_Mix(12.0f, 24.0f") &&
-          FileHas(src, "Math_Mix(0.8f, 2.0f") &&
+    CHECK(FileHas(src, "Math_Mix(4.0f, 8.0f") &&
+          FileHas(src, "Math_Mix(0.65f, 1.20f") &&
           FileHas(src, "Math_Mix(0.018f, 0.028f"),
-          "launch speed, lifetime and size follow the extracted NE_SparkDebris recipe");
+          "embers use a short-range physical launch envelope");
     CHECK(FileHas(src, ".gravityScale = 1.0f") &&
-          FileHas(src, ".linearDragPerSecond = 0.80f") &&
-          FileHas(src, ".physics.initialImpulseNs = velocity") &&
+          FileHas(src, ".inverseMassKg = 4.0f") &&
+          FileHas(src, ".linearDragPerSecond = 3.2f") &&
+          FileHas(src, ".physics.initialImpulseNs = Vector3Scale(velocity, 0.25f)") &&
           FileHas(src, ".type = FORCE_NOISE_CURL"),
           "embers use an explicit ballistic impulse, gravity, drag and curl wander");
     CHECK(fabsf(UniformConeCos(1.15f, 0.5f) -

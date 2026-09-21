@@ -672,20 +672,14 @@ void UpdateParticles(float dt)
       }
       velocity = ParticleDynamics_ApplyLinearDrag(velocity,
                                                     d->linearDragPerSecond, dt);
-      if (d->terminalSpeedMps > 0.0f) {
-        float speed = Vector3Length(velocity);
-        if (speed > d->terminalSpeedMps)
-          velocity = Vector3Scale(velocity, d->terminalSpeedMps / speed);
-      }
+      velocity = ParticleDynamics_ClampTerminalSpeed(velocity, d->terminalSpeedMps);
       if ((d->windCouplingHz > 0.0f && d->windSusceptibility > 0.0f) ||
           p->travelImpactActive) {
         float couplingHz = p->travelImpactActive ? 6.0f : d->windCouplingHz;
         float susceptibility = p->travelImpactActive ? 1.0f : d->windSusceptibility;
-        float alpha = 1.0f - expf(-couplingHz * susceptibility * dt);
         Vector3 airflow = Wind_EvaluateVelocity(position, s_particleTime);
-        velocity.x += (airflow.x - velocity.x) * alpha;
-        velocity.y += (airflow.y - velocity.y) * alpha;
-        velocity.z += (airflow.z - velocity.z) * alpha;
+        velocity = ParticleDynamics_CoupleToAirflow(velocity, airflow,
+                                                     couplingHz * susceptibility, dt);
       }
       if (p->travelPath && !p->travelImpactActive &&
           d->steeringFrequencyHz > 0.0f) {

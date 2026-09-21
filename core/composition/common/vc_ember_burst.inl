@@ -17,8 +17,10 @@
 static ForceField s_emberBurstField;
 static bool s_emberBurstReady = false;
 static const ParticleDynamicsProfile s_emberBurstDynamics = {
-    .inverseMassKg = 1.0f, .gravityScale = 1.0f, .linearDragPerSecond = 0.80f,
-    .terminalSpeedMps = 30.0f, .windCouplingHz = 1.0f, .windSusceptibility = 0.12f,
+    /* Effective 0.25 kg carrier: a compact VFX unit, not literal ash mass.
+     * It converts an authored N*s launch impulse into a short 4-8 m/s arc. */
+    .inverseMassKg = 4.0f, .gravityScale = 1.0f, .linearDragPerSecond = 3.2f,
+    .terminalSpeedMps = 7.0f, .windCouplingHz = 1.0f, .windSusceptibility = 0.12f,
 };
 
 // Short hot fragment shed on bounce. Static storage: the particle system keeps
@@ -32,7 +34,7 @@ static void EmberBurst_Init(void)
     ForceField_Clear(&s_emberBurstField);
     ForceField_AddLayer(&s_emberBurstField, (ForceLayer){
         .type = FORCE_NOISE_CURL,
-        .strength = 1.5f,
+        .strength = 0.40f,
         .noiseScale = 2.0f,
     });
     s_emberBurstSecondary = (ParticleConfig){
@@ -76,10 +78,10 @@ void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal,
     {
         Vector3 dir = VC_DirConeUniform(normal, EMBER_BURST_CONE_RAD,
                                         Random01(), Random01());
-        float speed = Math_Mix(12.0f, 24.0f, Random01()) * scale;
+        float speed = Math_Mix(4.0f, 8.0f, Random01()) * scale;
         Vector3 velocity = Vector3Scale(dir, speed);
         float radius = Math_Mix(0.018f, 0.028f, Random01()) * scale;
-        float lifetime = Math_Mix(0.8f, 2.0f, Random01());
+        float lifetime = Math_Mix(0.65f, 1.20f, Random01());
 
         ParticleConfig body = (ParticleConfig){
             .position = origin,
@@ -89,7 +91,7 @@ void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal,
             .forceField = &s_emberBurstField,
             .windInfluence = 0.12f,
             .physics.dynamics = &s_emberBurstDynamics,
-            .physics.initialImpulseNs = velocity,
+            .physics.initialImpulseNs = Vector3Scale(velocity, 0.25f),
             .colorStart = WHITE,
             .colorEnd = (Color){255, 255, 255, 0},
             .physics.collisionEnabled = true,
