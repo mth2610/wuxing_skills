@@ -41,6 +41,14 @@ static bool ParticleManager_RequiresCpuFacing(const ParticleConfig *particle)
            (axis.x != 0.0f || axis.y != 0.0f || axis.z != 0.0f);
 }
 
+/* Phase 1 has no GPU packing/shader mirror for physical profiles. AUTO must
+ * take the CPU path; GPU_ONLY is rejected at emitter creation rather than
+ * silently simulating a different model. */
+static bool ParticleManager_RequiresCpuDynamics(const ParticleConfig *particle)
+{
+    return ParticleDynamics_IsEnabled(particle->physics.dynamics);
+}
+
 /* A textureless billboard selects the shared default material. Its RGB owns
  * the white-core/orange-rim structure; particle authoring still controls alpha
  * and lifetime. Gradients are explicit colour treatments, not defaults. */
@@ -151,8 +159,10 @@ ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d
         ParticleConfig_Unify(&e->desc.particle);
         if (e->desc.particle.travelPath)
             e->desc.moduleFlags |= PARTICLE_MODULE_PATH_FOLLOW;
+        bool requiresCpuDynamics = ParticleManager_RequiresCpuDynamics(&e->desc.particle);
         bool gpuOK = ParticleManager_GPUCanRun(e->desc.moduleFlags);
         if (ParticleManager_RequiresCpuFacing(&e->desc.particle)) gpuOK = false;
+        if (requiresCpuDynamics) gpuOK = false;
         VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(&e->desc.particle);
         // The current GPU billboard draw is one additive batch. A named alpha
         // or premultiplied appearance must use the CPU renderer until blend is
@@ -166,7 +176,8 @@ ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d
         e->status = PARTICLE_EMITTER_OK;
         if (e->desc.simulationPolicy == PARTICLE_SIM_GPU_ONLY && !gpuOK) {
             e->gpu = false;
-            e->status = (e->desc.moduleFlags & (PARTICLE_MODULE_GAMEPLAY_CALLBACK | PARTICLE_MODULE_GAMEPLAY_COLLISION))
+            e->status = (requiresCpuDynamics ||
+                         (e->desc.moduleFlags & (PARTICLE_MODULE_GAMEPLAY_CALLBACK | PARTICLE_MODULE_GAMEPLAY_COLLISION)))
                             ? PARTICLE_EMITTER_UNSUPPORTED_MODULE : PARTICLE_EMITTER_GPU_UNAVAILABLE;
             s_stats.rejectedGpuOnlyEmitters++;
         } else if (e->desc.simulationPolicy == PARTICLE_SIM_AUTO && !gpuOK && e->desc.moduleFlags) {
@@ -253,7 +264,8 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
                                    p->render.gradient == NULL;
         bool appearanceFitsGpu = p->render.appearance == VFX_APPEARANCE_INHERIT ||
                                  appearance.surface == VFX_SURFACE_ADDITIVE;
-        if (e->gpu && appearanceFitsGpu && !ParticleManager_RequiresCpuFacing(p)) {
+        if (e->gpu && appearanceFitsGpu && !ParticleManager_RequiresCpuFacing(p) &&
+            !ParticleManager_RequiresCpuDynamics(p)) {
             VFXContrastLayer layer = appearance.surface == VFX_SURFACE_ADDITIVE
                                          ? VFX_CONTRAST_EMISSION
                                          : VFX_CONTRAST_BODY;

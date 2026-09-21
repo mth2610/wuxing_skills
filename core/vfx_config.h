@@ -32,6 +32,7 @@ typedef enum {
 #include "core/sprite_anim.h"
 #include "core/skill_curve.h"
 #include "core/particles/particle_travel.h"
+#include "core/particles/particle_dynamics.h"
 #include "core/vfx_contrast.h"
 #include "core/vfx_appearance.h"
 
@@ -83,6 +84,12 @@ typedef struct {
 
     // Aerodynamic wind & vorticle coupling [0.0 = none, 1.0 = full wind velocity]
     float windInfluence;
+
+    /* NULL selects the legacy integrator exactly. Non-NULL opts into the
+     * physical-motion contract; the profile must outlive emitted particles. */
+    const ParticleDynamicsProfile *dynamics;
+    Vector3 initialImpulseNs;          /* Applied once: dv = impulse * inverseMass. */
+    Vector3 initialAccelerationMps2;   /* Persistent authored acceleration field. */
 } VFX_PhysicsConfig;
 
 // 4. Animation Config
