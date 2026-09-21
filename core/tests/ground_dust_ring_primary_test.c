@@ -30,11 +30,13 @@ int main(void)
           "high severity reaches the extracted 25-40 particle budget");
     CHECK(Has(src, "float ringRadius = Math_Mix(0.30f, 1.15f, severity01) * scale;"),
           "severity expands the ring rather than multiplying cloud density");
-    CHECK(Has(src, ".velocity = {cosf(angle) * speed, Math_Mix(0.015f, 0.055f, Random01()) * scale,"),
-          "the burst is horizontal with only a small dust lift");
+    CHECK(Has(src, ".physics.initialImpulseNs = {cosf(angle) * speed,") &&
+          Has(src, "Math_Mix(0.015f, 0.055f, Random01()) * scale"),
+          "the burst expresses horizontal launch and dust lift as radial impulse");
     CHECK(Has(src, "float speed = Math_Mix(6.0f, 12.0f, Random01()) * scale;") &&
-          Has(src, ".speedCurve = &s_groundDustRingBrake,"),
-          "the ring launches at Niagara shockwave speed, then brakes rapidly");
+          Has(src, ".linearDragPerSecond = 7.0f") &&
+          Has(src, ".physics.dynamics = &s_groundDustRingDynamics"),
+          "the ring launches at Niagara shockwave speed, then brakes through heavy physical drag");
     CHECK(!Has(src, ".facingMode = VFX_FACING_GROUND_PLANE,") &&
           Has(src, "camera-facing cards preserve the ring under the current renderer"),
           "ground ring uses reliable camera-facing dust cards");

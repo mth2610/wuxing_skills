@@ -16,6 +16,10 @@
 
 static ForceField s_emberBurstField;
 static bool s_emberBurstReady = false;
+static const ParticleDynamicsProfile s_emberBurstDynamics = {
+    .inverseMassKg = 1.0f, .gravityScale = 1.0f, .linearDragPerSecond = 0.80f,
+    .terminalSpeedMps = 30.0f, .windCouplingHz = 1.0f, .windSusceptibility = 0.12f,
+};
 
 // Short hot fragment shed on bounce. Static storage: the particle system keeps
 // a copy of the template, and nested on-collision templates are stripped on
@@ -26,15 +30,6 @@ static void EmberBurst_Init(void)
 {
     if (s_emberBurstReady) return;
     ForceField_Clear(&s_emberBurstField);
-    ForceField_AddLayer(&s_emberBurstField, (ForceLayer){
-        .type = FORCE_GRAVITY_DIR,
-        .direction = (Vector3){0.0f, -1.0f, 0.0f},
-        .strength = 9.81f,
-    });
-    ForceField_AddLayer(&s_emberBurstField, (ForceLayer){
-        .type = FORCE_DRAG,
-        .strength = 0.80f,
-    });
     ForceField_AddLayer(&s_emberBurstField, (ForceLayer){
         .type = FORCE_NOISE_CURL,
         .strength = 1.5f,
@@ -88,11 +83,13 @@ void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal,
 
         ParticleConfig body = (ParticleConfig){
             .position = origin,
-            .velocity = velocity,
+            .velocity = (Vector3){0},
             .radius = radius,
             .lifetime = lifetime,
             .forceField = &s_emberBurstField,
             .windInfluence = 0.12f,
+            .physics.dynamics = &s_emberBurstDynamics,
+            .physics.initialImpulseNs = velocity,
             .colorStart = WHITE,
             .colorEnd = (Color){255, 255, 255, 0},
             .physics.collisionEnabled = true,

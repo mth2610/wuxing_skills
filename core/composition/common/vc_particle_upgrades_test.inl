@@ -9,6 +9,11 @@
 
 static ForceField s_testGravityField;
 static bool s_testGravityInit = false;
+static const ParticleDynamicsProfile s_guidedParticleDynamics = {
+    .inverseMassKg = 1.0f, .gravityScale = 0.0f, .linearDragPerSecond = 0.35f,
+    .terminalSpeedMps = 16.0f, .windCouplingHz = 0.8f, .windSusceptibility = 0.35f,
+    .steeringFrequencyHz = 1.8f, .maxSteeringAccelMps2 = 25.0f,
+};
 
 // Guided-travel diagnostic.  The route, moving target, force field and impact
 // template are pointer-backed, so every active cast owns stable storage until
@@ -140,8 +145,9 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
         .maxAcceleration = 25.0f,
         .waypointRadius = 0.40f,
         .targetRadius = 0.35f,
-        .arrivalForceField = &state->impactField,
-        // Khi tới đích: Triệt tiêu đà bay (scale ~0) để Wind System điều khiển 100%
+        // Arrival is handled by the particle physical path: it spawns the
+        // shared Wind System blast and retires the parent formation.
+        .arrivalForceField = NULL,
         .arrivalOffset = 0.0f,
         .arrivalKick = 0.0f,
         .arrivalVelocityScale = 0.01f,  // > 0 để trigger scale trong ApplyImpactEntry
@@ -156,13 +162,15 @@ static void GuidedParticleTest_Spawn(Vector3 source, Vector3 target)
 
     ParticleConfig follower = {
         .position = source,
-        .velocity = Vector3Scale(forward, 12.0f),
+        .velocity = (Vector3){0},
         .lifetime = 3.5f,
         .radius = 0.11f,
         .colorStart = (Color){90, 235, 255, 245},
         .colorEnd = (Color){130, 70, 255, 0},
         .forceField = &state->field,
         .travelPath = &state->path,
+        .physics.dynamics = &s_guidedParticleDynamics,
+        .physics.initialImpulseNs = Vector3Scale(forward, 12.0f),
         .stretchStrength = 0.016f,
         .stretchMinSpeed = 0.35f,
         .render.blendMode = VFX_BLEND_ADDITIVE,

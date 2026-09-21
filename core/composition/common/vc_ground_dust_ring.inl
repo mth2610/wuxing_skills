@@ -12,6 +12,10 @@ static SkillCurve s_groundDustRingGrow = {0};
 static SkillCurve s_groundDustRingFade = {0};
 static SkillCurve s_groundDustRingBrake = {0};
 static bool s_groundDustRingReady = false;
+static const ParticleDynamicsProfile s_groundDustRingDynamics = {
+    .inverseMassKg = 1.0f, .gravityScale = 0.05f, .linearDragPerSecond = 7.0f,
+    .terminalSpeedMps = 12.0f, .windCouplingHz = 1.4f, .windSusceptibility = 0.65f,
+};
 
 static void GroundDustRing_Init(void)
 {
@@ -65,13 +69,14 @@ void VFX_ComposeGroundDustRing(Vector3 pos, VC_MaterialId matId, float scale,
             .position = {pos.x + cosf(angle) * ringRadius * radialJitter,
                          pos.y + 0.08f * scale,
                          pos.z + sinf(angle) * ringRadius * radialJitter},
-            .velocity = {cosf(angle) * speed, Math_Mix(0.015f, 0.055f, Random01()) * scale,
-                         sinf(angle) * speed},
+            .velocity = (Vector3){0},
             .radius = Math_Mix(0.32f, 0.55f, Random01()) * scale,
             .lifetime = Math_Mix(0.72f, 1.08f, Random01()),
             .colorStart = dust, .colorEnd = VC_WithAlpha(dust, 0),
             .radiusCurve = &s_groundDustRingGrow, .alphaCurve = &s_groundDustRingFade,
-            .speedCurve = &s_groundDustRingBrake,
+            .physics.dynamics = &s_groundDustRingDynamics,
+            .physics.initialImpulseNs = {cosf(angle) * speed,
+                Math_Mix(0.015f, 0.055f, Random01()) * scale, sinf(angle) * speed},
             .render.texture = s_groundDustRingTex, .render.blendMode = VFX_BLEND_ALPHA,
             .render.smokeSheet = 1, .render.normalTex = s_groundDustRingNormalTex,
             .spriteAnim = &s_groundDustRingAnim[i % GROUND_DUST_RING_ANIM_RATES],

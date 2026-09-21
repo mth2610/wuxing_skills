@@ -47,12 +47,11 @@ int main(void)
           FileHas(src, "Math_Mix(0.8f, 2.0f") &&
           FileHas(src, "Math_Mix(0.018f, 0.028f"),
           "launch speed, lifetime and size follow the extracted NE_SparkDebris recipe");
-    CHECK(FileHas(src, ".type = FORCE_GRAVITY_DIR") &&
-          FileHas(src, ".strength = 9.81f") &&
-          FileHas(src, ".type = FORCE_DRAG") &&
-          FileHas(src, ".strength = 0.80f") &&
+    CHECK(FileHas(src, ".gravityScale = 1.0f") &&
+          FileHas(src, ".linearDragPerSecond = 0.80f") &&
+          FileHas(src, ".physics.initialImpulseNs = velocity") &&
           FileHas(src, ".type = FORCE_NOISE_CURL"),
-          "embers follow ballistic gravity with documented drag and curl wander");
+          "embers use an explicit ballistic impulse, gravity, drag and curl wander");
     CHECK(fabsf(UniformConeCos(1.15f, 0.5f) -
                  0.5f * (1.0f + cosf(1.15f))) < 0.0001f,
           "the cone sampler is uniform in solid angle rather than polar angle");

@@ -223,6 +223,38 @@ static inline Vector3 ParticleTravel_ComputeCriticalDampedAcceleration(
     return acceleration;
 }
 
+/* Advance a physically integrated segment through the route. Unlike the
+ * legacy solver this never rewrites position; it only advances waypoints and
+ * reports a swept final-target hit so the caller can run its arrival event. */
+static inline bool ParticleTravel_AdvancePhysical(
+    const ParticleTravelPath *path, Vector3 previous, Vector3 current,
+    int *waypointIndex, Vector3 formationOffset)
+{
+    int count, waypoint, finalIndex;
+    Vector3 goal, offset;
+    float radius;
+    if (!path || !waypointIndex) return false;
+    count = ParticleTravel_WaypointCount(path);
+    if (count <= 0) return false;
+    finalIndex = count - 1;
+    waypoint = *waypointIndex;
+    if (waypoint < 0) waypoint = 0;
+    if (waypoint > finalIndex) waypoint = finalIndex;
+    offset = ParticleTravel_TransportOffset(path, waypoint, formationOffset);
+    goal = ParticleTravel_GetWaypoint(path, waypoint);
+    goal.x += offset.x; goal.y += offset.y; goal.z += offset.z;
+    radius = waypoint == finalIndex
+        ? (path->targetRadius > 0.0f ? path->targetRadius : 0.10f)
+        : (path->waypointRadius > 0.0f ? path->waypointRadius : 0.10f);
+    if (ParticleTravel_SegmentDistanceSq(previous, current, goal) > radius * radius) {
+        *waypointIndex = waypoint;
+        return false;
+    }
+    if (waypoint == finalIndex) { *waypointIndex = waypoint; return true; }
+    *waypointIndex = waypoint + 1;
+    return false;
+}
+
 /* Apply path steering after external forces/drag, integrate once, advance the
  * route, and return true on final-target arrival. The swept test prevents fast
  * particles tunnelling through a small target between frames. */

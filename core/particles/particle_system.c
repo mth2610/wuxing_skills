@@ -677,8 +677,11 @@ void UpdateParticles(float dt)
         if (speed > d->terminalSpeedMps)
           velocity = Vector3Scale(velocity, d->terminalSpeedMps / speed);
       }
-      if (d->windCouplingHz > 0.0f && d->windSusceptibility > 0.0f) {
-        float alpha = 1.0f - expf(-d->windCouplingHz * d->windSusceptibility * dt);
+      if ((d->windCouplingHz > 0.0f && d->windSusceptibility > 0.0f) ||
+          p->travelImpactActive) {
+        float couplingHz = p->travelImpactActive ? 6.0f : d->windCouplingHz;
+        float susceptibility = p->travelImpactActive ? 1.0f : d->windSusceptibility;
+        float alpha = 1.0f - expf(-couplingHz * susceptibility * dt);
         Vector3 airflow = Wind_EvaluateVelocity(position, s_particleTime);
         velocity.x += (airflow.x - velocity.x) * alpha;
         velocity.y += (airflow.y - velocity.y) * alpha;
@@ -698,6 +701,48 @@ void UpdateParticles(float dt)
       }
       p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
       p->x += velocity.x * dt; p->y += velocity.y * dt; p->z += velocity.z * dt;
+      if (p->travelPath && !p->travelImpactActive &&
+          ParticleTravel_AdvancePhysical(p->travelPath, position,
+              (Vector3){p->x, p->y, p->z}, &p->travelWaypoint,
+              p->travelFormationOffset)) {
+        /* Arrival is an environmental event, not a hidden launch velocity or
+         * ForceField. Rate-limit the shared gust because a formation can cross
+         * the swept target during the same frame. */
+        Vector3 blastPos = p->travelPath->target ? *p->travelPath->target
+                                                  : (Vector3){p->x, p->y, p->z};
+        /* Resolve overshoot onto each member's transported formation point,
+         * not the blast centre. A radial wind has no outward direction at its
+         * exact origin; preserving this small shell makes the blast expand
+         * immediately while the formation still reads as one sphere on arrival. */
+        Vector3 impactOffset = ParticleTravel_TransportOffset(
+            p->travelPath, p->travelWaypoint, p->travelFormationOffset);
+        p->x = blastPos.x + impactOffset.x;
+        p->y = blastPos.y + impactOffset.y;
+        p->z = blastPos.z + impactOffset.z;
+        static float s_lastPhysicalArrivalWindTime = -10.0f;
+        if (s_particleTime - s_lastPhysicalArrivalWindTime > 0.35f) {
+          s_lastPhysicalArrivalWindTime = s_particleTime;
+          Wind_SpawnRadialBlast(blastPos, 4.5f, 7.5f, 0.75f);
+          /* Turbulence is a trailing breakup detail; radial airflow owns the
+           * launch so the impact cannot read as random wandering. */
+          Wind_SpawnTurbulence(blastPos, 7.5f, 12.0f, 0.90f, 2.8f, 4.0f);
+        }
+        if (p->hasTargetEmit && p->onTargetCount > 0) {
+          for (int c = 0; c < p->onTargetCount; ++c) {
+            ParticleConfig impact = p->onTargetConfig;
+            impact.position = (Vector3){p->x, p->y, p->z};
+            impact.physics.position = impact.position;
+            impact.velocity.x += p->vx * impact.velocityInheritance;
+            impact.velocity.y += p->vy * impact.velocityInheritance;
+            impact.velocity.z += p->vz * impact.velocityInheritance;
+            SpawnParticle(impact);
+          }
+        }
+        p->travelImpactActive = true;
+        p->travelImpactAge = 0.0f;
+        p->vx = p->vy = p->vz = 0.0f;
+        continue;
+      }
       goto particle_contacts;
     }
 

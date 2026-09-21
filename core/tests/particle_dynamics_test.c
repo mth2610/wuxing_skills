@@ -73,6 +73,16 @@ static void Test_GuidanceIsBoundedAccelerationNotTeleport(void)
                "guided particle advances physically instead of snapping to target");
 }
 
+static void Test_PhysicalGuidanceSweepsItsTarget(void)
+{
+    Vector3 target = {1.0f, 0.0f, 0.0f};
+    ParticleTravelPath path = {.target = &target, .targetRadius = 0.05f};
+    int waypoint = 0;
+    CHECK_NEAR(ParticleTravel_AdvancePhysical(&path, (Vector3){0},
+               (Vector3){2.0f, 0.0f, 0.0f}, &waypoint, (Vector3){0}), 1.0f, 0.0f,
+               "physical guidance detects a swept final-target crossing");
+}
+
 int main(void)
 {
     Test_NullProfileKeepsLegacyPath();
@@ -80,6 +90,7 @@ int main(void)
     Test_LinearDragIsFrameRateInvariant();
     Test_ForceDependsOnMassButAccelerationDoesNot();
     Test_GuidanceIsBoundedAccelerationNotTeleport();
+    Test_PhysicalGuidanceSweepsItsTarget();
     printf("particle dynamics: %s\n", s_failures ? "FAIL" : "PASS");
     return s_failures ? 1 : 0;
 }
