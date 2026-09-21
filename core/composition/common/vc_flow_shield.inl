@@ -173,7 +173,7 @@ static void VC_FlowShield_Update(float dt)
         // a decal of a shell — the reference's clearest tell is the pool of
         // colour it throws on the rock it is sitting on. Spawned per frame with
         // a lifetime just over one, the standard pattern for a continuous
-        // emitter (vc_character_aura.inl does the same), so the light tracks a
+        // emitter (the mesh particle emitter uses the same pattern), so the light tracks a
         // moving shield and dies with it instead of needing its own handle.
         if (shield->level > 0.02f)
         {

@@ -111,7 +111,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeSmokeVolume":       ("emitter", "timed",      "continuous"),
     "VFX_ComposeAmbientFire":       ("emitter", "timed",      "continuous"),
     "VFX_ComposeFlame":             ("emitter", "timed",      "continuous"),
-    "VFX_ComposeCharacterAura":      ("emitter", "persistent", "persistent"),
+    "VFX_ComposeMeshParticleEmitter": ("emitter", "persistent", "persistent"),
     "VFX_ComposeChargeConverge":     ("draw",    "timed",      "continuous"),
     "VFX_ComposeConvergeMotes":      ("draw",    "timed",      "continuous"),
     "VFX_ComposeFlare":              ("draw",    "timed",      "continuous"),
@@ -203,7 +203,7 @@ LIFECYCLE_SPECS = {
     # it is a plain draw-phase composer with no handle and no emitter.
     "VFX_ComposeLiquidBench":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeOpticalFlare":       ("draw",    "timed",      "continuous"),
-    "VFX_ComposeSilhouetteGlow":     ("draw",    "timed",      "continuous"),
+    "VFX_DrawMeshSurfaceAura":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeVacuumArc":          ("draw",    "timed",      "continuous"),
     "VFX_ComposeVacuumRing":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeIaidoStance":        ("draw",    "timed",      "continuous"),
@@ -214,6 +214,8 @@ LIFECYCLE_SPECS = {
 # composition contracts.  The shield intentionally has no surface override:
 # its default is the procedural, transparent bubble profile.
 FIXTURE_SPAWN_OVERRIDES = {
+    "VFX_ComposeMeshParticleEmitter":
+        "VFX_ComposeMeshParticleEmitter(&(VFX_MeshParticleEmitterDesc){.model=&s_meshParticleFixtureModel, .transform=MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), .variant=s_meshParticleFixtureVariant, .material=VC_MAT_LIGHTNING, .intensity=1.0f, .seed=0x4d455348u})",
     "VFX_ComposeRadiantStarburstHead":
         "VFX_ComposeRadiantStarburstHead($POS, VC_MAT_FIRE, 1.5f, $TIME)",
     # The vortex is magical energy rather than fire. Lightning supplies a
@@ -345,8 +347,12 @@ FIXTURE_METADATA_OVERRIDES = {
     "VFX_ComposeOpticalFlare": {
         "category": "common",
     },
-    "VFX_ComposeSilhouetteGlow": {
-        "label": "MESH AURA",
+    "VFX_ComposeMeshParticleEmitter": {
+        "label": "MESH PARTICLE EMITTER",
+        "category": "common",
+    },
+    "VFX_DrawMeshSurfaceAura": {
+        "label": "MESH SURFACE AURA",
         "category": "common",
     },
     "VFX_ComposeVacuumArc": {
@@ -362,8 +368,8 @@ FIXTURE_METADATA_OVERRIDES = {
 FIXTURE_DRAW_OVERRIDES = {
     "VFX_ComposeOpticalFlare":
         "VFX_ComposeOpticalFlare(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 0.55f, 2.4f, 1.0f, s_lastCam)",
-    "VFX_ComposeSilhouetteGlow":
-        "VFX_ComposeSilhouetteGlow(s_currentPlayerPos, s_currentPlayerYaw, 1.0f, s_lastCam)",
+    "VFX_DrawMeshSurfaceAura":
+        "VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=2.8f, .rimIntensity=0.70f, .opacity=0.32f})",
     "VFX_ComposeVacuumArc":
         "VFX_ComposeVacuumConverge(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 2.7f, $PROG, s_lastCam)",
     "VFX_ComposeVacuumRing":

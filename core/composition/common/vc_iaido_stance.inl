@@ -3,7 +3,7 @@
 // VFX 5: Complete Iaido Quick-Draw / Counter Stance Composite.
 // Orchestrates all 4 basic primitives into the high-contrast anime/sci-fi composition:
 //   1. Optical Starburst & Horizontal Anamorphic Cine Streak (Sword Hilt Focal Point).
-//   2. High-contrast Character Silhouette Glow & Surface Envelope Field.
+//   2. Restrained Mesh Surface Aura overlay.
 //   3. 3D Parabolic Curved Vacuum Wind Streamlines (High-altitude Sweeping Arches).
 //   4. Thin Planar Vacuum Ground Annulus Expansion.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -12,6 +12,7 @@
 #include "rlgl.h"
 #include "raymath.h"
 #include "core/time_fx.h"
+#include "character/character_model.h"
 #include <math.h>
 
 void VFX_ComposeIaidoStance(Vector3 playerPos, float yaw, float progress,
@@ -33,15 +34,25 @@ void VFX_ComposeIaidoStance(Vector3 playerPos, float yaw, float progress,
     VFX_DrawExpandingVacuumRing(playerPos, ringRadius, 0.42f, (Color){ 230, 245, 255, 255 }, ringAlpha);
 
     // ─────────────────────────────────────────────────────────────────────────
-    // LAYER 2: Character Silhouette Glow & Surface Aura
+    // LAYER 2: Mesh Surface Aura
     // ─────────────────────────────────────────────────────────────────────────
     float silhIntensity = 1.0f;
     if (progress > 0.80f)
     {
         silhIntensity = 1.0f - (progress - 0.80f) / 0.20f;
     }
-    Color silhColor = (Color){ 245, 250, 255, 255 };
-    VFX_DrawCharacterSilhouetteGlow(playerPos, yaw, silhColor, silhIntensity, animStatePtr);
+    (void)animStatePtr;
+    if (CharacterModel_IsLoaded()) {
+        VFX_MeshSurfaceAuraParams aura = {
+            .materialColor = (Color){245, 250, 255, 255},
+            .rimWidth = 2.8f,
+            .rimIntensity = 0.75f,
+            .opacity = 0.34f * silhIntensity,
+        };
+        Matrix transform = MatrixMultiply(MatrixRotateY(yaw),
+                                          MatrixTranslate(playerPos.x, playerPos.y, playerPos.z));
+        VFX_DrawModelSurfaceAura(CharacterModel_GetModel(), transform, &aura);
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // LAYER 1: Optical Starburst & Anamorphic Cine Streak (Sword Hilt Focal Point)

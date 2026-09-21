@@ -1175,7 +1175,6 @@ int main(int argc, char **argv) {
         if (renderVFXMode) mouseTarget3D = captureOrigin;
 
         VFXTest_SetPlayerYaw(s_vfxPlayerYaw);
-        VFX_SetActiveCharacterAnimState(&player.anim);
         if (VFXTest_UpdateAndHandleInput(player.position, mouseTarget3D, testAtlasTex, globalParticleTex)) {
             currentScreen = SCREEN_MAIN_MENU;
         }

@@ -11,7 +11,6 @@
 #include "core/camera_context.h"
 #include "environment/environment_system.h"
 #include "core/ribbon_strip.h"
-#include "character/character_model.h"
 #include "core/lightning/lightning_stroke.h"
 #include "core/path_spline.h"
 #include "core/scene_targets.h"
@@ -65,7 +64,7 @@
 // state and is driven by the two entry points below; both live in this one file,
 // adjacent and in matching order, so a deletion cannot be half-done.
 // @gen:archetype_includes begin
-#include "common/vc_character_aura.inl"
+#include "common/vc_mesh_particle_emitter.inl"
 #include "common/vc_trail.inl"
 #include "common/vc_volume_trail.inl"
 #include "common/vc_debris_shards.inl"
@@ -89,7 +88,7 @@ void VFX_Compose_Update(float dt)
 {
     (void)dt;
 // @gen:archetype_update begin
-    VC_CharacterAura_Update(dt);
+    VC_MeshParticleEmitter_Update(dt);
     VC_SweptTrail_Update(dt);
     VC_VolumeTrail_Update(dt);
     VC_DebrisShards_Update(dt);
@@ -131,7 +130,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
 {
     (void)cam;
 // @gen:archetype_draw begin
-    VC_CharacterAura_Draw3D(cam);
+    VC_MeshParticleEmitter_Draw3D(cam);
     VC_SweptTrail_Draw3D(cam);
     VC_VolumeTrail_Draw3D(cam);
     VC_DebrisShards_Draw3D(cam);

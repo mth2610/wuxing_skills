@@ -51,18 +51,6 @@
       "kill_fn": "VFX_Beam_Stop"
     },
     {
-      "source": "common/vc_character_aura.inl",
-      "fn": "VFX_ComposeCharacterAura",
-      "label": "CHARACTER AURA",
-      "category": "common",
-      "fixture": "persistent",
-      "lifecycle": "emitter",
-      "_auto": true,
-      "type": "persistent",
-      "spawn_call": "VFX_ComposeCharacterAura(Sandbox_GetPlayerAgentId(), VC_MAT_FIRE, 1.0f)",
-      "kill_fn": "VFX_KillCharacterAura"
-    },
-    {
       "source": "common/vc_charge_converge.inl",
       "fn": "VFX_ComposeChargeConverge",
       "label": "CHARGE CONVERGE",
@@ -363,6 +351,29 @@
       "trigger_call": "VFX_ComposeLightningGroundRicochet($POS, VC_MAT_LIGHTNING, 1.0f, $SEED)"
     },
     {
+      "source": "common/vc_mesh_particle_emitter.inl",
+      "fn": "VFX_ComposeMeshParticleEmitter",
+      "label": "MESH PARTICLE EMITTER",
+      "category": "common",
+      "fixture": "persistent",
+      "lifecycle": "emitter",
+      "_auto": true,
+      "type": "persistent",
+      "spawn_call": "VFX_ComposeMeshParticleEmitter(&(VFX_MeshParticleEmitterDesc){.model=&s_meshParticleFixtureModel, .transform=MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), .variant=s_meshParticleFixtureVariant, .material=VC_MAT_LIGHTNING, .intensity=1.0f, .seed=0x4d455348u})",
+      "kill_fn": "VFX_KillMeshParticleEmitter"
+    },
+    {
+      "source": "common/vc_mesh_surface_aura.inl",
+      "fn": "VFX_DrawMeshSurfaceAura",
+      "label": "MESH SURFACE AURA",
+      "category": "common",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=2.8f, .rimIntensity=0.70f, .opacity=0.32f})"
+    },
+    {
       "source": "common/vc_mist_veil.inl",
       "fn": "VFX_ComposeMistVeil",
       "label": "MIST VEIL",
@@ -497,17 +508,6 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeShockRing($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.5f, $PROG)"
-    },
-    {
-      "source": "common/vc_silhouette_glow.inl",
-      "fn": "VFX_ComposeSilhouetteGlow",
-      "label": "MESH AURA",
-      "category": "common",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeSilhouetteGlow(s_currentPlayerPos, s_currentPlayerYaw, 1.0f, s_lastCam)"
     },
     {
       "source": "common/vc_smoke_column.inl",

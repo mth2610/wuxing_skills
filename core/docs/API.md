@@ -926,9 +926,6 @@ _Inline helpers / macros only — see header._
   void VFX_KillShieldShell(int handle);
   void VFX_ShieldShell_DrawRefraction(Camera3D camera);
   void VFX_FlowShield_DrawRefraction(Camera3D camera);
-  int VFX_ComposeCharacterAura(int agentId, VC_MaterialId matId, float intensity);
-  void VFX_AuraSetIntensity(int handle, float intensity01);
-  void VFX_KillCharacterAura(int handle);
   void VFX_ComposeGlintSparkle(Vector3 center, VC_MaterialId mat, float scale, float time);
   void VFX_ComposeRadiantStarburst(Vector3 center, VC_MaterialId mat, float radius, float t01);
   void VFX_ComposeRadiantStarburstHead(Vector3 center, VC_MaterialId mat, float radius, float time);
@@ -945,19 +942,18 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeSweepSlash(Vector3 origin, Vector3 dir, VC_MaterialId mat, float length, float arcRad, float t01);
   void VFX_ComposeCentripetalSlash(Vector3 origin, float yaw, VC_MaterialId mat, float progress, float duration, Camera3D camera);
   void VFX_ComposeCentripetalSlashEx(Vector3 origin, float yaw, Color coreColor, Color rimColor, float progress, float duration, Camera3D camera);
-  void VFX_EmitCharacterSkinAura(Vector3 playerPos, float yaw, Color colorStart, Color colorEnd, float speed, int count);
   void VFX_DrawOpticalStarburstStreak(Vector3 pos, Color coreCol, Color streakCol, float starRadius, float streakLength, float streakThickness, float intensity, Camera3D camera);
   void VFX_ComposeOpticalFlare(Vector3 pos, float starRadius, float streakLength, float intensity, Camera3D camera);
-  void VFX_SetActiveCharacterAnimState(const struct CharacterAnimState *animState);
-  const struct CharacterAnimState *VFX_GetActiveCharacterAnimState(void);
-  void VFX_DrawModelSilhouetteGlow(Model model, Matrix transform, Color glowColor, float intensity);
-  void VFX_DrawModelSilhouetteGlowEx(Model model, Vector3 position, float yaw, float scale, Color glowColor, float intensity);
-  void VFX_DrawMeshSilhouetteGlow(Mesh mesh, Matrix transform, Color glowColor, float intensity);
-  void VFX_DrawCharacterSilhouetteGlowEx(Vector3 position, float yaw, float scale, const struct CharacterAnimState *animState, Color glowColor, float intensity);
-  void VFX_DrawCharacterSilhouetteGlow(Vector3 playerPos, float yaw, Color auraColor, float intensity, const void *targetMeshOrAnim);
-  void VFX_ComposeSilhouetteGlow(Vector3 pos, float yaw, float intensity, Camera3D camera);
-  void VFX_DrawMeshAuraModel(Model model, Matrix transform, VC_MaterialId matId, float intensity, VFX_MeshAuraParticleMode particleMode);
-  void VFX_DrawMeshAura(Mesh mesh, Matrix transform, VC_MaterialId matId, float intensity, VFX_MeshAuraParticleMode particleMode);
+  int VFX_MeshParticleEmitter_Spawn(const VFX_MeshParticleEmitterDesc *desc);
+  int VFX_ComposeMeshParticleEmitter(const VFX_MeshParticleEmitterDesc *desc);
+  void VFX_MeshParticleEmitter_SetTransform(int handle, Matrix transform);
+  void VFX_MeshParticleEmitter_SetVariant(int handle, VFX_MeshParticleVariant variant);
+  void VFX_MeshParticleEmitter_SetIntensity(int handle, float intensity01);
+  void VFX_MeshParticleEmitter_Kill(int handle);
+  void VFX_KillMeshParticleEmitter(int handle);
+  const char *VFX_MeshParticleVariant_Name(VFX_MeshParticleVariant variant);
+  void VFX_DrawMeshSurfaceAura(Mesh mesh, Matrix transform, const VFX_MeshSurfaceAuraParams *params);
+  void VFX_DrawModelSurfaceAura(Model model, Matrix transform, const VFX_MeshSurfaceAuraParams *params);
   void VFX_ComposeVacuumConverge(Vector3 focalPoint, float sphereRadius, float progress, Camera3D camera);
   void VFX_ComposeVacuumArc(Vector3 pos, float yaw, float progress, float duration, Camera3D camera);
   void VFX_DrawExpandingVacuumRing(Vector3 center, float radius, float bandWidth, Color ringColor, float alpha01);
@@ -1043,8 +1039,8 @@ _Inline helpers / macros only — see header._
   void VFX_WaterRing_Stop(void);
   void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
-**Enums:** VFX_SmokeStyle { VFX_SMOKE_STYLE_ROIL,VFX_SMOKE_STYLE_PUFF_DARK,VFX_SMOKE_STYLE_PUFF_LIGHT,VFX_SMOKE_STYLE_WISPY,VFX_SMOKE_STYLE_COUNT,VFX_SMOKE_STYLE_DEFAULT };VFX_FlameStyle { VFX_FLAME_STYLE_NIAGARA_ROIL,VFX_FLAME_STYLE_VOLUME,VFX_FLAME_STYLE_COLUMN,VFX_FLAME_STYLE_PUFF,VFX_FLAME_STYLE_FIREBALL,VFX_FLAME_STYLE_DEFAULT } VFX_SilhouetteTargetType { VFX_SILHOUETTE_AUTO,VFX_SILHOUETTE_MODEL,VFX_SILHOUETTE_MESH,VFX_SILHOUETTE_CHAR_ANIM };VFX_MeshAuraParticleMode { VFX_MESH_AURA_PARTICLES_NONE,VFX_MESH_AURA_PARTICLES_STATIC_FLIPBOOK,VFX_MESH_AURA_PARTICLES_RISE,VFX_MESH_AURA_PARTICLES_SMOKE,VFX_MESH_AURA_PARTICLES_FLAME } VFX_VolumeKind { VFX_VOLUME_SMOKE,VFX_VOLUME_FIRE,VFX_VOLUME_STEAM,VFX_VOLUME_ENERGY,VFX_VOLUME_KIND_COUNT,VOL_ENERGY,VOL_SMOKE,VOL_FIRE };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_ENERGY,VFX_COLUMN_KIND_COUNT } ContactSparkMode { CONTACT_SPARK_STATIC,CONTACT_SPARK_CENTRIFUGAL }
-**Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_GasPlumeConfig, VFX_GasVortexConfig, VFX_GasShockwaveConfig, VFX_FlameJetConfig, VFX_ShieldSurface, VFX_SilhouetteTarget, VFX_TrailSurface
+**Enums:** VFX_SmokeStyle { VFX_SMOKE_STYLE_ROIL,VFX_SMOKE_STYLE_PUFF_DARK,VFX_SMOKE_STYLE_PUFF_LIGHT,VFX_SMOKE_STYLE_WISPY,VFX_SMOKE_STYLE_COUNT,VFX_SMOKE_STYLE_DEFAULT };VFX_FlameStyle { VFX_FLAME_STYLE_NIAGARA_ROIL,VFX_FLAME_STYLE_VOLUME,VFX_FLAME_STYLE_COLUMN,VFX_FLAME_STYLE_PUFF,VFX_FLAME_STYLE_FIREBALL,VFX_FLAME_STYLE_DEFAULT } VFX_MeshParticleVariant { VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC,VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_RISE,VFX_MESH_PARTICLE_VARIANT_SMOKE_LIGHT_RISE,VFX_MESH_PARTICLE_VARIANT_SMOKE_DARK_RISE,VFX_MESH_PARTICLE_VARIANT_FIRE_ROIL,VFX_MESH_PARTICLE_VARIANT_EMBER_SPARK_LIFT,VFX_MESH_PARTICLE_VARIANT_COUNT };VFX_VolumeKind { VFX_VOLUME_SMOKE,VFX_VOLUME_FIRE,VFX_VOLUME_STEAM,VFX_VOLUME_ENERGY,VFX_VOLUME_KIND_COUNT,VOL_ENERGY,VOL_SMOKE,VOL_FIRE } VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_ENERGY,VFX_COLUMN_KIND_COUNT };ContactSparkMode { CONTACT_SPARK_STATIC,CONTACT_SPARK_CENTRIFUGAL }
+**Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_GasPlumeConfig, VFX_GasVortexConfig, VFX_GasShockwaveConfig, VFX_FlameJetConfig, VFX_ShieldSurface, VFX_MeshParticleEmitterDesc, VFX_MeshSurfaceAuraParams, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`
 ```c

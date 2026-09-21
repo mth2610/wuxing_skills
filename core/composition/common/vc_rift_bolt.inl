@@ -479,7 +479,7 @@ static void VC_RiftBolt_Update(float dt)
 
         // The pool of light a bolt throws on what it flies past. Spawned per
         // frame with a lifetime just over one, the standard continuous-emitter
-        // pattern (vc_character_aura.inl, vc_flow_shield.inl), so it follows a
+        // pattern (vc_flow_shield.inl), so it follows a
         // moving bolt and dies with it instead of needing its own handle.
         VFXLight_Spawn(b->pos, m->glow,
                        b->radius * s_riftLightScale * (0.55f + 0.45f * b->level),

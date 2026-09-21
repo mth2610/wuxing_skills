@@ -111,7 +111,7 @@ still needs matched dark/light-background approval.
 | `flipbooks/fireroil_normals_8x8.png` | FireRoilNiagara normal companion | 2048×2048, 8×8, 64 frames | preview-only; BC5-style XY |
 | `flipbooks/fireball_8x8.png` | FireballNiagara / `VFX_FlameEmitter` | 2048×2048, 8×8, 64 frames | preview-only |
 | `flipbooks/fireball_normals_8x8.png` | FireballNiagara normal companion | 2048×2048, 8×8, 64 frames | preview-only; BC5-style XY |
-| `flipbooks/plasma_wisps_8x8.png` | PlasmaWispsNiagara / `VFX_ComposeCharacterAura` | 4096×4096, 8×8, 64 frames | preview-only; high-memory source |
+| `flipbooks/plasma_wisps_8x8.png` | PlasmaWispsNiagara / `VFX_MeshParticleEmitter` | 4096×4096, 8×8, 64 frames | preview-only; high-memory source |
 | `flares/lens_flare_star.png` | LensFlareStarNiagara / `VFX_DrawOpticalStarburstStreak` | 512×512, static | preview-only |
 | `flares/lens_flare_ring.png` | LensFlareStreakNiagara / `VFX_DrawOpticalStarburstStreak` | 1024×256, static anamorphic streak; filename is legacy | preview-only |
 | `weapons/muzzle_flash_front.png` | MuzzleFlashFrontNiagara / `VFX_ComposeMuzzleFlash` | 2048×1024, 4×1 spatial variants | preview-only |
@@ -132,7 +132,7 @@ semantic profile; the registry owns the runtime path and sampler contract.
 | FireTongue | alpha tongue | `VFX_FlameEmitter` | migrated |
 | SmokeRoil/PuffDark/PuffLight/Wispy Niagara | puff/card | `VFX_ComposeSmokeVolume` | migrated; visual approval pending |
 | FireRoil/Fireball Niagara | puff/card | `VFX_FlameEmitter` | migrated; visual approval pending |
-| PlasmaWisps Niagara | puff/card | `VFX_ComposeCharacterAura` | migrated; visual approval pending |
+| PlasmaWisps Niagara | puff/card | `VFX_MeshParticleEmitter` | migrated; visual approval pending |
 | MuzzleFlash Front/Side/Sphere Niagara | camera/card + authored-axis cross | `VFX_ComposeMuzzleFlash` | migrated; visual approval pending |
 
 ### P4 decal semantic migration map — visual-owner gate

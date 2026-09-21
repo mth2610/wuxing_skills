@@ -576,7 +576,7 @@
       "flipbook": [8, 8, 64],
       "seam": "not_applicable",
       "provenance": "Extracted from the Unreal Engine Niagara Example pack by tools/extract_ue_textures.py; per-cell Y orientation normalized by tools/flip_extracted_flipbooks.py. Source: T_Plasma_Wisps.",
-      "consumers": ["VFX_ComposeCharacterAura body and ground wisps"],
+      "consumers": ["VFX_MeshParticleEmitter plasma-wisp variants"],
       "assets": {
         "body": {
           "path": "assets/textures/vfx/flipbooks/plasma_wisps_8x8.png",

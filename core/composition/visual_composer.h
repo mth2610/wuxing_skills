@@ -345,22 +345,6 @@ void VFX_KillShieldShell(int handle);
 void VFX_ShieldShell_DrawRefraction(Camera3D camera);
 void VFX_FlowShield_DrawRefraction(Camera3D camera);
 
-// ── F4. Character aura ──────────────────────────────────────────────────────
-// Three layers: discrete motes crossing the silhouette (the layer that actually
-// reads as an aura), a breathing shell + ground contact, and a real VFXLight
-// tracking the agent so the character is lit BY their own aura (E2). Attaches to
-// an agent and follows it via SkillManager_GetAgentPos.
-//
-// Long-lived and per-agent, so unlike a fire-and-forget composition it must be
-// released: call VFX_KillCharacterAura on cleanse/death. It also self-releases
-// when the agent stops resolving (despawn), so a missed Kill costs one slot
-// until then rather than leaking forever. Re-attaching to an agent that already
-// has one RETUNES it instead of stacking a second.
-// Returns a handle, or the recycled slot's handle when the pool (8) is full.
-int  VFX_ComposeCharacterAura(int agentId, VC_MaterialId matId, float intensity);
-void VFX_AuraSetIntensity(int handle, float intensity01); // ramped, never popped
-void VFX_KillCharacterAura(int handle);
-
 // ── E5.1. Glint sparkle ─────────────────────────────────────────────────────
 // Anisotropic star glints over a Fibonacci point cloud (the holy/metal/faith
 // signature). Continuous: call once per frame with a running `time`. `scale` is
@@ -553,8 +537,6 @@ void VFX_ComposeCentripetalSlashEx(Vector3 origin, float yaw, Color coreColor, C
 // ── E6.5c. Skinned Mesh Surface Aura Emitter ─────────────────────────────────
 // Uniform O(1) barycentric surface sampling across the animated character mesh.
 // Emits elemental aura particles flowing outward along surface normals.
-void VFX_EmitCharacterSkinAura(Vector3 playerPos, float yaw, Color colorStart, Color colorEnd,
-                              float speed, int count);
 
 // ── E6.5d. Optical Starburst & Anamorphic Cine Streak (VFX 1) ────────────────
 void VFX_DrawOpticalStarburstStreak(Vector3 pos, Color coreCol, Color streakCol,
@@ -562,56 +544,47 @@ void VFX_DrawOpticalStarburstStreak(Vector3 pos, Color coreCol, Color streakCol,
                                     float streakThickness, float intensity, Camera3D camera);
 void VFX_ComposeOpticalFlare(Vector3 pos, float starRadius, float streakLength, float intensity, Camera3D camera);
 
-// ── E6.5e. Generic 3D Mesh & Character Silhouette Glow (VFX 2) ───────────────
-// Universal unlit emissive silhouette glow with Fresnel edge enhancement and
-// surface-conforming energy motes on ANY Raylib Model, Mesh, or Character.
-struct CharacterAnimState;
-
+// ── Generic mesh VFX: independent particle emitter and surface aura ─────────
 typedef enum {
-    VFX_SILHOUETTE_AUTO = 0,    // Auto-detect: uses CharacterModel if loaded
-    VFX_SILHOUETTE_MODEL,       // Raylib Model pointer
-    VFX_SILHOUETTE_MESH,        // Raylib Mesh pointer + transform
-    VFX_SILHOUETTE_CHAR_ANIM,   // CharacterAnimState pointer
-} VFX_SilhouetteTargetType;
+    VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC = 0,
+    VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_RISE,
+    VFX_MESH_PARTICLE_VARIANT_SMOKE_LIGHT_RISE,
+    VFX_MESH_PARTICLE_VARIANT_SMOKE_DARK_RISE,
+    VFX_MESH_PARTICLE_VARIANT_FIRE_ROIL,
+    VFX_MESH_PARTICLE_VARIANT_EMBER_SPARK_LIFT,
+    VFX_MESH_PARTICLE_VARIANT_COUNT
+} VFX_MeshParticleVariant;
 
 typedef struct {
-    VFX_SilhouetteTargetType type;
-    const Model *model;
     const Mesh *mesh;
+    const Model *model;
     Matrix transform;
-    const struct CharacterAnimState *animState;
-    Vector3 position;
-    float yaw;
-    float scale;
-} VFX_SilhouetteTarget;
+    VFX_MeshParticleVariant variant;
+    VC_MaterialId material;
+    float intensity;
+    unsigned int seed;
+} VFX_MeshParticleEmitterDesc;
 
-void VFX_SetActiveCharacterAnimState(const struct CharacterAnimState *animState);
-const struct CharacterAnimState *VFX_GetActiveCharacterAnimState(void);
+int VFX_MeshParticleEmitter_Spawn(const VFX_MeshParticleEmitterDesc *desc);
+int VFX_ComposeMeshParticleEmitter(const VFX_MeshParticleEmitterDesc *desc);
+void VFX_MeshParticleEmitter_SetTransform(int handle, Matrix transform);
+void VFX_MeshParticleEmitter_SetVariant(int handle, VFX_MeshParticleVariant variant);
+void VFX_MeshParticleEmitter_SetIntensity(int handle, float intensity01);
+void VFX_MeshParticleEmitter_Kill(int handle);
+void VFX_KillMeshParticleEmitter(int handle);
+const char *VFX_MeshParticleVariant_Name(VFX_MeshParticleVariant variant);
 
-void VFX_DrawModelSilhouetteGlow(Model model, Matrix transform, Color glowColor, float intensity);
-void VFX_DrawModelSilhouetteGlowEx(Model model, Vector3 position, float yaw, float scale, Color glowColor, float intensity);
-void VFX_DrawMeshSilhouetteGlow(Mesh mesh, Matrix transform, Color glowColor, float intensity);
-void VFX_DrawCharacterSilhouetteGlowEx(Vector3 position, float yaw, float scale,
-                                      const struct CharacterAnimState *animState,
-                                      Color glowColor, float intensity);
-void VFX_DrawCharacterSilhouetteGlow(Vector3 playerPos, float yaw, Color auraColor,
-                                     float intensity, const void *targetMeshOrAnim);
-void VFX_ComposeSilhouetteGlow(Vector3 pos, float yaw, float intensity, Camera3D camera);
+typedef struct {
+    Color materialColor;
+    float rimWidth;
+    float rimIntensity;
+    float opacity;
+} VFX_MeshSurfaceAuraParams;
 
-// Generic mesh-bound aura. This is the replacement API for new callers: its
-// target is data, never an agent/character ID. STATIC_FLIPBOOK defaults to the
-// extracted Niagara Plasma Wisp sheet; other modes are added on this contract.
-typedef enum {
-    VFX_MESH_AURA_PARTICLES_NONE = 0,
-    VFX_MESH_AURA_PARTICLES_STATIC_FLIPBOOK,
-    VFX_MESH_AURA_PARTICLES_RISE,
-    VFX_MESH_AURA_PARTICLES_SMOKE,
-    VFX_MESH_AURA_PARTICLES_FLAME
-} VFX_MeshAuraParticleMode;
-void VFX_DrawMeshAuraModel(Model model, Matrix transform, VC_MaterialId matId,
-                           float intensity, VFX_MeshAuraParticleMode particleMode);
-void VFX_DrawMeshAura(Mesh mesh, Matrix transform, VC_MaterialId matId,
-                      float intensity, VFX_MeshAuraParticleMode particleMode);
+void VFX_DrawMeshSurfaceAura(Mesh mesh, Matrix transform,
+                             const VFX_MeshSurfaceAuraParams *params);
+void VFX_DrawModelSurfaceAura(Model model, Matrix transform,
+                              const VFX_MeshSurfaceAuraParams *params);
 
 // ── E6.5f. 3D Vacuum Suction Vortex Converge (VFX 3) ─────────────────────────
 void VFX_ComposeVacuumConverge(Vector3 focalPoint, float sphereRadius,
