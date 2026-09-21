@@ -266,7 +266,7 @@
       "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=2.8f, .rimIntensity=0.70f, .opacity=0.32f})"
+      "draw_call": "VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=1.8f, .rimIntensity=1.25f, .opacity=0.58f})"
     },
     {
       "source": "common/vc_mist_veil.inl",

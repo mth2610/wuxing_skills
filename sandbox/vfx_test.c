@@ -1275,7 +1275,7 @@ void VFXTest_Draw3D(void)
               case 13: VFX_ComposeGuidingWind(s_currentPlayerPos, Vector3Add(s_currentPlayerPos, Vector3Scale((Vector3){sinf(s_currentPlayerYaw), 0.0f, cosf(s_currentPlayerYaw)}, 24.0f)), progress, s_lastCam); break;
               case 14: VFX_ComposeIaidoStance(s_currentPlayerPos, s_currentPlayerYaw, progress, 1.35f, s_lastCam, NULL); break;
               case 16: VFX_ComposeLightShaft(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_FIRE, 0.8f, 1.35f); break;
-              case 20: VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=2.8f, .rimIntensity=0.70f, .opacity=0.32f}); break;
+              case 20: VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=1.8f, .rimIntensity=1.25f, .opacity=0.58f}); break;
               case 22: VFX_ComposeOpticalFlare(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 0.55f, 2.4f, 1.0f, s_lastCam); break;
               case 24:
               {

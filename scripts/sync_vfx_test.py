@@ -332,7 +332,7 @@ FIXTURE_DRAW_OVERRIDES = {
     "VFX_ComposeOpticalFlare":
         "VFX_ComposeOpticalFlare(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 0.55f, 2.4f, 1.0f, s_lastCam)",
     "VFX_DrawMeshSurfaceAura":
-        "VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=2.8f, .rimIntensity=0.70f, .opacity=0.32f})",
+        "VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=1.8f, .rimIntensity=1.25f, .opacity=0.58f})",
     "VFX_ComposeVacuumArc":
         "VFX_ComposeVacuumConverge(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 2.7f, $PROG, s_lastCam)",
     "VFX_ComposeVacuumRing":

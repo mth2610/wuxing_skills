@@ -21,6 +21,7 @@ int main(void)
     const char *header = "core/composition/visual_composer.h";
     const char *emitter = "core/composition/common/vc_mesh_particle_emitter.inl";
     const char *aura = "core/composition/common/vc_mesh_surface_aura.inl";
+    const char *auraVs = "core/shaders/mesh_surface_aura.vs";
 
     CHECK(!Has("core/composition/common/vc_character_aura.inl", "VFX_ComposeCharacterAura"),
           "legacy CharacterAura implementation is removed");
@@ -48,5 +49,7 @@ int main(void)
           !Has(aura, "SpawnParticle") &&
           !Has(aura, "character/character_model.h"),
           "surface aura is shader-only and generic");
+    CHECK(Has(auraVs, "vertexNormal * 0.012"),
+          "aura offsets its rim shell to avoid coplanar depth rejection");
     return failures ? 1 : 0;
 }
