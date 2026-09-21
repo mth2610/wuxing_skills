@@ -426,12 +426,8 @@
       ],
       "assets": {
         "body": {
-          "path": "assets/textures/fire_tongue_8x8_flame.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — white, upward flame emission mask; alpha falls continuously from the dense core through the turbulent rim"
-        },
-        "fallback_body": {
           "path": "assets/textures/fire_atlas_8x8_flame.png",
-          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — legacy upward flame column fallback"
+          "channels": "FLIPBOOK | R:color/CLAMP | G:color/CLAMP | B:color/CLAMP | A:opacity/CLAMP — white, upward flame emission mask; alpha falls continuously from the dense core through the turbulent rim"
         }
       }
     },

@@ -47,6 +47,7 @@
 // visual_composer.h for what remains and why.
 #include "common/common.inl"
 #include "fire/flame_volume.inl"   // F3 — reads vc_smoke_puff.inl's sheet, so it comes after it
+#include "fire/vc_fireball_burst.inl" // one-shot primary; shares FVol's owned packed-sheet assets
 
 // ── Restored after F0 (owner, 28/07/2026) ───────────────────────────────────
 // Brought back to rebuild the two water skills. These are pre-Đợt-E effects and

@@ -172,6 +172,10 @@ typedef enum {
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
 void VFX_ComposeAmbientFire(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
 void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+// One-shot NE_Explosion fireball layer. It is intentionally separate from the
+// rate-based ambient-fire emitter: one call creates the complete 16-24 puff burst.
+void VFX_ComposeFireballBurst(Vector3 pos, VC_MaterialId matId, float scale,
+                              float severity01);
 
 int  VFX_FlameEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
 int  VFX_FlameEmitter_SpawnEx(Vector3 pos, VC_MaterialId matId, float scale, float intensity, VFX_FlameStyle style);
@@ -593,6 +597,21 @@ void VFX_DrawCharacterSilhouetteGlowEx(Vector3 position, float yaw, float scale,
 void VFX_DrawCharacterSilhouetteGlow(Vector3 playerPos, float yaw, Color auraColor,
                                      float intensity, const void *targetMeshOrAnim);
 void VFX_ComposeSilhouetteGlow(Vector3 pos, float yaw, float intensity, Camera3D camera);
+
+// Generic mesh-bound aura. This is the replacement API for new callers: its
+// target is data, never an agent/character ID. STATIC_FLIPBOOK defaults to the
+// extracted Niagara Plasma Wisp sheet; other modes are added on this contract.
+typedef enum {
+    VFX_MESH_AURA_PARTICLES_NONE = 0,
+    VFX_MESH_AURA_PARTICLES_STATIC_FLIPBOOK,
+    VFX_MESH_AURA_PARTICLES_RISE,
+    VFX_MESH_AURA_PARTICLES_SMOKE,
+    VFX_MESH_AURA_PARTICLES_FLAME
+} VFX_MeshAuraParticleMode;
+void VFX_DrawMeshAuraModel(Model model, Matrix transform, VC_MaterialId matId,
+                           float intensity, VFX_MeshAuraParticleMode particleMode);
+void VFX_DrawMeshAura(Mesh mesh, Matrix transform, VC_MaterialId matId,
+                      float intensity, VFX_MeshAuraParticleMode particleMode);
 
 // ── E6.5f. 3D Vacuum Suction Vortex Converge (VFX 3) ─────────────────────────
 void VFX_ComposeVacuumConverge(Vector3 focalPoint, float sphereRadius,

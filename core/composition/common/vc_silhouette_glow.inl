@@ -18,6 +18,7 @@
 
 // ── Active Global Animation State Tracking ───────────────────────────────────
 static const CharacterAnimState *s_activeGlobalCharAnim = NULL;
+static bool s_meshAuraSuppressLegacyMotes = false;
 
 void VFX_SetActiveCharacterAnimState(const struct CharacterAnimState *animState)
 {
@@ -154,6 +155,71 @@ static void Silhouette_EmitMote(Vector3 surfPos, Vector3 surfNorm, Color auraCol
     SpawnParticle(p);
 }
 
+static Texture2D s_meshAuraPlasmaTex = {0};
+static SpriteAnim s_meshAuraPlasmaAnim = {0};
+static bool s_meshAuraPlasmaReady = false;
+
+static void MeshAura_EnsurePlasma(void)
+{
+    if (s_meshAuraPlasmaReady) return;
+    const VFX_SurfaceProfile *profile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_PLASMA_WISPS_NIAGARA);
+    if (profile != NULL && profile->body.id != 0) {
+        s_meshAuraPlasmaTex = profile->body;
+        SpriteAnim_Init(&s_meshAuraPlasmaAnim, profile->flipbookColumns,
+                        profile->flipbookRows, profile->flipbookFrames,
+                        (float)profile->flipbookFrames / 1.60f, ANIM_ONCE);
+    }
+    s_meshAuraPlasmaReady = true;
+}
+
+static void MeshAura_EmitPlasma(const Mesh *mesh, Matrix transform,
+                                const VFX_ElementMaterial *material, float intensity)
+{
+    MeshAura_EnsurePlasma();
+    if (s_meshAuraPlasmaTex.id == 0) return;
+    int count = (int)(6.0f * Clamp(intensity, 0.0f, 1.0f));
+    for (int i = 0; i < count; ++i) {
+        Vector3 p, n;
+        if (!VFX_SampleMeshSurfacePoint(mesh, transform, &p, &n)) continue;
+        SpawnParticle((ParticleConfig){
+            .position = p, .velocity = (Vector3){0.0f, 0.0f, 0.0f},
+            .radius = Math_Mix(0.055f, 0.13f, Random01()),
+            .lifetime = Math_Mix(0.75f, 1.35f, Random01()),
+            .colorStart = VC_WithAlpha(material->glow, (unsigned char)(170.0f * intensity)),
+            .colorEnd = VC_WithAlpha(material->soft, 0),
+            .render.texture = s_meshAuraPlasmaTex, .render.blendMode = VFX_BLEND_ADDITIVE,
+            .render.unlit = 1, .render.emissiveBoost = 1.35f,
+            .spriteAnim = &s_meshAuraPlasmaAnim, .spriteAnimPhase = Random01() * 0.30f,
+            .spriteAnimRate = Math_Mix(0.82f, 1.0f, Random01()),
+            .rotation = Random01() * 2.0f * PI,
+        });
+    }
+}
+
+void VFX_DrawMeshAura(Mesh mesh, Matrix transform, VC_MaterialId matId,
+                      float intensity, VFX_MeshAuraParticleMode particleMode)
+{
+    const VFX_ElementMaterial *material = VFX_Material(matId);
+    s_meshAuraSuppressLegacyMotes = true;
+    VFX_DrawMeshSilhouetteGlow(mesh, transform, material->glow, intensity);
+    s_meshAuraSuppressLegacyMotes = false;
+    if (particleMode == VFX_MESH_AURA_PARTICLES_STATIC_FLIPBOOK)
+        MeshAura_EmitPlasma(&mesh, transform, material, intensity);
+}
+
+void VFX_DrawMeshAuraModel(Model model, Matrix transform, VC_MaterialId matId,
+                           float intensity, VFX_MeshAuraParticleMode particleMode)
+{
+    const VFX_ElementMaterial *material = VFX_Material(matId);
+    s_meshAuraSuppressLegacyMotes = true;
+    VFX_DrawModelSilhouetteGlow(model, transform, material->glow, intensity);
+    s_meshAuraSuppressLegacyMotes = false;
+    if (particleMode != VFX_MESH_AURA_PARTICLES_STATIC_FLIPBOOK || model.meshCount <= 0) return;
+    int index = GetRandomValue(0, model.meshCount - 1);
+    MeshAura_EmitPlasma(&model.meshes[index], MatrixMultiply(model.transform, transform), material, intensity);
+}
+
 // ── 1. Draw Silhouette Glow on ANY Raylib Mesh ────────────────────────────────
 void VFX_DrawMeshSilhouetteGlow(Mesh mesh, Matrix transform, Color glowColor, float intensity)
 {
@@ -173,7 +239,7 @@ void VFX_DrawMeshSilhouetteGlow(Mesh mesh, Matrix transform, Color glowColor, fl
     rlDrawRenderBatchActive();
     EndBlendMode();
 
-    int moteCount = (int)(6.0f * intensity);
+    int moteCount = s_meshAuraSuppressLegacyMotes ? 0 : (int)(6.0f * intensity);
     for (int i = 0; i < moteCount; i++)
     {
         Vector3 surfPos, surfNorm;
@@ -213,7 +279,7 @@ void VFX_DrawModelSilhouetteGlow(Model model, Matrix transform, Color glowColor,
 
     for (int i = 0; i < count; i++) model.materials[i].shader = origShaders[i];
 
-    int moteCount = (int)(6.0f * intensity);
+    int moteCount = s_meshAuraSuppressLegacyMotes ? 0 : (int)(6.0f * intensity);
     for (int i = 0; i < moteCount; i++)
     {
         int mIdx = GetRandomValue(0, model.meshCount - 1);
@@ -328,6 +394,14 @@ void VFX_DrawCharacterSilhouetteGlow(Vector3 playerPos, float yaw, Color auraCol
 void VFX_ComposeSilhouetteGlow(Vector3 pos, float yaw, float intensity, Camera3D camera)
 {
     (void)camera;
-    Color silhColor = (Color){ 245, 250, 255, 255 };
-    VFX_DrawCharacterSilhouetteGlow(pos, yaw, silhColor, intensity, NULL);
+    // Compatibility fixture for the former Silhouette Glow name. New gameplay
+    // calls VFX_DrawMeshAura(Model/Mesh,...); this route proves the exact same
+    // generic mesh path on the player model, including Plasma Wisp flipbooks.
+    if (!CharacterModel_IsLoaded()) return;
+    Model model = CharacterModel_GetModel();
+    Matrix transform = MatrixMultiply(MatrixMultiply(MatrixScale(1.0f, 1.0f, 1.0f),
+                                                       MatrixRotateY(yaw)),
+                                      MatrixTranslate(pos.x, pos.y, pos.z));
+    VFX_DrawMeshAuraModel(model, transform, VC_MAT_LIGHTNING, intensity,
+                          VFX_MESH_AURA_PARTICLES_STATIC_FLIPBOOK);
 }

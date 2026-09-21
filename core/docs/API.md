@@ -879,6 +879,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
   void VFX_ComposeAmbientFire(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
   void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+  void VFX_ComposeFireballBurst(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   int VFX_FlameEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
   int VFX_FlameEmitter_SpawnEx(Vector3 pos, VC_MaterialId matId, float scale, float intensity, VFX_FlameStyle style);
   void VFX_FlameEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
@@ -955,6 +956,8 @@ _Inline helpers / macros only — see header._
   void VFX_DrawCharacterSilhouetteGlowEx(Vector3 position, float yaw, float scale, const struct CharacterAnimState *animState, Color glowColor, float intensity);
   void VFX_DrawCharacterSilhouetteGlow(Vector3 playerPos, float yaw, Color auraColor, float intensity, const void *targetMeshOrAnim);
   void VFX_ComposeSilhouetteGlow(Vector3 pos, float yaw, float intensity, Camera3D camera);
+  void VFX_DrawMeshAuraModel(Model model, Matrix transform, VC_MaterialId matId, float intensity, VFX_MeshAuraParticleMode particleMode);
+  void VFX_DrawMeshAura(Mesh mesh, Matrix transform, VC_MaterialId matId, float intensity, VFX_MeshAuraParticleMode particleMode);
   void VFX_ComposeVacuumConverge(Vector3 focalPoint, float sphereRadius, float progress, Camera3D camera);
   void VFX_ComposeVacuumArc(Vector3 pos, float yaw, float progress, float duration, Camera3D camera);
   void VFX_DrawExpandingVacuumRing(Vector3 center, float radius, float bandWidth, Color ringColor, float alpha01);
@@ -1040,7 +1043,7 @@ _Inline helpers / macros only — see header._
   void VFX_WaterRing_Stop(void);
   void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
-**Enums:** VFX_SmokeStyle { VFX_SMOKE_STYLE_ROIL,VFX_SMOKE_STYLE_PUFF_DARK,VFX_SMOKE_STYLE_PUFF_LIGHT,VFX_SMOKE_STYLE_WISPY,VFX_SMOKE_STYLE_COUNT,VFX_SMOKE_STYLE_DEFAULT };VFX_FlameStyle { VFX_FLAME_STYLE_NIAGARA_ROIL,VFX_FLAME_STYLE_VOLUME,VFX_FLAME_STYLE_COLUMN,VFX_FLAME_STYLE_PUFF,VFX_FLAME_STYLE_FIREBALL,VFX_FLAME_STYLE_DEFAULT } VFX_SilhouetteTargetType { VFX_SILHOUETTE_AUTO,VFX_SILHOUETTE_MODEL,VFX_SILHOUETTE_MESH,VFX_SILHOUETTE_CHAR_ANIM };VFX_VolumeKind { VFX_VOLUME_SMOKE,VFX_VOLUME_FIRE,VFX_VOLUME_STEAM,VFX_VOLUME_ENERGY,VFX_VOLUME_KIND_COUNT,VOL_ENERGY,VOL_SMOKE,VOL_FIRE } VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_ENERGY,VFX_COLUMN_KIND_COUNT };ContactSparkMode { CONTACT_SPARK_STATIC,CONTACT_SPARK_CENTRIFUGAL }
+**Enums:** VFX_SmokeStyle { VFX_SMOKE_STYLE_ROIL,VFX_SMOKE_STYLE_PUFF_DARK,VFX_SMOKE_STYLE_PUFF_LIGHT,VFX_SMOKE_STYLE_WISPY,VFX_SMOKE_STYLE_COUNT,VFX_SMOKE_STYLE_DEFAULT };VFX_FlameStyle { VFX_FLAME_STYLE_NIAGARA_ROIL,VFX_FLAME_STYLE_VOLUME,VFX_FLAME_STYLE_COLUMN,VFX_FLAME_STYLE_PUFF,VFX_FLAME_STYLE_FIREBALL,VFX_FLAME_STYLE_DEFAULT } VFX_SilhouetteTargetType { VFX_SILHOUETTE_AUTO,VFX_SILHOUETTE_MODEL,VFX_SILHOUETTE_MESH,VFX_SILHOUETTE_CHAR_ANIM };VFX_MeshAuraParticleMode { VFX_MESH_AURA_PARTICLES_NONE,VFX_MESH_AURA_PARTICLES_STATIC_FLIPBOOK,VFX_MESH_AURA_PARTICLES_RISE,VFX_MESH_AURA_PARTICLES_SMOKE,VFX_MESH_AURA_PARTICLES_FLAME } VFX_VolumeKind { VFX_VOLUME_SMOKE,VFX_VOLUME_FIRE,VFX_VOLUME_STEAM,VFX_VOLUME_ENERGY,VFX_VOLUME_KIND_COUNT,VOL_ENERGY,VOL_SMOKE,VOL_FIRE };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_ENERGY,VFX_COLUMN_KIND_COUNT } ContactSparkMode { CONTACT_SPARK_STATIC,CONTACT_SPARK_CENTRIFUGAL }
 **Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_GasPlumeConfig, VFX_GasVortexConfig, VFX_GasShockwaveConfig, VFX_FlameJetConfig, VFX_ShieldSurface, VFX_SilhouetteTarget, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`

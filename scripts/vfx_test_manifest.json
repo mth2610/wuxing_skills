@@ -501,7 +501,7 @@
     {
       "source": "common/vc_silhouette_glow.inl",
       "fn": "VFX_ComposeSilhouetteGlow",
-      "label": "SILHOUETTE GLOW",
+      "label": "MESH AURA",
       "category": "common",
       "fixture": "timed",
       "lifecycle": "draw",
@@ -719,6 +719,17 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeAmbientFire($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
+    },
+    {
+      "source": "fire/vc_fireball_burst.inl",
+      "fn": "VFX_ComposeFireballBurst",
+      "label": "FIREBALL BURST",
+      "category": "fire",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeFireballBurst($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
     },
     {
       "source": "taiji/vc_black_hole.inl",

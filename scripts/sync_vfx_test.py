@@ -139,6 +139,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeGasShockwave":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeGasVortex":          ("trail",   "static",     "continuous"),
     "VFX_ComposeFlameJet":           ("event",   "burst",      "oneshot"),
+    "VFX_ComposeFireballBurst":      ("event",   "burst",      "oneshot"),
     # P4 beam. "static" like the column and for the same reason: it owns a
     # handle and its endpoints are POSITIONS, not a follower transform. The
     # heuristic below would have guessed "timed" off the name alone, which is
@@ -262,6 +263,8 @@ FIXTURE_SPAWN_OVERRIDES = {
 # separate from persistent spawn overrides: a trigger call has no stored handle
 # and must not be treated as a frame-fed fixture.
 FIXTURE_EVENT_OVERRIDES = {
+    "VFX_ComposeFireballBurst":
+        "VFX_ComposeFireballBurst($POS, VC_MAT_FIRE, 1.5f, 1.0f)",
     # Severity is intensity, not timeline progress. Exercise the full authored
     # population so the bench reveals ribbon length, arc and bounce quality.
     "VFX_ComposeEmberBurst":
@@ -340,6 +343,10 @@ FIXTURE_METADATA_OVERRIDES = {
         "category": "common",
     },
     "VFX_ComposeOpticalFlare": {
+        "category": "common",
+    },
+    "VFX_ComposeSilhouetteGlow": {
+        "label": "MESH AURA",
         "category": "common",
     },
     "VFX_ComposeVacuumArc": {

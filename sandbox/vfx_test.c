@@ -362,9 +362,10 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
         s_vfxFixtureHandle[39] = VFX_ShieldShell_Spawn(pos, VC_MAT_WATER, 1.5f, 1.0f);
         return true;
     case 43: VFX_ComposeSmokePuff(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
-    case 60: VFX_ComposeFluidImpact(pos); return true;
-    case 61: VFX_ComposeIceCrystal(pos, posSeed); return true;
-    case 63: VFX_ComposeWaterOrb(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
+    case 59: VFX_ComposeFireballBurst(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
+    case 61: VFX_ComposeFluidImpact(pos); return true;
+    case 62: VFX_ComposeIceCrystal(pos, posSeed); return true;
+    case 64: VFX_ComposeWaterOrb(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
     default: return false;
     }
 // @gen:newfx_fire end
@@ -380,7 +381,7 @@ static const char *s_meshNames[] = {
     "VFX OUTPUT"};
 
 // @gen:newfx_names begin
-// 66 entries — auto-managed by sync_vfx_test.py
+// 67 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "ASTRAL SPEAR", "BEAM", "CHARACTER AURA", "CHARGE CONVERGE", "CONTACT SPARK", "CONVERGE MOTES",
     "DEBRIS SHARDS", "DECAL", "DISSOLVE EXIT", "[PARTICLE] EMBER BURST", "[PARTICLE] EMBER MOTES", "ENERGY BURST",
@@ -388,11 +389,12 @@ static const char* s_newFxNames[] = {
     "GAS VORTEX", "GLINT SPARKLE", "GROUND DUST RING", "GROUND WAVE", "GUIDING WIND", "IAIDO STANCE",
     "IMPACT DUST", "IMPACT PACKAGE", "LIGHT SHAFT", "LIGHTNING ARC", "LIGHTNING IMPACT", "MIST VEIL",
     "MUZZLE FLASH", "OPTICAL FLARE", "GUIDED PARTICLE", "PORTAL DISC", "RADIANT STARBURST", "REF BANDS",
-    "REF PARTICLES", "RIFT BOLT", "RUNE CIRCLE", "SHIELD SHELL", "SHOCK RING", "SILHOUETTE GLOW",
+    "REF PARTICLES", "RIFT BOLT", "RUNE CIRCLE", "SHIELD SHELL", "SHOCK RING", "MESH AURA",
     "SMOKE COLUMN", "SMOKE PUFF", "[PARTICLE] SMOKE VOLUME", "SWEEP SLASH", "TRAIL MAIN", "TRAIL ENERGY",
     "TRAIL BLADE", "TRAIL WISP", "TRAIL BACKDROP", "TRAIL SMOKE", "TRAIL MAGIC", "VACUUM CONVERGE",
-    "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR", "AMBIENT FIRE", "BLACK HOLE",
-    "FLUID IMPACT", "ICE CRYSTAL", "LIQUID BENCH", "WATER ORB", "WATER RING", "WATER STREAM",
+    "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR", "AMBIENT FIRE", "FIREBALL BURST",
+    "BLACK HOLE", "FLUID IMPACT", "ICE CRYSTAL", "LIQUID BENCH", "WATER ORB", "WATER RING",
+    "WATER STREAM",
 };
 // @gen:newfx_names end
 
@@ -417,8 +419,8 @@ static const int s_newFxCategories[] = {
     4, 4, 6, 6, 6, 6, 6, 6, 6, 1,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 6,
-    6, 6, 6, 6, 6, 6, 4, 4, 0, 5,
-    1, 1, 1, 1, 1, 1,
+    6, 6, 6, 6, 6, 6, 4, 4, 0, 0,
+    5, 1, 1, 1, 1, 1, 1,
 };
 // @gen:newfx_categories end
 
@@ -890,7 +892,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 66;
+            maxIdx = 67;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -1453,10 +1455,10 @@ void VFXTest_Draw3D(void)
               case 56: VFX_ComposeFissureStreak(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.1f, progress, s_meshTime); break;
               case 57: VFX_ComposeStonePillar(s_prefabStartPos, progress); break;
               case 58: VFX_ComposeAmbientFire(s_prefabStartPos, VC_MAT_FIRE, 1.5f, 1.0f); break;
-              case 59: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
-              case 62: VFX_ComposeLiquidBench(s_prefabStartPos, 1.1f, 1.0f); break;
-              case 64: VFX_ComposeWaterRing(s_prefabStartPos, 0.9f, 1.0f); break;
-              case 65: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
+              case 60: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
+              case 63: VFX_ComposeLiquidBench(s_prefabStartPos, 1.1f, 1.0f); break;
+              case 65: VFX_ComposeWaterRing(s_prefabStartPos, 0.9f, 1.0f); break;
+              case 66: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
           }
 // @gen:newfx_draw end
         }
@@ -1649,7 +1651,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 66;
+        maxIdx = 67;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;
