@@ -862,6 +862,7 @@ _Inline helpers / macros only — see header._
   void VFX_LightningTrail_Kill(int handle);
   void VFX_ComposeLightningGroundRicochet(Vector3 impactPos, VC_MaterialId material, float scale, unsigned int seed);
   void VFX_ComposeMuzzleFlash(Vector3 muzzlePos, Vector3 forward, VC_MaterialId matId, float scale, float intensity01);
+  void VFX_ComposeMuzzleSmoke(Vector3 muzzlePos, Vector3 forward, float scale, float density01);
   void VFX_ComposeCloudPuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
   void VFX_ComposeSmokePuff(Vector3 pos, VC_MaterialId matId, float scale, float density);
   int VFX_SmokeEmitter_Spawn(Vector3 pos, VC_MaterialId matId, float scale, float density);
@@ -1009,6 +1010,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target);
   void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
   void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+  void VFX_ComposeGroundDustRing(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
   void VFX_ComposeLiquidBench(Vector3 center,float spacing,float t01);
   void VFX_ComposeMistVeil(Vector3 pos, float radius, float duration);

@@ -9,6 +9,8 @@ static Texture2D s_impactDustNormalTex = {0};
 static SpriteAnim s_impactDustAnim[IMPACT_DUST_ANIM_RATES];
 static SkillCurve s_impactDustGrow = {0};
 static SkillCurve s_impactDustFade = {0};
+// NE_GroundDust spends its radial impulse in roughly the first 0.2 s. This is
+// a velocity multiplier, so the authored 6-12 m/s launch remains measurable.
 static bool s_impactDustReady = false;
 
 static void ImpactDust_Init(void)

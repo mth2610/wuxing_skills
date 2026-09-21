@@ -14,9 +14,14 @@ static bool s_muzzleInit = false;
 static Texture2D s_muzzleFrontTexture = {0};
 static Texture2D s_muzzleSideTexture = {0};
 static Texture2D s_muzzleSphereTexture = {0};
+static Texture2D s_muzzleSmokeTexture = {0};
+static Texture2D s_muzzleSmokeNormalTexture = {0};
 static SpriteAnim s_muzzleFrontAnim = {0};
 static SpriteAnim s_muzzleSideAnim = {0};
 static SpriteAnim s_muzzleSphereAnim = {0};
+static SpriteAnim s_muzzleSmokeAnim = {0};
+static SkillCurve s_muzzleSmokeGrow = {0};
+static SkillCurve s_muzzleSmokeFade = {0};
 
 static Texture2D MuzzleFlash_ResolveBody(VFX_SurfaceId id)
 {
@@ -35,10 +40,63 @@ static void MuzzleFlash_InitShared(void)
         VFX_SURFACE_MUZZLE_FLASH_SIDE_NIAGARA);
     s_muzzleSphereTexture = MuzzleFlash_ResolveBody(
         VFX_SURFACE_MUZZLE_FLASH_SPHERE_NIAGARA);
+    const VFX_SurfaceProfile *smoke = VFX_SurfaceRegistry_Get(
+        VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA);
+    if (smoke != NULL && smoke->body.id != 0) {
+        s_muzzleSmokeTexture = smoke->body;
+        s_muzzleSmokeNormalTexture = smoke->normalMap;
+        SpriteAnim_Init(&s_muzzleSmokeAnim, smoke->flipbookColumns,
+                        smoke->flipbookRows, smoke->flipbookFrames,
+                        (float)smoke->flipbookFrames / 0.78f, ANIM_ONCE);
+    }
 
+    // SpriteAnim_Init takes (rows, cols). The extracted horizontal variants
+    // are therefore 1x4 and 1x2; transposing those arguments samples strips
+    // across multiple cells rather than one complete flame.
     SpriteAnim_Init(&s_muzzleFrontAnim, 1, 4, 4, 1.0f, ANIM_ONCE);
     SpriteAnim_Init(&s_muzzleSideAnim, 1, 2, 2, 1.0f, ANIM_ONCE);
     SpriteAnim_Init(&s_muzzleSphereAnim, 2, 2, 4, 1.0f, ANIM_ONCE);
+    FloatCurve_AddStop(&s_muzzleSmokeGrow, 0.0f, 0.72f);
+    FloatCurve_AddStop(&s_muzzleSmokeGrow, 0.28f, 1.05f);
+    FloatCurve_AddStop(&s_muzzleSmokeGrow, 1.0f, 1.35f);
+    FloatCurve_AddStop(&s_muzzleSmokeFade, 0.0f, 0.0f);
+    FloatCurve_AddStop(&s_muzzleSmokeFade, 0.12f, 0.68f);
+    FloatCurve_AddStop(&s_muzzleSmokeFade, 1.0f, 0.0f);
+}
+
+void VFX_ComposeMuzzleSmoke(Vector3 muzzlePos, Vector3 forward,
+                            float scale, float density01)
+{
+    if (scale <= 0.0f || density01 <= 0.0f) return;
+    if (density01 > 1.0f) density01 = 1.0f;
+    MuzzleFlash_InitShared();
+    if (s_muzzleSmokeTexture.id == 0) return;
+    Vector3 axis = Vector3Normalize(forward);
+    if (Vector3LengthSqr(axis) < 1e-8f) axis = (Vector3){0.0f, 0.0f, 1.0f};
+    for (int i = 0; i < 2; ++i) {
+        float spread = (i == 0) ? -0.07f : 0.07f;
+        Color smoke = {218, 220, 224, (unsigned char)(64.0f * density01)};
+        SpawnParticle((ParticleConfig){
+            .position = Vector3Add(muzzlePos, Vector3Scale(axis,
+                         (0.11f + 0.08f * (float)i) * scale)),
+            .velocity = {axis.x * (0.55f + 0.18f * (float)i) * scale + spread,
+                         (0.12f + 0.05f * (float)i) * scale,
+                         axis.z * (0.55f + 0.18f * (float)i) * scale - spread},
+            .radius = (0.17f + 0.05f * (float)i) * scale,
+            .lifetime = 0.68f + 0.10f * (float)i,
+            .colorStart = smoke, .colorEnd = VC_WithAlpha(smoke, 0),
+            .radiusCurve = &s_muzzleSmokeGrow,
+            .alphaCurve = &s_muzzleSmokeFade,
+            .spriteAnim = &s_muzzleSmokeAnim,
+            .spriteAnimPhase = 0.04f + 0.10f * (float)i,
+            .spriteAnimRate = 0.84f - 0.08f * (float)i,
+            .rotation = (float)GetRandomValue(0, 359) * DEG2RAD,
+            .render.texture = s_muzzleSmokeTexture,
+            .render.blendMode = VFX_BLEND_ALPHA,
+            .render.smokeSheet = 1,
+            .render.normalTex = s_muzzleSmokeNormalTexture,
+        });
+    }
 }
 
 void VFX_ComposeMuzzleFlash(Vector3 muzzlePos, Vector3 forward,

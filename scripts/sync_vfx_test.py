@@ -164,6 +164,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeGroundWave":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeImpactPackage":      ("event",   "burst",      "oneshot"),
     "VFX_ComposeImpactDust":         ("event",   "burst",      "oneshot"),
+    "VFX_ComposeGroundDustRing":     ("event",   "burst",      "oneshot"),
     "VFX_ComposeContactSpark":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeContactSparkMode":   ("event",   "burst",      "oneshot"),
     "VFX_ComposeEmberTrail":         ("emitter", "persistent", "persistent"),
@@ -269,6 +270,8 @@ FIXTURE_EVENT_OVERRIDES = {
     # timeline parameter, so the generic $PROG inference would spawn nothing.
     "VFX_ComposeMuzzleFlash":
         "VFX_ComposeMuzzleFlash($POS, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.5f, 1.0f)",
+    "VFX_ComposeGroundDustRing":
+        "VFX_ComposeGroundDustRing($POS, VC_MAT_EARTH, 1.5f, 1.0f)",
     "VFX_ComposeContactSparkMode":
         "VFX_ComposeContactSparkMode($POS, VC_MAT_FIRE, 1.5f, $PROG, CONTACT_SPARK_CENTRIFUGAL)",
     # Long gameplay-scale run: character socket five metres behind the click
@@ -418,7 +421,7 @@ def infer_mat_id(fn_name):
     # Contact dust describes displaced ground, not the element that hit it.
     # A generic Common fixture used FIRE here, turning the neutral dust test
     # orange and hiding the actual texture/material read.
-    if fn_name == "VFX_ComposeImpactDust":
+    if fn_name in ("VFX_ComposeImpactDust", "VFX_ComposeGroundDustRing"):
         return "VC_MAT_EARTH"
     cat = infer_category(fn_name)
     if cat == "common":

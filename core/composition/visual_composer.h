@@ -117,6 +117,10 @@ void VFX_ComposeLightningGroundRicochet(Vector3 impactPos, VC_MaterialId materia
 void VFX_ComposeMuzzleFlash(Vector3 muzzlePos, Vector3 forward,
                             VC_MaterialId matId, float scale,
                             float intensity01);
+// Neutral, alpha-body residual smoke for a weapon discharge. The forward
+// vector controls its short initial push; density01 controls opacity only.
+void VFX_ComposeMuzzleSmoke(Vector3 muzzlePos, Vector3 forward,
+                            float scale, float density01);
 
 // ── F2. Smoke / dust puff ───────────────────────────────────────────────────
 // Layered alpha sprites with per-sprite spin that grow while they fade,
@@ -989,6 +993,10 @@ int VFX_ComposeGasMaterialLab(Vector3 pos, VC_MaterialId mat);
 void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+// One-shot expanding annulus of alpha dust. Unlike GroundWave, this is the
+// physical ground layer from an explosion rather than an energy geometry.
+void VFX_ComposeGroundDustRing(Vector3 pos, VC_MaterialId matId, float scale,
+                               float severity01);
 int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
 void VFX_ComposeLiquidBench(Vector3 center,float spacing,float t01);
 void VFX_ComposeMistVeil(Vector3 pos, float radius, float duration);

@@ -264,6 +264,17 @@
       "draw_call": "VFX_ComposeGlintSparkle($POS, VC_MAT_FIRE, 1.5f, $TIME)"
     },
     {
+      "source": "common/vc_ground_dust_ring.inl",
+      "fn": "VFX_ComposeGroundDustRing",
+      "label": "GROUND DUST RING",
+      "category": "earth",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeGroundDustRing($POS, VC_MAT_EARTH, 1.5f, 1.0f)"
+    },
+    {
       "source": "common/vc_ground_wave.inl",
       "fn": "VFX_ComposeGroundWave",
       "label": "GROUND WAVE",

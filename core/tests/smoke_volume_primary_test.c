@@ -48,6 +48,9 @@ int main(void)
           Has(sync, "\"VFX_ComposeSmokeVolume\"") &&
           Has(sync, "(\"emitter\", \"timed\",      \"continuous\")"),
           "smoke volume is wired into update and lifecycle metadata");
+    CHECK(Has(smoke, "e->legacyFeedAge += dt;\n            if (e->legacyFeedAge > 0.25f)") &&
+          !Has(smoke, "e->legacyFeedAge += dt;\n            e->legacyFeedAge += dt;"),
+          "legacy one-shot smoke ages once per frame, preserving its feed window");
     CHECK(Has(smoke, "VFX_SURFACE_SMOKE_ROIL_NIAGARA") &&
           Has(smoke, "VFX_SURFACE_SMOKE_PUFF_DARK_NIAGARA") &&
           Has(smoke, "VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA") &&
