@@ -143,6 +143,9 @@ static bool s_vfxFixturesReady = false;
 // APIs take arbitrary Mesh/Model + Matrix and never query this state.
 static Model s_meshParticleFixtureModel = {0};
 static VFX_MeshParticleVariant s_meshParticleFixtureVariant = VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC;
+static VFX_SmokeStyle s_smokeVolumeFixtureStyle = VFX_SMOKE_STYLE_ROIL;
+static VFX_MeshSurfaceAuraVariant s_meshSurfaceAuraFixtureVariant = VFX_MESH_SURFACE_AURA_CYAN;
+static VFX_DecalVariant s_decalFixtureVariant = VFX_DECAL_VARIANT_IMPACT;
 
 /* Sandbox-only contract fixture. It deliberately bypasses every production
  * composition so adopting the new EffectMaterial path here cannot migrate or
@@ -326,7 +329,7 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
     switch (newfxIndex) {
     case 0: VFX_ComposeContactSpark(pos, VC_MAT_FIRE, 1.5f, 0.0f); return true;
     case 1: VFX_ComposeDebrisShards(pos, (Vector3){1.4f, 2.2f, 0.5f}, VC_MAT_METAL, 1.5f, 5); return true;
-    case 2: VFX_ComposeDecal(pos, VC_MAT_FIRE, 1.5f, 0.0f, 1.5f); return true;
+    case 2: VFX_ComposeDecalVariant(pos, VC_MAT_FIRE, 1.5f, 0.65f, 1.5f, s_decalFixtureVariant); return false;
     case 4: VFX_ComposeEmberBurst(pos, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 1.0f); return true;
     case 5: VFX_ComposeFlameJet(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_FIRE, NULL); return true;
     case 6:
@@ -1216,6 +1219,34 @@ void VFXTest_Draw3D(void)
                 VFX_MeshParticleEmitter_SetVariant(s_vfxFixtureHandle[s_testIndex], s_meshParticleFixtureVariant);
             }
         }
+        else if (VFXTest_IsNewFxNamed("[PARTICLE] SMOKE VOLUME"))
+        {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0)
+            {
+                s_smokeVolumeFixtureStyle = (VFX_SmokeStyle)(((int)s_smokeVolumeFixtureStyle + direction + VFX_SMOKE_STYLE_COUNT) % VFX_SMOKE_STYLE_COUNT);
+                TraceLog(LOG_INFO, "SMOKE VOLUME variant: %s (>, next; <, previous)", VFX_SmokeStyle_Name(s_smokeVolumeFixtureStyle));
+            }
+        }
+        else if (VFXTest_IsNewFxNamed("MESH SURFACE AURA"))
+        {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0)
+            {
+                s_meshSurfaceAuraFixtureVariant = (VFX_MeshSurfaceAuraVariant)(((int)s_meshSurfaceAuraFixtureVariant + direction + VFX_MESH_SURFACE_AURA_VARIANT_COUNT) % VFX_MESH_SURFACE_AURA_VARIANT_COUNT);
+                TraceLog(LOG_INFO, "MESH SURFACE AURA variant: %s (>, next; <, previous)", VFX_MeshSurfaceAuraVariant_Name(s_meshSurfaceAuraFixtureVariant));
+            }
+        }
+        else if (VFXTest_IsNewFxNamed("DECAL"))
+        {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0)
+            {
+                s_decalFixtureVariant = (VFX_DecalVariant)(((int)s_decalFixtureVariant + direction + VFX_DECAL_VARIANT_COUNT) % VFX_DECAL_VARIANT_COUNT);
+                TraceLog(LOG_INFO, "DECAL variant: %s (>, next; <, previous)", VFX_DecalVariant_Name(s_decalFixtureVariant));
+                VFX_ComposeDecalVariant(s_prefabStartPos, VC_MAT_FIRE, 1.5f, 0.65f, 1.5f, s_decalFixtureVariant);
+            }
+        }
 
         if (s_testCategory == TEST_CAT_MESH)
         {
@@ -1275,7 +1306,7 @@ void VFXTest_Draw3D(void)
               case 13: VFX_ComposeGuidingWind(s_currentPlayerPos, Vector3Add(s_currentPlayerPos, Vector3Scale((Vector3){sinf(s_currentPlayerYaw), 0.0f, cosf(s_currentPlayerYaw)}, 24.0f)), progress, s_lastCam); break;
               case 14: VFX_ComposeIaidoStance(s_currentPlayerPos, s_currentPlayerYaw, progress, 1.35f, s_lastCam, NULL); break;
               case 16: VFX_ComposeLightShaft(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_FIRE, 0.8f, 1.35f); break;
-              case 20: VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=1.8f, .rimIntensity=1.25f, .opacity=0.58f}); break;
+              case 20: VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).materialColor, .rimWidth=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).rimWidth, .rimIntensity=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).rimIntensity, .opacity=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).opacity}); break;
               case 22: VFX_ComposeOpticalFlare(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 0.55f, 2.4f, 1.0f, s_lastCam); break;
               case 24:
               {
@@ -1323,7 +1354,7 @@ void VFXTest_Draw3D(void)
                       s_vfxFixtureHandle[30] = VFX_ComposeSmokeColumn(s_prefabStartPos, VC_MAT_METAL, 0.55f, 5.0f, VFX_COLUMN_SMOKE, true);
                   break;
               }
-              case 32: VFX_ComposeSmokeVolume(s_prefabStartPos, 1.5f, 1.0f, 0); break;
+              case 32: VFX_ComposeSmokeVolume(s_prefabStartPos, 1.5f, 1.0f, s_smokeVolumeFixtureStyle); break;
               case 33: VFX_ComposeSweepSlash(s_prefabStartPos, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 90.0f, progress); break;
               case 34:
               {
@@ -1503,6 +1534,18 @@ void VFXTest_DrawHUD(void)
         DrawText(TextFormat("MESH PARTICLE EMITTER: %s   > next   , previous",
                             VFX_MeshParticleVariant_Name(s_meshParticleFixtureVariant)),
                  10, 525, 16, SKYBLUE);
+    }
+    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("[PARTICLE] SMOKE VOLUME"))
+    {
+        DrawText(TextFormat("SMOKE VOLUME: %s   > next   < previous", VFX_SmokeStyle_Name(s_smokeVolumeFixtureStyle)), 10, 525, 16, SKYBLUE);
+    }
+    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("MESH SURFACE AURA"))
+    {
+        DrawText(TextFormat("MESH SURFACE AURA: %s   > next   < previous", VFX_MeshSurfaceAuraVariant_Name(s_meshSurfaceAuraFixtureVariant)), 10, 525, 16, SKYBLUE);
+    }
+    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("DECAL"))
+    {
+        DrawText(TextFormat("DECAL: %s   > next   < previous", VFX_DecalVariant_Name(s_decalFixtureVariant)), 10, 525, 16, SKYBLUE);
     }
     if (!s_hideDebugOverlays)
     {

@@ -55,11 +55,15 @@ int main(void)
           Has(smoke, "VFX_SURFACE_SMOKE_PUFF_DARK_NIAGARA") &&
           Has(smoke, "VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA") &&
           Has(smoke, "VFX_SURFACE_SMOKE_WISPY_NIAGARA") &&
+          Has(smoke, "VFX_SURFACE_PLASMA_WISPS_NIAGARA") &&
+          Has(smoke, "VFX_SMOKE_STYLE_ENERGY_WISP") &&
+          Has(smoke, "VFX_SmokeStyle_Name") &&
           Has(smoke, "VFX_SurfaceRegistry_Get(") &&
           !Has(smoke, "ResourceManager_LoadTexture") &&
           !Has(smoke, "assets/textures/vfx/"),
           "smoke volume resolves all Niagara sheets semantically");
     CHECK(Has(sync, "[PARTICLE] SMOKE VOLUME") &&
+          Has(sync, "s_smokeVolumeFixtureStyle") &&
           Has(sync, "[TRAIL/FLOW] VOLUME TRAIL") &&
           Has(sync, "[GAS] GAS PLUME") &&
           Has(sync, "\"modules\": [\"particle\"]"),

@@ -5,6 +5,25 @@ static int s_meshSurfaceAuraWidth = -1;
 static int s_meshSurfaceAuraIntensity = -1;
 static int s_meshSurfaceAuraOpacity = -1;
 
+const char *VFX_MeshSurfaceAuraVariant_Name(VFX_MeshSurfaceAuraVariant variant)
+{
+    static const char *names[] = {"CYAN RIM", "VIOLET RIM", "AMBER RIM", "EMBER RIM"};
+    return variant >= 0 && variant < VFX_MESH_SURFACE_AURA_VARIANT_COUNT ? names[variant] : "INVALID";
+}
+
+VFX_MeshSurfaceAuraParams VFX_MeshSurfaceAuraParams_MakeVariant(VFX_MeshSurfaceAuraVariant variant)
+{
+    static const VFX_MeshSurfaceAuraParams presets[] = {
+        {{130, 210, 255, 255}, 1.8f, 1.25f, 0.58f},
+        {{190, 120, 255, 255}, 1.5f, 1.10f, 0.54f},
+        {{255, 195, 95, 255}, 2.1f, 1.00f, 0.52f},
+        {{255, 92, 28, 255}, 1.3f, 1.35f, 0.56f},
+    };
+    if (variant < 0 || variant >= VFX_MESH_SURFACE_AURA_VARIANT_COUNT)
+        variant = VFX_MESH_SURFACE_AURA_CYAN;
+    return presets[variant];
+}
+
 static void MeshSurfaceAura_Ensure(void)
 {
     if (s_meshSurfaceAuraShader.id) return;

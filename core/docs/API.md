@@ -874,6 +874,7 @@ _Inline helpers / macros only — see header._
   void VFX_SmokeVolumeEmitter_SetDensity(int handle, float density01);
   void VFX_SmokeVolumeEmitter_Stop(int handle);
   void VFX_KillSmokeVolumeEmitter(int handle);
+  const char *VFX_SmokeStyle_Name(VFX_SmokeStyle style);
   void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
   void VFX_ComposeAmbientFire(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
   void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
@@ -938,6 +939,8 @@ _Inline helpers / macros only — see header._
   void VFX_MeshParticleEmitter_Kill(int handle);
   void VFX_KillMeshParticleEmitter(int handle);
   const char *VFX_MeshParticleVariant_Name(VFX_MeshParticleVariant variant);
+  const char *VFX_MeshSurfaceAuraVariant_Name(VFX_MeshSurfaceAuraVariant variant);
+  VFX_MeshSurfaceAuraParams VFX_MeshSurfaceAuraParams_MakeVariant(VFX_MeshSurfaceAuraVariant variant);
   void VFX_DrawMeshSurfaceAura(Mesh mesh, Matrix transform, const VFX_MeshSurfaceAuraParams *params);
   void VFX_DrawModelSurfaceAura(Model model, Matrix transform, const VFX_MeshSurfaceAuraParams *params);
   void VFX_ComposeVacuumConverge(Vector3 focalPoint, float sphereRadius, float progress, Camera3D camera);
@@ -969,10 +972,12 @@ _Inline helpers / macros only — see header._
   void VFX_BeginWaterStreams(float time);
   void VFX_EndWaterStreams(void);
   void VFX_Trail_Stop(int trailId);
+  const char *VFX_DecalVariant_Name(VFX_DecalVariant variant);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeContactSparkMode(Vector3 pos, VC_MaterialId matId, float scale, float severity01, ContactSparkMode mode);
   void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
+  void VFX_ComposeDecalVariant(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale, VFX_DecalVariant variant);
   void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
@@ -1011,7 +1016,7 @@ _Inline helpers / macros only — see header._
   void VFX_WaterRing_Stop(void);
   void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
-**Enums:** VFX_SmokeStyle { VFX_SMOKE_STYLE_ROIL,VFX_SMOKE_STYLE_PUFF_DARK,VFX_SMOKE_STYLE_PUFF_LIGHT,VFX_SMOKE_STYLE_WISPY,VFX_SMOKE_STYLE_COUNT,VFX_SMOKE_STYLE_DEFAULT };VFX_FlameStyle { VFX_FLAME_STYLE_NIAGARA_ROIL,VFX_FLAME_STYLE_VOLUME,VFX_FLAME_STYLE_COLUMN,VFX_FLAME_STYLE_PUFF,VFX_FLAME_STYLE_FIREBALL,VFX_FLAME_STYLE_DEFAULT } VFX_MeshParticleVariant { VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC,VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_RISE,VFX_MESH_PARTICLE_VARIANT_SMOKE_LIGHT_RISE,VFX_MESH_PARTICLE_VARIANT_SMOKE_DARK_RISE,VFX_MESH_PARTICLE_VARIANT_FIRE_ROIL,VFX_MESH_PARTICLE_VARIANT_EMBER_SPARK_LIFT,VFX_MESH_PARTICLE_VARIANT_COUNT };VFX_VolumeKind { VFX_VOLUME_SMOKE,VFX_VOLUME_FIRE,VFX_VOLUME_STEAM,VFX_VOLUME_ENERGY,VFX_VOLUME_KIND_COUNT,VOL_ENERGY,VOL_SMOKE,VOL_FIRE } VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_ENERGY,VFX_COLUMN_KIND_COUNT };ContactSparkMode { CONTACT_SPARK_STATIC,CONTACT_SPARK_CENTRIFUGAL }
+**Enums:** VFX_SmokeStyle { VFX_SMOKE_STYLE_ROIL,VFX_SMOKE_STYLE_PUFF_DARK,VFX_SMOKE_STYLE_PUFF_LIGHT,VFX_SMOKE_STYLE_WISPY,VFX_SMOKE_STYLE_ENERGY_WISP,VFX_SMOKE_STYLE_COUNT,VFX_SMOKE_STYLE_DEFAULT };VFX_FlameStyle { VFX_FLAME_STYLE_NIAGARA_ROIL,VFX_FLAME_STYLE_VOLUME,VFX_FLAME_STYLE_COLUMN,VFX_FLAME_STYLE_PUFF,VFX_FLAME_STYLE_FIREBALL,VFX_FLAME_STYLE_DEFAULT } VFX_MeshParticleVariant { VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC,VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_RISE,VFX_MESH_PARTICLE_VARIANT_SMOKE_LIGHT_RISE,VFX_MESH_PARTICLE_VARIANT_SMOKE_DARK_RISE,VFX_MESH_PARTICLE_VARIANT_FIRE_ROIL,VFX_MESH_PARTICLE_VARIANT_EMBER_SPARK_LIFT,VFX_MESH_PARTICLE_VARIANT_COUNT };VFX_MeshSurfaceAuraVariant { VFX_MESH_SURFACE_AURA_CYAN,VFX_MESH_SURFACE_AURA_VIOLET,VFX_MESH_SURFACE_AURA_AMBER,VFX_MESH_SURFACE_AURA_EMBER,VFX_MESH_SURFACE_AURA_VARIANT_COUNT } VFX_VolumeKind { VFX_VOLUME_SMOKE,VFX_VOLUME_FIRE,VFX_VOLUME_STEAM,VFX_VOLUME_ENERGY,VFX_VOLUME_KIND_COUNT,VOL_ENERGY,VOL_SMOKE,VOL_FIRE };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_ENERGY,VFX_COLUMN_KIND_COUNT } ContactSparkMode { CONTACT_SPARK_STATIC,CONTACT_SPARK_CENTRIFUGAL };VFX_DecalVariant { VFX_DECAL_VARIANT_IMPACT,VFX_DECAL_VARIANT_SCORCH,VFX_DECAL_VARIANT_FROST,VFX_DECAL_VARIANT_COUNT }
 **Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_GasPlumeConfig, VFX_GasVortexConfig, VFX_GasShockwaveConfig, VFX_FlameJetConfig, VFX_ShieldSurface, VFX_MeshParticleEmitterDesc, VFX_MeshSurfaceAuraParams, VFX_TrailSurface
 
 ### `core/composition/vfx_sequence.h`

@@ -240,6 +240,8 @@ FIXTURE_SPAWN_OVERRIDES = {
 # separate from persistent spawn overrides: a trigger call has no stored handle
 # and must not be treated as a frame-fed fixture.
 FIXTURE_EVENT_OVERRIDES = {
+    "VFX_ComposeDecal":
+        "VFX_ComposeDecalVariant($POS, VC_MAT_FIRE, 1.5f, 0.65f, 1.5f, s_decalFixtureVariant)",
     "VFX_ComposeFireballBurst":
         "VFX_ComposeFireballBurst($POS, VC_MAT_FIRE, 1.5f, 1.0f)",
     # Severity is intensity, not timeline progress. Exercise the full authored
@@ -329,10 +331,12 @@ FIXTURE_METADATA_OVERRIDES = {
 # merged dict so the entry itself says which fixture kind it belongs to — the
 # spawn table's contract (persistent, handle-owning) is not this one's.
 FIXTURE_DRAW_OVERRIDES = {
+    "VFX_ComposeSmokeVolume":
+        "VFX_ComposeSmokeVolume($POS, 1.5f, 1.0f, s_smokeVolumeFixtureStyle)",
     "VFX_ComposeOpticalFlare":
         "VFX_ComposeOpticalFlare(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 0.55f, 2.4f, 1.0f, s_lastCam)",
     "VFX_DrawMeshSurfaceAura":
-        "VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=1.8f, .rimIntensity=1.25f, .opacity=0.58f})",
+        "VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).materialColor, .rimWidth=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).rimWidth, .rimIntensity=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).rimIntensity, .opacity=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).opacity})",
     "VFX_ComposeVacuumArc":
         "VFX_ComposeVacuumConverge(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 2.7f, $PROG, s_lastCam)",
     "VFX_ComposeVacuumRing":
@@ -1325,7 +1329,8 @@ def gen_fire_function(entries):
                       # generated continuous fixture path after the spawn.
                       "        return false;" if e["fn"] == "VFX_ComposeMeshParticleEmitter" else "        return true;"]
         else:
-            lines.append(f"    case {idx}: {rexpand(e['trigger_call'])}; return true;")
+            keep_active = e["fn"] == "VFX_ComposeDecal"
+            lines.append(f"    case {idx}: {rexpand(e['trigger_call'])}; return {'false' if keep_active else 'true'};")
     lines += ["    default: return false;", "    }", "// @gen:newfx_fire end"]
     return "\n".join(lines)
 

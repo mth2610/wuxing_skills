@@ -64,6 +64,8 @@
 - White-screen mesh on Android → check logcat for `SHADER: compile failed` or `Link error...precision does not match` first, fix via rules above, rebuild.
 
 ## 8. Aesthetic (Anti-Robotic) Laws
+- Any NEW FX fixture with more than one authored variant must expose the active
+  variant and wrap deterministic `>` next / `<` previous controls in NEW FX.
 - No raylib primitives for real meshes (see §6).
 - Straight layouts need perpendicular jitter (`perp` + `GetRandomValue` pattern, CORE_API §12.2).
 - Every spawned instance: random scale 85-115%, yaw 0-360°, pitch/roll ±10°.

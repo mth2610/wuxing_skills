@@ -57,7 +57,7 @@
       "lifecycle": "event",
       "_auto": true,
       "type": "oneshot",
-      "trigger_call": "VFX_ComposeDecal($POS, VC_MAT_FIRE, 1.5f, $PROG, 1.5f)"
+      "trigger_call": "VFX_ComposeDecalVariant($POS, VC_MAT_FIRE, 1.5f, 0.65f, 1.5f, s_decalFixtureVariant)"
     },
     {
       "source": "common/vc_dissolve_exit.inl",
@@ -266,7 +266,7 @@
       "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=(Color){130, 210, 255, 255}, .rimWidth=1.8f, .rimIntensity=1.25f, .opacity=0.58f})"
+      "draw_call": "VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).materialColor, .rimWidth=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).rimWidth, .rimIntensity=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).rimIntensity, .opacity=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).opacity})"
     },
     {
       "source": "common/vc_mist_veil.inl",
@@ -403,7 +403,7 @@
       "lifecycle": "emitter",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeSmokeVolume($POS, 1.5f, 1.0f, 0)",
+      "draw_call": "VFX_ComposeSmokeVolume($POS, 1.5f, 1.0f, s_smokeVolumeFixtureStyle)",
       "modules": [
         "particle"
       ]

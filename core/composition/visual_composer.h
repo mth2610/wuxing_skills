@@ -125,13 +125,16 @@ void VFX_SmokeEmitter_Stop(int handle);
 void VFX_KillSmokeEmitter(int handle);
 
 // ── Primary VFX: Smoke Volume (UE5 Niagara Architecture) ────────────────────
-// 4 specialized styles: heavy roil, dark puff, light puff, and wispy smoke.
+// Five semantic styles: heavy roil, dark puff, light puff, wispy smoke, and
+// a self-emissive energy wisp. The energy variant uses its own plasma surface
+// contract rather than interpreting packed smoke RGB as colour.
 // Implements Morton-Taylor-Turner plume dynamics, radial entrainment, and 6-way lighting.
 typedef enum {
     VFX_SMOKE_STYLE_ROIL = 0,        // Heavy thermal convection column (smoke_roil_8x8)
     VFX_SMOKE_STYLE_PUFF_DARK = 1,   // Dense black detonation smoke (smoke_puff_8x8)
     VFX_SMOKE_STYLE_PUFF_LIGHT = 2,  // Light hit / impact dust smoke (smoke_puff_light_8x8)
     VFX_SMOKE_STYLE_WISPY = 3,       // Dispersed drifting smoke wisps (smoke_wispy_8x8)
+    VFX_SMOKE_STYLE_ENERGY_WISP = 4, // Additive plasma wisp (plasma_wisps_8x8)
     VFX_SMOKE_STYLE_COUNT,
     VFX_SMOKE_STYLE_DEFAULT = VFX_SMOKE_STYLE_ROIL,
 } VFX_SmokeStyle;
@@ -142,6 +145,7 @@ void VFX_SmokeVolumeEmitter_SetTransform(int handle, Vector3 pos, Vector3 wind);
 void VFX_SmokeVolumeEmitter_SetDensity(int handle, float density01);
 void VFX_SmokeVolumeEmitter_Stop(int handle);
 void VFX_KillSmokeVolumeEmitter(int handle);
+const char *VFX_SmokeStyle_Name(VFX_SmokeStyle style);
 
 // ── F3. Flame / Ambient Fire (Niagara NS_Fire & Flame Volume) ───────────────
 // Continuous fire with thermal buoyancy, Planck black-body cooling, vortex swirling
@@ -466,6 +470,17 @@ typedef struct {
     float rimIntensity;
     float opacity;
 } VFX_MeshSurfaceAuraParams;
+
+typedef enum {
+    VFX_MESH_SURFACE_AURA_CYAN = 0,
+    VFX_MESH_SURFACE_AURA_VIOLET,
+    VFX_MESH_SURFACE_AURA_AMBER,
+    VFX_MESH_SURFACE_AURA_EMBER,
+    VFX_MESH_SURFACE_AURA_VARIANT_COUNT
+} VFX_MeshSurfaceAuraVariant;
+
+const char *VFX_MeshSurfaceAuraVariant_Name(VFX_MeshSurfaceAuraVariant variant);
+VFX_MeshSurfaceAuraParams VFX_MeshSurfaceAuraParams_MakeVariant(VFX_MeshSurfaceAuraVariant variant);
 
 void VFX_DrawMeshSurfaceAura(Mesh mesh, Matrix transform,
                              const VFX_MeshSurfaceAuraParams *params);
@@ -805,11 +820,21 @@ typedef enum {
     CONTACT_SPARK_CENTRIFUGAL
 } ContactSparkMode;
 
+typedef enum {
+    VFX_DECAL_VARIANT_IMPACT = 0,
+    VFX_DECAL_VARIANT_SCORCH,
+    VFX_DECAL_VARIANT_FROST,
+    VFX_DECAL_VARIANT_COUNT
+} VFX_DecalVariant;
+
+const char *VFX_DecalVariant_Name(VFX_DecalVariant variant);
+
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeContactSparkMode(Vector3 pos, VC_MaterialId matId, float scale, float severity01, ContactSparkMode mode);
 void VFX_ComposeDecal(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale);
+void VFX_ComposeDecalVariant(Vector3 pos, VC_MaterialId matId, float scale, float severity01, float lifetimeScale, VFX_DecalVariant variant);
 void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
 int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);

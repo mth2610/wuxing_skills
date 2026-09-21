@@ -51,5 +51,9 @@ int main(void)
           "surface aura is shader-only and generic");
     CHECK(Has(auraVs, "vertexNormal * 0.012"),
           "aura offsets its rim shell to avoid coplanar depth rejection");
+    CHECK(Has(header, "VFX_MESH_SURFACE_AURA_VIOLET") &&
+          Has(aura, "VFX_MeshSurfaceAuraParams_MakeVariant") &&
+          Has(aura, "VFX_MeshSurfaceAuraVariant_Name"),
+          "surface aura has public readable palette variants");
     return failures ? 1 : 0;
 }

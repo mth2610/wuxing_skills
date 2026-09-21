@@ -1,10 +1,11 @@
 // vc_smoke_volume.inl — Primary VFX Smoke Volume (UE5 Niagara Architecture)
 //
-// Replaces monolithic single-sprite smoke with 4 specialized Niagara 8x8 flipbook styles:
+// Replaces monolithic single-sprite smoke with 5 semantic flipbook styles:
 //   1. ROIL:       Heavy thermal convection column (smoke_roil_8x8.png).
 //   2. PUFF_DARK:  Dense black detonation smoke (smoke_puff_8x8.png).
 //   3. PUFF_LIGHT: Soft light-grey hit / impact dust smoke (smoke_puff_light_8x8.png).
 //   4. WISPY:      Dispersed drifting smoke wisps (smoke_wispy_8x8.png).
+//   5. ENERGY:     Self-emissive plasma wisps (plasma_wisps_8x8.png).
 //
 // Implements Morton-Taylor-Turner plume dynamics:
 //   - Fast thermal buoyancy at emitter base, transitioning to ambient wind drift.
@@ -37,6 +38,7 @@ static const VFX_SurfaceId s_svolSurfaceIds[VFX_SMOKE_STYLE_COUNT] = {
     VFX_SURFACE_SMOKE_PUFF_DARK_NIAGARA,
     VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA,
     VFX_SURFACE_SMOKE_WISPY_NIAGARA,
+    VFX_SURFACE_PLASMA_WISPS_NIAGARA,
 };
 
 // Shared physics curves
@@ -219,6 +221,10 @@ static void SVol_Emit(VC_SmokeVolumeEmitter *e, float dt)
         tint = (Color){150, 145, 142, 255};
         baseSize = 0.65f;
         break;
+    case VFX_SMOKE_STYLE_ENERGY_WISP:
+        tint = (Color){112, 210, 255, 255};
+        baseSize = 0.46f;
+        break;
     case VFX_SMOKE_STYLE_ROIL:
     default:
         // The primary/default vocabulary is white smoke. Keep soot as the
@@ -269,9 +275,11 @@ static void SVol_Emit(VC_SmokeVolumeEmitter *e, float dt)
             .forceField = activeField,
             .windInfluence = 0.80f,
             .render.texture = tex,
-            .render.blendMode = VFX_BLEND_ALPHA,
-            .render.smokeSheet = 1,
+            .render.blendMode = e->style == VFX_SMOKE_STYLE_ENERGY_WISP ? VFX_BLEND_ADDITIVE : VFX_BLEND_ALPHA,
+            .render.smokeSheet = e->style == VFX_SMOKE_STYLE_ENERGY_WISP ? 0 : 1,
             .render.normalTex = normalTex,
+            .render.unlit = e->style == VFX_SMOKE_STYLE_ENERGY_WISP ? 1 : 0,
+            .render.emissiveBoost = e->style == VFX_SMOKE_STYLE_ENERGY_WISP ? 1.35f : 1.0f,
             .spriteAnim = anim,
             .spriteAnimPhase = Random01() * SVOL_BODY_PHASE_MAX,
             .spriteAnimRate = Math_Mix(0.85f, 1.0f, Random01()),
@@ -351,6 +359,12 @@ void VFX_KillSmokeVolumeEmitter(int handle)
 {
     if (handle >= 0 && handle < SVOL_MAX_EMITTERS)
         s_svolEmitters[handle].active = false;
+}
+
+const char *VFX_SmokeStyle_Name(VFX_SmokeStyle style)
+{
+    static const char *names[] = {"SMOKE ROIL", "SMOKE PUFF DARK", "SMOKE PUFF LIGHT", "SMOKE WISPY", "ENERGY WISP"};
+    return style >= 0 && style < VFX_SMOKE_STYLE_COUNT ? names[style] : "INVALID";
 }
 
 static void VC_SmokeVolumeEmitter_Update(float dt)

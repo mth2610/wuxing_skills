@@ -63,6 +63,10 @@ int main(void)
           Has(compose, "DecalSystem_AddConformalMaterialEx") &&
           !Has(compose, "SetLastConformalMaterial"),
           "Composition uses the atomic generic decal spawn path");
+    CHECK(Has("core/composition/visual_composer.h", "VFX_DECAL_VARIANT_SCORCH") &&
+          Has(compose, "VFX_ComposeDecalVariant") &&
+          Has(compose, "VFX_DecalVariant_Name"),
+          "Decal fixture variants are public and semantic");
     CHECK(Has(compose, "DecalMaterial_Get") &&
           !Has(compose, "matId == VC_MAT_ICE") &&
           Has("core/vfx_surface_registry.h", "VFX_SURFACE_DECAL_FROST") &&
