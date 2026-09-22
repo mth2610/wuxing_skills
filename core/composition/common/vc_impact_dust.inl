@@ -116,3 +116,46 @@ void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float 
     VFX_ComposeImpactDustVariant(pos, matId, scale, severity01,
                                  VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
 }
+
+void VFX_SurfaceImpact_Emit(const VFX_SurfaceImpactEvent *event)
+{
+    if (event == NULL || event->scale <= 0.0f) return;
+    VFX_ImpactSurface surface = event->surface;
+    if (surface < VFX_IMPACT_SURFACE_GROUND || surface >= VFX_IMPACT_SURFACE_COUNT)
+        surface = VFX_IMPACT_SURFACE_GROUND;
+    float severity = Clamp(event->severity01, 0.0f, 1.0f);
+    Vector3 normal = event->normal;
+    if (Vector3LengthSqr(normal) < 0.0001f) normal = (Vector3){0.0f, 1.0f, 0.0f};
+    else normal = Vector3Normalize(normal);
+
+    switch (surface) {
+    case VFX_IMPACT_SURFACE_WATER:
+        /* FluidImpact owns its own droplet/residue lifecycle. Do not stack an
+         * unrelated dust/decal event on top of a liquid receiver. */
+        VFX_ComposeFluidImpact(event->position);
+        return;
+
+    case VFX_IMPACT_SURFACE_METAL:
+        VFX_ComposeContactSpark(event->position, event->material, event->scale, severity);
+        VFX_ComposeDecalVariant(event->position, event->material, event->scale,
+                                severity, 0.65f, VFX_DECAL_VARIANT_IMPACT);
+        return;
+
+    case VFX_IMPACT_SURFACE_STONE:
+        VFX_ComposeImpactDustVariant(event->position, event->material, event->scale,
+                                     severity, VFX_IMPACT_DUST_VARIANT_DARK_SMOKE_PUFF);
+        break;
+
+    case VFX_IMPACT_SURFACE_GROUND:
+    case VFX_IMPACT_SURFACE_WOOD:
+    default:
+        VFX_ComposeImpactDustVariant(event->position, event->material, event->scale,
+                                     severity, VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
+        break;
+    }
+    VFX_ComposeDecalVariant(event->position, event->material, event->scale,
+                            severity, 1.0f, VFX_DECAL_VARIANT_IMPACT);
+    if (event->material == VC_MAT_FIRE && severity >= 0.45f)
+        VFX_ComposeEmberBurst(event->position, normal, event->material,
+                              event->scale, severity);
+}

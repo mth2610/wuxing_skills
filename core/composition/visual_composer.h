@@ -849,6 +849,30 @@ typedef enum {
 
 const char *VFX_ImpactDustVariant_Name(VFX_ImpactDustVariant variant);
 
+/* Receiver vocabulary is deliberately supplied by gameplay/collision. The map
+ * sampler owns geometry and normals, not a semantic material classification. */
+typedef enum {
+    VFX_IMPACT_SURFACE_GROUND = 0,
+    VFX_IMPACT_SURFACE_STONE,
+    VFX_IMPACT_SURFACE_METAL,
+    VFX_IMPACT_SURFACE_WOOD,
+    VFX_IMPACT_SURFACE_WATER,
+    VFX_IMPACT_SURFACE_COUNT
+} VFX_ImpactSurface;
+
+typedef struct {
+    Vector3 position;
+    Vector3 normal;
+    VC_MaterialId material;
+    VFX_ImpactSurface surface;
+    float scale;
+    float severity01;
+} VFX_SurfaceImpactEvent;
+
+/* One collision event, composed from existing dust, decal, spark and fluid
+ * primitives. It owns no pool and is safe to call from projectiles or skills. */
+void VFX_SurfaceImpact_Emit(const VFX_SurfaceImpactEvent *event);
+
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
@@ -875,6 +899,7 @@ int VFX_ComposeRefParticles(Vector3 pos, float scale);
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
+void VFX_ComposeSurfaceImpact(Vector3 pos, VFX_ImpactSurface surface);
 void VFX_ComposeSurfaceParticleRing(Vector3 pos, VC_MaterialId matId, float scale, float severity01, VFX_SurfaceParticleRingVariant variant);
 void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);

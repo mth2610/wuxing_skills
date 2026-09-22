@@ -168,6 +168,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeIceCrystal":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterStream":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeFluidImpact":        ("event",   "burst",      "oneshot"),
+    "VFX_ComposeSurfaceImpact":      ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterOrb":           ("event",   "burst",      "oneshot"),
     # SSF probe: it has no persistent handle to retain. The fixture is "timed"
     # because Draw fixtures are, but the bench call passes a CONSTANT t01
@@ -234,6 +235,8 @@ FIXTURE_SPAWN_OVERRIDES = {
 # separate from persistent spawn overrides: a trigger call has no stored handle
 # and must not be treated as a frame-fed fixture.
 FIXTURE_EVENT_OVERRIDES = {
+    "VFX_ComposeSurfaceImpact":
+        "VFX_ComposeSurfaceImpact($POS, s_surfaceImpactFixtureSurface)",
     "VFX_ComposeImpactDust":
         "VFX_ComposeImpactDustVariant($POS, s_impactDustFixtureVariant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_impactDustFixtureVariant)",
     "VFX_ComposeDecal":
@@ -1337,7 +1340,11 @@ def gen_fire_function(entries):
                       # generated continuous fixture path after the spawn.
                       "        return false;" if e["fn"] == "VFX_ComposeMeshParticleEmitter" else "        return true;"]
         else:
-            keep_active = e["fn"] in ("VFX_ComposeDecal", "VFX_ComposeImpactDust", "VFX_ComposeSurfaceParticleRing")
+            # Selector-driven burst fixtures must remain active after their
+            # first emission so UpdateAndHandleInput can receive > / , keys.
+            keep_active = e["fn"] in ("VFX_ComposeDecal", "VFX_ComposeImpactDust",
+                                       "VFX_ComposeSurfaceImpact",
+                                       "VFX_ComposeSurfaceParticleRing")
             lines.append(f"    case {idx}: {rexpand(e['trigger_call'])}; return {'false' if keep_active else 'true'};")
     lines += ["    default: return false;", "    }", "// @gen:newfx_fire end"]
     return "\n".join(lines)
@@ -1451,6 +1458,106 @@ def update_count(content, count):
     return pat.sub(replacer, content)
 
 
+def ensure_generated_section(content, key, anchor, before=False, last=False):
+    """Install a generator-owned block once; all subsequent contents are replaced."""
+    begin = f"// @gen:{key} begin"
+    if begin in content:
+        return content
+    at = content.rfind(anchor) if last else content.find(anchor)
+    if at < 0:
+        raise SystemExit(f"[sync_vfx_test] cannot install @gen:{key}: anchor missing")
+    insert_at = at if before else at + len(anchor)
+    stub = f"\n{begin}\n// @gen:{key} end\n"
+    return content[:insert_at] + stub + content[insert_at:]
+
+
+def relocate_generated_section(content, key, anchor, before=False, last=False):
+    """Move a generated block when its original bootstrap anchor was wrong."""
+    begin = re.escape(f"// @gen:{key} begin")
+    end = re.escape(f"// @gen:{key} end")
+    pattern = re.compile(r"\n[ \t]*" + begin + r".*?^[ \t]*" + end + r"\n?",
+                         re.DOTALL | re.MULTILINE)
+    content, removed = pattern.subn("", content)
+    if removed > 1:
+        raise SystemExit(f"[sync_vfx_test] duplicate @gen:{key} blocks")
+    return ensure_generated_section(content, key, anchor, before=before, last=last)
+
+
+def gen_surface_impact_selector_state():
+    return "\n".join([
+        "// @gen:newfx_surface_impact_selector_state begin",
+        "static VFX_ImpactSurface s_surfaceImpactFixtureSurface = VFX_IMPACT_SURFACE_GROUND;",
+        "static const char *VFXTest_SurfaceImpactReceiverName(VFX_ImpactSurface surface)",
+        "{",
+        "    static const char *const names[VFX_IMPACT_SURFACE_COUNT] = {",
+        "        \"Ground\", \"Stone\", \"Metal\", \"Wood\", \"Water\"};",
+        "    if (surface < VFX_IMPACT_SURFACE_GROUND || surface >= VFX_IMPACT_SURFACE_COUNT)",
+        "        return names[VFX_IMPACT_SURFACE_GROUND];",
+        "    return names[surface];",
+        "}",
+        "// @gen:newfx_surface_impact_selector_state end",
+    ])
+
+
+def gen_surface_impact_selector_input():
+    return "\n".join([
+        "// @gen:newfx_surface_impact_selector_input begin",
+        "        else if (VFXTest_IsNewFxNamed(\"SURFACE IMPACT\"))",
+        "        {",
+        "            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);",
+        "            if (direction != 0)",
+        "            {",
+        "                s_surfaceImpactFixtureSurface = (VFX_ImpactSurface)(((int)s_surfaceImpactFixtureSurface + direction + VFX_IMPACT_SURFACE_COUNT) % VFX_IMPACT_SURFACE_COUNT);",
+        "                TraceLog(LOG_INFO, \"SURFACE IMPACT receiver: %s (>, next; ,, previous)\",",
+        "                         VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface));",
+        "                VFX_ComposeSurfaceImpact(s_prefabStartPos, s_surfaceImpactFixtureSurface);",
+        "            }",
+        "        }",
+        "        // @gen:newfx_surface_impact_selector_input end",
+    ])
+
+
+def gen_surface_impact_selector_ui():
+    return "\n".join([
+        "// @gen:newfx_surface_impact_selector_ui begin",
+        "    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed(\"SURFACE IMPACT\"))",
+        "    {",
+        "        DrawText(TextFormat(\"SURFACE IMPACT receiver: %s   > next   , previous\",",
+        "                            VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface)),",
+        "                 10, 525, 16, SKYBLUE);",
+        "    }",
+        "    // @gen:newfx_surface_impact_selector_ui end",
+    ])
+
+
+def regenerate_vfx_test(content, entries):
+    content = ensure_generated_section(
+        content, "newfx_surface_impact_selector_state",
+        "static TrailPresetId s_motionRibbonFixturePreset = MOTION_RIBBON_ENERGY_SILK;")
+    content = relocate_generated_section(
+        content, "newfx_surface_impact_selector_input",
+        "        if (s_testCategory == TEST_CAT_MESH)\n", before=True, last=True)
+    content = ensure_generated_section(
+        content, "newfx_surface_impact_selector_ui",
+        "    if (!s_hideDebugOverlays)\n", before=True)
+    for key, gen in [
+        ("newfx_names", gen_names_array(entries)),
+        ("newfx_categories", gen_categories_array(entries)),
+        ("newfx_stop", gen_stop_function(entries)),
+        ("newfx_fire", gen_fire_function(entries)),
+        ("newfx_trigger", gen_trigger_block(entries)),
+        ("newfx_render_trigger", gen_render_trigger_block(entries)),
+        ("newfx_draw", gen_draw_block(entries)),
+        ("newfx_surface_impact_selector_state", gen_surface_impact_selector_state()),
+        ("newfx_surface_impact_selector_input", gen_surface_impact_selector_input()),
+        ("newfx_surface_impact_selector_ui", gen_surface_impact_selector_ui()),
+    ]:
+        content, found = replace_section(content, key, gen)
+        if not found:
+            raise SystemExit(f"[sync_vfx_test] @gen:{key} replacement failed")
+    return update_count(content, len(entries))
+
+
 # ── manifest helpers ───────────────────────────────────────────────────────────
 
 def all_excluded(manifest):
@@ -1551,6 +1658,12 @@ def main():
         drift |= bool(update_subdir_includes(COMP_DIR, manifest=manifest,
                                              dry_run=True, archetypes=arch))
         drift |= bool(update_archetype_dispatch(COMP_DIR, dry_run=True))
+        with open(VFX_TEST_PATH) as f:
+            current_vfx = f.read()
+        expected_vfx = regenerate_vfx_test(current_vfx, new_entries)
+        if current_vfx != expected_vfx:
+            print("[sync_vfx_test] vfx_test.c generated sections are out of sync.")
+            drift = True
         if not drift:
             print("[sync_vfx_test] everything in sync.")
         sys.exit(1 if drift else 0)
@@ -1588,22 +1701,7 @@ def main():
     # ── 8. Regenerate vfx_test.c ─────────────────────────────────────────────
     with open(VFX_TEST_PATH) as f:
         vfx = f.read()
-
-    for key, gen in [
-        ("newfx_names",          gen_names_array(new_entries)),
-        ("newfx_categories",     gen_categories_array(new_entries)),
-        ("newfx_stop",           gen_stop_function(new_entries)),
-        ("newfx_fire",           gen_fire_function(new_entries)),
-        ("newfx_trigger",        gen_trigger_block(new_entries)),
-        ("newfx_render_trigger", gen_render_trigger_block(new_entries)),
-        ("newfx_draw",           gen_draw_block(new_entries)),
-    ]:
-        vfx, found = replace_section(vfx, key, gen)
-        if not found:
-            print(f"  WARNING: @gen:{key} marker not found in vfx_test.c — skipped",
-                  file=sys.stderr)
-
-    vfx = update_count(vfx, len(new_entries))
+    vfx = regenerate_vfx_test(vfx, new_entries)
 
     with open(VFX_TEST_PATH, "w") as f:
         f.write(vfx)

@@ -401,6 +401,17 @@
       ]
     },
     {
+      "source": "common/vc_surface_impact.inl",
+      "fn": "VFX_ComposeSurfaceImpact",
+      "label": "SURFACE IMPACT",
+      "category": "common",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSurfaceImpact($POS, s_surfaceImpactFixtureSurface)"
+    },
+    {
       "source": "common/vc_surface_particle_ring.inl",
       "fn": "VFX_ComposeSurfaceParticleRing",
       "label": "SURFACE PARTICLE RING",
