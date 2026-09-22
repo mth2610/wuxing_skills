@@ -312,6 +312,9 @@ static const TrailMotion k_trailMotion[TRAIL_PRESET_COUNT] = {
     [TRAIL_PRESET_MAGIC]    = {0.0f, false, false, 0, 0, 0, 0, 1, false, false,
                                30.0f, 0.05f, 25.0f,
                                false, TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN},
+    [TRAIL_PRESET_WATER]    = {0.0600f, true, true, 0.35f, 0.18f, 4.2f, 0.75f, 1, false, true,
+                               SWEPT_SAMPLE_HZ, SWEPT_IDLE_SPEED, SWEPT_TELEPORT_SPEED,
+                               true, TRAIL_WIDTH_ENVELOPE_TAPER_BOTH},
 };
 
 static const TrailMotion *TrailMotionOf(TrailPresetId p)
@@ -761,6 +764,11 @@ static const TrailLayer k_sweptLayers[TRAIL_PRESET_COUNT][3] = {
     [TRAIL_PRESET_ENERGY] = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
     [TRAIL_PRESET_SMOKE]  = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
     [TRAIL_PRESET_MAGIC]  = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_WATER]  = {
+        {.widthMul = 1.32f, .alphaMul = 0.08f, .whiten = 0.00f, .scrollMul = 0.42f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 1.00f, .alphaMul = 0.42f, .whiten = 0.00f, .scrollMul = 0.86f, .headAlphaPow = 0.0f, .texture = NULL},
+        {.widthMul = 0.18f, .alphaMul = 0.12f, .whiten = 0.04f, .scrollMul = 1.25f, .headAlphaPow = 3.8f, .texture = NULL},
+    },
 };
 
 // ── THE RECIPE TABLE — what each preset LOOKS like ──────────────────────────
@@ -1139,6 +1147,32 @@ static void TrailPresets_Build(void)
         //    not emit.
         r->colour.contrast = VFX_CONTRAST_MAGIC;
     }
+
+    /* WATER is a separate material family, not MAIN with a blue argument:
+     * the body carries the readable cyan stream while emission is a restrained
+     * narrow core.  It intentionally has no spark shower (water sheds drops,
+     * not embers); a later droplet module may supply those as a water-specific
+     * secondary without corrupting this ribbon's colour contract. */
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_WATER];
+        *r = k_trailPresets[TRAIL_PRESET_MAIN];
+        r->layers = k_sweptLayers[TRAIL_PRESET_WATER];
+        r->layerCount = 3;
+        r->radiusDefault = 0.16f;
+        r->tintSource = TRAIL_TINT_BODY;
+        r->additive = true;
+        r->hdrGain = 1.18f;
+        r->bodyOpacity = 0.82f;
+        r->colour.tail = (Color){42, 112, 178, 255};
+        r->colour.coreWidth = 0.12f;
+        r->colour.coreIntensity = 0.24f;
+        r->colour.tailDarken = 0.0f;
+        r->colour.contrast = VFX_CONTRAST_ENERGY;
+        SurfaceFlow_Clear(&r->flow);
+        SurfaceFlow_AddLayer(&r->flow, (SurfaceFlowLayer){
+            .tiling = {0.75f, 0.90f}, .pan = {0.0f, 0.55f},
+            .blend = SURFACE_FLOW_MAX, .env = UV_ENV_NONE});
+    }
 }
 
 // ── RECIPE → the fragment shader's current uniform set ──────────────────────
@@ -1439,6 +1473,9 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     // smoke preset turns an occluding plume back into a glow.
     cfg.useCustomBlendMode = true;
     cfg.minVertexDistance = SWEPT_MIN_VERTEX;
+    /* Spawn-per-unit is the generic ribbon contract.  This retains the small
+     * remainder in TrailEntity history, so 20/60/240 FPS lay the same strip. */
+    cfg.spacingMeters = (mot->sampleHz > 0.0f) ? 0.10f : 0.10f;
     // BLADE lies in the plane of the swing — a broad sheet from the front and a
     // thin edge from the side, which IS the sense of a real object moving. The
     // other two are camera-facing, the mode that never pinches on a curve.
@@ -1479,7 +1516,7 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     cfg.nodeHomeSpring = mot->cloth ? SWEPT_HOME_SPRING : 0.0f;
     cfg.nodeHomeMaxDev = mot->cloth ? SWEPT_HOME_MAX_DEV : 0.0f;
     cfg.nodeOrderFrac = mot->cloth ? SWEPT_ORDER_FRAC : 0.0f;
-    cfg.sampleHz = mot->sampleHz;
+    cfg.sampleHz = 0.0f; /* spacingMeters, not a clock, owns node density */
     cfg.teleportSpeed = mot->teleportSpeed;
     cfg.idleSpeed = mot->idleSpeed;
     cfg.smoothSpline = mot->smoothSpline;
@@ -1905,7 +1942,8 @@ static void VC_SweptTrail_Update(float dt)
         if (sparks > 3)
             sparks = 3;
         s->sparkAcc -= (float)sparks;
-        if (s_sweptSpark > 0.01f && GfxQuality_Get() >= GFX_MED && lead->historyCount > 1)
+        if (s->kind != TRAIL_PRESET_WATER && s_sweptSpark > 0.01f &&
+            GfxQuality_Get() >= GFX_MED && lead->historyCount > 1)
         {
             const VFX_ElementMaterial *sm = VFX_Material(s->matId);
             for (int k2 = 0; k2 < sparks; k2++)
@@ -1918,7 +1956,7 @@ static void VC_SweptTrail_Update(float dt)
                 int back = (int)(sqrtf(Random01()) * (float)span);
                 Vector3 born = lead->history[(lead->historyHead - back + TRAIL_HISTORY_COUNT) %
                                              TRAIL_HISTORY_COUNT];
-                SpawnParticle((ParticleConfig){
+                ParticleConfig mote = {
                     .position = Vector3Add(born, Vector3Scale(jit, 0.09f)),
                     // MAGIC DUST, not sparks: "born, stay where they are, drift
                     // gently, then go." A spark thrown at a quarter of the tip's
@@ -1932,6 +1970,15 @@ static void VC_SweptTrail_Update(float dt)
                     // threshold, which turns a 1 cm dot into a star.
                     .radius = Math_Mix(0.006f, 0.013f, Random01()),
                     .lifetime = Math_Mix(0.55f, 1.40f, Random01()),
+                    /* The fallback sprite owns an orange rim unless a gradient
+                     * is explicit. Shed motes use one element hue, rather than
+                     * the ribbon's body-to-head ramp: a loose particle changing
+                     * violet to cyan reads as two mixed elements. */
+                    .gradient = VC_ElementMoteRamp(s->matId),
+                    /* The default spark's baked orange rim is not an element
+                     * palette. This neutral structured twin keeps the bright
+                     * core and soft rim, while the material alone supplies hue. */
+                    .render.texture = ParticleSystem_ElementSparkSprite(),
                     .colorStart = VC_WithAlpha(VC_Whiten(sm->glow, 0.75f), 255),
                     .colorEnd = VC_WithAlpha(VC_Whiten(sm->glow, 0.30f), 0),
                     // The TWINKLE. One shared curve would pulse every mote in
@@ -1941,7 +1988,20 @@ static void VC_SweptTrail_Update(float dt)
                     .render.blendMode = VFX_BLEND_ADDITIVE,
                     .render.unlit = 1,
                     .render.emissiveBoost = 1.9f,
-                });
+                };
+                /* One particle cannot use a texture as both a colour-neutral
+                 * element rim and an untinted white core. Layer a compact
+                 * DefaultSprite core over the element-coloured structured rim:
+                 * its baked white-hot centre survives, while its tiny orange
+                 * edge remains inside the larger element-coloured rim. */
+                SpawnParticle(mote);
+                mote.gradient = NULL;
+                mote.colorStart = WHITE;
+                mote.colorEnd = (Color){255, 255, 255, 0};
+                mote.radius *= 0.38f;
+                mote.render.texture = ParticleSystem_DefaultSprite();
+                mote.render.emissiveBoost = 2.35f;
+                SpawnParticle(mote);
             }
         }
     }

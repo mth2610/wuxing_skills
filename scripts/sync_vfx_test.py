@@ -97,13 +97,7 @@ MANIFEST_CATEGORIES = ["fire", "water", "wood", "metal", "earth", "taiji", "comm
 # way to give an .inl several unrelated entries.
 FIXTURE_PRESET_VARIANTS = {
     "VFX_ComposeTrail": [
-        ("MAIN",     "TRAIL_PRESET_MAIN",     "0.1f"),
-        ("ENERGY",   "TRAIL_PRESET_ENERGY",   "0.0f"),
-        ("BLADE",    "TRAIL_PRESET_BLADE",    "0.1f"),
-        ("WISP",     "TRAIL_PRESET_WISP",     "0.1f"),
-        ("BACKDROP", "TRAIL_PRESET_BACKDROP", "0.15f"),
-        ("SMOKE",    "TRAIL_PRESET_SMOKE",    "0.0f"),
-        ("MAGIC",    "TRAIL_PRESET_MAGIC",    "0.0f"),
+        ("MOTION RIBBON TRAIL", "s_motionRibbonFixturePreset", "0.18f"),
     ],
 }
 
@@ -752,9 +746,11 @@ def source_fixture_entries(inl_fns, excluded):
         # duplicates of the first.
         for label, preset, radius in variants:
             e = dict(base)
-            e["label"] = "%s %s" % (base["label"], label)
-            e["spawn_call"] = ("%s($XFORM, VC_MAT_FIRE, %s, 2.0f, %s)"
-                               % (base["fn"], radius, preset))
+            e["label"] = label if label == "MOTION RIBBON TRAIL" else "%s %s" % (base["label"], label)
+            material = ("MotionRibbonFixtureMaterial(s_motionRibbonFixturePreset)"
+                        if label == "MOTION RIBBON TRAIL" else "VC_MAT_FIRE")
+            e["spawn_call"] = ("%s($XFORM, %s, %s, 2.0f, %s)"
+                               % (base["fn"], material, radius, preset))
             e["_variant"] = preset
             entries.append(e)
     return entries

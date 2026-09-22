@@ -59,6 +59,8 @@ static Color VC_MixColor(Color a, Color b, float t)
 #define VC_RAMP_MAX 16
 static ColorGradient s_vcRamp[VC_RAMP_MAX];
 static bool s_vcRampBuilt[VC_RAMP_MAX];
+static ColorGradient s_vcMoteRamp[VC_RAMP_MAX];
+static bool s_vcMoteRampBuilt[VC_RAMP_MAX];
 
 static const ColorGradient *VC_ElementRamp(VC_MaterialId mat)
 {
@@ -74,6 +76,27 @@ static const ColorGradient *VC_ElementRamp(VC_MaterialId mat)
         s_vcRampBuilt[i] = true;
     }
     return &s_vcRamp[i];
+}
+
+/* Loose motes carry an element's recognisable emission hue, rather than the
+ * ribbon's body-to-head colour journey. A Lightning ribbon may deliberately
+ * bridge violet body into cyan glow, but detached dust that alternates between
+ * those hues reads as mixed elements. Opacity and brightness still animate in
+ * the particle curves; RGB remains the material's glow identity. */
+static const ColorGradient *VC_ElementMoteRamp(VC_MaterialId mat)
+{
+    int i = (int)mat;
+    if (i < 0 || i >= VC_RAMP_MAX)
+        return NULL;
+    if (!s_vcMoteRampBuilt[i])
+    {
+        Color glow = VFX_Material(mat)->glow;
+        ColorGradient_AddStop(&s_vcMoteRamp[i], 0.00f, glow);
+        ColorGradient_AddStop(&s_vcMoteRamp[i], 0.50f, glow);
+        ColorGradient_AddStop(&s_vcMoteRamp[i], 1.00f, glow);
+        s_vcMoteRampBuilt[i] = true;
+    }
+    return &s_vcMoteRamp[i];
 }
 
 // Two unit axes spanning the plane perpendicular to `unitNormal`, which MUST

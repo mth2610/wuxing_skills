@@ -2349,6 +2349,7 @@ void ParticleSystem_SpawnGlow(ParticleConfig core)
 }
 
 static Texture2D s_defaultParticleSprite = {0};
+static Texture2D s_elementSparkSprite = {0};
 static Texture2D s_glowSprite = {0};
 static Texture2D s_sparkCapsuleSprite = {0};
 
@@ -2384,6 +2385,41 @@ Texture2D ParticleSystem_DefaultSprite(void)
     SetTextureFilter(s_defaultParticleSprite, TEXTURE_FILTER_BILINEAR);
     UnloadImage(img);
     return s_defaultParticleSprite;
+}
+
+Texture2D ParticleSystem_ElementSparkSprite(void)
+{
+    if (s_elementSparkSprite.id != 0) return s_elementSparkSprite;
+    const int N = 128;
+    const float half = N * 0.5f;
+    const float radius = 0.84f;
+    const float feather = 0.22f;
+    Image img = GenImageColor(N, N, BLANK);
+    for (int y = 0; y < N; ++y) {
+        for (int x = 0; x < N; ++x) {
+            float px = ((float)x + 0.5f - half) / half;
+            float py = ((float)y + 0.5f - half) / half;
+            float dist = sqrtf(px * px + py * py);
+            float coverage = (radius - dist) / feather;
+            if (coverage < 0.0f) coverage = 0.0f;
+            if (coverage > 1.0f) coverage = 1.0f;
+            float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
+            float core = 1.0f - dist / 0.50f;
+            if (core < 0.0f) core = 0.0f;
+            if (core > 1.0f) core = 1.0f;
+            float whiteCore = core * core * (3.0f - 2.0f * core);
+            /* Neutral value profile: the particle's material supplies hue;
+             * particle_lit.fs promotes the concentrated high-value core to a
+             * restrained white-hot highlight. */
+            unsigned char value = (unsigned char)(72.0f + 183.0f * whiteCore);
+            ImageDrawPixel(&img, x, y,
+                           (Color){value, value, value, (unsigned char)(255.0f * alpha)});
+        }
+    }
+    s_elementSparkSprite = LoadTextureFromImage(img);
+    SetTextureFilter(s_elementSparkSprite, TEXTURE_FILTER_BILINEAR);
+    UnloadImage(img);
+    return s_elementSparkSprite;
 }
 
 Texture2D ParticleSystem_GlowSprite(void)

@@ -49,6 +49,17 @@ static bool ParticleManager_RequiresCpuDynamics(const ParticleConfig *particle)
     return ParticleDynamics_IsEnabled(particle->physics.dynamics);
 }
 
+/* The GPU billboard backend owns one shared draw texture: DefaultSprite.
+ * It cannot silently replace an authored texture without also replacing that
+ * texture's colour language (the default sprite has an orange rim). Keep
+ * custom-texture particles on the CPU path, which binds their texture per
+ * particle and therefore preserves the element palette. */
+static bool ParticleManager_RequiresCpuTexture(const ParticleConfig *particle)
+{
+    return particle->render.texture.id != 0 &&
+           particle->render.texture.id != ParticleSystem_DefaultSprite().id;
+}
+
 /* A textureless billboard selects the shared default material. Its RGB owns
  * the white-core/orange-rim structure; particle authoring still controls alpha
  * and lifetime. Gradients are explicit colour treatments, not defaults. */
@@ -163,6 +174,7 @@ ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d
         bool gpuOK = ParticleManager_GPUCanRun(e->desc.moduleFlags);
         if (ParticleManager_RequiresCpuFacing(&e->desc.particle)) gpuOK = false;
         if (requiresCpuDynamics) gpuOK = false;
+        if (ParticleManager_RequiresCpuTexture(&e->desc.particle)) gpuOK = false;
         VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(&e->desc.particle);
         // The current GPU billboard draw is one additive batch. A named alpha
         // or premultiplied appearance must use the CPU renderer until blend is
@@ -265,7 +277,8 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
         bool appearanceFitsGpu = p->render.appearance == VFX_APPEARANCE_INHERIT ||
                                  appearance.surface == VFX_SURFACE_ADDITIVE;
         if (e->gpu && appearanceFitsGpu && !ParticleManager_RequiresCpuFacing(p) &&
-            !ParticleManager_RequiresCpuDynamics(p)) {
+            !ParticleManager_RequiresCpuDynamics(p) &&
+            !ParticleManager_RequiresCpuTexture(p)) {
             VFXContrastLayer layer = appearance.surface == VFX_SURFACE_ADDITIVE
                                          ? VFX_CONTRAST_EMISSION
                                          : VFX_CONTRAST_BODY;

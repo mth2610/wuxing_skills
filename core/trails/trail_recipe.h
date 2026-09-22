@@ -250,7 +250,15 @@ typedef enum {
     // pass split exists to express, and a bool would have to fan out over six
     // of them.
     TRAIL_PRESET_MAGIC,
-    TRAIL_PRESET_COUNT      // range-check against THIS, never the last by name
+    TRAIL_PRESET_WATER,    // coherent alpha-lit water ribbon; no hot spark shed
+    TRAIL_PRESET_COUNT,    // range-check against THIS, never the last by name
+    /* Public Motion Ribbon vocabulary.  These aliases deliberately share the
+     * same enum type as VFX_ComposeTrail, so callers cannot accidentally mix
+     * two nominal enum types for one recipe table. */
+    MOTION_RIBBON_ENERGY_SILK = TRAIL_PRESET_ENERGY,
+    MOTION_RIBBON_SMOKE_WISP = TRAIL_PRESET_SMOKE,
+    MOTION_RIBBON_EMBER_FILAMENT = TRAIL_PRESET_BLADE,
+    MOTION_RIBBON_WATER_STREAM = TRAIL_PRESET_WATER
 } TrailPresetId;
 
 #endif // CORE_TRAIL_RECIPE_H

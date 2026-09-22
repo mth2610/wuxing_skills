@@ -272,6 +272,7 @@ _Inline helpers / macros only — see header._
   void DrawParticlesEmission(Camera3D camera, Texture2D texture);
   void UnloadParticleSystem(void);
   Texture2D ParticleSystem_DefaultSprite(void);
+  Texture2D ParticleSystem_ElementSparkSprite(void);
   Texture2D ParticleSystem_GlowSprite(void);
   Texture2D ParticleSystem_SparkCapsuleSprite(void);
   void ParticleSystem_SpawnGlow(ParticleConfig core);

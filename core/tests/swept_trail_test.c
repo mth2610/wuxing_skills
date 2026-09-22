@@ -1589,8 +1589,9 @@ static void Test_MirrorStillMatchesSource(void)
     CHECK(FileHas(inl, "r->surface = VFX_SURFACE_ENERGY_RIBBON;"),
           "and a preset still names its surface semantically");
 
-    CHECK(FileHas(inl, "cfg.sampleHz = mot->sampleHz;"),
-          "the fixed-rate sample clock is still asked for (a RATE, not per frame)");
+    CHECK(FileHas(inl, "cfg.spacingMeters") &&
+          FileHas(inl, "cfg.sampleHz = 0.0f;"),
+          "distance spacing, not a frame/sample clock, owns ribbon density");
     CHECK(FileHas(inl, "cfg.teleportSpeed = mot->teleportSpeed;"),
           "a teleport still CUTS the trail instead of bridging the gap");
     CHECK(FileHas(inl, "cfg.idleSpeed = mot->idleSpeed;"),

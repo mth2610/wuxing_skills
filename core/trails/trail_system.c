@@ -1257,6 +1257,7 @@ int SpawnTrailEntity(TrailConfig config)
     if (t->layers == NULL)
         t->layerCount = 0;
     t->uvMetresPerTile = config.uvMetresPerTile;
+    t->spacingMeters = config.spacingMeters;
     t->laidDist = 0.0f;
     t->nodeHomeSpring = config.nodeHomeSpring;
     t->nodeHomeMaxDev = config.nodeHomeMaxDev;
@@ -1418,6 +1419,33 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos)
     t->history[t->historyHead] = newTipPos;
     t->nodeHome[t->historyHead] = newTipPos;
     t->nodeVelocity[t->historyHead] = (Vector3){0, 0, 0};
+    t->position = newTipPos;
+    t->timeSinceLastFollowerUpdate = 0.0f;
+    t->fadeAccumulator = 0.0f;
+}
+
+/* Distance, never frames, owns follower density.  The newest retained node is
+ * the fractional carry: if a frame only travels 0.03 m of a 0.10 m spacing it
+ * stays put, and the next segment completes the 0.10 m interval. */
+static void MotionRibbon_SampleFollower(int id, Vector3 newTipPos)
+{
+    TrailEntity *t = &trailPool[id];
+    if (t->spacingMeters <= 0.0f || t->historyCount == 0)
+    {
+        UpdateFollowerPosition(id, newTipPos);
+        return;
+    }
+    for (;;)
+    {
+        Vector3 anchor = t->history[t->historyHead];
+        float distance = Vector3Distance(anchor, newTipPos);
+        if (distance + 1e-5f < t->spacingMeters)
+            break;
+        UpdateFollowerPosition(id, Vector3Lerp(anchor, newTipPos,
+                                                t->spacingMeters / distance));
+    }
+    /* Keep physics/ownership current even while the render head waits for the
+     * next metre-spaced control point.  No zero-length frame is manufactured. */
     t->position = newTipPos;
     t->timeSinceLastFollowerUpdate = 0.0f;
     t->fadeAccumulator = 0.0f;
@@ -1643,7 +1671,8 @@ void UpdateTrailSystem(float dt)
                 t->prevAttachPos = tip;
                 t->timeSinceLastFollowerUpdate = 0.0f;
             }
-            else if (t->idleSpeed > 0.0f && dt > 1e-6f && (moved / dt) <= t->idleSpeed)
+            else if (t->spacingMeters <= 0.0f && t->idleSpeed > 0.0f &&
+                     dt > 1e-6f && (moved / dt) <= t->idleSpeed)
             {
                 t->prevAttachPos = tip;
             }
@@ -1662,12 +1691,12 @@ void UpdateTrailSystem(float dt)
                     t->sampleAcc -= (float)steps * sampleDt;
                 }
                 for (int n = 1; n <= steps; n++)
-                    UpdateFollowerPosition(i, Vector3Lerp(t->prevAttachPos, tip, (float)n / (float)steps));
+                    MotionRibbon_SampleFollower(i, Vector3Lerp(t->prevAttachPos, tip, (float)n / (float)steps));
                 t->prevAttachPos = tip;
             }
             else
             {
-                UpdateFollowerPosition(i, tip);
+                MotionRibbon_SampleFollower(i, tip);
                 t->prevAttachPos = tip;
             }
         }

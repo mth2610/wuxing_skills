@@ -334,6 +334,12 @@ void UnloadParticleSystem(void);
  * hot core and orange rim; untextured particles receive it automatically. */
 Texture2D ParticleSystem_DefaultSprite(void);
 
+/* Element-tintable counterpart to DefaultSprite. It keeps the same soft round
+ * coverage and concentrated hot core, but its RGB is neutral so an authored
+ * element gradient colours the rim instead of multiplying an orange texture
+ * into a different hue. */
+Texture2D ParticleSystem_ElementSparkSprite(void);
+
 // ─── Đợt E / F1 — lit particles (core/docs/ELDEN_VFX_SPEC.md §0.1b, F1) ──────
 //
 // Flat-shaded smoke can only ever look like a decal OF smoke. Volume reads from

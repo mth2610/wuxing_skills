@@ -3695,3 +3695,14 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
 - **Rule:** until every load-bearing term is packed and tested, AUTO profiles
   route to CPU and GPU_ONLY reports `PARTICLE_EMITTER_UNSUPPORTED_MODULE`.
   Guarded by `core/tests/particle_manager_contract_test.c`.
+
+## A motion ribbon samples distance, never frames (22/09/2026)
+
+- **Symptom:** the same moving transform lays a dense, irregular strip at high
+  FPS and sparse long segments at low FPS; small per-frame motion is discarded.
+- **Cause:** follower history was fed by a sample clock/threshold and replaced
+  its newest point every update, losing the fractional travelled distance.
+- **Rule:** use `TrailConfig.spacingMeters` and append interpolation points at
+  each exact spacing interval. Leave the latest emitted point as the carry,
+  never manufacture a zero-length node at rest, and keep `nodeUV` in travelled
+  arc length. Guarded by `core/tests/motion_ribbon_trail_test.c`.

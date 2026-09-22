@@ -317,6 +317,10 @@ typedef struct
     const TrailLayer *layers;
     int layerCount;
     float uvMetresPerTile;
+    // Spawn-per-unit for transform followers.  When positive, control points
+    // are laid exactly this many metres apart, with the unsatisfied remainder
+    // retained by the last node instead of being discarded each frame.
+    float spacingMeters;
     float nodeHomeSpring;
     float nodeHomeMaxDev;
     float nodeOrderFrac;
@@ -604,6 +608,7 @@ typedef struct
     float helixTurns;
     float helixPhase;
     float uvMetresPerTile;
+    float spacingMeters;
     float laidDist;
     float nodeHomeSpring;
     float nodeHomeMaxDev;
