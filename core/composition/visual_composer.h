@@ -839,6 +839,16 @@ typedef enum {
 
 const char *VFX_SurfaceParticleRingVariant_Name(VFX_SurfaceParticleRingVariant variant);
 
+typedef enum {
+    VFX_IMPACT_DUST_VARIANT_DUST_PUFF = 0,
+    VFX_IMPACT_DUST_VARIANT_DARK_SMOKE_PUFF,
+    VFX_IMPACT_DUST_VARIANT_SMOKE_WISP,
+    VFX_IMPACT_DUST_VARIANT_ENERGY_WISP,
+    VFX_IMPACT_DUST_VARIANT_COUNT
+} VFX_ImpactDustVariant;
+
+const char *VFX_ImpactDustVariant_Name(VFX_ImpactDustVariant variant);
+
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
@@ -854,6 +864,7 @@ void VFX_ComposeGroundDustRing(Vector3 pos, VC_MaterialId matId, float scale, fl
 void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target);
 void VFX_ComposeIceCrystal(Vector3 basePos, int seed);
 void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
+void VFX_ComposeImpactDustVariant(Vector3 pos, VC_MaterialId matId, float scale, float severity01, VFX_ImpactDustVariant variant);
 int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
 void VFX_ComposeLiquidBench(Vector3 center,float spacing,float t01);
 void VFX_ComposeMistVeil(Vector3 pos, float radius, float duration);

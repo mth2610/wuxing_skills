@@ -240,6 +240,8 @@ FIXTURE_SPAWN_OVERRIDES = {
 # separate from persistent spawn overrides: a trigger call has no stored handle
 # and must not be treated as a frame-fed fixture.
 FIXTURE_EVENT_OVERRIDES = {
+    "VFX_ComposeImpactDust":
+        "VFX_ComposeImpactDustVariant($POS, s_impactDustFixtureVariant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_impactDustFixtureVariant)",
     "VFX_ComposeDecal":
         "VFX_ComposeDecalVariant($POS, VC_MAT_FIRE, 1.5f, 0.65f, 1.5f, s_decalFixtureVariant)",
     "VFX_ComposeFireballBurst":
@@ -303,6 +305,11 @@ FIXTURE_METADATA_OVERRIDES = {
     },
     "VFX_ComposeEmberBurst": {
         "label": "[PARTICLE] EMBER BURST",
+        "modules": ["particle"],
+    },
+    "VFX_ComposeImpactDust": {
+        "label": "IMPACT DUST",
+        "category": "common",
         "modules": ["particle"],
     },
     "VFX_ComposeLightningGroundRicochet": {
@@ -1334,7 +1341,7 @@ def gen_fire_function(entries):
                       # generated continuous fixture path after the spawn.
                       "        return false;" if e["fn"] == "VFX_ComposeMeshParticleEmitter" else "        return true;"]
         else:
-            keep_active = e["fn"] in ("VFX_ComposeDecal", "VFX_ComposeSurfaceParticleRing")
+            keep_active = e["fn"] in ("VFX_ComposeDecal", "VFX_ComposeImpactDust", "VFX_ComposeSurfaceParticleRing")
             lines.append(f"    case {idx}: {rexpand(e['trigger_call'])}; return {'false' if keep_active else 'true'};")
     lines += ["    default: return false;", "    }", "// @gen:newfx_fire end"]
     return "\n".join(lines)

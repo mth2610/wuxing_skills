@@ -147,6 +147,7 @@ static VFX_SmokeStyle s_smokeVolumeFixtureStyle = VFX_SMOKE_STYLE_ROIL;
 static VFX_MeshSurfaceAuraVariant s_meshSurfaceAuraFixtureVariant = VFX_MESH_SURFACE_AURA_CYAN;
 static VFX_DecalVariant s_decalFixtureVariant = VFX_DECAL_VARIANT_IMPACT;
 static VFX_SurfaceParticleRingVariant s_surfaceParticleRingFixtureVariant = VFX_SURFACE_PARTICLE_RING_VARIANT_DUST;
+static VFX_ImpactDustVariant s_impactDustFixtureVariant = VFX_IMPACT_DUST_VARIANT_DUST_PUFF;
 
 /* Sandbox-only contract fixture. It deliberately bypasses every production
  * composition so adopting the new EffectMaterial path here cannot migrate or
@@ -338,7 +339,7 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
         s_vfxFixtureHandle[6] = VFX_FlowShield_Spawn(pos, VC_MAT_WATER, 1.5f, 1.0f);
         return true;
     case 9: VFX_ComposeGasShockwave(pos, VC_MAT_VOID, NULL); return true;
-    case 14: VFX_ComposeImpactDust(pos, VC_MAT_EARTH, 1.5f, 0.0f); return true;
+    case 14: VFX_ComposeImpactDustVariant(pos, s_impactDustFixtureVariant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_impactDustFixtureVariant); return false;
     case 16: VFX_ComposeLightningArc(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_LIGHTNING, 0.055f); return true;
     case 17: VFX_ComposeLightningGroundRicochet(pos, VC_MAT_LIGHTNING, 1.0f, posSeed); return true;
     case 18:
@@ -1260,6 +1261,18 @@ void VFXTest_Draw3D(void)
                     1.5f, 1.0f, s_surfaceParticleRingFixtureVariant);
             }
         }
+        else if (VFXTest_IsNewFxNamed("IMPACT DUST"))
+        {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0)
+            {
+                s_impactDustFixtureVariant = (VFX_ImpactDustVariant)(((int)s_impactDustFixtureVariant + direction + VFX_IMPACT_DUST_VARIANT_COUNT) % VFX_IMPACT_DUST_VARIANT_COUNT);
+                TraceLog(LOG_INFO, "IMPACT DUST variant: %s (>, next; <, previous)", VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant));
+                VFX_ComposeImpactDustVariant(s_prefabStartPos,
+                    s_impactDustFixtureVariant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH,
+                    1.5f, 1.0f, s_impactDustFixtureVariant);
+            }
+        }
 
         if (s_testCategory == TEST_CAT_MESH)
         {
@@ -1563,6 +1576,10 @@ void VFXTest_DrawHUD(void)
     else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("SURFACE PARTICLE RING"))
     {
         DrawText(TextFormat("SURFACE PARTICLE RING: %s   > next   < previous", VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant)), 10, 525, 16, SKYBLUE);
+    }
+    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("IMPACT DUST"))
+    {
+        DrawText(TextFormat("IMPACT DUST: %s   > next   < previous", VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant)), 10, 525, 16, SKYBLUE);
     }
     if (!s_hideDebugOverlays)
     {

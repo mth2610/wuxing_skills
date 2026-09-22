@@ -199,7 +199,10 @@
       "lifecycle": "event",
       "_auto": true,
       "type": "oneshot",
-      "trigger_call": "VFX_ComposeImpactDust($POS, VC_MAT_EARTH, 1.5f, $PROG)"
+      "trigger_call": "VFX_ComposeImpactDustVariant($POS, s_impactDustFixtureVariant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_impactDustFixtureVariant)",
+      "modules": [
+        "particle"
+      ]
     },
     {
       "source": "common/vc_light_shaft.inl",

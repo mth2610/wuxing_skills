@@ -4,7 +4,7 @@
 static int Has(const char *path, const char *needle)
 {
     FILE *file = fopen(path, "rb");
-    char text[24000];
+    char text[180000];
     size_t count;
     if (!file) return 0;
     count = fread(text, 1, sizeof(text) - 1, file);
@@ -17,10 +17,21 @@ int main(void)
 {
     int bad = 0;
     const char *dust = "core/composition/common/vc_impact_dust.inl";
+    const char *api = "core/composition/visual_composer.h";
+    bad += !Has(api, "VFX_IMPACT_DUST_VARIANT_DUST_PUFF");
+    bad += !Has(api, "VFX_IMPACT_DUST_VARIANT_ENERGY_WISP");
+    bad += !Has(api, "VFX_ComposeImpactDustVariant");
     bad += !Has(dust, "VFX_SURFACE_SMOKE_PUFF_LIGHT_NIAGARA");
+    bad += !Has(dust, "VFX_SURFACE_SMOKE_PUFF_DARK_NIAGARA");
+    bad += !Has(dust, "VFX_SURFACE_SMOKE_WISPY_NIAGARA");
+    bad += !Has(dust, "VFX_SURFACE_PLASMA_WISPS_NIAGARA");
     bad += !Has(dust, "VFX_SurfaceRegistry_Get(");
-    bad += !Has(dust, ".render.smokeSheet = 1");
-    bad += !Has(dust, ".render.normalTex = s_impactDustNormalTex");
+    bad += !Has(dust, "p.render.smokeSheet = 1");
+    bad += !Has(dust, "p.render.normalTex = s_impactDustNormalTex[style]");
+    bad += !Has(dust, "p.render.unlit = 1");
+    bad += !Has(dust, "VFX_BLEND_ADDITIVE");
+    bad += !Has("scripts/sync_vfx_test.py", "s_impactDustFixtureVariant");
+    bad += !Has("sandbox/vfx_test.c", "IMPACT DUST variant:");
     bad += Has(dust, "ResourceManager_LoadTexture");
     printf("impact dust primary: %s\n", bad ? "FAIL" : "PASS");
     return bad ? 1 : 0;
