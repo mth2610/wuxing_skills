@@ -121,8 +121,8 @@ void VFX_SurfaceImpact_Emit(const VFX_SurfaceImpactEvent *event)
 {
     if (event == NULL || event->scale <= 0.0f) return;
     VFX_ImpactSurface surface = event->surface;
-    if (surface < VFX_IMPACT_SURFACE_GROUND || surface >= VFX_IMPACT_SURFACE_COUNT)
-        surface = VFX_IMPACT_SURFACE_GROUND;
+    if (surface < VFX_IMPACT_SURFACE_EARTH || surface >= VFX_IMPACT_SURFACE_COUNT)
+        surface = VFX_IMPACT_SURFACE_EARTH;
     float severity = Clamp(event->severity01, 0.0f, 1.0f);
     Vector3 normal = event->normal;
     if (Vector3LengthSqr(normal) < 0.0001f) normal = (Vector3){0.0f, 1.0f, 0.0f};
@@ -130,9 +130,12 @@ void VFX_SurfaceImpact_Emit(const VFX_SurfaceImpactEvent *event)
 
     switch (surface) {
     case VFX_IMPACT_SURFACE_WATER:
-        /* FluidImpact owns its own droplet/residue lifecycle. Do not stack an
-         * unrelated dust/decal event on top of a liquid receiver. */
-        VFX_ComposeFluidImpact(event->position);
+        /* Water stays fluid-module-free: a frost body plus cold vapor are
+         * persistent particle/decal primitives, valid from the update phase. */
+        VFX_ComposeDecalVariant(event->position, VC_MAT_ICE, event->scale,
+                                severity, 1.0f, VFX_DECAL_VARIANT_FROST);
+        VFX_ComposeSmokePuff(event->position, VC_MAT_ICE, event->scale,
+                             0.35f + severity * 0.35f);
         return;
 
     case VFX_IMPACT_SURFACE_METAL:
@@ -141,12 +144,14 @@ void VFX_SurfaceImpact_Emit(const VFX_SurfaceImpactEvent *event)
                                 severity, 0.65f, VFX_DECAL_VARIANT_IMPACT);
         return;
 
-    case VFX_IMPACT_SURFACE_STONE:
-        VFX_ComposeImpactDustVariant(event->position, event->material, event->scale,
-                                     severity, VFX_IMPACT_DUST_VARIANT_DARK_SMOKE_PUFF);
-        break;
+    case VFX_IMPACT_SURFACE_EARTH:
+        /* Earth must read as a dry soil expansion, never as the generic
+         * impact carrier that can retain a prior Fire decal in the tester. */
+        VFX_ComposeGroundDustRing(event->position, VC_MAT_EARTH,
+                                  event->scale, severity);
+        return;
 
-    case VFX_IMPACT_SURFACE_GROUND:
+    case VFX_IMPACT_SURFACE_FIRE:
     case VFX_IMPACT_SURFACE_WOOD:
     default:
         VFX_ComposeImpactDustVariant(event->position, event->material, event->scale,

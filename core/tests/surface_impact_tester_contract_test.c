@@ -59,12 +59,14 @@ int main(void)
     failed += !Has(generator, "newfx_surface_impact_selector_state") ||
               !Has(generator, "newfx_surface_impact_selector_input") ||
               !Has(generator, "newfx_surface_impact_selector_ui");
-    failed += !Has(tester, "Ground\", \"Stone\", \"Metal\", \"Wood\", \"Water") ||
+    failed += !Has(tester, "Earth\", \"Fire\", \"Wood\", \"Metal\", \"Water") ||
               !Has(tester, "KEY_PERIOD") || !Has(tester, "KEY_COMMA") ||
               !Has(tester, "VFX_IMPACT_SURFACE_COUNT") ||
               !Has(tester, "VFX_ComposeSurfaceImpact(s_prefabStartPos, s_surfaceImpactFixtureSurface)");
     failed += !Has(tester, "VFX_ComposeSurfaceImpact(pos, s_surfaceImpactFixtureSurface); return false;");
     failed += !Has(tester, "SURFACE IMPACT receiver: %s   > next   , previous");
+    failed += Has(tester, "if (s_surfaceImpactFixtureSurface == VFX_IMPACT_SURFACE_WATER)") ||
+              Has(tester, "VFX_ComposeIceCrystal(s_prefabStartPos,");
     failed += Position(tester, "if (s_isPlayingMesh)\n") >=
               Position(tester, "@gen:newfx_surface_impact_selector_input begin");
 

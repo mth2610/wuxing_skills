@@ -1486,13 +1486,13 @@ def relocate_generated_section(content, key, anchor, before=False, last=False):
 def gen_surface_impact_selector_state():
     return "\n".join([
         "// @gen:newfx_surface_impact_selector_state begin",
-        "static VFX_ImpactSurface s_surfaceImpactFixtureSurface = VFX_IMPACT_SURFACE_GROUND;",
+        "static VFX_ImpactSurface s_surfaceImpactFixtureSurface = VFX_IMPACT_SURFACE_EARTH;",
         "static const char *VFXTest_SurfaceImpactReceiverName(VFX_ImpactSurface surface)",
         "{",
         "    static const char *const names[VFX_IMPACT_SURFACE_COUNT] = {",
-        "        \"Ground\", \"Stone\", \"Metal\", \"Wood\", \"Water\"};",
-        "    if (surface < VFX_IMPACT_SURFACE_GROUND || surface >= VFX_IMPACT_SURFACE_COUNT)",
-        "        return names[VFX_IMPACT_SURFACE_GROUND];",
+        "        \"Earth\", \"Fire\", \"Wood\", \"Metal\", \"Water\"};",
+        "    if (surface < VFX_IMPACT_SURFACE_EARTH || surface >= VFX_IMPACT_SURFACE_COUNT)",
+        "        return names[VFX_IMPACT_SURFACE_EARTH];",
         "    return names[surface];",
         "}",
         "// @gen:newfx_surface_impact_selector_state end",

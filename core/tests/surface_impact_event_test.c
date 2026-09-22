@@ -17,16 +17,23 @@ int main(void)
     int failed = 0;
     failed += !Has("core/composition/visual_composer.h", "VFX_ImpactSurface") ||
               !Has("core/composition/visual_composer.h", "VFX_SurfaceImpact_Emit");
-    failed += !Has("core/composition/common/vc_impact_dust.inl", "case VFX_IMPACT_SURFACE_GROUND:") ||
-              !Has("core/composition/common/vc_impact_dust.inl", "case VFX_IMPACT_SURFACE_STONE:") ||
+    failed += !Has("core/composition/common/vc_impact_dust.inl", "case VFX_IMPACT_SURFACE_EARTH:") ||
+              !Has("core/composition/common/vc_impact_dust.inl", "case VFX_IMPACT_SURFACE_FIRE:") ||
               !Has("core/composition/common/vc_impact_dust.inl", "case VFX_IMPACT_SURFACE_METAL:") ||
               !Has("core/composition/common/vc_impact_dust.inl", "case VFX_IMPACT_SURFACE_WOOD:") ||
               !Has("core/composition/common/vc_impact_dust.inl", "case VFX_IMPACT_SURFACE_WATER:");
-    failed += !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeFluidImpact(event->position)") ||
+    failed += !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeGroundDustRing(event->position, VC_MAT_EARTH,") ||
+              !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeDecalVariant(event->position, VC_MAT_ICE,") ||
+              !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeSmokePuff(event->position, VC_MAT_ICE,") ||
               !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeContactSpark") ||
-              !Has("core/composition/common/vc_impact_dust.inl", "VFX_IMPACT_DUST_VARIANT_DARK_SMOKE_PUFF") ||
               !Has("core/composition/common/vc_impact_dust.inl", "VFX_IMPACT_DUST_VARIANT_DUST_PUFF") ||
               !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeDecalVariant");
+    failed += Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeFluidImpact") ||
+              Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeIceCrystal");
+    failed += !Has("core/composition/common/vc_surface_impact.inl", "case VFX_IMPACT_SURFACE_METAL: return VC_MAT_METAL;") ||
+              !Has("core/composition/common/vc_surface_impact.inl", "case VFX_IMPACT_SURFACE_WOOD: return VC_MAT_WOOD;") ||
+              !Has("core/composition/common/vc_surface_impact.inl", "case VFX_IMPACT_SURFACE_WATER: return VC_MAT_ICE;") ||
+              !Has("core/composition/common/vc_surface_impact.inl", "default: return VC_MAT_EARTH;");
     printf("surface impact event: %s\n", failed ? "FAIL" : "PASS");
     return failed ? 1 : 0;
 }

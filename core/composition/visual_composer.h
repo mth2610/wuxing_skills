@@ -852,10 +852,10 @@ const char *VFX_ImpactDustVariant_Name(VFX_ImpactDustVariant variant);
 /* Receiver vocabulary is deliberately supplied by gameplay/collision. The map
  * sampler owns geometry and normals, not a semantic material classification. */
 typedef enum {
-    VFX_IMPACT_SURFACE_GROUND = 0,
-    VFX_IMPACT_SURFACE_STONE,
-    VFX_IMPACT_SURFACE_METAL,
+    VFX_IMPACT_SURFACE_EARTH = 0,
+    VFX_IMPACT_SURFACE_FIRE,
     VFX_IMPACT_SURFACE_WOOD,
+    VFX_IMPACT_SURFACE_METAL,
     VFX_IMPACT_SURFACE_WATER,
     VFX_IMPACT_SURFACE_COUNT
 } VFX_ImpactSurface;
