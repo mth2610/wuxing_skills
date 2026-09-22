@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 import taichi as ti
 import numpy as np
 from PIL import Image

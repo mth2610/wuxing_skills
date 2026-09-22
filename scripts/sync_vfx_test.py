@@ -151,7 +151,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeEmberBurst":        ("event",   "burst",      "oneshot"),
     "VFX_ComposeGroundWave":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeImpactDust":         ("event",   "burst",      "oneshot"),
-    "VFX_ComposeGroundDustRing":     ("event",   "burst",      "oneshot"),
+    "VFX_ComposeSurfaceParticleRing": ("event", "burst",      "oneshot"),
     "VFX_ComposeContactSpark":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeContactSparkMode":   ("event",   "burst",      "oneshot"),
     "VFX_ComposeShieldShell":        ("emitter", "persistent", "persistent"),
@@ -248,8 +248,8 @@ FIXTURE_EVENT_OVERRIDES = {
     # population so the bench reveals ribbon length, arc and bounce quality.
     "VFX_ComposeEmberBurst":
         "VFX_ComposeEmberBurst($POS, (Vector3){0.0f, 1.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 1.0f)",
-    "VFX_ComposeGroundDustRing":
-        "VFX_ComposeGroundDustRing($POS, VC_MAT_EARTH, 1.5f, 1.0f)",
+    "VFX_ComposeSurfaceParticleRing":
+        "VFX_ComposeSurfaceParticleRing($POS, s_surfaceParticleRingFixtureVariant == VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_surfaceParticleRingFixtureVariant)",
     "VFX_ComposeContactSparkMode":
         "VFX_ComposeContactSparkMode($POS, VC_MAT_FIRE, 1.5f, $PROG, CONTACT_SPARK_CENTRIFUGAL)",
     # Long gameplay-scale run: character socket five metres behind the click
@@ -315,6 +315,11 @@ FIXTURE_METADATA_OVERRIDES = {
     "VFX_ComposeMeshParticleEmitter": {
         "label": "MESH PARTICLE EMITTER",
         "category": "common",
+    },
+    "VFX_ComposeSurfaceParticleRing": {
+        "label": "SURFACE PARTICLE RING",
+        "category": "common",
+        "modules": ["particle"],
     },
     "VFX_DrawMeshSurfaceAura": {
         "label": "MESH SURFACE AURA",
@@ -401,7 +406,7 @@ def infer_mat_id(fn_name):
     # Contact dust describes displaced ground, not the element that hit it.
     # A generic Common fixture used FIRE here, turning the neutral dust test
     # orange and hiding the actual texture/material read.
-    if fn_name in ("VFX_ComposeImpactDust", "VFX_ComposeGroundDustRing"):
+    if fn_name in ("VFX_ComposeImpactDust", "VFX_ComposeSurfaceParticleRing"):
         return "VC_MAT_EARTH"
     cat = infer_category(fn_name)
     if cat == "common":
@@ -1329,7 +1334,7 @@ def gen_fire_function(entries):
                       # generated continuous fixture path after the spawn.
                       "        return false;" if e["fn"] == "VFX_ComposeMeshParticleEmitter" else "        return true;"]
         else:
-            keep_active = e["fn"] == "VFX_ComposeDecal"
+            keep_active = e["fn"] in ("VFX_ComposeDecal", "VFX_ComposeSurfaceParticleRing")
             lines.append(f"    case {idx}: {rexpand(e['trigger_call'])}; return {'false' if keep_active else 'true'};")
     lines += ["    default: return false;", "    }", "// @gen:newfx_fire end"]
     return "\n".join(lines)

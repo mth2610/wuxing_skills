@@ -829,6 +829,16 @@ typedef enum {
 
 const char *VFX_DecalVariant_Name(VFX_DecalVariant variant);
 
+typedef enum {
+    VFX_SURFACE_PARTICLE_RING_VARIANT_DUST = 0,
+    VFX_SURFACE_PARTICLE_RING_VARIANT_SMOKE_PUFF_DARK,
+    VFX_SURFACE_PARTICLE_RING_VARIANT_SMOKE_WISP,
+    VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP,
+    VFX_SURFACE_PARTICLE_RING_VARIANT_COUNT
+} VFX_SurfaceParticleRingVariant;
+
+const char *VFX_SurfaceParticleRingVariant_Name(VFX_SurfaceParticleRingVariant variant);
+
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
@@ -854,6 +864,7 @@ int VFX_ComposeRefParticles(Vector3 pos, float scale);
 int VFX_ComposeShieldShell(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 int VFX_ComposeSmokeTrail(const Matrix *followTransform, VC_MaterialId mat, float radius, float lifetime, VFX_ColumnKind kind, bool funnel);
 void VFX_ComposeStonePillar(Vector3 basePos, float progress);
+void VFX_ComposeSurfaceParticleRing(Vector3 pos, VC_MaterialId matId, float scale, float severity01, VFX_SurfaceParticleRingVariant variant);
 void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);

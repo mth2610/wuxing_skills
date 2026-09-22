@@ -32,7 +32,7 @@
 #include "vc_ref_particle.inl"
 #include "vc_mist_veil.inl"
 #include "vc_ember_burst.inl"
-#include "vc_ground_dust_ring.inl"
+#include "vc_surface_particle_ring.inl"
 // @gen:common_includes end
 
 // Pool-owned one-shot primitive; its public API is VFX_LightningArc_* rather

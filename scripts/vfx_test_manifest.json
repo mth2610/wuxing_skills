@@ -158,17 +158,6 @@
       "kill_fn": "VFX_KillGasVortex"
     },
     {
-      "source": "common/vc_ground_dust_ring.inl",
-      "fn": "VFX_ComposeGroundDustRing",
-      "label": "GROUND DUST RING",
-      "category": "earth",
-      "fixture": "burst",
-      "lifecycle": "event",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeGroundDustRing($POS, VC_MAT_EARTH, 1.5f, 1.0f)"
-    },
-    {
       "source": "common/vc_ground_wave.inl",
       "fn": "VFX_ComposeGroundWave",
       "label": "GROUND WAVE",
@@ -404,6 +393,20 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeSmokeVolume($POS, 1.5f, 1.0f, s_smokeVolumeFixtureStyle)",
+      "modules": [
+        "particle"
+      ]
+    },
+    {
+      "source": "common/vc_surface_particle_ring.inl",
+      "fn": "VFX_ComposeSurfaceParticleRing",
+      "label": "SURFACE PARTICLE RING",
+      "category": "common",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeSurfaceParticleRing($POS, s_surfaceParticleRingFixtureVariant == VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_surfaceParticleRingFixtureVariant)",
       "modules": [
         "particle"
       ]
