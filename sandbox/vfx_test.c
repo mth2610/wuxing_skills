@@ -149,6 +149,7 @@ static VFX_DecalVariant s_decalFixtureVariant = VFX_DECAL_VARIANT_IMPACT;
 static VFX_SurfaceParticleRingVariant s_surfaceParticleRingFixtureVariant = VFX_SURFACE_PARTICLE_RING_VARIANT_DUST;
 static VFX_ImpactDustVariant s_impactDustFixtureVariant = VFX_IMPACT_DUST_VARIANT_DUST_PUFF;
 static TrailPresetId s_motionRibbonFixturePreset = MOTION_RIBBON_ENERGY_SILK;
+static VFX_FlameStyle s_ambientFireFixtureStyle = VFX_FLAME_STYLE_NIAGARA_ROIL;
 // @gen:newfx_surface_impact_selector_state begin
 static VFX_ImpactSurface s_surfaceImpactFixtureSurface = VFX_IMPACT_SURFACE_EARTH;
 static const char *VFXTest_SurfaceImpactReceiverName(VFX_ImpactSurface surface)
@@ -1299,6 +1300,15 @@ void VFXTest_Draw3D(void)
                     1.5f, 1.0f, s_impactDustFixtureVariant);
             }
         }
+        else if (VFXTest_IsNewFxNamed("AMBIENT FIRE"))
+        {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0)
+            {
+                s_ambientFireFixtureStyle = (VFX_FlameStyle)(((int)s_ambientFireFixtureStyle + direction + 5) % 5);
+                TraceLog(LOG_INFO, "AMBIENT FIRE style: %s (>, next; <, previous)", VFX_FlameStyle_Name(s_ambientFireFixtureStyle));
+            }
+        }
 
 
 // @gen:newfx_surface_impact_selector_input begin
@@ -1542,6 +1552,10 @@ void VFXTest_DrawHUD(void)
     else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("IMPACT DUST"))
     {
         DrawText(TextFormat("IMPACT DUST: %s   > next   < previous", VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant)), 10, 525, 16, SKYBLUE);
+    }
+    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("AMBIENT FIRE"))
+    {
+        DrawText(TextFormat("AMBIENT FIRE: %s   > next   < previous", VFX_FlameStyle_Name(s_ambientFireFixtureStyle)), 10, 525, 16, ORANGE);
     }
 
     // @gen:newfx_surface_impact_selector_ui begin

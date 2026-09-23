@@ -1,6 +1,6 @@
 # Cẩm Nang Quản Lý Thư Mục Assets VFX (`assets/textures/vfx/`)
 
-Thư mục này chứa 44 texture/flipbook trích xuất từ Unreal Engine 5 Niagara VFX. Các frame đã được chuẩn hóa trục $Y$ theo từng cell. Tên file giữ lại một số tên legacy; metadata thực bên dưới mới là nguồn đúng cho grid và kích thước.
+Thư mục này chứa texture/flipbook trích xuất từ Unreal Engine 5 Niagara VFX. Các frame đã được chuẩn hóa trục $Y$ theo từng cell. Tên file giữ lại một số tên legacy; metadata thực trong `catalog.json` mới là nguồn đúng cho grid và kích thước.
 
 ---
 

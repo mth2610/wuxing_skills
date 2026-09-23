@@ -163,6 +163,8 @@ typedef enum {
 // Unified / Generalized API
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
 void VFX_ComposeAmbientFire(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
+void VFX_ComposeAmbientFireEx(Vector3 pos, VC_MaterialId matId, float scale, float intensity, VFX_FlameStyle style);
+const char *VFX_FlameStyle_Name(VFX_FlameStyle style);
 void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
 // One-shot NE_Explosion fireball layer. It is intentionally separate from the
 // rate-based ambient-fire emitter: one call creates the complete 16-24 puff burst.

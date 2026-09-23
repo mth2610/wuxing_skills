@@ -908,11 +908,13 @@ particle_contacts:
         for (int c = 0; c < p->onCollisionCount; c++)
         {
           ParticleConfig tempColl = p->onCollisionConfig;
-          tempColl.position = (Vector3){p->x, p->collisionFloorY + 0.01f, p->z};
+          tempColl.position = (Vector3){p->x, p->collisionFloorY + 0.005f, p->z};
           float ang = (Random01() * 360.0f) * DEG2RAD;
-          float spd = (Random01() * 2.0f + 1.0f);
+          float baseSpd = Vector3Length(tempColl.velocity);
+          float spd = (baseSpd > 0.0f) ? (baseSpd * (0.3f + 0.7f * Random01()))
+                                       : (Random01() * 0.4f + 0.1f);
           tempColl.velocity.x += cosf(ang) * spd;
-          tempColl.velocity.y += (Random01() * 2.5f + 1.0f);
+          tempColl.velocity.y += (Random01() * 0.25f + 0.05f);
           tempColl.velocity.z += sinf(ang) * spd;
           SpawnParticle(tempColl);
         }

@@ -24,7 +24,7 @@ int main(void)
               !Has("core/composition/common/vc_impact_dust.inl", "case VFX_IMPACT_SURFACE_WATER:");
     failed += !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeGroundDustRing(event->position, VC_MAT_EARTH,") ||
               !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeDecalVariant(event->position, VC_MAT_ICE,") ||
-              !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeSmokePuff(event->position, VC_MAT_ICE,") ||
+              !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeImpactDustVariant(event->position, VC_MAT_ICE,") ||
               !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeContactSpark") ||
               !Has("core/composition/common/vc_impact_dust.inl", "VFX_IMPACT_DUST_VARIANT_DUST_PUFF") ||
               !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeDecalVariant");

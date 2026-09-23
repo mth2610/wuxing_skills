@@ -75,11 +75,20 @@ void VFX_ComposeImpactDustVariant(Vector3 pos, VC_MaterialId matId, float scale,
         const float angle = Random01() * 2.0f * PI;
         const float support = (i == 0) ? 1.0f : Math_Mix(0.48f, 0.86f, Random01());
         const float speed = Math_Mix(0.10f, energy ? 1.10f : 0.62f, Random01()) * scale * support;
-        const Color base = energy ? (Color){150, 220, 255, 124} : (Color){218, 210, 192, 78};
-        Color tint = {(unsigned char)((base.r * 9 + mat->body.r) / 10),
-                      (unsigned char)((base.g * 9 + mat->body.g) / 10),
-                      (unsigned char)((base.b * 9 + mat->body.b) / 10),
-                      energy ? 92 : 78};
+        Color base;
+        Color tint;
+        if (energy) {
+            Color glow = mat ? mat->glow : (Color){150, 220, 255, 255};
+            base = (Color){(unsigned char)((glow.r * 7 + 240 * 3) / 10),
+                           (unsigned char)((glow.g * 7 + 250 * 3) / 10),
+                           (unsigned char)((glow.b * 7 + 255 * 3) / 10), 124};
+            tint = (Color){base.r, base.g, base.b, 92};
+        } else {
+            base = (Color){218, 210, 192, 78};
+            tint = (Color){(unsigned char)((base.r * 9 + mat->body.r) / 10),
+                           (unsigned char)((base.g * 9 + mat->body.g) / 10),
+                           (unsigned char)((base.b * 9 + mat->body.b) / 10), 78};
+        }
         ParticleConfig p = {
             .position = {pos.x + cosf(angle) * Random01() * 0.24f * scale,
                          pos.y + 0.035f * scale,
@@ -130,12 +139,13 @@ void VFX_SurfaceImpact_Emit(const VFX_SurfaceImpactEvent *event)
 
     switch (surface) {
     case VFX_IMPACT_SURFACE_WATER:
-        /* Water stays fluid-module-free: a frost body plus cold vapor are
-         * persistent particle/decal primitives, valid from the update phase. */
+        /* Water surface impact represents ICE/FROST: Liquid water is handled
+         * exclusively by the Screen Space Fluid (SSF) simulation module.
+         * Here we spawn frost crack decals and cold crystalline vapor wisps. */
         VFX_ComposeDecalVariant(event->position, VC_MAT_ICE, event->scale,
                                 severity, 1.0f, VFX_DECAL_VARIANT_FROST);
-        VFX_ComposeSmokePuff(event->position, VC_MAT_ICE, event->scale,
-                             0.35f + severity * 0.35f);
+        VFX_ComposeImpactDustVariant(event->position, VC_MAT_ICE, event->scale,
+                                     severity, VFX_IMPACT_DUST_VARIANT_ENERGY_WISP);
         return;
 
     case VFX_IMPACT_SURFACE_METAL:
@@ -145,22 +155,33 @@ void VFX_SurfaceImpact_Emit(const VFX_SurfaceImpactEvent *event)
         return;
 
     case VFX_IMPACT_SURFACE_EARTH:
-        /* Earth must read as a dry soil expansion, never as the generic
-         * impact carrier that can retain a prior Fire decal in the tester. */
+        /* Earth reads as dry soil expansion paired with surface impact decal. */
         VFX_ComposeGroundDustRing(event->position, VC_MAT_EARTH,
                                   event->scale, severity);
+        VFX_ComposeImpactDustVariant(event->position, event->material, event->scale,
+                                     severity, VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
+        VFX_ComposeDecalVariant(event->position, event->material, event->scale,
+                                severity, 1.0f, VFX_DECAL_VARIANT_IMPACT);
         return;
 
     case VFX_IMPACT_SURFACE_FIRE:
+        /* Fire impact: scorching mark + dark smoke puff + ember burst */
+        VFX_ComposeDecalVariant(event->position, event->material, event->scale,
+                                severity, 1.0f, VFX_DECAL_VARIANT_SCORCH);
+        VFX_ComposeImpactDustVariant(event->position, event->material, event->scale,
+                                     severity, VFX_IMPACT_DUST_VARIANT_DARK_SMOKE_PUFF);
+        if (severity >= 0.35f) {
+            VFX_ComposeEmberBurst(event->position, normal, event->material,
+                                  event->scale, severity);
+        }
+        return;
+
     case VFX_IMPACT_SURFACE_WOOD:
     default:
         VFX_ComposeImpactDustVariant(event->position, event->material, event->scale,
                                      severity, VFX_IMPACT_DUST_VARIANT_DUST_PUFF);
-        break;
+        VFX_ComposeDecalVariant(event->position, event->material, event->scale,
+                                severity, 1.0f, VFX_DECAL_VARIANT_IMPACT);
+        return;
     }
-    VFX_ComposeDecalVariant(event->position, event->material, event->scale,
-                            severity, 1.0f, VFX_DECAL_VARIANT_IMPACT);
-    if (event->material == VC_MAT_FIRE && severity >= 0.45f)
-        VFX_ComposeEmberBurst(event->position, normal, event->material,
-                              event->scale, severity);
 }

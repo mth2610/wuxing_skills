@@ -753,7 +753,8 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .radiusCurve = &s_fvolGrow,
                 .forceField = activeField,
                 .windInfluence = 0.65f,
-                .render.volumeSheet = 2,
+                .render.volumeSheet = (useRoil || useFireball) ? 4 : 2,
+                .render.normalTex = useRoil ? s_fvolRoilNormalTex : (useFireball ? s_fvolFireballNormalTex : (Texture2D){0}),
                 .render.rampLUT = ramp,
                 .render.heatGain = s_fvolHeatGain,
                 .render.emissiveBoost = s_fvolEmissive,
@@ -1109,13 +1110,34 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float
     VFX_FlameEmitter_SetIntensity(legacyHandle, intensity);
 }
 
+const char *VFX_FlameStyle_Name(VFX_FlameStyle style)
+{
+    static const char *const names[5] = {
+        "NIAGARA ROIL", "VOLUME PUFF", "COLUMN", "PUFF", "FIREBALL"
+    };
+    int s = (int)style;
+    if (s < 0 || s >= 5) s = 0;
+    return names[s];
+}
+
+void VFX_ComposeAmbientFireEx(Vector3 pos, VC_MaterialId matId, float scale, float intensity, VFX_FlameStyle style)
+{
+    static int legacyHandle = -1;
+    if (legacyHandle < 0 || !s_fvolEmitters[legacyHandle].active)
+        legacyHandle = VFX_FlameEmitter_SpawnEx(pos, matId, scale, intensity, style);
+    s_fvolEmitters[legacyHandle].legacyFeedAge = 0.0f;
+    s_fvolEmitters[legacyHandle].style = style;
+    VFX_FlameEmitter_SetTransform(legacyHandle, pos, (Vector3){0});
+    VFX_FlameEmitter_SetIntensity(legacyHandle, intensity);
+}
+
 // Unified / Generalized Public APIs
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity)
 {
-    VFX_ComposeFlameVolume(pos, matId, scale, intensity);
+    VFX_ComposeAmbientFireEx(pos, matId, scale, intensity, VFX_FLAME_STYLE_DEFAULT);
 }
 
 void VFX_ComposeAmbientFire(Vector3 pos, VC_MaterialId matId, float scale, float intensity)
 {
-    VFX_ComposeFlameVolume(pos, matId, scale, intensity);
+    VFX_ComposeAmbientFireEx(pos, matId, scale, intensity, VFX_FLAME_STYLE_DEFAULT);
 }

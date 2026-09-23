@@ -11,8 +11,8 @@
 #define EMBER_BURST_MIN_COUNT 30
 #define EMBER_BURST_MAX_COUNT 60
 #define EMBER_BURST_CONE_RAD 1.15f
-#define EMBER_BURST_BOUNCE 0.45f
-#define EMBER_BURST_SECONDARIES 2
+#define EMBER_BURST_BOUNCE 0.35f
+#define EMBER_BURST_SECONDARIES 1
 
 static ForceField s_emberBurstField;
 static bool s_emberBurstReady = false;
@@ -38,17 +38,17 @@ static void EmberBurst_Init(void)
         .noiseScale = 2.0f,
     });
     s_emberBurstSecondary = (ParticleConfig){
-        .radius = 0.010f,
-        .lifetime = 0.45f,
+        .radius = 0.006f,
+        .lifetime = 0.25f,
         .colorStart = WHITE,
-        .colorEnd = (Color){255, 255, 255, 0},
+        .colorEnd = (Color){255, 140, 40, 0},
         .physics.collisionEnabled = false,
         .render.texture = ParticleSystem_SparkCapsuleSprite(),
         .render.blendMode = VFX_BLEND_ADDITIVE,
         .render.unlit = 1,
-        .render.emissiveBoost = 1.8f,
-        .render.stretchStrength = 0.10f,
-        .render.stretchMinSpeed = 1.0f,
+        .render.emissiveBoost = 4.0f,
+        .render.stretchStrength = 0.08f,
+        .render.stretchMinSpeed = 0.5f,
         .render.facingMode = VFX_FACING_VELOCITY,
         .render.trailLength = 0,
     };
@@ -93,17 +93,17 @@ void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal,
             .physics.dynamics = &s_emberBurstDynamics,
             .physics.initialImpulseNs = Vector3Scale(velocity, 0.25f),
             .colorStart = WHITE,
-            .colorEnd = (Color){255, 255, 255, 0},
+            .colorEnd = (Color){255, 120, 20, 0},
             .physics.collisionEnabled = true,
             .physics.collisionElasticity = EMBER_BURST_BOUNCE,
             .physics.collisionFloorY = pos.y,
             .physics.onCollisionEmit = &s_emberBurstSecondary,
             .physics.onCollisionEmitCount = EMBER_BURST_SECONDARIES,
             .render.texture = sparkTex,
-            .render.blendMode = VFX_BLEND_ALPHA,
+            .render.blendMode = VFX_BLEND_ADDITIVE,
             .render.unlit = 1,
             .render.contrastProfile = VFX_CONTRAST_FIRE,
-            .render.emissiveBoost = 2.2f,
+            .render.emissiveBoost = 4.5f,
             .render.stretchStrength = 0.10f,
             .render.stretchMinSpeed = 1.0f,
             .render.facingMode = VFX_FACING_VELOCITY,

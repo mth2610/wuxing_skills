@@ -70,7 +70,7 @@ int main(void)
           FileHas(src, ".render.trailLength = 0") &&
           !FileHas(src, ".render.trailColorStart"),
           "the primary uses Niagara's analytic sprite vocabulary, not an orange wire ribbon");
-    CHECK(FileHas(src, ".render.blendMode = VFX_BLEND_ALPHA") &&
+    CHECK(FileHas(src, ".render.blendMode = VFX_BLEND_ADDITIVE") &&
           FileHas(src, ".render.stretchStrength = 0.10f") &&
           FileHas(src, ".render.stretchMinSpeed = 1.0f") &&
           FileHas(src, ".render.facingMode = VFX_FACING_VELOCITY"),

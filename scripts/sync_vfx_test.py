@@ -141,6 +141,7 @@ LIFECYCLE_SPECS = {
     # followTransform like VFX_ComposeVolumeTrail, unlike the column above.
     "VFX_ComposeSmokeTrail":         ("trail",   "follower",   "continuous"),
     "VFX_ComposeDebrisShards":       ("event",   "burst",      "oneshot"),
+    "VFX_ComposeDetonationBurst":    ("event",   "burst",      "oneshot"),
     "VFX_ComposeDissolveExit":       ("draw",    "timed",      "continuous"),
     "VFX_ComposeEmberBurst":        ("event",   "burst",      "oneshot"),
     "VFX_ComposeGroundWave":         ("draw",    "timed",      "continuous"),
@@ -241,6 +242,8 @@ FIXTURE_EVENT_OVERRIDES = {
         "VFX_ComposeImpactDustVariant($POS, s_impactDustFixtureVariant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_impactDustFixtureVariant)",
     "VFX_ComposeDecal":
         "VFX_ComposeDecalVariant($POS, VC_MAT_FIRE, 1.5f, 0.65f, 1.5f, s_decalFixtureVariant)",
+    "VFX_ComposeDetonationBurst":
+        "VFX_ComposeDetonationBurstVariant($POS, VC_MAT_FIRE, 1.5f, 1.0f, s_detonationFixtureVariant)",
     "VFX_ComposeFireballBurst":
         "VFX_ComposeFireballBurst($POS, VC_MAT_FIRE, 1.5f, 1.0f)",
     # Severity is intensity, not timeline progress. Exercise the full authored

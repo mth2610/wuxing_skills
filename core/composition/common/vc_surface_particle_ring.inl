@@ -90,11 +90,20 @@ void VFX_ComposeSurfaceParticleRing(Vector3 pos, VC_MaterialId matId, float scal
         const float angle = ((float)i + Random01() * 0.55f) / (float)count * 2.0f * PI;
         const float radialJitter = Math_Mix(0.78f, 1.08f, Random01());
         const float speed = Math_Mix(3.4f, 5.8f, Random01()) * scale;
-        const Color base = energy ? (Color){150, 220, 255, 156} : (Color){210, 202, 186, 112};
-        Color tint = {(unsigned char)((base.r * 8 + mat->body.r * 2) / 10),
-                      (unsigned char)((base.g * 8 + mat->body.g * 2) / 10),
-                      (unsigned char)((base.b * 8 + mat->body.b * 2) / 10),
-                      energy ? 92 : 56};
+        Color base;
+        Color tint;
+        if (energy) {
+            Color glow = mat ? mat->glow : (Color){150, 220, 255, 255};
+            base = (Color){(unsigned char)((glow.r * 7 + 240 * 3) / 10),
+                           (unsigned char)((glow.g * 7 + 250 * 3) / 10),
+                           (unsigned char)((glow.b * 7 + 255 * 3) / 10), 156};
+            tint = (Color){base.r, base.g, base.b, 92};
+        } else {
+            base = (Color){210, 202, 186, 112};
+            tint = (Color){(unsigned char)((base.r * 8 + mat->body.r * 2) / 10),
+                           (unsigned char)((base.g * 8 + mat->body.g * 2) / 10),
+                           (unsigned char)((base.b * 8 + mat->body.b * 2) / 10), 56};
+        }
         ParticleConfig p = {
             .position = {pos.x + cosf(angle) * initialRingRadius * radialJitter,
                          pos.y + 0.08f * scale,
