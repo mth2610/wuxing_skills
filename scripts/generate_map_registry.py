@@ -30,6 +30,9 @@ def main():
                             has_ground_height = f"GetGroundHeight{prefix}Map" in content
                             has_ground_surface = f"SampleGroundSurface{prefix}Map" in content
                             has_draw_transparent = f"DrawTransparent{prefix}Map" in content
+                            has_water_info = f"GetWaterInfo{prefix}Map" in content
+                            has_set_water_interactor = f"SetWaterInteractor{prefix}Map" in content
+                            has_add_water_ripple = f"AddWaterRipple{prefix}Map" in content
 
                             generated_maps.append({
                                 "prefix": prefix,
@@ -39,7 +42,10 @@ def main():
                                 "has_unload": has_unload,
                                 "has_ground_height": has_ground_height,
                                 "has_ground_surface": has_ground_surface,
-                                "has_draw_transparent": has_draw_transparent
+                                "has_draw_transparent": has_draw_transparent,
+                                "has_water_info": has_water_info,
+                                "has_set_water_interactor": has_set_water_interactor,
+                                "has_add_water_ripple": has_add_water_ripple
                             })
                             
     gen_path = os.path.join(root_dir, "core", "maps_generated.h")
@@ -61,6 +67,11 @@ def main():
             ground_surface_fn = f"SampleGroundSurface{m['prefix']}Map" if m["has_ground_surface"] else "NULL"
             draw_transparent_fn = f"DrawTransparent{m['prefix']}Map" if m["has_draw_transparent"] else "NULL"
             out.write(f'    MapManager_RegisterEx("{m["name"]}", Init{m["prefix"]}Map, {update_fn}, Draw{m["prefix"]}Map, {unload_fn}, {ground_height_fn}, {ground_surface_fn}, {draw_transparent_fn});\n')
+            if m["has_water_info"]:
+                wi_fn = f"GetWaterInfo{m['prefix']}Map"
+                swi_fn = f"SetWaterInteractor{m['prefix']}Map" if m["has_set_water_interactor"] else "NULL"
+                awr_fn = f"AddWaterRipple{m['prefix']}Map" if m["has_add_water_ripple"] else "NULL"
+                out.write(f'    MapManager_RegisterWaterHooks("{m["name"]}", {wi_fn}, {swi_fn}, {awr_fn});\n')
         out.write("}\n\n")
         out.write("#endif // MAPS_GENERATED_H\n")
         

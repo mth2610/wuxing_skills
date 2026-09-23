@@ -1027,6 +1027,10 @@ int main(int argc, char **argv) {
         static float vfxCameraAngle = 0.0f;
         static float vfxCamDist = 8.4f;
 
+        static float s_vfxPlayerVelY = 0.0f;
+        static bool s_vfxPlayerJumping = false;
+        static float s_wadingStepTimer = 0.0f;
+
         // Most convenient default for testing: pivot at the arena centre (root
         // CLAUDE.md), not wherever the player last stood — fixtures spawn at
         // this pivot (vfx_test.c: s_prefabStartPos = playerPos), so this is
@@ -1035,6 +1039,8 @@ int main(int argc, char **argv) {
         if (!renderVFXMode && (enteredVFXTester || IsKeyPressed(KEY_R))) {
             player.position = (Vector3){6.0f, 0.0f, 4.4f};
             player.position.y = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
+            s_vfxPlayerVelY = 0.0f;
+            s_vfxPlayerJumping = false;
             vfxCameraAngle = 0.6f;
             vfxCamDist = 6.0f;
         }
@@ -1055,6 +1061,21 @@ int main(int argc, char **argv) {
             }
         }
 
+        float groundY = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
+        float waterSurfaceY = 0.0f;
+        float waterDepth = 0.0f;
+        bool inWater = MapManager_GetWaterInfoAt(player.position.x, player.position.z, &waterSurfaceY, &waterDepth);
+
+        // Nút khoảng trắng (Spacebar) để nhảy trong màn hình VFX Tester
+        if (IsKeyPressed(KEY_SPACE) && !s_vfxPlayerJumping && player.position.y <= groundY + 0.05f) {
+            s_vfxPlayerVelY = 5.8f;
+            s_vfxPlayerJumping = true;
+            CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_KICK, 0.40f);
+            if (inWater && player.position.y < waterSurfaceY + 0.15f) {
+                MapManager_AddWaterRipple(player.position, 3.2f, 0.85f);
+            }
+        }
+
         float inputX = 0.0f;
         float inputZ = 0.0f;
         if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) inputZ -= 1.0f;
@@ -1063,6 +1084,8 @@ int main(int argc, char **argv) {
         if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) inputX += 1.0f;
 
         bool moved = (inputX != 0.0f || inputZ != 0.0f);
+        Vector3 moveDir = {0};
+        float moveSpeed = 5.5f;
         if (moved) {
             Vector3 camForward = Vector3Subtract(camera.target, camera.position);
             camForward.y = 0.0f;
@@ -1072,20 +1095,97 @@ int main(int argc, char **argv) {
             camRight.y = 0.0f;
             camRight = Vector3Normalize(camRight);
 
-            Vector3 moveDir = {
+            moveDir = (Vector3){
                 camForward.x * -inputZ + camRight.x * inputX,
                 0.0f,
                 camForward.z * -inputZ + camRight.z * inputX
             };
             moveDir = Vector3Normalize(moveDir);
 
-            float moveSpeed = 5.5f;
+            if (inWater && player.position.y < waterSurfaceY) {
+                moveSpeed = 4.2f;
+            }
             player.position.x += moveDir.x * moveSpeed * dt;
             player.position.z += moveDir.z * moveSpeed * dt;
-            player.position.y = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
 
             s_vfxPlayerYaw = atan2f(moveDir.x, moveDir.z);
+
+            // Bắn hạt sóng loang khi bước chân lội nước
+            if (inWater && !s_vfxPlayerJumping && player.position.y < waterSurfaceY + 0.05f) {
+                s_wadingStepTimer += dt;
+                if (s_wadingStepTimer >= 0.28f) {
+                    s_wadingStepTimer = 0.0f;
+                    MapManager_AddWaterRipple(player.position, 2.0f, 0.45f);
+                }
+            } else {
+                s_wadingStepTimer = 0.20f;
+            }
+        } else {
+            s_wadingStepTimer = 0.20f;
         }
+
+        if (renderVFXMode) {
+            static int s_simMode = -1;
+            static int s_simFrame = 0;
+            if (s_simMode < 0) {
+                const char *vW = getenv("WUXING_CAPTURE_WADE");
+                const char *vJ = getenv("WUXING_CAPTURE_JUMP");
+                s_simMode = (vW && *vW && *vW != '0') ? 1 : ((vJ && *vJ && *vJ != '0') ? 2 : 0);
+            }
+            s_simFrame++;
+            if (s_simMode == 1) {
+                moved = true;
+                moveDir = (Vector3){ 0.707f, 0.0f, 0.707f };
+                moveSpeed = 4.2f;
+                player.position.x += moveDir.x * moveSpeed * dt;
+                player.position.z += moveDir.z * moveSpeed * dt;
+                s_vfxPlayerYaw = atan2f(moveDir.x, moveDir.z);
+                if (inWater && !s_vfxPlayerJumping && player.position.y < waterSurfaceY + 0.05f) {
+                    s_wadingStepTimer += dt;
+                    if (s_wadingStepTimer >= 0.28f) {
+                        s_wadingStepTimer = 0.0f;
+                        MapManager_AddWaterRipple(player.position, 2.0f, 0.45f);
+                    }
+                }
+            } else if (s_simMode == 2) {
+                if (s_simFrame == 10 && !s_vfxPlayerJumping) {
+                    s_vfxPlayerVelY = 5.8f;
+                    s_vfxPlayerJumping = true;
+                    if (inWater) MapManager_AddWaterRipple(player.position, 3.2f, 0.85f);
+                }
+            }
+        }
+
+        // Áp dụng trọng lực & va chạm tiếp đất
+        groundY = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
+        inWater = MapManager_GetWaterInfoAt(player.position.x, player.position.z, &waterSurfaceY, &waterDepth);
+        if (s_vfxPlayerJumping) {
+            s_vfxPlayerVelY -= 15.0f * dt;
+            player.position.y += s_vfxPlayerVelY * dt;
+
+            if (player.position.y <= groundY) {
+                player.position.y = groundY;
+                float impactSpeed = s_vfxPlayerVelY;
+                s_vfxPlayerVelY = 0.0f;
+                s_vfxPlayerJumping = false;
+
+                // Kích hoạt hiệu ứng va chạm dội nước khi rơi xuống nước
+                if (inWater && groundY < waterSurfaceY) {
+                    MapManager_AddWaterRipple(player.position, 6.0f, fminf(2.5f, fabsf(impactSpeed) * 0.35f));
+                }
+            }
+        } else {
+            player.position.y = groundY;
+        }
+
+        // Truyền thông tin interactor liên tục tới mặt nước để tính vệt sóng chữ V (Kelvin wake)
+        Vector3 playerVel = {0};
+        if (moved) {
+            playerVel = (Vector3){ moveDir.x * moveSpeed, s_vfxPlayerVelY, moveDir.z * moveSpeed };
+        } else {
+            playerVel = (Vector3){ 0.0f, s_vfxPlayerVelY, 0.0f };
+        }
+        MapManager_SetWaterInteractor(player.position, playerVel, 0.45f);
 
         if (IsKeyPressed(KEY_Z)) {
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.45f);

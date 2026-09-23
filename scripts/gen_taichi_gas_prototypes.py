@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Experimental Taichi gas bakes with separate smoke and fire material outputs.
 
-This generator reads no source texture. Taichi advects density and heat through
-an evolving divergence-free curl field, then shades the simulated density with
-coherent multiscale detail. The directional maps are 2.5D approximations of
+Taichi advects density and heat through an evolving divergence-free curl field.
+Small interior patches from the existing atlases supply fine detail; no full
+source frame or source silhouette is reused. The directional maps approximate
 light transmission through that field for SMOKE only, not a hidden 3D volume
 reconstruction. FIRE exports emission/coverage plus a normal companion only.
 Outputs go to build_cache because the current 2D visuals are below the art bar.
@@ -22,6 +22,7 @@ import taichi as ti
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "build_cache/taichi_vfx_prototypes"
+REFERENCE = ROOT / "assets/textures/vfx/flipbooks"
 N = 256
 GRID = 8
 FRAMES = 64
@@ -44,6 +45,68 @@ FIRE_DENSITY_TAU_S = 1.30
 FIRE_FLARE_DEGREES = 12.0
 FIRE_SOURCE_OPTICAL_DEPTH = 1.2
 FIRE_SOURCE_HEAT = 2.0
+
+
+def synthesize_detail(kind, seed):
+    """Quilt local motifs, never an atlas frame or its silhouette.
+
+    Each 56 px patch is selected from the interior of a different reference
+    frame. Per-patch contrast normalisation and feathered overlap produce a
+    new material field. The simulated density owns shape and motion; this field
+    supplies only the missing billow/flame frequencies.
+    """
+    rng = np.random.default_rng(seed)
+    names = ("smoke_puff_8x8", "smoke_roil_8x8") if kind == "smoke" else (
+        "fireroil_8x8", "fireball_8x8")
+    patch_size = 56
+    candidates = []
+    for name in names:
+        atlas = np.asarray(Image.open(REFERENCE / f"{name}.png").convert("RGBA"),
+                           dtype=np.uint8)
+        accepted = 0
+        for _ in range(3500):
+            frame = int(rng.integers(0, 64))
+            x = int(rng.integers(0, N - patch_size))
+            y = int(rng.integers(0, N - patch_size))
+            cell_x, cell_y = frame % GRID * N, frame // GRID * N
+            patch = atlas[cell_y + y:cell_y + y + patch_size,
+                          cell_x + x:cell_x + x + patch_size]
+            inside = patch[..., 3] > (100 if kind == "smoke" else 128)
+            signal = patch[..., 0].astype(np.float32) / 255.0
+            if inside.mean() < 0.72 or signal[inside].std() < (0.018 if kind == "smoke" else 0.07):
+                continue
+            mean, std = signal[inside].mean(), signal[inside].std()
+            motif = np.clip(0.5 + 0.22 * (signal - mean) / max(std, 1e-3), 0.0, 1.0)
+            candidates.append(motif)
+            accepted += 1
+            if accepted == 160:
+                break
+        if accepted < 24:
+            raise RuntimeError(f"not enough interior detail patches in {name}: {accepted}")
+    # Raise-cosine overlap avoids hard seams without copying any source frame.
+    step = 40
+    yy, xx = np.mgrid[:patch_size, :patch_size]
+    edge = np.minimum.reduce((xx + 1, yy + 1, patch_size - xx, patch_size - yy))
+    weight = np.sin(np.clip(edge / 17.0, 0, 1) * np.pi / 2) ** 2
+    accum = np.zeros((N, N), np.float32)
+    norm = np.zeros((N, N), np.float32)
+    for y in range(-8, N, step):
+        for x in range(-8, N, step):
+            patch = candidates[int(rng.integers(len(candidates)))]
+            if kind == "smoke":
+                patch = np.rot90(patch, int(rng.integers(4)))
+            if rng.integers(2):
+                patch = np.fliplr(patch)
+            x0, x1 = max(0, x), min(N, x + patch_size)
+            y0, y1 = max(0, y), min(N, y + patch_size)
+            px0, py0 = x0 - x, y0 - y
+            w = weight[py0:py0 + y1 - y0, px0:px0 + x1 - x0]
+            accum[y0:y1, x0:x1] += patch[py0:py0 + y1 - y0,
+                                           px0:px0 + x1 - x0] * w
+            norm[y0:y1, x0:x1] += w
+    tile = np.clip(accum / np.maximum(norm, 1e-5), 0.0, 1.0).astype(np.float32)
+    Image.fromarray(np.uint8(tile * 255)).save(OUT / f"{kind}_detail_synthesis.png")
+    return tile
 
 
 def write_png(array, path):
@@ -95,6 +158,7 @@ def main():
     density_next = ti.field(ti.f32, shape=(N, N))
     heat = ti.field(ti.f32, shape=(N, N))
     heat_next = ti.field(ti.f32, shape=(N, N))
+    detail_source = ti.field(ti.f32, shape=(N, N))
     shaped = ti.field(ti.f32, shape=(N, N))
     art = ti.Vector.field(4, ti.f32, shape=(N, N))
     normal = ti.Vector.field(4, ti.f32, shape=(N, N))
@@ -248,7 +312,13 @@ def main():
             n0 = noise(xf / 37.0 + t * 0.018, yf / 37.0 - t * 0.014, seed)
             n1 = noise(xf / 15.0 - t * 0.031, yf / 15.0 - t * 0.019, seed + 11)
             n2 = noise(xf / 6.0 + t * 0.047, yf / 6.0 - t * 0.032, seed + 29)
-            grain = 0.48 * n0 + 0.34 * n1 + 0.18 * n2
+            # Sample the quilt once per output pixel. Repeated semi-Lagrangian
+            # resampling erased the source frequencies after a few frames.
+            # A smooth coordinate drift gives temporal motion without blur.
+            drift_x = 4.0 * ti.sin(t * 0.045 + yf * 0.028)
+            drift_y = -t * (0.12 if kind == 0 else 0.72) + 3.0 * ti.sin(t * 0.038 + xf * 0.022)
+            motif = sample(detail_source, xf + drift_x, yf + drift_y)
+            grain = ti.math.clamp(0.90 * motif + 0.10 * (0.48 * n0 + 0.34 * n1 + 0.18 * n2), 0.0, 1.0)
             den = density[y, x]
             shaped[y, x] = den * ti.math.clamp(0.35 + 1.25 * grain, 0.0, 1.5)
             cov = 1.0 - ti.exp(-shaped[y, x] * (1.2 if kind == 0 else 1.0))
@@ -261,7 +331,7 @@ def main():
             lit = ti.math.clamp((0.18 + 0.85 * grain) * (1.0 - 0.30 * cov), 0.0, 1.0)
             emis = 1.0 - ti.exp(-heat[y, x] * (0.40 + 0.40 * grain))
             if kind == 0:
-                art[y, x] = ti.Vector([lit * cov, 1.0 - cov * 0.53, 0.0, cov])
+                art[y, x] = ti.Vector([lit, 1.0 - cov * 0.53, 0.0, cov])
             else:
                 art[y, x] = ti.Vector([emis, 1.0 - cov * 0.72, 0.0, cov])
 
@@ -314,6 +384,7 @@ def main():
     for kind_name in (args.kind,):
         kind = int(kind_name == "fire")
         reset()
+        detail_source.from_numpy(synthesize_detail(kind_name, args.seed + kind * 101))
         if kind == 0:
             seed_smoke((args.seed % 997) * 0.0063)
         fields = (art, normal, map_a, map_b) if kind == 0 else (art, normal)

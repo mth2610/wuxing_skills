@@ -702,12 +702,19 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         // Áp dụng trọng lực thông thường khi không bay
         bool isOnSolid = (player->position.y <= currentGroundY);
         if (!isOnSolid || player->zVelocity > 0.0f) {
+            float prevVel = player->zVelocity;
             player->zVelocity -= gravity * dt;
             player->position.y += player->zVelocity * dt;
             if (player->position.y <= currentGroundY) {
                 player->position.y = currentGroundY;
                 player->zVelocity = 0.0f;
                 player->jumpCount = 0;
+
+                float waterSurfaceY = 0.0f, waterDepth = 0.0f;
+                if (MapManager_GetWaterInfoAt(player->position.x, player->position.z, &waterSurfaceY, &waterDepth) &&
+                    currentGroundY < waterSurfaceY && prevVel < -2.0f) {
+                    MapManager_AddWaterRipple(player->position, 6.0f, fminf(2.5f, fabsf(prevVel) * 0.35f));
+                }
             }
         } else {
             player->zVelocity = 0.0f;
@@ -715,6 +722,11 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
 
         // Nhẩy / Nhẩy kép
         if (jumpPressed) {
+            float waterSurfaceY = 0.0f, waterDepth = 0.0f;
+            bool inWater = MapManager_GetWaterInfoAt(player->position.x, player->position.z, &waterSurfaceY, &waterDepth);
+            if (inWater && player->position.y < waterSurfaceY + 0.15f) {
+                MapManager_AddWaterRipple(player->position, 3.2f, 0.85f);
+            }
             if (player->position.y <= currentGroundY + 0.01f) {
                 player->zVelocity = 5.5f;
                 player->jumpCount = 1;
@@ -757,6 +769,30 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
                 player->dashDir = moveDir;
             }
         }
+    }
+
+    // Cập nhật tương tác nước trong Sandbox (vệt sóng chữ V + tia nước bắn chân)
+    {
+        static float s_sandboxWadingTimer = 0.0f;
+        float waterSurfaceY = 0.0f, waterDepth = 0.0f;
+        bool inWater = MapManager_GetWaterInfoAt(player->position.x, player->position.z, &waterSurfaceY, &waterDepth);
+        Vector3 curVel = {0};
+        if (player->isDashing) {
+            curVel = (Vector3){ player->dashDir.x * 12.0f, player->zVelocity, player->dashDir.z * 12.0f };
+        } else if (Vector3Length(moveDir) > 0.0001f) {
+            curVel = (Vector3){ moveDir.x * 3.0f, player->zVelocity, moveDir.z * 3.0f };
+            if (inWater && player->position.y < waterSurfaceY + 0.05f && player->jumpCount == 0) {
+                s_sandboxWadingTimer += dt;
+                if (s_sandboxWadingTimer >= 0.32f) {
+                    s_sandboxWadingTimer = 0.0f;
+                    MapManager_AddWaterRipple(player->position, 2.0f, 0.45f);
+                }
+            }
+        } else {
+            curVel = (Vector3){ 0.0f, player->zVelocity, 0.0f };
+            s_sandboxWadingTimer = 0.20f;
+        }
+        MapManager_SetWaterInteractor(player->position, curVel, 0.45f);
     }
 
     // Giới hạn trong võ đài

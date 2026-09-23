@@ -449,6 +449,19 @@ typedef struct
     float refractionStrength;  // Cường độ khúc xạ lệch tia màn hình (mặc định ~0.04)
 } MapWaterConfig;
 
+#define MAX_WATER_RIPPLES 4
+
+typedef struct {
+    Vector3 position;
+    float spawnTime;
+    float maxRadius;
+    float amplitude;
+    float speed;
+    float wavelength;
+    float decay;
+    bool active;
+} MapWaterRippleRing;
+
 typedef struct
 {
     Model waterModel;
@@ -457,6 +470,18 @@ typedef struct
     MapWaterConfig config;
     Texture2D causticTex;      // Texture tụ quang ánh sáng (nếu có)
     Texture2D bedDiffuseTex;   // Texture đá cuội/cát đáy hồ
+
+    // Dynamic Surface Interaction (Kelvin wake & ripples):
+    Vector3 interactorPos;
+    Vector3 interactorVel;
+    float interactorRadius;
+    float interactorSubmerged;
+
+    // Expanding shockwave ripple rings:
+    MapWaterRippleRing ripples[MAX_WATER_RIPPLES];
+    int nextRipple;
+    float lastTime;
+
     bool ready;
 } MapWaterSurface;
 
@@ -470,6 +495,14 @@ Vector3 MapProp_GetWaterEdgePoint(const MapWaterSurface *water, float angleRad,
 // kèm theo độ cao Y tuyệt đối của đáy hồ và pháp tuyến nghiêng của sườn đáy.
 bool MapProp_SampleWaterBed(const MapWaterSurface *water, float x, float z,
                             float *outBedHeight, Vector3 *outNormal);
+
+// Cập nhật nguồn tương tác động (nhân vật, quái vật, v.v.) lên mặt nước để sinh sóng rẽ nước và bọt
+void MapProp_SetWaterInteractor(MapWaterSurface *water, Vector3 position, Vector3 velocity,
+                                float radius, float submerged);
+
+// Kích hoạt một vòng sóng xung kích loang dần trên mặt nước (tiếp đất, bước mạnh, nổ, v.v.)
+void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radius, float intensity);
+
 void MapProp_DrawWaterBed(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time);

@@ -40,6 +40,15 @@ uniform float u_causticsStrength;   // Caustic intensity
 uniform float u_causticsScale;      // Caustic spatial frequency
 uniform float u_foamThreshold;      // Depth threshold for shoreline foam
 
+// Dynamic Water Interaction Uniforms
+uniform vec3 u_waterInteractor;  // (x, y, z) position of the submerged body
+uniform vec3 u_waterVelocity;    // (vx, vy, vz) movement velocity
+uniform float u_waterRadius;     // Interactor body radius (m)
+uniform float u_waterSubmerged;  // Submerged fraction [0.0 -> 1.0]
+
+uniform vec4 u_rippleRings[4];   // (x, z, spawnTime, maxRadius)
+uniform vec4 u_rippleParams[4];  // (amplitude, speed, wavelength, decay)
+
 out vec4 finalColor;
 
 void main()
@@ -100,6 +109,147 @@ void main()
     }
 
     slope += detailSlope * u_detailStrength * 2.40 * fragShoreFade;
+
+    // ── 1.1 DYNAMIC SURFACE INTERACTION (Kelvin Wake & Ripples) ──────────────
+    vec2 interactSlope = vec2(0.0);
+    float dynamicWakeFoam = 0.0;
+    float wakeCrestHighlight = 0.0;
+    float ringCrestHighlight = 0.0;
+
+    if (u_waterSubmerged > 0.01) {
+        vec2 toFrag = fragWorldXZ - u_waterInteractor.xz;
+        float r = length(toFrag);
+        vec2 rDir = (r > 0.0001) ? (toFrag / r) : vec2(0.0, 1.0);
+        float bodyRadius = max(u_waterRadius, 0.35);
+
+        // A. Breathing / idle concentric ripples around submerged body
+        if (r < 6.0) {
+            float idleK = 12.0;
+            float idlePhase = r * idleK - u_time * 5.0;
+            float idleFalloff = exp(-max(0.0, r - bodyRadius) * 2.2) * u_waterSubmerged;
+            interactSlope += rDir * cos(idlePhase) * idleFalloff * 0.28;
+            wakeCrestHighlight += max(0.0, cos(idlePhase)) * idleFalloff * 0.35;
+
+            // Contact waterline disturbance & meniscus foam around the body
+            float contactDist = abs(r - bodyRadius);
+            if (contactDist < 0.28) {
+                float contactLip = smoothstep(0.28, 0.02, contactDist);
+                dynamicWakeFoam = max(dynamicWakeFoam, contactLip * 0.95 * u_waterSubmerged);
+            }
+        }
+
+        // B. Kelvin / V-shaped wake & bow wave when moving
+        float speed = length(u_waterVelocity.xz);
+        if (speed > 0.15) {
+            vec2 moveDir = u_waterVelocity.xz / speed;
+            vec2 sideDir = vec2(-moveDir.y, moveDir.x);
+
+            float forward = dot(toFrag, moveDir);
+            float side = dot(toFrag, sideDir);
+            float absSide = abs(side);
+
+            // 1. Bow wave in front of the moving body
+            if (forward > -bodyRadius * 0.4 && forward < 3.2 && absSide < 2.5) {
+                vec2 bowDelta = vec2(forward - bodyRadius * 0.5, absSide * 1.15);
+                float bowDist = length(bowDelta);
+                float bowEnv = exp(-bowDist * 2.0) * clamp(speed * 0.35, 0.0, 1.0) * u_waterSubmerged;
+                float bowPhase = bowDist * 15.0 - u_time * (speed * 3.2 + 6.0);
+                vec2 bowDir = normalize(toFrag + moveDir * 0.3);
+                interactSlope += bowDir * (-sin(bowPhase)) * bowEnv * 0.42;
+
+                float bowCrest = cos(bowPhase);
+                wakeCrestHighlight += max(0.0, bowCrest) * bowEnv * 0.60;
+                float bowFoam = smoothstep(0.15, 0.70, bowCrest) * bowEnv * 1.35;
+                dynamicWakeFoam = max(dynamicWakeFoam, bowFoam);
+            }
+
+            // 2. Stern Kelvin V-wake arms behind the moving body
+            if (forward < bodyRadius * 0.6 && forward > -12.0) {
+                float trailDist = bodyRadius * 0.6 - forward; // trailDist >= 0
+                float kelvinHalfWidth = trailDist * 0.38 + bodyRadius * 0.65; // ~19.5 degree half angle
+                float armDist = abs(absSide - kelvinHalfWidth);
+
+                float armWidth = 0.30 + trailDist * 0.07;
+                float armProfile = exp(-(armDist * armDist) / (2.0 * armWidth * armWidth)) * exp(-trailDist * 0.16);
+                float wakeAmp = armProfile * clamp(speed * 0.35, 0.0, 1.0) * u_waterSubmerged;
+
+                float wakePhase = trailDist * 10.5 - absSide * 4.0 - u_time * (speed * 2.5 + 5.0);
+                float wakeCrest = cos(wakePhase);
+
+                vec2 wakeWaveDir = normalize(sideDir * sign(side) * 0.85 - moveDir * 0.55);
+                interactSlope += wakeWaveDir * (-sin(wakePhase)) * wakeAmp * 0.48;
+                wakeCrestHighlight += max(0.0, wakeCrest) * wakeAmp * 0.75;
+
+                // Foam along the wake arm crests (breaking aerated foam)
+                float crestFoam = smoothstep(0.05, 0.65, wakeCrest) * wakeAmp * 1.45;
+                dynamicWakeFoam = max(dynamicWakeFoam, crestFoam);
+
+                // 3. Transverse waves (chevrons inside the V)
+                if (absSide < kelvinHalfWidth) {
+                    float insideV = clamp(1.0 - absSide / max(kelvinHalfWidth, 0.1), 0.0, 1.0);
+                    float transPhase = trailDist * 8.0 - u_time * (speed * 2.0 + 4.0);
+                    float transAmp = exp(-trailDist * 0.22) * insideV * clamp(speed * 0.30, 0.0, 1.0) * u_waterSubmerged;
+                    float transCrest = cos(transPhase);
+
+                    interactSlope += (-moveDir) * (-sin(transPhase)) * transAmp * 0.30;
+                    wakeCrestHighlight += max(0.0, transCrest) * transAmp * 0.40;
+
+                    // Frothy churn trail in the center
+                    float trailNoise = texture(texture0, fragWorldXZ * 0.55 + vec2(u_time * 0.03, -u_time * 0.02)).r;
+                    float churn = exp(-absSide * 3.2) * exp(-trailDist * 0.25) * smoothstep(0.30, 0.65, trailNoise) * clamp(speed * 0.40, 0.0, 1.0) * u_waterSubmerged;
+                    dynamicWakeFoam = max(dynamicWakeFoam, churn * 1.25);
+                }
+            }
+        }
+    }
+
+    // ── 1.2 EXPANDING SHOCKWAVE RIPPLE RINGS ─────────────────────────────────
+    for (int i = 0; i < 4; i++) {
+        float spawnTime = u_rippleRings[i].z;
+        if (spawnTime <= 0.0) continue;
+
+        float age = u_time - spawnTime;
+        float maxRadius = u_rippleRings[i].w;
+        float waveSpeed = u_rippleParams[i].y;
+        float maxLife = (waveSpeed > 0.01) ? (maxRadius / waveSpeed) : 3.5;
+
+        if (age >= 0.0 && age < maxLife) {
+            vec2 ringToFrag = fragWorldXZ - u_rippleRings[i].xy;
+            float ringDist = length(ringToFrag);
+            vec2 ringDir = (ringDist > 0.0001) ? (ringToFrag / ringDist) : vec2(0.0, 1.0);
+
+            float currentRadius = waveSpeed * age;
+            float deltaR = ringDist - currentRadius;
+            float wavelength = max(u_rippleParams[i].z, 0.35);
+            float amplitude = u_rippleParams[i].x;
+            float decayCoeff = u_rippleParams[i].w;
+
+            // Gaussian wave packet envelope
+            float packetWidth = wavelength * 2.2;
+            float packet = exp(-(deltaR * deltaR) / (2.0 * packetWidth * packetWidth));
+
+            // Temporal & distance attenuation
+            float lifeFade = 1.0 - (age / maxLife);
+            float distFade = exp(-ringDist * decayCoeff * 0.20);
+            float strength = amplitude * packet * lifeFade * distFade;
+
+            if (strength > 0.001) {
+                float waveK = 6.2831853 / wavelength;
+                float phase = deltaR * waveK;
+                float dWave = -sin(phase);
+                interactSlope += ringDir * dWave * strength * 0.45;
+
+                float ringCrest = cos(phase);
+                ringCrestHighlight += max(0.0, ringCrest) * strength * 0.65;
+
+                // Foam on expanding ring crest
+                float ringFoam = smoothstep(0.10, 0.70, ringCrest) * strength * 1.50;
+                dynamicWakeFoam = max(dynamicWakeFoam, ringFoam);
+            }
+        }
+    }
+
+    slope += interactSlope * fragShoreFade;
     vec3 normal = normalize(vec3(-slope.x, 1.0, -slope.y));
 
     // ── 2. DEPTH & BATHYMETRY ESTIMATION (h <= 1.3m) ─────────────────────────
@@ -171,6 +321,7 @@ void main()
     float waveFacet = sin(p0) * 0.52 + sin(p1) * 0.31 + sin(p2) * 0.17;
     float crest = smoothstep(0.48, 0.95, waveFacet) * 0.035;
     vec3 waveHighlight = reflectedSky * (waveFacet * 0.030 + crest);
+    waveHighlight += reflectedSky * (wakeCrestHighlight * 0.45 + ringCrestHighlight * 0.55);
 
     // Multi-scale specular sun glint
     vec3 halfDir = normalize(u_lightDir + viewDir);
@@ -190,6 +341,7 @@ void main()
     float brokenFoam = smoothstep(0.26, 0.78, contactMask * 1.35 + (foamNoise - 0.5) * 0.65);
     brokenFoam = max(brokenFoam, meniscusLip * 0.90);
     brokenFoam += max(contactRipple, 0.0) * 0.35 * contactMask;
+    brokenFoam = max(brokenFoam, dynamicWakeFoam);
     brokenFoam = clamp(brokenFoam, 0.0, 1.0);
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
@@ -204,7 +356,7 @@ void main()
     surfaceAlpha *= shoreEdgeFade;
 
     // Meniscus and contact foam sit firmly ON the surface — never dissolved!
-    float alpha = clamp(surfaceAlpha + brokenFoam * 0.94, 0.0, 0.98);
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.96, 0.0, 0.98);
 
     // ── 9. COMPOSITION ───────────────────────────────────────────────────────
     // Aquatic water column color (Beer-Lambert volumetric tint)
@@ -219,7 +371,8 @@ void main()
     color += sssLight;
     color += waveHighlight;
     color += sunGlint;
-    color = mix(color, u_foamColor, brokenFoam);
+    vec3 frothColor = mix(u_foamColor, vec3(1.0, 1.0, 1.0), 0.72);
+    color = mix(color, frothColor, brokenFoam);
 
     // VFX Point Light response
     color += VFXLights_Accumulate(fragPosition, normal, u_shallowColor) * 0.65;

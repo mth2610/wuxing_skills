@@ -40,6 +40,12 @@ static int s_waterLocCameraDepthTex = -1;
 static int s_waterLocHasDepthTex = -1;
 static int s_waterLocModelPos = -1;
 static int s_waterLocResolution = -1;
+static int s_waterLocInteractor = -1;
+static int s_waterLocVelocity = -1;
+static int s_waterLocRadius = -1;
+static int s_waterLocSubmerged = -1;
+static int s_waterLocRippleRings = -1;
+static int s_waterLocRippleParams = -1;
 
 static Shader s_waterBedShader = {0};
 static bool s_waterBedShaderReady = false;
@@ -615,6 +621,13 @@ static Shader Water_GetShader(void)
         s_waterLocHasDepthTex = GetShaderLocation(s_waterShader, "u_hasDepthTex");
         s_waterLocModelPos = GetShaderLocation(s_waterShader, "u_modelPos");
         s_waterLocResolution = GetShaderLocation(s_waterShader, "u_resolution");
+        s_waterLocInteractor = GetShaderLocation(s_waterShader, "u_waterInteractor");
+        s_waterLocVelocity = GetShaderLocation(s_waterShader, "u_waterVelocity");
+        s_waterLocRadius = GetShaderLocation(s_waterShader, "u_waterRadius");
+        s_waterLocRippleRings = GetShaderLocation(s_waterShader, "u_rippleRings");
+        if (s_waterLocRippleRings < 0) s_waterLocRippleRings = GetShaderLocation(s_waterShader, "u_rippleRings[0]");
+        s_waterLocRippleParams = GetShaderLocation(s_waterShader, "u_rippleParams");
+        if (s_waterLocRippleParams < 0) s_waterLocRippleParams = GetShaderLocation(s_waterShader, "u_rippleParams[0]");
 
         int causticSlot = 1;
         if (s_waterLocCausticTex >= 0) {
@@ -3534,6 +3547,52 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     SetShaderValue(shader, s_waterLocCausticsScale, &water->config.causticsScale, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, s_waterLocFoamThreshold, &water->config.foamThreshold, SHADER_UNIFORM_FLOAT);
 
+    // Dynamic Interactor & Ripple Uniforms
+    static int s_dbgCount = 0;
+    if (s_dbgCount++ % 30 == 0) {
+        TraceLog(LOG_INFO, "WATER DEBUG: pos=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f) sub=%.2f locs=(%d,%d,%d,%d,%d,%d)",
+                 water->interactorPos.x, water->interactorPos.y, water->interactorPos.z,
+                 water->interactorVel.x, water->interactorVel.y, water->interactorVel.z,
+                 water->interactorSubmerged,
+                 s_waterLocInteractor, s_waterLocVelocity, s_waterLocRadius, s_waterLocSubmerged,
+                 s_waterLocRippleRings, s_waterLocRippleParams);
+    }
+    ((MapWaterSurface*)water)->lastTime = time;
+    if (s_waterLocInteractor >= 0)
+        SetShaderValue(shader, s_waterLocInteractor, &water->interactorPos, SHADER_UNIFORM_VEC3);
+    if (s_waterLocVelocity >= 0)
+        SetShaderValue(shader, s_waterLocVelocity, &water->interactorVel, SHADER_UNIFORM_VEC3);
+    if (s_waterLocRadius >= 0)
+        SetShaderValue(shader, s_waterLocRadius, &water->interactorRadius, SHADER_UNIFORM_FLOAT);
+    if (s_waterLocSubmerged >= 0)
+        SetShaderValue(shader, s_waterLocSubmerged, &water->interactorSubmerged, SHADER_UNIFORM_FLOAT);
+
+    Vector4 rings[MAX_WATER_RIPPLES];
+    Vector4 params[MAX_WATER_RIPPLES];
+    for (int i = 0; i < MAX_WATER_RIPPLES; i++) {
+        if (water->ripples[i].active) {
+            rings[i] = (Vector4){
+                water->ripples[i].position.x,
+                water->ripples[i].position.z,
+                water->ripples[i].spawnTime,
+                water->ripples[i].maxRadius
+            };
+            params[i] = (Vector4){
+                water->ripples[i].amplitude,
+                water->ripples[i].speed,
+                water->ripples[i].wavelength,
+                water->ripples[i].decay
+            };
+        } else {
+            rings[i] = (Vector4){0.0f, 0.0f, -100.0f, 0.0f};
+            params[i] = (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
+        }
+    }
+    if (s_waterLocRippleRings >= 0)
+        SetShaderValueV(shader, s_waterLocRippleRings, rings, SHADER_UNIFORM_VEC4, MAX_WATER_RIPPLES);
+    if (s_waterLocRippleParams >= 0)
+        SetShaderValueV(shader, s_waterLocRippleParams, params, SHADER_UNIFORM_VEC4, MAX_WATER_RIPPLES);
+
     // Multi-Texture Bindings
     Texture2D cTex = (water->causticTex.id > 0) ? water->causticTex : s_defaultCausticTex;
     rlActiveTextureSlot(1);
@@ -3578,6 +3637,31 @@ void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time)
 {
     MapProp_DrawWaterBed(water, time);
     MapProp_DrawWaterOverlay(water, time);
+}
+
+void MapProp_SetWaterInteractor(MapWaterSurface *water, Vector3 position, Vector3 velocity,
+                                float radius, float submerged)
+{
+    if (!water || !water->ready) return;
+    water->interactorPos = position;
+    water->interactorVel = velocity;
+    water->interactorRadius = radius;
+    water->interactorSubmerged = submerged;
+}
+
+void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radius, float intensity)
+{
+    if (!water || !water->ready) return;
+    int idx = water->nextRipple;
+    water->ripples[idx].position = position;
+    water->ripples[idx].spawnTime = water->lastTime;
+    water->ripples[idx].maxRadius = (radius > 0.0f) ? radius : 6.0f;
+    water->ripples[idx].amplitude = (intensity > 0.0f) ? intensity : 1.0f;
+    water->ripples[idx].speed = 3.2f;
+    water->ripples[idx].wavelength = 0.52f;
+    water->ripples[idx].decay = 1.8f;
+    water->ripples[idx].active = true;
+    water->nextRipple = (water->nextRipple + 1) % MAX_WATER_RIPPLES;
 }
 
 void MapProp_UnloadWaterSurface(MapWaterSurface *water)

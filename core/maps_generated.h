@@ -9,6 +9,7 @@
 
 static inline void RegisterGeneratedMaps(void) {
     MapManager_RegisterEx("VERDANT_PATH", InitVerdantPathMap, UpdateVerdantPathMap, DrawVerdantPathMap, UnloadVerdantPathMap, GetGroundHeightVerdantPathMap, SampleGroundSurfaceVerdantPathMap, DrawTransparentVerdantPathMap);
+    MapManager_RegisterWaterHooks("VERDANT_PATH", GetWaterInfoVerdantPathMap, SetWaterInteractorVerdantPathMap, AddWaterRippleVerdantPathMap);
     MapManager_RegisterEx("DEFAULT_ARENA", InitDefaultArenaMap, NULL, DrawDefaultArenaMap, NULL, NULL, NULL, NULL);
 }
 

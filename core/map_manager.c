@@ -61,6 +61,38 @@ void MapManager_RegisterEx(const char* name, void (*init)(void), void (*update)(
     };
 }
 
+void MapManager_RegisterWaterHooks(const char *name,
+                                   bool (*getWaterInfo)(float x, float z, float *outSurfaceY, float *outWaterDepth),
+                                   void (*setWaterInteractor)(Vector3, Vector3, float),
+                                   void (*addWaterRipple)(Vector3, float, float)) {
+    for (int i = 0; i < s_mapCount; i++) {
+        if (strcmp(s_maps[i].name, name) == 0) {
+            s_maps[i].GetWaterInfo = getWaterInfo;
+            s_maps[i].SetWaterInteractor = setWaterInteractor;
+            s_maps[i].AddWaterRipple = addWaterRipple;
+            return;
+        }
+    }
+}
+
+bool MapManager_GetWaterInfoAt(float x, float z, float *outSurfaceY, float *outWaterDepth) {
+    if (s_mapCount == 0) return false;
+    bool (*fn)(float, float, float*, float*) = s_maps[s_activeMapIndex].GetWaterInfo;
+    return fn ? fn(x, z, outSurfaceY, outWaterDepth) : false;
+}
+
+void MapManager_SetWaterInteractor(Vector3 position, Vector3 velocity, float radius) {
+    if (s_mapCount == 0) return;
+    void (*fn)(Vector3, Vector3, float) = s_maps[s_activeMapIndex].SetWaterInteractor;
+    if (fn) fn(position, velocity, radius);
+}
+
+void MapManager_AddWaterRipple(Vector3 position, float radius, float intensity) {
+    if (s_mapCount == 0) return;
+    void (*fn)(Vector3, float, float) = s_maps[s_activeMapIndex].AddWaterRipple;
+    if (fn) fn(position, radius, intensity);
+}
+
 bool MapManager_SampleGroundSurfaceAt(float x, float z, Vector3 *outPosition, Vector3 *outNormal) {
     if (outPosition) *outPosition = (Vector3){x, MapManager_GetGroundHeightAt(x, z), z};
     if (outNormal) *outNormal = (Vector3){0.0f, 1.0f, 0.0f};

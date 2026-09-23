@@ -644,6 +644,8 @@ void InitVerdantPathMap(void)
     // a runtime toggle. Dynamic vegetation/characters use the near cascade.
     CaptureVerdantStaticShadows();
     MapManager_SetZones(ISLAND_ZONES, ISLAND_ZONE_COUNT);
+    MapManager_RegisterWaterHooks("VERDANT_PATH", GetWaterInfoVerdantPathMap,
+                                  SetWaterInteractorVerdantPathMap, AddWaterRippleVerdantPathMap);
     s_time = 0.0f;
     s_ready = true;
 }
@@ -686,6 +688,39 @@ bool SampleGroundSurfaceVerdantPathMap(float x, float z, Vector3 *outPosition, V
         return true;
     }
     return MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, outPosition, outNormal);
+}
+
+bool GetWaterInfoVerdantPathMap(float x, float z, float *outSurfaceY, float *outWaterDepth)
+{
+    float bedHeight;
+    if (MapProp_SampleWaterBed(&s_lake, x, z, &bedHeight, NULL)) {
+        float surfaceY = s_lake.config.center.y;
+        if (outSurfaceY) *outSurfaceY = surfaceY;
+        if (outWaterDepth) *outWaterDepth = fmaxf(0.0f, surfaceY - bedHeight);
+        return true;
+    }
+    return false;
+}
+
+void SetWaterInteractorVerdantPathMap(Vector3 position, Vector3 velocity, float radius)
+{
+    float bedHeight;
+    if (MapProp_SampleWaterBed(&s_lake, position.x, position.z, &bedHeight, NULL)) {
+        float surfaceY = s_lake.config.center.y;
+        float depth = surfaceY - bedHeight;
+        float submerged = 0.0f;
+        if (position.y < surfaceY + 0.15f) {
+            submerged = fminf(1.0f, fmaxf(0.0f, (surfaceY - position.y + 0.25f) / fmaxf(depth, 0.35f)));
+        }
+        MapProp_SetWaterInteractor(&s_lake, position, velocity, radius, submerged);
+    } else {
+        MapProp_SetWaterInteractor(&s_lake, position, velocity, radius, 0.0f);
+    }
+}
+
+void AddWaterRippleVerdantPathMap(Vector3 position, float radius, float intensity)
+{
+    MapProp_AddWaterRipple(&s_lake, position, radius, intensity);
 }
 
 void DrawVerdantPathMap(void)

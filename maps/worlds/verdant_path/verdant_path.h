@@ -17,5 +17,8 @@ void UnloadVerdantPathMap(void);
 // MapManager by scripts/generate_map_registry.py's naming convention.
 float GetGroundHeightVerdantPathMap(float x, float z);
 bool SampleGroundSurfaceVerdantPathMap(float x, float z, Vector3 *outPosition, Vector3 *outNormal);
+bool GetWaterInfoVerdantPathMap(float x, float z, float *outSurfaceY, float *outWaterDepth);
+void SetWaterInteractorVerdantPathMap(Vector3 position, Vector3 velocity, float radius);
+void AddWaterRippleVerdantPathMap(Vector3 position, float radius, float intensity);
 
 #endif // VERDANT_PATH_MAP_H

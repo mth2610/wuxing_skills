@@ -14,6 +14,9 @@ typedef struct {
     float (*GetGroundHeight)(float x, float z); // optional, NULL = flat (Y=0)
     MapGroundSurfaceSampleFn SampleGroundSurface; // optional exact mesh receiver
     void (*DrawTransparent)(void);              // optional transparent pass (water, glass)
+    bool (*GetWaterInfo)(float x, float z, float *outSurfaceY, float *outWaterDepth); // optional shallow water info
+    void (*SetWaterInteractor)(Vector3 position, Vector3 velocity, float radius);     // optional dynamic wake/ripples
+    void (*AddWaterRipple)(Vector3 position, float radius, float intensity);          // optional expanding shockwave ring
 } MapDefinition;
 
 void MapManager_Init(void);
@@ -24,6 +27,10 @@ void MapManager_RegisterEx(const char* name, void (*init)(void), void (*update)(
                            void (*unload)(void), float (*getGroundHeight)(float x, float z),
                            MapGroundSurfaceSampleFn sampleGroundSurface,
                            void (*drawTransparent)(void));
+void MapManager_RegisterWaterHooks(const char *name,
+                                   bool (*getWaterInfo)(float x, float z, float *outSurfaceY, float *outWaterDepth),
+                                   void (*setWaterInteractor)(Vector3, Vector3, float),
+                                   void (*addWaterRipple)(Vector3, float, float));
 void MapManager_Update(float dt);
 void MapManager_DrawActive(void);
 void MapManager_DrawTransparent(void);
@@ -34,6 +41,17 @@ void MapManager_Unload(void);
 // GetGroundHeight hook registered.
 float MapManager_GetGroundHeightAt(float x, float z);
 bool MapManager_SampleGroundSurfaceAt(float x, float z, Vector3 *outPosition, Vector3 *outNormal);
+
+// Queries the active map for shallow water at (x, z).
+// Returns true if (x, z) is in a water body, writing the water surface Y to outSurfaceY
+// and the physical water depth (surfaceY - bedY) to outWaterDepth.
+bool MapManager_GetWaterInfoAt(float x, float z, float *outSurfaceY, float *outWaterDepth);
+
+// Passes an interactor (e.g. player) to the active map's water system to generate dynamic wakes and ripples.
+void MapManager_SetWaterInteractor(Vector3 position, Vector3 velocity, float radius);
+
+// Adds an expanding circular ripple impulse (e.g. footstep, landing, jump splash) to the active map.
+void MapManager_AddWaterRipple(Vector3 position, float radius, float intensity);
 
 int MapManager_GetCount(void);
 const char* MapManager_GetName(int index);
