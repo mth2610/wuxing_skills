@@ -88,6 +88,10 @@ void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCente
 // Per-map biome grading. The tint is multiplied into both tiled ground
 // textures through the material's standard colDiffuse uniform.
 void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint);
+// Optional packed tangent-space normal (RGB) and roughness (A) textures.
+void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground,
+                                  const char *grassMaterialPath,
+                                  const char *soilMaterialPath);
 // Configure multi-layer habitat blending (path corridors, shoreline wetness, soil transitions)
 void MapProp_SetGroundHabitat(MapGroundSurface *ground,
                               const Vector4 *pathSegments, int segmentCount,

@@ -21,8 +21,6 @@
 #define MAP_DEPTH 75.0f
 #define CLIFF_DEPTH 8.0f
 #define CLOUD_SEA_Y -12.0f
-#define PATH_UNIT_LENGTH 11.0f
-#define PATH_WIDTH 3.6f
 #define MOUNTAIN_RING_WIDTH 82.0f
 #define MOUNTAIN_RING_DEPTH 58.0f
 #define MOUNTAIN_ROCK_COUNT 40
@@ -75,7 +73,6 @@ static const MapRockPlacement kRocks[ROCK_COUNT] = {
 };
 
 static MapGroundSurface s_ground;
-static MapStripSurface s_path;
 static MapRockSet s_rocks;
 static MapRockSet s_mountainRockSet;
 static MapCloudSea s_cloudSea;
@@ -187,8 +184,14 @@ static float VerdantGrassDensity(float x, float z, void *userData)
         return 0.0f;
     float edgeFade = 1.0f - fmaxf(0.0f, (edge - 0.72f) / 0.28f);
 
-    // Uniform, solid meadow lawn coverage: every grid point produces grass
-    float macro = 1.0f;
+    // Broad drifting meadows alternate dense tussocks with shorter open turf.
+    float warpedX = x + sinf(z * 0.17f) * 2.1f;
+    float macroField = sinf(warpedX * 0.15f + z * 0.08f) * 0.55f
+                     + sinf(z * 0.20f - x * 0.06f + 1.4f) * 0.30f
+                     + sinf(x * 0.33f + z * 0.29f) * 0.15f;
+    float patch = fminf(1.0f, fmaxf(0.0f, (macroField + 0.25f) / 0.70f));
+    patch = patch * patch * (3.0f - 2.0f * patch);
+    float macro = 0.58f + 0.42f * patch;
 
     // Suppress grass in flower clusters: flowers need clear open ground to bloom cleanly
     const Vector3 flowerCenters[FLOWER_CLUSTER_COUNT] = {
@@ -380,23 +383,6 @@ static void BuildMeadowLayout(void)
     }
 }
 
-static void DrawPathChain(const Vector3 *points, int count, float widthScale)
-{
-    for (int i = 0; i < count - 1; i++) {
-        float dx = points[i + 1].x - points[i].x;
-        float dz = points[i + 1].z - points[i].z;
-        float length = sqrtf(dx * dx + dz * dz) + 0.75f;
-        Vector3 midpoint = {
-            (points[i].x + points[i + 1].x) * 0.5f,
-            0.0f,
-            (points[i].z + points[i + 1].z) * 0.5f,
-        };
-        float rotation = atan2f(dz, dx) * 180.0f / PI;
-        MapProp_DrawStripEx(&s_path, midpoint, 0.035f, -rotation,
-                            (Vector3){length / PATH_UNIT_LENGTH, 1.0f, widthScale});
-    }
-}
-
 static void DrawVerdantShadowCasters(Shader depthShader, void *userData)
 {
     (void)depthShader;
@@ -577,11 +563,9 @@ void InitVerdantPathMap(void)
     ApplyHabitatToGround();
     // Shader consumes normalized linear values; calibrated natural botanical meadow tint
     MapProp_SetGroundTint(&s_ground, (Color){62, 88, 45, 255});
-    s_path = MapProp_CreateStrip(PATH_UNIT_LENGTH, PATH_WIDTH, 1.8f,
-        "assets/textures/stone_path_diffuse.png",
-        "assets/textures/stone_path_normal.png",
-        "assets/textures/stone_path_roughness.png");
-    s_path.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].color = (Color){205, 198, 181, 255};
+    MapProp_SetGroundSurfaceMaps(&s_ground,
+        "assets/textures/grass_ground_material.png",
+        "assets/textures/dirt_material.png");
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
         "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
     // Border rocks must participate in the same lighting response as nearby
@@ -748,8 +732,6 @@ void DrawVerdantPathMap(void)
     PropLit_UpdateLighting();
     MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
     MapProp_DrawGround(&s_ground, kMapCenter);
-    DrawPathChain(kMainPath, MAIN_PATH_POINT_COUNT, 1.0f);
-    DrawPathChain(kLakePath, LAKE_PATH_POINT_COUNT, 0.72f);
     MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, MOUNTAIN_ROCK_COUNT, false);
     MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true);
     MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
@@ -783,7 +765,6 @@ void UnloadVerdantPathMap(void)
     MapProp_UnloadCloudSea(&s_cloudSea);
     MapProp_UnloadRocks(&s_mountainRockSet);
     MapProp_UnloadRocks(&s_rocks);
-    MapProp_UnloadStrip(&s_path);
     MapProp_UnloadGround(&s_ground);
     MapProp_ClearNatureInteraction();
 #if !defined(__ANDROID__)

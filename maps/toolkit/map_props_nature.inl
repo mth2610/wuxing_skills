@@ -1386,14 +1386,16 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                     bladeTip  = (Color){152, 196, 68, 255};
                 }
             } else if (bladesPerClump <= 2 && bladeSegments <= 2) {
-                // Shadow Caster / Far LOD: 1 wide arching blade aligned with wind flow
-                bladeLeanAngle = clumpAngle + (bHash - 0.5f) * 0.20f;
-                float bx = clump->position.x;
-                float bz = clump->position.z;
+                // Two splayed silhouettes keep distant clumps from forming
+                // parallel diagonal strokes across the whole meadow.
+                bladeLeanAngle = clumpAngle + (blade == 0 ? -0.54f : 0.54f)
+                               + (bHash - 0.5f) * 0.46f;
+                float bx = clump->position.x + cosf(bladeLeanAngle) * clump->radius * 0.09f;
+                float bz = clump->position.z + sinf(bladeLeanAngle) * clump->radius * 0.09f;
 
-                height = clump->height * 1.00f;
-                width = clump->radius * style.bladeWidthScale * widthMultiplier;
-                lean = height * 0.44f;
+                height = clump->height * (0.83f + 0.22f * bHash2);
+                width = clump->radius * style.bladeWidthScale * widthMultiplier * 0.86f;
+                lean = height * (0.35f + 0.13f * bHash3);
                 droopY = height * 0.06f;
 
                 pBase = (Vector3){bx, clump->position.y, bz};

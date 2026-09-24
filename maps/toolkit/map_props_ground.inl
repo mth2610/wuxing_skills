@@ -297,6 +297,10 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
             GetShaderLocation(groundShader, "matModel");
         groundShader.locs[SHADER_LOC_VERTEX_NORMAL] =
             GetShaderLocationAttrib(groundShader, "vertexNormal");
+        groundShader.locs[SHADER_LOC_MAP_ROUGHNESS] =
+            GetShaderLocation(groundShader, "texGrassMaterial");
+        groundShader.locs[SHADER_LOC_MAP_EMISSION] =
+            GetShaderLocation(groundShader, "texSoilMaterial");
         MapShadow_ConfigureShader(groundShader);
 
         locLightDir = GetShaderLocation(groundShader, "lightDir");
@@ -324,10 +328,16 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
     // 4. Khai báo khe cắm (slot) cho Shader
     int grassTexSlot = 1;
     int pathTexSlot = 2;
+    int grassMaterialSlot = MATERIAL_MAP_ROUGHNESS;
+    int soilMaterialSlot = MATERIAL_MAP_EMISSION;
     int grassLoc = GetShaderLocation(groundShader, "texGrass");
     int pathLoc = GetShaderLocation(groundShader, "texPath");
+    int grassMaterialLoc = GetShaderLocation(groundShader, "texGrassMaterial");
+    int soilMaterialLoc = GetShaderLocation(groundShader, "texSoilMaterial");
     SetShaderValue(groundShader, grassLoc, &grassTexSlot, SHADER_UNIFORM_INT);
     SetShaderValue(groundShader, pathLoc, &pathTexSlot, SHADER_UNIFORM_INT);
+    SetShaderValue(groundShader, grassMaterialLoc, &grassMaterialSlot, SHADER_UNIFORM_INT);
+    SetShaderValue(groundShader, soilMaterialLoc, &soilMaterialSlot, SHADER_UNIFORM_INT);
 
     // 5. Truyền thông số độ lặp (Tiling)
     float tiling[2] = {width / tileSize, depth / tileSize};
@@ -504,6 +514,24 @@ void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint)
         return;
     tint.a = 255;
     ground->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].color = tint;
+}
+
+void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground,
+                                  const char *grassMaterialPath,
+                                  const char *soilMaterialPath)
+{
+    if (!ground || !ground->ready || !grassMaterialPath || !soilMaterialPath)
+        return;
+    Texture2D grassMaterial = ResourceManager_LoadTexture(grassMaterialPath);
+    Texture2D soilMaterial = ResourceManager_LoadTexture(soilMaterialPath);
+    GenTextureMipmaps(&grassMaterial);
+    GenTextureMipmaps(&soilMaterial);
+    SetTextureFilter(grassMaterial, TEXTURE_FILTER_ANISOTROPIC_16X);
+    SetTextureFilter(soilMaterial, TEXTURE_FILTER_ANISOTROPIC_16X);
+    SetTextureWrap(grassMaterial, TEXTURE_WRAP_REPEAT);
+    SetTextureWrap(soilMaterial, TEXTURE_WRAP_REPEAT);
+    ground->model.materials[0].maps[MATERIAL_MAP_ROUGHNESS].texture = grassMaterial;
+    ground->model.materials[0].maps[MATERIAL_MAP_EMISSION].texture = soilMaterial;
 }
 
 void MapProp_UnloadGround(MapGroundSurface *ground)

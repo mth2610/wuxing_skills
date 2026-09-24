@@ -15,6 +15,8 @@ uniform vec4 colDiffuse;
 uniform sampler2D texture0; // Splatmap (if provided)
 uniform sampler2D texGrass; // Meadow substrate detail
 uniform sampler2D texPath;  // Soil / dirt detail
+uniform sampler2D texGrassMaterial; // packed normal RGB, roughness A
+uniform sampler2D texSoilMaterial;  // packed normal RGB, roughness A
 
 uniform vec2 tiling;
 
@@ -44,6 +46,8 @@ void main()
     vec2 broadDirtUV = vec2(-tiledUV.y * 0.31 + 8.5, tiledUV.x * 0.31 + 14.2);
     vec3 broadDirt = texture(texPath, broadDirtUV).rgb;
     vec3 dirtDetail = mix(colorDirt.rgb, broadDirt, 0.35);
+    vec4 grassMaterial = texture(texGrassMaterial, tiledUV);
+    vec4 soilMaterial = texture(texSoilMaterial, tiledUV * 0.85);
 
     // 1. Distance to path
     float distToPath = 1000.0;
@@ -114,9 +118,9 @@ void main()
     grassAlbedo = mix(coolTurf, warmTurf, smoothstep(-0.35, 0.55, turfNoise));
 
     // Soil & Path PBR Albedos
-    vec3 drySoilColor = dirtDetail * vec3(0.48, 0.38, 0.26) * 1.10;
-    vec3 wetSoilColor = dirtDetail * vec3(0.40, 0.35, 0.27) * 0.90;
-    vec3 pathMarginColor = mix(drySoilColor, colorDirt.rgb * vec3(0.68, 0.64, 0.58), wPath);
+    vec3 drySoilColor = dirtDetail * vec3(0.86, 0.77, 0.63) * 1.18;
+    vec3 wetSoilColor = dirtDetail * vec3(0.62, 0.58, 0.48) * 1.02;
+    vec3 pathMarginColor = mix(drySoilColor, colorDirt.rgb * vec3(1.12, 1.06, 0.91), wPath);
 
     vec3 blendedAlbedo = grassAlbedo * wGrass
                        + drySoilColor * wDrySoil
@@ -130,23 +134,20 @@ void main()
     vec3 macroTint = mix(vec3(0.92, 0.96, 0.90), vec3(1.06, 1.03, 0.94), macroField);
     blendedAlbedo *= macroTint;
 
-    // Surface Gradient Bump Mapping (Morten Mikkelsen's method)
-    // Generates true 3D micro-relief from texture height derivatives across the terrain
-    vec3 normal = geomNormal;
-    float surfaceHeight = mix(fineGrassLuma, colorDirt.r, wDrySoil + wPath * 0.7);
-    vec3 dp1 = dFdx(fragPosition);
-    vec3 dp2 = dFdy(fragPosition);
-    vec3 m = cross(dp1, dp2);
-    float det = dot(m, m);
-    if (det > 0.000001) {
-        float dh_dx = dFdx(surfaceHeight);
-        float dh_dy = dFdy(surfaceHeight);
-        vec3 surfGrad = (dh_dx * cross(dp2, normal) + dh_dy * cross(normal, dp1)) / sqrt(det);
-        normal = normalize(normal - surfGrad * 0.38);
-    }
+    // Tangent-space micro normals follow the same UVs as their albedo layers.
+    // Keep the strength modest so distant mips stay calm rather than glitter.
+    float soilWeight = clamp(wDrySoil + wWetSoil + wPath, 0.0, 1.0);
+    vec3 microNormal = normalize(mix(grassMaterial.rgb, soilMaterial.rgb, soilWeight) * 2.0 - 1.0);
+    vec3 tangent = normalize(vec3(1.0, -geomNormal.x / max(geomNormal.y, 0.15), 0.0));
+    vec3 bitangent = normalize(cross(tangent, geomNormal));
+    vec3 normal = normalize(geomNormal * (0.70 + 0.30 * microNormal.z)
+                          + tangent * microNormal.x * 0.34
+                          + bitangent * microNormal.y * 0.34);
+    float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
+    roughness = mix(roughness, 0.48, wWetSoil * 0.65);
 
     // Micro cavity ambient occlusion from texture relief
-    float cavityAO = clamp(0.35 + 0.65 * surfaceHeight * 1.5, 0.38, 1.0);
+    float cavityAO = clamp(0.75 + 0.25 * mix(fineGrassLuma, colorDirt.r, soilWeight), 0.68, 1.0);
 
     // Lighting
     vec3 light = vec3(0.0, 1.0, 0.0);
@@ -169,11 +170,15 @@ void main()
                     + actualLight.rgb * NdotL * shadow;
 
     vec3 groundLit = blendedAlbedo * totalLight;
+    vec3 viewDir = normalize(viewPos - fragPosition);
+    vec3 halfDir = normalize(light + viewDir);
+    float specPower = mix(12.0, 72.0, 1.0 - roughness);
+    float drySpec = pow(max(dot(normal, halfDir), 0.0), specPower)
+                  * (1.0 - roughness) * 0.16;
+    groundLit += actualLight.rgb * drySpec * shadow;
 
     // Capillary wetness mechanics: Albedo darkening & Roughness collapse (PBR Specular Sheen)
     if (wWetSoil > 0.03) {
-        vec3 viewDir = normalize(viewPos - fragPosition);
-        vec3 halfDir = normalize(light + viewDir);
         float NdotV_wet = max(dot(normal, viewDir), 0.0);
         float fresnelWet = 0.02 + 0.98 * pow(1.0 - NdotV_wet, 5.0);
         float wetSpecSharp = pow(max(dot(normal, halfDir), 0.0), 96.0);
