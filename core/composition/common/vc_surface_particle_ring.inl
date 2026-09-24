@@ -26,6 +26,8 @@ static const VFX_SurfaceId s_surfaceParticleRingSurfaces[VFX_SURFACE_PARTICLE_RI
     VFX_SURFACE_SMOKE_PUFF_DARK_NIAGARA,
     VFX_SURFACE_SMOKE_WISPY_NIAGARA,
     VFX_SURFACE_PLASMA_WISPS_NIAGARA,
+    VFX_SURFACE_SMOKE_PUFF_DENSE,
+    VFX_SURFACE_PLASMA_WISPS_VORTEX,
 };
 
 static int SurfaceParticleRing_Index(VFX_SurfaceParticleRingVariant variant)
@@ -66,7 +68,7 @@ static void SurfaceParticleRing_Init(VFX_SurfaceParticleRingVariant variant)
 const char *VFX_SurfaceParticleRingVariant_Name(VFX_SurfaceParticleRingVariant variant)
 {
     static const char *const names[VFX_SURFACE_PARTICLE_RING_VARIANT_COUNT] = {
-        "DUST PUFF", "DARK SMOKE PUFF", "SMOKE WISP", "ENERGY WISP"
+        "DUST PUFF", "DARK SMOKE PUFF", "SMOKE WISP", "ENERGY WISP", "DENSE SMOKE PUFF", "PLASMA VORTEX"
     };
     return names[SurfaceParticleRing_Index(variant)];
 }
@@ -75,7 +77,8 @@ void VFX_ComposeSurfaceParticleRing(Vector3 pos, VC_MaterialId matId, float scal
                                     float severity01, VFX_SurfaceParticleRingVariant variant)
 {
     const int style = SurfaceParticleRing_Index(variant);
-    const bool energy = variant == VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP;
+    const bool energy = (variant == VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP ||
+                         variant == VFX_SURFACE_PARTICLE_RING_VARIANT_PLASMA_VORTEX);
     SurfaceParticleRing_Init(variant);
     if (s_surfaceParticleRingTex[style].id == 0 || scale <= 0.0f) return;
     severity01 = Clamp(severity01, 0.0f, 1.0f);

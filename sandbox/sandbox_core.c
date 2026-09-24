@@ -702,19 +702,21 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         // Áp dụng trọng lực thông thường khi không bay
         bool isOnSolid = (player->position.y <= currentGroundY);
         if (!isOnSolid || player->zVelocity > 0.0f) {
-            float prevVel = player->zVelocity;
+            float previousY = player->position.y;
             player->zVelocity -= gravity * dt;
             player->position.y += player->zVelocity * dt;
+            float waterSurfaceY = 0.0f, waterDepth = 0.0f;
+            if (MapManager_GetWaterInfoAt(player->position.x, player->position.z, &waterSurfaceY, &waterDepth) &&
+                currentGroundY < waterSurfaceY && previousY > waterSurfaceY &&
+                player->position.y <= waterSurfaceY && player->zVelocity < -2.0f) {
+                Vector3 contact = {player->position.x, waterSurfaceY, player->position.z};
+                MapManager_AddWaterRipple(contact, 3.0f,
+                                          fminf(1.1f, fabsf(player->zVelocity) * 0.16f));
+            }
             if (player->position.y <= currentGroundY) {
                 player->position.y = currentGroundY;
                 player->zVelocity = 0.0f;
                 player->jumpCount = 0;
-
-                float waterSurfaceY = 0.0f, waterDepth = 0.0f;
-                if (MapManager_GetWaterInfoAt(player->position.x, player->position.z, &waterSurfaceY, &waterDepth) &&
-                    currentGroundY < waterSurfaceY && prevVel < -2.0f) {
-                    MapManager_AddWaterRipple(player->position, 6.0f, fminf(2.5f, fabsf(prevVel) * 0.35f));
-                }
             }
         } else {
             player->zVelocity = 0.0f;

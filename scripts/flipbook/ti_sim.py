@@ -180,11 +180,11 @@ PRESETS = {
     # empty half. A small value is enough to break the symmetry.
     "smoke_puff": dict(dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22, fuel_dens=1.0, 
         fuel_radius=0.06, fuel_frames=0.18,
-        radial=4.0, curl=3.2, swirl=4.0,
+        radial=3.6, curl=3.0, swirl=4.0, contain=0.6,
         # Smoke is rounder than flame: it has no thin licking tongues, so it
         # takes more diffusion before the silhouette reads as billows.
         diffuse=0.06, eddy=34.0,
-        viscosity=0.30, buoyancy=1.5,
+        viscosity=0.30, buoyancy=0.0, lock_center=1, domain=1.4,
         cool=3.0, soot=1.0),
 
     # DUST, as ONE SMALL PARCEL inside a larger cloud — which is what a sprite
@@ -398,6 +398,8 @@ def main():
                     help="remove density-weighted bulk velocity each solver step. "
                          "Use 1 for directionless parcel assets so turbulence churns "
                          "inside the cell instead of becoming baked travel.")
+    ap.add_argument("--bfecc", type=int, choices=[0, 1], default=1,
+                    help="use 2nd-order BFECC advection to preserve sharp turbulent lobes and eliminate numerical dissipation")
     args = ap.parse_args()
 
     p = dict(PRESETS[args.preset])
@@ -516,7 +518,12 @@ def main():
     temp = ti.field(ti.f32, shape=(N, N, N))
     fuel = ti.field(ti.f32, shape=(N, N, N))
     fld_tmp = ti.field(ti.f32, shape=(N, N, N))
+    fld_star = ti.field(ti.f32, shape=(N, N, N))
+    temp_tmp = ti.field(ti.f32, shape=(N, N, N))
+    temp_star = ti.field(ti.f32, shape=(N, N, N))
     fuel_tmp = ti.field(ti.f32, shape=(N, N, N))
+    fuel_star = ti.field(ti.f32, shape=(N, N, N))
+    u_star = ti.Vector.field(3, ti.f32, shape=(N, N, N))
     div = ti.field(ti.f32, shape=(N, N, N))
     pre = ti.field(ti.f32, shape=(N, N, N))
     pre2 = ti.field(ti.f32, shape=(N, N, N))
@@ -844,11 +851,77 @@ def main():
                     omega_mag[I + dy] - omega_mag[I - dy],
                     omega_mag[I + dz] - omega_mag[I - dz]])
                 n = grad.normalized(1e-4)
-                u_tmp[I] = u[I] + dt * strength * 0.02 * n.cross(omega[I])
+                u_tmp[I] = u[I] + dt * strength * 0.12 * n.cross(omega[I])
             else:
                 u_tmp[I] = u[I]
         for I in ti.grouped(u):
             u[I] = u_tmp[I]
+
+    @ti.func
+    def samp_min_max(fld: ti.template(), pos):
+        q = ti.math.clamp(pos, 0.0, N - 1.001)
+        i = ti.cast(q, ti.i32)
+        min_v = fld[i.x, i.y, i.z]
+        max_v = min_v
+        for dx, dy, dz in ti.static(ti.ndrange(2, 2, 2)):
+            val = fld[i.x + dx, i.y + dy, i.z + dz]
+            min_v = ti.min(min_v, val)
+            max_v = ti.max(max_v, val)
+        return min_v, max_v
+
+    @ti.func
+    def sampv_min_max(fld: ti.template(), pos):
+        q = ti.math.clamp(pos, 0.0, N - 1.001)
+        i = ti.cast(q, ti.i32)
+        min_v = fld[i.x, i.y, i.z]
+        max_v = min_v
+        for dx, dy, dz in ti.static(ti.ndrange(2, 2, 2)):
+            val = fld[i.x + dx, i.y + dy, i.z + dz]
+            min_v = ti.min(min_v, val)
+            max_v = ti.max(max_v, val)
+        return min_v, max_v
+
+    @ti.kernel
+    def advect_velocity_bfecc(dt: ti.f32):
+        for I in ti.grouped(u):
+            back = ti.cast(I, ti.f32) - u[I] * dt
+            u_star[I] = sampv(u, back)
+        for I in ti.grouped(u):
+            fwd = ti.cast(I, ti.f32) + u[I] * dt
+            u_tmp[I] = sampv(u_star, fwd)
+        for I in ti.grouped(u):
+            back = ti.cast(I, ti.f32) - u[I] * dt
+            min_v, max_v = sampv_min_max(u, back)
+            corr = u_star[I] + 0.5 * (u[I] - u_tmp[I])
+            u[I] = ti.math.clamp(corr, min_v, max_v)
+
+    @ti.kernel
+    def advect_scalars_bfecc(dt: ti.f32):
+        for I in ti.grouped(dens):
+            back = ti.cast(I, ti.f32) - u[I] * dt
+            fld_star[I] = samp(dens, back)
+            temp_star[I] = samp(temp, back)
+            fuel_star[I] = samp(fuel, back)
+
+        for I in ti.grouped(dens):
+            fwd = ti.cast(I, ti.f32) + u[I] * dt
+            fld_tmp[I] = samp(fld_star, fwd)
+            temp_tmp[I] = samp(temp_star, fwd)
+            fuel_tmp[I] = samp(fuel_star, fwd)
+
+        for I in ti.grouped(dens):
+            back = ti.cast(I, ti.f32) - u[I] * dt
+            min_d, max_d = samp_min_max(dens, back)
+            corr_d = fld_star[I] + 0.5 * (dens[I] - fld_tmp[I])
+            dens[I] = ti.math.clamp(corr_d, min_d, max_d)
+
+            min_t, max_t = samp_min_max(temp, back)
+            corr_t = temp_star[I] + 0.5 * (temp[I] - temp_tmp[I])
+            temp[I] = ti.math.clamp(corr_t, min_t, max_t)
+
+            min_f, max_f = samp_min_max(fuel, back)
+            corr_f = fuel_star[I] + 0.5 * (fuel[I] - fuel_tmp[I])
+            fuel[I] = ti.math.clamp(corr_f, min_f, max_f)
 
     @ti.kernel
     def velocity_to_faces():
@@ -981,13 +1054,13 @@ def main():
                     avg += dens[I + e] + dens[I - e]
                     avt += temp[I + e] + temp[I - e]
                 fld_tmp[I] = dens[I] + k * (avg / 6.0 - dens[I])
-                div[I] = temp[I] + k * (avt / 6.0 - temp[I])
+                temp_tmp[I] = temp[I] + k * (avt / 6.0 - temp[I])
             else:
                 fld_tmp[I] = dens[I]
-                div[I] = temp[I]
+                temp_tmp[I] = temp[I]
         for I in ti.grouped(dens):
             dens[I] = fld_tmp[I]
-            temp[I] = div[I]
+            temp[I] = temp_tmp[I]
 
     @ti.kernel
     def cool(dt: ti.f32, rate: ti.f32, soot: ti.f32, dissipate: ti.f32):
@@ -1034,9 +1107,10 @@ def main():
             # Stable-fluid ordering: transport velocity first, then apply
             # sources/forces, restore lost vorticity, project to divergence-free,
             # and only then transport the scalar material fields with that
-            # projected velocity.  Keeping all three advections in one pass made
-            # force injection depend on its own unprojected backtrace.
-            advect_velocity(step_dt)
+            if args.bfecc:
+                advect_velocity_bfecc(step_dt)
+            else:
+                advect_velocity(step_dt)
             if frac < p["fuel_frames"]:
                 qa, qb, qc = directionless_source_coefficients(
                     force_time * p["noise_phase_speed"])
@@ -1066,6 +1140,8 @@ def main():
             confine_vorticity(step_dt, p["swirl"])
             velocity_to_faces()
             divergence()
+            pre.fill(0.0)
+            pre2.fill(0.0)
             for k in range(jacobi_iters // 2):
                 jacobi(pre, pre2)
                 jacobi(pre2, pre)
@@ -1074,7 +1150,10 @@ def main():
                 clear_bulk_velocity()
                 measure_bulk_velocity()
                 remove_bulk_velocity()
-            advect_scalars(step_dt)
+            if args.bfecc:
+                advect_scalars_bfecc(step_dt)
+            else:
+                advect_scalars(step_dt)
             cool(step_dt, p["cool"], p["soot"], p.get("dissipate", 0.06))
             diffuse(p["diffuse"])
 

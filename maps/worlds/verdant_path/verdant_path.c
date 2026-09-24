@@ -26,7 +26,7 @@
 #define MOUNTAIN_RING_WIDTH 82.0f
 #define MOUNTAIN_RING_DEPTH 58.0f
 #define MOUNTAIN_ROCK_COUNT 40
-#define ROCK_COUNT 10
+#define ROCK_COUNT 13
 #define GRASS_TUFT_CAPACITY 65000
 #define FLOWER_CLUSTER_COUNT 3
 #define FLOWERS_PER_CLUSTER 120
@@ -68,6 +68,10 @@ static const MapRockPlacement kRocks[ROCK_COUNT] = {
     {{57.0f, 0.0f, 33.5f}, 0.52f, 0.34f, 260.0f},
     {{67.0f, 0.0f, 34.0f}, 0.42f, 0.30f, 112.0f},
     {{76.0f, 0.0f, 29.0f}, 0.58f, 0.38f, 226.0f},
+    // Three low stones breach the surface; their contact rings are shaded in water_surface.fs.
+    {{59.0f, 0.0f, 23.0f}, 0.66f, 0.52f, 29.0f},
+    {{65.7f, 0.0f, 29.0f}, 0.48f, 0.38f, 114.0f},
+    {{69.5f, 0.0f, 22.0f}, 0.73f, 0.57f, 241.0f},
 };
 
 static MapGroundSurface s_ground;
@@ -608,6 +612,10 @@ void InitVerdantPathMap(void)
         .foamColor = {205, 228, 218, 255},
         .bankInnerColor = {52, 58, 43, 255}, .bankOuterColor = {65, 84, 51, 255},
     });
+    for (int i = ROCK_COUNT - 3; i < ROCK_COUNT; i++) {
+        MapProp_AddWaterObstacle(&s_lake, kRocks[i].position,
+                                 kRocks[i].radiusScale * 0.92f, 0.75f);
+    }
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
@@ -654,6 +662,7 @@ void UpdateVerdantPathMap(float dt)
 {
     if (s_ready) {
         s_time += dt;
+        MapProp_UpdateWaterSurface(&s_lake, dt);
         Vector3 focus = {camera.target.x, 0.0f, camera.target.z};
         // Dynamic vegetation/character shadows are the near cascade. Static
         // terrain and rocks remain covered by the world-fixed cache. Centering

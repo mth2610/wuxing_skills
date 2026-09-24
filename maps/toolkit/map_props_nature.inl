@@ -43,9 +43,11 @@ static int s_waterLocResolution = -1;
 static int s_waterLocInteractor = -1;
 static int s_waterLocVelocity = -1;
 static int s_waterLocRadius = -1;
-static int s_waterLocSubmerged = -1;
-static int s_waterLocRippleRings = -1;
-static int s_waterLocRippleParams = -1;
+static int s_waterLocRippleRings[MAX_WATER_RIPPLES] = {-1, -1, -1, -1};
+static int s_waterLocRippleParams[MAX_WATER_RIPPLES] = {-1, -1, -1, -1};
+static int s_waterLocObstacles[MAX_WATER_OBSTACLES] = {-1, -1, -1, -1};
+static int s_waterLocWaveFieldTex = -1;
+static int s_waterLocWaveFieldEnabled = -1;
 
 static Shader s_waterBedShader = {0};
 static bool s_waterBedShaderReady = false;
@@ -624,10 +626,17 @@ static Shader Water_GetShader(void)
         s_waterLocInteractor = GetShaderLocation(s_waterShader, "u_waterInteractor");
         s_waterLocVelocity = GetShaderLocation(s_waterShader, "u_waterVelocity");
         s_waterLocRadius = GetShaderLocation(s_waterShader, "u_waterRadius");
-        s_waterLocRippleRings = GetShaderLocation(s_waterShader, "u_rippleRings");
-        if (s_waterLocRippleRings < 0) s_waterLocRippleRings = GetShaderLocation(s_waterShader, "u_rippleRings[0]");
-        s_waterLocRippleParams = GetShaderLocation(s_waterShader, "u_rippleParams");
-        if (s_waterLocRippleParams < 0) s_waterLocRippleParams = GetShaderLocation(s_waterShader, "u_rippleParams[0]");
+        static const char *ringNames[] = {"u_rippleRing0", "u_rippleRing1", "u_rippleRing2", "u_rippleRing3"};
+        static const char *paramNames[] = {"u_rippleParam0", "u_rippleParam1", "u_rippleParam2", "u_rippleParam3"};
+        static const char *obstacleNames[] = {"u_obstacle0", "u_obstacle1", "u_obstacle2", "u_obstacle3"};
+        for (int i = 0; i < MAX_WATER_RIPPLES; i++) {
+            s_waterLocRippleRings[i] = GetShaderLocation(s_waterShader, ringNames[i]);
+            s_waterLocRippleParams[i] = GetShaderLocation(s_waterShader, paramNames[i]);
+        }
+        for (int i = 0; i < MAX_WATER_OBSTACLES; i++)
+            s_waterLocObstacles[i] = GetShaderLocation(s_waterShader, obstacleNames[i]);
+        s_waterLocWaveFieldTex = GetShaderLocation(s_waterShader, "u_waveFieldTex");
+        s_waterLocWaveFieldEnabled = GetShaderLocation(s_waterShader, "u_waveFieldEnabled");
 
         int causticSlot = 1;
         if (s_waterLocCausticTex >= 0) {
@@ -637,6 +646,9 @@ static Shader Water_GetShader(void)
         if (s_waterLocCameraDepthTex >= 0) {
             SetShaderValue(s_waterShader, s_waterLocCameraDepthTex, &depthSlot, SHADER_UNIFORM_INT);
         }
+        int waveSlot = 3;
+        if (s_waterLocWaveFieldTex >= 0)
+            SetShaderValue(s_waterShader, s_waterLocWaveFieldTex, &waveSlot, SHADER_UNIFORM_INT);
 
         VFXLight_RegisterShader(s_waterShader);
         s_waterShaderReady = true;
@@ -3097,6 +3109,29 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
         }
     }
     water.bankModel = Nature_ModelFromMesh(bankMesh, Nature_GetShader(false));
+    const int cellCount = WATER_FIELD_SIZE * WATER_FIELD_SIZE;
+    water.waveHeightField = calloc((size_t)cellCount, sizeof(float));
+    water.waveNextField = calloc((size_t)cellCount, sizeof(float));
+    water.waveVelocityField = calloc((size_t)cellCount, sizeof(float));
+    water.wavePixels = malloc((size_t)cellCount * 4u);
+    if (water.waveHeightField && water.waveNextField && water.waveVelocityField && water.wavePixels) {
+        for (int i = 0; i < cellCount; i++) {
+            water.wavePixels[i * 4 + 0] = 128;
+            water.wavePixels[i * 4 + 1] = 128;
+            water.wavePixels[i * 4 + 2] = 128;
+            water.wavePixels[i * 4 + 3] = 128;
+        }
+        Image waveImage = {
+            .data = water.wavePixels,
+            .width = WATER_FIELD_SIZE, .height = WATER_FIELD_SIZE,
+            .mipmaps = 1, .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8
+        };
+        water.waveFieldTex = LoadTextureFromImage(waveImage);
+        if (water.waveFieldTex.id > 0) {
+            SetTextureFilter(water.waveFieldTex, TEXTURE_FILTER_BILINEAR);
+            SetTextureWrap(water.waveFieldTex, TEXTURE_WRAP_CLAMP);
+        }
+    }
     water.ready = true;
     return water;
 }
@@ -3444,6 +3479,10 @@ bool MapProp_SampleWaterBed(const MapWaterSurface *water, float x, float z,
 void MapProp_DrawWaterBed(const MapWaterSurface *water, float time)
 {
     if (!water || !water->ready) return;
+    // Upload while a Vulkan frame is recording. Uploading from the map update
+    // path waits for every in-flight frame and can stall once per frame.
+    if (water->waveFieldTex.id > 0 && water->wavePixels)
+        UpdateTexture(water->waveFieldTex, water->wavePixels);
     Vector3 position = water->config.center;
 
     Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
@@ -3546,26 +3585,19 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     SetShaderValue(shader, s_waterLocCausticsStrength, &water->config.causticsStrength, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, s_waterLocCausticsScale, &water->config.causticsScale, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, s_waterLocFoamThreshold, &water->config.foamThreshold, SHADER_UNIFORM_FLOAT);
+    int waveFieldEnabled = water->waveFieldTex.id > 0 ? 1 : 0;
+    if (s_waterLocWaveFieldEnabled >= 0)
+        SetShaderValue(shader, s_waterLocWaveFieldEnabled, &waveFieldEnabled, SHADER_UNIFORM_INT);
 
-    // Dynamic Interactor & Ripple Uniforms
-    static int s_dbgCount = 0;
-    if (s_dbgCount++ % 30 == 0) {
-        TraceLog(LOG_INFO, "WATER DEBUG: pos=(%.2f,%.2f,%.2f) vel=(%.2f,%.2f,%.2f) sub=%.2f locs=(%d,%d,%d,%d,%d,%d)",
-                 water->interactorPos.x, water->interactorPos.y, water->interactorPos.z,
-                 water->interactorVel.x, water->interactorVel.y, water->interactorVel.z,
-                 water->interactorSubmerged,
-                 s_waterLocInteractor, s_waterLocVelocity, s_waterLocRadius, s_waterLocSubmerged,
-                 s_waterLocRippleRings, s_waterLocRippleParams);
-    }
+    // Dynamic interactor, impacts, and persistent flow around submerged rocks.
     ((MapWaterSurface*)water)->lastTime = time;
+    Vector3 interaction = {water->interactorPos.x, water->interactorSubmerged, water->interactorPos.z};
     if (s_waterLocInteractor >= 0)
-        SetShaderValue(shader, s_waterLocInteractor, &water->interactorPos, SHADER_UNIFORM_VEC3);
+        SetShaderValue(shader, s_waterLocInteractor, &interaction, SHADER_UNIFORM_VEC3);
     if (s_waterLocVelocity >= 0)
         SetShaderValue(shader, s_waterLocVelocity, &water->interactorVel, SHADER_UNIFORM_VEC3);
     if (s_waterLocRadius >= 0)
         SetShaderValue(shader, s_waterLocRadius, &water->interactorRadius, SHADER_UNIFORM_FLOAT);
-    if (s_waterLocSubmerged >= 0)
-        SetShaderValue(shader, s_waterLocSubmerged, &water->interactorSubmerged, SHADER_UNIFORM_FLOAT);
 
     Vector4 rings[MAX_WATER_RIPPLES];
     Vector4 params[MAX_WATER_RIPPLES];
@@ -3588,15 +3620,26 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
             params[i] = (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
         }
     }
-    if (s_waterLocRippleRings >= 0)
-        SetShaderValueV(shader, s_waterLocRippleRings, rings, SHADER_UNIFORM_VEC4, MAX_WATER_RIPPLES);
-    if (s_waterLocRippleParams >= 0)
-        SetShaderValueV(shader, s_waterLocRippleParams, params, SHADER_UNIFORM_VEC4, MAX_WATER_RIPPLES);
+    for (int i = 0; i < MAX_WATER_RIPPLES; i++) {
+        if (s_waterLocRippleRings[i] >= 0)
+            SetShaderValue(shader, s_waterLocRippleRings[i], &rings[i], SHADER_UNIFORM_VEC4);
+        if (s_waterLocRippleParams[i] >= 0)
+            SetShaderValue(shader, s_waterLocRippleParams[i], &params[i], SHADER_UNIFORM_VEC4);
+    }
+    for (int i = 0; i < MAX_WATER_OBSTACLES; i++) {
+        Vector4 rock = i < water->obstacleCount ? water->obstacles[i] : (Vector4){0};
+        if (s_waterLocObstacles[i] >= 0)
+            SetShaderValue(shader, s_waterLocObstacles[i], &rock, SHADER_UNIFORM_VEC4);
+    }
 
     // Multi-Texture Bindings
     Texture2D cTex = (water->causticTex.id > 0) ? water->causticTex : s_defaultCausticTex;
     rlActiveTextureSlot(1);
     rlEnableTexture(cTex.id);
+    if (waveFieldEnabled) {
+        rlActiveTextureSlot(3);
+        rlEnableTexture(water->waveFieldTex.id);
+    }
 
     SceneTargets_RequestSoftDepthRegion((Rectangle){ 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() });
     Vector2 screenRes = { (float)GetScreenWidth(), (float)GetScreenHeight() };
@@ -3628,6 +3671,10 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
         rlActiveTextureSlot(2);
         rlDisableTexture();
     }
+    if (waveFieldEnabled) {
+        rlActiveTextureSlot(3);
+        rlDisableTexture();
+    }
     rlActiveTextureSlot(1);
     rlDisableTexture();
     rlActiveTextureSlot(0);
@@ -3652,16 +3699,143 @@ void MapProp_SetWaterInteractor(MapWaterSurface *water, Vector3 position, Vector
 void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radius, float intensity)
 {
     if (!water || !water->ready) return;
+    bool isStepEvent = intensity > 0.0f && intensity <= 0.65f;
+    if (isStepEvent && water->lastTime - water->waveLastImpulseTime < 0.12f) return;
+    if (isStepEvent) water->waveLastImpulseTime = water->lastTime;
     int idx = water->nextRipple;
+    // Wading impulses come from alternating feet, not the torso center.
+    // Keep jumps and hard impacts centered.
+    float planarSpeed = hypotf(water->interactorVel.x, water->interactorVel.z);
+    bool footstep = intensity > 0.0f && intensity <= 0.65f && planarSpeed > 0.2f;
+    if (footstep) {
+        float side = (idx & 1) ? 1.0f : -1.0f;
+        float footOffset = fmaxf(0.12f, water->interactorRadius * 0.48f);
+        position.x += -water->interactorVel.z / planarSpeed * footOffset * side;
+        position.z +=  water->interactorVel.x / planarSpeed * footOffset * side;
+    }
     water->ripples[idx].position = position;
     water->ripples[idx].spawnTime = water->lastTime;
-    water->ripples[idx].maxRadius = (radius > 0.0f) ? radius : 6.0f;
+    water->ripples[idx].maxRadius = footstep ? fminf(radius, 1.8f) : ((radius > 0.0f) ? radius : 6.0f);
     water->ripples[idx].amplitude = (intensity > 0.0f) ? intensity : 1.0f;
-    water->ripples[idx].speed = 3.2f;
-    water->ripples[idx].wavelength = 0.52f;
-    water->ripples[idx].decay = 1.8f;
+    water->ripples[idx].speed = footstep ? (2.25f + 0.16f * (float)(idx & 1)) : 3.2f;
+    water->ripples[idx].wavelength = footstep ? (0.42f + 0.05f * (float)(idx & 1)) : 0.52f;
+    water->ripples[idx].decay = footstep ? 2.2f : 1.8f;
     water->ripples[idx].active = true;
     water->nextRipple = (water->nextRipple + 1) % MAX_WATER_RIPPLES;
+
+    if (water->waveVelocityField) {
+        const int n = WATER_FIELD_SIZE;
+        float dx = 2.0f * water->config.radiusX / (float)(n - 1);
+        float dz = 2.0f * water->config.radiusZ / (float)(n - 1);
+        float sigma = footstep ? 0.22f : 0.30f;
+        float impulse = footstep ? fminf(1.2f, intensity * 2.35f)
+                                 : fminf(1.1f, fmaxf(0.0f, intensity) * 0.9f);
+        int cx = (int)roundf((position.x - water->config.center.x + water->config.radiusX) / dx);
+        int cz = (int)roundf((position.z - water->config.center.z + water->config.radiusZ) / dz);
+        int reachX = (int)ceilf(3.0f * sigma / dx);
+        int reachZ = (int)ceilf(3.0f * sigma / dz);
+        for (int z = fmaxf(1, cz - reachZ); z <= fminf(n - 2, cz + reachZ); z++) {
+            float wz = water->config.center.z - water->config.radiusZ + z * dz;
+            for (int x = fmaxf(1, cx - reachX); x <= fminf(n - 2, cx + reachX); x++) {
+                float wx = water->config.center.x - water->config.radiusX + x * dx;
+                float nx = (wx - water->config.center.x) / water->config.radiusX;
+                float nz = (wz - water->config.center.z) / water->config.radiusZ;
+                if (nx * nx + nz * nz >= 0.94f) continue;
+                float dist2 = (wx - position.x) * (wx - position.x) +
+                              (wz - position.z) * (wz - position.z);
+                float q = dist2 / (2.0f * sigma * sigma);
+                water->waveVelocityField[z * n + x] += impulse * expf(-q) * (1.0f - q);
+            }
+        }
+    }
+}
+
+void MapProp_AddWaterObstacle(MapWaterSurface *water, Vector3 position, float radius, float strength)
+{
+    if (!water || !water->ready || water->obstacleCount >= MAX_WATER_OBSTACLES || radius <= 0.0f) return;
+    water->obstacles[water->obstacleCount++] = (Vector4){position.x, position.z, radius, strength};
+}
+
+void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
+{
+    if (!water || !water->waveFieldTex.id || !water->waveHeightField || dt <= 0.0f) return;
+    float motionSpeed = hypotf(water->interactorVel.x, water->interactorVel.z);
+    if (water->interactorSubmerged > 0.05f && motionSpeed > 0.35f) {
+        water->waveWakeTimer += dt;
+        if (water->waveWakeTimer >= 0.24f) {
+            water->waveWakeTimer -= 0.24f;
+            MapProp_AddWaterRipple(water, water->interactorPos, 1.8f, 0.48f);
+        }
+    } else {
+        water->waveWakeTimer = 0.12f;
+    }
+    const int n = WATER_FIELD_SIZE;
+    const float step = 1.0f / 60.0f;
+    const float dx = 2.0f * water->config.radiusX / (float)(n - 1);
+    const float dz = 2.0f * water->config.radiusZ / (float)(n - 1);
+    const float invDx2 = 1.0f / (dx * dx);
+    const float invDz2 = 1.0f / (dz * dz);
+    water->waveStepRemainder = fminf(water->waveStepRemainder + dt, 3.0f * step);
+    while (water->waveStepRemainder >= step) {
+        water->waveStepRemainder -= step;
+        for (int z = 1; z < n - 1; z++) {
+            float nz = 2.0f * (float)z / (float)(n - 1) - 1.0f;
+            for (int x = 1; x < n - 1; x++) {
+                int i = z * n + x;
+                float nx = 2.0f * (float)x / (float)(n - 1) - 1.0f;
+                float radial2 = nx * nx + nz * nz;
+                bool blocked = radial2 >= 0.94f;
+                if (!blocked) {
+                    float wx = water->config.center.x + nx * water->config.radiusX;
+                    float wz = water->config.center.z + nz * water->config.radiusZ;
+                    for (int k = 0; k < water->obstacleCount; k++) {
+                        float ox = wx - water->obstacles[k].x;
+                        float oz = wz - water->obstacles[k].y;
+                        if (ox * ox + oz * oz < water->obstacles[k].z * water->obstacles[k].z) {
+                            blocked = true;
+                            break;
+                        }
+                    }
+                }
+                if (blocked) {
+                    water->waveNextField[i] = 0.0f;
+                    water->waveVelocityField[i] = 0.0f;
+                    continue;
+                }
+                float h = water->waveHeightField[i];
+                float lap = (water->waveHeightField[i - 1] + water->waveHeightField[i + 1] - 2.0f * h) * invDx2 +
+                            (water->waveHeightField[i - n] + water->waveHeightField[i + n] - 2.0f * h) * invDz2;
+                float speedSquared = (2.35f * 2.35f) * fmaxf(0.08f, 1.0f - radial2);
+                float shoreDamping = 1.4f + 4.0f * fmaxf(0.0f, radial2 - 0.70f);
+                float velocity = (water->waveVelocityField[i] + speedSquared * lap * step) *
+                                 fmaxf(0.0f, 1.0f - shoreDamping * step);
+                water->waveVelocityField[i] = velocity;
+                water->waveNextField[i] = fmaxf(-0.12f, fminf(0.12f, h + velocity * step));
+            }
+        }
+        float *old = water->waveHeightField;
+        water->waveHeightField = water->waveNextField;
+        water->waveNextField = old;
+    }
+    for (int z = 0; z < n; z++) {
+        for (int x = 0; x < n; x++) {
+            int i = z * n + x;
+            int xl = x > 0 ? i - 1 : i;
+            int xr = x < n - 1 ? i + 1 : i;
+            int zb = z > 0 ? i - n : i;
+            int zf = z < n - 1 ? i + n : i;
+            float sx = (water->waveHeightField[xr] - water->waveHeightField[xl]) / (2.0f * dx);
+            float sz = (water->waveHeightField[zf] - water->waveHeightField[zb]) / (2.0f * dz);
+            float h = water->waveHeightField[i];
+            water->wavePixels[i * 4 + 0] = (unsigned char)(255.0f * fminf(1.0f, fmaxf(0.0f, 0.5f + sx)));
+            water->wavePixels[i * 4 + 1] = (unsigned char)(255.0f * fminf(1.0f, fmaxf(0.0f, 0.5f + sz)));
+            water->wavePixels[i * 4 + 2] = (unsigned char)(255.0f * fminf(1.0f, fmaxf(0.0f, 0.5f + h * 4.0f)));
+            float lap = (water->waveHeightField[xl] + water->waveHeightField[xr] - 2.0f * h) * invDx2 +
+                        (water->waveHeightField[zb] + water->waveHeightField[zf] - 2.0f * h) * invDz2;
+            water->wavePixels[i * 4 + 3] = (unsigned char)(255.0f *
+                fminf(1.0f, fmaxf(0.0f, 0.5f - lap * 0.035f)));
+        }
+    }
 }
 
 void MapProp_UnloadWaterSurface(MapWaterSurface *water)
@@ -3674,5 +3848,10 @@ void MapProp_UnloadWaterSurface(MapWaterSurface *water)
     if (water->bedModel.meshCount > 0) {
         UnloadModel(water->bedModel);
     }
+    if (water->waveFieldTex.id > 0) UnloadTexture(water->waveFieldTex);
+    free(water->waveHeightField);
+    free(water->waveNextField);
+    free(water->waveVelocityField);
+    free(water->wavePixels);
     water->ready = false;
 }

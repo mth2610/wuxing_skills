@@ -80,3 +80,8 @@ eos_keys.cfg
 # Unreal Engine Starter Content
 unreal-engine-starter-content-main/
 
+# Python virtual environments & cache
+.venv/
+__pycache__/
+*.pyc
+

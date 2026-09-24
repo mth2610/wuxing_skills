@@ -111,7 +111,13 @@ still needs matched dark/light-background approval.
 | `flipbooks/fireroil_normals_8x8.png` | FireRoilNiagara normal companion | 2048×2048, 8×8, 64 frames | preview-only; BC5-style XY |
 | `flipbooks/fireball_8x8.png` | FireballNiagara / `VFX_FlameEmitter` | 2048×2048, 8×8, 64 frames | preview-only |
 | `flipbooks/fireball_normals_8x8.png` | FireballNiagara normal companion | 2048×2048, 8×8, 64 frames | preview-only; BC5-style XY |
+| `flipbooks/fire_tongue_01_8x8.png` | FireTongue01 / `VFX_FlameEmitter` | 2048×2048, 8×8, 64 frames | preview-only |
+| `flipbooks/fire_tongue_01_normals_8x8.png` | FireTongue01 normal companion | 2048×2048, 8×8, 64 frames | preview-only; BC5-style XY |
 | `flipbooks/plasma_wisps_8x8.png` | PlasmaWispsNiagara / `VFX_MeshParticleEmitter` | 4096×4096, 8×8, 64 frames | preview-only; high-memory source |
+| `flipbooks/plasma_wisps_vortex_8x8.png` | PlasmaWispsVortex / `VFX_ComposeSurfaceParticleRing` | 2048×2048, 8×8, 64 frames | preview-only |
+| `flipbooks/plasma_wisps_vortex_normals_8x8.png` | PlasmaWispsVortex normal companion | 2048×2048, 8×8, 64 frames | preview-only; BC5-style XY |
+| `flipbooks/smoke_puff_dense_8x8.png` | SmokePuffDense / `VFX_ComposeSurfaceParticleRing` | 2048×2048, 8×8, 64 frames | preview-only |
+| `flipbooks/smoke_puff_dense_normals_8x8.png` | SmokePuffDense normal companion | 2048×2048, 8×8, 64 frames | preview-only; BC5-style XY |
 | `flares/lens_flare_star.png` | LensFlareStarNiagara / `VFX_DrawOpticalStarburstStreak` | 512×512, static | preview-only |
 | `flares/lens_flare_ring.png` | LensFlareStreakNiagara / `VFX_DrawOpticalStarburstStreak` | 1024×256, static anamorphic streak; filename is legacy | preview-only |
 
@@ -130,6 +136,9 @@ semantic profile; the registry owns the runtime path and sampler contract.
 | SmokeRoil/PuffDark/PuffLight/Wispy Niagara | puff/card | `VFX_ComposeSmokeVolume` | migrated; visual approval pending |
 | FireRoil/Fireball Niagara | puff/card | `VFX_FlameEmitter` | migrated; visual approval pending |
 | PlasmaWisps Niagara | puff/card | `VFX_MeshParticleEmitter` | migrated; visual approval pending |
+| FireTongue01 | fire tongue | `VFX_FlameEmitter` | migrated; visual approval pending |
+| SmokePuffDense | puff/card | `VFX_ComposeSurfaceParticleRing` | migrated; visual approval pending |
+| PlasmaWispsVortex | puff/card | `VFX_ComposeSurfaceParticleRing` | migrated; visual approval pending |
 
 ### P4 decal semantic migration map — visual-owner gate
 

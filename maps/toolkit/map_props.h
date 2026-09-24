@@ -450,6 +450,8 @@ typedef struct
 } MapWaterConfig;
 
 #define MAX_WATER_RIPPLES 4
+#define MAX_WATER_OBSTACLES 4
+#define WATER_FIELD_SIZE 128
 
 typedef struct {
     Vector3 position;
@@ -481,6 +483,18 @@ typedef struct
     MapWaterRippleRing ripples[MAX_WATER_RIPPLES];
     int nextRipple;
     float lastTime;
+    Vector4 obstacles[MAX_WATER_OBSTACLES]; // world X/Z, waterline radius, strength
+    int obstacleCount;
+    // Damped 2D shallow-water height field. The CPU advances it at a fixed
+    // step; the texture carries slopes (R/G) and height (B) to the shaders.
+    float *waveHeightField;
+    float *waveNextField;
+    float *waveVelocityField;
+    unsigned char *wavePixels;
+    Texture2D waveFieldTex;
+    float waveStepRemainder;
+    float waveWakeTimer;
+    float waveLastImpulseTime;
 
     bool ready;
 } MapWaterSurface;
@@ -502,6 +516,8 @@ void MapProp_SetWaterInteractor(MapWaterSurface *water, Vector3 position, Vector
 
 // Kích hoạt một vòng sóng xung kích loang dần trên mặt nước (tiếp đất, bước mạnh, nổ, v.v.)
 void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radius, float intensity);
+void MapProp_AddWaterObstacle(MapWaterSurface *water, Vector3 position, float radius, float strength);
+void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt);
 
 void MapProp_DrawWaterBed(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time);

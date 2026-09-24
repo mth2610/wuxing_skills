@@ -1160,19 +1160,21 @@ int main(int argc, char **argv) {
         groundY = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
         inWater = MapManager_GetWaterInfoAt(player.position.x, player.position.z, &waterSurfaceY, &waterDepth);
         if (s_vfxPlayerJumping) {
+            float previousY = player.position.y;
             s_vfxPlayerVelY -= 15.0f * dt;
             player.position.y += s_vfxPlayerVelY * dt;
 
+            if (inWater && groundY < waterSurfaceY && previousY > waterSurfaceY &&
+                player.position.y <= waterSurfaceY && s_vfxPlayerVelY < -2.0f) {
+                Vector3 contact = {player.position.x, waterSurfaceY, player.position.z};
+                MapManager_AddWaterRipple(contact, 3.0f,
+                                          fminf(1.1f, fabsf(s_vfxPlayerVelY) * 0.16f));
+            }
+
             if (player.position.y <= groundY) {
                 player.position.y = groundY;
-                float impactSpeed = s_vfxPlayerVelY;
                 s_vfxPlayerVelY = 0.0f;
                 s_vfxPlayerJumping = false;
-
-                // Kích hoạt hiệu ứng va chạm dội nước khi rơi xuống nước
-                if (inWater && groundY < waterSurfaceY) {
-                    MapManager_AddWaterRipple(player.position, 6.0f, fminf(2.5f, fabsf(impactSpeed) * 0.35f));
-                }
             }
         } else {
             player.position.y = groundY;

@@ -1284,7 +1284,8 @@ void VFXTest_Draw3D(void)
                 s_surfaceParticleRingFixtureVariant = (VFX_SurfaceParticleRingVariant)(((int)s_surfaceParticleRingFixtureVariant + direction + VFX_SURFACE_PARTICLE_RING_VARIANT_COUNT) % VFX_SURFACE_PARTICLE_RING_VARIANT_COUNT);
                 TraceLog(LOG_INFO, "SURFACE PARTICLE RING variant: %s (>, next; <, previous)", VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant));
                 VFX_ComposeSurfaceParticleRing(s_prefabStartPos,
-                    s_surfaceParticleRingFixtureVariant == VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH,
+                    (s_surfaceParticleRingFixtureVariant == VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP ||
+                     s_surfaceParticleRingFixtureVariant == VFX_SURFACE_PARTICLE_RING_VARIANT_PLASMA_VORTEX) ? VC_MAT_LIGHTNING : VC_MAT_EARTH,
                     1.5f, 1.0f, s_surfaceParticleRingFixtureVariant);
             }
         }
@@ -1305,7 +1306,7 @@ void VFXTest_Draw3D(void)
             int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
             if (direction != 0)
             {
-                s_ambientFireFixtureStyle = (VFX_FlameStyle)(((int)s_ambientFireFixtureStyle + direction + 5) % 5);
+                s_ambientFireFixtureStyle = (VFX_FlameStyle)(((int)s_ambientFireFixtureStyle + direction + VFX_FLAME_STYLE_COUNT) % VFX_FLAME_STYLE_COUNT);
                 TraceLog(LOG_INFO, "AMBIENT FIRE style: %s (>, next; <, previous)", VFX_FlameStyle_Name(s_ambientFireFixtureStyle));
             }
         }
@@ -1464,7 +1465,7 @@ void VFXTest_Draw3D(void)
               }
               case 39: VFX_ComposeFissureStreak(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.1f, progress, s_meshTime); break;
               case 40: VFX_ComposeStonePillar(s_prefabStartPos, progress); break;
-              case 41: VFX_ComposeAmbientFire(s_prefabStartPos, VC_MAT_FIRE, 1.5f, 1.0f); break;
+              case 41: VFX_ComposeAmbientFireEx(s_prefabStartPos, VC_MAT_FIRE, 1.5f, 1.0f, s_ambientFireFixtureStyle); break;
               case 43: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
               case 46: VFX_ComposeLiquidBench(s_prefabStartPos, 1.1f, 1.0f); break;
               case 48: VFX_ComposeWaterRing(s_prefabStartPos, 0.9f, 1.0f); break;

@@ -97,6 +97,8 @@ def main():
                     help="volume keeps the smoke/fire lighting channels. dust writes a "
                          "cold, eroded alpha parcel: it deliberately has no volume "
                          "self-shadow, which otherwise shows up as horizontal bands.")
+    ap.add_argument("--bake-normals", type=int, default=1,
+                    help="1 = bake 3D volumetric tangent space normal map to normals/ folder, 0 = off")
     args = ap.parse_args()
 
     files = sorted(glob.glob(os.path.join(args.cache_dir, "f*.npz")))
@@ -128,6 +130,8 @@ def main():
     shad = ti.field(ti.f32, shape=(rz, ry, rx))
     # flame envelope/emission, smoke, opacity, shaded value
     out = ti.Vector.field(4, ti.f32, shape=(S, S))
+    # 3D Volumetric Tangent Normal: Nx, Ny, Nz (facing camera), Alpha
+    out_norm = ti.Vector.field(4, ti.f32, shape=(S, S))
 
     @ti.func
     def sample(fld, gx, gy, gz):
@@ -145,6 +149,12 @@ def main():
         c0 = c00 * (1 - fy) + c10 * fy
         c1 = c01 * (1 - fy) + c11 * fy
         return c0 * (1 - fz) + c1 * fz
+
+    @ti.func
+    def border_fade(u: ti.f32, v: ti.f32, m: ti.f32) -> ti.f32:
+        fx = ti.math.clamp(u / m, 0.0, 1.0) * ti.math.clamp((1.0 - u) / m, 0.0, 1.0)
+        fy = ti.math.clamp(v / m, 0.0, 1.0) * ti.math.clamp((1.0 - v) / m, 0.0, 1.0)
+        return fx * fx * (3.0 - 2.0 * fx) * fy * fy * (3.0 - 2.0 * fy)
 
     @ti.kernel
     def march(ks: ti.f32, kf: ti.f32, kfe: ti.f32, fw: ti.f32, fh: ti.f32,
@@ -165,98 +175,111 @@ def main():
             hot_envelope = 0.0
             smoke = 0.0
             shade = 0.0
+            accum_norm = ti.Vector([0.0, 0.0, 0.0])
             inside = (u >= 0.0) and (u <= 1.0) and (v >= 0.0) and (v <= 1.0)
+            fade = border_fade(u, v, 0.05) if inside else 0.0
             steps = ry * 2 if inside else 0
             dstep = ti.cast(ry - 1, ti.f32) / steps
             for s in range(steps):
                 gy = s * dstep
                 d = sample(dens, gx, gy, gz)
                 f = sample(flame, gx, gy, gz)
-                ext = (d * ks + f * kfe) * dstep
-                emis += f * kf * trans * dstep
-                # A depth integral is excellent for smoke opacity, but a poor
-                # flame SHAPE signal: turbulent parcels can trade density along
-                # a ray while retaining the same integral, producing the frozen
-                # circular cards this baker is meant to prevent.  The maximum
-                # hot sample is the visible envelope of that same 3D volume. It
-                # preserves soft scalar gradients (this is not a hard mask) and
-                # makes its changing surface survive the 3D-to-2D projection.
-                hot_envelope = ti.max(hot_envelope, f * kf)
-                smoke += d * ks * trans * dstep
-                # The same integral WEIGHTED by how much light reaches each
-                # sample. Without it every sprite is a flat plate of one value,
-                # and a stack of flat plates reads as overlapping cards no
-                # matter how faint each one is made — the lighting pass at the
-                # call site cannot supply this, because it lights a BILLBOARD
-                # and knows nothing about the depth inside it.
-                shade += d * ks * trans * sample(shad, gx, gy, gz) * dstep
+                ext = (d * ks + f * kfe) * dstep * fade
+                emis += f * kf * trans * dstep * fade
+                hot_envelope = ti.max(hot_envelope, f * kf * fade)
+                smoke += d * ks * trans * dstep * fade
+                shade += d * ks * trans * sample(shad, gx, gy, gz) * dstep * fade
+
+                # Central differences 3D density/flame gradient
+                dx = sample(dens, gx + 1.0, gy, gz) - sample(dens, gx - 1.0, gy, gz)
+                dy = sample(dens, gx, gy + 1.0, gz) - sample(dens, gx, gy - 1.0, gz)
+                dz = sample(dens, gx, gy, gz + 1.0) - sample(dens, gx, gy, gz - 1.0)
+                if kfe > 0.0:
+                    dx += (sample(flame, gx + 1.0, gy, gz) - sample(flame, gx - 1.0, gy, gz)) * 0.3
+                    dy += (sample(flame, gx, gy + 1.0, gz) - sample(flame, gx, gy - 1.0, gz)) * 0.3
+                    dz += (sample(flame, gx, gy, gz + 1.0) - sample(flame, gx, gy, gz - 1.0)) * 0.3
+
+                # Tangent space normal pointing outward:
+                # Right (+X) = -dx
+                # Up (+Y) = -dz
+                # Front/Camera (+Z) = dy
+                local_n = ti.Vector([-0.5 * dx, -0.5 * dz, 0.5 * dy])
+                n_len = local_n.norm()
+                if n_len > 1e-4:
+                    local_n = local_n / n_len
+                else:
+                    local_n = ti.Vector([0.0, 0.0, 1.0])
+
+                step_alpha = 1.0 - ti.exp(-ext)
+                accum_norm += local_n * trans * step_alpha
+
                 trans *= ti.exp(-ext)
                 if trans < 0.004:      # the rest cannot contribute a visible level
                     break
             flame_out = hot_envelope if peak_flame != 0 else emis
             out[px, py] = ti.Vector([flame_out, smoke, 1.0 - trans, shade])
 
+            total_alpha = 1.0 - trans
+            if total_alpha > 0.005:
+                an_len = accum_norm.norm()
+                n_unit = accum_norm / an_len if an_len > 1e-4 else ti.Vector([0.0, 0.0, 1.0])
+                n_unit.z = ti.max(0.0, n_unit.z)
+                n_unit = n_unit.normalized(1e-4)
+                out_norm[px, py] = ti.Vector([
+                    0.5 + 0.5 * n_unit.x,
+                    0.5 + 0.5 * n_unit.y,
+                    0.5 + 0.5 * n_unit.z,
+                    total_alpha
+                ])
+            else:
+                out_norm[px, py] = ti.Vector([0.5, 0.5, 1.0, 0.0])
+
     t0 = time.time()
 
     def render_all(fw, fh, quiet=False):
         frames = []
+        norm_frames = []
         for i, p in enumerate(files):
             z = np.load(p)
             d = np.ascontiguousarray(z["density"], np.float32)
             dens.from_numpy(d)
             flame.from_numpy(np.ascontiguousarray(z["flame"], np.float32))
-            # SELF-SHADOW, computed by a prefix sum rather than a second ray per
-            # sample: with the key light straight overhead the light ray IS the
-            # grid's z axis, so the optical depth above every voxel is one
-            # cumulative sum (grid index rz-1 is the TOP — see gz above). An
-            # arbitrary light direction would cost a march per sample; a fixed
-            # overhead one costs O(N^3) once per frame and buys the same cue.
             above = np.cumsum(d[::-1], axis=0)[::-1] - d
             shad.from_numpy(np.ascontiguousarray(
                 args.ambient + (1.0 - args.ambient)
                 * np.exp(-args.light * args.density_scale * above), np.float32))
             march(args.density_scale, args.flame_scale, args.flame_extinction,
                   fw, fh, 1 if args.flame_projection == "peak" else 0)
-        # transpose: the Taichi field is indexed [px, py] (x first), but numpy
-        # and PIL read axis 0 as the ROW. Without this the sheet comes out
-        # rotated 90 degrees — the flame rises along the image's X axis, which
-        # measured as a row-centroid that never moved (128 in every frame) while
-        # the column-centroid drifted 236 -> 198.
             img = out.to_numpy().transpose(1, 0, 2)
+            img_norm = out_norm.to_numpy().transpose(1, 0, 2)
             if args.supersample > 1:
                 k = args.supersample
                 img = img.reshape(args.cell, k, args.cell, k, 4).mean(axis=(1, 3))
+                norm_down = img_norm.reshape(args.cell, k, args.cell, k, 4).mean(axis=(1, 3))
+                rgb = norm_down[..., :3] * 2.0 - 1.0
+                norm_len = np.maximum(np.linalg.norm(rgb, axis=-1, keepdims=True), 1e-4)
+                norm_down[..., :3] = 0.5 + 0.5 * (rgb / norm_len)
+                img_norm = norm_down
             frames.append(img)
+            norm_frames.append(img_norm)
             if i % 8 == 0 and not quiet:
                 print("RENDER: %d/%d  %.1fs" % (i, len(files), time.time() - t0),
                       flush=True)
-        return frames
+        return frames, norm_frames
 
     if autofit:
-        # Measure on the UNCROPPED render, where nothing can be cut off, so the
-        # reach is a true extent and not a saturated one. Alpha is 1 - trans,
-        # an absolute quantity (unlike R/G, which are percentile-normalised
-        # later), so the 0.06 threshold here is the same one pack.py audits with.
-        probe = np.stack(render_all(fit_w, fit_h, quiet=True))[..., 2]
-        lit = probe > 0.06
+        # Measure on the UNCROPPED render, where nothing can be cut off
+        probe = np.stack(render_all(fit_w, fit_h, quiet=True)[0])[..., 2]
+        lit = probe > 0.005
         half = args.cell / 2.0
         ys, xs = np.nonzero(lit.any(axis=0))
         if len(ys):
             reach = max(abs(ys.max() + 0.5 - half), abs(ys.min() + 0.5 - half),
                         abs(xs.max() + 0.5 - half), abs(xs.min() + 0.5 - half)) / half
-            # Pack audits after filtering/quantising, which can expand the
-            # measured alpha by one or two pixels. Keep a real 6% margin here;
-            # 2% repeatedly produced "auto-fit" sheets that still clipped.
-            zoom = 0.94 / max(reach, 1e-3)
+            zoom = 0.82 / max(reach, 1e-3)
             fit_w, fit_h = min(1.0, aspect) * zoom, min(1.0, 1.0 / aspect) * zoom
             print("RENDER: autofit reach %.3f of the domain half-width -> zoom %.2f"
                   % (reach, zoom))
-            # The "silhouette is the box" test needs a SOLID threshold, not the
-            # visibility one. A ray crossing the whole domain accumulates enough
-            # optical depth from haze alone to pass alpha 0.06 at the very edge,
-            # so the faint reach is ~1.0 on a perfectly healthy puff (measured:
-            # reach 0.996 on a sim whose mass audit said r90 0.79, wall 0.1%).
-            # Warning on that number cries wolf on every good sheet.
             solid = np.nonzero((probe > 0.5).any(axis=0))
             if len(solid[0]):
                 sreach = max(abs(solid[0].max() + 0.5 - half),
@@ -270,46 +293,29 @@ def main():
         else:
             print("RENDER: autofit found nothing lit; keeping zoom 1.0")
 
-    frames = render_all(fit_w, fit_h)
+    frames, norm_frames = render_all(fit_w, fit_h)
     stack = np.stack(frames)
-    # One scale for the WHOLE sheet, from a high percentile. Per-frame
-    # normalisation would rescale a dying flame to look as bright as a roaring
-    # one, which deletes the intensity arc the flipbook exists to carry; the
-    # percentile keeps a few hot voxels from crushing everything else.
     e_max = max(1e-5, float(np.percentile(stack[..., 0], 99.5)))
     s_max = max(1e-5, float(np.percentile(stack[..., 1], 99.5)))
     print("RENDER: normalising emission/%.4f smoke/%.4f" % (e_max, s_max))
 
     out_dir = os.path.join(args.cache_dir, "frames")
     os.makedirs(out_dir, exist_ok=True)
-    for i, img in enumerate(frames):
+    normals_dir = os.path.join(args.cache_dir, "normals")
+    if args.bake_normals:
+        os.makedirs(normals_dir, exist_ok=True)
+
+    for i, (img, n_img) in enumerate(zip(frames, norm_frames)):
         rgba = np.zeros((args.cell, args.cell, 4), np.float32)
         emission = np.clip(img[..., 0] / e_max, 0, 1)
-        # Compress only the display transfer, never the simulation. A linear
-        # percentile-normalised R channel spends too much area near its maximum
-        # once the runtime heat gain maps it through the black-body ramp: every
-        # parcel becomes a white solid disc. Gamma < 1 preserves a small hot
-        # centre while carrying a broad, continuously graded orange shoulder.
         if args.emission_gamma != 1.0:
             emission = emission ** max(args.emission_gamma, 0.05)
         rgba[..., 0] = emission                            # flame emission
         rgba[..., 1] = np.clip(img[..., 1] / s_max, 0, 1)     # smoke
-        # B = the SHADED smoke value, normalised by the same scale as G so the
-        # two are directly comparable: B/G is exactly the fraction of light that
-        # survived to each pixel, which is what makes B usable as a shading term
-        # rather than as a second, differently-scaled density.
         rgba[..., 2] = np.clip(img[..., 3] / s_max, 0, 1)      # self-shadowed value
         rgba[..., 3] = np.clip(img[..., 2], 0, 1)              # true opacity
         if args.profile == "dust":
-            # Dust is a cold particulate card, not a mini lit smoke volume.
-            # Keeping B/G's volume-light ratio exposes ray-step/self-shadow
-            # bands in the first dense cells.  Shape it from the integrated
-            # density instead, then erode it with stable coarse grain so the
-            # parcel tears as it expands without temporal glitter.
             base = rgba[..., 1]
-            # B/G before the dust rewrite is the marched internal light just
-            # like SmokePuff's contract. The old dust path threw it away and
-            # replaced it with an 11px density blur, flattening every parcel.
             volume_value = np.clip(rgba[..., 2] / np.maximum(base, 1e-3), 0.0, 1.0)
             rng = np.random.default_rng(0xD057 + i)
             coarse_size = max(5, args.cell // 24)
@@ -321,29 +327,14 @@ def main():
             fine = np.asarray(Image.fromarray((fine * 255).astype(np.uint8)).resize(
                 (args.cell, args.cell), Image.Resampling.BICUBIC), np.float32) / 255.0
             grain = coarse * 0.68 + fine * 0.32
-            # A dust parcel must never begin as an opaque white stamp.  Preserve
-            # its dense core, but keep headroom for the material tint and let
-            # the per-card alpha stack build the impact cloud.
-            # Put the grain into the THRESHOLD, not only opacity. That breaks
-            # the silhouette into particulate lobes instead of painting noise
-            # over one smooth smoke blob.
             soft = np.clip((base - 0.16 + (grain - 0.5) * 0.23) / 0.66, 0.0, 1.0)
             rgba[..., 1] = soft
-            # Same B/G contract consumed by pack.py and SmokePuff: B is the
-            # density integral with a VALUE term, so B/G becomes the sprite's
-            # internal light. Do not use the ray-marched overhead shadow here —
-            # it banded in dense early dust frames. A broad density blur gives
-            # a stable bright body / darker broken rim instead.
             shadow = np.asarray(Image.fromarray((volume_value * 255).astype(np.uint8)).filter(
                 ImageFilter.GaussianBlur(radius=max(1.0, args.cell * 0.006))),
                 np.float32) / 255.0
             local = np.asarray(Image.fromarray((base * 255).astype(np.uint8)).filter(
                 ImageFilter.GaussianBlur(radius=max(1.0, args.cell * 0.010))),
                 np.float32) / 255.0
-            # Preserve the broad dynamic range that makes SmokePuff read as a
-            # volume (measured p10≈0.25). The previous 0.18 + 0.64 floor made
-            # Dust p10≈0.55, mathematically flattening every card before the
-            # particle renderer ever saw it.
             value = np.clip(0.04 + 0.86 * shadow + 0.10 * local, 0.0, 1.0)
             rgba[..., 2] = soft * value
             rgba[..., 3] = soft * np.clip(0.46 + grain * 0.50, 0.0, 1.0)
@@ -351,9 +342,20 @@ def main():
         Image.fromarray((rgba * 255).astype(np.uint8), "RGBA").save(
             os.path.join(out_dir, "f%03d.png" % (i + 1)))
 
-    print("RENDER: %d frames -> %s  (%.1fs)" % (len(frames), out_dir, time.time() - t0))
-    print("RENDER: next  python3 scripts/flipbook/pack.py %s --grid 8 "
-          "--alpha-from-luma 0 --out <name>.png" % out_dir)
+        if args.bake_normals:
+            n_rgba = np.clip(n_img, 0.0, 1.0)
+            zero_alpha = n_rgba[..., 3] < 0.005
+            n_rgba[zero_alpha, 0] = 0.5
+            n_rgba[zero_alpha, 1] = 0.5
+            n_rgba[zero_alpha, 2] = 1.0
+            n_rgba[zero_alpha, 3] = 0.0
+            Image.fromarray((n_rgba * 255).astype(np.uint8), "RGBA").save(
+                os.path.join(normals_dir, "f%03d.png" % (i + 1)))
+
+    print("RENDER: %d frames -> %s and %s (%.1fs)" % (len(frames), out_dir, normals_dir, time.time() - t0))
+    print("RENDER: next  python3 scripts/flipbook/pack.py %s --grid 8 --alpha-from-luma 0 --out <name>_8x8.png" % out_dir)
+    if args.bake_normals:
+        print("RENDER: normal pack -> python3 scripts/flipbook/pack.py %s --grid 8 --alpha-from-luma 0 --out <name>_normals_8x8.png" % normals_dir)
     return 0
 
 

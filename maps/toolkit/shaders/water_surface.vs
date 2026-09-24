@@ -11,6 +11,11 @@ uniform float u_waveScale;
 uniform float u_waveSpeed;
 uniform vec2 u_flowVelocity; // Directional flow vector (x, z)
 uniform int u_waterShape;    // 0 = Radial, 1 = Rect, 2 = Strip
+uniform vec3 u_waterInteractor; // world X, submerged fraction, world Z
+uniform vec3 u_waterVelocity;
+uniform float u_waterRadius;
+uniform sampler2D u_waveFieldTex;
+uniform int u_waveFieldEnabled;
 
 out vec3 fragPosition;
 out vec2 fragLakeCoord;
@@ -53,6 +58,17 @@ void main()
 
     // In shallow water (<= 1.3m), wave amplitude naturally dampens at the shore
     float wave = waves(world.xz) * u_waveHeight * shoreFade;
+    // Broad displacement under a moving body makes the disturbance part of
+    // the water mesh. Fine wavefronts are resolved by the fragment normals.
+    if (u_waveFieldEnabled > 0) {
+        wave += (texture(u_waveFieldTex, vertexTexCoord).b - 0.5) * 0.25 * shoreFade;
+    } else {
+        float movement = clamp(length(u_waterVelocity.xz) * 0.19, 0.0, 1.0) * u_waterInteractor.y;
+        float bodyDist = length(world.xz - u_waterInteractor.xz);
+        float outward = max(0.0, bodyDist - max(u_waterRadius, 0.25));
+        wave += sin(outward * 4.5 - u_time * 5.0) * exp(-outward * 1.35) *
+                smoothstep(0.1, 0.55, bodyDist) * movement * 0.026 * shoreFade;
+    }
     local.y += wave;
     world.y += wave;
 

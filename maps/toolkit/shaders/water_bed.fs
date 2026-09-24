@@ -44,11 +44,13 @@ void main()
     vec2 uv1 = fragPosition.xz * u_causticsScale * 0.48 + vec2(-t * 0.029, t * 0.043);
     float c0 = texture(u_causticTex, uv0).r;
     float c1 = texture(u_causticTex, uv1).r;
-    float causticWave = pow(min(c0, c1) * 2.4, 2.0);
+    // Keep only the focused ridge tips; the original broad response covered
+    // almost every pixel with bright white cells.
+    float causticWave = pow(smoothstep(0.32, 0.78, min(c0, c1)), 1.5);
 
     // Caustics are tightly focused at shallow depths (0.02m - 0.7m)
     float causticFade = smoothstep(0.01, 0.06, waterDepth) * (1.0 - smoothstep(0.72, 1.35, waterDepth));
-    vec3 causticLight = u_lightColor * causticWave * (u_causticsStrength * 1.35) * causticFade * max(u_lightDir.y, 0.25);
+    vec3 causticLight = u_lightColor * causticWave * (u_causticsStrength * 0.82) * causticFade * max(u_lightDir.y, 0.25);
 
     // Terrain lighting on the lake bed
     vec3 N = normalize(fragNormal);

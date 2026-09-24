@@ -70,8 +70,10 @@ static Texture2D s_fvolFlameTex = {0};   // the COLUMN sheet
 static Texture2D s_fvolPuffTex = {0};    // the PUFF sheet
 static Texture2D s_fvolRoilTex = {0};    // UE5 Niagara 8x8 Fire Roil (fireroil_8x8.png)
 static Texture2D s_fvolFireballTex = {0}; // UE5 Niagara 8x8 Fireball (fireball_8x8.png)
+static Texture2D s_fvolTongue01Tex = {0}; // Taichi rising flame tongue 01 (fire_tongue_01_8x8.png)
 static Texture2D s_fvolRoilNormalTex = {0};
 static Texture2D s_fvolFireballNormalTex = {0};
+static Texture2D s_fvolTongue01NormalTex = {0};
 static float s_fvolBodyCount = 1.0f;   // x on atlas body sprites (perf lever)
 // How many body sprites are ALIVE at once — the quantity the eye judges, and
 // the one the emission rate is derived from (rate = live / average lifetime).
@@ -131,6 +133,7 @@ static SpriteAnim s_fvolFlameAnim = {0};
 static SpriteAnim s_fvolPuffAnim = {0};
 static SpriteAnim s_fvolRoilAnim = {0};
 static SpriteAnim s_fvolFireballAnim = {0};
+static SpriteAnim s_fvolTongue01Anim = {0};
 static float s_fvolVortexStrength = 1.5f;
 
 // ── Đợt H — THE VOLUME PATH ─────────────────────────────────────────────────
@@ -390,6 +393,16 @@ static void FVol_InitShared(void)
                         ANIM_ONCE);
     }
 
+    const VFX_SurfaceProfile *tongue01Profile =
+        VFX_SurfaceRegistry_Get(VFX_SURFACE_FIRE_TONGUE_01);
+    s_fvolTongue01Tex = tongue01Profile != NULL ? tongue01Profile->body : (Texture2D){0};
+    s_fvolTongue01NormalTex = tongue01Profile != NULL ? tongue01Profile->normalMap : (Texture2D){0};
+    if (s_fvolTongue01Tex.id != 0)
+    {
+        SetTextureFilter(s_fvolTongue01Tex, TEXTURE_FILTER_BILINEAR);
+        SpriteAnim_Init(&s_fvolTongue01Anim, 8, 8, 64, 64.0f / 1.7f, ANIM_ONCE);
+    }
+
     // BLACK-BODY ramp, not three smoothsteps. Weighted so the flame spends most
     // of its life in the orange band and reaches white only at the very hottest
     // instant — an even spread across the ramp is what makes stylised fire look
@@ -567,20 +580,23 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
     const bool isRoil = (style == VFX_FLAME_STYLE_NIAGARA_ROIL) || (style == VFX_FLAME_STYLE_DEFAULT && s_fvolRoilTex.id != 0);
     const bool isFireball = (style == VFX_FLAME_STYLE_FIREBALL);
     const bool isVol = (style == VFX_FLAME_STYLE_VOLUME);
+    const bool isTongue01 = (style == VFX_FLAME_STYLE_FIRE_TONGUE_01);
 
-    // Any UE EOO packed texture (Roil, Fireball, Volume) uses the GPU Volume Path (volumeSheet = 2 + rampLUT)
+    // Any UE EOO packed texture (Roil, Fireball, Volume, Tongue01) uses the GPU Volume Path (volumeSheet = 2/4 + rampLUT)
     const bool useVolume = (s_fvolVolume > 0.5f) &&
                            ((isRoil && s_fvolRoilTex.id != 0) ||
                             (isFireball && s_fvolFireballTex.id != 0) ||
+                            (isTongue01 && s_fvolTongue01Tex.id != 0) ||
                             (isVol && s_fvolVolumeTex.id != 0) ||
-                            (s_fvolVolumeTex.id != 0));
+                            (style == VFX_FLAME_STYLE_DEFAULT && s_fvolVolumeTex.id != 0));
 
-    const bool wantPuff = (style == VFX_FLAME_STYLE_PUFF) || (!useVolume && !isRoil && !isFireball && (s_fvolAtlas > 0.5f) && (s_fvolAtlas < 1.5f));
+    const bool wantPuff = (style == VFX_FLAME_STYLE_PUFF) || (!useVolume && !isRoil && !isFireball && !isTongue01 && (s_fvolAtlas > 0.5f) && (s_fvolAtlas < 1.5f));
     const bool usePuff = wantPuff && (s_fvolPuffTex.id != 0);
     const bool useRoil = isRoil && (s_fvolRoilTex.id != 0);
     const bool useFireball = isFireball && (s_fvolFireballTex.id != 0);
+    const bool useTongue01 = isTongue01 && (s_fvolTongue01Tex.id != 0);
     const bool useAtlas = (s_fvolAtlas > 0.5f || !useVolume)
-                          && (useRoil || useFireball || usePuff || s_fvolFlameTex.id != 0);
+                          && (useRoil || useFireball || usePuff || useTongue01 || s_fvolFlameTex.id != 0);
 
     Texture2D bodyTex = s_fvolFlameTex;
     SpriteAnim *bodyAnim = &s_fvolFlameAnim;
@@ -593,6 +609,11 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
     {
         bodyTex = s_fvolFireballTex;
         bodyAnim = &s_fvolFireballAnim;
+    }
+    else if (useTongue01)
+    {
+        bodyTex = s_fvolTongue01Tex;
+        bodyAnim = &s_fvolTongue01Anim;
     }
     else if (usePuff)
     {
@@ -686,6 +707,11 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
             chosenVolTex = s_fvolFireballTex;
             chosenVolAnim = &s_fvolFireballAnim;
         }
+        else if (useTongue01 && s_fvolTongue01Tex.id != 0)
+        {
+            chosenVolTex = s_fvolTongue01Tex;
+            chosenVolAnim = &s_fvolTongue01Anim;
+        }
 
         for (int i = 0; i < n; i++)
         {
@@ -734,7 +760,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                              Math_Mix(0.70f, 1.05f, Random01()) * scale * s_fvolRiseMul,
                              sinf(ang) * 0.03f * scale},
                 .radius = Math_Mix(0.16f, 0.36f, powf(Random01(), 1.2f))
-                          * s_fvolBodySize * scale * (useRoil ? 1.45f : 1.0f),
+                          * s_fvolBodySize * scale * (useRoil ? 1.45f : (useTongue01 ? 1.35f : 1.0f)),
                 .lifetime = life,
                 // In volume mode colorStart.a is a per-billboard coverage
                 // multiplier; the sheet's A is the local gas coverage.  It
@@ -754,7 +780,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .forceField = activeField,
                 .windInfluence = 0.65f,
                 .render.volumeSheet = (useRoil || useFireball) ? 4 : 2,
-                .render.normalTex = useRoil ? s_fvolRoilNormalTex : (useFireball ? s_fvolFireballNormalTex : (Texture2D){0}),
+                .render.normalTex = useTongue01 ? s_fvolTongue01NormalTex : (useRoil ? s_fvolRoilNormalTex : (useFireball ? s_fvolFireballNormalTex : (Texture2D){0})),
                 .render.rampLUT = ramp,
                 .render.heatGain = s_fvolHeatGain,
                 .render.emissiveBoost = s_fvolEmissive,
@@ -886,7 +912,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
         };
         s_fvolSmokeSeed = smoke;
 
-        SpawnParticle((ParticleConfig){
+        ParticleConfig cfg = {
             .position = p,
             .velocity = {cosf(ang) * 0.06f * scale,
                          Math_Mix(0.45f, 0.75f, Random01()) * scale * s_fvolRiseMul,
@@ -903,6 +929,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
             // weighting), so overlaps look like structure rather than texture.
             .radius = (useRoil  ? Math_Mix(0.35f, 0.65f, powf(Random01(), 1.3f)) * s_fvolBodySize
                        : useFireball ? Math_Mix(0.30f, 0.55f, powf(Random01(), 1.2f)) * s_fvolBodySize
+                       : useTongue01 ? Math_Mix(0.30f, 0.55f, Random01()) * s_fvolBodySize
                        : usePuff  ? Math_Mix(0.22f, 0.62f, powf(Random01(), 1.6f)) * s_fvolBodySize
                        : useAtlas ? Math_Mix(0.30f, 0.46f, Random01())
                                   : Math_Mix(0.09f, 0.20f, powf(Random01(), 1.5f))) * scale,
@@ -949,10 +976,20 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
             .angularVelocity = (!useAtlas || usePuff || useRoil || useFireball)
                                    ? (Random01() - 0.5f) * (usePuff ? 0.5f : (useRoil ? 0.7f : 1.4f))
                                    : 0.0f,
-            // Only some embers make smoke, otherwise the fire is smothered by it.
-            // .onDeathEmit = (s_fvolSmokeAmt > 0.0f && (i % 3) == 0) ? &s_fvolSmokeSeed : NULL,
-            // .onDeathEmitCount = 1,
-        });
+        };
+        if (useTongue01)
+        {
+            cfg.render.blendMode = VFX_BLEND_PREMULTIPLIED;
+            cfg.render.volumeSheet = 2;
+            cfg.render.rampLUT = FVol_RampLUT(matId);
+            cfg.render.normalTex = s_fvolTongue01NormalTex;
+            cfg.render.heatGain = s_fvolHeatGain;
+            cfg.render.emissiveBoost = s_fvolEmissive;
+            cfg.render.unlit = 0;
+            cfg.rotation = (Random01() - 0.5f) * 0.20f;
+            cfg.angularVelocity = 0.0f;
+        }
+        SpawnParticle(cfg);
     }
 
     // ── CORE: additive, small, short-lived — the actual light source ─────────
@@ -1112,11 +1149,11 @@ void VFX_ComposeFlameVolume(Vector3 pos, VC_MaterialId matId, float scale, float
 
 const char *VFX_FlameStyle_Name(VFX_FlameStyle style)
 {
-    static const char *const names[5] = {
-        "NIAGARA ROIL", "VOLUME PUFF", "COLUMN", "PUFF", "FIREBALL"
+    static const char *const names[6] = {
+        "NIAGARA ROIL", "VOLUME PUFF", "COLUMN", "PUFF", "FIREBALL", "FIRE TONGUE 01"
     };
     int s = (int)style;
-    if (s < 0 || s >= 5) s = 0;
+    if (s < 0 || s >= 6) s = 0;
     return names[s];
 }
 
