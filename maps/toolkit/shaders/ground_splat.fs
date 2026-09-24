@@ -66,7 +66,8 @@ void main()
         if (lakeDist < 0.98) {
             discard; // Carve out lake hole so 3D bedModel, clear water, and wading character are exposed!
         }
-        shoreFactor = smoothstep(1.38, 1.0, lakeDist) * smoothstep(0.98, 1.04, lakeDist);
+        shoreFactor = (1.0 - smoothstep(1.0, 1.38, lakeDist)) *
+                      smoothstep(0.98, 1.04, lakeDist);
     }
 
     // 3. Slope steepness
@@ -76,7 +77,7 @@ void main()
     // 4. Four-layer weights
     float wPath = 1.0 - smoothstep(1.2, 1.9, distToPath);
     float wPathMargin = smoothstep(1.1, 1.85, distToPath) * (1.0 - smoothstep(1.85, 3.4, distToPath));
-    float wWetSoil = shoreFactor * 0.95;
+    float wWetSoil = shoreFactor * 0.55;
     float wSlope = smoothstep(0.14, 0.46, slope);
     float wDrySoil = clamp(wPathMargin * 0.88 + wSlope * 0.92, 0.0, 1.0);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
@@ -114,7 +115,7 @@ void main()
 
     // Soil & Path PBR Albedos
     vec3 drySoilColor = dirtDetail * vec3(0.48, 0.38, 0.26) * 1.10;
-    vec3 wetSoilColor = dirtDetail * vec3(0.24, 0.20, 0.15) * 0.90;
+    vec3 wetSoilColor = dirtDetail * vec3(0.40, 0.35, 0.27) * 0.90;
     vec3 pathMarginColor = mix(drySoilColor, colorDirt.rgb * vec3(0.68, 0.64, 0.58), wPath);
 
     vec3 blendedAlbedo = grassAlbedo * wGrass
@@ -180,6 +181,10 @@ void main()
         vec3 wetSheen = actualLight.rgb * (wetSpecSharp * 0.75 + wetSpecBroad) * (0.35 + fresnelWet * 0.65);
         groundLit += wetSheen * wWetSoil * shadow;
     }
+
+    // The steep lake cutout faces away from the sun. Sky and water bounce keep
+    // that short bank readable instead of leaving a black moat around the lake.
+    groundLit += vec3(0.10, 0.13, 0.10) * shoreFactor * (0.75 + 0.25 * dirtDetail.r);
 
     groundLit += VFXLights_AccumulateFlat(fragPosition, blendedAlbedo);
 

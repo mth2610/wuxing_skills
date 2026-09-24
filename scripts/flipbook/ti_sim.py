@@ -179,13 +179,13 @@ PRESETS = {
     # and the autofit crop (which is symmetric about that centre) pays for the
     # empty half. A small value is enough to break the symmetry.
     "smoke_puff": dict(dt=0.9, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22, fuel_dens=1.0, 
-        fuel_radius=0.06, fuel_frames=0.18,
-        radial=3.6, curl=3.0, swirl=4.0, contain=0.6,
+        fuel_radius=0.10, fuel_frames=0.35,
+        radial=3.6, curl=3.2, swirl=4.0, contain=0.6,
         # Smoke is rounder than flame: it has no thin licking tongues, so it
         # takes more diffusion before the silhouette reads as billows.
-        diffuse=0.06, eddy=34.0,
-        viscosity=0.30, buoyancy=0.0, lock_center=1, domain=1.4,
-        cool=3.0, soot=1.0),
+        diffuse=0.045, eddy=32.0,
+        viscosity=0.25, buoyancy=0.0, lock_center=1, domain=1.4,
+        dissipate=0.018, cool=3.0, soot=1.0),
 
     # DUST, as ONE SMALL PARCEL inside a larger cloud — which is what a sprite
     # in a flipbook actually is (owner, 28/07/2026). That framing decides two
@@ -273,14 +273,14 @@ PRESETS = {
 
     "fire_tongue": dict(
         dt=0.16, gravity=0.0, flat=1.0, shell=0.0, impulse=0.22,
-        fuel_dens=0.35, burn=6.0, heat_yield=6.0, smoke_yield=0.15,
-        fuel_radius=0.08, fuel_frames=0.90,
-        radial=0.70, sustain_pressure=0.12, contain=0.22,
-        curl=18.0, swirl=18.0, shape_noise=0.60,
-        diffuse=0.020, eddy=20.0, viscosity=0.10, buoyancy=12.0,
-        cool=0.55, soot=0.20,
+        fuel_dens=0.45, burn=6.0, heat_yield=7.0, smoke_yield=0.0,
+        fuel_radius=0.14, fuel_frames=0.98,
+        radial=0.85, sustain_pressure=0.18, contain=0.35,
+        curl=22.0, swirl=20.0, shape_noise=0.55,
+        diffuse=0.012, eddy=24.0, viscosity=0.06, buoyancy=2.0,
+        cool=0.35, soot=0.0,
         source_variation=0.45, source_pulse_rate=1.40,
-        noise_phase_speed=0.85, warmup_frames=0,
+        noise_phase_speed=0.85, warmup_frames=12, lock_center=1,
         domain=1.4),
 
     # Legacy rising-flame baseline. Kept reproducible for comparison; new work
@@ -398,7 +398,7 @@ def main():
                     help="remove density-weighted bulk velocity each solver step. "
                          "Use 1 for directionless parcel assets so turbulence churns "
                          "inside the cell instead of becoming baked travel.")
-    ap.add_argument("--bfecc", type=int, choices=[0, 1], default=1,
+    ap.add_argument("--bfecc", type=int, choices=[0, 1], default=0,
                     help="use 2nd-order BFECC advection to preserve sharp turbulent lobes and eliminate numerical dissipation")
     args = ap.parse_args()
 

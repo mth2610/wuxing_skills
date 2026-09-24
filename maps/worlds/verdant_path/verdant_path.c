@@ -28,8 +28,8 @@
 #define MOUNTAIN_ROCK_COUNT 40
 #define ROCK_COUNT 13
 #define GRASS_TUFT_CAPACITY 65000
-#define FLOWER_CLUSTER_COUNT 3
-#define FLOWERS_PER_CLUSTER 120
+#define FLOWER_CLUSTER_COUNT 4
+#define FLOWERS_PER_CLUSTER 90
 #define FLOWER_COUNT (FLOWER_CLUSTER_COUNT * FLOWERS_PER_CLUSTER)
 #define REED_COUNT 480
 
@@ -173,7 +173,7 @@ static Color FlowerSpeciesColor(int variant, bool accent)
 static float VerdantGrassDensity(float x, float z, void *userData)
 {
     (void)userData;
-    if (IsInsideLake(x, z, 1.25f))
+    if (IsInsideLake(x, z, 0.48f))
         return 0.0f;
     float distPath = DistanceToPaths(x, z);
     if (distPath < 1.15f)
@@ -192,10 +192,12 @@ static float VerdantGrassDensity(float x, float z, void *userData)
 
     // Suppress grass in flower clusters: flowers need clear open ground to bloom cleanly
     const Vector3 flowerCenters[FLOWER_CLUSTER_COUNT] = {
-        {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f}, {77.0f, 0.0f, 53.0f},
+        {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f},
+        {77.0f, 0.0f, 53.0f}, {65.0f, 0.0f, 35.5f},
     };
     const Vector3 flowerRadii[FLOWER_CLUSTER_COUNT] = {
-        {11.5f, 0.0f, 8.0f}, {13.0f, 0.0f, 7.0f}, {10.5f, 0.0f, 8.5f},
+        {11.5f, 0.0f, 8.0f}, {13.0f, 0.0f, 7.0f},
+        {10.5f, 0.0f, 8.5f}, {4.8f, 0.0f, 2.8f},
     };
     float flowerSuppression = 1.0f;
     for (int c = 0; c < FLOWER_CLUSTER_COUNT; c++) {
@@ -203,8 +205,8 @@ static float VerdantGrassDensity(float x, float z, void *userData)
         float dz = (z - flowerCenters[c].z) / flowerRadii[c].z;
         float d2 = dx * dx + dz * dz;
         if (d2 < 1.25f) {
-            // Core flower zone (d2 < 0.65) has 0 grass; gently fades in toward border
-            float localFactor = fmaxf(0.0f, (d2 - 0.65f) / 0.60f);
+            // Flower clearings fade into the meadow; the lakeside patch retains grass.
+            float localFactor = fmaxf(c == 3 ? 0.48f : 0.0f, (d2 - 0.65f) / 0.60f);
             if (localFactor < flowerSuppression) {
                 flowerSuppression = localFactor;
             }
@@ -276,10 +278,12 @@ static void BuildMeadowLayout(void)
     }
 
     const Vector3 centers[FLOWER_CLUSTER_COUNT] = {
-        {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f}, {77.0f, 0.0f, 53.0f},
+        {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f},
+        {77.0f, 0.0f, 53.0f}, {65.0f, 0.0f, 35.5f},
     };
     const Vector3 radii[FLOWER_CLUSTER_COUNT] = {
-        {11.5f, 0.0f, 8.0f}, {13.0f, 0.0f, 7.0f}, {10.5f, 0.0f, 8.5f},
+        {11.5f, 0.0f, 8.0f}, {13.0f, 0.0f, 7.0f},
+        {10.5f, 0.0f, 8.5f}, {4.8f, 0.0f, 2.8f},
     };
     static const Vector2 patchOffsets[4] = {
         {-0.42f, -0.18f}, {0.18f, -0.31f}, {0.38f, 0.20f}, {-0.12f, 0.36f},
@@ -329,6 +333,7 @@ static void BuildMeadowLayout(void)
             {0, 4, 5, 6}, // Ivory Daisy drift -> Peach Blossom -> Orchid Cosmos -> Lavender
             {1, 2, 7, 0}, // Golden Buttercup drift -> Scarlet Poppy -> Primrose -> Daisy
             {3, 6, 4, 1}, // Sapphire Cornflower drift -> Lavender -> Wild Rose -> Buttercup
+            {0, 7, 4, 1}, // Near the lake: ivory, primrose, peach and warm buttercup
         };
         int speciesSlot = (cellVal < -0.25f) ? 0
                         : (cellVal < 0.28f)  ? 1
@@ -430,8 +435,8 @@ static void CaptureVerdantStaticShadows(void)
 static void ApplyVerdantEnvironment(void)
 {
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){135, 155, 180, 255}); // Cool clear morning sky ambient
-    Environment_SetSunColor((Color){255, 238, 200, 255});     // Warm morning sunlight
+    Environment_SetAmbientColor((Color){142, 157, 170, 255}); // Neutral morning sky fill
+    Environment_SetSunColor((Color){246, 232, 207, 255});     // Warm sunlight without bleaching stone
     // Sun rises in the East-North ahead (X > 0, Z < 0), sunlight travels towards West-South (X < 0, Z > 0)
     Environment_SetSunDirection(Vector3Normalize((Vector3){-0.50f, -0.45f, 0.55f}));
     Environment_SetShadowColor((Color){28, 36, 48, 120});
@@ -444,9 +449,9 @@ static void ApplyVerdantEnvironment(void)
         .enabled = true,
         .optics = {
             .rayleighLMS = {0.0076224f, 0.012935f, 0.024845f},
-            .mieScattering = 0.0045f,
-            .mieAnisotropy = 0.72f,      // Forward scattering for brilliant sunlight shafts
-            .multipleScatteringAmp = 2.4f
+            .mieScattering = 0.0031f,
+            .mieAnisotropy = 0.66f,
+            .multipleScatteringAmp = 1.7f
         },
         .density = {
             .baseDensity = 0.006f,      // Subtle clear air; upper atmosphere is transparent
@@ -459,7 +464,7 @@ static void ApplyVerdantEnvironment(void)
         }
     };
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity(2.4f);
+    VolumetricFog_SetGodRayIntensity(0.90f);
 }
 
 static void ApplyHabitatToGround(void)
@@ -486,7 +491,7 @@ static void SpawnVerdantMistVolumes(void)
         .position = {36.0f, 0.40f, 31.0f},
         .extents = {5.0f, 0.45f, 4.2f},
         .color = {240, 248, 255, 255},
-        .density = 0.15f,
+        .density = 0.09f,
         .edgeSoftness = 0.85f,
         .emissive = 0.0f,
         .driftVelocity = {0.03f, 0.0f, 0.015f},
@@ -502,7 +507,7 @@ static void SpawnVerdantMistVolumes(void)
         .position = {53.0f, 0.35f, 27.5f},
         .extents = {5.5f, 0.40f, 4.5f},
         .color = {235, 246, 255, 255},
-        .density = 0.15f,
+        .density = 0.08f,
         .edgeSoftness = 0.85f,
         .emissive = 0.0f,
         .driftVelocity = {0.04f, 0.0f, 0.02f},
@@ -518,7 +523,7 @@ static void SpawnVerdantMistVolumes(void)
         .position = {24.0f, 0.38f, 20.5f},
         .extents = {5.0f, 0.42f, 4.2f},
         .color = {235, 246, 255, 255},
-        .density = 0.14f,
+        .density = 0.08f,
         .edgeSoftness = 0.85f,
         .emissive = 0.0f,
         .driftVelocity = {0.03f, 0.0f, 0.015f},
@@ -534,7 +539,7 @@ static void SpawnVerdantMistVolumes(void)
         .position = {75.0f, 0.38f, 49.0f},
         .extents = {5.2f, 0.42f, 4.4f},
         .color = {238, 246, 255, 255},
-        .density = 0.14f,
+        .density = 0.08f,
         .edgeSoftness = 0.85f,
         .emissive = 0.0f,
         .driftVelocity = {0.04f, 0.0f, 0.02f},
@@ -576,6 +581,7 @@ void InitVerdantPathMap(void)
         "assets/textures/stone_path_diffuse.png",
         "assets/textures/stone_path_normal.png",
         "assets/textures/stone_path_roughness.png");
+    s_path.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].color = (Color){205, 198, 181, 255};
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
         "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
     // Border rocks must participate in the same lighting response as nearby
@@ -609,8 +615,8 @@ void InitVerdantPathMap(void)
         .foamThreshold = 0.12f,
         .segments = 112, .rings = 14, .seed = 9173u,
         .deepColor = {14, 56, 64, 255}, .shallowColor = {52, 118, 108, 255},
-        .foamColor = {205, 228, 218, 255},
-        .bankInnerColor = {52, 58, 43, 255}, .bankOuterColor = {65, 84, 51, 255},
+        .foamColor = {170, 193, 179, 255},
+        .bankInnerColor = {94, 100, 73, 255}, .bankOuterColor = {100, 115, 79, 255},
     });
     for (int i = ROCK_COUNT - 3; i < ROCK_COUNT; i++) {
         MapProp_AddWaterObstacle(&s_lake, kRocks[i].position,
@@ -619,15 +625,15 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {26, 44, 16, 255}, .tipColor = {138, 206, 50, 255},
+            .rootColor = {34, 53, 27, 255}, .tipColor = {119, 175, 69, 255},
             .bladesPerClump = 6, .bladeSegments = 4, .bladeWidthScale = 0.11f,
-            .chunkSize = 12.0f, .lodDistance = 28.0f, .midLodDistance = 0.0f, .drawDistance = 50.0f,
+            .chunkSize = 12.0f, .lodDistance = 23.0f, .midLodDistance = 9.0f, .drawDistance = 50.0f,
             .shadowDistance = 0.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
         (MapMeadowStyle){
-            .rootColor = {24, 38, 16, 255}, .tipColor = {160, 194, 68, 255},
+            .rootColor = {34, 48, 27, 255}, .tipColor = {137, 166, 86, 255},
             .bladesPerClump = 7, .bladeSegments = 4, .bladeWidthScale = 0.14f,
             .chunkSize = 18.0f, .lodDistance = 36.0f, .drawDistance = 76.0f,
             .shadowDistance = 24.0f,
@@ -638,6 +644,7 @@ void InitVerdantPathMap(void)
         {218, 185, 65, 255},  // Cluster 0: pale daisy golden center
         {112, 70, 38, 255},   // Cluster 1: poppy/buttercup warm deep amber
         {78, 70, 125, 255},   // Cluster 2: cornflower violet-indigo core
+        {191, 159, 82, 255}, // Cluster 3: warm lake-bank flowers
     };
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
         s_flowerFields[cluster] = MapProp_CreateFlowerField(

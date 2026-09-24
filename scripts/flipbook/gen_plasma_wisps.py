@@ -306,6 +306,9 @@ def main():
     dt = 0.035
 
     print("GEN_PLASMA: Generating %d frames..." % FRAMES)
+    color_frames = []
+    norm_frames = []
+
     for f in range(FRAMES):
         sim_time = float(f) * dt
 
@@ -320,28 +323,51 @@ def main():
         # Extract frames (transposed to row-major)
         img_color = frame_color.to_numpy().transpose(1, 0, 2)
         img_norm = frame_norm.to_numpy().transpose(1, 0, 2)
+        color_frames.append(img_color)
+        norm_frames.append(img_norm)
 
-        # Normalize and save single frames
-        col_uint8 = np.clip(img_color * 255.0, 0, 255).astype(np.uint8)
+        if (f + 1) % 8 == 0:
+            print("  Simulated %d/%d (%.1fs elapsed)" % (f + 1, FRAMES, time.time() - t0))
+
+    color_stack = np.stack(color_frames)
+    norm_stack = np.stack(norm_frames)
+
+    # 99.5th percentile normalization on RGB emission and Alpha coverage
+    peak_rgb = max(1e-4, float(np.percentile(color_stack[..., :3], 99.5)))
+    peak_a = max(1e-4, float(np.percentile(color_stack[..., 3], 99.5)))
+    print("GEN_PLASMA: Normalizing beauty flipbook: peak RGB=%.4f, Alpha=%.4f..." % (peak_rgb, peak_a))
+
+    for f in range(FRAMES):
+        img_color = color_stack[f]
+        img_norm = norm_stack[f]
+
+        rgb_norm = np.clip(img_color[..., :3] / peak_rgb, 0.0, 1.0)
+        rgb_norm = np.power(rgb_norm, 0.88)
+        a_norm = np.clip(img_color[..., 3] / peak_a, 0.0, 1.0)
+
+        col_uint8 = (np.dstack([rgb_norm, a_norm]) * 255.0).astype(np.uint8)
         norm_uint8 = np.clip(img_norm * 255.0, 0, 255).astype(np.uint8)
 
         Image.fromarray(col_uint8, "RGBA").save(os.path.join(frames_dir, "f%03d.png" % (f + 1)))
         Image.fromarray(norm_uint8, "RGBA").save(os.path.join(normals_dir, "f%03d.png" % (f + 1)))
 
-        # Paste into flipbook atlas
         r, c = divmod(f, GRID)
         beauty_atlas[r * CELL:(r + 1) * CELL, c * CELL:(c + 1) * CELL] = col_uint8
         normal_atlas[r * CELL:(r + 1) * CELL, c * CELL:(c + 1) * CELL] = norm_uint8
 
-        if (f + 1) % 8 == 0:
-            print("  Frame %d/%d (%.1fs elapsed)" % (f + 1, FRAMES, time.time() - t0))
-
-    # Save final flipbooks to assets/textures/
-    beauty_out_path = os.path.join(OUT_DIR, f"{args.out}_8x8.png")
-    normal_out_path = os.path.join(OUT_DIR, f"{args.out}_normals_8x8.png")
+    # Save final flipbooks to assets/textures/vfx/flipbooks/
+    out_dir = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "textures", "vfx", "flipbooks")
+    os.makedirs(out_dir, exist_ok=True)
+    beauty_out_path = os.path.join(out_dir, f"{args.out}_8x8.png")
+    normal_out_path = os.path.join(out_dir, f"{args.out}_normals_8x8.png")
 
     Image.fromarray(beauty_atlas, "RGBA").save(beauty_out_path)
     Image.fromarray(normal_atlas, "RGBA").save(normal_out_path)
+
+    # Also save to assets/textures/ for backward compatibility
+    legacy_dir = os.path.join(os.path.dirname(__file__), "..", "..", "assets", "textures")
+    Image.fromarray(beauty_atlas, "RGBA").save(os.path.join(legacy_dir, f"{args.out}_8x8.png"))
+    Image.fromarray(normal_atlas, "RGBA").save(os.path.join(legacy_dir, f"{args.out}_normals_8x8.png"))
 
     print("\nSUCCESS!")
     print("Beauty Flipbook: %s (%dx%d)" % (beauty_out_path, GRID * CELL, GRID * CELL))

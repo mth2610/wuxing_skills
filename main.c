@@ -1025,7 +1025,7 @@ int main(int argc, char **argv) {
         CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_VFX_TESTER) {
         static float vfxCameraAngle = 0.0f;
-        static float vfxCamDist = 8.4f;
+        static float vfxCamDist = 13.0f;
 
         static float s_vfxPlayerVelY = 0.0f;
         static bool s_vfxPlayerJumping = false;
@@ -1042,7 +1042,7 @@ int main(int argc, char **argv) {
             s_vfxPlayerVelY = 0.0f;
             s_vfxPlayerJumping = false;
             vfxCameraAngle = 0.6f;
-            vfxCamDist = 6.0f;
+            vfxCamDist = 13.0f;
         }
 
         if (IsKeyPressed(KEY_N)) {
@@ -1728,7 +1728,13 @@ int main(int argc, char **argv) {
        spell cannot drive the exposure applied to itself. */
     SceneTargets_UpdateExposure(dt, 0.18f, 0.10f, 2.5f, 0.8f);
 
-    PostFX_Draw(&postFXConfig);
+    PostFXConfig scenePostFX = postFXConfig;
+    const char *activeMapName = MapManager_GetName(MapManager_GetActiveIndex());
+    if (activeMapName && strcmp(activeMapName, "VERDANT_PATH") == 0) {
+        scenePostFX.saturation = 1.30f;
+        scenePostFX.contrast = 1.07f;
+    }
+    PostFX_Draw(&scenePostFX);
     /* Chứng: CÙNG dải màu đó, tính bằng CPU qua đường cong ACES per-channel, vẽ
      * SAU post nên không đi qua gì cả. Chênh lệch giữa hai dải chính là phần
      * đường ống thêm vào. */

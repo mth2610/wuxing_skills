@@ -22,7 +22,7 @@
 #endif
 
 static float s_camAngle = 0.0f;
-static float s_camDist = 6.0f;
+static float s_camDist = 13.0f;
 static bool s_backToMenu = false;
 
 // --- Module 7 match state ---
@@ -161,7 +161,7 @@ static void PlaceHeroesAtTeamSpawns(void)
 void GameScreen_Init(PlayerEntity *player)
 {
     s_camAngle = 0.0f;
-    s_camDist = 6.0f;
+    s_camDist = 13.0f;
     s_backToMenu = false;
     UI_Init();
     ResetMatch(player);
@@ -481,8 +481,8 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     s_camDist -= GetMouseWheelMove() * 0.4f;
     if (s_camDist < 3.0f)
         s_camDist = 3.0f;
-    if (s_camDist > 12.0f)
-        s_camDist = 12.0f;
+    if (s_camDist > 22.0f)
+        s_camDist = 22.0f;
 
     float s = sinf(s_camAngle);
     float c = cosf(s_camAngle);

@@ -213,13 +213,13 @@ void main()
     // Contact waterline: surface tension meniscus where water meets body/bank
     float foamDist = max(u_foamThreshold, 0.16);
     float contactMask = clamp(1.0 - waterDepth / foamDist, 0.0, 1.0);
-    float meniscusLip = smoothstep(0.0, 0.035, waterDepth) * (1.0 - smoothstep(0.035, 0.12, waterDepth));
+    float meniscusLip = smoothstep(0.0, 0.022, waterDepth) * (1.0 - smoothstep(0.022, 0.075, waterDepth));
 
     float foamNoise = texture(texture0, fragWorldXZ * 0.45 + vec2(t * 0.022, -t * 0.016)).r;
     float contactRipple = sin(waterDepth * 36.0 - t * 4.8) * exp(-waterDepth * 6.5);
-    float brokenFoam = smoothstep(0.26, 0.78, contactMask * 1.35 + (foamNoise - 0.5) * 0.65);
-    brokenFoam = max(brokenFoam, meniscusLip * 0.90);
-    brokenFoam += max(contactRipple, 0.0) * 0.35 * contactMask;
+    float brokenFoam = smoothstep(0.47, 0.78, contactMask * 0.59 + (foamNoise - 0.5) * 0.74);
+    brokenFoam = max(brokenFoam, meniscusLip * 0.28);
+    brokenFoam += max(contactRipple, 0.0) * 0.10 * contactMask;
     brokenFoam = max(brokenFoam, dynamicWakeFoam);
     brokenFoam = clamp(brokenFoam, 0.0, 1.0);
 
@@ -235,7 +235,7 @@ void main()
     surfaceAlpha *= shoreEdgeFade;
 
     // Meniscus and contact foam sit firmly ON the surface — never dissolved!
-    float alpha = clamp(surfaceAlpha + brokenFoam * 0.80, 0.0, 0.92);
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.28, 0.0, 0.88);
 
     // ── 9. COMPOSITION ───────────────────────────────────────────────────────
     // Aquatic water column color (Beer-Lambert volumetric tint)
@@ -253,7 +253,7 @@ void main()
     color += waveReflection + waveLighting;
     color += u_lightColor * vec3(0.66, 0.78, 0.88) *
              clamp(waveCurvature, -0.24, 0.24);
-    vec3 frothColor = mix(u_foamColor, vec3(1.0, 1.0, 1.0), 0.72);
+    vec3 frothColor = mix(u_foamColor, vec3(1.0, 1.0, 1.0), 0.18);
     color = mix(color, frothColor, brokenFoam);
 
     // VFX Point Light response
