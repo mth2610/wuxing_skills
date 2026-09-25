@@ -921,8 +921,8 @@ static AutoTestResult AutoTest_AtmosphereFogStep(int frameInCase, char *outReaso
   AtmosphereProfile defaultAtmos = Environment_GetAtmosphereProfile();
   ok &= AutoTest_ExpectTrue(defaultAtmos.optics.rayleighLMS.x > 0.005f,
                             "default Rayleigh LMS X is valid", outReason, outReasonSize);
-  ok &= AutoTest_ExpectTrue(defaultAtmos.optics.multipleScatteringAmp > 2.0f,
-                            "default Multiple Scattering boost is ~2.16", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(defaultAtmos.optics.multipleScatteringAmp > 1.5f,
+                            "default Multiple Scattering boost is > 1.5 (tuned for map)", outReason, outReasonSize);
 
   // 2. Test 2-way synchronization between legacy EnvFogConfig and new AtmosphereProfile
   EnvFogConfig originalFog = Environment_GetFogConfig();

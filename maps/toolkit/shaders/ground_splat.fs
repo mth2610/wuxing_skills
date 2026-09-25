@@ -105,9 +105,8 @@ void main()
     // Botanical PBR Meadow Grass Albedo (calibrated rich natural green, never neon)
     vec3 blendedGrass = mix(colorGrass.rgb, broadGrass, 0.32);
     vec3 botanicalGreen = vec3(0.18, 0.29, 0.11);
-    vec3 sunlitGreen = vec3(0.38, 0.46, 0.20);
-    vec3 grassAlbedo = mix(blendedGrass * 0.65 + botanicalGreen * 0.45,
-                           blendedGrass * (colDiffuse.rgb * 1.08), 0.60);
+    vec3 grassAlbedo = blendedGrass * vec3(0.68, 0.78, 0.49)
+                     + botanicalGreen * 0.12;
 
     // Multi-scale organic turf variation (deep damp swales vs warm sunny hummocks)
     float turfNoise = sin(fragWorldPos.x * 0.16 + fragWorldPos.z * 0.11) * 0.5

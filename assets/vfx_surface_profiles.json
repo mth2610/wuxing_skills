@@ -603,7 +603,7 @@
       "assets": {
         "body": {
           "path": "assets/textures/vfx/flipbooks/fire_tongue_01_8x8.png",
-          "channels": "VOLUME | R:emission/CLAMP | G:density/CLAMP | B:shadow/CLAMP | A:opacity/CLAMP — simulated fire tongue packed volume data"
+          "channels": "FIRE_EOO | R:emission/CLAMP | G:transmittance/CLAMP | B:unused/CLAMP | A:opacity/CLAMP — simulated fire tongue packed with Niagara EOO layout: incandescent emission core plus transmittance envelope"
         },
         "normal": {
           "path": "assets/textures/vfx/flipbooks/fire_tongue_01_normals_8x8.png",

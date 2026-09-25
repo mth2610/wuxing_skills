@@ -135,7 +135,7 @@ def temporal_audit(sheet, grid, cell):
     frames = np.asarray(frames)
     hot = frames > 0.02
     if not hot.any():
-        return 0.0, 0.0, 1.0, 0.0, 0.0
+        return 0.0, 0.0, 1.0, 0.0, 0.0, 0.0
     plateau = float((frames[hot] > 0.75).mean())
     transition = float(((frames[hot] > 0.02) & (frames[hot] < 0.75)).sum()
                        / hot.sum())

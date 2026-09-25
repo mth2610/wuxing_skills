@@ -610,7 +610,7 @@
         .maskPath = NULL,
         .gradientPath = NULL,
         .fallbackBodyPath = NULL,
-        .bodyChannels = "VOLUME | R:emission/CLAMP | G:density/CLAMP | B:shadow/CLAMP | A:opacity/CLAMP \u2014 simulated fire tongue packed volume data",
+        .bodyChannels = "FIRE_EOO | R:emission/CLAMP | G:transmittance/CLAMP | B:unused/CLAMP | A:opacity/CLAMP \u2014 simulated fire tongue packed with Niagara EOO layout: incandescent emission core plus transmittance envelope",
         .flowChannels = NULL,
         .lightMapBChannels = NULL,
         .normalChannels = "NORMAL_XY | R:normalx/CLAMP | G:normaly/CLAMP | B:unused/CLAMP | A:unused/CLAMP \u2014 signed tangent-space XY with shader-reconstructed positive Z",

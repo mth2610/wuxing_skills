@@ -210,17 +210,18 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 halfDir = normalize(u_lightDir + viewDir);
     float NdotH = max(dot(faceNormal, halfDir), 0.0);
     float specPower = 28.0;
-    float specIntensity = 0.75 * (1.0 - antiShimmer * 0.75);
+    float specIntensity = 0.24 * (1.0 - antiShimmer * 0.80);
     float spec = pow(NdotH, specPower) * specIntensity;
 
     float NdotV = max(dot(faceNormal, viewDir), 0.0);
-    float rim = pow(1.0 - NdotV, 2.8) * 0.22;
+    float rim = pow(1.0 - NdotV, 2.8) * 0.15;
 
     // Direct sun, SSS, specular, and rim consolidated under single sunScale
     vec3 sunScale = u_lightColor * canopyExtinction;
-    vec3 sunTerms = baseColor * (directDiffuse * shadow * 1.10 + rim)
-                  + subsurfaceColor * (transmission * 0.75)
-                  + vec3(spec * (0.35 + 0.65 * shadow));
+    vec3 sunTerms = baseColor * (directDiffuse * shadow * 1.10
+                              + rim * (0.35 + 0.65 * shadow))
+                  + subsurfaceColor * (transmission * 0.65 * shadow)
+                  + baseColor * (spec * 0.70 * shadow);
     lit += sunTerms * sunScale;
 
     // Root Contact AO
@@ -230,4 +231,3 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);
     return lit;
 }
-

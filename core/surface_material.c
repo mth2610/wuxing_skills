@@ -5,6 +5,7 @@
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include <stddef.h> // NULL
 
 static Shader s_shader;
@@ -12,6 +13,7 @@ static bool   s_ready = false;
 
 // Per-frame uniform locations
 static int s_locQualityTier;
+static int s_locWorldFromShaderSpace;
 static int s_locSunToLight, s_locSunColor, s_locSky, s_locGround, s_locViewPos;
 static int s_locFogColor   = -1;
 static int s_locFogStart   = -1;
@@ -48,6 +50,7 @@ void SurfaceMaterial_Init(void) {
     s_shader.locs[SHADER_LOC_VERTEX_TANGENT] = GetShaderLocationAttrib(s_shader, "vertexTangent"); // P5a
 
     s_locQualityTier = GetShaderLocation(s_shader, "u_qualityTier");
+    s_locWorldFromShaderSpace = GetShaderLocation(s_shader, "u_worldFromShaderSpace");
     VFXLight_RegisterShader(s_shader);   // Đợt E / E2 — main.c binds each frame
     s_locSunToLight = GetShaderLocation(s_shader, "u_sunToLight");
     s_locSunColor   = GetShaderLocation(s_shader, "u_sunColor");
@@ -139,6 +142,10 @@ void SurfaceMaterial_Apply(Model *model) {
 
 void SurfaceMaterial_UpdateFrame(Camera3D camera) {
     if (!s_ready) return;
+
+    Matrix worldFromShaderSpace = MatrixInvert(rlGetMatrixTransform());
+    if (s_locWorldFromShaderSpace >= 0)
+        SetShaderValueMatrix(s_shader, s_locWorldFromShaderSpace, worldFromShaderSpace);
 
     int tier = (int)GfxQuality_Get();
     SetShaderValue(s_shader, s_locQualityTier, &tier, SHADER_UNIFORM_INT);

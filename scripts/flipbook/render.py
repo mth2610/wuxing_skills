@@ -93,10 +93,10 @@ def main():
                     help="floor under the self-shadow, so the underside of a "
                          "thick puff goes dark rather than black")
     ap.add_argument("--arch", default="gpu", choices=["gpu", "cpu"])
-    ap.add_argument("--profile", default="volume", choices=["volume", "dust"],
+    ap.add_argument("--profile", default="volume", choices=["volume", "dust", "eoo"],
                     help="volume keeps the smoke/fire lighting channels. dust writes a "
-                         "cold, eroded alpha parcel: it deliberately has no volume "
-                         "self-shadow, which otherwise shows up as horizontal bands.")
+                         "cold, eroded alpha parcel. eoo writes Niagara EOO fire (R=Planck emission, "
+                         "G=Transmittance, B=0, A=Coverage) + BC5 tangent normals.")
     ap.add_argument("--bake-normals", type=int, default=1,
                     help="1 = bake 3D volumetric tangent space normal map to normals/ folder, 0 = off")
     args = ap.parse_args()
@@ -234,6 +234,134 @@ def main():
             else:
                 out_norm[px, py] = ti.Vector([0.5, 0.5, 1.0, 0.0])
 
+    @ti.func
+    def smoothstep_f(e0: ti.f32, e1: ti.f32, x: ti.f32) -> ti.f32:
+        t = ti.math.clamp((x - e0) / (e1 - e0), 0.0, 1.0)
+        return t * t * (3.0 - 2.0 * t)
+
+    @ti.func
+    def snoise3(p: ti.types.vector(3, ti.f32), t: ti.f32) -> ti.f32:
+        val = 0.0
+        val += ti.sin(p.x * 2.8 + t * 1.1) * ti.cos(p.y * 2.5 - t * 0.9) * ti.sin(p.z * 3.1 + t * 1.2)
+        val += 0.55 * ti.sin(p.y * 6.2 + t * 1.7) * ti.cos(p.z * 5.8 - t * 1.5) * ti.sin(p.x * 6.5 + t * 1.8)
+        val += 0.32 * ti.sin(p.z * 13.5 - t * 2.9) * ti.cos(p.x * 12.8 + t * 2.6) * ti.sin(p.y * 14.2 - t * 3.1)
+        val += 0.18 * ti.sin(p.x * 28.4 + t * 4.5) * ti.cos(p.y * 27.1 - t * 4.2) * ti.sin(p.z * 29.7 + t * 4.8)
+        val += 0.09 * ti.sin(p.y * 58.2 + t * 6.8) * ti.cos(p.z * 55.4 - t * 6.1) * ti.sin(p.x * 61.3 + t * 7.2)
+        return val
+
+    @ti.func
+    def billow_noise(p: ti.types.vector(3, ti.f32), t: ti.f32) -> ti.f32:
+        b1 = 1.0 - 2.0 * ti.abs(ti.sin(p.x * 3.5 + t * 1.2) * ti.cos(p.y * 3.1 - t) * ti.sin(p.z * 3.8 + t * 1.1))
+        b2 = 1.0 - 2.0 * ti.abs(ti.sin(p.y * 7.8 + t * 1.8) * ti.cos(p.z * 7.2 - t * 1.6) * ti.sin(p.x * 8.1 + t * 1.7))
+        b3 = 1.0 - 2.0 * ti.abs(ti.sin(p.z * 17.5 - t * 3.0) * ti.cos(p.x * 16.2 + t * 2.8) * ti.sin(p.y * 18.1 - t * 3.2))
+        b4 = 1.0 - 2.0 * ti.abs(ti.sin(p.x * 36.0 + t * 4.6) * ti.cos(p.y * 34.0 - t * 4.4) * ti.sin(p.z * 37.0 + t * 4.9))
+        return 0.45 * b1 + 0.30 * b2 + 0.18 * b3 + 0.10 * b4
+
+    @ti.kernel
+    def march_eoo(kf: ti.f32, kfe: ti.f32, fw: ti.f32, fh: ti.f32, e_norm: ti.f32, time_val: ti.f32):
+        for px, py in out:
+            u = ((px + 0.5) / S - 0.5) / fw + 0.5
+            v = ((py + 0.5) / S - 0.5) / fh + 0.5
+            gx_base = u * (rx - 1)
+            gz_base = (1.0 - v) * (rz - 1)
+
+            trans = 1.0
+            emis_accum = 0.0
+            body_accum = 0.0
+            shadow_accum = 0.0
+            accum_norm = ti.Vector([0.0, 0.0, 0.0])
+
+            inside = (u >= 0.0) and (u <= 1.0) and (v >= 0.0) and (v <= 1.0)
+            fade = border_fade(u, v, 0.04) if inside else 0.0
+
+            steps = ry * 2 if inside else 0
+            dstep = ti.cast(ry - 1, ti.f32) / ti.max(steps, 1)
+
+            if inside:
+                for s in range(steps):
+                    gy = s * dstep
+                    p_norm = ti.Vector([gx_base / rx, gy / ry, gz_base / rz])
+                    p_stretch = ti.Vector([p_norm.x * 1.25, p_norm.y * 1.25, p_norm.z * 0.85])
+
+                    w_x = snoise3(p_stretch * 5.0 + ti.Vector([12.3, 0, 0]), time_val * 1.4)
+                    w_y = snoise3(p_stretch * 5.0 + ti.Vector([0, 45.6, 0]), time_val * 1.4)
+                    w_z = snoise3(p_stretch * 5.0 + ti.Vector([0, 0, 78.9]), time_val * 1.4)
+
+                    gx = gx_base + w_x * 3.5
+                    gz = gz_base + w_z * 3.5
+                    gy_w = gy + w_y * 3.5
+
+                    f_raw = sample(flame, gx, gy_w, gz)
+                    if f_raw > 0.002:
+                        b_noise = billow_noise(p_stretch * 4.2, time_val * 1.6)
+                        fine_wisp = snoise3(p_stretch * 18.0, time_val * 2.8)
+                        micro_grain = snoise3(p_stretch * 40.0, time_val * 4.2)
+
+                        modulation = ti.max(0.0, 0.68 + 0.90 * b_noise + 0.32 * fine_wisp + 0.12 * micro_grain)
+                        f_mod = f_raw * modulation
+
+                        core_heat = ti.pow(ti.max(0.0, f_mod - 0.08) * 1.7, 1.5)
+                        core_heat *= (0.60 + 0.80 * ti.max(0.0, fine_wisp + 0.3))
+
+                        ext = (f_mod * kfe) * (dstep / rz) * 24.0 * fade
+                        step_alpha = 1.0 - ti.exp(-ext)
+
+                        emis_accum += core_heat * kf * trans * (dstep / rz) * 20.0 * fade
+                        body_accum += f_mod * trans * (dstep / rz) * 16.0 * fade
+                        shadow_accum += f_mod * (1.0 - trans) * (dstep / rz) * 14.0 * fade
+
+                        delta = 1.0
+                        dx = sample(flame, gx + delta, gy_w, gz) - sample(flame, gx - delta, gy_w, gz)
+                        dy = sample(flame, gx, gy_w + delta, gz) - sample(flame, gx, gy_w - delta, gz)
+                        dz = sample(flame, gx, gy_w, gz + delta) - sample(flame, gx, gy_w, gz - delta)
+
+                        n_noise_x = snoise3(p_stretch * 12.0, time_val)
+                        n_noise_y = snoise3(p_stretch * 12.0 + ti.Vector([7, 7, 7]), time_val)
+
+                        local_n = ti.Vector([-0.5 * dx + 0.12 * n_noise_x, -0.5 * dz + 0.12 * n_noise_y, 0.5 * dy])
+                        n_len = local_n.norm()
+                        if n_len > 1e-4:
+                            local_n /= n_len
+                        else:
+                            local_n = ti.Vector([0.0, 0.0, 1.0])
+
+                        accum_norm += local_n * trans * step_alpha
+                        trans *= ti.exp(-ext)
+                        if trans < 0.003:
+                            break
+
+            r_raw = emis_accum / ti.max(e_norm, 1e-4)
+            r_val = ti.pow(ti.math.clamp(r_raw, 0.0, 1.0), 1.12)
+
+            cov_raw = 1.0 - trans
+            edge_wisp = snoise3(ti.Vector([u * 22.0, v * 22.0, 0.5]), time_val * 2.2)
+            coverage = smoothstep_f(0.012 + 0.025 * edge_wisp, 0.12, cov_raw) * fade
+
+            body_norm = ti.math.clamp(body_accum * 0.85, 0.0, 1.0)
+            crevice_shadow = ti.math.clamp(shadow_accum * 1.4, 0.0, 0.45)
+            g_val = ti.math.clamp(1.0 - 0.65 * r_val - 0.20 * body_norm - crevice_shadow, 0.32, 1.0)
+
+            if coverage < 0.005:
+                r_val = 0.0
+                g_val = 1.0
+                coverage = 0.0
+
+            out[px, py] = ti.Vector([r_val, g_val, 0.0, coverage])
+
+            an_len = accum_norm.norm()
+            n_unit = accum_norm / an_len if an_len > 1e-4 else ti.Vector([0.0, 0.0, 1.0])
+            edge_blend = smoothstep_f(0.005, 0.30, coverage)
+            n_smooth = n_unit * edge_blend + ti.Vector([0.0, 0.0, 1.0]) * (1.0 - edge_blend)
+            ns_len = n_smooth.norm()
+            n_final = n_smooth / ns_len if ns_len > 1e-4 else ti.Vector([0.0, 0.0, 1.0])
+
+            out_norm[px, py] = ti.Vector([
+                0.5 + 0.5 * n_final.x,
+                0.5 + 0.5 * n_final.y,
+                0.0,
+                1.0
+            ])
+
     t0 = time.time()
 
     def render_all(fw, fh, quiet=False):
@@ -244,12 +372,16 @@ def main():
             d = np.ascontiguousarray(z["density"], np.float32)
             dens.from_numpy(d)
             flame.from_numpy(np.ascontiguousarray(z["flame"], np.float32))
-            above = np.cumsum(d[::-1], axis=0)[::-1] - d
-            shad.from_numpy(np.ascontiguousarray(
-                args.ambient + (1.0 - args.ambient)
-                * np.exp(-args.light * args.density_scale * above), np.float32))
-            march(args.density_scale, args.flame_scale, args.flame_extinction,
-                  fw, fh, 1 if args.flame_projection == "peak" else 0)
+            if args.profile == "eoo":
+                time_val = float(i) * 0.08
+                march_eoo(args.flame_scale, args.flame_extinction, fw, fh, 1.0, time_val)
+            else:
+                above = np.cumsum(d[::-1], axis=0)[::-1] - d
+                shad.from_numpy(np.ascontiguousarray(
+                    args.ambient + (1.0 - args.ambient)
+                    * np.exp(-args.light * args.density_scale * above), np.float32))
+                march(args.density_scale, args.flame_scale, args.flame_extinction,
+                      fw, fh, 1 if args.flame_projection == "peak" else 0)
             img = out.to_numpy().transpose(1, 0, 2)
             img_norm = out_norm.to_numpy().transpose(1, 0, 2)
             if args.supersample > 1:
@@ -269,7 +401,8 @@ def main():
 
     if autofit:
         # Measure on the UNCROPPED render, where nothing can be cut off
-        probe = np.stack(render_all(fit_w, fit_h, quiet=True)[0])[..., 2]
+        alpha_ch = 3 if args.profile == "eoo" else 2
+        probe = np.stack(render_all(fit_w, fit_h, quiet=True)[0])[..., alpha_ch]
         lit = probe > 0.005
         half = args.cell / 2.0
         ys, xs = np.nonzero(lit.any(axis=0))
@@ -307,48 +440,66 @@ def main():
 
     for i, (img, n_img) in enumerate(zip(frames, norm_frames)):
         rgba = np.zeros((args.cell, args.cell, 4), np.float32)
-        emission = np.clip(img[..., 0] / e_max, 0, 1)
-        if args.emission_gamma != 1.0:
-            emission = emission ** max(args.emission_gamma, 0.05)
-        rgba[..., 0] = emission                            # flame emission
-        rgba[..., 1] = np.clip(img[..., 1] / s_max, 0, 1)     # smoke
-        rgba[..., 2] = np.clip(img[..., 3] / s_max, 0, 1)      # self-shadowed value
-        rgba[..., 3] = np.clip(img[..., 2], 0, 1)              # true opacity
-        if args.profile == "dust":
-            base = rgba[..., 1]
-            volume_value = np.clip(rgba[..., 2] / np.maximum(base, 1e-3), 0.0, 1.0)
-            rng = np.random.default_rng(0xD057 + i)
-            coarse_size = max(5, args.cell // 24)
-            fine_size = max(9, args.cell // 11)
-            coarse = rng.random((coarse_size, coarse_size), dtype=np.float32)
-            fine = rng.random((fine_size, fine_size), dtype=np.float32)
-            coarse = np.asarray(Image.fromarray((coarse * 255).astype(np.uint8)).resize(
-                (args.cell, args.cell), Image.Resampling.BICUBIC), np.float32) / 255.0
-            fine = np.asarray(Image.fromarray((fine * 255).astype(np.uint8)).resize(
-                (args.cell, args.cell), Image.Resampling.BICUBIC), np.float32) / 255.0
-            grain = coarse * 0.68 + fine * 0.32
-            soft = np.clip((base - 0.16 + (grain - 0.5) * 0.23) / 0.66, 0.0, 1.0)
-            rgba[..., 1] = soft
-            shadow = np.asarray(Image.fromarray((volume_value * 255).astype(np.uint8)).filter(
-                ImageFilter.GaussianBlur(radius=max(1.0, args.cell * 0.006))),
-                np.float32) / 255.0
-            local = np.asarray(Image.fromarray((base * 255).astype(np.uint8)).filter(
-                ImageFilter.GaussianBlur(radius=max(1.0, args.cell * 0.010))),
-                np.float32) / 255.0
-            value = np.clip(0.04 + 0.86 * shadow + 0.10 * local, 0.0, 1.0)
-            rgba[..., 2] = soft * value
-            rgba[..., 3] = soft * np.clip(0.46 + grain * 0.50, 0.0, 1.0)
+        if args.profile == "eoo":
+            emission = np.clip(img[..., 0] / e_max, 0, 1)
+            if args.emission_gamma != 1.0:
+                emission = emission ** max(args.emission_gamma, 0.05)
+            rgba[..., 0] = emission                               # flame emission
+            rgba[..., 1] = np.clip(img[..., 1], 0, 1)             # transmittance G
+            rgba[..., 2] = 0.0                                    # B is 0
+            rgba[..., 3] = np.clip(img[..., 3], 0, 1)             # coverage A
+        else:
+            emission = np.clip(img[..., 0] / e_max, 0, 1)
+            if args.emission_gamma != 1.0:
+                emission = emission ** max(args.emission_gamma, 0.05)
+            rgba[..., 0] = emission                            # flame emission
+            rgba[..., 1] = np.clip(img[..., 1] / s_max, 0, 1)     # smoke
+            rgba[..., 2] = np.clip(img[..., 3] / s_max, 0, 1)      # self-shadowed value
+            rgba[..., 3] = np.clip(img[..., 2], 0, 1)              # true opacity
+            if args.profile == "dust":
+                base = rgba[..., 1]
+                volume_value = np.clip(rgba[..., 2] / np.maximum(base, 1e-3), 0.0, 1.0)
+                rng = np.random.default_rng(0xD057 + i)
+                coarse_size = max(5, args.cell // 24)
+                fine_size = max(9, args.cell // 11)
+                coarse = rng.random((coarse_size, coarse_size), dtype=np.float32)
+                fine = rng.random((fine_size, fine_size), dtype=np.float32)
+                coarse = np.asarray(Image.fromarray((coarse * 255).astype(np.uint8)).resize(
+                    (args.cell, args.cell), Image.Resampling.BICUBIC), np.float32) / 255.0
+                fine = np.asarray(Image.fromarray((fine * 255).astype(np.uint8)).resize(
+                    (args.cell, args.cell), Image.Resampling.BICUBIC), np.float32) / 255.0
+                grain = coarse * 0.68 + fine * 0.32
+                soft = np.clip((base - 0.16 + (grain - 0.5) * 0.23) / 0.66, 0.0, 1.0)
+                rgba[..., 1] = soft
+                shadow = np.asarray(Image.fromarray((volume_value * 255).astype(np.uint8)).filter(
+                    ImageFilter.GaussianBlur(radius=max(1.0, args.cell * 0.006))),
+                    np.float32) / 255.0
+                local = np.asarray(Image.fromarray((base * 255).astype(np.uint8)).filter(
+                    ImageFilter.GaussianBlur(radius=max(1.0, args.cell * 0.010))),
+                    np.float32) / 255.0
+                value = np.clip(0.04 + 0.86 * shadow + 0.10 * local, 0.0, 1.0)
+                rgba[..., 2] = soft * value
+                rgba[..., 3] = soft * np.clip(0.46 + grain * 0.50, 0.0, 1.0)
+
         # Rows: image Y already runs down from the grid's top, so no flip here.
         Image.fromarray((rgba * 255).astype(np.uint8), "RGBA").save(
             os.path.join(out_dir, "f%03d.png" % (i + 1)))
 
         if args.bake_normals:
-            n_rgba = np.clip(n_img, 0.0, 1.0)
-            zero_alpha = n_rgba[..., 3] < 0.005
-            n_rgba[zero_alpha, 0] = 0.5
-            n_rgba[zero_alpha, 1] = 0.5
-            n_rgba[zero_alpha, 2] = 1.0
-            n_rgba[zero_alpha, 3] = 0.0
+            if args.profile == "eoo":
+                n_rgba = np.clip(n_img, 0.0, 1.0)
+                zero_alpha = rgba[..., 3] < 0.005
+                n_rgba[zero_alpha, 0] = 0.5
+                n_rgba[zero_alpha, 1] = 0.5
+                n_rgba[zero_alpha, 2] = 0.0
+                n_rgba[..., 3] = 1.0
+            else:
+                n_rgba = np.clip(n_img, 0.0, 1.0)
+                zero_alpha = n_rgba[..., 3] < 0.005
+                n_rgba[zero_alpha, 0] = 0.5
+                n_rgba[zero_alpha, 1] = 0.5
+                n_rgba[zero_alpha, 2] = 1.0
+                n_rgba[zero_alpha, 3] = 0.0
             Image.fromarray((n_rgba * 255).astype(np.uint8), "RGBA").save(
                 os.path.join(normals_dir, "f%03d.png" % (i + 1)))
 

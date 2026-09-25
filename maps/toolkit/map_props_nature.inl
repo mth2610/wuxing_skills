@@ -1388,7 +1388,8 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             } else if (bladesPerClump <= 2 && bladeSegments <= 2) {
                 // Two splayed silhouettes keep distant clumps from forming
                 // parallel diagonal strokes across the whole meadow.
-                bladeLeanAngle = clumpAngle + (blade == 0 ? -0.54f : 0.54f)
+                float splay = bladesPerClump == 1 ? 0.0f : (blade == 0 ? -0.54f : 0.54f);
+                bladeLeanAngle = clumpAngle + splay
                                + (bHash - 0.5f) * 0.46f;
                 float bx = clump->position.x + cosf(bladeLeanAngle) * clump->radius * 0.09f;
                 float bz = clump->position.z + sinf(bladeLeanAngle) * clump->radius * 0.09f;
@@ -1406,8 +1407,8 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 bladeRoot = style.rootColor;
                 bladeTip = style.tipColor;
             } else {
-                // Ghost of Tsushima / AAA Reference: 3D Volumetric Clump Architecture (6 Blades)
-                // All 6 blades emerge upright from root collar and arch gracefully
+                // Volumetric clump architecture, including reduced far LOD.
+                // Blades emerge from a collar and spread beyond the wind axis.
                 float baseAzimuth = ((float)blade / (float)bladesPerClump) * (2.0f * PI)
                                   + (bHash - 0.5f) * 0.45f;
                 float collarRadius = clump->radius * (0.16f + 0.12f * bHash3);
@@ -1744,13 +1745,13 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
 
             // Preserve coverage: removing every second clump turns a meadow
             // into isolated spikes. Far LOD reduces each clump instead.
-            // Procedural Blade Widening (Ghost of Tsushima model):
-            // Far clumps use exactly 2 blades with 1.45x width to preserve full coverage with minimal triangles.
-            int farBlades = 2;
+            // Three distinct silhouettes avoid the combed two-stroke pattern
+            // at the default gameplay zoom, while keeping one segment each.
+            int farBlades = 3;
             int farCount = 0;
             Model farModel = Nature_BuildMeadowChunk(
                 placements, count, style, x0, x1, z0, z1, 1,
-                farBlades, 1, 1.45f, &farCount);
+                farBlades, 1, 1.16f, &farCount);
             Model shadowModel = {0};
             // Eliminate crude 6-vertex trapezoid wedges.
             // Grass uses real dynamic shadow map casting via realShadowModel.

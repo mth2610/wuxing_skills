@@ -3706,3 +3706,15 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   each exact spacing interval. Leave the latest emitted point as the carry,
   never manufacture a zero-length node at rest, and keep `nodeUV` in travelled
   arc length. Guarded by `core/tests/motion_ribbon_trail_test.c`.
+
+## Model fog must compare positions in the same coordinate space (25/09/2026)
+
+- **Symptom:** a nearby character keeps its purple cloth in UNLIT but turns
+  pale grey at LOW/HIGH; fog strength changes with the map's world offset.
+- **Cause:** raylib can fold the view into `matModel`. The shader compared that
+  shader-space position with a world-space camera, making a 4 m ray look 60 m
+  long and applying distant blue fog to the character.
+- **Rule:** undo the folded view before world-space fog, shadows and VFX light
+  calculations. Guard the transform wiring with
+  `core/tests/surface_worldspace_test.c` and verify a same-camera HIGH/UNLIT
+  capture; source checks alone cannot validate a GPU matrix convention.

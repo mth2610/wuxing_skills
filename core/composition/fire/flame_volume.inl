@@ -779,7 +779,7 @@ static void FVol_Emit(VC_FlameEmitter *emitter, float dt)
                 .radiusCurve = &s_fvolGrow,
                 .forceField = activeField,
                 .windInfluence = 0.65f,
-                .render.volumeSheet = (useRoil || useFireball) ? 4 : 2,
+                .render.volumeSheet = (useRoil || useFireball || useTongue01) ? 4 : 2,
                 .render.normalTex = useTongue01 ? s_fvolTongue01NormalTex : (useRoil ? s_fvolRoilNormalTex : (useFireball ? s_fvolFireballNormalTex : (Texture2D){0})),
                 .render.rampLUT = ramp,
                 .render.heatGain = s_fvolHeatGain,

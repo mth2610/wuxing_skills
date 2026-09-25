@@ -175,7 +175,7 @@ static float VerdantGrassDensity(float x, float z, void *userData)
     float distPath = DistanceToPaths(x, z);
     if (distPath < 1.15f)
         return 0.0f;
-    float pathFade = fminf(1.0f, (distPath - 1.15f) / 1.10f); // smooth organic border along stone path
+    float pathFade = fminf(1.0f, (distPath - 1.15f) / 1.10f); // grass returns gradually at the dirt path edge
 
     float nx = (x - kMapCenter.x) / 43.0f;
     float nz = (z - kMapCenter.z) / 29.5f;
@@ -255,7 +255,9 @@ static void BuildMeadowLayout(void)
         // 4. Clump-level Yaw Jitter (AAA standard: organic diversity)
         float hash = sinf((float)(i * 47)) * 43758.5453f;
         hash -= floorf(hash);
-        clump->rotationDeg = flowAngle + (hash - 0.5f) * 54.0f;
+        clump->rotationDeg = flowAngle + (hash - 0.5f) * 70.0f;
+        float localHeight = clump->height; // keep the placement jitter after biome shaping
+        float localRadius = clump->radius;
 
         // Cellular noise field for macro-biomes (scale ~7 meters)
         float cell1 = sinf(cx * 0.15f + cz * 0.10f) * 0.5f + 0.5f;
@@ -278,6 +280,8 @@ static void BuildMeadowLayout(void)
             clump->height = 0.33f + t * 0.04f;
             clump->radius = 0.24f + t * 0.03f;
         }
+        clump->height *= 0.82f + 0.34f * (localHeight - 0.22f) / 0.16f;
+        clump->radius *= 0.91f + 0.18f * (localRadius - 0.22f) / 0.06f;
     }
 
     const Vector3 centers[FLOWER_CLUSTER_COUNT] = {
@@ -612,7 +616,7 @@ void InitVerdantPathMap(void)
             .rootColor = {34, 53, 27, 255}, .tipColor = {119, 175, 69, 255},
             .bladesPerClump = 6, .bladeSegments = 4, .bladeWidthScale = 0.11f,
             .chunkSize = 12.0f, .lodDistance = 23.0f, .midLodDistance = 9.0f, .drawDistance = 50.0f,
-            .shadowDistance = 0.0f,
+            .shadowDistance = 12.0f,
             .texturePath = NULL,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
