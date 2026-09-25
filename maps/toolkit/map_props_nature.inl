@@ -1108,6 +1108,21 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
         SetShaderValueTexture(shader, GetShaderLocation(shader, "u_interactionMap"),
                               s_natureInteractionTexture);
     MapShadow_UpdateShader(shader);
+    // Nature's vertex shader converts fragPosition to true world space before
+    // projecting it. MapShadow_UpdateShader folds inverse(view) into these
+    // matrices for other map shaders whose varyings stay in shader/view space.
+    // That conversion here sampled the shadow map at the wrong coordinates.
+    if (EnvShadow_IsEnabled()) {
+        int lightVpLoc = GetShaderLocation(shader, "u_lightVP");
+        if (lightVpLoc >= 0)
+            SetShaderValueMatrix(shader, lightVpLoc, EnvShadow_GetLightVP());
+        if (EnvShadow_HasStaticCache()) {
+            int staticLightVpLoc = GetShaderLocation(shader, "u_staticLightVP");
+            if (staticLightVpLoc >= 0)
+                SetShaderValueMatrix(shader, staticLightVpLoc,
+                                     EnvShadow_GetStaticLightVP());
+        }
+    }
 }
 
 static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDirection,

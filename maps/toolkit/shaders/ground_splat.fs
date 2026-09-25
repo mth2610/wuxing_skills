@@ -102,11 +102,12 @@ void main()
         wGrass = 1.0;
     }
 
-    // Botanical PBR Meadow Grass Albedo (calibrated rich natural green, never neon)
+    // The authored meadow substrate contains low turf, fine litter, and earth.
+    // Keep its large forms while matching the darker blade roots above it.
     vec3 blendedGrass = mix(colorGrass.rgb, broadGrass, 0.32);
-    vec3 botanicalGreen = vec3(0.18, 0.29, 0.11);
-    vec3 grassAlbedo = blendedGrass * vec3(0.68, 0.78, 0.49)
-                     + botanicalGreen * 0.12;
+    vec3 turfBase = vec3(0.145, 0.205, 0.095);
+    vec3 grassAlbedo = mix(turfBase,
+                           blendedGrass * vec3(0.82, 0.94, 0.78), 0.68);
 
     // Multi-scale organic turf variation (deep damp swales vs warm sunny hummocks)
     float turfNoise = sin(fragWorldPos.x * 0.16 + fragWorldPos.z * 0.11) * 0.5
@@ -139,14 +140,16 @@ void main()
     vec3 microNormal = normalize(mix(grassMaterial.rgb, soilMaterial.rgb, soilWeight) * 2.0 - 1.0);
     vec3 tangent = normalize(vec3(1.0, -geomNormal.x / max(geomNormal.y, 0.15), 0.0));
     vec3 bitangent = normalize(cross(tangent, geomNormal));
+    float microStrength = mix(0.14, 0.30, soilWeight);
     vec3 normal = normalize(geomNormal * (0.70 + 0.30 * microNormal.z)
-                          + tangent * microNormal.x * 0.34
-                          + bitangent * microNormal.y * 0.34);
+                          + tangent * microNormal.x * microStrength
+                          + bitangent * microNormal.y * microStrength);
     float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
     roughness = mix(roughness, 0.48, wWetSoil * 0.65);
 
     // Micro cavity ambient occlusion from texture relief
-    float cavityAO = clamp(0.75 + 0.25 * mix(fineGrassLuma, colorDirt.r, soilWeight), 0.68, 1.0);
+    float cavityAO = mix(0.88 + 0.12 * fineGrassLuma,
+                         0.75 + 0.25 * colorDirt.r, soilWeight);
 
     // Lighting
     vec3 light = vec3(0.0, 1.0, 0.0);
@@ -169,7 +172,7 @@ void main()
                     + actualLight.rgb * NdotL * shadow;
 
     vec3 groundLit = blendedAlbedo * totalLight;
-    vec3 viewDir = normalize(viewPos - fragPosition);
+    vec3 viewDir = normalize(viewPos - fragWorldPos);
     vec3 halfDir = normalize(light + viewDir);
     float specPower = mix(12.0, 72.0, 1.0 - roughness);
     float drySpec = pow(max(dot(normal, halfDir), 0.0), specPower)

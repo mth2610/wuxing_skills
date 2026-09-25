@@ -563,12 +563,12 @@ void InitVerdantPathMap(void)
     s_ground = MapProp_CreateGroundHeightmap(
         "assets/heightmaps/verdant_path_island.png", MAP_WIDTH, MAP_DEPTH,
         CLIFF_DEPTH, 3.6f, "assets/textures/grass_ground_diffuse.png",
-        "assets/textures/grass_ground_diffuse.png", "assets/textures/dirt_diffuse.png");
+        "assets/textures/verdant_meadow_substrate_diffuse.png", "assets/textures/dirt_diffuse.png");
     ApplyHabitatToGround();
     // Shader consumes normalized linear values; calibrated natural botanical meadow tint
     MapProp_SetGroundTint(&s_ground, (Color){62, 88, 45, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
-        "assets/textures/grass_ground_material.png",
+        "assets/textures/verdant_meadow_substrate_material.png",
         "assets/textures/dirt_material.png");
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
         "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");

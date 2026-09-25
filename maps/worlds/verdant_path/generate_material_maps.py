@@ -6,6 +6,7 @@ comes from the heightmap.
 """
 
 from pathlib import Path
+import argparse
 import struct
 import subprocess
 import zlib
@@ -18,7 +19,7 @@ SIZE = 512
 
 def read_rgb(path):
     return subprocess.check_output([
-        "ffmpeg", "-v", "error", "-i", str(path), "-f", "rawvideo",
+        "ffmpeg", "-v", "error", "-i", str(path), "-vf", f"scale={SIZE}:{SIZE}", "-f", "rawvideo",
         "-pix_fmt", "rgb24", "pipe:1",
     ])
 
@@ -72,5 +73,9 @@ def make_material(source, destination, grass):
 
 
 if __name__ == "__main__":
-    make_material("grass_ground_diffuse.png", "grass_ground_material.png", True)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--grass-source", default="grass_ground_diffuse.png")
+    parser.add_argument("--grass-output", default="grass_ground_material.png")
+    args = parser.parse_args()
+    make_material(args.grass_source, args.grass_output, True)
     make_material("dirt_diffuse.png", "dirt_material.png", False)
