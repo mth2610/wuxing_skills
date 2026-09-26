@@ -130,7 +130,16 @@ void main()
     float waterDepth = 0.0;
     bool hasValidDepth = false;
 
-    if (u_hasDepthTex > 0 && u_resolution.x > 1.0) {
+    // The radial lake has a known bed profile. Screen-space ray distance to
+    // that bed changes with camera pitch and used to move a visible contour
+    // across the lake whenever the camera zoomed or jumped.
+    if (u_waterShape == 0) {
+        float radial = clamp(length(fragLakeCoord), 0.0, 1.0);
+        waterDepth = u_maxDepth * (1.0 - pow(radial, 1.6)) + 0.015;
+        hasValidDepth = true;
+    }
+
+    if (!hasValidDepth && u_hasDepthTex > 0 && u_resolution.x > 1.0) {
         vec2 screenUV = gl_FragCoord.xy / u_resolution;
         float sceneLinear = texture(u_cameraDepthTex, screenUV).r;
         
@@ -148,7 +157,7 @@ void main()
         // Analytical shape-based bathymetry fallback
         if (u_waterShape == 0) {
             float radial = length(fragLakeCoord);
-            waterDepth = clamp((1.0 - radial * radial) * u_maxDepth, 0.0, u_maxDepth);
+            waterDepth = clamp((1.0 - pow(radial, 1.6)) * u_maxDepth + 0.015, 0.0, u_maxDepth);
         } else if (u_waterShape == 1) {
             float edgeDist = min(1.0 - abs(fragLakeCoord.x), 1.0 - abs(fragLakeCoord.y));
             waterDepth = clamp(smoothstep(0.0, 0.35, edgeDist) * u_maxDepth, 0.0, u_maxDepth);
@@ -230,12 +239,14 @@ void main()
     float waterColumnAlpha = 0.12 + 0.34 * (1.0 - exp(-1.8 * waterDepth));
     float surfaceAlpha = fresnel * 0.72 + waterColumnAlpha + min(length(sunGlint) * 0.22, 0.26);
 
-    // Soft boundary fade right at shore edge (< 1.2cm)
-    float shoreEdgeFade = smoothstep(0.0005, 0.012, waterDepth);
+    // Smoothly reveal the sandy bed over the outer edge of a radial lake.
+    float shoreEdgeFade = u_waterShape == 0
+        ? 1.0 - smoothstep(0.93, 1.0, length(fragLakeCoord))
+        : smoothstep(0.0005, 0.012, waterDepth);
     surfaceAlpha *= shoreEdgeFade;
 
     // Meniscus and contact foam sit firmly ON the surface — never dissolved!
-    float alpha = clamp(surfaceAlpha + brokenFoam * 0.28, 0.0, 0.88);
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.28 * shoreEdgeFade, 0.0, 0.88);
 
     // ── 9. COMPOSITION ───────────────────────────────────────────────────────
     // Aquatic water column color (Beer-Lambert volumetric tint)

@@ -5,7 +5,7 @@ in vec2 fragTexCoord;
 in vec3 fragNormal;
 in vec4 fragColor;
 
-uniform sampler2D texture0;         // Riverbed pebble/stone diffuse texture
+uniform sampler2D texture0;         // Bed diffuse texture; radial lake uses surrounding earth
 uniform sampler2D u_causticTex;     // Dual-layer caustics texture
 
 uniform float u_time;
@@ -28,15 +28,14 @@ void main()
     // Physical water column depth directly above this bed fragment
     float waterDepth = max(0.0, u_waterHeight - fragPosition.y);
 
-    // Multi-scale riverbed stone & gravel sampling using world coordinates
-    vec2 uvBase = fragPosition.xz * 1.45;
-    vec2 uvFine = fragPosition.xz * 4.30;
-    vec4 stoneBase = texture(texture0, uvBase);
-    vec4 stoneFine = texture(texture0, uvFine);
-    vec3 stoneRgb = mix(stoneBase.rgb, stoneFine.rgb, 0.35);
-
-    // Bed albedo: rich earthy river stones and gravel pebbles
-    vec3 bedAlbedo = stoneRgb * (fragColor.rgb * 1.35) * 0.92;
+    // Broad soil variation with fine sand grains. Vertex color moves from
+    // darker lake silt to pale sand at the waterline.
+    vec2 uvBase = fragPosition.xz * 0.45;
+    vec2 uvFine = fragPosition.xz * 2.60;
+    vec3 soil = texture(texture0, uvBase).rgb;
+    vec3 grain = texture(texture0, uvFine).rgb;
+    vec3 bedAlbedo = mix(soil, grain, 0.24) *
+                     (0.48 + fragColor.rgb * 1.05);
 
     // Dual-layer animated caustics dancing on the lake bed
     float t = u_time * 0.72;

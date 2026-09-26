@@ -609,7 +609,7 @@ void InitVerdantPathMap(void)
         .segments = 112, .rings = 14, .seed = 9173u,
         .deepColor = {14, 56, 64, 255}, .shallowColor = {52, 118, 108, 255},
         .foamColor = {170, 193, 179, 255},
-        .bankInnerColor = {94, 100, 73, 255}, .bankOuterColor = {100, 115, 79, 255},
+        .bankInnerColor = {145, 139, 107, 255}, .bankOuterColor = {94, 110, 78, 255},
     });
     for (int i = ROCK_COUNT - 3; i < ROCK_COUNT; i++) {
         MapProp_AddWaterObstacle(&s_lake, kRocks[i].position,

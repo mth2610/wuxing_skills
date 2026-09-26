@@ -3074,8 +3074,10 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
         float d1 = config.maxDepth * (1.0f - powf(r1, 1.6f)) + 0.015f;
         float y0 = -d0;
         float y1 = -d1;
-        Color c0 = Nature_LerpColor((Color){135, 128, 110, 255}, (Color){195, 185, 165, 255}, r0);
-        Color c1 = Nature_LerpColor((Color){135, 128, 110, 255}, (Color){195, 185, 165, 255}, r1);
+        float sand0 = r0 * r0 * (3.0f - 2.0f * r0);
+        float sand1 = r1 * r1 * (3.0f - 2.0f * r1);
+        Color c0 = Nature_LerpColor((Color){119, 101, 73, 255}, (Color){184, 170, 132, 255}, sand0);
+        Color c1 = Nature_LerpColor((Color){119, 101, 73, 255}, (Color){184, 170, 132, 255}, sand1);
         for (int segment = 0; segment < config.segments; segment++) {
             float a0 = (float)segment * 2.0f * PI / config.segments;
             float a1 = (float)(segment + 1) * 2.0f * PI / config.segments;
@@ -3108,7 +3110,7 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
         }
     }
     water.bedModel = Nature_ModelFromMesh(bedMesh, Water_GetBedShader());
-    water.bedDiffuseTex = ResourceManager_LoadTexture("assets/textures/stone_path_diffuse.png");
+    water.bedDiffuseTex = ResourceManager_LoadTexture("assets/textures/dirt_diffuse.png");
     SetTextureWrap(water.bedDiffuseTex, TEXTURE_WRAP_REPEAT);
     SetTextureFilter(water.bedDiffuseTex, TEXTURE_FILTER_BILINEAR);
     water.bedModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = water.bedDiffuseTex;
@@ -3697,11 +3699,15 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
         rlEnableTexture(water->waveFieldTex.id);
     }
 
-    SceneTargets_RequestSoftDepthRegion((Rectangle){ 0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() });
     Vector2 screenRes = { (float)GetScreenWidth(), (float)GetScreenHeight() };
     if (s_waterLocResolution >= 0) SetShaderValue(shader, s_waterLocResolution, &screenRes, SHADER_UNIFORM_VEC2);
 
-    Texture2D depthTex = SceneTargets_GetDepthTexture();
+    // Radial lakes use their own exact bed profile and do not need a camera
+    // depth snapshot. The snapshot was both expensive and view dependent.
+    if (water->config.shape != WATER_SHAPE_RADIAL)
+        SceneTargets_RequestSoftDepthRegion((Rectangle){ 0, 0, screenRes.x, screenRes.y });
+    Texture2D depthTex = water->config.shape != WATER_SHAPE_RADIAL
+        ? SceneTargets_GetDepthTexture() : (Texture2D){0};
     int hasDepth = (depthTex.id > 0) ? 1 : 0;
     SetShaderValue(shader, s_waterLocHasDepthTex, &hasDepth, SHADER_UNIFORM_INT);
     if (hasDepth) {

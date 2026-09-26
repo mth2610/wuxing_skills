@@ -3,6 +3,12 @@
 > Distilled, reusable lessons for the **maps** module. Format: Symptom → Cause → Rule (`DOC_ARCHITECTURE.md` §6).
 > Cross-cutting engine traps live in root `ENGINE_LANDMINES.md`. Backlog/log is in `PROGRESS.md`.
 
+### Lake depth contours shift when the camera moves
+
+- **Symptom:** A shore-shaped band appears to expand across the lake during zoom or a jump, and the lake bed has a hard material break at the bank.
+- **Cause:** The radial water shader mixed screen-space ray depth with an analytic fallback that did not match the concave bed mesh. Ray depth varies with camera pitch. The bed also used a paved-stone texture while the surrounding shore used earth colors.
+- **Rule:** For a radial lake with a known bed profile, calculate optical depth from the same radial equation as its mesh and fade surface coverage by shoreline coordinate. Do not request a scene-depth snapshot for that lake. Use soil/sand bed colors and the surrounding terrain texture family; inspect matched-camera captures at high and low camera heights.
+
 ### Vegetation shadows exist in the map but disappear from the viewed meadow
 
 - **Symptom:** The character has an obvious directional shadow while HIGH-quality grass and flowers look ungrounded.
@@ -38,3 +44,4 @@
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
 | 2026-09-26 | Codex | Vegetation shadow and grass-tip landmines | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_opaque.fs`, `environment/env_shadow.c` | Ground-truth |
+| 2026-09-26 | Codex | Lake depth contour and bed material landmine | `maps/toolkit/shaders/water_surface.fs`, `maps/toolkit/shaders/water_bed.fs`, `maps/toolkit/map_props_nature.inl` | Ground-truth |
