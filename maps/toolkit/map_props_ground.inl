@@ -445,6 +445,10 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     if (!ground->ready)
         return;
 
+    // rlvk uploads SetShaderValue to the active program, not the Shader
+    // argument. Keep shadow matrices and the receiving draw in one scope.
+    BeginShaderMode(groundShader);
+
     // --- CẬP NHẬT ÁNH SÁNG THEO THỜI GIAN THỰC ---
     // Lấy thông số từ API Môi trường
     Vector3 lightDir = Environment_GetSunDirection();
@@ -469,6 +473,14 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     if (locLakeParams >= 0)
         SetShaderValue(groundShader, locLakeParams, &s_groundLakeParams, SHADER_UNIFORM_VEC4);
     MapShadow_UpdateShader(groundShader);
+    // Grass and petals occupy only a few shadow texels. Keep their darkest
+    // comparison in the HIGH ground resolve instead of washing it out in PCF.
+    if (GfxQuality_Get() >= GFX_HIGH) {
+        float thinShadowBoost = 0.80f;
+        int thinShadowLoc = GetShaderLocation(groundShader, "u_shadowThinFeatureBoost");
+        if (thinShadowLoc >= 0)
+            SetShaderValue(groundShader, thinShadowLoc, &thinShadowBoost, SHADER_UNIFORM_FLOAT);
+    }
 
     // Vẽ mặt đất — drawOffset (0,0,0) for the flat plane, non-zero for the
     // heightmap variant (see MapProp_CreateGroundHeightmap).
@@ -480,6 +492,7 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     if (locGroundOffset >= 0)
         SetShaderValue(groundShader, locGroundOffset, &pos, SHADER_UNIFORM_VEC3);
     DrawModel(ground->model, pos, 1.0f, WHITE);
+    EndShaderMode();
 }
 
 void MapProp_SetGroundHabitat(MapGroundSurface *ground,

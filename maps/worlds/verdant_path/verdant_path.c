@@ -193,7 +193,9 @@ static float VerdantGrassDensity(float x, float z, void *userData)
     patch = patch * patch * (3.0f - 2.0f * patch);
     float macro = 0.58f + 0.42f * patch;
 
-    // Suppress grass in flower clusters: flowers need clear open ground to bloom cleanly
+    // Flowers grow through a shorter, sparser meadow underlayer. A zero-density
+    // clearing exposes a large dark disc at gameplay distance and makes the
+    // flower clusters look planted on bare soil instead of part of the meadow.
     const Vector3 flowerCenters[FLOWER_CLUSTER_COUNT] = {
         {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f},
         {77.0f, 0.0f, 53.0f}, {65.0f, 0.0f, 35.5f},
@@ -208,8 +210,9 @@ static float VerdantGrassDensity(float x, float z, void *userData)
         float dz = (z - flowerCenters[c].z) / flowerRadii[c].z;
         float d2 = dx * dx + dz * dz;
         if (d2 < 1.25f) {
-            // Flower clearings fade into the meadow; the lakeside patch retains grass.
-            float localFactor = fmaxf(c == 3 ? 0.48f : 0.0f, (d2 - 0.65f) / 0.60f);
+            // Keep enough cover to connect the flowers to the surrounding turf.
+            // The broad fade still gives blooms room to read individually.
+            float localFactor = fmaxf(0.72f, (d2 - 0.55f) / 0.70f);
             if (localFactor < flowerSuppression) {
                 flowerSuppression = localFactor;
             }
@@ -232,6 +235,8 @@ static void BuildMeadowLayout(void)
             .minHeight = 0.22f, .maxHeight = 0.38f,
             .yOffset = 0.025f, .seed = 0x51a7c3u,
         }, VerdantGrassDensity, NULL);
+    TraceLog(LOG_INFO, "VERDANT_MEADOW: placements=%d capacity=%d",
+             s_grassCount, GRASS_TUFT_CAPACITY);
 
     // Ghost of Tsushima / AAA Reference: Structured procedural variation with macro flow field
     for (int i = 0; i < s_grassCount; i++) {
@@ -614,7 +619,7 @@ void InitVerdantPathMap(void)
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
             .rootColor = {34, 53, 27, 255}, .tipColor = {119, 175, 69, 255},
-            .bladesPerClump = 6, .bladeSegments = 4, .bladeWidthScale = 0.11f,
+            .bladesPerClump = 6, .bladeSegments = 3, .bladeWidthScale = 0.15f,
             .chunkSize = 12.0f, .lodDistance = 23.0f, .midLodDistance = 9.0f, .drawDistance = 50.0f,
             .shadowDistance = 12.0f,
             .texturePath = NULL,

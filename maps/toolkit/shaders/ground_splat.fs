@@ -105,9 +105,9 @@ void main()
     // The authored meadow substrate contains low turf, fine litter, and earth.
     // Keep its large forms while matching the darker blade roots above it.
     vec3 blendedGrass = mix(colorGrass.rgb, broadGrass, 0.32);
-    vec3 turfBase = vec3(0.145, 0.205, 0.095);
+    vec3 turfBase = vec3(0.265, 0.355, 0.160);
     vec3 grassAlbedo = mix(turfBase,
-                           blendedGrass * vec3(0.82, 0.94, 0.78), 0.68);
+                           blendedGrass * vec3(0.98, 1.06, 0.83), 0.55);
 
     // Multi-scale organic turf variation (deep damp swales vs warm sunny hummocks)
     float turfNoise = sin(fragWorldPos.x * 0.16 + fragWorldPos.z * 0.11) * 0.5
@@ -172,6 +172,9 @@ void main()
                     + actualLight.rgb * NdotL * shadow;
 
     vec3 groundLit = blendedAlbedo * totalLight;
+    // The dense meadow should retain a readable low turf underlayer between
+    // opaque blades; soil and path weights keep their authored light response.
+    groundLit *= mix(1.0, 1.25, wGrass);
     vec3 viewDir = normalize(viewPos - fragWorldPos);
     vec3 halfDir = normalize(light + viewDir);
     float specPower = mix(12.0, 72.0, 1.0 - roughness);

@@ -3,6 +3,18 @@
 > Distilled, reusable lessons for the **maps** module. Format: Symptom → Cause → Rule (`DOC_ARCHITECTURE.md` §6).
 > Cross-cutting engine traps live in root `ENGINE_LANDMINES.md`. Backlog/log is in `PROGRESS.md`.
 
+### Vegetation shadows exist in the map but disappear from the viewed meadow
+
+- **Symptom:** The character has an obvious directional shadow while HIGH-quality grass and flowers look ungrounded.
+- **Cause:** `maps/toolkit/map_props_nature.inl` culled grass casters around `camera.position` although `environment/env_shadow.c` centers the dynamic shadow box on the gameplay focus. It also reduced grass to one shadow blade per clump and drew the flower far model in the depth pass. The resulting map held vegetation depth, but too little of it reached the visible ground.
+- **Rule:** Cull real casters around `EnvShadow_GetFocus()` with chunk bounds, keep a three-blade shadow LOD for grass, and use the flower near model for depth. Check both occupied shadow texels and shadowed receiver samples with `WUXING_SHADOW_DYNAMIC_VERIFY=1`; compare `WUXING_NATURE_SHADOW_MODE=real WUXING_NATURE_SHADOW_CASTERS=all` with `...CASTERS=none` at the same camera. On MED/LOW, real vegetation casters remain disabled by the quality policy in `maps/toolkit/map_props_nature.inl`.
+
+### Pointed grass tips accumulate single-sample aliasing
+
+- **Symptom:** Individual grass tips show tiny bright stair steps that become visible as shimmer across a dense meadow.
+- **Cause:** `maps/toolkit/map_props_nature.inl` gave the pointed triangle the final third of each near blade, while its one-segment far LOD made the entire leaf one long, narrow triangle. The default single-sample scene target gives subpixel tips binary coverage; FXAA cannot reconstruct the missing samples.
+- **Rule:** Reserve a short final curve span for near pointed tips and make one-segment far blades shorter and wider. In `maps/toolkit/shaders/nature_opaque.fs`, attenuate the final pixel and blades whose projected UV width is subpixel; keep the geometry opaque. Compare fixed close and distant captures; `WUXING_MSAA=4` is a measured quality option with a bandwidth cost (see `ENGINE_LANDMINES.md` #19).
+
 ### A player-centred vegetation field drops remote wind impacts
 
 - **Symptom:** Guided Particle visibly impacts grass or flowers, but the plants do not bend.
@@ -20,3 +32,9 @@
 - **Symptom:** Grass has attractive waves, but its motion does not line up with smoke, particles, or changes to Global Wind.
 - **Cause:** The vertex shader synthesizes standalone sine bands from time and a normalized direction while Core Wind uses a world-space, advected hash-gradient velocity field.
 - **Rule:** Wind owns the forcing: mirror the Core macro field in vegetation and superpose local Vorticles. Vegetation owns only its response—compliance, lag, wind-energy-driven flutter, bend limit, and root mask. Give grass and flowers different response profiles, but never give either an independent motion source. Visible and shadow passes must call the same deformation functions.
+
+## Patch Log
+
+| Date | Editor (human/AI) | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-09-26 | Codex | Vegetation shadow and grass-tip landmines | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_opaque.fs`, `environment/env_shadow.c` | Ground-truth |

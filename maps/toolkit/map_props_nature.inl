@@ -142,6 +142,8 @@ static bool Nature_ShadowCasterTypeEnabled(bool flower)
         return flower;
     if (filter[0] == 'm' || filter[0] == 'M' || filter[0] == 'g' || filter[0] == 'G')
         return !flower;
+    if (filter[0] == 'n' || filter[0] == 'N')
+        return false;
     return true;
 }
 
@@ -1056,6 +1058,10 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
     int textured = useTexture ? 1 : 0;
     SetShaderValue(shader, GetShaderLocation(shader, "u_useTexture"), &textured, SHADER_UNIFORM_INT);
     SetShaderValue(shader, GetShaderLocation(shader, "u_alphaCutoff"), &alphaCutoff, SHADER_UNIFORM_FLOAT);
+    float tipSoftening = 0.0f;
+    int tipSofteningLoc = GetShaderLocation(shader, "u_grassTipSoftening");
+    if (tipSofteningLoc >= 0)
+        SetShaderValue(shader, tipSofteningLoc, &tipSoftening, SHADER_UNIFORM_FLOAT);
     int interactionEnabled = s_natureInteractionReady ? 1 : 0;
     Vector2 interactionCenter = s_natureInteractionCenter;
     SetShaderValue(shader, GetShaderLocation(shader, "u_interactionEnabled"),
@@ -1440,11 +1446,22 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 bladeLeanAngle = atan2f(combZ / combLen, combX / combLen);
 
                 float tierFrac = (float)blade / (float)(bladesPerClump - 1);
-                float lengthScale = 0.84f + 0.22f * tierFrac + 0.06f * (bHash - 0.5f);
+                // Mix short inner leaves with long outer blades so nearby
+                // clumps do not collapse into one repeated fan silhouette.
+                float lengthScale = 0.76f + 0.31f * tierFrac + 0.17f * (bHash2 - 0.5f);
                 height = clump->height * lengthScale;
-                width = clump->radius * style.bladeWidthScale * widthMultiplier * (0.95f + 0.15f * (1.0f - tierFrac));
-                lean = height * (0.42f + 0.08f * tierFrac);
-                droopY = height * (0.05f + 0.04f * tierFrac);
+                width = clump->radius * style.bladeWidthScale * widthMultiplier *
+                        (0.76f + 0.34f * bHash3 + 0.10f * (1.0f - tierFrac));
+                lean = height * (0.34f + 0.16f * tierFrac + 0.08f * bHash);
+                droopY = height * (0.04f + 0.08f * tierFrac + 0.04f * bHash3);
+                if (bladeSegments == 1) {
+                    // A full-length distant triangle rasterizes as a thin,
+                    // bright diagonal. Keep its area in a shorter, wider tuft.
+                    height *= 0.78f;
+                    width *= 1.28f;
+                    lean *= 0.67f;
+                    droopY *= 0.65f;
+                }
 
                 // Cantilever progressive Bézier curve (monotonically increasing curvature, zero kinks)
                 pBase = (Vector3){bx, clump->position.y, bz};
@@ -1472,13 +1489,16 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                     bladeRoot = (Color){46, 60, 22, 255};   // warm olive-gold sheath
                     bladeTip  = (Color){208, 182, 85, 255};  // ripe golden-amber wheat straw tip
                 } else {
-                    float hueShift = (bHash - 0.5f) * 0.12f;
-                    int rR = (int)(style.rootColor.r * (1.0f + hueShift * 0.2f));
-                    int rG = (int)(style.rootColor.g * (1.0f + hueShift * 0.5f));
-                    int rB = (int)(style.rootColor.b * (1.0f - hueShift * 0.2f));
-                    int tR = (int)(style.tipColor.r * (1.0f + hueShift * 0.3f));
-                    int tG = (int)(style.tipColor.g * (1.0f + hueShift * 0.6f));
-                    int tB = (int)(style.tipColor.b * (1.0f - hueShift * 0.3f));
+                    float colorField = sinf(clump->position.x * 0.19f + clump->position.z * 0.07f) * 0.55f
+                                     + sinf(clump->position.z * 0.15f - clump->position.x * 0.05f) * 0.45f;
+                    float tone = 1.0f + colorField * 0.11f + (bHash - 0.5f) * 0.15f;
+                    float warmth = colorField * 0.08f + (bHash3 - 0.5f) * 0.06f;
+                    int rR = (int)(style.rootColor.r * tone * (1.0f + warmth));
+                    int rG = (int)(style.rootColor.g * tone);
+                    int rB = (int)(style.rootColor.b * tone * (1.0f - warmth));
+                    int tR = (int)(style.tipColor.r * tone * (1.0f + warmth));
+                    int tG = (int)(style.tipColor.g * tone);
+                    int tB = (int)(style.tipColor.b * tone * (1.0f - warmth));
                     bladeRoot = (Color){(unsigned char)fminf(255, fmaxf(0, rR)),
                                         (unsigned char)fminf(255, fmaxf(0, rG)),
                                         (unsigned char)fminf(255, fmaxf(0, rB)), 255};
@@ -1493,8 +1513,13 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             Vector3 terrainNormal = (Vector3){0.0f, 1.0f, 0.0f};
 
             for (int segment = 0; segment < bladeSegments; segment++) {
-                float t0 = (float)segment / (float)bladeSegments;
-                float t1 = (float)(segment + 1) / (float)bladeSegments;
+                // Long needle triangles create the bright leaf-tip streaks.
+                // Give the pointed triangle only the last 18% of the curve.
+                float tipStart = bladeSegments > 1 ? 0.82f : 0.0f;
+                float t0 = segment == bladeSegments - 1 ? tipStart
+                         : tipStart * (float)segment / (float)(bladeSegments - 1);
+                float t1 = segment == bladeSegments - 1 ? 1.0f
+                         : tipStart * (float)(segment + 1) / (float)(bladeSegments - 1);
 
                 Vector3 center0 = Nature_EvalCubicBezier(pBase, pP1, pP2, pP3, t0);
                 Vector3 center1 = Nature_EvalCubicBezier(pBase, pP1, pP2, pP3, t1);
@@ -1760,13 +1785,14 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
 
             // Preserve coverage: removing every second clump turns a meadow
             // into isolated spikes. Far LOD reduces each clump instead.
-            // Three distinct silhouettes avoid the combed two-stroke pattern
-            // at the default gameplay zoom, while keeping one segment each.
+            // Compensate for the lost blade count in projected coverage. Thin
+            // far blades reveal the dark ground as a stippled LOD boundary.
+            // Three distinct silhouettes retain the clump shape at one segment.
             int farBlades = 3;
             int farCount = 0;
             Model farModel = Nature_BuildMeadowChunk(
                 placements, count, style, x0, x1, z0, z1, 1,
-                farBlades, 1, 1.16f, &farCount);
+                farBlades, 1, 1.65f, &farCount);
             Model shadowModel = {0};
             // Eliminate crude 6-vertex trapezoid wedges.
             // Grass uses real dynamic shadow map casting via realShadowModel.
@@ -1775,7 +1801,7 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             if (buildRealShadowLod)
                 realShadowModel = Nature_BuildMeadowChunk(
                     placements, count, style, x0, x1, z0, z1, 1,
-                    1, 2, 2.0f, &realShadowCount);
+                    3, 2, 1.30f, &realShadowCount);
             MapMeadowChunk *chunk = &meadow.chunks[meadow.chunkCount++];
             if (textured) {
                 nearModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = foliageTexture;
@@ -1993,6 +2019,12 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     Nature_UpdateShader(shader, time, windDirection, windStrength,
                         meadow->textured, meadow->alphaCutoff,
                         NATURE_WIND_RESPONSE_GRASS);
+    if (!meadow->textured) {
+        float tipSoftening = 1.0f;
+        int tipSofteningLoc = GetShaderLocation(shader, "u_grassTipSoftening");
+        if (tipSofteningLoc >= 0)
+            SetShaderValue(shader, tipSofteningLoc, &tipSoftening, SHADER_UNIFORM_FLOAT);
+    }
     rlDisableBackfaceCulling();
     for (int i = 0; i < meadow->chunkCount; i++) {
         MapMeadowChunk *chunk = &meadow->chunks[i];
@@ -2027,16 +2059,20 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
                               meadow->textured, meadow->alphaCutoff,
                               NATURE_WIND_RESPONSE_GRASS);
     rlDisableBackfaceCulling();
-    float maxDist = meadow->shadowDistance + 6.0f;
-    float maxDistSq = maxDist * maxDist;
+    // The shadow box follows the gameplay focus, not the orbit camera. A
+    // camera-centred test dropped casters at the far side of the visible box.
+    Vector3 shadowFocus = EnvShadow_GetFocus();
+    float maxDist = fmaxf(meadow->shadowDistance + 6.0f,
+                          EnvShadow_GetHalfExtent() + 4.0f);
     for (int i = 0; i < meadow->chunkCount; i++) {
         MapMeadowChunk *chunk = &meadow->chunks[i];
         if (!chunk->realShadowReady)
             continue;
         Vector3 center = Vector3Add(chunk->center, worldOffset);
-        float dx = center.x - camera.position.x;
-        float dz = center.z - camera.position.z;
-        if ((dx * dx + dz * dz) > maxDistSq)
+        float dx = center.x - shadowFocus.x;
+        float dz = center.z - shadowFocus.z;
+        float limit = maxDist + chunk->radius;
+        if ((dx * dx + dz * dz) > limit * limit)
             continue;
         if (!Nature_IntersectsDynamicShadowCoverage(center, chunk->radius) &&
             !Nature_ShadowCasterFilterActive())
@@ -2806,7 +2842,9 @@ void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOff
     Nature_UpdateShadowShader(shader, time, windDirection, windStrength,
                               field->textured, field->alphaCutoff,
                               NATURE_WIND_RESPONSE_FLOWER);
-    Model castModel = field->farReady ? field->farModel : field->model;
+    // Use the same petals and stems as the visible near field. The far mesh
+    // loses the small silhouettes that make flower shadows recognizable.
+    Model castModel = field->model;
     Shader previous = castModel.materials[0].shader;
     castModel.materials[0].shader = shader;
     rlDisableBackfaceCulling();

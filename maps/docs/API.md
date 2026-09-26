@@ -126,9 +126,9 @@ At HIGH quality, a map may register an Environment dynamic-caster callback and
 call `MapProp_DrawMeadowShadowCasters` / `MapProp_DrawFlowerFieldShadowCaster`
 inside it. Flowers submit full near geometry and preserve their atlas alpha
 silhouette in the depth pass. Meadows use a stable shadow-only geometry LOD:
-one of every two clumps and two pointed blades per retained clump, with the same
-wind/interaction deformation. This prevents thousands of parallel low-sun blade
-shadows from forming full-screen moire while retaining shape-accurate casters.
+three pointed blades per clump, with the same wind/interaction deformation.
+Meadow caster culling follows the Environment shadow focus and includes each
+chunk's radius so an orbit camera does not drop visible ground shadows.
 HIGH combines those real silhouettes with a short, subdued root-contact layer;
 it is 10% of the authored projection length, remains a single six-vertex quad
 per plant, and uses analytic side/tip feathering instead of a hard black wedge.
@@ -140,7 +140,8 @@ omit vegetation shadows. Set `WUXING_NATURE_SHADOW_MODE=real` to disable the
 contact layer for shadow-map validation, or `projected` to suppress vegetation
 casters and compare the fallback in isolation. The default is `hybrid`.
 For automated caster isolation, `WUXING_NATURE_SHADOW_CASTERS=flower` records
-only flower geometry and `meadow` records only grass/reeds. An active filter
+only flower geometry, `meadow` records only grass/reeds, and `none` suppresses
+all vegetation casters for a fixed-camera receiver comparison. An active filter
 also bypasses gameplay distance culling so an off-camera diagnostic region can
 still be captured. Combine it with `WUXING_SHADOW_FOCUS_X/Z` and
 `WUXING_SHADOW_DYNAMIC_VERIFY=1` to log occupied dynamic shadow-map texels.
@@ -886,3 +887,9 @@ Rules:
 Current consumers: `game/game_screen.c` (applies the rule to the player every frame),
 `combat/combat.c` (Earth projectiles in `NAT_FOREST` take -50% damage).
 Autotest: `map_trigger_zones` in `main.c`.
+
+## Patch Log
+
+| Date | Editor (human/AI) | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-09-26 | Codex | Reusable meadow shadow contract | `maps/toolkit/map_props_nature.inl`, `environment/env_shadow.c` | Ground-truth |
