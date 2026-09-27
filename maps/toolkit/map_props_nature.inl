@@ -1438,7 +1438,7 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
 
                 float radX = cosf(baseAzimuth);
                 float radZ = sinf(baseAzimuth);
-                float windWeight = 0.58f;
+                float windWeight = 0.46f;
                 float combX = radX * (1.0f - windWeight) + flowX * windWeight;
                 float combZ = radZ * (1.0f - windWeight) + flowZ * windWeight;
                 float combLen = sqrtf(combX * combX + combZ * combZ);
@@ -1514,8 +1514,8 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
 
             for (int segment = 0; segment < bladeSegments; segment++) {
                 // Long needle triangles create the bright leaf-tip streaks.
-                // Give the pointed triangle only the last 18% of the curve.
-                float tipStart = bladeSegments > 1 ? 0.82f : 0.0f;
+                // A shorter pointed section limits subpixel bright streaks.
+                float tipStart = bladeSegments > 1 ? 0.88f : 0.0f;
                 float t0 = segment == bladeSegments - 1 ? tipStart
                          : tipStart * (float)segment / (float)(bladeSegments - 1);
                 float t1 = segment == bladeSegments - 1 ? 1.0f
@@ -1567,7 +1567,9 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 float occ0 = (t0 < 0.22f) ? (0.88f + 0.12f * (t0 / 0.22f)) : 1.0f;
                 float occ1 = (t1 < 0.22f) ? (0.88f + 0.12f * (t1 / 0.22f)) : 1.0f;
                 Color color0 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t0), occ0);
-                Color color1 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t1), occ1);
+                float tipTint = (segment == bladeSegments - 1 && !style.hasPlumes) ? 0.86f : 1.0f;
+                Color color1 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t1),
+                                                 occ1 * tipTint);
 
                 // Ghost of Tsushima / AAA Reference: Bent Vertex Normals
                 // Blend polygon normal with Spherical Clump Normal + Upward Ground Normal

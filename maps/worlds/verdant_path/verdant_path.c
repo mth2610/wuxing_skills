@@ -618,8 +618,8 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {34, 53, 27, 255}, .tipColor = {119, 175, 69, 255},
-            .bladesPerClump = 6, .bladeSegments = 3, .bladeWidthScale = 0.15f,
+            .rootColor = {38, 61, 29, 255}, .tipColor = {107, 158, 68, 255},
+            .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.19f,
             .chunkSize = 12.0f, .lodDistance = 23.0f, .midLodDistance = 9.0f, .drawDistance = 50.0f,
             .shadowDistance = 12.0f,
             .texturePath = NULL,

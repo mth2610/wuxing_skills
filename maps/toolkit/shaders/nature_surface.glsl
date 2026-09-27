@@ -210,7 +210,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 halfDir = normalize(u_lightDir + viewDir);
     float NdotH = max(dot(faceNormal, halfDir), 0.0);
     float specPower = 28.0;
-    float specIntensity = 0.24 * (1.0 - antiShimmer * 0.80);
+    float specIntensity = 0.15 * (1.0 - antiShimmer * 0.80);
     float spec = pow(NdotH, specPower) * specIntensity;
 
     float NdotV = max(dot(faceNormal, viewDir), 0.0);
@@ -220,7 +220,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 sunScale = u_lightColor * canopyExtinction;
     vec3 sunTerms = baseColor * (directDiffuse * shadow * 1.10
                               + rim * (0.35 + 0.65 * shadow))
-                  + subsurfaceColor * (transmission * 0.65 * shadow)
+                  + subsurfaceColor * (transmission * 0.55 * shadow)
                   + baseColor * (spec * 0.70 * shadow);
     lit += sunTerms * sunScale;
 

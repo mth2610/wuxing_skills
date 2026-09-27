@@ -19,7 +19,7 @@
 
 - **Symptom:** Individual grass tips show tiny bright stair steps that become visible as shimmer across a dense meadow.
 - **Cause:** `maps/toolkit/map_props_nature.inl` gave the pointed triangle the final third of each near blade, while its one-segment far LOD made the entire leaf one long, narrow triangle. The default single-sample scene target gives subpixel tips binary coverage; FXAA cannot reconstruct the missing samples.
-- **Rule:** Reserve a short final curve span for near pointed tips and make one-segment far blades shorter and wider. In `maps/toolkit/shaders/nature_opaque.fs`, attenuate the final pixel and blades whose projected UV width is subpixel; keep the geometry opaque. Compare fixed close and distant captures; `WUXING_MSAA=4` is a measured quality option with a bandwidth cost (see `ENGINE_LANDMINES.md` #19).
+- **Rule:** Reserve a short final curve span for near pointed tips, darken the tip vertex, and make one-segment far blades shorter and wider. Keep blade specular and transmission restrained so a narrow edge does not become a yellow line. In `maps/toolkit/shaders/nature_opaque.fs`, attenuate the final pixel and blades whose projected UV width is subpixel; keep the geometry opaque. Compare fixed close and distant captures; `WUXING_MSAA=4` is a measured quality option with a bandwidth cost (see `ENGINE_LANDMINES.md` #19).
 
 ### A player-centred vegetation field drops remote wind impacts
 
@@ -45,3 +45,4 @@
 |---|---|---|---|---|
 | 2026-09-26 | Codex | Vegetation shadow and grass-tip landmines | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_opaque.fs`, `environment/env_shadow.c` | Ground-truth |
 | 2026-09-26 | Codex | Lake depth contour and bed material landmine | `maps/toolkit/shaders/water_surface.fs`, `maps/toolkit/shaders/water_bed.fs`, `maps/toolkit/map_props_nature.inl` | Ground-truth |
+| 2026-09-27 | Codex | Grass tip contrast and blade silhouette follow-up | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_surface.glsl`, `maps/worlds/verdant_path/verdant_path.c` | Ground-truth |
