@@ -618,11 +618,9 @@ int main(int argc, char **argv) {
                                // Đợt G1 — cinematic tone mapping on by default.
                                .tonemapEnabled = true,
                                .exposure = 1.00f,
-                               // Đợt G5 — LUT grading. On by default, but it is
-                               // a no-op (and the shader branch stays disabled)
-                               // until a graded strip exists at
-                               // assets/luts/grade.png. See core/color_grade_lut.h.
-                               .lutEnabled = true,
+                               // The authored strip is selected for Verdant Path
+                               // below; other maps retain their existing grade.
+                               .lutEnabled = false,
                                .lutStrength = 1.00f};
 
   if (visualVerifyMode) {
@@ -1733,6 +1731,7 @@ int main(int argc, char **argv) {
     if (activeMapName && strcmp(activeMapName, "VERDANT_PATH") == 0) {
         scenePostFX.saturation = 1.30f;
         scenePostFX.contrast = 1.07f;
+        scenePostFX.lutEnabled = true;
     }
     PostFX_Draw(&scenePostFX);
     /* Chứng: CÙNG dải màu đó, tính bằng CPU qua đường cong ACES per-channel, vẽ
