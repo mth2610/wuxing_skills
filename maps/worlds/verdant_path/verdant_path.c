@@ -9,6 +9,7 @@
 #include "core/volumetric/volumetric_fog.h"
 #include "raylib.h"
 #include "raymath.h"
+#include "rlgl.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -76,6 +77,7 @@ static MapGroundSurface s_ground;
 static MapRockSet s_rocks;
 static MapRockSet s_mountainRockSet;
 static MapCloudSea s_cloudSea;
+static Texture2D s_farSunbeamTexture = {0};
 static MapRockPlacement s_mountainRocks[MOUNTAIN_ROCK_COUNT];
 static MapMeadowPlacement s_grassPlacements[GRASS_TUFT_CAPACITY];
 static MapFlowerPlacement s_flowerPlacements[FLOWER_COUNT];
@@ -88,6 +90,47 @@ static int s_grassCount = 0;
 static bool s_shadowWasEnabled = false;
 static float s_time = 0.0f;
 static bool s_ready = false;
+
+static void CreateFarSunbeamTexture(void)
+{
+    Image image = GenImageColor(64, 128, BLANK);
+    for (int y = 0; y < image.height; y++) {
+        float v = ((float)y + 0.5f) / (float)image.height;
+        float endFade = sinf(PI * v);
+        endFade *= endFade;
+        for (int x = 0; x < image.width; x++) {
+            float u = (((float)x + 0.5f) / (float)image.width) * 2.0f - 1.0f;
+            float widthFade = expf(-5.5f * u * u);
+            unsigned char alpha = (unsigned char)(82.0f * widthFade * endFade);
+            ImageDrawPixel(&image, x, y, (Color){255, 255, 255, alpha});
+        }
+    }
+    s_farSunbeamTexture = LoadTextureFromImage(image);
+    SetTextureFilter(s_farSunbeamTexture, TEXTURE_FILTER_BILINEAR);
+    UnloadImage(image);
+}
+
+static void DrawFarSunbeams(void)
+{
+    if (s_farSunbeamTexture.id == 0) return;
+    const Vector3 positions[] = {
+        {55.5f, 4.4f, 17.5f},
+        {61.5f, 4.0f, 18.5f},
+        {69.0f, 4.7f, 18.0f},
+    };
+    const float sizes[] = {8.8f, 7.4f, 9.4f};
+    rlDisableDepthMask();
+    BeginBlendMode(BLEND_ADDITIVE);
+    for (int i = 0; i < 3; i++) {
+        float distance = Vector3Distance(camera.target, positions[i]);
+        float farFade = Clamp((distance - 8.0f) / 9.0f, 0.0f, 1.0f);
+        if (farFade <= 0.001f) continue;
+        Color tint = {255, 223, 177, (unsigned char)(255.0f * farFade)};
+        DrawBillboard(camera, s_farSunbeamTexture, positions[i], sizes[i], tint);
+    }
+    EndBlendMode();
+    rlEnableDepthMask();
+}
 
 static unsigned int NextRandom(unsigned int *state)
 {
@@ -436,20 +479,20 @@ static void ApplyVerdantEnvironment(void)
     Environment_SetSunDirection(Vector3Normalize((Vector3){-0.50f, -0.45f, 0.55f}));
     Environment_SetShadowColor((Color){28, 36, 48, 120});
 
-    // Ghost of Tsushima style: Clear morning air with radiant canopy god-rays and scattered ground-hugging dew mist
+    // Keep the playable foreground clear; haze and sun shafts belong beyond it.
     AtmosphereProfile atmos = {
-        .color = {205, 228, 250, 255},  // Luminous morning mist hue
-        .start = 1.0f,                  // Close near-plane so sunbeams and nearby ground mist appear naturally
+        .color = {205, 228, 250, 255},
+        .start = 22.0f,
         .end = 95.0f,
         .enabled = true,
         .optics = {
             .rayleighLMS = {0.0076224f, 0.012935f, 0.024845f},
-            .mieScattering = 0.0031f,
+            .mieScattering = 0.0024f,
             .mieAnisotropy = 0.66f,
             .multipleScatteringAmp = 1.7f
         },
         .density = {
-            .baseDensity = 0.006f,      // Subtle clear air; upper atmosphere is transparent
+            .baseDensity = 0.004f,
             .heightFalloff = 0.85f,      // Hugs lowest ground level (Y <= 1.0m)
             .baseAltitude = 0.0f,
             .enableSigmoidLayer = false, // Disabled map-wide blanket; mist is strictly localized
@@ -459,7 +502,7 @@ static void ApplyVerdantEnvironment(void)
         }
     };
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity(0.90f);
+    VolumetricFog_SetGodRayIntensity(0.70f);
 }
 
 static void ApplyHabitatToGround(void)
@@ -512,7 +555,7 @@ static void SpawnVerdantMistVolumes(void)
     };
     FogVolume_Create(&lakeEdgeMist);
 
-    // 3. Đám sương nhỏ trong vùng trũng hoa cỏ phía Tây (sát hoa cỏ Y=0.0 - 0.80m)
+    // 3. Small mist pocket in the western flower hollow.
     LocalFogVolume westHollowMist = {
         .shape = FOG_SHAPE_CYLINDER,
         .position = {24.0f, 0.38f, 20.5f},
@@ -528,7 +571,7 @@ static void SpawnVerdantMistVolumes(void)
     };
     FogVolume_Create(&westHollowMist);
 
-    // 4. Đám sương nhỏ ven chân đồi hoa cỏ phía Đông (sát đất Y=0.0 - 0.80m)
+    // 4. Small mist pocket at the eastern meadow foot.
     LocalFogVolume eastMeadowMist = {
         .shape = FOG_SHAPE_CYLINDER,
         .position = {75.0f, 0.38f, 49.0f},
@@ -592,6 +635,7 @@ void InitVerdantPathMap(void)
         }
     }
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
+    CreateFarSunbeamTexture();
     s_lake = MapProp_CreateWaterSurface((MapWaterConfig){
         .shape = WATER_SHAPE_RADIAL,
         .ecosystem = WATER_ECO_ALPINE_STREAM,
@@ -757,6 +801,7 @@ void DrawTransparentVerdantPathMap(void)
     if (!s_ready)
         return;
     MapProp_DrawWaterOverlay(&s_lake, s_time);
+    DrawFarSunbeams();
 }
 
 void UnloadVerdantPathMap(void)
@@ -766,6 +811,10 @@ void UnloadVerdantPathMap(void)
     EnvShadow_SetMapCasterCallback(NULL, NULL);
     EnvShadow_InvalidateStaticCache();
     FogVolume_ClearAll();
+    if (s_farSunbeamTexture.id != 0) {
+        UnloadTexture(s_farSunbeamTexture);
+        s_farSunbeamTexture = (Texture2D){0};
+    }
     MapProp_UnloadWaterSurface(&s_lake);
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++)
         MapProp_UnloadFlowerField(&s_flowerFields[cluster]);

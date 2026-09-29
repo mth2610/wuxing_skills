@@ -181,8 +181,11 @@ void main() {
 
         vec3 samplePos = u_camPos + rayDir * t;
 
-        // Smooth camera near-fade (keeps lens clean while letting nearby mist show)
-        float camFade = smoothstep(0.8, 2.0, t);
+        // Spatial cutoff: no scattering over the player, then a soft distant onset.
+        // Small-start profiles retain their nearby mist; distant profiles get a
+        // wider transition so zoom changes do not reveal a sharp screen ring.
+        float fadeWidth = clamp(u_fogStart * 0.35, 1.2, 8.0);
+        float nearFade = smoothstep(u_fogStart, u_fogStart + fadeWidth, t);
 
         // 1. Exponential ground mist (clings to low ground, decays upward)
         float h = max(samplePos.y - u_baseAltitude, 0.0);
@@ -207,9 +210,10 @@ void main() {
         if (samplePos.y <= 12.0 && samplePos.y >= -2.5) {
             canopyShaft = ComputeCanopyGodRay(samplePos, u_sunDir, u_time);
         }
-        float sunbeamHaze = 0.038 * canopyShaft * smoothstep(12.0, 1.5, samplePos.y);
+        float sunbeamHaze = 0.038 * canopyShaft * clamp(u_godRayIntensity, 0.0, 1.0)
+                          * smoothstep(12.0, 1.5, samplePos.y);
 
-        float density = (u_fogDensity * (heightCoeff + sigmoidDensity) + localDensity + sunbeamHaze) * camFade;
+        float density = (u_fogDensity * (heightCoeff + sigmoidDensity) + localDensity + sunbeamHaze) * nearFade;
         if (density <= 0.00001) continue;
 
         // Sunlight transmission & canopy shaft modulation

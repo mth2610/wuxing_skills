@@ -3718,3 +3718,21 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   calculations. Guard the transform wiring with
   `core/tests/surface_worldspace_test.c` and verify a same-camera HIGH/UNLIT
   capture; source checks alone cannot validate a GPU matrix convention.
+
+## Distant volumetric fog needs a zoom-aware start (28/09/2026)
+
+- **Symptom:** fog and god rays wash over the player and the whole screen even
+  when a map configures a large atmospheric `start`; zooming out changes how
+  much of the character is covered.
+- **Cause:** the volumetric C path replaced starts above 3 m with 1.2 m, while
+  canopy haze added opacity independently of god-ray intensity.
+- **Rule:** pass a distant start beyond the camera focus at each zoom, then
+  fade all volume density in over a spatial band. Scale beam haze with beam
+  intensity. `core/tests/volumetric_fog_distance_test.c` guards the effective
+  start; compile the shader and check framing in matched gameplay captures.
+
+## Smoke column / volume trail mesh must extrude continuously from source (28/09/2026)
+
+- **Symptom:** smoke column (cigarette smoke) or volume trail looks like a static, rigid cylinder or pipe whose skin merely vibrates or slides textures in place, instead of fluid smoke rising and curling away from an emitter.
+- **Cause:** initializing a static swept tube path from root to top and only animating UV scroll or vertex noise offsets. Vertex noise oscillates in place around fixed nodal anchors; the mesh itself is not transported.
+- **Rule:** for rising smoke columns, extrude mesh nodes dynamically each frame from the source emitter (`node[0]`), advecting node positions along the convective rise velocity vector through fluid zones (laminar -> Kelvin-Helmholtz serpentine wave -> convective turbulent billows). Protect history from stationary follower overwrite with `t->frozen = true` while pushing updated nodal positions into `t->history[k]`. Guard optical depth in `trail_volume.fs` with non-zero chord absorption `pow(d, 0.85)` so central silhouettes do not vanish on bright backgrounds.

@@ -401,6 +401,20 @@ static void VC_VolumeTrail_Update(float dt)
         t->uvScrollSpeed = k_volumeTrailScroll[c->kind] * s_volTrailScrollMul;
         t->uvMetresPerTile = (s_volTrailTile > 0.05f) ? s_volTrailTile : 0.05f;
 
+        // Apply fluid buoyant wake rise & atmospheric dispersion to older history nodes
+        if (t->historyCount > 2 && (c->kind == VFX_VOLUME_SMOKE || c->kind == VFX_VOLUME_FIRE || c->kind == VFX_VOLUME_STEAM))
+        {
+            float buoySpeed = (c->kind == VFX_VOLUME_FIRE) ? 1.4f : 0.75f;
+            int hc = t->historyCount;
+            for (int k = 0; k < hc - 1; k++)
+            {
+                // Age fraction along trail: 0 at head (newest), 1 at tail (oldest)
+                float ageFrac = (float)(hc - 1 - k) / (float)(hc - 1);
+                int idx = (t->historyHead - (hc - 1 - k) + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
+                t->history[idx].y += buoySpeed * ageFrac * dt;
+            }
+        }
+
         if (c->stopping)
         {
             KillTrail(c->trailId);
@@ -408,7 +422,6 @@ static void VC_VolumeTrail_Update(float dt)
             c->active = false;
         }
     }
-    (void)dt;
 }
 
 static void VC_VolumeTrail_Draw3D(Camera3D cam)

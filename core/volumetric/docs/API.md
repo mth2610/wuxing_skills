@@ -30,5 +30,5 @@ PostFX_Draw(&postFXConfig);
 
 Quality tier scaling:
 - **`GFX_LOW` / `GFX_UNLIT`**: Pass is bypassed (0 ms cost; forward height fog in `surface_lit.fs` is used instead).
-- **`GFX_MED`**: 12 raymarching steps.
-- **`GFX_HIGH`**: 24 raymarching steps + Depth-Aware Bilateral filter.
+- **`GFX_MED`**: 14 raymarching steps.
+- **`GFX_HIGH`**: 20 raymarching steps + Depth-Aware Bilateral filter.

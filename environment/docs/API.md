@@ -166,6 +166,11 @@ const LocalFogVolume*   FogVolume_GetByIndex(int index);
 const LocalFogVolume*   FogVolume_GetById(int id);
 ```
 
+`AtmosphereProfile.start` is the fog onset distance in meters. In the volumetric pass,
+profiles with `start > 3 m` begin scattering at the greater of `start` and the
+camera-to-focus distance plus 7 m, with a smooth spatial fade. Profiles with a nearer
+start retain their existing behavior.
+
 ---
 
 ## 5. Day/Night Lighting Cycle (Time-of-Day)
@@ -233,3 +238,9 @@ float times[3] = { 0.0f, 0.4f, 0.7f };
 Environment_SetTimeOfDayPresets(presets, times, 3);
 Environment_SetTimeOfDaySpeed(1.0f / 1200.0f); // 1 cycle / 20 real minutes
 ```
+
+## Patch Log
+
+| Date | Editor (human/AI) | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-09-28 | Codex | §4 `AtmosphereProfile.start` volumetric onset | `environment/environment_system.h`, `core/volumetric/volumetric_fog_distance.h`, `core/volumetric/shaders/volumetric_fog.fs` | Ground-truth |

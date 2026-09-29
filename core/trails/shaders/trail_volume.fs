@@ -315,11 +315,7 @@ void main()
     float body = calcOpticalDepthBody(d, u_volMask.y);
     float rimTerm = calcOpticalDepthRim(d, u_volMask.y);
     float thickBase = combineOpticalDepth(body, rimTerm, u_volMask.x, u_volRim);
-    float depth = thickBase;
-    if (u_volBloom > 0.0) {
-        // Trail năng lượng / ma thuật: phát xạ thể tích dày nhất tại tâm trục, không rỗng ruột
-        depth = pow(d, 1.2);
-    }
+    float depth = (u_volBloom > 0.0) ? pow(d, 1.2) : max(thickBase, pow(d, 0.85) * 0.75 + rimTerm * 0.35);
     // rim vẫn giữ: cùng chiều tăng với depth nên không đục lỗ ở giữa, chỉ
     // làm mềm thêm đúng vùng sát viền. u_volMask.z vẫn là "độ mềm viền".
     float rim = smoothstep(0.0, max(u_volMask.z, 0.001), d);

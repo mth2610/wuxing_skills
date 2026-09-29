@@ -14,8 +14,8 @@ uniform vec4 ambientColor;
 out vec4 finalColor;
 
 // Khai báo hằng số giúp tránh cấp phát lại bộ nhớ trên mỗi pixel
-const vec3 CLOUD_DARK = vec3(0.30, 0.33, 0.40);
-const vec3 CLOUD_LIGHT = vec3(0.72, 0.75, 0.82);
+const vec3 CLOUD_DARK = vec3(0.27, 0.31, 0.38);
+const vec3 CLOUD_LIGHT = vec3(0.54, 0.60, 0.69);
 
 void main()
 {

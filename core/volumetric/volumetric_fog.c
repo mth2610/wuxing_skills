@@ -1,4 +1,5 @@
 #include "core/volumetric/volumetric_fog.h"
+#include "core/volumetric/volumetric_fog_distance.h"
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
 #include "core/scene_targets.h"
@@ -172,7 +173,8 @@ void VolumetricFog_Render(Camera3D camera) {
 
     int stepCount = (tier >= GFX_HIGH) ? 20 : 14;
     float maxDist = (atmos.end > 0.0f) ? atmos.end : 120.0f;
-    float fogStart = (atmos.start > 0.0f && atmos.start <= 3.0f) ? atmos.start : 1.2f;
+    float fogStart = VolumetricFog_EffectiveStart(
+        atmos.start, Vector3Distance(camera.position, camera.target));
     Vector2 screenRes = { (float)s_lowWidth, (float)s_lowHeight };
     float godRay = s_godRayIntensity;
     float time = (float)GetTime();

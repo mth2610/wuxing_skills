@@ -39,6 +39,13 @@
 #include "core/deform/mesh_deform.h"
 #include "core/tuning.h"
 
+static inline float ColumnSmoothStep(float e0, float e1, float x) {
+    if (x <= e0) return 0.0f;
+    if (x >= e1) return 1.0f;
+    float t = (x - e0) / (e1 - e0);
+    return t * t * (3.0f - 2.0f * t);
+}
+
 #define VFX_SMOKE_COLUMN_MAX 6
 #define SMOKE_COLUMN_TAG_BASE 0x5C000
 
@@ -51,7 +58,12 @@ typedef struct {
     VC_MaterialId matId;
     VFX_ColumnKind kind;
     float radius;
+    float totalHeight;
+    float riseSpeed;
     float elapsed;
+    int nodeCount;
+    Vector3 nodePos[TRAIL_HISTORY_COUNT];
+    float nodeAge[TRAIL_HISTORY_COUNT];
     TrailLayer layers[2];
     PMTubeConfig tube;     // owned: the SHAPE, not the trail's business
     MeshDeformField churn; // owned: pointed at by tube.noiseField
@@ -103,6 +115,8 @@ static float s_columnTile = 3.00f; // metres per texture repeat
 // chuyển động của cột dính chung một đồng hồ, nên đây là cách duy nhất tách
 // chúng ra mà nhìn. Sửa trong tuning.cfg, không cần build lại.
 static float s_columnFreezeDeform = 0.0f;
+static float s_columnRiseSpeed = 1.85f; // m/s convective rise velocity
+static float s_columnInstability = 1.0f; // Kelvin-Helmholtz amplitude multiplier
 
 static void SmokeColumn_EnsureTuning(void)
 {
@@ -114,6 +128,8 @@ static void SmokeColumn_EnsureTuning(void)
     Tuning_RegisterFloat("smokecolumn_alpha", &s_columnAlphaMul, 1.0f);
     Tuning_RegisterFloat("smokecolumn_tile", &s_columnTile, 3.00f);
     Tuning_RegisterFloat("smokecolumn_freeze", &s_columnFreezeDeform, 0.0f);
+    Tuning_RegisterFloat("smokecolumn_risespeed", &s_columnRiseSpeed, 1.85f);
+    Tuning_RegisterFloat("smokecolumn_instability", &s_columnInstability, 1.0f);
 }
 
 static void SmokeColumn_InitShared(void)
@@ -185,17 +201,12 @@ static void SmokeColumn_BuildShape(VC_SmokeColumn *c, bool funnel)
     // r(t) = tailFrac + (1 - tailFrac) * t^p, tail = the base. p = 2 puts the
     // opening near the top, which is what smoke does: it stays a stalk over the
     // source and spreads once it has risen. A cylinder keeps its width.
-    if (funnel) { c->tube.radiusTailFrac = 0.12f; c->tube.radiusPow = 1.7f; }
+    if (funnel) { c->tube.radiusTailFrac = 0.20f; c->tube.radiusPow = 1.35f; }
     else        { c->tube.radiusTailFrac = 0.55f; c->tube.radiusPow = 1.4f; }
 
-    // THE SNAKE. The reference wireframe's body is not a straight pipe with a
-    // bumpy skin — the whole cross-section slides sideways, two or three big
-    // bends over the height, sections still round. Surface displacement cannot
-    // produce that no matter how hard it is driven: it roughens a straight tube.
-    c->tube.centerlineAmp = c->radius * 1.6f;
-    // MỞ hai đầu. Nắp là hai quạt tam giác có đỉnh đẩy ra theo
-    // tail/headApexFactor, nên nó không phải một mặt phẳng bịt lại mà là một
-    // chóp NÓN — đúng cái chóp nhọn trên đỉnh cột. Khói không có nắp.
+    // Physical node meander is already applied dynamically to history nodes
+    // during continuous extrusion in VC_SmokeColumn_Update, so static tube centerlineAmp is 0
+    c->tube.centerlineAmp = 0.0f;
     c->tube.useTransportFrame = true;
 
     // ── The churn (core/deform) ──────────────────────────────────────────────
@@ -236,23 +247,18 @@ static void SmokeColumn_BuildShape(VC_SmokeColumn *c, bool funnel)
     MeshDeform_AddLayer(&c->churn, (MeshDeformLayer){
         .kind = MESH_DEFORM_NOISE_CHANNEL,
         .direction = MESH_DEFORM_DIR_NORMAL_SCALE,
-        .tiling = {1.0f, 1.0f}, .amplitude = 4.2f, .speed = 1.0f,
+        .tiling = {1.0f, 1.0f}, .amplitude = 2.8f, .speed = 1.0f,
         .latticeMul = 1.0f, .latticeAroundMul = 1.0f, .env = UV_ENV_HEAD_WELD,
         .envStart = 0.0f, .envEnd = 0.22f,
     });
     // OFFSET pushes the surface OFF its own normal — the reference's
-    // "Normal + RGB". This is the one that breaks the symmetry: scaling alone
-    // can only ever produce a rounder or thinner version of the same section.
-    //
-    // Amplitude 0.45, not 1.1. This layer displaces in METRES, and pm_tube.inl
-    // now caps it at 60% of the ring gap; at 1.1 the cap would be clipping
-    // almost every vertex, which is a flat-topped field, not a soft one. Sized
-    // so the cap stays what it is meant to be — a backstop, not the shape.
+    // "Normal + RGB". Displaces in METRES; kept at 0.38m to prevent
+    // self-intersection and pinch creases at bends.
     MeshDeform_AddLayer(&c->churn, (MeshDeformLayer){
         .kind = MESH_DEFORM_NOISE_CHANNEL,
         .direction = MESH_DEFORM_DIR_NORMAL_OFFSET,
-        .tiling = {1.0f, 1.9f}, .amplitude = 1.30f, .speed = 1.7f,
-        .timeOffset = 11.0f, .latticeMul = 3.0f, .latticeAroundMul = 2.0f,
+        .tiling = {1.0f, 1.5f}, .amplitude = 0.38f, .speed = 1.4f,
+        .timeOffset = 11.0f, .latticeMul = 2.0f, .latticeAroundMul = 1.0f,
         .env = UV_ENV_HEAD_WELD_SQ, .envStart = 0.0f, .envEnd = 0.35f,
     });
     c->tube.noiseField = &c->churn;
@@ -372,24 +378,22 @@ static int SmokeColumn_Spawn(VC_SmokeColumn *c, int slot, float height, bool fun
     int id = SpawnTrailEntity(cfg);
     if (id >= 0)
     {
-        // THE COLUMN, IN ONE CALL. A fixed vertical segment from the source
-        // upward, seeded whole and frozen — so it is at full height on frame
-        // one (the simulated version took seconds to fill, which read as a
-        // delayed spawn) and it cannot drift anywhere.
-        //
-        // Frozen stops the GEOMETRY, not the clocks: UpdateTrailSystem keeps
-        // advancing uvScrollOffset, DrawLayeredTube feeds that to the deform as
-        // noiseOffset, and core/deform moves the churn along the body. All of
-        // the motion is there and none of it is simulation.
+        c->totalHeight = height;
+        c->nodeCount = cfg.tubeMaxRings;
+        c->riseSpeed = s_columnRiseSpeed;
+
+        // Initialize physically extruded node stream from source upward
+        for (int k = 0; k < c->nodeCount; k++)
+        {
+            float u = (float)k / (float)(c->nodeCount - 1);
+            float nodeY = c->pos.y + u * height;
+            c->nodePos[k] = (Vector3){c->pos.x, nodeY, c->pos.z};
+            c->nodeAge[k] = u * (height / fmaxf(s_columnRiseSpeed, 0.1f));
+        }
+
         Vector3 top = (Vector3){c->pos.x, c->pos.y + height, c->pos.z};
         Trail_SetStaticPath(id, c->pos, top, cfg.tubeMaxRings);
 
-        // READ IT BACK. Every failure this composition has shipped was a silent
-        // early-return that left a plausible-looking wrong result, and none of
-        // them was visible in a log that only printed the INPUTS. Assert the
-        // effect instead: if the path did not take, say so at WARNING with the
-        // reason, because a collapsed tube and a correct one differ by nothing
-        // an input line can show.
         const TrailEntity *chk = GetTrail(id);
         int laid = (chk != NULL) ? chk->historyCount : -1;
         if (laid != cfg.tubeMaxRings)
@@ -476,6 +480,9 @@ void VFX_SmokeColumn_Stop(int handle)
 
 static void VC_SmokeColumn_Update(float dt)
 {
+    float vRise = s_columnRiseSpeed;
+    float kInstability = s_columnInstability;
+
     for (int i = 0; i < VFX_SMOKE_COLUMN_MAX; i++)
     {
         VC_SmokeColumn *c = &s_columns[i];
@@ -493,19 +500,115 @@ static void VC_SmokeColumn_Update(float dt)
         // respawn.
         SmokeColumn_ConfigureLayers(c);
         t->tubeNoiseAmp = k_columnNoise[c->kind] * s_columnNoiseMul;
-        // Đẩy lại mỗi khung hình để tuning.cfg đổi được lúc đang chạy — cả
-        // điểm của cái phanh này là không phải spawn lại để thử.
         bool freeze = (s_columnFreezeDeform > 0.5f);
         if (freeze != t->tubeDeformFrozen)
         {
             t->tubeDeformFrozen = freeze;
-            // LOG ON CHANGE. Một cột đứng im vì đã đóng băng và một cột đứng im
-            // vì deform hỏng trông giống hệt nhau.
             TraceLog(LOG_INFO, "VFX_SMOKE_COLUMN: deform %s — sheet vẫn trượt",
                      freeze ? "ĐÓNG BĂNG (smokecolumn_freeze=1)" : "chạy lại");
         }
         t->uvScrollSpeed = k_columnScroll[c->kind] * s_columnScrollMul;
         t->uvMetresPerTile = (s_columnTile > 0.05f) ? s_columnTile : 0.05f;
+
+        // ── CONTINUOUS MESH EXTRUSION (Simon Trümpler / Cigarette Smoke Flow) ──
+        // The mesh nodes are extruded dynamically from the emitter source (node 0)
+        // upward through 3 distinct fluid dynamic regimes:
+        //   Zone 1 (u <= 0.15): Laminar straight vertical stalk, zero deflection
+        //   Zone 2 (0.15 < u <= 0.50): Kelvin-Helmholtz serpentine instability wave
+        //   Zone 3 (u > 0.50): Turbulent convective vortex curls and billows
+        int N = c->nodeCount;
+        if (N > 1 && !freeze)
+        {
+            // Node 0 is welded at the continuous emitter point
+            c->nodePos[0] = c->pos;
+            c->nodeAge[0] = 0.0f;
+
+            float H = (c->totalHeight > 0.5f) ? c->totalHeight : 5.0f;
+            float totalPathDist = 0.0f;
+
+            for (int k = 1; k < N; k++)
+            {
+                c->nodeAge[k] += dt;
+                float u = (float)k / (float)(N - 1); // 0 at base, 1 at top
+
+                // Continuous Eulerian upward streaming:
+                // Node index k maps to nominal position along the column height,
+                // while material elements advect continuously upward.
+                float nominalY = c->pos.y + u * H;
+                c->nodePos[k].y = nominalY;
+
+                float hFrac = u;
+
+                // 3-Zone Cigarette Smoke fluid dynamic deflection (Simon Trümpler GAT #66):
+                // Zone 1 (hFrac <= 0.14): Pure laminar needle thread rising straight up.
+                // Zone 2 (0.14 < hFrac <= 0.48): Kelvin-Helmholtz 2D/3D sinusoidal serpentine wave.
+                // 3-Zone Cigarette Smoke fluid dynamic deflection (Simon Trümpler GAT #66):
+                // Zone 1 (hFrac <= 0.18): Pure laminar needle thread rising straight up.
+                // Zone 2 (0.18 < hFrac <= 0.65): Gentle, graceful meandering S-curve stream
+                //         (propagating upward with convective rise velocity).
+                // Zone 3 (hFrac > 0.65): Plume broadening & soft buoyant atmospheric dispersion.
+                float dx = 0.0f;
+                float dz = 0.0f;
+
+                if (hFrac > 0.18f)
+                {
+                    // Gentle transition from straight needle to undulating plume
+                    float transEnv = ColumnSmoothStep(0.18f, 0.65f, hFrac);
+
+                    // Upward convective wave: wavelength lambda ~ 0.90*H ensures broad,
+                    // graceful S-curves (at most ~1 wave cycle across the full column)
+                    // completely eliminating tight corkscrews or pinched accordion creases.
+                    float lambda = H * 0.90f;
+                    float wavePhase = (nominalY / lambda) - (c->elapsed * (vRise / lambda));
+
+                    // Natural fluid meander: primary elegant S-wave + soft harmonic
+                    float sWave = sinf(wavePhase * 2.0f * PI) + 0.22f * sinf(wavePhase * 4.0f * PI + 0.4f);
+                    float swayAmp = c->radius * 0.65f * kInstability * transEnv;
+
+                    // Slow ambient draft angle (slow wandering breeze, NOT a spinning corkscrew)
+                    float draftAngle = 0.55f + 0.15f * sinf(c->elapsed * 0.30f);
+
+                    // Subtle cross-sway (minor 3D breathing, phase-shifted)
+                    float crossWave = sinf(wavePhase * 2.0f * PI * 0.75f + 1.2f);
+                    float crossAmp = c->radius * 0.18f * kInstability * transEnv;
+
+                    // Project onto world X/Z axes: sways as an undulating ribbon/plume
+                    dx = (sWave * swayAmp) * cosf(draftAngle) - (crossWave * crossAmp) * sinf(draftAngle);
+                    dz = (sWave * swayAmp) * sinf(draftAngle) + (crossWave * crossAmp) * cosf(draftAngle);
+
+                    // Zone 3: Soft convective broadening & buoyant plume drift near top
+                    if (hFrac > 0.65f)
+                    {
+                        float plumeEnv = ColumnSmoothStep(0.65f, 0.96f, hFrac);
+                        float plumePhase = (nominalY / (H * 0.55f)) - (c->elapsed * 0.45f);
+                        float plumeDrift = sinf(plumePhase * 2.0f * PI) * (c->radius * 0.35f * kInstability * plumeEnv);
+                        dx += plumeDrift * (-sinf(draftAngle));
+                        dz += plumeDrift * (cosf(draftAngle));
+                    }
+                }
+
+                c->nodePos[k].x = c->pos.x + dx;
+                c->nodePos[k].z = c->pos.z + dz;
+            }
+
+            // Push the newly extruded physical nodes directly into trail history
+            // ensuring the mesh extrudes continuously upwards every frame
+            t->history[0] = c->nodePos[0];
+            t->nodeUV[0] = 0.0f;
+            for (int k = 1; k < N; k++)
+            {
+                totalPathDist += Vector3Distance(c->nodePos[k], c->nodePos[k - 1]);
+                t->history[k] = c->nodePos[k];
+                t->nodeHome[k] = c->nodePos[k];
+                t->nodeUV[k] = totalPathDist;
+            }
+            t->historyCount = N;
+            t->historyHead = N - 1;
+            t->laidDist = totalPathDist;
+            t->position = c->nodePos[N - 1];
+            t->prevAttachPos = c->nodePos[N - 1];
+            t->frozen = true; // Protect history from being overwritten by follower logic
+        }
 
         if (c->stopping)
         {
