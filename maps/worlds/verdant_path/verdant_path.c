@@ -119,14 +119,20 @@ static void DrawFarSunbeams(void)
         {69.0f, 4.7f, 18.0f},
     };
     const float sizes[] = {8.8f, 7.4f, 9.4f};
+    Vector3 beamUp = Vector3Negate(Vector3Normalize(Environment_GetSunDirection()));
+    Color sunlight = Environment_GetSunColor();
     rlDisableDepthMask();
     BeginBlendMode(BLEND_ADDITIVE);
     for (int i = 0; i < 3; i++) {
         float distance = Vector3Distance(camera.target, positions[i]);
         float farFade = Clamp((distance - 8.0f) / 9.0f, 0.0f, 1.0f);
         if (farFade <= 0.001f) continue;
-        Color tint = {255, 223, 177, (unsigned char)(255.0f * farFade)};
-        DrawBillboard(camera, s_farSunbeamTexture, positions[i], sizes[i], tint);
+        Color tint = sunlight;
+        tint.a = (unsigned char)(255.0f * farFade);
+        Vector2 size = {sizes[i] * 0.22f, sizes[i]};
+        DrawBillboardPro(camera, s_farSunbeamTexture,
+                         (Rectangle){0, 0, 64, 128}, positions[i], beamUp,
+                         size, (Vector2){size.x * 0.5f, size.y * 0.5f}, 0.0f, tint);
     }
     EndBlendMode();
     rlEnableDepthMask();
@@ -492,8 +498,8 @@ static void ApplyVerdantEnvironment(void)
             .multipleScatteringAmp = 1.7f
         },
         .density = {
-            .baseDensity = 0.012f,
-            .heightFalloff = 0.45f,      // Distant haze reaches above grass at gameplay zoom
+            .baseDensity = 0.025f,
+            .heightFalloff = 0.20f,      // Distant haze reaches above grass at gameplay zoom
             .baseAltitude = 0.0f,
             .enableSigmoidLayer = false, // Disabled map-wide blanket; mist is strictly localized
             .layerAltitude = 0.35f,

@@ -35,6 +35,7 @@ static int s_locFogDensity;
 static int s_locFogStart;
 static int s_locFogFocus;
 static int s_locFogForward;
+static int s_locViewForward;
 static int s_locFogSpan;
 static int s_locHeightFalloff;
 static int s_locBaseAltitude;
@@ -87,6 +88,7 @@ void VolumetricFog_Init(int width, int height) {
     s_locFogDensity        = GetShaderLocation(s_raymarchShader, "u_fogDensity");
     s_locFogStart          = GetShaderLocation(s_raymarchShader, "u_fogStart");
     s_locFogFocus = GetShaderLocation(s_raymarchShader, "u_fogFocus");
+    s_locViewForward = GetShaderLocation(s_raymarchShader, "u_viewForward");
     s_locFogForward = GetShaderLocation(s_raymarchShader, "u_fogForward");
     s_locFogSpan = GetShaderLocation(s_raymarchShader, "u_fogSpan");
     s_locHeightFalloff     = GetShaderLocation(s_raymarchShader, "u_heightFalloff");
@@ -249,6 +251,7 @@ void VolumetricFog_Render(Camera3D camera) {
     SetShaderValue(s_raymarchShader, s_locFogStart, &fogStart, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locFogFocus, &camera.target, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locFogForward, &fogForward, SHADER_UNIFORM_VEC3);
+    SetShaderValue(s_raymarchShader, s_locViewForward, &viewForward, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locFogSpan, &fogSpan, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locHeightFalloff, &heightFalloff, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locBaseAltitude, &baseAltitude, SHADER_UNIFORM_FLOAT);

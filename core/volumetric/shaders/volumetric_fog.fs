@@ -15,6 +15,7 @@ uniform vec3      u_fogColor;        // Ambient fog color
 uniform float     u_fogDensity;      // Base volume density
 uniform vec3      u_fogFocus;
 uniform vec3      u_fogForward;
+uniform vec3      u_viewForward;
 uniform float     u_fogSpan;         // >0: distant atmosphere uses ground framing
 uniform float     u_fogStart;        // Near-camera exclusion distance
 uniform float     u_heightFalloff;   // Exponential decay k_e
@@ -69,10 +70,11 @@ float SampleShadowLS(vec4 posLS) {
     return (proj.z <= shadowDepth + 0.0015) ? 1.0 : 0.0;
 }
 
-// Ánh sáng qua kẽ lá (Canopy Foliage Light Shafts / God-Rays)
+// Authored light modulation projected onto the canopy plane along sunlight.
+// It modulates illumination only; fog extinction stays independent.
 float ComputeCanopyGodRay(vec3 worldPos, vec3 sunDir, float time) {
     // Phạm vi độ cao: tia nắng rọi từ tán cây (Y ~ 12m) xuống mặt cỏ (Y ~ -2.5m)
-    float heightFade = smoothstep(12.0, 5.0, worldPos.y);
+    float heightFade = (1.0 - smoothstep(5.0, 12.0, worldPos.y));
     float groundFade = smoothstep(-2.5, 0.1, worldPos.y);
     float fade = heightFade * groundFade;
     if (fade <= 0.0001) return 0.0;
@@ -146,7 +148,9 @@ void main() {
     float sceneDepth = texture(texture0, fragTexCoord).r;
     if (sceneDepth <= 0.001) sceneDepth = u_maxDist;
 
-    float rayDist = min(sceneDepth, u_maxDist);
+    vec3 rayDir = ReconstructRayDir(fragTexCoord);
+    // The depth snapshot stores view-axis Z, not distance along this pixel ray.
+    float rayDist = min(sceneDepth / max(dot(rayDir, u_viewForward), 0.001), u_maxDist);
     float marchStart = max(u_fogStart, 0.8);
     float marchDist = rayDist - marchStart;
 
@@ -156,14 +160,13 @@ void main() {
         return;
     }
 
-    vec3 rayDir = ReconstructRayDir(fragTexCoord);
     vec3 receiverPos = u_camPos + rayDir * rayDist;
     int steps = clamp(u_stepCount, 8, 32);
-    float stepSize = marchDist / float(steps);
+
 
     // Jitter with 4x4 Bayer dither to turn slice banding into high-frequency grain
     float dither = Bayer4x4(fragTexCoord, u_screenResolution);
-    float startT = marchStart + stepSize * dither;
+
 
     // Mie phase function toward light source with multiple-scattering side floor
     vec3 sunToLight = normalize(-u_sunDir);
@@ -175,13 +178,15 @@ void main() {
     vec3 accumRadiance = vec3(0.0);
     float transmittance = 1.0;
 
-    // Linear projection along ray in light homogeneous clip space
-    vec4 rayStartLS = u_lightVP * vec4(u_camPos + rayDir * startT, 1.0);
-    vec4 rayStepLS = u_lightVP * vec4(rayDir * stepSize, 0.0);
-
     for (int i = 0; i < steps; i++) {
-        float t = startT + float(i) * stepSize;
-        if (t >= rayDist) break;
+        // Concentrate samples near the receiver so thin ground mist survives
+        // at far zoom. Each sample integrates its own exact interval length.
+        float u0 = float(i) / float(steps);
+        float u1 = float(i + 1) / float(steps);
+        float t0 = marchStart + marchDist * (1.0 - (1.0 - u0) * (1.0 - u0));
+        float t1 = marchStart + marchDist * (1.0 - (1.0 - u1) * (1.0 - u1));
+        float stepSize = t1 - t0;
+        float t = mix(t0, t1, 0.25 + 0.5 * dither);
 
         vec3 samplePos = u_camPos + rayDir * t;
 
@@ -216,26 +221,20 @@ void main() {
             localDensity = EvaluateLocalFog(samplePos, fogColor);
         }
 
-        // 4. Canopy sunbeam scattering particles (airborne dust & mist motes catching light)
-        float canopyShaft = 0.0;
-        if (samplePos.y <= 12.0 && samplePos.y >= -2.5) {
-            canopyShaft = ComputeCanopyGodRay(samplePos, u_sunDir, u_time);
-        }
-        float sunbeamHaze = 0.038 * canopyShaft * clamp(u_godRayIntensity, 0.0, 1.0)
-                          * smoothstep(12.0, 1.5, samplePos.y);
-
-        float density = (u_fogDensity * (heightCoeff + sigmoidDensity) + sunbeamHaze) * nearFade
+        // Fog density is independent of the authored light modulation.
+        float density = u_fogDensity * (heightCoeff + sigmoidDensity) * nearFade
                       + localDensity * localFade;
         if (density <= 0.00001) continue;
 
-        // Sunlight transmission & canopy shaft modulation
-        vec4 posLS = rayStartLS + rayStepLS * float(i);
+        // Sunlight visibility from the actual directional-light shadow map
+        vec4 posLS = u_lightVP * vec4(samplePos, 1.0);
         float shadow = SampleShadowLS(posLS);
-        float directLight = shadow * (0.20 + 0.80 * canopyShaft) * u_godRayIntensity;
+        float canopyShaft = ComputeCanopyGodRay(samplePos, u_sunDir, u_time);
+        float directLight = shadow * (0.15 + 0.85 * canopyShaft) * u_godRayIntensity;
 
         // Radiance calculation: warm golden sunlight in-scattering + luminous morning sky ambient
-        vec3 directTerm = u_sunColor * (directLight * shaftVisibility * 3.0);
-        vec3 ambientTerm = fogColor * 1.25;
+        vec3 directTerm = u_sunColor * (directLight * shaftVisibility * 5.0);
+        vec3 ambientTerm = fogColor * 0.85;
         vec3 stepLight = directTerm + ambientTerm;
 
         float opticalThickness = density * stepSize;

@@ -3734,3 +3734,20 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
 - **Symptom:** smoke column (cigarette smoke) or volume trail looks like a static, rigid cylinder or pipe whose skin merely vibrates or slides textures in place, instead of fluid smoke rising and curling away from an emitter.
 - **Cause:** initializing a static swept tube path from root to top and only animating UV scroll or vertex noise offsets. Vertex noise oscillates in place around fixed nodal anchors; the mesh itself is not transported.
 - **Rule:** for rising smoke columns, extrude mesh nodes dynamically each frame from the source emitter (`node[0]`), advecting node positions along the convective rise velocity vector through fluid zones (laminar -> Kelvin-Helmholtz serpentine wave -> convective turbulent billows). Protect history from stationary follower overwrite with `t->frozen = true` while pushing updated nodal positions into `t->history[k]`. Guard optical depth in `trail_volume.fs` with non-zero chord absorption `pow(d, 0.85)` so central silhouettes do not vanish on bright backgrounds.
+
+## Volumetric depth is axial, while marching distance is radial (30/09/2026)
+
+- **Symptom:** distant fog disappears at gameplay zoom, and thin ground mist
+  drops out as the camera retreats.
+- **Cause:** the linear scene snapshot contains view-axis depth; using it as
+  radial distance reconstructs receivers too close to the camera. Uniform
+  intervals also miss sub-metre fog pockets at large view distances.
+- **Rule:** divide axial depth by the ray/view-forward dot product, then use
+  receiver-concentrated intervals with their actual lengths for optical integration.
+
+## Keep shaft illumination separate from fog density (30/09/2026)
+
+- **Symptom:** patterned haze creates glowing columns with cool fog mixed into rays.
+- **Cause:** an authored canopy pattern modulated both fog extinction and lighting.
+- **Rule:** use sunlight-projected patterns only for illumination, multiply by
+  scene shadow visibility, and use sun color for both map beams and volumetric rays.
