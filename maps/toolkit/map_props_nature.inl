@@ -3078,8 +3078,8 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
         float y1 = -d1;
         float sand0 = r0 * r0 * (3.0f - 2.0f * r0);
         float sand1 = r1 * r1 * (3.0f - 2.0f * r1);
-        Color c0 = Nature_LerpColor((Color){119, 101, 73, 255}, (Color){184, 170, 132, 255}, sand0);
-        Color c1 = Nature_LerpColor((Color){119, 101, 73, 255}, (Color){184, 170, 132, 255}, sand1);
+        Color c0 = Nature_LerpColor((Color){119, 101, 73, 255}, config.bankInnerColor, sand0);
+        Color c1 = Nature_LerpColor((Color){119, 101, 73, 255}, config.bankInnerColor, sand1);
         for (int segment = 0; segment < config.segments; segment++) {
             float a0 = (float)segment * 2.0f * PI / config.segments;
             float a1 = (float)(segment + 1) * 2.0f * PI / config.segments;
@@ -3091,10 +3091,10 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
             Vector3 p01 = {cosf(a1) * config.radiusX * r0 * e01, y0, sinf(a1) * config.radiusZ * r0 * e01};
             Vector3 p10 = {cosf(a0) * config.radiusX * r1 * e10, y1, sinf(a0) * config.radiusZ * r1 * e10};
             Vector3 p11 = {cosf(a1) * config.radiusX * r1 * e11, y1, sinf(a1) * config.radiusZ * r1 * e11};
-            Vector2 uv00 = {p00.x * 0.16f, p00.z * 0.16f};
-            Vector2 uv01 = {p01.x * 0.16f, p01.z * 0.16f};
-            Vector2 uv10 = {p10.x * 0.16f, p10.z * 0.16f};
-            Vector2 uv11 = {p11.x * 0.16f, p11.z * 0.16f};
+            Vector2 uv00 = {cosf(a0) * r0 * 0.5f + 0.5f, sinf(a0) * r0 * 0.5f + 0.5f};
+            Vector2 uv01 = {cosf(a1) * r0 * 0.5f + 0.5f, sinf(a1) * r0 * 0.5f + 0.5f};
+            Vector2 uv10 = {cosf(a0) * r1 * 0.5f + 0.5f, sinf(a0) * r1 * 0.5f + 0.5f};
+            Vector2 uv11 = {cosf(a1) * r1 * 0.5f + 0.5f, sinf(a1) * r1 * 0.5f + 0.5f};
 
             float slope0 = 1.6f * powf(fmaxf(0.01f, r0), 0.6f) * (config.maxDepth / fmaxf(config.radiusX, config.radiusZ));
             float slope1 = 1.6f * powf(fmaxf(0.01f, r1), 0.6f) * (config.maxDepth / fmaxf(config.radiusX, config.radiusZ));
@@ -3121,7 +3121,7 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
     SetTextureWrap(water.causticTex, TEXTURE_WRAP_REPEAT);
     SetTextureFilter(water.causticTex, TEXTURE_FILTER_BILINEAR);
 
-    const int bankRings = 3;
+    const int bankRings = 6;
     Mesh bankMesh = Nature_AllocMesh(config.segments * bankRings * 6);
     cursor = 0;
     float bankOuterY = config.bankGroundY - config.center.y;
@@ -3132,6 +3132,9 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
         float s1 = t1 * t1 * (3.0f - 2.0f * t1);
         Color c0 = Nature_LerpColor(config.bankInnerColor, config.bankOuterColor, s0);
         Color c1 = Nature_LerpColor(config.bankInnerColor, config.bankOuterColor, s1);
+        // Bank alpha carries submersion, fading to dry soil outside the lake.
+        c0.a = (unsigned char)(255.0f * (1.0f - s0));
+        c1.a = (unsigned char)(255.0f * (1.0f - s1));
         for (int segment = 0; segment < config.segments; segment++) {
             float a0 = (float)segment * 2.0f * PI / config.segments;
             float a1 = (float)(segment + 1) * 2.0f * PI / config.segments;
@@ -3146,29 +3149,35 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
             habitat1 = fmaxf(0.0f, fminf(1.0f, habitat1));
             float width0 = config.bankWidth * (0.10f + 1.04f * habitat0 * habitat0);
             float width1 = config.bankWidth * (0.10f + 1.04f * habitat1 * habitat1);
-            float rx00 = config.radiusX * 0.985f * inner0 + width0 * s0;
-            float rz00 = config.radiusZ * 0.985f * inner0 + width0 * 0.72f * s0;
-            float rx01 = config.radiusX * 0.985f * inner1 + width1 * s0;
-            float rz01 = config.radiusZ * 0.985f * inner1 + width1 * 0.72f * s0;
-            float rx10 = config.radiusX * 0.985f * inner0 + width0 * s1;
-            float rz10 = config.radiusZ * 0.985f * inner0 + width0 * 0.72f * s1;
-            float rx11 = config.radiusX * 0.985f * inner1 + width1 * s1;
-            float rz11 = config.radiusZ * 0.985f * inner1 + width1 * 0.72f * s1;
-            float y0 = -0.018f + (bankOuterY + 0.018f) * s0;
-            float y1 = -0.018f + (bankOuterY + 0.018f) * s1;
+            float rx00 = config.radiusX * 1.0f * inner0 + width0 * s0;
+            float rz00 = config.radiusZ * 1.0f * inner0 + width0 * 0.72f * s0;
+            float rx01 = config.radiusX * 1.0f * inner1 + width1 * s0;
+            float rz01 = config.radiusZ * 1.0f * inner1 + width1 * 0.72f * s0;
+            float rx10 = config.radiusX * 1.0f * inner0 + width0 * s1;
+            float rz10 = config.radiusZ * 1.0f * inner0 + width0 * 0.72f * s1;
+            float rx11 = config.radiusX * 1.0f * inner1 + width1 * s1;
+            float rz11 = config.radiusZ * 1.0f * inner1 + width1 * 0.72f * s1;
+            float y0 = -0.015f + (bankOuterY + 0.015f) * s0;
+            float y1 = -0.015f + (bankOuterY + 0.015f) * s1;
             Vector3 p00 = {cosf(a0) * rx00, y0, sinf(a0) * rz00};
             Vector3 p01 = {cosf(a1) * rx01, y0, sinf(a1) * rz01};
             Vector3 p10 = {cosf(a0) * rx10, y1, sinf(a0) * rz10};
             Vector3 p11 = {cosf(a1) * rx11, y1, sinf(a1) * rz11};
             float shade0 = 0.88f + 0.16f * (0.5f + 0.5f * sinf(a0 * 7.0f - seedPhase * 0.7f));
             float shade1 = 0.88f + 0.16f * (0.5f + 0.5f * sinf(a1 * 7.0f - seedPhase * 0.7f));
+            Color bank00 = Nature_ScaleColor(c0, 1.0f + (shade0 - 1.0f) * s0);
+            Color bank01 = Nature_ScaleColor(c0, 1.0f + (shade1 - 1.0f) * s0);
+            Color bank10 = Nature_ScaleColor(c1, 1.0f + (shade0 - 1.0f) * s1);
+            Color bank11 = Nature_ScaleColor(c1, 1.0f + (shade1 - 1.0f) * s1);
+            bank00.a = bank01.a = c0.a;
+            bank10.a = bank11.a = c1.a;
             Nature_AddQuad4(&bankMesh, &cursor, p00, p01, p11, p10,
                             (Vector3){0.0f, 1.0f, 0.0f}, 0.0f,
-                            Nature_ScaleColor(c0, shade0), Nature_ScaleColor(c0, shade1),
-                            Nature_ScaleColor(c1, shade1), Nature_ScaleColor(c1, shade0));
+                            bank00, bank01, bank11, bank10);
         }
     }
-    water.bankModel = Nature_ModelFromMesh(bankMesh, Nature_GetShader(false));
+    water.bankModel = Nature_ModelFromMesh(bankMesh, Water_GetBedShader());
+    water.bankModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = water.bedDiffuseTex;
     const int cellCount = WATER_FIELD_SIZE * WATER_FIELD_SIZE;
     water.waveHeightField = calloc((size_t)cellCount, sizeof(float));
     water.waveNextField = calloc((size_t)cellCount, sizeof(float));
@@ -3558,6 +3567,7 @@ void MapProp_DrawWaterBed(const MapWaterSurface *water, float time)
     // 1. Draw 3D Concave Lake Bed (Nền hồ 3D thật có texture sỏi đá và tụ quang sóng)
     if (water->bedModel.meshCount > 0) {
         Shader bedShader = Water_GetBedShader();
+        BeginShaderMode(bedShader);
         SetShaderValue(bedShader, s_bedLocTime, &time, SHADER_UNIFORM_FLOAT);
         SetShaderValue(bedShader, s_bedLocWaterHeight, &water->config.center.y, SHADER_UNIFORM_FLOAT);
         SetShaderValue(bedShader, s_bedLocLightDir, &lightDir, SHADER_UNIFORM_VEC3);
@@ -3576,27 +3586,28 @@ void MapProp_DrawWaterBed(const MapWaterSurface *water, float time)
         rlEnableTexture(cTex.id);
 
         rlActiveTextureSlot(0);
+        int bankPassLoc = GetShaderLocation(bedShader, "u_bankPass");
+        int bankPass = 0;
+        SetShaderValue(bedShader, bankPassLoc, &bankPass, SHADER_UNIFORM_INT);
         DrawModel(water->bedModel, position, 1.0f, WHITE);
+        if (water->bankModel.meshCount > 0) {
+            rlDrawRenderBatchActive();
+            bankPass = 1;
+            SetShaderValue(bedShader, bankPassLoc, &bankPass, SHADER_UNIFORM_INT);
+            BeginBlendMode(BLEND_ALPHA);
+            rlDisableDepthMask();
+            DrawModel(water->bankModel, position, 1.0f, WHITE);
+            rlDrawRenderBatchActive();
+            rlEnableDepthMask();
+            EndBlendMode();
+            bankPass = 0;
+            SetShaderValue(bedShader, bankPassLoc, &bankPass, SHADER_UNIFORM_INT);
+        }
 
         rlActiveTextureSlot(1);
         rlDisableTexture();
         rlActiveTextureSlot(0);
-    }
-
-    // 2. Draw Shoreline Bank Rim (Dải bờ đất ven hồ)
-    if (water->bankModel.meshCount > 0) {
-        Shader bankShader = Nature_GetShader(false);
-        Nature_BeginWindReceiverShader(bankShader);
-        Nature_UpdateShader(bankShader, time, (Vector2){0.0f, 0.0f}, 0.0f,
-                            false, 1.0f, NATURE_WIND_RESPONSE_STATIC);
-        int noInteraction = 0;
-        SetShaderValue(bankShader, GetShaderLocation(bankShader, "u_interactionEnabled"),
-                       &noInteraction, SHADER_UNIFORM_INT);
-        SetShaderValue(bankShader, GetShaderLocation(bankShader, "u_windImpactEnabled"),
-                       &noInteraction, SHADER_UNIFORM_INT);
-        rlDisableBackfaceCulling();
-        DrawModel(water->bankModel, position, 1.0f, WHITE);
-        Nature_EndWindReceiverShader();
+        EndShaderMode();
     }
 }
 

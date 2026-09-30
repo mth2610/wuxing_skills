@@ -434,7 +434,10 @@ static void BuildMeadowLayout(void)
         s_reedPlacements[validReeds].position.y -= 0.035f;
         float coreBonus = bayDensity * (rim < 1.05f ? 0.35f : 0.15f);
         s_reedPlacements[validReeds].radius = RandomRange(&rng, 0.12f, 0.20f);
-        s_reedPlacements[validReeds].height = RandomRange(&rng, 1.05f, 1.70f) + coreBonus;
+        // Short peripheral growth softens the thicket edge; tall reeds stay in bays.
+        float thicketCore = Clamp(bayDensity, 0.0f, 1.0f);
+        float reedHeight = RandomRange(&rng, 0.45f, 0.90f) + thicketCore * 0.70f;
+        s_reedPlacements[validReeds].height = reedHeight + coreBonus;
         s_reedPlacements[validReeds].rotationDeg = angle * 180.0f / PI + RandomRange(&rng, -25.0f, 25.0f);
         s_reedPlacements[validReeds].phase = Random01(&rng);
         validReeds++;
@@ -646,7 +649,7 @@ void InitVerdantPathMap(void)
         .shape = WATER_SHAPE_RADIAL,
         .ecosystem = WATER_ECO_ALPINE_STREAM,
         .center = {63.0f, 0.075f, 25.5f},
-        .radiusX = kLakeRadiusX, .radiusZ = kLakeRadiusZ, .bankWidth = 0.56f,
+        .radiusX = kLakeRadiusX, .radiusZ = kLakeRadiusZ, .bankWidth = 0.85f,
         .waveHeight = 0.035f, .waveScale = 0.96f, .waveSpeed = 0.72f,
         .bankGroundY = 0.008f, .detailScale = 0.075f, .detailStrength = 0.17f,
         .maxDepth = 0.85f,
@@ -659,7 +662,7 @@ void InitVerdantPathMap(void)
         .segments = 112, .rings = 14, .seed = 9173u,
         .deepColor = {14, 56, 64, 255}, .shallowColor = {52, 118, 108, 255},
         .foamColor = {170, 193, 179, 255},
-        .bankInnerColor = {145, 139, 107, 255}, .bankOuterColor = {94, 110, 78, 255},
+        .bankInnerColor = {105, 113, 94, 255}, .bankOuterColor = {94, 110, 78, 255},
     });
     for (int i = ROCK_COUNT - 3; i < ROCK_COUNT; i++) {
         MapProp_AddWaterObstacle(&s_lake, kRocks[i].position,

@@ -227,7 +227,7 @@ void main()
     float foamNoise = texture(texture0, fragWorldXZ * 0.45 + vec2(t * 0.022, -t * 0.016)).r;
     float contactRipple = sin(waterDepth * 36.0 - t * 4.8) * exp(-waterDepth * 6.5);
     float brokenFoam = smoothstep(0.47, 0.78, contactMask * 0.59 + (foamNoise - 0.5) * 0.74);
-    brokenFoam = max(brokenFoam, meniscusLip * 0.28);
+    brokenFoam = max(brokenFoam, meniscusLip * 0.12 * smoothstep(0.48, 0.72, foamNoise));
     brokenFoam += max(contactRipple, 0.0) * 0.10 * contactMask;
     brokenFoam = max(brokenFoam, dynamicWakeFoam);
     brokenFoam = clamp(brokenFoam, 0.0, 1.0);
@@ -239,9 +239,13 @@ void main()
     float waterColumnAlpha = 0.12 + 0.34 * (1.0 - exp(-1.8 * waterDepth));
     float surfaceAlpha = fresnel * 0.72 + waterColumnAlpha + min(length(sunGlint) * 0.22, 0.26);
 
-    // Smoothly reveal the sandy bed over the outer edge of a radial lake.
+    // Static world-space wetting front; animated foam must not move the bank.
+    float shoreNoise = texture(texture0, fragWorldXZ * 0.72).r;
+    float shoreFine = texture(texture0, fragWorldXZ * 2.1).r;
+    float shoreBreakup = (shoreNoise - 0.5) * 0.045 + (shoreFine - 0.5) * 0.012;
+    // Reveal textured shallows in irregular pockets rather than one even ring.
     float shoreEdgeFade = u_waterShape == 0
-        ? 1.0 - smoothstep(0.93, 1.0, length(fragLakeCoord))
+        ? 1.0 - smoothstep(0.91 + shoreBreakup, 1.0, length(fragLakeCoord))
         : smoothstep(0.0005, 0.012, waterDepth);
     surfaceAlpha *= shoreEdgeFade;
 

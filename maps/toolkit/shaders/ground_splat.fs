@@ -70,8 +70,8 @@ void main()
         if (lakeDist < 0.98) {
             discard; // Carve out lake hole so 3D bedModel, clear water, and wading character are exposed!
         }
-        shoreFactor = (1.0 - smoothstep(1.0, 1.38, lakeDist)) *
-                      smoothstep(0.98, 1.04, lakeDist);
+        // Overlap underneath the feathered bed must be wet soil, not grass.
+        shoreFactor = 1.0 - smoothstep(0.98, 1.30, lakeDist);
     }
 
     // 3. Slope steepness
@@ -81,7 +81,7 @@ void main()
     // 4. Four-layer weights
     float wPath = 1.0 - smoothstep(1.2, 1.9, distToPath);
     float wPathMargin = smoothstep(1.1, 1.85, distToPath) * (1.0 - smoothstep(1.85, 3.4, distToPath));
-    float wWetSoil = shoreFactor * 0.55;
+    float wWetSoil = shoreFactor * 0.95;
     float wSlope = smoothstep(0.14, 0.46, slope);
     float wDrySoil = clamp(wPathMargin * 0.88 + wSlope * 0.92, 0.0, 1.0);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);

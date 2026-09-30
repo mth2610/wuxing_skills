@@ -9,6 +9,7 @@ uniform sampler2D texture0;         // Bed diffuse texture; radial lake uses sur
 uniform sampler2D u_causticTex;     // Dual-layer caustics texture
 
 uniform float u_time;
+uniform int u_bankPass; // Bank alpha carries wet-to-dry position, not opacity
 uniform float u_waterHeight;        // Absolute world Y of the water surface
 uniform vec3 u_lightDir;
 uniform vec3 u_lightColor;
@@ -26,7 +27,7 @@ out vec4 finalColor;
 void main()
 {
     // Physical water column depth directly above this bed fragment
-    float waterDepth = max(0.0, u_waterHeight - fragPosition.y);
+    float waterDepth = max(0.0, u_waterHeight - fragPosition.y) * fragColor.a;
 
     // Broad soil variation with fine sand grains. Vertex color moves from
     // darker lake silt to pale sand at the waterline.
@@ -36,6 +37,11 @@ void main()
     vec3 grain = texture(texture0, uvFine).rgb;
     vec3 bedAlbedo = mix(soil, grain, 0.24) *
                      (0.48 + fragColor.rgb * 1.05);
+
+    // Dark wet silt gives way gradually to the same textured dry bank.
+    float soilMoisture = texture(texture0, fragPosition.xz * 0.85).r;
+    float wetness = smoothstep(0.0, 0.10 + (soilMoisture - 0.5) * 0.075, waterDepth);
+    bedAlbedo *= mix(1.0, 0.70 + soilMoisture * 0.12, wetness);
 
     // Dual-layer animated caustics dancing on the lake bed
     float t = u_time * 0.72;
@@ -71,5 +77,7 @@ void main()
     // Composite: Submerged bed visible through crystal clear water
     vec3 finalRgb = litBed * transmittance + waterScatter;
 
-    finalColor = vec4(finalRgb, 1.0);
+    // The bank begins at the exact bed edge; feather only its terrain join.
+    float bankCoverage = smoothstep(0.0, 0.42, fragColor.a);
+    finalColor = vec4(finalRgb, u_bankPass > 0 ? bankCoverage : 1.0);
 }
