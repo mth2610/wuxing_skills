@@ -47,6 +47,7 @@
 - Before `rlBegin()` custom geometry: `rlColor4ub(255,255,255,255)` to reset vertex color.
 
 ## 7. Shaders
+- Distant volumetric framing uses focus-relative ground depth and projected span; keep local fog sampling independent of the distant haze fade.
 - Include order: `fs_header.glsl` → `noise.glsl` (if needed) → `lighting.glsl` → `fx.glsl` → `triplanar.glsl` (if needed; depends on `noise.glsl` for `triplanarNoise`).
 - VS must end with `VS_FinalOutput(vec3 finalPos)` — exactly one vec3 arg.
 - Never redeclare built-ins: `fragPosition`, `fragNormal`, `u_time`, `viewPos`, `u_resolution`, `finalColor`.

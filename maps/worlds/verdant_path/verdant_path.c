@@ -492,8 +492,8 @@ static void ApplyVerdantEnvironment(void)
             .multipleScatteringAmp = 1.7f
         },
         .density = {
-            .baseDensity = 0.004f,
-            .heightFalloff = 0.85f,      // Hugs lowest ground level (Y <= 1.0m)
+            .baseDensity = 0.012f,
+            .heightFalloff = 0.45f,      // Distant haze reaches above grass at gameplay zoom
             .baseAltitude = 0.0f,
             .enableSigmoidLayer = false, // Disabled map-wide blanket; mist is strictly localized
             .layerAltitude = 0.35f,

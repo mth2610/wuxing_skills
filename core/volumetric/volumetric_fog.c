@@ -33,6 +33,9 @@ static int s_locSunColor;
 static int s_locFogColor;
 static int s_locFogDensity;
 static int s_locFogStart;
+static int s_locFogFocus;
+static int s_locFogForward;
+static int s_locFogSpan;
 static int s_locHeightFalloff;
 static int s_locBaseAltitude;
 static int s_locSigmoidEnabled;
@@ -83,6 +86,9 @@ void VolumetricFog_Init(int width, int height) {
     s_locFogColor          = GetShaderLocation(s_raymarchShader, "u_fogColor");
     s_locFogDensity        = GetShaderLocation(s_raymarchShader, "u_fogDensity");
     s_locFogStart          = GetShaderLocation(s_raymarchShader, "u_fogStart");
+    s_locFogFocus = GetShaderLocation(s_raymarchShader, "u_fogFocus");
+    s_locFogForward = GetShaderLocation(s_raymarchShader, "u_fogForward");
+    s_locFogSpan = GetShaderLocation(s_raymarchShader, "u_fogSpan");
     s_locHeightFalloff     = GetShaderLocation(s_raymarchShader, "u_heightFalloff");
     s_locBaseAltitude      = GetShaderLocation(s_raymarchShader, "u_baseAltitude");
     s_locSigmoidEnabled    = GetShaderLocation(s_raymarchShader, "u_sigmoidEnabled");
@@ -175,6 +181,12 @@ void VolumetricFog_Render(Camera3D camera) {
     float maxDist = (atmos.end > 0.0f) ? atmos.end : 120.0f;
     float fogStart = VolumetricFog_EffectiveStart(
         atmos.start, Vector3Distance(camera.position, camera.target));
+    Vector3 viewForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    Vector3 fogForward = Vector3Normalize((Vector3){viewForward.x, 0.0f, viewForward.z});
+    float halfViewHeight = camera.projection == CAMERA_ORTHOGRAPHIC ? camera.fovy * 0.5f
+        : Vector3Distance(camera.position, camera.target) * tanf(camera.fovy * DEG2RAD * 0.5f);
+    float fogSpan = atmos.start > 3.0f
+        ? VolumetricFog_GroundSpan(halfViewHeight, viewForward.y) : 0.0f;
     Vector2 screenRes = { (float)s_lowWidth, (float)s_lowHeight };
     float godRay = s_godRayIntensity;
     float time = (float)GetTime();
@@ -235,6 +247,9 @@ void VolumetricFog_Render(Camera3D camera) {
     SetShaderValue(s_raymarchShader, s_locFogColor, &fogColor, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locFogDensity, &density, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locFogStart, &fogStart, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_raymarchShader, s_locFogFocus, &camera.target, SHADER_UNIFORM_VEC3);
+    SetShaderValue(s_raymarchShader, s_locFogForward, &fogForward, SHADER_UNIFORM_VEC3);
+    SetShaderValue(s_raymarchShader, s_locFogSpan, &fogSpan, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locHeightFalloff, &heightFalloff, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locBaseAltitude, &baseAltitude, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locSigmoidEnabled, &sigmoidEnabled, SHADER_UNIFORM_FLOAT);

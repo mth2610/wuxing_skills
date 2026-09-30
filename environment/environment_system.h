@@ -94,7 +94,7 @@ typedef struct {
 // Complete Atmosphere & Fog Profile (superset of EnvFogConfig)
 typedef struct {
     Color                     color;         // Primary ambient fog albedo
-    float                     start;         // Fog onset (m); >3 m also keeps volumetric scattering beyond the camera focus
+    float                     start;         // Fog onset (m); >3 m selects focus-relative distant volumetric framing
     float                     end;           // Far distance cutoff
     bool                      enabled;       // Global master switch
     OpticalScatteringCoeffs   optics;        // Physical scattering

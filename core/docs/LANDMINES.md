@@ -3719,17 +3719,15 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   `core/tests/surface_worldspace_test.c` and verify a same-camera HIGH/UNLIT
   capture; source checks alone cannot validate a GPU matrix convention.
 
-## Distant volumetric fog needs a zoom-aware start (28/09/2026)
+## Distant volumetric fog needs ground framing (30/09/2026)
 
-- **Symptom:** fog and god rays wash over the player and the whole screen even
-  when a map configures a large atmospheric `start`; zooming out changes how
-  much of the character is covered.
-- **Cause:** the volumetric C path replaced starts above 3 m with 1.2 m, while
-  canopy haze added opacity independently of god-ray intensity.
-- **Rule:** pass a distant start beyond the camera focus at each zoom, then
-  fade all volume density in over a spatial band. Scale beam haze with beam
-  intensity. `core/tests/volumetric_fog_distance_test.c` guards the effective
-  start; compile the shader and check framing in matched gameplay captures.
+- **Symptom:** haze and god rays disappear at gameplay zoom but emerge far away.
+- **Cause:** a camera-distance cutoff beyond the target excluded visible ground
+  and local volumes; the 7 m clearance did not follow the projected ground span.
+- **Rule:** frame distant atmosphere using horizontal depth behind camera focus
+  normalized by the projected ground half-span. Sample local volumes separately
+  with a soft focus clearance; preserve near-start profiles. Numeric tests cover
+  span scaling, while matched camera captures must validate appearance.
 
 ## Smoke column / volume trail mesh must extrude continuously from source (28/09/2026)
 

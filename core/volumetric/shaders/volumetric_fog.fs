@@ -13,6 +13,9 @@ uniform vec3      u_sunDir;          // Direction light travels (downward)
 uniform vec3      u_sunColor;        // Sunlight linear color
 uniform vec3      u_fogColor;        // Ambient fog color
 uniform float     u_fogDensity;      // Base volume density
+uniform vec3      u_fogFocus;
+uniform vec3      u_fogForward;
+uniform float     u_fogSpan;         // >0: distant atmosphere uses ground framing
 uniform float     u_fogStart;        // Near-camera exclusion distance
 uniform float     u_heightFalloff;   // Exponential decay k_e
 uniform float     u_baseAltitude;    // Reference altitude Y
@@ -154,6 +157,7 @@ void main() {
     }
 
     vec3 rayDir = ReconstructRayDir(fragTexCoord);
+    vec3 receiverPos = u_camPos + rayDir * rayDist;
     int steps = clamp(u_stepCount, 8, 32);
     float stepSize = marchDist / float(steps);
 
@@ -181,11 +185,18 @@ void main() {
 
         vec3 samplePos = u_camPos + rayDir * t;
 
-        // Spatial cutoff: no scattering over the player, then a soft distant onset.
-        // Small-start profiles retain their nearby mist; distant profiles get a
-        // wider transition so zoom changes do not reveal a sharp screen ring.
+        // Near-start profiles retain their distance fade. Distant profiles frame
+        // the atmosphere by receiver depth, independently of local volumes.
         float fadeWidth = clamp(u_fogStart * 0.35, 1.2, 8.0);
         float nearFade = smoothstep(u_fogStart, u_fogStart + fadeWidth, t);
+        float localFade = nearFade;
+        if (u_fogSpan > 0.0) {
+            // Horizontal depth behind focus; elevated foreground objects stay clear.
+            float behindFocus = dot(receiverPos - u_fogFocus, u_fogForward);
+            nearFade = smoothstep(0.12, 0.80, behindFocus / max(u_fogSpan, 0.001));
+            // Local mist retains its world placement, with a soft player clearance.
+            localFade *= smoothstep(1.0, 3.0, length(samplePos.xz - u_fogFocus.xz));
+        }
 
         // 1. Exponential ground mist (clings to low ground, decays upward)
         float h = max(samplePos.y - u_baseAltitude, 0.0);
@@ -213,7 +224,8 @@ void main() {
         float sunbeamHaze = 0.038 * canopyShaft * clamp(u_godRayIntensity, 0.0, 1.0)
                           * smoothstep(12.0, 1.5, samplePos.y);
 
-        float density = (u_fogDensity * (heightCoeff + sigmoidDensity) + localDensity + sunbeamHaze) * nearFade;
+        float density = (u_fogDensity * (heightCoeff + sigmoidDensity) + sunbeamHaze) * nearFade
+                      + localDensity * localFade;
         if (density <= 0.00001) continue;
 
         // Sunlight transmission & canopy shaft modulation

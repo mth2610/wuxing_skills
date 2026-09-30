@@ -166,10 +166,12 @@ const LocalFogVolume*   FogVolume_GetByIndex(int index);
 const LocalFogVolume*   FogVolume_GetById(int id);
 ```
 
-`AtmosphereProfile.start` is the fog onset distance in meters. In the volumetric pass,
-profiles with `start > 3 m` begin scattering at the greater of `start` and the
-camera-to-focus distance plus 7 m, with a smooth spatial fade. Profiles with a nearer
-start retain their existing behavior.
+`AtmosphereProfile.start` is the distance-fog onset in meters. In the volumetric
+pass, `start > 3 m` selects distant framing: global haze and canopy beams fade
+in behind the camera target over 12%–80% of the projected ground half-span.
+The span follows camera zoom and pitch. Local volumes retain world placement
+with a 1–3 m horizontal clearance around the target. Near-start profiles retain
+their distance-based behavior.
 
 ---
 
