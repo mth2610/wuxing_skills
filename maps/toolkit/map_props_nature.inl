@@ -1335,13 +1335,15 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             bool isReed = (clump->height > 0.95f);
             float clumpAngle = clump->rotationDeg * DEG2RAD;
 
-            // Natural per-blade organic variations (Structured Procedural Variation)
-            float bHash = sinf((float)(i * 43 + blade * 23)) * 43758.5453f;
-            bHash -= floorf(bHash);
-            float bHash2 = sinf((float)(i * 67 + blade * 37)) * 28461.1273f;
-            bHash2 -= floorf(bHash2);
-            float bHash3 = sinf((float)(i * 89 + blade * 13)) * 19283.4721f;
-            bHash3 -= floorf(bHash3);
+            // Stable blade identities across LODs: thinning retains the same
+            // botanical samples instead of rebuilding a different fan.
+            int bladeId = bladesPerClump > 1 && bladesPerClump < style.bladesPerClump
+                ? blade * (style.bladesPerClump - 1) / (bladesPerClump - 1) : blade;
+            unsigned int bladeSeed = (unsigned int)i * 747796405u
+                                  + (unsigned int)bladeId * 2891336453u + 277803737u;
+            float bHash = Nature_Random01(&bladeSeed);
+            float bHash2 = Nature_Random01(&bladeSeed);
+            float bHash3 = Nature_Random01(&bladeSeed);
 
             float flowX = cosf(clumpAngle);
             float flowZ = sinf(clumpAngle);
@@ -1430,30 +1432,31 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             } else {
                 // Volumetric clump architecture, including reduced far LOD.
                 // Blades emerge from a collar and spread beyond the wind axis.
-                float baseAzimuth = ((float)blade / (float)bladesPerClump) * (2.0f * PI)
-                                  + (bHash - 0.5f) * 0.45f;
+                float baseAzimuth = clumpAngle + (float)bladeId * golden
+                                  + (bHash - 0.5f) * 1.10f;
                 float collarRadius = clump->radius * (0.16f + 0.12f * bHash3);
                 float bx = clump->position.x + cosf(baseAzimuth) * collarRadius;
                 float bz = clump->position.z + sinf(baseAzimuth) * collarRadius;
 
                 float radX = cosf(baseAzimuth);
                 float radZ = sinf(baseAzimuth);
-                float windWeight = 0.46f;
+                float windWeight = 0.22f;
                 float combX = radX * (1.0f - windWeight) + flowX * windWeight;
                 float combZ = radZ * (1.0f - windWeight) + flowZ * windWeight;
                 float combLen = sqrtf(combX * combX + combZ * combZ);
                 if (combLen < 0.01f) { combX = flowX; combZ = flowZ; combLen = 1.0f; }
                 bladeLeanAngle = atan2f(combZ / combLen, combX / combLen);
 
-                float tierFrac = (float)blade / (float)(bladesPerClump - 1);
+                float tierFrac = (float)bladeId / (float)(style.bladesPerClump > 1
+                                                        ? style.bladesPerClump - 1 : 1);
                 // Mix short inner leaves with long outer blades so nearby
                 // clumps do not collapse into one repeated fan silhouette.
-                float lengthScale = 0.76f + 0.31f * tierFrac + 0.17f * (bHash2 - 0.5f);
+                float lengthScale = 0.68f + 0.46f * bHash2 + 0.12f * tierFrac;
                 height = clump->height * lengthScale;
                 width = clump->radius * style.bladeWidthScale * widthMultiplier *
                         (0.76f + 0.34f * bHash3 + 0.10f * (1.0f - tierFrac));
-                lean = height * (0.34f + 0.16f * tierFrac + 0.08f * bHash);
-                droopY = height * (0.04f + 0.08f * tierFrac + 0.04f * bHash3);
+                lean = height * (0.14f + 0.38f * bHash);
+                droopY = height * (0.025f + 0.10f * bHash3);
                 if (bladeSegments == 1) {
                     // A full-length distant triangle rasterizes as a thin,
                     // bright diagonal. Keep its area in a shorter, wider tuft.
@@ -1484,7 +1487,7 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 // Coherent Macro Seedhead Biome Field (scale ~18m):
                 float strawNoise = sinf(clump->position.x * 0.16f + clump->position.z * 0.12f + 1.7f) * 0.5f
                                  + sinf(clump->position.x * -0.10f + clump->position.z * 0.22f + 0.5f) * 0.5f;
-                bool isSeedhead = (strawNoise > 0.40f) && (blade == bladesPerClump - 1) && (bHash3 > 0.25f);
+                bool isSeedhead = (strawNoise > 0.40f) && (bladeId == style.bladesPerClump - 1) && (bHash3 > 0.25f);
                 if (isSeedhead) {
                     bladeRoot = (Color){46, 60, 22, 255};   // warm olive-gold sheath
                     bladeTip  = (Color){208, 182, 85, 255};  // ripe golden-amber wheat straw tip
@@ -1515,7 +1518,7 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             for (int segment = 0; segment < bladeSegments; segment++) {
                 // Long needle triangles create the bright leaf-tip streaks.
                 // A shorter pointed section limits subpixel bright streaks.
-                float tipStart = bladeSegments > 1 ? 0.88f : 0.0f;
+                float tipStart = bladeSegments > 1 ? 0.80f : 0.0f;
                 float t0 = segment == bladeSegments - 1 ? tipStart
                          : tipStart * (float)segment / (float)(bladeSegments - 1);
                 float t1 = segment == bladeSegments - 1 ? 1.0f
@@ -1549,8 +1552,10 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Ngeo1 = Vector3Normalize(Ngeo1);
 
                 // Botanical Spear Blade Profile: fuller mid-body for lush coverage, needle tip
-                float profile0 = (0.85f + 0.25f * sinf(PI * t0)) * (1.0f - powf(t0, 1.8f));
-                float profile1 = (0.85f + 0.25f * sinf(PI * t1)) * (1.0f - powf(t1, 1.8f));
+                float profile0 = isReed ? (0.85f + 0.25f * sinf(PI * t0)) * (1.0f - powf(t0, 1.8f))
+                                        : (0.72f + 0.50f * t0) * (1.0f - t0 * t0);
+                float profile1 = isReed ? (0.85f + 0.25f * sinf(PI * t1)) * (1.0f - powf(t1, 1.8f))
+                                        : (0.72f + 0.50f * t1) * (1.0f - t1 * t1);
                 float halfW0 = (width * 0.5f) * fmaxf(profile0, 0.08f);
                 float halfW1 = (width * 0.5f) * fmaxf(profile1, 0.03f);
 
@@ -1778,7 +1783,8 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             // Mid LOD: intermediate distance (e.g. 10m - 22m).
             // Uses fewer blades and segments with slight widening (1.22x) to preserve silhouette and volume
             // while drastically reducing subpixel polygon workload and overdraw.
-            int midBlades = (style.bladesPerClump >= 6) ? 4 : (style.bladesPerClump >= 4 ? 3 : 2);
+            int midBlades = style.bladesPerClump >= 5 ? 4
+                          : (style.bladesPerClump >= 3 ? 3 : style.bladesPerClump);
             int midSegments = (style.bladeSegments >= 3) ? 2 : 1;
             int midCount = 0;
             Model midModel = Nature_BuildMeadowChunk(
@@ -1906,10 +1912,9 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     float lodScale = quality >= GFX_HIGH ? 1.0f
                    : quality == GFX_MED ? 0.84f : 0.68f;
 
-    // Camera focal-distance and zoom-aware LOD adjustment:
-    // In third-person/orbit view, camera.position is separated from the target by focal distance.
-    // Offsetting with horizontal focal distance ensures meadow->lodDistance measures radius around the player/target.
-    // Scaling with zoomFactor ensures zooming in (narrower FOV or closer view) extends Near LOD coverage on screen.
+    // LOD uses actual 3D camera distance. Adding the orbit radius to
+    // thresholds promotes tiny on-screen blades to expensive near geometry.
+    // Retain the focal offset only for map visibility, not mesh detail.
     float focalDx = camera.position.x - camera.target.x;
     float focalDz = camera.position.z - camera.target.z;
     float focalDistH = sqrtf(focalDx * focalDx + focalDz * focalDz);
@@ -1918,7 +1923,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     if (zoomFactor < 0.8f) zoomFactor = 0.8f;
     if (zoomFactor > 2.5f) zoomFactor = 2.5f;
 
-    float lodDistance = focalDistH + meadow->lodDistance * lodScale * zoomFactor;
+    float lodDistance = meadow->lodDistance * lodScale * zoomFactor;
     float drawDistance = (meadow->drawDistance > 0.0f) ? (focalDistH + meadow->drawDistance * rangeScale * zoomFactor) : 0.0f;
     float drawDistanceSq = drawDistance * drawDistance;
     for (int i = 0; i < meadow->chunkCount; i++) {
@@ -1945,9 +1950,10 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             spatialHash = spatialHash - floorf(spatialHash);
             float farThreshold = lodDistance + (spatialHash - 0.5f) * 4.0f;
             float midThreshold = (meadow->midLodDistance > 0.0f && chunk->midReady) ?
-                                 (focalDistH + meadow->midLodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 2.5f) : 0.0f;
+                                 (meadow->midLodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 2.5f) : 0.0f;
             float hysteresis = quality >= GFX_HIGH ? 1.1f : 1.8f;
-            float distance = sqrtf(distanceSq);
+            float dy = camera.position.y - center.y;
+            float distance = sqrtf(distanceSq + dy * dy);
 
             if (midThreshold > 0.0f) {
                 // 3-tier LOD with hysteresis to prevent edge thrashing

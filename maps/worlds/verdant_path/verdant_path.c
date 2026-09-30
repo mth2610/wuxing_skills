@@ -279,7 +279,7 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.22f, .jitter = 0.65f,
+            .spacing = 0.22f, .jitter = 0.90f,
             .minRadius = 0.22f, .maxRadius = 0.28f,
             .minHeight = 0.22f, .maxHeight = 0.38f,
             .yOffset = 0.025f, .seed = 0x51a7c3u,
@@ -309,7 +309,7 @@ static void BuildMeadowLayout(void)
         // 4. Clump-level Yaw Jitter (AAA standard: organic diversity)
         float hash = sinf((float)(i * 47)) * 43758.5453f;
         hash -= floorf(hash);
-        clump->rotationDeg = flowAngle + (hash - 0.5f) * 70.0f;
+        clump->rotationDeg = flowAngle + (hash - 0.5f) * 240.0f;
         float localHeight = clump->height; // keep the placement jitter after biome shaping
         float localRadius = clump->radius;
 
@@ -671,7 +671,7 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {38, 61, 29, 255}, .tipColor = {107, 158, 68, 255},
+            .rootColor = {43, 65, 32, 255}, .tipColor = {99, 139, 65, 255},
             .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.19f,
             .chunkSize = 12.0f, .lodDistance = 23.0f, .midLodDistance = 9.0f, .drawDistance = 50.0f,
             .shadowDistance = 12.0f,
