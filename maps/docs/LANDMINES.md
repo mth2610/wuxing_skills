@@ -57,10 +57,17 @@
 - **Cause:** Position-only deduplication merges authored normal/UV/color seams; shrinking chunks increases draw and LOD overhead.
 - **Rule:** Compare all authored attribute bytes, preserve triangle order, and fall back unchanged when the 16-bit range or allocation budget fails. Verify expanded indices against the original streams, including allocation failures. Measure chunk changes independently; vertex savings do not establish a frame-time gain.
 
+### Bright ambient fill washes out captured grass shadows
+
+- **Symptom:** Valid grass silhouettes cast onto the soil, but roots and clumps still appear detached.
+- **Cause:** Broad receiver filtering reduces thin-shadow coverage, while nearly unattenuated ambient fill hides the remaining contrast.
+- **Rule:** Inspect the receiver before adding casters. Ground uses a 0.65-texel dynamic PCF radius and 0.70 ambient visibility floor; grass uses a 0.78 ambient floor under captured occlusion. Keep unshadowed lighting unchanged and verify matched-camera images plus frame time.
+
 ## Patch Log
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-01 | Codex | Grass shadow receiver contrast | `maps/toolkit/shaders/ground_splat.fs`, `maps/toolkit/shaders/nature_surface.glsl`, `maps/toolkit/shaders/map_shadow.glsl` | Ground-truth |
 | 2026-10-01 | Codex | Indexed foliage geometry and chunk budget | `maps/toolkit/map_props_mesh_index.inl`, `maps/tests/meadow_mesh_index_test.inl` | Ground-truth |
 | 2026-09-26 | Codex | Vegetation shadow and grass-tip landmines | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_opaque.fs`, `environment/env_shadow.c` | Ground-truth |
 | 2026-09-26 | Codex | Lake depth contour and bed material landmine | `maps/toolkit/shaders/water_surface.fs`, `maps/toolkit/shaders/water_bed.fs`, `maps/toolkit/map_props_nature.inl` | Ground-truth |

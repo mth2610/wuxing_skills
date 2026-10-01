@@ -193,6 +193,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 groundBounce = baseAmbient * vec3(0.65, 0.74, 0.44);
     vec3 ambient = mix(groundBounce, skyAmbient, n.y * 0.5 + 0.5);
     vec3 lit = baseColor * ambient * mix(0.68, 1.0, smoothstep(0.0, 0.65, h));
+    // Captured canopy occlusion also reduces sky fill; preserve a soft floor.
+    lit *= mix(0.78, 1.0, shadow);
 
     // Broad, weak highlights with derivative-based normal-variance filtering.
     // Repeated squares replace narrow power lobes on dense foliage.

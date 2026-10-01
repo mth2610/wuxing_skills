@@ -4,6 +4,8 @@
 // characters and the smoke about where the light is; a private copy of the
 // falloff drifts the moment one of them is edited.
 #include "core/shaders/common/vfx_lights.glsl"
+// Preserve thin grass silhouettes without adding shadow-map samples.
+#define MAP_DYNAMIC_SHADOW_RADIUS 0.65
 #include "maps/toolkit/shaders/map_shadow.glsl"
 
 in vec2 fragTexCoord;
@@ -167,7 +169,8 @@ void main()
     vec3 groundBounce = actualAmbient.rgb * vec3(0.42, 0.38, 0.28);
     vec3 ambient = mix(groundBounce, skyAmbient, skyWeight) * cavityAO;
 
-    float ambientVisibility = mix(0.92, 1.0, shadow);
+    // Retain sky fill while making captured foliage shadows readable on soil.
+    float ambientVisibility = mix(0.70, 1.0, shadow);
     vec3 totalLight = ambient * ambientVisibility
                     + actualLight.rgb * NdotL * shadow;
 

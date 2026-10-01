@@ -177,18 +177,21 @@ light projections. This is required by the project's custom 3D pass, where
 DrawMesh exposes model-plus-view shader space rather than raw world space;
 uploading an uncorrected world light-VP leaves a valid shadow map but samples it
 at unrelated coordinates on Vulkan.
-Shadow receivers select PCF cost from `GfxQuality`: HIGH uses one center plus
-four diagonal manually-bilinear PCF taps (20 point samples) for sub-texel
+Shared map shadow receivers select PCF cost from `GfxQuality`: HIGH uses one center plus
+eight surrounding manually-bilinear PCF taps (36 point samples) for sub-texel
 grass/flower edges, MED uses
 four direct taps, and LOW/UNLIT uses one comparison. Comparing first and then
 interpolating coverage avoids both unsupported R32F linear filtering and the
 block grid caused by interpolating stored depth. Both capture layers fade across the outer 3.5% of their
 coverage so a moving focus cannot reveal a hard square boundary.
-The center carries 50% of the smooth resolve so thin stems cannot fall between
-the diagonal taps. HIGH blends only a restrained 18% darkest-sample term into that smooth dynamic
+The center carries 28% of the smooth resolve so thin stems cannot fall between
+the surrounding taps. HIGH blends `thinFeatureBoost * 0.25` of the darkest cardinal/center sample into that smooth dynamic
 resolve and applies a mild post-PCF contrast curve, while leaving the static-cache
-filter untouched. Its 0.95-texel dynamic footprint stabilizes sub-pixel blades
-without turning individual depth texels into black blocks. Textured vegetation
+filter untouched. Its default 1.15-texel dynamic footprint can be overridden at shader compile time
+with `MAP_DYNAMIC_SHADOW_RADIUS`. Ground uses 0.65 texels to retain grass shadow silhouettes,
+and keeps 70% of ambient fill inside fully captured shadows. Grass blades keep 78% of
+ambient fill inside captured shadows; neither adjustment darkens unshadowed pixels or adds samples.
+Foliage retains its separate close-range filter described above. Textured vegetation
 casters add derivative-based conservative alpha coverage in the depth pass;
 this retains minified petal tips without changing the visible geometry or atlas
 silhouette. The dynamic receiver uses a smaller vegetation-safe depth bias so

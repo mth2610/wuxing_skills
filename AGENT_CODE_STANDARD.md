@@ -91,6 +91,7 @@
 - Vegetation mesh LOD uses full camera distance and FOV scaling; orbit-radius compensation belongs only to visibility range. Apply blade-normal rounding in one stage and filter unresolved highlights by projected width.
 - Core Wind owns vegetation forcing, including world-space grass-wave noise; vegetation shaders may only filter that field through species-specific lag, compliance, flutter, and bend limits. Do not add standalone sine/noise motion that remains active when the sampled wind is zero, and keep visible/shadow deformation identical.
 - Large-map directional shadows keep static casters in a world-fixed cached layer and dynamic casters in the camera-following layer; bind both samplers explicitly, and invalidate/rebuild the static cache when the sun direction changes.
+- Before adding foliage shadow casters, check receiver filter width and ambient fill: a valid shadow can disappear under nearly unattenuated sky lighting.
 - Distant volumetric fog starts beyond the camera focus across zoom levels, fades in spatially, and scales beam haze with god-ray intensity; a fixed near-plane cutoff can wash out the player.
 - Before changing a public function's behavior: `grep -r` across `skills/` for callers. Breaking changes must be documented (`core/docs/API.md` etc.) BEFORE landing, per `CLAUDE.md` cross-module rule.
 - No dynamic allocation in core runtime paths — static pools matching existing patterns (`MAX_DECALS`, `MAX_VFX_LIGHTS`, `MAX_DISTORTION_SOURCES`).

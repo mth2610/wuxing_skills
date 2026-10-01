@@ -1,5 +1,8 @@
 // Shared directional-shadow receiver for opaque map and foliage materials.
 // The Environment module owns capture/projection; map shaders only sample it.
+#ifndef MAP_DYNAMIC_SHADOW_RADIUS
+#define MAP_DYNAMIC_SHADOW_RADIUS 1.15
+#endif
 uniform sampler2D shadowMap;
 uniform mat4 u_lightVP;
 uniform float u_shadowEnabled;
@@ -107,7 +110,7 @@ float MapDynamicShadowVisibility(vec3 worldPos, float slope)
     // Smooth slope-aware bias eliminating stair-stepping acne bands
     float compareDepth = projected.z - mix(0.00028, 0.00085, slope);
     float visibility = MapShadowFilteredVisibility(
-        shadowMap, projected.xy, compareDepth, u_shadowTexel, 1.15,
+        shadowMap, projected.xy, compareDepth, u_shadowTexel, MAP_DYNAMIC_SHADOW_RADIUS,
         u_shadowThinFeatureBoost);
     float edgeFade = MapShadowCoverageFade(projected.xy);
     float resolved = mix(1.0, visibility, edgeFade);
