@@ -350,6 +350,10 @@ RLVKAPI bool rlvkFormatSupportsLinearFilter(int rlFormat);    // sampler magFilt
 #include <math.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <time.h>
+#if defined(__APPLE__)
+    #include <mach/mach_time.h>
+#endif
 #if !defined(_WIN32)
     #include <dlfcn.h>      // runtime shaderc loading (dlopen/dlsym)
 #endif

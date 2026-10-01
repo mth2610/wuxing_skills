@@ -794,6 +794,7 @@ static void rlvkPushTexture(VkCommandBuffer cmdBuffer, u32 binding, u32 textureS
     // previous texture bound -> "sprite core not white" / the Android dim-2D + garbled-text bug.
     // Harmless with native push descriptors (rlvkFlushSet0 early-outs on Caps.pushDescriptor).
     RLVK.set0Dirty = true;
+    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileDescriptors++;
     vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, 1,
                                &(VkWriteDescriptorSet){
                                    VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
@@ -947,6 +948,7 @@ static void rlvkPushSet0Batch(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader,
     }
     // Reaching here means a binding changed for the compat shim's benefit (rlvkFlushSet0 rebinds).
     RLVK.set0Dirty = true;
+    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileDescriptors += n;
     vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, n, writes);
     if (getenv("RLVK_EXP_DOUBLE_PUSH"))
         vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, n, writes);

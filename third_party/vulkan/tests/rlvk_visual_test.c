@@ -203,6 +203,48 @@ static const char *sc_shader_uniform(void)
     return NULL;
 }
 
+// Both stages share a uniform. Repeated bytes, changed bytes, changing back, shader
+// switches and command-buffer reuse must all preserve the latest requested value.
+static const char *sc_uniform_repeat(void)
+{
+    const char *vs = "#version 330\n"
+        "in vec3 vertexPosition; uniform mat4 mvp; uniform vec4 uColor; out vec4 stageColor;\n"
+        "void main(){stageColor=uColor;gl_Position=mvp*vec4(vertexPosition,1.0); }\n";
+    const char *fs = "#version 330\n"
+        "in vec4 stageColor; uniform vec4 uColor; out vec4 finalColor;\n"
+        "void main(){finalColor=0.5*(stageColor+uColor); }\n";
+    Shader sh=LoadShaderFromMemory(vs,fs), other=LoadShaderFromMemory(vs,fs);
+    int loc=GetShaderLocation(sh,"uColor"), otherLoc=GetShaderLocation(other,"uColor");
+    Vector4 colors[6]={{1,0,0,1},{1,0,0,1},{0,1,0,1},{0,1,0,1},{1,0,0,1},{1,0,0,1}};
+    Vector4 blue={0,0,1,1}; const int sw=W/6;
+    for(int f=0;f<4;f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        for(int i=0;i<6;i++)
+        {
+            if(i==3)
+            {
+                BeginShaderMode(other); SetShaderValue(other,otherLoc,&blue,SHADER_UNIFORM_VEC4);
+                DrawRectangle(0,0,2,2,WHITE); EndShaderMode();
+            }
+            BeginShaderMode(sh);
+            SetShaderValue(sh,loc,&colors[i],SHADER_UNIFORM_VEC4);
+            SetShaderValue(sh,loc,&colors[i],SHADER_UNIFORM_VEC4);
+            DrawRectangle(i*sw,4,sw,H-4,WHITE); EndShaderMode();
+        }
+        EndDrawing();
+    }
+    Image im=snap(); const char *why=NULL;
+    for(int i=0;i<6;i++)
+    {
+        Color c=at(im,i*sw+sw/2,H/2);
+        bool green=(i==2 || i==3);
+        if(green ? (c.g<220 || c.r>30 || c.b>30) : (c.r<220 || c.g>30 || c.b>30))
+            why="shared-stage uniform stale after repeat/change/switch/frame reuse";
+    }
+    UnloadImage(im); UnloadShader(sh); UnloadShader(other); return why;
+}
+
 // shaderc may assign texture0 to a non-zero descriptor binding once another
 // sampler exists. The draw-call texture must still land in texture0, while the
 // explicitly bound second sampler remains independent (soft-particle contract).
@@ -513,6 +555,86 @@ static const char *sc_soft_depth(void)
     // center covers the near cube -> real depth ~ dist 4 -> dark; corner is cleared far -> white
     if (c.r > 150) return "RT depth sample reads far everywhere: soft-particle depth not sampleable (no shadow-copy twin)";
     if (e.r < 200) return "cleared-far background not white: depth sample wrong";
+    return NULL;
+}
+
+// Between-frame updates must become visible without delaying the new pixels;
+// mid-frame updates must leave already recorded draws sampling their earlier contents.
+static const char *sc_texture_update_order(void)
+{
+    Image im = GenImageColor(2,2,RED);
+    Texture2D tex = LoadTextureFromImage(im); UnloadImage(im);
+    Color red[4] = {RED,RED,RED,RED}, green[4] = {GREEN,GREEN,GREEN,GREEN};
+    for (int f=0;f<4;f++)
+    {
+        UpdateTexture(tex,red); // after previous present, before BeginDrawing
+        BeginDrawing(); ClearBackground(BLACK);
+        DrawTexturePro(tex,(Rectangle){0,0,2,2},(Rectangle){0,0,W/2,H},(Vector2){0,0},0,WHITE);
+        rlDrawRenderBatchActive();
+        UpdateTexture(tex,green);
+        DrawTexturePro(tex,(Rectangle){0,0,2,2},(Rectangle){W/2,0,W/2,H},(Vector2){0,0},0,WHITE);
+        EndDrawing();
+    }
+    Image screen=snap(); Color left=at(screen,W/4,H/2),right=at(screen,3*W/4,H/2); UnloadImage(screen);
+    Image latest=LoadImageFromTexture(tex); Color stored=at(latest,0,0); UnloadImage(latest); UnloadTexture(tex);
+    if (left.r<180 || left.g>100) return "texture update changed a previously recorded draw";
+    if (right.g<150 || right.r>100) return "texture update missing from subsequent draw";
+    if (stored.g<150 || stored.r>100) return "readback did not observe latest texture update";
+    return NULL;
+}
+
+// A sampled depth twin survives read-only reopens, refreshes after both clears and
+// new geometry, and ignores a color clear while the depth write mask is disabled.
+static const char *sc_depth_twin_cache(void)
+{
+    const char *fs = "#version 330\n"
+        "in vec2 fragTexCoord; out vec4 finalColor; uniform sampler2D texture0;\n"
+        "void main(){float d=texture(texture0,fragTexCoord).r;"
+        "float z=(2.0*0.01*1000.0)/(1000.01-(d*2.0-1.0)*999.99);"
+        "finalColor=vec4(vec3(clamp(z/20.0,0.0,1.0)),1.0); }\n";
+    Shader sh = LoadShaderFromMemory(NULL, fs);
+    RenderTexture2D rt = LoadRenderTexture(W, H);
+    Camera3D cam = cam3d();
+    const int strip = W/5;
+    for (int f=0; f<4; f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        for (int stage=0; stage<5; stage++)
+        {
+            BeginTextureMode(rt);
+            if (stage==0 || stage==2) ClearBackground(BLACK);
+            if (stage==0 || stage==3)
+            {
+                BeginMode3D(cam);
+                DrawCube((Vector3){0,0,2},1.6f,1.6f,1.6f,WHITE);
+                EndMode3D();
+            }
+            if (stage==1)
+            {
+                BeginMode3D(cam); rlDisableDepthMask();
+                DrawCube((Vector3){0,0,3},2.0f,2.0f,2.0f,RED);
+                rlDrawRenderBatchActive(); rlEnableDepthMask(); EndMode3D();
+            }
+            if (stage==4)
+            {
+                rlDisableDepthMask(); ClearBackground(BLACK); rlEnableDepthMask();
+            }
+            EndTextureMode();
+            BeginShaderMode(sh);
+            DrawTexturePro(rt.depth,(Rectangle){0,0,W,H},
+                           (Rectangle){stage*strip,0,strip,H},(Vector2){0,0},0,WHITE);
+            EndShaderMode();
+        }
+        EndDrawing();
+    }
+    Image im = snap();
+    Color c[5]; for(int i=0;i<5;i++) c[i]=at(im,i*strip+strip/2,H/2);
+    UnloadImage(im); UnloadRenderTexture(rt); UnloadShader(sh);
+    if (c[0].r>150) return "initial depth write did not refresh twin";
+    if (abs((int)c[1].r-(int)c[0].r)>2) return "read-only reopen changed sampled depth";
+    if (c[2].r<200) return "depth clear did not refresh twin";
+    if (c[3].r>150) return "new geometry did not refresh twin";
+    if (abs((int)c[4].r-(int)c[3].r)>2) return "masked depth clear changed sampled depth";
     return NULL;
 }
 
@@ -3238,6 +3360,7 @@ static const Scenario SCENARIOS[] = {
     { "batch_alpha",    sc_batch_alpha },
     { "additive3d",     sc_additive3d },
     { "shader_uniform", sc_shader_uniform },
+    { "uniform_repeat", sc_uniform_repeat },
     { "sampler_pair",   sc_sampler_pair },
     { "depth",          sc_depth },
     { "depth_rt",       sc_depth_rt },
@@ -3245,6 +3368,8 @@ static const Scenario SCENARIOS[] = {
     { "msaa_rt",        sc_msaa_rt },
     { "fbo_switch",     sc_fbo_switch },
     { "soft_depth",     sc_soft_depth },
+    { "depth_twin_cache", sc_depth_twin_cache },
+    { "texture_update_order", sc_texture_update_order },
     { "soft_ground",    sc_soft_ground },
     { "winding_rt",     sc_winding_rt },
     { "gas_projection", sc_gas_projection },

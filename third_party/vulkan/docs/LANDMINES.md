@@ -120,15 +120,50 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
   been benchmarking the default shader for its entire existence. Fixed with
   `RLVK_REPO_ROOT` (exported by the script) plus a guard against
   `rlGetShaderIdDefault()`. Any scenario touching a repo asset needs both.
-- **`RLVK_GPU_TRACE` reports 0.000 ms on MoltenVK, and it is the host, not the
-  code.** The queue family advertises `timestampValidBits=64` and
-  `timestampPeriod=1.0 ns`, so the obvious diagnosis — "timestamps unsupported" —
-  is wrong. The harvest now uses `VK_QUERY_RESULT_WAIT_BIT` plus
-  `WITH_AVAILABILITY_BIT` and warns once if a query is unavailable; on this host
-  every query comes back **available with a value of zero**. MoltenVK is
-  advertising counters it does not fill. Treat GPU-side timing as unavailable on
-  macOS and use Instruments / Xcode's Metal frame capture when a real GPU
-  breakdown is needed.
+- **Available GPU timestamps are not an isolated pass-cost measurement.**
+  **Symptom:** historical MoltenVK captures returned available all-zero queries;
+  newer captures can report a nonzero scene span longer than the steady wall
+  frame time, with a zero present span. **Cause:** availability validates completion,
+  not clock granularity. The trace brackets frame start through final flip using
+  three timestamps; an intra-frame `rlvkFlushFrame` submits the start query and
+  resumes recording after host readback, so the interval can include host/idle
+  gaps. Its average also includes startup frames. **Rule:** reject zero spans as
+  cost evidence; do not classify the whole device as unsupported from these values.
+  Compare matching steady windows, and use wall timings and work counters when
+  timestamp isolation/granularity is unverified. This trace has no per-pass GPU
+  measurements; a zero present span is not proof that presenting costs nothing.
+
+- **A recently sampled depth twin can already contain the latest depth.**
+  **Symptom:** read-only scene reopens repeat full-resolution depth-to-buffer-to-R32F
+  copies. **Cause:** recent sampling was the only refill condition, independent of
+  content changes. **Rule:** track depth writes and clears per depth texture, and
+  refresh a recently consumed twin only when dirty or uninitialized. Preserve the
+  valid twin and resting depth layout through read-only passes; clear the dirty
+  flag only after recording the complete copy and sampling transition. Guard with
+  `depth_twin_cache`, `soft_depth`, and `msaa_rt`.
+
+- **Between-frame texture updates are runtime work, not necessarily load-time work.**
+  **Symptom:** a small dynamic texture update drains all previous frames and pays
+  a one-shot queue-idle wait every frame. **Cause:** the synchronous upload path
+  selected whenever no frame was recording, including between `EndDrawing` and
+  `BeginDrawing`. **Rule:** after the first presented frame on a live swapchain,
+  start the next frame lazily and copy bytes into its fence-gated arena. Record
+  sample-to-transfer-to-sample barriers for every consumer stage, preserve earlier
+  draw order, and drain before arena reuse or an oversized fallback. Keep startup
+  and headless uploads synchronous. `texture_update_order` checks earlier draws,
+  subsequent draws, and immediate readback; queue-wait elimination alone does not
+  establish an FPS gain.
+
+- **Uniform generations must represent changed bytes, not repeated setter calls.**
+  **Symptom:** identical material/matrix setters trigger new stage UBO snapshots
+  and descriptor writes on every mesh. **Cause:** each ordinary setter increments
+  the stage generation even when its staged bytes are unchanged. **Rule:** compare
+  each affected stage byte-for-byte before copying and incrementing; retain the
+  existing command-buffer epoch and shader-switch forced uploads. Preserve signed
+  zero and NaN payloads, and audit array strides separately. `uniform_repeat`
+  covers repeated/changed/restored values, shared vertex/fragment uniforms, shader
+  switches, and next-frame reuse. Work-counter reduction does not by itself prove
+  a wall-frame improvement on a GPU-limited scene.
 
 ## Patch Log
 
@@ -136,3 +171,4 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
 |---|---|---|---|---|
 | 2026-08-16 | Codex | Shutdown cleanup | `rlvk_core.inl`, `rlvk_shader.inl`, `tests/rlvk_runtime_test.c` | Ground-truth |
 | 2026-08-18 | Claude (Renderer Agent) | Anti-aliasing | `rlvk_renderpass.inl`, `rlvk_texture.inl`, `rlvk_frame.inl`, `tests/rlvk_visual_test.c msaa_rt`/`perf_msaa_*`, measured captures | Ground-truth |
+| 2026-10-01 | Codex | Texture/depth/uniform caching and timing interpretation | `rlvk_shaderc.inl`, `rlvk_texture.inl`, `rlvk_renderpass.inl`, `rlvk_platform.inl`, `rlvk_pipeline.inl`, visual regression scenarios and fresh runtime observations | Ground-truth |

@@ -74,6 +74,7 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
         cmdBuffer = RLVK.cmdBuffers[frameIndex];
         openFb = RLVK.scope.fbSlot;
         if (openFb) rlDisableFramebuffer();
+        rlvkProfileEndScope();
         vkCmdEndRenderPass(cmdBuffer);
     }
     else
@@ -158,6 +159,7 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
 
         vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, shader->computePipeline);
         vkCmdBindDescriptorSets(cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, RLVK.computePipelineLayout, 0, 1, &ds, 0, NULL);
+        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileDispatches++;
         vkCmdDispatch(cmdBuffer, gx, gy, gz);
 
         // glMemoryBarrier semantics: compute writes visible to every later consumer
@@ -287,6 +289,7 @@ void rlCopyShaderBuffer(unsigned int destId, unsigned int srcId, unsigned int de
         VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
         u32 openFb = RLVK.scope.fbSlot;
         if (openFb) rlDisableFramebuffer();
+        rlvkProfileEndScope();
         vkCmdEndRenderPass(cmdBuffer);
         vkCmdCopyBuffer(cmdBuffer, src->buffer, dst->buffer, 1,
             &(VkBufferCopy){ .srcOffset = srcOffset, .dstOffset = destOffset, .size = count });
@@ -403,6 +406,7 @@ void rlLoadDrawQuad(void)
         rlvkBindShaderSamplers(cmdBuffer, shader, true);
     }
     rlvkFlushSet0(cmdBuffer);
+    rlvkProfileDraw();
     vk.CmdDraw(cmdBuffer, 4, 1, 0, 0);
 }
 

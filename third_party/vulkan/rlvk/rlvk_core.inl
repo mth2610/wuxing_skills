@@ -657,6 +657,7 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                         batchBuffersBound = true;
                     }
                     if (getenv("RLVK_DBG_DRAWSITE")) { fprintf(stderr, "[DRAW] pre mode=%d verts=%d ubo=%d slot=%u\n", drawCall->mode, drawCall->vertexCount, (int)shader->usesUbo, RLVK.State.currentShaderSlot); fflush(stderr); }
+                    rlvkProfileDraw();
                     if ((drawCall->mode == RL_LINES) || (drawCall->mode == RL_TRIANGLES))
                         vk.CmdDraw(cmdBuffer, drawCall->vertexCount, 1, vertexOffset, 0);
                     else // RL_QUADS -> 2 triangles per quad via the index buffer
@@ -794,6 +795,7 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
         u32 openFb = RLVK.scope.fbSlot;
         if (openFb)
             rlDisableFramebuffer();
+        rlvkProfileEndScope();
         vkCmdEndRenderPass(cmdBuffer);
 
         vkCmdCopyBuffer(cmdBuffer, arena->buffer, dst, 1,
@@ -876,7 +878,10 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
                     VK_NULL_HANDLE);
 
     // Đồng bộ bằng vkQueueWaitIdle: gọn và ít tốn object hơn vkWaitForFences
+    bool profile = rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile);
+    f64 profileTime = profile ? rlvkProfileNow() : 0;
     vkQueueWaitIdle(RLVK.graphicsQueue);
+    if (profile) s_profileIdleMs += rlvkProfileNow() - profileTime;
 
     vkDestroyCommandPool(RLVK.device, tempPool, RLVK_ALLOC);
     vkDestroyBuffer(RLVK.device, staging, RLVK_ALLOC);

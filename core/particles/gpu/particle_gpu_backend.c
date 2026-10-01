@@ -1,4 +1,5 @@
 #include "particle_gpu_legacy.h"
+#include "particle_gpu_work_gate.h"
 #include "core/resource_manager.h"
 #include "core/particles/particle_system.h"
 #include "core/wind/wind_system.h"
@@ -229,6 +230,7 @@ static float s_elapsed_time = 0.0f;
 static GpuParticleData s_cpu_pool[MAX_GPU_PARTICLES];
 
 static int s_spawn_cursor = 0;
+static bool s_hasSpawned = false;
 static int s_spawn_start_this_frame = -1;
 static int s_spawn_count_this_frame = 0;
 static int s_filterEmitter = -1, s_filterRenderMode = -1;
@@ -314,6 +316,7 @@ void GpuParticleSystem_Init(void)
     memset(s_cpu_pool, 0, sizeof(s_cpu_pool));
     memset(s_vectorFieldTex, 0, sizeof(s_vectorFieldTex));
     s_spawn_cursor = 0;
+    s_hasSpawned = false;
     s_spawn_start_this_frame = -1;
     s_spawn_count_this_frame = 0;
     s_fieldCount = 0;
@@ -448,6 +451,7 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
 {
     if (!s_initialized)
         return;
+    s_hasSpawned = true;
 
     int idx = s_spawn_cursor % MAX_GPU_PARTICLES;
     s_spawn_cursor++;
@@ -533,13 +537,13 @@ void GpuParticleSystem_SetVectorFieldTexture(int slot, Texture2D tex)
 // ---------------------------------------------------------------------------
 void GpuParticleSystem_Update(float dt)
 {
-    if (!s_initialized)
+    if (!GpuParticleWork_BeginUpdate(s_initialized, s_use_compute,
+                                     s_hasSpawned, dt,
+                                     &s_elapsed_time))
         return;
 
     if (s_use_compute)
     {
-        s_elapsed_time += dt;
-
         // Batch upload cho các hạt mới spawn trong frame này
         if (s_spawn_count_this_frame > 0)
         {
@@ -876,7 +880,7 @@ void GpuParticleSystem_Update(float dt)
 // ---------------------------------------------------------------------------
 void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
 {
-    if (!s_initialized)
+    if (!s_initialized || !s_hasSpawned)
         return;
 
     Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.position, camera.target));

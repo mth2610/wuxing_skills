@@ -444,7 +444,11 @@ static void rlvkBeginFrame(void)
         return;
 
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
+    bool profile = rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile);
+    f64 profileTime = profile ? rlvkProfileNow() : 0;
     vkWaitForFences(RLVK.device, 1, &RLVK.frameFences[frameIndex], VK_TRUE, UINT64_MAX);
+
+    if (profile) s_profileFenceMs += rlvkProfileNow() - profileTime;
 
     // This slot's previous submission has fully executed: destroy its deferred objects
     for (int d = 0; d < RLVK.deadResourceCount[frameIndex]; d++)
@@ -468,6 +472,7 @@ static void rlvkBeginFrame(void)
     RLVK.deadResourceCount[frameIndex] = 0;
 
     u32 imageIndex = 0;
+    if (profile) profileTime = rlvkProfileNow();
     VkResult acq = vk.AcquireNextImageKHR(RLVK.device, RLVK.swapchain, UINT64_MAX,
                                           RLVK.acquireSemaphores[frameIndex], VK_NULL_HANDLE, &imageIndex);
     if (acq == VK_ERROR_OUT_OF_DATE_KHR)
@@ -492,6 +497,7 @@ static void rlvkBeginFrame(void)
         TRACELOG(RL_LOG_WARNING, "RLVK: vkAcquireNextImageKHR failed (VkResult %i), skipping frame", (int)acq);
         return;
     }
+    if (profile) s_profileAcquireMs += rlvkProfileNow() - profileTime;
     RLVK.currentImageIndex = imageIndex;
     RLVK.acquireWaited = false;
 
@@ -580,7 +586,7 @@ static void rlvkBeginFrame(void)
             {
                 s_gpuScene += (f64)(q[1] - q[0]) * s_gpuPeriod * 1e-6; // ms
                 s_gpuPresent += (f64)(q[2] - q[1]) * s_gpuPeriod * 1e-6;
-                if (((++s_gpuFrames) & 511) == 0)
+                if ((++s_gpuFrames % (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile) ? 60 : 512)) == 0)
                     TRACELOG(RL_LOG_WARNING, "VKGPU frames=%d scene=%.3fms present=%.3fms (avg)",
                              s_gpuFrames, s_gpuScene / s_gpuFrames, s_gpuPresent / s_gpuFrames);
             }
@@ -697,7 +703,7 @@ static void rlvkBeginFrame(void)
                                  &(VkClearValue){.color = {.float32 = {
                                                                RLVK.State.clearR / 255.0f, RLVK.State.clearG / 255.0f,
                                                                RLVK.State.clearB / 255.0f, RLVK.State.clearA / 255.0f}}},
-                                 &(VkClearValue){.depthStencil = {1.0f, 0}});
+                                 &(VkClearValue){.depthStencil = {1.0f, 0}}, 0);
     }
     RLVK.scope.fbSlot = 0;
     RLVK.scope.width = RLVK.swapchainExtent.width;
@@ -742,6 +748,7 @@ void rlvkPresent(void)
     u32 imageIndex = RLVK.currentImageIndex;
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
+    rlvkProfileEndScope();
     vkCmdEndRenderPass(cmdBuffer);
     rlvkFinishSwapchainImage(cmdBuffer); // flip-blit the frame into the swapchain
 
@@ -763,6 +770,8 @@ void rlvkPresent(void)
 
     vk.EndCommandBuffer(cmdBuffer);
 
+    bool profile = rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile);
+    f64 profileTime = profile ? rlvkProfileNow() : 0;
     vk.QueueSubmit2(RLVK.graphicsQueue, 1, &(VkSubmitInfo2){
                                                VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
                                                .waitSemaphoreInfoCount = RLVK.acquireWaited ? 0u : 1u, // a mid-frame flush may have consumed it
@@ -776,6 +785,7 @@ void rlvkPresent(void)
                                            },
                     RLVK.frameFences[frameIndex]);
 
+    if (profile) { s_profileSubmitMs += rlvkProfileNow() - profileTime; profileTime = rlvkProfileNow(); }
     VkResult pres = vk.QueuePresentKHR(RLVK.graphicsQueue, &(VkPresentInfoKHR){
                                                                VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
                                                                .waitSemaphoreCount = 1,
@@ -785,6 +795,8 @@ void rlvkPresent(void)
                                                                .pImageIndices = &imageIndex,
                                                            });
 
+    if (profile) s_profilePresentMs += rlvkProfileNow() - profileTime;
+    rlvkProfileReport();
     RLVK.frameActive = false;
     RLVK.frameCounter++;
 

@@ -63,10 +63,17 @@
 - **Cause:** Broad receiver filtering reduces thin-shadow coverage, while nearly unattenuated ambient fill hides the remaining contrast.
 - **Rule:** Inspect the receiver before adding casters. Ground uses a 0.65-texel dynamic PCF radius and 0.70 ambient visibility floor; grass uses a 0.78 ambient floor under captured occlusion. Keep unshadowed lighting unchanged and verify matched-camera images plus frame time.
 
+### Stable interaction texels still trigger texture-upload stalls
+
+- **Symptom:** A stationary meadow pays texture-upload synchronization every frame even after its interaction field stops changing.
+- **Cause:** `MapProp_EndNatureInteraction` uploaded the entire 64×64 RGBA8 field unconditionally; advancing the CPU receiver does not imply its quantized output changed.
+- **Rule:** Continue evaluating interactions and wind each frame, but upload only when a full 16 KB byte comparison detects a change. Invalidate that cache when the texture is created or destroyed; camera-region uniforms must still advance independently of texture contents.
+
 ## Patch Log
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-01 | Codex | Exact interaction texture reuse | `maps/toolkit/map_props_nature.inl` | Ground-truth |
 | 2026-10-01 | Codex | Grass shadow receiver contrast | `maps/toolkit/shaders/ground_splat.fs`, `maps/toolkit/shaders/nature_surface.glsl`, `maps/toolkit/shaders/map_shadow.glsl` | Ground-truth |
 | 2026-10-01 | Codex | Indexed foliage geometry and chunk budget | `maps/toolkit/map_props_mesh_index.inl`, `maps/tests/meadow_mesh_index_test.inl` | Ground-truth |
 | 2026-09-26 | Codex | Vegetation shadow and grass-tip landmines | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_opaque.fs`, `environment/env_shadow.c` | Ground-truth |

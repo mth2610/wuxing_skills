@@ -62,7 +62,10 @@ static void rlvkOneShotEnd(VkCommandPool pool, VkCommandBuffer cmdBuffer)
                                            },
                     VK_NULL_HANDLE); // Không cần Fence
 
+    bool profile = rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile);
+    f64 profileTime = profile ? rlvkProfileNow() : 0;
     vkQueueWaitIdle(RLVK.graphicsQueue);
+    if (profile) s_profileEndIdleMs += rlvkProfileNow() - profileTime;
     vkDestroyCommandPool(RLVK.device, pool, RLVK_ALLOC);
 }
 
@@ -613,6 +616,7 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
         rlvkBindDummyAttribBuffers(cmdBuffer, vertexLayout, shader);
 
     rlvkFlushSet0(cmdBuffer);
+    rlvkProfileDraw();
     if (indexed && a->indexSlot && a->indexSlot < RLVK_MAX_BUFFER_SLOTS)
     {
         vkCmdBindIndexBuffer(cmdBuffer, RLVK.bufferSlots[a->indexSlot].buffer, 0, VK_INDEX_TYPE_UINT16);
@@ -1096,14 +1100,30 @@ void rlUpdateTexture(unsigned int id, int x, int y, int w, int h, int format, co
         uploadFormat = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
     }
 
+    // Runtime updates between EndDrawing and BeginDrawing belong to the next frame's
+    // command stream. Start it lazily rather than draining every previous submission for
+    // a tiny texture patch. Startup/headless uploads keep their synchronous behavior.
+    if (!RLVK.frameActive && RLVK.swapchain && RLVK.frameCounter)
+        rlvkBeginFrame();
+
     // GL runs glTexSubImage2D IN ORDER with prior commands; an immediate host copy would run
     // BEFORE a recording frame's commands. Record an arena-staged buffer-to-image copy instead.
     VkDeviceSize bytes = (VkDeviceSize)rlvkGetPixelDataSize(w, h, uploadFormat);
+    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) { s_profileTextureUploads++; s_profileTextureBytes += bytes; }
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     rlvkBatchBackingBuffer *arena = &RLVK.arena[frameIndex];
     VkDeviceSize stagingOff = (RLVK.arenaOffset[frameIndex] + 15) & ~(VkDeviceSize)15;
+    if (RLVK.frameActive && stagingOff + bytes > arena->sizeBytes)
+    {
+        // The drained frame fence releases this arena and executes all earlier uses of
+        // the texture. Large uploads can then use the existing synchronous fallback.
+        RLVK.arenaWanted[frameIndex] += bytes + 16;
+        rlvkFlushFrame();
+        stagingOff = (RLVK.arenaOffset[frameIndex] + 15) & ~(VkDeviceSize)15;
+    }
     if (RLVK.frameActive && stagingOff + bytes <= arena->sizeBytes)
     {
+        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileTextureAsync++;
         VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
         memcpy((char *)arena->mapped + stagingOff, uploadData, (size_t)bytes);
         RLVK.arenaOffset[frameIndex] = stagingOff + bytes;
@@ -1115,6 +1135,7 @@ void rlUpdateTexture(unsigned int id, int x, int y, int w, int h, int format, co
         if (openFb)
             rlDisableFramebuffer();
 
+        rlvkProfileEndScope();
         vkCmdEndRenderPass(cmdBuffer);
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
                                               VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
@@ -1124,7 +1145,7 @@ void rlUpdateTexture(unsigned int id, int x, int y, int w, int h, int format, co
                                                   // Access mask matches the OLD layout (SHADER_READ_ONLY): prior use is
                                                   // sampling; any attachment write was already made visible by the FBO
                                                   // scope's own transition out of COLOR_ATTACHMENT
-                                                  .srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                                  .srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                                   .srcAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                                                   .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
                                                   .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
@@ -1148,7 +1169,7 @@ void rlUpdateTexture(unsigned int id, int x, int y, int w, int h, int format, co
                                                   VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
                                                   .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
                                                   .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                  .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+                                                  .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
                                                   .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                                                   .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                                   .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -1551,6 +1572,7 @@ unsigned char *rlReadScreenPixels(int width, int height)
     vkBindBufferMemory(RLVK.device, rbBuf, rbMem, 0);
     vkMapMemory(RLVK.device, rbMem, 0, sizeBytes, 0, &rbMapped);
 
+    rlvkProfileEndScope();
     vkCmdEndRenderPass(cmdBuffer);
     rlvkFinishSwapchainImage(cmdBuffer); // flip-blit the frame into the swapchain
 

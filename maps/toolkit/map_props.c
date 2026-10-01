@@ -9,6 +9,7 @@
 #include "core/gfx_quality.h"
 #include "core/camera_context.h"
 #include "core/wind/wind_system.h"
+#include "core/time_fx.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>

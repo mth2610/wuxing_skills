@@ -55,7 +55,7 @@ void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float y
     float lightDirArr[3] = {lightDir.x, lightDir.y, lightDir.z};
     float sunColArr[4] = {sunCol.r / 255.0f, sunCol.g / 255.0f, sunCol.b / 255.0f, sunCol.a / 255.0f};
     float ambColArr[4] = {ambCol.r / 255.0f, ambCol.g / 255.0f, ambCol.b / 255.0f, ambCol.a / 255.0f};
-    float t = (float)GetTime();
+    float t = TimeFX_IsDeterministic() ? TimeFX_Elapsed() : (float)GetTime();
 
     SetShaderValue(cloudShader, locCloudLightDir, lightDirArr, SHADER_UNIFORM_VEC3);
     SetShaderValue(cloudShader, locCloudLightCol, sunColArr, SHADER_UNIFORM_VEC4);

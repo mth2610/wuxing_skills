@@ -23,3 +23,13 @@
 - **Cause:** Quad basis was derived by crossing 3D velocity with `camera.up` or camera view direction in 3D world space. This tilted the billboard normal away from the camera (e.g. facing straight up to the sky), turning the billboard edge-on to horizontal camera views where its projected screen area collapses to zero.
 - **Rule:** Always project 3D particle velocity onto the camera view plane (`dot(vel, right)` and `dot(vel, up)`). Construct the stretched quad using in-plane basis vectors `tangentDir` and `rightDir` so the quad normal remains identically parallel to `viewDir` from every angle.
 
+### A GPU pool's CPU count does not prove it has finished
+- **Symptom:** an empty environment still submits GPU particle work, while an aggressive lifetime gate risks dropping delayed particle events.
+- **Cause:** `GpuParticleSystem_ActiveCount()` reports the spawn high-water mark on compute; CPU lifetime tracking also owns collision and arrival events independently of GPU simulation.
+- **Rule:** skip work only for a pool known never to have spawned since Init, preserve its compute clock, and keep all post-spawn processing until a stronger completion contract exists (`particle_gpu_idle_test.c` guards initial-empty admission).
+
+## Patch Log
+
+| Date | Editor (human/AI) | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-10-01 | AI | GPU pool completion gate | particle_gpu_backend.c, particle_gpu_work_gate.h, particle_gpu_idle_test.c | Ground-truth |

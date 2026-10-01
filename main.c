@@ -274,6 +274,7 @@ int main(int argc, char **argv) {
   bool captureEyeSet = false;
   bool captureExportFailed = false;
   bool captureNeutralSmoke = false;
+  bool benchmarkVisible = false;
   int         netHostPort     = 0;      // --host [port]
   const char *netJoinIp       = NULL;   // --join <ip> [port]
   int         netJoinPort     = NET_DEFAULT_PORT;
@@ -294,6 +295,8 @@ int main(int argc, char **argv) {
           { renderVFXIndex = atoi(argv[++i]); renderVFXMode = true; }
       else if (strcmp(argv[i], "--render-neutral-smoke") == 0)
           { captureNeutralSmoke = true; renderVFXMode = true; }
+      else if (strcmp(argv[i], "--benchmark-visible") == 0)
+          benchmarkVisible = true;
       else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc)
           renderVFXWarmup = atoi(argv[++i]);
       else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc)
@@ -312,6 +315,10 @@ int main(int argc, char **argv) {
       }
   }
 
+  if (benchmarkVisible && !renderVFXMode) {
+      fprintf(stderr, "--benchmark-visible requires --render-vfx or --render-neutral-smoke.\n");
+      return 2;
+  }
   if (renderVFXMode && (renderVFXWarmup < 1 ||
       (captureEyeSet && (Vector3Distance(captureEye,
           Vector3Add(captureOrigin, (Vector3){0, 0.2f, 0})) < 1.0f ||
@@ -325,7 +332,7 @@ int main(int argc, char **argv) {
   bool headlessMode     = autoTestMode || visualVerifyMode || renderVFXMode;
 
   unsigned int configFlags = 0;
-  if (headlessMode) {
+  if (headlessMode && !benchmarkVisible) {
       // Off-screen SetWindowPosition was tried first, but produced the exact
       // same GetWorldToScreen() output as FLAG_WINDOW_HIDDEN below (proving
       // the odd coordinates aren't a window-position artifact) — kept
@@ -689,11 +696,20 @@ int main(int argc, char **argv) {
           customMapName ? customMapName : (getenv("WUXING_MAP") ? getenv("WUXING_MAP") : "default"),
           captureOrigin.x, captureOrigin.y, captureOrigin.z, renderVFXWarmup,
           getenv("WUXING_TUNING") ? getenv("WUXING_TUNING") : "tuning.cfg");
+      TraceLog(LOG_INFO, "CAPTURE: visible=%d render=%dx%d quality=%d sim_dt=%.8f seed=%u",
+          benchmarkVisible, GetRenderWidth(), GetRenderHeight(), GfxQuality_Get(),
+          1.0 / 60.0, 20260814u);
   }
   while (autoTestMode     ? !AutoTest_IsFinished()      :
          visualVerifyMode ? !VisualVerify_IsFinished()  :
          renderVFXMode    ? (renderVFXFrame <= renderVFXWarmup) :
          !WindowShouldClose()) {
+    /* Visible captures retain deterministic simulation and RNG, but expose a
+     * real surface to the driver. These wall-clock spans include any implicit
+     * waits; they are submission costs, not unsupported GPU timestamps. */
+    double profileTime[12] = {0};
+    double updateTime[9] = {0};
+    if (benchmarkVisible) profileTime[0] = GetTime();
     // The headless paths pin dt so a capture is reproducible. That pin only ever
     // covered THIS variable, while VFX/composition code re-read GetFrameTime()
     // on its own — free-running here, since headless also skips SetTargetFPS —
@@ -724,49 +740,51 @@ int main(int argc, char **argv) {
     // -------------------------------------------------------------------------
     // TIME CONTROL FOR DEBUGGING / SCREENSHOTTING
     // -------------------------------------------------------------------------
-    if (IsKeyPressed(KEY_V)) g_gamePaused = !g_gamePaused;
-    if (IsKeyPressed(KEY_B)) g_stepNextFrame = true;
-    if (IsKeyPressed(KEY_M)) g_slowMotion = !g_slowMotion;
-    if (IsKeyPressed(KEY_K)) {
-        int nextMap = (MapManager_GetActiveIndex() + 1) % MapManager_GetCount();
-        MapManager_SetActiveIndex(nextMap);
-        // The VFX tester normally pivots at DEFAULT_ARENA's (6, 4.4). After
-        // cycling to a large world that point can contain only ground texture,
-        // with the actual vegetation receivers tens of metres away. Move the
-        // fixture to the first authored forest zone so surface-reactive VFX are
-        // evaluated against real grass/flower geometry on the selected map.
-        if (currentScreen == SCREEN_VFX_TESTER) {
-            int zoneCount = Map_GetZoneCount();
-            for (int zoneIndex = 0; zoneIndex < zoneCount; zoneIndex++) {
-                const MapZone *zone = Map_GetZone(zoneIndex);
-                if (zone == NULL || zone->type != NAT_FOREST)
-                    continue;
-                player.position = zone->center;
-                player.position.y = MapManager_GetGroundHeightAt(
-                    player.position.x, player.position.z);
-                Entity_SetPosition(player.agentId, player.position);
-                break;
+    if (!renderVFXMode) {
+        if (IsKeyPressed(KEY_V)) g_gamePaused = !g_gamePaused;
+        if (IsKeyPressed(KEY_B)) g_stepNextFrame = true;
+        if (IsKeyPressed(KEY_M)) g_slowMotion = !g_slowMotion;
+        if (IsKeyPressed(KEY_K)) {
+            int nextMap = (MapManager_GetActiveIndex() + 1) % MapManager_GetCount();
+            MapManager_SetActiveIndex(nextMap);
+            // The VFX tester normally pivots at DEFAULT_ARENA's (6, 4.4). After
+            // cycling to a large world that point can contain only ground texture,
+            // with the actual vegetation receivers tens of metres away. Move the
+            // fixture to the first authored forest zone so surface-reactive VFX are
+            // evaluated against real grass/flower geometry on the selected map.
+            if (currentScreen == SCREEN_VFX_TESTER) {
+                int zoneCount = Map_GetZoneCount();
+                for (int zoneIndex = 0; zoneIndex < zoneCount; zoneIndex++) {
+                    const MapZone *zone = Map_GetZone(zoneIndex);
+                    if (zone == NULL || zone->type != NAT_FOREST)
+                        continue;
+                    player.position = zone->center;
+                    player.position.y = MapManager_GetGroundHeightAt(
+                        player.position.x, player.position.z);
+                    Entity_SetPosition(player.agentId, player.position);
+                    break;
+                }
             }
         }
-    }
-    if (IsKeyPressed(KEY_L)) {
-        GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4)); // Real Shading — cycle UNLIT..HIGH
-    }
-    if (IsKeyPressed(KEY_J)) {
-        EnvShadow_SetEnabled(!EnvShadow_IsEnabled()); // Real Shading P6 — toggle real shadow map
-    }
-    // Same two toggles by TOUCH, for Android (no keyboard). Only while the labels are actually
-    // drawn (they are hidden on SCREEN_GAME), so gameplay taps are never swallowed.
-    if (currentScreen != SCREEN_GAME && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-        Vector2 tap = GetMousePosition();
-        if (CheckCollisionPointRec(tap, DebugToggleRect(1))) {
-            GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4));
-        } else if (CheckCollisionPointRec(tap, DebugToggleRect(2))) {
-            EnvShadow_SetEnabled(!EnvShadow_IsEnabled());
+        if (IsKeyPressed(KEY_L)) {
+            GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4)); // Real Shading — cycle UNLIT..HIGH
         }
-    }
-    if (IsKeyPressed(KEY_H) && EnvShadow_IsEnabled()) {
-        EnvShadow_DebugDump(player.position); // P6 diag — numeric shadow-map readback (see notes)
+        if (IsKeyPressed(KEY_J)) {
+            EnvShadow_SetEnabled(!EnvShadow_IsEnabled()); // Real Shading P6 — toggle real shadow map
+        }
+        // Same two toggles by TOUCH, for Android (no keyboard). Only while the labels are actually
+        // drawn (they are hidden on SCREEN_GAME), so gameplay taps are never swallowed.
+        if (currentScreen != SCREEN_GAME && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            Vector2 tap = GetMousePosition();
+            if (CheckCollisionPointRec(tap, DebugToggleRect(1))) {
+                GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4));
+            } else if (CheckCollisionPointRec(tap, DebugToggleRect(2))) {
+                EnvShadow_SetEnabled(!EnvShadow_IsEnabled());
+            }
+        }
+        if (IsKeyPressed(KEY_H) && EnvShadow_IsEnabled()) {
+            EnvShadow_DebugDump(player.position); // P6 diag — numeric shadow-map readback (see notes)
+        }
     }
 
     if (g_gamePaused) {
@@ -780,7 +798,7 @@ int main(int argc, char **argv) {
         dt *= 0.1f; // Slow motion 10% speed
     }
     
-    SkillDebugger_CheckInput();
+    if (!renderVFXMode) SkillDebugger_CheckInput();
     if (g_isDebuggerCapturing) {
         dt = 0.0f; // Freeze time during automated screenshot capture
     }
@@ -1043,7 +1061,7 @@ int main(int argc, char **argv) {
             vfxCamDist = 13.0f;
         }
 
-        if (IsKeyPressed(KEY_N)) {
+        if (!renderVFXMode && IsKeyPressed(KEY_N)) {
             s_vfxDarkMode = !s_vfxDarkMode;
             if (s_vfxDarkMode) {
                 if (!s_vfxLightingSaved) {
@@ -1065,7 +1083,7 @@ int main(int argc, char **argv) {
         bool inWater = MapManager_GetWaterInfoAt(player.position.x, player.position.z, &waterSurfaceY, &waterDepth);
 
         // Nút khoảng trắng (Spacebar) để nhảy trong màn hình VFX Tester
-        if (IsKeyPressed(KEY_SPACE) && !s_vfxPlayerJumping && player.position.y <= groundY + 0.05f) {
+        if (!renderVFXMode && IsKeyPressed(KEY_SPACE) && !s_vfxPlayerJumping && player.position.y <= groundY + 0.05f) {
             s_vfxPlayerVelY = 5.8f;
             s_vfxPlayerJumping = true;
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_KICK, 0.40f);
@@ -1076,10 +1094,10 @@ int main(int argc, char **argv) {
 
         float inputX = 0.0f;
         float inputZ = 0.0f;
-        if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP)) inputZ -= 1.0f;
-        if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN)) inputZ += 1.0f;
-        if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) inputX -= 1.0f;
-        if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) inputX += 1.0f;
+        if (!renderVFXMode && (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP))) inputZ -= 1.0f;
+        if (!renderVFXMode && (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN))) inputZ += 1.0f;
+        if (!renderVFXMode && (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT))) inputX -= 1.0f;
+        if (!renderVFXMode && (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT))) inputX += 1.0f;
 
         bool moved = (inputX != 0.0f || inputZ != 0.0f);
         Vector3 moveDir = {0};
@@ -1187,7 +1205,7 @@ int main(int argc, char **argv) {
         }
         MapManager_SetWaterInteractor(player.position, playerVel, 0.45f);
 
-        if (IsKeyPressed(KEY_Z)) {
+        if (!renderVFXMode && IsKeyPressed(KEY_Z)) {
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.45f);
             Vector3 forward = { sinf(s_vfxPlayerYaw), 0.0f, cosf(s_vfxPlayerYaw) };
             Vector3 fistPos = Vector3Add(player.position, Vector3Scale(forward, 0.75f));
@@ -1195,7 +1213,7 @@ int main(int argc, char **argv) {
             Wind_SpawnRadialBlast(fistPos, 1.4f, 4.0f, 0.25f);
             Wind_SpawnGust(fistPos, forward, 1.2f, 3.0f, 0.20f);
         }
-        if (IsKeyPressed(KEY_C)) {
+        if (!renderVFXMode && IsKeyPressed(KEY_C)) {
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_KICK, 0.50f);
             Vector3 forward = { sinf(s_vfxPlayerYaw), 0.0f, cosf(s_vfxPlayerYaw) };
             Vector3 footPos = Vector3Add(player.position, Vector3Scale(forward, 0.9f));
@@ -1203,21 +1221,22 @@ int main(int argc, char **argv) {
             Wind_SpawnRadialBlast(footPos, 1.6f, 4.5f, 0.30f);
             Wind_SpawnGust(footPos, forward, 1.5f, 3.5f, 0.25f);
         }
-        if (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1)) {
+        if (!renderVFXMode && (IsKeyPressed(KEY_ONE) || IsKeyPressed(KEY_KP_1))) {
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.40f);
         }
-        if (IsKeyPressed(KEY_FOUR) || IsKeyPressed(KEY_KP_4)) {
+        if (!renderVFXMode && (IsKeyPressed(KEY_FOUR) || IsKeyPressed(KEY_KP_4))) {
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.55f);
         }
 
         CharacterModel_Update(&player.anim, dt, moved);
 
-        if (IsKeyDown(KEY_Q)) vfxCameraAngle -= 2.5f * dt;
-        if (IsKeyDown(KEY_E)) vfxCameraAngle += 2.5f * dt;
-
-        vfxCamDist -= GetMouseWheelMove() * 0.5f;
-        if (vfxCamDist < 2.0f) vfxCamDist = 2.0f;
-        if (vfxCamDist > 30.0f) vfxCamDist = 30.0f;
+        if (!renderVFXMode) {
+            if (IsKeyDown(KEY_Q)) vfxCameraAngle -= 2.5f * dt;
+            if (IsKeyDown(KEY_E)) vfxCameraAngle += 2.5f * dt;
+            vfxCamDist -= GetMouseWheelMove() * 0.5f;
+            if (vfxCamDist < 2.0f) vfxCamDist = 2.0f;
+            if (vfxCamDist > 30.0f) vfxCamDist = 30.0f;
+        }
 
         camera.target = (Vector3){ player.position.x, player.position.y + 0.2f, player.position.z };
         camera.position = (Vector3){
@@ -1434,18 +1453,25 @@ int main(int argc, char **argv) {
 
     // Map switches may originate in main.c or inside GameScreen_Update. Keep a
     // local terrain tile around gameplay without coupling MapManager to wind.
+    if (benchmarkVisible) updateTime[0] = GetTime();
     WindRefreshTerrainGrid(player.position, false);
 
+    if (benchmarkVisible) updateTime[1] = GetTime();
     Tuning_Update();
+    if (benchmarkVisible) updateTime[2] = GetTime();
     UpdateSkillManager(dt, enemy.position, 0.35f);
     DamageVolume_Update(dt);
+    if (benchmarkVisible) updateTime[3] = GetTime();
     VFX_Compose_Update(dt);
     EmitterSystem_Update(dt);
     StatusVFX_Update(dt);
     Afterimage_Update(dt);
+    if (benchmarkVisible) updateTime[4] = GetTime();
     ParticleManager_Update(dt);
     FluidImpact_Update(dt);
+    if (benchmarkVisible) updateTime[5] = GetTime();
     GasSystem_Update(dt);
+    if (benchmarkVisible) updateTime[6] = GetTime();
     UpdateTrailSystem(dt);
     VFXLight_Update(dt);
     // Đợt E1a — decay any live radial burst and project its focal point.
@@ -1478,13 +1504,17 @@ int main(int argc, char **argv) {
         Environment_SetAmbientColor((Color){205, 214, 230, 255});
     }
 
+    if (benchmarkVisible) updateTime[7] = GetTime();
     MapManager_Update(dt);
     Wind_Update(dt);               // Ghost of Tsushima: Tick Vorticles decay
     Atmosphere_Update(dt, camera); // G3 — drift dust motes
 
+    if (benchmarkVisible) updateTime[8] = GetTime();
     SkillDebugger_PreRender();
 
+    if (benchmarkVisible) profileTime[1] = GetTime();
     BeginDrawing();
+    if (benchmarkVisible) profileTime[2] = GetTime();
 
     // Real Shading P6 — depth-only shadow caster pre-pass, off by default.
     // Re-invokes the same (pure, no-side-effect) draw functions used for the
@@ -1527,6 +1557,7 @@ int main(int argc, char **argv) {
         }
         EnvShadow_EndCapture();
     }
+    if (benchmarkVisible) profileTime[3] = GetTime();
 
     // ── BRIGHT-BACKGROUND HARNESS ────────────────────────────────────────────
     //
@@ -1612,7 +1643,9 @@ int main(int argc, char **argv) {
        BeginTextureMode (nothing else renders into a target under rlvk) and
        EndTextureMode resets the camera — see SceneTargets_CaptureBackgroundLuma. */
     MyEndMode3D();
+    if (benchmarkVisible) profileTime[4] = GetTime();
     SceneTargets_CaptureBackgroundLuma();
+    if (benchmarkVisible) profileTime[5] = GetTime();
     MyBeginMode3D(camera);
 
     VFX_Compose_Draw3D(camera);
@@ -1667,7 +1700,9 @@ int main(int argc, char **argv) {
     VFXTest_DrawRefraction(camera);
     MyEndMode3D();
     CompositeScreenSpaceVFX(camera);
+    if (benchmarkVisible) profileTime[6] = GetTime();
     VolumetricFog_Render(camera);
+    if (benchmarkVisible) profileTime[7] = GetTime();
 
     /* THE DISTORT COPY IS SKIPPED WHEN NOTHING WOULD DISTORT. With no live
      * shockwave source, ScreenDistort_Draw is an identity copy of the scene
@@ -1725,6 +1760,7 @@ int main(int argc, char **argv) {
        the composite that consumes it. Metered from the pre-VFX background, so a
        spell cannot drive the exposure applied to itself. */
     SceneTargets_UpdateExposure(dt, 0.18f, 0.10f, 2.5f, 0.8f);
+    if (benchmarkVisible) profileTime[8] = GetTime();
 
     PostFXConfig scenePostFX = postFXConfig;
     const char *activeMapName = MapManager_GetName(MapManager_GetActiveIndex());
@@ -1734,6 +1770,7 @@ int main(int argc, char **argv) {
         scenePostFX.lutEnabled = true;
     }
     PostFX_Draw(&scenePostFX);
+    if (benchmarkVisible) profileTime[9] = GetTime();
     /* Chứng: CÙNG dải màu đó, tính bằng CPU qua đường cong ACES per-channel, vẽ
      * SAU post nên không đi qua gì cả. Chênh lệch giữa hai dải chính là phần
      * đường ống thêm vào. */
@@ -1843,7 +1880,27 @@ int main(int argc, char **argv) {
 
     GradientProbe_Readback();
 
+    if (benchmarkVisible) profileTime[10] = GetTime();
     EndDrawing();
+    if (benchmarkVisible) {
+        profileTime[11] = GetTime();
+        if (renderVFXFrame >= 60) {
+            TraceLog(LOG_INFO, "UPDATE_PROFILE: frame=%d screen=%.3f terrain=%.3f tuning=%.3f skills=%.3f compose=%.3f particles=%.3f gas=%.3f other=%.3f map=%.3f",
+                renderVFXFrame, (updateTime[0]-profileTime[0])*1000.0,
+                (updateTime[1]-updateTime[0])*1000.0, (updateTime[2]-updateTime[1])*1000.0,
+                (updateTime[3]-updateTime[2])*1000.0, (updateTime[4]-updateTime[3])*1000.0,
+                (updateTime[5]-updateTime[4])*1000.0, (updateTime[6]-updateTime[5])*1000.0,
+                (updateTime[7]-updateTime[6])*1000.0, (updateTime[8]-updateTime[7])*1000.0);
+            TraceLog(LOG_INFO, "FRAME_PROFILE: frame=%d total=%.3f update=%.3f acquire=%.3f shadow=%.3f opaque=%.3f luma=%.3f transparent=%.3f fog=%.3f exposure=%.3f post=%.3f ui=%.3f present=%.3f",
+                renderVFXFrame, (profileTime[11]-profileTime[0])*1000.0,
+                (profileTime[1]-profileTime[0])*1000.0, (profileTime[2]-profileTime[1])*1000.0,
+                (profileTime[3]-profileTime[2])*1000.0, (profileTime[4]-profileTime[3])*1000.0,
+                (profileTime[5]-profileTime[4])*1000.0, (profileTime[6]-profileTime[5])*1000.0,
+                (profileTime[7]-profileTime[6])*1000.0, (profileTime[8]-profileTime[7])*1000.0,
+                (profileTime[9]-profileTime[8])*1000.0, (profileTime[10]-profileTime[9])*1000.0,
+                (profileTime[11]-profileTime[10])*1000.0);
+        }
+    }
 
     if (autoTestMode)     AutoTest_RunFrame();
     if (visualVerifyMode) VisualVerify_RunFrame(g_totalElapsed);
@@ -1876,6 +1933,8 @@ int main(int argc, char **argv) {
                 camera.position.x, camera.position.y, camera.position.z,
                 camera.target.x, camera.target.y, camera.target.z,
                 EnvShadow_IsEnabled(), renderVFXOut);
+            TraceLog(LOG_INFO, "CAPTURE: fovy=%.3f projection=%d simulation_frame=%d elapsed=%.6f",
+                camera.fovy, camera.projection, renderVFXFrame, TimeFX_Elapsed());
             if (!DirectoryExists("autotest_output")) MakeDirectory("autotest_output");
             Image img = LoadImageFromScreen();
             captureExportFailed = !ExportImage(img, renderVFXOut);

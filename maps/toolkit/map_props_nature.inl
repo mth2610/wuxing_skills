@@ -75,6 +75,8 @@ static const float kNatureWindBendPerMps = 0.035f;
 static Texture2D s_natureInteractionTexture = {0};
 static Color s_natureInteractionPixels[NATURE_INTERACTION_PIXEL_COUNT];
 static Color s_natureInteractionScratch[NATURE_INTERACTION_PIXEL_COUNT];
+static Color s_natureInteractionUploaded[NATURE_INTERACTION_PIXEL_COUNT];
+static bool s_natureInteractionUploadValid = false;
 static Color s_natureWindPixels[NATURE_INTERACTION_PIXEL_COUNT];
 static Vector2 s_natureInteractionCenter = {0};
 static bool s_natureInteractionReady = false;
@@ -345,6 +347,7 @@ static void Nature_InitInteraction(void)
 {
     if (s_natureInteractionReady)
         return;
+    s_natureInteractionUploadValid = false;
     Color empty = Nature_EmptyInteractionPixel();
     for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
         s_natureInteractionPixels[i] = empty;
@@ -638,7 +641,16 @@ void MapProp_EndNatureInteraction(void)
             interactionBend.y + windBend.y,
         });
     }
-    UpdateTexture(s_natureInteractionTexture, s_natureInteractionScratch);
+    // Reuse only byte-identical quantized texels. Wind/interaction evaluation
+    // and shader region uniforms still advance normally on every frame.
+    if (!s_natureInteractionUploadValid ||
+        memcmp(s_natureInteractionUploaded, s_natureInteractionScratch,
+               sizeof(s_natureInteractionScratch)) != 0) {
+        UpdateTexture(s_natureInteractionTexture, s_natureInteractionScratch);
+        memcpy(s_natureInteractionUploaded, s_natureInteractionScratch,
+               sizeof(s_natureInteractionScratch));
+        s_natureInteractionUploadValid = true;
+    }
     s_natureInteractionOpen = false;
 }
 
@@ -653,6 +665,7 @@ void MapProp_ClearNatureInteraction(void)
     if (s_natureInteractionReady)
         UnloadTexture(s_natureInteractionTexture);
     s_natureInteractionTexture = (Texture2D){0};
+    s_natureInteractionUploadValid = false;
     if (s_natureMacroTexture.id != 0)
         UnloadTexture(s_natureMacroTexture);
     s_natureMacroTexture = (Texture2D){0};

@@ -1074,15 +1074,25 @@ static void rlvkShaderWriteUniform(rlvkShaderSlot *shader, int loc, const void *
     if (!shader->usesUbo || loc < 0 || loc >= shader->uniformCount || !data)
         return;
     rlvkUniform *u = &shader->uniforms[loc];
+    // Stage generations represent byte changes, not API calls. Epoch/shader changes still
+    // force the first snapshot; exact comparisons retain NaN payloads and signed zero.
     if (u->vsOffset >= 0 && shader->vsStage && (u32)u->vsOffset + bytes <= shader->vsBlockSize)
     {
-        memcpy(shader->vsStage + u->vsOffset, data, bytes);
-        shader->vsWriteGen++;
+        if (memcmp(shader->vsStage + u->vsOffset, data, bytes))
+        {
+            memcpy(shader->vsStage + u->vsOffset, data, bytes);
+            shader->vsWriteGen++;
+        }
+        else if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileUniformSkipped++;
     }
     if (u->fsOffset >= 0 && shader->fsStage && (u32)u->fsOffset + bytes <= shader->fsBlockSize)
     {
-        memcpy(shader->fsStage + u->fsOffset, data, bytes);
-        shader->fsWriteGen++;
+        if (memcmp(shader->fsStage + u->fsOffset, data, bytes))
+        {
+            memcpy(shader->fsStage + u->fsOffset, data, bytes);
+            shader->fsWriteGen++;
+        }
+        else if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileUniformSkipped++;
     }
 }
 
@@ -1140,6 +1150,7 @@ static u32 rlvkAppendUboWrites(rlvkShaderSlot *shader, VkDescriptorBufferInfo *b
             RLVK.arenaWanted[frameIndex] += size + 256; // demand grows even when the push is skipped
             return writeCount;
         }
+        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) { s_profileUboUploads++; s_profileUboBytes += size; }
         memcpy((char *)arena->mapped + off, src, size);
         RLVK.arenaOffset[frameIndex] = off + size;
         RLVK.arenaWanted[frameIndex] += size + 256;
@@ -1170,6 +1181,7 @@ static void rlvkBindShaderUbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader
     u32 writeCount = rlvkAppendUboWrites(shader, bufferInfos, writes);
     if (writeCount == 0)
         return;
+    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileDescriptors += writeCount;
     vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, writeCount, writes);
     shader->uboPushedEpoch = RLVK.State.cbEpoch;
     RLVK.lastUboShader = shader;
@@ -1210,7 +1222,10 @@ static void rlvkBindShaderSsbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shade
         RLVK.pushedSsbo[i] = slot;
     }
     if (writeCount)
+    {
+        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileDescriptors += writeCount;
         vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, writeCount, writes);
+    }
 }
 
 // Push the shader's sampler bindings: rlSetUniformSampler's explicit texture wins, else the GL

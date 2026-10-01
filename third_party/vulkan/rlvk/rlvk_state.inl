@@ -64,6 +64,7 @@ typedef struct rlvkTextureSlot {
     // window is re-armed by every bind, so a continuous consumer never lapses. Layout bookkeeping
     // is identical whether or not the bounce runs, which is what makes this safe (§7.27/§7.29).
     u64                 sampleWantedFrame;
+    bool                sampleDirty;          // depth was written since the sample twin was last refreshed
     VkFilter            minFilter, magFilter;  // Sampler filters (rlTextureParameters)
     VkSamplerMipmapMode mipMode;               // Sampler mipmap mode
     VkSamplerAddressMode wrapS, wrapT;         // Sampler wrap modes (GL default: repeat)
@@ -548,9 +549,104 @@ static int rlvkDebugFlag(const char *name, int *cache)
 static int s_dbgSamplers = -1, s_dbgFbo = -1, s_dbgFlush = -1, s_dbgVao = -1, s_dbgPipe = -1, s_dbgVtx = -1;
 static ill s_memLocalBytes, s_memHostBytes; static int s_memAllocCount, s_vboCreateCount, s_vboReuseCount, s_dbgMem = -1;   // RLVK_MEM_REPORT accounting
 
+// Opt-in CPU recording/counter profile. These are host spans, never GPU pass timings.
+static int s_dbgProfile = -1;
+typedef struct rlvkProfileScope {
+    u64 opens, colorResolves, depthResolves, draws, twinPixels;
+    u32 width, height, samples;
+    f64 recordMs;
+} rlvkProfileScope;
+static rlvkProfileScope s_profileScopes[RLVK_MAX_FRAMEBUFFER_SLOTS];
+static u64 s_profileUboUploads, s_profileUboBytes, s_profileDispatches, s_profileDescriptors;
+static u64 s_profileTextureUploads, s_profileTextureBytes, s_profileTextureAsync;
+static u64 s_profileUniformSkipped;
+static u32 s_profileFrames, s_profileScope;
+static f64 s_profileScopeStart, s_profileFenceMs, s_profileAcquireMs, s_profileSubmitMs, s_profilePresentMs, s_profileIdleMs, s_profileEndIdleMs, s_profileFlushWaitMs;
+static bool s_profileScopeActive;
+static f64 rlvkProfileNow(void)
+{
+#if defined(__APPLE__)
+    static mach_timebase_info_data_t tb;
+    if (!tb.denom) mach_timebase_info(&tb);
+    return (f64)mach_absolute_time() * (f64)tb.numer / (f64)tb.denom * 1e-6;
+#elif !defined(_WIN32)
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (f64)ts.tv_sec * 1000.0 + (f64)ts.tv_nsec * 1e-6;
+#else
+    // Windows fallback is process CPU time; wall synchronization spans are unavailable.
+    return (f64)clock() * 1000.0 / CLOCKS_PER_SEC;
+#endif
+}
+static VkResult rlvkProfileWaitFences(VkDevice device, u32 count, const VkFence *fences, VkBool32 all, u64 timeout)
+{
+    bool profile = rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile);
+    f64 t = profile ? rlvkProfileNow() : 0;
+    VkResult result = vkWaitForFences(device, count, fences, all, timeout);
+    if (profile) s_profileFlushWaitMs += rlvkProfileNow() - t;
+    return result;
+}
+static void rlvkProfileEndScope(void)
+{
+    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile) && s_profileScopeActive)
+    {
+        s_profileScopes[s_profileScope].recordMs += rlvkProfileNow() - s_profileScopeStart;
+        s_profileScopeActive = false;
+    }
+}
+static void rlvkProfileBeginScope(u32 slot, const rlvkRenderPassKey *key, u32 width, u32 height)
+{
+    if (!rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) return;
+    rlvkProfileEndScope();
+    if (slot >= RLVK_MAX_FRAMEBUFFER_SLOTS) return;
+    rlvkProfileScope *p = &s_profileScopes[slot];
+    p->opens++; p->colorResolves += key->hasResolve; p->depthResolves += key->hasDepthResolve;
+    p->width = width; p->height = height; p->samples = key->samples;
+    s_profileScope = slot; s_profileScopeStart = rlvkProfileNow(); s_profileScopeActive = true;
+}
+// Every draw site calls this, including draws outside profiling. A read-only depth test
+// cannot change the sampled depth twin; preserving it avoids redundant aspect copies.
+static void rlvkRecordDepthWrite(void)
+{
+    u32 id = RLVK.scope.fbSlot;
+    if (id && id < RLVK_MAX_FRAMEBUFFER_SLOTS && RLVK.fbSlots[id].hasDepth)
+        RLVK.textureSlots[RLVK.fbSlots[id].depthTexture].sampleDirty = true;
+}
+static void rlvkProfileDraw(void)
+{
+    if (RLVK.State.depthTest && RLVK.State.depthWrite) rlvkRecordDepthWrite();
+    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile) && s_profileScopeActive)
+        s_profileScopes[s_profileScope].draws++;
+}
+static void rlvkProfileReport(void)
+{
+    if (!rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile) || ++s_profileFrames < 60) return;
+    f64 n = s_profileFrames;
+    (void)n;
+    // Raylib's trace buffer is bounded: keep each independently useful row short.
+    TRACELOG(RL_LOG_WARNING, "VKPROFILE frames=%u host_fence=%.3fms acquire=%.3fms submit=%.3fms present=%.3fms oneshot_idle=%.3fms oneshot_end_idle=%.3fms flush_fence=%.3fms",
+             s_profileFrames, s_profileFenceMs/n, s_profileAcquireMs/n, s_profileSubmitMs/n, s_profilePresentMs/n, s_profileIdleMs/n, s_profileEndIdleMs/n, s_profileFlushWaitMs/n);
+    TRACELOG(RL_LOG_WARNING, "VKPROFILE frames=%u ubo_uploads=%.1f ubo_bytes=%.1f descriptors=%.1f dispatches=%.1f uniform_stages_skipped=%.1f",
+             s_profileFrames, s_profileUboUploads/n, s_profileUboBytes/n, s_profileDescriptors/n, s_profileDispatches/n, s_profileUniformSkipped/n);
+    TRACELOG(RL_LOG_WARNING, "VKPROFILE frames=%u tex_uploads=%.1f tex_bytes=%.1f tex_async=%.1f",
+             s_profileFrames, s_profileTextureUploads/n, s_profileTextureBytes/n, s_profileTextureAsync/n);
+    for (u32 i = 0; i < RLVK_MAX_FRAMEBUFFER_SLOTS; i++)
+    {
+        rlvkProfileScope *p = &s_profileScopes[i];
+        if (!p->opens) continue;
+        TRACELOG(RL_LOG_WARNING, "VKPROFILE fb=%u %ux%u samples=%u opens=%.1f color_resolves=%.1f depth_resolves=%.1f draws=%.1f twin_pixels=%.1f host_record=%.3fms",
+                 i, p->width, p->height, p->samples, p->opens/n, p->colorResolves/n, p->depthResolves/n, p->draws/n, p->twinPixels/n, p->recordMs/n);
+    }
+    memset(s_profileScopes, 0, sizeof(s_profileScopes));
+    s_profileUboUploads = s_profileUboBytes = s_profileDispatches = s_profileDescriptors = 0;
+    s_profileTextureUploads = s_profileTextureBytes = s_profileTextureAsync = s_profileUniformSkipped = 0;
+    s_profileFenceMs = s_profileAcquireMs = s_profileSubmitMs = s_profilePresentMs = s_profileIdleMs = s_profileEndIdleMs = s_profileFlushWaitMs = 0;
+    s_profileFrames = 0;
+}
+
 // GPU timestamp trace (RLVK_GPU_TRACE env): three timestamps per frame measure the GPU span
 // of scene rendering vs the present chain (resolve/flip blit + layout transitions), read back
-// one frame ring behind. Averages print every 512 frames.
+// one frame ring behind. Cumulative elapsed spans print every 512 frames (60 with RLVK_PROFILE).
 static VkQueryPool s_gpuPool = VK_NULL_HANDLE;
 static int         s_dbgGpu = -1;
 static f32         s_gpuPeriod;      // nanoseconds per timestamp tick

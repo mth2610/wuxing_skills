@@ -272,7 +272,7 @@ static void rlvkEvictFramebuffersForView(VkImageView view)
 // clearColor/clearDepth are consumed only by CLEAR load ops of the key.
 static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRenderPassKey *key,
                                      const VkImageView *views, u32 viewCount, u32 width, u32 height,
-                                     const VkClearValue *clearColor, const VkClearValue *clearDepth)
+                                     const VkClearValue *clearColor, const VkClearValue *clearDepth, u32 profileSlot)
 {
     VkRenderPass pass = rlvkGetRenderPass(key);
     if (pass == VK_NULL_HANDLE)
@@ -299,6 +299,7 @@ static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRender
                              .pClearValues = clears,
                          },
                          VK_SUBPASS_CONTENTS_INLINE);
+    rlvkProfileBeginScope(profileSlot, key, width, height);
 }
 
 // Switch the rendering scope to a user framebuffer (render texture). The pending batch
@@ -372,6 +373,7 @@ void rlEnableFramebuffer(unsigned int id)
         return; // nothing attached yet
 
     u32 previousId = RLVK.scope.fbSlot;
+    rlvkProfileEndScope();
     vkCmdEndRenderPass(cmdBuffer);
     rlvkCloseFramebufferColorsForSwitch(cmdBuffer, previousId);
 
@@ -528,7 +530,7 @@ void rlEnableFramebuffer(unsigned int id)
     rpKey.depthStore = VK_ATTACHMENT_STORE_OP_STORE;
 
     // Vì dùng LOAD, không cần truyền clearValues vào nữa
-    rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount, (u32)fbW, (u32)fbH, NULL, NULL);
+    rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount, (u32)fbW, (u32)fbH, NULL, NULL, id);
 
     RLVK.scope.fbSlot = id;
     RLVK.scope.width = (u32)fbW;
@@ -554,6 +556,7 @@ void rlDisableFramebuffer(void)
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
     rlvkFramebufferSlot *f = &RLVK.fbSlots[id];
 
+    rlvkProfileEndScope();
     vkCmdEndRenderPass(cmdBuffer);
 
     // OPTIMIZATION: Batched Pipeline Barriers
@@ -584,7 +587,8 @@ void rlDisableFramebuffer(void)
     rlvkTextureSlot *depth = f->hasDepth ? &RLVK.textureSlots[f->depthTexture] : NULL;
     // The twin is refilled only while a bind is RECENT; see rlvkTextureSlot.sampleWantedFrame.
     bool twinWanted = depth && depth->sampleWantedFrame &&
-                      ((RLVK.frameCounter + 1 - depth->sampleWantedFrame) <= (u64)RLVK_TWIN_KEEPALIVE_FRAMES);
+                      ((RLVK.frameCounter + 1 - depth->sampleWantedFrame) <= (u64)RLVK_TWIN_KEEPALIVE_FRAMES) &&
+                      (depth->sampleDirty || depth->sampleLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     if (depth && depth->image)
     {
         if (depth->sampleImage && twinWanted)
@@ -620,16 +624,11 @@ void rlDisableFramebuffer(void)
         }
         else if (depth->sampleImage)
         {
-            // §7.27: the twin exists but NOTHING has ever sampled it (a shadow map whose depth is
-            // only depth-TESTED). Emit no barriers and skip the bounce below: the depth image is
-            // already in its resting DEPTH_STENCIL_ATTACHMENT_OPTIMAL and stays there, and the
-            // twin keeps its UNDEFINED sampleLayout — exactly the state the bounce path itself
-            // declares as the twin's oldLayout ("prior contents are stale; discard"), so layout
-            // bookkeeping is IDENTICAL either way. Should something bind the twin later, that bind
-            // re-arms sampleWantedFrame (rlvkResolveTexBinding) and reads the default-texture
-            // substitution (white = far = "no occluder") for that one frame, then the next scope
-            // close bounces for real. Elides w*h*4 bytes moved twice per pass: measured
-            // 13.4 -> 6.4 ms/frame on a 2048² RT (perf_rt2048), MoltenVK/Intel.
+            // No recent consumer, or the sampled twin already holds the latest depth.
+            // Keep the depth attachment in its resting layout and preserve the valid twin
+            // without redundant depth->buffer->color copies. Dirty writes remain recorded
+            // until a recent consumer requires a refresh; an uninitialized twin refreshes
+            // on the next close after its first bind, preserving the existing warm-up rule.
         }
         else
         {
@@ -660,6 +659,7 @@ void rlDisableFramebuffer(void)
 
     if (depth && depth->image && depth->sampleImage && twinWanted)
     {
+        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileScopes[id].twinPixels += (u64)depth->width * depth->height;
         // depth image (DEPTH aspect) -> scratch buffer -> twin (COLOR aspect), same 4 bytes/texel
         vkCmdCopyImageToBuffer(cmdBuffer, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                depth->sampleScratch, 1,
@@ -718,6 +718,7 @@ void rlDisableFramebuffer(void)
                                           });
         depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         depth->sampleLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        depth->sampleDirty = false;
     }
 
     // Resume the swapchain scope, preserving its content
@@ -751,7 +752,7 @@ static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer)
     rpKey.hasResolve = msaa ? 1 : 0;
 
     rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount,
-                             RLVK.swapchainExtent.width, RLVK.swapchainExtent.height, NULL, NULL);
+                             RLVK.swapchainExtent.width, RLVK.swapchainExtent.height, NULL, NULL, 0);
     RLVK.scope.fbSlot = 0;
     RLVK.scope.width = RLVK.swapchainExtent.width;
     RLVK.scope.height = RLVK.swapchainExtent.height;
@@ -775,7 +776,7 @@ static void rlvkWaitInFlightFrames(void)
     u32 recording = RLVK.frameActive ? (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT) : UINT32_MAX;
     for (u32 i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
         if ((i != recording) && (RLVK.frameFences[i] != VK_NULL_HANDLE))
-            vkWaitForFences(RLVK.device, 1, &RLVK.frameFences[i], VK_TRUE, UINT64_MAX);
+            rlvkProfileWaitFences(RLVK.device, 1, &RLVK.frameFences[i], VK_TRUE, UINT64_MAX);
 }
 
 static void rlvkFlushFrame(void)
@@ -790,6 +791,7 @@ static void rlvkFlushFrame(void)
     u32 openFb = RLVK.scope.fbSlot;
     if (openFb)
         rlDisableFramebuffer();
+    rlvkProfileEndScope();
     vkCmdEndRenderPass(cmdBuffer);
     vk.EndCommandBuffer(cmdBuffer);
 
@@ -803,7 +805,7 @@ static void rlvkFlushFrame(void)
                     RLVK.frameFences[frameIndex]);
     RLVK.acquireWaited = true;
 
-    vkWaitForFences(RLVK.device, 1, &RLVK.frameFences[frameIndex], VK_TRUE, UINT64_MAX);
+    rlvkProfileWaitFences(RLVK.device, 1, &RLVK.frameFences[frameIndex], VK_TRUE, UINT64_MAX);
     vkResetFences(RLVK.device, 1, &RLVK.frameFences[frameIndex]);
     RLVK.arenaOffset[frameIndex] = 0; // the drained submission consumed all arena data: reuse from the start
 
@@ -879,6 +881,7 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
+    rlvkProfileEndScope();
     vkCmdEndRenderPass(cmdBuffer);
 
     // VÁ LỖI LOGIC: Lưu lại layout ban đầu của ảnh nguồn để trả về đúng trạng thái
@@ -1183,9 +1186,12 @@ void rlClearScreenBuffers(void)
                                              RLVK.State.clearR / 255.0f, RLVK.State.clearG / 255.0f,
                                              RLVK.State.clearB / 255.0f, RLVK.State.clearA / 255.0f}}}};
     if (hasDepth && RLVK.State.depthWrite)
+    {
+        rlvkRecordDepthWrite();
         clears[clearCount++] = (VkClearAttachment){
             .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
             .clearValue = {.depthStencil = {1.0f, 0}}};
+    }
     if (clearCount)
         vkCmdClearAttachments(cmdBuffer, clearCount, clears,
                               1, &(VkClearRect){{{0, 0}, {RLVK.scope.width, RLVK.scope.height}}, 0, 1});

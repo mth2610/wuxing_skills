@@ -13,6 +13,7 @@
 
 #include <math.h>
 #include <stddef.h>
+#include <stdlib.h>
 
 #ifndef PI
 #define PI 3.14159265358979323846f
@@ -714,8 +715,19 @@ void InitVerdantPathMap(void)
 void UpdateVerdantPathMap(float dt)
 {
     if (s_ready) {
+        static int profileEnabled = -1;
+        static double profileMs[6] = {0};
+        static int profileSamples = 0;
+        if (profileEnabled < 0) {
+            const char *profile = getenv("WUXING_MAP_UPDATE_PROFILE");
+            profileEnabled = profile && profile[0] == '1';
+        }
+        double mark = profileEnabled ? GetTime() : 0.0;
         s_time += dt;
         MapProp_UpdateWaterSurface(&s_lake, dt);
+        if (profileEnabled) {
+            double now = GetTime(); profileMs[0] += (now - mark) * 1000.0; mark = now;
+        }
         Vector3 focus = {camera.target.x, 0.0f, camera.target.z};
         // Dynamic vegetation/character shadows are the near cascade. Static
         // terrain and rocks remain covered by the world-fixed cache. Centering
@@ -724,10 +736,32 @@ void UpdateVerdantPathMap(float dt)
         // fade; Environment performs the light-space texel snapping.
         EnvShadow_SetFocus(focus, 20.0f);
         CaptureVerdantStaticShadows();
+        if (profileEnabled) {
+            double now = GetTime(); profileMs[1] += (now - mark) * 1000.0; mark = now;
+        }
         MapProp_BeginNatureInteraction(camera.target, dt);
+        if (profileEnabled) {
+            double now = GetTime(); profileMs[2] += (now - mark) * 1000.0; mark = now;
+        }
         MapProp_AddNatureInteractor(camera.target, 1.25f, 0.34f);
+        if (profileEnabled) {
+            double now = GetTime(); profileMs[3] += (now - mark) * 1000.0; mark = now;
+        }
         MapProp_AddNatureWindVorticles(s_time);
+        if (profileEnabled) {
+            double now = GetTime(); profileMs[4] += (now - mark) * 1000.0; mark = now;
+        }
         MapProp_EndNatureInteraction();
+        if (profileEnabled) {
+            profileMs[5] += (GetTime() - mark) * 1000.0;
+            if (++profileSamples == 60) {
+                TraceLog(LOG_INFO, "MAP_UPDATE_PROFILE: samples=60 water_ms=%.3f static_ms=%.3f begin_ms=%.3f interactor_ms=%.3f wind_ms=%.3f interaction_upload_ms=%.3f",
+                    profileMs[0] / 60.0, profileMs[1] / 60.0, profileMs[2] / 60.0,
+                    profileMs[3] / 60.0, profileMs[4] / 60.0, profileMs[5] / 60.0);
+                for (int i = 0; i < 6; i++) profileMs[i] = 0.0;
+                profileSamples = 0;
+            }
+        }
     }
 }
 
