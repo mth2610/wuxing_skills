@@ -45,11 +45,25 @@
 - **Cause:** The vertex shader synthesizes standalone sine bands from time and a normalized direction while Core Wind uses a world-space, advected hash-gradient velocity field.
 - **Rule:** Wind owns the forcing: mirror the Core macro field in vegetation and superpose local Vorticles. Vegetation owns only its response—compliance, lag, wind-energy-driven flutter, bend limit, and root mask. Give grass and flowers different response profiles, but never give either an independent motion source. Visible and shadow passes must call the same deformation functions.
 
+### Foliage shadow filtering can dominate a dense meadow
+
+- **Symptom:** A small foliage PCF kernel makes close leaves less jagged but slows a full meadow substantially.
+- **Cause:** Each overlapped foliage pixel samples both shadow cascades; multiplying that work across the canopy overwhelms a bandwidth-limited GPU. Linear interpolation of stored depth followed by one comparison also does not equal filtered visibility.
+- **Rule:** Interpolate comparison results for close HIGH-quality foliage, fade the extra kernel out from 8 to 10 m, and retain single comparisons at gameplay distance and lower tiers. Share the same cached Core wind between visible grass and casters; evaluate the cache against off-grid Core samples and retain the analytic path for tall/high-compliance plants. Compare full-map frame time at a matched camera; a cheaper wind update alone does not establish a frame-rate gain.
+
+### Indexed foliage must preserve attribute seams and chunk budgets
+
+- **Symptom:** Vertex packing changes blade shading, or smaller chunks reduce memory but slow the full map.
+- **Cause:** Position-only deduplication merges authored normal/UV/color seams; shrinking chunks increases draw and LOD overhead.
+- **Rule:** Compare all authored attribute bytes, preserve triangle order, and fall back unchanged when the 16-bit range or allocation budget fails. Verify expanded indices against the original streams, including allocation failures. Measure chunk changes independently; vertex savings do not establish a frame-time gain.
+
 ## Patch Log
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-01 | Codex | Indexed foliage geometry and chunk budget | `maps/toolkit/map_props_mesh_index.inl`, `maps/tests/meadow_mesh_index_test.inl` | Ground-truth |
 | 2026-09-26 | Codex | Vegetation shadow and grass-tip landmines | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_opaque.fs`, `environment/env_shadow.c` | Ground-truth |
 | 2026-09-26 | Codex | Lake depth contour and bed material landmine | `maps/toolkit/shaders/water_surface.fs`, `maps/toolkit/shaders/water_bed.fs`, `maps/toolkit/map_props_nature.inl` | Ground-truth |
 | 2026-09-27 | Codex | Grass tip contrast and blade silhouette follow-up | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_surface.glsl`, `maps/worlds/verdant_path/verdant_path.c` | Ground-truth |
 | 2026-09-30 | Codex | Grass LOD and shading filtering | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_surface.glsl` | Ground-truth |
+| 2026-09-30 | Codex | Close foliage PCF and sampled Core wind | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_surface.glsl`, `maps/toolkit/shaders/nature_wind_field.glsl` | Ground-truth |

@@ -4,15 +4,25 @@ uniform vec3 u_ambientColor;
 uniform vec3 u_viewPos;
 uniform vec4 colDiffuse;
 
-// Fast Foliage Shadow Reception:
-// Foliage consists of millions of thin overlapping blades where full 9-tap PCF
-// (36-72 texture fetches/pixel) causes catastrophic texture cache thrashing.
-// One depth sample per cascade keeps the dense foliage path inexpensive;
-// this binary comparison does not provide a filtered penumbra.
-// Linear lightSpace coordinates are precomputed in the vertex shader for zero-cost per-pixel projection.
-float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace, vec3 normal, vec3 lightDir)
+// Four comparison taps interpolate visibility rather than depth. Limit the
+// kernel to resolved nearby foliage; distant/LOW vegetation keeps one tap.
+float NatureShadowCompare(sampler2D mapTexture, vec2 uv, float depth,
+                          float texelSize, float filterWeight)
+{
+    if (filterWeight <= 0.0)
+        return MapShadowCompare(mapTexture, uv, depth);
+    float filtered = MapShadowCompareBilinear(mapTexture, uv, depth, texelSize);
+    if (filterWeight >= 1.0)
+        return filtered;
+    return mix(MapShadowCompare(mapTexture, uv, depth), filtered, filterWeight);
+}
+
+float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
+                              vec3 normal, vec3 lightDir, vec3 worldPosition)
 {
     float slope = 1.0 - max(dot(normal, lightDir), 0.0);
+    float filterWeight = u_shadowFilterQuality > 1.5
+        ? 1.0 - smoothstep(8.0, 10.0, distance(worldPosition, u_viewPos)) : 0.0;
     float dynamicShadow = 1.0;
     if (u_shadowEnabled > 0.5) {
         vec3 projected = lightSpace.xyz / max(lightSpace.w, 0.00001) * 0.5 + 0.5;
@@ -20,7 +30,9 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace, vec3 norma
             projected.x > 0.0 && projected.x < 1.0 &&
             projected.y > 0.0 && projected.y < 1.0) {
             float bias = clamp(0.0018 + slope * 0.0035, 0.0015, 0.0055);
-            dynamicShadow = (projected.z <= texture(shadowMap, projected.xy).r + bias) ? 1.0 : 0.0;
+            dynamicShadow = NatureShadowCompare(shadowMap, projected.xy,
+                projected.z - bias, u_shadowTexel, filterWeight);
+            dynamicShadow = mix(1.0, dynamicShadow, MapShadowCoverageFade(projected.xy));
         }
     }
     float staticShadow = 1.0;
@@ -30,7 +42,9 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace, vec3 norma
             projected.x > 0.0 && projected.x < 1.0 &&
             projected.y > 0.0 && projected.y < 1.0) {
             float bias = clamp(0.0025 + slope * 0.0040, 0.0020, 0.0070);
-            staticShadow = (projected.z <= texture(staticShadowMap, projected.xy).r + bias) ? 1.0 : 0.0;
+            staticShadow = NatureShadowCompare(staticShadowMap, projected.xy,
+                projected.z - bias, u_staticShadowTexel, filterWeight);
+            staticShadow = mix(1.0, staticShadow, MapShadowCoverageFade(projected.xy));
         }
     }
     return min(dynamicShadow, staticShadow);
@@ -100,7 +114,7 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     );
 
     // Fast foliage shadow lookup (linear lightSpace coordinates interpolated from vertex shader)
-    float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, u_lightDir);
+    float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, u_lightDir, worldPosition);
 
     // Intra-Canopy Self-Shadowing:
     // Soft, dappled attenuation as light filters through foliage canopy
@@ -171,7 +185,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float rib = 1.0 - smoothstep(0.0, 0.32, abs(uTransverse));
     baseColor *= 1.0 + (rib - 0.35) * 0.09 * (1.0 - unresolved);
     float wrapped = clamp((dot(n, u_lightDir) + 0.42) / 1.42, 0.0, 1.0);
-    float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, u_lightDir);
+    float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, u_lightDir, worldPosition);
     float canopy = mix(0.48, 1.0, h * (2.0 - h));
 
     vec3 baseAmbient = max(u_ambientColor, vec3(0.28, 0.32, 0.24));

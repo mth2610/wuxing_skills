@@ -297,14 +297,15 @@ RLVKAPI void rlvkSetMsaaSamples(int samples);       // Set MSAA sample count, ca
 // afterwards - the compositor, the soft-particle depth snapshot, readback - keeps working with
 // no change and gl_FragCoord/resolution mapping is identical.
 //
-//   samples: 4 to enable, 1 to disable. Returns the count ACTUALLY in effect, which is 1 when
-//   the device cannot do it (Caps.msaa4x), when the framebuffer has a depth attachment and the
+//   samples: 2 or 4 to enable, 0/1 to disable (requests >=4 select 4). Returns the count
+//   ACTUALLY in effect, which is 1 when the attachment formats/usage or framebuffer limits
+//   cannot support that count, when the framebuffer has a depth attachment and the
 //   device has no depth resolve (Caps.depthResolve), or when it has more than one colour
 //   attachment (MRT resolve is not implemented). Never fails into wrong pixels.
 //
 // Call AFTER every rlFramebufferAttach for that framebuffer and BEFORE its first use; the
-// multisample images are sized from the attachments. Costs one extra 4x colour image and one
-// extra 4x depth image of the target's size in device memory.
+// multisample images are sized from the attachments. Costs one extra colour image and one
+// extra depth image at the requested sample count in device memory.
 RLVKAPI int  rlvkSetFramebufferSamples(unsigned int fbId, int samples);
 RLVKAPI void rlvkPresent(void);                     // Present the current frame, called from SwapScreenBuffer()
 

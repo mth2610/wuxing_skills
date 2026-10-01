@@ -435,7 +435,7 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
         rpKey.colorFormats[a] = key->colorFormats[a];
     rpKey.depthFormat = key->depthFormat;
     rpKey.colorCount = key->colorCount;
-    rpKey.samples = (key->samples > 1) ? 4 : 1;
+    rpKey.samples = (key->samples > 1) ? key->samples : 1;
     rpKey.colorLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
     rpKey.depthLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
     rpKey.depthStore = VK_ATTACHMENT_STORE_OP_STORE;
@@ -477,7 +477,7 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
                                                     },
                                                     .pMultisampleState = &(VkPipelineMultisampleStateCreateInfo){
                                                         VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-                                                        .rasterizationSamples = (key->samples > 1) ? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_1_BIT,
+                                                        .rasterizationSamples = (key->samples > 1) ? (VkSampleCountFlagBits)key->samples : VK_SAMPLE_COUNT_1_BIT,
                                                     },
                                                     .pDepthStencilState = &(VkPipelineDepthStencilStateCreateInfo){
                                                         VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,

@@ -313,71 +313,92 @@ static const char *sc_msaa_rt(void)
     SetShaderValue(dsh, GetShaderLocation(dsh, "uFar"), &farV, SHADER_UNIFORM_FLOAT);
 
     RenderTexture2D rt = LoadRenderTexture(W, H);
-    int samples = rlvkSetFramebufferSamples(rt.id, 4);
     Camera3D cam = cam3d();
 
-    // Pass 1: the coverage half. A flat-shaded sphere (raylib's default shader does no lighting,
-    // so it is a solid white disc) over black — every non-black non-white pixel is AA coverage.
-    for (int f = 0; f < 3; f++)
+    const int requests[] = {1, 2, 4, 2, 1};
+    const char *failure = NULL;
+    for (int pass = 0; pass < 5; pass++)
     {
-        BeginDrawing(); ClearBackground(BLACK);
-        BeginTextureMode(rt);
-            ClearBackground(BLACK);
-            BeginMode3D(cam);
-                DrawSphereEx((Vector3){0,0,0}, 1.6f, 24, 24, WHITE);
-            EndMode3D();
-        EndTextureMode();
-        DrawTextureRec(rt.texture, (Rectangle){0,0,W,-H}, (Vector2){0,0}, WHITE);
-        EndDrawing();
-    }
-    int partial = 0;
-    {
-        Image im = snap();
-        for (int y = 0; y < H; y++)
-            for (int x = 0; x < W; x++)
+        int requested = requests[pass];
+        int samples = rlvkSetFramebufferSamples(rt.id, requested);
+        if (samples != requested && samples != 1) failure = "MSAA returned an unexpected sample count";
+
+        // Pass 1: the coverage half. A flat-shaded sphere (raylib's default shader does no lighting,
+        // so it is a solid white disc) over black — every non-black non-white pixel is AA coverage.
+        for (int f = 0; f < 3; f++)
+        {
+            BeginDrawing(); ClearBackground(BLACK);
+            BeginTextureMode(rt);
+                ClearBackground(BLACK);
+                BeginMode3D(cam);
+                    DrawSphereEx((Vector3){0,0,0}, 1.6f, 24, 24, WHITE);
+                EndMode3D();
+            EndTextureMode();
+            DrawTextureRec(rt.texture, (Rectangle){0,0,W,-H}, (Vector2){0,0}, WHITE);
+            EndDrawing();
+        }
+        int partial = 0;
+        {
+            Image im = snap();
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < W; x++)
+                {
+                    Color c = at(im, x, y);
+                    if ((c.r > 24) && (c.r < 231)) partial++;   // neither background nor full coverage
+                }
+            const char *dump = getenv("RLVK_MSAA_DUMP");
+            if (dump && pass < 3)
             {
-                Color c = at(im, x, y);
-                if ((c.r > 24) && (c.r < 231)) partial++;   // neither background nor full coverage
+                char path[1024];
+                snprintf(path, sizeof(path), "%s_x%d.png", dump, requested);
+                ExportImage(im, path);
             }
-        UnloadImage(im);
-    }
+            UnloadImage(im);
+        }
 
-    // Pass 2: the depth-resolve half, same shape as soft_depth — a near cube fills the centre
-    // (real depth ~4 units -> dark), the corners keep the cleared far value (-> white).
-    int centre = 0, corner = 0;
-    for (int f = 0; f < 3; f++)
-    {
-        BeginDrawing(); ClearBackground(BLACK);
-        BeginTextureMode(rt);
-            ClearBackground(BLACK);
-            BeginMode3D(cam);
-                DrawCube((Vector3){0,0,2}, 1.6f, 1.6f, 1.6f, WHITE);
-            EndMode3D();
-        EndTextureMode();
-        BeginShaderMode(dsh);
-            DrawTexturePro(rt.depth, (Rectangle){0,0,W,H}, (Rectangle){0,0,W,H}, (Vector2){0,0}, 0, WHITE);
-        EndShaderMode();
-        EndDrawing();
+        // Pass 2: the depth-resolve half, same shape as soft_depth — a near cube fills the centre
+        // (real depth ~4 units -> dark), the corners keep the cleared far value (-> white).
+        int centre = 0, corner = 0;
+        for (int f = 0; f < 3; f++)
+        {
+            BeginDrawing(); ClearBackground(BLACK);
+            BeginTextureMode(rt);
+                ClearBackground(BLACK);
+                BeginMode3D(cam);
+                    DrawCube((Vector3){0,0,2}, 1.6f, 1.6f, 1.6f, WHITE);
+                EndMode3D();
+            EndTextureMode();
+            BeginShaderMode(dsh);
+                DrawTexturePro(rt.depth, (Rectangle){0,0,W,H}, (Rectangle){0,0,W,H}, (Vector2){0,0}, 0, WHITE);
+            EndShaderMode();
+            EndDrawing();
+        }
+        {
+            Image im = snap();
+            centre = at(im, W/2, H/2).r;
+            corner = at(im, 8, 8).r;
+            UnloadImage(im);
+        }
+        printf("  [msaa_rt] requested=%d samples=%d partialCoverage=%d depth(centre=%d corner=%d)\n",
+               requested, samples, partial, centre, corner);
+        if (samples > 1 && partial < 200)
+            failure = "offscreen MSAA reported active but the silhouette is still binary coverage";
+        if (samples == 1 && partial != 0)
+            failure = "single-sample silhouette unexpectedly has fractional coverage";
+        if (centre > 150)
+            failure = "depth was not resolved: the 1x depth texture reads far where geometry is";
+        if (corner < 200)
+            failure = "depth resolve clobbered the cleared-far background";
     }
-    {
-        Image im = snap();
-        centre = at(im, W/2, H/2).r;
-        corner = at(im, 8, 8).r;
-        UnloadImage(im);
-    }
+    // Unsupported MRT must retract an already-enabled sample count accurately.
+    rlvkSetFramebufferSamples(rt.id, 2);
+    rlFramebufferAttach(rt.id, rt.texture.id, RL_ATTACHMENT_COLOR_CHANNEL1, RL_ATTACHMENT_TEXTURE2D, 0);
+    int refused4 = rlvkSetFramebufferSamples(rt.id, 4);
+    int refused2 = rlvkSetFramebufferSamples(rt.id, 2);
+    printf("  [msaa_rt] unsupported MRT requests x4/x2 returned %d/%d\n", refused4, refused2);
+    if (refused4 != 1 || refused2 != 1) failure = "unsupported MRT did not fall back to 1 sample";
     UnloadRenderTexture(rt); UnloadShader(dsh);
-
-    printf("  [msaa_rt] samples=%d partialCoverage=%d depth(centre=%d corner=%d)\n",
-           samples, partial, centre, corner);
-    if (samples != 4)
-        return NULL;    // device declined offscreen MSAA (Caps.msaa4x / Caps.depthResolve): not a regression
-    if (partial < 200)
-        return "offscreen MSAA reported active but the silhouette is still binary coverage";
-    if (centre > 150)
-        return "MSAA depth was not resolved: the 1x depth texture reads far where geometry is";
-    if (corner < 200)
-        return "MSAA depth resolve clobbered the cleared-far background";
-    return NULL;
+    return failure;
 }
 
 // A VFX colour layer shares the scene RT depth so particles still occlude correctly.
@@ -2765,8 +2786,10 @@ static const char *perfMsaaRT(int samples, int layers, const char *label)
     return NULL;
 }
 static const char *sc_perf_msaa_off(void)  { return perfMsaaRT(1, 3, "msaa_off   1280x720 RGBA16F+depth"); }
+static const char *sc_perf_msaa_2x(void)   { return perfMsaaRT(2, 3, "msaa_2x    1280x720 RGBA16F+depth"); }
 static const char *sc_perf_msaa_4x(void)   { return perfMsaaRT(4, 3, "msaa_4x    1280x720 RGBA16F+depth"); }
 static const char *sc_perf_msaa_off1(void) { return perfMsaaRT(1, 0, "msaa_off1  1280x720 RGBA16F+depth"); }
+static const char *sc_perf_msaa_2x1(void)  { return perfMsaaRT(2, 0, "msaa_2x1   1280x720 RGBA16F+depth"); }
 static const char *sc_perf_msaa_4x1(void)  { return perfMsaaRT(4, 0, "msaa_4x1   1280x720 RGBA16F+depth"); }
 
 static const char *sc_perf_base(void)   { return perfRun(0);    }
@@ -3260,8 +3283,10 @@ static const Scenario SCENARIOS[] = {
     { "perf_rt256",     sc_perf_rt256 },
     { "perf_rt2048",    sc_perf_rt2048 },
     { "perf_msaa_off",  sc_perf_msaa_off },
+    { "perf_msaa_2x",   sc_perf_msaa_2x },
     { "perf_msaa_4x",   sc_perf_msaa_4x },
     { "perf_msaa_off1", sc_perf_msaa_off1 },
+    { "perf_msaa_2x1",  sc_perf_msaa_2x1 },
     { "perf_msaa_4x1",  sc_perf_msaa_4x1 },
 };
 #define N_SCENARIOS (int)(sizeof(SCENARIOS)/sizeof(SCENARIOS[0]))

@@ -120,8 +120,8 @@ typedef struct rlvkFramebufferSlot {
     // depth attachment is refused MSAA when that capability is missing.
     // NOT transient/lazily-allocated: rlvk opens and closes an FBO scope many times per frame
     // and every reopen is loadOp LOAD, so the multisample contents must survive between passes.
-    unsigned char       samples;                // 1 = off, else 4
-    VkImage             msColorImage;           // 4x color target (colorCount == 1 only)
+    unsigned char       samples;                // 1 = off, else 2 or 4
+    VkImage             msColorImage;           // multisample color target (colorCount == 1 only)
     VkImageView         msColorView;
     VkDeviceMemory      msColorMemory;
     VkImageLayout       msColorLayout;

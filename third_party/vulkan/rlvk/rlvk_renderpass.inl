@@ -26,7 +26,7 @@ static VkRenderPass rlvkGetRenderPass(const rlvkRenderPassKey *key)
         return VK_NULL_HANDLE;
     }
 
-    VkSampleCountFlagBits samples = (key->samples > 1) ? VK_SAMPLE_COUNT_4_BIT : VK_SAMPLE_COUNT_1_BIT;
+    VkSampleCountFlagBits samples = (key->samples > 1) ? (VkSampleCountFlagBits)key->samples : VK_SAMPLE_COUNT_1_BIT;
     bool hasDepth = (key->depthFormat != VK_FORMAT_UNDEFINED);
     u32 attCount = 0;
     VkAttachmentDescription atts[RLVK_MAX_SCOPE_ATTACHMENTS];
@@ -384,9 +384,9 @@ void rlEnableFramebuffer(unsigned int id)
     // attached 1x textures are the resolve destinations (which the loops below already put in
     // COLOR_ATTACHMENT_OPTIMAL / DEPTH_STENCIL_ATTACHMENT_OPTIMAL - the same layouts a resolve
     // destination needs, so nothing changes for them). Only the multisample images are extra.
-    // MSAA is off unless the FBO was declared 4x AND has exactly one colour attachment.
+    // MSAA is off unless the FBO was declared multisampled AND has exactly one colour attachment.
     // A depth attachment added AFTER rlvkSetFramebufferSamples would have no multisample twin,
-    // and a 1-sample depth cannot share a subpass with a 4-sample colour: fall back to 1x for
+    // and a 1-sample depth cannot share a subpass with a multisample colour: fall back to 1x for
     // this scope rather than build an illegal render pass.
     bool fbMsaa = (f->samples > 1) && (f->msColorImage != VK_NULL_HANDLE) && (colorCount == 1) &&
                   (!(fbDepth && fbDepth->image) || (f->msDepthImage != VK_NULL_HANDLE));
@@ -517,7 +517,7 @@ void rlEnableFramebuffer(unsigned int id)
 
     rpKey.depthFormat = fbHasDepth ? depth->format : VK_FORMAT_UNDEFINED;
     rpKey.colorCount = (unsigned char)colorCount;
-    rpKey.samples = fbMsaa ? 4 : 1;
+    rpKey.samples = fbMsaa ? f->samples : 1;
     rpKey.hasResolve = fbMsaa ? 1 : 0;
     rpKey.hasDepthResolve = fbMsaaDepth ? 1 : 0;
     rpKey.colorLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -536,7 +536,7 @@ void rlEnableFramebuffer(unsigned int id)
     RLVK.scope.colorCount = colorCount;
     for (u32 c = 0; c < colorCount; c++)
         RLVK.scope.colorFormats[c] = colors[c]->format;
-    RLVK.scope.samples = fbMsaa ? 4u : 1u;
+    RLVK.scope.samples = fbMsaa ? f->samples : 1u;
     RLVK.scope.depthResolve = fbMsaaDepth;
     RLVK.scope.flipY = false;
 }

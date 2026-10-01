@@ -94,6 +94,147 @@ static bool s_natureWindTraceVisibleUploaded = false;
 static bool s_natureWindTraceShadowUploaded = false;
 static MapNatureRenderStats s_natureRenderStats = {0};
 
+// Cache the Core macro field once per frame instead of evaluating sixteen
+// gradient-noise corners for every duplicated visible/shadow mesh vertex.
+#define NATURE_MACRO_RESOLUTION 32
+static const float kNatureMacroWorldSize = 64.0f;
+static const float kNatureMacroInterval = 1.0f / 30.0f;
+static Vector2 s_natureMacroTimeRange = {0};
+static WindMacroConfig s_natureMacroCachedConfig = {0};
+static Texture2D s_natureMacroTexture = {0};
+static Color s_natureMacroPixels[NATURE_MACRO_RESOLUTION * NATURE_MACRO_RESOLUTION];
+static Vector4 s_natureMacroRegion = {0}; // centre x/z, size, reference height
+static float s_natureMacroScale = 1.0f;
+static bool s_natureMacroReady = false;
+static bool s_natureMacroVerified = false;
+
+static unsigned char Nature_EncodeMacroComponent(float value)
+{
+    float normalized = value / s_natureMacroScale;
+    return (unsigned char)roundf((fmaxf(-1.0f, fminf(1.0f, normalized)) * 0.5f + 0.5f) * 255.0f);
+}
+
+static Vector2 Nature_DecodeMacroAtCell(int x, int z, float fraction)
+{
+    Color pixel = s_natureMacroPixels[z * NATURE_MACRO_RESOLUTION + x];
+    return (Vector2){
+        (((float)pixel.r + ((float)pixel.b - pixel.r) * fraction) / 255.0f * 2.0f - 1.0f) * s_natureMacroScale,
+        (((float)pixel.g + ((float)pixel.a - pixel.g) * fraction) / 255.0f * 2.0f - 1.0f) * s_natureMacroScale,
+    };
+}
+
+static void Nature_VerifyMacroCache(void)
+{
+    const char *trace = getenv("WUXING_WIND_RECEIVER_TRACE");
+    if (s_natureMacroVerified || !trace || trace[0] == '\0' || trace[0] == '0')
+        return;
+    s_natureMacroVerified = true;
+    float cellSize = kNatureMacroWorldSize / NATURE_MACRO_RESOLUTION;
+    float sumErrorSq = 0.0f;
+    float maxError = 0.0f;
+    for (int z = 0; z < 4; z++) {
+        for (int x = 0; x < 4; x++) {
+            // Sample off-grid, halfway through the cached interval, at blade
+            // height rather than the horizontal reference plane.
+            float gridX = 1.37f + (float)x * 8.0f;
+            float gridZ = 1.61f + (float)z * 8.0f;
+            int ix = (int)gridX;
+            int iz = (int)gridZ;
+            Vector2 lower = Vector2Lerp(Nature_DecodeMacroAtCell(ix, iz, 0.5f),
+                                       Nature_DecodeMacroAtCell(ix + 1, iz, 0.5f), gridX - ix);
+            Vector2 upper = Vector2Lerp(Nature_DecodeMacroAtCell(ix, iz + 1, 0.5f),
+                                       Nature_DecodeMacroAtCell(ix + 1, iz + 1, 0.5f), gridX - ix);
+            Vector2 cached = Vector2Lerp(lower, upper, gridZ - iz);
+            Vector3 position = {
+                s_natureMacroRegion.x - kNatureMacroWorldSize * 0.5f + (gridX + 0.5f) * cellSize,
+                s_natureMacroRegion.w + 0.35f,
+                s_natureMacroRegion.y - kNatureMacroWorldSize * 0.5f + (gridZ + 0.5f) * cellSize,
+            };
+            Vector3 exact = Wind_GetMacroAt(position, s_natureMacroTimeRange.x + kNatureMacroInterval * 0.5f);
+            float dx = cached.x - exact.x;
+            float dz = cached.y - exact.z;
+            float errorSq = dx * dx + dz * dz;
+            sumErrorSq += errorSq;
+            maxError = fmaxf(maxError, sqrtf(errorSq));
+        }
+    }
+    TraceLog(LOG_INFO, "NATURE_MACRO_CACHE_PARITY: samples=16 rms_error_mps=%.4f max_error_mps=%.4f",
+             sqrtf(sumErrorSq / 16.0f), maxError);
+}
+
+static void Nature_UpdateMacroCache(float time)
+{
+    // High-frequency fields use the analytic fallback; a coarse horizontal
+    // cache must not erase their structure. Core macro wind itself does not
+    // apply the height-gradient modifier (that belongs to aggregate wind).
+    if (s_natureWindMacro.gustAmplitude <= 0.0001f ||
+        Vector3LengthSqr(s_natureWindMacro.baseDirection) < 0.00000001f ||
+        s_natureWindMacro.noiseScale > 0.15f) {
+        s_natureMacroReady = false;
+        return;
+    }
+    float cellSize = kNatureMacroWorldSize / NATURE_MACRO_RESOLUTION;
+    Vector4 region = {
+        roundf(camera.target.x / cellSize) * cellSize,
+        roundf(camera.target.z / cellSize) * cellSize,
+        kNatureMacroWorldSize, camera.target.y,
+    };
+    float sampleTime = fmaxf(0.0f, time - 0.035f);
+    bool sameMacro = Vector3Equals(s_natureWindMacro.baseDirection, s_natureMacroCachedConfig.baseDirection) &&
+        s_natureWindMacro.gustAmplitude == s_natureMacroCachedConfig.gustAmplitude &&
+        s_natureWindMacro.noiseScale == s_natureMacroCachedConfig.noiseScale &&
+        s_natureWindMacro.noiseSpeed == s_natureMacroCachedConfig.noiseSpeed;
+    if (s_natureMacroReady && sameMacro &&
+        region.x == s_natureMacroRegion.x && region.y == s_natureMacroRegion.y &&
+        fabsf(region.w - s_natureMacroRegion.w) < 0.25f &&
+        sampleTime >= s_natureMacroTimeRange.x &&
+        sampleTime <= s_natureMacroTimeRange.x + kNatureMacroInterval)
+        return;
+    s_natureMacroRegion = region;
+    s_natureMacroTimeRange = (Vector2){sampleTime, kNatureMacroInterval};
+    s_natureMacroCachedConfig = s_natureWindMacro;
+    float baseSpeed = Vector3Length(s_natureWindMacro.baseDirection);
+    float gust = fmaxf(s_natureWindMacro.gustAmplitude, 0.0f);
+    float maxBase = fmaxf(fabsf(s_natureWindMacro.baseDirection.x),
+                         fabsf(s_natureWindMacro.baseDirection.z));
+    s_natureMacroScale = fmaxf(1.0f, maxBase * (1.0f + gust)
+                                  + gust * fmaxf(baseSpeed, 2.0f));
+    for (int z = 0; z < NATURE_MACRO_RESOLUTION; z++) {
+        for (int x = 0; x < NATURE_MACRO_RESOLUTION; x++) {
+            Vector3 position = {
+                s_natureMacroRegion.x + ((float)x + 0.5f) * cellSize - kNatureMacroWorldSize * 0.5f,
+                s_natureMacroRegion.w,
+                s_natureMacroRegion.y + ((float)z + 0.5f) * cellSize - kNatureMacroWorldSize * 0.5f,
+            };
+            Vector3 grass = Wind_GetMacroAt(position, sampleTime);
+            Vector3 future = Wind_GetMacroAt(position, sampleTime + kNatureMacroInterval);
+            s_natureMacroPixels[z * NATURE_MACRO_RESOLUTION + x] = (Color){
+                Nature_EncodeMacroComponent(grass.x), Nature_EncodeMacroComponent(grass.z),
+                Nature_EncodeMacroComponent(future.x), Nature_EncodeMacroComponent(future.z),
+            };
+        }
+    }
+    if (s_natureMacroTexture.id == 0) {
+        Image image = {
+            .data = s_natureMacroPixels, .width = NATURE_MACRO_RESOLUTION,
+            .height = NATURE_MACRO_RESOLUTION, .mipmaps = 1,
+            .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8,
+        };
+        s_natureMacroTexture = LoadTextureFromImage(image);
+        if (s_natureMacroTexture.id != 0) {
+            SetTextureFilter(s_natureMacroTexture, TEXTURE_FILTER_BILINEAR);
+            SetTextureWrap(s_natureMacroTexture, TEXTURE_WRAP_CLAMP);
+        }
+    } else {
+        UpdateTexture(s_natureMacroTexture, s_natureMacroPixels);
+    }
+    s_natureMacroReady = s_natureMacroTexture.id != 0;
+    if (s_natureMacroReady)
+        Nature_VerifyMacroCache();
+
+}
+
+
 static bool Nature_WindTraceEnabled(void)
 {
     const char *value = getenv("WUXING_WIND_RECEIVER_TRACE");
@@ -415,6 +556,20 @@ void MapProp_AddNatureWindVorticles(float time)
 
     s_natureWindMacro = Wind_GetMacro();
     s_natureWindReceiverReady = true;
+    double cacheStart = GetTime();
+    Nature_UpdateMacroCache(time);
+    if (Nature_WindTraceEnabled()) {
+        static double totalMs = 0.0;
+        static int samples = 0;
+        totalMs += (GetTime() - cacheStart) * 1000.0;
+        if (++samples == 60) {
+            TraceLog(LOG_INFO, "NATURE_MACRO_CACHE: enabled=%d samples=%d avg_cpu_ms=%.3f resolution=%d world_size=%.1f",
+                     s_natureMacroReady, samples, totalMs / samples,
+                     NATURE_MACRO_RESOLUTION, kNatureMacroWorldSize);
+            totalMs = 0.0;
+            samples = 0;
+        }
+    }
 
     int vorticleCount = 0;
     const VorticleData *vorticles = Wind_GetActiveVorticles(&vorticleCount);
@@ -498,6 +653,12 @@ void MapProp_ClearNatureInteraction(void)
     if (s_natureInteractionReady)
         UnloadTexture(s_natureInteractionTexture);
     s_natureInteractionTexture = (Texture2D){0};
+    if (s_natureMacroTexture.id != 0)
+        UnloadTexture(s_natureMacroTexture);
+    s_natureMacroTexture = (Texture2D){0};
+    s_natureMacroReady = false;
+    s_natureMacroVerified = false;
+    s_natureMacroRegion = (Vector4){0};
     s_natureInteractionCenter = (Vector2){0};
     s_natureInteractionReady = false;
     s_natureInteractionOpen = false;
@@ -995,9 +1156,22 @@ static Vector4 Nature_GetWindResponse(NatureWindResponseKind kind)
 }
 
 static void Nature_UpdateWindFieldShader(Shader shader, Vector2 fallbackDirection,
-                                         NatureWindResponseKind responseKind)
+                                         NatureWindResponseKind responseKind, float compliance)
 {
     WindMacroConfig macro = s_natureWindMacro;
+    int cacheEnabled = s_natureMacroReady && s_natureWindReceiverReady &&
+                       responseKind == NATURE_WIND_RESPONSE_GRASS && compliance <= 0.06f ? 1 : 0;
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windCacheEnabled"),
+                   &cacheEnabled, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windCacheRegion"),
+                   &s_natureMacroRegion, SHADER_UNIFORM_VEC4);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windCacheScale"),
+                   &s_natureMacroScale, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_windCacheTimeRange"),
+                   &s_natureMacroTimeRange, SHADER_UNIFORM_VEC2);
+    if (cacheEnabled)
+        SetShaderValueTexture(shader, GetShaderLocation(shader, "u_windCacheMap"),
+                              s_natureMacroTexture);
     if (!s_natureWindReceiverReady) {
         float directionLength = sqrtf(fallbackDirection.x * fallbackDirection.x +
                                       fallbackDirection.y * fallbackDirection.y);
@@ -1050,7 +1224,7 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
         SetShaderValueMatrix(shader, worldFromShaderSpaceLoc, worldFromShaderSpace);
     SetShaderValue(shader, GetShaderLocation(shader, "u_time"), &time, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, GetShaderLocation(shader, "u_windStrength"), &windStrength, SHADER_UNIFORM_FLOAT);
-    Nature_UpdateWindFieldShader(shader, windDirection, responseKind);
+    Nature_UpdateWindFieldShader(shader, windDirection, responseKind, windStrength);
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightDir"), &lightDir, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightColor"), &sunRgb, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_ambientColor"), &ambientRgb, SHADER_UNIFORM_VEC3);
@@ -1148,7 +1322,7 @@ static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDir
                    &time, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, GetShaderLocation(shader, "u_windStrength"),
                    &windStrength, SHADER_UNIFORM_FLOAT);
-    Nature_UpdateWindFieldShader(shader, windDirection, responseKind);
+    Nature_UpdateWindFieldShader(shader, windDirection, responseKind, windStrength);
     int textured = useTexture ? 1 : 0;
     SetShaderValue(shader, GetShaderLocation(shader, "u_useTexture"),
                    &textured, SHADER_UNIFORM_INT);
@@ -1714,6 +1888,8 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                            (Vector3){0, 1, 0}, clump->phase, 0.4f, 0.6f, leafCol, Nature_ScaleColor(leafCol, 1.15f));
         }
     }
+    if (!style.hasPlumes && bladeSegments > 1)
+        (void)Nature_IndexBladeMesh(&mesh);
     return Nature_ModelFromMesh(mesh, Nature_GetShader(style.texturePath != NULL));
 }
 
@@ -1844,6 +2020,23 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     meadow.ready = true;
     meadow.textured = textured;
     meadow.alphaCutoff = style.alphaCutoff;
+    long long rawVertices = 0, storedVertices = 0, indexBytes = 0;
+    for (int i = 0; i < meadow.chunkCount; i++) {
+        Model models[4] = {meadow.chunks[i].nearModel, meadow.chunks[i].midModel,
+                           meadow.chunks[i].farModel, meadow.chunks[i].realShadowModel};
+        for (int lod = 0; lod < 4; lod++) {
+            for (int j = 0; j < models[lod].meshCount; j++) {
+                const Mesh *mesh = &models[lod].meshes[j];
+                rawVertices += (long long)mesh->triangleCount * 3;
+                storedVertices += mesh->vertexCount;
+                if (mesh->indices)
+                    indexBytes += (long long)mesh->triangleCount * 3 * sizeof(unsigned short);
+            }
+        }
+    }
+    TraceLog(LOG_INFO, "MEADOW_MESH: chunks=%d raw_vertices=%lld stored_vertices=%lld vertex_bytes=%lld index_bytes=%lld",
+             meadow.chunkCount, rawVertices, storedVertices,
+             storedVertices * (10 * sizeof(float) + 4), indexBytes);
     return meadow;
 }
 

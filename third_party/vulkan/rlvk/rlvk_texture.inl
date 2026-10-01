@@ -1671,7 +1671,7 @@ static void rlvkReleaseFramebufferMsaa(rlvkFramebufferSlot *f)
 
 // Allocate one private multisample attachment image + view. Returns false and leaves every
 // out-param untouched-or-NULL on any failure, so the caller can degrade to 1 sample.
-static bool rlvkCreateMsaaAttachment(u32 width, u32 height, VkFormat format, bool isDepth,
+static bool rlvkCreateMsaaAttachment(u32 width, u32 height, VkFormat format, bool isDepth, int samples,
                                      VkImage *outImage, VkImageView *outView, VkDeviceMemory *outMemory)
 {
     VkImage image = VK_NULL_HANDLE;
@@ -1688,7 +1688,7 @@ static bool rlvkCreateMsaaAttachment(u32 width, u32 height, VkFormat format, boo
                                      .extent = {width, height, 1},
                                      .mipLevels = 1,
                                      .arrayLayers = 1,
-                                     .samples = VK_SAMPLE_COUNT_4_BIT,
+                                     .samples = (VkSampleCountFlagBits)samples,
                                      .tiling = VK_IMAGE_TILING_OPTIMAL,
                                      .usage = isDepth ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
                                      .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
@@ -1735,7 +1735,7 @@ int rlvkSetFramebufferSamples(unsigned int fbId, int samples)
     rlvkFramebufferSlot *f = &RLVK.fbSlots[fbId];
     if (!f->inUse)
         return 1;
-    int want = (samples >= 4) ? 4 : 1;
+    int want = (samples >= 4) ? 4 : ((samples >= 2) ? 2 : 1);
     if (want == 1)
     {
         if (f->samples > 1)
@@ -1743,12 +1743,14 @@ int rlvkSetFramebufferSamples(unsigned int fbId, int samples)
         f->samples = 1;
         return 1;
     }
-    if (f->samples == 4)
-        return 4; // already on; attachments are assumed unchanged (rlgl never re-attaches in place)
+    if (f->samples == want)
+        return want; // attachments are assumed unchanged (rlgl never re-attaches in place)
+    if (f->samples > 1)
+        rlvkReleaseFramebufferMsaa(f);
 
     rlvkTextureSlot *color = (f->colorCount == 1) ? &RLVK.textureSlots[f->colorTextures[0]] : NULL;
     rlvkTextureSlot *depth = f->hasDepth ? &RLVK.textureSlots[f->depthTexture] : NULL;
-    if (!RLVK.Caps.msaa4x || !color || !color->image || (f->colorCount != 1))
+    if ((want == 4 && !RLVK.Caps.msaa4x) || !color || !color->image || (f->colorCount != 1))
     {
         TRACELOG(RL_LOG_INFO, "RLVK: offscreen MSAA declined for fb %u (msaa4x=%d colorCount=%u)",
                  fbId, (int)RLVK.Caps.msaa4x, f->colorCount);
@@ -1762,14 +1764,41 @@ int rlvkSetFramebufferSamples(unsigned int fbId, int samples)
         TRACELOG(RL_LOG_INFO, "RLVK: offscreen MSAA declined for fb %u (no VK_KHR_depth_stencil_resolve)", fbId);
         return 1;
     }
-    if (!rlvkCreateMsaaAttachment((u32)color->width, (u32)color->height, color->format, false,
+    // General framebuffer limits alone do not guarantee this format/usage combination.
+    // Query the exact private attachment usage; these images are never sampled directly.
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(RLVK.physicalDevice, &props);
+    VkSampleCountFlags supported = props.limits.framebufferColorSampleCounts;
+    rlvkTextureSlot *attachments[2] = {color, depth};
+    for (int a = 0; a < 2; a++)
+    {
+        if (!attachments[a] || !attachments[a]->image) continue;
+        if (a == 1) supported &= props.limits.framebufferDepthSampleCounts;
+        VkImageFormatProperties imageProps;
+        VkResult result = vkGetPhysicalDeviceImageFormatProperties(RLVK.physicalDevice,
+            attachments[a]->format, VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+            a == 1 ? VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            0, &imageProps);
+        if (result != VK_SUCCESS || (u32)attachments[a]->width > imageProps.maxExtent.width ||
+            (u32)attachments[a]->height > imageProps.maxExtent.height)
+            supported = 0;
+        else
+            supported &= imageProps.sampleCounts;
+    }
+    if (!(supported & (VkSampleCountFlags)want))
+    {
+        TRACELOG(RL_LOG_INFO, "RLVK: offscreen MSAA x%d declined for fb %u (attachment sample mask=0x%x)",
+                 want, fbId, (unsigned int)supported);
+        return 1;
+    }
+    if (!rlvkCreateMsaaAttachment((u32)color->width, (u32)color->height, color->format, false, want,
                                   &f->msColorImage, &f->msColorView, &f->msColorMemory))
     {
         TRACELOG(RL_LOG_WARNING, "RLVK: offscreen MSAA colour target allocation failed for fb %u", fbId);
         return 1;
     }
     if (depth && depth->image &&
-        !rlvkCreateMsaaAttachment((u32)depth->width, (u32)depth->height, depth->format, true,
+        !rlvkCreateMsaaAttachment((u32)depth->width, (u32)depth->height, depth->format, true, want,
                                   &f->msDepthImage, &f->msDepthView, &f->msDepthMemory))
     {
         TRACELOG(RL_LOG_WARNING, "RLVK: offscreen MSAA depth target allocation failed for fb %u", fbId);
@@ -1778,10 +1807,10 @@ int rlvkSetFramebufferSamples(unsigned int fbId, int samples)
     }
     f->msColorLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     f->msDepthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    f->samples = 4;
-    TRACELOG(RL_LOG_INFO, "RLVK: offscreen MSAA x4 active on fb %u (%dx%d, depth resolve=%d)",
-             fbId, color->width, color->height, (int)(f->msDepthImage != VK_NULL_HANDLE));
-    return 4;
+    f->samples = (unsigned char)want;
+    TRACELOG(RL_LOG_INFO, "RLVK: offscreen MSAA x%d active on fb %u (%dx%d, depth resolve=%d)",
+             want, fbId, color->width, color->height, (int)(f->msDepthImage != VK_NULL_HANDLE));
+    return want;
 }
 
 // Verify render texture is complete

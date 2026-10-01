@@ -24,10 +24,11 @@ void SceneTargets_Init(int width, int height);
 // This is the AUTHORITATIVE HDR flag; PostFX_Init matches it. Valid after Init.
 bool SceneTargets_IsHDR(void);
 
-// Samples the scene target (renderTex) rasterizes with. 4 = real hardware MSAA on the offscreen
+// Actual samples used by the scene target: 2/4 = hardware MSAA on the offscreen
 // HDR target (rlvk/Vulkan only — FLAG_MSAA_4X_HINT reaches the swapchain, which no geometry is
 // drawn into); 1 = single-sampled, which is what GL 3.3 / GLES and any device that declines
-// offscreen MSAA get. PostFX's FXAA pass is the fallback resolve for the 1-sample case.
+// the requested offscreen sample count get. Select before Init with WUXING_MSAA=2 or 4;
+// default is 1. PostFX FXAA remains enabled alongside MSAA for shader-defined edges.
 // Valid after Init.
 int SceneTargets_GetSceneSamples(void);
 

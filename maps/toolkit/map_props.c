@@ -12,6 +12,7 @@
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
+#include <string.h>
 #include <stdlib.h>   // getenv (WUXING_GROUND_LOOKUP_VERIFY)
 
 // Split into one .inl per prop kind (ground/strip/rocks) — each grew its own
@@ -41,4 +42,5 @@ static void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength, float 
 #include "maps/toolkit/map_props_strip.inl"
 #include "maps/toolkit/map_props_rocks.inl"
 #include "maps/toolkit/map_props_cloud.inl"
+#include "maps/toolkit/map_props_mesh_index.inl"
 #include "maps/toolkit/map_props_nature.inl"

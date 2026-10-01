@@ -41,6 +41,7 @@
 - Non-persistent trails/fields (`life==0`) must `KillTrail` when done — no leaked slots.
 
 ## 6. Mesh / Geometry
+- Index packing must preserve every authored attribute seam and triangle order; retain the original mesh when index limits or allocation fail.
 - Never `DrawCylinder/DrawCone/DrawCube/DrawSphere`(+wireframe) for real meshes — use `procedural_mesh_utils.h`, `DrawRibbonStrip`, `ProceduralMesh_DrawTube`.
 - Never hand-roll Bezier/Frenet/path-sampling — use `path_spline.h` + `procedural_mesh_utils.h`.
 - `DrawRibbonStrip`/`ProceduralMesh_DrawTube` are low-level geometry-only APIs for manager batching. Standalone VFX must use `VFXRender_BeginAppearance`/`VFXRender_BeginDraw`; standalone ribbons should use `DrawRibbonStripAppearanceEx`.

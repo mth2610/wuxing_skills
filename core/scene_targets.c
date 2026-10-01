@@ -218,7 +218,7 @@ static RenderTexture2D LoadLinearDepthTarget(int width, int height)
  * The 3D world rasterizes into `renderTex`, never into the window, so FLAG_MSAA_4X_HINT /
  * rlvkSetMsaaSamples (both swapchain-only) can never anti-alias it: every geometric silhouette
  * in the game landed with binary coverage. rlvkSetFramebufferSamples makes renderTex ITSELF a
- * 4x target and resolves into the same colour and depth textures this module already hands out,
+ * 2x/4x target and resolves into the same colour and depth textures this module already hands out,
  * so ScreenDistort_Draw / SnapshotDepth / GetRawDepthTexture are unaffected.
  * Returns the sample count actually in effect (1 when the device declines) — it can cost
  * aliasing, never correctness. GL 3.3 / GLES have no offscreen-MSAA path and stay on FXAA. */
@@ -227,7 +227,7 @@ extern int rlvkSetFramebufferSamples(unsigned int fbId, int samples);
 #endif
 static int s_sceneSamples = 1;
 
-/* Samples the scene target rasterizes with: 4 = real MSAA, 1 = none.
+/* Actual scene samples: 2/4 = hardware MSAA, 1 = single-sampled.
    NOT a reason to switch FXAA off. MSAA and FXAA fix different edges here: with MSAA on, the
    post-3D VFX silhouettes still measured 937 -> 933 luma steps, i.e. unchanged, so dropping
    FXAA when MSAA is enabled would make exactly the edges the owner reported worse. Exported
@@ -300,7 +300,8 @@ void SceneTargets_Init(int width, int height)
     prevDepthTex = (RenderTexture2D){0};
   }
 
-  /* DEFAULT OFF, opt in with WUXING_MSAA=4. The capability is real and tested; what it buys
+  /* DEFAULT OFF, opt in with WUXING_MSAA=2 or 4 (Vulkan only; unsupported requests
+     return 1). The following cost/quality measurements describe the 4x path. What it buys
      here is not worth its price by default, and both halves of that were measured:
        - what it fixes: opaque geometry silhouettes. The map's ellipse edge went 47 -> 17 luma
          steps >20. Real, but this is a NIGHT arena — its geometry edges are low-contrast, so
