@@ -148,16 +148,27 @@ void Sandbox_ResetTrainingDummy(void) {
     trainingDummyAgentId = Entity_SpawnAgent(TRAINING_DUMMY_SPAWN_POS, 9999.0f, 0, TEAM_ENEMY, ARCH_HERO);
 }
 
+static float g_cameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
+static float g_camDist = SANDBOX_CAMERA_DEFAULT_DISTANCE;
+static float g_camHeight = SANDBOX_CAMERA_DEFAULT_DISTANCE * SANDBOX_CAMERA_HEIGHT_RATIO;
+
 void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     // Camera (real-world-scaled: 1 unit = 1 meter)
-    camera.position = (Vector3){ 6.0f, 5.0f, 8.4f };
-    camera.target = (Vector3){ 6.0f, 0.0f, 4.4f };
+    g_cameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
+    g_camDist = SANDBOX_CAMERA_DEFAULT_DISTANCE;
+    g_camHeight = g_camDist * SANDBOX_CAMERA_HEIGHT_RATIO;
     camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
-    camera.fovy = 45.0f;
+    camera.fovy = SANDBOX_CAMERA_DEFAULT_FOVY;
     camera.projection = CAMERA_PERSPECTIVE;
 
     // Cấu hình Player
     player->position = (Vector3){ -11.0f, 0.0f, 4.4f };
+    camera.target = (Vector3){ player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z };
+    camera.position = (Vector3){
+        player->position.x + sinf(g_cameraAngle) * g_camDist,
+        player->position.y + g_camHeight,
+        player->position.z + cosf(g_cameraAngle) * g_camDist
+    };
     player->radius = 0.3f;
     player->dashCooldown = 0.0f;
     player->dashTimer = 0.0f;
@@ -203,10 +214,6 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     // sole owner of its position instead of being stomped every frame.
     trainingDummyAgentId = Entity_SpawnAgent(TRAINING_DUMMY_SPAWN_POS, 9999.0f, 0, TEAM_ENEMY, ARCH_HERO);
 }
-// Biến toàn cục để điều khiển camera
-static float g_cameraAngle = 0.0f;
-static float g_camDist = 6.0f;
-static float g_camHeight = 4.5f;
 // Hướng model player (rad, quanh +Y) — cập nhật theo hướng DI CHUYỂN/dash,
 // đứng yên giữ hướng cuối. Trước đây xoay theo con trỏ chuột (giữ hành vi
 // tay-nhắm của stick-figure cũ) — sai với model thật: người chạy ngang mà
@@ -580,8 +587,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     if (IsKeyDown(KEY_F)) g_camDist += 3.0f * dt;
     if (g_camDist < 2.0f) g_camDist = 2.0f;
     if (g_camDist > 15.0f) g_camDist = 15.0f;
-    g_camHeight = g_camDist * 0.75f;
-    camera.target = (Vector3){ player->position.x, player->position.y + 0.2f, player->position.z };
+    g_camHeight = g_camDist * SANDBOX_CAMERA_HEIGHT_RATIO;
+    camera.target = (Vector3){ player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z };
     camera.position = (Vector3){ 
         player->position.x + sinf(g_cameraAngle) * g_camDist, 
         player->position.y + g_camHeight, 
@@ -933,7 +940,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     } // !enemyCrowdControlled
 
     // Cập nhật Camera góc nhìn thứ 3 theo vị trí mới của Player
-    camera.target = (Vector3){ player->position.x, player->position.y + 0.2f, player->position.z };
+    camera.target = (Vector3){ player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z };
     camera.position = (Vector3){ 
         player->position.x + sinf(g_cameraAngle) * g_camDist, 
         player->position.y + g_camHeight, 

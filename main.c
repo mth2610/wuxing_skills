@@ -1040,8 +1040,8 @@ int main(int argc, char **argv) {
         UpdateSandbox(&player, &enemy, dt, &uiState, &mouseTarget3D);
         CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_VFX_TESTER) {
-        static float vfxCameraAngle = 0.0f;
-        static float vfxCamDist = 13.0f;
+        static float vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
+        static float vfxCamDist = SANDBOX_CAMERA_DEFAULT_DISTANCE;
 
         static float s_vfxPlayerVelY = 0.0f;
         static bool s_vfxPlayerJumping = false;
@@ -1057,8 +1057,8 @@ int main(int argc, char **argv) {
             player.position.y = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
             s_vfxPlayerVelY = 0.0f;
             s_vfxPlayerJumping = false;
-            vfxCameraAngle = 0.6f;
-            vfxCamDist = 13.0f;
+            vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
+            vfxCamDist = SANDBOX_CAMERA_DEFAULT_DISTANCE;
         }
 
         if (!renderVFXMode && IsKeyPressed(KEY_N)) {
@@ -1238,10 +1238,10 @@ int main(int argc, char **argv) {
             if (vfxCamDist > 30.0f) vfxCamDist = 30.0f;
         }
 
-        camera.target = (Vector3){ player.position.x, player.position.y + 0.2f, player.position.z };
+        camera.target = (Vector3){ player.position.x, player.position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player.position.z };
         camera.position = (Vector3){
             player.position.x + sinf(vfxCameraAngle) * vfxCamDist,
-            player.position.y + vfxCamDist * 0.8f,
+            player.position.y + vfxCamDist * SANDBOX_CAMERA_HEIGHT_RATIO,
             player.position.z + cosf(vfxCameraAngle) * vfxCamDist
         };
 

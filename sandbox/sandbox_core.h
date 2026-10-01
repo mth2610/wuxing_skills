@@ -5,6 +5,13 @@
 #include "sandbox/ui_panel.h"
 #include "character/character_model.h"
 
+// Shared reference framing for skill sandbox and VFX test defaults (meters).
+#define SANDBOX_CAMERA_DEFAULT_YAW 0.0f
+#define SANDBOX_CAMERA_DEFAULT_DISTANCE 7.0f
+#define SANDBOX_CAMERA_HEIGHT_RATIO 0.85f
+#define SANDBOX_CAMERA_TARGET_HEIGHT 1.6f
+#define SANDBOX_CAMERA_DEFAULT_FOVY 45.0f
+
 // Biến camera toàn cục
 extern Camera3D camera;
 
