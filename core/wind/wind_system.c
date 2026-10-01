@@ -93,11 +93,11 @@ void Wind_Init(void) {
     memset(&s_terrainGrid, 0, sizeof(s_terrainGrid));
     s_terrainGrid.version = 1;
 
-    // Cấu hình gió vĩ mô mặc định (gió đêm thoang thoảng quét qua đấu trường)
+    // Strong coherent gusts over roughly 7 m noise cells; no extra evaluations.
     s_macroConfig = (WindMacroConfig){
         .baseDirection = (Vector3){ 1.5f, 0.0f, 0.8f },
-        .gustAmplitude = 0.6f,
-        .noiseScale    = 0.06f,
+        .gustAmplitude = 6.0f,
+        .noiseScale    = 0.14f,
         .noiseSpeed    = 1.0f,
         .terrainLiftK  = 1.2f,
         .heightGradientK = 1.0f,
