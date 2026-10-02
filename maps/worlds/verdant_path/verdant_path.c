@@ -666,6 +666,7 @@ void InitVerdantPathMap(void)
     MapProp_SetGroundSurfaceMaps(&s_ground,
         "assets/textures/verdant_meadow_substrate_material.png",
         "assets/textures/dirt_material.png");
+    MapProp_SetGroundReliefMap(&s_ground, "assets/textures/verdant_terrain_relief.png");
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
         "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
     // Border rocks must participate in the same lighting response as nearby
@@ -715,6 +716,7 @@ void InitVerdantPathMap(void)
             .chunkSize = 12.0f, .lodDistance = 23.0f, .midLodDistance = 9.0f, .drawDistance = 50.0f,
             .shadowDistance = 12.0f,
             .texturePath = NULL,
+            .botanicalVariation = 1.0f,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
         (MapMeadowStyle){
@@ -762,6 +764,10 @@ void UpdateVerdantPathMap(float dt)
         }
         double mark = profileEnabled ? GetTime() : 0.0;
         s_time += dt;
+        // Stage grass visibility before any framebuffer capture or scene draw.
+        // Late uploads split the scene pass and copy its full depth attachment.
+        MapProp_PrepareMeadow(&s_meadow, (Vector3){0});
+        MapProp_PrepareMeadow(&s_reedMeadow, (Vector3){0});
         MapProp_UpdateWaterSurface(&s_lake, dt);
         if (profileEnabled) {
             double now = GetTime(); profileMs[0] += (now - mark) * 1000.0; mark = now;

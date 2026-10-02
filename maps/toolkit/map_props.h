@@ -63,6 +63,7 @@ typedef struct
     bool ready;
     const MapEcology *ecology; // Borrowed shared habitat data; owner outlives ground.
     Vector2 tiling; // Per-surface texture repeats, uploaded in the active draw scope.
+    Texture2D reliefTexture; // ResourceManager-owned optional R/G heights, B/A litter/moss.
 } MapGroundSurface;
 
 // width/depth in world meters. tileSize = meters per texture repeat
@@ -96,6 +97,9 @@ void MapProp_SetGroundEcology(MapGroundSurface *ground, const MapEcology *ecolog
 void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground,
                                   const char *grassMaterialPath,
                                   const char *soilMaterialPath);
+// Optional tileable relief: R substrate height, G soil height, B litter, A moss.
+// Normal RGB / roughness A remain in the separate material maps.
+void MapProp_SetGroundReliefMap(MapGroundSurface *ground, const char *reliefPath);
 // Configure multi-layer habitat blending (path corridors, shoreline wetness, soil transitions)
 void MapProp_SetGroundHabitat(MapGroundSurface *ground,
                               const Vector4 *pathSegments, int segmentCount,
@@ -257,6 +261,7 @@ typedef struct
     const char *texturePath; // optional alpha-cutout blade texture
     float alphaCutoff;       // <= 0 uses 0.42
     bool hasPlumes;          // shore reeds: adds fluffy ivory plumes on top and arching side leaves
+    float botanicalVariation; // 0 preserves authored shapes; [0,1] mixes patch-coherent arches/leaf accents.
 } MapMeadowStyle;
 
 typedef struct
@@ -352,6 +357,9 @@ typedef struct
 
 void MapProp_ResetNatureRenderStats(void);
 MapNatureRenderStats MapProp_GetNatureRenderStats(void);
+// Optional update/pre-render preparation after camera finalization, before any render pass.
+// Stages compact visible IDs; Draw remains correct without preparation.
+void MapProp_PrepareMeadow(MapMeadowSurface *meadow, Vector3 worldOffset);
 void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float time,
                         Vector2 windDirection, float windStrength);
 // HIGH-tier dynamic shadow-map submission using a stable sparse geometry LOD

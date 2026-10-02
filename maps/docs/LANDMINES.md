@@ -39,6 +39,12 @@
 - **Cause:** The dynamic directional shadow map covers a finite moving box. Its previous 3.5% UV edge fade was too narrow to hide the transition across dense grass shadows at wide zoom.
 - **Rule:** In `maps/toolkit/shaders/map_shadow.glsl`, fade dynamic coverage across the outer 12% of UV extent while retaining full interior contrast and the static map's separate edge fade. Check the ground and foliage receivers at the same wide gameplay camera; mesh LOD changes cannot repair a shadow coverage edge.
 
+### Smaller grass submissions become slower when IDs upload mid-scene
+
+- **Symptom:** Compact tuft lists reduce submitted vertices, but frame time increases and the scene gains two additional full-resolution depth copies.
+- **Cause:** `UpdateTexture` inside `MapProp_DrawMeadow` splits the active scene render pass. The Vulkan backend preserves the scene's readable depth attachment when reopening it; uploading once for each meadow adds extra copies.
+- **Rule:** Call `MapProp_PrepareMeadow` after camera finalization and before framebuffer captures or scene drawing. Reuse prepared IDs when the view is unchanged; retain Draw's fallback for callers without a preparation phase. Compare renderer counters as well as visible frame timing. The production test checks preparation reuse and camera/resize invalidation.
+
 ### A player-centred vegetation field drops remote wind impacts
 
 - **Symptom:** Guided Particle visibly impacts grass or flowers, but the plants do not bend.

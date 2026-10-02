@@ -31,8 +31,8 @@ out vec4 v_staticLightSpace;
 
 void main()
 {
-    // Every tuft belongs to exactly one pass. Rejected templates are clipped
-    // before evaluating the blade or wind, retaining opaque depth/early-Z.
+    // Compact submissions contain only this LOD's roots. The diagnostic
+    // legacy path clips rejected templates before blade/wind evaluation.
     if (!NatureTuftUsesCurrentLod()) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;

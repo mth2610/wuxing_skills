@@ -9,6 +9,8 @@
 #include "maps/toolkit/shaders/map_shadow.glsl"
 #include "environment/shaders/cloud_shadow.glsl"
 uniform sampler2D u_cloudNoise;
+uniform sampler2D u_groundRelief; // R/G derived substrate/soil height; B/A litter/moss classes
+uniform int u_groundReliefEnabled;
 
 in vec2 fragTexCoord;
 in vec3 fragPosition;   // project surface space; see ground_splat.vs
@@ -48,6 +50,9 @@ void main()
     vec2 broadGrassUV = vec2(tiledUV.y * 0.38 + 17.0, -tiledUV.x * 0.38 + 9.0);
     vec3 broadGrass = texture(texGrass, broadGrassUV).rgb;
     float fineGrassLuma = dot(colorGrass.rgb, vec3(0.2126, 0.7152, 0.0722));
+    vec2 uvDx = dFdx(tiledUV), uvDy = dFdy(tiledUV);
+    float pixelMeters = max(length(dFdx(fragWorldPos.xz)), length(dFdy(fragWorldPos.xz)));
+    float detailResolve = 1.0 - smoothstep(0.015, 0.070, pixelMeters);
 
     // Soil detail from dirt texture
     vec4 colorDirt = texture(texPath, tiledUV * 0.85);
@@ -107,34 +112,48 @@ void main()
     float wDrySoil = clamp(wPathMargin * 0.88 + wSlope * 0.92, 0.0, 1.0);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
-    // Relief inferred from albedo (not authored height): normals RGB and
-    // roughness A retain their contract. Gate relief by actual coverage so
-    // an absent layer cannot bleed back into a road or wet shoreline.
+    // Separate relief reconstructed offline from normal gradients. The alpha
+    // of material maps remains roughness; albedo brightness never drives height.
     vec4 weights = vec4(wGrass, wDrySoil, wWetSoil, wPath);
-    vec4 relief = vec4(fineGrassLuma, dirtDetail.r, 1.0 - dirtDetail.g * 0.8, colorDirt.r);
-    vec4 heights = weights + (relief - 0.5) * 0.10 * smoothstep(vec4(0.0), vec4(0.2), weights);
-    float peak = max(max(heights.x, heights.y), max(heights.z, heights.w));
-    vec4 resolved = max(heights - vec4(peak - 0.45), vec4(0.0)) * weights;
-    resolved /= max(dot(resolved, vec4(1.0)), 0.0001);
-    // Albedo is only a relief proxy. Keep the authored soft coverage dominant
-    // instead of letting inferred heights create sharply separated islands.
-    resolved = mix(weights / max(dot(weights, vec4(1.0)), 0.0001), resolved, 0.25);
+    vec4 normalizedWeights = weights / max(dot(weights, vec4(1.0)), 0.0001);
+    vec4 resolved = normalizedWeights;
+    vec2 litterClasses = vec2(0.5);
+    if (u_groundReliefEnabled != 0 && detailResolve > 0.03) {
+        vec4 substrateRelief = textureGrad(u_groundRelief, tiledUV, uvDx, uvDy);
+        litterClasses = substrateRelief.ba;
+        // Only material boundaries need the second height read. Far pixels
+        // use the shared ecological coverage without additional relief reads.
+        float dominantWeight = max(max(weights.x, weights.y), max(weights.z, weights.w));
+        if (dominantWeight < 0.98) {
+            float soilHeight = textureGrad(u_groundRelief, tiledUV * 0.85, uvDx * 0.85, uvDy * 0.85).g;
+            vec4 relief = vec4(substrateRelief.r, soilHeight, soilHeight, soilHeight);
+            vec4 heights = weights + (relief - 0.5) * 0.24;
+            float peak = max(max(heights.x, heights.y), max(heights.z, heights.w));
+            vec4 candidates = max(heights - vec4(peak - 0.36), vec4(0.0)) * weights;
+            candidates /= max(dot(candidates, vec4(1.0)), 0.0001);
+            resolved = mix(normalizedWeights, candidates, detailResolve * 0.40);
+        }
+    }
     wGrass = resolved.x; wDrySoil = resolved.y;
     wWetSoil = resolved.z; wPath = resolved.w;
 
     // Preserve litter detail at low contrast; foliage owns the visible canopy.
     // A restrained olive underlayer matches the roots instead of competing
     // with them as a bright second grass canopy.
-    vec3 blendedGrass = mix(colorGrass.rgb, broadGrass, 0.32);
+    vec3 blendedGrass = mix(colorGrass.rgb, broadGrass, 0.20);
     float turfDetail = dot(blendedGrass, vec3(0.2126, 0.7152, 0.0722));
-    float detailContrast = clamp((turfDetail - 0.20) * 1.40, -0.22, 0.22);
-    vec3 turfBase = vec3(0.255, 0.300, 0.150);
-    // Retain the authored moss/root/straw hues as restrained detail. Reducing
-    // the texture to luminance alone turns every exposed gap into flat green.
+    // Normalize the authored chroma independently of exposure. Resolved moss
+    // and tan roots retain color; minified substrate settles into olive earth.
+    float detailContrast = clamp((turfDetail - 0.20) * 1.65, -0.28, 0.25);
+    vec3 turfBase = vec3(0.255, 0.290, 0.165);
     vec3 litterChroma = clamp(blendedGrass / max(turfDetail, 0.06),
-                              vec3(0.65), vec3(1.35));
-    vec3 grassAlbedo = turfBase * mix(vec3(1.0), litterChroma, 0.35)
+                              vec3(0.60), vec3(1.50));
+    float chromaStrength = mix(0.38, 0.68, detailResolve);
+    vec3 grassAlbedo = turfBase * mix(vec3(1.0), litterChroma, chromaStrength)
                                * (1.0 + detailContrast);
+    vec3 litterTint = mix(vec3(1.0), vec3(1.08, 1.01, 0.91), litterClasses.x);
+    litterTint *= mix(vec3(1.0), vec3(0.97, 1.015, 0.96), litterClasses.y);
+    grassAlbedo *= mix(vec3(1.0), litterTint, detailResolve * 0.35);
 
     // Multi-scale organic turf variation (deep damp swales vs warm sunny hummocks)
     float turfNoise = sin(fragWorldPos.x * 0.16 + fragWorldPos.z * 0.11) * 0.5

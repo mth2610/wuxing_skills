@@ -14,12 +14,14 @@ static int locPathSegCount = -1;
 static int locLakeParams = -1;
 static int locGroundOffset = -1;
 static int locGroundTiling = -1, locGroundCloudNoise = -1;
+static int locGroundReliefSampler = -1, locGroundReliefEnabled = -1;
 static int locEcologyRect = -1;
 static int locEcologyEnabled = -1;
 static int locGroundCloudUV = -1, locGroundCloudShape = -1, locGroundCloudProjection = -1;
 
 #define MAX_GROUND_PATH_SEGS 16
 #define GROUND_CLOUD_TEXTURE_SLOT 7 // Raw 2D binding; not a cubemap material map.
+#define GROUND_RELIEF_TEXTURE_SLOT 8 // Separate 2D resource, never material normals/roughness.
 static Vector4 s_groundPathSegs[MAX_GROUND_PATH_SEGS];
 static int s_groundPathSegCount = 0;
 static Vector4 s_groundLakeParams = {0};
@@ -320,6 +322,8 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locGroundOffset = GetShaderLocation(groundShader, "u_groundOffset");
         locGroundTiling = GetShaderLocation(groundShader, "tiling");
         locGroundCloudNoise = GetShaderLocation(groundShader, "u_cloudNoise");
+        locGroundReliefSampler = GetShaderLocation(groundShader, "u_groundRelief");
+        locGroundReliefEnabled = GetShaderLocation(groundShader, "u_groundReliefEnabled");
         locEcologyRect = GetShaderLocation(groundShader, "u_ecologyRect");
         locEcologyEnabled = GetShaderLocation(groundShader, "u_ecologyEnabled");
         locGroundCloudUV = GetShaderLocation(groundShader, "u_cloudUV");
@@ -471,6 +475,13 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     rlActiveTextureSlot(GROUND_CLOUD_TEXTURE_SLOT);
     rlEnableTexture(cloud.noiseTexture.id ? cloud.noiseTexture.id : rlGetTextureIdDefault());
     rlActiveTextureSlot(0);
+    rlActiveTextureSlot(GROUND_RELIEF_TEXTURE_SLOT);
+    rlEnableTexture(ground->reliefTexture.id ? ground->reliefTexture.id : rlGetTextureIdDefault());
+    rlActiveTextureSlot(0);
+    int reliefSlot = GROUND_RELIEF_TEXTURE_SLOT;
+    int reliefEnabled = ground->reliefTexture.id != 0;
+    if (locGroundReliefSampler >= 0) SetShaderValue(groundShader, locGroundReliefSampler, &reliefSlot, SHADER_UNIFORM_INT);
+    if (locGroundReliefEnabled >= 0) SetShaderValue(groundShader, locGroundReliefEnabled, &reliefEnabled, SHADER_UNIFORM_INT);
     int cloudSlot = GROUND_CLOUD_TEXTURE_SLOT;
     if (locGroundCloudNoise >= 0) SetShaderValue(groundShader, locGroundCloudNoise, &cloudSlot, SHADER_UNIFORM_INT);
     if (locGroundTiling >= 0) SetShaderValue(groundShader, locGroundTiling, &ground->tiling, SHADER_UNIFORM_VEC2);
@@ -524,6 +535,8 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     if (locGroundOffset >= 0)
         SetShaderValue(groundShader, locGroundOffset, &pos, SHADER_UNIFORM_VEC3);
     DrawModel(ground->model, pos, 1.0f, WHITE);
+    rlActiveTextureSlot(GROUND_RELIEF_TEXTURE_SLOT);
+    rlDisableTexture();
     rlActiveTextureSlot(GROUND_CLOUD_TEXTURE_SLOT);
     rlDisableTexture();
     rlActiveTextureSlot(0);
@@ -607,4 +620,15 @@ void MapProp_SetGroundEcology(MapGroundSurface *ground, const MapEcology *ecolog
     ground->ecology = ecology;
     ground->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = ecology ? ecology->habitatTexture : (Texture2D){0};
     ground->model.materials[0].maps[MATERIAL_MAP_BRDF].texture = ecology ? ecology->distanceTexture : (Texture2D){0};
+}
+
+void MapProp_SetGroundReliefMap(MapGroundSurface *ground, const char *reliefPath)
+{
+    if (!ground || !ground->ready) return;
+    ground->reliefTexture = reliefPath ? ResourceManager_LoadTexture(reliefPath) : (Texture2D){0};
+    if (ground->reliefTexture.id) {
+        GenTextureMipmaps(&ground->reliefTexture);
+        SetTextureFilter(ground->reliefTexture, TEXTURE_FILTER_ANISOTROPIC_16X);
+        SetTextureWrap(ground->reliefTexture, TEXTURE_WRAP_REPEAT);
+    }
 }

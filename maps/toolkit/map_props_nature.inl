@@ -1625,6 +1625,22 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
                 (0.76f + 0.34f * bHash3 + 0.10f * (1.0f - tierFrac));
         lean = height * (0.14f + 0.38f * bHash);
         droopY = height * (0.025f + 0.10f * bHash3);
+        float botanical = fminf(fmaxf(style.botanicalVariation, 0.0f), 1.0f);
+        if (botanical > 0.0f) {
+            // Neighboring tufts share a growth habit; stable blade identities
+            // add occasional broad leaves and needles without random patch noise.
+            float habit = 0.5f + 0.5f * (
+                sinf(clump->position.x * 0.19f + clump->position.z * 0.11f) * 0.60f +
+                sinf(clump->position.z * 0.16f - clump->position.x * 0.06f) * 0.40f);
+            float stretch = 1.08f + 0.24f * habit;
+            if (bHash2 < 0.07f) stretch *= 0.78f;
+            else if (bHash2 < 0.14f) stretch *= 1.12f;
+            stretch = 1.0f + (stretch - 1.0f) * botanical;
+            height *= stretch;
+            width /= stretch; // Retain approximate leaf area as silhouettes change.
+            lean *= stretch * (1.0f + botanical * (0.20f + 0.65f * habit));
+            droopY = height * (0.025f + 0.10f * bHash3 + botanical * 0.20f * habit);
+        }
         if (bladeSegments == 1) {
             // A full-length distant triangle rasterizes as a thin,
             // bright diagonal. Keep its area in a shorter, wider tuft.
@@ -1659,6 +1675,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         if (isSeedhead) {
             bladeRoot = (Color){46, 60, 22, 255};   // warm olive-gold sheath
             bladeTip  = (Color){208, 182, 85, 255};  // ripe golden-amber wheat straw tip
+            bladeTip = Nature_LerpColor(bladeTip, (Color){166, 156, 88, 255}, botanical);
         } else {
             float colorField = sinf(clump->position.x * 0.19f + clump->position.z * 0.07f) * 0.55f
                              + sinf(clump->position.z * 0.15f - clump->position.x * 0.05f) * 0.45f;
@@ -2133,31 +2150,35 @@ static bool Nature_IntersectsDynamicShadowCoverage(Vector3 center, float radius)
     return dx * dx + dz * dz <= limit * limit;
 }
 
+// Stage mutable visibility IDs before shadow/color rendering. Draw retains a
+// camera-signature fallback for callers without a preparation phase.
+void MapProp_PrepareMeadow(MapMeadowSurface *meadow, Vector3 worldOffset)
+{
+    if (!meadow || !meadow->ready || !meadow->parametric) return;
+    NatureParametricMeadow *data = meadow->parametric;
+    if (!data->compact && !data->nearFirst) return;
+    NatureMeadowView view = NatureParametric_View(meadow);
+    if (NatureParametric_IsPrepared(meadow,worldOffset,view.bands)) return;
+    float drawDistanceSq = view.drawDistance*view.drawDistance;
+    for (int i = 0; i < meadow->chunkCount; i++) {
+        MapMeadowChunk *chunk = &meadow->chunks[i];
+        Vector3 center = Vector3Add(chunk->center,worldOffset);
+        chunk->visibleThisFrame = Nature_IsChunkVisible(center,chunk->radius);
+        float dx = camera.position.x-center.x, dz = camera.position.z-center.z;
+        if (view.drawDistance > 0.0f && dx*dx+dz*dz > drawDistanceSq) chunk->visibleThisFrame = false;
+    }
+    NatureParametric_PrepareVisible(meadow,worldOffset,view.bands);
+}
+
 void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float time,
                         Vector2 windDirection, float windStrength)
 {
     if (!meadow || !meadow->ready) return;
     GfxQuality quality = GfxQuality_Get();
-    float rangeScale = quality >= GFX_HIGH ? 1.0f
-                     : quality == GFX_MED ? 0.84f
-                     : quality == GFX_LOW ? 0.68f : 0.55f;
-    float lodScale = quality >= GFX_HIGH ? 1.0f
-                   : quality == GFX_MED ? 0.84f : 0.68f;
-
-    // LOD uses actual 3D camera distance. Adding the orbit radius to
-    // thresholds promotes tiny on-screen blades to expensive near geometry.
-    // Retain the focal offset only for map visibility, not mesh detail.
-    float focalDx = camera.position.x - camera.target.x;
-    float focalDz = camera.position.z - camera.target.z;
-    float focalDistH = sqrtf(focalDx * focalDx + focalDz * focalDz);
-    float fovyRad = fmaxf(camera.fovy, 15.0f) * DEG2RAD;
-    float zoomFactor = tanf(45.0f * 0.5f * DEG2RAD) / tanf(fovyRad * 0.5f);
-    if (zoomFactor < 0.8f) zoomFactor = 0.8f;
-    if (zoomFactor > 2.5f) zoomFactor = 2.5f;
-
-    float lodDistance = meadow->lodDistance * lodScale * zoomFactor;
-    float drawDistance = (meadow->drawDistance > 0.0f) ? (focalDistH + meadow->drawDistance * rangeScale * zoomFactor) : 0.0f;
-    float drawDistanceSq = drawDistance * drawDistance;
+    NatureMeadowView view = NatureParametric_View(meadow);
+    float lodScale = view.lodScale, zoomFactor = view.zoomFactor;
+    float lodDistance = view.lodDistance, drawDistance = view.drawDistance;
+    float drawDistanceSq = drawDistance*drawDistance;
     for (int i = 0; i < meadow->chunkCount; i++) {
         MapMeadowChunk *chunk = &meadow->chunks[i];
         chunk->visibleThisFrame = false;
@@ -2254,17 +2275,14 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         rlEnableDepthMask();
     }
 
+    Vector4 tuftBands = view.bands;
+    if (meadow->parametric) NatureParametric_PrepareVisible(meadow,worldOffset,tuftBands);
     Shader shader = meadow->parametric ? NatureParametric_Shader(false)
                                       : Nature_GetShader(meadow->textured);
     Nature_BeginWindReceiverShader(shader);
     Nature_UpdateShader(shader, time, windDirection, windStrength,
                         meadow->textured, meadow->alphaCutoff,
                         NATURE_WIND_RESPONSE_GRASS);
-    float tuftMidDistance = meadow->midLodDistance > 0.0f
-        ? meadow->midLodDistance * lodScale * zoomFactor : 0.0f;
-    Vector4 tuftBands = {tuftMidDistance, lodDistance,
-                        NATURE_LOD_NEAR_BLEND_HALF_WIDTH,
-                        NATURE_LOD_FAR_BLEND_HALF_WIDTH};
     if (meadow->parametric) {
         NatureParametric_BindReceivers(shader,false);
         SetShaderValue(shader,s_natureTuftLodBandsLoc,&tuftBands,SHADER_UNIFORM_VEC4);
@@ -2277,7 +2295,10 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             SetShaderValue(shader, tipSofteningLoc, &tipSoftening, SHADER_UNIFORM_FLOAT);
     }
     rlDisableBackfaceCulling();
-    for (int i = 0; i < meadow->chunkCount; i++) {
+    NatureParametricMeadow *ordered = meadow->parametric;
+    int drawCount = ordered && ordered->nearFirst ? ordered->drawCount : meadow->chunkCount;
+    for (int draw = 0; draw < drawCount; draw++) {
+        int i = ordered && ordered->nearFirst ? ordered->drawOrder[draw] : draw;
         MapMeadowChunk *chunk = &meadow->chunks[i];
         if (!chunk->visibleThisFrame)
             continue;
@@ -2290,6 +2311,8 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             float maxDistance = d + chunk->radius;
             for (int lod = 0; lod < 3; lod++) {
                 if (!NatureParametric_LodIntersectsSphere(lod,minDistance,maxDistance,tuftBands)) continue;
+                NatureParametricMeadow *data = meadow->parametric;
+                if (data->compact && data->ranges[i].visibleCount[lod] == 0) continue;
                 NatureParametric_DrawChunk(meadow,i,lod,shader,worldOffset);
                 if (lod == 2) s_natureRenderStats.meadowFarDraws++;
                 else if (lod == 1) s_natureRenderStats.meadowMidDraws++;

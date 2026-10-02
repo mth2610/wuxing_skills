@@ -27,6 +27,8 @@ glsl = re.sub(r'vec3 worldRoot = vec3\(u_worldFromShaderSpace.*?;',
               'Vector3 worldRoot = TransformRoot(root);', glsl, flags=re.S)
 glsl = re.sub(r'\buint\b', 'uint32_t', glsl)
 glsl = re.sub(r'\bfloat\(', '(float)(', glsl)
+compact_source = (ROOT/'maps/toolkit/map_props_meadow_parametric.inl').read_text()
+cpu_selection = '\n'.join(function(compact_source,name) for name in ('NatureParametric_Rank','NatureParametric_Smoothstep','NatureParametric_SelectLod'))
 culling = function((ROOT/'maps/toolkit/map_props_meadow_parametric.inl').read_text(),
                    'NatureParametric_LodIntersectsSphere')
 STUBS = r'''
@@ -39,12 +41,15 @@ STUBS = r'''
 typedef struct {float x,y,z;} Vector3;
 typedef struct {float x,y,z,w;} Vector4;
 static Vector4 u_tuftLodBands;
+static int u_compactTuftSubmission;
 static int u_tuftLodLevel,u_bladeOffset,gl_InstanceID,u_bladesPerTuft,expectedBlade,addressBias;
 static Vector3 u_tuftLodCamera,rootInput,worldOffset;
+static int NatureBladeId(int localBlade) {return u_bladeOffset+gl_InstanceID*u_bladesPerTuft+localBlade;}
 static Vector3 FetchRoot(int blade) {assert(blade==expectedBlade);return rootInput;}
 static Vector3 TransformRoot(Vector3 r) {return (Vector3){r.x+worldOffset.x,r.y+worldOffset.y,r.z+worldOffset.z};}
 static uint32_t floatBitsToUint(float f) {uint32_t u;memcpy(&u,&f,sizeof(u));return u;}
 static float distance(Vector3 a,Vector3 b) {float x=a.x-b.x,y=a.y-b.y,z=a.z-b.z;return sqrtf(x*x+y*y+z*z);}
+static float Vector3Distance(Vector3 a,Vector3 b) {return distance(a,b);}
 static float smoothstep(float a,float b,float x) {float t=fmaxf(0,fminf(1,(x-a)/(b-a)));return t*t*(3-2*t);}
 '''
 TEST = r'''
@@ -57,7 +62,9 @@ static int Selected(void) {
         u_tuftLodLevel=lod;
         if(NatureTuftUsesCurrentLod()) {count++;result=lod;}
     }
-    assert(count==1);return result;
+    assert(count==1);
+    assert(result==NatureParametric_SelectLod(TransformRoot(rootInput),NatureParametric_Rank(rootInput),u_tuftLodCamera,u_tuftLodBands));
+    return result;
 }
 static void SetDistance(float d) {
     Vector3 r=TransformRoot(rootInput);u_tuftLodCamera=(Vector3){r.x+d,r.y,r.z};
@@ -124,6 +131,6 @@ with tempfile.TemporaryDirectory(prefix='wuxing-meadow-lod-') as directory:
     work = pathlib.Path(directory)
     c = work/'lod.c'
     exe = work/'lod'
-    c.write_text(STUBS+glsl+'\n'+culling+'\n'+TEST)
+    c.write_text(STUBS+cpu_selection+'\n'+glsl+'\n'+culling+'\n'+TEST)
     subprocess.run(['cc','-std=c99','-O2','-Wall','-Wextra','-Werror',str(c),'-lm','-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)

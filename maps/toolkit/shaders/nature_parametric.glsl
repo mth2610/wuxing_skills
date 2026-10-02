@@ -1,22 +1,55 @@
-// Immutable authored blade descriptors. Seven RGBA32F texels per blade,
+// One immutable atlas shared by all LODs. Seven RGBA32F texels per blade,
 // 256 descriptors per row; template.z = local blade id + row role / 4.
 uniform sampler2D u_bladeParameters;
 uniform int u_bladeOffset;
 uniform int u_bladesPerTuft;
 
+uniform int u_canonicalBladeData;
+uniform int u_canonicalBlades;
+uniform int u_geometryLod;
+uniform int u_chunkTuftOffset;
+
 #ifdef NATURE_VISIBLE_TUFT_LOD
-uniform vec4 u_tuftLodBands; // near/mid, mid/far, transition half widths (meters)
+uniform vec4 u_tuftLodBands;
 uniform int u_tuftLodLevel;
 uniform vec3 u_tuftLodCamera;
+uniform int u_compactTuftSubmission;
+uniform sampler2D u_visibleTuftIds;
+uniform int u_visibleTuftOffset;
+#endif
 
+int NatureTuftId()
+{
+#ifdef NATURE_VISIBLE_TUFT_LOD
+    if (u_compactTuftSubmission != 0) {
+        int index = u_visibleTuftOffset + gl_InstanceID;
+        int texel = index / 4;
+        vec4 ids = texelFetch(u_visibleTuftIds, ivec2(texel % 256, texel / 256), 0);
+        return int(ids[index % 4]);
+    }
+#endif
+    return u_chunkTuftOffset + gl_InstanceID;
+}
+
+int NatureBladeId(int localBlade)
+{
+    int tuft = NatureTuftId();
+    if (u_canonicalBladeData != 0) {
+        int botanicalBlade = u_bladesPerTuft > 1 && u_bladesPerTuft < u_canonicalBlades
+            ? localBlade * (u_canonicalBlades - 1) / (u_bladesPerTuft - 1) : localBlade;
+        return tuft * u_canonicalBlades + botanicalBlade;
+    }
+    return u_bladeOffset + (tuft-u_chunkTuftOffset) * u_bladesPerTuft + localBlade;
+}
+
+#ifdef NATURE_VISIBLE_TUFT_LOD
 bool NatureTuftUsesCurrentLod()
 {
+    if (u_compactTuftSubmission != 0) return true;
     if (u_tuftLodBands.y <= 0.0) return u_tuftLodLevel == 0;
-    int blade = u_bladeOffset + gl_InstanceID * u_bladesPerTuft;
+    int blade = NatureBladeId(0);
     vec3 root = texelFetch(u_bladeParameters,
         ivec2((blade % 256) * 7 + 4, blade / 256), 0).xyz;
-    // Hash immutable authoring coordinates, not camera-transformed floats:
-    // tiny matrix rounding changes must never reshuffle a tuft's LOD rank.
     uint h = floatBitsToUint(root.x) ^ (floatBitsToUint(root.z) * 0x9e3779b9u);
     h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
     float rank = float(h & 0x00ffffffu) * (1.0 / 16777216.0);
@@ -37,11 +70,35 @@ vec4 NatureBladeParameter(int blade, int column)
     return texelFetch(u_bladeParameters, ivec2((blade % 256) * 7 + column, blade / 256), 0);
 }
 
+void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p3)
+{
+    if (u_canonicalBladeData != 0) {
+        float widthScale = u_geometryLod == 1 ? 1.22 : (u_geometryLod == 2 ? 1.65 : (u_geometryLod == 3 ? 1.30 : 1.0));
+        p1.w *= widthScale;
+        if (u_geometryLod == 2) {
+            // Preserve the author's short/wide far silhouette and droop;
+            // canonical near geometry remains unchanged for real shadows.
+            float height = (p1.y-p0.y) / 0.38;
+            float droop = height*0.88 - (p3.y-p0.y);
+            p1.x = p0.x + (p1.x-p0.x)*0.67;
+            p1.y = p0.y + (p1.y-p0.y)*0.78;
+            p1.z = p0.z + (p1.z-p0.z)*0.67;
+            p2.x = p0.x + (p2.x-p0.x)*0.67;
+            p2.y = p0.y + (p2.y-p0.y)*0.78;
+            p2.z = p0.z + (p2.z-p0.z)*0.67;
+            p3.x = p0.x + (p3.x-p0.x)*0.67;
+            p3.z = p0.z + (p3.z-p0.z)*0.67;
+            p3.y = p0.y + max(height*0.78*0.28,height*0.78*0.88-droop*0.65);
+            p1.w *= 1.28;
+        }
+    }
+}
+
 void NatureEvaluateBlade(out vec3 position, out vec3 normal,
                          out vec4 color, out vec2 windUV, out vec2 surfaceUV)
 {
     int localBlade = int(floor(vertexPosition.z));
-    int blade = u_bladeOffset + gl_InstanceID * u_bladesPerTuft + localBlade;
+    int blade = NatureBladeId(localBlade);
     vec4 p0 = NatureBladeParameter(blade, 0);
     vec4 p1 = NatureBladeParameter(blade, 1);
     vec4 p2 = NatureBladeParameter(blade, 2);
@@ -49,6 +106,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     vec4 clump = NatureBladeParameter(blade, 4);
     vec3 rootColor = NatureBladeParameter(blade, 5).rgb;
     vec3 tipColor = NatureBladeParameter(blade, 6).rgb;
+    NatureApplyCanonicalLod(p0,p1,p2,p3);
     float t = vertexPosition.y;
     float sideSign = vertexPosition.x;
     float role = fract(vertexPosition.z) * 4.0; // 1 lower, 2 upper, 3 apex
