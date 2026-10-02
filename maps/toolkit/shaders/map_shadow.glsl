@@ -87,11 +87,16 @@ float MapShadowFilteredVisibility(sampler2D mapTexture, vec2 uv,
     return mix(smoothVisibility, darkestVisibility, thinFeatureBoost * 0.25);
 }
 
-float MapShadowCoverageFade(vec2 uv)
+float MapShadowCoverageFadeWidth(vec2 uv, float width)
 {
     float edgeDistance = min(min(uv.x, 1.0 - uv.x),
                              min(uv.y, 1.0 - uv.y));
-    return smoothstep(0.0, 0.035, edgeDistance);
+    return smoothstep(0.0, width, edgeDistance);
+}
+
+float MapShadowCoverageFade(vec2 uv)
+{
+    return MapShadowCoverageFadeWidth(uv, 0.035);
 }
 
 float MapDynamicShadowVisibility(vec3 worldPos, float slope)
@@ -112,7 +117,9 @@ float MapDynamicShadowVisibility(vec3 worldPos, float slope)
     float visibility = MapShadowFilteredVisibility(
         shadowMap, projected.xy, compareDepth, u_shadowTexel, MAP_DYNAMIC_SHADOW_RADIUS,
         u_shadowThinFeatureBoost);
-    float edgeFade = MapShadowCoverageFade(projected.xy);
+    // Wide chase views expose the moving shadow box. Blend its outer rim
+    // gradually while preserving full shadow contrast in the interior.
+    float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.12);
     float resolved = mix(1.0, visibility, edgeFade);
     // A modest contrast resolve makes sub-texel blades and petals readable
     // after PCF without dilating or replacing their captured silhouette.

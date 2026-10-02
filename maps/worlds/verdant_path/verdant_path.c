@@ -636,7 +636,7 @@ void InitVerdantPathMap(void)
     // global environment state before the resource guard so another map cannot
     // leave Verdant using stale light/fog values.
     ApplyVerdantEnvironment();
-    VolumetricFog_SetDistantCoverage(2.0f / 3.0f);
+    VolumetricFog_SetDistantCoverage(4.0f / 9.0f);
     EnvCloudShadowConfig cloudConfig = {
         .enabled = true, .strength = 0.12f, .worldSize = 96.0f,
         .planeHeight = 80.0f, .coverage = 0.48f, .softness = 0.16f, .windSpeedScale = 0.55f,

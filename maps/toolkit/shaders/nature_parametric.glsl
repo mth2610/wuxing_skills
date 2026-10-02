@@ -4,6 +4,34 @@ uniform sampler2D u_bladeParameters;
 uniform int u_bladeOffset;
 uniform int u_bladesPerTuft;
 
+#ifdef NATURE_VISIBLE_TUFT_LOD
+uniform vec4 u_tuftLodBands; // near/mid, mid/far, transition half widths (meters)
+uniform int u_tuftLodLevel;
+uniform vec3 u_tuftLodCamera;
+
+bool NatureTuftUsesCurrentLod()
+{
+    if (u_tuftLodBands.y <= 0.0) return u_tuftLodLevel == 0;
+    int blade = u_bladeOffset + gl_InstanceID * u_bladesPerTuft;
+    vec3 root = texelFetch(u_bladeParameters,
+        ivec2((blade % 256) * 7 + 4, blade / 256), 0).xyz;
+    // Hash immutable authoring coordinates, not camera-transformed floats:
+    // tiny matrix rounding changes must never reshuffle a tuft's LOD rank.
+    uint h = floatBitsToUint(root.x) ^ (floatBitsToUint(root.z) * 0x9e3779b9u);
+    h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
+    float rank = float(h & 0x00ffffffu) * (1.0 / 16777216.0);
+    vec3 worldRoot = vec3(u_worldFromShaderSpace * matModel * vec4(root, 1.0));
+    float d = distance(worldRoot, u_tuftLodCamera);
+    float farWeight = smoothstep(u_tuftLodBands.y - u_tuftLodBands.w,
+                                 u_tuftLodBands.y + u_tuftLodBands.w, d);
+    float midWeight = u_tuftLodBands.x > 0.0
+        ? smoothstep(u_tuftLodBands.x - u_tuftLodBands.z,
+                     u_tuftLodBands.x + u_tuftLodBands.z, d) : 0.0;
+    int selected = rank < farWeight ? 2 : (rank < midWeight ? 1 : 0);
+    return selected == u_tuftLodLevel;
+}
+#endif
+
 vec4 NatureBladeParameter(int blade, int column)
 {
     return texelFetch(u_bladeParameters, ivec2((blade % 256) * 7 + column, blade / 256), 0);

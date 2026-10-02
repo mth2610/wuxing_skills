@@ -380,7 +380,9 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
     struct
     {
         u32 id;
-        u32 members[32];
+        // The default uniform block is one struct. Keep every supported
+        // uniform; truncating at 32 silently loses later camera/LOD controls.
+        u32 members[RLVK_MAX_SHADER_UNIFORMS];
         u32 count;
     } structs[32];
     int structCount = 0;
@@ -412,7 +414,8 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
             if (structCount < 32)
             {
                 structs[structCount].id = a[0];
-                structs[structCount].count = (len - 2 < 32) ? (len - 2) : 32;
+                structs[structCount].count = (len - 2 < RLVK_MAX_SHADER_UNIFORMS)
+                    ? (len - 2) : RLVK_MAX_SHADER_UNIFORMS;
                 for (u32 m = 0; m < structs[structCount].count; m++)
                     structs[structCount].members[m] = a[1 + m];
                 structCount++;

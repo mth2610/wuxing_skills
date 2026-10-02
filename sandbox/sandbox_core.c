@@ -585,8 +585,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     if (wheel != 0.0f) g_camDist -= wheel * 0.5f;
     if (IsKeyDown(KEY_R)) g_camDist -= 3.0f * dt;
     if (IsKeyDown(KEY_F)) g_camDist += 3.0f * dt;
-    if (g_camDist < 2.0f) g_camDist = 2.0f;
-    if (g_camDist > 15.0f) g_camDist = 15.0f;
+    if (g_camDist < SANDBOX_CAMERA_MIN_DISTANCE) g_camDist = SANDBOX_CAMERA_MIN_DISTANCE;
+    if (g_camDist > SANDBOX_CAMERA_MAX_DISTANCE) g_camDist = SANDBOX_CAMERA_MAX_DISTANCE;
     g_camHeight = g_camDist * SANDBOX_CAMERA_HEIGHT_RATIO;
     camera.target = (Vector3){ player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z };
     camera.position = (Vector3){ 

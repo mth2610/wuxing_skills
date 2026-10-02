@@ -2260,7 +2260,16 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     Nature_UpdateShader(shader, time, windDirection, windStrength,
                         meadow->textured, meadow->alphaCutoff,
                         NATURE_WIND_RESPONSE_GRASS);
-    if (meadow->parametric) NatureParametric_BindReceivers(shader,false);
+    float tuftMidDistance = meadow->midLodDistance > 0.0f
+        ? meadow->midLodDistance * lodScale * zoomFactor : 0.0f;
+    Vector4 tuftBands = {tuftMidDistance, lodDistance,
+                        NATURE_LOD_NEAR_BLEND_HALF_WIDTH,
+                        NATURE_LOD_FAR_BLEND_HALF_WIDTH};
+    if (meadow->parametric) {
+        NatureParametric_BindReceivers(shader,false);
+        SetShaderValue(shader,s_natureTuftLodBandsLoc,&tuftBands,SHADER_UNIFORM_VEC4);
+        SetShaderValue(shader,s_natureTuftLodCameraLoc,&camera.position,SHADER_UNIFORM_VEC3);
+    }
     if (!meadow->textured) {
         float tipSoftening = 1.0f;
         int tipSofteningLoc = GetShaderLocation(shader, "u_grassTipSoftening");
@@ -2273,11 +2282,19 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         if (!chunk->visibleThisFrame)
             continue;
         if (meadow->parametric) {
-            int lod = chunk->lodLevel;
-            NatureParametric_DrawChunk(meadow,i,lod,shader,worldOffset);
-            if (lod == 2) s_natureRenderStats.meadowFarDraws++;
-            else if (lod == 1) s_natureRenderStats.meadowMidDraws++;
-            else s_natureRenderStats.meadowNearDraws++;
+            // Chunks batch and cull geometry; roots select detail themselves.
+            // Submit only LODs that intersect this conservative chunk sphere.
+            Vector3 center = Vector3Add(chunk->center, worldOffset);
+            float d = Vector3Distance(camera.position, center);
+            float minDistance = fmaxf(0.0f, d - chunk->radius);
+            float maxDistance = d + chunk->radius;
+            for (int lod = 0; lod < 3; lod++) {
+                if (!NatureParametric_LodIntersectsSphere(lod,minDistance,maxDistance,tuftBands)) continue;
+                NatureParametric_DrawChunk(meadow,i,lod,shader,worldOffset);
+                if (lod == 2) s_natureRenderStats.meadowFarDraws++;
+                else if (lod == 1) s_natureRenderStats.meadowMidDraws++;
+                else s_natureRenderStats.meadowNearDraws++;
+            }
             continue;
         }
         if (chunk->lodLevel == 2) {

@@ -1234,8 +1234,8 @@ int main(int argc, char **argv) {
             if (IsKeyDown(KEY_Q)) vfxCameraAngle -= 2.5f * dt;
             if (IsKeyDown(KEY_E)) vfxCameraAngle += 2.5f * dt;
             vfxCamDist -= GetMouseWheelMove() * 0.5f;
-            if (vfxCamDist < 2.0f) vfxCamDist = 2.0f;
-            if (vfxCamDist > 30.0f) vfxCamDist = 30.0f;
+            if (vfxCamDist < SANDBOX_CAMERA_MIN_DISTANCE) vfxCamDist = SANDBOX_CAMERA_MIN_DISTANCE;
+            if (vfxCamDist > SANDBOX_CAMERA_MAX_DISTANCE) vfxCamDist = SANDBOX_CAMERA_MAX_DISTANCE;
         }
 
         camera.target = (Vector3){ player.position.x, player.position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player.position.z };

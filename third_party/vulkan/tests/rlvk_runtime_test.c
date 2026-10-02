@@ -202,6 +202,48 @@ int main(void)
         }
     }
 
+    // Uniform-rich vegetation puts camera/LOD controls after the first 32 members.
+    // Reflect the complete block, including conditional declarations and shared stages.
+    {
+        char vs[8192];
+        size_t used = (size_t)snprintf(vs,sizeof(vs),
+            "#version 330\nin vec3 vertexPosition; uniform mat4 mvp;\n");
+        for (int i = 0; i < 40; i++)
+            used += (size_t)snprintf(vs+used,sizeof(vs)-used,"uniform float padding%d;\n",i);
+        used += (size_t)snprintf(vs+used,sizeof(vs)-used,
+            "#define VISIBLE_LOD\n#ifdef VISIBLE_LOD\n"
+            "uniform vec3 cameraTail; uniform int lodTail;\n#endif\n"
+            "void main(){float displacement=0.0;\n");
+        for (int i = 0; i < 40; i++)
+            used += (size_t)snprintf(vs+used,sizeof(vs)-used,"displacement+=padding%d;\n",i);
+        snprintf(vs+used,sizeof(vs)-used,
+            "gl_Position=mvp*vec4(vertexPosition+cameraTail*float(lodTail)+vec3(displacement),1.0);}\n");
+        const char *fs = "#version 330\nuniform vec3 cameraTail; out vec4 finalColor;\n"
+                         "void main(){finalColor=vec4(cameraTail,1.0);}\n";
+        unsigned int prog = rlLoadShaderProgram(vs,fs);
+        CHECK(prog && prog != rlGetShaderIdDefault(),"uniform-rich shader compiles");
+        if (prog && prog != rlGetShaderIdDefault()) {
+            int tail = rlGetLocationUniform(prog,"lodTail");
+            int cameraLoc = rlGetLocationUniform(prog,"cameraTail");
+            CHECK(tail >= 0,"conditional uniform after member32 reflected");
+            rlvkShaderSlot *shader = &RLVK.shaderSlots[prog];
+            bool both = cameraLoc >= 0 && shader->uniforms[cameraLoc].vsOffset >= 0 &&
+                        shader->uniforms[cameraLoc].fsOffset >= 0;
+            CHECK(both,"late shared camera reflected in both stages");
+            if (both) {
+                const float cameraValue[3] = {65.0f,13.0f,35.5f};
+                rlEnableShader(prog);
+                rlSetUniform(cameraLoc,cameraValue,RL_SHADER_UNIFORM_VEC3,1);
+                rlvkUniform *u = &shader->uniforms[cameraLoc];
+                CHECK(memcmp(shader->vsStage+u->vsOffset,cameraValue,sizeof(cameraValue)) == 0 &&
+                      memcmp(shader->fsStage+u->fsOffset,cameraValue,sizeof(cameraValue)) == 0,
+                      "late shared camera upload reaches both stage blocks");
+                rlDisableShader();
+            }
+            rlUnloadShader(prog);
+        }
+    }
+
     // 8. Format capability query. The spec's Mandatory Format Support tables are the
     //    oracle here: R16_SFLOAT must support linear filtering and blending, R32_SFLOAT
     //    need not. So the R16 answers are conformance assertions (a false there means the

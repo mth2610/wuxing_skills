@@ -165,6 +165,15 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
   switches, and next-frame reuse. Work-counter reduction does not by itself prove
   a wall-frame improvement on a GPU-limited scene.
 
+- **Late uniforms disappear even though the shader compiles.**
+  **Symptom:** camera/LOD uniform locations return -1, or a shared uniform is
+  reflected only in the fragment stage and vertex selection uses zero defaults.
+  **Cause:** `rlvk_shaderc.inl` formerly truncated every reflected SPIR-V struct
+  to 32 members, including the entire default uniform block. **Rule:** size that
+  member storage and its count limit to `RLVK_MAX_SHADER_UNIFORMS`, matching the
+  uniform table. The headless runtime regression compiles 40 preceding members,
+  conditional tail controls and a shared camera, then checks both stage uploads.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
@@ -172,3 +181,4 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
 | 2026-08-16 | Codex | Shutdown cleanup | `rlvk_core.inl`, `rlvk_shader.inl`, `tests/rlvk_runtime_test.c` | Ground-truth |
 | 2026-08-18 | Claude (Renderer Agent) | Anti-aliasing | `rlvk_renderpass.inl`, `rlvk_texture.inl`, `rlvk_frame.inl`, `tests/rlvk_visual_test.c msaa_rt`/`perf_msaa_*`, measured captures | Ground-truth |
 | 2026-10-01 | Codex | Texture/depth/uniform caching and timing interpretation | `rlvk_shaderc.inl`, `rlvk_texture.inl`, `rlvk_renderpass.inl`, `rlvk_platform.inl`, `rlvk_pipeline.inl`, visual regression scenarios and fresh runtime observations | Ground-truth |
+| 2026-10-02 | Codex | Default uniform block member capacity | `rlvk_shaderc.inl`, `tests/rlvk_runtime_test.c` failing then passing shaderc reflection regression | Ground-truth |

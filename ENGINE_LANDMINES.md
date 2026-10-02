@@ -1651,3 +1651,9 @@ fields and mask chains generally, not about that tail.*
 - **Symptom:** Ground appears flat or uses unrelated broad noise despite an authored litter texture.
 - **Cause:** Raylib's `MATERIAL_MAP_SPECULAR` aliases `MATERIAL_MAP_METALNESS` (slot 1). Assigning cloud noise to METALNESS replaced the ground's grass texture. Raw sampler unit 3 is not the METALNESS material slot.
 - **Rule:** Audit enum aliases and every occupied material slot before attaching an auxiliary texture. Assign canonical shader locations for mesh material samplers; bind extra raw units explicitly without overwriting material maps. Upload per-surface tiling inside the active shader scope. `maps/tests/test_ground_binding.py` executes the production draw and rejects the former alias overwrite.
+
+## Successful shader compilation can hide missing reflected uniforms (02/10/2026)
+
+- **Symptom:** Adding camera/LOD controls makes most grass disappear while its shadow pass still renders; the shader compiles successfully.
+- **Cause:** `third_party/vulkan/rlvk/rlvk_shaderc.inl` truncated reflected struct members at 32, although the uniform table supports 160. Later uniforms existed in SPIR-V but their locations returned -1 and uploads never reached them.
+- **Rule:** Reflection capacity must match the supported uniform table. Validate required locations before enabling a rendering path and retain a working fallback. The renderer's real shaderc regression covers late conditional members and uploads to both shader stages; see `third_party/vulkan/docs/LANDMINES.md`.

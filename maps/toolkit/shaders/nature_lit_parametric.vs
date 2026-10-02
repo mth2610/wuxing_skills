@@ -26,10 +26,17 @@ out vec2 fragTexCoord;
 out vec4 v_lightSpace;
 out vec4 v_staticLightSpace;
 
+#define NATURE_VISIBLE_TUFT_LOD
 #include "maps/toolkit/shaders/nature_parametric.glsl"
 
 void main()
 {
+    // Every tuft belongs to exactly one pass. Rejected templates are clipped
+    // before evaluating the blade or wind, retaining opaque depth/early-Z.
+    if (!NatureTuftUsesCurrentLod()) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+    }
     vec3 bladePosition, bladeNormal;
     vec4 bladeColor;
     vec2 bladeWindUV, bladeSurfaceUV;

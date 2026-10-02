@@ -65,6 +65,7 @@ static void rlEnableVertexAttribute(unsigned int slot) { assert(vaoBound && slot
 LIFECYCLE = r'''
 
 static int allocationCall, failAllocation, liveAllocations, liveTextures;
+static int s_natureTuftLodBandsLoc, s_natureTuftLodLevelLoc, s_natureTuftLodCameraLoc;
 void *MemAlloc(unsigned int bytes) {
     if(++allocationCall==failAllocation) return NULL;
     void *p=malloc(bytes); if(p) liveAllocations++; return p;
@@ -177,6 +178,13 @@ int main(void) {
         {.position={24.01f,0,0.01f},.height=.8f,.radius=.2f,.phase=3}};
     style.chunkSize=12; style.shadowDistance=20; expectedTufts=3;
     MapMeadowSurface meadow={0}; allocationCall=0;
+    int *lodLocations[]={&s_natureTuftLodBandsLoc,&s_natureTuftLodLevelLoc,&s_natureTuftLodCameraLoc};
+    for(int i=0;i<3;i++) {
+        *lodLocations[i]=-1;
+        assert(!NatureParametric_Create(&meadow,roots,3,style));
+        assert(!allocationCall && !liveAllocations && !liveTextures);
+        *lodLocations[i]=0;
+    }
     assert(NatureParametric_Create(&meadow,roots,3,style));
     int allocations=allocationCall;
     NatureParametricMeadow *data=meadow.parametric;

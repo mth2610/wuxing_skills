@@ -6,6 +6,8 @@
 #define NATURE_PARAMETER_MAX_ROWS 2048
 #define NATURE_TEMPLATE_MAX_VERTICES 230
 #define NATURE_TEMPLATE_MAX_INDICES 330
+#define NATURE_LOD_NEAR_BLEND_HALF_WIDTH 2.0f
+#define NATURE_LOD_FAR_BLEND_HALF_WIDTH 5.0f
 
 typedef struct {
     unsigned int vao, vertices, indices;
@@ -30,6 +32,16 @@ static Shader s_natureParametricShader = {0};
 static Shader s_natureParametricShadowShader = {0};
 static int s_natureParameterLoc[2], s_natureBladeOffsetLoc[2], s_natureBladeCountLoc[2];
 static int s_natureReceiverSamplerLoc[2][4];
+static int s_natureTuftLodBandsLoc = -1, s_natureTuftLodLevelLoc = -1;
+static int s_natureTuftLodCameraLoc = -1;
+
+static bool NatureParametric_LodIntersectsSphere(int lod, float nearest, float farthest, Vector4 bands)
+{
+    if (bands.y <= 0.0f) return lod == 0;
+    if (lod == 0) return nearest <= (bands.x > 0.0f ? bands.x + bands.z : bands.y + bands.w);
+    if (lod == 1) return bands.x > 0.0f && farthest >= bands.x - bands.z && nearest <= bands.y + bands.w;
+    return lod == 2 && farthest >= bands.y - bands.w;
+}
 
 static Shader NatureParametric_Shader(bool shadow)
 {
@@ -51,6 +63,11 @@ static Shader NatureParametric_Shader(bool shadow)
         shader->locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(*shader, "matModel");
         shader->locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(*shader, "colDiffuse");
         if (!shadow) {
+            s_natureTuftLodBandsLoc = GetShaderLocation(*shader,"u_tuftLodBands");
+            s_natureTuftLodLevelLoc = GetShaderLocation(*shader,"u_tuftLodLevel");
+            s_natureTuftLodCameraLoc = GetShaderLocation(*shader,"u_tuftLodCamera");
+            if (s_natureTuftLodBandsLoc < 0 || s_natureTuftLodLevelLoc < 0 || s_natureTuftLodCameraLoc < 0)
+                TraceLog(LOG_WARNING,"MEADOW_PARAMETRIC: missing LOD uniforms; using expanded mesh fallback");
             MapShadow_ConfigureShader(*shader);
             VFXLight_RegisterShader(*shader);
         }
@@ -120,7 +137,8 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
         (renderer && strcmp(renderer,"legacy") == 0)) return false;
     Shader visible = NatureParametric_Shader(false);
     if (visible.id == rlGetShaderIdDefault() || visible.locs[SHADER_LOC_MATRIX_MVP] < 0 ||
-        GetShaderLocation(visible,"u_bladeParameters") < 0) return false;
+        GetShaderLocation(visible,"u_bladeParameters") < 0 ||
+        s_natureTuftLodBandsLoc < 0 || s_natureTuftLodLevelLoc < 0 || s_natureTuftLodCameraLoc < 0) return false;
     bool shadows = style.shadowDistance > 0.0f && GfxQuality_Get() >= GFX_HIGH;
     if (shadows && GetShaderLocation(NatureParametric_Shader(true),"u_bladeParameters") < 0)
         return false;
@@ -259,6 +277,8 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
     if (shader.locs[SHADER_LOC_COLOR_DIFFUSE] >= 0)
         SetShaderValue(shader,shader.locs[SHADER_LOC_COLOR_DIFFUSE],&white,SHADER_UNIFORM_VEC4);
     int pass = lod == 3 ? 1 : 0;
+    if (pass == 0)
+        SetShaderValue(shader,s_natureTuftLodLevelLoc,&lod,SHADER_UNIFORM_INT);
     SetShaderValue(shader,s_natureBladeCountLoc[pass],&mesh->blades,SHADER_UNIFORM_INT);
     SetShaderValue(shader,s_natureBladeOffsetLoc[pass],&data->ranges[chunk].offset[lod],SHADER_UNIFORM_INT);
     // Canonical unit zero also distinguishes atlas changes in rlvk's mesh

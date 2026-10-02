@@ -27,6 +27,18 @@
 - **Cause:** Adding the camera-to-target horizontal orbit radius to both LOD thresholds compensates away the distance introduced by zooming out; ignoring camera height compounds it. Applying transverse rounding again in the fragment shader exaggerates normals already rounded by the mesh generator.
 - **Rule:** Select mesh detail using full 3D camera distance and FOV scaling; retain orbit compensation only for draw range. Preserve blade identities when reducing each clump, and filter highlights by projected blade width and normal variance. Keep rounded normals in one stage. Opaque contrast filtering mitigates shimmer but does not reconstruct geometric coverage or provide temporal antialiasing.
 
+### Whole-chunk grass LOD exposes rectangular boundaries
+
+- **Symptom:** Wide camera views reveal straight borders between dense detailed grass and shorter, wider far blades.
+- **Cause:** A single detail level selected from the chunk center changes every tuft at the same boundary. Staggering chunk thresholds changes when the rectangle appears, not its shape.
+- **Rule:** In `maps/toolkit/shaders/nature_parametric.glsl`, select visible detail per root with an immutable spatial rank distributed across distance transition bands. In `maps/toolkit/map_props_nature.inl`, submit every template intersecting the chunk sphere; the shader selects exactly one per tuft. Hash authoring coordinates before camera transforms to avoid rank changes from floating-point rounding. Keep shadow selection separate.
+
+### Wide cameras expose the moving shadow-map boundary
+
+- **Symptom:** Grass shading changes abruptly along straight lines even when visible tufts no longer select LOD by chunk.
+- **Cause:** The dynamic directional shadow map covers a finite moving box. Its previous 3.5% UV edge fade was too narrow to hide the transition across dense grass shadows at wide zoom.
+- **Rule:** In `maps/toolkit/shaders/map_shadow.glsl`, fade dynamic coverage across the outer 12% of UV extent while retaining full interior contrast and the static map's separate edge fade. Check the ground and foliage receivers at the same wide gameplay camera; mesh LOD changes cannot repair a shadow coverage edge.
+
 ### A player-centred vegetation field drops remote wind impacts
 
 - **Symptom:** Guided Particle visibly impacts grass or flowers, but the plants do not bend.
