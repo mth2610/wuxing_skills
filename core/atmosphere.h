@@ -12,6 +12,8 @@
 // Motion follows the shared Wind field with size-dependent linear drag and
 // integrated velocity. Dust has gentle settling slip; embers retain thermal
 // rise. The recycling faces fade to zero emission to hide wrap discontinuities.
+// Turning airflow is sampled at predicted trajectory midpoints, with 1/60 s
+// integration intervals during ordinary frames (catch-up is capped at 64 steps).
 //
 // Usage:
 //   Atmosphere_Init();                                  // once, after GL is up

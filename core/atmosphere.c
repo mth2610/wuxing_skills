@@ -140,31 +140,42 @@ void Atmosphere_Update(float dt, Camera3D camera) {
     // Volume locked to the look-at point so the field always fills the view.
     s_center = camera.target;
 
+    // Bound integration intervals in sharply turning/converging airflow. Cap
+    // catch-up work after exceptional stalls; ordinary frames use <= 1/60 s.
+    int steps = (int)fminf(ceilf(dt * 60.0f), 64.0f);
+    float stepDt = dt / (float)steps;
     for (int i = 0; i < s_count; i++) {
         Mote *m = &s_motes[i];
         m->phase += dt * m->swaySpd;
-        // Linear aerodynamic drag: dv/dt = response * (air + slip - v).
-        // Size changes response time, not the eventual air speed. Shared wind
-        // supplies spatial eddies; phase only controls the visual twinkle.
-        Vector3 windVel = Wind_EvaluateVelocity(m->pos, s_time);
-        Vector3 target = Vector3Add(windVel, m->drift);
+        // Size changes drag response time, not eventual air speed.
         float response = (s_mode == ATMO_MODE_WAR_EMBERS ? 3.0f : 2.0f) *
                          0.06f / fmaxf(m->size, 0.02f);
-        float follow = -expm1f(-response * dt);
-        // Exact displacement for the sampled constant target, so changing FPS
-        // does not alter either the relaxation or its integrated trajectory.
+        float follow = -expm1f(-response * stepDt);
         float lag = follow / response;
-        Vector3 displacement = {
-            target.x * dt + (m->velocity.x - target.x) * lag,
-            target.y * dt + (m->velocity.y - target.y) * lag,
-            target.z * dt + (m->velocity.z - target.z) * lag
-        };
-        m->velocity.x += (target.x - m->velocity.x) * follow;
-        m->velocity.y += (target.y - m->velocity.y) * follow;
-        m->velocity.z += (target.z - m->velocity.z) * follow;
-        m->pos.x = WrapAxis(m->pos.x + displacement.x, s_center.x, s_extent.x);
-        m->pos.y = WrapAxis(m->pos.y + displacement.y, s_center.y, s_extent.y);
-        m->pos.z = WrapAxis(m->pos.z + displacement.z, s_center.z, s_extent.z);
+        for (int step = 0; step < steps; step++) {
+            // Predict the midpoint along the existing trajectory instead of
+            // holding the entry velocity field constant across a whole frame.
+            Vector3 midpoint = {
+                m->pos.x + m->velocity.x * stepDt * 0.5f,
+                m->pos.y + m->velocity.y * stepDt * 0.5f,
+                m->pos.z + m->velocity.z * stepDt * 0.5f
+            };
+            float sampleTime = s_time - dt + ((float)step + 0.5f) * stepDt;
+            Vector3 target = Vector3Add(
+                Wind_EvaluateVelocity(midpoint, sampleTime), m->drift);
+            // Exact drag relaxation and displacement for this midpoint sample.
+            Vector3 displacement = {
+                target.x * stepDt + (m->velocity.x - target.x) * lag,
+                target.y * stepDt + (m->velocity.y - target.y) * lag,
+                target.z * stepDt + (m->velocity.z - target.z) * lag
+            };
+            m->velocity.x += (target.x - m->velocity.x) * follow;
+            m->velocity.y += (target.y - m->velocity.y) * follow;
+            m->velocity.z += (target.z - m->velocity.z) * follow;
+            m->pos.x = WrapAxis(m->pos.x + displacement.x, s_center.x, s_extent.x);
+            m->pos.y = WrapAxis(m->pos.y + displacement.y, s_center.y, s_extent.y);
+            m->pos.z = WrapAxis(m->pos.z + displacement.z, s_center.z, s_extent.z);
+        }
     }
 }
 

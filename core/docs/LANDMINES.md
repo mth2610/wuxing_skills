@@ -3763,3 +3763,14 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   slip, integrate both velocity and displacement with the exponential drag
   solution, and fade emission at recycling faces. Size controls response time,
   not steady-state airflow speed. Guard: `core/tests/atmosphere_motion_test.c`.
+
+## Constant-air drag integration still needs trajectory sampling (02/10/2026)
+
+- **Symptom:** ambient particles hesitate or follow different trajectories as
+  frame rate changes in a converging vortex.
+- **Cause:** `core/atmosphere.c` integrated drag exactly for a constant target,
+  but sampled the changing velocity field only at the frame-entry position.
+- **Rule:** sample airflow at predicted trajectory midpoints and bound normal
+  integration intervals to 1/60 s. The converging-flow regression in
+  `core/tests/atmosphere_motion_test.c` compares 30 and 240 FPS; it verifies
+  numerical motion, not human visual acceptance.

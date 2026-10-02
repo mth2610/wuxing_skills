@@ -9,7 +9,12 @@ typedef struct Image { void *data; int width, height, mipmaps, format; } Image;
 #define TEXTURE_FILTER_BILINEAR 1
 #include "core/vfx_render.h"
 static Vector3 s_air;
-Vector3 Wind_EvaluateVelocity(Vector3 p, float t) { (void)p; (void)t; return s_air; }
+static bool s_vortex;
+Vector3 Wind_EvaluateVelocity(Vector3 p, float t) {
+    (void)t;
+    if (s_vortex) return (Vector3){-8.0f*p.x-12.0f*p.z,0,12.0f*p.x-8.0f*p.z};
+    return s_air;
+}
 static Vector3 Vector3Add(Vector3 a, Vector3 b) { return (Vector3){a.x+b.x,a.y+b.y,a.z+b.z}; }
 static Image GenImageColor(int w, int h, Color c) { (void)w;(void)h;(void)c;return (Image){0}; }
 static void ImageDrawPixel(Image *i,int x,int y,Color c) { (void)i;(void)x;(void)y;(void)c; }
@@ -26,14 +31,23 @@ static int failed;
 static void Reset(void) {
     s_ready=true;s_count=1;s_time=0;s_mode=ATMO_MODE_MOONLIGHT_DUST;
     s_extent=(Vector3){100,100,100};s_center=(Vector3){0};
-    s_motes[0]=(Mote){0};s_motes[0].size=0.06f;s_air=(Vector3){0};
+    s_motes[0]=(Mote){0};s_motes[0].size=0.06f;s_air=(Vector3){0};s_vortex=false;
 }
 static float Run(float dt) {
     Reset();s_air=(Vector3){3,0,0};
     for(int i=0;i<(int)lroundf(2.0f/dt);i++) Atmosphere_Update(dt,(Camera3D){0});
     return s_motes[0].pos.x;
 }
+static Vector3 RunVortex(float dt) {
+    Reset();s_vortex=true;s_motes[0].pos=(Vector3){1,0,0.2f};
+    for(int i=0;i<(int)lroundf(1.0f/dt);i++) Atmosphere_Update(dt,(Camera3D){0});
+    return s_motes[0].pos;
+}
 int main(void) {
+    Vector3 coarse=RunVortex(1.0f/30),fine=RunVortex(1.0f/240);
+    float error=hypotf(coarse.x-fine.x,coarse.z-fine.z);
+    printf("Converging vortex trajectory error: %.6f m\n",(double)error);
+    CHECK(error<0.01f,"Converging vortex motion agrees at 30 and 240 FPS");
     Reset();Atmosphere_Update(0.01f,(Camera3D){0});
     float before=s_motes[0].pos.x;
     s_air=(Vector3){10,0,0};Atmosphere_Update(0.01f,(Camera3D){0});
