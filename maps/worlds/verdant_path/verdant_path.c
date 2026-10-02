@@ -24,13 +24,10 @@
 #define MAP_DEPTH 75.0f
 #define CLIFF_DEPTH 8.0f
 #define CLOUD_SEA_Y -12.0f
-#define MOUNTAIN_RING_WIDTH 82.0f
-#define MOUNTAIN_RING_DEPTH 58.0f
-#define MOUNTAIN_ROCK_COUNT 40
 #define ROCK_COUNT 13
 #define GRASS_TUFT_CAPACITY 65000
-#define FLOWER_CLUSTER_COUNT 4
-#define FLOWERS_PER_CLUSTER 90
+#define FLOWER_CLUSTER_COUNT 6
+#define FLOWERS_PER_CLUSTER 60
 #define FLOWER_COUNT (FLOWER_CLUSTER_COUNT * FLOWERS_PER_CLUSTER)
 #define REED_COUNT 480
 // Scale both horizontal axes by sqrt(2/3) to retain two-thirds of mist area.
@@ -40,6 +37,24 @@ static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
 static const Vector3 kLakeCenter = {63.0f, 0.0f, 25.5f};
 static const float kLakeRadiusX = 10.5f;
 static const float kLakeRadiusZ = 7.4f;
+
+static const Vector3 kFlowerCenters[FLOWER_CLUSTER_COUNT] = {
+    {27.0f, 0.0f, 20.0f}, // Cluster 0: Northwest meadow clearing
+    {37.0f, 0.0f, 44.0f}, // Cluster 1: South path bend meadow (visible in main view)
+    {64.0f, 0.0f, 36.5f}, // Cluster 2: South lake bank (foreground of default view)
+    {48.0f, 0.0f, 29.0f}, // Cluster 3: Fork to lake path (center of default view)
+    {77.0f, 0.0f, 52.0f}, // Cluster 4: Southeast sunny knoll
+    {54.0f, 0.0f, 17.5f}, // Cluster 5: North lake bank wildflowers
+};
+
+static const Vector3 kFlowerRadii[FLOWER_CLUSTER_COUNT] = {
+    {10.0f, 0.0f, 7.0f},
+    {9.0f, 0.0f, 6.5f},
+    {5.5f, 0.0f, 3.8f},
+    {6.0f, 0.0f, 4.2f},
+    {9.5f, 0.0f, 7.5f},
+    {8.0f, 0.0f, 5.5f},
+};
 
 static const MapZone ISLAND_ZONES[] = {
     {NAT_RIVER,  {63.0f, 0.0f, 25.5f}, 8.0f},
@@ -80,10 +95,8 @@ static const MapRockPlacement kRocks[ROCK_COUNT] = {
 static MapGroundSurface s_ground;
 static MapEcology s_ecology;
 static MapRockSet s_rocks;
-static MapRockSet s_mountainRockSet;
 static MapCloudSea s_cloudSea;
 static Texture2D s_farSunbeamTexture = {0};
-static MapRockPlacement s_mountainRocks[MOUNTAIN_ROCK_COUNT];
 static MapMeadowPlacement s_grassPlacements[GRASS_TUFT_CAPACITY];
 static MapFlowerPlacement s_flowerPlacements[FLOWER_COUNT];
 static MapMeadowPlacement s_reedPlacements[REED_COUNT];
@@ -250,18 +263,10 @@ static float VerdantGrassDensitySource(float x, float z, void *userData)
     // Flowers grow through a shorter, sparser meadow underlayer. A zero-density
     // clearing exposes a large dark disc at gameplay distance and makes the
     // flower clusters look planted on bare soil instead of part of the meadow.
-    const Vector3 flowerCenters[FLOWER_CLUSTER_COUNT] = {
-        {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f},
-        {77.0f, 0.0f, 53.0f}, {65.0f, 0.0f, 35.5f},
-    };
-    const Vector3 flowerRadii[FLOWER_CLUSTER_COUNT] = {
-        {11.5f, 0.0f, 8.0f}, {13.0f, 0.0f, 7.0f},
-        {10.5f, 0.0f, 8.5f}, {4.8f, 0.0f, 2.8f},
-    };
     float flowerSuppression = 1.0f;
     for (int c = 0; c < FLOWER_CLUSTER_COUNT; c++) {
-        float dx = (x - flowerCenters[c].x) / flowerRadii[c].x;
-        float dz = (z - flowerCenters[c].z) / flowerRadii[c].z;
+        float dx = (x - kFlowerCenters[c].x) / kFlowerRadii[c].x;
+        float dz = (z - kFlowerCenters[c].z) / kFlowerRadii[c].z;
         float d2 = dx * dx + dz * dz;
         if (d2 < 1.25f) {
             // Keep enough cover to connect the flowers to the surrounding turf.
@@ -361,21 +366,13 @@ static void BuildMeadowLayout(void)
         clump->radius *= 0.91f + 0.18f * (localRadius - 0.22f) / 0.06f;
     }
 
-    const Vector3 centers[FLOWER_CLUSTER_COUNT] = {
-        {27.0f, 0.0f, 20.0f}, {29.0f, 0.0f, 54.0f},
-        {77.0f, 0.0f, 53.0f}, {65.0f, 0.0f, 35.5f},
-    };
-    const Vector3 radii[FLOWER_CLUSTER_COUNT] = {
-        {11.5f, 0.0f, 8.0f}, {13.0f, 0.0f, 7.0f},
-        {10.5f, 0.0f, 8.5f}, {4.8f, 0.0f, 2.8f},
-    };
     static const Vector2 patchOffsets[4] = {
         {-0.42f, -0.18f}, {0.18f, -0.31f}, {0.38f, 0.20f}, {-0.12f, 0.36f},
     };
     for (int i = 0; i < FLOWER_COUNT; i++) {
         int cluster = i / FLOWERS_PER_CLUSTER;
-        float x = centers[cluster].x;
-        float z = centers[cluster].z;
+        float x = kFlowerCenters[cluster].x;
+        float z = kFlowerCenters[cluster].z;
         for (int attempt = 0; attempt < 24; attempt++) {
             float patchRoll = Random01(&rng);
             int patch = patchRoll < 0.32f ? 0 : patchRoll < 0.59f ? 1
@@ -383,10 +380,10 @@ static void BuildMeadowLayout(void)
             float angle = RandomRange(&rng, 0.0f, 2.0f * PI);
             float radius = sqrtf(Random01(&rng));
             float patchRadius = 0.31f + 0.08f * (float)((patch + cluster) & 1);
-            x = centers[cluster].x + patchOffsets[patch].x * radii[cluster].x
-              + cosf(angle) * radii[cluster].x * patchRadius * radius;
-            z = centers[cluster].z + patchOffsets[patch].y * radii[cluster].z
-              + sinf(angle) * radii[cluster].z * patchRadius * radius;
+            x = kFlowerCenters[cluster].x + patchOffsets[patch].x * kFlowerRadii[cluster].x
+              + cosf(angle) * kFlowerRadii[cluster].x * patchRadius * radius;
+            z = kFlowerCenters[cluster].z + patchOffsets[patch].y * kFlowerRadii[cluster].z
+              + sinf(angle) * kFlowerRadii[cluster].z * patchRadius * radius;
             if (IsInsideLake(x, z, 0.85f) || DistanceToPaths(x, z) < 1.40f)
                 continue;
 
@@ -416,8 +413,10 @@ static void BuildMeadowLayout(void)
         static const unsigned char speciesByCluster[FLOWER_CLUSTER_COUNT][4] = {
             {0, 4, 5, 6}, // Ivory Daisy drift -> Peach Blossom -> Orchid Cosmos -> Lavender
             {1, 2, 7, 0}, // Golden Buttercup drift -> Scarlet Poppy -> Primrose -> Daisy
+            {0, 7, 4, 1}, // South lake bank: ivory, primrose, peach and warm buttercup
             {3, 6, 4, 1}, // Sapphire Cornflower drift -> Lavender -> Wild Rose -> Buttercup
-            {0, 7, 4, 1}, // Near the lake: ivory, primrose, peach and warm buttercup
+            {1, 0, 7, 4}, // Southeast knoll: buttercup, daisy, primrose, peach
+            {0, 3, 6, 5}, // North bank: daisy, cornflower, lavender, cosmos
         };
         int speciesSlot = (cellVal < -0.25f) ? 0
                         : (cellVal < 0.28f)  ? 1
@@ -495,9 +494,6 @@ static void CaptureVerdantStaticShadows(void)
     // receiver/caster depth quantization turns its shallow slopes into long
     // parallel acne bands across the whole meadow. Terrain still receives
     // static rock shadows, dynamic vegetation shadows, and its own normal-based
-    // lighting; only unstable terrain self-shadowing is omitted.
-    MapProp_DrawRockShadowCasters(&s_mountainRockSet, s_mountainRocks,
-                                  MOUNTAIN_ROCK_COUNT, depthShader);
     MapProp_DrawRockShadowCasters(&s_rocks, kRocks, ROCK_COUNT, depthShader);
     EnvShadow_EndStaticCapture();
 }
@@ -669,40 +665,26 @@ void InitVerdantPathMap(void)
     MapProp_SetGroundReliefMap(&s_ground, "assets/textures/verdant_terrain_relief.png");
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
         "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
-    // Border rocks must participate in the same lighting response as nearby
-    // rocks; an unlit fallback turns the skyline into a flat white cut-out.
-    s_mountainRockSet = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
-        "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
-    MapProp_GenerateMountainRing(s_mountainRocks, MOUNTAIN_ROCK_COUNT,
-        MOUNTAIN_RING_WIDTH, MOUNTAIN_RING_DEPTH, 2.6f, 5.4f, 0.9f, 2.2f, 1337u);
-    {
-        float offsetX = (MAP_WIDTH - MOUNTAIN_RING_WIDTH) * 0.5f;
-        float offsetZ = (MAP_DEPTH - MOUNTAIN_RING_DEPTH) * 0.5f;
-        for (int i = 0; i < MOUNTAIN_ROCK_COUNT; i++) {
-            s_mountainRocks[i].position.x += offsetX;
-            s_mountainRocks[i].position.z += offsetZ;
-        }
-    }
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
     CreateFarSunbeamTexture();
     s_lake = MapProp_CreateWaterSurface((MapWaterConfig){
         .shape = WATER_SHAPE_RADIAL,
         .ecosystem = WATER_ECO_ALPINE_STREAM,
         .center = {63.0f, 0.075f, 25.5f},
-        .radiusX = kLakeRadiusX, .radiusZ = kLakeRadiusZ, .bankWidth = 0.85f,
-        .waveHeight = 0.035f, .waveScale = 0.96f, .waveSpeed = 0.72f,
-        .bankGroundY = 0.008f, .detailScale = 0.075f, .detailStrength = 0.17f,
-        .maxDepth = 0.85f,
-        .absorption = {0.70f, 0.20f, 0.05f},
-        .scatterColor = {0.26f, 0.90f, 0.78f},
-        .scatterCoeff = 0.48f,
-        .causticsStrength = 0.80f,
-        .causticsScale = 1.15f,
-        .foamThreshold = 0.12f,
-        .segments = 112, .rings = 14, .seed = 9173u,
-        .deepColor = {14, 56, 64, 255}, .shallowColor = {52, 118, 108, 255},
-        .foamColor = {170, 193, 179, 255},
-        .bankInnerColor = {105, 113, 94, 255}, .bankOuterColor = {94, 110, 78, 255},
+        .radiusX = kLakeRadiusX, .radiusZ = kLakeRadiusZ, .bankWidth = 0.60f,
+        .waveHeight = 0.038f, .waveScale = 1.15f, .waveSpeed = 0.65f,
+        .bankGroundY = 0.008f, .detailScale = 0.085f, .detailStrength = 0.22f,
+        .maxDepth = 1.15f,
+        .absorption = {0.65f, 0.18f, 0.04f},
+        .scatterColor = {0.15f, 0.65f, 0.70f},
+        .scatterCoeff = 0.42f,
+        .causticsStrength = 0.85f,
+        .causticsScale = 1.35f,
+        .foamThreshold = 0.15f,
+        .segments = 128, .rings = 16, .seed = 9173u,
+        .deepColor = {10, 42, 62, 255}, .shallowColor = {42, 138, 122, 235},
+        .foamColor = {230, 245, 238, 220},
+        .bankInnerColor = {62, 58, 44, 255}, .bankOuterColor = {55, 75, 42, 255},
     });
     for (int i = ROCK_COUNT - 3; i < ROCK_COUNT; i++) {
         MapProp_AddWaterObstacle(&s_lake, kRocks[i].position,
@@ -711,27 +693,29 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {43, 65, 32, 255}, .tipColor = {99, 139, 65, 255},
+            .rootColor = {28, 48, 22, 255}, .tipColor = {114, 165, 64, 255},
             .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.19f,
-            .chunkSize = 12.0f, .lodDistance = 23.0f, .midLodDistance = 9.0f, .drawDistance = 50.0f,
-            .shadowDistance = 12.0f,
+            .chunkSize = 12.0f, .lodDistance = 24.0f, .midLodDistance = 12.0f, .drawDistance = 45.0f,
+            .shadowDistance = 14.0f,
             .texturePath = NULL,
             .botanicalVariation = 1.0f,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
         (MapMeadowStyle){
-            .rootColor = {34, 48, 27, 255}, .tipColor = {137, 166, 86, 255},
+            .rootColor = {26, 42, 20, 255}, .tipColor = {136, 172, 82, 255},
             .bladesPerClump = 7, .bladeSegments = 4, .bladeWidthScale = 0.14f,
-            .chunkSize = 18.0f, .lodDistance = 36.0f, .drawDistance = 76.0f,
-            .shadowDistance = 24.0f,
+            .chunkSize = 18.0f, .lodDistance = 36.0f, .drawDistance = 65.0f,
+            .shadowDistance = 16.0f,
             .texturePath = NULL,
             .hasPlumes = false,
         });
     static const Color clusterCenters[FLOWER_CLUSTER_COUNT] = {
         {218, 185, 65, 255},  // Cluster 0: pale daisy golden center
         {112, 70, 38, 255},   // Cluster 1: poppy/buttercup warm deep amber
-        {78, 70, 125, 255},   // Cluster 2: cornflower violet-indigo core
-        {191, 159, 82, 255}, // Cluster 3: warm lake-bank flowers
+        {191, 159, 82, 255},  // Cluster 2: warm lake-bank flowers
+        {78, 70, 125, 255},   // Cluster 3: cornflower violet-indigo core
+        {120, 85, 45, 255},   // Cluster 4: sunny knoll golden amber
+        {210, 175, 75, 255},  // Cluster 5: north bank wildflowers
     };
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
         s_flowerFields[cluster] = MapProp_CreateFlowerField(
@@ -872,7 +856,6 @@ void DrawVerdantPathMap(void)
     PropLit_UpdateLighting();
     MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
     MapProp_DrawGround(&s_ground, kMapCenter);
-    MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, MOUNTAIN_ROCK_COUNT, false);
     MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true);
     MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
     MapProp_DrawMeadow(&s_reedMeadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.11f);
@@ -910,7 +893,6 @@ void UnloadVerdantPathMap(void)
     MapProp_UnloadMeadow(&s_reedMeadow);
     MapProp_UnloadMeadow(&s_meadow);
     MapProp_UnloadCloudSea(&s_cloudSea);
-    MapProp_UnloadRocks(&s_mountainRockSet);
     MapProp_UnloadRocks(&s_rocks);
     MapProp_SetGroundEcology(&s_ground, NULL);
     MapEcology_Unload(&s_ecology);

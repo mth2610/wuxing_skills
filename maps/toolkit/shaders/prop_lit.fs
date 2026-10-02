@@ -85,5 +85,15 @@ void main() {
     // uploaded through, so it is already in their space and needs no conversion.
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);
 
+    // Ground contact ambient occlusion: darken bottom of rocks to eliminate floating look
+    float groundAO = clamp(fragPosition.y * 0.35 + 0.75, 0.40, 1.0);
+    lit *= groundAO;
+
+    // Atmospheric aerial haze for distant mountain crags (soft horizon blending)
+    float camDist = length(u_viewPos - fragPosition);
+    float haze = smoothstep(28.0, 75.0, camDist) * 0.40;
+    vec3 hazeColor = mix(u_ambientColor * 1.35, u_lightColor * 0.95, 0.45);
+    lit = mix(lit, hazeColor, haze);
+
     finalColor = vec4(lit, albedo.a) * colDiffuse;
 }

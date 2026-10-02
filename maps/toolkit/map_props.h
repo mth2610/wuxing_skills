@@ -190,6 +190,8 @@ typedef struct
 // skip PBR shading and use a plain-textured rock instead (matches
 // MapProp_CreateGround's simplicity). Pass all 3 for a full prop_lit rock.
 MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, const char *roughnessPath);
+// Procedural stratified mountain crag / cliff mesh for border rings and horizons
+MapRockSet MapProp_CreateMountainCrags(const char *diffusePath, const char *normalPath, const char *roughnessPath);
 // drawShadow: pass false for large border/mountain-ring rocks — dozens of
 // giant fake-shadow decals stacked/overlapping is real alpha overdraw
 // (measured FPS cost, not theoretical) for a case where the shadow barely

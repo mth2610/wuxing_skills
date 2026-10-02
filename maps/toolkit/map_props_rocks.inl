@@ -3,11 +3,130 @@
 // paths are given. #include'd once from map_props.c — not a standalone
 // translation unit.
 
+static Mesh Nature_BuildProceduralRockMesh(bool isMountainCrag)
+{
+    int rings = isMountainCrag ? 14 : 10;
+    int slices = isMountainCrag ? 18 : 12;
+    Mesh mesh = GenMeshSphere(1.0f, rings, slices);
+
+    for (int i = 0; i < mesh.vertexCount; i++) {
+        float x = mesh.vertices[i * 3 + 0];
+        float y = mesh.vertices[i * 3 + 1];
+        float z = mesh.vertices[i * 3 + 2];
+
+        float horizR = sqrtf(x * x + z * z);
+        float angle = atan2f(z, x);
+
+        if (isMountainCrag) {
+            // Jagged mountain cliff / crag:
+            // 1. Taper upward with prominent sharp ridge lines (3-ridge karst/granite peak)
+            float ridge = 1.0f + 0.32f * cosf(3.0f * angle + 0.5f) + 0.16f * cosf(5.0f * angle - 1.1f);
+            // 2. Horizontal rock strata & stepped terraces
+            float terrace = 0.08f * sinf(y * 12.0f + angle * 1.5f);
+            // 3. Peak height factor: stretch upward into sharp spire
+            float heightFactor = (y + 1.0f) * 0.5f;
+            float taper = 1.12f - 0.72f * powf(heightFactor, 1.35f);
+            // 4. Flattened and expanded base for solid grounding
+            float baseWiden = (y < -0.1f) ? (1.0f + (-0.1f - y) * 0.75f) : 1.0f;
+
+            float newR = horizR * ridge * taper * baseWiden;
+            mesh.vertices[i * 3 + 0] = cosf(angle) * newR;
+            mesh.vertices[i * 3 + 1] = (y + 0.15f) * 2.2f + terrace;
+            mesh.vertices[i * 3 + 2] = sinf(angle) * newR;
+        } else {
+            // Natural weathered boulder:
+            // 1. Asymmetric faceted perturbation
+            float facet = 1.0f + 0.14f * cosf(3.0f * angle + y * 4.0f)
+                               + 0.09f * sinf(5.0f * angle - y * 3.0f)
+                               + 0.05f * cosf(7.0f * angle);
+            // 2. Flatten base so it sits solidly on the ground
+            float flatY = (y < -0.15f) ? (-0.15f + (y + 0.15f) * 0.35f) : y;
+            float baseSpread = (y < -0.15f) ? (1.0f + (-0.15f - y) * 0.45f) : 1.0f;
+
+            float newR = horizR * facet * baseSpread;
+            mesh.vertices[i * 3 + 0] = cosf(angle) * newR;
+            mesh.vertices[i * 3 + 1] = flatY;
+            mesh.vertices[i * 3 + 2] = sinf(angle) * newR;
+        }
+    }
+
+    // Recompute smooth normals from triangles
+    if (mesh.indices != NULL) {
+        for (int i = 0; i < mesh.vertexCount * 3; i++) mesh.normals[i] = 0.0f;
+        for (int t = 0; t < mesh.triangleCount; t++) {
+            unsigned short i0 = mesh.indices[t * 3 + 0];
+            unsigned short i1 = mesh.indices[t * 3 + 1];
+            unsigned short i2 = mesh.indices[t * 3 + 2];
+
+            Vector3 v0 = {mesh.vertices[i0 * 3], mesh.vertices[i0 * 3 + 1], mesh.vertices[i0 * 3 + 2]};
+            Vector3 v1 = {mesh.vertices[i1 * 3], mesh.vertices[i1 * 3 + 1], mesh.vertices[i1 * 3 + 2]};
+            Vector3 v2 = {mesh.vertices[i2 * 3], mesh.vertices[i2 * 3 + 1], mesh.vertices[i2 * 3 + 2]};
+
+            Vector3 e1 = Vector3Subtract(v1, v0);
+            Vector3 e2 = Vector3Subtract(v2, v0);
+            Vector3 n = Vector3CrossProduct(e1, e2);
+
+            mesh.normals[i0 * 3 + 0] += n.x; mesh.normals[i0 * 3 + 1] += n.y; mesh.normals[i0 * 3 + 2] += n.z;
+            mesh.normals[i1 * 3 + 0] += n.x; mesh.normals[i1 * 3 + 1] += n.y; mesh.normals[i1 * 3 + 2] += n.z;
+            mesh.normals[i2 * 3 + 0] += n.x; mesh.normals[i2 * 3 + 1] += n.y; mesh.normals[i2 * 3 + 2] += n.z;
+        }
+        for (int i = 0; i < mesh.vertexCount; i++) {
+            Vector3 n = {mesh.normals[i * 3], mesh.normals[i * 3 + 1], mesh.normals[i * 3 + 2]};
+            float len = Vector3Length(n);
+            if (len > 0.0001f) {
+                mesh.normals[i * 3 + 0] = n.x / len;
+                mesh.normals[i * 3 + 1] = n.y / len;
+                mesh.normals[i * 3 + 2] = n.z / len;
+            } else {
+                mesh.normals[i * 3 + 1] = 1.0f;
+            }
+        }
+    }
+
+    return mesh;
+}
+
 MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, const char *roughnessPath)
 {
     MapRockSet rocks = {0};
+    Mesh mesh = Nature_BuildProceduralRockMesh(false);
 
-    Mesh mesh = GenMeshSphere(1.0f, 6, 8); // low ring/slice count -> faceted low-poly look
+    if (normalPath && roughnessPath)
+    {
+        GenMeshTangents(&mesh);
+        rocks.model = LoadModelFromMesh(mesh);
+        Texture2D diffuse = ResourceManager_LoadTexture(diffusePath);
+        Texture2D normal = ResourceManager_LoadTexture(normalPath);
+        Texture2D roughness = ResourceManager_LoadTexture(roughnessPath);
+
+        GenTextureMipmaps(&diffuse);
+        GenTextureMipmaps(&normal);
+        GenTextureMipmaps(&roughness);
+        SetTextureFilter(diffuse, TEXTURE_FILTER_ANISOTROPIC_16X);
+        SetTextureFilter(normal, TEXTURE_FILTER_ANISOTROPIC_16X);
+        SetTextureFilter(roughness, TEXTURE_FILTER_ANISOTROPIC_16X);
+
+        rocks.model.materials[0] = PropLit_MakeMaterial(diffuse, normal, roughness);
+    }
+    else
+    {
+        rocks.model = LoadModelFromMesh(mesh);
+        Texture2D diffuse = ResourceManager_LoadTexture(diffusePath);
+
+        GenTextureMipmaps(&diffuse);
+        SetTextureFilter(diffuse, TEXTURE_FILTER_ANISOTROPIC_16X);
+
+        rocks.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = diffuse;
+    }
+
+    rocks.ready = true;
+    return rocks;
+}
+
+MapRockSet MapProp_CreateMountainCrags(const char *diffusePath, const char *normalPath, const char *roughnessPath)
+{
+    MapRockSet rocks = {0};
+    Mesh mesh = Nature_BuildProceduralRockMesh(true);
 
     if (normalPath && roughnessPath)
     {

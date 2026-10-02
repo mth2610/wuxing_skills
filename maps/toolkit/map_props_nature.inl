@@ -2354,7 +2354,7 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
     // The shadow box follows the gameplay focus, not the orbit camera. A
     // camera-centred test dropped casters at the far side of the visible box.
     Vector3 shadowFocus = EnvShadow_GetFocus();
-    float maxDist = fmaxf(meadow->shadowDistance + 6.0f,
+    float maxDist = fminf(meadow->shadowDistance + 4.0f,
                           EnvShadow_GetHalfExtent() + 4.0f);
     for (int i = 0; i < meadow->chunkCount; i++) {
         MapMeadowChunk *chunk = &meadow->chunks[i];
@@ -3204,9 +3204,11 @@ static void Water_SetBedVertex(Mesh *mesh, int index, Vector3 p, Vector3 n, Vect
 static float Water_EdgeScale(float angle, float radial, unsigned int seed)
 {
     float seedPhase = (float)(seed & 1023u) * 0.0173f;
-    float shorelineNoise = sinf(angle * 5.0f + seedPhase) * 0.024f
-                         + sinf(angle * 11.0f - seedPhase * 0.63f) * 0.013f
-                         + sinf(angle * 17.0f + 1.7f) * 0.006f;
+    // Harmonic organic shoreline: broad natural bays and subtle coves
+    float shorelineNoise = sinf(angle * 2.0f + seedPhase) * 0.095f
+                         + cosf(angle * 3.0f - seedPhase * 0.70f) * 0.065f
+                         + sinf(angle * 5.0f + 1.2f) * 0.038f
+                         + sinf(angle * 11.0f - seedPhase * 0.40f) * 0.018f;
     float edgeWeight = radial * radial;
     edgeWeight *= edgeWeight;
     return 1.0f + shorelineNoise * edgeWeight;

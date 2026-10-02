@@ -1768,6 +1768,8 @@ int main(int argc, char **argv) {
         scenePostFX.saturation = 1.30f;
         scenePostFX.contrast = 1.07f;
         scenePostFX.lutEnabled = true;
+        scenePostFX.vignetteRadius = 1.05f;
+        scenePostFX.vignetteSoftness = 0.35f;
     }
     PostFX_Draw(&scenePostFX);
     if (benchmarkVisible) profileTime[9] = GetTime();

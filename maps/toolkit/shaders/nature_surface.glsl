@@ -207,14 +207,14 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float nh = max(dot(n, halfDir), 0.0);
     float nh2 = nh * nh;
     float nh4 = nh2 * nh2;
-    float spec = nh4 * nh4 * 0.065 * (1.0 - antiShimmer) / (1.0 + 12.0 * variance);
+    float spec = nh4 * nh4 * 0.085 * (1.0 - antiShimmer) / (1.0 + 12.0 * variance);
     float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
     float backLight = max(-dot(faceNormal, u_lightDir), 0.0);
     float transmission = (backLight * backLight * 0.45
                         + forwardScatter * forwardScatter * 0.30)
                         * smoothstep(0.08, 0.85, h);
     vec3 sunTerms = baseColor * (wrapped * wrapped * 1.05 + spec)
-                 + baseColor * vec3(1.25, 1.18, 0.72) * transmission * 0.42;
+                 + baseColor * vec3(1.30, 1.25, 0.70) * transmission * 0.75;
     lit += sunTerms * u_lightColor * shadow * canopy * Environment_CloudVisibility(u_cloudNoise, worldPosition);
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);
     return lit;
