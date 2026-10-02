@@ -140,6 +140,36 @@ typedef struct {
 // Supplies one resolved snapshot; consumers do not independently infer light direction/tint.
 EnvFrameLighting Environment_GetFrameLighting(void);
 
+// Opt-in shared moving cloud visibility, applied only to direct sunlight.
+// Maps set this once on entry and disable it on exit; default is disabled.
+typedef struct {
+    bool enabled;
+    float strength;        // Maximum direct-light attenuation [0,1].
+    float worldSize;       // World-space repeat length in meters, >= 8.
+    float planeHeight;     // World-space cloud-plane Y, in meters.
+    float coverage;        // Shadow coverage [0,1] for a noise field in [0,1].
+    float softness;        // Threshold half-width [0.01,0.5].
+    float windSpeedScale;  // Cloud drift relative to Core macro air velocity.
+} EnvCloudShadowConfig;
+
+typedef struct {
+    Texture2D noiseTexture; // Shared repeat/bilinear RGBA8 noise, resource-manager owned.
+    Vector4 uvTransform;   // x=1/worldSize, yz=wrapped drift UV, w=strength.
+    Vector4 shape;         // x=coverage, y=softness, z=planeHeight, w=reserved.
+    Vector2 projection;    // sun.xz / max(-sun.y,0.15), for cloud-plane projection.
+    unsigned int version;  // Config changes only; drift does not dirty static shadows.
+} EnvCloudShadowFrame;
+
+EnvCloudShadowConfig Environment_GetCloudShadowConfig(void);
+void Environment_SetCloudShadowConfig(const EnvCloudShadowConfig *config);
+EnvCloudShadowFrame Environment_GetCloudShadowFrame(void);
+// Shader must already be active. Binds cloud noise to raw texture unit 3;
+// this unit is not a material-map enum. Direct DrawMesh/DrawModel receivers
+// must map u_cloudNoise to an unused material slot and bind noiseTexture there,
+// or manage a reserved raw texture unit themselves using the frame snapshot.
+// No BeginShaderMode/EndShaderMode or per-frame location lookup.
+void Environment_BindCloudShadowShader(Shader shader);
+
 // Validates and activates a complete profile atomically, incrementing lighting version.
 void Environment_ApplyProfile(const EnvLightingPreset *profile);
 

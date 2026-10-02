@@ -3,6 +3,7 @@
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
 #include "maps/toolkit/map_props.h"
+#include "maps/toolkit/map_ecology.h"
 #include "maps/toolkit/prop_lit.h"
 #include "core/camera_context.h"
 #include "core/map_manager.h"
@@ -32,6 +33,8 @@
 #define FLOWERS_PER_CLUSTER 90
 #define FLOWER_COUNT (FLOWER_CLUSTER_COUNT * FLOWERS_PER_CLUSTER)
 #define REED_COUNT 480
+// Scale both horizontal axes by sqrt(2/3) to retain two-thirds of mist area.
+#define VERDANT_MIST_RADIUS_SCALE 0.81649658f
 
 static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
 static const Vector3 kLakeCenter = {63.0f, 0.0f, 25.5f};
@@ -75,6 +78,7 @@ static const MapRockPlacement kRocks[ROCK_COUNT] = {
 };
 
 static MapGroundSurface s_ground;
+static MapEcology s_ecology;
 static MapRockSet s_rocks;
 static MapRockSet s_mountainRockSet;
 static MapCloudSea s_cloudSea;
@@ -217,7 +221,7 @@ static Color FlowerSpeciesColor(int variant, bool accent)
     return accent ? secondary[variant] : primary[variant];
 }
 
-static float VerdantGrassDensity(float x, float z, void *userData)
+static float VerdantGrassDensitySource(float x, float z, void *userData)
 {
     (void)userData;
     if (IsInsideLake(x, z, 0.48f))
@@ -273,6 +277,21 @@ static float VerdantGrassDensity(float x, float z, void *userData)
     return fmaxf(0.0f, fminf(1.0f, macro * edgeFade * pathFade));
 }
 
+static float VerdantGrassDensity(float x, float z, void *userData)
+{
+    (void)userData;
+    return s_ecology.ready ? MapEcology_Sample(&s_ecology, x, z).coverage
+                           : VerdantGrassDensitySource(x, z, NULL);
+}
+
+static bool VerdantEcologyEligible(float x, float z, void *userData)
+{
+    (void)userData;
+    Vector3 position, normal;
+    return MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &position, &normal)
+        && normal.y > 0.65f && position.y > -0.20f;
+}
+
 static void BuildMeadowLayout(void)
 {
     unsigned int rng = 0x51a7c3u;
@@ -317,7 +336,8 @@ static void BuildMeadowLayout(void)
         // Cellular noise field for macro-biomes (scale ~7 meters)
         float cell1 = sinf(cx * 0.15f + cz * 0.10f) * 0.5f + 0.5f;
         float cell2 = sinf(cx * -0.11f + cz * 0.20f + 1.8f) * 0.5f + 0.5f;
-        float biome = cell1 * 0.6f + cell2 * 0.4f;
+        float biome = s_ecology.ready ? MapEcology_Sample(&s_ecology, cx, cz).habitat
+                                      : cell1 * 0.6f + cell2 * 0.4f;
 
         if (biome > 0.60f) {
             // Biome 1: Tall Deep Meadow (long sweeping weeping ribbons, height ~0.36 - 0.42m)
@@ -335,6 +355,8 @@ static void BuildMeadowLayout(void)
             clump->height = 0.33f + t * 0.04f;
             clump->radius = 0.24f + t * 0.03f;
         }
+        if (s_ecology.ready)
+            clump->height = 0.30f + MapEcology_Sample(&s_ecology, cx, cz).growth * 0.12f;
         clump->height *= 0.82f + 0.34f * (localHeight - 0.22f) / 0.16f;
         clump->radius *= 0.91f + 0.18f * (localRadius - 0.22f) / 0.06f;
     }
@@ -527,6 +549,16 @@ static void ApplyHabitatToGround(void)
     }
     Vector4 lakeParams = {kLakeCenter.x, kLakeCenter.z, kLakeRadiusX, kLakeRadiusZ};
     MapProp_SetGroundHabitat(&s_ground, segs, segCount, lakeParams);
+    if (!s_ecology.ready) {
+        MapEcologyConfig ecologyConfig = {
+            .rect = {0.0f, 0.0f, MAP_WIDTH, MAP_DEPTH}, .lake = lakeParams,
+            .paths = segs, .pathCount = segCount, .roadHalfWidth = 1.15f,
+        };
+        if (!MapEcology_Bake(&s_ecology, &ecologyConfig, VerdantGrassDensitySource,
+                             VerdantEcologyEligible, NULL))
+            TraceLog(LOG_WARNING, "VERDANT: ecology bake failed; using analytic habitat");
+    }
+    MapProp_SetGroundEcology(&s_ground, s_ecology.ready ? &s_ecology : NULL);
 }
 
 static void SpawnVerdantMistVolumes(void)
@@ -537,7 +569,7 @@ static void SpawnVerdantMistVolumes(void)
     LocalFogVolume meadowPathMist = {
         .shape = FOG_SHAPE_CYLINDER,
         .position = {36.0f, 0.40f, 31.0f},
-        .extents = {5.0f, 0.45f, 4.2f},
+        .extents = {5.0f * VERDANT_MIST_RADIUS_SCALE, 0.45f, 4.2f * VERDANT_MIST_RADIUS_SCALE},
         .color = {240, 248, 255, 255},
         .density = 0.09f,
         .edgeSoftness = 0.85f,
@@ -553,7 +585,7 @@ static void SpawnVerdantMistVolumes(void)
     LocalFogVolume lakeEdgeMist = {
         .shape = FOG_SHAPE_CYLINDER,
         .position = {53.0f, 0.35f, 27.5f},
-        .extents = {5.5f, 0.40f, 4.5f},
+        .extents = {5.5f * VERDANT_MIST_RADIUS_SCALE, 0.40f, 4.5f * VERDANT_MIST_RADIUS_SCALE},
         .color = {235, 246, 255, 255},
         .density = 0.08f,
         .edgeSoftness = 0.85f,
@@ -569,7 +601,7 @@ static void SpawnVerdantMistVolumes(void)
     LocalFogVolume westHollowMist = {
         .shape = FOG_SHAPE_CYLINDER,
         .position = {24.0f, 0.38f, 20.5f},
-        .extents = {5.0f, 0.42f, 4.2f},
+        .extents = {5.0f * VERDANT_MIST_RADIUS_SCALE, 0.42f, 4.2f * VERDANT_MIST_RADIUS_SCALE},
         .color = {235, 246, 255, 255},
         .density = 0.08f,
         .edgeSoftness = 0.85f,
@@ -585,7 +617,7 @@ static void SpawnVerdantMistVolumes(void)
     LocalFogVolume eastMeadowMist = {
         .shape = FOG_SHAPE_CYLINDER,
         .position = {75.0f, 0.38f, 49.0f},
-        .extents = {5.2f, 0.42f, 4.4f},
+        .extents = {5.2f * VERDANT_MIST_RADIUS_SCALE, 0.42f, 4.4f * VERDANT_MIST_RADIUS_SCALE},
         .color = {238, 246, 255, 255},
         .density = 0.08f,
         .edgeSoftness = 0.85f,
@@ -604,6 +636,12 @@ void InitVerdantPathMap(void)
     // global environment state before the resource guard so another map cannot
     // leave Verdant using stale light/fog values.
     ApplyVerdantEnvironment();
+    VolumetricFog_SetDistantCoverage(2.0f / 3.0f);
+    EnvCloudShadowConfig cloudConfig = {
+        .enabled = true, .strength = 0.12f, .worldSize = 96.0f,
+        .planeHeight = 80.0f, .coverage = 0.48f, .softness = 0.16f, .windSpeedScale = 0.55f,
+    };
+    Environment_SetCloudShadowConfig(&cloudConfig);
     SpawnVerdantMistVolumes();
     if (s_ready) {
         ApplyHabitatToGround();
@@ -854,6 +892,8 @@ void UnloadVerdantPathMap(void)
     EnvShadow_SetMapCasterCallback(NULL, NULL);
     EnvShadow_InvalidateStaticCache();
     FogVolume_ClearAll();
+    Environment_SetCloudShadowConfig(NULL);
+    VolumetricFog_SetDistantCoverage(1.0f);
     if (s_farSunbeamTexture.id != 0) {
         UnloadTexture(s_farSunbeamTexture);
         s_farSunbeamTexture = (Texture2D){0};
@@ -866,6 +906,8 @@ void UnloadVerdantPathMap(void)
     MapProp_UnloadCloudSea(&s_cloudSea);
     MapProp_UnloadRocks(&s_mountainRockSet);
     MapProp_UnloadRocks(&s_rocks);
+    MapProp_SetGroundEcology(&s_ground, NULL);
+    MapEcology_Unload(&s_ecology);
     MapProp_UnloadGround(&s_ground);
     MapProp_ClearNatureInteraction();
 #if !defined(__ANDROID__)

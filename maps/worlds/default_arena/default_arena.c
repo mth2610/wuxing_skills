@@ -1,9 +1,12 @@
 #include "default_arena.h"
 #include "core/map_manager.h"
+#include "environment/environment_system.h"
+#include "core/volumetric/volumetric_fog.h"
 #include "maps/toolkit/ground_shadow.h"
 #include "raylib.h"
 #include "rlgl.h"
 #include <math.h>
+#include <stddef.h>
 
 #ifndef PI
 #define PI 3.14159265358979323846f
@@ -20,6 +23,8 @@ static const MapZone ARENA_ZONES[] = {
 #define ARENA_ZONE_COUNT (int)(sizeof(ARENA_ZONES) / sizeof(ARENA_ZONES[0]))
 
 void InitDefaultArenaMap(void) {
+    Environment_SetCloudShadowConfig(NULL);
+    VolumetricFog_SetDistantCoverage(1.0f);
     MapManager_SetZones(ARENA_ZONES, ARENA_ZONE_COUNT);
 }
 

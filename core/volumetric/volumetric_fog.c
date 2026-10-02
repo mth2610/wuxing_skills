@@ -12,6 +12,7 @@
 static bool s_enabled = true;
 static bool s_ready = false;
 static float s_godRayIntensity = 1.0f;
+static float s_distantCoverage = 1.0f;
 
 static int s_fullWidth = 0;
 static int s_fullHeight = 0;
@@ -37,6 +38,7 @@ static int s_locFogFocus;
 static int s_locFogForward;
 static int s_locViewForward;
 static int s_locFogSpan;
+static int s_locDistantCoverage;
 static int s_locHeightFalloff;
 static int s_locBaseAltitude;
 static int s_locSigmoidEnabled;
@@ -91,6 +93,7 @@ void VolumetricFog_Init(int width, int height) {
     s_locViewForward = GetShaderLocation(s_raymarchShader, "u_viewForward");
     s_locFogForward = GetShaderLocation(s_raymarchShader, "u_fogForward");
     s_locFogSpan = GetShaderLocation(s_raymarchShader, "u_fogSpan");
+    s_locDistantCoverage = GetShaderLocation(s_raymarchShader, "u_distantCoverage");
     s_locHeightFalloff     = GetShaderLocation(s_raymarchShader, "u_heightFalloff");
     s_locBaseAltitude      = GetShaderLocation(s_raymarchShader, "u_baseAltitude");
     s_locSigmoidEnabled    = GetShaderLocation(s_raymarchShader, "u_sigmoidEnabled");
@@ -137,6 +140,11 @@ void VolumetricFog_SetEnabled(bool enabled) { s_enabled = enabled; }
 
 void  VolumetricFog_SetGodRayIntensity(float intensity) { s_godRayIntensity = intensity; }
 float VolumetricFog_GetGodRayIntensity(void) { return s_godRayIntensity; }
+
+void VolumetricFog_SetDistantCoverage(float areaRatio) {
+    s_distantCoverage = VolumetricFog_ClampDistantCoverage(areaRatio);
+}
+float VolumetricFog_GetDistantCoverage(void) { return s_distantCoverage; }
 
 void VolumetricFog_PreFrame(void) {
     if (!s_ready || !s_enabled) return;
@@ -253,6 +261,7 @@ void VolumetricFog_Render(Camera3D camera) {
     SetShaderValue(s_raymarchShader, s_locFogForward, &fogForward, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locViewForward, &viewForward, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locFogSpan, &fogSpan, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_raymarchShader, s_locDistantCoverage, &s_distantCoverage, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locHeightFalloff, &heightFalloff, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locBaseAltitude, &baseAltitude, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locSigmoidEnabled, &sigmoidEnabled, SHADER_UNIFORM_FLOAT);

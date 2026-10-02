@@ -5,6 +5,7 @@
 #include "core/vfx_light.h"
 #include "environment/environment_system.h"
 #include "raymath.h"
+#include "rlgl.h"
 #include <stddef.h>
 
 Shader PropLit_GetShader(void) {
@@ -51,6 +52,8 @@ Shader PropLit_GetShader(void) {
         GetShaderLocation(shader, "texture2");
     shader.locs[SHADER_LOC_MAP_ROUGHNESS] =
         GetShaderLocation(shader, "texture3");
+    shader.locs[SHADER_LOC_MAP_METALNESS] =
+        GetShaderLocation(shader, "u_cloudNoise");
     MapShadow_ConfigureShader(shader);
 
     // Đợt E / E2 — opt into the VFX point-light pool. Registration is all it
@@ -78,6 +81,7 @@ Material PropLit_MakeMaterial(Texture2D diffuse, Texture2D normal,
   mat.maps[MATERIAL_MAP_DIFFUSE].color = WHITE; // colDiffuse base; DrawModelEx's tint multiplies into this per-draw
   mat.maps[MATERIAL_MAP_NORMAL].texture = normal;
   mat.maps[MATERIAL_MAP_ROUGHNESS].texture = roughness;
+  mat.maps[MATERIAL_MAP_METALNESS].texture = Environment_GetCloudShadowFrame().noiseTexture;
   MapShadow_AttachMaterial(&mat);
 
   return mat;
@@ -87,6 +91,12 @@ void PropLit_UpdateLighting(void) {
   Shader shader = PropLit_GetShader();
   if (shader.id == 0)
     return;
+
+  rlDrawRenderBatchActive();
+  BeginShaderMode(shader);
+  Environment_BindCloudShadowShader(shader);
+  SetShaderValueMatrix(shader, GetShaderLocation(shader, "u_cloudWorldFromShader"),
+                       MatrixInvert(rlGetMatrixTransform()));
 
   int lightDirLoc = GetShaderLocation(shader, "u_lightDir");
   if (lightDirLoc >= 0) {
@@ -119,4 +129,5 @@ void PropLit_UpdateLighting(void) {
     SetShaderValue(shader, viewPosLoc, &viewPos, SHADER_UNIFORM_VEC3);
   }
   MapShadow_UpdateShader(shader);
+  EndShaderMode();
 }

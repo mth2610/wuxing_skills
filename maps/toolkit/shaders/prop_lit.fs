@@ -4,6 +4,7 @@
 // the character so a fireball agrees with every surface it stands on.
 #include "core/shaders/common/vfx_lights.glsl"
 #include "maps/toolkit/shaders/map_shadow.glsl"
+#include "environment/shaders/cloud_shadow.glsl"
 
 // ============================================================
 // WUXING — prop_lit Fragment Shader (CORE_ISSUES.md Item 36)
@@ -44,6 +45,8 @@ uniform vec3 u_lightDir;      // surface -> light, world space (see PropLit_Upda
 uniform vec3 u_lightColor;    // sun color, normalized 0..1
 uniform vec3 u_ambientColor;  // ambient floor color, normalized 0..1
 uniform vec3 u_viewPos;       // camera world position
+uniform sampler2D u_cloudNoise;
+uniform mat4 u_cloudWorldFromShader;
 
 out vec4 finalColor;
 
@@ -72,6 +75,8 @@ void main() {
     float spec = calcSpecular(normal, lightDir, viewDir, shininess) * specStrength;
 
     float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
+    shadow *= Environment_CloudVisibility(u_cloudNoise,
+        vec3(u_cloudWorldFromShader * vec4(fragPosition, 1.0)));
     vec3 lit = albedo.rgb * (u_ambientColor + diff * u_lightColor * shadow)
              + spec * u_lightColor * shadow;
 

@@ -263,7 +263,8 @@ int main(void)
     // Both are lit shaders that gained the VFX-light block; both upload their
     // u_vfxLight* uniforms from core/vfx_light.c via VFXLight_BindToShader.
     static const char *propSrc[] = { "maps/toolkit/prop_lit.c",
-                                     "maps/toolkit/map_shadow.c", "core/vfx_light.c", NULL };
+                                     "maps/toolkit/map_shadow.c", "core/vfx_light.c",
+                                     "environment/environment_system.c", NULL };
     CheckPairMulti("maps/toolkit/shaders/prop_lit.fs", propSrc);
     static const char *floorSrc[] = { "maps/toolkit/ground_shadow.c", "core/vfx_light.c", NULL };
     CheckPairMulti("maps/toolkit/shaders/ground_shadow.fs", floorSrc);

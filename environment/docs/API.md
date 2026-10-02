@@ -241,8 +241,59 @@ Environment_SetTimeOfDayPresets(presets, times, 3);
 Environment_SetTimeOfDaySpeed(1.0f / 1200.0f); // 1 cycle / 20 real minutes
 ```
 
+## 6. Shared Cloud Shadows
+
+`environment/environment_system.h` exposes map-opt-in cloud configuration and a
+resolved receiver snapshot:
+
+```c
+EnvCloudShadowConfig Environment_GetCloudShadowConfig(void);
+void Environment_SetCloudShadowConfig(const EnvCloudShadowConfig *config);
+EnvCloudShadowFrame Environment_GetCloudShadowFrame(void);
+void Environment_BindCloudShadowShader(Shader shader);
+```
+
+`environment/environment_system.c` defaults to disabled. Set the configuration
+on map entry and call `Environment_SetCloudShadowConfig(NULL)` on exit to disable
+and reset drift. Configuration fields are finite-clamped; enabling lazily loads
+the resource-manager-owned `environment/textures/cloud_noise.png`. If loading
+fails, receiver strength resolves to zero. Core macro wind XZ velocity transports
+the repeating field; local skill gusts/vortices do not move clouds.
+
+The frame contains `noiseTexture`, `uvTransform` (inverse repeat size, wrapped
+UV drift XY, attenuation), `shape` (coverage, softness, plane height, reserved),
+and `projection` (sun travel XZ divided by clamped downward Y). Upload these to
+`u_cloudUV`, `u_cloudShape`, and `u_cloudProjection` while the receiver shader is
+active. Bind the shared noise texture to the receiver's cloud sampler.
+
+`environment/shaders/cloud_shadow.glsl` provides
+`Environment_CloudVisibility(sampler2D cloudNoise, vec3 worldPosition)`. Pass an
+actual world-space position; the helper projects it to the cloud plane and
+returns direct sunlight visibility. Multiply direct diffuse, specular, and
+transmission only; preserve ambient/sky light and surface albedo. Every receiver
+must use the same snapshot and sampler for coherent grass/ground/prop shading.
+Cloud visibility fades near the horizon. Cloud configuration has its own
+version; changing configuration or advancing drift does not invalidate the
+directional static-shadow cache.
+
+`Environment_BindCloudShadowShader` in `environment/environment_system.c`
+uploads these shared uniforms and binds `u_cloudNoise` at raw texture unit 3,
+restoring active texture slot 0. Call it while the receiver shader is active;
+it does not open/close a shader scope. Raw texture-unit numbers are not
+material-map enums. For direct `DrawMesh`/`DrawModel`, reserve an unused material
+slot, assign its shader-location entry to `u_cloudNoise`, and bind the frame's
+`noiseTexture` in that slot. The material draw then selects that slot's sampler
+unit. Alternatively, upload the frame parameters and bind a reserved raw unit
+explicitly; do not overwrite a material slot that supplies grass, dirt, or
+shadow textures.
+Shader locations use a fixed 16-entry cache, cleared by `Environment_Init`.
+
+`environment/tools/bake_cloud_noise.py` reproduces the fixed 64² RGBA8 periodic
+field using the Python standard library. It performs no runtime generation.
+
 ## Patch Log
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
 | 2026-09-28 | Codex | §4 `AtmosphereProfile.start` volumetric onset | `environment/environment_system.h`, `core/volumetric/volumetric_fog_distance.h`, `core/volumetric/shaders/volumetric_fog.fs` | Ground-truth |
+| 2026-10-02 | Codex | §6 shared opt-in cloud visibility | `environment/environment_system.h`, `environment/environment_system.c`, `environment/shaders/cloud_shadow.glsl` | Ground-truth |

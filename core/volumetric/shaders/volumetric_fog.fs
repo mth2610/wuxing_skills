@@ -17,6 +17,7 @@ uniform vec3      u_fogFocus;
 uniform vec3      u_fogForward;
 uniform vec3      u_viewForward;
 uniform float     u_fogSpan;         // >0: distant atmosphere uses ground framing
+uniform float     u_distantCoverage;
 uniform float     u_fogStart;        // Near-camera exclusion distance
 uniform float     u_heightFalloff;   // Exponential decay k_e
 uniform float     u_baseAltitude;    // Reference altitude Y
@@ -198,7 +199,10 @@ void main() {
         if (u_fogSpan > 0.0) {
             // Horizontal depth behind focus; elevated foreground objects stay clear.
             float behindFocus = dot(receiverPos - u_fogFocus, u_fogForward);
-            nearFade = smoothstep(0.12, 0.80, behindFocus / max(u_fogSpan, 0.001));
+            float framedDepth = behindFocus / max(u_fogSpan, 0.001);
+            if (u_distantCoverage < 1.0)
+                framedDepth = 1.0 + (framedDepth - 1.0) / max(u_distantCoverage, 0.0001);
+            nearFade = u_distantCoverage > 0.0 ? smoothstep(0.12, 0.80, framedDepth) : 0.0;
             // Local mist retains its world placement, with a soft player clearance.
             localFade *= smoothstep(1.0, 3.0, length(samplePos.xz - u_fogFocus.xz));
         }

@@ -27,4 +27,13 @@ void VolumetricFog_SetEnabled(bool enabled);
 void  VolumetricFog_SetGodRayIntensity(float intensity);
 float VolumetricFog_GetGodRayIntensity(void);
 
+// Fraction of the legacy distant ground-depth footprint, compressed toward
+// the far edge of the camera frame. Default 1; clamped to [0,1]; NaN resets 1.
+// 2/3 moves the distant onset from 12% to 41.33% of the projected ground
+// half-span. Zero removes global distant haze. Local volumes, nearby profiles,
+// density and light intensity are unaffected. Persists across resize; map
+// owners must restore 1 when leaving a map with a custom footprint.
+void VolumetricFog_SetDistantCoverage(float areaRatio);
+float VolumetricFog_GetDistantCoverage(void);
+
 #endif // VOLUMETRIC_FOG_H

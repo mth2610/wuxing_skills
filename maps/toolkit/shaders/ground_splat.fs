@@ -7,6 +7,8 @@
 // Preserve thin grass silhouettes without adding shadow-map samples.
 #define MAP_DYNAMIC_SHADOW_RADIUS 0.65
 #include "maps/toolkit/shaders/map_shadow.glsl"
+#include "environment/shaders/cloud_shadow.glsl"
+uniform sampler2D u_cloudNoise;
 
 in vec2 fragTexCoord;
 in vec3 fragPosition;   // project surface space; see ground_splat.vs
@@ -21,6 +23,10 @@ uniform sampler2D texGrassMaterial; // packed normal RGB, roughness A
 uniform sampler2D texSoilMaterial;  // packed normal RGB, roughness A
 
 uniform vec2 tiling;
+uniform sampler2D u_ecology;
+uniform sampler2D u_ecologyDistance;
+uniform vec4 u_ecologyRect;
+uniform int u_ecologyEnabled;
 
 uniform vec3 lightDir;
 uniform vec4 lightColor;
@@ -52,8 +58,16 @@ void main()
     vec4 soilMaterial = texture(texSoilMaterial, tiledUV * 0.85);
 
     // 1. Distance to path
-    float distToPath = 1000.0;
-    if (u_pathSegCount > 0) {
+    vec4 ecology = vec4(1.0, 0.6, 0.0, 0.5);
+    float roadEdge = 998.85;
+    if (u_ecologyEnabled != 0) {
+        vec2 ecoUV = (fragWorldPos.xz - u_ecologyRect.xy) / u_ecologyRect.zw;
+        ecology = texture(u_ecology, ecoUV);
+        vec4 metric = texture(u_ecologyDistance, ecoUV);
+        roadEdge = ((metric.r + metric.g / 255.0) * 2.0 - 1.0) * 16.0;
+    }
+    float distToPath = roadEdge + 1.15;
+    if (u_ecologyEnabled == 0 && u_pathSegCount > 0) {
         for (int i = 0; i < u_pathSegCount && i < MAX_PATH_SEGS; i++) {
             vec2 a = u_pathSegs[i].xy;
             vec2 b = u_pathSegs[i].zw;
@@ -73,12 +87,17 @@ void main()
             discard; // Carve out lake hole so 3D bedModel, clear water, and wading character are exposed!
         }
         // Overlap underneath the feathered bed must be wet soil, not grass.
-        shoreFactor = 1.0 - smoothstep(0.98, 1.30, lakeDist);
+        shoreFactor = u_ecologyEnabled != 0 ? ecology.b
+                    : 1.0 - smoothstep(0.98, 1.30, lakeDist);
     }
 
     // 3. Slope steepness
     vec3 geomNormal = normalize(fragNormal);
     float slope = clamp(1.0 - geomNormal.y, 0.0, 1.0);
+
+    // Small irregularities follow real detail, never displace the lake cutout.
+    if (u_ecologyEnabled != 0)
+        distToPath += (dirtDetail.r - 0.5) * 0.18;
 
     // 4. Four-layer weights
     float wPath = 1.0 - smoothstep(1.2, 1.9, distToPath);
@@ -88,36 +107,46 @@ void main()
     float wDrySoil = clamp(wPathMargin * 0.88 + wSlope * 0.92, 0.0, 1.0);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
-    // Height-blended layer modulation (PixelAnt / AAA terrain splatting)
-    float hGrass = wGrass + (fineGrassLuma - 0.5) * 0.18;
-    float hDry = wDrySoil + (dirtDetail.r - 0.5) * 0.16;
-    float hWet = wWetSoil + (1.0 - dirtDetail.g * 0.8) * 0.14;
-    float hPath = wPath + (colorDirt.r - 0.5) * 0.16;
+    // Relief inferred from albedo (not authored height): normals RGB and
+    // roughness A retain their contract. Gate relief by actual coverage so
+    // an absent layer cannot bleed back into a road or wet shoreline.
+    vec4 weights = vec4(wGrass, wDrySoil, wWetSoil, wPath);
+    vec4 relief = vec4(fineGrassLuma, dirtDetail.r, 1.0 - dirtDetail.g * 0.8, colorDirt.r);
+    vec4 heights = weights + (relief - 0.5) * 0.10 * smoothstep(vec4(0.0), vec4(0.2), weights);
+    float peak = max(max(heights.x, heights.y), max(heights.z, heights.w));
+    vec4 resolved = max(heights - vec4(peak - 0.45), vec4(0.0)) * weights;
+    resolved /= max(dot(resolved, vec4(1.0)), 0.0001);
+    // Albedo is only a relief proxy. Keep the authored soft coverage dominant
+    // instead of letting inferred heights create sharply separated islands.
+    resolved = mix(weights / max(dot(weights, vec4(1.0)), 0.0001), resolved, 0.25);
+    wGrass = resolved.x; wDrySoil = resolved.y;
+    wWetSoil = resolved.z; wPath = resolved.w;
 
-    float totalW = max(hGrass, 0.0) + max(hDry, 0.0) + max(hWet, 0.0) + max(hPath, 0.0);
-    if (totalW > 0.0001) {
-        wGrass = max(hGrass, 0.0) / totalW;
-        wDrySoil = max(hDry, 0.0) / totalW;
-        wWetSoil = max(hWet, 0.0) / totalW;
-        wPath = max(hPath, 0.0) / totalW;
-    } else {
-        wGrass = 1.0;
-    }
-
-    // The authored meadow substrate contains low turf, fine litter, and earth.
-    // Keep its large forms while matching the darker blade roots above it.
+    // Preserve litter detail at low contrast; foliage owns the visible canopy.
+    // A restrained olive underlayer matches the roots instead of competing
+    // with them as a bright second grass canopy.
     vec3 blendedGrass = mix(colorGrass.rgb, broadGrass, 0.32);
-    vec3 turfBase = vec3(0.265, 0.355, 0.160);
-    vec3 grassAlbedo = mix(turfBase,
-                           blendedGrass * vec3(0.98, 1.06, 0.83), 0.55);
+    float turfDetail = dot(blendedGrass, vec3(0.2126, 0.7152, 0.0722));
+    float detailContrast = clamp((turfDetail - 0.20) * 1.40, -0.22, 0.22);
+    vec3 turfBase = vec3(0.255, 0.300, 0.150);
+    // Retain the authored moss/root/straw hues as restrained detail. Reducing
+    // the texture to luminance alone turns every exposed gap into flat green.
+    vec3 litterChroma = clamp(blendedGrass / max(turfDetail, 0.06),
+                              vec3(0.65), vec3(1.35));
+    vec3 grassAlbedo = turfBase * mix(vec3(1.0), litterChroma, 0.35)
+                               * (1.0 + detailContrast);
 
     // Multi-scale organic turf variation (deep damp swales vs warm sunny hummocks)
     float turfNoise = sin(fragWorldPos.x * 0.16 + fragWorldPos.z * 0.11) * 0.5
                     + sin(fragWorldPos.x * -0.08 + fragWorldPos.z * 0.24 + 1.7) * 0.35
                     + sin(fragWorldPos.x * 0.45 - fragWorldPos.z * 0.38 + 3.1) * 0.15;
-    vec3 warmTurf = grassAlbedo * vec3(1.12, 1.06, 0.84);
-    vec3 coolTurf = grassAlbedo * vec3(0.90, 0.98, 0.92);
-    grassAlbedo = mix(coolTurf, warmTurf, smoothstep(-0.35, 0.55, turfNoise));
+    vec3 warmTurf = grassAlbedo * vec3(1.04, 1.02, 0.95);
+    vec3 coolTurf = grassAlbedo * vec3(0.97, 1.00, 0.98);
+    float habitatWarmth = u_ecologyEnabled != 0 ? 1.0 - ecology.a
+                         : smoothstep(-0.35, 0.55, turfNoise);
+    grassAlbedo = mix(coolTurf, warmTurf, habitatWarmth);
+    if (u_ecologyEnabled != 0)
+        grassAlbedo *= mix(vec3(1.0), vec3(0.93, 0.97, 0.94), ecology.b);
 
     // Soil & Path PBR Albedos
     vec3 drySoilColor = dirtDetail * vec3(0.86, 0.77, 0.63) * 1.18;
@@ -164,6 +193,7 @@ void main()
     vec4 actualLight = lightColor.a == 0.0 ? vec4(1.0, 1.0, 1.0, 1.0) : lightColor;
 
     float shadow = MapShadowVisibility(fragPosition, normal, light);
+    float sunVisibility = shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos);
     float skyWeight = normal.y * 0.5 + 0.5;
     vec3 skyAmbient = actualAmbient.rgb * vec3(1.04, 1.08, 1.16);
     vec3 groundBounce = actualAmbient.rgb * vec3(0.42, 0.38, 0.28);
@@ -172,18 +202,15 @@ void main()
     // Retain sky fill while making captured foliage shadows readable on soil.
     float ambientVisibility = mix(0.70, 1.0, shadow);
     vec3 totalLight = ambient * ambientVisibility
-                    + actualLight.rgb * NdotL * shadow;
+                    + actualLight.rgb * NdotL * sunVisibility;
 
     vec3 groundLit = blendedAlbedo * totalLight;
-    // The dense meadow should retain a readable low turf underlayer between
-    // opaque blades; soil and path weights keep their authored light response.
-    groundLit *= mix(1.0, 1.25, wGrass);
     vec3 viewDir = normalize(viewPos - fragWorldPos);
     vec3 halfDir = normalize(light + viewDir);
     float specPower = mix(12.0, 72.0, 1.0 - roughness);
     float drySpec = pow(max(dot(normal, halfDir), 0.0), specPower)
                   * (1.0 - roughness) * 0.16;
-    groundLit += actualLight.rgb * drySpec * shadow;
+    groundLit += actualLight.rgb * drySpec * sunVisibility;
 
     // Capillary wetness mechanics: Albedo darkening & Roughness collapse (PBR Specular Sheen)
     if (wWetSoil > 0.03) {
@@ -192,7 +219,7 @@ void main()
         float wetSpecSharp = pow(max(dot(normal, halfDir), 0.0), 96.0);
         float wetSpecBroad = pow(max(dot(normal, halfDir), 0.0), 24.0) * 0.25;
         vec3 wetSheen = actualLight.rgb * (wetSpecSharp * 0.75 + wetSpecBroad) * (0.35 + fresnelWet * 0.65);
-        groundLit += wetSheen * wWetSoil * shadow;
+        groundLit += wetSheen * wWetSoil * sunVisibility;
     }
 
     // The steep lake cutout faces away from the sun. Sky and water bounce keep

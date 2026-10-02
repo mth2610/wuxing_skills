@@ -817,6 +817,64 @@ static const char *sc_gas_projection(void)
     return NULL;
 }
 
+// Compact vegetation contract: one canonical vec3 template, uint16 indices,
+// gl_InstanceID and immutable nearest-sampled RGBA parameter texels. No matrices.
+static const char *sc_instanced_parameters(void)
+{
+    const char *vs = "#version 330\n"
+        "in vec3 vertexPosition; uniform sampler2D parameters; out vec3 color;\n"
+        "void main(){ vec4 p=texelFetch(parameters,ivec2(gl_InstanceID,0),0);"
+        " color=vec3(float(gl_InstanceID==0),float(gl_InstanceID==1),float(gl_InstanceID==2));"
+        " gl_Position=vec4(vertexPosition.xy+vec2(p.x,0.0),0.0,1.0); }\n";
+    const char *fs = "#version 330\n"
+        "in vec3 color; out vec4 finalColor; void main(){finalColor=vec4(color,1.0);}\n";
+    const float vertices[] = { -0.15f,-0.3f,0, 0.15f,-0.3f,0, 0,0.3f,0 };
+    const unsigned short indices[] = { 0,1,2 };
+    const float full[] = { -0.6f,0,0,1, 0,0,0,1, 0.6f,0,0,1 };
+    const unsigned short half[] = { 0xB8CD,0,0,0x3C00, 0,0,0,0x3C00, 0x38CD,0,0,0x3C00 };
+    const int formats[] = { PIXELFORMAT_UNCOMPRESSED_R32G32B32A32, PIXELFORMAT_UNCOMPRESSED_R16G16B16A16 };
+    Shader shader = LoadShaderFromMemory(vs, fs);
+    int loc = GetShaderLocation(shader, "parameters");
+    unsigned int vao = rlLoadVertexArray();
+    rlEnableVertexArray(vao);
+    unsigned int vbo = rlLoadVertexBuffer(vertices, sizeof(vertices), false);
+    rlSetVertexAttribute(0, 3, RL_FLOAT, false, 3*sizeof(float), 0);
+    rlEnableVertexAttribute(0);
+    unsigned int ebo = rlLoadVertexBufferElement(indices, sizeof(indices), false);
+    rlDisableVertexArray();
+    const char *failure = NULL;
+    for (int format = 0; format < 2; format++)
+    {
+        Image data = { .data = (format == 0) ? (void *)full : (void *)half,
+                       .width = 3, .height = 1, .mipmaps = 1, .format = formats[format] };
+        Texture2D parameters = LoadTextureFromImage(data);
+        SetTextureFilter(parameters, TEXTURE_FILTER_POINT);
+        for (int frame = 0; frame < 3; frame++)
+        {
+            BeginDrawing(); ClearBackground(BLACK);
+            rlDrawRenderBatchActive();
+            BeginShaderMode(shader);
+            SetShaderValueTexture(shader, loc, parameters);
+            rlDisableBackfaceCulling();
+            rlEnableVertexArray(vao);
+            rlDrawVertexArrayElementsInstanced(0, 3, NULL, 3);
+            rlDisableVertexArray();
+            rlEnableBackfaceCulling();
+            EndShaderMode(); EndDrawing();
+        }
+        Image result = snap();
+        bool valid = near3(at(result, W/5, H/2),255,0,0,5) &&
+                     near3(at(result, W/2, H/2),0,255,0,5) &&
+                     near3(at(result, 4*W/5, H/2),0,0,255,5) &&
+                     near3(at(result, 7*W/20, H/2),0,0,0,5);
+        UnloadImage(result); UnloadTexture(parameters);
+        if (!valid) failure = (format == 0) ? "RGBA32F instanced parameter fetch failed" : "RGBA16F instanced parameter fetch failed";
+    }
+    rlUnloadVertexArray(vao); rlUnloadVertexBuffer(vbo); rlUnloadVertexBuffer(ebo);
+    UnloadShader(shader);
+    return failure;
+}
+
 static const char *sc_instanced(void)
 {
     const char *VS = "#version 330\n"
@@ -3374,6 +3432,7 @@ static const Scenario SCENARIOS[] = {
     { "winding_rt",     sc_winding_rt },
     { "gas_projection", sc_gas_projection },
     { "instanced",      sc_instanced },
+    { "instanced_parameters", sc_instanced_parameters },
     { "ssbo_vs",        sc_ssbo_vs },
     { "imm_normal",     sc_imm_normal },
     { "readback",       sc_readback },

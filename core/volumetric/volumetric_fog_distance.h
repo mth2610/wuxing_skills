@@ -1,6 +1,22 @@
 #ifndef VOLUMETRIC_FOG_DISTANCE_H
 #define VOLUMETRIC_FOG_DISTANCE_H
 
+#include <math.h>
+
+static inline float VolumetricFog_ClampDistantCoverage(float coverage) {
+    if (isnan(coverage)) return 1.0f;
+    return coverage < 0.0f ? 0.0f : coverage > 1.0f ? 1.0f : coverage;
+}
+
+// Compress only the legacy distant region toward the far ground edge (depth=1).
+// This mirrors the shader's framing; it does not alter local fog or extinction.
+static inline float VolumetricFog_DistantDepth(float normalizedDepth, float coverage) {
+    coverage = VolumetricFog_ClampDistantCoverage(coverage);
+    if (coverage <= 0.0f) return -1.0f;
+    if (coverage >= 1.0f) return normalizedDepth;
+    return 1.0f + (normalizedDepth - 1.0f) / fmaxf(coverage, 0.0001f);
+}
+
 // Distant profiles use focus-relative ground framing in the shader. Start the
 // march nearby so authored local volumes are sampled independently of haze.
 static inline float VolumetricFog_EffectiveStart(float configuredStart,

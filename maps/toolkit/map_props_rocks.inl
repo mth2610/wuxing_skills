@@ -101,6 +101,9 @@ void MapProp_UnloadRocks(MapRockSet *rocks)
 {
     if (!rocks->ready)
         return;
+    // The environment owns the cloud field; this material only borrows it.
+    for (int i = 0; i < rocks->model.materialCount; i++)
+        rocks->model.materials[i].maps[MATERIAL_MAP_METALNESS].texture = (Texture2D){0};
     UnloadModel(rocks->model);
     rocks->ready = false;
 }

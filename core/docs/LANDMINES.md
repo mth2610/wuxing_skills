@@ -3774,3 +3774,16 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   integration intervals to 1/60 s. The converging-flow regression in
   `core/tests/atmosphere_motion_test.c` compares 30 and 240 FPS; it verifies
   numerical motion, not human visual acceptance.
+
+## Distant fog start does not control its ground footprint (02/10/2026)
+
+- **Symptom:** increasing a distant atmosphere profile's start does not narrow
+  the affected meadow region.
+- **Cause:** starts above 3 m enable focus-relative framing; the march starts
+  at 1.2 m to retain nearby local volumes, while the global haze uses a separate
+  projected-ground fade.
+- **Rule:** use `VolumetricFog_SetDistantCoverage` to compress that fade toward
+  the far edge. Keep density, lighting and local-volume fading independent;
+  restore coverage to 1 when leaving a map with a custom footprint. Guard:
+  `core/tests/volumetric_fog_distance_test.c`; rendered appearance still needs
+  matched-camera captures.

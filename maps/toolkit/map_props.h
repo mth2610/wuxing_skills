@@ -2,6 +2,7 @@
 #define MAP_PROPS_H
 
 #include "raylib.h"
+#include "map_ecology.h"
 #include <stdbool.h>
 
 // Reusable map-building blocks, shared across every map/ so a new map is
@@ -60,6 +61,8 @@ typedef struct
                         // without ever mutating the mesh's own vertex data
     MapGroundLookup lookup;
     bool ready;
+    const MapEcology *ecology; // Borrowed shared habitat data; owner outlives ground.
+    Vector2 tiling; // Per-surface texture repeats, uploaded in the active draw scope.
 } MapGroundSurface;
 
 // width/depth in world meters. tileSize = meters per texture repeat
@@ -88,6 +91,7 @@ void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCente
 // Per-map biome grading. The tint is multiplied into both tiled ground
 // textures through the material's standard colDiffuse uniform.
 void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint);
+void MapProp_SetGroundEcology(MapGroundSurface *ground, const MapEcology *ecology);
 // Optional packed tangent-space normal (RGB) and roughness (A) textures.
 void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground,
                                   const char *grassMaterialPath,
@@ -284,6 +288,7 @@ typedef struct
     bool textured;
     float alphaCutoff;
     bool ready;
+    void *parametric; // Private immutable tuft templates and blade parameter atlas.
 } MapMeadowSurface;
 
 typedef struct

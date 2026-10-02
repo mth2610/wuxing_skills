@@ -13,8 +13,13 @@ static int locPathSegs = -1;
 static int locPathSegCount = -1;
 static int locLakeParams = -1;
 static int locGroundOffset = -1;
+static int locGroundTiling = -1, locGroundCloudNoise = -1;
+static int locEcologyRect = -1;
+static int locEcologyEnabled = -1;
+static int locGroundCloudUV = -1, locGroundCloudShape = -1, locGroundCloudProjection = -1;
 
 #define MAX_GROUND_PATH_SEGS 16
+#define GROUND_CLOUD_TEXTURE_SLOT 7 // Raw 2D binding; not a cubemap material map.
 static Vector4 s_groundPathSegs[MAX_GROUND_PATH_SEGS];
 static int s_groundPathSegCount = 0;
 static Vector4 s_groundLakeParams = {0};
@@ -301,6 +306,8 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
             GetShaderLocation(groundShader, "texGrassMaterial");
         groundShader.locs[SHADER_LOC_MAP_EMISSION] =
             GetShaderLocation(groundShader, "texSoilMaterial");
+        groundShader.locs[SHADER_LOC_MAP_SPECULAR] = GetShaderLocation(groundShader, "texGrass");
+        groundShader.locs[SHADER_LOC_MAP_NORMAL] = GetShaderLocation(groundShader, "texPath");
         MapShadow_ConfigureShader(groundShader);
 
         locLightDir = GetShaderLocation(groundShader, "lightDir");
@@ -311,6 +318,15 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locPathSegCount = GetShaderLocation(groundShader, "u_pathSegCount");
         locLakeParams = GetShaderLocation(groundShader, "u_lakeParams");
         locGroundOffset = GetShaderLocation(groundShader, "u_groundOffset");
+        locGroundTiling = GetShaderLocation(groundShader, "tiling");
+        locGroundCloudNoise = GetShaderLocation(groundShader, "u_cloudNoise");
+        locEcologyRect = GetShaderLocation(groundShader, "u_ecologyRect");
+        locEcologyEnabled = GetShaderLocation(groundShader, "u_ecologyEnabled");
+        locGroundCloudUV = GetShaderLocation(groundShader, "u_cloudUV");
+        locGroundCloudShape = GetShaderLocation(groundShader, "u_cloudShape");
+        locGroundCloudProjection = GetShaderLocation(groundShader, "u_cloudProjection");
+        groundShader.locs[SHADER_LOC_MAP_DIFFUSE] = GetShaderLocation(groundShader, "u_ecology");
+        groundShader.locs[SHADER_LOC_MAP_BRDF] = GetShaderLocation(groundShader, "u_ecologyDistance");
         VFXLight_RegisterShader(groundShader);   // main.c binds it each frame
 
         shaderLoaded = true;
@@ -341,6 +357,7 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
 
     // 5. Truyền thông số độ lặp (Tiling)
     float tiling[2] = {width / tileSize, depth / tileSize};
+    ground.tiling = (Vector2){tiling[0], tiling[1]};
     int tilingLoc = GetShaderLocation(groundShader, "tiling");
     SetShaderValue(groundShader, tilingLoc, tiling, SHADER_UNIFORM_VEC2);
 
@@ -448,6 +465,21 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     // rlvk uploads SetShaderValue to the active program, not the Shader
     // argument. Keep shadow matrices and the receiving draw in one scope.
     BeginShaderMode(groundShader);
+    EnvCloudShadowFrame cloud = Environment_GetCloudShadowFrame();
+    // SPECULAR aliases METALNESS (slot 1), which already holds the turf.
+    // Bind cloud noise independently of all terrain and shadow material maps.
+    rlActiveTextureSlot(GROUND_CLOUD_TEXTURE_SLOT);
+    rlEnableTexture(cloud.noiseTexture.id ? cloud.noiseTexture.id : rlGetTextureIdDefault());
+    rlActiveTextureSlot(0);
+    int cloudSlot = GROUND_CLOUD_TEXTURE_SLOT;
+    if (locGroundCloudNoise >= 0) SetShaderValue(groundShader, locGroundCloudNoise, &cloudSlot, SHADER_UNIFORM_INT);
+    if (locGroundTiling >= 0) SetShaderValue(groundShader, locGroundTiling, &ground->tiling, SHADER_UNIFORM_VEC2);
+    if (locGroundCloudUV >= 0) SetShaderValue(groundShader, locGroundCloudUV, &cloud.uvTransform, SHADER_UNIFORM_VEC4);
+    if (locGroundCloudShape >= 0) SetShaderValue(groundShader, locGroundCloudShape, &cloud.shape, SHADER_UNIFORM_VEC4);
+    if (locGroundCloudProjection >= 0) SetShaderValue(groundShader, locGroundCloudProjection, &cloud.projection, SHADER_UNIFORM_VEC2);
+    int ecologyEnabled = ground->ecology && ground->ecology->ready;
+    if (locEcologyEnabled >= 0) SetShaderValue(groundShader, locEcologyEnabled, &ecologyEnabled, SHADER_UNIFORM_INT);
+    if (ecologyEnabled && locEcologyRect >= 0) SetShaderValue(groundShader, locEcologyRect, &ground->ecology->rect, SHADER_UNIFORM_VEC4);
 
     // --- CẬP NHẬT ÁNH SÁNG THEO THỜI GIAN THỰC ---
     // Lấy thông số từ API Môi trường
@@ -492,6 +524,9 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     if (locGroundOffset >= 0)
         SetShaderValue(groundShader, locGroundOffset, &pos, SHADER_UNIFORM_VEC3);
     DrawModel(ground->model, pos, 1.0f, WHITE);
+    rlActiveTextureSlot(GROUND_CLOUD_TEXTURE_SLOT);
+    rlDisableTexture();
+    rlActiveTextureSlot(0);
     EndShaderMode();
 }
 
@@ -515,10 +550,18 @@ void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCente
         return;
     Shader previous = ground->model.materials[0].shader;
     ground->model.materials[0].shader = depthShader;
+    Texture2D habitat = ground->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture;
+    Texture2D metrics = ground->model.materials[0].maps[MATERIAL_MAP_BRDF].texture;
+    if (ground->ecology) {
+        ground->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = (Texture2D){0};
+        ground->model.materials[0].maps[MATERIAL_MAP_BRDF].texture = (Texture2D){0};
+    }
     Vector3 pos = Vector3Add(worldCenter, ground->drawOffset);
     DrawModel(ground->model, pos, 1.0f, WHITE);
     rlDrawRenderBatchActive();
     ground->model.materials[0].shader = previous;
+    ground->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = habitat;
+    ground->model.materials[0].maps[MATERIAL_MAP_BRDF].texture = metrics;
 }
 
 void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint)
@@ -552,6 +595,16 @@ void MapProp_UnloadGround(MapGroundSurface *ground)
     if (!ground->ready)
         return;
     GroundLookup_Free(&ground->lookup);
+    // Ecology owns these textures; the ground material only borrows them.
+    if (ground->ecology) MapProp_SetGroundEcology(ground, NULL);
     UnloadModel(ground->model);
     ground->ready = false;
+}
+
+void MapProp_SetGroundEcology(MapGroundSurface *ground, const MapEcology *ecology)
+{
+    if (!ground || !ground->ready) return;
+    ground->ecology = ecology;
+    ground->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = ecology ? ecology->habitatTexture : (Texture2D){0};
+    ground->model.materials[0].maps[MATERIAL_MAP_BRDF].texture = ecology ? ecology->distanceTexture : (Texture2D){0};
 }

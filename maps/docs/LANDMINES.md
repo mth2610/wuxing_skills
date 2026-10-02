@@ -69,10 +69,17 @@
 - **Cause:** `MapProp_EndNatureInteraction` uploaded the entire 64×64 RGBA8 field unconditionally; advancing the CPU receiver does not imply its quantized output changed.
 - **Rule:** Continue evaluating interactions and wind each frame, but upload only when a full 16 KB byte comparison detects a change. Invalidate that cache when the texture is created or destroyed; camera-region uniforms must still advance independently of texture contents.
 
+### Compact meadow packing drops boundary roots
+
+- **Symptom:** Atlas draw counts include roots whose descriptors were never written.
+- **Cause:** Reconstructing chunk bounds from a rounded center changes the minimum by a few float ULPs, so count and packing passes disagree.
+- **Rule:** Store the exact bounds used by counting, reuse them during packing, and size atlases from the summed selected counts. `test_meadow_parametric.py` checks boundary roots and allocation rollback. Raw instancing binding rules are in `ENGINE_LANDMINES.md`.
+
 ## Patch Log
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-02 | Codex | Compact meadow boundary packing | `maps/toolkit/map_props_meadow_parametric.inl`, `maps/tests/test_meadow_parametric.py` | Ground-truth |
 | 2026-10-01 | Codex | Exact interaction texture reuse | `maps/toolkit/map_props_nature.inl` | Ground-truth |
 | 2026-10-01 | Codex | Grass shadow receiver contrast | `maps/toolkit/shaders/ground_splat.fs`, `maps/toolkit/shaders/nature_surface.glsl`, `maps/toolkit/shaders/map_shadow.glsl` | Ground-truth |
 | 2026-10-01 | Codex | Indexed foliage geometry and chunk budget | `maps/toolkit/map_props_mesh_index.inl`, `maps/tests/meadow_mesh_index_test.inl` | Ground-truth |

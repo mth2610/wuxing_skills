@@ -1639,3 +1639,15 @@ fields and mask chains generally, not about that tail.*
   per child, enforce a configurable timeout, verify the requested artifact, and
   propagate non-zero exits. Headless captures are for deterministic images and
   counters, never authoritative GPU frame timing.
+
+## Raw indexed instancing must bind its own VAO and samplers (02/10/2026)
+
+- **Symptom:** A compact mesh works under Vulkan but loses attributes on GL, or samples an interaction/shadow texture left by another draw.
+- **Cause:** `rlLoadVertexArray` allocates a GL VAO without activating it. `SetShaderValueTexture` queues texture bindings for immediate batches, while raw VAO draws bypass that batch.
+- **Rule:** Enable the VAO before configuring vertex attributes and its element buffer. Inside the active shader scope, explicitly bind each texture unit and upload its sampler index before raw draws. Restore texture/VAO state afterward. The compact meadow renderer applies this to wind, interaction, clouds and both shadow layers; `maps/tests/test_meadow_parametric.py` guards VAO setup.
+
+## Material-map aliases can silently replace a surface texture (02/10/2026)
+
+- **Symptom:** Ground appears flat or uses unrelated broad noise despite an authored litter texture.
+- **Cause:** Raylib's `MATERIAL_MAP_SPECULAR` aliases `MATERIAL_MAP_METALNESS` (slot 1). Assigning cloud noise to METALNESS replaced the ground's grass texture. Raw sampler unit 3 is not the METALNESS material slot.
+- **Rule:** Audit enum aliases and every occupied material slot before attaching an auxiliary texture. Assign canonical shader locations for mesh material samplers; bind extra raw units explicitly without overwriting material maps. Upload per-surface tiling inside the active shader scope. `maps/tests/test_ground_binding.py` executes the production draw and rejects the former alias overwrite.

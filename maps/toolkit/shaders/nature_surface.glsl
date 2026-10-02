@@ -1,3 +1,5 @@
+#include "environment/shaders/cloud_shadow.glsl"
+uniform sampler2D u_cloudNoise;
 uniform vec3 u_lightDir;
 uniform vec3 u_lightColor;
 uniform vec3 u_ambientColor;
@@ -146,7 +148,7 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float rim = pow(1.0 - NdotV, 2.8) * mix(0.22, 0.30, bloomMask);
 
     // Direct sun, SSS, specular, and rim consolidated under single sunScale
-    vec3 sunScale = u_lightColor * canopyExtinction;
+    vec3 sunScale = u_lightColor * canopyExtinction * Environment_CloudVisibility(u_cloudNoise, worldPosition);
     vec3 sunTerms = baseColor * (directDiffuse * shadow * 1.10 + rim)
                   + subsurfaceColor * (transmission * mix(0.75, 0.92, bloomMask))
                   + vec3(spec * (0.35 + 0.65 * shadow));
@@ -213,7 +215,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                         * smoothstep(0.08, 0.85, h);
     vec3 sunTerms = baseColor * (wrapped * wrapped * 1.05 + spec)
                  + baseColor * vec3(1.25, 1.18, 0.72) * transmission * 0.42;
-    lit += sunTerms * u_lightColor * shadow * canopy;
+    lit += sunTerms * u_lightColor * shadow * canopy * Environment_CloudVisibility(u_cloudNoise, worldPosition);
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);
     return lit;
 }

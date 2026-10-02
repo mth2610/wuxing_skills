@@ -1,5 +1,7 @@
 #include "environment_system.h"
 #include "core/map_manager.h"
+#include "core/wind/wind_system.h"
+#include "core/resource_manager.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -60,8 +62,56 @@ static int   s_todCount = 0;
 static float s_todCurrentTime = 0.0f; // normalized [0,1)
 static float s_todSpeed = 0.0f;       // cycles per second, 0 = paused
 
+static EnvCloudShadowConfig s_cloudShadow = {
+    .enabled = false,
+    .strength = 0.22f,
+    .worldSize = 96.0f,
+    .planeHeight = 80.0f,
+    .coverage = 0.48f,
+    .softness = 0.16f,
+    .windSpeedScale = 0.55f
+};
+static Vector2 s_cloudDriftUV = { 0 };
+static unsigned int s_cloudVersion = 1;
+static Texture2D s_cloudNoise = { 0 };
+#define ENV_CLOUD_SHADER_CACHE_CAPACITY 16
+#define ENV_CLOUD_TEXTURE_SLOT 3
+typedef struct {
+    unsigned int shaderId;
+    int uvLocation, shapeLocation, projectionLocation, noiseLocation;
+} EnvCloudShaderLocations;
+static EnvCloudShaderLocations s_cloudShaderLocations[ENV_CLOUD_SHADER_CACHE_CAPACITY];
+static unsigned int s_cloudShaderReplacement = 0;
+
+static float EnvCloudClamp(float value, float minimum, float maximum, float fallback) {
+    if (!isfinite(value)) return fallback;
+    return fminf(fmaxf(value, minimum), maximum);
+}
+
+static void EnvUpdateCloudShadow(float dt) {
+    if (!s_cloudShadow.enabled || !isfinite(dt) || dt <= 0.0f) return;
+    // Cloud transport follows the ambient airflow only; local skill vortices
+    // and terrain lift must not drag the sky across individual receivers.
+    WindMacroConfig wind = Wind_GetMacro();
+    double scale = (double)s_cloudShadow.windSpeedScale / s_cloudShadow.worldSize;
+    if (isfinite(wind.baseDirection.x)) {
+        double phase = (double)s_cloudDriftUV.x + wind.baseDirection.x * scale * dt;
+        s_cloudDriftUV.x = (float)(phase - floor(phase));
+    }
+    if (isfinite(wind.baseDirection.z)) {
+        double phase = (double)s_cloudDriftUV.y + wind.baseDirection.z * scale * dt;
+        s_cloudDriftUV.y = (float)(phase - floor(phase));
+    }
+}
+
 void Environment_Init(void) {
     s_sunDirection = Vector3Normalize(s_sunDirection);
+    s_cloudShadow.enabled = false;
+    s_cloudDriftUV = (Vector2){ 0 };
+    s_cloudVersion++;
+    s_cloudNoise = (Texture2D){ 0 };
+    for (int i = 0; i < ENV_CLOUD_SHADER_CACHE_CAPACITY; i++) s_cloudShaderLocations[i].shaderId = 0;
+    s_cloudShaderReplacement = 0;
 }
 
 static inline unsigned char EnvLerpByte(unsigned char a, unsigned char b, float t) {
@@ -116,6 +166,7 @@ static void EnvApplyBlendedPreset(const EnvLightingPreset *a, const EnvLightingP
 }
 
 void Environment_Update(float dt) {
+    EnvUpdateCloudShadow(dt);
     // 1. Update transient Local Fog Volumes (wind drift & lifetime decay)
     for (int i = 0; i < MAX_LOCAL_FOG_VOLUMES; i++) {
         if (!s_fogVolumes[i].active) continue;
@@ -499,6 +550,83 @@ EnvFrameLighting Environment_GetFrameLighting(void) {
     return frame;
 }
 
+EnvCloudShadowConfig Environment_GetCloudShadowConfig(void) {
+    return s_cloudShadow;
+}
+
+void Environment_SetCloudShadowConfig(const EnvCloudShadowConfig *config) {
+    if (!config) {
+        s_cloudShadow.enabled = false;
+        s_cloudDriftUV = (Vector2){ 0 };
+        s_cloudVersion++;
+        return;
+    }
+    s_cloudShadow.enabled = config->enabled;
+    s_cloudShadow.strength = EnvCloudClamp(config->strength, 0.0f, 1.0f, 0.22f);
+    s_cloudShadow.worldSize = EnvCloudClamp(config->worldSize, 8.0f, 4096.0f, 96.0f);
+    s_cloudShadow.planeHeight = EnvCloudClamp(config->planeHeight, 1.0f, 10000.0f, 80.0f);
+    s_cloudShadow.coverage = EnvCloudClamp(config->coverage, 0.0f, 1.0f, 0.48f);
+    s_cloudShadow.softness = EnvCloudClamp(config->softness, 0.01f, 0.5f, 0.16f);
+    s_cloudShadow.windSpeedScale = EnvCloudClamp(config->windSpeedScale, 0.0f, 4.0f, 0.55f);
+    if (s_cloudShadow.enabled && !s_cloudNoise.id) {
+        s_cloudNoise = ResourceManager_LoadTexture("environment/textures/cloud_noise.png");
+        if (s_cloudNoise.id) {
+            SetTextureFilter(s_cloudNoise, TEXTURE_FILTER_BILINEAR);
+            SetTextureWrap(s_cloudNoise, TEXTURE_WRAP_REPEAT);
+        }
+    }
+    s_cloudVersion++;
+}
+
+EnvCloudShadowFrame Environment_GetCloudShadowFrame(void) {
+    EnvCloudShadowFrame frame;
+    frame.noiseTexture = s_cloudNoise;
+    float sunElevation = fmaxf(-s_sunDirection.y, 0.15f);
+    // Fade near/below the horizon rather than creating an unbounded projection.
+    float daylight = EnvCloudClamp((-s_sunDirection.y - 0.02f) / 0.13f, 0.0f, 1.0f, 0.0f);
+    frame.uvTransform = (Vector4){
+        1.0f / s_cloudShadow.worldSize, s_cloudDriftUV.x, s_cloudDriftUV.y,
+        s_cloudShadow.enabled && s_cloudNoise.id ? s_cloudShadow.strength * daylight : 0.0f
+    };
+    frame.shape = (Vector4){ s_cloudShadow.coverage, s_cloudShadow.softness, s_cloudShadow.planeHeight, 0.0f };
+    frame.projection = (Vector2){ s_sunDirection.x / sunElevation, s_sunDirection.z / sunElevation };
+    frame.version = s_cloudVersion;
+    return frame;
+}
+
+void Environment_BindCloudShadowShader(Shader shader) {
+    if (!shader.id) return;
+    EnvCloudShaderLocations *locations = NULL;
+    for (int i = 0; i < ENV_CLOUD_SHADER_CACHE_CAPACITY; i++) {
+        if (s_cloudShaderLocations[i].shaderId == shader.id) {
+            locations = &s_cloudShaderLocations[i];
+            break;
+        }
+    }
+    if (!locations) {
+        for (int i = 0; i < ENV_CLOUD_SHADER_CACHE_CAPACITY; i++) {
+            if (!s_cloudShaderLocations[i].shaderId) { locations = &s_cloudShaderLocations[i]; break; }
+        }
+        if (!locations) locations = &s_cloudShaderLocations[s_cloudShaderReplacement++ % ENV_CLOUD_SHADER_CACHE_CAPACITY];
+        locations->shaderId = shader.id;
+        locations->uvLocation = GetShaderLocation(shader, "u_cloudUV");
+        locations->shapeLocation = GetShaderLocation(shader, "u_cloudShape");
+        locations->projectionLocation = GetShaderLocation(shader, "u_cloudProjection");
+        locations->noiseLocation = GetShaderLocation(shader, "u_cloudNoise");
+    }
+    EnvCloudShadowFrame frame = Environment_GetCloudShadowFrame();
+    if (locations->uvLocation >= 0) SetShaderValue(shader, locations->uvLocation, &frame.uvTransform, SHADER_UNIFORM_VEC4);
+    if (locations->shapeLocation >= 0) SetShaderValue(shader, locations->shapeLocation, &frame.shape, SHADER_UNIFORM_VEC4);
+    if (locations->projectionLocation >= 0) SetShaderValue(shader, locations->projectionLocation, &frame.projection, SHADER_UNIFORM_VEC2);
+    if (locations->noiseLocation >= 0 && frame.noiseTexture.id) {
+        int slot = ENV_CLOUD_TEXTURE_SLOT;
+        SetShaderValue(shader, locations->noiseLocation, &slot, SHADER_UNIFORM_INT);
+        rlActiveTextureSlot(slot);
+        rlEnableTexture(frame.noiseTexture.id);
+        rlActiveTextureSlot(0);
+    }
+}
+
 void Environment_ApplyProfile(const EnvLightingPreset *profile) {
     if (!profile) return;
     s_ambientColor = profile->ambientColor;
@@ -538,5 +666,3 @@ void Environment_SetTimeOfDay(float t) {
 }
 
 float Environment_GetTimeOfDay(void) { return s_todCurrentTime; }
-
-
