@@ -15,6 +15,7 @@
 typedef struct {
     Vector3 pos;
     Vector3 drift;
+    Vector3 velocity;
     float   phase;
     float   swaySpd;
     float   size;
@@ -35,10 +36,22 @@ static inline float Rand01(void) { return (float)rand() / (float)RAND_MAX; }
 static inline float RandRange(float a, float b) { return a + (b - a) * Rand01(); }
 
 static inline float WrapAxis(float p, float center, float ext) {
+    if (ext <= 0.0f) return center;
     float rel = p - center;
-    if (rel >  ext) rel -= 2.0f * ext;
-    if (rel < -ext) rel += 2.0f * ext;
+    rel -= floorf((rel + ext) / (2.0f * ext)) * (2.0f * ext);
     return center + rel;
+}
+
+static float MoteBoundaryFade(Vector3 pos) {
+    float dx = s_extent.x - fabsf(pos.x - s_center.x);
+    float dy = s_extent.y - fabsf(pos.y - s_center.y);
+    float dz = s_extent.z - fabsf(pos.z - s_center.z);
+    float fx = fminf(fmaxf(dx / fmaxf(s_extent.x * 0.15f, 0.001f), 0.0f), 1.0f);
+    float fy = fminf(fmaxf(dy / fmaxf(s_extent.y * 0.15f, 0.001f), 0.0f), 1.0f);
+    float fz = fminf(fmaxf(dz / fmaxf(s_extent.z * 0.15f, 0.001f), 0.0f), 1.0f);
+    return fx * fx * (3.0f - 2.0f * fx) *
+           fy * fy * (3.0f - 2.0f * fy) *
+           fz * fz * (3.0f - 2.0f * fz);
 }
 
 static void SeedMote(Mote *m) {
@@ -56,19 +69,20 @@ static void SeedMote(Mote *m) {
         m->bright  = RandRange(0.7f, 1.8f);
     } else if (s_mode == ATMO_MODE_SPIRIT_SPARKS) {
         // Đốm sáng tiên khí: lơ lửng, nhẹ nhàng, huyền ảo
-        m->drift   = (Vector3){ RandRange(-0.05f, 0.05f), RandRange(-0.02f, 0.08f), RandRange(-0.05f, 0.05f) };
+        m->drift   = (Vector3){ 0.0f, RandRange(-0.02f, 0.02f), 0.0f };
         m->phase   = RandRange(0.0f, 6.2831853f);
         m->swaySpd = RandRange(0.4f, 1.2f);
         m->size    = RandRange(0.03f, 0.08f);
         m->bright  = RandRange(0.6f, 1.4f);
     } else {
         // Bụi trôi ánh trăng (mặc định)
-        m->drift   = (Vector3){ RandRange(-0.05f, 0.05f), RandRange(0.02f, 0.10f), RandRange(-0.05f, 0.05f) };
+        m->drift   = (Vector3){ 0.0f, RandRange(-0.045f, -0.015f), 0.0f };
         m->phase   = RandRange(0.0f, 6.2831853f);
         m->swaySpd = RandRange(0.3f, 0.9f);
         m->size    = RandRange(0.035f, 0.10f);
         m->bright  = RandRange(0.5f, 1.0f);
     }
+    m->velocity = Vector3Add(Wind_EvaluateVelocity(m->pos, s_time), m->drift);
 }
 
 void Atmosphere_Init(void) {
@@ -121,29 +135,36 @@ AtmosphereMode Atmosphere_GetMode(void) {
 }
 
 void Atmosphere_Update(float dt, Camera3D camera) {
-    if (!s_ready) return;
+    if (!s_ready || dt <= 0.0f || !isfinite(dt)) return;
     s_time += dt;
     // Volume locked to the look-at point so the field always fills the view.
     s_center = camera.target;
 
-    // Ghost of Tsushima: Hệ số nhận gió phân tầng theo loại hạt.
-    // Tàn tro than hồng (WAR_EMBERS) nhẹ & phản ứng mãnh liệt với các luồng gió/kiếm chém/vụ nổ.
-    // Bụi trăng (MOONLIGHT_DUST) trôi êm dịu hơn.
-    float windWeight = (s_mode == ATMO_MODE_WAR_EMBERS) ? 0.70f : 0.30f;
-
     for (int i = 0; i < s_count; i++) {
         Mote *m = &s_motes[i];
         m->phase += dt * m->swaySpd;
-        Vector3 sway = { cosf(m->phase) * 0.03f, 0.0f, sinf(m->phase * 0.8f) * 0.03f };
-
-        // Lấy mẫu vận tốc gió tức thời từ hệ thống Wind (Macro + Vorticles + Terrain)
+        // Linear aerodynamic drag: dv/dt = response * (air + slip - v).
+        // Size changes response time, not the eventual air speed. Shared wind
+        // supplies spatial eddies; phase only controls the visual twinkle.
         Vector3 windVel = Wind_EvaluateVelocity(m->pos, s_time);
-        Vector3 totalVel = Vector3Add(m->drift, sway);
-        totalVel = Vector3Add(totalVel, Vector3Scale(windVel, windWeight));
-
-        m->pos.x = WrapAxis(m->pos.x + totalVel.x * dt, s_center.x, s_extent.x);
-        m->pos.y = WrapAxis(m->pos.y + totalVel.y * dt, s_center.y, s_extent.y);
-        m->pos.z = WrapAxis(m->pos.z + totalVel.z * dt, s_center.z, s_extent.z);
+        Vector3 target = Vector3Add(windVel, m->drift);
+        float response = (s_mode == ATMO_MODE_WAR_EMBERS ? 3.0f : 2.0f) *
+                         0.06f / fmaxf(m->size, 0.02f);
+        float follow = -expm1f(-response * dt);
+        // Exact displacement for the sampled constant target, so changing FPS
+        // does not alter either the relaxation or its integrated trajectory.
+        float lag = follow / response;
+        Vector3 displacement = {
+            target.x * dt + (m->velocity.x - target.x) * lag,
+            target.y * dt + (m->velocity.y - target.y) * lag,
+            target.z * dt + (m->velocity.z - target.z) * lag
+        };
+        m->velocity.x += (target.x - m->velocity.x) * follow;
+        m->velocity.y += (target.y - m->velocity.y) * follow;
+        m->velocity.z += (target.z - m->velocity.z) * follow;
+        m->pos.x = WrapAxis(m->pos.x + displacement.x, s_center.x, s_extent.x);
+        m->pos.y = WrapAxis(m->pos.y + displacement.y, s_center.y, s_extent.y);
+        m->pos.z = WrapAxis(m->pos.z + displacement.z, s_center.z, s_extent.z);
     }
 }
 
@@ -160,7 +181,7 @@ void Atmosphere_Draw(Camera3D camera) {
         float tw = (s_mode == ATMO_MODE_WAR_EMBERS)
             ? (0.4f + 0.6f * sinf(m->phase * 2.8f) * sinf(m->phase * 1.3f))
             : (0.7f + 0.3f * sinf(m->phase * 1.7f));
-        float b = m->bright * tw;
+        float b = m->bright * tw * MoteBoundaryFade(m->pos);
         int r = (int)(s_tint.r * b);
         int g = (int)(s_tint.g * b);
         int bCh = (int)(s_tint.b * b);

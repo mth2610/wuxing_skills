@@ -3751,3 +3751,15 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
 - **Cause:** an authored canopy pattern modulated both fog extinction and lighting.
 - **Rule:** use sunlight-projected patterns only for illumination, multiply by
   scene shadow visibility, and use sun color for both map beams and volumetric rays.
+
+## Ambient motes need inertia and invisible recycling (02/10/2026)
+
+- **Symptom:** dust changes velocity immediately with wind, rises in still air,
+  and pops across the camera-centered atmosphere volume.
+- **Cause:** `core/atmosphere.c` added scaled instantaneous airflow and periodic
+  sway directly to position, gave dust positive vertical drift, and wrapped
+  visible motes without fading.
+- **Rule:** retain mote velocity, relax toward airflow plus settling/thermal
+  slip, integrate both velocity and displacement with the exponential drag
+  solution, and fade emission at recycling faces. Size controls response time,
+  not steady-state airflow speed. Guard: `core/tests/atmosphere_motion_test.c`.

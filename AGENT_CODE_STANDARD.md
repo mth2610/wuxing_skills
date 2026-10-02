@@ -126,6 +126,7 @@
 - SSBO/buffer layout changes must stay in sync with C-side structs — verify std140/std430 alignment before committing.
 
 ### 10.4 Definition of done (core change)
+- Ambient wind receivers retain velocity and integrate drag displacement; never substitute an instantaneous fraction of air speed for inertia. Guard: `core/tests/atmosphere_motion_test.c`.
 - `make` builds clean.
 - Grepped `skills/` (+ `environment/`, `maps/` if relevant) — no caller broken.
 - Relevant API doc updated to match.
