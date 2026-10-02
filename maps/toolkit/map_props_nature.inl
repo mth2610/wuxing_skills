@@ -98,9 +98,9 @@ static MapNatureRenderStats s_natureRenderStats = {0};
 
 // Cache the Core macro field once per frame instead of evaluating sixteen
 // gradient-noise corners for every duplicated visible/shadow mesh vertex.
-#define NATURE_MACRO_RESOLUTION 32
+#define NATURE_MACRO_RESOLUTION 16
 static const float kNatureMacroWorldSize = 64.0f;
-static const float kNatureMacroInterval = 1.0f / 30.0f;
+static const float kNatureMacroInterval = 1.0f / 15.0f;
 static Vector2 s_natureMacroTimeRange = {0};
 static WindMacroConfig s_natureMacroCachedConfig = {0};
 static Texture2D s_natureMacroTexture = {0};
@@ -124,6 +124,8 @@ static Vector2 Nature_DecodeMacroAtCell(int x, int z, float fraction)
         (((float)pixel.g + ((float)pixel.a - pixel.g) * fraction) / 255.0f * 2.0f - 1.0f) * s_natureMacroScale,
     };
 }
+
+static bool Nature_WindTraceEnabled(void);
 
 static void Nature_VerifyMacroCache(void)
 {
@@ -231,7 +233,7 @@ static void Nature_UpdateMacroCache(float time)
         UpdateTexture(s_natureMacroTexture, s_natureMacroPixels);
     }
     s_natureMacroReady = s_natureMacroTexture.id != 0;
-    if (s_natureMacroReady)
+    if (s_natureMacroReady && Nature_WindTraceEnabled())
         Nature_VerifyMacroCache();
 
 }
