@@ -61,7 +61,7 @@
 
 - **Symptom:** Valid grass silhouettes cast onto the soil, but roots and clumps still appear detached.
 - **Cause:** Broad receiver filtering reduces thin-shadow coverage, while nearly unattenuated ambient fill hides the remaining contrast.
-- **Rule:** Inspect the receiver before adding casters. Ground uses a 0.65-texel dynamic PCF radius and 0.70 ambient visibility floor; grass uses a 0.78 ambient floor under captured occlusion. Keep unshadowed lighting unchanged and verify matched-camera images plus frame time.
+- **Rule:** Inspect the receiver before adding casters. Ground uses a 0.65-texel dynamic PCF radius, an ambient visibility floor of 0.70 on soil and 0.48 on turf, and a turf-only 1.45 visibility exponent; grass blades use a 0.78 ambient floor under captured occlusion. Keep unshadowed lighting unchanged. Compare identical-frame grass-caster on/off captures to distinguish missing depth geometry from weak receiver contrast before adjusting the material.
 
 ### Stable interaction texels still trigger texture-upload stalls
 
@@ -79,6 +79,7 @@
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-02 | Codex | Grass shadow contrast after substrate correction | `maps/toolkit/shaders/ground_splat.fs`, matched grass-caster on/off captures | Ground-truth |
 | 2026-10-02 | Codex | Compact meadow boundary packing | `maps/toolkit/map_props_meadow_parametric.inl`, `maps/tests/test_meadow_parametric.py` | Ground-truth |
 | 2026-10-01 | Codex | Exact interaction texture reuse | `maps/toolkit/map_props_nature.inl` | Ground-truth |
 | 2026-10-01 | Codex | Grass shadow receiver contrast | `maps/toolkit/shaders/ground_splat.fs`, `maps/toolkit/shaders/nature_surface.glsl`, `maps/toolkit/shaders/map_shadow.glsl` | Ground-truth |

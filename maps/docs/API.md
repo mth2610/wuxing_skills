@@ -193,7 +193,9 @@ the surrounding taps. HIGH blends `thinFeatureBoost * 0.25` of the darkest cardi
 resolve and applies a mild post-PCF contrast curve, while leaving the static-cache
 filter untouched. Its default 1.15-texel dynamic footprint can be overridden at shader compile time
 with `MAP_DYNAMIC_SHADOW_RADIUS`. Ground uses 0.65 texels to retain grass shadow silhouettes,
-and keeps 70% of ambient fill inside fully captured shadows. Grass blades keep 78% of
+and keeps 70% of ambient fill on soil, blending to 48% under the turf layer.
+Turf resolves captured visibility with a 1.45 exponent so thin blade shadows stay
+readable against the darker substrate. Grass blades keep 78% of
 ambient fill inside captured shadows; neither adjustment darkens unshadowed pixels or adds samples.
 Foliage retains its separate close-range filter described above. Textured vegetation
 casters add derivative-based conservative alpha coverage in the depth pass;

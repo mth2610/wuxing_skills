@@ -193,6 +193,10 @@ void main()
     vec4 actualLight = lightColor.a == 0.0 ? vec4(1.0, 1.0, 1.0, 1.0) : lightColor;
 
     float shadow = MapShadowVisibility(fragPosition, normal, light);
+    // Thin blade silhouettes lose contrast against the darker litter layer.
+    // Resolve captured coverage more firmly on turf without changing the
+    // caster footprint, PCF taps, or the lighting of unshadowed ground.
+    shadow = pow(clamp(shadow, 0.0, 1.0), mix(1.0, 1.45, wGrass));
     float sunVisibility = shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos);
     float skyWeight = normal.y * 0.5 + 0.5;
     vec3 skyAmbient = actualAmbient.rgb * vec3(1.04, 1.08, 1.16);
@@ -200,7 +204,8 @@ void main()
     vec3 ambient = mix(groundBounce, skyAmbient, skyWeight) * cavityAO;
 
     // Retain sky fill while making captured foliage shadows readable on soil.
-    float ambientVisibility = mix(0.70, 1.0, shadow);
+    float ambientShadowFloor = mix(0.70, 0.48, wGrass);
+    float ambientVisibility = mix(ambientShadowFloor, 1.0, shadow);
     vec3 totalLight = ambient * ambientVisibility
                     + actualLight.rgb * NdotL * sunVisibility;
 
