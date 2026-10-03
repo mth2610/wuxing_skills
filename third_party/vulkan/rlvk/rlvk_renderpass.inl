@@ -950,6 +950,59 @@ static void rlvkFlushFrame(void)
     if (openFb)
         rlEnableFramebuffer(openFb);
 }
+
+// PASS MARK (RLVK_PASS_MARK env, off by default): per-pass GPU cost where timestamp queries are
+// useless (MoltenVK/Intel returns all-zero timestamps, see RLVK_GPU_TRACE). Each mark submits the
+// recording and waits for the GPU, so the CPU wall time since the previous mark IS that pass's GPU
+// time. The frame total is inflated (pipeline serialized) — read the ratios, not the sum.
+// Call between passes; an open FBO scope is closed and reopened by rlvkFlushFrame. A mark labelled
+// "frame_end" every 120th hit prints the averaged table and resets it.
+#define RLVK_PASS_MARK_MAX 32
+void rlvkPassMark(const char *label)
+{
+    static int s_dbgMark = -1;
+    static struct { char name[24]; f64 sumMs; u32 hits; } s_marks[RLVK_PASS_MARK_MAX];
+    static int s_markCount = 0;
+    static u32 s_endHits = 0;
+    static f64 s_last = 0.0;
+    if (!rlvkDebugFlag("RLVK_PASS_MARK", &s_dbgMark) || !RLVK.frameActive || !label)
+        return;
+
+    rlDrawRenderBatchActive();
+    rlvkWaitInFlightFrames();
+    rlvkFlushFrame();
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    f64 now = (f64)ts.tv_sec * 1000.0 + (f64)ts.tv_nsec * 1e-6;
+
+    if (strcmp(label, "frame_start") != 0 && s_last > 0.0)
+    {
+        int i = 0;
+        while (i < s_markCount && strcmp(s_marks[i].name, label) != 0) i++;
+        if (i == s_markCount && s_markCount < RLVK_PASS_MARK_MAX)
+        {
+            strncpy(s_marks[i].name, label, sizeof(s_marks[i].name) - 1);
+            s_markCount++;
+        }
+        if (i < s_markCount) { s_marks[i].sumMs += now - s_last; s_marks[i].hits++; }
+    }
+    if (strcmp(label, "frame_end") == 0 && ++s_endHits >= 120)
+    {
+        f64 total = 0.0;
+        for (int i = 0; i < s_markCount; i++) total += s_marks[i].sumMs / (s_marks[i].hits ? s_marks[i].hits : 1);
+        TRACELOG(RL_LOG_WARNING, "VKPASS drained total=%.2fms (serialized; compare ratios)", total);
+        for (int i = 0; i < s_markCount; i++)
+        {
+            f64 ms = s_marks[i].sumMs / (s_marks[i].hits ? s_marks[i].hits : 1);
+            TRACELOG(RL_LOG_WARNING, "VKPASS %-16s %7.3f ms %5.1f%%", s_marks[i].name, ms, total > 0.0 ? 100.0 * ms / total : 0.0);
+            s_marks[i].sumMs = 0.0; s_marks[i].hits = 0;
+        }
+        s_endHits = 0;
+    }
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    s_last = (f64)ts.tv_sec * 1000.0 + (f64)ts.tv_nsec * 1e-6;
+}
+
 // return the active render texture (fbo)
 unsigned int rlGetActiveFramebuffer(void) { return RLVK.State.currentFramebufferSlot; }
 // Activate multiple draw color buffers

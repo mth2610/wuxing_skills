@@ -109,6 +109,10 @@ static bool ParseCaptureVector(const char *text, Vector3 *out)
            isfinite(out->x) && isfinite(out->y) && isfinite(out->z);
 }
 
+// RLVK_PASS_MARK=1: drain-after-pass GPU timing (rlvk). Weak so GL builds still link.
+extern void rlvkPassMark(const char *label) __attribute__((weak));
+#define PASS_MARK(label) do { if (rlvkPassMark) rlvkPassMark(label); } while (0)
+
 static void MyBeginMode3D(Camera3D camera) {
   rlDrawRenderBatchActive();
   rlMatrixMode(RL_PROJECTION);
@@ -1528,6 +1532,7 @@ int main(int argc, char **argv) {
     if (benchmarkVisible) profileTime[1] = GetTime();
     BeginDrawing();
     if (benchmarkVisible) profileTime[2] = GetTime();
+    PASS_MARK("frame_start");
 
     // Real Shading P6 — depth-only shadow caster pre-pass, off by default.
     // Re-invokes the same (pure, no-side-effect) draw functions used for the
@@ -1571,6 +1576,7 @@ int main(int argc, char **argv) {
         EnvShadow_EndCapture();
     }
     if (benchmarkVisible) profileTime[3] = GetTime();
+    PASS_MARK("shadow");
 
     // ── BRIGHT-BACKGROUND HARNESS ────────────────────────────────────────────
     //
@@ -1657,8 +1663,10 @@ int main(int argc, char **argv) {
        EndTextureMode resets the camera — see SceneTargets_CaptureBackgroundLuma. */
     MyEndMode3D();
     if (benchmarkVisible) profileTime[4] = GetTime();
+    PASS_MARK("opaque");
     SceneTargets_CaptureBackgroundLuma();
     if (benchmarkVisible) profileTime[5] = GetTime();
+    PASS_MARK("luma");
     MyBeginMode3D(camera);
 
     VFX_Compose_Draw3D(camera);
@@ -1714,8 +1722,10 @@ int main(int argc, char **argv) {
     MyEndMode3D();
     CompositeScreenSpaceVFX(camera);
     if (benchmarkVisible) profileTime[6] = GetTime();
+    PASS_MARK("transparent");
     VolumetricFog_Render(camera);
     if (benchmarkVisible) profileTime[7] = GetTime();
+    PASS_MARK("fog");
 
     /* THE DISTORT COPY IS SKIPPED WHEN NOTHING WOULD DISTORT. With no live
      * shockwave source, ScreenDistort_Draw is an identity copy of the scene
@@ -1774,6 +1784,7 @@ int main(int argc, char **argv) {
        spell cannot drive the exposure applied to itself. */
     SceneTargets_UpdateExposure(dt, 0.18f, 0.10f, 2.5f, 0.8f);
     if (benchmarkVisible) profileTime[8] = GetTime();
+    PASS_MARK("exposure");
 
     PostFXConfig scenePostFX = postFXConfig;
     const char *activeMapName = MapManager_GetName(MapManager_GetActiveIndex());
@@ -1786,6 +1797,7 @@ int main(int argc, char **argv) {
     }
     PostFX_Draw(&scenePostFX);
     if (benchmarkVisible) profileTime[9] = GetTime();
+    PASS_MARK("post");
     /* Chứng: CÙNG dải màu đó, tính bằng CPU qua đường cong ACES per-channel, vẽ
      * SAU post nên không đi qua gì cả. Chênh lệch giữa hai dải chính là phần
      * đường ống thêm vào. */
@@ -1896,6 +1908,7 @@ int main(int argc, char **argv) {
     GradientProbe_Readback();
 
     if (benchmarkVisible) profileTime[10] = GetTime();
+    PASS_MARK("frame_end");
     EndDrawing();
     if (benchmarkVisible) {
         profileTime[11] = GetTime();
