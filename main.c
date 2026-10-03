@@ -1251,11 +1251,7 @@ int main(int argc, char **argv) {
         }
 
         camera.target = (Vector3){ player.position.x, player.position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player.position.z };
-        camera.position = (Vector3){
-            player.position.x + sinf(vfxCameraAngle) * vfxCamDist,
-            player.position.y + vfxCamDist * SANDBOX_CAMERA_HEIGHT_RATIO,
-            player.position.z + cosf(vfxCameraAngle) * vfxCamDist
-        };
+        camera.position = SandboxCamera_OrbitPosition(player.position, vfxCameraAngle, vfxCamDist);
 
         // WUXING_VFX_TOPDOWN=1 — steep overhead framing so the GROUND fills the
         // frame instead of the sky. Judging anything that lives on a surface

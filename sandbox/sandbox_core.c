@@ -150,13 +150,11 @@ void Sandbox_ResetTrainingDummy(void) {
 
 static float g_cameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
 static float g_camDist = SANDBOX_CAMERA_DEFAULT_DISTANCE;
-static float g_camHeight = SANDBOX_CAMERA_DEFAULT_DISTANCE * SANDBOX_CAMERA_HEIGHT_RATIO;
 
 void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     // Camera (real-world-scaled: 1 unit = 1 meter)
     g_cameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
     g_camDist = SANDBOX_CAMERA_DEFAULT_DISTANCE;
-    g_camHeight = g_camDist * SANDBOX_CAMERA_HEIGHT_RATIO;
     camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
     camera.fovy = SANDBOX_CAMERA_DEFAULT_FOVY;
     camera.projection = CAMERA_PERSPECTIVE;
@@ -164,11 +162,7 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     // Cấu hình Player
     player->position = (Vector3){ -11.0f, 0.0f, 4.4f };
     camera.target = (Vector3){ player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z };
-    camera.position = (Vector3){
-        player->position.x + sinf(g_cameraAngle) * g_camDist,
-        player->position.y + g_camHeight,
-        player->position.z + cosf(g_cameraAngle) * g_camDist
-    };
+    camera.position = SandboxCamera_OrbitPosition(player->position, g_cameraAngle, g_camDist);
     player->radius = 0.3f;
     player->dashCooldown = 0.0f;
     player->dashTimer = 0.0f;
@@ -587,13 +581,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     if (IsKeyDown(KEY_F)) g_camDist += 3.0f * dt;
     if (g_camDist < SANDBOX_CAMERA_MIN_DISTANCE) g_camDist = SANDBOX_CAMERA_MIN_DISTANCE;
     if (g_camDist > SANDBOX_CAMERA_MAX_DISTANCE) g_camDist = SANDBOX_CAMERA_MAX_DISTANCE;
-    g_camHeight = g_camDist * SANDBOX_CAMERA_HEIGHT_RATIO;
     camera.target = (Vector3){ player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z };
-    camera.position = (Vector3){ 
-        player->position.x + sinf(g_cameraAngle) * g_camDist, 
-        player->position.y + g_camHeight, 
-        player->position.z + cosf(g_cameraAngle) * g_camDist
-    };
+    camera.position = SandboxCamera_OrbitPosition(player->position, g_cameraAngle, g_camDist);
 
     // 1. NGẮM BẮN CHUỘT 3D (Chỉ thực hiện ngắm nếu không tương tác với phím ảo)
     if (!uiState->clickedOnUI) {
@@ -941,11 +930,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
 
     // Cập nhật Camera góc nhìn thứ 3 theo vị trí mới của Player
     camera.target = (Vector3){ player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z };
-    camera.position = (Vector3){ 
-        player->position.x + sinf(g_cameraAngle) * g_camDist, 
-        player->position.y + g_camHeight, 
-        player->position.z + cosf(g_cameraAngle) * g_camDist
-    };
+    camera.position = SandboxCamera_OrbitPosition(player->position, g_cameraAngle, g_camDist);
 
     // Push computed positions into the Entities agentPool (Entities owns no
     // horizontal movement system) and tick the module's own state (cooldowns,
@@ -1133,8 +1118,8 @@ void DrawSandboxHUD(void) {
     
     // Thông số Camera (Size 10 pixel-perfect cực nét của Raylib)
     DrawTextEx(defaultFont, TextFormat("Angle: %.1f deg (%.3f rad)", angleDegrees, g_cameraAngle), (Vector2){ hudX + 15, hudY + 38 }, 10, 1.0f, GREEN);
-    DrawTextEx(defaultFont, TextFormat("Dist : %.1f | Height: %.1f", g_camDist, g_camHeight), (Vector2){ hudX + 15, hudY + 53 }, 10, 1.0f, SKYBLUE);
-    DrawTextEx(defaultFont, TextFormat("Ratio: %.3f (Height/Distance)", g_camHeight / g_camDist), (Vector2){ hudX + 15, hudY + 68 }, 10, 1.0f, MAGENTA);
+    DrawTextEx(defaultFont, TextFormat("Zoom : %.1f | Radius: %.1f", g_camDist, Vector3Distance(camera.position, camera.target)), (Vector2){ hudX + 15, hudY + 53 }, 10, 1.0f, SKYBLUE);
+    DrawTextEx(defaultFont, TextFormat("Pitch: %.1f deg | FOV: %.1f deg", SANDBOX_CAMERA_PITCH_DEGREES, camera.fovy), (Vector2){ hudX + 15, hudY + 68 }, 10, 1.0f, MAGENTA);
 
     // Dòng kẻ phân cách
     DrawLine(hudX + 15, hudY + 88, hudX + hudW - 15, hudY + 88, ColorAlpha(GetColor(0x353545FF), 0.5f));

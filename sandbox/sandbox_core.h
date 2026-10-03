@@ -4,8 +4,9 @@
 #include "raylib.h"
 #include "sandbox/ui_panel.h"
 #include "character/character_model.h"
+#include <math.h>
 
-// Shared elevated chase framing for skill sandbox and VFX defaults (meters).
+// Shared chase framing for skill sandbox and VFX defaults (meters).
 #define SANDBOX_CAMERA_DEFAULT_YAW 0.0f
 #define SANDBOX_CAMERA_DEFAULT_DISTANCE 18.0f
 #define SANDBOX_CAMERA_MIN_DISTANCE 2.0f
@@ -13,6 +14,25 @@
 #define SANDBOX_CAMERA_HEIGHT_RATIO 0.62f
 #define SANDBOX_CAMERA_TARGET_HEIGHT 1.2f
 #define SANDBOX_CAMERA_DEFAULT_FOVY 45.0f
+#define SANDBOX_CAMERA_PITCH_DEGREES 18.0f
+
+// Preserve the previous camera-to-target radius at every zoom setting while
+// lowering elevation. HEIGHT_RATIO defines that legacy radius, not new pitch.
+static inline Vector3 SandboxCamera_OrbitPosition(Vector3 playerPosition,
+                                                 float yaw, float zoomDistance)
+{
+    const float legacyTargetOffset = zoomDistance * SANDBOX_CAMERA_HEIGHT_RATIO
+                                  - SANDBOX_CAMERA_TARGET_HEIGHT;
+    const float radius = sqrtf(zoomDistance * zoomDistance
+                            + legacyTargetOffset * legacyTargetOffset);
+    const float pitch = SANDBOX_CAMERA_PITCH_DEGREES * 0.017453292519943295f;
+    const float horizontal = radius * cosf(pitch);
+    return (Vector3){
+        playerPosition.x + sinf(yaw) * horizontal,
+        playerPosition.y + SANDBOX_CAMERA_TARGET_HEIGHT + radius * sinf(pitch),
+        playerPosition.z + cosf(yaw) * horizontal
+    };
+}
 
 // Biến camera toàn cục
 extern Camera3D camera;
