@@ -102,6 +102,7 @@ static int s_natureTuftLodCameraLoc = -1;
 static int s_natureCanonicalBladesLoc[2], s_natureCanonicalLoc[2], s_natureGeometryLodLoc[2];
 static int s_natureTuftOffsetLoc[2], s_natureCompactLoc[2], s_natureVisibleIdsLoc;
 static int s_natureVisibleOffsetLoc;
+static int s_natureWorldOffsetLoc[2];
 
 static float NatureParametric_Rank(Vector3 root)
 {
@@ -154,6 +155,7 @@ static Shader NatureParametric_Shader(bool shadow)
         s_natureCanonicalBladesLoc[pass] = GetShaderLocation(*shader,"u_canonicalBlades");
         s_natureGeometryLodLoc[pass] = GetShaderLocation(*shader,"u_geometryLod");
         s_natureTuftOffsetLoc[pass] = GetShaderLocation(*shader,"u_chunkTuftOffset");
+        s_natureWorldOffsetLoc[pass] = GetShaderLocation(*shader,"u_worldOffset");
         s_natureCompactLoc[pass] = GetShaderLocation(*shader,"u_compactTuftSubmission");
         const char *samplers[4] = {"u_windCacheMap","u_interactionMap","shadowMap","staticShadowMap"};
         for (int i = 0; i < 4; i++) s_natureReceiverSamplerLoc[pass][i] = GetShaderLocation(*shader,samplers[i]);
@@ -250,7 +252,8 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
         return false;
     for (int pass = 0; pass < (shadows ? 2 : 1); pass++) {
         if (s_natureCanonicalLoc[pass] < 0 || s_natureCanonicalBladesLoc[pass] < 0 ||
-            s_natureGeometryLodLoc[pass] < 0 || s_natureTuftOffsetLoc[pass] < 0) return false;
+            s_natureGeometryLodLoc[pass] < 0 || s_natureTuftOffsetLoc[pass] < 0 ||
+            s_natureWorldOffsetLoc[pass] < 0) return false;
     }
     if (s_natureCompactLoc[0] < 0 || s_natureVisibleIdsLoc < 0 || s_natureVisibleOffsetLoc < 0) return false;
     float minX = placements[0].position.x, maxX = minX;
@@ -495,7 +498,6 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
     NatureTuftTemplate *mesh = &data->templates[lod];
     Matrix model = MatrixMultiply(MatrixTranslate(worldOffset.x,worldOffset.y,worldOffset.z),rlGetMatrixTransform());
     Matrix mvp = MatrixMultiply(MatrixMultiply(model,rlGetMatrixModelview()),rlGetMatrixProjection());
-    SetShaderValueMatrix(shader,shader.locs[SHADER_LOC_MATRIX_MODEL],model);
     SetShaderValueMatrix(shader,shader.locs[SHADER_LOC_MATRIX_MVP],mvp);
     const Vector4 white = {1.0f,1.0f,1.0f,1.0f};
     if (shader.locs[SHADER_LOC_COLOR_DIFFUSE] >= 0)
@@ -504,6 +506,9 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
     bool compact = pass == 0 && data->compact;
     int instanceCount = compact ? data->ranges[chunk].visibleCount[lod] : data->ranges[chunk].count;
     if (instanceCount <= 0) return;
+    // This path supports translation only. Keep the exact offset rather than
+    // cancelling the camera transform separately for every template vertex.
+    SetShaderValue(shader,s_natureWorldOffsetLoc[pass],&worldOffset,SHADER_UNIFORM_VEC3);
     if (pass == 0)
         SetShaderValue(shader,s_natureTuftLodLevelLoc,&lod,SHADER_UNIFORM_INT);
     SetShaderValue(shader,s_natureBladeCountLoc[pass],&mesh->blades,SHADER_UNIFORM_INT);

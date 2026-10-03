@@ -101,6 +101,11 @@ void SceneTargets_RequestSoftDepthRegion(Rectangle screenRegion);
 Texture2D SceneTargets_GetDepthTexture(void);
 // Current frame's raw scene attachments. Valid after SceneTargets_End().
 Texture2D SceneTargets_GetSceneTexture(void);
+/* After the last scene depth write and with its target closed, materialize the
+ * current raw-depth snapshot before a consumer reopens the scene. On native
+ * sampled-depth backends this is a no-op; it does not permit live feedback.
+ * Returns false if scene depth is unavailable or the backend cannot prepare it. */
+bool SceneTargets_PrepareRawDepth(void);
 Texture2D SceneTargets_GetRawDepthTexture(void);
 
 /* ============================================================================

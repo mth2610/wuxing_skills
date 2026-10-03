@@ -302,6 +302,25 @@ static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRender
     rlvkProfileBeginScope(profileSlot, key, width, height);
 }
 
+// An opt-in writer preserves the attachment until a closed-source consumer requests its twin.
+static bool rlvkDeferFramebufferDepthSample(u32 id)
+{
+    if (!id || id >= RLVK_MAX_FRAMEBUFFER_SLOTS)
+        return false;
+    rlvkFramebufferSlot *f = &RLVK.fbSlots[id];
+    if (!f->depthSampleOnDemand || !f->hasDepth)
+        return false;
+    rlvkTextureSlot *depth = &RLVK.textureSlots[f->depthTexture];
+    if (!depth->sampleImage)
+        return false; // native sampled depth keeps the existing transitions
+    if (depth->sampleDirty || depth->sampleLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+    {
+        depth->sampleDeferredFb = id;
+        s_bindingValid = false; // identical mesh/material draws must still resolve the deferred sampler
+    }
+    return true;
+}
+
 // Switch the rendering scope to a user framebuffer (render texture). The pending batch
 // was already flushed by raylib's BeginTextureMode/EndTextureMode before this is called.
 // Unlike rlDisableFramebuffer(), this keeps us inside an offscreen scope. The outgoing
@@ -313,6 +332,7 @@ static void rlvkCloseFramebufferColorsForSwitch(VkCommandBuffer cmdBuffer, u32 i
     if (id == 0 || id >= RLVK_MAX_FRAMEBUFFER_SLOTS)
         return;
     rlvkFramebufferSlot *old = &RLVK.fbSlots[id];
+    rlvkDeferFramebufferDepthSample(id);
     VkImageMemoryBarrier2 barriers[8];
     u32 count = 0;
     for (u32 c = 0; c < old->colorCount && c < 8; c++)
@@ -543,6 +563,72 @@ void rlEnableFramebuffer(unsigned int id)
     RLVK.scope.flipY = false;
 }
 
+// Copy after the depth/twin transfer-layout barriers; shared by default close and opt-in binds.
+static void rlvkCopyDepthTwin(VkCommandBuffer cmdBuffer, rlvkTextureSlot *depth, u32 id)
+{
+    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileScopes[id].twinPixels += (u64)depth->width * depth->height;
+    // depth image (DEPTH aspect) -> scratch buffer -> twin (COLOR aspect), same 4 bytes/texel
+    vkCmdCopyImageToBuffer(cmdBuffer, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           depth->sampleScratch, 1,
+                           &(VkBufferImageCopy){
+                               .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
+                               .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
+                           });
+    vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+                                          VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                          .bufferMemoryBarrierCount = 1,
+                                          .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2){
+                                              VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                                              .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                              .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                              .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                              .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                                              .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                              .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                              .buffer = depth->sampleScratch,
+                                              .size = VK_WHOLE_SIZE,
+                                          },
+                                      });
+    vkCmdCopyBufferToImage(cmdBuffer, depth->sampleScratch, depth->sampleImage,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                           &(VkBufferImageCopy){
+                               .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                               .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
+                           });
+    vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+                                          VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                          .imageMemoryBarrierCount = 2,
+                                          .pImageMemoryBarriers = (VkImageMemoryBarrier2[]){
+                                              {
+                                                  VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                  .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                  .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+                                                  .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                                                  .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                                                  .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                                  .image = depth->image,
+                                                  .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+                                              },
+                                              {
+                                                  VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                                  .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                  .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                  .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                                  .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                                  .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                                                  .image = depth->sampleImage,
+                                                  .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+                                              },
+                                          },
+                                      });
+    depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth->sampleLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    depth->sampleDirty = false;
+    depth->sampleDeferredFb = 0;
+}
+
 // Back to the swapchain scope; the render texture becomes sampleable again
 void rlDisableFramebuffer(void)
 {
@@ -586,7 +672,8 @@ void rlDisableFramebuffer(void)
     // Make the depth texture sampleable for depth-render / shadowmap / soft-particle shaders.
     rlvkTextureSlot *depth = f->hasDepth ? &RLVK.textureSlots[f->depthTexture] : NULL;
     // The twin is refilled only while a bind is RECENT; see rlvkTextureSlot.sampleWantedFrame.
-    bool twinWanted = depth && depth->sampleWantedFrame &&
+    bool deferred = rlvkDeferFramebufferDepthSample(id);
+    bool twinWanted = !deferred && depth && depth->sampleWantedFrame &&
                       ((RLVK.frameCounter + 1 - depth->sampleWantedFrame) <= (u64)RLVK_TWIN_KEEPALIVE_FRAMES) &&
                       (depth->sampleDirty || depth->sampleLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     if (depth && depth->image)
@@ -658,71 +745,82 @@ void rlDisableFramebuffer(void)
     }
 
     if (depth && depth->image && depth->sampleImage && twinWanted)
-    {
-        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileScopes[id].twinPixels += (u64)depth->width * depth->height;
-        // depth image (DEPTH aspect) -> scratch buffer -> twin (COLOR aspect), same 4 bytes/texel
-        vkCmdCopyImageToBuffer(cmdBuffer, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               depth->sampleScratch, 1,
-                               &(VkBufferImageCopy){
-                                   .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
-                                   .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
-                               });
-        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                              .bufferMemoryBarrierCount = 1,
-                                              .pBufferMemoryBarriers = &(VkBufferMemoryBarrier2){
-                                                  VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
-                                                  .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                                                  .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                  .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                                                  .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                                  .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                                                  .buffer = depth->sampleScratch,
-                                                  .size = VK_WHOLE_SIZE,
-                                              },
-                                          });
-        vkCmdCopyBufferToImage(cmdBuffer, depth->sampleScratch, depth->sampleImage,
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                               &(VkBufferImageCopy){
-                                   .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-                                   .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
-                               });
-        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                              .imageMemoryBarrierCount = 2,
-                                              .pImageMemoryBarriers = (VkImageMemoryBarrier2[]){
-                                                  {
-                                                      VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                      .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                                                      .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                                                      .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                                      .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                                                      .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                                      .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                                      .image = depth->image,
-                                                      .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
-                                                  },
-                                                  {
-                                                      VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                      .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                                                      .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                                                      .dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                                      .dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
-                                                      .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                                      .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                                                      .image = depth->sampleImage,
-                                                      .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-                                                  },
-                                              },
-                                          });
-        depth->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        depth->sampleLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        depth->sampleDirty = false;
-    }
+        rlvkCopyDepthTwin(cmdBuffer, depth, id);
 
     // Resume the swapchain scope, preserving its content
     rlvkResumeSwapchainScope(cmdBuffer);
+}
+
+// Refresh a CLOSED depth source without reopening its pass (or repeating its MSAA resolve).
+static bool rlvkRefreshDepthTwin(u32 textureSlot, u32 profileSlot)
+{
+    rlvkTextureSlot *depth = &RLVK.textureSlots[textureSlot];
+    u32 openFb = RLVK.scope.fbSlot;
+    if (RLVK.frameActive && openFb && RLVK.fbSlots[openFb].hasDepth &&
+        RLVK.fbSlots[openFb].depthTexture == textureSlot)
+        return false; // preserve the prior materialized snapshot while its source is open
+    if (!depth->sampleImage)
+        return true;
+    if (!depth->sampleDirty && depth->sampleLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+    {
+        depth->sampleDeferredFb = 0;
+        return true;
+    }
+    if (!RLVK.frameActive)
+        return false;
+
+    u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
+    VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
+    if (openFb)
+        rlDisableFramebuffer();
+    rlvkProfileEndScope();
+    vkCmdEndRenderPass(cmdBuffer);
+    VkImageMemoryBarrier2 barriers[2] = {
+        {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+            .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
+            .oldLayout = depth->currentLayout,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .image = depth->image,
+            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+        },
+        {
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            .srcAccessMask = depth->sampleLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+            .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+            .oldLayout = depth->sampleLayout,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .image = depth->sampleImage,
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        },
+    };
+    vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+        VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount = 2,
+        .pImageMemoryBarriers = barriers,
+    });
+    rlvkCopyDepthTwin(cmdBuffer, depth, profileSlot);
+    depth->sampleWantedFrame = RLVK.frameCounter + 1;
+    rlvkResumeSwapchainScope(cmdBuffer);
+    if (openFb)
+        rlEnableFramebuffer(openFb);
+    return true;
+}
+
+bool rlvkRefreshFramebufferDepthTexture(unsigned int fbId)
+{
+    if (!isGpuReady || fbId == 0 || fbId >= RLVK_MAX_FRAMEBUFFER_SLOTS)
+        return false;
+    rlvkFramebufferSlot *f = &RLVK.fbSlots[fbId];
+    if (!f->inUse || !f->hasDepth || !f->depthTexture ||
+        f->depthTexture >= RLVK_MAX_TEXTURE_SLOTS || !RLVK.textureSlots[f->depthTexture].image)
+        return false;
+    return rlvkRefreshDepthTwin(f->depthTexture, fbId);
 }
 
 // Re-open the swapchain-target rendering scope preserving content (color LOAD + depth LOAD)

@@ -5,8 +5,7 @@
 in vec3 vertexPosition;
 
 uniform mat4 mvp;
-uniform mat4 matModel;
-uniform mat4 u_worldFromShaderSpace;
+uniform vec3 u_worldOffset;
 uniform float u_time;
 uniform float u_windStrength;
 uniform sampler2D u_interactionMap;
@@ -26,8 +25,7 @@ void main()
     vec2 bladeWindUV, bladeSurfaceUV;
     NatureEvaluateBlade(bladePosition, bladeNormal, bladeColor, bladeWindUV, bladeSurfaceUV);
     vec3 local = bladePosition;
-    vec3 shaderPosition = vec3(matModel * vec4(local, 1.0));
-    vec3 world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
+    vec3 world = local + u_worldOffset;
     float rootMask = bladeWindUV.y * bladeWindUV.y;
     vec2 windBend = NatureVegetationWindBend(
         world, bladeWindUV, u_time, u_windStrength,

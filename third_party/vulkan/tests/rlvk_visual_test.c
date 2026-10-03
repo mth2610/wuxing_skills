@@ -641,6 +641,8 @@ static const char *sc_depth_twin_cache(void)
 // Compare two depth-writing scopes before one consumer with a consumer between
 // the scopes. RLVK_PROFILE exposes refresh counts for the two separate FBOs;
 // only the interleaved consumer needs the first snapshot to be materialized.
+extern bool rlvkSetFramebufferDepthSampleOnDemand(unsigned int fbId, bool enabled);
+extern bool rlvkRefreshFramebufferDepthTexture(unsigned int fbId);
 static const char *sc_depth_twin_demand(void)
 {
     const char *fs = "#version 330\n"
@@ -650,6 +652,13 @@ static const char *sc_depth_twin_demand(void)
         "finalColor=vec4(vec3(clamp(z/20.0,0.0,1.0)),1.0); }\n";
     Shader sh = LoadShaderFromMemory(NULL, fs);
     RenderTexture2D rt[2] = {LoadRenderTexture(W,H), LoadRenderTexture(W,H)};
+    bool configured = rlvkSetFramebufferDepthSampleOnDemand(rt[0].id, true) &&
+                      rlvkSetFramebufferDepthSampleOnDemand(rt[1].id, true);
+    if (!configured)
+    {
+        UnloadRenderTexture(rt[0]); UnloadRenderTexture(rt[1]); UnloadShader(sh);
+        return "closed target rejected depth sample-on-demand policy";
+    }
     Camera3D cam = cam3d();
     const int strip = W/3;
     for (int f=0; f<64; f++)
@@ -684,6 +693,65 @@ static const char *sc_depth_twin_demand(void)
     if (deferred.r<200) return "deferred depth sample missed the final clear";
     if (before.r>150) return "depth overwrite corrupted an earlier sample";
     if (after.r<200) return "interleaved sample missed the final clear";
+    return NULL;
+}
+
+// Explicitly prepare a closed source before its consumers, reject preparation while it is
+// attached, and prove that repeated preparation does not change the depth or add another copy.
+static const char *sc_depth_twin_prepare(void)
+{
+    const char *fs = "#version 330\n"
+        "in vec2 fragTexCoord; out vec4 finalColor; uniform sampler2D texture0;\n"
+        "void main(){float d=texture(texture0,fragTexCoord).r;"
+        "float z=(2.0*0.01*1000.0)/(1000.01-(d*2.0-1.0)*999.99);"
+        "finalColor=vec4(vec3(clamp(z/20.0,0.0,1.0)),1.0); }\n";
+    Shader sh = LoadShaderFromMemory(NULL, fs);
+    RenderTexture2D rt = LoadRenderTexture(W,H);
+    Camera3D cam = cam3d();
+    const int strip = W/3;
+    const char *why = NULL;
+    if (!rlvkSetFramebufferDepthSampleOnDemand(rt.id, true))
+        why = "closed target rejected depth sample-on-demand policy";
+    if (rlvkRefreshFramebufferDepthTexture(0))
+        why = "invalid target accepted depth preparation";
+    for (int f=0; !why && f<64; f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        BeginTextureMode(rt); ClearBackground(BLACK);
+        if (rlvkRefreshFramebufferDepthTexture(rt.id) ||
+            rlvkSetFramebufferDepthSampleOnDemand(rt.id, false))
+            why = "open source accepted depth preparation or policy change";
+        BeginMode3D(cam);
+        DrawCube((Vector3){0,0,2},1.6f,1.6f,1.6f,WHITE);
+        EndMode3D(); EndTextureMode();
+        if (!rlvkRefreshFramebufferDepthTexture(rt.id))
+            why = "closed source rejected explicit depth preparation";
+        BeginShaderMode(sh);
+        DrawTexturePro(rt.depth,(Rectangle){0,0,W,H},
+                       (Rectangle){0,0,strip,H},(Vector2){0,0},0,WHITE);
+        EndShaderMode(); rlDrawRenderBatchActive();
+        if (!rlvkRefreshFramebufferDepthTexture(rt.id))
+            why = "clean depth source rejected repeated preparation";
+        BeginShaderMode(sh);
+        DrawTexturePro(rt.depth,(Rectangle){0,0,W,H},
+                       (Rectangle){strip,0,strip,H},(Vector2){0,0},0,WHITE);
+        EndShaderMode(); rlDrawRenderBatchActive();
+        BeginTextureMode(rt); ClearBackground(BLACK); EndTextureMode();
+        if (!rlvkRefreshFramebufferDepthTexture(rt.id))
+            why = "newly cleared depth rejected preparation";
+        BeginShaderMode(sh);
+        DrawTexturePro(rt.depth,(Rectangle){0,0,W,H},
+                       (Rectangle){2*strip,0,strip,H},(Vector2){0,0},0,WHITE);
+        EndShaderMode(); rlDrawRenderBatchActive();
+        EndDrawing();
+    }
+    Image im = snap();
+    Color first = at(im,strip/2,H/2), repeat = at(im,strip+strip/2,H/2), final = at(im,2*strip+strip/2,H/2);
+    UnloadImage(im); UnloadRenderTexture(rt); UnloadShader(sh);
+    if (why) return why;
+    if (first.r>150) return "prepared source missed its geometry depth";
+    if (abs((int)repeat.r-(int)first.r)>2) return "repeated preparation changed depth";
+    if (final.r<200) return "prepared source missed its final depth clear";
     return NULL;
 }
 
@@ -3532,6 +3600,7 @@ static const Scenario SCENARIOS[] = {
     { "soft_depth",     sc_soft_depth },
     { "depth_twin_cache", sc_depth_twin_cache },
     { "depth_twin_demand", sc_depth_twin_demand },
+    { "depth_twin_prepare", sc_depth_twin_prepare },
     { "texture_update_order", sc_texture_update_order },
     { "soft_ground",    sc_soft_ground },
     { "winding_rt",     sc_winding_rt },

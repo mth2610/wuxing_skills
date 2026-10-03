@@ -307,6 +307,21 @@ RLVKAPI void rlvkSetMsaaSamples(int samples);       // Set MSAA sample count, ca
 // multisample images are sized from the attachments. Costs one extra colour image and one
 // extra depth image at the requested sample count in device memory.
 RLVKAPI int  rlvkSetFramebufferSamples(unsigned int fbId, int samples);
+// Opt a CLOSED framebuffer into refreshing its depth-copy twin on the first later sampler
+// bind instead of at every depth-writing scope close. Default false; native sampled-depth
+// drivers are unchanged. Configure after attaching depth and before the target's first use.
+// Returns false for an invalid/depthless target or while that target is open.
+// Closed-source sampler binds refresh the twin lazily. Before reopening the target to consume
+// its last closed depth snapshot, call rlvkRefreshFramebufferDepthTexture while it is closed.
+// Binds while that depth is attached to the open scope NEVER refresh it: they use only the
+// previously materialized twin, or warn and substitute a safe default if none exists.
+// Shared-depth writers must observe the same snapshot contract.
+RLVKAPI bool rlvkSetFramebufferDepthSampleOnDemand(unsigned int fbId, bool enabled);
+// Materialize the latest closed framebuffer depth for later raw-depth consumers. Copies only
+// when its twin is dirty/uninitialized; native sampled depth is unchanged. Explicit request,
+// so callers should invoke this only when a consumer needs depth. Returns false for an invalid
+// target or while that depth is attached to the open scope; never submits or waits on the host.
+RLVKAPI bool rlvkRefreshFramebufferDepthTexture(unsigned int fbId);
 RLVKAPI void rlvkPresent(void);                     // Present the current frame, called from SwapScreenBuffer()
 
 //------------------------------------------------------------------------------------

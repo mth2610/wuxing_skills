@@ -224,7 +224,10 @@ static RenderTexture2D LoadLinearDepthTarget(int width, int height)
  * aliasing, never correctness. GL 3.3 / GLES have no offscreen-MSAA path and stay on FXAA. */
 #if defined(GRAPHICS_API_VULKAN)
 extern int rlvkSetFramebufferSamples(unsigned int fbId, int samples);
+extern bool rlvkSetFramebufferDepthSampleOnDemand(unsigned int fbId, bool enabled);
+extern bool rlvkRefreshFramebufferDepthTexture(unsigned int fbId);
 #endif
+static bool s_depthSampleOnDemand = false;
 static int s_sceneSamples = 1;
 
 /* Actual scene samples: 2/4 = hardware MSAA, 1 = single-sampled.
@@ -236,6 +239,7 @@ int SceneTargets_GetSceneSamples(void) { return s_sceneSamples; }
 
 void SceneTargets_Init(int width, int height)
 {
+  s_depthSampleOnDemand = false;
   bool forceLdr = (getenv("WUXING_NO_HDR") != NULL);
   s_depthTextureActive = false;
 
@@ -816,6 +820,15 @@ void SceneTargets_SnapshotDepth(void)
 
 Texture2D SceneTargets_GetDepthTexture(void) { return prevDepthTex.texture; }
 Texture2D SceneTargets_GetSceneTexture(void) { return renderTex.texture; }
+bool SceneTargets_PrepareRawDepth(void)
+{
+  if (!s_depthTextureActive) return false;
+#if defined(GRAPHICS_API_VULKAN)
+  if (s_depthSampleOnDemand)
+    return rlvkRefreshFramebufferDepthTexture(renderTex.id);
+#endif
+  return true;
+}
 Texture2D SceneTargets_GetRawDepthTexture(void) { return s_depthTextureActive ? renderTex.depth : (Texture2D){0}; }
 
 void SceneTargets_BindDepthForSoftParticles(Shader shader, int textureSlot)

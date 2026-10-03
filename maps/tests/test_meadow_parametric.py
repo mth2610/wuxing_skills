@@ -69,6 +69,7 @@ static int allocationCall, failAllocation, liveAllocations, liveTextures;
 static int s_natureTuftLodBandsLoc, s_natureTuftLodLevelLoc, s_natureTuftLodCameraLoc;
 static int s_natureCanonicalBladesLoc[2],s_natureCanonicalLoc[2],s_natureGeometryLodLoc[2];
 static int s_natureTuftOffsetLoc[2],s_natureCompactLoc[2],s_natureVisibleIdsLoc,s_natureVisibleOffsetLoc;
+static int s_natureWorldOffsetLoc[2];
 static const char *testSubmission;
 static const char *testOrder;
 static const char *TestGetenv(const char *name) {
@@ -225,8 +226,9 @@ int main(void) {
         {.position={24.01f,0,0.01f},.height=.8f,.radius=.2f,.phase=3}};
     style.chunkSize=12; style.shadowDistance=20; expectedTufts=3;
     MapMeadowSurface meadow={0}; allocationCall=0;
-    int *lodLocations[]={&s_natureTuftLodBandsLoc,&s_natureTuftLodLevelLoc,&s_natureTuftLodCameraLoc};
-    for(int i=0;i<3;i++) {
+    int *lodLocations[]={&s_natureTuftLodBandsLoc,&s_natureTuftLodLevelLoc,&s_natureTuftLodCameraLoc,
+        &s_natureWorldOffsetLoc[0],&s_natureWorldOffsetLoc[1]};
+    for(int i=0;i<5;i++) {
         *lodLocations[i]=-1;
         assert(!NatureParametric_Create(&meadow,roots,3,style));
         assert(!allocationCall && !liveAllocations && !liveTextures);

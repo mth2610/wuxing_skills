@@ -99,10 +99,17 @@
 - **Cause:** `maps/toolkit/prop_lit.c` uploaded world-space sun/camera values against shader/view-space varyings. `maps/toolkit/shaders/prop_lit.fs` also treated view-space Y as ground height. This is the coordinate-space trap in `ENGINE_LANDMINES.md` §9.
 - **Rule:** Upload direction and point values in the varyings' space during the active camera scope, omit translation for directions, and recover world height separately. Keep shadow and VFX lighting in their established space; verify physical distance, diffuse response and ground AO under translated/rotated cameras with `maps/tests/test_prop_lighting_space.py`.
 
+### Parametric foliage repeats inverse-camera work per vertex
+
+- **Symptom:** Translation-only tuft draws transform authoring positions and normals into camera space, then immediately recover their original world space in every visible and shadow vertex.
+- **Cause:** The parametric renderer inherited the general mesh path's model/inverse-camera pair, although its only model transform is the caller's world offset.
+- **Rule:** Upload the exact translation once per draw and keep parametric world positions as `local + u_worldOffset`; preserve MVP separately. Require the offset uniform in both pass fallback checks. Rotation or scale needs an explicit position and normal transform before extending this path. `maps/tests/test_meadow_world_space.py` checks translated/rotated cameras, nonzero offsets, shader expressions and production uploads; matched captures and timings still decide visual equivalence and performance.
+
 ## Patch Log
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-03 | Codex | Translation-only parametric transform cancellation | `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/nature_parametric.glsl`, `maps/tests/test_meadow_world_space.py` | Ground-truth |
 | 2026-10-03 | Codex | Prop material camera-space lighting and world-height AO | `maps/toolkit/prop_lit.c`, `maps/toolkit/shaders/prop_lit.fs`, `maps/tests/test_prop_lighting_space.py` | Ground-truth |
 | 2026-10-03 | Codex | Exact water wake texture reuse and residual-wave lifecycle | `maps/toolkit/map_props_nature.inl`, `maps/tests/test_water_wave_upload.py` | Ground-truth |
 | 2026-10-02 | Codex | Grass shadow contrast after substrate correction | `maps/toolkit/shaders/ground_splat.fs`, matched grass-caster on/off captures | Ground-truth |

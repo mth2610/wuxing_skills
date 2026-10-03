@@ -754,6 +754,22 @@ static void rlvkFlushSet0(VkCommandBuffer cmdBuffer)
 static void rlvkResolveTexBinding(u32 textureSlot, VkImageView *outView, VkSampler *outSampler)
 {
     rlvkTextureSlot *t = &RLVK.textureSlots[textureSlot];
+    if (t->sampleImage && t->sampleDeferredFb)
+        rlvkRefreshDepthTwin(textureSlot, t->sampleDeferredFb);
+    if (t->sampleImage && RLVK.frameActive && RLVK.scope.fbSlot)
+    {
+        rlvkFramebufferSlot *f = &RLVK.fbSlots[RLVK.scope.fbSlot];
+        if (f->depthSampleOnDemand && f->hasDepth && f->depthTexture == textureSlot &&
+            t->sampleLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+        {
+            static bool warned = false;
+            if (!warned)
+            {
+                warned = true;
+                TRACELOG(RL_LOG_WARNING, "RLVK: on-demand depth sampled in its open source before a closed-source refresh; using default texture");
+            }
+        }
+    }
     // A non-sampleable depth attachment (Caps.noSampledDepth, §7.1) exposes a sampleable twin
     // filled at FBO scope close; sample the twin's view/layout so soft-particle / depth_copy
     // shaders read real depth instead of the substituted default.

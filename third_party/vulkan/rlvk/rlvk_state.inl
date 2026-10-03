@@ -65,6 +65,7 @@ typedef struct rlvkTextureSlot {
     // is identical whether or not the bounce runs, which is what makes this safe (§7.27/§7.29).
     u64                 sampleWantedFrame;
     bool                sampleDirty;          // depth was written since the sample twin was last refreshed
+    u32                 sampleDeferredFb;      // opt-in writer whose closed depth awaits its first sampler bind
     VkFilter            minFilter, magFilter;  // Sampler filters (rlTextureParameters)
     VkSamplerMipmapMode mipMode;               // Sampler mipmap mode
     VkSamplerAddressMode wrapS, wrapT;         // Sampler wrap modes (GL default: repeat)
@@ -112,6 +113,8 @@ typedef struct rlvkFramebufferSlot {
     u32                 stencilTexture;         // Stencil attachment texture slot (0 = none)
     bool                hasDepth, hasStencil;   // Attachment presence flags
     bool                inUse;                 // Slot occupied
+
+    bool                depthSampleOnDemand;   // default false; raw-depth feedback is forbidden when enabled
 
     // Offscreen MSAA (rlvkSetFramebufferSamples; 0/1 = off, the default). The attached
     // color/depth TEXTURES stay 1x and become RESOLVE destinations - everything that samples

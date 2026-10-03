@@ -1669,6 +1669,20 @@ void rlFramebufferAttach(unsigned int fb, unsigned int texId, int attachType, in
     // No VkFramebuffer object created; everything is inferred at vkCmdBeginRendering time.
 }
 
+bool rlvkSetFramebufferDepthSampleOnDemand(unsigned int fbId, bool enabled)
+{
+    if (!isGpuReady || fbId == 0 || fbId >= RLVK_MAX_FRAMEBUFFER_SLOTS)
+        return false;
+    rlvkFramebufferSlot *f = &RLVK.fbSlots[fbId];
+    if (!f->inUse || !f->hasDepth || !f->depthTexture ||
+        f->depthTexture >= RLVK_MAX_TEXTURE_SLOTS ||
+        !RLVK.textureSlots[f->depthTexture].image ||
+        (RLVK.frameActive && RLVK.scope.fbSlot == fbId))
+        return false;
+    f->depthSampleOnDemand = enabled;
+    return true;
+}
+
 // Release an FBO's private multisample images (see rlvkSetFramebufferSamples). Evicts the
 // cached VkFramebuffers that reference their views FIRST - a cached framebuffer outliving its
 // attachment view is a use-after-free the moment the same scope shape is opened again.

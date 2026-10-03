@@ -53,7 +53,7 @@ bool NatureTuftUsesCurrentLod()
     uint h = floatBitsToUint(root.x) ^ (floatBitsToUint(root.z) * 0x9e3779b9u);
     h ^= h >> 16; h *= 0x7feb352du; h ^= h >> 15; h *= 0x846ca68bu; h ^= h >> 16;
     float rank = float(h & 0x00ffffffu) * (1.0 / 16777216.0);
-    vec3 worldRoot = vec3(u_worldFromShaderSpace * matModel * vec4(root, 1.0));
+    vec3 worldRoot = root + u_worldOffset;
     float d = distance(worldRoot, u_tuftLodCamera);
     float farWeight = smoothstep(u_tuftLodBands.y - u_tuftLodBands.w,
                                  u_tuftLodBands.y + u_tuftLodBands.w, d);

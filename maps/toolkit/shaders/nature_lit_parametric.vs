@@ -5,8 +5,7 @@
 in vec3 vertexPosition;
 
 uniform mat4 mvp;
-uniform mat4 matModel;
-uniform mat4 u_worldFromShaderSpace;
+uniform vec3 u_worldOffset;
 uniform mat4 u_lightVP;
 uniform mat4 u_staticLightVP;
 uniform float u_time;
@@ -42,8 +41,7 @@ void main()
     vec2 bladeWindUV, bladeSurfaceUV;
     NatureEvaluateBlade(bladePosition, bladeNormal, bladeColor, bladeWindUV, bladeSurfaceUV);
     vec3 local = bladePosition;
-    vec3 shaderPosition = vec3(matModel * vec4(local, 1.0));
-    vec3 world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
+    vec3 world = local + u_worldOffset;
     float rootMask = bladeWindUV.y * bladeWindUV.y;
     vec2 windBend = NatureVegetationWindBend(
         world, bladeWindUV, u_time, u_windStrength,
@@ -60,15 +58,14 @@ void main()
                     u_natureWindResponse.w;
     }
     local.xz += windBend * rootMask;
-    shaderPosition = vec3(matModel * vec4(local, 1.0));
-    world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
+    world = local + u_worldOffset;
 
     // Normal tilts dynamically with wind deflection, creating iconic specular ripples
     vec3 bentNormal = bladeNormal;
     bentNormal.xz -= windBend * 1.15 * bladeWindUV.y;
 
     fragPosition = world;
-    fragNormal = normalize(mat3(u_worldFromShaderSpace) * mat3(matModel) * bentNormal);
+    fragNormal = normalize(bentNormal);
     fragColor = bladeColor;
     fragHeight = bladeWindUV.y;
     fragTexCoord = bladeSurfaceUV;
