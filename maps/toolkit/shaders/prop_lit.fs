@@ -41,10 +41,10 @@ uniform sampler2D texture3;   // roughness, single channel .r (MATERIAL_MAP_ROUG
 
 uniform vec4 colDiffuse;      // raylib standard tint uniform (DrawModelEx's tint param)
 
-uniform vec3 u_lightDir;      // surface -> light, world space (see PropLit_UpdateLighting)
+uniform vec3 u_lightDir;      // surface -> light, shader/view space (PropLit_UpdateLighting)
 uniform vec3 u_lightColor;    // sun color, normalized 0..1
 uniform vec3 u_ambientColor;  // ambient floor color, normalized 0..1
-uniform vec3 u_viewPos;       // camera world position
+uniform vec3 u_viewPos;       // camera position in the same shader/view space
 uniform sampler2D u_cloudNoise;
 uniform mat4 u_cloudWorldFromShader;
 
@@ -52,6 +52,7 @@ out vec4 finalColor;
 
 void main() {
     vec4 albedo = texture(texture0, fragTexCoord);
+    vec3 worldPosition = vec3(u_cloudWorldFromShader * vec4(fragPosition, 1.0));
 
     vec3 normalSample = texture(texture2, fragTexCoord).rgb * 2.0 - 1.0;
     mat3 TBN = mat3(normalize(fragTangent), normalize(fragBitangent), normalize(fragNormal));
@@ -75,8 +76,7 @@ void main() {
     float spec = calcSpecular(normal, lightDir, viewDir, shininess) * specStrength;
 
     float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
-    shadow *= Environment_CloudVisibility(u_cloudNoise,
-        vec3(u_cloudWorldFromShader * vec4(fragPosition, 1.0)));
+    shadow *= Environment_CloudVisibility(u_cloudNoise, worldPosition);
     vec3 lit = albedo.rgb * (u_ambientColor + diff * u_lightColor * shadow)
              + spec * u_lightColor * shadow;
 
@@ -86,7 +86,7 @@ void main() {
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);
 
     // Ground contact ambient occlusion: darken bottom of rocks to eliminate floating look
-    float groundAO = clamp(fragPosition.y * 0.35 + 0.75, 0.40, 1.0);
+    float groundAO = clamp(worldPosition.y * 0.35 + 0.75, 0.40, 1.0);
     lit *= groundAO;
 
     // Atmospheric aerial haze for distant mountain crags (soft horizon blending)

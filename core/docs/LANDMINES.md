@@ -3800,9 +3800,12 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   `TimeFX_Elapsed()` so fixed-frame image comparisons share animation time.
   The sampling test verifies rank distribution and synthetic integration;
   native-resolution captures remain necessary to assess residual grain.
+  Reconstruction must filter premultiplied radiance and opacity together and
+  reject unrelated depth layers; see `core/volumetric/docs/LANDMINES.md` §3.
 
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
 | 2026-10-03 | Codex | Fog sampling and reproducible animation | core/volumetric/volumetric_fog.c; core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_sampling_test.c | Ground-truth |
+| 2026-10-03 | Codex | Fog reconstruction pointer | core/volumetric/shaders/volumetric_composite.fs; core/tests/volumetric_fog_composite_test.c | Ground-truth |

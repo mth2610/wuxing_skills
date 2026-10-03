@@ -638,6 +638,55 @@ static const char *sc_depth_twin_cache(void)
     return NULL;
 }
 
+// Compare two depth-writing scopes before one consumer with a consumer between
+// the scopes. RLVK_PROFILE exposes refresh counts for the two separate FBOs;
+// only the interleaved consumer needs the first snapshot to be materialized.
+static const char *sc_depth_twin_demand(void)
+{
+    const char *fs = "#version 330\n"
+        "in vec2 fragTexCoord; out vec4 finalColor; uniform sampler2D texture0;\n"
+        "void main(){float d=texture(texture0,fragTexCoord).r;"
+        "float z=(2.0*0.01*1000.0)/(1000.01-(d*2.0-1.0)*999.99);"
+        "finalColor=vec4(vec3(clamp(z/20.0,0.0,1.0)),1.0); }\n";
+    Shader sh = LoadShaderFromMemory(NULL, fs);
+    RenderTexture2D rt[2] = {LoadRenderTexture(W,H), LoadRenderTexture(W,H)};
+    Camera3D cam = cam3d();
+    const int strip = W/3;
+    for (int f=0; f<64; f++)
+    {
+        BeginDrawing(); ClearBackground(BLACK);
+        for (int variant=0; variant<2; variant++)
+        {
+            BeginTextureMode(rt[variant]); ClearBackground(BLACK);
+            BeginMode3D(cam);
+            DrawCube((Vector3){0,0,2},1.6f,1.6f,1.6f,WHITE);
+            EndMode3D(); EndTextureMode();
+            if (variant)
+            {
+                BeginShaderMode(sh);
+                DrawTexturePro(rt[variant].depth,(Rectangle){0,0,W,H},
+                               (Rectangle){strip,0,strip,H},(Vector2){0,0},0,WHITE);
+                EndShaderMode();
+                rlDrawRenderBatchActive(); // consume BEFORE overwriting the depth
+            }
+            BeginTextureMode(rt[variant]); ClearBackground(BLACK); EndTextureMode();
+            BeginShaderMode(sh);
+            DrawTexturePro(rt[variant].depth,(Rectangle){0,0,W,H},
+                           (Rectangle){variant ? 2*strip : 0,0,strip,H},(Vector2){0,0},0,WHITE);
+            EndShaderMode();
+            rlDrawRenderBatchActive();
+        }
+        EndDrawing();
+    }
+    Image im = snap();
+    Color deferred = at(im,strip/2,H/2), before = at(im,strip+strip/2,H/2), after = at(im,2*strip+strip/2,H/2);
+    UnloadImage(im); UnloadRenderTexture(rt[0]); UnloadRenderTexture(rt[1]); UnloadShader(sh);
+    if (deferred.r<200) return "deferred depth sample missed the final clear";
+    if (before.r>150) return "depth overwrite corrupted an earlier sample";
+    if (after.r<200) return "interleaved sample missed the final clear";
+    return NULL;
+}
+
 // One soft-particle billboard straddling a ground plane: the half over open sky stays bright,
 // the half sunk into the ground fades out (the game's soft-particle behaviour). Also a depth
 // ORIENTATION test — a Y-flipped depth twin would fade the WRONG half. Set RLVK_SOFT_DUMP=path
@@ -3482,6 +3531,7 @@ static const Scenario SCENARIOS[] = {
     { "fbo_switch",     sc_fbo_switch },
     { "soft_depth",     sc_soft_depth },
     { "depth_twin_cache", sc_depth_twin_cache },
+    { "depth_twin_demand", sc_depth_twin_demand },
     { "texture_update_order", sc_texture_update_order },
     { "soft_ground",    sc_soft_ground },
     { "winding_rt",     sc_winding_rt },

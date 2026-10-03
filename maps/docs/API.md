@@ -224,6 +224,8 @@ void     PropLit_UpdateLighting(void);
 ```
 `map_props.c` calls these automatically when you pass all 3 paths to `MapProp_CreateStrip`/`CreateRocks` — you usually don't need to call them directly, **except** `PropLit_UpdateLighting()` still must be called once per frame in `Draw{Prefix}Map` (it doesn't run automatically). Reads lighting via `Environment_Get{SunDirection,SunColor,AmbientColor}()`, adjust automatically for time-of-day if the map uses a day/night cycle. Never call `UnloadShader()`/`UnloadMaterial()` on the result — the shader is shared, cached via `ResourceManager_LoadShader`.
 
+In `maps/toolkit/prop_lit.c`, call `PropLit_UpdateLighting()` inside the active 3D camera scope. It converts the sun direction without translation and camera position into the shader/view space emitted by `DrawMesh`; sun and ambient colors retain their Environment values. `maps/toolkit/shaders/prop_lit.fs` keeps view direction, shading normals, shadow sampling and VFX lighting in that space, while the existing inverse-view uniform recovers world position for cloud visibility and ground-contact AO. Material haze uses the physical camera-to-prop distance.
+
 ### `maps/toolkit/grass_material.h` — alternate ground material (currently shelved)
 
 Texture-blend hybrid ground material (grassBase + grassDetail + dirt, blended via `fbm2` noise) — was once tried as the main ground but shelved due to an unresolved visual issue (see `core/docs/PROGRESS.md` Item 38). Still in the codebase for possible reuse later; **not the default choice** — `MapProp_CreateGround` currently uses its own `ground_splat.fs`, not `grass_material`.
@@ -904,6 +906,7 @@ Autotest: `map_trigger_zones` in `main.c`.
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-03 | Codex | Prop material coordinate-space and active-camera contract | `maps/toolkit/prop_lit.c`, `maps/toolkit/shaders/prop_lit.fs`, `maps/tests/test_prop_lighting_space.py` | Ground-truth |
 | 2026-10-03 | Codex | Exact water wake upload cache and lifecycle | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/map_props.h`, `maps/tests/test_water_wave_upload.py` | Ground-truth |
 | 2026-10-02 | Codex | Shared grass atlas, optional compact submissions and ordering, botanical variation, derived terrain relief | `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/ground_splat.fs` | Ground-truth |
 | 2026-10-02 | Codex | Per-tuft visible LOD and narrower distant fog | `maps/toolkit/shaders/nature_parametric.glsl`, `maps/worlds/verdant_path/verdant_path.c` | Ground-truth |

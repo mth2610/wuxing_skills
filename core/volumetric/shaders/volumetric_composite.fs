@@ -12,28 +12,21 @@ uniform float     u_depthThreshold;  // Bilateral depth rejection threshold (~2.
 
 void main() {
     float fullDepth = texture(u_fullResDepthTex, fragTexCoord).r;
-    vec2 d = u_lowResTexel * 0.5;
-
-    // Unrolled 4-tap bilateral filter with hardware texture cache locality
-    vec2 uv0 = fragTexCoord + vec2(-d.x, -d.y);
-    vec2 uv1 = fragTexCoord + vec2( d.x, -d.y);
-    vec2 uv2 = fragTexCoord + vec2(-d.x,  d.y);
-    vec2 uv3 = fragTexCoord + vec2( d.x,  d.y);
-
-    float d0 = abs(fullDepth - texture(u_lowResDepthTex, uv0).r);
-    float d1 = abs(fullDepth - texture(u_lowResDepthTex, uv1).r);
-    float d2 = abs(fullDepth - texture(u_lowResDepthTex, uv2).r);
-    float d3 = abs(fullDepth - texture(u_lowResDepthTex, uv3).r);
-
-    float w0 = 1.0 / (1.0 + d0 * 2.0);
-    float w1 = 1.0 / (1.0 + d1 * 2.0);
-    float w2 = 1.0 / (1.0 + d2 * 2.0);
-    float w3 = 1.0 / (1.0 + d3 * 2.0);
-
-    vec4 s0 = texture(texture0, uv0);
-    vec4 s1 = texture(texture0, uv1);
-    vec4 s2 = texture(texture0, uv2);
-    vec4 s3 = texture(texture0, uv3);
-
-    finalColor = (s0 * w0 + s1 * w1 + s2 * w2 + s3 * w3) / (w0 + w1 + w2 + w3);
+    vec4 sum = vec4(0.0);
+    float total = 0.0;
+    // Filter radiance and extinction together. A wider spatial footprint
+    // suppresses static integration grain; reject unrelated depth layers.
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec2 uv = clamp(fragTexCoord + vec2(x, y) * u_lowResTexel * 1.5,
+                            u_lowResTexel * 0.5, vec2(1.0) - u_lowResTexel * 0.5);
+            float difference = abs(fullDepth - texture(u_lowResDepthTex, uv).r);
+            float spatial = (x == 0 ? 1.0 : 0.5) * (y == 0 ? 1.0 : 0.5);
+            float range = 1.0 - smoothstep(0.0, max(u_depthThreshold, 0.001), difference);
+            float weight = spatial * range;
+            sum += texture(texture0, uv) * weight;
+            total += weight;
+        }
+    }
+    finalColor = sum / max(total, 0.0001);
 }

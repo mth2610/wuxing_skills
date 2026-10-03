@@ -48,7 +48,10 @@ Material PropLit_MakeMaterial(Texture2D diffuse, Texture2D normal, Texture2D rou
 // uniforms. DrawModel()/DrawModelEx() do NOT auto-bind these — that's a
 // SkillManager_BeginShader-only convention that never runs for a plain
 // DrawModel() call — so call this once per frame before drawing any
-// prop_lit material, so lighting responds to
+// prop_lit material, inside the active 3D camera scope. Sun direction and
+// camera position are converted to DrawMesh's shader/view space; cloud and
+// contact-height calculations recover world space through the inverse view.
+// Lighting responds to
 // Environment_SetSunColor()/SetAmbientColor() changes (e.g. a day/night
 // cycle).
 void PropLit_UpdateLighting(void);

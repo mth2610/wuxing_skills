@@ -93,10 +93,17 @@
 - **Cause:** Reconstructing chunk bounds from a rounded center changes the minimum by a few float ULPs, so count and packing passes disagree.
 - **Rule:** Store the exact bounds used by counting, reuse them during packing, and size atlases from the summed selected counts. `test_meadow_parametric.py` checks boundary roots and allocation rollback. Raw instancing binding rules are in `ENGINE_LANDMINES.md`.
 
+### Prop haze and lighting change with camera coordinates
+
+- **Symptom:** A nearby prop receives distant material haze, and its directional shading or contact AO changes when the camera rotates or translates.
+- **Cause:** `maps/toolkit/prop_lit.c` uploaded world-space sun/camera values against shader/view-space varyings. `maps/toolkit/shaders/prop_lit.fs` also treated view-space Y as ground height. This is the coordinate-space trap in `ENGINE_LANDMINES.md` §9.
+- **Rule:** Upload direction and point values in the varyings' space during the active camera scope, omit translation for directions, and recover world height separately. Keep shadow and VFX lighting in their established space; verify physical distance, diffuse response and ground AO under translated/rotated cameras with `maps/tests/test_prop_lighting_space.py`.
+
 ## Patch Log
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-03 | Codex | Prop material camera-space lighting and world-height AO | `maps/toolkit/prop_lit.c`, `maps/toolkit/shaders/prop_lit.fs`, `maps/tests/test_prop_lighting_space.py` | Ground-truth |
 | 2026-10-03 | Codex | Exact water wake texture reuse and residual-wave lifecycle | `maps/toolkit/map_props_nature.inl`, `maps/tests/test_water_wave_upload.py` | Ground-truth |
 | 2026-10-02 | Codex | Grass shadow contrast after substrate correction | `maps/toolkit/shaders/ground_splat.fs`, matched grass-caster on/off captures | Ground-truth |
 | 2026-10-02 | Codex | Compact meadow boundary packing | `maps/toolkit/map_props_meadow_parametric.inl`, `maps/tests/test_meadow_parametric.py` | Ground-truth |

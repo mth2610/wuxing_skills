@@ -49,6 +49,7 @@
 
 ## 7. Shaders
 - Linear scene depth is view-axis Z: convert it to ray distance before reconstructing volumetric samples.
+- Fog reconstruction filters premultiplied radiance and opacity together, normalizes weights, and rejects unrelated depth layers; validate silhouettes as well as sky grain.
 - Distant volumetric framing uses focus-relative ground depth and projected span; keep local fog sampling independent of the distant haze fade.
 - Include order: `fs_header.glsl` → `noise.glsl` (if needed) → `lighting.glsl` → `fx.glsl` → `triplanar.glsl` (if needed; depends on `noise.glsl` for `triplanarNoise`).
 - VS must end with `VS_FinalOutput(vec3 finalPos)` — exactly one vec3 arg.
@@ -86,6 +87,7 @@
 - New/changed core API must stay backward compatible with every skill caller — don't change existing signatures; add new functions or append-only struct fields instead.
 - Under rlvk, the `Shader` argument to `SetShaderValue` does not select the target program: activate it with `BeginShaderMode`, keep uniform upload plus dependent draws in that scope, then end it.
 - In this engine `matModel * vertexPosition` is shader/view space, not world space; positional map effects must inverse-transform it before comparing against world-space centres.
+- Transform world light directions with rotation only and camera points with translation; ground-height AO must use recovered world Y.
 - Never reduce a position-dependent Vortex/Turbulence field to one shared direction; keep it spatial, and derive Radial Blast direction independently at each receiver.
 - A vegetation Radial Blast must read briefly as a moving pressure front before a stronger Turbulence wake takes over. Ramp impact Turbulence in with a short attack instead of applying full strength on the spawn frame; mirror the envelope and authored budgets across CPU/GPU and lock them with tests.
 - Vegetation mesh LOD uses full camera distance and FOV scaling; orbit-radius compensation belongs only to visibility range. Apply blade-normal rounding in one stage and filter unresolved highlights by projected width.
@@ -140,3 +142,5 @@
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
 | 2026-10-03 | Codex | §10.1 Texture upload identity and timestamp validation | maps/toolkit/map_props_nature.inl; third_party/vulkan/rlvk/rlvk_platform.inl; third_party/vulkan/rlvk/rlvk_renderpass.inl | Ground-truth |
+| 2026-10-03 | Codex | §7 Fog reconstruction | core/volumetric/shaders/volumetric_composite.fs; core/tests/volumetric_fog_composite_test.c | Ground-truth |
+| 2026-10-03 | Codex | §10.1 Prop lighting spaces | maps/toolkit/prop_lit.c; maps/toolkit/shaders/prop_lit.fs; maps/tests/test_prop_lighting_space.py | Ground-truth |

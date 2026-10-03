@@ -95,8 +95,9 @@ void PropLit_UpdateLighting(void) {
   rlDrawRenderBatchActive();
   BeginShaderMode(shader);
   Environment_BindCloudShadowShader(shader);
+  Matrix shaderFromWorld = rlGetMatrixTransform();
   SetShaderValueMatrix(shader, GetShaderLocation(shader, "u_cloudWorldFromShader"),
-                       MatrixInvert(rlGetMatrixTransform()));
+                       MatrixInvert(shaderFromWorld));
 
   int lightDirLoc = GetShaderLocation(shader, "u_lightDir");
   if (lightDirLoc >= 0) {
@@ -106,6 +107,11 @@ void PropLit_UpdateLighting(void) {
     // for dot(normal, lightDir) needs the opposite, surface->light
     // direction.
     Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+    // DrawMesh's matModel includes the view transform here. Transform a
+    // direction without translation to match the shader's normals.
+    Vector3 shaderOrigin = Vector3Transform((Vector3){0}, shaderFromWorld);
+    lightDir = Vector3Normalize(Vector3Subtract(
+        Vector3Transform(lightDir, shaderFromWorld), shaderOrigin));
     SetShaderValue(shader, lightDirLoc, &lightDir, SHADER_UNIFORM_VEC3);
   }
 
@@ -125,7 +131,7 @@ void PropLit_UpdateLighting(void) {
 
   int viewPosLoc = GetShaderLocation(shader, "u_viewPos");
   if (viewPosLoc >= 0) {
-    Vector3 viewPos = camera.position;
+    Vector3 viewPos = Vector3Transform(camera.position, shaderFromWorld);
     SetShaderValue(shader, viewPosLoc, &viewPos, SHADER_UNIFORM_VEC3);
   }
   MapShadow_UpdateShader(shader);

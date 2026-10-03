@@ -31,4 +31,15 @@ PostFX_Draw(&postFXConfig);
 Quality tier scaling:
 - **`GFX_LOW` / `GFX_UNLIT`**: Pass is bypassed (0 ms cost; forward height fog in `surface_lit.fs` is used instead).
 - **`GFX_MED`**: 14 raymarching steps.
-- **`GFX_HIGH`**: 20 raymarching steps + Depth-Aware Bilateral filter.
+- **`GFX_HIGH`**: 20 raymarching steps.
+
+Both active tiers use normalized 3x3 depth-aware reconstruction in
+`shaders/volumetric_composite.fs`. The kernel filters premultiplied radiance and
+opacity together and rejects samples whose view-depth difference reaches the
+configured threshold (2 m in `volumetric_fog.c`).
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-10-03 | Codex | Reconstruction and quality tiers | core/volumetric/volumetric_fog.c; core/volumetric/shaders/volumetric_composite.fs | Ground-truth |
