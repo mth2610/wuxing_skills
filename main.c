@@ -1553,6 +1553,7 @@ int main(int argc, char **argv) {
     // is a purely spatial trade. Do not re-introduce it without solving the update rate.
     if (EnvShadow_IsEnabled()) {
         EnvShadow_BeginCapture();
+        PASS_MARK("sh_begin");
         Model charModel = CharacterModel_GetModel();
         if (CharacterModel_IsLoaded()) {
             SurfaceMaterial_BeginShadowCast(charModel, EnvShadow_GetDepthShader());
@@ -1573,7 +1574,9 @@ int main(int argc, char **argv) {
         if (CharacterModel_IsLoaded()) {
             SurfaceMaterial_EndShadowCast(charModel);
         }
+        PASS_MARK("sh_draw");
         EnvShadow_EndCapture();
+        PASS_MARK("sh_end");
     }
     if (benchmarkVisible) profileTime[3] = GetTime();
     PASS_MARK("shadow");

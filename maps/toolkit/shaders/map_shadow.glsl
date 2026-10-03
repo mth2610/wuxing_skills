@@ -62,14 +62,6 @@ float MapShadowFilteredVisibility(sampler2D mapTexture, vec2 uv,
 
     float center = MapShadowCompareBilinear(
         mapTexture, uv, compareDepth, texelSize);
-    float left = MapShadowCompareBilinear(
-        mapTexture, uv + vec2(-tap.x, 0.0), compareDepth, texelSize);
-    float right = MapShadowCompareBilinear(
-        mapTexture, uv + vec2(tap.x, 0.0), compareDepth, texelSize);
-    float down = MapShadowCompareBilinear(
-        mapTexture, uv + vec2(0.0, -tap.y), compareDepth, texelSize);
-    float up = MapShadowCompareBilinear(
-        mapTexture, uv + vec2(0.0, tap.y), compareDepth, texelSize);
     float downLeft = MapShadowCompareBilinear(
         mapTexture, uv + vec2(-tap.x * 0.707, -tap.y * 0.707), compareDepth, texelSize);
     float downRight = MapShadowCompareBilinear(
@@ -79,11 +71,10 @@ float MapShadowFilteredVisibility(sampler2D mapTexture, vec2 uv,
     float upRight = MapShadowCompareBilinear(
         mapTexture, uv + vec2(tap.x * 0.707, tap.y * 0.707), compareDepth, texelSize);
 
-    float smoothVisibility = center * 0.28
-                           + (left + right + down + up) * 0.11
-                           + (downLeft + downRight + upLeft + upRight) * 0.07;
+    float smoothVisibility = center * 0.36
+                           + (downLeft + downRight + upLeft + upRight) * 0.16;
     float darkestVisibility = min(center,
-        min(min(left, right), min(down, up)));
+        min(min(downLeft, downRight), min(upLeft, upRight)));
     return mix(smoothVisibility, darkestVisibility, thinFeatureBoost * 0.25);
 }
 

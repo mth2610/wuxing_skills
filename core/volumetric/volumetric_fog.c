@@ -11,6 +11,8 @@
 #include "raymath.h"
 #include "rlgl.h"
 #include <stddef.h>
+extern void rlvkPassMark(const char *label) __attribute__((weak));
+#define PASS_MARK(label) do { if (rlvkPassMark) rlvkPassMark(label); } while (0)
 
 static bool s_enabled = true;
 static bool s_ready = false;
@@ -320,6 +322,7 @@ void VolumetricFog_Render(Camera3D camera) {
 
     EndShaderMode();
     EndTextureMode();
+    PASS_MARK("fog_raymarch");
 
     // --- PASS 2: Depth-Aware Bilateral Upsample & Composite into Scene Target ---
     SceneTargets_BeginVFXBody();

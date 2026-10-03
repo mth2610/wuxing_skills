@@ -108,6 +108,8 @@ float EvaluateLocalFog(vec3 worldPos, inout vec3 inoutFogColor) {
         float softness = clamp(u_volColorSoft[i].a, 0.1, 0.99);
 
         vec3 delta = abs(worldPos - center);
+        float maxR = max(extents.x, extents.z);
+        if (delta.y >= extents.y || delta.x >= maxR || delta.z >= maxR) continue;
         float dist = 0.0;
 
         if (shape == 2) {
@@ -173,6 +175,11 @@ void main() {
     vec3 accumRadiance = vec3(0.0);
     float transmittance = 1.0;
 
+    // Linear projection of ray into light space: posLS = camPosLS + rayDirLS * t
+    // Replaces 4x4 matrix multiplication at every ray step with 1 MAD
+    vec4 camPosLS = u_lightVP * vec4(u_camPos, 1.0);
+    vec4 rayDirLS = u_lightVP * vec4(rayDir, 0.0);
+
     for (int i = 0; i < steps; i++) {
         // Concentrate samples near the receiver so thin ground mist survives
         // at far zoom. Each sample integrates its own exact interval length.
@@ -202,6 +209,7 @@ void main() {
             // Local mist retains its world placement, with a soft player clearance.
             localFade *= smoothstep(1.0, 3.0, length(samplePos.xz - u_fogFocus.xz));
         }
+        if (nearFade <= 0.00001 && localFade <= 0.00001) continue;
 
         // 1. Exponential ground mist (clings to low ground, decays upward)
         float h = max(samplePos.y - u_baseAltitude, 0.0);
@@ -217,7 +225,7 @@ void main() {
         // 3. Local fog volumes (lake, meadow, forest hollows)
         vec3 fogColor = u_fogColor;
         float localDensity = 0.0;
-        if (u_volumeCount > 0 && samplePos.y <= 6.0 && samplePos.y >= -3.0) {
+        if (u_volumeCount > 0 && localFade > 0.00001 && samplePos.y <= 6.0 && samplePos.y >= -3.0) {
             localDensity = EvaluateLocalFog(samplePos, fogColor);
         }
 
@@ -227,7 +235,7 @@ void main() {
         if (density <= 0.00001) continue;
 
         // Sunlight visibility from the actual directional-light shadow map
-        vec4 posLS = u_lightVP * vec4(samplePos, 1.0);
+        vec4 posLS = camPosLS + rayDirLS * t;
         float shadow = SampleShadowLS(posLS);
         float canopyShaft = ComputeCanopyGodRay(samplePos, u_sunDir, u_time);
         float directLight = shadow * (0.15 + 0.85 * canopyShaft) * u_godRayIntensity;

@@ -865,18 +865,28 @@ void DrawVerdantPathMap(void)
     if (!s_ready)
         return;
 
+    extern void rlvkPassMark(const char *label) __attribute__((weak));
+    #define V_MARK(lbl) do { if (rlvkPassMark) rlvkPassMark(lbl); } while(0)
     MapProp_ResetNatureRenderStats();
     PropLit_UpdateLighting();
-    MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
     MapProp_DrawGround(&s_ground, kMapCenter);
+    V_MARK("op_terrain");
     MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true);
+    V_MARK("op_rocks");
     MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
+    V_MARK("op_grass_early");
+    MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
+    V_MARK("op_cloudsea");
+    V_MARK("op_grass");
     MapProp_DrawMeadow(&s_reedMeadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.11f);
+    V_MARK("op_reeds");
     MapProp_DrawWaterBed(&s_lake, s_time);
+    V_MARK("op_water");
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
         MapProp_DrawFlowerField(&s_flowerFields[cluster], (Vector3){0}, s_time,
                                 (Vector2){0.86f, 0.51f}, 0.032f);
     }
+    V_MARK("op_flowers");
 }
 
 void DrawTransparentVerdantPathMap(void)
