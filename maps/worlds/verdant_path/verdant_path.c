@@ -364,6 +364,14 @@ static void BuildMeadowLayout(void)
             clump->height = 0.30f + MapEcology_Sample(&s_ecology, cx, cz).growth * 0.12f;
         clump->height *= 0.82f + 0.34f * (localHeight - 0.22f) / 0.16f;
         clump->radius *= 0.91f + 0.18f * (localRadius - 0.22f) / 0.06f;
+
+        // 5. Pathway Edge Trampled Turf (AAA organic transition)
+        float distPath = DistanceToPaths(cx, cz);
+        float pathEdgeT = (distPath - 1.15f) / 1.35f;
+        pathEdgeT = fmaxf(0.0f, fminf(1.0f, pathEdgeT));
+        float pathTaper = 0.45f + 0.55f * (pathEdgeT * pathEdgeT * (3.0f - 2.0f * pathEdgeT));
+        clump->height *= pathTaper;
+        clump->radius *= (1.15f - 0.15f * pathTaper);
     }
 
     static const Vector2 patchOffsets[4] = {
@@ -472,8 +480,6 @@ static void DrawVerdantShadowCasters(Shader depthShader, void *userData)
     (void)userData;
     Vector3 offset = {0};
     Vector2 wind = {0.86f, 0.51f};
-    // High-efficiency shadow caster: s_meadow casts real, dynamic, wind-swaying
-    // blade silhouettes into the shadow map within shadowDistance.
     MapProp_DrawMeadowShadowCasters(&s_meadow, offset, s_time, wind, 0.035f);
     MapProp_DrawMeadowShadowCasters(&s_reedMeadow, offset, s_time, wind, 0.11f);
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
@@ -696,7 +702,7 @@ void InitVerdantPathMap(void)
             .rootColor = {28, 48, 22, 255}, .tipColor = {114, 165, 64, 255},
             .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.19f,
             .chunkSize = 12.0f, .lodDistance = 24.0f, .midLodDistance = 12.0f, .drawDistance = 45.0f,
-            .shadowDistance = 14.0f,
+            .shadowDistance = 10.0f,
             .texturePath = NULL,
             .botanicalVariation = 1.0f,
         });
@@ -705,7 +711,7 @@ void InitVerdantPathMap(void)
             .rootColor = {26, 42, 20, 255}, .tipColor = {136, 172, 82, 255},
             .bladesPerClump = 7, .bladeSegments = 4, .bladeWidthScale = 0.14f,
             .chunkSize = 18.0f, .lodDistance = 36.0f, .drawDistance = 65.0f,
-            .shadowDistance = 16.0f,
+            .shadowDistance = 12.0f,
             .texturePath = NULL,
             .hasPlumes = false,
         });

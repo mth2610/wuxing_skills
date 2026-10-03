@@ -1921,8 +1921,9 @@ int main(int argc, char **argv) {
                          s_benchCount, avgMs, 1000.0f / (avgMs > 0.001f ? avgMs : 1.0f));
             }
             MapNatureRenderStats stats = MapProp_GetNatureRenderStats();
-            TraceLog(LOG_INFO, "NATURE_STATS: visible=%d (near=%d, mid=%d, far=%d) culled_frustum=%d culled_dist=%d",
+            TraceLog(LOG_INFO, "NATURE_STATS: visible=%d (near=%d, mid=%d, far=%d, shadow=%d) culled_frustum=%d culled_dist=%d",
                      stats.meadowChunksVisible, stats.meadowNearDraws, stats.meadowMidDraws, stats.meadowFarDraws,
+                     stats.meadowShadowDraws,
                      stats.meadowFrustumCulled, stats.meadowDistanceCulled);
             Color captureAmbient = Environment_GetAmbientColor();
             Color captureSun = Environment_GetSunColor();

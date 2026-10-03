@@ -67,9 +67,9 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     NatureMeadowView view;
     view.lodScale = lodScale;
     view.zoomFactor = zoom;
-    view.lodDistance = meadow->lodDistance*lodScale*zoom;
+    view.lodDistance = focalDistance + meadow->lodDistance*lodScale*zoom;
     view.drawDistance = meadow->drawDistance > 0.0f ? focalDistance+meadow->drawDistance*rangeScale*zoom : 0.0f;
-    view.bands = (Vector4){meadow->midLodDistance > 0.0f ? meadow->midLodDistance*lodScale*zoom : 0.0f,
+    view.bands = (Vector4){meadow->midLodDistance > 0.0f ? focalDistance + meadow->midLodDistance*lodScale*zoom : 0.0f,
         view.lodDistance,NATURE_LOD_NEAR_BLEND_HALF_WIDTH,NATURE_LOD_FAR_BLEND_HALF_WIDTH};
     return view;
 }

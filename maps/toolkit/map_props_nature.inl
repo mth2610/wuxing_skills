@@ -2203,9 +2203,12 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         if (lodDistance > 0.0f) {
             float spatialHash = sinf(chunk->center.x * 12.9898f + chunk->center.z * 78.233f);
             spatialHash = spatialHash - floorf(spatialHash);
-            float farThreshold = lodDistance + (spatialHash - 0.5f) * 4.0f;
+            float fdx = camera.position.x - camera.target.x;
+            float fdz = camera.position.z - camera.target.z;
+            float focalDist = sqrtf(fdx * fdx + fdz * fdz);
+            float farThreshold = focalDist + lodDistance + (spatialHash - 0.5f) * 4.0f;
             float midThreshold = (meadow->midLodDistance > 0.0f && chunk->midReady) ?
-                                 (meadow->midLodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 2.5f) : 0.0f;
+                                 (focalDist + meadow->midLodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 2.5f) : 0.0f;
             float hysteresis = quality >= GFX_HIGH ? 1.1f : 1.8f;
             float dy = camera.position.y - center.y;
             float distance = sqrtf(distanceSq + dy * dy);
@@ -2365,7 +2368,8 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
         Vector3 center = Vector3Add(chunk->center, worldOffset);
         float dx = center.x - shadowFocus.x;
         float dz = center.z - shadowFocus.z;
-        float limit = maxDist + chunk->radius;
+        float limit = fminf(maxDist + chunk->radius * 0.35f,
+                            EnvShadow_GetHalfExtent() + 2.0f);
         if ((dx * dx + dz * dz) > limit * limit)
             continue;
         if (!Nature_IntersectsDynamicShadowCoverage(center, chunk->radius) &&
@@ -2373,6 +2377,7 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
             continue;
         if (meadow->parametric) {
             NatureParametric_DrawChunk(meadow,i,3,shader,worldOffset);
+            s_natureRenderStats.meadowShadowDraws++;
             continue;
         }
         Shader previous = chunk->realShadowModel.materials[0].shader;

@@ -194,7 +194,9 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 skyAmbient = baseAmbient * vec3(1.06, 1.10, 1.16);
     vec3 groundBounce = baseAmbient * vec3(0.65, 0.74, 0.44);
     vec3 ambient = mix(groundBounce, skyAmbient, n.y * 0.5 + 0.5);
-    vec3 lit = baseColor * ambient * mix(0.68, 1.0, smoothstep(0.0, 0.65, h));
+    // Deep ground contact ambient occlusion at blade base (h < 0.40)
+    float baseContactAO = smoothstep(0.0, 0.40, h);
+    vec3 lit = baseColor * ambient * mix(0.48, 1.0, baseContactAO);
     // Captured canopy occlusion also reduces sky fill; preserve a soft floor.
     lit *= mix(0.78, 1.0, shadow);
 
@@ -208,12 +210,17 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float nh2 = nh * nh;
     float nh4 = nh2 * nh2;
     float spec = nh4 * nh4 * 0.085 * (1.0 - antiShimmer) / (1.0 + 12.0 * variance);
+
+    // Ghost of Tsushima: Velvet tip glint and wind wave crest highlights
+    float tipGlint = nh4 * smoothstep(0.35, 1.0, h) * (1.0 - antiShimmer * 0.65);
+    vec3 velvetGlint = vec3(1.22, 1.18, 0.82) * tipGlint * 0.15;
+
     float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
     float backLight = max(-dot(faceNormal, u_lightDir), 0.0);
     float transmission = (backLight * backLight * 0.45
                         + forwardScatter * forwardScatter * 0.30)
                         * smoothstep(0.08, 0.85, h);
-    vec3 sunTerms = baseColor * (wrapped * wrapped * 1.05 + spec)
+    vec3 sunTerms = baseColor * (wrapped * wrapped * 1.05 + spec) + velvetGlint
                  + baseColor * vec3(1.30, 1.25, 0.70) * transmission * 0.75;
     lit += sunTerms * u_lightColor * shadow * canopy * Environment_CloudVisibility(u_cloudNoise, worldPosition);
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);
