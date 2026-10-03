@@ -121,6 +121,15 @@ void EnvShadow_Init(void)
     s_staticResolution = 1024;
 #endif
 
+    const char *envRes = getenv("WUXING_SHADOW_RES");
+    if (envRes != NULL && atoi(envRes) > 0) {
+        s_resolution = atoi(envRes);
+    }
+    const char *envStaticRes = getenv("WUXING_SHADOW_STATIC_RES");
+    if (envStaticRes != NULL && atoi(envStaticRes) > 0) {
+        s_staticResolution = atoi(envStaticRes);
+    }
+
     // Depth + throwaway color attachment — same recipe as
     // core/screen_distort.c's LoadRenderTextureWithDepthTexture, which is
     // proven to work on this project's rlvk (Vulkan) backend already. A

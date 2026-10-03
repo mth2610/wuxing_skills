@@ -1679,10 +1679,10 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             bladeTip  = (Color){208, 182, 85, 255};  // ripe golden-amber wheat straw tip
             bladeTip = Nature_LerpColor(bladeTip, (Color){166, 156, 88, 255}, botanical);
         } else {
-            float colorField = sinf(clump->position.x * 0.19f + clump->position.z * 0.07f) * 0.55f
-                             + sinf(clump->position.z * 0.15f - clump->position.x * 0.05f) * 0.45f;
-            float tone = 1.0f + colorField * 0.11f + (bHash - 0.5f) * 0.15f;
-            float warmth = colorField * 0.08f + (bHash3 - 0.5f) * 0.06f;
+            float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f
+                             + sinf(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f) * 0.45f;
+            float tone = 1.0f + colorField * 0.14f + (bHash - 0.5f) * 0.16f;
+            float warmth = colorField * 0.13f + (bHash3 - 0.5f) * 0.08f;
             int rR = (int)(style.rootColor.r * tone * (1.0f + warmth));
             int rG = (int)(style.rootColor.g * tone);
             int rB = (int)(style.rootColor.b * tone * (1.0f - warmth));

@@ -27,7 +27,7 @@
 #define ROCK_COUNT 13
 #define GRASS_TUFT_CAPACITY 65000
 #define FLOWER_CLUSTER_COUNT 6
-#define FLOWERS_PER_CLUSTER 60
+#define FLOWERS_PER_CLUSTER 200
 #define FLOWER_COUNT (FLOWER_CLUSTER_COUNT * FLOWERS_PER_CLUSTER)
 #define REED_COUNT 480
 // Scale both horizontal axes by sqrt(2/3) to retain two-thirds of mist area.
@@ -40,20 +40,20 @@ static const float kLakeRadiusZ = 7.4f;
 
 static const Vector3 kFlowerCenters[FLOWER_CLUSTER_COUNT] = {
     {27.0f, 0.0f, 20.0f}, // Cluster 0: Northwest meadow clearing
-    {37.0f, 0.0f, 44.0f}, // Cluster 1: South path bend meadow (visible in main view)
-    {64.0f, 0.0f, 36.5f}, // Cluster 2: South lake bank (foreground of default view)
-    {48.0f, 0.0f, 29.0f}, // Cluster 3: Fork to lake path (center of default view)
-    {77.0f, 0.0f, 52.0f}, // Cluster 4: Southeast sunny knoll
+    {28.0f, 0.0f, 52.0f}, // Cluster 1: South meadow & main overview view
+    {64.0f, 0.0f, 36.5f}, // Cluster 2: South lake bank
+    {48.0f, 0.0f, 29.0f}, // Cluster 3: Fork to lake path
+    {75.0f, 0.0f, 50.0f}, // Cluster 4: Southeast sunny knoll
     {54.0f, 0.0f, 17.5f}, // Cluster 5: North lake bank wildflowers
 };
 
 static const Vector3 kFlowerRadii[FLOWER_CLUSTER_COUNT] = {
-    {10.0f, 0.0f, 7.0f},
-    {9.0f, 0.0f, 6.5f},
-    {5.5f, 0.0f, 3.8f},
-    {6.0f, 0.0f, 4.2f},
-    {9.5f, 0.0f, 7.5f},
-    {8.0f, 0.0f, 5.5f},
+    {14.0f, 0.0f, 10.0f},
+    {18.0f, 0.0f, 15.0f},
+    {8.5f,  0.0f, 6.0f},
+    {10.5f, 0.0f, 7.5f},
+    {15.0f, 0.0f, 11.5f},
+    {12.0f, 0.0f, 8.5f},
 };
 
 static const MapZone ISLAND_ZONES[] = {
@@ -383,16 +383,23 @@ static void BuildMeadowLayout(void)
         float z = kFlowerCenters[cluster].z;
         for (int attempt = 0; attempt < 24; attempt++) {
             float patchRoll = Random01(&rng);
-            int patch = patchRoll < 0.32f ? 0 : patchRoll < 0.59f ? 1
-                      : patchRoll < 0.82f ? 2 : 3;
             float angle = RandomRange(&rng, 0.0f, 2.0f * PI);
             float radius = sqrtf(Random01(&rng));
-            float patchRadius = 0.31f + 0.08f * (float)((patch + cluster) & 1);
-            x = kFlowerCenters[cluster].x + patchOffsets[patch].x * kFlowerRadii[cluster].x
-              + cosf(angle) * kFlowerRadii[cluster].x * patchRadius * radius;
-            z = kFlowerCenters[cluster].z + patchOffsets[patch].y * kFlowerRadii[cluster].z
-              + sinf(angle) * kFlowerRadii[cluster].z * patchRadius * radius;
-            if (IsInsideLake(x, z, 0.85f) || DistanceToPaths(x, z) < 1.40f)
+            if (patchRoll < 0.78f) {
+                // Dense sweeping drifts/patches (poppies, daisies, buttercups in natural floral beds)
+                int patch = patchRoll < 0.28f ? 0 : patchRoll < 0.52f ? 1
+                          : patchRoll < 0.70f ? 2 : 3;
+                float patchRadius = 0.35f + 0.08f * (float)((patch + cluster) & 1);
+                x = kFlowerCenters[cluster].x + patchOffsets[patch].x * kFlowerRadii[cluster].x
+                  + cosf(angle) * kFlowerRadii[cluster].x * patchRadius * radius;
+                z = kFlowerCenters[cluster].z + patchOffsets[patch].y * kFlowerRadii[cluster].z
+                  + sinf(angle) * kFlowerRadii[cluster].z * patchRadius * radius;
+            } else {
+                // Natural stray wild blossoms scattered through the surrounding meadow
+                x = kFlowerCenters[cluster].x + cosf(angle) * kFlowerRadii[cluster].x * (0.30f + 0.70f * radius);
+                z = kFlowerCenters[cluster].z + sinf(angle) * kFlowerRadii[cluster].z * (0.30f + 0.70f * radius);
+            }
+            if (IsInsideLake(x, z, 0.85f) || DistanceToPaths(x, z) < 1.30f)
                 continue;
 
             // Blue noise / Poisson minimum distance enforcement: avoid intersecting flowers
@@ -400,7 +407,7 @@ static void BuildMeadowLayout(void)
             for (int prev = cluster * FLOWERS_PER_CLUSTER; prev < i; prev++) {
                 float pdx = x - s_flowerPlacements[prev].position.x;
                 float pdz = z - s_flowerPlacements[prev].position.z;
-                if (pdx * pdx + pdz * pdz < 0.065f * 0.065f) {
+                if (pdx * pdx + pdz * pdz < 0.055f * 0.055f) {
                     tooClose = true;
                     break;
                 }
@@ -432,14 +439,14 @@ static void BuildMeadowLayout(void)
         int variant = speciesByCluster[cluster][speciesSlot];
         bool tallAccent = variant == 2 || variant == 4 || variant == 6;
 
-        float driftHeightBase = tallAccent ? 0.32f : 0.20f;
-        s_flowerPlacements[i].height = driftHeightBase + RandomRange(&rng, -0.05f, 0.07f);
-        s_flowerPlacements[i].bloomRadius = (tallAccent ? 0.110f : 0.082f) * RandomRange(&rng, 0.90f, 1.15f);
+        float driftHeightBase = tallAccent ? 0.41f : 0.34f;
+        s_flowerPlacements[i].height = driftHeightBase + RandomRange(&rng, -0.03f, 0.08f);
+        s_flowerPlacements[i].bloomRadius = (tallAccent ? 0.125f : 0.096f) * RandomRange(&rng, 0.95f, 1.20f);
         s_flowerPlacements[i].petalColor = FlowerSpeciesColor(
             variant, Random01(&rng) > 0.85f);
         s_flowerPlacements[i].petalCount = (unsigned char)(4 + (variant % 3));
         s_flowerPlacements[i].bloomVariant = (unsigned char)variant;
-        s_flowerPlacements[i].petalLengthScale = RandomRange(&rng, 0.90f, 1.12f);
+        s_flowerPlacements[i].petalLengthScale = RandomRange(&rng, 0.92f, 1.15f);
     }
 
     // Wetland Reeds organized into 3 natural thicket bays
