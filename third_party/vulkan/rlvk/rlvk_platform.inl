@@ -575,20 +575,21 @@ static void rlvkBeginFrame(void)
                                                   VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
             u64 q[3] = { qa[0].value, qa[1].value, qa[2].value };
             bool qok = (qres == VK_SUCCESS) && qa[0].available && qa[1].available && qa[2].available;
-            if (!qok)
+            if (RLVK.frameCounter >= RLVK_FRAME_INDEX_COUNT + 8)
             {
-                static bool warned = false;
-                if (!warned) { warned = true;
-                    TRACELOG(RL_LOG_WARNING, "VKGPU: timestamps unavailable (res=%d avail=%d/%d/%d) — trace disabled",
-                             (int)qres, (int)qa[0].available, (int)qa[1].available, (int)qa[2].available); }
-            }
-            if (qok)
-            {
-                s_gpuScene += (f64)(q[1] - q[0]) * s_gpuPeriod * 1e-6; // ms
-                s_gpuPresent += (f64)(q[2] - q[1]) * s_gpuPeriod * 1e-6;
-                if ((++s_gpuFrames % (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile) ? 60 : 512)) == 0)
-                    TRACELOG(RL_LOG_WARNING, "VKGPU frames=%d scene=%.3fms present=%.3fms (avg)",
-                             s_gpuFrames, s_gpuScene / s_gpuFrames, s_gpuPresent / s_gpuFrames);
+                rlvkGpuTraceRecord(&s_gpuWindow, q, s_gpuPeriod, qok, s_gpuFragmented[frameIndex]);
+                if (s_gpuWindow.frames >= (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile) ? 60u : 512u))
+                {
+                    if (s_gpuWindow.valid)
+                        TRACELOG(RL_LOG_WARNING, "VKGPU window=%u valid=%u scene=%.3fms present=%.3fms (valid samples only)",
+                                 s_gpuWindow.frames, s_gpuWindow.valid,
+                                 s_gpuWindow.sceneMs/s_gpuWindow.valid, s_gpuWindow.presentMs/s_gpuWindow.valid);
+                    else
+                        TRACELOG(RL_LOG_WARNING, "VKGPU window=%u valid=0 timing=unavailable", s_gpuWindow.frames);
+                    TRACELOG(RL_LOG_WARNING, "VKGPU rejected: unavailable=%u zero_or_nonmonotonic=%u fragmented=%u",
+                             s_gpuWindow.unavailable, s_gpuWindow.invalid, s_gpuWindow.fragmented);
+                    memset(&s_gpuWindow, 0, sizeof(s_gpuWindow));
+                }
             }
         }
     }
@@ -679,6 +680,15 @@ static void rlvkBeginFrame(void)
                                           },
                                       });
 
+    // Query resets are illegal inside a render pass. Stamp before opening the
+    // initial scope, and mark any later host-drained split as unsuitable timing.
+    if (rlvkDebugFlag("RLVK_GPU_TRACE", &s_dbgGpu) && (s_gpuPool != VK_NULL_HANDLE))
+    {
+        s_gpuFragmented[frameIndex] = false;
+        vkCmdResetQueryPool(cmdBuffer, s_gpuPool, frameIndex * 3, 3);
+        vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, s_gpuPool, frameIndex * 3 + 0);
+    }
+
     bool msaa = (RLVK.msaaSamples > 1);
     {
         // Fixed-function resolve into the 1x intermediate at every scope close (MSAA only)
@@ -714,12 +724,6 @@ static void rlvkBeginFrame(void)
     RLVK.scope.depthResolve = false;  // the swapchain scope resolves colour only
     RLVK.scope.flipY = false; // UNMIRRORED: swapchain-scope rendering matches GL memory orientation
 
-    // GPU trace: frame-start stamp (query slots were harvested above, safe to reuse)
-    if (rlvkDebugFlag("RLVK_GPU_TRACE", &s_dbgGpu) && (s_gpuPool != VK_NULL_HANDLE))
-    {
-        vkCmdResetQueryPool(cmdBuffer, s_gpuPool, frameIndex * 3, 3);
-        vkCmdWriteTimestamp(cmdBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, s_gpuPool, frameIndex * 3 + 0);
-    }
     RLVK.frameActive = true;
 }
 

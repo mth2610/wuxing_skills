@@ -227,6 +227,8 @@ void rlglClose(void)
         vkDestroyQueryPool(RLVK.device, s_gpuPool, RLVK_ALLOC);
         s_gpuPool = VK_NULL_HANDLE;
     }
+    memset(&s_gpuWindow, 0, sizeof(s_gpuWindow));
+    memset(s_gpuFragmented, 0, sizeof(s_gpuFragmented));
 
     for (int i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
     {

@@ -3316,6 +3316,31 @@ static void Water_ApplyConfigDefaults(MapWaterConfig *config)
     if (config->detailStrength <= 0.0f) config->detailStrength = 0.16f;
 }
 
+static void Water_InitializeWaveUploadCache(MapWaterSurface *water)
+{
+    if (!water->waveFieldTex.id || !water->wavePixels) return;
+    const unsigned int bytes = WATER_FIELD_SIZE * WATER_FIELD_SIZE * 4u;
+    water->waveUploadedPixels = MemAlloc(bytes);
+    if (!water->waveUploadedPixels) return;
+    memcpy(water->waveUploadedPixels, water->wavePixels, bytes);
+    water->waveUploadedTextureId = water->waveFieldTex.id;
+}
+
+static void Water_UploadWaveField(MapWaterSurface *water)
+{
+    if (!water->waveFieldTex.id || !water->wavePixels) return;
+    const unsigned int bytes = WATER_FIELD_SIZE * WATER_FIELD_SIZE * 4u;
+    if (water->waveUploadedPixels &&
+        water->waveUploadedTextureId == water->waveFieldTex.id &&
+        memcmp(water->waveUploadedPixels, water->wavePixels, bytes) == 0)
+        return;
+    UpdateTexture(water->waveFieldTex, water->wavePixels);
+    if (water->waveUploadedPixels) {
+        memcpy(water->waveUploadedPixels, water->wavePixels, bytes);
+        water->waveUploadedTextureId = water->waveFieldTex.id;
+    }
+}
+
 MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
 {
     MapWaterSurface water = {0};
@@ -3509,6 +3534,7 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
         if (water.waveFieldTex.id > 0) {
             SetTextureFilter(water.waveFieldTex, TEXTURE_FILTER_BILINEAR);
             SetTextureWrap(water.waveFieldTex, TEXTURE_WRAP_CLAMP);
+            Water_InitializeWaveUploadCache(&water);
         }
     }
     water.ready = true;
@@ -3858,10 +3884,9 @@ bool MapProp_SampleWaterBed(const MapWaterSurface *water, float x, float z,
 void MapProp_DrawWaterBed(const MapWaterSurface *water, float time)
 {
     if (!water || !water->ready) return;
-    // Upload while a Vulkan frame is recording. Uploading from the map update
-    // path waits for every in-flight frame and can stall once per frame.
-    if (water->waveFieldTex.id > 0 && water->wavePixels)
-        UpdateTexture(water->waveFieldTex, water->wavePixels);
+    // Keep uploads at the existing draw boundary; reuse only byte-identical
+    // quantized wake data while the CPU simulation continues every update.
+    Water_UploadWaveField((MapWaterSurface *)water);
     Vector3 position = water->config.center;
 
     Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
@@ -4238,5 +4263,8 @@ void MapProp_UnloadWaterSurface(MapWaterSurface *water)
     free(water->waveNextField);
     free(water->waveVelocityField);
     free(water->wavePixels);
+    MemFree(water->waveUploadedPixels);
+    water->waveUploadedPixels = NULL;
+    water->waveUploadedTextureId = 0;
     water->ready = false;
 }

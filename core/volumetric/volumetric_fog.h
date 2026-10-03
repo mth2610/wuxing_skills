@@ -20,6 +20,7 @@ void VolumetricFog_PreFrame(void);
 void VolumetricFog_Render(Camera3D camera);
 
 // Bật/tắt sương mù thể tích
+// Effective enable state, including tuning.cfg volumetric_fog_enabled (default 1).
 bool VolumetricFog_IsEnabled(void);
 void VolumetricFog_SetEnabled(bool enabled);
 

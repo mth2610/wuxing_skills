@@ -1629,6 +1629,13 @@ fields and mask chains generally, not about that tail.*
   mobile-safe hash while retaining dense fixed steps; use isotropic `fbm3` for
   spatial breakup, never a single `sin(dot(position, k))` grating. Guarded by
   `core/tests/gas_volume_quality_test.c`.
+- **Fog case (03/10/2026):** `core/volumetric/shaders/volumetric_fog.fs`
+  repeated a 4×4 ordered phase over a half-resolution target, enlarging its
+  integration error into a screen grid. It now samples immutable balanced
+  blue-noise ranks and rotates the phase between ray intervals. Keep the
+  sampling static without temporal history; this removes the regular grid,
+  but does not guarantee a grain-free image. Guard:
+  `core/tests/volumetric_fog_sampling_test.c` and matched-camera captures.
 ## 22. Headless capture scripts can look dead when they hide long-running children (31/08/2026)
 
 - **Symptom:** a visual-matrix command prints nothing for minutes and appears
@@ -1657,3 +1664,9 @@ fields and mask chains generally, not about that tail.*
 - **Symptom:** Adding camera/LOD controls makes most grass disappear while its shadow pass still renders; the shader compiles successfully.
 - **Cause:** `third_party/vulkan/rlvk/rlvk_shaderc.inl` truncated reflected struct members at 32, although the uniform table supports 160. Later uniforms existed in SPIR-V but their locations returned -1 and uploads never reached them.
 - **Rule:** Reflection capacity must match the supported uniform table. Validate required locations before enabling a rendering path and retain a working fallback. The renderer's real shaderc regression covers late conditional members and uploads to both shader stages; see `third_party/vulkan/docs/LANDMINES.md`.
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-10-03 | Codex | Volume sampling coherence: fog ordered grid | core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_sampling_test.c; fixed-camera captures | Ground-truth |

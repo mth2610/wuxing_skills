@@ -81,11 +81,11 @@
 - **Cause:** Broad receiver filtering reduces thin-shadow coverage, while nearly unattenuated ambient fill hides the remaining contrast.
 - **Rule:** Inspect the receiver before adding casters. Ground uses a 0.65-texel dynamic PCF radius, an ambient visibility floor of 0.70 on soil and 0.48 on turf, and a turf-only 1.45 visibility exponent; grass blades use a 0.78 ambient floor under captured occlusion. Keep unshadowed lighting unchanged. Compare identical-frame grass-caster on/off captures to distinguish missing depth geometry from weak receiver contrast before adjusting the material.
 
-### Stable interaction texels still trigger texture-upload stalls
+### Stable interaction or wake texels still trigger texture-upload stalls
 
-- **Symptom:** A stationary meadow pays texture-upload synchronization every frame even after its interaction field stops changing.
-- **Cause:** `MapProp_EndNatureInteraction` uploaded the entire 64×64 RGBA8 field unconditionally; advancing the CPU receiver does not imply its quantized output changed.
-- **Rule:** Continue evaluating interactions and wind each frame, but upload only when a full 16 KB byte comparison detects a change. Invalidate that cache when the texture is created or destroyed; camera-region uniforms must still advance independently of texture contents.
+- **Symptom:** A stationary meadow or settled lake pays texture-upload synchronization every frame even after its interaction or wake texture stops changing.
+- **Cause:** `maps/toolkit/map_props_nature.inl` uploaded entire quantized fields unconditionally: the 64×64 interaction field and the 128×128 water wake field. Advancing CPU simulation does not imply those output bytes changed; the water upload also occurred after grass scene draws.
+- **Rule:** Continue evaluating interactions, wind and wakes each frame, but upload only when a full byte comparison detects a change. Record the initial loaded bytes and invalidate the cache on texture recreation or destruction; camera-region uniforms must still advance independently. Never infer settled output from an absent interactor while residual waves can still change the texture.
 
 ### Compact meadow packing drops boundary roots
 
@@ -97,6 +97,7 @@
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-03 | Codex | Exact water wake texture reuse and residual-wave lifecycle | `maps/toolkit/map_props_nature.inl`, `maps/tests/test_water_wave_upload.py` | Ground-truth |
 | 2026-10-02 | Codex | Grass shadow contrast after substrate correction | `maps/toolkit/shaders/ground_splat.fs`, matched grass-caster on/off captures | Ground-truth |
 | 2026-10-02 | Codex | Compact meadow boundary packing | `maps/toolkit/map_props_meadow_parametric.inl`, `maps/tests/test_meadow_parametric.py` | Ground-truth |
 | 2026-10-01 | Codex | Exact interaction texture reuse | `maps/toolkit/map_props_nature.inl` | Ground-truth |

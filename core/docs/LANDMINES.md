@@ -3787,3 +3787,22 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   restore coverage to 1 when leaving a map with a custom footprint. Guard:
   `core/tests/volumetric_fog_distance_test.c`; rendered appearance still needs
   matched-camera captures.
+
+## Half-resolution fog exposes short-period ordered sampling (03/10/2026)
+
+- **Symptom:** meadow sky shows a regular screen grid, especially at low camera
+  angles; disabling volumetric fog removes it.
+- **Cause:** `core/volumetric/shaders/volumetric_fog.fs` used a repeated 4×4
+  Bayer phase for every interval. Upsampling enlarged correlated integration
+  error. Cross-module rule: see ENGINE_LANDMINES.md's volume sampling entry.
+- **Rule:** use balanced immutable ranks with interval phase decorrelation,
+  retaining coverage and step counts. `core/volumetric/volumetric_fog.c` uses
+  `TimeFX_Elapsed()` so fixed-frame image comparisons share animation time.
+  The sampling test verifies rank distribution and synthetic integration;
+  native-resolution captures remain necessary to assess residual grain.
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-10-03 | Codex | Fog sampling and reproducible animation | core/volumetric/volumetric_fog.c; core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_sampling_test.c | Ground-truth |

@@ -646,16 +646,34 @@ static void rlvkProfileReport(void)
 
 // GPU timestamp trace (RLVK_GPU_TRACE env): three timestamps per frame measure the GPU span
 // of scene rendering vs the present chain (resolve/flip blit + layout transitions), read back
-// one frame ring behind. Cumulative elapsed spans print every 512 frames (60 with RLVK_PROFILE).
+// one frame ring behind. Completed-frame windows print every 512 frames (60 with RLVK_PROFILE).
 static VkQueryPool s_gpuPool = VK_NULL_HANDLE;
 static int         s_dbgGpu = -1;
 static f32         s_gpuPeriod;      // nanoseconds per timestamp tick
-static f64         s_gpuScene, s_gpuPresent;
-static int         s_gpuFrames;
+typedef struct rlvkGpuTraceWindow {
+    f64 sceneMs, presentMs;
+    u32 frames, valid, unavailable, invalid, fragmented;
+} rlvkGpuTraceWindow;
+static rlvkGpuTraceWindow s_gpuWindow;
+static bool s_gpuFragmented[RLVK_FRAME_INDEX_COUNT];
+static bool rlvkGpuTraceRecord(rlvkGpuTraceWindow *window, const u64 q[3], f32 period,
+                               bool available, bool fragmented)
+{
+    window->frames++;
+    if (!available) { window->unavailable++; return false; }
+    if (fragmented) { window->fragmented++; return false; }
+    // Availability proves completion, not usable clock resolution. In particular,
+    // zero spans must not dilute one startup sample into a fictitious steady average.
+    if (q[1] <= q[0] || q[2] <= q[1] || period <= 0)
+    { window->invalid++; return false; }
+    window->sceneMs += (f64)(q[1] - q[0]) * period * 1e-6;
+    window->presentMs += (f64)(q[2] - q[1]) * period * 1e-6;
+    window->valid++;
+    return true;
+}
 static u32            s_lastGeneration;
 static u32            s_lastShaderSlot;
 static unsigned short s_lastVertexLayout;
 static unsigned char  s_lastTopology;
 static f64          rlCullDistanceNear = RL_CULL_DISTANCE_NEAR;
 static f64          rlCullDistanceFar  = RL_CULL_DISTANCE_FAR;
-

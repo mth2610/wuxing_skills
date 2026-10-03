@@ -784,6 +784,7 @@ static void rlvkFlushFrame(void)
     if (!RLVK.frameActive)
         return;
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
+    if (s_gpuPool != VK_NULL_HANDLE) s_gpuFragmented[frameIndex] = true;
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
     // Close any open FBO scope through its normal path (attachment layout transitions), then

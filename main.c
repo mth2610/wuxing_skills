@@ -272,6 +272,8 @@ int main(int argc, char **argv) {
   Vector3 captureOrigin = {6.0f, 0.0f, 4.4f};
   Vector3 captureEye = {0};
   bool captureEyeSet = false;
+  Vector3 captureTarget = {0};
+  bool captureTargetSet = false;
   bool captureExportFailed = false;
   bool captureNeutralSmoke = false;
   bool benchmarkVisible = false;
@@ -303,14 +305,17 @@ int main(int argc, char **argv) {
           renderVFXOut = argv[++i];
       else if (strcmp(argv[i], "--map") == 0 && i + 1 < argc)
           customMapName = argv[++i];
-      else if (strcmp(argv[i], "--origin") == 0 || strcmp(argv[i], "--eye") == 0) {
+      else if (strcmp(argv[i], "--origin") == 0 || strcmp(argv[i], "--eye") == 0 ||
+               strcmp(argv[i], "--target") == 0) {
           bool eye = strcmp(argv[i], "--eye") == 0;
+          bool target = strcmp(argv[i], "--target") == 0;
           Vector3 value;
           if (i + 1 >= argc || !ParseCaptureVector(argv[++i], &value)) {
               fprintf(stderr, "Capture coordinates must be finite x,y,z world metres.\n");
               return 2;
           }
           if (eye) { captureEye = value; captureEyeSet = true; }
+          else if (target) { captureTarget = value; captureTargetSet = true; }
           else captureOrigin = value;
       }
   }
@@ -319,10 +324,17 @@ int main(int argc, char **argv) {
       fprintf(stderr, "--benchmark-visible requires --render-vfx or --render-neutral-smoke.\n");
       return 2;
   }
+  if (captureTargetSet && (!renderVFXMode || !captureEyeSet)) {
+      fprintf(stderr, "--target requires --render-vfx and --eye.\n");
+      return 2;
+  }
+  Vector3 resolvedCaptureTarget = captureTargetSet ? captureTarget
+      : Vector3Add(captureOrigin, (Vector3){0, 0.2f, 0});
   if (renderVFXMode && (renderVFXWarmup < 1 ||
       (captureEyeSet && (Vector3Distance(captureEye,
-          Vector3Add(captureOrigin, (Vector3){0, 0.2f, 0})) < 1.0f ||
-          hypotf(captureEye.x - captureOrigin.x, captureEye.z - captureOrigin.z) < 0.001f)))) {
+          resolvedCaptureTarget) < 1.0f ||
+          hypotf(captureEye.x - resolvedCaptureTarget.x,
+                 captureEye.z - resolvedCaptureTarget.z) < 0.001f)))) {
       fprintf(stderr, "Capture needs positive warmup, eye >= 1 metre from target and a nonvertical view.\n");
       return 2;
   }
@@ -1266,7 +1278,12 @@ int main(int argc, char **argv) {
 
         if (renderVFXMode && captureEyeSet) {
             camera.position = captureEye;
-            camera.target = Vector3Add(captureOrigin, (Vector3){0, 0.2f, 0});
+            camera.target = resolvedCaptureTarget;
+        }
+        if (renderVFXMode && renderVFXFrame == 0) {
+            TraceLog(LOG_INFO, "CAPTURE_CAMERA: eye=%.3f,%.3f,%.3f target=%.3f,%.3f,%.3f fovy=%.3f",
+                     camera.position.x, camera.position.y, camera.position.z,
+                     camera.target.x, camera.target.y, camera.target.z, camera.fovy);
         }
 
         // Intersect against the flat Y=0 plane first (cheap, works for the

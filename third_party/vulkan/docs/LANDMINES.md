@@ -127,11 +127,18 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
   not clock granularity. The trace brackets frame start through final flip using
   three timestamps; an intra-frame `rlvkFlushFrame` submits the start query and
   resumes recording after host readback, so the interval can include host/idle
-  gaps. Its average also includes startup frames. **Rule:** reject zero spans as
+  gaps. An available zero span formerly diluted startup-only time into a steadily
+  falling cumulative average. **Rule:** reset query pools outside render passes
+  (`VUID-vkCmdResetQueryPool-renderpass`), and reject zero spans as
   cost evidence; do not classify the whole device as unsupported from these values.
   Compare matching steady windows, and use wall timings and work counters when
   timestamp isolation/granularity is unverified. This trace has no per-pass GPU
   measurements; a zero present span is not proof that presenting costs nothing.
+  `rlvk_platform.inl` now skips the first eight completed frames and reports
+  separate valid/rejected counts in independent windows; `rlvk_renderpass.inl`
+  marks host-drained frames for rejection. `RLVK_GPU_TRACE=1 VALIDATE=1
+  ./scripts/run_rlvk_visual_test.sh buffer_update_order` guards query placement;
+  `tests/rlvk_runtime_test.c` guards sample acceptance and window accounting.
 
 - **A recently sampled depth twin can already contain the latest depth.**
   **Symptom:** read-only scene reopens repeat full-resolution depth-to-buffer-to-R32F
@@ -182,3 +189,4 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
 | 2026-08-18 | Claude (Renderer Agent) | Anti-aliasing | `rlvk_renderpass.inl`, `rlvk_texture.inl`, `rlvk_frame.inl`, `tests/rlvk_visual_test.c msaa_rt`/`perf_msaa_*`, measured captures | Ground-truth |
 | 2026-10-01 | Codex | Texture/depth/uniform caching and timing interpretation | `rlvk_shaderc.inl`, `rlvk_texture.inl`, `rlvk_renderpass.inl`, `rlvk_platform.inl`, `rlvk_pipeline.inl`, visual regression scenarios and fresh runtime observations | Ground-truth |
 | 2026-10-02 | Codex | Default uniform block member capacity | `rlvk_shaderc.inl`, `tests/rlvk_runtime_test.c` failing then passing shaderc reflection regression | Ground-truth |
+| 2026-10-03 | Codex | GPU trace query placement and sample accounting | `rlvk_platform.inl`, `rlvk_state.inl`, `rlvk_renderpass.inl`, trace-enabled visual validation and headless sample tests | Ground-truth |

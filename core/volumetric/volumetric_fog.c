@@ -1,9 +1,12 @@
 #include "core/volumetric/volumetric_fog.h"
 #include "core/volumetric/volumetric_fog_distance.h"
+#include "core/volumetric/fog_blue_noise.h"
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
 #include "core/scene_targets.h"
 #include "core/gfx_quality.h"
+#include "core/tuning.h"
+#include "core/time_fx.h"
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
@@ -11,6 +14,8 @@
 
 static bool s_enabled = true;
 static bool s_ready = false;
+static float s_tuningEnabled = 1.0f;
+static bool s_tuningRegistered = false;
 static float s_godRayIntensity = 1.0f;
 static float s_distantCoverage = 1.0f;
 
@@ -22,6 +27,7 @@ static int s_lowHeight = 0;
 static RenderTexture2D s_volumetricTarget;
 static Shader          s_raymarchShader;
 static Shader          s_compositeShader;
+static Texture2D       s_jitterTex;
 
 // Uniform locations — raymarch
 static int s_locDepthTex;
@@ -48,6 +54,8 @@ static int s_locGodRayIntensity;
 static int s_locMaxDist;
 static int s_locStepCount;
 static int s_locScreenRes;
+static int s_locJitterTex;
+static int s_locJitterTexel;
 static int s_locTime;
 static int s_locVolumeCount;
 static int s_locVolPosShape;
@@ -78,6 +86,16 @@ void VolumetricFog_Init(int width, int height) {
     s_volumetricTarget = LoadRenderTexture(s_lowWidth, s_lowHeight);
     SetTextureFilter(s_volumetricTarget.texture, TEXTURE_FILTER_BILINEAR);
 
+    // Image borrows immutable ranks; LoadTextureFromImage copies them to GPU.
+    Image samplingImage = {.data = (void *)kFogBlueNoise,
+        .width = FOG_BLUE_NOISE_SIZE, .height = FOG_BLUE_NOISE_SIZE,
+        .mipmaps = 1, .format = PIXELFORMAT_UNCOMPRESSED_GRAYSCALE};
+    s_jitterTex = LoadTextureFromImage(samplingImage);
+    if (s_jitterTex.id != 0) {
+        SetTextureFilter(s_jitterTex, TEXTURE_FILTER_POINT);
+        SetTextureWrap(s_jitterTex, TEXTURE_WRAP_REPEAT);
+    }
+
     s_raymarchShader = LoadShader(NULL, "core/volumetric/shaders/volumetric_fog.fs");
     s_locDepthTex          = GetShaderLocation(s_raymarchShader, "u_depthTex");
     s_locShadowMap         = GetShaderLocation(s_raymarchShader, "u_shadowMap");
@@ -103,6 +121,8 @@ void VolumetricFog_Init(int width, int height) {
     s_locMaxDist           = GetShaderLocation(s_raymarchShader, "u_maxDist");
     s_locStepCount         = GetShaderLocation(s_raymarchShader, "u_stepCount");
     s_locScreenRes         = GetShaderLocation(s_raymarchShader, "u_screenResolution");
+    s_locJitterTex         = GetShaderLocation(s_raymarchShader, "u_jitterTex");
+    s_locJitterTexel       = GetShaderLocation(s_raymarchShader, "u_jitterTexel");
     s_locTime              = GetShaderLocation(s_raymarchShader, "u_time");
     s_locVolumeCount       = GetShaderLocation(s_raymarchShader, "u_volumeCount");
     s_locVolPosShape       = GetShaderLocation(s_raymarchShader, "u_volPosShape");
@@ -127,6 +147,8 @@ void VolumetricFog_Unload(void) {
     UnloadRenderTexture(s_volumetricTarget);
     UnloadShader(s_raymarchShader);
     UnloadShader(s_compositeShader);
+    if (s_jitterTex.id != 0) UnloadTexture(s_jitterTex);
+    s_jitterTex = (Texture2D){0};
     s_ready = false;
 }
 
@@ -135,7 +157,7 @@ void VolumetricFog_Resize(int width, int height) {
     VolumetricFog_Init(width, height);
 }
 
-bool VolumetricFog_IsEnabled(void) { return s_enabled; }
+bool VolumetricFog_IsEnabled(void) { return s_enabled && s_tuningEnabled > 0.5f; }
 void VolumetricFog_SetEnabled(bool enabled) { s_enabled = enabled; }
 
 void  VolumetricFog_SetGodRayIntensity(float intensity) { s_godRayIntensity = intensity; }
@@ -147,7 +169,11 @@ void VolumetricFog_SetDistantCoverage(float areaRatio) {
 float VolumetricFog_GetDistantCoverage(void) { return s_distantCoverage; }
 
 void VolumetricFog_PreFrame(void) {
-    if (!s_ready || !s_enabled) return;
+    if (!s_tuningRegistered) {
+        s_tuningRegistered = true;
+        Tuning_RegisterFloat("volumetric_fog_enabled", &s_tuningEnabled, 1.0f);
+    }
+    if (!s_ready || !VolumetricFog_IsEnabled()) return;
     if (GfxQuality_Get() <= GFX_LOW) return;
     AtmosphereProfile atmos = Environment_GetAtmosphereProfile();
     if (!atmos.enabled) return;
@@ -155,7 +181,7 @@ void VolumetricFog_PreFrame(void) {
 }
 
 void VolumetricFog_Render(Camera3D camera) {
-    if (!s_ready || !s_enabled) return;
+    if (!s_ready || !VolumetricFog_IsEnabled()) return;
 
     GfxQuality tier = GfxQuality_Get();
     if (tier <= GFX_LOW) return; // Keep mobile/low-end lightweight (runs forward height fog instead)
@@ -199,7 +225,7 @@ void VolumetricFog_Render(Camera3D camera) {
         ? VolumetricFog_GroundSpan(halfViewHeight, viewForward.y) : 0.0f;
     Vector2 screenRes = { (float)s_lowWidth, (float)s_lowHeight };
     float godRay = s_godRayIntensity;
-    float time = (float)GetTime();
+    float time = TimeFX_Elapsed();
 
     float heightFalloff  = atmos.density.heightFalloff;
     float baseAltitude   = atmos.density.baseAltitude;
@@ -249,6 +275,14 @@ void VolumetricFog_Render(Camera3D camera) {
     ClearBackground(BLANK);
 
     BeginShaderMode(s_raymarchShader);
+    Vector2 jitterTexel = {0};
+    if (s_jitterTex.id != 0) {
+        jitterTexel = (Vector2){1.0f / s_jitterTex.width, 1.0f / s_jitterTex.height};
+        if (s_locJitterTex >= 0)
+            SetShaderValueTexture(s_raymarchShader, s_locJitterTex, s_jitterTex);
+    }
+    if (s_locJitterTexel >= 0)
+        SetShaderValue(s_raymarchShader, s_locJitterTexel, &jitterTexel, SHADER_UNIFORM_VEC2);
     SetShaderValueMatrix(s_raymarchShader, s_locInvViewProj, invViewProj);
     SetShaderValueMatrix(s_raymarchShader, s_locLightVP, lightVP);
     SetShaderValue(s_raymarchShader, s_locCamPos, &camera.position, SHADER_UNIFORM_VEC3);

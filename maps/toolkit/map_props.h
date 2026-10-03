@@ -516,6 +516,10 @@ typedef struct
     float waveLastImpulseTime;
 
     bool ready;
+
+    // Private exact-byte upload cache; allocated only with the wake texture.
+    unsigned char *waveUploadedPixels;
+    unsigned int waveUploadedTextureId;
 } MapWaterSurface;
 
 MapWaterConfig MapProp_DefaultWaterConfig(MapWaterEcosystem eco);

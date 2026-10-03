@@ -96,6 +96,8 @@
 - Distant volumetric fog starts beyond the camera focus across zoom levels, fades in spatially, and scales beam haze with god-ray intensity; a fixed near-plane cutoff can wash out the player.
 - Before changing a public function's behavior: `grep -r` across `skills/` for callers. Breaking changes must be documented (`core/docs/API.md` etc.) BEFORE landing, per `CLAUDE.md` cross-module rule.
 - No dynamic allocation in core runtime paths — static pools matching existing patterns (`MAX_DECALS`, `MAX_VFX_LIGHTS`, `MAX_DISTORTION_SOURCES`).
+- Skip texture uploads only when quantized bytes and resource identity match; keep simulation running and allocate/release upload snapshots at initialization/unload.
+- Reset GPU timestamp queries outside render passes; report independent windows of available, ordered samples and reject zero spans or host-drained command splits.
 - New modules follow existing Init/Update/Draw/Unload lifecycle shape (see `decal_system.h`, `vfx_light.h`).
 - Update `core/docs/API.md` (or relevant doc) in the same turn as the code change — docs must never lag code.
 
@@ -132,3 +134,9 @@
 - Grepped `skills/` (+ `environment/`, `maps/` if relevant) — no caller broken.
 - Relevant API doc updated to match.
 - This file updated if the change produced a new rule or lesson.
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-10-03 | Codex | §10.1 Texture upload identity and timestamp validation | maps/toolkit/map_props_nature.inl; third_party/vulkan/rlvk/rlvk_platform.inl; third_party/vulkan/rlvk/rlvk_renderpass.inl | Ground-truth |

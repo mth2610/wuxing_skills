@@ -35,6 +35,23 @@ int main(void)
 {
     printf("=== rlvk headless runtime test ===\n");
 
+    // Zero/coarse timestamps and host-drained frames must never enter the GPU
+    // average denominator. A fresh window cannot inherit a startup sample sum.
+    {
+        rlvkGpuTraceWindow window = {0};
+        u64 valid[3] = {1000000, 3000000, 4000000}, zero[3] = {5000000, 5000000, 5000000};
+        CHECK(rlvkGpuTraceRecord(&window, valid, 1, true, false), "GPU trace accepts ordered nonzero spans");
+        CHECK(!rlvkGpuTraceRecord(&window, zero, 1, true, false), "GPU trace rejects available zero spans");
+        CHECK(!rlvkGpuTraceRecord(&window, valid, 1, true, true), "GPU trace rejects host-drained frames");
+        CHECK(!rlvkGpuTraceRecord(&window, valid, 1, false, false), "GPU trace rejects unavailable queries");
+        CHECK(window.frames==4 && window.valid==1 && window.sceneMs==2 && window.presentMs==1,
+              "GPU trace averages only valid samples");
+        memset(&window, 0, sizeof(window));
+        rlvkGpuTraceRecord(&window, zero, 1, true, false);
+        CHECK(window.valid==0 && window.sceneMs==0 && window.presentMs==0,
+              "GPU trace window does not inherit startup timing");
+    }
+
     // 1. Device bring-up (instance, physical device pick, logical device, caps, frame ring)
     rlglInit(640, 480);
     CHECK(rlGetVersion() >= 0, "rlglInit survived");

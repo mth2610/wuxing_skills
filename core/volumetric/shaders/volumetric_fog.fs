@@ -28,6 +28,8 @@ uniform float     u_godRayIntensity; // Intensity multiplier for sunlight shafts
 uniform float     u_maxDist;         // Max raymarch distance (e.g. 150.0)
 uniform int       u_stepCount;       // 12 for MED, 24 for HIGH
 uniform vec2      u_screenResolution;// Resolution of the downscaled target
+uniform sampler2D u_jitterTex;       // Immutable balanced blue-noise ranks
+uniform vec2      u_jitterTexel;     // Zero selects midpoint fallback
 uniform float     u_time;            // Animation clock for wind & sunbeams
 
 // Local Fog Volumes (up to 4 active volumes)
@@ -41,18 +43,6 @@ vec3 ReconstructRayDir(vec2 uv) {
     vec4 clip = vec4(uv * 2.0 - 1.0, 1.0, 1.0);
     vec4 world = u_invViewProj * clip;
     return normalize(world.xyz / world.w - u_camPos);
-}
-
-// 4x4 Bayer matrix for ordered dithering (jitter step offset without banding)
-float Bayer4x4(vec2 uv, vec2 screenRes) {
-    ivec2 p = ivec2(mod(uv * screenRes, 4.0));
-    int bayer[16] = int[16](
-         0,  8,  2, 10,
-        12,  4, 14,  6,
-         3, 11,  1,  9,
-        15,  7, 13,  5
-    );
-    return float(bayer[p.y * 4 + p.x]) / 16.0;
 }
 
 // Henyey-Greenstein phase function for forward crepuscular scattering
@@ -165,8 +155,12 @@ void main() {
     int steps = clamp(u_stepCount, 8, 32);
 
 
-    // Jitter with 4x4 Bayer dither to turn slice banding into high-frequency grain
-    float dither = Bayer4x4(fragTexCoord, u_screenResolution);
+    // Static ranks avoid frame-to-frame flicker without a history buffer. The
+    // balanced tile and interval rotation avoid a coherent short screen grid.
+    vec2 jitterUV = fract((floor(fragTexCoord * u_screenResolution) + 0.5) * u_jitterTexel);
+    float dither = u_jitterTexel.x > 0.0
+        ? texture(u_jitterTex, jitterUV).r * (255.0 / 256.0) + (0.5 / 256.0)
+        : 0.5;
 
 
     // Mie phase function toward light source with multiple-scattering side floor
@@ -187,7 +181,9 @@ void main() {
         float t0 = marchStart + marchDist * (1.0 - (1.0 - u0) * (1.0 - u0));
         float t1 = marchStart + marchDist * (1.0 - (1.0 - u1) * (1.0 - u1));
         float stepSize = t1 - t0;
-        float t = mix(t0, t1, 0.25 + 0.5 * dither);
+        float samplePhase = u_jitterTexel.x > 0.0
+            ? fract(dither + float(i) * 0.61803398875) : 0.5;
+        float t = mix(t0, t1, 0.25 + 0.5 * samplePhase);
 
         vec3 samplePos = u_camPos + rayDir * t;
 

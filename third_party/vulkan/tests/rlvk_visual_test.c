@@ -1170,6 +1170,61 @@ static const char *sc_ssbo_vs(void)
     return NULL;
 }
 
+// Runtime SSBO uploads before BeginDrawing must own their bytes and retain command
+// order across both frame slots. The second upload must not recolor the first draw.
+static const char *sc_buffer_update_order(void)
+{
+    const char *vs = "#version 430\n"
+        "layout(location=0) in vec3 vertexPosition;\n"
+        "layout(std430,binding=0) buffer Buf { vec4 placement; vec4 color; };\n"
+        "out vec4 fragColor;\n"
+        "void main(){fragColor=color;gl_Position=vec4(vertexPosition.xy*placement.zw+placement.xy,0,1);}\n";
+    const char *fs = "#version 430\n"
+        "in vec4 fragColor;out vec4 finalColor;void main(){finalColor=fragColor;}\n";
+    Shader sh = LoadShaderFromMemory(vs, fs);
+    float quad[] = {-1,-1,0, 1,-1,0, 1,1,0, -1,-1,0, 1,1,0, -1,1,0};
+    unsigned int vao = rlLoadVertexArray();
+    rlEnableVertexArray(vao);
+    unsigned int vbo = rlLoadVertexBuffer(quad, sizeof(quad), false);
+    rlSetVertexAttribute(0, 3, RL_FLOAT, false, 0, 0);
+    rlEnableVertexAttribute(0);
+    rlDisableVertexArray();
+    float initial[8] = {-0.5f,0,0.5f,1, 1,0,0,1};
+    unsigned int buffers[2] = {
+        rlLoadShaderBuffer(sizeof(initial), initial, RL_DYNAMIC_DRAW),
+        rlLoadShaderBuffer(sizeof(initial), initial, RL_DYNAMIC_DRAW)
+    };
+    for (int f=0; f<8; f++)
+    {
+        unsigned int ssbo = buffers[f%2];
+        float left[8] = {-0.5f,0,0.5f,1, 1,0,0,1};
+        rlUpdateShaderBuffer(ssbo, left, sizeof(left), 0);
+        memset(left, 0, sizeof(left)); // upload must not retain caller memory
+        BeginDrawing(); ClearBackground(BLACK);
+        rlEnableShader(sh.id);
+        rlBindShaderBuffer(ssbo, 0);
+        rlEnableVertexArray(vao);
+        rlDrawVertexArrayInstanced(0, 6, 1);
+        float right[8] = {0.5f,0,0.5f,1, 0,1,0,1};
+        rlUpdateShaderBuffer(ssbo, right, sizeof(right), 0);
+        memset(right, 0, sizeof(right));
+        rlDrawVertexArrayInstanced(0, 6, 1);
+        rlDisableVertexArray(); rlDisableShader();
+        EndDrawing();
+    }
+    Image screen = snap();
+    Color left = at(screen,W/4,H/2), right = at(screen,3*W/4,H/2);
+    UnloadImage(screen);
+    float latest[8] = {0};
+    rlReadShaderBuffer(buffers[1], latest, sizeof(latest), 0);
+    rlUnloadShaderBuffer(buffers[0]); rlUnloadShaderBuffer(buffers[1]);
+    rlUnloadVertexBuffer(vbo); rlUnloadVertexArray(vao); UnloadShader(sh);
+    if (left.r<180 || left.g>100) return "SSBO update changed an earlier draw or retained caller bytes";
+    if (right.g<180 || right.r>100) return "SSBO update missing from subsequent draw";
+    if (latest[0]!=0.5f || latest[4]!=0 || latest[5]!=1) return "SSBO readback missed latest update";
+    return NULL;
+}
+
 static const char *sc_stress(void)
 {
     Image gi = GenImageGradientRadial(32, 32, 0.0f, WHITE, BLACK);
@@ -3434,6 +3489,7 @@ static const Scenario SCENARIOS[] = {
     { "instanced",      sc_instanced },
     { "instanced_parameters", sc_instanced_parameters },
     { "ssbo_vs",        sc_ssbo_vs },
+    { "buffer_update_order", sc_buffer_update_order },
     { "imm_normal",     sc_imm_normal },
     { "readback",       sc_readback },
     { "float_blend_rt", sc_float_blend_rt },
