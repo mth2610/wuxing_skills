@@ -12,6 +12,7 @@ void LiquidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, fl
  * the frame that bound its material, so the slot has to travel with the body
  * rather than being read off LiquidSurface's "current" one at capture time. */
 int LiquidPBDGPU_GetMaterial(void);
+float LiquidPBDGPU_GetReconstructionRadius(void);
 void LiquidPBDGPU_Update(float dt, float groundY);
 unsigned int LiquidPBDGPU_GetStateBuffer(void);
 int LiquidPBDGPU_GetParticleCount(void);

@@ -5,6 +5,10 @@ int main(void) {
     int demand[]={320,320,320,320}, admitted[4];
     CHECK(LiquidCaptureBudget_Allocate(demand,4,384,admitted)==384);
     for(int i=0;i<4;i++) CHECK(admitted[i]==96);
+    CHECK(fabsf(LiquidCaptureBudget_OpticalScale(320,96)-sqrtf(320.0f/96.0f))<1e-6f);
+    CHECK(LiquidCaptureBudget_OpticalScale(320,320)==1.0f);
+    CHECK(LiquidCaptureBudget_OpticalScale(320,1)==2.0f);
+    CHECK(LiquidCaptureBudget_OpticalScale(320,0)==1.0f);
     demand[0]=12;
     CHECK(LiquidCaptureBudget_Allocate(demand,4,384,admitted)==384);
     CHECK(admitted[0]==12);

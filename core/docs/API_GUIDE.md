@@ -246,7 +246,9 @@ Liquid renderers consume `ParticleRenderStream` from
 map it or request GPU-to-CPU readback. `LiquidSurface_SubmitParticleStream` queues
 input; CPU streams share the remaining aggregate 384-sample budget at capture.
 Small streams retain their complete shape; larger ones use evenly spaced
-samples. `LiquidSurface_GetStats()` reports requested/admitted/dropped counts,
+samples. Thinned CPU streams enlarge optical support by the square root of the
+demand/admission ratio (capped at 2) to preserve coherent coverage; collision and
+simulation radii stay unchanged. `LiquidSurface_GetStats()` reports requested/admitted/dropped counts,
 rejected streams, GPU capture instances, draws and reconstruction passes.
 
 GPU surface capture batches submitted emitters into one indexed draw per
@@ -268,13 +270,18 @@ sweeps can use the terrain/collision callback and render the resolved positions.
 
 Diagnostics: `WUXING_LIQUID_PROFILE=1` logs **host submission** stage times (not GPU
 timings). `WUXING_LIQUID_CAPTURE_BATCH=0`, `WUXING_LIQUID_CPU_IMPOSTOR=0`, and
-`WUXING_LIQUID_OCCUPANCY=0` select same-binary controls. The occupancy mask is a
+`WUXING_LIQUID_OCCUPANCY=1` enables the experimental occupancy mask (default off). The mask is a
 conservative 8x8 tile reduction with a one-pixel halo; it only skips guaranteed
-empty first-round hole fills and retains the true 2D HIGH filter.
+empty first-round hole fills and retains the true 2D HIGH filter. It remained
+slower in the repeated Intel HD 6000/MoltenVK runs, so shipping uses the direct
+empty-pixel test.
 `WUXING_LIQUID_CPU_ONLY=1` selects CPU liquid emitters; the wider
 `WUXING_PARTICLES_FORCE_CPU=1` disables the particle compute backend at init.
 `WUXING_LIQUID_IMPACT_COUNT` and `WUXING_LIQUID_BENCH_COUNT` accept 1/2/4 for
 concurrency fixtures; bench defaults to all five materials.
+`WUXING_LIQUID_IMPACT_BACKEND=pbd` tests the optional PBD route; unavailable or
+busy PBD falls back to Force Field. `WUXING_LIQUID_PBD_DISABLE=1` exercises init
+unavailability on a GPU-capable test host.
 
 ParticleConfig should be initialized with {0}.
 `void SpawnParticle(ParticleConfig config);` triggers particle emission in the engine.

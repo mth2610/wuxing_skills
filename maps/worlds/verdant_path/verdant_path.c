@@ -724,7 +724,7 @@ void InitVerdantPathMap(void)
             .rootColor = {28, 48, 22, 255}, .tipColor = {114, 165, 64, 255},
             .bladesPerClump = 6, .bladeSegments = 4, .bladeWidthScale = 0.19f,
             .chunkSize = 12.0f, .lodDistance = 28.0f, .midLodDistance = 0.0f, .drawDistance = 50.0f,
-            .shadowDistance = 0.0f,
+            .shadowDistance = 14.0f,
             .texturePath = NULL,
             .botanicalVariation = 1.0f,
         });

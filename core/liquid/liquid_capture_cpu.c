@@ -5,15 +5,17 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef struct LiquidCaptureCPUVertex {
-    Vector3 viewPosition;
-    Vector2 ndc;
-    Vector3 centerView;
-    Vector3 radii;
-    float material;
-} LiquidCaptureCPUVertex;
-
-static LiquidCaptureCPUVertex s_vertices[LIQUID_CAPTURE_CPU_MAX_INSTANCES*6];
+#define LIQUID_CAPTURE_CPU_VERTEX_CAPACITY (LIQUID_CAPTURE_CPU_MAX_INSTANCES*6)
+/* rlvk's canonical mesh streams have fixed strides. Keep planar attributes in
+ * one persistent buffer; an interleaved stride is not a supported backend path. */
+typedef struct LiquidCaptureCPUVertices {
+    Vector3 position[LIQUID_CAPTURE_CPU_VERTEX_CAPACITY];
+    Vector2 ndc[LIQUID_CAPTURE_CPU_VERTEX_CAPACITY];
+    Vector3 center[LIQUID_CAPTURE_CPU_VERTEX_CAPACITY];
+    unsigned char material[LIQUID_CAPTURE_CPU_VERTEX_CAPACITY][4];
+    Vector4 radii[LIQUID_CAPTURE_CPU_VERTEX_CAPACITY];
+} LiquidCaptureCPUVertices;
+static LiquidCaptureCPUVertices s_vertices;
 static unsigned int s_vao, s_vbo;
 static Shader s_shader;
 static bool s_ready;
@@ -29,7 +31,7 @@ static struct {
 static void LiquidCaptureCPU_Attribute(unsigned int location, int components, size_t offset)
 {
     rlSetVertexAttribute(location, components, RL_FLOAT, false,
-                         sizeof(LiquidCaptureCPUVertex), (int)offset);
+                         0, (int)offset);
     rlEnableVertexAttribute(location);
 }
 
@@ -61,11 +63,12 @@ bool LiquidCaptureCPU_Init(void)
         return false;
     }
     rlEnableVertexBuffer(s_vbo);
-    LiquidCaptureCPU_Attribute(0,3,offsetof(LiquidCaptureCPUVertex,viewPosition));
-    LiquidCaptureCPU_Attribute(1,2,offsetof(LiquidCaptureCPUVertex,ndc));
-    LiquidCaptureCPU_Attribute(2,3,offsetof(LiquidCaptureCPUVertex,centerView));
-    LiquidCaptureCPU_Attribute(3,3,offsetof(LiquidCaptureCPUVertex,radii));
-    LiquidCaptureCPU_Attribute(4,1,offsetof(LiquidCaptureCPUVertex,material));
+    LiquidCaptureCPU_Attribute(0,3,offsetof(LiquidCaptureCPUVertices,position));
+    LiquidCaptureCPU_Attribute(1,2,offsetof(LiquidCaptureCPUVertices,ndc));
+    LiquidCaptureCPU_Attribute(2,3,offsetof(LiquidCaptureCPUVertices,center));
+    rlSetVertexAttribute(3,4,RL_UNSIGNED_BYTE,true,0,(int)offsetof(LiquidCaptureCPUVertices,material));
+    rlEnableVertexAttribute(3);
+    LiquidCaptureCPU_Attribute(4,4,offsetof(LiquidCaptureCPUVertices,radii));
     rlDisableVertexBuffer();
     rlDisableVertexArray();
     s_ready = true;
@@ -115,13 +118,18 @@ int LiquidCaptureCPU_Prepare(const LiquidCaptureCPUInstance *instances, int coun
                 s_vertexCount = firstVertex;
                 break;
             }
-            s_vertices[s_vertexCount++] = (LiquidCaptureCPUVertex){viewPosition,ndc,
-                centerView,instance->radii,(float)instance->material};
+            int v=s_vertexCount++;
+            s_vertices.position[v]=viewPosition;
+            s_vertices.ndc[v]=ndc;
+            s_vertices.center[v]=centerView;
+            s_vertices.material[v][0]=(unsigned char)instance->material;
+            s_vertices.material[v][1]=s_vertices.material[v][2]=0;
+            s_vertices.material[v][3]=255;
+            s_vertices.radii[v]=(Vector4){instance->radii.x,instance->radii.y,instance->radii.z,0};
         }
         if (s_vertexCount == firstVertex+6) s_preparedCount++;
     }
-    if (s_vertexCount > 0) rlUpdateVertexBuffer(s_vbo,s_vertices,
-        s_vertexCount*(int)sizeof(LiquidCaptureCPUVertex),0);
+    if (s_vertexCount > 0) rlUpdateVertexBuffer(s_vbo,&s_vertices,sizeof(s_vertices),0);
     return s_preparedCount;
 }
 

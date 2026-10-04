@@ -87,6 +87,7 @@ void main() {
         float nearest = 1.0;
         for (int y = -1; y <= 1; y++) {
             for (int x = -1; x <= 1; x++) {
+                if(x==0 && y==0) continue; /* center is already known empty */
                 nearest = min(nearest, texture(texture0, fragTexCoord + vec2(x, y) * u_texel).r);
             }
         }

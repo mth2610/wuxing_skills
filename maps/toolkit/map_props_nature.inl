@@ -2348,6 +2348,12 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
 void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffset,
                                      float time, Vector2 windDirection, float windStrength)
 {
+    static int debugShadowLogs = 0;
+    if (debugShadowLogs < 3) {
+        TraceLog(LOG_INFO, "DEBUG_SHADOW_CASTERS: meadow=%p ready=%d q=%d dist=%.1f chunks=%d focus=(%.1f, %.1f)",
+                 meadow, meadow->ready, GfxQuality_Get(), meadow->shadowDistance, meadow->chunkCount,
+                 EnvShadow_GetFocus().x, EnvShadow_GetFocus().z);
+    }
     if (!meadow || !meadow->ready || GfxQuality_Get() < GFX_HIGH ||
         meadow->shadowDistance <= 0.0f ||
         Nature_GetShadowMode() == NATURE_SHADOW_PROJECTED_ONLY ||
@@ -2365,6 +2371,7 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
     Vector3 shadowFocus = EnvShadow_GetFocus();
     float maxDist = fminf(meadow->shadowDistance + 4.0f,
                           EnvShadow_GetHalfExtent() + 4.0f);
+    int draws = 0;
     for (int i = 0; i < meadow->chunkCount; i++) {
         MapMeadowChunk *chunk = &meadow->chunks[i];
         if (!chunk->realShadowReady)
@@ -2382,12 +2389,18 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
         if (meadow->parametric) {
             NatureParametric_DrawChunk(meadow,i,3,shader,worldOffset);
             s_natureRenderStats.meadowShadowDraws++;
+            draws++;
             continue;
         }
         Shader previous = chunk->realShadowModel.materials[0].shader;
         chunk->realShadowModel.materials[0].shader = shader;
         DrawModel(chunk->realShadowModel, worldOffset, 1.0f, WHITE);
         chunk->realShadowModel.materials[0].shader = previous;
+        draws++;
+    }
+    if (debugShadowLogs < 3) {
+        TraceLog(LOG_INFO, "DEBUG_SHADOW_CASTERS_DONE: draws=%d", draws);
+        debugShadowLogs++;
     }
     if (meadow->parametric) NatureParametric_EndReceivers();
     Nature_EndWindReceiverShader();

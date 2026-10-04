@@ -28,6 +28,7 @@ static int s_gpuStreamMaterial[16];
 static int s_gpuStreamCount;
 static ParticleRenderStream s_cpuStreams[32];
 static int s_cpuStreamMaterial[32], s_cpuStreamCount;
+static float s_cpuStreamKernel[32];
 static LiquidSurfaceStats s_stats;
 static int s_streamRejected, s_directRequested;
 static bool s_captureBatch=true, s_cpuImpostor=true, s_profile;
@@ -323,7 +324,7 @@ void LiquidSurface_Init(int width,int height) {
     const char *roi=getenv("WUXING_LIQUID_OCCUPANCY");
     s_captureBatch=!batch || atoi(batch)!=0;
     s_cpuImpostor=(!cpu || atoi(cpu)!=0) && LiquidCaptureCPU_Init();
-    s_useOccupancy=!roi || atoi(roi)!=0;
+    s_useOccupancy=roi && atoi(roi)!=0;
     const char *profile=getenv("WUXING_LIQUID_PROFILE");
     s_profile=profile && atoi(profile)!=0;
     const char *roundOverride=getenv("WUXING_LIQUID_RECON_ROUNDS");
@@ -661,6 +662,7 @@ bool LiquidSurface_SubmitParticleStream(const ParticleRenderStream *stream) {
     if(stream->backend==PARTICLE_RENDER_BACKEND_CPU) {
         if(s_cpuStreamCount>=32) { s_streamRejected++; return false; }
         s_cpuStreamMaterial[s_cpuStreamCount]=s_currentMaterial;
+        s_cpuStreamKernel[s_cpuStreamCount]=s_submissionKernelRadius;
         s_cpuStreams[s_cpuStreamCount++]=*stream;
         return true;
     }
@@ -683,8 +685,11 @@ static void LiquidSurface_PrepareCPUStreams(void) {
     ParticleSurfaceSample samples[LIQUID_SURFACE_MAX_PARTICLES];
     for(int i=0;i<s_cpuStreamCount;i++) {
         int count=ParticleManager_CopySurfaceSamplesSpaced(&s_cpuStreams[i],samples,admitted[i]);
+        float opticalScale=LiquidCaptureBudget_OpticalScale(demand[i],count);
+        int slot=s_cpuStreamMaterial[i];
+        s_materialKernel[slot]=fmaxf(s_materialKernel[slot],s_cpuStreamKernel[i]*opticalScale);
         for(int j=0;j<count;j++) {
-            float r=samples[j].radius;
+            float r=samples[j].radius*opticalScale;
             s_particles[s_count++]=(LiquidSurfaceParticle){samples[j].position,{r,r,r},s_cpuStreamMaterial[i]};
         }
     }
@@ -737,7 +742,11 @@ void LiquidSurface_Capture(Camera3D camera) {
         }
     }
     LiquidSurface_TouchLiveMaterials();
-    if(LiquidPBDGPU_IsActive()) LiquidSurface_RecordKernel(LiquidPBDGPU_GetMaterial());
+    if(LiquidPBDGPU_IsActive()) {
+        int slot=LiquidPBDGPU_GetMaterial();
+        if(slot>=0 && slot<LIQUID_SURFACE_MATERIAL_SLOTS)
+            s_materialKernel[slot]=fmaxf(s_materialKernel[slot],LiquidPBDGPU_GetReconstructionRadius());
+    }
     int materialParticipants=0;
     for(int slot=0;slot<LIQUID_SURFACE_MATERIAL_SLOTS;slot++)
         if(s_materialKernel[slot]>0.0f) materialParticipants++;
@@ -776,16 +785,17 @@ void LiquidSurface_Capture(Camera3D camera) {
     s_lastCamera=camera; s_hasCamera=true;
     s_fluidView=MatrixLookAt(camera.position,camera.target,camera.up);
     s_fluidProjection=LiquidSurface_MakeProjection(camera);
-    bool cpuPrepared=s_cpuImpostor && LiquidCaptureCPU_Prepare(s_particles,s_count,s_fluidView,s_fluidProjection)>0;
+    bool cpuPrepared=s_cpuImpostor;
+    int cpuVisible=cpuPrepared?LiquidCaptureCPU_Prepare(s_particles,s_count,s_fluidView,s_fluidProjection):0;
     ParticleSurfaceCaptureStream streams[32];
     for(int i=0;i<s_gpuStreamCount;i++) streams[i]=(ParticleSurfaceCaptureStream){s_gpuStreams[i],(float)s_gpuStreamMaterial[i]};
     BeginTextureMode(s_capture); ClearBackground((Color){255,0,0,0}); LiquidSurface_BeginCaptureMode3D(camera);
     /* One uniform per stream, not per splat: each stream is one draw, and the
      * slot it carries is fixed at submit time. */
     if(s_captureBatch && s_gpuStreamCount>0) {
-        ParticleManager_DrawSurfaceStreams(streams,s_gpuStreamCount,camera,s_surfaceTex);
+        if(ParticleManager_DrawSurfaceStreams(streams,s_gpuStreamCount,camera,s_surfaceTex))
+            s_stats.captureDraws++;
         s_stats.gpuCaptureInstances=ParticleManager_GetSurfaceCaptureInstanceCount();
-        s_stats.captureDraws++;
     } else for(int i=0;i<s_gpuStreamCount;i++) {
         GpuParticleSystem_SetSurfaceMaterialId((float)s_gpuStreamMaterial[i]);
         ParticleManager_DrawSurfaceStream(&s_gpuStreams[i],camera,s_surfaceTex);
@@ -797,7 +807,7 @@ void LiquidSurface_Capture(Camera3D camera) {
     if(LiquidPBDGPU_IsActive()) s_stats.captureDraws++;
     /* --- CPU particles registered via LiquidSurface_RegisterParticle --- */
     /* These were previously stored but never rasterised into the FBO.    */
-    if(cpuPrepared) { LiquidCaptureCPU_Draw(false); s_stats.captureDraws++; }
+    if(cpuPrepared) { if(cpuVisible>0) { LiquidCaptureCPU_Draw(false); s_stats.captureDraws++; } }
     else if (s_count > 0) {
         /* Sphere impostors: draw screen-aligned quads per particle.       */
         /* The default liquid_capture.fs outputs gl_FragCoord.z which is   */
@@ -842,8 +852,8 @@ void LiquidSurface_Capture(Camera3D camera) {
         LiquidPBDGPU_SetSurfaceFrontDepth(s_capture.texture);
         BeginTextureMode(s_captureBack); ClearBackground(BLANK); LiquidSurface_BeginCaptureMode3D(camera);
         if(s_captureBatch && s_gpuStreamCount>0) {
-            ParticleManager_DrawSurfaceBackStreams(streams,s_gpuStreamCount,camera);
-            s_stats.captureDraws++;
+            if(ParticleManager_DrawSurfaceBackStreams(streams,s_gpuStreamCount,camera))
+                s_stats.captureDraws++;
         } else for(int i=0;i<s_gpuStreamCount;i++) {
             GpuParticleSystem_SetSurfaceMaterialId((float)s_gpuStreamMaterial[i]);
             ParticleManager_DrawSurfaceBackStream(&s_gpuStreams[i],camera);
@@ -851,7 +861,7 @@ void LiquidSurface_Capture(Camera3D camera) {
         }
         LiquidPBDGPU_DrawSurfaceBackDepth(camera);
         if(LiquidPBDGPU_IsActive()) s_stats.captureDraws++;
-        if(cpuPrepared) { LiquidCaptureCPU_Draw(true); s_stats.captureDraws++; }
+        if(cpuPrepared) { if(cpuVisible>0) { LiquidCaptureCPU_Draw(true); s_stats.captureDraws++; } }
         else if (s_count > 0) {
             /* Real geometry, so the far surface is a culling choice rather than
              * a second analytic root. The flush is required: raylib batches
@@ -1055,7 +1065,7 @@ void LiquidSurface_Composite(void) {
         materialOptics[i*4+2]=m->opacityPerMetre;
         materialOptics[i*4+3]=0.0f;
     }
-    float opticalTime=(float)GetTime();
+    float opticalTime=TimeFX_Elapsed();
 
     int lightBudget=qualityTier>=GFX_HIGH?LIQUID_OPTICAL_POINT_LIGHTS:
                     (qualityTier>=GFX_MED?2:0);

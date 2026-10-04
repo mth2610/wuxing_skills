@@ -1,4 +1,5 @@
 #include "core/liquid/liquid_pbd_gpu.h"
+#include <stdlib.h>
 #include "rlgl.h"
 #include "raymath.h"
 #include "core/resource_manager.h"
@@ -39,6 +40,7 @@ static int s_gridStamp;
 static void LiquidPBDGPU_ClearGrid(void);
 static Shader s_depthShader,s_backShader;
 static Texture2D s_frontDepth;
+static float s_reconstructionRadius=0.022f;
 void LiquidPBDGPU_SetSurfaceFrontDepth(Texture2D frontDepth) { s_frontDepth=frontDepth; }
 
 static float LiquidPBDGPU_Rand01(unsigned int value)
@@ -62,6 +64,11 @@ bool LiquidPBDGPU_Init(void)
     if(s_active) return true;
     if(s_initAttempted) return false;
     s_initAttempted=true;
+    const char *disabled=getenv("WUXING_LIQUID_PBD_DISABLE");
+    if(disabled && atoi(disabled)!=0) {
+        TraceLog(LOG_INFO,"LIQUID_PBD: disabled for fallback validation");
+        return false;
+    }
     s_program=LiquidPBDGPU_LoadCompute(); if(!s_program) return false;
     s_stateA=rlLoadShaderBuffer(sizeof(GPULiquidParticle)*LIQUID_PBD_GPU_MAX_PARTICLES,NULL,RL_DYNAMIC_DRAW);
     s_stateB=rlLoadShaderBuffer(sizeof(GPULiquidParticle)*LIQUID_PBD_GPU_MAX_PARTICLES,NULL,RL_DYNAMIC_DRAW);
@@ -71,6 +78,13 @@ bool LiquidPBDGPU_Init(void)
     s_backShader=ResourceManager_LoadShader("core/liquid/shaders/liquid_pbd_surface.vs","core/liquid/shaders/liquid_capture_particle_back.fs");
     static const float quad[]={-1,-1,0,1,-1,0,1,1,0,-1,-1,0,1,1,0,-1,1,0};
     s_vao=rlLoadVertexArray(); rlEnableVertexArray(s_vao); s_vbo=rlLoadVertexBuffer(quad,sizeof(quad),false); rlSetVertexAttribute(0,3,RL_FLOAT,0,0,0); rlEnableVertexAttribute(0); rlDisableVertexArray();
+    if(!s_stateA || !s_stateB || !s_heads || !s_next || !s_vao || !s_vbo ||
+       !s_depthShader.id || !s_backShader.id ||
+       s_depthShader.id==rlGetShaderIdDefault() || s_backShader.id==rlGetShaderIdDefault()) {
+        LiquidPBDGPU_Unload();
+        s_initAttempted=true; /* cache failure; Force Field owns live fallback */
+        return false;
+    }
     s_uniform.phase=rlGetLocationUniform(s_program,"u_phase");
     s_uniform.particleCount=rlGetLocationUniform(s_program,"u_particleCount");
     s_uniform.gridCellCount=rlGetLocationUniform(s_program,"u_gridCellCount");
@@ -88,6 +102,7 @@ bool LiquidPBDGPU_Init(void)
  * otherwise a dead impact still pays two capture passes plus six filters every
  * frame forever. */
 int LiquidPBDGPU_GetMaterial(void) { return s_materialSlot; }
+float LiquidPBDGPU_GetReconstructionRadius(void) { return s_reconstructionRadius; }
 bool LiquidPBDGPU_IsActive(void) { return s_active && s_particleCount > 0; }
 void LiquidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, float force01, float scale)
 {
@@ -99,6 +114,7 @@ void LiquidPBDGPU_SpawnImpact(Vector3 point, Vector3 normal, Vector3 impulse, fl
     /* Keep PBD kernels below random-close-packing density.  The old 0.012 m
      * radius injected separation energy at spawn, which looked like a boiling
      * source sphere.  Surface rendering expands these kernels independently. */
+    s_reconstructionRadius=scale*0.022f;
     float radius=scale*(quality<=GFX_LOW?0.010f:(quality>=GFX_HIGH?0.0085f:0.0092f));
     /* The largest pair support is < 0.044*scale.  A 0.046*scale cell still
      * guarantees that all interacting neighbours are in the surrounding 27
@@ -241,7 +257,18 @@ void LiquidPBDGPU_Update(float dt,float groundY)
     }
     rlDisableShader();
 }
-void LiquidPBDGPU_Unload(void) { if(s_stateA)rlUnloadShaderBuffer(s_stateA);if(s_stateB)rlUnloadShaderBuffer(s_stateB);if(s_heads)rlUnloadShaderBuffer(s_heads);if(s_next)rlUnloadShaderBuffer(s_next);if(s_program)rlUnloadShaderProgram(s_program);s_stateA=s_stateB=s_heads=s_next=s_program=0;s_active=false;s_initAttempted=false; }
+void LiquidPBDGPU_Unload(void) {
+    if(s_stateA)rlUnloadShaderBuffer(s_stateA);
+    if(s_stateB)rlUnloadShaderBuffer(s_stateB);
+    if(s_heads)rlUnloadShaderBuffer(s_heads);
+    if(s_next)rlUnloadShaderBuffer(s_next);
+    if(s_program)rlUnloadShaderProgram(s_program);
+    if(s_vbo)rlUnloadVertexBuffer(s_vbo);
+    if(s_vao)rlUnloadVertexArray(s_vao);
+    s_stateA=s_stateB=s_heads=s_next=s_program=s_vbo=s_vao=0;
+    s_active=false; s_initAttempted=false; s_particleCount=0;
+    s_frontDepth=(Texture2D){0};
+}
 unsigned int LiquidPBDGPU_GetStateBuffer(void) { return s_stateA; }
 int LiquidPBDGPU_GetParticleCount(void) { return s_particleCount; }
 

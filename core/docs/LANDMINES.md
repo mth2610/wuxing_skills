@@ -3834,6 +3834,21 @@ must use its material kernel and reject captured neighbors of other materials.
 The remaining same-material envelope may still include air gaps between
 separated bodies; this is not a density/occupancy thickness solve.
 
+## CPU analytical capture must use the backend's canonical vertex streams (04/10/2026)
+
+**Symptom.** CPU ellipsoid math and shader links passed, but actual float capture
+pixels stayed clear.
+
+**Cause.** rlvk records canonical attribute buffers/offsets and uses fixed mesh
+formats/strides; `rlSetVertexAttribute` does not configure an arbitrary
+interleaved format. The helper's 48-byte vertex layout did not match those
+streams.
+
+**Rule.** Use planar position/UV/normal/RGBA8-color/vec4-tangent streams in the
+persistent CPU capture VBO. Material ids ride the normalized color byte; radii
+ride tangent.xyz. Validate actual front/back depth and per-pixel identity using
+`liquid_cpu_capture`, in both perspective and orthographic cameras.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
