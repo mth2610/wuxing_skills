@@ -101,8 +101,8 @@ The shared managers and scene target are owned by `main.c`. See
 `core/docs/API_GUIDE.md` “VFX render-layer contract” and
 `core/tests/bright_vfx_isolation_test.c` before changing this architecture.
 
-For SSF liquids, compositions submit only through the Fluid public API. The
-engine collects those surface streams before its `FluidSurface_HasPending()`
+For SSF liquids, compositions submit only through the Liquid public API. The
+engine collects those surface streams before its `LiquidSurface_HasPending()`
 check in the screen-space composite pass; never couple a liquid's submission
 to a decal or regular-particle pass.
 

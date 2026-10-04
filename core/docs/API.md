@@ -177,10 +177,10 @@
   float SkillCurve_Eval(const SkillCurve *curve, float t01);
 ```
 
-### `core/fluid/fluid_motion.h`
+### `core/liquid/liquid_motion.h`
 _Inline helpers / macros only — see header._
-**Enums:** FluidMotionProfile { FLUID_MOTION_WATER,FLUID_MOTION_POISON,FLUID_MOTION_MUD,FLUID_MOTION_LAVA,FLUID_MOTION_LIQUID_METAL }
-**Structs** (fields in header): FluidMotionDesc
+**Enums:** LiquidMotionProfile { LIQUID_MOTION_WATER,LIQUID_MOTION_POISON,LIQUID_MOTION_MUD,LIQUID_MOTION_LAVA,LIQUID_MOTION_LIQUID_METAL }
+**Structs** (fields in header): LiquidMotionDesc
 
 ### `core/volumetric/volumetric_fog.h`
 ```c
@@ -197,39 +197,39 @@ _Inline helpers / macros only — see header._
   float VolumetricFog_GetDistantCoverage(void);
 ```
 
-### `core/fluid/fluid_impact.h`
+### `core/liquid/liquid_impact.h`
 ```c
-  void FluidImpact_SpawnWater(const FluidImpactEvent *event);
-  void FluidImpact_SetCollisionQuery(FluidImpactCollisionQueryFn query, void *userData);
-  void FluidImpact_Update(float dt);
-  void FluidImpact_Draw(void);
-  void FluidImpact_GetStats(int *active, int *max);
+  void LiquidImpact_SpawnWater(const LiquidImpactEvent *event);
+  void LiquidImpact_SetCollisionQuery(LiquidImpactCollisionQueryFn query, void *userData);
+  void LiquidImpact_Update(float dt);
+  void LiquidImpact_Draw(void);
+  void LiquidImpact_GetStats(int *active, int *max);
 ```
-**Enums:** FluidImpactBackend { FLUID_IMPACT_BACKEND_FORCE_FIELD,FLUID_IMPACT_BACKEND_PBD }
-**Structs** (fields in header): FluidImpactCollision, FluidImpactEvent
+**Enums:** LiquidImpactBackend { LIQUID_IMPACT_BACKEND_FORCE_FIELD,LIQUID_IMPACT_BACKEND_PBD }
+**Structs** (fields in header): LiquidImpactCollision, LiquidImpactEvent
 
-### `core/fluid/fluid_surface.h`
+### `core/liquid/liquid_surface.h`
 ```c
-  FluidLiquidDesc FluidSurface_DielectricDesc(Color body, Color glow, Color soft);
-  FluidLiquidDesc FluidSurface_ProfileDesc(FluidMotionProfile profile);
-  int FluidSurface_BindMaterial(const FluidLiquidDesc *desc);
-  int FluidSurface_CurrentMaterial(void);
-  bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center, float worldRadius, bool alreadyRunning);
-  void FluidSurface_SetReconstructionRadiusFor(FluidSurfacePriority priority, float radius);
-  void FluidSurface_Init(int width, int height);
-  void FluidSurface_Unload(void);
-  void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft);
-  void FluidSurface_SetReconstructionRadius(float radius);
-  void FluidSurface_HintBody(Vector3 center, float worldRadius);
-  void FluidSurface_RegisterParticle(Vector3 position, float radius);
-  void FluidSurface_RegisterEllipsoid(Vector3 position, Vector3 radii);
-  bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream);
-  bool FluidSurface_HasPending(void);
-  void FluidSurface_Capture(Camera3D camera);
-  void FluidSurface_Composite(void);
+  LiquidDesc LiquidSurface_DielectricDesc(Color body, Color glow, Color soft);
+  LiquidDesc LiquidSurface_ProfileDesc(LiquidMotionProfile profile);
+  int LiquidSurface_BindMaterial(const LiquidDesc *desc);
+  int LiquidSurface_CurrentMaterial(void);
+  bool LiquidSurface_RequestBody(LiquidSurfacePriority priority, Vector3 center, float worldRadius, bool alreadyRunning);
+  void LiquidSurface_SetReconstructionRadiusFor(LiquidSurfacePriority priority, float radius);
+  void LiquidSurface_Init(int width, int height);
+  void LiquidSurface_Unload(void);
+  void LiquidSurface_SetMaterialColors(Color body, Color glow, Color soft);
+  void LiquidSurface_SetReconstructionRadius(float radius);
+  void LiquidSurface_HintBody(Vector3 center, float worldRadius);
+  void LiquidSurface_RegisterParticle(Vector3 position, float radius);
+  void LiquidSurface_RegisterEllipsoid(Vector3 position, Vector3 radii);
+  bool LiquidSurface_SubmitParticleStream(const ParticleRenderStream *stream);
+  bool LiquidSurface_HasPending(void);
+  void LiquidSurface_Capture(Camera3D camera);
+  void LiquidSurface_Composite(void);
 ```
-**Enums:** FluidLiquidClass { FLUID_LIQUID_DIELECTRIC,FLUID_LIQUID_EMISSIVE,FLUID_LIQUID_CONDUCTOR };FluidSurfacePriority { FLUID_PRIORITY_MINION,FLUID_PRIORITY_BASIC,FLUID_PRIORITY_CAST,FLUID_PRIORITY_ULTIMATE }
-**Structs** (fields in header): FluidLiquidDesc
+**Enums:** LiquidClass { LIQUID_CLASS_DIELECTRIC,LIQUID_CLASS_EMISSIVE,LIQUID_CLASS_CONDUCTOR };LiquidSurfacePriority { LIQUID_PRIORITY_MINION,LIQUID_PRIORITY_BASIC,LIQUID_PRIORITY_CAST,LIQUID_PRIORITY_ULTIMATE }
+**Structs** (fields in header): LiquidDesc
 
 ### `core/gas/gas_system.h`
 ```c
@@ -1002,7 +1002,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
-  void VFX_ComposeFluidImpact(Vector3 pos);
+  void VFX_ComposeLiquidImpact(Vector3 pos);
   int VFX_ComposeGasMaterialLab(Vector3 pos, VC_MaterialId mat);
   void VFX_ComposeGroundDustRing(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target);
@@ -1031,7 +1031,7 @@ _Inline helpers / macros only — see header._
   void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
   int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   void VFX_FlowShield_Stop(int handle);
-  void VFX_FluidOrb_Spawn(Vector3 start, Vector3 target, FluidMotionProfile profile);
+  void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile profile);
   void VFX_KillFlowShield(int handle);
   void VFX_KillGasMaterialLab(int handle);
   void VFX_KillRefBands(int id);

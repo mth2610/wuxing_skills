@@ -48,6 +48,8 @@ static int s_waterLocRippleParams[MAX_WATER_RIPPLES] = {-1, -1, -1, -1};
 static int s_waterLocObstacles[MAX_WATER_OBSTACLES] = {-1, -1, -1, -1};
 static int s_waterLocWaveFieldTex = -1;
 static int s_waterLocWaveFieldEnabled = -1;
+static int s_waterLocLakeRadii = -1;
+static int s_waterLocLakeSeed = -1;
 
 static Shader s_waterBedShader = {0};
 static bool s_waterBedShaderReady = false;
@@ -815,6 +817,8 @@ static Shader Water_GetShader(void)
             s_waterLocObstacles[i] = GetShaderLocation(s_waterShader, obstacleNames[i]);
         s_waterLocWaveFieldTex = GetShaderLocation(s_waterShader, "u_waveFieldTex");
         s_waterLocWaveFieldEnabled = GetShaderLocation(s_waterShader, "u_waveFieldEnabled");
+        s_waterLocLakeRadii = GetShaderLocation(s_waterShader, "u_lakeRadii");
+        s_waterLocLakeSeed = GetShaderLocation(s_waterShader, "u_lakeSeed");
 
         int causticSlot = 1;
         if (s_waterLocCausticTex >= 0) {
@@ -3949,6 +3953,7 @@ void MapProp_DrawWaterBed(const MapWaterSurface *water, float time)
 void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
 {
     if (!water || !water->ready) return;
+    Water_UploadWaveField((MapWaterSurface *)water);
     Vector3 position = water->config.center;
 
     Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
@@ -3980,6 +3985,10 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     SetShaderValue(shader, s_waterLocAmbientColor, &ambientRgb, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, s_waterLocViewPos, &camera.position, SHADER_UNIFORM_VEC3);
     if (s_waterLocModelPos >= 0) SetShaderValue(shader, s_waterLocModelPos, &position, SHADER_UNIFORM_VEC3);
+    Vector2 lakeRadii = {water->config.radiusX, water->config.radiusZ};
+    int lakeSeed = (int)water->config.seed;
+    if (s_waterLocLakeRadii >= 0) SetShaderValue(shader, s_waterLocLakeRadii, &lakeRadii, SHADER_UNIFORM_VEC2);
+    if (s_waterLocLakeSeed >= 0) SetShaderValue(shader, s_waterLocLakeSeed, &lakeSeed, SHADER_UNIFORM_INT);
 
     SetShaderValue(shader, s_waterLocMaxDepth, &water->config.maxDepth, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, s_waterLocAbsorption, &water->config.absorption, SHADER_UNIFORM_VEC3);

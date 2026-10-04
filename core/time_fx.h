@@ -41,7 +41,7 @@ float TimeFX_Apply(float rawDt);   // call once per frame; returns rawDt * curre
  * RULE: simulation/animation code under core/ and sandbox/ reads
  * TimeFX_RawDelta(), never GetFrameTime(). GetFrameTime() remains correct for
  * things that genuinely want wall-clock — perf counters and frame-budget gates
- * (core/post_fx.c's perf sample, core/fluid/fluid_surface.c's budget check) —
+ * (core/post_fx.c's perf sample, core/liquid/liquid_surface.c's budget check) —
  * because pinning those would make them measure nothing.
  *
  * Not hitstop-scaled on purpose: this is a pure determinism fix, so effects

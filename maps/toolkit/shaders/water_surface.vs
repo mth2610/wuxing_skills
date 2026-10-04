@@ -69,8 +69,9 @@ void main()
         wave += sin(outward * 4.5 - u_time * 5.0) * exp(-outward * 1.35) *
                 smoothstep(0.1, 0.55, bodyDist) * movement * 0.026 * shoreFade;
     }
-    local.y += wave;
-    world.y += wave;
+    // Water plane stays perfectly flat; optical waves are computed via fragment normals
+    // local.y += wave;
+    // world.y += wave;
 
     fragPosition = world;
     fragLakeCoord = coord;

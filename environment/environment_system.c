@@ -228,6 +228,13 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
     float skewFactor = 1.0f / fabsf(s_sunDirection.y);
     Vector2 shadowOffset = { s_sunDirection.x * skewFactor, s_sunDirection.z * skewFactor };
     
+    float waterSurfaceY = 0.0f, waterDepth = 0.0f;
+    if (MapManager_GetWaterInfoAt(pos.x, pos.z, &waterSurfaceY, &waterDepth)) {
+        if (pos.y < waterSurfaceY + 0.05f) {
+            return;
+        }
+    }
+
     float yGround = MapManager_GetGroundHeightAt(pos.x, pos.z) + 0.02f;
     
     rlSetTexture(0);

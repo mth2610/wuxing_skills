@@ -115,7 +115,7 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
   out either way.
 - **A missing shader file does not make a scenario fail.** raylib substitutes its
   DEFAULT shader and returns a valid non-zero id, so `if (shader.id == 0)` never
-  fires. `perf_ssf_filter` loaded `core/fluid/shaders/fluid_depth_narrow_range.fs`
+  fires. `perf_ssf_filter` loaded `core/liquid/shaders/liquid_depth_narrow_range.fs`
   by RELATIVE path while the harness runs from `/tmp/rlvk_visual_cache` — it had
   been benchmarking the default shader for its entire existence. Fixed with
   `RLVK_REPO_ROOT` (exported by the script) plus a guard against
@@ -190,3 +190,4 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
 | 2026-10-01 | Codex | Texture/depth/uniform caching and timing interpretation | `rlvk_shaderc.inl`, `rlvk_texture.inl`, `rlvk_renderpass.inl`, `rlvk_platform.inl`, `rlvk_pipeline.inl`, visual regression scenarios and fresh runtime observations | Ground-truth |
 | 2026-10-02 | Codex | Default uniform block member capacity | `rlvk_shaderc.inl`, `tests/rlvk_runtime_test.c` failing then passing shaderc reflection regression | Ground-truth |
 | 2026-10-03 | Codex | GPU trace query placement and sample accounting | `rlvk_platform.inl`, `rlvk_state.inl`, `rlvk_renderpass.inl`, trace-enabled visual validation and headless sample tests | Ground-truth |
+| 2026-10-04 | Codex | SSF shader scenario path | `tests/rlvk_visual_test.c`, renamed `core/liquid/shaders/liquid_depth_narrow_range.fs` | Ground-truth |

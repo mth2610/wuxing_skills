@@ -115,7 +115,7 @@ Texture2D SceneTargets_GetRawDepthTexture(void);
  * retired), so an effect that wants to refract "what is behind it" cannot
  * sample the scene target while drawing into it — undefined in GL, a
  * read/write hazard in Vulkan (engine landmine #15; the same trap that caught
- * FluidSurface). The safe pattern is the one FluidSurface uses privately:
+ * LiquidSurface). The safe pattern is the one LiquidSurface uses privately:
  * copy the finished scene into a separate target while it is still only a
  * source, then sample the copy.
  *

@@ -28,7 +28,7 @@ int main(void)
               !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeContactSpark") ||
               !Has("core/composition/common/vc_impact_dust.inl", "VFX_IMPACT_DUST_VARIANT_DUST_PUFF") ||
               !Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeDecalVariant");
-    failed += Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeFluidImpact") ||
+    failed += Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeLiquidImpact") ||
               Has("core/composition/common/vc_impact_dust.inl", "VFX_ComposeIceCrystal");
     failed += !Has("core/composition/common/vc_surface_impact.inl", "case VFX_IMPACT_SURFACE_METAL: return VC_MAT_METAL;") ||
               !Has("core/composition/common/vc_surface_impact.inl", "case VFX_IMPACT_SURFACE_WOOD: return VC_MAT_WOOD;") ||

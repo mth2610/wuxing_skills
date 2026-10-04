@@ -201,7 +201,7 @@ being read.
 
 **Cause.** The effect samples `ScreenDistort_GetSceneTexture()` inside a pass
 whose bound colour attachment IS that texture. GL calls the result undefined;
-Vulkan calls it a read/write hazard. This became true for `FluidSurface` the day
+Vulkan calls it a read/write hazard. This became true for `LiquidSurface` the day
 the split VFX layers were retired (`b03b7b6`): the body pass had always bound a
 separate `vfxBodyTex`, and afterwards it bound `renderTex` itself.
 
@@ -860,7 +860,7 @@ targets both showed clean, correctly-placed geometry) rendered **nothing at all*
 in the composite. Every pixel was discarded. The few debug views that returned
 before the discards showed the body; every view after them was empty.
 
-**Cause.** `FluidSurface_Capture` rasterized through raylib's `BeginMode3D`,
+**Cause.** `LiquidSurface_Capture` rasterized through raylib's `BeginMode3D`,
 whose projection is built from `RL_CULL_DISTANCE_NEAR = 0.01`, while the
 composite reconstructs view positions by inverting a frustum with **near = 1.0**
 (matching `main.c::MyBeginMode3D`, which uses 1.0 because this project's
@@ -886,7 +886,7 @@ Guarded by `core/tests/fluid_capture_projection_test.c`.
 intermittently, permanently, from the first frame onward.
 
 **Cause.** The gate rejected work when the previous frame ran over budget, and it
-read that frame time from a variable updated inside `FluidSurface_Composite`. But
+read that frame time from a variable updated inside `LiquidSurface_Composite`. But
 `main.c` only calls `Composite` when something was actually submitted. One slow
 start-up frame closed the gate; with the gate closed nothing was submitted;
 `Composite` was therefore never called; the frame time was never updated; the
@@ -1242,6 +1242,7 @@ no single-pixel step is negative, so a reversal count alone reports zero.
 
 | `postfx_hue_restore` | 0.0 | 0.15 | 0.25 | 0.35 | 0.5 (this machine) |
 |---|---|---|---|---|---|
+| 2026-10-04 | Codex | Liquid surface API references | core/liquid/liquid_surface.h | Ground-truth |
 | min dG | +6 | +10 | +4 | **-1** | **-10** |
 | worst G drop | 0 | 0 | 0 | 2 | 12 |
 
@@ -1669,4 +1670,5 @@ fields and mask chains generally, not about that tail.*
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-04 | Codex | Liquid surface API references | core/liquid/liquid_surface.h | Ground-truth |
 | 2026-10-03 | Codex | Volume sampling coherence: fog ordered grid | core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_sampling_test.c; fixed-camera captures | Ground-truth |

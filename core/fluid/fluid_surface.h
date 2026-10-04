@@ -1,161 +1,44 @@
-#ifndef CORE_FLUID_SURFACE_H
-#define CORE_FLUID_SURFACE_H
+#ifndef CORE_FLUID_COMPAT_FLUID_SURFACE_H
+#define CORE_FLUID_COMPAT_FLUID_SURFACE_H
 
-#include "raylib.h"
+/* Legacy source compatibility. New code includes core/liquid/liquid_surface.h. */
+#include "core/liquid/liquid_surface.h"
 #include "core/fluid/fluid_motion.h"
-#include "core/particles/particle_manager.h"
 
-#define FLUID_SURFACE_MAX_PARTICLES 384
-/* Distinct liquids that may share one screen. The capture rasterizes a slot
- * index per pixel, so this is the width of the composite's material table, not
- * a count of bodies: any number of bodies may share a slot. */
-#define FLUID_SURFACE_MATERIAL_SLOTS 6
-
-/* Which BRANCH of the optics a liquid takes. Not a style flag — the three
- * differ in what physically happens at and under the surface, and the composite
- * assembles a different set of terms for each. */
-typedef enum {
-    /* Water, poison, oil: refracts the background, absorbs along the measured
-     * path (Beer-Lambert), reflects a few percent at normal incidence. */
-    FLUID_LIQUID_DIELECTRIC = 0,
-    /* Lava, molten glass: opaque within a reference depth, radiates a
-     * thickness-driven blackbody colour, and its skin reads as cooled crust. */
-    FLUID_LIQUID_EMISSIVE = 1,
-    /* Liquid metal, mercury: a conductor. High COLOURED F0 and NO transmission
-     * at all, so the body is read almost entirely through reflection. */
-    FLUID_LIQUID_CONDUCTOR = 2
-} FluidLiquidClass;
-
-typedef struct {
-    Color body;             /* identity/albedo; for a conductor this IS its F0 */
-    Color glow;             /* hot core (emissive) / rim tint (dielectric) */
-    Color soft;             /* pastel: foam, horizon reflection fill */
-    FluidLiquidClass liquidClass;
-    float emission;         /* radiance of a fully-thick body; 0 for cold liquids */
-    float ior;              /* refractive index; <= 1 falls back to water's 1.333 */
-    float roughnessScale;   /* scales the authored perceptual roughness; <= 0 -> 1 */
-    float opacityPerMetre;  /* grey extinction ON TOP of the body colour's own */
-    float foam;             /* 0..1 gain on foam (dielectric) / crust (emissive) */
-} FluidLiquidDesc;
-
-/* Water, unchanged from what FluidSurface_SetMaterialColors has always built. */
-FluidLiquidDesc FluidSurface_DielectricDesc(Color body, Color glow, Color soft);
-
-/* Canonical optical identity paired with FluidMotion_Get(profile). This is
- * shared by impacts, force-field orbs, and deterministic material benches. */
-FluidLiquidDesc FluidSurface_ProfileDesc(FluidMotionProfile profile);
-
-/* Binds `desc` to a slot and makes it the material for every particle and every
- * stream registered AFTER this call, until the next bind. Returns the slot.
- *
- * Slots are content-addressed: binding the same liquid twice reuses one slot, so
- * a caller that re-binds every frame does not consume the table. When all slots
- * hold liquids that were used more recently than this one, the least recently
- * used is evicted — with six slots and a handful of liquids on screen this
- * cannot bite (LIQUID BENCH puts five on screen), and the failure mode if it ever
- * does is a body changing colour,
- * never a crash. */
-int FluidSurface_BindMaterial(const FluidLiquidDesc *desc);
-
-/* The slot the next registration would land in. GPU-PBD records it at spawn so
- * a body that outlives the frame it was spawned in keeps its own liquid. */
-int FluidSurface_CurrentMaterial(void);
-
-/* --- Cost gates ----------------------------------------------------------
- *
- * SSF's cost is almost entirely PER FRAME, not per body: the capture, the depth
- * filter, the thickness chain and the composite all run once no matter how many
- * liquids are in them. Measured on the VFX tester, the water ring has 6.3x the
- * splat area and 3.2x the screen coverage of the PBD crown and costs 1.5x. So
- * the expensive decision is not "how many bodies" — it is "does the surface run
- * at all this frame", and that is what these gates arbitrate.
- *
- * Nothing enforced this before: any number of skills could submit streams, and
- * nothing skipped SSF when the frame was already over budget. */
-typedef enum {
-    /* Never gets SSF. There can be a dozen of these on screen and none of them
-     * is what the player is looking at. */
-    FLUID_PRIORITY_MINION = 0,
-    /* A basic attack. Only ever JOINS a surface that is already running — its
-     * marginal cost is then splat area alone. It may not switch SSF on. */
-    FLUID_PRIORITY_BASIC = 1,
-    /* A hero/player cast. May switch the surface on. */
-    FLUID_PRIORITY_CAST = 2,
-    /* A boss ultimate. Outranks a cast for the resources that are still
-     * single-owner (the reconstruction radius), and is the last thing dropped
-     * when the frame is over budget. */
-    FLUID_PRIORITY_ULTIMATE = 3
-} FluidSurfacePriority;
-
-/* Radius in PIXELS below which a body is not worth a screen-space surface. The
- * per-frame cost is absurd for a small splash, and at this size a reconstructed
- * surface is indistinguishable from the particles it was built from. */
-#define FLUID_SURFACE_MIN_PROJECTED_RADIUS_PX 16.0f
-
-/* Frame time (ms) above which the surface admits ULTIMATE only. Deliberately
- * well past 16.6: dropping a hero's water the instant a frame runs long would
- * make the effect flicker in and out during exactly the busy moments it exists
- * for. */
-#define FLUID_SURFACE_BUDGET_MS 26.0f
-
-/* At HIGH, compact dense bodies need one 2D reconstruction round; larger or
- * close-up bodies keep two. This is a BODY footprint threshold, not a quality
- * downgrade: one round already spans a complete optical kernel, while the
- * second exists to remove residual large-scale lumpiness on broad surfaces. */
-#define FLUID_SURFACE_COMPACT_BODY_PX 180.0f
-#define FLUID_SURFACE_COMPACT_KERNEL_PX 8.0f
-
-/* Ask BEFORE building a fluid body, every frame the body wants to exist.
- * `worldRadius` is the body's approximate bounding radius in metres.
- *
- * `alreadyRunning` — pass true when THIS body was admitted on a previous frame
- * and is still going; false when it is starting. It is not an optimisation, it
- * is what stops the gate strobing: the frame-budget test measures a number the
- * gate's own decision controls (admitting the water ring costs 23-27 ms a
- * frame, rejecting it 16-17 ms), so re-testing a running body flips it every
- * frame at any threshold between those. A body's affordability is decided once,
- * when it starts. The size cull is not self-referential and keeps running every
- * frame, with hysteresis.
- *
- * Returns false when the caller must render with ordinary particles instead —
- * the caller owns that fallback; this function only decides. It uses the
- * PREVIOUS frame's camera and frame time, so it is order-independent within a
- * frame: a basic attack does not have to be submitted after the hero's cast to
- * see that the surface is running. */
-bool FluidSurface_RequestBody(FluidSurfacePriority priority, Vector3 center,
-                              float worldRadius, bool alreadyRunning);
-
-/* The reconstruction radius is still ONE value for the whole capture. A gated
- * caller sets it through this, so a boss ultimate's kernel is not resized by a
- * player cast that happened to submit after it. Within a frame the highest
- * priority wins; equal priorities are last-writer-wins.
- * FluidSurface_SetReconstructionRadius stays unconditional for ungated callers. */
-void FluidSurface_SetReconstructionRadiusFor(FluidSurfacePriority priority, float radius);
-
-/* Screen-space liquid surface. Register from a 3D draw path (no GL work),
- * capture after SceneTargets_End(), then composite into ScreenDistort's VFX
- * body layer before its HDR scene composite. */
-void FluidSurface_Init(int width, int height);
-void FluidSurface_Unload(void);
-/* Sets the optical identity used by absorption, scattering and highlights.
- * Callers normally forward body/glow/soft from VFX_Material(...).
- * Shorthand for binding FluidSurface_DielectricDesc(body, glow, soft). */
-void FluidSurface_SetMaterialColors(Color body, Color glow, Color soft);
-/* Approximate world-space radius of one optical kernel. It controls the
- * depth range used by screen-space surface reconstruction. */
-void FluidSurface_SetReconstructionRadius(float radius);
-/* Optional per-frame screen-footprint hint. Call immediately before submitting
- * a coherent body. Multiple hints accumulate conservatively (largest wins).
- * Callers that omit it keep the full two-round HIGH reconstruction path. */
-void FluidSurface_HintBody(Vector3 center, float worldRadius);
-void FluidSurface_RegisterParticle(Vector3 position, float radius);
-void FluidSurface_RegisterEllipsoid(Vector3 position, Vector3 radii);
-/* Accepts the same opaque stream from either particle backend. The GPU path
- * is rasterized by the owning renderer and is never read back to CPU. */
-bool FluidSurface_SubmitParticleStream(const ParticleRenderStream *stream);
-/* Whether the current frame has any surface input to capture/composite. */
-bool FluidSurface_HasPending(void);
-void FluidSurface_Capture(Camera3D camera);
-void FluidSurface_Composite(void);
+#define FLUID_LIQUID_CONDUCTOR LIQUID_CLASS_CONDUCTOR
+#define FLUID_LIQUID_DIELECTRIC LIQUID_CLASS_DIELECTRIC
+#define FLUID_LIQUID_EMISSIVE LIQUID_CLASS_EMISSIVE
+#define FLUID_PRIORITY_BASIC LIQUID_PRIORITY_BASIC
+#define FLUID_PRIORITY_CAST LIQUID_PRIORITY_CAST
+#define FLUID_PRIORITY_MINION LIQUID_PRIORITY_MINION
+#define FLUID_PRIORITY_ULTIMATE LIQUID_PRIORITY_ULTIMATE
+#define FLUID_SURFACE_BUDGET_MS LIQUID_SURFACE_BUDGET_MS
+#define FLUID_SURFACE_COMPACT_BODY_PX LIQUID_SURFACE_COMPACT_BODY_PX
+#define FLUID_SURFACE_COMPACT_KERNEL_PX LIQUID_SURFACE_COMPACT_KERNEL_PX
+#define FLUID_SURFACE_MATERIAL_SLOTS LIQUID_SURFACE_MATERIAL_SLOTS
+#define FLUID_SURFACE_MAX_PARTICLES LIQUID_SURFACE_MAX_PARTICLES
+#define FLUID_SURFACE_MIN_PROJECTED_RADIUS_PX LIQUID_SURFACE_MIN_PROJECTED_RADIUS_PX
+#define FluidLiquidClass LiquidClass
+#define FluidLiquidDesc LiquidDesc
+#define FluidMotionProfile LiquidMotionProfile
+#define FluidMotion_Get LiquidMotion_Get
+#define FluidSurfacePriority LiquidSurfacePriority
+#define FluidSurface_BindMaterial LiquidSurface_BindMaterial
+#define FluidSurface_Capture LiquidSurface_Capture
+#define FluidSurface_Composite LiquidSurface_Composite
+#define FluidSurface_CurrentMaterial LiquidSurface_CurrentMaterial
+#define FluidSurface_DielectricDesc LiquidSurface_DielectricDesc
+#define FluidSurface_HasPending LiquidSurface_HasPending
+#define FluidSurface_HintBody LiquidSurface_HintBody
+#define FluidSurface_Init LiquidSurface_Init
+#define FluidSurface_ProfileDesc LiquidSurface_ProfileDesc
+#define FluidSurface_RegisterEllipsoid LiquidSurface_RegisterEllipsoid
+#define FluidSurface_RegisterParticle LiquidSurface_RegisterParticle
+#define FluidSurface_RequestBody LiquidSurface_RequestBody
+#define FluidSurface_SetMaterialColors LiquidSurface_SetMaterialColors
+#define FluidSurface_SetReconstructionRadius LiquidSurface_SetReconstructionRadius
+#define FluidSurface_SetReconstructionRadiusFor LiquidSurface_SetReconstructionRadiusFor
+#define FluidSurface_SubmitParticleStream LiquidSurface_SubmitParticleStream
+#define FluidSurface_Unload LiquidSurface_Unload
 
 #endif

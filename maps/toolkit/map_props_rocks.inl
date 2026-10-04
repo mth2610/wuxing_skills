@@ -180,7 +180,7 @@ void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placemen
     {
         const MapRockPlacement *p = &placements[i];
 
-        Vector3 pos = {p->position.x, -0.3f * p->heightScale, p->position.z};
+        Vector3 pos = {p->position.x, p->position.y - 0.3f * p->heightScale, p->position.z};
         Vector3 scale = {p->radiusScale, p->heightScale, p->radiusScale};
 
         // API Môi trường - Đổ bóng giả tự động tính góc sáng. Bỏ qua cho
@@ -188,8 +188,12 @@ void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placemen
         // nhau đè lên nhau (alpha overdraw) tốn fill-rate mà không thấy rõ
         // tác dụng.
         if (drawShadow) {
-            Environment_DrawSmartShadow(p->position, ENV_SHAPE_SPHERE,
-                                        p->radiusScale * 2.0f, p->heightScale * 2.0f);
+            float waterSurfaceY = 0.0f, waterDepth = 0.0f;
+            bool inWater = MapManager_GetWaterInfoAt(p->position.x, p->position.z, &waterSurfaceY, &waterDepth);
+            if (!inWater) {
+                Environment_DrawSmartShadow(p->position, ENV_SHAPE_SPHERE,
+                                            p->radiusScale * 2.0f, p->heightScale * 2.0f);
+            }
         }
 
         DrawModelEx(rocks->model, pos, rotAxis, p->rotationDeg, scale, WHITE);
@@ -208,7 +212,7 @@ void MapProp_DrawRockShadowCasters(MapRockSet *rocks,
     Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
     for (int i = 0; i < count; i++) {
         const MapRockPlacement *p = &placements[i];
-        Vector3 pos = {p->position.x, -0.3f * p->heightScale, p->position.z};
+        Vector3 pos = {p->position.x, p->position.y - 0.3f * p->heightScale, p->position.z};
         Vector3 scale = {p->radiusScale, p->heightScale, p->radiusScale};
         DrawModelEx(rocks->model, pos, rotAxis, p->rotationDeg, scale, WHITE);
     }

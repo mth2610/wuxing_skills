@@ -88,7 +88,7 @@ static void WaterRing_SetField(Vector3 center, float radius, float t01)
  * a quarter second after the calls stop. `radius` is the ring radius in metres
  * (the tube is 0.12 of it), `t01` drives density and flow speed.
  *
- * SSF carries ONE material at a time (FluidSurface_SetMaterialColors is global),
+ * SSF carries ONE material at a time (LiquidSurface_SetMaterialColors is global),
  * so a second fluid body on screen in the same frame shares this one's optics. */
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
 {
@@ -96,7 +96,7 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
     t01 = Clamp(t01, 0.0f, 1.0f);
 
     const VFX_ElementMaterial *water = VFX_Material(VC_MAT_WATER);
-    FluidLiquidDesc material = FluidSurface_ProfileDesc(FLUID_MOTION_WATER);
+    LiquidDesc material = LiquidSurface_ProfileDesc(LIQUID_MOTION_WATER);
     const MeshAdjacency *mesh = WaterRing_Mesh();
 
     /* Ask before spending the surface. A ring is a hero cast, so it MAY switch
@@ -105,7 +105,7 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
      * spawned with visible colours instead of the alpha-0 the SSF path uses,
      * which is the ordinary-particle fallback the cost design calls for. */
     bool ringRunning = (s_waterRingEmitter != PARTICLE_EMITTER_INVALID) && s_waterRingUsesSurface;
-    bool useSurface = FluidSurface_RequestBody(FLUID_PRIORITY_CAST, center,
+    bool useSurface = LiquidSurface_RequestBody(LIQUID_PRIORITY_CAST, center,
                                                radius * (1.0f + WATER_RING_TUBE_RATIO),
                                                ringRunning);
     s_waterRingIdle = 0.0f;
@@ -185,8 +185,8 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
     ParticleManager_EmitBatch(s_waterRingEmitter, s_waterRingSpawn, spawn);
 
     if (useSurface) {
-        FluidSurface_BindMaterial(&material);
-        FluidSurface_SetReconstructionRadiusFor(FLUID_PRIORITY_CAST, kernel);
+        LiquidSurface_BindMaterial(&material);
+        LiquidSurface_SetReconstructionRadiusFor(LIQUID_PRIORITY_CAST, kernel);
     }
     s_waterRingUsesSurface = useSurface;
 }
@@ -210,7 +210,7 @@ static void WaterRing_Update(float dt)
 }
 
 /* SSF submission — runs in the screen-space composite phase, before
- * FluidSurface_HasPending(). */
+ * LiquidSurface_HasPending(). */
 static void WaterRing_SubmitSurface(void)
 {
     /* Not submitting is the whole point of the gate: the frame's fixed SSF cost
@@ -219,5 +219,5 @@ static void WaterRing_SubmitSurface(void)
     ParticleRenderStream stream;
     if (s_waterRingEmitter != PARTICLE_EMITTER_INVALID &&
         ParticleManager_GetSurfaceStream(s_waterRingEmitter, &stream))
-        FluidSurface_SubmitParticleStream(&stream);
+        LiquidSurface_SubmitParticleStream(&stream);
 }

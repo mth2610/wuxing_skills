@@ -397,6 +397,44 @@ MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float 
     // GenMeshHeightmap produced it.
     Image heightmapImg = LoadImage(heightmapPath);
     Mesh mesh = GenMeshHeightmap(heightmapImg, (Vector3){width, cliffDepth, depth});
+
+    // Compute continuous central-difference vertex normals so the heightmap
+    // (including the concave lake basin and rolling swales) has smooth shading
+    // without faceted polygonal creases.
+    if (mesh.normals != NULL && heightmapImg.width > 1 && heightmapImg.height > 1) {
+        float cellX = width / (float)(heightmapImg.width - 1);
+        float cellZ = depth / (float)(heightmapImg.height - 1);
+        for (int i = 0; i < mesh.vertexCount; i++) {
+            float vx = mesh.vertices[i * 3 + 0];
+            float vz = mesh.vertices[i * 3 + 2];
+            int ix = (int)roundf((vx / width) * (float)(heightmapImg.width - 1));
+            int iz = (int)roundf((vz / depth) * (float)(heightmapImg.height - 1));
+            if (ix < 0) ix = 0; else if (ix >= heightmapImg.width) ix = heightmapImg.width - 1;
+            if (iz < 0) iz = 0; else if (iz >= heightmapImg.height) iz = heightmapImg.height - 1;
+
+            int xL = ix > 0 ? ix - 1 : 0;
+            int xR = ix < heightmapImg.width - 1 ? ix + 1 : heightmapImg.width - 1;
+            int zU = iz > 0 ? iz - 1 : 0;
+            int zD = iz < heightmapImg.height - 1 ? iz + 1 : heightmapImg.height - 1;
+
+            float hL = (float)GetImageColor(heightmapImg, xL, iz).r / 255.0f * cliffDepth;
+            float hR = (float)GetImageColor(heightmapImg, xR, iz).r / 255.0f * cliffDepth;
+            float hU = (float)GetImageColor(heightmapImg, ix, zU).r / 255.0f * cliffDepth;
+            float hD = (float)GetImageColor(heightmapImg, ix, zD).r / 255.0f * cliffDepth;
+
+            float stepX = (float)(xR - xL) * cellX;
+            float stepZ = (float)(zD - zU) * cellZ;
+
+            float dYdx = stepX > 0.0001f ? (hR - hL) / stepX : 0.0f;
+            float dYdz = stepZ > 0.0001f ? (hD - hU) / stepZ : 0.0f;
+
+            Vector3 n = Vector3Normalize((Vector3){-dYdx, 1.0f, -dYdz});
+            mesh.normals[i * 3 + 0] = n.x;
+            mesh.normals[i * 3 + 1] = n.y;
+            mesh.normals[i * 3 + 2] = n.z;
+        }
+    }
+
     UnloadImage(heightmapImg);
 
     MapGroundSurface result = SetupGroundMaterial(mesh, width, depth, tileSize, splatMapPath, grassTexPath, pathTexPath);

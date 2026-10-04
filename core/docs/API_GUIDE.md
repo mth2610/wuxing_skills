@@ -243,7 +243,7 @@ behaviour while their descriptors are migrated.
 
 Fluid renderers consume `ParticleRenderStream` from
 `ParticleManager_GetSurfaceStream`. The stream is opaque; consumers must never
-map it or request GPU-to-CPU readback. `FluidSurface_SubmitParticleStream` is the
+map it or request GPU-to-CPU readback. `LiquidSurface_SubmitParticleStream` is the
 backend-neutral handoff point.
 
 ParticleConfig should be initialized with {0}.
@@ -502,14 +502,16 @@ void DecalSystem_Unload(void);
   a compatibility entry point, but it cannot choose two render targets for its
   caller and therefore is not suitable for the layered compositor.
 
-### Fluid Impacts (`core/fluid_impact.h`)
+### Liquid impacts (`core/liquid/liquid_impact.h`)
 
 ```c
-void FluidImpact_SpawnWater(const FluidImpactEvent *event);
-void FluidImpact_SetCollisionQuery(FluidImpactCollisionQueryFn query, void *userData);
+void LiquidImpact_SpawnWater(const LiquidImpactEvent *event);
+void LiquidImpact_SetCollisionQuery(LiquidImpactCollisionQueryFn query, void *userData);
 ```
 
-Gameplay submits `hitPoint`/`hitNormal`; hero droplets perform deterministic swept collision through `FluidImpact_SetCollisionQuery`, while compute/CPU-VBO particles are background density only. Without a provider, Core collides against the active map ground; walls/props require the world/physics owner to register its query. Full budget and wetness fallback contract: [`FLUID_IMPACT_SPEC.md`](FLUID_IMPACT_SPEC.md).
+Gameplay submits `hitPoint`/`hitNormal`; hero droplets perform deterministic swept collision through `LiquidImpact_SetCollisionQuery`. Without a provider, Core collides against the active map ground; walls/props require the world/physics owner to register its query. The coherent force-field body uses the event's receiver plane; see `core/liquid/liquid_impact.c`.
+
+`core/liquid/` and `Liquid*` are the canonical module and API names. The forwarding headers in `core/fluid/` retain the old types, enum constants and function names for source compatibility. `WUXING_LIQUID_RECON_ROUNDS` and `WUXING_LIQUID_ORB_PROFILE` take precedence over their legacy `WUXING_FLUID_*` aliases; see `core/liquid/liquid_surface.c` and `core/composition/water/water_orb.inl`.
 
 Rules:
 - Call `DecalSystem_Init()` once at startup, `DecalSystem_Update(dt)` every frame to age out decals.
@@ -2863,3 +2865,10 @@ exceed 1.0 and cannot produce a hot core on its own. Use it for shape over time
   The shared bright prefilter gathers each quarter-resolution source cell before
   applying this threshold, so a thin HDR mesh core is eligible for bloom without
   being widened into a ribbon.
+
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-10-04 | Codex | Liquid names, impact usage and compatibility | core/liquid/liquid_impact.h; core/liquid/liquid_impact.c; core/fluid/fluid_surface.h | Ground-truth |

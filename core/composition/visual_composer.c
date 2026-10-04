@@ -2,9 +2,9 @@
 #include "core/presets/vfx_presets.h"
 #include "core/particles/particle_system.h"
 #include "core/decals/decal_system.h"
-#include "core/fluid/fluid_impact.h"
+#include "core/liquid/liquid_impact.h"
 #include "core/particles/particle_manager.h"
-#include "core/fluid/fluid_surface.h"
+#include "core/liquid/liquid_surface.h"
 #include "core/vfx_light.h"
 #include "core/trails/trail_system.h"
 #include "core/camera_fx.h"
@@ -142,7 +142,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
 
 /* Screen-space VFX producers that must submit their particle streams before the
  * pending-fluids check. Called from main.c's CompositeScreenSpaceVFX alongside
- * FluidImpact_Draw(). Not an archetype and never fixture-scanned: static workers
+ * LiquidImpact_Draw(). Not an archetype and never fixture-scanned: static workers
  * inside the .inl it drives are out of reach of main.c, so this is the bridge. */
 void VFX_Compose_SubmitScreenSpaceVFX(void)
 {

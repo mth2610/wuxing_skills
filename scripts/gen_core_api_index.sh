@@ -13,11 +13,11 @@ cd "$(dirname "$0")/.."
 HEADERS=(
   core/resource_manager.h core/vfx_surface_registry.h core/tuning.h
   core/skill_manager.h core/skill_helper.h core/skill_curve.h
-  core/fluid/fluid_motion.h
+  core/liquid/liquid_motion.h
   core/volumetric/volumetric_fog.h
-  core/fluid/fluid_impact.h
-  core/fluid/fluid_surface.h
-  core/fluid/fluid_orb.h
+  core/liquid/liquid_impact.h
+  core/liquid/liquid_surface.h
+  core/liquid/liquid_orb.h
   core/gas/gas_system.h
   core/force_field.h core/particles/particle_travel.h core/particles/particle_system.h core/particles/particle_manager.h core/mesh_adjacency.h
   core/trails/trail_system.h core/ribbon_strip.h core/decals/decal_system.h

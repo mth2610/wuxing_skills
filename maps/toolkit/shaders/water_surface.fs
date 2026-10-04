@@ -23,6 +23,9 @@ uniform float u_detailScale;
 uniform float u_detailStrength;
 uniform vec2 u_flowVelocity;        // Directional stream flow (x, z)
 uniform int u_waterShape;           // 0 = Radial, 1 = Rect, 2 = Strip
+uniform vec3 u_modelPos;
+uniform vec2 u_lakeRadii;
+uniform int u_lakeSeed;
 
 // Lighting uniforms
 uniform vec3 u_lightDir;
@@ -57,6 +60,22 @@ void main()
 {
     float t = u_time * u_waveSpeed;
 
+    // Continuous analytical radial bathymetry and shoreline damping
+    float radial = 0.0;
+    float shoreFade = fragShoreFade;
+    if (u_waterShape == 0) {
+        vec2 delta = (fragWorldXZ - u_modelPos.xz) / max(u_lakeRadii, vec2(0.001));
+        float angle = atan(delta.y, delta.x);
+        float seedPhase = float(u_lakeSeed & 1023) * 0.0173;
+        float shorelineNoise = sin(angle * 2.0 + seedPhase) * 0.095
+                             + cos(angle * 3.0 - seedPhase * 0.70) * 0.065
+                             + sin(angle * 5.0 + 1.2) * 0.038
+                             + sin(angle * 11.0 - seedPhase * 0.40) * 0.018;
+        float edge = 1.0 + shorelineNoise;
+        radial = clamp(length(delta) / max(edge, 0.001), 0.0, 1.0);
+        shoreFade = 1.0 - smoothstep(0.75, 0.98, radial);
+    }
+
     // ── 1. WAVE NORMALS & DUAL-PHASE FLOW ────────────────────────────────────
     vec2 d0 = vec2(0.82, 0.57);
     vec2 d1 = vec2(-0.31, 0.95);
@@ -71,7 +90,7 @@ void main()
     vec2 slope = cos(p0) * d0 * u_waveScale * 0.50;
     slope += cos(p1) * d1 * u_waveScale * 1.73 * 0.29;
     slope += cos(p2) * d2 * u_waveScale * 2.61 * 0.16;
-    slope *= u_waveHeight * 1.85 * fragShoreFade;
+    slope *= u_waveHeight * 1.85 * shoreFade;
 
     // Microdetail sampling: Dual-phase flow if stream, or dual-rotated if calm
     float flowSpeed = length(u_flowVelocity);
@@ -110,7 +129,7 @@ void main()
         detailSlope = vec2(dX0, dZ0) * 0.72 + vec2(dZ1, -dX1) * 0.28;
     }
 
-    slope += detailSlope * u_detailStrength * 2.40 * fragShoreFade;
+    slope += detailSlope * u_detailStrength * 2.40 * shoreFade;
 
     // The shallow-water solver provides actual height derivatives and
     // curvature. All interaction shading comes from this propagated field.
@@ -123,18 +142,15 @@ void main()
         max(0.0, waveField.b - 0.5) * 0.52 : 0.0;
     float ringCrestHighlight = 0.0;
     float dynamicWakeFoam = 0.0;
-    slope += interactSlope * fragShoreFade;
+    slope += interactSlope * shoreFade;
     vec3 normal = normalize(vec3(-slope.x, 1.0, -slope.y));
 
     // ── 2. DEPTH & BATHYMETRY ESTIMATION (h <= 1.3m) ─────────────────────────
     float waterDepth = 0.0;
     bool hasValidDepth = false;
 
-    // The radial lake has a known bed profile. Screen-space ray distance to
-    // that bed changes with camera pitch and used to move a visible contour
-    // across the lake whenever the camera zoomed or jumped.
+    // The radial lake has an exact continuous bed profile.
     if (u_waterShape == 0) {
-        float radial = clamp(length(fragLakeCoord), 0.0, 1.0);
         waterDepth = u_maxDepth * (1.0 - pow(radial, 1.6)) + 0.015;
         hasValidDepth = true;
     }
@@ -245,7 +261,7 @@ void main()
     float shoreBreakup = (shoreNoise - 0.5) * 0.045 + (shoreFine - 0.5) * 0.012;
     // Reveal textured shallows in irregular pockets rather than one even ring.
     float shoreEdgeFade = u_waterShape == 0
-        ? 1.0 - smoothstep(0.91 + shoreBreakup, 1.0, length(fragLakeCoord))
+        ? 1.0 - smoothstep(0.91 + shoreBreakup, 1.0, radial)
         : smoothstep(0.0005, 0.012, waterDepth);
     surfaceAlpha *= shoreEdgeFade;
 

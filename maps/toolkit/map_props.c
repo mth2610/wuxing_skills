@@ -1,4 +1,5 @@
 #include "maps/toolkit/map_props.h"
+#include "core/map_manager.h"
 #include "core/resource_manager.h"
 #include "maps/toolkit/prop_lit.h"
 #include "maps/toolkit/map_shadow.h"

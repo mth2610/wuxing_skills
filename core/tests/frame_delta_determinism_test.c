@@ -143,7 +143,7 @@ int main(void)
     /* The third leg. A gate that sheds load on wall-clock frame cost decides
      * differently between two runs, so the CONTENT changes — the capture is
      * irreproducible even with time and RNG both pinned. */
-    failed += Require(ReadFile("core/fluid/fluid_surface.c"),
+    failed += Require(ReadFile("core/liquid/liquid_surface.c"),
                       "!TimeFX_IsDeterministic()",
                       "the fluid load-shed gate must not decide a capture's content");
     /* A zero default would freeze every accumulator and look like a dead
@@ -173,7 +173,7 @@ int main(void)
         fprintf(stderr, "FAIL: post_fx perf sampling must keep wall-clock time\n");
         failed++;
     }
-    if (!HasWallClock("core/fluid/fluid_surface.c")) {
+    if (!HasWallClock("core/liquid/liquid_surface.c")) {
         fprintf(stderr, "FAIL: the fluid frame-budget gate must keep wall-clock time\n");
         failed++;
     }

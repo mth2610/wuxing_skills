@@ -1317,6 +1317,7 @@ sits inside the halo — and they are additive, so the frame buffer sees their
 
 | | halo | body | core | sum |
 |---|---|---|---|---|
+| 2026-10-04 | Codex | Liquid module and test references | core/liquid/liquid_surface.c; core/tests/liquid_material_test.c | Ground-truth |
 | before | 0.16 | 0.85 | 1.00 | **2.01** |
 | body+core alone, where they overlap | | 0.85 | 1.00 | **1.85** |
 
@@ -2246,7 +2247,7 @@ available on the Vulkan backend.
 
 ## SSF water reads as opaque plastic — the receiver was CREATING the water column
 
-**Symptom.** A water body rendered through `FluidSurface` (water orb, fluid
+**Symptom.** A water body rendered through `LiquidSurface` (water orb, fluid
 impact) shows as a flat, saturated, fully opaque blob. Nothing of the background
 comes through, and the silhouette has no internal depth. It used to look clear;
 no shader constant looks obviously wrong.
@@ -2254,7 +2255,7 @@ no shader constant looks obviously wrong.
 **Cause.** Two independent ways of deleting the *thickness gradient*, which is
 the only thing that makes screen-space fluid read as liquid.
 
-1. `fluid_surface.fs` combined the measured kernel thickness with the distance
+1. `liquid_surface.fs` combined the measured kernel thickness with the distance
    to the opaque receiver behind it as
    `max(kernelThickness, min(0.40, depthGap * 0.90))` (introduced in `0262068`).
    For anything airborne the gap is over a metre, so **every** pixel of the
@@ -2272,7 +2273,7 @@ the liquid may only *bound* the column — `min`, never `max`. And a saturating
 decode must place its knee above the range the authored populations actually
 produce; verify that with numbers before tuning colour, because a saturated
 thickness buffer is invisible in the final image. Guarded by
-`core/tests/fluid_surface_optics_test.c` (the pre-fix formula returns a
+`core/tests/liquid_surface_optics_test.c` (the pre-fix formula returns a
 core/rim ratio of 1.31 where the test demands > 2.0).
 
 ## An FS input with no VS output is not an error — it is a silent `discard`
@@ -2285,12 +2286,12 @@ any of it runs.
 **Cause.** GL links varyings **by name** and leaves an unmatched fragment input
 *undefined* rather than failing the link; rlvk reproduces that leniency by
 demoting the unmatched input to a Private SPIR-V variable
-(`rlvk_shaderc.inl::rlvkMatchStageInterface`). `fluid_surface_capture.vs`
+(`rlvk_shaderc.inl::rlvkMatchStageInterface`). `liquid_surface_capture.vs`
 declared `v_centerView`, `v_corner`, `v_radius` — while **both** fragment stages
-it is paired with (`fluid_capture_particle.fs`, `fluid_surface_thickness.fs`)
+it is paired with (`liquid_capture_particle.fs`, `liquid_surface_thickness.fs`)
 open with `if (v_life <= 0.0) discard;`. Every GPU-backend fluid particle's depth
 and thickness therefore depended on whatever that undefined variable happened to
-contain. The PBD pool's own vertex stage (`fluid_pbd_surface.vs`) does write
+contain. The PBD pool's own vertex stage (`liquid_pbd_surface.vs`) does write
 `v_life`, so only the particle-backend path was affected — and only in a way that
 looks like an art bug.
 
@@ -2304,13 +2305,13 @@ vertex shader and are outside this test.)
 
 ## The refraction tap sampled the target it was drawing into (10/08 → 11/08/2026)
 
-**Symptom.** Water rendered through `FluidSurface` lost its transparency and read
+**Symptom.** Water rendered through `LiquidSurface` lost its transparency and read
 as cyan plastic with a silver rim — nothing of the background came through, and no
 amount of tuning absorption, thickness or scattering brought it back. Nothing was
 logged; no shader or validation error.
 
 **Cause.** The SSF composite's whole notion of "see-through" is one sample:
-`u_sceneTex` in `fluid_surface.fs`. It used to be safe because
+`u_sceneTex` in `liquid_surface.fs`. It used to be safe because
 `ScreenDistort_BeginVFXBody()` bound a **separate** `vfxBodyTex` layer, so the
 composite drew into one image and sampled another. Retiring the split VFX layers
 (`b03b7b6`, 10/08/2026) made the body pass bind `renderTex` itself — the exact
@@ -2321,11 +2322,11 @@ With the tap returning nothing usable, only the shader's own opaque terms surviv
 
 **Rule.** A screen-space effect that samples the scene **while drawing into it**
 must sample a snapshot, not the live target — and the snapshot must be taken while
-the scene is still only a source (for fluid: in `FluidSurface_Capture`, which runs
+the scene is still only a source (for fluid: in `LiquidSurface_Capture`, which runs
 before the body pass binds anything). Whenever a render-layer refactor changes what
 a pass binds, re-check every consumer that reads the scene texture inside that pass;
 the failure mode is a plausible-looking image, not an error. Guarded by
-`core/tests/fluid_refraction_source_test.c`, which detects the hazard condition
+`core/tests/liquid_refraction_source_test.c`, which detects the hazard condition
 itself and only then requires the private copy — restore separate layers and the
 requirement lapses. Promoted to `ENGINE_LANDMINES.md` #15.
 
@@ -2360,7 +2361,7 @@ offset / validity / path / scene-copy / caustics) attributed it in a single
 build: views 1 and 3 cleared the surface and its shading, 9 proved the scene copy
 was pixel-exact, 7 proved the validity test never fired, and 11 showed the
 pattern alone. Four rounds of reasoning cost more than the view did. Guarded by
-`core/tests/fluid_surface_optics_test.c`, which now forbids anything being added
+`core/tests/liquid_surface_optics_test.c`, which now forbids anything being added
 into `refractedScene`.
 
 ## `GenMeshTorus(radius, size, ...)` is (TUBE radius, overall scale)
@@ -2401,13 +2402,13 @@ entry on format features) and rlgl exposes no depth-func setter at all.
 **Cause / fix.** The depth test always keeps the smallest `gl_FragDepth`. Writing
 `gl_FragDepth = 1.0 - depth` while storing `depth` in the colour attachment makes
 "smallest complement" mean "largest depth", so an ordinary depth test performs
-the MAX. `core/fluid/shaders/fluid_capture_particle_back.fs`.
+the MAX. `core/liquid/shaders/liquid_capture_particle_back.fs`.
 
 **The consequence that bites.** The two targets now clear in OPPOSITE directions:
 the front capture clears to 1 ("nothing in front"), the back to 0 ("nothing
 behind"). Clearing the back to 1 like its twin makes every untouched pixel read
 as fluid at the near plane and fills the screen. Guarded by
-`core/tests/fluid_dual_depth_test.c`.
+`core/tests/liquid_dual_depth_test.c`.
 
 **Rule.** Before reaching for an optional blend equation or a state setter the
 backend does not expose, check whether the fixed-function test you already have
@@ -2415,7 +2416,7 @@ can be inverted into the reduction you want.
 
 ## A mirror test can assert a property the shader does not have
 
-**Symptom.** `fluid_dual_depth_test.c` asserted that a splat's chord closes to
+**Symptom.** `liquid_dual_depth_test.c` asserted that a splat's chord closes to
 zero at its own rim — the textbook sphere property. It failed on correct code.
 
 **Cause.** The capture profile is `sqrt(1 - r2*0.90) * (1 - r2*0.10)`, not
@@ -2470,7 +2471,7 @@ solid angle at a fixed amplitude adds energy. The first attempt removed the
 needle and left a bigger, brighter comma — at the variance ceiling that is 25x
 the energy. A `pow(cos, n)` lobe's solid angle goes as `1/(n+2)`, so its
 amplitude has to be scaled by `(n+2)/(n_base+2)` for the widening to
-redistribute instead of add. Guarded by `core/tests/fluid_specular_aa_test.c`.
+redistribute instead of add. Guarded by `core/tests/liquid_specular_aa_test.c`.
 
 ## Subtract the term; do not read it in isolation
 
@@ -2534,12 +2535,12 @@ point, not by phase-shifting one wave — a phase shift makes the whole field pu
 in lockstep.
 
 **Rule.** A single sine of a dot product is never "some noise"; it is a grating.
-This is the THIRD instance in `fluid_surface.fs` alone — a caustic
+This is the THIRD instance in `liquid_surface.fs` alone — a caustic
 `sin(x+sin(y))*sin(y+sin(x))` lattice and a wave perturbation with a constant
 up-bias were the other two, and both also presented as regular bands on a curved
 body. Anything wanting irregular spatial variation uses `noise.glsl`, which is
 also the file that carries the Mali-safe hash. Guarded by
-`core/tests/fluid_surface_noise_test.c`, which asserts the field does not repeat
+`core/tests/liquid_surface_noise_test.c`, which asserts the field does not repeat
 after one feature length along any direction — and mirrors the old expression to
 prove the guard can detect the defect.
 
@@ -2588,7 +2589,7 @@ reconstructed normal: the horizontal pass smears it into horizontal ribbons, the
 vertical pass into vertical ones, perfectly complementary. Neither pass ever
 samples a diagonal neighbour, so the residue of both is a cross-hatch.
 
-**Cause.** `fluid_depth_narrow_range.fs` was a faithful implementation of Truong
+**Cause.** `liquid_depth_narrow_range.fs` was a faithful implementation of Truong
 & Yuksel's `filter1D`, run twice — which is an *approximate separation*. Their own
 paper says of the bilateral Gaussian that it "is not separable, and an approximate
 separation can result in visual artefacts", and that applies to their filter too:
@@ -2598,7 +2599,7 @@ approximation.
 
 **Rule.** "We implemented the paper" is not the same as "we are running the
 paper's method". Check which variant of it you are running, and whether the
-reference offers another. Guarded by `core/tests/fluid_filter_2d_test.c`.
+reference offers another. Guarded by `core/tests/liquid_filter_2d_test.c`.
 
 **Note on the tier gate:** 2D is HIGH-only. `GfxQuality_Default()` returns
 **GFX_MED on Android**, and a several-hundred-tap loop of dependent fetches on a
@@ -2634,12 +2635,12 @@ own cost (31.4 ms against 30.9 at close range) with the stripes gone.
 **Rule.** Any screen-space kernel whose radius is derived from a projected size
 must be measured at more than one camera distance, and a kernel with quadratic
 cost needs a hard reach cap, not just a tier ceiling. Guarded by
-`core/tests/fluid_filter_2d_test.c`, which asserts the tap count stops growing.
+`core/tests/liquid_filter_2d_test.c`, which asserts the tap count stops growing.
 
 ## The SSF CPU ellipsoid path was broken twice over, and nothing could see it
 
-**Symptom.** `FluidSurface_RegisterParticle` / `FluidSurface_RegisterEllipsoid`
-— public API, part of `FluidSurface_SubmitParticleStream`'s CPU-backend branch —
+**Symptom.** `LiquidSurface_RegisterParticle` / `LiquidSurface_RegisterEllipsoid`
+— public API, part of `LiquidSurface_SubmitParticleStream`'s CPU-backend branch —
 rendered nothing. Registering 78 kernels at correct world positions produced an
 empty screen.
 
@@ -2681,7 +2682,7 @@ through the middle — so the whole body sat at full emission with no gradient.
 
 **Rule.** When an additive term looks wrong, subtract it before retuning it. A
 washed-out result is as often a desaturated COLOUR as an excessive magnitude, and
-the two need opposite fixes. Guarded by `core/tests/fluid_liquid_material_test.c`.
+the two need opposite fixes. Guarded by `core/tests/liquid_material_test.c`.
 
 ## An additive element colour is not a liquid transmission spectrum
 
@@ -2689,7 +2690,7 @@ the two need opposite fixes. Guarded by `core/tests/fluid_liquid_material_test.c
 blue slime, poison as flat green plastic, and the metal inherited the elemental
 blue-energy tint.
 
-**Cause.** `FluidSurface_ProfileDesc` fed the generic VFX body colours directly
+**Cause.** `LiquidSurface_ProfileDesc` fed the generic VFX body colours directly
 into Beer-Lambert absorption and conductor F0. Those colours were authored for
 additive readability, not for light transmitted through a sub-metre liquid.
 Separately, clear water received almost the same fixed in-scatter fill as mud.
@@ -2708,8 +2709,8 @@ Fresnel or absorption: those terms change the material without fixing the
 composite. The shaded RGB already contains the transmitted scene, so interior
 alpha must represent geometric coverage only; applying a thickness ramp there
 blends the original scene a second time. Keep the thickness ramp only on the
-dilated silhouette fringe. Guarded by `fluid_profile_palette_test.c` and
-`fluid_silhouette_coverage_test.c`, and judged in LIQUID BENCH.
+dilated silhouette fringe. Guarded by `liquid_profile_palette_test.c` and
+`liquid_silhouette_coverage_test.c`, and judged in LIQUID BENCH.
 
 ## Measure the OUTPUT pixel before retuning a colour
 
@@ -3607,8 +3608,8 @@ means a perfectly inelastic contact rather than a disabled layer.
 **Rule.** Filter inactive layers by their own semantics. Always pack receiver
 planes, including zero restitution, and keep their post-integration projection
 identical across the particle CPU, GPU-shadow and compute paths. Guarded by
-`core/tests/fluid_force_field_contract_test.c` and
-`core/tests/fluid_receiver_test.c`.
+`core/tests/liquid_force_field_contract_test.c` and
+`core/tests/liquid_receiver_test.c`.
 
 ## Central gas injection survives turbulence as a capsule (14/09/2026)
 
@@ -3807,5 +3808,6 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-04 | Codex | Liquid module and test references | core/liquid/liquid_surface.c; core/tests/liquid_material_test.c | Ground-truth |
 | 2026-10-03 | Codex | Fog sampling and reproducible animation | core/volumetric/volumetric_fog.c; core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_sampling_test.c | Ground-truth |
 | 2026-10-03 | Codex | Fog reconstruction pointer | core/volumetric/shaders/volumetric_composite.fs; core/tests/volumetric_fog_composite_test.c | Ground-truth |

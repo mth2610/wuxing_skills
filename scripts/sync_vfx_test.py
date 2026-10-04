@@ -168,7 +168,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeGuidedParticle":     ("event",   "burst",      "oneshot"),
     "VFX_ComposeIceCrystal":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterStream":        ("draw",    "timed",      "continuous"),
-    "VFX_ComposeFluidImpact":        ("event",   "burst",      "oneshot"),
+    "VFX_ComposeLiquidImpact":       ("event",   "burst",      "oneshot"),
     "VFX_ComposeSurfaceImpact":      ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterOrb":           ("event",   "burst",      "oneshot"),
     # SSF probe: it has no persistent handle to retain. The fixture is "timed"
@@ -343,6 +343,8 @@ FIXTURE_METADATA_OVERRIDES = {
 # merged dict so the entry itself says which fixture kind it belongs to — the
 # spawn table's contract (persistent, handle-owning) is not this one's.
 FIXTURE_DRAW_OVERRIDES = {
+    "VFX_ComposeAmbientFire":
+        "VFX_ComposeAmbientFireEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, s_ambientFireFixtureStyle)",
     "VFX_ComposeSmokeVolume":
         "VFX_ComposeSmokeVolume($POS, 1.5f, 1.0f, s_smokeVolumeFixtureStyle)",
     "VFX_ComposeOpticalFlare":

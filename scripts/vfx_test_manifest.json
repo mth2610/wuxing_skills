@@ -519,7 +519,7 @@
       "lifecycle": "emitter",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeAmbientFire($POS, VC_MAT_FIRE, 1.5f, 1.0f)"
+      "draw_call": "VFX_ComposeAmbientFireEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, s_ambientFireFixtureStyle)"
     },
     {
       "source": "fire/vc_fireball_burst.inl",
@@ -544,17 +544,6 @@
       "draw_call": "VFX_ComposeBlackHole(VC_MAT_FIRE, $POS, 1.5f, $TIME)"
     },
     {
-      "source": "water/fluid_impact_test.inl",
-      "fn": "VFX_ComposeFluidImpact",
-      "label": "FLUID IMPACT",
-      "category": "water",
-      "fixture": "burst",
-      "lifecycle": "event",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeFluidImpact($POS)"
-    },
-    {
       "source": "water/ice_crystal.inl",
       "fn": "VFX_ComposeIceCrystal",
       "label": "ICE CRYSTAL",
@@ -575,6 +564,17 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeLiquidBench($POS, 1.1f, 1.0f)"
+    },
+    {
+      "source": "water/liquid_impact_test.inl",
+      "fn": "VFX_ComposeLiquidImpact",
+      "label": "LIQUID IMPACT",
+      "category": "water",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFX_ComposeLiquidImpact($POS)"
     },
     {
       "source": "water/water_orb.inl",

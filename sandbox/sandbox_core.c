@@ -161,6 +161,7 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
 
     // Cấu hình Player
     player->position = (Vector3){ -11.0f, 0.0f, 4.4f };
+    player->position.y = MapManager_GetGroundHeightAt(player->position.x, player->position.z);
     camera.target = (Vector3){ player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z };
     camera.position = SandboxCamera_OrbitPosition(player->position, g_cameraAngle, g_camDist);
     player->radius = 0.3f;
@@ -181,6 +182,7 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
 
     // Cấu hình Enemy
     enemy->position = (Vector3){ 9.0f, 0.0f, 3.5f };
+    enemy->position.y = MapManager_GetGroundHeightAt(enemy->position.x, enemy->position.z);
     enemy->radius = 0.35f;
     enemy->mode = ENEMY_STATIC;
     enemy->speed = 1.2f;
@@ -652,7 +654,7 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
     if (player->dashCooldown > 0.0f) player->dashCooldown -= dt;
 
     // Tính toán chiều cao địa hình bên dưới người chơi (Pillars & Ground)
-    float currentGroundY = 0.0f;
+    float currentGroundY = MapManager_GetGroundHeightAt(player->position.x, player->position.z);
     for (int i = 0; i < NUM_PILLARS; i++) {
         Vector3 diff = Vector3Subtract(player->position, pillars[i].position);
         diff.y = 0.0f;
@@ -696,7 +698,13 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         }
     } else {
         // Áp dụng trọng lực thông thường khi không bay
-        bool isOnSolid = (player->position.y <= currentGroundY);
+        bool isOnSolid = (player->position.y <= currentGroundY + 0.02f);
+        // Walking down a slope (lake bed, swales): the ground drops faster per
+        // frame than free-fall can follow, so snap within a step-down tolerance.
+        if (!isOnSolid && player->jumpCount == 0 && player->zVelocity <= 0.0f &&
+            player->position.y - currentGroundY < 0.75f) {
+            isOnSolid = true;
+        }
         if (!isOnSolid || player->zVelocity > 0.0f) {
             float previousY = player->position.y;
             player->zVelocity -= gravity * dt;
@@ -715,6 +723,10 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
                 player->jumpCount = 0;
             }
         } else {
+            // Khi đang đi bộ (không nhảy), bám sát theo độ cao địa hình/đáy hồ
+            if (player->jumpCount == 0) {
+                player->position.y = currentGroundY;
+            }
             player->zVelocity = 0.0f;
         }
 
@@ -926,6 +938,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         enemy->position.z += (float)GetRandomValue(-6, 6) * 0.01f;
     }
 
+    enemy->position.y = MapManager_GetGroundHeightAt(enemy->position.x, enemy->position.z);
+
     } // !enemyCrowdControlled
 
     // Cập nhật Camera góc nhìn thứ 3 theo vị trí mới của Player
@@ -1009,13 +1023,16 @@ void DrawSandbox3D(const PlayerEntity* player, const EnemyEntity* enemy, Vector3
     // of the per-frame shadow-map fill/geometry that was re-rendered pointlessly every frame.
     bool shadowPass = EnvShadow_IsCapturing();
 
-    if (!shadowPass && player->position.y > 0.05f) {
-        DrawLine3D((Vector3){ player->position.x, 0.0f, player->position.z }, player->position, ColorAlpha(GRAY, 0.5f));
+    float playerGroundY = MapManager_GetGroundHeightAt(player->position.x, player->position.z);
+    float enemyGroundY = MapManager_GetGroundHeightAt(enemy->position.x, enemy->position.z);
+
+    if (!shadowPass && player->position.y > playerGroundY + 0.05f) {
+        DrawLine3D((Vector3){ player->position.x, playerGroundY, player->position.z }, player->position, ColorAlpha(GRAY, 0.5f));
     }
 
     if (!shadowPass) {
-        DrawCircleOutline3D((Vector3){ player->position.x, 0.0008f, player->position.z }, 0.25f, ColorAlpha(LIME, 0.6f));
-        DrawCircleOutline3D((Vector3){ enemy->position.x, 0.0008f, enemy->position.z }, 0.3f, ColorAlpha(RED, 0.6f));
+        DrawCircleOutline3D((Vector3){ player->position.x, playerGroundY + 0.008f, player->position.z }, 0.25f, ColorAlpha(LIME, 0.6f));
+        DrawCircleOutline3D((Vector3){ enemy->position.x, enemyGroundY + 0.008f, enemy->position.z }, 0.3f, ColorAlpha(RED, 0.6f));
         if (mouseTarget.x != 0.0f || mouseTarget.z != 0.0f) {
             float gY = MapManager_GetGroundHeightAt(mouseTarget.x, mouseTarget.z);
             DrawCircleOutline3D((Vector3){ mouseTarget.x, gY + 0.008f, mouseTarget.z }, 0.20f, ColorAlpha(SKYBLUE, 0.5f));

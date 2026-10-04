@@ -35,14 +35,14 @@ int main(void)
         CHECK(strstr(bench,"LIQUID_BENCH_GPU_HIGH_PER_BODY 128")!=NULL);
         CHECK(strstr(bench,"LIQUID_BENCH_CPU_PER_BODY 48")!=NULL);
         CHECK(strstr(bench,"LIQUID_BENCH_CPU_TOTAL 240")!=NULL);
-        CHECK(strstr(bench,"FluidSurface_RegisterParticle")==NULL);
+        CHECK(strstr(bench,"LiquidSurface_RegisterParticle")==NULL);
         CHECK(strstr(bench,"LiquidBench_Body")==NULL);
         CHECK(strstr(bench,"PARTICLE_RENDER_SURFACE_INPUT")!=NULL);
         CHECK(strstr(bench,"PARTICLE_MODULE_FORCE_FIELD")!=NULL);
         CHECK(Count(bench,"ParticleManager_CreateEmitter(")==1);
         CHECK(strstr(bench,"ParticleManager_EmitBatch")!=NULL);
-        CHECK(strstr(bench,"FluidMotion_Get(profile)")!=NULL);
-        CHECK(strstr(bench,"FluidSurface_ProfileDesc(profile)")!=NULL);
+        CHECK(strstr(bench,"LiquidMotion_Get(profile)")!=NULL);
+        CHECK(strstr(bench,"LiquidSurface_ProfileDesc(profile)")!=NULL);
         CHECK(strstr(bench,"FORCE_RECEIVER_PLANE")!=NULL);
         CHECK(strstr(bench,"static void LiquidBench_Update(float dt)")!=NULL);
         CHECK(strstr(bench,"static void LiquidBench_SubmitSurface(void)")!=NULL);

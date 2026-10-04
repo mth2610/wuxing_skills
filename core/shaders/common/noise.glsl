@@ -101,7 +101,7 @@ float fbm2N(vec2 p, int octaves) {
 // "some irregular variation over a 3D body". A single sine of a dot product is a
 // PLANE WAVE: it paints parallel bands across whatever it touches, and on a
 // curved body those bands read as interference fringes. That exact mistake has
-// been made three times in core/fluid/shaders/fluid_surface.fs alone (a caustic
+// been made three times in core/liquid/shaders/liquid_surface.fs alone (a caustic
 // lattice, a wave perturbation with a constant up-bias, and a "surfaceNoise"
 // term driving roughness, glints and foam).
 float vnoise3(vec3 p) {

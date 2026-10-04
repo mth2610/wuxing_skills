@@ -1424,7 +1424,7 @@ static RenderTexture2D fmtRT(int w, int h, int format)
     return t;
 }
 
-// Screen-space fluid (core/fluid) additively blends per-splat thickness into an R32F
+// Screen-space fluid (core/liquid) additively blends per-splat thickness into an R32F
 // target. That is optional hardware behaviour: the Vulkan spec's Mandatory Format Support
 // tables require COLOR_ATTACHMENT_BLEND for R16_SFLOAT but NOT for R32_SFLOAT. A driver
 // without it does not raise an error the caller can see - the effect just comes out wrong.
@@ -2512,8 +2512,8 @@ done:
 static void blit(Texture2D src, int dstW, int dstH);
 
 // What the screen-space fluid surface's separable filter chain actually costs, and
-// whether halving its internal resolution buys anything. core/fluid runs 4 rounds x 2
-// passes of core/fluid/shaders/fluid_depth_narrow_range.fs over R32F depth at NATIVE
+// whether halving its internal resolution buys anything. core/liquid runs 4 rounds x 2
+// passes of core/liquid/shaders/liquid_depth_narrow_range.fs over R32F depth at NATIVE
 // resolution on the HIGH tier — 21 taps per pass at filterRadius 10. The early-out on
 // empty pixels means the cost should scale with fluid COVERAGE rather than screen area;
 // this measures whether that holds, by filtering the same synthetic blob at full and
@@ -2532,10 +2532,10 @@ static const char *sc_perf_ssf_filter(void)
     if (!repoRoot) return "RLVK_REPO_ROOT not set (run via scripts/run_rlvk_visual_test.sh)";
     char filterPath[1024];
     snprintf(filterPath, sizeof(filterPath),
-             "%s/core/fluid/shaders/fluid_depth_narrow_range.fs", repoRoot);
+             "%s/core/liquid/shaders/liquid_depth_narrow_range.fs", repoRoot);
     Shader filter = LoadShader(NULL, filterPath);
     if (filter.id == 0 || filter.id == rlGetShaderIdDefault())
-        return "fluid_depth_narrow_range.fs did not load (raylib fell back to the default shader)";
+        return "liquid_depth_narrow_range.fs did not load (raylib fell back to the default shader)";
 
     RenderTexture2D src[3], a[3], b[3];
     for (int i = 0; i < 3; i++)
@@ -2631,7 +2631,7 @@ static const char *sc_perf_ssf_filter(void)
 
 // What ONE compute dispatch costs, independent of the work inside it.
 //
-// core/fluid's PBD solver measured 4.4 ms in-game for 2,048 particles across 9
+// core/liquid's PBD solver measured 4.4 ms in-game for 2,048 particles across 9
 // dispatches — 72 workgroups of actual work, which no GPU takes milliseconds
 // over. That points at per-CALL overhead rather than compute, and this file
 // already documents the same shape for uploads (§ PROGRESS: ~0.5-0.65 ms per
@@ -2675,7 +2675,7 @@ static const char *sc_perf_dispatch_count(void)
         int variant = (int)((seed >> 16) & 1u);
 
         /* Variant 0 dispatches INSIDE the frame (rlvk splits the render pass per
-         * call); variant 1 dispatches OUTSIDE it, which is where core/fluid's PBD
+         * call); variant 1 dispatches OUTSIDE it, which is where core/liquid's PBD
          * actually runs — main.c updates it before BeginDrawing, so every call
          * takes rlvk's one-shot path: allocate a pool, submit, vkQueueWaitIdle,
          * destroy. Same kernel, same count; only the frame scope differs. */

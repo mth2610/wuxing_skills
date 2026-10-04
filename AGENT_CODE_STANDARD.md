@@ -84,6 +84,7 @@
 ## 10. Core layer (`core/`, `environment/`, `maps/`, common shaders)
 
 ### 10.1 General
+- Liquid code uses `core/liquid/` and `Liquid*`; `core/fluid/` contains source-compatibility headers only.
 - New/changed core API must stay backward compatible with every skill caller — don't change existing signatures; add new functions or append-only struct fields instead.
 - Under rlvk, the `Shader` argument to `SetShaderValue` does not select the target program: activate it with `BeginShaderMode`, keep uniform upload plus dependent draws in that scope, then end it.
 - In this engine `matModel * vertexPosition` is shader/view space, not world space; positional map effects must inverse-transform it before comparing against world-space centres.
@@ -141,6 +142,7 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-04 | Codex | §10.1 Liquid names and legacy compatibility | core/liquid/liquid_surface.h; core/fluid/fluid_surface.h | Ground-truth |
 | 2026-10-03 | Codex | §10.1 Texture upload identity and timestamp validation | maps/toolkit/map_props_nature.inl; third_party/vulkan/rlvk/rlvk_platform.inl; third_party/vulkan/rlvk/rlvk_renderpass.inl | Ground-truth |
 | 2026-10-03 | Codex | §7 Fog reconstruction | core/volumetric/shaders/volumetric_composite.fs; core/tests/volumetric_fog_composite_test.c | Ground-truth |
 | 2026-10-03 | Codex | §10.1 Prop lighting spaces | maps/toolkit/prop_lit.c; maps/toolkit/shaders/prop_lit.fs; maps/tests/test_prop_lighting_space.py | Ground-truth |

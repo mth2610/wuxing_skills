@@ -40,7 +40,7 @@ static int g_checks = 0;
 
 typedef struct {
     int blendMode;
-    int renderMode;      // 3 = SURFACE_INPUT, drawn by FluidSurface, never here
+    int renderMode;      // 3 = SURFACE_INPUT, drawn by LiquidSurface, never here
     int trailOnly;
     int trailLength;
     int trailHistoryCount;
@@ -110,7 +110,7 @@ static void Test_TheGateStillClosesWhenItShould(void)
 
     P surface[] = { { BLEND_ADDITIVE_, 3, 0, 0, 0 } };
     CHECK(!HasAdditive(surface, 1),
-          "nor does SURFACE_INPUT, which FluidSurface draws on its own");
+          "nor does SURFACE_INPUT, which LiquidSurface draws on its own");
 
     // A thread that has only just spawned has one history point and no ribbon
     // yet. Admitting it would open the pass for a frame with nothing in it.

@@ -180,10 +180,10 @@ add_executable(wuxing
     core/particles/particle_system.c
     core/particles/particle_manager.c
     core/particles/gpu/particle_gpu_backend.c
-    core/fluid/fluid_impact.c
-    core/fluid/fluid_pbd.c
-    core/fluid/fluid_pbd_gpu.c
-    core/fluid/fluid_surface.c
+    core/liquid/liquid_impact.c
+    core/liquid/liquid_pbd.c
+    core/liquid/liquid_pbd_gpu.c
+    core/liquid/liquid_surface.c
     core/gas/gas_sim.c
     core/gas/gas_system.c
     core/path_spline.c
@@ -313,9 +313,9 @@ endforeach()
 # --- compute module shaders ---
 configure_file(core/particles/shaders/gpu/particle_gpu.comp    ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu.comp    COPYONLY)
 configure_file(core/particles/shaders/gpu/particle_gpu_ssbo.vs ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu_ssbo.vs COPYONLY)
-configure_file(core/particles/shaders/gpu/fluid_surface_capture.vs ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/fluid_surface_capture.vs COPYONLY)
-configure_file(core/fluid/shaders/fluid_pbd_gpu.comp ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_pbd_gpu.comp COPYONLY)
-configure_file(core/fluid/shaders/fluid_pbd_surface.vs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_pbd_surface.vs COPYONLY)
+configure_file(core/particles/shaders/gpu/liquid_surface_capture.vs ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/liquid_surface_capture.vs COPYONLY)
+configure_file(core/liquid/shaders/liquid_pbd_gpu.comp ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_pbd_gpu.comp COPYONLY)
+configure_file(core/liquid/shaders/liquid_pbd_surface.vs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_pbd_surface.vs COPYONLY)
 configure_file(core/particles/shaders/gpu/particle_gpu_vbo.vs  ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu_vbo.vs  COPYONLY)
 configure_file(core/particles/shaders/gpu/particle_gpu.fs      ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu.fs      COPYONLY)
 configure_file(core/shaders/taiji.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/taiji.fs COPYONLY)
@@ -358,15 +358,15 @@ configure_file(core/shaders/glass_shell.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shad
 configure_file(core/shaders/mesh_surface_aura.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/mesh_surface_aura.fs COPYONLY)
 configure_file(core/shaders/mesh_surface_aura.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/mesh_surface_aura.vs COPYONLY)
 configure_file(core/shaders/shield_flow_shell.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/shield_flow_shell.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_smooth.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_capture.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_capture_particle.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture_particle.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_capture_back.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture_back.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_capture_particle_back.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_capture_particle_back.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_thickness_resolve.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_thickness_resolve.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_thickness_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_thickness_blur.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_depth_narrow_range.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_depth_narrow_range.fs COPYONLY)
-configure_file(core/fluid/shaders/fluid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/fluid/shaders/fluid_surface.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_depth_smooth.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_capture.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_capture.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_capture_particle.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_capture_particle.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_capture_back.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_capture_back.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_capture_particle_back.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_capture_particle_back.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_thickness_resolve.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_thickness_resolve.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_thickness_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_thickness_blur.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_depth_narrow_range.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_depth_narrow_range.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_surface.fs COPYONLY)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders)
 configure_file(core/gas/shaders/gas_volume.fs ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders/gas_volume.fs COPYONLY)
 configure_file(core/gas/shaders/gas_denoise.fs ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders/gas_denoise.fs COPYONLY)

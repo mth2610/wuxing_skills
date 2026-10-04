@@ -7,7 +7,7 @@
 // It bites hardest when the undefined value gates a `discard`: the pass then throws
 // away every fragment and the effect simply is not there.
 //
-// That is exactly what `fluid_surface_capture.vs` did — it declared three outputs
+// That is exactly what `liquid_surface_capture.vs` did — it declared three outputs
 // while both fragment stages paired with it open on `if (v_life <= 0.0) discard;`.
 //
 // The pairs below mirror the ResourceManager_LoadShader call sites; the test asserts
@@ -101,15 +101,15 @@ int main(void)
     int bad = 0;
 
     // The GPU particle backend's surface-input pair (particle_gpu_backend.c).
-    bad += CheckPair("core/particles/shaders/gpu/fluid_surface_capture.vs",
-                     "core/fluid/shaders/fluid_capture_particle.fs");
-    bad += CheckPair("core/particles/shaders/gpu/fluid_surface_capture.vs",
-                     "core/fluid/shaders/fluid_capture_particle_back.fs");
-    // The GPU PBD pool's pair (fluid_pbd_gpu.c) — same fragment stages, other vertex stage.
-    bad += CheckPair("core/fluid/shaders/fluid_pbd_surface.vs",
-                     "core/fluid/shaders/fluid_capture_particle.fs");
-    bad += CheckPair("core/fluid/shaders/fluid_pbd_surface.vs",
-                     "core/fluid/shaders/fluid_capture_particle_back.fs");
+    bad += CheckPair("core/particles/shaders/gpu/liquid_surface_capture.vs",
+                     "core/liquid/shaders/liquid_capture_particle.fs");
+    bad += CheckPair("core/particles/shaders/gpu/liquid_surface_capture.vs",
+                     "core/liquid/shaders/liquid_capture_particle_back.fs");
+    // The GPU PBD pool's pair (liquid_pbd_gpu.c) — same fragment stages, other vertex stage.
+    bad += CheckPair("core/liquid/shaders/liquid_pbd_surface.vs",
+                     "core/liquid/shaders/liquid_capture_particle.fs");
+    bad += CheckPair("core/liquid/shaders/liquid_pbd_surface.vs",
+                     "core/liquid/shaders/liquid_capture_particle_back.fs");
 
     // The pairings themselves: if a call site moves, this test must be updated with it
     // rather than silently checking shaders nobody pairs any more.
@@ -117,8 +117,8 @@ int main(void)
     if (!backend) { printf("FAIL: cannot read particle_gpu_backend.c\n"); bad++; }
     else
     {
-        CHECK(strstr(backend, "\"core/particles/shaders/gpu/fluid_surface_capture.vs\", \"core/fluid/shaders/fluid_capture_particle.fs\"") != NULL);
-        CHECK(strstr(backend, "\"core/particles/shaders/gpu/fluid_surface_capture.vs\", \"core/fluid/shaders/fluid_capture_particle_back.fs\"") != NULL);
+        CHECK(strstr(backend, "\"core/particles/shaders/gpu/liquid_surface_capture.vs\", \"core/liquid/shaders/liquid_capture_particle.fs\"") != NULL);
+        CHECK(strstr(backend, "\"core/particles/shaders/gpu/liquid_surface_capture.vs\", \"core/liquid/shaders/liquid_capture_particle_back.fs\"") != NULL);
         free(backend);
     }
 

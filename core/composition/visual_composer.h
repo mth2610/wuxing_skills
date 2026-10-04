@@ -38,7 +38,7 @@
 #include "core/geometry/procedural_mesh_utils.h" // GroundHeightSampleFn (H2 ground wave)
 #include "core/trails/trail_recipe.h"            // TrailPresetId + what a preset row contains
 #include "core/gas/gas_system.h"                 // Volumetric smoke/fire/energy simulation
-#include "core/fluid/fluid_motion.h"
+#include "core/liquid/liquid_motion.h"
 
 // ── Per-frame drivers ───────────────────────────────────────────────────────
 // The pooled components (character aura) and the E3 sequencer ride these two
@@ -888,7 +888,7 @@ void VFX_ComposeDecalVariant(Vector3 pos, VC_MaterialId matId, float scale, floa
 void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
 int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
-void VFX_ComposeFluidImpact(Vector3 pos);
+void VFX_ComposeLiquidImpact(Vector3 pos);
 int VFX_ComposeGasMaterialLab(Vector3 pos, VC_MaterialId mat);
 void VFX_ComposeGroundDustRing(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target);
@@ -917,7 +917,7 @@ void VFX_FlowShield_SetIntensity(int handle, float intensity01);
 void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
 int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 void VFX_FlowShield_Stop(int handle);
-void VFX_FluidOrb_Spawn(Vector3 start, Vector3 target, FluidMotionProfile profile);
+void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile profile);
 void VFX_KillFlowShield(int handle);
 void VFX_KillGasMaterialLab(int handle);
 void VFX_KillRefBands(int id);
@@ -926,7 +926,12 @@ void VFX_SmokeTrail_Stop(int handle);
 void VFX_WaterRing_Stop(void);
 // @gen:vc_declarations end
 
-// Screen-space producers that submit SSF streams before FluidSurface_HasPending().
+/* Legacy composition names remain source-compatible. */
+#include "core/fluid/fluid_motion.h"
+#define VFX_ComposeFluidImpact VFX_ComposeLiquidImpact
+#define VFX_FluidOrb_Spawn VFX_LiquidOrb_Spawn
+
+// Screen-space producers that submit SSF streams before LiquidSurface_HasPending().
 void VFX_Compose_SubmitScreenSpaceVFX(void);
 
 #endif // VISUAL_COMPOSER_H

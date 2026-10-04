@@ -83,17 +83,18 @@ void main()
         }
     }
 
-    // 2. Shoreline wetness from lake parameters & lake basin cutout
+    // 2. Shoreline wetness & lake basin texturing
     float shoreFactor = 0.0;
+    float lakeDepthFactor = 0.0;
     if (u_lakeParams.z > 0.0) {
         vec2 lakeDelta = (fragWorldPos.xz - u_lakeParams.xy) / u_lakeParams.zw;
         float lakeDist = length(lakeDelta);
-        if (lakeDist < 0.98) {
-            discard; // Carve out lake hole so 3D bedModel, clear water, and wading character are exposed!
+        // Inside lake basin and along shoreline, transition smoothly from wet silt to dry turf
+        float distWet = 1.0 - smoothstep(0.96, 1.25, lakeDist);
+        shoreFactor = u_ecologyEnabled != 0 ? max(ecology.b, distWet) : distWet;
+        if (lakeDist < 1.0) {
+            lakeDepthFactor = 1.0 - pow(lakeDist, 1.6);
         }
-        // Overlap underneath the feathered bed must be wet soil, not grass.
-        shoreFactor = u_ecologyEnabled != 0 ? ecology.b
-                    : 1.0 - smoothstep(0.98, 1.30, lakeDist);
     }
 
     // 3. Slope steepness
@@ -170,6 +171,9 @@ void main()
     // Soil & Path PBR Albedos
     vec3 drySoilColor = dirtDetail * vec3(0.86, 0.77, 0.63) * 1.18;
     vec3 wetSoilColor = dirtDetail * vec3(0.62, 0.58, 0.48) * 1.02;
+    if (lakeDepthFactor > 0.0) {
+        wetSoilColor *= mix(1.0, 0.62, lakeDepthFactor);
+    }
     vec3 pathMarginColor = mix(drySoilColor, colorDirt.rgb * vec3(1.12, 1.06, 0.91), wPath);
 
     vec3 blendedAlbedo = grassAlbedo * wGrass

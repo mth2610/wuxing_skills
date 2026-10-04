@@ -28,8 +28,8 @@ typedef struct {
     Vector3 start;
     Vector3 target;
     Vector3 center;
-    FluidLiquidDesc material;
-    FluidMotionDesc motion;
+    LiquidDesc material;
+    LiquidMotionDesc motion;
     ForceField field;
     ParticleEmitterHandle emitter;
     LiquidBenchPhase phase;
@@ -117,12 +117,12 @@ static int LiquidBench_ParticleCount(bool compute)
     return LIQUID_BENCH_GPU_LOW_PER_BODY;
 }
 
-static void LiquidBench_SpawnBody(int index,FluidMotionProfile profile,
+static void LiquidBench_SpawnBody(int index,LiquidMotionProfile profile,
                                   Vector3 target,bool compute)
 {
     LiquidBenchRuntime *body=&s_liquidBench[index];
-    FluidMotionDesc motion=FluidMotion_Get(profile);
-    FluidLiquidDesc material=FluidSurface_ProfileDesc(profile);
+    LiquidMotionDesc motion=LiquidMotion_Get(profile);
+    LiquidDesc material=LiquidSurface_ProfileDesc(profile);
     Vector3 start=Vector3Add(target,(Vector3){0.0f,1.22f,0.0f});
     *body=(LiquidBenchRuntime){.start=start,.target=target,.center=start,
         .material=material,.motion=motion,.emitter=PARTICLE_EMITTER_INVALID,
@@ -165,9 +165,9 @@ static void LiquidBench_SpawnBody(int index,FluidMotionProfile profile,
 
 static void LiquidBench_SpawnAll(void)
 {
-    static const FluidMotionProfile profiles[LIQUID_BENCH_BODIES]={
-        FLUID_MOTION_WATER,FLUID_MOTION_POISON,FLUID_MOTION_MUD,
-        FLUID_MOTION_LAVA,FLUID_MOTION_LIQUID_METAL};
+    static const LiquidMotionProfile profiles[LIQUID_BENCH_BODIES]={
+        LIQUID_MOTION_WATER,LIQUID_MOTION_POISON,LIQUID_MOTION_MUD,
+        LIQUID_MOTION_LAVA,LIQUID_MOTION_LIQUID_METAL};
     const ParticleGPUCaps *caps=ParticleSystem_GetGPUCaps();
     bool compute=caps->computeShader;
     for (int i=0;i<LIQUID_BENCH_BODIES;++i) {
@@ -219,11 +219,11 @@ static void LiquidBench_SubmitSurface(void)
         ParticleRenderStream stream;
         if (!body->active ||
             !ParticleManager_GetSurfaceStream(body->emitter,&stream)) continue;
-        FluidSurface_BindMaterial(&body->material);
+        LiquidSurface_BindMaterial(&body->material);
         float extent=body->phase==LIQUID_BENCH_FLIGHT?0.38f:
                      body->phase==LIQUID_BENCH_IMPACT?0.94f:0.72f;
-        FluidSurface_HintBody(body->center,extent);
-        FluidSurface_SubmitParticleStream(&stream);
+        LiquidSurface_HintBody(body->center,extent);
+        LiquidSurface_SubmitParticleStream(&stream);
     }
 }
 
@@ -244,7 +244,7 @@ void VFX_ComposeLiquidBench(Vector3 center,float spacing,float t01)
         LiquidBench_Clear();
         LiquidBench_SpawnAll();
     }
-    /* CPU fallback: five times 48 = 240, below FluidSurface's 384-particle
+    /* CPU fallback: five times 48 = 240, below LiquidSurface's 384-particle
      * copy ceiling. GPU High: 640 particles, still one compute dispatch. */
-    FluidSurface_SetReconstructionRadius(0.112f);
+    LiquidSurface_SetReconstructionRadius(0.112f);
 }

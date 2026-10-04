@@ -11,7 +11,7 @@
 //
 // Rendered through the generic SSF bridge only: particles are emitted on a
 // PARTICLE_RENDER_SURFACE_INPUT stream, surfaced via particle manager, and the
-// surface stream is submitted per frame through `FluidSurface_SubmitParticleStream`.
+// surface stream is submitted per frame through `LiquidSurface_SubmitParticleStream`.
 // There is no fluid surface shading specific to this file — it reuses the same
 // bridge as any other surface-input emitter.
 
@@ -24,8 +24,8 @@ typedef struct {
     Vector3 start, target, center, velocity, hitNormal, impactVelocity;
     float age, phaseAge, travelTime, radius;
     Color body, glow, soft;
-    FluidLiquidDesc material;
-    FluidMotionDesc motion;
+    LiquidDesc material;
+    LiquidMotionDesc motion;
     ForceField field;
     ParticleEmitterHandle emitter;
     WaterOrbPhase phase;
@@ -115,10 +115,10 @@ static void WaterOrb_SetSettleField(WaterOrb *orb)
 
 /* One-shot composition entry. Start -> target path, defaults tuned for the
  * arena (metre scale): 0.72 s flight, 0.44 m body, world-up receiver. */
-void VFX_FluidOrb_Spawn(Vector3 start, Vector3 target, FluidMotionProfile profile)
+void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile profile)
 {
-    FluidLiquidDesc material=FluidSurface_ProfileDesc(profile);
-    FluidMotionDesc motion=FluidMotion_Get(profile);
+    LiquidDesc material=LiquidSurface_ProfileDesc(profile);
+    LiquidMotionDesc motion=LiquidMotion_Get(profile);
     WaterOrb *orb=&s_waterOrbs[s_nextWaterOrb++ % WATER_ORB_MAX];
     WaterOrb_Clear(orb);
     Vector3 flight=Vector3Subtract(target,start);
@@ -157,8 +157,8 @@ void VFX_FluidOrb_Spawn(Vector3 start, Vector3 target, FluidMotionProfile profil
             .forceAxisOrigin=target,.forceAxisDir=orb->hitNormal};
     }
     ParticleManager_EmitBatch(orb->emitter,s_waterOrbSpawn,count);
-    FluidSurface_BindMaterial(&orb->material);
-    FluidSurface_SetReconstructionRadius(0.44f*0.09f);
+    LiquidSurface_BindMaterial(&orb->material);
+    LiquidSurface_SetReconstructionRadius(0.44f*0.09f);
 }
 
 void VFX_ComposeWaterOrb(Vector3 start, Vector3 target)
@@ -167,14 +167,15 @@ void VFX_ComposeWaterOrb(Vector3 start, Vector3 target)
      * can exercise every force-field/material profile without adding five
      * near-identical sandbox fixtures: 0 water, 1 poison, 2 mud, 3 lava,
      * 4 liquid metal. */
-    FluidMotionProfile profile=FLUID_MOTION_WATER;
-    const char *profileOverride=getenv("WUXING_FLUID_ORB_PROFILE");
+    LiquidMotionProfile profile=LIQUID_MOTION_WATER;
+    const char *profileOverride=getenv("WUXING_LIQUID_ORB_PROFILE");
+    if (!profileOverride) profileOverride=getenv("WUXING_FLUID_ORB_PROFILE");
     if (profileOverride) {
         int value=atoi(profileOverride);
-        if (value>=FLUID_MOTION_WATER && value<=FLUID_MOTION_LIQUID_METAL)
-            profile=(FluidMotionProfile)value;
+        if (value>=LIQUID_MOTION_WATER && value<=LIQUID_MOTION_LIQUID_METAL)
+            profile=(LiquidMotionProfile)value;
     }
-    VFX_FluidOrb_Spawn(start,target,profile);
+    VFX_LiquidOrb_Spawn(start,target,profile);
 }
 
 static void WaterOrb_Update(float dt)
@@ -200,20 +201,20 @@ static void WaterOrb_Update(float dt)
 }
 
 /* SSF submission step — runs in the screen-space composite phase, immediately
- * before FluidSurface_HasPending(). Registering here keeps a flight-only orb
+ * before LiquidSurface_HasPending(). Registering here keeps a flight-only orb
  * visible before it has produced any decal or impact. */
 static void WaterOrb_SubmitSurface(void)
 {
     for (int i=0;i<WATER_ORB_MAX;++i) {
         WaterOrb *orb=&s_waterOrbs[i]; ParticleRenderStream stream;
         if (orb->active && ParticleManager_GetSurfaceStream(orb->emitter,&stream)) {
-            FluidSurface_BindMaterial(&orb->material);
+            LiquidSurface_BindMaterial(&orb->material);
             /* Flight is a compact dense body; impact/settle can occupy the
              * whole crown. The SSF uses this only to skip a redundant second
              * HIGH reconstruction round when the projected footprint is small. */
             float surfaceRadius=orb->phase==WATER_ORB_FLIGHT?orb->radius:orb->radius*2.8f;
-            FluidSurface_HintBody(orb->center,surfaceRadius);
-            FluidSurface_SubmitParticleStream(&stream);
+            LiquidSurface_HintBody(orb->center,surfaceRadius);
+            LiquidSurface_SubmitParticleStream(&stream);
         }
     }
 }

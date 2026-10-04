@@ -78,7 +78,7 @@ int main(void)
     bad += !Has("core/atmosphere.c", "VFX_RENDER_PASS_EMISSION, VFX_SURFACE_ADDITIVE, false");
     bad += !Has("main.c", "CompositeScreenSpaceVFX(camera);");
     bad += !Has("main.c", "MetaballFX_Composite();");
-    bad += !Has("main.c", "FluidSurface_Composite();");
+    bad += !Has("main.c", "LiquidSurface_Composite();");
     bad += !Has("core/trails/trail_system.c", "void DrawTrailEntitiesBody(Camera3D camera)");
     bad += !Has("core/trails/trail_system.c", "void DrawTrailEntitiesEmission(Camera3D camera)");
     // Đợt H: ADDITIVE is the ONLY mode that goes to the emission layer.

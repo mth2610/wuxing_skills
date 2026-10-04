@@ -95,6 +95,7 @@ static const MapRockPlacement kRocks[ROCK_COUNT] = {
 static MapGroundSurface s_ground;
 static MapEcology s_ecology;
 static MapRockSet s_rocks;
+static MapRockPlacement s_rockPlacements[ROCK_COUNT];
 static MapCloudSea s_cloudSea;
 static Texture2D s_farSunbeamTexture = {0};
 static MapMeadowPlacement s_grassPlacements[GRASS_TUFT_CAPACITY];
@@ -415,7 +416,8 @@ static void BuildMeadowLayout(void)
             if (!tooClose || attempt >= 23)
                 break;
         }
-        s_flowerPlacements[i].position = (Vector3){x, 0.014f, z};
+        float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
+        s_flowerPlacements[i].position = (Vector3){x, gy + 0.014f, z};
         s_flowerPlacements[i].rotationDeg = RandomRange(&rng, 0.0f, 360.0f);
         s_flowerPlacements[i].phase = Random01(&rng);
 
@@ -467,8 +469,9 @@ static void BuildMeadowLayout(void)
         if (DistanceToPaths(pos.x, pos.z) < 1.70f)
             continue;
 
+        float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, pos.x, pos.z);
         s_reedPlacements[validReeds].position = pos;
-        s_reedPlacements[validReeds].position.y -= 0.035f;
+        s_reedPlacements[validReeds].position.y = gy - 0.02f;
         float coreBonus = bayDensity * (rim < 1.05f ? 0.35f : 0.15f);
         s_reedPlacements[validReeds].radius = RandomRange(&rng, 0.12f, 0.20f);
         // Short peripheral growth softens the thicket edge; tall reeds stay in bays.
@@ -507,7 +510,7 @@ static void CaptureVerdantStaticShadows(void)
     // receiver/caster depth quantization turns its shallow slopes into long
     // parallel acne bands across the whole meadow. Terrain still receives
     // static rock shadows, dynamic vegetation shadows, and its own normal-based
-    MapProp_DrawRockShadowCasters(&s_rocks, kRocks, ROCK_COUNT, depthShader);
+    MapProp_DrawRockShadowCasters(&s_rocks, s_rockPlacements, ROCK_COUNT, depthShader);
     EnvShadow_EndStaticCapture();
 }
 
@@ -694,14 +697,26 @@ void InitVerdantPathMap(void)
         .causticsStrength = 0.85f,
         .causticsScale = 1.35f,
         .foamThreshold = 0.15f,
-        .segments = 128, .rings = 16, .seed = 9173u,
+        .segments = 128, .rings = 32, .seed = 9173u,
         .deepColor = {10, 42, 62, 255}, .shallowColor = {42, 138, 122, 235},
         .foamColor = {230, 245, 238, 220},
         .bankInnerColor = {62, 58, 44, 255}, .bankOuterColor = {55, 75, 42, 255},
     });
+    for (int i = 0; i < ROCK_COUNT; i++) {
+        s_rockPlacements[i] = kRocks[i];
+        float gy = GetGroundHeightVerdantPathMap(kRocks[i].position.x, kRocks[i].position.z);
+        if (i >= ROCK_COUNT - 3) {
+            float waterSurfaceY = s_lake.config.center.y;
+            float depth = fmaxf(0.0f, waterSurfaceY - gy);
+            s_rockPlacements[i].position.y = gy + 0.10f;
+            s_rockPlacements[i].heightScale = fmaxf(kRocks[i].heightScale, depth + 0.22f);
+        } else {
+            s_rockPlacements[i].position.y = gy;
+        }
+    }
     for (int i = ROCK_COUNT - 3; i < ROCK_COUNT; i++) {
-        MapProp_AddWaterObstacle(&s_lake, kRocks[i].position,
-                                 kRocks[i].radiusScale * 0.92f, 0.75f);
+        MapProp_AddWaterObstacle(&s_lake, s_rockPlacements[i].position,
+                                 s_rockPlacements[i].radiusScale * 0.92f, 0.75f);
     }
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
@@ -871,7 +886,7 @@ void DrawVerdantPathMap(void)
     PropLit_UpdateLighting();
     MapProp_DrawGround(&s_ground, kMapCenter);
     V_MARK("op_terrain");
-    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true);
+    MapProp_DrawRocks(&s_rocks, s_rockPlacements, ROCK_COUNT, true);
     V_MARK("op_rocks");
     MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
     V_MARK("op_grass_early");
@@ -880,8 +895,7 @@ void DrawVerdantPathMap(void)
     V_MARK("op_grass");
     MapProp_DrawMeadow(&s_reedMeadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.11f);
     V_MARK("op_reeds");
-    MapProp_DrawWaterBed(&s_lake, s_time);
-    V_MARK("op_water");
+    // Lake bed is seamlessly integrated into the sunken ground mesh (op_terrain)
     for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
         MapProp_DrawFlowerField(&s_flowerFields[cluster], (Vector3){0}, s_time,
                                 (Vector2){0.86f, 0.51f}, 0.032f);
@@ -893,7 +907,7 @@ void DrawTransparentVerdantPathMap(void)
 {
     if (!s_ready)
         return;
-    MapProp_DrawWaterOverlay(&s_lake, s_time);
+    if (!getenv("WUXING_NO_WATER")) MapProp_DrawWaterOverlay(&s_lake, s_time);
     DrawFarSunbeams();
 }
 

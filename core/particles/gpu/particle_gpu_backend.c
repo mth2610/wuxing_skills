@@ -213,8 +213,8 @@ static unsigned int s_draw_vao = 0;
 static unsigned int s_draw_quad_vbo = 0; // template quad, attribute 0
 static Shader s_draw_shader_gpu = {0};
 /* Liquid-table slot the NEXT surface draw rasterizes into the capture's B
- * channel. Set by core/fluid/fluid_surface.c before each stream so several
- * liquids can share one capture; see FluidLiquidDesc in fluid_surface.h. */
+ * channel. Set by core/liquid/liquid_surface.c before each stream so several
+ * liquids can share one capture; see LiquidDesc in liquid_surface.h. */
 static float s_surfaceMaterialId = 0.0f;
 static Shader s_surface_capture_shader_gpu = {0};
 static Shader s_surface_capture_shader_cpu = {0};
@@ -386,8 +386,8 @@ void GpuParticleSystem_Init(void)
             s_wind_terrain_ssbo = 0;
             goto cpu_path;
         }
-        s_surface_capture_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/fluid_surface_capture.vs", "core/fluid/shaders/fluid_capture_particle.fs");
-        s_surface_back_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/fluid_surface_capture.vs", "core/fluid/shaders/fluid_capture_particle_back.fs");
+        s_surface_capture_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/liquid_surface_capture.vs", "core/liquid/shaders/liquid_capture_particle.fs");
+        s_surface_back_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/liquid_surface_capture.vs", "core/liquid/shaders/liquid_capture_particle_back.fs");
         if (s_surface_capture_shader_gpu.id == 0)
         {
             TraceLog(LOG_WARNING, "GPU_PARTICLES: surface capture shader unavailable");
@@ -429,8 +429,8 @@ void GpuParticleSystem_Init(void)
     {
 cpu_path:
         // Sphere impostor shaders for CPU SSF capture/thickness.
-        s_surface_capture_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture_cpu.fs");
-        s_surface_back_shader_cpu = ResourceManager_LoadShader(NULL, "core/fluid/shaders/fluid_capture_cpu_back.fs");
+        s_surface_capture_shader_cpu = ResourceManager_LoadShader(NULL, "core/liquid/shaders/liquid_capture_cpu.fs");
+        s_surface_back_shader_cpu = ResourceManager_LoadShader(NULL, "core/liquid/shaders/liquid_capture_cpu_back.fs");
         s_cpu_capture_params_loc  = GetShaderLocation(s_surface_capture_shader_cpu,  "u_capture_params");
         s_cpu_capture_material_loc= GetShaderLocation(s_surface_capture_shader_cpu,  "u_materialId");
         s_cpu_capture_proj_loc    = GetShaderLocation(s_surface_capture_shader_cpu,  "u_projection");
@@ -1141,7 +1141,7 @@ void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, in
 void GpuParticleSystem_DrawSurfaceBackEmitter(Camera3D camera, int emitterId)
 {
     /* Far root of every splat, reduced with MAX (see
-     * fluid_capture_particle_back.fs). Same geometry, same filters and the same
+     * liquid_capture_particle_back.fs). Same geometry, same filters and the same
      * depth state as the front pass — only the shader differs, so the two
      * captures are guaranteed to describe the same cloud. */
     s_filterEmitter = emitterId;

@@ -1532,7 +1532,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // and their depth-mask handling.
     if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA) continue;
     if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA) continue;
-    // SURFACE_INPUT is rendered exclusively by FluidSurface; drawing it here
+    // SURFACE_INPUT is rendered exclusively by LiquidSurface; drawing it here
     // would reveal its source particles as billboards as well.
     if (p->renderMode == 3) continue;
     // Headless wisp: the particle exists to carry a path, not to be a sprite.

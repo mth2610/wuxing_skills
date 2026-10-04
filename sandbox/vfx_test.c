@@ -366,8 +366,8 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
     case 32: VFX_ComposeSurfaceImpact(pos, s_surfaceImpactFixtureSurface); return false;
     case 33: VFX_ComposeSurfaceParticleRing(pos, s_surfaceParticleRingFixtureVariant == VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_surfaceParticleRingFixtureVariant); return false;
     case 42: VFX_ComposeFireballBurst(pos, VC_MAT_FIRE, 1.5f, 1.0f); return true;
-    case 44: VFX_ComposeFluidImpact(pos); return true;
-    case 45: VFX_ComposeIceCrystal(pos, posSeed); return true;
+    case 44: VFX_ComposeIceCrystal(pos, posSeed); return true;
+    case 46: VFX_ComposeLiquidImpact(pos); return true;
     case 47: VFX_ComposeWaterOrb(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
     default: return false;
     }
@@ -393,7 +393,7 @@ static const char* s_newFxNames[] = {
     "REF PARTICLES", "RIFT BOLT", "RUNE CIRCLE", "SHIELD SHELL", "SHOCK RING", "SMOKE COLUMN",
     "SMOKE PUFF", "[PARTICLE] SMOKE VOLUME", "SURFACE IMPACT", "SURFACE PARTICLE RING", "SWEEP SLASH", "MOTION RIBBON TRAIL",
     "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR", "AMBIENT FIRE",
-    "FIREBALL BURST", "BLACK HOLE", "FLUID IMPACT", "ICE CRYSTAL", "LIQUID BENCH", "WATER ORB",
+    "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "LIQUID BENCH", "LIQUID IMPACT", "WATER ORB",
     "WATER RING", "WATER STREAM",
 };
 // @gen:newfx_names end
@@ -1467,7 +1467,7 @@ void VFXTest_Draw3D(void)
               case 40: VFX_ComposeStonePillar(s_prefabStartPos, progress); break;
               case 41: VFX_ComposeAmbientFireEx(s_prefabStartPos, VC_MAT_FIRE, 1.5f, 1.0f, s_ambientFireFixtureStyle); break;
               case 43: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
-              case 46: VFX_ComposeLiquidBench(s_prefabStartPos, 1.1f, 1.0f); break;
+              case 45: VFX_ComposeLiquidBench(s_prefabStartPos, 1.1f, 1.0f); break;
               case 48: VFX_ComposeWaterRing(s_prefabStartPos, 0.9f, 1.0f); break;
               case 49: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
           }
