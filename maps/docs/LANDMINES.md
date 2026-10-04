@@ -109,6 +109,7 @@
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-04 | Codex | Heightmap normalization and background/water shader scopes | `scripts/generate_island_heightmap.py`, `maps/toolkit/map_props_cloud.inl`, `maps/toolkit/map_props_nature.inl`, `maps/tests/test_map_background_state.py` | Ground-truth |
 | 2026-10-03 | Codex | Translation-only parametric transform cancellation | `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/nature_parametric.glsl`, `maps/tests/test_meadow_world_space.py` | Ground-truth |
 | 2026-10-03 | Codex | Prop material camera-space lighting and world-height AO | `maps/toolkit/prop_lit.c`, `maps/toolkit/shaders/prop_lit.fs`, `maps/tests/test_prop_lighting_space.py` | Ground-truth |
 | 2026-10-03 | Codex | Exact water wake texture reuse and residual-wave lifecycle | `maps/toolkit/map_props_nature.inl`, `maps/tests/test_water_wave_upload.py` | Ground-truth |
@@ -122,3 +123,11 @@
 | 2026-09-27 | Codex | Grass tip contrast and blade silhouette follow-up | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_surface.glsl`, `maps/worlds/verdant_path/verdant_path.c` | Ground-truth |
 | 2026-09-30 | Codex | Grass LOD and shading filtering | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_surface.glsl` | Ground-truth |
 | 2026-09-30 | Codex | Close foliage PCF and sampled Core wind | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/nature_surface.glsl`, `maps/toolkit/shaders/nature_wind_field.glsl` | Ground-truth |
+
+### Heightmap normalization must match runtime metres
+
+**Symptom:** a nominal 1.15 m lake basin rendered about 2.54 m deep, disagreeing with water bathymetry. **Cause:** the generator normalized against 3.6 m while the map mesh used an 8 m vertical range. **Rule:** bake with the runtime cliff range; verify decoded basin depth, and preserve existing meadow relief when changing normalization.
+
+### Cloud and water uniforms need the active draw shader
+
+**Symptom:** a preceding prop shader could receive background/water uniform uploads; multiple cloud surfaces shared the last creation-time tiling. **Cause:** draw uniforms were uploaded before activating their shader, and tiling was stored only in shared shader state. **Rule:** activate the shader before uploads and drawing; keep cloud tiling on the surface and upload per draw. `maps/tests/test_map_background_state.py` executes the production paths after a sky draw and checks shader/state ownership.

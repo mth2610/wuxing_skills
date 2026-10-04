@@ -373,7 +373,10 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
         }
     }
 
-    TRACELOG(RL_LOG_INFO, "RLVK: swapchain created (%ux%u, %u images)", extent.width, extent.height, RLVK.swapchainImageCount);
+    TRACELOG(RL_LOG_INFO, "RLVK: swapchain created (%ux%u, %u images, present=%s)",
+             extent.width, extent.height, RLVK.swapchainImageCount,
+             presentMode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE" :
+             presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? "MAILBOX" : "FIFO");
 }
 
 // Begin a frame: acquire a swapchain image, open the command buffer, transition the image to

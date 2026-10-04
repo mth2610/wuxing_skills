@@ -181,6 +181,16 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
   uniform table. The headless runtime regression compiles 40 preceding members,
   conditional tail controls and a shared camera, then checks both stage uploads.
 
+- **Pipeline cache reports "seeded" after a driver payload read failure.**
+  **Symptom:** MoltenVK reports truncated cache data at startup, followed by a
+  misleading successful seed message on every run. **Cause:** a rejected
+  `vkCreatePipelineCache` left the handle null; the log checked file size rather
+  than the Vulkan result, and null-cache shutdown could not save a replacement.
+  **Rule:** `rlvk_pipeline.inl` retries rejected disk data with an empty cache,
+  reports the actual outcome, and saves the resulting valid cache at shutdown.
+  An isolated copy of the failing blob recovered in the headless runtime suite;
+  `tests/rlvk_runtime_test.c` requires a non-null initialized cache.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
@@ -191,3 +201,4 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
 | 2026-10-02 | Codex | Default uniform block member capacity | `rlvk_shaderc.inl`, `tests/rlvk_runtime_test.c` failing then passing shaderc reflection regression | Ground-truth |
 | 2026-10-03 | Codex | GPU trace query placement and sample accounting | `rlvk_platform.inl`, `rlvk_state.inl`, `rlvk_renderpass.inl`, trace-enabled visual validation and headless sample tests | Ground-truth |
 | 2026-10-04 | Codex | SSF shader scenario path | `tests/rlvk_visual_test.c`, renamed `core/liquid/shaders/liquid_depth_narrow_range.fs` | Ground-truth |
+| 2026-10-04 | Codex | Rejected pipeline cache recovery | `rlvk_pipeline.inl`, headless runtime with isolated rejected disk blob | Ground-truth |

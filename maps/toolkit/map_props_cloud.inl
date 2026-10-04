@@ -4,7 +4,7 @@
 
 static Shader cloudShader = {0};
 static bool cloudShaderLoaded = false;
-static int locCloudLightDir = -1, locCloudLightCol = -1, locCloudAmbCol = -1, locCloudTime = -1;
+static int locCloudLightDir = -1, locCloudLightCol = -1, locCloudAmbCol = -1, locCloudTime = -1, locCloudTiling = -1;
 
 MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize)
 {
@@ -22,6 +22,7 @@ MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize)
         locCloudLightCol = GetShaderLocation(cloudShader, "lightColor");
         locCloudAmbCol = GetShaderLocation(cloudShader, "ambientColor");
         locCloudTime = GetShaderLocation(cloudShader, "u_time");
+        locCloudTiling = GetShaderLocation(cloudShader, "tiling");
         cloudShaderLoaded = true;
     }
 
@@ -35,9 +36,7 @@ MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize)
     SetTextureFilter(noiseTex, TEXTURE_FILTER_BILINEAR);
     cloud.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = noiseTex;
 
-    float tiling[2] = {width / tileSize, depth / tileSize};
-    int tilingLoc = GetShaderLocation(cloudShader, "tiling");
-    SetShaderValue(cloudShader, tilingLoc, tiling, SHADER_UNIFORM_VEC2);
+    cloud.tiling = (Vector2){width / tileSize, depth / tileSize};
 
     cloud.ready = true;
     return cloud;
@@ -57,6 +56,8 @@ void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float y
     float ambColArr[4] = {ambCol.r / 255.0f, ambCol.g / 255.0f, ambCol.b / 255.0f, ambCol.a / 255.0f};
     float t = TimeFX_IsDeterministic() ? TimeFX_Elapsed() : (float)GetTime();
 
+    BeginShaderMode(cloudShader);
+    SetShaderValue(cloudShader, locCloudTiling, &cloud->tiling, SHADER_UNIFORM_VEC2);
     SetShaderValue(cloudShader, locCloudLightDir, lightDirArr, SHADER_UNIFORM_VEC3);
     SetShaderValue(cloudShader, locCloudLightCol, sunColArr, SHADER_UNIFORM_VEC4);
     SetShaderValue(cloudShader, locCloudAmbCol, ambColArr, SHADER_UNIFORM_VEC4);
@@ -64,6 +65,7 @@ void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float y
 
     Vector3 pos = {worldCenter.x, worldCenter.y + yOffset, worldCenter.z};
     DrawModel(cloud->model, pos, 1.0f, WHITE);
+    EndShaderMode();
 }
 
 void MapProp_UnloadCloudSea(MapCloudSea *cloud)

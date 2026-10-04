@@ -3973,6 +3973,7 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
 
     // Draw Crystal Clear Water Surface with Alpha Blending
     Shader shader = Water_GetShader();
+    BeginShaderMode(shader);
     SetShaderValue(shader, s_waterLocTime, &time, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, s_waterLocWaveHeight, &water->config.waveHeight, SHADER_UNIFORM_FLOAT);
     SetShaderValue(shader, s_waterLocWaveScale, &water->config.waveScale, SHADER_UNIFORM_FLOAT);
@@ -4100,6 +4101,7 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     rlActiveTextureSlot(1);
     rlDisableTexture();
     rlActiveTextureSlot(0);
+    EndShaderMode();
 }
 
 void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time)

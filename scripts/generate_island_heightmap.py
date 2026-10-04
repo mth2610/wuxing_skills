@@ -1,7 +1,7 @@
 """Generate a grayscale heightmap for the "floating island" map motif
 (MAP_API.md): white = walkable plateau crest, black = cliff edge sinking
 down. Includes:
-1. Natural gentle meadow undulation (rolling swales & knolls, ~0.20m depth)
+1. Natural gentle meadow undulation (rolling swales & knolls, ~0.45m depth)
 2. Seamlessly sunken concave lake basin (depth 1.15m at center, matching Water_EdgeScale)
 3. Smooth waterline fade around the lake rim so the water surface meets the shore at Y=0.0m
 4. Mildly-jagged cliff edge strip around the outer 10% perimeter
@@ -19,7 +19,7 @@ seed = int(sys.argv[3]) if len(sys.argv) > 3 else 1337
 
 MAP_WIDTH = 100.0
 MAP_DEPTH = 75.0
-CLIFF_DEPTH = 3.6
+CLIFF_DEPTH = 8.0  # Must match the mesh's vertical range in verdant_path.c.
 LAKE_CENTER_X = 63.0
 LAKE_CENTER_Z = 25.5
 LAKE_RADIUS_X = 10.5
@@ -70,11 +70,11 @@ rz = LAKE_RADIUS_Z * edge
 r_lake = np.sqrt((dx / rx)**2 + (dz / rz)**2)
 lake_depth = np.where(r_lake < 1.0, LAKE_MAX_DEPTH * (1.0 - np.clip(r_lake, 0.0, 1.0)**1.6), 0.0)
 
-# 3. Meadow undulating swales (relative depth: 0.0 to 0.20m below crests)
+# 3. Meadow undulating swales (relative depth: 0.0 to 0.45m below crests)
 h_macro = np.sin(world_x * 0.065 + world_z * 0.048) * 0.55 + np.sin(world_x * -0.048 + world_z * 0.082 + 1.2) * 0.45
 h_med = np.sin(world_x * 0.14 - world_z * 0.11 + 0.8) * 0.55 + np.sin(world_x * 0.09 + world_z * 0.18 + 2.1) * 0.45
 raw_undulation = h_macro * 0.7 + h_med * 0.3
-swale_depth = (1.0 - (raw_undulation * 0.5 + 0.5)) * 0.20
+swale_depth = (1.0 - (raw_undulation * 0.5 + 0.5)) * 0.45
 
 # Fade meadow undulation at lake rim and cliff
 lake_fade = np.clip((r_lake - 1.02) / 0.30, 0.0, 1.0)
@@ -90,8 +90,7 @@ final_height = plateau_height * (1.0 - cliff_drop)
 final_height = np.clip(final_height, 0.0, 1.0)
 
 img = (final_height * 255.0 + 0.5).astype(np.uint8)
-out_img = Image.fromarray(img, mode="L").filter(ImageFilter.GaussianBlur(radius=0.6))
+out_img = Image.fromarray(img).filter(ImageFilter.GaussianBlur(radius=0.6))
 out_img.save(out_path)
 print(f"Wrote {out_path} ({size}x{size}) with lake basin and undulating terrain")
-
 

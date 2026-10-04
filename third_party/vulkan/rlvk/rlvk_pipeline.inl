@@ -63,7 +63,7 @@ static void rlvkInitPipelineCache(void)
             if (dataSize > 0)
             {
                 data = RL_MALLOC((size_t)dataSize);
-                if (fread(data, 1, (size_t)dataSize, file) != (size_t)dataSize)
+                if (!data || fread(data, 1, (size_t)dataSize, file) != (size_t)dataSize)
                 {
                     RL_FREE(data);
                     data = NULL;
@@ -74,18 +74,35 @@ static void rlvkInitPipelineCache(void)
         fclose(file);
     }
 
-    // The driver validates the blob header (UUID) itself and falls back to empty on mismatch
-    RLVK_CHECK(vkCreatePipelineCache(RLVK.device,
-                                     &(VkPipelineCacheCreateInfo){
-                                         VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
-                                         .initialDataSize = (size_t)dataSize,
-                                         .pInitialData = data,
-                                     },
-                                     RLVK_ALLOC, &RLVK.pipelineCache));
+    // A matching header can still contain truncated driver payload. Some drivers
+    // reject that payload rather than treating it as an empty cache.
+    VkPipelineCacheCreateInfo info = {
+        VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+        .initialDataSize = (size_t)dataSize,
+        .pInitialData = data,
+    };
+    RLVK.pipelineCache = VK_NULL_HANDLE;
+    VkResult result = vkCreatePipelineCache(RLVK.device, &info, RLVK_ALLOC, &RLVK.pipelineCache);
+    bool seeded = result == VK_SUCCESS && dataSize > 0;
+    if (result != VK_SUCCESS && dataSize > 0)
+    {
+        TRACELOG(RL_LOG_WARNING, "RLVK: pipeline cache seed rejected (%ld bytes, result=%d); retrying empty", dataSize, (int)result);
+        info.initialDataSize = 0;
+        info.pInitialData = NULL;
+        RLVK.pipelineCache = VK_NULL_HANDLE;
+        result = vkCreatePipelineCache(RLVK.device, &info, RLVK_ALLOC, &RLVK.pipelineCache);
+    }
     if (data != NULL)
         RL_FREE(data);
-    if (dataSize > 0)
+    if (result != VK_SUCCESS)
+    {
+        RLVK.pipelineCache = VK_NULL_HANDLE;
+        TRACELOG(RL_LOG_WARNING, "RLVK: pipeline cache unavailable (result=%d); pipelines will compile without it", (int)result);
+    }
+    else if (seeded)
         TRACELOG(RL_LOG_INFO, "RLVK: pipeline cache seeded from disk (%ld bytes)", dataSize);
+    else
+        TRACELOG(RL_LOG_INFO, "RLVK: empty pipeline cache initialized");
 }
 
 // Save the driver pipeline cache to disk so the next run creates pipelines instantly

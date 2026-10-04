@@ -44,5 +44,6 @@ static void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength, float 
 #include "maps/toolkit/map_props_strip.inl"
 #include "maps/toolkit/map_props_rocks.inl"
 #include "maps/toolkit/map_props_cloud.inl"
+#include "maps/toolkit/map_props_sky.inl"
 #include "maps/toolkit/map_props_mesh_index.inl"
 #include "maps/toolkit/map_props_nature.inl"

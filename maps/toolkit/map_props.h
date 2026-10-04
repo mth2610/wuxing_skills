@@ -223,12 +223,13 @@ typedef struct
 {
     Model model;
     bool ready;
+    Vector2 tiling; // Texture repeats owned by this surface.
 } MapCloudSea;
 
 // width/depth in world meters (make this bigger than the map itself so it
 // reads as an endless sea extending past the mountain ring). tileSize
-// controls the noise frequency, not a texture repeat (this shader is
-// texture-free, pure procedural FBM) — smaller tileSize = smaller/denser
+// controls the repeats of the tileable cloud-noise texture — smaller
+// tileSize = smaller/denser
 // cloud puffs. Draw well below the ground (yOffset negative, e.g. -12.0f).
 //
 // Uses a discard-based opaque cutout, never partial alpha — see
@@ -236,6 +237,13 @@ typedef struct
 MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize);
 void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float yOffset);
 void MapProp_UnloadCloudSea(MapCloudSea *cloud);
+
+// Opt-in camera-centred sky. Draw after opaque scenery, inside BeginMode3D.
+// Uses resolved Environment lighting; tests at far depth without writing it.
+typedef struct { Model model; Shader shader; int sunLoc, skyLoc, hazeLoc, colorLoc; bool ready; } MapSkyDome;
+MapSkyDome MapProp_CreateSkyDome(void);
+void MapProp_DrawSkyDome(const MapSkyDome *sky);
+void MapProp_UnloadSkyDome(MapSkyDome *sky);
 
 // --- Reusable natural surfaces -----------------------------------------
 

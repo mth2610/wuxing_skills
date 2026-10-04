@@ -55,6 +55,7 @@ int main(void)
     // 1. Device bring-up (instance, physical device pick, logical device, caps, frame ring)
     rlglInit(640, 480);
     CHECK(rlGetVersion() >= 0, "rlglInit survived");
+    CHECK(RLVK.pipelineCache != VK_NULL_HANDLE, "pipeline cache initialized after optional disk seed");
 
     // 2. Texture staging roundtrip: upload a deterministic RGBA8 pattern, read it back
     {
