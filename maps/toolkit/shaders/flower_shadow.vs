@@ -30,5 +30,7 @@ void main()
                  * u_widthScale;
     fragColor = vertexColor;
     fragShadowUV = vec2(along, across);
-    gl_Position = mvp * vec4(position, 1.0);
+    vec4 clip = mvp * vec4(position, 1.0);
+    clip.z -= 0.00075 * clip.w;
+    gl_Position = clip;
 }

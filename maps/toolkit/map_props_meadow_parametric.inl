@@ -317,6 +317,13 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
             .center = {x0+style.chunkSize*0.5f,0.0f,z0+style.chunkSize*0.5f},
             .radius = style.chunkSize*0.72f+1.5f,
             .midReady = true, .realShadowReady = shadows, .ready = true};
+        if (style.shadowDistance > 0.0f) {
+            Model shadowModel = Nature_BuildMeadowShadowChunk(placements, count,
+                                                              x0, x0 + style.chunkSize,
+                                                              z0, z0 + style.chunkSize);
+            meadow->chunks[chunk].shadowModel = shadowModel;
+            meadow->chunks[chunk].shadowReady = shadowModel.meshCount > 0;
+        }
     }
     int blades[4] = {style.bladesPerClump,
         style.bladesPerClump >= 5 ? 4 : (style.bladesPerClump >= 3 ? 3 : style.bladesPerClump),3,3};
@@ -384,6 +391,10 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     TraceLog(LOG_INFO,"MEADOW_PARAMETRIC: chunks=%d tufts=%d parameter_bytes=%lld shared_atlas=1 immutable_templates=4",meadow->chunkCount,count,parameterBytes);
     return true;
 failed:
+    for (int i = 0; i < meadow->chunkCount; i++) {
+        if (meadow->chunks && meadow->chunks[i].shadowReady)
+            UnloadModel(meadow->chunks[i].shadowModel);
+    }
     NatureParametric_Destroy(meadow);
     if (meadow->chunks) MemFree(meadow->chunks);
     memset(meadow,0,sizeof(*meadow));
@@ -496,8 +507,14 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
 {
     NatureParametricMeadow *data = meadow->parametric;
     NatureTuftTemplate *mesh = &data->templates[lod];
-    Matrix model = MatrixMultiply(MatrixTranslate(worldOffset.x,worldOffset.y,worldOffset.z),rlGetMatrixTransform());
-    Matrix mvp = MatrixMultiply(MatrixMultiply(model,rlGetMatrixModelview()),rlGetMatrixProjection());
+    Matrix model = MatrixTranslate(worldOffset.x,worldOffset.y,worldOffset.z);
+    Matrix mvp;
+    if (lod == 3) {
+        mvp = MatrixMultiply(model, EnvShadow_GetLightVP());
+    } else {
+        model = MatrixMultiply(model, rlGetMatrixTransform());
+        mvp = MatrixMultiply(MatrixMultiply(model, rlGetMatrixModelview()), rlGetMatrixProjection());
+    }
     SetShaderValueMatrix(shader,shader.locs[SHADER_LOC_MATRIX_MVP],mvp);
     const Vector4 white = {1.0f,1.0f,1.0f,1.0f};
     if (shader.locs[SHADER_LOC_COLOR_DIFFUSE] >= 0)

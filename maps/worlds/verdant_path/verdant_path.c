@@ -753,6 +753,7 @@ void InitVerdantPathMap(void)
         MapProp_SetFlowerFieldDrawDistance(&s_flowerFields[cluster], 78.0f);
         MapProp_SetFlowerFieldLod(&s_flowerFields[cluster], 34.0f, 30.0f);
     }
+    EnvShadow_SetFocus(kMapCenter, 20.0f);
     EnvShadow_SetMapCasterCallback(DrawVerdantShadowCasters, NULL);
     // World-fixed terrain/rocks are captured now when enabled, or lazily after
     // a runtime toggle. Dynamic vegetation/characters use the near cascade.
