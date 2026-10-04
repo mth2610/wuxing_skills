@@ -910,10 +910,10 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
     // Hybrid contact is root occlusion, not a second directional silhouette.
     // Keep it short, broad and restrained so the real animated shadow owns the
     // readable shape. SHADOW OFF retains a softer projected fallback.
-    float projectionScale = realShadowActive ? 0.82f : 0.88f;
-    float widthScale = realShadowActive ? 1.40f : 1.30f;
-    float tipWidth = realShadowActive ? 0.70f : 0.70f;
-    float shadowStrength = realShadowActive ? 0.95f : 0.95f;
+    float projectionScale = realShadowActive ? 0.42f : 0.68f;
+    float widthScale = realShadowActive ? 1.50f : 1.25f;
+    float tipWidth = realShadowActive ? 0.92f : 0.75f;
+    float shadowStrength = realShadowActive ? 0.85f : 0.92f;
     SetShaderValue(shader, GetShaderLocation(shader, "u_lightTravel"),
                    &lightTravel, SHADER_UNIFORM_VEC3);
     SetShaderValue(shader, GetShaderLocation(shader, "u_shadowTint"),
@@ -2401,10 +2401,6 @@ void MapProp_UnloadMeadow(MapMeadowSurface *meadow)
 {
     if (!meadow || !meadow->ready) return;
     if (meadow->parametric) {
-        for (int i = 0; i < meadow->chunkCount; i++) {
-            if (meadow->chunks[i].shadowReady)
-                UnloadModel(meadow->chunks[i].shadowModel);
-        }
         NatureParametric_Destroy(meadow);
         MemFree(meadow->chunks);
         memset(meadow,0,sizeof(*meadow));

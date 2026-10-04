@@ -73,7 +73,7 @@ vec4 NatureBladeParameter(int blade, int column)
 void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p3)
 {
     if (u_canonicalBladeData != 0) {
-        float widthScale = u_geometryLod == 1 ? 1.22 : (u_geometryLod == 2 ? 1.65 : (u_geometryLod == 3 ? 1.30 : 1.0));
+        float widthScale = u_geometryLod == 1 ? 1.22 : (u_geometryLod == 2 ? 1.65 : (u_geometryLod == 3 ? 2.10 : 1.0));
         p1.w *= widthScale;
         if (u_geometryLod == 2) {
             // Preserve the author's short/wide far silhouette and droop;
