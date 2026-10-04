@@ -90,6 +90,8 @@ final_height = plateau_height * (1.0 - cliff_drop)
 final_height = np.clip(final_height, 0.0, 1.0)
 
 img = (final_height * 255.0 + 0.5).astype(np.uint8)
-Image.fromarray(img, mode="L").save(out_path)
+out_img = Image.fromarray(img, mode="L").filter(ImageFilter.GaussianBlur(radius=0.6))
+out_img.save(out_path)
 print(f"Wrote {out_path} ({size}x{size}) with lake basin and undulating terrain")
+
 

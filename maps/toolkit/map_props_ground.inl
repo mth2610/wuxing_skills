@@ -398,40 +398,51 @@ MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float 
     Image heightmapImg = LoadImage(heightmapPath);
     Mesh mesh = GenMeshHeightmap(heightmapImg, (Vector3){width, cliffDepth, depth});
 
-    // Compute continuous central-difference vertex normals so the heightmap
-    // (including the concave lake basin and rolling swales) has smooth shading
-    // without faceted polygonal creases.
-    if (mesh.normals != NULL && heightmapImg.width > 1 && heightmapImg.height > 1) {
-        float cellX = width / (float)(heightmapImg.width - 1);
-        float cellZ = depth / (float)(heightmapImg.height - 1);
-        for (int i = 0; i < mesh.vertexCount; i++) {
-            float vx = mesh.vertices[i * 3 + 0];
-            float vz = mesh.vertices[i * 3 + 2];
-            int ix = (int)roundf((vx / width) * (float)(heightmapImg.width - 1));
-            int iz = (int)roundf((vz / depth) * (float)(heightmapImg.height - 1));
-            if (ix < 0) ix = 0; else if (ix >= heightmapImg.width) ix = heightmapImg.width - 1;
-            if (iz < 0) iz = 0; else if (iz >= heightmapImg.height) iz = heightmapImg.height - 1;
+    // Compute smooth Gouraud vertex normals by accumulating adjacent face normals
+    // across each heightmap grid cell, eliminating polygonal facet creases.
+    if (mesh.normals != NULL && heightmapImg.width > 1 && heightmapImg.height > 1 && mesh.triangleCount > 0) {
+        int mapX = heightmapImg.width;
+        int mapZ = heightmapImg.height;
+        Vector3 *gridNormals = (Vector3 *)MemAlloc((unsigned int)(mapX * mapZ) * sizeof(Vector3));
+        if (gridNormals != NULL) {
+            memset(gridNormals, 0, (unsigned int)(mapX * mapZ) * sizeof(Vector3));
+            for (int t = 0; t < mesh.triangleCount; t++) {
+                int b = t * 9;
+                Vector3 vA = { mesh.vertices[b + 0], mesh.vertices[b + 1], mesh.vertices[b + 2] };
+                Vector3 vB = { mesh.vertices[b + 3], mesh.vertices[b + 4], mesh.vertices[b + 5] };
+                Vector3 vC = { mesh.vertices[b + 6], mesh.vertices[b + 7], mesh.vertices[b + 8] };
+                Vector3 fn = Vector3CrossProduct(Vector3Subtract(vB, vA), Vector3Subtract(vC, vA));
+                if (fn.y < 0.0f) fn = Vector3Negate(fn);
 
-            int xL = ix > 0 ? ix - 1 : 0;
-            int xR = ix < heightmapImg.width - 1 ? ix + 1 : heightmapImg.width - 1;
-            int zU = iz > 0 ? iz - 1 : 0;
-            int zD = iz < heightmapImg.height - 1 ? iz + 1 : heightmapImg.height - 1;
+                for (int k = 0; k < 3; k++) {
+                    float vx = mesh.vertices[b + k * 3 + 0];
+                    float vz = mesh.vertices[b + k * 3 + 2];
+                    int ix = (int)roundf((vx / width) * (float)(mapX - 1));
+                    int iz = (int)roundf((vz / depth) * (float)(mapZ - 1));
+                    if (ix >= 0 && ix < mapX && iz >= 0 && iz < mapZ) {
+                        int gIdx = iz * mapX + ix;
+                        gridNormals[gIdx] = Vector3Add(gridNormals[gIdx], fn);
+                    }
+                }
+            }
 
-            float hL = (float)GetImageColor(heightmapImg, xL, iz).r / 255.0f * cliffDepth;
-            float hR = (float)GetImageColor(heightmapImg, xR, iz).r / 255.0f * cliffDepth;
-            float hU = (float)GetImageColor(heightmapImg, ix, zU).r / 255.0f * cliffDepth;
-            float hD = (float)GetImageColor(heightmapImg, ix, zD).r / 255.0f * cliffDepth;
-
-            float stepX = (float)(xR - xL) * cellX;
-            float stepZ = (float)(zD - zU) * cellZ;
-
-            float dYdx = stepX > 0.0001f ? (hR - hL) / stepX : 0.0f;
-            float dYdz = stepZ > 0.0001f ? (hD - hU) / stepZ : 0.0f;
-
-            Vector3 n = Vector3Normalize((Vector3){-dYdx, 1.0f, -dYdz});
-            mesh.normals[i * 3 + 0] = n.x;
-            mesh.normals[i * 3 + 1] = n.y;
-            mesh.normals[i * 3 + 2] = n.z;
+            for (int i = 0; i < mesh.vertexCount; i++) {
+                float vx = mesh.vertices[i * 3 + 0];
+                float vz = mesh.vertices[i * 3 + 2];
+                int ix = (int)roundf((vx / width) * (float)(mapX - 1));
+                int iz = (int)roundf((vz / depth) * (float)(mapZ - 1));
+                if (ix >= 0 && ix < mapX && iz >= 0 && iz < mapZ) {
+                    int gIdx = iz * mapX + ix;
+                    Vector3 n = Vector3Normalize(gridNormals[gIdx]);
+                    if (Vector3Length(n) > 0.001f) {
+                        mesh.normals[i * 3 + 0] = n.x;
+                        mesh.normals[i * 3 + 1] = n.y;
+                        mesh.normals[i * 3 + 2] = n.z;
+                    }
+                }
+            }
+            MemFree(gridNormals);
+            UpdateMeshBuffer(mesh, 2, mesh.normals, mesh.vertexCount * 3 * (int)sizeof(float), 0);
         }
     }
 

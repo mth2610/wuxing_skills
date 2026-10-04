@@ -823,32 +823,21 @@ void UpdateVerdantPathMap(float dt)
 
 float GetGroundHeightVerdantPathMap(float x, float z)
 {
-    float bedHeight;
-    if (MapProp_SampleWaterBed(&s_lake, x, z, &bedHeight, NULL)) {
-        return bedHeight;
-    }
     return MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
 }
 
 bool SampleGroundSurfaceVerdantPathMap(float x, float z, Vector3 *outPosition, Vector3 *outNormal)
 {
-    float bedHeight;
-    Vector3 bedNormal;
-    if (MapProp_SampleWaterBed(&s_lake, x, z, &bedHeight, &bedNormal)) {
-        if (outPosition) *outPosition = (Vector3){x, bedHeight, z};
-        if (outNormal) *outNormal = bedNormal;
-        return true;
-    }
     return MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, outPosition, outNormal);
 }
 
 bool GetWaterInfoVerdantPathMap(float x, float z, float *outSurfaceY, float *outWaterDepth)
 {
-    float bedHeight;
-    if (MapProp_SampleWaterBed(&s_lake, x, z, &bedHeight, NULL)) {
-        float surfaceY = s_lake.config.center.y;
+    float surfaceY = s_lake.config.center.y;
+    float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
+    if (gy < surfaceY) {
         if (outSurfaceY) *outSurfaceY = surfaceY;
-        if (outWaterDepth) *outWaterDepth = fmaxf(0.0f, surfaceY - bedHeight);
+        if (outWaterDepth) *outWaterDepth = surfaceY - gy;
         return true;
     }
     return false;
@@ -856,10 +845,10 @@ bool GetWaterInfoVerdantPathMap(float x, float z, float *outSurfaceY, float *out
 
 void SetWaterInteractorVerdantPathMap(Vector3 position, Vector3 velocity, float radius)
 {
-    float bedHeight;
-    if (MapProp_SampleWaterBed(&s_lake, position.x, position.z, &bedHeight, NULL)) {
-        float surfaceY = s_lake.config.center.y;
-        float depth = surfaceY - bedHeight;
+    float surfaceY = s_lake.config.center.y;
+    float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, position.x, position.z);
+    if (gy < surfaceY) {
+        float depth = surfaceY - gy;
         float submerged = 0.0f;
         if (position.y < surfaceY + 0.15f) {
             submerged = fminf(1.0f, fmaxf(0.0f, (surfaceY - position.y + 0.25f) / fmaxf(depth, 0.35f)));
