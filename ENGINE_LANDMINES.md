@@ -30,6 +30,7 @@
 | 20 | The GLSL `#include` expander does not understand comments — a commented-out include is still expanded | Anyone writing a usage example, or a "does NOT include X" note, inside a shader comment |
 | 21 | Terrain height sampling was O(every triangle) — FIXED, and the rations it forced are obsolete; `GetGroundHeightAt` still answers `0.0` for "no data" | Anyone conforming a VFX, decal or formation to the ground |
 | 22 | A silent headless capture looks hung and hides failures | Anyone maintaining visual regression harnesses |
+| 23 | Graphics SSBO bindings have a smaller limit than compute | Anyone adding raw instanced shader-buffer draws |
 
 ---
 
@@ -1666,9 +1667,27 @@ fields and mask chains generally, not about that tail.*
 - **Cause:** `third_party/vulkan/rlvk/rlvk_shaderc.inl` truncated reflected struct members at 32, although the uniform table supports 160. Later uniforms existed in SPIR-V but their locations returned -1 and uploads never reached them.
 - **Rule:** Reflection capacity must match the supported uniform table. Validate required locations before enabling a rendering path and retain a working fallback. The renderer's real shaderc regression covers late conditional members and uploads to both shader stages; see `third_party/vulkan/docs/LANDMINES.md`.
 
+## 23. Graphics SSBO bindings have a smaller limit than compute (04/10/2026)
+
+**Symptom.** Batched liquid reported 640 submitted instances but disappeared;
+rlvk logged `graphics SSBO binding 5 out of range (max 3), clamping`.
+
+**Cause.** A compute binding number was reused for a graphics-stage compact
+index buffer. The backend only accepts graphics binding indices 0 through 3;
+clamping the host binding does not rewrite the shader's declared binding.
+
+**Rule.** Check graphics-stage limits independently of compute. Declare and bind
+the same supported index on both sides, rebind shared slots before every dispatch
+or draw, and validate real shader output. Counters and shader links alone cannot
+prove that the buffer reached the shader. Liquid capture uses particle binding 0
+and index binding 1; compute rebinds its own field buffer at binding 1.
+
+---
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-04 | Codex | Graphics SSBO binding limit | core/particles/shaders/gpu/liquid_surface_capture.vs; core/particles/gpu/particle_gpu_backend.c | Ground-truth |
 | 2026-10-04 | Codex | Liquid surface API references | core/liquid/liquid_surface.h | Ground-truth |
 | 2026-10-03 | Codex | Volume sampling coherence: fog ordered grid | core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_sampling_test.c; fixed-camera captures | Ground-truth |

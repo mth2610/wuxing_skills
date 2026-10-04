@@ -241,10 +241,40 @@ performed by emit/update. `SpawnParticle` remains a compatibility AUTO burst and
 currently carries the legacy-compat module, so existing CPU effects retain their
 behaviour while their descriptors are migrated.
 
-Fluid renderers consume `ParticleRenderStream` from
+Liquid renderers consume `ParticleRenderStream` from
 `ParticleManager_GetSurfaceStream`. The stream is opaque; consumers must never
-map it or request GPU-to-CPU readback. `LiquidSurface_SubmitParticleStream` is the
-backend-neutral handoff point.
+map it or request GPU-to-CPU readback. `LiquidSurface_SubmitParticleStream` queues
+input; CPU streams share the remaining aggregate 384-sample budget at capture.
+Small streams retain their complete shape; larger ones use evenly spaced
+samples. `LiquidSurface_GetStats()` reports requested/admitted/dropped counts,
+rejected streams, GPU capture instances, draws and reconstruction passes.
+
+GPU surface capture batches submitted emitters into one indexed draw per
+front/back pass. CPU capture batches analytical world-axis ellipsoids using a
+persistent vertex buffer. Both carry material identity with the front winning
+fragment; the back pass rejects other materials at that pixel. Reconstruction
+uses each material's largest submitted kernel, and rejects valid capture samples
+from a different material. Thickness remains a front-to-farthest **envelope** of
+the same material: separated bodies of one material can still include air gaps.
+
+`LiquidBodyRecipe` (`core/liquid/liquid_body_recipe.h`) shares deterministic
+volume/crown sources and FLIGHT/IMPACT/SETTLE force-field construction across
+impact, orb and bench. It uses normal-only rebound and an airborne interval
+estimated from launch energy and gravity. It does not integrate particles or
+replace ParticleManager. Borrowed fields must stay allocated until
+`ParticleManager_IsForceFieldInUse()` returns false, including after destroying
+an emitter. GPU coherent collisions use a receiver plane; bounded CPU hero
+sweeps can use the terrain/collision callback and render the resolved positions.
+
+Diagnostics: `WUXING_LIQUID_PROFILE=1` logs **host submission** stage times (not GPU
+timings). `WUXING_LIQUID_CAPTURE_BATCH=0`, `WUXING_LIQUID_CPU_IMPOSTOR=0`, and
+`WUXING_LIQUID_OCCUPANCY=0` select same-binary controls. The occupancy mask is a
+conservative 8x8 tile reduction with a one-pixel halo; it only skips guaranteed
+empty first-round hole fills and retains the true 2D HIGH filter.
+`WUXING_LIQUID_CPU_ONLY=1` selects CPU liquid emitters; the wider
+`WUXING_PARTICLES_FORCE_CPU=1` disables the particle compute backend at init.
+`WUXING_LIQUID_IMPACT_COUNT` and `WUXING_LIQUID_BENCH_COUNT` accept 1/2/4 for
+concurrency fixtures; bench defaults to all five materials.
 
 ParticleConfig should be initialized with {0}.
 `void SpawnParticle(ParticleConfig config);` triggers particle emission in the engine.
@@ -2871,4 +2901,5 @@ exceed 1.0 and cannot produce a hot core on its own. Use it for shape over time
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-04 | Codex | Batched liquid capture, recipes, diagnostics | core/liquid/liquid_surface.h; core/liquid/liquid_body_recipe.h | Ground-truth |
 | 2026-10-04 | Codex | Liquid names, impact usage and compatibility | core/liquid/liquid_impact.h; core/liquid/liquid_impact.c; core/fluid/fluid_surface.h | Ground-truth |

@@ -60,12 +60,17 @@ typedef struct {
 // Call only from a collision/state transition, never from a draw loop.
 void LiquidImpact_SpawnWater(const LiquidImpactEvent *event);
 
-// Optional physics/world collision hook. NULL restores the active-map ground
-// query, which supports terrain/heightmap receivers but not walls or props.
+// Optional swept physics/world collision hook for bounded CPU hero droplets.
+// NULL restores a bounded active-map terrain query (eight probes + six TOI
+// refinements); narrow features can be missed. Walls/props require this hook.
+// Coherent GPU ForceField/PBD bodies currently collide only with their authored
+// receiver plane; this callback does not imply GPU world-collision support.
 void LiquidImpact_SetCollisionQuery(LiquidImpactCollisionQueryFn query, void *userData);
 
 // Engine lifecycle: main.c calls these once per frame inside the update/3D draw
 // phases. Skill/gameplay code only calls LiquidImpact_SpawnWater.
+// Update must precede ParticleManager_Update so timestep-averaged body fields
+// describe the interval the particle manager is about to integrate.
 void LiquidImpact_Update(float dt);
 void LiquidImpact_Draw(void);
 void LiquidImpact_GetStats(int *active, int *max);

@@ -9,6 +9,7 @@
 #include <stdbool.h>
 
 #define PARTICLE_MANAGER_MAX_EMITTERS 128
+#define PARTICLE_SURFACE_CAPTURE_MAX_STREAMS 32
 
 typedef struct ParticleGPUCaps {
     bool computeShader;
@@ -103,6 +104,11 @@ typedef struct ParticleRenderStream {
     const void *privateData;
 } ParticleRenderStream;
 
+typedef struct ParticleSurfaceCaptureStream {
+    ParticleRenderStream stream;
+    float materialId; /* Capture B-channel value; supplied by the surface owner. */
+} ParticleSurfaceCaptureStream;
+
 typedef struct ParticleManagerStats {
     int activeCpuParticles;
     int activeGpuParticles;
@@ -125,10 +131,32 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
 ParticleEmitterStatus ParticleManager_GetEmitterStatus(ParticleEmitterHandle handle);
 bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRenderStream *outStream);
 int ParticleManager_CopySurfaceSamples(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples);
+/* Exact live CPU demand; GPU streams return zero without readback. */
+int ParticleManager_CountSurfaceSamples(const ParticleRenderStream *stream);
+/* Same samples with evenly spaced selection across all matching CPU slots when
+ * the caller's capacity is smaller than live demand. Legacy Copy keeps order. */
+int ParticleManager_CopySurfaceSamplesSpaced(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples);
 bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camera3D camera, Texture2D texture);
 /* Back (far) surface of the same stream, for dual-depth thickness. Must be
  * drawn into its own depth target: the reduction is a MAX, not a MIN. */
 bool ParticleManager_DrawSurfaceBackStream(const ParticleRenderStream *stream, Camera3D camera);
+/* Batch GPU streams in one capture draw, routing material with each splat.
+ * Returns false for invalid inputs/CPU streams; CPU consumers copy samples.
+ * At most 32 streams. Duplicate owner ids select the first material.
+ * Call after Update. Single-stream APIs retain the full-pool compatibility path. */
+bool ParticleManager_DrawSurfaceStreams(const ParticleSurfaceCaptureStream *streams, int count, Camera3D camera, Texture2D texture);
+bool ParticleManager_DrawSurfaceBackStreams(const ParticleSurfaceCaptureStream *streams, int count, Camera3D camera);
+/* Conservative submitted instances in the last capture batch, not live GPU
+ * particles: expired owner-matching ring slots remain until overwritten. */
+int ParticleManager_GetSurfaceCaptureInstanceCount(void);
+/* Conservative field-storage reuse gate. Includes live CPU primary/future
+ * arrival references and GPU leases; no GPU readback or field dereference.
+ * DestroyEmitter does not kill particles. This only covers ForceField storage,
+ * not other borrowed route/target/texture data. NULL returns false. */
+bool ParticleManager_IsForceFieldInUse(const ForceField *field);
+/* Borrowed front capture sampled only by the BACK GPU pass for material
+ * matching. Set id=0 after capture to disable; never bind the back destination. */
+void ParticleManager_SetSurfaceCaptureFrontDepth(Texture2D texture);
 void ParticleManager_Update(float dt);
 void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
 void ParticleManager_DrawBody(Camera3D camera, Texture2D fallbackTexture);

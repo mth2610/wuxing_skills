@@ -43,9 +43,11 @@ int main(void)
         CHECK(strstr(orb,"LiquidSurface_ProfileDesc(profile)")!=NULL);
         CHECK(strstr(orb,"LiquidSurface_HintBody(orb->center,surfaceRadius)")!=NULL);
         CHECK(strstr(orb,"LiquidSurface_BindMaterial(&orb->material)")!=NULL);
-        CHECK(Count(orb,"FORCE_RECEIVER_PLANE")>=2);
-        CHECK(strstr(orb,".strength=-orb->motion.splashField")!=NULL);
-        CHECK(strstr(orb,".strength=orb->motion.gatherStrength,.radius=0.0f")!=NULL);
+        CHECK(strstr(orb,"LiquidBodyRecipe_BuildField")!=NULL);
+        CHECK(strstr(orb,"LiquidBodyRecipe_CrownDuration")!=NULL);
+        CHECK(strstr(orb,"LiquidBodyRecipe_VolumeOffset")!=NULL);
+        CHECK(strstr(orb,"WaterOrb_SetPhaseField(orb,fieldPhase,dt)")!=NULL);
+        CHECK(strstr(orb,"orb->phaseAge=fmaxf(orb->age-orb->travelTime,0.0f)")!=NULL);
         CHECK(strstr(orb,"count=caps->computeShader")!=NULL);
         CHECK(strstr(orb,"384")!=NULL);
         CHECK(strstr(impact,"LiquidSurface_ProfileDesc(event->motionProfile)")!=NULL);

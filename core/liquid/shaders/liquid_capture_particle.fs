@@ -7,7 +7,7 @@ in float v_life;
 out vec4 finalColor;
 uniform mat4 u_projection;
 /* Liquid-table slot of the emitter being rasterized; see liquid_capture.fs. */
-uniform float u_materialId;
+flat in float v_materialId;
 
 // GPU surface particles are billboards. Produce a filled elliptical splat here,
 // independent of the artist texture and its alpha convention.
@@ -30,5 +30,5 @@ void main() {
     float depth = clip.z / clip.w * 0.5 + 0.5;
     gl_FragDepth = depth;
     float coverage = smoothstep(1.0, 0.75, r2);
-    finalColor = vec4(depth, coverage, u_materialId, 1.0);
+    finalColor = vec4(depth, coverage, v_materialId, 1.0);
 }

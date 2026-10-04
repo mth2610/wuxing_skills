@@ -1,5 +1,6 @@
 #include "particle_gpu_legacy.h"
 #include "particle_gpu_work_gate.h"
+#include "particle_field_lease.h"
 #include "core/resource_manager.h"
 #include "core/particles/particle_system.h"
 #include "core/wind/wind_system.h"
@@ -52,35 +53,29 @@ typedef struct
 // Không sửa core/force_field.h — dùng nguyên ForceFieldGPU/ForceField_PackGPU
 // đã khai báo sẵn ở đó.
 // ---------------------------------------------------------------------------
-static const ForceField *s_fieldRegistry[MAX_GPU_FORCE_FIELDS];
+static GpuParticleFieldLease s_fieldLeases[MAX_GPU_FORCE_FIELDS];
+
+static const ForceField *FieldAt(int slot)
+{
+    return (const ForceField *)s_fieldLeases[slot].field;
+}
 static Vector3 s_fieldAxisOrigin[MAX_GPU_FORCE_FIELDS];
 static Vector3 s_fieldAxisDir[MAX_GPU_FORCE_FIELDS];
 static int s_fieldCount = 0;
 
-static int RegisterField(const ForceField *ff, Vector3 axisOrigin, Vector3 axisDir)
+static int RegisterField(const ForceField *ff, Vector3 axisOrigin, Vector3 axisDir,
+                         float remainingLife)
 {
-    if (!ff)
-        return -1;
-    for (int i = 0; i < s_fieldCount; i++)
-    {
-        if (s_fieldRegistry[i] == ff)
-        {
-            // Refresh trục — particle mới nhất spawn cùng field quyết định
-            // trục dùng cho slot này ở lần pack tiếp theo.
-            s_fieldAxisOrigin[i] = axisOrigin;
-            s_fieldAxisDir[i] = axisDir;
-            return i;
-        }
-    }
-    if (s_fieldCount >= MAX_GPU_FORCE_FIELDS)
-    {
-        TraceLog(LOG_WARNING, "GPU_PARTICLES: force field registry full (%d), ignoring", MAX_GPU_FORCE_FIELDS);
+    int idx = GpuParticleFieldLease_Register(s_fieldLeases, MAX_GPU_FORCE_FIELDS,
+                                            ff, remainingLife);
+    if (idx < 0) {
+        if (ff && remainingLife > 0.0f)
+            TraceLog(LOG_WARNING, "GPU_PARTICLES: force field registry full (%d), ignoring", MAX_GPU_FORCE_FIELDS);
         return -1;
     }
-    int idx = s_fieldCount++;
-    s_fieldRegistry[idx] = ff;
     s_fieldAxisOrigin[idx] = axisOrigin;
     s_fieldAxisDir[idx] = axisDir;
+    if (idx >= s_fieldCount) s_fieldCount = idx + 1;
     return idx;
 }
 
@@ -164,7 +159,7 @@ static void PackTravelPath(const ParticleTravelPath *path,
     packed->radii = (Vector4){path->waypointRadius, path->targetRadius,
                               path->arrivalForceDuration, 0.0f};
     packed->arrival = (Vector4){
-        (float)RegisterField(path->arrivalForceField, (Vector3){0}, (Vector3){0}),
+        (float)RegisterField(path->arrivalForceField, (Vector3){0}, (Vector3){0}, 0.0f),
         path->arrivalOffset, path->arrivalKick, path->arrivalVelocityScale};
     if (path->formationOrigin) {
         packed->formation_origin = (Vector4){path->formationOrigin->x,
@@ -202,6 +197,15 @@ typedef struct {
 static bool s_initialized = false;
 static bool s_use_compute = false;
 
+static unsigned int s_surface_index_ssbo = 0;
+static GpuSurfaceIndex s_surfaceIndices[MAX_GPU_PARTICLES];
+/* Owner/mode of uploaded slots, not pending CPU event-spawn replacements. */
+static GpuSurfaceRouting s_surfaceResidentRouting[MAX_GPU_PARTICLES];
+static GpuSurfaceRoute s_surfaceRoutes[GPU_SURFACE_MAX_STREAMS];
+static unsigned int s_surfaceRevision, s_surfaceCachedRevision;
+static int s_surfaceRouteCount, s_surfaceIndexCount;
+static bool s_surfaceCacheValid, s_surfaceIndexed;
+static int s_surfaceLastInstanceCount;
 static unsigned int s_ssbo = 0;
 static unsigned int s_ff_ssbo = 0; // ForceFieldBuffer, binding = 1
 static unsigned int s_path_ssbo = 0; // ParticleTravelPathBuffer, binding = 2
@@ -216,6 +220,7 @@ static Shader s_draw_shader_gpu = {0};
  * channel. Set by core/liquid/liquid_surface.c before each stream so several
  * liquids can share one capture; see LiquidDesc in liquid_surface.h. */
 static float s_surfaceMaterialId = 0.0f;
+static Texture2D s_surfaceFrontDepth = {0};
 static Shader s_surface_capture_shader_gpu = {0};
 static Shader s_surface_capture_shader_cpu = {0};
 static int s_cpu_capture_material_loc = -1;
@@ -320,6 +325,12 @@ void GpuParticleSystem_Init(void)
     s_spawn_start_this_frame = -1;
     s_spawn_count_this_frame = 0;
     s_fieldCount = 0;
+    memset(s_fieldLeases, 0, sizeof(s_fieldLeases));
+    s_surfaceRevision = 0;
+    s_surfaceCacheValid = s_surfaceIndexed = false;
+    s_surfaceLastInstanceCount = 0;
+    memset(s_surfaceResidentRouting, 0, sizeof(s_surfaceResidentRouting));
+    s_surfaceFrontDepth = (Texture2D){0};
     memset(s_pathRegistry, 0, sizeof(s_pathRegistry));
     memset(s_pathRefs, 0, sizeof(s_pathRefs));
     s_activePathSlots = 0;
@@ -345,6 +356,12 @@ void GpuParticleSystem_Init(void)
 
     TraceLog(LOG_INFO, "GPU_PARTICLES: rlGetVersion = %d", rlGetVersion());
 
+    const char *forceCpu = getenv("WUXING_PARTICLES_FORCE_CPU");
+    if (forceCpu && strcmp(forceCpu, "1") == 0) {
+        gl43 = false;
+        TraceLog(LOG_WARNING, "GPU_PARTICLES: WUXING_PARTICLES_FORCE_CPU=1 selects CPU simulation and capabilities");
+    }
+
     if (gl43)
     {
         // ----- COMPUTE PATH -----
@@ -361,6 +378,7 @@ void GpuParticleSystem_Init(void)
 
         s_ssbo = rlLoadShaderBuffer(MAX_GPU_PARTICLES * (ptrdiff_t)sizeof(GpuParticleData), NULL, RL_DYNAMIC_DRAW);
 
+        s_surface_index_ssbo = rlLoadShaderBuffer(MAX_GPU_PARTICLES * (ptrdiff_t)sizeof(GpuSurfaceIndex), NULL, RL_DYNAMIC_DRAW);
         s_ff_ssbo = rlLoadShaderBuffer(MAX_GPU_FORCE_FIELDS * (ptrdiff_t)sizeof(ForceFieldGPU), NULL, RL_DYNAMIC_DRAW);
         s_path_ssbo = rlLoadShaderBuffer(MAX_GPU_TRAVEL_PATHS * (ptrdiff_t)sizeof(ParticleTravelPathGPU), NULL, RL_DYNAMIC_DRAW);
         s_wind_ssbo = rlLoadShaderBuffer((unsigned int)sizeof(WindGPU), NULL, RL_DYNAMIC_DRAW);
@@ -452,6 +470,7 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
     if (!s_initialized)
         return;
     s_hasSpawned = true;
+    ++s_surfaceRevision;
 
     int idx = s_spawn_cursor % MAX_GPU_PARTICLES;
     s_spawn_cursor++;
@@ -487,7 +506,7 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
     d.life_max = cfg.lifetime;
     d.phase = (float)GetRandomValue(0, 10000) / 10000.0f;
     d.active = 1.0f;
-    d.ff_index = (float)RegisterField(cfg.forceField, cfg.axisOrigin, cfg.axisDir);
+    d.ff_index = (float)RegisterField(cfg.forceField, cfg.axisOrigin, cfg.axisDir, cfg.lifetime);
     d.ff_pad0 = cfg.stretchStrength;
     d.ff_pad1 = cfg.collisionEnabled ? cfg.collisionElasticity : -1.0f;
     d.ff_pad2 = cfg.collisionFloorY;
@@ -495,7 +514,7 @@ void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
     d.render_mode = (float)cfg.renderMode;
     if (cfg.travelPath)
         (void)RegisterField(cfg.travelPath->arrivalForceField,
-                            (Vector3){0}, (Vector3){0});
+                            (Vector3){0}, (Vector3){0}, cfg.lifetime);
     d.route_pad0 = (float)RegisterPath(cfg.travelPath);
     d.route_pad1 = 0.0f;
     d.impact_age = 0.0f;
@@ -542,6 +561,8 @@ void GpuParticleSystem_Update(float dt)
                                      &s_elapsed_time))
         return;
 
+    GpuParticleFieldLease_Advance(s_fieldLeases, MAX_GPU_FORCE_FIELDS, dt);
+    ++s_surfaceRevision;
     if (s_use_compute)
     {
         // Batch upload cho các hạt mới spawn trong frame này
@@ -562,6 +583,12 @@ void GpuParticleSystem_Update(float dt)
                 rlUpdateShaderBuffer(s_ssbo, &s_cpu_pool[start], chunk1 * sizeof(GpuParticleData), start * sizeof(GpuParticleData));
                 rlUpdateShaderBuffer(s_ssbo, &s_cpu_pool[0], chunk2 * sizeof(GpuParticleData), 0);
             }
+            for (int i = 0; i < count; ++i) {
+                int slot = (start + i) % MAX_GPU_PARTICLES;
+                s_surfaceResidentRouting[slot] = GpuSurfaceRouting_Read(&s_cpu_pool[slot],
+                                                       offsetof(GpuParticleData, emitter_id),
+                                                       offsetof(GpuParticleData, render_mode));
+            }
             s_spawn_start_this_frame = -1;
             s_spawn_count_this_frame = 0;
         }
@@ -572,8 +599,11 @@ void GpuParticleSystem_Update(float dt)
             ForceFieldGPU packed[MAX_GPU_FORCE_FIELDS];
             for (int i = 0; i < s_fieldCount; i++)
             {
-                ForceField_PackGPU(s_fieldRegistry[i], s_fieldAxisOrigin[i],
-                                   s_fieldAxisDir[i], &packed[i]);
+                if (FieldAt(i))
+                    ForceField_PackGPU(FieldAt(i), s_fieldAxisOrigin[i],
+                                       s_fieldAxisDir[i], &packed[i]);
+                else
+                    memset(&packed[i], 0, sizeof(packed[i]));
             }
             rlUpdateShaderBuffer(s_ff_ssbo, packed, s_fieldCount * (ptrdiff_t)sizeof(ForceFieldGPU), 0);
         }
@@ -695,7 +725,7 @@ void GpuParticleSystem_Update(float dt)
         if (impactActive && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
             s_pathRegistry[pathIndex])
             forceIndex = RegisterField(s_pathRegistry[pathIndex]->arrivalForceField,
-                                       (Vector3){0}, (Vector3){0});
+                                       (Vector3){0}, (Vector3){0}, p->life_rem);
 
         // 1. Evaluate Force Field on CPU
         if (forceIndex >= 0)
@@ -703,7 +733,7 @@ void GpuParticleSystem_Update(float dt)
             int ff_idx = forceIndex;
             if (ff_idx < s_fieldCount)
             {
-                const ForceField *ff = s_fieldRegistry[ff_idx];
+                const ForceField *ff = FieldAt(ff_idx);
                 Vector3 pos = {p->px, p->py, p->pz};
                 Vector3 vel = {p->vx, p->vy, p->vz};
                 Vector3 acc = ForceField_Evaluate(ff, pos, vel, s_elapsed_time, s_fieldAxisOrigin[ff_idx], s_fieldAxisDir[ff_idx]);
@@ -823,7 +853,7 @@ void GpuParticleSystem_Update(float dt)
         if (forceIndex >= 0 && forceIndex < s_fieldCount) {
             Vector3 position = {p->px, p->py, p->pz};
             Vector3 velocity = {p->vx, p->vy, p->vz};
-            ForceField_ResolveParticleContacts(s_fieldRegistry[forceIndex], p->radius,
+            ForceField_ResolveParticleContacts(FieldAt(forceIndex), p->radius,
                                               &position, &velocity);
             p->px = position.x; p->py = position.y; p->pz = position.z;
             p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
@@ -882,6 +912,8 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
 {
     if (!s_initialized || !s_hasSpawned)
         return;
+    if (s_surfacePass != 0 && s_surfaceIndexed && s_surfaceIndexCount == 0)
+        return;
 
     Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.position, camera.target));
     Vector3 right = Vector3Normalize(Vector3CrossProduct(camera.up, viewDir));
@@ -901,11 +933,26 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
         if (s_surfacePass == 1 && s_surface_capture_shader_gpu.id) drawShader = s_surface_capture_shader_gpu;
         if (s_surfacePass == 3 && s_surface_back_shader_gpu.id) drawShader = s_surface_back_shader_gpu;
         BeginShaderMode(drawShader);
-        if (s_surfacePass == 1)
+        if (s_surfacePass != 0) {
+            int loc_indexed = GetShaderLocation(drawShader, "u_surfaceIndexed");
+            int indexed = s_surfaceIndexed ? 1 : 0;
+            if (loc_indexed >= 0) SetShaderValue(drawShader, loc_indexed, &indexed, SHADER_UNIFORM_INT);
+            /* Both shader branches reflect binding 1, including legacy control. */
+            rlBindShaderBuffer(s_surface_index_ssbo, 1);
+        }
+        if (s_surfacePass != 0)
         {
             int loc_material = GetShaderLocation(drawShader, "u_materialId");
             if (loc_material >= 0)
                 SetShaderValue(drawShader, loc_material, &s_surfaceMaterialId, SHADER_UNIFORM_FLOAT);
+        }
+        if (s_surfacePass == 3) {
+            int loc_match = GetShaderLocation(drawShader, "u_matchFrontMaterial");
+            int loc_front = GetShaderLocation(drawShader, "u_frontDepthTex");
+            float match = s_surfaceFrontDepth.id != 0 ? 1.0f : 0.0f;
+            int textureSlot = 0;
+            if (loc_match >= 0) SetShaderValue(drawShader, loc_match, &match, SHADER_UNIFORM_FLOAT);
+            if (loc_front >= 0) SetShaderValue(drawShader, loc_front, &textureSlot, SHADER_UNIFORM_INT);
         }
 
         int loc_right = GetShaderLocation(drawShader, "u_right");
@@ -964,11 +1011,16 @@ void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
 
         // Đảm bảo kết nối texture đúng khe và báo hiệu rõ cho Vulkan/OpenGL
         rlActiveTextureSlot(0);
-        rlEnableTexture(texture.id);
+        unsigned int drawTextureId = s_surfacePass == 3 && s_surfaceFrontDepth.id != 0
+                                      ? s_surfaceFrontDepth.id : texture.id;
+        rlEnableTexture(drawTextureId);
 
         rlEnableShader(drawShader.id);
         rlEnableVertexArray(s_draw_vao);
-        rlDrawVertexArrayInstanced(0, 6, MAX_GPU_PARTICLES);
+        int instanceCount = s_surfacePass != 0 && s_surfaceIndexed
+                                ? s_surfaceIndexCount : MAX_GPU_PARTICLES;
+        rlDrawVertexArrayInstanced(0, 6, instanceCount);
+        if (s_surfacePass != 0) s_surfaceLastInstanceCount = instanceCount;
         rlDisableVertexArray();
 
         rlDisableShader();
@@ -1197,6 +1249,101 @@ void GpuParticleSystem_DrawSurfaceBackEmitter(Camera3D camera, int emitterId)
 }
 
 
+static bool GpuParticleSystem_PrepareSurfaceIndices(const GpuSurfaceRoute *routes, int count)
+{
+    if (!s_initialized || !routes || count <= 0 || count > GPU_SURFACE_MAX_STREAMS)
+        return false;
+    bool same = s_surfaceCacheValid && s_surfaceCachedRevision == s_surfaceRevision &&
+                count == s_surfaceRouteCount;
+    for (int i = 0; same && i < count; ++i)
+        same = routes[i].emitterId == s_surfaceRoutes[i].emitterId &&
+               routes[i].materialId == s_surfaceRoutes[i].materialId;
+    if (!same) {
+        const void *metadata = s_use_compute ? (const void *)s_surfaceResidentRouting
+                                             : (const void *)s_cpu_pool;
+        size_t stride = s_use_compute ? sizeof(GpuSurfaceRouting) : sizeof(GpuParticleData);
+        size_t emitterOffset = s_use_compute ? offsetof(GpuSurfaceRouting, emitterId)
+                                             : offsetof(GpuParticleData, emitter_id);
+        size_t modeOffset = s_use_compute ? offsetof(GpuSurfaceRouting, renderMode)
+                                          : offsetof(GpuParticleData, render_mode);
+        int n = GpuSurfaceIndex_Build(metadata, MAX_GPU_PARTICLES, stride,
+                                     emitterOffset, modeOffset, routes, count,
+                                     s_surfaceIndices, MAX_GPU_PARTICLES);
+        if (n < 0) return false;
+        memcpy(s_surfaceRoutes, routes, (size_t)count * sizeof(*routes));
+        s_surfaceRouteCount = count;
+        s_surfaceIndexCount = n;
+        s_surfaceCachedRevision = s_surfaceRevision;
+        s_surfaceCacheValid = true;
+        if (s_use_compute && n > 0)
+            rlUpdateShaderBuffer(s_surface_index_ssbo, s_surfaceIndices,
+                                 (unsigned int)((size_t)n * sizeof(GpuSurfaceIndex)), 0);
+    }
+    s_surfaceLastInstanceCount = s_surfaceIndexCount;
+    return true;
+}
+
+bool GpuParticleSystem_DrawSurfaceEmitters(Camera3D camera, Texture2D texture,
+                                          const GpuSurfaceRoute *routes, int count)
+{
+    if (!GpuParticleSystem_PrepareSurfaceIndices(routes, count)) return false;
+    if (!s_use_compute) {
+        float savedMaterial = s_surfaceMaterialId;
+        for (int i = 0; i < count; ++i) {
+            s_surfaceMaterialId = routes[i].materialId;
+            GpuParticleSystem_DrawSurfaceEmitter(camera, texture, routes[i].emitterId);
+        }
+        s_surfaceMaterialId = savedMaterial;
+        return true;
+    }
+    s_surfaceIndexed = true;
+    s_surfacePass = 1;
+    s_filterEmitter = -1;
+    s_filterRenderMode = 3;
+    GpuParticleSystem_Draw(camera, texture);
+    s_surfaceIndexed = false;
+    s_surfacePass = 0;
+    s_filterEmitter = s_filterRenderMode = -1;
+    return true;
+}
+
+bool GpuParticleSystem_DrawSurfaceBackEmitters(Camera3D camera,
+                                              const GpuSurfaceRoute *routes, int count)
+{
+    if (!GpuParticleSystem_PrepareSurfaceIndices(routes, count)) return false;
+    if (!s_use_compute) {
+        for (int i = 0; i < count; ++i)
+            GpuParticleSystem_DrawSurfaceBackEmitter(camera, routes[i].emitterId);
+        return true;
+    }
+    s_surfaceIndexed = true;
+    s_surfacePass = 3;
+    s_filterEmitter = -1;
+    s_filterRenderMode = 3;
+    GpuParticleSystem_Draw(camera, (Texture2D){0});
+    s_surfaceIndexed = false;
+    s_surfacePass = 0;
+    s_filterEmitter = s_filterRenderMode = -1;
+    return true;
+}
+
+int GpuParticleSystem_GetSurfaceCaptureInstanceCount(void)
+{
+    return s_surfaceLastInstanceCount;
+}
+
+bool GpuParticleSystem_IsForceFieldInUse(const ForceField *field)
+{
+    return s_initialized && GpuParticleFieldLease_InUse(s_fieldLeases,
+                                                       MAX_GPU_FORCE_FIELDS, field);
+}
+
+void GpuParticleSystem_SetSurfaceCaptureFrontDepth(Texture2D texture)
+{
+    s_surfaceFrontDepth = texture;
+}
+
+
 // ---------------------------------------------------------------------------
 // Unload
 // ---------------------------------------------------------------------------
@@ -1206,6 +1353,10 @@ void GpuParticleSystem_Unload(void)
         return;
     if (s_use_compute)
     {
+        if (s_surface_index_ssbo) {
+            rlUnloadShaderBuffer(s_surface_index_ssbo);
+            s_surface_index_ssbo = 0;
+        }
         if (s_ssbo)
         {
             rlUnloadShaderBuffer(s_ssbo);

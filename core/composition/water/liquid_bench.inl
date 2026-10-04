@@ -1,3 +1,5 @@
+#include "core/liquid/liquid_body_recipe.h"
+
 // liquid_bench.inl — five profile-driven SSF liquids in one force-field lab.
 //
 // Every body owns one persistent surface-input emitter and one stable
@@ -30,6 +32,9 @@ typedef struct {
     Vector3 center;
     LiquidDesc material;
     LiquidMotionDesc motion;
+    LiquidBodyRecipe recipe;
+    Vector3 velocity;
+    float crownDuration;
     ForceField field;
     ParticleEmitterHandle emitter;
     LiquidBenchPhase phase;
@@ -57,56 +62,12 @@ static void LiquidBench_Clear(void)
     s_liquidBenchActive=false;
 }
 
-static void LiquidBench_SetFlightField(LiquidBenchRuntime *body)
+static void LiquidBench_SetPhaseField(LiquidBenchRuntime *body,LiquidBodyPhase phase,float phaseAge,float stepSeconds)
 {
-    ForceField_Clear(&body->field);
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_GRAVITY_POINT,
-        .origin=body->center,.strength=26.0f+body->motion.gatherStrength*2.4f,
-        .radius=0.92f,.falloff=1.0f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_VORTEX,
-        .origin=body->center,.direction={0.0f,1.0f,0.0f},
-        .strength=0.35f+body->motion.tangentRetention*0.55f,.radius=0.68f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_NOISE_CURL,
-        .strength=body->motion.turbulence*0.12f,
-        .noiseScale=2.8f,.noiseSpeed=1.2f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_VISCOSITY,
-        .strength=body->motion.impactViscosity*0.025f});
-}
-
-static void LiquidBench_SetImpactField(LiquidBenchRuntime *body)
-{
-    ForceField_Clear(&body->field);
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_RADIAL_AXIS,
-        .strength=-body->motion.splashField,.radius=0.86f,.falloff=1.0f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_GRAVITY_DIR,
-        .direction={0.0f,1.0f,0.0f},.strength=body->motion.normalLift*4.8f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_VORTEX_AXIS,
-        .strength=2.0f+body->motion.tangentRetention*4.5f,.radius=0.78f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_NOISE_CURL,
-        .strength=body->motion.turbulence*5.5f,
-        .noiseScale=5.0f,.noiseSpeed=6.0f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_VISCOSITY,
-        .strength=body->motion.impactViscosity*2.5f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_RECEIVER_PLANE,
-        .origin=body->target,.direction={0.0f,1.0f,0.0f},
-        .strength=body->motion.restitution,.falloff=body->motion.tangentRetention});
-}
-
-static void LiquidBench_SetSettleField(LiquidBenchRuntime *body)
-{
-    ForceField_Clear(&body->field);
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_GRAVITY_DIR,
-        .direction={0.0f,-1.0f,0.0f},.strength=9.81f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_RADIAL_AXIS,
-        .strength=body->motion.gatherStrength,.radius=0.0f,.falloff=0.0f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_NOISE_CURL,
-        .strength=body->motion.turbulence*0.22f,
-        .noiseScale=3.2f,.noiseSpeed=0.8f});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_VISCOSITY,
-        .strength=body->motion.settleViscosity});
-    ForceField_AddLayer(&body->field,(ForceLayer){.type=FORCE_RECEIVER_PLANE,
-        .origin=body->target,.direction={0.0f,1.0f,0.0f},.strength=0.0f,
-        .falloff=body->motion.tangentRetention});
+    LiquidBodyContext context={.center=body->center,.receiverPoint=body->target,
+        .receiverNormal={0,1,0},.incomingVelocity=body->velocity,
+        .phaseAge=phaseAge,.stepSeconds=stepSeconds,.applyContactImpulse=true};
+    LiquidBodyRecipe_BuildField(&body->recipe,phase,&context,false,&body->field);
 }
 
 static int LiquidBench_ParticleCount(bool compute)
@@ -127,10 +88,15 @@ static void LiquidBench_SpawnBody(int index,LiquidMotionProfile profile,
     *body=(LiquidBenchRuntime){.start=start,.target=target,.center=start,
         .material=material,.motion=motion,.emitter=PARTICLE_EMITTER_INVALID,
         .phase=LIQUID_BENCH_FLIGHT,.active=true};
-    LiquidBench_SetFlightField(body);
+    body->velocity=Vector3Scale(Vector3Subtract(target,start),1.0f/LIQUID_BENCH_FLIGHT_SECONDS);
+    body->recipe=(LiquidBodyRecipe){.motion=motion,.radius=0.30f,.kernelRadius=0.112f};
+    body->crownDuration=fmaxf(LIQUID_BENCH_IMPACT_SECONDS,
+        LiquidBodyRecipe_CrownDuration(&body->recipe,body->velocity,(Vector3){0,1,0}));
+    LiquidBench_SetPhaseField(body,LIQUID_BODY_FLIGHT,0.0f,0.0f);
 
     ParticleEmitterDesc desc={0};
-    desc.simulationPolicy=PARTICLE_SIM_AUTO;
+    bool cpuOnly=getenv("WUXING_LIQUID_CPU_ONLY") && atoi(getenv("WUXING_LIQUID_CPU_ONLY"))!=0;
+    desc.simulationPolicy=cpuOnly?PARTICLE_SIM_CPU_ONLY:PARTICLE_SIM_AUTO;
     desc.renderMode=PARTICLE_RENDER_SURFACE_INPUT;
     desc.moduleFlags=PARTICLE_MODULE_FORCE_FIELD;
     desc.debugName="LiquidBench force-field SSF";
@@ -138,20 +104,14 @@ static void LiquidBench_SpawnBody(int index,LiquidMotionProfile profile,
     body->emitter=ParticleManager_CreateEmitter(&desc);
     if (body->emitter==PARTICLE_EMITTER_INVALID) { body->active=false; return; }
 
-    int count=LiquidBench_ParticleCount(compute);
-    float kernel=compute?(count>=LIQUID_BENCH_GPU_HIGH_PER_BODY?0.086f:
+    int count=LiquidBench_ParticleCount(compute && !cpuOnly);
+    float kernel=compute && !cpuOnly?(count>=LIQUID_BENCH_GPU_HIGH_PER_BODY?0.086f:
                          count>=LIQUID_BENCH_GPU_MED_PER_BODY?0.094f:0.106f):0.112f;
     Vector3 velocity=Vector3Scale(Vector3Subtract(target,start),
                                   1.0f/LIQUID_BENCH_FLIGHT_SECONDS);
     for (int i=0;i<count;++i) {
-        float u=((float)i+0.5f)/(float)count;
-        float y=1.0f-2.0f*u;
-        float ring=sqrtf(fmaxf(0.0f,1.0f-y*y));
-        float angle=2.39996323f*(float)i;
-        float volume=cbrtf(((float)((i*73+index*31)%count)+0.5f)/(float)count);
-        float radius=0.30f*volume;
-        Vector3 offset={cosf(angle)*ring*radius,y*radius*0.88f,
-                        sinf(angle)*ring*radius};
+        Vector3 offset=LiquidBodyRecipe_VolumeOffset(body->recipe.radius,i,count,(unsigned int)index*31u);
+        offset.y*=0.88f;
         s_liquidBenchSpawn[i]=(ParticleConfig){
             .position=Vector3Add(start,offset),.velocity=velocity,
             .colorStart=VC_WithAlpha(material.soft,0),
@@ -165,13 +125,20 @@ static void LiquidBench_SpawnBody(int index,LiquidMotionProfile profile,
 
 static void LiquidBench_SpawnAll(void)
 {
+    /* DestroyEmitter retires ownership, not particles. Reuse the same bounded
+     * fields only after their CPU references/GPU lifetime leases drain. */
+    for (int i=0;i<LIQUID_BENCH_BODIES;++i)
+        if (ParticleManager_IsForceFieldInUse(&s_liquidBench[i].field)) return;
     static const LiquidMotionProfile profiles[LIQUID_BENCH_BODIES]={
         LIQUID_MOTION_WATER,LIQUID_MOTION_POISON,LIQUID_MOTION_MUD,
         LIQUID_MOTION_LAVA,LIQUID_MOTION_LIQUID_METAL};
     const ParticleGPUCaps *caps=ParticleSystem_GetGPUCaps();
     bool compute=caps->computeShader;
-    for (int i=0;i<LIQUID_BENCH_BODIES;++i) {
-        Vector3 target={s_liquidBenchOrigin.x+(float)(i-2)*s_liquidBenchSpacing,
+    int bodyCount=LIQUID_BENCH_BODIES;
+    const char *countOverride=getenv("WUXING_LIQUID_BENCH_COUNT");
+    if (countOverride) { int value=atoi(countOverride); if (value==1 || value==2 || value==4) bodyCount=value; }
+    for (int i=0;i<bodyCount;++i) {
+        Vector3 target={s_liquidBenchOrigin.x+((float)i-0.5f*(float)(bodyCount-1))*s_liquidBenchSpacing,
                         s_liquidBenchOrigin.y+0.075f,s_liquidBenchOrigin.z};
         LiquidBench_SpawnBody(i,profiles[i],target,compute);
     }
@@ -184,7 +151,7 @@ static void LiquidBench_Update(float dt)
     if (!s_liquidBenchActive) return;
     if (++s_liquidBenchMissedFrames>2) { LiquidBench_Clear(); return; }
     s_liquidBenchAge+=dt*s_liquidBenchPlayback;
-    if (s_liquidBenchAge>=LIQUID_BENCH_CYCLE_SECONDS) {
+    if (s_liquidBenchAge>=LIQUID_BENCH_CYCLE_SECONDS+0.12f) {
         LiquidBench_Clear();
         LiquidBench_SpawnAll();
         return;
@@ -198,16 +165,19 @@ static void LiquidBench_Update(float dt)
             body->center=Vector3Lerp(body->start,body->target,t);
             body->field.layers[0].origin=body->center;
             body->field.layers[1].origin=body->center;
-        } else if (s_liquidBenchAge<LIQUID_BENCH_FLIGHT_SECONDS+
-                                           LIQUID_BENCH_IMPACT_SECONDS) {
+        } else if (s_liquidBenchAge<LIQUID_BENCH_FLIGHT_SECONDS+body->crownDuration) {
             if (body->phase!=LIQUID_BENCH_IMPACT) {
                 body->phase=LIQUID_BENCH_IMPACT;
                 body->center=body->target;
-                LiquidBench_SetImpactField(body);
             }
         } else if (body->phase!=LIQUID_BENCH_SETTLE) {
             body->phase=LIQUID_BENCH_SETTLE;
-            LiquidBench_SetSettleField(body);
+        }
+        if (s_liquidBenchAge>=LIQUID_BENCH_FLIGHT_SECONDS) {
+            float playback=fmaxf(s_liquidBenchPlayback,0.01f);
+            float phaseAge=(s_liquidBenchAge-LIQUID_BENCH_FLIGHT_SECONDS)/playback;
+            LiquidBodyPhase fieldPhase=LiquidBodyRecipe_IntegrationPhaseAt(phaseAge,dt,body->crownDuration/playback);
+            LiquidBench_SetPhaseField(body,fieldPhase,phaseAge,dt);
         }
     }
 }

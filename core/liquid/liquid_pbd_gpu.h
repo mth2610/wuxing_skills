@@ -16,6 +16,7 @@ void LiquidPBDGPU_Update(float dt, float groundY);
 unsigned int LiquidPBDGPU_GetStateBuffer(void);
 int LiquidPBDGPU_GetParticleCount(void);
 void LiquidPBDGPU_DrawSurfaceDepth(Camera3D camera);
+void LiquidPBDGPU_SetSurfaceFrontDepth(Texture2D frontDepth);
 /* Far surface of the same particles, for dual-depth thickness. */
 void LiquidPBDGPU_DrawSurfaceBackDepth(Camera3D camera);
 #endif

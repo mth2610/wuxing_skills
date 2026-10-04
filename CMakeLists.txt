@@ -183,6 +183,7 @@ add_executable(wuxing
     core/liquid/liquid_impact.c
     core/liquid/liquid_pbd.c
     core/liquid/liquid_pbd_gpu.c
+    core/liquid/liquid_capture_cpu.c
     core/liquid/liquid_surface.c
     core/gas/gas_sim.c
     core/gas/gas_system.c
@@ -359,6 +360,9 @@ configure_file(core/shaders/mesh_surface_aura.fs ${CMAKE_CURRENT_BINARY_DIR}/cor
 configure_file(core/shaders/mesh_surface_aura.vs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/mesh_surface_aura.vs COPYONLY)
 configure_file(core/shaders/shield_flow_shell.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/shield_flow_shell.fs COPYONLY)
 configure_file(core/liquid/shaders/liquid_depth_smooth.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_depth_smooth.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_occupancy.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_occupancy.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_capture_ellipsoid.vs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_capture_ellipsoid.vs COPYONLY)
+configure_file(core/liquid/shaders/liquid_capture_ellipsoid.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_capture_ellipsoid.fs COPYONLY)
 configure_file(core/liquid/shaders/liquid_capture.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_capture.fs COPYONLY)
 configure_file(core/liquid/shaders/liquid_capture_particle.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_capture_particle.fs COPYONLY)
 configure_file(core/liquid/shaders/liquid_capture_back.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_capture_back.fs COPYONLY)

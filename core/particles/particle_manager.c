@@ -338,6 +338,67 @@ bool ParticleManager_DrawSurfaceBackStream(const ParticleRenderStream *stream, C
     return true;
 }
 
+
+static bool ParticleManager_SurfaceRoutes(const ParticleSurfaceCaptureStream *streams,
+                                          int count, GpuSurfaceRoute *routes)
+{
+    if (!streams || count <= 0 || count > PARTICLE_SURFACE_CAPTURE_MAX_STREAMS) return false;
+    for (int i = 0; i < count; ++i) {
+        if (streams[i].stream.mode != PARTICLE_RENDER_SURFACE_INPUT ||
+            streams[i].stream.backend != PARTICLE_RENDER_BACKEND_GPU) return false;
+        routes[i] = (GpuSurfaceRoute){streams[i].stream.ownerId, streams[i].materialId};
+    }
+    return true;
+}
+
+bool ParticleManager_DrawSurfaceStreams(const ParticleSurfaceCaptureStream *streams,
+                                        int count, Camera3D camera, Texture2D texture)
+{
+    GpuSurfaceRoute routes[PARTICLE_SURFACE_CAPTURE_MAX_STREAMS];
+    if (!ParticleManager_SurfaceRoutes(streams, count, routes)) return false;
+    return GpuParticleSystem_DrawSurfaceEmitters(camera, texture, routes, count);
+}
+
+bool ParticleManager_DrawSurfaceBackStreams(const ParticleSurfaceCaptureStream *streams,
+                                            int count, Camera3D camera)
+{
+    GpuSurfaceRoute routes[PARTICLE_SURFACE_CAPTURE_MAX_STREAMS];
+    if (!ParticleManager_SurfaceRoutes(streams, count, routes)) return false;
+    return GpuParticleSystem_DrawSurfaceBackEmitters(camera, routes, count);
+}
+
+int ParticleManager_GetSurfaceCaptureInstanceCount(void)
+{
+    return GpuParticleSystem_GetSurfaceCaptureInstanceCount();
+}
+
+bool ParticleManager_IsForceFieldInUse(const ForceField *field)
+{
+    if (!s_initialized || !field) return false;
+    return ParticleSystem_IsForceFieldInUse(field) ||
+           GpuParticleSystem_IsForceFieldInUse(field);
+}
+
+void ParticleManager_SetSurfaceCaptureFrontDepth(Texture2D texture)
+{
+    GpuParticleSystem_SetSurfaceCaptureFrontDepth(texture);
+}
+
+int ParticleManager_CountSurfaceSamples(const ParticleRenderStream *stream)
+{
+    if (!stream || stream->mode != PARTICLE_RENDER_SURFACE_INPUT ||
+        stream->backend != PARTICLE_RENDER_BACKEND_CPU) return 0;
+    return ParticleSystem_CountSurfaceSamples(stream->ownerId);
+}
+
+int ParticleManager_CopySurfaceSamplesSpaced(const ParticleRenderStream *stream,
+                                            ParticleSurfaceSample *samples, int maxSamples)
+{
+    if (!stream || stream->mode != PARTICLE_RENDER_SURFACE_INPUT ||
+        stream->backend != PARTICLE_RENDER_BACKEND_CPU) return 0;
+    return ParticleSystem_GetSurfaceSamplesSpaced(stream->ownerId, samples, maxSamples);
+}
+
 void ParticleManager_Update(float dt) { if (!s_initialized) return; UpdateParticles(dt); GpuParticleSystem_Update(dt); ParticleManager_RefreshStats(); }
 void ParticleManager_Draw(Camera3D c, Texture2D t)
 {

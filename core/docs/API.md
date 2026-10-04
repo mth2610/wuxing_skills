@@ -182,6 +182,11 @@ _Inline helpers / macros only — see header._
 **Enums:** LiquidMotionProfile { LIQUID_MOTION_WATER,LIQUID_MOTION_POISON,LIQUID_MOTION_MUD,LIQUID_MOTION_LAVA,LIQUID_MOTION_LIQUID_METAL }
 **Structs** (fields in header): LiquidMotionDesc
 
+### `core/liquid/liquid_body_recipe.h`
+_Inline helpers / macros only — see header._
+**Enums:** LiquidBodyPhase { LIQUID_BODY_FLIGHT,LIQUID_BODY_IMPACT,LIQUID_BODY_SETTLE }
+**Structs** (fields in header): LiquidBodyRecipe, LiquidBodyContext, LiquidBodySeed
+
 ### `core/volumetric/volumetric_fog.h`
 ```c
   void VolumetricFog_Init(int width, int height);
@@ -224,12 +229,13 @@ _Inline helpers / macros only — see header._
   void LiquidSurface_RegisterParticle(Vector3 position, float radius);
   void LiquidSurface_RegisterEllipsoid(Vector3 position, Vector3 radii);
   bool LiquidSurface_SubmitParticleStream(const ParticleRenderStream *stream);
+  LiquidSurfaceStats LiquidSurface_GetStats(void);
   bool LiquidSurface_HasPending(void);
   void LiquidSurface_Capture(Camera3D camera);
   void LiquidSurface_Composite(void);
 ```
 **Enums:** LiquidClass { LIQUID_CLASS_DIELECTRIC,LIQUID_CLASS_EMISSIVE,LIQUID_CLASS_CONDUCTOR };LiquidSurfacePriority { LIQUID_PRIORITY_MINION,LIQUID_PRIORITY_BASIC,LIQUID_PRIORITY_CAST,LIQUID_PRIORITY_ULTIMATE }
-**Structs** (fields in header): LiquidDesc
+**Structs** (fields in header): LiquidDesc, LiquidSurfaceStats
 
 ### `core/gas/gas_system.h`
 ```c
@@ -279,6 +285,9 @@ _Inline helpers / macros only — see header._
   void ParticleSystem_SpawnLegacy(ParticleConfig config);
   void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int renderMode);
   int ParticleSystem_GetSurfaceSamples(int emitterId, ParticleSurfaceSample *outSamples, int maxSamples);
+  int ParticleSystem_CountSurfaceSamples(int emitterId);
+  bool ParticleSystem_IsForceFieldInUse(const ForceField *field);
+  int ParticleSystem_GetSurfaceSamplesSpaced(int emitterId, ParticleSurfaceSample *outSamples, int maxSamples);
   void SpawnParticle(ParticleConfig config);
   void ParticleSystem_GetStats(int *active, int *max);
   void UpdateParticles(float dt);
@@ -314,8 +323,15 @@ _Inline helpers / macros only — see header._
   ParticleEmitterStatus ParticleManager_GetEmitterStatus(ParticleEmitterHandle handle);
   bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle handle, ParticleRenderStream *outStream);
   int ParticleManager_CopySurfaceSamples(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples);
+  int ParticleManager_CountSurfaceSamples(const ParticleRenderStream *stream);
+  int ParticleManager_CopySurfaceSamplesSpaced(const ParticleRenderStream *stream, ParticleSurfaceSample *outSamples, int maxSamples);
   bool ParticleManager_DrawSurfaceStream(const ParticleRenderStream *stream, Camera3D camera, Texture2D texture);
   bool ParticleManager_DrawSurfaceBackStream(const ParticleRenderStream *stream, Camera3D camera);
+  bool ParticleManager_DrawSurfaceStreams(const ParticleSurfaceCaptureStream *streams, int count, Camera3D camera, Texture2D texture);
+  bool ParticleManager_DrawSurfaceBackStreams(const ParticleSurfaceCaptureStream *streams, int count, Camera3D camera);
+  int ParticleManager_GetSurfaceCaptureInstanceCount(void);
+  bool ParticleManager_IsForceFieldInUse(const ForceField *field);
+  void ParticleManager_SetSurfaceCaptureFrontDepth(Texture2D texture);
   void ParticleManager_Update(float dt);
   void ParticleManager_Draw(Camera3D camera, Texture2D fallbackTexture);
   void ParticleManager_DrawBody(Camera3D camera, Texture2D fallbackTexture);
@@ -324,7 +340,7 @@ _Inline helpers / macros only — see header._
   void ParticleManager_GetStats(ParticleManagerStats *outStats);
   void ParticleManager_SpawnCompatibility(ParticleConfig config);
 ```
-**Structs** (fields in header): ParticleGPUCaps, ParticleEmissionSource, ParticleEmitterDesc, ParticleRenderStream, ParticleManagerStats
+**Structs** (fields in header): ParticleGPUCaps, ParticleEmissionSource, ParticleEmitterDesc, ParticleRenderStream, ParticleSurfaceCaptureStream, ParticleManagerStats
 
 ### `core/mesh_adjacency.h`
 ```c

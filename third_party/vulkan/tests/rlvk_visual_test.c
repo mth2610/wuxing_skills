@@ -3582,6 +3582,8 @@ static const char *sc_ubo_arena(void)
     return why;
 }
 
+#include "rlvk_liquid_capture_test.inl"
+
 // ---- runner ----------------------------------------------------------------------
 
 typedef struct { const char *name; const char *(*fn)(void); } Scenario;
@@ -3608,6 +3610,8 @@ static const Scenario SCENARIOS[] = {
     { "instanced",      sc_instanced },
     { "instanced_parameters", sc_instanced_parameters },
     { "ssbo_vs",        sc_ssbo_vs },
+    { "liquid_cpu_capture", sc_liquid_cpu_capture },
+    { "liquid_indexed_capture", sc_liquid_indexed_capture },
     { "buffer_update_order", sc_buffer_update_order },
     { "imm_normal",     sc_imm_normal },
     { "readback",       sc_readback },

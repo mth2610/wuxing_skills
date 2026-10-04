@@ -14,6 +14,7 @@ HEADERS=(
   core/resource_manager.h core/vfx_surface_registry.h core/tuning.h
   core/skill_manager.h core/skill_helper.h core/skill_curve.h
   core/liquid/liquid_motion.h
+  core/liquid/liquid_body_recipe.h
   core/volumetric/volumetric_fog.h
   core/liquid/liquid_impact.h
   core/liquid/liquid_surface.h

@@ -125,11 +125,13 @@ typedef enum {
 bool LiquidSurface_RequestBody(LiquidSurfacePriority priority, Vector3 center,
                               float worldRadius, bool alreadyRunning);
 
-/* The reconstruction radius is still ONE value for the whole capture. A gated
+/* The fallback reconstruction radius has one priority owner. A gated
  * caller sets it through this, so a boss ultimate's kernel is not resized by a
  * player cast that happened to submit after it. Within a frame the highest
  * priority wins; equal priorities are last-writer-wins.
- * LiquidSurface_SetReconstructionRadius stays unconditional for ungated callers. */
+ * LiquidSurface_SetReconstructionRadius stays unconditional for ungated callers.
+ * Each material records its largest submitted radius; reconstruction uses the
+ * winning fragment's material kernel instead of another material's last value. */
 void LiquidSurface_SetReconstructionRadiusFor(LiquidSurfacePriority priority, float radius);
 
 /* Screen-space liquid surface. Register from a 3D draw path (no GL work),
@@ -151,8 +153,21 @@ void LiquidSurface_HintBody(Vector3 center, float worldRadius);
 void LiquidSurface_RegisterParticle(Vector3 position, float radius);
 void LiquidSurface_RegisterEllipsoid(Vector3 position, Vector3 radii);
 /* Accepts the same opaque stream from either particle backend. The GPU path
- * is rasterized by the owning renderer and is never read back to CPU. */
+ * is rasterized by the owning renderer and is never read back to CPU. CPU
+ * streams are queued and share the remaining aggregate 384-sample budget at
+ * capture; true means accepted into the queue, not fully admitted. */
 bool LiquidSurface_SubmitParticleStream(const ParticleRenderStream *stream);
+/* Capture/composite host submission costs, never GPU elapsed time. CPU streams
+ * share the aggregate sample budget at capture time; accepted submission means
+ * queued, not guaranteed full particle admission. Inspect these counters after
+ * capture. Enable periodic logging with WUXING_LIQUID_PROFILE=1. */
+typedef struct LiquidSurfaceStats {
+    int cpuRequested, cpuAdmitted, cpuDropped, streamRejected;
+    int gpuStreams, gpuCaptureInstances, captureDraws, reconstructionPasses;
+    double sceneCopyHostMs, frontHostMs, backHostMs, thicknessHostMs;
+    double reconstructionHostMs, compositeHostMs;
+} LiquidSurfaceStats;
+LiquidSurfaceStats LiquidSurface_GetStats(void);
 /* Whether the current frame has any surface input to capture/composite. */
 bool LiquidSurface_HasPending(void);
 void LiquidSurface_Capture(Camera3D camera);

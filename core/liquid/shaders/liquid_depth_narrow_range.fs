@@ -7,8 +7,32 @@ uniform sampler2D texture0;
 uniform vec2 u_texel;
 uniform vec2 u_direction;
 uniform float u_kernelRadius;
+uniform sampler2D u_materialIdTex;
+uniform float u_materialKernels[6];
+uniform int u_multipleMaterials;
+/* Filled pixels borrow the nearest actual capture fragment's identity. */
+int MaterialAt(vec2 uv) {
+    vec4 sampleValue=texture(u_materialIdTex,uv);
+    if(sampleValue.r>=0.99999) {
+        float nearest=1.0;
+        for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) {
+            vec4 candidate=texture(u_materialIdTex,uv+vec2(x,y)*u_texel);
+            if(candidate.r<nearest) { nearest=candidate.r; sampleValue=candidate; }
+        }
+    }
+    return clamp(int(sampleValue.b+0.5),0,5);
+}
+float DepthForMaterial(vec2 uv,int material) {
+    if(u_multipleMaterials!=0) {
+        vec4 raw=texture(u_materialIdTex,uv);
+        if(raw.r<0.99999 && int(raw.b+0.5)!=material) return 1.0;
+    }
+    return texture(texture0,uv).r;
+}
 uniform int u_filterRadius;
 uniform int u_fillHoles;
+uniform sampler2D u_occupancyTex;
+uniform int u_useOccupancy;
 /* 0 = the separable 1D pass (run twice by the host), 1 = the true 2D kernel. */
 uniform int u_filter2D;
 /* Radius ceiling for the 2D kernel, in texels.
@@ -56,6 +80,10 @@ void main() {
      * fringe two texels deep all the way round; 3x3 halves it while still
      * bridging the one-texel gaps this exists for. */
     if (centerDevice >= 0.99999 && u_fillHoles != 0) {
+        if(u_useOccupancy!=0 && texture(u_occupancyTex,fragTexCoord).r<0.5) {
+            finalColor=vec4(1.0,0.0,0.0,1.0);
+            return;
+        }
         float nearest = 1.0;
         for (int y = -1; y <= 1; y++) {
             for (int x = -1; x <= 1; x++) {
@@ -69,6 +97,8 @@ void main() {
         return;
     }
 
+    int material=MaterialAt(fragTexCoord);
+    float kernelRadius=u_materialKernels[material]>0.0?u_materialKernels[material]:u_kernelRadius;
     float centerDistance = ViewDistance(centerDevice);
     float weightedDepth = centerDistance;
     float weightSum = 1.0;
@@ -85,7 +115,7 @@ void main() {
      * that can still remove a dome. u_filterRadius stays as the tier's CEILING,
      * so quality tiers still bound the cost. */
     float projScale = u_projection[1][1] * (0.5 / max(u_texel.y, 1e-6));
-    float kernelPixels = u_kernelRadius * projScale / max(centerDistance, 0.05);
+    float kernelPixels = kernelRadius * projScale / max(centerDistance, 0.05);
 
     /* The amount of smoothing must be CONTINUOUS in depth. Deriving the Gaussian
      * from an integer radius made it a step function of distance: every texel
@@ -100,8 +130,8 @@ void main() {
     float sigmaS = max(reachPixels * 0.5, 1.0);
     int adaptiveRadius = int(min(ceil(sigmaS * 3.0), float(u_filterRadius)));
 
-    float threshold = u_kernelRadius * 10.5;
-    float lowerClamp = centerDistance - u_kernelRadius;
+    float threshold = kernelRadius * 10.5;
+    float lowerClamp = centerDistance - kernelRadius;
 
     /* ---- The TRUE 2D kernel. ----------------------------------------------
      *
@@ -150,8 +180,8 @@ void main() {
                     vec2 off = vec2((pair == 0 ? float(m) : -float(m)), float(dy)) * u_texel;
                     int iPos = pair * 2, iNeg = pair * 2 + 1;
 
-                    float dPos = ViewDistance(texture(texture0, fragTexCoord + off).r);
-                    float dNeg = ViewDistance(texture(texture0, fragTexCoord - off).r);
+                    float dPos = ViewDistance(DepthForMaterial(fragTexCoord+off,material));
+                    float dNeg = ViewDistance(DepthForMaterial(fragTexCoord-off,material));
                     float wPos = w, wNeg = w;
 
                     if (dPos > upper[iPos]) { wPos = 0.0; wNeg = 0.0; }
@@ -201,8 +231,8 @@ void main() {
         float w = exp(-0.5 * fi * fi / (sigmaS * sigmaS));
         float wPos = w, wNeg = w;
 
-        float dPos = ViewDistance(texture(texture0, fragTexCoord + u_direction * u_texel * fi).r);
-        float dNeg = ViewDistance(texture(texture0, fragTexCoord - u_direction * u_texel * fi).r);
+        float dPos = ViewDistance(DepthForMaterial(fragTexCoord+u_direction*u_texel*fi,material));
+        float dNeg = ViewDistance(DepthForMaterial(fragTexCoord-u_direction*u_texel*fi,material));
 
         if (dPos > upperPos) { wPos = 0.0; wNeg = 0.0; }
         else if (dPos < lowerPos) { dPos = lowerClamp; }

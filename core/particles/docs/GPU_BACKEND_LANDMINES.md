@@ -28,8 +28,30 @@
 - **Cause:** `GpuParticleSystem_ActiveCount()` reports the spawn high-water mark on compute; CPU lifetime tracking also owns collision and arrival events independently of GPU simulation.
 - **Rule:** skip work only for a pool known never to have spawned since Init, preserve its compute clock, and keep all post-spawn processing until a stronger completion contract exists (`particle_gpu_idle_test.c` guards initial-empty admission).
 
+### CPU event completion must not decide GPU surface capture admission
+- **Symptom:** compact surface capture loses GPU particles near arrival, despite
+  valid GPU lifetime, or incorrectly labels a slot after ring overwrite.
+- **Cause:** the CPU event shadow can reach a target at a different instant from
+  compute. Its active flag is not the authority for GPU visibility.
+- **Rule:** gather conservative matching owner/mode slots from spawn metadata;
+  let the actual GPU life gate reject them. Mirror uploaded owner/mode routing,
+  not pending CPU event-spawn replacements. Never retain indices across a spawn
+  revision or changed material routes. Guard: `particle_surface_index_test.c`
+  executes the production builder, including a CPU-dead slot and ring reuse.
+
+### Force-field slots cannot be compacted while GPU particles refer to them
+- **Symptom:** sequential effects exhaust the 16-entry field registry, or a later
+  effect's field unexpectedly accelerates older particles.
+- **Cause:** permanent pointer registration never reclaimed finished users;
+  compacting slots would invalidate force indices held in GPU buffers.
+- **Rule:** lease stable slots for the maximum remaining spawn lifetime, include
+  future arrival fields from spawn, advance with exactly the particle-life dt,
+  and reclaim only expired leases. Path packing performs lookup without renewal.
+  Zero-pack sparse holes before compute. Guard: `particle_field_lease_test.c`.
+
 ## Patch Log
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-04 | Codex | Conservative surface indices and stable field leases | particle_surface_index.h; particle_field_lease.h; particle_gpu_backend.c | Ground-truth |
 | 2026-10-01 | AI | GPU pool completion gate | particle_gpu_backend.c, particle_gpu_work_gate.h, particle_gpu_idle_test.c | Ground-truth |

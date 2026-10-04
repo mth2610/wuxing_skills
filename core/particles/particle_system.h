@@ -318,6 +318,9 @@ void ParticleSystem_SpawnLegacy(ParticleConfig config);
 void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int renderMode);
 typedef struct ParticleSurfaceSample { Vector3 position; float radius; } ParticleSurfaceSample;
 int ParticleSystem_GetSurfaceSamples(int emitterId, ParticleSurfaceSample *outSamples, int maxSamples);
+int ParticleSystem_CountSurfaceSamples(int emitterId);
+bool ParticleSystem_IsForceFieldInUse(const ForceField *field);
+int ParticleSystem_GetSurfaceSamplesSpaced(int emitterId, ParticleSurfaceSample *outSamples, int maxSamples);
 void SpawnParticle(ParticleConfig config);
 void ParticleSystem_GetStats(int *active, int *max); // Item 32
 void UpdateParticles(float dt);

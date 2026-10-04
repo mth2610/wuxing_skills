@@ -4,7 +4,10 @@ in vec2 v_corner;
 in vec2 v_offsetView;
 in float v_depthRadius;
 in float v_life;
+flat in float v_materialId;
 out vec4 finalColor;
+uniform sampler2D u_frontDepthTex;
+uniform float u_matchFrontMaterial;
 uniform mat4 u_projection;
 
 /* BACK half of the same analytic ellipsoid liquid_capture_particle.fs draws the
@@ -22,6 +25,10 @@ uniform mat4 u_projection;
  * this does not — a MAX blend equation is optional on R32F (rlvk detects that
  * as Caps.floatBlendR32), and rlgl exposes no depth-func setter at all. */
 void main() {
+    if(u_matchFrontMaterial>0.5) {
+        vec4 front=texelFetch(u_frontDepthTex,ivec2(gl_FragCoord.xy),0);
+        if(front.r>=0.99999 || abs(front.b-v_materialId)>0.25) discard;
+    }
     if (v_life <= 0.0) discard;
     vec2 q = v_corner;
     float r2 = dot(q, q);

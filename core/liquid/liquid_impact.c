@@ -5,6 +5,7 @@
 #include "core/force_field.h"
 #include "core/liquid/liquid_surface.h"
 #include "core/liquid/liquid_pbd_gpu.h"
+#include "core/liquid/liquid_body_recipe.h"
 #include "core/gfx_quality.h"
 #include "core/map_manager.h"
 #include "core/presets/vc_material.h"
@@ -13,6 +14,7 @@
 #include "rlgl.h"
 #include <stddef.h>
 #include <math.h>
+#include <stdlib.h>
 
 #define LIQUID_HERO_MAX_BOUNCES 2
 #define LIQUID_SECONDARY_MARKS_PER_FRAME 2
@@ -23,9 +25,9 @@ typedef struct {
     Vector3 position, velocity;
     float radius, life;
     unsigned char bounces;
-    ParticleEmitterHandle surfaceEmitter;
     LiquidDesc material;
-    bool active;
+    float restitution;
+    bool surfaceAdmitted, active;
 } LiquidHeroDroplet;
 
 typedef struct {
@@ -40,8 +42,9 @@ typedef struct {
     ParticleEmitterHandle emitter;
     LiquidDesc material;
     LiquidMotionDesc motion;
-    Vector3 point, normal;
-    float age, scale, kernelRadius;
+    Vector3 point, normal, incoming;
+    LiquidBodyRecipe recipe;
+    float age, scale, kernelRadius, crownDuration;
     bool settling, active;
 } LiquidForceBody;
 
@@ -60,11 +63,6 @@ static Color s_fluidBody;
 static Color s_fluidGlow;
 static Color s_fluidSoft;
 static LiquidDesc s_fluidMaterial;
-
-static float LiquidImpact_Rand01(void)
-{
-    return (float)GetRandomValue(0, 10000) / 10000.0f;
-}
 
 static bool LiquidImpact_ColorIsUnset(Color color)
 {
@@ -89,82 +87,42 @@ static void LiquidImpact_InitGravity(void)
     s_gravityReady = true;
 }
 
-static void LiquidImpact_SetBodyImpactField(LiquidForceBody *body)
+static void LiquidImpact_SetBodyField(LiquidForceBody *body, LiquidBodyPhase phase,float stepSeconds)
 {
-    ForceField_Clear(&body->field);
-    ForceField_Clear(&body->coreField);
-    ForceField_AddLayer(&body->field, (ForceLayer){.type=FORCE_GRAVITY_DIR,
-        .direction={0.0f,-1.0f,0.0f}, .strength=9.81f});
-    ForceField_AddLayer(&body->field, (ForceLayer){.type=FORCE_RADIAL_AXIS,
-        .strength=-body->motion.splashField, .radius=body->scale*0.85f, .falloff=2.0f});
-    ForceField_AddLayer(&body->field, (ForceLayer){.type=FORCE_NOISE_CURL,
-        .strength=body->motion.turbulence, .noiseScale=4.0f/body->scale, .noiseSpeed=2.0f});
-    ForceField_AddLayer(&body->field, (ForceLayer){.type=FORCE_VISCOSITY,
-        .strength=body->motion.impactViscosity});
-    ForceField_AddLayer(&body->field, (ForceLayer){.type=FORCE_RECEIVER_PLANE,
-        .origin=body->point, .direction=body->normal,
-        .strength=body->motion.restitution,
-        .falloff=body->motion.tangentRetention});
-    /* The body core omits radial expansion, otherwise every particle is
-       evacuated into the crown and the reconstructed surface becomes a torus. */
-    ForceField_AddLayer(&body->coreField, (ForceLayer){.type=FORCE_GRAVITY_DIR,
-        .direction={0.0f,-1.0f,0.0f}, .strength=9.81f});
-    ForceField_AddLayer(&body->coreField, (ForceLayer){.type=FORCE_NOISE_CURL,
-        .strength=body->motion.turbulence*0.55f,
-        .noiseScale=4.0f/body->scale, .noiseSpeed=2.0f});
-    ForceField_AddLayer(&body->coreField, (ForceLayer){.type=FORCE_VISCOSITY,
-        .strength=body->motion.impactViscosity});
-    ForceField_AddLayer(&body->coreField, (ForceLayer){.type=FORCE_RECEIVER_PLANE,
-        .origin=body->point, .direction=body->normal,
-        .strength=body->motion.restitution,
-        .falloff=body->motion.tangentRetention});
-}
-
-static void LiquidImpact_SetBodySettleField(LiquidForceBody *body)
-{
-    ForceField_Clear(&body->field);
-    ForceField_Clear(&body->coreField);
-    ForceField_AddLayer(&body->field, (ForceLayer){.type=FORCE_GRAVITY_DIR,
-        .direction={0.0f,-1.0f,0.0f}, .strength=9.81f});
-    /* A weak attraction to the receiver-normal axis bounds the puddle without
-     * paying for particle neighbours or pulling it away from the receiver. */
-    ForceField_AddLayer(&body->field, (ForceLayer){.type=FORCE_RADIAL_AXIS,
-        .strength=body->motion.gatherStrength, .radius=body->scale*1.15f, .falloff=2.0f});
-    ForceField_AddLayer(&body->field, (ForceLayer){.type=FORCE_VISCOSITY,
-        .strength=body->motion.settleViscosity});
-    ForceField_AddLayer(&body->field, (ForceLayer){.type=FORCE_RECEIVER_PLANE,
-        .origin=body->point, .direction=body->normal, .strength=0.0f,
-        .falloff=body->motion.tangentRetention});
-    /* The stationary core only needs damping and contact; the shell's gather
-       layer closes over it without collapsing the entire puddle to one point. */
-    ForceField_AddLayer(&body->coreField, (ForceLayer){.type=FORCE_GRAVITY_DIR,
-        .direction={0.0f,-1.0f,0.0f}, .strength=9.81f});
-    ForceField_AddLayer(&body->coreField, (ForceLayer){.type=FORCE_VISCOSITY,
-        .strength=body->motion.settleViscosity});
-    ForceField_AddLayer(&body->coreField, (ForceLayer){.type=FORCE_RECEIVER_PLANE,
-        .origin=body->point, .direction=body->normal, .strength=0.0f,
-        .falloff=body->motion.tangentRetention});
+    LiquidBodyContext context={.center=body->point,.receiverPoint=body->point,
+        .receiverNormal=body->normal,.incomingVelocity=body->incoming,
+        .phaseAge=body->age,.stepSeconds=stepSeconds};
+    LiquidBodyRecipe_BuildField(&body->recipe,phase,&context,false,&body->field);
+    LiquidBodyRecipe_BuildField(&body->recipe,phase,&context,true,&body->coreField);
 }
 
 static bool LiquidImpact_SpawnForceBody(const LiquidImpactEvent *event,
-                                       Vector3 normal, Vector3 outgoing,
-                                       float force01, float scale)
+                                       Vector3 normal, Vector3 incoming,
+                                       float scale)
 {
     LiquidForceBody *body = NULL;
     for (int i = 0; i < LIQUID_IMPACT_MAX_BODIES; ++i) {
-        if (!s_forceBodies[i].active) { body = &s_forceBodies[i]; break; }
+        if (!s_forceBodies[i].active &&
+            !ParticleManager_IsForceFieldInUse(&s_forceBodies[i].field) &&
+            !ParticleManager_IsForceFieldInUse(&s_forceBodies[i].coreField)) {
+            body = &s_forceBodies[i]; break;
+        }
     }
     if (!body) return false;
 
     *body = (LiquidForceBody){.emitter=PARTICLE_EMITTER_INVALID,
         .material=s_fluidMaterial,
         .motion=LiquidMotion_Get(event->motionProfile),
-        .point=event->hitPoint, .normal=normal, .scale=scale,
+        .point=event->hitPoint, .normal=normal, .incoming=incoming, .scale=scale,
         .kernelRadius=scale*0.028f, .active=true};
-    LiquidImpact_SetBodyImpactField(body);
+    body->recipe=(LiquidBodyRecipe){.motion=body->motion,.radius=scale*0.30f,
+        .kernelRadius=body->kernelRadius};
+    body->crownDuration=LiquidBodyRecipe_CrownDuration(&body->recipe,incoming,normal);
+    LiquidImpact_SetBodyField(body,LIQUID_BODY_IMPACT,0.0f);
 
     ParticleEmitterDesc desc={0};
-    desc.simulationPolicy=PARTICLE_SIM_AUTO;
+    bool cpuOnly=getenv("WUXING_LIQUID_CPU_ONLY") && atoi(getenv("WUXING_LIQUID_CPU_ONLY"))!=0;
+    desc.simulationPolicy=cpuOnly?PARTICLE_SIM_CPU_ONLY:PARTICLE_SIM_AUTO;
     desc.renderMode=PARTICLE_RENDER_SURFACE_INPUT;
     desc.moduleFlags=PARTICLE_MODULE_FORCE_FIELD;
     desc.debugName="LiquidImpact force body";
@@ -173,35 +131,13 @@ static bool LiquidImpact_SpawnForceBody(const LiquidImpactEvent *event,
     if (body->emitter==PARTICLE_EMITTER_INVALID) { body->active=false; return false; }
 
     const ParticleGPUCaps *caps=ParticleSystem_GetGPUCaps();
-    int count=caps->computeShader ? (GfxQuality_Get()>=GFX_HIGH?768:512) :
+    int count=caps->computeShader && !cpuOnly ? (GfxQuality_Get()>=GFX_HIGH?768:512) :
                                   (GfxQuality_Get()<=GFX_LOW?192:320);
-    Vector3 tangent,bitangent; LiquidImpact_Basis(normal,&tangent,&bitangent);
-    float outgoingNormal=Vector3DotProduct(outgoing,normal);
-    Vector3 outgoingTangent=Vector3Subtract(outgoing,Vector3Scale(normal,outgoingNormal));
     for (int i=0;i<count;++i) {
-        /* Keep a slow central population under the crown.  A pure expanding disk
-           reconstructs as a clean torus and leaves no particles to form a puddle. */
-        bool coreParticle=(i&3)==0;
-        float angle=2.39996323f*(float)i+(LiquidImpact_Rand01()-0.5f)*0.20f;
-        float radial=coreParticle?sqrtf(LiquidImpact_Rand01()):
-                                  sqrtf(((float)i+0.5f)/(float)count);
-        float height=LiquidImpact_Rand01();
-        Vector3 ring=Vector3Add(Vector3Scale(tangent,cosf(angle)),
-                                Vector3Scale(bitangent,sinf(angle)));
-        float radialOffset=coreParticle ? scale*(0.008f+0.20f*radial) :
-                                          scale*(0.035f+0.15f*radial);
-        Vector3 position=Vector3Add(event->hitPoint,
-            Vector3Add(Vector3Scale(ring,radialOffset),
-                       Vector3Scale(normal,body->kernelRadius+scale*0.12f*height)));
-        float splash=scale*(0.65f+2.0f*force01)*body->motion.splashVelocity*
-                     (0.45f+0.55f*LiquidImpact_Rand01());
-        if (coreParticle) splash*=0.18f;
-        Vector3 velocity=Vector3Add(Vector3Scale(outgoingTangent,0.62f),
-            Vector3Add(Vector3Scale(ring,splash),
-                       Vector3Scale(normal,scale*(0.35f+1.25f*force01)*
-                                    body->motion.normalLift*(coreParticle?0.25f+0.35f*height:
-                                                                          0.4f+height))));
-        s_forceBodySpawn[i]=(ParticleConfig){.position=position,.velocity=velocity,
+        LiquidBodySeed seed=LiquidBodyRecipe_CrownSeed(&body->recipe,event->hitPoint,
+            normal,incoming,i,count,0u);
+        bool coreParticle=seed.core;
+        s_forceBodySpawn[i]=(ParticleConfig){.position=seed.position,.velocity=seed.velocity,
             .colorStart=VC_WithAlpha(s_fluidSoft,0),.colorEnd=VC_WithAlpha(s_fluidBody,0),
             .radius=body->kernelRadius,.lifetime=body->motion.lifetime,
             .forceField=coreParticle?&body->coreField:&body->field,
@@ -244,28 +180,6 @@ static int LiquidImpact_HeroCount(float force01)
     return base + (int)(extra * force01);
 }
 
-static ParticleEmitterHandle LiquidImpact_CreateSurfaceEmitter(Vector3 position, Vector3 velocity,
-                                                               float radius, float lifetime)
-{
-    const VFX_ElementMaterial *water = VFX_Material(VC_MAT_WATER);
-    ParticleEmitterDesc desc = {0};
-    desc.simulationPolicy = PARTICLE_SIM_AUTO;
-    desc.renderMode = PARTICLE_RENDER_SURFACE_INPUT;
-    /* The separate hero pool owns gameplay collision/residue. The visual
-     * surface is therefore free to use direct GPU raster on capable devices. */
-    desc.moduleFlags = PARTICLE_MODULE_GRAVITY | PARTICLE_MODULE_DRAG;
-    desc.debugName = "LiquidImpact hero surface";
-    /* Surface input is capture-only. Alpha must remain zero so a routing
-     * failure cannot ever expose its underlying billboard quad in the main
-     * particle pass; the SSF capture shader writes its own procedural disc. */
-    desc.particle = (ParticleConfig){ .position=position, .velocity=velocity,
-        .colorStart=VC_WithAlpha(water->soft, 0), .colorEnd=VC_WithAlpha(water->body, 0), .radius=radius,
-        .lifetime=lifetime, .forceField=&s_gravity };
-    ParticleEmitterHandle h = ParticleManager_CreateEmitter(&desc);
-    if (h != PARTICLE_EMITTER_INVALID) ParticleManager_Emit(h, 1);
-    return h;
-}
-
 static void LiquidImpact_AddResidue(Vector3 point, Vector3 normal, float radius, float opacity)
 {
     if (Vector3LengthSqr(normal) < 0.0001f) normal = (Vector3){0.0f, 1.0f, 0.0f};
@@ -276,19 +190,22 @@ static void LiquidImpact_AddResidue(Vector3 point, Vector3 normal, float radius,
     (void)opacity;
 }
 
+static bool LiquidImpact_GroundSample(float x,float z,Vector3 *point,
+                                      Vector3 *normal,void *userData)
+{
+    (void)userData;
+    if (!MapManager_SampleGroundSurfaceAt(x,z,point,normal)) {
+        *point=(Vector3){x,MapManager_GetGroundHeightAt(x,z),z};
+        *normal=(Vector3){0,1,0};
+    }
+    return true;
+}
+
 static bool LiquidImpact_DefaultGroundHit(Vector3 from, Vector3 to, float radius,
                                          LiquidImpactCollision *outHit)
 {
-    float groundY = MapManager_GetGroundHeightAt(to.x, to.z);
-    if (from.y - radius >= groundY && to.y - radius <= groundY) {
-        Vector3 pos, normal;
-        MapManager_SampleGroundSurfaceAt(to.x, to.z, &pos, &normal);
-        outHit->position = pos;
-        outHit->normal = Vector3LengthSqr(normal) > 0.0001f ? Vector3Normalize(normal)
-                                                            : (Vector3){0.0f, 1.0f, 0.0f};
-        return true;
-    }
-    return false;
+    return LiquidBodyRecipe_SweepGround(from,to,radius,LiquidImpact_GroundSample,
+        NULL,&outHit->position,&outHit->normal);
 }
 
 static bool LiquidImpact_QueryCollision(Vector3 from, Vector3 to, float radius,
@@ -369,15 +286,15 @@ void LiquidImpact_SpawnWater(const LiquidImpactEvent *event)
         incoming = Vector3Scale(impulse, scale*(2.0f + force01*4.0f));
     /* Preserve the actual momentum magnitude, then apply an inelastic splash
      * rebound only when the water body was travelling into the receiver. */
-    float intoSurface = Vector3DotProduct(incoming, normal);
-    Vector3 outgoing = intoSurface < 0.0f ? Vector3Subtract(incoming, Vector3Scale(normal, intoSurface*1.35f)) : incoming;
+    Vector3 outgoing = LiquidBody_ContactVelocity(incoming, normal, 0.35f);
     LiquidImpact_AddResidue(event->hitPoint, normal,
                            scale * (0.30f + 0.65f * force01), force01);
     if (event->externalBody) return;
 
     /* PBD remains available for explicit experiments. It is lazy, single-body
      * today, and an occupied/unavailable solver falls back to the force path. */
-    bool pbdRequested = !event->forceFieldOnly &&
+    bool cpuOnly=getenv("WUXING_LIQUID_CPU_ONLY") && atoi(getenv("WUXING_LIQUID_CPU_ONLY"))!=0;
+    bool pbdRequested = !cpuOnly && !event->forceFieldOnly &&
                         event->backend == LIQUID_IMPACT_BACKEND_PBD;
     bool gpuLiquid = useSurface && pbdRequested &&
                     !LiquidPBDGPU_IsActive() && LiquidPBDGPU_Init();
@@ -386,7 +303,7 @@ void LiquidImpact_SpawnWater(const LiquidImpactEvent *event)
      * instead of an incoming water body striking the receiver. */
     if (gpuLiquid) LiquidPBDGPU_SpawnImpact(event->hitPoint, normal, incoming, force01, scale);
     bool forceBody = useSurface && !gpuLiquid &&
-                     LiquidImpact_SpawnForceBody(event,normal,outgoing,force01,scale);
+                     LiquidImpact_SpawnForceBody(event,normal,incoming,scale);
     Vector3 tangent, bitangent;
     LiquidImpact_Basis(normal, &tangent, &bitangent);
 
@@ -398,17 +315,16 @@ void LiquidImpact_SpawnWater(const LiquidImpactEvent *event)
         Vector3 radial = Vector3Add(Vector3Scale(tangent, cosf(angle)), Vector3Scale(bitangent, sinf(angle)));
         float speed = scale * (1.8f + 3.2f * force01) * spread;
         LiquidHeroDroplet *d = &s_hero[s_nextHero++ % LIQUID_IMPACT_MAX_HERO_DROPLETS];
-        if (d->active && d->surfaceEmitter != PARTICLE_EMITTER_INVALID)
-            ParticleManager_DestroyEmitter(d->surfaceEmitter);
         Vector3 start = Vector3Add(event->hitPoint, Vector3Scale(normal, 0.03f));
-        Vector3 velocity = Vector3Add(Vector3Add(Vector3Scale(impulse, speed * 0.75f),
+        Vector3 velocity = Vector3Add(Vector3Add(outgoing,
                                                   Vector3Scale(radial, speed * 0.65f)),
                                       Vector3Scale(normal, speed * 0.45f));
         float radius = scale * (0.025f + ((float)GetRandomValue(0, 1000) / 1000.0f) * 0.04f);
         float lifetime = 0.35f + ((float)GetRandomValue(0, 1000) / 1000.0f) * 0.45f;
         *d = (LiquidHeroDroplet){
             .position = start, .velocity = velocity, .radius = radius, .life = lifetime,
-            .surfaceEmitter = LiquidImpact_CreateSurfaceEmitter(start, velocity, radius * 1.75f, lifetime),
+            .restitution=LiquidMotion_Get(event->motionProfile).restitution,
+            .surfaceAdmitted=useSurface,
             .material = s_fluidMaterial,
             .active = true
         };
@@ -419,7 +335,7 @@ void LiquidImpact_SpawnWater(const LiquidImpactEvent *event)
         Vector3 radial = Vector3Add(Vector3Scale(tangent, cosf(angle)), Vector3Scale(bitangent, sinf(angle)));
         ParticleConfig p = {0};
         p.position = Vector3Add(event->hitPoint, Vector3Scale(normal, 0.025f));
-        p.velocity = Vector3Add(Vector3Scale(impulse, scale * (1.2f + force01 * 2.0f)),
+        p.velocity = Vector3Add(outgoing,
                                 Vector3Add(Vector3Scale(radial, scale * (0.8f + force01)),
                                            Vector3Scale(normal, scale * 1.0f)));
         p.colorStart = VC_WithAlpha(s_fluidSoft, 170);
@@ -438,10 +354,10 @@ void LiquidImpact_Update(float dt)
         LiquidForceBody *body=&s_forceBodies[i];
         if (!body->active) continue;
         body->age+=dt;
-        if (!body->settling && body->age>=body->motion.impactDuration) {
-            body->settling=true;
-            LiquidImpact_SetBodySettleField(body);
-        }
+        LiquidBodyPhase phase=LiquidBodyRecipe_PhaseAt(body->age,body->crownDuration);
+        body->settling=phase==LIQUID_BODY_SETTLE;
+        LiquidBodyPhase fieldPhase=LiquidBodyRecipe_IntegrationPhaseAt(body->age,dt,body->crownDuration);
+        LiquidImpact_SetBodyField(body,fieldPhase,dt);
         if (body->age>=body->motion.lifetime) {
             if (body->emitter!=PARTICLE_EMITTER_INVALID)
                 ParticleManager_DestroyEmitter(body->emitter);
@@ -454,20 +370,17 @@ void LiquidImpact_Update(float dt)
         LiquidHeroDroplet *d = &s_hero[i];
         if (!d->active) continue;
         d->life -= dt;
-        if (d->life <= 0.0f) { if (d->surfaceEmitter != PARTICLE_EMITTER_INVALID) ParticleManager_DestroyEmitter(d->surfaceEmitter); d->active = false; continue; }
+        if (d->life <= 0.0f) { d->active = false; continue; }
         Vector3 from = d->position;
         d->velocity.y -= 9.81f * dt;
-        d->velocity = Vector3Scale(d->velocity, fmaxf(0.0f, 1.0f - 1.4f * dt));
+        d->velocity = Vector3Scale(d->velocity, expf(-1.4f * dt));
         Vector3 to = Vector3Add(from, Vector3Scale(d->velocity, dt));
         LiquidImpactCollision hit;
         if (!LiquidImpact_QueryCollision(from, to, d->radius, &hit)) { d->position = to; continue; }
         if (Vector3LengthSqr(hit.normal) < 0.0001f) hit.normal = (Vector3){0.0f, 1.0f, 0.0f};
         hit.normal = Vector3Normalize(hit.normal);
         d->position = Vector3Add(hit.position, Vector3Scale(hit.normal, d->radius + 0.004f));
-        float normalSpeed = Vector3DotProduct(d->velocity, hit.normal);
-        if (normalSpeed < 0.0f) d->velocity = Vector3Subtract(d->velocity,
-            Vector3Scale(hit.normal, normalSpeed * 1.35f));
-        d->velocity = Vector3Scale(d->velocity, 0.52f);
+        d->velocity=LiquidBody_ContactVelocity(d->velocity,hit.normal,d->restitution);
         d->bounces++;
         LiquidImpact_SpawnMicroSplash(hit.position,hit.normal,d->radius,
                                      d->material.body,d->material.soft);
@@ -476,7 +389,6 @@ void LiquidImpact_Update(float dt)
             s_secondaryMarksThisFrame++;
         }
         if (d->bounces >= LIQUID_HERO_MAX_BOUNCES || Vector3Length(d->velocity) < 0.45f) {
-            if (d->surfaceEmitter != PARTICLE_EMITTER_INVALID) ParticleManager_DestroyEmitter(d->surfaceEmitter);
             d->active = false;
         }
     }
@@ -490,16 +402,16 @@ void LiquidImpact_Draw(void)
         if (!body->active || body->emitter==PARTICLE_EMITTER_INVALID) continue;
         LiquidSurface_BindMaterial(&body->material);
         LiquidSurface_SetReconstructionRadiusFor(LIQUID_PRIORITY_CAST,body->kernelRadius);
+        LiquidSurface_HintBody(body->point,LiquidBodyRecipe_EstimateRadius(&body->recipe,body->incoming,body->age));
         if (ParticleManager_GetSurfaceStream(body->emitter,&stream))
             LiquidSurface_SubmitParticleStream(&stream);
     }
     for (int i = 0; i < LIQUID_IMPACT_MAX_HERO_DROPLETS; ++i) {
         LiquidHeroDroplet *d = &s_hero[i];
-        if (!d->active || d->surfaceEmitter == PARTICLE_EMITTER_INVALID) continue;
-        ParticleRenderStream stream;
+        if (!d->active || !d->surfaceAdmitted) continue;
         LiquidSurface_BindMaterial(&d->material);
         LiquidSurface_SetReconstructionRadiusFor(LIQUID_PRIORITY_CAST,d->radius*1.75f);
-        if (ParticleManager_GetSurfaceStream(d->surfaceEmitter, &stream)) LiquidSurface_SubmitParticleStream(&stream);
+        LiquidSurface_RegisterParticle(d->position,d->radius*1.75f);
     }
 }
 

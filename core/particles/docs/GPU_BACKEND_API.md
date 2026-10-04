@@ -106,6 +106,52 @@ contract and is not packed into this legacy GPU backend. An emitter requesting
 routed to the CPU renderer, which constructs two planes around that direction.
 This is an intentional visual fallback, not a simulation-capability failure.
 
+### Batched surface capture
+
+`ParticleManager_DrawSurfaceStreams` and `ParticleManager_DrawSurfaceBackStreams`
+accept up to 32 `ParticleSurfaceCaptureStream` values with caller-owned material
+ids (`core/particles/particle_manager.h`). CPU streams use sample-copy APIs;
+these raster APIs reject CPU streams rather than reading GPU data back.
+
+`particle_gpu_backend.c` gathers conservative owner/mode matches from spawn
+metadata into a persistent 64 KiB index SSBO. Compute capture uses a separate
+64 KiB CPU mirror of uploaded owner/mode metadata, so an event spawn after
+dispatch cannot relabel a still-resident GPU slot before its next upload. It ignores CPU active/life state;
+the GPU remains authoritative for arrival and lifetime rejection. Each capture
+pass submits one indexed draw, with material id carried by each winning depth
+splat. Front/back reuse the uploaded list while routes and Spawn/Update revision
+match. Expired owner-matching slots remain candidates until ring overwrite, so
+`ParticleManager_GetSurfaceCaptureInstanceCount` reports submitted candidates,
+not a live GPU count. The legacy single-stream draw remains a full-pool path.
+
+`liquid_surface_capture.vs` reads particle data at graphics binding 0 and compact
+indices at graphics binding 1. Compute restores its force-field binding 1 before
+dispatch; compute and graphics buffer bindings are separate pass contracts.
+
+`particle_field_lease.h` retains stable force-field slots for the maximum float
+remaining lifetime of spawned users, including arrival fields leased at spawn.
+The backend decrements leases with the same dt as particle life, clears expired
+slots without compacting, and zero-packs holes. Runtime arrival lookups retain
+only remaining particle life; path packing performs lookup without extending a
+lease. Field pointers remain borrowed for the full emitted particle lifetime.
+
+`ParticleManager_IsForceFieldInUse` (`particle_manager.h`) gates field-storage
+reuse by CPU primary/future arrival references and conservative GPU leases. It
+compares pointer identities without dereferencing the field. Destroying an
+emitter does not destroy its particles. This query does not guarantee that
+other borrowed path/target/texture storage is unused.
+
+`ParticleManager_SetSurfaceCaptureFrontDepth` borrows the front capture while
+BACK runs (`particle_manager.h`); reset to id zero afterward. The GPU host sets
+`u_matchFrontMaterial` and explicitly binds `u_frontDepthTex` to texture slot
+zero before its raw instanced draw (`particle_gpu_backend.c`). This state defaults
+to disabled for standalone consumers.
+
+`WUXING_PARTICLES_FORCE_CPU=1` selects CPU simulation during backend Init
+(`particle_gpu_backend.c`), before capability discovery; manager compute/storage
+capabilities therefore describe the selected backend. Default selection is
+unchanged. This switch is intended for deterministic fallback comparisons.
+
 ### `GpuParticleSystem_Unload(void)`
 Free GPU buffers and shaders. Call at shutdown.
 
@@ -233,3 +279,9 @@ for (int i = 0; i < rain_spawn_count; i++) {
 ```
 
 No Init/Update/Draw needed in environment — main.c manages it centrally.
+
+## Patch Log
+
+| Date | Editor | Section edited | Based on which source | Tier |
+|---|---|---|---|---|
+| 2026-10-04 | Codex | Batched surface capture and field leases | core/particles/particle_manager.h; core/particles/gpu/particle_gpu_backend.c; core/particles/gpu/particle_field_lease.h | Ground-truth |

@@ -15,12 +15,17 @@ struct GpuParticleData {
     vec4 formation_data;
 };
 layout(std430, binding = 0) readonly buffer ParticleBuffer { GpuParticleData particles[]; };
+struct SurfaceIndex { uint particleIndex; float materialId; };
+layout(std430, binding = 1) readonly buffer SurfaceIndexBuffer { SurfaceIndex surfaceIndices[]; };
 
 in vec3 vertexPosition;
 uniform mat4 u_view;
 uniform mat4 u_projection;
 uniform float u_filterEmitter;
 uniform float u_filterRenderMode;
+uniform int u_surfaceIndexed;
+uniform float u_materialId;
+flat out float v_materialId;
 out vec3 v_centerView;
 out vec2 v_corner;
 /* The splat is an ELLIPSOID now, so one radius no longer describes it: the
@@ -59,8 +64,14 @@ out float v_life;
 #define LIQUID_ANISO_MAX_ASPECT 3.0
 
 void main() {
-    vec4 life = particles[gl_InstanceID].life_data;
-    vec4 route = particles[gl_InstanceID].route_data;
+    uint particleIndex = uint(gl_InstanceID);
+    v_materialId = u_materialId;
+    if (u_surfaceIndexed != 0) {
+        particleIndex = surfaceIndices[gl_InstanceID].particleIndex;
+        v_materialId = surfaceIndices[gl_InstanceID].materialId;
+    }
+    vec4 life = particles[particleIndex].life_data;
+    vec4 route = particles[particleIndex].route_data;
     if (life.w < 0.5 || life.y <= 0.0 ||
         (u_filterEmitter >= 0.0 && abs(route.x - u_filterEmitter) > 0.25) ||
         (u_filterRenderMode >= 0.0 && abs(route.y - u_filterRenderMode) > 0.25)) {
@@ -69,13 +80,13 @@ void main() {
         v_offsetView = vec2(0.0); v_depthRadius = 0.0; v_life = 0.0;
         return;
     }
-    vec4 pr = particles[gl_InstanceID].pos_radius;
+    vec4 pr = particles[particleIndex].pos_radius;
     v_centerView = (u_view * vec4(pr.xyz, 1.0)).xyz;
     v_corner = vertexPosition.xy;
     v_life = life.x;
 
     // Velocity in the view plane: the same space the quad is built in.
-    vec3 velocityView = mat3(u_view) * particles[gl_InstanceID].vel_drag.xyz;
+    vec3 velocityView = mat3(u_view) * particles[particleIndex].vel_drag.xyz;
     float speed = length(velocityView.xy);
     float aspect = clamp(1.0 + speed / LIQUID_ANISO_REFERENCE_SPEED,
                          1.0, LIQUID_ANISO_MAX_ASPECT);

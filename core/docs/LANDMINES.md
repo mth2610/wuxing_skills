@@ -3804,6 +3804,36 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
   Reconstruction must filter premultiplied radiance and opacity together and
   reject unrelated depth layers; see `core/volumetric/docs/LANDMINES.md` §3.
 
+## Liquid capture admission and borrowed field lifetimes (04/10/2026)
+
+**Symptom.** Four CPU splashes silently lost later bodies; respawning an orb or
+bench changed the forces on particles from the previous body.
+
+**Cause.** CPU submissions immediately consumed a shared 384-sample queue;
+destroying an emitter stopped future emission but did not destroy live particles
+borrowing its force fields. Body-slot reuse overwrote that storage.
+
+**Rule.** Defer CPU stream admission until capture and share remaining capacity
+with max-min quotas and evenly spaced samples. Report admitted/dropped counts.
+Retain force-field storage until `ParticleManager_IsForceFieldInUse()` is false;
+GPU lifetime leases use simulation dt, including future arrival references.
+Do not infer drain from CPU shadow arrival or emitter destruction. Graphics
+buffer-limit validation is cross-cutting; see `ENGINE_LANDMINES.md` section 23.
+
+## A liquid fringe's identity cannot be selected by its largest slot id (04/10/2026)
+
+**Symptom.** A dilated water edge borrowed the identity of another nearby liquid,
+and its thickness included an unrelated liquid behind it.
+
+**Cause.** Composite chose the maximum cardinal material id; back depth reduced
+all materials without consulting the winning front fragment.
+
+**Rule.** Borrow a fringe's identity from the nearest actual depth fragment. Back
+capture must match that front material at the same pixel, and reconstruction
+must use its material kernel and reject captured neighbors of other materials.
+The remaining same-material envelope may still include air gaps between
+separated bodies; this is not a density/occupancy thickness solve.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |

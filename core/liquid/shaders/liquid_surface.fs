@@ -19,6 +19,7 @@ uniform int u_hasSceneDepth;
 uniform int u_qualityTier;
 // World-space radius of one reconstruction kernel (LiquidSurface_SetReconstructionRadius).
 uniform float u_kernelRadius;
+uniform float u_materialKernels[6];
 
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
@@ -299,15 +300,19 @@ void main() {
      * its depth came from. Rounding, not truncation: the capture is POINT
      * filtered, but the composite target and the capture are the same size only
      * at HIGH — at MED/LOW the tap can land between texels. */
-    float rawSlot = texture(u_materialIdTex, fragTexCoord).b;
-    if (dilatedFringe) {
-        float sl = texture(u_materialIdTex, fragTexCoord - vec2(u_texel.x, 0.0)).b;
-        float sr = texture(u_materialIdTex, fragTexCoord + vec2(u_texel.x, 0.0)).b;
-        float sd = texture(u_materialIdTex, fragTexCoord - vec2(0.0, u_texel.y)).b;
-        float su = texture(u_materialIdTex, fragTexCoord + vec2(0.0, u_texel.y)).b;
-        rawSlot = max(max(sl, sr), max(sd, su));
+    vec4 identity=texture(u_materialIdTex,fragTexCoord);
+    if(identity.r>=0.99999) {
+        float nearest=1.0;
+        /* Reconstruction fills a one-pixel halo; the composite adds one more.
+         * Identity follows the nearest real depth, never the largest slot ID. */
+        for(int y=-2;y<=2;y++) for(int x=-2;x<=2;x++) {
+            vec4 candidate=texture(u_materialIdTex,fragTexCoord+vec2(x,y)*u_texel);
+            if(candidate.r<nearest) { nearest=candidate.r; identity=candidate; }
+        }
     }
+    float rawSlot=identity.b;
     int slot = clamp(int(rawSlot + 0.5), 0, LIQUID_MATERIAL_SLOTS - 1);
+    float kernelRadius=u_materialKernels[slot]>0.0?u_materialKernels[slot]:u_kernelRadius;
     vec3 materialBody = u_materialBody[slot].rgb;
     vec3 materialGlow = u_materialGlow[slot].rgb;
     vec3 materialSoft = u_materialSoft[slot].rgb;
@@ -425,7 +430,7 @@ void main() {
      * was 0.5, so a clear liquid retained mostly unmodified backdrop and
      * vanished on bright grass. Thickness is optical path, not geometric
      * coverage: use it only to soften the one-pixel mask borrowed by dilation. */
-    float thicknessCoverage = smoothstep(0.0, 2.0 * u_kernelRadius, kernelThickness);
+    float thicknessCoverage = smoothstep(0.0, 2.0 * kernelRadius, kernelThickness);
     float geometricCoverage = dilatedFringe ? thicknessCoverage : 1.0;
     float surfaceCoverage = geometricCoverage
                           * intersectionVisibility * maskCoverage;

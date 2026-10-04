@@ -38,6 +38,8 @@ static int s_gridStamp;
 #define PBD_STAMP_WRAP 500000     /* re-clear well before int overflow at x4096 */
 static void LiquidPBDGPU_ClearGrid(void);
 static Shader s_depthShader,s_backShader;
+static Texture2D s_frontDepth;
+void LiquidPBDGPU_SetSurfaceFrontDepth(Texture2D frontDepth) { s_frontDepth=frontDepth; }
 
 static float LiquidPBDGPU_Rand01(unsigned int value)
 {
@@ -257,8 +259,20 @@ static void LiquidPBDGPU_Draw(Camera3D camera, Shader shader)
         projection=MatrixFrustum(-top*aspect,top*aspect,-top,top,1.0,1000.0);
     }
     BeginShaderMode(shader);
+    float material=(float)LiquidPBDGPU_GetMaterial();
+    int materialLoc=GetShaderLocation(shader,"u_materialId");
+    if(materialLoc>=0)SetShaderValue(shader,materialLoc,&material,SHADER_UNIFORM_FLOAT);
+    int matchLoc=GetShaderLocation(shader,"u_matchFrontMaterial");
+    float match=s_frontDepth.id?1.0f:0.0f;
+    if(matchLoc>=0) {
+        SetShaderValue(shader,matchLoc,&match,SHADER_UNIFORM_FLOAT);
+        int slot=0, frontLoc=GetShaderLocation(shader,"u_frontDepthTex");
+        SetShaderValue(shader,frontLoc,&slot,SHADER_UNIFORM_INT);
+        rlActiveTextureSlot(0);
+        if(match>0.5f) rlEnableTexture(s_frontDepth.id);
+    }
     int loc=GetShaderLocation(shader,"u_view"); if(loc>=0)SetShaderValueMatrix(shader,loc,view); loc=GetShaderLocation(shader,"u_projection");if(loc>=0)SetShaderValueMatrix(shader,loc,projection);
-    rlBindShaderBuffer(s_stateA,0); rlEnableShader(shader.id); rlEnableVertexArray(s_vao); rlDrawVertexArrayInstanced(0,6,s_particleCount); rlDisableVertexArray(); rlDisableShader(); EndShaderMode();
+    rlBindShaderBuffer(s_stateA,0); rlEnableShader(shader.id); rlEnableVertexArray(s_vao); rlDrawVertexArrayInstanced(0,6,s_particleCount); rlDisableVertexArray(); rlDisableShader(); if(matchLoc>=0 && match>0.5f)rlDisableTexture(); EndShaderMode();
 }
 void LiquidPBDGPU_DrawSurfaceDepth(Camera3D camera){LiquidPBDGPU_Draw(camera,s_depthShader);}
 void LiquidPBDGPU_DrawSurfaceBackDepth(Camera3D camera){LiquidPBDGPU_Draw(camera,s_backShader);}

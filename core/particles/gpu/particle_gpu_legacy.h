@@ -24,6 +24,7 @@
 #include "core/force_field.h"
 #include "core/particles/particle_travel.h"
 #include <stdbool.h>
+#include "particle_surface_index.h"
 
 #define MAX_GPU_PARTICLES 8192
 #define GPU_PARTICLE_DATA_STRIDE_BYTES 144 /* nine std430 vec4 values */
@@ -100,6 +101,11 @@ void GpuParticleSystem_SetSurfaceMaterialId(float materialId);
 void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, int emitterId);
 // Far side of the same splat cloud (dual-depth thickness); see liquid_capture_particle_back.fs.
 void GpuParticleSystem_DrawSurfaceBackEmitter(Camera3D camera, int emitterId);
+bool GpuParticleSystem_DrawSurfaceEmitters(Camera3D camera, Texture2D texture, const GpuSurfaceRoute *routes, int count);
+bool GpuParticleSystem_DrawSurfaceBackEmitters(Camera3D camera, const GpuSurfaceRoute *routes, int count);
+int GpuParticleSystem_GetSurfaceCaptureInstanceCount(void);
+bool GpuParticleSystem_IsForceFieldInUse(const ForceField *field);
+void GpuParticleSystem_SetSurfaceCaptureFrontDepth(Texture2D texture);
 
 // Cleanup
 void GpuParticleSystem_Unload(void);

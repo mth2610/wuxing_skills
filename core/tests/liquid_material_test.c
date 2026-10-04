@@ -180,7 +180,7 @@ int main(void)
         if (!cap) { printf("FAIL: cannot read liquid_capture_particle.fs\n"); bad++; }
         else
         {
-            CHECK(strstr(cap, "vec4(depth, coverage, u_materialId, 1.0)") != NULL);
+            CHECK(strstr(cap, "vec4(depth, coverage, v_materialId, 1.0)") != NULL);
             free(cap);
         }
     }

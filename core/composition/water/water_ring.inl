@@ -88,8 +88,8 @@ static void WaterRing_SetField(Vector3 center, float radius, float t01)
  * a quarter second after the calls stop. `radius` is the ring radius in metres
  * (the tube is 0.12 of it), `t01` drives density and flow speed.
  *
- * SSF carries ONE material at a time (LiquidSurface_SetMaterialColors is global),
- * so a second fluid body on screen in the same frame shares this one's optics. */
+ * SSF binds the ring's optical material to its submitted stream, allowing
+ * other liquids to retain their own optics in the same capture. */
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
 {
     if (radius <= 0.0f) radius = 0.6f;

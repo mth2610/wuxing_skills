@@ -51,7 +51,8 @@ fi
 
 BIN="$CACHE/rlvk_visual_test"
 cc "$ROOT/third_party/vulkan/tests/rlvk_visual_test.c" -o "$BIN" \
-    -I"$RAYLIB/src" -L"$BUILD/raylib" -lraylib \
+    "$ROOT/core/liquid/liquid_capture_cpu.c" \
+    -I"$ROOT" -I"$RAYLIB/src" -L"$BUILD/raylib" -lraylib \
     -L"$VSDK/lib" -lvulkan -Wl,-rpath,"$VSDK/lib" \
     -framework Cocoa -framework IOKit -framework CoreVideo -framework CoreFoundation -framework QuartzCore -lm
 

@@ -1,3 +1,5 @@
+#include "particle_surface_sampling.h"
+#include "particle_field_reference.h"
 #include "particle_system.h"
 #include "core/particles/particle_manager.h"
 #include "core/mesh_adjacency.h"
@@ -2286,6 +2288,43 @@ void ParticleSystem_GetStats(int *active, int *max)
 {
   *active = s_activeCount;
   *max = MAX_PARTICLES;
+}
+
+int ParticleSystem_CountSurfaceSamples(int emitterId)
+{
+  int count = 0;
+  for (int i = 0; i < MAX_PARTICLES; ++i) {
+    const ParticleInternal *p = &g_Particles[i];
+    if (p->active && p->emitterId == emitterId && p->renderMode == 3) ++count;
+  }
+  return count;
+}
+
+bool ParticleSystem_IsForceFieldInUse(const ForceField *field)
+{
+  if (!field) return false;
+  for (int i = 0; i < s_activeCount; ++i) {
+    const ParticleInternal *p = &g_Particles[s_activeIds[i]];
+    if (!p->active) continue;
+    const ForceField *arrival = p->travelPath ? p->travelPath->arrivalForceField : NULL;
+    if (ParticleFieldReference_Matches(p->active, field, p->forceField, arrival)) return true;
+  }
+  return false;
+}
+
+int ParticleSystem_GetSurfaceSamplesSpaced(int emitterId, ParticleSurfaceSample *outSamples, int maxSamples)
+{
+  if (!outSamples || maxSamples <= 0) return 0;
+  int demand = ParticleSystem_CountSurfaceSamples(emitterId);
+  int admitted = demand < maxSamples ? demand : maxSamples;
+  int ordinal = 0, count = 0;
+  for (int i = 0; i < MAX_PARTICLES && count < admitted; ++i) {
+    const ParticleInternal *p = &g_Particles[i];
+    if (!p->active || p->emitterId != emitterId || p->renderMode != 3) continue;
+    if (ordinal++ != ParticleSurfaceSampling_Ordinal(count, admitted, demand)) continue;
+    outSamples[count++] = (ParticleSurfaceSample){{p->x, p->y, p->z}, p->radius};
+  }
+  return count;
 }
 
 int ParticleSystem_GetSurfaceSamples(int emitterId, ParticleSurfaceSample *outSamples, int maxSamples)

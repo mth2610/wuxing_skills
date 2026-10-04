@@ -43,7 +43,9 @@ int main(void)
         CHECK(strstr(bench,"ParticleManager_EmitBatch")!=NULL);
         CHECK(strstr(bench,"LiquidMotion_Get(profile)")!=NULL);
         CHECK(strstr(bench,"LiquidSurface_ProfileDesc(profile)")!=NULL);
-        CHECK(strstr(bench,"FORCE_RECEIVER_PLANE")!=NULL);
+        CHECK(strstr(bench,"LiquidBodyRecipe_BuildField")!=NULL);
+        CHECK(strstr(bench,"LiquidBodyRecipe_VolumeOffset")!=NULL);
+        CHECK(strstr(bench,"LiquidBench_SetPhaseField(body,fieldPhase,phaseAge,dt)")!=NULL);
         CHECK(strstr(bench,"static void LiquidBench_Update(float dt)")!=NULL);
         CHECK(strstr(bench,"static void LiquidBench_SubmitSurface(void)")!=NULL);
         CHECK(strstr(composer,"LiquidBench_Update(dt);")!=NULL);

@@ -7,6 +7,8 @@ struct LiquidParticle {
 layout(std430,binding=0) readonly buffer LiquidState { LiquidParticle particles[]; };
 in vec3 vertexPosition;
 uniform mat4 u_view,u_projection;
+uniform float u_materialId;
+flat out float v_materialId;
 out vec3 v_centerView; out vec2 v_corner; out vec2 v_offsetView;
 out float v_depthRadius; out float v_life;
 
@@ -17,6 +19,7 @@ out float v_depthRadius; out float v_life;
 #define LIQUID_ANISO_MAX_ASPECT 3.0
 
 void main(){
+    v_materialId=u_materialId;
     LiquidParticle p=particles[gl_InstanceID];
     v_centerView=(u_view*vec4(p.position_radius.xyz,1.0)).xyz;
     /* Airborne particles need generous optical overlap.  Once the heavy body

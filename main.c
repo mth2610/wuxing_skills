@@ -1485,8 +1485,8 @@ int main(int argc, char **argv) {
     StatusVFX_Update(dt);
     Afterimage_Update(dt);
     if (benchmarkVisible) updateTime[4] = GetTime();
-    ParticleManager_Update(dt);
     LiquidImpact_Update(dt);
+    ParticleManager_Update(dt);
     if (benchmarkVisible) updateTime[5] = GetTime();
     GasSystem_Update(dt);
     if (benchmarkVisible) updateTime[6] = GetTime();

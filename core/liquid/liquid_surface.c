@@ -5,6 +5,8 @@
 #include "core/screen_distort.h"
 #include "core/particles/particle_manager.h"
 #include "core/liquid/liquid_pbd_gpu.h"
+#include "core/liquid/liquid_capture_cpu.h"
+#include "core/liquid/liquid_capture_budget.h"
 #include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/gfx_quality.h"
 #include "core/presets/vc_material.h"
@@ -18,12 +20,25 @@
 
 #define LIQUID_OPTICAL_POINT_LIGHTS 4
 
-typedef struct { Vector3 position, radii; int material; } LiquidSurfaceParticle;
+typedef LiquidCaptureCPUInstance LiquidSurfaceParticle;
 static LiquidSurfaceParticle s_particles[LIQUID_SURFACE_MAX_PARTICLES];
 static int s_count;
 static ParticleRenderStream s_gpuStreams[16];
 static int s_gpuStreamMaterial[16];
 static int s_gpuStreamCount;
+static ParticleRenderStream s_cpuStreams[32];
+static int s_cpuStreamMaterial[32], s_cpuStreamCount;
+static LiquidSurfaceStats s_stats;
+static int s_streamRejected, s_directRequested;
+static bool s_captureBatch=true, s_cpuImpostor=true, s_profile;
+static unsigned int s_profileFrames;
+static RenderTexture2D s_occupancy;
+static Shader s_occupancyShader;
+static int s_occupancyLoc, s_useOccupancyLoc;
+static bool s_useOccupancy=true;
+LiquidSurfaceStats LiquidSurface_GetStats(void) { return s_stats; }
+static double LiquidSurface_HostClock(void) { return s_profile?GetTime():0.0; }
+static double LiquidSurface_HostElapsed(double start) { return s_profile?(GetTime()-start)*1000.0:0.0; }
 
 /* --- The liquid table ---------------------------------------------------- */
 static LiquidDesc s_materials[LIQUID_SURFACE_MATERIAL_SLOTS];
@@ -54,6 +69,14 @@ static Color s_materialBody = {41, 128, 185, 255};
 static Color s_materialGlow = {80, 180, 255, 255};
 static Color s_materialSoft = {160, 225, 255, 255};
 static float s_reconstructionRadius = 0.022f;
+static float s_submissionKernelRadius = 0.022f;
+static float s_materialKernel[LIQUID_SURFACE_MATERIAL_SLOTS];
+static int s_smoothMaterialLoc, s_smoothKernelsLoc, s_smoothMultiLoc;
+static int s_compositeKernelsLoc;
+static void LiquidSurface_RecordKernel(int slot) {
+    if(slot>=0 && slot<LIQUID_SURFACE_MATERIAL_SLOTS)
+        s_materialKernel[slot]=fmaxf(s_materialKernel[slot],s_submissionKernelRadius);
+}
 static float s_frameBodyRadiusPx = -1.0f;
 static float s_frameKernelRadiusPx = -1.0f;
 /* 0 = adaptive shipping path; 1/2 force a side; 3 interleaves both sides in one
@@ -295,6 +318,14 @@ static void LiquidSurface_DrawEllipsoid(const LiquidSurfaceParticle *sp) {
 
 
 void LiquidSurface_Init(int width,int height) {
+    const char *batch=getenv("WUXING_LIQUID_CAPTURE_BATCH");
+    const char *cpu=getenv("WUXING_LIQUID_CPU_IMPOSTOR");
+    const char *roi=getenv("WUXING_LIQUID_OCCUPANCY");
+    s_captureBatch=!batch || atoi(batch)!=0;
+    s_cpuImpostor=(!cpu || atoi(cpu)!=0) && LiquidCaptureCPU_Init();
+    s_useOccupancy=!roi || atoi(roi)!=0;
+    const char *profile=getenv("WUXING_LIQUID_PROFILE");
+    s_profile=profile && atoi(profile)!=0;
     const char *roundOverride=getenv("WUXING_LIQUID_RECON_ROUNDS");
     if (!roundOverride) roundOverride=getenv("WUXING_FLUID_RECON_ROUNDS");
     s_reconstructionRoundOverride=roundOverride?atoi(roundOverride):0;
@@ -330,6 +361,10 @@ void LiquidSurface_Init(int width,int height) {
     s_thicknessScratch=LiquidSurface_LoadScalarTarget(tw,th);
     s_smoothA=LiquidSurface_LoadScalarTarget(w,h);
     s_smoothB=LiquidSurface_LoadScalarTarget(w,h);
+    s_occupancy=LiquidSurface_LoadScalarTarget((w+7)/8,(h+7)/8);
+    SetTextureFilter(s_occupancy.texture,TEXTURE_FILTER_POINT);
+    s_occupancyShader=ResourceManager_LoadShader(NULL,"core/liquid/shaders/liquid_occupancy.fs");
+    if(s_occupancyShader.id==rlGetShaderIdDefault()) s_useOccupancy=false;
     s_captureShader=ResourceManager_LoadShader(NULL,"core/liquid/shaders/liquid_capture.fs");
     s_captureBackShader=ResourceManager_LoadShader(NULL,"core/liquid/shaders/liquid_capture_back.fs");
     s_thicknessResolve=ResourceManager_LoadShader(NULL,"core/liquid/shaders/liquid_thickness_resolve.fs");
@@ -342,9 +377,15 @@ void LiquidSurface_Init(int width,int height) {
     s_texelLoc=GetShaderLocation(s_smooth,"u_texel");
     s_dirLoc=GetShaderLocation(s_smooth,"u_direction");
     s_fillLoc=GetShaderLocation(s_smooth,"u_fillHoles");
+    s_occupancyLoc=GetShaderLocation(s_smooth,"u_occupancyTex");
+    s_useOccupancyLoc=GetShaderLocation(s_smooth,"u_useOccupancy");
     s_smoothProjectionLoc=GetShaderLocation(s_smooth,"u_projection");
     s_smoothInverseProjectionLoc=GetShaderLocation(s_smooth,"u_inverseProjection");
     s_kernelRadiusLoc=GetShaderLocation(s_smooth,"u_kernelRadius");
+    s_smoothMaterialLoc=GetShaderLocation(s_smooth,"u_materialIdTex");
+    s_smoothKernelsLoc=GetShaderLocation(s_smooth,"u_materialKernels");
+    s_smoothMultiLoc=GetShaderLocation(s_smooth,"u_multipleMaterials");
+    s_compositeKernelsLoc=GetShaderLocation(s_composite,"u_materialKernels");
     s_filterRadiusLoc=GetShaderLocation(s_smooth,"u_filterRadius");
     s_filter2DLoc=GetShaderLocation(s_smooth,"u_filter2D");
     s_resolveBackLoc=GetShaderLocation(s_thicknessResolve,"u_backDepthTex");
@@ -382,7 +423,7 @@ void LiquidSurface_Init(int width,int height) {
         s_materialCount=1; s_currentMaterial=0; s_materialUse[0]=++s_materialClock;
     }
 }
-void LiquidSurface_Unload(void) { UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_captureBack); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_thicknessScratch); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
+void LiquidSurface_Unload(void) { LiquidCaptureCPU_Unload(); UnloadRenderTexture(s_occupancy); UnloadTexture(s_surfaceTex); UnloadRenderTexture(s_capture); UnloadRenderTexture(s_captureBack); UnloadRenderTexture(s_thickness); UnloadRenderTexture(s_thicknessScratch); UnloadRenderTexture(s_smoothA); UnloadRenderTexture(s_smoothB); if(s_sceneCopy.id) { UnloadRenderTexture(s_sceneCopy); s_sceneCopy=(RenderTexture2D){0}; } }
 /* Screen-space radius, in pixels, of a sphere of `worldRadius` at `center`.
  *
  * Uses the vertical field of view, which is the axis raylib's fovy names and
@@ -590,6 +631,7 @@ void LiquidSurface_SetMaterialColors(Color body, Color glow, Color soft) {
 static int s_radiusOwnerPriority = -1;
 void LiquidSurface_SetReconstructionRadiusFor(LiquidSurfacePriority priority, float radius) {
     if(radius<=0.0001f) return;
+    s_submissionKernelRadius=radius;
     /* An owner that has not claimed recently has stopped casting; its rank must
      * not outrank a live body forever. Same anti-latch reasoning as the gates. */
     bool ownerCurrent = (GetTime() - s_radiusOwnerStamp) <= LIQUID_GATE_STAMP_TTL;
@@ -601,26 +643,54 @@ void LiquidSurface_SetReconstructionRadiusFor(LiquidSurfacePriority priority, fl
 /* Ungated callers keep the old unconditional behaviour: last writer wins. */
 void LiquidSurface_SetReconstructionRadius(float radius) {
     if(radius<=0.0001f) return;
+    s_submissionKernelRadius=radius;
     s_radiusOwnerPriority=-1;
     s_radiusOwnerStamp=-1000.0;
     s_reconstructionRadius=radius;
 }
 void LiquidSurface_RegisterParticle(Vector3 p,float r) { LiquidSurface_RegisterEllipsoid(p,(Vector3){r,r,r}); }
-void LiquidSurface_RegisterEllipsoid(Vector3 p,Vector3 radii) { if(s_count<LIQUID_SURFACE_MAX_PARTICLES) s_particles[s_count++]=(LiquidSurfaceParticle){p,radii,s_currentMaterial}; }
+void LiquidSurface_RegisterEllipsoid(Vector3 p,Vector3 radii) {
+    LiquidSurface_RecordKernel(s_currentMaterial);
+    s_directRequested++;
+    if(s_count<LIQUID_SURFACE_MAX_PARTICLES)
+        s_particles[s_count++]=(LiquidSurfaceParticle){p,radii,s_currentMaterial};
+}
 bool LiquidSurface_SubmitParticleStream(const ParticleRenderStream *stream) {
-    if (!stream || stream->mode != PARTICLE_RENDER_SURFACE_INPUT) return false;
-    if (stream->backend == PARTICLE_RENDER_BACKEND_CPU) {
-        ParticleSurfaceSample samples[LIQUID_SURFACE_MAX_PARTICLES];
-        int count = ParticleManager_CopySurfaceSamples(stream, samples, LIQUID_SURFACE_MAX_PARTICLES);
-        for (int i = 0; i < count; ++i) LiquidSurface_RegisterParticle(samples[i].position, samples[i].radius);
-        return count > 0;
+    if(!stream || stream->mode!=PARTICLE_RENDER_SURFACE_INPUT) return false;
+    LiquidSurface_RecordKernel(s_currentMaterial);
+    if(stream->backend==PARTICLE_RENDER_BACKEND_CPU) {
+        if(s_cpuStreamCount>=32) { s_streamRejected++; return false; }
+        s_cpuStreamMaterial[s_cpuStreamCount]=s_currentMaterial;
+        s_cpuStreams[s_cpuStreamCount++]=*stream;
+        return true;
     }
-    if (s_gpuStreamCount >= (int)(sizeof(s_gpuStreams)/sizeof(s_gpuStreams[0]))) return false;
-    s_gpuStreamMaterial[s_gpuStreamCount] = s_currentMaterial;
-    s_gpuStreams[s_gpuStreamCount++] = *stream;
+    if(s_gpuStreamCount>=(int)(sizeof(s_gpuStreams)/sizeof(s_gpuStreams[0]))) {
+        s_streamRejected++; return false;
+    }
+    s_gpuStreamMaterial[s_gpuStreamCount]=s_currentMaterial;
+    s_gpuStreams[s_gpuStreamCount++]=*stream;
     return true;
 }
-bool LiquidSurface_HasPending(void) { return s_count > 0 || s_gpuStreamCount > 0 || LiquidPBDGPU_IsActive(); }
+bool LiquidSurface_HasPending(void) { return s_count>0 || s_cpuStreamCount>0 || s_gpuStreamCount>0 || LiquidPBDGPU_IsActive(); }
+static void LiquidSurface_PrepareCPUStreams(void) {
+    int demand[32], admitted[32];
+    s_stats.cpuRequested=s_directRequested;
+    for(int i=0;i<s_cpuStreamCount;i++) {
+        demand[i]=ParticleManager_CountSurfaceSamples(&s_cpuStreams[i]);
+        s_stats.cpuRequested+=demand[i];
+    }
+    LiquidCaptureBudget_Allocate(demand,s_cpuStreamCount,LIQUID_SURFACE_MAX_PARTICLES-s_count,admitted);
+    ParticleSurfaceSample samples[LIQUID_SURFACE_MAX_PARTICLES];
+    for(int i=0;i<s_cpuStreamCount;i++) {
+        int count=ParticleManager_CopySurfaceSamplesSpaced(&s_cpuStreams[i],samples,admitted[i]);
+        for(int j=0;j<count;j++) {
+            float r=samples[j].radius;
+            s_particles[s_count++]=(LiquidSurfaceParticle){samples[j].position,{r,r,r},s_cpuStreamMaterial[i]};
+        }
+    }
+    s_stats.cpuAdmitted=s_count;
+    s_stats.cpuDropped=s_stats.cpuRequested-s_count;
+}
 /* Keep the recency stamps of every slot that is actually on screen fresh, so
  * LiquidSurface_BindMaterial's LRU eviction can only ever take a liquid that
  * nothing is drawing. Called once per capture, before any rasterization. */
@@ -641,6 +711,11 @@ static void LiquidSurface_TouchLiveMaterials(void) {
 
 void LiquidSurface_Capture(Camera3D camera) {
     if(!LiquidSurface_HasPending()) return;
+    s_stats=(LiquidSurfaceStats){0};
+    s_stats.streamRejected=s_streamRejected;
+    s_stats.gpuStreams=s_gpuStreamCount;
+    LiquidSurface_PrepareCPUStreams();
+    double stageStart=LiquidSurface_HostClock();
     if (s_reconstructionRoundOverride==3) {
         s_reconstructionABFrame++;
         /* GetFrameTime is the PREVIOUS completed frame, so charge it to the
@@ -662,6 +737,13 @@ void LiquidSurface_Capture(Camera3D camera) {
         }
     }
     LiquidSurface_TouchLiveMaterials();
+    if(LiquidPBDGPU_IsActive()) LiquidSurface_RecordKernel(LiquidPBDGPU_GetMaterial());
+    int materialParticipants=0;
+    for(int slot=0;slot<LIQUID_SURFACE_MATERIAL_SLOTS;slot++)
+        if(s_materialKernel[slot]>0.0f) materialParticipants++;
+    int multipleMaterials=materialParticipants>1;
+    for(int slot=0;slot<LIQUID_SURFACE_MATERIAL_SLOTS;slot++)
+        if(s_materialKernel[slot]<=0.0f) s_materialKernel[slot]=s_reconstructionRadius;
     /* Snapshot the scene for the refraction tap while it is still only a source.
      * The composite runs inside ScreenDistort's body pass, which now binds the
      * scene target itself, so sampling it there would be sampling the attachment
@@ -689,21 +771,34 @@ void LiquidSurface_Capture(Camera3D camera) {
             EndTextureMode();
         }
     }
+    s_stats.sceneCopyHostMs=LiquidSurface_HostElapsed(stageStart);
+    stageStart=LiquidSurface_HostClock();
     s_lastCamera=camera; s_hasCamera=true;
     s_fluidView=MatrixLookAt(camera.position,camera.target,camera.up);
     s_fluidProjection=LiquidSurface_MakeProjection(camera);
+    bool cpuPrepared=s_cpuImpostor && LiquidCaptureCPU_Prepare(s_particles,s_count,s_fluidView,s_fluidProjection)>0;
+    ParticleSurfaceCaptureStream streams[32];
+    for(int i=0;i<s_gpuStreamCount;i++) streams[i]=(ParticleSurfaceCaptureStream){s_gpuStreams[i],(float)s_gpuStreamMaterial[i]};
     BeginTextureMode(s_capture); ClearBackground((Color){255,0,0,0}); LiquidSurface_BeginCaptureMode3D(camera);
     /* One uniform per stream, not per splat: each stream is one draw, and the
      * slot it carries is fixed at submit time. */
-    for (int i=0;i<s_gpuStreamCount;i++) {
+    if(s_captureBatch && s_gpuStreamCount>0) {
+        ParticleManager_DrawSurfaceStreams(streams,s_gpuStreamCount,camera,s_surfaceTex);
+        s_stats.gpuCaptureInstances=ParticleManager_GetSurfaceCaptureInstanceCount();
+        s_stats.captureDraws++;
+    } else for(int i=0;i<s_gpuStreamCount;i++) {
         GpuParticleSystem_SetSurfaceMaterialId((float)s_gpuStreamMaterial[i]);
-        ParticleManager_DrawSurfaceStream(&s_gpuStreams[i], camera, s_surfaceTex);
+        ParticleManager_DrawSurfaceStream(&s_gpuStreams[i],camera,s_surfaceTex);
+        s_stats.gpuCaptureInstances+=8192;
+        s_stats.captureDraws++;
     }
     GpuParticleSystem_SetSurfaceMaterialId((float)LiquidPBDGPU_GetMaterial());
     LiquidPBDGPU_DrawSurfaceDepth(camera);
+    if(LiquidPBDGPU_IsActive()) s_stats.captureDraws++;
     /* --- CPU particles registered via LiquidSurface_RegisterParticle --- */
     /* These were previously stored but never rasterised into the FBO.    */
-    if (s_count > 0) {
+    if(cpuPrepared) { LiquidCaptureCPU_Draw(false); s_stats.captureDraws++; }
+    else if (s_count > 0) {
         /* Sphere impostors: draw screen-aligned quads per particle.       */
         /* The default liquid_capture.fs outputs gl_FragCoord.z which is   */
         /* the correct depth for geometry pushed through BeginMode3D,      */
@@ -719,6 +814,7 @@ void LiquidSurface_Capture(Camera3D camera) {
             bool any = false;
             for (int i = 0; i < s_count && !any; i++) any = (s_particles[i].material == slot);
             if (!any) continue;
+            s_stats.captureDraws++;
             BeginShaderMode(s_captureShader);
             float slotValue = (float)slot;
             if (materialLoc >= 0)
@@ -730,6 +826,8 @@ void LiquidSurface_Capture(Camera3D camera) {
     }
     LiquidSurface_EndCaptureMode3D(); EndTextureMode();
 
+    s_stats.frontHostMs=LiquidSurface_HostElapsed(stageStart);
+    stageStart=LiquidSurface_HostClock();
     Vector2 texel={1.0f/s_capture.texture.width,1.0f/s_capture.texture.height};
     Matrix captureInverseProjection=MatrixInvert(s_fluidProjection);
 
@@ -739,24 +837,51 @@ void LiquidSurface_Capture(Camera3D camera) {
          * write the complement of the depth so an ordinary depth test keeps the
          * FARTHEST fragment), so "nothing here" must be the smallest possible
          * value, the opposite of the front pass's convention. */
+        ParticleManager_SetSurfaceCaptureFrontDepth(s_capture.texture);
+        LiquidCaptureCPU_SetFrontDepth(s_capture.texture);
+        LiquidPBDGPU_SetSurfaceFrontDepth(s_capture.texture);
         BeginTextureMode(s_captureBack); ClearBackground(BLANK); LiquidSurface_BeginCaptureMode3D(camera);
-        for (int i=0;i<s_gpuStreamCount;i++) ParticleManager_DrawSurfaceBackStream(&s_gpuStreams[i], camera);
+        if(s_captureBatch && s_gpuStreamCount>0) {
+            ParticleManager_DrawSurfaceBackStreams(streams,s_gpuStreamCount,camera);
+            s_stats.captureDraws++;
+        } else for(int i=0;i<s_gpuStreamCount;i++) {
+            GpuParticleSystem_SetSurfaceMaterialId((float)s_gpuStreamMaterial[i]);
+            ParticleManager_DrawSurfaceBackStream(&s_gpuStreams[i],camera);
+            s_stats.captureDraws++;
+        }
         LiquidPBDGPU_DrawSurfaceBackDepth(camera);
-        if (s_count > 0) {
+        if(LiquidPBDGPU_IsActive()) s_stats.captureDraws++;
+        if(cpuPrepared) { LiquidCaptureCPU_Draw(true); s_stats.captureDraws++; }
+        else if (s_count > 0) {
             /* Real geometry, so the far surface is a culling choice rather than
              * a second analytic root. The flush is required: raylib batches
              * geometry and would otherwise rasterize these spheres under
              * whichever cull state happened to be current at flush time. */
             rlDrawRenderBatchActive();
             rlSetCullFace(RL_CULL_FACE_FRONT);
-            BeginShaderMode(s_captureBackShader);
-            for (int i = 0; i < s_count; i++) LiquidSurface_DrawEllipsoid(&s_particles[i]);
-            EndShaderMode();
+            for(int slot=0;slot<LIQUID_SURFACE_MATERIAL_SLOTS;slot++) {
+                bool any=false;
+                for(int i=0;i<s_count && !any;i++) any=s_particles[i].material==slot;
+                if(!any) continue;
+                BeginShaderMode(s_captureBackShader);
+                float material=(float)slot, match=1.0f;
+                SetShaderValue(s_captureBackShader,GetShaderLocation(s_captureBackShader,"u_materialId"),&material,SHADER_UNIFORM_FLOAT);
+                SetShaderValue(s_captureBackShader,GetShaderLocation(s_captureBackShader,"u_matchFrontMaterial"),&match,SHADER_UNIFORM_FLOAT);
+                SetShaderValueTexture(s_captureBackShader,GetShaderLocation(s_captureBackShader,"u_frontDepthTex"),s_capture.texture);
+                for(int i=0;i<s_count;i++) if(s_particles[i].material==slot)
+                    LiquidSurface_DrawEllipsoid(&s_particles[i]);
+                EndShaderMode(); s_stats.captureDraws++;
+            }
             rlDrawRenderBatchActive();
             rlSetCullFace(RL_CULL_FACE_BACK);
         }
         LiquidSurface_EndCaptureMode3D(); EndTextureMode();
+        ParticleManager_SetSurfaceCaptureFrontDepth((Texture2D){0});
+        LiquidCaptureCPU_SetFrontDepth((Texture2D){0});
+        LiquidPBDGPU_SetSurfaceFrontDepth((Texture2D){0});
 
+        s_stats.backHostMs=LiquidSurface_HostElapsed(stageStart);
+        stageStart=LiquidSurface_HostClock();
         /* T = z_back - z_front, then a plain Gaussian (Green 2010), both at the
          * thickness target's own half resolution. */
         BeginTextureMode(s_thickness); ClearBackground(BLANK);
@@ -790,6 +915,17 @@ void LiquidSurface_Capture(Camera3D camera) {
         BeginTextureMode(s_thickness); ClearBackground(BLANK); BeginShaderMode(s_thicknessBlur);
         SetShaderValue(s_thicknessBlur,s_blurDirectionLoc,&vertical,SHADER_UNIFORM_VEC2);
         DrawTextureRec(s_thicknessScratch.texture,(Rectangle){0,0,(float)s_thicknessScratch.texture.width,-(float)s_thicknessScratch.texture.height},(Vector2){0,0},WHITE);
+        EndShaderMode(); EndTextureMode();
+    }
+    s_stats.thicknessHostMs=LiquidSurface_HostElapsed(stageStart);
+    stageStart=LiquidSurface_HostClock();
+    if(s_useOccupancy) {
+        BeginTextureMode(s_occupancy); ClearBackground(BLANK);
+        BeginShaderMode(s_occupancyShader);
+        DrawTexturePro(s_capture.texture,
+            (Rectangle){0,0,s_capture.texture.width,-s_capture.texture.height},
+            (Rectangle){0,0,s_occupancy.texture.width,s_occupancy.texture.height},
+            (Vector2){0,0},0,WHITE);
         EndShaderMode(); EndTextureMode();
     }
     /* A CEILING now, not the radius itself: the filter derives its own reach per
@@ -836,6 +972,7 @@ void LiquidSurface_Capture(Camera3D camera) {
      * keep the cheap path until someone runs it on a device.
      *
      * Two rounds, not one: a single 2D round leaves the tube visibly lumpy. */
+    s_stats.reconstructionPasses=reconstructionRounds*(GfxQuality_Get()>=GFX_HIGH?1:2);
     if (GfxQuality_Get() >= GFX_HIGH) {
         /* True 2D: ONE pass per round instead of two, so the rounds alternate
          * targets and must land in s_smoothB, which is what the composite reads. */
@@ -849,28 +986,36 @@ void LiquidSurface_Capture(Camera3D camera) {
             SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2);
             SetShaderValue(s_smooth,s_dirLoc,&noDirection,SHADER_UNIFORM_VEC2);
             SetShaderValue(s_smooth,s_kernelRadiusLoc,&s_reconstructionRadius,SHADER_UNIFORM_FLOAT);
+            SetShaderValueV(s_smooth,s_smoothKernelsLoc,s_materialKernel,SHADER_UNIFORM_FLOAT,LIQUID_SURFACE_MATERIAL_SLOTS);
+            SetShaderValue(s_smooth,s_smoothMultiLoc,&multipleMaterials,SHADER_UNIFORM_INT);
+            SetShaderValueTexture(s_smooth,s_smoothMaterialLoc,s_capture.texture);
             SetShaderValue(s_smooth,s_filterRadiusLoc,&filterRadius,SHADER_UNIFORM_INT);
             SetShaderValue(s_smooth,s_filter2DLoc,&two,SHADER_UNIFORM_INT);
             SetShaderValueMatrix(s_smooth,s_smoothProjectionLoc,s_fluidProjection);
             SetShaderValueMatrix(s_smooth,s_smoothInverseProjectionLoc,inverseProjection);
             SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT);
+            int mask=s_useOccupancy && fillHoles;
+            SetShaderValue(s_smooth,s_useOccupancyLoc,&mask,SHADER_UNIFORM_INT);
+            SetShaderValueTexture(s_smooth,s_occupancyLoc,s_occupancy.texture);
             DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE);
             EndShaderMode(); EndTextureMode();
         }
         reconstructionRounds = 0;
     }
-    { int zero=0; SetShaderValue(s_smooth,s_filter2DLoc,&zero,SHADER_UNIFORM_INT); }
+
     for (int iteration=0; iteration<reconstructionRounds; ++iteration) {
         Vector2 horizontal={1.0f,0.0f}, vertical={0.0f,1.0f};
         Texture2D source = iteration ? s_smoothB.texture : s_capture.texture;
         int fillHoles=iteration==0;
-        BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_dirLoc,&horizontal,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_kernelRadiusLoc,&s_reconstructionRadius,SHADER_UNIFORM_FLOAT); SetShaderValue(s_smooth,s_filterRadiusLoc,&filterRadius,SHADER_UNIFORM_INT); SetShaderValueMatrix(s_smooth,s_smoothProjectionLoc,s_fluidProjection); SetShaderValueMatrix(s_smooth,s_smoothInverseProjectionLoc,inverseProjection); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
+        BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValueV(s_smooth,s_smoothKernelsLoc,s_materialKernel,SHADER_UNIFORM_FLOAT,LIQUID_SURFACE_MATERIAL_SLOTS); SetShaderValue(s_smooth,s_smoothMultiLoc,&multipleMaterials,SHADER_UNIFORM_INT); SetShaderValueTexture(s_smooth,s_smoothMaterialLoc,s_capture.texture); int zero=0; SetShaderValue(s_smooth,s_filter2DLoc,&zero,SHADER_UNIFORM_INT); int mask=s_useOccupancy && fillHoles; SetShaderValue(s_smooth,s_useOccupancyLoc,&mask,SHADER_UNIFORM_INT); SetShaderValueTexture(s_smooth,s_occupancyLoc,s_occupancy.texture); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_dirLoc,&horizontal,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_kernelRadiusLoc,&s_reconstructionRadius,SHADER_UNIFORM_FLOAT); SetShaderValue(s_smooth,s_filterRadiusLoc,&filterRadius,SHADER_UNIFORM_INT); SetShaderValueMatrix(s_smooth,s_smoothProjectionLoc,s_fluidProjection); SetShaderValueMatrix(s_smooth,s_smoothInverseProjectionLoc,inverseProjection); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
         fillHoles=0;
-        BeginTextureMode(s_smoothB); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValue(s_smooth,s_dirLoc,&vertical,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,s_smoothA.texture.width,-s_smoothA.texture.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
+        BeginTextureMode(s_smoothB); ClearBackground(WHITE); BeginShaderMode(s_smooth); int zeroMask=0; SetShaderValue(s_smooth,s_useOccupancyLoc,&zeroMask,SHADER_UNIFORM_INT); SetShaderValue(s_smooth,s_dirLoc,&vertical,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,s_smoothA.texture.width,-s_smoothA.texture.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
     }
+    s_stats.reconstructionHostMs=LiquidSurface_HostElapsed(stageStart);
 }
 void LiquidSurface_Composite(void) {
     if(!LiquidSurface_HasPending()) { s_frameOwnerPriority=-1; return; }
+    double stageStart=LiquidSurface_HostClock();
     Vector2 texel={1.0f/s_smoothB.texture.width,1.0f/s_smoothB.texture.height};
     Vector2 sceneTexel={1.0f/GetRenderWidth(),1.0f/GetRenderHeight()};
     /* The snapshot from Capture, never the live scene target: the body pass we are
@@ -943,6 +1088,7 @@ void LiquidSurface_Composite(void) {
     SetShaderValueMatrix(s_composite,s_viewToWorldLoc,viewToWorld);
     SetShaderValue(s_composite,s_qualityTierLoc,&qualityTier,SHADER_UNIFORM_INT);
     SetShaderValue(s_composite,s_compositeKernelRadiusLoc,&s_reconstructionRadius,SHADER_UNIFORM_FLOAT);
+    SetShaderValueV(s_composite,s_compositeKernelsLoc,s_materialKernel,SHADER_UNIFORM_FLOAT,LIQUID_SURFACE_MATERIAL_SLOTS);
     SetShaderValue(s_composite,s_sunDirectionLoc,&sunDirectionView,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_sunColorLoc,&sunColor,SHADER_UNIFORM_VEC3);
     SetShaderValue(s_composite,s_skyAmbientLoc,&skyAmbient,SHADER_UNIFORM_VEC3);
@@ -967,7 +1113,18 @@ void LiquidSurface_Composite(void) {
     DrawTexturePro(depthSource,(Rectangle){0,0,depthSource.width,-depthSource.height},(Rectangle){0,0,GetRenderWidth(),GetRenderHeight()},(Vector2){0,0},0,WHITE);
     EndShaderMode();
     EndBlendMode();
+    s_stats.compositeHostMs=LiquidSurface_HostElapsed(stageStart);
+    if(s_profile && (++s_profileFrames%60)==0)
+        TraceLog(LOG_INFO,"LIQUID_PROFILE host_ms copy=%.3f front=%.3f back=%.3f thickness=%.3f recon=%.3f composite=%.3f cpu=%d/%d dropped=%d gpu_streams=%d front_instances=%d draws=%d recon_passes=%d rejected=%d",
+            s_stats.sceneCopyHostMs,s_stats.frontHostMs,s_stats.backHostMs,
+            s_stats.thicknessHostMs,s_stats.reconstructionHostMs,s_stats.compositeHostMs,
+            s_stats.cpuAdmitted,s_stats.cpuRequested,s_stats.cpuDropped,s_stats.gpuStreams,
+            s_stats.gpuCaptureInstances,s_stats.captureDraws,s_stats.reconstructionPasses,s_stats.streamRejected);
+    for(int slot=0;slot<LIQUID_SURFACE_MATERIAL_SLOTS;slot++) s_materialKernel[slot]=0.0f;
     s_count=0;
+    s_cpuStreamCount=0;
+    s_directRequested=0;
+    s_streamRejected=0;
     s_gpuStreamCount=0;
     s_frameBodyRadiusPx=-1.0f;
     s_frameKernelRadiusPx=-1.0f;

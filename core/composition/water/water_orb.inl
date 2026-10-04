@@ -1,3 +1,5 @@
+#include "core/liquid/liquid_body_recipe.h"
+
 // water_orb.inl — Water orb: a coherent liquid projectile driven ENTIRELY by
 // force fields. No PBD, no fluid-impact dependency.
 //
@@ -22,14 +24,15 @@ typedef enum { WATER_ORB_FLIGHT, WATER_ORB_IMPACT, WATER_ORB_SETTLE } WaterOrbPh
 
 typedef struct {
     Vector3 start, target, center, velocity, hitNormal, impactVelocity;
-    float age, phaseAge, travelTime, radius;
+    float age, phaseAge, travelTime, radius, crownDuration;
     Color body, glow, soft;
     LiquidDesc material;
     LiquidMotionDesc motion;
+    LiquidBodyRecipe recipe;
     ForceField field;
     ParticleEmitterHandle emitter;
     WaterOrbPhase phase;
-    bool active;
+    bool surfaceAdmitted, active;
 } WaterOrb;
 
 static WaterOrb s_waterOrbs[WATER_ORB_MAX];
@@ -43,74 +46,18 @@ static bool WaterOrb_ColorUnset(Color c)
 
 static void WaterOrb_Clear(WaterOrb *orb)
 {
-    if (orb->emitter != PARTICLE_EMITTER_INVALID)
+    if (orb->active && orb->emitter != PARTICLE_EMITTER_INVALID)
         ParticleManager_DestroyEmitter(orb->emitter);
     orb->emitter = PARTICLE_EMITTER_INVALID;
     orb->active = false;
 }
 
-static void WaterOrb_SetFlightField(WaterOrb *orb, Vector3 direction)
+static void WaterOrb_SetPhaseField(WaterOrb *orb, LiquidBodyPhase phase,float stepSeconds)
 {
-    ForceField_Clear(&orb->field);
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_GRAVITY_POINT,
-        .origin=orb->center, .strength=32.0f+orb->motion.gatherStrength*3.0f,
-        .radius=orb->radius*2.2f, .falloff=1.0f});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_VORTEX,
-        .origin=orb->center, .direction=direction,
-        .strength=0.45f+orb->motion.tangentRetention*0.55f,
-        .radius=orb->radius*1.8f});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_NOISE_CURL,
-        .strength=orb->motion.turbulence*0.13f,
-        .noiseScale=2.4f, .noiseSpeed=1.1f});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_VISCOSITY,
-        .strength=orb->motion.impactViscosity*0.03f});
-}
-
-static void WaterOrb_SetImpactField(WaterOrb *orb)
-{
-    ForceField_Clear(&orb->field);
-    float normalSpeed=Vector3DotProduct(orb->velocity,orb->hitNormal);
-    Vector3 tangent=Vector3Subtract(orb->velocity,Vector3Scale(orb->hitNormal,normalSpeed));
-    float rebound=fmaxf(0.0f,-normalSpeed)*0.48f+1.1f;
-    orb->impactVelocity=Vector3Add(Vector3Scale(tangent,0.72f),
-        Vector3Scale(orb->hitNormal,rebound));
-    float speed=Vector3Length(orb->impactVelocity);
-    /* The radial-axis field is a centrifugal impulse in the contact plane,
-     * never a spherical blast. Its axis is the receiver normal. */
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_RADIAL_AXIS,
-        .strength=-orb->motion.splashField,
-        .radius=orb->radius*2.8f, .falloff=1.0f});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_GRAVITY_DIR,
-        .direction=speed>0.0001f?Vector3Scale(orb->impactVelocity,1.0f/speed):orb->hitNormal,
-        .strength=speed/fmaxf(orb->motion.impactDuration,0.08f)});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_VORTEX_AXIS,
-        .strength=3.0f+orb->motion.tangentRetention*6.0f,
-        .radius=orb->radius*2.4f});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_NOISE_CURL,
-        .strength=orb->motion.turbulence*8.0f,
-        .noiseScale=5.2f, .noiseSpeed=6.5f});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_VISCOSITY,
-        .strength=orb->motion.impactViscosity*2.5f});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_RECEIVER_PLANE,
-        .origin=orb->target,.direction=orb->hitNormal,
-        .strength=orb->motion.restitution,
-        .falloff=orb->motion.tangentRetention});
-}
-
-static void WaterOrb_SetSettleField(WaterOrb *orb)
-{
-    ForceField_Clear(&orb->field);
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_GRAVITY_DIR,
-        .direction={0.0f,-1.0f,0.0f}, .strength=9.81f});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_RADIAL_AXIS,
-        /* radius=0 keeps fast crown particles inside the gather contract;
-           a finite cylinder strands anything that escaped during impact. */
-        .strength=orb->motion.gatherStrength,.radius=0.0f,.falloff=0.0f});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_VISCOSITY,
-        .strength=orb->motion.settleViscosity});
-    ForceField_AddLayer(&orb->field, (ForceLayer){.type=FORCE_RECEIVER_PLANE,
-        .origin=orb->target,.direction=orb->hitNormal,.strength=0.0f,
-        .falloff=orb->motion.tangentRetention});
+    LiquidBodyContext context={.center=orb->center,.receiverPoint=orb->target,
+        .receiverNormal=orb->hitNormal,.incomingVelocity=orb->velocity,
+        .phaseAge=orb->phaseAge,.stepSeconds=stepSeconds,.applyContactImpulse=true};
+    LiquidBodyRecipe_BuildField(&orb->recipe,phase,&context,false,&orb->field);
 }
 
 /* One-shot composition entry. Start -> target path, defaults tuned for the
@@ -119,46 +66,59 @@ void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile prof
 {
     LiquidDesc material=LiquidSurface_ProfileDesc(profile);
     LiquidMotionDesc motion=LiquidMotion_Get(profile);
-    WaterOrb *orb=&s_waterOrbs[s_nextWaterOrb++ % WATER_ORB_MAX];
+    WaterOrb *orb=NULL;
+    for (int i=0;i<WATER_ORB_MAX;++i) {
+        int slot=(s_nextWaterOrb+i)%WATER_ORB_MAX;
+        if (!s_waterOrbs[slot].active &&
+            !ParticleManager_IsForceFieldInUse(&s_waterOrbs[slot].field)) {
+            orb=&s_waterOrbs[slot]; s_nextWaterOrb=(slot+1)%WATER_ORB_MAX; break;
+        }
+    }
+    if (!orb) return; /* Retired GPU particles may still borrow their fields. */
     WaterOrb_Clear(orb);
     Vector3 flight=Vector3Subtract(target,start);
-    float length=Vector3Length(flight);
-    Vector3 direction=length>0.0001f?Vector3Scale(flight,1.0f/length):(Vector3){0,0,1};
     *orb=(WaterOrb){.start=start,.target=target,.center=start,
         .velocity=Vector3Scale(flight,1.0f/0.72f),.travelTime=0.72f,
         .radius=0.44f,.hitNormal=(Vector3){0,1,0},
         .body=material.body,.glow=material.glow,.soft=material.soft,
         .material=material,.motion=motion,
         .emitter=PARTICLE_EMITTER_INVALID,.phase=WATER_ORB_FLIGHT,.active=true};
-    WaterOrb_SetFlightField(orb,direction);
+    orb->recipe=(LiquidBodyRecipe){.motion=motion,.radius=orb->radius,
+        .kernelRadius=orb->radius*0.09f};
+    orb->crownDuration=LiquidBodyRecipe_CrownDuration(&orb->recipe,orb->velocity,orb->hitNormal);
+    WaterOrb_SetPhaseField(orb,LIQUID_BODY_FLIGHT,0.0f);
+    bool forceSurface=getenv("WUXING_LIQUID_FORCE_SURFACE") &&
+                      atoi(getenv("WUXING_LIQUID_FORCE_SURFACE"))!=0;
+    /* The seed envelope fits inside this authored radius. Admission is decided
+     * once per source; a running body never re-tests its own frame cost. */
+    orb->surfaceAdmitted=forceSurface ||
+        LiquidSurface_RequestBody(LIQUID_PRIORITY_CAST,start,orb->radius,false);
     ParticleEmitterDesc desc={0};
-    desc.simulationPolicy=PARTICLE_SIM_AUTO;
-    desc.renderMode=PARTICLE_RENDER_SURFACE_INPUT;
+    bool cpuOnly=getenv("WUXING_LIQUID_CPU_ONLY") && atoi(getenv("WUXING_LIQUID_CPU_ONLY"))!=0;
+    desc.simulationPolicy=cpuOnly?PARTICLE_SIM_CPU_ONLY:PARTICLE_SIM_AUTO;
+    desc.renderMode=orb->surfaceAdmitted?PARTICLE_RENDER_SURFACE_INPUT:PARTICLE_RENDER_BILLBOARD;
     desc.moduleFlags=PARTICLE_MODULE_FORCE_FIELD;
     desc.debugName="WaterOrb SSF batch";
     desc.particle=(ParticleConfig){.forceField=&orb->field};
     orb->emitter=ParticleManager_CreateEmitter(&desc);
     if (orb->emitter==PARTICLE_EMITTER_INVALID) { orb->active=false; return; }
     const ParticleGPUCaps *caps=ParticleSystem_GetGPUCaps();
-    int count=caps->computeShader ? (GfxQuality_Get()>=GFX_HIGH?WATER_ORB_PARTICLES:
+    int count=caps->computeShader && !cpuOnly ? (GfxQuality_Get()>=GFX_HIGH?WATER_ORB_PARTICLES:
                                      GfxQuality_Get()<=GFX_LOW?768:1536) :
                                     (GfxQuality_Get()<=GFX_LOW?192:384);
     for (int i=0;i<count;++i) {
-        float u=((float)i+0.5f)/(float)count;
-        float y=1.0f-2.0f*u;
-        float ring=sqrtf(fmaxf(0.0f,1.0f-y*y));
-        float angle=2.39996323f*(float)i;
-        float shell=0.28f+0.52f*cbrtf((float)((i*37)%count)/(float)count);
-        Vector3 offset={cosf(angle)*ring*shell*0.44f, y*shell*0.44f, sinf(angle)*ring*shell*0.44f};
+        Vector3 offset=LiquidBodyRecipe_VolumeOffset(orb->radius*0.80f,i,count,0u);
         s_waterOrbSpawn[i]=(ParticleConfig){.position=Vector3Add(start,offset),.velocity=orb->velocity,
-            .colorStart=VC_WithAlpha(orb->soft,0),.colorEnd=VC_WithAlpha(orb->body,0),
+            .colorStart=VC_WithAlpha(orb->soft,orb->surfaceAdmitted?0:150),.colorEnd=VC_WithAlpha(orb->body,0),
             .radius=0.44f*0.09f,.lifetime=orb->travelTime+motion.lifetime,
             .forceField=&orb->field,
             .forceAxisOrigin=target,.forceAxisDir=orb->hitNormal};
     }
     ParticleManager_EmitBatch(orb->emitter,s_waterOrbSpawn,count);
-    LiquidSurface_BindMaterial(&orb->material);
-    LiquidSurface_SetReconstructionRadius(0.44f*0.09f);
+    if (orb->surfaceAdmitted) {
+        LiquidSurface_BindMaterial(&orb->material);
+        LiquidSurface_SetReconstructionRadius(0.44f*0.09f);
+    }
 }
 
 void VFX_ComposeWaterOrb(Vector3 start, Vector3 target)
@@ -182,21 +142,22 @@ static void WaterOrb_Update(float dt)
 {
     for (int i=0;i<WATER_ORB_MAX;++i) {
         WaterOrb *orb=&s_waterOrbs[i]; if (!orb->active) continue;
-        orb->age+=dt; orb->phaseAge+=dt;
-        if (orb->phase==WATER_ORB_FLIGHT) {
+        orb->age+=dt;
+        if (orb->age<orb->travelTime) {
             float t=Clamp(orb->age/orb->travelTime,0.0f,1.0f);
             orb->center=Vector3Lerp(orb->start,orb->target,t);
             orb->field.layers[0].origin=orb->center;
             orb->field.layers[1].origin=orb->center;
-            if (t<1.0f) continue;
-            orb->phase=WATER_ORB_IMPACT; orb->phaseAge=0.0f; WaterOrb_SetImpactField(orb);
-        } else if (orb->phase==WATER_ORB_IMPACT &&
-                   orb->phaseAge>=orb->motion.impactDuration) {
-            orb->phase=WATER_ORB_SETTLE; orb->phaseAge=0.0f; WaterOrb_SetSettleField(orb);
-        } else if (orb->phase==WATER_ORB_SETTLE &&
-                   orb->phaseAge>=orb->motion.lifetime-orb->motion.impactDuration) {
-            WaterOrb_Clear(orb);
+            continue;
         }
+        orb->center=orb->target;
+        orb->phaseAge=fmaxf(orb->age-orb->travelTime,0.0f);
+        if (orb->phaseAge>=orb->motion.lifetime) { WaterOrb_Clear(orb); continue; }
+        orb->phase=orb->phaseAge<orb->crownDuration?WATER_ORB_IMPACT:WATER_ORB_SETTLE;
+        /* Keep the last partial impact interval so clipped impulse is applied
+         * even when the timestep crosses the body phase boundary. */
+        LiquidBodyPhase fieldPhase=LiquidBodyRecipe_IntegrationPhaseAt(orb->phaseAge,dt,orb->crownDuration);
+        WaterOrb_SetPhaseField(orb,fieldPhase,dt);
     }
 }
 
@@ -207,12 +168,13 @@ static void WaterOrb_SubmitSurface(void)
 {
     for (int i=0;i<WATER_ORB_MAX;++i) {
         WaterOrb *orb=&s_waterOrbs[i]; ParticleRenderStream stream;
-        if (orb->active && ParticleManager_GetSurfaceStream(orb->emitter,&stream)) {
+        if (orb->active && orb->surfaceAdmitted && ParticleManager_GetSurfaceStream(orb->emitter,&stream)) {
             LiquidSurface_BindMaterial(&orb->material);
             /* Flight is a compact dense body; impact/settle can occupy the
              * whole crown. The SSF uses this only to skip a redundant second
              * HIGH reconstruction round when the projected footprint is small. */
-            float surfaceRadius=orb->phase==WATER_ORB_FLIGHT?orb->radius:orb->radius*2.8f;
+            float surfaceRadius=orb->phase==WATER_ORB_FLIGHT?orb->radius:
+                LiquidBodyRecipe_EstimateRadius(&orb->recipe,orb->velocity,orb->phaseAge);
             LiquidSurface_HintBody(orb->center,surfaceRadius);
             LiquidSurface_SubmitParticleStream(&stream);
         }
