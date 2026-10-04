@@ -241,9 +241,9 @@ static float VerdantGrassDensitySource(float x, float z, void *userData)
     if (IsInsideLake(x, z, 0.48f))
         return 0.0f;
     float distPath = DistanceToPaths(x, z);
-    if (distPath < 1.15f)
+    if (distPath < 0.95f)
         return 0.0f;
-    float pathFade = fminf(1.0f, (distPath - 1.15f) / 1.10f); // grass returns gradually at the dirt path edge
+    float pathFade = fminf(1.0f, (distPath - 0.95f) / 0.65f); // grass returns gradually at the dirt path edge
 
     float nx = (x - kMapCenter.x) / 43.0f;
     float nz = (z - kMapCenter.z) / 29.5f;
@@ -295,7 +295,7 @@ static bool VerdantEcologyEligible(float x, float z, void *userData)
     (void)userData;
     Vector3 position, normal;
     return MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &position, &normal)
-        && normal.y > 0.65f && position.y > -0.20f;
+        && normal.y > 0.65f && position.y > -1.0f;
 }
 
 static void BuildMeadowLayout(void)
@@ -368,7 +368,7 @@ static void BuildMeadowLayout(void)
 
         // 5. Pathway Edge Trampled Turf (AAA organic transition)
         float distPath = DistanceToPaths(cx, cz);
-        float pathEdgeT = (distPath - 1.15f) / 1.35f;
+        float pathEdgeT = (distPath - 0.95f) / 1.15f;
         pathEdgeT = fmaxf(0.0f, fminf(1.0f, pathEdgeT));
         float pathTaper = 0.45f + 0.55f * (pathEdgeT * pathEdgeT * (3.0f - 2.0f * pathEdgeT));
         clump->height *= pathTaper;
@@ -564,7 +564,7 @@ static void ApplyHabitatToGround(void)
     if (!s_ecology.ready) {
         MapEcologyConfig ecologyConfig = {
             .rect = {0.0f, 0.0f, MAP_WIDTH, MAP_DEPTH}, .lake = lakeParams,
-            .paths = segs, .pathCount = segCount, .roadHalfWidth = 1.15f,
+            .paths = segs, .pathCount = segCount, .roadHalfWidth = 0.95f,
         };
         if (!MapEcology_Bake(&s_ecology, &ecologyConfig, VerdantGrassDensitySource,
                              VerdantEcologyEligible, NULL))
@@ -722,9 +722,9 @@ void InitVerdantPathMap(void)
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
             .rootColor = {28, 48, 22, 255}, .tipColor = {114, 165, 64, 255},
-            .bladesPerClump = 5, .bladeSegments = 3, .bladeWidthScale = 0.19f,
-            .chunkSize = 12.0f, .lodDistance = 24.0f, .midLodDistance = 12.0f, .drawDistance = 45.0f,
-            .shadowDistance = 10.0f,
+            .bladesPerClump = 6, .bladeSegments = 4, .bladeWidthScale = 0.19f,
+            .chunkSize = 12.0f, .lodDistance = 28.0f, .midLodDistance = 0.0f, .drawDistance = 50.0f,
+            .shadowDistance = 0.0f,
             .texturePath = NULL,
             .botanicalVariation = 1.0f,
         });

@@ -376,7 +376,7 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
         if (!NatureParametric_BuildTemplate(&data->templates[lod],blades[lod],segments[lod])) goto failed;
     long long parameterBytes = bytes;
     meadow->lodDistance = style.lodDistance;
-    meadow->midLodDistance = style.midLodDistance > 0.0f ? style.midLodDistance : style.lodDistance*0.45f;
+    meadow->midLodDistance = style.midLodDistance;
     meadow->drawDistance = style.drawDistance;
     meadow->shadowDistance = style.shadowDistance;
     meadow->alphaCutoff = style.alphaCutoff;

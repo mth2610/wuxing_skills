@@ -194,35 +194,48 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 skyAmbient = baseAmbient * vec3(1.06, 1.10, 1.16);
     vec3 groundBounce = baseAmbient * vec3(0.65, 0.74, 0.44);
     vec3 ambient = mix(groundBounce, skyAmbient, n.y * 0.5 + 0.5);
-    // Deep ground contact ambient occlusion at blade base (h < 0.40)
-    float baseContactAO = smoothstep(0.0, 0.40, h);
-    vec3 lit = baseColor * ambient * mix(0.48, 1.0, baseContactAO);
+    // Deep ground contact ambient occlusion at blade base
+    float rootAO = clamp(0.50 + 0.50 * pow(h, 0.65), 0.50, 1.0);
+    vec3 lit = baseColor * ambient * rootAO;
     // Captured canopy occlusion also reduces sky fill; preserve a soft floor.
     lit *= mix(0.78, 1.0, shadow);
 
-    // Broad, weak highlights with derivative-based normal-variance filtering.
-    // Repeated squares replace narrow power lobes on dense foliage.
+    // Ghost of Tsushima: Anisotropic fiber specular along blade length
+    // Blades have longitudinal veins; highlights form soft sheen bands across width
+    vec3 sideVec = normalize(cross(faceNormal, vec3(0.0, 1.0, 0.0)) + vec3(0.001, 0.0, 0.0));
+    vec3 bladeTangent = normalize(cross(sideVec, faceNormal));
     vec3 halfDir = normalize(u_lightDir + viewDir);
     vec3 normalDx = dFdx(faceNormal);
     vec3 normalDy = dFdy(faceNormal);
     float variance = dot(normalDx, normalDx) + dot(normalDy, normalDy);
-    float nh = max(dot(n, halfDir), 0.0);
-    float nh2 = nh * nh;
-    float nh4 = nh2 * nh2;
-    float spec = nh4 * nh4 * 0.085 * (1.0 - antiShimmer) / (1.0 + 12.0 * variance);
 
-    // Ghost of Tsushima: Velvet tip glint and wind wave crest highlights
-    float tipGlint = nh4 * smoothstep(0.35, 1.0, h) * (1.0 - antiShimmer * 0.65);
-    vec3 velvetGlint = vec3(1.22, 1.18, 0.82) * tipGlint * 0.15;
+    float dotTH = dot(bladeTangent, halfDir);
+    float sinTH = sqrt(max(0.0, 1.0 - dotTH * dotTH));
+    float anisoSpec = pow(sinTH, 22.0) * 0.12 * (1.0 - antiShimmer) / (1.0 + 12.0 * variance);
 
+    // Waxy cuticle grazing sheen (Fresnel sheen reflecting sky)
+    float nv = max(dot(faceNormal, viewDir), 0.0);
+    float waxFresnel = pow(1.0 - nv, 4.0);
+    vec3 waxSheen = skyAmbient * waxFresnel * 0.28 * smoothstep(0.18, 0.85, h) * (1.0 - antiShimmer * 0.5);
+
+    // Velvet tip glint and wind wave crest highlights
+    float tipGlint = pow(sinTH, 12.0) * smoothstep(0.40, 1.0, h) * (1.0 - antiShimmer * 0.65);
+    vec3 velvetGlint = vec3(1.25, 1.20, 0.80) * tipGlint * 0.14;
+
+    // Chlorophyll translucency: warm emerald-gold backlight through leaf membrane
     float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
     float backLight = max(-dot(faceNormal, u_lightDir), 0.0);
-    float transmission = (backLight * backLight * 0.45
-                        + forwardScatter * forwardScatter * 0.30)
-                        * smoothstep(0.08, 0.85, h);
-    vec3 sunTerms = baseColor * (wrapped * wrapped * 1.05 + spec) + velvetGlint
-                 + baseColor * vec3(1.30, 1.25, 0.70) * transmission * 0.75;
-    lit += sunTerms * u_lightColor * shadow * canopy * Environment_CloudVisibility(u_cloudNoise, worldPosition);
+    float transmission = (pow(backLight, 1.6) * 0.52
+                        + pow(forwardScatter, 3.0) * 0.38)
+                        * smoothstep(0.10, 0.88, h);
+    vec3 translucentColor = baseColor * vec3(1.42, 1.36, 0.55) + vec3(0.04, 0.06, 0.01);
+
+    vec3 sunTerms = baseColor * (wrapped * wrapped * 1.05)
+                  + anisoSpec * vec3(1.0, 1.02, 0.95)
+                  + velvetGlint
+                  + translucentColor * transmission * 0.82;
+    lit += (sunTerms * u_lightColor * shadow * canopy + waxSheen)
+         * Environment_CloudVisibility(u_cloudNoise, worldPosition);
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);
     return lit;
 }
