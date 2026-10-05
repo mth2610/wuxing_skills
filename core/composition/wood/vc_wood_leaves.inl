@@ -42,6 +42,41 @@ const char* VFX_WoodLeafShape_Name(VFX_WoodLeafShape shape)
     }
 }
 
+static const char *s_woodLeafShapeDisplayNames[WOOD_LEAF_SHAPE_COUNT] = {
+    "OVAL BROADLEAF", "WILLOW TENDRIL", "BRAMBLE SERRATED"
+};
+
+static const char *s_woodLeafStyleDisplayNames[WOOD_VINE_STYLE_COUNT] = {
+    "JADE EMERALD", "BLOOD BRAMBLE", "GOLDEN AMBER", "TAICHI INK"
+};
+
+int VFX_WoodLeaves_GetParams(VFX_WoodLeavesConfig *cfg, VFX_ParamDef *outParams, int maxParams)
+{
+    if (!cfg || !outParams || maxParams <= 0) return 0;
+    int n = 0;
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Shape", .group = "Leaves", .type = VFX_PARAM_ENUM,
+            .valPtr = &cfg->shape, .minInt = 0, .maxInt = WOOD_LEAF_SHAPE_COUNT - 1,
+            .enumNames = s_woodLeafShapeDisplayNames, .enumCount = WOOD_LEAF_SHAPE_COUNT
+        };
+    }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Style", .group = "Leaves", .type = VFX_PARAM_ENUM,
+            .valPtr = &cfg->style, .minInt = 0, .maxInt = WOOD_VINE_STYLE_COUNT - 1,
+            .enumNames = s_woodLeafStyleDisplayNames, .enumCount = WOOD_VINE_STYLE_COUNT
+        };
+    }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Attached Mode", .group = "Leaves", .type = VFX_PARAM_BOOL,
+            .valPtr = &cfg->attached
+        };
+    }
+    return n;
+}
+
 /* Renders natural instanced foliage leaves on botanical sockets (ATTACHED)
  * or emits physical airborne leaves drifting in wind & gravity (FREE). */
 void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)

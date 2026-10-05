@@ -46,6 +46,37 @@ const char* VFX_WoodFlowerType_Name(VFX_WoodFlowerType type)
     }
 }
 
+static const char *s_woodFlowerTypeDisplayNames[WOOD_FLOWER_TYPE_COUNT] = {
+    "SACRED LOTUS", "CELESTIAL ORCHID", "IRONWOOD PLUM BLOSSOM"
+};
+
+int VFX_WoodFlower_GetParams(VFX_WoodFlowerConfig *cfg, VFX_ParamDef *outParams, int maxParams)
+{
+    if (!cfg || !outParams || maxParams <= 0) return 0;
+    int n = 0;
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Type", .group = "Flower", .type = VFX_PARAM_ENUM,
+            .valPtr = &cfg->type, .minInt = 0, .maxInt = WOOD_FLOWER_TYPE_COUNT - 1,
+            .enumNames = s_woodFlowerTypeDisplayNames, .enumCount = WOOD_FLOWER_TYPE_COUNT
+        };
+    }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Style", .group = "Flower", .type = VFX_PARAM_ENUM,
+            .valPtr = &cfg->style, .minInt = 0, .maxInt = WOOD_VINE_STYLE_COUNT - 1,
+            .enumNames = s_woodLeafStyleDisplayNames, .enumCount = WOOD_VINE_STYLE_COUNT
+        };
+    }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Attached Mode", .group = "Flower", .type = VFX_PARAM_BOOL,
+            .valPtr = &cfg->attached
+        };
+    }
+    return n;
+}
+
 static inline float WoodFlower_Smoothstep(float e0, float e1, float x)
 {
     float t = (x - e0) / (e1 - e0);

@@ -60,6 +60,87 @@ static void WoodVine_InitShader(void)
     }
 }
 
+const char* VFX_WoodVineCombo_Name(VFX_WoodVineCombo combo)
+{
+    switch (combo)
+    {
+        case WOOD_VINE_COMBO_BARE_STEM:       return "BARE STEM (BARK ONLY)";
+        case WOOD_VINE_COMBO_THORNY_BRAMBLE:  return "THORNY BRAMBLE (BARK+THORNS)";
+        case WOOD_VINE_COMBO_LEAFY_TENDRIL:   return "LEAFY TENDRIL (BARK+THORNS+LEAVES)";
+        case WOOD_VINE_COMBO_LOTUS_BLOOM:     return "LOTUS BLOOM (LEAVES+LOTUS)";
+        case WOOD_VINE_COMBO_ORCHID_BLOOM:    return "ORCHID BLOOM (LEAVES+ORCHID)";
+        case WOOD_VINE_COMBO_PLUM_BLOSSOM:    return "PLUM BLOSSOM (LEAVES+PLUM)";
+        case WOOD_VINE_COMBO_FULL_FLOURISH:   return "FULL FLOURISH (ALL ACTIVE)";
+        case WOOD_VINE_COMBO_WITHERED_AUTUMN: return "WITHERED AUTUMN (DECAY)";
+        case WOOD_VINE_COMBO_AUTO:
+        default:                              return "AUTO (DYNAMIC REACTION)";
+    }
+}
+
+static VFX_WoodVineConfig WoodVine_ResolveCombo(const VFX_WoodVineConfig *inCfg)
+{
+    VFX_WoodVineConfig eff = *inCfg;
+    switch (eff.combo)
+    {
+        case WOOD_VINE_COMBO_BARE_STEM:
+            eff.enableThorns = false;
+            eff.enableTwin = false;
+            eff.enableLeaves = false;
+            eff.enableFlowers = false;
+            break;
+        case WOOD_VINE_COMBO_THORNY_BRAMBLE:
+            eff.enableThorns = true;
+            eff.enableTwin = true;
+            eff.enableLeaves = false;
+            eff.enableFlowers = false;
+            break;
+        case WOOD_VINE_COMBO_LEAFY_TENDRIL:
+            eff.enableThorns = true;
+            eff.enableTwin = true;
+            eff.enableLeaves = true;
+            eff.enableFlowers = false;
+            break;
+        case WOOD_VINE_COMBO_LOTUS_BLOOM:
+            eff.enableThorns = false;
+            eff.enableTwin = true;
+            eff.enableLeaves = true;
+            eff.enableFlowers = true;
+            eff.flower.type = WOOD_FLOWER_TYPE_LOTUS;
+            break;
+        case WOOD_VINE_COMBO_ORCHID_BLOOM:
+            eff.enableThorns = false;
+            eff.enableTwin = true;
+            eff.enableLeaves = true;
+            eff.enableFlowers = true;
+            eff.flower.type = WOOD_FLOWER_TYPE_ORCHID;
+            break;
+        case WOOD_VINE_COMBO_PLUM_BLOSSOM:
+            eff.enableThorns = false;
+            eff.enableTwin = true;
+            eff.enableLeaves = true;
+            eff.enableFlowers = true;
+            eff.flower.type = WOOD_FLOWER_TYPE_PLUM_BLOSSOM;
+            break;
+        case WOOD_VINE_COMBO_FULL_FLOURISH:
+            eff.enableThorns = true;
+            eff.enableTwin = true;
+            eff.enableLeaves = true;
+            eff.enableFlowers = true;
+            break;
+        case WOOD_VINE_COMBO_WITHERED_AUTUMN:
+            eff.enableThorns = true;
+            eff.enableTwin = false;
+            eff.enableLeaves = true;
+            eff.enableFlowers = false;
+            eff.wither = (eff.wither > 0.45f) ? eff.wither : 0.65f;
+            break;
+        case WOOD_VINE_COMBO_AUTO:
+        default:
+            break;
+    }
+    return eff;
+}
+
 VFX_WoodVineConfig VFX_WoodVine_DefaultConfig(void)
 {
     VFX_WoodVineConfig cfg;
@@ -78,6 +159,10 @@ VFX_WoodVineConfig VFX_WoodVine_DefaultConfig(void)
     cfg.enableThorns = true;
     cfg.enableTwin = true;
     cfg.enableLeaves = false;
+    cfg.leaves = VFX_WoodLeaves_DefaultConfig();
+    cfg.enableFlowers = false;
+    cfg.flower = VFX_WoodFlower_DefaultConfig();
+    cfg.combo = WOOD_VINE_COMBO_AUTO;
     cfg.waterFactor = 0.0f;
     cfg.severArc = 1.0f;
     cfg.fireFactor = 0.0f;
@@ -87,6 +172,75 @@ VFX_WoodVineConfig VFX_WoodVine_DefaultConfig(void)
     cfg.style = WOOD_VINE_STYLE_JADE_EMERALD;
     cfg.seed = 98765;
     return cfg;
+}
+
+static const char *s_woodVineVariantDisplayNames[WOOD_VINE_VARIANT_COUNT] = {
+    "SERPENTINE", "ENTANGLE WHIP", "HELIX PILLAR", "ANCIENT ROOT", "SEED SPROUT"
+};
+
+static const char *s_woodReactionDisplayNames[WOOD_REACTION_COUNT] = {
+    "NORMAL DORMANT", "THUY: HYDRATION BLOOM", "KIM: SEVERED CUT", "HOA: EMBER BURNING"
+};
+
+int VFX_WoodVine_GetParams(VFX_WoodVineConfig *cfg, VFX_ParamDef *outParams, int maxParams)
+{
+    if (!cfg || !outParams || maxParams <= 0) return 0;
+    int n = 0;
+
+    // 1. Macro Vine parameters [c1, c2, c3, c4...]
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Variant", .group = "Vine", .type = VFX_PARAM_ENUM,
+            .valPtr = &cfg->variant, .minInt = 0, .maxInt = WOOD_VINE_VARIANT_COUNT - 1,
+            .enumNames = s_woodVineVariantDisplayNames, .enumCount = WOOD_VINE_VARIANT_COUNT
+        };
+    }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Style", .group = "Vine", .type = VFX_PARAM_ENUM,
+            .valPtr = &cfg->style, .minInt = 0, .maxInt = WOOD_VINE_STYLE_COUNT - 1,
+            .enumNames = s_woodLeafStyleDisplayNames, .enumCount = WOOD_VINE_STYLE_COUNT
+        };
+    }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Reaction", .group = "Vine", .type = VFX_PARAM_ENUM,
+            .valPtr = &cfg->reaction, .minInt = 0, .maxInt = WOOD_REACTION_COUNT - 1,
+            .enumNames = s_woodReactionDisplayNames, .enumCount = WOOD_REACTION_COUNT
+        };
+    }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Thorns", .group = "Vine", .type = VFX_PARAM_BOOL,
+            .valPtr = &cfg->enableThorns
+        };
+    }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Twin Tendril", .group = "Vine", .type = VFX_PARAM_BOOL,
+            .valPtr = &cfg->enableTwin
+        };
+    }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Leaves Active", .group = "Leaves", .type = VFX_PARAM_BOOL,
+            .valPtr = &cfg->enableLeaves
+        };
+    }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){
+            .name = "Flowers Active", .group = "Flower", .type = VFX_PARAM_BOOL,
+            .valPtr = &cfg->enableFlowers
+        };
+    }
+
+    // 2. Child A (Leaves) embedded parameters [a1, a2, a3...]
+    n += VFX_WoodLeaves_GetParams(&cfg->leaves, outParams + n, maxParams - n);
+
+    // 3. Child B (Flower) embedded parameters [b1, b2, b3...]
+    n += VFX_WoodFlower_GetParams(&cfg->flower, outParams + n, maxParams - n);
+
+    return n;
 }
 
 const char* VFX_WoodReactionState_Name(VFX_WoodReactionState state)
@@ -527,7 +681,7 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
 {
     if (config == NULL || config->growth <= 0.001f) return;
 
-    VFX_WoodVineConfig eff = *config;
+    VFX_WoodVineConfig eff = WoodVine_ResolveCombo(config);
 
     // Safety: default severArc to 1.0f (unsevered) if not specified or zero
     if (eff.severArc <= 0.001f) eff.severArc = 1.0f;
@@ -682,7 +836,7 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
                 WoodVine_DrawThorns(&meshSevered, 1.0f, eff.wither + 0.3f, eff.style, true);
             }
         }
-        if (eff.enableLeaves || eff.waterFactor > 0.05f)
+        if (eff.enableLeaves || eff.enableFlowers || eff.waterFactor > 0.05f)
         {
             #define MAX_VINE_LEAF_SOCKETS 32
             VFX_BotanicalSocket leafSockets[MAX_VINE_LEAF_SOCKETS];
@@ -707,26 +861,22 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
                         : (eff.enableLeaves ? 1.0f : 0.0f);
                     float flowerProg = (eff.waterFactor > 0.001f)
                         ? WoodVine_Smoothstep(0.25f, 1.0f, eff.waterFactor)
-                        : 0.0f;
+                        : (eff.enableFlowers ? 1.0f : 0.0f);
 
                     if (leafProg > 0.001f)
                     {
-                        VFX_WoodLeavesConfig leafCfg = VFX_WoodLeaves_DefaultConfig();
+                        VFX_WoodLeavesConfig leafCfg = eff.leaves;
                         leafCfg.attached = true;
                         leafCfg.sockets = leafSockets;
                         leafCfg.socketCount = leafCount;
                         leafCfg.growth = effectiveGrowth * leafProg;
                         leafCfg.wither = eff.wither;
-                        leafCfg.style = eff.style;
-                        leafCfg.shape = (eff.style == WOOD_VINE_STYLE_BLOOD_BRAMBLE)
-                            ? WOOD_LEAF_SHAPE_MAPLE
-                            : ((eff.variant == WOOD_VINE_VARIANT_ENTANGLE) ? WOOD_LEAF_SHAPE_WILLOW : WOOD_LEAF_SHAPE_OVAL);
                         leafCfg.size = (eff.waterFactor > 0.05f) ? (0.16f + 0.05f * eff.waterFactor) : 0.15f;
                         leafCfg.seed = eff.seed + 101;
                         VFX_ComposeWoodLeaves(&leafCfg);
                     }
 
-                    if (eff.waterFactor > 0.05f && flowerProg > 0.001f)
+                    if ((eff.waterFactor > 0.05f || eff.enableFlowers) && flowerProg > 0.001f)
                     {
                         VFX_BotanicalSocket flowerSockets[8];
                         int flowerCount = 0;
@@ -735,16 +885,13 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
                         }
                         if (flowerCount > 0)
                         {
-                            VFX_WoodFlowerConfig flwCfg = VFX_WoodFlower_DefaultConfig();
+                            VFX_WoodFlowerConfig flwCfg = eff.flower;
                             flwCfg.attached = true;
                             flwCfg.sockets = flowerSockets;
                             flwCfg.socketCount = flowerCount;
                             flwCfg.growth = effectiveGrowth * flowerProg;
                             flwCfg.wither = eff.wither;
-                            flwCfg.style = eff.style;
-                            flwCfg.type = (eff.style == WOOD_VINE_STYLE_BLOOD_BRAMBLE)
-                                ? WOOD_FLOWER_TYPE_ORCHID
-                                : ((eff.style == WOOD_VINE_STYLE_GOLDEN_AMBER) ? WOOD_FLOWER_TYPE_PLUM_BLOSSOM : WOOD_FLOWER_TYPE_LOTUS);
+                            flwCfg.seed = eff.seed + 202;
                             VFX_ComposeWoodFlower(&flwCfg);
                         }
                     }
@@ -899,7 +1046,7 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
     // -------------------------------------------------------------------------
     // 7. ATTACHED BOTANICAL FOLIAGE LEAVES & BLOOMING FLOWERS
     // -------------------------------------------------------------------------
-    if (eff.enableLeaves || eff.waterFactor > 0.05f)
+    if (eff.enableLeaves || eff.enableFlowers || eff.waterFactor > 0.05f)
     {
         VFX_BotanicalSocket leafSockets[MAX_VINE_LEAF_SOCKETS];
         int leafCount = Botanical_SampleSocketsOnSpine(pathMain, pathCount, eff.baseRadius,
@@ -923,28 +1070,24 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
                     : (eff.enableLeaves ? 1.0f : 0.0f);
                 float flowerProg = (eff.waterFactor > 0.001f)
                     ? WoodVine_Smoothstep(0.25f, 1.0f, eff.waterFactor)
-                    : 0.0f;
+                    : (eff.enableFlowers ? 1.0f : 0.0f);
 
                 if (leafProg > 0.001f)
                 {
-                    VFX_WoodLeavesConfig leafCfg = VFX_WoodLeaves_DefaultConfig();
+                    VFX_WoodLeavesConfig leafCfg = eff.leaves;
                     leafCfg.attached = true;
                     leafCfg.sockets = leafSockets;
                     leafCfg.socketCount = leafCount;
                     leafCfg.growth = effectiveGrowth * leafProg;
                     leafCfg.wither = eff.wither;
                     leafCfg.swayAmp = eff.swayAmp * 1.35f;
-                    leafCfg.style = eff.style;
-                    leafCfg.shape = (eff.style == WOOD_VINE_STYLE_BLOOD_BRAMBLE)
-                        ? WOOD_LEAF_SHAPE_MAPLE
-                        : ((eff.variant == WOOD_VINE_VARIANT_ENTANGLE) ? WOOD_LEAF_SHAPE_WILLOW : WOOD_LEAF_SHAPE_OVAL);
                     leafCfg.size = (eff.waterFactor > 0.05f) ? (0.16f + 0.05f * eff.waterFactor) : 0.15f;
                     leafCfg.seed = eff.seed + 101;
                     VFX_ComposeWoodLeaves(&leafCfg);
                 }
 
-                // Bloom flowers on hydration (Thủy sinh Mộc)!
-                if (eff.waterFactor > 0.05f && flowerProg > 0.001f)
+                // Bloom flowers on hydration (Thủy sinh Mộc) or explicit enableFlowers
+                if ((eff.waterFactor > 0.05f || eff.enableFlowers) && flowerProg > 0.001f)
                 {
                     VFX_BotanicalSocket flowerSockets[8];
                     int flowerCount = 0;
@@ -953,7 +1096,7 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
                     }
                     if (flowerCount > 0)
                     {
-                        VFX_WoodFlowerConfig flwCfg = VFX_WoodFlower_DefaultConfig();
+                        VFX_WoodFlowerConfig flwCfg = eff.flower;
                         flwCfg.attached = true;
                         flwCfg.sockets = flowerSockets;
                         flwCfg.socketCount = flowerCount;
@@ -961,10 +1104,6 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
                         flwCfg.wither = eff.wither;
                         flwCfg.swayAmp = eff.swayAmp * 1.15f;
                         flwCfg.size = 0.13f + 0.03f * eff.waterFactor;
-                        flwCfg.type = (eff.style == WOOD_VINE_STYLE_BLOOD_BRAMBLE)
-                            ? WOOD_FLOWER_TYPE_ORCHID
-                            : ((eff.style == WOOD_VINE_STYLE_GOLDEN_AMBER) ? WOOD_FLOWER_TYPE_PLUM_BLOSSOM : WOOD_FLOWER_TYPE_LOTUS);
-                        flwCfg.style = eff.style;
                         flwCfg.seed = eff.seed + 202;
                         VFX_ComposeWoodFlower(&flwCfg);
                     }

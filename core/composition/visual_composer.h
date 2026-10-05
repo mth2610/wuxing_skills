@@ -39,6 +39,7 @@
 #include "core/trails/trail_recipe.h"            // TrailPresetId + what a preset row contains
 #include "core/gas/gas_system.h"                 // Volumetric smoke/fire/energy simulation
 #include "core/liquid/liquid_motion.h"
+#include "core/composition/common/vc_params.h"   // Universal VFX Parameter System
 
 // ── Per-frame drivers ───────────────────────────────────────────────────────
 // The pooled components (character aura) and the E3 sequencer ride these two
@@ -906,43 +907,25 @@ typedef enum {
     WOOD_REACTION_COUNT
 } VFX_WoodReactionState;
 
-typedef struct {
-    Vector3 startPos;       // Root/emergence origin in world space
-    Vector3 targetPos;      // Target or tip destination
-    float targetRadius;     // If > 0, wraps around target cylinder/capsule (e.g. 0.38m for character)
-    float targetHeight;     // Height of target model to wrap (e.g. 1.8m)
-    float length;           // Extended length along path (metres)
-    float baseRadius;       // Base thickness at root (metres, default 0.08f)
-    float growth;           // Current growth progress [0..1]
-    float wither;           // Wither/decay progress [0..1]
-    float sapPhase;         // Sap pulse animation phase
-    float swayAmp;          // Sway amplitude under wind/motion (metres)
-    float coilRadius;       // 0 for direct crawl/whip, >0 for helical spiral
-    float coilTurns;        // Number of spiral turns (e.g. 2.2f)
-    bool  enableThorns;     // Sprout hooked phyllotaxis thorns along vine
-    bool  enableTwin;       // Sprout braided secondary tendril
-    bool  enableLeaves;     // Sprout foliage leaves along vine
-    float waterFactor;      // 0 = normal dry, 1 = fully hydrated verdant bloom
-    float severArc;         // 1.0 = intact, < 1.0 = severed by metal slash at arc
-    float fireFactor;       // 0 = normal, 1 = burning charcoal & ash
-    bool  castShadow;       // Cast dynamic ground shadows
-    VFX_WoodReactionState reaction; // Wuxing elemental reaction state
-    VFX_WoodVineVariant variant; // Morphological growth archetype
-    VFX_WoodVineStyle   style;   // Elemental tonal palette & contrast style
-    unsigned int seed;      // Deterministic PRNG seed
-} VFX_WoodVineConfig;
-
 const char* VFX_WoodReactionState_Name(VFX_WoodReactionState state);
 
-// ── Botanical Sockets (Universal attachment points for leaves, flowers & branches)
-typedef struct {
-    Vector3 pos;        // Surface attachment origin in world space
-    Vector3 normal;     // Outward growth direction (perpendicular to bark surface)
-    Vector3 tangent;    // Direction along the parent branch/vine axis
-    float   arc;        // Normalized distance along parent curve [0..1]
-    float   stemRadius; // Local radius of parent branch at this socket (metres)
-} VFX_BotanicalSocket;
+// ── Modular Child Combination Presets (Composite VFX assembly) ──────────────
+typedef enum {
+    WOOD_VINE_COMBO_AUTO = 0,         // Auto: dynamic reaction & style driven
+    WOOD_VINE_COMBO_BARE_STEM,        // Bare stem: bark only, no thorns/foliage
+    WOOD_VINE_COMBO_THORNY_BRAMBLE,   // Bramble: bark + thorns
+    WOOD_VINE_COMBO_LEAFY_TENDRIL,    // Leafy vine: bark + thorns + foliage leaves
+    WOOD_VINE_COMBO_LOTUS_BLOOM,      // Sacred Lotus: foliage + Lotus flowers
+    WOOD_VINE_COMBO_ORCHID_BLOOM,     // Celestial Orchid: foliage + Orchid flowers
+    WOOD_VINE_COMBO_PLUM_BLOSSOM,     // Ironwood Plum: foliage + Plum Blossom flowers
+    WOOD_VINE_COMBO_FULL_FLOURISH,    // Full flourish: twin + thorns + leaves + flowers
+    WOOD_VINE_COMBO_WITHERED_AUTUMN,  // Withered autumn: withered browning foliage
+    WOOD_VINE_COMBO_COUNT
+} VFX_WoodVineCombo;
 
+const char* VFX_WoodVineCombo_Name(VFX_WoodVineCombo combo);
+
+// ── Leaf Shapes & Flower Types (Atomic Botanical Components) ────────────────
 typedef enum {
     WOOD_LEAF_SHAPE_OVAL = 0,    // Broadleaf / oval blade (verdant, jade)
     WOOD_LEAF_SHAPE_WILLOW,      // Slender elongated tendril blade
@@ -950,6 +933,37 @@ typedef enum {
     WOOD_LEAF_SHAPE_COUNT
 } VFX_WoodLeafShape;
 
+const char* VFX_WoodLeafShape_Name(VFX_WoodLeafShape shape);
+
+typedef enum {
+    WOOD_FLOWER_TYPE_LOTUS = 0,     // Sacred Jade Lotus (multi-tier chalice petals)
+    WOOD_FLOWER_TYPE_ORCHID,        // Wild Celestial Orchid (asymmetric fan petals)
+    WOOD_FLOWER_TYPE_PLUM_BLOSSOM,  // Five-petal Ironwood Plum Blossom (apricot/ruby blossom)
+    WOOD_FLOWER_TYPE_COUNT
+} VFX_WoodFlowerType;
+
+const char* VFX_WoodFlowerType_Name(VFX_WoodFlowerType type);
+
+// ── Universal VFX Socket Contract (Anchor points for child attachment) ──────
+// Generalized attachment anchor across all elemental composite effects.
+typedef struct VFX_Socket {
+    Vector3 pos;        // Surface attachment origin in world space
+    Vector3 normal;     // Outward normal vector (perpendicular to parent surface)
+    Vector3 tangent;    // Direction along the parent spine / flow axis
+    union {
+        float param;    // Normalized distance along parent curve/spine [0..1]
+        float arc;      // Botanical alias
+    };
+    union {
+        float scale;    // Local parent thickness / radius scale (metres)
+        float stemRadius; // Botanical alias
+    };
+} VFX_Socket;
+
+// Botanical alias: 100% binary and source field compatible
+typedef struct VFX_Socket VFX_BotanicalSocket;
+
+// ── Atomic Wood Leaf Configuration ──────────────────────────────────────────
 typedef struct {
     bool  attached;               // true: anchored to host sockets; false: free physical airborne simulation
     Vector3 origin;               // center of spawn/distribution (metres)
@@ -969,22 +983,10 @@ typedef struct {
     unsigned int seed;
 } VFX_WoodLeavesConfig;
 
-VFX_WoodVineConfig   VFX_WoodVine_DefaultConfig(void);
-const char*          VFX_WoodVineVariant_Name(VFX_WoodVineVariant variant);
-const char*          VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
-void                 VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
-
 VFX_WoodLeavesConfig VFX_WoodLeaves_DefaultConfig(void);
-const char*          VFX_WoodLeafShape_Name(VFX_WoodLeafShape shape);
 void                 VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config);
 
-typedef enum {
-    WOOD_FLOWER_TYPE_LOTUS = 0,     // Sacred Jade Lotus (multi-tier chalice petals)
-    WOOD_FLOWER_TYPE_ORCHID,        // Wild Celestial Orchid (asymmetric fan petals)
-    WOOD_FLOWER_TYPE_PLUM_BLOSSOM,  // Five-petal Ironwood Plum Blossom (apricot/ruby blossom)
-    WOOD_FLOWER_TYPE_COUNT
-} VFX_WoodFlowerType;
-
+// ── Atomic Wood Flower Configuration ────────────────────────────────────────
 typedef struct {
     bool  attached;               // true: anchored to host sockets; false: free physical airborne simulation
     Vector3 origin;               // center of spawn/distribution (metres)
@@ -1005,8 +1007,53 @@ typedef struct {
 } VFX_WoodFlowerConfig;
 
 VFX_WoodFlowerConfig VFX_WoodFlower_DefaultConfig(void);
+void                 VFX_ComposeWoodFlower(const VFX_WoodFlowerConfig *config);
+
+// ── Composite Wood Vine Configuration ───────────────────────────────────────
+typedef struct {
+    Vector3 startPos;       // Root/emergence origin in world space
+    Vector3 targetPos;      // Target or tip destination
+    float targetRadius;     // If > 0, wraps around target cylinder/capsule (e.g. 0.38m for character)
+    float targetHeight;     // Height of target model to wrap (e.g. 1.8m)
+    float length;           // Extended length along path (metres)
+    float baseRadius;       // Base thickness at root (metres, default 0.08f)
+    float growth;           // Current growth progress [0..1]
+    float wither;           // Wither/decay progress [0..1]
+    float sapPhase;         // Sap pulse animation phase
+    float swayAmp;          // Sway amplitude under wind/motion (metres)
+    float coilRadius;       // 0 for direct crawl/whip, >0 for helical spiral
+    float coilTurns;        // Number of spiral turns (e.g. 2.2f)
+    bool  enableThorns;     // Sprout hooked phyllotaxis thorns along vine
+    bool  enableTwin;       // Sprout braided secondary tendril
+    bool  enableLeaves;     // Sprout foliage leaves along vine
+    VFX_WoodLeavesConfig leaves; // Child A: all leaf variables [a1, a2, a3...]
+    bool  enableFlowers;    // Sprout blossoming flowers along vine
+    VFX_WoodFlowerConfig flower; // Child B: all flower variables [b1, b2, b3...]
+    VFX_WoodVineCombo  combo;      // Modular child combination preset
+    float waterFactor;      // 0 = normal dry, 1 = fully hydrated verdant bloom
+    float severArc;         // 1.0 = intact, < 1.0 = severed by metal slash at arc
+    float fireFactor;       // 0 = normal, 1 = burning charcoal & ash
+    bool  castShadow;       // Cast dynamic ground shadows
+    VFX_WoodReactionState reaction; // Wuxing elemental reaction state
+    VFX_WoodVineVariant variant; // Morphological growth archetype
+    VFX_WoodVineStyle   style;   // Elemental tonal palette & contrast style
+    unsigned int seed;      // Deterministic PRNG seed
+} VFX_WoodVineConfig;
+
+VFX_WoodVineConfig   VFX_WoodVine_DefaultConfig(void);
+const char*          VFX_WoodVineVariant_Name(VFX_WoodVineVariant variant);
+const char*          VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
+void                 VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
+void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
+
+VFX_WoodFlowerConfig VFX_WoodFlower_DefaultConfig(void);
 const char*          VFX_WoodFlowerType_Name(VFX_WoodFlowerType type);
 void                 VFX_ComposeWoodFlower(const VFX_WoodFlowerConfig *config);
+
+// ── Generic Parameter Introspection API (CapsLock + / dynamic editing) ──────
+int VFX_WoodLeaves_GetParams(VFX_WoodLeavesConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+int VFX_WoodFlower_GetParams(VFX_WoodFlowerConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+int VFX_WoodVine_GetParams(VFX_WoodVineConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 
 // ── Universal Botanical Foliage & Petal Simulation System ────────────────────
 typedef enum {

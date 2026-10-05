@@ -151,10 +151,52 @@ static VFX_SurfaceParticleRingVariant s_surfaceParticleRingFixtureVariant = VFX_
 static VFX_ImpactDustVariant s_impactDustFixtureVariant = VFX_IMPACT_DUST_VARIANT_DUST_PUFF;
 static TrailPresetId s_motionRibbonFixturePreset = MOTION_RIBBON_ENERGY_SILK;
 static VFX_FlameStyle s_ambientFireFixtureStyle = VFX_FLAME_STYLE_NIAGARA_ROIL;
-static VFX_WoodVineVariant s_woodVineFixtureVariant = WOOD_VINE_VARIANT_SERPENTINE;
-static VFX_WoodVineStyle s_woodVineFixtureStyle = WOOD_VINE_STYLE_JADE_EMERALD;
-static VFX_WoodReactionState s_woodVineReactionState = WOOD_REACTION_NORMAL;
-static bool s_vfxAnimationPaused = false;
+static VFX_WoodVineConfig   s_liveWoodVineConfig;
+static VFX_WoodLeavesConfig s_liveWoodLeavesConfig;
+static VFX_WoodFlowerConfig s_liveWoodFlowerConfig;
+static bool                 s_liveWoodConfigsInit = false;
+
+#define VFX_TEST_MAX_INSPECTOR_PARAMS 32
+static VFX_ParamDef s_inspectorParams[VFX_TEST_MAX_INSPECTOR_PARAMS];
+static int          s_inspectorParamCount = 0;
+static int          s_inspectorSelectedParam = 0;
+static int          s_lastInspectedFixtureIndex = -999;
+static bool         s_vfxAnimationPaused = false;
+
+static void VFXTest_InitLiveConfigs(void)
+{
+    if (s_liveWoodConfigsInit) return;
+    s_liveWoodVineConfig = VFX_WoodVine_DefaultConfig();
+    s_liveWoodLeavesConfig = VFX_WoodLeaves_DefaultConfig();
+    s_liveWoodFlowerConfig = VFX_WoodFlower_DefaultConfig();
+    s_liveWoodLeavesConfig.attached = false;
+    s_liveWoodFlowerConfig.attached = false;
+    s_liveWoodConfigsInit = true;
+}
+
+static void VFXTest_RefreshInspectorParams(bool force)
+{
+    VFXTest_InitLiveConfigs();
+
+    if (!force && s_testIndex == s_lastInspectedFixtureIndex)
+        return;
+    s_lastInspectedFixtureIndex = s_testIndex;
+    s_inspectorSelectedParam = 0;
+    s_inspectorParamCount = 0;
+
+    if (VFXTest_IsNewFxNamed("WOOD VINE"))
+    {
+        s_inspectorParamCount = VFX_WoodVine_GetParams(&s_liveWoodVineConfig, s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+    else if (VFXTest_IsNewFxNamed("WOOD LEAVES"))
+    {
+        s_inspectorParamCount = VFX_WoodLeaves_GetParams(&s_liveWoodLeavesConfig, s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+    else if (VFXTest_IsNewFxNamed("WOOD FLOWER"))
+    {
+        s_inspectorParamCount = VFX_WoodFlower_GetParams(&s_liveWoodFlowerConfig, s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+}
 
 static inline float VFXTest_Smoothstep(float e0, float e1, float x)
 {
@@ -165,7 +207,8 @@ static inline float VFXTest_Smoothstep(float e0, float e1, float x)
 
 static VFX_WoodVineConfig VFXTest_BuildWoodVineConfig(Vector3 startPos, Vector3 playerPos, float meshTime)
 {
-    VFX_WoodVineConfig cfg = VFX_WoodVine_DefaultConfig();
+    VFXTest_InitLiveConfigs();
+    VFX_WoodVineConfig cfg = s_liveWoodVineConfig;
     cfg.startPos = startPos;
 
     bool nearPlayer = (Vector3Distance(startPos, playerPos) > 0.05f && Vector3Distance(startPos, playerPos) < 2.5f);
@@ -177,12 +220,7 @@ static VFX_WoodVineConfig VFXTest_BuildWoodVineConfig(Vector3 startPos, Vector3 
     cfg.swayAmp = 0.05f;
     cfg.coilRadius = 0.35f;
     cfg.coilTurns = 2.4f;
-    cfg.enableThorns = true;
-    cfg.enableTwin = true;
     cfg.castShadow = true;
-    cfg.variant = s_woodVineFixtureVariant;
-    cfg.style = s_woodVineFixtureStyle;
-    cfg.reaction = s_woodVineReactionState;
     cfg.seed = 98765;
 
     // -------------------------------------------------------------------------
@@ -219,7 +257,7 @@ static VFX_WoodVineConfig VFXTest_BuildWoodVineConfig(Vector3 startPos, Vector3 
         cfg.growth = 1.0f;
         float rxnSmooth = VFXTest_Smoothstep(2.6f, 5.0f, cycleT);
 
-        switch (s_woodVineReactionState)
+        switch (cfg.reaction)
         {
             case WOOD_REACTION_WATER: // Thủy sinh Mộc: Tưới nước -> nở lá -> nở hoa
                 cfg.waterFactor = rxnSmooth;
@@ -253,13 +291,13 @@ static VFX_WoodVineConfig VFXTest_BuildWoodVineConfig(Vector3 startPos, Vector3 
         // Phase 4: Hòa hoãn rút lui / reset
         float exitSmooth = 1.0f - VFXTest_Smoothstep(5.0f, 6.0f, cycleT);
         cfg.growth = exitSmooth;
-        if (s_woodVineReactionState == WOOD_REACTION_WATER) {
+        if (cfg.reaction == WOOD_REACTION_WATER) {
             cfg.waterFactor = exitSmooth;
             cfg.severArc = 1.0f;
-        } else if (s_woodVineReactionState == WOOD_REACTION_METAL) {
+        } else if (cfg.reaction == WOOD_REACTION_METAL) {
             cfg.severArc = 0.55f;
             cfg.wither = 0.70f;
-        } else if (s_woodVineReactionState == WOOD_REACTION_FIRE) {
+        } else if (cfg.reaction == WOOD_REACTION_FIRE) {
             cfg.fireFactor = exitSmooth;
             cfg.wither = 1.0f;
             cfg.severArc = 1.0f;
@@ -271,17 +309,11 @@ static VFX_WoodVineConfig VFXTest_BuildWoodVineConfig(Vector3 startPos, Vector3 
     return cfg;
 }
 
-static VFX_WoodLeafShape  s_woodLeavesFixtureShape = WOOD_LEAF_SHAPE_OVAL;
-static VFX_WoodVineStyle  s_woodLeavesFixtureStyle = WOOD_VINE_STYLE_JADE_EMERALD;
-static bool               s_woodLeavesFixtureAttached = false;
-
 static VFX_WoodLeavesConfig VFXTest_BuildWoodLeavesConfig(Vector3 startPos, Vector3 playerPos, float meshTime)
 {
     (void)playerPos;
-    VFX_WoodLeavesConfig cfg = VFX_WoodLeaves_DefaultConfig();
-    cfg.style = s_woodLeavesFixtureStyle;
-    cfg.shape = s_woodLeavesFixtureShape;
-    cfg.attached = s_woodLeavesFixtureAttached;
+    VFXTest_InitLiveConfigs();
+    VFX_WoodLeavesConfig cfg = s_liveWoodLeavesConfig;
     cfg.growth = 1.0f;
     cfg.origin = Vector3Add(startPos, (Vector3){0.0f, 3.2f, 0.0f});
     cfg.radius = 1.8f;
@@ -317,17 +349,11 @@ static VFX_WoodLeavesConfig VFXTest_BuildWoodLeavesConfig(Vector3 startPos, Vect
     return cfg;
 }
 
-static VFX_WoodFlowerType s_woodFlowerFixtureType = WOOD_FLOWER_TYPE_LOTUS;
-static VFX_WoodVineStyle  s_woodFlowerFixtureStyle = WOOD_VINE_STYLE_JADE_EMERALD;
-static bool               s_woodFlowerFixtureAttached = false;
-
 static VFX_WoodFlowerConfig VFXTest_BuildWoodFlowerConfig(Vector3 startPos, Vector3 playerPos, float meshTime)
 {
     (void)playerPos;
-    VFX_WoodFlowerConfig cfg = VFX_WoodFlower_DefaultConfig();
-    cfg.style = s_woodFlowerFixtureStyle;
-    cfg.type = s_woodFlowerFixtureType;
-    cfg.attached = s_woodFlowerFixtureAttached;
+    VFXTest_InitLiveConfigs();
+    VFX_WoodFlowerConfig cfg = s_liveWoodFlowerConfig;
     cfg.growth = 1.0f;
     cfg.origin = Vector3Add(startPos, (Vector3){0.0f, 2.8f, 0.0f});
     cfg.radius = 1.4f;
@@ -1424,9 +1450,59 @@ void VFXTest_Draw3D(void)
 
     if (s_isPlayingMesh)
     {
-        s_meshTime += dt;
+        if (IsKeyPressed(KEY_V))
+        {
+            s_vfxAnimationPaused = !s_vfxAnimationPaused;
+            TraceLog(LOG_INFO, "[VFX] Animation %s", s_vfxAnimationPaused ? "PAUSED" : "RESUMED");
+        }
+        if (!s_vfxAnimationPaused)
+        {
+            s_meshTime += dt;
+        }
         if (CharacterModel_IsLoaded())
             s_meshParticleFixtureModel = CharacterModel_GetModel();
+
+        VFXTest_RefreshInspectorParams(false);
+
+        if (s_inspectorParamCount > 0)
+        {
+            // CapsLock (or Tab) cycles through variables [c1 -> c2 -> ... -> a1 -> ... -> b1 ...]
+            if (IsKeyPressed(KEY_CAPS_LOCK) || IsKeyPressed(KEY_TAB))
+            {
+                if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+                    s_inspectorSelectedParam = (s_inspectorSelectedParam - 1 + s_inspectorParamCount) % s_inspectorParamCount;
+                else
+                    s_inspectorSelectedParam = (s_inspectorSelectedParam + 1) % s_inspectorParamCount;
+
+                char valBuf[64];
+                VFX_Param_FormatValue(&s_inspectorParams[s_inspectorSelectedParam], valBuf, sizeof(valBuf));
+                TraceLog(LOG_INFO, "[Inspector] Selected [%d/%d] %s: %s",
+                         s_inspectorSelectedParam + 1, s_inspectorParamCount,
+                         s_inspectorParams[s_inspectorSelectedParam].name, valBuf);
+            }
+
+            // Slash '/' (and '>' or '.') cycles the value of the selected variable
+            if (IsKeyPressed(KEY_SLASH) || IsKeyPressed(KEY_PERIOD))
+            {
+                if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+                    VFX_Param_CyclePrev(&s_inspectorParams[s_inspectorSelectedParam]);
+                else
+                    VFX_Param_CycleNext(&s_inspectorParams[s_inspectorSelectedParam]);
+
+                char valBuf[64];
+                VFX_Param_FormatValue(&s_inspectorParams[s_inspectorSelectedParam], valBuf, sizeof(valBuf));
+                TraceLog(LOG_INFO, "[Inspector] Param '%s' = %s",
+                         s_inspectorParams[s_inspectorSelectedParam].name, valBuf);
+            }
+            else if (IsKeyPressed(KEY_COMMA))
+            {
+                VFX_Param_CyclePrev(&s_inspectorParams[s_inspectorSelectedParam]);
+                char valBuf[64];
+                VFX_Param_FormatValue(&s_inspectorParams[s_inspectorSelectedParam], valBuf, sizeof(valBuf));
+                TraceLog(LOG_INFO, "[Inspector] Param '%s' = %s",
+                         s_inspectorParams[s_inspectorSelectedParam].name, valBuf);
+            }
+        }
 
         if (VFXTest_IsNewFxNamed("MESH PARTICLE EMITTER"))
         {
@@ -1524,120 +1600,42 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "AMBIENT FIRE style: %s (>, next; <, previous)", VFX_FlameStyle_Name(s_ambientFireFixtureStyle));
             }
         }
-        else if (VFXTest_IsNewFxNamed("WOOD VINE"))
+        else if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER"))
         {
-            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
-            if (direction != 0)
-            {
-                s_woodVineFixtureVariant = (VFX_WoodVineVariant)(((int)s_woodVineFixtureVariant + direction + WOOD_VINE_VARIANT_COUNT) % WOOD_VINE_VARIANT_COUNT);
-                TraceLog(LOG_INFO, "WOOD VINE variant: %s (>, next; ,, previous)", VFX_WoodVineVariant_Name(s_woodVineFixtureVariant));
-            }
-            if (IsKeyPressed(KEY_M))
-            {
-                s_woodVineFixtureStyle = (VFX_WoodVineStyle)(((int)s_woodVineFixtureStyle + 1) % WOOD_VINE_STYLE_COUNT);
-                TraceLog(LOG_INFO, "WOOD VINE style: %s (M, next style)", VFX_WoodVineStyle_Name(s_woodVineFixtureStyle));
-            }
-            if (IsKeyPressed(KEY_SLASH))
-            {
-                s_woodVineReactionState = (VFX_WoodReactionState)(((int)s_woodVineReactionState + 1) % WOOD_REACTION_COUNT);
-                TraceLog(LOG_INFO, "WOOD VINE reaction state: %s (/ to cycle)", VFX_WoodReactionState_Name(s_woodVineReactionState));
-            }
             if (IsKeyPressed(KEY_SEMICOLON))
             {
-                // Spawn 120 physical falling leaves drifting under wind & gravity
                 Vector3 spawnOrigin = Vector3Add(s_prefabStartPos, (Vector3){0, 3.2f, 0});
-                int count = VFX_Foliage_SpawnFreeLeaves(spawnOrigin, 1.8f, 120, 0.004f, s_woodVineFixtureStyle);
-                TraceLog(LOG_INFO, "[Foliage] Spawned %d physical leaves at (%.1f, %.1f, %.1f)", count, spawnOrigin.x, spawnOrigin.y, spawnOrigin.z);
+                if (VFXTest_IsNewFxNamed("WOOD FLOWER"))
+                {
+                    int count = VFX_Foliage_SpawnFreePetals(spawnOrigin, 1.4f, 80, 0.002f,
+                                                            s_liveWoodFlowerConfig.type,
+                                                            s_liveWoodFlowerConfig.style);
+                    TraceLog(LOG_INFO, "[Foliage] Spawned %d physical petals", count);
+                }
+                else
+                {
+                    VFX_WoodVineStyle st = VFXTest_IsNewFxNamed("WOOD VINE") ? s_liveWoodVineConfig.style : s_liveWoodLeavesConfig.style;
+                    int count = VFX_Foliage_SpawnFreeLeaves(spawnOrigin, 1.8f, 120, 0.004f, st);
+                    TraceLog(LOG_INFO, "[Foliage] Spawned %d physical leaves", count);
+                }
             }
             if (IsKeyPressed(KEY_APOSTROPHE))
             {
-                // Toggle Homing Vortex / Suction Force Field toward character/target
                 if (VFX_FoliageSystem_IsHomingActive())
                 {
                     VFX_FoliageSystem_ClearHomingTarget();
-                    TraceLog(LOG_INFO, "[Foliage] Homing vortex CLEARED — leaves drift freely in wind");
+                    TraceLog(LOG_INFO, "[Foliage] Homing vortex CLEARED");
                 }
                 else
                 {
                     VFX_FoliageSystem_SetHomingTarget(s_currentPlayerPos, 14.0f, 22.0f);
-                    TraceLog(LOG_INFO, "[Foliage] Homing vortex ACTIVATED toward (%.1f, %.1f, %.1f)", s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z);
+                    TraceLog(LOG_INFO, "[Foliage] Homing vortex ACTIVATED toward player");
                 }
             }
             if (IsKeyPressed(KEY_BACKSLASH))
             {
-                // Detach attached foliage in radius with an upward fling
                 int detached = VFX_Foliage_DetachInRadius(s_prefabStartPos, 3.5f, (Vector3){0, 2.5f, 0});
                 TraceLog(LOG_INFO, "[Foliage] Detached %d foliage particles in radius 3.5m", detached);
-            }
-        }
-        else if (VFXTest_IsNewFxNamed("WOOD LEAVES"))
-        {
-            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
-            if (direction != 0)
-            {
-                s_woodLeavesFixtureShape = (VFX_WoodLeafShape)(((int)s_woodLeavesFixtureShape + direction + WOOD_LEAF_SHAPE_COUNT) % WOOD_LEAF_SHAPE_COUNT);
-                TraceLog(LOG_INFO, "WOOD LEAVES shape: %s (>, next; ,, previous)", VFX_WoodLeafShape_Name(s_woodLeavesFixtureShape));
-            }
-            if (IsKeyPressed(KEY_M))
-            {
-                s_woodLeavesFixtureStyle = (VFX_WoodVineStyle)(((int)s_woodLeavesFixtureStyle + 1) % WOOD_VINE_STYLE_COUNT);
-                TraceLog(LOG_INFO, "WOOD LEAVES style: %s (M, next style)", VFX_WoodVineStyle_Name(s_woodLeavesFixtureStyle));
-            }
-            if (IsKeyPressed(KEY_SLASH))
-            {
-                s_woodLeavesFixtureAttached = !s_woodLeavesFixtureAttached;
-                TraceLog(LOG_INFO, "WOOD LEAVES mode: %s (/ to toggle attached/free)", s_woodLeavesFixtureAttached ? "ATTACHED (Stem)" : "FREE AIRBORNE (Gravity & Wind)");
-            }
-            if (IsKeyPressed(KEY_SEMICOLON))
-            {
-                Vector3 spawnOrigin = Vector3Add(s_prefabStartPos, (Vector3){0, 3.2f, 0});
-                int count = VFX_Foliage_SpawnFreeLeaves(spawnOrigin, 1.8f, 120, 0.004f, s_woodLeavesFixtureStyle);
-                TraceLog(LOG_INFO, "[Foliage] Burst spawned %d physical leaves at (%.1f, %.1f, %.1f)", count, spawnOrigin.x, spawnOrigin.y, spawnOrigin.z);
-            }
-            if (IsKeyPressed(KEY_APOSTROPHE))
-            {
-                if (VFX_FoliageSystem_IsHomingActive()) {
-                    VFX_FoliageSystem_ClearHomingTarget();
-                    TraceLog(LOG_INFO, "[Foliage] Homing vortex CLEARED");
-                } else {
-                    VFX_FoliageSystem_SetHomingTarget(s_currentPlayerPos, 14.0f, 22.0f);
-                    TraceLog(LOG_INFO, "[Foliage] Homing vortex ACTIVATED toward player");
-                }
-            }
-        }
-        else if (VFXTest_IsNewFxNamed("WOOD FLOWER"))
-        {
-            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
-            if (direction != 0)
-            {
-                s_woodFlowerFixtureType = (VFX_WoodFlowerType)(((int)s_woodFlowerFixtureType + direction + WOOD_FLOWER_TYPE_COUNT) % WOOD_FLOWER_TYPE_COUNT);
-                TraceLog(LOG_INFO, "WOOD FLOWER type: %s (>, next; ,, previous)", VFX_WoodFlowerType_Name(s_woodFlowerFixtureType));
-            }
-            if (IsKeyPressed(KEY_M))
-            {
-                s_woodFlowerFixtureStyle = (VFX_WoodVineStyle)(((int)s_woodFlowerFixtureStyle + 1) % WOOD_VINE_STYLE_COUNT);
-                TraceLog(LOG_INFO, "WOOD FLOWER style: %s (M, next style)", VFX_WoodVineStyle_Name(s_woodFlowerFixtureStyle));
-            }
-            if (IsKeyPressed(KEY_SLASH))
-            {
-                s_woodFlowerFixtureAttached = !s_woodFlowerFixtureAttached;
-                TraceLog(LOG_INFO, "WOOD FLOWER mode: %s (/ to toggle attached/free)", s_woodFlowerFixtureAttached ? "ATTACHED (Stem Bloom)" : "FREE PETALS (Gravity & Wind)");
-            }
-            if (IsKeyPressed(KEY_SEMICOLON))
-            {
-                Vector3 spawnOrigin = Vector3Add(s_prefabStartPos, (Vector3){0, 3.0f, 0});
-                int count = VFX_Foliage_SpawnFreePetals(spawnOrigin, 1.4f, 80, 0.002f, s_woodFlowerFixtureType, s_woodFlowerFixtureStyle);
-                TraceLog(LOG_INFO, "[Foliage] Burst spawned %d physical petals at (%.1f, %.1f, %.1f)", count, spawnOrigin.x, spawnOrigin.y, spawnOrigin.z);
-            }
-            if (IsKeyPressed(KEY_APOSTROPHE))
-            {
-                if (VFX_FoliageSystem_IsHomingActive()) {
-                    VFX_FoliageSystem_ClearHomingTarget();
-                    TraceLog(LOG_INFO, "[Foliage] Homing vortex CLEARED");
-                } else {
-                    VFX_FoliageSystem_SetHomingTarget(s_currentPlayerPos, 14.0f, 22.0f);
-                    TraceLog(LOG_INFO, "[Foliage] Homing vortex ACTIVATED toward player");
-                }
             }
         }
 
@@ -1916,41 +1914,59 @@ void VFXTest_DrawHUD(void)
     {
         DrawText(TextFormat("AMBIENT FIRE: %s   > next   < previous", VFX_FlameStyle_Name(s_ambientFireFixtureStyle)), 10, 525, 16, ORANGE);
     }
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("WOOD VINE"))
+    else if (s_isPlayingMesh && s_inspectorParamCount > 0)
     {
-        DrawText(TextFormat("WOOD VINE: [%s] | Style: [%s] | Reaction: [%s]   (/ rxn | >/, var | M style | V pause)",
-                            VFX_WoodVineVariant_Name(s_woodVineFixtureVariant),
-                            VFX_WoodVineStyle_Name(s_woodVineFixtureStyle),
-                            VFX_WoodReactionState_Name(s_woodVineReactionState)),
-                 10, 525, 16, GREEN);
-        DrawText(TextFormat("FOLIAGE: %d active | Homing: [%s]   (; spawn leaves | ' toggle vortex | \\ detach)",
-                            VFX_FoliageSystem_GetActiveCount(),
-                            VFX_FoliageSystem_IsHomingActive() ? "ACTIVE (Van Diep Quy Tong)" : "OFF (Wind Drift)"),
-                 10, 550, 16, LIME);
-    }
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("WOOD LEAVES"))
-    {
-        DrawText(TextFormat("WOOD LEAVES: [%s] | Style: [%s] | Mode: [%s]   (/ mode | >/, shape | M style | ; burst | ' vortex | V pause)",
-                            VFX_WoodLeafShape_Name(s_woodLeavesFixtureShape),
-                            VFX_WoodVineStyle_Name(s_woodLeavesFixtureStyle),
-                            s_woodLeavesFixtureAttached ? "ATTACHED (Stem)" : "FREE AIRBORNE (Gravity & Wind)"),
-                 10, 525, 16, GREEN);
-        DrawText(TextFormat("Leaves: %d active | Mass: 0.004kg | Aerodynamic Drag & Wind: ACTIVE | Vortex: [%s]",
-                            VFX_FoliageSystem_GetActiveCount(),
-                            VFX_FoliageSystem_IsHomingActive() ? "ACTIVE (Homing)" : "OFF"),
-                 10, 550, 16, LIME);
-    }
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("WOOD FLOWER"))
-    {
-        DrawText(TextFormat("WOOD FLOWER: [%s] | Style: [%s] | Mode: [%s]   (/ mode | >/, type | M style | ; burst | ' vortex | V pause)",
-                            VFX_WoodFlowerType_Name(s_woodFlowerFixtureType),
-                            VFX_WoodVineStyle_Name(s_woodFlowerFixtureStyle),
-                            s_woodFlowerFixtureAttached ? "ATTACHED (Stem Bloom)" : "FREE PETALS (Gravity & Wind)"),
-                 10, 525, 16, GREEN);
-        DrawText(TextFormat("Petals: %d active | Mass: 0.002kg | Multi-tier SSS Bloom | Vortex: [%s]",
-                            VFX_FoliageSystem_GetActiveCount(),
-                            VFX_FoliageSystem_IsHomingActive() ? "ACTIVE (Homing)" : "OFF"),
-                 10, 550, 16, LIME);
+        // Universal Parameter Inspector Panel for Atomic & Composite VFX
+        int colCount = (s_inspectorParamCount > 7) ? 2 : 1;
+        int rowsPerCol = (s_inspectorParamCount + colCount - 1) / colCount;
+        int boxWidth = (colCount == 2) ? 570 : 350;
+        int boxHeight = 36 + rowsPerCol * 18 + 48;
+        int startX = 10;
+        int startY = 460;
+
+        DrawRectangle(startX, startY, boxWidth, boxHeight, ColorAlpha(BLACK, 0.82f));
+        DrawRectangleLines(startX, startY, boxWidth, boxHeight, ColorAlpha(GREEN, 0.45f));
+
+        const char *fxName = (s_testIndex >= 0 && s_testIndex < VFXTest_NewFxCount()) ? s_newFxNames[s_testIndex] : "VFX";
+        DrawText(TextFormat("[%s] PARAMETERS (CapsLock/Tab: Select Var | /: Cycle Value)", fxName),
+                 startX + 10, startY + 8, 14, GOLD);
+
+        for (int i = 0; i < s_inspectorParamCount; i++)
+        {
+            int col = (colCount == 2) ? (i / rowsPerCol) : 0;
+            int row = (colCount == 2) ? (i % rowsPerCol) : i;
+            int itemX = startX + 12 + col * 276;
+            int itemY = startY + 28 + row * 18;
+
+            char valBuf[64];
+            VFX_Param_FormatValue(&s_inspectorParams[i], valBuf, sizeof(valBuf));
+
+            bool isSelected = (i == s_inspectorSelectedParam);
+            if (isSelected)
+            {
+                DrawRectangle(itemX - 2, itemY - 1, 268, 16, ColorAlpha(LIME, 0.22f));
+                DrawRectangleLines(itemX - 2, itemY - 1, 268, 16, ColorAlpha(LIME, 0.75f));
+                DrawText(TextFormat(">> [%s] %s: %s", s_inspectorParams[i].group, s_inspectorParams[i].name, valBuf),
+                         itemX, itemY + 1, 12, YELLOW);
+            }
+            else
+            {
+                DrawText(TextFormat("   [%s] %s: %s", s_inspectorParams[i].group, s_inspectorParams[i].name, valBuf),
+                         itemX, itemY + 1, 12, LIGHTGRAY);
+            }
+        }
+
+        int footerY = startY + 28 + rowsPerCol * 18 + 6;
+        DrawText("Controls: CapsLock/Tab: Select Var | / or >: Next Value | ,: Prev Value",
+                 startX + 10, footerY, 12, SKYBLUE);
+        if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER"))
+        {
+            DrawText(TextFormat("Actions: ; Burst | ' Homing (%s) | \\ Detach | V Pause (%s) | Foliage: %d",
+                                VFX_FoliageSystem_IsHomingActive() ? "ON" : "OFF",
+                                s_vfxAnimationPaused ? "PAUSED" : "PLAYING",
+                                VFX_FoliageSystem_GetActiveCount()),
+                     startX + 10, footerY + 16, 12, LIME);
+        }
     }
 
     // @gen:newfx_surface_impact_selector_ui begin
@@ -2134,8 +2150,10 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
 
     const char *envR = getenv("WUXING_WOOD_REACTION");
     if (envR && *envR) {
-        s_woodVineReactionState = (VFX_WoodReactionState)(atoi(envR) % WOOD_REACTION_COUNT);
+        VFXTest_InitLiveConfigs();
+        s_liveWoodVineConfig.reaction = (VFX_WoodReactionState)(atoi(envR) % WOOD_REACTION_COUNT);
     }
+    VFXTest_RefreshInspectorParams(true);
 
     // Fire oneshots immediately for warmup rendering.
     // @gen:newfx_render_trigger begin

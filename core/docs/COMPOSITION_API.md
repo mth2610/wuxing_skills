@@ -2,7 +2,7 @@
 
 > Source headers: `core/composition/visual_composer.h`, `core/geometry/procedural_mesh_utils.h`
 > Implementation: `core/composition/visual_composer.c` + modular `.inl` files
-> Cross-reference: [`API.md`](API.md) §7 (Particle), §19 stub
+> Cross-reference: [`API.md`](API.md) §7 (Particle), §19 stub, [`VFX_ARCHITECTURE.md`](VFX_ARCHITECTURE.md) (Atomic & Composite Standard)
 
 > [!IMPORTANT]
 > **This document is the mechanical catalog — WHAT exists.** For WHY/HOW to
