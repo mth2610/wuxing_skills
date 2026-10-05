@@ -77,11 +77,28 @@ VFX_WoodVineConfig VFX_WoodVine_DefaultConfig(void)
     cfg.coilTurns = 2.2f;
     cfg.enableThorns = true;
     cfg.enableTwin = true;
+    cfg.enableLeaves = false;
+    cfg.waterFactor = 0.0f;
+    cfg.severArc = 1.0f;
+    cfg.fireFactor = 0.0f;
     cfg.castShadow = true;
+    cfg.reaction = WOOD_REACTION_NORMAL;
     cfg.variant = WOOD_VINE_VARIANT_SERPENTINE;
     cfg.style = WOOD_VINE_STYLE_JADE_EMERALD;
     cfg.seed = 98765;
     return cfg;
+}
+
+const char* VFX_WoodReactionState_Name(VFX_WoodReactionState state)
+{
+    switch (state)
+    {
+        case WOOD_REACTION_WATER: return "THUY: HYDRATION BLOOM";
+        case WOOD_REACTION_METAL: return "KIM: SEVERED CUT";
+        case WOOD_REACTION_FIRE:  return "HOA: EMBER BURNING";
+        case WOOD_REACTION_NORMAL:
+        default:                  return "NORMAL DORMANT";
+    }
 }
 
 #define VINE_PATH_MAX_POINTS 24
@@ -510,44 +527,124 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
 {
     if (config == NULL || config->growth <= 0.001f) return;
 
+    VFX_WoodVineConfig eff = *config;
+
+    // Safety: default severArc to 1.0f (unsevered) if not specified or zero
+    if (eff.severArc <= 0.001f) eff.severArc = 1.0f;
+
+    // -------------------------------------------------------------------------
+    // WUXING ELEMENTAL REACTION OVERRIDES
+    // -------------------------------------------------------------------------
+    switch (eff.reaction)
+    {
+        case WOOD_REACTION_WATER: // Thủy sinh Mộc: Hydration bloom (leaves, flowers, rapid sap)
+            eff.enableLeaves = true;
+            // Only auto-hydrate if caller left it 0 and vine is already grown
+            if (eff.waterFactor <= 0.001f && eff.growth >= 0.99f) eff.waterFactor = 1.0f;
+            eff.severArc = 1.0f; // Intact, never severed or collapsed
+            break;
+        case WOOD_REACTION_METAL: // Kim khắc Mộc: Severed cut (cut tip drops, stump withers)
+            if (eff.severArc >= 0.999f) eff.severArc = 0.55f;
+            eff.wither = fmaxf(eff.wither, 0.65f);
+            break;
+        case WOOD_REACTION_FIRE:  // Hỏa thiêu Mộc: Combustion (charcoal bark, magma embers, ash)
+            if (eff.fireFactor <= 0.001f) eff.fireFactor = 1.0f;
+            eff.wither = fmaxf(eff.wither, 0.88f);
+            eff.severArc = 1.0f; // Intact, never severed or collapsed
+            break;
+        case WOOD_REACTION_NORMAL:
+        default:
+            eff.severArc = 1.0f; // Intact, never severed or collapsed
+            break;
+    }
+
     // -------------------------------------------------------------------------
     // 1. GENERATE MAIN VINE PATH & MESH
     // -------------------------------------------------------------------------
     Vector3 pathMain[VINE_PATH_MAX_POINTS];
-    int pathCount = WoodVine_GeneratePath(config, pathMain, VINE_PATH_MAX_POINTS, 0.0f);
+    int pathCount = WoodVine_GeneratePath(&eff, pathMain, VINE_PATH_MAX_POINTS, 0.0f);
+
+    float effectiveGrowth = eff.growth;
+    if (eff.severArc < 0.999f)
+    {
+        effectiveGrowth = fminf(eff.growth, eff.severArc);
+    }
 
     PMRmfTubeConfig tubeCfg = PMRmfTube_DefaultConfig();
-    tubeCfg.baseRadius = config->baseRadius;
+    tubeCfg.baseRadius = eff.baseRadius;
     tubeCfg.taperPow = 1.15f;
-    tubeCfg.tipRadiusFrac = 0.06f;
+    tubeCfg.tipRadiusFrac = (eff.severArc < 0.999f && eff.growth >= eff.severArc) ? 0.35f : 0.06f; // blunt cut edge
     tubeCfg.rootFlare = 0.50f;
     tubeCfg.knotAmp = 0.18f;
     tubeCfg.knotFreq = 7.5f;
     tubeCfg.segments = 28;
     tubeCfg.radialSegs = 8;
-    tubeCfg.growth = config->growth;
+    tubeCfg.growth = effectiveGrowth;
     tubeCfg.birth = 0.0f;
     tubeCfg.span = 1.0f;
     tubeCfg.tipLength = 0.08f;
-    tubeCfg.swayAmp = config->swayAmp;
+    tubeCfg.swayAmp = (eff.fireFactor > 0.05f) ? eff.swayAmp * 0.4f : eff.swayAmp;
+
     // Tailor tube morphology to variant
-    if (config->variant == WOOD_VINE_VARIANT_SPIKE_SPEAR) {
+    if (eff.variant == WOOD_VINE_VARIANT_SPIKE_SPEAR) {
         tubeCfg.taperPow = 1.55f;
         tubeCfg.tipRadiusFrac = 0.012f;
         tubeCfg.rootFlare = 0.70f;
-        tubeCfg.swayAmp = config->swayAmp * 0.20f; // rigid piercing spear
-    } else if (config->variant == WOOD_VINE_VARIANT_ANCIENT_ROOT) {
-        tubeCfg.baseRadius = config->baseRadius * 1.45f; // heavy gnarled root
+        tubeCfg.swayAmp = eff.swayAmp * 0.20f;
+    } else if (eff.variant == WOOD_VINE_VARIANT_ANCIENT_ROOT) {
+        tubeCfg.baseRadius = eff.baseRadius * 1.45f;
         tubeCfg.knotAmp = 0.25f;
         tubeCfg.rootFlare = 0.85f;
-        tubeCfg.swayAmp = 0.0f; // ground roots don't sway in wind
-    } else if (config->variant == WOOD_VINE_VARIANT_SEED_SPROUT) {
-        tubeCfg.baseRadius = config->baseRadius * 0.82f;
+        tubeCfg.swayAmp = 0.0f;
+    } else if (eff.variant == WOOD_VINE_VARIANT_SEED_SPROUT) {
+        tubeCfg.baseRadius = eff.baseRadius * 0.82f;
         tubeCfg.tipRadiusFrac = 0.08f;
     }
 
     PMRmfTubeMesh meshMain;
     PMRmf_BuildTube(pathMain, pathCount, &tubeCfg, &meshMain);
+
+    // -------------------------------------------------------------------------
+    // 1b. SEVERED FALLING PIECE (Kim khắc Mộc physics tumble)
+    // -------------------------------------------------------------------------
+    int cutIdx = (int)(eff.severArc * (float)(pathCount - 1));
+    if (cutIdx < 1) cutIdx = 1;
+    if (cutIdx > pathCount - 2) cutIdx = pathCount - 2;
+
+    int sevCount = pathCount - cutIdx;
+    Vector3 sevPath[VINE_PATH_MAX_POINTS];
+    bool hasSeveredPiece = (eff.severArc < 0.999f && eff.growth >= eff.severArc && sevCount >= 2);
+    PMRmfTubeMesh meshSevered;
+
+    if (hasSeveredPiece)
+    {
+        float fallProg = (eff.growth >= 0.999f)
+            ? fminf(eff.wither * 1.5f, 1.0f)
+            : ((eff.growth - eff.severArc) / (1.0f - eff.severArc));
+        if (fallProg < 0.0f) fallProg = 0.0f;
+        if (fallProg > 1.0f) fallProg = 1.0f;
+
+        float dropSec = fallProg * 1.25f;
+        float dropY = 0.5f * 9.81f * dropSec * dropSec;
+        float tumble = fallProg * 2.5f;
+        float floorY = (eff.targetRadius > 0.02f) ? eff.startPos.y : 0.0f;
+
+        for (int i = 0; i < sevCount; i++)
+        {
+            Vector3 pt = pathMain[cutIdx + i];
+            pt.y -= dropY;
+            if (pt.y < floorY + 0.03f) pt.y = floorY + 0.03f;
+            pt.x += sinf(tumble + (float)i * 0.15f) * (0.08f * fallProg);
+            pt.z += cosf(tumble + (float)i * 0.15f) * (0.08f * fallProg);
+            sevPath[i] = pt;
+        }
+
+        PMRmfTubeConfig sevTubeCfg = tubeCfg;
+        sevTubeCfg.baseRadius = eff.baseRadius * (1.0f - eff.severArc * 0.45f);
+        sevTubeCfg.growth = 1.0f;
+        sevTubeCfg.swayAmp = 0.0f;
+        PMRmf_BuildTube(sevPath, sevCount, &sevTubeCfg, &meshSevered);
+    }
 
     // -------------------------------------------------------------------------
     // 2. DIRECTIONAL SHADOW MAP PRE-PASS (Real Shading P6)
@@ -556,36 +653,113 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
     if (isShadowPass)
     {
         PMRmf_Draw(&meshMain, WHITE, 1.0f, 0.0f);
-        if (config->enableTwin)
+        if (hasSeveredPiece)
+        {
+            PMRmf_Draw(&meshSevered, WHITE, 1.0f, 0.0f);
+        }
+        if (eff.enableTwin && eff.severArc >= 0.999f)
         {
             Vector3 pathTwin[VINE_PATH_MAX_POINTS];
-            WoodVine_GeneratePath(config, pathTwin, VINE_PATH_MAX_POINTS, 2.1f);
+            WoodVine_GeneratePath(&eff, pathTwin, VINE_PATH_MAX_POINTS, 2.1f);
 
             PMRmfTubeConfig twinCfg = tubeCfg;
-            twinCfg.baseRadius = config->baseRadius * 0.45f;
+            twinCfg.baseRadius = eff.baseRadius * 0.45f;
             twinCfg.taperPow = 1.3f;
             twinCfg.knotFreq = 12.0f;
             twinCfg.segments = 24;
             twinCfg.radialSegs = 6;
-            twinCfg.seed = config->seed + 555;
+            twinCfg.seed = eff.seed + 555;
 
             PMRmfTubeMesh meshTwin;
             PMRmf_BuildTube(pathTwin, pathCount, &twinCfg, &meshTwin);
             PMRmf_Draw(&meshTwin, WHITE, 1.2f, 0.5f);
         }
-        if (config->enableThorns)
+        if (eff.enableThorns)
         {
-            WoodVine_DrawThorns(&meshMain, config->growth, config->wither, config->style, true);
+            WoodVine_DrawThorns(&meshMain, effectiveGrowth, eff.wither, eff.style, true);
+            if (hasSeveredPiece)
+            {
+                WoodVine_DrawThorns(&meshSevered, 1.0f, eff.wither + 0.3f, eff.style, true);
+            }
+        }
+        if (eff.enableLeaves || eff.waterFactor > 0.05f)
+        {
+            #define MAX_VINE_LEAF_SOCKETS 32
+            VFX_BotanicalSocket leafSockets[MAX_VINE_LEAF_SOCKETS];
+            int leafCount = Botanical_SampleSocketsOnSpine(pathMain, pathCount, eff.baseRadius,
+                                                          leafSockets, MAX_VINE_LEAF_SOCKETS,
+                                                          eff.seed + 777, 0.22f);
+            if (leafCount > 0)
+            {
+                if (eff.severArc < 0.999f)
+                {
+                    int kept = 0;
+                    for (int i = 0; i < leafCount; i++) {
+                        if (leafSockets[i].arc <= eff.severArc) leafSockets[kept++] = leafSockets[i];
+                    }
+                    leafCount = kept;
+                }
+
+                if (leafCount > 0)
+                {
+                    float leafProg = (eff.waterFactor > 0.001f)
+                        ? WoodVine_Smoothstep(0.0f, 0.65f, eff.waterFactor)
+                        : (eff.enableLeaves ? 1.0f : 0.0f);
+                    float flowerProg = (eff.waterFactor > 0.001f)
+                        ? WoodVine_Smoothstep(0.25f, 1.0f, eff.waterFactor)
+                        : 0.0f;
+
+                    if (leafProg > 0.001f)
+                    {
+                        VFX_WoodLeavesConfig leafCfg = VFX_WoodLeaves_DefaultConfig();
+                        leafCfg.attached = true;
+                        leafCfg.sockets = leafSockets;
+                        leafCfg.socketCount = leafCount;
+                        leafCfg.growth = effectiveGrowth * leafProg;
+                        leafCfg.wither = eff.wither;
+                        leafCfg.style = eff.style;
+                        leafCfg.shape = (eff.style == WOOD_VINE_STYLE_BLOOD_BRAMBLE)
+                            ? WOOD_LEAF_SHAPE_MAPLE
+                            : ((eff.variant == WOOD_VINE_VARIANT_ENTANGLE) ? WOOD_LEAF_SHAPE_WILLOW : WOOD_LEAF_SHAPE_OVAL);
+                        leafCfg.size = (eff.waterFactor > 0.05f) ? (0.16f + 0.05f * eff.waterFactor) : 0.15f;
+                        leafCfg.seed = eff.seed + 101;
+                        VFX_ComposeWoodLeaves(&leafCfg);
+                    }
+
+                    if (eff.waterFactor > 0.05f && flowerProg > 0.001f)
+                    {
+                        VFX_BotanicalSocket flowerSockets[8];
+                        int flowerCount = 0;
+                        for (int i = 0; i < leafCount && flowerCount < 8; i++) {
+                            if (i % 3 == 1) flowerSockets[flowerCount++] = leafSockets[i];
+                        }
+                        if (flowerCount > 0)
+                        {
+                            VFX_WoodFlowerConfig flwCfg = VFX_WoodFlower_DefaultConfig();
+                            flwCfg.attached = true;
+                            flwCfg.sockets = flowerSockets;
+                            flwCfg.socketCount = flowerCount;
+                            flwCfg.growth = effectiveGrowth * flowerProg;
+                            flwCfg.wither = eff.wither;
+                            flwCfg.style = eff.style;
+                            flwCfg.type = (eff.style == WOOD_VINE_STYLE_BLOOD_BRAMBLE)
+                                ? WOOD_FLOWER_TYPE_ORCHID
+                                : ((eff.style == WOOD_VINE_STYLE_GOLDEN_AMBER) ? WOOD_FLOWER_TYPE_PLUM_BLOSSOM : WOOD_FLOWER_TYPE_LOTUS);
+                            VFX_ComposeWoodFlower(&flwCfg);
+                        }
+                    }
+                }
+            }
         }
         return; // Shadow depth pass completed
     }
 
     // -------------------------------------------------------------------------
-    // 3. GROUND SHADOW FALLBACK (Continuous connected ribbon when shadow map is off)
+    // 3. GROUND SHADOW FALLBACK
     // -------------------------------------------------------------------------
-    if (config->castShadow && !EnvShadow_IsEnabled())
+    if (eff.castShadow && !EnvShadow_IsEnabled())
     {
-        WoodVine_DrawContactShadowRibbon(&meshMain, config->growth, config->baseRadius);
+        WoodVine_DrawContactShadowRibbon(&meshMain, effectiveGrowth, eff.baseRadius);
     }
 
     // -------------------------------------------------------------------------
@@ -599,44 +773,64 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
     if (s_woodVineShaderReady && s_woodVineShader.id > 0)
     {
         BeginShaderMode(s_woodVineShader);
+        SkillManager_BeginShader(s_woodVineShader);
 
-        float g = config->growth;
-        float w = config->wither;
-        float freq = 4.0f;
-        float speed = 2.5f;
-        float sway = config->swayAmp;
+        float g = effectiveGrowth;
+        float w = eff.wither;
+        float freq = (eff.fireFactor > 0.05f) ? 8.5f : ((eff.waterFactor > 0.05f) ? 5.2f : 4.0f);
+        float speed = (eff.fireFactor > 0.05f) ? 5.0f : ((eff.waterFactor > 0.05f) ? 4.2f : 2.5f);
+        float sway = (eff.fireFactor > 0.05f) ? eff.swayAmp * 0.4f : eff.swayAmp;
         float time = (float)GetTime();
 
-        Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
+        Vector3 sunDir = Vector3Normalize(Vector3Negate(Environment_GetSunDirection()));
         float lightDir[3] = {sunDir.x, sunDir.y, sunDir.z};
 
         float baseCol[4];
         float foliageCol[4];
         float sapCol[4];
 
-        switch (config->style)
+        if (eff.fireFactor > 0.05f)
         {
-            case WOOD_VINE_STYLE_BLOOD_BRAMBLE: // Cinnabar/Blood-wood: Maximum chromatic contrast on green grass!
-                baseCol[0] = 0.14f; baseCol[1] = 0.04f; baseCol[2] = 0.04f; baseCol[3] = 1.0f;
-                foliageCol[0] = 0.88f; foliageCol[1] = 0.16f; foliageCol[2] = 0.22f; foliageCol[3] = 1.0f;
-                sapCol[0] = 2.20f; sapCol[1] = 0.22f; sapCol[2] = 0.35f; sapCol[3] = 1.0f;
-                break;
-            case WOOD_VINE_STYLE_GOLDEN_AMBER: // Ancient Ironwood & Golden Sap
-                baseCol[0] = 0.06f; baseCol[1] = 0.045f; baseCol[2] = 0.035f; baseCol[3] = 1.0f;
-                foliageCol[0] = 0.92f; foliageCol[1] = 0.68f; foliageCol[2] = 0.15f; foliageCol[3] = 1.0f;
-                sapCol[0] = 2.10f; sapCol[1] = 1.35f; sapCol[2] = 0.20f; sapCol[3] = 1.0f;
-                break;
-            case WOOD_VINE_STYLE_WITHER_GHOST: // Weathered Ghost Wood
-                baseCol[0] = 0.32f; baseCol[1] = 0.32f; baseCol[2] = 0.30f; baseCol[3] = 1.0f;
-                foliageCol[0] = 0.65f; foliageCol[1] = 0.45f; foliageCol[2] = 0.80f; foliageCol[3] = 1.0f;
-                sapCol[0] = 1.50f; sapCol[1] = 0.35f; sapCol[2] = 2.10f; sapCol[3] = 1.0f;
-                break;
-            case WOOD_VINE_STYLE_JADE_EMERALD: // Celestial Jade: Ultra-dark ironwood + blazing cyan-jade veins
-            default:
-                baseCol[0] = 0.065f; baseCol[1] = 0.045f; baseCol[2] = 0.03f; baseCol[3] = 1.0f; // pitch ironwood, deep contrast
-                foliageCol[0] = 0.10f; foliageCol[1] = 0.90f; foliageCol[2] = 0.45f; foliageCol[3] = 1.0f; // electric jade shoot
-                sapCol[0] = 0.20f; sapCol[1] = 2.20f; sapCol[2] = 1.20f; sapCol[3] = 1.0f; // blazing cyan-jade veins
-                break;
+            // Hỏa thiêu Mộc: Charcoal black bark with smoldering liquid magma veins
+            baseCol[0] = 0.06f; baseCol[1] = 0.05f; baseCol[2] = 0.05f; baseCol[3] = 1.0f;
+            foliageCol[0] = 0.16f; foliageCol[1] = 0.09f; foliageCol[2] = 0.05f; foliageCol[3] = 1.0f;
+            sapCol[0] = 3.80f; sapCol[1] = 1.10f; sapCol[2] = 0.15f; sapCol[3] = 1.0f;
+        }
+        else
+        {
+            switch (eff.style)
+            {
+                case WOOD_VINE_STYLE_BLOOD_BRAMBLE:
+                    baseCol[0] = 0.30f; baseCol[1] = 0.11f; baseCol[2] = 0.10f; baseCol[3] = 1.0f;
+                    foliageCol[0] = 0.88f; foliageCol[1] = 0.16f; foliageCol[2] = 0.22f; foliageCol[3] = 1.0f;
+                    sapCol[0] = 2.20f; sapCol[1] = 0.22f; sapCol[2] = 0.35f; sapCol[3] = 1.0f;
+                    break;
+                case WOOD_VINE_STYLE_GOLDEN_AMBER:
+                    baseCol[0] = 0.26f; baseCol[1] = 0.18f; baseCol[2] = 0.11f; baseCol[3] = 1.0f;
+                    foliageCol[0] = 0.92f; foliageCol[1] = 0.68f; foliageCol[2] = 0.15f; foliageCol[3] = 1.0f;
+                    sapCol[0] = 2.10f; sapCol[1] = 1.35f; sapCol[2] = 0.20f; sapCol[3] = 1.0f;
+                    break;
+                case WOOD_VINE_STYLE_WITHER_GHOST:
+                    baseCol[0] = 0.36f; baseCol[1] = 0.36f; baseCol[2] = 0.34f; baseCol[3] = 1.0f;
+                    foliageCol[0] = 0.65f; foliageCol[1] = 0.45f; foliageCol[2] = 0.80f; foliageCol[3] = 1.0f;
+                    sapCol[0] = 1.50f; sapCol[1] = 0.35f; sapCol[2] = 2.10f; sapCol[3] = 1.0f;
+                    break;
+                case WOOD_VINE_STYLE_JADE_EMERALD:
+                default:
+                    baseCol[0] = (eff.waterFactor > 0.05f) ? 0.20f : 0.24f;
+                    baseCol[1] = (eff.waterFactor > 0.05f) ? 0.26f : 0.18f;
+                    baseCol[2] = (eff.waterFactor > 0.05f) ? 0.16f : 0.12f;
+                    baseCol[3] = 1.0f;
+                    foliageCol[0] = (eff.waterFactor > 0.05f) ? 0.15f : 0.10f;
+                    foliageCol[1] = (eff.waterFactor > 0.05f) ? 0.98f : 0.90f;
+                    foliageCol[2] = (eff.waterFactor > 0.05f) ? 0.55f : 0.45f;
+                    foliageCol[3] = 1.0f;
+                    sapCol[0] = (eff.waterFactor > 0.05f) ? 0.15f : 0.20f;
+                    sapCol[1] = (eff.waterFactor > 0.05f) ? 2.80f : 2.20f;
+                    sapCol[2] = (eff.waterFactor > 0.05f) ? 1.70f : 1.20f;
+                    sapCol[3] = 1.0f;
+                    break;
+            }
         }
 
         SetShaderValue(s_woodVineShader, s_locGrowth, &g, SHADER_UNIFORM_FLOAT);
@@ -652,21 +846,30 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
 
         PMRmf_Draw(&meshMain, WHITE, 1.0f, 0.0f);
 
+        // Draw severed piece if detached by metal cut
+        if (hasSeveredPiece)
+        {
+            float sevW = eff.wither + 0.35f;
+            SetShaderValue(s_woodVineShader, s_locWither, &sevW, SHADER_UNIFORM_FLOAT);
+            PMRmf_Draw(&meshSevered, WHITE, 1.0f, 0.0f);
+            SetShaderValue(s_woodVineShader, s_locWither, &w, SHADER_UNIFORM_FLOAT);
+        }
+
         // ---------------------------------------------------------------------
         // 5. BRAIDED TWIN TENDRIL (Secondary coiling strand)
         // ---------------------------------------------------------------------
-        if (config->enableTwin)
+        if (eff.enableTwin && eff.severArc >= 0.999f)
         {
             Vector3 pathTwin[VINE_PATH_MAX_POINTS];
-            WoodVine_GeneratePath(config, pathTwin, VINE_PATH_MAX_POINTS, 2.1f);
+            WoodVine_GeneratePath(&eff, pathTwin, VINE_PATH_MAX_POINTS, 2.1f);
 
             PMRmfTubeConfig twinCfg = tubeCfg;
-            twinCfg.baseRadius = config->baseRadius * 0.45f; // thin companion
+            twinCfg.baseRadius = eff.baseRadius * 0.45f;
             twinCfg.taperPow = 1.3f;
             twinCfg.knotFreq = 12.0f;
             twinCfg.segments = 24;
             twinCfg.radialSegs = 6;
-            twinCfg.seed = config->seed + 555;
+            twinCfg.seed = eff.seed + 555;
 
             PMRmfTubeMesh meshTwin;
             PMRmf_BuildTube(pathTwin, pathCount, &twinCfg, &meshTwin);
@@ -678,14 +881,124 @@ void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config)
     else
     {
         PMRmf_Draw(&meshMain, (Color){50, 140, 70, 255}, 1.0f, 0.0f);
+        if (hasSeveredPiece) PMRmf_Draw(&meshSevered, (Color){85, 65, 45, 255}, 1.0f, 0.0f);
     }
 
     // -------------------------------------------------------------------------
     // 6. HOOKED PHYLLOTAXIS THORNS
     // -------------------------------------------------------------------------
-    if (config->enableThorns)
+    if (eff.enableThorns)
     {
-        WoodVine_DrawThorns(&meshMain, config->growth, config->wither, config->style, false);
+        WoodVine_DrawThorns(&meshMain, effectiveGrowth, eff.wither, eff.style, false);
+        if (hasSeveredPiece)
+        {
+            WoodVine_DrawThorns(&meshSevered, 1.0f, eff.wither + 0.35f, eff.style, false);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. ATTACHED BOTANICAL FOLIAGE LEAVES & BLOOMING FLOWERS
+    // -------------------------------------------------------------------------
+    if (eff.enableLeaves || eff.waterFactor > 0.05f)
+    {
+        VFX_BotanicalSocket leafSockets[MAX_VINE_LEAF_SOCKETS];
+        int leafCount = Botanical_SampleSocketsOnSpine(pathMain, pathCount, eff.baseRadius,
+                                                      leafSockets, MAX_VINE_LEAF_SOCKETS,
+                                                      eff.seed + 777, 0.22f);
+        if (leafCount > 0)
+        {
+            if (eff.severArc < 0.999f)
+            {
+                int kept = 0;
+                for (int i = 0; i < leafCount; i++) {
+                    if (leafSockets[i].arc <= eff.severArc) leafSockets[kept++] = leafSockets[i];
+                }
+                leafCount = kept;
+            }
+
+            if (leafCount > 0)
+            {
+                float leafProg = (eff.waterFactor > 0.001f)
+                    ? WoodVine_Smoothstep(0.0f, 0.65f, eff.waterFactor)
+                    : (eff.enableLeaves ? 1.0f : 0.0f);
+                float flowerProg = (eff.waterFactor > 0.001f)
+                    ? WoodVine_Smoothstep(0.25f, 1.0f, eff.waterFactor)
+                    : 0.0f;
+
+                if (leafProg > 0.001f)
+                {
+                    VFX_WoodLeavesConfig leafCfg = VFX_WoodLeaves_DefaultConfig();
+                    leafCfg.attached = true;
+                    leafCfg.sockets = leafSockets;
+                    leafCfg.socketCount = leafCount;
+                    leafCfg.growth = effectiveGrowth * leafProg;
+                    leafCfg.wither = eff.wither;
+                    leafCfg.swayAmp = eff.swayAmp * 1.35f;
+                    leafCfg.style = eff.style;
+                    leafCfg.shape = (eff.style == WOOD_VINE_STYLE_BLOOD_BRAMBLE)
+                        ? WOOD_LEAF_SHAPE_MAPLE
+                        : ((eff.variant == WOOD_VINE_VARIANT_ENTANGLE) ? WOOD_LEAF_SHAPE_WILLOW : WOOD_LEAF_SHAPE_OVAL);
+                    leafCfg.size = (eff.waterFactor > 0.05f) ? (0.16f + 0.05f * eff.waterFactor) : 0.15f;
+                    leafCfg.seed = eff.seed + 101;
+                    VFX_ComposeWoodLeaves(&leafCfg);
+                }
+
+                // Bloom flowers on hydration (Thủy sinh Mộc)!
+                if (eff.waterFactor > 0.05f && flowerProg > 0.001f)
+                {
+                    VFX_BotanicalSocket flowerSockets[8];
+                    int flowerCount = 0;
+                    for (int i = 0; i < leafCount && flowerCount < 8; i++) {
+                        if (i % 3 == 1) flowerSockets[flowerCount++] = leafSockets[i];
+                    }
+                    if (flowerCount > 0)
+                    {
+                        VFX_WoodFlowerConfig flwCfg = VFX_WoodFlower_DefaultConfig();
+                        flwCfg.attached = true;
+                        flwCfg.sockets = flowerSockets;
+                        flwCfg.socketCount = flowerCount;
+                        flwCfg.growth = effectiveGrowth * flowerProg;
+                        flwCfg.wither = eff.wither;
+                        flwCfg.swayAmp = eff.swayAmp * 1.15f;
+                        flwCfg.size = 0.13f + 0.03f * eff.waterFactor;
+                        flwCfg.type = (eff.style == WOOD_VINE_STYLE_BLOOD_BRAMBLE)
+                            ? WOOD_FLOWER_TYPE_ORCHID
+                            : ((eff.style == WOOD_VINE_STYLE_GOLDEN_AMBER) ? WOOD_FLOWER_TYPE_PLUM_BLOSSOM : WOOD_FLOWER_TYPE_LOTUS);
+                        flwCfg.style = eff.style;
+                        flwCfg.seed = eff.seed + 202;
+                        VFX_ComposeWoodFlower(&flwCfg);
+                    }
+                }
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 8. RISING EMBER MOTES (Hỏa thiêu Mộc)
+    // -------------------------------------------------------------------------
+    if (eff.fireFactor > 0.05f)
+    {
+        float t = (float)GetTime();
+        rlBegin(RL_QUADS);
+        for (int e = 0; e < 16; e++)
+        {
+            float ep = fmodf(t * 0.9f + (float)e * 0.187f, 1.0f);
+            int seg = (e * 3) % (pathCount - 1);
+            Vector3 bPos = Vector3Lerp(pathMain[seg], pathMain[seg + 1], 0.5f);
+            Vector3 emberPos = (Vector3){
+                bPos.x + sinf(t * 3.5f + (float)e * 1.2f) * 0.07f,
+                bPos.y + ep * 1.1f,
+                bPos.z + cosf(t * 3.5f + (float)e * 1.2f) * 0.07f
+            };
+            float sz = 0.016f * (1.0f - ep * 0.5f);
+            unsigned char a = (unsigned char)((1.0f - ep) * 235.0f);
+            rlColor4ub(255, 140, 25, a);
+            rlVertex3f(emberPos.x - sz, emberPos.y - sz, emberPos.z);
+            rlVertex3f(emberPos.x + sz, emberPos.y - sz, emberPos.z);
+            rlVertex3f(emberPos.x + sz, emberPos.y + sz, emberPos.z);
+            rlVertex3f(emberPos.x - sz, emberPos.y + sz, emberPos.z);
+        }
+        rlEnd();
     }
 
     EndBlendMode();

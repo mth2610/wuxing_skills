@@ -70,10 +70,9 @@ void UpdateLeafWhirlwindSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                 if (s->stateTimer >= CASTING_DURATION) {
                     s->state = STATE_ACTIVE;
                     s->stateTimer = 0.0f;
-                    // F0 purge: SpawnImpactEffect -> the E6 package.
-                    // VFX_SpawnOrbitals is deleted with no successor (nothing in
-                    // the surviving set orbits a point); the whirlwind's pull and
-                    // damage are untouched, only its orbiting leaves are gone.
+                    // Botanical Leaf Flurry: Spawn swirling jade leaves into the vortex
+                    VFX_Foliage_SpawnFreeLeaves(s->position, s->radius * 0.85f, 84, 0.0035f, WOOD_VINE_STYLE_JADE_EMERALD);
+                    VFX_FoliageSystem_SetHomingTarget(s->position, 14.0f, 22.0f);
                 }
                 break;
 
@@ -95,6 +94,7 @@ void UpdateLeafWhirlwindSkill(float dt, Vector3 enemyPos, float enemyRadius) {
                 if (s->stateTimer >= ACTIVE_DURATION) {
                     s->state = STATE_DISSOLVE;
                     s->stateTimer = 0.0f;
+                    VFX_FoliageSystem_ClearHomingTarget();
                 }
                 break;
             }

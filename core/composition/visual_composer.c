@@ -114,6 +114,7 @@ void VFX_Compose_Update(float dt)
     WaterOrb_Update(dt);
     WaterRing_Update(dt);
     LiquidBench_Update(dt);
+    VFX_FoliageSystem_Update(dt, NULL);
 }
 
 void VFX_Compose_Draw3D(Camera3D cam)
@@ -138,6 +139,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
     LightningArc_Draw3D(cam);
     VC_RefBands_Draw3D(cam);   /* calibration target — see vc_ref_bands.inl */
     SmokeEmitter_Draw3D(cam);
+    VFX_FoliageSystem_Draw();
 }
 
 /* Screen-space VFX producers that must submit their particle streams before the

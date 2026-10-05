@@ -610,6 +610,28 @@
       "draw_call": "VFX_ComposeWaterStream($SOURCE, $CONTROL1, $CONTROL2, $TARGET, 1.5f, $PROG, $TIME)"
     },
     {
+      "source": "wood/vc_wood_flower.inl",
+      "fn": "VFX_ComposeWoodFlower",
+      "label": "WOOD FLOWER",
+      "category": "wood",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "do { VFX_WoodFlowerConfig _cfg = VFXTest_BuildWoodFlowerConfig($POS, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodFlower(&_cfg); } while(0)"
+    },
+    {
+      "source": "wood/vc_wood_leaves.inl",
+      "fn": "VFX_ComposeWoodLeaves",
+      "label": "WOOD LEAVES",
+      "category": "wood",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "do { VFX_WoodLeavesConfig _cfg = VFXTest_BuildWoodLeavesConfig($POS, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodLeaves(&_cfg); } while(0)"
+    },
+    {
       "source": "wood/vc_wood_vine.inl",
       "fn": "VFX_ComposeWoodVine",
       "label": "WOOD VINE",
@@ -618,7 +640,7 @@
       "lifecycle": "draw",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeWoodVine(&(VFX_WoodVineConfig){.startPos=$POS, .targetPos=Vector3Distance($POS, s_currentPlayerPos) < 2.5f ? s_currentPlayerPos : Vector3Add($POS, (Vector3){0.0f, 2.2f, 0.0f}), .targetRadius=Vector3Distance($POS, s_currentPlayerPos) < 2.5f ? 0.38f : 0.0f, .targetHeight=1.8f, .length=3.2f, .baseRadius=0.09f, .growth=$PROG, .wither=0.0f, .sapPhase=$PROG*2.0f, .swayAmp=0.05f, .coilRadius=0.35f, .coilTurns=2.4f, .enableThorns=true, .enableTwin=true, .castShadow=true, .seed=98765})"
+      "draw_call": "do { VFX_WoodVineConfig _cfg = VFXTest_BuildWoodVineConfig($POS, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodVine(&_cfg); } while(0)"
     }
   ],
   "schema": 2

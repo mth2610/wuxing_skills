@@ -13,19 +13,10 @@ uniform vec4  u_sapColor;      // Luminous jade sap (HDR) (e.g. 0.40, 1.40, 0.65
 
 void main()
 {
-    float arc = clamp(fragTexCoord.y, 0.0, 1.0);
-
-    // Discard fragment if not yet reached by growth front
-    if (u_growth < 0.999) {
-        if (arc > u_growth) {
-            discard;
-        }
-    }
-
-    vec3 normal = normalize(fragNormal);
-    // View direction in view space (camera is at origin)
-    vec3 viewDir = normalize(-fragPosition);
+    float arc = fragTexCoord.y;
+    vec3 normal = (length(fragNormal) > 0.001) ? normalize(fragNormal) : vec3(0.0, 1.0, 0.0);
     vec3 lightDir = (length(u_lightDir) > 0.001) ? normalize(u_lightDir) : normalize(vec3(0.4, 0.8, 0.4));
+    vec3 viewDir = (length(viewPos - fragPosition) > 0.001) ? normalize(viewPos - fragPosition) : vec3(0.0, 1.0, 0.0);
 
     // 1. Procedural bark fibrous striations & deep wood grain ridges
     float barkRibs = sin(fragTexCoord.x * 32.0) * 0.5 + 0.5;
@@ -72,7 +63,7 @@ void main()
 
     // 7. Final HDR color composition
     vec3 finalRGB = litColor + sapGlow + rimLight;
-    float alpha = clamp(u_baseColor.a, 0.0, 1.0);
+    float alpha = (u_baseColor.a > 0.01) ? clamp(u_baseColor.a, 0.0, 1.0) : 1.0;
 
     // Optional wither dissolve fade at final stage
     if (u_wither > 0.90) {

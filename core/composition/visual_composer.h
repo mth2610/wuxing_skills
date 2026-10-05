@@ -897,6 +897,15 @@ typedef enum {
     WOOD_VINE_STYLE_COUNT
 } VFX_WoodVineStyle;
 
+// ── Wuxing Elemental Reaction States (Universal for Botanical Systems) ───────
+typedef enum {
+    WOOD_REACTION_NORMAL = 0,    // Normal organic growth (Dormant/Standard)
+    WOOD_REACTION_WATER,         // Thủy sinh Mộc: Hydration bloom (leaves & flowers emerge)
+    WOOD_REACTION_METAL,         // Kim khắc Mộc: Severed cut (cut tip drops, stump withers)
+    WOOD_REACTION_FIRE,          // Hỏa thiêu Mộc: Combustion (charcoal embers & ash dissolve)
+    WOOD_REACTION_COUNT
+} VFX_WoodReactionState;
+
 typedef struct {
     Vector3 startPos;       // Root/emergence origin in world space
     Vector3 targetPos;      // Target or tip destination
@@ -912,16 +921,150 @@ typedef struct {
     float coilTurns;        // Number of spiral turns (e.g. 2.2f)
     bool  enableThorns;     // Sprout hooked phyllotaxis thorns along vine
     bool  enableTwin;       // Sprout braided secondary tendril
+    bool  enableLeaves;     // Sprout foliage leaves along vine
+    float waterFactor;      // 0 = normal dry, 1 = fully hydrated verdant bloom
+    float severArc;         // 1.0 = intact, < 1.0 = severed by metal slash at arc
+    float fireFactor;       // 0 = normal, 1 = burning charcoal & ash
     bool  castShadow;       // Cast dynamic ground shadows
+    VFX_WoodReactionState reaction; // Wuxing elemental reaction state
     VFX_WoodVineVariant variant; // Morphological growth archetype
     VFX_WoodVineStyle   style;   // Elemental tonal palette & contrast style
     unsigned int seed;      // Deterministic PRNG seed
 } VFX_WoodVineConfig;
 
-VFX_WoodVineConfig VFX_WoodVine_DefaultConfig(void);
-const char* VFX_WoodVineVariant_Name(VFX_WoodVineVariant variant);
-const char* VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
-void VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
+const char* VFX_WoodReactionState_Name(VFX_WoodReactionState state);
+
+// ── Botanical Sockets (Universal attachment points for leaves, flowers & branches)
+typedef struct {
+    Vector3 pos;        // Surface attachment origin in world space
+    Vector3 normal;     // Outward growth direction (perpendicular to bark surface)
+    Vector3 tangent;    // Direction along the parent branch/vine axis
+    float   arc;        // Normalized distance along parent curve [0..1]
+    float   stemRadius; // Local radius of parent branch at this socket (metres)
+} VFX_BotanicalSocket;
+
+typedef enum {
+    WOOD_LEAF_SHAPE_OVAL = 0,    // Broadleaf / oval blade (verdant, jade)
+    WOOD_LEAF_SHAPE_WILLOW,      // Slender elongated tendril blade
+    WOOD_LEAF_SHAPE_MAPLE,       // Lobed / serrated bramble blade (blood bramble)
+    WOOD_LEAF_SHAPE_COUNT
+} VFX_WoodLeafShape;
+
+typedef struct {
+    bool  attached;               // true: anchored to host sockets; false: free physical airborne simulation
+    Vector3 origin;               // center of spawn/distribution (metres)
+    float radius;                 // dispersion radius (metres)
+    int   count;                  // number of leaves N (e.g. 16 to hundreds)
+    float mass;                   // mass in kg (e.g. 0.004kg)
+    Vector3 initialVelocity;      // ejection velocity in m/s
+    float velocitySpread;         // velocity scatter in m/s
+    const VFX_BotanicalSocket *sockets; // Surface attachment sockets (when attached == true)
+    int   socketCount;
+    float growth;                 // Growth emergence progress [0..1]
+    float wither;                 // Decay/wither progress [0..1]
+    float swayAmp;                // Flutter sway under wind (metres)
+    float size;                   // Leaf blade length scale (metres, default ~0.16m)
+    VFX_WoodLeafShape shape;
+    VFX_WoodVineStyle style;
+    unsigned int seed;
+} VFX_WoodLeavesConfig;
+
+VFX_WoodVineConfig   VFX_WoodVine_DefaultConfig(void);
+const char*          VFX_WoodVineVariant_Name(VFX_WoodVineVariant variant);
+const char*          VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
+void                 VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
+
+VFX_WoodLeavesConfig VFX_WoodLeaves_DefaultConfig(void);
+const char*          VFX_WoodLeafShape_Name(VFX_WoodLeafShape shape);
+void                 VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config);
+
+typedef enum {
+    WOOD_FLOWER_TYPE_LOTUS = 0,     // Sacred Jade Lotus (multi-tier chalice petals)
+    WOOD_FLOWER_TYPE_ORCHID,        // Wild Celestial Orchid (asymmetric fan petals)
+    WOOD_FLOWER_TYPE_PLUM_BLOSSOM,  // Five-petal Ironwood Plum Blossom (apricot/ruby blossom)
+    WOOD_FLOWER_TYPE_COUNT
+} VFX_WoodFlowerType;
+
+typedef struct {
+    bool  attached;               // true: anchored to host sockets; false: free physical airborne simulation
+    Vector3 origin;               // center of spawn/distribution (metres)
+    float radius;                 // dispersion radius (metres)
+    int   count;                  // number of flowers/petals M (e.g. 12 to hundreds)
+    float mass;                   // mass in kg (e.g. 0.002kg)
+    Vector3 initialVelocity;      // ejection velocity in m/s
+    float velocitySpread;         // velocity scatter in m/s
+    const VFX_BotanicalSocket *sockets; // Surface attachment sockets (when attached == true)
+    int   socketCount;
+    float growth;                 // Bloom opening progress [0..1]
+    float wither;                 // Decay/wilting progress [0..1]
+    float swayAmp;                // Breeze flutter (metres)
+    float size;                   // Blossom radius scale (metres, default ~0.14m)
+    VFX_WoodFlowerType type;
+    VFX_WoodVineStyle  style;
+    unsigned int seed;
+} VFX_WoodFlowerConfig;
+
+VFX_WoodFlowerConfig VFX_WoodFlower_DefaultConfig(void);
+const char*          VFX_WoodFlowerType_Name(VFX_WoodFlowerType type);
+void                 VFX_ComposeWoodFlower(const VFX_WoodFlowerConfig *config);
+
+// ── Universal Botanical Foliage & Petal Simulation System ────────────────────
+typedef enum {
+    BOTANICAL_KIND_LEAF = 0,
+    BOTANICAL_KIND_PETAL,
+    BOTANICAL_KIND_FLOWER_HEAD
+} VFX_BotanicalKind;
+
+typedef enum {
+    BOTANICAL_STATE_ATTACHED = 0, // Anchored to a surface / vine / tree socket
+    BOTANICAL_STATE_FREE,         // Airborne under gravity, aerofoil drag, wind & force fields
+    BOTANICAL_STATE_SETTLED       // Resting on terrain / ground
+} VFX_BotanicalState;
+
+typedef struct {
+    VFX_BotanicalKind   kind;
+    VFX_WoodLeafShape   leafShape;
+    VFX_WoodFlowerType  flowerType;
+    VFX_WoodVineStyle   style;
+    Vector3 origin;                 // Center of spawn cluster
+    float   radius;                 // Distribution radius in metres
+    int     count;                  // Number of items to spawn (1 to hundreds)
+    bool    attached;               // If true, attempts to anchor to sockets
+    const VFX_BotanicalSocket *sockets; // Optional explicit sockets
+    int     socketCount;
+    Vector3 initialVelocity;        // Base ejection velocity in m/s
+    float   velocitySpread;         // Random velocity scatter in m/s
+    float   mass;                   // Mass in kg (default: 0.005kg)
+    float   size;                   // Scale in metres (e.g. 0.16m)
+    float   growth;                 // Initial growth [0..1]
+    float   lifetime;               // Lifetime in seconds
+    unsigned int seed;
+} VFX_FoliageSpawnParams;
+
+VFX_FoliageSpawnParams VFX_FoliageSpawnParams_Default(void);
+void VFX_FoliageSystem_Init(void);
+void VFX_FoliageSystem_Reset(void);
+int  VFX_FoliageSystem_GetActiveCount(void);
+int  VFX_FoliageSystem_SpawnCluster(const VFX_FoliageSpawnParams *params);
+int  VFX_FoliageSystem_DetachInRadius(Vector3 center, float radius, Vector3 impulse);
+struct ForceField;
+void VFX_FoliageSystem_SetForceField(const struct ForceField *ff);
+void VFX_FoliageSystem_ClearForceField(void);
+void VFX_FoliageSystem_SetHomingTarget(Vector3 targetPos, float suctionStrength, float swirlStrength);
+void VFX_FoliageSystem_ClearHomingTarget(void);
+bool VFX_FoliageSystem_IsHomingActive(void);
+void VFX_FoliageSystem_Update(float dt, const struct ForceField *externalForceField);
+void VFX_FoliageSystem_Draw(void);
+void VFX_FoliageSystem_DrawShadowPass(void);
+
+// High-level convenient Botanical API (for skills, maps, and visual events)
+int  VFX_Foliage_SpawnFreeLeaves(Vector3 center, float radius, int count, float mass, VFX_WoodVineStyle style);
+int  VFX_Foliage_SpawnFreePetals(Vector3 center, float radius, int count, float mass, VFX_WoodFlowerType flowerType, VFX_WoodVineStyle style);
+int  VFX_Foliage_SpawnAttachedLeaves(const VFX_BotanicalSocket *sockets, int socketCount, VFX_WoodLeafShape shape, VFX_WoodVineStyle style);
+int  VFX_Foliage_SpawnAttachedFlowers(const VFX_BotanicalSocket *sockets, int socketCount, VFX_WoodFlowerType type, VFX_WoodVineStyle style);
+int  VFX_Foliage_DetachInRadius(Vector3 center, float radius, Vector3 impulse);
+void VC_WoodFoliage_Update(float dt);
+void VC_WoodFoliage_Draw3D(Camera3D cam);
 
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);

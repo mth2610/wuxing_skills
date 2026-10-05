@@ -30,5 +30,8 @@ void main() {
     float nominalRadiusScale = g * g;
     vec3 localDisplaced = vertexPosition + sway;
 
-    VS_FinalOutput(localDisplaced);
+    fragPosition = localDisplaced;
+    fragNormal   = vertexNormal;
+    fragTexCoord = vertexTexCoord;
+    gl_Position  = mvp * vec4(localDisplaced, 1.0);
 }
