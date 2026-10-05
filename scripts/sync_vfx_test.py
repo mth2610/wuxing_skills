@@ -190,6 +190,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeWoodVineCluster":    ("draw",    "timed",      "continuous"),
     "VFX_ComposeWoodLeaves":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeWoodFlower":         ("draw",    "timed",      "continuous"),
+    "VFX_ComposeWoodPetals":        ("draw",    "timed",      "continuous"),
 }
 
 # Generated-call overrides keep fixtures readable without changing public
@@ -381,6 +382,8 @@ FIXTURE_DRAW_OVERRIDES = {
         "do { VFX_WoodLeavesConfig _cfg = VFXTest_BuildWoodLeavesConfig($POS, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodLeaves(&_cfg); } while(0)",
     "VFX_ComposeWoodFlower":
         "do { VFX_WoodFlowerConfig _cfg = VFXTest_BuildWoodFlowerConfig($POS, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodFlower(&_cfg); } while(0)",
+    "VFX_ComposeWoodPetals":
+        "do { VFX_WoodPetalConfig _cfg = VFXTest_BuildWoodPetalConfig($POS, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodPetals(&_cfg); } while(0)",
 }
 
 # Optional event that starts exactly once when a continuous fixture is selected.

@@ -7,5 +7,6 @@
 #include "vc_wood_leaves.inl"
 #include "vc_wood_flower.inl"
 #include "vc_wood_foliage_system.inl"
+#include "vc_wood_petals.inl"
 #include "vc_wood_vine.inl"
 // @gen:wood_includes end

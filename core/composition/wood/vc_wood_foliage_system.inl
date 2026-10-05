@@ -489,33 +489,146 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
     }
 }
 
-static inline Color Foliage_GetBaseColor(VFX_WoodVineStyle style, VFX_BotanicalKind kind)
+static inline void Foliage_GetFoliageColors(VFX_WoodVineStyle style, VFX_BotanicalKind kind,
+                                            VFX_WoodFlowerType flowerType, float wither,
+                                            Color *outBase, Color *outTip, Color *outAccent)
 {
-    if (kind == BOTANICAL_KIND_FLOWER_HEAD || kind == BOTANICAL_KIND_PETAL)
+    Color cBase, cTip, cAccent;
+    if (kind == BOTANICAL_KIND_LEAF)
     {
         switch (style)
         {
-            case WOOD_VINE_STYLE_BLOOD_BRAMBLE: return (Color){225, 38, 65, 255};
-            case WOOD_VINE_STYLE_GOLDEN_AMBER:  return (Color){245, 185, 35, 255};
-            case WOOD_VINE_STYLE_WITHER_GHOST:  return (Color){185, 135, 245, 255};
+            case WOOD_VINE_STYLE_BLOOD_BRAMBLE:
+                cBase   = (Color){160, 22, 38, 255};
+                cTip    = (Color){255, 120, 145, 255};
+                cAccent = (Color){255, 210, 225, 255}; // Radiant ruby chi spine
+                break;
+            case WOOD_VINE_STYLE_GOLDEN_AMBER:
+                cBase   = (Color){195, 140, 28, 255};
+                cTip    = (Color){255, 235, 110, 255};
+                cAccent = (Color){255, 252, 190, 255}; // Radiant solar gold spine
+                break;
+            case WOOD_VINE_STYLE_WITHER_GHOST:
+                cBase   = (Color){120, 95, 145, 255};
+                cTip    = (Color){220, 180, 255, 255};
+                cAccent = (Color){245, 230, 255, 255}; // Spectral amethyst chi spine
+                break;
             case WOOD_VINE_STYLE_JADE_EMERALD:
-            default:                            return (Color){45, 195, 125, 255};
+            default:
+                cBase   = (Color){18, 145, 72, 255};    // Rich celestial emerald
+                cTip    = (Color){140, 255, 205, 255};  // Luminous spirit aqua edge
+                cAccent = (Color){205, 255, 240, 255};  // Incandescent jade chi spine
+                break;
         }
-    }
-    else
-    {
-        switch (style)
+
+        if (wither > 0.02f)
         {
-            case WOOD_VINE_STYLE_BLOOD_BRAMBLE: return (Color){180, 28, 42, 255};
-            case WOOD_VINE_STYLE_GOLDEN_AMBER:  return (Color){215, 155, 35, 255};
-            case WOOD_VINE_STYLE_WITHER_GHOST:  return (Color){145, 120, 175, 255};
-            case WOOD_VINE_STYLE_JADE_EMERALD:
-            default:                            return (Color){38, 185, 85, 255};
+            float w = wither;
+            Color autumnGold = (Color){205, 155, 38, 255};
+            Color deadBrown  = (Color){85, 52, 25, 255};
+            float p1 = w < 0.5f ? (w * 2.0f) : 1.0f;
+            float p2 = w > 0.5f ? ((w - 0.5f) * 2.0f) : 0.0f;
+            cBase.r = (unsigned char)(cBase.r * (1.0f - p1) + autumnGold.r * p1);
+            cBase.g = (unsigned char)(cBase.g * (1.0f - p1) + autumnGold.g * p1);
+            cBase.b = (unsigned char)(cBase.b * (1.0f - p1) + autumnGold.b * p1);
+            cBase.r = (unsigned char)(cBase.r * (1.0f - p2) + deadBrown.r * p2);
+            cBase.g = (unsigned char)(cBase.g * (1.0f - p2) + deadBrown.r * p2);
+            cBase.b = (unsigned char)(cBase.b * (1.0f - p2) + deadBrown.r * p2);
+            cTip = cBase;
+            cAccent = cBase;
         }
     }
+    else // Flower head or individual falling petal — NEVER GREEN!
+    {
+        if (flowerType == WOOD_FLOWER_TYPE_LOTUS)
+        {
+            // SACRED LOTUS (Hoa Sen): Celestial White-Pink base to vivid Lotus Rose tip + golden stamen core
+            if (style == WOOD_VINE_STYLE_BLOOD_BRAMBLE) {
+                cBase   = (Color){185, 25, 42, 255};
+                cTip    = (Color){255, 110, 140, 255};
+                cAccent = (Color){255, 220, 80, 255};
+            } else if (style == WOOD_VINE_STYLE_GOLDEN_AMBER) {
+                cBase   = (Color){255, 245, 190, 255};
+                cTip    = (Color){255, 225, 90, 255};
+                cAccent = (Color){255, 248, 140, 255};
+            } else if (style == WOOD_VINE_STYLE_WITHER_GHOST) {
+                cBase   = (Color){215, 200, 245, 255};
+                cTip    = (Color){220, 185, 255, 255};
+                cAccent = (Color){150, 240, 255, 255};
+            } else {
+                cBase   = (Color){255, 245, 250, 255};  // Translucent pearl blush base
+                cTip    = (Color){255, 125, 185, 255};  // Radiant lotus rose magenta
+                cAccent = (Color){255, 225, 55, 255};   // Glowing golden core
+            }
+        }
+        else if (flowerType == WOOD_FLOWER_TYPE_ORCHID)
+        {
+            // CELESTIAL ORCHID (Hoa Lan): Silky Porcelain to Royal Orchid Violet
+            if (style == WOOD_VINE_STYLE_BLOOD_BRAMBLE) {
+                cBase   = (Color){245, 210, 220, 255};
+                cTip    = (Color){255, 110, 145, 255};
+                cAccent = (Color){255, 220, 90, 255};
+            } else if (style == WOOD_VINE_STYLE_GOLDEN_AMBER) {
+                cBase   = (Color){255, 248, 220, 255};
+                cTip    = (Color){255, 215, 70, 255};
+                cAccent = (Color){255, 230, 120, 255};
+            } else if (style == WOOD_VINE_STYLE_WITHER_GHOST) {
+                cBase   = (Color){230, 220, 250, 255};
+                cTip    = (Color){215, 180, 255, 255};
+                cAccent = (Color){140, 240, 255, 255};
+            } else {
+                cBase   = (Color){252, 248, 255, 255};
+                cTip    = (Color){225, 115, 255, 255};
+                cAccent = (Color){255, 225, 75, 255};
+            }
+        }
+        else // WOOD_FLOWER_TYPE_PLUM (Hoa Mai / Hoa Đào)
+        {
+            // PLUM BLOSSOM (Hoa Mai / Đào): Soft Peach Pink or Golden Apricot
+            if (style == WOOD_VINE_STYLE_BLOOD_BRAMBLE) {
+                cBase   = (Color){255, 225, 230, 255};
+                cTip    = (Color){255, 125, 155, 255};
+                cAccent = (Color){255, 215, 65, 255};
+            } else if (style == WOOD_VINE_STYLE_GOLDEN_AMBER) {
+                cBase   = (Color){255, 250, 195, 255};
+                cTip    = (Color){255, 230, 80, 255};
+                cAccent = (Color){255, 150, 20, 255};
+            } else if (style == WOOD_VINE_STYLE_WITHER_GHOST) {
+                cBase   = (Color){235, 225, 245, 255};
+                cTip    = (Color){225, 200, 255, 255};
+                cAccent = (Color){140, 240, 255, 255};
+            } else {
+                cBase   = (Color){255, 245, 248, 255};
+                cTip    = (Color){255, 145, 195, 255};
+                cAccent = (Color){255, 225, 60, 255};
+            }
+        }
+
+        if (wither > 0.05f)
+        {
+            float w = wither;
+            Color wiltBrown = (Color){95, 60, 35, 255};
+            cBase.r = (unsigned char)(cBase.r * (1.0f - w) + wiltBrown.r * w);
+            cBase.g = (unsigned char)(cBase.g * (1.0f - w) + wiltBrown.g * w);
+            cBase.b = (unsigned char)(cBase.b * (1.0f - w) + wiltBrown.b * w);
+            cTip.r  = (unsigned char)(cTip.r * (1.0f - w) + wiltBrown.r * w);
+            cTip.g  = (unsigned char)(cTip.g * (1.0f - w) + wiltBrown.r * w);
+            cTip.b  = (unsigned char)(cTip.b * (1.0f - w) + wiltBrown.b * w);
+        }
+    }
+    *outBase = cBase;
+    *outTip = cTip;
+    *outAccent = cAccent;
 }
 
-static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color col, bool isShadowPass)
+static inline Color Foliage_GetBaseColor(VFX_WoodVineStyle style, VFX_BotanicalKind kind)
+{
+    Color cBase, cTip, cAccent;
+    Foliage_GetFoliageColors(style, kind, WOOD_FLOWER_TYPE_LOTUS, 0.0f, &cBase, &cTip, &cAccent);
+    return cBase;
+}
+
+static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color cBase, Color cTip, Color cVein, bool isShadowPass)
 {
     float sz = p->scale * p->growth;
     if (sz <= 0.005f) return;
@@ -525,8 +638,8 @@ static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color col, bo
     if (p->state == BOTANICAL_STATE_ATTACHED)
     {
         forward = p->anchorTangent;
-        right = Vector3CrossProduct(p->anchorNormal, forward);
-        up = p->anchorNormal;
+        up      = p->anchorNormal;
+        right   = Vector3CrossProduct(up, forward);
     }
     else
     {
@@ -543,84 +656,492 @@ static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color col, bo
     right   = Vector3Normalize(right);
     up      = Vector3Normalize(up);
 
-    float halfW = sz * 0.32f;
-    float halfL = sz * 0.65f;
-    float vLift = sz * 0.12f; // V-crease keel
+    Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
+    unsigned char alphaByte = (unsigned char)(p->alpha * 255.0f);
 
-    Vector3 stem = Vector3Add(p->pos, Vector3Scale(forward, -halfL * 0.3f));
-    Vector3 tip  = Vector3Add(p->pos, Vector3Scale(forward,  halfL * 0.7f));
-    Vector3 mid  = Vector3Add(p->pos, Vector3Scale(up, -vLift));
+    float leafLen = sz;
+    Vector3 vRoot = p->pos;
 
-    Vector3 leftWing  = Vector3Add(Vector3Add(p->pos, Vector3Scale(right, -halfW)), Vector3Scale(up, vLift));
-    Vector3 rightWing = Vector3Add(Vector3Add(p->pos, Vector3Scale(right,  halfW)), Vector3Scale(up, vLift));
+    // Tiny petiole stem
+    if (!isShadowPass)
+    {
+        Vector3 vStemBase = Vector3Add(vRoot, Vector3Scale(forward, -leafLen * 0.22f));
+        float stemLit = 0.35f + 0.65f * fmaxf(Vector3DotProduct(up, sunDir), 0.0f);
+        rlColor4ub((unsigned char)(cVein.r * stemLit * 0.8f), (unsigned char)(cVein.g * stemLit * 0.8f), (unsigned char)(cVein.b * stemLit * 0.8f), alphaByte);
+        rlNormal3f(up.x, up.y, up.z);
+        Vector3 sLeft  = Vector3Add(vStemBase, Vector3Scale(right, -0.006f));
+        Vector3 sRight = Vector3Add(vStemBase, Vector3Scale(right,  0.006f));
+        rlVertex3f(sLeft.x, sLeft.y, sLeft.z);
+        rlVertex3f(sRight.x, sRight.y, sRight.z);
+        rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
+    }
 
-    unsigned char a = (unsigned char)(p->alpha * (float)col.a);
-    Color drawCol = (Color){ col.r, col.g, col.b, a };
+    if (p->leafShape == WOOD_LEAF_SHAPE_WILLOW || p->leafShape == WOOD_LEAF_SHAPE_OVAL)
+    {
+        // 5-SEGMENT AAA PROCEDURAL CURVED BLADE (WILLOW / OVAL)
+        BotanicalProfile prof = (p->leafShape == WOOD_LEAF_SHAPE_WILLOW)
+            ? Botanical_ProfileWillow() : Botanical_ProfileOval();
 
-    // Left V-crease half
-    rlColor4ub(drawCol.r, drawCol.g, drawCol.b, drawCol.a);
-    rlVertex3f(stem.x, stem.y, stem.z);
-    rlVertex3f(leftWing.x, leftWing.y, leftWing.z);
-    rlVertex3f(tip.x, tip.y, tip.z);
-    rlVertex3f(mid.x, mid.y, mid.z);
+        float curLen = (p->leafShape == WOOD_LEAF_SHAPE_WILLOW) ? (leafLen * 1.45f) : (leafLen * 1.05f);
+        #define FOLIAGE_LEAF_SEGS 5
+        Vector3 spineMid[FOLIAGE_LEAF_SEGS + 1];
+        Vector3 leftEdge[FOLIAGE_LEAF_SEGS + 1];
+        Vector3 rightEdge[FOLIAGE_LEAF_SEGS + 1];
 
-    // Right V-crease half
-    rlColor4ub(drawCol.r, drawCol.g, drawCol.b, drawCol.a);
-    rlVertex3f(stem.x, stem.y, stem.z);
-    rlVertex3f(mid.x, mid.y, mid.z);
-    rlVertex3f(tip.x, tip.y, tip.z);
-    rlVertex3f(rightWing.x, rightWing.y, rightWing.z);
+        float flutter = sinf(p->flutterPhase) * (p->state == BOTANICAL_STATE_FREE ? 0.18f : 0.06f);
+
+        for (int i = 0; i <= FOLIAGE_LEAF_SEGS; i++)
+        {
+            float u = (float)i / (float)FOLIAGE_LEAF_SEGS;
+            float t = Botanical_CosineWarp(u);
+            float w = Botanical_EvaluateWidth(&prof, t) * curLen;
+            float y = t * curLen;
+            float zc = prof.curl * t * t * curLen + flutter * t * t * curLen;
+            float zFold = prof.fold * w;
+
+            Vector3 pMid = Vector3Add(vRoot, Vector3Add(Vector3Scale(forward, y), Vector3Scale(up, zc)));
+            spineMid[i]  = pMid;
+            leftEdge[i]  = Vector3Add(pMid, Vector3Add(Vector3Scale(right, -w), Vector3Scale(up, zFold)));
+            rightEdge[i] = Vector3Add(pMid, Vector3Add(Vector3Scale(right,  w), Vector3Scale(up, zFold)));
+        }
+
+        for (int i = 0; i < FOLIAGE_LEAF_SEGS; i++)
+        {
+            Vector3 pL0 = leftEdge[i],     pL1 = leftEdge[i + 1];
+            Vector3 pM0 = spineMid[i],     pM1 = spineMid[i + 1];
+            Vector3 pR0 = rightEdge[i],    pR1 = rightEdge[i + 1];
+
+            Vector3 nL = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(pL1, pM0), Vector3Subtract(pM1, pM0)));
+            Vector3 nR = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(pM1, pM0), Vector3Subtract(pR1, pM0)));
+
+            if (!isShadowPass)
+            {
+                float dL = 0.35f + 0.65f * Botanical_WrapDiffuse(nL, sunDir) + 0.38f * Botanical_WrapDiffuse(Vector3Negate(nL), sunDir);
+                float dR = 0.35f + 0.65f * Botanical_WrapDiffuse(nR, sunDir) + 0.38f * Botanical_WrapDiffuse(Vector3Negate(nR), sunDir);
+
+                float t0 = (float)i / (float)FOLIAGE_LEAF_SEGS;
+                float t1 = (float)(i + 1) / (float)FOLIAGE_LEAF_SEGS;
+                Color col0 = (Color){
+                    (unsigned char)(cBase.r * (1.0f - t0 * 0.6f) + cTip.r * (t0 * 0.6f)),
+                    (unsigned char)(cBase.g * (1.0f - t0 * 0.6f) + cTip.g * (t0 * 0.6f)),
+                    (unsigned char)(cBase.b * (1.0f - t0 * 0.6f) + cTip.b * (t0 * 0.6f)),
+                    alphaByte
+                };
+                Color col1 = (Color){
+                    (unsigned char)(cBase.r * (1.0f - t1 * 0.6f) + cTip.r * (t1 * 0.6f)),
+                    (unsigned char)(cBase.g * (1.0f - t1 * 0.6f) + cTip.g * (t1 * 0.6f)),
+                    (unsigned char)(cBase.b * (1.0f - t1 * 0.6f) + cTip.b * (t1 * 0.6f)),
+                    alphaByte
+                };
+
+                // Left blade quad (pM0, pL0, pL1) + (pM0, pL1, pM1)
+                rlColor4ub((unsigned char)(cVein.r * dL), (unsigned char)(cVein.g * dL), (unsigned char)(cVein.b * dL), alphaByte);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pM0.x, pM0.y, pM0.z);
+                rlColor4ub((unsigned char)(col0.r * dL), (unsigned char)(col0.g * dL), (unsigned char)(col0.b * dL), alphaByte);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pL0.x, pL0.y, pL0.z);
+                rlColor4ub((unsigned char)(col1.r * dL), (unsigned char)(col1.g * dL), (unsigned char)(col1.b * dL), alphaByte);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pL1.x, pL1.y, pL1.z);
+
+                rlColor4ub((unsigned char)(cVein.r * dL), (unsigned char)(cVein.g * dL), (unsigned char)(cVein.b * dL), alphaByte);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pM0.x, pM0.y, pM0.z);
+                rlColor4ub((unsigned char)(col1.r * dL), (unsigned char)(col1.g * dL), (unsigned char)(col1.b * dL), alphaByte);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pL1.x, pL1.y, pL1.z);
+                rlColor4ub((unsigned char)(cVein.r * dL), (unsigned char)(cVein.g * dL), (unsigned char)(cVein.b * dL), alphaByte);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pM1.x, pM1.y, pM1.z);
+
+                // Right blade quad (pM0, pM1, pR1) + (pM0, pR1, pR0)
+                rlColor4ub((unsigned char)(cVein.r * dR), (unsigned char)(cVein.g * dR), (unsigned char)(cVein.b * dR), alphaByte);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pM0.x, pM0.y, pM0.z);
+                rlColor4ub((unsigned char)(cVein.r * dR), (unsigned char)(cVein.g * dR), (unsigned char)(cVein.b * dR), alphaByte);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pM1.x, pM1.y, pM1.z);
+                rlColor4ub((unsigned char)(col1.r * dR), (unsigned char)(col1.g * dR), (unsigned char)(col1.b * dR), alphaByte);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pR1.x, pR1.y, pR1.z);
+
+                rlColor4ub((unsigned char)(cVein.r * dR), (unsigned char)(cVein.g * dR), (unsigned char)(cVein.b * dR), alphaByte);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pM0.x, pM0.y, pM0.z);
+                rlColor4ub((unsigned char)(col1.r * dR), (unsigned char)(col1.g * dR), (unsigned char)(col1.b * dR), alphaByte);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pR1.x, pR1.y, pR1.z);
+                rlColor4ub((unsigned char)(col0.r * dR), (unsigned char)(col0.g * dR), (unsigned char)(col0.b * dR), alphaByte);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pR0.x, pR0.y, pR0.z);
+            }
+            else
+            {
+                rlVertex3f(pM0.x, pM0.y, pM0.z); rlVertex3f(pL0.x, pL0.y, pL0.z); rlVertex3f(pL1.x, pL1.y, pL1.z);
+                rlVertex3f(pM0.x, pM0.y, pM0.z); rlVertex3f(pL1.x, pL1.y, pL1.z); rlVertex3f(pM1.x, pM1.y, pM1.z);
+                rlVertex3f(pM0.x, pM0.y, pM0.z); rlVertex3f(pM1.x, pM1.y, pM1.z); rlVertex3f(pR1.x, pR1.y, pR1.z);
+                rlVertex3f(pM0.x, pM0.y, pM0.z); rlVertex3f(pR1.x, pR1.y, pR1.z); rlVertex3f(pR0.x, pR0.y, pR0.z);
+            }
+        }
+        #undef FOLIAGE_LEAF_SEGS
+    }
+    else
+    {
+        // MAPLE: 3-lobed notched palmate silhouette with prominent sinus notches
+        float mLen = leafLen * 0.95f;
+        float mW   = mLen * 0.52f;
+
+        Vector3 vSpineMid  = Vector3Add(vRoot, Vector3Scale(forward, mLen * 0.45f));
+        Vector3 vTip       = Vector3Add(vRoot, Vector3Scale(forward, mLen * 1.05f));
+        Vector3 vLeftLobe  = Vector3Add(vRoot, Vector3Add(Vector3Scale(forward, mLen * 0.60f), Vector3Scale(right, -mW * 1.15f)));
+        Vector3 vRightLobe = Vector3Add(vRoot, Vector3Add(Vector3Scale(forward, mLen * 0.60f), Vector3Scale(right,  mW * 1.15f)));
+        Vector3 vNotchL    = Vector3Add(vRoot, Vector3Add(Vector3Scale(forward, mLen * 0.42f), Vector3Scale(right, -mW * 0.42f)));
+        Vector3 vNotchR    = Vector3Add(vRoot, Vector3Add(Vector3Scale(forward, mLen * 0.42f), Vector3Scale(right,  mW * 0.42f)));
+        Vector3 vBaseL     = Vector3Add(vRoot, Vector3Scale(right, -mW * 0.35f));
+        Vector3 vBaseR     = Vector3Add(vRoot, Vector3Scale(right,  mW * 0.35f));
+
+        Vector3 nC = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vNotchL, vRoot), Vector3Subtract(vTip, vRoot)));
+        Vector3 nL = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vBaseL, vRoot), Vector3Subtract(vLeftLobe, vRoot)));
+        Vector3 nR = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vRightLobe, vRoot), Vector3Subtract(vBaseR, vRoot)));
+
+        if (!isShadowPass)
+        {
+            float dC = 0.36f + 0.64f * Botanical_WrapDiffuse(nC, sunDir) + 0.38f * Botanical_WrapDiffuse(Vector3Negate(nC), sunDir);
+            float dL = 0.36f + 0.64f * Botanical_WrapDiffuse(nL, sunDir) + 0.38f * Botanical_WrapDiffuse(Vector3Negate(nL), sunDir);
+            float dR = 0.36f + 0.64f * Botanical_WrapDiffuse(nR, sunDir) + 0.38f * Botanical_WrapDiffuse(Vector3Negate(nR), sunDir);
+
+            // Center lobe
+            rlColor4ub((unsigned char)(cVein.r * dC), (unsigned char)(cVein.g * dC), (unsigned char)(cVein.b * dC), alphaByte);
+            rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vSpineMid.x, vSpineMid.y, vSpineMid.z);
+            rlColor4ub((unsigned char)(cBase.r * dC), (unsigned char)(cBase.g * dC), (unsigned char)(cBase.b * dC), alphaByte);
+            rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vNotchL.x, vNotchL.y, vNotchL.z);
+            rlColor4ub((unsigned char)(cTip.r * dC),  (unsigned char)(cTip.g * dC),  (unsigned char)(cTip.b * dC), alphaByte);
+            rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
+
+            rlColor4ub((unsigned char)(cVein.r * dC), (unsigned char)(cVein.g * dC), (unsigned char)(cVein.b * dC), alphaByte);
+            rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vSpineMid.x, vSpineMid.y, vSpineMid.z);
+            rlColor4ub((unsigned char)(cTip.r * dC),  (unsigned char)(cTip.g * dC),  (unsigned char)(cTip.b * dC), alphaByte);
+            rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
+            rlColor4ub((unsigned char)(cBase.r * dC), (unsigned char)(cBase.g * dC), (unsigned char)(cBase.b * dC), alphaByte);
+            rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vNotchR.x, vNotchR.y, vNotchR.z);
+
+            // Left lobe
+            rlColor4ub((unsigned char)(cVein.r * dL), (unsigned char)(cVein.g * dL), (unsigned char)(cVein.b * dL), alphaByte);
+            rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
+            rlColor4ub((unsigned char)(cBase.r * dL), (unsigned char)(cBase.g * dL), (unsigned char)(cBase.b * dL), alphaByte);
+            rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vBaseL.x, vBaseL.y, vBaseL.z);
+            rlColor4ub((unsigned char)(cTip.r * dL),  (unsigned char)(cTip.g * dL),  (unsigned char)(cTip.b * dL), alphaByte);
+            rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vLeftLobe.x, vLeftLobe.y, vLeftLobe.z);
+
+            rlColor4ub((unsigned char)(cVein.r * dL), (unsigned char)(cVein.g * dL), (unsigned char)(cVein.b * dL), alphaByte);
+            rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
+            rlColor4ub((unsigned char)(cTip.r * dL),  (unsigned char)(cTip.g * dL),  (unsigned char)(cTip.b * dL), alphaByte);
+            rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vLeftLobe.x, vLeftLobe.y, vLeftLobe.z);
+            rlColor4ub((unsigned char)(cBase.r * dL), (unsigned char)(cBase.g * dL), (unsigned char)(cBase.b * dL), alphaByte);
+            rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vNotchL.x, vNotchL.y, vNotchL.z);
+
+            // Right lobe
+            rlColor4ub((unsigned char)(cVein.r * dR), (unsigned char)(cVein.g * dR), (unsigned char)(cVein.b * dR), alphaByte);
+            rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
+            rlColor4ub((unsigned char)(cTip.r * dR),  (unsigned char)(cTip.g * dR),  (unsigned char)(cTip.b * dR), alphaByte);
+            rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vRightLobe.x, vRightLobe.y, vRightLobe.z);
+            rlColor4ub((unsigned char)(cBase.r * dR), (unsigned char)(cBase.g * dR), (unsigned char)(cBase.b * dR), alphaByte);
+            rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vBaseR.x, vBaseR.y, vBaseR.z);
+
+            rlColor4ub((unsigned char)(cVein.r * dR), (unsigned char)(cVein.g * dR), (unsigned char)(cVein.b * dR), alphaByte);
+            rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
+            rlColor4ub((unsigned char)(cBase.r * dR), (unsigned char)(cBase.g * dR), (unsigned char)(cBase.b * dR), alphaByte);
+            rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vNotchR.x, vNotchR.y, vNotchR.z);
+            rlColor4ub((unsigned char)(cTip.r * dR),  (unsigned char)(cTip.g * dR),  (unsigned char)(cTip.b * dR), alphaByte);
+            rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vRightLobe.x, vRightLobe.y, vRightLobe.z);
+        }
+        else
+        {
+            rlVertex3f(vSpineMid.x, vSpineMid.y, vSpineMid.z); rlVertex3f(vNotchL.x, vNotchL.y, vNotchL.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
+            rlVertex3f(vSpineMid.x, vSpineMid.y, vSpineMid.z); rlVertex3f(vTip.x, vTip.y, vTip.z); rlVertex3f(vNotchR.x, vNotchR.y, vNotchR.z);
+            rlVertex3f(vRoot.x, vRoot.y, vRoot.z); rlVertex3f(vBaseL.x, vBaseL.y, vBaseL.z); rlVertex3f(vLeftLobe.x, vLeftLobe.y, vLeftLobe.z);
+            rlVertex3f(vRoot.x, vRoot.y, vRoot.z); rlVertex3f(vLeftLobe.x, vLeftLobe.y, vLeftLobe.z); rlVertex3f(vNotchL.x, vNotchL.y, vNotchL.z);
+            rlVertex3f(vRoot.x, vRoot.y, vRoot.z); rlVertex3f(vRightLobe.x, vRightLobe.y, vRightLobe.z); rlVertex3f(vBaseR.x, vBaseR.y, vBaseR.z);
+            rlVertex3f(vRoot.x, vRoot.y, vRoot.z); rlVertex3f(vNotchR.x, vNotchR.y, vNotchR.z); rlVertex3f(vRightLobe.x, vRightLobe.y, vRightLobe.z);
+        }
+    }
 }
 
-static void Foliage_RenderSingleFlower(const VFX_FoliageParticle *p, Color col, bool isShadowPass)
+static void Foliage_RenderSingleFlower(const VFX_FoliageParticle *p, Color cBase, Color cTip, Color cStamen, bool isShadowPass)
 {
     float sz = p->scale * p->growth;
     if (sz <= 0.005f) return;
 
-    Vector3 forward = (Vector3){0, 1, 0};
-    Vector3 right   = (Vector3){1, 0, 0};
-    Vector3 up      = (Vector3){0, 0, 1};
+    Vector3 forward, right, up;
 
-    if (p->state != BOTANICAL_STATE_ATTACHED)
-    {
-        float cy = cosf(p->rot.y), sy = sinf(p->rot.y);
-        float cp = cosf(p->rot.x), sp = sinf(p->rot.x);
-        forward = (Vector3){ cy * cp, sp, sy * cp };
-        right   = (Vector3){ -sy, 0, cy };
-        up      = Vector3CrossProduct(forward, right);
-    }
-    else
+    if (p->state == BOTANICAL_STATE_ATTACHED)
     {
         forward = p->anchorNormal;
         right   = p->anchorTangent;
         up      = Vector3CrossProduct(forward, right);
+    }
+    else
+    {
+        float cy = cosf(p->rot.y), sy = sinf(p->rot.y);
+        float cp = cosf(p->rot.x), sp = sinf(p->rot.x);
+        float cr = cosf(p->rot.z), sr = sinf(p->rot.z);
+
+        forward = (Vector3){ cy * cp, sp, sy * cp };
+        up      = (Vector3){ -sy * sr - cy * sp * cr, cp * cr, cy * sr - sy * sp * cr };
+        right   = Vector3CrossProduct(up, forward);
     }
 
     forward = Vector3Normalize(forward);
     right   = Vector3Normalize(right);
     up      = Vector3Normalize(up);
 
-    int petalCount = (p->flowerType == WOOD_FLOWER_TYPE_LOTUS) ? 6 : 5;
-    float petalR = sz * 0.55f;
-    unsigned char a = (unsigned char)(p->alpha * (float)col.a);
-    Color drawCol = (Color){ col.r, col.g, col.b, a };
-
+    Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
+    unsigned char alphaByte = (unsigned char)(p->alpha * 255.0f);
     Vector3 center = p->pos;
 
-    for (int k = 0; k < petalCount; k++)
+    // ── CASE 1: Individual Airborne Tumbling Petal (BOTANICAL_KIND_PETAL) ────
+    if (p->kind == BOTANICAL_KIND_PETAL)
     {
-        float ang0 = ((float)k / (float)petalCount) * 2.0f * PI;
-        float ang1 = (((float)k + 0.85f) / (float)petalCount) * 2.0f * PI;
+        BotanicalProfile prof;
+        if (p->flowerType == WOOD_FLOWER_TYPE_ORCHID) prof = Botanical_ProfilePetalOrchid();
+        else if (p->flowerType == WOOD_FLOWER_TYPE_PLUM_BLOSSOM) prof = Botanical_ProfilePetalPlum();
+        else prof = Botanical_ProfilePetalLotus();
 
-        Vector3 p0 = Vector3Add(center, Vector3Add(Vector3Scale(right, cosf(ang0) * petalR), Vector3Scale(up, sinf(ang0) * petalR)));
-        Vector3 p1 = Vector3Add(center, Vector3Add(Vector3Scale(right, cosf(ang1) * petalR), Vector3Scale(up, sinf(ang1) * petalR)));
-        Vector3 tip = Vector3Add(Vector3Lerp(p0, p1, 0.5f), Vector3Scale(forward, petalR * 0.45f));
+        float petalLen = sz * 1.25f;
+        float curve = petalLen * 0.16f;
+        Color cMid = (Color){
+            (unsigned char)((cBase.r + cTip.r) / 2),
+            (unsigned char)((cBase.g + cTip.g) / 2),
+            (unsigned char)((cBase.b + cTip.b) / 2),
+            alphaByte
+        };
+        Color cGlowRim = cStamen;
 
-        rlColor4ub(drawCol.r, drawCol.g, drawCol.b, drawCol.a);
-        rlVertex3f(center.x, center.y, center.z);
-        rlVertex3f(p0.x, p0.y, p0.z);
-        rlVertex3f(tip.x, tip.y, tip.z);
-        rlVertex3f(p1.x, p1.y, p1.z);
+        Botanical_RenderSinglePetalMesh(
+            center, forward, right, up, petalLen, &prof, curve,
+            cBase, cMid, cTip, cGlowRim, sunDir, isShadowPass, alphaByte
+        );
+        return;
+    }
+
+    // ── CASE 2: Full Blossom Head (BOTANICAL_KIND_FLOWER_HEAD) ────────────────
+    float bloomFactor = p->growth;
+    float blossomScale = sz;
+
+    // 3D Morphological Calyx Sepals (Lá Đài Bảo Vệ Nụ & Khung Nở)
+    float calyxProg = bloomFactor;
+    float calyxSpread = 0.08f + calyxProg * 1.20f;
+    float calyxLen = blossomScale * 0.45f;
+    float calyxW   = calyxLen * 0.40f;
+    Color sepalBase = (Color){24, 90, 42, alphaByte};
+    Color sepalTip  = (Color){60, 185, 95, alphaByte};
+    Botanical_RenderCalyxSepals(
+        center, forward, right, up,
+        calyxLen, calyxW, calyxSpread,
+        sepalBase, sepalTip,
+        sunDir, isShadowPass, alphaByte
+    );
+
+    if (p->flowerType == WOOD_FLOWER_TYPE_LOTUS)
+    {
+        const int outerCount = 6;
+        const int innerCount = 5;
+        const int layers = 2;
+
+        for (int layer = 0; layer < layers; layer++)
+        {
+            int pCount = (layer == 0) ? outerCount : innerCount;
+            float layerScale = (layer == 0) ? blossomScale : blossomScale * 0.75f;
+            float layerSpread = (layer == 0) ? (10.0f + bloomFactor * 60.0f) * DEG2RAD : (8.0f + bloomFactor * 30.0f) * DEG2RAD;
+            float layerOffset = (layer == 1) ? (PI / (float)pCount) : 0.0f;
+            float petalW = layerScale * 0.48f;
+
+            for (int k = 0; k < pCount; k++)
+            {
+                float ang = ((float)k / (float)pCount) * 2.0f * PI + layerOffset;
+                Vector3 radDir = Vector3Normalize(Vector3Add(Vector3Scale(right, cosf(ang)), Vector3Scale(up, sinf(ang))));
+                Vector3 pDir   = Vector3Normalize(Vector3Add(Vector3Scale(forward, cosf(layerSpread)), Vector3Scale(radDir, sinf(layerSpread))));
+                Vector3 pSide  = Vector3Normalize(Vector3CrossProduct(pDir, forward));
+
+                Vector3 vBase  = center;
+                Vector3 vMid   = Vector3Add(center, Vector3Scale(pDir, layerScale * 0.52f));
+                Vector3 vLeft  = Vector3Add(vMid, Vector3Scale(pSide, -petalW * 0.5f));
+                Vector3 vRight = Vector3Add(vMid, Vector3Scale(pSide,  petalW * 0.5f));
+                Vector3 vTip   = Vector3Add(center, Vector3Scale(pDir, layerScale));
+
+                Vector3 norm = Vector3Normalize(Vector3CrossProduct(pSide, pDir));
+                if (!isShadowPass)
+                {
+                    float diff = 0.36f + 0.64f * fmaxf(Vector3DotProduct(norm, sunDir), 0.0f) + 0.40f * fmaxf(-Vector3DotProduct(norm, sunDir), 0.0f);
+                    rlColor4ub((unsigned char)(cBase.r * diff), (unsigned char)(cBase.g * diff), (unsigned char)(cBase.b * diff), alphaByte);
+                    rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vBase.x, vBase.y, vBase.z);
+                    rlColor4ub((unsigned char)(cTip.r * diff),  (unsigned char)(cTip.g * diff),  (unsigned char)(cTip.b * diff), alphaByte);
+                    rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z);
+                    rlColor4ub((unsigned char)(cTip.r * diff),  (unsigned char)(cTip.g * diff),  (unsigned char)(cTip.b * diff), alphaByte);
+                    rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+
+                    rlColor4ub((unsigned char)(cTip.r * diff), (unsigned char)(cTip.g * diff), (unsigned char)(cTip.b * diff), alphaByte);
+                    rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z);
+                    rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
+                    rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+                }
+                else
+                {
+                    rlVertex3f(vBase.x, vBase.y, vBase.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+                    rlVertex3f(vLeft.x, vLeft.y, vLeft.z); rlVertex3f(vTip.x, vTip.y, vTip.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+                }
+            }
+        }
+
+        // Golden central receptacle pod
+        if (!isShadowPass && bloomFactor > 0.2f)
+        {
+            float podR = blossomScale * 0.22f;
+            Vector3 podCenter = Vector3Add(center, Vector3Scale(forward, podR * 0.6f));
+            for (int i = 0; i < 6; i++)
+            {
+                float a1 = ((float)i / 6.0f) * 2.0f * PI;
+                float a2 = ((float)(i + 1) / 6.0f) * 2.0f * PI;
+                Vector3 p1 = Vector3Add(podCenter, Vector3Add(Vector3Scale(right, cosf(a1) * podR), Vector3Scale(up, sinf(a1) * podR)));
+                Vector3 p2 = Vector3Add(podCenter, Vector3Add(Vector3Scale(right, cosf(a2) * podR), Vector3Scale(up, sinf(a2) * podR)));
+                rlColor4ub(cStamen.r, cStamen.g, cStamen.b, alphaByte);
+                rlVertex3f(podCenter.x, podCenter.y, podCenter.z);
+                rlVertex3f(p1.x, p1.y, p1.z);
+                rlVertex3f(p2.x, p2.y, p2.z);
+            }
+        }
+    }
+    else if (p->flowerType == WOOD_FLOWER_TYPE_ORCHID)
+    {
+        float oScale = blossomScale * 1.1f;
+        float oSpread = (12.0f + bloomFactor * 52.0f) * DEG2RAD;
+        float angles[5]  = { 0.0f, 85.0f * DEG2RAD, -85.0f * DEG2RAD, 140.0f * DEG2RAD, -140.0f * DEG2RAD };
+        float lengths[5] = { oScale * 1.05f, oScale * 0.95f, oScale * 0.95f, oScale * 0.85f, oScale * 0.85f };
+        float widths[5]  = { oScale * 0.40f, oScale * 0.46f, oScale * 0.46f, oScale * 0.36f, oScale * 0.36f };
+
+        for (int k = 0; k < 5; k++)
+        {
+            float ang = angles[k];
+            Vector3 radDir = Vector3Normalize(Vector3Add(Vector3Scale(right, cosf(ang)), Vector3Scale(up, sinf(ang))));
+            Vector3 pDir   = Vector3Normalize(Vector3Add(Vector3Scale(forward, cosf(oSpread)), Vector3Scale(radDir, sinf(oSpread))));
+            Vector3 pSide  = Vector3Normalize(Vector3CrossProduct(pDir, forward));
+
+            Vector3 vBase  = center;
+            Vector3 vMid   = Vector3Add(center, Vector3Scale(pDir, lengths[k] * 0.52f));
+            Vector3 vLeft  = Vector3Add(vMid, Vector3Scale(pSide, -widths[k] * 0.5f));
+            Vector3 vRight = Vector3Add(vMid, Vector3Scale(pSide,  widths[k] * 0.5f));
+            Vector3 vTip   = Vector3Add(center, Vector3Scale(pDir, lengths[k]));
+
+            Vector3 norm = Vector3Normalize(Vector3CrossProduct(pSide, pDir));
+            if (!isShadowPass)
+            {
+                float diff = 0.36f + 0.64f * fmaxf(Vector3DotProduct(norm, sunDir), 0.0f) + 0.40f * fmaxf(-Vector3DotProduct(norm, sunDir), 0.0f);
+                rlColor4ub((unsigned char)(cBase.r * diff), (unsigned char)(cBase.g * diff), (unsigned char)(cBase.b * diff), alphaByte);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vBase.x, vBase.y, vBase.z);
+                rlColor4ub((unsigned char)(cTip.r * diff),  (unsigned char)(cTip.g * diff),  (unsigned char)(cTip.b * diff), alphaByte);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z);
+                rlColor4ub((unsigned char)(cTip.r * diff),  (unsigned char)(cTip.g * diff),  (unsigned char)(cTip.b * diff), alphaByte);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+
+                rlColor4ub((unsigned char)(cTip.r * diff), (unsigned char)(cTip.g * diff), (unsigned char)(cTip.b * diff), alphaByte);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+            }
+            else
+            {
+                rlVertex3f(vBase.x, vBase.y, vBase.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+                rlVertex3f(vLeft.x, vLeft.y, vLeft.z); rlVertex3f(vTip.x, vTip.y, vTip.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+            }
+        }
+
+        // Orchid Labellum Lip
+        if (bloomFactor > 0.15f)
+        {
+            float lipLen = oScale * 1.2f;
+            float lipW   = oScale * 0.65f;
+            Vector3 lipDir = Vector3Normalize(Vector3Add(Vector3Scale(forward, 0.45f), Vector3Scale(up, -0.85f)));
+            Vector3 lipSide = Vector3Normalize(Vector3CrossProduct(lipDir, forward));
+
+            Vector3 lBase  = center;
+            Vector3 lMid   = Vector3Add(center, Vector3Scale(lipDir, lipLen * 0.50f));
+            Vector3 lLeft  = Vector3Add(lMid, Vector3Scale(lipSide, -lipW * 0.5f));
+            Vector3 lRight = Vector3Add(lMid, Vector3Scale(lipSide,  lipW * 0.5f));
+            Vector3 lTip   = Vector3Add(center, Vector3Scale(lipDir, lipLen));
+
+            if (!isShadowPass)
+            {
+                rlColor4ub(cBase.r, cBase.g, cBase.b, alphaByte);
+                rlVertex3f(lBase.x, lBase.y, lBase.z);
+                rlColor4ub(cStamen.r, cStamen.g, cStamen.b, alphaByte);
+                rlVertex3f(lLeft.x, lLeft.y, lLeft.z);
+                rlColor4ub(cStamen.r, cStamen.g, cStamen.b, alphaByte);
+                rlVertex3f(lRight.x, lRight.y, lRight.z);
+
+                rlColor4ub(cStamen.r, cStamen.g, cStamen.b, alphaByte);
+                rlVertex3f(lLeft.x, lLeft.y, lLeft.z);
+                rlColor4ub(cTip.r, cTip.g, cTip.b, alphaByte);
+                rlVertex3f(lTip.x, lTip.y, lTip.z);
+                rlColor4ub(cStamen.r, cStamen.g, cStamen.b, alphaByte);
+                rlVertex3f(lRight.x, lRight.y, lRight.z);
+            }
+            else
+            {
+                rlVertex3f(lBase.x, lBase.y, lBase.z); rlVertex3f(lLeft.x, lLeft.y, lLeft.z); rlVertex3f(lRight.x, lRight.y, lRight.z);
+                rlVertex3f(lLeft.x, lLeft.y, lLeft.z); rlVertex3f(lTip.x, lTip.y, lTip.z); rlVertex3f(lRight.x, lRight.y, lRight.z);
+            }
+        }
+    }
+    else
+    {
+        // PLUM BLOSSOM (Hoa Mai / Hoa Đào): 5 rounded silky petals + central stamen burst
+        const int pCount = 5;
+        float spreadAngle = (10.0f + bloomFactor * 62.0f) * DEG2RAD;
+        float petalLen = blossomScale * 0.95f;
+        float petalW   = petalLen * 0.66f;
+
+        for (int k = 0; k < pCount; k++)
+        {
+            float ang = ((float)k / (float)pCount) * 2.0f * PI;
+            Vector3 radDir = Vector3Normalize(Vector3Add(Vector3Scale(right, cosf(ang)), Vector3Scale(up, sinf(ang))));
+            Vector3 pDir   = Vector3Normalize(Vector3Add(Vector3Scale(forward, cosf(spreadAngle)), Vector3Scale(radDir, sinf(spreadAngle))));
+            Vector3 pSide  = Vector3Normalize(Vector3CrossProduct(pDir, forward));
+
+            Vector3 vBase  = center;
+            Vector3 vMid   = Vector3Add(center, Vector3Scale(pDir, petalLen * 0.50f));
+            Vector3 vLeft  = Vector3Add(vMid, Vector3Scale(pSide, -petalW * 0.5f));
+            Vector3 vRight = Vector3Add(vMid, Vector3Scale(pSide,  petalW * 0.5f));
+            Vector3 vTip   = Vector3Add(center, Vector3Scale(pDir, petalLen));
+
+            Vector3 norm = Vector3Normalize(Vector3CrossProduct(pSide, pDir));
+            if (!isShadowPass)
+            {
+                float diff = 0.36f + 0.64f * fmaxf(Vector3DotProduct(norm, sunDir), 0.0f) + 0.40f * fmaxf(-Vector3DotProduct(norm, sunDir), 0.0f);
+                rlColor4ub((unsigned char)(cBase.r * diff), (unsigned char)(cBase.g * diff), (unsigned char)(cBase.b * diff), alphaByte);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vBase.x, vBase.y, vBase.z);
+                rlColor4ub((unsigned char)(cTip.r * diff),  (unsigned char)(cTip.g * diff),  (unsigned char)(cTip.b * diff), alphaByte);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z);
+                rlColor4ub((unsigned char)(cTip.r * diff),  (unsigned char)(cTip.g * diff),  (unsigned char)(cTip.b * diff), alphaByte);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+
+                rlColor4ub((unsigned char)(cTip.r * diff), (unsigned char)(cTip.g * diff), (unsigned char)(cTip.b * diff), alphaByte);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
+                rlNormal3f(norm.x, norm.y, norm.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+            }
+            else
+            {
+                rlVertex3f(vBase.x, vBase.y, vBase.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+                rlVertex3f(vLeft.x, vLeft.y, vLeft.z); rlVertex3f(vTip.x, vTip.y, vTip.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+            }
+        }
+
+        // Radiating stamen filaments
+        if (!isShadowPass && bloomFactor > 0.20f)
+        {
+            float stamenR = petalLen * 0.32f;
+            for (int i = 0; i < 8; i++)
+            {
+                float a = ((float)i / 8.0f) * 2.0f * PI;
+                Vector3 fBase = center;
+                Vector3 fTip  = Vector3Add(center, Vector3Add(
+                    Vector3Scale(right, cosf(a) * stamenR),
+                    Vector3Add(Vector3Scale(up, sinf(a) * stamenR), Vector3Scale(forward, stamenR * 1.1f))));
+                rlColor4ub(cStamen.r, cStamen.g, cStamen.b, alphaByte);
+                rlVertex3f(fBase.x, fBase.y, fBase.z);
+                rlVertex3f(fTip.x, fTip.y, fTip.z);
+                rlVertex3f(fBase.x, fBase.y, fBase.z);
+            }
+        }
     }
 }
 
@@ -630,19 +1151,22 @@ void VFX_FoliageSystem_Draw(void)
 
     rlDisableBackfaceCulling();
     BeginBlendMode(BLEND_ALPHA);
-    rlBegin(RL_QUADS);
+    rlBegin(RL_TRIANGLES);
 
     for (int i = 0; i < VFX_FOLIAGE_POOL_CAPACITY; i++)
     {
         const VFX_FoliageParticle *p = &s_foliagePool[i];
         if (!p->active || p->alpha <= 0.01f || p->growth <= 0.01f) continue;
 
-        Color col = Foliage_GetBaseColor(p->style, p->kind);
+        rlCheckRenderBatchLimit(48);
+
+        Color cBase, cTip, cAccent;
+        Foliage_GetFoliageColors(p->style, p->kind, p->flowerType, p->wither, &cBase, &cTip, &cAccent);
 
         if (p->kind == BOTANICAL_KIND_LEAF) {
-            Foliage_RenderSingleLeaf(p, col, false);
+            Foliage_RenderSingleLeaf(p, cBase, cTip, cAccent, false);
         } else {
-            Foliage_RenderSingleFlower(p, col, false);
+            Foliage_RenderSingleFlower(p, cBase, cTip, cAccent, false);
         }
     }
 
@@ -656,7 +1180,7 @@ void VFX_FoliageSystem_DrawShadowPass(void)
     if (s_foliageActiveCount <= 0) return;
 
     rlDisableBackfaceCulling();
-    rlBegin(RL_QUADS);
+    rlBegin(RL_TRIANGLES);
 
     Color shadowCol = WHITE;
 
@@ -665,10 +1189,12 @@ void VFX_FoliageSystem_DrawShadowPass(void)
         const VFX_FoliageParticle *p = &s_foliagePool[i];
         if (!p->active || p->alpha <= 0.15f || p->growth <= 0.05f) continue;
 
+        rlCheckRenderBatchLimit(48);
+
         if (p->kind == BOTANICAL_KIND_LEAF) {
-            Foliage_RenderSingleLeaf(p, shadowCol, true);
+            Foliage_RenderSingleLeaf(p, shadowCol, shadowCol, shadowCol, true);
         } else {
-            Foliage_RenderSingleFlower(p, shadowCol, true);
+            Foliage_RenderSingleFlower(p, shadowCol, shadowCol, shadowCol, true);
         }
     }
 

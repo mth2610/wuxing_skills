@@ -1009,6 +1009,23 @@ typedef struct {
 VFX_WoodFlowerConfig VFX_WoodFlower_DefaultConfig(void);
 void                 VFX_ComposeWoodFlower(const VFX_WoodFlowerConfig *config);
 
+// ── Atomic Wood Petals Configuration (Standalone / Always Free Falling) ─────
+typedef struct {
+    Vector3 origin;               // center of spawn/distribution (metres)
+    float   radius;               // dispersion radius (metres)
+    int     count;                // number of drifting petals (e.g. 32 to hundreds)
+    float   mass;                 // mass in kg (e.g. 0.002kg)
+    Vector3 initialVelocity;      // ejection velocity in m/s
+    float   velocitySpread;       // velocity scatter in m/s
+    float   size;                 // petal length scale (metres, default ~0.13m)
+    VFX_WoodFlowerType type;      // petal morphology
+    VFX_WoodVineStyle  style;     // elemental color scheme
+    unsigned int seed;
+} VFX_WoodPetalConfig;
+
+VFX_WoodPetalConfig VFX_WoodPetal_DefaultConfig(void);
+void                VFX_ComposeWoodPetals(const VFX_WoodPetalConfig *config);
+
 // ── Composite Wood Vine Configuration ───────────────────────────────────────
 typedef struct {
     Vector3 startPos;       // Root/emergence origin in world space
@@ -1046,13 +1063,10 @@ const char*          VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
 void                 VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
 void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
 
-VFX_WoodFlowerConfig VFX_WoodFlower_DefaultConfig(void);
-const char*          VFX_WoodFlowerType_Name(VFX_WoodFlowerType type);
-void                 VFX_ComposeWoodFlower(const VFX_WoodFlowerConfig *config);
-
 // ── Generic Parameter Introspection API (CapsLock + / dynamic editing) ──────
 int VFX_WoodLeaves_GetParams(VFX_WoodLeavesConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 int VFX_WoodFlower_GetParams(VFX_WoodFlowerConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+int VFX_WoodPetals_GetParams(VFX_WoodPetalConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 int VFX_WoodVine_GetParams(VFX_WoodVineConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 
 // ── Universal Botanical Foliage & Petal Simulation System ────────────────────
@@ -1145,7 +1159,6 @@ void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
-void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
 void VFX_ComposeWoodVineCluster(Vector3 center, float radius, float height, float growth, float wither, float sapPhase, int vineCount, unsigned int seed);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);

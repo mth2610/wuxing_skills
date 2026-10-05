@@ -154,6 +154,7 @@ static VFX_FlameStyle s_ambientFireFixtureStyle = VFX_FLAME_STYLE_NIAGARA_ROIL;
 static VFX_WoodVineConfig   s_liveWoodVineConfig;
 static VFX_WoodLeavesConfig s_liveWoodLeavesConfig;
 static VFX_WoodFlowerConfig s_liveWoodFlowerConfig;
+static VFX_WoodPetalConfig  s_liveWoodPetalConfig;
 static bool                 s_liveWoodConfigsInit = false;
 
 #define VFX_TEST_MAX_INSPECTOR_PARAMS 32
@@ -169,8 +170,9 @@ static void VFXTest_InitLiveConfigs(void)
     s_liveWoodVineConfig = VFX_WoodVine_DefaultConfig();
     s_liveWoodLeavesConfig = VFX_WoodLeaves_DefaultConfig();
     s_liveWoodFlowerConfig = VFX_WoodFlower_DefaultConfig();
-    s_liveWoodLeavesConfig.attached = false;
-    s_liveWoodFlowerConfig.attached = false;
+    s_liveWoodPetalConfig  = VFX_WoodPetal_DefaultConfig();
+    s_liveWoodLeavesConfig.attached = true;
+    s_liveWoodFlowerConfig.attached = true;
     s_liveWoodConfigsInit = true;
 }
 
@@ -195,6 +197,10 @@ static void VFXTest_RefreshInspectorParams(bool force)
     else if (VFXTest_IsNewFxNamed("WOOD FLOWER"))
     {
         s_inspectorParamCount = VFX_WoodFlower_GetParams(&s_liveWoodFlowerConfig, s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+    else if (VFXTest_IsNewFxNamed("WOOD PETALS"))
+    {
+        s_inspectorParamCount = VFX_WoodPetals_GetParams(&s_liveWoodPetalConfig, s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
 }
 
@@ -314,37 +320,34 @@ static VFX_WoodLeavesConfig VFXTest_BuildWoodLeavesConfig(Vector3 startPos, Vect
     (void)playerPos;
     VFXTest_InitLiveConfigs();
     VFX_WoodLeavesConfig cfg = s_liveWoodLeavesConfig;
-    cfg.growth = 1.0f;
-    cfg.origin = Vector3Add(startPos, (Vector3){0.0f, 3.2f, 0.0f});
-    cfg.radius = 1.8f;
-    cfg.count = 96;
+    cfg.origin = Vector3Add(startPos, (Vector3){0.0f, 1.35f, 0.0f});
+    cfg.radius = 1.4f;
+    cfg.count = 80;
     cfg.mass = 0.004f;
-    cfg.size = 0.16f;
-    cfg.seed = 12345 + (unsigned int)(meshTime * 10.0f);
+    cfg.size = 0.22f;
+    cfg.seed = 12345;
 
-    static VFX_BotanicalSocket s_testLeafSockets[16];
-    static bool s_testLeafSocketsInit = false;
-    if (!s_testLeafSocketsInit)
-    {
-        for (int i = 0; i < 16; i++) {
-            float t = (float)i / 15.0f;
-            float ang = t * 4.0f * PI;
-            float r = 0.28f + 0.10f * sinf(t * 3.0f);
-            s_testLeafSockets[i].pos = Vector3Add(startPos, (Vector3){ cosf(ang) * r, 0.2f + t * 1.8f, sinf(ang) * r });
-            s_testLeafSockets[i].normal = Vector3Normalize((Vector3){ cosf(ang), 0.35f, sinf(ang) });
-            s_testLeafSockets[i].tangent = (Vector3){ -sinf(ang), 0.6f, cosf(ang) };
-            s_testLeafSockets[i].arc = t;
-            s_testLeafSockets[i].stemRadius = 0.04f;
-        }
-        s_testLeafSocketsInit = true;
+    static VFX_BotanicalSocket s_testLeafSockets[10];
+    // Elegant eye-level fan branch facing camera, dynamically rooted at startPos
+    for (int i = 0; i < 10; i++) {
+        float t = (float)i / 9.0f;
+        float ang = (t - 0.5f) * 1.6f;
+        float r = 0.28f + t * 0.18f;
+        s_testLeafSockets[i].pos = Vector3Add(startPos, (Vector3){ sinf(ang) * r, 1.15f + t * 0.40f, cosf(ang) * 0.15f });
+        s_testLeafSockets[i].normal = Vector3Normalize((Vector3){ sinf(ang) * 0.6f, 0.40f, 0.90f });
+        s_testLeafSockets[i].tangent = (Vector3){ cosf(ang), 0.7f, -sinf(ang) * 0.3f };
+        s_testLeafSockets[i].arc = t;
+        s_testLeafSockets[i].stemRadius = 0.035f;
     }
+
+    float cycleT = fmodf(meshTime, 4.0f);
+    cfg.growth = (cycleT < 2.6f) ? VFXTest_Smoothstep(0.0f, 1.8f, cycleT)
+               : (cycleT < 3.5f ? 1.0f : (1.0f - VFXTest_Smoothstep(3.5f, 4.0f, cycleT)));
 
     if (cfg.attached)
     {
         cfg.sockets = s_testLeafSockets;
-        cfg.socketCount = 16;
-        float cycleT = fmodf(meshTime, 3.5f);
-        cfg.growth = VFXTest_Smoothstep(0.0f, 1.5f, cycleT);
+        cfg.socketCount = 10;
     }
     return cfg;
 }
@@ -354,38 +357,66 @@ static VFX_WoodFlowerConfig VFXTest_BuildWoodFlowerConfig(Vector3 startPos, Vect
     (void)playerPos;
     VFXTest_InitLiveConfigs();
     VFX_WoodFlowerConfig cfg = s_liveWoodFlowerConfig;
-    cfg.growth = 1.0f;
-    cfg.origin = Vector3Add(startPos, (Vector3){0.0f, 2.8f, 0.0f});
-    cfg.radius = 1.4f;
+    cfg.origin = Vector3Add(startPos, (Vector3){0.0f, 1.35f, 0.0f});
+    cfg.radius = 1.2f;
     cfg.count = 64;
     cfg.mass = 0.002f;
-    cfg.size = 0.14f;
-    cfg.seed = 54321 + (unsigned int)(meshTime * 10.0f);
+    cfg.size = 0.22f;
+    cfg.seed = 54321;
 
-    static VFX_BotanicalSocket s_testFlowerSockets[8];
-    static bool s_testFlowerSocketsInit = false;
-    if (!s_testFlowerSocketsInit)
-    {
-        for (int i = 0; i < 8; i++) {
-            float t = (float)i / 7.0f;
-            float ang = t * 3.5f * PI + 0.5f;
-            float r = 0.32f;
-            s_testFlowerSockets[i].pos = Vector3Add(startPos, (Vector3){ cosf(ang) * r, 0.3f + t * 1.6f, sinf(ang) * r });
-            s_testFlowerSockets[i].normal = Vector3Normalize((Vector3){ cosf(ang), 0.45f, sinf(ang) });
-            s_testFlowerSockets[i].tangent = (Vector3){ -sinf(ang), 0.5f, cosf(ang) };
-            s_testFlowerSockets[i].arc = t;
-            s_testFlowerSockets[i].stemRadius = 0.04f;
-        }
-        s_testFlowerSocketsInit = true;
+    static VFX_BotanicalSocket s_testFlowerSockets[5];
+    // Central Hero Flower facing camera, dynamically rooted at startPos
+    s_testFlowerSockets[0].pos = Vector3Add(startPos, (Vector3){0.0f, 1.35f, 0.0f});
+    s_testFlowerSockets[0].normal = (Vector3){0.0f, 0.35f, 0.94f}; // Facing forward/upward to camera
+    s_testFlowerSockets[0].tangent = (Vector3){0.0f, 1.0f, 0.0f};
+    s_testFlowerSockets[0].arc = 0.0f;
+    s_testFlowerSockets[0].stemRadius = 0.04f;
+
+    // 4 companion flowers around it at different angles
+    for (int i = 1; i < 5; i++) {
+        float ang = ((float)(i - 1) / 4.0f) * 2.0f * PI + 0.35f;
+        float r = 0.42f;
+        s_testFlowerSockets[i].pos = Vector3Add(startPos, (Vector3){ cosf(ang) * r, 1.22f + sinf(ang * 2.0f) * 0.12f, sinf(ang) * r * 0.7f });
+        s_testFlowerSockets[i].normal = Vector3Normalize((Vector3){ cosf(ang) * 0.65f, 0.55f, 0.85f });
+        s_testFlowerSockets[i].tangent = (Vector3){ -sinf(ang), 0.6f, cosf(ang) };
+        s_testFlowerSockets[i].arc = (float)i / 4.0f;
+        s_testFlowerSockets[i].stemRadius = 0.035f;
+    }
+
+    // 4.5s Organic Bud-to-Bloom Showcase Timeline:
+    // 0.0s -> 0.6s: Tight conical bud
+    // 0.6s -> 2.4s: Sepals part, petals part and bloom with easeOutBack flourish
+    // 2.4s -> 3.8s: Full glorious bloom with glowing stamen core
+    // 3.8s -> 4.5s: Soft reset
+    float cycleT = fmodf(meshTime, 4.5f);
+    if (cycleT < 2.4f) {
+        cfg.growth = VFXTest_Smoothstep(0.0f, 1.8f, cycleT);
+    } else if (cycleT < 3.8f) {
+        cfg.growth = 1.0f;
+    } else {
+        cfg.growth = 1.0f - VFXTest_Smoothstep(3.8f, 4.5f, cycleT);
     }
 
     if (cfg.attached)
     {
         cfg.sockets = s_testFlowerSockets;
-        cfg.socketCount = 8;
-        float cycleT = fmodf(meshTime, 3.5f);
-        cfg.growth = VFXTest_Smoothstep(0.0f, 1.8f, cycleT);
+        cfg.socketCount = 5;
     }
+    return cfg;
+}
+
+static VFX_WoodPetalConfig VFXTest_BuildWoodPetalConfig(Vector3 startPos, Vector3 playerPos, float meshTime)
+{
+    (void)playerPos;
+    (void)meshTime;
+    VFXTest_InitLiveConfigs();
+    VFX_WoodPetalConfig cfg = s_liveWoodPetalConfig;
+    cfg.origin = Vector3Add(startPos, (Vector3){0.0f, 1.8f, 0.0f});
+    cfg.radius = 1.4f;
+    cfg.count = 64;
+    cfg.mass = 0.002f;
+    cfg.size = 0.16f;
+    cfg.seed = 67890;
     return cfg;
 }
 
@@ -623,7 +654,7 @@ static const char *s_meshNames[] = {
     "VFX OUTPUT"};
 
 // @gen:newfx_names begin
-// 53 entries — auto-managed by sync_vfx_test.py
+// 54 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "CONTACT SPARK", "DEBRIS SHARDS", "DECAL", "DISSOLVE EXIT", "[PARTICLE] EMBER BURST", "FLAME JET",
     "FLOW SHIELD", "GAS MATERIAL LAB", "[GAS] GAS PLUME", "GAS SHOCKWAVE", "GAS VORTEX", "GROUND WAVE",
@@ -633,7 +664,7 @@ static const char* s_newFxNames[] = {
     "SMOKE PUFF", "[PARTICLE] SMOKE VOLUME", "SURFACE IMPACT", "SURFACE PARTICLE RING", "SWEEP SLASH", "MOTION RIBBON TRAIL",
     "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR", "AMBIENT FIRE",
     "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "LIQUID BENCH", "LIQUID IMPACT", "WATER ORB",
-    "WATER RING", "WATER STREAM", "WOOD FLOWER", "WOOD LEAVES", "WOOD VINE",
+    "WATER RING", "WATER STREAM", "WOOD FLOWER", "WOOD LEAVES", "WOOD PETALS", "WOOD VINE",
 };
 // @gen:newfx_names end
 
@@ -658,7 +689,7 @@ static const int s_newFxCategories[] = {
     1, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 4,
     4, 0, 0, 5, 1, 1, 1, 1, 1, 1,
-    2, 2, 2,
+    2, 2, 2, 2,
 };
 // @gen:newfx_categories end
 
@@ -1134,7 +1165,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 53;
+            maxIdx = 54;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -1600,16 +1631,16 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "AMBIENT FIRE style: %s (>, next; <, previous)", VFX_FlameStyle_Name(s_ambientFireFixtureStyle));
             }
         }
-        else if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER"))
+        else if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER") || VFXTest_IsNewFxNamed("WOOD PETALS"))
         {
             if (IsKeyPressed(KEY_SEMICOLON))
             {
                 Vector3 spawnOrigin = Vector3Add(s_prefabStartPos, (Vector3){0, 3.2f, 0});
-                if (VFXTest_IsNewFxNamed("WOOD FLOWER"))
+                if (VFXTest_IsNewFxNamed("WOOD FLOWER") || VFXTest_IsNewFxNamed("WOOD PETALS"))
                 {
-                    int count = VFX_Foliage_SpawnFreePetals(spawnOrigin, 1.4f, 80, 0.002f,
-                                                            s_liveWoodFlowerConfig.type,
-                                                            s_liveWoodFlowerConfig.style);
+                    VFX_WoodFlowerType flType = VFXTest_IsNewFxNamed("WOOD PETALS") ? s_liveWoodPetalConfig.type : s_liveWoodFlowerConfig.type;
+                    VFX_WoodVineStyle flStyle = VFXTest_IsNewFxNamed("WOOD PETALS") ? s_liveWoodPetalConfig.style : s_liveWoodFlowerConfig.style;
+                    int count = VFX_Foliage_SpawnFreePetals(spawnOrigin, 1.4f, 80, 0.002f, flType, flStyle);
                     TraceLog(LOG_INFO, "[Foliage] Spawned %d physical petals", count);
                 }
                 else
@@ -1800,7 +1831,8 @@ void VFXTest_Draw3D(void)
               case 49: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
               case 50: do { VFX_WoodFlowerConfig _cfg = VFXTest_BuildWoodFlowerConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodFlower(&_cfg); } while(0); break;
               case 51: do { VFX_WoodLeavesConfig _cfg = VFXTest_BuildWoodLeavesConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodLeaves(&_cfg); } while(0); break;
-              case 52: do { VFX_WoodVineConfig _cfg = VFXTest_BuildWoodVineConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodVine(&_cfg); } while(0); break;
+              case 52: do { VFX_WoodPetalConfig _cfg = VFXTest_BuildWoodPetalConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodPetals(&_cfg); } while(0); break;
+              case 53: do { VFX_WoodVineConfig _cfg = VFXTest_BuildWoodVineConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodVine(&_cfg); } while(0); break;
           }
 // @gen:newfx_draw end
         }
@@ -1835,6 +1867,11 @@ void VFXTest_DrawShadowPass(void)
         {
             VFX_WoodFlowerConfig cfg = VFXTest_BuildWoodFlowerConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime);
             VFX_ComposeWoodFlower(&cfg);
+        }
+        else if (VFXTest_IsNewFxNamed("WOOD PETALS"))
+        {
+            VFX_WoodPetalConfig cfg = VFXTest_BuildWoodPetalConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime);
+            VFX_ComposeWoodPetals(&cfg);
         }
     }
     VFX_FoliageSystem_DrawShadowPass();
@@ -1959,7 +1996,7 @@ void VFXTest_DrawHUD(void)
         int footerY = startY + 28 + rowsPerCol * 18 + 6;
         DrawText("Controls: CapsLock/Tab: Select Var | / or >: Next Value | ,: Prev Value",
                  startX + 10, footerY, 12, SKYBLUE);
-        if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER"))
+        if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER") || VFXTest_IsNewFxNamed("WOOD PETALS"))
         {
             DrawText(TextFormat("Actions: ; Burst | ' Homing (%s) | \\ Detach | V Pause (%s) | Foliage: %d",
                                 VFX_FoliageSystem_IsHomingActive() ? "ON" : "OFF",
@@ -2117,7 +2154,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 53;
+        maxIdx = 54;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;

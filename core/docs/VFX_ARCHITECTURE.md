@@ -158,31 +158,51 @@ typedef enum {
 const char* VFX_WoodVineCombo_Name(VFX_WoodVineCombo combo);
 ```
 
-Inside the composite configuration:
+### 4.2. Embedded Config Composition & The Composability Law
+A composite effect must never flatten or duplicate child variables manually. Instead, it embeds the child configs directly:
+
 ```c
-typedef struct {
-    // Macro Geometry
+typedef struct VFX_WoodVineConfig {
+    // Macro Geometry & Reaction Drivers [c1, c2, c3, c4...]
     Vector3 startPos, targetPos;
     float   length, baseRadius, growth, wither;
-    
-    // Child Toggles & Combination Presets
-    bool               enableThorns;
-    bool               enableTwin;
-    bool               enableLeaves;
-    bool               enableFlowers;
-    VFX_WoodVineCombo  combo;      // Preset combination
-    VFX_WoodLeafShape  leafShape;  // Child leaf shape override
-    VFX_WoodFlowerType flowerType; // Child flower type override
-    
-    // Elemental Reactions & Physics
-    float waterFactor;  // Thủy sinh Mộc: Hydration bloom
-    float severArc;     // Kim khắc Mộc: Severed cut position [0..1]
-    float fireFactor;   // Hỏa thiêu Mộc: Combustion progress [0..1]
-    
-    VFX_WoodVineVariant variant;
-    VFX_WoodVineStyle   style;
-    unsigned int seed;
+    VFX_WoodVineVariant   variant;
+    VFX_WoodVineStyle     style;
+    VFX_WoodReactionState reaction;
+    VFX_WoodVineCombo     combo;
+    bool enableThorns;
+    bool enableTwin;
+    bool castShadow;
+    bool enableLeaves;
+    bool enableFlowers;
+
+    // Direct Embedded Child Configs [A, B]
+    VFX_WoodLeavesConfig leaves; // Child A: Foliage Leaves
+    VFX_WoodFlowerConfig flower; // Child B: Flower Blossoms
 } VFX_WoodVineConfig;
+```
+
+#### The Parameter Composability Law:
+$$\mathcal{P}(C) = \big[ c_1, c_2, \dots, c_m, \; a_1, a_2, \dots, a_n, \; b_1, b_2, \dots, b_k \big]$$
+
+When introspecting parameters for Composite $C$, its `GetParams` function writes its own macro parameters, then directly appends the parameters of its children by passing the addresses of its embedded child configs:
+
+```c
+int VFX_WoodVine_GetParams(VFX_WoodVineConfig *cfg, VFX_ParamDef *outParams, int maxParams)
+{
+    int n = 0;
+    // 1. Macro Vine variables [c1..c7]
+    outParams[n++] = (VFX_ParamDef){ .name = "Variant", .group = "Vine", .type = VFX_PARAM_ENUM, .valPtr = &cfg->variant, ... };
+    outParams[n++] = (VFX_ParamDef){ .name = "Style",   .group = "Vine", .type = VFX_PARAM_ENUM, .valPtr = &cfg->style, ... };
+    ...
+    // 2. Child A (Leaves) embedded parameters [a1..a3]
+    n += VFX_WoodLeaves_GetParams(&cfg->leaves, outParams + n, maxParams - n);
+
+    // 3. Child B (Flower) embedded parameters [b1..b3]
+    n += VFX_WoodFlower_GetParams(&cfg->flower, outParams + n, maxParams - n);
+
+    return n;
+}
 ```
 
 ### 4.3. Detachment & Physics Transfer
@@ -193,26 +213,36 @@ When a parent composite structure experiences an external event (severed by a bl
 
 ---
 
-## 5. Universal Testing Protocol & Sandbox Controls
+## 5. Universal Parameter Inspector & Sandbox Testing Protocol
 
-To ensure testing combinations and swapping variants is effortless, all VFX test fixtures in [`sandbox/vfx_test.c`](../../sandbox/vfx_test.c) adhere to a **unified hotkey contract**:
+To eliminate per-fixture hotkey clutter, all VFX test fixtures in [`sandbox/vfx_test.c`](../../sandbox/vfx_test.c) use the **Universal Parameter Inspector System** ([`core/composition/common/vc_params.h`](../composition/common/vc_params.h)):
 
-| Key | Atomic VFX Action | Composite VFX Action |
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ [WOOD VINE] PARAMETERS (CapsLock/Tab: Select Var | /: Cycle Value)     │
+│ >> [Vine] Variant: SERPENTINE <<        [Leaves] Shape: OVAL           │
+│    [Vine] Style: JADE EMERALD           [Leaves] Style: JADE EMERALD   │
+│    [Vine] Reaction: WATER (GROWTH)      [Leaves] Mode: ATTACHED        │
+│    [Vine] Thorns: ON                    [Flower] Type: SACRED LOTUS    │
+│    [Vine] Twin Tendril: ON              [Flower] Style: JADE EMERALD   │
+│    [Vine] Leaves Active: ON             [Flower] Mode: ATTACHED        │
+│    [Vine] Flowers Active: ON                                           │
+│ Controls: CapsLock/Tab: Select Var | / or >: Next Value | ,: Prev Value│
+│ Actions: ; Burst | ' Homing (OFF) | \ Detach | V Pause (PLAYING)       │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+### 5.1. Standardized Hotkey Contract:
+| Input Key | Universal Action | Implementation |
 |:---:|---|---|
-| `,` / `.` | Cycle morphology shape (`shape` / `type`) | Cycle macro spine variant (`variant`) |
-| `M` | Cycle elemental style / palette (`style`) | Cycle elemental style / palette (`style`) |
-| `[` / `]` | *(N/A)* | **Cycle child combination preset (`combo`)** |
-| `/` | **Toggle Dual-Mode (`ATTACHED` vs `FREE`)** | **Cycle elemental reaction state (`reaction`)** |
-| `;` | Trigger physical burst of $N$ free instances | Trigger physical burst of $N$ free instances |
-| `'` | Toggle force field / homing vortex | Toggle force field / homing vortex |
-| `\` | Detach attached instances in radius | Detach attached instances in radius |
-| `V` | **Pause / resume animation timeline** | **Pause / resume animation timeline** |
-
-### HUD Standard:
-The fixture HUD must render informative status lines:
-1. **Line 1 (Identity)**: `[NAME]: [Variant] | Style: [Style] | Combo: [Combo] | Mode/Reaction: [State]`
-2. **Line 2 (Controls)**: `CONTROLS: >/, var | M style | [ / ] child combo | / rxn | ; burst | ' vortex | V pause`
-3. **Line 3 (Active Simulation)**: `[System]: N active | Mass: X.XXXkg | Homing: [ACTIVE/OFF]`
+| **`CapsLock`** (or **`Tab`**) | **Cycle Selected Variable** forward | `s_selectedParam = (s_selectedParam + 1) % s_paramCount;` |
+| **`Shift + CapsLock`** / **`Shift + Tab`** | **Cycle Selected Variable** backward | `s_selectedParam = (s_selectedParam - 1 + s_paramCount) % s_paramCount;` |
+| **`/` (Slash)** (or **`>`**) | **Cycle Value Forward** for active variable | `VFX_Param_CycleNext(&s_inspectorParams[s_selectedParam]);` |
+| **`,` (Comma)** (or **`Shift + /`**) | **Cycle Value Backward** for active variable | `VFX_Param_CyclePrev(&s_inspectorParams[s_selectedParam]);` |
+| **`V`** | **Pause / Resume** animation timeline | `s_vfxAnimationPaused = !s_vfxAnimationPaused;` |
+| **`;` (Semicolon)** | Trigger physical particle burst | Spawns $N$ free instances into physics pool |
+| **`'` (Apostrophe)** | Toggle suction / homing vortex | Engages `VFX_FoliageSystem_SetHomingTarget` |
+| **`\` (Backslash)** | Detach attached instances in radius | Calls `DetachInRadius(center, radius, impulse)` |
 
 ---
 
@@ -222,7 +252,7 @@ The table below defines how the Atomic & Composite standard maps to all Six Elem
 
 | Element | Composite VFX (Parent Host) | Atomic VFX (Children) | Sockets Exposed | Elemental Reactions |
 |---|---|---|---|---|
-| **Wood (Mộc)** | `WOOD VINE`<br>`WOOD BRAMBLE CAGE`<br>`WOOD DRAGON` | `WOOD LEAVES` (Oval, Willow, Maple)<br>`WOOD FLOWER` (Lotus, Orchid, Plum)<br>`THORNS`, `SPORES` | Surface bark normal, branch tangent, phyllotaxis | **Water**: Hydration bloom (leaves & flowers emerge)<br>**Metal**: Severed cut (tip drops under gravity)<br>**Fire**: Combustion (charcoal bark, ash embers) |
+| **Wood (Mộc)** | `WOOD VINE`<br>`WOOD BRAMBLE CAGE`<br>`WOOD DRAGON` | `WOOD LEAVES` (Oval, Willow, Maple)<br>`WOOD FLOWER` (Bud-to-bloom Lotus, Orchid, Plum; unattached falls as whole blossom head)<br>`WOOD PETALS` (Standalone free drifting petals)<br>`THORNS` | Surface bark normal, branch tangent, phyllotaxis | **Water**: Hydration bloom (leaves & flowers emerge)<br>**Metal**: Severed cut (tip drops under gravity)<br>**Fire**: Combustion (charcoal bark, ash embers) |
 | **Water (Thủy)** | `WATER STREAM`<br>`WATER DRAGON`<br>`CROWN SPLASH`<br>`WATER ORB` | `WATER DROPLET` (Fine mist, splash bead)<br>`WATER FOAM RING`<br>`ICE NEEDLE / CRYSTAL` | Flow velocity tangent, stream surface normal, rim lip | **Earth**: Mud thickening (viscosity increases, flow stops)<br>**Fire**: Vaporization (steam clouds, droplets vanish)<br>**Cold/Metal**: Freezing (water turns to solid ice spikes) |
 | **Fire (Hỏa)** | `FIREBALL / METEOR`<br>`INFERNO COLUMN`<br>`FIRE WHIRLWIND` | `FLAME TONGUE` (Rising wisp, curling plume)<br>`FIRE EMBER / SPARK` (Drifting ember)<br>`SMOKE PUFF` | Plume core normal, buoyancy updraft tangent | **Water**: Extinguish (steam hiss, dark soot)<br>**Wood**: Fuel surge (intensity & flame height double)<br>**Wind**: Drift & elongated fire stretch |
 | **Earth (Thổ)** | `STONE PILLAR`<br>`EARTH FISSURE`<br>`ROLLING BOULDER` | `ROCK SHARD` (Slab, gravel, jagged block)<br>`DUST PUFF`<br>`SURFACE CRACK / DECAL` | Fissure fault edge, pillar cleavage plane | **Wood**: Root penetration (stone fractures, moss growth)<br>**Water**: Mud softening (earth turns to liquid slurry)<br>**Metal**: Spark strike on impact |
@@ -231,20 +261,56 @@ The table below defines how the Atomic & Composite standard maps to all Six Elem
 
 ---
 
-## 7. Migration Roadmap for Existing VFX
+## 7. Migration Guide: Converting Existing & Authoring New VFX
 
-To migrate existing monolithic effects to the new standard without breaking gameplay skills:
+To migrate an existing monolithic effect or author a brand new effect according to this standard:
 
-### Migration Steps:
-1. **Phase 1: Abstract Children into Atomic Composers**
-   - Identify embedded particles, sparks, or secondary sprites in the monolithic `.inl`.
-   - Extract them into a standalone atomic composer (`VFX_Compose<Element><Child>`) with `attached` vs `free` dual-mode support.
-2. **Phase 2: Introduce `VFX_Socket` Sampling**
-   - Replace hardcoded coordinate math in the parent with procedural socket generation along the spine/mesh surface.
-3. **Phase 3: Implement Combination Presets (`VFX_<Parent>Combo`)**
-   - Add the `combo` enum to the parent config and delegate child rendering to the extracted atomic composers.
-4. **Phase 4: Wire Sandbox Test Fixtures**
-   - Register the atomic children as standalone fixtures in `scripts/sync_vfx_test.py` and `sandbox/vfx_test.c`.
-   - Wire standard hotkeys (`,`, `.`, `M`, `/`, `[`, `]`, `;`, `'`, `V`).
-5. **Phase 5: Measure Bright-Background Matrix**
-   - Execute `scripts/render_vfx_matrix.sh "<FIXTURE NAME>" 40 90 140` to guarantee high darken% (>80%) on pure white backgrounds before closing the task.
+### Step 1: Extract Children into Atomic Composers
+- Identify secondary elements (e.g. sparks along a blade slash, droplets trailing a water dragon, embers in a fire plume).
+- Create a dedicated config struct `VFX_<Element><Child>Config` supporting `bool attached`, `VFX_Socket *sockets`, and physical airborne simulation.
+- Declare `int VFX_<Element><Child>_GetParams(...)` in `visual_composer.h`.
+
+### Step 2: Embed Child Configs into Parent Struct
+- In the composite struct `VFX_<Element><Parent>Config`, embed the child structs directly:
+  ```c
+  typedef struct VFX_WaterDragonConfig {
+      Vector3 startPos, targetPos;
+      float speed, thickness;
+      VFX_WaterDropletConfig droplets; // Embedded child A
+      VFX_WaterFoamConfig    foam;     // Embedded child B
+  } VFX_WaterDragonConfig;
+  ```
+
+### Step 3: Implement Parameter Introspection (`GetParams`)
+- In `vc_<element>_<parent>.inl`, write `VFX_<Parent>_GetParams`:
+  1. Populate composite macro variables (`VFX_PARAM_ENUM`, `VFX_PARAM_BOOL`, `VFX_PARAM_FLOAT`, `VFX_PARAM_INT`).
+  2. Append child A via `VFX_<ChildA>_GetParams(&cfg->childA, outParams + n, maxParams - n)`.
+  3. Append child B via `VFX_<ChildB>_GetParams(&cfg->childB, outParams + n, maxParams - n)`.
+
+### Step 4: Register in Sandbox Parameter Inspector (`sandbox/vfx_test.c`)
+- In `VFXTest_RefreshInspectorParams`:
+  ```c
+  else if (VFXTest_IsNewFxNamed("WATER DRAGON"))
+  {
+      s_inspectorParamCount = VFX_WaterDragon_GetParams(&s_liveWaterDragonConfig, s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+  }
+  ```
+- No custom hotkey code is required! `CapsLock` and `/` immediately work for all child and parent parameters.
+
+### Step 5: Verification Checklist
+- [ ] Compiles with zero heap allocations in draw/update loops.
+- [ ] Hotkeys `CapsLock` and `/` dynamically inspect and mutate all aggregated variables.
+- [ ] Child components detach and simulate physically when severed or blasted.
+- [ ] Passes bright-background contrast verification:
+  ```bash
+  scripts/render_vfx_matrix.sh "<FIXTURE NAME>" 40 90 140
+  ```
+  Score must satisfy: `darken% > 70%` and `structure > 0.40` on white and warm background plates.
+
+---
+
+## 8. Visual Quality & Botanical Discipline Laws
+
+1. **Strict Prohibition on Autonomous Particles**: Agents are strictly forbidden from unilaterally adding extraneous particle emitters (spores, embers, motes) into VFX unless explicitly approved by the user. Effects must achieve visual richness and punch through procedural geometry, vertex lighting, and shaders.
+2. **Morphological Bud-to-Bloom & Blossom Integrity**: A blooming flower VFX must visibly start as a closed bud (nụ hoa) cradled by calyx sepals and unfold smoothly into full blossom with an expanding incandescent stamen core. If not attached to a host, it drops as an intact whole blossom head (`BOTANICAL_KIND_FLOWER_HEAD`), preserving gravity and aerodynamic tumble physics. Individual petals belong to a separate standalone effect (`VFX_ComposeWoodPetals`).
+3. **Default Spiritual Luminescence (Dạng phát sáng, phép thuật)**: All botanical elements in VFX possess default spiritual luminescence (`eL = 0.50f * dL + 0.50f`) so that midribs, veins, petal edges, and stamen centers emit a celestial glow even in shadows and nighttime arenas.

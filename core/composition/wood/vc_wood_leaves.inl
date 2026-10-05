@@ -7,6 +7,7 @@
 #include "environment/env_shadow.h"
 #include "environment/environment_system.h"
 #include "core/composition/visual_composer.h"
+#include "core/composition/wood/vc_wood_botanical_math.h"
 #include <math.h>
 
 VFX_WoodLeavesConfig VFX_WoodLeaves_DefaultConfig(void)
@@ -84,9 +85,25 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
     if (config == NULL || config->growth <= 0.01f)
         return;
 
+    VFX_BotanicalSocket fallbackSockets[4];
+    const VFX_BotanicalSocket *socketsToRender = config->sockets;
+    int socketCountToRender = config->socketCount;
+
     // ── Mode B: Standalone / Free Airborne Leaves (Wind, Gravity & Air Drag) ──
     if (!config->attached || config->sockets == NULL || config->socketCount <= 0)
     {
+        for (int i = 0; i < 4; i++) {
+            float ang = ((float)i / 4.0f) * 2.0f * PI + 0.35f;
+            float r = 0.22f;
+            fallbackSockets[i].pos = Vector3Add(config->origin, (Vector3){ cosf(ang) * r, 0.05f * (float)i, sinf(ang) * r });
+            fallbackSockets[i].normal = Vector3Normalize((Vector3){ cosf(ang), 0.40f, sinf(ang) });
+            fallbackSockets[i].tangent = (Vector3){ -sinf(ang), 0.6f, cosf(ang) };
+            fallbackSockets[i].arc = (float)i / 3.0f;
+            fallbackSockets[i].stemRadius = 0.035f;
+        }
+        socketsToRender = fallbackSockets;
+        socketCountToRender = 4;
+
         static float s_freeLeafTimer = 0.0f;
         s_freeLeafTimer += GetFrameTime();
         int targetCount = config->count > 0 ? config->count : 64;
@@ -111,38 +128,41 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
             sp.seed = config->seed;
             VFX_FoliageSystem_SpawnCluster(&sp);
         }
-        return;
     }
 
-    // ── Mode A: Attached Botanical Sockets on Vine / Tree Host ────────────────
+    // ── Mode A: Attached / Showcase Botanical Sockets ─────────────────────────
     bool isShadowPass = EnvShadow_IsCapturing();
     Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
     float time = (float)GetTime();
 
-    // Palette setup based on style and wither
-    Color leafBase, leafTip, leafVein;
+    // Luminous celestial palette based on style — CELESTIAL SPIRIT VEIN EMISSION
+    Color leafBase, leafMid, leafTip, leafVein;
     switch (config->style)
     {
         case WOOD_VINE_STYLE_BLOOD_BRAMBLE: // Cinnabar ruby vs green grass
-            leafBase = (Color){150, 22, 35, 255};
-            leafTip  = (Color){235, 45, 62, 255};
-            leafVein = (Color){85, 12, 18, 255};
+            leafBase = (Color){160, 22, 38, 255};
+            leafMid  = (Color){240, 45, 68, 255};
+            leafTip  = (Color){255, 120, 145, 255};
+            leafVein = (Color){255, 210, 225, 255}; // Radiant ruby chi spine
             break;
-        case WOOD_VINE_STYLE_GOLDEN_AMBER:  // Liquid amber gold
-            leafBase = (Color){195, 140, 32, 255};
-            leafTip  = (Color){250, 205, 68, 255};
-            leafVein = (Color){125, 75, 18, 255};
+        case WOOD_VINE_STYLE_GOLDEN_AMBER:  // Liquid amber solar gold
+            leafBase = (Color){195, 140, 28, 255};
+            leafMid  = (Color){250, 195, 45, 255};
+            leafTip  = (Color){255, 235, 110, 255};
+            leafVein = (Color){255, 252, 190, 255}; // Radiant solar gold spine
             break;
         case WOOD_VINE_STYLE_WITHER_GHOST:  // Spectral violet
-            leafBase = (Color){115, 95, 135, 255};
-            leafTip  = (Color){195, 145, 240, 255};
-            leafVein = (Color){70, 55, 85, 255};
+            leafBase = (Color){120, 95, 145, 255};
+            leafMid  = (Color){185, 135, 240, 255};
+            leafTip  = (Color){220, 180, 255, 255};
+            leafVein = (Color){245, 230, 255, 255}; // Spectral amethyst chi spine
             break;
         case WOOD_VINE_STYLE_JADE_EMERALD:  // High-contrast celestial jade
         default:
-            leafBase = (Color){28, 145, 68, 255};
-            leafTip  = (Color){50, 240, 160, 255};
-            leafVein = (Color){16, 85, 40, 255};
+            leafBase = (Color){18, 145, 72, 255};
+            leafMid  = (Color){45, 238, 132, 255};
+            leafTip  = (Color){140, 255, 205, 255};
+            leafVein = (Color){205, 255, 240, 255}; // Incandescent celestial jade spine
             break;
     }
 
@@ -161,22 +181,22 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
         leafBase.b = (unsigned char)(leafBase.b * (1.0f - phase1) + autumnGold.b * phase1);
 
         leafBase.r = (unsigned char)(leafBase.r * (1.0f - phase2) + deadBrown.r * phase2);
-        leafBase.g = (unsigned char)(leafBase.g * (1.0f - phase2) + deadBrown.g * phase2);
-        leafBase.b = (unsigned char)(leafBase.b * (1.0f - phase2) + deadBrown.b * phase2);
+        leafBase.g = (unsigned char)(leafBase.g * (1.0f - phase2) + deadBrown.r * phase2);
+        leafBase.b = (unsigned char)(leafBase.b * (1.0f - phase2) + deadBrown.r * phase2);
 
-        leafTip = leafBase;
+        leafMid  = leafBase;
+        leafTip  = leafBase;
+        leafVein = leafBase;
     }
 
     rlDisableBackfaceCulling();
     if (!isShadowPass) BeginBlendMode(BLEND_ALPHA);
 
-    // Each leaf has 4 triangles (12 vertices), 2-sided = 24 vertices
-    rlCheckRenderBatchLimit(config->socketCount * 24);
     rlBegin(RL_TRIANGLES);
 
-    for (int k = 0; k < config->socketCount; k++)
+    for (int k = 0; k < socketCountToRender; k++)
     {
-        const VFX_BotanicalSocket *sock = &config->sockets[k];
+        const VFX_BotanicalSocket *sock = &socketsToRender[k];
 
         // 1. Biological emergence progress for this leaf
         float leafBirth = sock->arc * 0.65f;
@@ -199,98 +219,167 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
         Vector3 spineDir = sock->tangent;
 
         // Leaf petiole (cuống lá) extends outward
-        float stemLen = sock->stemRadius * 0.65f + 0.02f;
+        float stemLen = sock->stemRadius * 0.65f + 0.025f;
         Vector3 bladeBase = Vector3Add(sock->pos, Vector3Scale(stemDir, stemLen));
 
         // Leaf growth direction: tilted outward and forward along branch
-        Vector3 leafDir = Vector3Normalize(Vector3Add(Vector3Scale(stemDir, 0.60f), Vector3Scale(spineDir, 0.45f)));
+        Vector3 leafDir  = Vector3Normalize(Vector3Add(Vector3Scale(stemDir, 0.55f), Vector3Scale(spineDir, 0.45f)));
         Vector3 leafNorm = Vector3Normalize(Vector3CrossProduct(stemDir, spineDir));
         Vector3 leafSide = Vector3Normalize(Vector3CrossProduct(leafDir, leafNorm));
 
         // High frequency biological wind flutter
-        float flutterPhase = time * 7.5f + (float)k * 1.8f;
+        float flutterPhase = time * 7.5f + (float)k * 1.85f;
         float sway = (config->swayAmp > 0.001f ? config->swayAmp : 0.035f);
         float flutter = sinf(flutterPhase) * sway * (0.5f + 0.5f * sock->arc);
         Vector3 flutterVec = Vector3Scale(leafNorm, flutter);
 
-        // Blade aspect ratio based on shape
-        float widthFrac = 0.38f;
-        if (config->shape == WOOD_LEAF_SHAPE_WILLOW) widthFrac = 0.18f;
-        else if (config->shape == WOOD_LEAF_SHAPE_MAPLE) widthFrac = 0.52f;
-        float leafWidth = leafLen * widthFrac;
+        // Petiole tiny stem segment
+        Vector3 vStemBase = sock->pos;
+        Vector3 vRoot     = bladeBase;
 
-        // 3. Build 3D V-creased curved leaf blade vertices
-        Vector3 vRoot = bladeBase;
-        Vector3 vMid  = Vector3Add(bladeBase, Vector3Add(Vector3Scale(leafDir, leafLen * 0.50f),
-                                                         Vector3Add(Vector3Scale(stemDir, leafLen * 0.08f), Vector3Scale(flutterVec, 0.4f))));
-        Vector3 vTip  = Vector3Add(bladeBase, Vector3Add(Vector3Scale(leafDir, leafLen * 1.05f),
-                                                         Vector3Add(Vector3Scale(stemDir, -leafLen * 0.04f), flutterVec)));
+        Color cV = leafVein;
+        Color cB = leafBase;
+        Color cM = leafMid;
+        Color cT = leafTip;
 
-        // V-crease upward fold
-        Vector3 vFold = Vector3Scale(leafNorm, leafLen * 0.065f);
-        Vector3 vLeft = Vector3Add(bladeBase, Vector3Add(Vector3Scale(leafDir, leafLen * 0.42f),
-                                                         Vector3Add(Vector3Scale(leafSide, -leafWidth), vFold)));
-        Vector3 vRight = Vector3Add(bladeBase, Vector3Add(Vector3Scale(leafDir, leafLen * 0.42f),
-                                                          Vector3Add(Vector3Scale(leafSide, leafWidth), vFold)));
-
-        // Compute face normals for 3D creased lighting
-        Vector3 nL1 = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vLeft, vRoot), Vector3Subtract(vMid, vRoot)));
-        Vector3 nR1 = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vMid, vRoot), Vector3Subtract(vRight, vRoot)));
-        Vector3 nL2 = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vLeft, vMid), Vector3Subtract(vTip, vMid)));
-        Vector3 nR2 = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vTip, vMid), Vector3Subtract(vRight, vMid)));
-
+        // Draw Petiole stem
         if (!isShadowPass)
         {
-            // Two-sided subsurface transmission + diffuse sunlight
-            float diffL1 = 0.35f + 0.65f * fmaxf(Vector3DotProduct(nL1, sunDir), 0.0f) + 0.30f * fmaxf(-Vector3DotProduct(nL1, sunDir), 0.0f);
-            float diffR1 = 0.35f + 0.65f * fmaxf(Vector3DotProduct(nR1, sunDir), 0.0f) + 0.30f * fmaxf(-Vector3DotProduct(nR1, sunDir), 0.0f);
-            float diffL2 = 0.35f + 0.65f * fmaxf(Vector3DotProduct(nL2, sunDir), 0.0f) + 0.30f * fmaxf(-Vector3DotProduct(nL2, sunDir), 0.0f);
-            float diffR2 = 0.35f + 0.65f * fmaxf(Vector3DotProduct(nR2, sunDir), 0.0f) + 0.30f * fmaxf(-Vector3DotProduct(nR2, sunDir), 0.0f);
+            float stemLit = 0.35f + 0.65f * fmaxf(Vector3DotProduct(stemDir, sunDir), 0.0f);
+            rlColor4ub((unsigned char)(cV.r * stemLit * 0.8f), (unsigned char)(cV.g * stemLit * 0.8f), (unsigned char)(cV.b * stemLit * 0.8f), 255);
+            rlNormal3f(stemDir.x, stemDir.y, stemDir.z);
+            Vector3 sLeft  = Vector3Add(vStemBase, Vector3Scale(leafSide, -0.008f));
+            Vector3 sRight = Vector3Add(vStemBase, Vector3Scale(leafSide,  0.008f));
+            rlVertex3f(sLeft.x, sLeft.y, sLeft.z);
+            rlVertex3f(sRight.x, sRight.y, sRight.z);
+            rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
+        }
 
-            Color cV = leafVein;
-            Color cB = leafBase;
-            Color cT = leafTip;
+        // ---------------------------------------------------------------------
+        // 3D CUBIC BÉZIER BLADE (From map_props_nature.inl): OVAL, WILLOW, MAPLE
+        // ---------------------------------------------------------------------
+        if (config->shape == WOOD_LEAF_SHAPE_WILLOW)
+        {
+            // WILLOW TENDRIL: Elongated slender weeping S-curve Bézier arch
+            BotanicalProfile prof = Botanical_ProfileWillow();
+            float wLen = leafLen * 1.45f;
+            float maxW = wLen * prof.W * 2.0f;
 
-            // Front faces
-            // Left base quad/tri
-            rlColor4ub((unsigned char)(cV.r * diffL1), (unsigned char)(cV.g * diffL1), (unsigned char)(cV.b * diffL1), 255);
-            rlNormal3f(nL1.x, nL1.y, nL1.z); rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
-            rlColor4ub((unsigned char)(cB.r * diffL1), (unsigned char)(cB.g * diffL1), (unsigned char)(cB.b * diffL1), 255);
-            rlNormal3f(nL1.x, nL1.y, nL1.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z);
-            rlColor4ub((unsigned char)(cB.r * diffL1), (unsigned char)(cB.g * diffL1), (unsigned char)(cB.b * diffL1), 255);
-            rlNormal3f(nL1.x, nL1.y, nL1.z); rlVertex3f(vMid.x, vMid.y, vMid.z);
+            Vector3 p0 = vRoot;
+            Vector3 p1 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, wLen * 0.35f),
+                                                      Vector3Scale(leafNorm, prof.curl * wLen * 0.15f)));
+            Vector3 p2 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, wLen * 0.70f),
+                                                      Vector3Add(Vector3Scale(leafNorm, prof.curl * wLen * 0.65f),
+                                                                 Vector3Scale(flutterVec, 0.5f))));
+            Vector3 p3 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, wLen),
+                                                      Vector3Add(Vector3Scale(leafNorm, prof.curl * wLen),
+                                                                 flutterVec)));
 
-            // Right base
-            rlColor4ub((unsigned char)(cV.r * diffR1), (unsigned char)(cV.g * diffR1), (unsigned char)(cV.b * diffR1), 255);
-            rlNormal3f(nR1.x, nR1.y, nR1.z); rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
-            rlColor4ub((unsigned char)(cB.r * diffR1), (unsigned char)(cB.g * diffR1), (unsigned char)(cB.b * diffR1), 255);
-            rlNormal3f(nR1.x, nR1.y, nR1.z); rlVertex3f(vMid.x, vMid.y, vMid.z);
-            rlColor4ub((unsigned char)(cB.r * diffR1), (unsigned char)(cB.g * diffR1), (unsigned char)(cB.b * diffR1), 255);
-            rlNormal3f(nR1.x, nR1.y, nR1.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+            Botanical_RenderBezierLeafBlade(p0, p1, p2, p3, leafNorm, maxW, prof.fold,
+                                           cB, cM, cT, cV, sunDir, isShadowPass, 255);
+        }
+        else if (config->shape == WOOD_LEAF_SHAPE_MAPLE)
+        {
+            // MAPLE / SERRATED BRAMBLE: 3-Lobed Palmate Blade with Glowing Center Vein
+            float mLen = leafLen * 1.15f;
+            float mWidth = mLen * 0.54f;
 
-            // Left tip
-            rlColor4ub((unsigned char)(cB.r * diffL2), (unsigned char)(cB.g * diffL2), (unsigned char)(cB.b * diffL2), 255);
-            rlNormal3f(nL2.x, nL2.y, nL2.z); rlVertex3f(vMid.x, vMid.y, vMid.z);
-            rlColor4ub((unsigned char)(cB.r * diffL2), (unsigned char)(cB.g * diffL2), (unsigned char)(cB.b * diffL2), 255);
-            rlNormal3f(nL2.x, nL2.y, nL2.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z);
-            rlColor4ub((unsigned char)(cT.r * diffL2), (unsigned char)(cT.g * diffL2), (unsigned char)(cT.b * diffL2), 255);
-            rlNormal3f(nL2.x, nL2.y, nL2.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
+            Vector3 vSpineMid = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, mLen * 0.45f), Vector3Scale(leafNorm, mLen * 0.05f)));
+            Vector3 vTip      = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, mLen * 1.05f), flutterVec));
 
-            // Right tip
-            rlColor4ub((unsigned char)(cB.r * diffR2), (unsigned char)(cB.g * diffR2), (unsigned char)(cB.b * diffR2), 255);
-            rlNormal3f(nR2.x, nR2.y, nR2.z); rlVertex3f(vMid.x, vMid.y, vMid.z);
-            rlColor4ub((unsigned char)(cT.r * diffR2), (unsigned char)(cT.g * diffR2), (unsigned char)(cT.b * diffR2), 255);
-            rlNormal3f(nR2.x, nR2.y, nR2.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
-            rlColor4ub((unsigned char)(cB.r * diffR2), (unsigned char)(cB.g * diffR2), (unsigned char)(cB.b * diffR2), 255);
-            rlNormal3f(nR2.x, nR2.y, nR2.z); rlVertex3f(vRight.x, vRight.y, vRight.z);
+            Vector3 vLeftLobe  = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, mLen * 0.60f),
+                                                              Vector3Add(Vector3Scale(leafSide, -mWidth), Vector3Scale(leafNorm, mLen * 0.04f))));
+            Vector3 vRightLobe = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, mLen * 0.60f),
+                                                              Vector3Add(Vector3Scale(leafSide,  mWidth), Vector3Scale(leafNorm, mLen * 0.04f))));
+
+            Vector3 vNotchL = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, mLen * 0.68f), Vector3Scale(leafSide, -mWidth * 0.35f)));
+            Vector3 vNotchR = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, mLen * 0.68f), Vector3Scale(leafSide,  mWidth * 0.35f)));
+            Vector3 vBaseL  = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, mLen * 0.25f), Vector3Scale(leafSide, -mWidth * 0.55f)));
+            Vector3 vBaseR  = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, mLen * 0.25f), Vector3Scale(leafSide,  mWidth * 0.55f)));
+
+            Vector3 nC = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vLeftLobe, vRoot), Vector3Subtract(vTip, vRoot)));
+            Vector3 nL = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vBaseL, vRoot), Vector3Subtract(vLeftLobe, vRoot)));
+            Vector3 nR = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(vRightLobe, vRoot), Vector3Subtract(vBaseR, vRoot)));
+
+            if (!isShadowPass)
+            {
+                float dC = 0.38f + 0.62f * Botanical_WrapDiffuse(nC, sunDir) + 0.35f * Botanical_WrapDiffuse(Vector3Negate(nC), sunDir);
+                float dL = 0.38f + 0.62f * Botanical_WrapDiffuse(nL, sunDir) + 0.35f * Botanical_WrapDiffuse(Vector3Negate(nL), sunDir);
+                float dR = 0.38f + 0.62f * Botanical_WrapDiffuse(nR, sunDir) + 0.35f * Botanical_WrapDiffuse(Vector3Negate(nR), sunDir);
+
+                // Central Lobe with glowing vein
+                rlColor4ub(cV.r, cV.g, cV.b, 255);
+                rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vSpineMid.x, vSpineMid.y, vSpineMid.z);
+                rlColor4ub((unsigned char)(cB.r * dC), (unsigned char)(cB.g * dC), (unsigned char)(cB.b * dC), 255);
+                rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vNotchL.x, vNotchL.y, vNotchL.z);
+                rlColor4ub((unsigned char)(cT.r * dC), (unsigned char)(cT.g * dC), (unsigned char)(cT.b * dC), 255);
+                rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
+
+                rlColor4ub(cV.r, cV.g, cV.b, 255);
+                rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vSpineMid.x, vSpineMid.y, vSpineMid.z);
+                rlColor4ub((unsigned char)(cT.r * dC), (unsigned char)(cT.g * dC), (unsigned char)(cT.b * dC), 255);
+                rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
+                rlColor4ub((unsigned char)(cB.r * dC), (unsigned char)(cB.g * dC), (unsigned char)(cB.b * dC), 255);
+                rlNormal3f(nC.x, nC.y, nC.z); rlVertex3f(vNotchR.x, vNotchR.y, vNotchR.z);
+
+                // Left Lobe
+                rlColor4ub(cV.r, cV.g, cV.b, 255);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
+                rlColor4ub((unsigned char)(cB.r * dL), (unsigned char)(cB.g * dL), (unsigned char)(cB.b * dL), 255);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vBaseL.x, vBaseL.y, vBaseL.z);
+                rlColor4ub((unsigned char)(cT.r * dL), (unsigned char)(cT.g * dL), (unsigned char)(cT.b * dL), 255);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vLeftLobe.x, vLeftLobe.y, vLeftLobe.z);
+
+                rlColor4ub(cV.r, cV.g, cV.b, 255);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
+                rlColor4ub((unsigned char)(cT.r * dL), (unsigned char)(cT.g * dL), (unsigned char)(cT.b * dL), 255);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vLeftLobe.x, vLeftLobe.y, vLeftLobe.z);
+                rlColor4ub((unsigned char)(cB.r * dL), (unsigned char)(cB.g * dL), (unsigned char)(cB.b * dL), 255);
+                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(vNotchL.x, vNotchL.y, vNotchL.z);
+
+                // Right Lobe
+                rlColor4ub(cV.r, cV.g, cV.b, 255);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
+                rlColor4ub((unsigned char)(cT.r * dR), (unsigned char)(cT.g * dR), (unsigned char)(cT.b * dR), 255);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vRightLobe.x, vRightLobe.y, vRightLobe.z);
+                rlColor4ub((unsigned char)(cB.r * dR), (unsigned char)(cB.g * dR), (unsigned char)(cB.b * dR), 255);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vBaseR.x, vBaseR.y, vBaseR.z);
+
+                rlColor4ub(cV.r, cV.g, cV.b, 255);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
+                rlColor4ub((unsigned char)(cB.r * dR), (unsigned char)(cB.g * dR), (unsigned char)(cB.b * dR), 255);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vNotchR.x, vNotchR.y, vNotchR.z);
+                rlColor4ub((unsigned char)(cT.r * dR), (unsigned char)(cT.g * dR), (unsigned char)(cT.b * dR), 255);
+                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(vRightLobe.x, vRightLobe.y, vRightLobe.z);
+            }
+            else
+            {
+                rlVertex3f(vSpineMid.x, vSpineMid.y, vSpineMid.z); rlVertex3f(vNotchL.x, vNotchL.y, vNotchL.z); rlVertex3f(vTip.x, vTip.y, vTip.z);
+                rlVertex3f(vSpineMid.x, vSpineMid.y, vSpineMid.z); rlVertex3f(vTip.x, vTip.y, vTip.z); rlVertex3f(vNotchR.x, vNotchR.y, vNotchR.z);
+                rlVertex3f(vRoot.x, vRoot.y, vRoot.z); rlVertex3f(vBaseL.x, vBaseL.y, vBaseL.z); rlVertex3f(vLeftLobe.x, vLeftLobe.y, vLeftLobe.z);
+                rlVertex3f(vRoot.x, vRoot.y, vRoot.z); rlVertex3f(vLeftLobe.x, vLeftLobe.y, vLeftLobe.z); rlVertex3f(vNotchL.x, vNotchL.y, vNotchL.z);
+                rlVertex3f(vRoot.x, vRoot.y, vRoot.z); rlVertex3f(vRightLobe.x, vRightLobe.y, vRightLobe.z); rlVertex3f(vBaseR.x, vBaseR.y, vBaseR.z);
+                rlVertex3f(vRoot.x, vRoot.y, vRoot.z); rlVertex3f(vNotchR.x, vNotchR.y, vNotchR.z); rlVertex3f(vRightLobe.x, vRightLobe.y, vRightLobe.z);
+            }
         }
         else
         {
-            // Depth-only shadow map pass
-            rlVertex3f(vRoot.x, vRoot.y, vRoot.z); rlVertex3f(vLeft.x, vLeft.y, vLeft.z);   rlVertex3f(vMid.x, vMid.y, vMid.z);
-            rlVertex3f(vRoot.x, vRoot.y, vRoot.z); rlVertex3f(vMid.x, vMid.y, vMid.z);     rlVertex3f(vRight.x, vRight.y, vRight.z);
-            rlVertex3f(vMid.x, vMid.y, vMid.z);   rlVertex3f(vLeft.x, vLeft.y, vLeft.z);   rlVertex3f(vTip.x, vTip.y, vTip.z);
-            rlVertex3f(vMid.x, vMid.y, vMid.z);   rlVertex3f(vTip.x, vTip.y, vTip.z);     rlVertex3f(vRight.x, vRight.y, vRight.z);
+            // OVAL BROADLEAF: Lush 3D Cubic Bézier Cantilever Blade with Glowing Chi Midrib
+            BotanicalProfile prof = Botanical_ProfileOval();
+            float maxW = leafLen * prof.W * 2.0f;
+
+            Vector3 p0 = vRoot;
+            Vector3 p1 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, leafLen * 0.35f),
+                                                      Vector3Scale(leafNorm, prof.curl * leafLen * 0.12f)));
+            Vector3 p2 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, leafLen * 0.70f),
+                                                      Vector3Add(Vector3Scale(leafNorm, prof.curl * leafLen * 0.55f),
+                                                                 Vector3Scale(flutterVec, 0.5f))));
+            Vector3 p3 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, leafLen),
+                                                      Vector3Add(Vector3Scale(leafNorm, prof.curl * leafLen),
+                                                                 flutterVec)));
+
+            Botanical_RenderBezierLeafBlade(p0, p1, p2, p3, leafNorm, maxW, prof.fold,
+                                           cB, cM, cT, cV, sunDir, isShadowPass, 255);
         }
     }
 

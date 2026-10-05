@@ -632,6 +632,17 @@
       "draw_call": "do { VFX_WoodLeavesConfig _cfg = VFXTest_BuildWoodLeavesConfig($POS, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodLeaves(&_cfg); } while(0)"
     },
     {
+      "source": "wood/vc_wood_petals.inl",
+      "fn": "VFX_ComposeWoodPetals",
+      "label": "WOOD PETALS",
+      "category": "wood",
+      "fixture": "timed",
+      "lifecycle": "draw",
+      "_auto": true,
+      "type": "continuous",
+      "draw_call": "do { VFX_WoodPetalConfig _cfg = VFXTest_BuildWoodPetalConfig($POS, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodPetals(&_cfg); } while(0)"
+    },
+    {
       "source": "wood/vc_wood_vine.inl",
       "fn": "VFX_ComposeWoodVine",
       "label": "WOOD VINE",
