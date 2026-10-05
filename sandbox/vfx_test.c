@@ -739,7 +739,7 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
 // @gen:newfx_fire end
 }
 
-static bool s_isPanelOpen = true;
+static bool s_isPanelOpen = false;
 static bool s_clickedOnUI = false;
 static int s_newfxFilter = NEWFX_CAT_COMMON;
 
@@ -800,6 +800,401 @@ static int g_activeCountCache = 0;
 #define VF_TEST_BTN_Y 300.0f
 #define VF_TEST_BTN_RADIUS 45.0f
 
+
+// @gen:vfx_ui_helpers begin
+// Canonical VFX tester UI. sync_vfx_test.py copies this into sandbox/vfx_test.c.
+static bool s_vfxHelpOpen = false;
+static bool s_vfxPointerCaptured = false;
+static bool s_vfxButtonArmed = false;
+static Rectangle s_vfxArmedButton;
+static int s_vfxInspectorScroll = 0;
+static int s_vfxBrowserScroll = 0;
+static float s_vfxTelemetryFps, s_vfxTelemetryFrameMs, s_vfxTelemetryPeakMs;
+static float s_vfxTelemetryTilt = 18.0f, s_vfxTelemetryDistance = 20.571864f, s_vfxTelemetryZoom = 1.0f;
+static int s_vfxPendingTiltStep;
+
+void VFXTest_SetPerformanceTelemetry(float fps, float frameTimeMs, float peakFrameMs)
+{
+    s_vfxTelemetryFps = fps;
+    s_vfxTelemetryFrameMs = frameTimeMs;
+    s_vfxTelemetryPeakMs = peakFrameMs;
+}
+
+void VFXTest_SetCameraTelemetry(float tiltDegrees, float zoomRatio, float distanceMeters)
+{
+    s_vfxTelemetryTilt = tiltDegrees;
+    s_vfxTelemetryDistance = distanceMeters;
+    s_vfxTelemetryZoom = zoomRatio;
+}
+
+int VFXTest_ConsumeCameraTiltStep(void)
+{
+    int step = s_vfxPendingTiltStep;
+    s_vfxPendingTiltStep = 0;
+    return step;
+}
+
+typedef struct VFXTest_UILayout {
+    Rectangle header, inspector, browser, help, metrics[3], cameraStatus;
+    int inspectorRows, browserColumns, browserRows;
+    float rowHeight, browserCellWidth;
+} VFXTest_UILayout;
+
+static VFXTest_UILayout VFXTest_UIGetLayout(void)
+{
+    float w = (float)GetScreenWidth(), h = (float)GetScreenHeight();
+    float top = 16.0f;
+#if defined(PLATFORM_ANDROID)
+    top = 92.0f; /* ENGINE_LANDMINES: keep touch targets below the 84px inset. */
+#endif
+    float panelWidth = fminf(420.0f, fmaxf(300.0f, w * 0.36f));
+    panelWidth = fminf(panelWidth, w - 24.0f);
+    VFXTest_UILayout ui = {0};
+    ui.header = (Rectangle){12.0f, top, w - 24.0f, 40.0f};
+    float statusTop = top + 80.0f;
+    float statusBottom;
+    if (w >= 740.0f) {
+        ui.cameraStatus = (Rectangle){w - panelWidth - 12.0f, statusTop, panelWidth, 56.0f};
+        float metricsWidth = fminf(470.0f, ui.cameraStatus.x - 24.0f);
+        float cardWidth = (metricsWidth - 12.0f) / 3.0f;
+        for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){12.0f + i * (cardWidth + 6.0f), statusTop, cardWidth, 56.0f};
+        statusBottom = statusTop + 56.0f;
+    } else {
+        float cardWidth = (w - 36.0f) / 3.0f;
+        for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){12.0f + i * (cardWidth + 6.0f), statusTop, cardWidth, 30.0f};
+        ui.cameraStatus = (Rectangle){12.0f, statusTop + 36.0f, w - 24.0f, 36.0f};
+        statusBottom = statusTop + 72.0f;
+    }
+    float panelTop = fmaxf(176.0f, statusBottom + (w >= 740.0f ? 24.0f : 8.0f));
+    ui.rowHeight = 38.0f;
+    float panelHeight = fminf(76.0f + fmaxf(1.0f, (float)s_inspectorParamCount) * ui.rowHeight, fmaxf(116.0f, h - panelTop - 48.0f));
+    ui.inspector = (Rectangle){w - panelWidth - 12.0f, panelTop, panelWidth, panelHeight};
+    ui.inspectorRows = (int)((ui.inspector.height - 76.0f) / ui.rowHeight);
+    if (ui.inspectorRows < 1) ui.inspectorRows = 1;
+    ui.browser = (Rectangle){12.0f, top + 52.0f, fminf(720.0f, w - 24.0f), fmaxf(140.0f, h - top - 100.0f)};
+    ui.browserColumns = (int)((ui.browser.width - 20.0f) / 150.0f);
+    if (ui.browserColumns < 1) ui.browserColumns = 1;
+    ui.browserCellWidth = (ui.browser.width - 20.0f) / (float)ui.browserColumns;
+    ui.browserRows = (int)((ui.browser.height - 100.0f) / 40.0f);
+    if (ui.browserRows < 1) ui.browserRows = 1;
+    ui.help = (Rectangle){12.0f, top + 52.0f, fminf(480.0f, w - 24.0f), fminf(320.0f, h - top - 72.0f)};
+    return ui;
+}
+
+static Rectangle VFXTest_UIHeaderButton(VFXTest_UILayout ui, int index)
+{
+    float width = ui.header.width < 580.0f ? 56.0f : 76.0f;
+    return (Rectangle){ui.header.x + ui.header.width - (3 - index) * (width + 6.0f) - 4.0f,
+                       ui.header.y + 5.0f, width, 30.0f};
+}
+
+static Rectangle VFXTest_UIInspectorRow(VFXTest_UILayout ui, int visibleRow)
+{
+    return (Rectangle){ui.inspector.x + 8.0f, ui.inspector.y + 42.0f + visibleRow * ui.rowHeight,
+                       ui.inspector.width - 16.0f, ui.rowHeight - 4.0f};
+}
+
+static Rectangle VFXTest_UIParameterButton(Rectangle row, int direction)
+{
+    return (Rectangle){row.x + row.width - (direction < 0 ? 68.0f : 32.0f), row.y + 2.0f, 30.0f, row.height - 4.0f};
+}
+
+static Rectangle VFXTest_UITiltButton(VFXTest_UILayout ui, int direction)
+{
+    return (Rectangle){ui.cameraStatus.x + ui.cameraStatus.width - (direction < 0 ? 72.0f : 36.0f),
+                       ui.cameraStatus.y + (ui.cameraStatus.height - 30.0f) * 0.5f, 30.0f, 30.0f};
+}
+
+static Rectangle VFXTest_UIBrowserCell(VFXTest_UILayout ui, int visibleIndex)
+{
+    return (Rectangle){ui.browser.x + 10.0f + (visibleIndex % ui.browserColumns) * ui.browserCellWidth,
+                       ui.browser.y + 82.0f + (visibleIndex / ui.browserColumns) * 40.0f,
+                       ui.browserCellWidth - 6.0f, 34.0f};
+}
+
+static Rectangle VFXTest_UIBrowserTab(VFXTest_UILayout ui, int category)
+{
+    return (Rectangle){ui.browser.x + 10.0f + category * 106.0f, ui.browser.y + 8.0f, 100.0f, 28.0f};
+}
+
+static Rectangle VFXTest_UIBrowserFilter(VFXTest_UILayout ui, int filter)
+{
+    float width = (ui.browser.width - 20.0f) / NEWFX_CAT_COUNT;
+    return (Rectangle){ui.browser.x + 10.0f + filter * width, ui.browser.y + 42.0f, width - 3.0f, 26.0f};
+}
+
+static Rectangle VFXTest_UIForceButton(VFXTest_UILayout ui, bool vectorField)
+{
+    return (Rectangle){ui.help.x + (vectorField ? 124.0f : 12.0f), ui.help.y + ui.help.height - 42.0f, 106.0f, 30.0f};
+}
+
+bool VFXTest_IsPointerOverUI(void)
+{
+    if (s_hideAllUI) return false;
+    if (s_vfxPointerCaptured) return true;
+    VFXTest_UILayout ui = VFXTest_UIGetLayout();
+    Vector2 mouse = GetMousePosition();
+    if (CheckCollisionPointRec(mouse, ui.header)) return true;
+    if (CheckCollisionPointRec(mouse, ui.cameraStatus)) return true;
+    for (int i = 0; i < 3; ++i) if (CheckCollisionPointRec(mouse, ui.metrics[i])) return true;
+    if (s_isPanelOpen || s_vfxHelpOpen) return true; /* Modal panels own their backdrop. */
+    if (s_isPlayingMesh && s_inspectorParamCount > 0 && CheckCollisionPointRec(mouse, ui.inspector)) return true;
+    if (!s_hideDebugOverlays && CheckCollisionPointRec(mouse, (Rectangle){12.0f, ui.cameraStatus.y + ui.cameraStatus.height + 12.0f, 298.0f, 76.0f})) return true;
+    return false;
+}
+
+static bool VFXTest_UIButtonReleased(Rectangle rect)
+{
+    bool hover = CheckCollisionPointRec(GetMousePosition(), rect);
+    if (hover && IsMouseButtonDown(MOUSE_BUTTON_LEFT) && !s_vfxButtonArmed) {
+        s_vfxButtonArmed = true;
+        s_vfxArmedButton = rect;
+    }
+    return hover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && s_vfxButtonArmed &&
+           s_vfxArmedButton.x == rect.x && s_vfxArmedButton.y == rect.y &&
+           s_vfxArmedButton.width == rect.width && s_vfxArmedButton.height == rect.height;
+}
+
+static int VFXTest_UIBrowserCount(void)
+{
+    if (s_testCategory == TEST_CAT_MESH) return (int)(sizeof(s_meshNames) / sizeof(s_meshNames[0]));
+    int count = 0;
+    for (int i = 0; i < VFXTest_NewFxCount(); ++i) if (s_newFxCategories[i] == s_newfxFilter) ++count;
+    return count;
+}
+
+static int VFXTest_UIBrowserIndex(int visibleIndex)
+{
+    if (s_testCategory == TEST_CAT_MESH) return visibleIndex;
+    for (int i = 0; i < VFXTest_NewFxCount(); ++i) {
+        if (s_newFxCategories[i] != s_newfxFilter) continue;
+        if (visibleIndex-- == 0) return i;
+    }
+    return -1;
+}
+
+static void VFXTest_UISelectFixture(int index, Vector3 playerPos)
+{
+    VFXTest_StopFixtures();
+    s_testIndex = index;
+    s_prefabStartPos = playerPos;
+    s_meshTime = 0.0f;
+    s_isPlayingMesh = true;
+    if (s_testCategory == TEST_CAT_NEWFX) {
+        VFXTest_FireNewFx(index, playerPos);
+        s_isPlayingMesh = true; /* Keep event fixtures available for controls. */
+    }
+    s_isPanelOpen = false;
+    s_vfxInspectorScroll = 0;
+    VFXTest_RefreshInspectorParams(true);
+}
+
+static void VFXTest_UIRevealSelectedParameter(void)
+{
+    VFXTest_UILayout ui = VFXTest_UIGetLayout();
+    if (s_inspectorSelectedParam < s_vfxInspectorScroll) s_vfxInspectorScroll = s_inspectorSelectedParam;
+    if (s_inspectorSelectedParam >= s_vfxInspectorScroll + ui.inspectorRows)
+        s_vfxInspectorScroll = s_inspectorSelectedParam - ui.inspectorRows + 1;
+}
+
+static void VFXTest_UILogParameter(int index)
+{
+    char value[64];
+    VFX_Param_FormatValue(&s_inspectorParams[index], value, sizeof(value));
+    TraceLog(LOG_INFO, "[VFXUI] %s / %s: %s", s_inspectorParams[index].group, s_inspectorParams[index].name, value);
+}
+
+static void VFXTest_UIEditParameter(int index, int direction)
+{
+    VFX_ParamDef *param = &s_inspectorParams[index];
+    if (!param->valPtr) return;
+    if (param->type == VFX_PARAM_FLOAT) {
+        float *value = (float *)param->valPtr;
+        *value = fmaxf(param->minFloat, fminf(param->maxFloat, *value + direction * param->stepFloat));
+    } else if (param->type == VFX_PARAM_INT) {
+        int *value = (int *)param->valPtr;
+        if (direction > 0 && *value < param->maxInt) ++*value;
+        if (direction < 0 && *value > param->minInt) --*value;
+        if (*value < param->minInt) *value = param->minInt;
+        if (*value > param->maxInt) *value = param->maxInt;
+    } else if (direction > 0) {
+        VFX_Param_CycleNext(param);
+    } else {
+        VFX_Param_CyclePrev(param);
+    }
+}
+
+static bool VFXTest_UIHandleInput(Vector3 playerPos)
+{
+    if (s_hideAllUI) { s_vfxPointerCaptured = false; s_vfxButtonArmed = false; return false; }
+    VFXTest_UILayout ui = VFXTest_UIGetLayout();
+    s_clickedOnUI = VFXTest_IsPointerOverUI();
+    if (s_clickedOnUI && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) s_vfxPointerCaptured = true;
+    bool back = false;
+    if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 0))) { s_isPanelOpen = !s_isPanelOpen; s_vfxHelpOpen = false; }
+    if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 1))) { s_vfxHelpOpen = !s_vfxHelpOpen; s_isPanelOpen = false; }
+    if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 2))) back = true;
+    if (!s_isPanelOpen && !s_vfxHelpOpen) {
+        if (VFXTest_UIButtonReleased(VFXTest_UITiltButton(ui, -1))) s_vfxPendingTiltStep = -1;
+        if (VFXTest_UIButtonReleased(VFXTest_UITiltButton(ui, 1))) s_vfxPendingTiltStep = 1;
+    }
+    if (s_isPanelOpen) {
+        for (int i = 0; i < TEST_CAT_COUNT; ++i) if (VFXTest_UIButtonReleased(VFXTest_UIBrowserTab(ui, i))) {
+            s_testCategory = i; s_vfxBrowserScroll = 0;
+        }
+        if (s_testCategory == TEST_CAT_NEWFX) for (int i = 0; i < NEWFX_CAT_COUNT; ++i)
+            if (VFXTest_UIButtonReleased(VFXTest_UIBrowserFilter(ui, i))) { s_newfxFilter = i; s_vfxBrowserScroll = 0; }
+        int count = VFXTest_UIBrowserCount();
+        int maxScroll = (count + ui.browserColumns - 1) / ui.browserColumns - ui.browserRows;
+        if (maxScroll < 0) maxScroll = 0;
+        if (CheckCollisionPointRec(GetMousePosition(), ui.browser)) s_vfxBrowserScroll -= (int)GetMouseWheelMove();
+        if (s_vfxBrowserScroll < 0) s_vfxBrowserScroll = 0;
+        if (s_vfxBrowserScroll > maxScroll) s_vfxBrowserScroll = maxScroll;
+        int first = s_vfxBrowserScroll * ui.browserColumns;
+        for (int i = 0; i < ui.browserColumns * ui.browserRows && first + i < count; ++i)
+            if (VFXTest_UIButtonReleased(VFXTest_UIBrowserCell(ui, i))) {
+                int index = VFXTest_UIBrowserIndex(first + i);
+                if (index >= 0) VFXTest_UISelectFixture(index, playerPos);
+                break;
+            }
+    } else if (!s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
+        int maxScroll = s_inspectorParamCount - ui.inspectorRows;
+        if (maxScroll < 0) maxScroll = 0;
+        if (CheckCollisionPointRec(GetMousePosition(), ui.inspector)) s_vfxInspectorScroll -= (int)GetMouseWheelMove();
+        if (s_vfxInspectorScroll < 0) s_vfxInspectorScroll = 0;
+        if (s_vfxInspectorScroll > maxScroll) s_vfxInspectorScroll = maxScroll;
+        for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
+            int index = row + s_vfxInspectorScroll;
+            Rectangle rect = VFXTest_UIInspectorRow(ui, row);
+            if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, -1))) {
+                s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, -1); VFXTest_UILogParameter(index);
+            } else if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, 1))) {
+                s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, 1); VFXTest_UILogParameter(index);
+            } else if (VFXTest_UIButtonReleased(rect)) s_inspectorSelectedParam = index;
+        }
+    }
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) { s_vfxButtonArmed = false; s_vfxPointerCaptured = false; }
+    return back;
+}
+
+static void VFXTest_UIText(const char *text, Rectangle rect, int fontSize, Color color)
+{
+    BeginScissorMode((int)rect.x, (int)rect.y, (int)rect.width, (int)rect.height);
+    DrawText(text, (int)rect.x + 6, (int)rect.y + (int)(rect.height - fontSize) / 2, fontSize, color);
+    EndScissorMode();
+}
+
+static void VFXTest_UIDrawButton(Rectangle rect, const char *text, bool active)
+{
+    bool hover = CheckCollisionPointRec(GetMousePosition(), rect);
+    Color fill = active ? (Color){48, 83, 90, 245} : (hover ? (Color){48, 57, 68, 245} : (Color){28, 35, 44, 245});
+    DrawRectangleRounded(rect, 0.15f, 4, fill);
+    DrawRectangleRoundedLines(rect, 0.15f, 4, active ? SKYBLUE : (Color){75, 85, 97, 255});
+    VFXTest_UIText(text, rect, 12, active ? SKYBLUE : RAYWHITE);
+}
+
+static const char *VFXTest_UIActiveVariant(void)
+{
+    if (VFXTest_IsNewFxNamed("GUIDED PARTICLE")) return s_guidedFixturePresetNames[s_guidedFixturePreset];
+    if (VFXTest_IsNewFxNamed("MESH PARTICLE EMITTER")) return VFX_MeshParticleVariant_Name(s_meshParticleFixtureVariant);
+    if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL")) return MotionRibbonFixturePresetName(s_motionRibbonFixturePreset);
+    if (VFXTest_IsNewFxNamed("[PARTICLE] SMOKE VOLUME")) return VFX_SmokeStyle_Name(s_smokeVolumeFixtureStyle);
+    if (VFXTest_IsNewFxNamed("MESH SURFACE AURA")) return VFX_MeshSurfaceAuraVariant_Name(s_meshSurfaceAuraFixtureVariant);
+    if (VFXTest_IsNewFxNamed("DECAL")) return VFX_DecalVariant_Name(s_decalFixtureVariant);
+    if (VFXTest_IsNewFxNamed("SURFACE PARTICLE RING")) return VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant);
+    if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
+    if (VFXTest_IsNewFxNamed("AMBIENT FIRE")) return VFX_FlameStyle_Name(s_ambientFireFixtureStyle);
+    if (VFXTest_IsNewFxNamed("SURFACE IMPACT")) return VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface);
+    return NULL;
+}
+
+static void VFXTest_UIDraw(void)
+{
+    VFXTest_UILayout ui = VFXTest_UIGetLayout();
+    DrawRectangleRounded(ui.header, 0.12f, 4, (Color){15, 20, 27, 230});
+    const char *name = s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 && s_testIndex < VFXTest_NewFxCount()
+                       ? s_newFxNames[s_testIndex] : "MESH PREVIEW";
+    Rectangle title = {ui.header.x + 6.0f, ui.header.y, VFXTest_UIHeaderButton(ui, 0).x - ui.header.x - 10.0f, ui.header.height};
+    VFXTest_UIText(name, title, 14, RAYWHITE);
+    VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 0), "Fixtures", s_isPanelOpen);
+    VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), "Help", s_vfxHelpOpen);
+    VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Back", false);
+    const char *variant = VFXTest_UIActiveVariant();
+    if (variant) VFXTest_UIText(TextFormat("%s   |   < / > preset", variant),
+                             (Rectangle){12.0f, ui.header.y + 46.0f, fmaxf(180.0f, GetScreenWidth() - 340.0f), 24.0f}, 12, SKYBLUE);
+    const char *metricLabels[] = {"FPS", "Frame", "Peak"};
+    const float metricValues[] = {s_vfxTelemetryFps, s_vfxTelemetryFrameMs, s_vfxTelemetryPeakMs};
+    for (int i = 0; i < 3; ++i) {
+        Rectangle card = ui.metrics[i];
+        DrawRectangleRounded(card, 0.08f, 4, (Color){15, 20, 27, 225});
+        const char *value = i == 0 ? TextFormat("%.1f", metricValues[i]) : TextFormat("%.2f ms", metricValues[i]);
+        if (card.height < 40.0f) {
+            VFXTest_UIText(TextFormat("%s %s", metricLabels[i], value), card, 11, LIGHTGRAY);
+        } else {
+            VFXTest_UIText(metricLabels[i], (Rectangle){card.x + 2, card.y + 4, card.width - 4, 16}, 10, GRAY);
+            VFXTest_UIText(value, (Rectangle){card.x + 2, card.y + 23, card.width - 4, 26}, 17, RAYWHITE);
+        }
+    }
+    DrawRectangleRounded(ui.cameraStatus, 0.08f, 4, (Color){15, 20, 27, 225});
+    Rectangle cameraLabel = {ui.cameraStatus.x + 2, ui.cameraStatus.y + 4, ui.cameraStatus.width - 82, 16};
+    if (ui.cameraStatus.height >= 40.0f) {
+        VFXTest_UIText(TextFormat("Camera   %.2f m", s_vfxTelemetryDistance), cameraLabel, 10, GRAY);
+        cameraLabel.y += 20; cameraLabel.height = 26;
+    } else { cameraLabel.y = ui.cameraStatus.y + 4; cameraLabel.height = ui.cameraStatus.height - 8; }
+    VFXTest_UIText(TextFormat("Tilt %.1f deg   Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 12, RAYWHITE);
+    VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, -1), "-", false);
+    VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
+    if (!s_isPanelOpen && !s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
+        DrawRectangleRounded(ui.inspector, 0.035f, 4, (Color){15, 20, 27, 235});
+        VFXTest_UIText("Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
+        for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
+            int index = row + s_vfxInspectorScroll;
+            Rectangle rect = VFXTest_UIInspectorRow(ui, row);
+            bool selected = index == s_inspectorSelectedParam;
+            DrawRectangleRounded(rect, 0.08f, 3, selected ? (Color){34, 56, 66, 245} : (Color){23, 29, 37, 245});
+            char value[64]; VFX_Param_FormatValue(&s_inspectorParams[index], value, sizeof(value));
+            VFXTest_UIText(TextFormat("%s / %s", s_inspectorParams[index].group, s_inspectorParams[index].name),
+                          (Rectangle){rect.x, rect.y, rect.width - 76, 17}, 11, selected ? SKYBLUE : LIGHTGRAY);
+            VFXTest_UIText(value, (Rectangle){rect.x, rect.y + 16, rect.width - 76, 18}, 12, RAYWHITE);
+            VFXTest_UIDrawButton(VFXTest_UIParameterButton(rect, -1), "<", false);
+            VFXTest_UIDrawButton(VFXTest_UIParameterButton(rect, 1), ">", false);
+        }
+        VFXTest_UIText(TextFormat("%d-%d / %d   |   scroll or Tab   |   / edit", s_vfxInspectorScroll + 1,
+                                  (int)fminf(s_inspectorParamCount, s_vfxInspectorScroll + ui.inspectorRows), s_inspectorParamCount),
+                      (Rectangle){ui.inspector.x + 8, ui.inspector.y + ui.inspector.height - 28, ui.inspector.width - 16, 22}, 11, GRAY);
+    }
+    if (s_isPanelOpen) {
+        DrawRectangle(0, (int)(ui.header.y + ui.header.height + 2), GetScreenWidth(), GetScreenHeight(), ColorAlpha(BLACK, 0.22f));
+        DrawRectangleRounded(ui.browser, 0.025f, 4, (Color){15, 20, 27, 248});
+        VFXTest_UIDrawButton(VFXTest_UIBrowserTab(ui, 0), "Meshes", s_testCategory == TEST_CAT_MESH);
+        VFXTest_UIDrawButton(VFXTest_UIBrowserTab(ui, 1), "Effects", s_testCategory == TEST_CAT_NEWFX);
+        if (s_testCategory == TEST_CAT_NEWFX) {
+            const char *filters[] = {"Fire", "Water", "Wood", "Metal", "Earth", "Taiji", "Common"};
+            for (int i = 0; i < NEWFX_CAT_COUNT; ++i) VFXTest_UIDrawButton(VFXTest_UIBrowserFilter(ui, i), filters[i], s_newfxFilter == i);
+        }
+        int first = s_vfxBrowserScroll * ui.browserColumns, count = VFXTest_UIBrowserCount();
+        for (int i = 0; i < ui.browserRows * ui.browserColumns && first + i < count; ++i) {
+            int index = VFXTest_UIBrowserIndex(first + i);
+            const char *label = s_testCategory == TEST_CAT_NEWFX ? s_newFxNames[index] : s_meshNames[index];
+            VFXTest_UIDrawButton(VFXTest_UIBrowserCell(ui, i), label, s_testIndex == index);
+        }
+        VFXTest_UIText(TextFormat("%d-%d / %d   |   scroll to browse", count ? first + 1 : 0,
+                                  (int)fminf(count, first + ui.browserRows * ui.browserColumns), count),
+                      (Rectangle){ui.browser.x + 10, ui.browser.y + ui.browser.height - 24, ui.browser.width - 20, 20}, 11, GRAY);
+    }
+    if (s_vfxHelpOpen) {
+        DrawRectangleRounded(ui.help, 0.035f, 4, (Color){15, 20, 27, 248});
+        const char *lines[] = {"Preview controls", "Click the scene to cast. Q/E orbit, wheel zoom.",
+            "Tab / CapsLock: select parameter. /: next value.", "Shift /: previous value. < / >: fixture preset.",
+            "V: fixture clock. B: character. U: hide UI.", "F3: diagnostics. N: background. R: reset view.",
+            "Wood: ; burst, ' homing, backslash detach.", "Demos: 1 mesh, 2 SSS, 3 particles, 4 slash,",
+            "5 Iaido, 6 guiding wind. Z/C: character actions."};
+        for (int i = 0; i < 9; ++i) VFXTest_UIText(lines[i], (Rectangle){ui.help.x + 8, ui.help.y + 8 + i * 26.0f, ui.help.width - 16, 24}, i == 0 ? 14 : 12, i == 0 ? RAYWHITE : LIGHTGRAY);
+        VFXTest_UIDrawButton(VFXTest_UIForceButton(ui, false), "Force test", false);
+        VFXTest_UIDrawButton(VFXTest_UIForceButton(ui, true), "Vector field", false);
+    }
+}
+// @gen:vfx_ui_helpers end
 bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Texture2D testAtlasTex,
                                   Texture2D globalParticleTex)
 {
@@ -854,8 +1249,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     /* B — hiện/ẩn nhân vật tham chiếu tỉ lệ. */
     if (IsKeyPressed(KEY_B))
         s_hideCharacterRef = !s_hideCharacterRef;
-    /* TAB — hiện/ẩn HUD debug (pool GPU particle, skill manager, core-test). */
-    if (IsKeyPressed(KEY_TAB))
+    /* F3 — hiện/ẩn HUD debug (pool GPU particle, skill manager, core-test). */
+    if (IsKeyPressed(KEY_F3))
         s_hideDebugOverlays = !s_hideDebugOverlays;
     /* U — tắt/bật TOÀN BỘ UI của màn hình này (tabs, nút mesh/newfx, 2 hình
      * tròn FF/VF TEST, nút toggle/back). Dùng khi cần chụp/quan sát VFX hoàn
@@ -1017,12 +1412,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     // -------------------------------------------------------------------------
     // Test GPU compute force field
     // -------------------------------------------------------------------------
-    bool ffTestTouched =
-        !s_hideAllUI &&
-        IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-        CheckCollisionPointCircle(GetMousePosition(),
-                                  (Vector2){FF_TEST_BTN_X, FF_TEST_BTN_Y},
-                                  FF_TEST_BTN_RADIUS);
+    bool ffTestTouched = !s_hideAllUI && s_vfxHelpOpen &&
+        VFXTest_UIButtonReleased(VFXTest_UIForceButton(VFXTest_UIGetLayout(), false));
     if (IsKeyPressed(KEY_F) || ffTestTouched)
     {
         static ForceField s_gpuTestField;
@@ -1061,12 +1452,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     // -------------------------------------------------------------------------
     // Test FORCE_VECTOR_TEXTURE
     // -------------------------------------------------------------------------
-    bool vfTestTouched =
-        !s_hideAllUI &&
-        IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
-        CheckCollisionPointCircle(GetMousePosition(),
-                                  (Vector2){VF_TEST_BTN_X, VF_TEST_BTN_Y},
-                                  VF_TEST_BTN_RADIUS);
+    bool vfTestTouched = !s_hideAllUI && s_vfxHelpOpen &&
+        VFXTest_UIButtonReleased(VFXTest_UIForceButton(VFXTest_UIGetLayout(), true));
     if (IsKeyPressed(KEY_Y) || vfTestTouched)
     {
         static Texture2D s_flowTex = {0};
@@ -1116,205 +1503,8 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
     // -------------------------------------------------------------------------
     // PREFAB TESTER UI INPUT
     // -------------------------------------------------------------------------
-    Vector2 mousePos = GetMousePosition();
     bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-
-    // y=95 (not 15): Android reserves the top 84px as a mandatory system-gesture inset that
-    // intermittently steals finger taps there (see the long note in sandbox/ui_panel.c). Also
-    // arm-on-DOWN / fire-on-RELEASE instead of IsMouseButtonPressed: the down-frame position is
-    // often stale on Android, so a naive down-edge check highlights but never fires.
-    Rectangle toggleBtn = {20, 95, 180, 32};
-    Rectangle backBtn = {210, 95, 180, 32};
-    bool downNow = IsMouseButtonDown(MOUSE_BUTTON_LEFT);
-    static bool s_toggleArmed = false, s_backArmed = false;
-
-    bool overToggleBtn = CheckCollisionPointRec(mousePos, toggleBtn);
-    if (overToggleBtn)
-    {
-        s_clickedOnUI = true;
-        if (downNow)
-            s_toggleArmed = true;
-    }
-    if (s_toggleArmed && !downNow)
-    {
-        s_toggleArmed = false;
-        if (overToggleBtn)
-            s_isPanelOpen = !s_isPanelOpen;
-    }
-
-    bool overBackBtn = CheckCollisionPointRec(mousePos, backBtn);
-    if (overBackBtn)
-    {
-        s_clickedOnUI = true;
-        if (downNow)
-            s_backArmed = true;
-    }
-    if (s_backArmed && !downNow)
-    {
-        s_backArmed = false;
-        if (overBackBtn)
-            return true; // Request back to menu
-    }
-
-    if (s_isPlayingMesh && s_testCategory == TEST_CAT_MESH)
-    {
-        s_meshTime += TimeFX_RawDelta();
-        if (s_testIndex != MATERIAL_OUTPUT_FIXTURE_INDEX && s_meshTime > 5.0f)
-            s_isPlayingMesh = false;
-    }
-
-    if (s_isPanelOpen)
-    {
-        float startX = 20.0f;
-        float startY = 150.0f; // shifted down with the toggle/back row (clear of top-84px gesture inset)
-        float tabW = 120.0f;
-        float tabH = 35.0f;
-        float spacing = 10.0f;
-
-        // Check tabs (2 tabs: MESH and NEWFX)
-        {
-            int i;
-            for (i = 0; i < TEST_CAT_COUNT; i++)
-            {
-                Rectangle tabRec = {startX + i * (tabW + spacing), startY, tabW, tabH};
-                if (CheckCollisionPointRec(mousePos, tabRec))
-                {
-                    s_clickedOnUI = true;
-                    if (clicked)
-                    {
-                        VFXTest_StopFixtures();
-                        s_testCategory = i;
-                        s_testIndex = 0;
-                    }
-                }
-            }
-        }
-
-        // NEWFX sub-filter row
-        if (s_testCategory == TEST_CAT_NEWFX)
-        {
-            float filterY = startY + tabH + 8.0f;
-            float filterBtnW = 72.0f;
-            float filterBtnH = 26.0f;
-            int fi;
-            for (fi = 0; fi < NEWFX_CAT_COUNT; fi++)
-            {
-                Rectangle fBtnRec = {startX + fi * (filterBtnW + 4.0f), filterY, filterBtnW, filterBtnH};
-                if (CheckCollisionPointRec(mousePos, fBtnRec))
-                {
-                    s_clickedOnUI = true;
-                    if (clicked)
-                    {
-                        VFXTest_StopFixtures();
-                        s_newfxFilter = fi;
-                        s_isPlayingMesh = false;
-                        for (int newfxIdx = 0;
-                             newfxIdx < (int)(sizeof(s_newFxCategories) / sizeof(s_newFxCategories[0]));
-                             newfxIdx++)
-                        {
-                            if (s_newFxCategories[newfxIdx] == s_newfxFilter)
-                            {
-                                s_testIndex = newfxIdx;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        float gridY = startY + tabH + 20.0f;
-        float btnW = 110.0f;
-        float btnH = 35.0f;
-        int columns = 6;
-
-        // Push gridY down for filter row when in NEWFX
-        if (s_testCategory == TEST_CAT_NEWFX)
-            gridY += 26.0f + 10.0f;
-
-        if (s_testCategory == TEST_CAT_MESH)
-        {
-            int maxIdx = (int)(sizeof(s_meshNames) / sizeof(s_meshNames[0]));
-            int i;
-            for (i = 0; i < maxIdx; i++)
-            {
-                int col = i % columns;
-                int row = i / columns;
-                Rectangle btnRec = {startX + col * (btnW + spacing), gridY + row * (btnH + spacing), btnW, btnH};
-                if (CheckCollisionPointRec(mousePos, btnRec))
-                {
-                    s_clickedOnUI = true;
-                    if (clicked)
-                    {
-                        VFXTest_StopFixtures();
-                        s_testIndex = i;
-                        s_isPlayingMesh = false;
-                        s_meshTime = 0.0f;
-                    }
-                }
-            }
-        }
-        else if (s_testCategory == TEST_CAT_NEWFX)
-        {
-            int maxIdx;
-            const char **names;
-            int globalIdx;
-            int visualIdx;
-            maxIdx = 54;
-            names = s_newFxNames; // @gen:newfx_count
-            visualIdx = 0;
-            (void)names;
-            for (globalIdx = 0; globalIdx < maxIdx; globalIdx++)
-            {
-                int cat = s_newFxCategories[globalIdx];
-                if (cat != s_newfxFilter)
-                    continue;
-                int col = visualIdx % columns;
-                int row = visualIdx / columns;
-                Rectangle btnRec = {startX + col * (btnW + spacing), gridY + row * (btnH + spacing), btnW, btnH};
-                if (CheckCollisionPointRec(mousePos, btnRec))
-                {
-                    s_clickedOnUI = true;
-                    if (clicked)
-                    {
-                        VFXTest_StopFixtures();
-                        s_testIndex = globalIdx;
-                        s_isPlayingMesh = false;
-                        // @gen:newfx_trigger begin
-        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex == 12) {
-            Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
-            Vector3 guidedTarget = mouseTarget3D;
-            if (s_clickedOnUI) {
-                guidedTarget = Vector3Add(playerPos, (Vector3){2.5f, 0.0f, 0.8f});
-                guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
-            }
-            VFXTest_FireGuidedParticle(castSocket, guidedTarget);
-            return false;
-        }
-          if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
-              /* continuous — handled per-frame in VFXTest_Draw3D */
-              switch (s_testIndex) {
-              default: break;
-              }
-              s_isPlayingMesh = true;
-              s_meshTime = 0.0f;
-          }
-// @gen:newfx_trigger end
-                    }
-                }
-                visualIdx++;
-            }
-        }
-
-        // Mark UI if hovering over background panel
-        {
-            float bgW = columns * (btnW + spacing) + 10.0f;
-            float bgH = (s_testCategory == TEST_CAT_NEWFX) ? 490.0f : 360.0f;
-            Rectangle bgBox = {startX - 10, startY - 10, bgW, bgH};
-            if (CheckCollisionPointRec(mousePos, bgBox))
-                s_clickedOnUI = true;
-        }
-    }
+    if (VFXTest_UIHandleInput(playerPos)) return true;
 
     // Click outside UI → spawn
     if (clicked && !s_clickedOnUI)
@@ -1626,6 +1816,7 @@ void VFXTest_Draw3D(void)
                     s_inspectorSelectedParam = (s_inspectorSelectedParam - 1 + s_inspectorParamCount) % s_inspectorParamCount;
                 else
                     s_inspectorSelectedParam = (s_inspectorSelectedParam + 1) % s_inspectorParamCount;
+                VFXTest_UIRevealSelectedParameter();
 
                 char valBuf[64];
                 VFX_Param_FormatValue(&s_inspectorParams[s_inspectorSelectedParam], valBuf, sizeof(valBuf));
@@ -1638,9 +1829,9 @@ void VFXTest_Draw3D(void)
             if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && !VFXTest_IsNewFxNamed("GUIDED PARTICLE"))))
             {
                 if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
-                    VFX_Param_CyclePrev(&s_inspectorParams[s_inspectorSelectedParam]);
+                    VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);
                 else
-                    VFX_Param_CycleNext(&s_inspectorParams[s_inspectorSelectedParam]);
+                    VFXTest_UIEditParameter(s_inspectorSelectedParam, 1);
 
                 char valBuf[64];
                 VFX_Param_FormatValue(&s_inspectorParams[s_inspectorSelectedParam], valBuf, sizeof(valBuf));
@@ -1649,7 +1840,7 @@ void VFXTest_Draw3D(void)
             }
             else if (IsKeyPressed(KEY_COMMA) && !VFXTest_IsNewFxNamed("GUIDED PARTICLE"))
             {
-                VFX_Param_CyclePrev(&s_inspectorParams[s_inspectorSelectedParam]);
+                VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);
                 char valBuf[64];
                 VFX_Param_FormatValue(&s_inspectorParams[s_inspectorSelectedParam], valBuf, sizeof(valBuf));
                 TraceLog(LOG_INFO, "[Inspector] Param '%s' = %s",
@@ -2019,293 +2210,9 @@ void VFXTest_DrawHUD(void)
     if (s_hideAllUI)
         return; // U — see UpdateAndHandleInput. Nothing below draws.
 
-    DrawText(TextFormat("[1] MESH DISTORT | [2] SSS %s | [3] EMITTER %s | [4] SLASH | [5] IAIDO %s | [6] GUIDING WIND %s",
-                        s_demoSSSActive ? "[ON]" : "[OFF]",
-                        s_demoMeshEmitterActive ? "[ON]" : "[OFF]",
-                        s_demoIaidoActive ? "[ON]" : "[OFF]",
-                        s_demoGuidingWindActive ? "[ON]" : "[OFF]"),
-             10, 565, 16, YELLOW);
-    DrawText(TextFormat("B: character ref %s | Z/C: punch/kick | TAB: debug HUD %s | N: dark bg | R: reset view",
-                        s_hideCharacterRef ? "hidden" : "shown",
-                        s_hideDebugOverlays ? "hidden" : "shown"),
-             10, 590, 16, GRAY);
-    if (s_testCategory == TEST_CAT_MESH &&
-        s_testIndex == MATERIAL_OUTPUT_FIXTURE_INDEX && s_isPlayingMesh)
-    {
-        DrawText("VFX OUTPUT: LEFT ALPHA | CENTER PREMULT | RIGHT ADDITIVE",
-                 10, 570, 16, SKYBLUE);
-        DrawText("Contract check: same hue family; brightness is intentionally not equal",
-                 10, 550, 14, LIGHTGRAY);
-    }
-
-// @gen:newfx_guided_ui begin
-    if (s_isPlayingMesh && VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
-        DrawText(TextFormat("GUIDED PARTICLE: %s | > next | < previous",
-                            s_guidedFixturePresetNames[s_guidedFixturePreset]), 10, 320, 16, LIME);
-        DrawText("Click: cast | Tab: select parameter | /: edit (Shift /: previous)", 10, 340, 12, SKYBLUE);
-    }
-// @gen:newfx_guided_ui end
-    if (s_isPlayingMesh && VFXTest_IsNewFxNamed("MESH PARTICLE EMITTER"))
-    {
-        DrawText(TextFormat("MESH PARTICLE EMITTER: %s   > next   , previous",
-                            VFX_MeshParticleVariant_Name(s_meshParticleFixtureVariant)),
-                 10, 525, 16, SKYBLUE);
-    }
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
-    {
-        DrawText(TextFormat("MOTION RIBBON TRAIL: %s   > next   , previous",
-                            MotionRibbonFixturePresetName(s_motionRibbonFixturePreset)),
-                 10, 525, 16, SKYBLUE);
-    }
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("[PARTICLE] SMOKE VOLUME"))
-    {
-        DrawText(TextFormat("SMOKE VOLUME: %s   > next   < previous", VFX_SmokeStyle_Name(s_smokeVolumeFixtureStyle)), 10, 525, 16, SKYBLUE);
-    }
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("MESH SURFACE AURA"))
-    {
-        DrawText(TextFormat("MESH SURFACE AURA: %s   > next   < previous", VFX_MeshSurfaceAuraVariant_Name(s_meshSurfaceAuraFixtureVariant)), 10, 525, 16, SKYBLUE);
-    }
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("DECAL"))
-    {
-        DrawText(TextFormat("DECAL: %s   > next   < previous", VFX_DecalVariant_Name(s_decalFixtureVariant)), 10, 525, 16, SKYBLUE);
-    }
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("SURFACE PARTICLE RING"))
-    {
-        DrawText(TextFormat("SURFACE PARTICLE RING: %s   > next   < previous", VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant)), 10, 525, 16, SKYBLUE);
-    }
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("IMPACT DUST"))
-    {
-        DrawText(TextFormat("IMPACT DUST: %s   > next   < previous", VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant)), 10, 525, 16, SKYBLUE);
-    }
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("AMBIENT FIRE"))
-    {
-        DrawText(TextFormat("AMBIENT FIRE: %s   > next   < previous", VFX_FlameStyle_Name(s_ambientFireFixtureStyle)), 10, 525, 16, ORANGE);
-    }
-    else if (s_isPlayingMesh && s_inspectorParamCount > 0)
-    {
-        // Universal Parameter Inspector Panel for Atomic & Composite VFX
-        int colCount = (s_inspectorParamCount > 7) ? 2 : 1;
-        int rowsPerCol = (s_inspectorParamCount + colCount - 1) / colCount;
-        int boxWidth = (colCount == 2) ? 570 : 350;
-        int boxHeight = 36 + rowsPerCol * 18 + 48;
-        int startX = 10;
-        int startY = VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? 360 : 460;
-
-        DrawRectangle(startX, startY, boxWidth, boxHeight, ColorAlpha(BLACK, 0.82f));
-        DrawRectangleLines(startX, startY, boxWidth, boxHeight, ColorAlpha(GREEN, 0.45f));
-
-        const char *fxName = (s_testIndex >= 0 && s_testIndex < VFXTest_NewFxCount()) ? s_newFxNames[s_testIndex] : "VFX";
-        DrawText(TextFormat("[%s] PARAMETERS (CapsLock/Tab: Select Var | /: Cycle Value)", fxName),
-                 startX + 10, startY + 8, 14, GOLD);
-
-        for (int i = 0; i < s_inspectorParamCount; i++)
-        {
-            int col = (colCount == 2) ? (i / rowsPerCol) : 0;
-            int row = (colCount == 2) ? (i % rowsPerCol) : i;
-            int itemX = startX + 12 + col * 276;
-            int itemY = startY + 28 + row * 18;
-
-            char valBuf[64];
-            VFX_Param_FormatValue(&s_inspectorParams[i], valBuf, sizeof(valBuf));
-
-            bool isSelected = (i == s_inspectorSelectedParam);
-            if (isSelected)
-            {
-                DrawRectangle(itemX - 2, itemY - 1, 268, 16, ColorAlpha(LIME, 0.22f));
-                DrawRectangleLines(itemX - 2, itemY - 1, 268, 16, ColorAlpha(LIME, 0.75f));
-                DrawText(TextFormat(">> [%s] %s: %s", s_inspectorParams[i].group, s_inspectorParams[i].name, valBuf),
-                         itemX, itemY + 1, 12, YELLOW);
-            }
-            else
-            {
-                DrawText(TextFormat("   [%s] %s: %s", s_inspectorParams[i].group, s_inspectorParams[i].name, valBuf),
-                         itemX, itemY + 1, 12, LIGHTGRAY);
-            }
-        }
-
-        int footerY = startY + 28 + rowsPerCol * 18 + 6;
-        DrawText(VFXTest_IsNewFxNamed("GUIDED PARTICLE")
-                 ? "Controls: Tab Select | / Next Value | Shift / Previous | >/< Preset"
-                 : "Controls: CapsLock/Tab: Select Var | / or >: Next Value | ,: Prev Value",
-                 startX + 10, footerY, 12, SKYBLUE);
-        if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER") || VFXTest_IsNewFxNamed("WOOD PETALS"))
-        {
-            DrawText(TextFormat("Actions: ; Burst | ' Homing (%s) | \\ Detach | V Pause (%s) | Foliage: %d",
-                                VFX_FoliageSystem_IsHomingActive() ? "ON" : "OFF",
-                                s_vfxAnimationPaused ? "PAUSED" : "PLAYING",
-                                VFX_FoliageSystem_GetActiveCount()),
-                     startX + 10, footerY + 16, 12, LIME);
-        }
-    }
-
-    // @gen:newfx_surface_impact_selector_ui begin
-    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("SURFACE IMPACT"))
-    {
-        DrawText(TextFormat("SURFACE IMPACT receiver: %s   > next   , previous",
-                            VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface)),
-                 10, 525, 16, SKYBLUE);
-    }
-    // @gen:newfx_surface_impact_selector_ui end
-    if (!s_hideDebugOverlays)
-    {
-        VFXLightData activeLights[MAX_VFX_LIGHTS];
-        int activeCount = 0;
-        VFXLight_GetActive(activeLights, &activeCount, MAX_VFX_LIGHTS);
-        DrawText(TextFormat("Active VFX Lights: %d / 8", activeCount), 10, 610,
-                 20, ORANGE);
-        GpuParticleSystem_DrawDebug(10, 635);
-    }
-
-    // FF TEST button
-    DrawCircle((int)FF_TEST_BTN_X, (int)FF_TEST_BTN_Y, FF_TEST_BTN_RADIUS,
-               ColorAlpha(SKYBLUE, 0.5f));
-    DrawCircleLines((int)FF_TEST_BTN_X, (int)FF_TEST_BTN_Y, FF_TEST_BTN_RADIUS,
-                    SKYBLUE);
-    DrawText("FF", (int)FF_TEST_BTN_X - 14, (int)FF_TEST_BTN_Y - 12, 20, WHITE);
-    DrawText("TEST", (int)FF_TEST_BTN_X - 22, (int)FF_TEST_BTN_Y + 10, 14, WHITE);
-
-    // VF TEST button
-    DrawCircle((int)VF_TEST_BTN_X, (int)VF_TEST_BTN_Y, VF_TEST_BTN_RADIUS,
-               ColorAlpha(GOLD, 0.5f));
-    DrawCircleLines((int)VF_TEST_BTN_X, (int)VF_TEST_BTN_Y, VF_TEST_BTN_RADIUS,
-                    GOLD);
-    DrawText("VF", (int)VF_TEST_BTN_X - 14, (int)VF_TEST_BTN_Y - 12, 20, WHITE);
-    DrawText("TEST", (int)VF_TEST_BTN_X - 22, (int)VF_TEST_BTN_Y + 10, 14, WHITE);
-
-    // Toggle and back buttons (y=95: clear of the top-84px Android system-gesture inset)
-    Rectangle toggleBtn = {20, 95, 180, 32};
-    Rectangle backBtn = {210, 95, 180, 32};
-    Vector2 mousePos = GetMousePosition();
-
-    bool isOverToggle = CheckCollisionPointRec(mousePos, toggleBtn);
-    Color toggleCol = s_isPanelOpen ? (isOverToggle ? RED : MAROON) : (isOverToggle ? LIME : DARKGREEN);
-    DrawRectangleRounded(toggleBtn, 0.2f, 10, toggleCol);
-    DrawRectangleRoundedLines(toggleBtn, 0.2f, 10, WHITE);
-    {
-        const char *toggleText = s_isPanelOpen ? "[X] AN BANG DIEU KHIEN" : "[+] HIEN BANG DIEU KHIEN";
-        int tW = MeasureText(toggleText, 10);
-        DrawText(toggleText, (int)(toggleBtn.x + (toggleBtn.width - tW) / 2), (int)(toggleBtn.y + 11), 10, WHITE);
-    }
-
-    bool isOverBack = CheckCollisionPointRec(mousePos, backBtn);
-    Color backCol = isOverBack ? MAROON : DARKGRAY;
-    DrawRectangleRounded(backBtn, 0.2f, 10, backCol);
-    DrawRectangleRoundedLines(backBtn, 0.2f, 10, WHITE);
-    {
-        const char *backText = "[<] QUAY LAI MENU";
-        int bW = MeasureText(backText, 10);
-        DrawText(backText, (int)(backBtn.x + (backBtn.width - bW) / 2), (int)(backBtn.y + 11), 10, WHITE);
-    }
-
-    if (!s_isPanelOpen)
-        return;
-
-    // Background dim
-    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), ColorAlpha(BLACK, 0.4f));
-
-    float startX = 20.0f;
-    float startY = 150.0f; // shifted down with the toggle/back row (clear of top-84px gesture inset)
-    float tabW = 120.0f;
-    float tabH = 35.0f;
-    float spacing = 10.0f;
-
-    float btnW = 110.0f;
-    float btnH = 35.0f;
-    int columns = 6;
-
-    {
-        float bgW = columns * (btnW + spacing) + 10.0f;
-        float bgH = (s_testCategory == TEST_CAT_NEWFX) ? 490.0f : 360.0f;
-        Rectangle bgBox = {startX - 10, startY - 10, bgW, bgH};
-        DrawRectangleRounded(bgBox, 0.05f, 10, ColorAlpha(BLACK, 0.6f));
-        DrawRectangleRoundedLines(bgBox, 0.05f, 10, ColorAlpha(WHITE, 0.3f));
-    }
-
-    // Draw tabs (2 tabs)
-    {
-        const char *tabNames[] = {"MESH", "NEW FX"};
-        int i;
-        for (i = 0; i < TEST_CAT_COUNT; i++)
-        {
-            Rectangle tabRec = {startX + i * (tabW + spacing), startY, tabW, tabH};
-            bool isHover = CheckCollisionPointRec(mousePos, tabRec);
-            bool isSelected = (s_testCategory == i);
-            Color btnCol = isSelected ? ORANGE : (isHover ? DARKGRAY : ColorAlpha(DARKGRAY, 0.5f));
-            DrawRectangleRounded(tabRec, 0.3f, 10, btnCol);
-            DrawRectangleRoundedLines(tabRec, 0.3f, 10, WHITE);
-            int textW = MeasureText(tabNames[i], 12);
-            DrawText(tabNames[i], (int)(tabRec.x + (tabW - textW) / 2), (int)(tabRec.y + 11), 12, isSelected ? BLACK : WHITE);
-        }
-    }
-    float gridY = startY + tabH + 20.0f;
-
-    // NEWFX sub-filter row
-    if (s_testCategory == TEST_CAT_NEWFX)
-    {
-        const char *filterNames[] = {"FIRE", "WATER", "WOOD", "METAL", "EARTH", "TAIJI", "COMMON"};
-        float filterY = startY + tabH + 8.0f;
-        float filterBtnW = 72.0f;
-        float filterBtnH = 26.0f;
-        int fi;
-        for (fi = 0; fi < NEWFX_CAT_COUNT; fi++)
-        {
-            Rectangle fBtnRec = {startX + fi * (filterBtnW + 4.0f), filterY, filterBtnW, filterBtnH};
-            bool fHover = CheckCollisionPointRec(mousePos, fBtnRec);
-            bool fSel = (s_newfxFilter == fi);
-            Color fCol = fSel ? ORANGE : (fHover ? DARKGRAY : ColorAlpha(DARKGRAY, 0.5f));
-            DrawRectangleRounded(fBtnRec, 0.3f, 6, fCol);
-            DrawRectangleRoundedLines(fBtnRec, 0.3f, 6, WHITE);
-            int fw = MeasureText(filterNames[fi], 10);
-            DrawText(filterNames[fi], (int)(fBtnRec.x + (filterBtnW - fw) / 2), (int)(fBtnRec.y + 8), 10, fSel ? BLACK : WHITE);
-        }
-        // Push gridY down to accommodate filter row
-        gridY += filterBtnH + 10.0f;
-    }
-
-    // Draw button grid
-    if (s_testCategory == TEST_CAT_MESH)
-    {
-        int maxIdx = (int)(sizeof(s_meshNames) / sizeof(s_meshNames[0]));
-        int i;
-        for (i = 0; i < maxIdx; i++)
-        {
-            int col = i % columns;
-            int row = i / columns;
-            Rectangle btnRec = {startX + col * (btnW + spacing), gridY + row * (btnH + spacing), btnW, btnH};
-            bool isHover = CheckCollisionPointRec(mousePos, btnRec);
-            Color btnCol = (s_testIndex == i) ? ORANGE : (isHover ? MAROON : ColorAlpha(DARKGRAY, 0.5f));
-            DrawRectangleRounded(btnRec, 0.3f, 10, btnCol);
-            DrawRectangleRoundedLines(btnRec, 0.3f, 10, WHITE);
-            int textW = MeasureText(s_meshNames[i], 12);
-            DrawText(s_meshNames[i], (int)(btnRec.x + (btnW - textW) / 2), (int)(btnRec.y + 11), 12, WHITE);
-        }
-    }
-    else if (s_testCategory == TEST_CAT_NEWFX)
-    {
-        int maxIdx;
-        const char **names;
-        int gi;
-        int vIdx;
-        maxIdx = 54;
-        names = s_newFxNames; // @gen:newfx_count
-        vIdx = 0;
-        (void)names;
-        for (gi = 0; gi < maxIdx; gi++)
-        {
-            if (s_newFxCategories[gi] != s_newfxFilter)
-                continue;
-            int col = vIdx % columns;
-            int row = vIdx / columns;
-            Rectangle btnRec = {startX + col * (btnW + spacing), gridY + row * (btnH + spacing), btnW, btnH};
-            bool isHover = CheckCollisionPointRec(mousePos, btnRec);
-            Color btnCol = (s_testIndex == gi) ? ORANGE : (isHover ? MAROON : ColorAlpha(DARKGRAY, 0.5f));
-            DrawRectangleRounded(btnRec, 0.3f, 10, btnCol);
-            DrawRectangleRoundedLines(btnRec, 0.3f, 10, WHITE);
-            int tw = MeasureText(s_newFxNames[gi], 12);
-            DrawText(s_newFxNames[gi], (int)(btnRec.x + (btnW - tw) / 2), (int)(btnRec.y + 11), 12, WHITE);
-            vIdx++;
-        }
-    }
+    // @gen:vfx_ui_draw begin
+    VFXTest_UIDraw();
+    // @gen:vfx_ui_draw end
 }
 
 void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)

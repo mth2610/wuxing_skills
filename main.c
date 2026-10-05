@@ -169,10 +169,15 @@ static void MyEndMode3D(void) {
 // camera buttons, and the top 84 px is the OS's mandatory gesture strip (ENGINE_LANDMINES §5,
 // verified on the A33: a finger there never reaches the app, though `adb tap` does — so this is
 // NOT something device testing via adb will catch). That leaves the top-left, below y=90.
-//   index 0 = frame-time readout, 1 = GFX tier button, 2 = SHADOW button
-static Rectangle DebugToggleRect(int index) {
-  const float y[3] = { 96.0f, 122.0f, 148.0f };
-  return (Rectangle){ 10.0f, y[index], 300.0f, 24.0f }; // generous width: a finger is not a cursor
+//   index 0 = frame time, 1 = GFX, 2 = shadow, 3 = Taiji (outside VFX tester).
+// VFX performance/camera readouts belong to its toolbar; optional debug labels sit left.
+static Rectangle DebugToggleRect(int index, bool vfxTester) {
+  const float y[4] = {96.0f, 122.0f, 148.0f, 174.0f};
+  if (index < 0 || index >= (int)(sizeof(y) / sizeof(y[0])))
+    return (Rectangle){0};
+  const float vfxY[4] = {96.0f, 164.0f, 190.0f, 216.0f};
+  return (Rectangle){vfxTester ? 12.0f : 10.0f,
+                     vfxTester ? vfxY[index] : y[index], 300.0f, 24.0f};
 }
 
 /* Manager-owned VFX uses the common semantic passes. Standalone skills and
@@ -269,6 +274,8 @@ int main(int argc, char **argv) {
   // --render-vfx <index> [--warmup <frames>] [--out <path>]
   // Renders NEWFX tab entry <index> headlessly, saves PNG, exits.
   bool        renderVFXMode   = false;
+  bool        captureVFXUI    = false;
+  bool        captureSizeSet  = false;
   int         renderVFXIndex  = 0;
   int         renderVFXWarmup = 90;
   const char *renderVFXOut    = "autotest_output/vfx_eval.png";
@@ -301,6 +308,17 @@ int main(int argc, char **argv) {
           { renderVFXIndex = atoi(argv[++i]); renderVFXMode = true; }
       else if (strcmp(argv[i], "--render-neutral-smoke") == 0)
           { captureNeutralSmoke = true; renderVFXMode = true; }
+      else if (strcmp(argv[i], "--capture-ui") == 0)
+          captureVFXUI = true;
+      else if (strcmp(argv[i], "--size") == 0 && i + 1 < argc) {
+          char trailing;
+          if (sscanf(argv[++i], "%d,%d%c", &screenWidth, &screenHeight, &trailing) != 2 ||
+              screenWidth < 320 || screenWidth > 3840 || screenHeight < 240 || screenHeight > 2160) {
+              fprintf(stderr, "Capture size must be width,height within 320x240..3840x2160.\n");
+              return 2;
+          }
+          captureSizeSet = true;
+      }
       else if (strcmp(argv[i], "--benchmark-visible") == 0)
           benchmarkVisible = true;
       else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc)
@@ -324,6 +342,10 @@ int main(int argc, char **argv) {
       }
   }
 
+  if ((captureVFXUI || captureSizeSet) && !renderVFXMode) {
+      fprintf(stderr, "--capture-ui and --size require --render-vfx or --render-neutral-smoke.\n");
+      return 2;
+  }
   if (benchmarkVisible && !renderVFXMode) {
       fprintf(stderr, "--benchmark-visible requires --render-vfx or --render-neutral-smoke.\n");
       return 2;
@@ -790,11 +812,13 @@ int main(int argc, char **argv) {
         }
         // Same two toggles by TOUCH, for Android (no keyboard). Only while the labels are actually
         // drawn (they are hidden on SCREEN_GAME), so gameplay taps are never swallowed.
-        if (currentScreen != SCREEN_GAME && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        if (currentScreen != SCREEN_GAME &&
+            !(currentScreen == SCREEN_VFX_TESTER && VFXTest_ShouldHideDebugOverlays()) &&
+            IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             Vector2 tap = GetMousePosition();
-            if (CheckCollisionPointRec(tap, DebugToggleRect(1))) {
+            if (CheckCollisionPointRec(tap, DebugToggleRect(1, currentScreen == SCREEN_VFX_TESTER))) {
                 GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4));
-            } else if (CheckCollisionPointRec(tap, DebugToggleRect(2))) {
+            } else if (CheckCollisionPointRec(tap, DebugToggleRect(2, currentScreen == SCREEN_VFX_TESTER))) {
                 EnvShadow_SetEnabled(!EnvShadow_IsEnabled());
             }
         }
@@ -1058,6 +1082,7 @@ int main(int argc, char **argv) {
     } else if (currentScreen == SCREEN_VFX_TESTER) {
         static float vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
         static float vfxCamDist = SANDBOX_CAMERA_DEFAULT_DISTANCE;
+        static float vfxCamPitch = SANDBOX_CAMERA_PITCH_DEGREES;
 
         static float s_vfxPlayerVelY = 0.0f;
         static bool s_vfxPlayerJumping = false;
@@ -1075,6 +1100,7 @@ int main(int argc, char **argv) {
             s_vfxPlayerJumping = false;
             vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
             vfxCamDist = SANDBOX_CAMERA_DEFAULT_DISTANCE;
+            vfxCamPitch = SANDBOX_CAMERA_PITCH_DEGREES;
         }
 
         if (!renderVFXMode && IsKeyPressed(KEY_N)) {
@@ -1250,13 +1276,16 @@ int main(int argc, char **argv) {
         if (!renderVFXMode) {
             if (IsKeyDown(KEY_Q)) vfxCameraAngle -= 2.5f * dt;
             if (IsKeyDown(KEY_E)) vfxCameraAngle += 2.5f * dt;
-            vfxCamDist -= GetMouseWheelMove() * 0.5f;
+            if (!VFXTest_IsPointerOverUI())
+                vfxCamDist -= GetMouseWheelMove() * 0.5f;
             if (vfxCamDist < SANDBOX_CAMERA_MIN_DISTANCE) vfxCamDist = SANDBOX_CAMERA_MIN_DISTANCE;
             if (vfxCamDist > SANDBOX_CAMERA_MAX_DISTANCE) vfxCamDist = SANDBOX_CAMERA_MAX_DISTANCE;
         }
 
-        camera.target = (Vector3){ player.position.x, player.position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player.position.z };
-        camera.position = SandboxCamera_OrbitPosition(player.position, vfxCameraAngle, vfxCamDist);
+        int tiltStep = VFXTest_ConsumeCameraTiltStep();
+        vfxCamPitch = Clamp(vfxCamPitch + tiltStep * 2.0f, 5.0f, 80.0f);
+        camera.target = (Vector3){player.position.x, player.position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player.position.z};
+        camera.position = SandboxCamera_OrbitPositionAtPitch(player.position, vfxCameraAngle, vfxCamDist, vfxCamPitch);
 
         // WUXING_VFX_TOPDOWN=1 — steep overhead framing so the GROUND fills the
         // frame instead of the sky. Judging anything that lives on a surface
@@ -1286,6 +1315,13 @@ int main(int argc, char **argv) {
                      camera.position.x, camera.position.y, camera.position.z,
                      camera.target.x, camera.target.y, camera.target.z, camera.fovy);
         }
+
+        Vector3 viewOffset = Vector3Subtract(camera.position, camera.target);
+        float viewRadius = Vector3Length(viewOffset);
+        float viewTilt = atan2f(viewOffset.y, hypotf(viewOffset.x, viewOffset.z)) * RAD2DEG;
+        Vector3 defaultEye = SandboxCamera_OrbitPosition((Vector3){0}, 0, SANDBOX_CAMERA_DEFAULT_DISTANCE);
+        float defaultRadius = Vector3Distance(defaultEye, (Vector3){0, SANDBOX_CAMERA_TARGET_HEIGHT, 0});
+        VFXTest_SetCameraTelemetry(viewTilt, viewRadius > 0 ? defaultRadius / viewRadius : 1, viewRadius);
 
         // Intersect against the flat Y=0 plane first (cheap, works for the
         // common flat-map case), then snap the result's Y to the ACTIVE
@@ -1810,8 +1846,8 @@ int main(int argc, char **argv) {
 
     // These are dev/debug overlays — skip them entirely on SCREEN_GAME so it
     // reads as a real production screen, not a test environment. Untouched
-    // for every other screen. On the VFX Tester specifically, TAB
-    // (VFXTest_ShouldHideDebugOverlays) also hides them by default — pure
+    // for every other screen. The VFX Tester keeps diagnostics hidden by default;
+    // F3 toggles them through VFXTest_ShouldHideDebugOverlays — pure
     // clutter while judging how an effect looks.
     if (currentScreen != SCREEN_GAME &&
         !(currentScreen == SCREEN_VFX_TESTER && VFXTest_ShouldHideDebugOverlays())) {
@@ -1828,58 +1864,67 @@ int main(int argc, char **argv) {
                  WHITE);
     }
 
-    if (!g_isDebuggerCapturing && !renderVFXMode) {
+    if (!g_isDebuggerCapturing && (!renderVFXMode || captureVFXUI)) {
+        static float s_msAvg = 0, s_msWorst = 0, s_worstWindow = 0;
+        float rawFrameSeconds = GetFrameTime();
+        float msNow = rawFrameSeconds * 1000;
+        s_msAvg += (msNow - s_msAvg) * 0.05f;
+        if (msNow > s_msWorst) s_msWorst = msNow;
+        s_worstWindow += rawFrameSeconds;
+        if (s_worstWindow >= 1) { s_worstWindow = 0; s_msWorst = msNow; }
+        if (currentScreen == SCREEN_VFX_TESTER)
+            VFXTest_SetPerformanceTelemetry(GetFPS(), s_msAvg, s_msWorst);
+
         if (currentScreen == SCREEN_SKILL_SANDBOX) {
             DrawUIPanel(&uiState);
             DrawSandboxTouchControls(&player);
             if (uiState.isPanelOpen) {
                 DrawSandboxHUD();
             }
-        } else if (currentScreen == SCREEN_VFX_TESTER && !renderVFXMode) {
+        } else if (currentScreen == SCREEN_VFX_TESTER && (!renderVFXMode || captureVFXUI)) {
             VFXTest_DrawHUD();
         } else if (currentScreen == SCREEN_GAME) {
             GameScreen_DrawHUD(&player);
         }
 
+        const bool showRootDiagnostics = currentScreen != SCREEN_VFX_TESTER ||
+                                         !VFXTest_ShouldHideDebugOverlays();
         // Frame-time readout. FPS alone cannot be tuned with: it is a reciprocal, so equal FPS
         // steps are unequal amounts of work (60->50 is 3.3 ms, 30->25 is 6.7 ms), and under vsync
         // it snaps to refresh divisors and hides every partial win. Milliseconds are LINEAR in the
         // work done - a 2 ms saving reads as 2 ms whether you are at 60 FPS or at 40. Budget for
         // 60 FPS is 16.6 ms; the colour is that budget (green under, yellow under 33, red over).
-        {
-            static float s_msAvg = 0.0f, s_msWorst = 0.0f, s_worstWindow = 0.0f;
-            float dt = GetFrameTime();
-            float msNow = dt * 1000.0f;
-            s_msAvg += (msNow - s_msAvg) * 0.05f;   // ~20-frame smoothing: steady enough to read
-            if (msNow > s_msWorst) s_msWorst = msNow;
-            s_worstWindow += dt;
-            if (s_worstWindow >= 1.0f) { s_worstWindow = 0.0f; s_msWorst = msNow; } // worst of the last second
+        if (showRootDiagnostics && currentScreen != SCREEN_VFX_TESTER) {
             Color budget = (s_msAvg < 16.6f) ? GREEN : (s_msAvg < 33.3f) ? YELLOW : RED;
             const char *line = TextFormat("%.1f ms  %d FPS   worst %.1f ms", s_msAvg, GetFPS(), s_msWorst);
-            Rectangle r = DebugToggleRect(0);   // screen-relative: lands correctly on a phone too
+            const int debugFontSize = 20;
+            Rectangle r = DebugToggleRect(0, currentScreen == SCREEN_VFX_TESTER);   // screen-relative: lands correctly on a phone too
 #if defined(PERFORMANCE_CAPTURE)
-            DrawText(line, (int)r.x, (int)r.y, 20, budget);   // measurement build: show it in-game too
+            DrawText(line, (int)r.x, (int)r.y, debugFontSize, budget);   // measurement build: show it in-game too
 #else
-            if (currentScreen != SCREEN_GAME) DrawText(line, (int)r.x, (int)r.y, 20, budget);
+            if (currentScreen != SCREEN_GAME) DrawText(line, (int)r.x, (int)r.y, debugFontSize, budget);
 #endif
         }
 
         // Two separate lines, each its own tap target (see DebugToggleRect): on Android these ARE
         // the only way to switch tier / turn the real shadow on, since there is no keyboard.
-        if (currentScreen != SCREEN_GAME) {
+        if (currentScreen != SCREEN_GAME && showRootDiagnostics) {
+            const int debugFontSize = currentScreen == SCREEN_VFX_TESTER ? 14 : 20;
             static const char *gfxTierName[4] = { "UNLIT", "LOW", "MED", "HIGH" };
-            Rectangle rg = DebugToggleRect(1), rs = DebugToggleRect(2);
+            Rectangle rg = DebugToggleRect(1, currentScreen == SCREEN_VFX_TESTER), rs = DebugToggleRect(2, currentScreen == SCREEN_VFX_TESTER);
             DrawText(TextFormat("GFX [L/tap]: %s", gfxTierName[GfxQuality_Get()]),
-                     (int)rg.x, (int)rg.y, 20, SKYBLUE);
+                     (int)rg.x, (int)rg.y, debugFontSize, SKYBLUE);
             DrawText(TextFormat("SHADOW [J/tap]: %s", EnvShadow_IsEnabled() ? "ON" : "OFF"),
-                     (int)rs.x, (int)rs.y, 20, EnvShadow_IsEnabled() ? GREEN : SKYBLUE);
+                     (int)rs.x, (int)rs.y, debugFontSize, EnvShadow_IsEnabled() ? GREEN : SKYBLUE);
             // Thái Cực state — without it on screen, "[U] did nothing" and
             // "[U] worked and the skill is still gated" look identical, which is
             // exactly the confusion the toggle exists to remove.
-            bool taiji = Entity_IsTaijiActive(player.agentId);
-            Rectangle rt = DebugToggleRect(3);
-            DrawText(TextFormat("THAI CUC [U]: %s", taiji ? "ON" : "OFF"),
-                     (int)rt.x, (int)rt.y, 20, taiji ? GOLD : SKYBLUE);
+            if (currentScreen != SCREEN_VFX_TESTER) {
+                bool taiji = Entity_IsTaijiActive(player.agentId);
+                Rectangle rt = DebugToggleRect(3, currentScreen == SCREEN_VFX_TESTER);
+                DrawText(TextFormat("THAI CUC [U]: %s", taiji ? "ON" : "OFF"),
+                         (int)rt.x, (int)rt.y, 20, taiji ? GOLD : SKYBLUE);
+            }
         }
 
         // Real Shading P6 — debug preview of the raw shadow-map texture.

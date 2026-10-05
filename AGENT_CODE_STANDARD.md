@@ -147,10 +147,16 @@
 - Relevant API doc updated to match.
 - This file updated if the change produced a new rule or lesson.
 
+## 11. Tester UI
+
+- Use the same responsive rectangles for UI drawing and pointer capture. Hidden controls must not keep invisible click targets; capture wheel input before camera zoom and keep parameter selection separate from debug toggles.
+- Bounds-check indexed HUD positions against the actual array length; a fourth status label needs a fourth entry.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-05 | Codex | Tester UI capture and indexed HUD positions | main.c; sandbox/vfx_test.h | Ground-truth |
 | 2026-10-05 | Codex | Shared flow amplitude and SSF boundary | core/motion/motion_flow.h; core/liquid/liquid_surface.h | Ground-truth |
 | 2026-10-05 | Codex | §10.3 Mass-aware spatial forces and arrival ownership | core/motion/motion_fields.h; core/particles/particle_dynamics.h | Ground-truth |
 | 2026-10-05 | Codex | §7 Cloud background depth policy | maps/toolkit/map_props_cloud.inl; maps/tests/test_map_background_state.py | Ground-truth |

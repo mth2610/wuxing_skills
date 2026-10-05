@@ -1680,24 +1680,67 @@ def gen_guided_fixture_input():
 
 
 def gen_guided_fixture_ui():
-    return '''// @gen:newfx_guided_ui begin
-    if (s_isPlayingMesh && VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
-        DrawText(TextFormat("GUIDED PARTICLE: %s | > next | < previous",
-                            s_guidedFixturePresetNames[s_guidedFixturePreset]), 10, 320, 16, LIME);
-        DrawText("Click: cast | Tab: select parameter | /: edit (Shift /: previous)", 10, 340, 12, SKYBLUE);
-    }
-// @gen:newfx_guided_ui end'''
+    return "// @gen:newfx_guided_ui begin\n// Active preset is drawn by the shared toolbar.\n// @gen:newfx_guided_ui end"
+
+
+def regenerate_shared_ui(content):
+    """One canonical UI template owns drawing, row hit tests and modal navigation."""
+    template_path = os.path.join(REPO_ROOT, "scripts/templates/vfx_test_ui.c.in")
+    with open(template_path) as source:
+        body = source.read().rstrip()
+    content = ensure_generated_section(content, "vfx_ui_helpers", "bool VFXTest_UpdateAndHandleInput(", before=True)
+    # ensure_generated_section normally inserts after an anchor; this one is a
+    # function prefix, so the section must be immediately before it.
+    content, found = replace_section(content, "vfx_ui_helpers", "// @gen:vfx_ui_helpers begin\n" + body + "\n// @gen:vfx_ui_helpers end")
+    if not found:
+        raise SystemExit("[sync_vfx_test] shared UI helper replacement failed")
+    start = content.index("    // PREFAB TESTER UI INPUT")
+    legacy_input = content.find("    Vector2 mousePos = GetMousePosition();", start)
+    canonical_input = content.find("    bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);", start)
+    start = legacy_input if legacy_input >= 0 and (canonical_input < 0 or legacy_input < canonical_input) else canonical_input
+    if start < 0:
+        raise SystemExit("[sync_vfx_test] prefab input anchor missing")
+    end = content.index("    // Click outside UI", start)
+    content = content[:start] + '''    bool clicked = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+    if (VFXTest_UIHandleInput(playerPos)) return true;
+
+''' + content[end:]
+    # Migrate legacy circular buttons to compact Help controls, preserving
+    # their existing keyboard shortcuts and production test implementations.
+    content = re.sub(r"bool ffTestTouched =.*?;\n    if \(IsKeyPressed\(KEY_F\)",
+                     "bool ffTestTouched = !s_hideAllUI && s_vfxHelpOpen &&\n        VFXTest_UIButtonReleased(VFXTest_UIForceButton(VFXTest_UIGetLayout(), false));\n    if (IsKeyPressed(KEY_F)", content, count=1, flags=re.DOTALL)
+    content = re.sub(r"bool vfTestTouched =.*?;\n    if \(IsKeyPressed\(KEY_Y\)",
+                     "bool vfTestTouched = !s_hideAllUI && s_vfxHelpOpen &&\n        VFXTest_UIButtonReleased(VFXTest_UIForceButton(VFXTest_UIGetLayout(), true));\n    if (IsKeyPressed(KEY_Y)", content, count=1, flags=re.DOTALL)
+    hud_start = content.index("void VFXTest_DrawHUD(void)")
+    ui_start = content.index("    DrawText(TextFormat(\"[1] MESH DISTORT", hud_start) if "    DrawText(TextFormat(\"[1] MESH DISTORT" in content[hud_start:] else content.index("    // @gen:vfx_ui_draw begin", hud_start)
+    hud_end = content.index("\nvoid VFXTest_SetRenderTarget", ui_start)
+    content = content[:ui_start] + '''    // @gen:vfx_ui_draw begin
+    VFXTest_UIDraw();
+    // @gen:vfx_ui_draw end
+}
+''' + content[hud_end:]
+    content = content.replace("static bool s_isPanelOpen = true;", "static bool s_isPanelOpen = false;")
+    content = content.replace("if (IsKeyPressed(KEY_TAB))\n        s_hideDebugOverlays", "if (IsKeyPressed(KEY_F3))\n        s_hideDebugOverlays")
+    content = content.replace("/* TAB — hiện/ẩn HUD debug", "/* F3 — hiện/ẩn HUD debug")
+    content = content.replace("VFX_Param_CycleNext(&s_inspectorParams[s_inspectorSelectedParam]);",
+                              "VFXTest_UIEditParameter(s_inspectorSelectedParam, 1);")
+    content = content.replace("VFX_Param_CyclePrev(&s_inspectorParams[s_inspectorSelectedParam]);",
+                              "VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);")
+    selected_next = "s_inspectorSelectedParam = (s_inspectorSelectedParam + 1) % s_inspectorParamCount;"
+    if "VFXTest_UIRevealSelectedParameter();" not in content:
+        content = content.replace(selected_next, selected_next + "\n                VFXTest_UIRevealSelectedParameter();")
+    return content
 
 
 def regenerate_vfx_test(content, entries):
+    # The shared UI replaces legacy inspector/variant/footer drawing below;
+    # install selectors in the draw function first, then canonicalize the HUD.
     content = ensure_generated_section(content, "newfx_guided_state",
                                        "static bool                 s_liveWoodConfigsInit = false;")
     content = relocate_generated_section(content, "newfx_guided_inspector",
                                         "    s_inspectorSelectedParam = 0;\n    s_inspectorParamCount = 0;\n")
     content = ensure_generated_section(content, "newfx_guided_input",
                                        "        VFXTest_RefreshInspectorParams(false);\n")
-    content = ensure_generated_section(content, "newfx_guided_ui",
-                                       '    if (s_isPlayingMesh && VFXTest_IsNewFxNamed("MESH PARTICLE EMITTER"))', before=True)
     # Migrate the earlier world-click branch too; preview and live casts share
     # exactly one configuration helper. Reserve >/< for Guided presets.
     content = content.replace("VFX_ComposeGuidedParticle(castSocket, mouseTarget3D);",
@@ -1719,9 +1762,6 @@ def regenerate_vfx_test(content, entries):
     content = relocate_generated_section(
         content, "newfx_surface_impact_selector_input",
         "        if (s_testCategory == TEST_CAT_MESH)\n", before=True, last=True)
-    content = ensure_generated_section(
-        content, "newfx_surface_impact_selector_ui",
-        "    if (!s_hideDebugOverlays)\n", before=True)
     for key, gen in [
         ("newfx_names", gen_names_array(entries)),
         ("newfx_categories", gen_categories_array(entries)),
@@ -1733,15 +1773,13 @@ def regenerate_vfx_test(content, entries):
         ("newfx_guided_state", gen_guided_fixture_state()),
         ("newfx_guided_inspector", gen_guided_fixture_inspector()),
         ("newfx_guided_input", gen_guided_fixture_input()),
-        ("newfx_guided_ui", gen_guided_fixture_ui()),
         ("newfx_surface_impact_selector_state", gen_surface_impact_selector_state()),
         ("newfx_surface_impact_selector_input", gen_surface_impact_selector_input()),
-        ("newfx_surface_impact_selector_ui", gen_surface_impact_selector_ui()),
     ]:
         content, found = replace_section(content, key, gen)
         if not found:
             raise SystemExit(f"[sync_vfx_test] @gen:{key} replacement failed")
-    return update_count(content, len(entries))
+    return regenerate_shared_ui(update_count(content, len(entries)))
 
 
 # ── manifest helpers ───────────────────────────────────────────────────────────

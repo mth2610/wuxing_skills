@@ -18,20 +18,28 @@
 
 // Preserve the previous camera-to-target radius at every zoom setting while
 // lowering elevation. HEIGHT_RATIO defines that legacy radius, not new pitch.
-static inline Vector3 SandboxCamera_OrbitPosition(Vector3 playerPosition,
-                                                 float yaw, float zoomDistance)
+static inline Vector3 SandboxCamera_OrbitPositionAtPitch(Vector3 playerPosition,
+                                                        float yaw, float zoomDistance,
+                                                        float pitchDegrees)
 {
     const float legacyTargetOffset = zoomDistance * SANDBOX_CAMERA_HEIGHT_RATIO
                                   - SANDBOX_CAMERA_TARGET_HEIGHT;
     const float radius = sqrtf(zoomDistance * zoomDistance
                             + legacyTargetOffset * legacyTargetOffset);
-    const float pitch = SANDBOX_CAMERA_PITCH_DEGREES * 0.017453292519943295f;
+    const float pitch = pitchDegrees * 0.017453292519943295f;
     const float horizontal = radius * cosf(pitch);
     return (Vector3){
         playerPosition.x + sinf(yaw) * horizontal,
         playerPosition.y + SANDBOX_CAMERA_TARGET_HEIGHT + radius * sinf(pitch),
         playerPosition.z + cosf(yaw) * horizontal
     };
+}
+
+static inline Vector3 SandboxCamera_OrbitPosition(Vector3 playerPosition,
+                                                 float yaw, float zoomDistance)
+{
+    return SandboxCamera_OrbitPositionAtPitch(playerPosition, yaw, zoomDistance,
+                                             SANDBOX_CAMERA_PITCH_DEGREES);
 }
 
 // Biến camera toàn cục
