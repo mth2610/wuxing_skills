@@ -187,7 +187,9 @@ ForceField_AddLayer(&s_forceField, (ForceLayer){
 
 ### ForceLayer Types & Parameters Reference
 | ForceType | `origin` | `direction` | `strength` | `radius` | `falloff` | `noiseScale` | `noiseSpeed` |
-|---|---|---|---|---|---|---|---|
+|---|---|---|---|---|
+| 2026-10-05 | Codex | Shared motion/target flow, physical drag and SSF stream export | core/motion/motion_flow.h; core/motion/motion_fields.c; core/motion/motion_body.h; core/composition/common/vc_guided_particle.inl | Ground-truth |
+| 2026-10-05 | Codex | Independent mass-aware guide and target fields | core/motion/motion_fields.h; core/motion/motion_body.h; core/composition/visual_composer.h | Ground-truth |---|---|---|
 | `FORCE_GRAVITY_DIR` | Unused | Gravity vector (normalized) | Magnitude of acceleration | Unused | Unused | Unused | Unused |
 | `FORCE_GRAVITY_POINT` | Center of attraction | Unused | Positive = attract, Negative = repel | Active range | 0=Constant, 1=Linear, 2=Quadratic | Unused | Unused |
 | `FORCE_VORTEX` | Center of vortex | Axis of rotation (normalized) | Angular speed (ccw/cw) | Active range | 0=Constant, 1=Linear | Unused | Unused |
@@ -2906,10 +2908,95 @@ exceed 1.0 and cannot produce a hot core on its own. Use it for shape over time
   being widened into a ribbon.
 
 
+## Independent motion guides and target fields
+
+`core/motion/motion_fields.h` owns copied paths and independent, generation-checked
+field handles. `MotionFields_CreateGuide` creates a spatial receiver field without
+an emitter; free/settled Wood foliage can enter it later. `CreateTarget` creates an
+independent target field immediately. Guide arrival templates trigger once on the
+first actual swept arrival, and their lifetimes continue after the guide stops.
+No arrival creates a blast unless a template or callback explicitly requests one.
+
+Use `MotionGuide_Default`, bake a path with `MotionPath_Build`, then author speed,
+tube radius, duration and `maxForceNewtons`. STREAM advances each receiver along
+the route; SHELL transports captured offsets around a shared centre. SUSTAINED
+keeps the corridor active; PULSE moves a bounded window along it. Optional endpoint
+speed/radius profiles, preserved stream lanes and extra local force layers compose
+with the guide. The controller derives stiffness from its Newton budget and tube
+radius, and critical damping from each receiver's mass, with an implicit step for stability. Increasing mass therefore
+reduces acceleration under the same capped force; a heavy body may fail to follow
+an underpowered guide. This is a steering controller, not a conserved fluid simulation.
+
+Call `MotionFields_Sample(position, velocity, massKg, substepDt, receiverMask, &receiver,
+&sample)` and integrate `sample.forceNewtons / massKg` alongside existing acceleration,
+gravity/buoyancy and drag. Add `sample.airflowVelocity` to ambient wind velocity
+before relative-air drag; never treat an airflow velocity as acceleration. `VFX_Compose_Update` advances field lifetimes once
+before consumers. Call `AdvanceReceiver` after each integration step for swept
+arrival and per-body release/destroy/hold/orbit. Target templates and callback fire
+once per cast; per-body impulses and child particle emission remain per arrival.
+Callbacks must not reset or recursively update the registry. Stop handles explicitly
+or let them expire; pool exhaustion returns zero instead of evicting live casts.
+
+`MotionFlowDesc` has two controls in m/s: nonnegative turbulence speed and signed
+swirl speed. Both zero skips both procedural dynamics. Geometry derives eddy scale,
+temporal turnover, look-ahead and tube falloff. Coherent turbulence takes the curl
+of a smoothly windowed vector potential; swirl has a nonsingular solid-body core.
+Guide and arrival profiles own separate flows. Rotating lanes preserve thickness,
+and arrival starts a new phase without moving the captured offset discontinuously.
+
+Independent target descriptors compose Newton layers, an optional Wind primitive
+and shared flow velocities; they have no mutually exclusive type selector. Force
+layers and additional guide layers use Newtons; airflow uses m/s and becomes force
+through each body's drag. The existing
+standalone `ForceField_Evaluate`/WindZone APIs retain their m/s² semantics for old
+callers. Do not reuse a descriptor between those two unit conventions without
+converting its strengths. Paths and field templates are copied; borrowed particle
+assets/curves and callback userdata must outlive their consumers.
+
+`ParticleDynamicsProfile` accepts mass through `inverseMassKg` and optional
+`densityKgM3`. Positive density adds Archimedes air buoyancy: `V=m/density`,
+`F_buoyancy=rhoAir*V*9.81`; zero density retains gravity-only legacy profiles.
+Air density defaults to 1.225 kg/m³. Relative-air quadratic drag depends on body
+mass, area and drag coefficient and replaces exponential wind coupling. The algebraic backward-Euler quadratic
+drag step in `core/motion/motion_body.h` preserves gravity/drag terminal equilibrium; it is a stable numerical
+approximation, not an exact trajectory integrator. Gravity
+and buoyancy share `gravityScale`; use 1 for a physical body. A density below the
+surrounding air rises when gravity is enabled. Hot gas/smoke needs the gas solver,
+not a low-density solid proxy.
+
+`VFX_GuidedParticle_DefaultConfig` + `VFX_ComposeGuidedParticleEx` is the reusable
+composition. Physical controls are mass, density and force budget. Spherical
+volume, radius and projected drag area derive from mass/density with Cd=0.47;
+rendered radius remains independent. Cd=0.47 is a spherical approximation rather
+than a general aerodynamic model. Body templates can override these defaults
+for leaves or other shapes. Emission count/rate/duration are independent of fields:
+count=0 creates only a guide. The inspector hides emission-body controls for
+field-only casts and target lifetime when no target field is configured. Body lifetime derives from guide duration plus the
+longest target tail; templates can specialize lifetime and body behavior. Default arrival releases with no target field. The
+legacy two-point wrapper explicitly selects blast. The fixture **GUIDED PARTICLE**
+exposes shell, stream/orbit, blast, turbulence, sustained leaf capture, disappearance,
+pulse leaf capture, coherent flow and matched zero-flow presets (`>`/`<`, Tab parameters, `/` edits).
+
+For a future SSF consumer, set `renderMode=PARTICLE_RENDER_SURFACE_INPUT` and
+`surfaceStreamOut` to caller-owned `ParticleRenderStream` storage. The composition
+exports the owner stream before emitter retirement; retain it while particles live,
+and submit it with `LiquidSurface_SubmitParticleStream` during the liquid surface
+pass. This exposes the same simulated positions/radii without coupling the motion
+registry to a renderer. SSF reconstructs the surface; particle density/cohesion and
+pressure constraints still require a liquid solver. Procedural curl/steering alone
+does not make an incompressible liquid.
+
+Spatial motion receivers require CPU simulation: ParticleManager AUTO falls back
+to CPU and GPU_ONLY rejects them. Existing GPU particles do not sample the new
+registry. Wood foliage keeps its own render/orientation/contact logic and consumes
+the shared translational integrator; material density can be supplied in
+`VFX_FoliageSpawnParams`. GPU scene vegetation remains on the existing Wind system.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-05 | Codex | Shared motion/target flow, physical drag and SSF stream export | core/motion/motion_flow.h; core/motion/motion_fields.c; core/motion/motion_body.h; core/composition/common/vc_guided_particle.inl | Ground-truth |
 | 2026-10-04 | Codex | Batched liquid capture, recipes, diagnostics | core/liquid/liquid_surface.h; core/liquid/liquid_body_recipe.h | Ground-truth |
 | 2026-10-05 | Codex | Immutable texture variants | core/resource_manager.h; core/resource_manager.c | Ground-truth |
 | 2026-10-04 | Codex | Liquid names, impact usage and compatibility | core/liquid/liquid_impact.h; core/liquid/liquid_impact.c; core/fluid/fluid_surface.h | Ground-truth |

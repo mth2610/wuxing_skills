@@ -166,6 +166,7 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeFlameVolume":        ("emitter", "timed",      "continuous"),
     "VFX_ComposeBlackHole":          ("draw",    "timed",      "continuous"),
     "VFX_ComposeGuidedParticle":     ("event",   "burst",      "oneshot"),
+    "VFX_ComposeGuidedParticleEx":   ("event",   "burst",      "oneshot"),
     "VFX_ComposeIceCrystal":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterStream":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeLiquidImpact":       ("event",   "burst",      "oneshot"),
@@ -265,7 +266,7 @@ FIXTURE_EVENT_OVERRIDES = {
         # Use the harness' actual character source and mouse target.  Using
         # POS for both made the diagnostic silently invent a second endpoint,
         # so the visible route was offset from both gameplay locations.
-        "VFX_ComposeGuidedParticle($SOURCE, $TARGET)",
+        "VFXTest_FireGuidedParticle($SOURCE, $TARGET)",
     # A directed fire primary needs a visible segment, not the generic point
     # that an inferred event call would provide. The standard line fixture is
     # long enough to judge nozzle taper, flame-front width and hot-smoke wake.
@@ -710,7 +711,7 @@ def scan_inl_functions(comp_dir):
     First definition wins (in alphabetical relative-path order).
     """
     sig_re = re.compile(
-        r'\b(void|int)\s+(VFX_\w+)\s*\(([^)]*)\)\s*\{',
+        r'\b(void|int|MotionFieldHandle)\s+(VFX_\w+)\s*\(([^)]*)\)\s*\{',
         re.DOTALL,
     )
     result = {}
@@ -1397,7 +1398,7 @@ def gen_trigger_block(entries):
                   "                guidedTarget = Vector3Add(playerPos, (Vector3){2.5f, 0.0f, 0.8f});",
                   "                guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);",
                   "            }",
-                  "            VFX_ComposeGuidedParticle(castSocket, guidedTarget);",
+                  "            VFXTest_FireGuidedParticle(castSocket, guidedTarget);",
                   "            return false;",
                   "        }"]
     lines += [f"{INDENT}if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {{",
@@ -1550,7 +1551,168 @@ def gen_surface_impact_selector_ui():
     ])
 
 
+def gen_guided_fixture_state():
+    return '''// @gen:newfx_guided_state begin
+static VFX_GuidedParticleConfig s_liveGuidedParticleConfig;
+static bool s_liveGuidedParticleConfigInit = false;
+static int s_guidedFixturePreset = 0;
+static const char *s_guidedFixturePresetNames[] = {
+    "Shell / release", "Stream / orbit", "Shell / blast",
+    "Stream / turbulence", "Catch leaves / sustained vortex", "Shell / disappear",
+    "Catch leaves / traveling pulse", "Stream / coherent flow", "Stream / no added flow"
+};
+#define VFXTEST_GUIDED_PRESET_COUNT 9
+
+static void VFXTest_SetGuidedPreset(int preset)
+{
+    s_guidedFixturePreset = preset;
+    s_liveGuidedParticleConfig = VFX_GuidedParticle_DefaultConfig();
+    s_liveGuidedParticleConfigInit = true;
+    s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_NONE;
+    s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_RELEASE;
+    s_liveGuidedParticleConfig.guideMode = MOTION_GUIDE_SUSTAINED;
+    s_liveGuidedParticleConfig.duration = 5.0f;
+    s_liveGuidedParticleConfig.targetLifetime = 4.0f;
+    s_liveGuidedParticleConfig.particleRadius = 0.11f;
+    if (preset == 1 || preset == 3 || preset == 7 || preset == 8) {
+        s_liveGuidedParticleConfig.formation = MOTION_FORMATION_STREAM;
+        s_liveGuidedParticleConfig.emitDuration = 2.5f;
+    }
+    if (preset == 1) {
+        s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_ORBIT;
+        s_liveGuidedParticleConfig.targetFlow.swirlSpeedMps = 3.0f;
+    } else if (preset == 2) {
+        s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_BLAST;
+    } else if (preset == 3) {
+        s_liveGuidedParticleConfig.targetFlow.turbulenceSpeedMps = 8.0f;
+    } else if (preset == 4 || preset == 6) {
+        s_liveGuidedParticleConfig.count = 0;
+        s_liveGuidedParticleConfig.formation = MOTION_FORMATION_STREAM;
+        s_liveGuidedParticleConfig.speed = 3.0f;
+        s_liveGuidedParticleConfig.duration = 8.0f;
+        s_liveGuidedParticleConfig.guideRadius = 1.2f;
+        s_liveGuidedParticleConfig.maxForceNewtons = 0.4f;
+        s_liveGuidedParticleConfig.targetFlow.swirlSpeedMps = 8.0f;
+        if (preset == 6) {
+            s_liveGuidedParticleConfig.guideMode = MOTION_GUIDE_PULSE;
+            s_liveGuidedParticleConfig.pulseLength = 2.0f;
+            s_liveGuidedParticleConfig.targetLifetime = 2.5f;
+        }
+    } else if (preset == 5) {
+        s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_DESTROY;
+    } else if (preset == 7) {
+        s_liveGuidedParticleConfig.motionFlow.turbulenceSpeedMps = 0.6f;
+        s_liveGuidedParticleConfig.motionFlow.swirlSpeedMps = 1.5f;
+        s_liveGuidedParticleConfig.targetFlow.turbulenceSpeedMps = 1.0f;
+        s_liveGuidedParticleConfig.targetFlow.swirlSpeedMps = 2.0f;
+    }
+}
+
+static void VFXTest_InitGuidedConfig(void)
+{
+    if (!s_liveGuidedParticleConfigInit) {
+        // Deterministic capture selection; interactive >/< uses the same presets.
+        const char *capturePreset = getenv("WUXING_GUIDED_PRESET");
+        int preset = capturePreset ? atoi(capturePreset) : 0;
+        if (preset < 0 || preset >= VFXTEST_GUIDED_PRESET_COUNT) preset = 0;
+        VFXTest_SetGuidedPreset(preset);
+    }
+}
+
+static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
+{
+    VFXTest_InitGuidedConfig();
+    // Keep this event fixture selected for preset controls and the inspector.
+    s_isPlayingMesh = true;
+    VFX_GuidedParticleConfig cfg = s_liveGuidedParticleConfig;
+    cfg.source = source;
+    cfg.target = target;
+    if (s_guidedFixturePreset == 4 || s_guidedFixturePreset == 6) {
+        VFX_WoodLeavesConfig leaves = VFX_WoodLeaves_DefaultConfig();
+        Vector3 leafCenter = Vector3Add(Vector3Lerp(source, target, 0.40f), (Vector3){0.0f, 0.45f, 0.0f});
+        VFX_Foliage_SpawnFreeLeaves(leafCenter,
+                                  0.45f, 80, leaves.mass, leaves.style);
+    }
+    TraceLog(LOG_INFO, "GUIDED PARTICLE: %s", s_guidedFixturePresetNames[s_guidedFixturePreset]);
+    if (VFX_ComposeGuidedParticleEx(&cfg) == MOTION_FIELD_INVALID)
+        TraceLog(LOG_WARNING, "GUIDED PARTICLE: cast rejected (invalid configuration or exhausted field/emitter pool)");
+}
+// @gen:newfx_guided_state end'''
+
+
+def gen_guided_fixture_inspector():
+    return '''// @gen:newfx_guided_inspector begin
+    if (VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+        VFXTest_InitGuidedConfig();
+        s_inspectorParamCount = VFX_GuidedParticle_GetParams(&s_liveGuidedParticleConfig,
+                                                          s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+// @gen:newfx_guided_inspector end'''
+
+
+def gen_guided_fixture_input():
+    return '''// @gen:newfx_guided_input begin
+        if (VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0) {
+                VFXTest_SetGuidedPreset((s_guidedFixturePreset + direction + VFXTEST_GUIDED_PRESET_COUNT) % VFXTEST_GUIDED_PRESET_COUNT);
+                VFXTest_RefreshInspectorParams(true);
+                TraceLog(LOG_INFO, "GUIDED PARTICLE preset: %s (>, next; <, previous)",
+                         s_guidedFixturePresetNames[s_guidedFixturePreset]);
+            } else {
+                // Emission and pulse controls appear only while applicable.
+                // Rebind the descriptors without losing the selected parameter.
+                const char *selectedName = s_inspectorParamCount > 0 ? s_inspectorParams[s_inspectorSelectedParam].name : NULL;
+                const char *selectedGroup = s_inspectorParamCount > 0 ? s_inspectorParams[s_inspectorSelectedParam].group : NULL;
+                s_inspectorParamCount = VFX_GuidedParticle_GetParams(&s_liveGuidedParticleConfig,
+                                                                  s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+                s_inspectorSelectedParam = 0;
+                for (int i = 0; i < s_inspectorParamCount; ++i) {
+                    if (selectedName && selectedGroup && strcmp(selectedName, s_inspectorParams[i].name) == 0 &&
+                        strcmp(selectedGroup, s_inspectorParams[i].group) == 0) {
+                        s_inspectorSelectedParam = i;
+                        break;
+                    }
+                }
+            }
+        }
+// @gen:newfx_guided_input end'''
+
+
+def gen_guided_fixture_ui():
+    return '''// @gen:newfx_guided_ui begin
+    if (s_isPlayingMesh && VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+        DrawText(TextFormat("GUIDED PARTICLE: %s | > next | < previous",
+                            s_guidedFixturePresetNames[s_guidedFixturePreset]), 10, 320, 16, LIME);
+        DrawText("Click: cast | Tab: select parameter | /: edit (Shift /: previous)", 10, 340, 12, SKYBLUE);
+    }
+// @gen:newfx_guided_ui end'''
+
+
 def regenerate_vfx_test(content, entries):
+    content = ensure_generated_section(content, "newfx_guided_state",
+                                       "static bool                 s_liveWoodConfigsInit = false;")
+    content = relocate_generated_section(content, "newfx_guided_inspector",
+                                        "    s_inspectorSelectedParam = 0;\n    s_inspectorParamCount = 0;\n")
+    content = ensure_generated_section(content, "newfx_guided_input",
+                                       "        VFXTest_RefreshInspectorParams(false);\n")
+    content = ensure_generated_section(content, "newfx_guided_ui",
+                                       '    if (s_isPlayingMesh && VFXTest_IsNewFxNamed("MESH PARTICLE EMITTER"))', before=True)
+    # Migrate the earlier world-click branch too; preview and live casts share
+    # exactly one configuration helper. Reserve >/< for Guided presets.
+    content = content.replace("VFX_ComposeGuidedParticle(castSocket, mouseTarget3D);",
+                              "VFXTest_FireGuidedParticle(castSocket, mouseTarget3D);")
+    content = content.replace("IsKeyPressed(KEY_SLASH) || IsKeyPressed(KEY_PERIOD)",
+                              '(IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && !VFXTest_IsNewFxNamed("GUIDED PARTICLE")))')
+    content = content.replace("else if (IsKeyPressed(KEY_COMMA))\n            {",
+                              'else if (IsKeyPressed(KEY_COMMA) && !VFXTest_IsNewFxNamed("GUIDED PARTICLE"))\n            {')
+    content = content.replace("        int startY = 460;",
+                              '        int startY = VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? 360 : 460;')
+    content = content.replace(
+        'DrawText("Controls: CapsLock/Tab: Select Var | / or >: Next Value | ,: Prev Value",',
+        'DrawText(VFXTest_IsNewFxNamed("GUIDED PARTICLE")\n'
+        '                 ? "Controls: Tab Select | / Next Value | Shift / Previous | >/< Preset"\n'
+        '                 : "Controls: CapsLock/Tab: Select Var | / or >: Next Value | ,: Prev Value",')
     content = ensure_generated_section(
         content, "newfx_surface_impact_selector_state",
         "static TrailPresetId s_motionRibbonFixturePreset = MOTION_RIBBON_ENERGY_SILK;")
@@ -1568,6 +1730,10 @@ def regenerate_vfx_test(content, entries):
         ("newfx_trigger", gen_trigger_block(entries)),
         ("newfx_render_trigger", gen_render_trigger_block(entries)),
         ("newfx_draw", gen_draw_block(entries)),
+        ("newfx_guided_state", gen_guided_fixture_state()),
+        ("newfx_guided_inspector", gen_guided_fixture_inspector()),
+        ("newfx_guided_input", gen_guided_fixture_input()),
+        ("newfx_guided_ui", gen_guided_fixture_ui()),
         ("newfx_surface_impact_selector_state", gen_surface_impact_selector_state()),
         ("newfx_surface_impact_selector_input", gen_surface_impact_selector_input()),
         ("newfx_surface_impact_selector_ui", gen_surface_impact_selector_ui()),

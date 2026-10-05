@@ -81,6 +81,7 @@
 
 void VFX_Compose_Update(float dt)
 {
+    MotionFields_Update(dt);
     (void)dt;
 // @gen:archetype_update begin
     VC_MeshParticleEmitter_Update(dt);
@@ -110,7 +111,7 @@ void VFX_Compose_Update(float dt)
     // VFX_Sequence_Update takes the raw one itself for `unscaled` beats.
     VFX_Sequence_Update(dt);
     VC_RefParticles_Update(dt);   /* calibration target — vc_ref_particle.inl */
-    GuidedParticleTest_Update(dt); /* particle-upgrades guided GPU fixture */
+    VC_GuidedParticle_Update(dt);
     WaterOrb_Update(dt);
     WaterRing_Update(dt);
     LiquidBench_Update(dt);

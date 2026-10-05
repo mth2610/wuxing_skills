@@ -169,6 +169,17 @@
       "draw_call": "VFX_ComposeGroundWave($POS, VC_MAT_EARTH, 1.5f, $PROG, VFX_GroundHeightFromMap, NULL)"
     },
     {
+      "source": "common/vc_guided_particle.inl",
+      "fn": "VFX_ComposeGuidedParticle",
+      "label": "GUIDED PARTICLE",
+      "category": "common",
+      "fixture": "burst",
+      "lifecycle": "event",
+      "_auto": true,
+      "type": "oneshot",
+      "trigger_call": "VFXTest_FireGuidedParticle($SOURCE, $TARGET)"
+    },
+    {
       "source": "common/vc_guiding_wind.inl",
       "fn": "VFX_ComposeGuidingWind",
       "label": "GUIDING WIND",
@@ -281,17 +292,6 @@
       "_auto": true,
       "type": "continuous",
       "draw_call": "VFX_ComposeOpticalFlare(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 0.55f, 2.4f, 1.0f, s_lastCam)"
-    },
-    {
-      "source": "common/vc_particle_upgrades_test.inl",
-      "fn": "VFX_ComposeGuidedParticle",
-      "label": "GUIDED PARTICLE",
-      "category": "common",
-      "fixture": "burst",
-      "lifecycle": "event",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeGuidedParticle($SOURCE, $TARGET)"
     },
     {
       "source": "common/vc_ref_bands.inl",

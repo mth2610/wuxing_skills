@@ -170,8 +170,8 @@ static void Test_GPUAndManagerWiring(void)
 
 static void Test_VFXFixtureWiring(void)
 {
-    const char *fixture = "core/composition/common/vc_particle_upgrades_test.inl";
-    CHECK(Has(fixture, "GuidedParticleTest_Spawn"),
+    const char *fixture = "core/composition/common/vc_guided_particle.inl";
+    CHECK(Has("core/composition/common/vc_particle_upgrades_test.inl", "VFX_ComposeGuidedParticle"),
           "particle-upgrades fixture includes the guided-travel demonstration");
     CHECK(Has(fixture, "VFX_ComposeGuidedParticle"),
           "guided-travel demonstration has a generator-visible public entry point");
@@ -180,12 +180,12 @@ static void Test_VFXFixtureWiring(void)
           "guided-travel public declaration matches its source/target implementation");
     CHECK(Has(fixture, "PARTICLE_SIM_AUTO") &&
           Has(fixture, "PARTICLE_SOURCE_MESH_EDGE"),
-          "guided VFX defaults to GPU-capable AUTO simulation and a mesh source");
-    CHECK(Has(fixture, "arrivalForceField") && Has(fixture, "travelPath") &&
-          !Has(fixture, ".onTargetEmit"),
-          "guided VFX keeps the same particles for path travel and target impact");
-    CHECK(Has("core/composition/visual_composer.c", "GuidedParticleTest_Update(dt);"),
-          "composition lifecycle keeps dynamic guided-route storage alive");
+          "guided VFX uses manager AUTO with an authored mesh source");
+    CHECK(Has(fixture, "receiveMotionFields") && Has(fixture, "MotionFields_CreateGuide") &&
+          Has(fixture, "guide.arrival"),
+          "guided VFX configures spatial motion and explicit arrival behavior");
+    CHECK(Has("core/composition/visual_composer.c", "VC_GuidedParticle_Update(dt);"),
+          "composition lifecycle drives configured continuous emission");
 }
 
 int main(void)

@@ -33,6 +33,7 @@
 
 #include "raylib.h"
 #include "core/particles/particle_system.h"
+#include "core/particles/particle_manager.h"
 #include "core/composition/common/vc_motion.h"   // Motion Library (orbit/helix/jitter/breathe)
 #include "core/presets/vc_material.h"            // Element Material Table (VC_MaterialId)
 #include "core/geometry/procedural_mesh_utils.h" // GroundHeightSampleFn (H2 ground wave)
@@ -1063,6 +1064,46 @@ const char*          VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
 void                 VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
 void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
 
+/* Guided effects compose independent spatial fields with optional emission.
+ * count=0 creates only the guide; already-existing free foliage can be caught.
+ * guideOverride, targetOverrides and particleTemplate are copied during spawn;
+ * borrowed textures/curves/mesh data and callback userData retain their normal
+ * caller-owned lifetime contracts. Targets outlive guide expiry independently. */
+typedef enum {
+    VFX_GUIDED_TARGET_NONE, VFX_GUIDED_TARGET_BLAST
+} VFX_GuidedTargetPreset;
+typedef struct VFX_GuidedParticleConfig {
+    Vector3 source, target;
+    MotionFormation formation;
+    MotionGuideMode guideMode;
+    MotionArrivalMode arrival;
+    VFX_GuidedTargetPreset targetPreset;
+    float duration, targetLifetime, emitDuration, emissionRate;
+    int count;
+    float formationRadius, particleRadius, massKg;
+    float speed, guideRadius, maxForceNewtons, pulseLength;
+    /* Density derives volume and spherical projected drag area from mass.
+     * Visual particleRadius is independent of the physical body dimensions. */
+    float densityKgM3;
+    MotionFlowDesc motionFlow, targetFlow;
+    ParticleRenderMode renderMode; /* Billboard default, or surface input for SSF. */
+    /* Optional output, copied before emitter retirement. Stable owner stream
+     * remains capturable while emitted particles live. Caller submits it via
+     * LiquidSurface_SubmitParticleStream in the surface submission pass. */
+    ParticleRenderStream *surfaceStreamOut;
+    VC_MaterialId material;
+    const MotionGuideDesc *guideOverride;
+    const MotionTargetDesc *targetOverrides;
+    int targetOverrideCount;
+    const ParticleConfig *particleTemplate;
+    const ParticleEmissionSource *emissionSource;
+} VFX_GuidedParticleConfig;
+VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void);
+int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg,VFX_ParamDef *outParams,int maxParams);
+/* Returns field handle, or zero on invalid settings / field or emitter exhaustion.
+ * Stop the guide with MotionFields_Stop; spawned target fields stay independent. */
+MotionFieldHandle VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *config);
+
 // ── Generic Parameter Introspection API (CapsLock + / dynamic editing) ──────
 int VFX_WoodLeaves_GetParams(VFX_WoodLeavesConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 int VFX_WoodFlower_GetParams(VFX_WoodFlowerConfig *cfg, VFX_ParamDef *outParams, int maxParams);
@@ -1100,6 +1141,7 @@ typedef struct {
     float   growth;                 // Initial growth [0..1]
     float   lifetime;               // Lifetime in seconds
     unsigned int seed;
+    float densityKgM3;             // Material density; <=0 defaults to 600 kg/m^3
 } VFX_FoliageSpawnParams;
 
 VFX_FoliageSpawnParams VFX_FoliageSpawnParams_Default(void);

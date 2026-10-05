@@ -276,6 +276,42 @@ _Inline helpers / macros only — see header._
 **Enums:** ForceType { FORCE_GRAVITY_DIR,FORCE_GRAVITY_POINT,FORCE_VORTEX,FORCE_WIND,FORCE_NOISE_PERLIN,FORCE_NOISE_CURL,FORCE_DRAG,FORCE_VISCOSITY,FORCE_RADIAL_AXIS,FORCE_VORTEX_AXIS,FORCE_VECTOR_TEXTURE,FORCE_RECEIVER_PLANE }
 **Structs** (fields in header): ForceLayer, ForceField, ForceLayerGPU, ForceFieldGPU
 
+### `core/motion/motion_path.h`
+_Inline helpers / macros only — see header._
+**Structs** (fields in header): MotionPath, MotionPathSample
+
+### `core/motion/motion_flow.h`
+_Inline helpers / macros only — see header._
+**Enums:** MotionFlowDomain { MOTION_FLOW_TUBE,MOTION_FLOW_SPHERE }
+**Structs** (fields in header): MotionFlowDesc
+
+### `core/motion/motion_fields.h`
+```c
+  MotionGuideDesc MotionGuide_Default(void);
+  MotionTargetDesc MotionTarget_Default(void);
+  void MotionFields_Reset(void);
+  void MotionFields_Update(float dt);
+  MotionFieldHandle MotionFields_CreateGuide(const MotionGuideDesc *desc);
+  MotionFieldHandle MotionFields_CreateTarget(const MotionTargetDesc *desc);
+  bool MotionFields_IsAlive(MotionFieldHandle handle);
+  void MotionFields_Stop(MotionFieldHandle handle);
+  int MotionFields_GetGuideCount(void);
+  int MotionFields_GetTargetCount(void);
+  void MotionFields_Sample(Vector3 position, Vector3 velocity, float massKg, float dt, unsigned int mask, MotionReceiver *receiver, MotionFieldSample *sample);
+  MotionArrivalMode MotionFields_AdvanceReceiver(MotionReceiver *receiver, Vector3 previous, Vector3 current, Vector3 velocity);
+  bool MotionFields_GetArrival(MotionFieldHandle guide, MotionArrivalProfile *out);
+  bool MotionFields_Capture(MotionFieldHandle guide, Vector3 position, MotionReceiver *receiver);
+```
+**Enums:** MotionReceiverMask { MOTION_RECEIVER_PARTICLE,MOTION_RECEIVER_FOLIAGE,MOTION_RECEIVER_ALL };MotionFormation { MOTION_FORMATION_STREAM,MOTION_FORMATION_SHELL } MotionGuideMode { MOTION_GUIDE_SUSTAINED,MOTION_GUIDE_PULSE };MotionArrivalMode { MOTION_ARRIVAL_RELEASE,MOTION_ARRIVAL_DESTROY,MOTION_ARRIVAL_HOLD,MOTION_ARRIVAL_ORBIT }
+**Structs** (fields in header): MotionTargetDesc, MotionArrivalEvent, MotionArrivalProfile, MotionGuideDesc, MotionReceiver, MotionFieldSample
+
+### `core/motion/motion_body.h`
+_Inline helpers / macros only — see header._
+
+### `core/particles/particle_dynamics.h`
+_Inline helpers / macros only — see header._
+**Structs** (fields in header): ParticleDynamicsProfile
+
 ### `core/particles/particle_travel.h`
 _Inline helpers / macros only — see header._
 **Structs** (fields in header): ParticleTravelPath, ForceField
@@ -877,8 +913,12 @@ _Inline helpers / macros only — see header._
   Mesh ProceduralMesh_BuildCrystalTemplateMesh(const CrystalDesc *desc);
   void ProceduralMesh_DrawBakedCrystalCluster(Mesh mesh, Material material, Matrix transform);
   Material ProceduralMesh_GetPassthroughMaterial(Shader shader);
+  PMRmfTubeConfig PMRmfTube_DefaultConfig(void);
+  void PMRmf_BuildFrames(const Vector3 *positions, const Vector3 *tangents, int count, Vector3 *outRight, Vector3 *outUp);
+  void PMRmf_BuildTube(const Vector3 *pathPoints, int pathCount, const PMRmfTubeConfig *cfg, PMRmfTubeMesh *outMesh);
+  void PMRmf_Draw(const PMRmfTubeMesh *mesh, Color tint, float uvVScale, float uvVOffset);
 ```
-**Structs** (fields in header): PMTubeConfig, PMTubeMesh, PMDropletConfig, PMDropletMesh, PMCapsuleConfig, PMCapsuleMesh, WavePlaneConfig, WavePlaneMeshData, ShockwaveMeshConfig, ShockwaveMeshData, CurlingWaveConfig, CurlingWaveMeshData, RockMeshData, ShardClusterConfig, ShardClusterMeshData, VortexFunnelConfig, VortexFunnelMeshData, FissureMeshData, MeshDisplacementParams, CrystalDesc, CrystalClusterMeshData
+**Structs** (fields in header): PMTubeConfig, PMTubeMesh, PMDropletConfig, PMDropletMesh, PMCapsuleConfig, PMCapsuleMesh, WavePlaneConfig, WavePlaneMeshData, ShockwaveMeshConfig, ShockwaveMeshData, CurlingWaveConfig, CurlingWaveMeshData, RockMeshData, ShardClusterConfig, ShardClusterMeshData, VortexFunnelConfig, VortexFunnelMeshData, FissureMeshData, MeshDisplacementParams, CrystalDesc, CrystalClusterMeshData, PMRmfTubeConfig, PMRmfTubeMesh
 
 ### `core/composition/visual_composer.h`
 ```c
@@ -1011,6 +1051,49 @@ _Inline helpers / macros only — see header._
   const char *VFX_SurfaceParticleRingVariant_Name(VFX_SurfaceParticleRingVariant variant);
   const char *VFX_ImpactDustVariant_Name(VFX_ImpactDustVariant variant);
   void VFX_SurfaceImpact_Emit(const VFX_SurfaceImpactEvent *event);
+  const char* VFX_WoodReactionState_Name(VFX_WoodReactionState state);
+  const char* VFX_WoodVineCombo_Name(VFX_WoodVineCombo combo);
+  const char* VFX_WoodLeafShape_Name(VFX_WoodLeafShape shape);
+  const char* VFX_WoodFlowerType_Name(VFX_WoodFlowerType type);
+  VFX_WoodLeavesConfig VFX_WoodLeaves_DefaultConfig(void);
+  void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config);
+  VFX_WoodFlowerConfig VFX_WoodFlower_DefaultConfig(void);
+  void VFX_ComposeWoodFlower(const VFX_WoodFlowerConfig *config);
+  VFX_WoodPetalConfig VFX_WoodPetal_DefaultConfig(void);
+  void VFX_ComposeWoodPetals(const VFX_WoodPetalConfig *config);
+  VFX_WoodVineConfig VFX_WoodVine_DefaultConfig(void);
+  const char* VFX_WoodVineVariant_Name(VFX_WoodVineVariant variant);
+  const char* VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
+  void VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
+  void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
+  VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void);
+  int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg,VFX_ParamDef *outParams,int maxParams);
+  MotionFieldHandle VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *config);
+  int VFX_WoodLeaves_GetParams(VFX_WoodLeavesConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+  int VFX_WoodFlower_GetParams(VFX_WoodFlowerConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+  int VFX_WoodPetals_GetParams(VFX_WoodPetalConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+  int VFX_WoodVine_GetParams(VFX_WoodVineConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+  VFX_FoliageSpawnParams VFX_FoliageSpawnParams_Default(void);
+  void VFX_FoliageSystem_Init(void);
+  void VFX_FoliageSystem_Reset(void);
+  int VFX_FoliageSystem_GetActiveCount(void);
+  int VFX_FoliageSystem_SpawnCluster(const VFX_FoliageSpawnParams *params);
+  int VFX_FoliageSystem_DetachInRadius(Vector3 center, float radius, Vector3 impulse);
+  void VFX_FoliageSystem_SetForceField(const struct ForceField *ff);
+  void VFX_FoliageSystem_ClearForceField(void);
+  void VFX_FoliageSystem_SetHomingTarget(Vector3 targetPos, float suctionStrength, float swirlStrength);
+  void VFX_FoliageSystem_ClearHomingTarget(void);
+  bool VFX_FoliageSystem_IsHomingActive(void);
+  void VFX_FoliageSystem_Update(float dt, const struct ForceField *externalForceField);
+  void VFX_FoliageSystem_Draw(void);
+  void VFX_FoliageSystem_DrawShadowPass(void);
+  int VFX_Foliage_SpawnFreeLeaves(Vector3 center, float radius, int count, float mass, VFX_WoodVineStyle style);
+  int VFX_Foliage_SpawnFreePetals(Vector3 center, float radius, int count, float mass, VFX_WoodFlowerType flowerType, VFX_WoodVineStyle style);
+  int VFX_Foliage_SpawnAttachedLeaves(const VFX_BotanicalSocket *sockets, int socketCount, VFX_WoodLeafShape shape, VFX_WoodVineStyle style);
+  int VFX_Foliage_SpawnAttachedFlowers(const VFX_BotanicalSocket *sockets, int socketCount, VFX_WoodFlowerType type, VFX_WoodVineStyle style);
+  int VFX_Foliage_DetachInRadius(Vector3 center, float radius, Vector3 impulse);
+  void VC_WoodFoliage_Update(float dt);
+  void VC_WoodFoliage_Draw3D(Camera3D cam);
   void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
   void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeContactSparkMode(Vector3 pos, VC_MaterialId matId, float scale, float severity01, ContactSparkMode mode);
@@ -1019,7 +1102,6 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
   int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
-  void VFX_ComposeLiquidImpact(Vector3 pos);
   int VFX_ComposeGasMaterialLab(Vector3 pos, VC_MaterialId mat);
   void VFX_ComposeGroundDustRing(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
   void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target);
@@ -1028,6 +1110,7 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeImpactDustVariant(Vector3 pos, VC_MaterialId matId, float scale, float severity01, VFX_ImpactDustVariant variant);
   int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
   void VFX_ComposeLiquidBench(Vector3 center,float spacing,float t01);
+  void VFX_ComposeLiquidImpact(Vector3 pos);
   void VFX_ComposeMistVeil(Vector3 pos, float radius, float duration);
   void VFX_ComposeMistVeilEx(Vector3 pos, VC_MaterialId matId, float radius, float duration);
   void VFX_ComposeParticleUpgradesTest(Vector3 pos);
@@ -1042,23 +1125,24 @@ _Inline helpers / macros only — see header._
   void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
   void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
   void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
+  void VFX_ComposeWoodVineCluster(Vector3 center, float radius, float height, float growth, float wither, float sapPhase, int vineCount, unsigned int seed);
   void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
   void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
   void VFX_FlowShield_SetIntensity(int handle, float intensity01);
   void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
   int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
   void VFX_FlowShield_Stop(int handle);
-  void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile profile);
   void VFX_KillFlowShield(int handle);
   void VFX_KillGasMaterialLab(int handle);
   void VFX_KillRefBands(int id);
   void VFX_KillRefParticles(int id);
+  void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile profile);
   void VFX_SmokeTrail_Stop(int handle);
   void VFX_WaterRing_Stop(void);
   void VFX_Compose_SubmitScreenSpaceVFX(void);
 ```
-**Enums:** VFX_SmokeStyle { VFX_SMOKE_STYLE_ROIL,VFX_SMOKE_STYLE_PUFF_DARK,VFX_SMOKE_STYLE_PUFF_LIGHT,VFX_SMOKE_STYLE_WISPY,VFX_SMOKE_STYLE_ENERGY_WISP,VFX_SMOKE_STYLE_COUNT,VFX_SMOKE_STYLE_DEFAULT };VFX_FlameStyle { VFX_FLAME_STYLE_NIAGARA_ROIL,VFX_FLAME_STYLE_VOLUME,VFX_FLAME_STYLE_COLUMN,VFX_FLAME_STYLE_PUFF,VFX_FLAME_STYLE_FIREBALL,VFX_FLAME_STYLE_FIRE_TONGUE_01,VFX_FLAME_STYLE_COUNT,VFX_FLAME_STYLE_DEFAULT } VFX_MeshParticleVariant { VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC,VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_RISE,VFX_MESH_PARTICLE_VARIANT_SMOKE_LIGHT_RISE,VFX_MESH_PARTICLE_VARIANT_SMOKE_DARK_RISE,VFX_MESH_PARTICLE_VARIANT_FIRE_ROIL,VFX_MESH_PARTICLE_VARIANT_EMBER_SPARK_LIFT,VFX_MESH_PARTICLE_VARIANT_COUNT };VFX_MeshSurfaceAuraVariant { VFX_MESH_SURFACE_AURA_CYAN,VFX_MESH_SURFACE_AURA_VIOLET,VFX_MESH_SURFACE_AURA_AMBER,VFX_MESH_SURFACE_AURA_EMBER,VFX_MESH_SURFACE_AURA_VARIANT_COUNT } VFX_VolumeKind { VFX_VOLUME_SMOKE,VFX_VOLUME_FIRE,VFX_VOLUME_STEAM,VFX_VOLUME_ENERGY,VFX_VOLUME_KIND_COUNT,VOL_ENERGY,VOL_SMOKE,VOL_FIRE };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_ENERGY,VFX_COLUMN_KIND_COUNT } ContactSparkMode { CONTACT_SPARK_STATIC,CONTACT_SPARK_CENTRIFUGAL };VFX_DecalVariant { VFX_DECAL_VARIANT_IMPACT,VFX_DECAL_VARIANT_SCORCH,VFX_DECAL_VARIANT_FROST,VFX_DECAL_VARIANT_COUNT } VFX_SurfaceParticleRingVariant { VFX_SURFACE_PARTICLE_RING_VARIANT_DUST,VFX_SURFACE_PARTICLE_RING_VARIANT_SMOKE_PUFF_DARK,VFX_SURFACE_PARTICLE_RING_VARIANT_SMOKE_WISP,VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP,VFX_SURFACE_PARTICLE_RING_VARIANT_SMOKE_PUFF_DENSE,VFX_SURFACE_PARTICLE_RING_VARIANT_PLASMA_VORTEX,VFX_SURFACE_PARTICLE_RING_VARIANT_COUNT };VFX_ImpactDustVariant { VFX_IMPACT_DUST_VARIANT_DUST_PUFF,VFX_IMPACT_DUST_VARIANT_DARK_SMOKE_PUFF,VFX_IMPACT_DUST_VARIANT_SMOKE_WISP,VFX_IMPACT_DUST_VARIANT_ENERGY_WISP,VFX_IMPACT_DUST_VARIANT_COUNT } VFX_ImpactSurface { VFX_IMPACT_SURFACE_EARTH,VFX_IMPACT_SURFACE_FIRE,VFX_IMPACT_SURFACE_WOOD,VFX_IMPACT_SURFACE_METAL,VFX_IMPACT_SURFACE_WATER,VFX_IMPACT_SURFACE_COUNT }
-**Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_GasPlumeConfig, VFX_GasVortexConfig, VFX_GasShockwaveConfig, VFX_FlameJetConfig, VFX_ShieldSurface, VFX_MeshParticleEmitterDesc, VFX_MeshSurfaceAuraParams, VFX_TrailSurface, VFX_SurfaceImpactEvent
+**Enums:** VFX_SmokeStyle { VFX_SMOKE_STYLE_ROIL,VFX_SMOKE_STYLE_PUFF_DARK,VFX_SMOKE_STYLE_PUFF_LIGHT,VFX_SMOKE_STYLE_WISPY,VFX_SMOKE_STYLE_ENERGY_WISP,VFX_SMOKE_STYLE_COUNT,VFX_SMOKE_STYLE_DEFAULT };VFX_FlameStyle { VFX_FLAME_STYLE_NIAGARA_ROIL,VFX_FLAME_STYLE_VOLUME,VFX_FLAME_STYLE_COLUMN,VFX_FLAME_STYLE_PUFF,VFX_FLAME_STYLE_FIREBALL,VFX_FLAME_STYLE_FIRE_TONGUE_01,VFX_FLAME_STYLE_COUNT,VFX_FLAME_STYLE_DEFAULT } VFX_MeshParticleVariant { VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_STATIC,VFX_MESH_PARTICLE_VARIANT_PLASMA_WISP_RISE,VFX_MESH_PARTICLE_VARIANT_SMOKE_LIGHT_RISE,VFX_MESH_PARTICLE_VARIANT_SMOKE_DARK_RISE,VFX_MESH_PARTICLE_VARIANT_FIRE_ROIL,VFX_MESH_PARTICLE_VARIANT_EMBER_SPARK_LIFT,VFX_MESH_PARTICLE_VARIANT_COUNT };VFX_MeshSurfaceAuraVariant { VFX_MESH_SURFACE_AURA_CYAN,VFX_MESH_SURFACE_AURA_VIOLET,VFX_MESH_SURFACE_AURA_AMBER,VFX_MESH_SURFACE_AURA_EMBER,VFX_MESH_SURFACE_AURA_VARIANT_COUNT } VFX_VolumeKind { VFX_VOLUME_SMOKE,VFX_VOLUME_FIRE,VFX_VOLUME_STEAM,VFX_VOLUME_ENERGY,VFX_VOLUME_KIND_COUNT,VOL_ENERGY,VOL_SMOKE,VOL_FIRE };VFX_ColumnKind { VFX_COLUMN_SMOKE,VFX_COLUMN_FIRE,VFX_COLUMN_STEAM,VFX_COLUMN_ENERGY,VFX_COLUMN_KIND_COUNT } ContactSparkMode { CONTACT_SPARK_STATIC,CONTACT_SPARK_CENTRIFUGAL };VFX_DecalVariant { VFX_DECAL_VARIANT_IMPACT,VFX_DECAL_VARIANT_SCORCH,VFX_DECAL_VARIANT_FROST,VFX_DECAL_VARIANT_COUNT } VFX_SurfaceParticleRingVariant { VFX_SURFACE_PARTICLE_RING_VARIANT_DUST,VFX_SURFACE_PARTICLE_RING_VARIANT_SMOKE_PUFF_DARK,VFX_SURFACE_PARTICLE_RING_VARIANT_SMOKE_WISP,VFX_SURFACE_PARTICLE_RING_VARIANT_ENERGY_WISP,VFX_SURFACE_PARTICLE_RING_VARIANT_SMOKE_PUFF_DENSE,VFX_SURFACE_PARTICLE_RING_VARIANT_PLASMA_VORTEX,VFX_SURFACE_PARTICLE_RING_VARIANT_COUNT };VFX_ImpactDustVariant { VFX_IMPACT_DUST_VARIANT_DUST_PUFF,VFX_IMPACT_DUST_VARIANT_DARK_SMOKE_PUFF,VFX_IMPACT_DUST_VARIANT_SMOKE_WISP,VFX_IMPACT_DUST_VARIANT_ENERGY_WISP,VFX_IMPACT_DUST_VARIANT_COUNT } VFX_ImpactSurface { VFX_IMPACT_SURFACE_EARTH,VFX_IMPACT_SURFACE_FIRE,VFX_IMPACT_SURFACE_WOOD,VFX_IMPACT_SURFACE_METAL,VFX_IMPACT_SURFACE_WATER,VFX_IMPACT_SURFACE_COUNT };VFX_WoodVineVariant { WOOD_VINE_VARIANT_SERPENTINE,WOOD_VINE_VARIANT_ENTANGLE,WOOD_VINE_VARIANT_SPIKE_SPEAR,WOOD_VINE_VARIANT_ANCIENT_ROOT,WOOD_VINE_VARIANT_SEED_SPROUT,WOOD_VINE_VARIANT_COUNT } VFX_WoodVineStyle { WOOD_VINE_STYLE_JADE_EMERALD,WOOD_VINE_STYLE_BLOOD_BRAMBLE,WOOD_VINE_STYLE_GOLDEN_AMBER,WOOD_VINE_STYLE_WITHER_GHOST,WOOD_VINE_STYLE_COUNT };VFX_WoodReactionState { WOOD_REACTION_NORMAL,WOOD_REACTION_WATER,WOOD_REACTION_METAL,WOOD_REACTION_FIRE,WOOD_REACTION_COUNT } VFX_WoodVineCombo { WOOD_VINE_COMBO_AUTO,WOOD_VINE_COMBO_BARE_STEM,WOOD_VINE_COMBO_THORNY_BRAMBLE,WOOD_VINE_COMBO_LEAFY_TENDRIL,WOOD_VINE_COMBO_LOTUS_BLOOM,WOOD_VINE_COMBO_ORCHID_BLOOM,WOOD_VINE_COMBO_PLUM_BLOSSOM,WOOD_VINE_COMBO_FULL_FLOURISH,WOOD_VINE_COMBO_WITHERED_AUTUMN,WOOD_VINE_COMBO_COUNT };VFX_WoodLeafShape { WOOD_LEAF_SHAPE_OVAL,WOOD_LEAF_SHAPE_WILLOW,WOOD_LEAF_SHAPE_MAPLE,WOOD_LEAF_SHAPE_COUNT } VFX_WoodFlowerType { WOOD_FLOWER_TYPE_LOTUS,WOOD_FLOWER_TYPE_ORCHID,WOOD_FLOWER_TYPE_PLUM_BLOSSOM,WOOD_FLOWER_TYPE_COUNT };VFX_GuidedTargetPreset { VFX_GUIDED_TARGET_NONE,VFX_GUIDED_TARGET_BLAST } VFX_BotanicalKind { BOTANICAL_KIND_LEAF,BOTANICAL_KIND_PETAL,BOTANICAL_KIND_FLOWER_HEAD };VFX_BotanicalState { BOTANICAL_STATE_ATTACHED,BOTANICAL_STATE_FREE,BOTANICAL_STATE_SETTLED }
+**Structs** (fields in header): VFX_LightningArcConfig, VFX_LightningTrailConfig, VFX_GasPlumeConfig, VFX_GasVortexConfig, VFX_GasShockwaveConfig, VFX_FlameJetConfig, VFX_ShieldSurface, VFX_MeshParticleEmitterDesc, VFX_MeshSurfaceAuraParams, VFX_TrailSurface, VFX_SurfaceImpactEvent, VFX_WoodLeavesConfig, VFX_WoodFlowerConfig, VFX_WoodPetalConfig, VFX_WoodVineConfig, VFX_GuidedParticleConfig, VFX_FoliageSpawnParams, VFX_BotanicalSocket
 
 ### `core/composition/vfx_sequence.h`
 ```c

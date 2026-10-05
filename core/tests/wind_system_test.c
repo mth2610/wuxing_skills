@@ -519,10 +519,7 @@ int main(void) {
                FileContains("maps/toolkit/map_props_nature.inl",
                             "Nature_BeginWindReceiverShader(shader);\n    Nature_UpdateShadowShader"),
                "Vegetation activates its shader before uploading wind uniforms on Vulkan");
-    TEST_CHECK(FileContains("core/particles/particle_system.c",
-                            "[WIND_TRACE] guided_arrival backend=cpu") &&
-               FileContains("core/particles/gpu/particle_gpu_backend.c",
-                            "[WIND_TRACE] guided_arrival backend=gpu") &&
+    TEST_CHECK(FileContains("core/motion/motion_fields.c", "Motion_Trace(\"arrival\"") &&
                FileContains("maps/toolkit/map_props_nature.inl",
                             "[WIND_TRACE] vegetation_receiver") &&
                FileContains("maps/toolkit/map_props_nature.inl",
@@ -551,15 +548,12 @@ int main(void) {
                FileContains("maps/toolkit/map_props_nature.inl",
                             "i == directImpact"),
                "Turbulence and vortices remain spatially sampled instead of becoming one patch-wide direction");
-    TEST_CHECK(FileContains("core/particles/particle_system.c",
-                            "Wind_SpawnRadialBlast(blastPos, 4.5f, 7.5f, 0.75f)") &&
-               FileContains("core/particles/gpu/particle_gpu_backend.c",
-                            "Wind_SpawnRadialBlast(blastPos, 4.5f, 7.5f, 0.75f)") &&
-               FileContains("core/particles/particle_system.c",
-                            "Wind_SpawnTurbulence(blastPos, 6.0f, 18.0f, 0.90f, 2.8f, 3.0f)") &&
-               FileContains("core/particles/gpu/particle_gpu_backend.c",
-                            "Wind_SpawnTurbulence(blastPos, 6.0f, 18.0f, 0.90f, 2.8f, 3.0f)"),
-               "CPU and GPU guided arrivals author a strong long-lived turbulence wake");
+    TEST_CHECK(!FileContains("core/particles/particle_system.c", "Wind_SpawnRadialBlast(") &&
+               !FileContains("core/particles/gpu/particle_gpu_backend.c", "Wind_SpawnRadialBlast(") &&
+               !FileContains("core/particles/particle_system.c", "Wind_SpawnTurbulence(") &&
+               !FileContains("core/particles/gpu/particle_gpu_backend.c", "Wind_SpawnTurbulence(") &&
+               FileContains("core/motion/motion_fields.c", "MotionFields_CreateTarget(&d)"),
+               "Arrival fields are explicitly configured, with no hidden CPU/GPU blast or wake");
     TEST_CHECK(FileContains("core/wind/wind_system.c",
                             "Wind_TurbulenceAttackWeight") &&
                FileContains("core/particles/shaders/gpu/particle_gpu.comp",

@@ -175,6 +175,10 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
     cfg->physics.onTargetEmit = cfg->onTargetEmit;
     cfg->physics.onTargetEmitCount = cfg->onTargetEmitCount;
   }
+  if (cfg->physics.onTargetEmit == NULL && cfg->onTargetEmit != NULL) {
+    cfg->physics.onTargetEmit = cfg->onTargetEmit;
+    cfg->physics.onTargetEmitCount = cfg->onTargetEmitCount;
+  }
   if (cfg->physics.collisionEnabled == false && cfg->collisionEnabled != false) {
     cfg->physics.collisionEnabled = cfg->collisionEnabled;
     cfg->physics.collisionElasticity = cfg->collisionElasticity;

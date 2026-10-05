@@ -59,9 +59,9 @@ int main(void)
     CHECK(FileHas(inl, "BOTANICAL_STATE_SETTLED"), "foliage system supports SETTLED state on terrain");
 
     // 2. Physical laws & forces
-    CHECK(FileHas(inl, "-9.81f"), "real-world gravity (9.81 m/s^2) applied to airborne leaves");
+    CHECK((FileHas(inl, "MotionBody_AdvanceVelocity") && (FileHas("core/motion/motion_body.h", "ParticleDynamics_GravityAcceleration") && FileHas("core/particles/particle_dynamics.h", "9.81f"))), "real-world gravity (9.81 m/s^2) applied to airborne leaves");
     CHECK(FileHas(inl, "dragCoeff"), "planar aerodynamic drag coefficient modeled for leaf glide/flutter");
-    CHECK(FileHas(inl, "Wind_EvaluateAcceleration"), "forest environmental wind acceleration evaluates dynamically");
+    CHECK(FileHas(inl, "Wind_EvaluateVelocity"), "forest environmental wind acceleration evaluates dynamically");
     CHECK(FileHas(inl, "ForceField_Evaluate"), "external force fields evaluated for vortex and homing suction");
     CHECK(FileHas(inl, "MapManager_GetGroundHeightAt"), "terrain height collision and ground contact properly queried");
 

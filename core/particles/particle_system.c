@@ -1,3 +1,4 @@
+#include "core/motion/motion_body.h"
 #include "particle_surface_sampling.h"
 #include "particle_field_reference.h"
 #include "particle_system.h"
@@ -122,6 +123,9 @@ typedef struct
   float travelImpactAge;
   float windInfluence;
   const ParticleDynamicsProfile *dynamics;
+  ParticleDynamicsProfile dynamicsStorage;
+  bool receiveMotionFields;
+  MotionReceiver motionReceiver;
   Vector3 dynamicsInitialImpulseNs;
   Vector3 dynamicsInitialAccelerationMps2;
   Vector3 dynamicsConstantForceNewtons;
@@ -356,7 +360,15 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->travelImpactActive = false;
   p->travelImpactAge = 0.0f;
   p->windInfluence = config.physics.windInfluence > 0.0f ? config.physics.windInfluence : config.windInfluence;
-  p->dynamics = config.physics.dynamics;
+  p->dynamics = NULL;
+  if (config.physics.dynamics) {
+    p->dynamicsStorage = *config.physics.dynamics;
+    p->dynamics = &p->dynamicsStorage;
+  }
+  p->receiveMotionFields = config.physics.receiveMotionFields;
+  p->motionReceiver = (MotionReceiver){0};
+  if (p->receiveMotionFields && config.physics.initialGuide)
+    MotionFields_Capture(config.physics.initialGuide, config.position, &p->motionReceiver);
   p->dynamicsInitialImpulseNs = config.physics.initialImpulseNs;
   p->dynamicsInitialAccelerationMps2 = config.physics.initialAccelerationMps2;
   p->dynamicsConstantForceNewtons = config.physics.constantForceNewtons;
@@ -636,6 +648,63 @@ void UpdateParticles(float dt)
     }
 
     const ForceField *activeField = p->forceField;
+    if(p->travelImpactActive) {
+      p->travelImpactAge+=dt;
+      activeField=(p->travelPath&&p->travelPath->arrivalForceField&&
+          (p->travelPath->arrivalForceDuration<=0||p->travelImpactAge<=p->travelPath->arrivalForceDuration))
+          ?p->travelPath->arrivalForceField:NULL;
+    }
+    if (p->receiveMotionFields) {
+      ParticleDynamicsProfile fallback = {.inverseMassKg=1, .gravityScale=0,
+          .windCouplingHz=3.5f, .windSusceptibility=p->windInfluence};
+      const ParticleDynamicsProfile *body = p->dynamics ? p->dynamics : &fallback;
+      Vector3 position = {p->x,p->y,p->z}, velocity = {p->vx,p->vy,p->vz};
+      if (p->dynamicsImpulsePending) {
+        velocity = ParticleDynamics_ApplyImpulse(velocity,p->dynamicsInitialImpulseNs,
+            body->inverseMassKg>0?body->inverseMassKg:1);
+        p->dynamicsImpulsePending=false;
+      }
+      /* Resample spatial fields along the trajectory. Bound both dt and work
+       * during stalls; normal 30/60/120 Hz frames share the same substep. */
+      float remaining=fminf(dt,0.25f);
+      bool destroyed=false;
+      while (remaining>1e-6f) {
+        float step=fminf(remaining,1.0f/120.0f);remaining-=step;
+        MotionFieldSample sample;
+        MotionFields_Sample(position,velocity,body->inverseMassKg>0?1/body->inverseMassKg:1,step,MOTION_RECEIVER_PARTICLE,&p->motionReceiver,&sample);
+        Vector3 acceleration=p->dynamicsInitialAccelerationMps2;
+        if (activeField) acceleration=MotionVec_Add(acceleration,ForceField_Evaluate(
+            activeField,position,velocity,s_particleTime,p->forceAxisOrigin,p->forceAxisDir));
+        if (windActive) acceleration=MotionVec_Add(acceleration,MotionVec_Scale(
+            WindZone_Evaluate(position,velocity,s_particleTime),body->windAccelerationScale*body->windSusceptibility));
+        Vector3 air=MotionVec_Add(Wind_EvaluateVelocity(position,s_particleTime),sample.airflowVelocity);
+        velocity=MotionBody_AdvanceVelocity(velocity,body,acceleration,MotionVec_Add(p->dynamicsConstantForceNewtons,sample.forceNewtons),air,step);
+        if(activeField) velocity=MotionVec_Scale(velocity,ForceField_GetViscosityDamping(activeField,step));
+        Vector3 previous=position;position=MotionVec_Add(position,MotionVec_Scale(velocity,step));
+        bool wasArrived=p->motionReceiver.arrived;
+        MotionArrivalMode action=MotionFields_AdvanceReceiver(&p->motionReceiver,previous,position,velocity);
+        if (!wasArrived && p->motionReceiver.arrived) {
+          MotionArrivalProfile arrival;
+          if(MotionFields_GetArrival(p->motionReceiver.guide,&arrival)) {
+            velocity=ParticleDynamics_ApplyImpulse(velocity,arrival.impulseNs,body->inverseMassKg>0?body->inverseMassKg:1);
+            if(arrival.overrideDynamics) {
+              p->dynamicsStorage=arrival.dynamics;p->dynamics=&p->dynamicsStorage;body=p->dynamics;
+            }
+          }
+          if(p->hasTargetEmit) for(int c=0;c<p->onTargetCount;c++) {
+            ParticleConfig impact=p->onTargetConfig;
+            impact.position=position;impact.physics.position=position;
+            impact.velocity=MotionVec_Add(impact.velocity,MotionVec_Scale(velocity,impact.velocityInheritance));
+            SpawnParticle(impact);
+          }
+          if(action==MOTION_ARRIVAL_DESTROY) { destroyed=true;break; }
+        }
+      }
+      p->x=position.x;p->y=position.y;p->z=position.z;
+      p->vx=velocity.x;p->vy=velocity.y;p->vz=velocity.z;
+      if(destroyed) {Particle_Deactivate(i);continue;}
+      goto particle_contacts;
+    }
     if (p->dynamics)
     {
       const ParticleDynamicsProfile *d = p->dynamics;
@@ -649,10 +718,10 @@ void UpdateParticles(float dt)
                                                   inverseMass);
         p->dynamicsImpulsePending = false;
       }
-      acceleration.y -= 9.81f * d->gravityScale;
-      if (p->forceField) {
+      acceleration.y += ParticleDynamics_GravityAcceleration(d);
+      if (activeField) {
         Vector3 fieldAcceleration = ForceField_Evaluate(
-            p->forceField, position, velocity, p->lifetime,
+            activeField, position, velocity, p->lifetime,
             p->forceAxisOrigin, p->forceAxisDir);
         acceleration.x += fieldAcceleration.x;
         acceleration.y += fieldAcceleration.y;
@@ -668,8 +737,8 @@ void UpdateParticles(float dt)
       }
       velocity = ParticleDynamics_ApplyAccelerationAndForce(
           velocity, acceleration, p->dynamicsConstantForceNewtons, inverseMass, dt);
-      if (p->forceField) {
-        float viscosity = ForceField_GetViscosityDamping(p->forceField, dt);
+      if (activeField) {
+        float viscosity = ForceField_GetViscosityDamping(activeField, dt);
         velocity.x *= viscosity; velocity.y *= viscosity; velocity.z *= viscosity;
       }
       velocity = ParticleDynamics_ApplyLinearDrag(velocity,
@@ -677,8 +746,8 @@ void UpdateParticles(float dt)
       velocity = ParticleDynamics_ClampTerminalSpeed(velocity, d->terminalSpeedMps);
       if ((d->windCouplingHz > 0.0f && d->windSusceptibility > 0.0f) ||
           p->travelImpactActive) {
-        float couplingHz = p->travelImpactActive ? 6.0f : d->windCouplingHz;
-        float susceptibility = p->travelImpactActive ? 1.0f : d->windSusceptibility;
+        float couplingHz = d->windCouplingHz;
+        float susceptibility = d->windSusceptibility;
         Vector3 airflow = Wind_EvaluateVelocity(position, s_particleTime);
         velocity = ParticleDynamics_CoupleToAirflow(velocity, airflow,
                                                      couplingHz * susceptibility, dt);
@@ -701,28 +770,9 @@ void UpdateParticles(float dt)
           ParticleTravel_AdvancePhysical(p->travelPath, position,
               (Vector3){p->x, p->y, p->z}, &p->travelWaypoint,
               p->travelFormationOffset)) {
-        /* Arrival is an environmental event, not a hidden launch velocity or
-         * ForceField. Rate-limit the shared gust because a formation can cross
-         * the swept target during the same frame. */
-        Vector3 blastPos = p->travelPath->target ? *p->travelPath->target
-                                                  : (Vector3){p->x, p->y, p->z};
-        /* Resolve overshoot onto each member's transported formation point,
-         * not the blast centre. A radial wind has no outward direction at its
-         * exact origin; preserving this small shell makes the blast expand
-         * immediately while the formation still reads as one sphere on arrival. */
-        Vector3 impactOffset = ParticleTravel_TransportOffset(
-            p->travelPath, p->travelWaypoint, p->travelFormationOffset);
-        p->x = blastPos.x + impactOffset.x;
-        p->y = blastPos.y + impactOffset.y;
-        p->z = blastPos.z + impactOffset.z;
-        static float s_lastPhysicalArrivalWindTime = -10.0f;
-        if (s_particleTime - s_lastPhysicalArrivalWindTime > 0.35f) {
-          s_lastPhysicalArrivalWindTime = s_particleTime;
-          Wind_SpawnRadialBlast(blastPos, 4.5f, 7.5f, 0.75f);
-          /* Turbulence is a trailing breakup detail; radial airflow owns the
-           * launch so the impact cannot read as random wandering. */
-          Wind_SpawnTurbulence(blastPos, 7.5f, 12.0f, 0.90f, 2.8f, 4.0f);
-        }
+        Vector3 blastPos = p->travelPath->target ? *p->travelPath->target : (Vector3){p->x,p->y,p->z};
+        Vector3 impactOffset = ParticleTravel_TransportOffset(p->travelPath,p->travelWaypoint,p->travelFormationOffset);
+        p->x=blastPos.x+impactOffset.x;p->y=blastPos.y+impactOffset.y;p->z=blastPos.z+impactOffset.z;
         if (p->hasTargetEmit && p->onTargetCount > 0) {
           for (int c = 0; c < p->onTargetCount; ++c) {
             ParticleConfig impact = p->onTargetConfig;
@@ -734,9 +784,12 @@ void UpdateParticles(float dt)
             SpawnParticle(impact);
           }
         }
+        Vector3 enteredPosition={p->x,p->y,p->z},enteredVelocity={p->vx,p->vy,p->vz};
+        ParticleTravel_ApplyImpactEntry(p->travelPath,&enteredPosition,&enteredVelocity);
+        p->x=enteredPosition.x;p->y=enteredPosition.y;p->z=enteredPosition.z;
+        p->vx=enteredVelocity.x;p->vy=enteredVelocity.y;p->vz=enteredVelocity.z;
         p->travelImpactActive = true;
         p->travelImpactAge = 0.0f;
-        p->vx = p->vy = p->vz = 0.0f;
         continue;
       }
       goto particle_contacts;
@@ -807,8 +860,7 @@ void UpdateParticles(float dt)
       p->x += p->vx * step;
       p->y += p->vy * step;
       p->z += p->vz * step;
-      if (p->travelImpactActive || p->windInfluence > 0.0f) {
-        if (p->travelImpactActive) p->travelImpactAge += dt;
+      if (p->windInfluence > 0.0f) {
         // Jitter per-particle: phá vỡ coherence Perlin khi tất cả hạt cùng vị trí target
         float seed = (float)i;
         float h1 = fmodf(sinf(seed * 127.1f) * 43758.5453f, 1.0f);
@@ -823,7 +875,7 @@ void UpdateParticles(float dt)
           p->z + (h3 - 0.5f) * 3.0f
         };
         Vector3 windVel = Wind_EvaluateVelocity(samplePos, s_particleTime);
-        float infl = p->travelImpactActive ? 1.0f : p->windInfluence;
+        float infl = p->windInfluence;
         float blendRate = (1.0f - expf(-3.5f * dt)) * infl;
         p->vx += (windVel.x - p->vx) * blendRate;
         p->vy += (windVel.y - p->vy) * blendRate;
@@ -846,29 +898,6 @@ void UpdateParticles(float dt)
         p->vz = velocity.z;
         p->travelImpactActive = true;
         p->travelImpactAge = 0.0f;
-
-        // VỤ NỔ HOÀN TOÀN BẰNG WIND SYSTEM: Kích phát sóng xung kích + nhiễu loạn lưu cục bộ
-        Vector3 blastPos = (p->travelPath && p->travelPath->target) ? *p->travelPath->target : position;
-        static float s_lastCpuArrivalWindTime = -10.0f;
-        if (s_particleTime - s_lastCpuArrivalWindTime > 0.35f) {
-          s_lastCpuArrivalWindTime = s_particleTime;
-          // Xung hướng tâm là chuyển động chính: đủ rộng và đủ lâu để mặt sóng
-          // quét qua vegetation. Turbulence chỉ là wake yếu hơn phía sau blast.
-          int radialSlot = Wind_SpawnRadialBlast(blastPos, 4.5f, 7.5f, 0.75f);
-          int turbulenceSlot = Wind_SpawnTurbulence(blastPos, 6.0f, 18.0f, 0.90f, 2.8f, 3.0f);
-          const char *trace = getenv("WUXING_WIND_RECEIVER_TRACE");
-          if (trace != NULL && trace[0] != '\0' && trace[0] != '0') {
-            TraceLog(LOG_INFO,
-                     "[WIND_TRACE] guided_arrival backend=cpu target=(%.2f,%.2f,%.2f) radial_slot=%d turbulence_slot=%d active=%d",
-                     blastPos.x, blastPos.y, blastPos.z, radialSlot,
-                     turbulenceSlot, Wind_GetActiveCount());
-          }
-        }
-
-        // Không gán cứng vận tốc = gió tại frame arrival (tất cả hạt cùng vị trí
-        // → cùng vector Perlin → bay ra cùng hướng). Per-frame blend (blendRate = 
-        // 1 - exp(-3.5*dt)) trong vòng lặp travelImpactActive sẽ kéo vận tốc 
-        // hạt về phía gió một cách mượt mà.
 
         continue;
       }

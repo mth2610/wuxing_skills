@@ -175,6 +175,7 @@ add_executable(wuxing
     core/uv/uv_deform.c
     core/uv/surface_flow.c
     core/force_field.c
+    core/motion/motion_fields.c
     core/camera_fx.c
     core/audio_system.c
     core/particles/particle_system.c

@@ -33,6 +33,7 @@ typedef enum {
 #include "core/skill_curve.h"
 #include "core/particles/particle_travel.h"
 #include "core/particles/particle_dynamics.h"
+#include "core/motion/motion_fields.h"
 #include "core/vfx_contrast.h"
 #include "core/vfx_appearance.h"
 
@@ -86,11 +87,16 @@ typedef struct {
     float windInfluence;
 
     /* NULL selects the legacy integrator exactly. Non-NULL opts into the
-     * physical-motion contract; the profile must outlive emitted particles. */
+     * physical-motion contract. CPU particles snapshot it at spawn; it must
+     * remain valid while an emitter can still emit from the template. */
     const ParticleDynamicsProfile *dynamics;
     Vector3 initialImpulseNs;          /* Applied once: dv = impulse * inverseMass. */
     Vector3 initialAccelerationMps2;   /* Persistent authored acceleration field. */
     Vector3 constantForceNewtons;      /* Persistent world-space force, converted by inverse mass. */
+    /* Opt-in spatial motion-field receiver (CPU only). Fields are independent
+     * of this emitter; zero initialGuide permits spatial capture later. */
+    bool receiveMotionFields;
+    MotionFieldHandle initialGuide;
 } VFX_PhysicsConfig;
 
 // 4. Animation Config

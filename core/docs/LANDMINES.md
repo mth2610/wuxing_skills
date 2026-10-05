@@ -1317,6 +1317,7 @@ sits inside the halo — and they are additive, so the frame buffer sees their
 
 | | halo | body | core | sum |
 |---|---|---|---|---|
+| 2026-10-05 | Codex | Arrival side effects and field units | core/motion/motion_fields.c; core/tests/motion_fields_test.c | Ground-truth |
 | 2026-10-04 | Codex | Liquid module and test references | core/liquid/liquid_surface.c; core/tests/liquid_material_test.c | Ground-truth |
 | before | 0.16 | 0.85 | 1.00 | **2.01** |
 | body+core alone, where they overlap | | 0.85 | 1.00 | **1.85** |
@@ -3869,10 +3870,43 @@ Do not mutate or unload borrowed variants. The shared 32-slot cache returns
 zero on variant exhaustion instead of leaking an unmanaged resource. Source:
 `core/resource_manager.c`; guard: `core/tests/resource_manager_texture_variant_test.c`.
 
+## Arrival side effects and field units (05/10/2026)
+
+**Symptom.** Releasing a guided body produces a blast/wake, unrelated casts suppress
+each other's impacts, or heavier bodies accelerate like lighter ones.
+
+**Cause.** Arrival spawned fixed global Wind effects behind the particle update,
+used a global cooldown, and treated guidance as acceleration rather than force.
+
+**Rule.** Spatial guide and target FORCE outputs are Newtons, integrated through
+actual inverse mass. AIRFLOW outputs are m/s and body drag converts them to motion.
+Legacy standalone ForceField/WindZone outputs remain accelerations; their strengths
+cannot be copied between unit conventions blindly. Cast templates fire once on
+swept arrival; target handles have independent lifetimes. Body actions remain per
+receiver. No implicit blast/wake and no shared impact cooldown. Density affects
+buoyancy through displaced volume, not an additional mass multiplier on gravity.
+Guard: `core/tests/motion_fields_test.c`.
+
+## Continuous-force drag and compact curl flow (05/10/2026)
+
+**Symptom.** Terminal falling speed changes with frame step, or a bounded curl
+field develops artificial sinks near its boundary.
+
+**Cause.** An exact drag-only decay is split after a continuous gravity kick;
+multiplying the resulting curl velocity by a spatial mask introduces divergence.
+
+**Rule.** Use the shared implicit quadratic drag solve for continuous-force bodies
+and verify its terminal equilibrium. Window the vector potential before taking its
+curl. Guide tangent velocity damping has no spring denominator until endpoint
+position control activates. Reset independent arrival flow phase while preserving
+the actual rotated lane offset.
+
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-05 | Codex | Continuous-force drag and bounded curl | core/motion/motion_body.h; core/motion/motion_flow.h; core/tests/motion_flow_test.c | Ground-truth |
 | 2026-10-05 | Codex | Cached texture variants | core/resource_manager.c; core/tests/resource_manager_texture_variant_test.c | Ground-truth |
 | 2026-10-05 | Codex | Anisotropic variant fallback | core/resource_manager.c; core/resource_manager.h; core/tests/resource_manager_texture_variant_test.c | Ground-truth |
 | 2026-10-04 | Codex | Liquid module and test references | core/liquid/liquid_surface.c; core/tests/liquid_material_test.c | Ground-truth |

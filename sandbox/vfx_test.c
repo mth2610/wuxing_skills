@@ -156,6 +156,93 @@ static VFX_WoodLeavesConfig s_liveWoodLeavesConfig;
 static VFX_WoodFlowerConfig s_liveWoodFlowerConfig;
 static VFX_WoodPetalConfig  s_liveWoodPetalConfig;
 static bool                 s_liveWoodConfigsInit = false;
+// @gen:newfx_guided_state begin
+static VFX_GuidedParticleConfig s_liveGuidedParticleConfig;
+static bool s_liveGuidedParticleConfigInit = false;
+static int s_guidedFixturePreset = 0;
+static const char *s_guidedFixturePresetNames[] = {
+    "Shell / release", "Stream / orbit", "Shell / blast",
+    "Stream / turbulence", "Catch leaves / sustained vortex", "Shell / disappear",
+    "Catch leaves / traveling pulse", "Stream / coherent flow", "Stream / no added flow"
+};
+#define VFXTEST_GUIDED_PRESET_COUNT 9
+
+static void VFXTest_SetGuidedPreset(int preset)
+{
+    s_guidedFixturePreset = preset;
+    s_liveGuidedParticleConfig = VFX_GuidedParticle_DefaultConfig();
+    s_liveGuidedParticleConfigInit = true;
+    s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_NONE;
+    s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_RELEASE;
+    s_liveGuidedParticleConfig.guideMode = MOTION_GUIDE_SUSTAINED;
+    s_liveGuidedParticleConfig.duration = 5.0f;
+    s_liveGuidedParticleConfig.targetLifetime = 4.0f;
+    s_liveGuidedParticleConfig.particleRadius = 0.11f;
+    if (preset == 1 || preset == 3 || preset == 7 || preset == 8) {
+        s_liveGuidedParticleConfig.formation = MOTION_FORMATION_STREAM;
+        s_liveGuidedParticleConfig.emitDuration = 2.5f;
+    }
+    if (preset == 1) {
+        s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_ORBIT;
+        s_liveGuidedParticleConfig.targetFlow.swirlSpeedMps = 3.0f;
+    } else if (preset == 2) {
+        s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_BLAST;
+    } else if (preset == 3) {
+        s_liveGuidedParticleConfig.targetFlow.turbulenceSpeedMps = 8.0f;
+    } else if (preset == 4 || preset == 6) {
+        s_liveGuidedParticleConfig.count = 0;
+        s_liveGuidedParticleConfig.formation = MOTION_FORMATION_STREAM;
+        s_liveGuidedParticleConfig.speed = 3.0f;
+        s_liveGuidedParticleConfig.duration = 8.0f;
+        s_liveGuidedParticleConfig.guideRadius = 1.2f;
+        s_liveGuidedParticleConfig.maxForceNewtons = 0.4f;
+        s_liveGuidedParticleConfig.targetFlow.swirlSpeedMps = 8.0f;
+        if (preset == 6) {
+            s_liveGuidedParticleConfig.guideMode = MOTION_GUIDE_PULSE;
+            s_liveGuidedParticleConfig.pulseLength = 2.0f;
+            s_liveGuidedParticleConfig.targetLifetime = 2.5f;
+        }
+    } else if (preset == 5) {
+        s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_DESTROY;
+    } else if (preset == 7) {
+        s_liveGuidedParticleConfig.motionFlow.turbulenceSpeedMps = 0.6f;
+        s_liveGuidedParticleConfig.motionFlow.swirlSpeedMps = 1.5f;
+        s_liveGuidedParticleConfig.targetFlow.turbulenceSpeedMps = 1.0f;
+        s_liveGuidedParticleConfig.targetFlow.swirlSpeedMps = 2.0f;
+    }
+}
+
+static void VFXTest_InitGuidedConfig(void)
+{
+    if (!s_liveGuidedParticleConfigInit) {
+        // Deterministic capture selection; interactive >/< uses the same presets.
+        const char *capturePreset = getenv("WUXING_GUIDED_PRESET");
+        int preset = capturePreset ? atoi(capturePreset) : 0;
+        if (preset < 0 || preset >= VFXTEST_GUIDED_PRESET_COUNT) preset = 0;
+        VFXTest_SetGuidedPreset(preset);
+    }
+}
+
+static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
+{
+    VFXTest_InitGuidedConfig();
+    // Keep this event fixture selected for preset controls and the inspector.
+    s_isPlayingMesh = true;
+    VFX_GuidedParticleConfig cfg = s_liveGuidedParticleConfig;
+    cfg.source = source;
+    cfg.target = target;
+    if (s_guidedFixturePreset == 4 || s_guidedFixturePreset == 6) {
+        VFX_WoodLeavesConfig leaves = VFX_WoodLeaves_DefaultConfig();
+        Vector3 leafCenter = Vector3Add(Vector3Lerp(source, target, 0.40f), (Vector3){0.0f, 0.45f, 0.0f});
+        VFX_Foliage_SpawnFreeLeaves(leafCenter,
+                                  0.45f, 80, leaves.mass, leaves.style);
+    }
+    TraceLog(LOG_INFO, "GUIDED PARTICLE: %s", s_guidedFixturePresetNames[s_guidedFixturePreset]);
+    if (VFX_ComposeGuidedParticleEx(&cfg) == MOTION_FIELD_INVALID)
+        TraceLog(LOG_WARNING, "GUIDED PARTICLE: cast rejected (invalid configuration or exhausted field/emitter pool)");
+}
+// @gen:newfx_guided_state end
+
 
 #define VFX_TEST_MAX_INSPECTOR_PARAMS 32
 static VFX_ParamDef s_inspectorParams[VFX_TEST_MAX_INSPECTOR_PARAMS];
@@ -185,6 +272,14 @@ static void VFXTest_RefreshInspectorParams(bool force)
     s_lastInspectedFixtureIndex = s_testIndex;
     s_inspectorSelectedParam = 0;
     s_inspectorParamCount = 0;
+
+// @gen:newfx_guided_inspector begin
+    if (VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+        VFXTest_InitGuidedConfig();
+        s_inspectorParamCount = VFX_GuidedParticle_GetParams(&s_liveGuidedParticleConfig,
+                                                          s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+// @gen:newfx_guided_inspector end
 
     if (VFXTest_IsNewFxNamed("WOOD VINE"))
     {
@@ -566,10 +661,10 @@ static void VFXTest_StopFixtures(void)
         VFX_KillGasVortex(s_vfxFixtureHandle[10]);
     s_vfxFixtureHandle[10] = -1;
     s_vfxFixtureLastTime[10] = -1.0f;
-    if (s_vfxFixtureHandle[18] >= 0)
-        VFX_KillMeshParticleEmitter(s_vfxFixtureHandle[18]);
-    s_vfxFixtureHandle[18] = -1;
-    s_vfxFixtureLastTime[18] = -1.0f;
+    if (s_vfxFixtureHandle[19] >= 0)
+        VFX_KillMeshParticleEmitter(s_vfxFixtureHandle[19]);
+    s_vfxFixtureHandle[19] = -1;
+    s_vfxFixtureLastTime[19] = -1.0f;
     if (s_vfxFixtureHandle[23] >= 0)
         VFX_KillRefBands(s_vfxFixtureHandle[23]);
     s_vfxFixtureHandle[23] = -1;
@@ -619,15 +714,15 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
         s_vfxFixtureHandle[6] = VFX_FlowShield_Spawn(pos, VC_MAT_WATER, 1.5f, 1.0f);
         return true;
     case 9: VFX_ComposeGasShockwave(pos, VC_MAT_VOID, NULL); return true;
-    case 14: VFX_ComposeImpactDustVariant(pos, s_impactDustFixtureVariant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_impactDustFixtureVariant); return false;
-    case 16: VFX_ComposeLightningArc(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_LIGHTNING, 0.055f); return true;
-    case 17: VFX_ComposeLightningGroundRicochet(pos, VC_MAT_LIGHTNING, 1.0f, posSeed); return true;
-    case 18:
-        if (s_vfxFixtureHandle[18] >= 0) VFX_KillMeshParticleEmitter(s_vfxFixtureHandle[18]);
-        s_vfxFixtureHandle[18] = VFX_ComposeMeshParticleEmitter(&(VFX_MeshParticleEmitterDesc){.model=&s_meshParticleFixtureModel, .transform=MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), .variant=s_meshParticleFixtureVariant, .material=VC_MAT_LIGHTNING, .intensity=1.0f, .seed=0x4d455348u});
+    case 12: VFXTest_FireGuidedParticle(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
+    case 15: VFX_ComposeImpactDustVariant(pos, s_impactDustFixtureVariant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_impactDustFixtureVariant); return false;
+    case 17: VFX_ComposeLightningArc(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_LIGHTNING, 0.055f); return true;
+    case 18: VFX_ComposeLightningGroundRicochet(pos, VC_MAT_LIGHTNING, 1.0f, posSeed); return true;
+    case 19:
+        if (s_vfxFixtureHandle[19] >= 0) VFX_KillMeshParticleEmitter(s_vfxFixtureHandle[19]);
+        s_vfxFixtureHandle[19] = VFX_ComposeMeshParticleEmitter(&(VFX_MeshParticleEmitterDesc){.model=&s_meshParticleFixtureModel, .transform=MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), .variant=s_meshParticleFixtureVariant, .material=VC_MAT_LIGHTNING, .intensity=1.0f, .seed=0x4d455348u});
         return false;
-    case 20: VFX_ComposeMistVeil(pos, 5.5f, 4.5f); return true;
-    case 22: VFX_ComposeGuidedParticle(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
+    case 21: VFX_ComposeMistVeil(pos, 5.5f, 4.5f); return true;
     case 27:
         if (s_vfxFixtureHandle[27] >= 0) VFX_KillShieldShell(s_vfxFixtureHandle[27]);
         s_vfxFixtureHandle[27] = VFX_ShieldShell_Spawn(pos, VC_MAT_WATER, 1.5f, 1.0f);
@@ -658,8 +753,8 @@ static const char *s_meshNames[] = {
 static const char* s_newFxNames[] = {
     "CONTACT SPARK", "DEBRIS SHARDS", "DECAL", "DISSOLVE EXIT", "[PARTICLE] EMBER BURST", "FLAME JET",
     "FLOW SHIELD", "GAS MATERIAL LAB", "[GAS] GAS PLUME", "GAS SHOCKWAVE", "GAS VORTEX", "GROUND WAVE",
-    "GUIDING WIND", "IAIDO STANCE", "IMPACT DUST", "LIGHT SHAFT", "LIGHTNING ARC", "LIGHTNING IMPACT",
-    "MESH PARTICLE EMITTER", "MESH SURFACE AURA", "MIST VEIL", "OPTICAL FLARE", "GUIDED PARTICLE", "REF BANDS",
+    "GUIDED PARTICLE", "GUIDING WIND", "IAIDO STANCE", "IMPACT DUST", "LIGHT SHAFT", "LIGHTNING ARC",
+    "LIGHTNING IMPACT", "MESH PARTICLE EMITTER", "MESH SURFACE AURA", "MIST VEIL", "OPTICAL FLARE", "REF BANDS",
     "REF PARTICLES", "RIFT BOLT", "RUNE CIRCLE", "SHIELD SHELL", "SHOCK RING", "SMOKE COLUMN",
     "SMOKE PUFF", "[PARTICLE] SMOKE VOLUME", "SURFACE IMPACT", "SURFACE PARTICLE RING", "SWEEP SLASH", "MOTION RIBBON TRAIL",
     "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR", "AMBIENT FIRE",
@@ -686,7 +781,7 @@ static bool VFXTest_IsNewFxNamed(const char *name)
 static const int s_newFxCategories[] = {
     6, 3, 6, 6, 0, 0, 6, 6, 6, 1,
     6, 4, 6, 6, 6, 6, 6, 6, 6, 6,
-    1, 6, 6, 6, 6, 6, 6, 6, 6, 6,
+    6, 1, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 4,
     4, 0, 0, 5, 1, 1, 1, 1, 1, 1,
     2, 2, 2, 2,
@@ -1186,14 +1281,14 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
                         s_testIndex = globalIdx;
                         s_isPlayingMesh = false;
                         // @gen:newfx_trigger begin
-        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex == 22) {
+        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex == 12) {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
             Vector3 guidedTarget = mouseTarget3D;
             if (s_clickedOnUI) {
                 guidedTarget = Vector3Add(playerPos, (Vector3){2.5f, 0.0f, 0.8f});
                 guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
             }
-            VFX_ComposeGuidedParticle(castSocket, guidedTarget);
+            VFXTest_FireGuidedParticle(castSocket, guidedTarget);
             return false;
         }
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
@@ -1237,7 +1332,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         if (VFXTest_IsNewFxNamed("GUIDED PARTICLE"))
         {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
-            VFX_ComposeGuidedParticle(castSocket, mouseTarget3D);
+            VFXTest_FireGuidedParticle(castSocket, mouseTarget3D);
             s_prefabStartPos = mouseTarget3D;
             return false;
         }
@@ -1299,14 +1394,14 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
         {
             s_isPlayingMesh = false;
             // @gen:newfx_trigger begin
-        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex == 22) {
+        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex == 12) {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
             Vector3 guidedTarget = mouseTarget3D;
             if (s_clickedOnUI) {
                 guidedTarget = Vector3Add(playerPos, (Vector3){2.5f, 0.0f, 0.8f});
                 guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
             }
-            VFX_ComposeGuidedParticle(castSocket, guidedTarget);
+            VFXTest_FireGuidedParticle(castSocket, guidedTarget);
             return false;
         }
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
@@ -1495,6 +1590,33 @@ void VFXTest_Draw3D(void)
 
         VFXTest_RefreshInspectorParams(false);
 
+// @gen:newfx_guided_input begin
+        if (VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0) {
+                VFXTest_SetGuidedPreset((s_guidedFixturePreset + direction + VFXTEST_GUIDED_PRESET_COUNT) % VFXTEST_GUIDED_PRESET_COUNT);
+                VFXTest_RefreshInspectorParams(true);
+                TraceLog(LOG_INFO, "GUIDED PARTICLE preset: %s (>, next; <, previous)",
+                         s_guidedFixturePresetNames[s_guidedFixturePreset]);
+            } else {
+                // Emission and pulse controls appear only while applicable.
+                // Rebind the descriptors without losing the selected parameter.
+                const char *selectedName = s_inspectorParamCount > 0 ? s_inspectorParams[s_inspectorSelectedParam].name : NULL;
+                const char *selectedGroup = s_inspectorParamCount > 0 ? s_inspectorParams[s_inspectorSelectedParam].group : NULL;
+                s_inspectorParamCount = VFX_GuidedParticle_GetParams(&s_liveGuidedParticleConfig,
+                                                                  s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+                s_inspectorSelectedParam = 0;
+                for (int i = 0; i < s_inspectorParamCount; ++i) {
+                    if (selectedName && selectedGroup && strcmp(selectedName, s_inspectorParams[i].name) == 0 &&
+                        strcmp(selectedGroup, s_inspectorParams[i].group) == 0) {
+                        s_inspectorSelectedParam = i;
+                        break;
+                    }
+                }
+            }
+        }
+// @gen:newfx_guided_input end
+
         if (s_inspectorParamCount > 0)
         {
             // CapsLock (or Tab) cycles through variables [c1 -> c2 -> ... -> a1 -> ... -> b1 ...]
@@ -1513,7 +1635,7 @@ void VFXTest_Draw3D(void)
             }
 
             // Slash '/' (and '>' or '.') cycles the value of the selected variable
-            if (IsKeyPressed(KEY_SLASH) || IsKeyPressed(KEY_PERIOD))
+            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && !VFXTest_IsNewFxNamed("GUIDED PARTICLE"))))
             {
                 if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
                     VFX_Param_CyclePrev(&s_inspectorParams[s_inspectorSelectedParam]);
@@ -1525,7 +1647,7 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "[Inspector] Param '%s' = %s",
                          s_inspectorParams[s_inspectorSelectedParam].name, valBuf);
             }
-            else if (IsKeyPressed(KEY_COMMA))
+            else if (IsKeyPressed(KEY_COMMA) && !VFXTest_IsNewFxNamed("GUIDED PARTICLE"))
             {
                 VFX_Param_CyclePrev(&s_inspectorParams[s_inspectorSelectedParam]);
                 char valBuf[64];
@@ -1739,11 +1861,11 @@ void VFXTest_Draw3D(void)
                   break;
               }
               case 11: VFX_ComposeGroundWave(s_prefabStartPos, VC_MAT_EARTH, 1.5f, progress, VFX_GroundHeightFromMap, NULL); break;
-              case 12: VFX_ComposeGuidingWind(s_currentPlayerPos, Vector3Add(s_currentPlayerPos, Vector3Scale((Vector3){sinf(s_currentPlayerYaw), 0.0f, cosf(s_currentPlayerYaw)}, 24.0f)), progress, s_lastCam); break;
-              case 13: VFX_ComposeIaidoStance(s_currentPlayerPos, s_currentPlayerYaw, progress, 1.35f, s_lastCam, NULL); break;
-              case 15: VFX_ComposeLightShaft(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_FIRE, 0.8f, 1.35f); break;
-              case 19: VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).materialColor, .rimWidth=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).rimWidth, .rimIntensity=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).rimIntensity, .opacity=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).opacity}); break;
-              case 21: VFX_ComposeOpticalFlare(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 0.55f, 2.4f, 1.0f, s_lastCam); break;
+              case 13: VFX_ComposeGuidingWind(s_currentPlayerPos, Vector3Add(s_currentPlayerPos, Vector3Scale((Vector3){sinf(s_currentPlayerYaw), 0.0f, cosf(s_currentPlayerYaw)}, 24.0f)), progress, s_lastCam); break;
+              case 14: VFX_ComposeIaidoStance(s_currentPlayerPos, s_currentPlayerYaw, progress, 1.35f, s_lastCam, NULL); break;
+              case 16: VFX_ComposeLightShaft(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_FIRE, 0.8f, 1.35f); break;
+              case 20: VFX_DrawModelSurfaceAura(s_meshParticleFixtureModel, MatrixMultiply(MatrixRotateY(s_currentPlayerYaw), MatrixTranslate(s_currentPlayerPos.x, s_currentPlayerPos.y, s_currentPlayerPos.z)), &(VFX_MeshSurfaceAuraParams){.materialColor=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).materialColor, .rimWidth=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).rimWidth, .rimIntensity=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).rimIntensity, .opacity=VFX_MeshSurfaceAuraParams_MakeVariant(s_meshSurfaceAuraFixtureVariant).opacity}); break;
+              case 22: VFX_ComposeOpticalFlare(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 0.55f, 2.4f, 1.0f, s_lastCam); break;
               case 23:
               {
                   if (s_meshTime < s_vfxFixtureLastTime[23] && s_vfxFixtureHandle[23] >= 0)
@@ -1915,6 +2037,14 @@ void VFXTest_DrawHUD(void)
         DrawText("Contract check: same hue family; brightness is intentionally not equal",
                  10, 550, 14, LIGHTGRAY);
     }
+
+// @gen:newfx_guided_ui begin
+    if (s_isPlayingMesh && VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+        DrawText(TextFormat("GUIDED PARTICLE: %s | > next | < previous",
+                            s_guidedFixturePresetNames[s_guidedFixturePreset]), 10, 320, 16, LIME);
+        DrawText("Click: cast | Tab: select parameter | /: edit (Shift /: previous)", 10, 340, 12, SKYBLUE);
+    }
+// @gen:newfx_guided_ui end
     if (s_isPlayingMesh && VFXTest_IsNewFxNamed("MESH PARTICLE EMITTER"))
     {
         DrawText(TextFormat("MESH PARTICLE EMITTER: %s   > next   , previous",
@@ -1959,7 +2089,7 @@ void VFXTest_DrawHUD(void)
         int boxWidth = (colCount == 2) ? 570 : 350;
         int boxHeight = 36 + rowsPerCol * 18 + 48;
         int startX = 10;
-        int startY = 460;
+        int startY = VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? 360 : 460;
 
         DrawRectangle(startX, startY, boxWidth, boxHeight, ColorAlpha(BLACK, 0.82f));
         DrawRectangleLines(startX, startY, boxWidth, boxHeight, ColorAlpha(GREEN, 0.45f));
@@ -1994,7 +2124,9 @@ void VFXTest_DrawHUD(void)
         }
 
         int footerY = startY + 28 + rowsPerCol * 18 + 6;
-        DrawText("Controls: CapsLock/Tab: Select Var | / or >: Next Value | ,: Prev Value",
+        DrawText(VFXTest_IsNewFxNamed("GUIDED PARTICLE")
+                 ? "Controls: Tab Select | / Next Value | Shift / Previous | >/< Preset"
+                 : "Controls: CapsLock/Tab: Select Var | / or >: Next Value | ,: Prev Value",
                  startX + 10, footerY, 12, SKYBLUE);
         if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER") || VFXTest_IsNewFxNamed("WOOD PETALS"))
         {

@@ -786,7 +786,7 @@ void GpuParticleSystem_Update(float dt)
                   p->pz + (h3 - 0.5f) * 3.0f
                 };
                 Vector3 windVel = Wind_EvaluateVelocity(samplePos, s_elapsed_time);
-                float infl = impactActive ? 1.0f : p->wind_influence;
+                float infl = p->wind_influence;
                 float blendRate = (1.0f - expf(-3.5f * dt)) * infl;
                 p->vx += (windVel.x - p->vx) * blendRate;
                 p->vy += (windVel.y - p->vy) * blendRate;
@@ -807,25 +807,6 @@ void GpuParticleSystem_Update(float dt)
             p->impact_age = 0.0f;
             p->impact_active = 1.0f;
 
-            // VỤ NỔ HOÀN TOÀN BẰNG WIND SYSTEM: Kích phát sóng xung kích + nhiễu loạn lưu cục bộ
-            Vector3 blastPos = (s_pathRegistry[pathIndex] && s_pathRegistry[pathIndex]->target) ? *s_pathRegistry[pathIndex]->target : position;
-            static float s_lastGpuArrivalWindTime = -10.0f;
-            if (s_elapsed_time - s_lastGpuArrivalWindTime > 0.35f) {
-                s_lastGpuArrivalWindTime = s_elapsed_time;
-                // Keep the radial impulse perceptually dominant; turbulence is
-                // only the weaker wake that follows the expanding wavefront.
-                int radialSlot = Wind_SpawnRadialBlast(blastPos, 4.5f, 7.5f, 0.75f);
-                int turbulenceSlot = Wind_SpawnTurbulence(blastPos, 6.0f, 18.0f, 0.90f, 2.8f, 3.0f);
-                const char *trace = getenv("WUXING_WIND_RECEIVER_TRACE");
-                if (trace != NULL && trace[0] != '\0' && trace[0] != '0') {
-                    TraceLog(LOG_INFO,
-                             "[WIND_TRACE] guided_arrival backend=gpu target=(%.2f,%.2f,%.2f) radial_slot=%d turbulence_slot=%d active=%d",
-                             blastPos.x, blastPos.y, blastPos.z, radialSlot,
-                             turbulenceSlot, Wind_GetActiveCount());
-                }
-            }
-            // Per-frame blend sẽ kéo vận tốc hạt về phía gió mượt mà
-            // (không gán cứng tại frame arrival — tránh hạt bị bắn cùng hướng)
             continue;
         }
         if (reachedTarget) {

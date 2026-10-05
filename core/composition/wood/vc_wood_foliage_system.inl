@@ -25,6 +25,7 @@
 #include "core/map_manager.h"
 #include "core/wind/wind_system.h"
 #include "core/force_field.h"
+#include "core/motion/motion_body.h"
 #include <math.h>
 #include <stdlib.h>
 
@@ -50,7 +51,9 @@ typedef struct {
     float   scale;
     float   growth;     // 0..1
     float   wither;     // 0..1
+    MotionReceiver motionReceiver;
     float   mass;       // In kg (default ~0.005kg)
+    float   densityKgM3;
     float   dragCoeff;  // Aerodynamic planar drag
     float   flutterPhase;
     float   flutterSpeed;
@@ -135,6 +138,7 @@ VFX_FoliageSpawnParams VFX_FoliageSpawnParams_Default(void)
     p.initialVelocity = (Vector3){0, 0.5f, 0};
     p.velocitySpread = 1.2f;
     p.mass = 0.005f;
+    p.densityKgM3 = 600;
     p.size = 0.16f;
     p.growth = 1.0f;
     p.lifetime = 8.0f;
@@ -170,6 +174,7 @@ int VFX_FoliageSystem_SpawnCluster(const VFX_FoliageSpawnParams *params)
         p->growth = params->growth;
         p->wither = 0.0f;
         p->mass = params->mass > 1e-4f ? params->mass : 0.005f;
+        p->densityKgM3 = params->densityKgM3 > 0 ? params->densityKgM3 : 600;
         p->dragCoeff = (params->kind == BOTANICAL_KIND_LEAF) ? 1.45f : 1.15f;
         p->flutterPhase = Foliage_Randf(&rng) * 2.0f * PI;
         p->flutterSpeed = 3.5f + Foliage_Randf(&rng) * 2.5f;
@@ -183,6 +188,7 @@ int VFX_FoliageSystem_SpawnCluster(const VFX_FoliageSpawnParams *params)
         {
             const VFX_BotanicalSocket *sock = &params->sockets[spawned];
             p->state = BOTANICAL_STATE_ATTACHED;
+            p->motionReceiver = (MotionReceiver){0};
             p->pos = sock->pos;
             p->vel = (Vector3){0, 0, 0};
             p->anchorNormal = sock->normal;
@@ -198,6 +204,7 @@ int VFX_FoliageSystem_SpawnCluster(const VFX_FoliageSpawnParams *params)
         else
         {
             p->state = BOTANICAL_STATE_FREE;
+            p->motionReceiver = (MotionReceiver){0};
             float r = params->radius * sqrtf(Foliage_Randf(&rng));
             float theta = Foliage_Randf(&rng) * 2.0f * PI;
             float phi = (Foliage_Randf(&rng) - 0.5f) * PI;
@@ -251,6 +258,7 @@ int VFX_FoliageSystem_DetachInRadius(Vector3 center, float radius, Vector3 impul
         {
             VFX_FoliageParticle *p = &s_foliagePool[i];
             p->state = BOTANICAL_STATE_FREE;
+            p->motionReceiver = (MotionReceiver){0};
             unsigned int rng = p->seed;
 
             // Inherit outward fling + random tumbling velocity
@@ -364,6 +372,13 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
 
         p->age += dt;
 
+        if(p->state==BOTANICAL_STATE_SETTLED) {
+            MotionFieldSample sample;
+            MotionFields_Sample(p->pos,p->vel,fmaxf(p->mass,0.0001f),0,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
+            if(sample.captured || sample.forceNewtons.y/fmaxf(p->mass,0.0001f)>9.81f || sample.airflowVelocity.y>1.0f) {
+                p->state=BOTANICAL_STATE_FREE;p->groundRestTimer=0;
+            }
+        }
         if (p->state == BOTANICAL_STATE_ATTACHED)
         {
             // Organic unfurling & wind sway while anchored
@@ -374,47 +389,46 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
         }
         else if (p->state == BOTANICAL_STATE_FREE)
         {
-            // -----------------------------------------------------------------
-            // PHYSICAL SIMULATION: Gravity, Planar Air Drag, Wind & Force Field
-            // -----------------------------------------------------------------
-            Vector3 accel = (Vector3){0, -9.81f, 0}; // Real-world gravity
-
-            // 1. Planar aerodynamic drag (leaves fall like flat gliders)
-            float speedSq = p->vel.x * p->vel.x + p->vel.y * p->vel.y + p->vel.z * p->vel.z;
-            if (speedSq > 1e-4f)
-            {
-                float speed = sqrtf(speedSq);
-                float dragMag = 0.5f * 1.225f * p->dragCoeff * speedSq * (p->scale * 0.1f) / p->mass;
-                if (dragMag > 25.0f) dragMag = 25.0f;
-
-                Vector3 dragForce = Vector3Scale(p->vel, -dragMag / speed);
-                accel = Vector3Add(accel, dragForce);
+            /* Free botanical bodies consume the same independent spatial
+             * fields as particles. Area/mass preserves their leaf response;
+             * orientation, flutter and terrain remain foliage-specific. */
+            ParticleDynamicsProfile body = {.inverseMassKg=1/fmaxf(p->mass,0.0001f),
+                .gravityScale=1,.densityKgM3=p->densityKgM3,.windSusceptibility=1,
+                .aerodynamicAreaM2=0.5f*p->scale*p->scale,
+                .aerodynamicDragCoefficient=p->dragCoeff,.airDensityKgM3=1.225f};
+            p->flutterPhase += dt*p->flutterSpeed;
+            Vector3 flutter={(float)cosf(p->rot.y)*sinf(p->flutterPhase)*1.8f,0,
+                             (float)sinf(p->rot.y)*sinf(p->flutterPhase)*1.8f};
+            float remaining=fminf(dt,0.25f);
+            bool destroyed=false;
+            while(remaining>1e-6f) {
+                float step=fminf(remaining,1.0f/120.0f);remaining-=step;
+                MotionArrivalProfile post;
+                if(p->motionReceiver.arrived&&MotionFields_GetArrival(p->motionReceiver.guide,&post)&&post.overrideDynamics) {
+                    float inverseMass=body.inverseMassKg;body=post.dynamics;
+                    if(body.inverseMassKg<=0)body.inverseMassKg=inverseMass;
+                }
+                MotionFieldSample sample;
+                MotionFields_Sample(p->pos,p->vel,body.inverseMassKg>0?1/body.inverseMassKg:p->mass,step,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
+                Vector3 accel=flutter;
+                if(activeFF)accel=MotionVec_Add(accel,ForceField_Evaluate(activeFF,p->pos,p->vel,time,(Vector3){0},(Vector3){0,1,0}));
+                Vector3 air=MotionVec_Add(Wind_EvaluateVelocity(p->pos,time),sample.airflowVelocity);
+                p->vel=MotionBody_AdvanceVelocity(p->vel,&body,accel,sample.forceNewtons,air,step);
+                Vector3 previous=p->pos;p->pos=MotionVec_Add(p->pos,MotionVec_Scale(p->vel,step));
+                bool arrived=p->motionReceiver.arrived;
+                MotionArrivalMode action=MotionFields_AdvanceReceiver(&p->motionReceiver,previous,p->pos,p->vel);
+                if(!arrived&&p->motionReceiver.arrived) {
+                    MotionArrivalProfile arrival;
+                    if(MotionFields_GetArrival(p->motionReceiver.guide,&arrival))
+                        p->vel=ParticleDynamics_ApplyImpulse(p->vel,arrival.impulseNs,body.inverseMassKg);
+                    if(action==MOTION_ARRIVAL_DESTROY){destroyed=true;break;}
+                }
             }
-
-            // 2. Leaf aerodynamic flutter & sideways gliding
-            p->flutterPhase += dt * p->flutterSpeed;
-            float flutter = sinf(p->flutterPhase) * 1.8f;
-            accel.x += cosf(p->rot.y) * flutter;
-            accel.z += sinf(p->rot.y) * flutter;
-
-            // 3. Environmental forest wind (acceleration toward target air velocity)
-            Vector3 windAccel = Wind_EvaluateAcceleration(p->pos, time, p->vel);
-            accel = Vector3Add(accel, windAccel);
-
-            // 4. External Force Fields (Whirlwind, Vortex, or Target Suction)
-            if (activeFF != NULL)
-            {
-                Vector3 ffAccel = ForceField_Evaluate(activeFF, p->pos, p->vel, time, (Vector3){0}, (Vector3){0, 1.0f, 0});
-                accel = Vector3Add(accel, ffAccel);
-            }
-
-            // Integrate velocity & position
-            p->vel = Vector3Add(p->vel, Vector3Scale(accel, dt));
-            p->pos = Vector3Add(p->pos, Vector3Scale(p->vel, dt));
+            if(destroyed){p->active=false;s_foliageActiveCount--;continue;}
 
             // Integrate rotation tumbling
             p->rot = Vector3Add(p->rot, Vector3Scale(p->rotVel, dt));
-            p->rotVel = Vector3Scale(p->rotVel, 0.985f); // Air rotational damping
+            p->rotVel = Vector3Scale(p->rotVel, powf(0.985f, dt*60.0f)); // Air rotational damping
 
             // Homing strike impact check: dissolve upon reaching target center
             if (s_foliageHomingActive)
@@ -459,6 +473,7 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
             if (s_foliageHomingActive)
             {
                 p->state = BOTANICAL_STATE_FREE;
+            p->motionReceiver = (MotionReceiver){0};
                 p->groundRestTimer = 0.0f;
                 p->vel.y = 1.8f + Foliage_Randf(&p->seed) * 1.5f;
                 continue;

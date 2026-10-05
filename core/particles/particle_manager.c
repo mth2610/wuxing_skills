@@ -46,7 +46,7 @@ static bool ParticleManager_RequiresCpuFacing(const ParticleConfig *particle)
  * silently simulating a different model. */
 static bool ParticleManager_RequiresCpuDynamics(const ParticleConfig *particle)
 {
-    return ParticleDynamics_IsEnabled(particle->physics.dynamics);
+    return ParticleDynamics_IsEnabled(particle->physics.dynamics) || particle->physics.receiveMotionFields;
 }
 
 /* The GPU billboard backend owns one shared draw texture: DefaultSprite.

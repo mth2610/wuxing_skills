@@ -135,6 +135,11 @@
 - Read `core/particles/docs/GPU_BACKEND_API.md` first. New VFX code uses `core/particles/particle_manager.h`.
 - SSBO/buffer layout changes must stay in sync with C-side structs — verify std140/std430 alignment before committing.
 
+- New spatial guidance uses Newton forces and the receiver's actual mass. Derive damping from stiffness/mass; do not expose redundant frequency, steering, wind-response and reference-mass knobs in compositions. Derive volume and spherical drag area from mass/density; keep visual size separate. Density=0 retains old gravity-only profiles. Existing acceleration-field APIs keep their declared m/s² units.
+- Guide arrival must never spawn an implicit blast or turbulence wake. Configure independent target fields/impulses explicitly and trigger cast-level fields once on actual swept arrival, with no global cooldown.
+
+- Shared procedural motion uses m/s turbulence and signed swirl amplitudes; zero disables each. Derive eddy scale from field geometry, window the vector potential before its curl, and keep target flow independent of travel flow. SSF is a surface renderer; density/cohesion constraints belong to a liquid solver.
+
 ### 10.4 Definition of done (core change)
 - Ambient wind receivers retain velocity, integrate drag displacement, and sample changing airflow along the trajectory with bounded timesteps; constant-air tests alone cannot verify vortex motion. Guard: `core/tests/atmosphere_motion_test.c`.
 - `make` builds clean.
@@ -146,6 +151,8 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-05 | Codex | Shared flow amplitude and SSF boundary | core/motion/motion_flow.h; core/liquid/liquid_surface.h | Ground-truth |
+| 2026-10-05 | Codex | §10.3 Mass-aware spatial forces and arrival ownership | core/motion/motion_fields.h; core/particles/particle_dynamics.h | Ground-truth |
 | 2026-10-05 | Codex | §7 Cloud background depth policy | maps/toolkit/map_props_cloud.inl; maps/tests/test_map_background_state.py | Ground-truth |
 | 2026-10-05 | Codex | §4 Isolated texture sampler variants | core/resource_manager.h; core/tests/resource_manager_texture_variant_test.c | Ground-truth |
 | 2026-10-04 | Codex | §7 Bounded fog radiance and opacity | core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_transport_test.c | Ground-truth |

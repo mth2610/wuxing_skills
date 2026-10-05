@@ -22,6 +22,7 @@
 #include "vc_dissolve_exit.inl"
 #include "vc_sweep_slash.inl"
 #include "vc_light_shaft.inl"
+#include "vc_guided_particle.inl"
 #include "vc_particle_upgrades_test.inl"
 #include "vc_ground_wave.inl"
 #include "vc_shock_ring.inl"

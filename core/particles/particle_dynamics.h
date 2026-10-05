@@ -22,7 +22,25 @@ typedef struct ParticleDynamicsProfile {
     float windSusceptibility;
     float steeringFrequencyHz;    /* Critically damped spline PD frequency. */
     float maxSteeringAccelMps2;   /* <= 0 disables the profile steering clamp. */
+    /* Optional quadratic aerodynamic response relative to air; replaces
+     * windCouplingHz when area/coefficient are positive. Units m^2, unitless,
+     * kg/m^3. Zero area retains exponential artistic airflow relaxation. */
+    float aerodynamicAreaM2;
+    float aerodynamicDragCoefficient;
+    float airDensityKgM3;
+    /* Positive body density enables air buoyancy: displaced volume=m/rho.
+     * Zero preserves legacy gravity without buoyancy. kg/m^3. */
+    float densityKgM3;
 } ParticleDynamicsProfile;
+
+/* Gravity and Archimedes buoyancy use the same ambient gravity. Density=0
+ * retains the old gravity-only profile; air defaults to 1.225 kg/m^3. */
+static inline float ParticleDynamics_GravityAcceleration(const ParticleDynamicsProfile *body)
+{
+    float rhoAir = body->airDensityKgM3 > 0 ? body->airDensityKgM3 : 1.225f;
+    float buoyancyRatio = body->densityKgM3 > 0 ? rhoAir / body->densityKgM3 : 0;
+    return 9.81f * body->gravityScale * (buoyancyRatio - 1);
+}
 
 static inline bool ParticleDynamics_IsEnabled(const ParticleDynamicsProfile *profile)
 {
