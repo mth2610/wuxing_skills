@@ -12,7 +12,29 @@ static void CheckNear(float actual, float expected, const char *label) {
     }
 }
 
+static void CheckLightSpaceLinearity(void) {
+    /* Include translation and projective W: the ray is a vector (w=0),
+       while camera and sample positions are points (w=1). */
+    const float matrix[4][4] = {{2, -1, 3, 5}, {0, 4, -2, 7},
+                              {1, 2, 3, -4}, {0.02f, -0.03f, 0.01f, 1}};
+    const float camera[4] = {6, 8, -3, 1};
+    const float ray[4] = {0.3f, -0.4f, 0.5f, 0};
+    const float distances[] = {0, 1.2f, 40, 150};
+    for (int n = 0; n < 4; ++n) {
+        for (int row = 0; row < 4; ++row) {
+            float point = 0, origin = 0, direction = 0;
+            for (int col = 0; col < 4; ++col) {
+                point += matrix[row][col] * (camera[col] + ray[col] * distances[n]);
+                origin += matrix[row][col] * camera[col];
+                direction += matrix[row][col] * ray[col];
+            }
+            CheckNear(point, origin + direction * distances[n], "light-space ray projection is linear");
+        }
+    }
+}
+
 int main(void) {
+    CheckLightSpaceLinearity();
     CheckNear(VolumetricFog_EffectiveStart(1.0f, 24.0f), 1.0f,
               "legacy nearby fog remains available");
     CheckNear(VolumetricFog_EffectiveStart(22.0f, 10.0f), 1.2f,
@@ -53,8 +75,8 @@ int main(void) {
         !strstr(shader, "behindFocus / max(u_fogSpan, 0.001)") ||
         !strstr(shader, "+ localDensity * localFade")) failures++;
     if (strstr(shader, "sunbeamHaze") ||
-        !strstr(shader, "float directLight = shadow * (0.15 + 0.85 * canopyShaft) * u_godRayIntensity;") ||
-        !strstr(shader, "u_sunColor * (directLight * shaftVisibility * 5.0)")) {
+        !strstr(shader, "float directLight = shadow * u_godRayIntensity;") ||
+        !strstr(shader, "u_sunColor * (directLight * miePhase)")) {
         puts("FAIL: beams must use scene shadows and sun color without patterned density");
         failures++;
     }
@@ -73,7 +95,9 @@ int main(void) {
     if (lastInterval > 0.1f || lastInterval <= 0.0f) failures++;
     if (!strstr(shader, "sceneDepth / max(dot(rayDir, u_viewForward), 0.001)") ||
         !strstr(shader, "float stepSize = t1 - t0;") ||
-        !strstr(shader, "u_lightVP * vec4(samplePos, 1.0)")) failures++;
+        !strstr(shader, "u_lightVP * vec4(u_camPos, 1.0)") ||
+        !strstr(shader, "u_lightVP * vec4(rayDir, 0.0)") ||
+        !strstr(shader, "camPosLS + rayDirLS * t")) failures++;
     if (!strstr(shader,"uniform float     u_distantCoverage;") ||
         !strstr(shader,"1.0 + (framedDepth - 1.0) / max(u_distantCoverage, 0.0001)") ||
         !strstr(shader,"u_distantCoverage > 0.0 ? smoothstep(0.12, 0.80, framedDepth) : 0.0")) {

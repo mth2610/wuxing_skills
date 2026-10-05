@@ -34,6 +34,8 @@ uniform vec3 lightDir;
 uniform vec4 lightColor;
 uniform vec4 ambientColor;
 uniform vec3 viewPos;
+uniform vec4 u_islandRect, u_islandShape;
+#include "maps/toolkit/shaders/map_island_boundary.glsl"
 
 #define MAX_PATH_SEGS 16
 uniform vec4 u_pathSegs[MAX_PATH_SEGS]; // xy = p0.xz, zw = p1.xz
@@ -256,5 +258,12 @@ void main()
 
     groundLit += VFXLights_AccumulateFlat(fragPosition, blendedAlbedo);
 
+    if (u_islandRect.z > 0.0 && u_islandRect.w > 0.0) {
+        float edge = MapIslandDistance(fragWorldPos.xz, u_islandRect, u_islandShape.x);
+        float veil = smoothstep(-max(u_islandShape.y, 0.1), 0.0, edge + max(u_islandShape.z, 0.0))
+                   * (1.0 - smoothstep(-2.0, 0.1, fragWorldPos.y));
+        vec3 cloudLight = clamp(ambientColor.rgb + lightColor.rgb * max((normalize(-lightDir).y + 0.4) / 1.4, 0.0) * 0.55, 0.0, 1.05);
+        groundLit = mix(groundLit, vec3(0.88, 0.91, 0.96) * cloudLight, veil);
+    }
     finalColor = vec4(groundLit, 1.0);
 }

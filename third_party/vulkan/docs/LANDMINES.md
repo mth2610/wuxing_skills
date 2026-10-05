@@ -191,6 +191,21 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
   An isolated copy of the failing blob recovered in the headless runtime suite;
   `tests/rlvk_runtime_test.c` requires a non-null initialized cache.
 
+- **Raw non-mip minification filters unexpectedly sample generated mips.**
+  **Symptom:** a generated checkerboard mip chain loses base-level contrast even
+  with raw `RL_TEXTURE_FILTER_NEAREST` or `RL_TEXTURE_FILTER_LINEAR` minification.
+  **Cause:** `rlvk_matrix.inl` allowed the full mip LOD range for every min filter.
+  **Rule:** track whether the raw min filter requests mipmaps and clamp non-mip
+  samplers to LOD zero, including the sampler rebuilt by `rlvk_texture.inl` after
+  generation. Raylib's `SetTextureFilter(POINT/BILINEAR)` intentionally requests
+  nearest mip selection when `Texture2D.mipmaps > 1`; preserve that behavior.
+  `tests/rlvk_visual_test.c` scenario `mipmap_filter` checks the two contracts,
+  fractional trilinear LOD and unchanged separately loaded texture IDs.
+  Generation requires RGBA8 linear-blit support and otherwise retains existing
+  levels. Load-time generation synchronizes GPU work; subsequent base updates
+  do not regenerate lower levels. Anisotropic requests remain unsupported and
+  leave the previously selected filter intact.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
@@ -202,3 +217,4 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
 | 2026-10-03 | Codex | GPU trace query placement and sample accounting | `rlvk_platform.inl`, `rlvk_state.inl`, `rlvk_renderpass.inl`, trace-enabled visual validation and headless sample tests | Ground-truth |
 | 2026-10-04 | Codex | SSF shader scenario path | `tests/rlvk_visual_test.c`, renamed `core/liquid/shaders/liquid_depth_narrow_range.fs` | Ground-truth |
 | 2026-10-04 | Codex | Rejected pipeline cache recovery | `rlvk_pipeline.inl`, headless runtime with isolated rejected disk blob | Ground-truth |
+| 2026-10-05 | Codex | Non-mip sampler LOD and physical mip generation | `rlvk_matrix.inl`, `rlvk_texture.inl`, `tests/rlvk_visual_test.c mipmap_filter` red/green validation | Ground-truth |

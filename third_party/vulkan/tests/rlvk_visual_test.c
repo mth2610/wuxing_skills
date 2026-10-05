@@ -132,6 +132,74 @@ static Camera3D cam3d(void)
 
 // ---- scenarios (return NULL on pass, short reason string on fail) ----------------
 
+// Physical mip generation, fractional trilinear LOD and independent texture IDs.
+// Raylib POINT/BILINEAR use nearest mip selection when metadata includes mips;
+// raw GL_NEAREST/GL_LINEAR min filters instead restrict sampling to level zero.
+static const char *sc_mipmap_filter(void)
+{
+    const char *fs =
+        "#version 330\n"
+        "in vec2 fragTexCoord; uniform sampler2D texture0; out vec4 finalColor;\n"
+        "void main(){\n"
+        " float value;\n"
+        " if(fragTexCoord.y>0.8) value=textureLod(texture0,vec2(0.5/128.0),0.5).r;\n"
+        " else value=texture(texture0,fragTexCoord*31.3+vec2(0.013,0.029)).r;\n"
+        " finalColor=vec4(vec3(value),1.0);\n"
+        "}\n";
+    Color pixels[128*128];
+    for (int y=0;y<128;y++) for (int x=0;x<128;x++)
+        pixels[y*128+x]=((x+y)&1)?WHITE:BLACK;
+    Image data={pixels,128,128,1,PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+    Texture2D original=LoadTextureFromImage(data), variant=LoadTextureFromImage(data);
+    unsigned int originalId=original.id, variantId=variant.id;
+    GenTextureMipmaps(&variant);
+    SetTextureWrap(original,TEXTURE_WRAP_REPEAT); SetTextureWrap(variant,TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(original,TEXTURE_FILTER_POINT);
+    Shader shader=LoadShaderFromMemory(NULL,fs);
+    const char *failure=NULL;
+    if (!original.id || !variant.id || original.id==variant.id ||
+        original.id!=originalId || variant.id!=variantId || original.mipmaps!=1 || variant.mipmaps!=8)
+        failure="mip generation changed identity or did not create the physical chain";
+    if (shader.id==rlGetShaderIdDefault()) failure="mipmap shader compile failed";
+    // First two modes request raw non-mip minification. The rest use Raylib
+    // mip-aware wrapper modes; anisotropic currently leaves that mode unchanged.
+    for (int mode=0;mode<6 && !failure;mode++)
+    {
+        if (mode<2)
+        {
+            rlTextureParameters(variant.id,RL_TEXTURE_MIN_FILTER,mode?RL_TEXTURE_FILTER_LINEAR:RL_TEXTURE_FILTER_NEAREST);
+            rlTextureParameters(variant.id,RL_TEXTURE_MAG_FILTER,mode?RL_TEXTURE_FILTER_LINEAR:RL_TEXTURE_FILTER_NEAREST);
+        }
+        else SetTextureFilter(variant,mode==2?TEXTURE_FILTER_POINT:mode==3?TEXTURE_FILTER_BILINEAR:TEXTURE_FILTER_TRILINEAR);
+        if (mode==5) SetTextureFilter(variant,TEXTURE_FILTER_ANISOTROPIC_4X);
+        for (int frame=0;frame<3;frame++)
+        {
+            BeginDrawing(); ClearBackground(BLACK); BeginShaderMode(shader);
+            DrawTexturePro(original,(Rectangle){0,0,128,128},(Rectangle){0,0,200,180},(Vector2){0,0},0,WHITE);
+            DrawTexturePro(variant,(Rectangle){0,0,128,128},(Rectangle){200,0,200,180},(Vector2){0,0},0,WHITE);
+            EndShaderMode(); EndDrawing();
+        }
+        Image captured=snap();
+        int originalMin=255, originalMax=0, variantMin=255, variantMax=0;
+        for (int y=10;y<130;y+=3) for (int x=10;x<190;x+=3)
+        {
+            int a=at(captured,x,y).r,b=at(captured,200+x,y).r;
+            if(a<originalMin)originalMin=a; if(a>originalMax)originalMax=a;
+            if(b<variantMin)variantMin=b; if(b>variantMax)variantMax=b;
+        }
+        int originalHalf=at(captured,80,165).r, variantHalf=at(captured,280,165).r;
+        if(originalMin>2 || originalMax<253 || originalHalf>2) failure="original texture sampler or base contents changed";
+        if(mode<2 && variantHalf>2) failure="non-mip minification sampled a higher level";
+        if(mode==0 && (variantMin>2 || variantMax<253)) failure="point non-mip minification lost base contrast";
+        if(mode>=2 && (variantMin<124 || variantMax>132)) failure="minified mipmapped texture is not stable gray";
+        if(mode>=4 && (variantHalf<60 || variantHalf>68)) failure="trilinear did not interpolate fractional mip LOD";
+        if(mode==4) ExportImage(captured,"mipmap_filter.png");
+        UnloadImage(captured);
+    }
+    UnloadShader(shader); UnloadTexture(original); UnloadTexture(variant);
+    return failure;
+}
+
 static const char *sc_clear(void)
 {
     for (int f = 0; f < 3; f++) { BeginDrawing(); ClearBackground(RED); EndDrawing(); }
@@ -3589,6 +3657,7 @@ static const char *sc_ubo_arena(void)
 typedef struct { const char *name; const char *(*fn)(void); } Scenario;
 static const Scenario SCENARIOS[] = {
     { "clear",          sc_clear },
+    { "mipmap_filter",  sc_mipmap_filter },
     { "batch_alpha",    sc_batch_alpha },
     { "additive3d",     sc_additive3d },
     { "shader_uniform", sc_shader_uniform },

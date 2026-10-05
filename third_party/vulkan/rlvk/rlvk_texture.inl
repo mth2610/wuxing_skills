@@ -805,6 +805,8 @@ unsigned int rlLoadTexture(const void *data, int width, int height, int format, 
                                  RLVK_ALLOC, &t->view));
 
     t->minFilter = VK_FILTER_NEAREST;
+    t->mipMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    t->mipEnabled = false;
     t->magFilter = VK_FILTER_NEAREST;
     t->wrapS = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     t->wrapT = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -871,6 +873,8 @@ unsigned int rlLoadTextureDepth(int width, int height, bool useRenderBuffer)
                                  },
                                  RLVK_ALLOC, &t->view));
     t->minFilter = VK_FILTER_NEAREST;
+    t->mipMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    t->mipEnabled = false;
     t->magFilter = VK_FILTER_NEAREST;
     t->wrapS = t->wrapT = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     RLVK_CHECK(vkCreateSampler(RLVK.device,
@@ -1020,6 +1024,8 @@ unsigned int rlLoadTextureCubemap(const void *data, int size, int format, int mi
                                  RLVK_ALLOC, &t->view));
 
     t->minFilter = VK_FILTER_LINEAR; // rlgl sets GL_LINEAR for cubemaps
+    t->mipMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    t->mipEnabled = false;
     t->magFilter = VK_FILTER_LINEAR;
     t->wrapS = t->wrapT = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
     RLVK_CHECK(vkCreateSampler(RLVK.device,
@@ -1333,9 +1339,8 @@ void rlUnloadTexture(unsigned int id)
     t->inUse = false;
 }
 
-// Generate a full mip chain: read level 0 back, recreate the image with mipLevels, box-filter
-// each level on the CPU (matches GL glGenerateMipmap's conventional box filter), upload via host
-// image copy. RGBA8 only (every uncompressed load lands there via the RGB->RGBA expansion).
+// Generate a full RGBA8 mip chain by copying level zero into a new image and
+// linearly blitting successive levels. Unsupported formats retain level zero.
 void rlGenTextureMipmaps(unsigned int id, int w, int h, int format, int *mipmaps)
 {
     if (mipmaps)
@@ -1346,6 +1351,17 @@ void rlGenTextureMipmaps(unsigned int id, int w, int h, int format, int *mipmaps
     if (!t->image || t->format != VK_FORMAT_R8G8B8A8_UNORM)
         return;
     (void)format;
+
+    VkFormatProperties properties;
+    vkGetPhysicalDeviceFormatProperties(RLVK.physicalDevice, t->format, &properties);
+    VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT |
+                                  VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+    if ((properties.optimalTilingFeatures & needed) != needed)
+    {
+        TRACELOG(RL_LOG_WARNING, "RLVK: [ID %u] linear mip blits unsupported; retaining existing levels", id);
+        if (mipmaps) *mipmaps = t->mipCount;
+        return;
+    }
 
     // Flush công việc hiện tại để bắt đầu quy trình nội suy trên GPU
     rlvkFlushFrame();
@@ -1458,7 +1474,7 @@ void rlGenTextureMipmaps(unsigned int id, int w, int h, int format, int *mipmaps
                                    .addressModeU = t->wrapS,
                                    .addressModeV = t->wrapT,
                                    .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-                                   .maxLod = (f32)mipCount,
+                                   .maxLod = t->mipEnabled ? (f32)(mipCount - 1) : 0.0f,
                                },
                                RLVK_ALLOC, &t->sampler));
 

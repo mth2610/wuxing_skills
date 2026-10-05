@@ -6,11 +6,11 @@
 #include "core/scene_targets.h"
 #include "core/gfx_quality.h"
 #include "core/tuning.h"
-#include "core/time_fx.h"
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <stddef.h>
+#include "core/volumetric/volumetric_fog_volume.inl"
 extern void rlvkPassMark(const char *label) __attribute__((weak));
 #define PASS_MARK(label) do { if (rlvkPassMark) rlvkPassMark(label); } while (0)
 
@@ -34,8 +34,12 @@ static Texture2D       s_jitterTex;
 // Uniform locations — raymarch
 static int s_locDepthTex;
 static int s_locShadowMap;
+static int s_locStaticShadowMap;
+static int s_locShadowEnabled;
+static int s_locStaticShadowEnabled;
 static int s_locInvViewProj;
 static int s_locLightVP;
+static int s_locStaticLightVP;
 static int s_locCamPos;
 static int s_locSunDir;
 static int s_locSunColor;
@@ -58,7 +62,6 @@ static int s_locStepCount;
 static int s_locScreenRes;
 static int s_locJitterTex;
 static int s_locJitterTexel;
-static int s_locTime;
 static int s_locVolumeCount;
 static int s_locVolPosShape;
 static int s_locVolExtentsDense;
@@ -101,8 +104,12 @@ void VolumetricFog_Init(int width, int height) {
     s_raymarchShader = LoadShader(NULL, "core/volumetric/shaders/volumetric_fog.fs");
     s_locDepthTex          = GetShaderLocation(s_raymarchShader, "u_depthTex");
     s_locShadowMap         = GetShaderLocation(s_raymarchShader, "u_shadowMap");
+    s_locStaticShadowMap   = GetShaderLocation(s_raymarchShader, "u_staticShadowMap");
+    s_locShadowEnabled     = GetShaderLocation(s_raymarchShader, "u_shadowEnabled");
+    s_locStaticShadowEnabled = GetShaderLocation(s_raymarchShader, "u_staticShadowEnabled");
     s_locInvViewProj       = GetShaderLocation(s_raymarchShader, "u_invViewProj");
     s_locLightVP           = GetShaderLocation(s_raymarchShader, "u_lightVP");
+    s_locStaticLightVP     = GetShaderLocation(s_raymarchShader, "u_staticLightVP");
     s_locCamPos            = GetShaderLocation(s_raymarchShader, "u_camPos");
     s_locSunDir            = GetShaderLocation(s_raymarchShader, "u_sunDir");
     s_locSunColor          = GetShaderLocation(s_raymarchShader, "u_sunColor");
@@ -125,7 +132,6 @@ void VolumetricFog_Init(int width, int height) {
     s_locScreenRes         = GetShaderLocation(s_raymarchShader, "u_screenResolution");
     s_locJitterTex         = GetShaderLocation(s_raymarchShader, "u_jitterTex");
     s_locJitterTexel       = GetShaderLocation(s_raymarchShader, "u_jitterTexel");
-    s_locTime              = GetShaderLocation(s_raymarchShader, "u_time");
     s_locVolumeCount       = GetShaderLocation(s_raymarchShader, "u_volumeCount");
     s_locVolPosShape       = GetShaderLocation(s_raymarchShader, "u_volPosShape");
     if (s_locVolPosShape < 0) s_locVolPosShape = GetShaderLocation(s_raymarchShader, "u_volPosShape[0]");
@@ -194,6 +200,11 @@ void VolumetricFog_Render(Camera3D camera) {
     Texture2D sceneDepth = SceneTargets_GetDepthTexture();
     Texture2D shadowMap = EnvShadow_GetShadowMap();
     Matrix lightVP = EnvShadow_GetLightVP();
+    Texture2D staticShadowMap = EnvShadow_GetStaticShadowMap();
+    Matrix staticLightVP = EnvShadow_GetStaticLightVP();
+    float shadowEnabled = EnvShadow_IsEnabled() && shadowMap.id != 0 ? 1.0f : 0.0f;
+    float staticShadowEnabled = shadowEnabled > 0.5f && EnvShadow_HasStaticCache()
+        && staticShadowMap.id != 0 ? 1.0f : 0.0f;
 
     // Compute camera inverse View-Projection matrix matching main.c MyBeginMode3D
     Matrix matView = MatrixLookAt(camera.position, camera.target, camera.up);
@@ -227,7 +238,6 @@ void VolumetricFog_Render(Camera3D camera) {
         ? VolumetricFog_GroundSpan(halfViewHeight, viewForward.y) : 0.0f;
     Vector2 screenRes = { (float)s_lowWidth, (float)s_lowHeight };
     float godRay = s_godRayIntensity;
-    float time = TimeFX_Elapsed();
 
     float heightFalloff  = atmos.density.heightFalloff;
     float baseAltitude   = atmos.density.baseAltitude;
@@ -254,7 +264,7 @@ void VolumetricFog_Render(Camera3D camera) {
             float fadeOut = (lifeRatio < 0.25f) ? (lifeRatio / 0.25f) : 1.0f;
             effDensity *= (fadeIn < fadeOut ? fadeIn : fadeOut);
 
-            volPosShape[volCount] = (Vector4){ v->position.x, v->position.y, v->position.z, (float)v->shape };
+            volPosShape[volCount] = VolumetricFog_PackPositionShape(v);
             volExtentsDense[volCount] = (Vector4){ v->extents.x, v->extents.y, v->extents.z, effDensity };
             volColorSoft[volCount] = (Vector4){ (float)v->color.r / 255.0f, (float)v->color.g / 255.0f, (float)v->color.b / 255.0f, v->edgeSoftness };
             volCount++;
@@ -265,7 +275,7 @@ void VolumetricFog_Render(Camera3D camera) {
     for (int i = 0; i < totalActive && volCount < 4; i++) {
         const LocalFogVolume *v = FogVolume_GetByIndex(i);
         if (v && v->maxLifetime <= 0.0f) {
-            volPosShape[volCount] = (Vector4){ v->position.x, v->position.y, v->position.z, (float)v->shape };
+            volPosShape[volCount] = VolumetricFog_PackPositionShape(v);
             volExtentsDense[volCount] = (Vector4){ v->extents.x, v->extents.y, v->extents.z, v->density };
             volColorSoft[volCount] = (Vector4){ (float)v->color.r / 255.0f, (float)v->color.g / 255.0f, (float)v->color.b / 255.0f, v->edgeSoftness };
             volCount++;
@@ -287,6 +297,9 @@ void VolumetricFog_Render(Camera3D camera) {
         SetShaderValue(s_raymarchShader, s_locJitterTexel, &jitterTexel, SHADER_UNIFORM_VEC2);
     SetShaderValueMatrix(s_raymarchShader, s_locInvViewProj, invViewProj);
     SetShaderValueMatrix(s_raymarchShader, s_locLightVP, lightVP);
+    SetShaderValueMatrix(s_raymarchShader, s_locStaticLightVP, staticLightVP);
+    SetShaderValue(s_raymarchShader, s_locShadowEnabled, &shadowEnabled, SHADER_UNIFORM_FLOAT);
+    SetShaderValue(s_raymarchShader, s_locStaticShadowEnabled, &staticShadowEnabled, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locCamPos, &camera.position, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locSunDir, &sunDir, SHADER_UNIFORM_VEC3);
     SetShaderValue(s_raymarchShader, s_locSunColor, &sunColor, SHADER_UNIFORM_VEC3);
@@ -307,14 +320,16 @@ void VolumetricFog_Render(Camera3D camera) {
     SetShaderValue(s_raymarchShader, s_locMaxDist, &maxDist, SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_raymarchShader, s_locStepCount, &stepCount, SHADER_UNIFORM_INT);
     SetShaderValue(s_raymarchShader, s_locScreenRes, &screenRes, SHADER_UNIFORM_VEC2);
-    if (s_locTime >= 0) SetShaderValue(s_raymarchShader, s_locTime, &time, SHADER_UNIFORM_FLOAT);
     if (s_locVolumeCount >= 0) SetShaderValue(s_raymarchShader, s_locVolumeCount, &volCount, SHADER_UNIFORM_INT);
     if (s_locVolPosShape >= 0) SetShaderValueV(s_raymarchShader, s_locVolPosShape, volPosShape, SHADER_UNIFORM_VEC4, 4);
     if (s_locVolExtentsDense >= 0) SetShaderValueV(s_raymarchShader, s_locVolExtentsDense, volExtentsDense, SHADER_UNIFORM_VEC4, 4);
     if (s_locVolColorSoft >= 0) SetShaderValueV(s_raymarchShader, s_locVolColorSoft, volColorSoft, SHADER_UNIFORM_VEC4, 4);
 
     SetShaderValueTexture(s_raymarchShader, s_locDepthTex, sceneDepth);
-    SetShaderValueTexture(s_raymarchShader, s_locShadowMap, shadowMap);
+    if (shadowEnabled > 0.5f)
+        SetShaderValueTexture(s_raymarchShader, s_locShadowMap, shadowMap);
+    if (staticShadowEnabled > 0.5f)
+        SetShaderValueTexture(s_raymarchShader, s_locStaticShadowMap, staticShadowMap);
 
     Rectangle srcRect = { 0.0f, 0.0f, (float)sceneDepth.width, -(float)sceneDepth.height };
     Rectangle dstRect = { 0.0f, 0.0f, (float)s_lowWidth, (float)s_lowHeight };

@@ -6,6 +6,7 @@
 bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Texture2D testAtlasTex,
                                   Texture2D globalParticleTex);
 void VFXTest_Draw3D(void);
+void VFXTest_DrawShadowPass(void);
 /* Dedicated refraction post-pass (runs after SceneTargets_SnapshotScene) */
 void VFXTest_DrawRefraction(Camera3D cam);
 void VFXTest_SetPlayerYaw(float yaw);

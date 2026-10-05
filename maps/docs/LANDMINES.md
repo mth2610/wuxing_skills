@@ -131,3 +131,27 @@
 ### Cloud and water uniforms need the active draw shader
 
 **Symptom:** a preceding prop shader could receive background/water uniform uploads; multiple cloud surfaces shared the last creation-time tiling. **Cause:** draw uniforms were uploaded before activating their shader, and tiling was stored only in shared shader state. **Rule:** activate the shader before uploads and drawing; keep cloud tiling on the surface and upload per draw. `maps/tests/test_map_background_state.py` executes the production paths after a sky draw and checks shader/state ownership.
+
+### Floating-plain boundary: geometry and sampler setup
+
+**Symptom:** a cloud perimeter resembles a hard ridge, exposes a straight terrain seam, or produces grain after changing sampler behavior.
+
+**Cause:** a heightmap plateau is inset from its rectangle; a cloud bank with an opaque crest exposes its mesh outline; `matModel` contains the view matrix in this engine, so cloud world coordinates must use an explicit translation; anisotropy may be unavailable and does not itself enable mip selection.
+
+**Rule:** bake mist from actual terrain contours instead of a raised rounded rectangle, use shared sky radiance with explicit world translation, and configure once at initialization. The mist replacement preserves its borrowed texture; allocation failure retains the original model. Use `ResourceManager_LoadTextureVariant` for isolated texture settings and establish trilinear filtering before requesting anisotropy. Do not alter meadow density to conceal a boundary problem.
+
+### Mist sprites must not cut through the plateau
+
+**Symptom:** soft mist shows a hard horizontal cutoff despite a transparent texture border.
+
+**Cause:** a camera-facing billboard intersects opaque ground; the depth test cuts its silhouette before alpha can soften it.
+
+**Rule:** use world-aligned rim quads slightly above the plateau in the transparent pass, with a baked soft mask and no depth writes. Flush both sides of depth-state changes. Opaque cloud sheets write their actual surface depth to cover submerged cliffs; the transparent ribbon does not. Draw sky before the cloud sheet. Do not interpolate terrain depth toward far depth to hide a seam: it creates false surfaces for fog reconstruction.
+
+### Contour mist: general shapes without runtime boundary work
+
+**Symptom:** four-sided rim placement fits one map but creates white walls, missing patches, or displaced mist on curved/concave maps.
+
+**Cause:** a map rectangle describes a bound, not the actual plateau outline. Raised cloud geometry duplicates the terrain border and exposes a finite surface silhouette.
+
+**Rule:** keep the sea flat. Bake closed mist contours from actual indexed/unindexed terrain at initialization, joining duplicated endpoints with canonical low-to-high interpolation. Exclude clockwise depression contours so lakes do not become island rims; explicit contour input can represent holes. Simplify only mist geometry, retain collision/terrain, and draw one cached textured ribbon. Quantization limits and non-manifold slices return failure without replacing existing resources.

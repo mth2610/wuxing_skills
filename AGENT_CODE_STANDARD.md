@@ -31,6 +31,7 @@
   transparent border; additive-only dark RGB fringes become visible halos.
 
 ## 4. Resource Manager
+- Use `ResourceManager_LoadTextureVariant` for different mipmap/sampler options; do not mutate a borrowed shared texture ID or its copied mipmap metadata.
 - Load via `ResourceManager_LoadTexture/LoadShader` only, never raw raylib load calls.
 - `Unload[Name]Skill` must NOT call `UnloadTexture`/`UnloadShader` — leave empty.
 
@@ -48,6 +49,9 @@
 - Before `rlBegin()` custom geometry: `rlColor4ub(255,255,255,255)` to reset vertex color.
 
 ## 7. Shaders
+
+- When capping fog opacity, bound interval extinction before accumulating in-scattering so premultiplied radiance and opacity remain consistent.
+- Opaque cloud seas write native surface depth to hide submerged cliffs consistently with fog; transparent rim mist preserves depth. Draw sky before clouds and flush both sides of depth-mask changes.
 - Linear scene depth is view-axis Z: convert it to ray distance before reconstructing volumetric samples.
 - Fog reconstruction filters premultiplied radiance and opacity together, normalizes weights, and rejects unrelated depth layers; validate silhouettes as well as sky grain.
 - Distant volumetric framing uses focus-relative ground depth and projected span; keep local fog sampling independent of the distant haze fade.
@@ -142,6 +146,9 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-05 | Codex | §7 Cloud background depth policy | maps/toolkit/map_props_cloud.inl; maps/tests/test_map_background_state.py | Ground-truth |
+| 2026-10-05 | Codex | §4 Isolated texture sampler variants | core/resource_manager.h; core/tests/resource_manager_texture_variant_test.c | Ground-truth |
+| 2026-10-04 | Codex | §7 Bounded fog radiance and opacity | core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_transport_test.c | Ground-truth |
 | 2026-10-04 | Codex | §10.1 Liquid names and legacy compatibility | core/liquid/liquid_surface.h; core/fluid/fluid_surface.h | Ground-truth |
 | 2026-10-03 | Codex | §10.1 Texture upload identity and timestamp validation | maps/toolkit/map_props_nature.inl; third_party/vulkan/rlvk/rlvk_platform.inl; third_party/vulkan/rlvk/rlvk_renderpass.inl | Ground-truth |
 | 2026-10-03 | Codex | §7 Fog reconstruction | core/volumetric/shaders/volumetric_composite.fs; core/tests/volumetric_fog_composite_test.c | Ground-truth |

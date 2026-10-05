@@ -1567,10 +1567,11 @@ int main(int argc, char **argv) {
             Boss_Draw();
             Formation_Draw();
         }
-        if (currentScreen == SCREEN_VFX_TESTER && !VFXTest_ShouldHideCharacterRef()) {
-            if (CharacterModel_IsLoaded()) {
+        if (currentScreen == SCREEN_VFX_TESTER) {
+            if (!VFXTest_ShouldHideCharacterRef() && CharacterModel_IsLoaded()) {
                 CharacterModel_Draw(&player.anim, player.position, s_vfxPlayerYaw, 1.0f, WHITE);
             }
+            VFXTest_DrawShadowPass();
         }
         if (CharacterModel_IsLoaded()) {
             SurfaceMaterial_EndShadowCast(charModel);

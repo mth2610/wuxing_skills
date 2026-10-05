@@ -3,6 +3,7 @@
 
 // Biến toàn cục (static) để lưu trữ Shader và vị trí các biến (Uniform Locations)
 // Giúp tối ưu hiệu năng, tránh việc phải tìm location mỗi frame.
+static int locIslandRect = -1, locIslandShape = -1;
 static Shader groundShader = {0};
 static bool shaderLoaded = false;
 static int locLightDir = -1;
@@ -258,8 +259,8 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
 
     // 1. Load Textures
     Texture2D texSplat = ResourceManager_LoadTexture(splatMapPath);
-    Texture2D texGrass = ResourceManager_LoadTexture(grassTexPath);
-    Texture2D texPath = ResourceManager_LoadTexture(pathTexPath);
+    Texture2D texGrass = MapLoadMippedTexture(grassTexPath, TEXTURE_WRAP_REPEAT);
+    Texture2D texPath = MapLoadMippedTexture(pathTexPath, TEXTURE_WRAP_REPEAT);
 
     // Splatmap filter FIRST. When splatMapPath == grassTexPath (a common
     // placeholder setup), ResourceManager returns the SAME GPU texture for both
@@ -269,15 +270,6 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
     // Set the grass/path aniso+mipmap filters LAST so they win on a shared tex.
     SetTextureFilter(texSplat, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(texSplat, TEXTURE_WRAP_REPEAT);
-
-    // Tối ưu Texture Lặp (Grass, Path) — mipmaps + anisotropic để khử aliasing
-    // khi tile dày và nhìn xa/nghiêng.
-    GenTextureMipmaps(&texGrass);
-    GenTextureMipmaps(&texPath);
-    SetTextureFilter(texGrass, TEXTURE_FILTER_ANISOTROPIC_16X);
-    SetTextureFilter(texPath, TEXTURE_FILTER_ANISOTROPIC_16X);
-    SetTextureWrap(texGrass, TEXTURE_WRAP_REPEAT);
-    SetTextureWrap(texPath, TEXTURE_WRAP_REPEAT);
 
     // 2. Khởi tạo Shader một lần duy nhất
     if (!shaderLoaded)
@@ -312,6 +304,8 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         groundShader.locs[SHADER_LOC_MAP_NORMAL] = GetShaderLocation(groundShader, "texPath");
         MapShadow_ConfigureShader(groundShader);
 
+        locIslandRect = GetShaderLocation(groundShader, "u_islandRect");
+        locIslandShape = GetShaderLocation(groundShader, "u_islandShape");
         locLightDir = GetShaderLocation(groundShader, "lightDir");
         locLightColor = GetShaderLocation(groundShader, "lightColor");
         locAmbientColor = GetShaderLocation(groundShader, "ambientColor");
@@ -518,6 +512,9 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     // rlvk uploads SetShaderValue to the active program, not the Shader
     // argument. Keep shadow matrices and the receiving draw in one scope.
     BeginShaderMode(groundShader);
+    Vector4 islandShape = {ground->boundary.cornerRadius, ground->boundary.mistWidth, ground->boundary.groundInset, 0};
+    SetShaderValue(groundShader, locIslandRect, &ground->boundary.rect, SHADER_UNIFORM_VEC4);
+    SetShaderValue(groundShader, locIslandShape, &islandShape, SHADER_UNIFORM_VEC4);
     EnvCloudShadowFrame cloud = Environment_GetCloudShadowFrame();
     // SPECULAR aliases METALNESS (slot 1), which already holds the turf.
     // Bind cloud noise independently of all terrain and shadow material maps.
@@ -640,14 +637,9 @@ void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground,
 {
     if (!ground || !ground->ready || !grassMaterialPath || !soilMaterialPath)
         return;
-    Texture2D grassMaterial = ResourceManager_LoadTexture(grassMaterialPath);
-    Texture2D soilMaterial = ResourceManager_LoadTexture(soilMaterialPath);
-    GenTextureMipmaps(&grassMaterial);
-    GenTextureMipmaps(&soilMaterial);
-    SetTextureFilter(grassMaterial, TEXTURE_FILTER_ANISOTROPIC_16X);
-    SetTextureFilter(soilMaterial, TEXTURE_FILTER_ANISOTROPIC_16X);
-    SetTextureWrap(grassMaterial, TEXTURE_WRAP_REPEAT);
-    SetTextureWrap(soilMaterial, TEXTURE_WRAP_REPEAT);
+    Texture2D grassMaterial = MapLoadMippedTexture(grassMaterialPath, TEXTURE_WRAP_REPEAT);
+    Texture2D soilMaterial = MapLoadMippedTexture(soilMaterialPath, TEXTURE_WRAP_REPEAT);
+
     ground->model.materials[0].maps[MATERIAL_MAP_ROUGHNESS].texture = grassMaterial;
     ground->model.materials[0].maps[MATERIAL_MAP_EMISSION].texture = soilMaterial;
 }
@@ -674,10 +666,5 @@ void MapProp_SetGroundEcology(MapGroundSurface *ground, const MapEcology *ecolog
 void MapProp_SetGroundReliefMap(MapGroundSurface *ground, const char *reliefPath)
 {
     if (!ground || !ground->ready) return;
-    ground->reliefTexture = reliefPath ? ResourceManager_LoadTexture(reliefPath) : (Texture2D){0};
-    if (ground->reliefTexture.id) {
-        GenTextureMipmaps(&ground->reliefTexture);
-        SetTextureFilter(ground->reliefTexture, TEXTURE_FILTER_ANISOTROPIC_16X);
-        SetTextureWrap(ground->reliefTexture, TEXTURE_WRAP_REPEAT);
-    }
+    ground->reliefTexture = reliefPath ? MapLoadMippedTexture(reliefPath, TEXTURE_WRAP_REPEAT) : (Texture2D){0};
 }

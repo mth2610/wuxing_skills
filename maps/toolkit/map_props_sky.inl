@@ -32,7 +32,7 @@ MapSkyDome MapProp_CreateSkyDome(void)
     memcpy(mesh.indices, triangles, sizeof(triangles));
     UploadMesh(&mesh, false);
     sky.model = LoadModelFromMesh(mesh);
-    sky.shader = LoadShader("maps/toolkit/shaders/sky_dome.vs", "maps/toolkit/shaders/sky_dome.fs");
+    sky.shader = ResourceManager_LoadShader("maps/toolkit/shaders/sky_dome.vs", "maps/toolkit/shaders/sky_dome.fs");
     sky.sunLoc = GetShaderLocation(sky.shader, "u_sunDirection");
     sky.skyLoc = GetShaderLocation(sky.shader, "u_skyAmbient");
     sky.hazeLoc = GetShaderLocation(sky.shader, "u_hazeColor");
@@ -70,6 +70,5 @@ void MapProp_UnloadSkyDome(MapSkyDome *sky)
 {
     if (!sky || !sky->model.meshCount) return;
     UnloadModel(sky->model);
-    if (sky->shader.id && sky->shader.id != rlGetShaderIdDefault()) UnloadShader(sky->shader);
     *sky = (MapSkyDome){0};
 }

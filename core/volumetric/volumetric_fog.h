@@ -17,6 +17,10 @@ void VolumetricFog_Resize(int width, int height);
 void VolumetricFog_PreFrame(void);
 
 // Thực thi render pass sương mù thể tích & God-rays, sau đó hòa trộn vào Scene HDR
+// Direct radiance uses normalized Henyey-Greenstein Mie scattering and enabled
+// dynamic/static directional-shadow visibility; no synthetic canopy is added.
+// Density controls extinction independently. The 0.20 transmittance floor is
+// applied before in-scattering so premultiplied radiance and opacity agree.
 void VolumetricFog_Render(Camera3D camera);
 
 // Bật/tắt sương mù thể tích

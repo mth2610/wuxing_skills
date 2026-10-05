@@ -41,6 +41,8 @@ To optimize VRAM and prevent duplicate file loadings, skills must load textures 
 ### APIs
 * `Texture2D ResourceManager_LoadTexture(const char *filePath);`
   - Loads a texture or retrieves it from cache if already loaded (e.g. sharing `crack.png` across skills).
+* `Texture2D ResourceManager_LoadTextureVariant(const char *filePath, bool generateMipmaps, int filter, int wrap);`
+  - Use an immutable separate GPU texture when one consumer needs different sampling. For distant cloud noise, request `(path, true, TEXTURE_FILTER_TRILINEAR, TEXTURE_WRAP_REPEAT)` and check `id != 0` before binding. Mipmapped variants normalize to RGBA8 and generate mips from the uploaded base level; later cache returns carry the updated mip count. Do not call `GenTextureMipmaps`, `SetTextureFilter`, `SetTextureWrap`, or `UnloadTexture` on a borrowed variant. Variants share the 32-entry texture pool and return zero on failure/exhaustion. Source and full contract: `core/resource_manager.h` and `core/resource_manager.c`.
 * `Shader ResourceManager_LoadShader(const char *vsFilePath, const char *fsFilePath);`
   - Loads/compiles custom vertex and fragment shaders. Pass `NULL` for `vsFilePath` only for shaders that do not require custom vertex processing. Skills using 3D lighting must always provide both `.vs` and `.fs`.
 * `Font ResourceManager_LoadFont(const char *filePath, int baseSize);`
@@ -2909,4 +2911,5 @@ exceed 1.0 and cannot produce a hot core on its own. Use it for shape over time
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
 | 2026-10-04 | Codex | Batched liquid capture, recipes, diagnostics | core/liquid/liquid_surface.h; core/liquid/liquid_body_recipe.h | Ground-truth |
+| 2026-10-05 | Codex | Immutable texture variants | core/resource_manager.h; core/resource_manager.c | Ground-truth |
 | 2026-10-04 | Codex | Liquid names, impact usage and compatibility | core/liquid/liquid_impact.h; core/liquid/liquid_impact.c; core/fluid/fluid_surface.h | Ground-truth |

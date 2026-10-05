@@ -879,6 +879,50 @@ typedef struct {
  * primitives. It owns no pool and is safe to call from projectiles or skills. */
 void VFX_SurfaceImpact_Emit(const VFX_SurfaceImpactEvent *event);
 
+// ── Primary VFX: Wood Growth Vine & Tendril (RMF + Growth Dynamics) ─────────
+typedef enum {
+    WOOD_VINE_VARIANT_SERPENTINE = 0, // Organic free-space searching tendril
+    WOOD_VINE_VARIANT_ENTANGLE,       // Helical wrap & constrict around target model
+    WOOD_VINE_VARIANT_SPIKE_SPEAR,    // Explosive straight piercing wooden javelin/spear
+    WOOD_VINE_VARIANT_ANCIENT_ROOT,   // Heavy gnarled ground crawler hugging terrain
+    WOOD_VINE_VARIANT_SEED_SPROUT,    // Ground seed impact eruption with uncurling shoots
+    WOOD_VINE_VARIANT_COUNT
+} VFX_WoodVineVariant;
+
+typedef enum {
+    WOOD_VINE_STYLE_JADE_EMERALD = 0, // Dark bog-oak + brilliant cyan-jade veins (High contrast on grass)
+    WOOD_VINE_STYLE_BLOOD_BRAMBLE,    // Mahogany bark + blazing ruby/cinnabar veins (Red vs green grass)
+    WOOD_VINE_STYLE_GOLDEN_AMBER,     // Ancient ironwood + molten golden-amber veins
+    WOOD_VINE_STYLE_WITHER_GHOST,     // Silver weathered timber + eerie violet soul veins
+    WOOD_VINE_STYLE_COUNT
+} VFX_WoodVineStyle;
+
+typedef struct {
+    Vector3 startPos;       // Root/emergence origin in world space
+    Vector3 targetPos;      // Target or tip destination
+    float targetRadius;     // If > 0, wraps around target cylinder/capsule (e.g. 0.38m for character)
+    float targetHeight;     // Height of target model to wrap (e.g. 1.8m)
+    float length;           // Extended length along path (metres)
+    float baseRadius;       // Base thickness at root (metres, default 0.08f)
+    float growth;           // Current growth progress [0..1]
+    float wither;           // Wither/decay progress [0..1]
+    float sapPhase;         // Sap pulse animation phase
+    float swayAmp;          // Sway amplitude under wind/motion (metres)
+    float coilRadius;       // 0 for direct crawl/whip, >0 for helical spiral
+    float coilTurns;        // Number of spiral turns (e.g. 2.2f)
+    bool  enableThorns;     // Sprout hooked phyllotaxis thorns along vine
+    bool  enableTwin;       // Sprout braided secondary tendril
+    bool  castShadow;       // Cast dynamic ground shadows
+    VFX_WoodVineVariant variant; // Morphological growth archetype
+    VFX_WoodVineStyle   style;   // Elemental tonal palette & contrast style
+    unsigned int seed;      // Deterministic PRNG seed
+} VFX_WoodVineConfig;
+
+VFX_WoodVineConfig VFX_WoodVine_DefaultConfig(void);
+const char* VFX_WoodVineVariant_Name(VFX_WoodVineVariant variant);
+const char* VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
+void VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
+
 // @gen:vc_declarations begin
 void VFX_ComposeBlackHole(VC_MaterialId matId, Vector3 pos, float radius, float time);
 void VFX_ComposeContactSpark(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
@@ -888,7 +932,6 @@ void VFX_ComposeDecalVariant(Vector3 pos, VC_MaterialId matId, float scale, floa
 void VFX_ComposeEmberBurst(Vector3 pos, Vector3 normal, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeFissureStreak(Vector3 start, Vector3 end, float width, float progress, float time);
 int VFX_ComposeFlowShield(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
-void VFX_ComposeLiquidImpact(Vector3 pos);
 int VFX_ComposeGasMaterialLab(Vector3 pos, VC_MaterialId mat);
 void VFX_ComposeGroundDustRing(Vector3 pos, VC_MaterialId matId, float scale, float severity01);
 void VFX_ComposeGuidedParticle(Vector3 source, Vector3 target);
@@ -897,6 +940,7 @@ void VFX_ComposeImpactDust(Vector3 pos, VC_MaterialId matId, float scale, float 
 void VFX_ComposeImpactDustVariant(Vector3 pos, VC_MaterialId matId, float scale, float severity01, VFX_ImpactDustVariant variant);
 int VFX_ComposeLightningArc(Vector3 from, Vector3 to, VC_MaterialId material, float width);
 void VFX_ComposeLiquidBench(Vector3 center,float spacing,float t01);
+void VFX_ComposeLiquidImpact(Vector3 pos);
 void VFX_ComposeMistVeil(Vector3 pos, float radius, float duration);
 void VFX_ComposeMistVeilEx(Vector3 pos, VC_MaterialId matId, float radius, float duration);
 void VFX_ComposeParticleUpgradesTest(Vector3 pos);
@@ -911,17 +955,19 @@ void VFX_ComposeWaterOrb(Vector3 start, Vector3 target);
 void VFX_ComposeWaterRing(Vector3 center, float radius, float t01);
 void VFX_ComposeWaterStream(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float radius, float progress, float time);
 void VFX_ComposeWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time);
+void VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
+void VFX_ComposeWoodVineCluster(Vector3 center, float radius, float height, float growth, float wither, float sapPhase, int vineCount, unsigned int seed);
 void VFX_DrawIceCrystalBurst(Vector3 center, int crystalCount, int seed, float growProgress);
 void VFX_DrawWaterStreamOnPath(const Vector3 *pathPoints, int pathCount, float radius, float progress, float segmentLengthRatio, float time, float phaseOffset);
 void VFX_FlowShield_SetIntensity(int handle, float intensity01);
 void VFX_FlowShield_SetTransform(int handle, Vector3 pos);
 int VFX_FlowShield_Spawn(Vector3 pos, VC_MaterialId mat, float radius, float intensity);
 void VFX_FlowShield_Stop(int handle);
-void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile profile);
 void VFX_KillFlowShield(int handle);
 void VFX_KillGasMaterialLab(int handle);
 void VFX_KillRefBands(int id);
 void VFX_KillRefParticles(int id);
+void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile profile);
 void VFX_SmokeTrail_Stop(int handle);
 void VFX_WaterRing_Stop(void);
 // @gen:vc_declarations end

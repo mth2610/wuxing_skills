@@ -126,3 +126,5 @@ Vector3 PMSweptSection_ClampOffset(Vector3 rawOffset, float localRadius,
 #include "pm_gpu_base.inl"      // Lưới Base cho GPU Displacement
 #include "pm_organic.inl"       // Cột thạch nhũ, Vũng nước (StonePillar, Puddle)
 #include "pm_crystal.inl"       // Hình khối Pha lê (Crystal, Cluster)
+#include "pm_rmf_tube.inl"      // Ống mộc RMF (Rotation Minimizing Frames, Mọc, Taper, Gỗ)
+

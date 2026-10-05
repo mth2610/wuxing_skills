@@ -6,8 +6,12 @@ out vec4 finalColor;
 uniform sampler2D texture0;          // Linearized scene depth (world units) bound via DrawTexturePro
 uniform sampler2D u_depthTex;        // Secondary alias
 uniform sampler2D u_shadowMap;       // Directional shadow map
+uniform sampler2D u_staticShadowMap;// Cached static directional casters
+uniform float     u_shadowEnabled;
+uniform float     u_staticShadowEnabled;
 uniform mat4      u_invViewProj;     // Inverse view-projection matrix
 uniform mat4      u_lightVP;         // Sun light-space matrix
+uniform mat4      u_staticLightVP;
 uniform vec3      u_camPos;          // World-space camera position
 uniform vec3      u_sunDir;          // Direction light travels (downward)
 uniform vec3      u_sunColor;        // Sunlight linear color
@@ -30,7 +34,6 @@ uniform int       u_stepCount;       // 12 for MED, 24 for HIGH
 uniform vec2      u_screenResolution;// Resolution of the downscaled target
 uniform sampler2D u_jitterTex;       // Immutable balanced blue-noise ranks
 uniform vec2      u_jitterTexel;     // Zero selects midpoint fallback
-uniform float     u_time;            // Animation clock for wind & sunbeams
 
 // Local Fog Volumes (up to 4 active volumes)
 uniform int       u_volumeCount;
@@ -52,48 +55,14 @@ float HenyeyGreenstein(float cosTheta, float g) {
 }
 
 // Shadow factor from directional shadow map (1.0 = lit, 0.0 = shadowed)
-float SampleShadowLS(vec4 posLS) {
-    vec3 proj = posLS.xyz / max(posLS.w, 0.00001) * 0.5 + 0.5;
-    if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) {
+float SampleShadowLS(sampler2D shadowMap, vec4 posLS) {
+    if (posLS.w <= 0.00001) return 1.0;
+    vec3 proj = posLS.xyz / posLS.w * 0.5 + 0.5;
+    if (proj.z < 0.0 || proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) {
         return 1.0;
     }
-    float shadowDepth = texture(u_shadowMap, proj.xy).r;
+    float shadowDepth = texture(shadowMap, proj.xy).r;
     return (proj.z <= shadowDepth + 0.0015) ? 1.0 : 0.0;
-}
-
-// Authored light modulation projected onto the canopy plane along sunlight.
-// It modulates illumination only; fog extinction stays independent.
-float ComputeCanopyGodRay(vec3 worldPos, vec3 sunDir, float time) {
-    // Phạm vi độ cao: tia nắng rọi từ tán cây (Y ~ 12m) xuống mặt cỏ (Y ~ -2.5m)
-    float heightFade = (1.0 - smoothstep(5.0, 12.0, worldPos.y));
-    float groundFade = smoothstep(-2.5, 0.1, worldPos.y);
-    float fade = heightFade * groundFade;
-    if (fade <= 0.0001) return 0.0;
-
-    // Chiếu ngược theo tia nắng lên độ cao tán cây (Canopy Y ~ 6.5m)
-    float canopyY = 6.5;
-    float distToCanopy = (canopyY - worldPos.y) / max(-sunDir.y, 0.05);
-    vec3 canopyPos = worldPos - sunDir * max(distToCanopy, 0.0);
-
-    // Gió lay động cành lá làm các luồng nắng lung linh
-    vec2 wind = vec2(sin(time * 0.9 + canopyPos.x * 0.15), cos(time * 0.7 + canopyPos.z * 0.15)) * 0.35;
-    vec2 uv = (canopyPos.xz + wind) * 0.18;
-
-    // 1. Cành cây lớn (Branch clusters)
-    float branch = sin(uv.x * 3.14 + sin(uv.y * 2.1)) * cos(uv.y * 2.8 + cos(uv.x * 1.9));
-    branch = branch * 0.5 + 0.5;
-
-    // 2. Kẽ lá và tán lá đan xen (Leaf gaps)
-    vec2 leafUV = uv * 3.2 + vec2(time * 0.12, time * 0.08);
-    float leafGaps = sin(leafUV.x * 6.28 + sin(leafUV.y * 4.2)) * cos(leafUV.y * 5.8 + cos(leafUV.x * 3.1));
-    leafGaps = leafGaps * 0.5 + 0.5;
-
-    // 3. Tia nắng sắc nét xuyên qua kẽ lá (Crepuscular beams)
-    float pattern = branch * 0.55 + leafGaps * 0.45;
-    float shaft = smoothstep(0.35, 0.75, pattern);
-    shaft = pow(shaft, 1.4);
-
-    return shaft * fade;
 }
 
 // Đánh giá các khối sương mù cục bộ (hồ nước, vạt hoa, hốc rừng)
@@ -165,12 +134,10 @@ void main() {
         : 0.5;
 
 
-    // Mie phase function toward light source with multiple-scattering side floor
+    // Normalized Mie phase: actual occluders determine spatial shaft structure.
     vec3 sunToLight = normalize(-u_sunDir);
     float cosTheta = dot(rayDir, sunToLight);
     float miePhase = HenyeyGreenstein(cosTheta, clamp(u_mieAnisotropy, 0.4, 0.75));
-    // Multiple scattering and side floor ensure sunlit shafts are visible from side/45-deg camera angles
-    float shaftVisibility = max(miePhase, 0.32) + 0.35 * max(cosTheta * 0.5 + 0.5, 0.0);
 
     vec3 accumRadiance = vec3(0.0);
     float transmittance = 1.0;
@@ -179,6 +146,8 @@ void main() {
     // Replaces 4x4 matrix multiplication at every ray step with 1 MAD
     vec4 camPosLS = u_lightVP * vec4(u_camPos, 1.0);
     vec4 rayDirLS = u_lightVP * vec4(rayDir, 0.0);
+    vec4 staticCamPosLS = u_staticLightVP * vec4(u_camPos, 1.0);
+    vec4 staticRayDirLS = u_staticLightVP * vec4(rayDir, 0.0);
 
     for (int i = 0; i < steps; i++) {
         // Concentrate samples near the receiver so thin ground mist survives
@@ -236,17 +205,22 @@ void main() {
 
         // Sunlight visibility from the actual directional-light shadow map
         vec4 posLS = camPosLS + rayDirLS * t;
-        float shadow = SampleShadowLS(posLS);
-        float canopyShaft = ComputeCanopyGodRay(samplePos, u_sunDir, u_time);
-        float directLight = shadow * (0.15 + 0.85 * canopyShaft) * u_godRayIntensity;
+        float shadow = u_shadowEnabled > 0.5 ? SampleShadowLS(u_shadowMap, posLS) : 1.0;
+        if (u_staticShadowEnabled > 0.5) {
+            vec4 staticPosLS = staticCamPosLS + staticRayDirLS * t;
+            shadow = min(shadow, SampleShadowLS(u_staticShadowMap, staticPosLS));
+        }
+        float directLight = shadow * u_godRayIntensity;
 
         // Radiance calculation: warm golden sunlight in-scattering + luminous morning sky ambient
-        vec3 directTerm = u_sunColor * (directLight * shaftVisibility * 5.0);
+        vec3 directTerm = u_sunColor * (directLight * miePhase);
         vec3 ambientTerm = fogColor * 0.85;
         vec3 stepLight = directTerm + ambientTerm;
 
         float opticalThickness = density * stepSize;
-        float stepTransmittance = exp(-opticalThickness);
+        // Apply the visibility floor before integrating in-scattering, keeping
+        // premultiplied radiance consistent with the retained extinction.
+        float stepTransmittance = max(exp(-opticalThickness), 0.20 / transmittance);
 
         // In-scattering accumulation
         vec3 stepRadiance = stepLight * (1.0 - stepTransmittance);
@@ -254,7 +228,7 @@ void main() {
         transmittance *= stepTransmittance;
 
         // Soft floor so fog never completely blinds the player
-        if (transmittance < 0.20) {
+        if (transmittance <= 0.20) {
             transmittance = 0.20;
             break;
         }

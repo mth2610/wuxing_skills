@@ -18,6 +18,10 @@
 typedef struct {
   char path[128];
   Texture2D texture;
+  bool variant;
+  bool generateMipmaps;
+  int filter;
+  int wrap;
   bool active;
 } CachedTexture;
 
@@ -188,7 +192,7 @@ Texture2D ResourceManager_LoadTexture(const char *filePath) {
 
   // 1. Search in cache
   for (int i = 0; i < MAX_CACHED_TEXTURES; i++) {
-    if (s_textures[i].active && strcmp(s_textures[i].path, filePath) == 0) {
+    if (s_textures[i].active && !s_textures[i].variant && strcmp(s_textures[i].path, filePath) == 0) {
       return s_textures[i].texture;
     }
   }
@@ -197,6 +201,7 @@ Texture2D ResourceManager_LoadTexture(const char *filePath) {
   for (int i = 0; i < MAX_CACHED_TEXTURES; i++) {
     if (!s_textures[i].active) {
       s_textures[i].texture = LoadTexture(filePath);
+      s_textures[i].variant = false;
       snprintf(s_textures[i].path, sizeof(s_textures[i].path), "%s", filePath);
       s_textures[i].active = true;
       return s_textures[i].texture;
@@ -208,6 +213,88 @@ Texture2D ResourceManager_LoadTexture(const char *filePath) {
          "%s\n",
          filePath);
   return LoadTexture(filePath);
+}
+
+Texture2D ResourceManager_LoadTextureVariant(const char *filePath,
+                                            bool generateMipmaps,
+                                            int filter, int wrap) {
+  if (filePath == NULL || filePath[0] == '\0' ||
+      strlen(filePath) >= sizeof(s_textures[0].path) ||
+      filter < TEXTURE_FILTER_POINT || filter > TEXTURE_FILTER_ANISOTROPIC_16X ||
+      wrap < TEXTURE_WRAP_REPEAT || wrap > TEXTURE_WRAP_MIRROR_CLAMP ||
+      (filter >= TEXTURE_FILTER_TRILINEAR && !generateMipmaps))
+    return (Texture2D){0};
+
+  int available = -1;
+  for (int i = 0; i < MAX_CACHED_TEXTURES; ++i) {
+    CachedTexture *entry = &s_textures[i];
+    if (!entry->active) {
+      if (available < 0) available = i;
+    } else if (entry->variant && entry->generateMipmaps == generateMipmaps &&
+               entry->filter == filter && entry->wrap == wrap &&
+               strcmp(entry->path, filePath) == 0) {
+      return entry->texture;
+    }
+  }
+  if (available < 0) {
+    TraceLog(LOG_WARNING, "TEXTURE: variant cache full: %s", filePath);
+    return (Texture2D){0};
+  }
+
+  Texture2D texture = {0};
+  if (generateMipmaps) {
+    Image image = LoadImage(filePath);
+    if (image.data == NULL) return (Texture2D){0};
+    if (image.width <= 0 || image.height <= 0) {
+      UnloadImage(image);
+      return (Texture2D){0};
+    }
+    // rlvk's generator supports RGBA8, and its initial upload creates only
+    // one physical level. Normalize/upload the base before generating mips.
+    image.mipmaps = 1;
+    ImageFormat(&image, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    if (image.data == NULL || image.format != PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 ||
+        image.width <= 0 || image.height <= 0) {
+      UnloadImage(image);
+      return (Texture2D){0};
+    }
+    texture = LoadTextureFromImage(image);
+    UnloadImage(image);
+  } else {
+    texture = LoadTexture(filePath);
+  }
+  if (texture.id == 0) return (Texture2D){0};
+  if (texture.width <= 0 || texture.height <= 0 ||
+      (generateMipmaps && texture.format != PIXELFORMAT_UNCOMPRESSED_R8G8B8A8)) {
+    UnloadTexture(texture);
+    return (Texture2D){0};
+  }
+  if (generateMipmaps) {
+    int size = texture.width > texture.height ? texture.width : texture.height;
+    int expectedMipmaps = 1;
+    while (size > 1) { size /= 2; ++expectedMipmaps; }
+    GenTextureMipmaps(&texture);
+    if (texture.mipmaps != expectedMipmaps) {
+      TraceLog(LOG_WARNING, "TEXTURE: variant mipmap generation failed: %s", filePath);
+      UnloadTexture(texture);
+      return (Texture2D){0};
+    }
+  }
+  // Anisotropy may be an optional/no-op backend parameter. Establish mip
+  // selection first so unsupported anisotropy retains trilinear filtering.
+  if (filter >= TEXTURE_FILTER_ANISOTROPIC_4X)
+    SetTextureFilter(texture, TEXTURE_FILTER_TRILINEAR);
+  SetTextureFilter(texture, filter);
+  SetTextureWrap(texture, wrap);
+  CachedTexture *entry = &s_textures[available];
+  snprintf(entry->path, sizeof(entry->path), "%s", filePath);
+  entry->texture = texture;
+  entry->variant = true;
+  entry->generateMipmaps = generateMipmaps;
+  entry->filter = filter;
+  entry->wrap = wrap;
+  entry->active = true;
+  return entry->texture;
 }
 
 Shader ResourceManager_LoadShaderVariant(const char *vsFilePath,

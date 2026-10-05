@@ -36,6 +36,7 @@
   void ResourceManager_Init(void);
   void ResourceManager_Unload(void);
   Texture2D ResourceManager_LoadTexture(const char *filePath);
+  Texture2D ResourceManager_LoadTextureVariant(const char *filePath, bool generateMipmaps, int filter, int wrap);
   Shader ResourceManager_LoadShader(const char *vsFilePath, const char *fsFilePath);
   Shader ResourceManager_LoadShaderVariant(const char *vsFilePath, const char *fsFilePath, const char *defines);
   Sound ResourceManager_LoadSound(const char *filePath);

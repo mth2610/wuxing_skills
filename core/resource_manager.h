@@ -2,6 +2,7 @@
 #define RESOURCE_MANAGER_H
 
 #include "raylib.h"
+#include <stdbool.h>
 
 // Initialize resource manager cache
 void ResourceManager_Init(void);
@@ -11,6 +12,25 @@ void ResourceManager_Unload(void);
 
 // Load texture (returns cached instance if already loaded)
 Texture2D ResourceManager_LoadTexture(const char *filePath);
+
+// Cache an independently owned GPU texture keyed by literal path + mipmap flag
+// + raylib TEXTURE_FILTER_* + TEXTURE_WRAP_* options. It never aliases the
+// legacy LoadTexture entry, even when options match the backend defaults.
+// Generate mipmaps and configure filtering/wrap before caching; returned
+// mipmap metadata matches the generated texture. Trilinear and anisotropic
+// filters require mipmaps. Anisotropic requests first enable trilinear mip
+// selection, then request the preferred anisotropy; unsupported anisotropy
+// retains trilinear filtering. The requested filter remains the cache key.
+// Mipmapped variants normalize the source image to RGBA8 and upload only its
+// base level before generating the physical chain (including pre-baked files).
+// This immutable variant cannot alter another consumer's format or sampler.
+// Invalid/overlong paths (>=128 bytes), unsupported options, load/mipmap
+// failures or exhaustion of the shared 32-entry texture cache return {0}.
+// Failures are not cached, and variants never fall back to unmanaged loads.
+// ResourceManager_Unload owns lifetime; callers must not mutate or unload it.
+Texture2D ResourceManager_LoadTextureVariant(const char *filePath,
+                                            bool generateMipmaps,
+                                            int filter, int wrap);
 
 // Load shader (returns cached instance if already loaded)
 Shader ResourceManager_LoadShader(const char *vsFilePath, const char *fsFilePath);

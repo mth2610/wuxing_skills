@@ -23,9 +23,8 @@
 #define MAP_WIDTH 100.0f
 #define MAP_DEPTH 75.0f
 #define CLIFF_DEPTH 8.0f
-#define CLOUD_SEA_Y -12.0f
+#define CLOUD_SEA_Y -3.5f
 #define ROCK_COUNT 13
-#define HORIZON_CRAG_COUNT 16
 #define GRASS_TUFT_CAPACITY 65000
 #define FLOWER_CLUSTER_COUNT 6
 #define FLOWERS_PER_CLUSTER 200
@@ -96,8 +95,6 @@ static const MapRockPlacement kRocks[ROCK_COUNT] = {
 static MapGroundSurface s_ground;
 static MapEcology s_ecology;
 static MapRockSet s_rocks;
-static MapRockSet s_horizonCrags;
-static MapRockPlacement s_horizonPlacements[HORIZON_CRAG_COUNT];
 static MapSkyDome s_sky;
 static MapRockPlacement s_rockPlacements[ROCK_COUNT];
 static MapCloudSea s_cloudSea;
@@ -686,22 +683,11 @@ void InitVerdantPathMap(void)
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
         "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
     s_sky = MapProp_CreateSkyDome();
-    s_horizonCrags = MapProp_CreateMountainCrags("assets/textures/rock_diffuse.png",
-        "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
-    unsigned int horizonSeed = 0x4c39a1u;
-    for (int i = 0; i < HORIZON_CRAG_COUNT; i++) {
-        float angle = ((float)i + RandomRange(&horizonSeed, -0.28f, 0.28f)) *
-                      (2.0f * PI / HORIZON_CRAG_COUNT);
-        float radius = RandomRange(&horizonSeed, 0.96f, 1.12f);
-        s_horizonPlacements[i] = (MapRockPlacement){
-            .position = {kMapCenter.x + cosf(angle) * 72.0f * radius, -6.0f,
-                         kMapCenter.z + sinf(angle) * 55.0f * radius},
-            .radiusScale = RandomRange(&horizonSeed, 11.0f, 19.0f),
-            .heightScale = RandomRange(&horizonSeed, 5.0f, 12.0f),
-            .rotationDeg = RandomRange(&horizonSeed, 0.0f, 360.0f),
-        };
-    }
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
+    // Bake from the actual plateau contour; no rectangular wall or per-frame search.
+    MapBoundaryMistStyle rim = {1.2f, 4.0f, 0.5f, 2.0f, 0.35f};
+    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -0.35f, &rim))
+        TraceLog(LOG_WARNING, "Verdant Path: terrain boundary mist bake failed");
     CreateFarSunbeamTexture();
     s_lake = MapProp_CreateWaterSurface((MapWaterConfig){
         .shape = WATER_SHAPE_RADIAL,
@@ -897,11 +883,11 @@ void DrawVerdantPathMap(void)
     MapProp_DrawGround(&s_ground, kMapCenter);
     V_MARK("op_terrain");
     MapProp_DrawRocks(&s_rocks, s_rockPlacements, ROCK_COUNT, true);
-    MapProp_DrawRocks(&s_horizonCrags, s_horizonPlacements, HORIZON_CRAG_COUNT, false);
     V_MARK("op_rocks");
     MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
     V_MARK("op_grass_early");
-    MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
+    MapProp_DrawSkyDome(&s_sky);
+    if (!getenv("WUXING_NO_CLOUD_SEA")) MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
     V_MARK("op_cloudsea");
     V_MARK("op_grass");
     MapProp_DrawMeadow(&s_reedMeadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.11f);
@@ -911,7 +897,6 @@ void DrawVerdantPathMap(void)
         MapProp_DrawFlowerField(&s_flowerFields[cluster], (Vector3){0}, s_time,
                                 (Vector2){0.86f, 0.51f}, 0.032f);
     }
-    MapProp_DrawSkyDome(&s_sky);
     V_MARK("op_flowers");
 }
 
@@ -920,6 +905,7 @@ void DrawTransparentVerdantPathMap(void)
     if (!s_ready)
         return;
     if (!getenv("WUXING_NO_WATER")) MapProp_DrawWaterOverlay(&s_lake, s_time);
+    MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
     DrawFarSunbeams();
 }
 
@@ -943,7 +929,6 @@ void UnloadVerdantPathMap(void)
     MapProp_UnloadMeadow(&s_meadow);
     MapProp_UnloadCloudSea(&s_cloudSea);
     MapProp_UnloadRocks(&s_rocks);
-    MapProp_UnloadRocks(&s_horizonCrags);
     MapProp_UnloadSkyDome(&s_sky);
     MapProp_SetGroundEcology(&s_ground, NULL);
     MapEcology_Unload(&s_ecology);

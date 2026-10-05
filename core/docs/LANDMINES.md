@@ -3750,8 +3750,10 @@ identical across the particle CPU, GPU-shadow and compute paths. Guarded by
 
 - **Symptom:** patterned haze creates glowing columns with cool fog mixed into rays.
 - **Cause:** an authored canopy pattern modulated both fog extinction and lighting.
-- **Rule:** use sunlight-projected patterns only for illumination, multiply by
-  scene shadow visibility, and use sun color for both map beams and volumetric rays.
+- **Rule:** keep illumination separate from extinction. Volumetric rays use
+  normalized Mie phase and actual dynamic/static shadow visibility, never a
+  fictitious global canopy pattern or side-scattering floor. Use sun color for
+  both map beams and volumetric rays; see `core/volumetric/docs/LANDMINES.md` §5.
 
 ## Ambient motes need inertia and invisible recycling (02/10/2026)
 
@@ -3849,10 +3851,31 @@ persistent CPU capture VBO. Material ids ride the normalized color byte; radii
 ride tangent.xyz. Validate actual front/back depth and per-pixel identity using
 `liquid_cpu_capture`, in both perspective and orthographic cameras.
 
+## Cached texture variants must own their sampler and mipmap metadata (05/10/2026)
+
+**Symptom.** Generating mips or changing filtering for a cloud texture also
+changes another effect, while later cache returns still report one mip level.
+
+**Cause.** `ResourceManager_LoadTexture` returns cached `Texture2D` structs by
+value, sharing one GPU id by literal path. Updating the local copy's mip count
+does not update cache metadata; changing its sampler affects every consumer.
+
+**Rule.** Use `ResourceManager_LoadTextureVariant` for immutable path/options
+variants with separate GPU ids. It normalizes mipmapped images to RGBA8, uploads
+one base level, generates the chain, then caches the resulting mip count.
+Anisotropic variants require mipmaps and enable trilinear mip selection before
+requesting anisotropy, retaining trilinear sampling when that parameter is unsupported.
+Do not mutate or unload borrowed variants. The shared 32-slot cache returns
+zero on variant exhaustion instead of leaking an unmanaged resource. Source:
+`core/resource_manager.c`; guard: `core/tests/resource_manager_texture_variant_test.c`.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-05 | Codex | Cached texture variants | core/resource_manager.c; core/tests/resource_manager_texture_variant_test.c | Ground-truth |
+| 2026-10-05 | Codex | Anisotropic variant fallback | core/resource_manager.c; core/resource_manager.h; core/tests/resource_manager_texture_variant_test.c | Ground-truth |
 | 2026-10-04 | Codex | Liquid module and test references | core/liquid/liquid_surface.c; core/tests/liquid_material_test.c | Ground-truth |
 | 2026-10-03 | Codex | Fog sampling and reproducible animation | core/volumetric/volumetric_fog.c; core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_sampling_test.c | Ground-truth |
+| 2026-10-04 | Codex | Shadow-derived volumetric illumination | core/volumetric/shaders/volumetric_fog.fs; core/volumetric/docs/LANDMINES.md | Ground-truth |
 | 2026-10-03 | Codex | Fog reconstruction pointer | core/volumetric/shaders/volumetric_composite.fs; core/tests/volumetric_fog_composite_test.c | Ground-truth |

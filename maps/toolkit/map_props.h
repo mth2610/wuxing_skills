@@ -40,6 +40,15 @@
 // warns about. Nothing here is owned by the caller; MapProp_UnloadGround frees
 // it. Built by MapProp_Create*; a surface whose grid failed to build silently
 // falls back to the raycast.
+// Shared visual perimeter, independent of biome materials and collision.
+// rect = world X/Z origin and width/depth; all distances are metres.
+typedef struct {
+    Vector4 rect;
+    float cornerRadius, mistWidth, cloudLift, cloudBankWidth;
+    float groundInset; // plateau-to-rectangle setback; shifts the mist inward
+} MapIslandBoundary;
+float MapProp_IslandBoundaryDistance(const MapIslandBoundary *boundary, Vector2 worldXZ);
+
 typedef struct
 {
     bool  built;
@@ -64,7 +73,10 @@ typedef struct
     const MapEcology *ecology; // Borrowed shared habitat data; owner outlives ground.
     Vector2 tiling; // Per-surface texture repeats, uploaded in the active draw scope.
     Texture2D reliefTexture; // ResourceManager-owned optional R/G heights, B/A litter/moss.
+    MapIslandBoundary boundary;
 } MapGroundSurface;
+
+void MapProp_SetGroundIslandBoundary(MapGroundSurface *ground, const MapIslandBoundary *boundary);
 
 // width/depth in world meters. tileSize = meters per texture repeat
 // (e.g. 1.5f means the diffuse texture repeats every 1.5m).
@@ -206,7 +218,7 @@ void MapProp_UnloadRocks(MapRockSet *rocks);
 
 // Fills outPlacements[] (capacity maxCount) with a ring of giant rock
 // placements around a mapWidth x mapDepth rectangle's border — the
-// "floating island ringed by mountains" motif every map uses. Draw the
+// legacy optional rock composition. Floating-plain boundaries use clouds. Draw the
 // result with the SAME MapProp_DrawRocks/MapRockSet used for scattered
 // rocks (just much bigger radius/height scale) — no separate prop kind
 // needed. seed makes the layout reproducible (same seed -> same ring).
@@ -224,10 +236,29 @@ typedef struct
     Model model;
     bool ready;
     Vector2 tiling; // Texture repeats owned by this surface.
+    Vector2 size;
+    MapIslandBoundary boundary;
+    Model mistModel;
+    bool mistReady;
+    Texture2D mistTexture; // Borrowed baked rim sprite; no emitter or simulation.
 } MapCloudSea;
 
+// Closed contours in map-local space, with the plateau on the left of each edge.
+// Supports concave loops, disconnected islands and clockwise hole contours.
+typedef struct { const Vector3 *points; int count; } MapBoundaryContour;
+typedef struct {
+    float innerWidth, outerWidth, heightOffset, outerDrop, opacity;
+} MapBoundaryMistStyle;
+// Copies/bakes once. Failure retains the previous mesh; zero contours clears it.
+bool MapProp_SetCloudSeaBoundaryContours(MapCloudSea *cloud,
+    const MapBoundaryContour *contours, int count, const MapBoundaryMistStyle *style);
+// Extracts outer plateau contours from the actual indexed or unindexed terrain.
+// contourHeight is relative to worldCenter.y; interior lake contours are excluded.
+bool MapProp_SetCloudSeaGroundBoundary(MapCloudSea *cloud,
+    const MapGroundSurface *ground, float contourHeight, const MapBoundaryMistStyle *style);
+
 // width/depth in world meters (make this bigger than the map itself so it
-// reads as an endless sea extending past the mountain ring). tileSize
+// reads as an endless sea beneath the floating plain). tileSize
 // controls the repeats of the tileable cloud-noise texture — smaller
 // tileSize = smaller/denser
 // cloud puffs. Draw well below the ground (yOffset negative, e.g. -12.0f).
@@ -235,7 +266,12 @@ typedef struct
 // Uses a discard-based opaque cutout, never partial alpha — see
 // maps/toolkit/shaders/cloud_sea.fs and maps/CLAUDE.md's Alpha = 255 rule.
 MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize);
+// Legacy rectangle descriptor only; the cloud sheet remains flat.
+// New maps should bake terrain or explicit boundary contours.
+void MapProp_SetCloudSeaIslandBoundary(MapCloudSea *cloud, const MapIslandBoundary *boundary);
 void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float yOffset);
+// Cached contour ribbon, one draw; call after opaque scenery in the transparent pass.
+void MapProp_DrawIslandMist(const MapCloudSea *cloud, Vector3 worldCenter);
 void MapProp_UnloadCloudSea(MapCloudSea *cloud);
 
 // Opt-in camera-centred sky. Draw after opaque scenery, inside BeginMode3D.

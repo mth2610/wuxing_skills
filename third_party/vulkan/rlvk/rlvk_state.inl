@@ -68,6 +68,7 @@ typedef struct rlvkTextureSlot {
     u32                 sampleDeferredFb;      // opt-in writer whose closed depth awaits its first sampler bind
     VkFilter            minFilter, magFilter;  // Sampler filters (rlTextureParameters)
     VkSamplerMipmapMode mipMode;               // Sampler mipmap mode
+    bool                mipEnabled;           // raw GL min filter selects mipmaps (NEAREST/LINEAR do not)
     VkSamplerAddressMode wrapS, wrapT;         // Sampler wrap modes (GL default: repeat)
     bool                inUse;                 // Slot occupied
 } rlvkTextureSlot;

@@ -32,10 +32,12 @@ typedef struct {Texture2D texture;} MaterialMap;
 typedef struct {MaterialMap *maps;} Material;
 typedef struct {Material *materials;} Model;
 typedef struct {bool ready;Vector4 rect;} MapEcology;
-typedef struct {bool ready;Model model;Vector3 drawOffset;Vector2 tiling;const MapEcology *ecology;Texture2D reliefTexture;} MapGroundSurface;
+typedef struct {Vector4 rect;float cornerRadius,mistWidth,cloudLift,cloudBankWidth,groundInset;} MapIslandBoundary;
+typedef struct {bool ready;Model model;Vector3 drawOffset;Vector2 tiling;const MapEcology *ecology;Texture2D reliefTexture;MapIslandBoundary boundary;} MapGroundSurface;
 typedef struct {Texture2D noiseTexture;Vector4 uvTransform,shape;Vector2 projection;} EnvCloudShadowFrame;
 static const Color WHITE={255,255,255,255};
 static Shader groundShader={123};
+static int locIslandRect=19,locIslandShape=20;
 static int locGroundReliefSampler=17,locGroundReliefEnabled=18;
 static int locGroundCloudNoise=1,locGroundTiling=2,locGroundCloudUV=3,locGroundCloudShape=4,
  locGroundCloudProjection=5,locEcologyEnabled=6,locEcologyRect=7,locLightDir=8,locLightColor=9,
@@ -88,7 +90,7 @@ int main(void) {
  MaterialMap maps[11]={0};
  for(int i=0;i<11;i++) {maps[i].texture.id=100+i;expectedMaterialIds[i]=100+i;}
  Material material={maps};MapEcology ecology={true,{0,0,100,75}};
- MapGroundSurface g={true,{&material},{0,0,0},{27.777f,20.833f},&ecology,{670}};
+ MapGroundSurface g={true,{&material},{0,0,0},{27.777f,20.833f},&ecology,{670},{0}};
  expectedReliefId=670;
  expectedTiling=g.tiling;MapProp_DrawGround(&g,(Vector3){50,0,37.5f});
  assert(!activeProgram && activeSlot==0 && textures[GROUND_CLOUD_TEXTURE_SLOT]==0 && textures[GROUND_RELIEF_TEXTURE_SLOT]==0);

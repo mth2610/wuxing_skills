@@ -80,21 +80,32 @@ MapRockSet MapProp_CreateRocks(const char *diffusePath,
 void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placements, int count, bool drawShadow);
 void MapProp_UnloadRocks(MapRockSet *rocks);
 
-// Generates a giant ring of rocks around the map border (the "floating
-// island surrounded by cliffs" motif shared by every map) — drawn with the
-// SAME MapProp_DrawRocks/MapRockSet above, just with much larger
-// radiusScale/heightScale. Fixed seed = fixed layout.
+// Legacy placement helper for optional rock compositions. Not the map boundary
+// recipe: floating plains use cloud banks and open sky. Fixed seed = fixed layout.
 int MapProp_GenerateMountainRing(MapRockPlacement *outPlacements, int maxCount,
                                   float mapWidth, float mapDepth,
                                   float minRadiusScale, float maxRadiusScale,
                                   float minHeightScale, float maxHeightScale,
                                   unsigned int seed);
 
+// Legacy rounded-rectangle descriptor; new maps use actual terrain contours.
+typedef struct {
+    Vector4 rect;
+    float cornerRadius, mistWidth, cloudLift, cloudBankWidth, groundInset;
+} MapIslandBoundary;
+
 // --- Sea of clouds (abyss beneath the floating island) ---
-typedef struct { Model model; bool ready; Vector2 tiling; } MapCloudSea;
+typedef struct { Model model; bool ready; Vector2 tiling, size; MapIslandBoundary boundary; Model mistModel; bool mistReady; Texture2D mistTexture; } MapCloudSea;
 
 MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize);
 void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float yOffset);
+void MapProp_DrawIslandMist(const MapCloudSea *cloud, Vector3 worldCenter);
+typedef struct { const Vector3 *points; int count; } MapBoundaryContour;
+typedef struct { float innerWidth, outerWidth, heightOffset, outerDrop, opacity; } MapBoundaryMistStyle;
+bool MapProp_SetCloudSeaBoundaryContours(MapCloudSea *cloud,
+    const MapBoundaryContour *contours, int count, const MapBoundaryMistStyle *style);
+bool MapProp_SetCloudSeaGroundBoundary(MapCloudSea *cloud,
+    const MapGroundSurface *ground, float contourHeight, const MapBoundaryMistStyle *style);
 void MapProp_UnloadCloudSea(MapCloudSea *cloud);
 
 // Opt-in far-depth sky; draw after opaque scenery inside BeginMode3D.
@@ -108,7 +119,7 @@ void MapProp_UnloadSkyDome(MapSkyDome *sky);
 * `MapProp_CreateStrip` (`map_props_strip.inl`): drawn with `maps/toolkit/shaders/path_blend.fs` — texture repeats by per-surface `tiling`, world-space noise breaks up the geometric edge using opaque cutout, and edge wear blends the road into vegetation. Passing both `normalPath` and `roughnessPath` enables tangent-space normal lighting and restrained roughness-driven specular response; passing `NULL` for both selects the cheaper diffuse-only path.
 * `MapProp_CreateRocks` (`map_props_rocks.inl`): pass `NULL` for `normalPath`+`roughnessPath` to use a simple flat texture (no shader); pass all 3 texture paths to use the `prop_lit` material (normal map + roughness, real lighting response).
 * `MapProp_DrawRocks`'s `drawShadow`: **set `false` for the border/cliff rock ring** — dozens of `Environment_DrawSmartShadow` calls stacked/overlapping is real alpha overdraw (measured, not theoretical, as the cause of an FPS drop), and shadows at the map's edge are meaningless anyway. Only set `true` for a small number of decorative scattered rocks where the shadow is clearly visible.
-* `MapProp_GenerateMountainRing` (`map_props_rocks.inl`): only GENERATES positions (writes into the `MapRockPlacement` array you supply) — it does not draw and does not create its own model. **Create a separate `MapRockSet` for this ring**, but keep its normal and roughness maps so the skyline remains part of the scene lighting instead of becoming an unlit cut-out. Recover performance with count/range LOD rather than bypassing lighting. Draw it with `MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, count, false)`. `min/maxRadiusScale`/`min/maxHeightScale` should be much larger than normal rocks (e.g. 6-14 and 18-30 for tall cliffs, or much smaller like 3-6/1-2.5 for a low border close to the ground — compare to regular scattered rocks at ~0.5-1.1) so it reads as a cliff/mountain wall rather than individual rocks.
+* `MapProp_GenerateMountainRing` remains a deterministic placement helper. It is not used for the floating-plain boundary; keep ordinary biome rocks inside the playable map.
 * `MapProp_CreateCloudSea` (`map_props_cloud.inl`): cloud density is now sourced from a **texture**, `assets/textures/cloud_noise.png` (grayscale, tileable, generated with `python3 scripts/generate_cloud_noise.py`) — NOT computed via per-pixel FBM/`sin()` like the first version. Changed because this plane usually covers a very large screen area (fill-rate bound); 2-layer multi-octave FBM costs dozens of `sin()` calls per pixel and was measured (not theorized) to cause real FPS drops on weaker machines — 1-2 texture reads are much cheaper. Drawn with `maps/toolkit/shaders/cloud_sea.fs` — uses `discard` for low-density areas instead of alpha-blending, since `maps/CLAUDE.md` forbids alpha < 255 in the main scene (breaks particles). `width`/`depth` should be much larger than the map so it reads as an endless sea of clouds, not an obviously cut-off card. Only visible when standing near the cliff edge (`MapProp_CreateGroundHeightmap`) looking down through gaps between the border rocks — standing in the middle of the plateau, the ground itself blocks the view, matching real terrain.
 * Calling convention: `Create*` is called exactly once in `Init{Prefix}Map`, `Draw*` is called every frame in `Draw{Prefix}Map`, `Unload*` is called in `Unload{Prefix}Map` if the map declares an Unload function. `MapProp_GenerateMountainRing` is the exception — it doesn't load any resource, it only fills an array with numbers, so it can be called anywhere inside `Init`, even with no corresponding `Unload`.
 * Rocks using `prop_lit` (all 3 paths supplied) need `PropLit_UpdateLighting()` called **once per frame before drawing** (see the full example in section 6). Ground/strip/cloud sea each push their own lighting uniforms inside their own `Draw*`, no extra call needed.
@@ -119,7 +130,11 @@ void MapProp_UnloadSkyDome(MapSkyDome *sky);
 
 Parametric meadow draws support world translation only. `maps/toolkit/map_props_meadow_parametric.inl` uploads `u_worldOffset` for visible and shadow passes; their vertex shaders use `local + u_worldOffset` for wind, interaction, lighting and root LOD distance, with unchanged local normals. MVP still contains the camera transform. Missing offset uniforms select the expanded fallback; adding rotation or scale requires extending this position/normal contract. `maps/tests/test_meadow_world_space.py` executes the production uploads and verifies camera cancellation, nonzero offsets and unchanged clip transforms.
 
-Ground retains authored substrate color/detail under a restrained olive-earth palette. `MapProp_SetGroundReliefMap(ground, path)` optionally binds a ResourceManager-owned companion at raw 2D unit 8, separate from material slots. Its RG channels carry normalized substrate/soil relief; BA carry litter/moss classification. `assets/textures/verdant_terrain_relief.png` is **derived**, not authored displacement: `maps/toolkit/tools/bake_ground_relief.py` reconstructs periodic, zero-mean heights from existing normal RGB with a least-squares Poisson solve and percentile normalization; its BA classifications come from substrate chroma. Original material normal RGB and roughness A remain unchanged. Close pixels sample this mipmapped companion; mixed material boundaries additionally sample soil height, while unresolved pixels retain ecology coverage without relief reads. `MapGroundSurface.tiling` is per-surface and uploaded during the active draw. Cloud noise uses a separate raw unit; it must not replace the turf's SPECULAR/METALNESS material slot. `maps/worlds/verdant_path/verdant_path.c` opts into `VolumetricFog_SetDistantCoverage(4/9)`, two thirds of its previous distant coverage, and retains local mist XZ extents scaled by `sqrt(2/3)`; other maps restore default distant coverage on activation.
+Ground retains authored substrate color/detail under a restrained olive-earth palette. `MapProp_SetGroundReliefMap(ground, path)` optionally binds a ResourceManager-owned companion at raw 2D unit 8, separate from material slots. Its RG channels carry normalized substrate/soil relief; BA carry litter/moss classification. `assets/textures/verdant_terrain_relief.png` is **derived**, not authored displacement: `maps/toolkit/tools/bake_ground_relief.py` reconstructs periodic, zero-mean heights from existing normal RGB with a least-squares Poisson solve and percentile normalization; its BA classifications come from substrate chroma. Original material normal RGB and roughness A remain unchanged. Close pixels sample this mipmapped companion; mixed material boundaries additionally sample soil height, while unresolved pixels retain ecology coverage without relief reads. `MapGroundSurface.tiling` is per-surface and uploaded during the active draw. `MapProp_DrawIslandMist` draws twelve overlapping, world-aligned quads (48 vertices, one texture batch) in the transparent pass, using the neutral 256px RGBA sprite baked by `maps/toolkit/generate_cloud_mist.py` (`/usr/bin/python3` with NumPy/Pillow). No particles, runtime noise, or vertex updates are involved. It flushes before and after disabling depth writes; depth testing remains active. Call after opaque scenery, before volumetric fog. Perspective supplies parallax without camera offsets.
+
+`WUXING_NO_CLOUD_SEA=1` suppresses the Verdant Path background sheet for same-binary frame-cost comparisons; it is a measurement switch, not a quality preset.
+
+Cloud noise uses a separate raw unit; it must not replace the turf's SPECULAR/METALNESS material slot. `maps/worlds/verdant_path/verdant_path.c` opts into `VolumetricFog_SetDistantCoverage(4/9)`, two thirds of its previous distant coverage, and retains local mist XZ extents scaled by `sqrt(2/3)`; other maps restore default distant coverage on activation.
 
 - Untextured, non-plumed meadows use indexed tuft templates and one immutable RGBA32F blade atlas in `maps/toolkit/map_props_meadow_parametric.inl`. Regular meadows share canonical near descriptors across visible and shadow LODs, deriving width and far-curve compensation; reeds and special low-blade layouts retain exact authored variants within the same atlas. Initialization falls back to expanded meshes if required shader uniforms or resources are unavailable. `WUXING_MEADOW_RENDERER=legacy` selects expanded meshes; The default keeps the shared atlas and submits candidates for GPU rejection. `WUXING_MEADOW_SUBMISSION=compact` opts into CPU-compacted submissions; `legacy` explicitly selects the default GPU-rejection path. `MEADOW_PARAMETRIC` reports atlas bytes. `MapMeadowSurface.parametric` is private state owned and released by the surface.
 - Parametric visible LOD selection in `maps/toolkit/map_props_meadow_parametric.inl` uses each tuft's root distance and immutable spatial hash, with 4 m near/mid and 10 m mid/far transition bands. The opt-in compact path writes four exact tuft IDs per RGBA32F texel; only selected roots enter each chunk/template draw. Call `MapProp_PrepareMeadow` after finalizing the camera and before rendering to stage IDs without splitting scene passes. Camera, offset, projection, FOV, resolution, quality and range changes invalidate preparation; an unchanged view reuses IDs without uploading. `MapProp_DrawMeadow` retains an upload fallback for callers without preparation. `WUXING_MEADOW_SUBMISSION_TRACE=1` reports candidate/submitted instances and vertices. Parametric visible chunks retain source order by default. `WUXING_MEADOW_ORDER=sorted` opts into stable nearest-first view-depth ordering, including orthographic cameras; `legacy` explicitly retains source order. Shadow geometry never reads the visible ID list and retains its original order; expanded fallback meshes retain chunk-level staggering and hysteresis.
@@ -323,7 +338,7 @@ void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float wi
 
 ## 6. Sample Source Skeleton — Using the Toolkit (Recommended, Start Here)
 
-This is the fastest way to produce a finished map: a floating island (ground dipping into a cliff at the border) + a path + scattered rocks + a surrounding mountain ring + a sea of clouds below, all built with `maps/toolkit/` (section 1b), with no hand-written `rlgl` needed. Copy this skeleton into `maps/worlds/<map_name>/<map_name>.c` and change the numbers. **Every map in this project follows the "floating island surrounded by cliffs + sea of clouds" motif — this is the default skeleton, not an optional style.**
+All maps are floating plains above a sea of clouds, with open sky in the distance. Use the shared ground/cloud boundary configuration below for grassland, desert, and stone biomes. Change the interior materials and props for each biome; do not enclose the horizon with mountains or giant rocks.
 
 ```c
 #include "verdant_path.h"           // rename to match your map
@@ -339,11 +354,9 @@ static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
 #define PATH_LENGTH (MAP_WIDTH - 10.0f)
 #define PATH_WIDTH 4.0f
 
-// The island's cliff dips down CLIFF_DEPTH meters; the cloud sea must sit
-// DEEPER (more negative) than this so the cliff doesn't poke through the
-// clouds — see MapProp_CreateGroundHeightmap.
+// The cloud sheet covers the lower cliff; keep it below the playable plateau.
 #define CLIFF_DEPTH 8.0f
-#define CLOUD_SEA_Y -12.0f
+#define CLOUD_SEA_Y -3.5f
 
 #define ROCK_COUNT 6
 static const MapRockPlacement kRocks[ROCK_COUNT] = {
@@ -355,13 +368,10 @@ static const MapRockPlacement kRocks[ROCK_COUNT] = {
     {{20.0f, 0.0f, 45.0f}, 0.8f, 0.6f, 150.0f},
 };
 
-#define MOUNTAIN_ROCK_COUNT 36
-static MapRockPlacement s_mountainRocks[MOUNTAIN_ROCK_COUNT];
-
 static MapGroundSurface s_ground;
 static MapStripSurface s_path;
 static MapRockSet s_rocks;         // decorative scattered rocks — prop_lit, shadow on
-static MapRockSet s_mountainRockSet; // border ring — lit material; reduce count/range for perf
+static MapSkyDome s_sky;
 static MapCloudSea s_cloudSea;
 static bool s_ready = false;
 
@@ -399,16 +409,12 @@ void InitVerdantPathMap(void)
                                   "assets/textures/rock_normal.png",
                                   "assets/textures/rock_roughness.png");
 
-    // 5. Border mountain ring — a SEPARATE lit MapRockSet. Keep its normal and
-    //    roughness response coherent with the scene; tune count/range for cost.
-    s_mountainRockSet = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
-        "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
-    MapProp_GenerateMountainRing(s_mountainRocks, MOUNTAIN_ROCK_COUNT,
-                                 MAP_WIDTH, MAP_DEPTH,
-                                 6.0f, 14.0f, 18.0f, 30.0f, 1337);
-
-    // 6. Sea of clouds — wider than the map to look endless, deeper than CLIFF_DEPTH
+    // Shared floating-plain perimeter, independent of biome materials.
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
+    MapBoundaryMistStyle rim = {1.2f, 4.0f, 0.5f, 2.0f, 0.35f};
+    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -0.35f, &rim))
+        TraceLog(LOG_WARNING, "Boundary mist bake failed");
+    s_sky = MapProp_CreateSkyDome();
 
     s_ready = true;
 }
@@ -419,16 +425,30 @@ void DrawVerdantPathMap(void)
 
     PropLit_UpdateLighting(); // required every frame — s_rocks uses prop_lit (all 3 paths)
 
-    MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y); // draw first, farthest/lowest
     MapProp_DrawGround(&s_ground, kMapCenter);
     MapProp_DrawStrip(&s_path, kMapCenter, 0.01f); // small yOffset avoids z-fighting with the ground
-    // false = no shadow for the mountain ring (dozens stacked would cost fill-rate for no benefit)
-    MapProp_DrawRocks(&s_mountainRockSet, s_mountainRocks, MOUNTAIN_ROCK_COUNT, false);
-    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true); // scattered rocks on the plateau — shadowed
+    MapProp_DrawRocks(&s_rocks, kRocks, ROCK_COUNT, true);
+    MapProp_DrawSkyDome(&s_sky);
+    MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
+}
+
+void DrawTransparentVerdantPathMap(void)
+{
+    if (s_ready) MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
+}
+
+void UnloadVerdantPathMap(void)
+{
+    MapProp_UnloadGround(&s_ground);
+    MapProp_UnloadStrip(&s_path);
+    MapProp_UnloadRocks(&s_rocks);
+    MapProp_UnloadCloudSea(&s_cloudSea);
+    MapProp_UnloadSkyDome(&s_sky);
+    s_ready = false;
 }
 ```
 
-This map doesn't need `Update{Prefix}Map`/`Unload{Prefix}Map` — if those two functions aren't declared in the `.h`, the registration script simply skips them (section 2), which is fine.
+Declare `Unload{Prefix}Map` in the map header so map switching releases its models. `Update{Prefix}Map` is optional for a static map; cloud animation uses engine time.
 
 If a map needs something the toolkit doesn't yet have (bushes, flower carpets, lakes, hilly terrain...) — add a new function to `maps/toolkit/map_props.h`/`.c` following the `Create*`/`Draw*`/`Unload*` pattern above, or fall back to manual code in sections 8-12 below for that specific piece of the map.
 
@@ -909,12 +929,25 @@ Current consumers: `game/game_screen.c` (applies the rule to the player every fr
 `combat/combat.c` (Earth projectiles in `NAT_FOREST` take -50% damage).
 Autotest: `map_trigger_zones` in `main.c`.
 
-`MapSkyDome` owns its model and shader. It follows the camera, reads the environment lighting snapshot, and draws at far depth with depth writes disabled; unload it when leaving the map. Verdant Path adds a deterministic distant crag ring through the existing rock prop API, without fake-shadow casters. Cloud tiling belongs to each `MapCloudSea` and is uploaded with lighting inside its active shader scope. Water overlay uniforms likewise require an active water shader.
+`MapSkyDome` owns its model and borrows its cached ResourceManager shader. Draw opaque terrain/props first, then sky and the cloud sheet. Clouds retain a flat, two-triangle opaque plane and write their native surface depth; placing the sheet above the cliff bottom covers submerged terrain consistently for depth-based fog. Cloud world coordinates use explicit translation because the engine's `matModel` includes the view transform.
+
+`MapProp_SetCloudSeaBoundaryContours` bakes one indexed, textured mist ribbon from closed map-local loops. Plateau interior must be on the left of each directed edge: outer loops are counterclockwise in XZ, holes clockwise. Concave contours, disjoint islands, holes, and varying contour heights are supported. Repeated closing endpoints are accepted. Input points are copied into geometry, so the caller can free them. Miter lengths are bounded at sharp corners. Style distances are metres; opacity is 0..1. Invalid input/allocation failure retains the previous model. Zero contours clears it. The 16-bit indexed mesh supports at most 32,760 contour points.
+
+`MapProp_SetCloudSeaGroundBoundary` derives outer contours from a horizontal slice of actual terrain triangles, including indexed and duplicated unindexed meshes. `contourHeight` is relative to the map's draw center Y. Endpoint hashing joins the segments; interior depression loops (lakes) are excluded. Derived contours are simplified to a 0.10m tolerance; terrain/collision geometry is unchanged. Flat meshes without a descending rim should supply explicit contours instead. Non-manifold/open slices or more than 8,192 slice endpoints return false. These operations happen once at initialization.
+
+`MapProp_DrawIslandMist` draws the cached ribbon at the same world center as its terrain, in the transparent pass. It uses one 256px baked periodic RGBA strip, one default-shader texture sample, and no simulation, searches, allocations, noise evaluation, or vertex updates per frame. Depth testing remains active; depth writes and culling are disabled with flushed/restored state. `MapProp_UnloadCloudSea` unloads both its models; its textures are borrowed. Regenerate the strip with `/usr/bin/python3 maps/toolkit/generate_cloud_mist.py` (NumPy/Pillow). `MapIslandBoundary` and its rectangle setters remain compatibility descriptors; the cloud setter no longer builds a raised bank. New map boundaries should use the contour API.
+
+`WUXING_NO_CLOUD_SEA=1` suppresses the Verdant Path background sheet for same-binary frame-cost comparisons; it is a measurement switch, not a quality preset.
+
+Cloud noise uses a separate ResourceManager mipmapped trilinear/repeat variant. Terrain, strips, rock materials, and petals request immutable mipmapped variants; anisotropic requests first establish trilinear filtering so unsupported anisotropy still selects mip levels. Allocation failure retains legacy load-time configuration. Draw opaque terrain first, then sky and the cloud sheet. The opaque sheet tests against the foreground and replaces only deeper surfaces with its native cloud-surface depth. The transparent rim mist preserves depth. Sky/cloud/terrain uniforms must be uploaded inside their active shader scopes; uniform locations are cached at initialization. Unload each map model, leaving cached shaders/textures to ResourceManager.
 
 ## Patch Log
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-05 | Codex | Arbitrary contour mist, terrain extraction, flat background plane | maps/toolkit/map_props_boundary_contour.inl; map_props.h; tests/test_island_boundary.py | Ground-truth |
+| 2026-10-05 | Codex | Shared floating-plain perimeter, cached sky shader, background depth policy, baked rim wisps | maps/toolkit/map_props.h; map_props_boundary.inl; map_props_cloud.inl; shaders/cloud_sea.vs | Ground-truth |
+| 2026-10-05 | Codex | Cloud minification filtering | maps/toolkit/map_props_cloud.inl; core/resource_manager.h | Ground-truth |
 | 2026-10-04 | Codex | Opt-in sky, per-cloud tiling, active water/cloud shader scopes and metric heightmap | `maps/toolkit/map_props.h`, `maps/toolkit/map_props_sky.inl`, `maps/toolkit/map_props_cloud.inl`, `scripts/generate_island_heightmap.py` | Ground-truth |
 | 2026-10-03 | Codex | Translation-only parametric meadow world-space contract | `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/nature_lit_parametric.vs`, `maps/toolkit/shaders/nature_shadow_parametric.vs`, `maps/tests/test_meadow_world_space.py` | Ground-truth |
 | 2026-10-03 | Codex | Prop material coordinate-space and active-camera contract | `maps/toolkit/prop_lit.c`, `maps/toolkit/shaders/prop_lit.fs`, `maps/tests/test_prop_lighting_space.py` | Ground-truth |

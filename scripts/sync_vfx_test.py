@@ -186,6 +186,8 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeVacuumRing":         ("draw",    "timed",      "continuous"),
     "VFX_ComposeIaidoStance":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeGuidingWind":        ("draw",    "timed",      "continuous"),
+    "VFX_ComposeWoodVine":           ("draw",    "timed",      "continuous"),
+    "VFX_ComposeWoodVineCluster":    ("draw",    "timed",      "continuous"),
 }
 
 # Generated-call overrides keep fixtures readable without changing public
@@ -369,6 +371,10 @@ FIXTURE_DRAW_OVERRIDES = {
         "VFX_ComposeWaterRing($POS, 0.9f, 1.0f)",
     "VFX_ComposeLiquidBench":
         "VFX_ComposeLiquidBench($POS, 1.1f, 1.0f)",
+    "VFX_ComposeWoodVine":
+        "VFX_ComposeWoodVine(&(VFX_WoodVineConfig){.startPos=$POS, .targetPos=Vector3Distance($POS, s_currentPlayerPos) < 2.5f ? s_currentPlayerPos : Vector3Add($POS, (Vector3){0.0f, 2.2f, 0.0f}), .targetRadius=Vector3Distance($POS, s_currentPlayerPos) < 2.5f ? 0.38f : 0.0f, .targetHeight=1.8f, .length=3.2f, .baseRadius=0.09f, .growth=$PROG, .wither=0.0f, .sapPhase=$PROG*2.0f, .swayAmp=0.05f, .coilRadius=0.35f, .coilTurns=2.4f, .enableThorns=true, .enableTwin=true, .castShadow=true, .variant=s_woodVineFixtureVariant, .style=s_woodVineFixtureStyle, .seed=98765})",
+    "VFX_ComposeWoodVineCluster":
+        "VFX_ComposeWoodVineCluster($POS, 1.2f, 2.8f, $PROG, 0.0f, $PROG*2.0f, 5, 42424)",
 }
 
 # Optional event that starts exactly once when a continuous fixture is selected.

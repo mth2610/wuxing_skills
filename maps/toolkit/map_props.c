@@ -14,6 +14,7 @@
 #include "rlgl.h"
 #include "raymath.h"
 #include <math.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>   // getenv (WUXING_GROUND_LOOKUP_VERIFY)
 
@@ -40,6 +41,9 @@ static void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength, float 
     }
 }
 
+#include "maps/toolkit/map_props_texture.inl"
+#include "maps/toolkit/map_props_boundary.inl"
+#include "maps/toolkit/map_props_boundary_contour.inl"
 #include "maps/toolkit/map_props_ground.inl"
 #include "maps/toolkit/map_props_strip.inl"
 #include "maps/toolkit/map_props_rocks.inl"

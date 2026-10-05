@@ -403,6 +403,8 @@ void rlTextureParameters(unsigned int id, int param, int value)
         t->magFilter = (value == RL_TEXTURE_FILTER_NEAREST) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
         break;
     case RL_TEXTURE_MIN_FILTER:
+        t->mipEnabled = value == RL_TEXTURE_FILTER_MIP_NEAREST || value == RL_TEXTURE_FILTER_LINEAR_MIP_NEAREST ||
+                        value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR || value == RL_TEXTURE_FILTER_MIP_LINEAR;
         t->minFilter = ((value == RL_TEXTURE_FILTER_NEAREST) || (value == RL_TEXTURE_FILTER_MIP_NEAREST) ||
                         (value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR))
                            ? VK_FILTER_NEAREST
@@ -442,7 +444,7 @@ void rlTextureParameters(unsigned int id, int param, int value)
                                    .addressModeU = t->wrapS,
                                    .addressModeV = t->wrapT,
                                    .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-                                   .maxLod = (t->mipCount > 1) ? (f32)t->mipCount : 1.0f,
+                                   .maxLod = (t->mipEnabled && t->mipCount > 1) ? (f32)(t->mipCount - 1) : 0.0f,
                                },
                                RLVK_ALLOC, &t->sampler));
 }

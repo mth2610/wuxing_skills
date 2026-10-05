@@ -974,4 +974,45 @@ void ProceduralMesh_DrawBakedCrystalCluster(Mesh mesh, Material material, Matrix
  * này không đụng vào. Đổi `.shader` mỗi lần gọi theo shader đang active. */
 Material ProceduralMesh_GetPassthroughMaterial(Shader shader);
 
+/* ===========================================================================
+ * RMF WOOD TUBE MESH (Rotation Minimizing Frames - Wang et al. 2008)
+ * Procedural growth tube for Vines, Branches, Roots with organic tapering,
+ * bark knots, root flare, and growth vertex dynamics.
+ * ===========================================================================*/
+
+typedef struct {
+    float baseRadius;       /* Radius at root in meters (default 0.08f) */
+    float taperPow;         /* Taper exponent (1-t)^p (default 1.0f) */
+    float tipRadiusFrac;    /* Tip radius ratio (default 0.05f) */
+    float rootFlare;        /* Base flare amount [0..1] (default 0.40f) */
+    float knotAmp;          /* Bark knot bump amplitude (default 0.12f) */
+    float knotFreq;         /* Bark knot frequency along length (default 6.0f) */
+    float noiseAmp;         /* Circumferential bark roughness (default 0.06f) */
+    int   segments;         /* Rings along length (default 24, max 48) */
+    int   radialSegs;       /* Slices around circumference (default 6 or 8, max 24) */
+    float growth;           /* Current growth progress [0..1] */
+    float birth;            /* Emergence start delay in hierarchy [0..1] */
+    float span;             /* Growth duration span [0..1] */
+    float tipLength;        /* Transition width of un-grown tip [0.05..0.15] */
+    float swayAmp;          /* Sway amplitude in meters (default 0.0f) */
+    float time;             /* Animation time in seconds */
+    unsigned int seed;      /* PRNG seed for deterministic roughness */
+} PMRmfTubeConfig;
+
+typedef struct {
+    Vector3 rings[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
+    Vector3 normals[TUBE_MESH_MAX_SEGMENTS + 1][TUBE_MESH_MAX_RADIAL];
+    Vector3 centers[TUBE_MESH_MAX_SEGMENTS + 1];
+    float   arcs[TUBE_MESH_MAX_SEGMENTS + 1];
+    int     segments;
+    int     radialSegs;
+} PMRmfTubeMesh;
+
+PMRmfTubeConfig PMRmfTube_DefaultConfig(void);
+void PMRmf_BuildFrames(const Vector3 *positions, const Vector3 *tangents, int count,
+                       Vector3 *outRight, Vector3 *outUp);
+void PMRmf_BuildTube(const Vector3 *pathPoints, int pathCount,
+                     const PMRmfTubeConfig *cfg, PMRmfTubeMesh *outMesh);
+void PMRmf_Draw(const PMRmfTubeMesh *mesh, Color tint, float uvVScale, float uvVOffset);
+
 #endif // PROCEDURAL_MESH_UTILS_H

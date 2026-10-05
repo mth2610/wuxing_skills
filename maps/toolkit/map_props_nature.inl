@@ -3033,10 +3033,7 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
     field.lodDistance = 34.0f;
     field.shadowDistance = 26.0f;
     if (field.textured) {
-        Texture2D petalTexture = ResourceManager_LoadTexture(petalTexturePath);
-        GenTextureMipmaps(&petalTexture);
-        SetTextureFilter(petalTexture, TEXTURE_FILTER_ANISOTROPIC_16X);
-        SetTextureWrap(petalTexture, TEXTURE_WRAP_CLAMP);
+        Texture2D petalTexture = MapLoadMippedTexture(petalTexturePath, TEXTURE_WRAP_CLAMP);
         field.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = petalTexture;
         field.farModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = petalTexture;
     }

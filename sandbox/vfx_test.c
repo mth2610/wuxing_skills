@@ -150,6 +150,8 @@ static VFX_SurfaceParticleRingVariant s_surfaceParticleRingFixtureVariant = VFX_
 static VFX_ImpactDustVariant s_impactDustFixtureVariant = VFX_IMPACT_DUST_VARIANT_DUST_PUFF;
 static TrailPresetId s_motionRibbonFixturePreset = MOTION_RIBBON_ENERGY_SILK;
 static VFX_FlameStyle s_ambientFireFixtureStyle = VFX_FLAME_STYLE_NIAGARA_ROIL;
+static VFX_WoodVineVariant s_woodVineFixtureVariant = WOOD_VINE_VARIANT_SERPENTINE;
+static VFX_WoodVineStyle s_woodVineFixtureStyle = WOOD_VINE_STYLE_JADE_EMERALD;
 // @gen:newfx_surface_impact_selector_state begin
 static VFX_ImpactSurface s_surfaceImpactFixtureSurface = VFX_IMPACT_SURFACE_EARTH;
 static const char *VFXTest_SurfaceImpactReceiverName(VFX_ImpactSurface surface)
@@ -384,7 +386,7 @@ static const char *s_meshNames[] = {
     "VFX OUTPUT"};
 
 // @gen:newfx_names begin
-// 50 entries — auto-managed by sync_vfx_test.py
+// 51 entries — auto-managed by sync_vfx_test.py
 static const char* s_newFxNames[] = {
     "CONTACT SPARK", "DEBRIS SHARDS", "DECAL", "DISSOLVE EXIT", "[PARTICLE] EMBER BURST", "FLAME JET",
     "FLOW SHIELD", "GAS MATERIAL LAB", "[GAS] GAS PLUME", "GAS SHOCKWAVE", "GAS VORTEX", "GROUND WAVE",
@@ -394,7 +396,7 @@ static const char* s_newFxNames[] = {
     "SMOKE PUFF", "[PARTICLE] SMOKE VOLUME", "SURFACE IMPACT", "SURFACE PARTICLE RING", "SWEEP SLASH", "MOTION RIBBON TRAIL",
     "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR", "AMBIENT FIRE",
     "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "LIQUID BENCH", "LIQUID IMPACT", "WATER ORB",
-    "WATER RING", "WATER STREAM",
+    "WATER RING", "WATER STREAM", "WOOD VINE",
 };
 // @gen:newfx_names end
 
@@ -419,6 +421,7 @@ static const int s_newFxCategories[] = {
     1, 6, 6, 6, 6, 6, 6, 6, 6, 6,
     6, 6, 6, 6, 6, 6, 6, 6, 6, 4,
     4, 0, 0, 5, 1, 1, 1, 1, 1, 1,
+    2,
 };
 // @gen:newfx_categories end
 
@@ -894,7 +897,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             const char **names;
             int globalIdx;
             int visualIdx;
-            maxIdx = 50;
+            maxIdx = 51;
             names = s_newFxNames; // @gen:newfx_count
             visualIdx = 0;
             (void)names;
@@ -1310,6 +1313,20 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "AMBIENT FIRE style: %s (>, next; <, previous)", VFX_FlameStyle_Name(s_ambientFireFixtureStyle));
             }
         }
+        else if (VFXTest_IsNewFxNamed("WOOD VINE"))
+        {
+            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+            if (direction != 0)
+            {
+                s_woodVineFixtureVariant = (VFX_WoodVineVariant)(((int)s_woodVineFixtureVariant + direction + WOOD_VINE_VARIANT_COUNT) % WOOD_VINE_VARIANT_COUNT);
+                TraceLog(LOG_INFO, "WOOD VINE variant: %s (>, next; ,, previous)", VFX_WoodVineVariant_Name(s_woodVineFixtureVariant));
+            }
+            if (IsKeyPressed(KEY_M))
+            {
+                s_woodVineFixtureStyle = (VFX_WoodVineStyle)(((int)s_woodVineFixtureStyle + 1) % WOOD_VINE_STYLE_COUNT);
+                TraceLog(LOG_INFO, "WOOD VINE style: %s (M, next style)", VFX_WoodVineStyle_Name(s_woodVineFixtureStyle));
+            }
+        }
 
 
 // @gen:newfx_surface_impact_selector_input begin
@@ -1470,6 +1487,7 @@ void VFXTest_Draw3D(void)
               case 45: VFX_ComposeLiquidBench(s_prefabStartPos, 1.1f, 1.0f); break;
               case 48: VFX_ComposeWaterRing(s_prefabStartPos, 0.9f, 1.0f); break;
               case 49: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
+              case 50: VFX_ComposeWoodVine(&(VFX_WoodVineConfig){.startPos=s_prefabStartPos, .targetPos=Vector3Distance(s_prefabStartPos, s_currentPlayerPos) < 2.5f ? s_currentPlayerPos : Vector3Add(s_prefabStartPos, (Vector3){0.0f, 2.2f, 0.0f}), .targetRadius=Vector3Distance(s_prefabStartPos, s_currentPlayerPos) < 2.5f ? 0.38f : 0.0f, .targetHeight=1.8f, .length=3.2f, .baseRadius=0.09f, .growth=progress, .wither=0.0f, .sapPhase=progress*2.0f, .swayAmp=0.05f, .coilRadius=0.35f, .coilTurns=2.4f, .enableThorns=true, .enableTwin=true, .castShadow=true, .variant=s_woodVineFixtureVariant, .style=s_woodVineFixtureStyle, .seed=98765}); break;
           }
 // @gen:newfx_draw end
         }
@@ -1482,6 +1500,42 @@ void VFXTest_Draw3D(void)
     }
 
     FresnelProbe_Draw3D(s_lastCam);
+}
+
+void VFXTest_DrawShadowPass(void)
+{
+    if (s_isPlayingMesh && s_testIndex >= 0)
+    {
+        float progress = fmodf(s_meshTime, 2.0f) * 0.5f;
+
+        switch (s_testIndex)
+        {
+            case 50:
+                VFX_ComposeWoodVine(&(VFX_WoodVineConfig){
+                    .startPos = s_prefabStartPos,
+                    .targetPos = Vector3Distance(s_prefabStartPos, s_currentPlayerPos) < 2.5f ? s_currentPlayerPos : Vector3Add(s_prefabStartPos, (Vector3){0.0f, 2.2f, 0.0f}),
+                    .targetRadius = Vector3Distance(s_prefabStartPos, s_currentPlayerPos) < 2.5f ? 0.38f : 0.0f,
+                    .targetHeight = 1.8f,
+                    .length = 3.2f,
+                    .baseRadius = 0.09f,
+                    .growth = progress,
+                    .wither = 0.0f,
+                    .sapPhase = progress * 2.0f,
+                    .swayAmp = 0.05f,
+                    .coilRadius = 0.35f,
+                    .coilTurns = 2.4f,
+                    .enableThorns = true,
+                    .enableTwin = true,
+                    .castShadow = true,
+                    .variant = s_woodVineFixtureVariant,
+                    .style = s_woodVineFixtureStyle,
+                    .seed = 98765
+                });
+                break;
+            default:
+                break;
+        }
+    }
 }
 
 void VFXTest_DrawHUD(void)
@@ -1557,6 +1611,13 @@ void VFXTest_DrawHUD(void)
     else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("AMBIENT FIRE"))
     {
         DrawText(TextFormat("AMBIENT FIRE: %s   > next   < previous", VFX_FlameStyle_Name(s_ambientFireFixtureStyle)), 10, 525, 16, ORANGE);
+    }
+    else if (s_isPlayingMesh && VFXTest_IsNewFxNamed("WOOD VINE"))
+    {
+        DrawText(TextFormat("WOOD VINE: [%s] | Style: [%s]   (> / , variant | M style)",
+                            VFX_WoodVineVariant_Name(s_woodVineFixtureVariant),
+                            VFX_WoodVineStyle_Name(s_woodVineFixtureStyle)),
+                 10, 525, 16, GREEN);
     }
 
     // @gen:newfx_surface_impact_selector_ui begin
@@ -1707,7 +1768,7 @@ void VFXTest_DrawHUD(void)
         const char **names;
         int gi;
         int vIdx;
-        maxIdx = 50;
+        maxIdx = 51;
         names = s_newFxNames; // @gen:newfx_count
         vIdx = 0;
         (void)names;

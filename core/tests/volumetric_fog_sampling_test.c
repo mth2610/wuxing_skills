@@ -63,7 +63,7 @@ int main(void) {
     CHECK(SourceHas(shader, "texture(u_jitterTex, jitterUV)"), "raymarch reads the immutable sampling texture");
     CHECK(SourceHas(shader, "fract(dither + float(i) * 0.61803398875)"), "intervals decorrelate the ray phase");
     CHECK(SourceHas(shader, "float stepSize = t1 - t0;"), "optical path length remains unchanged");
-    CHECK(SourceHas("core/volumetric/volumetric_fog.c", "TimeFX_Elapsed()"), "fog animation uses the reproducible simulation clock");
+    CHECK(!SourceHas(shader, "ComputeCanopyGodRay"), "fog has no independently animated synthetic canopy");
     CHECK(SourceHas("core/volumetric/volumetric_fog.c", "SetShaderValueTexture(s_raymarchShader, s_locJitterTex, s_jitterTex)"), "sampling texture is bound in the raymarch scope");
     printf("sampling optical-depth variance %.7f -> %.7f; mean error %.4f%%\n",
            oldVariance, newVariance, 100.0*fabs(newSum/COUNT-exact)/exact);

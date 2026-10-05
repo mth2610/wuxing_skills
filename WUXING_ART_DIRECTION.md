@@ -6,6 +6,12 @@
 
 ---
 
+## Map world direction
+
+All maps are floating plains suspended above a sea of clouds. Looking below reveals clouds; the distant view is open sky. Giant perimeter rocks and mountain rings are not part of the map boundary. Meadow, desert, stone plain, and future biomes share this world composition.
+
+The edge must read as terrain dissolving into cloud banks at the gameplay camera, with no exposed rectangular rim or finite cloud-plane seam. Keep the playable foreground clear. Boundary geometry, cloud shading, and sky lighting belong to reusable Map Toolkit primitives; biome materials and decoration remain map-specific. Keep the cloud sea flat and cheap. Bake a soft mist ribbon from the actual terrain contour; avoid uniform white walls or rectangle-based rim placement. Contour processing happens at load time, with a cached mesh and one texture sample at runtime.
+
 ## CHAPTER 1 — CORE PHILOSOPHY
 
 ### 1.1 Design Goal

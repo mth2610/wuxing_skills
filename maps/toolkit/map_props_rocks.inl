@@ -95,26 +95,16 @@ MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, 
     {
         GenMeshTangents(&mesh);
         rocks.model = LoadModelFromMesh(mesh);
-        Texture2D diffuse = ResourceManager_LoadTexture(diffusePath);
-        Texture2D normal = ResourceManager_LoadTexture(normalPath);
-        Texture2D roughness = ResourceManager_LoadTexture(roughnessPath);
-
-        GenTextureMipmaps(&diffuse);
-        GenTextureMipmaps(&normal);
-        GenTextureMipmaps(&roughness);
-        SetTextureFilter(diffuse, TEXTURE_FILTER_ANISOTROPIC_16X);
-        SetTextureFilter(normal, TEXTURE_FILTER_ANISOTROPIC_16X);
-        SetTextureFilter(roughness, TEXTURE_FILTER_ANISOTROPIC_16X);
+        Texture2D diffuse = MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT);
+        Texture2D normal = MapLoadMippedTexture(normalPath, TEXTURE_WRAP_REPEAT);
+        Texture2D roughness = MapLoadMippedTexture(roughnessPath, TEXTURE_WRAP_REPEAT);
 
         rocks.model.materials[0] = PropLit_MakeMaterial(diffuse, normal, roughness);
     }
     else
     {
         rocks.model = LoadModelFromMesh(mesh);
-        Texture2D diffuse = ResourceManager_LoadTexture(diffusePath);
-
-        GenTextureMipmaps(&diffuse);
-        SetTextureFilter(diffuse, TEXTURE_FILTER_ANISOTROPIC_16X);
+        Texture2D diffuse = MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT);
 
         rocks.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = diffuse;
     }
@@ -132,26 +122,16 @@ MapRockSet MapProp_CreateMountainCrags(const char *diffusePath, const char *norm
     {
         GenMeshTangents(&mesh);
         rocks.model = LoadModelFromMesh(mesh);
-        Texture2D diffuse = ResourceManager_LoadTexture(diffusePath);
-        Texture2D normal = ResourceManager_LoadTexture(normalPath);
-        Texture2D roughness = ResourceManager_LoadTexture(roughnessPath);
-
-        GenTextureMipmaps(&diffuse);
-        GenTextureMipmaps(&normal);
-        GenTextureMipmaps(&roughness);
-        SetTextureFilter(diffuse, TEXTURE_FILTER_ANISOTROPIC_16X);
-        SetTextureFilter(normal, TEXTURE_FILTER_ANISOTROPIC_16X);
-        SetTextureFilter(roughness, TEXTURE_FILTER_ANISOTROPIC_16X);
+        Texture2D diffuse = MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT);
+        Texture2D normal = MapLoadMippedTexture(normalPath, TEXTURE_WRAP_REPEAT);
+        Texture2D roughness = MapLoadMippedTexture(roughnessPath, TEXTURE_WRAP_REPEAT);
 
         rocks.model.materials[0] = PropLit_MakeMaterial(diffuse, normal, roughness);
     }
     else
     {
         rocks.model = LoadModelFromMesh(mesh);
-        Texture2D diffuse = ResourceManager_LoadTexture(diffusePath);
-
-        GenTextureMipmaps(&diffuse);
-        SetTextureFilter(diffuse, TEXTURE_FILTER_ANISOTROPIC_16X);
+        Texture2D diffuse = MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT);
 
         rocks.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = diffuse;
     }

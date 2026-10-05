@@ -22,9 +22,12 @@ STUBS = r'''
 #include <stdio.h>
 Camera3D camera = {.position={6,8,17}};
 static bool depthWrite=true,culling=true;
-static int active,uploads,draws;
+static int active,uploads,draws,mistDraws;
+static int expectedDepth=-1;
 static Vector2 uploadedCloudTiling;
 static Shader cloudShader={.id=2};
+static int locCloudOffset=102;
+static int locCloudBank,locCloudView,locCloudSky,locCloudHaze;
 static int locCloudLightDir,locCloudLightCol,locCloudAmbCol,locCloudTime,locCloudTiling;
 static Texture2D s_defaultCausticTex;
 void *MemAlloc(unsigned int bytes){return malloc(bytes);}
@@ -40,19 +43,21 @@ void UnloadModel(Model m){
     free(m.meshes[0].texcoords);free(m.meshes[0].indices);
     free(m.meshes);free(m.materials);
 }
-Shader LoadShader(const char *vs,const char *fs){assert(vs && fs);return (Shader){.id=2};}
+Shader ResourceManager_LoadShader(const char *vs,const char *fs){assert(vs && fs);return (Shader){.id=2};}
 int GetShaderLocation(Shader s,const char *name){(void)s;(void)name;return 1;}
 void UnloadShader(Shader s){assert(s.id==2);}
-static unsigned int rlGetShaderIdDefault(void){return 1;}
 void BeginShaderMode(Shader s){assert(!active);active=(int)s.id;}
 void EndShaderMode(void){assert(active);active=0;}
 void SetShaderValue(Shader s,int loc,const void *value,int type){
     (void)loc;(void)value;(void)type;assert(active==(int)s.id);uploads++;
-    if(type==SHADER_UNIFORM_VEC2 && s.id==cloudShader.id) uploadedCloudTiling=*(const Vector2 *)value;
+    if(type==SHADER_UNIFORM_VEC2 && s.id==cloudShader.id && loc==locCloudTiling) uploadedCloudTiling=*(const Vector2 *)value;
 }
 void DrawModel(Model m,Vector3 pos,float scale,Color tint){
     (void)m;(void)pos;(void)scale;(void)tint;
-    assert(active==2);draws++;
+    if(expectedDepth>=0)assert(depthWrite==(bool)expectedDepth);
+    if (!active) {assert(!depthWrite && !culling);mistDraws++;}
+    else assert(active==2);
+    draws++;
 }
 static void rlDrawRenderBatchActive(void){}
 static void rlDisableDepthMask(void){depthWrite=false;}
@@ -89,12 +94,15 @@ int main(void){
     MapProp_DrawSkyDome(&sky);assert(!active && depthWrite && culling && uploads==4 && draws==1);
     MapProp_UnloadSkyDome(&sky);assert(!sky.ready && !sky.model.meshCount);
     MapCloudSea cloud={.ready=true,.tiling={8,7}};
+    expectedDepth=1;
     MapProp_DrawCloudSea(&cloud,(Vector3){0},-12);
-    assert(!active && depthWrite && culling && uploads==9 && draws==2);
+    assert(!active && depthWrite && culling && uploads==14 && draws==2);
     assert(uploadedCloudTiling.x==8 && uploadedCloudTiling.y==7);
     cloud.tiling=(Vector2){4,3};
+    expectedDepth=1;
     MapProp_DrawCloudSea(&cloud,(Vector3){0},-12);
     assert(uploadedCloudTiling.x==4 && uploadedCloudTiling.y==3);
+    expectedDepth=-1;
     for(int shape=0;shape<3;shape++)for(int waves=0;waves<2;waves++){
         MapWaterSurface water={.ready=true,.config={.shape=shape,.maxDepth=1.15f},
             .waveFieldTex={.id=waves ? 7 : 0}};
@@ -103,6 +111,10 @@ int main(void){
         assert(uploads>before+20 && !active && depthWrite && culling);
     }
     assert(draws==9);
+    expectedDepth=0;
+    cloud.mistReady=true;
+    MapProp_DrawIslandMist(&cloud,(Vector3){50,0,37.5});
+    assert(mistDraws==1 && depthWrite && culling && !active);
     puts("PASS: sky/cloud/water uniforms and draws share active shader; depth/culling restored");
 }
 '''
@@ -118,6 +130,7 @@ def main():
     code = STUBS + declarations + "\n"
     code += (ROOT / "maps/toolkit/map_props_sky.inl").read_text()
     code += function((ROOT / "maps/toolkit/map_props_cloud.inl").read_text(), "MapProp_DrawCloudSea")
+    code += function((ROOT / "maps/toolkit/map_props_cloud.inl").read_text(), "MapProp_DrawIslandMist")
     code += overlay + MAIN
     with tempfile.TemporaryDirectory(prefix="map-background-") as directory:
         work = Path(directory)

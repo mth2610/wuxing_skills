@@ -47,10 +47,7 @@ MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
     }
 
     // 3. Load Texture
-    Texture2D diffuse = ResourceManager_LoadTexture(diffusePath);
-    GenTextureMipmaps(&diffuse);
-    SetTextureFilter(diffuse, TEXTURE_FILTER_ANISOTROPIC_16X);
-    SetTextureWrap(diffuse, TEXTURE_WRAP_REPEAT);
+    Texture2D diffuse = MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT);
 
     // Tạm thời bỏ qua normal/roughness đối với đường mờ lề để tối ưu hiệu năng
     strip.model.materials[0].shader = pathShader;
@@ -59,14 +56,9 @@ MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
     strip.useSurfaceMaps = normalPath && roughnessPath;
     if (strip.useSurfaceMaps)
     {
-        Texture2D normal = ResourceManager_LoadTexture(normalPath);
-        Texture2D roughness = ResourceManager_LoadTexture(roughnessPath);
-        GenTextureMipmaps(&normal);
-        GenTextureMipmaps(&roughness);
-        SetTextureFilter(normal, TEXTURE_FILTER_ANISOTROPIC_16X);
-        SetTextureFilter(roughness, TEXTURE_FILTER_ANISOTROPIC_16X);
-        SetTextureWrap(normal, TEXTURE_WRAP_REPEAT);
-        SetTextureWrap(roughness, TEXTURE_WRAP_REPEAT);
+        Texture2D normal = MapLoadMippedTexture(normalPath, TEXTURE_WRAP_REPEAT);
+        Texture2D roughness = MapLoadMippedTexture(roughnessPath, TEXTURE_WRAP_REPEAT);
+
         strip.model.materials[0].maps[MATERIAL_MAP_NORMAL].texture = normal;
         strip.model.materials[0].maps[MATERIAL_MAP_ROUGHNESS].texture = roughness;
     }
