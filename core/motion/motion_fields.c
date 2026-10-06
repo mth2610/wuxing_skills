@@ -1,6 +1,7 @@
 #include "core/motion/motion_fields.h"
 #include "core/wind/wind_system.h"
 #include <stdlib.h>
+#include <float.h>
 #include <string.h>
 #ifndef PI
 #define PI 3.14159265358979323846f
@@ -96,6 +97,36 @@ static float Motion_GuideWeight(const MotionGuideRuntime *g, Vector3 p,
   }
   return weight;
 }
+/* Snapshot bridge: no ring-pool spawning, stale indices, or per-tracer rebuilds. */
+static void Motion_PublishWind(void) {
+  VorticleData sources[MOTION_FIELDS_MAX_GUIDES * 9];
+  int count = 0;
+  for (int i = 0; i < MOTION_FIELDS_MAX_GUIDES; ++i) {
+    MotionGuideRuntime *g = &s_guides[i];
+    MotionGuideDesc *d = &g->desc;
+    if (!g->handle || !d->affectWind) continue;
+    int nodes = d->mode == MOTION_GUIDE_PULSE ? 1 : 3;
+    float envelope = Motion_Envelope(g->age, d->duration, d->attackTime, d->fadeTime);
+    for (int node = 0; node < nodes; ++node) {
+      float distance = nodes == 1 ? g->distance : d->path.length * (node + 0.5f) / nodes;
+      MotionPathSample f = MotionPath_Sample(&d->path, distance);
+      float radius = Motion_GuideRadius(d, distance);
+      float speeds[] = {d->speed * Motion_Profile(d->speedScaleStart, d->speedScaleEnd, distance / d->path.length),
+                        d->flow.swirlSpeedMps, d->flow.turbulenceSpeedMps};
+      for (int component = 0; component < 3; ++component) {
+        if (speeds[component] == 0 || envelope == 0) continue;
+        sources[count++] = (VorticleData){
+            .position = f.position,
+            .direction = component == 2 ? (Vector3){1.0f / radius, 1.0f, 0.0f} : f.tangent,
+            .radius = radius, .strength = speeds[component] * envelope,
+            .type = component == 0 ? VORTICLE_LINEAR_GUST : component == 1 ? VORTICLE_VORTEX : VORTICLE_TURBULENCE,
+            .lifetime = 1, .maxLifetime = 1, .active = true};
+      }
+    }
+  }
+  Wind_SetMotionAirflow(sources, count);
+}
+
 MotionGuideDesc MotionGuide_Default(void) {
   MotionGuideDesc d = {0};
   d.duration = 4;
@@ -120,6 +151,7 @@ void MotionFields_Reset(void) {
   memset(s_guides, 0, sizeof(s_guides));
   memset(s_targets, 0, sizeof(s_targets));
   s_time = 0;
+  Wind_SetMotionAirflow(NULL, 0);
 }
 void MotionFields_Update(float dt) {
   if (!isfinite(dt) || dt <= 0)
@@ -145,6 +177,7 @@ void MotionFields_Update(float dt) {
       if (s_targets[i].age >= s_targets[i].desc.duration)
         s_targets[i].handle = 0;
     }
+  Motion_PublishWind();
 }
 static bool Motion_FiniteVector(Vector3 v) {
   return isfinite(v.x) && isfinite(v.y) && isfinite(v.z);
@@ -200,6 +233,7 @@ MotionFieldHandle MotionFields_CreateGuide(const MotionGuideDesc *d) {
       s_guides[i].desc.path = checked;
       if (!s_guides[i].desc.receiverMask)
         s_guides[i].desc.receiverMask = MOTION_RECEIVER_ALL;
+      Motion_PublishWind();
       Motion_Trace("guide_created", s_guides[i].handle, (int)d->mode);
       return s_guides[i].handle;
     }
@@ -235,6 +269,7 @@ void MotionFields_Stop(MotionFieldHandle h) {
     g->handle = 0;
   if (t)
     t->handle = 0;
+  Motion_PublishWind();
 }
 int MotionFields_GetGuideCount(void) {
   int n = 0;
@@ -415,6 +450,123 @@ static Vector3 Motion_GuideForce(MotionGuideRuntime *g, Vector3 p, Vector3 v,
       Motion_Envelope(g->age, d->duration, d->attackTime, d->fadeTime) *
           Motion_GuideWeight(g, p, r));
 }
+static void Motion_SampleTargets(Vector3 p, Vector3 v, unsigned int mask,
+                                  MotionFieldSample *out) {
+  for (int i = 0; i < MOTION_FIELDS_MAX_TARGETS; i++) {
+    MotionTargetRuntime *t = &s_targets[i];
+    MotionTargetDesc *d = &t->desc;
+    if (!t->handle || !(d->receiverMask & mask))
+      continue;
+    float dist = MotionVec_Length(MotionVec_Sub(p, d->center));
+    if (dist >= d->radius)
+      continue;
+    float w = 1 - dist / d->radius;
+    w = w * w * (3 - 2 * w) *
+        Motion_Envelope(t->age, d->duration, d->attackTime, d->fadeTime);
+    out->airflowVelocity = MotionVec_Add(
+        out->airflowVelocity,
+        MotionVec_Scale(
+            MotionFlow_Evaluate(&d->flow, p, d->center, d->flowAxis, d->radius,
+                                s_time, MOTION_FLOW_SPHERE),
+            Motion_Envelope(t->age, d->duration, d->attackTime, d->fadeTime)));
+    if (d->airflow.strength != 0) {
+      VorticleData vort = d->airflow;
+      vort.position = d->center;
+      vort.radius = d->radius;
+      vort.active = true;
+      vort.maxLifetime = d->duration;
+      vort.lifetime = fmaxf(d->duration - t->age, 0);
+      out->airflowVelocity = MotionVec_Add(
+          out->airflowVelocity,
+          MotionVec_Scale(Wind_EvaluateVorticleVelocity(&vort, p, s_time),
+                          Motion_Envelope(t->age, d->duration, d->attackTime,
+                                          d->fadeTime)));
+    }
+    if (d->field.layerCount > 0)
+      out->forceNewtons = MotionVec_Add(
+          out->forceNewtons,
+          MotionVec_Scale(ForceField_Evaluate(&d->field, p, v, s_time,
+                                              d->center, (Vector3){0, 1, 0}),
+                          w));
+  }
+}
+bool MotionFields_GetArrival(MotionFieldHandle h, MotionArrivalProfile *out) {
+  MotionGuideRuntime *g = Motion_FindGuide(h);
+  if (!g || !out)
+    return false;
+  *out = g->desc.arrival;
+  return true;
+}
+
+static void Motion_AddGuideLayers(MotionGuideRuntime *g, Vector3 p, Vector3 v,
+                                  MotionReceiver *r, MotionFieldSample *out) {
+  if (g->desc.field.layerCount <= 0 || r->arrived) return;
+  MotionPathSample f = MotionPath_Sample(&g->desc.path, r->distance);
+  ForceField field = g->desc.field;
+  for (int j = 0; j < field.layerCount; ++j) {
+    field.layers[j].origin = MotionVec_Add(f.position, MotionPath_WorldOffset(f, field.layers[j].origin));
+    field.layers[j].direction = MotionPath_WorldOffset(f, field.layers[j].direction);
+  }
+  out->forceNewtons = MotionVec_Add(out->forceNewtons,
+      MotionVec_Scale(ForceField_Evaluate(&field, p, v, s_time, f.position, f.tangent),
+          Motion_GuideWeight(g, p, r) * Motion_Envelope(g->age, g->desc.duration,
+              g->desc.attackTime, g->desc.fadeTime)));
+}
+
+void MotionFields_SampleAnchored(Vector3 p, Vector3 v, float massKg, float dt,
+                                 unsigned int mask, MotionFieldSample *out) {
+  if (!out) return;
+  *out = (MotionFieldSample){0};
+  if (!Motion_FiniteVector(p) || !Motion_FiniteVector(v) ||
+      !isfinite(massKg) || massKg <= 0 || !isfinite(dt) || dt < 0) return;
+  for (int i = 0; i < MOTION_FIELDS_MAX_GUIDES; ++i) {
+    MotionGuideRuntime *g = &s_guides[i];
+    MotionPathSample f;
+    if (!g->handle || !(g->desc.receiverMask & mask) || !Motion_InGuide(g, p, &f)) continue;
+    MotionReceiver r = {.guide = g->handle, .distance = f.distance, .segment = f.segment};
+    out->forceNewtons = MotionVec_Add(out->forceNewtons,
+        Motion_GuideForce(g, p, v, massKg, dt, &r));
+    out->captured = true; // Spatial influence only; no owned capture state.
+    Motion_AddGuideLayers(g, p, v, &r, out);
+  }
+  Motion_SampleTargets(p, v, mask, out);
+}
+
+static void Motion_ExpandBounds(Vector3 p, float radius, Vector3 *lo, Vector3 *hi) {
+  lo->x = fminf(lo->x, p.x-radius); lo->y = fminf(lo->y, p.y-radius); lo->z = fminf(lo->z, p.z-radius);
+  hi->x = fmaxf(hi->x, p.x+radius); hi->y = fmaxf(hi->y, p.y+radius); hi->z = fmaxf(hi->z, p.z+radius);
+}
+bool MotionFields_GetAnchoredBounds(unsigned int mask, Vector3 *lo, Vector3 *hi) {
+  if (!lo || !hi) return false;
+  *lo = (Vector3){FLT_MAX,FLT_MAX,FLT_MAX}; *hi = (Vector3){-FLT_MAX,-FLT_MAX,-FLT_MAX};
+  bool found = false;
+  for (int i = 0; i < MOTION_FIELDS_MAX_GUIDES; ++i) {
+    MotionGuideRuntime *g = &s_guides[i]; MotionGuideDesc *d = &g->desc;
+    if (!g->handle || !(d->receiverMask & mask)) continue;
+    float radius = fmaxf(Motion_GuideRadius(d,0), Motion_GuideRadius(d,d->path.length));
+    float start = 0, end = d->path.length;
+    if (d->formation == MOTION_FORMATION_SHELL) start = end = g->distance;
+    else if (d->mode == MOTION_GUIDE_PULSE) {
+      start = fmaxf(0,g->distance-d->pulseLength*.5f);
+      end = fminf(d->path.length,g->distance+d->pulseLength*.5f);
+    }
+    Motion_ExpandBounds(MotionPath_Sample(&d->path,start).position,radius,lo,hi);
+    Motion_ExpandBounds(MotionPath_Sample(&d->path,end).position,radius,lo,hi);
+    for (int j=0;j<d->path.count;++j)
+      if (d->path.distance[j]>=start && d->path.distance[j]<=end)
+        Motion_ExpandBounds(d->path.points[j],radius,lo,hi);
+    found = true;
+  }
+  for (int i=0;i<MOTION_FIELDS_MAX_TARGETS;++i) {
+    MotionTargetRuntime *t=&s_targets[i];
+    if (t->handle && (t->desc.receiverMask & mask)) {
+      Motion_ExpandBounds(t->desc.center,t->desc.radius,lo,hi); found=true;
+    }
+  }
+  if (!found) *lo=*hi=(Vector3){0};
+  return found;
+}
+
 void MotionFields_Sample(Vector3 p, Vector3 v, float massKg, float dt,
                          unsigned int mask, MotionReceiver *r,
                          MotionFieldSample *out) {
@@ -462,69 +614,9 @@ void MotionFields_Sample(Vector3 p, Vector3 v, float massKg, float dt,
   if (bound) {
     out->forceNewtons = Motion_GuideForce(bound, p, v, massKg, dt, r);
     out->captured = !r->arrived;
-    if (bound->desc.field.layerCount > 0 && !r->arrived) {
-      MotionPathSample f = MotionPath_Sample(&bound->desc.path, r->distance);
-      ForceField field = bound->desc.field;
-      for (int j = 0; j < field.layerCount; j++) {
-        field.layers[j].origin = MotionVec_Add(
-            f.position, MotionPath_WorldOffset(f, field.layers[j].origin));
-        field.layers[j].direction =
-            MotionPath_WorldOffset(f, field.layers[j].direction);
-      }
-      out->forceNewtons = MotionVec_Add(
-          out->forceNewtons,
-          MotionVec_Scale(
-              ForceField_Evaluate(&field, p, v, s_time, f.position, f.tangent),
-              Motion_GuideWeight(bound, p, r) *
-                  Motion_Envelope(bound->age, bound->desc.duration,
-                                  bound->desc.attackTime,
-                                  bound->desc.fadeTime)));
-    }
+    Motion_AddGuideLayers(bound, p, v, r, out);
   }
-  for (int i = 0; i < MOTION_FIELDS_MAX_TARGETS; i++) {
-    MotionTargetRuntime *t = &s_targets[i];
-    MotionTargetDesc *d = &t->desc;
-    if (!t->handle || !(d->receiverMask & mask))
-      continue;
-    float dist = MotionVec_Length(MotionVec_Sub(p, d->center));
-    if (dist >= d->radius)
-      continue;
-    float w = 1 - dist / d->radius;
-    w = w * w * (3 - 2 * w) *
-        Motion_Envelope(t->age, d->duration, d->attackTime, d->fadeTime);
-    out->airflowVelocity = MotionVec_Add(
-        out->airflowVelocity,
-        MotionVec_Scale(
-            MotionFlow_Evaluate(&d->flow, p, d->center, d->flowAxis, d->radius,
-                                s_time, MOTION_FLOW_SPHERE),
-            Motion_Envelope(t->age, d->duration, d->attackTime, d->fadeTime)));
-    if (d->airflow.strength != 0) {
-      VorticleData vort = d->airflow;
-      vort.position = d->center;
-      vort.radius = d->radius;
-      vort.active = true;
-      vort.maxLifetime = d->duration;
-      vort.lifetime = fmaxf(d->duration - t->age, 0);
-      out->airflowVelocity = MotionVec_Add(
-          out->airflowVelocity,
-          MotionVec_Scale(Wind_EvaluateVorticleVelocity(&vort, p, s_time),
-                          Motion_Envelope(t->age, d->duration, d->attackTime,
-                                          d->fadeTime)));
-    }
-    if (d->field.layerCount > 0)
-      out->forceNewtons = MotionVec_Add(
-          out->forceNewtons,
-          MotionVec_Scale(ForceField_Evaluate(&d->field, p, v, s_time,
-                                              d->center, (Vector3){0, 1, 0}),
-                          w));
-  }
-}
-bool MotionFields_GetArrival(MotionFieldHandle h, MotionArrivalProfile *out) {
-  MotionGuideRuntime *g = Motion_FindGuide(h);
-  if (!g || !out)
-    return false;
-  *out = g->desc.arrival;
-  return true;
+  Motion_SampleTargets(p, v, mask, out);
 }
 MotionArrivalMode MotionFields_AdvanceReceiver(MotionReceiver *r,
                                                Vector3 before, Vector3 after,

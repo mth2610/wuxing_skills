@@ -97,6 +97,13 @@ int main(void)
     for (int i = 0; i < 3; ++i) {
         s_testWidth = sizes[i][0]; s_testHeight = sizes[i][1];
         VFXTest_UILayout ui = VFXTest_UIGetLayout();
+        if (s_testWidth >= 900) {
+            assert(ui.header.height == 40);
+            assert(ui.cameraStatus.y == ui.header.y);
+            for (int metric = 0; metric < 3; ++metric)
+                assert(ui.metrics[metric].y == ui.header.y && ui.metrics[metric].height == ui.header.height);
+            assert(ui.cameraStatus.x + ui.cameraStatus.width <= VFXTest_UIHeaderButton(ui, 0).x);
+        }
         assert(ui.inspector.x >= 0 && ui.inspector.x + ui.inspector.width <= s_testWidth);
         assert(ui.inspector.y + ui.inspector.height <= s_testHeight);
         Rectangle row = VFXTest_UIInspectorRow(ui, 0);

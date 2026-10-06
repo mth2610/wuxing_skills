@@ -51,6 +51,24 @@
 - **Cause:** Two silent coordinate/wiring errors compounded. On rlvk, `SetShaderValue(shader, ...)` still writes to the currently active shader, but Nature uploaded wind uniforms before `DrawModel` activated the vegetation program. Then `nature_lit.vs` called `matModel * vertexPosition` world space even though this engine's `matModel` includes the view transform; comparing that view-space point with a world-space impact centre made radial attenuation zero. Separately, a player-centred 18 m receiver can reject a remote impact, and the default arena position may contain only grass-coloured terrain rather than vegetation geometry.
 - **Rule:** Keep `BeginShaderMode(vegetationShader) -> wind uniform upload -> vegetation draws -> EndShaderMode()` as one scope for both visible and dynamic-shadow passes. Recover a true world position with the inverse current transform before interaction UV or impact-distance math. A uniform direction is valid for Linear Gust only; Radial Blast derives an outward direction per plant, while Vortex and Turbulence stay in the spatial field instead of being collapsed to one patch-wide sample. Diagnose with `WUXING_WIND_RECEIVER_TRACE=1`: require `guided_cast`, one `guided_arrival`, `vegetation_receiver`, then `vegetation_shader ... uniforms=ok`. A missing stage identifies the broken boundary. Source-wiring assertions alone cannot prove active-shader state or coordinate-space agreement.
 
+### A force strike cannot be represented by amplifying airflow
+
+- **Symptom:** A guide force grabs free leaves, but grass only leans smoothly in one direction and returns without a strike or rebound.
+- **Cause:** The receiver reads the guide airflow approximation, so displacement follows current wind rather than integrating Newton force against plant inertia and flexure.
+- **Rule:** Keep ambient Wind response intact; separately query anchored Motion forces into a mass/spring/damper tip state. Scroll both displacement and velocity with the same world-cell mapping as the interaction texture, preserve the root mask, and share that texture between visible and shadow passes. Guard: `maps/tests/test_nature_local_wind.py` exercises force magnitude, opposite release response and scrolling.
+
+### Sampling the source plane erases horizontal-axis swirl
+
+- **Symptom:** A travelling guide curls free particles but its swirling airflow barely bends grass beneath it.
+- **Cause:** The interaction receiver rasterized at the source centre height. A horizontal-axis vortex on that plane produces mainly vertical airflow, then the vegetation receiver discards Y when computing ground-plane bend.
+- **Rule:** Query local map terrain plus representative canopy height for each affected receiver texel. Keep the source geometry in world space; never move the receiver plane to the airborne guide head. Guard: `maps/tests/test_nature_local_wind.py` exercises horizontal-axis swirl below the source.
+
+### Parametric vegetation has a different world-position uniform
+
+- **Symptom:** Wind traces report `uniforms=MISSING` for working parametric grass in both visible and shadow passes.
+- **Cause:** The trace required `u_worldFromShaderSpace`, which belongs to expanded meshes. Parametric blades already recover world position through `u_worldOffset`.
+- **Rule:** Validate the coordinate contract actually used by the shader: inverse transform or explicit world offset, together with every impact uniform. Log individual locations to distinguish missing impact inputs from an unused coordinate conversion. Guard: `maps/tests/test_nature_local_wind.py`.
+
 ### Turbulence can hide the authored blast
 
 - **Symptom:** Grass moves in varied directions after impact, but the result still reads as a Perlin wind wave rather than a blast.

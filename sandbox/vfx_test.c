@@ -851,33 +851,29 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
     panelWidth = fminf(panelWidth, w - 24.0f);
     VFXTest_UILayout ui = {0};
     ui.header = (Rectangle){12.0f, top, w - 24.0f, 40.0f};
-    float statusTop = top + 80.0f;
-    float statusBottom;
-    if (w >= 740.0f) {
-        ui.cameraStatus = (Rectangle){w - panelWidth - 12.0f, statusTop, panelWidth, 56.0f};
-        float metricsWidth = fminf(470.0f, ui.cameraStatus.x - 24.0f);
-        float cardWidth = (metricsWidth - 12.0f) / 3.0f;
-        for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){12.0f + i * (cardWidth + 6.0f), statusTop, cardWidth, 56.0f};
-        statusBottom = statusTop + 56.0f;
+    float statusBottom = top + 40.0f;
+    if (w >= 900.0f) {
+        for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){178.0f + i * 76.0f, top, 76.0f, 40.0f};
+        ui.cameraStatus = (Rectangle){412.0f, top, w - 690.0f, 40.0f};
     } else {
-        float cardWidth = (w - 36.0f) / 3.0f;
-        for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){12.0f + i * (cardWidth + 6.0f), statusTop, cardWidth, 30.0f};
-        ui.cameraStatus = (Rectangle){12.0f, statusTop + 36.0f, w - 24.0f, 36.0f};
-        statusBottom = statusTop + 72.0f;
+        ui.header.height = 116.0f;
+        for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){18.0f + i * ((w - 36.0f) / 3.0f), top + 40.0f, (w - 36.0f) / 3.0f, 36.0f};
+        ui.cameraStatus = (Rectangle){18.0f, top + 76.0f, w - 36.0f, 36.0f};
+        statusBottom = top + 116.0f;
     }
-    float panelTop = fmaxf(176.0f, statusBottom + (w >= 740.0f ? 24.0f : 8.0f));
+    float panelTop = fmaxf(176.0f, statusBottom + 40.0f);
     ui.rowHeight = 38.0f;
     float panelHeight = fminf(76.0f + fmaxf(1.0f, (float)s_inspectorParamCount) * ui.rowHeight, fmaxf(116.0f, h - panelTop - 48.0f));
     ui.inspector = (Rectangle){w - panelWidth - 12.0f, panelTop, panelWidth, panelHeight};
     ui.inspectorRows = (int)((ui.inspector.height - 76.0f) / ui.rowHeight);
     if (ui.inspectorRows < 1) ui.inspectorRows = 1;
-    ui.browser = (Rectangle){12.0f, top + 52.0f, fminf(720.0f, w - 24.0f), fmaxf(140.0f, h - top - 100.0f)};
+    ui.browser = (Rectangle){12.0f, statusBottom + 12.0f, fminf(720.0f, w - 24.0f), fmaxf(140.0f, h - statusBottom - 60.0f)};
     ui.browserColumns = (int)((ui.browser.width - 20.0f) / 150.0f);
     if (ui.browserColumns < 1) ui.browserColumns = 1;
     ui.browserCellWidth = (ui.browser.width - 20.0f) / (float)ui.browserColumns;
     ui.browserRows = (int)((ui.browser.height - 100.0f) / 40.0f);
     if (ui.browserRows < 1) ui.browserRows = 1;
-    ui.help = (Rectangle){12.0f, top + 52.0f, fminf(480.0f, w - 24.0f), fminf(320.0f, h - top - 72.0f)};
+    ui.help = (Rectangle){12.0f, statusBottom + 12.0f, fminf(480.0f, w - 24.0f), fminf(320.0f, h - statusBottom - 32.0f)};
     return ui;
 }
 
@@ -939,7 +935,7 @@ bool VFXTest_IsPointerOverUI(void)
     for (int i = 0; i < 3; ++i) if (CheckCollisionPointRec(mouse, ui.metrics[i])) return true;
     if (s_isPanelOpen || s_vfxHelpOpen) return true; /* Modal panels own their backdrop. */
     if (s_isPlayingMesh && s_inspectorParamCount > 0 && CheckCollisionPointRec(mouse, ui.inspector)) return true;
-    if (!s_hideDebugOverlays && CheckCollisionPointRec(mouse, (Rectangle){12.0f, ui.cameraStatus.y + ui.cameraStatus.height + 12.0f, 298.0f, 76.0f})) return true;
+    if (!s_hideDebugOverlays && CheckCollisionPointRec(mouse, (Rectangle){12.0f, 164.0f, 298.0f, 76.0f})) return true;
     return false;
 }
 
@@ -1114,34 +1110,20 @@ static void VFXTest_UIDraw(void)
     DrawRectangleRounded(ui.header, 0.12f, 4, (Color){15, 20, 27, 230});
     const char *name = s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 && s_testIndex < VFXTest_NewFxCount()
                        ? s_newFxNames[s_testIndex] : "MESH PREVIEW";
-    Rectangle title = {ui.header.x + 6.0f, ui.header.y, VFXTest_UIHeaderButton(ui, 0).x - ui.header.x - 10.0f, ui.header.height};
+    Rectangle title = {ui.header.x + 6.0f, ui.header.y, VFXTest_UIHeaderButton(ui, 0).x - ui.header.x - 10.0f, 40.0f};
+    if (GetScreenWidth() >= 900) title.width = 150.0f;
     VFXTest_UIText(name, title, 14, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 0), "Fixtures", s_isPanelOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), "Help", s_vfxHelpOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Back", false);
     const char *variant = VFXTest_UIActiveVariant();
     if (variant) VFXTest_UIText(TextFormat("%s   |   < / > preset", variant),
-                             (Rectangle){12.0f, ui.header.y + 46.0f, fmaxf(180.0f, GetScreenWidth() - 340.0f), 24.0f}, 12, SKYBLUE);
-    const char *metricLabels[] = {"FPS", "Frame", "Peak"};
-    const float metricValues[] = {s_vfxTelemetryFps, s_vfxTelemetryFrameMs, s_vfxTelemetryPeakMs};
-    for (int i = 0; i < 3; ++i) {
-        Rectangle card = ui.metrics[i];
-        DrawRectangleRounded(card, 0.08f, 4, (Color){15, 20, 27, 225});
-        const char *value = i == 0 ? TextFormat("%.1f", metricValues[i]) : TextFormat("%.2f ms", metricValues[i]);
-        if (card.height < 40.0f) {
-            VFXTest_UIText(TextFormat("%s %s", metricLabels[i], value), card, 11, LIGHTGRAY);
-        } else {
-            VFXTest_UIText(metricLabels[i], (Rectangle){card.x + 2, card.y + 4, card.width - 4, 16}, 10, GRAY);
-            VFXTest_UIText(value, (Rectangle){card.x + 2, card.y + 23, card.width - 4, 26}, 17, RAYWHITE);
-        }
-    }
-    DrawRectangleRounded(ui.cameraStatus, 0.08f, 4, (Color){15, 20, 27, 225});
-    Rectangle cameraLabel = {ui.cameraStatus.x + 2, ui.cameraStatus.y + 4, ui.cameraStatus.width - 82, 16};
-    if (ui.cameraStatus.height >= 40.0f) {
-        VFXTest_UIText(TextFormat("Camera   %.2f m", s_vfxTelemetryDistance), cameraLabel, 10, GRAY);
-        cameraLabel.y += 20; cameraLabel.height = 26;
-    } else { cameraLabel.y = ui.cameraStatus.y + 4; cameraLabel.height = ui.cameraStatus.height - 8; }
-    VFXTest_UIText(TextFormat("Tilt %.1f deg   Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 12, RAYWHITE);
+                             (Rectangle){12.0f, ui.header.y + ui.header.height + 6.0f, fmaxf(180.0f, GetScreenWidth() - 340.0f), 24.0f}, 12, SKYBLUE);
+    VFXTest_UIText(TextFormat("%.0f FPS", s_vfxTelemetryFps), ui.metrics[0], 12, RAYWHITE);
+    VFXTest_UIText(TextFormat("%.1f ms", s_vfxTelemetryFrameMs), ui.metrics[1], 12, LIGHTGRAY);
+    VFXTest_UIText(TextFormat("peak %.1f", s_vfxTelemetryPeakMs), ui.metrics[2], 11, LIGHTGRAY);
+    Rectangle cameraLabel = {ui.cameraStatus.x, ui.cameraStatus.y, ui.cameraStatus.width - 78.0f, ui.cameraStatus.height};
+    VFXTest_UIText(TextFormat("Tilt %.0f deg  Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 12, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, -1), "-", false);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
     if (!s_isPanelOpen && !s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
@@ -1188,7 +1170,7 @@ static void VFXTest_UIDraw(void)
             "Tab / CapsLock: select parameter. /: next value.", "Shift /: previous value. < / >: fixture preset.",
             "V: fixture clock. B: character. U: hide UI.", "F3: diagnostics. N: background. R: reset view.",
             "Wood: ; burst, ' homing, backslash detach.", "Demos: 1 mesh, 2 SSS, 3 particles, 4 slash,",
-            "5 Iaido, 6 guiding wind. Z/C: character actions."};
+            "5 Iaido, 6 wind, 7 path flow. Z/C: actions."};
         for (int i = 0; i < 9; ++i) VFXTest_UIText(lines[i], (Rectangle){ui.help.x + 8, ui.help.y + 8 + i * 26.0f, ui.help.width - 16, 24}, i == 0 ? 14 : 12, i == 0 ? RAYWHITE : LIGHTGRAY);
         VFXTest_UIDrawButton(VFXTest_UIForceButton(ui, false), "Force test", false);
         VFXTest_UIDrawButton(VFXTest_UIForceButton(ui, true), "Vector field", false);

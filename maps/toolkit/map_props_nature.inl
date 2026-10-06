@@ -73,19 +73,31 @@ static int s_bedLocModelPos = -1;
 static const float kNatureInteractionWorldSize = 18.0f;
 static const float kNatureInteractionMaxBend = 0.55f;
 static const float kNatureWindReferenceSpeed = 1.7f;
-static const float kNatureWindBendPerMps = 0.035f;
+// Local airflow uses stronger canopy compliance than broad ambient wind.
+// Both analytic impacts and spatial fields retain the existing 0.55 m cap.
+static const float kNatureWindBendPerMps = 0.10f;
+// Shared interaction field represents grass canopy, not the airborne source.
+static const float kNatureWindSampleHeight = 0.25f;
 static Texture2D s_natureInteractionTexture = {0};
 static Color s_natureInteractionPixels[NATURE_INTERACTION_PIXEL_COUNT];
 static Color s_natureInteractionScratch[NATURE_INTERACTION_PIXEL_COUNT];
 static Color s_natureInteractionUploaded[NATURE_INTERACTION_PIXEL_COUNT];
 static bool s_natureInteractionUploadValid = false;
 static Color s_natureWindPixels[NATURE_INTERACTION_PIXEL_COUNT];
+// Tip displacement of a rooted canopy element; independent of pixel recovery.
+static Vector2 s_natureForceBend[NATURE_INTERACTION_PIXEL_COUNT];
+static Vector2 s_natureForceVelocity[NATURE_INTERACTION_PIXEL_COUNT];
+static Vector2 s_natureForceBendScratch[NATURE_INTERACTION_PIXEL_COUNT];
+static Vector2 s_natureForceVelocityScratch[NATURE_INTERACTION_PIXEL_COUNT];
+static const float kNatureCanopyMassKg = 0.003f;
+static float s_natureForceDt;
+static bool s_natureForceAwake;
+
 static Vector2 s_natureInteractionCenter = {0};
 static bool s_natureInteractionReady = false;
 static bool s_natureInteractionOpen = false;
 static bool s_natureWindReceiverReady = false;
 static WindMacroConfig s_natureWindMacro = {0};
-static float s_natureInteractionHeight = 0.0f;
 static bool s_natureWindImpactEnabled = false;
 static Vector2 s_natureWindImpactCenter = {0};
 static Vector2 s_natureWindImpactDirection = {1.0f, 0.0f};
@@ -94,6 +106,7 @@ static float s_natureWindImpactRadius = 0.0f;
 static float s_natureWindImpactStrength = 0.0f;
 static float s_natureWindImpactAge = 0.0f;
 static int s_natureWindTraceDominantSlot = -1;
+static float s_natureWindTraceNextTime = 0.0f;
 static bool s_natureWindTraceVisibleUploaded = false;
 static bool s_natureWindTraceShadowUploaded = false;
 static MapNatureRenderStats s_natureRenderStats = {0};
@@ -384,17 +397,30 @@ static void Nature_ScrollAndDecayInteraction(Vector2 newCenter, float dt)
                 if (value.b < 2)
                     value = empty;
             }
+            int destination = y * NATURE_INTERACTION_RESOLUTION + x;
+            Vector2 bend = {0}, velocity = {0};
+            if (sourceX >= 0 && sourceX < NATURE_INTERACTION_RESOLUTION &&
+                sourceY >= 0 && sourceY < NATURE_INTERACTION_RESOLUTION) {
+                int source = sourceY * NATURE_INTERACTION_RESOLUTION + sourceX;
+                bend = s_natureForceBend[source];
+                velocity = s_natureForceVelocity[source];
+            }
+            s_natureForceBendScratch[destination] = bend;
+            s_natureForceVelocityScratch[destination] = velocity;
             s_natureInteractionScratch[y * NATURE_INTERACTION_RESOLUTION + x] = value;
         }
     }
     for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
         s_natureInteractionPixels[i] = s_natureInteractionScratch[i];
+    memcpy(s_natureForceBend, s_natureForceBendScratch, sizeof(s_natureForceBend));
+    memcpy(s_natureForceVelocity, s_natureForceVelocityScratch, sizeof(s_natureForceVelocity));
     s_natureInteractionCenter = newCenter;
 }
 
 void MapProp_BeginNatureInteraction(Vector3 focus, float dt)
 {
     Nature_InitInteraction();
+    s_natureForceDt = fminf(fmaxf(dt, 0.0f), 0.1f);
     if (!s_natureInteractionReady)
         return;
     float cellSize = kNatureInteractionWorldSize / NATURE_INTERACTION_RESOLUTION;
@@ -406,7 +432,6 @@ void MapProp_BeginNatureInteraction(Vector3 focus, float dt)
     Color empty = Nature_EmptyInteractionPixel();
     for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
         s_natureWindPixels[i] = empty;
-    s_natureInteractionHeight = focus.y;
     s_natureWindReceiverReady = false;
     s_natureWindImpactEnabled = false;
     s_natureInteractionOpen = true;
@@ -495,7 +520,6 @@ static int Nature_UpdateDominantWindImpact(const VorticleData *vorticles,
         roundf(focus->position.z / cellSize) * cellSize,
     };
     Nature_ScrollAndDecayInteraction(windCenter, 0.0f);
-    s_natureInteractionHeight = focus->position.y;
 
     // Vortex and turbulence have position-dependent direction fields. They
     // must stay in the rasterized receiver path; collapsing either to one
@@ -542,7 +566,9 @@ static int Nature_UpdateDominantWindImpact(const VorticleData *vorticles,
     s_natureWindImpactAge = fminf(fmaxf(age01, 0.0f), 1.0f);
     s_natureWindImpactEnabled = s_natureWindImpactStrength > 0.0001f;
     if (Nature_WindTraceEnabled() &&
-        s_natureWindTraceDominantSlot != directImpact) {
+        (s_natureWindTraceDominantSlot != directImpact ||
+         time >= s_natureWindTraceNextTime)) {
+        s_natureWindTraceNextTime = time + 0.5f;
         TraceLog(LOG_INFO,
                  "[WIND_TRACE] vegetation_receiver count=%d focus_slot=%d direct_slot=%d type=%d center=(%.2f,%.2f,%.2f) radius=%.2f bend=%.3f age=%.3f",
                  vorticleCount, strongestFocus, directImpact, (int)source->type,
@@ -554,6 +580,127 @@ static int Nature_UpdateDominantWindImpact(const VorticleData *vorticles,
     }
     s_natureWindTraceDominantSlot = directImpact;
     return directImpact;
+}
+
+// Rooted vegetation responds to force through material mass and flexure, never
+// free-body capture/arrival. Underdamped release gives an opposite return beat.
+static void Nature_AdvanceAnchoredCell(Vector2 *bend, Vector2 *velocity,
+                                      Vector3 forceNewtons, float dt)
+{
+    const float massKg = kNatureCanopyMassKg;
+    const float stiffnessNPerM = 0.30f;
+    const float dampingRatio = 0.30f;
+    const float damping = 2.0f * dampingRatio * sqrtf(stiffnessNPerM * massKg);
+    float step = fminf(fmaxf(dt, 0.0f), 1.0f / 120.0f);
+    float implicitDrag = 1.0f + damping * step / massKg;
+    velocity->x = (velocity->x + (forceNewtons.x - stiffnessNPerM * bend->x) * step / massKg) / implicitDrag;
+    velocity->y = (velocity->y + (forceNewtons.z - stiffnessNPerM * bend->y) * step / massKg) / implicitDrag;
+    bend->x += velocity->x * step;
+    bend->y += velocity->y * step;
+    float length = sqrtf(bend->x * bend->x + bend->y * bend->y);
+    if (length > kNatureInteractionMaxBend) {
+        Vector2 normal = {bend->x / length, bend->y / length};
+        bend->x = normal.x * kNatureInteractionMaxBend;
+        bend->y = normal.y * kNatureInteractionMaxBend;
+        float outwardSpeed = velocity->x * normal.x + velocity->y * normal.y;
+        if (outwardSpeed > 0.0f) {
+            velocity->x -= normal.x * outwardSpeed;
+            velocity->y -= normal.y * outwardSpeed;
+        }
+    }
+}
+
+static Vector3 Nature_AnchoredAirForce(Vector3 velocity, Vector3 airflow, float dt)
+{
+    // Only target-authored airflow is coupled here; ordinary Wind already has
+    // its own receiver path. A representative blade projects height * width.
+    float airSpeed2 = airflow.x * airflow.x + airflow.y * airflow.y + airflow.z * airflow.z;
+    if (airSpeed2 <= 0.00000001f) return (Vector3){0};
+    Vector3 relative = {airflow.x - velocity.x, airflow.y - velocity.y,
+                        airflow.z - velocity.z};
+    float speed = sqrtf(relative.x * relative.x + relative.y * relative.y + relative.z * relative.z);
+    const float airDensityKgM3 = 1.225f, dragCoefficient = 1.2f;
+    const float projectedAreaM2 = kNatureWindSampleHeight * 0.012f;
+    float drag = 0.5f * airDensityKgM3 * dragCoefficient * projectedAreaM2;
+    float forceScale = drag * speed;
+    if (dt > 0.0f) {
+        // Backward-Euler quadratic drag impulse: never overshoot target air
+        // velocity, even for a strong target field or a light canopy element.
+        float speedScale = 2.0f / (1.0f + sqrtf(1.0f + 4.0f * drag * speed * dt / kNatureCanopyMassKg));
+        forceScale = kNatureCanopyMassKg * (1.0f - speedScale) / dt;
+    }
+    return (Vector3){relative.x * forceScale, relative.y * forceScale,
+                     relative.z * forceScale};
+}
+
+static void Nature_AddAnchoredMotion(void)
+{
+    Vector3 minimum, maximum;
+    bool fieldsActive = MotionFields_GetAnchoredBounds(MOTION_RECEIVER_FOLIAGE, &minimum, &maximum);
+    if (!fieldsActive && !s_natureForceAwake)
+        return;
+    float cellSize = kNatureInteractionWorldSize / NATURE_INTERACTION_RESOLUTION;
+    float halfSize = kNatureInteractionWorldSize * 0.5f;
+    bool awake = false;
+    float maxBend = 0.0f;
+    int queryCells = 0;
+    int steps = (int)ceilf(s_natureForceDt * 120.0f);
+    if (steps < 1) steps = 1;
+    float step = s_natureForceDt / steps;
+    for (int y = 0; y < NATURE_INTERACTION_RESOLUTION; y++) {
+        for (int x = 0; x < NATURE_INTERACTION_RESOLUTION; x++) {
+            int index = y * NATURE_INTERACTION_RESOLUTION + x;
+            Vector2 *bend = &s_natureForceBend[index];
+            Vector2 *velocity = &s_natureForceVelocity[index];
+            Vector3 root = {
+                s_natureInteractionCenter.x - halfSize + (x + 0.5f) * cellSize,
+                0.0f,
+                s_natureInteractionCenter.y - halfSize + (y + 0.5f) * cellSize,
+            };
+            bool inBounds = fieldsActive && root.x >= minimum.x - kNatureInteractionMaxBend &&
+                root.x <= maximum.x + kNatureInteractionMaxBend &&
+                root.z >= minimum.z - kNatureInteractionMaxBend &&
+                root.z <= maximum.z + kNatureInteractionMaxBend;
+            float stateSize = fabsf(bend->x) + fabsf(bend->y) + fabsf(velocity->x) + fabsf(velocity->y);
+            if (!inBounds && stateSize < 0.001f) {
+                *bend = (Vector2){0}; *velocity = (Vector2){0};
+                continue;
+            }
+            if (inBounds) queryCells++;
+            float groundY = MapManager_GetGroundHeightAt(root.x, root.z);
+            if (!isfinite(groundY)) continue;
+            root.y = groundY + kNatureWindSampleHeight;
+            for (int substep = 0; substep < steps; substep++) {
+                MotionFieldSample sample = {0};
+                if (inBounds) {
+                    Vector3 position = {root.x + bend->x, root.y, root.z + bend->y};
+                    Vector3 tipVelocity = {velocity->x, 0.0f, velocity->y};
+                    MotionFields_SampleAnchored(position, tipVelocity, kNatureCanopyMassKg, step, MOTION_RECEIVER_FOLIAGE, &sample);
+                }
+                Vector3 tipVelocity = {velocity->x, 0.0f, velocity->y};
+                Vector3 airForce = Nature_AnchoredAirForce(tipVelocity, sample.airflowVelocity, step);
+                sample.forceNewtons.x += airForce.x;
+                sample.forceNewtons.z += airForce.z;
+                Nature_AdvanceAnchoredCell(bend, velocity, sample.forceNewtons, step);
+            }
+            maxBend = fmaxf(maxBend, sqrtf(bend->x * bend->x + bend->y * bend->y));
+            awake |= fabsf(bend->x) + fabsf(bend->y) + fabsf(velocity->x) + fabsf(velocity->y) >= 0.001f;
+            Vector2 windBend = Nature_DecodeInteractionPixel(s_natureWindPixels[index]);
+            s_natureWindPixels[index] = Nature_EncodeInteractionPixel((Vector2){
+                windBend.x + bend->x, windBend.y + bend->y,
+            });
+        }
+    }
+    s_natureForceAwake = awake;
+    if (Nature_WindTraceEnabled()) {
+        static float traceElapsed = 0.5f;
+        traceElapsed += s_natureForceDt;
+        if (traceElapsed >= 0.5f) {
+            TraceLog(LOG_INFO, "[MOTION] rooted_canopy fields=%d cells=%d max_tip_bend_m=%.3f awake=%d",
+                     fieldsActive, queryCells, maxBend, awake);
+            traceElapsed = 0.0f;
+        }
+    }
 }
 
 void MapProp_AddNatureWindVorticles(float time)
@@ -610,9 +757,14 @@ void MapProp_AddNatureWindVorticles(float time)
             for (int x = minX; x <= maxX; x++) {
                 Vector3 samplePosition = {
                     fieldMinX + ((float)x + 0.5f) * cellSize,
-                    s_natureInteractionHeight,
+                    0.0f,
                     fieldMinZ + ((float)y + 0.5f) * cellSize,
                 };
+                float groundY = MapManager_GetGroundHeightAt(samplePosition.x,
+                                                               samplePosition.z);
+                if (!isfinite(groundY))
+                    continue;
+                samplePosition.y = groundY + kNatureWindSampleHeight;
                 Vector3 airVelocity = Wind_EvaluateVorticleVelocity(vorticle,
                                                                      samplePosition,
                                                                      time);
@@ -631,6 +783,7 @@ void MapProp_AddNatureWindVorticles(float time)
             }
         }
     }
+    Nature_AddAnchoredMotion();
 }
 
 void MapProp_EndNatureInteraction(void)
@@ -678,10 +831,13 @@ void MapProp_ClearNatureInteraction(void)
     s_natureMacroRegion = (Vector4){0};
     s_natureInteractionCenter = (Vector2){0};
     s_natureInteractionReady = false;
+    memset(s_natureForceBend, 0, sizeof(s_natureForceBend));
+    memset(s_natureForceVelocity, 0, sizeof(s_natureForceVelocity));
+    s_natureForceAwake = false;
+    s_natureForceDt = 0.0f;
     s_natureInteractionOpen = false;
     s_natureWindReceiverReady = false;
     s_natureWindMacro = (WindMacroConfig){0};
-    s_natureInteractionHeight = 0.0f;
     s_natureWindImpactEnabled = false;
     s_natureWindImpactCenter = (Vector2){0};
     s_natureWindImpactDirection = (Vector2){1.0f, 0.0f};
@@ -1290,18 +1446,23 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
         SetShaderValue(shader, impactAgeLoc, &s_natureWindImpactAge, SHADER_UNIFORM_FLOAT);
     if (Nature_WindTraceEnabled() && windImpactEnabled != 0 &&
         !s_natureWindTraceVisibleUploaded) {
-        bool uniformsValid = worldFromShaderSpaceLoc >= 0 &&
+        // Expanded meshes recover world space through the inverse transform;
+        // parametric tufts already use their explicit world offset.
+        int worldOffsetLoc = GetShaderLocation(shader, "u_worldOffset");
+        bool uniformsValid = (worldFromShaderSpaceLoc >= 0 || worldOffsetLoc >= 0) &&
                              impactEnabledLoc >= 0 && impactCenterLoc >= 0 &&
                              impactDirectionLoc >= 0 && impactTypeLoc >= 0 &&
                              impactRadiusLoc >= 0 &&
                              impactStrengthLoc >= 0 && impactAgeLoc >= 0;
         TraceLog(uniformsValid ? LOG_INFO : LOG_WARNING,
-                 "[WIND_TRACE] vegetation_shader pass=visible shader=%u uniforms=%s enabled=%d type=%d center=(%.2f,%.2f) radius=%.2f bend=%.3f age=%.3f",
+                 "[WIND_TRACE] vegetation_shader pass=visible shader=%u uniforms=%s enabled=%d type=%d center=(%.2f,%.2f) radius=%.2f bend=%.3f age=%.3f locations=(world:%d offset:%d enabled:%d center:%d direction:%d type:%d radius:%d strength:%d age:%d)",
                  shader.id, uniformsValid ? "ok" : "MISSING", windImpactEnabled,
                  s_natureWindImpactType,
                  s_natureWindImpactCenter.x, s_natureWindImpactCenter.y,
                  s_natureWindImpactRadius, s_natureWindImpactStrength,
-                 s_natureWindImpactAge);
+                 s_natureWindImpactAge, worldFromShaderSpaceLoc, worldOffsetLoc,
+                 impactEnabledLoc, impactCenterLoc, impactDirectionLoc,
+                 impactTypeLoc, impactRadiusLoc, impactStrengthLoc, impactAgeLoc);
         s_natureWindTraceVisibleUploaded = true;
     }
     if (s_natureInteractionReady)
@@ -1387,18 +1548,23 @@ static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDir
         SetShaderValue(shader, impactAgeLoc, &s_natureWindImpactAge, SHADER_UNIFORM_FLOAT);
     if (Nature_WindTraceEnabled() && windImpactEnabled != 0 &&
         !s_natureWindTraceShadowUploaded) {
-        bool uniformsValid = worldFromShaderSpaceLoc >= 0 &&
+        // Expanded meshes recover world space through the inverse transform;
+        // parametric tufts already use their explicit world offset.
+        int worldOffsetLoc = GetShaderLocation(shader, "u_worldOffset");
+        bool uniformsValid = (worldFromShaderSpaceLoc >= 0 || worldOffsetLoc >= 0) &&
                              impactEnabledLoc >= 0 && impactCenterLoc >= 0 &&
                              impactDirectionLoc >= 0 && impactTypeLoc >= 0 &&
                              impactRadiusLoc >= 0 &&
                              impactStrengthLoc >= 0 && impactAgeLoc >= 0;
         TraceLog(uniformsValid ? LOG_INFO : LOG_WARNING,
-                 "[WIND_TRACE] vegetation_shader pass=shadow shader=%u uniforms=%s enabled=%d type=%d center=(%.2f,%.2f) radius=%.2f bend=%.3f age=%.3f",
+                 "[WIND_TRACE] vegetation_shader pass=shadow shader=%u uniforms=%s enabled=%d type=%d center=(%.2f,%.2f) radius=%.2f bend=%.3f age=%.3f locations=(world:%d offset:%d enabled:%d center:%d direction:%d type:%d radius:%d strength:%d age:%d)",
                  shader.id, uniformsValid ? "ok" : "MISSING", windImpactEnabled,
                  s_natureWindImpactType,
                  s_natureWindImpactCenter.x, s_natureWindImpactCenter.y,
                  s_natureWindImpactRadius, s_natureWindImpactStrength,
-                 s_natureWindImpactAge);
+                 s_natureWindImpactAge, worldFromShaderSpaceLoc, worldOffsetLoc,
+                 impactEnabledLoc, impactCenterLoc, impactDirectionLoc,
+                 impactTypeLoc, impactRadiusLoc, impactStrengthLoc, impactAgeLoc);
         s_natureWindTraceShadowUploaded = true;
     }
     if (s_natureInteractionReady)

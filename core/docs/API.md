@@ -298,6 +298,8 @@ _Inline helpers / macros only — see header._
   int MotionFields_GetGuideCount(void);
   int MotionFields_GetTargetCount(void);
   void MotionFields_Sample(Vector3 position, Vector3 velocity, float massKg, float dt, unsigned int mask, MotionReceiver *receiver, MotionFieldSample *sample);
+  void MotionFields_SampleAnchored(Vector3 position, Vector3 velocity, float massKg, float dt, unsigned int mask, MotionFieldSample *sample);
+  bool MotionFields_GetAnchoredBounds(unsigned int mask, Vector3 *minimum, Vector3 *maximum);
   MotionArrivalMode MotionFields_AdvanceReceiver(MotionReceiver *receiver, Vector3 previous, Vector3 current, Vector3 velocity);
   bool MotionFields_GetArrival(MotionFieldHandle guide, MotionArrivalProfile *out);
   bool MotionFields_Capture(MotionFieldHandle guide, Vector3 position, MotionReceiver *receiver);
@@ -797,6 +799,7 @@ _Inline helpers / macros only — see header._
   Vector3 Wind_EvaluateAcceleration(Vector3 pos, float time, Vector3 currentVel);
   Vector3 Wind_GetMacroAt(Vector3 pos, float time);
   float Wind_HeightFactor(float hRel);
+  void Wind_SetMotionAirflow(const VorticleData *sources, int count);
   const VorticleData* Wind_GetActiveVorticles(int *outCount);
   int Wind_GetActiveCount(void);
   void Wind_TriggerGuidingWind(Vector3 playerPos, Vector3 targetPos, float speed, float duration);

@@ -188,6 +188,8 @@ ForceField_AddLayer(&s_forceField, (ForceLayer){
 ### ForceLayer Types & Parameters Reference
 | ForceType | `origin` | `direction` | `strength` | `radius` | `falloff` | `noiseScale` | `noiseSpeed` |
 |---|---|---|---|---|
+| 2026-10-06 | Codex | Anchored Newton receiver and broadphase | core/motion/motion_fields.h; core/tests/motion_fields_test.c | Ground-truth |
+| 2026-10-06 | Codex | Guide airflow bridge | core/motion/motion_fields.h; core/wind/wind_system.h | Ground-truth |
 | 2026-10-05 | Codex | Shared motion/target flow, physical drag and SSF stream export | core/motion/motion_flow.h; core/motion/motion_fields.c; core/motion/motion_body.h; core/composition/common/vc_guided_particle.inl | Ground-truth |
 | 2026-10-05 | Codex | Independent mass-aware guide and target fields | core/motion/motion_fields.h; core/motion/motion_body.h; core/composition/visual_composer.h | Ground-truth |---|---|---|
 | `FORCE_GRAVITY_DIR` | Unused | Gravity vector (normalized) | Magnitude of acceleration | Unused | Unused | Unused | Unused |
@@ -2992,10 +2994,25 @@ registry. Wood foliage keeps its own render/orientation/contact logic and consum
 the shared translational integrator; material density can be supplied in
 `VFX_FoliageSpawnParams`. GPU scene vegetation remains on the existing Wind system.
 
+
+### Guide airflow for ambient tracers and anchored vegetation
+
+Set `MotionGuideDesc.affectWind = true` to publish a local Wind approximation alongside receiver steering. A pulse follows its advancing path head; a sustained guide uses three path samples. Forward speed, signed swirl and turbulence amplitudes become the existing gust/vortex/turbulence primitives. Zero swirl or turbulence omits that primitive. This is an approximation for Wind consumers, not the guide's exact curl-flow or capture controller. Free bodies still receive mass-dependent guide forces; anchored plants bend through their existing Wind response.
+
+The motion registry replaces its snapshot on create/update/stop/reset. It never spawns into or evicts the ordinary Wind pool. `Wind_GetActiveVorticles` combines motion first and ordinary sources second, capped at `MAX_VORTICLES`; CPU sampling uses the same bounded source set. Smaller GPU/vegetation upload limits can truncate the tail. Guide lifetime controls the snapshot, independently of arrival target fields; enabling airflow adds no arrival blast.
+
+### Rooted receivers
+
+`MotionFields_SampleAnchored` returns the same Newton force layers and target airflow for a rooted body. All overlapping guides compose. It samples guide centre attraction without free-particle lane capture; it does not emit arrival events, impulses or targets. Mass and timestep still control guide damping. `MotionFields_GetAnchoredBounds(mask, &min, &max)` returns conservative active-pulse/formation/target bounds for broadphase rejection; an empty registry returns false and zero bounds.
+
+An anchored receiver supplies its tip velocity and material mass, then integrates force against its own restoring spring and damping. Target airflow is converted to aerodynamic force by that receiver's projected area and drag coefficient. Free particles retain their existing capture and arrival lifecycle.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-06 | Codex | Anchored Newton receiver and broadphase | core/motion/motion_fields.h; core/tests/motion_fields_test.c | Ground-truth |
+| 2026-10-06 | Codex | Guide airflow bridge | core/motion/motion_fields.h; core/wind/wind_system.h | Ground-truth |
 | 2026-10-05 | Codex | Shared motion/target flow, physical drag and SSF stream export | core/motion/motion_flow.h; core/motion/motion_fields.c; core/motion/motion_body.h; core/composition/common/vc_guided_particle.inl | Ground-truth |
 | 2026-10-04 | Codex | Batched liquid capture, recipes, diagnostics | core/liquid/liquid_surface.h; core/liquid/liquid_body_recipe.h | Ground-truth |
 | 2026-10-05 | Codex | Immutable texture variants | core/resource_manager.h; core/resource_manager.c | Ground-truth |

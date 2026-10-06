@@ -78,6 +78,11 @@ typedef struct MotionGuideDesc {
   float duration, radius, pulseLength, speed;
   float maxForceNewtons;
   MotionFlowDesc flow;
+  /* Publish a bounded Wind approximation for tracers and anchored vegetation.
+   * Pulse follows the advancing path head; sustained uses three path samples.
+   * Uses existing gust/vortex/turbulence primitives, not exact curl noise.
+   * Defaults false; expires/stops with this guide, never spawns a target blast. */
+  bool affectWind;
   /* Smooth tube falloff is derived from geometry. Positive endpoint scales
    * interpolate by normalized arc length; zero means
    * 1 for backwards-compatible zero-initialized descriptors. */
@@ -127,6 +132,16 @@ int MotionFields_GetTargetCount(void);
 void MotionFields_Sample(Vector3 position, Vector3 velocity, float massKg,
                          float dt, unsigned int mask, MotionReceiver *receiver,
                          MotionFieldSample *sample);
+/* Rooted receivers query the same Newton fields without capture, lanes,
+ * arrival callbacks or lifetime actions. All overlapping guides compose;
+ * anchoring/restoring springs belong to the receiving object's material. */
+void MotionFields_SampleAnchored(Vector3 position, Vector3 velocity,
+                                 float massKg, float dt, unsigned int mask,
+                                 MotionFieldSample *sample);
+/* Conservative world AABB of live guide domains and target spheres. Returns
+ * false and zero bounds when empty. Use before expensive spatial queries. */
+bool MotionFields_GetAnchoredBounds(unsigned int mask, Vector3 *minimum,
+                                    Vector3 *maximum);
 /* After integration. Returns action only on first actual swept arrival;
  * fields/callback trigger once per guide, actions remain per receiver. */
 MotionArrivalMode MotionFields_AdvanceReceiver(MotionReceiver *receiver,

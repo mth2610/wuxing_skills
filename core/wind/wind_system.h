@@ -87,6 +87,12 @@ float Wind_HeightFactor(float hRel);
 // -----------------------------------------------------------------------------
 // Buffer & Inspection
 // -----------------------------------------------------------------------------
+/* Motion registry replaces this borrowed snapshot each simulation update.
+ * Copies at most 144 primitives; does not allocate/evict ordinary vorticles.
+ * GetActiveVorticles returns a combined snapshot capped at MAX_VORTICLES,
+ * with motion first so small vegetation/GPU upload budgets see active guides.
+ * CPU velocity sampling uses that same bounded set. NULL/0 clears it. */
+void Wind_SetMotionAirflow(const VorticleData *sources, int count);
 const VorticleData* Wind_GetActiveVorticles(int *outCount);
 int Wind_GetActiveCount(void);
 

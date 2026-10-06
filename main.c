@@ -16,6 +16,7 @@
 #include "core/atmosphere.h"
 #include "core/volumetric/volumetric_fog.h"
 #include "core/wind/wind_system.h"
+#include "core/motion/motion_fields.h"
 #include "sandbox/skill_debugger.h"
 #include "core/skill_manager.h"
 #include "core/trails/trail_system.h"
@@ -65,6 +66,44 @@
 Camera3D camera = {0};
 PlayerEntity player = {0};
 static float s_vfxPlayerYaw = 0.0f;
+
+/* Field-only environment probe: no synthetic particles or arrival blast. */
+static void CastEnvironmentGuide(Vector3 origin, float yaw)
+{
+    Vector3 forward = {sinf(yaw), 0.0f, cosf(yaw)};
+    Vector3 right = {forward.z, 0.0f, -forward.x};
+    Vector3 points[33];
+    origin.y += 0.85f;
+    for (int i = 0; i < 33; ++i) {
+        float t = (float)i / 32.0f;
+        float bend = 0.55f * sinf(t * 2.0f * PI) * sinf(t * PI);
+        points[i] = Vector3Add(origin, Vector3Add(Vector3Scale(forward, 12.0f * t), Vector3Scale(right, bend)));
+        points[i].y += 0.40f * sinf(t * PI);
+    }
+    MotionGuideDesc guide = MotionGuide_Default();
+    if (!MotionPath_Build(&guide.path, points, 33)) return;
+    guide.mode = MOTION_GUIDE_PULSE;
+    guide.formation = MOTION_FORMATION_STREAM;
+    /* About one character height in radius; a broad pickup mouth narrows
+     * into a readable stream. Velocities are m/s, actuator budget is Newtons. */
+    guide.radius = 2.0f;
+    guide.radiusScaleStart = 1.20f;
+    guide.radiusScaleEnd = 0.85f;
+    guide.preserveStreamLanes = true;
+    guide.pulseLength = 5.0f;
+    guide.speed = 3.0f;
+    // 0.22 N is about 4.5 times the weight of a 5 g leaf; acceleration
+    // remains F/m and gravity/buoyancy stay in the shared body integration.
+    guide.maxForceNewtons = 0.22f;
+    guide.duration = guide.path.length / guide.speed + 0.8f;
+    guide.attackTime = 0.25f;
+    guide.fadeTime = 0.8f;
+    guide.flow.turbulenceSpeedMps = 0.35f;
+    guide.flow.swirlSpeedMps = 1.8f;
+    guide.affectWind = true;
+    MotionFieldHandle handle = MotionFields_CreateGuide(&guide);
+    TraceLog(handle ? LOG_INFO : LOG_WARNING, "[MOTION] environment guide %s: 12m forward, swirl + turbulence, no blast", handle ? "cast" : "pool full");
+}
 
 #define WIND_TERRAIN_HALF_EXTENT 24.0f
 #define WIND_TERRAIN_RECENTER_DISTANCE 8.0f
@@ -277,6 +316,7 @@ int main(int argc, char **argv) {
   bool        captureVFXUI    = false;
   bool        captureSizeSet  = false;
   int         renderVFXIndex  = 0;
+  bool        captureGuide = false; // --render-guide: key-7 cast, without emitted fixture particles
   int         renderVFXWarmup = 90;
   const char *renderVFXOut    = "autotest_output/vfx_eval.png";
   const char *customMapName   = NULL;
@@ -306,6 +346,8 @@ int main(int argc, char **argv) {
           netJoinCode = argv[++i];
       else if (strcmp(argv[i], "--render-vfx") == 0 && i + 1 < argc)
           { renderVFXIndex = atoi(argv[++i]); renderVFXMode = true; }
+      else if (strcmp(argv[i], "--render-guide") == 0)
+          { captureGuide = true; renderVFXMode = true; }
       else if (strcmp(argv[i], "--render-neutral-smoke") == 0)
           { captureNeutralSmoke = true; renderVFXMode = true; }
       else if (strcmp(argv[i], "--capture-ui") == 0)
@@ -725,10 +767,14 @@ int main(int argc, char **argv) {
       currentScreen    = SCREEN_VFX_TESTER;
       player.position  = captureOrigin;
       player.position.y = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
-      if (captureNeutralSmoke) VFXTest_SetNeutralSmokeRenderTarget(player.position);
+      if (captureGuide) {
+          VFXTest_SetRenderTarget(999, player.position); // rendered background plate + character
+          CastEnvironmentGuide(player.position, s_vfxPlayerYaw);
+      }
+      else if (captureNeutralSmoke) VFXTest_SetNeutralSmokeRenderTarget(player.position);
       else VFXTest_SetRenderTarget(renderVFXIndex, player.position);
       TraceLog(LOG_INFO, "CAPTURE: fixture=%s index=%d",
-          captureNeutralSmoke ? "neutral-smoke" : "newfx",
+          captureGuide ? "environment-guide" : captureNeutralSmoke ? "neutral-smoke" : "newfx",
           captureNeutralSmoke ? -1 : renderVFXIndex);
       TraceLog(LOG_INFO, "CAPTURE: map=%s origin=%.3f,%.3f,%.3f warmup=%d tuning=%s",
           customMapName ? customMapName : (getenv("WUXING_MAP") ? getenv("WUXING_MAP") : "default"),
@@ -1269,6 +1315,10 @@ int main(int argc, char **argv) {
         }
         if (!renderVFXMode && (IsKeyPressed(KEY_FOUR) || IsKeyPressed(KEY_KP_4))) {
             CharacterModel_TriggerAttackTimed(&player.anim, CHAR_ANIM_PUNCH, 0.55f);
+        }
+
+        if (!renderVFXMode && (IsKeyPressed(KEY_SEVEN) || IsKeyPressed(KEY_KP_7))) {
+            CastEnvironmentGuide(player.position, s_vfxPlayerYaw);
         }
 
         CharacterModel_Update(&player.anim, dt, moved);

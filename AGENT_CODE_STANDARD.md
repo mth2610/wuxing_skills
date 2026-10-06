@@ -88,6 +88,9 @@
 ## 10. Core layer (`core/`, `environment/`, `maps/`, common shaders)
 
 ### 10.1 General
+- Rooted objects consume Motion Newton forces through their own mass/spring/damping; stateless queries must not capture free-particle lanes or fire arrival callbacks.
+- Anchored vegetation samples airflow near terrain/canopy height, not at the airborne source height; a horizontal-axis swirl has different bending directions at those heights.
+- Guide airflow for anchored vegetation must use the shared Wind source snapshot; do not spawn replacement vorticles every frame or confuse plant bending with free-body capture.
 - Liquid code uses `core/liquid/` and `Liquid*`; `core/fluid/` contains source-compatibility headers only.
 - New/changed core API must stay backward compatible with every skill caller — don't change existing signatures; add new functions or append-only struct fields instead.
 - Under rlvk, the `Shader` argument to `SetShaderValue` does not select the target program: activate it with `BeginShaderMode`, keep uniform upload plus dependent draws in that scope, then end it.
@@ -166,3 +169,5 @@
 | 2026-10-03 | Codex | §10.1 Texture upload identity and timestamp validation | maps/toolkit/map_props_nature.inl; third_party/vulkan/rlvk/rlvk_platform.inl; third_party/vulkan/rlvk/rlvk_renderpass.inl | Ground-truth |
 | 2026-10-03 | Codex | §7 Fog reconstruction | core/volumetric/shaders/volumetric_composite.fs; core/tests/volumetric_fog_composite_test.c | Ground-truth |
 | 2026-10-03 | Codex | §10.1 Prop lighting spaces | maps/toolkit/prop_lit.c; maps/toolkit/shaders/prop_lit.fs; maps/tests/test_prop_lighting_space.py | Ground-truth |
+| 2026-10-06 | Codex | §10.1 Guide/Wind snapshot ownership | core/motion/motion_fields.c; core/wind/wind_system.h | Ground-truth |
+| 2026-10-06 | Codex | §10.1 Vegetation airflow sampling height | maps/toolkit/map_props_nature.inl; maps/tests/test_nature_local_wind.py | Ground-truth |

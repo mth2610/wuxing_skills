@@ -5,6 +5,11 @@
 
 static VorticleData           s_vorticles[MAX_VORTICLES];
 static int                    s_activeCount = 0;
+#define WIND_MAX_MOTION_AIRFLOW 144
+static VorticleData s_motionAirflow[WIND_MAX_MOTION_AIRFLOW];
+static VorticleData s_combinedAirflow[MAX_VORTICLES];
+static int s_motionAirflowCount;
+
 static WindMacroConfig        s_macroConfig;
 static WindGuidingGust        s_guidingGust = {0};
 static TerrainHeightQueryFn   s_terrainQuery = NULL;
@@ -87,6 +92,7 @@ static float Wind_NoiseScalar3D(Vector3 p) {
 void Wind_Init(void) {
     memset(s_vorticles, 0, sizeof(s_vorticles));
     s_activeCount = 0;
+    s_motionAirflowCount = 0;
     memset(&s_guidingGust, 0, sizeof(s_guidingGust));
     s_terrainQuery = NULL;
     s_terrainUserData = NULL;
@@ -110,6 +116,7 @@ void Wind_Clear(void) {
         s_vorticles[i].active = false;
     }
     s_activeCount = 0;
+    s_motionAirflowCount = 0;
     s_guidingGust.active = false;
     s_guidingGust.intensity = 0.0f;
 }
@@ -515,7 +522,12 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
     }
 
     // 3. Tổng hợp từ mảng Vorticles cục bộ (Brute-force O(N) với N <= 256)
-    for (int i = 0; i < s_activeCount; i++) {
+    for (int i = 0; i < s_motionAirflowCount; ++i)
+        totalVel = Vector3Add(totalVel, Wind_EvaluateVorticleVelocity(&s_motionAirflow[i], pos, time));
+    int ordinaryCount = s_activeCount;
+    if (ordinaryCount > MAX_VORTICLES - s_motionAirflowCount)
+        ordinaryCount = MAX_VORTICLES - s_motionAirflowCount;
+    for (int i = 0; i < ordinaryCount; i++) {
         Vector3 localVelocity = Wind_EvaluateVorticleVelocity(&s_vorticles[i], pos, time);
         totalVel = Vector3Add(totalVel, localVelocity);
     }
@@ -606,13 +618,26 @@ Vector3 Wind_EvaluateAcceleration(Vector3 pos, float time, Vector3 currentVel) {
     return Vector3Scale(relVel, dragCoeff);
 }
 
+void Wind_SetMotionAirflow(const VorticleData *sources, int count) {
+    if (!sources || count < 0) count = 0;
+    if (count > WIND_MAX_MOTION_AIRFLOW) count = WIND_MAX_MOTION_AIRFLOW;
+    if (count) memcpy(s_motionAirflow, sources, (size_t)count * sizeof(*sources));
+    s_motionAirflowCount = count;
+}
+
 const VorticleData* Wind_GetActiveVorticles(int *outCount) {
-    if (outCount) *outCount = s_activeCount;
-    return s_vorticles;
+    int ordinaryCount = s_activeCount;
+    if (ordinaryCount > MAX_VORTICLES - s_motionAirflowCount)
+        ordinaryCount = MAX_VORTICLES - s_motionAirflowCount;
+    memcpy(s_combinedAirflow, s_motionAirflow, (size_t)s_motionAirflowCount * sizeof(VorticleData));
+    memcpy(s_combinedAirflow + s_motionAirflowCount, s_vorticles, (size_t)ordinaryCount * sizeof(VorticleData));
+    if (outCount) *outCount = ordinaryCount + s_motionAirflowCount;
+    return s_combinedAirflow;
 }
 
 int Wind_GetActiveCount(void) {
-    return s_activeCount;
+    int count = s_activeCount + s_motionAirflowCount;
+    return count > MAX_VORTICLES ? MAX_VORTICLES : count;
 }
 
 // -----------------------------------------------------------------------------

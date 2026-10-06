@@ -394,7 +394,93 @@ static void TestSharedFlowStages(void) {
   CHECK(!MotionFields_CreateGuide(&g), "invalid arrival flow is rejected before allocation");
   MotionFields_Reset();
 }
+static void TestWindBridge(void) {
+  Wind_Init(); MotionFields_Reset();
+  WindMacroConfig macro = {0}; Wind_SetMacro(&macro);
+  Vector3 points[] = {{0, 0.65f, 0}, {0, 0.65f, 12}};
+  MotionGuideDesc g = MotionGuide_Default();
+  MotionPath_Build(&g.path, points, 2);
+  g.mode = MOTION_GUIDE_PULSE; g.affectWind = true;
+  g.flow.swirlSpeedMps = 2.4f; g.flow.turbulenceSpeedMps = 0.8f;
+  MotionFieldHandle h = MotionFields_CreateGuide(&g);
+  int count = 0; const VorticleData *v = Wind_GetActiveVorticles(&count);
+  CHECK(count == 3 && v[0].type == VORTICLE_LINEAR_GUST && v[1].type == VORTICLE_VORTEX && v[2].type == VORTICLE_TURBULENCE,
+        "guide publishes gust, swirl and turbulence to common Wind upload");
+  MotionFields_Update(1);
+  v = Wind_GetActiveVorticles(&count);
+  CHECK(fabsf(v[0].position.z - 4) < 0.001f, "airflow head advances along guide path");
+  Vector3 at = v[0].position;
+  Vector3 sum = {0};
+  for (int i = 0; i < count; ++i) sum = Vector3Add(sum, Wind_EvaluateVorticleVelocity(&v[i], at, 1));
+  Vector3 sampled = Wind_EvaluateVelocity(at, 1);
+  CHECK(MotionVec_Length(MotionVec_Sub(sum, sampled)) < 0.0001f && sampled.z > 3,
+        "ambient CPU wind equals uploaded local primitive sum");
+  CHECK(MotionVec_Length(Wind_EvaluateVelocity((Vector3){10,0,4},1)) == 0,
+        "guide airflow stays local rather than changing global wind");
+  Wind_SpawnGust((Vector3){20,0,0}, (Vector3){1,0,0}, 1, 2, 5);
+  MotionFields_Stop(h);
+  const VorticleData *remaining = Wind_GetActiveVorticles(&count);
+  CHECK(count == 1 && remaining[0].position.x == 20 && MotionFields_GetTargetCount() == 0,
+        "stopping guide clears its airflow without blast or removing unrelated wind");
+  Wind_Clear();
+  g.flow.swirlSpeedMps = g.flow.turbulenceSpeedMps = 0;
+  MotionFields_CreateGuide(&g);
+  CHECK(Wind_GetActiveCount() == 1, "zero swirl and turbulence omit both primitives");
+  MotionFields_Update(g.duration);
+  CHECK(Wind_GetActiveCount() == 0, "guide expiry clears Wind snapshot");
+  g.mode = MOTION_GUIDE_SUSTAINED;
+  g.flow.swirlSpeedMps = 1;
+  MotionFields_CreateGuide(&g);
+  CHECK(Wind_GetActiveCount() == 6, "sustained guide publishes bounded path samples");
+  MotionFields_Reset();
+  CHECK(Wind_GetActiveCount() == 0, "registry reset clears borrowed Wind sources");
+  Wind_Unload();
+}
+
+static void TestAnchoredReceivers(void) {
+  MotionFields_Reset();
+  Vector3 lo, hi;
+  CHECK(!MotionFields_GetAnchoredBounds(MOTION_RECEIVER_ALL,&lo,&hi), "empty registry skips anchored spatial work");
+  Vector3 points[]={{0,1,0},{10,1,0}};
+  MotionGuideDesc g=MotionGuide_Default();
+  MotionPath_Build(&g.path,points,2);
+  g.radius=2;g.speed=3;g.maxForceNewtons=.22f;
+  g.preserveStreamLanes=true;g.receiverMask=MOTION_RECEIVER_FOLIAGE;
+  g.arrival.callback=CountEvent;g.arrival.userData=&events;
+  MotionFields_CreateGuide(&g);
+  MotionFieldSample left,right,freeBody;
+  MotionFields_SampleAnchored((Vector3){3,1,-1},(Vector3){3,0,0},.003f,0,MOTION_RECEIVER_FOLIAGE,&left);
+  MotionFields_SampleAnchored((Vector3){3,1,1},(Vector3){3,0,0},.003f,0,MOTION_RECEIVER_FOLIAGE,&right);
+  CHECK(left.forceNewtons.z>.20f && right.forceNewtons.z<-.20f,
+        "rooted plants on opposite sides pull toward the guide in opposite directions");
+  MotionFields_Sample((Vector3){3,1,1},(Vector3){3,0,0},.003f,0,MOTION_RECEIVER_FOLIAGE,NULL,&freeBody);
+  CHECK(fabsf(freeBody.forceNewtons.z)<.001f,
+        "anchored sampling ignores free-body lane preservation without changing free receivers");
+  int before=events;
+  MotionFields_SampleAnchored((Vector3){10,1,0},(Vector3){0},.003f,.01f,MOTION_RECEIVER_FOLIAGE,&right);
+  CHECK(events==before && MotionFields_GetTargetCount()==0,
+        "anchored query never fires arrival callbacks or creates an impact");
+  MotionFields_CreateGuide(&g);
+  MotionFields_SampleAnchored((Vector3){3,1,-1},(Vector3){3,0,0},.003f,0,MOTION_RECEIVER_FOLIAGE,&right);
+  CHECK(fabsf(right.forceNewtons.z-2*left.forceNewtons.z)<.0001f,
+        "all overlapping guide Newton forces superpose for rooted receivers");
+  MotionFields_SampleAnchored((Vector3){3,1,-1},(Vector3){0},.003f,0,MOTION_RECEIVER_PARTICLE,&right);
+  CHECK(MotionVec_Length(right.forceNewtons)==0,
+        "anchored force query respects receiver masks");
+  MotionFields_Reset();g.mode=MOTION_GUIDE_PULSE;g.pulseLength=2;
+  MotionFields_CreateGuide(&g);
+  CHECK(MotionFields_GetAnchoredBounds(MOTION_RECEIVER_FOLIAGE,&lo,&hi) && hi.x<=3.001f && hi.x>=3 && lo.z<=-2 && hi.z>=2,
+        "pulse broadphase encloses active tube without scanning its distant path");
+  MotionTargetDesc target=MotionTarget_Default();target.center=(Vector3){30,1,0};target.radius=3;
+  MotionFields_CreateTarget(&target);
+  CHECK(MotionFields_GetAnchoredBounds(MOTION_RECEIVER_ALL,&lo,&hi) && hi.x>=33,
+        "independent target domains are included in anchored broadphase");
+  MotionFields_Reset();
+}
+
 int main(void) {
+  TestWindBridge();
+  TestAnchoredReceivers();
   MotionFields_Reset();
   Vector3 points[] = {{0, 1, 0}, {3, 1, 0}, {6, 1, 0}};
   MotionGuideDesc g = MotionGuide_Default();
