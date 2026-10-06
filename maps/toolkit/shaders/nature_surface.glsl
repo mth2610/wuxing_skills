@@ -102,6 +102,11 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float totalTerrainBlend = 1.0 - (1.0 - flattenFactor) * (1.0 - groundBlend);
     vec3 n = normalize(mix(faceNormal, terrainNormal, totalTerrainBlend));
 
+    // Root-to-ground color blending: softly ground lower stems and reeds into soil
+    vec3 soilTone = vec3(0.18, 0.15, 0.09);
+    float stemRootBlend = (1.0 - smoothstep(0.0, 0.22, heightAlongPlant)) * (1.0 - bloomMask) * 0.65;
+    baseColor = mix(baseColor, soilTone, stemRootBlend);
+
     // Ghost of Tsushima Wrapped Diffuse Lighting:
     // I_diffuse = ((N · L + w) / (1 + w))^2
     // Quadratic falloff wraps light gently around curved foliage without harsh terminators
@@ -114,17 +119,17 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     // and forward-scatter when looking toward the sun (Ghost of Tsushima / CryEngine foliage).
     float backfaceSun = max(-dot(faceNormal, u_lightDir), 0.0);
     float viewSunAlign = max(dot(-u_lightDir, viewDir), 0.0);
-    float transmissionAngle = pow(backfaceSun, 1.5) * 0.70 + pow(viewSunAlign, 2.0) * 0.50;
+    float transmissionAngle = pow(backfaceSun, 1.4) * 0.70 + pow(viewSunAlign, 2.0) * 0.60;
     // Petals have omnidirectional membrane diffusion (sunlight penetrating and lighting the delicate petal body)
     float petalDiffusion = (0.28 + 0.72 * wrapped);
     transmissionAngle = mix(transmissionAngle, max(transmissionAngle, petalDiffusion * 0.75), bloomMask);
     float thinness = mix(0.20, 1.0, smoothstep(0.06, 0.65, heightAlongPlant));
     float transmission = transmissionAngle * thinness;
 
-    // Subsurface scattering color: radiant emerald-gold transmission
+    // Subsurface scattering color: radiant emerald-gold transmission for foliage/stems, warm translucent glow for petals
     vec3 subsurfaceColor = mix(
-        baseColor * vec3(1.48, 1.40, 0.62), // Grass: radiant emerald-gold backlit transmission
-        baseColor * vec3(1.45, 1.25, 0.90) + vec3(0.08, 0.04, 0.02), // Petals: warm translucent glow
+        baseColor * vec3(1.65, 1.80, 0.55) + vec3(0.05, 0.08, 0.02), // Reeds/stems: radiant emerald-gold backlit transmission
+        baseColor * vec3(1.48, 1.28, 0.92) + vec3(0.08, 0.04, 0.02), // Petals: warm translucent glow
         bloomMask
     );
 
@@ -203,6 +208,13 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     // No textures, alpha discard, or additional geometry are required.
     float rib = 1.0 - smoothstep(0.0, 0.32, abs(uTransverse));
     baseColor *= 1.0 + (rib - 0.35) * 0.09 * (1.0 - unresolved);
+
+    // AAA Technique: Root-to-Ground Color Blending (Ghost of Tsushima / Where Winds Meet)
+    // Softly transitions blade base into rich, warm earth humus/soil tone to anchor roots
+    vec3 soilTone = vec3(0.18, 0.15, 0.09);
+    float rootBlend = (1.0 - smoothstep(0.0, 0.24, h)) * 0.68;
+    baseColor = mix(baseColor, soilTone, rootBlend);
+
     float wrapped = clamp((dot(n, u_lightDir) + 0.42) / 1.42, 0.0, 1.0);
     float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, u_lightDir, worldPosition, distToCam);
     float canopy = mix(0.48, 1.0, h * (2.0 - h));
@@ -237,13 +249,15 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float tipGlint = pow(sinTH, 12.0) * smoothstep(0.40, 1.0, h) * (1.0 - antiShimmer * 0.65);
     vec3 velvetGlint = vec3(1.25, 1.20, 0.80) * tipGlint * 0.14;
 
-    // Chlorophyll translucency: warm emerald-gold backlight through leaf membrane
+    // Chlorophyll translucency: radiant emerald-gold backlight through leaf membrane
     float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
     float backLight = max(-dot(faceNormal, u_lightDir), 0.0);
-    float transmission = (pow(backLight, 1.5) * 0.58
-                        + pow(forwardScatter, 2.8) * 0.42)
-                        * smoothstep(0.18, 0.95, h);
-    vec3 translucentColor = baseColor * vec3(1.60, 1.52, 0.42) + vec3(0.05, 0.08, 0.01);
+    float forwardLobe = pow(forwardScatter, 2.0);
+    float backLobe = pow(backLight, 1.4);
+    float edgeThinness = 0.75 + 0.50 * abs(uTransverse);
+    float transmission = (backLobe * 0.65 + forwardLobe * 0.60)
+                        * smoothstep(0.10, 0.75, h) * edgeThinness;
+    vec3 translucentColor = baseColor * vec3(1.65, 1.85, 0.55) + vec3(0.06, 0.10, 0.02);
 
     // Physical daylight optics:
     // Direct solar irradiance (diffuse wrap, anisotropic specular, velvet tip glint,
@@ -253,11 +267,11 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 directSunTerms = baseColor * (wrapped * wrapped * 1.05)
                         + anisoSpec * vec3(1.0, 1.02, 0.95)
                         + velvetGlint
-                        + translucentColor * (transmission * 0.92);
+                        + translucentColor * (transmission * 1.10);
     vec3 directSun = directSunTerms * u_lightColor * canopy * sunVis;
 
     // Diffuse skylight transmission through leaf membrane (soft emerald ambient glow)
-    vec3 skyTrans = translucentColor * (transmission * 0.22) * skyAmbient;
+    vec3 skyTrans = translucentColor * (transmission * 0.28) * skyAmbient;
 
     lit += directSun + skyTrans + waxSheen;
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);
