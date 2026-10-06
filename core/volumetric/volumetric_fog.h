@@ -41,4 +41,16 @@ float VolumetricFog_GetGodRayIntensity(void);
 void VolumetricFog_SetDistantCoverage(float areaRatio);
 float VolumetricFog_GetDistantCoverage(void);
 
+typedef enum {
+    FOG_MODE_VOLUMETRIC = 0, // Full 3D raymarching with light shafts
+    FOG_MODE_HEIGHT     = 1, // Analytical closed-form exponential height fog (ultra-fast)
+    FOG_MODE_OFF        = 2, // Disabled
+} FogRenderMode;
+
+// Cấu hình chế độ dựng hình sương mù
+void          Fog_SetRenderMode(FogRenderMode mode);
+FogRenderMode Fog_GetRenderMode(void);
+const char*   Fog_GetRenderModeName(FogRenderMode mode);
+void          Fog_CycleRenderMode(void);
+
 #endif // VOLUMETRIC_FOG_H

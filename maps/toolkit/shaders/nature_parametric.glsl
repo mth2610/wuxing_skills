@@ -127,6 +127,14 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     float halfWidth = p1.w * 0.5 * max(profile,role < 1.5 ? 0.08 : 0.03);
     position = center + side*halfWidth*sideSign + geometricNormal*halfWidth*0.18;
     if (role > 2.5) position = center;
+#ifdef NATURE_VISIBLE_TUFT_LOD
+    vec3 worldRoot = p0.xyz + u_worldOffset;
+    float distToCam = distance(worldRoot, u_tuftLodCamera);
+    if (distToCam > 38.0) {
+        float perimeterFade = clamp(1.0 - (distToCam - 38.0) / 18.0, 0.0, 1.0);
+        position = p0.xyz + (position - p0.xyz) * perimeterFade;
+    }
+#endif
     vec3 sphereDirection = normalize(position - (clump.xyz-vec3(0.0,0.04,0.0)));
     vec3 target = normalize(mix(sphereDirection,vec3(0.0,1.0,0.0),role > 2.5 ? 0.55 : 0.45));
     vec3 meshNormal = normalize(geometricNormal + side*sideSign*(role < 1.5 ? 0.35 : 0.32));

@@ -1127,7 +1127,7 @@ int main(int argc, char **argv) {
         CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_VFX_TESTER) {
         static float vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
-        static float vfxCamDist = SANDBOX_CAMERA_DEFAULT_DISTANCE;
+        static float vfxCamDist = 14.50f; // Zoom 1.25x default
         static float vfxCamPitch = SANDBOX_CAMERA_PITCH_DEGREES;
 
         static float s_vfxPlayerVelY = 0.0f;
@@ -1145,7 +1145,7 @@ int main(int argc, char **argv) {
             s_vfxPlayerVelY = 0.0f;
             s_vfxPlayerJumping = false;
             vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
-            vfxCamDist = SANDBOX_CAMERA_DEFAULT_DISTANCE;
+            vfxCamDist = 14.50f; // Zoom 1.25x default
             vfxCamPitch = SANDBOX_CAMERA_PITCH_DEGREES;
         }
 
@@ -1163,6 +1163,10 @@ int main(int argc, char **argv) {
                 Environment_SetAmbientColor(s_vfxSavedAmbient);
                 Environment_SetSunColor(s_vfxSavedSun);
             }
+        }
+
+        if (!renderVFXMode && IsKeyPressed(KEY_F)) {
+            Fog_CycleRenderMode();
         }
 
         float groundY = MapManager_GetGroundHeightAt(player.position.x, player.position.z);

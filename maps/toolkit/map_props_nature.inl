@@ -2430,7 +2430,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             float fdx = camera.position.x - camera.target.x;
             float fdz = camera.position.z - camera.target.z;
             float focalDist = sqrtf(fdx * fdx + fdz * fdz);
-            float farThreshold = lodDistance + (spatialHash - 0.5f) * 4.0f;
+            float farThreshold = focalDist + lodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 4.0f;
             float midThreshold = (meadow->midLodDistance > 0.0f && chunk->midReady) ?
                                  (focalDist + meadow->midLodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 2.5f) : 0.0f;
             float hysteresis = quality >= GFX_HIGH ? 1.1f : 1.8f;

@@ -14,7 +14,7 @@
 #define SANDBOX_CAMERA_HEIGHT_RATIO 0.62f
 #define SANDBOX_CAMERA_TARGET_HEIGHT 1.2f
 #define SANDBOX_CAMERA_DEFAULT_FOVY 45.0f
-#define SANDBOX_CAMERA_PITCH_DEGREES 18.0f
+#define SANDBOX_CAMERA_PITCH_DEGREES 20.0f
 
 // Preserve the previous camera-to-target radius at every zoom setting while
 // lowering elevation. HEIGHT_RATIO defines that legacy radius, not new pitch.

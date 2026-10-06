@@ -23,6 +23,7 @@
 #include "core/ribbon_strip.h"
 #include "core/map_manager.h"
 #include "core/wind/wind_system.h"
+#include "core/volumetric/volumetric_fog.h"
 
 #define TEST_PATH_POINT_COUNT 16
 static Vector3 s_testPathPoints[TEST_PATH_POINT_COUNT];
@@ -810,7 +811,7 @@ static Rectangle s_vfxArmedButton;
 static int s_vfxInspectorScroll = 0;
 static int s_vfxBrowserScroll = 0;
 static float s_vfxTelemetryFps, s_vfxTelemetryFrameMs, s_vfxTelemetryPeakMs;
-static float s_vfxTelemetryTilt = 18.0f, s_vfxTelemetryDistance = 20.571864f, s_vfxTelemetryZoom = 1.0f;
+static float s_vfxTelemetryTilt = 20.0f, s_vfxTelemetryDistance = 16.46f, s_vfxTelemetryZoom = 1.25f;
 static int s_vfxPendingTiltStep;
 
 void VFXTest_SetPerformanceTelemetry(float fps, float frameTimeMs, float peakFrameMs)
@@ -854,7 +855,7 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
     float statusBottom = top + 40.0f;
     if (w >= 900.0f) {
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){178.0f + i * 76.0f, top, 76.0f, 40.0f};
-        ui.cameraStatus = (Rectangle){412.0f, top, w - 690.0f, 40.0f};
+        ui.cameraStatus = (Rectangle){412.0f, top, 240.0f, 40.0f};
     } else {
         ui.header.height = 116.0f;
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){18.0f + i * ((w - 36.0f) / 3.0f), top + 40.0f, (w - 36.0f) / 3.0f, 36.0f};
@@ -879,8 +880,8 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
 
 static Rectangle VFXTest_UIHeaderButton(VFXTest_UILayout ui, int index)
 {
-    float width = ui.header.width < 580.0f ? 56.0f : 76.0f;
-    return (Rectangle){ui.header.x + ui.header.width - (3 - index) * (width + 6.0f) - 4.0f,
+    float width = ui.header.width < 640.0f ? 52.0f : 74.0f;
+    return (Rectangle){ui.header.x + ui.header.width - (4 - index) * (width + 6.0f) - 4.0f,
                        ui.header.y + 5.0f, width, 30.0f};
 }
 
@@ -1028,8 +1029,9 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
     if (s_clickedOnUI && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) s_vfxPointerCaptured = true;
     bool back = false;
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 0))) { s_isPanelOpen = !s_isPanelOpen; s_vfxHelpOpen = false; }
-    if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 1))) { s_vfxHelpOpen = !s_vfxHelpOpen; s_isPanelOpen = false; }
-    if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 2))) back = true;
+    if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 1))) { Fog_CycleRenderMode(); }
+    if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 2))) { s_vfxHelpOpen = !s_vfxHelpOpen; s_isPanelOpen = false; }
+    if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 3))) back = true;
     if (!s_isPanelOpen && !s_vfxHelpOpen) {
         if (VFXTest_UIButtonReleased(VFXTest_UITiltButton(ui, -1))) s_vfxPendingTiltStep = -1;
         if (VFXTest_UIButtonReleased(VFXTest_UITiltButton(ui, 1))) s_vfxPendingTiltStep = 1;
@@ -1114,8 +1116,11 @@ static void VFXTest_UIDraw(void)
     if (GetScreenWidth() >= 900) title.width = 150.0f;
     VFXTest_UIText(name, title, 14, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 0), "Fixtures", s_isPanelOpen);
-    VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), "Help", s_vfxHelpOpen);
-    VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Back", false);
+    const char *fogShort = Fog_GetRenderMode() == FOG_MODE_HEIGHT ? "Fog: Hgt"
+                         : (Fog_GetRenderMode() == FOG_MODE_VOLUMETRIC ? "Fog: Vol" : "Fog: Off");
+    VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), fogShort, Fog_GetRenderMode() != FOG_MODE_OFF);
+    VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Help", s_vfxHelpOpen);
+    VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 3), "Back", false);
     const char *variant = VFXTest_UIActiveVariant();
     if (variant) VFXTest_UIText(TextFormat("%s   |   < / > preset", variant),
                              (Rectangle){12.0f, ui.header.y + ui.header.height + 6.0f, fmaxf(180.0f, GetScreenWidth() - 340.0f), 24.0f}, 12, SKYBLUE);

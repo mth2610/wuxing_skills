@@ -26,10 +26,34 @@ static int s_fullHeight = 0;
 static int s_lowWidth = 0;
 static int s_lowHeight = 0;
 
+static FogRenderMode s_fogRenderMode = FOG_MODE_HEIGHT;
+
 static RenderTexture2D s_volumetricTarget;
 static Shader          s_raymarchShader;
 static Shader          s_compositeShader;
+static Shader          s_heightFogShader;
 static Texture2D       s_jitterTex;
+
+// Uniform locations — height fog
+static int s_locHfInvViewProj;
+static int s_locHfCamPos;
+static int s_locHfViewForward;
+static int s_locHfSunDir;
+static int s_locHfSunColor;
+static int s_locHfFogColor;
+static int s_locHfFogDensity;
+static int s_locHfFogStart;
+static int s_locHfMaxDist;
+static int s_locHfHeightFalloff;
+static int s_locHfBaseAltitude;
+static int s_locHfSigmoidEnabled;
+static int s_locHfSigmoidParams;
+static int s_locHfMieAnisotropy;
+static int s_locHfGodRayIntensity;
+static int s_locHfVolumeCount;
+static int s_locHfVolPosShape;
+static int s_locHfVolExtentsDense;
+static int s_locHfVolColorSoft;
 
 // Uniform locations — raymarch
 static int s_locDepthTex;
@@ -147,6 +171,30 @@ void VolumetricFog_Init(int width, int height) {
     s_locCompLowTexel      = GetShaderLocation(s_compositeShader, "u_lowResTexel");
     s_locCompDepthThreshold= GetShaderLocation(s_compositeShader, "u_depthThreshold");
 
+    s_heightFogShader = LoadShader(NULL, "core/volumetric/shaders/height_fog.fs");
+    s_locHfInvViewProj        = GetShaderLocation(s_heightFogShader, "u_invViewProj");
+    s_locHfCamPos             = GetShaderLocation(s_heightFogShader, "u_camPos");
+    s_locHfViewForward        = GetShaderLocation(s_heightFogShader, "u_viewForward");
+    s_locHfSunDir             = GetShaderLocation(s_heightFogShader, "u_sunDir");
+    s_locHfSunColor           = GetShaderLocation(s_heightFogShader, "u_sunColor");
+    s_locHfFogColor           = GetShaderLocation(s_heightFogShader, "u_fogColor");
+    s_locHfFogDensity         = GetShaderLocation(s_heightFogShader, "u_fogDensity");
+    s_locHfFogStart           = GetShaderLocation(s_heightFogShader, "u_fogStart");
+    s_locHfMaxDist            = GetShaderLocation(s_heightFogShader, "u_maxDist");
+    s_locHfHeightFalloff      = GetShaderLocation(s_heightFogShader, "u_heightFalloff");
+    s_locHfBaseAltitude       = GetShaderLocation(s_heightFogShader, "u_baseAltitude");
+    s_locHfSigmoidEnabled     = GetShaderLocation(s_heightFogShader, "u_sigmoidEnabled");
+    s_locHfSigmoidParams      = GetShaderLocation(s_heightFogShader, "u_sigmoidParams");
+    s_locHfMieAnisotropy      = GetShaderLocation(s_heightFogShader, "u_mieAnisotropy");
+    s_locHfGodRayIntensity    = GetShaderLocation(s_heightFogShader, "u_godRayIntensity");
+    s_locHfVolumeCount        = GetShaderLocation(s_heightFogShader, "u_volumeCount");
+    s_locHfVolPosShape        = GetShaderLocation(s_heightFogShader, "u_volPosShape");
+    if (s_locHfVolPosShape < 0) s_locHfVolPosShape = GetShaderLocation(s_heightFogShader, "u_volPosShape[0]");
+    s_locHfVolExtentsDense    = GetShaderLocation(s_heightFogShader, "u_volExtentsDense");
+    if (s_locHfVolExtentsDense < 0) s_locHfVolExtentsDense = GetShaderLocation(s_heightFogShader, "u_volExtentsDense[0]");
+    s_locHfVolColorSoft       = GetShaderLocation(s_heightFogShader, "u_volColorSoft");
+    if (s_locHfVolColorSoft < 0) s_locHfVolColorSoft = GetShaderLocation(s_heightFogShader, "u_volColorSoft[0]");
+
     s_ready = true;
 }
 
@@ -155,6 +203,7 @@ void VolumetricFog_Unload(void) {
     UnloadRenderTexture(s_volumetricTarget);
     UnloadShader(s_raymarchShader);
     UnloadShader(s_compositeShader);
+    UnloadShader(s_heightFogShader);
     if (s_jitterTex.id != 0) UnloadTexture(s_jitterTex);
     s_jitterTex = (Texture2D){0};
     s_ready = false;
@@ -163,6 +212,27 @@ void VolumetricFog_Unload(void) {
 void VolumetricFog_Resize(int width, int height) {
     if (!s_ready) return;
     VolumetricFog_Init(width, height);
+}
+
+void Fog_SetRenderMode(FogRenderMode mode) {
+    s_fogRenderMode = mode;
+}
+
+FogRenderMode Fog_GetRenderMode(void) {
+    return s_fogRenderMode;
+}
+
+const char* Fog_GetRenderModeName(FogRenderMode mode) {
+    switch (mode) {
+        case FOG_MODE_VOLUMETRIC: return "Volumetric";
+        case FOG_MODE_HEIGHT:     return "Height Fog";
+        case FOG_MODE_OFF:        return "Off";
+        default:                  return "Unknown";
+    }
+}
+
+void Fog_CycleRenderMode(void) {
+    s_fogRenderMode = (FogRenderMode)((s_fogRenderMode + 1) % 3);
 }
 
 bool VolumetricFog_IsEnabled(void) { return s_enabled && s_tuningEnabled > 0.5f; }
@@ -182,7 +252,8 @@ void VolumetricFog_PreFrame(void) {
         Tuning_RegisterFloat("volumetric_fog_enabled", &s_tuningEnabled, 1.0f);
     }
     if (!s_ready || !VolumetricFog_IsEnabled()) return;
-    if (GfxQuality_Get() <= GFX_LOW) return;
+    if (s_fogRenderMode == FOG_MODE_OFF) return;
+    if (s_fogRenderMode == FOG_MODE_VOLUMETRIC && GfxQuality_Get() <= GFX_LOW) return;
     AtmosphereProfile atmos = Environment_GetAtmosphereProfile();
     if (!atmos.enabled) return;
     SceneTargets_RequestSoftDepthRegion((Rectangle){ 0, 0, (float)s_fullWidth, (float)s_fullHeight });
@@ -190,9 +261,10 @@ void VolumetricFog_PreFrame(void) {
 
 void VolumetricFog_Render(Camera3D camera) {
     if (!s_ready || !VolumetricFog_IsEnabled()) return;
+    if (s_fogRenderMode == FOG_MODE_OFF) return;
 
     GfxQuality tier = GfxQuality_Get();
-    if (tier <= GFX_LOW) return; // Keep mobile/low-end lightweight (runs forward height fog instead)
+    if (s_fogRenderMode == FOG_MODE_VOLUMETRIC && tier <= GFX_LOW) return;
 
     AtmosphereProfile atmos = Environment_GetAtmosphereProfile();
     if (!atmos.enabled) return;
@@ -280,6 +352,43 @@ void VolumetricFog_Render(Camera3D camera) {
             volColorSoft[volCount] = (Vector4){ (float)v->color.r / 255.0f, (float)v->color.g / 255.0f, (float)v->color.b / 255.0f, v->edgeSoftness };
             volCount++;
         }
+    }
+
+    if (s_fogRenderMode == FOG_MODE_HEIGHT) {
+        SceneTargets_BeginVFXBody();
+        BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
+        BeginShaderMode(s_heightFogShader);
+
+        SetShaderValueMatrix(s_heightFogShader, s_locHfInvViewProj, invViewProj);
+        SetShaderValue(s_heightFogShader, s_locHfCamPos, &camera.position, SHADER_UNIFORM_VEC3);
+        SetShaderValue(s_heightFogShader, s_locHfViewForward, &viewForward, SHADER_UNIFORM_VEC3);
+        SetShaderValue(s_heightFogShader, s_locHfSunDir, &sunDir, SHADER_UNIFORM_VEC3);
+        SetShaderValue(s_heightFogShader, s_locHfSunColor, &sunColor, SHADER_UNIFORM_VEC3);
+        SetShaderValue(s_heightFogShader, s_locHfFogColor, &fogColor, SHADER_UNIFORM_VEC3);
+        SetShaderValue(s_heightFogShader, s_locHfFogDensity, &density, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_heightFogShader, s_locHfFogStart, &fogStart, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_heightFogShader, s_locHfMaxDist, &maxDist, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_heightFogShader, s_locHfHeightFalloff, &heightFalloff, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_heightFogShader, s_locHfBaseAltitude, &baseAltitude, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_heightFogShader, s_locHfSigmoidEnabled, &sigmoidEnabled, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_heightFogShader, s_locHfSigmoidParams, &sigmoidParams, SHADER_UNIFORM_VEC3);
+        SetShaderValue(s_heightFogShader, s_locHfMieAnisotropy, &mieAniso, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(s_heightFogShader, s_locHfGodRayIntensity, &godRay, SHADER_UNIFORM_FLOAT);
+
+        if (s_locHfVolumeCount >= 0) SetShaderValue(s_heightFogShader, s_locHfVolumeCount, &volCount, SHADER_UNIFORM_INT);
+        if (s_locHfVolPosShape >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolPosShape, volPosShape, SHADER_UNIFORM_VEC4, 4);
+        if (s_locHfVolExtentsDense >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolExtentsDense, volExtentsDense, SHADER_UNIFORM_VEC4, 4);
+        if (s_locHfVolColorSoft >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolColorSoft, volColorSoft, SHADER_UNIFORM_VEC4, 4);
+
+        Rectangle srcRect = { 0.0f, 0.0f, (float)sceneDepth.width, -(float)sceneDepth.height };
+        Rectangle dstRect = { 0.0f, 0.0f, (float)s_fullWidth, (float)s_fullHeight };
+        DrawTexturePro(sceneDepth, srcRect, dstRect, (Vector2){ 0, 0 }, 0.0f, WHITE);
+
+        EndShaderMode();
+        EndBlendMode();
+        SceneTargets_EndVFXLayer();
+        PASS_MARK("fog_height");
+        return;
     }
 
     // --- PASS 1: Low-Res Volumetric Raymarch ---
