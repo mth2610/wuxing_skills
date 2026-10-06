@@ -17,6 +17,8 @@ typedef struct {
   MotionTargetDesc desc;
   MotionFieldHandle handle;
   float age;
+  FieldDesc physical;
+  bool typed;
 } MotionTargetRuntime;
 static MotionGuideRuntime s_guides[MOTION_FIELDS_MAX_GUIDES];
 static MotionTargetRuntime s_targets[MOTION_FIELDS_MAX_TARGETS];
@@ -174,7 +176,8 @@ void MotionFields_Update(float dt) {
   for (int i = 0; i < MOTION_FIELDS_MAX_TARGETS; i++)
     if (s_targets[i].handle) {
       s_targets[i].age += dt;
-      if (s_targets[i].age >= s_targets[i].desc.duration)
+      if (s_targets[i].age >= (s_targets[i].typed ?
+          s_targets[i].physical.lifetime.startDelaySec + s_targets[i].physical.lifetime.durationSec : s_targets[i].desc.duration))
         s_targets[i].handle = 0;
     }
   Motion_PublishWind();
@@ -182,8 +185,18 @@ void MotionFields_Update(float dt) {
 static bool Motion_FiniteVector(Vector3 v) {
   return isfinite(v.x) && isfinite(v.y) && isfinite(v.z);
 }
+static bool Motion_ValidPhysical(const FieldDesc *d);
+/* Motion's historic layers are explicitly Newton-valued compatibility data.
+ * Sampling-only velocity textures, damping and contacts are not force laws. */
+static bool Motion_ValidLegacyLayers(const ForceField *f) {
+  if(f->layerCount<0 || f->layerCount>FORCE_FIELD_MAX_LAYERS) return false;
+  for(int i=0;i<f->layerCount;++i)
+    if(f->layers[i].type==FORCE_VECTOR_TEXTURE || f->layers[i].type==FORCE_VISCOSITY ||
+       f->layers[i].type==FORCE_RECEIVER_PLANE) return false;
+  return true;
+}
 static bool Motion_ValidTarget(const MotionTargetDesc *d) {
-  return d && isfinite(d->duration) && d->duration > 0 &&
+  return d && Motion_ValidLegacyLayers(&d->field) && (!d->usePhysicalField || Motion_ValidPhysical(&d->physicalField)) && isfinite(d->duration) && d->duration > 0 &&
          isfinite(d->radius) && d->radius > 0 &&
          d->field.layerCount >= 0 && d->field.layerCount <= FORCE_FIELD_MAX_LAYERS &&
          Motion_FiniteVector(d->center) && Motion_FiniteVector(d->flowAxis) &&
@@ -196,7 +209,10 @@ static bool Motion_ValidTarget(const MotionTargetDesc *d) {
          isfinite(d->fadeTime) && d->fadeTime >= 0;
 }
 MotionFieldHandle MotionFields_CreateGuide(const MotionGuideDesc *d) {
-  if (!d || !isfinite(d->duration) || d->duration <= 0 ||
+  if (!d || !Motion_ValidLegacyLayers(&d->field) || (d->usePhysicalField && !Motion_ValidPhysical(&d->physicalField)) ||
+      !isfinite(d->controller.maxForceNewtons) || d->controller.maxForceNewtons<0 ||
+      !isfinite(d->controller.dampingRatio) || d->controller.dampingRatio<0 ||
+      !isfinite(d->duration) || d->duration <= 0 ||
       !isfinite(d->radius) || d->radius <= 0 || !isfinite(d->speed) ||
       d->speed <= 0 || !isfinite(d->maxForceNewtons) ||
       d->maxForceNewtons <= 0 || d->field.layerCount < 0 ||
@@ -231,6 +247,8 @@ MotionFieldHandle MotionFields_CreateGuide(const MotionGuideDesc *d) {
       s_guides[i] =
           (MotionGuideRuntime){.desc = *d, .handle = Motion_NewHandle(i)};
       s_guides[i].desc.path = checked;
+      if(s_guides[i].desc.controller.maxForceNewtons<=0)
+        s_guides[i].desc.controller=(GuideController){d->maxForceNewtons,1};
       if (!s_guides[i].desc.receiverMask)
         s_guides[i].desc.receiverMask = MOTION_RECEIVER_ALL;
       Motion_PublishWind();
@@ -424,8 +442,8 @@ static Vector3 Motion_GuideForce(MotionGuideRuntime *g, Vector3 p, Vector3 v,
   }
   /* Design stiffness from force budget/tube width; this is an actuator, not
    * a natural material constant. Physical damping c=2*sqrt(k*m). */
-  float stiffness = d->maxForceNewtons / fmaxf(radius * 0.25f, 0.001f);
-  float damping = 2 * sqrtf(stiffness * massKg);
+  float stiffness = d->controller.maxForceNewtons / fmaxf(radius * 0.25f, 0.001f);
+  float damping = 2 * d->controller.dampingRatio * sqrtf(stiffness * massKg);
   Vector3 error = MotionVec_Sub(goal, p), dv = MotionVec_Sub(desired, v);
   Vector3 along = {0};
   if (transverseOnly) {
@@ -446,7 +464,7 @@ static Vector3 Motion_GuideForce(MotionGuideRuntime *g, Vector3 p, Vector3 v,
       1 / (1 + damping * dt / massKg + stiffness * dt * dt / massKg));
   force = MotionVec_Add(force, along);
   return MotionVec_Scale(
-      MotionVec_Limit(force, d->maxForceNewtons),
+      MotionVec_Limit(force, d->controller.maxForceNewtons),
       Motion_Envelope(g->age, d->duration, d->attackTime, d->fadeTime) *
           Motion_GuideWeight(g, p, r));
 }
@@ -455,7 +473,7 @@ static void Motion_SampleTargets(Vector3 p, Vector3 v, unsigned int mask,
   for (int i = 0; i < MOTION_FIELDS_MAX_TARGETS; i++) {
     MotionTargetRuntime *t = &s_targets[i];
     MotionTargetDesc *d = &t->desc;
-    if (!t->handle || !(d->receiverMask & mask))
+    if (t->typed || !t->handle || !(d->receiverMask & mask))
       continue;
     float dist = MotionVec_Length(MotionVec_Sub(p, d->center));
     if (dist >= d->radius)
@@ -513,7 +531,7 @@ static void Motion_AddGuideLayers(MotionGuideRuntime *g, Vector3 p, Vector3 v,
               g->desc.attackTime, g->desc.fadeTime)));
 }
 
-void MotionFields_SampleAnchored(Vector3 p, Vector3 v, float massKg, float dt,
+static void Motion_SampleAnchoredLegacy(Vector3 p, Vector3 v, float massKg, float dt,
                                  unsigned int mask, MotionFieldSample *out) {
   if (!out) return;
   *out = (MotionFieldSample){0};
@@ -559,15 +577,31 @@ bool MotionFields_GetAnchoredBounds(unsigned int mask, Vector3 *lo, Vector3 *hi)
   }
   for (int i=0;i<MOTION_FIELDS_MAX_TARGETS;++i) {
     MotionTargetRuntime *t=&s_targets[i];
-    if (t->handle && (t->desc.receiverMask & mask)) {
+    if (!t->typed && t->handle && (t->desc.receiverMask & mask)) {
       Motion_ExpandBounds(t->desc.center,t->desc.radius,lo,hi); found=true;
     }
+  }
+  for(int i=0;i<MOTION_FIELDS_MAX_TARGETS;++i) {
+    MotionTargetRuntime *t=&s_targets[i];
+    if(!t->handle) continue;
+    FieldDesc *d=t->typed?&t->physical:t->desc.usePhysicalField?&t->desc.physicalField:NULL;
+    if(!d || !((d->receiverMask?d->receiverMask:MOTION_RECEIVER_ALL) & mask)) continue;
+    FieldTransform frame=FieldTrajectory_Transform(d,t->age);
+    float radius=d->volume.shape==FIELD_BOX?MotionVec_Length(d->volume.halfExtentsM):d->volume.radiusM;
+    if(d->volume.shape==FIELD_PATH_TUBE) {
+      for(int j=0;j<d->volume.path.count;++j)
+        Motion_ExpandBounds(MotionVec_Add(frame.position,FieldTransform_Vector(&frame,d->volume.path.points[j])),radius,lo,hi);
+    } else if(d->volume.shape==FIELD_CAPSULE) {
+      Motion_ExpandBounds(MotionVec_Add(frame.position,FieldTransform_Vector(&frame,d->volume.capsuleStart)),radius,lo,hi);
+      Motion_ExpandBounds(MotionVec_Add(frame.position,FieldTransform_Vector(&frame,d->volume.capsuleEnd)),radius,lo,hi);
+    } else Motion_ExpandBounds(frame.position,radius,lo,hi);
+    found=true;
   }
   if (!found) *lo=*hi=(Vector3){0};
   return found;
 }
 
-void MotionFields_Sample(Vector3 p, Vector3 v, float massKg, float dt,
+static void Motion_SampleLegacy(Vector3 p, Vector3 v, float massKg, float dt,
                          unsigned int mask, MotionReceiver *r,
                          MotionFieldSample *out) {
   if (!out)
@@ -655,6 +689,8 @@ MotionArrivalMode MotionFields_AdvanceReceiver(MotionReceiver *r,
          i++) {
       MotionTargetDesc d = g->desc.arrival.targets[i];
       d.center = MotionVec_Add(d.center, f.position);
+      if(d.usePhysicalField)
+        d.physicalField.transform.position=MotionVec_Add(d.physicalField.transform.position,f.position);
       for (int j = 0; j < d.field.layerCount && j < FORCE_FIELD_MAX_LAYERS; j++)
         d.field.layers[j].origin =
             MotionVec_Add(d.field.layers[j].origin, f.position);
@@ -667,4 +703,187 @@ MotionArrivalMode MotionFields_AdvanceReceiver(MotionReceiver *r,
     }
   }
   return action;
+}
+
+
+FieldDesc MotionField_Default(void) {
+  FieldDesc d={0};
+  d.volume.shape=FIELD_SPHERE; d.volume.radiusM=1;
+  d.transform=FieldTransform_Identity(); d.lifetime.durationSec=2;
+  d.receiverMask=MOTION_RECEIVER_ALL; d.flow.axis=(Vector3){0,1,0};
+  return d;
+}
+static bool Motion_ValidPhysical(const FieldDesc *d) {
+  if (!d || d->forceLawCount<0 || d->forceLawCount>FIELD_MAX_FORCE_LAWS ||
+      d->volume.shape<FIELD_SPHERE || d->volume.shape>FIELD_PATH_TUBE ||
+      !isfinite(d->lifetime.durationSec) || d->lifetime.durationSec<=0 ||
+      !isfinite(d->lifetime.startDelaySec) || d->lifetime.startDelaySec<0 ||
+      !isfinite(d->lifetime.attackSec) || d->lifetime.attackSec<0 ||
+      !isfinite(d->lifetime.fadeSec) || d->lifetime.fadeSec<0 ||
+      !isfinite(d->volume.coreFraction) || d->volume.coreFraction<0 || d->volume.coreFraction>=1 ||
+      !MotionFlow_IsValid(&d->flow.procedural) ||
+      !Motion_FiniteVector(d->volume.capsuleStart) || !Motion_FiniteVector(d->volume.capsuleEnd) ||
+      !Motion_FiniteVector(d->transform.axisX) || !Motion_FiniteVector(d->transform.axisY) ||
+      !Motion_FiniteVector(d->transform.axisZ) || !Motion_FiniteVector(d->transform.position) ||
+      !Motion_FiniteVector(d->transform.frameVelocityMps) ||
+      !Motion_FiniteVector(d->transform.angularVelocityRadPerSec)) return false;
+  const FieldTransform *t=&d->transform;
+  if (fabsf(MotionVec_Length(t->axisX)-1)>0.001f ||
+      fabsf(MotionVec_Length(t->axisY)-1)>0.001f ||
+      fabsf(MotionVec_Length(t->axisZ)-1)>0.001f ||
+      fabsf(MotionVec_Dot(t->axisX,t->axisY))>0.001f ||
+      MotionVec_Dot(MotionVec_Cross(t->axisX,t->axisY),t->axisZ)<0.999f) return false;
+  if (d->volume.shape==FIELD_BOX) {
+    if (!Motion_FiniteVector(d->volume.halfExtentsM) || d->volume.halfExtentsM.x<=0 ||
+        d->volume.halfExtentsM.y<=0 || d->volume.halfExtentsM.z<=0) return false;
+  } else if (!isfinite(d->volume.radiusM) || d->volume.radiusM<=0) return false;
+  MotionPath checked;
+  if(d->volume.shape==FIELD_PATH_TUBE && !MotionPath_Build(&checked,d->volume.path.points,d->volume.path.count)) return false;
+  if(d->trajectory.mode<FIELD_TRAJECTORY_STATIC || d->trajectory.mode>FIELD_TRAJECTORY_PATH) return false;
+  if(d->trajectory.mode==FIELD_TRAJECTORY_PATH &&
+      (!isfinite(d->trajectory.speedMps) || d->trajectory.speedMps<0 ||
+       !MotionPath_Build(&checked,d->trajectory.path.points,d->trajectory.path.count))) return false;
+  for(int i=0;i<d->forceLawCount;++i) {
+    const ForceLaw *l=&d->forceLaws[i];
+    if(l->type<FORCE_LAW_NEWTONS || l->type>FORCE_LAW_DRAG ||
+       !Motion_FiniteVector(l->forceNewtons) || !Motion_FiniteVector(l->accelerationMps2) || !Motion_FiniteVector(l->center) ||
+       !isfinite(l->magnitudeNewtons) || !isfinite(l->springStiffnessNPerM) ||
+       l->springStiffnessNPerM<0 || !isfinite(l->dampingNsPerM) || l->dampingNsPerM<0) return false;
+  }
+  return Motion_FiniteVector(d->flow.velocityMps) && Motion_FiniteVector(d->flow.axis) &&
+      isfinite(d->flow.blendWeight) && d->flow.blendWeight>=0;
+}
+MotionFieldHandle MotionFields_CreateField(const FieldDesc *d) {
+  if(!Motion_ValidPhysical(d)) return MOTION_FIELD_INVALID;
+  for(int i=0;i<MOTION_FIELDS_MAX_TARGETS;++i) if(!s_targets[i].handle) {
+    MotionTargetRuntime *t=&s_targets[i];
+    *t=(MotionTargetRuntime){.physical=*d,.typed=true,
+      .handle=Motion_NewHandle(MOTION_FIELDS_MAX_GUIDES+i)};
+    if(!t->physical.receiverMask) t->physical.receiverMask=MOTION_RECEIVER_ALL;
+    if(d->volume.shape==FIELD_PATH_TUBE)
+      MotionPath_Build(&t->physical.volume.path,d->volume.path.points,d->volume.path.count);
+    if(d->trajectory.mode==FIELD_TRAJECTORY_PATH)
+      MotionPath_Build(&t->physical.trajectory.path,d->trajectory.path.points,d->trajectory.path.count);
+    return t->handle;
+  }
+  return MOTION_FIELD_INVALID;
+}
+static void Motion_ComposePhysical(const FieldDesc *d,float age,Vector3 p,Vector3 v,
+    const BodyPhysicalProperties *body,const MediumProperties *medium,FieldSample *out,bool dragPass) {
+  FieldDesc selected=*d;
+  selected.forceLawCount=0;
+  for(int j=0;j<d->forceLawCount;++j)
+    if((d->forceLaws[j].type==FORCE_LAW_DRAG)==dragPass)
+      selected.forceLaws[selected.forceLawCount++]=d->forceLaws[j];
+  MediumProperties resolved=*medium;
+  if(dragPass) {
+    selected.flow.enabled=false;
+    if(out->mediumWeight>0) resolved.velocityMps=out->mediumIsAbsolute?out->mediumVelocityMps:
+      MotionVec_Add(medium->velocityMps,out->mediumVelocityMps);
+  }
+  FieldSample sample=Field_Evaluate(&selected,age,p,v,body,&resolved);
+  FieldSample_Combine(out,&sample);
+}
+static void Motion_SamplePhysical(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,
+    const MediumProperties *medium,unsigned int mask,FieldSample *out) {
+  /* Resolve media first; all authored drag laws then consume that single
+   * resolved velocity. Overlapping drag laws remain explicit force additions. */
+  for(int pass=0;pass<2;++pass) {
+    for(int i=0;i<MOTION_FIELDS_MAX_TARGETS;++i) {
+      MotionTargetRuntime *t=&s_targets[i];
+      if(!t->handle) continue;
+      const FieldDesc *d=t->typed?&t->physical:t->desc.usePhysicalField?&t->desc.physicalField:NULL;
+      if(!d || !((d->receiverMask?d->receiverMask:MOTION_RECEIVER_ALL) & mask)) continue;
+      Motion_ComposePhysical(d,t->age,p,v,body,medium,out,pass!=0);
+    }
+    for(int i=0;i<MOTION_FIELDS_MAX_GUIDES;++i) {
+      MotionGuideRuntime *g=&s_guides[i]; MotionPathSample projection;
+      if(!g->handle || !g->desc.usePhysicalField || !(g->desc.receiverMask & mask) ||
+         !Motion_InGuide(g,p,&projection)) continue;
+      FieldDesc d=g->desc.physicalField;
+      MotionPathSample f=MotionPath_Sample(&g->desc.path,projection.distance);
+      d.transform.position=MotionVec_Add(f.position,MotionPath_WorldOffset(f,d.transform.position));
+      d.transform.axisX=MotionPath_WorldOffset(f,d.transform.axisX);
+      d.transform.axisY=MotionPath_WorldOffset(f,d.transform.axisY);
+      d.transform.axisZ=MotionPath_WorldOffset(f,d.transform.axisZ);
+      Motion_ComposePhysical(&d,g->age,p,v,body,medium,out,pass!=0);
+    }
+  }
+}
+static bool Motion_ValidBodySample(const BodyPhysicalProperties *b,const MediumProperties *m,
+    const ReceiverConstraints *c) {
+  return b && m && c && isfinite(b->massKg) && (b->massKg>0 || (b->massKg==0 && c->mode==RECEIVER_TRACER)) &&
+    isfinite(b->densityKgM3) && b->densityKgM3>=0 && isfinite(b->volumeM3) && b->volumeM3>=0 &&
+    isfinite(b->projectedAreaM2) && b->projectedAreaM2>=0 && isfinite(b->dragCoefficient) && b->dragCoefficient>=0 &&
+    isfinite(b->immersionFraction) && b->immersionFraction>=0 && b->immersionFraction<=1 &&
+    isfinite(m->densityKgM3) && m->densityKgM3>=0 && isfinite(m->dynamicViscosityPaS) && m->dynamicViscosityPaS>=0 &&
+    Motion_FiniteVector(m->velocityMps) && Motion_FiniteVector(m->gravityMps2) &&
+    c->mode>=RECEIVER_FREE && c->mode<=RECEIVER_TRACER && Motion_FiniteVector(c->permittedAxes) &&
+    c->permittedAxes.x>=0 && c->permittedAxes.x<=1 && c->permittedAxes.y>=0 && c->permittedAxes.y<=1 &&
+    c->permittedAxes.z>=0 && c->permittedAxes.z<=1;
+}
+static void Motion_ProjectResponse(const ReceiverConstraints *c,FieldSample *out) {
+  if(c->mode==RECEIVER_TRACER) out->forceNewtons=out->accelerationMps2=(Vector3){0};
+  if(c->mode==RECEIVER_ROOTED) {
+    out->dragForceNewtons.x*=c->permittedAxes.x; out->dragForceNewtons.y*=c->permittedAxes.y; out->dragForceNewtons.z*=c->permittedAxes.z;
+    out->forceNewtons.x*=c->permittedAxes.x; out->forceNewtons.y*=c->permittedAxes.y; out->forceNewtons.z*=c->permittedAxes.z;
+    out->accelerationMps2.x*=c->permittedAxes.x; out->accelerationMps2.y*=c->permittedAxes.y; out->accelerationMps2.z*=c->permittedAxes.z;
+  }
+}
+void MotionFields_SampleExternalBody(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,
+    const MediumProperties *medium,const ReceiverConstraints *c,unsigned int mask,FieldSample *out) {
+  if(!out) return;
+  *out=(FieldSample){0};
+  if(!Motion_ValidBodySample(body,medium,c) || !Motion_FiniteVector(p) || !Motion_FiniteVector(v) ||
+      c->mode==RECEIVER_STATIC || c->mode==RECEIVER_KINEMATIC) return;
+  Motion_SamplePhysical(p,v,body,medium,mask,out);
+  Motion_ProjectResponse(c,out);
+}
+void MotionFields_SampleBody(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,
+    const MediumProperties *medium,const ReceiverConstraints *constraints,float dt,
+    unsigned int mask,MotionReceiver *receiver,FieldSample *out) {
+  if(!out) return;
+  *out=(FieldSample){0};
+  if(!Motion_ValidBodySample(body,medium,constraints) ||
+      !Motion_FiniteVector(p) || !Motion_FiniteVector(v) || !isfinite(dt) || dt<0 ||
+      constraints->mode==RECEIVER_STATIC || constraints->mode==RECEIVER_KINEMATIC) return;
+  MotionFieldSample legacy={0};
+  if(constraints->mode==RECEIVER_TRACER) { /* Wind owns legacy tracer publication. */ }
+  else if(constraints->mode==RECEIVER_ROOTED || constraints->mode==RECEIVER_TRACER)
+    Motion_SampleAnchoredLegacy(p,v,body->massKg,dt,mask,&legacy);
+  else Motion_SampleLegacy(p,v,body->massKg,dt,mask,receiver,&legacy);
+  out->forceNewtons=legacy.forceNewtons; out->accelerationMps2=legacy.accelerationMps2;
+  out->mediumVelocityMps=legacy.airflowVelocity;
+  if(MotionVec_Length(legacy.airflowVelocity)>0) {
+    out->mediumWeight=1; out->mediumPriority=-2147483647;
+  }
+  Motion_SamplePhysical(p,v,body,medium,mask,out);
+  Motion_ProjectResponse(constraints,out);
+}
+
+/* Legacy receiver adapter: mass is known, area/density are not. Body-dependent
+ * drag/buoyancy therefore require SampleBody; force/acceleration/flow still
+ * sample correctly. No approximation silently invents area or volume. */
+void MotionFields_Sample(Vector3 p,Vector3 v,float mass,float dt,unsigned int mask,
+    MotionReceiver *receiver,MotionFieldSample *out) {
+  if(!out) return;
+  BodyPhysicalProperties body={.massKg=mass,.immersionFraction=1};
+  MediumProperties medium={.densityKgM3=1.225f,.gravityMps2={0,-9.81f,0}};
+  ReceiverConstraints constraints={.mode=RECEIVER_FREE}; FieldSample sample;
+  MotionFields_SampleBody(p,v,&body,&medium,&constraints,dt,mask,receiver,&sample);
+  *out=(MotionFieldSample){.forceNewtons=sample.forceNewtons,
+    .accelerationMps2=sample.accelerationMps2,.airflowVelocity=sample.mediumVelocityMps,
+    .captured=receiver && receiver->guide && !receiver->arrived};
+}
+void MotionFields_SampleAnchored(Vector3 p,Vector3 v,float mass,float dt,unsigned int mask,
+    MotionFieldSample *out) {
+  if(!out) return;
+  BodyPhysicalProperties body={.massKg=mass,.immersionFraction=1};
+  MediumProperties medium={.densityKgM3=1.225f,.gravityMps2={0,-9.81f,0}};
+  ReceiverConstraints constraints={.mode=RECEIVER_ROOTED,.permittedAxes={1,1,1}};
+  FieldSample sample;
+  MotionFields_SampleBody(p,v,&body,&medium,&constraints,dt,mask,NULL,&sample);
+  *out=(MotionFieldSample){.forceNewtons=sample.forceNewtons,
+    .accelerationMps2=sample.accelerationMps2,.airflowVelocity=sample.mediumVelocityMps,
+    .captured=MotionVec_Length(sample.forceNewtons)>0};
 }

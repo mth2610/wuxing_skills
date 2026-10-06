@@ -482,7 +482,7 @@ Vector3 Wind_EvaluateVorticleVelocity(const VorticleData *v, Vector3 pos, float 
     return velocity;
 }
 
-Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
+static Vector3 Wind_EvaluateVelocityChannels(Vector3 pos, float time, bool includeMotion) {
     if (!s_initialized) return (Vector3){ 0 };
 
     // 1. Thành phần gió vĩ mô (Macro Wind)
@@ -522,7 +522,7 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
     }
 
     // 3. Tổng hợp từ mảng Vorticles cục bộ (Brute-force O(N) với N <= 256)
-    for (int i = 0; i < s_motionAirflowCount; ++i)
+    for (int i = 0; includeMotion && i < s_motionAirflowCount; ++i)
         totalVel = Vector3Add(totalVel, Wind_EvaluateVorticleVelocity(&s_motionAirflow[i], pos, time));
     int ordinaryCount = s_activeCount;
     if (ordinaryCount > MAX_VORTICLES - s_motionAirflowCount)
@@ -607,6 +607,14 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
     }
 
     return totalVel;
+}
+
+Vector3 Wind_EvaluateVelocity(Vector3 pos, float time) {
+    return Wind_EvaluateVelocityChannels(pos, time, true);
+}
+
+Vector3 Wind_EvaluateBackgroundVelocity(Vector3 pos, float time) {
+    return Wind_EvaluateVelocityChannels(pos, time, false);
 }
 
 Vector3 Wind_EvaluateAcceleration(Vector3 pos, float time, Vector3 currentVel) {

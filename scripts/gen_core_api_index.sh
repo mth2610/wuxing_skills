@@ -14,6 +14,7 @@ HEADERS=(
   core/resource_manager.h core/vfx_surface_registry.h core/tuning.h
   core/skill_manager.h core/skill_helper.h core/skill_curve.h
   core/liquid/liquid_motion.h
+  core/liquid/liquid_external_field.h
   core/liquid/liquid_body_recipe.h
   core/volumetric/volumetric_fog.h
   core/liquid/liquid_impact.h
@@ -21,8 +22,10 @@ HEADERS=(
   core/liquid/liquid_orb.h
   core/gas/gas_system.h
   core/force_field.h
-  core/motion/motion_path.h core/motion/motion_flow.h core/motion/motion_fields.h core/motion/motion_body.h
+  core/motion/motion_path.h core/motion/motion_flow.h core/motion/physical_field.h core/motion/motion_fields.h core/motion/motion_body.h
   core/particles/particle_dynamics.h
+  core/particles/particle_field_capabilities.h
+  core/particles/particle_field_integration.h
   core/particles/particle_travel.h core/particles/particle_system.h core/particles/particle_manager.h core/mesh_adjacency.h
   core/trails/trail_system.h core/ribbon_strip.h core/decals/decal_system.h
   core/lightning/lightning_stroke.h
@@ -34,7 +37,7 @@ HEADERS=(
   core/surface_material.h core/gfx_quality.h core/audio_system.h core/atmosphere.h
   core/wind/wind_types.h core/wind/wind_system.h
   core/material/material_system.h core/geometry/procedural_mesh_utils.h
-  core/composition/visual_composer.h core/composition/vfx_sequence.h core/presets/vfx_presets.h core/utils_math.h
+  core/composition/visual_composer.h core/composition/vc_emission.h core/composition/vfx_sequence.h core/presets/vfx_presets.h core/utils_math.h
 )
 
 protos() {

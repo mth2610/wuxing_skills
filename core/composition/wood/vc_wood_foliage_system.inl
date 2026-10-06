@@ -372,10 +372,22 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
 
         p->age += dt;
 
+        ParticleDynamicsProfile body = {.inverseMassKg=1/fmaxf(p->mass,0.0001f),
+            .gravityScale=1,.densityKgM3=p->densityKgM3,.windSusceptibility=1,
+            .aerodynamicAreaM2=0.5f*p->scale*p->scale,
+            .aerodynamicDragCoefficient=p->dragCoeff,.airDensityKgM3=1.225f};
+        ReceiverConstraints constraints = {.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
+
         if(p->state==BOTANICAL_STATE_SETTLED) {
-            MotionFieldSample sample;
-            MotionFields_Sample(p->pos,p->vel,fmaxf(p->mass,0.0001f),0,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
-            if(sample.captured || sample.forceNewtons.y/fmaxf(p->mass,0.0001f)>9.81f || sample.airflowVelocity.y>1.0f) {
+            BodyPhysicalProperties physicalBody = MotionBody_GetPhysicalProperties(&body);
+            MediumProperties medium = MotionBody_GetMediumProperties(&body);
+            medium.velocityMps = Wind_EvaluateBackgroundVelocity(p->pos,time);
+            FieldSample sample;
+            MotionFields_SampleBody(p->pos,p->vel,&physicalBody,&medium,&constraints,
+                0,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
+            if((p->motionReceiver.guide && !p->motionReceiver.arrived) ||
+                sample.accelerationMps2.y + sample.forceNewtons.y*body.inverseMassKg>9.81f ||
+                sample.mediumVelocityMps.y>1.0f) {
                 p->state=BOTANICAL_STATE_FREE;p->groundRestTimer=0;
             }
         }
@@ -392,10 +404,6 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
             /* Free botanical bodies consume the same independent spatial
              * fields as particles. Area/mass preserves their leaf response;
              * orientation, flutter and terrain remain foliage-specific. */
-            ParticleDynamicsProfile body = {.inverseMassKg=1/fmaxf(p->mass,0.0001f),
-                .gravityScale=1,.densityKgM3=p->densityKgM3,.windSusceptibility=1,
-                .aerodynamicAreaM2=0.5f*p->scale*p->scale,
-                .aerodynamicDragCoefficient=p->dragCoeff,.airDensityKgM3=1.225f};
             p->flutterPhase += dt*p->flutterSpeed;
             Vector3 flutter={(float)cosf(p->rot.y)*sinf(p->flutterPhase)*1.8f,0,
                              (float)sinf(p->rot.y)*sinf(p->flutterPhase)*1.8f};
@@ -408,12 +416,16 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
                     float inverseMass=body.inverseMassKg;body=post.dynamics;
                     if(body.inverseMassKg<=0)body.inverseMassKg=inverseMass;
                 }
-                MotionFieldSample sample;
-                MotionFields_Sample(p->pos,p->vel,body.inverseMassKg>0?1/body.inverseMassKg:p->mass,step,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
+                BodyPhysicalProperties physicalBody = MotionBody_GetPhysicalProperties(&body);
+                MediumProperties medium = MotionBody_GetMediumProperties(&body);
+                medium.velocityMps = Wind_EvaluateBackgroundVelocity(p->pos,time);
+                FieldSample sample;
+                MotionFields_SampleBody(p->pos,p->vel,&physicalBody,&medium,&constraints,
+                    step,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
                 Vector3 accel=flutter;
                 if(activeFF)accel=MotionVec_Add(accel,ForceField_Evaluate(activeFF,p->pos,p->vel,time,(Vector3){0},(Vector3){0,1,0}));
-                Vector3 air=MotionVec_Add(Wind_EvaluateVelocity(p->pos,time),sample.airflowVelocity);
-                p->vel=MotionBody_AdvanceVelocity(p->vel,&body,accel,sample.forceNewtons,air,step);
+                p->vel=MotionBody_AdvanceFieldVelocity(p->vel,&body,accel,
+                    (Vector3){0},&sample,medium.velocityMps,step);
                 Vector3 previous=p->pos;p->pos=MotionVec_Add(p->pos,MotionVec_Scale(p->vel,step));
                 bool arrived=p->motionReceiver.arrived;
                 MotionArrivalMode action=MotionFields_AdvanceReceiver(&p->motionReceiver,previous,p->pos,p->vel);

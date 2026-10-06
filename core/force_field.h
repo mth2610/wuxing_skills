@@ -24,19 +24,19 @@ Vector3 Noise_Curl3D(float x, float y, float z, float scale);
 // ============================================================
 
 typedef enum {
-  FORCE_GRAVITY_DIR, // gia tốc cố định theo hướng (vd: -Y = trọng lực)
-  FORCE_GRAVITY_POINT, // hút (hoặc đẩy nếu strength < 0) vào một điểm
-  FORCE_VORTEX,        // xoáy quanh trục (origin + direction = trục)
-  FORCE_WIND,          // gió theo hướng + nhiễu Perlin làm gió rung
-  FORCE_NOISE_PERLIN, // trường nhiễu Perlin — đẩy hạt theo vector ngẫu nhiên
-  FORCE_NOISE_CURL, // trường Curl noise — không phân kỳ, swirling đẹp
-  FORCE_DRAG, // lực cản tỉ lệ vận tốc (cần truyền vel khi evaluate)
-  FORCE_VISCOSITY, // giảm chấn mũ: vel *= exp(-strength * dt) — dùng cho chất
-                   // lỏng
-  FORCE_RADIAL_AXIS, // Lực hướng tâm/li tâm theo TRỤC ĐỘNG (axisOrigin, axisDir
+  FORCE_GRAVITY_DIR = 0, // gia tốc cố định theo hướng (vd: -Y = trọng lực)
+  FORCE_GRAVITY_POINT = 1, // hút (hoặc đẩy nếu strength < 0) vào một điểm
+  FORCE_VORTEX = 2,        // xoáy quanh trục (origin + direction = trục)
+  FORCE_WIND = 3,          // gió theo hướng + nhiễu Perlin làm gió rung
+  FORCE_NOISE_PERLIN = 4, // trường nhiễu Perlin — đẩy hạt theo vector ngẫu nhiên
+  FORCE_NOISE_CURL = 5, // trường Curl noise — không phân kỳ, swirling đẹp
+  FORCE_DRAG = 6, // lực cản tỉ lệ vận tốc (cần truyền vel khi evaluate)
+  FORCE_VISCOSITY = 7, /* Legacy exponential damping rate in s^-1;
+                        * not dynamic viscosity in Pa*s. */
+  FORCE_RADIAL_AXIS = 8, // Lực hướng tâm/li tâm theo TRỤC ĐỘNG (axisOrigin, axisDir
                      // cấp lúc evaluate).
-  FORCE_VORTEX_AXIS,
-  FORCE_VECTOR_TEXTURE, // Sample velocity từ texture động (baked flow/fluid-sim)
+  FORCE_VORTEX_AXIS = 9,
+  FORCE_VECTOR_TEXTURE = 10, // Sample velocity từ texture động (baked flow/fluid-sim)
                         // thay vì công thức procedural — xem block "VECTOR
                         // TEXTURE FIELD" bên dưới. CHỈ có hiệu lực ở COMPUTE
                         // path (GpuParticleSystem); CPU evaluate là no-op,
@@ -45,7 +45,7 @@ typedef enum {
    * outward normal, strength = restitution [0,1], falloff = tangential
    * retention [0,1]. radius/noise parameters unused. Infinite plane; zero
    * normal disables it. Evaluate returns no acceleration for this layer. */
-  FORCE_RECEIVER_PLANE,
+  FORCE_RECEIVER_PLANE = 11,
   // LƯU Ý: thứ tự enum này PHẢI khớp với các #define FT_* trong particles.comp
   // (GLSL không include được header C, nên phải giữ đồng bộ thủ công).
   // Thêm type mới PHẢI append ở cuối — không chèn giữa hay đổi số thứ tự,
@@ -65,7 +65,12 @@ typedef struct {
   // Với FORCE_RADIAL_AXIS: strength dương = hút vào trục; âm = đẩy ra khỏi
   // trục. radius = vùng tác dụng (tính theo khoảng cách vuông góc tới trục).
   // falloff = suy giảm theo khoảng cách vuông góc tới trục.
-  float strength; // cường độ gia tốc (m/s²)
+  /* Legacy acceleration magnitude in m/s^2 for force primitives; DRAG and
+   * VISCOSITY are rates in s^-1, RECEIVER_PLANE is restitution, and texture
+   * fields retain their packed multiplier contract. Motion's compatibility
+   * adapter explicitly treats its old guide/target force layers as Newtons.
+   * New physical authoring uses ForceLaw with distinct typed quantities. */
+  float strength;
   float radius; // 0.0 = tác dụng vô cực; > 0 = chỉ trong vùng sphere/cylinder
                 // bán kính này
   float falloff; // 0.0 = hằng số; 1.0 = tuyến tính; 2.0 = bình phương (chỉ khi

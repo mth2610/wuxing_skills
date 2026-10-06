@@ -240,6 +240,9 @@ static void TestFormationAndArrivalIsolation(void) {
                         MOTION_RECEIVER_PARTICLE, &r, &sample);
     MotionFields_AdvanceReceiver(&r, (Vector3){3.95f, 2, 1.95f},
                                  (Vector3){4.05f, 2, 2.05f}, (Vector3){0});
+    for(int substep=0;substep<8;++substep)
+      MotionFields_AdvanceReceiver(&r,(Vector3){3.95f,2,1.95f},(Vector3){4.05f,2,2.05f},(Vector3){0});
+    CHECK(events==i+1,"arrival callback remains one-shot under repeated integration substeps");
     if (i == 0)
       MotionFields_Stop(r.guide);
   }
@@ -478,7 +481,189 @@ static void TestAnchoredReceivers(void) {
   MotionFields_Reset();
 }
 
+static void TestGenericProceduralSupport(void) {
+  FieldDesc d=MotionField_Default();
+  d.volume.shape=FIELD_CAPSULE; d.volume.radiusM=1;
+  d.volume.capsuleStart=(Vector3){0,0,0}; d.volume.capsuleEnd=(Vector3){10,0,0};
+  d.flow.enabled=true; d.flow.axis=(Vector3){1,0,0};
+  d.flow.procedural.turbulenceSpeedMps=.35f;
+  Vector3 distal={9,.25f,.2f};
+  Vector3 curl=FieldFlow_Evaluate(&d.flow,&d.volume,distal,.37f);
+  CHECK(MotionVec_Length(curl)>1e-5f,"capsule curl covers actual distal segment volume");
+  CHECK(MotionVec_Length(FieldFlow_Evaluate(&d.flow,&d.volume,(Vector3){9,2,0},.37f))==0,
+      "capsule procedural flow disables outside actual support");
+  d.volume.shape=FIELD_BOX; d.volume.halfExtentsM=(Vector3){10,1,1};
+  curl=FieldFlow_Evaluate(&d.flow,&d.volume,distal,.37f);
+  CHECK(MotionVec_Length(curl)>1e-5f,"box curl covers actual elongated volume beyond inscribed sphere");
+  CHECK(MotionVec_Length(FieldFlow_Evaluate(&d.flow,&d.volume,(Vector3){11,.25f,.2f},.37f))==0,
+      "box procedural flow disables outside actual support");
+  d.flow.procedural.turbulenceSpeedMps=0; d.flow.procedural.swirlSpeedMps=2;
+  d.flow.axis=(Vector3){0,1,0}; d.volume.shape=FIELD_SPHERE; d.volume.radiusM=1;
+  Vector3 nearEdge={.75f,0,0}; d.volume.coreFraction=0;
+  Vector3 soft=FieldFlow_Evaluate(&d.flow,&d.volume,nearEdge,0);
+  d.volume.coreFraction=.8f;
+  Vector3 core=FieldFlow_Evaluate(&d.flow,&d.volume,nearEdge,0);
+  CHECK(MotionVec_Length(core)>MotionVec_Length(soft)*3,
+      "volume core fraction controls procedural swirl spatial support");
+  CHECK(fabsf(core.z+1.5f)<1e-6f,"swirl applies actual volume weighting once");
+  d.flow.procedural.swirlSpeedMps=0; d.flow.procedural.turbulenceSpeedMps=.35f;
+  Vector3 corePotential=FieldFlow_Potential(&d.flow,&d.volume,nearEdge,.37f);
+  d.volume.coreFraction=0;
+  Vector3 softPotential=FieldFlow_Potential(&d.flow,&d.volume,nearEdge,.37f);
+  CHECK(MotionVec_Length(corePotential)>MotionVec_Length(softPotential)*3,
+      "volume falloff windows turbulence potential before curl");
+  d.volume.coreFraction=.8f; d.flow.procedural.swirlSpeedMps=2;
+  d.lifetime.attackSec=1;
+  BodyPhysicalProperties b=BodyPhysicalProperties_Sphere(1,600,1);
+  MediumProperties m={0};
+  FieldSample half=Field_Evaluate(&d,.5f,nearEdge,(Vector3){0},&b,&m);
+  d.lifetime.attackSec=0;
+  FieldSample full=Field_Evaluate(&d,.5f,nearEdge,(Vector3){0},&b,&m);
+  CHECK(MotionVec_Length(MotionVec_Sub(half.mediumVelocityMps,MotionVec_Scale(full.mediumVelocityMps,.5f)))<1e-5f,
+    "field lifetime weights procedural flow once after curl");
+  d.flow.procedural=(MotionFlowDesc){0};
+  CHECK(MotionVec_Length(FieldFlow_Evaluate(&d.flow,&d.volume,nearEdge,0))==0,
+    "zero generic swirl and turbulence disable exactly");
+}
+
+static void TestTypedFields(void) {
+  MotionFields_Reset();
+  FieldDesc d=MotionField_Default();
+  d.volume.radiusM=10; d.volume.coreFraction=.8f;
+  d.forceLawCount=2;
+  d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_NEWTONS,.forceNewtons={2,0,0}};
+  d.forceLaws[1]=(ForceLaw){.type=FORCE_LAW_ACCELERATION,.accelerationMps2={0,-9.81f,0}};
+  BodyPhysicalProperties b=BodyPhysicalProperties_Sphere(1,600,1.2f);
+  MediumProperties m={.densityKgM3=1.225f,.gravityMps2={0,-9.81f,0}};
+  ReceiverConstraints freeBody={.mode=RECEIVER_FREE};
+  FieldSample sample;
+  CHECK(MotionFields_CreateField(&d)!=0,"typed field uses owned target pool");
+  MotionFields_SampleBody((Vector3){0},(Vector3){0},&b,&m,&freeBody,0,MOTION_RECEIVER_ALL,NULL,&sample);
+  float lightAcceleration=sample.forceNewtons.x/b.massKg;
+  b.massKg=2;
+  MotionFields_SampleBody((Vector3){0},(Vector3){0},&b,&m,&freeBody,0,MOTION_RECEIVER_ALL,NULL,&sample);
+  CHECK(fabsf(lightAcceleration-2*sample.forceNewtons.x/b.massKg)<1e-6f,
+      "equal Newton force gives inverse mass acceleration");
+  CHECK(fabsf(sample.accelerationMps2.y+9.81f)<1e-6f,"gravity channel remains acceleration independent of mass");
+  ForceLaw buoyancy={.type=FORCE_LAW_BUOYANCY};
+  b=BodyPhysicalProperties_Sphere(1,.5f,1);
+  Vector3 buoy=ForceLaw_Evaluate(&buoyancy,(Vector3){0},(Vector3){0},&b,&m,(Vector3){0});
+  CHECK(buoy.y/b.massKg+m.gravityMps2.y>0,"effective body lighter than medium rises through buoyancy");
+  b=BodyPhysicalProperties_Sphere(1,2,1);
+  buoy=ForceLaw_Evaluate(&buoyancy,(Vector3){0},(Vector3){0},&b,&m,(Vector3){0});
+  CHECK(buoy.y/b.massKg+m.gravityMps2.y<0,"effective body denser than medium sinks");
+  ForceLaw drag={.type=FORCE_LAW_DRAG}; b.projectedAreaM2=1; b.dragCoefficient=1;
+  Vector3 force=ForceLaw_Evaluate(&drag,(Vector3){0},(Vector3){2,0,0},&b,&m,(Vector3){2,0,0});
+  CHECK(MotionVec_Length(force)==0,"relative flow drag vanishes at matched medium velocity");
+  force=ForceLaw_Evaluate(&drag,(Vector3){0},(Vector3){2,0,0},&b,&m,(Vector3){0});
+  CHECK(force.x<0,"relative flow drag opposes velocity relative to medium");
+  ReceiverConstraints rooted={.mode=RECEIVER_ROOTED,.permittedAxes={0,0,1}};
+  MotionReceiver receiver={0};
+  MotionFields_SampleBody((Vector3){0},(Vector3){0},&b,&m,&rooted,0,MOTION_RECEIVER_ALL,&receiver,&sample);
+  CHECK(sample.forceNewtons.x==0 && sample.accelerationMps2.y==0 && receiver.guide==0,
+    "rooted constraints project response without capture");
+  rooted.mode=RECEIVER_STATIC;
+  MotionFields_SampleBody((Vector3){0},(Vector3){0},&b,&m,&rooted,0,MOTION_RECEIVER_ALL,NULL,&sample);
+  CHECK(MotionVec_Length(sample.forceNewtons)==0,"static receiver ignores dynamic field response");
+  MotionFields_Reset();
+  d=MotionField_Default(); d.volume.radiusM=4; d.volume.coreFraction=.5f;
+  d.flow.enabled=true; d.flow.velocityMps=(Vector3){2,0,0};
+  d.transform.axisX=(Vector3){0,1,0}; d.transform.axisY=(Vector3){-1,0,0};
+  d.transform.frameVelocityMps=(Vector3){1,0,0}; d.transform.angularVelocityRadPerSec=(Vector3){0,0,1};
+  sample=Field_Evaluate(&d,0,(Vector3){1,0,0},(Vector3){0},&b,&m);
+  CHECK(fabsf(sample.mediumVelocityMps.x-1)<1e-5f && fabsf(sample.mediumVelocityMps.y-3)<1e-5f,
+    "moving local flow includes translation rotation and rotated local velocity");
+  d.transform=FieldTransform_Identity(); d.flow.velocityMps=(Vector3){2,0,0};
+  d.flow.priority=1; MotionFields_CreateField(&d);
+  d.flow.velocityMps=(Vector3){0,2,0}; MotionFields_CreateField(&d);
+  MotionFields_SampleBody((Vector3){0},(Vector3){0},&b,&m,&freeBody,0,MOTION_RECEIVER_ALL,NULL,&sample);
+  CHECK(fabsf(sample.mediumVelocityMps.x-1)<1e-6f && fabsf(sample.mediumVelocityMps.y-1)<1e-6f,
+      "compatible equal priority media average rather than sum");
+  d.flow.priority=2; d.flow.velocityMps=(Vector3){0,0,3}; MotionFields_CreateField(&d);
+  MotionFields_SampleBody((Vector3){0},(Vector3){0},&b,&m,&freeBody,0,MOTION_RECEIVER_ALL,NULL,&sample);
+  CHECK(sample.mediumVelocityMps.z==3 && sample.mediumVelocityMps.x==0,
+    "higher priority medium replaces competing lower priority flow");
+  d.flow.enabled=false; d.forceLawCount=1; d.forceLaws[0]=drag; MotionFields_CreateField(&d);
+  MotionFields_SampleBody((Vector3){0},(Vector3){0,0,3},&b,&m,&freeBody,0,MOTION_RECEIVER_ALL,NULL,&sample);
+  CHECK(MotionVec_Length(sample.forceNewtons)==0 && sample.hasDragForce,
+    "drag consumes selected overlapping medium rather than independent flows");
+  MotionFields_Reset(); d=MotionField_Default(); d.lifetime.startDelaySec=1; d.lifetime.durationSec=2;
+  d.forceLawCount=1; d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_NEWTONS,.forceNewtons={1,0,0}};
+  MotionFieldHandle h=MotionFields_CreateField(&d);
+  sample=Field_Evaluate(&d,.5f,(Vector3){0},(Vector3){0},&b,&m);
+  CHECK(sample.forceNewtons.x==0,"field start delay does not apply forcing early");
+  MotionFields_Update(2.5f); CHECK(MotionFields_IsAlive(h),"delay independent of active duration");
+  MotionFields_Update(.6f); CHECK(!MotionFields_IsAlive(h),"typed field expires after delay plus duration");
+  FieldVolume volume={.shape=FIELD_CAPSULE,.radiusM=1,.capsuleStart={-2,0,0},.capsuleEnd={2,0,0}};
+  CHECK(FieldVolume_Weight(&volume,(Vector3){1,0,.5f})>0 && FieldVolume_Weight(&volume,(Vector3){0,2,0})==0,
+    "capsule tests actual segment support");
+  volume=(FieldVolume){.shape=FIELD_BOX,.halfExtentsM={2,1,.5f}};
+  CHECK(FieldVolume_Weight(&volume,(Vector3){1,0,0})>0 && FieldVolume_Weight(&volume,(Vector3){0,0,1})==0,
+    "box support uses oriented local geometry");
+  d=MotionField_Default(); Vector3 points[]={{0,0,0},{6,0,0}};
+  d.trajectory.mode=FIELD_TRAJECTORY_PATH; d.trajectory.speedMps=1;
+  MotionPath_Build(&d.trajectory.path,points,2); d.lifetime.durationSec=10;
+  d.forceLawCount=1; d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_NEWTONS,.forceNewtons={1,0,0}};
+  sample=Field_Evaluate(&d,3,(Vector3){0},(Vector3){0},&b,&m);
+  CHECK(sample.forceNewtons.x==0,"travelling sphere does not cover departed path");
+  d.trajectory.mode=FIELD_TRAJECTORY_STATIC; d.volume.shape=FIELD_PATH_TUBE;
+  MotionPath_Build(&d.volume.path,points,2);
+  sample=Field_Evaluate(&d,3,(Vector3){0},(Vector3){0},&b,&m);
+  CHECK(sample.forceNewtons.x==1,"sustained path tube maintains whole path coverage");
+  MotionFields_Reset(); MotionFields_CreateField(&d); d.volume.path.points[1].x=100;
+  Vector3 lo,hi; MotionFields_GetAnchoredBounds(MOTION_RECEIVER_ALL,&lo,&hi);
+  CHECK(hi.x<10,"typed registry copies bounded path geometry");
+  d=MotionField_Default(); d.transform.axisX.x=NAN;
+  CHECK(MotionFields_CreateField(&d)==0,"nonfinite transform axis is rejected");
+  d=MotionField_Default(); d.volume.capsuleEnd.x=NAN;
+  CHECK(MotionFields_CreateField(&d)==0,"nonfinite capsule geometry is rejected");
+  d=MotionField_Default(); d.forceLawCount=FIELD_MAX_FORCE_LAWS+1;
+  sample=Field_Evaluate(&d,0,(Vector3){0},(Vector3){0},&b,&m);
+  CHECK(MotionFields_CreateField(&d)==0 && sample.forceNewtons.x==0,
+      "descriptor and pure query reject force count overflow");
+  d=MotionField_Default(); MotionFields_CreateField(&d); b.projectedAreaM2=NAN;
+  MotionFields_SampleBody((Vector3){0},(Vector3){0},&b,&m,&freeBody,0,MOTION_RECEIVER_ALL,NULL,&sample);
+  CHECK(sample.mediumWeight==0 && sample.forceNewtons.x==0,"nonfinite physical body is rejected before sampling");
+  b=BodyPhysicalProperties_Sphere(.001f,600,1.2f);
+  d=MotionField_Default(); d.volume.radiusM=10; d.volume.coreFraction=.8f;
+  d.flow.enabled=true; d.flow.velocityMps=(Vector3){2,0,0};
+  d.forceLawCount=1; d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_DRAG};
+  b.projectedAreaM2=.1f;
+  sample=Field_Evaluate(&d,0,(Vector3){0},(Vector3){-20,0,0},&b,&m);
+  ParticleDynamicsProfile dynamics={.inverseMassKg=1000};
+  Vector3 stable=MotionBody_AdvanceFieldVelocity((Vector3){-20,0,0},&dynamics,
+      (Vector3){0},(Vector3){0},&sample,(Vector3){0},.2f);
+  CHECK(isfinite(stable.x) && stable.x>-20 && stable.x<=2,
+      "authored quadratic drag uses implicit body integration without overshoot");
+  float endpoints[3];
+  for(int hz=0;hz<3;++hz) {
+    float dt=1.0f/(30*(1<<hz)); Vector3 v={-2,0,0};
+    for(int step=0;step<30*(1<<hz);++step) {
+      sample=Field_Evaluate(&d,step*dt,(Vector3){0},v,&b,&m);
+      v=MotionBody_AdvanceFieldVelocity(v,&dynamics,(Vector3){0},(Vector3){0},&sample,(Vector3){0},dt);
+    }
+    endpoints[hz]=v.x;
+  }
+  CHECK(fabsf(endpoints[0]-endpoints[2])<.05f,
+    "authored drag converges across 30 60 and 120 Hz");
+  d.forceLawCount=1; d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_RADIAL_ATTRACTION,.magnitudeNewtons=-1};
+  sample=Field_Evaluate(&d,0,(Vector3){1,0,0},(Vector3){0},&b,&m);
+  CHECK(sample.forceNewtons.x>0,"signed radial law authors outward repulsion in inertial coordinates");
+  d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_ACCELERATION,.accelerationMps2={0,2,0}};
+  d.flow.velocityMps=(Vector3){0,3,0}; d.flow.procedural.turbulenceSpeedMps=.35f;
+  sample=Field_Evaluate(&d,0,(Vector3){0},(Vector3){0},&b,&m);
+  CHECK(sample.accelerationMps2.y==2 && isfinite(sample.mediumVelocityMps.y),
+    "updraft acceleration and turbulent medium remain separate finite channels");
+  MotionGuideDesc guide=MotionGuide_Default(); MotionPath_Build(&guide.path,points,2);
+  guide.field.layerCount=1; guide.field.layers[0].type=FORCE_VECTOR_TEXTURE;
+  CHECK(MotionFields_CreateGuide(&guide)==0,"CPU motion rejects unsupported vector texture");
+  guide.field.layers[0].type=FORCE_VISCOSITY;
+  CHECK(MotionFields_CreateGuide(&guide)==0,"motion rejects damping passed as Newton force law");
+}
+
 int main(void) {
+  TestTypedFields();
+  TestGenericProceduralSupport();
   TestWindBridge();
   TestAnchoredReceivers();
   MotionFields_Reset();

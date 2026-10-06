@@ -31,6 +31,7 @@
 | 21 | Terrain height sampling was O(every triangle) — FIXED, and the rations it forced are obsolete; `GetGroundHeightAt` still answers `0.0` for "no data" | Anyone conforming a VFX, decal or formation to the ground |
 | 22 | A silent headless capture looks hung and hides failures | Anyone maintaining visual regression harnesses |
 | 23 | Graphics SSBO bindings have a smaller limit than compute | Anyone adding raw instanced shader-buffer draws |
+| 24 | Duplicate physical response through field adapters | Particle, tracer and vegetation receivers using Wind and direct fields |
 
 ---
 
@@ -1684,10 +1685,17 @@ and index binding 1; compute rebinds its own field buffer at binding 1.
 
 ---
 
+## 24. Duplicate physical response through field adapters
+
+- **Symptom:** Guided leaves receive excessive airflow, or authored drag destabilizes a light body.
+- **Cause:** A direct receiver adds Motion's Wind publication again; raw authored drag is then stacked with automatic material drag.
+- **Rule:** Direct receivers use `Wind_EvaluateBackgroundVelocity` and `MotionBody_AdvanceFieldVelocity`; preserve raw drag metadata for the implicit step and suppress automatic drag/buoyancy only when an authored law supplies it. Sources: `core/wind/wind_system.c`, `core/motion/motion_body.h`; guards: `core/tests/wind_system_test.c`, `core/tests/particle_external_field_test.c`.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-06 | Codex | §24 Physical response ownership | core/wind/wind_system.c; core/motion/motion_body.h; core/tests/particle_external_field_test.c | Ground-truth |
 | 2026-10-04 | Codex | Graphics SSBO binding limit | core/particles/shaders/gpu/liquid_surface_capture.vs; core/particles/gpu/particle_gpu_backend.c | Ground-truth |
 | 2026-10-04 | Codex | Liquid surface API references | core/liquid/liquid_surface.h | Ground-truth |
 | 2026-10-03 | Codex | Volume sampling coherence: fog ordered grid | core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_sampling_test.c; fixed-camera captures | Ground-truth |

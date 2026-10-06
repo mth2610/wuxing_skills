@@ -1068,7 +1068,8 @@ void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
  * count=0 creates only the guide; already-existing free foliage can be caught.
  * guideOverride, targetOverrides and particleTemplate are copied during spawn;
  * borrowed textures/curves/mesh data and callback userData retain their normal
- * caller-owned lifetime contracts. Targets outlive guide expiry independently. */
+ * caller-owned lifetime contracts. Emission and targets outlive guide expiry
+ * independently; guide expiration releases bodies and never retires a source. */
 typedef enum {
     VFX_GUIDED_TARGET_NONE, VFX_GUIDED_TARGET_BLAST
 } VFX_GuidedTargetPreset;
@@ -1097,6 +1098,10 @@ typedef struct VFX_GuidedParticleConfig {
     int targetOverrideCount;
     const ParticleConfig *particleTemplate;
     const ParticleEmissionSource *emissionSource;
+    /* Optional copied typed field contribution in the guide's local path
+     * frame. Geometry, force laws and medium flow retain distinct units;
+     * guide control and arrival remain separate. Legacy layers are unchanged. */
+    const FieldDesc *fieldOverride;
 } VFX_GuidedParticleConfig;
 VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void);
 int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg,VFX_ParamDef *outParams,int maxParams);

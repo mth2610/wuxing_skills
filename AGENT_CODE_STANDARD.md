@@ -88,6 +88,7 @@
 ## 10. Core layer (`core/`, `environment/`, `maps/`, common shaders)
 
 ### 10.1 General
+- Typed fields keep Newton force, acceleration and medium velocity separate. Direct Motion receivers sample ordinary Wind excluding Motion publication; authored drag/buoyancy replace automatic material approximations. Legacy packed force IDs and units never change.
 - Rooted objects consume Motion Newton forces through their own mass/spring/damping; stateless queries must not capture free-particle lanes or fire arrival callbacks.
 - Anchored vegetation samples airflow near terrain/canopy height, not at the airborne source height; a horizontal-axis swirl has different bending directions at those heights.
 - Guide airflow for anchored vegetation must use the shared Wind source snapshot; do not spawn replacement vorticles every frame or confuse plant bending with free-body capture.
@@ -159,6 +160,7 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-06 | Codex | §10.1 Typed field units and adapter response ownership | core/motion/physical_field.h; core/motion/motion_body.h; core/wind/wind_system.h | Ground-truth |
 | 2026-10-05 | Codex | Tester UI capture and indexed HUD positions | main.c; sandbox/vfx_test.h | Ground-truth |
 | 2026-10-05 | Codex | Shared flow amplitude and SSF boundary | core/motion/motion_flow.h; core/liquid/liquid_surface.h | Ground-truth |
 | 2026-10-05 | Codex | §10.3 Mass-aware spatial forces and arrival ownership | core/motion/motion_fields.h; core/particles/particle_dynamics.h | Ground-truth |

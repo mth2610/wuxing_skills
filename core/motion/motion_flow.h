@@ -8,11 +8,13 @@
  * This is procedural flow, not a pressure/incompressibility solver. */
 typedef struct MotionFlowDesc {
   float turbulenceSpeedMps, swirlSpeedMps;
+  float eddyLengthM; /* Zero derives radius/4; positive authors noise scale. */
 } MotionFlowDesc;
 typedef enum { MOTION_FLOW_TUBE, MOTION_FLOW_SPHERE } MotionFlowDomain;
 static inline bool MotionFlow_IsValid(const MotionFlowDesc *flow) {
   return flow && isfinite(flow->turbulenceSpeedMps) &&
-         flow->turbulenceSpeedMps >= 0 && isfinite(flow->swirlSpeedMps);
+         flow->turbulenceSpeedMps >= 0 && isfinite(flow->swirlSpeedMps) &&
+         isfinite(flow->eddyLengthM) && flow->eddyLengthM>=0;
 }
 static inline float MotionFlow_Band(float distance, float radius) {
   float x = Motion_Clamp(distance / radius, 0, 1);
@@ -33,7 +35,7 @@ static inline Vector3 MotionFlow_Potential(const MotionFlowDesc *flow,
   float band = MotionFlow_Band(MotionVec_Length(d), radius);
   if (band == 0)
     return (Vector3){0};
-  float length = radius * 0.25f;
+  float length = flow->eddyLengthM>0?flow->eddyLengthM:radius * 0.25f;
   float phase = time * flow->turbulenceSpeedMps / length;
   Vector3 q =
       MotionVec_Add(MotionVec_Scale(p, 1 / length),

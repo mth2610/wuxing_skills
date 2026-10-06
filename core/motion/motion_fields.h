@@ -2,6 +2,7 @@
 #define CORE_MOTION_FIELDS_H
 #include "core/force_field.h"
 #include "core/motion/motion_flow.h"
+#include "core/motion/physical_field.h"
 #include "core/motion/motion_path.h"
 #include "core/particles/particle_dynamics.h"
 #include "core/wind/wind_types.h"
@@ -41,6 +42,8 @@ typedef struct MotionTargetDesc {
   VorticleData airflow; /* Zero strength disables the Wind primitive. */
   MotionFlowDesc flow;
   Vector3 flowAxis; /* Zero defaults to world Y. */
+  FieldDesc physicalField;
+  bool usePhysicalField;
 } MotionTargetDesc;
 typedef struct MotionArrivalEvent {
   MotionFieldHandle guide;
@@ -76,7 +79,7 @@ typedef struct MotionGuideDesc {
   MotionFormation formation;
   MotionGuideMode mode;
   float duration, radius, pulseLength, speed;
-  float maxForceNewtons;
+  float maxForceNewtons; /* Legacy configuration adapter into controller. */
   MotionFlowDesc flow;
   /* Publish a bounded Wind approximation for tracers and anchored vegetation.
    * Pulse follows the advancing path head; sustained uses three path samples.
@@ -99,6 +102,9 @@ typedef struct MotionGuideDesc {
    * primitives for curl, radial attraction, drag, etc. */
   ForceField field;
   MotionArrivalProfile arrival;
+  FieldDesc physicalField; /* Additional typed field in the local path frame. */
+  bool usePhysicalField;
+  GuideController controller;
 } MotionGuideDesc;
 /* Caller-owned per receiver; never shared across particles. All zero is free.
  * One guide captures a receiver at a time; other target fields still compose.
@@ -113,9 +119,28 @@ typedef struct MotionReceiver {
 typedef struct MotionFieldSample {
   Vector3 forceNewtons, airflowVelocity;
   bool captured;
+  Vector3 accelerationMps2;
 } MotionFieldSample;
 MotionGuideDesc MotionGuide_Default(void);
 MotionTargetDesc MotionTarget_Default(void);
+FieldDesc MotionField_Default(void);
+/* Copies descriptors and paths into the existing generation-checked target
+ * pool. CPU sampling only; never silently submitted to legacy GPU packing. */
+MotionFieldHandle MotionFields_CreateField(const FieldDesc *desc);
+/* Typed receiver boundary. Static/kinematic receivers have no dynamic response;
+ * rooted receivers never capture/arrive. Tracers receive medium velocity only.
+ * Field-owned flow uses explicit priority/blend; sample ordinary Wind excluding
+ * Motion publication to avoid duplicate forcing. */
+void MotionFields_SampleBody(Vector3 position, Vector3 velocity,
+    const BodyPhysicalProperties *body, const MediumProperties *medium,
+    const ReceiverConstraints *constraints, float dt, unsigned int mask,
+    MotionReceiver *receiver, FieldSample *sample);
+/* Stateless external sampling, excluding guide controllers/capture and legacy
+ * Newton adapters. Free-body material integration can always call this even
+ * when receiver capture into a guide is disabled. */
+void MotionFields_SampleExternalBody(Vector3 position, Vector3 velocity,
+    const BodyPhysicalProperties *body, const MediumProperties *medium,
+    const ReceiverConstraints *constraints, unsigned int mask, FieldSample *sample);
 void MotionFields_Reset(void);
 /* Called once per simulation frame by VFX_Compose_Update, before receivers. */
 void MotionFields_Update(float dt);

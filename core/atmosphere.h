@@ -9,6 +9,10 @@
 // Motes live in a box volume and wrap inside it, so density stays constant and
 // the field never empties. Drawn as additive billboards → in the HDR pipeline
 // overlapping motes bloom softly on their own.
+// Receiver mode is a velocity tracer with relaxation and authored settling slip:
+// no effective mass, displaced volume or Newton force response is implied.
+// Legacy Motion publication arrives through Wind; typed absolute FlowField
+// samples replace the medium velocity. Neither source is sampled twice.
 // Motion follows the shared Wind field with size-dependent linear drag and
 // integrated velocity. Dust has gentle settling slip; embers retain thermal
 // rise. The recycling faces fade to zero emission to hide wrap discontinuities.

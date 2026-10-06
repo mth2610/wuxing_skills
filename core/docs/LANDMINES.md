@@ -3902,10 +3902,15 @@ position control activates. Reset independent arrival flow phase while preservin
 the actual rotated lane offset.
 
 
+## Duplicate physical response through adapters
+
+See `ENGINE_LANDMINES.md` §24 for shared Wind/direct sampling and material-response ownership.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-06 | Codex | Duplicate physical response | core/wind/wind_system.c; core/motion/motion_body.h; core/tests/particle_external_field_test.c | Ground-truth |
 | 2026-10-05 | Codex | Continuous-force drag and bounded curl | core/motion/motion_body.h; core/motion/motion_flow.h; core/tests/motion_flow_test.c | Ground-truth |
 | 2026-10-05 | Codex | Cached texture variants | core/resource_manager.c; core/tests/resource_manager_texture_variant_test.c | Ground-truth |
 | 2026-10-05 | Codex | Anisotropic variant fallback | core/resource_manager.c; core/resource_manager.h; core/tests/resource_manager_texture_variant_test.c | Ground-truth |

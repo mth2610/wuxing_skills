@@ -29,7 +29,11 @@ typedef struct {float x,y,z;} Vector3;
 typedef struct {unsigned char r,g,b,a;} Color;
 typedef struct {int id;} Texture2D;
 typedef struct {int placeholder;} WindMacroConfig;
-typedef struct {Vector3 forceNewtons,airflowVelocity;bool captured;} MotionFieldSample;
+typedef struct {Vector3 forceNewtons,accelerationMps2,mediumVelocityMps;bool hasDragForce;} FieldSample;
+typedef struct {float massKg,densityKgM3,volumeM3,projectedAreaM2,dragCoefficient,immersionFraction;} BodyPhysicalProperties;
+typedef struct {float densityKgM3,dynamicViscosityPaS;Vector3 velocityMps,gravityMps2;} MediumProperties;
+#define RECEIVER_ROOTED 1
+typedef struct {int mode;Vector3 permittedAxes;} ReceiverConstraints;
 typedef enum {VORTICLE_LINEAR_GUST,VORTICLE_RADIAL_BLAST,VORTICLE_VORTEX,VORTICLE_TURBULENCE} VorticleType;
 typedef struct {Vector3 position,direction;float radius,strength;VorticleType type;float lifetime,maxLifetime,inwardPull;bool active;} VorticleData;
 #define NATURE_INTERACTION_RESOLUTION 64
@@ -49,9 +53,16 @@ static Vector2 s_natureForceBend[4096],s_natureForceVelocity[4096],s_natureForce
 static const float kNatureCanopyMassKg=.003f;
 static float s_natureForceDt;static bool s_natureForceAwake;
 #define MOTION_RECEIVER_FOLIAGE 2
-static bool anchoredActive, anchoredFlowOnly;static int anchoredQueries;
+static bool anchoredActive, anchoredFlowOnly, anchoredAccelerationOnly, anchoredDragOnly;static int anchoredQueries;
 static bool MotionFields_GetAnchoredBounds(unsigned mask,Vector3 *min,Vector3 *max){assert(mask==MOTION_RECEIVER_FOLIAGE);*min=(Vector3){2.5f,0,.5f};*max=(Vector3){5.5f,2,3.5f};return anchoredActive;}
-static void MotionFields_SampleAnchored(Vector3 p,Vector3 v,float mass,float dt,unsigned mask,MotionFieldSample *sample){(void)v;assert(mass==.003f&&dt>0&&mask==MOTION_RECEIVER_FOLIAGE);anchoredQueries++;*sample=anchoredFlowOnly?(MotionFieldSample){.airflowVelocity={3,0,0}}:(MotionFieldSample){.forceNewtons={p.x<4?.22f:-.22f,0,0}};}
+static void MotionFields_SampleBody(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,const MediumProperties *medium,const ReceiverConstraints *constraints,float dt,unsigned mask,void *receiver,FieldSample *sample){
+ (void)v;assert(body->massKg==.003f&&dt>0&&mask==MOTION_RECEIVER_FOLIAGE&&!receiver);
+ assert(fabsf(body->projectedAreaM2-.003f)<1e-8f&&body->dragCoefficient==1.2f);
+ assert(medium->densityKgM3==1.225f&&medium->velocityMps.x==0&&medium->velocityMps.y==0&&medium->velocityMps.z==0);
+ assert(constraints->mode==RECEIVER_ROOTED&&constraints->permittedAxes.x==1&&constraints->permittedAxes.y==0&&constraints->permittedAxes.z==1);
+ anchoredQueries++;*sample=anchoredFlowOnly?(FieldSample){.mediumVelocityMps={3,0,0}}:anchoredAccelerationOnly?(FieldSample){.accelerationMps2={p.x<4?.22f/.003f:-.22f/.003f,0,0}}:(FieldSample){.forceNewtons={p.x<4?.22f:-.22f,0,0}};
+ if(anchoredDragOnly)*sample=(FieldSample){.mediumVelocityMps={1000,0,0},.hasDragForce=true};
+}
 static float s_natureWindTraceNextTime;
 static int s_natureWindTraceDominantSlot=-1,s_natureWindImpactType,uploads;
 static WindMacroConfig s_natureWindMacro;
@@ -113,11 +124,21 @@ int main(void){
  anchoredActive=false;int previousQueries=anchoredQueries;
  for(int i=0;i<180;i++){begin();Nature_AddAnchoredMotion();}
  assert(anchoredQueries==previousQueries&&!s_natureForceAwake);
- anchoredActive=true;anchoredFlowOnly=true;
+ anchoredActive=true;anchoredAccelerationOnly=true;
+ for(int i=0;i<30;i++){begin();Nature_AddAnchoredMotion();}
+ int accelMovedCells=0;
+ for(int i=0;i<4096;i++)accelMovedCells+=fabsf(s_natureForceBend[i].x)>.1f;
+ assert(accelMovedCells>0);
+ anchoredAccelerationOnly=false;anchoredFlowOnly=true;
  for(int i=0;i<30;i++){begin();Nature_AddAnchoredMotion();}
  int airMovedCells=0;
  for(int i=0;i<4096;i++)airMovedCells+=s_natureForceBend[i].x>.02f;
  assert(airMovedCells>0);
+ memset(s_natureForceBend,0,sizeof(s_natureForceBend));
+ memset(s_natureForceVelocity,0,sizeof(s_natureForceVelocity));
+ anchoredDragOnly=true;begin();Nature_AddAnchoredMotion();
+ for(int i=0;i<4096;i++)assert(s_natureForceBend[i].x==0);
+ anchoredDragOnly=false;
  Vector3 hugeAir=Nature_AnchoredAirForce((Vector3){0},(Vector3){1000,0,0},1.0f/120);
  assert(isfinite(hugeAir.x)&&hugeAir.x>0&&hugeAir.x*(1.0f/120)/kNatureCanopyMassKg<=1000);
  assert(Nature_AnchoredAirForce((Vector3){1,0,0},(Vector3){0},1.0f/120).x==0);
@@ -140,7 +161,7 @@ int main(void){
  Vector2 center=s_natureInteractionCenter;center.x+=kNatureInteractionWorldSize/64;
  Nature_ScrollAndDecayInteraction(center,0);
  assert(s_natureForceBend[newIndex].x==.4f&&s_natureForceVelocity[newIndex].y==.3f);
- puts("PASS: moving continuous gust, spatial swirl, ground-relative horizontal-axis swirl, zero-age acceptance, texture upload/removal, Newton strike, opposite recovery, target airflow and world-fixed scroll");
+ puts("PASS: moving continuous gust, spatial swirl, ground-relative horizontal-axis swirl, zero-age acceptance, texture upload/removal, typed Newton/acceleration strike, opposite recovery, target airflow, no duplicate drag and world-fixed scroll");
 }
 """
 

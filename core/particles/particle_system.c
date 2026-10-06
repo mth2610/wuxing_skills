@@ -1,6 +1,8 @@
 #include "core/motion/motion_body.h"
 #include "particle_surface_sampling.h"
 #include "particle_field_reference.h"
+#include "particle_field_capabilities.h"
+#include "particle_field_integration.h"
 #include "particle_system.h"
 #include "core/particles/particle_manager.h"
 #include "core/mesh_adjacency.h"
@@ -318,6 +320,11 @@ void ParticleSystem_SpawnLegacy(ParticleConfig config)
 void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int renderMode)
 {
   ParticleConfig_Unify(&config);
+  if (!ParticleField_CpuSupported(config.forceField) ||
+      (config.travelPath && !ParticleField_CpuSupported(config.travelPath->arrivalForceField))) {
+    TraceLog(LOG_WARNING, "ParticleSystem: CPU particle rejected unsupported vector-texture field");
+    return;
+  }
   if (config.render.texture.id == 0) {
     config.render.texture = ParticleSystem_DefaultSprite();
     /* This is a complete default appearance, not an alpha mask. Keep its
@@ -670,15 +677,20 @@ void UpdateParticles(float dt)
       bool destroyed=false;
       while (remaining>1e-6f) {
         float step=fminf(remaining,1.0f/120.0f);remaining-=step;
-        MotionFieldSample sample;
-        MotionFields_Sample(position,velocity,body->inverseMassKg>0?1/body->inverseMassKg:1,step,MOTION_RECEIVER_PARTICLE,&p->motionReceiver,&sample);
+        BodyPhysicalProperties physicalBody=MotionBody_GetPhysicalProperties(body);
+        MediumProperties medium=MotionBody_GetMediumProperties(body);
+        medium.velocityMps=Wind_EvaluateBackgroundVelocity(position,s_particleTime);
+        ReceiverConstraints constraints={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
+        FieldSample sample;
+        MotionFields_SampleBody(position,velocity,&physicalBody,&medium,&constraints,
+            step,MOTION_RECEIVER_PARTICLE,&p->motionReceiver,&sample);
         Vector3 acceleration=p->dynamicsInitialAccelerationMps2;
         if (activeField) acceleration=MotionVec_Add(acceleration,ForceField_Evaluate(
             activeField,position,velocity,s_particleTime,p->forceAxisOrigin,p->forceAxisDir));
         if (windActive) acceleration=MotionVec_Add(acceleration,MotionVec_Scale(
             WindZone_Evaluate(position,velocity,s_particleTime),body->windAccelerationScale*body->windSusceptibility));
-        Vector3 air=MotionVec_Add(Wind_EvaluateVelocity(position,s_particleTime),sample.airflowVelocity);
-        velocity=MotionBody_AdvanceVelocity(velocity,body,acceleration,MotionVec_Add(p->dynamicsConstantForceNewtons,sample.forceNewtons),air,step);
+        velocity=MotionBody_AdvanceFieldVelocity(velocity,body,acceleration,
+            p->dynamicsConstantForceNewtons,&sample,medium.velocityMps,step);
         if(activeField) velocity=MotionVec_Scale(velocity,ForceField_GetViscosityDamping(activeField,step));
         Vector3 previous=position;position=MotionVec_Add(position,MotionVec_Scale(velocity,step));
         bool wasArrived=p->motionReceiver.arrived;
@@ -710,7 +722,21 @@ void UpdateParticles(float dt)
       const ParticleDynamicsProfile *d = p->dynamics;
       Vector3 position = {p->x, p->y, p->z};
       Vector3 velocity = {p->vx, p->vy, p->vz};
-      Vector3 acceleration = p->dynamicsInitialAccelerationMps2;
+      BodyPhysicalProperties physicalBody=MotionBody_GetPhysicalProperties(d);
+      MediumProperties medium=MotionBody_GetMediumProperties(d);
+      medium.velocityMps=Wind_EvaluateVelocity(position,s_particleTime);
+      ReceiverConstraints constraints={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
+      FieldSample externalSample;
+      /* Independent fields do not require a captured guide or emit particles.
+       * Optional guide capture remains governed by receiveMotionFields. */
+      MotionFields_SampleExternalBody(position,velocity,&physicalBody,&medium,
+          &constraints,MOTION_RECEIVER_PARTICLE,&externalSample);
+      ParticleDynamicsProfile integrationBody=*d;
+      if(externalSample.hasBuoyancyForce) integrationBody.densityKgM3=0;
+      if(externalSample.hasDragForce) integrationBody.windCouplingHz=0;
+      d=&integrationBody;
+      Vector3 acceleration = MotionVec_Add(p->dynamicsInitialAccelerationMps2,
+          externalSample.accelerationMps2);
       float inverseMass = d->inverseMassKg > 0.0f ? d->inverseMassKg : 1.0f;
       if (p->dynamicsImpulsePending) {
         velocity = ParticleDynamics_ApplyImpulse(velocity,
@@ -735,22 +761,35 @@ void UpdateParticles(float dt)
         acceleration.y += windAcceleration.y * windScale;
         acceleration.z += windAcceleration.z * windScale;
       }
-      velocity = ParticleDynamics_ApplyAccelerationAndForce(
-          velocity, acceleration, p->dynamicsConstantForceNewtons, inverseMass, dt);
-      if (activeField) {
-        float viscosity = ForceField_GetViscosityDamping(activeField, dt);
-        velocity.x *= viscosity; velocity.y *= viscosity; velocity.z *= viscosity;
-      }
-      velocity = ParticleDynamics_ApplyLinearDrag(velocity,
-                                                    d->linearDragPerSecond, dt);
-      velocity = ParticleDynamics_ClampTerminalSpeed(velocity, d->terminalSpeedMps);
-      if ((d->windCouplingHz > 0.0f && d->windSusceptibility > 0.0f) ||
-          p->travelImpactActive) {
-        float couplingHz = d->windCouplingHz;
-        float susceptibility = d->windSusceptibility;
-        Vector3 airflow = Wind_EvaluateVelocity(position, s_particleTime);
-        velocity = ParticleDynamics_CoupleToAirflow(velocity, airflow,
-                                                     couplingHz * susceptibility, dt);
+      if (ParticleField_UsesSharedIntegration(&externalSample)) {
+        /* Typed media use material aerodynamics; authored quadratic drag stays
+         * implicit even without guide capture. Empty fields retain legacy order. */
+        Vector3 otherAcceleration=MotionVec_Sub(acceleration,externalSample.accelerationMps2);
+        otherAcceleration.y-=ParticleDynamics_GravityAcceleration(d);
+        velocity=MotionBody_AdvanceFieldVelocity(velocity,d,otherAcceleration,
+            p->dynamicsConstantForceNewtons,&externalSample,medium.velocityMps,dt);
+        if (activeField) velocity=MotionVec_Scale(velocity,
+            ForceField_GetViscosityDamping(activeField,dt));
+      } else {
+        velocity = ParticleDynamics_ApplyAccelerationAndForce(
+            velocity, acceleration, MotionVec_Add(p->dynamicsConstantForceNewtons,
+                externalSample.forceNewtons), inverseMass, dt);
+        if (activeField) {
+          float viscosity = ForceField_GetViscosityDamping(activeField, dt);
+          velocity.x *= viscosity; velocity.y *= viscosity; velocity.z *= viscosity;
+        }
+        velocity = ParticleDynamics_ApplyLinearDrag(velocity,
+                                                      d->linearDragPerSecond, dt);
+        velocity = ParticleDynamics_ClampTerminalSpeed(velocity, d->terminalSpeedMps);
+        if ((d->windCouplingHz > 0.0f && d->windSusceptibility > 0.0f) ||
+            p->travelImpactActive) {
+          float couplingHz = d->windCouplingHz;
+          float susceptibility = d->windSusceptibility;
+          Vector3 airflow = externalSample.mediumIsAbsolute ? externalSample.mediumVelocityMps :
+              MotionVec_Add(medium.velocityMps,externalSample.mediumVelocityMps);
+          velocity = ParticleDynamics_CoupleToAirflow(velocity, airflow,
+                                                       couplingHz * susceptibility, dt);
+        }
       }
       if (p->travelPath && !p->travelImpactActive &&
           d->steeringFrequencyHz > 0.0f) {

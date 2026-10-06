@@ -2,6 +2,7 @@
 
 #include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/mesh_adjacency.h"
+#include "core/particles/particle_field_capabilities.h"
 #include "rlgl.h"
 #include "raymath.h"
 #include <string.h>
@@ -195,6 +196,11 @@ ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d
         } else if (e->desc.simulationPolicy == PARTICLE_SIM_AUTO && !gpuOK && e->desc.moduleFlags) {
             s_stats.fallbackCount++;
         }
+        if (!e->gpu && (!ParticleField_CpuSupported(e->desc.particle.forceField) ||
+            (e->desc.particle.travelPath && !ParticleField_CpuSupported(
+                e->desc.particle.travelPath->arrivalForceField)) ||
+            (e->desc.moduleFlags & PARTICLE_MODULE_VECTOR_FIELD)))
+            e->status = PARTICLE_EMITTER_UNSUPPORTED_MODULE;
         s_stats.emitterCount++;
         return i;
     }
@@ -213,7 +219,7 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
     if (handle < 0 || handle >= PARTICLE_MANAGER_MAX_EMITTERS || count <= 0) return;
     ParticleEmitterRuntime *e = &s_emitters[handle];
     if (!e->active || e->status != PARTICLE_EMITTER_OK) {
-        if (e->active && !e->warned) { TraceLog(LOG_WARNING, "ParticleManager: GPU_ONLY emitter '%s' rejected (%d)", e->desc.debugName ? e->desc.debugName : "unnamed", e->status); e->warned = true; }
+        if (e->active && !e->warned) { TraceLog(LOG_WARNING, "ParticleManager: emitter '%s' rejected (%d)", e->desc.debugName ? e->desc.debugName : "unnamed", e->status); e->warned = true; }
         return;
     }
     // A packed volume sheet is decoded by particle_lit.fs, which only the CPU
@@ -228,6 +234,11 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
                      e->desc.debugName ? e->desc.debugName : "unnamed");
         }
         e->gpu = false;
+        if (!ParticleField_CpuSupported(e->desc.particle.forceField) ||
+            (e->desc.moduleFlags & PARTICLE_MODULE_VECTOR_FIELD)) {
+            e->status = PARTICLE_EMITTER_UNSUPPORTED_MODULE;
+            return;
+        }
     }
     for (int i = 0; i < count; ++i) {
         ParticleConfig spawned = e->desc.particle;

@@ -3,7 +3,10 @@
 
 /* Backend-neutral particle façade.  Descriptors are copied into a fixed
  * emitter pool; pointed-to ForceFields, curves, gradients and textures remain
- * caller-owned and must outlive every particle emitted from the emitter. */
+ * caller-owned and must outlive every particle emitted from the emitter.
+ * Physical profiles/shared Motion fields require CPU simulation. GPU_ONLY
+ * rejects them; CPU rejects vector-texture fields instead of omitting layers.
+ * Query emitter status before emitting unsupported combinations. */
 #include "core/particles/particle_system.h"
 #include "raylib.h"
 #include <stdbool.h>

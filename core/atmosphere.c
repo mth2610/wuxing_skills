@@ -1,6 +1,7 @@
 #include "core/atmosphere.h"
 #include "core/vfx_render.h"
 #include "core/wind/wind_system.h"
+#include "core/motion/motion_fields.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -54,6 +55,21 @@ static float MoteBoundaryFade(Vector3 pos) {
            fz * fz * (3.0f - 2.0f * fz);
 }
 
+/* Legacy guide Wind publication remains the tracer approximation. Generic
+ * fields provide absolute medium velocity directly; ignore legacy direct flow
+ * here so the same published source cannot arrive by both channels. */
+static Vector3 Atmosphere_Airflow(Vector3 position,float time) {
+    BodyPhysicalProperties body={0}; /* tracer has no massive-body response */
+    MediumProperties medium={.densityKgM3=1.225f,
+        .velocityMps=Wind_EvaluateBackgroundVelocity(position,time)};
+    ReceiverConstraints constraints={.mode=RECEIVER_TRACER,.permittedAxes={1,1,1}};
+    FieldSample sample;
+    MotionFields_SampleBody(position,(Vector3){0},&body,&medium,&constraints,
+        0,MOTION_RECEIVER_PARTICLE,NULL,&sample);
+    return sample.mediumIsAbsolute && sample.mediumWeight>0 ?
+        sample.mediumVelocityMps : Wind_EvaluateVelocity(position,time);
+}
+
 static void SeedMote(Mote *m) {
     m->pos = (Vector3){
         s_center.x + RandRange(-s_extent.x, s_extent.x),
@@ -82,7 +98,7 @@ static void SeedMote(Mote *m) {
         m->size    = RandRange(0.035f, 0.10f);
         m->bright  = RandRange(0.5f, 1.0f);
     }
-    m->velocity = Vector3Add(Wind_EvaluateVelocity(m->pos, s_time), m->drift);
+    m->velocity = Vector3Add(Atmosphere_Airflow(m->pos, s_time), m->drift);
 }
 
 void Atmosphere_Init(void) {
@@ -162,7 +178,7 @@ void Atmosphere_Update(float dt, Camera3D camera) {
             };
             float sampleTime = s_time - dt + ((float)step + 0.5f) * stepDt;
             Vector3 target = Vector3Add(
-                Wind_EvaluateVelocity(midpoint, sampleTime), m->drift);
+                Atmosphere_Airflow(midpoint, sampleTime), m->drift);
             // Exact drag relaxation and displacement for this midpoint sample.
             Vector3 displacement = {
                 target.x * stepDt + (m->velocity.x - target.x) * lag,

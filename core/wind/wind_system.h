@@ -67,6 +67,10 @@ int Wind_SpawnTurbulence(Vector3 pos, float radius, float strength, float noiseS
 // Lấy vận tốc khí mục tiêu tức thời (m/s) tại pos, kết hợp Macro Wind,
 // Vorticles và Terrain Lift. Vorticle strength cũng dùng đơn vị m/s.
 Vector3 Wind_EvaluateVelocity(Vector3 pos, float time);
+/* Same bounded ordinary-wind set, without the Motion publication snapshot.
+ * Direct field receivers use this channel so Motion flow is applied once.
+ * Aggregate Wind and GPU snapshots retain their legacy additive approximation. */
+Vector3 Wind_EvaluateBackgroundVelocity(Vector3 pos, float time);
 
 // Evaluates one Vorticle using the same formula as the aggregate CPU/GPU wind
 // field. Receivers that spatially rasterize sources (for example vegetation)

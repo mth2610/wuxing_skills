@@ -188,6 +188,7 @@ ForceField_AddLayer(&s_forceField, (ForceLayer){
 ### ForceLayer Types & Parameters Reference
 | ForceType | `origin` | `direction` | `strength` | `radius` | `falloff` | `noiseScale` | `noiseSpeed` |
 |---|---|---|---|---|
+| 2026-10-06 | Codex | Typed physical fields, emission ownership and receiver adapters | core/motion/physical_field.h; core/motion/motion_fields.h; core/motion/motion_body.h; core/liquid/liquid_external_field.h; core/composition/vc_emission.h | Ground-truth |
 | 2026-10-06 | Codex | Anchored Newton receiver and broadphase | core/motion/motion_fields.h; core/tests/motion_fields_test.c | Ground-truth |
 | 2026-10-06 | Codex | Guide airflow bridge | core/motion/motion_fields.h; core/wind/wind_system.h | Ground-truth |
 | 2026-10-05 | Codex | Shared motion/target flow, physical drag and SSF stream export | core/motion/motion_flow.h; core/motion/motion_fields.c; core/motion/motion_body.h; core/composition/common/vc_guided_particle.inl | Ground-truth |
@@ -2910,6 +2911,69 @@ exceed 1.0 and cannot produce a hot core on its own. Use it for shape over time
   being widened into a ribbon.
 
 
+## Typed physical fields
+
+`core/motion/physical_field.h` separates `FieldVolume`, rigid `FieldTransform`,
+`FieldTrajectory`, `FieldLifetime`, `ForceLaw` and `FlowField`. Create a descriptor
+with `MotionField_Default()` and register it using `MotionFields_CreateField()`
+(`core/motion/motion_fields.h`). Fields share the existing bounded target pool and
+its generation-checked handles; paths and descriptors are copied. Pool exhaustion
+returns the invalid handle. A field owns neither emission nor rendering.
+
+Volumes are spheres, capsules, oriented boxes or copied path tubes. Dimensions
+are metres; transforms contain a right-handed orthonormal basis and never scale.
+Change geometry dimensions explicitly to scale support. A translated sphere
+following a trajectory covers its current neighbourhood; a static path tube
+covers the complete route continuously. The AABB returned by the registry is
+only a conservative broadphase bound (`core/motion/motion_fields.c`).
+
+`MotionFields_SampleBody` accepts `BodyPhysicalProperties`, `MediumProperties`
+and `ReceiverConstraints`. `FieldSample` keeps Newton force, m/s² acceleration
+and m/s medium velocity separate: integrate `a + F/m`. Gravity is acceleration;
+Archimedes buoyancy uses displaced volume and medium gravity. `volumeM3` overrides
+`massKg/densityKgM3`; immersion scales displaced volume. Relative-flow quadratic
+drag uses projected area and the matching drag coefficient. Shared sphere and
+leaf approximations live in `core/motion/physical_field.h`; visible size remains
+independent. `dynamicViscosityPaS` is reserved medium data, not an implemented
+viscosity solver.
+
+Flow priority resolves competing media; equal priorities use explicit weighted
+averaging, rather than summing unrelated velocities. Generic flow is an absolute
+medium velocity; legacy guide/target airflow remains an explicitly marked
+perturbation. Moving local flow includes frame translation and angular velocity
+cross offset. Moving the field adds no fictitious force. Spatial/lifetime force
+weights apply once; procedural turbulence windows its vector potential before
+curl. Procedural flow is not a pressure or incompressibility solve
+(`core/motion/physical_field.h`, `core/motion/motion_fields.c`).
+
+| Assembly | Descriptor choices |
+|---|---|
+| Moving attraction carrying existing leaves | Sphere + path trajectory + radial attraction; flow carries frame velocity |
+| Continuously fed stream | Sustained path guide/controller, or path tube with authored flow; independent emission schedule |
+| Stationary gathering volume | Sphere + radial attraction; sphere-shell emission belongs to the source |
+| Outward blast | Negative radial attraction magnitude (repulsion), or one-shot arrival impulse; optional turbulence |
+| Fire-like updraft | Upward medium velocity + optional turbulence; positive-density bodies use explicit buoyancy/drag |
+
+Guide actuators use `GuideController` separately from material properties.
+Stiffness derives from geometry and force budget; damping derives from receiver
+mass and damping ratio. Free receivers may capture lanes and arrive; rooted
+receivers query forces through permitted axes with their own restoring spring.
+Static and kinematic receivers receive no automatic dynamic response. Tracers
+sample velocity without force or invented mass. Contact resolution remains the
+receiver's responsibility (`core/motion/motion_fields.h`).
+
+`MotionBody_AdvanceFieldVelocity` combines the channels and avoids applying
+material buoyancy or aerodynamic drag a second time when an authored law already
+supplies it (`core/motion/motion_body.h`). CPU physical consumers sample ordinary
+Wind with `Wind_EvaluateBackgroundVelocity`, excluding Motion's published snapshot;
+Wind-only compatibility consumers retain the aggregate API (`core/wind/wind_system.h`).
+
+`core/liquid/liquid_external_field.h` supplies an opt-in callback boundary for
+sampling external acceleration and Newton force at a solver's velocity prediction
+stage. It does not advance positions or modify existing liquid solvers. Internal
+pressure, density and neighbour constraints remain solver-owned. GPU use requires
+matching sampling or explicit CPU fallback. SSF remains a surface renderer.
+
 ## Independent motion guides and target fields
 
 `core/motion/motion_fields.h` owns copied paths and independent, generation-checked
@@ -2931,16 +2995,19 @@ an underpowered guide. This is a steering controller, not a conserved fluid simu
 
 Call `MotionFields_Sample(position, velocity, massKg, substepDt, receiverMask, &receiver,
 &sample)` and integrate `sample.forceNewtons / massKg` alongside existing acceleration,
-gravity/buoyancy and drag. Add `sample.airflowVelocity` to ambient wind velocity
-before relative-air drag; never treat an airflow velocity as acceleration. `VFX_Compose_Update` advances field lifetimes once
+gravity/buoyancy and drag. For new receivers prefer `MotionFields_SampleBody` and
+`MotionBody_AdvanceFieldVelocity`; use ordinary Wind excluding Motion publication.
+Legacy `sample.airflowVelocity` is a perturbation; generic absolute flow follows
+`FieldSample.mediumIsAbsolute`. Never treat velocity as acceleration. `VFX_Compose_Update` advances field lifetimes once
 before consumers. Call `AdvanceReceiver` after each integration step for swept
 arrival and per-body release/destroy/hold/orbit. Target templates and callback fire
 once per cast; per-body impulses and child particle emission remain per arrival.
 Callbacks must not reset or recursively update the registry. Stop handles explicitly
 or let them expire; pool exhaustion returns zero instead of evicting live casts.
 
-`MotionFlowDesc` has two controls in m/s: nonnegative turbulence speed and signed
-swirl speed. Both zero skips both procedural dynamics. Geometry derives eddy scale,
+`MotionFlowDesc` has two amplitudes in m/s: nonnegative turbulence speed and signed
+swirl speed. Both zero skips both procedural dynamics. Optional `eddyLengthM`
+overrides the geometry-derived eddy length; zero keeps that derived default. Geometry derives
 temporal turnover, look-ahead and tube falloff. Coherent turbulence takes the curl
 of a smoothly windowed vector potential; swirl has a nonsingular solid-body core.
 Guide and arrival profiles own separate flows. Rotating lanes preserve thickness,
@@ -2972,7 +3039,10 @@ volume, radius and projected drag area derive from mass/density with Cd=0.47;
 rendered radius remains independent. Cd=0.47 is a spherical approximation rather
 than a general aerodynamic model. Body templates can override these defaults
 for leaves or other shapes. Emission count/rate/duration are independent of fields:
-count=0 creates only a guide. The inspector hides emission-body controls for
+count=0 creates only a guide. `fieldOverride` copies a typed additional local-frame
+field into that guide. `VFX_EmissionSchedule` owns emission duration independently:
+a source can continue emitting after guide expiry (`core/composition/vc_emission.h`).
+The inspector hides emission-body controls for
 field-only casts and target lifetime when no target field is configured. Body lifetime derives from guide duration plus the
 longest target tail; templates can specialize lifetime and body behavior. Default arrival releases with no target field. The
 legacy two-point wrapper explicitly selects blast. The fixture **GUIDED PARTICLE**
@@ -2990,7 +3060,9 @@ does not make an incompressible liquid.
 
 Spatial motion receivers require CPU simulation: ParticleManager AUTO falls back
 to CPU and GPU_ONLY rejects them. Existing GPU particles do not sample the new
-registry. Wood foliage keeps its own render/orientation/contact logic and consumes
+registry. CPU vector-texture fields are rejected as a whole rather than silently
+dropping the unsupported layer (`core/particles/particle_field_capabilities.h`).
+Wood foliage keeps its own render/orientation/contact logic and consumes
 the shared translational integrator; material density can be supplied in
 `VFX_FoliageSpawnParams`. GPU scene vegetation remains on the existing Wind system.
 

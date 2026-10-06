@@ -678,6 +678,23 @@ int main(void) {
         TEST_NEAR(vHigh.x, 5.6f, 0.05f, "Wind velocity in high air (Y=12m) scales to 140% (5.6 m/s)");
     }
 
+    /* Direct receivers must not receive the published Motion snapshot again. */
+    {
+        Wind_Clear();
+        Wind_SetTerrainHeightQuery(NULL, NULL);
+        Wind_SetMacro(&(WindMacroConfig){.baseDirection={1,0,0}});
+        Wind_SpawnGust((Vector3){0}, (Vector3){1,0,0}, 5, 2, 1);
+        Vector3 background = Wind_EvaluateBackgroundVelocity((Vector3){0},0);
+        VorticleData published = {.position={0}, .direction={0,0,1},
+            .radius=5, .strength=4, .lifetime=1, .maxLifetime=1, .active=true, .type=VORTICLE_LINEAR_GUST};
+        Wind_SetMotionAirflow(&published,1);
+        Vector3 ordinary = Wind_EvaluateBackgroundVelocity((Vector3){0},0);
+        Vector3 aggregate = Wind_EvaluateVelocity((Vector3){0},0);
+        TEST_NEAR(ordinary.x,background.x,1e-6f,"Direct sampling preserves ordinary wind");
+        TEST_NEAR(ordinary.z,0,1e-6f,"Direct sampling excludes Motion publication");
+        TEST_CHECK(aggregate.z>0,"Legacy aggregate retains Motion publication");
+    }
+
     // 12. Dọn dẹp
     Wind_Unload();
     TEST_CHECK(Wind_GetActiveCount() == 0, "Cleaned up after unload");

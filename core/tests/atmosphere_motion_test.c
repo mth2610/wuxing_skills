@@ -8,12 +8,23 @@ typedef struct Camera3D { Vector3 position, target, up; float fovy; int projecti
 typedef struct Image { void *data; int width, height, mipmaps, format; } Image;
 #define TEXTURE_FILTER_BILINEAR 1
 #include "core/vfx_render.h"
+#include "core/motion/motion_fields.h"
 static Vector3 s_air;
 static bool s_vortex;
 Vector3 Wind_EvaluateVelocity(Vector3 p, float t) {
     (void)t;
     if (s_vortex) return (Vector3){-8.0f*p.x-12.0f*p.z,0,12.0f*p.x-8.0f*p.z};
     return s_air;
+}
+Vector3 Wind_EvaluateBackgroundVelocity(Vector3 p,float t) { return Wind_EvaluateVelocity(p,t); }
+static bool s_absoluteFlow;
+void MotionFields_SampleBody(Vector3 p,Vector3 v,const BodyPhysicalProperties *b,
+    const MediumProperties *m,const ReceiverConstraints *c,float dt,unsigned int mask,
+    MotionReceiver *r,FieldSample *s) {
+    (void)p;(void)v;(void)b;(void)m;(void)dt;(void)mask;(void)r;
+    *s=(FieldSample){0};
+    if(s_absoluteFlow && c->mode==RECEIVER_TRACER)
+        *s=(FieldSample){.mediumVelocityMps={2,0,0},.mediumWeight=1,.mediumIsAbsolute=true};
 }
 static Vector3 Vector3Add(Vector3 a, Vector3 b) { return (Vector3){a.x+b.x,a.y+b.y,a.z+b.z}; }
 static Image GenImageColor(int w, int h, Color c) { (void)w;(void)h;(void)c;return (Image){0}; }
@@ -44,6 +55,10 @@ static Vector3 RunVortex(float dt) {
     return s_motes[0].pos;
 }
 int main(void) {
+    Reset();s_air=(Vector3){9,0,0};s_absoluteFlow=true;
+    CHECK(Atmosphere_Airflow((Vector3){0},0).x==2,"Typed absolute tracer flow replaces Wind without duplication");
+    s_absoluteFlow=false;
+    CHECK(Atmosphere_Airflow((Vector3){0},0).x==9,"Legacy tracer retains aggregate Wind exactly");
     Vector3 coarse=RunVortex(1.0f/30),fine=RunVortex(1.0f/240);
     float error=hypotf(coarse.x-fine.x,coarse.z-fine.z);
     printf("Converging vortex trajectory error: %.6f m\n",(double)error);

@@ -2,12 +2,12 @@
  */
 #include "core/motion/motion_body.h"
 #include "core/path_spline.h"
+#include "core/composition/vc_emission.h"
 #define VC_GUIDED_MAX_STREAMS 8
 typedef struct {
   bool active;
   ParticleEmitterHandle emitter;
-  MotionFieldHandle guide;
-  float age, duration, rate, carry;
+  VFX_EmissionSchedule emission;
   ParticleDynamicsProfile body;
 } VC_GuidedStream;
 static VC_GuidedStream s_guidedStreams[VC_GUIDED_MAX_STREAMS];
@@ -115,16 +115,10 @@ static void VC_GuidedParticle_Update(float dt) {
     VC_GuidedStream *s = &s_guidedStreams[i];
     if (!s->active)
       continue;
-    float emitDt = fmaxf(0, fminf(dt, s->duration - s->age));
-    s->age += dt;
-    if (MotionFields_IsAlive(s->guide)) {
-      s->carry += emitDt * s->rate;
-      int n = (int)fminf(s->carry, 2048);
-      s->carry -= n;
-      if (n > 0)
-        ParticleManager_Emit(s->emitter, n);
-    }
-    if (s->age >= s->duration || !MotionFields_IsAlive(s->guide)) {
+    int n = VFX_EmissionAdvance(&s->emission, dt, 2048);
+    if (n > 0)
+      ParticleManager_Emit(s->emitter, n);
+    if (VFX_EmissionComplete(&s->emission)) {
       ParticleManager_DestroyEmitter(s->emitter);
       s->active = false;
     }
@@ -192,6 +186,8 @@ VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
     guide.radius = c->guideRadius;
     guide.speed = c->speed;
     guide.maxForceNewtons = c->maxForceNewtons;
+    guide.controller = (GuideController){.maxForceNewtons = c->maxForceNewtons,
+                                        .dampingRatio = 1.0f};
     guide.pulseLength = c->pulseLength;
     guide.preserveStreamLanes = true;
     guide.flow = c->motionFlow;
@@ -212,6 +208,10 @@ VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
     for (int i = 0; i < guide.arrival.targetCount; i++)
       guide.arrival.targets[i] = c->targetOverrides[i];
   }
+  if (c->fieldOverride) {
+    guide.physicalField = *c->fieldOverride;
+    guide.usePhysicalField = true;
+  }
   MotionFieldHandle h = MotionFields_CreateGuide(&guide);
   if (!h)
     return 0;
@@ -223,14 +223,14 @@ VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
     UnloadMesh(mesh);
     s_guidedSourceReady = true;
   }
-  float physicalRadius = cbrtf(3 * c->massKg / (4 * PI * c->densityKgM3));
+  BodyPhysicalProperties physicalBody =
+      BodyPhysicalProperties_Sphere(c->massKg, c->densityKgM3, 0.47f);
   ParticleDynamicsProfile body = {.inverseMassKg = 1 / c->massKg,
                                   .gravityScale = 1,
                                   .densityKgM3 = c->densityKgM3,
                                   .windSusceptibility = 1,
-                                  .aerodynamicAreaM2 =
-                                      PI * physicalRadius * physicalRadius,
-                                  .aerodynamicDragCoefficient = 0.47f};
+                                  .aerodynamicAreaM2 = physicalBody.projectedAreaM2,
+                                  .aerodynamicDragCoefficient = physicalBody.dragCoefficient};
   float bodyLifetime = guide.duration;
   float targetTail = 0;
   for (int i = 0; i < guide.arrival.targetCount; i++)
@@ -268,9 +268,8 @@ VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
     desc.source = *c->emissionSource;
   if (stream) {
     *stream = (VC_GuidedStream){.active = true,
-                                .guide = h,
-                                .duration = c->emitDuration,
-                                .rate = c->emissionRate,
+                                .emission = {.durationSeconds = c->emitDuration,
+                                             .ratePerSecond = c->emissionRate},
                                 .body = *p.physics.dynamics};
     desc.particle.physics.dynamics = &stream->body;
   }

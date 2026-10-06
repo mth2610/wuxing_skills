@@ -671,16 +671,29 @@ static void Nature_AddAnchoredMotion(void)
             if (!isfinite(groundY)) continue;
             root.y = groundY + kNatureWindSampleHeight;
             for (int substep = 0; substep < steps; substep++) {
-                MotionFieldSample sample = {0};
+                FieldSample sample = {0};
                 if (inBounds) {
                     Vector3 position = {root.x + bend->x, root.y, root.z + bend->y};
                     Vector3 tipVelocity = {velocity->x, 0.0f, velocity->y};
-                    MotionFields_SampleAnchored(position, tipVelocity, kNatureCanopyMassKg, step, MOTION_RECEIVER_FOLIAGE, &sample);
+                    BodyPhysicalProperties body = {
+                        .massKg = kNatureCanopyMassKg,
+                        .projectedAreaM2 = kNatureWindSampleHeight * 0.012f,
+                        .dragCoefficient = 1.2f,
+                    };
+                    /* Ordinary Wind already drives the separate ambient
+                     * receiver; this medium contains only direct field flow. */
+                    MediumProperties medium = {.densityKgM3 = 1.225f,
+                                               .gravityMps2 = {0, -9.81f, 0}};
+                    ReceiverConstraints constraints = {.mode = RECEIVER_ROOTED,
+                                                       .permittedAxes = {1, 0, 1}};
+                    MotionFields_SampleBody(position, tipVelocity, &body, &medium,
+                        &constraints, step, MOTION_RECEIVER_FOLIAGE, NULL, &sample);
                 }
                 Vector3 tipVelocity = {velocity->x, 0.0f, velocity->y};
-                Vector3 airForce = Nature_AnchoredAirForce(tipVelocity, sample.airflowVelocity, step);
-                sample.forceNewtons.x += airForce.x;
-                sample.forceNewtons.z += airForce.z;
+                Vector3 airForce = sample.hasDragForce ? (Vector3){0} :
+                    Nature_AnchoredAirForce(tipVelocity, sample.mediumVelocityMps, step);
+                sample.forceNewtons.x += airForce.x + sample.accelerationMps2.x * kNatureCanopyMassKg;
+                sample.forceNewtons.z += airForce.z + sample.accelerationMps2.z * kNatureCanopyMassKg;
                 Nature_AdvanceAnchoredCell(bend, velocity, sample.forceNewtons, step);
             }
             maxBend = fmaxf(maxBend, sqrtf(bend->x * bend->x + bend->y * bend->y));
