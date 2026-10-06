@@ -242,9 +242,12 @@ static float VerdantGrassDensitySource(float x, float z, void *userData)
     if (IsInsideLake(x, z, 0.48f))
         return 0.0f;
     float distPath = DistanceToPaths(x, z);
-    if (distPath < 0.95f)
+    float pathMeander = sinf(x * 0.85f + z * 1.15f) * 0.22f
+                      + sinf(x * 2.30f - z * 1.70f) * 0.11f;
+    float effectiveDist = distPath + pathMeander;
+    if (effectiveDist < 0.95f)
         return 0.0f;
-    float pathFade = fminf(1.0f, (distPath - 0.95f) / 0.65f); // grass returns gradually at the dirt path edge
+    float pathFade = fminf(1.0f, (effectiveDist - 0.95f) / 0.65f); // grass returns gradually at the dirt path edge
 
     float nx = (x - kMapCenter.x) / 43.0f;
     float nz = (z - kMapCenter.z) / 29.5f;
@@ -368,38 +371,53 @@ static void BuildMeadowLayout(void)
         clump->radius *= 0.92f + 0.16f * (localRadius - 0.22f) / 0.06f;
 
         // 5. Pathway Edge Trampled Turf (AAA organic transition)
-        float distPath = DistanceToPaths(cx, cz);
+        float pathMeander = sinf(cx * 0.85f + cz * 1.15f) * 0.22f
+                          + sinf(cx * 2.30f - cz * 1.70f) * 0.11f;
+        float distPath = DistanceToPaths(cx, cz) + pathMeander;
         float pathEdgeT = (distPath - 0.95f) / 1.15f;
         pathEdgeT = fmaxf(0.0f, fminf(1.0f, pathEdgeT));
-        float pathTaper = 0.45f + 0.55f * (pathEdgeT * pathEdgeT * (3.0f - 2.0f * pathEdgeT));
+        float pathTaper = 0.40f + 0.60f * (pathEdgeT * pathEdgeT * (3.0f - 2.0f * pathEdgeT));
         clump->height *= pathTaper;
-        clump->radius *= (1.15f - 0.15f * pathTaper);
+        clump->radius *= (1.20f - 0.20f * pathTaper);
     }
 
-    static const Vector2 patchOffsets[4] = {
-        {-0.42f, -0.18f}, {0.18f, -0.31f}, {0.38f, 0.20f}, {-0.12f, 0.36f},
-    };
     for (int i = 0; i < FLOWER_COUNT; i++) {
         int cluster = i / FLOWERS_PER_CLUSTER;
+        int localIndex = i % FLOWERS_PER_CLUSTER;
+
+        // 3 organic colony epicenters per cluster, positioned along organic wind/terrain axes
+        float clusterSeedAngle = (float)cluster * 1.047f + 0.35f;
+        Vector2 epicenters[3];
+        for (int c = 0; c < 3; c++) {
+            float epAngle = clusterSeedAngle + (float)c * 2.094f + 0.35f * sinf((float)(cluster * 7 + c * 3));
+            float epDist = 0.32f + 0.20f * cosf((float)(cluster * 3 + c * 5));
+            epicenters[c] = (Vector2){cosf(epAngle) * epDist, sinf(epAngle) * epDist};
+        }
+
+        // Each flower belongs to one of the 3 colony drifts, or is a loose meadow blossom
+        int colony = localIndex % 3;
+        if (Random01(&rng) < 0.20f) colony = (colony + 1) % 3; // intermingled colony edges
+        bool isColony = Random01(&rng) < 0.80f;
+
         float x = kFlowerCenters[cluster].x;
         float z = kFlowerCenters[cluster].z;
         for (int attempt = 0; attempt < 24; attempt++) {
-            float patchRoll = Random01(&rng);
             float angle = RandomRange(&rng, 0.0f, 2.0f * PI);
-            float radius = sqrtf(Random01(&rng));
-            if (patchRoll < 0.78f) {
-                // Dense sweeping drifts/patches (poppies, daisies, buttercups in natural floral beds)
-                int patch = patchRoll < 0.28f ? 0 : patchRoll < 0.52f ? 1
-                          : patchRoll < 0.70f ? 2 : 3;
-                float patchRadius = 0.35f + 0.08f * (float)((patch + cluster) & 1);
-                x = kFlowerCenters[cluster].x + patchOffsets[patch].x * kFlowerRadii[cluster].x
-                  + cosf(angle) * kFlowerRadii[cluster].x * patchRadius * radius;
-                z = kFlowerCenters[cluster].z + patchOffsets[patch].y * kFlowerRadii[cluster].z
-                  + sinf(angle) * kFlowerRadii[cluster].z * patchRadius * radius;
+            // Exponential falloff for dense organic heart with feathered margins
+            float rVal = powf(Random01(&rng), 1.35f);
+            if (isColony) {
+                // Wind-elongated elliptical dispersal along landscape flow (~45 deg)
+                float flowAngle = 0.785f + 0.30f * sinf(kFlowerCenters[cluster].x * 0.12f + (float)cluster);
+                float along = cosf(angle) * rVal * 0.46f;
+                float across = sinf(angle) * rVal * 0.26f;
+                float dxNorm = epicenters[colony].x + (cosf(flowAngle) * along - sinf(flowAngle) * across);
+                float dzNorm = epicenters[colony].y + (sinf(flowAngle) * along + cosf(flowAngle) * across);
+                x = kFlowerCenters[cluster].x + dxNorm * kFlowerRadii[cluster].x;
+                z = kFlowerCenters[cluster].z + dzNorm * kFlowerRadii[cluster].z;
             } else {
-                // Natural stray wild blossoms scattered through the surrounding meadow
-                x = kFlowerCenters[cluster].x + cosf(angle) * kFlowerRadii[cluster].x * (0.30f + 0.70f * radius);
-                z = kFlowerCenters[cluster].z + sinf(angle) * kFlowerRadii[cluster].z * (0.30f + 0.70f * radius);
+                // Loose wild meadow blossoms scattered in the surrounding grass
+                x = kFlowerCenters[cluster].x + cosf(angle) * kFlowerRadii[cluster].x * (0.35f + 0.65f * rVal);
+                z = kFlowerCenters[cluster].z + sinf(angle) * kFlowerRadii[cluster].z * (0.35f + 0.65f * rVal);
             }
             if (IsInsideLake(x, z, 0.85f) || DistanceToPaths(x, z) < 1.30f)
                 continue;
@@ -422,12 +440,6 @@ static void BuildMeadowLayout(void)
         s_flowerPlacements[i].rotationDeg = RandomRange(&rng, 0.0f, 360.0f);
         s_flowerPlacements[i].phase = Random01(&rng);
 
-        // 2D Spatial Cellular Bio-Drift (Ghost of Tsushima Voronoi field)
-        // Flowers cluster by spatial cell so species form cohesive sweeping waves/drifts
-        float cellVal = sinf(x * 0.22f + z * 0.15f) * 0.5f +
-                        sinf(x * -0.14f + z * 0.26f + 1.2f) * 0.5f;
-        cellVal += (Random01(&rng) - 0.5f) * 0.28f; // organic boundary jitter
-
         static const unsigned char speciesByCluster[FLOWER_CLUSTER_COUNT][4] = {
             {0, 4, 5, 6}, // Ivory Daisy drift -> Peach Blossom -> Orchid Cosmos -> Lavender
             {1, 2, 7, 0}, // Golden Buttercup drift -> Scarlet Poppy -> Primrose -> Daisy
@@ -436,10 +448,16 @@ static void BuildMeadowLayout(void)
             {1, 0, 7, 4}, // Southeast knoll: buttercup, daisy, primrose, peach
             {0, 3, 6, 5}, // North bank: daisy, cornflower, lavender, cosmos
         };
-        int speciesSlot = (cellVal < -0.25f) ? 0
-                        : (cellVal < 0.28f)  ? 1
-                        : (cellVal < 0.72f)  ? 2 : 3;
-        int variant = speciesByCluster[cluster][speciesSlot];
+        int variant;
+        if (isColony) {
+            // Colony signature species with occasional wild hybrid/companion (16%)
+            variant = speciesByCluster[cluster][colony];
+            if (Random01(&rng) < 0.16f)
+                variant = speciesByCluster[cluster][3]; // companion accent blossom
+        } else {
+            // Stray blossoms can be any companion species
+            variant = speciesByCluster[cluster][(int)(Random01(&rng) * 4.0f) % 4];
+        }
         bool tallAccent = variant == 2 || variant == 4 || variant == 6;
 
         float driftHeightBase = tallAccent ? 0.44f : 0.36f;
@@ -729,7 +747,7 @@ void InitVerdantPathMap(void)
         (MapMeadowStyle){
             .rootColor = {18, 34, 16, 255}, .tipColor = {136, 186, 54, 255},
             .bladesPerClump = 6, .bladeSegments = 3, .bladeWidthScale = 0.12f,
-            .chunkSize = 12.0f, .lodDistance = 32.0f, .midLodDistance = 16.0f, .drawDistance = 50.0f,
+            .chunkSize = 12.0f, .lodDistance = 32.0f, .midLodDistance = 16.0f, .drawDistance = 58.0f,
             .shadowDistance = 14.0f,
             .texturePath = NULL,
             .botanicalVariation = 1.0f,

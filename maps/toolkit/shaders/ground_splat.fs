@@ -104,12 +104,15 @@ void main()
     float slope = clamp(1.0 - geomNormal.y, 0.0, 1.0);
 
     // Small irregularities follow real detail, never displace the lake cutout.
+    float pathMeander = sin(fragWorldPos.x * 0.85 + fragWorldPos.z * 1.15) * 0.22
+                      + sin(fragWorldPos.x * 2.30 - fragWorldPos.z * 1.70) * 0.11;
+    distToPath += pathMeander;
     if (u_ecologyEnabled != 0)
         distToPath += (dirtDetail.r - 0.5) * 0.18;
 
     // 4. Four-layer weights
-    float wPath = 1.0 - smoothstep(1.2, 1.9, distToPath);
-    float wPathMargin = smoothstep(1.1, 1.85, distToPath) * (1.0 - smoothstep(1.85, 3.4, distToPath));
+    float wPath = 1.0 - smoothstep(1.15, 1.85, distToPath);
+    float wPathMargin = smoothstep(1.05, 1.75, distToPath) * (1.0 - smoothstep(1.75, 3.2, distToPath));
     float wWetSoil = shoreFactor * 0.95;
     float wSlope = smoothstep(0.14, 0.46, slope);
     float wDrySoil = clamp(wPathMargin * 0.88 + wSlope * 0.92, 0.0, 1.0);
@@ -169,6 +172,18 @@ void main()
     grassAlbedo = mix(coolTurf, warmTurf, habitatWarmth);
     if (u_ecologyEnabled != 0)
         grassAlbedo *= mix(vec3(1.0), vec3(0.93, 0.97, 0.94), ecology.b);
+
+    // Distant Grass Canopy Imposter Blend (Seamless infinite horizon):
+    // Near the camera, dark root soil is visible between individual blades.
+    // Approaching the 3D grass culling horizon (22m -> 50m), smoothly transition
+    // ground albedo into the lush illuminated grass canopy color so the cutoff is invisible.
+    float camDist = length(viewPos.xz - fragWorldPos.xz);
+    float distantCanopyBlend = smoothstep(22.0, 50.0, camDist) * wGrass;
+    vec3 canopyColor = vec3(0.39, 0.53, 0.20) * mix(vec3(0.92, 0.96, 0.90), vec3(1.10, 1.06, 0.88), habitatWarmth);
+    float distantClumpNoise = sin(fragWorldPos.x * 1.6 + fragWorldPos.z * 1.2) * 0.5
+                            + sin(fragWorldPos.x * -1.1 + fragWorldPos.z * 2.1) * 0.5;
+    canopyColor *= mix(0.90, 1.10, distantClumpNoise * 0.5 + 0.5);
+    grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.86);
 
     // Soil & Path PBR Albedos
     vec3 drySoilColor = dirtDetail * vec3(0.86, 0.77, 0.63) * 1.18;

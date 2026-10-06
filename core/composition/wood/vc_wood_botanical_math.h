@@ -298,168 +298,62 @@ static inline void Botanical_RenderParametricPetal(
     }
 }
 
-// ── 3D Single Parametric Petal (Standalone / Free airborne falling petal) ────
-static inline void Botanical_RenderSinglePetalMesh(
-    Vector3 root,
-    Vector3 forward,
-    Vector3 right,
-    Vector3 up,
-    float petalLen,
-    const BotanicalProfile *prof,
-    float curveAmount,
-    Color cBase,
-    Color cMid,
-    Color cTip,
-    Color cGlowRim,
-    Vector3 sunDir,
-    bool isShadowPass,
-    unsigned char alphaByte
-)
+/* Shared soft blade primitive: smooth geometric normals, restrained midrib,
+ * continuous base/tip and gentle transverse cup. Uses the same sample grid
+ * that defines the physical broadside area. No textures or extra draw layer. */
+static inline void Botanical_RenderBladeMesh(Vector3 root,Vector3 forward,Vector3 right,
+    Vector3 up,float lengthM,const BotanicalProfile *profile,float curveRatio,
+    float cupRatio,float asymmetry,Color cBase,Color cMid,Color cTip,Color cAccent,
+    Vector3 sunDir,bool petal,bool isShadowPass,unsigned char alphaByte)
 {
-    const float tSamples[4] = { 0.05f, 0.38f, 0.70f, 0.88f };
-    Vector3 spinePt[4];
-    Vector3 leftPt[4];
-    Vector3 rightPt[4];
-    Vector3 normL[4];
-    Vector3 normR[4];
-
-    for (int i = 0; i < 4; i++)
-    {
-        float t = tSamples[i];
-        float w = Botanical_EvaluateWidth(prof, t) * petalLen;
-        float dy = Botanical_EvalPetalElevation(t, curveAmount);
-        float cup = w * (prof->fold > 0.01f ? prof->fold : 0.28f);
-
-        Vector3 pMid = Vector3Add(root, Vector3Add(
-            Vector3Scale(forward, petalLen * t),
-            Vector3Scale(up, dy)
-        ));
-        spinePt[i] = pMid;
-        leftPt[i]  = Vector3Add(Vector3Subtract(pMid, Vector3Scale(right, w)), Vector3Scale(up, cup));
-        rightPt[i] = Vector3Add(Vector3Add(pMid, Vector3Scale(right, w)), Vector3Scale(up, cup));
-
-        normL[i] = Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(forward, 0.25f), Vector3Scale(right, -0.35f)), Vector3Scale(up, 0.85f)));
-        normR[i] = Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(forward, 0.25f), Vector3Scale(right,  0.35f)), Vector3Scale(up, 0.85f)));
-    }
-
-    Vector3 apexPt = Vector3Add(root, Vector3Add(
-        Vector3Scale(forward, petalLen),
-        Vector3Scale(up, Botanical_EvalPetalElevation(1.0f, curveAmount))
-    ));
-    Vector3 normApex = Vector3Normalize(Vector3Add(Vector3Scale(forward, 0.55f), Vector3Scale(up, 0.75f)));
-
-    for (int i = 0; i < 3; i++)
-    {
-        Vector3 L0 = leftPt[i],      L1 = leftPt[i + 1];
-        Vector3 M0 = spinePt[i],     M1 = spinePt[i + 1];
-        Vector3 R0 = rightPt[i],     R1 = rightPt[i + 1];
-
-        if (!isShadowPass)
-        {
-            float dL0 = 0.38f + 0.62f * Botanical_WrapDiffuse(normL[i], sunDir) + 0.40f * Botanical_WrapDiffuse(Vector3Negate(normL[i]), sunDir);
-            float dL1 = 0.38f + 0.62f * Botanical_WrapDiffuse(normL[i + 1], sunDir) + 0.40f * Botanical_WrapDiffuse(Vector3Negate(normL[i + 1]), sunDir);
-            float dR0 = 0.38f + 0.62f * Botanical_WrapDiffuse(normR[i], sunDir) + 0.40f * Botanical_WrapDiffuse(Vector3Negate(normR[i]), sunDir);
-            float dR1 = 0.38f + 0.62f * Botanical_WrapDiffuse(normR[i + 1], sunDir) + 0.40f * Botanical_WrapDiffuse(Vector3Negate(normR[i + 1]), sunDir);
-
-            float eL0 = 0.50f * dL0 + 0.50f;
-            float eL1 = 0.50f * dL1 + 0.50f;
-            float eR0 = 0.50f * dR0 + 0.50f;
-            float eR1 = 0.50f * dR1 + 0.50f;
-
-            float s0 = tSamples[i];
-            float s1 = tSamples[i + 1];
-
-            Color colM0 = (Color){
-                (unsigned char)(cBase.r * (1.0f - s0) + cMid.r * s0),
-                (unsigned char)(cBase.g * (1.0f - s0) + cMid.g * s0),
-                (unsigned char)(cBase.b * (1.0f - s0) + cMid.b * s0),
-                alphaByte
-            };
-            Color colM1 = (Color){
-                (unsigned char)(cBase.r * (1.0f - s1) + cMid.r * s1),
-                (unsigned char)(cBase.g * (1.0f - s1) + cMid.g * s1),
-                (unsigned char)(cBase.b * (1.0f - s1) + cMid.b * s1),
-                alphaByte
-            };
-            Color colEdge0 = (Color){
-                (unsigned char)fminf(255.0f, colM0.r * 0.40f + cGlowRim.r * 0.60f),
-                (unsigned char)fminf(255.0f, colM0.g * 0.40f + cGlowRim.g * 0.60f),
-                (unsigned char)fminf(255.0f, colM0.b * 0.40f + cGlowRim.b * 0.60f),
-                alphaByte
-            };
-            Color colEdge1 = (Color){
-                (unsigned char)fminf(255.0f, colM1.r * 0.40f + cGlowRim.r * 0.60f),
-                (unsigned char)fminf(255.0f, colM1.g * 0.40f + cGlowRim.g * 0.60f),
-                (unsigned char)fminf(255.0f, colM1.b * 0.40f + cGlowRim.b * 0.60f),
-                alphaByte
-            };
-
-            // Left quad
-            rlColor4ub((unsigned char)fminf(255.0f, colEdge0.r * eL0), (unsigned char)fminf(255.0f, colEdge0.g * eL0), (unsigned char)fminf(255.0f, colEdge0.b * eL0), alphaByte);
-            rlNormal3f(normL[i].x, normL[i].y, normL[i].z); rlVertex3f(L0.x, L0.y, L0.z);
-            rlColor4ub((unsigned char)(colM0.r * dL0), (unsigned char)(colM0.g * dL0), (unsigned char)(colM0.b * dL0), alphaByte);
-            rlNormal3f(normL[i].x, normL[i].y, normL[i].z); rlVertex3f(M0.x, M0.y, M0.z);
-            rlColor4ub((unsigned char)(colM1.r * dL1), (unsigned char)(colM1.g * dL1), (unsigned char)(colM1.b * dL1), alphaByte);
-            rlNormal3f(normL[i + 1].x, normL[i + 1].y, normL[i + 1].z); rlVertex3f(M1.x, M1.y, M1.z);
-
-            rlColor4ub((unsigned char)fminf(255.0f, colEdge0.r * eL0), (unsigned char)fminf(255.0f, colEdge0.g * eL0), (unsigned char)fminf(255.0f, colEdge0.b * eL0), alphaByte);
-            rlNormal3f(normL[i].x, normL[i].y, normL[i].z); rlVertex3f(L0.x, L0.y, L0.z);
-            rlColor4ub((unsigned char)(colM1.r * dL1), (unsigned char)(colM1.g * dL1), (unsigned char)(colM1.b * dL1), alphaByte);
-            rlNormal3f(normL[i + 1].x, normL[i + 1].y, normL[i + 1].z); rlVertex3f(M1.x, M1.y, M1.z);
-            rlColor4ub((unsigned char)fminf(255.0f, colEdge1.r * eL1), (unsigned char)fminf(255.0f, colEdge1.g * eL1), (unsigned char)fminf(255.0f, colEdge1.b * eL1), alphaByte);
-            rlNormal3f(normL[i + 1].x, normL[i + 1].y, normL[i + 1].z); rlVertex3f(L1.x, L1.y, L1.z);
-
-            // Right quad
-            rlColor4ub((unsigned char)(colM0.r * dR0), (unsigned char)(colM0.g * dR0), (unsigned char)(colM0.b * dR0), alphaByte);
-            rlNormal3f(normR[i].x, normR[i].y, normR[i].z); rlVertex3f(M0.x, M0.y, M0.z);
-            rlColor4ub((unsigned char)fminf(255.0f, colEdge0.r * eR0), (unsigned char)fminf(255.0f, colEdge0.g * eR0), (unsigned char)fminf(255.0f, colEdge0.b * eR0), alphaByte);
-            rlNormal3f(normR[i].x, normR[i].y, normR[i].z); rlVertex3f(R0.x, R0.y, R0.z);
-            rlColor4ub((unsigned char)fminf(255.0f, colEdge1.r * eR1), (unsigned char)fminf(255.0f, colEdge1.g * eR1), (unsigned char)fminf(255.0f, colEdge1.b * eR1), alphaByte);
-            rlNormal3f(normR[i + 1].x, normR[i + 1].y, normR[i + 1].z); rlVertex3f(R1.x, R1.y, R1.z);
-
-            rlColor4ub((unsigned char)(colM0.r * dR0), (unsigned char)(colM0.g * dR0), (unsigned char)(colM0.b * dR0), alphaByte);
-            rlNormal3f(normR[i].x, normR[i].y, normR[i].z); rlVertex3f(M0.x, M0.y, M0.z);
-            rlColor4ub((unsigned char)fminf(255.0f, colEdge1.r * eR1), (unsigned char)fminf(255.0f, colEdge1.g * eR1), (unsigned char)fminf(255.0f, colEdge1.b * eR1), alphaByte);
-            rlNormal3f(normR[i + 1].x, normR[i + 1].y, normR[i + 1].z); rlVertex3f(R1.x, R1.y, R1.z);
-            rlColor4ub((unsigned char)(colM1.r * dR1), (unsigned char)(colM1.g * dR1), (unsigned char)(colM1.b * dR1), alphaByte);
-            rlNormal3f(normR[i + 1].x, normR[i + 1].y, normR[i + 1].z); rlVertex3f(M1.x, M1.y, M1.z);
-        }
-        else
-        {
-            rlVertex3f(L0.x, L0.y, L0.z); rlVertex3f(M0.x, M0.y, M0.z); rlVertex3f(M1.x, M1.y, M1.z);
-            rlVertex3f(L0.x, L0.y, L0.z); rlVertex3f(M1.x, M1.y, M1.z); rlVertex3f(L1.x, L1.y, L1.z);
-            rlVertex3f(M0.x, M0.y, M0.z); rlVertex3f(R0.x, R0.y, R0.z); rlVertex3f(R1.x, R1.y, R1.z);
-            rlVertex3f(M0.x, M0.y, M0.z); rlVertex3f(R1.x, R1.y, R1.z); rlVertex3f(M1.x, M1.y, M1.z);
+    Vector3 points[BOTANICAL_BLADE_SEGMENTS+1][BOTANICAL_BLADE_STRIPS+1];
+    Vector3 normals[BOTANICAL_BLADE_SEGMENTS+1][BOTANICAL_BLADE_STRIPS+1];
+    Color colors[BOTANICAL_BLADE_SEGMENTS+1][BOTANICAL_BLADE_STRIPS+1];
+    if (!isfinite(lengthM) || lengthM<=0) return;
+    for(int row=0;row<=BOTANICAL_BLADE_SEGMENTS;row++) {
+        float t=Botanical_BladeSampleT(row);
+        for(int column=0;column<=BOTANICAL_BLADE_STRIPS;column++) {
+            float across=-1+2*(float)column/BOTANICAL_BLADE_STRIPS;
+            Vector3 local=Botanical_BladeLocalPoint(profile,lengthM,t,across,curveRatio,cupRatio,asymmetry);
+            Vector3 normal=Botanical_BladeLocalNormal(profile,lengthM,t,across,curveRatio,cupRatio,asymmetry);
+            points[row][column]=Vector3Add(root,Vector3Add(Vector3Scale(right,local.x),
+                Vector3Add(Vector3Scale(up,local.y),Vector3Scale(forward,local.z))));
+            normals[row][column]=Vector3Normalize(Vector3Add(Vector3Scale(right,normal.x),
+                Vector3Add(Vector3Scale(up,normal.y),Vector3Scale(forward,normal.z))));
+            if(!isShadowPass) {
+                Color tint=t<=.5f?ColorLerp(cBase,cMid,t*2):ColorLerp(cMid,cTip,(t-.5f)*2);
+                float accent=petal?.04f*powf(fabsf(across),4):.08f*powf(1-fabsf(across),4);
+                tint=ColorLerp(tint,cAccent,accent);
+                float light=.58f+.42f*fabsf(Vector3DotProduct(normals[row][column],sunDir));
+                tint=(Color){(unsigned char)(tint.r*light),(unsigned char)(tint.g*light),
+                    (unsigned char)(tint.b*light),alphaByte};
+                colors[row][column]=tint;
+            }
         }
     }
+    rlCheckRenderBatchLimit(BOTANICAL_BLADE_VERTEX_COUNT);
+    const int offsets[6][2]={{0,0},{1,0},{1,1},{0,0},{1,1},{0,1}};
+    for(int row=0;row<BOTANICAL_BLADE_SEGMENTS;row++)
+        for(int column=0;column<BOTANICAL_BLADE_STRIPS;column++)
+            for(int vertex=0;vertex<6;vertex++) {
+                int r=row+offsets[vertex][0],c=column+offsets[vertex][1];
+                if(!isShadowPass) {
+                    Color tint=colors[r][c];rlColor4ub(tint.r,tint.g,tint.b,tint.a);
+                }
+                Vector3 normal=normals[r][c],point=points[r][c];
+                rlNormal3f(normal.x,normal.y,normal.z);rlVertex3f(point.x,point.y,point.z);
+            }
+}
 
-    // Apex fan
-    Vector3 L3 = leftPt[3], M3 = spinePt[3], R3 = rightPt[3];
-    if (!isShadowPass)
-    {
-        float dTip = 0.45f + 0.55f * Botanical_WrapDiffuse(normApex, sunDir);
-        float eTip = 0.50f * dTip + 0.50f;
-        Color colTipLit = (Color){
-            (unsigned char)fminf(255.0f, cTip.r * eTip),
-            (unsigned char)fminf(255.0f, cTip.g * eTip),
-            (unsigned char)fminf(255.0f, cTip.b * eTip),
-            alphaByte
-        };
-        rlColor4ub(colTipLit.r, colTipLit.g, colTipLit.b, alphaByte);
-        rlNormal3f(normApex.x, normApex.y, normApex.z); rlVertex3f(L3.x, L3.y, L3.z);
-        rlNormal3f(normApex.x, normApex.y, normApex.z); rlVertex3f(M3.x, M3.y, M3.z);
-        rlNormal3f(normApex.x, normApex.y, normApex.z); rlVertex3f(apexPt.x, apexPt.y, apexPt.z);
-
-        rlColor4ub(colTipLit.r, colTipLit.g, colTipLit.b, alphaByte);
-        rlNormal3f(normApex.x, normApex.y, normApex.z); rlVertex3f(M3.x, M3.y, M3.z);
-        rlNormal3f(normApex.x, normApex.y, normApex.z); rlVertex3f(R3.x, R3.y, R3.z);
-        rlNormal3f(normApex.x, normApex.y, normApex.z); rlVertex3f(apexPt.x, apexPt.y, apexPt.z);
-    }
-    else
-    {
-        rlVertex3f(L3.x, L3.y, L3.z); rlVertex3f(M3.x, M3.y, M3.z); rlVertex3f(apexPt.x, apexPt.y, apexPt.z);
-        rlVertex3f(M3.x, M3.y, M3.z); rlVertex3f(R3.x, R3.y, R3.z); rlVertex3f(apexPt.x, apexPt.y, apexPt.z);
-    }
+// Standalone petals share the blade primitive; compound blossoms stay separate.
+static inline void Botanical_RenderSinglePetalMesh(Vector3 root,Vector3 forward,
+    Vector3 right,Vector3 up,float petalLen,const BotanicalProfile *profile,
+    float curveAmount,Color cBase,Color cMid,Color cTip,Color cGlowRim,
+    Vector3 sunDir,bool isShadowPass,unsigned char alphaByte)
+{
+    Botanical_RenderBladeMesh(root,forward,right,up,petalLen,profile,
+        petalLen>0?.6f*curveAmount/petalLen:0,profile->fold*.5f,.018f,
+        cBase,cMid,cTip,cGlowRim,sunDir,true,isShadowPass,alphaByte);
 }
 
 // ── 3D Golden Angle Phyllotaxis Receptacle Dome (From map_props_nature.inl) ──

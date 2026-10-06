@@ -7,6 +7,7 @@
 #include "environment/env_shadow.h"
 #include "environment/environment_system.h"
 #include "core/composition/visual_composer.h"
+#include "core/time_fx.h"
 #include "core/composition/wood/vc_wood_botanical_math.h"
 #include <math.h>
 
@@ -74,7 +75,7 @@ void VFX_ComposeWoodPetals(const VFX_WoodPetalConfig *config)
 
     // Periodically feed the simulation pool with free physical airborne petals
     static float s_petalSpawnTimer = 0.0f;
-    s_petalSpawnTimer += GetFrameTime();
+    s_petalSpawnTimer += TimeFX_RawDelta();
     int targetCount = config->count > 0 ? config->count : 64;
 
     if (s_petalSpawnTimer > 1.2f || VFX_FoliageSystem_GetActiveCount() < targetCount / 3)
@@ -102,7 +103,7 @@ void VFX_ComposeWoodPetals(const VFX_WoodPetalConfig *config)
     // Also render 6 showcase drifting petals orbiting origin for immediate visual feedback
     bool isShadowPass = EnvShadow_IsCapturing();
     Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
-    float time = (float)GetTime();
+    float time = (float)TimeFX_Elapsed();
 
     Color petalBase, petalMid, petalTip, cGlowRim;
     if (config->type == WOOD_FLOWER_TYPE_LOTUS)

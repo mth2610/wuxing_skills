@@ -22,11 +22,12 @@
 #include "environment/env_shadow.h"
 #include "environment/environment_system.h"
 #include "core/composition/visual_composer.h"
+#include "core/time_fx.h"
 #include "core/map_manager.h"
 #include "core/wind/wind_system.h"
 #include "core/force_field.h"
 #include "core/motion/motion_body.h"
-#include "core/composition/wood/vc_wood_botanical_profile.h"
+#include "core/composition/wood/vc_wood_botanical_math.h"
 #include <math.h>
 #include <stdlib.h>
 
@@ -389,7 +390,7 @@ bool VFX_FoliageSystem_IsHomingActive(void)
 void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
 {
     if (dt <= 0.0001f || s_foliageActiveCount <= 0) return;
-    float time = (float)GetTime();
+    float time = (float)TimeFX_Elapsed();
 
     const ForceField *activeFF = (externalForceField != NULL) ? externalForceField : (s_foliageHasForceField ? &s_foliageActiveForceField : NULL);
 
@@ -727,8 +728,8 @@ static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color cBase, 
         float stemLit = 0.35f + 0.65f * fmaxf(Vector3DotProduct(up, sunDir), 0.0f);
         rlColor4ub((unsigned char)(cVein.r * stemLit * 0.8f), (unsigned char)(cVein.g * stemLit * 0.8f), (unsigned char)(cVein.b * stemLit * 0.8f), alphaByte);
         rlNormal3f(up.x, up.y, up.z);
-        Vector3 sLeft  = Vector3Add(vStemBase, Vector3Scale(right, -0.006f));
-        Vector3 sRight = Vector3Add(vStemBase, Vector3Scale(right,  0.006f));
+        Vector3 sLeft  = Vector3Add(vStemBase, Vector3Scale(right, -leafLen*.003f));
+        Vector3 sRight = Vector3Add(vStemBase, Vector3Scale(right,  leafLen*.003f));
         rlVertex3f(sLeft.x, sLeft.y, sLeft.z);
         rlVertex3f(sRight.x, sRight.y, sRight.z);
         rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
@@ -736,105 +737,19 @@ static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color cBase, 
 
     if (p->leafShape == WOOD_LEAF_SHAPE_WILLOW || p->leafShape == WOOD_LEAF_SHAPE_OVAL)
     {
-        // 5-SEGMENT AAA PROCEDURAL CURVED BLADE (WILLOW / OVAL)
-        BotanicalProfile prof = (p->leafShape == WOOD_LEAF_SHAPE_WILLOW)
-            ? Botanical_ProfileWillow() : Botanical_ProfileOval();
-
-        float curLen = (p->leafShape == WOOD_LEAF_SHAPE_WILLOW) ? (leafLen * 1.45f) : (leafLen * 1.05f);
-        #define FOLIAGE_LEAF_SEGS 5
-        Vector3 spineMid[FOLIAGE_LEAF_SEGS + 1];
-        Vector3 leftEdge[FOLIAGE_LEAF_SEGS + 1];
-        Vector3 rightEdge[FOLIAGE_LEAF_SEGS + 1];
-
-        float flutter = sinf(p->flutterPhase) * (p->state == BOTANICAL_STATE_FREE ? 0.18f : 0.06f);
-
-        for (int i = 0; i <= FOLIAGE_LEAF_SEGS; i++)
-        {
-            float u = (float)i / (float)FOLIAGE_LEAF_SEGS;
-            float t = Botanical_CosineWarp(u);
-            float w = Botanical_EvaluateWidth(&prof, t) * curLen;
-            float y = t * curLen;
-            float zc = prof.curl * t * t * curLen + flutter * t * t * curLen;
-            float zFold = prof.fold * w;
-
-            Vector3 pMid = Vector3Add(vRoot, Vector3Add(Vector3Scale(forward, y), Vector3Scale(up, zc)));
-            spineMid[i]  = pMid;
-            leftEdge[i]  = Vector3Add(pMid, Vector3Add(Vector3Scale(right, -w), Vector3Scale(up, zFold)));
-            rightEdge[i] = Vector3Add(pMid, Vector3Add(Vector3Scale(right,  w), Vector3Scale(up, zFold)));
-        }
-
-        for (int i = 0; i < FOLIAGE_LEAF_SEGS; i++)
-        {
-            Vector3 pL0 = leftEdge[i],     pL1 = leftEdge[i + 1];
-            Vector3 pM0 = spineMid[i],     pM1 = spineMid[i + 1];
-            Vector3 pR0 = rightEdge[i],    pR1 = rightEdge[i + 1];
-
-            Vector3 nL = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(pL1, pM0), Vector3Subtract(pM1, pM0)));
-            Vector3 nR = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(pM1, pM0), Vector3Subtract(pR1, pM0)));
-
-            if (!isShadowPass)
-            {
-                float dL = 0.35f + 0.65f * Botanical_WrapDiffuse(nL, sunDir) + 0.38f * Botanical_WrapDiffuse(Vector3Negate(nL), sunDir);
-                float dR = 0.35f + 0.65f * Botanical_WrapDiffuse(nR, sunDir) + 0.38f * Botanical_WrapDiffuse(Vector3Negate(nR), sunDir);
-
-                float t0 = (float)i / (float)FOLIAGE_LEAF_SEGS;
-                float t1 = (float)(i + 1) / (float)FOLIAGE_LEAF_SEGS;
-                Color col0 = (Color){
-                    (unsigned char)(cBase.r * (1.0f - t0 * 0.6f) + cTip.r * (t0 * 0.6f)),
-                    (unsigned char)(cBase.g * (1.0f - t0 * 0.6f) + cTip.g * (t0 * 0.6f)),
-                    (unsigned char)(cBase.b * (1.0f - t0 * 0.6f) + cTip.b * (t0 * 0.6f)),
-                    alphaByte
-                };
-                Color col1 = (Color){
-                    (unsigned char)(cBase.r * (1.0f - t1 * 0.6f) + cTip.r * (t1 * 0.6f)),
-                    (unsigned char)(cBase.g * (1.0f - t1 * 0.6f) + cTip.g * (t1 * 0.6f)),
-                    (unsigned char)(cBase.b * (1.0f - t1 * 0.6f) + cTip.b * (t1 * 0.6f)),
-                    alphaByte
-                };
-
-                // Left blade quad (pM0, pL0, pL1) + (pM0, pL1, pM1)
-                rlColor4ub((unsigned char)(cVein.r * dL), (unsigned char)(cVein.g * dL), (unsigned char)(cVein.b * dL), alphaByte);
-                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pM0.x, pM0.y, pM0.z);
-                rlColor4ub((unsigned char)(col0.r * dL), (unsigned char)(col0.g * dL), (unsigned char)(col0.b * dL), alphaByte);
-                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pL0.x, pL0.y, pL0.z);
-                rlColor4ub((unsigned char)(col1.r * dL), (unsigned char)(col1.g * dL), (unsigned char)(col1.b * dL), alphaByte);
-                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pL1.x, pL1.y, pL1.z);
-
-                rlColor4ub((unsigned char)(cVein.r * dL), (unsigned char)(cVein.g * dL), (unsigned char)(cVein.b * dL), alphaByte);
-                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pM0.x, pM0.y, pM0.z);
-                rlColor4ub((unsigned char)(col1.r * dL), (unsigned char)(col1.g * dL), (unsigned char)(col1.b * dL), alphaByte);
-                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pL1.x, pL1.y, pL1.z);
-                rlColor4ub((unsigned char)(cVein.r * dL), (unsigned char)(cVein.g * dL), (unsigned char)(cVein.b * dL), alphaByte);
-                rlNormal3f(nL.x, nL.y, nL.z); rlVertex3f(pM1.x, pM1.y, pM1.z);
-
-                // Right blade quad (pM0, pM1, pR1) + (pM0, pR1, pR0)
-                rlColor4ub((unsigned char)(cVein.r * dR), (unsigned char)(cVein.g * dR), (unsigned char)(cVein.b * dR), alphaByte);
-                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pM0.x, pM0.y, pM0.z);
-                rlColor4ub((unsigned char)(cVein.r * dR), (unsigned char)(cVein.g * dR), (unsigned char)(cVein.b * dR), alphaByte);
-                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pM1.x, pM1.y, pM1.z);
-                rlColor4ub((unsigned char)(col1.r * dR), (unsigned char)(col1.g * dR), (unsigned char)(col1.b * dR), alphaByte);
-                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pR1.x, pR1.y, pR1.z);
-
-                rlColor4ub((unsigned char)(cVein.r * dR), (unsigned char)(cVein.g * dR), (unsigned char)(cVein.b * dR), alphaByte);
-                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pM0.x, pM0.y, pM0.z);
-                rlColor4ub((unsigned char)(col1.r * dR), (unsigned char)(col1.g * dR), (unsigned char)(col1.b * dR), alphaByte);
-                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pR1.x, pR1.y, pR1.z);
-                rlColor4ub((unsigned char)(col0.r * dR), (unsigned char)(col0.g * dR), (unsigned char)(col0.b * dR), alphaByte);
-                rlNormal3f(nR.x, nR.y, nR.z); rlVertex3f(pR0.x, pR0.y, pR0.z);
-            }
-            else
-            {
-                rlVertex3f(pM0.x, pM0.y, pM0.z); rlVertex3f(pL0.x, pL0.y, pL0.z); rlVertex3f(pL1.x, pL1.y, pL1.z);
-                rlVertex3f(pM0.x, pM0.y, pM0.z); rlVertex3f(pL1.x, pL1.y, pL1.z); rlVertex3f(pM1.x, pM1.y, pM1.z);
-                rlVertex3f(pM0.x, pM0.y, pM0.z); rlVertex3f(pM1.x, pM1.y, pM1.z); rlVertex3f(pR1.x, pR1.y, pR1.z);
-                rlVertex3f(pM0.x, pM0.y, pM0.z); rlVertex3f(pR1.x, pR1.y, pR1.z); rlVertex3f(pR0.x, pR0.y, pR0.z);
-            }
-        }
-        #undef FOLIAGE_LEAF_SEGS
+        BotanicalProfile profile=p->leafShape==WOOD_LEAF_SHAPE_WILLOW ?
+            Botanical_ProfileWillow():Botanical_ProfileOval();
+        float lengthM=leafLen*(p->leafShape==WOOD_LEAF_SHAPE_WILLOW?1.45f:1.05f);
+        float flutter=sinf(p->flutterPhase)*(p->state==BOTANICAL_STATE_FREE?.04f:.015f);
+        Botanical_RenderBladeMesh(vRoot,forward,right,up,lengthM,&profile,
+            profile.curl*.6f+flutter,profile.fold*.5f,.012f,
+            cBase,ColorLerp(cBase,cTip,.45f),cTip,cVein,sunDir,false,isShadowPass,alphaByte);
     }
     else
     {
         // MAPLE: 3-lobed notched palmate silhouette with prominent sinus notches
+        cVein=ColorLerp(cBase,cVein,.14f);
+        cTip=ColorLerp(cBase,cTip,.65f);
         float mLen = leafLen * 0.95f;
         float mW   = mLen * 0.52f;
 

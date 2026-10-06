@@ -105,7 +105,7 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     // Ghost of Tsushima Wrapped Diffuse Lighting:
     // I_diffuse = ((N · L + w) / (1 + w))^2
     // Quadratic falloff wraps light gently around curved foliage without harsh terminators
-    float wrap = mix(0.32, 0.14, bloomMask);
+    float wrap = mix(0.32, 0.42, bloomMask);
     float wrapped = clamp((dot(n, u_lightDir) + wrap) / (1.0 + wrap), 0.0, 1.0);
     float directDiffuse = wrapped * wrapped;
 
@@ -115,13 +115,16 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float backfaceSun = max(-dot(faceNormal, u_lightDir), 0.0);
     float viewSunAlign = max(dot(-u_lightDir, viewDir), 0.0);
     float transmissionAngle = pow(backfaceSun, 1.5) * 0.70 + pow(viewSunAlign, 2.0) * 0.50;
+    // Petals have omnidirectional membrane diffusion (sunlight penetrating and lighting the delicate petal body)
+    float petalDiffusion = (0.28 + 0.72 * wrapped);
+    transmissionAngle = mix(transmissionAngle, max(transmissionAngle, petalDiffusion * 0.75), bloomMask);
     float thinness = mix(0.20, 1.0, smoothstep(0.06, 0.65, heightAlongPlant));
     float transmission = transmissionAngle * thinness;
 
     // Subsurface scattering color: radiant emerald-gold transmission
     vec3 subsurfaceColor = mix(
         baseColor * vec3(1.48, 1.40, 0.62), // Grass: radiant emerald-gold backlit transmission
-        baseColor * vec3(1.42, 1.22, 0.88) + vec3(0.08, 0.04, 0.02), // Petals: warm translucent glow
+        baseColor * vec3(1.45, 1.25, 0.90) + vec3(0.08, 0.04, 0.02), // Petals: warm translucent glow
         bloomMask
     );
 
@@ -140,7 +143,8 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 baseAmbient = max(u_ambientColor, vec3(0.28, 0.32, 0.24));
     vec3 skyAmbient = baseAmbient * vec3(1.06, 1.10, 1.16);
     vec3 groundBounce = baseAmbient * vec3(0.65, 0.74, 0.44);
-    float cupCavity = mix(0.65, 1.0, smoothstep(0.70, 0.98, heightAlongPlant));
+    // Soft radial ambient occlusion from the blossom center outwards to petal tips
+    float cupCavity = mix(0.58, 1.0, smoothstep(0.82, 0.98, heightAlongPlant));
     vec3 ambientFloor = mix(groundBounce, skyAmbient, skyWeight) * mix(1.0, cupCavity, bloomMask);
 
     float horizon = 0.75 + 0.25 * max(n.y, 0.0);

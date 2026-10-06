@@ -3116,6 +3116,14 @@ geometry choices, not universal botanical constants. Randomized scale remains
 compound blossom geometry retains its original profiles. The six illustrative
 orbiting petals in `vc_wood_petals.inl` use the same resolved dimensions as the
 physical pool; their motion remains an illustrative kinematic showcase.
+Standalone petals and oval/willow leaves share a 12-segment, four-strip blade
+mesh with a smooth cup, gentle asymmetric spine and geometric vertex normals.
+Broadside area uses those exact projected triangles. Attached blades and free
+blades use the same renderer; two-sided lighting, subdued accents and proportional
+petioles preserve readability without enlarging the species dimensions. Maple
+retains its palmate outline; compound flower-head geometry is unchanged.
+Wood leaf/petal emission and animation use the shared `TimeFX` clock so matched
+simulation frames also match their showcase phases.
 Rotational flutter remains artistic. Translational flutter is a bounded airflow-powered
 approximation, powered by air velocity relative to the body. A co-moving body or a
 stationary body in still air receives no flutter input; falling through still air can

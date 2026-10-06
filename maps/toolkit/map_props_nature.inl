@@ -1869,14 +1869,26 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             bz + sinf(bladeLeanAngle) * lean * 0.95f
         };
 
-        // Coherent Macro Seedhead Biome Field (scale ~18m):
+        // Coherent Macro Seedhead Biome Field (Ghost of Tsushima golden pampas/wheat waves, scale ~16m):
         float strawNoise = sinf(clump->position.x * 0.16f + clump->position.z * 0.12f + 1.7f) * 0.5f
                          + sinf(clump->position.x * -0.10f + clump->position.z * 0.22f + 0.5f) * 0.5f;
-        bool isSeedhead = (strawNoise > 0.40f) && (bladeId == style.bladesPerClump - 1) && (bHash3 > 0.25f);
+        bool isStrawBiome = strawNoise > 0.18f;
+        bool isSeedhead = false;
+        if (isStrawBiome) {
+            if (strawNoise > 0.42f) {
+                // Dense golden wheat ridge: 65% of blades catch the warm straw plume
+                isSeedhead = (bladeId < 4) || (bHash3 > 0.35f);
+            } else {
+                // Transition zone: top arching hero blades carry golden seedheads
+                isSeedhead = (bladeId < 2 && bHash3 > 0.20f) || (bladeId == style.bladesPerClump - 1);
+            }
+        }
         if (isSeedhead) {
-            bladeRoot = (Color){46, 60, 22, 255};   // warm olive-gold sheath
-            bladeTip  = (Color){208, 182, 85, 255};  // ripe golden-amber wheat straw tip
-            bladeTip = Nature_LerpColor(bladeTip, (Color){166, 156, 88, 255}, botanical);
+            bladeRoot = (Color){52, 62, 24, 255};    // warm golden-olive sheath
+            bladeTip  = (Color){222, 194, 92, 255};  // ripe golden-amber wheat straw tip
+            if (bHash2 > 0.60f)
+                bladeTip = (Color){238, 222, 172, 255}; // ivory pampas feather plume
+            bladeTip = Nature_LerpColor(bladeTip, (Color){182, 168, 98, 255}, botanical * 0.5f);
         } else {
             float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f
                              + sinf(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f) * 0.45f;
@@ -1888,6 +1900,14 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             int tR = (int)(style.tipColor.r * tone * (1.0f + warmth));
             int tG = (int)(style.tipColor.g * tone);
             int tB = (int)(style.tipColor.b * tone * (1.0f - warmth));
+
+            // Botanical micro-diversity: 18% of blades have sun-kissed golden tips
+            if (bHash2 < 0.18f && bladeId < 3) {
+                tR = (int)(tR * 1.38f);
+                tG = (int)(tG * 1.12f);
+                tB = (int)(tB * 0.62f);
+            }
+
             if (bladeId >= 4) {
                 // Ground thatch has deeper forest shadow tones to anchor roots
                 rR = (int)(rR * 0.82f); rG = (int)(rG * 0.85f); rB = (int)(rB * 0.82f);

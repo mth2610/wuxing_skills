@@ -5,6 +5,9 @@
 #ifndef PI
 #define PI 3.14159265358979323846f
 #endif
+#define BOTANICAL_BLADE_SEGMENTS 12
+#define BOTANICAL_BLADE_STRIPS 4
+#define BOTANICAL_BLADE_VERTEX_COUNT (BOTANICAL_BLADE_SEGMENTS * BOTANICAL_BLADE_STRIPS * 6)
 // ── Profile Definition ───────────────────────────────────────────────────────
 typedef struct {
     float a;        // Base taper exponent (0.4-0.7: rounded base; 0.8-1.5: slender base)
@@ -118,6 +121,41 @@ static inline float Botanical_ProfilePlanformArea(const BotanicalProfile *profil
     }
     return area;
 }
+/* Rendering and material area use the same bounded longitudinal samples. */
+static inline float Botanical_BladeSampleT(int index)
+{
+    return Botanical_CosineWarp((float)index/BOTANICAL_BLADE_SEGMENTS);
+}
+/* Local X spans the blade, Y is its normal direction, Z follows its spine.
+ * Centerline asymmetry bends the outline without changing broadside area. */
+static inline Vector3 Botanical_BladeLocalPoint(const BotanicalProfile *profile,
+    float lengthM,float t,float across,float curveRatio,float cupRatio,float asymmetry)
+{
+    float width=Botanical_EvaluateWidth(profile,t)*lengthM;
+    return (Vector3){lengthM*asymmetry*sinf(PI*t)+across*width,
+        lengthM*curveRatio*t*t+cupRatio*width*across*across,lengthM*t};
+}
+static inline Vector3 Botanical_BladeLocalNormal(const BotanicalProfile *profile,
+    float lengthM,float t,float across,float curveRatio,float cupRatio,float asymmetry)
+{
+    float before=fmaxf(0,t-.002f),after=fminf(1,t+.002f);
+    Vector3 a=Botanical_BladeLocalPoint(profile,lengthM,before,across,curveRatio,cupRatio,asymmetry);
+    Vector3 b=Botanical_BladeLocalPoint(profile,lengthM,after,across,curveRatio,cupRatio,asymmetry);
+    Vector3 tangent={b.x-a.x,b.y-a.y,b.z-a.z};
+    /* Cross the longitudinal tangent with the width-normalized transverse
+     * derivative, which remains finite at the collapsed base and apex. */
+    Vector3 normal={-tangent.z*2*cupRatio*across,tangent.z,
+        tangent.x*2*cupRatio*across-tangent.y};
+    float length=sqrtf(normal.x*normal.x+normal.y*normal.y+normal.z*normal.z);
+    if(length<1e-12f) return (Vector3){0,1,0};
+    return (Vector3){normal.x/length,normal.y/length,normal.z/length};
+}
+static inline float Botanical_BladePlanformArea(const BotanicalProfile *profile,float lengthM)
+{
+    float samples[BOTANICAL_BLADE_SEGMENTS+1];
+    for(int i=0;i<=BOTANICAL_BLADE_SEGMENTS;i++) samples[i]=Botanical_BladeSampleT(i);
+    return Botanical_ProfilePlanformArea(profile,lengthM,samples,BOTANICAL_BLADE_SEGMENTS+1);
+}
 static inline float Botanical_LeafPlanformArea(float sizeM, int shape)
 {
     if (shape==2) { /* Maple: sum the six rendered planar lobe triangles. */
@@ -125,9 +163,7 @@ static inline float Botanical_LeafPlanformArea(float sizeM, int shape)
         return length*width*(.60f*.42f + .35f*.60f + 1.15f*.42f-.42f*.60f);
     }
     BotanicalProfile profile=shape==1?Botanical_ProfileWillow():Botanical_ProfileOval();
-    float samples[6];
-    for(int i=0;i<6;i++) samples[i]=Botanical_CosineWarp((float)i/5);
-    return Botanical_ProfilePlanformArea(&profile,sizeM*(shape==1?1.45f:1.05f),samples,6);
+    return Botanical_BladePlanformArea(&profile,sizeM*(shape==1?1.45f:1.05f));
 }
 /* Detached blade geometry only: compound blossom profiles keep their authored
  * proportions. Plum is a representative 14 x 9 mm peach-family petal; lotus
@@ -142,8 +178,7 @@ static inline BotanicalProfile Botanical_DetachedPetalProfile(int flowerType)
 static inline float Botanical_PetalPlanformArea(float sizeM,int flowerType)
 {
     BotanicalProfile profile=Botanical_DetachedPetalProfile(flowerType);
-    const float samples[4]={.05f,.38f,.70f,.88f};
-    return Botanical_ProfilePlanformArea(&profile,sizeM*1.25f,samples,4);
+    return Botanical_BladePlanformArea(&profile,sizeM*1.25f);
 }
 static inline float Botanical_PetalDefaultSize(int flowerType)
 {

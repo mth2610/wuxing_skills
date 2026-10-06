@@ -7,6 +7,7 @@
 #include "environment/env_shadow.h"
 #include "environment/environment_system.h"
 #include "core/composition/visual_composer.h"
+#include "core/time_fx.h"
 #include "core/composition/wood/vc_wood_botanical_math.h"
 #include <math.h>
 
@@ -113,7 +114,7 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
         socketCountToRender = 4;
 
         static float s_freeLeafTimer = 0.0f;
-        s_freeLeafTimer += GetFrameTime();
+        s_freeLeafTimer += TimeFX_RawDelta();
         int targetCount = config->count > 0 ? config->count : 64;
 
         if (s_freeLeafTimer > 1.2f || VFX_FoliageSystem_GetActiveCount() < targetCount / 3)
@@ -142,7 +143,7 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
     // ── Mode A: Attached / Showcase Botanical Sockets ─────────────────────────
     bool isShadowPass = EnvShadow_IsCapturing();
     Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
-    float time = (float)GetTime();
+    float time = (float)TimeFX_Elapsed();
 
     // Luminous celestial palette based on style — CELESTIAL SPIRIT VEIN EMISSION
     Color leafBase, leafMid, leafTip, leafVein;
@@ -257,8 +258,8 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
             float stemLit = 0.35f + 0.65f * fmaxf(Vector3DotProduct(stemDir, sunDir), 0.0f);
             rlColor4ub((unsigned char)(cV.r * stemLit * 0.8f), (unsigned char)(cV.g * stemLit * 0.8f), (unsigned char)(cV.b * stemLit * 0.8f), 255);
             rlNormal3f(stemDir.x, stemDir.y, stemDir.z);
-            Vector3 sLeft  = Vector3Add(vStemBase, Vector3Scale(leafSide, -0.008f));
-            Vector3 sRight = Vector3Add(vStemBase, Vector3Scale(leafSide,  0.008f));
+            Vector3 sLeft  = Vector3Add(vStemBase, Vector3Scale(leafSide, -leafLen*.003f));
+            Vector3 sRight = Vector3Add(vStemBase, Vector3Scale(leafSide,  leafLen*.003f));
             rlVertex3f(sLeft.x, sLeft.y, sLeft.z);
             rlVertex3f(sRight.x, sRight.y, sRight.z);
             rlVertex3f(vRoot.x, vRoot.y, vRoot.z);
@@ -269,26 +270,15 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
         // ---------------------------------------------------------------------
         if (config->shape == WOOD_LEAF_SHAPE_WILLOW)
         {
-            // WILLOW TENDRIL: Elongated slender weeping S-curve Bézier arch
-            BotanicalProfile prof = Botanical_ProfileWillow();
-            float wLen = leafLen * 1.45f;
-            float maxW = wLen * prof.W * 2.0f;
-
-            Vector3 p0 = vRoot;
-            Vector3 p1 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, wLen * 0.35f),
-                                                      Vector3Scale(leafNorm, prof.curl * wLen * 0.15f)));
-            Vector3 p2 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, wLen * 0.70f),
-                                                      Vector3Add(Vector3Scale(leafNorm, prof.curl * wLen * 0.65f),
-                                                                 Vector3Scale(flutterVec, 0.5f))));
-            Vector3 p3 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, wLen),
-                                                      Vector3Add(Vector3Scale(leafNorm, prof.curl * wLen),
-                                                                 flutterVec)));
-
-            Botanical_RenderBezierLeafBlade(p0, p1, p2, p3, leafNorm, maxW, prof.fold,
-                                           cB, cM, cT, cV, sunDir, isShadowPass, 255);
+            BotanicalProfile profile=Botanical_ProfileWillow();
+            Botanical_RenderBladeMesh(vRoot,leafDir,leafSide,leafNorm,leafLen*1.45f,
+                &profile,profile.curl*.6f+flutter/leafLen,profile.fold*.5f,.012f,
+                cB,cM,cT,cV,sunDir,false,isShadowPass,255);
         }
         else if (config->shape == WOOD_LEAF_SHAPE_MAPLE)
         {
+            cV=ColorLerp(cB,cV,.14f);
+            cT=ColorLerp(cB,cT,.65f);
             // MAPLE / SERRATED BRAMBLE: 3-Lobed Palmate Blade with Glowing Center Vein
             float mLen = leafLen * 1.15f;
             float mWidth = mLen * 0.54f;
@@ -373,22 +363,10 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
         }
         else
         {
-            // OVAL BROADLEAF: Lush 3D Cubic Bézier Cantilever Blade with Glowing Chi Midrib
-            BotanicalProfile prof = Botanical_ProfileOval();
-            float maxW = leafLen * prof.W * 2.0f;
-
-            Vector3 p0 = vRoot;
-            Vector3 p1 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, leafLen * 0.35f),
-                                                      Vector3Scale(leafNorm, prof.curl * leafLen * 0.12f)));
-            Vector3 p2 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, leafLen * 0.70f),
-                                                      Vector3Add(Vector3Scale(leafNorm, prof.curl * leafLen * 0.55f),
-                                                                 Vector3Scale(flutterVec, 0.5f))));
-            Vector3 p3 = Vector3Add(vRoot, Vector3Add(Vector3Scale(leafDir, leafLen),
-                                                      Vector3Add(Vector3Scale(leafNorm, prof.curl * leafLen),
-                                                                 flutterVec)));
-
-            Botanical_RenderBezierLeafBlade(p0, p1, p2, p3, leafNorm, maxW, prof.fold,
-                                           cB, cM, cT, cV, sunDir, isShadowPass, 255);
+            BotanicalProfile profile=Botanical_ProfileOval();
+            Botanical_RenderBladeMesh(vRoot,leafDir,leafSide,leafNorm,leafLen,
+                &profile,profile.curl*.6f+flutter/leafLen,profile.fold*.5f,.012f,
+                cB,cM,cT,cV,sunDir,false,isShadowPass,255);
         }
     }
 
