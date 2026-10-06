@@ -189,6 +189,7 @@ ForceField_AddLayer(&s_forceField, (ForceLayer){
 | ForceType | `origin` | `direction` | `strength` | `radius` | `falloff` | `noiseScale` | `noiseSpeed` |
 |---|---|---|---|---|
 | 2026-10-06 | Codex | Typed physical fields, emission ownership and receiver adapters | core/motion/physical_field.h; core/motion/motion_fields.h; core/motion/motion_body.h; core/liquid/liquid_external_field.h; core/composition/vc_emission.h | Ground-truth |
+| 2026-10-06 | Codex | Thin-lamina material construction and representative presets | core/motion/physical_field.h; core/tests/motion_material_test.c | Ground-truth and project convention |
 | 2026-10-06 | Codex | Anchored Newton receiver and broadphase | core/motion/motion_fields.h; core/tests/motion_fields_test.c | Ground-truth |
 | 2026-10-06 | Codex | Guide airflow bridge | core/motion/motion_fields.h; core/wind/wind_system.h | Ground-truth |
 | 2026-10-05 | Codex | Shared motion/target flow, physical drag and SSF stream export | core/motion/motion_flow.h; core/motion/motion_fields.c; core/motion/motion_body.h; core/composition/common/vc_guided_particle.inl | Ground-truth |
@@ -2933,9 +2934,48 @@ and m/s medium velocity separate: integrate `a + F/m`. Gravity is acceleration;
 Archimedes buoyancy uses displaced volume and medium gravity. `volumeM3` overrides
 `massKg/densityKgM3`; immersion scales displaced volume. Relative-flow quadratic
 drag uses projected area and the matching drag coefficient. Shared sphere and
-leaf approximations live in `core/motion/physical_field.h`; visible size remains
-independent. `dynamicViscosityPaS` is reserved medium data, not an implemented
-viscosity solver.
+thin-lamina body constructors live in `core/motion/physical_field.h`.
+`dynamicViscosityPaS` is reserved medium data, not an implemented viscosity solver.
+
+For leaves and petals, call `BodyLaminaMaterial_Preset(preset)` and pass the
+one-sided geometry planform area to `BodyPhysicalProperties_Lamina(areaM2,
+&material)`. It derives `massKg = areaM2 * arealMassKgM2`,
+`volumeM3 = areaM2 * thicknessM` and effective bulk density
+`densityKgM3 = arealMassKgM2 / thicknessM`. Projected area equals that planform
+area, paired with the broadside flat-plate `dragCoefficient = 1.28`
+(`core/motion/physical_field.h`). This is the low-speed, frontal-area convention
+reported by [NASA Shape Effects on Drag](https://www1.grc.nasa.gov/beginners-guide-to-aeronautics/shape-effects-on-drag/);
+it does not model changing orientation, flutter or species-specific Reynolds
+number dependence.
+
+> [!NOTE]
+> **(project convention):** The shared presets below are representative authored
+> defaults, not universal measured constants. Species and hydration vary.
+> [Vile et al., Specific Leaf Area and Dry Matter Content Estimate Thickness in
+> Laminar Leaves](https://pmc.ncbi.nlm.nih.gov/articles/PMC4247101/) motivates
+> separating dry/fresh areal mass and thickness.
+> [Paiva and Roddy, Flower longevity and size are coordinated with
+> ecophysiological traits in a tropical montane ecosystem](https://doi.org/10.1111/nph.20027)
+> reports **dry** petal mass per area; the fresh-petal preset here is an authored
+> assumption, not a directly measured value from that paper.
+
+| Preset | Areal mass (kg/m²) | Thickness (m) | Derived effective density (kg/m³) |
+|---|---:|---:|---:|
+| `BODY_LAMINA_LEAF_DRY` | 0.060 | 0.00020 | 300 |
+| `BODY_LAMINA_LEAF_FRESH` | 0.200 | 0.00020 | 1000 |
+| `BODY_LAMINA_PETAL_FRESH` | 0.150 | 0.00020 | 750 |
+
+At the representative 0.012 m² area, these constructors produce 0.72 g, 2.40 g
+and 1.80 g respectively. `BodyPhysicalProperties_Leaf()` delegates to the dry
+preset at that area. Increasing a lamina's linear dimensions by two increases
+mass, displaced volume and projected area by four; no independent mass tuning
+is needed. `BodyPhysicalProperties_Sphere` remains the separate solid-body
+approximation (`core/motion/physical_field.h`). With air density 1.225 kg/m³,
+gravity 9.81 m/s² and the fixed broadside coefficient, analytical terminal
+descent is approximately 0.865, 1.581 and 1.369 m/s; the production implicit
+integrator converges to these values without an artificial terminal clamp
+(`core/tests/motion_material_test.c`). These are model outputs, not measured
+flutter trajectories.
 
 Flow priority resolves competing media; equal priorities use explicit weighted
 averaging, rather than summing unrelated velocities. Generic flow is an absolute
@@ -3049,6 +3089,38 @@ legacy two-point wrapper explicitly selects blast. The fixture **GUIDED PARTICLE
 exposes shell, stream/orbit, blast, turbulence, sustained leaf capture, disappearance,
 pulse leaf capture, coherent flow and matched zero-flow presets (`>`/`<`, Tab parameters, `/` edits).
 
+The Guided inspector groups source emission, appearance, guide and arrival controls.
+Burst count and continuous rate remain independently configurable and visible together.
+It hides particle/body settings for field-only casts and hides controls replaced by source,
+particle, guide or target overrides. `showCustomBodyProperties` only expands the inspector;
+it does not change the existing massive glowing-body proxy. `bodyOverride` copies explicit
+mass/density/area/Cd through the particle-profile adapter; that adapter rejects partial
+immersion or displaced volume different from `mass/density`, rather than dropping them.
+A supplied particle template with dynamics takes precedence over this override.
+`VFX_GUIDED_TARGET_FLOW` explicitly creates a persistent target flow; `arrivalFlow`
+controls HOLD/ORBIT separately. Legacy NONE plus nonzero `targetFlow` retains its previous
+implicit flow-field adapter for source compatibility (`vc_guided_particle.inl`).
+
+Wood leaf and petal defaults select fresh sheet materials, with mass derived from the
+randomized blade size and generated broadside planform. `vc_wood_botanical_profile.h`
+uses the same width profiles/tessellation samples as the visible mesh; its area excludes
+camber, petiole and instantaneous orientation. Positive legacy mass/density overrides
+remain available, including masses below 100 mg. Petals remain laminae; compound flower
+heads retain their existing separate mass/area/Cd proxy (`vc_wood_foliage_system.inl`).
+`size <= 0` resolves leaf/petal dimensions by species; finite positive overrides,
+including sizes below 2 cm, are retained. The default detached pink plum variant
+is a representative 14 × 9 mm blade; lotus and orchid use authored 60 mm and 30 mm
+blade lengths. The default free oval leaf is 80 mm long. These are representative
+geometry choices, not universal botanical constants. Randomized scale remains
+85–115%. `Botanical_DetachedPetalProfile` shares standalone rendering/area width;
+compound blossom geometry retains its original profiles. The six illustrative
+orbiting petals in `vc_wood_petals.inl` use the same resolved dimensions as the
+physical pool; their motion remains an illustrative kinematic showcase.
+Rotational flutter remains artistic. Translational flutter is a bounded airflow-powered
+approximation, powered by air velocity relative to the body. A co-moving body or a
+stationary body in still air receives no flutter input; falling through still air can
+power flutter from gravitational motion. This is not an aeroelastic material simulation.
+
 For a future SSF consumer, set `renderMode=PARTICLE_RENDER_SURFACE_INPUT` and
 `surfaceStreamOut` to caller-owned `ParticleRenderStream` storage. The composition
 exports the owner stream before emitter retirement; retain it while particles live,
@@ -3083,6 +3155,8 @@ An anchored receiver supplies its tip velocity and material mass, then integrate
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-06 | Codex | Guided consumed controls and botanical material adapters | core/composition/common/vc_guided_particle.inl; core/composition/wood/vc_wood_foliage_system.inl; core/composition/wood/vc_wood_botanical_profile.h | Ground-truth |
+| 2026-10-06 | Codex | Thin-lamina material construction and representative presets | core/motion/physical_field.h; core/tests/motion_material_test.c | Ground-truth and project convention |
 | 2026-10-06 | Codex | Anchored Newton receiver and broadphase | core/motion/motion_fields.h; core/tests/motion_fields_test.c | Ground-truth |
 | 2026-10-06 | Codex | Guide airflow bridge | core/motion/motion_fields.h; core/wind/wind_system.h | Ground-truth |
 | 2026-10-05 | Codex | Shared motion/target flow, physical drag and SSF stream export | core/motion/motion_flow.h; core/motion/motion_fields.c; core/motion/motion_body.h; core/composition/common/vc_guided_particle.inl | Ground-truth |

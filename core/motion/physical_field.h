@@ -96,10 +96,52 @@ static inline BodyPhysicalProperties BodyPhysicalProperties_Sphere(float massKg,
   }
   return b;
 }
+/* Thin lamina quantities use ONE-SIDED planform area. projectedAreaM2 is
+ * broadside area paired with Cd; it is not total two-sided surface area.
+ * Effective density is areal mass / thickness, including internal porosity.
+ * Cd=1.28 is the low-speed broadside flat-plate approximation, not an
+ * orientation-averaged flutter coefficient.
+ * Species, hydration and orientation vary; presets below are representative
+ * authored defaults, not universal measured material constants. */
+typedef struct ThinLaminaMaterial {
+  float arealMassKgM2, thicknessM, dragCoefficient;
+} ThinLaminaMaterial;
+typedef enum {
+  BODY_LAMINA_LEAF_DRY,
+  BODY_LAMINA_LEAF_FRESH,
+  BODY_LAMINA_PETAL_FRESH
+} BodyLaminaPreset;
+static inline ThinLaminaMaterial BodyLaminaMaterial_Preset(BodyLaminaPreset preset) {
+  switch(preset) {
+    case BODY_LAMINA_LEAF_DRY: return (ThinLaminaMaterial){.060f,.00020f,1.28f};
+    case BODY_LAMINA_LEAF_FRESH: return (ThinLaminaMaterial){.200f,.00020f,1.28f};
+    /* Petal fresh mass is a representative project assumption, not a value
+     * measured by the leaf/petal thickness references cited in API_GUIDE. */
+    case BODY_LAMINA_PETAL_FRESH: return (ThinLaminaMaterial){.150f,.00020f,1.28f};
+  }
+  return (ThinLaminaMaterial){0};
+}
+static inline BodyPhysicalProperties BodyPhysicalProperties_Lamina(float areaM2,
+    const ThinLaminaMaterial *material) {
+  BodyPhysicalProperties b={0};
+  if(!material || !isfinite(areaM2) || areaM2<=0 ||
+      !isfinite(material->arealMassKgM2) || material->arealMassKgM2<=0 ||
+      !isfinite(material->thicknessM) || material->thicknessM<=0 ||
+      !isfinite(material->dragCoefficient) || material->dragCoefficient<0) return b;
+  b.massKg=areaM2*material->arealMassKgM2;
+  b.volumeM3=areaM2*material->thicknessM;
+  b.densityKgM3=material->arealMassKgM2/material->thicknessM;
+  b.projectedAreaM2=areaM2; b.dragCoefficient=material->dragCoefficient;
+  b.immersionFraction=1;
+  if(!isfinite(b.massKg) || !isfinite(b.volumeM3) || !isfinite(b.densityKgM3))
+    return (BodyPhysicalProperties){0};
+  return b;
+}
+/* Compatibility convenience: representative 120 cm^2 dry leaf. New consumers
+ * should derive planform area from geometry and choose a hydration preset. */
 static inline BodyPhysicalProperties BodyPhysicalProperties_Leaf(void) {
-  return (BodyPhysicalProperties){.massKg=0.004f,.densityKgM3=600,
-    .volumeM3=0.004f/600,.projectedAreaM2=0.012f,.dragCoefficient=1.2f,
-    .immersionFraction=1};
+  ThinLaminaMaterial material=BodyLaminaMaterial_Preset(BODY_LAMINA_LEAF_DRY);
+  return BodyPhysicalProperties_Lamina(.012f,&material);
 }
 static inline FieldTransform FieldTransform_Identity(void) {
   return (FieldTransform){.axisX={1,0,0},.axisY={0,1,0},.axisZ={0,0,1}};

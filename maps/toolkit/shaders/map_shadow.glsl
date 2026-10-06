@@ -75,7 +75,7 @@ float MapShadowFilteredVisibility(sampler2D mapTexture, vec2 uv,
                            + (downLeft + downRight + upLeft + upRight) * 0.16;
     float darkestVisibility = min(center,
         min(min(downLeft, downRight), min(upLeft, upRight)));
-    return mix(smoothVisibility, darkestVisibility, thinFeatureBoost * 0.65);
+    return mix(smoothVisibility, darkestVisibility, thinFeatureBoost * 0.20);
 }
 
 float MapShadowCoverageFadeWidth(vec2 uv, float width)

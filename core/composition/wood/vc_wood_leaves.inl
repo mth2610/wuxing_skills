@@ -17,7 +17,8 @@ VFX_WoodLeavesConfig VFX_WoodLeaves_DefaultConfig(void)
     cfg.origin = (Vector3){0.0f, 3.2f, 0.0f};
     cfg.radius = 1.5f;
     cfg.count = 64;
-    cfg.mass = 0.004f;
+    cfg.mass = 0; // Derived from sheet material and generated area.
+    cfg.bodyMaterial = BODY_LAMINA_LEAF_FRESH;
     cfg.initialVelocity = (Vector3){0.0f, 0.6f, 0.0f};
     cfg.velocitySpread = 1.2f;
     cfg.sockets = NULL;
@@ -25,7 +26,7 @@ VFX_WoodLeavesConfig VFX_WoodLeaves_DefaultConfig(void)
     cfg.growth = 1.0f;
     cfg.wither = 0.0f;
     cfg.swayAmp = 0.035f;
-    cfg.size = 0.16f;
+    cfg.size = 0; // Resolve representative species blade dimensions.
     cfg.shape = WOOD_LEAF_SHAPE_OVAL;
     cfg.style = WOOD_VINE_STYLE_JADE_EMERALD;
     cfg.seed = 12345;
@@ -51,6 +52,8 @@ static const char *s_woodLeafStyleDisplayNames[WOOD_VINE_STYLE_COUNT] = {
     "JADE EMERALD", "BLOOD BRAMBLE", "GOLDEN AMBER", "TAICHI INK"
 };
 
+static const char *s_botanicalMaterialNames[] = {"DRY LEAF", "FRESH LEAF", "FRESH PETAL"};
+
 int VFX_WoodLeaves_GetParams(VFX_WoodLeavesConfig *cfg, VFX_ParamDef *outParams, int maxParams)
 {
     if (!cfg || !outParams || maxParams <= 0) return 0;
@@ -75,6 +78,11 @@ int VFX_WoodLeaves_GetParams(VFX_WoodLeavesConfig *cfg, VFX_ParamDef *outParams,
             .valPtr = &cfg->attached
         };
     }
+    if (!cfg->attached && n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){.name="Body material", .group="Leaves",
+            .type=VFX_PARAM_ENUM, .valPtr=&cfg->bodyMaterial, .minInt=0, .maxInt=2,
+            .enumNames=s_botanicalMaterialNames, .enumCount=3};
+    }
     return n;
 }
 
@@ -82,7 +90,7 @@ int VFX_WoodLeaves_GetParams(VFX_WoodLeavesConfig *cfg, VFX_ParamDef *outParams,
  * or emits physical airborne leaves drifting in wind & gravity (FREE). */
 void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
 {
-    if (config == NULL || config->growth <= 0.01f)
+    if (config == NULL || !isfinite(config->size) || config->growth <= 0.01f)
         return;
 
     VFX_BotanicalSocket fallbackSockets[4];
@@ -119,10 +127,11 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
             sp.radius = config->radius > 0.1f ? config->radius : 1.5f;
             sp.count = targetCount;
             sp.attached = false;
-            sp.mass = config->mass > 1e-4f ? config->mass : 0.004f;
+            sp.mass = config->mass > 0 ? config->mass : 0;
+            sp.bodyMaterial = config->bodyMaterial;
             sp.initialVelocity = config->initialVelocity;
             sp.velocitySpread = config->velocitySpread > 0.1f ? config->velocitySpread : 1.2f;
-            sp.size = config->size > 0.02f ? config->size : 0.16f;
+            sp.size = Botanical_ResolveLeafSize(config->size,config->shape);
             sp.growth = config->growth;
             sp.lifetime = 10.0f;
             sp.seed = config->seed;
@@ -207,7 +216,7 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
         // Smooth growth curve with organic unfurl overshoot bounce
         float tGrow = localGrowth * localGrowth * (3.0f - 2.0f * localGrowth);
         float popBounce = 1.0f + 0.16f * sinf(localGrowth * PI) * (1.0f - localGrowth);
-        float leafLen = (config->size > 0.04f ? config->size : 0.16f) * tGrow * popBounce;
+        float leafLen = Botanical_ResolveLeafSize(config->size,config->shape) * tGrow * popBounce;
 
         // Desiccation shrinkage under wither
         if (config->wither > 0.1f) {

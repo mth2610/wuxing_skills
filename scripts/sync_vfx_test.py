@@ -1558,7 +1558,7 @@ static bool s_liveGuidedParticleConfigInit = false;
 static int s_guidedFixturePreset = 0;
 static const char *s_guidedFixturePresetNames[] = {
     "Shell / release", "Stream / orbit", "Shell / blast",
-    "Stream / turbulence", "Catch leaves / sustained vortex", "Shell / disappear",
+    "Stream / target turbulence", "Catch leaves / sustained swirl", "Shell / disappear",
     "Catch leaves / traveling pulse", "Stream / coherent flow", "Stream / no added flow"
 };
 #define VFXTEST_GUIDED_PRESET_COUNT 9
@@ -1572,17 +1572,21 @@ static void VFXTest_SetGuidedPreset(int preset)
     s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_RELEASE;
     s_liveGuidedParticleConfig.guideMode = MOTION_GUIDE_SUSTAINED;
     s_liveGuidedParticleConfig.duration = 5.0f;
-    s_liveGuidedParticleConfig.targetLifetime = 4.0f;
     s_liveGuidedParticleConfig.particleRadius = 0.11f;
+    if (preset == 3 || preset == 4 || preset == 6 || preset == 7) {
+        s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_FLOW;
+        s_liveGuidedParticleConfig.targetLifetime = 4.0f;
+    }
     if (preset == 1 || preset == 3 || preset == 7 || preset == 8) {
         s_liveGuidedParticleConfig.formation = MOTION_FORMATION_STREAM;
         s_liveGuidedParticleConfig.emitDuration = 2.5f;
     }
     if (preset == 1) {
         s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_ORBIT;
-        s_liveGuidedParticleConfig.targetFlow.swirlSpeedMps = 3.0f;
+        s_liveGuidedParticleConfig.arrivalFlow.swirlSpeedMps = 3.0f;
     } else if (preset == 2) {
         s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_BLAST;
+        s_liveGuidedParticleConfig.targetLifetime = 4.0f;
     } else if (preset == 3) {
         s_liveGuidedParticleConfig.targetFlow.turbulenceSpeedMps = 8.0f;
     } else if (preset == 4 || preset == 6) {
@@ -1733,6 +1737,15 @@ def regenerate_shared_ui(content):
 
 
 def regenerate_vfx_test(content, entries):
+    # Botanical fixtures inherit material-derived mass and species-sized
+    # dimensions from the live defaults/inspector. Preserve their emission
+    # layout and counts, but migrate the older fixed gram/decimetre overrides.
+    for helper in ("VFXTest_BuildWoodLeavesConfig", "VFXTest_BuildWoodPetalConfig"):
+        start = content.index(" " + helper + "(")
+        end = content.index("\n}\n", start)
+        body = content[start:end]
+        body = re.sub(r"^    cfg\.(?:mass|size) = [^;]+;\n", "", body, flags=re.MULTILINE)
+        content = content[:start] + body + content[end:]
     # The shared UI replaces legacy inspector/variant/footer drawing below;
     # install selectors in the draw function first, then canonicalize the HUD.
     content = ensure_generated_section(content, "newfx_guided_state",

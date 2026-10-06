@@ -20,11 +20,12 @@ VFX_WoodPetalConfig VFX_WoodPetal_DefaultConfig(void)
     cfg.origin = (Vector3){0.0f, 3.0f, 0.0f};
     cfg.radius = 1.4f;
     cfg.count = 64;
-    cfg.mass = 0.002f;
+    cfg.mass = 0; // Derived from sheet material and generated area.
+    cfg.bodyMaterial = BODY_LAMINA_PETAL_FRESH;
     cfg.initialVelocity = (Vector3){0.0f, 0.35f, 0.0f};
     cfg.velocitySpread = 1.1f;
-    cfg.size = 0.13f;
-    cfg.type = WOOD_FLOWER_TYPE_LOTUS;
+    cfg.size = 0; // Resolve species blade dimensions.
+    cfg.type = WOOD_FLOWER_TYPE_PLUM_BLOSSOM;
     cfg.style = WOOD_VINE_STYLE_JADE_EMERALD;
     cfg.seed = 67890;
     return cfg;
@@ -56,6 +57,11 @@ int VFX_WoodPetals_GetParams(VFX_WoodPetalConfig *cfg, VFX_ParamDef *outParams, 
             .enumNames = s_woodPetalStyleDisplayNames, .enumCount = WOOD_VINE_STYLE_COUNT
         };
     }
+    if (n < maxParams) {
+        outParams[n++] = (VFX_ParamDef){.name="Body material", .group="Petals",
+            .type=VFX_PARAM_ENUM, .valPtr=&cfg->bodyMaterial, .minInt=0, .maxInt=2,
+            .enumNames=s_botanicalMaterialNames, .enumCount=3};
+    }
     return n;
 }
 
@@ -63,7 +69,7 @@ int VFX_WoodPetals_GetParams(VFX_WoodPetalConfig *cfg, VFX_ParamDef *outParams, 
  * Petals are always free (never attached), tumbling gracefully through space. */
 void VFX_ComposeWoodPetals(const VFX_WoodPetalConfig *config)
 {
-    if (config == NULL)
+    if (config == NULL || !isfinite(config->size))
         return;
 
     // Periodically feed the simulation pool with free physical airborne petals
@@ -82,10 +88,11 @@ void VFX_ComposeWoodPetals(const VFX_WoodPetalConfig *config)
         sp.radius = config->radius > 0.1f ? config->radius : 1.4f;
         sp.count = targetCount;
         sp.attached = false;
-        sp.mass = config->mass > 1e-4f ? config->mass : 0.002f;
+        sp.mass = config->mass > 0 ? config->mass : 0;
+        sp.bodyMaterial = config->bodyMaterial;
         sp.initialVelocity = config->initialVelocity;
         sp.velocitySpread = config->velocitySpread > 0.1f ? config->velocitySpread : 1.1f;
-        sp.size = config->size > 0.02f ? config->size : 0.13f;
+        sp.size = Botanical_ResolvePetalSize(config->size,config->type);
         sp.growth = 1.0f;
         sp.lifetime = 12.0f;
         sp.seed = config->seed;
@@ -171,16 +178,13 @@ void VFX_ComposeWoodPetals(const VFX_WoodPetalConfig *config)
         }
     }
 
-    BotanicalProfile prof;
-    if (config->type == WOOD_FLOWER_TYPE_ORCHID) prof = Botanical_ProfilePetalOrchid();
-    else if (config->type == WOOD_FLOWER_TYPE_LOTUS) prof = Botanical_ProfilePetalLotus();
-    else prof = Botanical_ProfilePetalPlum();
+    BotanicalProfile prof=Botanical_DetachedPetalProfile(config->type);
 
     rlDisableBackfaceCulling();
     if (!isShadowPass) BeginBlendMode(BLEND_ALPHA);
     rlBegin(RL_TRIANGLES);
 
-    float petalSz = config->size > 0.02f ? config->size : 0.13f;
+    float petalSz = 1.25f * Botanical_ResolvePetalSize(config->size,config->type);
     for (int k = 0; k < 6; k++)
     {
         float phaseK = (float)k * 1.04719755f;

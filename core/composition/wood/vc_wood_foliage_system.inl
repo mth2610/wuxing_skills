@@ -26,6 +26,7 @@
 #include "core/wind/wind_system.h"
 #include "core/force_field.h"
 #include "core/motion/motion_body.h"
+#include "core/composition/wood/vc_wood_botanical_profile.h"
 #include <math.h>
 #include <stdlib.h>
 
@@ -54,6 +55,7 @@ typedef struct {
     MotionReceiver motionReceiver;
     float   mass;       // In kg (default ~0.005kg)
     float   densityKgM3;
+    float   projectedAreaM2;
     float   dragCoeff;  // Aerodynamic planar drag
     float   flutterPhase;
     float   flutterSpeed;
@@ -137,9 +139,10 @@ VFX_FoliageSpawnParams VFX_FoliageSpawnParams_Default(void)
     p.socketCount = 0;
     p.initialVelocity = (Vector3){0, 0.5f, 0};
     p.velocitySpread = 1.2f;
-    p.mass = 0.005f;
-    p.densityKgM3 = 600;
-    p.size = 0.16f;
+    p.mass = 0;
+    p.bodyMaterial = BODY_LAMINA_LEAF_FRESH;
+    p.densityKgM3 = 0;
+    p.size = 0; // Species-resolved blade scale.
     p.growth = 1.0f;
     p.lifetime = 8.0f;
     p.seed = 445566;
@@ -148,7 +151,10 @@ VFX_FoliageSpawnParams VFX_FoliageSpawnParams_Default(void)
 
 int VFX_FoliageSystem_SpawnCluster(const VFX_FoliageSpawnParams *params)
 {
-    if (params == NULL || params->count <= 0) return 0;
+    if (params == NULL || params->count <= 0 || !isfinite(params->size) || (params->kind==BOTANICAL_KIND_FLOWER_HEAD && params->size <= 0) ||
+        !isfinite(params->mass) || !isfinite(params->densityKgM3) ||
+        (params->kind != BOTANICAL_KIND_FLOWER_HEAD &&
+         (params->bodyMaterial < BODY_LAMINA_LEAF_DRY || params->bodyMaterial > BODY_LAMINA_PETAL_FRESH))) return 0;
     VFX_FoliageSystem_Init();
 
     int spawned = 0;
@@ -170,12 +176,34 @@ int VFX_FoliageSystem_SpawnCluster(const VFX_FoliageSpawnParams *params)
         p->leafShape = params->leafShape;
         p->flowerType = params->flowerType;
         p->style = params->style;
-        p->scale = params->size * (0.85f + 0.30f * Foliage_Randf(&rng));
+        float sizeM=params->kind==BOTANICAL_KIND_LEAF ?
+            Botanical_ResolveLeafSize(params->size,params->leafShape) :
+            params->kind==BOTANICAL_KIND_PETAL ?
+            Botanical_ResolvePetalSize(params->size,params->flowerType) : params->size;
+        p->scale = sizeM * (0.85f + 0.30f * Foliage_Randf(&rng));
         p->growth = params->growth;
         p->wither = 0.0f;
-        p->mass = params->mass > 1e-4f ? params->mass : 0.005f;
-        p->densityKgM3 = params->densityKgM3 > 0 ? params->densityKgM3 : 600;
-        p->dragCoeff = (params->kind == BOTANICAL_KIND_LEAF) ? 1.45f : 1.15f;
+        if (params->kind == BOTANICAL_KIND_FLOWER_HEAD) {
+            /* Compound blossom proxy retained separately: not a sheet petal. */
+            p->mass = params->mass > 0 ? params->mass : 0.005f;
+            p->densityKgM3 = params->densityKgM3 > 0 ? params->densityKgM3 : 600;
+            p->projectedAreaM2 = 0.5f*p->scale*p->scale;
+            p->dragCoeff = 1.15f;
+        } else {
+            BodyLaminaPreset materialId=params->bodyMaterial;
+            ThinLaminaMaterial material=BodyLaminaMaterial_Preset(materialId);
+            float area=params->kind==BOTANICAL_KIND_LEAF ?
+                Botanical_LeafPlanformArea(p->scale,p->leafShape) :
+                Botanical_PetalPlanformArea(p->scale,p->flowerType);
+            BodyPhysicalProperties physical=BodyPhysicalProperties_Lamina(area,&material);
+            p->mass=params->mass>0?params->mass:physical.massKg;
+            p->densityKgM3=params->densityKgM3>0?params->densityKgM3:physical.densityKgM3;
+            p->projectedAreaM2=physical.projectedAreaM2;
+            p->dragCoeff=physical.dragCoefficient;
+        }
+        if (!isfinite(p->mass) || p->mass <= 0 || !isfinite(1/p->mass)) {
+            p->active=false; continue;
+        }
         p->flutterPhase = Foliage_Randf(&rng) * 2.0f * PI;
         p->flutterSpeed = 3.5f + Foliage_Randf(&rng) * 2.5f;
         p->age = 0.0f;
@@ -372,9 +400,9 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
 
         p->age += dt;
 
-        ParticleDynamicsProfile body = {.inverseMassKg=1/fmaxf(p->mass,0.0001f),
+        ParticleDynamicsProfile body = {.inverseMassKg=1/p->mass,
             .gravityScale=1,.densityKgM3=p->densityKgM3,.windSusceptibility=1,
-            .aerodynamicAreaM2=0.5f*p->scale*p->scale,
+            .aerodynamicAreaM2=p->projectedAreaM2,
             .aerodynamicDragCoefficient=p->dragCoeff,.airDensityKgM3=1.225f};
         ReceiverConstraints constraints = {.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
 
@@ -422,7 +450,10 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
                 FieldSample sample;
                 MotionFields_SampleBody(p->pos,p->vel,&physicalBody,&medium,&constraints,
                     step,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
-                Vector3 accel=flutter;
+                Vector3 resolvedAir = sample.mediumIsAbsolute ? sample.mediumVelocityMps :
+                    MotionVec_Add(medium.velocityMps,sample.mediumVelocityMps);
+                Vector3 accel=MotionVec_Scale(flutter,
+                    Botanical_FlutterAirWeight(MotionVec_Sub(resolvedAir,p->vel)));
                 if(activeFF)accel=MotionVec_Add(accel,ForceField_Evaluate(activeFF,p->pos,p->vel,time,(Vector3){0},(Vector3){0,1,0}));
                 p->vel=MotionBody_AdvanceFieldVelocity(p->vel,&body,accel,
                     (Vector3){0},&sample,medium.velocityMps,step);
@@ -918,10 +949,7 @@ static void Foliage_RenderSingleFlower(const VFX_FoliageParticle *p, Color cBase
     // ── CASE 1: Individual Airborne Tumbling Petal (BOTANICAL_KIND_PETAL) ────
     if (p->kind == BOTANICAL_KIND_PETAL)
     {
-        BotanicalProfile prof;
-        if (p->flowerType == WOOD_FLOWER_TYPE_ORCHID) prof = Botanical_ProfilePetalOrchid();
-        else if (p->flowerType == WOOD_FLOWER_TYPE_PLUM_BLOSSOM) prof = Botanical_ProfilePetalPlum();
-        else prof = Botanical_ProfilePetalLotus();
+        BotanicalProfile prof=Botanical_DetachedPetalProfile(p->flowerType);
 
         float petalLen = sz * 1.25f;
         float curve = petalLen * 0.16f;
@@ -1243,10 +1271,10 @@ int VFX_Foliage_SpawnFreeLeaves(Vector3 center, float radius, int count, float m
     p.radius = radius;
     p.count = count;
     p.attached = false;
-    p.mass = (mass > 1e-4f) ? mass : 0.005f;
+    p.mass = mass > 0 ? mass : 0;
     p.initialVelocity = (Vector3){0, 0.8f, 0};
     p.velocitySpread = 1.6f;
-    p.size = 0.16f;
+    p.size = 0; // Species-resolved blade scale.
     p.growth = 1.0f;
     p.lifetime = 10.0f;
     p.seed = (unsigned int)(fabsf(center.x) * 1000.0f + fabsf(center.z) * 100.0f + (float)count);
@@ -1263,10 +1291,11 @@ int VFX_Foliage_SpawnFreePetals(Vector3 center, float radius, int count, float m
     p.radius = radius;
     p.count = count;
     p.attached = false;
-    p.mass = (mass > 1e-4f) ? mass : 0.002f;
+    p.mass = mass > 0 ? mass : 0;
+    p.bodyMaterial = BODY_LAMINA_PETAL_FRESH;
     p.initialVelocity = (Vector3){0, 0.5f, 0};
     p.velocitySpread = 1.2f;
-    p.size = 0.13f;
+    p.size = 0; // Species-resolved petal scale.
     p.growth = 1.0f;
     p.lifetime = 12.0f;
     p.seed = (unsigned int)(fabsf(center.x) * 1234.0f + fabsf(center.z) * 567.0f + (float)count);
@@ -1284,7 +1313,7 @@ int VFX_Foliage_SpawnAttachedLeaves(const VFX_BotanicalSocket *sockets, int sock
     p.socketCount = socketCount;
     p.count = socketCount;
     p.attached = true;
-    p.size = 0.16f;
+    p.size = 0; // Species-resolved blade scale.
     p.growth = 0.05f; // Starts budding and grows out
     p.lifetime = 99999.0f; // Persistent while attached
     p.seed = 778899;

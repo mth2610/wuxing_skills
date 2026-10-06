@@ -970,7 +970,7 @@ typedef struct {
     Vector3 origin;               // center of spawn/distribution (metres)
     float radius;                 // dispersion radius (metres)
     int   count;                  // number of leaves N (e.g. 16 to hundreds)
-    float mass;                   // mass in kg (e.g. 0.004kg)
+    float mass;                   // Mass override in kg; <=0 derives from sheet material
     Vector3 initialVelocity;      // ejection velocity in m/s
     float velocitySpread;         // velocity scatter in m/s
     const VFX_BotanicalSocket *sockets; // Surface attachment sockets (when attached == true)
@@ -978,10 +978,11 @@ typedef struct {
     float growth;                 // Growth emergence progress [0..1]
     float wither;                 // Decay/wither progress [0..1]
     float swayAmp;                // Flutter sway under wind (metres)
-    float size;                   // Leaf blade length scale (metres, default ~0.16m)
+    float size;                   // Blade scale in metres; <=0 uses species dimensions (oval blade 8 cm)
     VFX_WoodLeafShape shape;
     VFX_WoodVineStyle style;
     unsigned int seed;
+    BodyLaminaPreset bodyMaterial; /* Zero selects dry leaf; defaults select fresh. Positive mass overrides derived mass. */
 } VFX_WoodLeavesConfig;
 
 VFX_WoodLeavesConfig VFX_WoodLeaves_DefaultConfig(void);
@@ -993,7 +994,7 @@ typedef struct {
     Vector3 origin;               // center of spawn/distribution (metres)
     float radius;                 // dispersion radius (metres)
     int   count;                  // number of flowers/petals M (e.g. 12 to hundreds)
-    float mass;                   // mass in kg (e.g. 0.002kg)
+    float mass;                   // Mass in kg for compound flower-head proxy
     Vector3 initialVelocity;      // ejection velocity in m/s
     float velocitySpread;         // velocity scatter in m/s
     const VFX_BotanicalSocket *sockets; // Surface attachment sockets (when attached == true)
@@ -1015,13 +1016,14 @@ typedef struct {
     Vector3 origin;               // center of spawn/distribution (metres)
     float   radius;               // dispersion radius (metres)
     int     count;                // number of drifting petals (e.g. 32 to hundreds)
-    float   mass;                 // mass in kg (e.g. 0.002kg)
+    float   mass;                 // Mass override in kg; <=0 derives from sheet material
     Vector3 initialVelocity;      // ejection velocity in m/s
     float   velocitySpread;       // velocity scatter in m/s
-    float   size;                 // petal length scale (metres, default ~0.13m)
+    float   size;                 // Blade scale in metres; <=0 uses species dimensions (default plum length 14 mm)
     VFX_WoodFlowerType type;      // petal morphology
     VFX_WoodVineStyle  style;     // elemental color scheme
     unsigned int seed;
+    BodyLaminaPreset bodyMaterial; /* Zero selects dry leaf explicitly; DefaultConfig selects fresh petal. */
 } VFX_WoodPetalConfig;
 
 VFX_WoodPetalConfig VFX_WoodPetal_DefaultConfig(void);
@@ -1071,7 +1073,7 @@ void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
  * caller-owned lifetime contracts. Emission and targets outlive guide expiry
  * independently; guide expiration releases bodies and never retires a source. */
 typedef enum {
-    VFX_GUIDED_TARGET_NONE, VFX_GUIDED_TARGET_BLAST
+    VFX_GUIDED_TARGET_NONE, VFX_GUIDED_TARGET_BLAST, VFX_GUIDED_TARGET_FLOW
 } VFX_GuidedTargetPreset;
 typedef struct VFX_GuidedParticleConfig {
     Vector3 source, target;
@@ -1102,6 +1104,18 @@ typedef struct VFX_GuidedParticleConfig {
      * frame. Geometry, force laws and medium flow retain distinct units;
      * guide control and arrival remain separate. Legacy layers are unchanged. */
     const FieldDesc *fieldOverride;
+    /* Optional copied material/body override. Templates with dynamics take
+     * precedence; legacy mass/density remain the glowing massive-body proxy,
+     * independent of optical radius, not a claimed natural luminous material. */
+    /* The particle-profile adapter requires full immersion and volume=mass/
+     * density (or volume=0 with density=0); unsupported overrides are rejected.
+     * General solver receivers can sample arbitrary bodies via SampleBody. */
+    const BodyPhysicalProperties *bodyOverride;
+    bool showCustomBodyProperties; /* Inspector only; does not change physics. */
+    /* Post-arrival controller flow is distinct from persistent target flow.
+     * For legacy NONE+targetFlow callers, targetFlow remains the adapter when
+     * this channel is zero. Explicit FLOW assigns targetFlow to the field only. */
+    MotionFlowDesc arrivalFlow;
 } VFX_GuidedParticleConfig;
 VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void);
 int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg,VFX_ParamDef *outParams,int maxParams);
@@ -1141,12 +1155,13 @@ typedef struct {
     int     socketCount;
     Vector3 initialVelocity;        // Base ejection velocity in m/s
     float   velocitySpread;         // Random velocity scatter in m/s
-    float   mass;                   // Mass in kg (default: 0.005kg)
-    float   size;                   // Scale in metres (e.g. 0.16m)
+    float   mass;                   // Mass override in kg; <=0 derives from sheet material
+    float   size;                   // Blade scale in metres; <=0 resolves leaf/petal species dimensions
     float   growth;                 // Initial growth [0..1]
     float   lifetime;               // Lifetime in seconds
     unsigned int seed;
-    float densityKgM3;             // Material density; <=0 defaults to 600 kg/m^3
+    float densityKgM3;             // Density override; <=0 uses sheet material (heads: 600 kg/m^3)
+    BodyLaminaPreset bodyMaterial; /* Zero is dry leaf; Default selects fresh leaf. No kind-based remapping. */
 } VFX_FoliageSpawnParams;
 
 VFX_FoliageSpawnParams VFX_FoliageSpawnParams_Default(void);

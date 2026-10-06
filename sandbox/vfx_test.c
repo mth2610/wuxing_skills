@@ -162,7 +162,7 @@ static bool s_liveGuidedParticleConfigInit = false;
 static int s_guidedFixturePreset = 0;
 static const char *s_guidedFixturePresetNames[] = {
     "Shell / release", "Stream / orbit", "Shell / blast",
-    "Stream / turbulence", "Catch leaves / sustained vortex", "Shell / disappear",
+    "Stream / target turbulence", "Catch leaves / sustained swirl", "Shell / disappear",
     "Catch leaves / traveling pulse", "Stream / coherent flow", "Stream / no added flow"
 };
 #define VFXTEST_GUIDED_PRESET_COUNT 9
@@ -176,17 +176,21 @@ static void VFXTest_SetGuidedPreset(int preset)
     s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_RELEASE;
     s_liveGuidedParticleConfig.guideMode = MOTION_GUIDE_SUSTAINED;
     s_liveGuidedParticleConfig.duration = 5.0f;
-    s_liveGuidedParticleConfig.targetLifetime = 4.0f;
     s_liveGuidedParticleConfig.particleRadius = 0.11f;
+    if (preset == 3 || preset == 4 || preset == 6 || preset == 7) {
+        s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_FLOW;
+        s_liveGuidedParticleConfig.targetLifetime = 4.0f;
+    }
     if (preset == 1 || preset == 3 || preset == 7 || preset == 8) {
         s_liveGuidedParticleConfig.formation = MOTION_FORMATION_STREAM;
         s_liveGuidedParticleConfig.emitDuration = 2.5f;
     }
     if (preset == 1) {
         s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_ORBIT;
-        s_liveGuidedParticleConfig.targetFlow.swirlSpeedMps = 3.0f;
+        s_liveGuidedParticleConfig.arrivalFlow.swirlSpeedMps = 3.0f;
     } else if (preset == 2) {
         s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_BLAST;
+        s_liveGuidedParticleConfig.targetLifetime = 4.0f;
     } else if (preset == 3) {
         s_liveGuidedParticleConfig.targetFlow.turbulenceSpeedMps = 8.0f;
     } else if (preset == 4 || preset == 6) {
@@ -418,8 +422,6 @@ static VFX_WoodLeavesConfig VFXTest_BuildWoodLeavesConfig(Vector3 startPos, Vect
     cfg.origin = Vector3Add(startPos, (Vector3){0.0f, 1.35f, 0.0f});
     cfg.radius = 1.4f;
     cfg.count = 80;
-    cfg.mass = 0.004f;
-    cfg.size = 0.22f;
     cfg.seed = 12345;
 
     static VFX_BotanicalSocket s_testLeafSockets[10];
@@ -509,8 +511,6 @@ static VFX_WoodPetalConfig VFXTest_BuildWoodPetalConfig(Vector3 startPos, Vector
     cfg.origin = Vector3Add(startPos, (Vector3){0.0f, 1.8f, 0.0f});
     cfg.radius = 1.4f;
     cfg.count = 64;
-    cfg.mass = 0.002f;
-    cfg.size = 0.16f;
     cfg.seed = 67890;
     return cfg;
 }

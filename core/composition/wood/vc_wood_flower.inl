@@ -123,7 +123,7 @@ void VFX_ComposeWoodFlower(const VFX_WoodFlowerConfig *config)
             sp.radius = config->radius > 0.1f ? config->radius : 1.2f;
             sp.count = targetCount;
             sp.attached = false;
-            sp.mass = config->mass > 1e-4f ? config->mass : 0.012f;
+            sp.mass = config->mass > 0 ? config->mass : 0.012f; // Compound head proxy.
             sp.initialVelocity = config->initialVelocity;
             sp.velocitySpread = config->velocitySpread > 0.1f ? config->velocitySpread : 1.0f;
             sp.size = config->size > 0.02f ? config->size : 0.14f;

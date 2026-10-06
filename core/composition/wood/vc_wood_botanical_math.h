@@ -32,97 +32,7 @@
 #define PI 3.14159265358979323846f
 #endif
 
-// ── Profile Definition ───────────────────────────────────────────────────────
-typedef struct {
-    float a;        // Base taper exponent (0.4-0.7: rounded base; 0.8-1.5: slender base)
-    float b;        // Tip taper exponent (0.8-1.0: rounded tip; 1.2-2.0: acuminate tip)
-    float W;        // Maximum half-width as ratio of length L
-    float fold;     // Transverse V-keel fold factor (camber)
-    float curl;     // Longitudinal spine curvature (negative: downward droop; positive: recurved tip)
-} BotanicalProfile;
-
-// ── Standard Presets ────────────────────────────────────────────────────────
-static inline BotanicalProfile Botanical_ProfileOval(void)
-{
-    // Oval broadleaf: rounded base, gently pointed apex, natural downward droop
-    BotanicalProfile p;
-    p.a = 0.55f;
-    p.b = 1.15f;
-    p.W = 0.36f;
-    p.fold = 0.22f;
-    p.curl = -0.16f;
-    return p;
-}
-
-static inline BotanicalProfile Botanical_ProfileWillow(void)
-{
-    // Willow: slender lanceolate, weeping S-curve arch, pointed drooping apex
-    BotanicalProfile p;
-    p.a = 0.85f;
-    p.b = 1.65f;
-    p.W = 0.15f;
-    p.fold = 0.16f;
-    p.curl = -0.38f;
-    return p;
-}
-
-static inline BotanicalProfile Botanical_ProfileMaple(void)
-{
-    // Maple / notched palmate base blade
-    BotanicalProfile p;
-    p.a = 0.45f;
-    p.b = 0.95f;
-    p.W = 0.48f;
-    p.fold = 0.26f;
-    p.curl = -0.12f;
-    return p;
-}
-
-static inline BotanicalProfile Botanical_ProfilePetalPlum(void)
-{
-    // Plum / Peach / Cherry blossom: rounded silky petal, concave cup, recurved apex
-    BotanicalProfile p;
-    p.a = 0.45f;
-    p.b = 0.85f;
-    p.W = 0.56f;
-    p.fold = 0.18f;
-    p.curl = 0.24f;
-    return p;
-}
-
-static inline BotanicalProfile Botanical_ProfilePetalLotus(void)
-{
-    // Sacred Lotus: spoon-dished elongated cup, sharp elegant apex tip
-    BotanicalProfile p;
-    p.a = 0.60f;
-    p.b = 1.35f;
-    p.W = 0.42f;
-    p.fold = 0.32f;
-    p.curl = 0.18f;
-    return p;
-}
-
-static inline BotanicalProfile Botanical_ProfilePetalOrchid(void)
-{
-    // Celestial Orchid: flared lateral wings with wavy margin
-    BotanicalProfile p;
-    p.a = 0.50f;
-    p.b = 1.20f;
-    p.W = 0.40f;
-    p.fold = 0.24f;
-    p.curl = 0.26f;
-    return p;
-}
-
-// ── Profile Width Evaluator ──────────────────────────────────────────────────
-static inline float Botanical_EvaluateWidth(const BotanicalProfile *p, float t)
-{
-    if (t <= 0.001f || t >= 0.999f) return 0.0f;
-    float tm = p->a / (p->a + p->b);
-    float wmax = powf(tm, p->a) * powf(1.0f - tm, p->b);
-    if (wmax < 1e-5f) return 0.0f;
-    return p->W * (powf(t, p->a) * powf(1.0f - t, p->b)) / wmax;
-}
+#include "core/composition/wood/vc_wood_botanical_profile.h"
 
 // ── EaseOutBack Organic Overshoot Bloom Curve ────────────────────────────────
 static inline float Botanical_EaseOutBack(float x)
@@ -147,13 +57,6 @@ static inline float Botanical_SubsurfaceTransmission(Vector3 sunDir, Vector3 vie
     float dot = -Vector3DotProduct(sunDir, viewDir);
     if (dot <= 0.0f) return 0.0f;
     return powf(dot, 2.5f) * 0.65f;
-}
-
-// ── Cosine Vertebra Segment Warp ────────────────────────────────────────────
-// Concentrates vertices at base and tip where curvature and taper changes fastest
-static inline float Botanical_CosineWarp(float u)
-{
-    return 0.5f - 0.5f * cosf(u * PI);
 }
 
 // ── Cubic Bézier Spine Evaluation (From map_props_nature.inl) ───────────────

@@ -36,19 +36,20 @@ VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void) {
 static const char *s_guidedFormationNames[] = {"STREAM", "SPHERE SHELL"};
 static const char *s_guidedArrivalNames[] = {"RELEASE", "DISAPPEAR", "HOLD",
                                              "ORBIT"};
-static const char *s_guidedTargetNames[] = {"NONE", "BLAST"};
+static const char *s_guidedTargetNames[] = {"NONE", "BLAST", "FLOW"};
 static const char *s_guidedModeNames[] = {"SUSTAINED", "TRAVELLING PULSE"};
 int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *c, VFX_ParamDef *out,
                                  int max) {
   if (!c || !out || max <= 0)
     return 0;
   int n = 0;
+  const char *group = "Guide";
 #define GUIDE_ENUM(label, member, names)                                       \
   do {                                                                         \
     if (n < max)                                                               \
       out[n++] = (VFX_ParamDef){                                               \
           .name = label,                                                       \
-          .group = "Guided",                                                   \
+          .group = group,                                                   \
           .type = VFX_PARAM_ENUM,                                              \
           .valPtr = &c->member,                                                \
           .minInt = 0,                                                         \
@@ -60,50 +61,66 @@ int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *c, VFX_ParamDef *out,
   do {                                                                         \
     if (n < max)                                                               \
       out[n++] = (VFX_ParamDef){.name = label,                                 \
-                                .group = "Guided",                             \
+                                .group = group,                             \
                                 .type = VFX_PARAM_FLOAT,                       \
                                 .valPtr = &c->member,                          \
                                 .minFloat = lo,                                \
                                 .maxFloat = hi,                                \
                                 .stepFloat = step};                            \
   } while (0)
-  GUIDE_ENUM("Formation", formation, s_guidedFormationNames);
-  GUIDE_ENUM("Guide mode", guideMode, s_guidedModeNames);
-  GUIDE_ENUM("Arrival", arrival, s_guidedArrivalNames);
-  GUIDE_ENUM("Target field", targetPreset, s_guidedTargetNames);
-  GUIDE_FLOAT("Guide lifetime", duration, 0.1f, 30, 0.5f);
-  if (c->targetPreset != VFX_GUIDED_TARGET_NONE ||
-      c->targetFlow.swirlSpeedMps != 0 || c->targetFlow.turbulenceSpeedMps > 0) {
-    GUIDE_FLOAT("Target lifetime", targetLifetime, 0.1f, 30, 0.5f);
+  if (!c->guideOverride) {
+    GUIDE_ENUM("Formation", formation, s_guidedFormationNames);
+    GUIDE_ENUM("Guide mode", guideMode, s_guidedModeNames);
+    GUIDE_FLOAT("Guide lifetime s", duration, 0.1f, 30, 0.5f);
+    GUIDE_FLOAT("Speed m/s", speed, 0.2f, 20, 0.5f);
+    GUIDE_FLOAT("Guide radius m", guideRadius, 0.1f, 8, 0.1f);
+    GUIDE_FLOAT("Guide force N", maxForceNewtons, 0.01f, 5, 0.05f);
+    if (c->guideMode == MOTION_GUIDE_PULSE)
+      GUIDE_FLOAT("Pulse length m", pulseLength, 0.1f, 8, 0.1f);
+    GUIDE_FLOAT("Turbulence m/s", motionFlow.turbulenceSpeedMps, 0, 8, 0.2f);
+    GUIDE_FLOAT("Swirl m/s", motionFlow.swirlSpeedMps, -8, 8, 0.5f);
+    group = "Arrival";
+    GUIDE_ENUM("Arrival", arrival, s_guidedArrivalNames);
+    if (c->arrival == MOTION_ARRIVAL_HOLD || c->arrival == MOTION_ARRIVAL_ORBIT) {
+      GUIDE_FLOAT("Arrival turbulence m/s", arrivalFlow.turbulenceSpeedMps, 0, 8, 0.2f);
+      GUIDE_FLOAT("Arrival swirl m/s", arrivalFlow.swirlSpeedMps, -8, 8, 0.5f);
+    }
+    if (!c->targetOverrides) {
+      group = "Target";
+      GUIDE_ENUM("Target field", targetPreset, s_guidedTargetNames);
+      if (c->targetPreset != VFX_GUIDED_TARGET_NONE ||
+          c->targetFlow.swirlSpeedMps != 0 || c->targetFlow.turbulenceSpeedMps > 0) {
+        GUIDE_FLOAT("Target lifetime s", targetLifetime, 0.1f, 30, 0.5f);
+        GUIDE_FLOAT("Target turbulence m/s", targetFlow.turbulenceSpeedMps, 0, 8, 0.2f);
+        GUIDE_FLOAT("Target swirl m/s", targetFlow.swirlSpeedMps, -8, 8, 0.5f);
+      }
+    }
   }
-  GUIDE_FLOAT("Emit duration", emitDuration, 0, 20, 0.5f);
-  if (c->emitDuration > 0) {
-    GUIDE_FLOAT("Emission rate", emissionRate, 1, 1000, 25);
-  } else if (n < max)
-    out[n++] = (VFX_ParamDef){.name = "Burst count",
-                              .group = "Guided",
-                              .type = VFX_PARAM_INT,
-                              .valPtr = &c->count,
-                              .minInt = 0,
-                              .maxInt = 2048};
-  if (c->count > 0 || (c->emitDuration > 0 && c->emissionRate > 0)) {
-    GUIDE_FLOAT("Formation radius", formationRadius, 0.01f, 2, 0.025f);
-    GUIDE_FLOAT("Particle radius", particleRadius, 0.005f, 0.2f, 0.005f);
-    GUIDE_FLOAT("Density kg/m3", densityKgM3, 0.1f, 2000, 100);
-    GUIDE_FLOAT("Mass kg", massKg, 0.001f, 1, 0.001f);
+  group = "Emission";
+  if (n < max)
+    out[n++] = (VFX_ParamDef){.name="Burst count", .group=group,
+        .type=VFX_PARAM_INT, .valPtr=&c->count, .minInt=0, .maxInt=2048};
+  GUIDE_FLOAT("Emit duration s", emitDuration, 0, 20, 0.5f);
+  if (c->emitDuration > 0)
+    GUIDE_FLOAT("Emission rate /s", emissionRate, 0, 1000, 25);
+  bool emitting = c->count > 0 || (c->emitDuration > 0 && c->emissionRate > 0);
+  if (emitting) {
+    if (!c->emissionSource)
+      GUIDE_FLOAT("Source radius m", formationRadius, 0.01f, 2, 0.025f);
+    if (!c->particleTemplate) {
+      group = "Appearance";
+      GUIDE_FLOAT("Particle radius m", particleRadius, 0.005f, 0.2f, 0.005f);
+    }
+    if (!c->bodyOverride && (!c->particleTemplate || !c->particleTemplate->physics.dynamics)) {
+      group = "Body";
+      if (n < max) out[n++] = (VFX_ParamDef){.name="Custom body properties",
+          .group=group, .type=VFX_PARAM_BOOL, .valPtr=&c->showCustomBodyProperties};
+      if (c->showCustomBodyProperties) {
+        GUIDE_FLOAT("Density kg/m3", densityKgM3, 0.1f, 2000, 100);
+        GUIDE_FLOAT("Mass kg", massKg, 0.000001f, 1, 0.0001f);
+      }
+    }
   }
-  GUIDE_FLOAT("Speed m/s", speed, 0.2f, 20, 0.5f);
-  GUIDE_FLOAT("Guide radius", guideRadius, 0.1f, 8, 0.1f);
-  GUIDE_FLOAT("Guide force N", maxForceNewtons, 0.01f, 5, 0.05f);
-  if (c->guideMode == MOTION_GUIDE_PULSE) {
-    GUIDE_FLOAT("Pulse length", pulseLength, 0.1f, 8, 0.1f);
-  }
-  GUIDE_FLOAT("Motion turbulence m/s", motionFlow.turbulenceSpeedMps, 0, 8,
-              0.2f);
-  GUIDE_FLOAT("Motion swirl m/s", motionFlow.swirlSpeedMps, -8, 8, 0.5f);
-  GUIDE_FLOAT("Target turbulence m/s", targetFlow.turbulenceSpeedMps, 0, 8,
-              0.2f);
-  GUIDE_FLOAT("Target swirl m/s", targetFlow.swirlSpeedMps, -8, 8, 0.5f);
 #undef GUIDE_ENUM
 #undef GUIDE_FLOAT
   return n;
@@ -137,20 +154,49 @@ static MotionTargetDesc VC_GuidedTarget(VFX_GuidedTargetPreset preset,
   }
   return d;
 }
+static bool VC_GuidedSettingsValid(const VFX_GuidedParticleConfig *c) {
+  if (!c || c->count < 0 || c->count > 2048 ||
+      !isfinite(c->emitDuration) || c->emitDuration < 0 ||
+      (c->emitDuration > 0 && (!isfinite(c->emissionRate) || c->emissionRate < 0)))
+    return false;
+  bool emitting = c->count > 0 || (c->emitDuration > 0 && c->emissionRate > 0);
+  bool defaultBody = !c->bodyOverride &&
+      (!c->particleTemplate || !c->particleTemplate->physics.dynamics);
+  if (emitting && (c->renderMode < PARTICLE_RENDER_BILLBOARD ||
+      c->renderMode > PARTICLE_RENDER_SURFACE_INPUT ||
+      (!c->emissionSource && (!isfinite(c->formationRadius) || c->formationRadius < 0)) ||
+      (!c->particleTemplate && (!isfinite(c->particleRadius) || c->particleRadius <= 0)) ||
+      (defaultBody && (!isfinite(c->massKg) || c->massKg <= 0 ||
+          !isfinite(c->densityKgM3) || c->densityKgM3 <= 0))))
+    return false;
+  if (emitting && c->bodyOverride && (!c->particleTemplate || !c->particleTemplate->physics.dynamics) &&
+      (!isfinite(c->bodyOverride->massKg) || c->bodyOverride->massKg <= 0 ||
+       !isfinite(c->bodyOverride->densityKgM3) || c->bodyOverride->densityKgM3 < 0 ||
+       !isfinite(c->bodyOverride->projectedAreaM2) || c->bodyOverride->projectedAreaM2 < 0 ||
+       !isfinite(c->bodyOverride->dragCoefficient) || c->bodyOverride->dragCoefficient < 0 ||
+       !isfinite(c->bodyOverride->volumeM3) || c->bodyOverride->volumeM3 < 0 ||
+       !isfinite(c->bodyOverride->immersionFraction) || c->bodyOverride->immersionFraction < 0 ||
+       c->bodyOverride->immersionFraction > 1))
+    return false;
+  if (emitting && c->bodyOverride && (!c->particleTemplate || !c->particleTemplate->physics.dynamics)) {
+    float derivedVolume = c->bodyOverride->densityKgM3 > 0 ?
+        c->bodyOverride->massKg / c->bodyOverride->densityKgM3 : 0;
+    if (c->bodyOverride->immersionFraction != 1 ||
+        fabsf(c->bodyOverride->volumeM3-derivedVolume) >
+            fmaxf(1e-12f, derivedVolume*1e-5f)) return false;
+  }
+  if (!c->guideOverride && (!MotionFlow_IsValid(&c->motionFlow) ||
+      !MotionFlow_IsValid(&c->arrivalFlow) ||
+      (!c->targetOverrides && (!MotionFlow_IsValid(&c->targetFlow) ||
+       c->targetPreset < VFX_GUIDED_TARGET_NONE || c->targetPreset > VFX_GUIDED_TARGET_FLOW))))
+    return false;
+  return true;
+}
 MotionFieldHandle
 VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
   if (c && c->surfaceStreamOut)
     *c->surfaceStreamOut = (ParticleRenderStream){0};
-  if (!c || c->renderMode < PARTICLE_RENDER_BILLBOARD ||
-      c->renderMode > PARTICLE_RENDER_SURFACE_INPUT || c->count < 0 ||
-      c->count > 2048 || !isfinite(c->emitDuration) || c->emitDuration < 0 ||
-      !isfinite(c->emissionRate) || c->emissionRate < 0 ||
-      !isfinite(c->formationRadius) || c->formationRadius < 0 ||
-      !isfinite(c->particleRadius) || c->particleRadius <= 0 ||
-      !MotionFlow_IsValid(&c->motionFlow) || !MotionFlow_IsValid(&c->targetFlow) ||
-      c->targetPreset < VFX_GUIDED_TARGET_NONE || c->targetPreset > VFX_GUIDED_TARGET_BLAST || !isfinite(c->massKg) || c->massKg <= 0 ||
-      !isfinite(c->densityKgM3) || c->densityKgM3 <= 0)
-    return 0;
+  if (!VC_GuidedSettingsValid(c)) return 0;
   VC_GuidedStream *stream = NULL;
   if (c->emitDuration > 0 && c->emissionRate > 0) {
     for (int i = 0; i < VC_GUIDED_MAX_STREAMS; i++)
@@ -191,12 +237,15 @@ VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
     guide.pulseLength = c->pulseLength;
     guide.preserveStreamLanes = true;
     guide.flow = c->motionFlow;
-    guide.arrival.flow = c->targetFlow;
+    guide.arrival.flow = c->arrivalFlow;
+    if (!c->targetOverrides && c->targetPreset == VFX_GUIDED_TARGET_NONE &&
+        c->arrivalFlow.swirlSpeedMps == 0 && c->arrivalFlow.turbulenceSpeedMps == 0)
+      guide.arrival.flow = c->targetFlow; /* Legacy post-arrival adapter. */
     guide.arrival.mode = c->arrival;
     guide.arrival.radius = 0.25f;
-    if (c->targetPreset != VFX_GUIDED_TARGET_NONE ||
+    if (!c->targetOverrides && (c->targetPreset != VFX_GUIDED_TARGET_NONE ||
         c->targetFlow.swirlSpeedMps != 0 ||
-        c->targetFlow.turbulenceSpeedMps > 0) {
+        c->targetFlow.turbulenceSpeedMps > 0)) {
       guide.arrival.targetCount = 1;
       guide.arrival.targets[0] =
           VC_GuidedTarget(c->targetPreset, c->targetLifetime, c->targetFlow);
@@ -217,20 +266,21 @@ VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
     return 0;
   if (c->count == 0 && !stream)
     return h;
-  if (!s_guidedSourceReady) {
+  if (!c->emissionSource && !s_guidedSourceReady) {
     Mesh mesh = GenMeshSphere(1, 16, 10);
     MeshAdjacency_Build(&s_guidedSourceMesh, mesh);
     UnloadMesh(mesh);
     s_guidedSourceReady = true;
   }
-  BodyPhysicalProperties physicalBody =
-      BodyPhysicalProperties_Sphere(c->massKg, c->densityKgM3, 0.47f);
-  ParticleDynamicsProfile body = {.inverseMassKg = 1 / c->massKg,
-                                  .gravityScale = 1,
-                                  .densityKgM3 = c->densityKgM3,
-                                  .windSusceptibility = 1,
-                                  .aerodynamicAreaM2 = physicalBody.projectedAreaM2,
-                                  .aerodynamicDragCoefficient = physicalBody.dragCoefficient};
+  ParticleDynamicsProfile body = {0};
+  if (!c->particleTemplate || !c->particleTemplate->physics.dynamics) {
+    BodyPhysicalProperties physicalBody = c->bodyOverride ? *c->bodyOverride :
+        BodyPhysicalProperties_Sphere(c->massKg, c->densityKgM3, 0.47f);
+    body = (ParticleDynamicsProfile){.inverseMassKg = 1 / physicalBody.massKg,
+        .gravityScale = 1, .densityKgM3 = physicalBody.densityKgM3,
+        .windSusceptibility = 1, .aerodynamicAreaM2 = physicalBody.projectedAreaM2,
+        .aerodynamicDragCoefficient = physicalBody.dragCoefficient};
+  }
   float bodyLifetime = guide.duration;
   float targetTail = 0;
   for (int i = 0; i < guide.arrival.targetCount; i++)
