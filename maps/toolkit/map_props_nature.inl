@@ -1800,16 +1800,32 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         if (combLen < 0.01f) { combX = flowX; combZ = flowZ; combLen = 1.0f; }
         bladeLeanAngle = atan2f(combZ / combLen, combX / combLen);
 
-        float tierFrac = (float)bladeId / (float)(style.bladesPerClump > 1
-                                                ? style.bladesPerClump - 1 : 1);
-        // Mix short inner leaves with long outer blades so nearby
-        // clumps do not collapse into one repeated fan silhouette.
-        float lengthScale = 0.68f + 0.46f * bHash2 + 0.12f * tierFrac;
+        // Ghost of Tsushima 3-Tier Morphology Hierarchy (Enhanced sweeping slant)
+        float lengthScale, widthScaleVal, leanFactor, droopFactor;
+        if (bladeId < 2) {
+            // Tier 1: Hero Arching Blades (sweeping cantilever arch, lower vertical apex)
+            lengthScale = 1.02f + 0.20f * bHash2;
+            widthScaleVal = 0.88f + 0.16f * bHash3;
+            leanFactor = 0.38f + 0.18f * bHash;
+            droopFactor = 0.08f + 0.14f * bHash3;
+        } else if (bladeId < 4) {
+            // Tier 2: Mid-Arching Foliage (wider outward slant for volume)
+            lengthScale = 0.80f + 0.16f * bHash2;
+            widthScaleVal = 1.02f + 0.18f * bHash3;
+            leanFactor = 0.50f + 0.22f * bHash;
+            droopFactor = 0.05f + 0.08f * bHash3;
+        } else {
+            // Tier 3: Ground Thatch & Undergrowth (carpets the soil at low angle)
+            lengthScale = 0.46f + 0.12f * bHash2;
+            widthScaleVal = 1.35f + 0.22f * bHash3;
+            leanFactor = 0.62f + 0.25f * bHash;
+            droopFactor = 0.03f;
+        }
+
         height = clump->height * lengthScale;
-        width = clump->radius * style.bladeWidthScale * widthMultiplier *
-                (0.76f + 0.34f * bHash3 + 0.10f * (1.0f - tierFrac));
-        lean = height * (0.14f + 0.38f * bHash);
-        droopY = height * (0.025f + 0.10f * bHash3);
+        width = clump->radius * style.bladeWidthScale * widthMultiplier * widthScaleVal;
+        lean = height * leanFactor;
+        droopY = height * droopFactor;
         float botanical = fminf(fmaxf(style.botanicalVariation, 0.0f), 1.0f);
         if (botanical > 0.0f) {
             // Neighboring tufts share a growth habit; stable blade identities
@@ -1824,7 +1840,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             height *= stretch;
             width /= stretch; // Retain approximate leaf area as silhouettes change.
             lean *= stretch * (1.0f + botanical * (0.20f + 0.65f * habit));
-            droopY = height * (0.025f + 0.10f * bHash3 + botanical * 0.20f * habit);
+            droopY = height * (droopFactor + botanical * 0.20f * habit);
         }
         if (bladeSegments == 1) {
             // A full-length distant triangle rasterizes as a thin,
@@ -1835,22 +1851,22 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             droopY *= 0.65f;
         }
 
-        // Cantilever progressive Bézier curve (monotonically increasing curvature, zero kinks)
+        // Cantilever progressive Bézier curve (slanted arch, comfortable vertical canopy height)
         pBase = (Vector3){bx, clump->position.y, bz};
         pP1 = (Vector3){
-            bx + cosf(bladeLeanAngle) * lean * 0.08f,
-            pBase.y + height * 0.38f,
-            bz + sinf(bladeLeanAngle) * lean * 0.08f
+            bx + cosf(bladeLeanAngle) * lean * 0.12f,
+            pBase.y + height * 0.28f,
+            bz + sinf(bladeLeanAngle) * lean * 0.12f
         };
         pP2 = (Vector3){
-            bx + cosf(bladeLeanAngle) * lean * 0.40f,
-            pBase.y + height * 0.74f,
-            bz + sinf(bladeLeanAngle) * lean * 0.40f
+            bx + cosf(bladeLeanAngle) * lean * 0.52f,
+            pBase.y + height * 0.56f,
+            bz + sinf(bladeLeanAngle) * lean * 0.52f
         };
         pP3 = (Vector3){
-            bx + cosf(bladeLeanAngle) * lean * 0.90f,
-            pBase.y + fmaxf(height * 0.28f, height * 0.88f - droopY),
-            bz + sinf(bladeLeanAngle) * lean * 0.90f
+            bx + cosf(bladeLeanAngle) * lean * 0.95f,
+            pBase.y + fmaxf(height * 0.12f, height * 0.68f - droopY),
+            bz + sinf(bladeLeanAngle) * lean * 0.95f
         };
 
         // Coherent Macro Seedhead Biome Field (scale ~18m):
@@ -1872,6 +1888,11 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             int tR = (int)(style.tipColor.r * tone * (1.0f + warmth));
             int tG = (int)(style.tipColor.g * tone);
             int tB = (int)(style.tipColor.b * tone * (1.0f - warmth));
+            if (bladeId >= 4) {
+                // Ground thatch has deeper forest shadow tones to anchor roots
+                rR = (int)(rR * 0.82f); rG = (int)(rG * 0.85f); rB = (int)(rB * 0.82f);
+                tR = (int)(tR * 0.74f); tG = (int)(tG * 0.80f); tB = (int)(tB * 0.74f);
+            }
             bladeRoot = (Color){(unsigned char)fminf(255, fmaxf(0, rR)),
                                 (unsigned char)fminf(255, fmaxf(0, rG)),
                                 (unsigned char)fminf(255, fmaxf(0, rB)), 255};
@@ -2950,23 +2971,14 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                            phase, 0.0f, 0.25f, basalColor, Nature_ScaleColor(basalColor, 1.25f));
         }
 
-        // 2. Curved stem using quadratic Bezier (bowing organically under wind/gravity, 24 verts)
+        // 2. Straight upright stem (standing tall and proud above grass, 24 verts)
         float stemWidth = fmaxf(0.005f, flower->bloomRadius * 0.08f);
-        float leanAngle = flower->rotationDeg * DEG2RAD * 0.73f + phase * 4.1f;
-        float leanDist = h * (0.06f + 0.08f * (0.5f + 0.5f * sinf((float)i * 2.37f)));
         Vector3 stemP0 = base;
-        Vector3 stemP1 = {base.x + cosf(leanAngle) * leanDist * 0.40f,
-                          base.y + h * 0.52f,
-                          base.z + sinf(leanAngle) * leanDist * 0.40f};
-        Vector3 head = {base.x + cosf(leanAngle) * leanDist, base.y + h,
-                        base.z + sinf(leanAngle) * leanDist};
+        Vector3 stemP1 = (Vector3){base.x, base.y + h * 0.50f, base.z};
+        Vector3 head = (Vector3){base.x, base.y + h, base.z};
 
-        // Mid point on Bezier curve
-        Vector3 midStem = {
-            0.25f * stemP0.x + 0.50f * stemP1.x + 0.25f * head.x,
-            0.25f * stemP0.y + 0.50f * stemP1.y + 0.25f * head.y,
-            0.25f * stemP0.z + 0.50f * stemP1.z + 0.25f * head.z
-        };
+        // Mid point on straight stem
+        Vector3 midStem = stemP1;
 
         for (int cross = 0; cross < 2; cross++) {
             float angle = flower->rotationDeg * DEG2RAD + cross * PI * 0.5f;
@@ -2991,16 +3003,11 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         // 3. Mid-stem foliage leaves (12 verts)
         for (int leaf = 0; leaf < 2; leaf++) {
             float rootT = leaf == 0 ? 0.35f : 0.65f;
-            float leafAngle = leanAngle + (leaf == 0 ? 1.40f : -1.40f);
+            float leafAngle = flower->rotationDeg * DEG2RAD * 0.73f + (leaf == 0 ? 1.40f : -1.40f);
             Vector3 lDir = {cosf(leafAngle), 0.0f, sinf(leafAngle)};
             Vector3 lSide = {-lDir.z * 0.012f, 0.0f, lDir.x * 0.012f};
             float lLen = fmaxf(0.045f, flower->bloomRadius * 0.75f);
-            float omt = 1.0f - rootT;
-            Vector3 lRoot = {
-                omt*omt*stemP0.x + 2*omt*rootT*stemP1.x + rootT*rootT*head.x,
-                omt*omt*stemP0.y + 2*omt*rootT*stemP1.y + rootT*rootT*head.y,
-                omt*omt*stemP0.z + 2*omt*rootT*stemP1.z + rootT*rootT*head.z
-            };
+            Vector3 lRoot = {base.x, base.y + h * rootT, base.z};
             Vector3 lTip = {lRoot.x + lDir.x * lLen, lRoot.y + lLen * 0.35f, lRoot.z + lDir.z * lLen};
             Nature_AddQuad(&mesh, &cursor,
                            Vector3Subtract(lRoot, lSide), Vector3Add(lRoot, lSide),
@@ -3039,14 +3046,11 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
             };
 
             float stemAngle = flower->rotationDeg * DEG2RAD;
-            float headTilt = 0.22f + 0.25f * (0.5f + 0.5f * sinf((float)i * 1.91f + phase));
-            float tiltX = cosf(leanAngle) * headTilt;
-            float tiltZ = sinf(leanAngle) * headTilt;
-            Vector3 bloomNormal = Vector3Normalize((Vector3){-tiltX, 1.0f, -tiltZ});
+            Vector3 bloomNormal = (Vector3){0.0f, 1.0f, 0.0f};
             Vector3 right = {cosf(stemAngle), 0.0f, sinf(stemAngle)};
             Vector3 forward = {-sinf(stemAngle), 0.0f, cosf(stemAngle)};
 
-            // Card 0: Horizontal / upward-tilted face bloom disc
+            // Card 0: Horizontal upward-facing bloom disc (upright, no tilt)
             float ox0 = (-right.x - forward.x) * r;
             float oz0 = (-right.z - forward.z) * r;
             float ox1 = ( right.x - forward.x) * r;
@@ -3055,10 +3059,10 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
             float oz2 = ( right.z + forward.z) * r;
             float ox3 = (-right.x + forward.x) * r;
             float oz3 = (-right.z + forward.z) * r;
-            Vector3 p0 = {head.x + ox0, head.y + tiltX * ox0 + tiltZ * oz0, head.z + oz0};
-            Vector3 p1 = {head.x + ox1, head.y + tiltX * ox1 + tiltZ * oz1, head.z + oz1};
-            Vector3 p2 = {head.x + ox2, head.y + tiltX * ox2 + tiltZ * oz2, head.z + oz2};
-            Vector3 p3 = {head.x + ox3, head.y + tiltX * ox3 + tiltZ * oz3, head.z + oz3};
+            Vector3 p0 = {head.x + ox0, head.y, head.z + oz0};
+            Vector3 p1 = {head.x + ox1, head.y, head.z + oz1};
+            Vector3 p2 = {head.x + ox2, head.y, head.z + oz2};
+            Vector3 p3 = {head.x + ox3, head.y, head.z + oz3};
             Nature_AddTexturedBloom(&mesh, &cursor, p0, p1, p2, p3, bloomNormal,
                                     phase, flower->petalColor, uvRect);
 

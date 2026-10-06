@@ -78,8 +78,8 @@ void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p
         if (u_geometryLod == 2) {
             // Preserve the author's short/wide far silhouette and droop;
             // canonical near geometry remains unchanged for real shadows.
-            float height = (p1.y-p0.y) / 0.38;
-            float droop = height*0.88 - (p3.y-p0.y);
+            float height = (p1.y-p0.y) / 0.28;
+            float droop = height*0.68 - (p3.y-p0.y);
             p1.x = p0.x + (p1.x-p0.x)*0.67;
             p1.y = p0.y + (p1.y-p0.y)*0.78;
             p1.z = p0.z + (p1.z-p0.z)*0.67;

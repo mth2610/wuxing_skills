@@ -260,7 +260,7 @@ static float VerdantGrassDensitySource(float x, float z, void *userData)
                      + sinf(x * 0.33f + z * 0.29f) * 0.15f;
     float patch = fminf(1.0f, fmaxf(0.0f, (macroField + 0.25f) / 0.70f));
     patch = patch * patch * (3.0f - 2.0f * patch);
-    float macro = 0.58f + 0.42f * patch;
+    float macro = 0.45f + 0.55f * patch;
 
     // Flowers grow through a shorter, sparser meadow underlayer. A zero-density
     // clearing exposes a large dark disc at gameplay distance and makes the
@@ -273,7 +273,7 @@ static float VerdantGrassDensitySource(float x, float z, void *userData)
         if (d2 < 1.25f) {
             // Keep enough cover to connect the flowers to the surrounding turf.
             // The broad fade still gives blooms room to read individually.
-            float localFactor = fmaxf(0.72f, (d2 - 0.55f) / 0.70f);
+            float localFactor = fmaxf(0.50f, (d2 - 0.40f) / 0.85f);
             if (localFactor < flowerSuppression) {
                 flowerSuppression = localFactor;
             }
@@ -306,9 +306,9 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.22f, .jitter = 0.90f,
+            .spacing = 0.25f, .jitter = 0.90f,
             .minRadius = 0.22f, .maxRadius = 0.28f,
-            .minHeight = 0.22f, .maxHeight = 0.38f,
+            .minHeight = 0.34f, .maxHeight = 0.54f,
             .yOffset = 0.025f, .seed = 0x51a7c3u,
         }, VerdantGrassDensity, NULL);
     TraceLog(LOG_INFO, "VERDANT_MEADOW: placements=%d capacity=%d",
@@ -347,25 +347,25 @@ static void BuildMeadowLayout(void)
                                       : cell1 * 0.6f + cell2 * 0.4f;
 
         if (biome > 0.60f) {
-            // Biome 1: Tall Deep Meadow (long sweeping weeping ribbons, height ~0.36 - 0.42m)
+            // Biome 1: Tall Deep Meadow (long sweeping weeping ribbons, height ~0.34 - 0.38m)
             float t = (biome - 0.60f) / 0.40f;
-            clump->height = 0.36f + t * 0.06f;
-            clump->radius = 0.26f + t * 0.04f;
+            clump->height = 0.34f + t * 0.04f;
+            clump->radius = 0.25f + t * 0.03f;
         } else if (biome < 0.35f) {
-            // Biome 2: Meadow clearing (dense arching grass, height ~0.30 - 0.34m)
+            // Biome 2: Meadow clearing (dense arching grass, height ~0.26 - 0.30m)
             float t = biome / 0.35f;
-            clump->height = 0.30f + t * 0.04f;
-            clump->radius = 0.23f + t * 0.03f;
+            clump->height = 0.26f + t * 0.04f;
+            clump->radius = 0.22f + t * 0.02f;
         } else {
-            // Biome 3: Wild flowing grass (height ~0.33 - 0.37m)
+            // Biome 3: Wild flowing grass (height ~0.29 - 0.33m)
             float t = (biome - 0.35f) / 0.25f;
-            clump->height = 0.33f + t * 0.04f;
-            clump->radius = 0.24f + t * 0.03f;
+            clump->height = 0.29f + t * 0.04f;
+            clump->radius = 0.23f + t * 0.03f;
         }
         if (s_ecology.ready)
-            clump->height = 0.30f + MapEcology_Sample(&s_ecology, cx, cz).growth * 0.12f;
-        clump->height *= 0.82f + 0.34f * (localHeight - 0.22f) / 0.16f;
-        clump->radius *= 0.91f + 0.18f * (localRadius - 0.22f) / 0.06f;
+            clump->height = 0.26f + MapEcology_Sample(&s_ecology, cx, cz).growth * 0.10f;
+        clump->height *= 0.85f + 0.30f * (localHeight - 0.34f) / 0.20f;
+        clump->radius *= 0.92f + 0.16f * (localRadius - 0.22f) / 0.06f;
 
         // 5. Pathway Edge Trampled Turf (AAA organic transition)
         float distPath = DistanceToPaths(cx, cz);
@@ -442,9 +442,9 @@ static void BuildMeadowLayout(void)
         int variant = speciesByCluster[cluster][speciesSlot];
         bool tallAccent = variant == 2 || variant == 4 || variant == 6;
 
-        float driftHeightBase = tallAccent ? 0.41f : 0.34f;
-        s_flowerPlacements[i].height = driftHeightBase + RandomRange(&rng, -0.03f, 0.08f);
-        s_flowerPlacements[i].bloomRadius = (tallAccent ? 0.125f : 0.096f) * RandomRange(&rng, 0.95f, 1.20f);
+        float driftHeightBase = tallAccent ? 0.44f : 0.36f;
+        s_flowerPlacements[i].height = driftHeightBase + RandomRange(&rng, -0.02f, 0.05f);
+        s_flowerPlacements[i].bloomRadius = (tallAccent ? 0.105f : 0.082f) * RandomRange(&rng, 0.95f, 1.15f);
         s_flowerPlacements[i].petalColor = FlowerSpeciesColor(
             variant, Random01(&rng) > 0.85f);
         s_flowerPlacements[i].petalCount = (unsigned char)(4 + (variant % 3));
@@ -727,8 +727,8 @@ void InitVerdantPathMap(void)
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
-            .rootColor = {28, 48, 22, 255}, .tipColor = {114, 165, 64, 255},
-            .bladesPerClump = 6, .bladeSegments = 4, .bladeWidthScale = 0.19f,
+            .rootColor = {18, 34, 16, 255}, .tipColor = {136, 186, 54, 255},
+            .bladesPerClump = 6, .bladeSegments = 3, .bladeWidthScale = 0.12f,
             .chunkSize = 12.0f, .lodDistance = 32.0f, .midLodDistance = 16.0f, .drawDistance = 50.0f,
             .shadowDistance = 14.0f,
             .texturePath = NULL,
@@ -737,8 +737,8 @@ void InitVerdantPathMap(void)
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
         (MapMeadowStyle){
             .rootColor = {26, 42, 20, 255}, .tipColor = {136, 172, 82, 255},
-            .bladesPerClump = 7, .bladeSegments = 4, .bladeWidthScale = 0.14f,
-            .chunkSize = 18.0f, .lodDistance = 36.0f, .drawDistance = 65.0f,
+            .bladesPerClump = 7, .bladeSegments = 3, .bladeWidthScale = 0.14f,
+            .chunkSize = 18.0f, .lodDistance = 36.0f, .midLodDistance = 18.0f, .drawDistance = 65.0f,
             .shadowDistance = 12.0f,
             .texturePath = NULL,
             .hasPlumes = false,

@@ -207,8 +207,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 skyAmbient = baseAmbient * vec3(1.06, 1.10, 1.16);
     vec3 groundBounce = baseAmbient * vec3(0.65, 0.74, 0.44);
     vec3 ambient = mix(groundBounce, skyAmbient, n.y * 0.5 + 0.5);
-    // Deep ground contact ambient occlusion at blade base
-    float rootAO = clamp(0.50 + 0.50 * pow(h, 0.65), 0.50, 1.0);
+    // Deep ground contact ambient occlusion at blade base (Ghost of Tsushima deep canopy shadow)
+    float rootAO = clamp(0.24 + 0.76 * pow(h, 1.25), 0.24, 1.0);
     vec3 lit = baseColor * ambient * rootAO;
 
     // Ghost of Tsushima: Anisotropic fiber specular along blade length
@@ -222,12 +222,12 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     float dotTH = dot(bladeTangent, halfDir);
     float sinTH = sqrt(max(0.0, 1.0 - dotTH * dotTH));
-    float anisoSpec = pow(sinTH, 22.0) * 0.12 * (1.0 - antiShimmer) / (1.0 + 12.0 * variance);
+    float anisoSpec = pow(sinTH, 36.0) * 0.20 * (1.0 - antiShimmer) / (1.0 + 8.0 * variance);
 
     // Waxy cuticle grazing sheen (Fresnel sheen reflecting sky)
     float nv = max(dot(faceNormal, viewDir), 0.0);
     float waxFresnel = pow(1.0 - nv, 4.0);
-    vec3 waxSheen = skyAmbient * waxFresnel * 0.28 * smoothstep(0.18, 0.85, h) * (1.0 - antiShimmer * 0.5);
+    vec3 waxSheen = skyAmbient * waxFresnel * 0.32 * smoothstep(0.25, 0.90, h) * (1.0 - antiShimmer * 0.5);
 
     // Velvet tip glint and wind wave crest highlights
     float tipGlint = pow(sinTH, 12.0) * smoothstep(0.40, 1.0, h) * (1.0 - antiShimmer * 0.65);
@@ -236,10 +236,10 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     // Chlorophyll translucency: warm emerald-gold backlight through leaf membrane
     float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
     float backLight = max(-dot(faceNormal, u_lightDir), 0.0);
-    float transmission = (pow(backLight, 1.6) * 0.52
-                        + pow(forwardScatter, 3.0) * 0.38)
-                        * smoothstep(0.10, 0.88, h);
-    vec3 translucentColor = baseColor * vec3(1.42, 1.36, 0.55) + vec3(0.04, 0.06, 0.01);
+    float transmission = (pow(backLight, 1.5) * 0.58
+                        + pow(forwardScatter, 2.8) * 0.42)
+                        * smoothstep(0.18, 0.95, h);
+    vec3 translucentColor = baseColor * vec3(1.60, 1.52, 0.42) + vec3(0.05, 0.08, 0.01);
 
     // Physical daylight optics:
     // Direct solar irradiance (diffuse wrap, anisotropic specular, velvet tip glint,
@@ -249,7 +249,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 directSunTerms = baseColor * (wrapped * wrapped * 1.05)
                         + anisoSpec * vec3(1.0, 1.02, 0.95)
                         + velvetGlint
-                        + translucentColor * (transmission * 0.82);
+                        + translucentColor * (transmission * 0.92);
     vec3 directSun = directSunTerms * u_lightColor * canopy * sunVis;
 
     // Diffuse skylight transmission through leaf membrane (soft emerald ambient glow)

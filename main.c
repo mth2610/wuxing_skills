@@ -400,10 +400,10 @@ int main(int argc, char **argv) {
       : Vector3Add(captureOrigin, (Vector3){0, 0.2f, 0});
   if (renderVFXMode && (renderVFXWarmup < 1 ||
       (captureEyeSet && (Vector3Distance(captureEye,
-          resolvedCaptureTarget) < 1.0f ||
+          resolvedCaptureTarget) < 0.35f ||
           hypotf(captureEye.x - resolvedCaptureTarget.x,
                  captureEye.z - resolvedCaptureTarget.z) < 0.001f)))) {
-      fprintf(stderr, "Capture needs positive warmup, eye >= 1 metre from target and a nonvertical view.\n");
+      fprintf(stderr, "Capture needs positive warmup, eye >= 0.35 metre from target and a nonvertical view.\n");
       return 2;
   }
 
