@@ -144,8 +144,7 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambientFloor = mix(groundBounce, skyAmbient, skyWeight) * mix(1.0, cupCavity, bloomMask);
 
     float horizon = 0.75 + 0.25 * max(n.y, 0.0);
-    float ambientVisibility = mix(0.92, 1.0, shadow);
-    vec3 lit = baseColor * ambientFloor * horizon * ambientVisibility;
+    vec3 lit = baseColor * ambientFloor * horizon;
 
     // Specular and Rim terms
     vec3 halfDir = normalize(u_lightDir + viewDir);
@@ -157,12 +156,16 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float NdotV = max(dot(faceNormal, viewDir), 0.0);
     float rim = pow(1.0 - NdotV, 2.8) * mix(0.22, 0.30, bloomMask);
 
-    // Direct sun, SSS, specular, and rim consolidated under single sunScale
-    vec3 sunScale = u_lightColor * canopyExtinction * Environment_CloudVisibility(u_cloudNoise, worldPosition);
-    vec3 sunTerms = baseColor * (directDiffuse * shadow * 1.10 + rim)
-                  + subsurfaceColor * (transmission * mix(0.75, 0.92, bloomMask))
-                  + vec3(spec * (0.35 + 0.65 * shadow));
-    lit += sunTerms * sunScale;
+    // Direct sun, SSS, specular, and rim strictly governed by physical shadow visibility
+    float cloudVis = Environment_CloudVisibility(u_cloudNoise, worldPosition);
+    vec3 sunScale = u_lightColor * canopyExtinction * cloudVis;
+    vec3 directSunTerms = baseColor * (directDiffuse * 1.10 + rim)
+                        + subsurfaceColor * (transmission * mix(0.75, 0.92, bloomMask))
+                        + vec3(spec);
+    lit += directSunTerms * sunScale * shadow;
+
+    // Diffuse sky dome transmission (skylight passing through translucent petals)
+    lit += subsurfaceColor * (transmission * mix(0.18, 0.24, bloomMask)) * skyAmbient;
 
     // Root Contact AO: grounds foliage naturally into the soil without harsh pitch-black ink spots
     float rootAO = clamp(0.74 + 0.26 * pow(hNorm, 0.70), 0.74, 1.0);
@@ -207,8 +210,6 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     // Deep ground contact ambient occlusion at blade base
     float rootAO = clamp(0.50 + 0.50 * pow(h, 0.65), 0.50, 1.0);
     vec3 lit = baseColor * ambient * rootAO;
-    // Captured canopy occlusion also reduces sky fill; preserve a soft floor.
-    lit *= mix(0.88, 1.0, shadow);
 
     // Ghost of Tsushima: Anisotropic fiber specular along blade length
     // Blades have longitudinal veins; highlights form soft sheen bands across width
@@ -240,19 +241,21 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                         * smoothstep(0.10, 0.88, h);
     vec3 translucentColor = baseColor * vec3(1.42, 1.36, 0.55) + vec3(0.04, 0.06, 0.01);
 
-    // Foliage direct light & transmission response in shadow:
-    // Translucent leaf membranes scatter backlit sun even in partial shadow (Ghost of Tsushima).
-    // Clumps preserve scattered diffuse fill rather than collapsing into pitch-black silhouettes.
-    float directSunOcc = mix(0.35, 1.0, shadow);
-    float transSunOcc = mix(0.55, 1.0, shadow);
-    float specOcc = mix(0.35, 1.0, shadow);
+    // Physical daylight optics:
+    // Direct solar irradiance (diffuse wrap, anisotropic specular, velvet tip glint,
+    // and backlight solar transmission) is occluded by shadow map visibility.
+    // Hemispheric sky ambient and waxy sky reflection provide natural illumination in shade.
+    float sunVis = shadow * Environment_CloudVisibility(u_cloudNoise, worldPosition);
+    vec3 directSunTerms = baseColor * (wrapped * wrapped * 1.05)
+                        + anisoSpec * vec3(1.0, 1.02, 0.95)
+                        + velvetGlint
+                        + translucentColor * (transmission * 0.82);
+    vec3 directSun = directSunTerms * u_lightColor * canopy * sunVis;
 
-    vec3 sunTerms = baseColor * (wrapped * wrapped * 1.05 * directSunOcc)
-                  + anisoSpec * vec3(1.0, 1.02, 0.95) * specOcc
-                  + velvetGlint * specOcc
-                  + translucentColor * (transmission * 0.82 * transSunOcc);
-    lit += (sunTerms * u_lightColor * canopy + waxSheen)
-         * Environment_CloudVisibility(u_cloudNoise, worldPosition);
+    // Diffuse skylight transmission through leaf membrane (soft emerald ambient glow)
+    vec3 skyTrans = translucentColor * (transmission * 0.22) * skyAmbient;
+
+    lit += directSun + skyTrans + waxSheen;
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);
     return lit;
 }
