@@ -745,12 +745,15 @@ static bool Motion_ValidPhysical(const FieldDesc *d) {
        !MotionPath_Build(&checked,d->trajectory.path.points,d->trajectory.path.count))) return false;
   for(int i=0;i<d->forceLawCount;++i) {
     const ForceLaw *l=&d->forceLaws[i];
-    if(l->type<FORCE_LAW_NEWTONS || l->type>FORCE_LAW_DRAG ||
+    if(l->type<FORCE_LAW_NEWTONS || l->type>FORCE_LAW_PATH_GUIDE ||
        !Motion_FiniteVector(l->forceNewtons) || !Motion_FiniteVector(l->accelerationMps2) || !Motion_FiniteVector(l->center) ||
        !isfinite(l->magnitudeNewtons) || !isfinite(l->springStiffnessNPerM) ||
        l->springStiffnessNPerM<0 || !isfinite(l->dampingNsPerM) || l->dampingNsPerM<0) return false;
+    if(l->type==FORCE_LAW_PATH_GUIDE &&
+       (d->volume.shape!=FIELD_PATH_TUBE || l->magnitudeNewtons<0)) return false;
   }
-  return Motion_FiniteVector(d->flow.velocityMps) && Motion_FiniteVector(d->flow.axis) &&
+  return isfinite(d->flow.followSpeedMps) &&
+         Motion_FiniteVector(d->flow.velocityMps) && Motion_FiniteVector(d->flow.axis) &&
       isfinite(d->flow.blendWeight) && d->flow.blendWeight>=0;
 }
 MotionFieldHandle MotionFields_CreateField(const FieldDesc *d) {

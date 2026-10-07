@@ -3073,17 +3073,28 @@ and buoyancy share `gravityScale`; use 1 for a physical body. A density below th
 surrounding air rises when gravity is enabled. Hot gas/smoke needs the gas solver,
 not a low-density solid proxy.
 
-`VFX_GuidedParticle_DefaultConfig` + `VFX_ComposeGuidedParticleEx` creates a
-standalone typed spherical field (`core/composition/common/vc_guided_particle.inl`).
-Its centre follows the source/target curve at `speed` m/s, then stays at the target
-until `duration` expires. Equal source/target or zero speed produces a stationary
-field. Radial attraction uses Newtons; swirl and turbulence use airflow m/s, added
-to ordinary Wind once. Particles sample their current position without capture,
-kinematic snapping, arrival actions or automatic target blasts. Independent target
-fields belong to `MotionFields_CreateField`, outside this composition.
+`VFX_GuidedParticle_DefaultConfig` + `VFX_ComposeGuidedParticleEx` chooses its
+field shape from the emission schedule (`core/composition/common/vc_guided_particle.inl`).
+For burst emission (no positive `emitDuration` and `emissionRate`), the field is a
+sphere. With distinct source and target, that sphere travels along the Bezier path
+at `speed`; equal endpoints make it stationary. Its radial force, local swirl and
+turbulence affect nearby particles, and ordinary Wind is added once. For continuous
+emission with distinct endpoints, the field is a stationary `FIELD_PATH_TUBE`
+spanning the complete Bezier route from A to B. It does not travel. Equal endpoints
+have no route, so they use a stationary sphere. A capped Newton force acts like a critically
+damped spring toward the nearest centerline point, while `speed` sets airflow along
+the tube; particle drag controls how quickly particles respond to that airflow.
+Swirl, turbulence and ordinary Wind remain independent contributions. Particles
+sample their current position without capture, kinematic snapping, arrival actions
+or automatic target blasts. The tube stays at full strength through `emitDuration`,
+then uses its fade tail. Keep the emitter's initial spawn footprint within the tube
+radius if every newborn must be guided. Independent target fields belong to
+`MotionFields_CreateField`, outside this composition.
 
 Emission count/rate/duration remain independent; count=0 and zero continuous
-emission creates only a field. Default body lifetime matches field lifetime;
+emission creates only a field. A continuous tube's effective lifetime covers the
+emission duration plus its fade tail. Default body lifetime matches the effective
+field lifetime;
 particle templates can specialize it. Default mass and density control Newton
 response and buoyancy, while visual radius remains separate. `drag` is a linear
 response rate in s^-1 relative to local airflow: zero disables default damping;

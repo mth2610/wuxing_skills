@@ -661,6 +661,46 @@ static void TestTypedFields(void) {
   CHECK(MotionFields_CreateGuide(&guide)==0,"motion rejects damping passed as Newton force law");
 }
 
+static void TestPathTubeGuide(void) {
+  FieldDesc d=MotionField_Default();
+  Vector3 points[]={{0,0,0},{5,0,0},{10,0,0}};
+  CHECK(MotionPath_Build(&d.volume.path,points,3), "build path tube guide test path");
+  d.volume.shape=FIELD_PATH_TUBE;d.volume.radiusM=1;d.volume.coreFraction=.25f;
+  d.lifetime.durationSec=4;
+  d.forceLawCount=1;
+  d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_PATH_GUIDE,
+      .magnitudeNewtons=.32f,.springStiffnessNPerM=.32f};
+  d.flow.enabled=true;d.flow.followSpeedMps=3;d.flow.addBackgroundVelocity=true;
+  BodyPhysicalProperties body=BodyPhysicalProperties_Sphere(.004f,600,0);
+  MediumProperties air={.densityKgM3=1.225f,.velocityMps={0,0,2}};
+  Vector3 p={4,.5f,0};
+  FieldSample sample=Field_Evaluate(&d,.5f,p,(Vector3){0},&body,&air);
+  CHECK(sample.forceNewtons.y<0 && MotionVec_Length(sample.forceNewtons)<=.32001f,
+      "path guide attracts across the tube with a bounded Newton force");
+  CHECK(fabsf(sample.mediumVelocityMps.x-3*sample.mediumWeight)<1e-5f &&
+        fabsf(sample.mediumVelocityMps.z-2)<1e-5f,
+      "every position along a static tube carries tangent flow plus ambient wind");
+  sample=Field_Evaluate(&d,.5f,(Vector3){4,0,0},(Vector3){0},&body,&air);
+  CHECK(MotionVec_Length(sample.forceNewtons)<1e-5f,
+      "centreline has no artificial attraction singularity");
+  sample=Field_Evaluate(&d,.5f,(Vector3){4,1.1f,0},(Vector3){0},&body,&air);
+  CHECK(MotionVec_Length(sample.forceNewtons)==0 && sample.mediumWeight==0,
+      "tube force and flow fade to zero beyond its finite radius");
+  d.volume.shape=FIELD_SPHERE;
+  CHECK(!MotionFields_CreateField(&d), "path guide force rejects non-tube geometry");
+  d.volume.shape=FIELD_PATH_TUBE;
+  d.forceLaws[0].magnitudeNewtons=0;
+  d.forceLaws[0].springStiffnessNPerM=0;
+  CHECK(MotionFields_CreateField(&d)!=0,
+      "zero path-guide force budget cleanly disables attraction while retaining the tube");
+  MotionFields_Reset();
+  d.forceLaws[0].magnitudeNewtons=.32f;
+  d.forceLaws[0].springStiffnessNPerM=.32f;
+  sample=Field_Evaluate(&d,4,(Vector3){4,.5f,0},(Vector3){0},&body,&air);
+  CHECK(MotionVec_Length(sample.forceNewtons)==0 && sample.mediumWeight==0,
+      "stationary route field expires at its configured end time");
+  MotionFields_Reset();
+}
 static void TestSimpleVolumeBuilders(void) {
   MotionFields_Reset();
   MotionFieldHandle h=MotionFields_SpawnStaticAttractor((Vector3){2,1,0},2,.2f,2,.1f,.2f);
@@ -759,6 +799,7 @@ int main(void) {
   TestSharedFlowStages();
   TestDensityAndForceProfiles();
   TestSimpleVolumeBuilders();
+  TestPathTubeGuide();
   TestOwnedStorageAndPools();
   TestPulseAndReceiverMasks();
   TestBodyMassAndAir();

@@ -1,5 +1,6 @@
 #ifndef CORE_PHYSICAL_FIELD_H
 #define CORE_PHYSICAL_FIELD_H
+#include <stddef.h>
 #include "core/motion/motion_flow.h"
 #define FIELD_MAX_FORCE_LAWS 8
 /* All geometry is metres in a rigid local frame. Scaling is explicit in
@@ -40,10 +41,12 @@ typedef struct ReceiverConstraints {
   Vector3 permittedAxes;
 } ReceiverConstraints;
 /* Signed radial magnitude: positive attracts, negative repels. No automatic
- * centrifugal force is introduced in this world-space inertial solver. */
+ * centrifugal force is introduced in this world-space inertial solver.
+ * PATH_GUIDE applies a capped, critically damped force toward the nearest
+ * point on a FIELD_PATH_TUBE centerline. */
 typedef enum { FORCE_LAW_NEWTONS, FORCE_LAW_ACCELERATION,
                FORCE_LAW_RADIAL_ATTRACTION, FORCE_LAW_SPRING,
-               FORCE_LAW_BUOYANCY, FORCE_LAW_DRAG } ForceLawType;
+               FORCE_LAW_BUOYANCY, FORCE_LAW_DRAG, FORCE_LAW_PATH_GUIDE } ForceLawType;
 /* Controller coefficients belong to the actuator, never the body material.
  * Stiffness derives from the force budget and guide geometry. */
 typedef struct GuideController {
@@ -65,6 +68,9 @@ typedef struct FlowField {
   /* Add ordinary medium velocity once, before priority blending. Default false
    * retains absolute authored flow. Used for ambient-Wind-aware moving VFX. */
   bool addBackgroundVelocity;
+  /* Desired along-path medium speed for FIELD_PATH_TUBE, in m/s. The tube
+   * guides every point along the route; it is not a moving-center capture. */
+  float followSpeedMps;
 } FlowField;
 typedef struct FieldDesc {
   FieldVolume volume;
@@ -176,18 +182,21 @@ static inline FieldTransform FieldTrajectory_Transform(const FieldDesc *d,float 
   }
   return t;
 }
-static inline float FieldVolume_NormalizedDistance(const FieldVolume *v,Vector3 p) {
+static inline float FieldVolume_NormalizedDistanceAt(const FieldVolume *v,Vector3 p,
+    const MotionPathSample *pathSample) {
   if(v->shape==FIELD_BOX) return fmaxf(fabsf(p.x)/v->halfExtentsM.x,
       fmaxf(fabsf(p.y)/v->halfExtentsM.y,fabsf(p.z)/v->halfExtentsM.z));
   if(v->shape==FIELD_CAPSULE)
     return Motion_SegmentDistance(v->capsuleStart,v->capsuleEnd,p)/v->radiusM;
   if(v->shape==FIELD_PATH_TUBE) {
-    MotionPathSample q=MotionPath_Project(&v->path,p,0,v->path.count-2);
+    MotionPathSample q=pathSample ? *pathSample :
+      MotionPath_Project(&v->path,p,0,v->path.count-2);
     return MotionVec_Length(MotionVec_Sub(p,q.position))/v->radiusM;
   }
   return MotionVec_Length(p)/v->radiusM;
 }
-static inline float FieldVolume_Weight(const FieldVolume *v,Vector3 p) {
+static inline float FieldVolume_WeightAt(const FieldVolume *v,Vector3 p,
+    const MotionPathSample *pathSample) {
   if(!v || v->shape<FIELD_SPHERE || v->shape>FIELD_PATH_TUBE ||
       !isfinite(v->coreFraction) || v->coreFraction<0 || v->coreFraction>=1 ||
       (v->shape==FIELD_BOX && (!isfinite(v->halfExtentsM.x) || !isfinite(v->halfExtentsM.y) || !isfinite(v->halfExtentsM.z))) ||
@@ -195,9 +204,12 @@ static inline float FieldVolume_Weight(const FieldVolume *v,Vector3 p) {
       (v->shape==FIELD_BOX && (v->halfExtentsM.x<=0 || v->halfExtentsM.y<=0 || v->halfExtentsM.z<=0)) ||
       (v->shape!=FIELD_BOX && (!isfinite(v->radiusM) || v->radiusM<=0)) ||
       (v->shape==FIELD_PATH_TUBE && (v->path.count<2 || v->path.count>MOTION_PATH_MAX_POINTS))) return 0;
-  float x=Motion_Clamp((FieldVolume_NormalizedDistance(v,p)-v->coreFraction)/
+  float x=Motion_Clamp((FieldVolume_NormalizedDistanceAt(v,p,pathSample)-v->coreFraction)/
       fmaxf(1-v->coreFraction,0.0001f),0,1);
   return 1-x*x*(3-2*x);
+}
+static inline float FieldVolume_Weight(const FieldVolume *v,Vector3 p) {
+  return FieldVolume_WeightAt(v,p,NULL);
 }
 static inline Vector3 ForceLaw_Evaluate(const ForceLaw *law,Vector3 p,Vector3 v,
     const BodyPhysicalProperties *body,const MediumProperties *medium,
@@ -216,6 +228,7 @@ static inline Vector3 ForceLaw_Evaluate(const ForceLaw *law,Vector3 p,Vector3 v,
       return MotionVec_Scale(medium->gravityMps2,
         -medium->densityKgM3*volume*Motion_Clamp(body->immersionFraction,0,1));
     }
+    case FORCE_LAW_PATH_GUIDE: return (Vector3){0}; /* Evaluated with its path below. */
     case FORCE_LAW_DRAG: {
       Vector3 relative=MotionVec_Sub(flow,v);
       return MotionVec_Scale(relative,0.5f*medium->densityKgM3*body->dragCoefficient*
@@ -256,9 +269,11 @@ static inline float FieldFlow_CharacteristicRadius(const FieldVolume *v) {
   return v->shape==FIELD_BOX?fminf(v->halfExtentsM.x,
     fminf(v->halfExtentsM.y,v->halfExtentsM.z)):v->radiusM;
 }
-static inline Vector3 FieldFlow_Potential(const FlowField *flow,const FieldVolume *volume,
-    Vector3 p,float time) {
-  float weight=FieldVolume_Weight(volume,p);
+static inline Vector3 FieldFlow_PotentialAt(const FlowField *flow,const FieldVolume *volume,
+    Vector3 p,float time,const MotionPathSample *pathSample) {
+  /* Curl samples are only a small eddy-length step from the receiver. Reuse
+   * its nearest path point to avoid six full path projections per sample. */
+  float weight=FieldVolume_WeightAt(volume,p,pathSample);
   if(weight<=0 || flow->procedural.turbulenceSpeedMps==0) return (Vector3){0};
   float eddy=flow->procedural.eddyLengthM>0?flow->procedural.eddyLengthM:
     FieldFlow_CharacteristicRadius(volume)*.25f;
@@ -271,16 +286,21 @@ static inline Vector3 FieldFlow_Potential(const FlowField *flow,const FieldVolum
     Noise_Perlin3D(q.x+67.234f,q.y+67.234f,q.z+67.234f)};
   return MotionVec_Scale(noise,flow->procedural.turbulenceSpeedMps*eddy*weight);
 }
-static inline Vector3 FieldFlow_Evaluate(const FlowField *flow,const FieldVolume *volume,
+static inline Vector3 FieldFlow_Potential(const FlowField *flow,const FieldVolume *volume,
     Vector3 p,float time) {
+  return FieldFlow_PotentialAt(flow,volume,p,time,NULL);
+}
+static inline Vector3 FieldFlow_EvaluateAt(const FlowField *flow,const FieldVolume *volume,
+    Vector3 p,float time,const MotionPathSample *pathSample) {
   Vector3 out={0};
-  float weight=FieldVolume_Weight(volume,p);
+  float weight=FieldVolume_WeightAt(volume,p,pathSample);
   if(weight<=0 || !MotionFlow_IsValid(&flow->procedural)) return out;
   float radius=FieldFlow_CharacteristicRadius(volume);
   Vector3 center={0},axis=MotionVec_Normalize(flow->axis);
   if(MotionVec_Length(axis)<.1f) axis=(Vector3){0,1,0};
   if(volume->shape==FIELD_PATH_TUBE) {
-    MotionPathSample q=MotionPath_Project(&volume->path,p,0,volume->path.count-2);
+    MotionPathSample q=pathSample ? *pathSample :
+      MotionPath_Project(&volume->path,p,0,volume->path.count-2);
     center=q.position; axis=q.tangent;
   } else if(volume->shape==FIELD_CAPSULE) {
     Vector3 delta=MotionVec_Sub(volume->capsuleEnd,volume->capsuleStart);
@@ -289,31 +309,45 @@ static inline Vector3 FieldFlow_Evaluate(const FlowField *flow,const FieldVolume
     center=MotionVec_Add(volume->capsuleStart,MotionVec_Scale(delta,along));
     if(square>1e-12f) axis=MotionVec_Normalize(delta);
   }
+  if (volume->shape == FIELD_PATH_TUBE && flow->followSpeedMps != 0.0f) {
+    MotionPathSample nearest = pathSample ? *pathSample :
+      MotionPath_Project(&volume->path, p, 0, volume->path.count - 2);
+    out = MotionVec_Scale(nearest.tangent, flow->followSpeedMps * weight);
+  }
   if(flow->procedural.swirlSpeedMps!=0 && radius>0) {
     Vector3 radial=MotionFlow_Radial(p,center,axis);
-    out=MotionVec_Scale(MotionVec_Cross(axis,radial),
-      flow->procedural.swirlSpeedMps/radius*weight);
+    out=MotionVec_Add(out,MotionVec_Scale(MotionVec_Cross(axis,radial),
+      flow->procedural.swirlSpeedMps/radius*weight));
   }
   if(flow->procedural.turbulenceSpeedMps>0) {
     float eddy=flow->procedural.eddyLengthM>0?flow->procedural.eddyLengthM:radius*.25f;
     float h=eddy*.02f;
     if(h<=0 || !isfinite(h)) return out;
     Vector3 dx={h,0,0},dy={0,h,0},dz={0,0,h};
-    Vector3 ax=MotionVec_Sub(FieldFlow_Potential(flow,volume,MotionVec_Add(p,dx),time),
-                            FieldFlow_Potential(flow,volume,MotionVec_Sub(p,dx),time));
-    Vector3 ay=MotionVec_Sub(FieldFlow_Potential(flow,volume,MotionVec_Add(p,dy),time),
-                            FieldFlow_Potential(flow,volume,MotionVec_Sub(p,dy),time));
-    Vector3 az=MotionVec_Sub(FieldFlow_Potential(flow,volume,MotionVec_Add(p,dz),time),
-                            FieldFlow_Potential(flow,volume,MotionVec_Sub(p,dz),time));
+    Vector3 ax=MotionVec_Sub(FieldFlow_PotentialAt(flow,volume,MotionVec_Add(p,dx),time,pathSample),
+                            FieldFlow_PotentialAt(flow,volume,MotionVec_Sub(p,dx),time,pathSample));
+    Vector3 ay=MotionVec_Sub(FieldFlow_PotentialAt(flow,volume,MotionVec_Add(p,dy),time,pathSample),
+                            FieldFlow_PotentialAt(flow,volume,MotionVec_Sub(p,dy),time,pathSample));
+    Vector3 az=MotionVec_Sub(FieldFlow_PotentialAt(flow,volume,MotionVec_Add(p,dz),time,pathSample),
+                            FieldFlow_PotentialAt(flow,volume,MotionVec_Sub(p,dz),time,pathSample));
     out=MotionVec_Add(out,MotionVec_Scale((Vector3){ay.z-az.y,az.x-ax.z,ax.y-ay.x},1/(2*h)));
   }
   return out;
+}
+static inline Vector3 FieldFlow_Evaluate(const FlowField *flow,const FieldVolume *volume,
+    Vector3 p,float time) {
+  return FieldFlow_EvaluateAt(flow,volume,p,time,NULL);
 }
 /* Raw field evaluation has no capture, emission, contact or arrival effects.
  * Spatial falloff applies once per contribution; lifetime scales completed
  * curl velocity uniformly in space, preserving its construction. */
 static inline bool Field_FiniteVector(Vector3 p) {
   return isfinite(p.x) && isfinite(p.y) && isfinite(p.z);
+}
+static inline Vector3 Field_LimitVector(Vector3 value, float maximum) {
+  float length = MotionVec_Length(value);
+  return length > maximum && length > 1e-8f
+      ? MotionVec_Scale(value, maximum / length) : value;
 }
 static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
     Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,
@@ -333,12 +367,18 @@ static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
   Vector3 offset=MotionVec_Sub(position,t.position);
   Vector3 p=FieldTransform_LocalVector(&t,offset);
   float lifetime=FieldLifetime_Weight(&d->lifetime,age);
-  float w=FieldVolume_Weight(&d->volume,p)*lifetime;
+  MotionPathSample nearestPath;
+  const MotionPathSample *pathSample=NULL;
+  if(d->volume.shape==FIELD_PATH_TUBE) {
+    nearestPath=MotionPath_Project(&d->volume.path,p,0,d->volume.path.count-2);
+    pathSample=&nearestPath;
+  }
+  float w=FieldVolume_WeightAt(&d->volume,p,pathSample)*lifetime;
   if(w<=0) return out;
   Vector3 flow=medium->velocityMps;
   if(d->flow.enabled) {
     Vector3 local=MotionVec_Add(MotionVec_Scale(d->flow.velocityMps,w),
-      MotionVec_Scale(FieldFlow_Evaluate(&d->flow,&d->volume,p,age),lifetime));
+      MotionVec_Scale(FieldFlow_EvaluateAt(&d->flow,&d->volume,p,age,pathSample),lifetime));
     flow=MotionVec_Add(MotionVec_Scale(MotionVec_Add(t.frameVelocityMps,
         MotionVec_Cross(t.angularVelocityRadPerSec,offset)),w),FieldTransform_Vector(&t,local));
     if(d->flow.addBackgroundVelocity) flow=MotionVec_Add(flow,medium->velocityMps);
@@ -357,9 +397,32 @@ static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
     law.forceNewtons=FieldTransform_Vector(&t,law.forceNewtons);
     law.accelerationMps2=FieldTransform_Vector(&t,law.accelerationMps2);
     law.center=MotionVec_Add(t.position,FieldTransform_Vector(&t,law.center));
-    Vector3 f=MotionVec_Scale(ForceLaw_Evaluate(&law,position,law.type==FORCE_LAW_SPRING?
-      MotionVec_Sub(velocity,MotionVec_Add(t.frameVelocityMps,
-        MotionVec_Cross(t.angularVelocityRadPerSec,offset))):velocity,body,medium,flow),w);
+    Vector3 f;
+    if (law.type == FORCE_LAW_PATH_GUIDE && d->volume.shape == FIELD_PATH_TUBE) {
+      MotionPathSample nearest = *pathSample;
+      Vector3 tangent = FieldTransform_Vector(&t, nearest.tangent);
+      Vector3 toPath = MotionVec_Sub(
+          MotionVec_Add(t.position, FieldTransform_Vector(&t, nearest.position)), position);
+      Vector3 normalOffset = MotionVec_Sub(toPath,
+          MotionVec_Scale(tangent, MotionVec_Dot(toPath, tangent)));
+      Vector3 relativeVelocity = MotionVec_Sub(velocity,
+          MotionVec_Add(t.frameVelocityMps, MotionVec_Cross(t.angularVelocityRadPerSec, offset)));
+      relativeVelocity = MotionVec_Sub(relativeVelocity,
+          MotionVec_Scale(tangent, MotionVec_Dot(relativeVelocity, tangent)));
+      float stiffness = law.springStiffnessNPerM > 0
+          ? law.springStiffnessNPerM : law.magnitudeNewtons / d->volume.radiusM;
+      float mass = body->massKg > 0 ? body->massKg : 1.0f;
+      float damping = 2.0f * sqrtf(stiffness * mass); /* Critical damping. */
+      Vector3 guideForce = MotionVec_Sub(MotionVec_Scale(normalOffset, stiffness),
+                                         MotionVec_Scale(relativeVelocity, damping));
+      f = MotionVec_Scale(Field_LimitVector(guideForce, law.magnitudeNewtons), w);
+    } else {
+      f = MotionVec_Scale(ForceLaw_Evaluate(&law, position,
+          law.type == FORCE_LAW_SPRING
+              ? MotionVec_Sub(velocity, MotionVec_Add(t.frameVelocityMps,
+                  MotionVec_Cross(t.angularVelocityRadPerSec, offset)))
+              : velocity, body, medium, flow), w);
+    }
     if(law.type==FORCE_LAW_DRAG) {
       out.dragForceNewtons=MotionVec_Add(out.dragForceNewtons,f);
       out.dragMediumVelocityMps=flow;

@@ -109,26 +109,50 @@ static bool VC_GuidedBuildField(const VFX_GuidedParticleConfig *c, FieldDesc *fi
   field->volume.radiusM = c->guideRadius;
   field->volume.coreFraction = .25f;
   field->transform.position = c->source;
-  field->lifetime.durationSec = c->duration;
+  bool continuous = c->emitDuration > 0 && c->emissionRate > 0;
+  /* A static tube must guide late births through the full emission interval,
+   * then retain the authored fade tail. */
+  float fadeSec = fminf(.3f, c->duration * .1f);
+  float activeDuration = continuous
+      ? fmaxf(c->duration, c->emitDuration + fadeSec) : c->duration;
+  field->lifetime.durationSec = activeDuration;
   field->lifetime.attackSec = fminf(.1f, c->duration * .1f);
-  field->lifetime.fadeSec = fminf(.3f, c->duration * .1f);
-  field->forceLawCount = 1;
-  field->forceLaws[0] = (ForceLaw){.type=FORCE_LAW_RADIAL_ATTRACTION,
-      .magnitudeNewtons=c->maxForceNewtons};
+  field->lifetime.fadeSec = fadeSec;
   Vector3 delta = MotionVec_Sub(c->target, c->source);
   float len = MotionVec_Length(delta);
-  if (len > .001f && c->speed > 0) {
+  if (len > .001f) {
     Vector3 up = {0, 1, 0};
     Vector3 a = MotionVec_Add(MotionVec_Scale(delta, .33f), MotionVec_Scale(up, len * .06f));
     Vector3 b = MotionVec_Add(MotionVec_Scale(delta, .67f), MotionVec_Scale(up, len * .02f));
     Vector3 points[33];
     for (int i=0; i<33; i++)
       points[i] = GetBezierPoint((Vector3){0}, a, b, delta, (float)i/32);
-    if (!MotionPath_Build(&field->trajectory.path, points, 33)) return false;
-    field->trajectory.mode = FIELD_TRAJECTORY_PATH;
-    field->trajectory.speedMps = c->speed;
+    MotionPath path;
+    if (!MotionPath_Build(&path, points, 33)) return false;
+    field->forceLawCount = 1;
+    if (continuous) {
+      /* Continuous births share one stationary corridor from A to B. */
+      field->volume.shape = FIELD_PATH_TUBE;
+      field->volume.path = path;
+      field->forceLaws[0] = (ForceLaw){
+          .type=FORCE_LAW_PATH_GUIDE,
+          .magnitudeNewtons=c->maxForceNewtons,
+          .springStiffnessNPerM=c->maxForceNewtons/c->guideRadius};
+      field->flow.followSpeedMps = c->speed;
+    } else {
+      /* A burst gets a spherical field that travels along the same path. */
+      field->trajectory.mode = FIELD_TRAJECTORY_PATH;
+      field->trajectory.path = path;
+      field->trajectory.speedMps = c->speed;
+      field->forceLaws[0] = (ForceLaw){.type=FORCE_LAW_RADIAL_ATTRACTION,
+          .magnitudeNewtons=c->maxForceNewtons};
+    }
+  } else {
+    field->forceLawCount = 1;
+    field->forceLaws[0] = (ForceLaw){.type=FORCE_LAW_RADIAL_ATTRACTION,
+        .magnitudeNewtons=c->maxForceNewtons};
   }
-  field->flow.enabled = true; /* Includes centre velocity even without swirl. */
+  field->flow.enabled = true;
   field->flow.addBackgroundVelocity = true;
   field->flow.axis = len > .001f ? MotionVec_Normalize(delta) : (Vector3){0,1,0};
   field->flow.procedural.swirlSpeedMps = c->swirlSpeed;
