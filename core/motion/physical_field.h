@@ -46,7 +46,48 @@ typedef struct ReceiverConstraints {
  * point on a FIELD_PATH_TUBE centerline. */
 typedef enum { FORCE_LAW_NEWTONS, FORCE_LAW_ACCELERATION,
                FORCE_LAW_RADIAL_ATTRACTION, FORCE_LAW_SPRING,
-               FORCE_LAW_BUOYANCY, FORCE_LAW_DRAG, FORCE_LAW_PATH_GUIDE } ForceLawType;
+               FORCE_LAW_BUOYANCY, FORCE_LAW_DRAG, FORCE_LAW_PATH_GUIDE,
+               FORCE_LAW_MOVING_GUIDE, FORCE_LAW_CURL_FORCE } ForceLawType;
+typedef enum { GUIDE_MANUAL, GUIDE_LOOSE, GUIDE_BALANCED, GUIDE_TIGHT } GuidePreset;
+/* Compiled actuator properties. Reference-body compilation is a project
+ * convention, not a material constant. Actual receiver mass still controls
+ * acceleration; these budgets never scale per receiver at sampling time. */
+typedef struct GuideTuning {
+  float maxForceNewtons, forwardForceNewtons, stiffnessNPerM, settlingTimeSec;
+  float turbulenceForceNewtons, turbulenceSpeedMps, eddyLengthM;
+} GuideTuning;
+static inline GuideTuning GuideTuning_Derive(const BodyPhysicalProperties *body,
+    float radiusM,float speedMps,float swirlMps,float turbulenceMps,
+    float gravityMps2,GuidePreset preset) {
+  GuideTuning out={0};
+  if(!body || !isfinite(body->massKg) || body->massKg<=0 ||
+      !isfinite(radiusM) || radiusM<=0 || !isfinite(speedMps) || speedMps<0 ||
+      !isfinite(swirlMps) || !isfinite(turbulenceMps) || turbulenceMps<0 ||
+      !isfinite(gravityMps2) || preset<GUIDE_LOOSE || preset>GUIDE_TIGHT) return out;
+  float factor=preset==GUIDE_LOOSE?.75f:preset==GUIDE_TIGHT?1.5f:1;
+  /* Reserve eight percent of support radius for gravity deflection, leaving
+   * room for formation offsets and the field's smooth boundary falloff. Transit,
+   * rotational timescales set a second lower response bound. Turbulence is
+   * an independent disturbance: increasing it must not stiffen its opponent. */
+  float omega=factor*fmaxf(sqrtf(fabsf(gravityMps2)/(radiusM*.08f)),
+      2*fmaxf(speedMps,fabsf(swirlMps))/radiusM);
+  omega=fmaxf(omega,.5f);
+  out.stiffnessNPerM=body->massKg*omega*omega;
+  out.maxForceNewtons=2*out.stiffnessNPerM*radiusM;
+  out.forwardForceNewtons=body->massKg*omega*speedMps;
+  out.settlingTimeSec=6/omega;
+  /* Guided clouds need coherent integral-scale rolls, not many independent
+   * small eddies across the formation. Derive the largest eddy from support. */
+  out.eddyLengthM=radiusM;
+  /* Requested noise uses the inertial scale m*U^2/L. Reserve 75% of force
+   * authority for guidance (authoring convention). Saturated turnover follows
+   * attainable speed, so increasing the request cannot hide noise by speeding
+   * it up beyond the actuator's response. Never changes stiffness/damping. */
+  out.turbulenceForceNewtons=fminf(body->massKg*turbulenceMps*turbulenceMps/out.eddyLengthM,
+      out.maxForceNewtons*.25f);
+  out.turbulenceSpeedMps=sqrtf(out.turbulenceForceNewtons*out.eddyLengthM/body->massKg);
+  return out;
+}
 /* Controller coefficients belong to the actuator, never the body material.
  * Stiffness derives from the force budget and guide geometry. */
 typedef struct GuideController {
@@ -58,6 +99,10 @@ typedef struct ForceLaw {
   float magnitudeNewtons, springStiffnessNPerM, dampingNsPerM;
   /* Independent cap for the PATH_GUIDE tangent velocity controller. */
   float forwardForceNewtons;
+  /* CURL_FORCE: separate actuator noise, not airflow/drag. magnitudeNewtons
+   * caps the force; procedural.turbulenceSpeedMps sets turnover and the curl
+   * normalization. Zero speed disables it; swirl is unused. */
+  MotionFlowDesc procedural;
 } ForceLaw;
 typedef struct FlowField {
   Vector3 velocityMps, axis;
@@ -86,6 +131,12 @@ typedef struct FieldDesc {
   /* Path tubes can retain each receiver's captured cross-section lane; no
    * particle-particle forces or per-sample allocations are required. */
   bool preservePathLanes;
+  /* Moving-guide spheres retain each receiver's entry offset. Swirl rotates
+   * the force target (angular rate=swirlSpeedMps/radiusM), not its position.
+   * Capture uses the same four bounded formation slots as path lanes. */
+  bool preserveSphereOffsets;
+  /* Opt-in rotating tube lanes; manual/legacy fixed lanes stay unchanged. */
+  bool rotatePathLanes;
 } FieldDesc;
 typedef struct FieldSample {
   Vector3 forceNewtons, accelerationMps2, mediumVelocityMps;
@@ -233,7 +284,9 @@ static inline Vector3 ForceLaw_Evaluate(const ForceLaw *law,Vector3 p,Vector3 v,
       return MotionVec_Scale(medium->gravityMps2,
         -medium->densityKgM3*volume*Motion_Clamp(body->immersionFraction,0,1));
     }
-    case FORCE_LAW_PATH_GUIDE: return (Vector3){0}; /* Evaluated with its path below. */
+    case FORCE_LAW_PATH_GUIDE:
+    case FORCE_LAW_CURL_FORCE:
+    case FORCE_LAW_MOVING_GUIDE: return (Vector3){0}; /* Contextual controllers below. */
     case FORCE_LAW_DRAG: {
       Vector3 relative=MotionVec_Sub(flow,v);
       return MotionVec_Scale(relative,0.5f*medium->densityKgM3*body->dragCoefficient*
@@ -354,12 +407,39 @@ static inline Vector3 Field_LimitVector(Vector3 value, float maximum) {
   return length > maximum && length > 1e-8f
       ? MotionVec_Scale(value, maximum / length) : value;
 }
-static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
+/* Backward-Euler spring/damper force. dt=0 is the continuous force query.
+ * Spatial/lifetime weight scales stiffness; critical damping is derived from
+ * that effective stiffness before the solve. */
+static inline Vector3 Guide_ImplicitForce(Vector3 error,Vector3 relativeVelocity,
+    float stiffness,float mass,float weight,float dt) {
+  stiffness*=weight;
+  float damping=2*sqrtf(stiffness*mass);
+  float denominator=1+(damping+stiffness*dt)*dt/mass;
+  return MotionVec_Scale(MotionVec_Sub(MotionVec_Scale(error,stiffness),
+      MotionVec_Scale(relativeVelocity,damping+stiffness*dt)),1/denominator);
+}
+static inline Vector3 FieldGuide_RotateOffset(const FieldDesc *d,Vector3 offset,float age) {
+  if(!d->flow.enabled || d->flow.procedural.swirlSpeedMps==0) return offset;
+  Vector3 axis=MotionVec_Normalize(d->flow.axis);
+  if(MotionVec_Length(axis)<.1f) axis=(Vector3){0,1,0};
+  float angle=d->flow.procedural.swirlSpeedMps/d->volume.radiusM*age;
+  float c=cosf(angle),s=sinf(angle);
+  return MotionVec_Add(MotionVec_Scale(offset,c),MotionVec_Add(
+      MotionVec_Scale(MotionVec_Cross(axis,offset),s),
+      MotionVec_Scale(axis,MotionVec_Dot(axis,offset)*(1-c))));
+}
+static inline Vector3 FieldGuide_RotatePathLane(const FieldDesc *d,Vector3 lane,float age) {
+  if(!d->rotatePathLanes || !d->flow.enabled) return lane;
+  float angle=d->flow.procedural.swirlSpeedMps/d->volume.radiusM*age;
+  float c=cosf(angle),s=sinf(angle);
+  return (Vector3){lane.x,lane.y*c-lane.z*s,lane.y*s+lane.z*c};
+}
+static inline FieldSample Field_EvaluateStepPass(const FieldDesc *d,float age,
     Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,
     const MediumProperties *medium,bool includeFlow,bool filterDrag,bool dragPass,
-    const Vector3 *pathLaneOffset) {
+    const Vector3 *pathLaneOffset,float dt) {
   FieldSample out={0};
-  if(!d || !body || !medium || d->forceLawCount<0 || d->forceLawCount>FIELD_MAX_FORCE_LAWS ||
+  if(!d || !body || !medium || !isfinite(dt) || dt<0 || d->forceLawCount<0 || d->forceLawCount>FIELD_MAX_FORCE_LAWS ||
       !isfinite(age) || !isfinite(body->massKg) || body->massKg<0 ||
       !isfinite(body->projectedAreaM2) || body->projectedAreaM2<0 ||
       !isfinite(body->densityKgM3) || body->densityKgM3<0 ||
@@ -406,12 +486,28 @@ static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
     law.accelerationMps2=FieldTransform_Vector(&t,law.accelerationMps2);
     law.center=MotionVec_Add(t.position,FieldTransform_Vector(&t,law.center));
     Vector3 f;
-    if (law.type == FORCE_LAW_PATH_GUIDE && d->volume.shape == FIELD_PATH_TUBE) {
+    if (law.type == FORCE_LAW_CURL_FORCE) {
+      if(!MotionFlow_IsValid(&law.procedural) || law.magnitudeNewtons<0)
+        return (FieldSample){0};
+      float speed=law.procedural.turbulenceSpeedMps;
+      FlowField noise={0};noise.procedural=law.procedural;
+      noise.procedural.swirlSpeedMps=0;
+      Vector3 curl=speed>0 && law.magnitudeNewtons>0?FieldFlow_EvaluateAt(&noise,&d->volume,p,age,pathSample):(Vector3){0};
+      /* Force authority fades with support like the guide, preventing the
+       * derivative of the windowed potential from dominating at the boundary.
+       * This is a bounded actuator force, not an incompressible airflow claim. */
+      Vector3 raw=MotionVec_Scale(curl,speed>0?law.magnitudeNewtons*lifetime/speed:0);
+      f=FieldTransform_Vector(&t,Field_LimitVector(raw,law.magnitudeNewtons*w));
+    } else if (law.type == FORCE_LAW_PATH_GUIDE && d->volume.shape == FIELD_PATH_TUBE) {
       MotionPathSample nearest = *pathSample;
       Vector3 tangent = FieldTransform_Vector(&t, nearest.tangent);
       Vector3 pathGoal=nearest.position;
+      Vector3 rotatedLane={0};
       if(pathLaneOffset)
-        pathGoal=MotionVec_Add(pathGoal,MotionPath_WorldOffset(nearest,*pathLaneOffset));
+      {
+        rotatedLane=FieldGuide_RotatePathLane(d,*pathLaneOffset,age);
+        pathGoal=MotionVec_Add(pathGoal,MotionPath_WorldOffset(nearest,rotatedLane));
+      }
       Vector3 toPath = MotionVec_Sub(
           MotionVec_Add(t.position, FieldTransform_Vector(&t, pathGoal)), position);
       Vector3 normalOffset = MotionVec_Sub(toPath,
@@ -421,12 +517,17 @@ static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
       float tangentSpeed = MotionVec_Dot(relativeVelocity, tangent);
       relativeVelocity = MotionVec_Sub(relativeVelocity,
           MotionVec_Scale(tangent, tangentSpeed));
+      if(pathLaneOffset && d->rotatePathLanes && d->flow.enabled) {
+        Vector3 laneWorld=FieldTransform_Vector(&t,MotionPath_WorldOffset(nearest,rotatedLane));
+        relativeVelocity=MotionVec_Sub(relativeVelocity,
+            MotionVec_Scale(MotionVec_Cross(tangent,laneWorld),
+                d->flow.procedural.swirlSpeedMps/d->volume.radiusM));
+      }
       float stiffness = law.springStiffnessNPerM > 0
           ? law.springStiffnessNPerM : law.magnitudeNewtons / d->volume.radiusM;
       float mass = body->massKg > 0 ? body->massKg : 1.0f;
-      float damping = 2.0f * sqrtf(stiffness * mass); /* Critical damping. */
       Vector3 dampingVelocity=relativeVelocity;
-      if(d->flow.enabled && d->flow.procedural.swirlSpeedMps!=0) {
+      if(!d->rotatePathLanes && d->flow.enabled && d->flow.procedural.swirlSpeedMps!=0) {
         /* A path guide must damp motion toward/away from its centreline without
          * cancelling the circumferential velocity that forms the authored swirl. */
         Vector3 swirlRadial=MotionVec_Sub(p,nearest.position);
@@ -440,21 +541,43 @@ static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
           dampingVelocity=MotionVec_Scale(radial,MotionVec_Dot(relativeVelocity,radial));
         }
       }
-      Vector3 lateralForce = MotionVec_Sub(MotionVec_Scale(normalOffset, stiffness),
-                                           MotionVec_Scale(dampingVelocity, damping));
+      Vector3 lateralForce = Guide_ImplicitForce(normalOffset,dampingVelocity,
+          stiffness,mass,w,dt);
       Vector3 forwardForce = {0};
       float targetSpeed = d->flow.followSpeedMps;
       if (law.forwardForceNewtons > 0 && fabsf(targetSpeed) > 1e-5f) {
         /* A bounded target-velocity servo pushes toward B, then brakes if a
          * particle exceeds the authored speed. It does not depend on drag. */
         float gain = law.forwardForceNewtons / fabsf(targetSpeed);
-        float force = Motion_Clamp((targetSpeed - tangentSpeed) * gain,
+        float force = Motion_Clamp((targetSpeed - tangentSpeed) * gain /
+                                   (1+gain*w*dt/mass),
                                    -law.forwardForceNewtons,
                                    law.forwardForceNewtons);
         forwardForce = MotionVec_Scale(tangent, force);
       }
-      f = MotionVec_Scale(Field_LimitVector(lateralForce, law.magnitudeNewtons), w);
+      f = Field_LimitVector(lateralForce, law.magnitudeNewtons*w);
       f = MotionVec_Add(f, MotionVec_Scale(forwardForce, w));
+    } else if(law.type==FORCE_LAW_MOVING_GUIDE) {
+      float mass=body->massKg>0?body->massKg:1;
+      float stiffness=law.springStiffnessNPerM>0?law.springStiffnessNPerM:
+          law.magnitudeNewtons/d->volume.radiusM;
+      Vector3 goal=law.center;
+      Vector3 goalVelocity=MotionVec_Add(t.frameVelocityMps,
+          MotionVec_Cross(t.angularVelocityRadPerSec,offset));
+      if(pathLaneOffset) {
+        Vector3 lane=FieldGuide_RotateOffset(d,*pathLaneOffset,age);
+        goal=MotionVec_Add(goal,FieldTransform_Vector(&t,lane));
+        if(d->flow.enabled && d->flow.procedural.swirlSpeedMps!=0) {
+          Vector3 axis=MotionVec_Normalize(d->flow.axis);
+          if(MotionVec_Length(axis)<.1f) axis=(Vector3){0,1,0};
+          Vector3 spin=MotionVec_Scale(MotionVec_Cross(axis,lane),
+              d->flow.procedural.swirlSpeedMps/d->volume.radiusM);
+          goalVelocity=MotionVec_Add(goalVelocity,FieldTransform_Vector(&t,spin));
+        }
+      }
+      f=Field_LimitVector(Guide_ImplicitForce(MotionVec_Sub(goal,position),
+          MotionVec_Sub(velocity,goalVelocity),stiffness,mass,w,dt),
+          law.magnitudeNewtons*w);
     } else {
       f = MotionVec_Scale(ForceLaw_Evaluate(&law, position,
           law.type == FORCE_LAW_SPRING
@@ -471,6 +594,18 @@ static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
     else out.forceNewtons=MotionVec_Add(out.forceNewtons,f);
   }
   return out;
+}
+static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
+    Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,
+    const MediumProperties *medium,bool includeFlow,bool filterDrag,bool dragPass,
+    const Vector3 *pathLaneOffset) {
+  return Field_EvaluateStepPass(d,age,position,velocity,body,medium,includeFlow,
+      filterDrag,dragPass,pathLaneOffset,0);
+}
+static inline FieldSample Field_EvaluateStep(const FieldDesc *d,float age,
+    Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,
+    const MediumProperties *medium,float dt) {
+  return Field_EvaluateStepPass(d,age,position,velocity,body,medium,true,false,false,NULL,dt);
 }
 static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
     Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,

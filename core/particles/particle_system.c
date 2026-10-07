@@ -680,20 +680,23 @@ void UpdateParticles(float dt)
        * during stalls; normal 30/60/120 Hz frames share the same substep. */
       float remaining=fminf(dt,0.25f);
       bool destroyed=false;
+      BodyPhysicalProperties physicalBody=MotionBody_GetPhysicalProperties(body);
+      ReceiverConstraints constraints={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
       while (remaining>1e-6f) {
+        float timeOffset=-remaining;
+        float sampleTime=s_particleTime+timeOffset;
         float step=fminf(remaining,1.0f/120.0f);remaining-=step;
-        BodyPhysicalProperties physicalBody=MotionBody_GetPhysicalProperties(body);
-        MediumProperties medium=MotionBody_GetMediumProperties(body);
-        medium.velocityMps=Wind_EvaluateBackgroundVelocity(position,s_particleTime);
-        ReceiverConstraints constraints={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
+        MediumProperties medium=Wind_EvaluateBackgroundMedium(position,sampleTime,
+            (Vector3){0,-9.81f*body->gravityScale,0});
+        if(body->airDensityKgM3>0) medium.densityKgM3=body->airDensityKgM3;
         FieldSample sample;
-        MotionFields_SampleBody(position,velocity,&physicalBody,&medium,&constraints,
-            step,MOTION_RECEIVER_PARTICLE,&p->motionReceiver,&sample);
+        MotionFields_SampleBodyAtOffset(position,velocity,&physicalBody,&medium,&constraints,
+            step,timeOffset,MOTION_RECEIVER_PARTICLE,&p->motionReceiver,&sample);
         Vector3 acceleration=p->dynamicsInitialAccelerationMps2;
         if (activeField) acceleration=MotionVec_Add(acceleration,ForceField_Evaluate(
-            activeField,position,velocity,s_particleTime,p->forceAxisOrigin,p->forceAxisDir));
+            activeField,position,velocity,sampleTime,p->forceAxisOrigin,p->forceAxisDir));
         if (windActive) acceleration=MotionVec_Add(acceleration,MotionVec_Scale(
-            WindZone_Evaluate(position,velocity,s_particleTime),body->windAccelerationScale*body->windSusceptibility));
+            WindZone_Evaluate(position,velocity,sampleTime),body->windAccelerationScale*body->windSusceptibility));
         velocity=MotionBody_AdvanceFieldVelocity(velocity,body,acceleration,
             p->dynamicsConstantForceNewtons,&sample,medium.velocityMps,step);
         if(activeField) velocity=MotionVec_Scale(velocity,ForceField_GetViscosityDamping(activeField,step));
@@ -706,6 +709,7 @@ void UpdateParticles(float dt)
             velocity=ParticleDynamics_ApplyImpulse(velocity,arrival.impulseNs,body->inverseMassKg>0?body->inverseMassKg:1);
             if(arrival.overrideDynamics) {
               p->dynamicsStorage=arrival.dynamics;p->dynamics=&p->dynamicsStorage;body=p->dynamics;
+              physicalBody=MotionBody_GetPhysicalProperties(body);
             }
           }
           if(p->hasTargetEmit) for(int c=0;c<p->onTargetCount;c++) {
@@ -728,14 +732,15 @@ void UpdateParticles(float dt)
       Vector3 position = {p->x, p->y, p->z};
       Vector3 velocity = {p->vx, p->vy, p->vz};
       BodyPhysicalProperties physicalBody=MotionBody_GetPhysicalProperties(d);
-      MediumProperties medium=MotionBody_GetMediumProperties(d);
-      medium.velocityMps=Wind_EvaluateVelocity(position,s_particleTime);
+      MediumProperties medium=Wind_EvaluateBackgroundMedium(position,s_particleTime,
+          (Vector3){0,-9.81f*d->gravityScale,0});
+      if(d->airDensityKgM3>0) medium.densityKgM3=d->airDensityKgM3;
       ReceiverConstraints constraints={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
       FieldSample externalSample;
       /* Independent fields do not require a captured guide or emit particles.
        * Optional guide capture remains governed by receiveMotionFields. */
-      MotionFields_SampleExternalBody(position,velocity,&physicalBody,&medium,
-          &constraints,MOTION_RECEIVER_PARTICLE,&externalSample);
+      MotionFields_SampleExternalBodyStep(position,velocity,&physicalBody,&medium,
+          &constraints,dt,MOTION_RECEIVER_PARTICLE,&externalSample);
       ParticleDynamicsProfile integrationBody=*d;
       if(externalSample.hasBuoyancyForce) integrationBody.densityKgM3=0;
       if(externalSample.hasDragForce) integrationBody.windCouplingHz=0;

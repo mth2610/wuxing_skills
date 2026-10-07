@@ -36,6 +36,10 @@
 - `Unload[Name]Skill` must NOT call `UnloadTexture`/`UnloadShader` — leave empty.
 
 ## 5. ForceField / Particle / Trail
+- Guide stiffness must stay independent of turbulence amplitude; otherwise increasing disturbance also strengthens its suppression.
+- Distinguish guiding curl force (N, fixed reference budget) from airflow turbulence (m/s, material drag). Apply authored noise once, reserve capture authority, and bind actuator turnover to attainable speed when force-limited.
+- Automatic guided clouds derive integral eddy length from field radius; verify neighboring-force correlation before calling motion coherent.
+- Preserve flow/travel ratios in inspector edit callbacks; keep Core config speeds absolute and introspection free of mutations. Path overrides retain exact authored geometry.
 - `ForceField` instances must be `static`.
 - `FORCE_RADIAL_AXIS`/`FORCE_VORTEX_AXIS` ignore static origin/direction — feed axis per-frame via `SetFollowerAxis`.
 - `TRAIL_TYPE_FOLLOWER`: call `SetFollowerAxis` AND `UpdateFollowerPosition` every frame — missing either breaks orientation.
@@ -140,6 +144,7 @@
 - SSBO/buffer layout changes must stay in sync with C-side structs — verify std140/std430 alignment before committing.
 
 - New spatial guidance uses Newton forces and the receiver's actual mass. Derive damping from stiffness/mass; do not expose redundant frequency, steering, wind-response and reference-mass knobs in compositions. Derive volume and spherical drag area from mass/density; keep visual size separate. Density=0 retains old gravity-only profiles. Existing acceleration-field APIs keep their declared m/s² units.
+- Force-limited guidance compiles against one reference body; preserve actual receiver mass response. Derive support budgets from net gravity including buoyancy and reserve clearance for spatial falloff. Use implicit spring and tangent-velocity response for light bodies.
 - Guide arrival must never spawn an implicit blast or turbulence wake. Configure independent target fields/impulses explicitly and trigger cast-level fields once on actual swept arrival, with no global cooldown.
 
 - Shared procedural motion uses m/s turbulence and signed swirl amplitudes; zero disables each. Derive eddy scale from field geometry, window the vector potential before its curl, and keep target flow independent of travel flow. SSF is a surface renderer; density/cohesion constraints belong to a liquid solver.
@@ -161,6 +166,7 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-07 | Codex | §10.3 Derived guide budgets and implicit controllers | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
 | 2026-10-06 | Codex | §10.1 Typed field units and adapter response ownership | core/motion/physical_field.h; core/motion/motion_body.h; core/wind/wind_system.h | Ground-truth |
 | 2026-10-05 | Codex | Tester UI capture and indexed HUD positions | main.c; sandbox/vfx_test.h | Ground-truth |
 | 2026-10-05 | Codex | Shared flow amplitude and SSF boundary | core/motion/motion_flow.h; core/liquid/liquid_surface.h | Ground-truth |

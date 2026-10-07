@@ -3073,78 +3073,104 @@ and buoyancy share `gravityScale`; use 1 for a physical body. A density below th
 surrounding air rises when gravity is enabled. Hot gas/smoke needs the gas solver,
 not a low-density solid proxy.
 
-`VFX_GuidedParticle_DefaultConfig` + `VFX_ComposeGuidedParticleEx` chooses its
-field shape from the emission schedule (`core/composition/common/vc_guided_particle.inl`).
-For burst emission (`emitDuration == 0`), the field is a sphere. With distinct
-source and target, that sphere travels along the Bezier path at `speed`; equal
-endpoints make it stationary. Its radial force, local swirl and
-turbulence affect nearby particles, and ordinary Wind is added once. For continuous
-emission with distinct endpoints, the field is a stationary `FIELD_PATH_TUBE`
-spanning the complete Bezier route from A to B. It does not travel. Equal endpoints
-have no route, so they use a stationary sphere. A capped Newton force acts like a critically
-damped spring toward the nearest centerline point. An independent, capped forward
-force drives particle velocity toward `speed` along the A-to-B tangent, and brakes
-overspeed; it therefore works even when particle drag is zero. `speed` also sets
-the along-tube airflow, which drag couples independently. This follows the
-separate curve-follow and curve-suction controls in [SideFX POP Curve Force](https://www.sidefx.com/docs/houdini/nodes/dop/popcurveforce.html);
-its target-velocity mode avoids unbounded overshoot. Swirl, turbulence and ordinary
-Wind remain independent contributions. Particles
-sample their current position without legacy guide capture, kinematic snapping, arrival actions
-or automatic target blasts. The tube stays at full strength through emission and
-the estimated A-to-B transit, then uses its fade tail. Field life is at least
-`emitDuration + transitTime + fade`; burst mode uses zero emission time. Transit
-uses the generated path's arc length and `speed`. A continuous stream adds one
-response time based on body drag and forward-force response, using its known mass
-(including a supplied dynamics profile when present). The inspector's `Minimum
-field life` is a lower bound and fallback, so long or slow routes extend beyond
-it. At zero speed there is no finite A-to-B transit estimate. Keep the emitter's
-initial spawn footprint within the tube
-radius if every newborn must be guided. Independent target fields belong to
-`MotionFields_CreateField`, outside this composition.
+`VFX_GuidedParticle_DefaultConfig` selects `GUIDE_BALANCED` in
+`core/composition/common/vc_guided_particle.inl`. Burst emission uses a moving
+sphere; timed emission uses a stationary path tube covering the complete route.
+Equal endpoints produce a stationary sphere. Emitters only initialize bodies;
+spatial fields supply motion. Ordinary Wind contributes once through the typed
+background medium from `core/wind/wind_system.h`.
 
-For a continuous path tube, each particle stores its first captured transverse
-offset (normal/binormal) in its own `MotionReceiver`. The tube corrects toward
-that offset instead of collapsing every particle onto one centerline. This is
-constant-size per-particle state and does not calculate pairwise particle forces.
-`count` is the total number of particles in either mode. At zero emission time,
-they spawn as one burst. At positive emission time, they are spread across that
-interval at the derived average rate `count / emitDuration`; there is no additional
-startup burst. At steady stream speed, longitudinal spacing is approximately
-`speed * emitDuration / count` (for example, 20 particles over 2 seconds at 3 m/s
-gives about 0.3 m). Acceleration and external forces can temporarily change that
-spacing. The default formation radius captures distinct lanes for the stream.
+Automatic presets expose speed, field radius, guidance, swirl and turbulence.
+Guided Particle defaults to travel 12 m/s, swirl 14.4 m/s and turbulence 9.6 m/s
+(1.2 and 0.8 times travel). In the sandbox, editing travel speed preserves the
+current flow/travel ratios, including disabled channels and signed swirl. Stopping
+and resuming retains those ratios. Direct API configurations remain absolute m/s.
+Inspector travel ranges to 60 m/s; flow limits are max(24, 2 * travel speed).
+These are skill authoring defaults, not universal material constants.
 
-`maxForceNewtons` caps lateral path correction; `forwardForceNewtons` separately
-caps the tangent-speed controller. These independent force channels add together,
-then the motion solver divides their Newton sum by each particle's mass. A zero
-`speed` disables the tangent drive. The bounded target-speed controller avoids
-constant-thrust acceleration and brakes particles already moving faster than the
-requested stream speed, following the target-velocity/drag distinction in the
-[SideFX POP Solver](https://www.sidefx.com/docs/houdini/nodes/dop/popsolver.html).
+The default 33-sample cubic path has a visible sideways bow and lift. Both endpoints
+stay exact, and a stable perpendicular frame also handles vertical casts. The same
+path drives burst trajectory and continuous tube support; `fieldOverride` retains
+exact caller-authored geometry. Transit and field lifetime use sampled arc length.
+Mass, density and visual radius remain independent body controls. Default bodies
+use equivalent-sphere volume/area and Cd=0.47, not manual airflow relaxation.
+Templates retain authority over their complete body/render properties.
 
-Emission count and duration define the total and its schedule; the deprecated
-`emissionRate` member is ignored. A zero count creates only a field. A continuous tube's effective lifetime covers the
-emission duration plus its fade tail. Default body lifetime matches the effective
-field lifetime;
-particle templates can specialize it. Default mass and density control Newton
-response and buoyancy, while visual radius remains separate. `drag` is a linear
-response rate in s^-1 relative to local airflow: zero disables default damping;
-positive values relax toward that airflow. Gravity and direct forces still act
-at zero drag. `gravityScale` independently scales gravity and buoyancy; set it to
-zero when testing with gravity disabled. Zero turbulence/swirl removes those
-procedural flow terms, but attraction, gravity, wind, and the randomized emitter
-surface can still move particles. A `particleTemplate` owns all body/render properties and can select
-quadratic mass/area/Cd aerodynamics instead. `emissionSource` replaces source
-geometry; `fieldOverride` replaces the complete world-space field and lifetime.
-These are copied at spawn; resource pointers keep their usual ownership contracts.
+`GuideTuning_Derive` in `core/motion/physical_field.h` compiles force budgets,
+stiffness and settling time once from the reference body, geometry, speed,
+rotational timescales and effective gravity including buoyancy. Turbulence stays
+an independent actuator disturbance; it never increases guide stiffness or damping.
+Automatic Guided Particle compiles `FORCE_LAW_CURL_FORCE` from `m_ref * U^2 / eddy`
+and caps it at 25% of guide authority (an authoring convention reserving capture
+margin). Automatic curl uses the field radius as its integral eddy length, so
+nearby particles share a roll and turnover remains slower than small-cell jitter. Turnover uses the attainable speed after saturation, avoiding increasingly
+fast but invisible noise. This force uses the actual receiver's inverse mass; it
+works in vacuum and is not aerodynamic drag. The field's airflow turbulence is
+zero in this mode so noise is applied once. Ordinary Wind, swirl airflow and body
+drag still compose normally. Manual mode retains legacy airflow turbulence.
+
+`ForceLaw.procedural` configures a curl-force law independently of `FieldDesc.flow`.
+Its Newton cap follows local volume/lifetime support; unlike airflow curl, the
+bounded actuator force does not promise zero divergence. Overlapping guides add
+actuator forces while compatible airflow velocities blend; apparent breakup during
+two casts does not establish curl.
+
+> [!NOTE]
+> **(project convention):** Loose/Balanced/Tight multiply the derived response
+> frequency by 0.75/1/1.5. Gravity deflection reserves 8% of support radius.
+> These are actuator defaults for authoring, not measured material constants.
+
+The compiled force budget stays fixed across receivers. Actual mass determines
+acceleration; critical damping derives from effective stiffness and receiver
+mass. Both transverse springs and tangent-speed control use implicit response
+when sampled with a positive timestep. `Field_Evaluate` remains a raw force
+query; `Field_EvaluateStep` supplies the timestep-aware controller response.
+Force limits permit escape under sufficiently strong external forcing.
+
+Moving spheres retain spatial entry offsets in each receiver's bounded formation
+slots. Tube lanes retain transverse offsets in the local path frame. Automatic
+guidance rotates these force targets at swirl/radius rad/s; particles track them
+through capped Newton forces, without position snapping or pairwise interaction.
+This actuator rotation is separate from aerodynamic swirl in the surrounding air.
+Manual/fixed lanes remain available through explicit field descriptors.
+
+`MotionFields_SampleBodyAtOffset` in `core/motion/motion_fields.h` samples live
+typed fields within the latest registry update. Particle substeps sample field
+trajectory and wind time along the integration interval. `MotionFields_SampleExternalBodyStep` gives independent physical particles the
+same implicit controllers without acquiring formation slots. Direct physical
+receivers use background Wind so the publication adapter cannot double forcing.
+Captured legacy guides retain their existing frame-time behavior. Expired handles are unavailable even
+for earlier offset queries. Cached conservative bounds reject unrelated fields;
+time-offset trajectory queries expand support by the bounded travel distance.
+
+`count` is the total emission count. Zero `emitDuration` creates a burst; positive
+values distribute that count over the interval at count/duration, without a startup
+burst. Zero count creates only a field. Automatic routed lifetime covers emission,
+arc-length transit, derived settling and fade. `duration` is the stationary or
+zero-speed fallback. Transit is an estimate, not an arrival guarantee under
+arbitrary external forcing. Default body lifetime follows field lifetime;
+templates can specialize it. Arrival reactions remain independent fields/events.
+
+`GUIDE_MANUAL=0` preserves explicit `maxForceNewtons`, `forwardForceNewtons`,
+linear airflow `drag` in s^-1, and minimum `duration`. Zero-initialized existing
+configs therefore retain manual behavior. Automatic presets ignore those force
+and drag values. Zero swirl/turbulence disables the corresponding procedural term;
+gravity, attraction and background wind can still move a body. `gravityScale`
+scales gravity and buoyancy together. A template can supply lamina aerodynamics
+instead of the default compact sphere. `emissionSource` replaces birth geometry;
+`fieldOverride` replaces the complete world-space field and lifetime. Resources
+retain their normal borrowed-pointer lifetime contracts.
+
 Legacy formation/arrival/target enums and guide/body override pointers were removed.
 Use a field descriptor or particle template for their independent responsibilities.
 
-The **GUIDED PARTICLE** fixture offers moving attraction, swirl, turbulence,
+The **GUIDED PARTICLE** fixture offers default guided motion, swirl, turbulence,
 free-leaf interaction, zero drag and stationary attraction. Shift+comma/period
 cycles presets; comma/period or `/` edits the selected parameter for the next cast.
-The inspector keeps numeric rows stable, including burst and continuous emission.
-It hides only properties replaced by supplied field, source or particle templates.
+The inspector keeps rows stable across numeric edits, including burst/continuous
+emission. Changing the guidance authoring mode explicitly reveals manual force,
+drag and minimum-lifetime controls. Field/source/particle templates hide controls
+they replace.
 
 Wood leaf and petal defaults select fresh sheet materials, with mass derived from the
 randomized blade size and generated broadside planform. `vc_wood_botanical_profile.h`
@@ -3208,6 +3234,10 @@ An anchored receiver supplies its tip velocity and material mass, then integrate
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-07 | Codex | Independent curl amplitude and overlapping-guide diagnosis | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
+| 2026-10-07 | Codex | Fast guided defaults and curved path | core/composition/common/vc_guided_particle.inl; core/tests/test_guided_config.py | Ground-truth and project convention |
+| 2026-10-07 | Codex | Coherent guided curl force, units and eddy scale | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth and project convention |
+| 2026-10-07 | Codex | Automatic physical guidance, formation and substep sampling | core/motion/physical_field.h; core/composition/common/vc_guided_particle.inl; core/motion/motion_fields.h; core/wind/wind_system.h | Ground-truth and project convention |
 | 2026-10-06 | Codex | Guided consumed controls and botanical material adapters | core/composition/common/vc_guided_particle.inl; core/composition/wood/vc_wood_foliage_system.inl; core/composition/wood/vc_wood_botanical_profile.h | Ground-truth |
 | 2026-10-06 | Codex | Thin-lamina material construction and representative presets | core/motion/physical_field.h; core/tests/motion_material_test.c | Ground-truth and project convention |
 | 2026-10-06 | Codex | Anchored Newton receiver and broadphase | core/motion/motion_fields.h; core/tests/motion_fields_test.c | Ground-truth |

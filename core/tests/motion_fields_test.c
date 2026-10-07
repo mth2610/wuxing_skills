@@ -785,6 +785,56 @@ static void TestSimpleVolumeBuilders(void) {
       "moving sphere leaves no forced path behind it");
   MotionFields_Stop(h);
 }
+/* The public evaluator is the uncached reference: broad-phase rejection must
+ * preserve its result for rotated volumes and changing trajectory clocks. */
+static void TestPhysicalBroadPhaseEquivalence(void) {
+  BodyPhysicalProperties b=BodyPhysicalProperties_Sphere(.004f,600,.47f);
+  MediumProperties m={.densityKgM3=1.225f,.velocityMps={.2f,0,0}};
+  ReceiverConstraints c={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
+  for(int shape=FIELD_SPHERE;shape<=FIELD_PATH_TUBE;++shape) {
+    MotionFields_Reset();
+    FieldDesc d=MotionField_Default();
+    d.volume.shape=(FieldShape)shape;d.volume.radiusM=.6f;d.volume.coreFraction=.2f;
+    d.volume.halfExtentsM=(Vector3){1.7f,.25f,.4f};
+    d.volume.capsuleStart=(Vector3){-1,0,0};d.volume.capsuleEnd=(Vector3){1,.3f,0};
+    Vector3 points[]={{-1,0,0},{0,.5f,.5f},{1,0,0}};
+    MotionPath_Build(&d.volume.path,points,3);
+    d.transform.position=(Vector3){.3f,.4f,.2f};
+    float a=.7071067812f;
+    d.transform.axisX=(Vector3){a,0,a};d.transform.axisY=(Vector3){0,1,0};
+    d.transform.axisZ=(Vector3){-a,0,a};
+    Vector3 trajectory[]={{0,0,0},{2,0,0}};
+    MotionPath_Build(&d.trajectory.path,trajectory,2);
+    d.trajectory.mode=FIELD_TRAJECTORY_PATH;d.trajectory.speedMps=1.5f;
+    d.lifetime.durationSec=2;d.lifetime.startDelaySec=.1f;
+    d.lifetime.attackSec=.1f;d.lifetime.fadeSec=.2f;
+    d.forceLawCount=1;d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_NEWTONS,.forceNewtons={.1f,.2f,.3f}};
+    MotionFieldHandle h=MotionFields_CreateField(&d);
+    CHECK(h!=0,"rotated broad-phase fixture creates successfully");
+    float age=0;bool equivalent=true;int nonzero=0;
+    for(int frame=0;frame<4;++frame) {
+      float step=frame?.4f:0;age+=step;MotionFields_Update(step);
+      for(int x=-4;x<=6;++x) for(int y=-2;y<=3;++y) for(int z=-4;z<=6;++z) {
+        Vector3 p={x*.4f,y*.4f,z*.4f};FieldSample actual;
+        MotionFields_SampleBody(p,(Vector3){0},&b,&m,&c,.008f,MOTION_RECEIVER_PARTICLE,NULL,&actual);
+        FieldSample expected=Field_Evaluate(&d,age,p,(Vector3){0},&b,&m);
+        equivalent&=MotionVec_Length(MotionVec_Sub(actual.forceNewtons,expected.forceNewtons))<1e-6f;
+        nonzero+=MotionVec_Length(expected.forceNewtons)>0;
+      }
+    }
+    CHECK(equivalent && nonzero>0,"cached bounds preserve public evaluator over rotated moving volume and outside samples");
+    MotionFields_Stop(h);
+    d.transform.position=(Vector3){20,0,0};d.trajectory.mode=FIELD_TRAJECTORY_STATIC;
+    d.lifetime.startDelaySec=0;d.lifetime.attackSec=0;
+    h=MotionFields_CreateField(&d);FieldSample s;
+    MotionFields_SampleBody((Vector3){20,0,0},(Vector3){0},&b,&m,&c,.008f,MOTION_RECEIVER_PARTICLE,NULL,&s);
+    CHECK(h!=0 && MotionVec_Length(s.forceNewtons)>0,"reused slot refreshes bounds at creation before update");
+    MotionFields_Update(3);
+    MotionFields_SampleBody((Vector3){20,0,0},(Vector3){0},&b,&m,&c,.008f,MOTION_RECEIVER_PARTICLE,NULL,&s);
+    CHECK(!MotionFields_IsAlive(h) && MotionVec_Length(s.forceNewtons)==0,"expired cached field contributes no force");
+  }
+  MotionFields_Reset();
+}
 int main(void) {
   TestTypedFields();
   TestGenericProceduralSupport();
@@ -852,6 +902,7 @@ int main(void) {
   MotionFields_Update(2);
   CHECK(MotionFields_GetTargetCount() == 0,
         "target field expires independently");
+  TestPhysicalBroadPhaseEquivalence();
   TestSharedFlowStages();
   TestDensityAndForceProfiles();
   TestSimpleVolumeBuilders();

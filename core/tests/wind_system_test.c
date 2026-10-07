@@ -693,11 +693,21 @@ int main(void) {
         TEST_NEAR(ordinary.x,background.x,1e-6f,"Direct sampling preserves ordinary wind");
         TEST_NEAR(ordinary.z,0,1e-6f,"Direct sampling excludes Motion publication");
         TEST_CHECK(aggregate.z>0,"Legacy aggregate retains Motion publication");
+        MediumProperties air=Wind_EvaluateBackgroundMedium((Vector3){0},0,(Vector3){0,-4.905f,0});
+        TEST_NEAR(air.densityKgM3,1.225f,1e-6f,"Background medium carries standard air density in kg/m3");
+        TEST_NEAR(air.dynamicViscosityPaS,1.81e-5f,1e-9f,"Background medium carries standard air dynamic viscosity in Pa s");
+        TEST_NEAR(air.velocityMps.x,ordinary.x,1e-6f,"Background medium shares ordinary wind sampling");
+        TEST_NEAR(air.velocityMps.z,0,1e-6f,"Background medium excludes Motion flow to prevent duplicate application");
+        TEST_NEAR(air.gravityMps2.y,-4.905f,1e-6f,"Background medium preserves caller effective gravity");
     }
 
     // 12. Dọn dẹp
     Wind_Unload();
     TEST_CHECK(Wind_GetActiveCount() == 0, "Cleaned up after unload");
+    MediumProperties unloaded=Wind_EvaluateBackgroundMedium((Vector3){1,2,3},2,(Vector3){1,-9.81f,2});
+    TEST_NEAR(Vector3Length(unloaded.velocityMps),0,1e-6f,"Uninitialized background medium has still air");
+    TEST_NEAR(unloaded.gravityMps2.x,1,1e-6f,"Background medium preserves nonvertical caller gravity");
+    TEST_NEAR(unloaded.gravityMps2.z,2,1e-6f,"Background medium preserves caller gravity direction");
 
     printf("\nTEST RESULT: %d PASSED, %d FAILED\n", s_passed, s_failed);
     return (s_failed == 0) ? 0 : 1;

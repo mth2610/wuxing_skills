@@ -52,6 +52,10 @@ static bool VFXTest_IsNewFxNamed(const char *name) { (void)name; return false; }
 static void VFXTest_StopFixtures(void) {}
 static bool VFXTest_FireNewFx(int index, Vector3 pos) { (void)index; (void)pos; ++s_testCasts; return true; }
 static void VFXTest_RefreshInspectorParams(bool force) { (void)force; }
+#define VFX_TEST_MAX_INSPECTOR_PARAMS 32
+static int VFXTest_GuidedParameterEdited(const VFX_ParamDef *param, float before,
+                                       VFX_ParamDef *params, int count, int max)
+{ (void)param; (void)before; (void)params; (void)max; return count; }
 static const char *TextFormat(const char *format, ...)
 { static char buffers[4][512]; static int slot; char *buffer = buffers[slot++ % 4]; va_list args; va_start(args, format); vsnprintf(buffer, 512, format, args); va_end(args); return buffer; }
 static Color ColorAlpha(Color c, float alpha) { c.a = (unsigned char)(alpha * 255); return c; }

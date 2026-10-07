@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "core/decals/decal_system.h"
 #include "core/particles/particle_system.h"
 #include "core/screen_distort.h"
@@ -160,9 +161,13 @@ static bool                 s_liveWoodConfigsInit = false;
 // @gen:newfx_guided_state begin
 static VFX_GuidedParticleConfig s_liveGuidedParticleConfig;
 static bool s_liveGuidedParticleConfigInit = false;
+static bool s_guidedCaptureActive = false;
+static float s_guidedSwirlRatio;
+static float s_guidedTurbulenceRatio;
+static float s_guidedRatioReferenceSpeed = 1.0f;
 static int s_guidedFixturePreset = 0;
 static const char *s_guidedFixturePresetNames[] = {
-    "Moving attraction", "Moving swirl", "Moving turbulence",
+    "Default guided motion", "Moving swirl", "Moving turbulence",
     "Catch free leaves", "Zero drag", "Stationary attraction"
 };
 #define VFXTEST_GUIDED_PRESET_COUNT 6
@@ -172,8 +177,6 @@ static void VFXTest_SetGuidedPreset(int preset)
     s_guidedFixturePreset = preset;
     s_liveGuidedParticleConfig = VFX_GuidedParticle_DefaultConfig();
     s_liveGuidedParticleConfigInit = true;
-    s_liveGuidedParticleConfig.duration = 5.0f;
-    s_liveGuidedParticleConfig.particleRadius = 0.11f;
     if (preset == 1) {
         s_liveGuidedParticleConfig.swirlSpeed = 3.0f;
     } else if (preset == 2) {
@@ -192,6 +195,33 @@ static void VFXTest_SetGuidedPreset(int preset)
         s_liveGuidedParticleConfig.formationRadius = 0.8f;
         s_liveGuidedParticleConfig.guideRadius = 1.2f;
     }
+    s_guidedRatioReferenceSpeed = s_liveGuidedParticleConfig.speed > 0.00001f
+        ? s_liveGuidedParticleConfig.speed : 1.0f;
+    s_guidedSwirlRatio = s_liveGuidedParticleConfig.swirlSpeed / s_guidedRatioReferenceSpeed;
+    s_guidedTurbulenceRatio = s_liveGuidedParticleConfig.turbulenceSpeed / s_guidedRatioReferenceSpeed;
+}
+
+/* UI edits couple authored speeds; the public composition remains absolute m/s. */
+static int VFXTest_GuidedParameterEdited(const VFX_ParamDef *param, float before,
+                                       VFX_ParamDef *params, int count, int max)
+{
+    VFX_GuidedParticleConfig *cfg = &s_liveGuidedParticleConfig;
+    if (param->valPtr == &cfg->speed) {
+        if (before > 0.00001f) {
+            s_guidedSwirlRatio = cfg->swirlSpeed / before;
+            s_guidedTurbulenceRatio = cfg->turbulenceSpeed / before;
+        }
+        cfg->swirlSpeed = s_guidedSwirlRatio * cfg->speed;
+        cfg->turbulenceSpeed = s_guidedTurbulenceRatio * cfg->speed;
+        if (cfg->speed > 0.00001f) s_guidedRatioReferenceSpeed = cfg->speed;
+        return VFX_GuidedParticle_GetParams(cfg, params, max);
+    }
+    float reference = cfg->speed > 0.00001f ? cfg->speed : s_guidedRatioReferenceSpeed;
+    if (param->valPtr == &cfg->swirlSpeed)
+        s_guidedSwirlRatio = cfg->swirlSpeed / reference;
+    else if (param->valPtr == &cfg->turbulenceSpeed)
+        s_guidedTurbulenceRatio = cfg->turbulenceSpeed / reference;
+    return count;
 }
 
 static void VFXTest_InitGuidedConfig(void)
@@ -205,11 +235,31 @@ static void VFXTest_InitGuidedConfig(void)
     }
 }
 
+static float VFXTest_GuidedCaptureFloat(const char *name, float fallback, float lo, float hi)
+{
+    const char *text = getenv(name);
+    if (!text || !*text) return fallback;
+    char *end = NULL;
+    float value = strtof(text, &end);
+    if (end == text || *end || !isfinite(value) || value < lo || value > hi) {
+        TraceLog(LOG_WARNING, "%s: expected a finite value in [%g, %g]", name, (double)lo, (double)hi);
+        return fallback;
+    }
+    return value;
+}
+
 static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
 {
     VFXTest_InitGuidedConfig();
     s_isPlayingMesh = true;
     VFX_GuidedParticleConfig cfg = s_liveGuidedParticleConfig;
+    if (s_guidedCaptureActive) {
+        float flowLimit = fmaxf(24.0f, 2.0f * cfg.speed);
+        cfg.turbulenceSpeed = VFXTest_GuidedCaptureFloat("WUXING_GUIDED_TURBULENCE", cfg.turbulenceSpeed, 0.0f, flowLimit);
+        cfg.swirlSpeed = VFXTest_GuidedCaptureFloat("WUXING_GUIDED_SWIRL", cfg.swirlSpeed, -flowLimit, flowLimit);
+        TraceLog(LOG_INFO, "GUIDED PARTICLE capture: turbulence=%g m/s, swirl=%g m/s",
+                 (double)cfg.turbulenceSpeed, (double)cfg.swirlSpeed);
+    }
     cfg.source = source;
     cfg.target = s_guidedFixturePreset == 5 ? source : target;
     if (s_guidedFixturePreset == 3) {
@@ -983,7 +1033,10 @@ static void VFXTest_UIEditParameter(int index, int direction)
     if (!param->valPtr) return;
     if (param->type == VFX_PARAM_FLOAT) {
         float *value = (float *)param->valPtr;
+        float before = *value;
         *value = fmaxf(param->minFloat, fminf(param->maxFloat, *value + direction * param->stepFloat));
+        s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, before,
+            s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
     } else if (param->type == VFX_PARAM_INT) {
         int *value = (int *)param->valPtr;
         if (direction > 0 && *value < param->maxInt) ++*value;
@@ -2181,7 +2234,9 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
 
     // Fire oneshots immediately for warmup rendering.
     // @gen:newfx_render_trigger begin
+    s_guidedCaptureActive = true;
     (void)VFXTest_FireNewFx(newfxIndex, spawnPos);
+    s_guidedCaptureActive = false;
 // @gen:newfx_render_trigger end
 }
 

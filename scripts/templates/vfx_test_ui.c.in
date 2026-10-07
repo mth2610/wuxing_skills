@@ -202,7 +202,10 @@ static void VFXTest_UIEditParameter(int index, int direction)
     if (!param->valPtr) return;
     if (param->type == VFX_PARAM_FLOAT) {
         float *value = (float *)param->valPtr;
+        float before = *value;
         *value = fmaxf(param->minFloat, fminf(param->maxFloat, *value + direction * param->stepFloat));
+        s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, before,
+            s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
     } else if (param->type == VFX_PARAM_INT) {
         int *value = (int *)param->valPtr;
         if (direction > 0 && *value < param->maxInt) ++*value;

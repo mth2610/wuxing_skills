@@ -115,10 +115,10 @@ typedef struct MotionReceiver {
   float distance, flowTime;
   int segment;
   bool arrived;
-  /* Receiver-owned transverse lanes for persistent physical path-tube fields.
+  /* Receiver-owned lanes/entry offsets for physical tubes and guided spheres.
    * Legacy guide release/capture preserves these independent field bindings. */
   MotionFieldHandle pathLaneFields[4];
-  Vector3 pathLaneOffsets[4]; /* x=tangent, y=normal, z=binormal coordinates. */
+  Vector3 pathLaneOffsets[4]; /* Tube: tangent/normal/binormal; sphere: local XYZ. */
 } MotionReceiver;
 typedef struct MotionFieldSample {
   Vector3 forceNewtons, airflowVelocity;
@@ -156,12 +156,25 @@ void MotionFields_SampleBody(Vector3 position, Vector3 velocity,
     const BodyPhysicalProperties *body, const MediumProperties *medium,
     const ReceiverConstraints *constraints, float dt, unsigned int mask,
     MotionReceiver *receiver, FieldSample *sample);
+/* Typed fields can sample within the last registry update: timeOffsetSec is
+ * in [-lastUpdateDt,0]. dt drives implicit controllers; 0 queries raw forces.
+ * Legacy captured-guide adapters retain their frame-time semantics. */
+void MotionFields_SampleBodyAtOffset(Vector3 position, Vector3 velocity,
+    const BodyPhysicalProperties *body, const MediumProperties *medium,
+    const ReceiverConstraints *constraints, float dt, float timeOffsetSec,
+    unsigned int mask, MotionReceiver *receiver, FieldSample *sample);
 /* Stateless external sampling, excluding guide controllers/capture and legacy
  * Newton adapters. Free-body material integration can always call this even
  * when receiver capture into a guide is disabled. */
 void MotionFields_SampleExternalBody(Vector3 position, Vector3 velocity,
     const BodyPhysicalProperties *body, const MediumProperties *medium,
     const ReceiverConstraints *constraints, unsigned int mask, FieldSample *sample);
+/* Stateless integration counterpart: positive dt makes typed controllers
+ * implicit without acquiring a formation lane or legacy guide. */
+void MotionFields_SampleExternalBodyStep(Vector3 position, Vector3 velocity,
+    const BodyPhysicalProperties *body, const MediumProperties *medium,
+    const ReceiverConstraints *constraints, float dt, unsigned int mask,
+    FieldSample *sample);
 void MotionFields_Reset(void);
 /* Called once per simulation frame by VFX_Compose_Update, before receivers. */
 void MotionFields_Update(float dt);

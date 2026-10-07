@@ -295,8 +295,8 @@ _Inline helpers / macros only — see header._
 
 ### `core/motion/physical_field.h`
 _Inline helpers / macros only — see header._
-**Enums:** FieldShape { FIELD_SPHERE,FIELD_CAPSULE,FIELD_BOX,FIELD_PATH_TUBE };FieldTrajectoryMode { FIELD_TRAJECTORY_STATIC,FIELD_TRAJECTORY_PATH } ReceiverMode { RECEIVER_FREE,RECEIVER_ROOTED,RECEIVER_STATIC,RECEIVER_KINEMATIC,RECEIVER_TRACER };ForceLawType { FORCE_LAW_NEWTONS,FORCE_LAW_ACCELERATION,FORCE_LAW_RADIAL_ATTRACTION,FORCE_LAW_SPRING,FORCE_LAW_BUOYANCY,FORCE_LAW_DRAG,FORCE_LAW_PATH_GUIDE } BodyLaminaPreset { BODY_LAMINA_LEAF_DRY,BODY_LAMINA_LEAF_FRESH,BODY_LAMINA_PETAL_FRESH }
-**Structs** (fields in header): FieldVolume, FieldTransform, FieldTrajectory, FieldLifetime, BodyPhysicalProperties, MediumProperties, ReceiverConstraints, GuideController, ForceLaw, FlowField, FieldDesc, FieldSample, ThinLaminaMaterial
+**Enums:** FieldShape { FIELD_SPHERE,FIELD_CAPSULE,FIELD_BOX,FIELD_PATH_TUBE };FieldTrajectoryMode { FIELD_TRAJECTORY_STATIC,FIELD_TRAJECTORY_PATH } ReceiverMode { RECEIVER_FREE,RECEIVER_ROOTED,RECEIVER_STATIC,RECEIVER_KINEMATIC,RECEIVER_TRACER };ForceLawType { FORCE_LAW_NEWTONS,FORCE_LAW_ACCELERATION,FORCE_LAW_RADIAL_ATTRACTION,FORCE_LAW_SPRING,FORCE_LAW_BUOYANCY,FORCE_LAW_DRAG,FORCE_LAW_PATH_GUIDE,FORCE_LAW_MOVING_GUIDE,FORCE_LAW_CURL_FORCE } GuidePreset { GUIDE_MANUAL,GUIDE_LOOSE,GUIDE_BALANCED,GUIDE_TIGHT };BodyLaminaPreset { BODY_LAMINA_LEAF_DRY,BODY_LAMINA_LEAF_FRESH,BODY_LAMINA_PETAL_FRESH }
+**Structs** (fields in header): FieldVolume, FieldTransform, FieldTrajectory, FieldLifetime, BodyPhysicalProperties, MediumProperties, ReceiverConstraints, GuideTuning, GuideController, ForceLaw, FlowField, FieldDesc, FieldSample, ThinLaminaMaterial
 
 ### `core/motion/motion_fields.h`
 ```c
@@ -308,7 +308,9 @@ _Inline helpers / macros only — see header._
   MotionFieldHandle MotionFields_SpawnMovingGuide(const MotionPath *path, float speedMps, float radiusM, float pullStrengthN, float swirlSpeedMps, float turbulenceSpeedMps, float durationSec);
   MotionFieldHandle MotionFields_SpawnStaticVortex(Vector3 center, Vector3 axis, float radiusM, float swirlSpeedMps, float inwardPullN, float durationSec, float attackSec, float fadeSec);
   void MotionFields_SampleBody(Vector3 position, Vector3 velocity, const BodyPhysicalProperties *body, const MediumProperties *medium, const ReceiverConstraints *constraints, float dt, unsigned int mask, MotionReceiver *receiver, FieldSample *sample);
+  void MotionFields_SampleBodyAtOffset(Vector3 position, Vector3 velocity, const BodyPhysicalProperties *body, const MediumProperties *medium, const ReceiverConstraints *constraints, float dt, float timeOffsetSec, unsigned int mask, MotionReceiver *receiver, FieldSample *sample);
   void MotionFields_SampleExternalBody(Vector3 position, Vector3 velocity, const BodyPhysicalProperties *body, const MediumProperties *medium, const ReceiverConstraints *constraints, unsigned int mask, FieldSample *sample);
+  void MotionFields_SampleExternalBodyStep(Vector3 position, Vector3 velocity, const BodyPhysicalProperties *body, const MediumProperties *medium, const ReceiverConstraints *constraints, float dt, unsigned int mask, FieldSample *sample);
   void MotionFields_Reset(void);
   void MotionFields_Update(float dt);
   MotionFieldHandle MotionFields_CreateGuide(const MotionGuideDesc *desc);
@@ -822,6 +824,7 @@ _Inline helpers / macros only — see header._
   int Wind_SpawnTurbulence(Vector3 pos, float radius, float strength, float noiseScale, float noiseSpeed, float duration);
   Vector3 Wind_EvaluateVelocity(Vector3 pos, float time);
   Vector3 Wind_EvaluateBackgroundVelocity(Vector3 pos, float time);
+  MediumProperties Wind_EvaluateBackgroundMedium(Vector3 pos, float time, Vector3 gravityMps2);
   Vector3 Wind_EvaluateVorticleVelocity(const VorticleData *vorticle, Vector3 pos, float time);
   Vector3 Wind_EvaluateAcceleration(Vector3 pos, float time, Vector3 currentVel);
   Vector3 Wind_GetMacroAt(Vector3 pos, float time);

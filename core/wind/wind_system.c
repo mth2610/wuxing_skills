@@ -617,6 +617,14 @@ Vector3 Wind_EvaluateBackgroundVelocity(Vector3 pos, float time) {
     return Wind_EvaluateVelocityChannels(pos, time, false);
 }
 
+MediumProperties Wind_EvaluateBackgroundMedium(Vector3 pos, float time,
+                                               Vector3 gravityMps2) {
+    return (MediumProperties){.densityKgM3=1.225f,
+        .dynamicViscosityPaS=1.81e-5f,
+        .velocityMps=Wind_EvaluateBackgroundVelocity(pos,time),
+        .gravityMps2=gravityMps2};
+}
+
 Vector3 Wind_EvaluateAcceleration(Vector3 pos, float time, Vector3 currentVel) {
     Vector3 targetWindVel = Wind_EvaluateVelocity(pos, time);
     // Lực cản khí động học kéo vận tốc hạt tiến về vận tốc dòng khí

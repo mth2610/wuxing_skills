@@ -5,7 +5,7 @@ ROOT=pathlib.Path(__file__).resolve().parents[2]
 s=(ROOT/'core/composition/common/vc_guided_particle.inl').read_text()
 h=(ROOT/'core/composition/visual_composer.h').read_text()
 def function(name):
- m=re.search(r'^(?:static bool|static float|static int|static ParticleDynamicsProfile|VFX_GuidedParticleConfig|int) '+name+r'\(',s,re.M); start=s.index('{',m.start()); depth=1; end=start+1
+ m=re.search(r'^(?:static bool|static float|static int|static ParticleDynamicsProfile|static GuideTuning|VFX_GuidedParticleConfig|int) '+name+r'\(',s,re.M); start=s.index('{',m.start()); depth=1; end=start+1
  while depth:
   depth+=(s[end]=='{')-(s[end]=='}');end+=1
  return s[m.start():end]
@@ -37,8 +37,10 @@ static Vector3 GetBezierPoint(Vector3 p,Vector3 a,Vector3 b,Vector3 q,float t) {
 main=r'''
 int main(void) {
  VFX_GuidedParticleConfig c=VFX_GuidedParticle_DefaultConfig();
- assert(VC_GuidedSettingsValid(&c));
- VFX_ParamDef a[32],b[32];int n=VFX_GuidedParticle_GetParams(&c,a,32);assert(n==15);
+ assert(VC_GuidedSettingsValid(&c) && c.guidancePreset==GUIDE_BALANCED);
+ c.swirlSpeed=0;c.turbulenceSpeed=0;
+ c.guidancePreset=GUIDE_MANUAL;
+ VFX_ParamDef a[32],b[32];int n=VFX_GuidedParticle_GetParams(&c,a,32);assert(n==16);
  assert(c.formationRadius==.45f && c.gravityScale==1);
  c.count=512;c.emitDuration=2;
  assert(fabsf(VC_GuidedEmissionRate(&c)-256)<1e-6f);
@@ -81,8 +83,8 @@ int main(void) {
  MediumProperties medium={.velocityMps={0,0,2}};
  Vector3 offCenter=MotionVec_Add(moving.position,(Vector3){0,0,.2f});
  FieldSample sample=Field_Evaluate(&d,.2f,offCenter,(Vector3){0},&physical,&medium);
- assert(sample.forceNewtons.z<0 && sample.mediumVelocityMps.x>c.speed*.9f &&
-   fabsf(sample.mediumVelocityMps.z-2)<1e-5f);
+ assert(sample.forceNewtons.z<0 &&
+   MotionVec_Length(MotionVec_Sub(MotionVec_Sub(sample.mediumVelocityMps,medium.velocityMps),moving.frameVelocityMps))<1e-4f);
  sample=Field_Evaluate(&d,.2f,moving.position,(Vector3){0},&physical,&medium);
  assert(MotionVec_Length(sample.forceNewtons)<1e-3f &&
    sample.mediumVelocityMps.x>0);
@@ -103,8 +105,9 @@ int main(void) {
  assert(pathPoint.position.x>0 && pathPoint.tangent.x>.9f);
  Vector3 offPath=MotionVec_Add(MotionVec_Add(c.source,pathPoint.position),(Vector3){0,0,.2f});
  sample=Field_Evaluate(&d,.2f,offPath,(Vector3){0},&physical,&medium);
- assert(sample.forceNewtons.z<0 && sample.mediumVelocityMps.x>c.speed*.9f &&
-   fabsf(sample.mediumVelocityMps.z-2)<1e-5f);
+ MotionPathSample projected=MotionPath_Project(&d.volume.path,MotionVec_Sub(offPath,c.source),0,d.volume.path.count-2);
+ assert(sample.forceNewtons.z<0 &&
+   MotionVec_Length(MotionVec_Sub(MotionVec_Sub(sample.mediumVelocityMps,medium.velocityMps),MotionVec_Scale(projected.tangent,c.speed)))<1e-3f);
  sample=Field_Evaluate(&d,.2f,MotionVec_Add(c.source,pathPoint.position),(Vector3){0},&physical,&medium);
  assert(MotionVec_Dot(sample.forceNewtons,pathPoint.tangent)>0 &&
    sample.mediumVelocityMps.x>c.speed*.9f);
@@ -122,10 +125,79 @@ int main(void) {
  ParticleConfig particle={0};c.particleTemplate=&particle;c.massKg=NAN;c.densityKgM3=NAN;c.particleRadius=NAN;c.drag=NAN;
  assert(VC_GuidedSettingsValid(&c));
  c.particleTemplate=NULL;assert(!VC_GuidedSettingsValid(&c));
+ c=VFX_GuidedParticle_DefaultConfig();
+ assert(VFX_GuidedParticle_GetParams(&c,b,32)==12);
+ /* Controls must allow proportionate swirl/noise at skill speed. */
+ c.speed=40;VFX_GuidedParticle_GetParams(&c,b,32);
+ for(int i=0;i<12;i++) if(b[i].valPtr==&c.swirlSpeed || b[i].valPtr==&c.turbulenceSpeed)
+   assert(b[i].maxFloat>=2*c.speed);
+ c=VFX_GuidedParticle_DefaultConfig();
+ assert(VC_GuidedBuildField(&c,&d));
+ MotionPathSample middle=MotionPath_Sample(&d.trajectory.path,d.trajectory.path.length*.5f);
+ Vector3 chord=MotionVec_Sub(c.target,c.source);
+ Vector3 chordMid=MotionVec_Scale(chord,.5f);
+ assert(MotionVec_Length(MotionVec_Sub(middle.position,chordMid))>MotionVec_Length(chord)*.3f);
+ assert(MotionVec_Length(MotionVec_Sub(MotionPath_Sample(&d.trajectory.path,0).position,(Vector3){0}))<1e-6f);
+ assert(MotionVec_Length(MotionVec_Sub(MotionPath_Sample(&d.trajectory.path,d.trajectory.path.length).position,chord))<1e-5f);
+ VFX_GuidedParticleConfig vertical=c;vertical.target=MotionVec_Add(c.source,(Vector3){0,4,0});
+ assert(VC_GuidedBuildField(&vertical,&d));
+ assert(d.trajectory.path.length>4.5f);
+ assert(VC_GuidedBuildField(&c,&d));
+ VFX_GuidedParticleConfig tracking=c;tracking.swirlSpeed=0;tracking.turbulenceSpeed=0;
+ FieldDesc routed;assert(VC_GuidedBuildField(&tracking,&routed));
+ ParticleDynamicsProfile tracked=VC_GuidedBody(&tracking);
+ BodyPhysicalProperties trackedBody=MotionBody_GetPhysicalProperties(&tracked);
+ MediumProperties air={.densityKgM3=1.225f,.gravityMps2={0,-9.81f,0}};
+ Vector3 position=tracking.source,velocity={0};float dt=1.f/120,maxError=0,maxBow=0;
+ float transitSeconds=routed.trajectory.path.length/tracking.speed;
+ for(int step=0;step*dt<transitSeconds;step++) {
+   float age=step*dt;
+   FieldSample force=Field_EvaluateStep(&routed,age,position,velocity,&trackedBody,&air,dt);
+   velocity=MotionBody_AdvanceFieldVelocity(velocity,&tracked,(Vector3){0},(Vector3){0},&force,(Vector3){0},dt);
+   position=MotionVec_Add(position,MotionVec_Scale(velocity,dt));
+   FieldTransform expected=FieldTrajectory_Transform(&routed,age+dt);
+   maxError=fmaxf(maxError,MotionVec_Length(MotionVec_Sub(position,expected.position)));
+   maxBow=fmaxf(maxBow,fabsf(position.z-tracking.source.z));
+ }
+ assert(maxError<tracking.guideRadius*.5f && maxBow>MotionVec_Length(chord)*.2f);
+ printf("Curved skill tracking: max lag %.4f m, lateral bow %.4f m\n",maxError,maxBow);
+ body=VC_GuidedBody(&c);
+ assert(body.aerodynamicAreaM2>0 && body.aerodynamicDragCoefficient==.47f && body.windCouplingHz==0);
+ assert(VC_GuidedBuildField(&c,&d) && d.preserveSphereOffsets &&
+   d.forceLaws[0].type==FORCE_LAW_MOVING_GUIDE);
+ GuideTuning compiled=VC_GuidedTuning(&c);
+ assert(d.forceLaws[0].magnitudeNewtons==compiled.maxForceNewtons);
+ /* A guided field's turbulence is an actuator disturbance in Newtons,
+  * independent of medium drag: one cast must receive it even in vacuum. */
+ c.source=(Vector3){0};c.target=c.source;c.swirlSpeed=0;c.turbulenceSpeed=0;
+ Vector3 probe={.13f,.07f,.19f};
+ MediumProperties vacuum={0};
+ BodyPhysicalProperties receiver={.massKg=c.massKg};
+ assert(VC_GuidedBuildField(&c,&d));
+ FieldSample quiet=Field_Evaluate(&d,.37f,probe,(Vector3){0},&receiver,&vacuum);
+ c.turbulenceSpeed=8;assert(VC_GuidedBuildField(&c,&d));
+ FieldSample noisy=Field_Evaluate(&d,.37f,probe,(Vector3){0},&receiver,&vacuum);
+ assert(MotionVec_Length(MotionVec_Sub(noisy.forceNewtons,quiet.forceNewtons))>.01f);
+ assert(MotionVec_Length(noisy.mediumVelocityMps)<1e-6f);
+ receiver.massKg*=4;
+ FieldSample heavy=Field_Evaluate(&d,.37f,probe,(Vector3){0},&receiver,&vacuum);
+ assert(MotionVec_Length(MotionVec_Sub(heavy.forceNewtons,noisy.forceNewtons))<1e-6f);
+ c=VFX_GuidedParticle_DefaultConfig();
+ c.emitDuration=2;assert(VC_GuidedBuildField(&c,&d));
+ assert(d.volume.shape==FIELD_PATH_TUBE && d.forceLaws[0].forwardForceNewtons>0);
+ /* Automatic settings do not consume legacy force/drag controls. */
+ c.maxForceNewtons=NAN;c.forwardForceNewtons=NAN;c.drag=NAN;
+ assert(VC_GuidedSettingsValid(&c) && VC_GuidedBuildField(&c,&d));
+ c.speed=0;c.emitDuration=0;
+ assert(VC_GuidedBuildField(&c,&d) && d.lifetime.durationSec>=c.duration);
+ c.speed=3;c.densityKgM3=.1f;
+ GuideTuning buoyant=VC_GuidedTuning(&c);
+ assert(buoyant.maxForceNewtons>compiled.maxForceNewtons);
+ c.guidancePreset=4;assert(!VC_GuidedSettingsValid(&c));
  puts("PASS: production Guided stable inspector, real relative-air drag, static/moving fields, expiry and override precedence");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='wuxing-guided-config-') as temp:
- p=pathlib.Path(temp);(p/'test.c').write_text(stubs+(ROOT/'core/force_field.c').read_text().split('static inline float ValueHash')[0]+config+''.join(function(name) for name in ['VFX_GuidedParticle_DefaultConfig','VFX_GuidedParticle_GetParams','VC_GuidedEmissionRate','VC_GuidedUsesTimedEmission','VC_GuidedInitialBurstCount','VC_GuidedEstimatedTransitTime','VC_GuidedSettingsValid','VC_GuidedBuildField','VC_GuidedBody'])+main)
+ p=pathlib.Path(temp);(p/'test.c').write_text(stubs+(ROOT/'core/force_field.c').read_text().split('static inline float ValueHash')[0]+config+''.join(function(name) for name in ['VFX_GuidedParticle_DefaultConfig','VFX_GuidedParticle_GetParams','VC_GuidedEmissionRate','VC_GuidedUsesTimedEmission','VC_GuidedInitialBurstCount','VC_GuidedTuning','VC_GuidedEstimatedTransitTime','VC_GuidedSettingsValid','VC_GuidedBuildField','VC_GuidedBody'])+main)
  subprocess.run(['cc','-std=c99','-Wall','-Wextra','-I'+str(ROOT),'-I'+str(ROOT/'core/tests/stubs'),str(p/'test.c'),'-lm','-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)

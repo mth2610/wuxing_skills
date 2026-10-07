@@ -2,6 +2,7 @@
 #define WUXING_WIND_SYSTEM_H
 
 #include "core/wind/wind_types.h"
+#include "core/motion/physical_field.h"
 
 // =============================================================================
 // WIND SYSTEM API (Ghost of Tsushima Style)
@@ -71,6 +72,13 @@ Vector3 Wind_EvaluateVelocity(Vector3 pos, float time);
  * Direct field receivers use this channel so Motion flow is applied once.
  * Aggregate Wind and GPU snapshots retain their legacy additive approximation. */
 Vector3 Wind_EvaluateBackgroundVelocity(Vector3 pos, float time);
+/* Ordinary air for direct physical receivers: reference air
+ * density (1.225 kg/m3), dynamic viscosity (1.81e-5 Pa s), and caller-supplied
+ * effective gravity (m/s2). Wind supplies velocity, never body acceleration.
+ * Excludes Motion publication exactly as BackgroundVelocity does. A receiver
+ * may override material/environment values after sampling this default. */
+MediumProperties Wind_EvaluateBackgroundMedium(Vector3 pos, float time,
+                                               Vector3 gravityMps2);
 
 // Evaluates one Vorticle using the same formula as the aggregate CPU/GPU wind
 // field. Receivers that spatially rasterize sources (for example vegetation)

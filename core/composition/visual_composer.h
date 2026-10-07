@@ -1072,8 +1072,13 @@ void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
  * target; timed mode uses a stationary path tube for distinct endpoints. Equal
  * endpoints create a stationary sphere. `speed` sets sphere travel speed or
  * tube particle flow speed. Field life covers emission, estimated transit and fade;
- * `duration` is a minimum/fallback. Pull and forward force are separate Newton channels;
- * swirl/turbulence are airflow m/s. No arrival action or implicit target blast.
+ * `duration` is the manual minimum or an automatic stationary/zero-speed fallback.
+ * Pull and forward force are separate Newton channels. Swirl is airflow m/s;
+ * automatic formation targets also rotate at swirl/radius through actuator forces.
+ * Automatic turbulence is a separate curl-force actuator, compiled from requested
+ * characteristic speed as m_ref*U^2/eddy, capped at 25% of guide authority. It
+ * replaces this field's airflow turbulence; ordinary Wind/drag remain independent.
+ * Manual mode retains legacy turbulence airflow in m/s. No arrival action or implicit target blast.
  * `count=0` creates only a field. Use independent fields for arrival and target effects.
  * particleTemplate and emissionSource are copied at spawn; borrowed resources
  * retain their normal lifetime. fieldOverride replaces the ENTIRE field in
@@ -1084,6 +1089,10 @@ void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
 typedef struct VFX_GuidedParticleConfig {
     Vector3 source, target;
     float speed, duration, guideRadius, maxForceNewtons;
+    /* Absolute m/s. Defaults: travel12, swirl14.4, turbulence9.6.
+     * The sandbox's speed edit preserves flow/travel ratios; direct API values
+     * are never rescaled. Default path bows sideways and upward; fieldOverride
+     * supplies exact custom paths. */
     float swirlSpeed, turbulenceSpeed;
     int count; /* Total particles: burst at emitDuration=0; otherwise spread over time. */
     float emitDuration; /* seconds; average rate is derived as count/emitDuration. */
@@ -1091,7 +1100,7 @@ typedef struct VFX_GuidedParticleConfig {
     float formationRadius; /* Source emission radius, independent of field. */
     float particleRadius;  /* Visual radius, independent of physical density. */
     float massKg, densityKgM3;
-    float drag; /* Linear airflow response s^-1; zero disables default damping. */
+    float drag; /* Manual preset only: linear airflow response s^-1. */
     VC_MaterialId material;
     ParticleRenderMode renderMode;
     ParticleRenderStream *surfaceStreamOut;
@@ -1100,6 +1109,13 @@ typedef struct VFX_GuidedParticleConfig {
     const FieldDesc *fieldOverride;
     float forwardForceNewtons; /* Tube-only tangent force cap toward `speed`. */
     float gravityScale; /* Body gravity multiplier; zero removes ballistic fall. */
+    /* GUIDE_MANUAL=0 preserves legacy explicit force/drag authoring. DefaultConfig
+     * selects GUIDE_BALANCED: mass/density derive sphere area/Cd; force budgets,
+     * critical damping, and settling time derive once from the reference body,
+     * field geometry and speed. A template remains authoritative for its body.
+     * Auto burst guides retain spatially captured formation offsets and rotate
+     * their force targets with swirl; no receiver position is assigned directly. */
+    int guidancePreset; /* GuidePreset from core/motion/physical_field.h. */
 } VFX_GuidedParticleConfig;
 VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void);
 int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg,VFX_ParamDef *outParams,int maxParams);

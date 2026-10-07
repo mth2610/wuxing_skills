@@ -6,6 +6,92 @@ import unittest
 
 
 class GuidedInspectorInputTest(unittest.TestCase):
+    def test_speed_edits_preserve_flow_ratios_and_zero_speed_memory(self):
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "sandbox/vfx_test.c").read_text()
+        begin = source.index("static int VFXTest_GuidedParameterEdited(")
+        end = source.index("\nstatic void VFXTest_InitGuidedConfig", begin)
+        hook = source[begin:end]
+        begin = source.index("static void VFXTest_SetGuidedPreset(")
+        end = source.index("/* UI edits couple authored speeds", begin)
+        preset = source[begin:end]
+        begin = source.index("static void VFXTest_UIEditParameter(")
+        end = source.index("\nstatic bool VFXTest_UIHandleInput", begin)
+        edit = source[begin:end]
+        fixture = r'''
+#include <assert.h>
+#include <math.h>
+#include <stddef.h>
+#include "core/composition/common/vc_params.h"
+#define VFX_TEST_MAX_INSPECTOR_PARAMS 4
+typedef struct {
+    float speed, swirlSpeed, turbulenceSpeed, duration, guideRadius, maxForceNewtons, drag, formationRadius;
+    int count;
+} VFX_GuidedParticleConfig;
+static VFX_GuidedParticleConfig s_liveGuidedParticleConfig;
+static bool s_liveGuidedParticleConfigInit;
+static int s_guidedFixturePreset;
+static VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void) {
+    return (VFX_GuidedParticleConfig){.speed=12,.swirlSpeed=14.4f,.turbulenceSpeed=9.6f,.duration=4};
+}
+static float s_guidedSwirlRatio = 1.2f, s_guidedTurbulenceRatio = .8f;
+static float s_guidedRatioReferenceSpeed = 12;
+static VFX_ParamDef s_inspectorParams[4];
+static int s_inspectorParamCount = 3, s_inspectorSelectedParam = 2, refreshes;
+static int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg, VFX_ParamDef *out, int max) {
+    assert(max == 4); ++refreshes;
+    out[0]=(VFX_ParamDef){.type=VFX_PARAM_FLOAT,.valPtr=&cfg->speed,.minFloat=0,.maxFloat=60,.stepFloat=12};
+    out[1]=(VFX_ParamDef){.type=VFX_PARAM_FLOAT,.valPtr=&cfg->swirlSpeed,.minFloat=-120,.maxFloat=120,.stepFloat=12};
+    out[2]=(VFX_ParamDef){.type=VFX_PARAM_FLOAT,.valPtr=&cfg->turbulenceSpeed,.minFloat=0,.maxFloat=120,.stepFloat=12};
+    return 3;
+}
+''' + preset + hook + edit + r'''
+static void Near(float actual,float expected) { assert(fabsf(actual-expected)<.0001f); }
+int main(void) {
+    VFXTest_SetGuidedPreset(0);
+    assert(s_liveGuidedParticleConfigInit && s_guidedFixturePreset==0);
+    Near(s_liveGuidedParticleConfig.duration,4);
+    VFX_GuidedParticle_GetParams(&s_liveGuidedParticleConfig,s_inspectorParams,4);
+    VFXTest_UIEditParameter(0,1);
+    Near(s_liveGuidedParticleConfig.speed,24); Near(s_liveGuidedParticleConfig.swirlSpeed,28.8f);
+    Near(s_liveGuidedParticleConfig.turbulenceSpeed,19.2f);
+    assert(refreshes==2 && s_inspectorSelectedParam==2 && s_inspectorParamCount==3);
+    VFXTest_UIEditParameter(0,-1); VFXTest_UIEditParameter(0,-1);
+    Near(s_liveGuidedParticleConfig.speed,0); Near(s_liveGuidedParticleConfig.swirlSpeed,0);
+    Near(s_liveGuidedParticleConfig.turbulenceSpeed,0);
+    VFXTest_UIEditParameter(0,-1); /* Clamping at zero must not erase ratios. */
+    VFXTest_UIEditParameter(0,1);
+    Near(s_liveGuidedParticleConfig.swirlSpeed,14.4f); Near(s_liveGuidedParticleConfig.turbulenceSpeed,9.6f);
+    VFXTest_UIEditParameter(0,-1);
+    VFXTest_UIEditParameter(1,-1); /* Author stationary negative swirl using remembered 12 m/s. */
+    VFXTest_UIEditParameter(2,1);
+    VFXTest_UIEditParameter(0,1);
+    Near(s_liveGuidedParticleConfig.swirlSpeed,-12); Near(s_liveGuidedParticleConfig.turbulenceSpeed,12);
+    VFXTest_UIEditParameter(1,1); VFXTest_UIEditParameter(2,-1);
+    VFXTest_UIEditParameter(0,1);
+    Near(s_liveGuidedParticleConfig.swirlSpeed,0); Near(s_liveGuidedParticleConfig.turbulenceSpeed,0);
+    float unrelated=2;
+    s_inspectorParams[3]=(VFX_ParamDef){.type=VFX_PARAM_FLOAT,.valPtr=&unrelated,.minFloat=0,.maxFloat=10,.stepFloat=1};
+    int priorRefreshes=refreshes;
+    VFXTest_UIEditParameter(3,1);
+    Near(unrelated,3); assert(refreshes==priorRefreshes);
+    Near(s_liveGuidedParticleConfig.speed,24);
+    VFXTest_SetGuidedPreset(0);
+    Near(s_liveGuidedParticleConfig.speed,12); Near(s_liveGuidedParticleConfig.swirlSpeed,14.4f);
+    Near(s_liveGuidedParticleConfig.turbulenceSpeed,9.6f);
+    VFX_GuidedParticle_GetParams(&s_liveGuidedParticleConfig,s_inspectorParams,4);
+    VFXTest_UIEditParameter(0,1);
+    Near(s_liveGuidedParticleConfig.swirlSpeed,28.8f); Near(s_liveGuidedParticleConfig.turbulenceSpeed,19.2f);
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="guided-inspector-speed-") as directory:
+            code = Path(directory) / "test.c"
+            binary = Path(directory) / "test"
+            code.write_text(fixture)
+            subprocess.run(["cc", "-std=c99", "-Wall", "-Wextra", "-Werror", "-I", str(root), str(code), "-lm", "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
     def test_edit_keys_preserve_preset_and_selection(self):
         root = Path(__file__).resolve().parents[2]
         source = (root / "sandbox/vfx_test.c").read_text()

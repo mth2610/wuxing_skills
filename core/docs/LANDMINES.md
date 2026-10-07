@@ -3921,13 +3921,81 @@ laws during evaluation, avoid copying descriptors, and return before evaluating
 a pass with no matching laws or flow. Preserve the public all-laws evaluator as
 the behavior reference. Guard: `core/tests/motion_fields_test.c`.
 
+## Guidance budgets must include formation clearance and effective gravity
+
+**Symptom.** A spring is stable alone but lower formation members escape and fall,
+or very light particles oscillate around the requested forward speed.
+
+**Cause.** Smooth support falloff weakens the spring near an offset formation;
+a gravity budget based only on 9.81 ignores buoyancy. An explicit tangent-speed
+servo can overshoot when dt times gain divided by mass exceeds its stable range.
+
+**Rule.** Derive support from reference net gravity with room for entry offsets
+and boundary falloff. Derive critical damping from effective stiffness and actual
+receiver mass; solve both positional and velocity controllers implicitly before
+applying their force limits. Keep the force budget independent of receiver mass.
+Source: `core/motion/physical_field.h`; guards: `core/tests/guidance_physics_test.c`
+and `core/tests/test_guided_config.py`.
+
+## Turbulence must not strengthen the guide opposing it
+
+**Symptom.** Increasing curl airflow produces little visible breakup in one cast,
+while two overlapping casts appear much more disturbed.
+
+**Cause.** Automatic guide stiffness grew quadratically with the turbulence
+amplitude, suppressing the drag-driven displacement it was meant to allow.
+Delayed curved guides can also disturb particles through competing actuator
+forces even with curl disabled; their airflow blend does not double amplitude.
+
+**Rule.** Derive guide response from transit, rotation and effective gravity;
+keep turbulence independent. Verify curl alone with one field and fixed body
+properties, and compare overlap with turbulence zero before attributing it to
+noise. Guard: `core/tests/guidance_physics_test.c`.
+
+## Guided field disturbance is distinct from atmospheric turbulence
+
+**Symptom.** A fresh single cast at turbulence 8 m/s still looks like a rigid
+sphere, even with swirl disabled; numeric airflow tests pass.
+
+**Cause.** Per-particle formation springs oppose aerodynamic displacement.
+Dense bodies respond weakly to air drag. Removing turbulence-dependent stiffness
+alone does not make airflow a turbulent guiding force. Unbounded windowed curl
+force can also overpower guidance near the support edge.
+
+**Rule.** Automatic Guided Particle uses an explicit curl-force law with fixed
+reference-body Newton budget and actual receiver mass response. Reserve capture
+force authority, bound noise by local support, and use attainable turnover after
+saturation. Do not also apply that same noise as airflow. Keep generic airflow
+and manual legacy behavior intact. Verify fresh casts with swirl zero at matched
+camera/frame; UI changes affect the next cast. Guards: `guidance_physics_test.c`
+and `test_guided_config.py`.
+
+## Guided clouds need coherent integral-scale eddies
+
+**Symptom.** Strong guided turbulence looks like independently darting insects
+rather than a cloud rolling through a shared flow.
+
+**Cause.** Eddies derived as 0.3 times support radius split the cloud across many
+rapidly changing force cells. Formation springs then pull each displaced body
+back toward its lane, accentuating individual motion.
+
+**Rule.** Derive automatic guide curl's integral eddy length from the full field
+radius, preserving reference-force budgeting and actual mass response. Verify
+spatial neighbor correlation across locations and phases, then inspect motion at
+the gameplay camera. Leave independently authored force/airflow scales intact.
+Guard: `TestCloudCoherence` in `core/tests/guidance_physics_test.c`.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-07 | Codex | Physical guidance support and implicit response | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
 | 2026-10-07 | Codex | Guided route lifetime from transit estimate | core/composition/common/vc_guided_particle.inl; core/tests/test_guided_config.py | Ground-truth |
 | 2026-10-07 | Codex | Timed Guided total-count emission | core/composition/common/vc_guided_particle.inl; core/composition/vc_emission.h; core/tests/test_guided_config.py | Ground-truth |
 | 2026-10-07 | Codex | Independent physical-field lane state | core/motion/motion_fields.c; core/motion/motion_fields.h; core/tests/motion_fields_test.c | Ground-truth |
+| 2026-10-07 | Codex | Guided cloud integral eddy coherence | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth and project convention |
+| 2026-10-07 | Codex | Explicit guided curl force and capture authority | core/motion/physical_field.h; core/composition/common/vc_guided_particle.inl; core/tests/guidance_physics_test.c | Ground-truth and project convention |
+| 2026-10-07 | Codex | Independent curl amplitude and overlapping-guide diagnosis | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
 | 2026-10-07 | Codex | Bounded path projection and physical passes | core/motion/motion_path.h; core/motion/physical_field.h; core/motion/motion_fields.c; core/tests/motion_fields_test.c | Ground-truth |
 | 2026-10-06 | Codex | Duplicate physical response | core/wind/wind_system.c; core/motion/motion_body.h; core/tests/particle_external_field_test.c | Ground-truth |
 | 2026-10-05 | Codex | Continuous-force drag and bounded curl | core/motion/motion_body.h; core/motion/motion_flow.h; core/tests/motion_flow_test.c | Ground-truth |
