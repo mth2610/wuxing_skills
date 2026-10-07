@@ -5,13 +5,14 @@ ROOT=pathlib.Path(__file__).resolve().parents[2]
 s=(ROOT/'core/composition/common/vc_guided_particle.inl').read_text()
 h=(ROOT/'core/composition/visual_composer.h').read_text()
 def function(name):
- m=re.search(r'^(?:static bool|static ParticleDynamicsProfile|VFX_GuidedParticleConfig|int) '+name+r'\(',s,re.M); start=s.index('{',m.start()); depth=1; end=start+1
+ m=re.search(r'^(?:static bool|static float|static int|static ParticleDynamicsProfile|VFX_GuidedParticleConfig|int) '+name+r'\(',s,re.M); start=s.index('{',m.start()); depth=1; end=start+1
  while depth:
   depth+=(s[end]=='{')-(s[end]=='}');end+=1
  return s[m.start():end]
 config=re.search(r'typedef struct VFX_GuidedParticleConfig \{.*?\} VFX_GuidedParticleConfig;',h,re.S).group()
 stubs=r'''
 #include "core/motion/motion_fields.h"
+#include "core/composition/vc_emission.h"
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
@@ -38,17 +39,34 @@ int main(void) {
  VFX_GuidedParticleConfig c=VFX_GuidedParticle_DefaultConfig();
  assert(VC_GuidedSettingsValid(&c));
  VFX_ParamDef a[32],b[32];int n=VFX_GuidedParticle_GetParams(&c,a,32);assert(n==15);
- c.count=0;c.emitDuration=1;c.emissionRate=0;
+ assert(c.formationRadius==.45f && c.gravityScale==1);
+ c.count=512;c.emitDuration=2;
+ assert(fabsf(VC_GuidedEmissionRate(&c)-256)<1e-6f);
+ assert(VC_GuidedUsesTimedEmission(&c) && VC_GuidedInitialBurstCount(&c)==0);
+ VFX_EmissionSchedule schedule={.durationSeconds=c.emitDuration,
+   .ratePerSecond=VC_GuidedEmissionRate(&c)};
+ int emitted=0,firstFrame=VFX_EmissionAdvance(&schedule,1.0f/60.0f,2048);
+ emitted+=firstFrame;
+ for(int i=1;i<120;i++)emitted+=VFX_EmissionAdvance(&schedule,1.0f/60.0f,2048);
+ assert(firstFrame>0 && firstFrame<10 && emitted==c.count && VFX_EmissionComplete(&schedule));
+ c.count=0;
  assert(VFX_GuidedParticle_GetParams(&c,b,32)==n);
- for(int i=0;i<n;i++)assert(a[i].valPtr==b[i].valPtr && !strcmp(a[i].name,b[i].name));
+ for(int i=0;i<n;i++)assert(a[i].valPtr==b[i].valPtr &&
+   (i==0 || !strcmp(a[i].name,b[i].name)));
+ assert(!strcmp(a[0].name,"Field travel speed m/s") &&
+   !strcmp(b[0].name,"Stream speed m/s"));
  assert(VFX_GuidedParticle_GetParams(&c,b,3)==3);
  assert(VFX_GuidedParticle_GetParams(NULL,b,32)==0);
+ c.emitDuration=0;c.count=512;
+ assert(!VC_GuidedUsesTimedEmission(&c) && VC_GuidedInitialBurstCount(&c)==512);
+ c.count=1;
  c.count=1;c.drag=-1;assert(!VC_GuidedSettingsValid(&c));
  c.drag=NAN;assert(!VC_GuidedSettingsValid(&c));
  c.drag=0;assert(VC_GuidedSettingsValid(&c));
  c.forwardForceNewtons=-1;assert(!VC_GuidedSettingsValid(&c));
  c.forwardForceNewtons=.08f;
  ParticleDynamicsProfile body=VC_GuidedBody(&c);
+ assert(body.gravityScale==1);c.gravityScale=0;body=VC_GuidedBody(&c);assert(body.gravityScale==0);
  Vector3 v=MotionBody_AdvanceVelocity((Vector3){10,0,0},&body,(Vector3){0},(Vector3){0},(Vector3){3,0,0},.1f);
  assert(v.x==10);
  c.drag=2;body=VC_GuidedBody(&c);
@@ -72,13 +90,15 @@ int main(void) {
  assert(MotionVec_Length(sample.forceNewtons)<1e-5f);
  sample=Field_Evaluate(&d,c.duration,offCenter,(Vector3){0},&physical,&medium);
  assert(MotionVec_Length(sample.forceNewtons)==0 && sample.mediumWeight==0);
- c.count=0;c.duration=.5f;c.emitDuration=2;c.emissionRate=100;
+ c.count=0;c.duration=.5f;c.emitDuration=2;
  assert(VC_GuidedBuildField(&c,&d));
  assert(d.volume.shape==FIELD_PATH_TUBE && d.trajectory.mode==FIELD_TRAJECTORY_STATIC &&
+   d.preservePathLanes &&
    d.flow.followSpeedMps==c.speed &&
    d.forceLaws[0].forwardForceNewtons==c.forwardForceNewtons);
- assert(fabsf(d.lifetime.durationSec-2.05f)<1e-6f &&
-   fabsf(FieldLifetime_Weight(&d.lifetime,2)-1)<1e-5f);
+ float transit=VC_GuidedEstimatedTransitTime(&c,d.volume.path.length,true);
+ assert(fabsf(d.lifetime.durationSec-(c.emitDuration+transit+d.lifetime.fadeSec))<1e-5f &&
+   fabsf(FieldLifetime_Weight(&d.lifetime,c.emitDuration+transit)-1)<1e-5f);
  MotionPathSample pathPoint=MotionPath_Sample(&d.volume.path,d.volume.path.length*.5f);
  assert(pathPoint.position.x>0 && pathPoint.tangent.x>.9f);
  Vector3 offPath=MotionVec_Add(MotionVec_Add(c.source,pathPoint.position),(Vector3){0,0,.2f});
@@ -88,7 +108,11 @@ int main(void) {
  sample=Field_Evaluate(&d,.2f,MotionVec_Add(c.source,pathPoint.position),(Vector3){0},&physical,&medium);
  assert(MotionVec_Dot(sample.forceNewtons,pathPoint.tangent)>0 &&
    sample.mediumVelocityMps.x>c.speed*.9f);
- c.duration=4;c.emitDuration=0;c.emissionRate=0;
+ c.duration=.1f;c.emitDuration=0;
+ assert(VC_GuidedBuildField(&c,&d));
+ assert(d.trajectory.mode==FIELD_TRAJECTORY_PATH &&
+   fabsf(d.lifetime.durationSec-(d.trajectory.path.length/c.speed+d.lifetime.fadeSec))<1e-5f);
+ c.duration=4;
  c.target=c.source;assert(VC_GuidedBuildField(&c,&d));
  assert(d.volume.shape==FIELD_SPHERE && d.trajectory.mode==FIELD_TRAJECTORY_STATIC);
  c.count=1;
@@ -102,6 +126,6 @@ int main(void) {
 }
 '''
 with tempfile.TemporaryDirectory(prefix='wuxing-guided-config-') as temp:
- p=pathlib.Path(temp);(p/'test.c').write_text(stubs+(ROOT/'core/force_field.c').read_text().split('static inline float ValueHash')[0]+config+''.join(function(name) for name in ['VFX_GuidedParticle_DefaultConfig','VFX_GuidedParticle_GetParams','VC_GuidedSettingsValid','VC_GuidedBuildField','VC_GuidedBody'])+main)
+ p=pathlib.Path(temp);(p/'test.c').write_text(stubs+(ROOT/'core/force_field.c').read_text().split('static inline float ValueHash')[0]+config+''.join(function(name) for name in ['VFX_GuidedParticle_DefaultConfig','VFX_GuidedParticle_GetParams','VC_GuidedEmissionRate','VC_GuidedUsesTimedEmission','VC_GuidedInitialBurstCount','VC_GuidedEstimatedTransitTime','VC_GuidedSettingsValid','VC_GuidedBuildField','VC_GuidedBody'])+main)
  subprocess.run(['cc','-std=c99','-Wall','-Wextra','-I'+str(ROOT),'-I'+str(ROOT/'core/tests/stubs'),str(p/'test.c'),'-lm','-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)

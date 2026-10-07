@@ -3075,9 +3075,9 @@ not a low-density solid proxy.
 
 `VFX_GuidedParticle_DefaultConfig` + `VFX_ComposeGuidedParticleEx` chooses its
 field shape from the emission schedule (`core/composition/common/vc_guided_particle.inl`).
-For burst emission (no positive `emitDuration` and `emissionRate`), the field is a
-sphere. With distinct source and target, that sphere travels along the Bezier path
-at `speed`; equal endpoints make it stationary. Its radial force, local swirl and
+For burst emission (`emitDuration == 0`), the field is a sphere. With distinct
+source and target, that sphere travels along the Bezier path at `speed`; equal
+endpoints make it stationary. Its radial force, local swirl and
 turbulence affect nearby particles, and ordinary Wind is added once. For continuous
 emission with distinct endpoints, the field is a stationary `FIELD_PATH_TUBE`
 spanning the complete Bezier route from A to B. It does not travel. Equal endpoints
@@ -3089,11 +3089,30 @@ the along-tube airflow, which drag couples independently. This follows the
 separate curve-follow and curve-suction controls in [SideFX POP Curve Force](https://www.sidefx.com/docs/houdini/nodes/dop/popcurveforce.html);
 its target-velocity mode avoids unbounded overshoot. Swirl, turbulence and ordinary
 Wind remain independent contributions. Particles
-sample their current position without capture, kinematic snapping, arrival actions
-or automatic target blasts. The tube stays at full strength through `emitDuration`,
-then uses its fade tail. Keep the emitter's initial spawn footprint within the tube
+sample their current position without legacy guide capture, kinematic snapping, arrival actions
+or automatic target blasts. The tube stays at full strength through emission and
+the estimated A-to-B transit, then uses its fade tail. Field life is at least
+`emitDuration + transitTime + fade`; burst mode uses zero emission time. Transit
+uses the generated path's arc length and `speed`. A continuous stream adds one
+response time based on body drag and forward-force response, using its known mass
+(including a supplied dynamics profile when present). The inspector's `Minimum
+field life` is a lower bound and fallback, so long or slow routes extend beyond
+it. At zero speed there is no finite A-to-B transit estimate. Keep the emitter's
+initial spawn footprint within the tube
 radius if every newborn must be guided. Independent target fields belong to
 `MotionFields_CreateField`, outside this composition.
+
+For a continuous path tube, each particle stores its first captured transverse
+offset (normal/binormal) in its own `MotionReceiver`. The tube corrects toward
+that offset instead of collapsing every particle onto one centerline. This is
+constant-size per-particle state and does not calculate pairwise particle forces.
+`count` is the total number of particles in either mode. At zero emission time,
+they spawn as one burst. At positive emission time, they are spread across that
+interval at the derived average rate `count / emitDuration`; there is no additional
+startup burst. At steady stream speed, longitudinal spacing is approximately
+`speed * emitDuration / count` (for example, 20 particles over 2 seconds at 3 m/s
+gives about 0.3 m). Acceleration and external forces can temporarily change that
+spacing. The default formation radius captures distinct lanes for the stream.
 
 `maxForceNewtons` caps lateral path correction; `forwardForceNewtons` separately
 caps the tangent-speed controller. These independent force channels add together,
@@ -3103,15 +3122,18 @@ constant-thrust acceleration and brakes particles already moving faster than the
 requested stream speed, following the target-velocity/drag distinction in the
 [SideFX POP Solver](https://www.sidefx.com/docs/houdini/nodes/dop/popsolver.html).
 
-Emission count/rate/duration remain independent; count=0 and zero continuous
-emission creates only a field. A continuous tube's effective lifetime covers the
+Emission count and duration define the total and its schedule; the deprecated
+`emissionRate` member is ignored. A zero count creates only a field. A continuous tube's effective lifetime covers the
 emission duration plus its fade tail. Default body lifetime matches the effective
 field lifetime;
 particle templates can specialize it. Default mass and density control Newton
 response and buoyancy, while visual radius remains separate. `drag` is a linear
 response rate in s^-1 relative to local airflow: zero disables default damping;
 positive values relax toward that airflow. Gravity and direct forces still act
-at zero drag. A `particleTemplate` owns all body/render properties and can select
+at zero drag. `gravityScale` independently scales gravity and buoyancy; set it to
+zero when testing with gravity disabled. Zero turbulence/swirl removes those
+procedural flow terms, but attraction, gravity, wind, and the randomized emitter
+surface can still move particles. A `particleTemplate` owns all body/render properties and can select
 quadratic mass/area/Cd aerodynamics instead. `emissionSource` replaces source
 geometry; `fieldOverride` replaces the complete world-space field and lifetime.
 These are copied at spawn; resource pointers keep their usual ownership contracts.

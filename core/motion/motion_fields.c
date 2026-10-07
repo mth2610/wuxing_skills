@@ -330,8 +330,10 @@ bool MotionFields_Capture(MotionFieldHandle h, Vector3 p, MotionReceiver *r) {
   if (g->desc.formation == MOTION_FORMATION_SHELL)
     f = MotionPath_Sample(&g->desc.path,
                           Motion_Clamp(g->distance, 0, g->desc.path.length));
-  *r = (MotionReceiver){
-      .guide = h, .distance = f.distance, .segment = f.segment};
+  /* A receiver may already own state for independent typed fields. Binding a
+   * legacy guide must not erase that state. */
+  r->guide=h; r->localOffset=(Vector3){0}; r->distance=f.distance;
+  r->flowTime=0; r->segment=f.segment; r->arrived=false;
   if (g->desc.formation == MOTION_FORMATION_SHELL)
     r->localOffset =
         MotionPath_LocalOffset(f, MotionVec_Limit(MotionVec_Sub(p, f.position),
@@ -344,6 +346,11 @@ bool MotionFields_Capture(MotionFieldHandle h, Vector3 p, MotionReceiver *r) {
     r->localOffset.x = 0;
   }
   return true;
+}
+static void MotionReceiver_ClearGuide(MotionReceiver *r) {
+  if(!r) return;
+  r->guide=0; r->localOffset=(Vector3){0}; r->distance=0;
+  r->flowTime=0; r->segment=0; r->arrived=false;
 }
 static Vector3 Motion_RotateLane(MotionPathSample f, Vector3 local,
                                  const MotionFlowDesc *flow, float radius,
@@ -612,9 +619,11 @@ static void Motion_SampleLegacy(Vector3 p, Vector3 v, float massKg, float dt,
   MotionReceiver local = {0};
   if (!r)
     r = &local;
+  /* Legacy guide ownership is a subset of MotionReceiver. Typed-field lane
+   * captures share the object but have an independent lifecycle. */
   MotionGuideRuntime *bound = Motion_FindGuide(r->guide);
   if (!bound || !(bound->desc.receiverMask & mask)) {
-    *r = (MotionReceiver){0};
+    MotionReceiver_ClearGuide(r);
     bound = NULL;
   }
   if (bound && !r->arrived) {
@@ -622,7 +631,7 @@ static void Motion_SampleLegacy(Vector3 p, Vector3 v, float massKg, float dt,
         MotionPath_Project(&bound->desc.path, p, r->segment, r->segment + 2);
     if (MotionVec_Length(MotionVec_Sub(p, f.position)) >
         Motion_GuideRadius(&bound->desc, f.distance)) {
-      *r = (MotionReceiver){0};
+      MotionReceiver_ClearGuide(r);
       bound = NULL;
     }
   }
@@ -630,7 +639,7 @@ static void Motion_SampleLegacy(Vector3 p, Vector3 v, float massKg, float dt,
       bound->desc.formation != MOTION_FORMATION_SHELL) {
     MotionPathSample f;
     if (!Motion_InGuide(bound, p, &f)) {
-      *r = (MotionReceiver){0};
+      MotionReceiver_ClearGuide(r);
       bound = NULL;
     }
   }
@@ -863,8 +872,40 @@ MotionFieldHandle MotionFields_SpawnStaticVortex(Vector3 center, Vector3 axis, f
   return MotionFields_CreateField(&d);
 }
 
-static void Motion_ComposePhysical(const FieldDesc *d,float age,Vector3 p,Vector3 v,
-    const BodyPhysicalProperties *body,const MediumProperties *medium,FieldSample *out,bool dragPass) {
+static bool Motion_PhysicalPathLane(const FieldDesc *d,MotionFieldHandle handle,
+    float age,Vector3 position,MotionReceiver *receiver,Vector3 *offset) {
+  if(!d->preservePathLanes || d->volume.shape!=FIELD_PATH_TUBE ||
+     !receiver || !offset) return false;
+  bool hasPathGuide=false;
+  for(int i=0;i<d->forceLawCount;++i)
+    if(d->forceLaws[i].type==FORCE_LAW_PATH_GUIDE) { hasPathGuide=true; break; }
+  if(!hasPathGuide) return false;
+  for(int i=0;i<4;++i)
+    if(receiver->pathLaneFields[i]==handle) {
+      *offset=receiver->pathLaneOffsets[i];
+      return true;
+    }
+  int slot=-1;
+  for(int i=0;i<4;++i)
+    if(!MotionFields_IsAlive(receiver->pathLaneFields[i])) { slot=i; break; }
+  if(slot<0) return false;
+  FieldTransform frame=FieldTrajectory_Transform(d,age);
+  Vector3 local=FieldTransform_LocalVector(&frame,MotionVec_Sub(position,frame.position));
+  MotionPathSample nearest=MotionPath_Project(&d->volume.path,local,0,d->volume.path.count-2);
+  if(FieldVolume_WeightAt(&d->volume,local,&nearest)<=0) return false;
+  Vector3 radial=MotionVec_Sub(local,nearest.position);
+  radial=MotionVec_Sub(radial,MotionVec_Scale(nearest.tangent,
+      MotionVec_Dot(radial,nearest.tangent)));
+  radial=MotionVec_Limit(radial,d->volume.radiusM*.65f);
+  *offset=MotionPath_LocalOffset(nearest,radial);
+  offset->x=0;
+  receiver->pathLaneFields[slot]=handle;
+  receiver->pathLaneOffsets[slot]=*offset;
+  return true;
+}
+static void Motion_ComposePhysical(const FieldDesc *d,MotionFieldHandle handle,float age,
+    Vector3 p,Vector3 v,const BodyPhysicalProperties *body,const MediumProperties *medium,
+    MotionReceiver *receiver,FieldSample *out,bool dragPass) {
   bool hasPassLaw=false;
   for(int j=0;j<d->forceLawCount;++j)
     if((d->forceLaws[j].type==FORCE_LAW_DRAG)==dragPass) {
@@ -878,11 +919,12 @@ static void Motion_ComposePhysical(const FieldDesc *d,float age,Vector3 p,Vector
     if(out->mediumWeight>0) resolved.velocityMps=out->mediumIsAbsolute?out->mediumVelocityMps:
       MotionVec_Add(medium->velocityMps,out->mediumVelocityMps);
   }
-  FieldSample sample=Field_EvaluatePass(d,age,p,v,body,&resolved,includeFlow,true,dragPass);
+  Vector3 lane;const Vector3 *laneOffset=Motion_PhysicalPathLane(d,handle,age,p,receiver,&lane)?&lane:NULL;
+  FieldSample sample=Field_EvaluatePass(d,age,p,v,body,&resolved,includeFlow,true,dragPass,laneOffset);
   FieldSample_Combine(out,&sample);
 }
 static void Motion_SamplePhysical(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,
-    const MediumProperties *medium,unsigned int mask,FieldSample *out) {
+    const MediumProperties *medium,unsigned int mask,MotionReceiver *receiver,FieldSample *out) {
   /* Resolve media first; all authored drag laws then consume that single
    * resolved velocity. Overlapping drag laws remain explicit force additions. */
   for(int pass=0;pass<2;++pass) {
@@ -891,7 +933,7 @@ static void Motion_SamplePhysical(Vector3 p,Vector3 v,const BodyPhysicalProperti
       if(!t->handle) continue;
       const FieldDesc *d=t->typed?&t->physical:t->desc.usePhysicalField?&t->desc.physicalField:NULL;
       if(!d || !((d->receiverMask?d->receiverMask:MOTION_RECEIVER_ALL) & mask)) continue;
-      Motion_ComposePhysical(d,t->age,p,v,body,medium,out,pass!=0);
+      Motion_ComposePhysical(d,t->handle,t->age,p,v,body,medium,receiver,out,pass!=0);
     }
     for(int i=0;i<MOTION_FIELDS_MAX_GUIDES;++i) {
       MotionGuideRuntime *g=&s_guides[i]; MotionPathSample projection;
@@ -903,7 +945,7 @@ static void Motion_SamplePhysical(Vector3 p,Vector3 v,const BodyPhysicalProperti
       d.transform.axisX=MotionPath_WorldOffset(f,d.transform.axisX);
       d.transform.axisY=MotionPath_WorldOffset(f,d.transform.axisY);
       d.transform.axisZ=MotionPath_WorldOffset(f,d.transform.axisZ);
-      Motion_ComposePhysical(&d,g->age,p,v,body,medium,out,pass!=0);
+      Motion_ComposePhysical(&d,g->handle,g->age,p,v,body,medium,receiver,out,pass!=0);
     }
   }
 }
@@ -933,7 +975,7 @@ void MotionFields_SampleExternalBody(Vector3 p,Vector3 v,const BodyPhysicalPrope
   *out=(FieldSample){0};
   if(!Motion_ValidBodySample(body,medium,c) || !Motion_FiniteVector(p) || !Motion_FiniteVector(v) ||
       c->mode==RECEIVER_STATIC || c->mode==RECEIVER_KINEMATIC) return;
-  Motion_SamplePhysical(p,v,body,medium,mask,out);
+  Motion_SamplePhysical(p,v,body,medium,mask,NULL,out);
   Motion_ProjectResponse(c,out);
 }
 void MotionFields_SampleBody(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,
@@ -954,7 +996,7 @@ void MotionFields_SampleBody(Vector3 p,Vector3 v,const BodyPhysicalProperties *b
   if(MotionVec_Length(legacy.airflowVelocity)>0) {
     out->mediumWeight=1; out->mediumPriority=-2147483647;
   }
-  Motion_SamplePhysical(p,v,body,medium,mask,out);
+  Motion_SamplePhysical(p,v,body,medium,mask,receiver,out);
   Motion_ProjectResponse(constraints,out);
 }
 

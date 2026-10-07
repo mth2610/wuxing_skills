@@ -19,8 +19,8 @@ VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void) {
   c.target = (Vector3){2, 1, 0};
   c.duration = 4;
   c.count = 512;
-  c.emissionRate = 160;
-  c.formationRadius = 0.10f;
+  c.emissionRate = 0; /* Deprecated; continuous rate is derived from count/time. */
+  c.formationRadius = 0.45f;
   c.particleRadius = 0.11f;
   c.massKg = 0.004f;
   c.speed = 3;
@@ -31,6 +31,7 @@ VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void) {
   c.swirlSpeed = 4.0f;
   c.material = VC_MAT_LIGHTNING;
   c.densityKgM3 = 600;
+  c.gravityScale = 1;
   return c;
 }
 int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *c, VFX_ParamDef *out,
@@ -45,19 +46,20 @@ int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *c, VFX_ParamDef *out,
   /* Override identity is fixed for a cast; changing numeric values never
    * inserts/removes rows or changes selection to another property. */
   if (!c->fieldOverride) {
-    GUIDE_FLOAT("Speed m/s", speed, 0, 20, .25f);
+    const char *speedName=c->emitDuration>0?"Stream speed m/s":"Field travel speed m/s";
+    if(n<max) out[n++]=(VFX_ParamDef){.name=speedName,.group=group,
+      .type=VFX_PARAM_FLOAT,.valPtr=&c->speed,.minFloat=0,.maxFloat=20,.stepFloat=.25f};
     GUIDE_FLOAT("Field radius m", guideRadius, .1f, 8, .1f);
     GUIDE_FLOAT("Pull force N", maxForceNewtons, 0, 5, .02f);
     GUIDE_FLOAT("Forward force N", forwardForceNewtons, 0, 5, .02f);
     GUIDE_FLOAT("Swirl m/s", swirlSpeed, -8, 8, .5f);
     GUIDE_FLOAT("Turbulence m/s", turbulenceSpeed, 0, 8, .2f);
-    GUIDE_FLOAT("Lifetime s", duration, .1f, 30, .5f);
+    GUIDE_FLOAT("Minimum field life s", duration, .1f, 30, .5f);
   }
   group = "Emission";
-  if (n < max) out[n++] = (VFX_ParamDef){.name="Burst count", .group=group,
+  if (n < max) out[n++] = (VFX_ParamDef){.name="Particle count", .group=group,
     .type=VFX_PARAM_INT, .valPtr=&c->count, .minInt=0, .maxInt=2048};
-  GUIDE_FLOAT("Emit duration s", emitDuration, 0, 20, .5f);
-  GUIDE_FLOAT("Emission rate /s", emissionRate, 0, 1000, 25);
+  GUIDE_FLOAT("Emission time s", emitDuration, 0, 20, .5f);
   if (!c->emissionSource)
     GUIDE_FLOAT("Source radius m", formationRadius, 0, 2, .025f);
   if (!c->particleTemplate) {
@@ -66,9 +68,38 @@ int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *c, VFX_ParamDef *out,
     GUIDE_FLOAT("Drag /s", drag, 0, 20, .25f);
     GUIDE_FLOAT("Mass kg", massKg, .000001f, 1, .0001f);
     GUIDE_FLOAT("Density kg/m3", densityKgM3, .1f, 2000, 100);
+    GUIDE_FLOAT("Gravity scale", gravityScale, -2, 2, .1f);
   }
 #undef GUIDE_FLOAT
   return n;
+}
+static float VC_GuidedEmissionRate(const VFX_GuidedParticleConfig *c) {
+  return c && c->emitDuration>0 && c->count>0
+      ? (float)c->count/c->emitDuration : 0;
+}
+static bool VC_GuidedUsesTimedEmission(const VFX_GuidedParticleConfig *c) {
+  return c && c->emitDuration>0 && c->count>0;
+}
+static int VC_GuidedInitialBurstCount(const VFX_GuidedParticleConfig *c) {
+  return c && c->emitDuration<=0 ? c->count : 0;
+}
+static float VC_GuidedEstimatedTransitTime(const VFX_GuidedParticleConfig *c,
+    float pathLength,bool continuous) {
+  if(!c || pathLength<=0 || c->speed<=1e-5f) return 0;
+  float travel=pathLength/c->speed;
+  if(!continuous) return travel;
+  float mass=c->massKg,couplingHz=c->drag;
+  if(c->particleTemplate) {
+    const ParticleDynamicsProfile *d=c->particleTemplate->physics.dynamics;
+    if(!d) return travel;
+    mass=d->inverseMassKg>0?1.0f/d->inverseMassKg:0;
+    couplingHz=d->windCouplingHz;
+  }
+  float responseHz=fmaxf(couplingHz,0);
+  if(mass>0 && c->forwardForceNewtons>0)
+    responseHz+=c->forwardForceNewtons/(mass*c->speed);
+  if(responseHz>1e-5f) travel+=1.0f/responseHz;
+  return travel;
 }
 static void VC_GuidedParticle_Update(float dt) {
   if (dt <= 0)
@@ -88,9 +119,10 @@ static void VC_GuidedParticle_Update(float dt) {
 }
 static bool VC_GuidedSettingsValid(const VFX_GuidedParticleConfig *c) {
   if (!c || !Field_FiniteVector(c->source) || c->count < 0 || c->count > 2048 ||
-      !isfinite(c->emitDuration) || c->emitDuration < 0 ||
-      (c->emitDuration > 0 && (!isfinite(c->emissionRate) || c->emissionRate < 0)))
+      !isfinite(c->emitDuration) || c->emitDuration < 0)
     return false;
+  if(c->emitDuration>0 && c->count>0 &&
+     (!isfinite(VC_GuidedEmissionRate(c)) || VC_GuidedEmissionRate(c)<=0)) return false;
   if (!c->fieldOverride && (!Field_FiniteVector(c->target) ||
       !isfinite(c->speed) || c->speed < 0 || !isfinite(c->duration) || c->duration <= 0 ||
       !isfinite(c->guideRadius) || c->guideRadius <= 0 ||
@@ -98,13 +130,14 @@ static bool VC_GuidedSettingsValid(const VFX_GuidedParticleConfig *c) {
       !isfinite(c->forwardForceNewtons) || c->forwardForceNewtons < 0 ||
       !isfinite(c->swirlSpeed) || !isfinite(c->turbulenceSpeed) || c->turbulenceSpeed < 0))
     return false;
-  bool emitting = c->count > 0 || (c->emitDuration > 0 && c->emissionRate > 0);
+  bool emitting = c->count > 0;
   if (emitting && (c->renderMode < PARTICLE_RENDER_BILLBOARD ||
       c->renderMode > PARTICLE_RENDER_SURFACE_INPUT ||
       (!c->emissionSource && (!isfinite(c->formationRadius) || c->formationRadius < 0)) ||
       (!c->particleTemplate && (!isfinite(c->particleRadius) || c->particleRadius <= 0 ||
         !isfinite(c->massKg) || c->massKg <= 0 || !isfinite(c->densityKgM3) || c->densityKgM3 <= 0 ||
-        !isfinite(c->drag) || c->drag < 0)))) return false;
+        !isfinite(c->drag) || c->drag < 0 || !isfinite(c->gravityScale) ||
+        c->gravityScale < -2 || c->gravityScale > 2)))) return false;
   return true;
 }
 static bool VC_GuidedBuildField(const VFX_GuidedParticleConfig *c, FieldDesc *field) {
@@ -113,17 +146,11 @@ static bool VC_GuidedBuildField(const VFX_GuidedParticleConfig *c, FieldDesc *fi
   field->volume.radiusM = c->guideRadius;
   field->volume.coreFraction = .25f;
   field->transform.position = c->source;
-  bool continuous = c->emitDuration > 0 && c->emissionRate > 0;
-  /* A static tube must guide late births through the full emission interval,
-   * then retain the authored fade tail. */
+  bool continuous = c->emitDuration > 0;
   float fadeSec = fminf(.3f, c->duration * .1f);
-  float activeDuration = continuous
-      ? fmaxf(c->duration, c->emitDuration + fadeSec) : c->duration;
-  field->lifetime.durationSec = activeDuration;
-  field->lifetime.attackSec = fminf(.1f, c->duration * .1f);
-  field->lifetime.fadeSec = fadeSec;
   Vector3 delta = MotionVec_Sub(c->target, c->source);
   float len = MotionVec_Length(delta);
+  float pathLength=0;
   if (len > .001f) {
     Vector3 up = {0, 1, 0};
     Vector3 a = MotionVec_Add(MotionVec_Scale(delta, .33f), MotionVec_Scale(up, len * .06f));
@@ -133,11 +160,13 @@ static bool VC_GuidedBuildField(const VFX_GuidedParticleConfig *c, FieldDesc *fi
       points[i] = GetBezierPoint((Vector3){0}, a, b, delta, (float)i/32);
     MotionPath path;
     if (!MotionPath_Build(&path, points, 33)) return false;
+    pathLength=path.length;
     field->forceLawCount = 1;
     if (continuous) {
       /* Continuous births share one stationary corridor from A to B. */
       field->volume.shape = FIELD_PATH_TUBE;
       field->volume.path = path;
+      field->preservePathLanes = true;
       field->forceLaws[0] = (ForceLaw){
           .type=FORCE_LAW_PATH_GUIDE,
           .magnitudeNewtons=c->maxForceNewtons,
@@ -163,13 +192,22 @@ static bool VC_GuidedBuildField(const VFX_GuidedParticleConfig *c, FieldDesc *fi
   field->flow.procedural.swirlSpeedMps = c->swirlSpeed;
   field->flow.procedural.turbulenceSpeedMps = c->turbulenceSpeed;
   field->flow.procedural.eddyLengthM = c->guideRadius * .3f;
+  float transitSec=VC_GuidedEstimatedTransitTime(c,pathLength,continuous);
+  float emissionSec=continuous?c->emitDuration:0;
+  float requiredLife=emissionSec+transitSec+fadeSec;
+  if(!isfinite(requiredLife)) return false;
+  /* `duration` remains an authorable minimum/fallback. Routed fields also live
+   * through the last emitted particle's estimated A-to-B transit and fade. */
+  field->lifetime.durationSec=fmaxf(c->duration,requiredLife);
+  field->lifetime.attackSec=fminf(.1f,c->duration*.1f);
+  field->lifetime.fadeSec=fadeSec;
   return true;
 }
 static ParticleDynamicsProfile VC_GuidedBody(const VFX_GuidedParticleConfig *c) {
   /* The simple control is a linear response to relative airflow. A template
    * can instead supply mass/area/Cd quadratic aerodynamics without stacking. */
   return (ParticleDynamicsProfile){.inverseMassKg=1/c->massKg,
-      .densityKgM3=c->densityKgM3, .gravityScale=1,
+      .densityKgM3=c->densityKgM3, .gravityScale=c->gravityScale,
       .windSusceptibility=1, .windCouplingHz=c->drag};
 }
 MotionFieldHandle
@@ -178,7 +216,7 @@ VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
     *c->surfaceStreamOut = (ParticleRenderStream){0};
   if (!VC_GuidedSettingsValid(c)) return 0;
   VC_GuidedStream *stream = NULL;
-  if (c->emitDuration > 0 && c->emissionRate > 0) {
+  if (VC_GuidedUsesTimedEmission(c)) {
     for (int i = 0; i < VC_GUIDED_MAX_STREAMS; i++)
       if (!s_guidedStreams[i].active) {
         stream = &s_guidedStreams[i];
@@ -236,7 +274,7 @@ VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
   if (stream) {
     *stream = (VC_GuidedStream){.active = true,
                                 .emission = {.durationSeconds = c->emitDuration,
-                                             .ratePerSecond = c->emissionRate},
+                                             .ratePerSecond = VC_GuidedEmissionRate(c)},
                                 .body = p.physics.dynamics ? *p.physics.dynamics : body};
     if (p.physics.dynamics) desc.particle.physics.dynamics = &stream->body;
   }
@@ -247,8 +285,9 @@ VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
       stream->active = false;
     return 0;
   }
-  if (c->count > 0)
-    ParticleManager_Emit(emitter, c->count);
+  int initialBurst=VC_GuidedInitialBurstCount(c);
+  if (initialBurst>0)
+    ParticleManager_Emit(emitter, initialBurst);
   if (c->surfaceStreamOut)
     ParticleManager_GetSurfaceStream(emitter, c->surfaceStreamOut);
   if (stream)

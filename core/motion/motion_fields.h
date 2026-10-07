@@ -115,6 +115,10 @@ typedef struct MotionReceiver {
   float distance, flowTime;
   int segment;
   bool arrived;
+  /* Receiver-owned transverse lanes for persistent physical path-tube fields.
+   * Legacy guide release/capture preserves these independent field bindings. */
+  MotionFieldHandle pathLaneFields[4];
+  Vector3 pathLaneOffsets[4]; /* x=tangent, y=normal, z=binormal coordinates. */
 } MotionReceiver;
 typedef struct MotionFieldSample {
   Vector3 forceNewtons, airflowVelocity;

@@ -83,6 +83,9 @@ typedef struct FieldDesc {
   int forceLawCount;
   FlowField flow;
   unsigned int receiverMask;
+  /* Path tubes can retain each receiver's captured cross-section lane; no
+   * particle-particle forces or per-sample allocations are required. */
+  bool preservePathLanes;
 } FieldDesc;
 typedef struct FieldSample {
   Vector3 forceNewtons, accelerationMps2, mediumVelocityMps;
@@ -353,7 +356,8 @@ static inline Vector3 Field_LimitVector(Vector3 value, float maximum) {
 }
 static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
     Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,
-    const MediumProperties *medium,bool includeFlow,bool filterDrag,bool dragPass) {
+    const MediumProperties *medium,bool includeFlow,bool filterDrag,bool dragPass,
+    const Vector3 *pathLaneOffset) {
   FieldSample out={0};
   if(!d || !body || !medium || d->forceLawCount<0 || d->forceLawCount>FIELD_MAX_FORCE_LAWS ||
       !isfinite(age) || !isfinite(body->massKg) || body->massKg<0 ||
@@ -405,8 +409,11 @@ static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
     if (law.type == FORCE_LAW_PATH_GUIDE && d->volume.shape == FIELD_PATH_TUBE) {
       MotionPathSample nearest = *pathSample;
       Vector3 tangent = FieldTransform_Vector(&t, nearest.tangent);
+      Vector3 pathGoal=nearest.position;
+      if(pathLaneOffset)
+        pathGoal=MotionVec_Add(pathGoal,MotionPath_WorldOffset(nearest,*pathLaneOffset));
       Vector3 toPath = MotionVec_Sub(
-          MotionVec_Add(t.position, FieldTransform_Vector(&t, nearest.position)), position);
+          MotionVec_Add(t.position, FieldTransform_Vector(&t, pathGoal)), position);
       Vector3 normalOffset = MotionVec_Sub(toPath,
           MotionVec_Scale(tangent, MotionVec_Dot(toPath, tangent)));
       Vector3 relativeVelocity = MotionVec_Sub(velocity,
@@ -422,9 +429,14 @@ static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
       if(d->flow.enabled && d->flow.procedural.swirlSpeedMps!=0) {
         /* A path guide must damp motion toward/away from its centreline without
          * cancelling the circumferential velocity that forms the authored swirl. */
-        float radialSq=MotionVec_Dot(normalOffset,normalOffset);
+        Vector3 swirlRadial=MotionVec_Sub(p,nearest.position);
+        swirlRadial=MotionVec_Sub(swirlRadial,
+            MotionVec_Scale(nearest.tangent,MotionVec_Dot(swirlRadial,nearest.tangent)));
+        if(MotionVec_Length(swirlRadial)<1e-5f && pathLaneOffset)
+          swirlRadial=MotionPath_WorldOffset(nearest,*pathLaneOffset);
+        float radialSq=MotionVec_Dot(swirlRadial,swirlRadial);
         if(radialSq>1e-10f) {
-          Vector3 radial=MotionVec_Scale(normalOffset,1/sqrtf(radialSq));
+          Vector3 radial=MotionVec_Scale(FieldTransform_Vector(&t,swirlRadial),1/sqrtf(radialSq));
           dampingVelocity=MotionVec_Scale(radial,MotionVec_Dot(relativeVelocity,radial));
         }
       }
@@ -463,6 +475,6 @@ static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
 static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
     Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,
     const MediumProperties *medium) {
-  return Field_EvaluatePass(d,age,position,velocity,body,medium,true,false,false);
+  return Field_EvaluatePass(d,age,position,velocity,body,medium,true,false,false,NULL);
 }
 #endif

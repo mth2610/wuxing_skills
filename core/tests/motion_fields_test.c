@@ -725,6 +725,38 @@ static void TestPathTubeGuide(void) {
       "stationary route field expires at its configured end time");
   MotionFields_Reset();
 }
+static void TestPhysicalPathLaneRetention(void) {
+  MotionFields_Reset();
+  FieldDesc d=MotionField_Default();
+  Vector3 points[]={{0,0,0},{10,0,0}};
+  CHECK(MotionPath_Build(&d.volume.path,points,2),"build lane-preserving physical tube");
+  d.volume.shape=FIELD_PATH_TUBE;d.volume.radiusM=1;d.volume.coreFraction=.25f;
+  d.lifetime.durationSec=4;d.preservePathLanes=true;
+  d.forceLawCount=1;
+  d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_PATH_GUIDE,
+      .magnitudeNewtons=.32f,.springStiffnessNPerM=.32f};
+  MotionFieldHandle h=MotionFields_CreateField(&d);
+  BodyPhysicalProperties body=BodyPhysicalProperties_Sphere(.004f,600,0);
+  MediumProperties medium={0};
+  ReceiverConstraints freeBody={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
+  MotionReceiver receiver={0};FieldSample sample;
+  MotionFields_SampleBody((Vector3){2,.3f,.2f},(Vector3){3,0,0},&body,&medium,
+      &freeBody,.008f,MOTION_RECEIVER_PARTICLE,&receiver,&sample);
+  CHECK(receiver.pathLaneFields[0]==h &&
+        fabsf(receiver.pathLaneOffsets[0].y-.3f)<1e-5f &&
+        fabsf(receiver.pathLaneOffsets[0].z-.2f)<1e-5f,
+      "physical tube captures one bounded receiver lane");
+  MotionFields_SampleBody((Vector3){3,0,0},(Vector3){3,0,0},&body,&medium,
+      &freeBody,.008f,MOTION_RECEIVER_PARTICLE,&receiver,&sample);
+  CHECK(sample.forceNewtons.y>0 && sample.forceNewtons.z>0,
+      "tube guide restores each particle to its own lane rather than the shared centreline");
+  MotionFields_SampleBody((Vector3){3,.3f,.2f},(Vector3){3,0,0},&body,&medium,
+      &freeBody,.008f,MOTION_RECEIVER_PARTICLE,&receiver,&sample);
+  CHECK(fabsf(sample.forceNewtons.y)<1e-5f && fabsf(sample.forceNewtons.z)<1e-5f,
+      "captured lane remains a stable transverse equilibrium");
+  MotionFields_Stop(h);
+  MotionFields_Reset();
+}
 static void TestSimpleVolumeBuilders(void) {
   MotionFields_Reset();
   MotionFieldHandle h=MotionFields_SpawnStaticAttractor((Vector3){2,1,0},2,.2f,2,.1f,.2f);
@@ -824,6 +856,7 @@ int main(void) {
   TestDensityAndForceProfiles();
   TestSimpleVolumeBuilders();
   TestPathTubeGuide();
+  TestPhysicalPathLaneRetention();
   TestOwnedStorageAndPools();
   TestPulseAndReceiverMasks();
   TestBodyMassAndAir();

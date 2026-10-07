@@ -3925,6 +3925,9 @@ the behavior reference. Guard: `core/tests/motion_fields_test.c`.
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-07 | Codex | Guided route lifetime from transit estimate | core/composition/common/vc_guided_particle.inl; core/tests/test_guided_config.py | Ground-truth |
+| 2026-10-07 | Codex | Timed Guided total-count emission | core/composition/common/vc_guided_particle.inl; core/composition/vc_emission.h; core/tests/test_guided_config.py | Ground-truth |
+| 2026-10-07 | Codex | Independent physical-field lane state | core/motion/motion_fields.c; core/motion/motion_fields.h; core/tests/motion_fields_test.c | Ground-truth |
 | 2026-10-07 | Codex | Bounded path projection and physical passes | core/motion/motion_path.h; core/motion/physical_field.h; core/motion/motion_fields.c; core/tests/motion_fields_test.c | Ground-truth |
 | 2026-10-06 | Codex | Duplicate physical response | core/wind/wind_system.c; core/motion/motion_body.h; core/tests/particle_external_field_test.c | Ground-truth |
 | 2026-10-05 | Codex | Continuous-force drag and bounded curl | core/motion/motion_body.h; core/motion/motion_flow.h; core/tests/motion_flow_test.c | Ground-truth |
@@ -3946,3 +3949,39 @@ inspector; keep descriptor ordering independent of numeric values. Small float
 controls use significant digits and step-relative boundary tolerance. Sources:
 `core/composition/common/vc_guided_particle.inl`, `core/composition/common/vc_params.h`.
 Guards: `core/tests/test_guided_config.py`, `core/tests/vfx_params_test.c`.
+
+## Independent field state must survive legacy guide release (07/10/2026)
+
+**Symptom.** A physical path tube captures a per-particle lane, but on the next
+sample its restoring force points back to the shared centerline.
+
+**Cause.** Legacy guide sampling reset the complete `MotionReceiver` when no
+legacy guide was bound, erasing receiver-owned state for independent typed fields.
+
+**Rule.** Clear only legacy guide members when releasing a guide; capturing a
+legacy guide must preserve independent typed-field bindings. Guard:
+`core/tests/motion_fields_test.c` (`TestPhysicalPathLaneRetention`).
+
+## Timed Guided emission must not also burst the total (07/10/2026)
+
+**Symptom.** Increasing Guided emission time still produces a large first-frame
+burst, followed by a sparse stream.
+
+**Cause.** The composition emits `count` immediately and separately advances a
+rate schedule, treating the total as both a burst and a continuous quantity.
+
+**Rule.** Interpret `count` as the total: emit it immediately only when duration
+is zero; otherwise derive the schedule rate as `count / emitDuration`. Guard:
+`core/tests/test_guided_config.py`.
+
+## Guided route fields must outlive the last transit (07/10/2026)
+
+**Symptom.** A field expires or fades before late continuous births can reach B,
+or a moving burst sphere stops before traversing its route.
+
+**Cause.** Lifetime was based on an authored duration and emission window without
+accounting for the generated path length or particle response time.
+
+**Rule.** Keep a routed field active through its emission window, estimated
+arc-length/speed transit, response allowance and fade; treat the authored
+duration as a minimum/fallback. Guard: `core/tests/test_guided_config.py`.
