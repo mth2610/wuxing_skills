@@ -17,6 +17,8 @@ Public declarations: [`../vfx_test.h`](../vfx_test.h). HUD implementation is gen
 
 Every visible parameter row has previous/decrease and next/increase buttons. Buttons select and edit their own row. Integer and float values clamp to their declared limits; enum and boolean values cycle. Tab/CapsLock selects a parameter and scrolls it into view; `/` edits forward and Shift `/` edits backward.
 
+Guided Particle uses a stable parameter list. Plain comma/period decreases/increases the selected value; Shift+comma/period selects the previous/next preset. A preset selection resets its authored defaults; parameter edits preserve the preset and selected row. Parameters are copied at spawn, so edits apply on the next scene click, as the inspector title states. `WUXING_GUIDED_PRESET=0..5` selects moving attraction, moving swirl, moving turbulence, catch free leaves, zero drag, or stationary attraction for deterministic capture. Zero drag disables medium drag; explicit Newton field forces still act. Stationary attraction uses coincident source and target and expires after its configured duration.
+
 The inspector scrolls long lists and sizes short lists to their row count. Wheel input over UI belongs to the tester; consumers must consult `VFXTest_IsPointerOverUI()` before applying camera zoom. Button activation occurs on release over the armed rectangle, including Android's below-84-pixel gesture inset. Drag capture lasts until release, preventing a UI gesture from becoming a scene cast.
 
 Fixtures opens the browser; Help exposes demo shortcuts and compact force-test buttons. `<`/`>` preserves authored fixture preset controls. `V` toggles the fixture animation clock; it does not pause particle, gas, or liquid simulation. `U` hides the tester controls.
@@ -31,4 +33,5 @@ In the VFX screen, `7` / keypad `7` casts a field-only forward guide from the ch
 
 | Date | Section | Source | Tier |
 |---|---|---|---|
+| 2026-10-07 | Guided Particle parameters and preset controls | vfx_test.c; scripts/sync_vfx_test.py; scripts/templates/vfx_test_ui.c.in | Ground-truth |
 | 2026-10-05 | VFX tester | vfx_test.h; scripts/templates/vfx_test_ui.c.in; generated vfx_test.c | Ground-truth |

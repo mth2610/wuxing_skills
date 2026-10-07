@@ -816,9 +816,10 @@ MotionFieldHandle MotionFields_SpawnMovingGuide(const MotionPath *path, float sp
         .center = (Vector3){0, 0, 0},
         .magnitudeNewtons = pullStrengthN};
   }
-  if (swirlSpeedMps != 0.0f || turbulenceSpeedMps > 0.0f) {
+  if (speedMps > 0.0f || swirlSpeedMps != 0.0f || turbulenceSpeedMps > 0.0f) {
     d.flow.enabled = true;
-    d.flow.axis = (Vector3){0, 1, 0};
+    d.flow.addBackgroundVelocity = true;
+    d.flow.axis = MotionPath_Sample(path, 0).tangent;
     d.flow.procedural.swirlSpeedMps = swirlSpeedMps;
     d.flow.procedural.turbulenceSpeedMps = turbulenceSpeedMps;
     d.flow.procedural.eddyLengthM = radiusM * 0.3f;

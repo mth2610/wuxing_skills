@@ -3073,33 +3073,33 @@ and buoyancy share `gravityScale`; use 1 for a physical body. A density below th
 surrounding air rises when gravity is enabled. Hot gas/smoke needs the gas solver,
 not a low-density solid proxy.
 
-`VFX_GuidedParticle_DefaultConfig` + `VFX_ComposeGuidedParticleEx` is the reusable
-composition. Physical controls are mass, density and force budget. Spherical
-volume, radius and projected drag area derive from mass/density with Cd=0.47;
-rendered radius remains independent. Cd=0.47 is a spherical approximation rather
-than a general aerodynamic model. Body templates can override these defaults
-for leaves or other shapes. Emission count/rate/duration are independent of fields:
-count=0 creates only a guide. `fieldOverride` copies a typed additional local-frame
-field into that guide. `VFX_EmissionSchedule` owns emission duration independently:
-a source can continue emitting after guide expiry (`core/composition/vc_emission.h`).
-The inspector hides emission-body controls for
-field-only casts and target lifetime when no target field is configured. Body lifetime derives from guide duration plus the
-longest target tail; templates can specialize lifetime and body behavior. Default arrival releases with no target field. The
-legacy two-point wrapper explicitly selects blast. The fixture **GUIDED PARTICLE**
-exposes shell, stream/orbit, blast, turbulence, sustained leaf capture, disappearance,
-pulse leaf capture, coherent flow and matched zero-flow presets (`>`/`<`, Tab parameters, `/` edits).
+`VFX_GuidedParticle_DefaultConfig` + `VFX_ComposeGuidedParticleEx` creates a
+standalone typed spherical field (`core/composition/common/vc_guided_particle.inl`).
+Its centre follows the source/target curve at `speed` m/s, then stays at the target
+until `duration` expires. Equal source/target or zero speed produces a stationary
+field. Radial attraction uses Newtons; swirl and turbulence use airflow m/s, added
+to ordinary Wind once. Particles sample their current position without capture,
+kinematic snapping, arrival actions or automatic target blasts. Independent target
+fields belong to `MotionFields_CreateField`, outside this composition.
 
-The Guided inspector groups source emission, appearance, guide and arrival controls.
-Burst count and continuous rate remain independently configurable and visible together.
-It hides particle/body settings for field-only casts and hides controls replaced by source,
-particle, guide or target overrides. `showCustomBodyProperties` only expands the inspector;
-it does not change the existing massive glowing-body proxy. `bodyOverride` copies explicit
-mass/density/area/Cd through the particle-profile adapter; that adapter rejects partial
-immersion or displaced volume different from `mass/density`, rather than dropping them.
-A supplied particle template with dynamics takes precedence over this override.
-`VFX_GUIDED_TARGET_FLOW` explicitly creates a persistent target flow; `arrivalFlow`
-controls HOLD/ORBIT separately. Legacy NONE plus nonzero `targetFlow` retains its previous
-implicit flow-field adapter for source compatibility (`vc_guided_particle.inl`).
+Emission count/rate/duration remain independent; count=0 and zero continuous
+emission creates only a field. Default body lifetime matches field lifetime;
+particle templates can specialize it. Default mass and density control Newton
+response and buoyancy, while visual radius remains separate. `drag` is a linear
+response rate in s^-1 relative to local airflow: zero disables default damping;
+positive values relax toward that airflow. Gravity and direct forces still act
+at zero drag. A `particleTemplate` owns all body/render properties and can select
+quadratic mass/area/Cd aerodynamics instead. `emissionSource` replaces source
+geometry; `fieldOverride` replaces the complete world-space field and lifetime.
+These are copied at spawn; resource pointers keep their usual ownership contracts.
+Legacy formation/arrival/target enums and guide/body override pointers were removed.
+Use a field descriptor or particle template for their independent responsibilities.
+
+The **GUIDED PARTICLE** fixture offers moving attraction, swirl, turbulence,
+free-leaf interaction, zero drag and stationary attraction. Shift+comma/period
+cycles presets; comma/period or `/` edits the selected parameter for the next cast.
+The inspector keeps numeric rows stable, including burst and continuous emission.
+It hides only properties replaced by supplied field, source or particle templates.
 
 Wood leaf and petal defaults select fresh sheet materials, with mass derived from the
 randomized blade size and generated broadside planform. `vc_wood_botanical_profile.h`

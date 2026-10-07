@@ -162,65 +162,42 @@ static VFX_GuidedParticleConfig s_liveGuidedParticleConfig;
 static bool s_liveGuidedParticleConfigInit = false;
 static int s_guidedFixturePreset = 0;
 static const char *s_guidedFixturePresetNames[] = {
-    "Shell / release", "Stream / orbit", "Shell / blast",
-    "Stream / target turbulence", "Catch leaves / sustained swirl", "Shell / disappear",
-    "Catch leaves / traveling pulse", "Stream / coherent flow", "Stream / no added flow"
+    "Moving attraction", "Moving swirl", "Moving turbulence",
+    "Catch free leaves", "Zero drag", "Stationary attraction"
 };
-#define VFXTEST_GUIDED_PRESET_COUNT 9
+#define VFXTEST_GUIDED_PRESET_COUNT 6
 
 static void VFXTest_SetGuidedPreset(int preset)
 {
     s_guidedFixturePreset = preset;
     s_liveGuidedParticleConfig = VFX_GuidedParticle_DefaultConfig();
     s_liveGuidedParticleConfigInit = true;
-    s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_NONE;
-    s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_RELEASE;
-    s_liveGuidedParticleConfig.guideMode = MOTION_GUIDE_SUSTAINED;
     s_liveGuidedParticleConfig.duration = 5.0f;
     s_liveGuidedParticleConfig.particleRadius = 0.11f;
-    if (preset == 3 || preset == 4 || preset == 6 || preset == 7) {
-        s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_FLOW;
-        s_liveGuidedParticleConfig.targetLifetime = 4.0f;
-    }
-    if (preset == 1 || preset == 3 || preset == 7 || preset == 8) {
-        s_liveGuidedParticleConfig.formation = MOTION_FORMATION_STREAM;
-        s_liveGuidedParticleConfig.emitDuration = 2.5f;
-    }
     if (preset == 1) {
-        s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_ORBIT;
-        s_liveGuidedParticleConfig.arrivalFlow.swirlSpeedMps = 3.0f;
+        s_liveGuidedParticleConfig.swirlSpeed = 3.0f;
     } else if (preset == 2) {
-        s_liveGuidedParticleConfig.targetPreset = VFX_GUIDED_TARGET_BLAST;
-        s_liveGuidedParticleConfig.targetLifetime = 4.0f;
+        s_liveGuidedParticleConfig.turbulenceSpeed = 1.0f;
     } else if (preset == 3) {
-        s_liveGuidedParticleConfig.targetFlow.turbulenceSpeedMps = 8.0f;
-    } else if (preset == 4 || preset == 6) {
         s_liveGuidedParticleConfig.count = 0;
-        s_liveGuidedParticleConfig.formation = MOTION_FORMATION_STREAM;
         s_liveGuidedParticleConfig.speed = 3.0f;
         s_liveGuidedParticleConfig.duration = 8.0f;
         s_liveGuidedParticleConfig.guideRadius = 1.2f;
         s_liveGuidedParticleConfig.maxForceNewtons = 0.4f;
-        s_liveGuidedParticleConfig.targetFlow.swirlSpeedMps = 8.0f;
-        if (preset == 6) {
-            s_liveGuidedParticleConfig.guideMode = MOTION_GUIDE_PULSE;
-            s_liveGuidedParticleConfig.pulseLength = 2.0f;
-            s_liveGuidedParticleConfig.targetLifetime = 2.5f;
-        }
+        s_liveGuidedParticleConfig.swirlSpeed = 2.0f;
+    } else if (preset == 4) {
+        // Zero medium drag still permits explicitly authored Newton forces.
+        s_liveGuidedParticleConfig.drag = 0.0f;
     } else if (preset == 5) {
-        s_liveGuidedParticleConfig.arrival = MOTION_ARRIVAL_DESTROY;
-    } else if (preset == 7) {
-        s_liveGuidedParticleConfig.motionFlow.turbulenceSpeedMps = 0.6f;
-        s_liveGuidedParticleConfig.motionFlow.swirlSpeedMps = 1.5f;
-        s_liveGuidedParticleConfig.targetFlow.turbulenceSpeedMps = 1.0f;
-        s_liveGuidedParticleConfig.targetFlow.swirlSpeedMps = 2.0f;
+        s_liveGuidedParticleConfig.formationRadius = 0.8f;
+        s_liveGuidedParticleConfig.guideRadius = 1.2f;
     }
 }
 
 static void VFXTest_InitGuidedConfig(void)
 {
     if (!s_liveGuidedParticleConfigInit) {
-        // Deterministic capture selection; interactive >/< uses the same presets.
+        // Deterministic capture selection; Shift+, / Shift+. selects interactively.
         const char *capturePreset = getenv("WUXING_GUIDED_PRESET");
         int preset = capturePreset ? atoi(capturePreset) : 0;
         if (preset < 0 || preset >= VFXTEST_GUIDED_PRESET_COUNT) preset = 0;
@@ -231,12 +208,11 @@ static void VFXTest_InitGuidedConfig(void)
 static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
 {
     VFXTest_InitGuidedConfig();
-    // Keep this event fixture selected for preset controls and the inspector.
     s_isPlayingMesh = true;
     VFX_GuidedParticleConfig cfg = s_liveGuidedParticleConfig;
     cfg.source = source;
-    cfg.target = target;
-    if (s_guidedFixturePreset == 4 || s_guidedFixturePreset == 6) {
+    cfg.target = s_guidedFixturePreset == 5 ? source : target;
+    if (s_guidedFixturePreset == 3) {
         VFX_WoodLeavesConfig leaves = VFX_WoodLeaves_DefaultConfig();
         Vector3 leafCenter = Vector3Add(Vector3Lerp(source, target, 0.40f), (Vector3){0.0f, 0.45f, 0.0f});
         VFX_Foliage_SpawnFreeLeaves(leafCenter,
@@ -1118,7 +1094,8 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), "Help", s_vfxHelpOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Back", false);
     const char *variant = VFXTest_UIActiveVariant();
-    if (variant) VFXTest_UIText(TextFormat("%s   |   < / > preset", variant),
+    if (variant) VFXTest_UIText(TextFormat("%s   |   %s", variant,
+                             VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? "Shift+, / Shift+. preset" : "< / > preset"),
                              (Rectangle){12.0f, ui.header.y + ui.header.height + 6.0f, fmaxf(180.0f, GetScreenWidth() - 340.0f), 24.0f}, 12, SKYBLUE);
     VFXTest_UIText(TextFormat("%.0f FPS", s_vfxTelemetryFps), ui.metrics[0], 12, RAYWHITE);
     VFXTest_UIText(TextFormat("%.1f ms", s_vfxTelemetryFrameMs), ui.metrics[1], 12, LIGHTGRAY);
@@ -1129,7 +1106,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
     if (!s_isPanelOpen && !s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
         DrawRectangleRounded(ui.inspector, 0.035f, 4, (Color){15, 20, 27, 235});
-        VFXTest_UIText("Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
+        VFXTest_UIText(VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? "Parameters - next cast" : "Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
         for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
             int index = row + s_vfxInspectorScroll;
             Rectangle rect = VFXTest_UIInspectorRow(ui, row);
@@ -1168,7 +1145,7 @@ static void VFXTest_UIDraw(void)
     if (s_vfxHelpOpen) {
         DrawRectangleRounded(ui.help, 0.035f, 4, (Color){15, 20, 27, 248});
         const char *lines[] = {"Preview controls", "Click the scene to cast. Q/E orbit, wheel zoom.",
-            "Tab / CapsLock: select parameter. /: next value.", "Shift /: previous value. < / >: fixture preset.",
+            "Tab / CapsLock: select. /: next, Shift+/: previous.", "Guided: comma/period edit; Shift+comma/period preset.",
             "V: fixture clock. B: character. U: hide UI.", "F3: diagnostics. N: background. R: reset view.",
             "Wood: ; burst, ' homing, backslash detach.", "Demos: 1 mesh, 2 SSS, 3 particles, 4 slash,",
             "5 Iaido, 6 wind, 7 path flow. Z/C: actions."};
@@ -1764,28 +1741,14 @@ void VFXTest_Draw3D(void)
         VFXTest_RefreshInspectorParams(false);
 
 // @gen:newfx_guided_input begin
-        if (VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+        if (VFXTest_IsNewFxNamed("GUIDED PARTICLE") &&
+            (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))) {
             int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
             if (direction != 0) {
                 VFXTest_SetGuidedPreset((s_guidedFixturePreset + direction + VFXTEST_GUIDED_PRESET_COUNT) % VFXTEST_GUIDED_PRESET_COUNT);
                 VFXTest_RefreshInspectorParams(true);
-                TraceLog(LOG_INFO, "GUIDED PARTICLE preset: %s (>, next; <, previous)",
+                TraceLog(LOG_INFO, "GUIDED PARTICLE preset: %s (Shift+. next; Shift+, previous; click scene to cast)",
                          s_guidedFixturePresetNames[s_guidedFixturePreset]);
-            } else {
-                // Emission and pulse controls appear only while applicable.
-                // Rebind the descriptors without losing the selected parameter.
-                const char *selectedName = s_inspectorParamCount > 0 ? s_inspectorParams[s_inspectorSelectedParam].name : NULL;
-                const char *selectedGroup = s_inspectorParamCount > 0 ? s_inspectorParams[s_inspectorSelectedParam].group : NULL;
-                s_inspectorParamCount = VFX_GuidedParticle_GetParams(&s_liveGuidedParticleConfig,
-                                                                  s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
-                s_inspectorSelectedParam = 0;
-                for (int i = 0; i < s_inspectorParamCount; ++i) {
-                    if (selectedName && selectedGroup && strcmp(selectedName, s_inspectorParams[i].name) == 0 &&
-                        strcmp(selectedGroup, s_inspectorParams[i].group) == 0) {
-                        s_inspectorSelectedParam = i;
-                        break;
-                    }
-                }
             }
         }
 // @gen:newfx_guided_input end
@@ -1809,7 +1772,8 @@ void VFXTest_Draw3D(void)
             }
 
             // Slash '/' (and '>' or '.') cycles the value of the selected variable
-            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && !VFXTest_IsNewFxNamed("GUIDED PARTICLE"))))
+            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && (!VFXTest_IsNewFxNamed("GUIDED PARTICLE") ||
+                !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))))
             {
                 if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
                     VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);
@@ -1821,7 +1785,8 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "[Inspector] Param '%s' = %s",
                          s_inspectorParams[s_inspectorSelectedParam].name, valBuf);
             }
-            else if (IsKeyPressed(KEY_COMMA) && !VFXTest_IsNewFxNamed("GUIDED PARTICLE"))
+            else if (IsKeyPressed(KEY_COMMA) && (!VFXTest_IsNewFxNamed("GUIDED PARTICLE") ||
+                     !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))
             {
                 VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);
                 char valBuf[64];

@@ -1066,63 +1066,38 @@ const char*          VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
 void                 VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
 void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
 
-/* Guided effects compose independent spatial fields with optional emission.
- * count=0 creates only the guide; already-existing free foliage can be caught.
- * guideOverride, targetOverrides and particleTemplate are copied during spawn;
- * borrowed textures/curves/mesh data and callback userData retain their normal
- * caller-owned lifetime contracts. Emission and targets outlive guide expiry
- * independently; guide expiration releases bodies and never retires a source. */
-typedef enum {
-    VFX_GUIDED_TARGET_NONE, VFX_GUIDED_TARGET_BLAST, VFX_GUIDED_TARGET_FLOW
-} VFX_GuidedTargetPreset;
+/* Field-first composition. source==target creates a stationary sphere; otherwise
+ * its centre follows a smooth path at speed m/s and holds at the endpoint until
+ * duration expires. Forces are Newtons; swirl/turbulence are airflow m/s.
+ * count=0 with no continuous emission creates a field only. No capture, arrival
+ * action or implicit target blast. Use independent fields for those effects.
+ * particleTemplate and emissionSource are copied at spawn; borrowed resources
+ * retain their normal lifetime. fieldOverride replaces the ENTIRE field in
+ * world space, including its trajectory and lifetime. Templates own body/render
+ * settings; mass/density/drag/particleRadius apply only without a template.
+ * Migration: legacy formation/arrival/guide/target/body overrides were removed;
+ * use FieldDesc for spatial motion and ParticleConfig for custom bodies. */
 typedef struct VFX_GuidedParticleConfig {
-    /* 1. Trajectory & Field Domain */
     Vector3 source, target;
-    float speed;
-    float duration;
-    float guideRadius;
-    float maxForceNewtons; /* Attraction pull force */
-
-    /* 2. Fluid Swirl & Aerodynamic Turbulence */
-    float swirlSpeed;
-    float turbulenceSpeed;
-
-    /* 3. Emission & Particle Body */
+    float speed, duration, guideRadius, maxForceNewtons;
+    float swirlSpeed, turbulenceSpeed;
     int count;
-    float emitDuration;
-    float emissionRate;
-    float formationRadius;
-    float particleRadius;
-    float massKg;
-    float densityKgM3;
-    float drag;             /* Per-particle air drag [0.0 = frictionless, >0 = slows down] */
+    float emitDuration, emissionRate;
+    float formationRadius; /* Source emission radius, independent of field. */
+    float particleRadius;  /* Visual radius, independent of physical density. */
+    float massKg, densityKgM3;
+    float drag; /* Linear airflow response s^-1; zero disables default damping. */
     VC_MaterialId material;
-
-    /* 4. Overrides & Integration */
     ParticleRenderMode renderMode;
     ParticleRenderStream *surfaceStreamOut;
     const ParticleConfig *particleTemplate;
     const ParticleEmissionSource *emissionSource;
-    const MotionGuideDesc *guideOverride;
     const FieldDesc *fieldOverride;
-    const BodyPhysicalProperties *bodyOverride;
-
-    /* 5. Legacy backward-compatibility aliases */
-    MotionFormation formation;
-    MotionGuideMode guideMode;
-    MotionArrivalMode arrival;
-    VFX_GuidedTargetPreset targetPreset;
-    float targetLifetime;
-    float pulseLength;
-    MotionFlowDesc motionFlow, targetFlow, arrivalFlow;
-    const MotionTargetDesc *targetOverrides;
-    int targetOverrideCount;
-    bool showCustomBodyProperties;
 } VFX_GuidedParticleConfig;
 VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void);
 int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg,VFX_ParamDef *outParams,int maxParams);
 /* Returns field handle, or zero on invalid settings / field or emitter exhaustion.
- * Stop the guide with MotionFields_Stop; spawned target fields stay independent. */
+ * Stop the field with MotionFields_Stop; emission has its own lifetime. */
 MotionFieldHandle VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *config);
 
 // ── Generic Parameter Introspection API (CapsLock + / dynamic editing) ──────

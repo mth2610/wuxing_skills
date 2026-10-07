@@ -154,6 +154,7 @@
 ## 11. Tester UI
 
 - Use the same responsive rectangles for UI drawing and pointer capture. Hidden controls must not keep invisible click targets; capture wheel input before camera zoom and keep parameter selection separate from debug toggles.
+- Format small float controls with enough precision to expose each edit; boundary tolerance must be smaller than the descriptor step.
 - Bounds-check indexed HUD positions against the actual array length; a fourth status label needs a fourth entry.
 
 ## Patch Log

@@ -36,22 +36,20 @@ int main(void)
     v=MotionBody_AdvanceFieldVelocity((Vector3){0},&body,(Vector3){0},
         (Vector3){0},&sample,(Vector3){-100,0,0},.1f);
     if(!isfinite(v.x) || v.x<=0 || v.x>=3) return 1;
-    /* Verification for Phase 1 & 2: Builder helpers & drag damping */
-    MotionFieldHandle staticAttractor = MotionFields_SpawnStaticAttractor((Vector3){0,1,0}, 3.0f, 15.0f, 2.5f, 0.2f, 0.3f);
-    if (!MotionFields_IsAlive(staticAttractor)) return 1;
-    MotionFields_Stop(staticAttractor);
-    if (MotionFields_IsAlive(staticAttractor)) return 1;
-
-    /* Verify drag parameter damping: drag=0 preserves speed; drag>0 slows down */
-    Vector3 v0 = {10.0f, 0, 0};
-    float dt = 0.1f;
-    float dragZero = 0.0f;
-    float dragNonZero = 2.0f;
-    Vector3 vZero = MotionVec_Scale(v0, dragZero > 0.0f ? expf(-dragZero * dt) : 1.0f);
-    Vector3 vNonZero = MotionVec_Scale(v0, dragNonZero > 0.0f ? expf(-dragNonZero * dt) : 1.0f);
-    if (fabsf(vZero.x - 10.0f) > 1e-5f) return 1;
-    if (vNonZero.x >= 10.0f || vNonZero.x <= 0.0f) return 1;
-
-    puts("Independent particle typed integration: implicit drag, units, builder helpers, and zero-drag preservation PASSED");
+    /* Exercise the production integrator, not a copy of the drag formula. */
+    body=(ParticleDynamicsProfile){.inverseMassKg=1};
+    sample=(FieldSample){0};
+    v=MotionBody_AdvanceFieldVelocity((Vector3){10,0,0},&body,(Vector3){0},
+        (Vector3){0},&sample,(Vector3){3,0,0},.1f);
+    if(v.x!=10) return 1;
+    body.windCouplingHz=2;body.windSusceptibility=1;
+    v=MotionBody_AdvanceFieldVelocity(v,&body,(Vector3){0},(Vector3){0},
+        &sample,(Vector3){3,0,0},.1f);
+    if(fabsf(v.x-(3+7*expf(-.2f)))>1e-5f) return 1;
+    body.windCouplingHz=0;sample.forceNewtons=(Vector3){2,0,0};
+    v=MotionBody_AdvanceFieldVelocity((Vector3){10,0,0},&body,(Vector3){0},
+        (Vector3){0},&sample,(Vector3){3,0,0},.1f);
+    if(fabsf(v.x-10.2f)>1e-5f) return 1;
+    puts("Independent particle integration: drag relative to air, zero drag and direct forces PASSED");
     return 0;
 }

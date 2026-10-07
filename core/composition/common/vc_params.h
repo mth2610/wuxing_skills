@@ -49,7 +49,7 @@ static inline void VFX_Param_CycleNext(const VFX_ParamDef *p)
         }
         case VFX_PARAM_FLOAT: {
             float v = *(float*)p->valPtr + p->stepFloat;
-            if (v > p->maxFloat + 0.0001f) v = p->minFloat;
+            if (v > p->maxFloat + p->stepFloat * 0.001f) v = p->minFloat;
             *(float*)p->valPtr = v;
             break;
         }
@@ -74,7 +74,7 @@ static inline void VFX_Param_CyclePrev(const VFX_ParamDef *p)
         }
         case VFX_PARAM_FLOAT: {
             float v = *(float*)p->valPtr - p->stepFloat;
-            if (v < p->minFloat - 0.0001f) v = p->maxFloat;
+            if (v < p->minFloat - p->stepFloat * 0.001f) v = p->maxFloat;
             *(float*)p->valPtr = v;
             break;
         }
@@ -105,7 +105,8 @@ static inline void VFX_Param_FormatValue(const VFX_ParamDef *p, char *buf, int m
             snprintf(buf, maxLen, "%d", *(int*)p->valPtr);
             break;
         case VFX_PARAM_FLOAT:
-            snprintf(buf, maxLen, "%.2f", *(float*)p->valPtr);
+            snprintf(buf, maxLen, p->stepFloat > 0 && p->stepFloat < .01f ? "%.6g" : "%.2f",
+                     *(float*)p->valPtr);
             break;
     }
 }

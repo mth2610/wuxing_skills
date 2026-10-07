@@ -181,9 +181,9 @@ static void Test_VFXFixtureWiring(void)
     CHECK(Has(fixture, "PARTICLE_SIM_AUTO") &&
           Has(fixture, "PARTICLE_SOURCE_MESH_EDGE"),
           "guided VFX uses manager AUTO with an authored mesh source");
-    CHECK(Has(fixture, "receiveMotionFields") && Has(fixture, "MotionFields_CreateGuide") &&
-          Has(fixture, "guide.arrival"),
-          "guided VFX configures spatial motion and explicit arrival behavior");
+    CHECK(Has(fixture, "receiveMotionFields") && Has(fixture, "MotionFields_CreateField") &&
+          Has(fixture, "p.physics.initialGuide = 0"),
+          "guided VFX samples independent spatial fields without path capture");
     CHECK(Has("core/composition/visual_composer.c", "VC_GuidedParticle_Update(dt);"),
           "composition lifecycle drives configured continuous emission");
 }

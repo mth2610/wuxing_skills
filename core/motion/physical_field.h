@@ -62,6 +62,9 @@ typedef struct FlowField {
    * Zero means default weight 1, not a disabled field. Disable via amplitudes. */
   float blendWeight;
   bool enabled;
+  /* Add ordinary medium velocity once, before priority blending. Default false
+   * retains absolute authored flow. Used for ambient-Wind-aware moving VFX. */
+  bool addBackgroundVelocity;
 } FlowField;
 typedef struct FieldDesc {
   FieldVolume volume;
@@ -338,6 +341,7 @@ static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
       MotionVec_Scale(FieldFlow_Evaluate(&d->flow,&d->volume,p,age),lifetime));
     flow=MotionVec_Add(MotionVec_Scale(MotionVec_Add(t.frameVelocityMps,
         MotionVec_Cross(t.angularVelocityRadPerSec,offset)),w),FieldTransform_Vector(&t,local));
+    if(d->flow.addBackgroundVelocity) flow=MotionVec_Add(flow,medium->velocityMps);
     out.mediumVelocityMps=flow;
     out.mediumWeight=w*(d->flow.blendWeight>0?d->flow.blendWeight:1);
     out.mediumPriority=d->flow.priority; out.mediumIsAbsolute=true;

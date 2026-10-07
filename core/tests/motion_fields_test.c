@@ -661,6 +661,34 @@ static void TestTypedFields(void) {
   CHECK(MotionFields_CreateGuide(&guide)==0,"motion rejects damping passed as Newton force law");
 }
 
+static void TestSimpleVolumeBuilders(void) {
+  MotionFields_Reset();
+  MotionFieldHandle h=MotionFields_SpawnStaticAttractor((Vector3){2,1,0},2,.2f,2,.1f,.2f);
+  CHECK(MotionFields_IsAlive(h), "static builder owns a finite duration field");
+  MotionFields_Update(.2f);
+  BodyPhysicalProperties body=BodyPhysicalProperties_Sphere(.004f,600,0);
+  MediumProperties medium={.velocityMps={0,0,2}};
+  ReceiverConstraints constraints={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
+  MotionReceiver receiver={0};FieldSample sample;
+  MotionFields_SampleBody((Vector3){2.1f,1,0},(Vector3){0},&body,&medium,&constraints,
+      .01f,MOTION_RECEIVER_PARTICLE,&receiver,&sample);
+  CHECK(sample.forceNewtons.x<0 && receiver.guide==0, "static field attracts without path capture");
+  MotionFields_Update(2);
+  CHECK(!MotionFields_IsAlive(h), "static field expires on its own clock");
+  MotionPath path;Vector3 points[]={{0,1,0},{4,1,0}};
+  MotionPath_Build(&path,points,2);
+  h=MotionFields_SpawnMovingGuide(&path,2,1,.2f,0,0,3);
+  MotionFields_Update(.5f);
+  MotionFields_SampleBody((Vector3){1,1,0},(Vector3){0},&body,&medium,&constraints,
+      .01f,MOTION_RECEIVER_PARTICLE,&receiver,&sample);
+  CHECK(fabsf(sample.mediumVelocityMps.x-2)<1e-5f && fabsf(sample.mediumVelocityMps.z-2)<1e-5f,
+      "moving sphere supplies head airflow and ordinary wind with zero procedural flow");
+  MotionFields_SampleBody((Vector3){-2,1,0},(Vector3){0},&body,&medium,&constraints,
+      .01f,MOTION_RECEIVER_PARTICLE,&receiver,&sample);
+  CHECK(MotionVec_Length(sample.forceNewtons)==0 && sample.mediumWeight==0,
+      "moving sphere leaves no forced path behind it");
+  MotionFields_Stop(h);
+}
 int main(void) {
   TestTypedFields();
   TestGenericProceduralSupport();
@@ -730,6 +758,7 @@ int main(void) {
         "target field expires independently");
   TestSharedFlowStages();
   TestDensityAndForceProfiles();
+  TestSimpleVolumeBuilders();
   TestOwnedStorageAndPools();
   TestPulseAndReceiverMasks();
   TestBodyMassAndAir();

@@ -313,7 +313,8 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), "Help", s_vfxHelpOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Back", false);
     const char *variant = VFXTest_UIActiveVariant();
-    if (variant) VFXTest_UIText(TextFormat("%s   |   < / > preset", variant),
+    if (variant) VFXTest_UIText(TextFormat("%s   |   %s", variant,
+                             VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? "Shift+, / Shift+. preset" : "< / > preset"),
                              (Rectangle){12.0f, ui.header.y + ui.header.height + 6.0f, fmaxf(180.0f, GetScreenWidth() - 340.0f), 24.0f}, 12, SKYBLUE);
     VFXTest_UIText(TextFormat("%.0f FPS", s_vfxTelemetryFps), ui.metrics[0], 12, RAYWHITE);
     VFXTest_UIText(TextFormat("%.1f ms", s_vfxTelemetryFrameMs), ui.metrics[1], 12, LIGHTGRAY);
@@ -324,7 +325,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
     if (!s_isPanelOpen && !s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
         DrawRectangleRounded(ui.inspector, 0.035f, 4, (Color){15, 20, 27, 235});
-        VFXTest_UIText("Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
+        VFXTest_UIText(VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? "Parameters - next cast" : "Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
         for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
             int index = row + s_vfxInspectorScroll;
             Rectangle rect = VFXTest_UIInspectorRow(ui, row);
@@ -363,7 +364,7 @@ static void VFXTest_UIDraw(void)
     if (s_vfxHelpOpen) {
         DrawRectangleRounded(ui.help, 0.035f, 4, (Color){15, 20, 27, 248});
         const char *lines[] = {"Preview controls", "Click the scene to cast. Q/E orbit, wheel zoom.",
-            "Tab / CapsLock: select parameter. /: next value.", "Shift /: previous value. < / >: fixture preset.",
+            "Tab / CapsLock: select. /: next, Shift+/: previous.", "Guided: comma/period edit; Shift+comma/period preset.",
             "V: fixture clock. B: character. U: hide UI.", "F3: diagnostics. N: background. R: reset view.",
             "Wood: ; burst, ' homing, backslash detach.", "Demos: 1 mesh, 2 SSS, 3 particles, 4 slash,",
             "5 Iaido, 6 wind, 7 path flow. Z/C: actions."};

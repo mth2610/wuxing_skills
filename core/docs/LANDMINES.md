@@ -3918,3 +3918,15 @@ See `ENGINE_LANDMINES.md` §24 for shared Wind/direct sampling and material-resp
 | 2026-10-03 | Codex | Fog sampling and reproducible animation | core/volumetric/volumetric_fog.c; core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_sampling_test.c | Ground-truth |
 | 2026-10-04 | Codex | Shadow-derived volumetric illumination | core/volumetric/shaders/volumetric_fog.fs; core/volumetric/docs/LANDMINES.md | Ground-truth |
 | 2026-10-03 | Codex | Fog reconstruction pointer | core/volumetric/shaders/volumetric_composite.fs; core/tests/volumetric_fog_composite_test.c | Ground-truth |
+
+## Guided authoring controls must reach the spatial solver (07/10/2026)
+
+**Symptom.** Swirl/drag edits have no effect; a small particle mass displays as zero.
+**Cause.** Composition sampled legacy flow fields and never wired new controls;
+the shared parameter formatter rounded every float to two decimals, and a fixed
+boundary epsilon exceeded the mass edit step.
+**Rule.** Build the typed field from the same scalar members exposed by the
+inspector; keep descriptor ordering independent of numeric values. Small float
+controls use significant digits and step-relative boundary tolerance. Sources:
+`core/composition/common/vc_guided_particle.inl`, `core/composition/common/vc_params.h`.
+Guards: `core/tests/test_guided_config.py`, `core/tests/vfx_params_test.c`.

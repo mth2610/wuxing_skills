@@ -5,13 +5,11 @@ ROOT=pathlib.Path(__file__).resolve().parents[2]
 s=(ROOT/'core/composition/common/vc_guided_particle.inl').read_text()
 h=(ROOT/'core/composition/visual_composer.h').read_text()
 def function(name):
- m=re.search(r'^(?:static bool|int) '+name+r'\(',s,re.M); start=s.index('{',m.start()); depth=1; end=start+1
+ m=re.search(r'^(?:static bool|static ParticleDynamicsProfile|VFX_GuidedParticleConfig|int) '+name+r'\(',s,re.M); start=s.index('{',m.start()); depth=1; end=start+1
  while depth:
   depth+=(s[end]=='{')-(s[end]=='}');end+=1
  return s[m.start():end]
 config=re.search(r'typedef struct VFX_GuidedParticleConfig \{.*?\} VFX_GuidedParticleConfig;',h,re.S).group()
-enum=re.search(r'typedef enum \{\s*VFX_GUIDED_TARGET_NONE.*?\} VFX_GuidedTargetPreset;',h,re.S).group()
-names=s[s.index('static const char *s_guidedFormationNames'):s.index('int VFX_GuidedParticle_GetParams')]
 stubs=r'''
 #include "core/motion/motion_fields.h"
 #include <assert.h>
@@ -22,40 +20,62 @@ typedef enum {PARTICLE_RENDER_BILLBOARD=0,PARTICLE_RENDER_SURFACE_INPUT=3} Parti
 typedef struct {int placeholder;} ParticleRenderStream;
 typedef struct {struct {ParticleDynamicsProfile *dynamics;} physics;} ParticleConfig;
 typedef struct {int placeholder;} ParticleEmissionSource;
-enum {VFX_PARAM_ENUM,VFX_PARAM_FLOAT,VFX_PARAM_INT,VFX_PARAM_BOOL};
-typedef struct {const char *name,*group;int type;void *valPtr;int minInt,maxInt;const char **enumNames;int enumCount;float minFloat,maxFloat,stepFloat;} VFX_ParamDef;
+#include "core/composition/common/vc_params.h"
+#include "core/motion/motion_body.h"
+enum {VC_MAT_LIGHTNING};
+static FieldDesc MotionField_TestDefault(void) {
+ return (FieldDesc){.transform=FieldTransform_Identity(),.receiverMask=MOTION_RECEIVER_ALL};
+}
+#define MotionField_Default MotionField_TestDefault
+static Vector3 GetBezierPoint(Vector3 p,Vector3 a,Vector3 b,Vector3 q,float t) {
+ float u=1-t;
+ return MotionVec_Add(MotionVec_Add(MotionVec_Scale(p,u*u*u),MotionVec_Scale(a,3*u*u*t)),
+   MotionVec_Add(MotionVec_Scale(b,3*u*t*t),MotionVec_Scale(q,t*t*t)));
+}
 '''
 main=r'''
-static bool HasParam(VFX_GuidedParticleConfig *c,const char *name) {
- VFX_ParamDef params[64];int n=VFX_GuidedParticle_GetParams(c,params,64);
- for(int i=0;i<n;i++)if(!strcmp(params[i].name,name))return true;
- return false;
-}
 int main(void) {
- VFX_GuidedParticleConfig c={.count=0,.massKg=NAN,.densityKgM3=NAN,.particleRadius=NAN,.formationRadius=NAN,.renderMode=999};
+ VFX_GuidedParticleConfig c=VFX_GuidedParticle_DefaultConfig();
  assert(VC_GuidedSettingsValid(&c));
- assert(!HasParam(&c,"Particle radius m")&&!HasParam(&c,"Mass kg")&&!HasParam(&c,"Source radius m"));
- c.count=1;assert(!VC_GuidedSettingsValid(&c));
- c=(VFX_GuidedParticleConfig){.count=1,.massKg=.004f,.densityKgM3=600,.particleRadius=.03f,.formationRadius=.1f,.emitDuration=1,.emissionRate=160};
+ VFX_ParamDef a[32],b[32];int n=VFX_GuidedParticle_GetParams(&c,a,32);assert(n==14);
+ c.count=0;c.emitDuration=1;c.emissionRate=0;
+ assert(VFX_GuidedParticle_GetParams(&c,b,32)==n);
+ for(int i=0;i<n;i++)assert(a[i].valPtr==b[i].valPtr && !strcmp(a[i].name,b[i].name));
+ assert(VFX_GuidedParticle_GetParams(&c,b,3)==3);
+ assert(VFX_GuidedParticle_GetParams(NULL,b,32)==0);
+ c.count=1;c.drag=-1;assert(!VC_GuidedSettingsValid(&c));
+ c.drag=NAN;assert(!VC_GuidedSettingsValid(&c));
+ c.drag=0;assert(VC_GuidedSettingsValid(&c));
+ ParticleDynamicsProfile body=VC_GuidedBody(&c);
+ Vector3 v=MotionBody_AdvanceVelocity((Vector3){10,0,0},&body,(Vector3){0},(Vector3){0},(Vector3){3,0,0},.1f);
+ assert(v.x==10);
+ c.drag=2;body=VC_GuidedBody(&c);
+ v=MotionBody_AdvanceVelocity((Vector3){10,0,0},&body,(Vector3){0},(Vector3){0},(Vector3){3,0,0},.1f);
+ assert(fabsf(v.x-(3+7*expf(-.2f)))<1e-5f);
+ FieldDesc d;assert(VC_GuidedBuildField(&c,&d));
+ assert(d.trajectory.mode==FIELD_TRAJECTORY_PATH && d.flow.enabled && d.flow.addBackgroundVelocity);
+ FieldTransform t=FieldTrajectory_Transform(&d,.2f);
+ assert(t.position.x>c.source.x && t.frameVelocityMps.x>0);
+ BodyPhysicalProperties physical=BodyPhysicalProperties_Sphere(.004f,600,0);
+ MediumProperties medium={.velocityMps={0,0,2}};
+ FieldSample sample=Field_Evaluate(&d,.2f,t.position,(Vector3){0},&physical,&medium);
+ assert(fabsf(sample.mediumVelocityMps.z-2)<1e-5f);
+ c.target=c.source;assert(VC_GuidedBuildField(&c,&d));
+ assert(d.trajectory.mode==FIELD_TRAJECTORY_STATIC);
+ sample=Field_Evaluate(&d,.2f,MotionVec_Add(c.source,(Vector3){.1f,0,0}),(Vector3){0},&physical,&medium);
+ assert(sample.forceNewtons.x<0);
+ sample=Field_Evaluate(&d,c.duration,MotionVec_Add(c.source,(Vector3){.1f,0,0}),(Vector3){0},&physical,&medium);
+ assert(MotionVec_Length(sample.forceNewtons)==0);
+ FieldDesc replacement=d;c.fieldOverride=&replacement;c.speed=NAN;c.duration=NAN;
+ assert(VC_GuidedSettingsValid(&c) && VC_GuidedBuildField(&c,&d));
+ assert(VFX_GuidedParticle_GetParams(&c,b,32)==8);
+ ParticleConfig particle={0};c.particleTemplate=&particle;c.massKg=NAN;c.densityKgM3=NAN;c.particleRadius=NAN;c.drag=NAN;
  assert(VC_GuidedSettingsValid(&c));
- assert(HasParam(&c,"Burst count")&&HasParam(&c,"Emission rate /s"));
- assert(!HasParam(&c,"Mass kg")&&!HasParam(&c,"Density kg/m3"));
- c.showCustomBodyProperties=true;assert(HasParam(&c,"Mass kg")&&HasParam(&c,"Density kg/m3"));
- ParticleDynamicsProfile profile={0};ParticleConfig particle={.physics={.dynamics=&profile}};ParticleEmissionSource source={0};
- c.particleTemplate=&particle;c.emissionSource=&source;c.particleRadius=NAN;c.massKg=NAN;c.densityKgM3=NAN;c.formationRadius=NAN;
- BodyPhysicalProperties invalid={.massKg=NAN};c.bodyOverride=&invalid;
- assert(VC_GuidedSettingsValid(&c));assert(!HasParam(&c,"Mass kg")&&!HasParam(&c,"Particle radius m")&&!HasParam(&c,"Source radius m"));
- MotionGuideDesc guide={0};c.guideOverride=&guide;c.targetPreset=999;c.motionFlow.swirlSpeedMps=NAN;c.arrivalFlow.swirlSpeedMps=NAN;
- assert(VC_GuidedSettingsValid(&c));assert(!HasParam(&c,"Guide lifetime s")&&!HasParam(&c,"Target field"));
- c.particleTemplate=NULL;c.bodyOverride=&invalid;c.particleRadius=.03f;assert(!VC_GuidedSettingsValid(&c));
- BodyPhysicalProperties valid=BodyPhysicalProperties_Sphere(.004f,600,.47f);c.bodyOverride=&valid;assert(VC_GuidedSettingsValid(&c));
- valid.immersionFraction=.5f;assert(!VC_GuidedSettingsValid(&c));
- valid.immersionFraction=1;valid.volumeM3*=2;assert(!VC_GuidedSettingsValid(&c));
- c.bodyOverride=NULL;c.count=0;c.emitDuration=0;c.emissionRate=NAN;assert(VC_GuidedSettingsValid(&c));
- puts("PASS: production Guided consumed-branch validation, field-only bodies, override precedence, reduced inspector, simultaneous burst/stream and explicit unsupported-body rejection");
+ c.particleTemplate=NULL;assert(!VC_GuidedSettingsValid(&c));
+ puts("PASS: production Guided stable inspector, real relative-air drag, static/moving fields, expiry and override precedence");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='wuxing-guided-config-') as temp:
- p=pathlib.Path(temp);(p/'test.c').write_text(stubs+enum+config+names+function('VFX_GuidedParticle_GetParams')+function('VC_GuidedSettingsValid')+main)
+ p=pathlib.Path(temp);(p/'test.c').write_text(stubs+(ROOT/'core/force_field.c').read_text().split('static inline float ValueHash')[0]+config+''.join(function(name) for name in ['VFX_GuidedParticle_DefaultConfig','VFX_GuidedParticle_GetParams','VC_GuidedSettingsValid','VC_GuidedBuildField','VC_GuidedBody'])+main)
  subprocess.run(['cc','-std=c99','-Wall','-Wextra','-I'+str(ROOT),'-I'+str(ROOT/'core/tests/stubs'),str(p/'test.c'),'-lm','-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)
