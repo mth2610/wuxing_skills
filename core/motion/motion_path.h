@@ -130,6 +130,8 @@ MotionPath_Project(const MotionPath *path, Vector3 p, int first, int last) {
   if (!path || path->count < 2)
     return best;
   float bestSq = 1e30f;
+  float bestDistance = 0;
+  int bestSegment = first;
   first = (int)Motion_Clamp((float)first, 0, (float)path->count - 2);
   last = (int)Motion_Clamp((float)last, (float)first, (float)path->count - 2);
   for (int i = first; i <= last; i++) {
@@ -142,12 +144,14 @@ MotionPath_Project(const MotionPath *path, Vector3 p, int first, int last) {
     float sq = MotionVec_Dot(MotionVec_Sub(p, q), MotionVec_Sub(p, q));
     if (sq < bestSq) {
       bestSq = sq;
-      best = MotionPath_Sample(
-          path,
-          path->distance[i] + t * (path->distance[i + 1] - path->distance[i]));
-      best.segment = i;
+      bestDistance = path->distance[i] + t * (path->distance[i + 1] - path->distance[i]);
+      bestSegment = i;
     }
   }
+  /* Sampling inside the candidate loop rescanned the whole arc-length table
+   * for every segment, turning projection into O(n^2). Resolve only the winner. */
+  best = MotionPath_Sample(path, bestDistance);
+  best.segment = bestSegment;
   return best;
 }
 static inline Vector3 MotionPath_WorldOffset(MotionPathSample f,

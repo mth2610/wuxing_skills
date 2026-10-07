@@ -28,6 +28,7 @@ VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void) {
   c.guideRadius = 1.2f;
   c.maxForceNewtons = 0.32f;
   c.forwardForceNewtons = 0.08f;
+  c.swirlSpeed = 4.0f;
   c.material = VC_MAT_LIGHTNING;
   c.densityKgM3 = 600;
   return c;

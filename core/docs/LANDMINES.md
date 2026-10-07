@@ -3906,10 +3906,26 @@ the actual rotated lane offset.
 
 See `ENGINE_LANDMINES.md` §24 for shared Wind/direct sampling and material-response ownership.
 
+## Keep path projection and physical sampling passes bounded (07/10/2026)
+
+**Symptom.** Particles sampling a path tube spend excess CPU time in each motion
+substep, even when a physical-field pass has no force or flow to contribute.
+
+**Cause.** Resolving the arc-length sample for each improving projection
+candidate repeats a table scan; copying a full `FieldDesc` to filter drag laws
+also copies its fixed path arrays, and evaluating an empty pass repeats volume
+and path work.
+
+**Rule.** Track the winning projected distance and sample it once. Filter force
+laws during evaluation, avoid copying descriptors, and return before evaluating
+a pass with no matching laws or flow. Preserve the public all-laws evaluator as
+the behavior reference. Guard: `core/tests/motion_fields_test.c`.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-07 | Codex | Bounded path projection and physical passes | core/motion/motion_path.h; core/motion/physical_field.h; core/motion/motion_fields.c; core/tests/motion_fields_test.c | Ground-truth |
 | 2026-10-06 | Codex | Duplicate physical response | core/wind/wind_system.c; core/motion/motion_body.h; core/tests/particle_external_field_test.c | Ground-truth |
 | 2026-10-05 | Codex | Continuous-force drag and bounded curl | core/motion/motion_body.h; core/motion/motion_flow.h; core/tests/motion_flow_test.c | Ground-truth |
 | 2026-10-05 | Codex | Cached texture variants | core/resource_manager.c; core/tests/resource_manager_texture_variant_test.c | Ground-truth |

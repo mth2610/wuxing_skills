@@ -865,18 +865,20 @@ MotionFieldHandle MotionFields_SpawnStaticVortex(Vector3 center, Vector3 axis, f
 
 static void Motion_ComposePhysical(const FieldDesc *d,float age,Vector3 p,Vector3 v,
     const BodyPhysicalProperties *body,const MediumProperties *medium,FieldSample *out,bool dragPass) {
-  FieldDesc selected=*d;
-  selected.forceLawCount=0;
+  bool hasPassLaw=false;
   for(int j=0;j<d->forceLawCount;++j)
-    if((d->forceLaws[j].type==FORCE_LAW_DRAG)==dragPass)
-      selected.forceLaws[selected.forceLawCount++]=d->forceLaws[j];
+    if((d->forceLaws[j].type==FORCE_LAW_DRAG)==dragPass) {
+      hasPassLaw=true;
+      break;
+    }
+  bool includeFlow=!dragPass;
+  if(!hasPassLaw && !(includeFlow && d->flow.enabled)) return;
   MediumProperties resolved=*medium;
   if(dragPass) {
-    selected.flow.enabled=false;
     if(out->mediumWeight>0) resolved.velocityMps=out->mediumIsAbsolute?out->mediumVelocityMps:
       MotionVec_Add(medium->velocityMps,out->mediumVelocityMps);
   }
-  FieldSample sample=Field_Evaluate(&selected,age,p,v,body,&resolved);
+  FieldSample sample=Field_EvaluatePass(d,age,p,v,body,&resolved,includeFlow,true,dragPass);
   FieldSample_Combine(out,&sample);
 }
 static void Motion_SamplePhysical(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,

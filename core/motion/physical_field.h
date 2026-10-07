@@ -351,9 +351,9 @@ static inline Vector3 Field_LimitVector(Vector3 value, float maximum) {
   return length > maximum && length > 1e-8f
       ? MotionVec_Scale(value, maximum / length) : value;
 }
-static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
+static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
     Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,
-    const MediumProperties *medium) {
+    const MediumProperties *medium,bool includeFlow,bool filterDrag,bool dragPass) {
   FieldSample out={0};
   if(!d || !body || !medium || d->forceLawCount<0 || d->forceLawCount>FIELD_MAX_FORCE_LAWS ||
       !isfinite(age) || !isfinite(body->massKg) || body->massKg<0 ||
@@ -378,7 +378,7 @@ static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
   float w=FieldVolume_WeightAt(&d->volume,p,pathSample)*lifetime;
   if(w<=0) return out;
   Vector3 flow=medium->velocityMps;
-  if(d->flow.enabled) {
+  if(includeFlow && d->flow.enabled) {
     Vector3 local=MotionVec_Add(MotionVec_Scale(d->flow.velocityMps,w),
       MotionVec_Scale(FieldFlow_EvaluateAt(&d->flow,&d->volume,p,age,pathSample),lifetime));
     flow=MotionVec_Add(MotionVec_Scale(MotionVec_Add(t.frameVelocityMps,
@@ -390,6 +390,7 @@ static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
   }
   for(int i=0;i<d->forceLawCount;++i) {
     ForceLaw law=d->forceLaws[i];
+    if(filterDrag && ((law.type==FORCE_LAW_DRAG)!=dragPass)) continue;
     if(!Field_FiniteVector(law.forceNewtons) || !Field_FiniteVector(law.accelerationMps2) ||
        !Field_FiniteVector(law.center) || !isfinite(law.magnitudeNewtons) ||
        !isfinite(law.springStiffnessNPerM) || !isfinite(law.dampingNsPerM) ||
@@ -417,8 +418,18 @@ static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
           ? law.springStiffnessNPerM : law.magnitudeNewtons / d->volume.radiusM;
       float mass = body->massKg > 0 ? body->massKg : 1.0f;
       float damping = 2.0f * sqrtf(stiffness * mass); /* Critical damping. */
+      Vector3 dampingVelocity=relativeVelocity;
+      if(d->flow.enabled && d->flow.procedural.swirlSpeedMps!=0) {
+        /* A path guide must damp motion toward/away from its centreline without
+         * cancelling the circumferential velocity that forms the authored swirl. */
+        float radialSq=MotionVec_Dot(normalOffset,normalOffset);
+        if(radialSq>1e-10f) {
+          Vector3 radial=MotionVec_Scale(normalOffset,1/sqrtf(radialSq));
+          dampingVelocity=MotionVec_Scale(radial,MotionVec_Dot(relativeVelocity,radial));
+        }
+      }
       Vector3 lateralForce = MotionVec_Sub(MotionVec_Scale(normalOffset, stiffness),
-                                           MotionVec_Scale(relativeVelocity, damping));
+                                           MotionVec_Scale(dampingVelocity, damping));
       Vector3 forwardForce = {0};
       float targetSpeed = d->flow.followSpeedMps;
       if (law.forwardForceNewtons > 0 && fabsf(targetSpeed) > 1e-5f) {
@@ -448,5 +459,10 @@ static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
     else out.forceNewtons=MotionVec_Add(out.forceNewtons,f);
   }
   return out;
+}
+static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
+    Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,
+    const MediumProperties *medium) {
+  return Field_EvaluatePass(d,age,position,velocity,body,medium,true,false,false);
 }
 #endif

@@ -682,6 +682,15 @@ static void TestPathTubeGuide(void) {
   CHECK(fabsf(sample.mediumVelocityMps.x-3*sample.mediumWeight)<1e-5f &&
         fabsf(sample.mediumVelocityMps.z-2)<1e-5f,
       "every position along a static tube carries tangent flow plus ambient wind");
+  d.flow.axis=(Vector3){1,0,0};
+  d.flow.procedural.swirlSpeedMps=4;
+  sample=Field_Evaluate(&d,.5f,p,(Vector3){0,0,2},&body,&air);
+  CHECK(sample.mediumVelocityMps.z>0 && fabsf(sample.mediumVelocityMps.y)<1e-5f,
+      "path-tube swirl points around the centerline, not along the particle");
+  CHECK(fabsf(sample.forceNewtons.z)<1e-5f,
+      "path guide does not critically damp the swirl's circumferential motion");
+  d.flow.procedural.swirlSpeedMps=0;
+  d.flow.axis=(Vector3){0,1,0};
   sample=Field_Evaluate(&d,.5f,(Vector3){4,0,0},(Vector3){0},&body,&air);
   CHECK(fabsf(sample.forceNewtons.y)<1e-5f && sample.forceNewtons.x>0,
       "centreline has no singular suction but retains forward drive");
