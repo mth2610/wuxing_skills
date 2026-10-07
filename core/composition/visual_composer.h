@@ -1066,11 +1066,13 @@ const char*          VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
 void                 VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
 void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
 
-/* Field-first composition. source==target creates a stationary sphere; otherwise
- * its centre follows a smooth path at speed m/s and holds at the endpoint until
- * duration expires. Forces are Newtons; swirl/turbulence are airflow m/s.
- * count=0 with no continuous emission creates a field only. No capture, arrival
- * action or implicit target blast. Use independent fields for those effects.
+/* Field-first composition. Burst emission uses a sphere that travels from source
+ * to target; continuous emission uses a stationary path tube for distinct
+ * endpoints. Equal endpoints create a stationary sphere. `speed` sets sphere
+ * travel speed or tube tangent target speed. Pull and forward force are separate
+ * Newton channels; swirl/turbulence are airflow m/s. No capture, arrival action
+ * or implicit target blast. `count=0` with no continuous emission creates only
+ * a field. Use independent fields for arrival and target effects.
  * particleTemplate and emissionSource are copied at spawn; borrowed resources
  * retain their normal lifetime. fieldOverride replaces the ENTIRE field in
  * world space, including its trajectory and lifetime. Templates own body/render
@@ -1093,6 +1095,7 @@ typedef struct VFX_GuidedParticleConfig {
     const ParticleConfig *particleTemplate;
     const ParticleEmissionSource *emissionSource;
     const FieldDesc *fieldOverride;
+    float forwardForceNewtons; /* Tube-only tangent force cap toward `speed`. */
 } VFX_GuidedParticleConfig;
 VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void);
 int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg,VFX_ParamDef *outParams,int maxParams);

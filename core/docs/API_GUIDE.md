@@ -3082,14 +3082,26 @@ turbulence affect nearby particles, and ordinary Wind is added once. For continu
 emission with distinct endpoints, the field is a stationary `FIELD_PATH_TUBE`
 spanning the complete Bezier route from A to B. It does not travel. Equal endpoints
 have no route, so they use a stationary sphere. A capped Newton force acts like a critically
-damped spring toward the nearest centerline point, while `speed` sets airflow along
-the tube; particle drag controls how quickly particles respond to that airflow.
-Swirl, turbulence and ordinary Wind remain independent contributions. Particles
+damped spring toward the nearest centerline point. An independent, capped forward
+force drives particle velocity toward `speed` along the A-to-B tangent, and brakes
+overspeed; it therefore works even when particle drag is zero. `speed` also sets
+the along-tube airflow, which drag couples independently. This follows the
+separate curve-follow and curve-suction controls in [SideFX POP Curve Force](https://www.sidefx.com/docs/houdini/nodes/dop/popcurveforce.html);
+its target-velocity mode avoids unbounded overshoot. Swirl, turbulence and ordinary
+Wind remain independent contributions. Particles
 sample their current position without capture, kinematic snapping, arrival actions
 or automatic target blasts. The tube stays at full strength through `emitDuration`,
 then uses its fade tail. Keep the emitter's initial spawn footprint within the tube
 radius if every newborn must be guided. Independent target fields belong to
 `MotionFields_CreateField`, outside this composition.
+
+`maxForceNewtons` caps lateral path correction; `forwardForceNewtons` separately
+caps the tangent-speed controller. These independent force channels add together,
+then the motion solver divides their Newton sum by each particle's mass. A zero
+`speed` disables the tangent drive. The bounded target-speed controller avoids
+constant-thrust acceleration and brakes particles already moving faster than the
+requested stream speed, following the target-velocity/drag distinction in the
+[SideFX POP Solver](https://www.sidefx.com/docs/houdini/nodes/dop/popsolver.html).
 
 Emission count/rate/duration remain independent; count=0 and zero continuous
 emission creates only a field. A continuous tube's effective lifetime covers the

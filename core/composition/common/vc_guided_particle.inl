@@ -27,6 +27,7 @@ VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void) {
   c.drag = 2;
   c.guideRadius = 1.2f;
   c.maxForceNewtons = 0.32f;
+  c.forwardForceNewtons = 0.08f;
   c.material = VC_MAT_LIGHTNING;
   c.densityKgM3 = 600;
   return c;
@@ -46,6 +47,7 @@ int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *c, VFX_ParamDef *out,
     GUIDE_FLOAT("Speed m/s", speed, 0, 20, .25f);
     GUIDE_FLOAT("Field radius m", guideRadius, .1f, 8, .1f);
     GUIDE_FLOAT("Pull force N", maxForceNewtons, 0, 5, .02f);
+    GUIDE_FLOAT("Forward force N", forwardForceNewtons, 0, 5, .02f);
     GUIDE_FLOAT("Swirl m/s", swirlSpeed, -8, 8, .5f);
     GUIDE_FLOAT("Turbulence m/s", turbulenceSpeed, 0, 8, .2f);
     GUIDE_FLOAT("Lifetime s", duration, .1f, 30, .5f);
@@ -92,6 +94,7 @@ static bool VC_GuidedSettingsValid(const VFX_GuidedParticleConfig *c) {
       !isfinite(c->speed) || c->speed < 0 || !isfinite(c->duration) || c->duration <= 0 ||
       !isfinite(c->guideRadius) || c->guideRadius <= 0 ||
       !isfinite(c->maxForceNewtons) || c->maxForceNewtons < 0 ||
+      !isfinite(c->forwardForceNewtons) || c->forwardForceNewtons < 0 ||
       !isfinite(c->swirlSpeed) || !isfinite(c->turbulenceSpeed) || c->turbulenceSpeed < 0))
     return false;
   bool emitting = c->count > 0 || (c->emitDuration > 0 && c->emissionRate > 0);
@@ -137,7 +140,8 @@ static bool VC_GuidedBuildField(const VFX_GuidedParticleConfig *c, FieldDesc *fi
       field->forceLaws[0] = (ForceLaw){
           .type=FORCE_LAW_PATH_GUIDE,
           .magnitudeNewtons=c->maxForceNewtons,
-          .springStiffnessNPerM=c->maxForceNewtons/c->guideRadius};
+          .springStiffnessNPerM=c->maxForceNewtons/c->guideRadius,
+          .forwardForceNewtons=c->forwardForceNewtons};
       field->flow.followSpeedMps = c->speed;
     } else {
       /* A burst gets a spherical field that travels along the same path. */

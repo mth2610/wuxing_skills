@@ -669,20 +669,35 @@ static void TestPathTubeGuide(void) {
   d.lifetime.durationSec=4;
   d.forceLawCount=1;
   d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_PATH_GUIDE,
-      .magnitudeNewtons=.32f,.springStiffnessNPerM=.32f};
+      .magnitudeNewtons=.32f,.springStiffnessNPerM=.32f,
+      .forwardForceNewtons=.16f};
   d.flow.enabled=true;d.flow.followSpeedMps=3;d.flow.addBackgroundVelocity=true;
   BodyPhysicalProperties body=BodyPhysicalProperties_Sphere(.004f,600,0);
   MediumProperties air={.densityKgM3=1.225f,.velocityMps={0,0,2}};
   Vector3 p={4,.5f,0};
   FieldSample sample=Field_Evaluate(&d,.5f,p,(Vector3){0},&body,&air);
-  CHECK(sample.forceNewtons.y<0 && MotionVec_Length(sample.forceNewtons)<=.32001f,
-      "path guide attracts across the tube with a bounded Newton force");
+  CHECK(sample.forceNewtons.y<0 && sample.forceNewtons.x>0 &&
+        fabsf(sample.forceNewtons.y)<=.32001f && sample.forceNewtons.x<=.16001f,
+      "path guide independently bounds lateral suction and A-to-B forward force");
   CHECK(fabsf(sample.mediumVelocityMps.x-3*sample.mediumWeight)<1e-5f &&
         fabsf(sample.mediumVelocityMps.z-2)<1e-5f,
       "every position along a static tube carries tangent flow plus ambient wind");
   sample=Field_Evaluate(&d,.5f,(Vector3){4,0,0},(Vector3){0},&body,&air);
-  CHECK(MotionVec_Length(sample.forceNewtons)<1e-5f,
-      "centreline has no artificial attraction singularity");
+  CHECK(fabsf(sample.forceNewtons.y)<1e-5f && sample.forceNewtons.x>0,
+      "centreline has no singular suction but retains forward drive");
+  sample=Field_Evaluate(&d,.5f,(Vector3){4,0,0},(Vector3){3,0,0},&body,&air);
+  CHECK(fabsf(sample.forceNewtons.x)<1e-5f,
+      "path controller stops accelerating at its desired A-to-B speed");
+  sample=Field_Evaluate(&d,.5f,(Vector3){4,0,0},(Vector3){6,0,0},&body,&air);
+  CHECK(sample.forceNewtons.x<0,
+      "path controller brakes overspeed instead of accelerating without bound");
+  sample=Field_Evaluate(&d,.5f,(Vector3){4,0,0},(Vector3){0},&body,&air);
+  ParticleDynamicsProfile profile={.inverseMassKg=1/body.massKg,
+      .terminalSpeedMps=100};
+  Vector3 driven=MotionBody_AdvanceFieldVelocity((Vector3){0},&profile,
+      (Vector3){0},(Vector3){0},&sample,(Vector3){0},.01f);
+  CHECK(driven.x>0,
+      "forward Newton force moves a zero-drag particle through mass-based integration");
   sample=Field_Evaluate(&d,.5f,(Vector3){4,1.1f,0},(Vector3){0},&body,&air);
   CHECK(MotionVec_Length(sample.forceNewtons)==0 && sample.mediumWeight==0,
       "tube force and flow fade to zero beyond its finite radius");

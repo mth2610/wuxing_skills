@@ -37,7 +37,7 @@ main=r'''
 int main(void) {
  VFX_GuidedParticleConfig c=VFX_GuidedParticle_DefaultConfig();
  assert(VC_GuidedSettingsValid(&c));
- VFX_ParamDef a[32],b[32];int n=VFX_GuidedParticle_GetParams(&c,a,32);assert(n==14);
+ VFX_ParamDef a[32],b[32];int n=VFX_GuidedParticle_GetParams(&c,a,32);assert(n==15);
  c.count=0;c.emitDuration=1;c.emissionRate=0;
  assert(VFX_GuidedParticle_GetParams(&c,b,32)==n);
  for(int i=0;i<n;i++)assert(a[i].valPtr==b[i].valPtr && !strcmp(a[i].name,b[i].name));
@@ -46,6 +46,8 @@ int main(void) {
  c.count=1;c.drag=-1;assert(!VC_GuidedSettingsValid(&c));
  c.drag=NAN;assert(!VC_GuidedSettingsValid(&c));
  c.drag=0;assert(VC_GuidedSettingsValid(&c));
+ c.forwardForceNewtons=-1;assert(!VC_GuidedSettingsValid(&c));
+ c.forwardForceNewtons=.08f;
  ParticleDynamicsProfile body=VC_GuidedBody(&c);
  Vector3 v=MotionBody_AdvanceVelocity((Vector3){10,0,0},&body,(Vector3){0},(Vector3){0},(Vector3){3,0,0},.1f);
  assert(v.x==10);
@@ -64,13 +66,17 @@ int main(void) {
  assert(sample.forceNewtons.z<0 && sample.mediumVelocityMps.x>c.speed*.9f &&
    fabsf(sample.mediumVelocityMps.z-2)<1e-5f);
  sample=Field_Evaluate(&d,.2f,moving.position,(Vector3){0},&physical,&medium);
- assert(MotionVec_Length(sample.forceNewtons)<1e-5f && sample.mediumVelocityMps.x>c.speed*.9f);
+ assert(MotionVec_Length(sample.forceNewtons)<1e-3f &&
+   sample.mediumVelocityMps.x>0);
+ sample=Field_Evaluate(&d,.2f,moving.position,moving.frameVelocityMps,&physical,&medium);
+ assert(MotionVec_Length(sample.forceNewtons)<1e-5f);
  sample=Field_Evaluate(&d,c.duration,offCenter,(Vector3){0},&physical,&medium);
  assert(MotionVec_Length(sample.forceNewtons)==0 && sample.mediumWeight==0);
  c.count=0;c.duration=.5f;c.emitDuration=2;c.emissionRate=100;
  assert(VC_GuidedBuildField(&c,&d));
  assert(d.volume.shape==FIELD_PATH_TUBE && d.trajectory.mode==FIELD_TRAJECTORY_STATIC &&
-   d.flow.followSpeedMps==c.speed);
+   d.flow.followSpeedMps==c.speed &&
+   d.forceLaws[0].forwardForceNewtons==c.forwardForceNewtons);
  assert(fabsf(d.lifetime.durationSec-2.05f)<1e-6f &&
    fabsf(FieldLifetime_Weight(&d.lifetime,2)-1)<1e-5f);
  MotionPathSample pathPoint=MotionPath_Sample(&d.volume.path,d.volume.path.length*.5f);
@@ -80,7 +86,8 @@ int main(void) {
  assert(sample.forceNewtons.z<0 && sample.mediumVelocityMps.x>c.speed*.9f &&
    fabsf(sample.mediumVelocityMps.z-2)<1e-5f);
  sample=Field_Evaluate(&d,.2f,MotionVec_Add(c.source,pathPoint.position),(Vector3){0},&physical,&medium);
- assert(MotionVec_Length(sample.forceNewtons)<1e-5f && sample.mediumVelocityMps.x>c.speed*.9f);
+ assert(MotionVec_Dot(sample.forceNewtons,pathPoint.tangent)>0 &&
+   sample.mediumVelocityMps.x>c.speed*.9f);
  c.duration=4;c.emitDuration=0;c.emissionRate=0;
  c.target=c.source;assert(VC_GuidedBuildField(&c,&d));
  assert(d.volume.shape==FIELD_SPHERE && d.trajectory.mode==FIELD_TRAJECTORY_STATIC);

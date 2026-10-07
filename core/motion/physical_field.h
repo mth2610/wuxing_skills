@@ -56,6 +56,8 @@ typedef struct ForceLaw {
   ForceLawType type;
   Vector3 forceNewtons, accelerationMps2, center;
   float magnitudeNewtons, springStiffnessNPerM, dampingNsPerM;
+  /* Independent cap for the PATH_GUIDE tangent velocity controller. */
+  float forwardForceNewtons;
 } ForceLaw;
 typedef struct FlowField {
   Vector3 velocityMps, axis;
@@ -68,8 +70,8 @@ typedef struct FlowField {
   /* Add ordinary medium velocity once, before priority blending. Default false
    * retains absolute authored flow. Used for ambient-Wind-aware moving VFX. */
   bool addBackgroundVelocity;
-  /* Desired along-path medium speed for FIELD_PATH_TUBE, in m/s. The tube
-   * guides every point along the route; it is not a moving-center capture. */
+  /* Desired A-to-B speed for FIELD_PATH_TUBE, in m/s. Drives tangent airflow
+   * and the optional PATH_GUIDE force controller. */
   float followSpeedMps;
 } FlowField;
 typedef struct FieldDesc {
@@ -390,7 +392,8 @@ static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
     ForceLaw law=d->forceLaws[i];
     if(!Field_FiniteVector(law.forceNewtons) || !Field_FiniteVector(law.accelerationMps2) ||
        !Field_FiniteVector(law.center) || !isfinite(law.magnitudeNewtons) ||
-       !isfinite(law.springStiffnessNPerM) || !isfinite(law.dampingNsPerM)) return (FieldSample){0};
+       !isfinite(law.springStiffnessNPerM) || !isfinite(law.dampingNsPerM) ||
+       !isfinite(law.forwardForceNewtons) || law.forwardForceNewtons<0) return (FieldSample){0};
     if(law.type==FORCE_LAW_DRAG) out.hasDragForce=true;
     if(law.type==FORCE_LAW_BUOYANCY) out.hasBuoyancyForce=true;
     /* Authored forces/centers are local; gravity and medium are inertial. */
@@ -407,15 +410,28 @@ static inline FieldSample Field_Evaluate(const FieldDesc *d,float age,
           MotionVec_Scale(tangent, MotionVec_Dot(toPath, tangent)));
       Vector3 relativeVelocity = MotionVec_Sub(velocity,
           MotionVec_Add(t.frameVelocityMps, MotionVec_Cross(t.angularVelocityRadPerSec, offset)));
+      float tangentSpeed = MotionVec_Dot(relativeVelocity, tangent);
       relativeVelocity = MotionVec_Sub(relativeVelocity,
-          MotionVec_Scale(tangent, MotionVec_Dot(relativeVelocity, tangent)));
+          MotionVec_Scale(tangent, tangentSpeed));
       float stiffness = law.springStiffnessNPerM > 0
           ? law.springStiffnessNPerM : law.magnitudeNewtons / d->volume.radiusM;
       float mass = body->massKg > 0 ? body->massKg : 1.0f;
       float damping = 2.0f * sqrtf(stiffness * mass); /* Critical damping. */
-      Vector3 guideForce = MotionVec_Sub(MotionVec_Scale(normalOffset, stiffness),
-                                         MotionVec_Scale(relativeVelocity, damping));
-      f = MotionVec_Scale(Field_LimitVector(guideForce, law.magnitudeNewtons), w);
+      Vector3 lateralForce = MotionVec_Sub(MotionVec_Scale(normalOffset, stiffness),
+                                           MotionVec_Scale(relativeVelocity, damping));
+      Vector3 forwardForce = {0};
+      float targetSpeed = d->flow.followSpeedMps;
+      if (law.forwardForceNewtons > 0 && fabsf(targetSpeed) > 1e-5f) {
+        /* A bounded target-velocity servo pushes toward B, then brakes if a
+         * particle exceeds the authored speed. It does not depend on drag. */
+        float gain = law.forwardForceNewtons / fabsf(targetSpeed);
+        float force = Motion_Clamp((targetSpeed - tangentSpeed) * gain,
+                                   -law.forwardForceNewtons,
+                                   law.forwardForceNewtons);
+        forwardForce = MotionVec_Scale(tangent, force);
+      }
+      f = MotionVec_Scale(Field_LimitVector(lateralForce, law.magnitudeNewtons), w);
+      f = MotionVec_Add(f, MotionVec_Scale(forwardForce, w));
     } else {
       f = MotionVec_Scale(ForceLaw_Evaluate(&law, position,
           law.type == FORCE_LAW_SPRING

@@ -748,7 +748,8 @@ static bool Motion_ValidPhysical(const FieldDesc *d) {
     if(l->type<FORCE_LAW_NEWTONS || l->type>FORCE_LAW_PATH_GUIDE ||
        !Motion_FiniteVector(l->forceNewtons) || !Motion_FiniteVector(l->accelerationMps2) || !Motion_FiniteVector(l->center) ||
        !isfinite(l->magnitudeNewtons) || !isfinite(l->springStiffnessNPerM) ||
-       l->springStiffnessNPerM<0 || !isfinite(l->dampingNsPerM) || l->dampingNsPerM<0) return false;
+       l->springStiffnessNPerM<0 || !isfinite(l->dampingNsPerM) || l->dampingNsPerM<0 ||
+       !isfinite(l->forwardForceNewtons) || l->forwardForceNewtons<0) return false;
     if(l->type==FORCE_LAW_PATH_GUIDE &&
        (d->volume.shape!=FIELD_PATH_TUBE || l->magnitudeNewtons<0)) return false;
   }
