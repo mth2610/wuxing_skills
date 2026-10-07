@@ -332,6 +332,21 @@ static inline void Botanical_RenderBladeMesh(Vector3 root,Vector3 forward,Vector
         }
     }
     rlCheckRenderBatchLimit(BOTANICAL_BLADE_VERTEX_COUNT);
+    if (getenv("WUXING_BOTANICAL_TRACE")) {
+        static unsigned int traced;
+        unsigned int bit=1u<<((petal?2:0)+(isShadowPass?1:0));
+        if (!(traced&bit)) {
+            traced|=bit;
+            Vector3 lo=points[0][0],hi=lo;
+            for(int row=0;row<=BOTANICAL_BLADE_SEGMENTS;row++)
+                for(int col=0;col<=BOTANICAL_BLADE_STRIPS;col++) {
+                    Vector3 p=points[row][col];
+                    lo=(Vector3){fminf(lo.x,p.x),fminf(lo.y,p.y),fminf(lo.z,p.z)};
+                    hi=(Vector3){fmaxf(hi.x,p.x),fmaxf(hi.y,p.y),fmaxf(hi.z,p.z)};
+                }
+            TraceLog(LOG_WARNING,"BLADE OUTPUT petal=%d shadow=%d L=%.6f vertices=%d bounds=(%.6f %.6f %.6f)-(%.6f %.6f %.6f)",petal,isShadowPass,lengthM,BOTANICAL_BLADE_VERTEX_COUNT,lo.x,lo.y,lo.z,hi.x,hi.y,hi.z);
+        }
+    }
     const int offsets[6][2]={{0,0},{1,0},{1,1},{0,0},{1,1},{0,1}};
     for(int row=0;row<BOTANICAL_BLADE_SEGMENTS;row++)
         for(int column=0;column<BOTANICAL_BLADE_STRIPS;column++)
@@ -641,4 +656,3 @@ static inline void Botanical_RenderCalyxSepals(
 }
 
 #endif // VC_WOOD_BOTANICAL_MATH_H
-

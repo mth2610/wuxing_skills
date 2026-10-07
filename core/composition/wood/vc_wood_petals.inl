@@ -205,6 +205,8 @@ void VFX_ComposeWoodPetals(const VFX_WoodPetalConfig *config)
         Vector3 forward = Vector3Normalize((Vector3){ cy * cp, sp, sy * cp });
         Vector3 up      = Vector3Normalize((Vector3){ -sy * sr - cy * sp * cr, cp * cr, cy * sr - sy * sp * cr });
         Vector3 right   = Vector3Normalize(Vector3CrossProduct(up, forward));
+        if (getenv("WUXING_BOTANICAL_TRACE") && k==0 && time>=1.48f && time<=1.52f)
+            TraceLog(LOG_WARNING,"BLADE PETAL shadow=%d time=%.4f L=%.6f root=(%.6f %.6f %.6f)",isShadowPass,time,petalSz,pos.x,pos.y,pos.z);
 
         Botanical_RenderSinglePetalMesh(
             pos, forward, right, up, petalSz, &prof,

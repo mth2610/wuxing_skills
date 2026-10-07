@@ -326,6 +326,8 @@ typedef struct
     float nodeOrderFrac;
     float sampleHz;
     float teleportSpeed;
+    // Per-node air drag / friction rate in s^-1 [0.0 = frictionless, >0 = slows down nodes over time]
+    float nodeDrag;
 
     // Tube & Geometry
     TrailShape shape;
@@ -616,6 +618,7 @@ typedef struct
     float sampleHz;
     float sampleAcc;
     float teleportSpeed;
+    float nodeDrag;
     float idleSpeed;
     float tubeNoiseAmp;
     /* HÌNH DẠNG của ống — do CALLER quyết định, không phải DrawLayeredTube.

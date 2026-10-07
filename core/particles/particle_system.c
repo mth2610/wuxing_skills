@@ -124,6 +124,7 @@ typedef struct
   bool travelImpactActive;
   float travelImpactAge;
   float windInfluence;
+  float drag;
   const ParticleDynamicsProfile *dynamics;
   ParticleDynamicsProfile dynamicsStorage;
   bool receiveMotionFields;
@@ -367,9 +368,13 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->travelImpactActive = false;
   p->travelImpactAge = 0.0f;
   p->windInfluence = config.physics.windInfluence > 0.0f ? config.physics.windInfluence : config.windInfluence;
+  p->drag = config.physics.drag > 0.0f ? config.physics.drag : config.drag;
   p->dynamics = NULL;
   if (config.physics.dynamics) {
     p->dynamicsStorage = *config.physics.dynamics;
+    if (p->drag > 0.0f && p->dynamicsStorage.linearDragPerSecond <= 0.0f) {
+      p->dynamicsStorage.linearDragPerSecond = p->drag;
+    }
     p->dynamics = &p->dynamicsStorage;
   }
   p->receiveMotionFields = config.physics.receiveMotionFields;
@@ -869,6 +874,14 @@ void UpdateParticles(float dt)
       p->vx += windForce.x * dt;
       p->vy += windForce.y * dt;
       p->vz += windForce.z * dt;
+    }
+
+    if (p->drag > 0.0f && dt > 0.0f)
+    {
+      float dragFactor = expf(-p->drag * dt);
+      p->vx *= dragFactor;
+      p->vy *= dragFactor;
+      p->vz *= dragFactor;
     }
 
     float speedMul = 1.0f;

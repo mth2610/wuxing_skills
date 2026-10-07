@@ -85,6 +85,8 @@ typedef struct {
 
     // Aerodynamic wind & vorticle coupling [0.0 = none, 1.0 = full wind velocity]
     float windInfluence;
+    // Per-particle air drag / friction rate in s^-1 [0.0 = frictionless/persists forever, >0 = slows down]
+    float drag;
 
     /* NULL selects the legacy integrator exactly. Non-NULL opts into the
      * physical-motion contract. CPU particles snapshot it at spawn; it must

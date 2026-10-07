@@ -1076,46 +1076,48 @@ typedef enum {
     VFX_GUIDED_TARGET_NONE, VFX_GUIDED_TARGET_BLAST, VFX_GUIDED_TARGET_FLOW
 } VFX_GuidedTargetPreset;
 typedef struct VFX_GuidedParticleConfig {
+    /* 1. Trajectory & Field Domain */
     Vector3 source, target;
+    float speed;
+    float duration;
+    float guideRadius;
+    float maxForceNewtons; /* Attraction pull force */
+
+    /* 2. Fluid Swirl & Aerodynamic Turbulence */
+    float swirlSpeed;
+    float turbulenceSpeed;
+
+    /* 3. Emission & Particle Body */
+    int count;
+    float emitDuration;
+    float emissionRate;
+    float formationRadius;
+    float particleRadius;
+    float massKg;
+    float densityKgM3;
+    float drag;             /* Per-particle air drag [0.0 = frictionless, >0 = slows down] */
+    VC_MaterialId material;
+
+    /* 4. Overrides & Integration */
+    ParticleRenderMode renderMode;
+    ParticleRenderStream *surfaceStreamOut;
+    const ParticleConfig *particleTemplate;
+    const ParticleEmissionSource *emissionSource;
+    const MotionGuideDesc *guideOverride;
+    const FieldDesc *fieldOverride;
+    const BodyPhysicalProperties *bodyOverride;
+
+    /* 5. Legacy backward-compatibility aliases */
     MotionFormation formation;
     MotionGuideMode guideMode;
     MotionArrivalMode arrival;
     VFX_GuidedTargetPreset targetPreset;
-    float duration, targetLifetime, emitDuration, emissionRate;
-    int count;
-    float formationRadius, particleRadius, massKg;
-    float speed, guideRadius, maxForceNewtons, pulseLength;
-    /* Density derives volume and spherical projected drag area from mass.
-     * Visual particleRadius is independent of the physical body dimensions. */
-    float densityKgM3;
-    MotionFlowDesc motionFlow, targetFlow;
-    ParticleRenderMode renderMode; /* Billboard default, or surface input for SSF. */
-    /* Optional output, copied before emitter retirement. Stable owner stream
-     * remains capturable while emitted particles live. Caller submits it via
-     * LiquidSurface_SubmitParticleStream in the surface submission pass. */
-    ParticleRenderStream *surfaceStreamOut;
-    VC_MaterialId material;
-    const MotionGuideDesc *guideOverride;
+    float targetLifetime;
+    float pulseLength;
+    MotionFlowDesc motionFlow, targetFlow, arrivalFlow;
     const MotionTargetDesc *targetOverrides;
     int targetOverrideCount;
-    const ParticleConfig *particleTemplate;
-    const ParticleEmissionSource *emissionSource;
-    /* Optional copied typed field contribution in the guide's local path
-     * frame. Geometry, force laws and medium flow retain distinct units;
-     * guide control and arrival remain separate. Legacy layers are unchanged. */
-    const FieldDesc *fieldOverride;
-    /* Optional copied material/body override. Templates with dynamics take
-     * precedence; legacy mass/density remain the glowing massive-body proxy,
-     * independent of optical radius, not a claimed natural luminous material. */
-    /* The particle-profile adapter requires full immersion and volume=mass/
-     * density (or volume=0 with density=0); unsupported overrides are rejected.
-     * General solver receivers can sample arbitrary bodies via SampleBody. */
-    const BodyPhysicalProperties *bodyOverride;
-    bool showCustomBodyProperties; /* Inspector only; does not change physics. */
-    /* Post-arrival controller flow is distinct from persistent target flow.
-     * For legacy NONE+targetFlow callers, targetFlow remains the adapter when
-     * this channel is zero. Explicit FLOW assigns targetFlow to the field only. */
-    MotionFlowDesc arrivalFlow;
+    bool showCustomBodyProperties;
 } VFX_GuidedParticleConfig;
 VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void);
 int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg,VFX_ParamDef *outParams,int maxParams);

@@ -768,6 +768,96 @@ MotionFieldHandle MotionFields_CreateField(const FieldDesc *d) {
   }
   return MOTION_FIELD_INVALID;
 }
+
+MotionFieldHandle MotionFields_SpawnStaticAttractor(Vector3 center, float radiusM,
+                                                    float pullStrengthN, float durationSec,
+                                                    float attackSec, float fadeSec) {
+  if (!Motion_FiniteVector(center) || radiusM <= 0.0f || durationSec <= 0.0f)
+    return MOTION_FIELD_INVALID;
+  FieldDesc d = MotionField_Default();
+  d.volume.shape = FIELD_SPHERE;
+  d.volume.radiusM = radiusM;
+  d.volume.coreFraction = 0.2f;
+  d.transform.position = center;
+  d.lifetime.durationSec = durationSec;
+  d.lifetime.attackSec = fmaxf(attackSec, 0.0f);
+  d.lifetime.fadeSec = fmaxf(fadeSec, 0.0f);
+  d.receiverMask = MOTION_RECEIVER_ALL;
+  if (pullStrengthN != 0.0f) {
+    d.forceLaws[d.forceLawCount++] = (ForceLaw){
+        .type = FORCE_LAW_RADIAL_ATTRACTION,
+        .center = (Vector3){0, 0, 0},
+        .magnitudeNewtons = pullStrengthN};
+  }
+  return MotionFields_CreateField(&d);
+}
+
+MotionFieldHandle MotionFields_SpawnMovingGuide(const MotionPath *path, float speedMps,
+                                                float radiusM, float pullStrengthN,
+                                                float swirlSpeedMps, float turbulenceSpeedMps,
+                                                float durationSec) {
+  if (!path || path->count < 2 || speedMps < 0.0f || radiusM <= 0.0f || durationSec <= 0.0f)
+    return MOTION_FIELD_INVALID;
+  FieldDesc d = MotionField_Default();
+  d.volume.shape = FIELD_SPHERE;
+  d.volume.radiusM = radiusM;
+  d.volume.coreFraction = 0.25f;
+  d.trajectory.mode = FIELD_TRAJECTORY_PATH;
+  d.trajectory.path = *path;
+  d.trajectory.speedMps = speedMps;
+  d.lifetime.durationSec = durationSec;
+  d.lifetime.attackSec = 0.2f;
+  d.lifetime.fadeSec = 0.3f;
+  d.receiverMask = MOTION_RECEIVER_ALL;
+
+  if (pullStrengthN != 0.0f) {
+    d.forceLaws[d.forceLawCount++] = (ForceLaw){
+        .type = FORCE_LAW_RADIAL_ATTRACTION,
+        .center = (Vector3){0, 0, 0},
+        .magnitudeNewtons = pullStrengthN};
+  }
+  if (swirlSpeedMps != 0.0f || turbulenceSpeedMps > 0.0f) {
+    d.flow.enabled = true;
+    d.flow.axis = (Vector3){0, 1, 0};
+    d.flow.procedural.swirlSpeedMps = swirlSpeedMps;
+    d.flow.procedural.turbulenceSpeedMps = turbulenceSpeedMps;
+    d.flow.procedural.eddyLengthM = radiusM * 0.3f;
+    d.flow.blendWeight = 1.0f;
+  }
+  return MotionFields_CreateField(&d);
+}
+
+MotionFieldHandle MotionFields_SpawnStaticVortex(Vector3 center, Vector3 axis, float radiusM,
+                                                 float swirlSpeedMps, float inwardPullN,
+                                                 float durationSec, float attackSec, float fadeSec) {
+  if (!Motion_FiniteVector(center) || radiusM <= 0.0f || durationSec <= 0.0f)
+    return MOTION_FIELD_INVALID;
+  FieldDesc d = MotionField_Default();
+  d.volume.shape = FIELD_SPHERE;
+  d.volume.radiusM = radiusM;
+  d.volume.coreFraction = 0.15f;
+  d.transform.position = center;
+  d.lifetime.durationSec = durationSec;
+  d.lifetime.attackSec = fmaxf(attackSec, 0.0f);
+  d.lifetime.fadeSec = fmaxf(fadeSec, 0.0f);
+  d.receiverMask = MOTION_RECEIVER_ALL;
+
+  if (inwardPullN != 0.0f) {
+    d.forceLaws[d.forceLawCount++] = (ForceLaw){
+        .type = FORCE_LAW_RADIAL_ATTRACTION,
+        .center = (Vector3){0, 0, 0},
+        .magnitudeNewtons = inwardPullN};
+  }
+  if (swirlSpeedMps != 0.0f) {
+    d.flow.enabled = true;
+    d.flow.axis = MotionVec_Length(axis) > 0.1f ? MotionVec_Normalize(axis) : (Vector3){0, 1, 0};
+    d.flow.procedural.swirlSpeedMps = swirlSpeedMps;
+    d.flow.procedural.eddyLengthM = radiusM * 0.25f;
+    d.flow.blendWeight = 1.0f;
+  }
+  return MotionFields_CreateField(&d);
+}
+
 static void Motion_ComposePhysical(const FieldDesc *d,float age,Vector3 p,Vector3 v,
     const BodyPhysicalProperties *body,const MediumProperties *medium,FieldSample *out,bool dragPass) {
   FieldDesc selected=*d;

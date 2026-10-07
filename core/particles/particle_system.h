@@ -123,6 +123,8 @@ struct ParticleConfig {
   Color trailColorEnd;
   // Aerodynamic wind & vorticle coupling [0.0 = none, 1.0 = full wind velocity]
   float windInfluence;
+  // Per-particle air drag / friction rate in s^-1 [0.0 = frictionless, >0 = slows down]
+  float drag;
 
   // Advanced facing & 3D Mesh
   VFX_FacingMode facingMode;
@@ -162,6 +164,9 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
   }
   if (cfg->physics.windInfluence == 0.0f && cfg->windInfluence != 0.0f) {
     cfg->physics.windInfluence = cfg->windInfluence;
+  }
+  if (cfg->physics.drag == 0.0f && cfg->drag != 0.0f) {
+    cfg->physics.drag = cfg->drag;
   }
   if (cfg->physics.followTarget == NULL && cfg->followTarget != NULL) {
     cfg->physics.followTarget = cfg->followTarget;
@@ -260,6 +265,9 @@ static inline void ParticleConfig_Unify(ParticleConfig *cfg) {
   if (cfg->position.x == 0.0f && cfg->position.y == 0.0f && cfg->position.z == 0.0f) {
     cfg->position = cfg->physics.position;
     cfg->velocity = cfg->physics.velocity;
+  }
+  if (cfg->drag == 0.0f && cfg->physics.drag != 0.0f) {
+    cfg->drag = cfg->physics.drag;
   }
   if (cfg->collisionEnabled == false && cfg->physics.collisionEnabled != false) {
     cfg->collisionEnabled = cfg->physics.collisionEnabled;

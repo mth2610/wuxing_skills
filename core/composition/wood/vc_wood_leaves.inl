@@ -246,6 +246,8 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
         // Petiole tiny stem segment
         Vector3 vStemBase = sock->pos;
         Vector3 vRoot     = bladeBase;
+        if (getenv("WUXING_BOTANICAL_TRACE") && k==4 && time>=1.48f && time<=1.52f)
+            TraceLog(LOG_WARNING,"BLADE LEAF shadow=%d time=%.4f L=%.6f root=(%.6f %.6f %.6f) forward=(%.4f %.4f %.4f) right=(%.4f %.4f %.4f) up=(%.4f %.4f %.4f)",isShadowPass,time,leafLen,vRoot.x,vRoot.y,vRoot.z,leafDir.x,leafDir.y,leafDir.z,leafSide.x,leafSide.y,leafSide.z,leafNorm.x,leafNorm.y,leafNorm.z);
 
         Color cV = leafVein;
         Color cB = leafBase;

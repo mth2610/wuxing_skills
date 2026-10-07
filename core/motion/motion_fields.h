@@ -127,6 +127,23 @@ FieldDesc MotionField_Default(void);
 /* Copies descriptors and paths into the existing generation-checked target
  * pool. CPU sampling only; never silently submitted to legacy GPU packing. */
 MotionFieldHandle MotionFields_CreateField(const FieldDesc *desc);
+
+/* Ergonomic builder helpers:
+ * 1. Spawn a static spherical attraction field that pulls receivers towards center for durationSec. */
+MotionFieldHandle MotionFields_SpawnStaticAttractor(Vector3 center, float radiusM,
+                                                    float pullStrengthN, float durationSec,
+                                                    float attackSec, float fadeSec);
+
+/* 2. Spawn a moving guide field traveling along path at speedMps with pull, swirl, and turbulence. */
+MotionFieldHandle MotionFields_SpawnMovingGuide(const MotionPath *path, float speedMps,
+                                                float radiusM, float pullStrengthN,
+                                                float swirlSpeedMps, float turbulenceSpeedMps,
+                                                float durationSec);
+
+/* 3. Spawn a static spherical vortex with rotational swirl and inward pull. */
+MotionFieldHandle MotionFields_SpawnStaticVortex(Vector3 center, Vector3 axis, float radiusM,
+                                                 float swirlSpeedMps, float inwardPullN,
+                                                 float durationSec, float attackSec, float fadeSec);
 /* Typed receiver boundary. Static/kinematic receivers have no dynamic response;
  * rooted receivers never capture/arrive. Tracers receive medium velocity only.
  * Field-owned flow uses explicit priority/blend; sample ordinary Wind excluding

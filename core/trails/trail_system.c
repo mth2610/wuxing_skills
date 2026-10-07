@@ -929,10 +929,15 @@ static void UpdateWispPhysics(TrailEntity *t, float dt, float time)
             acc.y += windAcc.y;
             acc.z += windAcc.z;
         }
+        float nodeDamp = viscDamp;
+        if (t->nodeDrag > 0.0f && dt > 0.0f)
+        {
+            nodeDamp *= expf(-t->nodeDrag * dt);
+        }
         t->nodeVelocity[h] = (Vector3){
-            (t->nodeVelocity[h].x + acc.x * dt) * viscDamp,
-            (t->nodeVelocity[h].y + acc.y * dt) * viscDamp,
-            (t->nodeVelocity[h].z + acc.z * dt) * viscDamp};
+            (t->nodeVelocity[h].x + acc.x * dt) * nodeDamp,
+            (t->nodeVelocity[h].y + acc.y * dt) * nodeDamp,
+            (t->nodeVelocity[h].z + acc.z * dt) * nodeDamp};
         scratchNodePrevPos[h] = t->history[h];
         t->history[h] = (Vector3){
             t->history[h].x + t->nodeVelocity[h].x * dt,
@@ -1265,6 +1270,7 @@ int SpawnTrailEntity(TrailConfig config)
     t->sampleHz = config.sampleHz;
     t->sampleAcc = 0.0f;
     t->teleportSpeed = config.teleportSpeed;
+    t->nodeDrag = config.nodeDrag;
     t->idleSpeed = config.idleSpeed;
     t->shape = config.shape;
     t->tubeRadialSegs = (config.tubeRadialSegs > 0) ? config.tubeRadialSegs
