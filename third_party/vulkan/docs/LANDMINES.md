@@ -46,12 +46,18 @@
 - **Present/readback lifecycle faults.** → §7.6
 - **`VUID-…-oldLayout-01211` ×30 in the validated suite** — two independent layout-transition causes. → §7.9
 
+### Persisted pipeline cache
+
+- **Startup aborts with `std::bad_alloc` inside MoltenVK cache decompression.** A failed-result retry cannot catch a driver exception. `rlvk_pipeline.inl` validates a versioned, checksummed driver-matched wrapper before loading and replaces disk files atomically; unverified legacy blobs are rebuilt. See HANDOFF §7.35; CPU guard: `rlvk_runtime_test --cache-contract-only BAD_CACHE_PATH`.
+
 ### Shutdown cleanup
+
 - **Symptom:** `run_rlvk_runtime_test.sh` passes but validation reports `VUID-vkDestroyDevice-device-05137` for compute objects.
 - **Cause:** `rlUnloadShader()` intentionally retains linked compute programs, while `rlglClose()` omitted their `compMod` and `computePipeline` cleanup in `rlvk_core.inl`.
 - **Rule:** every new device-owned object must have a shutdown destroy path, including objects deliberately retained by public API semantics. → HANDOFF §7.33
 
 ### Perf traps
+- **Pre-draw buffer uploads take the synchronous load-time path unless the backend frame is explicitly active.** `rlvk_core.inl::rlvkUploadBuffer` uses arena copies inside an active frame; outside it, each upload allocates staging resources and waits for the graphics queue. Raylib `BeginDrawing()` and `ClearBackground()` alone leave Vulkan activation lazy. Call `rlvkBeginFrameCommands()` inside a balanced drawing pair before runtime uploads/compute and scene draws. The wait can charge previous rendering to an update timer. See the cross-cutting frame-scope rule in `ENGINE_LANDMINES.md`; regression: `compute_upload_draw`.
 - **§7.27 (FIXED 2026-07-22, see §7.29) — the `Caps.noSampledDepth` depth twin was bounced at EVERY scope close, even when nothing samples it.** Fix: a sticky `sampleWanted` flag latched by `rlvkResolveTexBinding`; until something actually binds the twin, scope close emits no depth barriers and no copies. Measured on a 2048² RT: **13.4 → 8.9 ms/frame**. Also note the doc claim below that the cost is "unchanged by resolution" was **wrong** — it was never measured; `perf_rt256` vs `perf_rt2048` shows it scales with pixels. Historical analysis follows.
 - **Measure frame TIME, never FPS.** With FIFO present (+ `SetTargetFPS`), 17 ms and 33 ms both report "30 FPS": every partial win looks like it did nothing until the last one crosses the refresh interval. `UNCAPPED=1 ./scripts/run_rlvk_visual_test.sh perf_rt2048` (IMMEDIATE present) for the backend; `-DWUXING_PERF_CAPTURE=ON` for the game.
 - *(historical)* **§7.27 original analysis — the depth twin bounce.** `rlDisableFramebuffer` does `depth-image → sampleScratch buffer → R32F twin` for any depth attachment that has a twin, unconditionally — `width*height*4` image→buffer **plus** buffer→image. For a 2048² shadow-map FBO whose depth is only ever depth-TESTED (env_shadow samples its own R32F *color* attachment) that is **~32 MB/frame of pure waste**, and it is the prime suspect for "enabling the real shadow costs ~16 ms" on MoltenVK/Intel. Signature that points here: the cost is **per-pass**, unchanged by resolution *or* geometry, and only removing whole passes moves it.
@@ -218,3 +224,4 @@ These are decisions, not accidents — don't "simplify" them away: driver quirks
 | 2026-10-04 | Codex | SSF shader scenario path | `tests/rlvk_visual_test.c`, renamed `core/liquid/shaders/liquid_depth_narrow_range.fs` | Ground-truth |
 | 2026-10-04 | Codex | Rejected pipeline cache recovery | `rlvk_pipeline.inl`, headless runtime with isolated rejected disk blob | Ground-truth |
 | 2026-10-05 | Codex | Non-mip sampler LOD and physical mip generation | `rlvk_matrix.inl`, `rlvk_texture.inl`, `tests/rlvk_visual_test.c mipmap_filter` red/green validation | Ground-truth |
+| 2026-10-08 | Codex | Corrupt persisted pipeline cache startup abort | `rlvk_pipeline.inl`, `tests/rlvk_runtime_test.c`, preserved offending cache and captured MoltenVK stack | Ground-truth |

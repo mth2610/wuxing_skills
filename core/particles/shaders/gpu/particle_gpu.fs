@@ -12,6 +12,7 @@ uniform vec2 u_resolution;
 #include "core/shaders/common/vfx_composite.glsl"
 
 uniform float u_softFade;
+uniform int u_blendLaw;
 
 out vec4 finalColor;
 
@@ -24,10 +25,8 @@ void main() {
     // Discard pixel trong suốt hoàn toàn để tối ưu fillrate
     if (lit.a < 0.01) discard;
 
-    // GPU billboards have ONE blend law — both ParticleManager_Draw and
-    // _DrawEmission wrap this in BLEND_ADDITIVE, and particle_manager.c calls
-    // it an emissive-only material contract — so the resolver is fixed and
-    // needs no permutation. mask stays 1.0: lit.a is the authored alpha, and
-    // feeding it to both arguments would square it.
-    finalColor = VFX_ResolveEmission(lit.rgb, 1.0, 1.0, lit.a);
+    // Separate alpha and additive draws share resident particle storage.
+    // lit.a already contains coverage; do not multiply coverage twice.
+    finalColor = u_blendLaw==0 ? VFX_ResolveBody(lit.rgb,1.0,lit.a)
+        : VFX_ResolveEmission(lit.rgb, 1.0, 1.0, lit.a);
 }

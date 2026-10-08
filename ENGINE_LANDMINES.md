@@ -1691,10 +1691,38 @@ and index binding 1; compute rebinds its own field buffer at binding 1.
 - **Cause:** A direct receiver adds Motion's Wind publication again; raw authored drag is then stacked with automatic material drag.
 - **Rule:** Direct receivers use `Wind_EvaluateBackgroundVelocity` and `MotionBody_AdvanceFieldVelocity`; preserve raw drag metadata for the implicit step and suppress automatic drag/buoyancy only when an authored law supplies it. Sources: `core/wind/wind_system.c`, `core/motion/motion_body.h`; guards: `core/tests/wind_system_test.c`, `core/tests/particle_external_field_test.c`.
 
+## A Gas offscreen pass can expose a broken 3D matrix unwind (07/10/2026)
+
+- **Symptom:** GAS PLUME makes a clear meadow acquire a fullscreen pale veil;
+  disabling environment fog removes the veil while retaining the local plume.
+- **Cause:** `MyBeginMode3D` pushed projection then modelview, but
+  `MyEndMode3D` popped them in the same order. Both modes share one LIFO stack,
+  so subsequent fullscreen fog used a view matrix as its raster projection.
+  Gas's `EndTextureMode` restored screen ortho and exposed the previously hidden
+  atmosphere. The linear depth snapshot and atmosphere settings were identical.
+- **Rule:** unwind modelview before projection, then leave modelview active.
+  A fullscreen pass must not depend on another effect resetting its matrices.
+  Renderer guards: `matrix_scope_order` and `gas_fog_state`. Height fog must also
+  honor distant framing; see `core/volumetric/docs/LANDMINES.md`.
+
+## Vulkan uploads before frame activation serialize the GPU
+
+- **Symptom:** GPU particles cost more than CPU particles; several casts stall
+  inside update even when command recording itself is cheap.
+- **Cause:** Raylib `BeginDrawing` and `ClearBackground` leave rlvk frame activation
+  lazy. Uploads outside an active frame allocate temporary staging resources and
+  wait for the graphics queue, draining the preceding frame.
+- **Rule:** call `rlvkBeginFrameCommands` inside a balanced `BeginDrawing` /
+  `EndDrawing` pair before per-frame uploads and compute. Preserve the normal
+  end-of-frame submission. Sources: `main.c`, `rlvk_core.inl`, `rlvk_platform.inl`;
+  renderer guards: `buffer_update_order`, `ssbo_vs`, `compute_upload_draw`.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-08 | Codex | Vulkan frame activation | main.c; rlvk_core.inl; validated upload/compute/draw guards | Ground-truth |
+| 2026-10-07 | Codex | Gas/fog matrix unwind | main.c; third_party/vulkan/tests/rlvk_visual_test.c; matched meadow captures | Ground-truth |
 | 2026-10-06 | Codex | §24 Physical response ownership | core/wind/wind_system.c; core/motion/motion_body.h; core/tests/particle_external_field_test.c | Ground-truth |
 | 2026-10-04 | Codex | Graphics SSBO binding limit | core/particles/shaders/gpu/liquid_surface_capture.vs; core/particles/gpu/particle_gpu_backend.c | Ground-truth |
 | 2026-10-04 | Codex | Liquid surface API references | core/liquid/liquid_surface.h | Ground-truth |

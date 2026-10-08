@@ -38,6 +38,7 @@
 
 #define W 400
 #define H 300
+extern void rlvkBeginFrameCommands(void);
 
 static Image snap(void) { return LoadImageFromScreen(); }
 static Color at(Image im, int x, int y) { return ((Color *)im.data)[y*im.width + x]; }
@@ -311,6 +312,91 @@ static const char *sc_uniform_repeat(void)
             why="shared-stage uniform stale after repeat/change/switch/frame reuse";
     }
     UnloadImage(im); UnloadShader(sh); UnloadShader(other); return why;
+}
+
+// Projection and modelview share a stack and must unwind in reverse push order.
+static const char *sc_matrix_scope_order(void)
+{
+    BeginDrawing();
+    Matrix saved = rlGetMatrixProjection();
+    Matrix results[2];
+    for (int reverse = 0; reverse < 2; reverse++)
+    {
+        rlSetMatrixProjection(saved);
+        rlMatrixMode(RL_PROJECTION); rlPushMatrix(); rlLoadIdentity();
+        rlFrustum(-1,1,-1,1,1,1000);
+        rlMatrixMode(RL_MODELVIEW); rlPushMatrix(); rlLoadIdentity();
+        if (reverse)
+        {
+            rlMatrixMode(RL_MODELVIEW); rlPopMatrix();
+            rlMatrixMode(RL_PROJECTION); rlPopMatrix();
+        }
+        else
+        {
+            rlMatrixMode(RL_PROJECTION); rlPopMatrix();
+            rlMatrixMode(RL_MODELVIEW); rlPopMatrix();
+        }
+        rlMatrixMode(RL_MODELVIEW); rlLoadIdentity();
+        results[reverse] = rlGetMatrixProjection();
+    }
+    rlSetMatrixProjection(saved);
+    EndDrawing();
+    printf("  [matrix_scope_order] expected.m0=%g sameOrder.m0=%g reverseOrder.m0=%g\n",saved.m0,results[0].m0,results[1].m0);
+    if (!memcmp(&results[0],&saved,sizeof(saved))) return "same-order pops unexpectedly restore projection";
+    return memcmp(&results[1],&saved,sizeof(saved)) ? "reverse-order pops fail to restore projection" : NULL;
+}
+
+static const char *sc_gas_fog_state(void)
+{
+    const char *fs = "#version 330\n"
+        "in vec2 fragTexCoord; out vec4 finalColor; uniform sampler2D texture0;\n"
+        "void main(){ float a=texture(texture0,fragTexCoord).r*0.5; finalColor=vec4(vec3(a),a); }\n";
+    Shader fog = LoadShaderFromMemory(NULL, fs);
+    Shader plume = LoadShaderFromMemory(NULL, fs);
+    RenderTexture2D depth = LoadRenderTexture(W, H);
+    RenderTexture2D gas = LoadRenderTexture(W/4, H/4);
+    RenderTexture2D scene = LoadRenderTexture(W, H);
+    Color samples[2];
+    for (int variant = 0; variant < 2; variant++)
+    {
+        for (int frame = 0; frame < 3; frame++)
+        {
+            BeginDrawing();
+            ClearBackground(BLACK);
+            BeginTextureMode(depth);
+            ClearBackground((Color){64,64,64,255});
+            EndTextureMode();
+            if (variant)
+            {
+                BeginTextureMode(gas);
+                ClearBackground(BLANK);
+                BeginShaderMode(plume);
+                DrawTexturePro(scene.depth,(Rectangle){0,0,W,-H},(Rectangle){0,0,W/4,H/4},(Vector2){0},0,WHITE);
+                EndShaderMode();
+                EndTextureMode();
+            }
+            BeginTextureMode(scene);
+            ClearBackground((Color){20,60,100,255});
+            if (variant)
+            {
+                BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
+                DrawTexturePro(gas.texture,(Rectangle){0,0,W/4,-H/4},(Rectangle){W/2,H/2,20,20},(Vector2){0},0,WHITE);
+                EndBlendMode();
+            }
+            BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
+            BeginShaderMode(fog);
+            DrawTexturePro(depth.texture,(Rectangle){0,0,W,-H},(Rectangle){0,0,W,H},(Vector2){0},0,WHITE);
+            EndShaderMode();
+            EndBlendMode();
+            EndTextureMode();
+            DrawTextureRec(scene.texture,(Rectangle){0,0,W,-H},(Vector2){0},WHITE);
+            EndDrawing();
+        }
+        Image im = snap(); samples[variant] = at(im,20,20); UnloadImage(im);
+    }
+    UnloadRenderTexture(scene); UnloadRenderTexture(gas); UnloadRenderTexture(depth); UnloadShader(fog); UnloadShader(plume);
+    printf("  [gas_fog_state] plain=%d,%d,%d gas=%d,%d,%d\n",samples[0].r,samples[0].g,samples[0].b,samples[1].r,samples[1].g,samples[1].b);
+    return near3(samples[1],samples[0].r,samples[0].g,samples[0].b,2) ? NULL : "gas-like RT/composite changes subsequent fog texture0";
 }
 
 // shaderc may assign texture0 to a non-zero descriptor binding once another
@@ -1332,6 +1418,7 @@ static const char *sc_ssbo_vs(void)
     for (int f = 0; f < 3; f++)
     {
         BeginDrawing(); ClearBackground((Color){0,0,60,255});
+        rlvkBeginFrameCommands();
         rlUpdateShaderBuffer(ssbo, items, sizeof(items), 0);   // spawn-style mid-frame write
         BeginMode3D(cam);
             Matrix mvp = MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection());
@@ -1357,6 +1444,66 @@ static const char *sc_ssbo_vs(void)
 
 // Runtime SSBO uploads before BeginDrawing must own their bytes and retain command
 // order across both frame slots. The second upload must not recolor the first draw.
+// Explicit activation before any draw must support upload -> compute -> draw,
+// repeated updates, stack-owned inputs, ring reuse and idempotent activation.
+static const char *sc_frame_compute_upload(void)
+{
+    const char *cs = "#version 430\nlayout(local_size_x=1) in;\n"
+        "layout(std430,binding=0) buffer B {vec4 placement;vec4 color;};\n"
+        "uniform float factor;void main(){color.rgb*=factor;}\n";
+    const char *vs = "#version 430\nlayout(location=0) in vec3 vertexPosition;\n"
+        "layout(std430,binding=0) buffer B {vec4 placement;vec4 color;};\n"
+        "out vec4 tint;void main(){tint=color;gl_Position=vec4(vertexPosition.xy*placement.zw+placement.xy,0,1);}\n";
+    const char *fs = "#version 430\nin vec4 tint;out vec4 finalColor;void main(){finalColor=tint;}\n";
+    unsigned int stage = rlLoadShader(cs, RL_COMPUTE_SHADER);
+    unsigned int program = rlLoadShaderProgramCompute(stage);
+    rlUnloadShader(stage);
+    if (!program) return "compute shader failed to compile";
+    Shader draw = LoadShaderFromMemory(vs, fs);
+    float quad[] = {-1,-1,0, 1,-1,0, 1,1,0, -1,-1,0, 1,1,0, -1,1,0};
+    unsigned int vao = rlLoadVertexArray();
+    rlEnableVertexArray(vao);
+    unsigned int vbo = rlLoadVertexBuffer(quad, sizeof(quad), false);
+    rlSetVertexAttribute(0, 3, RL_FLOAT, false, 0, 0); rlEnableVertexAttribute(0);
+    rlDisableVertexArray();
+    unsigned int buffer = rlLoadShaderBuffer(8*sizeof(float), NULL, RL_DYNAMIC_COPY);
+    int location = rlGetLocationUniform(program, "factor");
+    float factor = 2;
+    for (int frame = 0; frame < 4; frame++)
+    {
+        BeginDrawing();
+        rlvkBeginFrameCommands(); rlvkBeginFrameCommands();
+        ClearBackground(BLACK);
+        for (int half = 0; half < 2; half++)
+        {
+            float values[8] = {half ? .5f : -.5f, 0, .5f, 1,
+                               half ? 0 : .25f, half ? .25f : 0, 0, 1};
+            rlUpdateShaderBuffer(buffer, values, sizeof(values), 0);
+            memset(values, 0, sizeof(values));
+            rlEnableShader(program); rlBindShaderBuffer(buffer, 0);
+            rlSetUniform(location, &factor, RL_SHADER_UNIFORM_FLOAT, 1);
+            rlComputeShaderDispatch(1, 1, 1); rlDisableShader();
+            rlEnableShader(draw.id); rlBindShaderBuffer(buffer, 0);
+            rlEnableVertexArray(vao); rlDrawVertexArrayInstanced(0, 6, 1);
+            rlDisableVertexArray(); rlDisableShader();
+        }
+        EndDrawing();
+    }
+    Image screen = snap();
+    Color left = at(screen, W/4, H/2), right = at(screen, 3*W/4, H/2);
+    UnloadImage(screen);
+    float latest[8] = {0}; rlReadShaderBuffer(buffer, latest, sizeof(latest), 0);
+    rlUnloadShaderBuffer(buffer); rlUnloadVertexBuffer(vbo); rlUnloadVertexArray(vao);
+    UnloadShader(draw); rlUnloadShaderProgram(program);
+    if (left.r < 110 || left.r > 145 || left.g > 20)
+        return "earlier computed draw changed or lost its upload";
+    if (right.g < 110 || right.g > 145 || right.r > 20)
+        return "later computed draw missed its upload";
+    if (latest[0] != .5f || latest[4] != 0 || latest[5] != .5f)
+        return "in-frame compute readback did not match uploads";
+    return NULL;
+}
+
 static const char *sc_buffer_update_order(void)
 {
     const char *vs = "#version 430\n"
@@ -2763,6 +2910,7 @@ static const char *sc_perf_dispatch_count(void)
         ClearBackground(BLACK);
         if (!variant)
         {
+            rlvkBeginFrameCommands();
             rlEnableShader(program);
             rlBindShaderBuffer(ssbo, 0);
             for (int d = 0; d < many; d++)
@@ -3663,6 +3811,8 @@ static const Scenario SCENARIOS[] = {
     { "shader_uniform", sc_shader_uniform },
     { "uniform_repeat", sc_uniform_repeat },
     { "sampler_pair",   sc_sampler_pair },
+    { "gas_fog_state", sc_gas_fog_state },
+    { "matrix_scope_order", sc_matrix_scope_order },
     { "depth",          sc_depth },
     { "depth_rt",       sc_depth_rt },
     { "depth_mask_clear", sc_depth_mask_clear },
@@ -3682,6 +3832,7 @@ static const Scenario SCENARIOS[] = {
     { "liquid_cpu_capture", sc_liquid_cpu_capture },
     { "liquid_indexed_capture", sc_liquid_indexed_capture },
     { "buffer_update_order", sc_buffer_update_order },
+    { "compute_upload_draw", sc_frame_compute_upload },
     { "imm_normal",     sc_imm_normal },
     { "readback",       sc_readback },
     { "float_blend_rt", sc_float_blend_rt },

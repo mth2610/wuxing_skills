@@ -159,6 +159,12 @@ void MotionFields_SampleBody(Vector3 position, Vector3 velocity,
 /* Typed fields can sample within the last registry update: timeOffsetSec is
  * in [-lastUpdateDt,0]. dt drives implicit controllers; 0 queries raw forces.
  * Legacy captured-guide adapters retain their frame-time semantics. */
+/* World-space spatial fields only; skips legacy capture, guides and callbacks.
+ * NULL receiver disables formation-offset capture. Same offset contract below. */
+void MotionFields_SampleSpatialBodyAtOffset(Vector3 position, Vector3 velocity,
+    const BodyPhysicalProperties *body, const MediumProperties *medium,
+    const ReceiverConstraints *constraints, float dt, float timeOffset,
+    unsigned int mask, MotionReceiver *receiver, FieldSample *out);
 void MotionFields_SampleBodyAtOffset(Vector3 position, Vector3 velocity,
     const BodyPhysicalProperties *body, const MediumProperties *medium,
     const ReceiverConstraints *constraints, float dt, float timeOffsetSec,

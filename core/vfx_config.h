@@ -95,10 +95,14 @@ typedef struct {
     Vector3 initialImpulseNs;          /* Applied once: dv = impulse * inverseMass. */
     Vector3 initialAccelerationMps2;   /* Persistent authored acceleration field. */
     Vector3 constantForceNewtons;      /* Persistent world-space force, converted by inverse mass. */
-    /* Opt-in spatial motion-field receiver (CPU only). Fields are independent
+    /* Opt-in spatial motion-field receiver. Fields are independent
      * of this emitter; zero initialGuide permits spatial capture later. */
     bool receiveMotionFields;
     MotionFieldHandle initialGuide;
+    /* Modern spatial fields only: no legacy guide capture or arrival callbacks.
+     * Identical CPU/GPU semantics; enables GPU physical Motion when supported.
+     * False preserves all existing legacy receiver behavior. */
+    bool spatialMotionOnly;
 } VFX_PhysicsConfig;
 
 // 4. Animation Config

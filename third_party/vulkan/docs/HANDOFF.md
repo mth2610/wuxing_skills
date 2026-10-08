@@ -633,6 +633,30 @@ attached 1x depth texture still reads real scene depth afterwards (the depth-res
 would otherwise ship silently broken since nothing looks different until a soft particle meets
 geometry). Zero validation errors under `VALIDATE=1`.
 
+### 7.35 Corrupt persisted pipeline cache aborts before Vulkan can return an error (2026-10-08)
+
+**Symptom.** Startup stopped immediately after device information with `std::bad_alloc`.
+The captured stack entered `MVKShaderLibrary::decompressMSL` from
+`MVKPipelineCache::readData` and `vkCreatePipelineCache`. An isolated empty cache
+restored startup; the offending raw driver blob was preserved separately.
+
+**Cause.** `rlvk_pipeline.inl` passed unchecked disk bytes into the driver. A fallback
+after a failed `VkResult` cannot recover from an exception abort inside the call.
+The old writer also truncated the shared file in place, allowing readers to observe
+incomplete writes. The exact origin of this blob's invalid internal payload was not established.
+
+**Rule.** `rlvk_pipeline.inl` now accepts only a versioned wrapper with matching
+payload length, checksum, vendor/device, driver version and cache UUID, then validates
+the embedded Vulkan header before calling the driver. Legacy raw files are ignored
+and rebuilt once. Writers use a process-specific temporary file and atomic replacement;
+an incomplete save preserves the previous file. This verifies transport integrity,
+not the driver's opaque serialization algorithm.
+
+**Guard.** `tests/rlvk_runtime_test.c --cache-contract-only BAD_CACHE_PATH` checks the
+actual offending file is rejected without GPU access, plus valid, truncated, stale,
+corrupt and mismatched-header cases. The normal headless suite exercises verified
+cache initialization and persistence.
+
 ## 8. What remains
 
 ### 8.1 Confirm in-game — **DONE (2026-07-17, user-confirmed)**
@@ -1714,3 +1738,4 @@ platform hooks. GL-vs-Vulkan stays a build-time choice per binary (both define t
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
 | 2026-08-16 | Codex | §7.33 runtime teardown | `rlvk_core.inl`, `rlvk_shader.inl`, `tests/rlvk_runtime_test.c` | Ground-truth |
+| 2026-10-08 | Codex | §7.35 verified persisted cache and atomic replacement | `rlvk_pipeline.inl`, `tests/rlvk_runtime_test.c`, captured MoltenVK startup stack | Ground-truth |

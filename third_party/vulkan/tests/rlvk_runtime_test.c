@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
+#include <math.h>
+#include <time.h>
 
 #include "raylib.h"
 
@@ -31,9 +33,67 @@ static int g_failures = 0;
     else { printf("FAIL: %s\n", name); g_failures++; } \
 } while (0)
 
-int main(void)
+#include "rlvk_particle_motion_test.h"
+
+static void testDiskCacheContract(const char *rejectedFile)
 {
+    VkPhysicalDeviceProperties properties = {0};
+    properties.vendorID = 0x8086; properties.deviceID = 0x1626; properties.driverVersion = 7;
+    memset(properties.pipelineCacheUUID, 0x5a, VK_UUID_SIZE);
+    unsigned char payload[sizeof(VkPipelineCacheHeaderVersionOne) + 16] = {0};
+    VkPipelineCacheHeaderVersionOne driver = { sizeof(driver), VK_PIPELINE_CACHE_HEADER_VERSION_ONE, 0x8086, 0x1626, {0} };
+    memcpy(driver.pipelineCacheUUID, properties.pipelineCacheUUID, VK_UUID_SIZE);
+    memcpy(payload, &driver, sizeof(driver));
+    rlvkDiskPipelineCacheHeader header = {0};
+    header.magic = RLVK_DISK_CACHE_MAGIC; header.version = RLVK_DISK_CACHE_VERSION;
+    header.headerSize = sizeof(header); header.vendorID = properties.vendorID;
+    header.deviceID = properties.deviceID; header.driverVersion = properties.driverVersion;
+    memcpy(header.uuid, properties.pipelineCacheUUID, VK_UUID_SIZE);
+    header.payloadSize = sizeof(payload); header.checksum = rlvkDiskCacheChecksum(payload, sizeof(payload));
+    CHECK(rlvkDiskCacheHeaderMatches(&header, sizeof(header) + sizeof(payload), &properties) &&
+          rlvkDiskCachePayloadMatches(&header, payload), "verified cache accepts complete matching payload");
+    CHECK(!rlvkDiskCacheHeaderMatches(&header, sizeof(header) + sizeof(payload) - 1, &properties),
+          "verified cache rejects truncated file before driver access");
+    header.payloadSize = (u64)RLVK_DISK_CACHE_MAX_BYTES + 1;
+    CHECK(!rlvkDiskCacheHeaderMatches(&header, sizeof(header) + (size_t)header.payloadSize, &properties),
+          "verified cache rejects oversized allocation before reading payload");
+    header.payloadSize = sizeof(payload);
+    properties.pipelineCacheUUID[0] ^= 1;
+    CHECK(!rlvkDiskCacheHeaderMatches(&header, sizeof(header) + sizeof(payload), &properties),
+          "verified cache rejects another cache UUID");
+    properties.pipelineCacheUUID[0] ^= 1;
+    properties.driverVersion++;
+    CHECK(!rlvkDiskCacheHeaderMatches(&header, sizeof(header) + sizeof(payload), &properties),
+          "verified cache rejects another driver version");
+    properties.driverVersion--;
+    payload[sizeof(payload) - 1] ^= 1;
+    CHECK(!rlvkDiskCachePayloadMatches(&header, payload), "verified cache rejects corrupt payload checksum");
+    payload[sizeof(payload) - 1] ^= 1;
+    driver.deviceID++;
+    memcpy(payload, &driver, sizeof(driver));
+    header.checksum = rlvkDiskCacheChecksum(payload, sizeof(payload));
+    CHECK(!rlvkDiskCachePayloadMatches(&header, payload), "verified cache rejects mismatching embedded driver header");
+    if (rejectedFile)
+    {
+        size_t size = 0;
+        unsigned char *raw = motionReadFile(rejectedFile, &size);
+        CHECK(raw != NULL && size >= sizeof(header), "offending cache evidence loaded");
+        if (raw && size >= sizeof(header))
+        {
+            memcpy(&header, raw, sizeof(header));
+            CHECK(!rlvkDiskCacheHeaderMatches(&header, size, &properties),
+                  "offending legacy cache rejected without calling driver");
+        }
+        free(raw);
+    }
+}
+
+int main(int argc, char **argv)
+{
+    setvbuf(stdout, NULL, _IOLBF, 0);
     printf("=== rlvk headless runtime test ===\n");
+    testDiskCacheContract(argc >= 2 && strcmp(argv[1], "--cache-contract-only") == 0 && argc == 3 ? argv[2] : NULL);
+    if (argc >= 2 && strcmp(argv[1], "--cache-contract-only") == 0) return g_failures ? 1 : 0;
 
     // Zero/coarse timestamps and host-drained frames must never enter the GPU
     // average denominator. A fresh window cannot inherit a startup sample sum.
@@ -287,6 +347,11 @@ int main(void)
         printf("      R32F on this device: blend=%d linearFilter=%d\n",
                (int)RLVK.Caps.floatBlendR32, (int)RLVK.Caps.floatFilterR32);
     }
+
+    if (argc == 4 && strcmp(argv[1], "--particle-motion") == 0)
+        runParticleMotionParity(argv[2], argv[3]);
+    else if (argc != 1)
+        CHECK(0, "usage: runtime_test [--particle-motion REPO_ROOT FIXTURE_DIR]");
 
     rlglClose();
     printf("=== done: %d failure(s) ===\n", g_failures);

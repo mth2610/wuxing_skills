@@ -14,7 +14,50 @@ The module auto-detects GPU capability at runtime and picks one of two paths:
 | **COMPUTE** | GL 4.3+ (desktop) or GLES 3.1+ (Android Mali-G68+) | Physics fully on GPU — compute-shader dispatch, SSBO |
 | **CPU/VBO** | GL 3.3 (macOS) or older devices | Physics on CPU, VBO upload per frame |
 
-The caller doesn't need to check the path — the API is identical on both.
+The particle manager selects compatible backends; composition code does not call
+this private backend directly. Vulkan uses its compute implementation as well.
+
+### Spatial Motion compute contract
+
+`VFX_PhysicsConfig.spatialMotionOnly` opts into typed world-space fields, excluding
+legacy captured guides and arrival callbacks. `receiveMotionFields` enables
+persistent sphere/path formation offsets. AUTO uses compute when supported and
+otherwise uses the equivalent CPU spatial sampler. Legacy physical receivers,
+custom rendering and callback-bearing particles retain CPU fallback; GPU_ONLY
+rejects unsupported requests rather than dropping their behavior.
+
+The 144-byte render record remains unchanged. Compute bindings are:
+
+| Binding | Storage |
+|---|---|
+| 0 | Existing render particles |
+| 1–2 | Legacy ForceField and travel paths |
+| 3–4 | Wind and terrain snapshot |
+| 5 | Read-only `MotionGpuScene`: typed fields, paths, trajectories, WindZone |
+| 6 | Writable `MotionGpuBody`: physical profile, forces, generation-safe lanes |
+
+`core/motion/motion_gpu.h` owns the versioned, vec4-aligned packing ABI. Handles
+remain unsigned integers. Scene upload includes only active field records; body
+sidecars upload at spawn and thereafter remain GPU-resident. Each dispatch bounds
+integration to 0.25 seconds with at most thirty 1/120-second substeps. Overlapping
+guide controllers share a bounded implicit solve with gravity and external forces.
+Their isotropic/axial/transverse resistance uses two private vec4 records per
+controller, with an exact rank-one inverse for overflow responses.
+Typed airflow excludes Wind's published Motion prefix to avoid double forcing.
+
+CPU bookkeeping tracks slot ownership and lifetime, but does not integrate these
+particles or download their positions. SSF reads the same resident render buffer.
+Alpha body and additive emission use separate draws and shader filtering. Named
+appearance, texture, orientation and callback compatibility gates still apply.
+Before ring wrap, dispatch and unindexed draws stop at the spawn high-water
+mark. They retain every previously spawned slot, including CPU-dead slots.
+The gameplay loop activates Vulkan frame commands before VFX updates (`main.c`)
+so per-frame uploads use the renderer's frame-owned staging arena.
+
+`core/tests/motion_gpu_test.c` generates binary inputs and CPU references from
+production samplers/packers. The renderer parity harness dispatches the production
+shader and compares positions/velocities on the actual device; CPU layout tests
+alone do not establish shader execution or visual acceptance.
 
 ---
 

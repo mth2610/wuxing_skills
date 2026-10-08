@@ -3127,6 +3127,23 @@ when sampled with a positive timestep. `Field_Evaluate` remains a raw force
 query; `Field_EvaluateStep` supplies the timestep-aware controller response.
 Force limits permit escape under sufficiently strong external forcing.
 
+Step samples carry bounded controller responses in addition to the queried
+Newton force (`core/motion/physical_field.h`). Consume them through
+`MotionBody_AdvanceFieldVelocity` with the same timestep used for sampling.
+The adapter in `core/motion/motion_body.h` solves gravity, explicit forces,
+acceleration and up to eight guide actuators together, preserving each
+actuator's force limit. Additional actuators retain their bounded sampled force.
+Material drag follows this joint guide solve; it is still an operator split.
+Raw force queries and receivers that integrate `forceNewtons` themselves retain
+the previous sampled response. Rooted receivers own their spring integration;
+tracers consume flow without guide-controller metadata.
+
+> [!NOTE]
+> **(project convention):** Motion fields may drive a stylized water particle
+> cloud directly into SSF. This use does not require a liquid simulation or
+> density constraints; author particle coverage and coherent flow for the
+> desired surface. SSF itself only renders the supplied particle geometry.
+
 Moving spheres retain spatial entry offsets in each receiver's bounded formation
 slots. Tube lanes retain transverse offsets in the local path frame. Automatic
 guidance rotates these force targets at swirl/radius rad/s; particles track them
@@ -3209,10 +3226,21 @@ registry to a renderer. SSF reconstructs the surface; particle density/cohesion 
 pressure constraints still require a liquid solver. Procedural curl/steering alone
 does not make an incompressible liquid.
 
-Spatial motion receivers require CPU simulation: ParticleManager AUTO falls back
-to CPU and GPU_ONLY rejects them. Existing GPU particles do not sample the new
-registry. CPU vector-texture fields are rejected as a whole rather than silently
-dropping the unsupported layer (`core/particles/particle_field_capabilities.h`).
+Set `physics.spatialMotionOnly=true` for world-space typed Motion fields on the
+compute backend. `receiveMotionFields` additionally enables persistent formation
+offsets. The guided-particle composer uses this policy. AUTO selects GPU when
+compute and rendering capabilities are available; the CPU sampler honors the same
+spatial-only policy. Legacy captured routes and their arrival callbacks remain CPU
+contracts. Custom shaders, gradients, authored curves, sprite animation, particle
+ribbons, mesh heads, event emission and premultiplied rendering retain CPU
+fallback; GPU_ONLY reports unsupported requests.
+
+The GPU integrates bounded 1/120-second substeps, samples field trajectories and
+ordinary Wind, and solves overlapping capped guidance together with external
+forces. It stores formation lanes in a per-particle sidecar and keeps the existing
+144-byte render ABI for SSF. Alpha and additive particles use separate draw buckets.
+There is no per-frame position readback or CPU Motion shadow integration. CPU
+vector-texture fields remain rejected as a whole (`particle_field_capabilities.h`).
 Wood foliage keeps its own render/orientation/contact logic and consumes
 the shared translational integrator; material density can be supplied in
 `VFX_FoliageSpawnParams`. GPU scene vegetation remains on the existing Wind system.
@@ -3234,6 +3262,7 @@ An anchored receiver supplies its tip velocity and material mass, then integrate
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Independent curl amplitude and overlapping-guide diagnosis | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
 | 2026-10-07 | Codex | Fast guided defaults and curved path | core/composition/common/vc_guided_particle.inl; core/tests/test_guided_config.py | Ground-truth and project convention |
 | 2026-10-07 | Codex | Coherent guided curl force, units and eddy scale | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth and project convention |

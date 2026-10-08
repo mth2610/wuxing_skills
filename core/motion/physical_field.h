@@ -138,6 +138,17 @@ typedef struct FieldDesc {
   /* Opt-in rotating tube lanes; manual/legacy fixed lanes stay unchanged. */
   bool rotatePathLanes;
 } FieldDesc;
+/* Optional linearized actuator response for a joint body solve. The force is
+ * driveNewtons - resistance * deltaVelocity. Symmetric resistance is stored
+ * as diagonal (xx,yy,zz) and offDiagonal (xy,xz,yz), in N s/m.
+ * Each actuator retains its own force cap. Queries still expose the original
+ * bounded force in FieldSample.forceNewtons. No persistent per-body storage. */
+#define FIELD_MAX_CONTROLLER_RESPONSES 8
+typedef struct FieldControllerResponse {
+  Vector3 driveNewtons, sampledForceNewtons;
+  Vector3 diagonal, offDiagonal;
+  float maxForceNewtons;
+} FieldControllerResponse;
 typedef struct FieldSample {
   Vector3 forceNewtons, accelerationMps2, mediumVelocityMps;
   float mediumWeight;
@@ -148,6 +159,11 @@ typedef struct FieldSample {
    * removes this component and uses its coefficient in an implicit drag step. */
   Vector3 dragForceNewtons, dragMediumVelocityMps;
   float dragCoefficientKgPerM;
+  /* Step samples must be consumed with the same dt used for sampling.
+   * Up to eight actuators share the joint solve; additional actuators retain
+   * their bounded sampled force. dt=0 queries carry no solver metadata. */
+  int controllerCount;
+  FieldControllerResponse controllers[FIELD_MAX_CONTROLLER_RESPONSES];
 } FieldSample;
 /* Shared material approximation: equivalent fully immersed sphere; visual
  * particle size remains independent. Projected area matches sphere Cd. */
@@ -226,17 +242,21 @@ static inline float FieldLifetime_Weight(const FieldLifetime *l,float age) {
   if(l->fadeSec>0) w*=Motion_Clamp((l->durationSec-age)/l->fadeSec,0,1);
   return w*w*(3-2*w);
 }
-static inline FieldTransform FieldTrajectory_Transform(const FieldDesc *d,float age) {
-  FieldTransform t=d->transform;
+static inline FieldTransform FieldTrajectory_TransformFrom(const FieldDesc *d,
+    const FieldTransform *base,float age) {
+  FieldTransform t=*base;
   if(d->trajectory.mode==FIELD_TRAJECTORY_PATH) {
     MotionPathSample p=MotionPath_Sample(&d->trajectory.path,
       fmaxf(age-d->lifetime.startDelaySec,0)*d->trajectory.speedMps);
-    t.position=MotionVec_Add(t.position,FieldTransform_Vector(&d->transform,p.position));
+    t.position=MotionVec_Add(t.position,FieldTransform_Vector(base,p.position));
     if(p.distance<d->trajectory.path.length)
       t.frameVelocityMps=MotionVec_Add(t.frameVelocityMps,
-        FieldTransform_Vector(&d->transform,MotionVec_Scale(p.tangent,d->trajectory.speedMps)));
+        FieldTransform_Vector(base,MotionVec_Scale(p.tangent,d->trajectory.speedMps)));
   }
   return t;
+}
+static inline FieldTransform FieldTrajectory_Transform(const FieldDesc *d,float age) {
+  return FieldTrajectory_TransformFrom(d,&d->transform,age);
 }
 static inline float FieldVolume_NormalizedDistanceAt(const FieldVolume *v,Vector3 p,
     const MotionPathSample *pathSample) {
@@ -297,6 +317,9 @@ static inline Vector3 ForceLaw_Evaluate(const ForceLaw *law,Vector3 p,Vector3 v,
 }
 /* Flow channels blend; force and acceleration channels accumulate. */
 static inline void FieldSample_Combine(FieldSample *out,const FieldSample *in) {
+  for(int i=0;i<in->controllerCount &&
+      out->controllerCount<FIELD_MAX_CONTROLLER_RESPONSES;i++)
+    out->controllers[out->controllerCount++]=in->controllers[i];
   out->hasDragForce=out->hasDragForce || in->hasDragForce;
   out->hasBuoyancyForce=out->hasBuoyancyForce || in->hasBuoyancyForce;
   out->dragForceNewtons=MotionVec_Add(out->dragForceNewtons,in->dragForceNewtons);
@@ -418,6 +441,18 @@ static inline Vector3 Guide_ImplicitForce(Vector3 error,Vector3 relativeVelocity
   return MotionVec_Scale(MotionVec_Sub(MotionVec_Scale(error,stiffness),
       MotionVec_Scale(relativeVelocity,damping+stiffness*dt)),1/denominator);
 }
+/* resistance = isotropic * I + axial * axis * transpose(axis). This covers
+ * sphere, tube-normal, radial-only and tangent controllers without matrices
+ * on the authoring API. Overflow safely keeps the sampled bounded force. */
+static inline void FieldSample_AddController(FieldSample *sample,Vector3 drive,
+    Vector3 sampled,float isotropic,float axial,Vector3 axis,float cap,float dt) {
+  if(dt<=0 || sample->controllerCount>=FIELD_MAX_CONTROLLER_RESPONSES) return;
+  FieldControllerResponse *r=&sample->controllers[sample->controllerCount++];
+  r->driveNewtons=drive;r->sampledForceNewtons=sampled;r->maxForceNewtons=cap;
+  r->diagonal=(Vector3){isotropic+axial*axis.x*axis.x,
+    isotropic+axial*axis.y*axis.y,isotropic+axial*axis.z*axis.z};
+  r->offDiagonal=(Vector3){axial*axis.x*axis.y,axial*axis.x*axis.z,axial*axis.y*axis.z};
+}
 static inline Vector3 FieldGuide_RotateOffset(const FieldDesc *d,Vector3 offset,float age) {
   if(!d->flow.enabled || d->flow.procedural.swirlSpeedMps==0) return offset;
   Vector3 axis=MotionVec_Normalize(d->flow.axis);
@@ -434,10 +469,12 @@ static inline Vector3 FieldGuide_RotatePathLane(const FieldDesc *d,Vector3 lane,
   float c=cosf(angle),s=sinf(angle);
   return (Vector3){lane.x,lane.y*c-lane.z*s,lane.y*s+lane.z*c};
 }
-static inline FieldSample Field_EvaluateStepPass(const FieldDesc *d,float age,
+/* Prepared rigid frame avoids copying a descriptor and its path arrays when
+ * an enclosing guide places the same field at a receiver's path projection. */
+static inline FieldSample Field_EvaluateFrameStepPass(const FieldDesc *d,float age,
     Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,
     const MediumProperties *medium,bool includeFlow,bool filterDrag,bool dragPass,
-    const Vector3 *pathLaneOffset,float dt) {
+    const Vector3 *pathLaneOffset,float dt,const FieldTransform *frame) {
   FieldSample out={0};
   if(!d || !body || !medium || !isfinite(dt) || dt<0 || d->forceLawCount<0 || d->forceLawCount>FIELD_MAX_FORCE_LAWS ||
       !isfinite(age) || !isfinite(body->massKg) || body->massKg<0 ||
@@ -449,7 +486,7 @@ static inline FieldSample Field_EvaluateStepPass(const FieldDesc *d,float age,
       !isfinite(medium->densityKgM3) || medium->densityKgM3<0 ||
       !Field_FiniteVector(position) || !Field_FiniteVector(velocity) ||
       !Field_FiniteVector(medium->velocityMps) || !Field_FiniteVector(medium->gravityMps2)) return out;
-  FieldTransform t=FieldTrajectory_Transform(d,age);
+  FieldTransform t=frame?*frame:FieldTrajectory_Transform(d,age);
   Vector3 offset=MotionVec_Sub(position,t.position);
   Vector3 p=FieldTransform_LocalVector(&t,offset);
   float lifetime=FieldLifetime_Weight(&d->lifetime,age);
@@ -527,6 +564,8 @@ static inline FieldSample Field_EvaluateStepPass(const FieldDesc *d,float age,
           ? law.springStiffnessNPerM : law.magnitudeNewtons / d->volume.radiusM;
       float mass = body->massKg > 0 ? body->massKg : 1.0f;
       Vector3 dampingVelocity=relativeVelocity;
+      Vector3 dampingAxis=tangent;
+      bool radialDamping=false;
       if(!d->rotatePathLanes && d->flow.enabled && d->flow.procedural.swirlSpeedMps!=0) {
         /* A path guide must damp motion toward/away from its centreline without
          * cancelling the circumferential velocity that forms the authored swirl. */
@@ -539,10 +578,17 @@ static inline FieldSample Field_EvaluateStepPass(const FieldDesc *d,float age,
         if(radialSq>1e-10f) {
           Vector3 radial=MotionVec_Scale(FieldTransform_Vector(&t,swirlRadial),1/sqrtf(radialSq));
           dampingVelocity=MotionVec_Scale(radial,MotionVec_Dot(relativeVelocity,radial));
+          dampingAxis=radial;radialDamping=true;
         }
       }
       Vector3 lateralForce = Guide_ImplicitForce(normalOffset,dampingVelocity,
           stiffness,mass,w,dt);
+      float resistance=2*sqrtf(stiffness*w*mass)+stiffness*w*dt;
+      Vector3 lateralDrive=MotionVec_Scale(lateralForce,1+resistance*dt/mass);
+      lateralForce=Field_LimitVector(lateralForce,law.magnitudeNewtons*w);
+      FieldSample_AddController(&out,lateralDrive,lateralForce,
+          radialDamping?0:resistance,radialDamping?resistance:-resistance,
+          dampingAxis,law.magnitudeNewtons*w,dt);
       Vector3 forwardForce = {0};
       float targetSpeed = d->flow.followSpeedMps;
       if (law.forwardForceNewtons > 0 && fabsf(targetSpeed) > 1e-5f) {
@@ -554,6 +600,10 @@ static inline FieldSample Field_EvaluateStepPass(const FieldDesc *d,float age,
                                    -law.forwardForceNewtons,
                                    law.forwardForceNewtons);
         forwardForce = MotionVec_Scale(tangent, force);
+        FieldSample_AddController(&out,
+            MotionVec_Scale(tangent,(targetSpeed-tangentSpeed)*gain*w),
+            MotionVec_Scale(forwardForce,w),0,gain*w,tangent,
+            law.forwardForceNewtons*w,dt);
       }
       f = Field_LimitVector(lateralForce, law.magnitudeNewtons*w);
       f = MotionVec_Add(f, MotionVec_Scale(forwardForce, w));
@@ -578,6 +628,11 @@ static inline FieldSample Field_EvaluateStepPass(const FieldDesc *d,float age,
       f=Field_LimitVector(Guide_ImplicitForce(MotionVec_Sub(goal,position),
           MotionVec_Sub(velocity,goalVelocity),stiffness,mass,w,dt),
           law.magnitudeNewtons*w);
+      float resistance=2*sqrtf(stiffness*w*mass)+stiffness*w*dt;
+      Vector3 drive=MotionVec_Sub(MotionVec_Scale(MotionVec_Sub(goal,position),stiffness*w),
+          MotionVec_Scale(MotionVec_Sub(velocity,goalVelocity),resistance));
+      FieldSample_AddController(&out,drive,f,resistance,0,(Vector3){0},
+          law.magnitudeNewtons*w,dt);
     } else {
       f = MotionVec_Scale(ForceLaw_Evaluate(&law, position,
           law.type == FORCE_LAW_SPRING
@@ -594,6 +649,13 @@ static inline FieldSample Field_EvaluateStepPass(const FieldDesc *d,float age,
     else out.forceNewtons=MotionVec_Add(out.forceNewtons,f);
   }
   return out;
+}
+static inline FieldSample Field_EvaluateStepPass(const FieldDesc *d,float age,
+    Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,
+    const MediumProperties *medium,bool includeFlow,bool filterDrag,bool dragPass,
+    const Vector3 *pathLaneOffset,float dt) {
+  return Field_EvaluateFrameStepPass(d,age,position,velocity,body,medium,includeFlow,
+      filterDrag,dragPass,pathLaneOffset,dt,NULL);
 }
 static inline FieldSample Field_EvaluatePass(const FieldDesc *d,float age,
     Vector3 position,Vector3 velocity,const BodyPhysicalProperties *body,

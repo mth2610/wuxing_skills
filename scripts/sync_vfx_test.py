@@ -1421,6 +1421,7 @@ def gen_render_trigger_block(entries):
              f"{RINDENT}s_guidedCaptureActive = true;",
              f"{RINDENT}(void)VFXTest_FireNewFx(newfxIndex, spawnPos);",
              f"{RINDENT}s_guidedCaptureActive = false;",
+             f"{RINDENT}VFXTest_BeginGuidedCaptureRepeats();",
               "// @gen:newfx_render_trigger end"]
     return "\n".join(lines)
 
@@ -1558,6 +1559,8 @@ def gen_guided_fixture_state():
 static VFX_GuidedParticleConfig s_liveGuidedParticleConfig;
 static bool s_liveGuidedParticleConfigInit = false;
 static bool s_guidedCaptureActive = false;
+static int s_guidedCaptureRemaining, s_guidedCaptureFrame, s_guidedCaptureInterval;
+static Vector3 s_guidedCaptureSource, s_guidedCaptureTarget;
 static float s_guidedSwirlRatio;
 static float s_guidedTurbulenceRatio;
 static float s_guidedRatioReferenceSpeed = 1.0f;
@@ -1658,6 +1661,10 @@ static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
     }
     cfg.source = source;
     cfg.target = s_guidedFixturePreset == 5 ? source : target;
+    if (s_guidedCaptureActive) {
+        s_guidedCaptureSource = cfg.source;
+        s_guidedCaptureTarget = cfg.target;
+    }
     if (s_guidedFixturePreset == 3) {
         VFX_WoodLeavesConfig leaves = VFX_WoodLeaves_DefaultConfig();
         Vector3 leafCenter = Vector3Add(Vector3Lerp(source, target, 0.40f), (Vector3){0.0f, 0.45f, 0.0f});
@@ -1667,6 +1674,47 @@ static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
     TraceLog(LOG_INFO, "GUIDED PARTICLE: %s", s_guidedFixturePresetNames[s_guidedFixturePreset]);
     if (VFX_ComposeGuidedParticleEx(&cfg) == MOTION_FIELD_INVALID)
         TraceLog(LOG_WARNING, "GUIDED PARTICLE: cast rejected (invalid configuration or exhausted field/emitter pool)");
+}
+
+static int VFXTest_GuidedCaptureInt(const char *name, int fallback, int lo, int hi)
+{
+    const char *text = getenv(name);
+    if (!text || !*text) return fallback;
+    char *end = NULL;
+    long value = strtol(text, &end, 10);
+    if (end == text || *end || value < lo || value > hi) {
+        TraceLog(LOG_WARNING, "%s: expected an integer in [%d, %d]", name, lo, hi);
+        return fallback;
+    }
+    return (int)value;
+}
+
+static void VFXTest_BeginGuidedCaptureRepeats(void)
+{
+    s_guidedCaptureRemaining = 0;
+    s_guidedCaptureFrame = 0;
+    if (!VFXTest_IsNewFxNamed("GUIDED PARTICLE")) return;
+    int casts = VFXTest_GuidedCaptureInt("WUXING_GUIDED_CASTS", 1, 1, 16);
+    s_guidedCaptureInterval = VFXTest_GuidedCaptureInt("WUXING_GUIDED_CAST_INTERVAL_FRAMES", 6, 1, 120);
+    s_guidedCaptureRemaining = casts - 1;
+    TraceLog(LOG_INFO, "GUIDED PARTICLE capture: casts=%d interval_frames=%d particles_per_cast=%d",
+             casts, s_guidedCaptureInterval, s_liveGuidedParticleConfig.count);
+}
+
+static void VFXTest_UpdateGuidedCaptureRepeats(void)
+{
+    if (s_guidedCaptureRemaining <= 0) return;
+    if (!VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+        s_guidedCaptureRemaining = 0;
+        return;
+    }
+    if (++s_guidedCaptureFrame % s_guidedCaptureInterval != 0) return;
+    --s_guidedCaptureRemaining;
+    s_guidedCaptureActive = true;
+    VFXTest_FireGuidedParticle(s_guidedCaptureSource, s_guidedCaptureTarget);
+    s_guidedCaptureActive = false;
+    TraceLog(LOG_INFO, "GUIDED PARTICLE capture repeat: frame=%d remaining=%d",
+             s_guidedCaptureFrame, s_guidedCaptureRemaining);
 }
 // @gen:newfx_guided_state end'''
 
@@ -1683,6 +1731,7 @@ def gen_guided_fixture_inspector():
 
 def gen_guided_fixture_input():
     return '''// @gen:newfx_guided_input begin
+        VFXTest_UpdateGuidedCaptureRepeats();
         if (VFXTest_IsNewFxNamed("GUIDED PARTICLE") &&
             (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))) {
             int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);

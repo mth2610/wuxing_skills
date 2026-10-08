@@ -21,8 +21,9 @@ static void CheckSource(const char *path, const char *const *needles, int count)
     FILE *file = fopen(path, "rb");
     CHECK(file != NULL, "lighting source readable");
     if (!file) return;
-    char source[24000] = {0};
+    char source[32768] = {0};
     fread(source, 1, sizeof(source)-1, file);
+    CHECK(fgetc(file) == EOF, "lighting wiring guard reads the complete source");
     fclose(file);
     for (int i = 0; i < count; ++i) CHECK(strstr(source, needles[i]) != NULL, "physical fog source wiring");
     if (strstr(path, ".fs")) {

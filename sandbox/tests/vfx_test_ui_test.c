@@ -28,6 +28,10 @@ static Vector2 s_testMouse;
 static bool s_testDown, s_testReleased;
 static float s_testWheel;
 static int s_testCasts;
+typedef enum { FOG_MODE_VOLUMETRIC, FOG_MODE_HEIGHT, FOG_MODE_OFF } FogRenderMode;
+static FogRenderMode s_testFogMode = FOG_MODE_HEIGHT;
+static FogRenderMode Fog_GetRenderMode(void) { return s_testFogMode; }
+static void Fog_SetRenderMode(FogRenderMode mode) { s_testFogMode = mode; }
 static bool s_hideAllUI, s_isPanelOpen, s_clickedOnUI, s_hideDebugOverlays = true;
 static bool s_isPlayingMesh = true;
 static int s_inspectorParamCount, s_inspectorSelectedParam, s_testCategory = TEST_CAT_NEWFX;
@@ -101,13 +105,16 @@ int main(void)
     for (int i = 0; i < 3; ++i) {
         s_testWidth = sizes[i][0]; s_testHeight = sizes[i][1];
         VFXTest_UILayout ui = VFXTest_UIGetLayout();
-        if (s_testWidth >= 900) {
+        if (s_testWidth >= 1100) {
             assert(ui.header.height == 40);
             assert(ui.cameraStatus.y == ui.header.y);
             for (int metric = 0; metric < 3; ++metric)
                 assert(ui.metrics[metric].y == ui.header.y && ui.metrics[metric].height == ui.header.height);
             assert(ui.cameraStatus.x + ui.cameraStatus.width <= VFXTest_UIHeaderButton(ui, 0).x);
         }
+        Rectangle fog = VFXTest_UIFogButton(ui);
+        assert(fog.x >= 0 && fog.x + fog.width <= s_testWidth);
+        assert(fog.x + fog.width <= (s_testWidth >= 1100 ? VFXTest_UIHeaderButton(ui, 0).x : VFXTest_UITiltButton(ui, -1).x));
         assert(ui.inspector.x >= 0 && ui.inspector.x + ui.inspector.width <= s_testWidth);
         assert(ui.inspector.y + ui.inspector.height <= s_testHeight);
         Rectangle row = VFXTest_UIInspectorRow(ui, 0);
@@ -122,6 +129,9 @@ int main(void)
     Click(VFXTest_UITiltButton(ui, 1)); assert(VFXTest_ConsumeCameraTiltStep() == 1);
     assert(VFXTest_ConsumeCameraTiltStep() == 0);
     Click(VFXTest_UITiltButton(ui, -1)); assert(VFXTest_ConsumeCameraTiltStep() == -1);
+    Click(VFXTest_UIFogButton(ui)); assert(Fog_GetRenderMode() == FOG_MODE_VOLUMETRIC);
+    Click(VFXTest_UIFogButton(ui)); assert(Fog_GetRenderMode() == FOG_MODE_OFF);
+    Click(VFXTest_UIFogButton(ui)); assert(Fog_GetRenderMode() == FOG_MODE_HEIGHT);
     Click(VFXTest_UIParameterButton(VFXTest_UIInspectorRow(ui, 0), 1)); assert(value == .75f);
     Click(VFXTest_UIParameterButton(VFXTest_UIInspectorRow(ui, 1), 1)); assert(integer == 2 && s_inspectorSelectedParam == 1);
     Click(VFXTest_UIParameterButton(VFXTest_UIInspectorRow(ui, 1), 1)); assert(integer == 2);

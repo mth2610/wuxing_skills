@@ -3937,6 +3937,18 @@ applying their force limits. Keep the force budget independent of receiver mass.
 Source: `core/motion/physical_field.h`; guards: `core/tests/guidance_physics_test.c`
 and `core/tests/test_guided_config.py`.
 
+## Guidance and external forces must share the velocity solve
+
+- **Symptom:** a guided body sags farther at coarser timesteps despite stable
+  motion (4 g body, 0.4 N/m guide: 11.51 cm at 120 Hz versus 9.81 cm equilibrium).
+- **Cause:** solving the spring/damper first and adding gravity afterwards leaves
+  gravity outside the implicit controller response.
+- **Rule:** consume step-sample controller metadata with
+  `MotionBody_AdvanceFieldVelocity` at the sampling timestep; keep each actuator's
+  cap in the bounded joint solve. Preserve raw Newton force queries for custom
+  solvers and clear controller metadata for rooted bodies and tracers.
+  Source: `core/motion/motion_body.h`; guard: `core/tests/motion_coupling_test.c`.
+
 ## Turbulence must not strengthen the guide opposing it
 
 **Symptom.** Increasing curl airflow produces little visible breakup in one cast,
@@ -3989,6 +4001,7 @@ Guard: `TestCloudCoherence` in `core/tests/guidance_physics_test.c`.
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Physical guidance support and implicit response | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
 | 2026-10-07 | Codex | Guided route lifetime from transit estimate | core/composition/common/vc_guided_particle.inl; core/tests/test_guided_config.py | Ground-truth |
 | 2026-10-07 | Codex | Timed Guided total-count emission | core/composition/common/vc_guided_particle.inl; core/composition/vc_emission.h; core/tests/test_guided_config.py | Ground-truth |

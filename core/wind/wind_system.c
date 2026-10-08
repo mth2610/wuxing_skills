@@ -138,6 +138,7 @@ void Wind_SetMacro(const WindMacroConfig *cfg) {
 WindMacroConfig Wind_GetMacro(void) {
     return s_macroConfig;
 }
+int Wind_GetPublishedMotionAirflowCount(void) { return s_motionAirflowCount; }
 
 void Wind_SetTerrainHeightQuery(TerrainHeightQueryFn queryFn, void *userData) {
     s_terrainQuery = queryFn;

@@ -1,4 +1,5 @@
 #include "core/motion/motion_fields.h"
+#include "core/motion/motion_gpu.h"
 #include "core/wind/wind_system.h"
 #include <stdlib.h>
 #include <float.h>
@@ -923,7 +924,8 @@ MotionFieldHandle MotionFields_SpawnStaticVortex(Vector3 center, Vector3 axis, f
 }
 
 static bool Motion_PhysicalPathLane(const FieldDesc *d,MotionFieldHandle handle,
-    float age,Vector3 position,MotionReceiver *receiver,Vector3 *offset) {
+    float age,Vector3 position,MotionReceiver *receiver,Vector3 *offset,
+    const FieldTransform *frame) {
   bool sphere=d->preserveSphereOffsets && d->volume.shape==FIELD_SPHERE;
   if((!sphere && (!d->preservePathLanes || d->volume.shape!=FIELD_PATH_TUBE)) ||
      !receiver || !offset) return false;
@@ -940,8 +942,7 @@ static bool Motion_PhysicalPathLane(const FieldDesc *d,MotionFieldHandle handle,
   for(int i=0;i<4;++i)
     if(!MotionFields_IsAlive(receiver->pathLaneFields[i])) { slot=i; break; }
   if(slot<0) return false;
-  FieldTransform frame=FieldTrajectory_Transform(d,age);
-  Vector3 local=FieldTransform_LocalVector(&frame,MotionVec_Sub(position,frame.position));
+  Vector3 local=FieldTransform_LocalVector(frame,MotionVec_Sub(position,frame->position));
   if(sphere) {
     if(FieldVolume_Weight(&d->volume,local)<=0) return false;
     *offset=FieldGuide_RotateOffset(d,MotionVec_Limit(local,d->volume.radiusM*.65f),-age);
@@ -964,7 +965,8 @@ static bool Motion_PhysicalPathLane(const FieldDesc *d,MotionFieldHandle handle,
 }
 static void Motion_ComposePhysical(const FieldDesc *d,MotionFieldHandle handle,float age,
     Vector3 p,Vector3 v,const BodyPhysicalProperties *body,const MediumProperties *medium,
-    MotionReceiver *receiver,FieldSample *out,bool dragPass,float dt) {
+    MotionReceiver *receiver,FieldSample *out,bool dragPass,float dt,
+    const FieldTransform *preparedFrame) {
   bool hasPassLaw=false;
   for(int j=0;j<d->forceLawCount;++j)
     if((d->forceLaws[j].type==FORCE_LAW_DRAG)==dragPass) {
@@ -978,12 +980,13 @@ static void Motion_ComposePhysical(const FieldDesc *d,MotionFieldHandle handle,f
     if(out->mediumWeight>0) resolved.velocityMps=out->mediumIsAbsolute?out->mediumVelocityMps:
       MotionVec_Add(medium->velocityMps,out->mediumVelocityMps);
   }
-  Vector3 lane;const Vector3 *laneOffset=Motion_PhysicalPathLane(d,handle,age,p,receiver,&lane)?&lane:NULL;
-  FieldSample sample=Field_EvaluateStepPass(d,age,p,v,body,&resolved,includeFlow,true,dragPass,laneOffset,dt);
+  FieldTransform frame=preparedFrame?*preparedFrame:FieldTrajectory_Transform(d,age);
+  Vector3 lane;const Vector3 *laneOffset=Motion_PhysicalPathLane(d,handle,age,p,receiver,&lane,&frame)?&lane:NULL;
+  FieldSample sample=Field_EvaluateFrameStepPass(d,age,p,v,body,&resolved,includeFlow,true,dragPass,laneOffset,dt,&frame);
   FieldSample_Combine(out,&sample);
 }
 static void Motion_SamplePhysical(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,
-    const MediumProperties *medium,unsigned int mask,MotionReceiver *receiver,FieldSample *out,float dt,float timeOffset) {
+    const MediumProperties *medium,unsigned int mask,MotionReceiver *receiver,FieldSample *out,float dt,float timeOffset,bool spatialOnly) {
   /* Resolve media first; all authored drag laws then consume that single
    * resolved velocity. Overlapping drag laws remain explicit force additions. */
   bool needsDrag=false;
@@ -1000,20 +1003,23 @@ static void Motion_SamplePhysical(Vector3 p,Vector3 v,const BodyPhysicalProperti
           d->trajectory.speedMps*fminf(t->age,-timeOffset):0;
       if(!Motion_InPhysicalTarget(t,p,sweep)) continue;
       needsDrag|=t->physicalHasDrag;
-      Motion_ComposePhysical(d,t->handle,fmaxf(t->age+timeOffset,0),p,v,body,medium,receiver,out,pass!=0,dt);
+      Motion_ComposePhysical(d,t->handle,fmaxf(t->age+timeOffset,0),p,v,body,medium,receiver,out,pass!=0,dt,NULL);
     }
     for(int i=0;i<MOTION_FIELDS_MAX_GUIDES;++i) {
+      if(spatialOnly) break;
       MotionGuideRuntime *g=&s_guides[i]; MotionPathSample projection;
       if(!g->handle || !g->desc.usePhysicalField || !(g->desc.receiverMask & mask) ||
          !Motion_InGuide(g,p,&projection)) continue;
-      FieldDesc d=g->desc.physicalField;
-      for(int j=0;j<d.forceLawCount;++j) needsDrag|=d.forceLaws[j].type==FORCE_LAW_DRAG;
+      const FieldDesc *d=&g->desc.physicalField;
+      for(int j=0;j<d->forceLawCount;++j) needsDrag|=d->forceLaws[j].type==FORCE_LAW_DRAG;
       MotionPathSample f=MotionPath_Sample(&g->desc.path,projection.distance);
-      d.transform.position=MotionVec_Add(f.position,MotionPath_WorldOffset(f,d.transform.position));
-      d.transform.axisX=MotionPath_WorldOffset(f,d.transform.axisX);
-      d.transform.axisY=MotionPath_WorldOffset(f,d.transform.axisY);
-      d.transform.axisZ=MotionPath_WorldOffset(f,d.transform.axisZ);
-      Motion_ComposePhysical(&d,g->handle,g->age,p,v,body,medium,receiver,out,pass!=0,dt);
+      FieldTransform base=d->transform;
+      base.position=MotionVec_Add(f.position,MotionPath_WorldOffset(f,base.position));
+      base.axisX=MotionPath_WorldOffset(f,base.axisX);
+      base.axisY=MotionPath_WorldOffset(f,base.axisY);
+      base.axisZ=MotionPath_WorldOffset(f,base.axisZ);
+      FieldTransform frame=FieldTrajectory_TransformFrom(d,&base,g->age);
+      Motion_ComposePhysical(d,g->handle,g->age,p,v,body,medium,receiver,out,pass!=0,dt,&frame);
     }
   }
 }
@@ -1030,6 +1036,9 @@ static bool Motion_ValidBodySample(const BodyPhysicalProperties *b,const MediumP
     c->permittedAxes.z>=0 && c->permittedAxes.z<=1;
 }
 static void Motion_ProjectResponse(const ReceiverConstraints *c,FieldSample *out) {
+  /* Rooted bodies own their material spring solve; tracers consume flow only.
+   * Keep the solver metadata exclusive to free-body integration. */
+  if(c->mode!=RECEIVER_FREE) out->controllerCount=0;
   if(c->mode==RECEIVER_TRACER) out->forceNewtons=out->accelerationMps2=(Vector3){0};
   if(c->mode==RECEIVER_ROOTED) {
     out->dragForceNewtons.x*=c->permittedAxes.x; out->dragForceNewtons.y*=c->permittedAxes.y; out->dragForceNewtons.z*=c->permittedAxes.z;
@@ -1044,7 +1053,7 @@ void MotionFields_SampleExternalBodyStep(Vector3 p,Vector3 v,const BodyPhysicalP
   if(!Motion_ValidBodySample(body,medium,c) || !Motion_FiniteVector(p) || !Motion_FiniteVector(v) ||
       !isfinite(dt) || dt<0 ||
       c->mode==RECEIVER_STATIC || c->mode==RECEIVER_KINEMATIC) return;
-  Motion_SamplePhysical(p,v,body,medium,mask,NULL,out,dt,0);
+  Motion_SamplePhysical(p,v,body,medium,mask,NULL,out,dt,0,false);
   Motion_ProjectResponse(c,out);
 }
 void MotionFields_SampleExternalBody(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,
@@ -1070,8 +1079,39 @@ void MotionFields_SampleBodyAtOffset(Vector3 p,Vector3 v,const BodyPhysicalPrope
   if(MotionVec_Length(legacy.airflowVelocity)>0) {
     out->mediumWeight=1; out->mediumPriority=-2147483647;
   }
-  Motion_SamplePhysical(p,v,body,medium,mask,receiver,out,dt,timeOffset);
+  Motion_SamplePhysical(p,v,body,medium,mask,receiver,out,dt,timeOffset,false);
   Motion_ProjectResponse(constraints,out);
+}
+
+void MotionFields_SampleSpatialBodyAtOffset(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,
+    const MediumProperties *medium,const ReceiverConstraints *constraints,float dt,
+    float timeOffset,unsigned int mask,MotionReceiver *receiver,FieldSample *out) {
+  if(!out) return;
+  *out=(FieldSample){0};
+  if(!Motion_ValidBodySample(body,medium,constraints) || !Motion_FiniteVector(p) ||
+      !Motion_FiniteVector(v) || !isfinite(dt) || dt<0 || !isfinite(timeOffset) ||
+      timeOffset>0 || timeOffset < -s_updateDt-1e-6f ||
+      constraints->mode==RECEIVER_STATIC || constraints->mode==RECEIVER_KINEMATIC) return;
+  Motion_SamplePhysical(p,v,body,medium,mask,receiver,out,dt,timeOffset,true);
+  Motion_ProjectResponse(constraints,out);
+}
+
+void MotionFields_PackGpu(MotionGpuScene *out) {
+  if(!out) return;
+  out->meta[0]=0;out->meta[1]=MOTION_GPU_ABI_VERSION;out->meta[2]=out->meta[3]=0;
+  out->zoneDirectionStrength=out->zoneNoise=(Vector4){0};
+  const ForceField *zone=WindZone_GetField();
+  if(zone && zone->layerCount>0) {
+    out->zoneDirectionStrength=MotionGpu_V4(zone->layers[0].direction,zone->layers[0].strength);
+    if(zone->layerCount>1) out->zoneNoise=(Vector4){zone->layers[1].strength,
+      zone->layers[1].noiseScale,zone->layers[1].noiseSpeed,1};
+    else out->zoneNoise.w=1;
+  }
+  for(int i=0;i<MOTION_FIELDS_MAX_TARGETS;i++) {
+    const MotionTargetRuntime *t=&s_targets[i];
+    const FieldDesc *d=t->typed?&t->physical:t->desc.usePhysicalField?&t->desc.physicalField:NULL;
+    if(t->handle && d) MotionGpu_PackField(d,t->handle,t->age,&out->fields[out->meta[0]++]);
+  }
 }
 
 void MotionFields_SampleBody(Vector3 p,Vector3 v,const BodyPhysicalProperties *body,

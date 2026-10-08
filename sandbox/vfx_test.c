@@ -162,6 +162,8 @@ static bool                 s_liveWoodConfigsInit = false;
 static VFX_GuidedParticleConfig s_liveGuidedParticleConfig;
 static bool s_liveGuidedParticleConfigInit = false;
 static bool s_guidedCaptureActive = false;
+static int s_guidedCaptureRemaining, s_guidedCaptureFrame, s_guidedCaptureInterval;
+static Vector3 s_guidedCaptureSource, s_guidedCaptureTarget;
 static float s_guidedSwirlRatio;
 static float s_guidedTurbulenceRatio;
 static float s_guidedRatioReferenceSpeed = 1.0f;
@@ -262,6 +264,10 @@ static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
     }
     cfg.source = source;
     cfg.target = s_guidedFixturePreset == 5 ? source : target;
+    if (s_guidedCaptureActive) {
+        s_guidedCaptureSource = cfg.source;
+        s_guidedCaptureTarget = cfg.target;
+    }
     if (s_guidedFixturePreset == 3) {
         VFX_WoodLeavesConfig leaves = VFX_WoodLeaves_DefaultConfig();
         Vector3 leafCenter = Vector3Add(Vector3Lerp(source, target, 0.40f), (Vector3){0.0f, 0.45f, 0.0f});
@@ -271,6 +277,47 @@ static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
     TraceLog(LOG_INFO, "GUIDED PARTICLE: %s", s_guidedFixturePresetNames[s_guidedFixturePreset]);
     if (VFX_ComposeGuidedParticleEx(&cfg) == MOTION_FIELD_INVALID)
         TraceLog(LOG_WARNING, "GUIDED PARTICLE: cast rejected (invalid configuration or exhausted field/emitter pool)");
+}
+
+static int VFXTest_GuidedCaptureInt(const char *name, int fallback, int lo, int hi)
+{
+    const char *text = getenv(name);
+    if (!text || !*text) return fallback;
+    char *end = NULL;
+    long value = strtol(text, &end, 10);
+    if (end == text || *end || value < lo || value > hi) {
+        TraceLog(LOG_WARNING, "%s: expected an integer in [%d, %d]", name, lo, hi);
+        return fallback;
+    }
+    return (int)value;
+}
+
+static void VFXTest_BeginGuidedCaptureRepeats(void)
+{
+    s_guidedCaptureRemaining = 0;
+    s_guidedCaptureFrame = 0;
+    if (!VFXTest_IsNewFxNamed("GUIDED PARTICLE")) return;
+    int casts = VFXTest_GuidedCaptureInt("WUXING_GUIDED_CASTS", 1, 1, 16);
+    s_guidedCaptureInterval = VFXTest_GuidedCaptureInt("WUXING_GUIDED_CAST_INTERVAL_FRAMES", 6, 1, 120);
+    s_guidedCaptureRemaining = casts - 1;
+    TraceLog(LOG_INFO, "GUIDED PARTICLE capture: casts=%d interval_frames=%d particles_per_cast=%d",
+             casts, s_guidedCaptureInterval, s_liveGuidedParticleConfig.count);
+}
+
+static void VFXTest_UpdateGuidedCaptureRepeats(void)
+{
+    if (s_guidedCaptureRemaining <= 0) return;
+    if (!VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+        s_guidedCaptureRemaining = 0;
+        return;
+    }
+    if (++s_guidedCaptureFrame % s_guidedCaptureInterval != 0) return;
+    --s_guidedCaptureRemaining;
+    s_guidedCaptureActive = true;
+    VFXTest_FireGuidedParticle(s_guidedCaptureSource, s_guidedCaptureTarget);
+    s_guidedCaptureActive = false;
+    TraceLog(LOG_INFO, "GUIDED PARTICLE capture repeat: frame=%d remaining=%d",
+             s_guidedCaptureFrame, s_guidedCaptureRemaining);
 }
 // @gen:newfx_guided_state end
 
@@ -879,9 +926,9 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
     VFXTest_UILayout ui = {0};
     ui.header = (Rectangle){12.0f, top, w - 24.0f, 40.0f};
     float statusBottom = top + 40.0f;
-    if (w >= 900.0f) {
+    if (w >= 1100.0f) {
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){178.0f + i * 76.0f, top, 76.0f, 40.0f};
-        ui.cameraStatus = (Rectangle){412.0f, top, w - 690.0f, 40.0f};
+        ui.cameraStatus = (Rectangle){412.0f, top, w - 842.0f, 40.0f};
     } else {
         ui.header.height = 116.0f;
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){18.0f + i * ((w - 36.0f) / 3.0f), top + 40.0f, (w - 36.0f) / 3.0f, 36.0f};
@@ -926,6 +973,16 @@ static Rectangle VFXTest_UITiltButton(VFXTest_UILayout ui, int direction)
 {
     return (Rectangle){ui.cameraStatus.x + ui.cameraStatus.width - (direction < 0 ? 72.0f : 36.0f),
                        ui.cameraStatus.y + (ui.cameraStatus.height - 30.0f) * 0.5f, 30.0f, 30.0f};
+}
+
+static Rectangle VFXTest_UIFogButton(VFXTest_UILayout ui)
+{
+    if (GetScreenWidth() >= 1100)
+        return (Rectangle){VFXTest_UIHeaderButton(ui, 0).x - 152.0f,
+                           ui.header.y + 5.0f, 146.0f, 30.0f};
+    float width = ui.cameraStatus.width >= 440.0f ? 146.0f : 96.0f;
+    return (Rectangle){VFXTest_UITiltButton(ui, -1).x - width - 8.0f,
+                       VFXTest_UITiltButton(ui, -1).y, width, 30.0f};
 }
 
 static Rectangle VFXTest_UIBrowserCell(VFXTest_UILayout ui, int visibleIndex)
@@ -1057,6 +1114,11 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
     s_clickedOnUI = VFXTest_IsPointerOverUI();
     if (s_clickedOnUI && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) s_vfxPointerCaptured = true;
     bool back = false;
+    if (VFXTest_UIButtonReleased(VFXTest_UIFogButton(ui))) {
+        FogRenderMode mode = Fog_GetRenderMode();
+        Fog_SetRenderMode(mode == FOG_MODE_OFF ? FOG_MODE_HEIGHT :
+                          mode == FOG_MODE_HEIGHT ? FOG_MODE_VOLUMETRIC : FOG_MODE_OFF);
+    }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 0))) { s_isPanelOpen = !s_isPanelOpen; s_vfxHelpOpen = false; }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 1))) { s_vfxHelpOpen = !s_vfxHelpOpen; s_isPanelOpen = false; }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 2))) back = true;
@@ -1141,11 +1203,16 @@ static void VFXTest_UIDraw(void)
     const char *name = s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 && s_testIndex < VFXTest_NewFxCount()
                        ? s_newFxNames[s_testIndex] : "MESH PREVIEW";
     Rectangle title = {ui.header.x + 6.0f, ui.header.y, VFXTest_UIHeaderButton(ui, 0).x - ui.header.x - 10.0f, 40.0f};
-    if (GetScreenWidth() >= 900) title.width = 150.0f;
+    if (GetScreenWidth() >= 1100) title.width = 150.0f;
     VFXTest_UIText(name, title, 14, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 0), "Fixtures", s_isPanelOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), "Help", s_vfxHelpOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Back", false);
+    FogRenderMode fogMode = Fog_GetRenderMode();
+    const char *fogLabel = fogMode == FOG_MODE_OFF ? "Fog: None" :
+                           fogMode == FOG_MODE_HEIGHT ?
+                           (ui.cameraStatus.width >= 440.0f || GetScreenWidth() >= 1100 ? "Fog: Height Map" : "Fog: Height") : "Fog: Raymarch";
+    VFXTest_UIDrawButton(VFXTest_UIFogButton(ui), fogLabel, fogMode != FOG_MODE_OFF);
     const char *variant = VFXTest_UIActiveVariant();
     if (variant) VFXTest_UIText(TextFormat("%s   |   %s", variant,
                              VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? "Shift+, / Shift+. preset" : "< / > preset"),
@@ -1154,6 +1221,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIText(TextFormat("%.1f ms", s_vfxTelemetryFrameMs), ui.metrics[1], 12, LIGHTGRAY);
     VFXTest_UIText(TextFormat("peak %.1f", s_vfxTelemetryPeakMs), ui.metrics[2], 11, LIGHTGRAY);
     Rectangle cameraLabel = {ui.cameraStatus.x, ui.cameraStatus.y, ui.cameraStatus.width - 78.0f, ui.cameraStatus.height};
+    if (GetScreenWidth() < 1100) cameraLabel.width = VFXTest_UIFogButton(ui).x - cameraLabel.x - 6.0f;
     VFXTest_UIText(TextFormat("Tilt %.0f deg  Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 12, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, -1), "-", false);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
@@ -1794,6 +1862,7 @@ void VFXTest_Draw3D(void)
         VFXTest_RefreshInspectorParams(false);
 
 // @gen:newfx_guided_input begin
+        VFXTest_UpdateGuidedCaptureRepeats();
         if (VFXTest_IsNewFxNamed("GUIDED PARTICLE") &&
             (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))) {
             int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
@@ -2237,6 +2306,7 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     s_guidedCaptureActive = true;
     (void)VFXTest_FireNewFx(newfxIndex, spawnPos);
     s_guidedCaptureActive = false;
+    VFXTest_BeginGuidedCaptureRepeats();
 // @gen:newfx_render_trigger end
 }
 

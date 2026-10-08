@@ -12,6 +12,60 @@
 // GL-equivalent state baked into VkPipelines keyed by rlvkPipelineKey, bound once per state
 // combo; only viewport/scissor stay dynamic. The VkPipelineCache persists to disk across runs.
 
+#if defined(_WIN32)
+#include <process.h>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#define RLVK_CACHE_PROCESS_ID _getpid()
+#else
+#include <unistd.h>
+#define RLVK_CACHE_PROCESS_ID getpid()
+#endif
+
+typedef struct rlvkDiskPipelineCacheHeader {
+    u32 magic, version, headerSize, vendorID, deviceID, driverVersion;
+    unsigned char uuid[VK_UUID_SIZE];
+    u64 payloadSize, checksum;
+} rlvkDiskPipelineCacheHeader;
+typedef char rlvkDiskCacheHeaderLayout[(sizeof(rlvkDiskPipelineCacheHeader) == 56) ? 1 : -1];
+
+#define RLVK_DISK_CACHE_MAGIC 0x524c564bu
+#define RLVK_DISK_CACHE_VERSION 1u
+#define RLVK_DISK_CACHE_MAX_BYTES (256u * 1024u * 1024u)
+
+static u64 rlvkDiskCacheChecksum(const void *data, size_t size)
+{
+    const unsigned char *bytes = data;
+    u64 hash = 14695981039346656037ull;
+    for (size_t i = 0; i < size; i++) { hash ^= bytes[i]; hash *= 1099511628211ull; }
+    return hash;
+}
+
+static bool rlvkDiskCacheHeaderMatches(const rlvkDiskPipelineCacheHeader *header,
+                                      size_t fileSize, const VkPhysicalDeviceProperties *props)
+{
+    return header->magic == RLVK_DISK_CACHE_MAGIC && header->version == RLVK_DISK_CACHE_VERSION &&
+           header->headerSize == sizeof(*header) && header->payloadSize >= sizeof(VkPipelineCacheHeaderVersionOne) &&
+           header->payloadSize <= RLVK_DISK_CACHE_MAX_BYTES &&
+           fileSize == sizeof(*header) + header->payloadSize &&
+           header->vendorID == props->vendorID && header->deviceID == props->deviceID &&
+           header->driverVersion == props->driverVersion &&
+           memcmp(header->uuid, props->pipelineCacheUUID, VK_UUID_SIZE) == 0;
+}
+
+static bool rlvkDiskCachePayloadMatches(const rlvkDiskPipelineCacheHeader *header, const void *data)
+{
+    VkPipelineCacheHeaderVersionOne driverHeader;
+    memcpy(&driverHeader, data, sizeof(driverHeader));
+    return driverHeader.headerSize == sizeof(driverHeader) &&
+           driverHeader.headerVersion == VK_PIPELINE_CACHE_HEADER_VERSION_ONE &&
+           driverHeader.vendorID == header->vendorID && driverHeader.deviceID == header->deviceID &&
+           memcmp(driverHeader.pipelineCacheUUID, header->uuid, VK_UUID_SIZE) == 0 &&
+           rlvkDiskCacheChecksum(data, (size_t)header->payloadSize) == header->checksum;
+}
+
 static u32 s_pipelineHashes[RLVK_MAX_PIPELINES] = {0}; // OPTIMIZATION: Cache hashes for fast lookup
 
 // OPTIMIZATION: FNV-1a Hash function for fast pipeline key lookup
@@ -50,20 +104,25 @@ static const char *rlvkGetPipelineCachePath(void)
 static void rlvkInitPipelineCache(void)
 {
     void *data = NULL;
-    long dataSize = 0;
+    size_t dataSize = 0;
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(RLVK.physicalDevice, &props);
     FILE *file = fopen(rlvkGetPipelineCachePath(), "rb");
     if (file != NULL)
     {
         fseek(file, 0, SEEK_END);
         long pos = ftell(file); // OPTIMIZATION: Catch ftell errors (-1)
-        if (pos >= 0)
+        if (pos >= (long)sizeof(rlvkDiskPipelineCacheHeader))
         {
-            dataSize = pos;
+            rlvkDiskPipelineCacheHeader header;
             fseek(file, 0, SEEK_SET);
-            if (dataSize > 0)
+            if (fread(&header, 1, sizeof(header), file) == sizeof(header) &&
+                rlvkDiskCacheHeaderMatches(&header, (size_t)pos, &props))
             {
+                dataSize = (size_t)header.payloadSize;
                 data = RL_MALLOC((size_t)dataSize);
-                if (!data || fread(data, 1, (size_t)dataSize, file) != (size_t)dataSize)
+                if (!data || fread(data, 1, dataSize, file) != dataSize ||
+                    !rlvkDiskCachePayloadMatches(&header, data))
                 {
                     RL_FREE(data);
                     data = NULL;
@@ -72,6 +131,7 @@ static void rlvkInitPipelineCache(void)
             }
         }
         fclose(file);
+        if (!data) TRACELOG(RL_LOG_WARNING, "RLVK: unverified, stale or corrupt pipeline cache ignored; rebuilding safely");
     }
 
     // A matching header can still contain truncated driver payload. Some drivers
@@ -86,7 +146,7 @@ static void rlvkInitPipelineCache(void)
     bool seeded = result == VK_SUCCESS && dataSize > 0;
     if (result != VK_SUCCESS && dataSize > 0)
     {
-        TRACELOG(RL_LOG_WARNING, "RLVK: pipeline cache seed rejected (%ld bytes, result=%d); retrying empty", dataSize, (int)result);
+        TRACELOG(RL_LOG_WARNING, "RLVK: pipeline cache seed rejected (%llu bytes, result=%d); retrying empty", (ull)dataSize, (int)result);
         info.initialDataSize = 0;
         info.pInitialData = NULL;
         RLVK.pipelineCache = VK_NULL_HANDLE;
@@ -100,7 +160,7 @@ static void rlvkInitPipelineCache(void)
         TRACELOG(RL_LOG_WARNING, "RLVK: pipeline cache unavailable (result=%d); pipelines will compile without it", (int)result);
     }
     else if (seeded)
-        TRACELOG(RL_LOG_INFO, "RLVK: pipeline cache seeded from disk (%ld bytes)", dataSize);
+        TRACELOG(RL_LOG_INFO, "RLVK: pipeline cache seeded from verified disk payload (%llu bytes)", (ull)dataSize);
     else
         TRACELOG(RL_LOG_INFO, "RLVK: empty pipeline cache initialized");
 }
@@ -113,18 +173,42 @@ static void rlvkSavePipelineCache(void)
 
     size_t dataSize = 0;
     vkGetPipelineCacheData(RLVK.device, RLVK.pipelineCache, &dataSize, NULL);
-    if (dataSize == 0)
+    if (dataSize == 0 || dataSize > RLVK_DISK_CACHE_MAX_BYTES)
         return;
 
     void *data = RL_MALLOC(dataSize);
+    if (!data) return;
     if (vkGetPipelineCacheData(RLVK.device, RLVK.pipelineCache, &dataSize, data) == VK_SUCCESS)
     {
-        FILE *file = fopen(rlvkGetPipelineCachePath(), "wb");
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(RLVK.physicalDevice, &props);
+        rlvkDiskPipelineCacheHeader header = {0};
+        header.magic = RLVK_DISK_CACHE_MAGIC; header.version = RLVK_DISK_CACHE_VERSION;
+        header.headerSize = sizeof(header); header.vendorID = props.vendorID;
+        header.deviceID = props.deviceID; header.driverVersion = props.driverVersion;
+        memcpy(header.uuid, props.pipelineCacheUUID, VK_UUID_SIZE);
+        header.payloadSize = dataSize; header.checksum = rlvkDiskCacheChecksum(data, dataSize);
+        char temporary[640];
+        snprintf(temporary, sizeof(temporary), "%s.%lu.tmp", rlvkGetPipelineCachePath(), (unsigned long)RLVK_CACHE_PROCESS_ID);
+        FILE *file = fopen(temporary, "wb");
         if (file != NULL)
         {
-            fwrite(data, 1, dataSize, file);
-            fclose(file);
-            TRACELOG(RL_LOG_INFO, "RLVK: pipeline cache saved to disk (%llu bytes)", (ull)dataSize);
+            bool complete = fwrite(&header, 1, sizeof(header), file) == sizeof(header) &&
+                            fwrite(data, 1, dataSize, file) == dataSize;
+            if (fclose(file) != 0) complete = false;
+            bool replaced = false;
+            if (complete)
+            {
+#if defined(_WIN32)
+                replaced = MoveFileExA(temporary, rlvkGetPipelineCachePath(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+                replaced = rename(temporary, rlvkGetPipelineCachePath()) == 0;
+#endif
+            }
+            if (replaced)
+                TRACELOG(RL_LOG_INFO, "RLVK: verified pipeline cache saved atomically (%llu bytes)", (ull)dataSize);
+            else { remove(temporary); TRACELOG(RL_LOG_WARNING, "RLVK: pipeline cache save skipped; previous file preserved"); }
         }
     }
     RL_FREE(data);

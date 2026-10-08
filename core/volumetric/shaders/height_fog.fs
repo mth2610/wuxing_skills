@@ -12,6 +12,10 @@ uniform vec3      u_sunColor;     // Sunlight linear color
 uniform vec3      u_fogColor;     // Ambient fog color
 uniform float     u_fogDensity;   // Base volume density
 uniform float     u_fogStart;     // Near exclusion start distance
+uniform vec3      u_fogFocus;
+uniform vec3      u_fogForward;
+uniform float     u_fogSpan;
+uniform float     u_distantCoverage;
 uniform float     u_maxDist;      // Max distance clamp
 uniform float     u_heightFalloff;// Exponential decay rate k_e along Y
 uniform float     u_baseAltitude; // Ground reference altitude Y
@@ -107,13 +111,24 @@ void main() {
             }
         }
     }
-    opticalDepth += localDensitySum;
 
     // Distant aerial perspective boost for distant terrain and sky horizon
     if (isSky || rayDist > 35.0) {
         float distantBlend = smoothstep(30.0, u_maxDist, rayDist);
         opticalDepth += distantBlend * u_fogDensity * 0.40;
     }
+
+    // Distant profiles share the volumetric renderer's receiver footprint.
+    // Apply it only to global atmosphere; local mist keeps its world placement.
+    if (u_fogSpan > 0.0) {
+        float behindFocus = dot(endPos - u_fogFocus, u_fogForward);
+        float framedDepth = behindFocus / max(u_fogSpan, 0.001);
+        if (u_distantCoverage < 1.0)
+            framedDepth = 1.0 + (framedDepth - 1.0) / max(u_distantCoverage, 0.0001);
+        float distantFade = u_distantCoverage > 0.0 ? smoothstep(0.12, 0.80, framedDepth) : 0.0;
+        opticalDepth *= distantFade;
+    }
+    opticalDepth += localDensitySum;
 
     if (opticalDepth <= 0.0001) {
         finalColor = vec4(0.0);

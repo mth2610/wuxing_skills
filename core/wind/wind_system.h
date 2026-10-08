@@ -106,6 +106,8 @@ float Wind_HeightFactor(float hRel);
  * CPU velocity sampling uses that same bounded set. NULL/0 clears it. */
 void Wind_SetMotionAirflow(const VorticleData *sources, int count);
 const VorticleData* Wind_GetActiveVorticles(int *outCount);
+/* Prefix of GetActiveVorticles published by Motion; direct receivers skip it. */
+int Wind_GetPublishedMotionAirflowCount(void);
 int Wind_GetActiveCount(void);
 
 // -----------------------------------------------------------------------------

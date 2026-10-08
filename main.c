@@ -31,6 +31,9 @@
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
+#if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
+#include "third_party/vulkan/rlvk.h"
+#endif
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -188,11 +191,13 @@ static void MyBeginMode3D(Camera3D camera) {
 
 static void MyEndMode3D(void) {
   rlDrawRenderBatchActive();
-  rlMatrixMode(RL_PROJECTION);
-  rlPopMatrix();
+  // Projection and modelview share one stack: unwind in reverse push order.
   rlMatrixMode(RL_MODELVIEW);
   rlPopMatrix();
   rlLoadIdentity();
+  rlMatrixMode(RL_PROJECTION);
+  rlPopMatrix();
+  rlMatrixMode(RL_MODELVIEW);
   rlDisableDepthTest();
 }
 
@@ -328,6 +333,7 @@ int main(int argc, char **argv) {
   bool captureExportFailed = false;
   bool captureNeutralSmoke = false;
   bool benchmarkVisible = false;
+  int benchmarkStartFrame = 60;
   int         netHostPort     = 0;      // --host [port]
   const char *netJoinIp       = NULL;   // --join <ip> [port]
   int         netJoinPort     = NET_DEFAULT_PORT;
@@ -363,6 +369,14 @@ int main(int argc, char **argv) {
       }
       else if (strcmp(argv[i], "--benchmark-visible") == 0)
           benchmarkVisible = true;
+      else if (strcmp(argv[i], "--profile-start-frame") == 0 && i + 1 < argc) {
+          char *end=NULL;long frame=strtol(argv[++i],&end,10);
+          if(!argv[i][0] || *end || frame<0 || frame>1000000) {
+              fprintf(stderr,"Profile start frame must be an integer within 0..1000000.\n");
+              return 2;
+          }
+          benchmarkStartFrame=(int)frame;
+      }
       else if (strcmp(argv[i], "--warmup") == 0 && i + 1 < argc)
           renderVFXWarmup = atoi(argv[++i]);
       else if (strcmp(argv[i], "--out") == 0 && i + 1 < argc)
@@ -793,6 +807,7 @@ int main(int argc, char **argv) {
      * waits; they are submission costs, not unsupported GPU timestamps. */
     double profileTime[12] = {0};
     double updateTime[9] = {0};
+    double profileAcquireSeconds = 0;
     if (benchmarkVisible) profileTime[0] = GetTime();
     // The headless paths pin dt so a capture is reproducible. That pin only ever
     // covered THIS variable, while VFX/composition code re-read GetFrameTime()
@@ -1559,6 +1574,16 @@ int main(int argc, char **argv) {
       }
     }
 
+    /* Begin the GPU frame before simulation uploads/dispatches. Otherwise
+     * Vulkan must stage each out-of-frame buffer update synchronously, draining
+     * the previous graphics submission before particle compute can be queued. */
+    if (benchmarkVisible) profileAcquireSeconds = GetTime();
+    BeginDrawing();
+#if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
+    rlvkBeginFrameCommands();
+#endif
+    if (benchmarkVisible) profileAcquireSeconds = GetTime() - profileAcquireSeconds;
+
     // Map switches may originate in main.c or inside GameScreen_Update. Keep a
     // local terrain tile around gameplay without coupling MapManager to wind.
     if (benchmarkVisible) updateTime[0] = GetTime();
@@ -1621,7 +1646,6 @@ int main(int argc, char **argv) {
     SkillDebugger_PreRender();
 
     if (benchmarkVisible) profileTime[1] = GetTime();
-    BeginDrawing();
     if (benchmarkVisible) profileTime[2] = GetTime();
     PASS_MARK("frame_start");
 
@@ -2016,16 +2040,16 @@ int main(int argc, char **argv) {
     EndDrawing();
     if (benchmarkVisible) {
         profileTime[11] = GetTime();
-        if (renderVFXFrame >= 60) {
+        if (renderVFXFrame >= benchmarkStartFrame) {
             TraceLog(LOG_INFO, "UPDATE_PROFILE: frame=%d screen=%.3f terrain=%.3f tuning=%.3f skills=%.3f compose=%.3f particles=%.3f gas=%.3f other=%.3f map=%.3f",
-                renderVFXFrame, (updateTime[0]-profileTime[0])*1000.0,
+                renderVFXFrame, (updateTime[0]-profileTime[0]-profileAcquireSeconds)*1000.0,
                 (updateTime[1]-updateTime[0])*1000.0, (updateTime[2]-updateTime[1])*1000.0,
                 (updateTime[3]-updateTime[2])*1000.0, (updateTime[4]-updateTime[3])*1000.0,
                 (updateTime[5]-updateTime[4])*1000.0, (updateTime[6]-updateTime[5])*1000.0,
                 (updateTime[7]-updateTime[6])*1000.0, (updateTime[8]-updateTime[7])*1000.0);
             TraceLog(LOG_INFO, "FRAME_PROFILE: frame=%d total=%.3f update=%.3f acquire=%.3f shadow=%.3f opaque=%.3f luma=%.3f transparent=%.3f fog=%.3f exposure=%.3f post=%.3f ui=%.3f present=%.3f",
                 renderVFXFrame, (profileTime[11]-profileTime[0])*1000.0,
-                (profileTime[1]-profileTime[0])*1000.0, (profileTime[2]-profileTime[1])*1000.0,
+                (profileTime[1]-profileTime[0]-profileAcquireSeconds)*1000.0, profileAcquireSeconds*1000.0,
                 (profileTime[3]-profileTime[2])*1000.0, (profileTime[4]-profileTime[3])*1000.0,
                 (profileTime[5]-profileTime[4])*1000.0, (profileTime[6]-profileTime[5])*1000.0,
                 (profileTime[7]-profileTime[6])*1000.0, (profileTime[8]-profileTime[7])*1000.0,

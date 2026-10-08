@@ -128,6 +128,7 @@ typedef struct
   const ParticleDynamicsProfile *dynamics;
   ParticleDynamicsProfile dynamicsStorage;
   bool receiveMotionFields;
+  bool spatialMotionOnly;
   MotionReceiver motionReceiver;
   Vector3 dynamicsInitialImpulseNs;
   Vector3 dynamicsInitialAccelerationMps2;
@@ -378,8 +379,9 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
     p->dynamics = &p->dynamicsStorage;
   }
   p->receiveMotionFields = config.physics.receiveMotionFields;
+  p->spatialMotionOnly = config.physics.spatialMotionOnly;
   p->motionReceiver = (MotionReceiver){0};
-  if (p->receiveMotionFields && config.physics.initialGuide)
+  if (p->receiveMotionFields && !p->spatialMotionOnly && config.physics.initialGuide)
     MotionFields_Capture(config.physics.initialGuide, config.position, &p->motionReceiver);
   p->dynamicsInitialImpulseNs = config.physics.initialImpulseNs;
   p->dynamicsInitialAccelerationMps2 = config.physics.initialAccelerationMps2;
@@ -666,7 +668,7 @@ void UpdateParticles(float dt)
           (p->travelPath->arrivalForceDuration<=0||p->travelImpactAge<=p->travelPath->arrivalForceDuration))
           ?p->travelPath->arrivalForceField:NULL;
     }
-    if (p->receiveMotionFields) {
+    if (p->receiveMotionFields || p->spatialMotionOnly) {
       ParticleDynamicsProfile fallback = {.inverseMassKg=1, .gravityScale=0,
           .windCouplingHz=3.5f, .windSusceptibility=p->windInfluence};
       const ParticleDynamicsProfile *body = p->dynamics ? p->dynamics : &fallback;
@@ -690,8 +692,11 @@ void UpdateParticles(float dt)
             (Vector3){0,-9.81f*body->gravityScale,0});
         if(body->airDensityKgM3>0) medium.densityKgM3=body->airDensityKgM3;
         FieldSample sample;
-        MotionFields_SampleBodyAtOffset(position,velocity,&physicalBody,&medium,&constraints,
-            step,timeOffset,MOTION_RECEIVER_PARTICLE,&p->motionReceiver,&sample);
+        if(p->spatialMotionOnly)
+          MotionFields_SampleSpatialBodyAtOffset(position,velocity,&physicalBody,&medium,&constraints,
+              step,timeOffset,MOTION_RECEIVER_PARTICLE,p->receiveMotionFields?&p->motionReceiver:NULL,&sample);
+        else MotionFields_SampleBodyAtOffset(position,velocity,&physicalBody,&medium,&constraints,
+              step,timeOffset,MOTION_RECEIVER_PARTICLE,&p->motionReceiver,&sample);
         Vector3 acceleration=p->dynamicsInitialAccelerationMps2;
         if (activeField) acceleration=MotionVec_Add(acceleration,ForceField_Evaluate(
             activeField,position,velocity,sampleTime,p->forceAxisOrigin,p->forceAxisDir));

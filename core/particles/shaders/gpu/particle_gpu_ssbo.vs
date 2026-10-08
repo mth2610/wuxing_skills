@@ -33,6 +33,7 @@ uniform vec3 u_right;   // camera right vector
 uniform vec3 u_up;      // camera up vector
 uniform float u_filterEmitter; // < 0 = all
 uniform float u_filterRenderMode; // < 0 = all
+uniform float u_filterBlend;
 
 out vec2 fragTexCoord;
 out vec4 fragColor;
@@ -44,6 +45,7 @@ void main() {
 
     // Invisible nếu inactive hoặc vừa mới chết
     if (life.w < 0.5 || life.y <= 0.0 ||
+        abs(particles[gl_InstanceID].impact_data.w-u_filterBlend)>.25 ||
         (u_filterRenderMode < 0.0 && abs(route.y - 3.0) < 0.25) ||
         (u_filterEmitter >= 0.0 && abs(route.x - u_filterEmitter) > 0.25) ||
         (u_filterRenderMode >= 0.0 && abs(route.y - u_filterRenderMode) > 0.25)) {

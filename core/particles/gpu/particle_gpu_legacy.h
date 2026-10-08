@@ -23,6 +23,7 @@
 #include "raylib.h"
 #include "core/force_field.h"
 #include "core/particles/particle_travel.h"
+#include "core/particles/particle_dynamics.h"
 #include <stdbool.h>
 #include "particle_surface_index.h"
 
@@ -82,6 +83,12 @@ typedef struct {
     /* Manager-owned routing metadata. Never authored by VFX code. */
     int     emitterId;
     int     renderMode;
+    /* Compute-only modern spatial Motion. Manager retains CPU fallback for
+     * legacy captures/events. Profile is copied at Spawn, never borrowed. */
+    bool spatialMotionOnly, receiveMotionFields;
+    const ParticleDynamicsProfile *dynamics;
+    Vector3 initialImpulseNs, initialAccelerationMps2, constantForceNewtons;
+    int blendMode;
 } GpuParticleConfig;
 
 // Khởi tạo — detect compute capability, tạo buffer/shader
@@ -95,6 +102,8 @@ void GpuParticleSystem_Update(float dt);
 
 // Vẽ tất cả particle dưới dạng camera-facing billboard
 void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture);
+/* Layer 0=all, 1=alpha body, 2=additive emission. Surface capture bypasses it. */
+void GpuParticleSystem_DrawLayer(Camera3D camera, Texture2D texture, int layer);
 /* Liquid-table slot written into the capture's B channel by the NEXT surface
  * draw. core/liquid/liquid_surface.c owns the policy; this is only the wire. */
 void GpuParticleSystem_SetSurfaceMaterialId(float materialId);

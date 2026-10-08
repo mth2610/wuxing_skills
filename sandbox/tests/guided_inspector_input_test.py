@@ -6,6 +6,61 @@ import unittest
 
 
 class GuidedInspectorInputTest(unittest.TestCase):
+    def test_capture_repeat_schedule_is_bounded_and_frame_deterministic(self):
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "sandbox/vfx_test.c").read_text()
+        begin = source.index("static int VFXTest_GuidedCaptureInt(")
+        end = source.index("// @gen:newfx_guided_state end", begin)
+        production = source[begin:end]
+        fixture = r'''
+#define _POSIX_C_SOURCE 200809L
+#include <assert.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stddef.h>
+#define LOG_WARNING 1
+#define LOG_INFO 2
+#define TraceLog(...) ((void)0)
+typedef struct { float x,y,z; } Vector3;
+static bool selected=true, s_guidedCaptureActive;
+static int s_guidedCaptureRemaining,s_guidedCaptureFrame,s_guidedCaptureInterval;
+static Vector3 s_guidedCaptureSource={1,2,3},s_guidedCaptureTarget={4,5,6};
+static int casts=1, frames[4];
+static bool VFXTest_IsNewFxNamed(const char *name) { (void)name; return selected; }
+static void VFXTest_FireGuidedParticle(Vector3 source,Vector3 target) {
+    assert(s_guidedCaptureActive && source.x==1 && target.z==6);
+    assert(casts>=1 && casts<=4); frames[casts-1]=s_guidedCaptureFrame; ++casts;
+}
+''' + production + r'''
+int main(void) {
+    unsetenv("WUXING_GUIDED_CASTS"); unsetenv("WUXING_GUIDED_CAST_INTERVAL_FRAMES");
+    VFXTest_BeginGuidedCaptureRepeats();
+    for(int i=0;i<30;i++) VFXTest_UpdateGuidedCaptureRepeats();
+    assert(casts==1);
+    setenv("WUXING_GUIDED_CASTS","5",1);
+    VFXTest_BeginGuidedCaptureRepeats();
+    for(int i=0;i<30;i++) VFXTest_UpdateGuidedCaptureRepeats();
+    assert(casts==5 && frames[0]==6 && frames[1]==12 && frames[2]==18 && frames[3]==24);
+    assert(!s_guidedCaptureActive);
+    setenv("WUXING_GUIDED_CASTS","17",1);
+    VFXTest_BeginGuidedCaptureRepeats(); assert(s_guidedCaptureRemaining==0);
+    setenv("WUXING_GUIDED_CASTS","5garbage",1);
+    VFXTest_BeginGuidedCaptureRepeats(); assert(s_guidedCaptureRemaining==0);
+    setenv("WUXING_GUIDED_CASTS","5",1);
+    setenv("WUXING_GUIDED_CAST_INTERVAL_FRAMES","0",1);
+    VFXTest_BeginGuidedCaptureRepeats(); assert(s_guidedCaptureInterval==6);
+    selected=false; VFXTest_UpdateGuidedCaptureRepeats(); assert(s_guidedCaptureRemaining==0);
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="guided-capture-repeat-") as directory:
+            code = Path(directory) / "test.c"
+            binary = Path(directory) / "test"
+            code.write_text(fixture)
+            subprocess.run(["cc", "-std=c99", "-Wall", "-Wextra", "-Werror", str(code), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+
     def test_speed_edits_preserve_flow_ratios_and_zero_speed_memory(self):
         root = Path(__file__).resolve().parents[2]
         source = (root / "sandbox/vfx_test.c").read_text()
@@ -123,6 +178,7 @@ static bool VFXTest_IsNewFxNamed(const char *name) { (void)name; return true; }
 static void VFXTest_SetGuidedPreset(int preset) { s_guidedFixturePreset = preset; ++resets; }
 static void VFXTest_RefreshInspectorParams(bool force) { (void)force; s_inspectorSelectedParam = 0; }
 static void VFXTest_UIRevealSelectedParameter(void) {}
+static void VFXTest_UpdateGuidedCaptureRepeats(void) {}
 static void VFXTest_UIEditParameter(int index, int direction) { assert(index == s_inspectorSelectedParam); value += direction; ++edits; }
 #define VFX_Param_FormatValue(param,buf,size) ((void)(param), (void)(buf), (void)(size))
 static void TraceLog(int level, const char *format, ...) { (void)level; (void)format; }

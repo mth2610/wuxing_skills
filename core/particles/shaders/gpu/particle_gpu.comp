@@ -76,6 +76,7 @@ struct WindGPU {
     vec4 macro_params;    // x = noiseScale, y = noiseSpeed, z = activeCount, w = terrainLiftK
     vec4 macro_extra;     // x = heightGradientK, yzw = reserved
     VorticleGPU vorticles[MAX_GPU_VORTICLES];
+    vec4 guidingOrigin, guidingTarget, guidingDirection;
 };
 
 layout(std430, binding = 3) readonly buffer WindBuffer {
@@ -171,6 +172,10 @@ float calcAttenuation(vec3 origin, float radius, float falloff, vec3 pos) {
 }
 
 // TỐI ƯU HÓA: Truyền `out float outTotalVisc` để gộp vòng lặp SSBO
+bool motionPhysicalNoise=false;
+float fieldNoiseScalar(vec3 p);
+vec3 fieldCurlNoise(vec3 p);
+
 vec3 evalForceField(int idx, vec3 pos, vec3 vel, float time, out float outTotalVisc) {
     vec3 totalAcc = vec3(0.0);
     outTotalVisc = 0.0;
@@ -231,21 +236,21 @@ vec3 evalForceField(int idx, vec3 pos, vec3 vel, float time, out float outTotalV
 
         } else if (type == FT_WIND) {
             float t = time * nSpeed;
-            float nx = noiseScalar(vec3(pos.x * nScale + t, pos.y * nScale, pos.z * nScale));
-            float nz = noiseScalar(vec3(pos.x * nScale + 53.9, pos.y * nScale, pos.z * nScale + t));
+            float nx = fieldNoiseScalar(vec3(pos.x * nScale + t, pos.y * nScale, pos.z * nScale));
+            float nz = fieldNoiseScalar(vec3(pos.x * nScale + 53.9, pos.y * nScale, pos.z * nScale + t));
             acc = dir * strength + vec3(nx, 0.0, nz) * strength * 0.35;
 
         } else if (type == FT_NOISE_PERLIN) {
             float t = time * nSpeed;
-            float nx = noiseScalar(vec3(pos.x * nScale + t,    pos.y * nScale + 17.7, pos.z * nScale + 17.7));
-            float ny = noiseScalar(vec3(pos.x * nScale + 37.3, pos.y * nScale + t,    pos.z * nScale + 37.3));
-            float nz = noiseScalar(vec3(pos.x * nScale + 73.1, pos.y * nScale + 73.1, pos.z * nScale + t));
+            float nx = fieldNoiseScalar(vec3(pos.x * nScale + t,    pos.y * nScale + 17.7, pos.z * nScale + 17.7));
+            float ny = fieldNoiseScalar(vec3(pos.x * nScale + 37.3, pos.y * nScale + t,    pos.z * nScale + 37.3));
+            float nz = fieldNoiseScalar(vec3(pos.x * nScale + 73.1, pos.y * nScale + 73.1, pos.z * nScale + t));
             acc = vec3(nx, ny, nz) * strength;
 
         } else if (type == FT_NOISE_CURL) {
             float t = time * nSpeed;
             vec3 p = vec3(pos.x * nScale + t, pos.y * nScale, pos.z * nScale + t);
-            acc = curlNoise3(p) * strength;
+            acc = fieldCurlNoise(p) * strength;
 
         } else if (type == FT_DRAG) {
             acc = -strength * vel;
@@ -433,7 +438,7 @@ float evalTerrainLift(vec3 pos, vec3 macroVelocity) {
 }
 
 // Động lực học luồng gió mô phỏng theo Ghost of Tsushima Wind System
-vec3 evalWindVelocity(vec3 pos, float time) {
+vec3 evalWindVelocityMode(vec3 pos, float time, bool background) {
     vec3 totalVel = vec3(0.0);
     // 1. Gió vĩ mô cuộn gradient noise 3D theo không gian và thời gian
     vec3 baseDir = uWind.macro_dir_amp.xyz;
@@ -477,7 +482,7 @@ vec3 evalWindVelocity(vec3 pos, float time) {
 
     // 3. Các xoáy khí cục bộ (Vorticles: Linear Gust, Radial Blast, Vortex)
     int vortCount = int(uWind.macro_params.z + 0.5);
-    for (int i = 0; i < vortCount && i < MAX_GPU_VORTICLES; ++i) {
+    for (int i = background?int(uWind.macro_extra.y):0; i < vortCount && i < MAX_GPU_VORTICLES; ++i) {
         vec3 vPos = uWind.vorticles[i].pos_radius.xyz;
         float vRadius = uWind.vorticles[i].pos_radius.w;
         vec3 delta = pos - vPos;
@@ -540,6 +545,32 @@ vec3 evalWindVelocity(vec3 pos, float time) {
     return totalVel;
 }
 
+vec3 evalGuidingWind(vec3 pos,float time) {
+    if(uWind.guidingOrigin.w<.5 || uWind.guidingTarget.w<=.001) return vec3(0);
+    vec3 dir=uWind.guidingDirection.xyz,toPos=pos-uWind.guidingOrigin.xyz;
+    float span=length((uWind.guidingTarget.xyz-uWind.guidingOrigin.xyz).xz);
+    if(span<1.0) span=24.0;
+    float along=dot(toPos.xz,dir.xz);if(along< -1.5 || along>span+3.0) return vec3(0);
+    float perp=length(toPos.xz-dir.xz*along),dy=abs(toPos.y);
+    if(perp>=3.8 || dy>=2.8) return vec3(0);
+    float w=(1.0-perp/3.8)*(1.0-perp/3.8)*(1.0-dy/2.8)*uWind.guidingTarget.w;
+    if(w<=.001) return vec3(0);
+    float speed=uWind.guidingDirection.w;
+    vec3 flow=dir*speed*(1.0+.22*sin(along*.20-time*3.5))*w;
+    flow+=vec3(noiseScalar(vec3(pos.x*.35,pos.y*.35+time*1.5,pos.z*.35)),
+        noiseScalar(vec3(pos.x*.35+17.3,pos.y*.35-time*1.2,pos.z*.35+19.7)),
+        noiseScalar(vec3(pos.x*.35-23.5,pos.y*.35,pos.z*.35+time*1.6)))*vec3(.8,.4,.8)*w;
+    float h0,h1;bool hasH0=sampleTerrainHeight(pos.xz,h0),hasH1=sampleTerrainHeight(pos.xz+dir.xz*2.4,h1);
+    if(hasH0) {
+        if(hasH1 && h1>h0) flow.y+=min((h1-h0)/2.4*speed*.45*w,6.0);
+        if(pos.y<h0+1.2) flow.y+=min((h0+1.2-pos.y)*3.0*w,8.0);
+    }
+    return flow;
+}
+vec3 evalWindVelocity(vec3 pos,float time) { return evalWindVelocityMode(pos,time,false)+evalGuidingWind(pos,time); }
+vec3 evalMotionBackgroundWind(vec3 pos,float time) { return evalWindVelocityMode(pos,time,true)+evalGuidingWind(pos,time); }
+#include "core/particles/shaders/gpu/particle_motion.glsl"
+
 void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= uint(particles.length())) return;
@@ -557,9 +588,12 @@ void main() {
         return;
     }
 
+    int forceIndex = int(p.ff_data.x);
+    if(idx<uint(motionBodies.length()) && motionBodies[idx].meta.x!=0u) {
+        motionPhysicalNoise=true;motionIntegrate(idx,p);
+    } else {
     int pathIndex = int(p.route_data.z);
     bool impactActive = p.impact_data.y > 0.5;
-    int forceIndex = int(p.ff_data.x);
     if (impactActive && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
         (uTravelPaths[pathIndex].radii.z <= 0.0 ||
          p.impact_data.x <= uTravelPaths[pathIndex].radii.z))
@@ -634,6 +668,8 @@ void main() {
         return;
     }
 
+    } // legacy integrator
+
     // Same receiver contract as ParticlePlane_Resolve on both CPU paths.
     if (forceIndex >= 0) {
         int count = min(uFields[forceIndex].meta.x, FF_MAX_LAYERS);
@@ -661,7 +697,7 @@ void main() {
         float floorY = p.ff_data.w; // ff_pad2
         if (p.pos_radius.y <= floorY) {
             p.vel_drag.y = -p.vel_drag.y * elasticity;
-            p.vel_drag.xz *= 0.8;
+            p.vel_drag.xz *= motionBodies[idx].meta.x!=0u ? 0.75 : 0.8;
             p.pos_radius.y = floorY + 0.005;
         }
     }

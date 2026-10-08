@@ -204,6 +204,8 @@ void    WindZone_Clear(void);
 
 // Trả về true nếu wind zone đang hoạt động.
 bool    WindZone_IsActive(void);
+/* Borrowed immutable snapshot source for compute packing; NULL when inactive. */
+const ForceField *WindZone_GetField(void);
 
 // Tính gia tốc wind tại vị trí pos. Gọi nội bộ bởi particle_system.
 // Skill code thông thường KHÔNG gọi hàm này trực tiếp.

@@ -56,6 +56,68 @@ static inline Vector3 MotionBody_AdvanceVelocity(
   }
   return ParticleDynamics_ClampTerminalSpeed(velocity, body->terminalSpeedMps);
 }
+static inline Vector3 MotionBody_ResponseMultiply(const FieldControllerResponse *r,Vector3 v) {
+  return (Vector3){r->diagonal.x*v.x+r->offDiagonal.x*v.y+r->offDiagonal.y*v.z,
+    r->offDiagonal.x*v.x+r->diagonal.y*v.y+r->offDiagonal.z*v.z,
+    r->offDiagonal.y*v.x+r->offDiagonal.z*v.y+r->diagonal.z*v.z};
+}
+/* Solve a symmetric positive definite 3x3 system by LDL transpose. One solve
+ * for unsaturated guidance; at most count+1 when force limits activate. */
+static inline Vector3 MotionBody_SolveResponse(Vector3 diagonal,Vector3 off,Vector3 rhs) {
+  float l10=off.x/diagonal.x,l20=off.y/diagonal.x;
+  float d1=diagonal.y-l10*off.x;
+  float l21=(off.z-l20*off.x)/d1;
+  float d2=diagonal.z-l20*off.y-l21*l21*d1;
+  float y1=rhs.y-l10*rhs.x,y2=rhs.z-l20*rhs.x-l21*y1;
+  float z=y2/d2,y=y1/d1-l21*z;
+  return (Vector3){rhs.x/diagonal.x-l10*y-l20*z,y,z};
+}
+static inline Vector3 MotionBody_AdvanceControllers(Vector3 velocity,Vector3 externalAcceleration,
+    const FieldSample *sample,float inverseMass,float dt) {
+  float scale=inverseMass*dt;
+  /* Common moving-sphere case: one isotropic response needs three scalar
+   * divisions, no active-set scratch or general matrix factorization. */
+  if(sample->controllerCount==1) {
+    const FieldControllerResponse *r=&sample->controllers[0];
+    if(r->offDiagonal.x==0 && r->offDiagonal.y==0 && r->offDiagonal.z==0) {
+      Vector3 rhs=MotionVec_Add(MotionVec_Scale(externalAcceleration,dt),
+          MotionVec_Scale(r->driveNewtons,scale));
+      Vector3 delta={rhs.x/(1+scale*r->diagonal.x),
+        rhs.y/(1+scale*r->diagonal.y),rhs.z/(1+scale*r->diagonal.z)};
+      Vector3 force=MotionVec_Sub(r->driveNewtons,MotionBody_ResponseMultiply(r,delta));
+      if(MotionVec_Dot(force,force)>r->maxForceNewtons*r->maxForceNewtons)
+        delta=MotionVec_Add(MotionVec_Scale(externalAcceleration,dt),
+            MotionVec_Scale(Field_LimitVector(force,r->maxForceNewtons),scale));
+      return MotionVec_Add(velocity,delta);
+    }
+  }
+  bool limited[FIELD_MAX_CONTROLLER_RESPONSES]={0};
+  Vector3 fixed[FIELD_MAX_CONTROLLER_RESPONSES]={{0}};
+  Vector3 delta={0};
+  for(int pass=0;pass<=sample->controllerCount;pass++) {
+    Vector3 diagonal={1,1,1},off={0},rhs=MotionVec_Scale(externalAcceleration,dt);
+    for(int i=0;i<sample->controllerCount;i++) {
+      const FieldControllerResponse *r=&sample->controllers[i];
+      rhs=MotionVec_Add(rhs,MotionVec_Scale(limited[i]?fixed[i]:r->driveNewtons,scale));
+      if(!limited[i]) {
+        diagonal=MotionVec_Add(diagonal,MotionVec_Scale(r->diagonal,scale));
+        off=MotionVec_Add(off,MotionVec_Scale(r->offDiagonal,scale));
+      }
+    }
+    delta=MotionBody_SolveResponse(diagonal,off,rhs);
+    bool changed=false;
+    for(int i=0;i<sample->controllerCount;i++) if(!limited[i]) {
+      const FieldControllerResponse *r=&sample->controllers[i];
+      Vector3 force=MotionVec_Sub(r->driveNewtons,MotionBody_ResponseMultiply(r,delta));
+      if(MotionVec_Dot(force,force)>r->maxForceNewtons*r->maxForceNewtons) {
+        fixed[i]=Field_LimitVector(force,r->maxForceNewtons);
+        limited[i]=true;changed=true;
+      }
+    }
+    if(!changed) break;
+  }
+  return MotionVec_Add(velocity,delta);
+}
 /* Authored drag/buoyancy replace automatic material approximations so each
  * physical contribution is integrated exactly once. */
 static inline Vector3 MotionBody_AdvanceFieldVelocity(Vector3 velocity,
@@ -67,6 +129,20 @@ static inline Vector3 MotionBody_AdvanceFieldVelocity(Vector3 velocity,
   if(sample->hasBuoyancyForce) body.densityKgM3=0;
   Vector3 air=sample->mediumIsAbsolute?sample->mediumVelocityMps:
     MotionVec_Add(ordinaryAir,sample->mediumVelocityMps);
+  if(sample->controllerCount>0 && dt>0) {
+    float inverseMass=body.inverseMassKg>0?body.inverseMassKg:1;
+    Vector3 externalForce=MotionVec_Add(force,
+        MotionVec_Sub(sample->forceNewtons,sample->dragForceNewtons));
+    for(int i=0;i<sample->controllerCount;i++)
+      externalForce=MotionVec_Sub(externalForce,sample->controllers[i].sampledForceNewtons);
+    Vector3 externalAcceleration=MotionVec_Add(MotionVec_Add(acceleration,
+        sample->accelerationMps2),MotionVec_Scale(externalForce,inverseMass));
+    externalAcceleration.y+=ParticleDynamics_GravityAcceleration(&body);
+    velocity=MotionBody_AdvanceControllers(velocity,externalAcceleration,sample,inverseMass,dt);
+    /* Reuse the existing material drag/terminal step without a second kick. */
+    body.gravityScale=0;
+    velocity=MotionBody_AdvanceVelocity(velocity,&body,(Vector3){0},(Vector3){0},air,dt);
+  } else
   velocity=MotionBody_AdvanceVelocity(velocity,&body,
     MotionVec_Add(acceleration,sample->accelerationMps2),
     MotionVec_Add(force,MotionVec_Sub(sample->forceNewtons,sample->dragForceNewtons)),air,dt);

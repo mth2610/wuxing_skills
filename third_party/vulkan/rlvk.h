@@ -323,6 +323,10 @@ RLVKAPI bool rlvkSetFramebufferDepthSampleOnDemand(unsigned int fbId, bool enabl
 // target or while that depth is attached to the open scope; never submits or waits on the host.
 RLVKAPI bool rlvkRefreshFramebufferDepthTexture(unsigned int fbId);
 RLVKAPI void rlvkPresent(void);                     // Present the current frame, called from SwapScreenBuffer()
+// Opt in to frame commands before the first draw. Call inside a balanced
+// BeginDrawing/EndDrawing pair, before runtime uploads or compute. Idempotent;
+// unavailable surfaces/acquire failures retain the existing lazy fallback.
+RLVKAPI void rlvkBeginFrameCommands(void);
 
 //------------------------------------------------------------------------------------
 // Functions Declaration - Format capability query

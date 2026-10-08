@@ -38,6 +38,7 @@ float VolumetricFog_GetGodRayIntensity(void);
 // half-span. Zero removes global distant haze. Local volumes, nearby profiles,
 // density and light intensity are unaffected. Persists across resize; map
 // owners must restore 1 when leaving a map with a custom footprint.
+// Applies to both analytical height fog and volumetric rendering.
 void VolumetricFog_SetDistantCoverage(float areaRatio);
 float VolumetricFog_GetDistantCoverage(void);
 

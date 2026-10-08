@@ -32,10 +32,22 @@ Lessons learned during the implementation of volumetric fog and shadow raymarchi
 - **Cause:** `environment/environment_system.h` defines sphere=0, box=1, cylinder=2, while `shaders/volumetric_fog.fs` dispatches box=0, sphere=1, cylinder=2. Casting the public enum directly into both transient and permanent upload packets swaps two shapes.
 - **Rule:** Use the explicit enum-to-wire mapping in `volumetric_fog_volume.inl` for both upload branches. Keep the public enum stable; unrecognized values retain the shader's box fallback. Guard: `core/tests/volumetric_fog_shape_upload_test.c` executes the production packet constructor and checks upload wiring. It cannot validate rendered shape boundaries.
 
+### 7. Height fog must retain distant framing when sharing a near march start
+- **Symptom:** GAS PLUME exposes a fullscreen white veil on Verdant Path.
+- **Cause:** the height renderer inherited the volumetric renderer's 1.2 m
+  effective start for distant profiles but omitted its receiver-based coverage
+  mask. Once screen projection was restored, global fog covered the foreground.
+- **Rule:** both renderers use focus, horizontal forward, ground span and
+  distant coverage for global extinction. Add local mist after that mask so
+  authored pockets remain independent. Guard: `height_fog_framing_test`;
+  matched Gas/no-Gas captures verify integration. The matrix-stack cause is
+  recorded in `ENGINE_LANDMINES.md`.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-07 | Codex | Height fog distant framing | core/volumetric/shaders/height_fog.fs; core/volumetric/volumetric_fog.c; core/tests/height_fog_framing_test.c | Ground-truth |
 | 2026-10-05 | Codex | Local fog shape encoding | core/volumetric/volumetric_fog_volume.inl; core/tests/volumetric_fog_shape_upload_test.c; environment/environment_system.h | Ground-truth |
 | 2026-10-03 | Codex | Jitter and fog reconstruction | core/volumetric/shaders/volumetric_fog.fs; core/volumetric/shaders/volumetric_composite.fs; core/tests/volumetric_fog_composite_test.c | Ground-truth |
 | 2026-10-04 | Codex | Fog radiance at visibility floor | core/volumetric/shaders/volumetric_fog.fs; core/tests/volumetric_fog_transport_test.c | Ground-truth |

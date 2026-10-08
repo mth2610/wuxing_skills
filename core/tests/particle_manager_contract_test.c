@@ -31,7 +31,7 @@ int main(void)
     bad += !Has("main.c", "ParticleManager_DrawBody(camera, particleTexture);");
     bad += !Has("main.c", "ParticleManager_DrawEmission(camera, particleTexture);");
     bad += !Has("core/particles/particle_system.c", "ParticleManager_SpawnCompatibility(config)");
-    bad += !Has("core/particles/particle_manager.c", "ParticleManager_RequiresCpuDynamics");
+    bad += !Has("core/particles/particle_manager.c", "ParticleMotion_RequiresCpuDynamics");
     bad += !Has("core/particles/particle_manager.c", "ParticleManager_RequiresCpuTexture");
     bad += !Has("core/particles/particle_manager.c", "particle->render.texture.id != ParticleSystem_DefaultSprite().id");
     bad += !Has("core/particles/particle_manager.c", "PARTICLE_EMITTER_UNSUPPORTED_MODULE");

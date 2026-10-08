@@ -321,6 +321,7 @@ VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *c) {
                                         .unlit = 1,
                                         .emissiveBoost = 1.6f}};
   p.physics.receiveMotionFields = true;
+  p.physics.spatialMotionOnly = true;
   p.physics.initialGuide = 0; /* Spatial sampling only; never captured. */
   if (!c->particleTemplate)
     p.physics.dynamics = &body;

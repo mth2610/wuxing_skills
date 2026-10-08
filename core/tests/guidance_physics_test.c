@@ -208,7 +208,9 @@ static void TestGuidedTurbulenceShape(void) {
   float quiet=TurbulenceDisplacement(0,0,true);
   float medium=TurbulenceDisplacement(4,0,true);
   float strong=TurbulenceDisplacement(8,0,true);
-  assert(quiet<1e-6f && medium>.1f && strong>medium && strong<.5f);
+  /* Joint guidance no longer amplifies the external curl kick through the
+   * old split. Still require a visible, monotonic deformation of the cloud. */
+  assert(quiet<1e-6f && medium>.08f && strong>medium && strong<.5f);
   BodyPhysicalProperties body={.massKg=.004f};
   GuideTuning a=GuideTuning_Derive(&body,1.2f,3,0,4,9.81f,GUIDE_BALANCED);
   GuideTuning b=GuideTuning_Derive(&body,1.2f,3,0,80,9.81f,GUIDE_BALANCED);

@@ -730,6 +730,11 @@ static void rlvkBeginFrame(void)
     RLVK.frameActive = true;
 }
 
+void rlvkBeginFrameCommands(void)
+{
+    rlvkBeginFrame();
+}
+
 // Close the render scope, transition to PRESENT_SRC, submit and present. Called from the platform's
 // SwapScreenBuffer. If nothing drew this frame, still present a cleared frame.
 void rlvkPresent(void)

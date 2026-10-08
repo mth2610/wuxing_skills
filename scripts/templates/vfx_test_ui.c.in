@@ -48,9 +48,9 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
     VFXTest_UILayout ui = {0};
     ui.header = (Rectangle){12.0f, top, w - 24.0f, 40.0f};
     float statusBottom = top + 40.0f;
-    if (w >= 900.0f) {
+    if (w >= 1100.0f) {
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){178.0f + i * 76.0f, top, 76.0f, 40.0f};
-        ui.cameraStatus = (Rectangle){412.0f, top, w - 690.0f, 40.0f};
+        ui.cameraStatus = (Rectangle){412.0f, top, w - 842.0f, 40.0f};
     } else {
         ui.header.height = 116.0f;
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){18.0f + i * ((w - 36.0f) / 3.0f), top + 40.0f, (w - 36.0f) / 3.0f, 36.0f};
@@ -95,6 +95,16 @@ static Rectangle VFXTest_UITiltButton(VFXTest_UILayout ui, int direction)
 {
     return (Rectangle){ui.cameraStatus.x + ui.cameraStatus.width - (direction < 0 ? 72.0f : 36.0f),
                        ui.cameraStatus.y + (ui.cameraStatus.height - 30.0f) * 0.5f, 30.0f, 30.0f};
+}
+
+static Rectangle VFXTest_UIFogButton(VFXTest_UILayout ui)
+{
+    if (GetScreenWidth() >= 1100)
+        return (Rectangle){VFXTest_UIHeaderButton(ui, 0).x - 152.0f,
+                           ui.header.y + 5.0f, 146.0f, 30.0f};
+    float width = ui.cameraStatus.width >= 440.0f ? 146.0f : 96.0f;
+    return (Rectangle){VFXTest_UITiltButton(ui, -1).x - width - 8.0f,
+                       VFXTest_UITiltButton(ui, -1).y, width, 30.0f};
 }
 
 static Rectangle VFXTest_UIBrowserCell(VFXTest_UILayout ui, int visibleIndex)
@@ -226,6 +236,11 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
     s_clickedOnUI = VFXTest_IsPointerOverUI();
     if (s_clickedOnUI && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) s_vfxPointerCaptured = true;
     bool back = false;
+    if (VFXTest_UIButtonReleased(VFXTest_UIFogButton(ui))) {
+        FogRenderMode mode = Fog_GetRenderMode();
+        Fog_SetRenderMode(mode == FOG_MODE_OFF ? FOG_MODE_HEIGHT :
+                          mode == FOG_MODE_HEIGHT ? FOG_MODE_VOLUMETRIC : FOG_MODE_OFF);
+    }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 0))) { s_isPanelOpen = !s_isPanelOpen; s_vfxHelpOpen = false; }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 1))) { s_vfxHelpOpen = !s_vfxHelpOpen; s_isPanelOpen = false; }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 2))) back = true;
@@ -310,11 +325,16 @@ static void VFXTest_UIDraw(void)
     const char *name = s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 && s_testIndex < VFXTest_NewFxCount()
                        ? s_newFxNames[s_testIndex] : "MESH PREVIEW";
     Rectangle title = {ui.header.x + 6.0f, ui.header.y, VFXTest_UIHeaderButton(ui, 0).x - ui.header.x - 10.0f, 40.0f};
-    if (GetScreenWidth() >= 900) title.width = 150.0f;
+    if (GetScreenWidth() >= 1100) title.width = 150.0f;
     VFXTest_UIText(name, title, 14, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 0), "Fixtures", s_isPanelOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), "Help", s_vfxHelpOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Back", false);
+    FogRenderMode fogMode = Fog_GetRenderMode();
+    const char *fogLabel = fogMode == FOG_MODE_OFF ? "Fog: None" :
+                           fogMode == FOG_MODE_HEIGHT ?
+                           (ui.cameraStatus.width >= 440.0f || GetScreenWidth() >= 1100 ? "Fog: Height Map" : "Fog: Height") : "Fog: Raymarch";
+    VFXTest_UIDrawButton(VFXTest_UIFogButton(ui), fogLabel, fogMode != FOG_MODE_OFF);
     const char *variant = VFXTest_UIActiveVariant();
     if (variant) VFXTest_UIText(TextFormat("%s   |   %s", variant,
                              VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? "Shift+, / Shift+. preset" : "< / > preset"),
@@ -323,6 +343,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIText(TextFormat("%.1f ms", s_vfxTelemetryFrameMs), ui.metrics[1], 12, LIGHTGRAY);
     VFXTest_UIText(TextFormat("peak %.1f", s_vfxTelemetryPeakMs), ui.metrics[2], 11, LIGHTGRAY);
     Rectangle cameraLabel = {ui.cameraStatus.x, ui.cameraStatus.y, ui.cameraStatus.width - 78.0f, ui.cameraStatus.height};
+    if (GetScreenWidth() < 1100) cameraLabel.width = VFXTest_UIFogButton(ui).x - cameraLabel.x - 6.0f;
     VFXTest_UIText(TextFormat("Tilt %.0f deg  Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 12, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, -1), "-", false);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);

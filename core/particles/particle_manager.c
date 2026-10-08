@@ -6,6 +6,7 @@
 #include "rlgl.h"
 #include "raymath.h"
 #include <string.h>
+#include <stdlib.h>
 
 typedef struct ParticleEmitterRuntime {
     bool active, gpu, warned;
@@ -42,13 +43,7 @@ static bool ParticleManager_RequiresCpuFacing(const ParticleConfig *particle)
            (axis.x != 0.0f || axis.y != 0.0f || axis.z != 0.0f);
 }
 
-/* Phase 1 has no GPU packing/shader mirror for physical profiles. AUTO must
- * take the CPU path; GPU_ONLY is rejected at emitter creation rather than
- * silently simulating a different model. */
-static bool ParticleManager_RequiresCpuDynamics(const ParticleConfig *particle)
-{
-    return ParticleDynamics_IsEnabled(particle->physics.dynamics) || particle->physics.receiveMotionFields;
-}
+#include "core/particles/particle_motion_capabilities.h"
 
 /* The GPU billboard backend owns one shared draw texture: DefaultSprite.
  * It cannot silently replace an authored texture without also replacing that
@@ -171,21 +166,22 @@ ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d
         ParticleConfig_Unify(&e->desc.particle);
         if (e->desc.particle.travelPath)
             e->desc.moduleFlags |= PARTICLE_MODULE_PATH_FOLLOW;
-        bool requiresCpuDynamics = ParticleManager_RequiresCpuDynamics(&e->desc.particle);
+        bool requiresCpuDynamics = ParticleMotion_RequiresCpuDynamics(&e->desc.particle);
         bool gpuOK = ParticleManager_GPUCanRun(e->desc.moduleFlags);
         if (ParticleManager_RequiresCpuFacing(&e->desc.particle)) gpuOK = false;
         if (requiresCpuDynamics) gpuOK = false;
         if (ParticleManager_RequiresCpuTexture(&e->desc.particle)) gpuOK = false;
         VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(&e->desc.particle);
-        // The current GPU billboard draw is one additive batch. A named alpha
-        // or premultiplied appearance must use the CPU renderer until blend is
-        // part of the GPU bucket key; rendering it with the wrong law is worse
-        // than the fallback. INHERIT keeps legacy backend selection exact.
+        // Named appearances retain their material compatibility gate. Spatial
+        // INHERIT receivers use explicit alpha/additive GPU buckets.
         if (e->desc.particle.render.appearance != VFX_APPEARANCE_INHERIT &&
             appearance.surface != VFX_SURFACE_ADDITIVE)
             gpuOK = false;
         e->gpu = e->desc.simulationPolicy == PARTICLE_SIM_GPU_ONLY ||
                  (e->desc.simulationPolicy == PARTICLE_SIM_AUTO && gpuOK);
+        if(e->desc.particle.physics.spatialMotionOnly && getenv("WUXING_PARTICLE_MOTION_TRACE"))
+            TraceLog(LOG_INFO,"PARTICLE_MOTION: %s backend=%s compute=%d",
+                e->desc.debugName?e->desc.debugName:"spatial",e->gpu?"GPU":"CPU",s_caps.computeShader);
         e->status = PARTICLE_EMITTER_OK;
         if (e->desc.simulationPolicy == PARTICLE_SIM_GPU_ONLY && !gpuOK) {
             e->gpu = false;
@@ -267,7 +263,13 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
                 .onTargetEmitCount=p->onTargetEmitCount,
                 .emissiveBoost=boost, .windInfluence=p->windInfluence,
                 .emitterId=e->ownerId,
-                .renderMode=(int)e->desc.renderMode });
+                .renderMode=(int)e->desc.renderMode,
+                .spatialMotionOnly=p->physics.spatialMotionOnly,
+                .receiveMotionFields=p->physics.receiveMotionFields, .dynamics=p->physics.dynamics,
+                .initialImpulseNs=p->physics.initialImpulseNs,
+                .initialAccelerationMps2=p->physics.initialAccelerationMps2,
+                .constantForceNewtons=p->physics.constantForceNewtons,
+                .drag=p->physics.spatialMotionOnly?p->drag:0, .blendMode=p->render.blendMode });
         } else ParticleSystem_SpawnFromEmitter(spawned, e->ownerId, (int)e->desc.renderMode);
     }
 }
@@ -288,7 +290,7 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
         bool appearanceFitsGpu = p->render.appearance == VFX_APPEARANCE_INHERIT ||
                                  appearance.surface == VFX_SURFACE_ADDITIVE;
         if (e->gpu && appearanceFitsGpu && !ParticleManager_RequiresCpuFacing(p) &&
-            !ParticleManager_RequiresCpuDynamics(p) &&
+            !ParticleMotion_RequiresCpuDynamics(p) &&
             !ParticleManager_RequiresCpuTexture(p)) {
             VFXContrastLayer layer = appearance.surface == VFX_SURFACE_ADDITIVE
                                          ? VFX_CONTRAST_EMISSION
@@ -309,7 +311,13 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
                 .onTargetEmitCount=p->onTargetEmitCount,
                 .emissiveBoost=boost, .windInfluence=p->windInfluence,
                 .emitterId=e->ownerId,
-                .renderMode=(int)e->desc.renderMode });
+                .renderMode=(int)e->desc.renderMode,
+                .spatialMotionOnly=p->physics.spatialMotionOnly,
+                .receiveMotionFields=p->physics.receiveMotionFields, .dynamics=p->physics.dynamics,
+                .initialImpulseNs=p->physics.initialImpulseNs,
+                .initialAccelerationMps2=p->physics.initialAccelerationMps2,
+                .constantForceNewtons=p->physics.constantForceNewtons,
+                .drag=p->physics.spatialMotionOnly?p->drag:0, .blendMode=p->render.blendMode });
         } else {
             ParticleSystem_SpawnFromEmitter(*p, e->ownerId, (int)e->desc.renderMode);
         }
@@ -415,11 +423,8 @@ void ParticleManager_Draw(Camera3D c, Texture2D t)
 {
     if (!s_initialized) return;
 
-    // CPU particles select alpha/additive per particle and restore the default
-    // alpha state when finished. GPU billboards currently have one emissive
-    // blend law, so bind it explicitly here instead of inheriting whichever
-    // mode the CPU path happened to leave behind. Without this ownership split,
-    // GPU VFX switched between alpha and additive based on CPU activity.
+    // Each backend owns its blend state; compute buckets separate alpha bodies
+    // from additive emission without downloading particle positions.
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
     DrawParticles(c, t);
@@ -437,6 +442,7 @@ void ParticleManager_DrawBody(Camera3D c, Texture2D t)
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
     DrawParticlesBody(c, t);
+    GpuParticleSystem_DrawLayer(c,ParticleSystem_DefaultSprite(),1);
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
     // GPU billboards currently have an emissive-only material contract. Do
@@ -450,7 +456,7 @@ void ParticleManager_DrawEmission(Camera3D c, Texture2D t)
     rlDisableDepthMask();
     BeginBlendMode(BLEND_ADDITIVE);
     DrawParticlesEmission(c, t);
-    GpuParticleSystem_Draw(c, ParticleSystem_DefaultSprite());
+    GpuParticleSystem_DrawLayer(c, ParticleSystem_DefaultSprite(),2);
     rlDrawRenderBatchActive();
     EndBlendMode();
     rlEnableDepthMask();

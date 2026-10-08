@@ -1,6 +1,33 @@
 # compute — Landmines
 
 > Distilled, reusable lessons for the **compute** (GPU particle) module. Format: Symptom → Cause → Rule.
+
+### More private state can defeat a GPU arithmetic optimization
+- **Symptom:** typed guidance becomes slower with overlapping casts; caching path
+  projection or unrolling controller records makes the shader slower still.
+- **Cause:** full private response matrices and separate saturation arrays keep
+  substantial per-invocation state live. Extra caches increase that pressure.
+- **Rule:** exploit the actual isotropic/axial/transverse resistance structure,
+  reuse saturated records, and measure each candidate on the device against a
+  bracketed control. Preserve all eight responses and overflow behavior. GPU
+  parity and dispatch timings establish different facts; neither proves live FPS.
+
+### Motion parity passes in the core but fails at boundaries
+- **Symptom:** core-centered GPU clouds match CPU references while boundary curl,
+  soft field forces or floor contacts differ.
+- **Cause:** a separately written shader used quintic support instead of the CPU's
+  cubic support, and inherited legacy GPU floor retention `.8` instead of `.75`.
+- **Rule:** compare production GPU dispatch against CPU samples at support edges,
+  during contact, and with ordinary Wind plus published Motion airflow. Retain
+  legacy contact semantics only for legacy particles. CPU-only ABI tests cannot
+  establish shader parity (`motion_gpu_test.c` + renderer parity harness).
+
+### Inactive geometry can still corrupt packing
+- **Symptom:** a valid static sphere descriptor overruns a GPU staging record.
+- **Cause:** inactive path counts were copied even though CPU validation checks
+  paths only for active tube/trajectory modes.
+- **Rule:** pack only active geometry and bound every path copy. Preserve integer
+  handles and GPU-owned lane state; never upload a stale CPU sidecar each frame.
 > Cross-cutting device traps (Mali SSBO vertex-stage, depth-test-vs-mask, numeric-over-visual) are in root `ENGINE_LANDMINES.md`. Session logs / open backlog are in `PROGRESS.md`.
 
 ### `RewriteVersionForGLES` silently downgrades SSBO shaders

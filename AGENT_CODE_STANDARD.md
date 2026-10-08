@@ -12,6 +12,7 @@
 
 ## 1. C99 / Compile
 - Strict **C99**; Raylib 6.0. Rendering backend: **Vulkan 1.1 via `rlvk` is the priority** (see `third_party/vulkan/docs/HANDOFF.md` / `third_party/vulkan/`); OpenGL 3.3 Core (desktop) and GLES 3.x (Android) are the fallback/legacy paths. Skill/draw code stays backend-agnostic — use `rlgl`/raylib calls, never raw GL or raw Vulkan.
+- Projection and modelview share one matrix stack: pop scopes in reverse push order; a later offscreen pass must not be needed to restore screen projection.
 - Relative include paths from repo root: `#include "core/particles/particle_system.h"`.
 - `.c` skill files: must `#include <stddef.h> <stdlib.h> <stdio.h>` (for `NULL`/`snprintf` — not implicitly included).
 - Never bare `#define PI` — always `#ifndef PI / #define PI ... / #endif` (bare redef = `-Wmacro-redefined`, a hard error in strict builds).
@@ -142,9 +143,11 @@
 ### 10.3 GPU particle backend (`core/particles/gpu/`)
 - Read `core/particles/docs/GPU_BACKEND_API.md` first. New VFX code uses `core/particles/particle_manager.h`.
 - SSBO/buffer layout changes must stay in sync with C-side structs — verify std140/std430 alignment before committing.
+- Activate Vulkan frame commands before per-frame VFX uploads/compute (`main.c`); Raylib `BeginDrawing` alone does not activate rlvk's lazy frame. Keep normal `EndDrawing` ownership.
 
 - New spatial guidance uses Newton forces and the receiver's actual mass. Derive damping from stiffness/mass; do not expose redundant frequency, steering, wind-response and reference-mass knobs in compositions. Derive volume and spherical drag area from mass/density; keep visual size separate. Density=0 retains old gravity-only profiles. Existing acceleration-field APIs keep their declared m/s² units.
 - Force-limited guidance compiles against one reference body; preserve actual receiver mass response. Derive support budgets from net gravity including buoyancy and reserve clearance for spatial falloff. Use implicit spring and tangent-velocity response for light bodies.
+- Consume guide step samples at their sampling timestep through the joint Motion body solve; adding gravity after a separately solved guide biases equilibrium. Rooted bodies retain their own spring solver; tracers consume flow only.
 - Guide arrival must never spawn an implicit blast or turbulence wake. Configure independent target fields/impulses explicitly and trigger cast-level fields once on actual swept arrival, with no global cooldown.
 
 - Shared procedural motion uses m/s turbulence and signed swirl amplitudes; zero disables each. Derive eddy scale from field geometry, window the vector potential before its curl, and keep target flow independent of travel flow. SSF is a surface renderer; density/cohesion constraints belong to a liquid solver.
@@ -166,6 +169,7 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | §10.3 Derived guide budgets and implicit controllers | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
 | 2026-10-06 | Codex | §10.1 Typed field units and adapter response ownership | core/motion/physical_field.h; core/motion/motion_body.h; core/wind/wind_system.h | Ground-truth |
 | 2026-10-05 | Codex | Tester UI capture and indexed HUD positions | main.c; sandbox/vfx_test.h | Ground-truth |

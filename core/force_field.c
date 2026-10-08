@@ -533,6 +533,7 @@ void WindZone_Clear(void)
 }
 
 bool WindZone_IsActive(void) { return g_windZoneActive; }
+const ForceField *WindZone_GetField(void) { return g_windZoneActive?&g_windZone:NULL; }
 
 Vector3 WindZone_Evaluate(Vector3 pos, Vector3 vel, float time)
 {
