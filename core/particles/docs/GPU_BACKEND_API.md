@@ -59,6 +59,33 @@ production samplers/packers. The renderer parity harness dispatches the producti
 shader and compares positions/velocities on the actual device; CPU layout tests
 alone do not establish shader execution or visual acceptance.
 
+### Emitter-owned child storage
+
+`core/emitter/emitter_gpu.h` owns Vulkan live/death leaf births. Supported
+parents and children explicitly opt into spatial motion; unsupported collision,
+arrival, recursive or appearance policies use AUTO's CPU fallback. GPU_ONLY
+rejects unsupported requests. Legacy CPU-shadow arrival and collision-dust
+policies are owned by `core/emitter/particle_children.h`.
+
+Child storage is initialized lazily: 2048 resident children, 64 copied templates
+and 8192 parent event sidecars. The emitter dispatch follows parent integration
+and binds parent particles, child particles, child motion bodies, parent events,
+templates and counters at bindings 0–5. Children use the production particle
+integration shader and billboard draws, without birth or position readback.
+After the last parent retires, a conservative child-lifetime bound keeps the
+pool updating and drawing until it drains.
+
+GPU live cadence uses the post-integration parent position and caps births at
+64 per parent per dispatch; legacy CPU cadence preserves its interpolation and
+10-birth cap. Excess cadence is discarded. The global dispatch birth budget is
+2048, with device-side overflow counters. Atomic ring allocation can replace
+older children and does not guarantee ordering between parents or replay
+determinism. These are distinct event policies, not CPU/GPU cadence parity.
+
+`core/tests/emitter_gpu_test.c` supplies emitter fixtures to the renderer's
+`--emitter-events` harness, which checks both birth state and subsequent resident
+child integration against expected records on the device.
+
 ---
 
 ## 2. Game-loop integration (main.c)
@@ -86,8 +113,17 @@ GpuParticleSystem_Unload();
 ### `GpuParticleSystem_Init(void)`
 Detects compute capability, initializes shaders and buffers. Call once after `InitWindow()`.
 
+### `GpuParticleSystem_TrySpawn(GpuParticleConfig cfg)`
+Returns false when required GPU resources or child templates cannot be acquired,
+without replacing the resident parent slot. It never spawns a CPU particle.
+`ParticleManager` owns AUTO fallback and GPU_ONLY rejection. The optional
+`cfg.emissionConfig` is consumed synchronously: child templates and profiles are
+copied, so the caller's configuration pointer need not remain alive.
+
 ### `GpuParticleSystem_Spawn(GpuParticleConfig cfg)`
-Spawn one particle. Works on both paths. Ring-buffer — old particles are overwritten when the pool is full.
+Compatibility wrapper around `TrySpawn` that discards its result. Ring-buffer —
+old particles are overwritten when the pool is full. New managed callers should
+use the checked entry point.
 
 ```c
 typedef struct {
@@ -327,4 +363,5 @@ No Init/Update/Draw needed in environment — main.c manages it centrally.
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-08 | Codex | Emitter child storage and checked spawn | core/emitter/emitter_gpu.h; core/emitter/particle_children.h; core/particles/gpu/particle_gpu_backend.c | Ground-truth |
 | 2026-10-04 | Codex | Batched surface capture and field leases | core/particles/particle_manager.h; core/particles/gpu/particle_gpu_backend.c; core/particles/gpu/particle_field_lease.h | Ground-truth |

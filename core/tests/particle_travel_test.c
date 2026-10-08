@@ -157,10 +157,12 @@ static void Test_GPUAndManagerWiring(void)
     CHECK(Has("core/particles/particle_manager.c", "Emission_ApplyParticleSource") &&
           Has("core/emitter/particle_source.c", "MeshAdjacency_SampleEdge"),
           "manager resolves mesh sources before backend submission");
-    CHECK(Has("core/particles/gpu/particle_gpu_backend.c", "ParticleConfig impact = *s_impactRegistry[impactIndex]"),
-          "GPU arrival mirror spawns the configured target-impact effect");
-    CHECK(Has("core/particles/particle_system.c", "ParticleConfig impact = p->onTargetConfig"),
-          "CPU fallback spawns the same target-impact effect");
+    CHECK(Has("core/particles/gpu/particle_gpu_backend.c", "EmissionImpact_Publish") &&
+          Has("core/emitter/particle_children.c", "void EmissionImpact_Publish"),
+          "legacy GPU arrival mirror reports its event to the emitter-owned impact policy");
+    CHECK(Has("core/particles/particle_system.c", "EMISSION_EVENT_ARRIVAL") &&
+          Has("core/emitter/particle_children.c", "parent->physics.onTargetEmit"),
+          "CPU fallback reports arrival to the emitter-owned child policy");
     CHECK(Has("core/particles/shaders/gpu/particle_gpu.comp", "impactActive") &&
           Has("core/particles/gpu/particle_gpu_backend.c", "impact_active"),
           "GPU and CPU mirrors retain particles for the post-arrival phase");

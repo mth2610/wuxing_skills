@@ -6,6 +6,7 @@
 #include "particle_system.h"
 #include "core/particles/particle_manager.h"
 #include "core/mesh_adjacency.h"
+#include "core/emitter/particle_children.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include "core/utils_math.h"
@@ -24,6 +25,7 @@
 #include <stdlib.h>
 
 #define MAX_PARTICLES 2000
+typedef char ParticleEmissionCapacity[(MAX_PARTICLES==EMISSION_PARTICLE_PARENT_CAPACITY)?1:-1];
 
 // Trail ribbon buffer: 8 recorded history points, optionally subdivided.
 #define PS_TRAIL_SUBDIV         4
@@ -169,16 +171,7 @@ typedef struct
   const SkillCurve *alphaCurve;
   const SkillCurve *emissiveCurve;
 
-  // CẢNH BÁO: Việc lưu nguyên ParticleConfig ở đây vẫn tốn bộ nhớ.
-  // Lý tưởng nhất sau này bạn nên đổi thành con trỏ tới 1 "SubEmitterPool"
-  ParticleConfig onDeathConfig;
-  int onDeathCount;
-  bool hasDeathEmit;
-
-  ParticleConfig onLiveConfig;
-  float onLiveEmitRate;
-  float onLiveEmitTimer;
-  bool hasLiveEmit;
+  EmissionChildrenHandle children;
 
   // Stretch rendering
   float stretchStrength;
@@ -188,14 +181,6 @@ typedef struct
   bool collisionEnabled;
   float collisionElasticity;
   float collisionFloorY;
-  ParticleConfig onCollisionConfig;
-  int onCollisionCount;
-  bool hasCollisionEmit;
-
-  ParticleConfig onTargetConfig;
-  int onTargetCount;
-  bool hasTargetEmit;
-
   // Particle trails history (static buffer, no malloc!)
   int trailLength;
   float trailWidthRatio;
@@ -228,6 +213,7 @@ static int s_slotListIndex[MAX_PARTICLES];
 
 static inline void Particle_Deactivate(int idx)
 {
+  EmissionChildren_Release(g_Particles[idx].children);
   g_Particles[idx].active = false;
   int listIdx = s_slotListIndex[idx];
   int lastId = s_activeIds[s_activeCount - 1];
@@ -292,8 +278,12 @@ static int   s_locEmissiveBoost = -1;
 // white-hot core with a coloured rim. Only applied to unlit/additive batches.
 static float s_emissiveBoost    = 1.0f;  // GLOBAL multiplier; per-particle value carries the intent
 
+static void SpawnEmissionChild(void *user,ParticleConfig child) { (void)user;SpawnParticle(child); }
+static float EmissionRandom01(void *user) { (void)user;return Random01(); }
+
 void InitParticleSystem(void)
 {
+  EmissionChildren_Init(SpawnEmissionChild,EmissionRandom01,NULL);
   for (int i = 0; i < MAX_PARTICLES - 1; i++)
     s_nextFree[i] = i + 1;
   s_nextFree[MAX_PARTICLES - 1] = MAX_PARTICLES;
@@ -477,32 +467,7 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->angularVelocity = config.angularVelocity;
   p->active = true;
 
-  if (config.onDeathEmit && config.onDeathEmitCount > 0)
-  {
-    p->onDeathConfig = *config.onDeathEmit;
-    p->onDeathConfig.onDeathEmit = NULL;
-    p->onDeathConfig.onLiveEmit = NULL;
-    p->onDeathCount = config.onDeathEmitCount;
-    p->hasDeathEmit = true;
-  }
-  else
-  {
-    p->hasDeathEmit = false;
-  }
-
-  if (config.onLiveEmit && config.onLiveEmitRate > 0.0f)
-  {
-    p->onLiveConfig = *config.onLiveEmit;
-    p->onLiveConfig.onLiveEmit = NULL;
-    p->onLiveConfig.onDeathEmit = NULL;
-    p->onLiveEmitRate = config.onLiveEmitRate;
-    p->onLiveEmitTimer = 0.0f;
-    p->hasLiveEmit = true;
-  }
-  else
-  {
-    p->hasLiveEmit = false;
-  }
+  p->children=EmissionChildren_Bind(targetIdx,&config);
 
   // Populate stretch, collision, and trail parameters
   p->stretchStrength = config.render.stretchStrength;
@@ -511,35 +476,6 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->collisionEnabled = config.physics.collisionEnabled;
   p->collisionElasticity = config.physics.collisionElasticity;
   p->collisionFloorY = config.physics.collisionFloorY;
-  if (config.physics.onCollisionEmit && config.physics.onCollisionEmitCount > 0)
-  {
-    p->onCollisionConfig = *config.physics.onCollisionEmit;
-    p->onCollisionConfig.onDeathEmit = NULL;
-    p->onCollisionConfig.onLiveEmit = NULL;
-    p->onCollisionConfig.physics.onCollisionEmit = NULL;
-    p->onCollisionCount = config.physics.onCollisionEmitCount;
-    p->hasCollisionEmit = true;
-  }
-  else
-  {
-    p->hasCollisionEmit = false;
-  }
-
-  if (config.physics.onTargetEmit && config.physics.onTargetEmitCount > 0)
-  {
-    p->onTargetConfig = *config.physics.onTargetEmit;
-    p->onTargetConfig.onDeathEmit = NULL;
-    p->onTargetConfig.onLiveEmit = NULL;
-    p->onTargetConfig.physics.onCollisionEmit = NULL;
-    p->onTargetConfig.physics.onTargetEmit = NULL;
-    p->onTargetCount = config.physics.onTargetEmitCount;
-    p->hasTargetEmit = true;
-  }
-  else
-  {
-    p->hasTargetEmit = false;
-  }
-
   p->trailLength = config.render.trailLength;
   if (p->trailLength > 8) p->trailLength = 8; // clamp to static buffer size
   p->trailWidthRatio = config.render.trailWidthRatio;
@@ -581,19 +517,8 @@ void UpdateParticles(float dt)
 
     if (p->lifetime <= 0.0f)
     {
-      if (p->hasDeathEmit)
-      {
-        for (int c = 0; c < p->onDeathCount; c++)
-        {
-          ParticleConfig tempChild = p->onDeathConfig;
-          tempChild.position = (Vector3){p->x, p->y, p->z};
-          // Thừa hưởng vận tốc từ hạt mẹ (velocity inheritance)
-          tempChild.velocity.x += p->vx * p->onDeathConfig.velocityInheritance;
-          tempChild.velocity.y += p->vy * p->onDeathConfig.velocityInheritance;
-          tempChild.velocity.z += p->vz * p->onDeathConfig.velocityInheritance;
-          SpawnParticle(tempChild);
-        }
-      }
+      EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_DEATH,
+          .position={p->x,p->y,p->z},.velocity={p->vx,p->vy,p->vz}});
       Particle_Deactivate(i);
       continue;
     }
@@ -620,45 +545,15 @@ void UpdateParticles(float dt)
       p->followTarget = NULL;
     }
 
-    if (p->hasLiveEmit)
-    {
-      p->onLiveEmitTimer += dt;
-      float spawnInterval = 1.0f / p->onLiveEmitRate;
-      int safetyCounter = 0;
-      float totalT = p->onLiveEmitTimer;
-
-      float speedMul = 1.0f;
-      if (p->speedCurve)
-      {
-        float ageT = 1.0f - Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
-        speedMul = SkillCurve_Eval(p->speedCurve, ageT);
+    if (p->children) {
+      float speedMul=1;
+      if(p->speedCurve) {
+        float ageT=1-Clamp(p->lifetime/p->maxLifetime,0,1);
+        speedMul=SkillCurve_Eval(p->speedCurve,ageT);
       }
-      float stepX = p->vx * dt * speedMul;
-      float stepY = p->vy * dt * speedMul;
-      float stepZ = p->vz * dt * speedMul;
-
-      while (p->onLiveEmitTimer >= spawnInterval && safetyCounter < 10)
-      {
-        p->onLiveEmitTimer -= spawnInterval;
-        float t = (totalT - p->onLiveEmitTimer) / totalT;
-
-        ParticleConfig tempLive = p->onLiveConfig;
-        tempLive.position = (Vector3){
-            p->x - stepX * (1.0f - t),
-            p->y - stepY * (1.0f - t),
-            p->z - stepZ * (1.0f - t)
-        };
-
-        // Thừa hưởng vận tốc từ hạt mẹ (velocity inheritance)
-        tempLive.velocity.x += p->vx * tempLive.velocityInheritance;
-        tempLive.velocity.y += p->vy * tempLive.velocityInheritance;
-        tempLive.velocity.z += p->vz * tempLive.velocityInheritance;
-
-        SpawnParticle(tempLive);
-        safetyCounter++;
-      }
-      if (p->onLiveEmitTimer >= spawnInterval)
-        p->onLiveEmitTimer = 0.0f; // Reset backlog an toàn
+      EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_LIVE,
+          .position={p->x,p->y,p->z},.velocity={p->vx,p->vy,p->vz},.dt=dt,
+          .stepDisplacement={p->vx*dt*speedMul,p->vy*dt*speedMul,p->vz*dt*speedMul}});
     }
 
     const ForceField *activeField = p->forceField;
@@ -717,12 +612,8 @@ void UpdateParticles(float dt)
               physicalBody=MotionBody_GetPhysicalProperties(body);
             }
           }
-          if(p->hasTargetEmit) for(int c=0;c<p->onTargetCount;c++) {
-            ParticleConfig impact=p->onTargetConfig;
-            impact.position=position;impact.physics.position=position;
-            impact.velocity=MotionVec_Add(impact.velocity,MotionVec_Scale(velocity,impact.velocityInheritance));
-            SpawnParticle(impact);
-          }
+          EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_ARRIVAL,
+              .position=position,.velocity=velocity});
           if(action==MOTION_ARRIVAL_DESTROY) { destroyed=true;break; }
         }
       }
@@ -827,17 +718,8 @@ void UpdateParticles(float dt)
         Vector3 blastPos = p->travelPath->target ? *p->travelPath->target : (Vector3){p->x,p->y,p->z};
         Vector3 impactOffset = ParticleTravel_TransportOffset(p->travelPath,p->travelWaypoint,p->travelFormationOffset);
         p->x=blastPos.x+impactOffset.x;p->y=blastPos.y+impactOffset.y;p->z=blastPos.z+impactOffset.z;
-        if (p->hasTargetEmit && p->onTargetCount > 0) {
-          for (int c = 0; c < p->onTargetCount; ++c) {
-            ParticleConfig impact = p->onTargetConfig;
-            impact.position = (Vector3){p->x, p->y, p->z};
-            impact.physics.position = impact.position;
-            impact.velocity.x += p->vx * impact.velocityInheritance;
-            impact.velocity.y += p->vy * impact.velocityInheritance;
-            impact.velocity.z += p->vz * impact.velocityInheritance;
-            SpawnParticle(impact);
-          }
-        }
+        EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_ARRIVAL,
+            .position={p->x,p->y,p->z},.velocity={p->vx,p->vy,p->vz}});
         Vector3 enteredPosition={p->x,p->y,p->z},enteredVelocity={p->vx,p->vy,p->vz};
         ParticleTravel_ApplyImpactEntry(p->travelPath,&enteredPosition,&enteredVelocity);
         p->x=enteredPosition.x;p->y=enteredPosition.y;p->z=enteredPosition.z;
@@ -963,19 +845,8 @@ void UpdateParticles(float dt)
 
         continue;
       }
-      if (p->hasTargetEmit && p->onTargetCount > 0)
-      {
-        for (int c = 0; c < p->onTargetCount; c++)
-        {
-          ParticleConfig impact = p->onTargetConfig;
-          impact.position = (Vector3){p->x, p->y, p->z};
-          impact.physics.position = impact.position;
-          impact.velocity.x += p->vx * impact.velocityInheritance;
-          impact.velocity.y += p->vy * impact.velocityInheritance;
-          impact.velocity.z += p->vz * impact.velocityInheritance;
-          SpawnParticle(impact);
-        }
-      }
+      EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_ARRIVAL,
+          .position={p->x,p->y,p->z},.velocity={p->vx,p->vy,p->vz}});
       Particle_Deactivate(i);
       continue;
     }
@@ -996,22 +867,8 @@ particle_contacts:
       p->vz *= 0.75f;
       p->y = p->collisionFloorY + 0.005f;
 
-      if (p->hasCollisionEmit && p->onCollisionCount > 0)
-      {
-        for (int c = 0; c < p->onCollisionCount; c++)
-        {
-          ParticleConfig tempColl = p->onCollisionConfig;
-          tempColl.position = (Vector3){p->x, p->collisionFloorY + 0.005f, p->z};
-          float ang = (Random01() * 360.0f) * DEG2RAD;
-          float baseSpd = Vector3Length(tempColl.velocity);
-          float spd = (baseSpd > 0.0f) ? (baseSpd * (0.3f + 0.7f * Random01()))
-                                       : (Random01() * 0.4f + 0.1f);
-          tempColl.velocity.x += cosf(ang) * spd;
-          tempColl.velocity.y += (Random01() * 0.25f + 0.05f);
-          tempColl.velocity.z += sinf(ang) * spd;
-          SpawnParticle(tempColl);
-        }
-      }
+      EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_COLLISION,
+          .position={p->x,p->collisionFloorY+.005f,p->z},.velocity={p->vx,p->vy,p->vz},.normal={0,1,0}});
     }
 
     // Particle Trail History Update

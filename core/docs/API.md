@@ -472,6 +472,50 @@ _Inline helpers / macros only — see header._
 **Enums:** EmitterPreset { EMITTER_FIRE,EMITTER_SNOW,EMITTER_WATER_SPURT,EMITTER_SHOCKED_SPARKS,EMITTER_WOOD_LEAVES,EMITTER_EARTH_DUST,EMITTER_METAL_SPARKS,EMITTER_TAIJI_MOTES }
 **Structs** (fields in header): ParticleEmitter
 
+### `core/emitter/mesh_surface_source.h`
+```c
+  bool EmissionSource_MeshSurface(void *source, uint32_t *seed, EmissionSample *sample);
+  uint32_t EmissionSeed_Next(uint32_t *seed);
+  float EmissionSeed_Random01(uint32_t *seed);
+  unsigned int EmissionBacklog_Step(EmissionBacklogClock *clock, float rate, float gain, float dt, unsigned int cap);
+  void EmissionBacklog_Queue(EmissionBacklogClock *clock, float count);
+```
+**Structs** (fields in header): EmissionMeshSurfaceSource, EmissionBacklogClock
+
+### `core/emitter/emission_events.h`
+_Inline helpers / macros only — see header._
+**Enums:** EmissionEventKind { EMISSION_EVENT_LIVE,EMISSION_EVENT_DEATH,EMISSION_EVENT_COLLISION,EMISSION_EVENT_ARRIVAL }
+**Structs** (fields in header): EmissionEvent
+
+### `core/emitter/particle_children.h`
+```c
+  void EmissionChildren_Init(EmissionChildSpawnFn spawn,EmissionChildRandomFn random,void *user);
+  EmissionChildrenHandle EmissionChildren_Bind(int parentSlot,const ParticleConfig *parent);
+  void EmissionChildren_Release(EmissionChildrenHandle handle);
+  void EmissionChildren_Publish(EmissionChildrenHandle handle,const EmissionEvent *event);
+  EmissionChildrenStats EmissionChildren_GetStats(void);
+  void EmissionImpact_Init(void);
+  EmissionChildrenHandle EmissionImpact_Retain(const ParticleConfig *config);
+  void EmissionImpact_Release(EmissionChildrenHandle handle);
+  void EmissionImpact_Publish(EmissionChildrenHandle handle,int count,const EmissionEvent *event);
+  void EmissionLegacy_CollisionDust(Vector3 position,EmissionRandomIntFn random,void *user);
+```
+**Structs** (fields in header): EmissionChildrenStats
+
+### `core/emitter/emitter_gpu.h`
+```c
+  bool EmissionGpu_Init(void);
+  void EmissionGpu_Unload(void);
+  bool EmissionGpu_SetParent(unsigned int slot,const ParticleConfig *config,int owner);
+  void EmissionGpu_ReleaseParent(unsigned int slot);
+  void EmissionGpu_Dispatch(unsigned int parentBuffer,unsigned int parentCount,float dt);
+  unsigned int EmissionGpu_ChildBuffer(void);
+  unsigned int EmissionGpu_ChildBodyBuffer(void);
+  bool EmissionGpu_HasChildren(void);
+  unsigned int EmissionGpu_BlendMask(void);
+```
+**Structs** (fields in header): EmissionGpuParticle, EmissionGpuTemplate, EmissionGpuParent
+
 ### `core/trails/trail_ribbon.h`
 ```c
   TrailRibbonConfig TrailRibbon_Default(void);

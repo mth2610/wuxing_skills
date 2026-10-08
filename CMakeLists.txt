@@ -171,6 +171,9 @@ add_executable(wuxing
     core/tuning.c
     core/emitter/emitter.c
     core/emitter/emitter_sources.c
+    core/emitter/mesh_surface_source.c
+    core/emitter/particle_children.c
+    core/emitter/emitter_gpu.c
     core/emitter/legacy_particle_emitter.c
     core/emitter/preset_emitter.c
     core/emitter/particle_source.c
@@ -326,6 +329,7 @@ foreach(shared_motion_shader
     core/motion/shaders/motion_wind_types.glsl
     core/motion/shaders/motion_wind_noise.glsl
     core/motion/shaders/motion_wind.glsl
+    core/emitter/shaders/emitter_gpu.comp
     core/trails/shaders/trail_ribbon.comp
     core/trails/shaders/trail_ribbon_gpu.vs
     core/trails/shaders/trail_ribbon_gpu.fs

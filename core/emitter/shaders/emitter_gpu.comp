@@ -1,0 +1,43 @@
+#version 430
+layout(local_size_x=256) in;
+struct Particle { vec4 data[9]; };
+struct Body { uvec4 meta; vec4 body0,body1,body2,body3,acceleration,force; uvec4 lanes; vec4 offsets[4]; };
+struct Template { Particle particle; Body body; vec4 inheritance; };
+struct Parent { uvec4 meta; vec4 timing; };
+layout(std430,binding=0) readonly buffer Parents { Particle parents[]; };
+layout(std430,binding=1) buffer Children { Particle children[]; };
+layout(std430,binding=2) buffer Bodies { Body bodies[]; };
+layout(std430,binding=3) buffer Events { Parent events[]; };
+layout(std430,binding=4) readonly buffer Templates { Template templates[]; };
+layout(std430,binding=5) buffer Counters { uint cursor; uint attempts; uint dropped; uint reserved; };
+uniform float u_dt;
+uniform int u_parentCount;
+void birth(uint templateId,Particle parent) {
+    uint ticket=atomicAdd(attempts,1u);
+    if(ticket>=uint(children.length())) {atomicAdd(dropped,1u);return;}
+    uint slot=atomicAdd(cursor,1u)%uint(children.length());
+    Template t=templates[templateId-1u];
+    Particle p=t.particle;
+    p.data[0].xyz=parent.data[0].xyz;
+    p.data[1].xyz+=parent.data[1].xyz*t.inheritance.x;
+    /* Owner routing follows parent; children are visual billboards only. */
+    p.data[6].x=parent.data[6].x;
+    children[slot]=p;bodies[slot]=t.body;
+}
+void main() {
+    uint i=gl_GlobalInvocationID.x;
+    if(i>=uint(u_parentCount) || i>=uint(events.length())) return;
+    Parent e=events[i];if(e.timing.z<.5) return;
+    Particle p=parents[i];
+    if(p.data[4].w<.5) {
+        if(e.meta.z!=0u) for(uint j=0u;j<min(e.meta.w,64u);j++) birth(e.meta.z,p);
+        e.timing.z=0.0;
+    } else if(e.meta.y!=0u && e.timing.x>0.0) {
+        e.timing.y+=u_dt*e.timing.x;
+        uint due=uint(min(floor(e.timing.y),64.0));
+        /* Cap per-parent work; discarded hitch debt never creates a later burst. */
+        e.timing.y=fract(e.timing.y);
+        for(uint j=0u;j<due;j++) birth(e.meta.y,p);
+    }
+    events[i]=e;
+}

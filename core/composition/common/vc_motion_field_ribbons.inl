@@ -13,7 +13,7 @@ typedef struct {
     int freeRibbon, tiedRibbon;
     EmissionHandle emission;
     EmissionParticleSink sink;
-    ParticleConfig particle;
+    ParticleConfig particle, child;
 } VC_MotionFieldRibbons;
 static VC_MotionFieldRibbons s_motionFieldRibbons[VC_MOTION_RIBBON_CAPACITY];
 static const MotionBodyProfile s_motionRibbonParticleBody={
@@ -74,7 +74,16 @@ static bool VC_MotionFieldRibbons_Start(VC_MotionFieldRibbons *s)
     s->particle.colorStart=VFX_Material(VC_MAT_WATER)->body;
     s->particle.colorEnd=VC_WithAlpha(s->particle.colorStart,0);
     s->particle.physics.dynamics=&s_motionRibbonParticleBody;
-    s->particle.render.appearance=VFX_APPEARANCE_NORMAL;
+    s->particle.physics.spatialMotionOnly=true;
+    s->particle.physics.receiveMotionFields=true;
+    s->particle.render.appearance=VFX_APPEARANCE_INHERIT;
+    s->particle.render.blendMode=VFX_BLEND_ALPHA;
+    s->child=s->particle;
+    s->child.radius=.025f;s->child.lifetime=.5f;
+    s->child.velocity=(Vector3){.05f,.2f,0};s->child.velocityInheritance=.25f;
+    s->particle.lifetime=.85f;
+    s->particle.onLiveEmit=&s->child;s->particle.onLiveEmitRate=6;
+    s->particle.onDeathEmit=&s->child;s->particle.onDeathEmitCount=3;
     ParticleEmitterDesc desc={0};
     desc.particle=s->particle; desc.debugName="Motion field ribbons";
     s->sink.emitter=ParticleManager_CreateEmitter(&desc);

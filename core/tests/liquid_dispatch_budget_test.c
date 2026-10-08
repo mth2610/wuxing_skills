@@ -37,8 +37,11 @@ int main(void)
     char *orb=ReadFile("core/composition/water/water_orb.inl");
     if (!particles || !pbd || !orb) bad++;
     else {
-        /* One update dispatch at the generic GPU emitter backend. */
-        CHECK(Count(particles,"rlComputeShaderDispatch(")==1);
+        /* Ordinary emitters still own one integration dispatch. The second
+         * site advances a separate child pool only while births can be live. */
+        CHECK(Count(particles,"rlComputeShaderDispatch(")==2);
+        CHECK(strstr(particles,"if(EmissionGpu_HasChildren()) {\n            rlBindShaderBuffer(EmissionGpu_ChildBuffer(),0);")!=NULL);
+        CHECK(strstr(particles,"EmissionGpu_Dispatch(s_ssbo,")!=NULL);
         /* One Water Orb, one emitter: no split core/foam simulation streams. */
         CHECK(Count(orb,"ParticleManager_CreateEmitter(")==1);
         CHECK(strstr(orb,"desc.moduleFlags=PARTICLE_MODULE_FORCE_FIELD")!=NULL);

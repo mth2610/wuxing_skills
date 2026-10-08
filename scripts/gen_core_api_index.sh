@@ -28,7 +28,7 @@ HEADERS=(
   core/particles/particle_field_capabilities.h
   core/particles/particle_field_integration.h
   core/particles/particle_travel.h core/particles/particle_system.h core/particles/particle_manager.h core/mesh_adjacency.h
-  core/emitter/emitter.h core/emitter/emitter_sources.h core/emitter/emitter_sinks.h core/emitter/particle_source.h core/emitter/legacy_particle_emitter.h core/emitter/preset_emitter.h
+  core/emitter/emitter.h core/emitter/emitter_sources.h core/emitter/emitter_sinks.h core/emitter/particle_source.h core/emitter/legacy_particle_emitter.h core/emitter/preset_emitter.h core/emitter/mesh_surface_source.h core/emitter/emission_events.h core/emitter/particle_children.h core/emitter/emitter_gpu.h
   core/trails/trail_ribbon.h
   core/trails/trail_system.h core/ribbon_strip.h core/decals/decal_system.h
   core/lightning/lightning_stroke.h

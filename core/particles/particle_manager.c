@@ -143,6 +143,11 @@ ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d
         bool gpuOK = ParticleManager_GPUCanRun(e->desc.moduleFlags);
         if (ParticleManager_RequiresCpuFacing(&e->desc.particle)) gpuOK = false;
         if (requiresCpuDynamics) gpuOK = false;
+        bool hasChildEvents=e->desc.particle.onDeathEmitCount>0 || e->desc.particle.onLiveEmitRate>0;
+        if(hasChildEvents && e->desc.renderMode==PARTICLE_RENDER_SURFACE_INPUT) {
+            requiresCpuDynamics=true;gpuOK=false;
+        }
+        if(hasChildEvents && gpuOK && e->desc.simulationPolicy!=PARTICLE_SIM_CPU_ONLY && !EmissionGpu_Init()) gpuOK=false;
         if (ParticleManager_RequiresCpuTexture(&e->desc.particle)) gpuOK = false;
         VFXResolvedAppearance appearance = ParticleManager_ResolveAppearance(&e->desc.particle);
         // Named appearances retain their material compatibility gate. Spatial
@@ -225,7 +230,7 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
             if (layer == VFX_CONTRAST_EMISSION)
                 boost = VFXContrast_ApplyEmissionIntensity(
                     boost, appearance.contrast);
-            GpuParticleSystem_Spawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity,
+            if(!GpuParticleSystem_TrySpawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity, .emissionConfig=p,
                 .colorStart=VFXContrast_ApplyColor(ParticleManager_DefaultSpriteColor(p->colorStart, defaultSpriteColors), appearance.contrast, layer),
                 .colorEnd=VFXContrast_ApplyColor(ParticleManager_DefaultSpriteColor(p->colorEnd, defaultSpriteColors), appearance.contrast, layer), .radius=p->radius,
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
@@ -242,7 +247,15 @@ void ParticleManager_Emit(ParticleEmitterHandle handle, int count)
                 .initialImpulseNs=p->physics.initialImpulseNs,
                 .initialAccelerationMps2=p->physics.initialAccelerationMps2,
                 .constantForceNewtons=p->physics.constantForceNewtons,
-                .drag=p->physics.spatialMotionOnly?p->drag:0, .blendMode=p->render.blendMode });
+                .drag=p->physics.spatialMotionOnly?p->drag:0, .blendMode=p->render.blendMode })) {
+                if(e->desc.simulationPolicy==PARTICLE_SIM_GPU_ONLY) {
+                    e->status=PARTICLE_EMITTER_POOL_EXHAUSTED;
+                    TraceLog(LOG_WARNING,"ParticleManager: GPU child emission resources unavailable");
+                    return;
+                }
+                s_stats.fallbackCount++;
+                ParticleSystem_SpawnFromEmitter(*p,e->ownerId,(int)e->desc.renderMode);
+            }
         } else ParticleSystem_SpawnFromEmitter(spawned, e->ownerId, (int)e->desc.renderMode);
     }
 }
@@ -264,7 +277,9 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
                                  appearance.surface == VFX_SURFACE_ADDITIVE;
         if (e->gpu && appearanceFitsGpu && !ParticleManager_RequiresCpuFacing(p) &&
             !ParticleMotion_RequiresCpuDynamics(p) &&
-            !ParticleManager_RequiresCpuTexture(p)) {
+            !ParticleManager_RequiresCpuTexture(p) &&
+            !(e->desc.renderMode==PARTICLE_RENDER_SURFACE_INPUT &&
+              (p->onDeathEmitCount>0 || p->onLiveEmitRate>0))) {
             VFXContrastLayer layer = appearance.surface == VFX_SURFACE_ADDITIVE
                                          ? VFX_CONTRAST_EMISSION
                                          : VFX_CONTRAST_BODY;
@@ -273,7 +288,7 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
             if (layer == VFX_CONTRAST_EMISSION)
                 boost = VFXContrast_ApplyEmissionIntensity(
                     boost, appearance.contrast);
-            GpuParticleSystem_Spawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity,
+            if(!GpuParticleSystem_TrySpawn((GpuParticleConfig){ .position=p->position, .velocity=p->velocity, .emissionConfig=p,
                 .colorStart=VFXContrast_ApplyColor(ParticleManager_DefaultSpriteColor(p->colorStart, defaultSpriteColors), appearance.contrast, layer),
                 .colorEnd=VFXContrast_ApplyColor(ParticleManager_DefaultSpriteColor(p->colorEnd, defaultSpriteColors), appearance.contrast, layer), .radius=p->radius,
                 .lifetime=p->lifetime, .forceField=p->forceField, .stretchStrength=p->stretchStrength,
@@ -290,8 +305,20 @@ void ParticleManager_EmitBatch(ParticleEmitterHandle handle,
                 .initialImpulseNs=p->physics.initialImpulseNs,
                 .initialAccelerationMps2=p->physics.initialAccelerationMps2,
                 .constantForceNewtons=p->physics.constantForceNewtons,
-                .drag=p->physics.spatialMotionOnly?p->drag:0, .blendMode=p->render.blendMode });
+                .drag=p->physics.spatialMotionOnly?p->drag:0, .blendMode=p->render.blendMode })) {
+                if(e->desc.simulationPolicy==PARTICLE_SIM_GPU_ONLY) {
+                    e->status=PARTICLE_EMITTER_POOL_EXHAUSTED;
+                    TraceLog(LOG_WARNING,"ParticleManager: GPU child emission resources unavailable");
+                    return;
+                }
+                s_stats.fallbackCount++;
+                ParticleSystem_SpawnFromEmitter(*p,e->ownerId,(int)e->desc.renderMode);
+            }
         } else {
+            if(e->desc.simulationPolicy==PARTICLE_SIM_GPU_ONLY) {
+                e->status=PARTICLE_EMITTER_UNSUPPORTED_MODULE;
+                return;
+            }
             ParticleSystem_SpawnFromEmitter(*p, e->ownerId, (int)e->desc.renderMode);
         }
     }

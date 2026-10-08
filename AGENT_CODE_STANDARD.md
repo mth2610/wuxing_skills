@@ -118,6 +118,7 @@
 - Update `core/docs/API.md` (or relevant doc) in the same turn as the code change — docs must never lag code.
 
 - Modern ribbons use `core/trails/trail_ribbon.h`: free/head-anchored attachment is independent of Motion fields. Emitter scheduling/source adapters live in `core/emitter/`; never add a third emitter implementation outside that module.
+- Components publish child-emission events; `core/emitter/` owns templates, cadence and budgets. GPU_ONLY must reject unsupported births or resource exhaustion; AUTO alone may select CPU fallback.
 - GPU ribbon node positions and receiver lanes stay GPU-owned after spawn; upload only control/attachment snapshots, and return NULL from CPU state queries rather than reading back implicitly.
 
 ### 10.2 Adding functions to common shaders (`core/shaders/common/*.glsl`)

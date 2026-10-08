@@ -89,6 +89,8 @@ typedef struct {
     const ParticleDynamicsProfile *dynamics;
     Vector3 initialImpulseNs, initialAccelerationMps2, constantForceNewtons;
     int blendMode;
+    /* Copied into emitter-owned GPU event state at birth; never borrowed. */
+    const struct ParticleConfig *emissionConfig;
 } GpuParticleConfig;
 
 // Khởi tạo — detect compute capability, tạo buffer/shader
@@ -96,6 +98,9 @@ void GpuParticleSystem_Init(void);
 
 // Spawn một particle (hoạt động ở cả hai path)
 void GpuParticleSystem_Spawn(GpuParticleConfig cfg);
+/* Failure leaves the resident parent slot untouched. Manager owns AUTO versus
+ * GPU_ONLY fallback policy; this function never creates CPU particles. */
+bool GpuParticleSystem_TrySpawn(GpuParticleConfig cfg);
 
 // Update vật lý — dispatch compute shader hoặc CPU loop
 void GpuParticleSystem_Update(float dt);
