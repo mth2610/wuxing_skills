@@ -38,6 +38,10 @@ static Vector3 Vector3Lerp(Vector3 a, Vector3 b, float t) {
     return (Vector3){ a.x + (b.x-a.x)*t, a.y + (b.y-a.y)*t, a.z + (b.z-a.z)*t };
 }
 float MapManager_GetGroundHeightAt(float x, float z) { (void)x; (void)z; return 0; }
+bool MapManager_GetWaterInfoAt(float x, float z, float *surface, float *depth) {
+    (void)x; (void)z; (void)surface; (void)depth;
+    return false;
+}
 #define RL_TRIANGLES 0
 #define RL_QUADS 1
 #define rlBegin(...) ((void)0)
@@ -60,6 +64,23 @@ static bool near(float a, float b) { return fabsf(a-b) < 0.00001f; }
 
 int main(void) {
     Environment_Init();
+    // Hemisphere lighting must preserve night darkness and configured color,
+    // including a bright sky clamp without lifting the ground hemisphere.
+    Environment_SetAmbientColor((Color){ 0, 0, 0, 255 });
+    Color sky = Environment_GetSkyAmbient();
+    Color ground = Environment_GetGroundAmbient();
+    assert(sky.r == 0 && sky.g == 0 && sky.b == 0);
+    assert(ground.r == 0 && ground.g == 0 && ground.b == 0);
+    Environment_SetAmbientColor((Color){ 80, 100, 120, 255 });
+    sky = Environment_GetSkyAmbient();
+    ground = Environment_GetGroundAmbient();
+    assert(sky.r == 100 && sky.g == 125 && sky.b == 162);
+    assert(ground.r == 44 && ground.g == 45 && ground.b == 48);
+    Environment_SetAmbientColor((Color){ 240, 240, 240, 255 });
+    sky = Environment_GetSkyAmbient();
+    ground = Environment_GetGroundAmbient();
+    assert(sky.r == 255 && sky.g == 255 && sky.b == 255);
+    assert(ground.r < 140 && ground.g < 120 && ground.b < 110);
     assert(Environment_GetCloudShadowFrame().uvTransform.w == 0);
     assert(textureLoads == 0);
     EnvCloudShadowConfig config = {

@@ -45,6 +45,7 @@ uniform float u_waveStrength;
 uniform float u_curlScale;   // noise frequency for curl3 / noise modes
 uniform vec3  u_stripNormal; // strip plane normal (viewDir / world-up / fixedNormal)
 
+out float vPathMetres;
 out vec4 vColor;
 out vec2 vSegUV;             // x = across 0..1, y = segment 0 (head) .. 1 (tail)
 
@@ -79,6 +80,7 @@ float VNoise3D(vec3 p)
 
 void main()
 {
+    vPathMetres=0.0;
     float sideLen = length(vertexNormal);
     vec3 side = (sideLen > 0.5) ? normalize(vertexNormal) : vec3(1.0, 0.0, 0.0);
     float seg = clamp(vertexTexCoord.y, 0.0, 1.0);

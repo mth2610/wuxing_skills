@@ -534,7 +534,7 @@ static inline void TrailConfig_Unify(TrailConfig *cfg)
 }
 
 // ── OPTIMIZED STRUCT PADDING (Đã sắp xếp theo kích thước dữ liệu giảm dần) ────
-typedef struct
+typedef struct TrailEntity
 {
     // 1. Con trỏ (Pointers) - 8 bytes mỗi biến
     TrailUpdateCallback onUpdate;

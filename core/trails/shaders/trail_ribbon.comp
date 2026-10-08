@@ -18,6 +18,7 @@ shared vec3 positions[60],previous[60],velocities[60];
 shared float rests[60],lambdas[60],bendLambdas[60];
 shared float accumulator;
 shared int stepCount;
+shared int transportField;
 shared vec3 start;
 void projectPair(int a,int b,float rest,float compliance,float invMass,bool pinned,inout float lambda) {
     vec3 delta=positions[b]-positions[a];float len=length(delta);
@@ -36,8 +37,21 @@ void main() {
     RibbonParams r=ribbons[slot];
     int count=int(r.meta.x),base=int(slot)*maxNodes;
     if(r.meta.w==0u || count<2 || count>maxNodes || u_dt<=0.0) return;
-    bool pinned=r.meta.z!=0u && r.anchor.w>0.5;
     int node=int(gl_LocalInvocationID.x);
+    if((r.meta.w&2u)!=0u) {
+        if(node==0) transportField=mFindPathTransport(r.meta.y);
+        barrier();
+        if(transportField>=0 && node<count) {
+            vec3 old=nodes[base+node].positionRest.xyz;
+            float spacing=nodes[base+1].positionRest.w;
+            vec3 p=mPathTransportSample(transportField,r.compliance.w-float(node)*spacing,r.anchor.xyz);
+            nodes[base+node].positionRest.xyz=p;
+            nodes[base+node].previous=vec4(old,0);
+            nodes[base+node].velocity=vec4((p-old)/u_dt,0);
+        }
+        return;
+    }
+    bool pinned=r.meta.z!=0u && r.anchor.w>0.5;
     if(node<count) {
         positions[node]=nodes[base+node].positionRest.xyz;
         velocities[node]=nodes[base+node].velocity.xyz;

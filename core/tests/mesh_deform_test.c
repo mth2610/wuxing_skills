@@ -412,7 +412,7 @@ static void Test_GLSLMirrorScopeAndWiring(void) {
   const char *vs = "core/trails/shaders/trail_deform.vs";
   const char *ts = "core/trails/trail_system.c";
   CHECK(FileHas(vs, "MeshDeform_ApplyField("), "trail_deform.vs mode 1 calls the mirror");
-  CHECK(FileHas(ts, "MeshDeform_Apply(&warp, s_deformShader, &L->meshWarp);"),
+  CHECK(FileHas(ts, "MeshDeform_Apply(&warp, shader, &L->meshWarp);"),
         "trail_system.c pushes the packed field for mode 1");
 }
 

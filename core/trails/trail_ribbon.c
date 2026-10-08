@@ -14,12 +14,13 @@ typedef struct {
     int trailId,gpuSlot;
     TrailRibbonConfig config;
     TrailRibbonState state;
+    float pathDistanceM;
     MotionReceiver receivers[TRAIL_RIBBON_MAX_NODES];
 } ModernRibbon;
 static ModernRibbon s_ribbons[TRAIL_RIBBON_GPU_CAPACITY];
 static TrailAttachmentHandle s_ownedAttachments[TRAIL_ATTACHMENT_CAPACITY];
 static float s_time;
-static Shader s_cpuShader;
+static Shader s_cpuShader,s_cpuAppearanceShader;
 
 static ModernRibbon *FindRibbon(int id) {
     for(int i=0;i<TRAIL_RIBBON_GPU_CAPACITY;i++)
@@ -60,6 +61,11 @@ static bool SampleAnchor(const ModernRibbon *r,TrailRibbonAnchor *anchor) {
 }
 static void CopyRenderHistory(ModernRibbon *r,TrailEntity *t) {
     t->position=r->state.position[0];t->velocity=r->state.velocity[0];
+    float arc=0;
+    for(int n=r->state.count-1;n>=0;n--) {
+        if(n<r->state.count-1) arc+=Vector3Distance(r->state.position[n],r->state.position[n+1]);
+        t->nodeUV[r->state.count-1-n]=arc;
+    }
     t->historyCount=r->state.count;t->historyHead=r->state.count-1;
     for(int i=0;i<r->state.count;i++) {
         int h=r->state.count-1-i;
@@ -71,6 +77,7 @@ int TrailRibbon_Spawn(const TrailRibbonConfig *c) {
        c->backend<TRAIL_RIBBON_AUTO||c->backend>TRAIL_RIBBON_GPU_ONLY||
        !isfinite(c->material.stretchCompliance)||c->material.stretchCompliance<0||
        !isfinite(c->material.bendCompliance)||!Field_FiniteVector(c->attachmentOffset)) return -1;
+    if(!TrailRibbonAppearance_IsValid(&c->appearance)) return -1;
     const float *body=(const float *)&c->material.body;
     for(unsigned i=0;i<sizeof(c->material.body)/sizeof(float);i++) if(!isfinite(body[i])) return -1;
     ModernRibbon *r=NULL;
@@ -86,6 +93,19 @@ int TrailRibbon_Spawn(const TrailRibbonConfig *c) {
         head=anchor.position;
     }
     if(!TrailRibbon_Initialize(&state,c->nodeCount,head,c->tailDirection,c->lengthM,c->initialVelocity,c->mode)) return -1;
+    MotionPathTransport transport=c->pathTransport;
+    if(transport.field) {
+        MotionPathTransportSnapshot view;
+        if(c->mode!=TRAIL_RIBBON_FREE || !isfinite(transport.speedMps) || transport.speedMps<0 ||
+           !isfinite(transport.startDistanceM) || !Field_FiniteVector(transport.laneOffset) ||
+           !MotionFields_GetPathTransport(transport.field,&view)) return -1;
+        if(transport.captureBirthLane) transport.laneOffset=MotionVec_Add(transport.laneOffset,
+            MotionPathTransport_CaptureLane(&view,head));
+        for(int n=0;n<state.count;n++) {
+            state.position[n]=MotionPathTransport_Sample(&view,transport.startDistanceM-n*state.restLength[1],transport.laneOffset);
+            state.previous[n]=state.position[n];state.velocity[n]=(Vector3){0};
+        }
+    }
     int gpu=-1;
     if(c->backend!=TRAIL_RIBBON_CPU_ONLY) gpu=TrailRibbonGpu_Spawn(&state,&c->material);
     if(c->backend==TRAIL_RIBBON_GPU_ONLY && gpu<0) return -1;
@@ -96,7 +116,19 @@ int TrailRibbon_Spawn(const TrailRibbonConfig *c) {
     int id=SpawnTrailEntity(legacy);
     if(id<0) {if(gpu>=0) TrailRibbonGpu_Kill(gpu);return -1;}
     memset(r,0,sizeof(*r));r->active=true;r->trailId=id;r->gpuSlot=gpu;r->config=*c;r->state=state;
-    CopyRenderHistory(r,GetTrail(id));
+    r->config.pathTransport=transport;r->pathDistanceM=transport.startDistanceM;
+    if(gpu>=0 && transport.field) TrailRibbonGpu_SetPathTransport(gpu,&transport,r->pathDistanceM);
+    TrailEntity *entity=GetTrail(id);
+    if(c->appearance.enabled) {
+        const TrailRibbonAppearance *a=&r->config.appearance;
+        entity->material=a->material;entity->deform=a->deform;entity->deform.mode=0;
+        entity->layers=a->layers;entity->layerCount=a->layerCount;
+        entity->widthEnvelope=a->widthEnvelope;entity->widthCurve=a->widthCurve;
+        entity->alphaCurve=a->alphaCurve;entity->gradient=a->gradient;
+        entity->ribbonMode=a->ribbonMode;entity->fixedNormal=a->fixedNormal;
+        entity->blendMode=a->blendMode;entity->useCustomBlendMode=true;
+    }
+    CopyRenderHistory(r,entity);
     if(getenv("WUXING_TRAIL_MOTION_TRACE"))
         TraceLog(LOG_INFO,"TRAIL_MOTION: trail=%d backend=%s nodes=%d mode=%s",id,
             gpu>=0?"GPU":"CPU",state.count,
@@ -144,6 +176,24 @@ static void SampleMotion(void *user,Vector3 position,Vector3 velocity,float dt,i
 }
 bool TrailRibbonSystem_Update(int id,float dt) {
     ModernRibbon *r=FindRibbon(id);if(!r) return false;
+    if(r->config.pathTransport.field) {
+        MotionPathTransportSnapshot view;
+        if(MotionFields_GetPathTransport(r->config.pathTransport.field,&view) && dt>0) {
+            r->pathDistanceM=fminf(view.path->length+r->config.lengthM,
+                r->pathDistanceM+r->config.pathTransport.speedMps*dt);
+            if(r->gpuSlot>=0) TrailRibbonGpu_SetPathTransport(r->gpuSlot,&r->config.pathTransport,r->pathDistanceM);
+            else {
+                for(int n=0;n<r->state.count;n++) {
+                    Vector3 old=r->state.position[n];r->state.previous[n]=old;
+                    r->state.position[n]=MotionPathTransport_Sample(&view,
+                        r->pathDistanceM-n*r->state.restLength[1],r->config.pathTransport.laneOffset);
+                    r->state.velocity[n]=MotionVec_Scale(MotionVec_Sub(r->state.position[n],old),1/dt);
+                }
+                CopyRenderHistory(r,GetTrail(id));
+            }
+        }
+        return true;
+    }
     TrailRibbonAnchor anchor={0};
     if(r->config.mode==TRAIL_RIBBON_HEAD_ANCHORED && !SampleAnchor(r,&anchor)) {
         TrailRibbon_Release(&r->state,NULL);r->config.mode=TRAIL_RIBBON_FREE;
@@ -161,11 +211,58 @@ void TrailRibbonSystem_Kill(int id) {
     r->active=false;
 }
 bool TrailRibbonSystem_IsModern(int id) {return FindRibbon(id)!=NULL;}
+static void DrawAppearance(ModernRibbon *r,TrailEntity *t,Camera3D camera,int filter) {
+    bool emits=t->blendMode!=BLEND_ALPHA;
+    if(filter==1&&!emits) return;
+    if(!s_cpuAppearanceShader.id && r->gpuSlot<0) s_cpuAppearanceShader=ResourceManager_LoadShader(
+        "core/trails/shaders/trail_deform.vs","core/trails/shaders/trail_deform.fs");
+    int count=r->state.count,layers=t->layerCount>0?t->layerCount:1;
+    float life=fminf(1,t->lifetime/t->maxLifetime);
+    for(int layer=0;layer<layers;layer++) {
+        if(filter==0&&emits&&layers>=2&&layer!=1) continue;
+        TrailLayer fallback={0};const TrailLayer *ly=t->layerCount?&t->layers[layer]:&fallback;
+        float widthMul=ly->widthMul>0?ly->widthMul:1;
+        float alpha=TrailRibbon_LayerAlpha(t,ly,filter);
+        bool whiten=!(filter==0&&emits&&t->material.bodyOpacity>0);
+        Vector4 colors[TRAIL_RIBBON_MAX_NODES];float widths[TRAIL_RIBBON_MAX_NODES];
+        RibbonPoint points[TRAIL_RIBBON_MAX_NODES];
+        for(int n=0;n<count;n++) {
+            float head=1-(float)n/(count-1);
+            Color c=t->gradient?ColorGradient_Sample(t->gradient,head):r->config.color;
+            if(whiten&&ly->whiten>0) {
+                float w=fminf(ly->whiten,1);c.r+=(255-c.r)*w;c.g+=(255-c.g)*w;c.b+=(255-c.b)*w;
+            }
+            float a=alpha*life;
+            if(t->alphaCurve) a*=fminf(1,fmaxf(0,SkillCurve_Eval(t->alphaCurve,head)));
+            if(ly->headAlphaPow>0) a*=powf(head,ly->headAlphaPow);
+            c.a=(unsigned char)fminf(255,fmaxf(0,c.a*a));
+            widths[n]=TrailRibbon_WidthEnvelope(t,head,s_time);
+            /* CPU profiled primitive applies this same policy at submission. */
+            Color gpuColor=VFXContrast_ApplyColor(c,t->material.contrastProfile,
+                filter==0||!emits?VFX_CONTRAST_BODY:VFX_CONTRAST_EMISSION);
+            colors[n]=(Vector4){gpuColor.r/255.f,gpuColor.g/255.f,gpuColor.b/255.f,gpuColor.a/255.f};
+            points[n]=(RibbonPoint){.position=r->state.position[n],.halfWidth=r->config.widthM*.5f*widthMul*widths[n],
+                .v=(float)n/(count-1),.tint=c};
+        }
+        Texture2D tex=ly->texture?*ly->texture:r->config.texture;
+        if(r->gpuSlot>=0) {
+            TrailRibbonGpu_DrawAppearance(r->gpuSlot,camera,r->config.widthM*widthMul,tex,t,filter,colors,widths);
+        } else {
+            rlDrawRenderBatchActive();BeginBlendMode(filter==0?BLEND_ALPHA:t->blendMode);
+            BeginShaderMode(s_cpuAppearanceShader);TrailRibbon_BindAppearance(s_cpuAppearanceShader,t,camera,filter);
+            rlDisableDepthMask();
+            DrawRibbonStripDeformedProfiledEx(points,count,tex,camera,t->ribbonMode,t->fixedNormal,
+                t->material.contrastProfile,filter==0||!emits?VFX_CONTRAST_BODY:VFX_CONTRAST_EMISSION);
+            rlDrawRenderBatchActive();rlEnableDepthMask();EndShaderMode();EndBlendMode();
+        }
+    }
+}
 void TrailRibbonSystem_Draw(Camera3D camera,int layerFilter) {
-    if(layerFilter==1) return; /* Plain physical ribbons contribute alpha body. */
     for(int i=0;i<TRAIL_RIBBON_GPU_CAPACITY;i++) {
         ModernRibbon *r=&s_ribbons[i];if(!r->active) continue;
         TrailEntity *t=GetTrail(r->trailId);if(!t||!t->active) continue;
+        if(r->config.appearance.enabled) {DrawAppearance(r,t,camera,layerFilter);continue;}
+        if(layerFilter==1) continue;
         Color color=r->config.color;
         color.a=(unsigned char)(color.a*fminf(1,t->lifetime/t->maxLifetime));
         if(r->gpuSlot>=0) {
@@ -182,4 +279,4 @@ void TrailRibbonSystem_Draw(Camera3D camera,int layerFilter) {
         rlDrawRenderBatchActive();rlEnableDepthMask();EndShaderMode();EndBlendMode();
     }
 }
-void TrailRibbonSystem_Unload(void) {TrailRibbonSystem_Reset();TrailRibbonGpu_Unload();s_cpuShader=(Shader){0};}
+void TrailRibbonSystem_Unload(void) {TrailRibbonSystem_Reset();TrailRibbonGpu_Unload();s_cpuShader=(Shader){0};s_cpuAppearanceShader=(Shader){0};}

@@ -332,6 +332,8 @@ foreach(shared_motion_shader
     core/emitter/shaders/emitter_gpu.comp
     core/trails/shaders/trail_ribbon.comp
     core/trails/shaders/trail_ribbon_gpu.vs
+    core/trails/shaders/trail_ribbon_material_gpu.vs
+    core/trails/shaders/trail_ribbon_vertex.glsl
     core/trails/shaders/trail_ribbon_gpu.fs
     core/shaders/common/vfx_composite.glsl)
     configure_file(${shared_motion_shader} ${CMAKE_CURRENT_BINARY_DIR}/${shared_motion_shader} COPYONLY)

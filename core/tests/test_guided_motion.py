@@ -11,10 +11,13 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HEADER = (ROOT / 'core/composition/visual_composer.h').read_text()
-ENUMS = '\n'.join(re.search(r'typedef enum \{[^}]*\} '+name+r';', HEADER, re.S).group() for name in ('VFX_GuidedOutput','VFX_GuidedPattern'))
+ENUMS = '\n'.join(re.search(r'typedef enum \{[^}]*\} '+name+r';', HEADER, re.S).group() for name in ('VFX_GuidedOutput','VFX_GuidedPattern','VFX_GuidedTrailStyle','VFX_GuidedTrailMotion'))
 CONFIG = ENUMS + re.search(r'typedef struct VFX_GuidedParticleConfig \{.*?\} VFX_GuidedParticleConfig;', HEADER, re.S).group() + '\ntypedef VFX_GuidedParticleConfig VFX_GuidedMotionConfig;\n'
 STUBS = r'''
 #include "raylib.h"
+typedef struct {int placeholder;} Material;
+typedef int BlendMode;
+enum {BLEND_ALPHA,BLEND_ADDITIVE,BLEND_ALPHA_PREMULTIPLY};
 typedef struct {int placeholder;} Mesh;
 typedef struct {int meshCount;} Model;
 typedef struct {Vector3 position,target,up;float fovy;int projection;} Camera3D;
@@ -22,6 +25,7 @@ typedef struct {Vector3 position,target,up;float fovy;int projection;} Camera3D;
 #include "core/motion/motion_fields.h"
 #include "core/particles/particle_manager.h"
 #include "core/trails/trail_ribbon.h"
+#include "core/trails/trail_recipe.h"
 #include "core/presets/vc_material.h"
 #include "core/composition/common/vc_params.h"
 #include "core/emitter/emitter.h"
@@ -33,7 +37,11 @@ static ParticleEmitterDesc descriptors[128];
 static bool emitterActive[128], failEmitter, failField;
 static ParticleConfig particles[4096];
 static TrailRibbonConfig ribbons[4096];
-static int particleCount,ribbonCount,fieldCount,fieldStopped;
+static int particleCount,ribbonCount,fieldCount,fieldStopped,styleCalls;
+static TrailPresetId lastStyle;
+bool VFX_TrailRibbonApplyPreset(TrailRibbonConfig *r,TrailPresetId preset,VC_MaterialId mat){
+ (void)mat;styleCalls++;lastStyle=preset;r->appearance.enabled=true;r->appearance.layerCount=3;return true;
+}
 static FieldDesc capturedField;
 static MotionFrameRegistry frames;
 static MotionFrameHandle boundFrame;
@@ -100,12 +108,12 @@ void TrailRibbonGpu_Kill(int slot){(void)slot;assert(0);}
 MAIN = r'''
 static int ActiveEmitters(void){int n=0;for(int i=0;i<128;i++)n+=emitterActive[i];return n;}
 static int ActiveCasts(void){int n=0;for(int i=0;i<VC_GUIDED_MAX_STREAMS;i++)n+=s_guidedStreams[i].active;return n;}
-static void Reset(void){assert(!ActiveCasts()&&!ActiveEmitters());EmissionSystem_Init();particleCount=ribbonCount=fieldCount=fieldStopped=0;failEmitter=failField=false;MotionFrame_Reset();boundFrame=0;frameBinds=0;}
+static void Reset(void){assert(!ActiveCasts()&&!ActiveEmitters());EmissionSystem_Init();particleCount=ribbonCount=fieldCount=fieldStopped=0;failEmitter=failField=false;styleCalls=0;MotionFrame_Reset();boundFrame=0;frameBinds=0;}
 static bool Ignore(void *u,const EmissionSpawn *s){(void)u;(void)s;return true;}
 int main(void) {
  Reset();
  VFX_GuidedMotionConfig c=VFX_GuidedMotion_DefaultConfig();
- assert(c.output==VFX_GUIDED_BOTH);
+ assert(c.output==VFX_GUIDED_BOTH&&c.trailMotion==VFX_GUIDED_TRAIL_MOTION_SPLINE);
  assert(!VC_GuidedUsesTimedEmission(&c)&&VC_GuidedInitialBurstCount(&c)==c.count);
  c.count=10;c.trailCount=4;c.emitDuration=1;c.formationRadius=.2f;
  MotionFieldHandle h=VFX_ComposeGuidedMotionEx(&c);
@@ -131,6 +139,41 @@ int main(void) {
  assert(VFX_ComposeGuidedMotionEx(&c));assert(particleCount==2048&&ribbonCount==4&&!ActiveCasts()&&!ActiveEmitters());
  Reset();c.emitDuration=1;assert(VFX_ComposeGuidedMotionEx(&c));assert(particleCount==0&&ribbonCount==0);
  VC_GuidedMotion_Update(20);assert(particleCount==2048&&ribbonCount==4&&!ActiveCasts());
+ /* Burst trails must be transported along the whole spline, not a moving sphere. */
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;
+ c.trailCount=1;c.count=0;c.emitDuration=0;c.swirlSpeed=0;c.turbulenceSpeed=0;c.formationRadius=0;
+ assert(VFX_ComposeGuidedMotionEx(&c));
+ assert(capturedField.volume.shape==FIELD_PATH_TUBE&&capturedField.trajectory.mode==FIELD_TRAJECTORY_STATIC);
+ assert(!capturedField.preserveSphereOffsets&&capturedField.forceLaws[0].type==FORCE_LAW_PATH_GUIDE);
+ Vector3 expectedTail=MotionVec_Scale(capturedField.volume.path.tangents[0],-1);
+ assert(MotionVec_Length(MotionVec_Sub(ribbons[0].tailDirection,expectedTail))<1e-5f);
+ assert(ribbonCount==1&&ribbons[0].mode==TRAIL_RIBBON_FREE);
+ assert(ribbons[0].pathTransport.field&&ribbons[0].pathTransport.speedMps==c.speed&&ribbons[0].pathTransport.captureBirthLane);
+ Near(ribbons[0].headPosition.x,c.source.x);
+ float expectedLife=VC_GuidedEstimatedTransitTime(&c,capturedField.volume.path.length,true)+
+   c.trailLength/c.speed+fminf(.3f,c.duration*.1f);
+ Near(capturedField.lifetime.durationSec,expectedLife);
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;
+ c.trailMotion=VFX_GUIDED_TRAIL_MOTION_FIELD;
+ assert(VFX_ComposeGuidedMotionEx(&c));assert(ribbonCount&&ribbons[0].pathTransport.field==0);
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;c.trailMotion=2;
+ assert(!VFX_ComposeGuidedMotionEx(&c));
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_PARTICLES;
+ assert(VFX_ComposeGuidedMotionEx(&c));assert(capturedField.volume.shape==FIELD_SPHERE);
+ /* Shared appearance selection is independent of physics and copied into timed births. */
+ const TrailPresetId expectedStyles[]={TRAIL_PRESET_ENERGY,TRAIL_PRESET_SMOKE,TRAIL_PRESET_BLADE,TRAIL_PRESET_WATER};
+ for(int style=1;style<=4;style++) {
+   Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;
+   c.trailCount=2;c.emitDuration=1;c.trailStyle=style;c.trailLength=1.7f;
+   assert(VFX_ComposeGuidedMotionEx(&c));assert(styleCalls==1&&lastStyle==expectedStyles[style-1]);
+   c.trailStyle=0;VC_GuidedMotion_Update(1);
+   assert(ribbonCount==2&&ribbons[0].appearance.enabled&&ribbons[1].appearance.layerCount==3);
+   Near(ribbons[0].lengthM,1.7f);assert(ribbons[0].mode==TRAIL_RIBBON_FREE);
+ }
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;c.trailStyle=5;
+ assert(!VFX_ComposeGuidedMotionEx(&c)&&fieldCount==0&&styleCalls==0);
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_PARTICLES;c.trailStyle=5;
+ assert(VFX_ComposeGuidedMotionEx(&c)&&styleCalls==0&&ribbonCount==0);
  /* Explicit source, body and templates are copied before the caller mutates them. */
  Reset();c=VFX_GuidedMotion_DefaultConfig();c.count=2;c.trailCount=2;c.emitDuration=1;
  ParticleDynamicsProfile body={.inverseMassKg=23,.gravityScale=-.2f};
@@ -138,14 +181,14 @@ int main(void) {
  TrailRibbonConfig ribbon=TrailRibbon_Default();ribbon.mode=TRAIL_RIBBON_HEAD_ANCHORED;
  ribbon.attachment=1234;ribbon.lifetimeSec=9;ribbon.widthM=.019f;ribbon.backend=TRAIL_RIBBON_GPU_ONLY;
  ParticleEmissionSource source={.type=PARTICLE_SOURCE_POINT,.point={2,3,4}};
- c.particleTemplate=&particle;c.trailTemplate=&ribbon;c.emissionSource=&source;
+ c.particleTemplate=&particle;c.trailTemplate=&ribbon;c.emissionSource=&source;c.trailStyle=999;
  assert(VFX_ComposeGuidedMotionEx(&c));
  particle.radius=99;particle.lifetime=99;body.inverseMassKg=99;ribbon.attachment=99;ribbon.widthM=99;source.point.x=99;
  VC_GuidedMotion_Update(.5f);
  assert(particleCount==1&&ribbonCount==1);Near(particles[0].radius,.037f);Near(particles[0].lifetime,.7f);
  Near(particles[0].physics.dynamics->inverseMassKg,23);Near(particles[0].position.x,2);
  assert(ribbons[0].attachment==1234&&ribbons[0].mode==TRAIL_RIBBON_HEAD_ANCHORED&&ribbons[0].backend==TRAIL_RIBBON_GPU_ONLY);
- Near(ribbons[0].widthM,.019f);Near(ribbons[0].lifetimeSec,9);Near(ribbons[0].headPosition.x,2);
+ assert(styleCalls==0&&!ribbons[0].appearance.enabled);Near(ribbons[0].widthM,.019f);Near(ribbons[0].lifetimeSec,9);Near(ribbons[0].headPosition.x,2);
  VC_GuidedMotion_Update(1);assert(particleCount==2&&ribbonCount==2&&!ActiveCasts());
  /* Default attached ribbons retain external anchor ownership; trails-only needs no particle allocator. */
  Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;c.trailCount=3;c.trailAttachment=4321;

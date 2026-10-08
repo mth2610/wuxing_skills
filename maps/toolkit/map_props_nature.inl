@@ -1596,6 +1596,8 @@ static float Nature_Random01(unsigned int *state)
     return (float)(Nature_NextRandom(state) & 0x00ffffffu) / 16777215.0f;
 }
 
+#include "maps/toolkit/meadow_palette.h"
+
 int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxCount,
                                      const MapGroundSurface *ground, Vector3 groundCenter,
                                      MapMeadowDistribution distribution,
@@ -1920,6 +1922,15 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
                                 (unsigned char)fminf(255, fmaxf(0, tG)),
                                 (unsigned char)fminf(255, fmaxf(0, tB)), 255};
         }
+    }
+    if (!isReed && style.botanicalVariation > 0.0f) {
+        Vector3 canopy = MeadowCanopyColor(MeadowHabitat(clump->position.x, clump->position.z));
+        float variation = 0.90f + 0.20f * bHash2;
+        Color canopyTip = {(unsigned char)(canopy.x * variation * 255.0f),
+                           (unsigned char)(canopy.y * variation * 255.0f),
+                           (unsigned char)(canopy.z * variation * 255.0f), 255};
+        bladeTip = Nature_LerpColor(bladeTip, canopyTip,
+            fminf(style.botanicalVariation, 1.0f) * 0.85f);
     }
     return (NatureBladeDescriptor){pBase, pP1, pP2, pP3, clump->position,
         bladeRoot, bladeTip, width, clump->phase, bladeLeanAngle, isReed};

@@ -25,6 +25,7 @@ typedef struct {
   MotionFrameHandle frame;
   uint32_t frameRevision;
   FieldTransform localFrame;
+  FieldTransform transportFrame;
 } MotionTargetRuntime;
 static MotionGuideRuntime s_guides[MOTION_FIELDS_MAX_GUIDES];
 static MotionTargetRuntime s_targets[MOTION_FIELDS_MAX_TARGETS];
@@ -81,6 +82,7 @@ static void Motion_CachePhysicalTarget(MotionTargetRuntime *target) {
       target->desc.usePhysicalField?&target->desc.physicalField:NULL;
   if(!d) return;
   FieldTransform t=FieldTrajectory_Transform(d,target->age);
+  target->transportFrame=t;
   Vector3 lo={FLT_MAX,FLT_MAX,FLT_MAX},hi={-FLT_MAX,-FLT_MAX,-FLT_MAX};
   float radius=d->volume.radiusM;
   int count=d->volume.shape==FIELD_PATH_TUBE?d->volume.path.count:
@@ -619,6 +621,15 @@ bool MotionFields_GetArrival(MotionFieldHandle h, MotionArrivalProfile *out) {
   if (!g || !out)
     return false;
   *out = g->desc.arrival;
+  return true;
+}
+bool MotionFields_GetPathTransport(MotionFieldHandle h,MotionPathTransportSnapshot *out) {
+  if(!out) return false;
+  *out=(MotionPathTransportSnapshot){0};
+  const MotionTargetRuntime *target=Motion_FindTarget(h);
+  if(!target || !target->typed || target->physical.volume.shape!=FIELD_PATH_TUBE) return false;
+  out->path=&target->physical.volume.path;
+  out->transform=target->transportFrame;
   return true;
 }
 

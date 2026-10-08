@@ -243,6 +243,18 @@ Environment_SetTimeOfDaySpeed(1.0f / 1200.0f); // 1 cycle / 20 real minutes
 
 ## 6. Shared Cloud Shadows
 
+`environment/shaders/hemisphere_lighting.glsl` provides
+`Environment_HemisphereIrradiance(vec3 unitNormal, vec3 skyRadiance, vec3 groundRadiance)`.
+Pass a world-space unit normal and linear sky/ground colors from
+`Environment_GetFrameLighting()` in `environment/environment_system.c`.
+The helper interpolates ground to sky with clamped `(normal.y + 1) / 2`,
+introduces no uniforms, and leaves sunlight/cloud visibility to the caller.
+It returns irradiance before surface albedo and canopy ambient occlusion.
+The two-argument overload `(vec3 unitNormal, vec3 ambientRadiance)` derives
+sky/ground RGB with the same clamped multipliers as the Environment getters,
+using the configured ambient intensity without a minimum brightness floor.
+It omits the getters' 8-bit channel quantization.
+
 `environment/environment_system.h` exposes map-opt-in cloud configuration and a
 resolved receiver snapshot:
 
@@ -295,5 +307,6 @@ field using the Python standard library. It performs no runtime generation.
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | §6 hemispheric irradiance helper | `environment/shaders/hemisphere_lighting.glsl` | Ground-truth |
 | 2026-09-28 | Codex | §4 `AtmosphereProfile.start` volumetric onset | `environment/environment_system.h`, `core/volumetric/volumetric_fog_distance.h`, `core/volumetric/shaders/volumetric_fog.fs` | Ground-truth |
 | 2026-10-02 | Codex | §6 shared opt-in cloud visibility | `environment/environment_system.h`, `environment/environment_system.c`, `environment/shaders/cloud_shadow.glsl` | Ground-truth |

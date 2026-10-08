@@ -33,6 +33,7 @@ def typedef(source, name):
 
 PREAMBLE = r'''
 #include "maps/toolkit/map_props.h"
+#include "maps/toolkit/meadow_palette.h"
 #define RAYMATH_STATIC_INLINE
 #include "raymath.h"
 #include <assert.h>

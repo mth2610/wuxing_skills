@@ -3075,7 +3075,8 @@ not a low-density solid proxy.
 
 `VFX_GuidedMotion_DefaultConfig` selects `GUIDE_BALANCED` in
 `core/composition/common/vc_guided_motion.inl`. Burst emission uses a moving
-sphere; timed emission uses a stationary path tube covering the complete route.
+sphere for particle-only casts; timed emission and casts emitting ribbons use a
+stationary path tube covering the complete route.
 Equal endpoints produce a stationary sphere. Emitters only initialize bodies;
 spatial fields supply motion. Ordinary Wind contributes once through the typed
 background medium from `core/wind/wind_system.h`.
@@ -3085,6 +3086,32 @@ behavior), Orbit (a spherical captured-offset guide), or Airflow (a bounded movi
 medium). Orbit and Airflow avoid path projection. `core/motion/motion_recipe.h`
 compiles these and explicit path-stream recipes into the same `FieldDesc` used by
 particles and ribbons; recipes add no shader variants or receiver solvers.
+Route ribbons remain free at both ends unless an attachment is supplied.
+`VFX_GuidedMotion_DefaultConfig()` selects `trailMotion=SPLINE`: prescribed
+transport through the shared `FIELD_PATH_TUBE`. Motion's C1 Hermite sampler places
+each node at `headDistance - nodeSpacing * nodeIndex`; the head advances at the
+authored speed, the tail grows from A and drains into B. The sampler uses the
+polyline arc-distance coordinate, an approximation of smoothed-curve arc length.
+Gravity, turbulence, drag and cloth constraints do not affect this mode. CPU and
+GPU share its formulas; GPU nodes use binary path lookup and bypass force sampling
+and iterative constraints. The CPU advances one scalar phase per ribbon, with no
+GPU geometry readback. Transverse birth offsets are captured once as stable lanes.
+
+Select `trailMotion=FIELD` for physical silk: lateral path guidance and tangent
+forces move nodes while constraints preserve the chain. This allows wind and
+flutter rather than a prescribed trajectory. Head attachments, Orbit, Airflow and
+explicit trail templates retain their own motion contracts and ignore this choice.
+Particle motion continues to use physical field integration in either trail mode.
+
+`TrailRibbonConfig.pathTransport` exposes the same generic Motion transport outside
+Guided. Its nonzero field must resolve to a live path tube; zero retains physical
+simulation. `MotionFields_GetPathTransport` provides a borrowed resolved snapshot,
+valid until registry mutation. Destroying the field freezes a transported ribbon's
+last pose; normal ribbon lifetime still expires it. Automatic Guided field life
+includes `trailLength / speed` to let the tail drain. A supplied `fieldOverride`
+retains authored topology, follow speed and lifetime. A zero formation radius
+emits from an exact point without a collapsed mesh-source transform.
+
 Airflow has no guide spring: each body's drag/wind response determines movement.
 Orbit's automatic force targets rotate captured offsets; positions remain solved
 by Motion. Trail-only templates supply the reference body for derived guidance.
@@ -3108,6 +3135,38 @@ current cached parent transform; they do not interpolate parent-frame history.
 Use `MotionFields_SetTransform` for an explicitly controlled world transform;
 it clears a binding. Generic frames have caller-owned lifetimes independent of
 field or trail reset; `MotionFrame_Reset` explicitly invalidates the shared pool.
+
+Guided's `trailStyle` selects Plain, Energy Silk, Smoke Wisp, Ember Filament or
+Water Stream. The four styled choices resolve the same appearance recipes as
+**MOTION RIBBON TRAIL**; shading, layer coverage/emission, gradients and width
+profiles are shared. A `trailTemplate` is authoritative and hides/ignores this
+choice. Styles do not alter body properties, field laws or chain topology.
+
+```c
+VFX_GuidedMotionConfig cfg = VFX_GuidedMotion_DefaultConfig();
+cfg.output = VFX_GUIDED_TRAILS;
+cfg.trailStyle = VFX_GUIDED_TRAIL_ENERGY_SILK;
+cfg.trailCount = 1;
+cfg.motionPattern = VFX_GUIDED_AIRFLOW;
+cfg.frame = movingObjectFrame;
+cfg.trailAttachment = movingObjectFrame;
+cfg.source = (Vector3){0}; // local to the moving object
+cfg.target = cfg.source;
+VFX_ComposeGuidedMotionEx(&cfg);
+```
+
+The caller updates the frame before component updates. Set `trailAttachment=0`
+for a free chain. To author a template directly, call
+`VFX_TrailRibbonApplyPreset(&ribbon, TRAIL_PRESET_ENERGY, VC_MAT_LIGHTNING)`:
+it copies appearance into `ribbon.appearance`, preserving physical properties,
+length, lifetime and backend. Borrowed gradients, curves and textures retain their
+usual resource lifetimes. Zero/disabled appearance keeps the plain fast path.
+Both CPU and GPU use the shared material fragment shader and uniform binder.
+World-space vertex waves are disabled for physical chains; UV surface waves stay
+active. Resident GPU node positions are not read back for material rendering.
+The three-layer presets draw more passes than Plain; they have the same layer
+budget as their swept counterparts. This reproduces their surface styles, while
+chain movement follows Motion rather than storing the emitter's swept history.
 
 Trail motion ownership depends on topology: a material chain has free or anchored
 endpoints and internal constraints; a swept history records emitter samples and
@@ -3394,6 +3453,8 @@ TrailAttachment_Destroy(attachment);
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | Prescribed C1 spline transport and Guided trail motion choice | core/motion/motion_path_transport.h; core/trails/trail_ribbon.c; core/composition/common/vc_guided_motion.inl | Ground-truth |
+| 2026-10-08 | Codex | Guided spline chain transport and shared ribbon appearance | core/composition/common/vc_guided_motion.inl; core/trails/trail_ribbon.h; core/trails/trail_system.c | Ground-truth |
 | 2026-10-08 | Codex | Emitter-owned mesh sources and CPU/GPU child policies | core/emitter/mesh_surface_source.h; core/emitter/particle_children.h; core/emitter/emitter_gpu.h | Ground-truth |
 | 2026-10-08 | Codex | Batched parallel ribbon Motion | core/trails/trail_ribbon_gpu.c; core/trails/shaders/trail_ribbon.comp; core/trails/trail_system.c | Ground-truth |
 | 2026-10-08 | Codex | Independent emission and physical ribbons | core/emitter/emitter.h; core/trails/trail_ribbon.h; core/trails/trail_ribbon_solver.h; core/motion/motion_fields.h | Ground-truth |

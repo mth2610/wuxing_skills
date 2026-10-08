@@ -110,6 +110,14 @@ int main(void){
  TrailRibbonGpu_EndUpdate();assert(dispatches==1);
  TrailRibbonGpu_BeginUpdate(.01f,2);TrailRibbonGpu_Update(2,.01f,&anchor);TrailRibbonGpu_EndUpdate();
  assert(dispatches==2);Near(uploaded[2].compliance.z,0);Near(uploaded[2].anchorVelocity.x,4); /* Release velocity is one submission only. */
+ Reset();Slot(0);Slot(3);TrailRibbonGpu_BeginUpdate(.01f,1);
+ MotionPathTransport transport={.field=0xf1234567u,.laneOffset={0,.2f,-.3f}};
+ TrailRibbonGpu_SetPathTransport(3,&transport,2.75f);
+ assert(!dispatches&&!uploads[s_params]);
+ TrailRibbonGpu_EndUpdate();assert(dispatches==1&&uploads[s_params]==1&&groups==4);
+ assert(uploaded[3].meta[1]==0xf1234567u&&uploaded[3].meta[3]==3);
+ assert(uploaded[0].meta[1]==16&&uploaded[0].meta[3]==1);
+ Near(uploaded[3].compliance.w,2.75f);Near(uploaded[3].anchor.y,.2f);Near(uploaded[3].anchor.z,-.3f);
  Reset();TrailRibbonGpu_BeginUpdate(.01f,1);TrailRibbonGpu_EndUpdate();assert(!dispatches&&!snapshots);
  Slot(1);s_ready=false;TrailRibbonGpu_BeginUpdate(.01f,1);TrailRibbonGpu_Update(1,.01f,&anchor);TrailRibbonGpu_EndUpdate();assert(!dispatches&&!snapshots);
  s_ready=true;
@@ -127,7 +135,7 @@ int main(void){
 with tempfile.TemporaryDirectory(prefix='wuxing-ribbon-gpu-batch-') as temp:
     p = pathlib.Path(temp)
     names = ['TrailRibbonGpu_BeginUpdate', 'TrailRibbonGpu_Update',
-             'TrailRibbonGpu_EndUpdate', 'TrailRibbonGpu_Release', 'TrailRibbonGpu_Kill']
+             'TrailRibbonGpu_SetPathTransport', 'TrailRibbonGpu_EndUpdate', 'TrailRibbonGpu_Release', 'TrailRibbonGpu_Kill']
     (p/'test.c').write_text(STUBS + '\n'.join(extract(name) for name in names) + MAIN)
     subprocess.run(['cc', '-std=c99', '-Wall', '-Wextra', '-I'+str(ROOT),
                     '-I'+str(ROOT/'core/tests/stubs'), str(p/'test.c'), '-lm',

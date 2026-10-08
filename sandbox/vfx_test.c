@@ -174,9 +174,11 @@ static const char *s_guidedFixturePresetNames[] = {
     "Catch free leaves", "Zero drag", "Stationary attraction",
     "Particles only", "Free trails", "Particles and trails",
     "Timed particles and trails", "Timed trails only",
-    "Orbit trails", "Anchored silk", "Released silk"
+    "Orbit trails", "Anchored silk", "Released silk",
+    "Energy silk ribbon", "Smoke wisp ribbon", "Ember filament ribbon", "Water stream ribbon",
+    "Spline ribbon"
 };
-#define VFXTEST_GUIDED_PRESET_COUNT 14
+#define VFXTEST_GUIDED_PRESET_COUNT 19
 
 static void VFXTest_SetGuidedPreset(int preset)
 {
@@ -205,6 +207,7 @@ static void VFXTest_SetGuidedPreset(int preset)
         s_liveGuidedMotionConfig.output = VFX_GUIDED_PARTICLES;
     } else if (preset == 7) {
         s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
+        s_liveGuidedMotionConfig.trailMotion = VFX_GUIDED_TRAIL_MOTION_FIELD;
     } else if (preset == 8) {
         s_liveGuidedMotionConfig.output = VFX_GUIDED_BOTH;
     } else if (preset == 9 || preset == 10) {
@@ -213,7 +216,7 @@ static void VFXTest_SetGuidedPreset(int preset)
         s_liveGuidedMotionConfig.trailCount = 8;
         s_liveGuidedMotionConfig.emitDuration = 1.5f;
     }
-    if (preset >= 11) {
+    if (preset >= 11 && preset <= 13) {
         s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
         s_liveGuidedMotionConfig.motionPattern = preset == 11 ? VFX_GUIDED_ORBIT : VFX_GUIDED_AIRFLOW;
         s_liveGuidedMotionConfig.speed = 2.0f;
@@ -234,6 +237,48 @@ static void VFXTest_SetGuidedPreset(int preset)
             s_liveGuidedMotionConfig.trailWidth = 0.16f;
             s_liveGuidedMotionConfig.material = VC_MAT_WATER;
         }
+    }
+    if (preset >= 14 && preset <= 17) {
+        static const int styles[] = {VFX_GUIDED_TRAIL_ENERGY_SILK,
+            VFX_GUIDED_TRAIL_SMOKE_WISP, VFX_GUIDED_TRAIL_EMBER_FILAMENT,
+            VFX_GUIDED_TRAIL_WATER_STREAM};
+        static const VC_MaterialId materials[] = {VC_MAT_LIGHTNING,
+            VC_MAT_METAL, VC_MAT_FIRE, VC_MAT_WATER};
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
+        s_liveGuidedMotionConfig.motionPattern = VFX_GUIDED_AIRFLOW;
+        s_liveGuidedMotionConfig.trailStyle = styles[preset - 14];
+        s_liveGuidedMotionConfig.material = materials[preset - 14];
+        s_liveGuidedMotionConfig.trailCount = 1;
+        s_liveGuidedMotionConfig.emitDuration = 0.0f;
+        s_liveGuidedMotionConfig.duration = 4.0f;
+        s_liveGuidedMotionConfig.trailLength = 1.5f;
+        s_liveGuidedMotionConfig.trailWidth = 0.18f;
+        s_liveGuidedMotionConfig.trailNodes = 24;
+        s_liveGuidedMotionConfig.speed = 0.5f;
+        s_liveGuidedMotionConfig.swirlSpeed = 0.15f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 0.4f;
+        s_liveGuidedMotionConfig.guideRadius = 4.0f;
+        s_liveGuidedMotionConfig.gravityScale = 0.05f;
+        s_liveGuidedMotionConfig.massKg = 0.004f;
+    }
+    if (preset == 18) {
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
+        s_liveGuidedMotionConfig.trailMotion = VFX_GUIDED_TRAIL_MOTION_SPLINE;
+        s_liveGuidedMotionConfig.motionPattern = VFX_GUIDED_ROUTE;
+        s_liveGuidedMotionConfig.trailStyle = VFX_GUIDED_TRAIL_ENERGY_SILK;
+        s_liveGuidedMotionConfig.material = VC_MAT_LIGHTNING;
+        s_liveGuidedMotionConfig.trailCount = 1;
+        s_liveGuidedMotionConfig.emitDuration = 0.0f;
+        s_liveGuidedMotionConfig.trailLength = 0.8f;
+        s_liveGuidedMotionConfig.trailWidth = 0.18f;
+        s_liveGuidedMotionConfig.trailNodes = 24;
+        s_liveGuidedMotionConfig.speed = 2.0f;
+        s_liveGuidedMotionConfig.swirlSpeed = 0.0f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 0.0f;
+        s_liveGuidedMotionConfig.guidancePreset = GUIDE_TIGHT;
+        s_liveGuidedMotionConfig.guideRadius = 0.8f;
+        s_liveGuidedMotionConfig.formationRadius = 0.0f;
+        s_liveGuidedMotionConfig.gravityScale = 0.0f;
     }
     s_guidedRatioReferenceSpeed = s_liveGuidedMotionConfig.speed > 0.00001f
         ? s_liveGuidedMotionConfig.speed : 1.0f;
@@ -291,9 +336,9 @@ static float VFXTest_GuidedCaptureFloat(const char *name, float fallback, float 
 #define VFXTEST_GUIDED_FRAME_COUNT 16
 typedef struct {
     MotionFrameHandle frame;
-    Vector3 position, velocity;
+    Vector3 position, velocity, origin;
     float age;
-    bool active, release;
+    bool active, release, kinematic;
 } VFXTest_GuidedFrame;
 static VFXTest_GuidedFrame s_guidedFrames[VFXTEST_GUIDED_FRAME_COUNT];
 
@@ -321,6 +366,17 @@ static void VFXTest_UpdateGuidedFrames(float dt)
         if (f->frame && f->release && f->age >= 1.2f) {
             MotionFrame_Destroy(f->frame);
             f->frame = 0;
+        }
+        if (f->kinematic) {
+            /* External emitter motion matches MOTION RIBBON TRAIL. Only the
+             * anchor is prescribed; the ribbon nodes remain Motion receivers. */
+            float a = f->age * 1.35f;
+            f->position = Vector3Add(f->origin, (Vector3){3.0f * sinf(a),
+                1.5f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a * 1.3f)});
+            if (f->frame)
+                MotionFrame_Update(f->frame, MatrixTranslate(f->position.x,
+                    f->position.y, f->position.z), dt, false);
+            continue;
         }
         int steps = (int)ceilf(dt * 120.0f);
         if (steps > 120) steps = 120;
@@ -352,6 +408,9 @@ static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
         TraceLog(LOG_INFO, "GUIDED MOTION capture: turbulence=%g m/s, swirl=%g m/s",
                  (double)cfg.turbulenceSpeed, (double)cfg.swirlSpeed);
     }
+    /* Match the swept reference's origin for fixed-camera material captures. */
+    if (s_guidedCaptureActive && s_guidedFixturePreset >= 14 && s_guidedFixturePreset <= 17)
+        source = s_prefabStartPos;
     cfg.source = source;
     cfg.target = s_guidedFixturePreset == 5 ? source : target;
     if (s_guidedCaptureActive) {
@@ -365,16 +424,18 @@ static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
                                   0.45f, 80, leaves.mass, leaves.style);
     }
     VFXTest_GuidedFrame *anchor = NULL;
-    if (s_guidedFixturePreset >= 12) {
+    if (s_guidedFixturePreset >= 12 && s_guidedFixturePreset <= 17) {
         for (int i = 0; i < VFXTEST_GUIDED_FRAME_COUNT; ++i)
             if (!s_guidedFrames[i].active) { anchor = &s_guidedFrames[i]; break; }
         if (!anchor) {
             TraceLog(LOG_WARNING, "GUIDED MOTION: anchor pool exhausted");
             return;
         }
-        MotionFrameHandle frame = MotionFrame_Create(MatrixTranslate(source.x, source.y, source.z));
+        bool kinematic = s_guidedFixturePreset >= 14;
+        Vector3 initial = kinematic ? Vector3Add(source, (Vector3){0.0f, 1.5f, 2.1f}) : source;
+        MotionFrameHandle frame = MotionFrame_Create(MatrixTranslate(initial.x, initial.y, initial.z));
         if (!frame) return;
-        *anchor = (VFXTest_GuidedFrame){.frame = frame, .position = source,
+        *anchor = (VFXTest_GuidedFrame){.frame = frame, .position = initial, .origin = source, .kinematic = kinematic,
             .velocity = {1.2f, 4.0f, 0.0f}, .active = true,
             .release = s_guidedFixturePreset == 13};
         cfg.frame = frame;
@@ -2430,6 +2491,17 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
     s_prefabStartPos = spawnPos;
     s_isPlayingMesh = true;
     s_meshTime = 0.0f;
+
+    const char *ribbonPreset = getenv("WUXING_MOTION_RIBBON_PRESET");
+    if (ribbonPreset && *ribbonPreset) {
+        static const TrailPresetId presets[] = {MOTION_RIBBON_ENERGY_SILK,
+            MOTION_RIBBON_SMOKE_WISP, MOTION_RIBBON_EMBER_FILAMENT,
+            MOTION_RIBBON_WATER_STREAM};
+        char *end = NULL;
+        long selected = strtol(ribbonPreset, &end, 10);
+        if (end != ribbonPreset && !*end && selected >= 0 && selected < 4)
+            s_motionRibbonFixturePreset = presets[selected];
+    }
 
     const char *envR = getenv("WUXING_WOOD_REACTION");
     if (envR && *envR) {

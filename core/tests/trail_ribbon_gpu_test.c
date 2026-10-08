@@ -102,9 +102,43 @@ static void Fixture(int which,const char *dir) {
         FILE *f=fopen(path,"w");assert(f);fprintf(f,"1 1 %.9g %.9g .003\n",1.f/60,1.f/60);fclose(f);
     }
 }
+static void TransportFixture(int which,const char *dir) {
+    MotionFields_Reset();Wind_Init();WindZone_Clear();
+    WindMacroConfig macro={0};Wind_SetMacro(&macro);
+    FieldDesc field=MotionField_Default();field.lifetime.durationSec=10;
+    field.volume.shape=FIELD_PATH_TUBE;field.volume.radiusM=2;
+    Vector3 points[]={{0,0,0},{.5f,.7f,.2f},{1.5f,.8f,.5f},{2.5f,.2f,0}};
+    assert(MotionPath_Build(&field.volume.path,points,4));
+    field.transform.position=(Vector3){3,2,-1};
+    MotionFieldHandle handle=MotionFields_CreateField(&field);assert(handle);
+    MotionPathTransportSnapshot view;assert(MotionFields_GetPathTransport(handle,&view));
+    TrailRibbonGpuNode nodes[TRAIL_RIBBON_MAX_NODES]={0},expected[TRAIL_RIBBON_MAX_NODES]={0};
+    MotionGpuBody bodies[TRAIL_RIBBON_MAX_NODES]={0};
+    TrailRibbonGpuParams params={.meta={24,handle,0,3},.compliance={0,0,0,1.75f},.anchor={0,.13f,-.17f,0}};
+    for(int i=0;i<24;i++) {
+        Vector3 old={0,1,0};
+        Vector3 q=MotionPathTransport_Sample(&view,params.compliance.w-i*.08f,(Vector3){0,.13f,-.17f});
+        nodes[i].positionRest=MotionGpu_V4(old,i?.08f:0);nodes[i].previous=MotionGpu_V4(old,0);
+        expected[i].positionRest=MotionGpu_V4(q,i?.08f:0);
+        expected[i].velocity=MotionGpu_V4(MotionVec_Scale(MotionVec_Sub(q,old),60),0);
+        expected[i].previous=MotionGpu_V4(old,0);
+    }
+    if(which==11) {MotionFields_Stop(handle);memcpy(expected,nodes,sizeof(nodes));}
+    MotionFields_PackGpu(&scene);
+    WindGPU wind;MotionGpu_PackWind(&wind);
+    WindTerrainGPU terrain;MotionGpu_PackWindTerrain(Wind_GetTerrainGrid(),&terrain);
+    if(dir) {
+        Bytes(dir,"ssbo0.bin",nodes,sizeof(nodes));Bytes(dir,"ssbo1.bin",&params,sizeof(params));
+        Bytes(dir,"ssbo3.bin",&wind,sizeof(wind));Bytes(dir,"ssbo4.bin",&terrain,sizeof(terrain));
+        Bytes(dir,"ssbo5.bin",&scene,sizeof(scene));Bytes(dir,"ssbo6.bin",bodies,sizeof(bodies));
+        Bytes(dir,"expected0.bin",expected,sizeof(expected));
+        char path[1024];snprintf(path,sizeof(path),"%s/config.txt",dir);
+        FILE *f=fopen(path,"w");assert(f);fprintf(f,"1 1 %.9g %.9g .0001\n",1.f/60,1.f/60);fclose(f);
+    }
+}
 int main(int argc,char **argv) {
-    if(argc>=3) Fixture(atoi(argv[2]),argv[1]);
-    else for(int i=0;i<10;i++) Fixture(i,NULL);
+    if(argc>=3) {int which=atoi(argv[2]);if(which>=10) TransportFixture(which,argv[1]);else Fixture(which,argv[1]);}
+    else {for(int i=0;i<10;i++) Fixture(i,NULL);TransportFixture(10,NULL);TransportFixture(11,NULL);}
     puts("PASS: production ribbon CPU references and GPU ABI fixtures (execution requires renderer harness)");
     return 0;
 }

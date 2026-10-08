@@ -49,7 +49,7 @@
 ## 6. Mesh / Geometry
 - Index packing must preserve every authored attribute seam and triangle order; retain the original mesh when index limits or allocation fail.
 - Never `DrawCylinder/DrawCone/DrawCube/DrawSphere`(+wireframe) for real meshes — use `procedural_mesh_utils.h`, `DrawRibbonStrip`, `ProceduralMesh_DrawTube`.
-- Never hand-roll Bezier/Frenet/path-sampling — use `path_spline.h` + `procedural_mesh_utils.h`.
+- Never hand-roll Bezier/Frenet/path-sampling in effects — use `path_spline.h` + `procedural_mesh_utils.h`; prescribed Motion routes use `motion_path_transport.h` and its shared GPU sampler.
 - `DrawRibbonStrip`/`ProceduralMesh_DrawTube` are low-level geometry-only APIs for manager batching. Standalone VFX must use `VFXRender_BeginAppearance`/`VFXRender_BeginDraw`; standalone ribbons should use `DrawRibbonStripAppearanceEx`.
 - Before `rlBegin()` custom geometry: `rlColor4ub(255,255,255,255)` to reset vertex color.
 
@@ -118,6 +118,7 @@
 - Update `core/docs/API.md` (or relevant doc) in the same turn as the code change — docs must never lag code.
 
 - Modern ribbons use `core/trails/trail_ribbon.h`: free/head-anchored attachment is independent of Motion fields. Emitter scheduling/source adapters live in `core/emitter/`; never add a third emitter implementation outside that module.
+- Physical ribbon appearance reuses trail recipes and the shared material binder; disable world-space vertex deformation so Motion retains position ownership.
 - Guided Motion composes shared spatial fields with independent particle/ribbon schedules; supplied field overrides must explicitly include trail receivers. Attachments remain caller-owned.
 - Components publish child-emission events; `core/emitter/` owns templates, cadence and budgets. GPU_ONLY must reject unsupported births or resource exhaustion; AUTO alone may select CPU fallback.
 - GPU ribbon node positions and receiver lanes stay GPU-owned after spawn; upload only control/attachment snapshots, and return NULL from CPU state queries rather than reading back implicitly.
@@ -176,6 +177,8 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | Shared prescribed Motion path sampling | core/motion/motion_path_transport.h; core/motion/shaders/motion_fields.glsl | Ground-truth and project convention |
+| 2026-10-08 | Codex | Shared physical ribbon appearance without vertex displacement | core/trails/trail_ribbon.h; core/trails/trail_system.c; core/composition/common/vc_trail.inl | Ground-truth |
 | 2026-10-08 | Codex | §10.1 Caller-owned shared frames and binding refresh | core/motion/motion_frame.h; core/motion/motion_fields.c; core/composition/visual_composer.c | Ground-truth and project convention |
 | 2026-10-08 | Codex | §10.1 Emitter ownership and resident modern ribbon state | core/emitter/emitter.h; core/trails/trail_ribbon.h; core/trails/trail_ribbon_gpu.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |

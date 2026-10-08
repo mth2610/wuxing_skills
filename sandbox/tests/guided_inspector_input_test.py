@@ -50,9 +50,16 @@ int main(void) {
     assert(s_guidedFrames[1].position.x>0.5f);
     for(int i=0;i<180;++i) VFXTest_UpdateGuidedFrames(1.0f/60);
     assert(!s_guidedFrames[0].active && !s_guidedFrames[1].active && destroyed==2);
+    s_guidedFrames[3]=(VFXTest_GuidedFrame){.frame=4,.origin={1,2,3},.active=true,.kinematic=true};
+    VFXTest_UpdateGuidedFrames(0.5f);
+    float a=0.5f*1.35f;
+    assert(fabsf(s_guidedFrames[3].position.x-(1+3*sinf(a)))<0.00001f);
+    assert(fabsf(s_guidedFrames[3].position.y-(3.5f+0.45f*sinf(a*0.7f)))<0.00001f);
+    assert(fabsf(s_guidedFrames[3].position.z-(3+2.1f*cosf(a*1.3f)))<0.00001f);
+    VFXTest_UpdateGuidedFrames(3.51f); assert(!s_guidedFrames[3].active && destroyed==3);
     s_guidedFrames[2]=(VFXTest_GuidedFrame){.frame=3,.active=true};
-    VFXTest_ClearGuidedFrames(); assert(destroyed==3);
-    VFXTest_ClearGuidedFrames(); assert(destroyed==3);
+    VFXTest_ClearGuidedFrames(); assert(destroyed==4);
+    VFXTest_ClearGuidedFrames(); assert(destroyed==4);
     return 0;
 }
 '''
@@ -141,11 +148,15 @@ int main(void) {
 #define VFX_TEST_MAX_INSPECTOR_PARAMS 4
 typedef struct {
     float speed, swirlSpeed, turbulenceSpeed, duration, guideRadius, maxForceNewtons, drag, formationRadius, emitDuration, gravityScale, massKg, trailLength, trailWidth;
-    int count, output, trailCount, motionPattern, trailNodes, material;
+    int count, output, trailCount, motionPattern, trailNodes, material, trailStyle, guidancePreset, trailMotion;
 } VFX_GuidedMotionConfig;
 enum { VFX_GUIDED_PARTICLES, VFX_GUIDED_TRAILS, VFX_GUIDED_BOTH };
 enum { VFX_GUIDED_ROUTE, VFX_GUIDED_ORBIT, VFX_GUIDED_AIRFLOW };
-enum { VC_MAT_WATER = 3 };
+enum { GUIDE_TIGHT = 3 };
+enum { VFX_GUIDED_TRAIL_MOTION_FIELD, VFX_GUIDED_TRAIL_MOTION_SPLINE };
+typedef int VC_MaterialId;
+enum { VC_MAT_WATER = 3, VC_MAT_LIGHTNING, VC_MAT_METAL, VC_MAT_FIRE };
+enum { VFX_GUIDED_TRAIL_PLAIN, VFX_GUIDED_TRAIL_ENERGY_SILK, VFX_GUIDED_TRAIL_SMOKE_WISP, VFX_GUIDED_TRAIL_EMBER_FILAMENT, VFX_GUIDED_TRAIL_WATER_STREAM };
 static VFX_GuidedMotionConfig s_liveGuidedMotionConfig;
 static bool s_liveGuidedMotionConfigInit;
 static int s_guidedFixturePreset;
@@ -172,6 +183,7 @@ int main(void) {
     assert(s_liveGuidedMotionConfig.output==VFX_GUIDED_BOTH);
     VFXTest_SetGuidedPreset(6); assert(s_liveGuidedMotionConfig.output==VFX_GUIDED_PARTICLES);
     VFXTest_SetGuidedPreset(7); assert(s_liveGuidedMotionConfig.output==VFX_GUIDED_TRAILS);
+    assert(s_liveGuidedMotionConfig.trailMotion==VFX_GUIDED_TRAIL_MOTION_FIELD);
     VFXTest_SetGuidedPreset(8); assert(s_liveGuidedMotionConfig.output==VFX_GUIDED_BOTH);
     VFXTest_SetGuidedPreset(9);
     assert(s_liveGuidedMotionConfig.output==VFX_GUIDED_BOTH);
@@ -201,6 +213,29 @@ int main(void) {
     assert(s_liveGuidedMotionConfig.trailCount==1 && s_liveGuidedMotionConfig.material==VC_MAT_WATER);
     Near(s_liveGuidedMotionConfig.emitDuration,0);
     Near(s_liveGuidedMotionConfig.trailWidth,0.16f);
+    for (int preset=14; preset<=17; ++preset) {
+        VFXTest_SetGuidedPreset(preset);
+        assert(s_liveGuidedMotionConfig.trailStyle==preset-13);
+        assert(s_liveGuidedMotionConfig.output==VFX_GUIDED_TRAILS);
+        assert(s_liveGuidedMotionConfig.motionPattern==VFX_GUIDED_AIRFLOW);
+        assert(s_liveGuidedMotionConfig.trailCount==1);
+        Near(s_liveGuidedMotionConfig.emitDuration,0);
+        Near(s_liveGuidedMotionConfig.trailWidth,0.18f);
+        Near(s_liveGuidedMotionConfig.duration,4);
+    }
+    VFXTest_SetGuidedPreset(18);
+    assert(s_liveGuidedMotionConfig.trailMotion==VFX_GUIDED_TRAIL_MOTION_SPLINE);
+    assert(s_liveGuidedMotionConfig.output==VFX_GUIDED_TRAILS);
+    assert(s_liveGuidedMotionConfig.trailCount==1 && s_liveGuidedMotionConfig.trailNodes==24);
+    assert(s_liveGuidedMotionConfig.motionPattern==VFX_GUIDED_ROUTE);
+    assert(s_liveGuidedMotionConfig.trailStyle==VFX_GUIDED_TRAIL_ENERGY_SILK);
+    assert(s_liveGuidedMotionConfig.guidancePreset==GUIDE_TIGHT);
+    Near(s_liveGuidedMotionConfig.trailLength,0.8f);
+    Near(s_liveGuidedMotionConfig.speed,2.0f);
+    Near(s_liveGuidedMotionConfig.swirlSpeed,0.0f);
+    Near(s_liveGuidedMotionConfig.turbulenceSpeed,0.0f);
+    Near(s_liveGuidedMotionConfig.gravityScale,0.0f);
+    Near(s_liveGuidedMotionConfig.formationRadius,0.0f);
     VFXTest_SetGuidedPreset(3); assert(s_liveGuidedMotionConfig.count==0 && s_liveGuidedMotionConfig.trailCount==0);
     VFXTest_SetGuidedPreset(0);
     VFX_GuidedMotion_GetParams(&s_liveGuidedMotionConfig,s_inspectorParams,4);

@@ -1,4 +1,5 @@
 #include "core/trails/trail_ribbon_gpu.h"
+#include "core/trails/trail_ribbon.h"
 #include "core/motion/motion_wind_gpu.h"
 #include "core/resource_manager.h"
 #include "core/shading/shader_preprocessor.h"
@@ -117,6 +118,13 @@ void TrailRibbonGpu_Update(int slot,float dt,const TrailRibbonAnchor *anchor) {
         p->anchorVelocity=anchor?MotionGpu_V4(anchor->velocity,anchor->discontinuity?1:0):(Vector4){0};
     s_updatePending=true;
 }
+void TrailRibbonGpu_SetPathTransport(int slot,const MotionPathTransport *transport,float distanceM) {
+    if(!s_ready||slot<0||slot>=TRAIL_RIBBON_GPU_CAPACITY||!s_slots[slot].meta[3]||!transport||!transport->field) return;
+    TrailRibbonGpuParams *p=&s_slots[slot];
+    p->meta[1]=transport->field;p->meta[3]=3;
+    p->compliance.w=distanceM;p->anchor=MotionGpu_V4(transport->laneOffset,0);
+    s_updatePending=true;
+}
 void TrailRibbonGpu_EndUpdate(void) {
     if(!s_ready || !s_updatePending || s_updateDt<=0) return;
     s_updatePending=false;
@@ -173,7 +181,44 @@ void TrailRibbonGpu_Draw(int slot,Camera3D camera,float width,Color color,Textur
     rlEnableDepthMask();rlEnableBackfaceCulling();rlDisableTexture();
     EndShaderMode();EndBlendMode();
 }
+static Shader s_appearanceShader;
+static int s_appearanceLocs[11];
+void TrailRibbonGpu_DrawAppearance(int slot,Camera3D camera,float width,Texture2D texture,
+    const TrailEntity *trail,int layerFilter,const Vector4 *colors,const float *widths) {
+    if(!s_ready||slot<0||slot>=TRAIL_RIBBON_GPU_CAPACITY||!s_slots[slot].meta[3]) return;
+    if(!s_appearanceShader.id) {
+        s_appearanceShader=ResourceManager_LoadShader(
+            "core/trails/shaders/trail_ribbon_material_gpu.vs","core/trails/shaders/trail_deform.fs");
+        const char *names[]={"mvp","u_camera","u_right","u_slot","u_count","u_width","u_nodeArc","u_ribbonMode","u_fixedNormal","u_nodeColor","u_nodeWidth"};
+        for(int i=0;i<11;i++) s_appearanceLocs[i]=GetShaderLocation(s_appearanceShader,names[i]);
+    }
+    Shader sh=s_appearanceShader;if(!sh.id) return;
+    rlDrawRenderBatchActive();
+    BeginBlendMode(layerFilter==0?BLEND_ALPHA:trail->blendMode);BeginShaderMode(sh);
+    TrailRibbon_BindAppearance(sh,trail,camera,layerFilter);
+    Matrix mvp=MatrixMultiply(GetCameraMatrix(camera),rlGetMatrixProjection());
+    Vector3 right=Vector3Normalize(Vector3CrossProduct(camera.up,Vector3Subtract(camera.position,camera.target)));
+    int count=(int)s_slots[slot].meta[0],one=1;
+    SetShaderValueMatrix(sh,s_appearanceLocs[0],mvp);
+    SetShaderValue(sh,s_appearanceLocs[1],&camera.position,SHADER_UNIFORM_VEC3);
+    SetShaderValue(sh,s_appearanceLocs[2],&right,SHADER_UNIFORM_VEC3);
+    SetShaderValue(sh,s_appearanceLocs[3],&slot,SHADER_UNIFORM_INT);
+    SetShaderValue(sh,s_appearanceLocs[4],&count,SHADER_UNIFORM_INT);
+    SetShaderValue(sh,s_appearanceLocs[5],&width,SHADER_UNIFORM_FLOAT);
+    SetShaderValue(sh,s_appearanceLocs[6],&one,SHADER_UNIFORM_INT);
+    SetShaderValue(sh,s_appearanceLocs[7],&trail->ribbonMode,SHADER_UNIFORM_INT);
+    SetShaderValue(sh,s_appearanceLocs[8],&trail->fixedNormal,SHADER_UNIFORM_VEC3);
+    SetShaderValueV(sh,s_appearanceLocs[9],colors,SHADER_UNIFORM_VEC4,count);
+    SetShaderValueV(sh,s_appearanceLocs[10],widths,SHADER_UNIFORM_FLOAT,count);
+    rlBindShaderBuffer(s_nodes,0);rlActiveTextureSlot(0);
+    rlEnableTexture(texture.id?texture.id:rlGetTextureIdDefault());
+    rlDisableBackfaceCulling();rlDisableDepthMask();
+    rlEnableShader(sh.id);rlEnableVertexArray(s_vao);rlDrawVertexArrayInstanced(0,6,count-1);
+    rlDisableVertexArray();rlDisableShader();rlEnableDepthMask();rlEnableBackfaceCulling();rlDisableTexture();
+    EndShaderMode();EndBlendMode();
+}
 void TrailRibbonGpu_Unload(void) {
+    s_appearanceShader=(Shader){0};
     unsigned int buffers[]={s_nodes,s_params,s_bodies,s_scene,s_wind,s_terrain};
     for(int i=0;i<6;i++) if(RibbonBufferValid(buffers[i])) rlUnloadShaderBuffer(buffers[i]);
     if(s_vao) rlUnloadVertexArray(s_vao);
@@ -188,9 +233,14 @@ bool TrailRibbonGpu_IsAvailable(void) {return false;}
 int TrailRibbonGpu_Spawn(const TrailRibbonState *s,const TrailRibbonMaterial *m) {(void)s;(void)m;return -1;}
 void TrailRibbonGpu_BeginUpdate(float dt,float time) {(void)dt;(void)time;}
 void TrailRibbonGpu_Update(int slot,float dt,const TrailRibbonAnchor *a) {(void)slot;(void)dt;(void)a;}
+void TrailRibbonGpu_SetPathTransport(int slot,const MotionPathTransport *t,float d) {(void)slot;(void)t;(void)d;}
 void TrailRibbonGpu_EndUpdate(void) {}
 void TrailRibbonGpu_Release(int slot,const TrailRibbonAnchor *a) {(void)slot;(void)a;}
 void TrailRibbonGpu_Kill(int slot) {(void)slot;}
 void TrailRibbonGpu_Draw(int slot,Camera3D c,float w,Color color,Texture2D t) {(void)slot;(void)c;(void)w;(void)color;(void)t;}
 void TrailRibbonGpu_Unload(void) {}
+void TrailRibbonGpu_DrawAppearance(int slot,Camera3D camera,float width,Texture2D texture,
+    const TrailEntity *trail,int layerFilter,const Vector4 *colors,const float *widths) {
+    (void)slot;(void)camera;(void)width;(void)texture;(void)trail;(void)layerFilter;(void)colors;(void)widths;
+}
 #endif

@@ -1,7 +1,7 @@
 """Generate a grayscale heightmap for the "floating island" map motif
 (MAP_API.md): white = walkable plateau crest, black = cliff edge sinking
 down. Includes:
-1. Natural gentle meadow undulation (rolling swales & knolls, ~0.45m depth)
+1. Multi-scale rolling swales & knolls (bounded to 0.90m depth)
 2. Seamlessly sunken concave lake basin (depth 1.15m at center, matching Water_EdgeScale)
 3. Smooth waterline fade around the lake rim so the water surface meets the shore at Y=0.0m
 4. Mildly-jagged cliff edge strip around the outer 10% perimeter
@@ -70,11 +70,19 @@ rz = LAKE_RADIUS_Z * edge
 r_lake = np.sqrt((dx / rx)**2 + (dz / rz)**2)
 lake_depth = np.where(r_lake < 1.0, LAKE_MAX_DEPTH * (1.0 - np.clip(r_lake, 0.0, 1.0)**1.6), 0.0)
 
-# 3. Meadow undulating swales (relative depth: 0.0 to 0.45m below crests)
-h_macro = np.sin(world_x * 0.065 + world_z * 0.048) * 0.55 + np.sin(world_x * -0.048 + world_z * 0.082 + 1.2) * 0.45
-h_med = np.sin(world_x * 0.14 - world_z * 0.11 + 0.8) * 0.55 + np.sin(world_x * 0.09 + world_z * 0.18 + 2.1) * 0.45
-raw_undulation = h_macro * 0.7 + h_med * 0.3
-swale_depth = (1.0 - (raw_undulation * 0.5 + 0.5)) * 0.45
+# 3. Like gf's continuous height field, separate broad landscape relief from
+# smaller canopy-scale rolls. A slow coordinate warp avoids straight parallel
+# wave bands; all wavelengths remain resolved by the existing 80x80 mesh.
+# Preserve Y<=0, the existing waterline, and the fixed mesh/triangle budget.
+relief_x = world_x + 3.0 * np.sin(world_z * 0.051 + 0.7)
+relief_z = world_z + 2.4 * np.sin(world_x * 0.044 + 1.9)
+h_macro = (np.sin(relief_x * 0.065 + relief_z * 0.048) * 0.55 +
+           np.sin(relief_x * -0.048 + relief_z * 0.082 + 1.2) * 0.45)
+h_med = (np.sin(relief_x * 0.14 - relief_z * 0.11 + 0.8) * 0.55 +
+         np.sin(relief_x * 0.09 + relief_z * 0.18 + 2.1) * 0.45)
+h_fine = np.sin(relief_x * 0.23 + relief_z * 0.19 + 0.4)
+raw_undulation = h_macro * 0.68 + h_med * 0.24 + h_fine * 0.08
+swale_depth = (1.0 - (raw_undulation * 0.5 + 0.5)) * 0.90
 
 # Fade meadow undulation at lake rim and cliff
 lake_fade = np.clip((r_lake - 1.02) / 0.30, 0.0, 1.0)
@@ -93,4 +101,3 @@ img = (final_height * 255.0 + 0.5).astype(np.uint8)
 out_img = Image.fromarray(img).filter(ImageFilter.GaussianBlur(radius=0.6))
 out_img.save(out_path)
 print(f"Wrote {out_path} ({size}x{size}) with lake basin and undulating terrain")
-

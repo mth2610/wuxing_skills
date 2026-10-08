@@ -22,7 +22,7 @@ HEADERS=(
   core/liquid/liquid_orb.h
   core/gas/gas_system.h
   core/force_field.h
-  core/motion/motion_path.h core/motion/motion_flow.h core/motion/physical_field.h
+  core/motion/motion_path.h core/motion/motion_path_transport.h core/motion/motion_flow.h core/motion/physical_field.h
   core/motion/motion_frame.h core/motion/motion_fields.h core/motion/motion_recipe.h core/motion/motion_body.h
   core/motion/motion_profile.h
   core/particles/particle_dynamics.h

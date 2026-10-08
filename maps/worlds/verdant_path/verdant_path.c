@@ -317,60 +317,44 @@ static void BuildMeadowLayout(void)
     TraceLog(LOG_INFO, "VERDANT_MEADOW: placements=%d capacity=%d",
              s_grassCount, GRASS_TUFT_CAPACITY);
 
-    // Ghost of Tsushima / AAA Reference: Structured procedural variation with macro flow field
+    // Bake coherent canopy variation once; animated motion stays owned by Core Wind.
     for (int i = 0; i < s_grassCount; i++) {
         MapMeadowPlacement *clump = &s_grassPlacements[i];
         float cx = clump->position.x;
         float cz = clump->position.z;
 
-        // Multi-frequency wind noise & directional flow:
-        // 1. Broad landscape waves (macro scale ~16m)
+        // Static orientation follows broad landscape bands plus local yaw jitter.
         float wave1 = sinf(cx * 0.07f + cz * 0.05f) * 0.60f
                     + sinf(cx * -0.05f + cz * 0.11f + 1.2f) * 0.40f;
-        // 2. Medium organic turbulence / Voronoi eddies (~4.5m)
         float eddy = sinf(cx * 0.22f - cz * 0.18f + 0.8f) * 0.55f
                    + sinf(cx * 0.14f + cz * 0.26f + 2.3f) * 0.45f;
-        // 3. Micro gust ripple (~1.8m)
         float micro = sinf(cx * 0.55f + cz * 0.45f + 3.1f) * 0.5f
                     + sinf(cx * -0.42f + cz * 0.62f) * 0.5f;
 
         float flowAngle = 45.0f + wave1 * 32.0f + eddy * 24.0f + micro * 16.0f;
 
-        // 4. Clump-level Yaw Jitter (AAA standard: organic diversity)
+        // Clump-level yaw jitter.
         float hash = sinf((float)(i * 47)) * 43758.5453f;
         hash -= floorf(hash);
         clump->rotationDeg = flowAngle + (hash - 0.5f) * 240.0f;
         float localHeight = clump->height; // keep the placement jitter after biome shaping
         float localRadius = clump->radius;
 
-        // Cellular noise field for macro-biomes (scale ~7 meters)
+        // Continuous habitat controls both ground palette and canopy structure.
         float cell1 = sinf(cx * 0.15f + cz * 0.10f) * 0.5f + 0.5f;
         float cell2 = sinf(cx * -0.11f + cz * 0.20f + 1.8f) * 0.5f + 0.5f;
-        float biome = s_ecology.ready ? MapEcology_Sample(&s_ecology, cx, cz).habitat
-                                      : cell1 * 0.6f + cell2 * 0.4f;
-
-        if (biome > 0.60f) {
-            // Biome 1: Tall Deep Meadow (long sweeping weeping ribbons, height ~0.34 - 0.38m)
-            float t = (biome - 0.60f) / 0.40f;
-            clump->height = 0.34f + t * 0.04f;
-            clump->radius = 0.25f + t * 0.03f;
-        } else if (biome < 0.35f) {
-            // Biome 2: Meadow clearing (dense arching grass, height ~0.26 - 0.30m)
-            float t = biome / 0.35f;
-            clump->height = 0.26f + t * 0.04f;
-            clump->radius = 0.22f + t * 0.02f;
-        } else {
-            // Biome 3: Wild flowing grass (height ~0.29 - 0.33m)
-            float t = (biome - 0.35f) / 0.25f;
-            clump->height = 0.29f + t * 0.04f;
-            clump->radius = 0.23f + t * 0.03f;
-        }
+        MapEcologySample ecology = {0};
         if (s_ecology.ready)
-            clump->height = 0.26f + MapEcology_Sample(&s_ecology, cx, cz).growth * 0.10f;
+            ecology = MapEcology_Sample(&s_ecology, cx, cz);
+        float biome = s_ecology.ready ? ecology.habitat : cell1 * 0.6f + cell2 * 0.4f;
+        float growth = s_ecology.ready ? ecology.growth : biome;
+        // Shared growth avoids abrupt species-height steps at biome thresholds.
+        clump->height = 0.30f + growth * 0.12f;
+        clump->radius = 0.22f + biome * 0.06f;
         clump->height *= 0.85f + 0.30f * (localHeight - 0.34f) / 0.20f;
         clump->radius *= 0.92f + 0.16f * (localRadius - 0.22f) / 0.06f;
 
-        // 5. Pathway Edge Trampled Turf (AAA organic transition)
+        // Short trampled turf connects the canopy to the pathway edge.
         float pathMeander = sinf(cx * 0.85f + cz * 1.15f) * 0.22f
                           + sinf(cx * 2.30f - cz * 1.70f) * 0.11f;
         float distPath = DistanceToPaths(cx, cz) + pathMeander;
@@ -704,7 +688,8 @@ void InitVerdantPathMap(void)
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
     // Bake from the actual plateau contour; no rectangular wall or per-frame search.
     MapBoundaryMistStyle rim = {1.2f, 4.0f, 0.5f, 2.0f, 0.35f};
-    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -0.35f, &rim))
+    // Extract the cliff contour below all meadow swales, above the cloud sea.
+    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -1.25f, &rim))
         TraceLog(LOG_WARNING, "Verdant Path: terrain boundary mist bake failed");
     CreateFarSunbeamTexture();
     s_lake = MapProp_CreateWaterSurface((MapWaterConfig){

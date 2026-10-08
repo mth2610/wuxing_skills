@@ -9,6 +9,7 @@ HEADER = r'''
 #define RAYLIB_H
 #include <stdbool.h>
 typedef struct {float x,y,z,w;} Vector4;
+typedef struct {float x,y,z;} Vector3;
 typedef struct {unsigned id;int width,height,mipmaps,format;} Texture2D;
 typedef struct {void *data;int width,height,mipmaps,format;} Image;
 #define PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 7
@@ -25,6 +26,7 @@ void TraceLog(int,const char *,...);
 '''
 TEST = r'''
 #include "maps/toolkit/map_ecology.h"
+#include "maps/toolkit/meadow_palette.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -70,6 +72,16 @@ int main(void) {
     assert(MapEcology_Sample(&m,10,20).coverage==0);
     assert(MapEcology_Sample(&m,-1,20).coverage==0);
     assert(MapEcology_Sample(&m,60,36).moisture>.99f);
+    // Baked ecology and immutable grass colors must select the same habitat.
+    // Texture interpolation/8-bit quantization may differ by one byte.
+    for(int z=8;z<68;z+=3) for(int x=25;x<88;x+=3) {
+        float habitat=MeadowHabitat((float)x,(float)z);
+        MapEcologySample sample=MapEcology_Sample(&m,(float)x,(float)z);
+        Near(sample.habitat,habitat,.006f);
+        Vector3 blade=MeadowCanopyColor(habitat),ground=MeadowCanopyColor(sample.habitat);
+        Near(blade.x,ground.x,.012f);Near(blade.y,ground.y,.012f);Near(blade.z,ground.z,.012f);
+        assert(blade.x>0 && blade.y>0 && blade.z>0 && blade.x<1 && blade.y<1 && blade.z<1);
+    }
     MapEcology_Unload(&m);assert(!m.ready && unloads==2);
     assert(MapEcology_Sample(&m,40,20).coverage==0);
     assert(MapEcology_Bake(&other,&c,Density,Eligible,NULL));MapEcology_Unload(&other);

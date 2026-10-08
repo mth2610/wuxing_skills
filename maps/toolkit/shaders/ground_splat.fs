@@ -8,6 +8,8 @@
 #define MAP_DYNAMIC_SHADOW_RADIUS 0.65
 #include "maps/toolkit/shaders/map_shadow.glsl"
 #include "environment/shaders/cloud_shadow.glsl"
+#include "environment/shaders/hemisphere_lighting.glsl"
+#include "maps/toolkit/shaders/meadow_palette.glsl"
 uniform sampler2D u_cloudNoise;
 uniform sampler2D u_groundRelief; // R/G derived substrate/soil height; B/A litter/moss classes
 uniform int u_groundReliefEnabled;
@@ -179,7 +181,9 @@ void main()
     // ground albedo into the lush illuminated grass canopy color so the cutoff is invisible.
     float camDist = length(viewPos.xz - fragWorldPos.xz);
     float distantCanopyBlend = smoothstep(22.0, 50.0, camDist) * wGrass;
-    vec3 canopyColor = vec3(0.39, 0.53, 0.20) * mix(vec3(0.92, 0.96, 0.90), vec3(1.10, 1.06, 0.88), habitatWarmth);
+    if (u_ecologyEnabled != 0)
+        distantCanopyBlend *= smoothstep(0.10, 0.75, ecology.r);
+    vec3 canopyColor = MeadowCanopyColor(1.0 - habitatWarmth);
     float distantClumpNoise = sin(fragWorldPos.x * 1.6 + fragWorldPos.z * 1.2) * 0.5
                             + sin(fragWorldPos.x * -1.1 + fragWorldPos.z * 2.1) * 0.5;
     canopyColor *= mix(0.90, 1.10, distantClumpNoise * 0.5 + 0.5);
@@ -234,10 +238,7 @@ void main()
 
     float shadow = MapShadowVisibility(fragPosition, normal, light);
     float sunVisibility = shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos);
-    float skyWeight = normal.y * 0.5 + 0.5;
-    vec3 skyAmbient = actualAmbient.rgb * vec3(1.04, 1.08, 1.16);
-    vec3 groundBounce = actualAmbient.rgb * vec3(0.42, 0.38, 0.28);
-    vec3 ambient = mix(groundBounce, skyAmbient, skyWeight) * cavityAO;
+    vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient.rgb) * cavityAO;
 
     // Physically Based Lighting (PBR daylight law):
     // Direct solar irradiance is modulated by directional shadow visibility.

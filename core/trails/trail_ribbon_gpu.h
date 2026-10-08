@@ -1,6 +1,8 @@
 #ifndef CORE_TRAIL_RIBBON_GPU_H
 #define CORE_TRAIL_RIBBON_GPU_H
 #include "core/trails/trail_ribbon_solver.h"
+#include "core/motion/motion_path_transport.h"
+struct TrailEntity;
 
 #define TRAIL_RIBBON_GPU_CAPACITY 64
 /* std430 ABI v1; persistent nodes/body lanes are uploaded only at spawn.
@@ -10,9 +12,9 @@ typedef struct {
     Vector4 positionRest, velocity, previous;
 } TrailRibbonGpuNode;
 typedef struct {
-    unsigned int meta[4]; /* count, iterations, head-anchored, active */
-    Vector4 compliance;  /* stretch, bend, pending release velocity, reserved */
-    Vector4 anchor;      /* xyz target, w valid */
+    unsigned int meta[4]; /* count, iterations/path-field handle, head-anchored, active flags (1 alive, 2 prescribed) */
+    Vector4 compliance;  /* stretch, bend, pending release velocity, prescribed head distance */
+    Vector4 anchor;      /* xyz target / prescribed lane offset, w valid */
     Vector4 anchorVelocity; /* xyz velocity, w discontinuity */
 } TrailRibbonGpuParams;
 typedef char TrailRibbonGpuNodeLayout[(sizeof(TrailRibbonGpuNode)==48)?1:-1];
@@ -27,10 +29,13 @@ int TrailRibbonGpu_Spawn(const TrailRibbonState *state,const TrailRibbonMaterial
 void TrailRibbonGpu_BeginUpdate(float dt,float time);
 void TrailRibbonGpu_Update(int slot,float dt,const TrailRibbonAnchor *anchor);
 void TrailRibbonGpu_EndUpdate(void);
+void TrailRibbonGpu_SetPathTransport(int slot,const MotionPathTransport *transport,float distanceM);
 void TrailRibbonGpu_Release(int slot,const TrailRibbonAnchor *anchor);
 void TrailRibbonGpu_Kill(int slot);
 void TrailRibbonGpu_Unload(void);
 /* Direct GPU strip: straight-alpha color/texture, with world-space width.
  * The manager must reject/fallback for unsupported appearance features. */
 void TrailRibbonGpu_Draw(int slot,Camera3D camera,float width,Color color,Texture2D texture);
+void TrailRibbonGpu_DrawAppearance(int slot,Camera3D camera,float width,Texture2D texture,
+    const struct TrailEntity *trail,int layerFilter,const Vector4 *colors,const float *widths);
 #endif

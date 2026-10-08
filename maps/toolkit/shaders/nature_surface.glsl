@@ -1,4 +1,5 @@
 #include "environment/shaders/cloud_shadow.glsl"
+#include "environment/shaders/hemisphere_lighting.glsl"
 uniform sampler2D u_cloudNoise;
 uniform vec3 u_lightDir;
 uniform vec3 u_lightColor;
@@ -145,9 +146,8 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     // Hemispheric Ambient Lighting:
     // Upper surface catches cool sky ambient; lower surface catches warm chlorophyll grass bounce
     float skyWeight = n.y * 0.5 + 0.5;
-    vec3 baseAmbient = max(u_ambientColor, vec3(0.28, 0.32, 0.24));
-    vec3 skyAmbient = baseAmbient * vec3(1.06, 1.10, 1.16);
-    vec3 groundBounce = baseAmbient * vec3(0.65, 0.74, 0.44);
+    vec3 skyAmbient = Environment_HemisphereIrradiance(vec3(0.0, 1.0, 0.0), u_ambientColor);
+    vec3 groundBounce = Environment_HemisphereIrradiance(vec3(0.0, -1.0, 0.0), u_ambientColor);
     // Soft radial ambient occlusion from the blossom center outwards to petal tips
     float cupCavity = mix(0.58, 1.0, smoothstep(0.82, 0.98, heightAlongPlant));
     vec3 ambientFloor = mix(groundBounce, skyAmbient, skyWeight) * mix(1.0, cupCavity, bloomMask);
@@ -217,14 +217,16 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     float wrapped = clamp((dot(n, u_lightDir) + 0.42) / 1.42, 0.0, 1.0);
     float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, u_lightDir, worldPosition, distToCam);
-    float canopy = mix(0.48, 1.0, h * (2.0 - h));
+    // Beer-Lambert attenuation through the unresolved canopy. Grazing sun
+    // traverses more leaves; tips stay lit while roots retain sky illumination.
+    float canopyDepth = 0.45 * (1.0 - h);
+    float canopy = 0.12 + 0.88 * exp(-canopyDepth * 0.9 / max(u_lightDir.y, 0.10));
 
-    vec3 baseAmbient = max(u_ambientColor, vec3(0.28, 0.32, 0.24));
-    vec3 skyAmbient = baseAmbient * vec3(1.06, 1.10, 1.16);
-    vec3 groundBounce = baseAmbient * vec3(0.65, 0.74, 0.44);
+    vec3 skyAmbient = Environment_HemisphereIrradiance(vec3(0.0, 1.0, 0.0), u_ambientColor);
+    vec3 groundBounce = Environment_HemisphereIrradiance(vec3(0.0, -1.0, 0.0), u_ambientColor);
     vec3 ambient = mix(groundBounce, skyAmbient, n.y * 0.5 + 0.5);
     // Deep ground contact ambient occlusion at blade base (Ghost of Tsushima deep canopy shadow)
-    float rootAO = clamp(0.24 + 0.76 * pow(h, 1.25), 0.24, 1.0);
+    float rootAO = mix(0.18, 1.0, smoothstep(0.0, 0.55, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     // Ghost of Tsushima: Anisotropic fiber specular along blade length
@@ -245,10 +247,6 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float waxFresnel = pow(1.0 - nv, 4.0);
     vec3 waxSheen = skyAmbient * waxFresnel * 0.32 * smoothstep(0.25, 0.90, h) * (1.0 - antiShimmer * 0.5);
 
-    // Velvet tip glint and wind wave crest highlights
-    float tipGlint = pow(sinTH, 12.0) * smoothstep(0.40, 1.0, h) * (1.0 - antiShimmer * 0.65);
-    vec3 velvetGlint = vec3(1.25, 1.20, 0.80) * tipGlint * 0.14;
-
     // Chlorophyll translucency: radiant emerald-gold backlight through leaf membrane
     float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
     float backLight = max(-dot(faceNormal, u_lightDir), 0.0);
@@ -257,7 +255,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float edgeThinness = 0.75 + 0.50 * abs(uTransverse);
     float transmission = (backLobe * 0.65 + forwardLobe * 0.60)
                         * smoothstep(0.10, 0.75, h) * edgeThinness;
-    vec3 translucentColor = baseColor * vec3(1.65, 1.85, 0.55) + vec3(0.06, 0.10, 0.02);
+    vec3 translucentColor = baseColor * vec3(1.10, 1.15, 0.80);
 
     // Physical daylight optics:
     // Direct solar irradiance (diffuse wrap, anisotropic specular, velvet tip glint,
@@ -266,14 +264,11 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float sunVis = shadow * Environment_CloudVisibility(u_cloudNoise, worldPosition);
     vec3 directSunTerms = baseColor * (wrapped * wrapped * 1.05)
                         + anisoSpec * vec3(1.0, 1.02, 0.95)
-                        + velvetGlint
                         + translucentColor * (transmission * 1.10);
     vec3 directSun = directSunTerms * u_lightColor * canopy * sunVis;
 
-    // Diffuse skylight transmission through leaf membrane (soft emerald ambient glow)
-    vec3 skyTrans = translucentColor * (transmission * 0.28) * skyAmbient;
-
-    lit += directSun + skyTrans + waxSheen;
+    // Sky reflection follows canopy exposure independently of solar visibility.
+    lit += directSun + waxSheen * rootAO;
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);
     return lit;
 }

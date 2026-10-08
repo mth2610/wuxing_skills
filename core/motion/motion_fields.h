@@ -5,6 +5,7 @@
 #include "core/motion/physical_field.h"
 #include "core/motion/motion_frame.h"
 #include "core/motion/motion_path.h"
+#include "core/motion/motion_path_transport.h"
 #include "core/motion/motion_profile.h"
 #include "core/wind/wind_types.h"
 #include <stdint.h>
@@ -13,7 +14,6 @@
 #define MOTION_ARRIVAL_MAX_TARGETS 3
 /* Generation-checked owned field handles. Zero is invalid. Pool exhaustion
  * fails rather than replacing an unrelated live field. */
-typedef uint32_t MotionFieldHandle;
 #define MOTION_FIELD_INVALID ((MotionFieldHandle)0)
 /* Bit masks are stable. Legacy ALL intentionally excludes newly added
  * components; zero descriptor masks select ALL_COMPONENTS. */
@@ -236,6 +236,10 @@ MotionArrivalMode MotionFields_AdvanceReceiver(MotionReceiver *receiver,
                                                Vector3 velocity);
 bool MotionFields_GetArrival(MotionFieldHandle guide,
                              MotionArrivalProfile *out);
+/* Live typed PATH_TUBE only. Cached world frame; borrowed path remains valid
+ * until the next registry mutation. Destroyed/reused handles fail closed. */
+bool MotionFields_GetPathTransport(MotionFieldHandle field,
+                                  MotionPathTransportSnapshot *snapshot);
 /* Formation/emission are independent: caller can seed source-sampled offsets
  * on an explicitly selected guide before its first spatial query. */
 bool MotionFields_Capture(MotionFieldHandle guide, Vector3 position,

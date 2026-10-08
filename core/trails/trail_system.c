@@ -109,7 +109,7 @@ typedef struct
     int matMode, wispMix, dissolve, dissolveSoft;
     int tiling, panSpeed, tailFadeA, tailFadeB;
     int bandShape, pathArc, colHot, strandFlow, coreShape;
-    int renderPass, bodyOpacity, toneMapSafe, contrastParams, colTail, tailShape;
+    int renderPass, bodyOpacity, toneMapSafe, contrastParams, colTail, tailShape,nodeArc;
     // The mode-2 sine warp's coordinate half, generalised 05/08/2026 onto
     // core/uv's UVDeformField (u_sinWave is GONE — see the "SIN-WAVE STRAND
     // TRAIL" push site for the reproduction). uv_field.glsl is shape-neutral
@@ -129,6 +129,7 @@ static void CacheShaderLocs(Shader shader);   // defined below; called first by 
 
 static void FillDeformLocs(Shader shader, DeformLocs *l)
 {
+    l->nodeArc=GetShaderLocation(shader,"u_nodeArc");
     l->deformMode    = GetShaderLocation(shader, "u_deformMode");
     l->waveAmpA      = GetShaderLocation(shader, "u_waveAmpA");
     l->waveAmpB      = GetShaderLocation(shader, "u_waveAmpB");
@@ -516,6 +517,10 @@ static float ComputeWidthEnvelopeFast(const TrailEntity *t, float segRatio, floa
     default:
         return 1.0f;
     }
+}
+
+float TrailRibbon_WidthEnvelope(const TrailEntity *t,float ratio,float time) {
+    return ComputeWidthEnvelopeFast(t,ratio,time);
 }
 
 // Centripetal Catmull-Rom (alpha = 0.5) - Messiah Engine standard.
@@ -1757,12 +1762,15 @@ static void DrawTrailRibbon(const TrailEntity *t, const RibbonPoint *points,
  * contrast profile's alpha: the vertex colour picks that up downstream, and
  * applying it here would run the same opacity policy twice — the same reasoning
  * the deform path states at its own bodyOpacity upload. */
-static float TrailLayerPassAlphaMul(const TrailEntity *t, const TrailLayer *ly)
-{
-    float aMul = (ly->alphaMul > 0.0f) ? ly->alphaMul : 1.0f;
-    if (s_drawLayerFilter != 0 || !TrailUsesAdditiveBlend(t)) return aMul;
-    if (t->material.bodyOpacity <= 0.0f) return aMul;
-    return (t->material.bodyOpacity > 1.0f) ? 1.0f : t->material.bodyOpacity;
+static float TrailLayerPassAlphaMul(const TrailEntity *t,const TrailLayer *ly) {
+    return TrailRibbon_LayerAlpha(t,ly,s_drawLayerFilter);
+}
+
+float TrailRibbon_LayerAlpha(const TrailEntity *t,const TrailLayer *ly,int layerFilter) {
+    float a=ly->alphaMul>0?ly->alphaMul:1;
+    if(layerFilter==0&&TrailUsesAdditiveBlend(t)&&t->material.bodyOpacity>0)
+        return fminf(t->material.bodyOpacity,1);
+    return a;
 }
 
 /* Whitening a layer toward 255 is an EMISSION idea — it reads as "hotter than
@@ -2022,30 +2030,35 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
 // Per-instance deform + packed-material uniforms, pushed just before this
 // trail's geometry inside its render group. Wave params are per-trail state,
 // so they live here — only the shared u_time clock stays at group level.
-static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
+void TrailRibbon_BindAppearance(Shader shader,const TrailEntity *t, Camera3D camera,int layerFilter)
 {
-    if (s_deformShader.id == 0)
+    if (shader.id == 0)
         return;
-    const DeformLocs *L = GetCachedDeformLocs(s_deformShader);
+    const DeformLocs *L = GetCachedDeformLocs(shader);
+    int nodeArc=0;
+    if(L->nodeArc>=0) SetShaderValue(shader,L->nodeArc,&nodeArc,SHADER_UNIFORM_INT);
+    float time=fmodf(TimeFX_Elapsed(),4096.0f);
+    int timeLoc=GetCachedTimeLoc(shader);
+    if(timeLoc>=0) SetShaderValue(shader,timeLoc,&time,SHADER_UNIFORM_FLOAT);
     const TrailDeformConfig *d = &t->deform;
     const TrailMaterialConfig *m = &t->material;
     float contrastParams[4];
     VFXContrast_GetShaderParams(m->contrastProfile, contrastParams);
     if (L->contrastParams >= 0)
-        SetShaderValue(s_deformShader, L->contrastParams, contrastParams,
+        SetShaderValue(shader, L->contrastParams, contrastParams,
                        SHADER_UNIFORM_VEC4);
 
-    if (L->deformMode >= 0) SetShaderValue(s_deformShader, L->deformMode, &d->mode, SHADER_UNIFORM_FLOAT);
-    if (L->waveAmpA >= 0) SetShaderValue(s_deformShader, L->waveAmpA, d->ampA, SHADER_UNIFORM_VEC3);
-    if (L->waveAmpB >= 0) SetShaderValue(s_deformShader, L->waveAmpB, d->ampB, SHADER_UNIFORM_VEC3);
-    if (L->waveFreq >= 0) SetShaderValue(s_deformShader, L->waveFreq, d->freq, SHADER_UNIFORM_VEC3);
-    if (L->waveSpeed >= 0) SetShaderValue(s_deformShader, L->waveSpeed, d->speed, SHADER_UNIFORM_VEC3);
-    if (L->wavePhase >= 0) SetShaderValue(s_deformShader, L->wavePhase, &d->phase, SHADER_UNIFORM_FLOAT);
-    if (L->waveStrength >= 0) SetShaderValue(s_deformShader, L->waveStrength, &d->strength, SHADER_UNIFORM_FLOAT);
-    if (L->curlScale >= 0) SetShaderValue(s_deformShader, L->curlScale, &d->curlScale, SHADER_UNIFORM_FLOAT);
+    if (L->deformMode >= 0) SetShaderValue(shader, L->deformMode, &d->mode, SHADER_UNIFORM_FLOAT);
+    if (L->waveAmpA >= 0) SetShaderValue(shader, L->waveAmpA, d->ampA, SHADER_UNIFORM_VEC3);
+    if (L->waveAmpB >= 0) SetShaderValue(shader, L->waveAmpB, d->ampB, SHADER_UNIFORM_VEC3);
+    if (L->waveFreq >= 0) SetShaderValue(shader, L->waveFreq, d->freq, SHADER_UNIFORM_VEC3);
+    if (L->waveSpeed >= 0) SetShaderValue(shader, L->waveSpeed, d->speed, SHADER_UNIFORM_VEC3);
+    if (L->wavePhase >= 0) SetShaderValue(shader, L->wavePhase, &d->phase, SHADER_UNIFORM_FLOAT);
+    if (L->waveStrength >= 0) SetShaderValue(shader, L->waveStrength, &d->strength, SHADER_UNIFORM_FLOAT);
+    if (L->curlScale >= 0) SetShaderValue(shader, L->curlScale, &d->curlScale, SHADER_UNIFORM_FLOAT);
     {
         float env[2] = {d->envHead, d->envTail};
-        if (L->waveEnv >= 0) SetShaderValue(s_deformShader, L->waveEnv, env, SHADER_UNIFORM_VEC2);
+        if (L->waveEnv >= 0) SetShaderValue(shader, L->waveEnv, env, SHADER_UNIFORM_VEC2);
     }
     // MODE 1 (sin-multi) ONLY — core/deform's first GLSL mirror,
     // 05/08/2026 (core/deform/shaders/mesh_deform.glsl). 2 octaves along
@@ -2094,7 +2107,7 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         // Field-level amplitude/timeScale stay neutral (1.0/default-via-
         // Clear) — the x2 compensation and per-octave speed already live
         // in each layer, so nothing should scale them again here.
-        MeshDeform_Apply(&warp, s_deformShader, &L->meshWarp);
+        MeshDeform_Apply(&warp, shader, &L->meshWarp);
     }
     {
         // Strip plane normal, mirroring ribbon_strip.c's ResolveFrameNormals:
@@ -2107,7 +2120,7 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
             n = Vector3Normalize(t->fixedNormal);
         else
             n = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-        if (L->stripNormal >= 0) SetShaderValue(s_deformShader, L->stripNormal, &n, SHADER_UNIFORM_VEC3);
+        if (L->stripNormal >= 0) SetShaderValue(shader, L->stripNormal, &n, SHADER_UNIFORM_VEC3);
     }
 
     {
@@ -2125,7 +2138,7 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         BlendMode srcBm = t->useCustomBlendMode
                               ? t->blendMode
                               : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
-        float pass = (s_drawLayerFilter == 0)
+        float pass = (layerFilter == 0)
                          ? 0.0f
                          : ((srcBm == BLEND_ALPHA_PREMULTIPLY) ? 2.0f : 1.0f);
         // Vertex colour already carries the profile's alpha multiplier. Keep
@@ -2134,29 +2147,29 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         float bodyOpacity = (m->bodyOpacity > 0.0f) ? m->bodyOpacity : 0.0f;
         float toneMapSafe = (m->contrastProfile == VFX_CONTRAST_MAGIC) ? 1.0f : 0.0f;
         if (bodyOpacity > 1.0f) bodyOpacity = 1.0f;
-        if (L->renderPass >= 0) SetShaderValue(s_deformShader, L->renderPass, &pass, SHADER_UNIFORM_FLOAT);
-        if (L->bodyOpacity >= 0) SetShaderValue(s_deformShader, L->bodyOpacity, &bodyOpacity, SHADER_UNIFORM_FLOAT);
-        if (L->toneMapSafe >= 0) SetShaderValue(s_deformShader, L->toneMapSafe, &toneMapSafe, SHADER_UNIFORM_FLOAT);
+        if (L->renderPass >= 0) SetShaderValue(shader, L->renderPass, &pass, SHADER_UNIFORM_FLOAT);
+        if (L->bodyOpacity >= 0) SetShaderValue(shader, L->bodyOpacity, &bodyOpacity, SHADER_UNIFORM_FLOAT);
+        if (L->toneMapSafe >= 0) SetShaderValue(shader, L->toneMapSafe, &toneMapSafe, SHADER_UNIFORM_FLOAT);
     }
 
-    if (L->matMode >= 0) SetShaderValue(s_deformShader, L->matMode, &m->mode, SHADER_UNIFORM_FLOAT);
-    if (L->wispMix >= 0) SetShaderValue(s_deformShader, L->wispMix, &m->wispMix, SHADER_UNIFORM_FLOAT);
-    if (L->dissolve >= 0) SetShaderValue(s_deformShader, L->dissolve, &m->dissolve, SHADER_UNIFORM_FLOAT);
-    if (L->dissolveSoft >= 0) SetShaderValue(s_deformShader, L->dissolveSoft, &m->dissolveSoft, SHADER_UNIFORM_FLOAT);
+    if (L->matMode >= 0) SetShaderValue(shader, L->matMode, &m->mode, SHADER_UNIFORM_FLOAT);
+    if (L->wispMix >= 0) SetShaderValue(shader, L->wispMix, &m->wispMix, SHADER_UNIFORM_FLOAT);
+    if (L->dissolve >= 0) SetShaderValue(shader, L->dissolve, &m->dissolve, SHADER_UNIFORM_FLOAT);
+    if (L->dissolveSoft >= 0) SetShaderValue(shader, L->dissolveSoft, &m->dissolveSoft, SHADER_UNIFORM_FLOAT);
     {
         float tiling[2] = {m->tilingX, m->tilingY};
-        if (L->tiling >= 0) SetShaderValue(s_deformShader, L->tiling, tiling, SHADER_UNIFORM_VEC2);
+        if (L->tiling >= 0) SetShaderValue(shader, L->tiling, tiling, SHADER_UNIFORM_VEC2);
     }
     {
         float pan[4] = {m->panCoarse, m->panFine, 0.0f, 0.0f};
-        if (L->panSpeed >= 0) SetShaderValue(s_deformShader, L->panSpeed, pan, SHADER_UNIFORM_VEC4);
+        if (L->panSpeed >= 0) SetShaderValue(shader, L->panSpeed, pan, SHADER_UNIFORM_VEC4);
     }
     {
         // Tail dissolve ramp in segment space; disabled when start >= end.
         float a = m->tailFadeA >= m->tailFadeB ? 1.0f : m->tailFadeA;
         float b = m->tailFadeA >= m->tailFadeB ? 1.0f : m->tailFadeB;
-        if (L->tailFadeA >= 0) SetShaderValue(s_deformShader, L->tailFadeA, &a, SHADER_UNIFORM_FLOAT);
-        if (L->tailFadeB >= 0) SetShaderValue(s_deformShader, L->tailFadeB, &b, SHADER_UNIFORM_FLOAT);
+        if (L->tailFadeA >= 0) SetShaderValue(shader, L->tailFadeA, &a, SHADER_UNIFORM_FLOAT);
+        if (L->tailFadeB >= 0) SetShaderValue(shader, L->tailFadeB, &b, SHADER_UNIFORM_FLOAT);
     }
 
     // ── SIN-WAVE STRAND TRAIL (material mode 2) ─────────────────────────────
@@ -2200,7 +2213,7 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
             .speed = m->waveTravel * 0.67f, .phase = d->phase * 4.1f,
             .env = UV_ENV_HEAD_WELD, .envAxis = 1,
             .envStart = 0.0f, .envEnd = d->envHead});
-        UVDeform_Apply(&warp, s_deformShader, &L->uvWarp);
+        UVDeform_Apply(&warp, shader, &L->uvWarp);
         // FIXED INDICES 0/1/2 IN THE SHADER, NOT LOOPED — trail_deform.fs
         // reads u_uvField[0..2]/[3..5]/[6..8] directly (w0/w1/w2 each feed a
         // SPECIFIC sheet channel downstream, r/g/r — they are named bundles,
@@ -2223,19 +2236,19 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
         float band[4] = {m->bundleWidth, m->edgeSoft, hdrGain,
                          (m->strandGain > 0.0f) ? m->strandGain : 1.0f};
         float strandFlow[4] = {m->flowStrength, m->bundleWeight, m->stretchUV, 0.0f};
-        if (L->bandShape >= 0) SetShaderValue(s_deformShader, L->bandShape, band, SHADER_UNIFORM_VEC4);
-        if (L->strandFlow >= 0) SetShaderValue(s_deformShader, L->strandFlow, strandFlow, SHADER_UNIFORM_VEC4);
+        if (L->bandShape >= 0) SetShaderValue(shader, L->bandShape, band, SHADER_UNIFORM_VEC4);
+        if (L->strandFlow >= 0) SetShaderValue(shader, L->strandFlow, strandFlow, SHADER_UNIFORM_VEC4);
         // ZERO MEANS UNSET, and the fallbacks are the literals trail_deform.fs
         // used to carry (0.18 half-width, 0.45 density gate). Resolved HERE
         // rather than in the shader so a material that leaves them at zero
         // cannot render differently depending on which shader variant loads.
         float coreShape[2] = {(m->coreHalfWidth > 0.0f) ? m->coreHalfWidth : 0.18f,
                               (m->coreDensityGate > 0.0f) ? m->coreDensityGate : 0.45f};
-        if (L->coreShape >= 0) SetShaderValue(s_deformShader, L->coreShape, coreShape, SHADER_UNIFORM_VEC2);
+        if (L->coreShape >= 0) SetShaderValue(shader, L->coreShape, coreShape, SHADER_UNIFORM_VEC2);
 
         float tailShape[4] = {m->tailStagger, m->tailDissolve,
                               (m->tailNarrow > 0.0f) ? m->tailNarrow : 1.0f, 0.0f};
-        if (L->tailShape >= 0) SetShaderValue(s_deformShader, L->tailShape, tailShape, SHADER_UNIFORM_VEC4);
+        if (L->tailShape >= 0) SetShaderValue(shader, L->tailShape, tailShape, SHADER_UNIFORM_VEC4);
 
         // The wave is anchored in METRES of the path the emitter actually
         // laid, not in normalized segment space: nodeUV[] already carries the
@@ -2270,7 +2283,7 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
                 }
             }
         }
-        if (L->pathArc >= 0) SetShaderValue(s_deformShader, L->pathArc, arc, SHADER_UNIFORM_VEC2);
+        if (L->pathArc >= 0) SetShaderValue(shader, L->pathArc, arc, SHADER_UNIFORM_VEC2);
 
         VFXContrastLayer hotLayer = TrailUsesAdditiveBlend(t)
                                         ? VFX_CONTRAST_EMISSION
@@ -2287,7 +2300,7 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
             hot[1] = fallbackHot.g / 255.0f;
             hot[2] = fallbackHot.b / 255.0f;
         }
-        if (L->colHot >= 0) SetShaderValue(s_deformShader, L->colHot, hot, SHADER_UNIFORM_VEC3);
+        if (L->colHot >= 0) SetShaderValue(shader, L->colHot, hot, SHADER_UNIFORM_VEC3);
 
         // Tail colour. Unset (black) means "no along-trail ramp": fall back to
         // the head tint so an author who never sets it gets a flat hue rather
@@ -2304,8 +2317,12 @@ static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
             tailCol[1] = fallbackTail.g / 255.0f;
             tailCol[2] = fallbackTail.b / 255.0f;
         }
-        if (L->colTail >= 0) SetShaderValue(s_deformShader, L->colTail, tailCol, SHADER_UNIFORM_VEC3);
+        if (L->colTail >= 0) SetShaderValue(shader, L->colTail, tailCol, SHADER_UNIFORM_VEC3);
     }
+}
+
+static void ApplyDeformUniforms(const TrailEntity *t,Camera3D camera) {
+    TrailRibbon_BindAppearance(s_deformShader,t,camera,s_drawLayerFilter);
 }
 
 // Ribbon submission router: deform trails go through the Deformed variant

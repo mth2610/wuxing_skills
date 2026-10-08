@@ -4004,6 +4004,8 @@ World-space GPU ribbon camera transforms: see `ENGINE_LANDMINES.md`,
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | Force guidance versus prescribed spline transport | core/motion/motion_path_transport.h; core/trails/trail_ribbon.c; core/tests/ribbon_path_transport_test.c | Ground-truth |
+| 2026-10-08 | Codex | Burst chain transport and point-source emission | core/composition/common/vc_guided_motion.inl; core/tests/test_guided_motion.py; core/tests/guided_ribbon_path_test.c | Ground-truth |
 | 2026-10-08 | Codex | GPU ribbon camera pointer | ENGINE_LANDMINES.md; core/trails/trail_ribbon_gpu.c | Ground-truth |
 | 2026-10-08 | Codex | Shared frame lifetime and post-choreography refresh | core/motion/motion_frame.h; core/motion/motion_fields.c; core/tests/motion_frame_field_test.c; core/tests/test_guided_motion.py | Ground-truth |
 | 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
@@ -4109,3 +4111,48 @@ fields again. Cache angular metadata on frame updates, rather than rebuilding
 it for each attached ribbon. Destroyed or nonrigid bindings freeze safely and
 clear inherited velocities. Guards: `core/tests/motion_frame_field_test.c`,
 `core/tests/motion_frame_test.c`, and `core/tests/test_guided_motion.py`.
+
+
+## Burst spline ribbons must not inherit moving-formation transport (08/10/2026)
+
+**Symptom.** A free ribbon travels from A to B like a translated strip instead
+of bending along the spline; its initial tail also cuts across the route.
+
+**Cause.** Burst scheduling selected a moving sphere with captured formation
+offsets for every receiver. That law moves a formation, rather than transporting
+nodes along their own locations on a path. Tail orientation used the A-to-B chord.
+
+**Rule.** Keep emission timing independent of transport topology. Guided Route
+casts emitting ribbons use the shared path tube for bursts and timed emission;
+particle-only bursts retain moving formations. Initialize tails opposite the
+first path tangent and include length/speed in automatic field life. Constraints
+remain in Trail; path forces and transport remain in Motion. No per-node CPU
+spline animation or GPU readback. Guards: `guided_ribbon_path_test.c` and
+`test_guided_motion.py`.
+
+
+## Zero-width emission is a point, not a collapsed mesh (08/10/2026)
+
+**Symptom.** Guided with `formationRadius=0` creates a field but emits no bodies.
+
+**Cause.** A zero-scale mesh source has no valid transformed normal. The shared
+mesh sampler correctly rejects it, and emission callbacks never reach the sink.
+
+**Rule.** Compile zero-width default sources to `PARTICLE_SOURCE_POINT`, avoiding
+mesh creation and sampling entirely. Positive radii retain mesh-edge sources;
+authored emission sources remain authoritative. Guard with the production
+composer/emitter test in `core/tests/test_guided_motion.py`.
+
+## A force-guided ribbon is not a prescribed spline streak (09/10/2026)
+
+**Symptom.** A free Guided trail wanders like blown silk instead of following the
+A-to-B spline smoothly, even with turbulence disabled.
+
+**Cause.** Path guidance supplies forces to an inertial constrained chain. It does
+not prescribe node trajectories; damping and stiffness cannot guarantee a smooth
+history-shaped streak.
+
+**Rule.** Use Motion's explicit `MotionPathTransport` for prescribed streaks.
+Sample consecutive arc-distance offsets with the shared C1 sampler and bypass
+force integration and cloth constraints. Keep physical field mode for flutter.
+Never duplicate path animation in an emitter or read GPU node positions back.

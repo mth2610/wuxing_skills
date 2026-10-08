@@ -835,7 +835,32 @@ static void TestPhysicalBroadPhaseEquivalence(void) {
   }
   MotionFields_Reset();
 }
+static void TestPathTransportSnapshot(void) {
+  MotionFields_Reset();
+  FieldDesc d=MotionField_Default();d.volume.shape=FIELD_PATH_TUBE;
+  Vector3 points[]={{0,0,0},{2,0,0},{3,1,0}};
+  MotionPath_Build(&d.volume.path,points,3);
+  MotionFieldHandle field=MotionFields_CreateField(&d);
+  MotionPathTransportSnapshot snapshot;
+  CHECK(MotionFields_GetPathTransport(field,&snapshot),"typed path transport snapshot available before simulation");
+  Matrix matrix={.m0=1,.m5=1,.m10=1,.m15=1,.m12=4};
+  MotionFrameHandle parent=MotionFrame_Create(matrix);
+  CHECK(MotionFields_BindFrame(field,parent,NULL),"transport binds shared parent frame");
+  matrix.m12=7;MotionFrame_Update(parent,matrix,1,false);MotionFields_RefreshFrames();
+  CHECK(MotionFields_GetPathTransport(field,&snapshot) &&
+      fabsf(MotionPathTransport_Sample(&snapshot,0,(Vector3){0}).x-7)<1e-6f,
+      "transport consumes cached updated parent frame");
+  MotionFields_Stop(field);
+  CHECK(!MotionFields_GetPathTransport(field,&snapshot) && !snapshot.path,
+      "destroyed transport fails closed and clears snapshot");
+  MotionFieldHandle replacement=MotionFields_CreateField(&d);
+  CHECK(replacement!=field && !MotionFields_GetPathTransport(field,&snapshot),"reused transport generation rejects stale handles");
+  d.volume.shape=FIELD_SPHERE;
+  MotionFieldHandle sphere=MotionFields_CreateField(&d);
+  CHECK(!MotionFields_GetPathTransport(sphere,&snapshot),"non-path field rejects prescribed transport");
+}
 int main(void) {
+  TestPathTransportSnapshot();
   TestTypedFields();
   TestGenericProceduralSupport();
   TestWindBridge();

@@ -120,6 +120,45 @@ void mFrame(int fi,float age,out vec3 center,out vec3 velocity) {
     center+=axes*mix(a.xyz,b.xyz,t);
     if(dist<last) velocity+=axes*mNorm(b.xyz-a.xyz)*motionFields[fi].position.w;
 }
+// Prescribed transport shares CPU Hermite arc-distance interpolation. No force
+// solve, state readback or extra scene ABI. Generation identity fails closed.
+int mFindPathTransport(uint handle) {
+    if(handle==0u) return -1;
+    for(int fi=0;fi<int(motionMeta.x);fi++)
+        if(motionFields[fi].identity.x==handle && motionFields[fi].identity.y==3u &&
+           motionFields[fi].halfExtents.w>=2.0) return fi;
+    return -1;
+}
+vec3 mPathTransportDerivative(int fi,int knot,int count) {
+    int a=max(knot-1,0),b=min(knot+1,count-1);
+    vec4 p=motionFields[fi].points[a],q=motionFields[fi].points[b];
+    return (q.xyz-p.xyz)/(q.w-p.w);
+}
+vec3 mPathTransportSample(int fi,float distance,vec3 lane) {
+    int count=int(motionFields[fi].halfExtents.w);
+    float d=clamp(distance,0.0,motionFields[fi].points[count-1].w);
+    int lo=0,hi=count-1;
+    while(hi-lo>1) {int mid=(lo+hi)/2;if(motionFields[fi].points[mid].w<=d) lo=mid;else hi=mid;}
+    if(lo==count-1) lo--;
+    int b=lo+1;
+    vec4 p=motionFields[fi].points[lo],q=motionFields[fi].points[b];
+    float span=q.w-p.w,t=(d-p.w)/span,t2=t*t,t3=t2*t;
+    vec3 aSlope=mPathTransportDerivative(fi,lo,count),bSlope=mPathTransportDerivative(fi,b,count);
+    vec3 position=(2.0*t3-3.0*t2+1.0)*p.xyz+(-2.0*t3+3.0*t2)*q.xyz
+        +span*(t3-2.0*t2+t)*aSlope+span*(t3-t2)*bSlope;
+    float blend=t2*(3.0-2.0*t);
+    vec3 tangent=mNorm(mix(aSlope,bSlope,blend));
+    vec3 normal=mix(motionFields[fi].normals[lo].xyz,motionFields[fi].normals[b].xyz,blend);
+    normal-=tangent*dot(normal,tangent);
+    if(length(normal)<1e-5) {
+        vec3 ref=abs(tangent.y)<.9?vec3(0,1,0):vec3(1,0,0);
+        normal=ref-tangent*dot(ref,tangent);
+    }
+    normal=mNorm(normal);
+    vec3 local=position+tangent*lane.x+normal*lane.y+cross(tangent,normal)*lane.z;
+    vec3 center,velocity;mFrame(fi,motionFields[fi].volume.z,center,velocity);
+    return center+mAxes(fi)*local;
+}
 // Guide resistance is isotropic, axial or transverse: R=aI+b*u*u^T.
 // A zero axis means isotropic; unit axis with signed response selects axial
 // (positive) or transverse (negative). Two vec4s avoid full private matrices.

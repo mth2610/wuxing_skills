@@ -153,6 +153,8 @@ uniform vec4  u_contrastParams; // enabled, edgeSharpness, coreSize, coreIntensi
 // never carries the defaults itself.
 uniform vec2  u_coreShape;
 
+uniform int u_nodeArc;
+in float vPathMetres;
 in vec2 vSegUV;
 in vec4 vColor;
 
@@ -238,7 +240,7 @@ void main()
         // hence the subtraction. The `+ u_time` sign then walks the crests
         // toward the TAIL (constant phase => metres decreasing), which is the
         // direction energy sheds from a moving emitter.
-        float metres = u_pathArc.x - along * u_pathArc.y;
+        float metres = u_nodeArc!=0?vPathMetres:u_pathArc.x - along * u_pathArc.y;
         // ph (u_wavePhase) is no longer read here — the per-spawn phase is
         // now baked into each packed SINE layer's own `phase` field
         // (trail_system.c's ApplyDeformUniforms: d->phase, d->phase*2.3,

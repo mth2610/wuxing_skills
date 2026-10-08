@@ -1,4 +1,5 @@
 #include "maps/toolkit/map_ecology.h"
+#include "maps/toolkit/meadow_palette.h"
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -61,8 +62,7 @@ bool MapEcology_Bake(MapEcology *m,const MapEcologyConfig *c,
         float road=MapEcology_RoadDistance(c,wx,wz), shore=MapEcology_ShoreDistance(c->lake,wx,wz);
         float cover=density?density(wx,wz,user):1.0f;
         if(eligible && !eligible(wx,wz,user)) cover=0;
-        float habitat=(sinf(wx*0.15f+wz*0.10f)*0.5f+0.5f)*0.6f
-                    +(sinf(wx*-0.11f+wz*0.20f+1.8f)*0.5f+0.5f)*0.4f;
+        float habitat=MeadowHabitat(wx,wz);
         float moisture=1.0f-EcoSmooth(0,3.0f,shore);
         /* Preserve the authored meadow's 0.30--0.42m broad canopy; G
          * stores its normalized growth potential. Wet margins add only 3mm. */

@@ -9,7 +9,7 @@ def function(name):
  while depth:
   depth+=(s[end]=='{')-(s[end]=='}');end+=1
  return s[m.start():end]
-enums='\n'.join(re.search(r'typedef enum \{[^}]*\} '+name+r';',h,re.S).group() for name in ('VFX_GuidedOutput','VFX_GuidedPattern'))
+enums='\n'.join(re.search(r'typedef enum \{[^}]*\} '+name+r';',h,re.S).group() for name in ('VFX_GuidedOutput','VFX_GuidedPattern','VFX_GuidedTrailStyle','VFX_GuidedTrailMotion'))
 config=re.search(r'typedef struct VFX_GuidedParticleConfig \{.*?\} VFX_GuidedParticleConfig;',h,re.S).group()
 stubs=r'''
 #include "core/motion/motion_fields.h"
@@ -23,6 +23,11 @@ typedef struct {int placeholder;} ParticleRenderStream;
 typedef struct {struct {ParticleDynamicsProfile *dynamics;} physics;} ParticleConfig;
 typedef struct {int placeholder;} ParticleEmissionSource;
 typedef struct {int placeholder;} Camera3D;
+typedef struct {int placeholder;} Mesh;
+typedef struct {int meshCount;} Model;
+typedef struct {int placeholder;} Material;
+typedef int BlendMode;
+enum {BLEND_ALPHA,BLEND_ADDITIVE,BLEND_ALPHA_PREMULTIPLY};
 #include "core/trails/trail_ribbon.h"
 #include "core/motion/motion_recipe.h"
 #include "core/composition/common/vc_params.h"

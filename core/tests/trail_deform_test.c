@@ -725,7 +725,7 @@ static void Test_MirrorStillMatchesSource(void)
     // distance falloff that turns the centreline into a band.
     const char *gen = "scripts/gen_energy_wisp_texture.py";
     CHECK(FileHas(fs, "if (u_matMode < 1.5)"), "the strand branch is still reachable past one threshold");
-    CHECK(FileHas(fs, "float metres = u_pathArc.x - along * u_pathArc.y;"),
+    CHECK(FileHas(fs, "float metres = u_nodeArc!=0?vPathMetres:u_pathArc.x - along * u_pathArc.y;"),
           "the trail is still anchored in metres of laid path, not in segment space");
     // The ramp moved into core/uv as UV_ENV_HEAD_WELD — the shape was general
     // enough to name. Pin it at BOTH ends: the call here, and the formula

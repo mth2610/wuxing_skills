@@ -591,6 +591,9 @@ int  VFX_ComposeTrail(const Matrix *followTransform, VC_MaterialId mat,
 int  VFX_ComposeTrailEx(const Matrix *followTransform, VC_MaterialId mat,
                         float width, float lifetime, TrailPresetId preset,
                         const VFX_TrailSurface *surface);
+/* Copies the same preset appearance used by swept trails into a physical chain.
+ * Geometry, lifetime, body and Motion ownership remain with the caller. */
+bool VFX_TrailRibbonApplyPreset(TrailRibbonConfig *config, TrailPresetId preset, VC_MaterialId mat);
 void VFX_TrailSetWidth(int handle, float width01); // ramped, for wind-down
 // Per-instance EMISSION lift (the recipe's `hdrGain`, which is what bloom
 // catches). Each trail owns a copy of its preset row, so this brightens ONE
@@ -1078,10 +1081,20 @@ typedef enum {
 typedef enum {
     VFX_GUIDED_ROUTE = 0, VFX_GUIDED_ORBIT, VFX_GUIDED_AIRFLOW
 } VFX_GuidedPattern;
+typedef enum {
+    VFX_GUIDED_TRAIL_PLAIN = 0, VFX_GUIDED_TRAIL_ENERGY_SILK,
+    VFX_GUIDED_TRAIL_SMOKE_WISP, VFX_GUIDED_TRAIL_EMBER_FILAMENT,
+    VFX_GUIDED_TRAIL_WATER_STREAM
+} VFX_GuidedTrailStyle;
+typedef enum {
+    VFX_GUIDED_TRAIL_MOTION_FIELD=0, VFX_GUIDED_TRAIL_MOTION_SPLINE=1
+} VFX_GuidedTrailMotion;
 /* Field-first composition. Zero emitDuration bursts `count` particles; positive
  * emitDuration spreads exactly `count` particles across that interval at the
- * derived average rate. Burst mode uses a sphere that travels from source to
- * target; timed mode uses a stationary path tube for distinct endpoints. Equal
+ * derived average rate. Particle-only bursts use a sphere travelling source to
+ * target. Timed emission or any emitted trails use a stationary path tube for
+ * distinct endpoints: each node follows its local tangent rather than a moving
+ * formation. Trail lifetime includes trailing length / speed. Equal
  * endpoints create a stationary sphere. `speed` sets sphere travel speed or
  * tube particle flow speed. Field life covers emission, estimated transit and fade;
  * `duration` is the manual minimum or an automatic stationary/zero-speed fallback.
@@ -1141,6 +1154,9 @@ typedef struct VFX_GuidedParticleConfig {
      * anchor. Caller owns its lifetime; destruction freezes field/birth frame
      * and releases anchored ribbons. Zero retains world-space behavior. */
     MotionFrameHandle frame;
+    int trailStyle; /* VFX_GuidedTrailStyle; appearance only; ignored with trailTemplate. */
+    int trailMotion; /* VFX_GuidedTrailMotion. SPLINE prescribes smooth route positions;
+                     * FIELD retains free-body forces. Ignored by templates/anchors/Orbit/Airflow. */
 } VFX_GuidedParticleConfig;
 typedef VFX_GuidedParticleConfig VFX_GuidedMotionConfig;
 /* Shared field and source, independent particle/ribbon birth totals. AUTO uses
