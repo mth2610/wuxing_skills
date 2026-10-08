@@ -173,7 +173,7 @@ static void Test_GPUAndManagerWiring(void)
 
 static void Test_VFXFixtureWiring(void)
 {
-    const char *fixture = "core/composition/common/vc_guided_particle.inl";
+    const char *fixture = "core/composition/common/vc_guided_motion.inl";
     CHECK(Has("core/composition/common/vc_particle_upgrades_test.inl", "VFX_ComposeGuidedParticle"),
           "particle-upgrades fixture includes the guided-travel demonstration");
     CHECK(Has(fixture, "VFX_ComposeGuidedParticle"),
@@ -185,9 +185,9 @@ static void Test_VFXFixtureWiring(void)
           Has(fixture, "PARTICLE_SOURCE_MESH_EDGE"),
           "guided VFX uses manager AUTO with an authored mesh source");
     CHECK(Has(fixture, "receiveMotionFields") && Has(fixture, "MotionFields_CreateField") &&
-          Has(fixture, "p.physics.initialGuide = 0"),
+          Has(fixture, "p->physics.initialGuide=0"),
           "guided VFX samples independent spatial fields without path capture");
-    CHECK(Has("core/composition/visual_composer.c", "VC_GuidedParticle_Update(dt);"),
+    CHECK(Has("core/composition/visual_composer.c", "VC_GuidedMotion_Update(dt);"),
           "composition lifecycle drives configured continuous emission");
 }
 

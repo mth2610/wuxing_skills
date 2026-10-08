@@ -2,7 +2,7 @@
 """Run production Guided settings/inspector with data-only dependency stubs."""
 import pathlib,re,subprocess,tempfile
 ROOT=pathlib.Path(__file__).resolve().parents[2]
-s=(ROOT/'core/composition/common/vc_guided_particle.inl').read_text()
+s=(ROOT/'core/composition/common/vc_guided_motion.inl').read_text()
 h=(ROOT/'core/composition/visual_composer.h').read_text()
 def function(name):
  m=re.search(r'^(?:static bool|static float|static int|static ParticleDynamicsProfile|static GuideTuning|VFX_GuidedParticleConfig|int) '+name+r'\(',s,re.M); start=s.index('{',m.start()); depth=1; end=start+1
@@ -21,6 +21,9 @@ typedef enum {PARTICLE_RENDER_BILLBOARD=0,PARTICLE_RENDER_SURFACE_INPUT=3} Parti
 typedef struct {int placeholder;} ParticleRenderStream;
 typedef struct {struct {ParticleDynamicsProfile *dynamics;} physics;} ParticleConfig;
 typedef struct {int placeholder;} ParticleEmissionSource;
+typedef uint64_t TrailAttachmentHandle;
+typedef struct {int placeholder;} TrailRibbonConfig;
+enum {VFX_GUIDED_PARTICLES,VFX_GUIDED_TRAILS,VFX_GUIDED_BOTH};
 #include "core/composition/common/vc_params.h"
 #include "core/motion/motion_body.h"
 enum {VC_MAT_LIGHTNING};

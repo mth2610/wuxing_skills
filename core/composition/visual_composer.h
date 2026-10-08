@@ -38,6 +38,7 @@
 #include "core/presets/vc_material.h"            // Element Material Table (VC_MaterialId)
 #include "core/geometry/procedural_mesh_utils.h" // GroundHeightSampleFn (H2 ground wave)
 #include "core/trails/trail_recipe.h"            // TrailPresetId + what a preset row contains
+#include "core/trails/trail_ribbon.h"
 #include "core/gas/gas_system.h"                 // Volumetric smoke/fire/energy simulation
 #include "core/liquid/liquid_motion.h"
 #include "core/composition/common/vc_params.h"   // Universal VFX Parameter System
@@ -1071,6 +1072,9 @@ const char*          VFX_WoodVineStyle_Name(VFX_WoodVineStyle style);
 void                 VFX_ComposeWoodVineSeedSprout(Vector3 impactPos, float progress, unsigned int seed, VFX_WoodVineStyle style);
 void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
 
+typedef enum {
+    VFX_GUIDED_PARTICLES = 0, VFX_GUIDED_TRAILS = 1, VFX_GUIDED_BOTH = 2
+} VFX_GuidedOutput;
 /* Field-first composition. Zero emitDuration bursts `count` particles; positive
  * emitDuration spreads exactly `count` particles across that interval at the
  * derived average rate. Burst mode uses a sphere that travels from source to
@@ -1084,8 +1088,9 @@ void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
  * characteristic speed as m_ref*U^2/eddy, capped at 25% of guide authority. It
  * replaces this field's airflow turbulence; ordinary Wind/drag remain independent.
  * Manual mode retains legacy turbulence airflow in m/s. No arrival action or implicit target blast.
- * `count=0` creates only a field. Use independent fields for arrival and target effects.
- * particleTemplate and emissionSource are copied at spawn; borrowed resources
+ * Particle-only `count=0` creates only a field. Guided Motion also requires zero
+ * trailCount when trails are selected. Arrival/target effects use independent fields.
+ * particleTemplate and emissionSource are copied at cast; borrowed resources
  * retain their normal lifetime. fieldOverride replaces the ENTIRE field in
  * world space, including its trajectory and lifetime. Templates own body/render
  * settings; mass/density/drag/particleRadius apply only without a template.
@@ -1121,7 +1126,28 @@ typedef struct VFX_GuidedParticleConfig {
      * Auto burst guides retain spatially captured formation offsets and rotate
      * their force targets with swirl; no receiver position is assigned directly. */
     int guidancePreset; /* GuidePreset from core/motion/physical_field.h. */
+    int output; /* VFX_GuidedOutput; legacy zero-initialized configs select particles. */
+    int trailCount; /* Independent total chains; shares emission time, not particle count. */
+    float trailLength, trailWidth; /* World meters; ignored with trailTemplate. */
+    int trailNodes; /* 2..TRAIL_RIBBON_MAX_NODES; ignored with trailTemplate. */
+    TrailAttachmentHandle trailAttachment; /* 0 free; otherwise caller-owned head anchor. */
+    const TrailRibbonConfig *trailTemplate; /* Copied at cast; borrowed texture/anchor stay live. */
 } VFX_GuidedParticleConfig;
+typedef VFX_GuidedParticleConfig VFX_GuidedMotionConfig;
+/* Shared field and source, independent particle/ribbon birth totals. AUTO uses
+ * Vulkan resident simulation when supported. Default emits both families.
+ * Schedulers copy source descriptors and templates at cast. Resource pointers
+ * (mesh, texture, child configs) retain their normal borrowed lifetimes.
+ * One callback budget of 2048 per family per update preserves bounded casts.
+ * Field stop does not cancel births; emitted bodies drain independently.
+ * A supplied fieldOverride is complete, including its receiverMask: include
+ * MOTION_RECEIVER_TRAIL when it must move chains. Attachments are never moved
+ * by this composition; the caller supplies their Motion-driven transforms. */
+VFX_GuidedMotionConfig VFX_GuidedMotion_DefaultConfig(void);
+int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *cfg,VFX_ParamDef *outParams,int maxParams);
+MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *config);
+void VFX_ComposeGuidedMotion(Vector3 source, Vector3 target);
+/* Particle-only compatibility adapters; no additional fixture. */
 VFX_GuidedParticleConfig VFX_GuidedParticle_DefaultConfig(void);
 int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg,VFX_ParamDef *outParams,int maxParams);
 /* Returns field handle, or zero on invalid settings / field or emitter exhaustion.

@@ -159,8 +159,8 @@ static VFX_WoodFlowerConfig s_liveWoodFlowerConfig;
 static VFX_WoodPetalConfig  s_liveWoodPetalConfig;
 static bool                 s_liveWoodConfigsInit = false;
 // @gen:newfx_guided_state begin
-static VFX_GuidedParticleConfig s_liveGuidedParticleConfig;
-static bool s_liveGuidedParticleConfigInit = false;
+static VFX_GuidedMotionConfig s_liveGuidedMotionConfig;
+static bool s_liveGuidedMotionConfigInit = false;
 static bool s_guidedCaptureActive = false;
 static int s_guidedCaptureRemaining, s_guidedCaptureFrame, s_guidedCaptureInterval;
 static Vector3 s_guidedCaptureSource, s_guidedCaptureTarget;
@@ -170,44 +170,58 @@ static float s_guidedRatioReferenceSpeed = 1.0f;
 static int s_guidedFixturePreset = 0;
 static const char *s_guidedFixturePresetNames[] = {
     "Default guided motion", "Moving swirl", "Moving turbulence",
-    "Catch free leaves", "Zero drag", "Stationary attraction"
+    "Catch free leaves", "Zero drag", "Stationary attraction",
+    "Particles only", "Free trails", "Particles and trails",
+    "Timed particles and trails", "Timed trails only"
 };
-#define VFXTEST_GUIDED_PRESET_COUNT 6
+#define VFXTEST_GUIDED_PRESET_COUNT 11
 
 static void VFXTest_SetGuidedPreset(int preset)
 {
     s_guidedFixturePreset = preset;
-    s_liveGuidedParticleConfig = VFX_GuidedParticle_DefaultConfig();
-    s_liveGuidedParticleConfigInit = true;
+    s_liveGuidedMotionConfig = VFX_GuidedMotion_DefaultConfig();
+    s_liveGuidedMotionConfigInit = true;
     if (preset == 1) {
-        s_liveGuidedParticleConfig.swirlSpeed = 3.0f;
+        s_liveGuidedMotionConfig.swirlSpeed = 3.0f;
     } else if (preset == 2) {
-        s_liveGuidedParticleConfig.turbulenceSpeed = 1.0f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 1.0f;
     } else if (preset == 3) {
-        s_liveGuidedParticleConfig.count = 0;
-        s_liveGuidedParticleConfig.speed = 3.0f;
-        s_liveGuidedParticleConfig.duration = 8.0f;
-        s_liveGuidedParticleConfig.guideRadius = 1.2f;
-        s_liveGuidedParticleConfig.maxForceNewtons = 0.4f;
-        s_liveGuidedParticleConfig.swirlSpeed = 2.0f;
+        s_liveGuidedMotionConfig.count = 0;
+        s_liveGuidedMotionConfig.trailCount = 0;
+        s_liveGuidedMotionConfig.speed = 3.0f;
+        s_liveGuidedMotionConfig.duration = 8.0f;
+        s_liveGuidedMotionConfig.guideRadius = 1.2f;
+        s_liveGuidedMotionConfig.maxForceNewtons = 0.4f;
+        s_liveGuidedMotionConfig.swirlSpeed = 2.0f;
     } else if (preset == 4) {
         // Zero medium drag still permits explicitly authored Newton forces.
-        s_liveGuidedParticleConfig.drag = 0.0f;
+        s_liveGuidedMotionConfig.drag = 0.0f;
     } else if (preset == 5) {
-        s_liveGuidedParticleConfig.formationRadius = 0.8f;
-        s_liveGuidedParticleConfig.guideRadius = 1.2f;
+        s_liveGuidedMotionConfig.formationRadius = 0.8f;
+        s_liveGuidedMotionConfig.guideRadius = 1.2f;
+    } else if (preset == 6) {
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_PARTICLES;
+    } else if (preset == 7) {
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
+    } else if (preset == 8) {
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_BOTH;
+    } else if (preset == 9 || preset == 10) {
+        s_liveGuidedMotionConfig.output = preset == 10 ? VFX_GUIDED_TRAILS : VFX_GUIDED_BOTH;
+        s_liveGuidedMotionConfig.count = 192;
+        s_liveGuidedMotionConfig.trailCount = 8;
+        s_liveGuidedMotionConfig.emitDuration = 1.5f;
     }
-    s_guidedRatioReferenceSpeed = s_liveGuidedParticleConfig.speed > 0.00001f
-        ? s_liveGuidedParticleConfig.speed : 1.0f;
-    s_guidedSwirlRatio = s_liveGuidedParticleConfig.swirlSpeed / s_guidedRatioReferenceSpeed;
-    s_guidedTurbulenceRatio = s_liveGuidedParticleConfig.turbulenceSpeed / s_guidedRatioReferenceSpeed;
+    s_guidedRatioReferenceSpeed = s_liveGuidedMotionConfig.speed > 0.00001f
+        ? s_liveGuidedMotionConfig.speed : 1.0f;
+    s_guidedSwirlRatio = s_liveGuidedMotionConfig.swirlSpeed / s_guidedRatioReferenceSpeed;
+    s_guidedTurbulenceRatio = s_liveGuidedMotionConfig.turbulenceSpeed / s_guidedRatioReferenceSpeed;
 }
 
 /* UI edits couple authored speeds; the public composition remains absolute m/s. */
 static int VFXTest_GuidedParameterEdited(const VFX_ParamDef *param, float before,
                                        VFX_ParamDef *params, int count, int max)
 {
-    VFX_GuidedParticleConfig *cfg = &s_liveGuidedParticleConfig;
+    VFX_GuidedMotionConfig *cfg = &s_liveGuidedMotionConfig;
     if (param->valPtr == &cfg->speed) {
         if (before > 0.00001f) {
             s_guidedSwirlRatio = cfg->swirlSpeed / before;
@@ -216,7 +230,7 @@ static int VFXTest_GuidedParameterEdited(const VFX_ParamDef *param, float before
         cfg->swirlSpeed = s_guidedSwirlRatio * cfg->speed;
         cfg->turbulenceSpeed = s_guidedTurbulenceRatio * cfg->speed;
         if (cfg->speed > 0.00001f) s_guidedRatioReferenceSpeed = cfg->speed;
-        return VFX_GuidedParticle_GetParams(cfg, params, max);
+        return VFX_GuidedMotion_GetParams(cfg, params, max);
     }
     float reference = cfg->speed > 0.00001f ? cfg->speed : s_guidedRatioReferenceSpeed;
     if (param->valPtr == &cfg->swirlSpeed)
@@ -228,7 +242,7 @@ static int VFXTest_GuidedParameterEdited(const VFX_ParamDef *param, float before
 
 static void VFXTest_InitGuidedConfig(void)
 {
-    if (!s_liveGuidedParticleConfigInit) {
+    if (!s_liveGuidedMotionConfigInit) {
         // Deterministic capture selection; Shift+, / Shift+. selects interactively.
         const char *capturePreset = getenv("WUXING_GUIDED_PRESET");
         int preset = capturePreset ? atoi(capturePreset) : 0;
@@ -250,16 +264,16 @@ static float VFXTest_GuidedCaptureFloat(const char *name, float fallback, float 
     return value;
 }
 
-static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
+static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
 {
     VFXTest_InitGuidedConfig();
     s_isPlayingMesh = true;
-    VFX_GuidedParticleConfig cfg = s_liveGuidedParticleConfig;
+    VFX_GuidedMotionConfig cfg = s_liveGuidedMotionConfig;
     if (s_guidedCaptureActive) {
         float flowLimit = fmaxf(24.0f, 2.0f * cfg.speed);
         cfg.turbulenceSpeed = VFXTest_GuidedCaptureFloat("WUXING_GUIDED_TURBULENCE", cfg.turbulenceSpeed, 0.0f, flowLimit);
         cfg.swirlSpeed = VFXTest_GuidedCaptureFloat("WUXING_GUIDED_SWIRL", cfg.swirlSpeed, -flowLimit, flowLimit);
-        TraceLog(LOG_INFO, "GUIDED PARTICLE capture: turbulence=%g m/s, swirl=%g m/s",
+        TraceLog(LOG_INFO, "GUIDED MOTION capture: turbulence=%g m/s, swirl=%g m/s",
                  (double)cfg.turbulenceSpeed, (double)cfg.swirlSpeed);
     }
     cfg.source = source;
@@ -274,9 +288,9 @@ static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
         VFX_Foliage_SpawnFreeLeaves(leafCenter,
                                   0.45f, 80, leaves.mass, leaves.style);
     }
-    TraceLog(LOG_INFO, "GUIDED PARTICLE: %s", s_guidedFixturePresetNames[s_guidedFixturePreset]);
-    if (VFX_ComposeGuidedParticleEx(&cfg) == MOTION_FIELD_INVALID)
-        TraceLog(LOG_WARNING, "GUIDED PARTICLE: cast rejected (invalid configuration or exhausted field/emitter pool)");
+    TraceLog(LOG_INFO, "GUIDED MOTION: %s", s_guidedFixturePresetNames[s_guidedFixturePreset]);
+    if (VFX_ComposeGuidedMotionEx(&cfg) == MOTION_FIELD_INVALID)
+        TraceLog(LOG_WARNING, "GUIDED MOTION: cast rejected (invalid configuration or exhausted field/emitter pool)");
 }
 
 static int VFXTest_GuidedCaptureInt(const char *name, int fallback, int lo, int hi)
@@ -296,27 +310,29 @@ static void VFXTest_BeginGuidedCaptureRepeats(void)
 {
     s_guidedCaptureRemaining = 0;
     s_guidedCaptureFrame = 0;
-    if (!VFXTest_IsNewFxNamed("GUIDED PARTICLE")) return;
+    if (!VFXTest_IsNewFxNamed("GUIDED MOTION")) return;
     int casts = VFXTest_GuidedCaptureInt("WUXING_GUIDED_CASTS", 1, 1, 16);
     s_guidedCaptureInterval = VFXTest_GuidedCaptureInt("WUXING_GUIDED_CAST_INTERVAL_FRAMES", 6, 1, 120);
     s_guidedCaptureRemaining = casts - 1;
-    TraceLog(LOG_INFO, "GUIDED PARTICLE capture: casts=%d interval_frames=%d particles_per_cast=%d",
-             casts, s_guidedCaptureInterval, s_liveGuidedParticleConfig.count);
+    TraceLog(LOG_INFO, "GUIDED MOTION capture: casts=%d interval_frames=%d particles_per_cast=%d trails_per_cast=%d",
+             casts, s_guidedCaptureInterval,
+             s_liveGuidedMotionConfig.output == VFX_GUIDED_TRAILS ? 0 : s_liveGuidedMotionConfig.count,
+             s_liveGuidedMotionConfig.output == VFX_GUIDED_PARTICLES ? 0 : s_liveGuidedMotionConfig.trailCount);
 }
 
 static void VFXTest_UpdateGuidedCaptureRepeats(void)
 {
     if (s_guidedCaptureRemaining <= 0) return;
-    if (!VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+    if (!VFXTest_IsNewFxNamed("GUIDED MOTION")) {
         s_guidedCaptureRemaining = 0;
         return;
     }
     if (++s_guidedCaptureFrame % s_guidedCaptureInterval != 0) return;
     --s_guidedCaptureRemaining;
     s_guidedCaptureActive = true;
-    VFXTest_FireGuidedParticle(s_guidedCaptureSource, s_guidedCaptureTarget);
+    VFXTest_FireGuidedMotion(s_guidedCaptureSource, s_guidedCaptureTarget);
     s_guidedCaptureActive = false;
-    TraceLog(LOG_INFO, "GUIDED PARTICLE capture repeat: frame=%d remaining=%d",
+    TraceLog(LOG_INFO, "GUIDED MOTION capture repeat: frame=%d remaining=%d",
              s_guidedCaptureFrame, s_guidedCaptureRemaining);
 }
 // @gen:newfx_guided_state end
@@ -352,9 +368,9 @@ static void VFXTest_RefreshInspectorParams(bool force)
     s_inspectorParamCount = 0;
 
 // @gen:newfx_guided_inspector begin
-    if (VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+    if (VFXTest_IsNewFxNamed("GUIDED MOTION")) {
         VFXTest_InitGuidedConfig();
-        s_inspectorParamCount = VFX_GuidedParticle_GetParams(&s_liveGuidedParticleConfig,
+        s_inspectorParamCount = VFX_GuidedMotion_GetParams(&s_liveGuidedMotionConfig,
                                                           s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
 // @gen:newfx_guided_inspector end
@@ -792,7 +808,7 @@ static bool VFXTest_FireNewFx(int newfxIndex, Vector3 pos)
         s_vfxFixtureHandle[6] = VFX_FlowShield_Spawn(pos, VC_MAT_WATER, 1.5f, 1.0f);
         return true;
     case 9: VFX_ComposeGasShockwave(pos, VC_MAT_VOID, NULL); return true;
-    case 12: VFXTest_FireGuidedParticle(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
+    case 12: VFXTest_FireGuidedMotion(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f})); return true;
     case 15: VFX_ComposeImpactDustVariant(pos, s_impactDustFixtureVariant == VFX_IMPACT_DUST_VARIANT_ENERGY_WISP ? VC_MAT_LIGHTNING : VC_MAT_EARTH, 1.5f, 1.0f, s_impactDustFixtureVariant); return false;
     case 17: VFX_ComposeLightningArc(Vector3Add(pos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(pos, (Vector3){2.5f, 1.8f, 0.8f}), VC_MAT_LIGHTNING, 0.055f); return true;
     case 18: VFX_ComposeLightningGroundRicochet(pos, VC_MAT_LIGHTNING, 1.0f, posSeed); return true;
@@ -831,7 +847,7 @@ static const char *s_meshNames[] = {
 static const char* s_newFxNames[] = {
     "CONTACT SPARK", "DEBRIS SHARDS", "DECAL", "DISSOLVE EXIT", "[PARTICLE] EMBER BURST", "FLAME JET",
     "FLOW SHIELD", "GAS MATERIAL LAB", "[GAS] GAS PLUME", "GAS SHOCKWAVE", "GAS VORTEX", "GROUND WAVE",
-    "GUIDED PARTICLE", "GUIDING WIND", "IAIDO STANCE", "IMPACT DUST", "LIGHT SHAFT", "LIGHTNING ARC",
+    "GUIDED MOTION", "GUIDING WIND", "IAIDO STANCE", "IMPACT DUST", "LIGHT SHAFT", "LIGHTNING ARC",
     "LIGHTNING IMPACT", "MESH PARTICLE EMITTER", "MESH SURFACE AURA", "MIST VEIL", "MOTION FIELD RIBBONS", "OPTICAL FLARE",
     "REF BANDS", "REF PARTICLES", "RIFT BOLT", "RUNE CIRCLE", "SHIELD SHELL", "SHOCK RING",
     "SMOKE COLUMN", "SMOKE PUFF", "[PARTICLE] SMOKE VOLUME", "SURFACE IMPACT", "SURFACE PARTICLE RING", "SWEEP SLASH",
@@ -1188,7 +1204,7 @@ static void VFXTest_UIDrawButton(Rectangle rect, const char *text, bool active)
 
 static const char *VFXTest_UIActiveVariant(void)
 {
-    if (VFXTest_IsNewFxNamed("GUIDED PARTICLE")) return s_guidedFixturePresetNames[s_guidedFixturePreset];
+    if (VFXTest_IsNewFxNamed("GUIDED MOTION")) return s_guidedFixturePresetNames[s_guidedFixturePreset];
     if (VFXTest_IsNewFxNamed("MESH PARTICLE EMITTER")) return VFX_MeshParticleVariant_Name(s_meshParticleFixtureVariant);
     if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL")) return MotionRibbonFixturePresetName(s_motionRibbonFixturePreset);
     if (VFXTest_IsNewFxNamed("[PARTICLE] SMOKE VOLUME")) return VFX_SmokeStyle_Name(s_smokeVolumeFixtureStyle);
@@ -1220,7 +1236,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UIFogButton(ui), fogLabel, fogMode != FOG_MODE_OFF);
     const char *variant = VFXTest_UIActiveVariant();
     if (variant) VFXTest_UIText(TextFormat("%s   |   %s", variant,
-                             VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? "Shift+, / Shift+. preset" : "< / > preset"),
+                             VFXTest_IsNewFxNamed("GUIDED MOTION") ? "Shift+, / Shift+. preset" : "< / > preset"),
                              (Rectangle){12.0f, ui.header.y + ui.header.height + 6.0f, fmaxf(180.0f, GetScreenWidth() - 340.0f), 24.0f}, 12, SKYBLUE);
     VFXTest_UIText(TextFormat("%.0f FPS", s_vfxTelemetryFps), ui.metrics[0], 12, RAYWHITE);
     VFXTest_UIText(TextFormat("%.1f ms", s_vfxTelemetryFrameMs), ui.metrics[1], 12, LIGHTGRAY);
@@ -1232,7 +1248,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
     if (!s_isPanelOpen && !s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
         DrawRectangleRounded(ui.inspector, 0.035f, 4, (Color){15, 20, 27, 235});
-        VFXTest_UIText(VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? "Parameters - next cast" : "Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
+        VFXTest_UIText(VFXTest_IsNewFxNamed("GUIDED MOTION") ? "Parameters - next cast" : "Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
         for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
             int index = row + s_vfxInspectorScroll;
             Rectangle rect = VFXTest_UIInspectorRow(ui, row);
@@ -1605,10 +1621,10 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             VFX_ComposeLightningArc(castSocket, mouseTarget3D, VC_MAT_LIGHTNING, 0.055f);
             return false;
         }
-        if (VFXTest_IsNewFxNamed("GUIDED PARTICLE"))
+        if (VFXTest_IsNewFxNamed("GUIDED MOTION"))
         {
             Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});
-            VFXTest_FireGuidedParticle(castSocket, mouseTarget3D);
+            VFXTest_FireGuidedMotion(castSocket, mouseTarget3D);
             s_prefabStartPos = mouseTarget3D;
             return false;
         }
@@ -1677,7 +1693,7 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
                 guidedTarget = Vector3Add(playerPos, (Vector3){2.5f, 0.0f, 0.8f});
                 guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
             }
-            VFXTest_FireGuidedParticle(castSocket, guidedTarget);
+            VFXTest_FireGuidedMotion(castSocket, guidedTarget);
             return false;
         }
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
@@ -1868,13 +1884,13 @@ void VFXTest_Draw3D(void)
 
 // @gen:newfx_guided_input begin
         VFXTest_UpdateGuidedCaptureRepeats();
-        if (VFXTest_IsNewFxNamed("GUIDED PARTICLE") &&
+        if (VFXTest_IsNewFxNamed("GUIDED MOTION") &&
             (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))) {
             int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
             if (direction != 0) {
                 VFXTest_SetGuidedPreset((s_guidedFixturePreset + direction + VFXTEST_GUIDED_PRESET_COUNT) % VFXTEST_GUIDED_PRESET_COUNT);
                 VFXTest_RefreshInspectorParams(true);
-                TraceLog(LOG_INFO, "GUIDED PARTICLE preset: %s (Shift+. next; Shift+, previous; click scene to cast)",
+                TraceLog(LOG_INFO, "GUIDED MOTION preset: %s (Shift+. next; Shift+, previous; click scene to cast)",
                          s_guidedFixturePresetNames[s_guidedFixturePreset]);
             }
         }
@@ -1899,7 +1915,7 @@ void VFXTest_Draw3D(void)
             }
 
             // Slash '/' (and '>' or '.') cycles the value of the selected variable
-            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && (!VFXTest_IsNewFxNamed("GUIDED PARTICLE") ||
+            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && (!VFXTest_IsNewFxNamed("GUIDED MOTION") ||
                 !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))))
             {
                 if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
@@ -1912,7 +1928,7 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "[Inspector] Param '%s' = %s",
                          s_inspectorParams[s_inspectorSelectedParam].name, valBuf);
             }
-            else if (IsKeyPressed(KEY_COMMA) && (!VFXTest_IsNewFxNamed("GUIDED PARTICLE") ||
+            else if (IsKeyPressed(KEY_COMMA) && (!VFXTest_IsNewFxNamed("GUIDED MOTION") ||
                      !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))
             {
                 VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);
@@ -2236,7 +2252,7 @@ void VFXTest_Draw3D(void)
         }
     }
 
-    if (VFXTest_IsNewFxNamed("GUIDED PARTICLE") &&
+    if (VFXTest_IsNewFxNamed("GUIDED MOTION") &&
         (s_prefabStartPos.x != 0.0f || s_prefabStartPos.z != 0.0f)) {
         VFXTest_DrawGroundCircle((Vector3){s_prefabStartPos.x, s_prefabStartPos.y + 0.015f, s_prefabStartPos.z}, 0.25f, ColorAlpha(SKYBLUE, 0.6f));
         VFXTest_DrawGroundCircle((Vector3){s_prefabStartPos.x, s_prefabStartPos.y + 0.015f, s_prefabStartPos.z}, 0.06f, ColorAlpha(WHITE, 0.8f));

@@ -62,6 +62,11 @@ int main(void) {
     assert(Emission_Step(h,zero,0)); assert(children==EMITTER_MAX_SPAWNS_PER_STEP);
     assert(Emission_GetStats(h,&stats) && stats.scheduled==1000 && stats.dropped==744);
     assert(Emission_Step(h,zero,0)); assert(children==256);
+    Reset(); c.callbackBudget=1000; h=Emission_Create(&c,zero);
+    assert(h && Emission_Step(h,zero,0) && children==1000);
+    assert(Emission_GetStats(h,&stats) && stats.accepted==1000 && stats.dropped==0);
+    c.callbackBudget=EMITTER_MAX_CALLBACK_BUDGET+1;
+    assert(!Emission_Create(&c,zero)); c.callbackBudget=0;
     Reset(); rejectBirth=true; c.count=4; h=Emission_Create(&c,zero);
     assert(Emission_Step(h,zero,0)); assert(Emission_GetStats(h,&stats));
     assert(stats.rejected==4 && stats.accepted==0 && children==0);

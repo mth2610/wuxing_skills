@@ -1,6 +1,6 @@
 #version 430 core
-// One invocation owns one connected chain. No node races or global barriers.
-layout(local_size_x=1,local_size_y=1,local_size_z=1) in;
+// One workgroup per chain. Parallel node Motion; ordered XPBD on lane zero.
+layout(local_size_x=64,local_size_y=1,local_size_z=1) in;
 uniform float u_dt;
 uniform float u_time;
 uniform int u_slot;
@@ -14,8 +14,11 @@ layout(std430,binding=0) buffer RibbonNodes {RibbonNode nodes[];};
 layout(std430,binding=1) readonly buffer RibbonParameters {RibbonParams ribbons[];};
 const float fixedDt=1.0/120.0;
 const int maxNodes=60;
-vec3 positions[60],previous[60],velocities[60];
-float rests[60],lambdas[60],bendLambdas[60];
+shared vec3 positions[60],previous[60],velocities[60];
+shared float rests[60],lambdas[60],bendLambdas[60];
+shared float accumulator;
+shared int stepCount;
+shared vec3 start;
 void projectPair(int a,int b,float rest,float compliance,float invMass,bool pinned,inout float lambda) {
     vec3 delta=positions[b]-positions[a];float len=length(delta);
     if(len<1e-8) {
@@ -28,54 +31,67 @@ void projectPair(int a,int b,float rest,float compliance,float invMass,bool pinn
     lambda+=change;positions[a]-=delta*(wa*change);positions[b]+=delta*(invMass*change);
 }
 void main() {
-    uint slot=uint(u_slot);
+    uint slot=u_slot<0?gl_WorkGroupID.x:uint(u_slot);
     if(slot>=uint(ribbons.length())) return;
     RibbonParams r=ribbons[slot];
     int count=int(r.meta.x),base=int(slot)*maxNodes;
     if(r.meta.w==0u || count<2 || count>maxNodes || u_dt<=0.0) return;
     bool pinned=r.meta.z!=0u && r.anchor.w>0.5;
-    for(int i=0;i<count;i++) {
-        positions[i]=nodes[base+i].positionRest.xyz;
-        velocities[i]=nodes[base+i].velocity.xyz;
-        previous[i]=positions[i];rests[i]=nodes[base+i].positionRest.w;
+    int node=int(gl_LocalInvocationID.x);
+    if(node<count) {
+        positions[node]=nodes[base+node].positionRest.xyz;
+        velocities[node]=nodes[base+node].velocity.xyz;
+        previous[node]=positions[node];rests[node]=nodes[base+node].positionRest.w;
     }
-    if(r.compliance.z>0.5) velocities[0]=r.anchorVelocity.xyz;
-    if(pinned && r.anchorVelocity.w>0.5) {
-        vec3 jump=r.anchor.xyz-positions[0];
-        for(int i=0;i<count;i++) positions[i]+=jump;
-        velocities[0]=r.anchorVelocity.xyz;
-    }
-    float accumulator=nodes[base].velocity.w+min(u_dt,8.0*fixedDt);
-    int steps=min(8,int((accumulator+1e-7)/fixedDt));
-    vec3 start=positions[0];
-    for(int k=0;k<steps;k++) {
-        float offset=-float(steps-k)*fixedDt,time=u_time+offset;
-        for(int i=0;i<count;i++) {
-            previous[i]=positions[i];lambdas[i]=0.0;bendLambdas[i]=0.0;
-            if(i==0 && pinned) {
-                positions[i]=mix(start,r.anchor.xyz,float(k+1)/float(steps));continue;
-            }
-            MotionGpuBody body=motionBodies[base+i];
-            motionAdvanceStep(positions[i],velocities[i],body,
-                evalMotionBackgroundWind(positions[i],time),vec3(0),0.0,time,fixedDt,offset);
-            motionBodies[base+i]=body;
+    barrier();
+    if(node==0) {
+        if(r.compliance.z>0.5) velocities[0]=r.anchorVelocity.xyz;
+        if(pinned && r.anchorVelocity.w>0.5) {
+            vec3 jump=r.anchor.xyz-positions[0];
+            for(int i=0;i<count;i++) positions[i]+=jump;
+            velocities[0]=r.anchorVelocity.xyz;
         }
-        float invMass=motionBodies[base].body0.x;
-        int iterations=clamp(int(r.meta.y),1,32);
-        for(int pass=0;pass<iterations;pass++) {
-            if(r.compliance.y>=0.0) for(int i=2;i<count;i++)
-                projectPair(i-2,i,rests[i-1]+rests[i],r.compliance.y,invMass,pinned,bendLambdas[i]);
-            for(int j=1;j<count;j++) {
-                int i=(pass&1)!=0?count-j:j;
-                projectPair(i-1,i,rests[i],r.compliance.x,invMass,pinned,lambdas[i]);
+        accumulator=nodes[base].velocity.w+min(u_dt,8.0*fixedDt);
+        stepCount=min(8,int((accumulator+1e-7)/fixedDt));
+        start=positions[0];
+    }
+    barrier();
+    for(int k=0;k<stepCount;k++) {
+        float offset=-float(stepCount-k)*fixedDt,time=u_time+offset;
+        if(node<count) {
+            previous[node]=positions[node];lambdas[node]=0.0;bendLambdas[node]=0.0;
+            if(node==0 && pinned) {
+                positions[node]=mix(start,r.anchor.xyz,float(k+1)/float(stepCount));
+            } else {
+                MotionGpuBody body=motionBodies[base+node];
+                vec3 position=positions[node],velocity=velocities[node];
+                motionAdvanceStep(position,velocity,body,
+                    evalMotionBackgroundWind(position,time),vec3(0),0.0,time,fixedDt,offset);
+                positions[node]=position;velocities[node]=velocity;
+                motionBodies[base+node]=body;
             }
         }
-        for(int i=0;i<count;i++) velocities[i]=(positions[i]-previous[i])/fixedDt;
-        if(pinned) velocities[0]=r.anchorVelocity.xyz;
+        barrier();
+        if(node==0) {
+            float invMass=motionBodies[base].body0.x;
+            int iterations=clamp(int(r.meta.y),1,32);
+            for(int pass=0;pass<iterations;pass++) {
+                if(r.compliance.y>=0.0) for(int i=2;i<count;i++)
+                    projectPair(i-2,i,rests[i-1]+rests[i],r.compliance.y,invMass,pinned,bendLambdas[i]);
+                for(int j=1;j<count;j++) {
+                    int i=(pass&1)!=0?count-j:j;
+                    projectPair(i-1,i,rests[i],r.compliance.x,invMass,pinned,lambdas[i]);
+                }
+            }
+        }
+        barrier();
+        if(node<count) velocities[node]=(positions[node]-previous[node])/fixedDt;
+        if(node==0 && pinned) velocities[0]=r.anchorVelocity.xyz;
+        barrier();
     }
-    for(int i=0;i<count;i++) {
-        nodes[base+i].positionRest.xyz=positions[i];
-        nodes[base+i].velocity=vec4(velocities[i],i==0?max(0.0,accumulator-float(steps)*fixedDt):0.0);
-        nodes[base+i].previous=vec4(previous[i],0);
+    if(node<count) {
+        nodes[base+node].positionRest.xyz=positions[node];
+        nodes[base+node].velocity=vec4(velocities[node],node==0?max(0.0,accumulator-float(stepCount)*fixedDt):0.0);
+        nodes[base+node].previous=vec4(previous[node],0);
     }
 }

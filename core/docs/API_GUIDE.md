@@ -3073,15 +3073,15 @@ and buoyancy share `gravityScale`; use 1 for a physical body. A density below th
 surrounding air rises when gravity is enabled. Hot gas/smoke needs the gas solver,
 not a low-density solid proxy.
 
-`VFX_GuidedParticle_DefaultConfig` selects `GUIDE_BALANCED` in
-`core/composition/common/vc_guided_particle.inl`. Burst emission uses a moving
+`VFX_GuidedMotion_DefaultConfig` selects `GUIDE_BALANCED` in
+`core/composition/common/vc_guided_motion.inl`. Burst emission uses a moving
 sphere; timed emission uses a stationary path tube covering the complete route.
 Equal endpoints produce a stationary sphere. Emitters only initialize bodies;
 spatial fields supply motion. Ordinary Wind contributes once through the typed
 background medium from `core/wind/wind_system.h`.
 
 Automatic presets expose speed, field radius, guidance, swirl and turbulence.
-Guided Particle defaults to travel 12 m/s, swirl 14.4 m/s and turbulence 9.6 m/s
+Guided Motion defaults to travel 12 m/s, swirl 14.4 m/s and turbulence 9.6 m/s
 (1.2 and 0.8 times travel). In the sandbox, editing travel speed preserves the
 current flow/travel ratios, including disabled channels and signed swirl. Stopping
 and resuming retains those ratios. Direct API configurations remain absolute m/s.
@@ -3100,7 +3100,7 @@ Templates retain authority over their complete body/render properties.
 stiffness and settling time once from the reference body, geometry, speed,
 rotational timescales and effective gravity including buoyancy. Turbulence stays
 an independent actuator disturbance; it never increases guide stiffness or damping.
-Automatic Guided Particle compiles `FORCE_LAW_CURL_FORCE` from `m_ref * U^2 / eddy`
+Automatic Guided Motion compiles `FORCE_LAW_CURL_FORCE` from `m_ref * U^2 / eddy`
 and caps it at 25% of guide authority (an authoring convention reserving capture
 margin). Automatic curl uses the field radius as its integral eddy length, so
 nearby particles share a roll and turnover remains slower than small-cell jitter. Turnover uses the attainable speed after saturation, avoiding increasingly
@@ -3181,8 +3181,44 @@ retain their normal borrowed-pointer lifetime contracts.
 Legacy formation/arrival/target enums and guide/body override pointers were removed.
 Use a field descriptor or particle template for their independent responsibilities.
 
-The **GUIDED PARTICLE** fixture offers default guided motion, swirl, turbulence,
-free-leaf interaction, zero drag and stationary attraction. Shift+comma/period
+`VFX_GuidedMotionConfig` selects `VFX_GUIDED_PARTICLES`, `VFX_GUIDED_TRAILS` or
+`VFX_GUIDED_BOTH`. The default selects both: `count` totals particles and
+`trailCount` independently totals connected ribbons. Both use `emitDuration`;
+zero bursts immediately and positive duration schedules births without a startup
+burst. `core/emitter/emitter.c` owns both clocks. This composition requests its
+bounded 2048 callback budget so a maximum-size burst or final hitch does not
+silently halve particle count. Component allocation can still reject births.
+
+The source descriptor and body/template values are copied into the cast's fixed
+storage in `core/composition/common/vc_guided_motion.inl`. The seeded adapter in
+`core/emitter/particle_source.c` samples mesh geometry for both families. Mesh,
+texture, curve and child-template resources remain borrowed. Each family starts
+with the same seed; its birth sequence is independent of the other family's
+count and cadence. Particle manager emitters use CONFIG_POSITION so they do not
+sample the source a second time.
+
+Generated fields explicitly include the trail receiver bit. A complete
+`fieldOverride` retains its authored mask and must include `MOTION_RECEIVER_TRAIL`
+to affect ribbons. `trailTemplate` owns the complete chain material, geometry,
+backend, texture, lifetime and attachment. Without it, `trailLength`,
+`trailWidth` and `trailNodes` define the chain; the shared reference body profile
+supplies its Motion response. `trailAttachment=0` emits free chains; a nonzero
+caller-owned attachment pins their heads. The composition never animates that
+attachment. Update it from the attached object's motion, or destroy it to release
+the chains. No render-history displacement or separate trail steering is added.
+
+Emission, field and body lifetime remain independent. Stopping the returned
+field handle does not stop either birth clock. Completed clocks release their
+emitter handles; emitted bodies continue in their component pools. At most eight
+casts can emit concurrently. Field and scheduler setup failure rolls back owned
+handles before returning zero.
+
+The old `VFX_GuidedParticleConfig` type and GuidedParticle entry points remain
+source-compatible. Their wrappers force particle-only emission; the old default
+and inspector retain their particle controls. The canonical fixture is a single
+**GUIDED MOTION** entry with default combined motion, swirl, turbulence,
+free-leaf interaction, zero drag, stationary attraction and explicit particle,
+free-trail, combined and timed combined output presets. Shift+comma/period
 cycles presets; comma/period or `/` edits the selected parameter for the next cast.
 The inspector keeps rows stable across numeric edits, including burst/continuous
 emission. Changing the guidance authoring mode explicitly reveals manual force,
@@ -3228,12 +3264,13 @@ does not make an incompressible liquid.
 
 Set `physics.spatialMotionOnly=true` for world-space typed Motion fields on the
 compute backend. `receiveMotionFields` additionally enables persistent formation
-offsets. The guided-particle composer uses this policy. AUTO selects GPU when
+offsets. The Guided Motion composer uses this policy. AUTO selects GPU when
 compute and rendering capabilities are available; the CPU sampler honors the same
 spatial-only policy. Legacy captured routes and their arrival callbacks remain CPU
 contracts. Custom shaders, gradients, authored curves, sprite animation, particle
-ribbons, mesh heads, event emission and premultiplied rendering retain CPU
-fallback; GPU_ONLY reports unsupported requests.
+ribbons, mesh heads and premultiplied rendering retain CPU fallback. Emitter-owned
+spatial live/death leaf births can stay GPU-resident; collision, arrival and recursive
+child policies retain CPU fallback. GPU_ONLY reports unsupported requests.
 
 The GPU integrates bounded 1/120-second substeps, samples field trajectories and
 ordinary Wind, and solves overlapping capped guidance together with external
@@ -3260,7 +3297,7 @@ An anchored receiver supplies its tip velocity and material mass, then integrate
 
 ## Independent emission and physical ribbons
 
-`core/emitter/emitter.h` owns the generic fixed-pool scheduler. Its core API has no particle or trail dependency. `Emission_Create` copies its descriptor; source data, sink context and spawn templates remain borrowed until `Emission_Destroy`. Call `Emission_Step(handle, worldOrigin, dt)` explicitly for each emitter. `Emission_Stop` stops births while components drain in their own systems. Completed/stopped handles retain statistics until destroyed. `core/emitter/emitter.c` bounds delivery to 256 callbacks per step and counts consumed overflow births.
+`core/emitter/emitter.h` owns the generic fixed-pool scheduler. Its core API has no particle or trail dependency. `Emission_Create` copies its descriptor; source data, sink context and spawn templates remain borrowed until `Emission_Destroy`. Call `Emission_Step(handle, worldOrigin, dt)` explicitly for each emitter. `Emission_Stop` stops births while components drain in their own systems. Completed/stopped handles retain statistics until destroyed. `core/emitter/emitter.c` defaults to 256 callbacks per step; an explicit `callbackBudget` may request up to 2048. It counts consumed overflow births.
 
 `core/emitter/emitter_sources.h` supplies deterministic vertex/edge mesh sources. MeshAdjacency remains a reusable topology utility in `core/mesh_adjacency.h`. Sampling supplies a position offset; the scheduler adds worldOrigin. Adjacency has no authored normals, so the adapter returns transformed local +Y. `core/emitter/emitter_sinks.h` supplies particle and complete-chain ribbon sinks. Particle sink acceptance means command submission, not a readback-confirmed GPU allocation.
 
@@ -3280,7 +3317,15 @@ Legacy `core/emitter_system.h` includes `core/emitter/legacy_particle_emitter.h`
 
 `core/trails/trail_ribbon_solver.h` owns intrinsic XPBD segment/optional second-neighbor constraints. External motion is sampled through shared spatial Motion fields and integrated by MotionBody. The solver uses 1/120-second steps, at most eight per update, discarding excess hitch debt. Default mass is per node, so changing node resolution changes total chain mass unless the caller adjusts inverseMassKg. This is a connected chain rather than full fabric or self-collision simulation.
 
-`TrailRibbon_Spawn` returns a TrailSystem id: use `KillTrail` for destruction. AUTO selects Vulkan compute where available and otherwise CPU; GPU_ONLY rejects unavailable compute rather than omitting simulation. `TrailRibbon_GetState` returns NULL for GPU-resident ribbons. `core/trails/trail_ribbon_gpu.c` uploads node/body data at spawn and keeps it resident; per-frame uploads contain fields, wind and attachment/control records. The initial compute shader assigns one invocation to each bounded chain; no throughput or FPS claim follows from this dispatch layout.
+`TrailRibbon_Spawn` returns a TrailSystem id: use `KillTrail` for destruction. AUTO selects Vulkan compute where available and otherwise CPU; GPU_ONLY rejects unavailable compute rather than omitting simulation. `TrailRibbon_GetState` returns NULL for GPU-resident ribbons. `core/trails/trail_ribbon_gpu.c` uploads node/body data at spawn and keeps it resident; per-frame uploads contain fields, wind and attachment/control records. `TrailRibbonGpu_BeginUpdate` uploads the shared field/wind snapshot,
+`TrailRibbonGpu_Update` stages per-chain controls, and `TrailRibbonGpu_EndUpdate`
+submits one control upload and compute dispatch after TrailSystem lifetime and
+attachment processing. Sparse slot ranges retain their original node/body indices.
+The shader assigns a 64-invocation workgroup to each chain: nodes evaluate Motion
+in parallel, then lane zero projects constraints in the original alternating
+order. Shared-memory barriers separate those phases. Node counts, fixed steps,
+constraint iterations and receiver lanes remain unchanged. The shader's `u_slot=-1`
+selects the batch; a nonnegative slot retains the single-chain validation entry.
 
 Example attachment lifecycle (`core/trails/trail_ribbon.h`):
 
@@ -3314,9 +3359,11 @@ TrailAttachment_Destroy(attachment);
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
 | 2026-10-08 | Codex | Emitter-owned mesh sources and CPU/GPU child policies | core/emitter/mesh_surface_source.h; core/emitter/particle_children.h; core/emitter/emitter_gpu.h | Ground-truth |
+| 2026-10-08 | Codex | Batched parallel ribbon Motion | core/trails/trail_ribbon_gpu.c; core/trails/shaders/trail_ribbon.comp; core/trails/trail_system.c | Ground-truth |
 | 2026-10-08 | Codex | Independent emission and physical ribbons | core/emitter/emitter.h; core/trails/trail_ribbon.h; core/trails/trail_ribbon_solver.h; core/motion/motion_fields.h | Ground-truth |
 | 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Independent curl amplitude and overlapping-guide diagnosis | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
+| 2026-10-08 | Codex | Shared Guided Motion emission and ribbon outputs | core/composition/common/vc_guided_motion.inl; core/emitter/particle_source.c; core/emitter/emitter.h | Ground-truth |
 | 2026-10-07 | Codex | Fast guided defaults and curved path | core/composition/common/vc_guided_particle.inl; core/tests/test_guided_config.py | Ground-truth and project convention |
 | 2026-10-07 | Codex | Coherent guided curl force, units and eddy scale | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Automatic physical guidance, formation and substep sampling | core/motion/physical_field.h; core/composition/common/vc_guided_particle.inl; core/motion/motion_fields.h; core/wind/wind_system.h | Ground-truth and project convention |

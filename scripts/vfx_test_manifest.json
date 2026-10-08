@@ -23,7 +23,9 @@
   ],
   "excluded": {},
   "exclude_from_auto_include": {
-    "common": []
+    "common": [
+      "vc_guided_particle.inl"
+    ]
   },
   "entries": [
     {
@@ -169,15 +171,15 @@
       "draw_call": "VFX_ComposeGroundWave($POS, VC_MAT_EARTH, 1.5f, $PROG, VFX_GroundHeightFromMap, NULL)"
     },
     {
-      "source": "common/vc_guided_particle.inl",
-      "fn": "VFX_ComposeGuidedParticle",
-      "label": "GUIDED PARTICLE",
+      "source": "common/vc_guided_motion.inl",
+      "fn": "VFX_ComposeGuidedMotion",
+      "label": "GUIDED MOTION",
       "category": "common",
       "fixture": "burst",
       "lifecycle": "event",
       "_auto": true,
       "type": "oneshot",
-      "trigger_call": "VFXTest_FireGuidedParticle($SOURCE, $TARGET)"
+      "trigger_call": "VFXTest_FireGuidedMotion($SOURCE, $TARGET)"
     },
     {
       "source": "common/vc_guiding_wind.inl",

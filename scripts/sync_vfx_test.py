@@ -166,8 +166,8 @@ LIFECYCLE_SPECS = {
     "VFX_ComposeStonePillar":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeFlameVolume":        ("emitter", "timed",      "continuous"),
     "VFX_ComposeBlackHole":          ("draw",    "timed",      "continuous"),
-    "VFX_ComposeGuidedParticle":     ("event",   "burst",      "oneshot"),
-    "VFX_ComposeGuidedParticleEx":   ("event",   "burst",      "oneshot"),
+    "VFX_ComposeGuidedMotion":     ("event",   "burst",      "oneshot"),
+    "VFX_ComposeGuidedMotionEx":   ("event",   "burst",      "oneshot"),
     "VFX_ComposeIceCrystal":         ("event",   "burst",      "oneshot"),
     "VFX_ComposeWaterStream":        ("draw",    "timed",      "continuous"),
     "VFX_ComposeLiquidImpact":       ("event",   "burst",      "oneshot"),
@@ -263,11 +263,11 @@ FIXTURE_EVENT_OVERRIDES = {
         "VFX_ComposeContactSparkMode($POS, VC_MAT_FIRE, 1.5f, $PROG, CONTACT_SPARK_CENTRIFUGAL)",
     # Long gameplay-scale run: character socket five metres behind the click
     # point, so the spline and the post-arrival radial burst have room to read.
-    "VFX_ComposeGuidedParticle":
+    "VFX_ComposeGuidedMotion":
         # Use the harness' actual character source and mouse target.  Using
         # POS for both made the diagnostic silently invent a second endpoint,
         # so the visible route was offset from both gameplay locations.
-        "VFXTest_FireGuidedParticle($SOURCE, $TARGET)",
+        "VFXTest_FireGuidedMotion($SOURCE, $TARGET)",
     # A directed fire primary needs a visible segment, not the generic point
     # that an inferred event call would provide. The standard line fixture is
     # long enough to judge nozzle taper, flame-front width and hot-smoke wake.
@@ -1390,7 +1390,7 @@ def gen_trigger_block(entries):
     # buttons, a world click must provide the real player socket and raycast
     # target instead of the generic POS-relative preview endpoints.
     guided_idx = next((i for i, e in enumerate(entries)
-                       if e.get("fn") == "VFX_ComposeGuidedParticle"), None)
+                       if e.get("fn") == "VFX_ComposeGuidedMotion"), None)
     if guided_idx is not None:
         lines += [f"        if (s_testCategory == TEST_CAT_NEWFX && s_testIndex == {guided_idx}) {{",
                   "            Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.78f, 0.0f});",
@@ -1399,7 +1399,7 @@ def gen_trigger_block(entries):
                   "                guidedTarget = Vector3Add(playerPos, (Vector3){2.5f, 0.0f, 0.8f});",
                   "                guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);",
                   "            }",
-                  "            VFXTest_FireGuidedParticle(castSocket, guidedTarget);",
+                  "            VFXTest_FireGuidedMotion(castSocket, guidedTarget);",
                   "            return false;",
                   "        }"]
     lines += [f"{INDENT}if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {{",
@@ -1557,8 +1557,8 @@ def gen_surface_impact_selector_ui():
 
 def gen_guided_fixture_state():
     return '''// @gen:newfx_guided_state begin
-static VFX_GuidedParticleConfig s_liveGuidedParticleConfig;
-static bool s_liveGuidedParticleConfigInit = false;
+static VFX_GuidedMotionConfig s_liveGuidedMotionConfig;
+static bool s_liveGuidedMotionConfigInit = false;
 static bool s_guidedCaptureActive = false;
 static int s_guidedCaptureRemaining, s_guidedCaptureFrame, s_guidedCaptureInterval;
 static Vector3 s_guidedCaptureSource, s_guidedCaptureTarget;
@@ -1568,44 +1568,58 @@ static float s_guidedRatioReferenceSpeed = 1.0f;
 static int s_guidedFixturePreset = 0;
 static const char *s_guidedFixturePresetNames[] = {
     "Default guided motion", "Moving swirl", "Moving turbulence",
-    "Catch free leaves", "Zero drag", "Stationary attraction"
+    "Catch free leaves", "Zero drag", "Stationary attraction",
+    "Particles only", "Free trails", "Particles and trails",
+    "Timed particles and trails", "Timed trails only"
 };
-#define VFXTEST_GUIDED_PRESET_COUNT 6
+#define VFXTEST_GUIDED_PRESET_COUNT 11
 
 static void VFXTest_SetGuidedPreset(int preset)
 {
     s_guidedFixturePreset = preset;
-    s_liveGuidedParticleConfig = VFX_GuidedParticle_DefaultConfig();
-    s_liveGuidedParticleConfigInit = true;
+    s_liveGuidedMotionConfig = VFX_GuidedMotion_DefaultConfig();
+    s_liveGuidedMotionConfigInit = true;
     if (preset == 1) {
-        s_liveGuidedParticleConfig.swirlSpeed = 3.0f;
+        s_liveGuidedMotionConfig.swirlSpeed = 3.0f;
     } else if (preset == 2) {
-        s_liveGuidedParticleConfig.turbulenceSpeed = 1.0f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 1.0f;
     } else if (preset == 3) {
-        s_liveGuidedParticleConfig.count = 0;
-        s_liveGuidedParticleConfig.speed = 3.0f;
-        s_liveGuidedParticleConfig.duration = 8.0f;
-        s_liveGuidedParticleConfig.guideRadius = 1.2f;
-        s_liveGuidedParticleConfig.maxForceNewtons = 0.4f;
-        s_liveGuidedParticleConfig.swirlSpeed = 2.0f;
+        s_liveGuidedMotionConfig.count = 0;
+        s_liveGuidedMotionConfig.trailCount = 0;
+        s_liveGuidedMotionConfig.speed = 3.0f;
+        s_liveGuidedMotionConfig.duration = 8.0f;
+        s_liveGuidedMotionConfig.guideRadius = 1.2f;
+        s_liveGuidedMotionConfig.maxForceNewtons = 0.4f;
+        s_liveGuidedMotionConfig.swirlSpeed = 2.0f;
     } else if (preset == 4) {
         // Zero medium drag still permits explicitly authored Newton forces.
-        s_liveGuidedParticleConfig.drag = 0.0f;
+        s_liveGuidedMotionConfig.drag = 0.0f;
     } else if (preset == 5) {
-        s_liveGuidedParticleConfig.formationRadius = 0.8f;
-        s_liveGuidedParticleConfig.guideRadius = 1.2f;
+        s_liveGuidedMotionConfig.formationRadius = 0.8f;
+        s_liveGuidedMotionConfig.guideRadius = 1.2f;
+    } else if (preset == 6) {
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_PARTICLES;
+    } else if (preset == 7) {
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
+    } else if (preset == 8) {
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_BOTH;
+    } else if (preset == 9 || preset == 10) {
+        s_liveGuidedMotionConfig.output = preset == 10 ? VFX_GUIDED_TRAILS : VFX_GUIDED_BOTH;
+        s_liveGuidedMotionConfig.count = 192;
+        s_liveGuidedMotionConfig.trailCount = 8;
+        s_liveGuidedMotionConfig.emitDuration = 1.5f;
     }
-    s_guidedRatioReferenceSpeed = s_liveGuidedParticleConfig.speed > 0.00001f
-        ? s_liveGuidedParticleConfig.speed : 1.0f;
-    s_guidedSwirlRatio = s_liveGuidedParticleConfig.swirlSpeed / s_guidedRatioReferenceSpeed;
-    s_guidedTurbulenceRatio = s_liveGuidedParticleConfig.turbulenceSpeed / s_guidedRatioReferenceSpeed;
+    s_guidedRatioReferenceSpeed = s_liveGuidedMotionConfig.speed > 0.00001f
+        ? s_liveGuidedMotionConfig.speed : 1.0f;
+    s_guidedSwirlRatio = s_liveGuidedMotionConfig.swirlSpeed / s_guidedRatioReferenceSpeed;
+    s_guidedTurbulenceRatio = s_liveGuidedMotionConfig.turbulenceSpeed / s_guidedRatioReferenceSpeed;
 }
 
 /* UI edits couple authored speeds; the public composition remains absolute m/s. */
 static int VFXTest_GuidedParameterEdited(const VFX_ParamDef *param, float before,
                                        VFX_ParamDef *params, int count, int max)
 {
-    VFX_GuidedParticleConfig *cfg = &s_liveGuidedParticleConfig;
+    VFX_GuidedMotionConfig *cfg = &s_liveGuidedMotionConfig;
     if (param->valPtr == &cfg->speed) {
         if (before > 0.00001f) {
             s_guidedSwirlRatio = cfg->swirlSpeed / before;
@@ -1614,7 +1628,7 @@ static int VFXTest_GuidedParameterEdited(const VFX_ParamDef *param, float before
         cfg->swirlSpeed = s_guidedSwirlRatio * cfg->speed;
         cfg->turbulenceSpeed = s_guidedTurbulenceRatio * cfg->speed;
         if (cfg->speed > 0.00001f) s_guidedRatioReferenceSpeed = cfg->speed;
-        return VFX_GuidedParticle_GetParams(cfg, params, max);
+        return VFX_GuidedMotion_GetParams(cfg, params, max);
     }
     float reference = cfg->speed > 0.00001f ? cfg->speed : s_guidedRatioReferenceSpeed;
     if (param->valPtr == &cfg->swirlSpeed)
@@ -1626,7 +1640,7 @@ static int VFXTest_GuidedParameterEdited(const VFX_ParamDef *param, float before
 
 static void VFXTest_InitGuidedConfig(void)
 {
-    if (!s_liveGuidedParticleConfigInit) {
+    if (!s_liveGuidedMotionConfigInit) {
         // Deterministic capture selection; Shift+, / Shift+. selects interactively.
         const char *capturePreset = getenv("WUXING_GUIDED_PRESET");
         int preset = capturePreset ? atoi(capturePreset) : 0;
@@ -1648,16 +1662,16 @@ static float VFXTest_GuidedCaptureFloat(const char *name, float fallback, float 
     return value;
 }
 
-static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
+static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
 {
     VFXTest_InitGuidedConfig();
     s_isPlayingMesh = true;
-    VFX_GuidedParticleConfig cfg = s_liveGuidedParticleConfig;
+    VFX_GuidedMotionConfig cfg = s_liveGuidedMotionConfig;
     if (s_guidedCaptureActive) {
         float flowLimit = fmaxf(24.0f, 2.0f * cfg.speed);
         cfg.turbulenceSpeed = VFXTest_GuidedCaptureFloat("WUXING_GUIDED_TURBULENCE", cfg.turbulenceSpeed, 0.0f, flowLimit);
         cfg.swirlSpeed = VFXTest_GuidedCaptureFloat("WUXING_GUIDED_SWIRL", cfg.swirlSpeed, -flowLimit, flowLimit);
-        TraceLog(LOG_INFO, "GUIDED PARTICLE capture: turbulence=%g m/s, swirl=%g m/s",
+        TraceLog(LOG_INFO, "GUIDED MOTION capture: turbulence=%g m/s, swirl=%g m/s",
                  (double)cfg.turbulenceSpeed, (double)cfg.swirlSpeed);
     }
     cfg.source = source;
@@ -1672,9 +1686,9 @@ static void VFXTest_FireGuidedParticle(Vector3 source, Vector3 target)
         VFX_Foliage_SpawnFreeLeaves(leafCenter,
                                   0.45f, 80, leaves.mass, leaves.style);
     }
-    TraceLog(LOG_INFO, "GUIDED PARTICLE: %s", s_guidedFixturePresetNames[s_guidedFixturePreset]);
-    if (VFX_ComposeGuidedParticleEx(&cfg) == MOTION_FIELD_INVALID)
-        TraceLog(LOG_WARNING, "GUIDED PARTICLE: cast rejected (invalid configuration or exhausted field/emitter pool)");
+    TraceLog(LOG_INFO, "GUIDED MOTION: %s", s_guidedFixturePresetNames[s_guidedFixturePreset]);
+    if (VFX_ComposeGuidedMotionEx(&cfg) == MOTION_FIELD_INVALID)
+        TraceLog(LOG_WARNING, "GUIDED MOTION: cast rejected (invalid configuration or exhausted field/emitter pool)");
 }
 
 static int VFXTest_GuidedCaptureInt(const char *name, int fallback, int lo, int hi)
@@ -1694,27 +1708,29 @@ static void VFXTest_BeginGuidedCaptureRepeats(void)
 {
     s_guidedCaptureRemaining = 0;
     s_guidedCaptureFrame = 0;
-    if (!VFXTest_IsNewFxNamed("GUIDED PARTICLE")) return;
+    if (!VFXTest_IsNewFxNamed("GUIDED MOTION")) return;
     int casts = VFXTest_GuidedCaptureInt("WUXING_GUIDED_CASTS", 1, 1, 16);
     s_guidedCaptureInterval = VFXTest_GuidedCaptureInt("WUXING_GUIDED_CAST_INTERVAL_FRAMES", 6, 1, 120);
     s_guidedCaptureRemaining = casts - 1;
-    TraceLog(LOG_INFO, "GUIDED PARTICLE capture: casts=%d interval_frames=%d particles_per_cast=%d",
-             casts, s_guidedCaptureInterval, s_liveGuidedParticleConfig.count);
+    TraceLog(LOG_INFO, "GUIDED MOTION capture: casts=%d interval_frames=%d particles_per_cast=%d trails_per_cast=%d",
+             casts, s_guidedCaptureInterval,
+             s_liveGuidedMotionConfig.output == VFX_GUIDED_TRAILS ? 0 : s_liveGuidedMotionConfig.count,
+             s_liveGuidedMotionConfig.output == VFX_GUIDED_PARTICLES ? 0 : s_liveGuidedMotionConfig.trailCount);
 }
 
 static void VFXTest_UpdateGuidedCaptureRepeats(void)
 {
     if (s_guidedCaptureRemaining <= 0) return;
-    if (!VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+    if (!VFXTest_IsNewFxNamed("GUIDED MOTION")) {
         s_guidedCaptureRemaining = 0;
         return;
     }
     if (++s_guidedCaptureFrame % s_guidedCaptureInterval != 0) return;
     --s_guidedCaptureRemaining;
     s_guidedCaptureActive = true;
-    VFXTest_FireGuidedParticle(s_guidedCaptureSource, s_guidedCaptureTarget);
+    VFXTest_FireGuidedMotion(s_guidedCaptureSource, s_guidedCaptureTarget);
     s_guidedCaptureActive = false;
-    TraceLog(LOG_INFO, "GUIDED PARTICLE capture repeat: frame=%d remaining=%d",
+    TraceLog(LOG_INFO, "GUIDED MOTION capture repeat: frame=%d remaining=%d",
              s_guidedCaptureFrame, s_guidedCaptureRemaining);
 }
 // @gen:newfx_guided_state end'''
@@ -1722,9 +1738,9 @@ static void VFXTest_UpdateGuidedCaptureRepeats(void)
 
 def gen_guided_fixture_inspector():
     return '''// @gen:newfx_guided_inspector begin
-    if (VFXTest_IsNewFxNamed("GUIDED PARTICLE")) {
+    if (VFXTest_IsNewFxNamed("GUIDED MOTION")) {
         VFXTest_InitGuidedConfig();
-        s_inspectorParamCount = VFX_GuidedParticle_GetParams(&s_liveGuidedParticleConfig,
+        s_inspectorParamCount = VFX_GuidedMotion_GetParams(&s_liveGuidedMotionConfig,
                                                           s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
 // @gen:newfx_guided_inspector end'''
@@ -1733,13 +1749,13 @@ def gen_guided_fixture_inspector():
 def gen_guided_fixture_input():
     return '''// @gen:newfx_guided_input begin
         VFXTest_UpdateGuidedCaptureRepeats();
-        if (VFXTest_IsNewFxNamed("GUIDED PARTICLE") &&
+        if (VFXTest_IsNewFxNamed("GUIDED MOTION") &&
             (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))) {
             int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
             if (direction != 0) {
                 VFXTest_SetGuidedPreset((s_guidedFixturePreset + direction + VFXTEST_GUIDED_PRESET_COUNT) % VFXTEST_GUIDED_PRESET_COUNT);
                 VFXTest_RefreshInspectorParams(true);
-                TraceLog(LOG_INFO, "GUIDED PARTICLE preset: %s (Shift+. next; Shift+, previous; click scene to cast)",
+                TraceLog(LOG_INFO, "GUIDED MOTION preset: %s (Shift+. next; Shift+, previous; click scene to cast)",
                          s_guidedFixturePresetNames[s_guidedFixturePreset]);
             }
         }
@@ -1819,17 +1835,17 @@ def regenerate_vfx_test(content, entries):
                                        "        VFXTest_RefreshInspectorParams(false);\n")
     # Migrate the earlier world-click branch too; preview and live casts share
     # exactly one configuration helper. Reserve >/< for Guided presets.
-    content = content.replace("VFX_ComposeGuidedParticle(castSocket, mouseTarget3D);",
-                              "VFXTest_FireGuidedParticle(castSocket, mouseTarget3D);")
+    content = content.replace("VFX_ComposeGuidedMotion(castSocket, mouseTarget3D);",
+                              "VFXTest_FireGuidedMotion(castSocket, mouseTarget3D);")
     content = content.replace("IsKeyPressed(KEY_SLASH) || IsKeyPressed(KEY_PERIOD)",
-                              '(IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && !VFXTest_IsNewFxNamed("GUIDED PARTICLE")))')
+                              '(IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && !VFXTest_IsNewFxNamed("GUIDED MOTION")))')
     content = content.replace("else if (IsKeyPressed(KEY_COMMA))\n            {",
-                              'else if (IsKeyPressed(KEY_COMMA) && !VFXTest_IsNewFxNamed("GUIDED PARTICLE"))\n            {')
+                              'else if (IsKeyPressed(KEY_COMMA) && !VFXTest_IsNewFxNamed("GUIDED MOTION"))\n            {')
     content = content.replace("        int startY = 460;",
-                              '        int startY = VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? 360 : 460;')
+                              '        int startY = VFXTest_IsNewFxNamed("GUIDED MOTION") ? 360 : 460;')
     content = content.replace(
         'DrawText("Controls: CapsLock/Tab: Select Var | / or >: Next Value | ,: Prev Value",',
-        'DrawText(VFXTest_IsNewFxNamed("GUIDED PARTICLE")\n'
+        'DrawText(VFXTest_IsNewFxNamed("GUIDED MOTION")\n'
         '                 ? "Controls: Tab Select | / Next Value | Shift / Previous | >/< Preset"\n'
         '                 : "Controls: CapsLock/Tab: Select Var | / or >: Next Value | ,: Prev Value",')
     content = ensure_generated_section(

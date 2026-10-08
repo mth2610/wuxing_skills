@@ -42,6 +42,18 @@ static void Fixture(int which,const char *dir) {
         field.forceLawCount=1;field.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_MOVING_GUIDE,
             .springStiffnessNPerM=.8f,.magnitudeNewtons=.3f};
         field.preserveSphereOffsets=true;
+        if(which==9) {
+            Vector3 points[]={{0,0,0},{.5f,.7f,.2f},{1.5f,.8f,.5f},{2.5f,.2f,0}};
+            assert(MotionPath_Build(&field.volume.path,points,4));
+            field.volume.shape=FIELD_PATH_TUBE;
+            field.flow.followSpeedMps=2;
+            field.forceLaws[0].type=FORCE_LAW_PATH_GUIDE;
+            field.forceLaws[0].forwardForceNewtons=.05f;
+            field.preservePathLanes=true;
+            field.forceLawCount=2;
+            field.forceLaws[1]=(ForceLaw){.type=FORCE_LAW_CURL_FORCE,.magnitudeNewtons=.002f,
+                .procedural={.turbulenceSpeedMps=.8f,.eddyLengthM=.4f}};
+        }
         assert(MotionFields_CreateField(&field));
     }
     if(which==3) {
@@ -52,7 +64,7 @@ static void Fixture(int which,const char *dir) {
     if(which==5) {material.body.inverseMassKg=25;WindZone_Set((Vector3){1,0,0},3,.2f,.4f);material.body.windAccelerationScale=1;}
     TrailRibbonState state;
     bool pinned=which==1||which==4||which==7;
-    assert(TrailRibbon_Initialize(&state,which==8?60:16,(Vector3){0,1,0},(Vector3){0,-1,.1f},1,
+    assert(TrailRibbon_Initialize(&state,which==8?60:which==9?24:16,(Vector3){0,1,0},(Vector3){0,-1,.1f},1,
         (Vector3){.3f,.2f,0},pinned?TRAIL_RIBBON_HEAD_ANCHORED:TRAIL_RIBBON_FREE));
     TrailRibbonAnchor anchor={.previousPosition={0,1,0},.position={.02f,1.01f,0},
         .velocity={1.2f,.6f,0},.valid=pinned};
@@ -92,7 +104,7 @@ static void Fixture(int which,const char *dir) {
 }
 int main(int argc,char **argv) {
     if(argc>=3) Fixture(atoi(argv[2]),argv[1]);
-    else for(int i=0;i<9;i++) Fixture(i,NULL);
+    else for(int i=0;i<10;i++) Fixture(i,NULL);
     puts("PASS: production ribbon CPU references and GPU ABI fixtures (execution requires renderer harness)");
     return 0;
 }

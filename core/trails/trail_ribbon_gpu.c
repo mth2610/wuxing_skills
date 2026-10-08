@@ -14,7 +14,8 @@ static unsigned int s_compute, s_vao, s_vbo;
 static Shader s_draw;
 static TrailRibbonGpuParams s_slots[TRAIL_RIBBON_GPU_CAPACITY];
 static MotionGpuScene s_sceneSnapshot;
-static float s_time;
+static float s_time, s_updateDt;
+static bool s_updatePending;
 static unsigned int s_terrainVersion;
 static int s_computeDt, s_computeTime, s_computeSlot;
 static int s_drawMvp,s_drawCamera,s_drawRight,s_drawSlot,s_drawCount,s_drawWidth,s_drawColor;
@@ -91,11 +92,12 @@ int TrailRibbonGpu_Spawn(const TrailRibbonState *state,const TrailRibbonMaterial
     return -1;
 }
 void TrailRibbonGpu_BeginUpdate(float dt,float time) {
+    s_updatePending=false; s_updateDt=0;
     if(!s_ready||!isfinite(dt)||dt<=0||!isfinite(time)) return;
     bool any=false;
     for(int i=0;i<TRAIL_RIBBON_GPU_CAPACITY;i++) if(s_slots[i].meta[3]) {any=true;break;}
     if(!any) return;
-    s_time=time;
+    s_time=time; s_updateDt=dt;
     MotionFields_PackGpu(&s_sceneSnapshot);
     rlUpdateShaderBuffer(s_scene,&s_sceneSnapshot,
         offsetof(MotionGpuScene,fields)+s_sceneSnapshot.meta[0]*sizeof(MotionGpuField),0);
@@ -113,16 +115,25 @@ void TrailRibbonGpu_Update(int slot,float dt,const TrailRibbonAnchor *anchor) {
     p->anchor=anchor?MotionGpu_V4(anchor->position,anchor->valid?1:0):(Vector4){0};
     if(p->compliance.z<0.5f)
         p->anchorVelocity=anchor?MotionGpu_V4(anchor->velocity,anchor->discontinuity?1:0):(Vector4){0};
-    rlUpdateShaderBuffer(s_params,p,sizeof(*p),slot*sizeof(*p));
+    s_updatePending=true;
+}
+void TrailRibbonGpu_EndUpdate(void) {
+    if(!s_ready || !s_updatePending || s_updateDt<=0) return;
+    s_updatePending=false;
+    int count=TRAIL_RIBBON_GPU_CAPACITY;
+    while(count>0 && !s_slots[count-1].meta[3]) --count;
+    if(!count) return;
+    rlUpdateShaderBuffer(s_params,s_slots,(unsigned int)(count*sizeof(s_slots[0])),0);
+    int allSlots=-1;
     rlEnableShader(s_compute);
-    rlSetUniform(s_computeDt,&dt,RL_SHADER_UNIFORM_FLOAT,1);
+    rlSetUniform(s_computeDt,&s_updateDt,RL_SHADER_UNIFORM_FLOAT,1);
     rlSetUniform(s_computeTime,&s_time,RL_SHADER_UNIFORM_FLOAT,1);
-    rlSetUniform(s_computeSlot,&slot,RL_SHADER_UNIFORM_INT,1);
+    rlSetUniform(s_computeSlot,&allSlots,RL_SHADER_UNIFORM_INT,1);
     rlBindShaderBuffer(s_nodes,0);rlBindShaderBuffer(s_params,1);
     rlBindShaderBuffer(s_wind,3);rlBindShaderBuffer(s_terrain,4);
     rlBindShaderBuffer(s_scene,5);rlBindShaderBuffer(s_bodies,6);
-    rlComputeShaderDispatch(1,1,1);rlDisableShader();
-    p->compliance.z=0;
+    rlComputeShaderDispatch((unsigned int)count,1,1);rlDisableShader();
+    for(int i=0;i<count;i++) s_slots[i].compliance.z=0;
 }
 void TrailRibbonGpu_Release(int slot,const TrailRibbonAnchor *anchor) {
     if(slot>=0&&slot<TRAIL_RIBBON_GPU_CAPACITY) {
@@ -170,12 +181,14 @@ void TrailRibbonGpu_Unload(void) {
     if(s_compute) rlUnloadShaderProgram(s_compute);
     s_nodes=s_params=s_bodies=s_scene=s_wind=s_terrain=s_compute=s_vao=s_vbo=0;
     memset(s_slots,0,sizeof(s_slots));s_ready=false;s_attempted=false;
+    s_updatePending=false; s_updateDt=0;
 }
 #else
 bool TrailRibbonGpu_IsAvailable(void) {return false;}
 int TrailRibbonGpu_Spawn(const TrailRibbonState *s,const TrailRibbonMaterial *m) {(void)s;(void)m;return -1;}
 void TrailRibbonGpu_BeginUpdate(float dt,float time) {(void)dt;(void)time;}
 void TrailRibbonGpu_Update(int slot,float dt,const TrailRibbonAnchor *a) {(void)slot;(void)dt;(void)a;}
+void TrailRibbonGpu_EndUpdate(void) {}
 void TrailRibbonGpu_Release(int slot,const TrailRibbonAnchor *a) {(void)slot;(void)a;}
 void TrailRibbonGpu_Kill(int slot) {(void)slot;}
 void TrailRibbonGpu_Draw(int slot,Camera3D c,float w,Color color,Texture2D t) {(void)slot;(void)c;(void)w;(void)color;(void)t;}

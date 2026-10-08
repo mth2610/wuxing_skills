@@ -31,10 +31,10 @@ int main(void) {
     s=(VFX_EmissionSchedule){.durationSeconds=1,.ratePerSecond=100};
     CHECK(VFX_EmissionAdvance(&s,NAN,2048)==0 && s.ageSeconds==0,
           "nonfinite timestep cannot corrupt emission state");
-    FILE *f=fopen("core/composition/common/vc_guided_particle.inl","rb");
+    FILE *f=fopen("core/composition/common/vc_guided_motion.inl","rb");
     char text[24000]={0};
     if(f) { fread(text,1,sizeof(text)-1,f); fclose(f); }
-    CHECK(strstr(text,"VFX_EmissionAdvance(&s->emission") &&
+    CHECK(strstr(text,"Emission_Step(*h") &&
           !strstr(text,"MotionFields_IsAlive(s->guide)"),
           "guide expiration cannot stop an independently scheduled source");
     return failures ? 1 : 0;

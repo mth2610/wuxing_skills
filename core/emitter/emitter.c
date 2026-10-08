@@ -30,7 +30,7 @@ void EmissionSystem_Init(void) {
 }
 void EmissionSystem_Unload(void) { EmissionSystem_Init(); }
 EmissionHandle Emission_Create(const EmissionConfig *c, Vector3 origin) {
-    if (!c || !c->sink || !Emission_FiniteVector(origin) ||
+    if (!c || !c->sink || c->callbackBudget > EMITTER_MAX_CALLBACK_BUDGET || !Emission_FiniteVector(origin) ||
         c->kind < EMISSION_PARTICLE || c->kind > EMISSION_MESH ||
         c->schedule < EMISSION_BURST || c->schedule > EMISSION_DISTANCE ||
         !isfinite(c->duration) || c->duration < 0.0f ||
@@ -88,7 +88,8 @@ bool Emission_Step(EmissionHandle handle, Vector3 origin, float dt) {
     }
     uint64_t remaining = UINT64_MAX - s->stats.scheduled;
     uint64_t births = due <= 0.0 ? 0 : due >= (double)remaining ? remaining : (uint64_t)due;
-    uint32_t deliver = births > EMITTER_MAX_SPAWNS_PER_STEP ? EMITTER_MAX_SPAWNS_PER_STEP : (uint32_t)births;
+    uint32_t budget = c->callbackBudget ? c->callbackBudget : EMITTER_MAX_SPAWNS_PER_STEP;
+    uint32_t deliver = births > budget ? budget : (uint32_t)births;
     for (uint32_t i = 0; i < deliver; ++i) {
         double t = 1.0;
         if (c->schedule == EMISSION_DISTANCE && distance > 0.0)

@@ -305,7 +305,7 @@ static void VFXTest_UIDrawButton(Rectangle rect, const char *text, bool active)
 
 static const char *VFXTest_UIActiveVariant(void)
 {
-    if (VFXTest_IsNewFxNamed("GUIDED PARTICLE")) return s_guidedFixturePresetNames[s_guidedFixturePreset];
+    if (VFXTest_IsNewFxNamed("GUIDED MOTION")) return s_guidedFixturePresetNames[s_guidedFixturePreset];
     if (VFXTest_IsNewFxNamed("MESH PARTICLE EMITTER")) return VFX_MeshParticleVariant_Name(s_meshParticleFixtureVariant);
     if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL")) return MotionRibbonFixturePresetName(s_motionRibbonFixturePreset);
     if (VFXTest_IsNewFxNamed("[PARTICLE] SMOKE VOLUME")) return VFX_SmokeStyle_Name(s_smokeVolumeFixtureStyle);
@@ -337,7 +337,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UIFogButton(ui), fogLabel, fogMode != FOG_MODE_OFF);
     const char *variant = VFXTest_UIActiveVariant();
     if (variant) VFXTest_UIText(TextFormat("%s   |   %s", variant,
-                             VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? "Shift+, / Shift+. preset" : "< / > preset"),
+                             VFXTest_IsNewFxNamed("GUIDED MOTION") ? "Shift+, / Shift+. preset" : "< / > preset"),
                              (Rectangle){12.0f, ui.header.y + ui.header.height + 6.0f, fmaxf(180.0f, GetScreenWidth() - 340.0f), 24.0f}, 12, SKYBLUE);
     VFXTest_UIText(TextFormat("%.0f FPS", s_vfxTelemetryFps), ui.metrics[0], 12, RAYWHITE);
     VFXTest_UIText(TextFormat("%.1f ms", s_vfxTelemetryFrameMs), ui.metrics[1], 12, LIGHTGRAY);
@@ -349,7 +349,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
     if (!s_isPanelOpen && !s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
         DrawRectangleRounded(ui.inspector, 0.035f, 4, (Color){15, 20, 27, 235});
-        VFXTest_UIText(VFXTest_IsNewFxNamed("GUIDED PARTICLE") ? "Parameters - next cast" : "Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
+        VFXTest_UIText(VFXTest_IsNewFxNamed("GUIDED MOTION") ? "Parameters - next cast" : "Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
         for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
             int index = row + s_vfxInspectorScroll;
             Rectangle rect = VFXTest_UIInspectorRow(ui, row);

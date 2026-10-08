@@ -1733,6 +1733,7 @@ void UpdateTrailSystem(float dt)
             t->onUpdate(i, dt);
         a++;
     }
+    TrailRibbonSystem_EndUpdate();
 }
 
 // Forward declaration — DrawTrailRibbon is defined after the layered draw

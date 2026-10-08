@@ -118,8 +118,10 @@
 - Update `core/docs/API.md` (or relevant doc) in the same turn as the code change — docs must never lag code.
 
 - Modern ribbons use `core/trails/trail_ribbon.h`: free/head-anchored attachment is independent of Motion fields. Emitter scheduling/source adapters live in `core/emitter/`; never add a third emitter implementation outside that module.
+- Guided Motion composes shared spatial fields with independent particle/ribbon schedules; supplied field overrides must explicitly include trail receivers. Attachments remain caller-owned.
 - Components publish child-emission events; `core/emitter/` owns templates, cadence and budgets. GPU_ONLY must reject unsupported births or resource exhaustion; AUTO alone may select CPU fallback.
 - GPU ribbon node positions and receiver lanes stay GPU-owned after spawn; upload only control/attachment snapshots, and return NULL from CPU state queries rather than reading back implicitly.
+- GPU ribbon updates stage per-chain controls and dispatch once after TrailSystem lifetime/attachment updates; parallel node Motion must preserve ordered constraints and per-node receiver lanes.
 
 ### 10.2 Adding functions to common shaders (`core/shaders/common/*.glsl`)
 - A material's `.mat output`, GLSL resolver, render pass and runtime blend are one contract: fixed outputs use the matching `VFX_Resolve*`; surface-aware EffectMaterial uses `VFX_ResolveOutput` plus `Material_BeginVFX/EndVFX` (ADDITIVE→EMISSION, ALPHA/PREMULTIPLIED→BODY). Legacy `Material_Begin/End` remains caller-managed.

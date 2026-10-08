@@ -32,6 +32,7 @@ void TrailAttachment_Destroy(TrailAttachmentHandle handle);
 /* Manager hooks: these are called by TrailSystem, not application update code. */
 void TrailRibbonSystem_Reset(void);
 void TrailRibbonSystem_BeginUpdate(float dt,float time);
+void TrailRibbonSystem_EndUpdate(void);
 bool TrailRibbonSystem_Update(int trailId,float dt);
 void TrailRibbonSystem_Kill(int trailId);
 void TrailRibbonSystem_Draw(Camera3D camera,int layerFilter);

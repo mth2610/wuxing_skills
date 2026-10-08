@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Exercise production Guided Motion and Emitter with component allocator stubs.
+
+This verifies composition ownership and birth scheduling, not GPU simulation,
+rendering or visual acceptance. Component resources remain deliberately opaque.
+"""
+import pathlib
+import re
+import subprocess
+import tempfile
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+HEADER = (ROOT / 'core/composition/visual_composer.h').read_text()
+CONFIG = re.search(r'typedef struct VFX_GuidedParticleConfig \{.*?\} VFX_GuidedParticleConfig;', HEADER, re.S).group() + '\ntypedef VFX_GuidedParticleConfig VFX_GuidedMotionConfig;\nenum {VFX_GUIDED_PARTICLES,VFX_GUIDED_TRAILS,VFX_GUIDED_BOTH};\n'
+STUBS = r'''
+#include "raylib.h"
+typedef struct {int placeholder;} Mesh;
+typedef struct {int meshCount;} Model;
+typedef struct {Vector3 position,target,up;float fovy;int projection;} Camera3D;
+#define WHITE ((Color){255,255,255,255})
+#include "core/motion/motion_fields.h"
+#include "core/particles/particle_manager.h"
+#include "core/trails/trail_ribbon.h"
+#include "core/presets/vc_material.h"
+#include "core/composition/common/vc_params.h"
+#include "core/emitter/emitter.h"
+#include "core/mesh_adjacency.h"
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+static ParticleEmitterDesc descriptors[128];
+static bool emitterActive[128], failEmitter, failField;
+static ParticleConfig particles[4096];
+static TrailRibbonConfig ribbons[4096];
+static int particleCount,ribbonCount,fieldCount,fieldStopped;
+static FieldDesc capturedField;
+ParticleEmitterHandle ParticleManager_CreateEmitter(const ParticleEmitterDesc *d) {
+ if(failEmitter)return PARTICLE_EMITTER_INVALID;
+ for(int i=0;i<128;i++)if(!emitterActive[i]){descriptors[i]=*d;emitterActive[i]=true;return i;}
+ return PARTICLE_EMITTER_INVALID;
+}
+void ParticleManager_DestroyEmitter(ParticleEmitterHandle h){if(h==PARTICLE_EMITTER_INVALID)return;assert(h>=0&&h<128&&emitterActive[h]);emitterActive[h]=false;}
+ParticleEmitterStatus ParticleManager_GetEmitterStatus(ParticleEmitterHandle h){return h>=0&&h<128&&emitterActive[h]?PARTICLE_EMITTER_OK:PARTICLE_EMITTER_INVALID_HANDLE;}
+void ParticleManager_EmitBatch(ParticleEmitterHandle h,const ParticleConfig *p,int n){assert(emitterActive[h]);for(int i=0;i<n;i++){assert(particleCount<4096);particles[particleCount++]=p[i];}}
+bool ParticleManager_GetSurfaceStream(ParticleEmitterHandle h,ParticleRenderStream *out){*out=(ParticleRenderStream){.emitter=h};return true;}
+MotionFieldHandle MotionFields_CreateField(const FieldDesc *d){if(failField)return 0;capturedField=*d;return ++fieldCount;}
+void MotionFields_Stop(MotionFieldHandle h){assert(h);fieldStopped++;}
+int TrailRibbon_Spawn(const TrailRibbonConfig *r){assert(ribbonCount<4096);ribbons[ribbonCount]=*r;return ribbonCount++;}
+TrailRibbonConfig TrailRibbon_Default(void){return (TrailRibbonConfig){.nodeCount=16,.tailDirection={-1,0,0},.lengthM=.5f,.widthM=.05f,.lifetimeSec=1,.color=WHITE,.material=TrailRibbonMaterial_Default()};}
+const VFX_ElementMaterial *VFX_Material(VC_MaterialId id){(void)id;static VFX_ElementMaterial m={.body={180,200,240,255}};return &m;}
+Vector3 GetBezierPoint(Vector3 p,Vector3 a,Vector3 b,Vector3 q,float t){float u=1-t;return MotionVec_Add(MotionVec_Add(MotionVec_Scale(p,u*u*u),MotionVec_Scale(a,3*u*u*t)),MotionVec_Add(MotionVec_Scale(b,3*u*t*t),MotionVec_Scale(q,t*t*t)));}
+FieldDesc MotionField_Default(void){return (FieldDesc){.transform=FieldTransform_Identity(),.receiverMask=MOTION_RECEIVER_ALL,.volume={.shape=FIELD_SPHERE}};}
+static Matrix MatrixScale(float x,float y,float z){return (Matrix){.m0=x,.m5=y,.m10=z,.m15=1};}
+static Matrix MatrixTranslate(float x,float y,float z){return (Matrix){.m0=1,.m5=1,.m10=1,.m15=1,.m12=x,.m13=y,.m14=z};}
+static Matrix MatrixMultiply(Matrix a,Matrix b){a.m12=b.m12;a.m13=b.m13;a.m14=b.m14;return a;}
+static Vector3 Vector3Transform(Vector3 p,Matrix m){return (Vector3){m.m0*p.x+m.m12,m.m5*p.y+m.m13,m.m10*p.z+m.m14};}
+static Mesh GenMeshSphere(float r,int rings,int slices){(void)r;(void)rings;(void)slices;return (Mesh){0};}
+static void UnloadMesh(Mesh m){(void)m;}
+void MeshAdjacency_Build(MeshAdjacency *a,Mesh m){(void)m;*a=(MeshAdjacency){.count=2,.vertices={{1,0,0},{-1,0,0}},.neighborCount={1,1},.neighbors={{1},{0}}};}
+Vector3 MeshAdjacency_SampleVertex(const MeshAdjacency *a){(void)a;assert(0);return (Vector3){0};}
+Vector3 MeshAdjacency_SampleEdge(const MeshAdjacency *a){(void)a;assert(0);return (Vector3){0};}
+static void Near(float a,float b){assert(fabsf(a-b)<.0001f);}
+'''
+MAIN = r'''
+static int ActiveEmitters(void){int n=0;for(int i=0;i<128;i++)n+=emitterActive[i];return n;}
+static int ActiveCasts(void){int n=0;for(int i=0;i<VC_GUIDED_MAX_STREAMS;i++)n+=s_guidedStreams[i].active;return n;}
+static void Reset(void){assert(!ActiveCasts()&&!ActiveEmitters());EmissionSystem_Init();particleCount=ribbonCount=fieldCount=fieldStopped=0;failEmitter=failField=false;}
+static bool Ignore(void *u,const EmissionSpawn *s){(void)u;(void)s;return true;}
+int main(void) {
+ Reset();
+ VFX_GuidedMotionConfig c=VFX_GuidedMotion_DefaultConfig();
+ assert(c.output==VFX_GUIDED_BOTH);
+ assert(!VC_GuidedUsesTimedEmission(&c)&&VC_GuidedInitialBurstCount(&c)==c.count);
+ c.count=10;c.trailCount=4;c.emitDuration=1;c.formationRadius=.2f;
+ MotionFieldHandle h=VFX_ComposeGuidedMotionEx(&c);
+ assert(h&&particleCount==0&&ribbonCount==0&&ActiveCasts()==1);
+ assert(capturedField.receiverMask&MOTION_RECEIVER_TRAIL);
+ VC_GuidedMotion_Update(0);VC_GuidedMotion_Update(NAN);assert(particleCount==0&&ribbonCount==0);
+ VC_GuidedMotion_Update(.25f);assert(particleCount==2&&ribbonCount==1);
+ MotionFields_Stop(h);c.count=2048;c.trailCount=64;c.source=(Vector3){999,999,999};
+ for(int i=0;i<3;i++)VC_GuidedMotion_Update(.25f);
+ assert(particleCount==10&&ribbonCount==4&&!ActiveCasts()&&!ActiveEmitters());
+ for(int i=0;i<10;i++){
+   assert(MotionVec_Length(MotionVec_Sub(particles[i].position,(Vector3){-2,1,0}))<=.2001f);
+   assert(particles[i].physics.receiveMotionFields&&particles[i].physics.spatialMotionOnly&&!particles[i].physics.initialGuide);
+   Near(particles[i].position.x,particles[i].physics.position.x);
+ }
+ for(int i=0;i<4;i++){
+   assert(MotionVec_Length(MotionVec_Sub(ribbons[i].headPosition,(Vector3){-2,1,0}))<=.2001f);
+   Near(ribbons[i].headPosition.x,particles[i].position.x);
+   assert(ribbons[i].mode==TRAIL_RIBBON_FREE);
+ }
+ assert(fieldStopped==1); /* End of births does not stop the independent field. */
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.count=2048;c.trailCount=4;c.emitDuration=0;
+ assert(VFX_ComposeGuidedMotionEx(&c));assert(particleCount==2048&&ribbonCount==4&&!ActiveCasts()&&!ActiveEmitters());
+ Reset();c.emitDuration=1;assert(VFX_ComposeGuidedMotionEx(&c));assert(particleCount==0&&ribbonCount==0);
+ VC_GuidedMotion_Update(20);assert(particleCount==2048&&ribbonCount==4&&!ActiveCasts());
+ /* Explicit source, body and templates are copied before the caller mutates them. */
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.count=2;c.trailCount=2;c.emitDuration=1;
+ ParticleDynamicsProfile body={.inverseMassKg=23,.gravityScale=-.2f};
+ ParticleConfig particle={.position={8,9,10},.lifetime=.7f,.radius=.037f,.physics={.dynamics=&body}};
+ TrailRibbonConfig ribbon=TrailRibbon_Default();ribbon.mode=TRAIL_RIBBON_HEAD_ANCHORED;
+ ribbon.attachment=1234;ribbon.lifetimeSec=9;ribbon.widthM=.019f;ribbon.backend=TRAIL_RIBBON_GPU_ONLY;
+ ParticleEmissionSource source={.type=PARTICLE_SOURCE_POINT,.point={2,3,4}};
+ c.particleTemplate=&particle;c.trailTemplate=&ribbon;c.emissionSource=&source;
+ assert(VFX_ComposeGuidedMotionEx(&c));
+ particle.radius=99;particle.lifetime=99;body.inverseMassKg=99;ribbon.attachment=99;ribbon.widthM=99;source.point.x=99;
+ VC_GuidedMotion_Update(.5f);
+ assert(particleCount==1&&ribbonCount==1);Near(particles[0].radius,.037f);Near(particles[0].lifetime,.7f);
+ Near(particles[0].physics.dynamics->inverseMassKg,23);Near(particles[0].position.x,2);
+ assert(ribbons[0].attachment==1234&&ribbons[0].mode==TRAIL_RIBBON_HEAD_ANCHORED&&ribbons[0].backend==TRAIL_RIBBON_GPU_ONLY);
+ Near(ribbons[0].widthM,.019f);Near(ribbons[0].lifetimeSec,9);Near(ribbons[0].headPosition.x,2);
+ VC_GuidedMotion_Update(1);assert(particleCount==2&&ribbonCount==2&&!ActiveCasts());
+ /* Default attached ribbons retain external anchor ownership; trails-only needs no particle allocator. */
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;c.trailCount=3;c.trailAttachment=4321;
+ failEmitter=true;assert(VFX_ComposeGuidedMotionEx(&c));assert(!ActiveEmitters()&&particleCount==0&&ribbonCount==3);
+ assert(ribbons[0].mode==TRAIL_RIBBON_HEAD_ANCHORED&&ribbons[0].attachment==4321);
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.count=5;c.trailCount=3;
+ assert(VFX_ComposeGuidedParticleEx(&c));assert(particleCount==5&&ribbonCount==0);
+ assert(VFX_GuidedParticle_DefaultConfig().output==VFX_GUIDED_PARTICLES);
+ /* Failure must release every cast/scheduler/particle handle acquired so far. */
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.count=1;c.trailCount=1;c.emitDuration=1;
+ failField=true;assert(!VFX_ComposeGuidedMotionEx(&c)&&!ActiveCasts()&&!ActiveEmitters()&&fieldStopped==0);
+ failField=false;failEmitter=true;assert(!VFX_ComposeGuidedMotionEx(&c)&&!ActiveCasts()&&!ActiveEmitters()&&fieldStopped==1);
+ failEmitter=false;
+ EmissionHandle held[EMITTER_SCHEDULER_CAPACITY];
+ EmissionConfig cfg={.schedule=EMISSION_BURST,.count=1,.sink=Ignore};
+ for(int i=0;i<EMITTER_SCHEDULER_CAPACITY-1;i++){held[i]=Emission_Create(&cfg,(Vector3){0});assert(held[i]);}
+ assert(!VFX_ComposeGuidedMotionEx(&c)&&!ActiveCasts()&&!ActiveEmitters()&&fieldStopped==2);
+ held[EMITTER_SCHEDULER_CAPACITY-1]=Emission_Create(&cfg,(Vector3){0});assert(held[EMITTER_SCHEDULER_CAPACITY-1]);
+ assert(!Emission_Create(&cfg,(Vector3){0}));
+ for(int i=0;i<EMITTER_SCHEDULER_CAPACITY;i++)assert(Emission_Destroy(held[i]));
+ for(int i=0;i<VC_GUIDED_MAX_STREAMS;i++)assert(VFX_ComposeGuidedMotionEx(&c));
+ int before=fieldCount;assert(!VFX_ComposeGuidedMotionEx(&c)&&fieldCount==before);
+ VC_GuidedMotion_Update(1);assert(!ActiveCasts()&&!ActiveEmitters());
+ assert(VFX_ComposeGuidedMotionEx(&c));VC_GuidedMotion_Update(1);
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.count=c.trailCount=0;
+ assert(VFX_ComposeGuidedMotionEx(&c)&&!ActiveCasts()&&!ActiveEmitters());
+ c.output=99;assert(!VFX_ComposeGuidedMotionEx(&c));
+ puts("Guided Motion production composition: independent totals, copied ownership, shared sources, compatibility and rollback PASS");
+}
+'''
+
+with tempfile.TemporaryDirectory(prefix='wuxing-guided-motion-') as temp:
+    p = pathlib.Path(temp)
+    code = STUBS + CONFIG
+    code += '\n#include "core/emitter/emitter_sources.c"\n#include "core/emitter/particle_source.c"\n#include "core/emitter/emitter.c"\n#include "core/emitter/emitter_sinks.c"\n'
+    code += '\n#include "core/composition/common/vc_guided_motion.inl"\n' + MAIN
+    (p / 'test.c').write_text(code)
+    subprocess.run(['cc', '-std=c99', '-Wall', '-Wextra', '-I'+str(ROOT),
+                    '-I'+str(ROOT/'core/tests/stubs'), str(p/'test.c'), '-lm',
+                    '-o', str(p/'test')], check=True)
+    subprocess.run([str(p/'test')], check=True)

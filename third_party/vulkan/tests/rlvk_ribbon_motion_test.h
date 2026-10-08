@@ -33,8 +33,11 @@ static void runRibbonMotionParity(const char *root, const char *fixture)
     }
     CHECK(nodeBytes == (size_t)count * 60 * 48, "ribbon fixture bounded node stride and capacity");
     if (nodeBytes != (size_t)count * 60 * 48) goto cleanup;
+    const char *shaderOverride = getenv("RLVK_RIBBON_SHADER");
     snprintf(path, sizeof(path), "%s/core/trails/shaders/trail_ribbon.comp", root);
-    char *source = motionReadShader(root, path, 0);
+    size_t overrideSize = 0;
+    char *source = shaderOverride ? (char *)motionReadFile(shaderOverride, &overrideSize)
+                                  : motionReadShader(root, path, 0);
     CHECK(source != NULL, "production ribbon shader includes expanded");
     if (!source) goto cleanup;
     double compileStart = motionTestTime();
@@ -51,18 +54,19 @@ static void runRibbonMotionParity(const char *root, const char *fixture)
     CHECK(dtLocation >= 0 && timeLocation >= 0 && slotLocation >= 0,
           "production ribbon uniforms reflected");
     if (dtLocation < 0 || timeLocation < 0 || slotLocation < 0) { rlDisableShader(); goto cleanup; }
+    int batch = getenv("RLVK_RIBBON_BATCH") && atoi(getenv("RLVK_RIBBON_BATCH")) != 0;
     double dispatchStart = motionTestTime();
     for (unsigned int step = 0; step < steps; step++)
     {
         float sampleTime = time + step * dt;
         rlSetUniform(dtLocation, &dt, RL_SHADER_UNIFORM_FLOAT, 1);
         rlSetUniform(timeLocation, &sampleTime, RL_SHADER_UNIFORM_FLOAT, 1);
-        for (int slot = 0; slot < (int)count; slot++)
+        for (int slot = batch ? -1 : 0; slot < (batch ? 0 : (int)count); slot++)
         {
             rlSetUniform(slotLocation, &slot, RL_SHADER_UNIFORM_INT, 1);
             for (int binding = 0; binding < 7; binding++)
                 if (binding != 2) rlBindShaderBuffer(buffers[binding], binding);
-            rlComputeShaderDispatch(1, 1, 1);
+            rlComputeShaderDispatch(batch ? count : 1, 1, 1);
         }
     }
     rlDisableShader();
@@ -98,6 +102,48 @@ static void runRibbonMotionParity(const char *root, const char *fixture)
            count, steps, maximumError, tolerance);
     CHECK(finite, "production ribbon positions and velocities finite");
     CHECK(close, "production ribbon GPU agrees with CPU solver");
+    const char *iterationsEnv = getenv("RLVK_RIBBON_BENCHMARK");
+    unsigned int iterations = iterationsEnv ? (unsigned int)atoi(iterationsEnv) : 0;
+    if (finite && close && iterations > 0 && iterations <= 1000)
+    {
+        unsigned int dispatchesPerFrame = batch ? 1 : count;
+        unsigned int capacityFrames = (RLVK_COMPUTE_SETS_PER_FRAME - 8) / dispatchesPerFrame;
+        if (iterations > capacityFrames) iterations = capacityFrames;
+        // Resident state, fixed dt, no per-frame uploads/readbacks. A final drain
+        // includes device execution; wall time is a host proxy, not GPU timing.
+        for (int sample = 0; sample < 6; sample++)
+        {
+            // The previous synchronized readback completed every descriptor user.
+            // Headless batches have no present/fence lifecycle to reset this pool.
+            VkResult reset = vkResetDescriptorPool(RLVK.device,
+                RLVK.computeDescPools[RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT], 0);
+            CHECK(reset == VK_SUCCESS, "drained ribbon benchmark descriptor pool reset");
+            if (reset != VK_SUCCESS) break;
+            rlEnableShader(program);
+            double start = motionTestTime();
+            for (unsigned int frame = 0; frame < iterations; frame++)
+            {
+                float sampleTime = time + (steps + sample * iterations + frame) * dt;
+                rlSetUniform(dtLocation, &dt, RL_SHADER_UNIFORM_FLOAT, 1);
+                rlSetUniform(timeLocation, &sampleTime, RL_SHADER_UNIFORM_FLOAT, 1);
+                for (int slot = batch ? -1 : 0; slot < (batch ? 0 : (int)count); slot++)
+                {
+                    rlSetUniform(slotLocation, &slot, RL_SHADER_UNIFORM_INT, 1);
+                    for (int binding = 0; binding < 7; binding++)
+                        if (binding != 2) rlBindShaderBuffer(buffers[binding], binding);
+                    rlComputeShaderDispatch(batch ? count : 1, 1, 1);
+                }
+            }
+            rlDisableShader();
+            double recordingEnd = motionTestTime();
+            rlReadShaderBuffer(buffers[0], actual, nodeBytes, 0);
+            printf("      ribbon resident host proxy: ribbons=%u frames=%u batch=%d sample=%d warmup=%d wall=%.6f ms/frame recording=%.6f ms/frame drain=%.3f ms\n",
+                   count, iterations, batch, sample, sample == 0,
+                   (motionTestTime() - start) * 1000 / iterations,
+                   (recordingEnd - start) * 1000 / iterations,
+                   (motionTestTime() - recordingEnd) * 1000);
+        }
+    }
 cleanup:
     free(actual); free(expected);
     if (program && program != 0xffffffffu) rlUnloadShaderProgram(program);

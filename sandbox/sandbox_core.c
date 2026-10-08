@@ -608,13 +608,13 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         *outMouseTarget = (Vector3){0};
     }
 
-    // [J] — Bắn Guided Particle VFX (bay tới mục tiêu rồi cuốn theo hệ thống Gió Wind System)
+    // [J] — Bắn Guided Motion VFX (bay tới mục tiêu rồi cuốn theo hệ thống Gió Wind System)
     if (IsKeyPressed(KEY_J)) {
         Vector3 castSocket = Vector3Add(player->position, (Vector3){ 0.0f, 1.0f, 0.0f });
         Vector3 target = (outMouseTarget && (outMouseTarget->x != 0.0f || outMouseTarget->z != 0.0f))
                          ? *outMouseTarget : enemy->position;
-        VFX_ComposeGuidedParticle(castSocket, target);
-        TraceLog(LOG_INFO, "SANDBOX: Cast Guided Particle VFX -> target (%.1f, %.1f, %.1f)", target.x, target.y, target.z);
+        VFX_ComposeGuidedMotion(castSocket, target);
+        TraceLog(LOG_INFO, "SANDBOX: Cast Guided Motion VFX -> target (%.1f, %.1f, %.1f)", target.x, target.y, target.z);
     }
 
     // 2. DI CHUYỂN PLAYER (WASD & KEYBOARD / JOYSTICK)
@@ -1150,7 +1150,7 @@ void DrawSandboxHUD(void) {
     DrawTextEx(defaultFont, "- Z / C Key      : Basic Attack (Spawn Linear Gust & Radial Shockwave)", (Vector2){ hudX + 25, hudY + 173 }, 10, 1.0f, LIGHTGRAY);
     DrawTextEx(defaultFont, TextFormat("- F8 / 8 Key     : Toggle Wind Debug Gizmo [%s]", s_windDebugEnabled ? "ON" : "OFF"), (Vector2){ hudX + 25, hudY + 188 }, 10, 1.0f, s_windDebugEnabled ? LIME : LIGHTGRAY);
     DrawTextEx(defaultFont, TextFormat("- F9 / 9 Key     : Cycle Atmosphere [%s]", Atmosphere_GetMode() == ATMO_MODE_WAR_EMBERS ? "War Embers (Tan tro)" : "Moonlight Dust (Bui trang)"), (Vector2){ hudX + 25, hudY + 203 }, 10, 1.0f, ORANGE);
-    DrawTextEx(defaultFont, "- J Key          : Cast Guided Particle (Travel -> Target -> Wind Flow)", (Vector2){ hudX + 25, hudY + 218 }, 10, 1.0f, YELLOW);
+    DrawTextEx(defaultFont, "- J Key          : Cast Guided Motion (Travel -> Target -> Wind Flow)", (Vector2){ hudX + 25, hudY + 218 }, 10, 1.0f, YELLOW);
     DrawTextEx(defaultFont, TextFormat("- F10 / 0 Key    : Switch Map [%s]", MapManager_GetName(MapManager_GetActiveIndex())), (Vector2){ hudX + 25, hudY + 233 }, 10, 1.0f, GREEN);
     DrawTextEx(defaultFont, "- Left Mouse     : Cast Selected Element Skill", (Vector2){ hudX + 25, hudY + 248 }, 10, 1.0f, LIGHTGRAY);
 }

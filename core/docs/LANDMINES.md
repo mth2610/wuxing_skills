@@ -4007,6 +4007,7 @@ World-space GPU ribbon camera transforms: see `ENGINE_LANDMINES.md`,
 | 2026-10-08 | Codex | GPU ribbon camera pointer | ENGINE_LANDMINES.md; core/trails/trail_ribbon_gpu.c | Ground-truth |
 | 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Physical guidance support and implicit response | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
+| 2026-10-08 | Codex | Parallel ribbon field sampling and batched submission | core/trails/shaders/trail_ribbon.comp; core/trails/trail_ribbon_gpu.c; core/tests/ribbon_gpu_batch_test.c | Ground-truth |
 | 2026-10-07 | Codex | Guided route lifetime from transit estimate | core/composition/common/vc_guided_particle.inl; core/tests/test_guided_config.py | Ground-truth |
 | 2026-10-07 | Codex | Timed Guided total-count emission | core/composition/common/vc_guided_particle.inl; core/composition/vc_emission.h; core/tests/test_guided_config.py | Ground-truth |
 | 2026-10-07 | Codex | Independent physical-field lane state | core/motion/motion_fields.c; core/motion/motion_fields.h; core/tests/motion_fields_test.c | Ground-truth |
@@ -4070,3 +4071,23 @@ accounting for the generated path length or particle response time.
 **Rule.** Keep a routed field active through its emission window, estimated
 arc-length/speed transit, response allowance and fade; treat the authored
 duration as a minimum/fallback. Guard: `core/tests/test_guided_config.py`.
+
+
+## Parallelize ribbon field sampling without reordering constraints (08/10/2026)
+
+**Symptom.** A connected ribbon becomes expensive with typed path fields even
+without particles; additional ribbons multiply the cost.
+
+**Cause.** `core/trails/shaders/trail_ribbon.comp` originally evaluated every
+node and solved its chain in one invocation. `core/trails/trail_ribbon_gpu.c`
+also uploaded controls and dispatched separately for each ribbon, leaving node
+Motion work serial and preventing one batch from filling the device.
+
+**Rule.** Assign one workgroup per chain, evaluate independent node Motion in
+parallel, then use shared-memory barriers before projecting constraints in the
+original order on lane zero. Stage controls and dispatch once after TrailSystem
+lifetime/attachment processing. Preserve per-node receiver lanes, fixed steps,
+node resolution and iteration counts. Guard submission/release semantics with
+`core/tests/ribbon_gpu_batch_test.c`; validate numerical state on the device with
+`third_party/vulkan/tests/rlvk_ribbon_motion_test.h`. Report synchronized host
+wall-time probes separately from GPU timestamps and visible frame timings.

@@ -6,6 +6,7 @@
 
 #define EMITTER_SCHEDULER_CAPACITY 128
 #define EMITTER_MAX_SPAWNS_PER_STEP 256
+#define EMITTER_MAX_CALLBACK_BUDGET 2048
 typedef uint64_t EmissionHandle;
 #define EMISSION_HANDLE_INVALID ((EmissionHandle)0)
 typedef enum EmissionKind {
@@ -42,6 +43,7 @@ typedef struct EmissionConfig {
     EmissionSinkFn sink;
     void *sinkUser;
     const void *spawnTemplate;
+    uint32_t callbackBudget; /* 0 = 256; explicit budgets may reach 2048. */
 } EmissionConfig;
 typedef struct EmissionStats {
     uint64_t scheduled, accepted, rejected, dropped;
@@ -50,7 +52,8 @@ typedef struct EmissionStats {
 /* Init invalidates existing handles. Explicit per-handle stepping, dt >= 0.
  * Burst runs on first Step. Stopped/completed slots persist until Destroy.
  * Stop ceases births; children drain in their component system independently.
- * At most 256 callbacks/Step; overflow births are consumed and counted.
+ * Default 256 callbacks/Step; explicit callbackBudget is bounded at 2048.
+ * Overflow births are consumed and counted.
  * Counters saturate. Single-threaded, fixed pool, no component simulation. */
 void EmissionSystem_Init(void);
 void EmissionSystem_Unload(void);

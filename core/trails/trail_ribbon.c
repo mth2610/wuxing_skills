@@ -7,6 +7,7 @@
 #include "core/vfx_render.h"
 #include "rlgl.h"
 #include <string.h>
+#include <stdlib.h>
 
 typedef struct {
     bool active;
@@ -77,7 +78,12 @@ int TrailRibbon_Spawn(const TrailRibbonConfig *c) {
     int id=SpawnTrailEntity(legacy);
     if(id<0) {if(gpu>=0) TrailRibbonGpu_Kill(gpu);return -1;}
     memset(r,0,sizeof(*r));r->active=true;r->trailId=id;r->gpuSlot=gpu;r->config=*c;r->state=state;
-    CopyRenderHistory(r,GetTrail(id));return id;
+    CopyRenderHistory(r,GetTrail(id));
+    if(getenv("WUXING_TRAIL_MOTION_TRACE"))
+        TraceLog(LOG_INFO,"TRAIL_MOTION: trail=%d backend=%s nodes=%d mode=%s",id,
+            gpu>=0?"GPU":"CPU",state.count,
+            state.mode==TRAIL_RIBBON_HEAD_ANCHORED?"anchored":"free");
+    return id;
 }
 bool TrailRibbon_ReleaseHead(int id) {
     ModernRibbon *r=FindRibbon(id);if(!r) return false;
@@ -99,6 +105,7 @@ void TrailRibbonSystem_Reset(void) {
     memset(s_ribbons,0,sizeof(s_ribbons));TrailAttachmentRegistry_Reset(&s_attachments);
 }
 void TrailRibbonSystem_BeginUpdate(float dt,float time) {s_time=time;TrailRibbonGpu_BeginUpdate(dt,time);}
+void TrailRibbonSystem_EndUpdate(void) {TrailRibbonGpu_EndUpdate();}
 static void SampleMotion(void *user,Vector3 position,Vector3 velocity,float dt,int node,float offset,
     FieldSample *sample,Vector3 *air) {
     ModernRibbon *r=user;const MotionBodyProfile *profile=&r->config.material.body;
