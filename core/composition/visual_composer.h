@@ -48,6 +48,11 @@
 void VFX_Compose_Update(float dt);
 void VFX_Compose_Draw3D(Camera3D cam);
 
+/* Integration fixture: shared field, free/head-anchored ribbons and timed
+ * particle emission. Releases the head at 2s and repeats every 4s. */
+int VFX_ComposeMotionFieldRibbons(Vector3 pos);
+void VFX_KillMotionFieldRibbons(int handle);
+
 // ── Primary: one-shot lightning arc ────────────────────────────────────────
 // A bounded, flickering geometric arc between arbitrary world-space endpoints.
 // `from` may be the character's cast socket and `to` the hit/click point. The

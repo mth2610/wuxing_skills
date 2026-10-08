@@ -1,7 +1,6 @@
 #include "core/particles/particle_manager.h"
 
 #include "core/particles/gpu/particle_gpu_legacy.h"
-#include "core/mesh_adjacency.h"
 #include "core/particles/particle_field_capabilities.h"
 #include "rlgl.h"
 #include "raymath.h"
@@ -26,14 +25,6 @@ static int ParticleManager_NextOwnerId(void)
     int id = s_nextOwnerId++;
     if (s_nextOwnerId <= 0) s_nextOwnerId = 1;
     return id;
-}
-
-static bool ParticleManager_IsZeroMatrix(Matrix m)
-{
-    return m.m0 == 0.0f && m.m1 == 0.0f && m.m2 == 0.0f && m.m3 == 0.0f &&
-           m.m4 == 0.0f && m.m5 == 0.0f && m.m6 == 0.0f && m.m7 == 0.0f &&
-           m.m8 == 0.0f && m.m9 == 0.0f && m.m10 == 0.0f && m.m11 == 0.0f &&
-           m.m12 == 0.0f && m.m13 == 0.0f && m.m14 == 0.0f && m.m15 == 0.0f;
 }
 
 static bool ParticleManager_RequiresCpuFacing(const ParticleConfig *particle)
@@ -69,29 +60,11 @@ static Color ParticleManager_DefaultSpriteColor(Color color, bool defaultSprite)
 static void ParticleManager_ApplySource(ParticleEmitterRuntime *emitter,
                                         ParticleConfig *particle)
 {
-    const ParticleEmissionSource *source = &emitter->desc.source;
-    Vector3 position;
-    if (source->type == PARTICLE_SOURCE_CONFIG_POSITION) return;
-    if (source->type == PARTICLE_SOURCE_POINT) {
-        position = source->point;
-    } else if ((source->type == PARTICLE_SOURCE_MESH_VERTEX ||
-                source->type == PARTICLE_SOURCE_MESH_EDGE) &&
-               source->mesh && source->mesh->count > 0) {
-        position = source->type == PARTICLE_SOURCE_MESH_VERTEX
-                       ? MeshAdjacency_SampleVertex(source->mesh)
-                       : MeshAdjacency_SampleEdge(source->mesh);
-        if (!ParticleManager_IsZeroMatrix(source->transform))
-            position = Vector3Transform(position, source->transform);
-    } else {
-        if (!emitter->warned) {
-            emitter->warned = true;
-            TraceLog(LOG_WARNING, "ParticleManager: emitter '%s' has an invalid mesh source",
-                     emitter->desc.debugName ? emitter->desc.debugName : "unnamed");
-        }
-        return;
+    if (!Emission_ApplyParticleSource(&emitter->desc.source, particle) && !emitter->warned) {
+        emitter->warned = true;
+        TraceLog(LOG_WARNING, "ParticleManager: emitter '%s' has an invalid mesh source",
+                 emitter->desc.debugName ? emitter->desc.debugName : "unnamed");
     }
-    particle->position = position;
-    particle->physics.position = position;
 }
 
 static bool ParticleManager_GPUCanRun(unsigned int modules)

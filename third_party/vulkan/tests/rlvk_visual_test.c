@@ -1375,6 +1375,8 @@ static const char *sc_ui_after_rt(void)
 // (mirrors the GPU particle draw half: core/particles/shaders/gpu/particle_gpu_ssbo.vs
 // + compute/gpu_particle_system.c; the old core/shaders/particles.vs was deleted unused).
 // Guards: graphics set0 SSBO bindings, rlvkRebaseStorageBuffers, rlvkBindShaderSsbos.
+#include "rlvk_ribbon_strip_test.h"
+
 static const char *sc_ssbo_vs(void)
 {
     const char *VS =
@@ -3829,6 +3831,8 @@ static const Scenario SCENARIOS[] = {
     { "instanced",      sc_instanced },
     { "instanced_parameters", sc_instanced_parameters },
     { "ssbo_vs",        sc_ssbo_vs },
+    { "ribbon_gpu_strip", sc_ribbon_gpu_strip },
+    { "ribbon_gpu_world_strip", sc_ribbon_gpu_world_strip },
     { "liquid_cpu_capture", sc_liquid_cpu_capture },
     { "liquid_indexed_capture", sc_liquid_indexed_capture },
     { "buffer_update_order", sc_buffer_update_order },

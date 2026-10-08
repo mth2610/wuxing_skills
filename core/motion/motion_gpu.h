@@ -45,7 +45,7 @@ static inline void MotionGpu_PackField(const FieldDesc *d,MotionFieldHandle hand
   if(trajectoryCount>MOTION_PATH_MAX_POINTS) trajectoryCount=MOTION_PATH_MAX_POINTS;
   if(volumeCount>MOTION_PATH_MAX_POINTS) volumeCount=MOTION_PATH_MAX_POINTS;
   out->identity[0]=handle;out->identity[1]=(uint32_t)d->volume.shape;
-  out->identity[2]=d->receiverMask?d->receiverMask:MOTION_RECEIVER_ALL;
+  out->identity[2]=d->receiverMask?d->receiverMask:MOTION_RECEIVER_ALL_COMPONENTS;
   out->identity[3]=(d->preserveSphereOffsets?1u:0u)|(d->preservePathLanes?2u:0u)|(d->rotatePathLanes?4u:0u);
   out->volume=(Vector4){d->volume.radiusM,d->volume.coreFraction,age,d->flow.enabled?1:0};
   out->halfExtents=MotionGpu_V4(d->volume.halfExtentsM,(float)volumeCount);
@@ -78,17 +78,23 @@ static inline void MotionGpu_PackField(const FieldDesc *d,MotionFieldHandle hand
     g->procedural=(Vector4){l->procedural.turbulenceSpeedMps,l->procedural.swirlSpeedMps,l->procedural.eddyLengthM,0};
   }
 }
-static inline MotionGpuBody MotionGpu_PackBody(const ParticleDynamicsProfile *profile,
-    Vector3 acceleration,Vector3 force,bool captureOffsets,float windInfluence) {
-  ParticleDynamicsProfile fallback={.inverseMassKg=1,.windCouplingHz=3.5f,.windSusceptibility=windInfluence};
-  const ParticleDynamicsProfile *p=profile?profile:&fallback;
-  MotionGpuBody out={0};out.meta[0]=1;out.meta[1]=captureOffsets?1:0;out.meta[2]=MOTION_RECEIVER_PARTICLE;
+static inline MotionGpuBody MotionGpu_PackBodyForReceiver(const MotionBodyProfile *profile,
+    Vector3 acceleration,Vector3 force,bool captureOffsets,float windInfluence,unsigned int receiverMask) {
+  MotionBodyProfile fallback={.inverseMassKg=1,.windCouplingHz=3.5f,.windSusceptibility=windInfluence};
+  const MotionBodyProfile *p=profile?profile:&fallback;
+  MotionGpuBody out={0};out.meta[0]=1;out.meta[1]=captureOffsets?1:0;out.meta[2]=receiverMask?receiverMask:MOTION_RECEIVER_ALL_COMPONENTS;
   out.body0=(Vector4){p->inverseMassKg>0?p->inverseMassKg:1,p->gravityScale,p->linearDragPerSecond,p->terminalSpeedMps};
   out.body1=(Vector4){p->windAccelerationScale,p->windCouplingHz,p->windSusceptibility,p->steeringFrequencyHz};
   out.body2=(Vector4){p->aerodynamicAreaM2,p->aerodynamicDragCoefficient,p->airDensityKgM3,p->densityKgM3};
   out.body3=(Vector4){p->maxSteeringAccelMps2,0,0,0};
   out.acceleration=MotionGpu_V4(acceleration,0);out.force=MotionGpu_V4(force,0);
   return out;
+}
+/* Legacy particle adapter preserves its receiver selection and defaults. */
+static inline MotionGpuBody MotionGpu_PackBody(const MotionBodyProfile *profile,
+    Vector3 acceleration,Vector3 force,bool captureOffsets,float windInfluence) {
+  return MotionGpu_PackBodyForReceiver(profile,acceleration,force,captureOffsets,
+      windInfluence,MOTION_RECEIVER_PARTICLE);
 }
 /* Copies only world-space spatial fields. Captured legacy guides and their
  * callbacks remain a distinct CPU contract. Upload meta + active fields. */

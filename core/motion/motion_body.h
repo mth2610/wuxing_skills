@@ -2,8 +2,8 @@
 #define CORE_MOTION_BODY_H
 #include "core/motion/motion_path.h"
 #include "core/motion/physical_field.h"
-#include "core/particles/particle_dynamics.h"
-static inline BodyPhysicalProperties MotionBody_GetPhysicalProperties(const ParticleDynamicsProfile *p) {
+#include "core/motion/motion_profile.h"
+static inline BodyPhysicalProperties MotionBody_GetPhysicalProperties(const MotionBodyProfile *p) {
   BodyPhysicalProperties b={0};
   if(!p) return b;
   b.massKg=p->inverseMassKg>0?1/p->inverseMassKg:1;
@@ -13,7 +13,7 @@ static inline BodyPhysicalProperties MotionBody_GetPhysicalProperties(const Part
   b.dragCoefficient=p->aerodynamicDragCoefficient; b.immersionFraction=1;
   return b;
 }
-static inline MediumProperties MotionBody_GetMediumProperties(const ParticleDynamicsProfile *p) {
+static inline MediumProperties MotionBody_GetMediumProperties(const MotionBodyProfile *p) {
   MediumProperties m={0};
   if(!p) return m;
   m.densityKgM3=p->airDensityKgM3>0?p->airDensityKgM3:1.225f;
@@ -23,16 +23,16 @@ static inline MediumProperties MotionBody_GetMediumProperties(const ParticleDyna
 /* Shared translational integrator; callers sample fields and resolve their
  * own geometry contacts. Acceleration fields never depend on mass. */
 static inline Vector3 MotionBody_AdvanceVelocity(
-    Vector3 velocity, const ParticleDynamicsProfile *body, Vector3 acceleration,
+    Vector3 velocity, const MotionBodyProfile *body, Vector3 acceleration,
     Vector3 forceNewtons, Vector3 airflow, float dt) {
   if (!body || dt <= 0)
     return velocity;
   float inverseMass = body->inverseMassKg > 0 ? body->inverseMassKg : 1;
-  acceleration.y += ParticleDynamics_GravityAcceleration(body);
-  velocity = ParticleDynamics_ApplyAccelerationAndForce(
+  acceleration.y += MotionProfile_GravityAcceleration(body);
+  velocity = MotionProfile_ApplyAccelerationAndForce(
       velocity, acceleration, forceNewtons, inverseMass, dt);
   velocity =
-      ParticleDynamics_ApplyLinearDrag(velocity, body->linearDragPerSecond, dt);
+      MotionProfile_ApplyLinearDrag(velocity, body->linearDragPerSecond, dt);
   if (body->aerodynamicAreaM2 > 0 && body->aerodynamicDragCoefficient > 0) {
     /* Backward-Euler solution of quadratic drag after the external-force kick.
      * Unlike an exact drag-only split, this preserves terminal equilibrium
@@ -51,10 +51,10 @@ static inline Vector3 MotionBody_AdvanceVelocity(
             relative,
             2 / (1 + sqrtf(1 + 4 * k * MotionVec_Length(relative) * dt))));
   } else if (body->windCouplingHz > 0 && body->windSusceptibility > 0) {
-    velocity = ParticleDynamics_CoupleToAirflow(
+    velocity = MotionProfile_CoupleToAirflow(
         velocity, airflow, body->windCouplingHz * body->windSusceptibility, dt);
   }
-  return ParticleDynamics_ClampTerminalSpeed(velocity, body->terminalSpeedMps);
+  return MotionProfile_ClampTerminalSpeed(velocity, body->terminalSpeedMps);
 }
 static inline Vector3 MotionBody_ResponseMultiply(const FieldControllerResponse *r,Vector3 v) {
   return (Vector3){r->diagonal.x*v.x+r->offDiagonal.x*v.y+r->offDiagonal.y*v.z,
@@ -121,10 +121,10 @@ static inline Vector3 MotionBody_AdvanceControllers(Vector3 velocity,Vector3 ext
 /* Authored drag/buoyancy replace automatic material approximations so each
  * physical contribution is integrated exactly once. */
 static inline Vector3 MotionBody_AdvanceFieldVelocity(Vector3 velocity,
-    const ParticleDynamicsProfile *profile,Vector3 acceleration,Vector3 force,
+    const MotionBodyProfile *profile,Vector3 acceleration,Vector3 force,
     const FieldSample *sample,Vector3 ordinaryAir,float dt) {
   if(!profile || !sample) return velocity;
-  ParticleDynamicsProfile body=*profile;
+  MotionBodyProfile body=*profile;
   if(sample->hasDragForce) { body.aerodynamicAreaM2=0; body.windCouplingHz=0; }
   if(sample->hasBuoyancyForce) body.densityKgM3=0;
   Vector3 air=sample->mediumIsAbsolute?sample->mediumVelocityMps:
@@ -137,7 +137,7 @@ static inline Vector3 MotionBody_AdvanceFieldVelocity(Vector3 velocity,
       externalForce=MotionVec_Sub(externalForce,sample->controllers[i].sampledForceNewtons);
     Vector3 externalAcceleration=MotionVec_Add(MotionVec_Add(acceleration,
         sample->accelerationMps2),MotionVec_Scale(externalForce,inverseMass));
-    externalAcceleration.y+=ParticleDynamics_GravityAcceleration(&body);
+    externalAcceleration.y+=MotionProfile_GravityAcceleration(&body);
     velocity=MotionBody_AdvanceControllers(velocity,externalAcceleration,sample,inverseMass,dt);
     /* Reuse the existing material drag/terminal step without a second kick. */
     body.gravityScale=0;
@@ -153,6 +153,6 @@ static inline Vector3 MotionBody_AdvanceFieldVelocity(Vector3 velocity,
     velocity=MotionVec_Add(sample->dragMediumVelocityMps,
       MotionVec_Scale(relative,2/(1+sqrtf(1+4*k*MotionVec_Length(relative)*dt))));
   }
-  return ParticleDynamics_ClampTerminalSpeed(velocity,body.terminalSpeedMps);
+  return MotionProfile_ClampTerminalSpeed(velocity,body.terminalSpeedMps);
 }
 #endif

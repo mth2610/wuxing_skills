@@ -4,8 +4,8 @@
 /* Backend-neutral particle façade.  Descriptors are copied into a fixed
  * emitter pool; pointed-to ForceFields, curves, gradients and textures remain
  * caller-owned and must outlive every particle emitted from the emitter.
- * Physical profiles/shared Motion fields require CPU simulation. GPU_ONLY
- * rejects them; CPU rejects vector-texture fields instead of omitting layers.
+ * Modern spatial Motion supports GPU compute; captured guides/callbacks
+ * retain CPU routing. GPU_ONLY rejects unsupported combinations; CPU rejects vector-texture fields instead of omitting layers.
  * Query emitter status before emitting unsupported combinations. */
 #include "core/particles/particle_system.h"
 #include "raylib.h"
@@ -55,24 +55,7 @@ typedef enum ParticleModuleFlags {
     PARTICLE_MODULE_PATH_FOLLOW       = 1u << 11 /* GPU preferred; CPU parity */
 } ParticleModuleFlags;
 
-struct MeshAdjacency;
-typedef enum ParticleEmissionSourceType {
-    /* Backward-compatible default: use ParticleConfig.position. */
-    PARTICLE_SOURCE_CONFIG_POSITION = 0,
-    PARTICLE_SOURCE_POINT,
-    PARTICLE_SOURCE_MESH_VERTEX,
-    PARTICLE_SOURCE_MESH_EDGE
-} ParticleEmissionSourceType;
-
-/* Emitter-level source sampled once per emitted particle. Mesh modes use a
- * prebuilt MeshAdjacency, so spawning stays O(1); source data is caller-owned
- * and must outlive the emitter. */
-typedef struct ParticleEmissionSource {
-    ParticleEmissionSourceType type;
-    Vector3 point;
-    const struct MeshAdjacency *mesh;
-    Matrix transform;
-} ParticleEmissionSource;
+#include "core/emitter/particle_source.h"
 
 typedef struct ParticleEmitterDesc {
     ParticleSimulationPolicy simulationPolicy;

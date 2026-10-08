@@ -295,7 +295,7 @@ MotionFieldHandle MotionFields_CreateGuide(const MotionGuideDesc *d) {
       if(s_guides[i].desc.controller.maxForceNewtons<=0)
         s_guides[i].desc.controller=(GuideController){d->maxForceNewtons,1};
       if (!s_guides[i].desc.receiverMask)
-        s_guides[i].desc.receiverMask = MOTION_RECEIVER_ALL;
+        s_guides[i].desc.receiverMask = MOTION_RECEIVER_ALL_COMPONENTS;
       Motion_PublishWind();
       Motion_Trace("guide_created", s_guides[i].handle, (int)d->mode);
       return s_guides[i].handle;
@@ -310,7 +310,7 @@ MotionFieldHandle MotionFields_CreateTarget(const MotionTargetDesc *d) {
       s_targets[i] = (MotionTargetRuntime){
           .desc = *d, .handle = Motion_NewHandle(MOTION_FIELDS_MAX_GUIDES + i)};
       if (!s_targets[i].desc.receiverMask)
-        s_targets[i].desc.receiverMask = MOTION_RECEIVER_ALL;
+        s_targets[i].desc.receiverMask = MOTION_RECEIVER_ALL_COMPONENTS;
       Motion_CachePhysicalTarget(&s_targets[i]);
       Motion_Trace(
           "target_created", s_targets[i].handle,
@@ -638,7 +638,7 @@ bool MotionFields_GetAnchoredBounds(unsigned int mask, Vector3 *lo, Vector3 *hi)
     MotionTargetRuntime *t=&s_targets[i];
     if(!t->handle) continue;
     FieldDesc *d=t->typed?&t->physical:t->desc.usePhysicalField?&t->desc.physicalField:NULL;
-    if(!d || !((d->receiverMask?d->receiverMask:MOTION_RECEIVER_ALL) & mask)) continue;
+    if(!d || !((d->receiverMask?d->receiverMask:MOTION_RECEIVER_ALL_COMPONENTS) & mask)) continue;
     FieldTransform frame=FieldTrajectory_Transform(d,t->age);
     float radius=d->volume.shape==FIELD_BOX?MotionVec_Length(d->volume.halfExtentsM):d->volume.radiusM;
     if(d->volume.shape==FIELD_PATH_TUBE) {
@@ -765,7 +765,7 @@ FieldDesc MotionField_Default(void) {
   FieldDesc d={0};
   d.volume.shape=FIELD_SPHERE; d.volume.radiusM=1;
   d.transform=FieldTransform_Identity(); d.lifetime.durationSec=2;
-  d.receiverMask=MOTION_RECEIVER_ALL; d.flow.axis=(Vector3){0,1,0};
+  d.receiverMask=MOTION_RECEIVER_ALL_COMPONENTS; d.flow.axis=(Vector3){0,1,0};
   return d;
 }
 static bool Motion_ValidPhysical(const FieldDesc *d) {
@@ -822,7 +822,7 @@ MotionFieldHandle MotionFields_CreateField(const FieldDesc *d) {
     MotionTargetRuntime *t=&s_targets[i];
     *t=(MotionTargetRuntime){.physical=*d,.typed=true,
       .handle=Motion_NewHandle(MOTION_FIELDS_MAX_GUIDES+i)};
-    if(!t->physical.receiverMask) t->physical.receiverMask=MOTION_RECEIVER_ALL;
+    if(!t->physical.receiverMask) t->physical.receiverMask=MOTION_RECEIVER_ALL_COMPONENTS;
     if(d->volume.shape==FIELD_PATH_TUBE)
       MotionPath_Build(&t->physical.volume.path,d->volume.path.points,d->volume.path.count);
     if(d->trajectory.mode==FIELD_TRAJECTORY_PATH)
@@ -831,6 +831,17 @@ MotionFieldHandle MotionFields_CreateField(const FieldDesc *d) {
     return t->handle;
   }
   return MOTION_FIELD_INVALID;
+}
+
+bool MotionFields_SetTransform(MotionFieldHandle handle,const FieldTransform *transform) {
+  MotionTargetRuntime *target=Motion_FindTarget(handle);
+  if(!target||!target->typed||!transform) return false;
+  FieldDesc candidate=target->physical;
+  candidate.transform=*transform;
+  if(!Motion_ValidPhysical(&candidate)) return false;
+  target->physical.transform=*transform;
+  Motion_CachePhysicalTarget(target);
+  return true;
 }
 
 MotionFieldHandle MotionFields_SpawnStaticAttractor(Vector3 center, float radiusM,
@@ -996,7 +1007,7 @@ static void Motion_SamplePhysical(Vector3 p,Vector3 v,const BodyPhysicalProperti
       MotionTargetRuntime *t=&s_targets[i];
       if(!t->handle) continue;
       const FieldDesc *d=t->typed?&t->physical:t->desc.usePhysicalField?&t->desc.physicalField:NULL;
-      if(!d || !((d->receiverMask?d->receiverMask:MOTION_RECEIVER_ALL) & mask)) continue;
+      if(!d || !((d->receiverMask?d->receiverMask:MOTION_RECEIVER_ALL_COMPONENTS) & mask)) continue;
       /* Arc length bounds displacement even through curved paths. Expand
        * cached current support for earlier samples, retaining cheap culling. */
       float sweep=d->trajectory.mode==FIELD_TRAJECTORY_PATH?

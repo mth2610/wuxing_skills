@@ -3997,10 +3997,14 @@ spatial neighbor correlation across locations and phases, then inspect motion at
 the gameplay camera. Leave independently authored force/airflow scales intact.
 Guard: `TestCloudCoherence` in `core/tests/guidance_physics_test.c`.
 
+World-space GPU ribbon camera transforms: see `ENGINE_LANDMINES.md`,
+"GPU world-space draws must resolve the camera view explicitly".
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-08 | Codex | GPU ribbon camera pointer | ENGINE_LANDMINES.md; core/trails/trail_ribbon_gpu.c | Ground-truth |
 | 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Physical guidance support and implicit response | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
 | 2026-10-07 | Codex | Guided route lifetime from transit estimate | core/composition/common/vc_guided_particle.inl; core/tests/test_guided_config.py | Ground-truth |

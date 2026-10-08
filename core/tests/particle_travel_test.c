@@ -154,7 +154,8 @@ static void Test_GPUAndManagerWiring(void)
           "compute arrival uses a swept segment test");
     CHECK(Has("core/particles/gpu/particle_gpu_backend.c", "rlBindShaderBuffer(s_path_ssbo, 2)"),
           "path registry is bound once as a shared SSBO");
-    CHECK(Has("core/particles/particle_manager.c", "MeshAdjacency_SampleEdge"),
+    CHECK(Has("core/particles/particle_manager.c", "Emission_ApplyParticleSource") &&
+          Has("core/emitter/particle_source.c", "MeshAdjacency_SampleEdge"),
           "manager resolves mesh sources before backend submission");
     CHECK(Has("core/particles/gpu/particle_gpu_backend.c", "ParticleConfig impact = *s_impactRegistry[impactIndex]"),
           "GPU arrival mirror spawns the configured target-impact effect");

@@ -34,6 +34,7 @@ static int g_failures = 0;
 } while (0)
 
 #include "rlvk_particle_motion_test.h"
+#include "rlvk_ribbon_motion_test.h"
 
 static void testDiskCacheContract(const char *rejectedFile)
 {
@@ -350,8 +351,10 @@ int main(int argc, char **argv)
 
     if (argc == 4 && strcmp(argv[1], "--particle-motion") == 0)
         runParticleMotionParity(argv[2], argv[3]);
+    else if (argc == 4 && strcmp(argv[1], "--ribbon-motion") == 0)
+        runRibbonMotionParity(argv[2], argv[3]);
     else if (argc != 1)
-        CHECK(0, "usage: runtime_test [--particle-motion REPO_ROOT FIXTURE_DIR]");
+        CHECK(0, "usage: runtime_test [--particle-motion|--ribbon-motion REPO_ROOT FIXTURE_DIR]");
 
     rlglClose();
     printf("=== done: %d failure(s) ===\n", g_failures);

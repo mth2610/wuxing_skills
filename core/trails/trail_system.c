@@ -1,4 +1,5 @@
 #include "trail_system.h"
+#include "core/trails/trail_ribbon.h"
 #include "core/time_fx.h"   // TimeFX_Elapsed — pinned clock; GetTime() is wall clock
 #include "core/force_field.h"
 #include "core/composition/visual_composer.h"
@@ -1103,6 +1104,7 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
 
 void InitTrailSystem(void)
 {
+    TrailRibbonSystem_Reset();
     /* The module loads its own default material now. It used to be handed one
      * Shader by main.c, which cannot work once the shader is a permutation: the
      * caller would have to know which blend each trail ends up using. */
@@ -1143,6 +1145,7 @@ TrailEntity *GetTrail(int id) { return (id < 0 || id >= MAX_TRAIL_PARTICLES) ? N
 
 static void KillTrailInternal(int id)
 {
+    TrailRibbonSystem_Kill(id);
     if (trailPool[id].onDeath)
         trailPool[id].onDeath(trailPool[id].position, trailPool[id].scale);
     trailPool[id].active = false;
@@ -1576,6 +1579,7 @@ void Trail_SetFollowerOrbit(int id, float radius, float speed, Vector3 axis, flo
 void UpdateTrailSystem(float dt)
 {
     float time = TimeFX_Elapsed();
+    TrailRibbonSystem_BeginUpdate(dt, time);
 
     for (int a = 0; a < activeCount;)
     {
@@ -1588,6 +1592,8 @@ void UpdateTrailSystem(float dt)
             KillTrailInternal(i);
             continue;
         }
+
+        if (TrailRibbonSystem_Update(i, dt)) { a++; continue; }
 
         // Keep an unscaled clock. The shader applies uSpeed exactly once;
         // scaling here too made flow-map speed unintentionally quadratic.
@@ -2653,6 +2659,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
     for (int a = 0; a < activeCount; a++)
     {
         TrailEntity *t = &trailPool[s_activeIds[a]];
+        if (TrailRibbonSystem_IsModern(s_activeIds[a])) continue;
 
         // Tối ưu culling sớm ngay tại vòng lặp thu thập
         if (!IsTrailVisible(t, camera))
@@ -2871,6 +2878,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         for (int a = 0; a < activeCount; a++)
         {
             TrailEntity *t = &trailPool[s_activeIds[a]];
+            if (TrailRibbonSystem_IsModern(s_activeIds[a])) continue;
             if (!IsTrailVisible(t, camera))
                 continue;
 
@@ -2903,6 +2911,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
     rlDrawRenderBatchActive();
     rlEnableDepthMask();
     s_drawLayerFilter = -1;
+    TrailRibbonSystem_Draw(camera, layerFilter);
 }
 
 void DrawTrailEntities(Camera3D camera) { DrawTrailEntitiesLayer(camera, -1); }
@@ -2911,6 +2920,7 @@ void DrawTrailEntitiesEmission(Camera3D camera) { DrawTrailEntitiesLayer(camera,
 
 void UnloadTrailSystem(void)
 {
+    TrailRibbonSystem_Unload();
     // Gọi callback onDeath cho tất cả các entity đang hoạt động trước khi dọn dẹp
     for (int i = 0; i < activeCount; i++)
     {

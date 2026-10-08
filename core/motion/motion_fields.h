@@ -4,7 +4,7 @@
 #include "core/motion/motion_flow.h"
 #include "core/motion/physical_field.h"
 #include "core/motion/motion_path.h"
-#include "core/particles/particle_dynamics.h"
+#include "core/motion/motion_profile.h"
 #include "core/wind/wind_types.h"
 #include <stdint.h>
 #define MOTION_FIELDS_MAX_GUIDES 16
@@ -14,10 +14,15 @@
  * fails rather than replacing an unrelated live field. */
 typedef uint32_t MotionFieldHandle;
 #define MOTION_FIELD_INVALID ((MotionFieldHandle)0)
+/* Bit masks are stable. Legacy ALL intentionally excludes newly added
+ * components; zero descriptor masks select ALL_COMPONENTS. */
 typedef enum {
   MOTION_RECEIVER_PARTICLE = 1,
   MOTION_RECEIVER_FOLIAGE = 2,
-  MOTION_RECEIVER_ALL = 3
+  MOTION_RECEIVER_ALL = 3, /* Historical particle + foliage mask. */
+  MOTION_RECEIVER_TRAIL = 4,
+  MOTION_RECEIVER_MESH = 8,
+  MOTION_RECEIVER_ALL_COMPONENTS = 15
 } MotionReceiverMask;
 typedef enum {
   MOTION_FORMATION_STREAM,
@@ -61,10 +66,10 @@ typedef struct MotionArrivalProfile {
   MotionFlowDesc flow;
   Vector3 orbitAxis;
   Vector3 impulseNs; /* Per arriving receiver, applied by body integration. */
-  /* Optional complete post-arrival body profile; copied by particle receivers.
+  /* Optional complete post-arrival body profile; copied by compatible body receivers.
    * Free foliage substitutes its own mass when inverseMassKg <= 0. */
   bool overrideDynamics;
-  ParticleDynamicsProfile dynamics;
+  MotionBodyProfile dynamics;
   int targetCount;
   MotionTargetDesc targets[MOTION_ARRIVAL_MAX_TARGETS];
   MotionArrivalCallback callback;
@@ -131,6 +136,11 @@ FieldDesc MotionField_Default(void);
 /* Copies descriptors and paths into the existing generation-checked target
  * pool. CPU sampling only; never silently submitted to legacy GPU packing. */
 MotionFieldHandle MotionFields_CreateField(const FieldDesc *desc);
+/* Updates the base frame of an owned typed field without resetting its age,
+ * handle or receiver lanes. Does not move receivers. frameVelocityMps is
+ * metadata for field laws, not an implicit position integration request.
+ * Legacy guide/target handles and invalid transforms are rejected. */
+bool MotionFields_SetTransform(MotionFieldHandle handle,const FieldTransform *transform);
 
 /* Ergonomic builder helpers:
  * 1. Spawn a static spherical attraction field that pulls receivers towards center for durationSec. */

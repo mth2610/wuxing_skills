@@ -283,6 +283,18 @@
       "trigger_call": "VFX_ComposeMistVeil($POS, 5.5f, 4.5f)"
     },
     {
+      "source": "common/vc_motion_field_ribbons.inl",
+      "fn": "VFX_ComposeMotionFieldRibbons",
+      "label": "MOTION FIELD RIBBONS",
+      "category": "common",
+      "fixture": "static",
+      "lifecycle": "trail",
+      "_auto": true,
+      "type": "continuous",
+      "spawn_call": "VFX_ComposeMotionFieldRibbons($POS)",
+      "kill_fn": "VFX_KillMotionFieldRibbons"
+    },
+    {
       "source": "common/vc_optical_flare.inl",
       "fn": "VFX_ComposeOpticalFlare",
       "label": "OPTICAL FLARE",

@@ -102,6 +102,7 @@ FIXTURE_PRESET_VARIANTS = {
 }
 
 LIFECYCLE_SPECS = {
+    "VFX_ComposeMotionFieldRibbons": ("trail", "static", "continuous"),
     "VFX_ComposeSmokeVolume":       ("emitter", "timed",      "continuous"),
     "VFX_ComposeAmbientFire":       ("emitter", "timed",      "continuous"),
     "VFX_ComposeFlame":             ("emitter", "timed",      "continuous"),

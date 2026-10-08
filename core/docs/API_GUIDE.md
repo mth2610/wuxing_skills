@@ -3258,10 +3258,54 @@ The motion registry replaces its snapshot on create/update/stop/reset. It never 
 
 An anchored receiver supplies its tip velocity and material mass, then integrates force against its own restoring spring and damping. Target airflow is converted to aerodynamic force by that receiver's projected area and drag coefficient. Free particles retain their existing capture and arrival lifecycle.
 
+## Independent emission and physical ribbons
+
+`core/emitter/emitter.h` owns the generic fixed-pool scheduler. Its core API has no particle or trail dependency. `Emission_Create` copies its descriptor; source data, sink context and spawn templates remain borrowed until `Emission_Destroy`. Call `Emission_Step(handle, worldOrigin, dt)` explicitly for each emitter. `Emission_Stop` stops births while components drain in their own systems. Completed/stopped handles retain statistics until destroyed. `core/emitter/emitter.c` bounds delivery to 256 callbacks per step and counts consumed overflow births.
+
+`core/emitter/emitter_sources.h` supplies deterministic vertex/edge mesh sources. MeshAdjacency remains owned by `core/mesh_adjacency.h`. Sampling supplies a position offset; the scheduler adds worldOrigin. Adjacency has no authored normals, so the adapter returns transformed local +Y. `core/emitter/emitter_sinks.h` supplies particle and complete-chain ribbon sinks. Particle sink acceptance means command submission, not a readback-confirmed GPU allocation. Live/death/collision/arrival sub-emission still uses existing particle routes; the generic scheduler does not yet consume a GPU event queue.
+
+Legacy `core/emitter_system.h` includes `core/emitter/legacy_particle_emitter.h`; the preset API in `core/skill_helper.h` includes `core/emitter/preset_emitter.h`. Their implementations live in the dedicated directory and preserve existing behavior. The generic Emission_* vocabulary avoids collision with those two historical APIs.
+
+`core/motion/motion_profile.h` owns MotionBodyProfile. `core/particles/particle_dynamics.h` is a compatibility include retaining ParticleDynamicsProfile and historical helper names. Existing acceleration/Newton/airflow units are unchanged. `core/motion/motion_fields.h` retains legacy ALL=3; ALL_COMPONENTS adds trail and mesh receiver bits. Typed field defaults and zero masks address all components, while explicit legacy masks retain their selection.
+
+`core/trails/trail_ribbon.h` adds an opt-in connected-chain API alongside legacy TrailConfig. There are exactly two attachment modes: Free and HeadAnchored. The initial modern API emits complete chains with fixed topology; continuous history-node emission remains on legacy paths. Appearance is a plain alpha textured strip with constant width/color and lifetime fade, on both backends. Existing complex trail materials are not silently mapped into this renderer.
+
+`core/trails/trail_ribbon_solver.h` owns intrinsic XPBD segment/optional second-neighbor constraints. External motion is sampled through shared spatial Motion fields and integrated by MotionBody. The solver uses 1/120-second steps, at most eight per update, discarding excess hitch debt. Default mass is per node, so changing node resolution changes total chain mass unless the caller adjusts inverseMassKg. This is a connected chain rather than full fabric or self-collision simulation.
+
+`TrailRibbon_Spawn` returns a TrailSystem id: use `KillTrail` for destruction. AUTO selects Vulkan compute where available and otherwise CPU; GPU_ONLY rejects unavailable compute rather than omitting simulation. `TrailRibbon_GetState` returns NULL for GPU-resident ribbons. `core/trails/trail_ribbon_gpu.c` uploads node/body data at spawn and keeps it resident; per-frame uploads contain fields, wind and attachment/control records. The initial compute shader assigns one invocation to each bounded chain; no throughput or FPS claim follows from this dispatch layout.
+
+Example attachment lifecycle (`core/trails/trail_ribbon.h`):
+
+```c
+TrailAttachmentHandle attachment = TrailAttachment_Create(stoneTransform);
+TrailRibbonConfig ribbon = TrailRibbon_Default();
+ribbon.mode = TRAIL_RIBBON_HEAD_ANCHORED;
+ribbon.attachment = attachment;
+ribbon.lengthM = 2.0f;
+ribbon.widthM = 0.12f;
+int trailId = TrailRibbon_Spawn(&ribbon);
+
+/* Publish the stone transform before UpdateTrailSystem each frame. */
+TrailAttachment_Update(attachment, stoneTransform, dt, false);
+/* Existing game loop owns MotionFields_Update and UpdateTrailSystem. */
+
+/* Detach without resetting the chain or its last source velocity. */
+TrailRibbon_ReleaseHead(trailId);
+TrailAttachment_Destroy(attachment);
+/* KillTrail(trailId) when explicit destruction is needed. */
+```
+
+`core/trails/trail_attachment.h` stores generation-checked transform snapshots and derives offset-point velocity including rotation. Publish each active provider every frame. Destroyed attachments release their ribbon; teleports published with discontinuity=true rebase the whole chain without injecting teleport velocity.
+
+`MotionFields_SetTransform` in `core/motion/motion_fields.h` changes an owned typed field's base frame without resetting age, handle or receiver lanes. Set position from the stone and frameVelocityMps from its velocity when the authored law needs that frame velocity. The field and the ribbon attachment have independent lifetimes. Updating the field frame does not translate nodes or force them to inherit stone velocity.
+
+`VFX_ComposeMotionFieldRibbons` exposes the generated `MOTION FIELD RIBBONS` integration fixture: one moving stone, a head-anchored water ribbon, a free wood ribbon and timed particles share a spatial field. The anchored head releases after two seconds; the owned fixture restarts every four seconds. `VFX_KillMotionFieldRibbons` releases its field, attachment, chains and emission resources.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-08 | Codex | Independent emission and physical ribbons | core/emitter/emitter.h; core/trails/trail_ribbon.h; core/trails/trail_ribbon_solver.h; core/motion/motion_fields.h | Ground-truth |
 | 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Independent curl amplitude and overlapping-guide diagnosis | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
 | 2026-10-07 | Codex | Fast guided defaults and curved path | core/composition/common/vc_guided_particle.inl; core/tests/test_guided_config.py | Ground-truth and project convention |

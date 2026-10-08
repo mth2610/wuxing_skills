@@ -148,11 +148,6 @@
   Vector3 SkillHelper_EvaluateForceLayer(const ForceLayer *layer, Vector3 pos, Vector3 vel, float time, Vector3 axisOrigin, Vector3 axisDir);
   void SkillForceMix_AddLayers(const SkillForceMix *mix, ForceField *ff);
   int SkillForceMix_MakeTunables(SkillForceMix *mix, const char *labelPrefix, const char *phase, SkillTunableEntry *outEntries);
-  void EmitterSystem_Init(void);
-  void EmitterSystem_Update(float dt);
-  int Emitter_AttachToPoint(EmitterPreset type, Vector3 pos, float ratePerSecond, float duration);
-  void Emitter_Stop(int emitterId);
-  void EmitterSystem_Unload(void);
   void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color);
   void Material_LoadElement(EffectMaterial *outMat, EffectPresetType element);
   void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float duration);
@@ -169,8 +164,8 @@
   void DamageVolume_GetStats(int *active, int *max);
   void InitHelperResources(void);
 ```
-**Enums:** EffectPresetType { EFFECT_PRESET_FIRE_EXPLOSION,EFFECT_PRESET_ICE_SHATTER,EFFECT_PRESET_WATER_SPLASH,EFFECT_PRESET_LIGHTNING_IMPACT,EFFECT_PRESET_EARTH_CRACK,EFFECT_PRESET_WOOD_BLOOM,EFFECT_PRESET_METAL_SHARD,EFFECT_PRESET_TAIJI_BURST };ShapeType { SHAPE_CIRCLE,SHAPE_BOX,SHAPE_CONE } EmitterPreset { EMITTER_FIRE,EMITTER_SNOW,EMITTER_WATER_SPURT,EMITTER_SHOCKED_SPARKS,EMITTER_WOOD_LEAVES,EMITTER_EARTH_DUST,EMITTER_METAL_SPARKS,EMITTER_TAIJI_MOTES };MeshPresetType { MESH_PRESET_DISC,MESH_PRESET_RING,MESH_PRESET_CONE,MESH_PRESET_TORNADO,MESH_PRESET_CYLINDER,MESH_PRESET_SPHERE,MESH_PRESET_SHOCKWAVE,MESH_PRESET_PYRAMID,MESH_PRESET_TETRAHEDRON } DecalPresetType { DECAL_PRESET_CRACK,DECAL_PRESET_EARTH_SHATTER,DECAL_PRESET_EARTH_RUNE,DECAL_PRESET_BURN,DECAL_PRESET_FIRE_LAVA,DECAL_PRESET_WATER,DECAL_PRESET_WATER_SPLASH,DECAL_PRESET_WATER_RIPPLE,DECAL_PRESET_ICE,DECAL_PRESET_WOOD_ROOT,DECAL_PRESET_WOOD_MOSS,DECAL_PRESET_METAL_SLASH,DECAL_PRESET_METAL_CRATER,DECAL_PRESET_METAL_RUNE,DECAL_PRESET_TAIJI_RING,DECAL_PRESET_TAIJI_LIGHTNING,DECAL_PRESET_TAIJI_WIND,DECAL_PRESET_GENERIC_IMPACT_RING,DECAL_PRESET_GENERIC_GLOW,DECAL_PRESET_GENERIC_SHADOW };ForceFieldPreset { FORCE_PRESET_FIRE_UPDRAFT,FORCE_PRESET_SNOW_BLIZZARD,FORCE_PRESET_WATER_VORTEX,FORCE_PRESET_EARTH_RUMBLE,FORCE_PRESET_WOOD_GROWTH,FORCE_PRESET_METAL_IMPLOSION,FORCE_PRESET_TAIJI_ORBIT }
-**Structs** (fields in header): DamageVolume, SkillTimeline, TimelineLayer, LayeredTimeline, SkillForceMix, ParticleEmitter, CameraImpulse, SkillBuildContext
+**Enums:** EffectPresetType { EFFECT_PRESET_FIRE_EXPLOSION,EFFECT_PRESET_ICE_SHATTER,EFFECT_PRESET_WATER_SPLASH,EFFECT_PRESET_LIGHTNING_IMPACT,EFFECT_PRESET_EARTH_CRACK,EFFECT_PRESET_WOOD_BLOOM,EFFECT_PRESET_METAL_SHARD,EFFECT_PRESET_TAIJI_BURST };ShapeType { SHAPE_CIRCLE,SHAPE_BOX,SHAPE_CONE } MeshPresetType { MESH_PRESET_DISC,MESH_PRESET_RING,MESH_PRESET_CONE,MESH_PRESET_TORNADO,MESH_PRESET_CYLINDER,MESH_PRESET_SPHERE,MESH_PRESET_SHOCKWAVE,MESH_PRESET_PYRAMID,MESH_PRESET_TETRAHEDRON };DecalPresetType { DECAL_PRESET_CRACK,DECAL_PRESET_EARTH_SHATTER,DECAL_PRESET_EARTH_RUNE,DECAL_PRESET_BURN,DECAL_PRESET_FIRE_LAVA,DECAL_PRESET_WATER,DECAL_PRESET_WATER_SPLASH,DECAL_PRESET_WATER_RIPPLE,DECAL_PRESET_ICE,DECAL_PRESET_WOOD_ROOT,DECAL_PRESET_WOOD_MOSS,DECAL_PRESET_METAL_SLASH,DECAL_PRESET_METAL_CRATER,DECAL_PRESET_METAL_RUNE,DECAL_PRESET_TAIJI_RING,DECAL_PRESET_TAIJI_LIGHTNING,DECAL_PRESET_TAIJI_WIND,DECAL_PRESET_GENERIC_IMPACT_RING,DECAL_PRESET_GENERIC_GLOW,DECAL_PRESET_GENERIC_SHADOW } ForceFieldPreset { FORCE_PRESET_FIRE_UPDRAFT,FORCE_PRESET_SNOW_BLIZZARD,FORCE_PRESET_WATER_VORTEX,FORCE_PRESET_EARTH_RUMBLE,FORCE_PRESET_WOOD_GROWTH,FORCE_PRESET_METAL_IMPLOSION,FORCE_PRESET_TAIJI_ORBIT }
+**Structs** (fields in header): DamageVolume, SkillTimeline, TimelineLayer, LayeredTimeline, SkillForceMix, CameraImpulse, SkillBuildContext
 
 ### `core/skill_curve.h`
 ```c
@@ -305,6 +300,7 @@ _Inline helpers / macros only — see header._
   MotionTargetDesc MotionTarget_Default(void);
   FieldDesc MotionField_Default(void);
   MotionFieldHandle MotionFields_CreateField(const FieldDesc *desc);
+  bool MotionFields_SetTransform(MotionFieldHandle handle,const FieldTransform *transform);
   MotionFieldHandle MotionFields_SpawnStaticAttractor(Vector3 center, float radiusM, float pullStrengthN, float durationSec, float attackSec, float fadeSec);
   MotionFieldHandle MotionFields_SpawnMovingGuide(const MotionPath *path, float speedMps, float radiusM, float pullStrengthN, float swirlSpeedMps, float turbulenceSpeedMps, float durationSec);
   MotionFieldHandle MotionFields_SpawnStaticVortex(Vector3 center, Vector3 axis, float radiusM, float swirlSpeedMps, float inwardPullN, float durationSec, float attackSec, float fadeSec);
@@ -328,15 +324,18 @@ _Inline helpers / macros only — see header._
   bool MotionFields_GetArrival(MotionFieldHandle guide, MotionArrivalProfile *out);
   bool MotionFields_Capture(MotionFieldHandle guide, Vector3 position, MotionReceiver *receiver);
 ```
-**Enums:** MotionReceiverMask { MOTION_RECEIVER_PARTICLE,MOTION_RECEIVER_FOLIAGE,MOTION_RECEIVER_ALL };MotionFormation { MOTION_FORMATION_STREAM,MOTION_FORMATION_SHELL } MotionGuideMode { MOTION_GUIDE_SUSTAINED,MOTION_GUIDE_PULSE };MotionArrivalMode { MOTION_ARRIVAL_RELEASE,MOTION_ARRIVAL_DESTROY,MOTION_ARRIVAL_HOLD,MOTION_ARRIVAL_ORBIT }
+**Enums:** MotionReceiverMask { MOTION_RECEIVER_PARTICLE,MOTION_RECEIVER_FOLIAGE,MOTION_RECEIVER_ALL,MOTION_RECEIVER_TRAIL,MOTION_RECEIVER_MESH,MOTION_RECEIVER_ALL_COMPONENTS };MotionFormation { MOTION_FORMATION_STREAM,MOTION_FORMATION_SHELL } MotionGuideMode { MOTION_GUIDE_SUSTAINED,MOTION_GUIDE_PULSE };MotionArrivalMode { MOTION_ARRIVAL_RELEASE,MOTION_ARRIVAL_DESTROY,MOTION_ARRIVAL_HOLD,MOTION_ARRIVAL_ORBIT }
 **Structs** (fields in header): MotionTargetDesc, MotionArrivalEvent, MotionArrivalProfile, MotionGuideDesc, MotionReceiver, MotionFieldSample
 
 ### `core/motion/motion_body.h`
 _Inline helpers / macros only — see header._
 
+### `core/motion/motion_profile.h`
+_Inline helpers / macros only — see header._
+**Structs** (fields in header): MotionBodyProfile
+
 ### `core/particles/particle_dynamics.h`
 _Inline helpers / macros only — see header._
-**Structs** (fields in header): ParticleDynamicsProfile
 
 ### `core/particles/particle_field_capabilities.h`
 _Inline helpers / macros only — see header._
@@ -409,7 +408,7 @@ _Inline helpers / macros only — see header._
   void ParticleManager_GetStats(ParticleManagerStats *outStats);
   void ParticleManager_SpawnCompatibility(ParticleConfig config);
 ```
-**Structs** (fields in header): ParticleGPUCaps, ParticleEmissionSource, ParticleEmitterDesc, ParticleRenderStream, ParticleSurfaceCaptureStream, ParticleManagerStats
+**Structs** (fields in header): ParticleGPUCaps, ParticleEmitterDesc, ParticleRenderStream, ParticleSurfaceCaptureStream, ParticleManagerStats
 
 ### `core/mesh_adjacency.h`
 ```c
@@ -419,6 +418,79 @@ _Inline helpers / macros only — see header._
   int MeshAdjacency_GeneratePath(const MeshAdjacency *adj, int startVertex, int length, Vector3 *outPath);
 ```
 **Structs** (fields in header): MeshAdjacency
+
+### `core/emitter/emitter.h`
+```c
+  void EmissionSystem_Init(void);
+  void EmissionSystem_Unload(void);
+  EmissionHandle Emission_Create(const EmissionConfig *config, Vector3 origin);
+  bool Emission_Step(EmissionHandle handle, Vector3 origin, float dt);
+  bool Emission_Stop(EmissionHandle handle);
+  bool Emission_Destroy(EmissionHandle handle);
+  bool Emission_GetStats(EmissionHandle handle, EmissionStats *stats);
+```
+**Structs** (fields in header): EmissionSample, EmissionSpawn, EmissionConfig, EmissionStats
+
+### `core/emitter/emitter_sources.h`
+```c
+  bool EmissionSource_Mesh(void *source, uint32_t *seed, EmissionSample *sample);
+```
+**Structs** (fields in header): EmissionMeshSource
+
+### `core/emitter/emitter_sinks.h`
+```c
+  bool EmissionSink_Particle(void *user,const EmissionSpawn *spawn);
+  bool EmissionSink_Ribbon(void *user,const EmissionSpawn *spawn);
+```
+**Structs** (fields in header): EmissionParticleSink
+
+### `core/emitter/particle_source.h`
+```c
+  bool Emission_ApplyParticleSource(const ParticleEmissionSource *source, struct ParticleConfig *particle);
+```
+**Structs** (fields in header): ParticleEmissionSource
+
+### `core/emitter/legacy_particle_emitter.h`
+```c
+  void InitEmitterSystem(void);
+  int CreateEmitter(EmitterConfig config, Vector3 startPos);
+  void UpdateEmitterTarget(int id, Vector3 newPos, float dt);
+  void StopEmitter(int id);
+  void KillEmitter(int id);
+  void EmitterSystem_GetStats(int *active, int *max);
+```
+**Structs** (fields in header): EmitterConfig
+
+### `core/emitter/preset_emitter.h`
+```c
+  void EmitterSystem_Init(void);
+  void EmitterSystem_Update(float dt);
+  int Emitter_AttachToPoint(EmitterPreset type, Vector3 pos, float ratePerSecond, float duration);
+  void Emitter_Stop(int emitterId);
+  void EmitterSystem_Unload(void);
+```
+**Enums:** EmitterPreset { EMITTER_FIRE,EMITTER_SNOW,EMITTER_WATER_SPURT,EMITTER_SHOCKED_SPARKS,EMITTER_WOOD_LEAVES,EMITTER_EARTH_DUST,EMITTER_METAL_SPARKS,EMITTER_TAIJI_MOTES }
+**Structs** (fields in header): ParticleEmitter
+
+### `core/trails/trail_ribbon.h`
+```c
+  TrailRibbonConfig TrailRibbon_Default(void);
+  int TrailRibbon_Spawn(const TrailRibbonConfig *config);
+  bool TrailRibbon_ReleaseHead(int trailId);
+  const TrailRibbonState *TrailRibbon_GetState(int trailId);
+  TrailRibbonBackend TrailRibbon_GetBackend(int trailId);
+  TrailAttachmentHandle TrailAttachment_Create(Matrix transform);
+  bool TrailAttachment_Update(TrailAttachmentHandle handle,Matrix transform,float dt,bool discontinuity);
+  void TrailAttachment_Destroy(TrailAttachmentHandle handle);
+  void TrailRibbonSystem_Reset(void);
+  void TrailRibbonSystem_BeginUpdate(float dt,float time);
+  bool TrailRibbonSystem_Update(int trailId,float dt);
+  void TrailRibbonSystem_Kill(int trailId);
+  void TrailRibbonSystem_Draw(Camera3D camera,int layerFilter);
+  bool TrailRibbonSystem_IsModern(int trailId);
+  void TrailRibbonSystem_Unload(void);
+```
+**Structs** (fields in header): TrailRibbonConfig
 
 ### `core/trails/trail_system.h`
 ```c
@@ -960,6 +1032,8 @@ _Inline helpers / macros only — see header._
 ```c
   void VFX_Compose_Update(float dt);
   void VFX_Compose_Draw3D(Camera3D cam);
+  int VFX_ComposeMotionFieldRibbons(Vector3 pos);
+  void VFX_KillMotionFieldRibbons(int handle);
   VFX_LightningArcConfig VFX_LightningArc_DefaultConfig(void);
   int VFX_LightningArc_Spawn(Vector3 from, Vector3 to, const VFX_LightningArcConfig *config);
   void VFX_LightningArc_SetEndpoints(int handle, Vector3 from, Vector3 to);

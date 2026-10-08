@@ -117,6 +117,9 @@
 - New modules follow existing Init/Update/Draw/Unload lifecycle shape (see `decal_system.h`, `vfx_light.h`).
 - Update `core/docs/API.md` (or relevant doc) in the same turn as the code change — docs must never lag code.
 
+- Modern ribbons use `core/trails/trail_ribbon.h`: free/head-anchored attachment is independent of Motion fields. Emitter scheduling/source adapters live in `core/emitter/`; never add a third emitter implementation outside that module.
+- GPU ribbon node positions and receiver lanes stay GPU-owned after spawn; upload only control/attachment snapshots, and return NULL from CPU state queries rather than reading back implicitly.
+
 ### 10.2 Adding functions to common shaders (`core/shaders/common/*.glsl`)
 - A material's `.mat output`, GLSL resolver, render pass and runtime blend are one contract: fixed outputs use the matching `VFX_Resolve*`; surface-aware EffectMaterial uses `VFX_ResolveOutput` plus `Material_BeginVFX/EndVFX` (ADDITIVE→EMISSION, ALPHA/PREMULTIPLIED→BODY). Legacy `Material_Begin/End` remains caller-managed.
 - Tone-map-safe colour is explicit per producer: custom trail/particle shaders do not inherit EffectMaterial's permutation. For structured emitters preserve the sub-Bloom carrier and correct only HDR excess after coverage; if additive submits that completed value, use unit source alpha so coverage is not applied twice.
@@ -169,6 +172,7 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-08 | Codex | §10.1 Emitter ownership and resident modern ribbon state | core/emitter/emitter.h; core/trails/trail_ribbon.h; core/trails/trail_ribbon_gpu.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | §10.3 Derived guide budgets and implicit controllers | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
 | 2026-10-06 | Codex | §10.1 Typed field units and adapter response ownership | core/motion/physical_field.h; core/motion/motion_body.h; core/wind/wind_system.h | Ground-truth |

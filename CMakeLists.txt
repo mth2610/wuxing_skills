@@ -169,7 +169,12 @@ add_executable(wuxing
     core/float_curve.c
     core/skill_curve.c
     core/tuning.c
-    core/emitter_system.c
+    core/emitter/emitter.c
+    core/emitter/emitter_sources.c
+    core/emitter/legacy_particle_emitter.c
+    core/emitter/preset_emitter.c
+    core/emitter/particle_source.c
+    core/emitter/emitter_sinks.c
     core/uv/flow_map.c
     core/deform/mesh_deform.c
     core/uv/uv_deform.c
@@ -203,6 +208,8 @@ add_executable(wuxing
     core/skill_manager.c
     core/sprite_anim.c
     core/trails/trail_system.c
+    core/trails/trail_ribbon.c
+    core/trails/trail_ribbon_gpu.c
     core/utils_math.c
     core/vfx_light.c
     core/vfx_contrast.c
@@ -313,6 +320,18 @@ foreach(asset_path ${MAP_ASSETS})
 endforeach()
 
 # --- compute module shaders ---
+foreach(shared_motion_shader
+    core/particles/shaders/gpu/particle_motion.glsl
+    core/motion/shaders/motion_fields.glsl
+    core/motion/shaders/motion_wind_types.glsl
+    core/motion/shaders/motion_wind_noise.glsl
+    core/motion/shaders/motion_wind.glsl
+    core/trails/shaders/trail_ribbon.comp
+    core/trails/shaders/trail_ribbon_gpu.vs
+    core/trails/shaders/trail_ribbon_gpu.fs
+    core/shaders/common/vfx_composite.glsl)
+    configure_file(${shared_motion_shader} ${CMAKE_CURRENT_BINARY_DIR}/${shared_motion_shader} COPYONLY)
+endforeach()
 configure_file(core/particles/shaders/gpu/particle_gpu.comp    ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu.comp    COPYONLY)
 configure_file(core/particles/shaders/gpu/particle_gpu_ssbo.vs ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/particle_gpu_ssbo.vs COPYONLY)
 configure_file(core/particles/shaders/gpu/liquid_surface_capture.vs ${CMAKE_CURRENT_BINARY_DIR}/core/particles/shaders/gpu/liquid_surface_capture.vs COPYONLY)

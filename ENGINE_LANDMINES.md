@@ -1717,10 +1717,24 @@ and index binding 1; compute rebinds its own field buffer at binding 1.
   end-of-frame submission. Sources: `main.c`, `rlvk_core.inl`, `rlvk_platform.inl`;
   renderer guards: `buffer_update_order`, `ssbo_vs`, `compute_upload_draw`.
 
+## GPU world-space draws must resolve the camera view explicitly
+
+- **Symptom:** ribbon compute produces valid world-space nodes, yet strips are
+  absent in gameplay while a standalone `BeginMode3D` graphics test passes.
+- **Cause:** `MyBeginMode3D` pushes modelview and writes the camera into rlgl's
+  transform matrix; `rlGetMatrixModelview()` alone remains identity. A GPU
+  vertex shader reading world positions from an SSBO receives projection only.
+- **Rule:** world-space SSBO draws use the supplied camera view multiplied by
+  the active projection, or explicitly resolve both rlgl matrices without
+  applying the camera twice. Validate a pushed-modelview path with a camera
+  away from the origin. Source: `core/trails/trail_ribbon_gpu.c`; renderer
+  guard: `ribbon_gpu_world_strip`.
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-08 | Codex | World-space GPU camera view | core/trails/trail_ribbon_gpu.c; gameplay ribbon captures; ribbon_gpu_world_strip | Ground-truth |
 | 2026-10-08 | Codex | Vulkan frame activation | main.c; rlvk_core.inl; validated upload/compute/draw guards | Ground-truth |
 | 2026-10-07 | Codex | Gas/fog matrix unwind | main.c; third_party/vulkan/tests/rlvk_visual_test.c; matched meadow captures | Ground-truth |
 | 2026-10-06 | Codex | §24 Physical response ownership | core/wind/wind_system.c; core/motion/motion_body.h; core/tests/particle_external_field_test.c | Ground-truth |

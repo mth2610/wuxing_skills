@@ -77,6 +77,7 @@
 #include "common/vc_gas_shockwave.inl"
 #include "common/vc_flame_jet.inl"
 #include "common/vc_gas_material_lab.inl"
+#include "common/vc_motion_field_ribbons.inl"
 // @gen:archetype_includes end
 
 void VFX_Compose_Update(float dt)
@@ -97,6 +98,7 @@ void VFX_Compose_Update(float dt)
     VC_GasShockwave_Update(dt);
     VC_FlameJet_Update(dt);
     VC_GasMaterialLab_Update(dt);
+    VC_MotionFieldRibbons_Update(dt);
     VC_FlameEmitter_Update(dt);
 // @gen:archetype_update end
     LightningArc_Update(dt);
@@ -135,6 +137,7 @@ void VFX_Compose_Draw3D(Camera3D cam)
     VC_GasShockwave_Draw3D(cam);
     VC_FlameJet_Draw3D(cam);
     VC_GasMaterialLab_Draw3D(cam);
+    VC_MotionFieldRibbons_Draw3D(cam);
     VC_FlameEmitter_Draw3D(cam);
 // @gen:archetype_draw end
     LightningArc_Draw3D(cam);
