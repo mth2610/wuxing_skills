@@ -287,14 +287,14 @@ static ParticleDynamicsProfile VC_GuidedBody(const VFX_GuidedParticleConfig *c) 
 VFX_GuidedMotionConfig VFX_GuidedMotion_DefaultConfig(void) {
   VFX_GuidedMotionConfig c=VFX_GuidedParticle_DefaultConfig();
   c.output=VFX_GUIDED_BOTH;
-  c.trailMotion=VFX_GUIDED_TRAIL_MOTION_SPLINE;
+  c.trailMotion=VFX_GUIDED_TRAIL_MOTION_GUIDED;
   return c;
 }
 int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int max) {
   if(!c || !out || max<=0) return 0;
   static const char *const outputNames[]={"Particles","Trails","Particles + trails"};
   static const char *const patternNames[]={"Route","Orbit","Airflow"};
-  static const char *const trailMotionNames[]={"Physical field","Smooth spline"};
+  static const char *const trailMotionNames[]={"Physical field","Smooth spline","Guided field"};
   bool splineOnly=c->output==VFX_GUIDED_TRAILS && c->motionPattern==VFX_GUIDED_ROUTE &&
     c->trailMotion==VFX_GUIDED_TRAIL_MOTION_SPLINE && !c->trailTemplate && !c->trailAttachment;
   static const char *const styleNames[]={"Plain","Energy Silk","Smoke Wisp","Ember Filament","Water Stream"};
@@ -313,6 +313,9 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
        base[i].valPtr==&c->turbulenceSpeed || base[i].valPtr==&c->guideRadius ||
        base[i].valPtr==&c->massKg || base[i].valPtr==&c->densityKgM3 ||
        base[i].valPtr==&c->gravityScale || base[i].valPtr==&c->drag)) continue;
+    if(c->output==VFX_GUIDED_TRAILS && c->motionPattern==VFX_GUIDED_ROUTE &&
+       c->trailMotion==VFX_GUIDED_TRAIL_MOTION_GUIDED && !c->trailTemplate && !c->trailAttachment &&
+       (base[i].valPtr==&c->forwardForceNewtons || base[i].valPtr==&c->drag)) continue;
     bool particleRow=base[i].valPtr==&c->count || base[i].valPtr==&c->particleRadius;
     if(c->output==VFX_GUIDED_TRAILS && particleRow) continue;
     if(c->motionPattern==VFX_GUIDED_ORBIT && base[i].valPtr==&c->speed) continue;
@@ -335,7 +338,7 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
     if(!c->trailTemplate) {
       if(c->motionPattern==VFX_GUIDED_ROUTE && !c->trailAttachment && n<max)
         out[n++]=(VFX_ParamDef){.name="Trail motion",.group="Trail",.type=VFX_PARAM_ENUM,
-          .valPtr=&c->trailMotion,.minInt=0,.maxInt=1,.enumNames=trailMotionNames,.enumCount=2};
+          .valPtr=&c->trailMotion,.minInt=0,.maxInt=2,.enumNames=trailMotionNames,.enumCount=3};
       if(n<max) out[n++]=(VFX_ParamDef){.name="Trail style",.group="Trail",.type=VFX_PARAM_ENUM,
         .valPtr=&c->trailStyle,.minInt=VFX_GUIDED_TRAIL_PLAIN,.maxInt=VFX_GUIDED_TRAIL_WATER_STREAM,
         .enumNames=styleNames,.enumCount=5};
@@ -357,7 +360,7 @@ static bool VC_GuidedMotion_Valid(const VFX_GuidedMotionConfig *c) {
   if(!VC_GuidedSettingsValid(&check)) return false;
   if(c->output!=VFX_GUIDED_PARTICLES && (c->trailCount<0 || c->trailCount>64 ||
       (!c->trailTemplate && (c->trailMotion<VFX_GUIDED_TRAIL_MOTION_FIELD ||
-       c->trailMotion>VFX_GUIDED_TRAIL_MOTION_SPLINE || c->trailStyle<VFX_GUIDED_TRAIL_PLAIN ||
+       c->trailMotion>VFX_GUIDED_TRAIL_MOTION_GUIDED || c->trailStyle<VFX_GUIDED_TRAIL_PLAIN ||
        c->trailStyle>VFX_GUIDED_TRAIL_WATER_STREAM || !isfinite(c->trailLength) || c->trailLength<=0 ||
        !isfinite(c->trailWidth) || c->trailWidth<=0 || c->trailNodes<2 ||
        c->trailNodes>TRAIL_RIBBON_MAX_NODES)))) return false;
@@ -423,10 +426,11 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
     }
     s->ribbon.mode=c->trailAttachment?TRAIL_RIBBON_HEAD_ANCHORED:TRAIL_RIBBON_FREE;
     s->ribbon.attachment=c->trailAttachment;
-    if(c->trailMotion==VFX_GUIDED_TRAIL_MOTION_SPLINE && !c->trailAttachment &&
+    if(c->trailMotion!=VFX_GUIDED_TRAIL_MOTION_FIELD && !c->trailAttachment &&
        c->motionPattern==VFX_GUIDED_ROUTE && field.volume.shape==FIELD_PATH_TUBE)
       s->ribbon.pathTransport=(MotionPathTransport){.field=h,
-        .speedMps=c->fieldOverride?field.flow.followSpeedMps:c->speed,.captureBirthLane=true};
+        .speedMps=c->fieldOverride?field.flow.followSpeedMps:c->speed,
+        .respondToField=c->trailMotion==VFX_GUIDED_TRAIL_MOTION_GUIDED,.captureBirthLane=true};
     Vector3 delta=MotionVec_Sub(c->source,c->target);
     /* Trail nodes start behind the local route tangent, not the A-to-B chord.
      * The shared frame below rotates both births and this direction once. */

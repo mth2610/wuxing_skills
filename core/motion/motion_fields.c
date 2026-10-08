@@ -630,6 +630,7 @@ bool MotionFields_GetPathTransport(MotionFieldHandle h,MotionPathTransportSnapsh
   if(!target || !target->typed || target->physical.volume.shape!=FIELD_PATH_TUBE) return false;
   out->path=&target->physical.volume.path;
   out->transform=target->transportFrame;
+  out->field=&target->physical;out->ageSec=target->age;
   return true;
 }
 

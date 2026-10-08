@@ -121,7 +121,8 @@ void TrailRibbonGpu_Update(int slot,float dt,const TrailRibbonAnchor *anchor) {
 void TrailRibbonGpu_SetPathTransport(int slot,const MotionPathTransport *transport,float distanceM) {
     if(!s_ready||slot<0||slot>=TRAIL_RIBBON_GPU_CAPACITY||!s_slots[slot].meta[3]||!transport||!transport->field) return;
     TrailRibbonGpuParams *p=&s_slots[slot];
-    p->meta[1]=transport->field;p->meta[3]=3;
+    p->meta[1]=transport->field;p->meta[3]=transport->respondToField?7:3;
+    p->anchorVelocity.w=transport->speedMps;
     p->compliance.w=distanceM;p->anchor=MotionGpu_V4(transport->laneOffset,0);
     s_updatePending=true;
 }

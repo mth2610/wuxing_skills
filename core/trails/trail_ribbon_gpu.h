@@ -12,10 +12,10 @@ typedef struct {
     Vector4 positionRest, velocity, previous;
 } TrailRibbonGpuNode;
 typedef struct {
-    unsigned int meta[4]; /* count, iterations/path-field handle, head-anchored, active flags (1 alive, 2 prescribed) */
+    unsigned int meta[4]; /* count, iterations/path-field handle, head-anchored, active flags (1 alive, 2 prescribed, 4 bounded field response) */
     Vector4 compliance;  /* stretch, bend, pending release velocity, prescribed head distance */
     Vector4 anchor;      /* xyz target / prescribed lane offset, w valid */
-    Vector4 anchorVelocity; /* xyz velocity, w discontinuity */
+    Vector4 anchorVelocity; /* xyz velocity, w discontinuity / transport speed */
 } TrailRibbonGpuParams;
 typedef char TrailRibbonGpuNodeLayout[(sizeof(TrailRibbonGpuNode)==48)?1:-1];
 typedef char TrailRibbonGpuParamsLayout[(sizeof(TrailRibbonGpuParams)==64)?1:-1];

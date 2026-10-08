@@ -134,7 +134,7 @@ vec3 mPathTransportDerivative(int fi,int knot,int count) {
     vec4 p=motionFields[fi].points[a],q=motionFields[fi].points[b];
     return (q.xyz-p.xyz)/(q.w-p.w);
 }
-vec3 mPathTransportSample(int fi,float distance,vec3 lane) {
+MPath mPathTransportFrame(int fi,float distance) {
     int count=int(motionFields[fi].halfExtents.w);
     float d=clamp(distance,0.0,motionFields[fi].points[count-1].w);
     int lo=0,hi=count-1;
@@ -155,9 +155,79 @@ vec3 mPathTransportSample(int fi,float distance,vec3 lane) {
         normal=ref-tangent*dot(ref,tangent);
     }
     normal=mNorm(normal);
-    vec3 local=position+tangent*lane.x+normal*lane.y+cross(tangent,normal)*lane.z;
+    MPath result;result.p=position;result.t=tangent;result.n=normal;result.b=cross(tangent,normal);return result;
+}
+vec3 mPathTransportWorld(int fi,MPath q,vec3 lane) {
+    vec3 local=q.p+q.t*lane.x+q.n*lane.y+q.b*lane.z;
     vec3 center,velocity;mFrame(fi,motionFields[fi].volume.z,center,velocity);
     return center+mAxes(fi)*local;
+}
+vec3 mPathTransportSample(int fi,float distance,vec3 lane) {
+    return mPathTransportWorld(fi,mPathTransportFrame(fi,distance),lane);
+}
+// Bounded field response in a moving path frame. Body laneOffsets[0/1] are
+// transport offset/velocity only in this opt-in branch; physical lanes retain
+// their original ABI and ownership. No path projection or iterative solve.
+vec3 mPathTransportAdvance(int fi,float distance,vec3 birthLane,float lag,float dt,inout MotionGpuBody body) {
+    MPath q=mPathTransportFrame(fi,distance);
+    int pathCount=int(motionFields[fi].halfExtents.w);
+    if(distance<=0.0 || distance>=motionFields[fi].points[pathCount-1].w) {
+        body.laneOffsets[0]=vec4(0);body.laneOffsets[1]=vec4(0);
+        return mPathTransportWorld(fi,q,vec3(0));
+    }
+    float radius=motionFields[fi].volume.x,age=motionFields[fi].volume.z;
+    if(radius<=0.0) return mPathTransportWorld(fi,q,vec3(0));
+    bool flowOn=motionFields[fi].volume.w>0.5;
+    float angle=flowOn?motionFields[fi].flowParams.y/radius*(age-lag):0.0;
+    float c=cos(angle),sn=sin(angle);
+    vec3 base=mLimit(vec3(0,birthLane.y*c-birthLane.z*sn,birthLane.y*sn+birthLane.z*c),radius);
+    float room=max(0.0,radius-length(base));
+    vec3 displacement=body.laneOffsets[0].xyz,velocity=body.laneOffsets[1].xyz;
+    vec3 lane=base+displacement,local=q.p+q.n*lane.y+q.b*lane.z;
+    vec3 localVelocity=q.n*velocity.y+q.b*velocity.z;
+    float lifeAge=age-motionFields[fi].axisY.w,duration=motionFields[fi].axisZ.w;
+    float life=lifeAge<0.0 || lifeAge>=duration?0.0:1.0;
+    if(motionFields[fi].frameVelocity.w>0.0) life*=clamp(lifeAge/motionFields[fi].frameVelocity.w,0.0,1.0);
+    if(motionFields[fi].angularVelocity.w>0.0) life*=clamp((duration-lifeAge)/motionFields[fi].angularVelocity.w,0.0,1.0);
+    life=life*life*(3.0-2.0*life);
+    float w=mWeight(fi,local,q.p)*life;
+    vec3 gravity=transpose(mAxes(fi))*vec3(0,-9.81*body.body0.y,0);
+    vec3 force=vec3(0),acc=vec3(0),air=vec3(0);float stiffness=0.0;
+    if(flowOn) air=motionFields[fi].flowVelocity.xyz*w+
+        mCurl(fi,local,q.p,age,motionFields[fi].flowParams.x,motionFields[fi].flowParams.z)*life;
+    for(int j=0;j<int(motionFields[fi].flowParams.w);j++) {
+        MotionGpuLaw law=motionFields[fi].laws[j];int type=int(law.forceType.w);
+        if(type==6) stiffness=max(stiffness,law.centerStiffness.w>0.0?law.centerStiffness.w:law.accelerationMagnitude.w/radius);
+        else if(type==8) {
+            float speed=law.procedural.x;
+            if(speed>0.0 && law.accelerationMagnitude.w>0.0 && w>0.0)
+                force+=mLimit(mCurl(fi,local,q.p,age,speed,law.procedural.z)*
+                    (law.accelerationMagnitude.w*life/speed),law.accelerationMagnitude.w*w);
+        } else if(type==0) force+=law.forceType.xyz*w;
+        else if(type==1) acc+=law.accelerationMagnitude.xyz*w;
+        else if(type==2) force+=mNorm(law.centerStiffness.xyz-local)*law.accelerationMagnitude.w*w;
+        else if(type==3) force+=((law.centerStiffness.xyz-local)*law.centerStiffness.w-localVelocity*law.params.x)*w;
+        else if(type==4 && body.body2.w>0.0) force-=gravity*((body.body2.z>0.0?body.body2.z:1.225)/body.body2.w/body.body0.x*w);
+    }
+    vec3 relative=air-localVelocity;
+    float rho=body.body2.z>0.0?body.body2.z:1.225;
+    force+=relative*(.5*rho*body.body2.x*body.body2.y*length(relative));
+    vec3 acceleration=gravity+acc+force*body.body0.x;
+    vec3 lateral=vec3(0,dot(acceleration,q.n),dot(acceleration,q.b));
+    float omega=sqrt(stiffness*body.body0.x);if(omega<=0.0) omega=1.0;
+    float denom=1.0+2.0*omega*dt+omega*omega*dt*dt;
+    velocity=(velocity+dt*(lateral-omega*omega*displacement))/denom;
+    displacement+=velocity*dt;
+    float len=length(displacement);
+    if(len>room) {
+        vec3 normal=displacement/len;displacement=normal*room;
+        float outward=dot(velocity,normal);if(outward>0.0) velocity-=normal*outward;
+    }
+    body.laneOffsets[0]=vec4(displacement,0);body.laneOffsets[1]=vec4(velocity,0);
+    int count=int(motionFields[fi].halfExtents.w);
+    float total=motionFields[fi].points[count-1].w,d=clamp(distance,0.0,total);
+    float edge=clamp(min(d,total-d)/radius,0.0,1.0);edge=edge*edge*(3.0-2.0*edge);
+    return mPathTransportWorld(fi,q,(base+displacement)*edge);
 }
 // Guide resistance is isotropic, axial or transverse: R=aI+b*u*u^T.
 // A zero axis means isotropic; unit axis with signed response selects axial

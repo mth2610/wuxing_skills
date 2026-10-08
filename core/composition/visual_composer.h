@@ -1087,7 +1087,8 @@ typedef enum {
     VFX_GUIDED_TRAIL_WATER_STREAM
 } VFX_GuidedTrailStyle;
 typedef enum {
-    VFX_GUIDED_TRAIL_MOTION_FIELD=0, VFX_GUIDED_TRAIL_MOTION_SPLINE=1
+    VFX_GUIDED_TRAIL_MOTION_FIELD=0, VFX_GUIDED_TRAIL_MOTION_SPLINE=1,
+    VFX_GUIDED_TRAIL_MOTION_GUIDED=2
 } VFX_GuidedTrailMotion;
 /* Field-first composition. Zero emitDuration bursts `count` particles; positive
  * emitDuration spreads exactly `count` particles across that interval at the
@@ -1155,7 +1156,8 @@ typedef struct VFX_GuidedParticleConfig {
      * and releases anchored ribbons. Zero retains world-space behavior. */
     MotionFrameHandle frame;
     int trailStyle; /* VFX_GuidedTrailStyle; appearance only; ignored with trailTemplate. */
-    int trailMotion; /* VFX_GuidedTrailMotion. SPLINE prescribes smooth route positions;
+    int trailMotion; /* VFX_GuidedTrailMotion. GUIDED locks progress while fields perturb bounded lateral offsets;
+                      SPLINE prescribes smooth route positions;
                      * FIELD retains free-body forces. Ignored by templates/anchors/Orbit/Airflow. */
 } VFX_GuidedParticleConfig;
 typedef VFX_GuidedParticleConfig VFX_GuidedMotionConfig;

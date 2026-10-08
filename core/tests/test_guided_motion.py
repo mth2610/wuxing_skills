@@ -113,7 +113,7 @@ static bool Ignore(void *u,const EmissionSpawn *s){(void)u;(void)s;return true;}
 int main(void) {
  Reset();
  VFX_GuidedMotionConfig c=VFX_GuidedMotion_DefaultConfig();
- assert(c.output==VFX_GUIDED_BOTH&&c.trailMotion==VFX_GUIDED_TRAIL_MOTION_SPLINE);
+ assert(c.output==VFX_GUIDED_BOTH&&c.trailMotion==VFX_GUIDED_TRAIL_MOTION_GUIDED);
  assert(!VC_GuidedUsesTimedEmission(&c)&&VC_GuidedInitialBurstCount(&c)==c.count);
  c.count=10;c.trailCount=4;c.emitDuration=1;c.formationRadius=.2f;
  MotionFieldHandle h=VFX_ComposeGuidedMotionEx(&c);
@@ -149,14 +149,18 @@ int main(void) {
  assert(MotionVec_Length(MotionVec_Sub(ribbons[0].tailDirection,expectedTail))<1e-5f);
  assert(ribbonCount==1&&ribbons[0].mode==TRAIL_RIBBON_FREE);
  assert(ribbons[0].pathTransport.field&&ribbons[0].pathTransport.speedMps==c.speed&&ribbons[0].pathTransport.captureBirthLane);
+ assert(ribbons[0].pathTransport.respondToField);
  Near(ribbons[0].headPosition.x,c.source.x);
  float expectedLife=VC_GuidedEstimatedTransitTime(&c,capturedField.volume.path.length,true)+
    c.trailLength/c.speed+fminf(.3f,c.duration*.1f);
  Near(capturedField.lifetime.durationSec,expectedLife);
  Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;
+ c.trailMotion=VFX_GUIDED_TRAIL_MOTION_SPLINE;
+ assert(VFX_ComposeGuidedMotionEx(&c));assert(ribbons[0].pathTransport.field&&!ribbons[0].pathTransport.respondToField);
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;
  c.trailMotion=VFX_GUIDED_TRAIL_MOTION_FIELD;
  assert(VFX_ComposeGuidedMotionEx(&c));assert(ribbonCount&&ribbons[0].pathTransport.field==0);
- Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;c.trailMotion=2;
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;c.trailMotion=3;
  assert(!VFX_ComposeGuidedMotionEx(&c));
  Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_PARTICLES;
  assert(VFX_ComposeGuidedMotionEx(&c));assert(capturedField.volume.shape==FIELD_SPHERE);

@@ -127,6 +127,7 @@
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | Interior relief threshold and shared meadow palette | maps/tests/test_verdant_heightmap.py; maps/toolkit/meadow_palette.h; maps/toolkit/shaders/ground_splat.fs | Ground-truth |
 | 2026-10-04 | Codex | Heightmap normalization and background/water shader scopes | `scripts/generate_island_heightmap.py`, `maps/toolkit/map_props_cloud.inl`, `maps/toolkit/map_props_nature.inl`, `maps/tests/test_map_background_state.py` | Ground-truth |
 | 2026-10-03 | Codex | Translation-only parametric transform cancellation | `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/nature_parametric.glsl`, `maps/tests/test_meadow_world_space.py` | Ground-truth |
 | 2026-10-03 | Codex | Prop material camera-space lighting and world-height AO | `maps/toolkit/prop_lit.c`, `maps/toolkit/shaders/prop_lit.fs`, `maps/tests/test_prop_lighting_space.py` | Ground-truth |
@@ -173,3 +174,16 @@
 **Cause:** a map rectangle describes a bound, not the actual plateau outline. Raised cloud geometry duplicates the terrain border and exposes a finite surface silhouette.
 
 **Rule:** keep the sea flat. Bake closed mist contours from actual indexed/unindexed terrain at initialization, joining duplicated endpoints with canonical low-to-high interpolation. Exclude clockwise depression contours so lakes do not become island rims; explicit contour input can represent holes. Simplify only mist geometry, retain collision/terrain, and draw one cached textured ribbon. Quantization limits and non-manifold slices return failure without replacing existing resources.
+
+
+### Perimeter mist must stay below interior terrain relief
+
+- **Symptom:** contour mist crosses meadow swales after a terrain update.
+- **Cause:** the contour extraction height intersects interior depressions instead of only the island cliff.
+- **Rule:** choose a contour below the deepest interior lake/swale and above the cloud sea, and verify below-threshold heightmap cells connect only to the perimeter. Verdant uses -1.25 m; `maps/tests/test_verdant_heightmap.py` checks the baked terrain topology.
+
+### Meadow colors must agree across geometry and distant ground
+
+- **Symptom:** green blades disappear into a differently colored distant carpet or form unrelated golden stripes.
+- **Cause:** independent habitat noise and palettes in the blade bake and ground shader.
+- **Rule:** derive grass and distant ground color from the same ecology habitat and synchronize `meadow_palette.h` with `shaders/meadow_palette.glsl`; retain ecology coverage when replacing distant blades with ground shading.

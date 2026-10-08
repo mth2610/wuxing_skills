@@ -37,6 +37,7 @@
 - `Unload[Name]Skill` must NOT call `UnloadTexture`/`UnloadShader` — leave empty.
 
 ## 5. ForceField / Particle / Trail
+- Directed path transport locks longitudinal progress and limits field-driven transverse state to the authored corridor; do not restore free-body drift or duplicate path projection.
 - Guide stiffness must stay independent of turbulence amplitude; otherwise increasing disturbance also strengthens its suppression.
 - Distinguish guiding curl force (N, fixed reference budget) from airflow turbulence (m/s, material drag). Apply authored noise once, reserve capture authority, and bind actuator turnover to attainable speed when force-limited.
 - Automatic guided clouds derive integral eddy length from field radius; verify neighboring-force correlation before calling motion coherent.
@@ -93,6 +94,7 @@
 ## 10. Core layer (`core/`, `environment/`, `maps/`, common shaders)
 
 ### 10.1 General
+- Meadow habitat and canopy colors must agree between the CPU blade bake, ecology texture and distant ground. Keep `meadow_palette.h` and its GLSL counterpart synchronized; contour mist thresholds must remain below interior relief.
 - Typed fields keep Newton force, acceleration and medium velocity separate. Direct Motion receivers sample ordinary Wind excluding Motion publication; authored drag/buoyancy replace automatic material approximations. Legacy packed force IDs and units never change.
 - Rooted objects consume Motion Newton forces through their own mass/spring/damping; stateless queries must not capture free-particle lanes or fire arrival callbacks.
 - Anchored vegetation samples airflow near terrain/canopy height, not at the airborne source height; a horizontal-axis swirl has different bending directions at those heights.
@@ -177,6 +179,8 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | §10.1 Shared meadow habitat and relief contours | maps/toolkit/meadow_palette.h; maps/toolkit/shaders/meadow_palette.glsl; maps/tests/test_verdant_heightmap.py | Ground-truth |
+| 2026-10-09 | Codex | Directed path constraints and transverse field units | core/motion/motion_path_transport.h; core/motion/shaders/motion_fields.glsl | Ground-truth and project convention |
 | 2026-10-09 | Codex | Shared prescribed Motion path sampling | core/motion/motion_path_transport.h; core/motion/shaders/motion_fields.glsl | Ground-truth and project convention |
 | 2026-10-08 | Codex | Shared physical ribbon appearance without vertex displacement | core/trails/trail_ribbon.h; core/trails/trail_system.c; core/composition/common/vc_trail.inl | Ground-truth |
 | 2026-10-08 | Codex | §10.1 Caller-owned shared frames and binding refresh | core/motion/motion_frame.h; core/motion/motion_fields.c; core/composition/visual_composer.c | Ground-truth and project convention |

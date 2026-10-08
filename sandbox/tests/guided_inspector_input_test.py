@@ -153,7 +153,7 @@ typedef struct {
 enum { VFX_GUIDED_PARTICLES, VFX_GUIDED_TRAILS, VFX_GUIDED_BOTH };
 enum { VFX_GUIDED_ROUTE, VFX_GUIDED_ORBIT, VFX_GUIDED_AIRFLOW };
 enum { GUIDE_TIGHT = 3 };
-enum { VFX_GUIDED_TRAIL_MOTION_FIELD, VFX_GUIDED_TRAIL_MOTION_SPLINE };
+enum { VFX_GUIDED_TRAIL_MOTION_FIELD, VFX_GUIDED_TRAIL_MOTION_SPLINE, VFX_GUIDED_TRAIL_MOTION_GUIDED };
 typedef int VC_MaterialId;
 enum { VC_MAT_WATER = 3, VC_MAT_LIGHTNING, VC_MAT_METAL, VC_MAT_FIRE };
 enum { VFX_GUIDED_TRAIL_PLAIN, VFX_GUIDED_TRAIL_ENERGY_SILK, VFX_GUIDED_TRAIL_SMOKE_WISP, VFX_GUIDED_TRAIL_EMBER_FILAMENT, VFX_GUIDED_TRAIL_WATER_STREAM };
@@ -236,6 +236,18 @@ int main(void) {
     Near(s_liveGuidedMotionConfig.turbulenceSpeed,0.0f);
     Near(s_liveGuidedMotionConfig.gravityScale,0.0f);
     Near(s_liveGuidedMotionConfig.formationRadius,0.0f);
+    VFXTest_SetGuidedPreset(19);
+    assert(s_liveGuidedMotionConfig.trailMotion==VFX_GUIDED_TRAIL_MOTION_GUIDED);
+    assert(s_liveGuidedMotionConfig.output==VFX_GUIDED_TRAILS);
+    assert(s_liveGuidedMotionConfig.trailCount==1 && s_liveGuidedMotionConfig.trailNodes==24);
+    assert(s_liveGuidedMotionConfig.motionPattern==VFX_GUIDED_ROUTE);
+    assert(s_liveGuidedMotionConfig.trailStyle==VFX_GUIDED_TRAIL_ENERGY_SILK);
+    Near(s_liveGuidedMotionConfig.trailLength,0.8f);
+    Near(s_liveGuidedMotionConfig.speed,2.0f);
+    Near(s_liveGuidedMotionConfig.swirlSpeed,1.2f);
+    Near(s_liveGuidedMotionConfig.turbulenceSpeed,0.6f);
+    Near(s_liveGuidedMotionConfig.guideRadius,0.45f);
+    Near(s_liveGuidedMotionConfig.formationRadius,0.15f);
     VFXTest_SetGuidedPreset(3); assert(s_liveGuidedMotionConfig.count==0 && s_liveGuidedMotionConfig.trailCount==0);
     VFXTest_SetGuidedPreset(0);
     VFX_GuidedMotion_GetParams(&s_liveGuidedMotionConfig,s_inspectorParams,4);

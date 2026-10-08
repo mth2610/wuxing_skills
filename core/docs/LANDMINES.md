@@ -4004,6 +4004,7 @@ World-space GPU ribbon camera transforms: see `ENGINE_LANDMINES.md`,
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | Bounded field response without longitudinal drift | core/motion/motion_path_transport.h; core/tests/motion_path_response_test.c | Ground-truth |
 | 2026-10-09 | Codex | Force guidance versus prescribed spline transport | core/motion/motion_path_transport.h; core/trails/trail_ribbon.c; core/tests/ribbon_path_transport_test.c | Ground-truth |
 | 2026-10-08 | Codex | Burst chain transport and point-source emission | core/composition/common/vc_guided_motion.inl; core/tests/test_guided_motion.py; core/tests/guided_ribbon_path_test.c | Ground-truth |
 | 2026-10-08 | Codex | GPU ribbon camera pointer | ENGINE_LANDMINES.md; core/trails/trail_ribbon_gpu.c | Ground-truth |
@@ -4156,3 +4157,18 @@ history-shaped streak.
 Sample consecutive arc-distance offsets with the shared C1 sampler and bypass
 force integration and cloth constraints. Keep physical field mode for flutter.
 Never duplicate path animation in an emitter or read GPU node positions back.
+
+## Prescribed progress must retain bounded field response (09/10/2026)
+
+**Symptom.** A spline trail either ignores curl/swirl completely or loses direction
+when switched back to a free physical chain.
+
+**Cause.** Full position prescription removes transverse degrees of freedom; full
+free-body integration gives disturbances authority over longitudinal travel.
+
+**Rule.** Keep route distance authoritative and integrate field response in the
+transported normal/binormal frame. Preserve Newton versus airflow units, damp
+return independently of disturbance strength, and bound offsets by field radius.
+Use the known path frame rather than searching the path again per force sample.
+Store GPU transverse state in dedicated mode-owned lanes; reset at spawn and never
+reinterpret physical receiver lanes while a physical chain is live.

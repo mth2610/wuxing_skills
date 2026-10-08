@@ -15,6 +15,7 @@ typedef struct {
     TrailRibbonConfig config;
     TrailRibbonState state;
     float pathDistanceM;
+    MotionPathTransportState pathState[TRAIL_RIBBON_MAX_NODES];
     MotionReceiver receivers[TRAIL_RIBBON_MAX_NODES];
 } ModernRibbon;
 static ModernRibbon s_ribbons[TRAIL_RIBBON_GPU_CAPACITY];
@@ -102,7 +103,8 @@ int TrailRibbon_Spawn(const TrailRibbonConfig *c) {
         if(transport.captureBirthLane) transport.laneOffset=MotionVec_Add(transport.laneOffset,
             MotionPathTransport_CaptureLane(&view,head));
         for(int n=0;n<state.count;n++) {
-            state.position[n]=MotionPathTransport_Sample(&view,transport.startDistanceM-n*state.restLength[1],transport.laneOffset);
+            state.position[n]=MotionPathTransport_Sample(&view,transport.startDistanceM-n*state.restLength[1],
+                transport.respondToField?(Vector3){0}:transport.laneOffset);
             state.previous[n]=state.position[n];state.velocity[n]=(Vector3){0};
         }
     }
@@ -178,15 +180,24 @@ bool TrailRibbonSystem_Update(int id,float dt) {
     ModernRibbon *r=FindRibbon(id);if(!r) return false;
     if(r->config.pathTransport.field) {
         MotionPathTransportSnapshot view;
-        if(MotionFields_GetPathTransport(r->config.pathTransport.field,&view) && dt>0) {
+        if(MotionFields_GetPathTransport(r->config.pathTransport.field,&view) && isfinite(dt) && dt>0) {
             r->pathDistanceM=fminf(view.path->length+r->config.lengthM,
                 r->pathDistanceM+r->config.pathTransport.speedMps*dt);
             if(r->gpuSlot>=0) TrailRibbonGpu_SetPathTransport(r->gpuSlot,&r->config.pathTransport,r->pathDistanceM);
             else {
+                BodyPhysicalProperties body=MotionBody_GetPhysicalProperties(&r->config.material.body);
                 for(int n=0;n<r->state.count;n++) {
                     Vector3 old=r->state.position[n];r->state.previous[n]=old;
-                    r->state.position[n]=MotionPathTransport_Sample(&view,
-                        r->pathDistanceM-n*r->state.restLength[1],r->config.pathTransport.laneOffset);
+                    float distance=r->pathDistanceM-n*r->state.restLength[1];
+                    if(r->config.pathTransport.respondToField) {
+                        float lag=r->config.pathTransport.speedMps>1e-5f?
+                            n*r->state.restLength[1]/r->config.pathTransport.speedMps:0;
+                        r->state.position[n]=MotionPathTransport_Advance(&view,distance,
+                            r->config.pathTransport.laneOffset,lag,dt,&body,
+                            r->config.material.body.airDensityKgM3,
+                            (Vector3){0,-9.81f*r->config.material.body.gravityScale,0},&r->pathState[n]);
+                    } else r->state.position[n]=MotionPathTransport_Sample(&view,
+                        distance,r->config.pathTransport.laneOffset);
                     r->state.velocity[n]=MotionVec_Scale(MotionVec_Sub(r->state.position[n],old),1/dt);
                 }
                 CopyRenderHistory(r,GetTrail(id));

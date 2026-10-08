@@ -176,9 +176,9 @@ static const char *s_guidedFixturePresetNames[] = {
     "Timed particles and trails", "Timed trails only",
     "Orbit trails", "Anchored silk", "Released silk",
     "Energy silk ribbon", "Smoke wisp ribbon", "Ember filament ribbon", "Water stream ribbon",
-    "Spline ribbon"
+    "Spline ribbon", "Guided curl ribbon"
 };
-#define VFXTEST_GUIDED_PRESET_COUNT 19
+#define VFXTEST_GUIDED_PRESET_COUNT 20
 
 static void VFXTest_SetGuidedPreset(int preset)
 {
@@ -261,7 +261,7 @@ static void VFXTest_SetGuidedPreset(int preset)
         s_liveGuidedMotionConfig.gravityScale = 0.05f;
         s_liveGuidedMotionConfig.massKg = 0.004f;
     }
-    if (preset == 18) {
+    if (preset == 18 || preset == 19) {
         s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
         s_liveGuidedMotionConfig.trailMotion = VFX_GUIDED_TRAIL_MOTION_SPLINE;
         s_liveGuidedMotionConfig.motionPattern = VFX_GUIDED_ROUTE;
@@ -279,6 +279,13 @@ static void VFXTest_SetGuidedPreset(int preset)
         s_liveGuidedMotionConfig.guideRadius = 0.8f;
         s_liveGuidedMotionConfig.formationRadius = 0.0f;
         s_liveGuidedMotionConfig.gravityScale = 0.0f;
+    }
+    if (preset == 19) {
+        s_liveGuidedMotionConfig.trailMotion = VFX_GUIDED_TRAIL_MOTION_GUIDED;
+        s_liveGuidedMotionConfig.formationRadius = 0.15f;
+        s_liveGuidedMotionConfig.guideRadius = 0.45f;
+        s_liveGuidedMotionConfig.swirlSpeed = 1.2f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 0.6f;
     }
     s_guidedRatioReferenceSpeed = s_liveGuidedMotionConfig.speed > 0.00001f
         ? s_liveGuidedMotionConfig.speed : 1.0f;

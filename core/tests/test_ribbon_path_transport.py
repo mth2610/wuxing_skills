@@ -19,15 +19,16 @@ enum {BLEND_ALPHA,BLEND_ADDITIVE,BLEND_ALPHA_PREMULTIPLY};
 #include "core/trails/trail_ribbon.h"
 #include <assert.h>
 #include <stdio.h>
-typedef struct {TrailRibbonConfig config;TrailRibbonState state;float pathDistanceM;int gpuSlot;} ModernRibbon;
+typedef struct {TrailRibbonConfig config;TrailRibbonState state;float pathDistanceM;int gpuSlot;MotionPathTransportState pathState[TRAIL_RIBBON_MAX_NODES];} ModernRibbon;
 static ModernRibbon ribbon;
 static MotionPath path;
+static FieldDesc route;
 static bool live=true;
 static int copies,staged,forces;
 static float uploaded;
 static ModernRibbon *FindRibbon(int id){return id==1?&ribbon:NULL;}
 bool MotionFields_GetPathTransport(MotionFieldHandle h,MotionPathTransportSnapshot *v){
- if(!live||h!=123)return false;*v=(MotionPathTransportSnapshot){.path=&path,.transform=FieldTransform_Identity()};return true;
+ if(!live||h!=123)return false;*v=(MotionPathTransportSnapshot){.path=&path,.transform=FieldTransform_Identity(),.field=&route,.ageSec=1};return true;
 }
 static void TrailRibbonGpu_SetPathTransport(int slot,const MotionPathTransport *t,float d){assert(slot==4&&t->field==123);staged++;uploaded=d;}
 TrailEntity *GetTrail(int id){(void)id;return NULL;}
@@ -57,10 +58,18 @@ int main(void){
  ribbon.gpuSlot=-1;assert(TrailRibbonSystem_Update(1,.1f));
  for(int n=0;n<3;n++) assert(ribbon.state.position[n].x==5); /* Tail drains into B. */
  assert(!forces);
+ route=(FieldDesc){.volume={.shape=FIELD_PATH_TUBE,.radiusM=.5f},.lifetime={.durationSec=10},.forceLawCount=1};
+ route.volume.path=path;
+ route.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_NEWTONS,.forceNewtons={0,.01f,0}};
+ ribbon.pathDistanceM=2;ribbon.config.pathTransport.respondToField=true;
+ ribbon.config.material.body.inverseMassKg=250;ribbon.config.material.body.gravityScale=0;
+ assert(TrailRibbonSystem_Update(1,.02f));
+ assert(fabsf(ribbon.state.position[0].x-2.04f)<1e-6f&&ribbon.state.position[0].y>0);
+ assert(ribbon.pathState[0].offsetM.y>0&&!forces);
  puts("Production ribbon spline update: growth, ordered tail, expiry freeze, drain and GPU-only staging PASS");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='wuxing-ribbon-transport-') as tmp:
-    p=pathlib.Path(tmp);(p/'test.c').write_text(preamble+code+main)
+    p=pathlib.Path(tmp);(p/'test.c').write_text(preamble+(ROOT/'core/force_field.c').read_text().split('static inline float ValueHash')[0]+code+main)
     subprocess.run(['cc','-std=c99','-Wall','-Wextra','-I'+str(ROOT),'-I'+str(ROOT/'core/tests/stubs'),str(p/'test.c'),'-lm','-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test')],check=True)

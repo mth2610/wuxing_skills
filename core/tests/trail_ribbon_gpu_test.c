@@ -110,11 +110,25 @@ static void TransportFixture(int which,const char *dir) {
     Vector3 points[]={{0,0,0},{.5f,.7f,.2f},{1.5f,.8f,.5f},{2.5f,.2f,0}};
     assert(MotionPath_Build(&field.volume.path,points,4));
     field.transform.position=(Vector3){3,2,-1};
+    if(which>=12) {
+        field.transform.axisX=(Vector3){0,0,-1};field.transform.axisZ=(Vector3){1,0,0};
+        field.flow.enabled=true;field.flow.procedural.swirlSpeedMps=1.2f;
+        field.forceLawCount=2;
+        field.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_PATH_GUIDE,.springStiffnessNPerM=.08f,.magnitudeNewtons=.05f};
+        field.forceLaws[1]=(ForceLaw){.type=FORCE_LAW_CURL_FORCE,.magnitudeNewtons=.02f,
+            .procedural={.turbulenceSpeedMps=.6f,.eddyLengthM=.3f}};
+        if(which==13) {field.forceLawCount=1;field.flow.procedural.turbulenceSpeedMps=.6f;field.flow.procedural.eddyLengthM=.3f;}
+    }
     MotionFieldHandle handle=MotionFields_CreateField(&field);assert(handle);
+    MotionFields_Update(.7f);
     MotionPathTransportSnapshot view;assert(MotionFields_GetPathTransport(handle,&view));
     TrailRibbonGpuNode nodes[TRAIL_RIBBON_MAX_NODES]={0},expected[TRAIL_RIBBON_MAX_NODES]={0};
     MotionGpuBody bodies[TRAIL_RIBBON_MAX_NODES]={0};
     TrailRibbonGpuParams params={.meta={24,handle,0,3},.compliance={0,0,0,1.75f},.anchor={0,.13f,-.17f,0}};
+    int steps=which>=12?4:1;
+    MotionBodyProfile profile={.inverseMassKg=250,.aerodynamicAreaM2=.002f,.aerodynamicDragCoefficient=.47f};
+    BodyPhysicalProperties physical=MotionBody_GetPhysicalProperties(&profile);
+    if(which>=12) {params.meta[3]=7;params.anchorVelocity.w=2;}
     for(int i=0;i<24;i++) {
         Vector3 old={0,1,0};
         Vector3 q=MotionPathTransport_Sample(&view,params.compliance.w-i*.08f,(Vector3){0,.13f,-.17f});
@@ -122,6 +136,18 @@ static void TransportFixture(int which,const char *dir) {
         expected[i].positionRest=MotionGpu_V4(q,i?.08f:0);
         expected[i].velocity=MotionGpu_V4(MotionVec_Scale(MotionVec_Sub(q,old),60),0);
         expected[i].previous=MotionGpu_V4(old,0);
+        if(which>=12) {
+            bodies[i]=MotionGpu_PackBodyForReceiver(&profile,(Vector3){0},(Vector3){0},true,0,MOTION_RECEIVER_TRAIL);
+            MotionPathTransportState state={.offsetM={0,.02f,-.01f},.velocityMps={0,.03f,.01f}};
+            bodies[i].laneOffsets[0]=MotionGpu_V4(state.offsetM,0);bodies[i].laneOffsets[1]=MotionGpu_V4(state.velocityMps,0);
+            for(int step=0;step<steps;step++) {
+                Vector3 next=MotionPathTransport_Advance(&view,params.compliance.w-i*.08f,
+                    (Vector3){0,.13f,-.17f},i*.08f/2,1.f/60,&physical,0,(Vector3){0},&state);
+                expected[i].positionRest=MotionGpu_V4(next,i?.08f:0);
+                expected[i].velocity=MotionGpu_V4(MotionVec_Scale(MotionVec_Sub(next,old),60),0);
+                expected[i].previous=MotionGpu_V4(old,0);old=next;
+            }
+        }
     }
     if(which==11) {MotionFields_Stop(handle);memcpy(expected,nodes,sizeof(nodes));}
     MotionFields_PackGpu(&scene);
@@ -133,12 +159,12 @@ static void TransportFixture(int which,const char *dir) {
         Bytes(dir,"ssbo5.bin",&scene,sizeof(scene));Bytes(dir,"ssbo6.bin",bodies,sizeof(bodies));
         Bytes(dir,"expected0.bin",expected,sizeof(expected));
         char path[1024];snprintf(path,sizeof(path),"%s/config.txt",dir);
-        FILE *f=fopen(path,"w");assert(f);fprintf(f,"1 1 %.9g %.9g .0001\n",1.f/60,1.f/60);fclose(f);
+        FILE *f=fopen(path,"w");assert(f);fprintf(f,"1 %d %.9g %.9g .002\n",steps,1.f/60,.7f);fclose(f);
     }
 }
 int main(int argc,char **argv) {
     if(argc>=3) {int which=atoi(argv[2]);if(which>=10) TransportFixture(which,argv[1]);else Fixture(which,argv[1]);}
-    else {for(int i=0;i<10;i++) Fixture(i,NULL);TransportFixture(10,NULL);TransportFixture(11,NULL);}
+    else {for(int i=0;i<10;i++) Fixture(i,NULL);TransportFixture(10,NULL);TransportFixture(11,NULL);TransportFixture(12,NULL);TransportFixture(13,NULL);}
     puts("PASS: production ribbon CPU references and GPU ABI fixtures (execution requires renderer harness)");
     return 0;
 }

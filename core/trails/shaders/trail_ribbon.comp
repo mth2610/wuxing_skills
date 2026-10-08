@@ -44,7 +44,14 @@ void main() {
         if(transportField>=0 && node<count) {
             vec3 old=nodes[base+node].positionRest.xyz;
             float spacing=nodes[base+1].positionRest.w;
-            vec3 p=mPathTransportSample(transportField,r.compliance.w-float(node)*spacing,r.anchor.xyz);
+            float distance=r.compliance.w-float(node)*spacing;
+            vec3 p;
+            if((r.meta.w&4u)!=0u) {
+                MotionGpuBody body=motionBodies[base+node];
+                float lag=r.anchorVelocity.w>1e-5?float(node)*spacing/r.anchorVelocity.w:0.0;
+                p=mPathTransportAdvance(transportField,distance,r.anchor.xyz,lag,u_dt,body);
+                motionBodies[base+node]=body;
+            } else p=mPathTransportSample(transportField,distance,r.anchor.xyz);
             nodes[base+node].positionRest.xyz=p;
             nodes[base+node].previous=vec4(old,0);
             nodes[base+node].velocity=vec4((p-old)/u_dt,0);

@@ -3087,7 +3087,7 @@ medium). Orbit and Airflow avoid path projection. `core/motion/motion_recipe.h`
 compiles these and explicit path-stream recipes into the same `FieldDesc` used by
 particles and ribbons; recipes add no shader variants or receiver solvers.
 Route ribbons remain free at both ends unless an attachment is supplied.
-`VFX_GuidedMotion_DefaultConfig()` selects `trailMotion=SPLINE`: prescribed
+`trailMotion=SPLINE` selects prescribed
 transport through the shared `FIELD_PATH_TUBE`. Motion's C1 Hermite sampler places
 each node at `headDistance - nodeSpacing * nodeIndex`; the head advances at the
 authored speed, the tail grows from A and drains into B. The sampler uses the
@@ -3096,6 +3096,29 @@ Gravity, turbulence, drag and cloth constraints do not affect this mode. CPU and
 GPU share its formulas; GPU nodes use binary path lookup and bypass force sampling
 and iterative constraints. The CPU advances one scalar phase per ribbon, with no
 GPU geometry readback. Transverse birth offsets are captured once as stable lanes.
+
+`VFX_GuidedMotion_DefaultConfig()` selects `trailMotion=GUIDED` (Guided field).
+It preserves the same monotonic spline progress and adds a bounded normal/binormal
+response to the selected path field. Captured birth lanes rotate with field swirl;
+node lag derives from spacing/speed so the ribbon retains the head's orbit history.
+Newton curl actuators and other field laws drive transverse acceleration using body
+mass. Airflow turbulence remains m/s and acts through body aerodynamic area/Cd.
+Body gravity projects into the transverse plane. Path-guide stiffness supplies a
+critically damped implicit return; the field radius bounds the combined lane and
+deviation. A smooth endpoint envelope brings all lanes into exact A/B positions.
+This is constrained transport, not an inextensible cloth solver: lateral motion can
+change geometric segment lengths. It samples the bound route field, not unrelated
+registry fields or global Wind. Head attachments and physical chains retain their
+existing spatial field/Wind integration.
+
+`MotionPathTransport.respondToField` enables the shared behavior outside Guided.
+`MotionPathTransport_Advance` consumes a prepared snapshot, mass/area/Cd, external
+world acceleration and caller-owned transverse state. Snapshots also expose the
+borrowed field descriptor and its age. The GPU stores that state in existing body
+lanes reserved for this mode, preserving SSBO layouts and physical receiver lanes.
+One binary path lookup and one field-response evaluation run per node/update;
+known path frames eliminate nearest-segment searches. No cloth iterations or
+geometry readback occur. Zero response state is initialized on every spawn.
 
 Select `trailMotion=FIELD` for physical silk: lateral path guidance and tangent
 forces move nodes while constraints preserve the chain. This allows wind and
@@ -3453,6 +3476,7 @@ TrailAttachment_Destroy(attachment);
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | Bounded field-driven path transport and Guided field default | core/motion/motion_path_transport.h; core/trails/shaders/trail_ribbon.comp; core/tests/motion_path_response_test.c | Ground-truth |
 | 2026-10-09 | Codex | Prescribed C1 spline transport and Guided trail motion choice | core/motion/motion_path_transport.h; core/trails/trail_ribbon.c; core/composition/common/vc_guided_motion.inl | Ground-truth |
 | 2026-10-08 | Codex | Guided spline chain transport and shared ribbon appearance | core/composition/common/vc_guided_motion.inl; core/trails/trail_ribbon.h; core/trails/trail_system.c | Ground-truth |
 | 2026-10-08 | Codex | Emitter-owned mesh sources and CPU/GPU child policies | core/emitter/mesh_surface_source.h; core/emitter/particle_children.h; core/emitter/emitter_gpu.h | Ground-truth |

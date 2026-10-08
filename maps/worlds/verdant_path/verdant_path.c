@@ -349,7 +349,10 @@ static void BuildMeadowLayout(void)
         float biome = s_ecology.ready ? ecology.habitat : cell1 * 0.6f + cell2 * 0.4f;
         float growth = s_ecology.ready ? ecology.growth : biome;
         // Shared growth avoids abrupt species-height steps at biome thresholds.
-        clump->height = 0.30f + growth * 0.12f;
+        clump->height = 0.42f + growth * 0.24f;
+        // Sparse flower colonies and meadow margins retain a shorter underlayer.
+        if (s_ecology.ready)
+            clump->height *= 0.65f + 0.35f * ecology.coverage;
         clump->radius = 0.22f + biome * 0.06f;
         clump->height *= 0.85f + 0.30f * (localHeight - 0.34f) / 0.20f;
         clump->radius *= 0.92f + 0.16f * (localRadius - 0.22f) / 0.06f;
@@ -539,7 +542,7 @@ static void ApplyVerdantEnvironment(void)
             .multipleScatteringAmp = 1.7f
         },
         .density = {
-            .baseDensity = 0.025f,
+            .baseDensity = 0.008f,
             .heightFalloff = 0.20f,      // Distant haze reaches above grass at gameplay zoom
             .baseAltitude = 0.0f,
             .enableSigmoidLayer = false, // Disabled map-wide blanket; mist is strictly localized
@@ -651,7 +654,7 @@ void InitVerdantPathMap(void)
     // global environment state before the resource guard so another map cannot
     // leave Verdant using stale light/fog values.
     ApplyVerdantEnvironment();
-    VolumetricFog_SetDistantCoverage(4.0f / 9.0f);
+    VolumetricFog_SetDistantCoverage(2.0f / 3.0f);
     EnvCloudShadowConfig cloudConfig = {
         .enabled = true, .strength = 0.12f, .worldSize = 96.0f,
         .planeHeight = 80.0f, .coverage = 0.48f, .softness = 0.16f, .windSpeedScale = 0.55f,

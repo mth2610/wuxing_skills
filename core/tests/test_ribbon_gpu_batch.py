@@ -118,6 +118,10 @@ int main(void){
  assert(uploaded[3].meta[1]==0xf1234567u&&uploaded[3].meta[3]==3);
  assert(uploaded[0].meta[1]==16&&uploaded[0].meta[3]==1);
  Near(uploaded[3].compliance.w,2.75f);Near(uploaded[3].anchor.y,.2f);Near(uploaded[3].anchor.z,-.3f);
+ transport.respondToField=true;transport.speedMps=2.25f;
+ TrailRibbonGpu_BeginUpdate(.01f,2);TrailRibbonGpu_SetPathTransport(3,&transport,3);
+ TrailRibbonGpu_EndUpdate();assert(dispatches==2&&uploaded[3].meta[3]==7);
+ Near(uploaded[3].anchorVelocity.w,2.25f);assert(uploaded[0].meta[3]==1);
  Reset();TrailRibbonGpu_BeginUpdate(.01f,1);TrailRibbonGpu_EndUpdate();assert(!dispatches&&!snapshots);
  Slot(1);s_ready=false;TrailRibbonGpu_BeginUpdate(.01f,1);TrailRibbonGpu_Update(1,.01f,&anchor);TrailRibbonGpu_EndUpdate();assert(!dispatches&&!snapshots);
  s_ready=true;
