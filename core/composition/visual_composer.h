@@ -1075,6 +1075,9 @@ void                 VFX_ComposeWoodVine(const VFX_WoodVineConfig *config);
 typedef enum {
     VFX_GUIDED_PARTICLES = 0, VFX_GUIDED_TRAILS = 1, VFX_GUIDED_BOTH = 2
 } VFX_GuidedOutput;
+typedef enum {
+    VFX_GUIDED_ROUTE = 0, VFX_GUIDED_ORBIT, VFX_GUIDED_AIRFLOW
+} VFX_GuidedPattern;
 /* Field-first composition. Zero emitDuration bursts `count` particles; positive
  * emitDuration spreads exactly `count` particles across that interval at the
  * derived average rate. Burst mode uses a sphere that travels from source to
@@ -1132,6 +1135,12 @@ typedef struct VFX_GuidedParticleConfig {
     int trailNodes; /* 2..TRAIL_RIBBON_MAX_NODES; ignored with trailTemplate. */
     TrailAttachmentHandle trailAttachment; /* 0 free; otherwise caller-owned head anchor. */
     const TrailRibbonConfig *trailTemplate; /* Copied at cast; borrowed texture/anchor stay live. */
+    int motionPattern; /* VFX_GuidedPattern; zero retains existing A-to-B routing. */
+    /* Optional shared rigid frame. Source, target, emission source and field
+     * override become LOCAL metres. One frame can drive field, births and head
+     * anchor. Caller owns its lifetime; destruction freezes field/birth frame
+     * and releases anchored ribbons. Zero retains world-space behavior. */
+    MotionFrameHandle frame;
 } VFX_GuidedParticleConfig;
 typedef VFX_GuidedParticleConfig VFX_GuidedMotionConfig;
 /* Shared field and source, independent particle/ribbon birth totals. AUTO uses

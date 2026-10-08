@@ -4005,6 +4005,7 @@ World-space GPU ribbon camera transforms: see `ENGINE_LANDMINES.md`,
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
 | 2026-10-08 | Codex | GPU ribbon camera pointer | ENGINE_LANDMINES.md; core/trails/trail_ribbon_gpu.c | Ground-truth |
+| 2026-10-08 | Codex | Shared frame lifetime and post-choreography refresh | core/motion/motion_frame.h; core/motion/motion_fields.c; core/tests/motion_frame_field_test.c; core/tests/test_guided_motion.py | Ground-truth |
 | 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Physical guidance support and implicit response | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
 | 2026-10-08 | Codex | Parallel ribbon field sampling and batched submission | core/trails/shaders/trail_ribbon.comp; core/trails/trail_ribbon_gpu.c; core/tests/ribbon_gpu_batch_test.c | Ground-truth |
@@ -4091,3 +4092,20 @@ node resolution and iteration counts. Guard submission/release semantics with
 `core/tests/ribbon_gpu_batch_test.c`; validate numerical state on the device with
 `third_party/vulkan/tests/rlvk_ribbon_motion_test.h`. Report synchronized host
 wall-time probes separately from GPU timestamps and visible frame timings.
+
+## Shared moving frames must survive unrelated component resets (08/10/2026)
+
+**Symptom.** Resetting trails or fields invalidates an external anchor also used
+by another component; a field can also lag a head moved by composition updates.
+
+**Cause.** A shared frame pool inherited trail-local reset ownership, and field
+ages/bindings were updated before choreography changed the parent transform.
+
+**Rule.** Generic Motion frames are caller-owned. Compatibility trail wrappers
+release only the frames they created; field reset never clears the shared pool.
+After choreography, resolve changed frame revisions through
+`MotionFields_RefreshFrames` before particle/trail GPU snapshots, without aging
+fields again. Cache angular metadata on frame updates, rather than rebuilding
+it for each attached ribbon. Destroyed or nonrigid bindings freeze safely and
+clear inherited velocities. Guards: `core/tests/motion_frame_field_test.c`,
+`core/tests/motion_frame_test.c`, and `core/tests/test_guided_motion.py`.

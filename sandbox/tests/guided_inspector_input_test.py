@@ -6,6 +6,66 @@ import unittest
 
 
 class GuidedInspectorInputTest(unittest.TestCase):
+    def test_owned_frames_release_and_expire_without_draw_updates(self):
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "sandbox/vfx_test.c").read_text()
+        begin = source.index("#define VFXTEST_GUIDED_FRAME_COUNT")
+        end = source.index("static void VFXTest_FireGuidedMotion", begin)
+        helper = source[begin:end]
+        fixture = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <math.h>
+#include <stddef.h>
+typedef unsigned MotionFrameHandle;
+typedef struct {float x,y,z;} Vector3;
+typedef struct {float x,y,z;} Matrix;
+typedef struct {float inverseMassKg,gravityScale;} MotionBodyProfile;
+static int destroyed, updated;
+static bool seen[17];
+static void MotionFrame_Destroy(MotionFrameHandle h) {
+    assert(h>0 && h<=16 && !seen[h]); seen[h]=true; ++destroyed;
+}
+static bool MotionFrame_Update(MotionFrameHandle h,Matrix m,float dt,bool jump) {
+    assert(h>0 && h<=16 && !seen[h] && dt>0 && !jump);
+    assert(isfinite(m.x) && isfinite(m.y) && m.y>=0.2f); ++updated; return true;
+}
+static Matrix MatrixTranslate(float x,float y,float z) {return (Matrix){x,y,z};}
+static Vector3 Vector3Add(Vector3 a,Vector3 b) {return (Vector3){a.x+b.x,a.y+b.y,a.z+b.z};}
+static Vector3 Vector3Scale(Vector3 a,float k) {return (Vector3){a.x*k,a.y*k,a.z*k};}
+static Vector3 MotionBody_AdvanceVelocity(Vector3 v,const MotionBodyProfile *p,
+    Vector3 a,Vector3 f,Vector3 air,float dt) {
+    (void)a;(void)f;(void)air; v.y-=9.81f*p->gravityScale*dt; return v;
+}
+''' + helper + r'''
+int main(void) {
+    s_guidedFrames[0]=(VFXTest_GuidedFrame){.frame=1,.position={0,1,0},.velocity={1,4,0},.active=true,.release=true};
+    s_guidedFrames[1]=(VFXTest_GuidedFrame){.frame=2,.position={0,1,0},.velocity={1,4,0},.active=true};
+    VFXTest_UpdateGuidedFrames(0); VFXTest_UpdateGuidedFrames(NAN); assert(updated==0);
+    for(int i=0;i<71;++i) VFXTest_UpdateGuidedFrames(1.0f/60);
+    assert(s_guidedFrames[0].active && s_guidedFrames[1].active && destroyed==0);
+    VFXTest_UpdateGuidedFrames(0.02f);
+    assert(s_guidedFrames[0].active && s_guidedFrames[0].frame==0);
+    assert(s_guidedFrames[1].active && destroyed==1);
+    assert(s_guidedFrames[1].position.x>0.5f);
+    for(int i=0;i<180;++i) VFXTest_UpdateGuidedFrames(1.0f/60);
+    assert(!s_guidedFrames[0].active && !s_guidedFrames[1].active && destroyed==2);
+    s_guidedFrames[2]=(VFXTest_GuidedFrame){.frame=3,.active=true};
+    VFXTest_ClearGuidedFrames(); assert(destroyed==3);
+    VFXTest_ClearGuidedFrames(); assert(destroyed==3);
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="guided-frame-lifetime-") as directory:
+            code = Path(directory) / "test.c"
+            binary = Path(directory) / "test"
+            code.write_text(fixture)
+            subprocess.run(["cc", "-std=c99", "-Wall", "-Wextra", "-Werror", str(code), "-lm", "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True)
+        draw = source[source.index("void VFXTest_Draw3D(void)"):]
+        self.assertNotIn("VFXTest_UpdateGuidedFrames(", draw)
+        self.assertIn("VFXTest_UpdateGuidedFrames(TimeFX_RawDelta());", source)
+
     def test_capture_repeat_schedule_is_bounded_and_frame_deterministic(self):
         root = Path(__file__).resolve().parents[2]
         source = (root / "sandbox/vfx_test.c").read_text()
@@ -80,10 +140,12 @@ int main(void) {
 #include "core/composition/common/vc_params.h"
 #define VFX_TEST_MAX_INSPECTOR_PARAMS 4
 typedef struct {
-    float speed, swirlSpeed, turbulenceSpeed, duration, guideRadius, maxForceNewtons, drag, formationRadius, emitDuration;
-    int count, output, trailCount;
+    float speed, swirlSpeed, turbulenceSpeed, duration, guideRadius, maxForceNewtons, drag, formationRadius, emitDuration, gravityScale, massKg, trailLength, trailWidth;
+    int count, output, trailCount, motionPattern, trailNodes, material;
 } VFX_GuidedMotionConfig;
 enum { VFX_GUIDED_PARTICLES, VFX_GUIDED_TRAILS, VFX_GUIDED_BOTH };
+enum { VFX_GUIDED_ROUTE, VFX_GUIDED_ORBIT, VFX_GUIDED_AIRFLOW };
+enum { VC_MAT_WATER = 3 };
 static VFX_GuidedMotionConfig s_liveGuidedMotionConfig;
 static bool s_liveGuidedMotionConfigInit;
 static int s_guidedFixturePreset;
@@ -121,6 +183,24 @@ int main(void) {
     assert(s_liveGuidedMotionConfig.count==192 && s_liveGuidedMotionConfig.trailCount==8);
     Near(s_liveGuidedMotionConfig.emitDuration,1.5f);
     Near(s_liveGuidedMotionConfig.speed,12);
+    VFXTest_SetGuidedPreset(11);
+    assert(s_liveGuidedMotionConfig.motionPattern==VFX_GUIDED_ORBIT);
+    assert(s_liveGuidedMotionConfig.output==VFX_GUIDED_TRAILS);
+    assert(s_liveGuidedMotionConfig.trailCount==8);
+    Near(s_liveGuidedMotionConfig.emitDuration,1.5f);
+    VFXTest_SetGuidedPreset(12);
+    assert(s_liveGuidedMotionConfig.motionPattern==VFX_GUIDED_AIRFLOW);
+    assert(s_liveGuidedMotionConfig.trailNodes==24);
+    assert(s_liveGuidedMotionConfig.trailCount==1 && s_liveGuidedMotionConfig.material==VC_MAT_WATER);
+    Near(s_liveGuidedMotionConfig.emitDuration,0);
+    Near(s_liveGuidedMotionConfig.trailWidth,0.16f);
+    Near(s_liveGuidedMotionConfig.gravityScale,0.05f);
+    Near(s_liveGuidedMotionConfig.massKg,0.004f);
+    VFXTest_SetGuidedPreset(13);
+    assert(s_liveGuidedMotionConfig.motionPattern==VFX_GUIDED_AIRFLOW);
+    assert(s_liveGuidedMotionConfig.trailCount==1 && s_liveGuidedMotionConfig.material==VC_MAT_WATER);
+    Near(s_liveGuidedMotionConfig.emitDuration,0);
+    Near(s_liveGuidedMotionConfig.trailWidth,0.16f);
     VFXTest_SetGuidedPreset(3); assert(s_liveGuidedMotionConfig.count==0 && s_liveGuidedMotionConfig.trailCount==0);
     VFXTest_SetGuidedPreset(0);
     VFX_GuidedMotion_GetParams(&s_liveGuidedMotionConfig,s_inspectorParams,4);

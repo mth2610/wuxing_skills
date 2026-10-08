@@ -3,6 +3,7 @@
 #include "core/force_field.h"
 #include "core/motion/motion_flow.h"
 #include "core/motion/physical_field.h"
+#include "core/motion/motion_frame.h"
 #include "core/motion/motion_path.h"
 #include "core/motion/motion_profile.h"
 #include "core/wind/wind_types.h"
@@ -141,6 +142,16 @@ MotionFieldHandle MotionFields_CreateField(const FieldDesc *desc);
  * metadata for field laws, not an implicit position integration request.
  * Legacy guide/target handles and invalid transforms are rejected. */
 bool MotionFields_SetTransform(MotionFieldHandle handle,const FieldTransform *transform);
+/* Bind an owned typed field to a shared rigid frame. NULL localFrame is identity.
+ * Resolve immediately and once per registry update, never per receiver/node.
+ * Zero frame unbinds preserving the last world pose and clearing velocity. Destroyed frames
+ * freeze that transform and clear frame velocity. SetTransform also unbinds.
+ * Update frames before MotionFields_Update; no automatic receiver teleport. */
+bool MotionFields_BindFrame(MotionFieldHandle handle,MotionFrameHandle frame,
+                           const FieldTransform *localFrame);
+/* Resolve frame updates made by choreography after the registry update,
+ * without aging fields. Unchanged frame revisions incur no bounds rebuild. */
+void MotionFields_RefreshFrames(void);
 
 /* Ergonomic builder helpers:
  * 1. Spawn a static spherical attraction field that pulls receivers towards center for durationSec. */

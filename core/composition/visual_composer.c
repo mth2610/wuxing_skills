@@ -117,6 +117,9 @@ void VFX_Compose_Update(float dt)
     WaterOrb_Update(dt);
     WaterRing_Update(dt);
     LiquidBench_Update(dt);
+    /* Choreography can update parent frames after field ages advance. Refresh
+     * bindings without advancing clocks before component GPU snapshots. */
+    MotionFields_RefreshFrames();
     VFX_FoliageSystem_Update(dt, NULL);
 }
 

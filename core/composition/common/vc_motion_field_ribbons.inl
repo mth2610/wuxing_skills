@@ -53,6 +53,9 @@ static bool VC_MotionFieldRibbons_Start(VC_MotionFieldRibbons *s)
     field.forceLaws[0].type=FORCE_LAW_ACCELERATION;
     field.forceLaws[0].accelerationMps2=(Vector3){0,.5f,0};
     s->field=MotionFields_CreateField(&field);
+    if(s->field && !MotionFields_BindFrame(s->field,s->attachment,NULL)) {
+        MotionFields_Stop(s->field); s->field=MOTION_FIELD_INVALID;
+    }
 
     TrailRibbonConfig ribbon=TrailRibbon_Default();
     ribbon.nodeCount=32; ribbon.lengthM=1.25f; ribbon.widthM=.12f;
@@ -132,9 +135,6 @@ static void VC_MotionFieldRibbons_Update(float dt)
             (Vector3){0},(Vector3){0},(Vector3){0},dt);
         s->stone=Vector3Add(s->stone,Vector3Scale(s->velocity,dt));
         TrailAttachment_Update(s->attachment,MatrixTranslate(s->stone.x,s->stone.y,s->stone.z),dt,false);
-        FieldTransform transform=MotionField_Default().transform;
-        transform.position=s->stone; transform.frameVelocityMps=s->velocity;
-        MotionFields_SetTransform(s->field,&transform);
         Emission_Step(s->emission,s->stone,dt);
         if(!s->released && s->age>=2) {
             TrailRibbon_ReleaseHead(s->tiedRibbon);s->released=true;

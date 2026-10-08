@@ -5,10 +5,11 @@ ROOT=pathlib.Path(__file__).resolve().parents[2]
 s=(ROOT/'core/composition/common/vc_guided_motion.inl').read_text()
 h=(ROOT/'core/composition/visual_composer.h').read_text()
 def function(name):
- m=re.search(r'^(?:static bool|static float|static int|static ParticleDynamicsProfile|static GuideTuning|VFX_GuidedParticleConfig|int) '+name+r'\(',s,re.M); start=s.index('{',m.start()); depth=1; end=start+1
+ m=re.search(r'^(?:static bool|static float|static int|static ParticleDynamicsProfile|static MotionFieldRecipe|static GuideTuning|VFX_GuidedParticleConfig|int) '+name+r'\(',s,re.M); start=s.index('{',m.start()); depth=1; end=start+1
  while depth:
   depth+=(s[end]=='{')-(s[end]=='}');end+=1
  return s[m.start():end]
+enums='\n'.join(re.search(r'typedef enum \{[^}]*\} '+name+r';',h,re.S).group() for name in ('VFX_GuidedOutput','VFX_GuidedPattern'))
 config=re.search(r'typedef struct VFX_GuidedParticleConfig \{.*?\} VFX_GuidedParticleConfig;',h,re.S).group()
 stubs=r'''
 #include "core/motion/motion_fields.h"
@@ -21,16 +22,15 @@ typedef enum {PARTICLE_RENDER_BILLBOARD=0,PARTICLE_RENDER_SURFACE_INPUT=3} Parti
 typedef struct {int placeholder;} ParticleRenderStream;
 typedef struct {struct {ParticleDynamicsProfile *dynamics;} physics;} ParticleConfig;
 typedef struct {int placeholder;} ParticleEmissionSource;
-typedef uint64_t TrailAttachmentHandle;
-typedef struct {int placeholder;} TrailRibbonConfig;
-enum {VFX_GUIDED_PARTICLES,VFX_GUIDED_TRAILS,VFX_GUIDED_BOTH};
+typedef struct {int placeholder;} Camera3D;
+#include "core/trails/trail_ribbon.h"
+#include "core/motion/motion_recipe.h"
 #include "core/composition/common/vc_params.h"
 #include "core/motion/motion_body.h"
 enum {VC_MAT_LIGHTNING};
-static FieldDesc MotionField_TestDefault(void) {
+FieldDesc MotionField_Default(void) {
  return (FieldDesc){.transform=FieldTransform_Identity(),.receiverMask=MOTION_RECEIVER_ALL};
 }
-#define MotionField_Default MotionField_TestDefault
 static Vector3 GetBezierPoint(Vector3 p,Vector3 a,Vector3 b,Vector3 q,float t) {
  float u=1-t;
  return MotionVec_Add(MotionVec_Add(MotionVec_Scale(p,u*u*u),MotionVec_Scale(a,3*u*u*t)),
@@ -201,6 +201,6 @@ int main(void) {
 }
 '''
 with tempfile.TemporaryDirectory(prefix='wuxing-guided-config-') as temp:
- p=pathlib.Path(temp);(p/'test.c').write_text(stubs+(ROOT/'core/force_field.c').read_text().split('static inline float ValueHash')[0]+config+''.join(function(name) for name in ['VFX_GuidedParticle_DefaultConfig','VFX_GuidedParticle_GetParams','VC_GuidedEmissionRate','VC_GuidedUsesTimedEmission','VC_GuidedInitialBurstCount','VC_GuidedTuning','VC_GuidedEstimatedTransitTime','VC_GuidedSettingsValid','VC_GuidedBuildField','VC_GuidedBody'])+main)
+ p=pathlib.Path(temp);(p/'test.c').write_text(stubs+(ROOT/'core/force_field.c').read_text().split('static inline float ValueHash')[0]+enums+config+''.join(function(name) for name in ['VFX_GuidedParticle_DefaultConfig','VFX_GuidedParticle_GetParams','VC_GuidedEmissionRate','VC_GuidedUsesTimedEmission','VC_GuidedInitialBurstCount','VC_GuidedRecipe','VC_GuidedTuning','VC_GuidedEstimatedTransitTime','VC_GuidedSettingsValid','VC_GuidedBuildField','VC_GuidedBody'])+main)
  subprocess.run(['cc','-std=c99','-Wall','-Wextra','-I'+str(ROOT),'-I'+str(ROOT/'core/tests/stubs'),str(p/'test.c'),'-lm','-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)

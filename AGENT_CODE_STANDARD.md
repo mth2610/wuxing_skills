@@ -122,6 +122,7 @@
 - Components publish child-emission events; `core/emitter/` owns templates, cadence and budgets. GPU_ONLY must reject unsupported births or resource exhaustion; AUTO alone may select CPU fallback.
 - GPU ribbon node positions and receiver lanes stay GPU-owned after spawn; upload only control/attachment snapshots, and return NULL from CPU state queries rather than reading back implicitly.
 - GPU ribbon updates stage per-chain controls and dispatch once after TrailSystem lifetime/attachment updates; parallel node Motion must preserve ordered constraints and per-node receiver lanes.
+- Shared Motion frames are caller-owned snapshots: field/trail resets must not destroy external frames. Cache rigid velocity metadata on frame updates and refresh changed field bindings after choreography, before component GPU snapshots; never reconstruct frames per node.
 
 ### 10.2 Adding functions to common shaders (`core/shaders/common/*.glsl`)
 - A material's `.mat output`, GLSL resolver, render pass and runtime blend are one contract: fixed outputs use the matching `VFX_Resolve*`; surface-aware EffectMaterial uses `VFX_ResolveOutput` plus `Material_BeginVFX/EndVFX` (ADDITIVE→EMISSION, ALPHA/PREMULTIPLIED→BODY). Legacy `Material_Begin/End` remains caller-managed.
@@ -175,6 +176,7 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-08 | Codex | §10.1 Caller-owned shared frames and binding refresh | core/motion/motion_frame.h; core/motion/motion_fields.c; core/composition/visual_composer.c | Ground-truth and project convention |
 | 2026-10-08 | Codex | §10.1 Emitter ownership and resident modern ribbon state | core/emitter/emitter.h; core/trails/trail_ribbon.h; core/trails/trail_ribbon_gpu.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | §10.3 Derived guide budgets and implicit controllers | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |

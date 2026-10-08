@@ -1,6 +1,7 @@
 #include "vfx_test.h"
 #include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/camera_fx.h"
+#include "core/motion/motion_body.h"
 #include "core/time_fx.h"   // TimeFX_RawDelta — headless captures pin dt; GetFrameTime does not
 #include "sandbox/auto_test.h"
 #include "sandbox/colour_probe.h"
@@ -172,9 +173,10 @@ static const char *s_guidedFixturePresetNames[] = {
     "Default guided motion", "Moving swirl", "Moving turbulence",
     "Catch free leaves", "Zero drag", "Stationary attraction",
     "Particles only", "Free trails", "Particles and trails",
-    "Timed particles and trails", "Timed trails only"
+    "Timed particles and trails", "Timed trails only",
+    "Orbit trails", "Anchored silk", "Released silk"
 };
-#define VFXTEST_GUIDED_PRESET_COUNT 11
+#define VFXTEST_GUIDED_PRESET_COUNT 14
 
 static void VFXTest_SetGuidedPreset(int preset)
 {
@@ -210,6 +212,28 @@ static void VFXTest_SetGuidedPreset(int preset)
         s_liveGuidedMotionConfig.count = 192;
         s_liveGuidedMotionConfig.trailCount = 8;
         s_liveGuidedMotionConfig.emitDuration = 1.5f;
+    }
+    if (preset >= 11) {
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
+        s_liveGuidedMotionConfig.motionPattern = preset == 11 ? VFX_GUIDED_ORBIT : VFX_GUIDED_AIRFLOW;
+        s_liveGuidedMotionConfig.speed = 2.0f;
+        s_liveGuidedMotionConfig.swirlSpeed = preset == 11 ? 2.0f : 0.5f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 0.4f;
+        s_liveGuidedMotionConfig.guideRadius = 3.0f;
+        s_liveGuidedMotionConfig.gravityScale = 0.05f;
+        s_liveGuidedMotionConfig.massKg = 0.004f;
+        s_liveGuidedMotionConfig.trailLength = 1.5f;
+        s_liveGuidedMotionConfig.trailWidth = 0.1f;
+        s_liveGuidedMotionConfig.trailNodes = 24;
+        s_liveGuidedMotionConfig.count = 192;
+        s_liveGuidedMotionConfig.trailCount = 8;
+        s_liveGuidedMotionConfig.emitDuration = 1.5f;
+        if (preset >= 12) {
+            s_liveGuidedMotionConfig.trailCount = 1;
+            s_liveGuidedMotionConfig.emitDuration = 0.0f;
+            s_liveGuidedMotionConfig.trailWidth = 0.16f;
+            s_liveGuidedMotionConfig.material = VC_MAT_WATER;
+        }
     }
     s_guidedRatioReferenceSpeed = s_liveGuidedMotionConfig.speed > 0.00001f
         ? s_liveGuidedMotionConfig.speed : 1.0f;
@@ -264,6 +288,58 @@ static float VFXTest_GuidedCaptureFloat(const char *name, float fallback, float 
     return value;
 }
 
+#define VFXTEST_GUIDED_FRAME_COUNT 16
+typedef struct {
+    MotionFrameHandle frame;
+    Vector3 position, velocity;
+    float age;
+    bool active, release;
+} VFXTest_GuidedFrame;
+static VFXTest_GuidedFrame s_guidedFrames[VFXTEST_GUIDED_FRAME_COUNT];
+
+static void VFXTest_ClearGuidedFrames(void)
+{
+    for (int i = 0; i < VFXTEST_GUIDED_FRAME_COUNT; ++i) {
+        if (s_guidedFrames[i].frame) MotionFrame_Destroy(s_guidedFrames[i].frame);
+        s_guidedFrames[i] = (VFXTest_GuidedFrame){0};
+    }
+}
+
+static void VFXTest_UpdateGuidedFrames(float dt)
+{
+    if (!isfinite(dt) || dt <= 0.0f) return;
+    const MotionBodyProfile stone = {.inverseMassKg = 1.0f, .gravityScale = 1.0f};
+    for (int i = 0; i < VFXTEST_GUIDED_FRAME_COUNT; ++i) {
+        VFXTest_GuidedFrame *f = &s_guidedFrames[i];
+        if (!f->active) continue;
+        f->age += dt;
+        if (f->age >= 4.0f) {
+            if (f->frame) MotionFrame_Destroy(f->frame);
+            *f = (VFXTest_GuidedFrame){0};
+            continue;
+        }
+        if (f->frame && f->release && f->age >= 1.2f) {
+            MotionFrame_Destroy(f->frame);
+            f->frame = 0;
+        }
+        int steps = (int)ceilf(dt * 120.0f);
+        if (steps > 120) steps = 120;
+        float h = dt / (float)steps;
+        for (int j = 0; j < steps; ++j) {
+            f->velocity = MotionBody_AdvanceVelocity(f->velocity, &stone,
+                (Vector3){0}, (Vector3){0}, (Vector3){0}, h);
+            f->position = Vector3Add(f->position, Vector3Scale(f->velocity, h));
+            if (f->position.y < 0.2f) {
+                f->position.y = 0.2f;
+                f->velocity = (Vector3){0};
+            }
+        }
+        if (f->frame)
+            MotionFrame_Update(f->frame, MatrixTranslate(f->position.x,
+                f->position.y, f->position.z), dt, false);
+    }
+}
+
 static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
 {
     VFXTest_InitGuidedConfig();
@@ -288,9 +364,32 @@ static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
         VFX_Foliage_SpawnFreeLeaves(leafCenter,
                                   0.45f, 80, leaves.mass, leaves.style);
     }
+    VFXTest_GuidedFrame *anchor = NULL;
+    if (s_guidedFixturePreset >= 12) {
+        for (int i = 0; i < VFXTEST_GUIDED_FRAME_COUNT; ++i)
+            if (!s_guidedFrames[i].active) { anchor = &s_guidedFrames[i]; break; }
+        if (!anchor) {
+            TraceLog(LOG_WARNING, "GUIDED MOTION: anchor pool exhausted");
+            return;
+        }
+        MotionFrameHandle frame = MotionFrame_Create(MatrixTranslate(source.x, source.y, source.z));
+        if (!frame) return;
+        *anchor = (VFXTest_GuidedFrame){.frame = frame, .position = source,
+            .velocity = {1.2f, 4.0f, 0.0f}, .active = true,
+            .release = s_guidedFixturePreset == 13};
+        cfg.frame = frame;
+        cfg.trailAttachment = frame;
+        cfg.source = (Vector3){0};
+        cfg.target = (Vector3){1.0f, 0.0f, 0.0f};
+    }
     TraceLog(LOG_INFO, "GUIDED MOTION: %s", s_guidedFixturePresetNames[s_guidedFixturePreset]);
-    if (VFX_ComposeGuidedMotionEx(&cfg) == MOTION_FIELD_INVALID)
+    if (VFX_ComposeGuidedMotionEx(&cfg) == MOTION_FIELD_INVALID) {
         TraceLog(LOG_WARNING, "GUIDED MOTION: cast rejected (invalid configuration or exhausted field/emitter pool)");
+        if (anchor) {
+            MotionFrame_Destroy(anchor->frame);
+            *anchor = (VFXTest_GuidedFrame){0};
+        }
+    }
 }
 
 static int VFXTest_GuidedCaptureInt(const char *name, int fallback, int lo, int hi)
@@ -733,6 +832,7 @@ static void VFXTest_InitFixtures(void)
 // calls use each composition's public Kill API; trails then drain naturally.
 static void VFXTest_StopFixtures(void)
 {
+    VFXTest_ClearGuidedFrames();
     VFXTest_InitFixtures();
     // @gen:newfx_stop begin
     if (s_vfxFixtureHandle[6] >= 0)
@@ -1300,6 +1400,7 @@ static void VFXTest_UIDraw(void)
 bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Texture2D testAtlasTex,
                                   Texture2D globalParticleTex)
 {
+    VFXTest_UpdateGuidedFrames(TimeFX_RawDelta());
     // Reset cache count each frame
     g_activeCountCache = 0;
     s_clickedOnUI = false;
@@ -1763,6 +1864,11 @@ void VFXTest_DrawRefraction(Camera3D cam)
 void VFXTest_Draw3D(void)
 {
     VFXTest_InitFixtures();
+    // Shared-frame stone markers: rendering never advances the attachment.
+    for (int i = 0; i < VFXTEST_GUIDED_FRAME_COUNT; ++i)
+        if (s_guidedFrames[i].active)
+            DrawCoreSphere(s_guidedFrames[i].position, 0.12f, 6, 8, ELEMENT_COLOR_EARTH);
+
     float dt = TimeFX_RawDelta();
 
     // -------------------------------------------------------------------------

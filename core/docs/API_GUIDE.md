@@ -3080,6 +3080,42 @@ Equal endpoints produce a stationary sphere. Emitters only initialize bodies;
 spatial fields supply motion. Ordinary Wind contributes once through the typed
 background medium from `core/wind/wind_system.h`.
 
+`VFX_GuidedMotionConfig.motionPattern` selects Route (the existing burst/path
+behavior), Orbit (a spherical captured-offset guide), or Airflow (a bounded moving
+medium). Orbit and Airflow avoid path projection. `core/motion/motion_recipe.h`
+compiles these and explicit path-stream recipes into the same `FieldDesc` used by
+particles and ribbons; recipes add no shader variants or receiver solvers.
+Airflow has no guide spring: each body's drag/wind response determines movement.
+Orbit's automatic force targets rotate captured offsets; positions remain solved
+by Motion. Trail-only templates supply the reference body for derived guidance.
+
+A caller-owned `MotionFrameHandle` can drive a field, emission source and ribbon
+head together. Set Guided `frame` and `trailAttachment` to the same handle for
+anchored silk; leave `trailAttachment=0` for free chains in that moving field.
+With `frame!=0`, source/target, source descriptors and field overrides are LOCAL
+metres. Update the frame before field/component updates. Birth positions and
+initial velocities follow its current rigid transform; previously born free
+bodies are never repositioned by the emitter. Destroying the frame freezes the
+field's parent pose and birth transform, removes inherited birth velocity and
+releases anchors. Field lifetimes and local trajectories continue normally.
+Borrowed template resources retain their original lifetime contracts.
+
+`MotionFields_BindFrame` also works without Guided. Binding and field updates
+cache the composed world transform/bounds once; GPU nodes continue to consume the
+existing packed field snapshot. Frame rotation/velocity metadata is cached on
+frame updates, shared by all consumers. Registry substep offsets retain the
+current cached parent transform; they do not interpolate parent-frame history.
+Use `MotionFields_SetTransform` for an explicitly controlled world transform;
+it clears a binding. Generic frames have caller-owned lifetimes independent of
+field or trail reset; `MotionFrame_Reset` explicitly invalidates the shared pool.
+
+Trail motion ownership depends on topology: a material chain has free or anchored
+endpoints and internal constraints; a swept history records emitter samples and
+owns segment aging/spacing; a fixed-path strip renders prescribed geometry.
+Shared Motion supplies dynamic transport, while Trail retains these topology and
+appearance rules. UV waves, tube cross-section noise and portal surface spin are
+component-local appearance, rather than additional world-space fields.
+
 Automatic presets expose speed, field radius, guidance, swirl and turbulence.
 Guided Motion defaults to travel 12 m/s, swirl 14.4 m/s and turbulence 9.6 m/s
 (1.2 and 0.8 times travel). In the sandbox, editing travel speed preserves the
@@ -3363,6 +3399,7 @@ TrailAttachment_Destroy(attachment);
 | 2026-10-08 | Codex | Independent emission and physical ribbons | core/emitter/emitter.h; core/trails/trail_ribbon.h; core/trails/trail_ribbon_solver.h; core/motion/motion_fields.h | Ground-truth |
 | 2026-10-07 | Codex | Joint bounded guide/body solve and SSF motion convention | core/motion/motion_body.h; core/tests/motion_coupling_test.c | Ground-truth and project convention |
 | 2026-10-07 | Codex | Independent curl amplitude and overlapping-guide diagnosis | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth |
+| 2026-10-08 | Codex | Shared Motion frames, field recipes and Guided patterns | core/motion/motion_frame.h; core/motion/motion_recipe.h; core/composition/common/vc_guided_motion.inl | Ground-truth and project convention |
 | 2026-10-08 | Codex | Shared Guided Motion emission and ribbon outputs | core/composition/common/vc_guided_motion.inl; core/emitter/particle_source.c; core/emitter/emitter.h | Ground-truth |
 | 2026-10-07 | Codex | Fast guided defaults and curved path | core/composition/common/vc_guided_particle.inl; core/tests/test_guided_config.py | Ground-truth and project convention |
 | 2026-10-07 | Codex | Coherent guided curl force, units and eddy scale | core/motion/physical_field.h; core/tests/guidance_physics_test.c | Ground-truth and project convention |

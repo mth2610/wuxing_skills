@@ -3,6 +3,7 @@
 /* Composition owns casts; Emitter owns births, Motion owns movement,
  * Particle/Trail own their state and geometry. */
 #include "core/motion/motion_body.h"
+#include "core/motion/motion_recipe.h"
 #include "core/path_spline.h"
 #include "core/emitter/emitter_sinks.h"
 #include "core/emitter/particle_source.h"
@@ -16,6 +17,9 @@ typedef struct {
   TrailRibbonConfig ribbon;
   EmissionParticleSourceAdapter source;
   EmissionParticleSink sink;
+  MotionFrameHandle frame;
+  EmissionParticleSourceAdapter localSource;
+  Vector3 localVelocity, localRibbonVelocity, localTailDirection, frameVelocity;
 } VC_GuidedStream;
 static VC_GuidedStream s_guidedStreams[VC_GUIDED_MAX_STREAMS];
 static MeshAdjacency s_guidedSourceMesh;
@@ -105,18 +109,29 @@ static bool VC_GuidedUsesTimedEmission(const VFX_GuidedParticleConfig *c) {
 static int VC_GuidedInitialBurstCount(const VFX_GuidedParticleConfig *c) {
   return c && c->emitDuration<=0 ? c->count : 0;
 }
-static GuideTuning VC_GuidedTuning(const VFX_GuidedParticleConfig *c) {
-  BodyPhysicalProperties reference={.massKg=c->massKg};
-  ParticleDynamicsProfile referenceProfile={.densityKgM3=c->densityKgM3,
-      .gravityScale=c->gravityScale};
-  float gravity=ParticleDynamics_GravityAcceleration(&referenceProfile);
+static MotionFieldRecipe VC_GuidedRecipe(const VFX_GuidedParticleConfig *c) {
+  MotionFieldRecipe r={.kind=c->motionPattern==VFX_GUIDED_ORBIT?MOTION_RECIPE_ORBIT:
+      c->motionPattern==VFX_GUIDED_AIRFLOW?MOTION_RECIPE_AIRFLOW:MOTION_RECIPE_MOVING_GUIDE,
+    .origin=c->source,.axis=MotionVec_Sub(c->target,c->source),
+    .referenceBody={.massKg=c->massKg},.guidance=(GuidePreset)c->guidancePreset,
+    .radiusM=c->guideRadius,.speedMps=c->speed,.swirlSpeedMps=c->swirlSpeed,
+    .turbulenceSpeedMps=c->turbulenceSpeed,.maxForceNewtons=c->maxForceNewtons,
+    .forwardForceNewtons=c->forwardForceNewtons,.receiverMask=MOTION_RECEIVER_ALL_COMPONENTS};
+  ParticleDynamicsProfile referenceProfile={.densityKgM3=c->densityKgM3,.gravityScale=c->gravityScale};
+  const ParticleDynamicsProfile *profile=&referenceProfile;
   if(c->particleTemplate) {
-    const ParticleDynamicsProfile *p=c->particleTemplate->physics.dynamics;
-    reference=p?MotionBody_GetPhysicalProperties(p):(BodyPhysicalProperties){.massKg=1};
-    gravity=p?ParticleDynamics_GravityAcceleration(p):0;
+    profile=c->particleTemplate->physics.dynamics;
+    r.referenceBody=profile?MotionBody_GetPhysicalProperties(profile):(BodyPhysicalProperties){.massKg=1};
+  } else if(c->output==VFX_GUIDED_TRAILS && c->trailTemplate) {
+    profile=&c->trailTemplate->material.body;
+    r.referenceBody=MotionBody_GetPhysicalProperties(profile);
   }
-  return GuideTuning_Derive(&reference,c->guideRadius,c->speed,c->swirlSpeed,
-      c->turbulenceSpeed,gravity,(GuidePreset)c->guidancePreset);
+  r.gravityMps2=profile?ParticleDynamics_GravityAcceleration(profile):0;
+  return r;
+}
+static GuideTuning VC_GuidedTuning(const VFX_GuidedParticleConfig *c) {
+  MotionFieldRecipe r=VC_GuidedRecipe(c);
+  return MotionFieldRecipe_Tuning(&r);
 }
 static float VC_GuidedEstimatedTransitTime(const VFX_GuidedParticleConfig *c,
     float pathLength,bool continuous) {
@@ -152,11 +167,41 @@ static bool VC_GuidedSchedule_Update(EmissionHandle *h,float dt) {
   }
   return false;
 }
+static void VC_GuidedStream_ApplyFrame(VC_GuidedStream *s) {
+  if(!s->frame) return;
+  MotionFrameSnapshot frame;
+  if(!MotionFrame_Snapshot(s->frame,s->localSource.defaultPosition,&frame) ||
+      !MotionFrame_IsRigidTransform(&frame.transform)) {
+    s->particle.velocity=MotionVec_Sub(s->particle.velocity,s->frameVelocity);
+    s->particle.physics.velocity=s->particle.velocity;
+    s->ribbon.initialVelocity=MotionVec_Sub(s->ribbon.initialVelocity,s->frameVelocity);
+    if(s->ribbon.mode==TRAIL_RIBBON_HEAD_ANCHORED && s->ribbon.attachment==s->frame) {
+      s->ribbon.mode=TRAIL_RIBBON_FREE; s->ribbon.attachment=0;
+    }
+    s->frame=0; return;
+  }
+  s->source=s->localSource;
+  s->source.defaultPosition=MotionFrame_TransformPoint(frame.current,s->localSource.defaultPosition);
+  s->source.source.point=MotionFrame_TransformPoint(frame.current,s->localSource.source.point);
+  Matrix local=s->localSource.source.transform;
+  if(local.m0==0 && local.m1==0 && local.m2==0 && local.m3==0 &&
+      local.m4==0 && local.m5==0 && local.m6==0 && local.m7==0 &&
+      local.m8==0 && local.m9==0 && local.m10==0 && local.m11==0 &&
+      local.m12==0 && local.m13==0 && local.m14==0 && local.m15==0)
+    local=(Matrix){.m0=1,.m5=1,.m10=1,.m15=1};
+  s->source.source.transform=MatrixMultiply(local,frame.current);
+  s->frameVelocity=frame.velocity;
+  s->particle.velocity=MotionVec_Add(FieldTransform_Vector(&frame.transform,s->localVelocity),frame.velocity);
+  s->particle.physics.velocity=s->particle.velocity;
+  s->ribbon.initialVelocity=MotionVec_Add(FieldTransform_Vector(&frame.transform,s->localRibbonVelocity),frame.velocity);
+  s->ribbon.tailDirection=FieldTransform_Vector(&frame.transform,s->localTailDirection);
+}
 static void VC_GuidedMotion_Update(float dt) {
   if(!isfinite(dt) || dt<=0) return;
   for(int i=0;i<VC_GUIDED_MAX_STREAMS;i++) {
     VC_GuidedStream *s=&s_guidedStreams[i];
     if(!s->active) continue;
+    VC_GuidedStream_ApplyFrame(s);
     bool particlesDone=VC_GuidedSchedule_Update(&s->particles,dt);
     bool trailsDone=VC_GuidedSchedule_Update(&s->trails,dt);
     if(particlesDone && trailsDone) VC_GuidedStream_Clear(s);
@@ -187,25 +232,13 @@ static bool VC_GuidedSettingsValid(const VFX_GuidedParticleConfig *c) {
   return true;
 }
 static bool VC_GuidedBuildField(const VFX_GuidedParticleConfig *c, FieldDesc *field) {
-  if (c->fieldOverride) { *field = *c->fieldOverride; return true; }
-  GuideTuning tuning=VC_GuidedTuning(c);
-  bool automatic=c->guidancePreset!=GUIDE_MANUAL;
-  float pull=automatic?tuning.maxForceNewtons:c->maxForceNewtons;
-  float forward=automatic?tuning.forwardForceNewtons:c->forwardForceNewtons;
-  float stiffness=automatic?tuning.stiffnessNPerM:pull/c->guideRadius;
-  if(!isfinite(pull) || !isfinite(forward) || !isfinite(stiffness) ||
-      (automatic && stiffness<=0)) return false;
-  *field = MotionField_Default();
-  field->receiverMask = MOTION_RECEIVER_ALL_COMPONENTS;
-  field->volume.radiusM = c->guideRadius;
-  field->volume.coreFraction = .25f;
-  field->transform.position = c->source;
-  bool continuous = c->emitDuration > 0;
-  float fadeSec = fminf(.3f, c->duration * .1f);
-  Vector3 delta = MotionVec_Sub(c->target, c->source);
-  float len = MotionVec_Length(delta);
-  float pathLength=0;
-  if (len > .001f) {
+  if(c->fieldOverride) { *field=*c->fieldOverride; return true; }
+  MotionFieldRecipe r=VC_GuidedRecipe(c);
+  bool continuous=c->emitDuration>0,automatic=c->guidancePreset!=GUIDE_MANUAL;
+  Vector3 delta=MotionVec_Sub(c->target,c->source);
+  float len=MotionVec_Length(delta),pathLength=0;
+  MotionPath path;
+  if(c->motionPattern==VFX_GUIDED_ROUTE && len>.001f) {
     /* Visible lateral bow and lift in a stable orthonormal frame. The path
      * remains valid for vertical casts; fieldOverride keeps caller paths exact. */
     Vector3 tangent=MotionVec_Scale(delta,1/len);
@@ -220,65 +253,18 @@ static bool VC_GuidedBuildField(const VFX_GuidedParticleConfig *c, FieldDesc *fi
     Vector3 points[33];
     for (int i=0; i<33; i++)
       points[i] = GetBezierPoint((Vector3){0}, a, b, delta, (float)i/32);
-    MotionPath path;
     if (!MotionPath_Build(&path, points, 33)) return false;
-    pathLength=path.length;
-    field->forceLawCount = 1;
-    if (continuous) {
-      /* Continuous births share one stationary corridor from A to B. */
-      field->volume.shape = FIELD_PATH_TUBE;
-      field->volume.path = path;
-      field->preservePathLanes = true;
-      field->rotatePathLanes = automatic;
-      field->forceLaws[0] = (ForceLaw){
-          .type=FORCE_LAW_PATH_GUIDE,
-          .magnitudeNewtons=pull,
-          .springStiffnessNPerM=stiffness,
-          .forwardForceNewtons=forward};
-      field->flow.followSpeedMps = c->speed;
-    } else {
-      /* A burst gets a spherical field that travels along the same path. */
-      field->trajectory.mode = FIELD_TRAJECTORY_PATH;
-      field->trajectory.path = path;
-      field->trajectory.speedMps = c->speed;
-      field->forceLaws[0] = (ForceLaw){.type=automatic?FORCE_LAW_MOVING_GUIDE:FORCE_LAW_RADIAL_ATTRACTION,
-          .magnitudeNewtons=pull,.springStiffnessNPerM=stiffness};
-      field->preserveSphereOffsets=automatic;
-    }
-  } else {
-    field->forceLawCount = 1;
-    field->forceLaws[0] = (ForceLaw){.type=automatic?FORCE_LAW_MOVING_GUIDE:FORCE_LAW_RADIAL_ATTRACTION,
-        .magnitudeNewtons=pull,.springStiffnessNPerM=stiffness};
-    field->preserveSphereOffsets=automatic;
+    pathLength=path.length; r.path=&path;
+    if(continuous) r.kind=MOTION_RECIPE_PATH_STREAM;
   }
-  field->flow.enabled = true;
-  field->flow.addBackgroundVelocity = true;
-  field->flow.axis = len > .001f ? MotionVec_Normalize(delta) : (Vector3){0,1,0};
-  field->flow.procedural.swirlSpeedMps = c->swirlSpeed;
-  /* Automatic guidance is a force-field actuator, not atmospheric turbulence.
-   * Compile one fixed Newton budget from reference mass and eddy turnover:
-   * F=m_ref*U^2/L. Receiver mass remains free to determine acceleration.
-   * Manual mode retains the legacy airflow meaning. Do not apply both. */
-  field->flow.procedural.turbulenceSpeedMps = automatic?0:c->turbulenceSpeed;
-  if(automatic && c->turbulenceSpeed>0) {
-    if(!isfinite(tuning.turbulenceForceNewtons)) return false;
-    field->forceLaws[field->forceLawCount++]=(ForceLaw){.type=FORCE_LAW_CURL_FORCE,
-      .magnitudeNewtons=tuning.turbulenceForceNewtons,
-      .procedural={.turbulenceSpeedMps=tuning.turbulenceSpeedMps,
-                   .eddyLengthM=tuning.eddyLengthM}};
-  }
-  field->flow.procedural.eddyLengthM = c->guideRadius * .3f;
-  float transitSec=VC_GuidedEstimatedTransitTime(c,pathLength,continuous);
-  float emissionSec=continuous?c->emitDuration:0;
-  float requiredLife=emissionSec+transitSec+fadeSec;
+  float fadeSec=fminf(.3f,c->duration*.1f);
+  float requiredLife=(continuous?c->emitDuration:0)+
+      VC_GuidedEstimatedTransitTime(c,pathLength,continuous)+fadeSec;
   if(!isfinite(requiredLife)) return false;
-  /* `duration` remains an authorable minimum/fallback. Routed fields also live
-   * through the last emitted particle's estimated A-to-B transit and fade. */
-  field->lifetime.durationSec=automatic && pathLength>0 && c->speed>1e-5f?requiredLife:
+  r.durationSec=automatic && pathLength>0 && c->speed>1e-5f?requiredLife:
       fmaxf(c->duration,requiredLife);
-  field->lifetime.attackSec=fminf(.1f,c->duration*.1f);
-  field->lifetime.fadeSec=fadeSec;
-  return true;
+  r.attackSec=fminf(.1f,c->duration*.1f); r.fadeSec=fadeSec;
+  return MotionFieldRecipe_Build(&r,field);
 }
 static ParticleDynamicsProfile VC_GuidedBody(const VFX_GuidedParticleConfig *c) {
   if(c->guidancePreset!=GUIDE_MANUAL) {
@@ -302,18 +288,30 @@ VFX_GuidedMotionConfig VFX_GuidedMotion_DefaultConfig(void) {
 int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int max) {
   if(!c || !out || max<=0) return 0;
   static const char *const outputNames[]={"Particles","Trails","Particles + trails"};
+  static const char *const patternNames[]={"Route","Orbit","Airflow"};
   int n=0;
   out[n++]=(VFX_ParamDef){.name="Output",.group="Emission",.type=VFX_PARAM_ENUM,
     .valPtr=&c->output,.minInt=VFX_GUIDED_PARTICLES,.maxInt=VFX_GUIDED_BOTH,
     .enumNames=outputNames,.enumCount=3};
+  if(!c->fieldOverride && n<max) out[n++]=(VFX_ParamDef){.name="Motion",.group="Field",
+    .type=VFX_PARAM_ENUM,.valPtr=&c->motionPattern,.minInt=VFX_GUIDED_ROUTE,.maxInt=VFX_GUIDED_AIRFLOW,
+    .enumNames=patternNames,.enumCount=3};
   VFX_ParamDef base[32];
   int count=VFX_GuidedParticle_GetParams(c,base,32);
   for(int i=0;i<count && n<max;i++) {
     bool particleRow=base[i].valPtr==&c->count || base[i].valPtr==&c->particleRadius;
     if(c->output==VFX_GUIDED_TRAILS && particleRow) continue;
+    if(c->motionPattern==VFX_GUIDED_ORBIT && base[i].valPtr==&c->speed) continue;
+    if(c->motionPattern==VFX_GUIDED_AIRFLOW && (base[i].valPtr==&c->guidancePreset ||
+        base[i].valPtr==&c->maxForceNewtons || base[i].valPtr==&c->forwardForceNewtons)) continue;
+    if(c->motionPattern==VFX_GUIDED_AIRFLOW && base[i].valPtr==&c->speed) base[i].name="Air speed m/s";
     if(!strcmp(base[i].group,"Particle") && base[i].valPtr!=&c->particleRadius) base[i].group="Body";
     out[n++]=base[i];
   }
+  if(!c->fieldOverride && c->motionPattern!=VFX_GUIDED_ROUTE &&
+      c->guidancePreset!=GUIDE_MANUAL && n<max)
+    out[n++]=(VFX_ParamDef){.name="Field life s",.group="Field",.type=VFX_PARAM_FLOAT,
+      .valPtr=&c->duration,.minFloat=.1f,.maxFloat=30,.stepFloat=.5f};
 #define GUIDED_TRAIL_PARAM(label,member,typeValue,lo,hi,step) \
   do {if(n<max) out[n++]=(VFX_ParamDef){.name=label,.group="Trail", \
     .type=typeValue,.valPtr=&c->member,.minFloat=lo,.maxFloat=hi,.stepFloat=step, \
@@ -330,7 +328,8 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
   return n;
 }
 static bool VC_GuidedMotion_Valid(const VFX_GuidedMotionConfig *c) {
-  if(!c || c->output<VFX_GUIDED_PARTICLES || c->output>VFX_GUIDED_BOTH) return false;
+  if(!c || c->output<VFX_GUIDED_PARTICLES || c->output>VFX_GUIDED_BOTH ||
+      c->motionPattern<VFX_GUIDED_ROUTE || c->motionPattern>VFX_GUIDED_AIRFLOW) return false;
   VFX_GuidedParticleConfig check=*c;
   if(c->output==VFX_GUIDED_TRAILS) {
     check.count=c->trailCount; check.particleRadius=1; check.renderMode=PARTICLE_RENDER_BILLBOARD;
@@ -356,7 +355,11 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
   FieldDesc field;
   if(!VC_GuidedBuildField(c,&field)) return MOTION_FIELD_INVALID;
   MotionFieldHandle h=MotionFields_CreateField(&field);
-  if(!h || !s) return h;
+  if(!h) return h;
+  if(c->frame && !MotionFields_BindFrame(h,c->frame,&field.transform)) {
+    MotionFields_Stop(h); return MOTION_FIELD_INVALID;
+  }
+  if(!s) return h;
   *s=(VC_GuidedStream){.active=true,.emitter=PARTICLE_EMITTER_INVALID};
   if(!c->emissionSource && !s_guidedSourceReady) {
     Mesh mesh=GenMeshSphere(1,16,10);
@@ -394,6 +397,9 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
     Vector3 delta=MotionVec_Sub(c->source,c->target);
     s->ribbon.tailDirection=MotionVec_Length(delta)>.001f?MotionVec_Normalize(delta):(Vector3){0,-1,0};
   }
+  s->frame=c->frame; s->localSource=s->source; s->localVelocity=p->velocity;
+  s->localRibbonVelocity=s->ribbon.initialVelocity; s->localTailDirection=s->ribbon.tailDirection;
+  VC_GuidedStream_ApplyFrame(s);
   if(particles) {
     ParticleEmitterDesc desc={.simulationPolicy=PARTICLE_SIM_AUTO,.renderMode=c->renderMode,
       .particle=*p,.debugName="Guided motion particles",

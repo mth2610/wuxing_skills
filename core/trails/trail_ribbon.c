@@ -17,7 +17,7 @@ typedef struct {
     MotionReceiver receivers[TRAIL_RIBBON_MAX_NODES];
 } ModernRibbon;
 static ModernRibbon s_ribbons[TRAIL_RIBBON_GPU_CAPACITY];
-static TrailAttachmentRegistry s_attachments;
+static TrailAttachmentHandle s_ownedAttachments[TRAIL_ATTACHMENT_CAPACITY];
 static float s_time;
 static Shader s_cpuShader;
 
@@ -33,14 +33,30 @@ TrailRibbonConfig TrailRibbon_Default(void) {
     c.color=(Color){255,255,255,255};return c;
 }
 TrailAttachmentHandle TrailAttachment_Create(Matrix transform) {
-    return TrailAttachmentRegistry_Create(&s_attachments,transform);
+    for(int i=0;i<TRAIL_ATTACHMENT_CAPACITY;i++) {
+        MotionFrameSnapshot snapshot;
+        if(s_ownedAttachments[i] && !MotionFrame_Snapshot(s_ownedAttachments[i],(Vector3){0},&snapshot))
+            s_ownedAttachments[i]=0;
+        if(!s_ownedAttachments[i]) {
+            TrailAttachmentHandle handle=MotionFrame_Create(transform);
+            s_ownedAttachments[i]=handle;return handle;
+        }
+    }
+    return 0;
 }
 bool TrailAttachment_Update(TrailAttachmentHandle handle,Matrix transform,float dt,bool discontinuity) {
-    return TrailAttachmentRegistry_Update(&s_attachments,handle,transform,dt,discontinuity);
+    return MotionFrame_Update(handle,transform,dt,discontinuity);
 }
-void TrailAttachment_Destroy(TrailAttachmentHandle handle) {TrailAttachmentRegistry_Destroy(&s_attachments,handle);}
+void TrailAttachment_Destroy(TrailAttachmentHandle handle) {
+    MotionFrame_Destroy(handle);
+    for(int i=0;i<TRAIL_ATTACHMENT_CAPACITY;i++) if(s_ownedAttachments[i]==handle) s_ownedAttachments[i]=0;
+}
 static bool SampleAnchor(const ModernRibbon *r,TrailRibbonAnchor *anchor) {
-    return TrailAttachmentRegistry_Snapshot(&s_attachments,r->config.attachment,r->config.attachmentOffset,anchor);
+    MotionFrameSnapshot s;
+    bool valid=MotionFrame_Snapshot(r->config.attachment,r->config.attachmentOffset,&s);
+    *anchor=(TrailRibbonAnchor){.previousPosition=s.previousPosition,.position=s.position,
+        .velocity=s.velocity,.valid=s.valid,.discontinuity=s.discontinuity};
+    return valid;
 }
 static void CopyRenderHistory(ModernRibbon *r,TrailEntity *t) {
     t->position=r->state.position[0];t->velocity=r->state.velocity[0];
@@ -64,7 +80,9 @@ int TrailRibbon_Spawn(const TrailRibbonConfig *c) {
     Vector3 head=c->headPosition;
     if(c->mode==TRAIL_RIBBON_HEAD_ANCHORED) {
         TrailRibbonAnchor anchor;
-        if(!TrailAttachmentRegistry_Snapshot(&s_attachments,c->attachment,c->attachmentOffset,&anchor)) return -1;
+        MotionFrameSnapshot frame;
+        if(!MotionFrame_Snapshot(c->attachment,c->attachmentOffset,&frame)) return -1;
+        anchor.position=frame.position;
         head=anchor.position;
     }
     if(!TrailRibbon_Initialize(&state,c->nodeCount,head,c->tailDirection,c->lengthM,c->initialVelocity,c->mode)) return -1;
@@ -102,7 +120,10 @@ TrailRibbonBackend TrailRibbon_GetBackend(int id) {
 void TrailRibbonSystem_Reset(void) {
     for(int i=0;i<TRAIL_RIBBON_GPU_CAPACITY;i++) if(s_ribbons[i].active&&s_ribbons[i].gpuSlot>=0)
         TrailRibbonGpu_Kill(s_ribbons[i].gpuSlot);
-    memset(s_ribbons,0,sizeof(s_ribbons));TrailAttachmentRegistry_Reset(&s_attachments);
+    memset(s_ribbons,0,sizeof(s_ribbons));
+    for(int i=0;i<TRAIL_ATTACHMENT_CAPACITY;i++) {
+        MotionFrame_Destroy(s_ownedAttachments[i]);s_ownedAttachments[i]=0;
+    }
 }
 void TrailRibbonSystem_BeginUpdate(float dt,float time) {s_time=time;TrailRibbonGpu_BeginUpdate(dt,time);}
 void TrailRibbonSystem_EndUpdate(void) {TrailRibbonGpu_EndUpdate();}

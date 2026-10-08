@@ -22,12 +22,58 @@ typedef struct {
   bool typed;
   Vector3 physicalBoundsMin, physicalBoundsMax;
   bool physicalHasDrag;
+  MotionFrameHandle frame;
+  uint32_t frameRevision;
+  FieldTransform localFrame;
 } MotionTargetRuntime;
 static MotionGuideRuntime s_guides[MOTION_FIELDS_MAX_GUIDES];
 static MotionTargetRuntime s_targets[MOTION_FIELDS_MAX_TARGETS];
 static uint32_t s_generation;
 static float s_time;
 static float s_updateDt;
+static MotionFrameRegistry s_frames;
+MotionFrameHandle MotionFrame_Create(Matrix transform) {return MotionFrameRegistry_Create(&s_frames,transform);}
+bool MotionFrame_Update(MotionFrameHandle handle,Matrix transform,float dt,bool discontinuity) {
+  return MotionFrameRegistry_Update(&s_frames,handle,transform,dt,discontinuity);
+}
+void MotionFrame_Destroy(MotionFrameHandle handle) {MotionFrameRegistry_Destroy(&s_frames,handle);}
+void MotionFrame_Reset(void) {MotionFrameRegistry_Reset(&s_frames);}
+bool MotionFrame_Snapshot(MotionFrameHandle handle,Vector3 offset,MotionFrameSnapshot *snapshot) {
+  return MotionFrameRegistry_Snapshot(&s_frames,handle,offset,snapshot);
+}
+static FieldTransform Motion_ComposeFrame(const FieldTransform *parent,const FieldTransform *local) {
+  FieldTransform t=*local;
+  Vector3 offset=FieldTransform_Vector(parent,local->position);
+  t.position=MotionVec_Add(parent->position,offset);
+  t.axisX=FieldTransform_Vector(parent,local->axisX);
+  t.axisY=FieldTransform_Vector(parent,local->axisY);
+  t.axisZ=FieldTransform_Vector(parent,local->axisZ);
+  t.frameVelocityMps=MotionVec_Add(parent->frameVelocityMps,
+      MotionVec_Add(MotionVec_Cross(parent->angularVelocityRadPerSec,offset),
+                    FieldTransform_Vector(parent,local->frameVelocityMps)));
+  t.angularVelocityRadPerSec=MotionVec_Add(parent->angularVelocityRadPerSec,
+      FieldTransform_Vector(parent,local->angularVelocityRadPerSec));
+  return t;
+}
+static bool Motion_UpdateBoundFrame(MotionTargetRuntime *target) {
+  if(!target->frame) return false;
+  MotionFrameSnapshot snapshot;
+  if(MotionFrame_Snapshot(target->frame,(Vector3){0},&snapshot) && MotionFrame_IsRigidTransform(&snapshot.transform)) {
+    if(target->frameRevision==snapshot.revision) return false;
+    target->frameRevision=snapshot.revision;
+    target->physical.transform=Motion_ComposeFrame(&snapshot.transform,&target->localFrame);
+    if(snapshot.discontinuity) {
+      target->physical.transform.frameVelocityMps=(Vector3){0};
+      target->physical.transform.angularVelocityRadPerSec=(Vector3){0};
+    }
+  } else {
+    target->frame=0;target->frameRevision=0;
+    target->physical.transform.frameVelocityMps=(Vector3){0};
+    target->physical.transform.angularVelocityRadPerSec=(Vector3){0};
+  }
+  return true;
+}
+
 /* Immutable geometry is compiled into conservative world bounds once per
  * field update, not once per particle/substep. No descriptor copies. */
 static void Motion_CachePhysicalTarget(MotionTargetRuntime *target) {
@@ -223,9 +269,16 @@ void MotionFields_Update(float dt) {
       if (s_targets[i].age >= (s_targets[i].typed ?
           s_targets[i].physical.lifetime.startDelaySec + s_targets[i].physical.lifetime.durationSec : s_targets[i].desc.duration))
         s_targets[i].handle = 0;
-      else Motion_CachePhysicalTarget(&s_targets[i]);
+      else { Motion_UpdateBoundFrame(&s_targets[i]); Motion_CachePhysicalTarget(&s_targets[i]); }
     }
   Motion_PublishWind();
+}
+void MotionFields_RefreshFrames(void) {
+  bool changed=false;
+  for(int i=0;i<MOTION_FIELDS_MAX_TARGETS;i++) if(s_targets[i].handle && Motion_UpdateBoundFrame(&s_targets[i])) {
+    Motion_CachePhysicalTarget(&s_targets[i]);changed=true;
+  }
+  if(changed) Motion_PublishWind();
 }
 static bool Motion_FiniteVector(Vector3 v) {
   return isfinite(v.x) && isfinite(v.y) && isfinite(v.z);
@@ -839,8 +892,31 @@ bool MotionFields_SetTransform(MotionFieldHandle handle,const FieldTransform *tr
   FieldDesc candidate=target->physical;
   candidate.transform=*transform;
   if(!Motion_ValidPhysical(&candidate)) return false;
+  target->frame=0;target->frameRevision=0;
   target->physical.transform=*transform;
   Motion_CachePhysicalTarget(target);
+  return true;
+}
+
+bool MotionFields_BindFrame(MotionFieldHandle handle,MotionFrameHandle frame,const FieldTransform *localFrame) {
+  MotionTargetRuntime *target=Motion_FindTarget(handle);
+  if(!target || !target->typed) return false;
+  if(!frame) {
+    target->frame=0;target->frameRevision=0;
+    target->physical.transform.frameVelocityMps=(Vector3){0};
+    target->physical.transform.angularVelocityRadPerSec=(Vector3){0};
+    Motion_CachePhysicalTarget(target);return true;
+  }
+  MotionFrameSnapshot snapshot;
+  if(!MotionFrame_Snapshot(frame,(Vector3){0},&snapshot) || !MotionFrame_IsRigidTransform(&snapshot.transform)) return false;
+  FieldTransform local=localFrame?*localFrame:(FieldTransform){.axisX={1,0,0},.axisY={0,1,0},.axisZ={0,0,1}};
+  FieldDesc candidate=target->physical;
+  candidate.transform=local;
+  if(!Motion_ValidPhysical(&candidate)) return false;
+  candidate.transform=Motion_ComposeFrame(&snapshot.transform,&local);
+  if(!Motion_ValidPhysical(&candidate)) return false;
+  target->localFrame=local;target->frame=frame;target->frameRevision=0;
+  Motion_UpdateBoundFrame(target);Motion_CachePhysicalTarget(target);
   return true;
 }
 
