@@ -118,7 +118,7 @@ void PropLit_UpdateLighting(void) {
   int lightColorLoc = GetShaderLocation(shader, "u_lightColor");
   if (lightColorLoc >= 0) {
     Vector4 c = ColorNormalize(Environment_GetSunColor());
-    Vector3 rgb = {c.x, c.y, c.z};
+    Vector3 rgb = Vector3Scale((Vector3){c.x, c.y, c.z}, Environment_GetSunIntensity());
     SetShaderValue(shader, lightColorLoc, &rgb, SHADER_UNIFORM_VEC3);
   }
 

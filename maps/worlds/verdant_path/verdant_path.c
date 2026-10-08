@@ -309,7 +309,7 @@ static void BuildMeadowLayout(void)
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.25f, .jitter = 0.90f,
+            .spacing = 0.22f, .jitter = 0.90f,
             .minRadius = 0.22f, .maxRadius = 0.28f,
             .minHeight = 0.34f, .maxHeight = 0.54f,
             .yOffset = 0.025f, .seed = 0x51a7c3u,
@@ -349,7 +349,7 @@ static void BuildMeadowLayout(void)
         float biome = s_ecology.ready ? ecology.habitat : cell1 * 0.6f + cell2 * 0.4f;
         float growth = s_ecology.ready ? ecology.growth : biome;
         // Shared growth avoids abrupt species-height steps at biome thresholds.
-        clump->height = 0.42f + growth * 0.24f;
+        clump->height = 1.25f + growth * 0.50f;
         // Sparse flower colonies and meadow margins retain a shorter underlayer.
         if (s_ecology.ready)
             clump->height *= 0.65f + 0.35f * ecology.coverage;
@@ -523,15 +523,16 @@ static void CaptureVerdantStaticShadows(void)
 static void ApplyVerdantEnvironment(void)
 {
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){142, 157, 170, 255}); // Neutral morning sky fill
-    Environment_SetSunColor((Color){246, 232, 207, 255});     // Warm sunlight without bleaching stone
+    Environment_SetAmbientColor((Color){88, 102, 128, 255}); // Cool sky fill preserves shaded canopy volume
+    Environment_SetSunColor((Color){255, 158, 79, 255});
+    Environment_SetSunIntensity(3.0f);
     // Sun rises in the East-North ahead (X > 0, Z < 0), sunlight travels towards West-South (X < 0, Z > 0)
-    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.50f, -0.45f, 0.55f}));
+    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.20f, -0.24f, 0.95f}));
     Environment_SetShadowColor((Color){28, 36, 48, 120});
 
     // Keep the playable foreground clear; haze and sun shafts belong beyond it.
     AtmosphereProfile atmos = {
-        .color = {205, 228, 250, 255},
+        .color = {235, 190, 151, 255},
         .start = 22.0f,
         .end = 95.0f,
         .enabled = true,
@@ -734,11 +735,12 @@ void InitVerdantPathMap(void)
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
             .rootColor = {18, 34, 16, 255}, .tipColor = {136, 186, 54, 255},
-            .bladesPerClump = 6, .bladeSegments = 3, .bladeWidthScale = 0.12f,
+            .bladesPerClump = 6, .bladeSegments = 3, .bladeWidthScale = 0.17f,
             .chunkSize = 12.0f, .lodDistance = 32.0f, .midLodDistance = 16.0f, .drawDistance = 58.0f,
             .shadowDistance = 14.0f,
             .texturePath = NULL,
             .botanicalVariation = 1.0f,
+            .growthForm = MAP_MEADOW_GROWTH_GRASS,
         });
     s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
         (MapMeadowStyle){
@@ -748,6 +750,7 @@ void InitVerdantPathMap(void)
             .shadowDistance = 12.0f,
             .texturePath = NULL,
             .hasPlumes = false,
+            .growthForm = MAP_MEADOW_GROWTH_REED,
         });
     static const Color clusterCenters[FLOWER_CLUSTER_COUNT] = {
         {218, 185, 65, 255},  // Cluster 0: pale daisy golden center
@@ -917,6 +920,7 @@ void DrawTransparentVerdantPathMap(void)
 
 void UnloadVerdantPathMap(void)
 {
+    Environment_SetSunIntensity(1.0f);
     if (!s_ready)
         return;
     EnvShadow_SetMapCasterCallback(NULL, NULL);

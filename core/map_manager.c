@@ -1,4 +1,5 @@
 #include "core/map_manager.h"
+#include "environment/environment_system.h"
 #include <string.h>
 
 #define MAX_MAPS 16
@@ -18,6 +19,7 @@ void MapManager_Init(void) {
     s_mapCount = 0;
     s_activeMapIndex = 0;
     s_zoneCount = 0;
+    Environment_SetSunIntensity(1.0f);
 
     RegisterGeneratedMaps();
 
@@ -134,6 +136,7 @@ void MapManager_Unload(void) {
     }
     s_mapCount = 0;
     s_zoneCount = 0;
+    Environment_SetSunIntensity(1.0f);
 }
 
 int MapManager_GetCount(void) {
@@ -155,6 +158,9 @@ void MapManager_SetActiveIndex(int index) {
         // Clear the previous map's zones BEFORE Init so a zone-less map ends
         // up with zero zones instead of inheriting stale ones.
         s_zoneCount = 0;
+        // Maps remain loaded across switches; reset opt-in direct radiance
+        // before Init so legacy maps cannot inherit another map's HDR sun.
+        Environment_SetSunIntensity(1.0f);
         if (s_maps[s_activeMapIndex].Init) {
             s_maps[s_activeMapIndex].Init();
         }

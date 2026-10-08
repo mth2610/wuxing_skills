@@ -30,6 +30,10 @@ void Environment_SetSunDirection(Vector3 dir);
 
 Color Environment_GetSunColor(void);
 void Environment_SetSunColor(Color col);
+// Direct linear radiance = normalized sunColor.rgb * sunIntensity.
+// Default 1 preserves existing lighting; maps opting in reset to 1 on exit.
+float Environment_GetSunIntensity(void);
+void Environment_SetSunIntensity(float intensity); // Finite [0,64]; nonfinite resets to 1.
 
 Color Environment_GetAmbientColor(void);
 void Environment_SetAmbientColor(Color col);
@@ -128,13 +132,14 @@ typedef struct {
 // --- Resolved Frame Lighting Snapshot (E10) ---
 typedef struct {
     Vector3           sunDirection;  // Normalized travel direction (from light into scene)
-    Color             sunColor;      // Direct linear sunlight
+    Color             sunColor;      // Sunlight tint; normalize RGB and multiply by sunIntensity
     Color             skyAmbient;    // Upper hemisphere sky fill
     Color             groundBounce;  // Lower hemisphere warm earth bounce
     Color             shadowColor;   // Directional shadow attenuation
     EnvFogConfig      fog;           // Distance and height fog parameters
     AtmosphereProfile atmosphere;    // Full physical atmosphere profile
     unsigned int      version;       // Increments when lighting changes
+    float             sunIntensity;  // Direct linear radiance scale; default 1, independent of ambient
 } EnvFrameLighting;
 
 // Supplies one resolved snapshot; consumers do not independently infer light direction/tint.

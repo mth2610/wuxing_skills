@@ -153,7 +153,8 @@ void SurfaceMaterial_UpdateFrame(Camera3D camera) {
     // environment sun direction points the way light TRAVELS (downward); the
     // shader wants the direction from the surface toward the sun.
     Vector3 sunToLight = Vector3Normalize(Vector3Negate(Environment_GetSunDirection()));
-    Vector3 sunColor   = ColorToVec3(Environment_GetSunColor());
+    Vector3 sunColor   = Vector3Scale(ColorToVec3(Environment_GetSunColor()),
+                                    Environment_GetSunIntensity());
     Vector3 sky        = ColorToVec3(Environment_GetSkyAmbient());
     Vector3 ground     = ColorToVec3(Environment_GetGroundAmbient());
     Vector3 viewPos    = camera.position;

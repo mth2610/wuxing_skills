@@ -23,11 +23,13 @@ glsl = function((ROOT/'maps/toolkit/shaders/nature_parametric.glsl').read_text()
 # remain copied directly from the production shader.
 glsl = re.sub(r'vec3 root = texelFetch\(u_bladeParameters,.*?\)\.xyz;',
               'Vector3 root = FetchRoot(blade);', glsl, flags=re.S)
-glsl = re.sub(r'vec3 worldRoot = vec3\(u_worldFromShaderSpace.*?;',
+glsl = re.sub(r'vec3 worldRoot = root \+ u_worldOffset;',
               'Vector3 worldRoot = TransformRoot(root);', glsl, flags=re.S)
 glsl = re.sub(r'\buint\b', 'uint32_t', glsl)
 glsl = re.sub(r'\bfloat\(', '(float)(', glsl)
 compact_source = (ROOT/'maps/toolkit/map_props_meadow_parametric.inl').read_text()
+view_type = re.search(r'typedef struct \{[^}]*\} NatureMeadowView;', compact_source).group()
+view_function = function(compact_source, 'NatureParametric_View')
 cpu_selection = '\n'.join(function(compact_source,name) for name in ('NatureParametric_Rank','NatureParametric_Smoothstep','NatureParametric_SelectLod'))
 culling = function((ROOT/'maps/toolkit/map_props_meadow_parametric.inl').read_text(),
                    'NatureParametric_LodIntersectsSphere')
@@ -40,6 +42,17 @@ STUBS = r'''
 #include <string.h>
 typedef struct {float x,y,z;} Vector3;
 typedef struct {float x,y,z,w;} Vector4;
+typedef struct {float midLodDistance,lodDistance,drawDistance;} MapMeadowSurface;
+typedef struct {Vector3 position,target;float fovy;} Camera3D;
+static Camera3D camera;
+static int quality=3;
+static int GfxQuality_Get(void) {return quality;}
+#define GFX_HIGH 3
+#define GFX_MED 2
+#define GFX_LOW 1
+#define DEG2RAD 0.017453292519943295f
+#define NATURE_LOD_NEAR_BLEND_HALF_WIDTH 2.0f
+#define NATURE_LOD_FAR_BLEND_HALF_WIDTH 5.0f
 static Vector4 u_tuftLodBands;
 static int u_compactTuftSubmission;
 static int u_tuftLodLevel,u_bladeOffset,gl_InstanceID,u_bladesPerTuft,expectedBlade,addressBias;
@@ -77,7 +90,44 @@ static void CheckSphere(int selected,float rootDistance,float radius,float offse
     assert(rootDistance>=nearest-1e-4f && rootDistance<=farthest+1e-4f);
     assert(NatureParametric_LodIntersectsSphere(selected,nearest,farthest,u_tuftLodBands));
 }
+static void Close(float a,float b) {assert(fabsf(a-b)<0.0001f);}
+static void CheckView(void) {
+    MapMeadowSurface meadow={.midLodDistance=9,.lodDistance=23,.drawDistance=60};
+    camera=(Camera3D){.position={0,8,10},.target={0,0,0},.fovy=45};
+    for(quality=0;quality<=GFX_HIGH;quality++) {
+        camera.position.z=10;camera.fovy=45;
+        NatureMeadowView baseline=NatureParametric_View(&meadow);
+        camera.position.z=30;
+        NatureMeadowView orbit=NatureParametric_View(&meadow);
+        Close(orbit.lodDistance,baseline.lodDistance);
+        Close(orbit.bands.x,baseline.bands.x);Close(orbit.bands.y,baseline.bands.y);
+        Close(orbit.bands.z,baseline.bands.z);Close(orbit.bands.w,baseline.bands.w);
+        Close(orbit.zoomFactor,baseline.zoomFactor);
+        Close(orbit.drawDistance-baseline.drawDistance,20);
+        // Narrower FOV retains more geometric detail and visible range.
+        camera.fovy=30;
+        NatureMeadowView zoom=NatureParametric_View(&meadow);
+        assert(zoom.zoomFactor>orbit.zoomFactor);
+        assert(zoom.bands.x>orbit.bands.x && zoom.bands.y>orbit.bands.y);
+        assert(zoom.drawDistance>orbit.drawDistance);
+        Close(zoom.bands.x/orbit.bands.x,zoom.zoomFactor/orbit.zoomFactor);
+        Close(zoom.bands.y/orbit.bands.y,zoom.zoomFactor/orbit.zoomFactor);
+        Close((zoom.drawDistance-30)/(orbit.drawDistance-30),zoom.zoomFactor/orbit.zoomFactor);
+        // Extreme zoom remains bounded; broad FOV retains a conservative floor.
+        camera.fovy=1;NatureMeadowView narrow=NatureParametric_View(&meadow);
+        camera.fovy=120;NatureMeadowView wide=NatureParametric_View(&meadow);
+        assert(narrow.zoomFactor<=2.5f && narrow.zoomFactor>=zoom.zoomFactor);
+        assert(wide.zoomFactor>=.8f && wide.zoomFactor<=orbit.zoomFactor);
+        assert(wide.drawDistance>30 && narrow.drawDistance>=zoom.drawDistance);
+        meadow.drawDistance=0;meadow.midLodDistance=0;
+        NatureMeadowView disabled=NatureParametric_View(&meadow);
+        assert(disabled.drawDistance==0 && disabled.bands.x==0);
+        meadow.drawDistance=60;meadow.midLodDistance=9;
+    }
+    printf("meadow view: orbit-independent geometry LOD, visibility orbit compensation, FOV scaling and bounded zoom passed\n");
+}
 int main(void) {
+    CheckView();
     int total=0;
     const Vector4 modes[]={{9,23,2,5},{0,23,2,5},{0,0,0,0}};
     for(int mode=0;mode<3;mode++) {
@@ -131,6 +181,6 @@ with tempfile.TemporaryDirectory(prefix='wuxing-meadow-lod-') as directory:
     work = pathlib.Path(directory)
     c = work/'lod.c'
     exe = work/'lod'
-    c.write_text(STUBS+cpu_selection+'\n'+glsl+'\n'+culling+'\n'+TEST)
+    c.write_text(STUBS+view_type+'\n'+view_function+'\n'+cpu_selection+'\n'+glsl+'\n'+culling+'\n'+TEST)
     subprocess.run(['cc','-std=c99','-O2','-Wall','-Wextra','-Werror',str(c),'-lm','-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)

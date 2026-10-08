@@ -67,9 +67,9 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     NatureMeadowView view;
     view.lodScale = lodScale;
     view.zoomFactor = zoom;
-    view.lodDistance = focalDistance + meadow->lodDistance*lodScale*zoom;
+    view.lodDistance = meadow->lodDistance*lodScale*zoom;
     view.drawDistance = meadow->drawDistance > 0.0f ? focalDistance+meadow->drawDistance*rangeScale*zoom : 0.0f;
-    view.bands = (Vector4){meadow->midLodDistance > 0.0f ? focalDistance + meadow->midLodDistance*lodScale*zoom : 0.0f,
+    view.bands = (Vector4){meadow->midLodDistance > 0.0f ? meadow->midLodDistance*lodScale*zoom : 0.0f,
         view.lodDistance,NATURE_LOD_NEAR_BLEND_HALF_WIDTH,NATURE_LOD_FAR_BLEND_HALF_WIDTH};
     return view;
 }
@@ -99,6 +99,7 @@ static int s_natureParameterLoc[2], s_natureBladeOffsetLoc[2], s_natureBladeCoun
 static int s_natureReceiverSamplerLoc[2][4];
 static int s_natureTuftLodBandsLoc = -1, s_natureTuftLodLevelLoc = -1;
 static int s_natureTuftLodCameraLoc = -1;
+static int s_natureTuftFadeRangeLoc = -1;
 static int s_natureCanonicalBladesLoc[2], s_natureCanonicalLoc[2], s_natureGeometryLodLoc[2];
 static int s_natureTuftOffsetLoc[2], s_natureCompactLoc[2], s_natureVisibleIdsLoc;
 static int s_natureVisibleOffsetLoc;
@@ -167,6 +168,7 @@ static Shader NatureParametric_Shader(bool shadow)
             s_natureTuftLodBandsLoc = GetShaderLocation(*shader,"u_tuftLodBands");
             s_natureTuftLodLevelLoc = GetShaderLocation(*shader,"u_tuftLodLevel");
             s_natureTuftLodCameraLoc = GetShaderLocation(*shader,"u_tuftLodCamera");
+            s_natureTuftFadeRangeLoc = GetShaderLocation(*shader,"u_tuftFadeRange");
             s_natureVisibleIdsLoc = GetShaderLocation(*shader,"u_visibleTuftIds");
             s_natureVisibleOffsetLoc = GetShaderLocation(*shader,"u_visibleTuftOffset");
             if (s_natureTuftLodBandsLoc < 0 || s_natureTuftLodLevelLoc < 0 || s_natureTuftLodCameraLoc < 0)
@@ -281,9 +283,11 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     data->shadow = shadows;
     data->tuftCount = count;
     data->canonicalBlades = style.bladesPerClump;
-    data->canonical = style.bladesPerClump >= 3 && style.bladeSegments >= 2;
+    data->canonical = style.bladesPerClump >= 3 && style.bladeSegments >= 2 &&
+        style.growthForm != MAP_MEADOW_GROWTH_REED;
     for (int i = 0; i < count; i++)
-        if (placements[i].height > 0.95f) data->canonical = false;
+        if (style.growthForm == MAP_MEADOW_GROWTH_AUTO && placements[i].height > 0.95f)
+            data->canonical = false;
     const char *submission = getenv("WUXING_MEADOW_SUBMISSION");
     data->compact = submission && strcmp(submission,"compact") == 0;
     const char *order = getenv("WUXING_MEADOW_ORDER");

@@ -1130,7 +1130,8 @@ static void ParticleLighting_Begin(Camera3D camera)
     return;
 
   Vector3 sunToLight = Vector3Normalize(Vector3Negate(Environment_GetSunDirection()));
-  Vector3 sunColor   = ColorToVec3_Particle(Environment_GetSunColor());
+  Vector3 sunColor   = Vector3Scale(ColorToVec3_Particle(Environment_GetSunColor()),
+                                  Environment_GetSunIntensity());
   Vector3 ambient    = ColorToVec3_Particle(Environment_GetAmbientColor());
 
   BeginShaderMode(s_litShader);

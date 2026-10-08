@@ -13,6 +13,7 @@ uniform int u_chunkTuftOffset;
 uniform vec4 u_tuftLodBands;
 uniform int u_tuftLodLevel;
 uniform vec3 u_tuftLodCamera;
+uniform vec2 u_tuftFadeRange;
 uniform int u_compactTuftSubmission;
 uniform sampler2D u_visibleTuftIds;
 uniform int u_visibleTuftOffset;
@@ -88,7 +89,7 @@ void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p
             p2.z = p0.z + (p2.z-p0.z)*0.67;
             p3.x = p0.x + (p3.x-p0.x)*0.67;
             p3.z = p0.z + (p3.z-p0.z)*0.67;
-            p3.y = p0.y + max(height*0.78*0.28,height*0.78*0.88-droop*0.65);
+            p3.y = p0.y + max(height*0.78*0.12,height*0.78*0.68-droop*0.65);
             p1.w *= 1.28;
         }
     }
@@ -130,8 +131,9 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 #ifdef NATURE_VISIBLE_TUFT_LOD
     vec3 worldRoot = p0.xyz + u_worldOffset;
     float distToCam = distance(worldRoot, u_tuftLodCamera);
-    if (distToCam > 38.0) {
-        float perimeterFade = clamp(1.0 - (distToCam - 38.0) / 18.0, 0.0, 1.0);
+    if (u_tuftFadeRange.y > 0.0 && distToCam > u_tuftFadeRange.x) {
+        float perimeterFade = clamp((u_tuftFadeRange.y - distToCam) /
+                                   max(u_tuftFadeRange.y - u_tuftFadeRange.x, 0.001), 0.0, 1.0);
         position = p0.xyz + (position - p0.xyz) * perimeterFade;
     }
 #endif

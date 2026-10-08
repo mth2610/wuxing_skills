@@ -94,7 +94,7 @@
 ## 10. Core layer (`core/`, `environment/`, `maps/`, common shaders)
 
 ### 10.1 General
-- Meadow habitat and canopy colors must agree between the CPU blade bake, ecology texture and distant ground. Keep `meadow_palette.h` and its GLSL counterpart synchronized; contour mist thresholds must remain below interior relief.
+- Meadow habitat and canopy colors must agree between the CPU blade bake, ecology texture and distant ground. Keep `meadow_palette.h` and its GLSL counterpart synchronized; contour mist thresholds must remain below interior relief. Canonical GPU LOD reconstruction must retain the CPU authoring tip floor, bend and droop; compare all visible and shadow descriptors.
 - Typed fields keep Newton force, acceleration and medium velocity separate. Direct Motion receivers sample ordinary Wind excluding Motion publication; authored drag/buoyancy replace automatic material approximations. Legacy packed force IDs and units never change.
 - Rooted objects consume Motion Newton forces through their own mass/spring/damping; stateless queries must not capture free-particle lanes or fire arrival callbacks.
 - Anchored vegetation samples airflow near terrain/canopy height, not at the airborne source height; a horizontal-axis swirl has different bending directions at those heights.
@@ -179,7 +179,7 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
-| 2026-10-09 | Codex | §10.1 Shared meadow habitat and relief contours | maps/toolkit/meadow_palette.h; maps/toolkit/shaders/meadow_palette.glsl; maps/tests/test_verdant_heightmap.py | Ground-truth |
+| 2026-10-09 | Codex | §10.1 Shared meadow habitat, relief contours and LOD geometry | maps/toolkit/meadow_palette.h; maps/toolkit/shaders/nature_parametric.glsl; maps/tests/test_meadow_parametric.py | Ground-truth |
 | 2026-10-09 | Codex | Directed path constraints and transverse field units | core/motion/motion_path_transport.h; core/motion/shaders/motion_fields.glsl | Ground-truth and project convention |
 | 2026-10-09 | Codex | Shared prescribed Motion path sampling | core/motion/motion_path_transport.h; core/motion/shaders/motion_fields.glsl | Ground-truth and project convention |
 | 2026-10-08 | Codex | Shared physical ribbon appearance without vertex displacement | core/trails/trail_ribbon.h; core/trails/trail_system.c; core/composition/common/vc_trail.inl | Ground-truth |

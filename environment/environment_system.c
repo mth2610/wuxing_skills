@@ -18,6 +18,7 @@
 // same Tây Nam (southwest) horizontal direction as before.
 static Vector3 s_sunDirection = { -0.6f, -0.7f, 0.6f }; // Hướng mặt trời (bóng đổ về Tây Nam)
 static Color s_sunColor = { 255, 245, 230, 255 };      // Warm white / yellowish sun light
+static float s_sunIntensity = 1.0f;
 static Color s_ambientColor = { 50, 50, 70, 255 };      // Cool bluish shadow ambient tone
 static Color s_shadowColor = { 8, 8, 12, 180 };       // Transparent dark shadow tone
 static EnvFogConfig s_fogConfig = {
@@ -106,6 +107,7 @@ static void EnvUpdateCloudShadow(float dt) {
 
 void Environment_Init(void) {
     s_sunDirection = Vector3Normalize(s_sunDirection);
+    s_sunIntensity = 1.0f;
     s_cloudShadow.enabled = false;
     s_cloudDriftUV = (Vector2){ 0 };
     s_cloudVersion++;
@@ -399,6 +401,15 @@ void Environment_SetSunDirection(Vector3 dir) { s_sunDirection = Vector3Normaliz
 Color Environment_GetSunColor(void) { return s_sunColor; }
 void Environment_SetSunColor(Color col) { s_sunColor = col; s_lightingVersion++; }
 
+float Environment_GetSunIntensity(void) { return s_sunIntensity; }
+void Environment_SetSunIntensity(float intensity) {
+    float resolved = isfinite(intensity) ? fminf(fmaxf(intensity, 0.0f), 64.0f) : 1.0f;
+    if (resolved != s_sunIntensity) {
+        s_sunIntensity = resolved;
+        s_lightingVersion++;
+    }
+}
+
 Color Environment_GetAmbientColor(void) { return s_ambientColor; }
 void Environment_SetAmbientColor(Color col) { s_ambientColor = col; s_lightingVersion++; }
 
@@ -554,6 +565,7 @@ EnvFrameLighting Environment_GetFrameLighting(void) {
     frame.fog = s_fogConfig;
     frame.atmosphere = s_atmosphereProfile;
     frame.version = s_lightingVersion;
+    frame.sunIntensity = s_sunIntensity;
     return frame;
 }
 

@@ -58,10 +58,12 @@ static void rlEnableTexture(unsigned id) {textures[activeSlot]=id;}
 static void rlDisableTexture(void) {textures[activeSlot]=0;}
 static unsigned rlGetTextureIdDefault(void) {return 999;}
 static Vector3 Environment_GetSunDirection(void) {return (Vector3){0,-1,0};}
+static float Environment_GetSunIntensity(void) {return 3.0f;}
 static Color Environment_GetSunColor(void) {return WHITE;}
 static Color Environment_GetAmbientColor(void) {return WHITE;}
 static void SetShaderValue(Shader s,int loc,const void *p,int type) {
  assert(activeProgram==123 && s.id==123);
+ if(loc==locLightColor) {assert(type==SHADER_UNIFORM_VEC4);const float *v=p;assert(v[0]==3 && v[1]==3 && v[2]==3 && v[3]==1);}
  if(loc==locGroundReliefSampler) {assert(type==SHADER_UNIFORM_INT);reliefSampler=*(const int *)p;}
  if(loc==locGroundReliefEnabled) {assert(type==SHADER_UNIFORM_INT);reliefEnabled=*(const int *)p;}
  if(loc==locGroundCloudNoise) {assert(type==SHADER_UNIFORM_INT);cloudSampler=*(const int *)p;}

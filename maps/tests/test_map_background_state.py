@@ -75,12 +75,13 @@ double GetTime(void){return 2;}
 static bool TimeFX_IsDeterministic(void){return true;}
 static float TimeFX_Elapsed(void){return 2;}
 Vector3 Environment_GetSunDirection(void){return (Vector3){-.5f,-.45f,.55f};}
+float Environment_GetSunIntensity(void) {return 3.0f;}
 Color Environment_GetSunColor(void){return (Color){246,232,207,255};}
 Color Environment_GetAmbientColor(void){return (Color){142,157,170,255};}
 Vector4 ColorNormalize(Color c){return (Vector4){c.r/255.0f,c.g/255.0f,c.b/255.0f,c.a/255.0f};}
 EnvFrameLighting Environment_GetFrameLighting(void){
     return (EnvFrameLighting){.sunDirection={-.5f,-.45f,.55f},
-        .sunColor={246,232,207,255},.skyAmbient={177,196,229,255},
+        .sunIntensity=3.0f,.sunColor={246,232,207,255},.skyAmbient={177,196,229,255},
         .atmosphere={.color={205,228,250,255}}};
 }
 static Shader Water_GetShader(void){return (Shader){.id=2};}

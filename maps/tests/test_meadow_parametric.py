@@ -204,13 +204,15 @@ int main(void) {
     // Execute production GLSL canonical reconstruction against independent
     // CPU-authoring LOD descriptors, preserving far and shadow silhouettes.
     const int parityBlades[4]={5,4,3,3},paritySegments[4]={3,2,1,2};
-    const float parityWidths[4]={1,1.22f,1.65f,1.30f};
-    for(int sample=0;sample<64;sample++) for(int lod=0;lod<4;lod++) for(int blade=0;blade<parityBlades[lod];blade++) {
+    const float parityWidths[4]={1,1.22f,1.65f,2.10f};
+    for(int form=0;form<2;form++) for(int sample=0;sample<64;sample++) for(int lod=0;lod<4;lod++) for(int blade=0;blade<parityBlades[lod];blade++) {
+        style.growthForm=form ? MAP_MEADOW_GROWTH_GRASS : MAP_MEADOW_GROWTH_AUTO;
         style.botanicalVariation=(float)(sample%3)*0.5f;
-        MapMeadowPlacement root={.position={3.19f+sample*.27f,.13f,5.71f},.height=.3f+(sample%13)*.043f,
+        MapMeadowPlacement root={.position={3.19f+sample*.27f,.13f,5.71f},.height=(form ? 1.15f : .3f)+(sample%13)*.043f,
             .radius=.13f+(sample%7)*.012f,.rotationDeg=sample*17.3f,.phase=sample*.03f};
         int botanical=blade*(5-1)/(parityBlades[lod]-1);
         NatureBladeDescriptor base=Nature_DescribeMeadowBlade(&root,sample,botanical,style,5,3,1);
+        assert(!base.isReed);
         NatureBladeDescriptor reconstructed=ReconstructCanonical(base,lod);
         NatureBladeDescriptor authored=Nature_DescribeMeadowBlade(&root,sample,blade,style,parityBlades[lod],paritySegments[lod],parityWidths[lod]);
         nearVector(reconstructed.p0,authored.p0);nearVector(reconstructed.p1,authored.p1);
@@ -219,6 +221,8 @@ int main(void) {
         assert(!memcmp(&reconstructed.rootColor,&authored.rootColor,sizeof(Color)));
         assert(!memcmp(&reconstructed.tipColor,&authored.tipColor,sizeof(Color)));
     }
+
+    style.growthForm=MAP_MEADOW_GROWTH_AUTO;
 
     // Production creation/destruction and every CPU allocation failure boundary.
     MapMeadowPlacement roots[3]={
@@ -339,7 +343,25 @@ int main(void) {
         assert(!liveAllocations && !liveTextures);
     }
     failAllocation=0;
-    // Reed authoring depends on local LOD ordinal; retain exact variants.
+    // Explicit tall grass retains one canonical atlas for all visible/shadow LODs.
+    roots[0].height=1.6f;
+    style.growthForm=MAP_MEADOW_GROWTH_GRASS;
+    memset(&meadow,0,sizeof(meadow));
+    assert(NatureParametric_Create(&meadow,roots,3,style));
+    data=meadow.parametric;
+    assert(data->canonical && liveTextures==2);
+    for(int c=0;c<meadow.chunkCount;c++) {
+        NatureBladeDescriptor desc=Nature_DescribeMeadowBlade(&roots[c],c,0,style,5,3,1);
+        assert(!desc.isReed);
+        int offset=data->ranges[c].offset[0]*28;
+        assert(capturedAtlas[offset+11]==0.0f);
+        for(int lod=1;lod<4;lod++)
+            assert(data->ranges[c].offset[lod]==data->ranges[c].offset[0]);
+    }
+    NatureParametric_Destroy(&meadow);MemFree(meadow.chunks);
+    assert(!liveAllocations && !liveTextures);
+    // AUTO preserves historical height-based reed selection and exact variants.
+    style.growthForm=MAP_MEADOW_GROWTH_AUTO;
     roots[0].height=1.1f;
     memset(&meadow,0,sizeof(meadow));
     assert(NatureParametric_Create(&meadow,roots,3,style));
@@ -349,6 +371,7 @@ int main(void) {
     const float lodWidths[4]={1,1.22f,1.65f,1.30f};
     for(int lod=0;lod<4;lod++) for(int c=0;c<meadow.chunkCount;c++) for(int b=0;b<lodBlades[lod];b++) {
         NatureBladeDescriptor desc=Nature_DescribeMeadowBlade(&roots[c],c,b,style,lodBlades[lod],lodSegments[lod],lodWidths[lod]);
+        assert(desc.isReed==(roots[c].height>0.95f));
         int offset=(data->ranges[c].offset[lod]+b)*28;
         nearVector((Vector3){capturedAtlas[offset],capturedAtlas[offset+1],capturedAtlas[offset+2]},desc.p0);
         nearVector((Vector3){capturedAtlas[offset+12],capturedAtlas[offset+13],capturedAtlas[offset+14]},desc.p3);
@@ -356,6 +379,23 @@ int main(void) {
     }
     NatureParametric_Destroy(&meadow);MemFree(meadow.chunks);
     assert(!liveAllocations && !liveTextures);
+    // Explicit reeds retain reed morphology even below the AUTO height threshold.
+    style.growthForm=MAP_MEADOW_GROWTH_REED;
+    roots[0].height=.5f;
+    memset(&meadow,0,sizeof(meadow));
+    assert(NatureParametric_Create(&meadow,roots,3,style));
+    data=meadow.parametric;
+    assert(!data->canonical && liveTextures==2);
+    for(int lod=0;lod<4;lod++) for(int c=0;c<meadow.chunkCount;c++) {
+        NatureBladeDescriptor desc=Nature_DescribeMeadowBlade(&roots[c],c,0,style,lodBlades[lod],lodSegments[lod],lodWidths[lod]);
+        assert(desc.isReed);
+        int offset=data->ranges[c].offset[lod]*28;
+        assert(capturedAtlas[offset+11]==1.0f);
+        nearVector((Vector3){capturedAtlas[offset+12],capturedAtlas[offset+13],capturedAtlas[offset+14]},desc.p3);
+    }
+    NatureParametric_Destroy(&meadow);MemFree(meadow.chunks);
+    assert(!liveAllocations && !liveTextures);
+    style.growthForm=MAP_MEADOW_GROWTH_AUTO;
     memset(&meadow,0,sizeof(meadow)); style.hasPlumes=true;
     assert(!NatureParametric_Create(&meadow,roots,3,style));
     style.hasPlumes=false; style.texturePath="authored-cutout";

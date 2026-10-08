@@ -761,7 +761,7 @@ void rlvkPresent(void)
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
     rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    rlvkEndActiveRenderPass(cmdBuffer);
     rlvkFinishSwapchainImage(cmdBuffer); // flip-blit the frame into the swapchain
 
     // COLOR_ATTACHMENT_OPTIMAL -> PRESENT_SRC

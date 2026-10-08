@@ -29,6 +29,10 @@ static int expectedPass,expectedInstances,offsetUploads,draws,activeShader;
 static Matrix rlGetMatrixTransform(void) {return currentTransform;}
 static Matrix rlGetMatrixModelview(void) {return MatrixRotateX(.2f);}
 static Matrix rlGetMatrixProjection(void) {return MatrixPerspective(.75,1.7,.1,300);}
+static Matrix EnvShadow_GetLightVP(void) {
+    return MatrixMultiply(MatrixLookAt((Vector3){12,19,-8},(Vector3){2,0,3},(Vector3){0,1,0}),
+                          MatrixOrtho(-20,20,-20,20,.1,80));
+}
 void SetShaderValueMatrix(Shader shader,int location,Matrix value) {
     assert(activeShader==(int)shader.id);
     if(location==SHADER_LOC_MATRIX_MVP)uploadedMvp=value;
@@ -69,8 +73,13 @@ int main(void) {
             data.compact=compact!=0;expectedPass=lod==3;
             expectedInstances=compact && !expectedPass ? range.visibleCount[lod] : range.count;
             NatureParametric_DrawChunk(&meadow,0,lod,shader,expectedOffset);
-            Matrix model=MatrixMultiply(MatrixTranslate(expectedOffset.x,expectedOffset.y,expectedOffset.z),currentTransform);
-            Matrix oracle=MatrixMultiply(MatrixMultiply(model,rlGetMatrixModelview()),rlGetMatrixProjection());
+            Matrix model=MatrixTranslate(expectedOffset.x,expectedOffset.y,expectedOffset.z);
+            Matrix oracle;
+            if(expectedPass) oracle=MatrixMultiply(model,EnvShadow_GetLightVP());
+            else {
+                model=MatrixMultiply(model,currentTransform);
+                oracle=MatrixMultiply(MatrixMultiply(model,rlGetMatrixModelview()),rlGetMatrixProjection());
+            }
             const float *actual=(const float *)&uploadedMvp,*expected=(const float *)&oracle;
             for(int i=0;i<16;i++)assert(actual[i]==expected[i]);
         }

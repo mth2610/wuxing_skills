@@ -1039,7 +1039,8 @@ void LiquidSurface_Composite(void) {
     Vector3 sunToLight=Vector3Normalize(Vector3Negate(Environment_GetSunDirection()));
     Vector3 sunDirectionView=Vector3Normalize(
         LiquidSurface_TransformDirection(sunToLight,s_fluidView));
-    Vector3 sunColor=LiquidSurface_ColorToVec3(Environment_GetSunColor());
+    Vector3 sunColor=Vector3Scale(LiquidSurface_ColorToVec3(Environment_GetSunColor()),
+                                Environment_GetSunIntensity());
     Vector3 skyAmbient=LiquidSurface_ColorToVec3(Environment_GetSkyAmbient());
     Vector3 groundAmbient=LiquidSurface_ColorToVec3(Environment_GetGroundAmbient());
     /* The whole table, every frame. Four slots of four vec4s is 256 bytes; the

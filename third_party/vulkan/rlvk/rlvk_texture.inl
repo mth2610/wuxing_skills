@@ -616,6 +616,7 @@ static void rlvkDrawMesh(int offset, int count, bool indexed, int instances)
         rlvkBindDummyAttribBuffers(cmdBuffer, vertexLayout, shader);
 
     rlvkFlushSet0(cmdBuffer);
+    rlvkEnsureSwapchainScope(cmdBuffer);
     rlvkProfileDraw();
     if (indexed && a->indexSlot && a->indexSlot < RLVK_MAX_BUFFER_SLOTS)
     {
@@ -1142,7 +1143,7 @@ void rlUpdateTexture(unsigned int id, int x, int y, int w, int h, int format, co
             rlDisableFramebuffer();
 
         rlvkProfileEndScope();
-        vkCmdEndRenderPass(cmdBuffer);
+        rlvkEndActiveRenderPass(cmdBuffer);
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
                                               VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                                               .imageMemoryBarrierCount = 1,
@@ -1589,7 +1590,7 @@ unsigned char *rlReadScreenPixels(int width, int height)
     vkMapMemory(RLVK.device, rbMem, 0, sizeBytes, 0, &rbMapped);
 
     rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    rlvkEndActiveRenderPass(cmdBuffer);
     rlvkFinishSwapchainImage(cmdBuffer); // flip-blit the frame into the swapchain
 
     // COLOR_ATTACHMENT_OPTIMAL -> TRANSFER_SRC_OPTIMAL

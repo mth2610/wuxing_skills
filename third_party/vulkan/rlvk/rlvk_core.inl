@@ -659,6 +659,7 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                         batchBuffersBound = true;
                     }
                     if (getenv("RLVK_DBG_DRAWSITE")) { fprintf(stderr, "[DRAW] pre mode=%d verts=%d ubo=%d slot=%u\n", drawCall->mode, drawCall->vertexCount, (int)shader->usesUbo, RLVK.State.currentShaderSlot); fflush(stderr); }
+                    rlvkEnsureSwapchainScope(cmdBuffer);
                     rlvkProfileDraw();
                     if ((drawCall->mode == RL_LINES) || (drawCall->mode == RL_TRIANGLES))
                         vk.CmdDraw(cmdBuffer, drawCall->vertexCount, 1, vertexOffset, 0);
@@ -798,7 +799,7 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
         if (openFb)
             rlDisableFramebuffer();
         rlvkProfileEndScope();
-        vkCmdEndRenderPass(cmdBuffer);
+        rlvkEndActiveRenderPass(cmdBuffer);
 
         vkCmdCopyBuffer(cmdBuffer, arena->buffer, dst, 1,
                         &(VkBufferCopy){.srcOffset = off, .dstOffset = dstOffset, .size = size});

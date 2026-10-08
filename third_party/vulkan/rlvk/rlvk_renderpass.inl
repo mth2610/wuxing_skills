@@ -268,6 +268,31 @@ static void rlvkEvictFramebuffersForView(VkImageView view)
     }
 }
 
+// Experiment: omit empty swapchain scopes between offscreen passes. Explicitly
+// track command-buffer scope state because transfers/readbacks may suspend it.
+static bool s_renderPassActive = false;
+static bool s_swapchainScopeDemand = false;
+static int s_lazySwapchain = -1;
+
+static void rlvkEndActiveRenderPass(VkCommandBuffer cmdBuffer)
+{
+    if (s_renderPassActive)
+    {
+        vkCmdEndRenderPass(cmdBuffer);
+        s_renderPassActive = false;
+    }
+}
+
+static void rlvkEnsureSwapchainScope(VkCommandBuffer cmdBuffer)
+{
+    if (!s_renderPassActive)
+    {
+        s_swapchainScopeDemand = true;
+        rlvkResumeSwapchainScope(cmdBuffer);
+        s_swapchainScopeDemand = false;
+    }
+}
+
 // Open a rendering scope: cached render pass + cached framebuffer + vkCmdBeginRenderPass.
 // clearColor/clearDepth are consumed only by CLEAR load ops of the key.
 static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRenderPassKey *key,
@@ -299,6 +324,7 @@ static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRender
                              .pClearValues = clears,
                          },
                          VK_SUBPASS_CONTENTS_INLINE);
+    s_renderPassActive = true;
     rlvkProfileBeginScope(profileSlot, key, width, height);
 }
 
@@ -394,7 +420,7 @@ void rlEnableFramebuffer(unsigned int id)
 
     u32 previousId = RLVK.scope.fbSlot;
     rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    rlvkEndActiveRenderPass(cmdBuffer);
     rlvkCloseFramebufferColorsForSwitch(cmdBuffer, previousId);
 
     // OPTIMIZATION: Batched Pipeline Barriers
@@ -643,7 +669,7 @@ void rlDisableFramebuffer(void)
     rlvkFramebufferSlot *f = &RLVK.fbSlots[id];
 
     rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    rlvkEndActiveRenderPass(cmdBuffer);
 
     // OPTIMIZATION: Batched Pipeline Barriers
     VkImageMemoryBarrier2 batchedBarriers[10]; // max 8 colors + up to 2 for depth
@@ -774,7 +800,7 @@ static bool rlvkRefreshDepthTwin(u32 textureSlot, u32 profileSlot)
     if (openFb)
         rlDisableFramebuffer();
     rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    rlvkEndActiveRenderPass(cmdBuffer);
     VkImageMemoryBarrier2 barriers[2] = {
         {
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -849,8 +875,9 @@ static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer)
     rpKey.depthStore = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     rpKey.hasResolve = msaa ? 1 : 0;
 
-    rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount,
-                             RLVK.swapchainExtent.width, RLVK.swapchainExtent.height, NULL, NULL, 0);
+    if (!rlvkDebugFlag("RLVK_LAZY_SWAPCHAIN", &s_lazySwapchain) || s_swapchainScopeDemand)
+        rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount,
+                                 RLVK.swapchainExtent.width, RLVK.swapchainExtent.height, NULL, NULL, 0);
     RLVK.scope.fbSlot = 0;
     RLVK.scope.width = RLVK.swapchainExtent.width;
     RLVK.scope.height = RLVK.swapchainExtent.height;
@@ -891,7 +918,7 @@ static void rlvkFlushFrame(void)
     if (openFb)
         rlDisableFramebuffer();
     rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    rlvkEndActiveRenderPass(cmdBuffer);
     vk.EndCommandBuffer(cmdBuffer);
 
     vk.QueueSubmit2(RLVK.graphicsQueue, 1, &(VkSubmitInfo2){
@@ -1034,7 +1061,7 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
     rlvkProfileEndScope();
-    vkCmdEndRenderPass(cmdBuffer);
+    rlvkEndActiveRenderPass(cmdBuffer);
 
     // VÁ LỖI LOGIC: Lưu lại layout ban đầu của ảnh nguồn để trả về đúng trạng thái
     VkImageLayout originalSrcLayout = srcDepth->currentLayout;
@@ -1318,6 +1345,7 @@ void rlClearScreenBuffers(void)
         return;
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
+    rlvkEnsureSwapchainScope(cmdBuffer);
     // Build the clear list from what the current scope actually has attached: the swapchain
     // scope always has color+depth; an FBO may lack either (depth-only shadowmaps have no color)
     bool hasColor = true, hasDepth = true;

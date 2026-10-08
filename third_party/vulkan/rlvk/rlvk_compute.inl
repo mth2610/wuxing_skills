@@ -75,7 +75,7 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
         openFb = RLVK.scope.fbSlot;
         if (openFb) rlDisableFramebuffer();
         rlvkProfileEndScope();
-        vkCmdEndRenderPass(cmdBuffer);
+        rlvkEndActiveRenderPass(cmdBuffer);
     }
     else
     {
@@ -290,7 +290,7 @@ void rlCopyShaderBuffer(unsigned int destId, unsigned int srcId, unsigned int de
         u32 openFb = RLVK.scope.fbSlot;
         if (openFb) rlDisableFramebuffer();
         rlvkProfileEndScope();
-        vkCmdEndRenderPass(cmdBuffer);
+        rlvkEndActiveRenderPass(cmdBuffer);
         vkCmdCopyBuffer(cmdBuffer, src->buffer, dst->buffer, 1,
             &(VkBufferCopy){ .srcOffset = srcOffset, .dstOffset = destOffset, .size = count });
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
@@ -406,6 +406,7 @@ void rlLoadDrawQuad(void)
         rlvkBindShaderSamplers(cmdBuffer, shader, true);
     }
     rlvkFlushSet0(cmdBuffer);
+    rlvkEnsureSwapchainScope(cmdBuffer);
     rlvkProfileDraw();
     vk.CmdDraw(cmdBuffer, 4, 1, 0, 0);
 }

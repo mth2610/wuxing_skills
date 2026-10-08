@@ -51,6 +51,7 @@ void MapProp_DrawSkyDome(const MapSkyDome *sky)
     float skyRGB[3] = {ambient.r/255.0f, ambient.g/255.0f, ambient.b/255.0f};
     float hazeRGB[3] = {haze.r/255.0f, haze.g/255.0f, haze.b/255.0f};
     float sunRGB[3] = {direct.r/255.0f, direct.g/255.0f, direct.b/255.0f};
+    for (int channel = 0; channel < 3; channel++) sunRGB[channel] *= lighting.sunIntensity;
     rlDrawRenderBatchActive();
     rlDisableBackfaceCulling();
     rlDisableDepthMask();

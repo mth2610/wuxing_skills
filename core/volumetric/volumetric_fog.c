@@ -303,7 +303,8 @@ void VolumetricFog_Render(Camera3D camera) {
     Matrix invViewProj = MatrixInvert(matViewProj);
 
     Vector3 sunDir   = Environment_GetSunDirection();
-    Vector3 sunColor = ColorToV3(Environment_GetSunColor());
+    Vector3 sunColor = Vector3Scale(ColorToV3(Environment_GetSunColor()),
+                                   Environment_GetSunIntensity());
     Vector3 fogColor = ColorToV3(atmos.color);
 
     int stepCount = (tier >= GFX_HIGH) ? 20 : 14;

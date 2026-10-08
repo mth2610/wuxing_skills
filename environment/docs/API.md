@@ -133,6 +133,8 @@ void Environment_SetSunDirection(Vector3 dir); // Auto-normalizes the vector
 // --- Sun color ---
 Color Environment_GetSunColor(void);
 void Environment_SetSunColor(Color col);
+float Environment_GetSunIntensity(void);
+void Environment_SetSunIntensity(float intensity);
 
 // --- Ambient color ---
 Color Environment_GetAmbientColor(void);
@@ -165,6 +167,16 @@ int                     FogVolume_GetActiveCount(void);
 const LocalFogVolume*   FogVolume_GetByIndex(int index);
 const LocalFogVolume*   FogVolume_GetById(int id);
 ```
+
+`environment/environment_system.c` keeps sunlight tint and direct radiance
+separate: normalize `Environment_GetSunColor().rgb` to `[0,1]` and multiply by
+`Environment_GetSunIntensity()` when uploading direct sunlight. Intensity
+defaults to `1`, clamps finite inputs to `[0,64]`, and resets nonfinite inputs
+to `1`. `EnvFrameLighting.sunIntensity` exposes the same scale; changing it
+increments the lighting version. Ambient, fog density, and cloud visibility
+are unaffected. Maps opting in restore intensity `1` on exit. Existing tint
+getters and lighting presets retain their contracts; presets do not overwrite
+the separately configured intensity. `Environment_Init()` resets it to `1`.
 
 `AtmosphereProfile.start` is the distance-fog onset in meters. In the volumetric
 pass, `start > 3 m` selects distant framing: global haze and canopy beams fade
@@ -307,6 +319,7 @@ field using the Python standard library. It performs no runtime generation.
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | §4 opt-in direct sun radiance scale | `environment/environment_system.h`, `environment/environment_system.c` | Ground-truth |
 | 2026-10-09 | Codex | §6 hemispheric irradiance helper | `environment/shaders/hemisphere_lighting.glsl` | Ground-truth |
 | 2026-09-28 | Codex | §4 `AtmosphereProfile.start` volumetric onset | `environment/environment_system.h`, `core/volumetric/volumetric_fog_distance.h`, `core/volumetric/shaders/volumetric_fog.fs` | Ground-truth |
 | 2026-10-02 | Codex | §6 shared opt-in cloud visibility | `environment/environment_system.h`, `environment/environment_system.c`, `environment/shaders/cloud_shadow.glsl` | Ground-truth |

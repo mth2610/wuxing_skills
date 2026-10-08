@@ -292,6 +292,12 @@ typedef struct
     float phase;
 } MapMeadowPlacement;
 
+typedef enum {
+    MAP_MEADOW_GROWTH_AUTO = 0, // Legacy height-based grass/reed choice.
+    MAP_MEADOW_GROWTH_GRASS,
+    MAP_MEADOW_GROWTH_REED
+} MapMeadowGrowthForm;
+
 typedef struct
 {
     Color rootColor;
@@ -308,6 +314,7 @@ typedef struct
     float alphaCutoff;       // <= 0 uses 0.42
     bool hasPlumes;          // shore reeds: adds fluffy ivory plumes on top and arching side leaves
     float botanicalVariation; // 0 preserves authored shapes; [0,1] mixes patch-coherent arches/leaf accents.
+    MapMeadowGrowthForm growthForm; // Explicit morphology independent of plant height.
 } MapMeadowStyle;
 
 typedef struct

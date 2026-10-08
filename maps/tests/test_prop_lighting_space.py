@@ -41,6 +41,7 @@ static Vector3 Vector3Transform(Vector3 p,Matrix m) {
 }
 static Vector3 Vector3Subtract(Vector3 a,Vector3 b) {return (Vector3){a.x-b.x,a.y-b.y,a.z-b.z};}
 static Vector3 Vector3Negate(Vector3 p) {return (Vector3){-p.x,-p.y,-p.z};}
+static Vector3 Vector3Scale(Vector3 p,float s) {return (Vector3){p.x*s,p.y*s,p.z*s};}
 static float Vector3Length(Vector3 p) {return sqrtf(p.x*p.x+p.y*p.y+p.z*p.z);}
 static Vector3 Vector3Normalize(Vector3 p) {float d=Vector3Length(p);return (Vector3){p.x/d,p.y/d,p.z/d};}
 static Matrix MatrixInvert(Matrix m) {
@@ -75,6 +76,7 @@ static void SetShaderValueMatrix(Shader s,int location,Matrix value) {
     assert(activeShader==(int)s.id && location==3);uploadedWorldFromShader=value;
 }
 static Vector3 Environment_GetSunDirection(void) {return (Vector3){-.5f,-.45f,.55f};}
+static float Environment_GetSunIntensity(void) {return 3.0f;}
 static Color Environment_GetSunColor(void) {return (Color){246,232,207,255};}
 static Color Environment_GetAmbientColor(void) {return (Color){142,157,170,255};}
 static Vector4 ColorNormalize(Color c) {return (Vector4){c.r/255.f,c.g/255.f,c.b/255.f,c.a/255.f};}
@@ -96,7 +98,7 @@ int main(void) {
         Vector3 expectedLight=Vector3Normalize((Vector3){sign*sun.z,sun.y,-sign*sun.x});
         nearVector(uploadedLight,expectedLight);
         nearVector(uploadedCamera,(Vector3){0});
-        nearVector(uploadedSunColor,(Vector3){246/255.f,232/255.f,207/255.f});
+        nearVector(uploadedSunColor,(Vector3){3*246/255.f,3*232/255.f,3*207/255.f});
         nearVector(uploadedAmbient,(Vector3){142/255.f,157/255.f,170/255.f});
         Vector3 shaderRock=Vector3Transform(rock,shaderFromWorld);
         nearVector(Vector3Transform(shaderRock,uploadedWorldFromShader),rock);

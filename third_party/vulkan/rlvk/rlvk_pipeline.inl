@@ -646,6 +646,7 @@ static VkPipeline rlvkGetPipeline(const rlvkPipelineKey *key)
 
 static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, unsigned short vertexLayout, u32 shaderSlot)
 {
+    rlvkEnsureSwapchainScope(cmdBuffer);
     if (s_pipelineFastValid && (RLVK.State.stateGeneration == s_lastGeneration) &&
         (shaderSlot == s_lastShaderSlot) && (vertexLayout == s_lastVertexLayout) && (topology == s_lastTopology))
         return true;

@@ -548,6 +548,8 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     float lightDirArr[3] = {lightDir.x, lightDir.y, lightDir.z};
     float sunColArr[4] = {sunCol.r / 255.0f, sunCol.g / 255.0f, sunCol.b / 255.0f, sunCol.a / 255.0f};
     float ambColArr[4] = {ambCol.r / 255.0f, ambCol.g / 255.0f, ambCol.b / 255.0f, ambCol.a / 255.0f};
+    float sunIntensity = Environment_GetSunIntensity();
+    for (int channel = 0; channel < 3; channel++) sunColArr[channel] *= sunIntensity;
 
     // Đẩy dữ liệu ánh sáng mới nhất xuống Shader
     SetShaderValue(groundShader, locLightDir, lightDirArr, SHADER_UNIFORM_VEC3);

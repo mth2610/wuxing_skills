@@ -56,6 +56,8 @@ void MapManager_AddWaterRipple(Vector3 position, float radius, float intensity);
 int MapManager_GetCount(void);
 const char* MapManager_GetName(int index);
 int MapManager_GetActiveIndex(void);
+// Valid activation resets direct solar intensity to legacy 1 before map Init;
+// maps opting into HDR lighting set their intensity again on every Init.
 void MapManager_SetActiveIndex(int index);
 
 // --- Virtual Trigger Zones (MODULES_ROADMAP.md Module 2) ---

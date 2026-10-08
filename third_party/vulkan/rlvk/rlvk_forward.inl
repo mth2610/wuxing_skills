@@ -59,3 +59,6 @@ static VkDeviceMemory rlvkAllocMemory       (VkMemoryRequirements memReq, VkMemo
 
 // rlvkAttachSurface is declared in the public section above (rlvk.h, not rlgl.h).
 
+
+static void rlvkEndActiveRenderPass(VkCommandBuffer cmdBuffer);
+static void rlvkEnsureSwapchainScope(VkCommandBuffer cmdBuffer);

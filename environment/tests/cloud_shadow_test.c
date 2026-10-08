@@ -64,6 +64,25 @@ static bool near(float a, float b) { return fabsf(a-b) < 0.00001f; }
 
 int main(void) {
     Environment_Init();
+    assert(near(Environment_GetSunIntensity(), 1.0f));
+    Color sunTint = Environment_GetSunColor();
+    Color originalAmbient = Environment_GetAmbientColor();
+    unsigned int sunVersion = Environment_GetFrameLighting().version;
+    Environment_SetSunIntensity(3.2f);
+    assert(near(Environment_GetFrameLighting().sunIntensity, 3.2f));
+    assert(Environment_GetFrameLighting().version == sunVersion + 1);
+    assert(Environment_GetSunColor().r == sunTint.r);
+    assert(Environment_GetAmbientColor().r == originalAmbient.r);
+    Environment_SetSunIntensity(3.2f);
+    assert(Environment_GetFrameLighting().version == sunVersion + 1);
+    Environment_SetSunIntensity(-2.0f);
+    assert(Environment_GetSunIntensity() == 0.0f);
+    Environment_SetSunIntensity(100.0f);
+    assert(Environment_GetSunIntensity() == 64.0f);
+    Environment_SetSunIntensity(NAN);
+    assert(Environment_GetSunIntensity() == 1.0f);
+    Environment_SetSunIntensity(INFINITY);
+    assert(Environment_GetSunIntensity() == 1.0f);
     // Hemisphere lighting must preserve night darkness and configured color,
     // including a bright sky clamp without lifting the ground hemisphere.
     Environment_SetAmbientColor((Color){ 0, 0, 0, 255 });
@@ -125,6 +144,6 @@ int main(void) {
     Environment_SetCloudShadowConfig(&config);
     Environment_SetSunDirection((Vector3){ 0, -1, 0 });
     assert(Environment_GetCloudShadowFrame().uvTransform.w == 0);
-    puts("cloud_shadow_test: passed default, transport, timestep, versions, lifecycle, invalid input, horizon, load failure");
+    puts("cloud_shadow_test: passed sun radiance, hemispheres, cloud transport, timestep, versions, lifecycle, invalid input, horizon, load failure");
     return 0;
 }

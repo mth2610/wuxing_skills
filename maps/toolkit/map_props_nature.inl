@@ -1405,7 +1405,7 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
     Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
     Vector4 sun = ColorNormalize(Environment_GetSunColor());
     Vector4 ambient = ColorNormalize(Environment_GetAmbientColor());
-    Vector3 sunRgb = {sun.x, sun.y, sun.z};
+    Vector3 sunRgb = Vector3Scale((Vector3){sun.x, sun.y, sun.z}, Environment_GetSunIntensity());
     Vector3 ambientRgb = {ambient.x, ambient.y, ambient.z};
     Matrix worldFromShaderSpace = MatrixInvert(rlGetMatrixTransform());
     int worldFromShaderSpaceLoc = GetShaderLocation(shader, "u_worldFromShaderSpace");
@@ -1687,7 +1687,8 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     float widthMultiplier)
 {
     const float golden = 2.39996323f;
-    bool isReed = (clump->height > 0.95f);
+    bool isReed = style.growthForm == MAP_MEADOW_GROWTH_REED ||
+        (style.growthForm == MAP_MEADOW_GROWTH_AUTO && clump->height > 0.95f);
     float clumpAngle = clump->rotationDeg * DEG2RAD;
 
     // Stable blade identities across LODs: thinning retains the same
@@ -2527,6 +2528,8 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         NatureParametric_BindReceivers(shader,false);
         SetShaderValue(shader,s_natureTuftLodBandsLoc,&tuftBands,SHADER_UNIFORM_VEC4);
         SetShaderValue(shader,s_natureTuftLodCameraLoc,&camera.position,SHADER_UNIFORM_VEC3);
+        Vector2 fadeRange = {view.drawDistance * 0.82f, view.drawDistance};
+        SetShaderValue(shader,s_natureTuftFadeRangeLoc,&fadeRange,SHADER_UNIFORM_VEC2);
     }
     if (!meadow->textured) {
         float tipSoftening = 1.0f;
@@ -4112,7 +4115,7 @@ void MapProp_DrawWaterBed(const MapWaterSurface *water, float time)
     Vector4 ambient = ColorNormalize(Environment_GetAmbientColor());
     Vector4 deep = ColorNormalize(water->config.deepColor);
     Vector4 shallow = ColorNormalize(water->config.shallowColor);
-    Vector3 sunRgb = {sun.x, sun.y, sun.z};
+    Vector3 sunRgb = Vector3Scale((Vector3){sun.x, sun.y, sun.z}, Environment_GetSunIntensity());
     Vector3 ambientRgb = {ambient.x, ambient.y, ambient.z};
     Vector3 deepRgb = {deep.x, deep.y, deep.z};
     Vector3 shallowRgb = {shallow.x, shallow.y, shallow.z};
@@ -4176,7 +4179,7 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     Vector4 deep = ColorNormalize(water->config.deepColor);
     Vector4 shallow = ColorNormalize(water->config.shallowColor);
     Vector4 foam = ColorNormalize(water->config.foamColor);
-    Vector3 sunRgb = {sun.x, sun.y, sun.z};
+    Vector3 sunRgb = Vector3Scale((Vector3){sun.x, sun.y, sun.z}, Environment_GetSunIntensity());
     Vector3 ambientRgb = {ambient.x, ambient.y, ambient.z};
     Vector3 deepRgb = {deep.x, deep.y, deep.z};
     Vector3 shallowRgb = {shallow.x, shallow.y, shallow.z};
