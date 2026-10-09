@@ -293,7 +293,7 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     const char *submission = getenv("WUXING_MEADOW_SUBMISSION");
     data->compact = submission && strcmp(submission,"compact") == 0;
     const char *order = getenv("WUXING_MEADOW_ORDER");
-    data->nearFirst = order && strcmp(order,"sorted") == 0;
+    data->nearFirst = !order || (strcmp(order,"none") != 0 && strcmp(order,"unsorted") != 0);
     data->roots = MemAlloc(count*sizeof(*data->roots));
     data->ranks = MemAlloc(count*sizeof(*data->ranks));
     data->visibleLods = MemAlloc(count*sizeof(*data->visibleLods));

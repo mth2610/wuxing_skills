@@ -126,11 +126,17 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     float profile = p2.w > 0.5 ? (0.85 + 0.25*sin(3.141592653589793*t))*(1.0-pow(t,1.8))
                               : (0.72 + 0.50*t)*(1.0-t*t);
     float halfWidth = p1.w * 0.5 * max(profile,role < 1.5 ? 0.08 : 0.03);
+#ifdef NATURE_VISIBLE_TUFT_LOD
+    // Sub-pixel guard (gf u_pixelSize principle): prevent far blades from collapsing below 0.75 pixel
+    // which causes aliasing crawling, flicker and wasted rasterization.
+    vec3 worldRoot = p0.xyz + u_worldOffset;
+    float distToCam = distance(worldRoot, u_tuftLodCamera);
+    float minPxHalfWidth = distToCam * 0.00065 * (1.0 - 0.5 * t);
+    halfWidth = max(halfWidth, minPxHalfWidth);
+#endif
     position = center + side*halfWidth*sideSign + geometricNormal*halfWidth*0.18;
     if (role > 2.5) position = center;
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    vec3 worldRoot = p0.xyz + u_worldOffset;
-    float distToCam = distance(worldRoot, u_tuftLodCamera);
     if (u_tuftFadeRange.y > 0.0 && distToCam > u_tuftFadeRange.x) {
         float perimeterFade = clamp((u_tuftFadeRange.y - distToCam) /
                                    max(u_tuftFadeRange.y - u_tuftFadeRange.x, 0.001), 0.0, 1.0);
