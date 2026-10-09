@@ -191,7 +191,7 @@ void SurfaceMaterial_UpdateFrame(Camera3D camera) {
     SetShaderValue(s_shader, s_locMieAnisotropy,     &mieAnisotropy,     SHADER_UNIFORM_FLOAT);
     SetShaderValue(s_shader, s_locMultipleScattAmp,  &multScattAmp,      SHADER_UNIFORM_FLOAT);
 
-    // Real Shading P6 — shadow map (HIGH tier only in-shader; harmless to
+    // Real shadow map at every lit tier (harmless to
     // push always, EnvShadow_GetLightVP/GetShadowMap return stale-but-valid
     // data when disabled since the uniform is gated by u_shadowEnabled).
     float shadowEnabled = EnvShadow_IsEnabled() ? 1.0f : 0.0f;

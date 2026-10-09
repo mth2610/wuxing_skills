@@ -32,7 +32,9 @@ void main()
     fragTexCoord = vertexTexCoord;
     fragColor    = vertexColor;
     fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
-    fragNormal   = normalize(mat3(matModel) * vertexNormal);
+    // Ground surfaces draw with translation only. Lighting, habitat slope
+    // and relief normals are world-space; matModel also contains the camera.
+    fragNormal   = normalize(vertexNormal);
     fragWorldPos = vertexPosition + u_groundOffset;
     gl_Position  = mvp * vec4(vertexPosition, 1.0);
 }

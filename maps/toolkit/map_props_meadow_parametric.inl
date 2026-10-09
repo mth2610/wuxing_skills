@@ -171,7 +171,8 @@ static Shader NatureParametric_Shader(bool shadow)
             s_natureTuftFadeRangeLoc = GetShaderLocation(*shader,"u_tuftFadeRange");
             s_natureVisibleIdsLoc = GetShaderLocation(*shader,"u_visibleTuftIds");
             s_natureVisibleOffsetLoc = GetShaderLocation(*shader,"u_visibleTuftOffset");
-            if (s_natureTuftLodBandsLoc < 0 || s_natureTuftLodLevelLoc < 0 || s_natureTuftLodCameraLoc < 0)
+            if (s_natureTuftLodBandsLoc < 0 || s_natureTuftLodLevelLoc < 0 ||
+                s_natureTuftLodCameraLoc < 0 || s_natureTuftFadeRangeLoc < 0)
                 TraceLog(LOG_WARNING,"MEADOW_PARAMETRIC: missing LOD uniforms; using expanded mesh fallback");
             MapShadow_ConfigureShader(*shader);
             VFXLight_RegisterShader(*shader);
@@ -248,8 +249,9 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     Shader visible = NatureParametric_Shader(false);
     if (visible.id == rlGetShaderIdDefault() || visible.locs[SHADER_LOC_MATRIX_MVP] < 0 ||
         GetShaderLocation(visible,"u_bladeParameters") < 0 ||
-        s_natureTuftLodBandsLoc < 0 || s_natureTuftLodLevelLoc < 0 || s_natureTuftLodCameraLoc < 0) return false;
-    bool shadows = style.shadowDistance > 0.0f && GfxQuality_Get() >= GFX_HIGH;
+        s_natureTuftLodBandsLoc < 0 || s_natureTuftLodLevelLoc < 0 ||
+        s_natureTuftLodCameraLoc < 0 || s_natureTuftFadeRangeLoc < 0) return false;
+    bool shadows = style.shadowDistance > 0.0f;
     if (shadows && GetShaderLocation(NatureParametric_Shader(true),"u_bladeParameters") < 0)
         return false;
     for (int pass = 0; pass < (shadows ? 2 : 1); pass++) {

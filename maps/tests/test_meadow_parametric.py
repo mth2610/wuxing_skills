@@ -67,7 +67,7 @@ static void rlEnableVertexAttribute(unsigned int slot) { assert(vaoBound && slot
 LIFECYCLE = r'''
 
 static int allocationCall, failAllocation, liveAllocations, liveTextures;
-static int s_natureTuftLodBandsLoc, s_natureTuftLodLevelLoc, s_natureTuftLodCameraLoc;
+static int s_natureTuftLodBandsLoc, s_natureTuftLodLevelLoc, s_natureTuftLodCameraLoc, s_natureTuftFadeRangeLoc;
 static int s_natureCanonicalBladesLoc[2],s_natureCanonicalLoc[2],s_natureGeometryLodLoc[2];
 static int s_natureTuftOffsetLoc[2],s_natureCompactLoc[2],s_natureVisibleIdsLoc,s_natureVisibleOffsetLoc;
 static int s_natureWorldOffsetLoc[2];

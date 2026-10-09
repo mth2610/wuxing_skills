@@ -43,6 +43,11 @@ int main(void)
           "surface shader declares a separate static projection");
     CHECK(Has(shader, "min(dynamicShadow, staticShadow)"),
           "static and dynamic visibility compose by nearest occlusion");
+    CHECK(Has(shader, "u_qualityTier >= 1 && u_shadowEnabled > 0.5"),
+          "Low retains real directional shadow receiving");
+    CHECK(Has(shader, "shadowGroups = u_qualityTier >= 3 ? 2 : 1") &&
+          Has(shader, "shadow / float(shadowGroups * shadowGroups)"),
+          "Low reduces PCF groups while preserving normalized visibility");
     CHECK(Has(wiring, "GetShaderLocation(s_shader, \"staticShadowMap\")"),
           "C resolves the static sampler location");
     CHECK(Has(wiring, "SetShaderValueTexture(s_shader, s_locStaticShadowMap"),

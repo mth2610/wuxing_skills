@@ -23,7 +23,7 @@ fi
 capture() {
     local name=$1 origin=$2 eye=$3
     env WUXING_MAP=verdant_path "$capture_binary" \
-        --render-neutral-smoke --origin "$origin" --eye "$eye" \
+        --render-vfx 999 --origin "$origin" --eye "$eye" \
         --warmup 90 --out "$capture_dir/$name.png" \
         > "$capture_dir/$name.log" 2>&1
     if [[ ! -s "$capture_dir/$name.png" ]]; then

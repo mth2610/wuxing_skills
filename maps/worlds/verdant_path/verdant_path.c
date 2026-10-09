@@ -353,6 +353,15 @@ static void BuildMeadowLayout(void)
         // Sparse flower colonies and meadow margins retain a shorter underlayer.
         if (s_ecology.ready)
             clump->height *= 0.65f + 0.35f * ecology.coverage;
+        // Blooms occupy short understorey within a taller surrounding canopy.
+        float understorey = 1.0f;
+        for (int c = 0; c < FLOWER_CLUSTER_COUNT; c++) {
+            float dx = (cx - kFlowerCenters[c].x) / kFlowerRadii[c].x;
+            float dz = (cz - kFlowerCenters[c].z) / kFlowerRadii[c].z;
+            float blend = fminf(1.0f, fmaxf(0.0f, (dx*dx + dz*dz - 0.35f) / 0.90f));
+            understorey = fminf(understorey, 0.35f + 0.65f * blend*blend*(3.0f - 2.0f*blend));
+        }
+        clump->height *= understorey;
         clump->radius = 0.22f + biome * 0.06f;
         clump->height *= 0.85f + 0.30f * (localHeight - 0.34f) / 0.20f;
         clump->radius *= 0.92f + 0.16f * (localRadius - 0.22f) / 0.06f;

@@ -6,7 +6,7 @@
 // Real Shading P6 — two-layer directional shadows (Environment Agent owns).
 // A camera-following target updates dynamic casters each frame; an optional
 // world-fixed target caches static map geometry. Receivers combine both maps.
-// Fake blob shadows (Environment_DrawSmartShadow) remain the low-cost fallback.
+// Fake blob shadows (Environment_DrawSmartShadow) remain a separate effect.
 //
 // Usage (once per frame, BEFORE the normal camera 3D pass):
 //   if (EnvShadow_IsEnabled()) {
@@ -19,15 +19,22 @@
 //   ... then the normal camera pass; SurfaceMaterial_UpdateFrame() pushes
 //   u_lightVP/shadowMap/u_shadowEnabled automatically from the getters below.
 //
-// NOT profiled on Mali. Default OFF on every platform — call
-// EnvShadow_SetEnabled(true) explicitly (sandbox hotkey/options menu) after
-// verifying perf headroom; per REAL_SHADING_PLAN.md do NOT ship enabled on
-// Mali until profiled.
+// Enabled after successful initialization on every graphics tier. Explicit
+// debug toggles may still disable it; quality never substitutes blob shadows.
 
 void EnvShadow_Init(void); // once, after Environment_Init + SurfaceMaterial_Init
 
 void       EnvShadow_SetEnabled(bool enabled);
 bool       EnvShadow_IsEnabled(void);   // false also when Init failed (e.g. FBO incomplete)
+
+// Resolved graphics tier: 0=Low, 1=Medium, 2=High, 3=Ultra. Auto resolves in
+// the graphics owner before calling. Dynamic sizes: 1024/1024/2048/2048;
+// static sizes: 512/512/1024/1024. Before Init, records requested tier.
+// Runtime replacement is atomic: allocation failure retains old targets.
+// Returns false during capture or allocation failure; old quality stays active.
+// WUXING_SHADOW_RES / WUXING_SHADOW_STATIC_RES retain diagnostic precedence.
+bool       EnvShadow_SetQuality(int resolvedTier);
+int        EnvShadow_GetQuality(void);
 
 // Moves and sizes the dynamic directional-shadow coverage region. The center
 // should follow the camera/player for large maps; halfExtent is clamped to a

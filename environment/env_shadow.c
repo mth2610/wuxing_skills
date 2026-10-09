@@ -50,10 +50,34 @@ static Vector3 s_staticSunDir = {0};
 static bool s_staticTargetReady = false;
 static bool s_staticCacheValid = false;
 static bool s_dynamicVerifyDumped = false;
+#if defined(__ANDROID__)
+static int s_quality = 1;
+#else
+static int s_quality = 2;
+#endif
 static EnvShadowMapCasterCallback s_mapCasterCallback = NULL;
 static void *s_mapCasterUserData = NULL;
 
 static Vector3 ProjectLS(Matrix vp, Vector3 wp);
+
+static void DestroyShadowTarget(unsigned int fbo, unsigned int depth, unsigned int color)
+{
+    if (fbo != 0) rlUnloadFramebuffer(fbo);
+    if (depth != 0) rlUnloadTexture(depth);
+    if (color != 0) rlUnloadTexture(color);
+}
+
+static void ShadowQualitySizes(int quality, int *dynamicSize, int *staticSize)
+{
+    *dynamicSize = quality < 2 ? 1024 : 2048;
+    *staticSize = quality < 2 ? 512 : 1024;
+    const char *dynamicOverride = getenv("WUXING_SHADOW_RES");
+    const char *staticOverride = getenv("WUXING_SHADOW_STATIC_RES");
+    if (dynamicOverride != NULL && atoi(dynamicOverride) > 0)
+        *dynamicSize = atoi(dynamicOverride);
+    if (staticOverride != NULL && atoi(staticOverride) > 0)
+        *staticSize = atoi(staticOverride);
+}
 
 // TỐI ƯU: Biến cache hướng nắng để tránh tính toán lại ma trận mỗi frame
 static Vector3 s_lastSunDir = {0};
@@ -68,8 +92,11 @@ static bool CreateShadowTarget(int resolution, unsigned int *outFbo,
                               RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
     *outDepth = rlLoadTextureDepth(resolution, resolution, false);
     *outFbo = rlLoadFramebuffer();
-    if (*outFbo == 0 || *outDepth == 0 || *outColor == 0)
+    if (*outFbo == 0 || *outDepth == 0 || *outColor == 0) {
+        DestroyShadowTarget(*outFbo, *outDepth, *outColor);
+        *outFbo = *outDepth = *outColor = 0;
         return false;
+    }
 
     rlEnableFramebuffer(*outFbo);
     rlFramebufferAttach(*outFbo, *outColor, RL_ATTACHMENT_COLOR_CHANNEL0,
@@ -78,8 +105,11 @@ static bool CreateShadowTarget(int resolution, unsigned int *outFbo,
                         RL_ATTACHMENT_TEXTURE2D, 0);
     bool complete = rlFramebufferComplete(*outFbo);
     rlDisableFramebuffer();
-    if (!complete)
+    if (!complete) {
+        DestroyShadowTarget(*outFbo, *outDepth, *outColor);
+        *outFbo = *outDepth = *outColor = 0;
         return false;
+    }
 
     *outMap = (Texture2D){
         .id = *outColor,
@@ -97,38 +127,7 @@ static bool CreateShadowTarget(int resolution, unsigned int *outFbo,
 
 void EnvShadow_Init(void)
 {
-#if defined(__ANDROID__)
-    // 2026-07-22, on-device (Mali-G68, rlvk/Vulkan): 512 was chosen defensively before the shadow
-    // path had ever run on hardware, and it is the reason the shadow looks SHATTERED there. The
-    // light frustum is fixed at halfExtent = ARENA_RADIUS + 2 = 20 m, so the map covers a 40x40 m
-    // box regardless of resolution: 512 gives 12.8 texels/m (7.8 cm per texel), and at the raking
-    // sun angle that is exactly the "coarse diagonal texel STREAKS" failure the desktop comment
-    // below describes — only 4x worse. 1024 doubles the density to 3.9 cm/texel.
-    // Cost check before raising it: on a MUCH weaker GPU (Intel Iris 6000) the whole 2048-vs-1024
-    // capture-fill difference measured 0.6-1.1 ms/frame (rlvk perf_shadow_ab), so 512->1024 on a
-    // G68 should be well under that. VERIFY on device with the ms HUD before going further to
-    // 2048 — this is a mid-range mobile GPU and the budget is 16.6 ms.
-    s_resolution = 1024;
-    s_staticResolution = 512;
-#else
-    // 2048: at the raking sun angle the shadow is very elongated, so a lower resolution shows
-    // coarse diagonal texel STREAKS across the shadow (projective aliasing). Keep it high for a
-    // clean shadow. NOTE (2026-07-22): dropping to 1024 did NOT improve FPS (the O(res^2) fill of
-    // the capture + copy passes is not the P6 bottleneck — the fixed per-pass overhead is), so
-    // there is no perf reason to lower it. Session 3's "1024 = no shadow" was the projection bug,
-    // now fixed (§7.26 + the MyBeginMode3D inverse-view fold in ground_shadow.c).
-    s_resolution = 2048;
-    s_staticResolution = 1024;
-#endif
-
-    const char *envRes = getenv("WUXING_SHADOW_RES");
-    if (envRes != NULL && atoi(envRes) > 0) {
-        s_resolution = atoi(envRes);
-    }
-    const char *envStaticRes = getenv("WUXING_SHADOW_STATIC_RES");
-    if (envStaticRes != NULL && atoi(envStaticRes) > 0) {
-        s_staticResolution = atoi(envStaticRes);
-    }
+    ShadowQualitySizes(s_quality, &s_resolution, &s_staticResolution);
 
     // Depth + throwaway color attachment — same recipe as
     // core/screen_distort.c's LoadRenderTextureWithDepthTexture, which is
@@ -171,7 +170,7 @@ void EnvShadow_Init(void)
     }
 
     s_ready = true;
-    s_enabled = false; // opt-in only, per plan §7 "do NOT ship enabled on Mali until profiled"
+    s_enabled = true; // Real shadows remain available at every graphics tier.
     TraceLog(LOG_INFO, "ENV_SHADOW: ready, %dx%d depth target (fbo=%u depthTex=%u shadowMapTex=%u)",
              s_resolution, s_resolution, s_fboId, s_depthTexId, s_colorTexId);
     if (s_staticTargetReady)
@@ -182,6 +181,55 @@ void EnvShadow_Init(void)
 void EnvShadow_SetEnabled(bool enabled) { s_enabled = s_ready && enabled; }
 bool EnvShadow_IsEnabled(void) { return s_ready && s_enabled; }
 bool EnvShadow_IsCapturing(void) { return s_capturing; }
+
+int EnvShadow_GetQuality(void) { return s_quality; }
+
+bool EnvShadow_SetQuality(int resolvedTier)
+{
+    if (s_capturing) return false;
+    if (resolvedTier < 0 || resolvedTier > 3) resolvedTier = 2;
+    if (!s_ready) {
+        s_quality = resolvedTier;
+        return true;
+    }
+    int dynamicSize, staticSize;
+    ShadowQualitySizes(resolvedTier, &dynamicSize, &staticSize);
+    if (dynamicSize == s_resolution && staticSize == s_staticResolution) {
+        s_quality = resolvedTier;
+        return true;
+    }
+
+    unsigned int fbo = 0, depth = 0, color = 0;
+    unsigned int staticFbo = 0, staticDepth = 0, staticColor = 0;
+    Texture2D dynamicMap = {0}, staticMap = {0};
+    rlDrawRenderBatchActive();
+    if (!CreateShadowTarget(dynamicSize, &fbo, &depth, &color, &dynamicMap))
+        return false;
+    if (!CreateShadowTarget(staticSize, &staticFbo, &staticDepth, &staticColor, &staticMap)) {
+        DestroyShadowTarget(fbo, depth, color);
+        return false;
+    }
+    DestroyShadowTarget(s_fboId, s_depthTexId, s_colorTexId);
+    DestroyShadowTarget(s_staticFboId, s_staticDepthTexId, s_staticColorTexId);
+    s_fboId = fbo;
+    s_depthTexId = depth;
+    s_colorTexId = color;
+    s_shadowMapTex = dynamicMap;
+    s_staticFboId = staticFbo;
+    s_staticDepthTexId = staticDepth;
+    s_staticColorTexId = staticColor;
+    s_staticShadowMapTex = staticMap;
+    s_resolution = dynamicSize;
+    s_staticResolution = staticSize;
+    s_quality = resolvedTier;
+    s_staticTargetReady = true;
+    s_staticCacheValid = false;
+    s_dynamicVerifyDumped = false;
+    s_lastShadowHalfExtent = -1.0f;
+    TraceLog(LOG_INFO, "ENV_SHADOW: quality %d, dynamic %d, static %d",
+             s_quality, s_resolution, s_staticResolution);
+    return true;
+}
 
 void EnvShadow_SetFocus(Vector3 center, float halfExtent)
 {

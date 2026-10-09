@@ -1,5 +1,6 @@
 #include "core/volumetric/volumetric_fog.h"
 #include "core/volumetric/volumetric_fog_distance.h"
+#include "core/volumetric/volumetric_fog_quality.h"
 #include "core/volumetric/fog_blue_noise.h"
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
@@ -261,7 +262,6 @@ void VolumetricFog_PreFrame(void) {
     }
     if (!s_ready || !VolumetricFog_IsEnabled()) return;
     if (s_fogRenderMode == FOG_MODE_OFF) return;
-    if (s_fogRenderMode == FOG_MODE_VOLUMETRIC && GfxQuality_Get() <= GFX_LOW) return;
     AtmosphereProfile atmos = Environment_GetAtmosphereProfile();
     if (!atmos.enabled) return;
     SceneTargets_RequestSoftDepthRegion((Rectangle){ 0, 0, (float)s_fullWidth, (float)s_fullHeight });
@@ -272,7 +272,7 @@ void VolumetricFog_Render(Camera3D camera) {
     if (s_fogRenderMode == FOG_MODE_OFF) return;
 
     GfxQuality tier = GfxQuality_Get();
-    if (s_fogRenderMode == FOG_MODE_VOLUMETRIC && tier <= GFX_LOW) return;
+    FogRenderMode renderMode = VolumetricFog_ResolveMode(s_fogRenderMode, tier);
 
     AtmosphereProfile atmos = Environment_GetAtmosphereProfile();
     if (!atmos.enabled) return;
@@ -363,7 +363,7 @@ void VolumetricFog_Render(Camera3D camera) {
         }
     }
 
-    if (s_fogRenderMode == FOG_MODE_HEIGHT) {
+    if (renderMode == FOG_MODE_HEIGHT) {
         SceneTargets_BeginVFXBody();
         BeginBlendMode(BLEND_ALPHA_PREMULTIPLY);
         BeginShaderMode(s_heightFogShader);

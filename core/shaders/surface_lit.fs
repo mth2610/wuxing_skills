@@ -72,7 +72,7 @@ uniform vec3  u_rayleighLMS;        // Rayleigh LMS scattering coefficients
 uniform float u_mieAnisotropy;      // g (forward scattering)
 uniform float u_multipleScattAmp;   // Multiple scattering boost (~2.16)
 
-// Real shadow map (P6, HIGH+Shadow) — single directional PCF shadow from
+// Real shadow map — directional PCF shadow at every lit quality tier from
 // EnvShadow. Multiplies diffuse/spec only (not ambient), so shadowed areas
 // stay lit by the hemispheric ambient rather than going pitch black.
 uniform sampler2D shadowMap;
@@ -109,9 +109,14 @@ float ShadowFactor(vec3 worldPos, float ndl) {
     // into real shading.
     float res = 1.0 / u_shadowTexel;
     float shadow = 0.0;
+    int shadowGroups = u_qualityTier >= 3 ? 2 : 1;
     for (int x = 0; x < 2; x++) {
+        if (x >= shadowGroups) break;
         for (int y = 0; y < 2; y++) {
-            vec2 o = (vec2(float(x), float(y)) * 3.0 - 1.5) * u_shadowTexel; // +-1.5 texels
+            if (y >= shadowGroups) break;
+            vec2 o = shadowGroups > 1
+                ? (vec2(float(x), float(y)) * 3.0 - 1.5) * u_shadowTexel
+                : vec2(0.0);
             vec2 t = (proj.xy + o) * res - 0.5;
             vec2 f = fract(t);
             vec2 base = (floor(t) + 0.5) * u_shadowTexel;
@@ -122,7 +127,7 @@ float ShadowFactor(vec3 worldPos, float ndl) {
             shadow += mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
         }
     }
-    float dynamicShadow = shadow * 0.25;
+    float dynamicShadow = shadow / float(shadowGroups * shadowGroups);
     float staticShadow = 1.0;
     if (u_staticShadowEnabled > 0.5) {
         vec4 staticPosLS = u_staticLightVP * vec4(worldPos, 1.0);
@@ -162,9 +167,9 @@ void main() {
     vec3 H = normalize(L + V);
     float ndl = dot(N, L);
 
-    // Real shadow map (P6) — HIGH tier only; 1.0 (no-op) otherwise.
+    // Low keeps real occlusion with one bilinear PCF group; High uses four.
     float shadow = 1.0;
-    if (u_qualityTier >= 3 && u_shadowEnabled > 0.5) {
+    if (u_qualityTier >= 1 && u_shadowEnabled > 0.5) {
         shadow = ShadowFactor(fragWorldPos, ndl);
     }
 

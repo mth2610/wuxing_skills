@@ -58,7 +58,3 @@ static u32          rlvkFindMemoryType       (u32 typeBits, VkMemoryPropertyFlag
 static VkDeviceMemory rlvkAllocMemory       (VkMemoryRequirements memReq, VkMemoryPropertyFlags props); // Allocate resource memory (type + priority)
 
 // rlvkAttachSurface is declared in the public section above (rlvk.h, not rlgl.h).
-
-
-static void rlvkEndActiveRenderPass(VkCommandBuffer cmdBuffer);
-static void rlvkEnsureSwapchainScope(VkCommandBuffer cmdBuffer);

@@ -2547,10 +2547,14 @@ Stylized-realism forward lighting for opaque scene meshes (characters/props/map/
 
 ```c
 // core/gfx_quality.h
-typedef enum { GFX_UNLIT = 0, GFX_LOW = 1, GFX_MED = 2, GFX_HIGH = 3 } GfxQuality;
+typedef enum { GFX_UNLIT = 0, GFX_LOW = 1, GFX_MED = 2, GFX_HIGH = 3, GFX_ULTRA = 4 } GfxQuality;
 void       GfxQuality_Set(GfxQuality q);
 GfxQuality GfxQuality_Get(void);
 GfxQuality GfxQuality_Default(void); // platform default, or WUXING_GFX_QUALITY
+void       GfxQuality_InitDefault(void); // unset/auto enables adaptive selection
+void       GfxQuality_SetAuto(bool enabled);
+bool       GfxQuality_IsAuto(void);
+void       GfxQuality_UpdateAuto(float frameSeconds); // actual elapsed frame time
 
 // core/surface_material.h
 void   SurfaceMaterial_Init(void);              // once, after window/GL is up
@@ -2571,6 +2575,16 @@ void SurfaceMaterial_ClearMatcap(void);
 - `GFX_LOW` (1) — half-Lambert diffuse + hemispheric ambient (`u_skyColor`/`u_groundColor`, from `Environment_GetSkyAmbient/GetGroundAmbient`) + Fresnel rim + emissive. All cheap ALU, the signature moonlit look.
 - `GFX_MED` (2, default) — LOW + Blinn spec sheen + directional-moon-facing rim tint (`smoothstep(-0.2, 0.6, dot(N,-L))` narrows the rim to the anti-moon silhouette instead of a uniform halo) + optional matcap (below).
 - `GFX_HIGH` (3) — MED + normal mapping + anisotropic sheen + fake jade/skin SSS (below).
+- `GFX_ULTRA` (4) — preserves High's Core shading and bounded simulation budgets; map/environment binders may increase vegetation and shadow quality.
+
+`core/gfx_quality.c` keeps Auto separate from the resolved tier. Feed actual
+elapsed frame seconds once per interactive frame, including presentation wait.
+After 1.5 seconds of warmup, two consecutive one-second windows slower than
+57 FPS reduce Ultra → High → Low; each change gets two seconds to settle.
+Auto never selects Unlit and never raises its tier automatically. Loading
+stalls of at least 250 ms and invalid samples are ignored. Manual `Set` disables
+Auto. Fixed quality and Auto's lowest tier cannot guarantee 60 FPS on every
+device; measure the rendered workload separately.
 
 **Matcap materials** (MED+, `SurfaceMaterial_SetMatcapActive`/`ClearMatcap`) — no authored matcap textures exist in `assets/` yet (Art task); the shader/API plumbing is done and inert (`u_hasMatcap` defaults to 0) until a texture is supplied. Because the shader instance is shared across all models, this is a **call-around-the-draw** toggle, not a per-material flag baked at `Apply` time — wrap the specific `DrawModel` call(s) that should use it.
 
@@ -2585,7 +2599,7 @@ void SurfaceMaterial_SetSSS(float strength, float power);     void SurfaceMateri
 - **Fake SSS** — cheap back-scatter (`pow(dot(V,-L), power) * strength`) for jade/skin/thin-robe edges glowing with the moon behind them.
 No authored normal-map textures exist yet either (Art/Character task) — the plumbing is done and inert until one is supplied.
 
-**Real shadow maps** (P6, HIGH+Shadow, Environment-owned — `#include "environment/env_shadow.h"`): the dynamic layer follows the camera and updates moving casters every frame; a second world-fixed layer caches terrain/static props once per map or sun-direction change. `surface_lit.fs` explicitly binds both R32F samplers, keeps the dynamic layer's high-quality comparison filter, uses four taps for broad static occlusion, and takes the minimum visibility. Fake blob shadows (`Environment_DrawSmartShadow`) remain the lower-tier fallback. The feature remains opt-in globally; Verdant Path enables it on desktop and owns its static cache lifecycle.
+**Real shadow maps** (every lit tier, Environment-owned — `#include "environment/env_shadow.h"`): the dynamic layer follows the camera; a second world-fixed layer caches terrain/static props. `core/shaders/surface_lit.fs` explicitly samples both R32F maps and takes minimum visibility. Low/Med use one bilinear comparison group (four dynamic fetches), High/Ultra four groups (16 dynamic fetches); static occlusion uses four fetches at every lit tier. The feature remains opt-in globally. `core/volumetric/volumetric_fog_quality.h` resolves a requested volumetric fog mode to analytical height fog on Low, retaining atmosphere and the requested mode for subsequent tier changes.
 ```c
 void       EnvShadow_Init(void);           // once, after Environment_Init + SurfaceMaterial_Init
 void       EnvShadow_SetEnabled(bool enabled);
@@ -2617,12 +2631,16 @@ Currently applied to `character/character_model.c` hero models. Map props and bo
 `GfxQuality_Set`/`Get` changes take effect immediately for ordinary material
 shaders. Gas owns tier-sized simulation/atlas/raymarch resources, so a gas tier
 change is recorded immediately but rebuilt only after the active volume retires;
-this avoids destroying resources still used by a submitted frame. In-game: **L**
-cycles UNLIT→LOW→MED→HIGH, current tier shown in the corner HUD text.
+this avoids destroying resources still used by a submitted frame. Ultra reuses
+High's bounded Gas resources. The interactive quality controls are owned by
+`main.c`; they select Auto, Low, High and Ultra.
 
 For deterministic startup and capture automation, set
-`WUXING_GFX_QUALITY=unlit|low|med|high` (numeric `0..3` is also accepted) before
-the process starts. Invalid values retain the platform default.
+`WUXING_GFX_QUALITY=auto|unlit|low|med|high|ultra` (numeric `0..4` also selects
+fixed tiers) before the process starts. Invalid values retain the platform tier.
+`GfxQuality_InitDefault` enables Auto only for unset, empty or `auto` overrides;
+deterministic capture callers can retain that resolved tier without feeding the
+adaptive controller.
 
 ### Volumetric gas quality, optics, and telemetry
 

@@ -107,6 +107,9 @@
 - Never reduce a position-dependent Vortex/Turbulence field to one shared direction; keep it spatial, and derive Radial Blast direction independently at each receiver.
 - A vegetation Radial Blast must read briefly as a moving pressure front before a stronger Turbulence wake takes over. Ramp impact Turbulence in with a short attack instead of applying full strength on the spawn frame; mirror the envelope and authored budgets across CPU/GPU and lock them with tests.
 - Vegetation mesh LOD uses full camera distance and FOV scaling; orbit-radius compensation belongs only to visibility range. Apply blade-normal rounding in one stage and filter unresolved highlights by projected width.
+- Keep canopy fade tied to the effective visibility range; a hardcoded distance can erase far grass even when CPU visibility retains it. Author species explicitly when tall grass must not trigger legacy height-based reed selection.
+- Shared solar intensity scales direct RGB only; keep sky/cloud horizon inputs consistent and reset the scalar before map activation to prevent HDR lighting leaking into legacy maps.
+- Quality enum extensions are append-only. Auto uses actual elapsed frame time, retains real shadows on Low, and keeps explicit fog visible through the analytical fallback; fixed captures do not feed adaptive timing.
 - Core Wind owns vegetation forcing, including world-space grass-wave noise; vegetation shaders may only filter that field through species-specific lag, compliance, flutter, and bend limits. Do not add standalone sine/noise motion that remains active when the sampled wind is zero, and keep visible/shadow deformation identical.
 - Cloud visibility is one shared world-space field transported by macro wind; attenuate direct diffuse, specular and transmission only, preserving sky ambient and local VFX lights.
 - Large-map directional shadows keep static casters in a world-fixed cached layer and dynamic casters in the camera-following layer; bind both samplers explicitly, and invalidate/rebuild the static cache when the sun direction changes.
@@ -179,6 +182,8 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | §10.1 Adaptive quality and lit Low fallback | core/gfx_quality.h; core/volumetric/volumetric_fog_quality.h; core/shaders/surface_lit.fs | Ground-truth |
+| 2026-10-09 | Codex | §10.1 Meadow visibility and shared solar scale | maps/toolkit/shaders/nature_parametric.glsl; core/map_manager.h; environment/environment_system.h | Ground-truth |
 | 2026-10-09 | Codex | §10.1 Shared meadow habitat, relief contours and LOD geometry | maps/toolkit/meadow_palette.h; maps/toolkit/shaders/nature_parametric.glsl; maps/tests/test_meadow_parametric.py | Ground-truth |
 | 2026-10-09 | Codex | Directed path constraints and transverse field units | core/motion/motion_path_transport.h; core/motion/shaders/motion_fields.glsl | Ground-truth and project convention |
 | 2026-10-09 | Codex | Shared prescribed Motion path sampling | core/motion/motion_path_transport.h; core/motion/shaders/motion_fields.glsl | Ground-truth and project convention |

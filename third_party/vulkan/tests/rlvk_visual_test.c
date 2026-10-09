@@ -667,44 +667,6 @@ static const char *sc_fbo_switch(void)
     return sampledRed ? NULL : "outgoing FBO colour was not transitioned for sampling";
 }
 
-// Repeated offscreen passes must not require empty swapchain scopes. The same
-// scenario runs with the opt-in disabled/enabled; RLVK_PROFILE reports scope work.
-static const char *sc_lazy_swapchain(void)
-{
-    RenderTexture2D rt = LoadRenderTexture(W, H);
-    bool readbackOk = true;
-    for (int f = 0; f < 180; f++)
-    {
-        BeginDrawing(); ClearBackground(BLACK);
-        for (int pass = 0; pass < 20; pass++)
-        {
-            BeginTextureMode(rt);
-            ClearBackground(RED);
-            DrawRectangle(0, 0, W/2, H, GREEN);
-            EndTextureMode();
-        }
-        if (f == 2)
-        {
-            Image r = LoadImageFromTexture(rt.texture);
-            Color left = at(r, W/4, H/2), right = at(r, 3*W/4, H/2);
-            readbackOk = left.g > left.r*2 && right.r > right.g*2;
-            UnloadImage(r);
-        }
-        // Clear after leaving the FBO exercises demand-driven scope creation.
-        ClearBackground(BLUE);
-        DrawTextureRec(rt.texture, (Rectangle){0,0,W,-H}, (Vector2){0,0}, WHITE);
-        EndDrawing();
-    }
-    Image im = snap();
-    Color left = at(im, W/4, H/2), right = at(im, 3*W/4, H/2);
-    UnloadImage(im);
-    UnloadRenderTexture(rt);
-    if (!readbackOk) return "mid-frame offscreen readback failed";
-    if (left.g <= left.r*2 || right.r <= right.g*2)
-        return "offscreen switch/clear/final sampling failed";
-    return NULL;
-}
-
 // Sample a render texture's DEPTH attachment in a shader and linearize it, exactly like the
 // game's depth_copy.fs / soft-particle path. Under Caps.noSampledDepth the attachment depth has
 // no SAMPLED usage; rlvk must route the sample through the sampleable shadow-copy twin (§7.1),
@@ -3857,7 +3819,6 @@ static const Scenario SCENARIOS[] = {
     { "depth_rt",       sc_depth_rt },
     { "depth_mask_clear", sc_depth_mask_clear },
     { "msaa_rt",        sc_msaa_rt },
-    { "lazy_swapchain", sc_lazy_swapchain },
     { "fbo_switch",     sc_fbo_switch },
     { "soft_depth",     sc_soft_depth },
     { "depth_twin_cache", sc_depth_twin_cache },

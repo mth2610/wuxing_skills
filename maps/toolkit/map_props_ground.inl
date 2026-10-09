@@ -512,6 +512,8 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     // rlvk uploads SetShaderValue to the active program, not the Shader
     // argument. Keep shadow matrices and the receiving draw in one scope.
     BeginShaderMode(groundShader);
+    // Quality changes can replace shadow targets while this ground stays loaded.
+    MapShadow_AttachMaterial(&ground->model.materials[0]);
     Vector4 islandShape = {ground->boundary.cornerRadius, ground->boundary.mistWidth, ground->boundary.groundInset, 0};
     SetShaderValue(groundShader, locIslandRect, &ground->boundary.rect, SHADER_UNIFORM_VEC4);
     SetShaderValue(groundShader, locIslandShape, &islandShape, SHADER_UNIFORM_VEC4);

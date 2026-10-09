@@ -917,8 +917,12 @@ _Inline helpers / macros only — see header._
   void GfxQuality_Set(GfxQuality q);
   GfxQuality GfxQuality_Get(void);
   GfxQuality GfxQuality_Default(void);
+  void GfxQuality_InitDefault(void);
+  void GfxQuality_SetAuto(bool enabled);
+  bool GfxQuality_IsAuto(void);
+  void GfxQuality_UpdateAuto(float frameSeconds);
 ```
-**Enums:** GfxQuality { GFX_UNLIT,GFX_LOW,GFX_MED,GFX_HIGH }
+**Enums:** GfxQuality { GFX_UNLIT,GFX_LOW,GFX_MED,GFX_HIGH,GFX_ULTRA }
 
 ### `core/audio_system.h`
 ```c

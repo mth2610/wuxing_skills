@@ -49,6 +49,8 @@ typedef enum {
 } FogRenderMode;
 
 // Cấu hình chế độ dựng hình sương mù
+// The requested volumetric mode renders analytically at Low quality; the
+// request is retained and resumes raymarching when the resolved tier rises.
 void          Fog_SetRenderMode(FogRenderMode mode);
 FogRenderMode Fog_GetRenderMode(void);
 const char*   Fog_GetRenderModeName(FogRenderMode mode);

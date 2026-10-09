@@ -45,11 +45,13 @@ void Environment_Init(void);
 void Environment_Update(float dt);
 ```
 
-The optional real directional-shadow layer can follow a large map instead of
+The real directional-shadow layer can follow a large map instead of
 remaining fixed over the default arena:
 
 ```c
 void EnvShadow_SetFocus(Vector3 center, float halfExtent); // light-space texel stabilized
+bool EnvShadow_SetQuality(int resolvedTier);
+int EnvShadow_GetQuality(void);
 Vector3 EnvShadow_GetFocus(void);
 float EnvShadow_GetHalfExtent(void);
 typedef void (*EnvShadowMapCasterCallback)(Shader depthShader, void *userData);
@@ -63,14 +65,27 @@ Matrix EnvShadow_GetStaticLightVP(void);
 Texture2D EnvShadow_GetStaticShadowMap(void);
 ```
 
+`environment/env_shadow.c` enables real directional shadows after successful
+initialization. Graphics owners resolve Auto before calling
+`EnvShadow_SetQuality`: `0=Low`, `1=Medium`, `2=High`, `3=Ultra`.
+Dynamic targets are `1024/1024/2048/2048`; static targets are
+`512/512/1024/1024`. The desktop default is High and Android default is Medium.
+All tiers retain real depth shadows. Before initialization the setter records
+the requested tier; afterward it allocates both replacements before swapping.
+Failure preserves the current targets and quality. Calls during capture fail.
+Replacing targets invalidates static capture and stabilized matrices; the map
+rebuilds its static cache using the existing `EnvShadow_NeedsStaticCapture`
+contract. `WUXING_SHADOW_RES` and `WUXING_SHADOW_STATIC_RES` retain diagnostic
+precedence. Explicit enable/disable toggles remain independent of quality.
+
 Call `EnvShadow_SetFocus` before the frame's dynamic capture. Its `halfExtent`
 is clamped to 8–96 m and should stay tight around the camera/player. For large
 maps, the getters expose the stabilized capture region so map-owned caster
 culling can follow the shadow cascade instead of guessing from camera range.
 Call `EnvShadow_BeginStaticCapture` after static models are created, draw
 only their geometry with `EnvShadow_GetDepthShader`, then end the capture. The
-static projection is world-fixed (1024² desktop, 512² Android), while the
-dynamic projection remains camera-following (2048²/1024²). Receivers combine
+static projection is world-fixed, while the dynamic projection remains
+camera-following at the configured quality resolution. Receivers combine
 the two visibility layers. `EnvShadow_NeedsStaticCapture` becomes true when
 shadows are enabled without a cache or the directional light has changed;
 maps should rebuild then, avoiding both stale lighting and per-frame retries
@@ -319,6 +334,7 @@ field using the Python standard library. It performs no runtime generation.
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-09 | Codex | §2 real shadows on every tier and atomic target replacement | `environment/env_shadow.h`, `environment/env_shadow.c` | Ground-truth |
 | 2026-10-09 | Codex | §4 opt-in direct sun radiance scale | `environment/environment_system.h`, `environment/environment_system.c` | Ground-truth |
 | 2026-10-09 | Codex | §6 hemispheric irradiance helper | `environment/shaders/hemisphere_lighting.glsl` | Ground-truth |
 | 2026-09-28 | Codex | §4 `AtmosphereProfile.start` volumetric onset | `environment/environment_system.h`, `core/volumetric/volumetric_fog_distance.h`, `core/volumetric/shaders/volumetric_fog.fs` | Ground-truth |

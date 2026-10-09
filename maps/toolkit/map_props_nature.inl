@@ -1845,6 +1845,12 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             lean *= stretch * (1.0f + botanical * (0.20f + 0.65f * habit));
             droopY = height * (droopFactor + botanical * 0.20f * habit);
         }
+        if (style.growthForm == MAP_MEADOW_GROWTH_GRASS) {
+            // Upright meadow leaves keep a visible canopy instead of forming
+            // the wide, low lawn arches retained by legacy AUTO morphology.
+            lean *= 0.65f;
+            droopY *= 0.50f;
+        }
         if (bladeSegments == 1) {
             // A full-length distant triangle rasterizes as a thin,
             // bright diagonal. Keep its area in a shorter, wider tuft.
@@ -2200,7 +2206,7 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     if (style.alphaCutoff <= 0.0f) style.alphaCutoff = 0.42f;
     if (style.alphaCutoff > 0.9f) style.alphaCutoff = 0.9f;
     if (NatureParametric_Create(&meadow, placements, count, style)) return meadow;
-    if (style.shadowDistance > 0.0f && GfxQuality_Get() >= GFX_HIGH)
+    if (style.shadowDistance > 0.0f)
         (void)NatureShadow_GetShader();
     Texture2D foliageTexture = {0};
     bool textured = style.texturePath != NULL;
@@ -2235,7 +2241,7 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     meadow.drawDistance = style.drawDistance;
     meadow.shadowDistance = style.shadowDistance;
     bool buildContactShadows = style.shadowDistance > 0.0f && GfxQuality_Get() >= GFX_MED;
-    bool buildRealShadowLod = style.shadowDistance > 0.0f && GfxQuality_Get() >= GFX_HIGH;
+    bool buildRealShadowLod = style.shadowDistance > 0.0f;
 
     for (int row = 0; row < rows; row++) {
         for (int column = 0; column < columns; column++) {
@@ -2486,7 +2492,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     }
 
     NatureShadowMode shadowMode = Nature_GetShadowMode();
-    bool realShadowActive = quality >= GFX_HIGH && EnvShadow_IsEnabled() &&
+    bool realShadowActive = quality >= GFX_LOW && EnvShadow_IsEnabled() &&
                             shadowMode != NATURE_SHADOW_PROJECTED_ONLY;
     bool useProjectedShadows = quality >= GFX_MED &&
                                shadowMode != NATURE_SHADOW_REAL_ONLY;
@@ -2582,7 +2588,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
 void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffset,
                                      float time, Vector2 windDirection, float windStrength)
 {
-    if (!meadow || !meadow->ready || GfxQuality_Get() < GFX_HIGH ||
+    if (!meadow || !meadow->ready || GfxQuality_Get() < GFX_LOW ||
         meadow->shadowDistance <= 0.0f ||
         Nature_GetShadowMode() == NATURE_SHADOW_PROJECTED_ONLY ||
         !Nature_ShadowCasterTypeEnabled(false))
@@ -2961,8 +2967,7 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
     boundsMax.x += placements[0].bloomRadius * 1.5f;
     boundsMax.y += placements[0].height + placements[0].bloomRadius * 1.5f;
     boundsMax.z += placements[0].bloomRadius * 1.5f;
-    if (GfxQuality_Get() >= GFX_HIGH)
-        (void)NatureShadow_GetShader();
+    (void)NatureShadow_GetShader();
     field.textured = (petalTexturePath != NULL);
     if (atlasColumns < 1) atlasColumns = 1;
     if (atlasRows < 1) atlasRows = 1;
@@ -3324,7 +3329,7 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
     bool shadowInRange = field->shadowDistance <= 0.0f ||
                          visibleDistance <= field->shadowDistance * shadowScale;
     NatureShadowMode shadowMode = Nature_GetShadowMode();
-    bool realShadowActive = quality >= GFX_HIGH && EnvShadow_IsEnabled() &&
+    bool realShadowActive = quality >= GFX_LOW && EnvShadow_IsEnabled() &&
                             shadowMode != NATURE_SHADOW_PROJECTED_ONLY;
     bool useProjectedShadows = quality >= GFX_MED &&
                                shadowMode != NATURE_SHADOW_REAL_ONLY;
@@ -3359,7 +3364,7 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
 void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOffset,
                                          float time, Vector2 windDirection, float windStrength)
 {
-    if (!field || !field->ready || GfxQuality_Get() < GFX_HIGH ||
+    if (!field || !field->ready || GfxQuality_Get() < GFX_LOW ||
         Nature_GetShadowMode() == NATURE_SHADOW_PROJECTED_ONLY ||
         !Nature_ShadowCasterTypeEnabled(true))
         return;

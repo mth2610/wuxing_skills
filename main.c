@@ -224,6 +224,14 @@ static Rectangle DebugToggleRect(int index, bool vfxTester) {
                      vfxTester ? vfxY[index] : y[index], 300.0f, 24.0f};
 }
 
+static void CycleGraphicsQuality(void)
+{
+    if (GfxQuality_IsAuto()) GfxQuality_Set(GFX_LOW);
+    else if (GfxQuality_Get() < GFX_HIGH) GfxQuality_Set(GFX_HIGH);
+    else if (GfxQuality_Get() == GFX_HIGH) GfxQuality_Set(GFX_ULTRA);
+    else GfxQuality_SetAuto(true);
+}
+
 /* Manager-owned VFX uses the common semantic passes. Standalone skills and
  * compositions own VFXRender scopes, so main remains render-graph
  * orchestration rather than an effect list. */
@@ -507,7 +515,7 @@ int main(int argc, char **argv) {
   LiquidSurface_Init(screenWidth, screenHeight);
   PostFX_Init(screenWidth, screenHeight);
   SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
-  GfxQuality_Set(GfxQuality_Default()); // Real Shading P0 — platform-appropriate tier
+  GfxQuality_InitDefault();
   GasSystem_Init(screenWidth, screenHeight);
   Atmosphere_Init();      // G3 — ambient dust motes over the arena
   Atmosphere_Configure((Vector3){6.0f, 3.0f, 4.4f}, (Vector3){15.0f, 5.0f, 15.0f},
@@ -685,7 +693,7 @@ int main(int argc, char **argv) {
                                // HDR emissive VFX still exceed it and bloom normally.
                                .bloomThreshold = 1.25f,
                                .bloomIntensity = 0.12f,
-                               .chromaticEnabled = true,
+                               .chromaticEnabled = false,
                                .chromaticStrength = 0.15f,
                                .vignetteEnabled = true,
                                .vignetteRadius = 0.85f,
@@ -817,6 +825,11 @@ int main(int argc, char **argv) {
     // TimeFX_RawDelta in core/time_fx.h.
     const bool headlessFixedStep = (autoTestMode || visualVerifyMode || renderVFXMode);
     float rawDt = headlessFixedStep ? (1.0f / 60.0f) : GetFrameTime();
+    if (!headlessFixedStep) GfxQuality_UpdateAuto(GetFrameTime());
+    GfxQuality resolvedQuality = GfxQuality_Get();
+    EnvShadow_SetQuality(resolvedQuality >= GFX_ULTRA ? 3 :
+                         resolvedQuality >= GFX_HIGH ? 2 :
+                         resolvedQuality >= GFX_MED ? 1 : 0);
     TimeFX_SetRawDelta(rawDt);
     float dt = headlessFixedStep ? rawDt : TimeFX_Apply(rawDt);
     g_totalElapsed += dt;
@@ -866,7 +879,7 @@ int main(int argc, char **argv) {
             }
         }
         if (IsKeyPressed(KEY_L)) {
-            GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4)); // Real Shading — cycle UNLIT..HIGH
+            CycleGraphicsQuality();
         }
         if (IsKeyPressed(KEY_J)) {
             EnvShadow_SetEnabled(!EnvShadow_IsEnabled()); // Real Shading P6 — toggle real shadow map
@@ -878,7 +891,7 @@ int main(int argc, char **argv) {
             IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             Vector2 tap = GetMousePosition();
             if (CheckCollisionPointRec(tap, DebugToggleRect(1, currentScreen == SCREEN_VFX_TESTER))) {
-                GfxQuality_Set((GfxQuality)((GfxQuality_Get() + 1) % 4));
+                CycleGraphicsQuality();
             } else if (CheckCollisionPointRec(tap, DebugToggleRect(2, currentScreen == SCREEN_VFX_TESTER))) {
                 EnvShadow_SetEnabled(!EnvShadow_IsEnabled());
             }
@@ -1988,9 +2001,9 @@ int main(int argc, char **argv) {
         // the only way to switch tier / turn the real shadow on, since there is no keyboard.
         if (currentScreen != SCREEN_GAME && showRootDiagnostics) {
             const int debugFontSize = currentScreen == SCREEN_VFX_TESTER ? 14 : 20;
-            static const char *gfxTierName[4] = { "UNLIT", "LOW", "MED", "HIGH" };
+            static const char *gfxTierName[5] = { "UNLIT", "LOW", "MED", "HIGH", "ULTRA" };
             Rectangle rg = DebugToggleRect(1, currentScreen == SCREEN_VFX_TESTER), rs = DebugToggleRect(2, currentScreen == SCREEN_VFX_TESTER);
-            DrawText(TextFormat("GFX [L/tap]: %s", gfxTierName[GfxQuality_Get()]),
+            DrawText(TextFormat("GFX [L/tap]: %s%s", GfxQuality_IsAuto() ? "AUTO / " : "", gfxTierName[GfxQuality_Get()]),
                      (int)rg.x, (int)rg.y, debugFontSize, SKYBLUE);
             DrawText(TextFormat("SHADOW [J/tap]: %s", EnvShadow_IsEnabled() ? "ON" : "OFF"),
                      (int)rs.x, (int)rs.y, debugFontSize, EnvShadow_IsEnabled() ? GREEN : SKYBLUE);
