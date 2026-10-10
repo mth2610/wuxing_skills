@@ -48,6 +48,13 @@ out vec4 finalColor;
 
 void main()
 {
+    // Out-of-bounds watershed discard: fragments outside the floating island
+    // cliff or on the bottom perimeter void are discarded into the bottomless abyss.
+    vec4 boundarySplat = texture(texture0, fragTexCoord);
+    if (boundarySplat.g > 0.85 && boundarySplat.r < 0.10 && fragWorldPos.y <= -7.2) {
+        discard;
+    }
+
     // Dual-scale rotated texture sampling to break tiling
     vec2 tiledUV = fragTexCoord * tiling;
     vec4 colorGrass = texture(texGrass, tiledUV);
@@ -113,11 +120,16 @@ void main()
         distToPath += (dirtDetail.r - 0.5) * 0.18;
 
     // 4. Four-layer weights
+    vec4 splatSample = texture(texture0, fragTexCoord);
+    float streamWet = splatSample.a; // Channel A: Streams and lake wetland
+    float rockScree = splatSample.g; // Channel G: Exposed cliff rocks and scree
+    shoreFactor = max(shoreFactor, streamWet);
+
     float wPath = 1.0 - smoothstep(1.15, 1.85, distToPath);
     float wPathMargin = smoothstep(1.05, 1.75, distToPath) * (1.0 - smoothstep(1.75, 3.2, distToPath));
-    float wWetSoil = shoreFactor * 0.95;
+    float wWetSoil = max(shoreFactor * 0.95, streamWet * 0.90);
     float wSlope = smoothstep(0.14, 0.46, slope);
-    float wDrySoil = clamp(wPathMargin * 0.88 + wSlope * 0.92, 0.0, 1.0);
+    float wDrySoil = clamp(max(wPathMargin * 0.88 + wSlope * 0.92, rockScree * 0.85), 0.0, 1.0);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
     // Separate relief reconstructed offline from normal gradients. The alpha

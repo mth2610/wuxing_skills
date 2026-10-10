@@ -334,6 +334,7 @@ int main(int argc, char **argv) {
   const char *renderVFXOut    = "autotest_output/vfx_eval.png";
   const char *customMapName   = NULL;
   Vector3 captureOrigin = {6.0f, 0.0f, 4.4f};
+  bool captureOriginSet = false;
   Vector3 captureEye = {0};
   bool captureEyeSet = false;
   Vector3 captureTarget = {0};
@@ -402,7 +403,7 @@ int main(int argc, char **argv) {
           }
           if (eye) { captureEye = value; captureEyeSet = true; }
           else if (target) { captureTarget = value; captureTargetSet = true; }
-          else captureOrigin = value;
+          else { captureOrigin = value; captureOriginSet = true; }
       }
   }
 
@@ -778,6 +779,9 @@ int main(int argc, char **argv) {
       for (int i = 0; i < MapManager_GetCount(); i++) {
         if (strcasestr(MapManager_GetName(i), wantMap) != NULL) {
           MapManager_SetActiveIndex(i);
+          Vector3 center; float radius;
+          MapManager_GetActiveBounds(&center, &radius);
+          Entity_SetArenaBounds(center, radius);
           TraceLog(LOG_INFO, "WUXING_MAP: active map -> %s", MapManager_GetName(i));
           break;
         }
@@ -787,6 +791,9 @@ int main(int argc, char **argv) {
   int renderVFXFrame = 0;
   if (renderVFXMode) {
       currentScreen    = SCREEN_VFX_TESTER;
+      if (!captureOriginSet) {
+          captureOrigin = MapManager_GetActiveSpawnPoint();
+      }
       player.position  = captureOrigin;
       player.position.y = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
       if (captureGuide) {
@@ -859,23 +866,14 @@ int main(int argc, char **argv) {
         if (IsKeyPressed(KEY_K)) {
             int nextMap = (MapManager_GetActiveIndex() + 1) % MapManager_GetCount();
             MapManager_SetActiveIndex(nextMap);
-            // The VFX tester normally pivots at DEFAULT_ARENA's (6, 4.4). After
-            // cycling to a large world that point can contain only ground texture,
-            // with the actual vegetation receivers tens of metres away. Move the
-            // fixture to the first authored forest zone so surface-reactive VFX are
-            // evaluated against real grass/flower geometry on the selected map.
+            Vector3 center; float radius;
+            MapManager_GetActiveBounds(&center, &radius);
+            Entity_SetArenaBounds(center, radius);
+
+            // Re-anchor the player to the active map's valid spawn / forest zone
             if (currentScreen == SCREEN_VFX_TESTER) {
-                int zoneCount = Map_GetZoneCount();
-                for (int zoneIndex = 0; zoneIndex < zoneCount; zoneIndex++) {
-                    const MapZone *zone = Map_GetZone(zoneIndex);
-                    if (zone == NULL || zone->type != NAT_FOREST)
-                        continue;
-                    player.position = zone->center;
-                    player.position.y = MapManager_GetGroundHeightAt(
-                        player.position.x, player.position.z);
-                    Entity_SetPosition(player.agentId, player.position);
-                    break;
-                }
+                player.position = MapManager_GetActiveSpawnPoint();
+                Entity_SetPosition(player.agentId, player.position);
             }
         }
         if (IsKeyPressed(KEY_L)) {
@@ -1168,8 +1166,7 @@ int main(int argc, char **argv) {
         // also where every new fixture appears. Re-fires on R so the view can
         // be recovered after WASD/QE/scroll drift without leaving the screen.
         if (!renderVFXMode && (enteredVFXTester || IsKeyPressed(KEY_R))) {
-            player.position = (Vector3){6.0f, 0.0f, 4.4f};
-            player.position.y = MapManager_GetGroundHeightAt(player.position.x, player.position.z);
+            player.position = MapManager_GetActiveSpawnPoint();
             s_vfxPlayerVelY = 0.0f;
             s_vfxPlayerJumping = false;
             vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;

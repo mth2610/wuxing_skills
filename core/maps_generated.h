@@ -5,11 +5,14 @@
 #include "core/map_manager.h"
 
 #include "maps/worlds/verdant_path/verdant_path.h"
+#include "maps/worlds/song_quao/song_quao.h"
 #include "maps/worlds/default_arena/default_arena.h"
 
 static inline void RegisterGeneratedMaps(void) {
     MapManager_RegisterEx("VERDANT_PATH", InitVerdantPathMap, UpdateVerdantPathMap, DrawVerdantPathMap, UnloadVerdantPathMap, GetGroundHeightVerdantPathMap, SampleGroundSurfaceVerdantPathMap, DrawTransparentVerdantPathMap);
     MapManager_RegisterWaterHooks("VERDANT_PATH", GetWaterInfoVerdantPathMap, SetWaterInteractorVerdantPathMap, AddWaterRippleVerdantPathMap);
+    MapManager_RegisterEx("SONG_QUAO", InitSongQuaoMap, UpdateSongQuaoMap, DrawSongQuaoMap, UnloadSongQuaoMap, GetGroundHeightSongQuaoMap, SampleGroundSurfaceSongQuaoMap, DrawTransparentSongQuaoMap);
+    MapManager_RegisterWaterHooks("SONG_QUAO", GetWaterInfoSongQuaoMap, SetWaterInteractorSongQuaoMap, AddWaterRippleSongQuaoMap);
     MapManager_RegisterEx("DEFAULT_ARENA", InitDefaultArenaMap, NULL, DrawDefaultArenaMap, NULL, NULL, NULL, NULL);
 }
 

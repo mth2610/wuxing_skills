@@ -57,8 +57,13 @@ int MapManager_GetCount(void);
 const char* MapManager_GetName(int index);
 int MapManager_GetActiveIndex(void);
 // Valid activation resets direct solar intensity to legacy 1 before map Init;
-// maps opting into HDR lighting set their intensity again on every Init.
 void MapManager_SetActiveIndex(int index);
+
+// Returns the recommended player spawn point on the currently active map (Y snapped to ground).
+Vector3 MapManager_GetActiveSpawnPoint(void);
+
+// Returns the recommended arena center and radius for the currently active map.
+void MapManager_GetActiveBounds(Vector3 *outCenter, float *outRadius);
 
 // --- Virtual Trigger Zones (MODULES_ROADMAP.md Module 2) ---
 // Map = pure data: a map declares WHERE its nature zones are; the gameplay

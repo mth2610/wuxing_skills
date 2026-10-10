@@ -23,8 +23,8 @@ bool g_showTouchControls = false;
 #endif
 
 // Biến môi trường (real-world-scaled: 1 unit = 1 meter)
-static const Vector3 arenaCenter = { 6.0f, 0.0f, 4.4f };
-static const float arenaRadius = 18.0f;
+static Vector3 arenaCenter = { 6.0f, 0.0f, 4.4f };
+static float   arenaRadius = 18.0f;
 static const float gravity = 15.0f;
 
 static Vector2 g_joystickKnobOffset = { 0, 0 };
@@ -159,9 +159,14 @@ void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     camera.fovy = SANDBOX_CAMERA_DEFAULT_FOVY;
     camera.projection = CAMERA_PERSPECTIVE;
 
-    // Cấu hình Player
-    player->position = (Vector3){ -11.0f, 0.0f, 4.4f };
-    player->position.y = MapManager_GetGroundHeightAt(player->position.x, player->position.z);
+    // Cấu hình Player và Arena Bounds
+    MapManager_GetActiveBounds(&arenaCenter, &arenaRadius);
+    Entity_SetArenaBounds(arenaCenter, arenaRadius);
+    player->position = MapManager_GetActiveSpawnPoint();
+    if (strcmp(MapManager_GetName(MapManager_GetActiveIndex()), "DEFAULT_ARENA") == 0) {
+        player->position = (Vector3){ -11.0f, 0.0f, 4.4f };
+        player->position.y = MapManager_GetGroundHeightAt(player->position.x, player->position.z);
+    }
     camera.target = (Vector3){ player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z };
     camera.position = SandboxCamera_OrbitPosition(player->position, g_cameraAngle, g_camDist);
     player->radius = 0.3f;
@@ -805,7 +810,8 @@ void UpdateSandbox(PlayerEntity* player, EnemyEntity* enemy, float dt, UIPanelSt
         MapManager_SetWaterInteractor(player->position, curVel, 0.45f);
     }
 
-    // Giới hạn trong võ đài
+    // Giới hạn trong võ đài (đồng bộ theo active map)
+    MapManager_GetActiveBounds(&arenaCenter, &arenaRadius);
     Vector3 toChar = Vector3Subtract(player->position, arenaCenter);
     toChar.y = 0.0f;
     if (Vector3Length(toChar) > arenaRadius - player->radius) {
