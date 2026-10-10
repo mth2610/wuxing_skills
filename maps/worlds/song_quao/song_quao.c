@@ -199,29 +199,54 @@ static void DrawSongQuaoShadowCasters(Shader depthShader, void *userData)
     MapProp_DrawFlowerFieldShadowCaster(&s_flowerField, offset, s_time, wind, 0.032f);
 }
 
+static void CaptureSongQuaoStaticShadows(void)
+{
+    if (!EnvShadow_NeedsStaticCapture())
+        return;
+    EnvShadow_BeginStaticCapture(kMapCenter, 64.0f);
+    if (!EnvShadow_IsCapturing())
+        return;
+    Shader depthShader = EnvShadow_GetDepthShader();
+    MapProp_DrawRockShadowCasters(&s_rocks, s_rockPlacements, ROCK_COUNT, depthShader);
+    EnvShadow_EndStaticCapture();
+}
+
 void InitSongQuaoMap(void)
 {
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){95, 110, 135, 255});
+    Environment_SetAmbientColor((Color){88, 102, 128, 255}); // Cool sky fill preserves shaded canopy volume
     Environment_SetSunColor((Color){255, 175, 95, 255});
-    Environment_SetSunIntensity(3.2f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.35f, -0.45f, 0.82f}));
+    Environment_SetSunIntensity(2.8f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.25f, -0.45f, 0.85f}));
     Environment_SetShadowColor((Color){28, 36, 48, 120});
 
     AtmosphereProfile atmos = {
-        .color = {235, 195, 160, 255},
+        .color = {225, 235, 248, 255},
         .start = 30.0f,
         .end = 220.0f,
         .enabled = true,
+        .optics = {
+            .rayleighLMS = {0.0076224f, 0.012935f, 0.024845f},
+            .mieScattering = 0.0024f,
+            .mieAnisotropy = 0.66f,
+            .multipleScatteringAmp = 1.7f
+        },
         .density = {
-            .baseDensity = 0.005f,
-            .heightFalloff = 0.15f,
+            .baseDensity = 0.008f,
+            .heightFalloff = 0.20f,
             .baseAltitude = 0.0f,
             .enableSigmoidLayer = false
         }
     };
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity(0.80f);
+    VolumetricFog_SetGodRayIntensity(0.75f);
+    VolumetricFog_SetDistantCoverage(2.0f / 3.0f);
+
+    EnvCloudShadowConfig cloudConfig = {
+        .enabled = true, .strength = 0.12f, .worldSize = 96.0f,
+        .planeHeight = 80.0f, .coverage = 0.48f, .softness = 0.16f, .windSpeedScale = 0.55f,
+    };
+    Environment_SetCloudShadowConfig(&cloudConfig);
 
     if (s_ready) return;
 
@@ -234,16 +259,20 @@ void InitSongQuaoMap(void)
     s_splatImage = LoadImage("assets/maps/song_quao/song_quao_ecology_splat.png");
     s_splatLoaded = (s_splatImage.data != NULL);
 
-    // Heightmap terrain
+    // Heightmap terrain using identical standard 3-layer materials and relief as Verdant Path
     s_ground = MapProp_CreateGroundHeightmap(
         "assets/maps/song_quao/song_quao_island_heightmap.png", MAP_WIDTH, MAP_DEPTH,
-        CLIFF_DEPTH, 2.8f, "assets/maps/song_quao/song_quao_ecology_splat.png",
+        CLIFF_DEPTH, 3.6f, "assets/maps/song_quao/song_quao_ecology_splat.png",
         "assets/textures/verdant_meadow_substrate_diffuse.png", "assets/textures/dirt_diffuse.png");
-    MapProp_SetGroundTint(&s_ground, (Color){68, 92, 48, 255});
+    MapProp_SetGroundTint(&s_ground, (Color){62, 88, 45, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
         "assets/textures/verdant_meadow_substrate_material.png",
         "assets/textures/dirt_material.png");
     MapProp_SetGroundReliefMap(&s_ground, "assets/textures/verdant_terrain_relief.png");
+
+    // Sample ground height inside lake basin floor to position the water surface naturally
+    float lakeGroundY = MapProp_SampleGroundHeight(&s_ground, kMapCenter, SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z);
+    float lakeWaterY = lakeGroundY + 0.55f;
 
     // Configure lake basin habitat blending for ground shader
     Vector4 lakeParams = {SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z,
@@ -253,15 +282,20 @@ void InitSongQuaoMap(void)
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
                                   "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
     s_sky = MapProp_CreateSkyDome();
-    s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 400.0f, MAP_DEPTH + 400.0f, 60.0f);
+    s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
+    MapBoundaryMistStyle rim = {1.2f, 4.0f, 0.5f, 2.0f, 0.35f};
+    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -1.25f, &rim))
+        TraceLog(LOG_WARNING, "Song Quao: terrain boundary mist bake failed");
 
     BuildMeadowLayout();
     s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
         (MapMeadowStyle){
             .rootColor = {18, 34, 16, 255}, .tipColor = {136, 186, 54, 255},
             .bladesPerClump = 6, .bladeSegments = 3, .bladeWidthScale = 0.17f,
-            .chunkSize = 14.0f, .lodDistance = 32.0f, .midLodDistance = 16.0f, .drawDistance = 60.0f,
+            .chunkSize = 12.0f, .lodDistance = 32.0f, .midLodDistance = 16.0f, .drawDistance = 58.0f,
             .shadowDistance = 14.0f,
+            .texturePath = NULL,
+            .botanicalVariation = 1.0f,
             .growthForm = MAP_MEADOW_GROWTH_GRASS,
         });
 
@@ -273,6 +307,8 @@ void InitSongQuaoMap(void)
                 .bladesPerClump = 7, .bladeSegments = 3, .bladeWidthScale = 0.14f,
                 .chunkSize = 18.0f, .lodDistance = 36.0f, .midLodDistance = 18.0f, .drawDistance = 65.0f,
                 .shadowDistance = 12.0f,
+                .texturePath = NULL,
+                .hasPlumes = false,
                 .growthForm = MAP_MEADOW_GROWTH_REED,
             });
     }
@@ -288,26 +324,37 @@ void InitSongQuaoMap(void)
     BuildRockPlacements();
 
     // Song Quao Reservoir water surface in lake basin
+    Vector3 lakePos = {SONG_QUAO_LAKE_CENTER_X, lakeWaterY, SONG_QUAO_LAKE_CENTER_Z};
     s_river = MapProp_CreateWaterSurface((MapWaterConfig){
         .shape = WATER_SHAPE_RADIAL,
         .ecosystem = WATER_ECO_ALPINE_STREAM,
-        .center = kLakePos,
+        .center = lakePos,
         .radiusX = SONG_QUAO_LAKE_RADIUS_X, .radiusZ = SONG_QUAO_LAKE_RADIUS_Z,
-        .bankWidth = 1.6f,
-        .bankGroundY = SONG_QUAO_LAKE_WATER_Y + 0.15f,
-        .waveHeight = 0.038f, .waveScale = 1.15f, .waveSpeed = 0.55f,
+        .bankWidth = 0.85f,
+        .bankGroundY = lakeGroundY,
+        .waveHeight = 0.038f, .waveScale = 1.15f, .waveSpeed = 0.65f,
         .detailScale = 0.085f, .detailStrength = 0.22f,
-        .maxDepth = 1.4f,
+        .maxDepth = 1.35f,
+        .absorption = {0.65f, 0.18f, 0.04f},
+        .scatterColor = {0.15f, 0.65f, 0.70f},
+        .scatterCoeff = 0.42f,
         .causticsStrength = 0.85f, .causticsScale = 1.35f,
-        .foamThreshold = 0.18f,
+        .foamThreshold = 0.15f,
         .segments = 128, .rings = 32, .seed = 7491u,
-        .scatterColor = {0.18f, 0.70f, 0.75f},
-        .deepColor = {10, 42, 65, 255}, .shallowColor = {40, 140, 125, 235},
-        .foamColor = {235, 248, 242, 220},
+        .deepColor = {10, 42, 62, 255}, .shallowColor = {42, 138, 122, 235},
+        .foamColor = {230, 245, 238, 220},
         .bankInnerColor = {62, 58, 44, 255}, .bankOuterColor = {55, 75, 42, 255},
     });
 
-    EnvShadow_SetFocus(kMapCenter, 25.0f);
+    for (int i = 0; i < ROCK_COUNT; i++) {
+        float gy = GetGroundHeightSongQuaoMap(s_rockPlacements[i].position.x, s_rockPlacements[i].position.z);
+        if (s_rockPlacements[i].position.y < lakeWaterY) {
+            MapProp_AddWaterObstacle(&s_river, s_rockPlacements[i].position,
+                                     s_rockPlacements[i].radiusScale * 0.92f, 0.75f);
+        }
+    }
+
+    EnvShadow_SetFocus(kMapCenter, 20.0f);
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);
     MapManager_SetZones(SONG_QUAO_ZONES, SONG_QUAO_ZONE_COUNT);
 
@@ -324,7 +371,13 @@ void UpdateSongQuaoMap(float dt)
     MapProp_UpdateWaterSurface(&s_river, dt);
 
     Vector3 focus = {camera.target.x, 0.0f, camera.target.z};
-    EnvShadow_SetFocus(focus, 24.0f);
+    EnvShadow_SetFocus(focus, 20.0f);
+    CaptureSongQuaoStaticShadows();
+
+    MapProp_BeginNatureInteraction(camera.target, dt);
+    MapProp_AddNatureInteractor(camera.target, 1.25f, 0.34f);
+    MapProp_AddNatureWindVorticles(s_time);
+    MapProp_EndNatureInteraction();
 }
 
 void DrawSongQuaoMap(void)
@@ -351,8 +404,12 @@ void DrawTransparentSongQuaoMap(void)
 
 void UnloadSongQuaoMap(void)
 {
+    Environment_SetSunIntensity(1.0f);
     if (!s_ready) return;
     EnvShadow_SetMapCasterCallback(NULL, NULL);
+    EnvShadow_InvalidateStaticCache();
+    Environment_SetCloudShadowConfig(NULL);
+    VolumetricFog_SetDistantCoverage(1.0f);
     MapProp_UnloadWaterSurface(&s_river);
     if (s_flowerCount > 0) MapProp_UnloadFlowerField(&s_flowerField);
     if (s_reedCount > 0) MapProp_UnloadMeadow(&s_reedMeadow);

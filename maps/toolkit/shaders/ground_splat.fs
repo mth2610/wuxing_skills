@@ -123,11 +123,10 @@ void main()
     vec4 splatSample = texture(texture0, fragTexCoord);
     float streamWet = splatSample.a; // Channel A: Streams and lake wetland
     float rockScree = splatSample.g; // Channel G: Exposed cliff rocks and scree
-    shoreFactor = max(shoreFactor, streamWet);
 
     float wPath = 1.0 - smoothstep(1.15, 1.85, distToPath);
     float wPathMargin = smoothstep(1.05, 1.75, distToPath) * (1.0 - smoothstep(1.75, 3.2, distToPath));
-    float wWetSoil = max(shoreFactor * 0.95, streamWet * 0.90);
+    float wWetSoil = max(shoreFactor * 0.95, smoothstep(0.40, 0.85, streamWet) * 0.90);
     float wSlope = smoothstep(0.14, 0.46, slope);
     float wDrySoil = clamp(max(wPathMargin * 0.88 + wSlope * 0.92, rockScree * 0.85), 0.0, 1.0);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
@@ -201,24 +200,31 @@ void main()
     canopyColor *= mix(0.90, 1.10, distantClumpNoise * 0.5 + 0.5);
     grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.86);
 
-    // Soil & Path PBR Albedos
-    vec3 drySoilColor = dirtDetail * vec3(0.86, 0.77, 0.63) * 1.18;
-    vec3 wetSoilColor = dirtDetail * vec3(0.62, 0.58, 0.48) * 1.02;
+    // Soil & Path PBR Albedos - Natural lush mountain soil (not desert sand)
+    vec3 drySoilColor = dirtDetail * vec3(0.42, 0.38, 0.30) * 1.02;
+    vec3 wetSoilColor = dirtDetail * vec3(0.24, 0.21, 0.17) * 0.95;
     if (lakeDepthFactor > 0.0) {
         wetSoilColor *= mix(1.0, 0.62, lakeDepthFactor);
     }
-    vec3 pathMarginColor = mix(drySoilColor, colorDirt.rgb * vec3(1.12, 1.06, 0.91), wPath);
+    vec3 pathMarginColor = mix(drySoilColor, colorDirt.rgb * vec3(0.68, 0.62, 0.48), wPath);
 
     vec3 blendedAlbedo = grassAlbedo * wGrass
                        + drySoilColor * wDrySoil
                        + wetSoilColor * wWetSoil
                        + pathMarginColor * wPath;
 
+    // Mountain stream bed color tint: where concentrated streams carve channels (streamWet > 0.55),
+    // blend with damp stream bed stones/gravel, keeping natural mossy river rock tones (not artificial cyan)
+    if (streamWet > 0.55) {
+        vec3 streamBedTint = vec3(0.22, 0.28, 0.24) * (0.8 + 0.4 * dirtDetail.r);
+        blendedAlbedo = mix(blendedAlbedo, streamBedTint, smoothstep(0.55, 0.95, streamWet) * 0.55);
+    }
+
     // Macro landscape modulation (warm golden sun ridges, deep emerald dips)
     float macroA = sin(fragWorldPos.x * 0.042 + fragWorldPos.z * 0.028);
     float macroB = sin(fragWorldPos.x * -0.022 + fragWorldPos.z * 0.048 + 1.35);
     float macroField = 0.50 + 0.32 * macroA + 0.18 * macroB;
-    vec3 macroTint = mix(vec3(0.92, 0.96, 0.90), vec3(1.06, 1.03, 0.94), macroField);
+    vec3 macroTint = mix(vec3(0.94, 0.97, 0.92), vec3(1.04, 1.02, 0.96), macroField);
     blendedAlbedo *= macroTint;
 
     // Tangent-space micro normals follow the same UVs as their albedo layers.
@@ -232,7 +238,8 @@ void main()
                           + tangent * microNormal.x * microStrength
                           + bitangent * microNormal.y * microStrength);
     float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
-    roughness = mix(roughness, 0.48, wWetSoil * 0.65);
+    roughness = mix(roughness, 0.72, wDrySoil * 0.75); // Dry soil is rough and matte, not shiny plastic
+    roughness = mix(roughness, 0.22, wWetSoil * 0.85); // Streams and wet banks are sleek
 
     // Micro cavity ambient occlusion from texture relief
     float cavityAO = mix(0.88 + 0.12 * fineGrassLuma,
@@ -253,26 +260,23 @@ void main()
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient.rgb) * cavityAO;
 
     // Physically Based Lighting (PBR daylight law):
-    // Direct solar irradiance is modulated by directional shadow visibility.
-    // Hemispheric sky ambient and ground bounce illuminate the surface even in shadow,
-    // naturally scaled by cavity AO and sky exposure without artificial darkening.
     vec3 totalLight = ambient + actualLight.rgb * NdotL * sunVisibility;
 
     vec3 groundLit = blendedAlbedo * totalLight;
     vec3 viewDir = normalize(viewPos - fragWorldPos);
     vec3 halfDir = normalize(light + viewDir);
-    float specPower = mix(12.0, 72.0, 1.0 - roughness);
+    float specPower = mix(8.0, 32.0, 1.0 - roughness);
     float drySpec = pow(max(dot(normal, halfDir), 0.0), specPower)
-                  * (1.0 - roughness) * 0.16;
+                  * (1.0 - roughness) * 0.04;
     groundLit += actualLight.rgb * drySpec * sunVisibility;
 
-    // Capillary wetness mechanics: Albedo darkening & Roughness collapse (PBR Specular Sheen)
+    // Capillary wetness mechanics: Stream water sheen and caustics
     if (wWetSoil > 0.03) {
         float NdotV_wet = max(dot(normal, viewDir), 0.0);
         float fresnelWet = 0.02 + 0.98 * pow(1.0 - NdotV_wet, 5.0);
         float wetSpecSharp = pow(max(dot(normal, halfDir), 0.0), 96.0);
         float wetSpecBroad = pow(max(dot(normal, halfDir), 0.0), 24.0) * 0.25;
-        vec3 wetSheen = actualLight.rgb * (wetSpecSharp * 0.75 + wetSpecBroad) * (0.35 + fresnelWet * 0.65);
+        vec3 wetSheen = actualLight.rgb * (wetSpecSharp * 0.65 + wetSpecBroad) * (0.35 + fresnelWet * 0.65);
         groundLit += wetSheen * wWetSoil * sunVisibility;
     }
 

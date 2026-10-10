@@ -4,7 +4,10 @@
 #include "core/particles/gpu/particle_gpu_legacy.h"
 #include "core/tuning.h"
 #include "core/resource_manager.h"
+#include "environment/environment_system.h"
+#include "raymath.h"
 #include "rlgl.h"
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -38,6 +41,11 @@ static Rectangle dummyStunBtn;
 static Rectangle dummyLaunchBtn;
 static Rectangle dummyPullBtn;
 static Rectangle dummyResetBtn;
+
+// --- Time-of-day (Sun position) slider on top control bar ---
+static Rectangle sunTimeSlider;
+static bool isDraggingSunSlider = false;
+static float sunTimeNorm = 0.35f; // Initial default morning/day (~0.35)
 
 static int hoverSkillIndex = -1;
 static int skillOrder[64];
@@ -231,14 +239,17 @@ void InitUIPanel(void) {
   // MANDATORY and cannot be excluded via setSystemGestureExclusionRects, so the only fix is to
   // keep interactive UI out of it. Every Y below (and TUNABLE_*_TOP) is shifted down together so
   // relative layout is unchanged - do NOT move a single row back up into y<84.
-  togglePanelBtn = (Rectangle){20, 95, 190, 32};
-  backBtn = (Rectangle){215, 95, 180, 32};
+  togglePanelBtn = (Rectangle){20, 95, 175, 32};
+  backBtn = (Rectangle){200, 95, 155, 32};
 
-  // Training dummy CC test row, continuing the same top bar
-  dummyStunBtn   = (Rectangle){400, 95, 140, 32};
-  dummyLaunchBtn = (Rectangle){550, 95, 140, 32};
-  dummyPullBtn   = (Rectangle){700, 95, 140, 32};
-  dummyResetBtn  = (Rectangle){850, 95, 140, 32};
+  // Compacted Training dummy CC test row
+  dummyStunBtn   = (Rectangle){365, 95, 95, 32};
+  dummyLaunchBtn = (Rectangle){465, 95, 105, 32};
+  dummyPullBtn   = (Rectangle){575, 95, 90, 32};
+  dummyResetBtn  = (Rectangle){670, 95, 95, 32};
+
+  // Time-of-day / Sun position slider on top bar
+  sunTimeSlider  = (Rectangle){775, 95, 230, 32};
 
   // Compacted row pitch (36px, was 50px) and button height (28px, was 35px)
   // so this whole control block takes noticeably less vertical space,
@@ -366,6 +377,47 @@ void UpdateUIPanel(Vector2 mousePos, UIPanelState *state) {
     state->clickedOnUI = true;
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       Sandbox_ResetTrainingDummy();
+    }
+  }
+
+  // --- Time-of-day / Sun position slider interaction ---
+  if (CheckCollisionPointRec(mousePos, sunTimeSlider)) {
+    state->clickedOnUI = true;
+    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+      isDraggingSunSlider = true;
+    }
+  }
+  if (isDraggingSunSlider) {
+    state->clickedOnUI = true;
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+      float t = (mousePos.x - sunTimeSlider.x) / sunTimeSlider.width;
+      if (t < 0.0f) t = 0.0f;
+      if (t > 1.0f) t = 1.0f;
+      sunTimeNorm = t;
+
+      // Update solar lighting trajectory dynamically:
+      // t = 0.0: Sunrise (East) -> t = 0.5: Noon (High South) -> t = 1.0: Sunset (West)
+      float solarAngle = sunTimeNorm * PI; // 0 to 180 degrees arc
+      float sunElevation = sinf(solarAngle);
+      float sunAzimuth = cosf(solarAngle);
+      // Normalized sun direction vector (points from sun into scene):
+      Vector3 sunDir = Vector3Normalize((Vector3){ -sunAzimuth * 0.8f, -fmaxf(0.18f, sunElevation), 0.55f });
+      Environment_SetSunDirection(sunDir);
+
+      // Dynamically calculate sunlight and ambient color based on elevation
+      float warmSunset = powf(1.0f - sunElevation, 2.0f);
+      unsigned char sunR = 255;
+      unsigned char sunG = (unsigned char)(240.0f - 85.0f * warmSunset);
+      unsigned char sunB = (unsigned char)(210.0f - 130.0f * warmSunset);
+      Environment_SetSunColor((Color){sunR, sunG, sunB, 255});
+      Environment_SetSunIntensity(1.4f + 1.6f * sunElevation);
+
+      unsigned char ambR = (unsigned char)(60.0f + 25.0f * sunElevation);
+      unsigned char ambG = (unsigned char)(75.0f + 25.0f * sunElevation);
+      unsigned char ambB = (unsigned char)(95.0f + 30.0f * sunElevation);
+      Environment_SetAmbientColor((Color){ambR, ambG, ambB, 255});
+    } else {
+      isDraggingSunSlider = false;
     }
   }
 
@@ -597,9 +649,38 @@ void DrawUIPanel(const UIPanelState *state) {
       Color col = isOver ? ColorBrightness(dummyBtns[i].col, 0.3f) : dummyBtns[i].col;
       DrawRectangleRounded(dummyBtns[i].rect, 0.2f, 10, col);
       DrawRectangleRoundedLines(dummyBtns[i].rect, 0.2f, 10, WHITE);
-      float tw = UITextWidth(dummyBtns[i].label, 12);
-      UIText(dummyBtns[i].label, dummyBtns[i].rect.x + (dummyBtns[i].rect.width - tw) / 2, dummyBtns[i].rect.y + 10, 12, WHITE);
+      float tw = UITextWidth(dummyBtns[i].label, 11);
+      UIText(dummyBtns[i].label, dummyBtns[i].rect.x + (dummyBtns[i].rect.width - tw) / 2, dummyBtns[i].rect.y + 10, 11, WHITE);
     }
+  }
+
+  // Vẽ thanh trượt điều khiển thời gian trong ngày (Mặt trời / Time of Day)
+  {
+    bool isOver = CheckCollisionPointRec(mousePos, sunTimeSlider);
+    DrawRectangleRounded(sunTimeSlider, 0.25f, 8, ColorAlpha(GetColor(0x181822FF), 0.88f));
+    DrawRectangleRoundedLines(sunTimeSlider, 0.25f, 8, isOver || isDraggingSunSlider ? GOLD : DARKGRAY);
+
+    // Track line
+    float trackX = sunTimeSlider.x + 8.0f;
+    float trackW = sunTimeSlider.width - 16.0f;
+    float trackY = sunTimeSlider.y + sunTimeSlider.height * 0.70f;
+    DrawLine((int)trackX, (int)trackY, (int)(trackX + trackW), (int)trackY, ColorAlpha(WHITE, 0.35f));
+
+    // Solar icon / knob
+    float knobX = trackX + sunTimeNorm * trackW;
+    DrawCircle((int)knobX, (int)trackY, 7.0f, GOLD);
+    DrawCircleLines((int)knobX, (int)trackY, 7.0f, WHITE);
+
+    // Sun time text label
+    const char *timeLabel = "DAWN";
+    if (sunTimeNorm > 0.18f && sunTimeNorm < 0.38f) timeLabel = "MORNING";
+    else if (sunTimeNorm >= 0.38f && sunTimeNorm < 0.62f) timeLabel = "NOON";
+    else if (sunTimeNorm >= 0.62f && sunTimeNorm < 0.82f) timeLabel = "AFTERNOON";
+    else if (sunTimeNorm >= 0.82f) timeLabel = "DUSK";
+
+    char sunText[48];
+    snprintf(sunText, sizeof(sunText), "SUN: %s (%.0f%%)", timeLabel, sunTimeNorm * 100.0f);
+    UIText(sunText, sunTimeSlider.x + 10.0f, sunTimeSlider.y + 4.0f, 11, isOver || isDraggingSunSlider ? YELLOW : LIGHTGRAY);
   }
 
   // Nếu bảng điều khiển đang đóng, không vẽ gì thêm

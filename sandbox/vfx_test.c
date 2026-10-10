@@ -26,6 +26,7 @@
 #include "core/map_manager.h"
 #include "core/wind/wind_system.h"
 #include "core/volumetric/volumetric_fog.h"
+#include "environment/environment_system.h"
 
 #define TEST_PATH_POINT_COUNT 16
 static Vector3 s_testPathPoints[TEST_PATH_POINT_COUNT];
@@ -1097,11 +1098,43 @@ int VFXTest_ConsumeCameraTiltStep(void)
     return step;
 }
 
+static float s_vfxSunTimeNorm = 0.35f;
+static bool  s_vfxDraggingSunSlider = false;
+
+static void VFXTest_ApplySunTime(float t)
+{
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    s_vfxSunTimeNorm = t;
+
+    float solarAngle = s_vfxSunTimeNorm * PI;
+    float sunElevation = sinf(solarAngle);
+    float sunAzimuth = cosf(solarAngle);
+    Vector3 sunDir = Vector3Normalize((Vector3){ -sunAzimuth * 0.8f, -fmaxf(0.18f, sunElevation), 0.55f });
+    Environment_SetSunDirection(sunDir);
+
+    float warmSunset = powf(1.0f - sunElevation, 2.0f);
+    unsigned char sunR = 255;
+    unsigned char sunG = (unsigned char)(240.0f - 85.0f * warmSunset);
+    unsigned char sunB = (unsigned char)(210.0f - 130.0f * warmSunset);
+    Environment_SetSunColor((Color){sunR, sunG, sunB, 255});
+    Environment_SetSunIntensity(1.4f + 1.6f * sunElevation);
+
+    unsigned char ambR = (unsigned char)(60.0f + 25.0f * sunElevation);
+    unsigned char ambG = (unsigned char)(75.0f + 25.0f * sunElevation);
+    unsigned char ambB = (unsigned char)(95.0f + 30.0f * sunElevation);
+    Environment_SetAmbientColor((Color){ambR, ambG, ambB, 255});
+}
+
 typedef struct VFXTest_UILayout {
-    Rectangle header, inspector, browser, help, metrics[3], cameraStatus;
+    Rectangle header, inspector, browser, help, metrics[3], cameraStatus, sunSlider;
     int inspectorRows, browserColumns, browserRows;
     float rowHeight, browserCellWidth;
 } VFXTest_UILayout;
+
+static Rectangle VFXTest_UIHeaderButton(VFXTest_UILayout ui, int index);
+static Rectangle VFXTest_UIFogButton(VFXTest_UILayout ui);
+static Rectangle VFXTest_UISunSlider(VFXTest_UILayout ui);
 
 static VFXTest_UILayout VFXTest_UIGetLayout(void)
 {
@@ -1117,12 +1150,17 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
     float statusBottom = top + 40.0f;
     if (w >= 1100.0f) {
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){178.0f + i * 76.0f, top, 76.0f, 40.0f};
-        ui.cameraStatus = (Rectangle){412.0f, top, w - 842.0f, 40.0f};
+        float sunSliderX = VFXTest_UIFogButton(ui).x - 160.0f;
+        float camRight = sunSliderX - 10.0f;
+        float camW = fmaxf(120.0f, camRight - 412.0f);
+        ui.cameraStatus = (Rectangle){412.0f, top, camW, 40.0f};
+        ui.sunSlider = (Rectangle){sunSliderX, top + 5.0f, 154.0f, 30.0f};
     } else {
         ui.header.height = 116.0f;
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){18.0f + i * ((w - 36.0f) / 3.0f), top + 40.0f, (w - 36.0f) / 3.0f, 36.0f};
         ui.cameraStatus = (Rectangle){18.0f, top + 76.0f, w - 36.0f, 36.0f};
         statusBottom = top + 116.0f;
+        ui.sunSlider = (Rectangle){18.0f, top + 40.0f, 140.0f, 30.0f};
     }
     float panelTop = fmaxf(176.0f, statusBottom + 40.0f);
     ui.rowHeight = 38.0f;
@@ -1174,6 +1212,15 @@ static Rectangle VFXTest_UIFogButton(VFXTest_UILayout ui)
                        VFXTest_UITiltButton(ui, -1).y, width, 30.0f};
 }
 
+static Rectangle VFXTest_UISunSlider(VFXTest_UILayout ui)
+{
+    if (GetScreenWidth() >= 1100)
+        return (Rectangle){VFXTest_UIFogButton(ui).x - 160.0f,
+                           ui.header.y + 5.0f, 154.0f, 30.0f};
+    return (Rectangle){VFXTest_UIFogButton(ui).x - 146.0f,
+                       VFXTest_UIFogButton(ui).y, 140.0f, 30.0f};
+}
+
 static Rectangle VFXTest_UIBrowserCell(VFXTest_UILayout ui, int visibleIndex)
 {
     return (Rectangle){ui.browser.x + 10.0f + (visibleIndex % ui.browserColumns) * ui.browserCellWidth,
@@ -1205,6 +1252,7 @@ bool VFXTest_IsPointerOverUI(void)
     Vector2 mouse = GetMousePosition();
     if (CheckCollisionPointRec(mouse, ui.header)) return true;
     if (CheckCollisionPointRec(mouse, ui.cameraStatus)) return true;
+    if (CheckCollisionPointRec(mouse, ui.sunSlider) || s_vfxDraggingSunSlider) return true;
     for (int i = 0; i < 3; ++i) if (CheckCollisionPointRec(mouse, ui.metrics[i])) return true;
     if (s_isPanelOpen || s_vfxHelpOpen) return true; /* Modal panels own their backdrop. */
     if (s_isPlayingMesh && s_inspectorParamCount > 0 && CheckCollisionPointRec(mouse, ui.inspector)) return true;
@@ -1303,6 +1351,24 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
     s_clickedOnUI = VFXTest_IsPointerOverUI();
     if (s_clickedOnUI && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) s_vfxPointerCaptured = true;
     bool back = false;
+
+    // Sun time slider interaction
+    Rectangle sunSlider = VFXTest_UISunSlider(ui);
+    Vector2 mousePos = GetMousePosition();
+    if (CheckCollisionPointRec(mousePos, sunSlider)) {
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            s_vfxDraggingSunSlider = true;
+        }
+    }
+    if (s_vfxDraggingSunSlider) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            float t = (mousePos.x - sunSlider.x) / sunSlider.width;
+            VFXTest_ApplySunTime(t);
+        } else {
+            s_vfxDraggingSunSlider = false;
+        }
+    }
+
     if (VFXTest_UIButtonReleased(VFXTest_UIFogButton(ui))) {
         FogRenderMode mode = Fog_GetRenderMode();
         Fog_SetRenderMode(mode == FOG_MODE_OFF ? FOG_MODE_HEIGHT :
@@ -1402,6 +1468,37 @@ static void VFXTest_UIDraw(void)
                            fogMode == FOG_MODE_HEIGHT ?
                            (ui.cameraStatus.width >= 440.0f || GetScreenWidth() >= 1100 ? "Fog: Height Map" : "Fog: Height") : "Fog: Raymarch";
     VFXTest_UIDrawButton(VFXTest_UIFogButton(ui), fogLabel, fogMode != FOG_MODE_OFF);
+
+    // Draw Sun Time Slider
+    {
+        Rectangle sunSlider = VFXTest_UISunSlider(ui);
+        bool isOver = CheckCollisionPointRec(GetMousePosition(), sunSlider);
+        DrawRectangleRounded(sunSlider, 0.2f, 4, (Color){24, 30, 39, 245});
+        DrawRectangleRoundedLines(sunSlider, 0.2f, 4, isOver || s_vfxDraggingSunSlider ? GOLD : (Color){75, 85, 97, 255});
+
+        // Track line
+        float trackX = sunSlider.x + 8.0f;
+        float trackW = sunSlider.width - 16.0f;
+        float trackY = sunSlider.y + sunSlider.height * 0.70f;
+        DrawLine((int)trackX, (int)trackY, (int)(trackX + trackW), (int)trackY, ColorAlpha(WHITE, 0.35f));
+
+        // Knob
+        float knobX = trackX + s_vfxSunTimeNorm * trackW;
+        DrawCircle((int)knobX, (int)trackY, 6.0f, GOLD);
+        DrawCircleLines((int)knobX, (int)trackY, 6.0f, WHITE);
+
+        // Sun label
+        const char *timeLabel = "DAWN";
+        if (s_vfxSunTimeNorm > 0.18f && s_vfxSunTimeNorm < 0.38f) timeLabel = "MORNING";
+        else if (s_vfxSunTimeNorm >= 0.38f && s_vfxSunTimeNorm < 0.62f) timeLabel = "NOON";
+        else if (s_vfxSunTimeNorm >= 0.62f && s_vfxSunTimeNorm < 0.82f) timeLabel = "AFTERNOON";
+        else if (s_vfxSunTimeNorm >= 0.82f) timeLabel = "DUSK";
+
+        char sunText[48];
+        snprintf(sunText, sizeof(sunText), "SUN: %s (%.0f%%)", timeLabel, s_vfxSunTimeNorm * 100.0f);
+        VFXTest_UIText(sunText, (Rectangle){sunSlider.x, sunSlider.y + 1.0f, sunSlider.width, 16.0f}, 11,
+                       isOver || s_vfxDraggingSunSlider ? YELLOW : LIGHTGRAY);
+    }
     const char *variant = VFXTest_UIActiveVariant();
     if (variant) VFXTest_UIText(TextFormat("%s   |   %s", variant,
                              VFXTest_IsNewFxNamed("GUIDED MOTION") ? "Shift+, / Shift+. preset" : "< / > preset"),
