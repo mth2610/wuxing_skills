@@ -22,6 +22,7 @@ out vec2 fragLakeCoord;
 out vec2 fragWorldXZ;
 out vec4 fragScreenPos;
 out float fragShoreFade;
+out float fragWaterDepth;
 
 float waves(vec2 p)
 {
@@ -55,6 +56,9 @@ void main()
         // Stream / strip: bank damping along width (Y in local UV)
         shoreFade = 1.0 - smoothstep(0.72, 0.98, abs(coord.y));
     }
+
+    if (u_waterShape == 3) shoreFade = smoothstep(0.0, 0.25, vertexTexCoord.x);
+    fragWaterDepth = max(0.0, vertexTexCoord.x);
 
     // In shallow water (<= 1.3m), wave amplitude naturally dampens at the shore
     float wave = waves(world.xz) * u_waveHeight * shoreFade;

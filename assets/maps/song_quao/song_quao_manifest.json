@@ -1,0 +1,76 @@
+{
+  "schema": 2,
+  "source": {
+    "crs_epsg": 32648,
+    "pixel_size_m": [
+      30.0,
+      30.0
+    ],
+    "origin": [
+      822083.6153323168,
+      1263765.590121801
+    ],
+    "pixel_is_area": true,
+    "nodata": -32768.0,
+    "shape": [
+      1155,
+      725
+    ],
+    "valid_area_m2": 278245800.0,
+    "path": "/Users/mth2610/Desktop/vfx/DEM_SongQuao.tif",
+    "sha256": "53273f3c251eae957a4306d30fa12cc40a29842437614d0a519ecefa11a45499",
+    "crop_pixels": [
+      0,
+      0,
+      725,
+      1155
+    ]
+  },
+  "game": {
+    "width_m": 188.21490467937608,
+    "depth_m": 300.0,
+    "grid": [
+      301,
+      189
+    ],
+    "height_range_m": 16,
+    "cliff_depth_m": 8,
+    "horizontal_scale": 0.008665511265164644,
+    "vertical_transform": "normalized elevation power 1.12",
+    "water_triangles": 9750
+  },
+  "inference": {
+    "lake": "inferred largest connected lowland plateau; unverified water extent",
+    "lake_source_level_m": 71.0,
+    "lake_source_area_m2": 3161700.0,
+    "geology": "unknown; exposed substrate and deposition are terrain proxies only",
+    "biology": "habitat suitability only; no surveyed species or land-cover input",
+    "drainage": "D8 after priority flood; raster boundary outlets may truncate upstream area",
+    "landform_classes": {
+      "0": "outside",
+      "1": "valley",
+      "2": "slope or plain",
+      "3": "ridge",
+      "4": "candidate lake"
+    },
+    "bathymetry": "procedural game-scale reconstruction; not measured lake depth"
+  },
+  "source_statistics": {
+    "elevation_min_m": 45.0,
+    "elevation_max_m": 1240.0,
+    "source_outlets": 88
+  },
+  "parameters": {
+    "max_dim": 300,
+    "height_range": 16,
+    "cliff_depth": 8,
+    "cliff_margin": 5,
+    "resolution_scale": 1.0,
+    "stream_ratio": 0.01
+  },
+  "metrics": {
+    "bake_seconds": 39.279348331,
+    "wet_nodes": 3026,
+    "lake_nodes": 180
+  }
+}

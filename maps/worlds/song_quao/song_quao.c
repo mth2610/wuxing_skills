@@ -7,6 +7,7 @@
 #include "maps/toolkit/prop_lit.h"
 #include "core/camera_context.h"
 #include "core/map_manager.h"
+#include "core/resource_manager.h"
 #include "core/volumetric/volumetric_fog.h"
 #include "raylib.h"
 #include "raymath.h"
@@ -53,11 +54,9 @@ static MapMeadowSurface s_meadow;
 static MapMeadowSurface s_reedMeadow;
 static MapFlowerField s_flowerField;
 static MapWaterSurface s_river;
-static MapWaterSurface s_riverSpline;
-static Vector3 s_riverPoints[SONG_QUAO_RIVER_WAYPOINT_COUNT];
-static float s_riverWidths[SONG_QUAO_RIVER_WAYPOINT_COUNT];
-static int s_activeRiverPointCount = 0;
-static float s_lakeWaterY = SONG_QUAO_LAKE_WATER_Y;
+static Image s_waterHeight;
+static MapEcology s_habitat;
+static int s_rockCount = 0;
 
 static int s_grassCount = 0;
 static int s_reedCount = 0;
@@ -73,59 +72,43 @@ static bool s_splatLoaded = false;
 static Color SampleSplat(float x, float z)
 {
     if (!s_splatLoaded) return (Color){255, 0, 0, 0};
-    int tx = (int)((x / MAP_WIDTH) * (float)s_splatImage.width);
-    int tz = (int)((z / MAP_DEPTH) * (float)s_splatImage.height);
+    int tx = (int)((x / MAP_WIDTH) * (float)(s_splatImage.width - 1) + 0.5f);
+    int tz = (int)((z / MAP_DEPTH) * (float)(s_splatImage.height - 1) + 0.5f);
     if (tx < 0) tx = 0; if (tx >= s_splatImage.width) tx = s_splatImage.width - 1;
     if (tz < 0) tz = 0; if (tz >= s_splatImage.height) tz = s_splatImage.height - 1;
     return GetImageColor(s_splatImage, tx, tz);
 }
 
-static bool IsInsideRiverChannel(float x, float z, float bufferMeters)
+// The bake and runtime use the same diagonal and encoded node heights.
+static float SampleWaterHeight(float x, float z)
 {
-    for (int i = 0; i < SONG_QUAO_RIVER_WAYPOINT_COUNT - 1; i++) {
-        float x1 = kSong_quaoRiverWaypoints[i].x, z1 = kSong_quaoRiverWaypoints[i].z;
-        float x2 = kSong_quaoRiverWaypoints[i+1].x, z2 = kSong_quaoRiverWaypoints[i+1].z;
-        float w = fmaxf(kSong_quaoRiverWaypoints[i].width, kSong_quaoRiverWaypoints[i+1].width) * 0.5f + bufferMeters;
-
-        float dx = x2 - x1, dz = z2 - z1;
-        float lenSq = dx * dx + dz * dz;
-        if (lenSq < 1e-4f) continue;
-        float t = fmaxf(0.0f, fminf(1.0f, ((x - x1) * dx + (z - z1) * dz) / lenSq));
-        float projX = x1 + t * dx, projZ = z1 + t * dz;
-        float distSq = (x - projX) * (x - projX) + (z - projZ) * (z - projZ);
-        if (distSq < w * w) return true;
-    }
-    return false;
+    if (!s_waterHeight.data || x < 0.0f || z < 0.0f || x > MAP_WIDTH || z > MAP_DEPTH)
+        return -CLIFF_DEPTH;
+    float fx = x / MAP_WIDTH * (float)(s_waterHeight.width - 1);
+    float fz = z / MAP_DEPTH * (float)(s_waterHeight.height - 1);
+    int ix = (int)fminf(floorf(fx), (float)(s_waterHeight.width - 2));
+    int iz = (int)fminf(floorf(fz), (float)(s_waterHeight.height - 2));
+    float tx = fx - (float)ix, tz = fz - (float)iz;
+    Color c00 = GetImageColor(s_waterHeight, ix, iz);
+    Color c10 = GetImageColor(s_waterHeight, ix + 1, iz);
+    Color c01 = GetImageColor(s_waterHeight, ix, iz + 1);
+    Color c11 = GetImageColor(s_waterHeight, ix + 1, iz + 1);
+    float h00 = (float)(c00.r * 256 + c00.g);
+    float h10 = (float)(c10.r * 256 + c10.g);
+    float h01 = (float)(c01.r * 256 + c01.g);
+    float h11 = (float)(c11.r * 256 + c11.g);
+    float code = tx + tz <= 1.0f ? h00 + tx * (h10 - h00) + tz * (h01 - h00)
+        : h11 + (1.0f - tx) * (h01 - h11) + (1.0f - tz) * (h10 - h11);
+    return code * ((CLIFF_DEPTH + SONG_QUAO_HEIGHT_RANGE) / 65535.0f) - CLIFF_DEPTH;
 }
 
 static float SongQuaoGrassDensity(float x, float z, void *userData)
 {
     (void)userData;
-    // 1. Lake water absolute clearance (radial basin)
-    float dxLake = (x - SONG_QUAO_LAKE_CENTER_X) / SONG_QUAO_LAKE_RADIUS_X;
-    float dzLake = (z - SONG_QUAO_LAKE_CENTER_Z) / SONG_QUAO_LAKE_RADIUS_Z;
-    if (dxLake * dxLake + dzLake * dzLake <= 1.08f * 1.08f) {
-        return 0.0f; // Completely suppress grass submerged in lake basin
-    }
-
-    // 2. River channel corridor clearance
-    if (IsInsideRiverChannel(x, z, 0.45f)) {
-        return 0.0f; // Suppress grass inside river bed and water margins
-    }
-
-    // 3. Ground elevation test against lake waterline
     float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
-    if (gy <= s_lakeWaterY + 0.12f && (dxLake * dxLake + dzLake * dzLake <= 1.35f * 1.35f)) {
-        return 0.0f; // Suppress grass in wet shoreline zones below waterline
-    }
-
-    Color splat = SampleSplat(x, z);
-    // Grass probability from channel R, suppressed if exposed rock or stream mask
-    float grass = (float)splat.r / 255.0f;
-    float rock = (float)splat.g / 255.0f;
-    float water = (float)splat.a / 255.0f;
-    float density = grass * (1.0f - rock) * (1.0f - water * 0.95f);
-    return fmaxf(0.0f, fminf(1.0f, density));
+    if (gy < -0.25f || SampleWaterHeight(x, z) > gy - 0.025f) return 0.0f;
+    // R is already the final coverage probability; do not suppress wetness twice.
+    return (float)SampleSplat(x, z).r / 255.0f;
 }
 
 static void BuildMeadowLayout(void)
@@ -145,12 +128,9 @@ static void BuildMeadowLayout(void)
 
     for (int i = 0; i < s_grassCount; i++) {
         MapMeadowPlacement *clump = &s_grassPlacements[i];
-        float cx = clump->position.x;
-        float cz = clump->position.z;
-        float hash = sinf((float)(i * 47)) * 43758.5453f;
-        clump->rotationDeg = (hash - floorf(hash)) * 360.0f;
-        clump->height = 0.45f + 0.25f * sinf(cx * 0.05f + cz * 0.05f);
-        clump->radius = 0.24f + 0.06f * cosf(cx * 0.08f - cz * 0.06f);
+        Color splat = SampleSplat(clump->position.x, clump->position.z);
+        float vigor = (float)splat.r / 255.0f;
+        clump->height *= 0.75f + 0.35f * vigor;
     }
 }
 
@@ -176,10 +156,9 @@ static void BuildReedsAndFlowers(void)
         if (normal.y < 0.70f || pos.y < -CLIFF_DEPTH + 0.45f) continue;
 
         // Reeds in wetland / stream banks (Channel A > 80), but strictly above waterline
-        float dxLake = (rx - SONG_QUAO_LAKE_CENTER_X) / SONG_QUAO_LAKE_RADIUS_X;
-        float dzLake = (rz - SONG_QUAO_LAKE_CENTER_Z) / SONG_QUAO_LAKE_RADIUS_Z;
-        bool inDeepWater = (dxLake * dxLake + dzLake * dzLake < 1.02f) || (pos.y < s_lakeWaterY);
-        bool inRiverBed = IsInsideRiverChannel(rx, rz, -0.15f);
+        float waterY = SampleWaterHeight(rx, rz);
+        bool inDeepWater = waterY >= pos.y - 0.015f;
+        bool inRiverBed = inDeepWater;
 
         if (splat.a > 80 && s_reedCount < REED_COUNT && !inDeepWater && !inRiverBed) {
             float rad = 0.16f + 0.08f * Random01(&rng);
@@ -219,6 +198,7 @@ static void BuildRockPlacements(void)
 {
     unsigned int rng = 0x826412u;
     int placed = 0;
+    s_rockCount = 0;
     // Ecology-driven rock placement: focus rocks on rock scree (Channel G > 70)
     // or near shoreline/riverbanks (Channel A > 60), avoiding open pure grass meadows
     for (int attempts = 0; attempts < 1500 && placed < ROCK_COUNT; attempts++) {
@@ -227,11 +207,22 @@ static void BuildRockPlacements(void)
         Color splat = SampleSplat(rx, rz);
         Vector3 pos, normal;
         if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, rx, rz, &pos, &normal)) continue;
-        if (pos.y < -CLIFF_DEPTH + 0.5f) continue;
+        if (pos.y < -0.25f || SampleWaterHeight(rx, rz) > pos.y) continue;
 
         // Rock probability high if splat.g is high or near water
         bool isRockZone = (splat.g > 70) || (splat.a > 60 && Random01(&rng) < 0.65f) || (normal.y < 0.78f);
         if (!isRockZone && Random01(&rng) > 0.12f) continue;
+
+        // Reject cliff-adjacent footprints, not just the centre sample.
+        if (normal.y < 0.85f) continue;
+        bool supported = true;
+        const Vector2 probes[4] = {{2,0},{-2,0},{0,2},{0,-2}};
+        for (int j = 0; j < 4; j++) {
+            float edgeY = MapProp_SampleGroundHeight(&s_ground, kMapCenter,
+                rx + probes[j].x, rz + probes[j].y);
+            if (edgeY < -0.25f || fabsf(edgeY - pos.y) > 0.75f) supported = false;
+        }
+        if (!supported) continue;
 
         float rScale = 0.75f + 1.35f * Random01(&rng);
         float hScale = 0.60f + 0.85f * Random01(&rng);
@@ -243,6 +234,7 @@ static void BuildRockPlacements(void)
             .rotationDeg = rot
         };
     }
+    s_rockCount = placed;
 }
 
 static void DrawSongQuaoShadowCasters(Shader depthShader, void *userData)
@@ -264,7 +256,7 @@ static void CaptureSongQuaoStaticShadows(void)
     if (!EnvShadow_IsCapturing())
         return;
     Shader depthShader = EnvShadow_GetDepthShader();
-    MapProp_DrawRockShadowCasters(&s_rocks, s_rockPlacements, ROCK_COUNT, depthShader);
+    MapProp_DrawRockShadowCasters(&s_rocks, s_rockPlacements, s_rockCount, depthShader);
     EnvShadow_EndStaticCapture();
 }
 
@@ -272,8 +264,8 @@ void InitSongQuaoMap(void)
 {
     Environment_SetTimeOfDaySpeed(0.0f);
     Environment_SetAmbientColor((Color){88, 102, 128, 255}); // Cool sky fill preserves shaded canopy volume
-    Environment_SetSunColor((Color){255, 175, 95, 255});
-    Environment_SetSunIntensity(2.8f);
+    Environment_SetSunColor((Color){255, 224, 185, 255});
+    Environment_SetSunIntensity(2.2f);
     Environment_SetSunDirection(Vector3Normalize((Vector3){-0.25f, -0.45f, 0.85f}));
     Environment_SetShadowColor((Color){28, 36, 48, 120});
 
@@ -316,33 +308,22 @@ void InitSongQuaoMap(void)
     s_splatImage = LoadImage("assets/maps/song_quao/song_quao_ecology_splat.png");
     s_splatLoaded = (s_splatImage.data != NULL);
 
+    s_waterHeight = LoadImage("assets/maps/song_quao/song_quao_water_height.png");
+
     // Heightmap terrain using universal heightmap loader: total range = CLIFF_DEPTH + HEIGHT_RANGE
-    s_ground = MapProp_CreateGroundHeightmapEx(
-        "assets/maps/song_quao/song_quao_island_heightmap.png", MAP_WIDTH, MAP_DEPTH,
+    s_ground = MapProp_CreateGroundHeightfield16(
+        "assets/maps/song_quao/song_quao_heightfield.png", MAP_WIDTH, MAP_DEPTH,
         CLIFF_DEPTH + SONG_QUAO_HEIGHT_RANGE, CLIFF_DEPTH, 3.6f, "assets/maps/song_quao/song_quao_ecology_splat.png",
         "assets/textures/verdant_meadow_substrate_diffuse.png", "assets/textures/dirt_diffuse.png");
-    // Valley stream corridor path segments flowing from upper north basin down to Song Quao Lake
-    static const Vector4 kValleyPathSegs[] = {
-        {86.70f, 83.41f, 89.41f, 91.48f},
-        {89.41f, 91.48f, 94.83f, 99.55f},
-        {94.83f, 99.55f, 96.19f, 108.97f},
-        {96.19f, 108.97f, 108.50f, 126.20f},
-        {108.50f, 126.20f, 125.00f, 152.00f},
-        {125.00f, 152.00f, 145.00f, 185.00f},
-        {145.00f, 185.00f, 158.00f, 210.00f},
-        {158.00f, 210.00f, SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z},
-    };
-    int valleyPathSegCount = (int)(sizeof(kValleyPathSegs) / sizeof(kValleyPathSegs[0]));
-
-    // Configure lake basin habitat blending for ground shader
-    Vector4 lakeParams = {SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z,
-                          SONG_QUAO_LAKE_RADIUS_X, SONG_QUAO_LAKE_RADIUS_Z};
-    MapProp_SetGroundHabitat(&s_ground, kValleyPathSegs, valleyPathSegCount, lakeParams);
-
-    // Sample ground height inside lake basin floor to position the water surface naturally
-    float lakeGroundY = MapProp_SampleGroundHeight(&s_ground, kMapCenter, SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z);
-    float lakeWaterY = lakeGroundY + 0.55f;
-    s_lakeWaterY = lakeWaterY;
+    s_habitat.habitatTexture = ResourceManager_LoadTextureVariant(
+        "assets/maps/song_quao/song_quao_habitat.png", true,
+        TEXTURE_FILTER_TRILINEAR, TEXTURE_WRAP_CLAMP);
+    s_habitat.distanceTexture = ResourceManager_LoadTextureVariant(
+        "assets/maps/song_quao/song_quao_habitat_distance.png", false,
+        TEXTURE_FILTER_BILINEAR, TEXTURE_WRAP_CLAMP);
+    s_habitat.rect = (Vector4){0, 0, MAP_WIDTH, MAP_DEPTH};
+    s_habitat.ready = s_habitat.habitatTexture.id > 0 && s_habitat.distanceTexture.id > 0;
+    MapProp_SetGroundEcology(&s_ground, &s_habitat);
 
     MapProp_SetGroundTint(&s_ground, (Color){62, 88, 45, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
@@ -397,76 +378,20 @@ void InitSongQuaoMap(void)
 
     BuildRockPlacements();
 
-    // Song Quao Reservoir water surface in lake basin
-    Vector3 lakePos = {SONG_QUAO_LAKE_CENTER_X, lakeWaterY, SONG_QUAO_LAKE_CENTER_Z};
-    s_river = MapProp_CreateWaterSurface((MapWaterConfig){
-        .shape = WATER_SHAPE_RADIAL,
-        .ecosystem = WATER_ECO_ALPINE_STREAM,
-        .center = lakePos,
-        .radiusX = SONG_QUAO_LAKE_RADIUS_X, .radiusZ = SONG_QUAO_LAKE_RADIUS_Z,
-        .bankWidth = 0.85f,
-        .bankGroundY = lakeGroundY,
-        .waveHeight = 0.038f, .waveScale = 1.15f, .waveSpeed = 0.65f,
-        .detailScale = 0.085f, .detailStrength = 0.22f,
-        .maxDepth = 1.35f,
-        .absorption = {0.65f, 0.18f, 0.04f},
-        .scatterColor = {0.15f, 0.65f, 0.70f},
-        .scatterCoeff = 0.42f,
-        .causticsStrength = 0.85f, .causticsScale = 1.35f,
-        .foamThreshold = 0.15f,
-        .segments = 128, .rings = 32, .seed = 7491u,
-        .deepColor = {10, 42, 62, 255}, .shallowColor = {42, 138, 122, 235},
-        .foamColor = {230, 245, 238, 220},
-        .bankInnerColor = {62, 58, 44, 255}, .bankOuterColor = {55, 75, 42, 255},
-    });
-
-    // Natural continuous sloped river stream ribbon from mountain source down to reservoir
-    int validRiverCount = 0;
-    for (int i = 0; i < SONG_QUAO_RIVER_WAYPOINT_COUNT; i++) {
-        float wx = kSong_quaoRiverWaypoints[i].x;
-        float wz = kSong_quaoRiverWaypoints[i].z;
-        float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, wx, wz);
-
-        // Stop river ribbon before it reaches the steep perimeter cliff edge falloff
-        if (gy < -1.50f) break;
-
-        float wy = gy + 0.18f;
-
-        // Smoothly blend river mouth into lake reservoir water level
-        float dLake = hypotf(wx - SONG_QUAO_LAKE_CENTER_X, wz - SONG_QUAO_LAKE_CENTER_Z);
-        if (dLake < SONG_QUAO_LAKE_RADIUS_X * 1.25f) {
-            float blend = fmaxf(0.0f, (dLake - SONG_QUAO_LAKE_RADIUS_X * 0.75f) / (SONG_QUAO_LAKE_RADIUS_X * 0.50f));
-            wy = lakeWaterY * (1.0f - blend) + wy * blend;
-        }
-
-        s_riverPoints[validRiverCount] = (Vector3){wx, wy, wz};
-        s_riverWidths[validRiverCount] = kSong_quaoRiverWaypoints[i].width;
-        validRiverCount++;
-    }
-    s_activeRiverPointCount = validRiverCount;
-
-    s_riverSpline = MapProp_CreateWaterSpline(
-        s_riverPoints, s_riverWidths, s_activeRiverPointCount, (MapWaterConfig){
-            .ecosystem = WATER_ECO_ALPINE_STREAM,
-            .waveHeight = 0.024f, .waveScale = 1.45f, .waveSpeed = 1.25f,
-            .detailScale = 0.12f, .detailStrength = 0.28f,
-            .maxDepth = 0.65f,
-            .absorption = {0.65f, 0.18f, 0.04f},
-            .scatterColor = {0.15f, 0.65f, 0.70f},
-            .scatterCoeff = 0.35f,
-            .causticsStrength = 0.65f, .causticsScale = 1.55f,
-            .foamThreshold = 0.12f,
-            .deepColor = {14, 48, 68, 255}, .shallowColor = {48, 145, 130, 220},
-            .foamColor = {235, 248, 242, 210},
+    // One terrain-clipped surface for connected lake and all stream branches.
+    s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
+        (MapWaterConfig){
+            .ecosystem = WATER_ECO_CUSTOM,
+            .radiusX = MAP_WIDTH * 0.5f, .radiusZ = MAP_DEPTH * 0.5f,
+            .waveHeight = 0.024f, .waveScale = 1.15f, .waveSpeed = 0.65f,
+            .detailScale = 0.085f, .detailStrength = 0.16f,
+            .maxDepth = 1.5f, .absorption = {0.65f, 0.30f, 0.16f},
+            .scatterColor = {0.13f, 0.24f, 0.18f}, .scatterCoeff = 0.24f,
+            .causticsStrength = 0.32f, .causticsScale = 1.35f,
+            .foamThreshold = 0.08f,
+            .deepColor = {18, 48, 46, 255}, .shallowColor = {76, 100, 72, 255},
+            .foamColor = {215, 227, 216, 255},
         });
-
-    for (int i = 0; i < ROCK_COUNT; i++) {
-        float gy = GetGroundHeightSongQuaoMap(s_rockPlacements[i].position.x, s_rockPlacements[i].position.z);
-        if (s_rockPlacements[i].position.y < lakeWaterY) {
-            MapProp_AddWaterObstacle(&s_river, s_rockPlacements[i].position,
-                                     s_rockPlacements[i].radiusScale * 0.92f, 0.75f);
-        }
-    }
 
     EnvShadow_SetFocus(kMapCenter, 20.0f);
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);
@@ -499,7 +424,7 @@ void DrawSongQuaoMap(void)
     if (!s_ready) return;
     PropLit_UpdateLighting();
     MapProp_DrawGround(&s_ground, kMapCenter);
-    MapProp_DrawRocks(&s_rocks, s_rockPlacements, ROCK_COUNT, true);
+    MapProp_DrawRocks(&s_rocks, s_rockPlacements, s_rockCount, true);
     MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
     MapProp_DrawSkyDome(&s_sky);
     MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
@@ -512,8 +437,6 @@ void DrawSongQuaoMap(void)
 void DrawTransparentSongQuaoMap(void)
 {
     if (!s_ready) return;
-    // Draw sloped river spline ribbon
-    MapProp_DrawWaterOverlay(&s_riverSpline, s_time);
     // Draw lake reservoir surface
     MapProp_DrawWaterOverlay(&s_river, s_time);
     MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
@@ -528,7 +451,6 @@ void UnloadSongQuaoMap(void)
     Environment_SetCloudShadowConfig(NULL);
     VolumetricFog_SetDistantCoverage(1.0f);
 
-    MapProp_UnloadWaterSurface(&s_riverSpline);
     MapProp_UnloadWaterSurface(&s_river);
     if (s_flowerCount > 0) MapProp_UnloadFlowerField(&s_flowerField);
     if (s_reedCount > 0) MapProp_UnloadMeadow(&s_reedMeadow);
@@ -537,6 +459,8 @@ void UnloadSongQuaoMap(void)
     MapProp_UnloadRocks(&s_rocks);
     MapProp_UnloadSkyDome(&s_sky);
     MapProp_UnloadGround(&s_ground);
+    if (s_waterHeight.data) { UnloadImage(s_waterHeight); s_waterHeight = (Image){0}; }
+    s_habitat = (MapEcology){0}; // ResourceManager owns the two textures.
     if (s_splatLoaded) {
         UnloadImage(s_splatImage);
         s_splatLoaded = false;
@@ -581,38 +505,13 @@ bool SampleGroundSurfaceSongQuaoMap(float x, float z, Vector3 *outPosition, Vect
 
 bool GetWaterInfoSongQuaoMap(float x, float z, float *outSurfaceY, float *outWaterDepth)
 {
+    if (!s_ready || x < 0 || z < 0 || x > MAP_WIDTH || z > MAP_DEPTH) return false;
     float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
-
-    // 1. Check Lake Reservoir
-    float surfaceY = s_river.config.center.y;
-    float dxLake = (x - SONG_QUAO_LAKE_CENTER_X) / SONG_QUAO_LAKE_RADIUS_X;
-    float dzLake = (z - SONG_QUAO_LAKE_CENTER_Z) / SONG_QUAO_LAKE_RADIUS_Z;
-    if (dxLake * dxLake + dzLake * dzLake <= 1.25f * 1.25f && gy < surfaceY) {
-        if (outSurfaceY) *outSurfaceY = surfaceY;
-        if (outWaterDepth) *outWaterDepth = surfaceY - gy;
-        return true;
-    }
-
-    // 2. Check Sloped River Channel
-    int riverSegs = s_activeRiverPointCount > 1 ? s_activeRiverPointCount - 1 : 0;
-    for (int i = 0; i < riverSegs; i++) {
-        float x1 = s_riverPoints[i].x, z1 = s_riverPoints[i].z;
-        float x2 = s_riverPoints[i+1].x, z2 = s_riverPoints[i+1].z;
-        float w = fmaxf(s_riverWidths[i], s_riverWidths[i+1]) * 0.5f;
-        float dx = x2 - x1, dz = z2 - z1;
-        float lenSq = dx * dx + dz * dz;
-        if (lenSq < 1e-4f) continue;
-        float t = fmaxf(0.0f, fminf(1.0f, ((x - x1) * dx + (z - z1) * dz) / lenSq));
-        float px = x1 + t * dx, pz = z1 + t * dz;
-        float distSq = (x - px) * (x - px) + (z - pz) * (z - pz);
-        if (distSq <= w * w) {
-            float segWaterY = s_riverPoints[i].y * (1.0f - t) + s_riverPoints[i+1].y * t;
-            if (outSurfaceY) *outSurfaceY = segWaterY;
-            if (outWaterDepth) *outWaterDepth = fmaxf(0.05f, segWaterY - gy);
-            return true;
-        }
-    }
-    return false;
+    float surfaceY = SampleWaterHeight(x, z);
+    if (surfaceY <= gy + 0.005f) return false;
+    if (outSurfaceY) *outSurfaceY = surfaceY;
+    if (outWaterDepth) *outWaterDepth = surfaceY - gy;
+    return true;
 }
 
 void SetWaterInteractorSongQuaoMap(Vector3 position, Vector3 velocity, float radius)

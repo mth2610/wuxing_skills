@@ -1,16 +1,8 @@
 #!/usr/bin/env python3
-"""
-maps/pipeline/dem_pipeline.py
+"""Projected DEM bake: source metrics, game terrain, hydrology and habitat proxies.
 
-Modular, Universal DEM-to-Island Pipeline for Wuxing Skills (C/Raylib 60 FPS Engine).
-Processes any raw GeoTIFF DEM (tiled/stripped, integer/float) into a full set of
-game-ready assets and C headers:
-  1. Heightmap PNG (with floating island perimeter abyss falloff).
-  2. Ecology Splatmap PNG (RGBA: Meadow, Rock, Flowers, Water/Wetlands).
-  3. Stream network mask PNG and vector centerline coordinates.
-  4. C Metadata header ([prefix]_generated_meta.h) for zero-boilerplate map instantiation.
-
-Zero external heavy dependencies: Pure Python 3 + NumPy + Zlib built-in.
+Python + NumPy only. Geology, vegetation and bathymetry inferred from terrain
+are explicitly distinguished from observations in the generated manifest.
 """
 
 import sys
@@ -59,95 +51,15 @@ def write_png(filename, img_array, color_type=0, bit_depth=8):
         f.write(idat)
         f.write(iend)
 
-# --- 2. Universal GeoTIFF Reader ---
+# GeoTIFF georeferencing and NoData are part of the input contract.
+try:
+    from .georaster import read_dem
+except ImportError:
+    from georaster import read_dem
+
+
 def read_geotiff(dem_path):
-    """Reads TIFF directory and raster tiles/strips supporting 16-bit and 32-bit formats."""
-    with open(dem_path, "rb") as f:
-        header = f.read(8)
-        byte_order_mark, magic, ifd_offset = struct.unpack("<2sHI", header)
-        endian = "<" if byte_order_mark == b"II" else ">"
-        
-        f.seek(ifd_offset)
-        num_entries = struct.unpack(f"{endian}H", f.read(2))[0]
-        
-        tags = {}
-        for _ in range(num_entries):
-            entry = f.read(12)
-            tag, typ, count, val_or_off = struct.unpack(f"{endian}HHI4s", entry)
-            tags[tag] = (typ, count, val_or_off)
-            
-        def read_tag_val(tag_tuple):
-            typ, count, raw = tag_tuple
-            if typ in (3, 4): # SHORT or LONG
-                is_short = (typ == 3)
-                fmt = f"{endian}H" if is_short else f"{endian}I"
-                b_size = 2 if is_short else 4
-                if count == 1:
-                    return struct.unpack(fmt, raw[:b_size])[0]
-                else:
-                    off = struct.unpack(f"{endian}I", raw)[0]
-                    cur = f.tell()
-                    f.seek(off)
-                    vals = struct.unpack(f"{endian}{count}{'H' if is_short else 'I'}", f.read(b_size * count))
-                    f.seek(cur)
-                    return vals
-            return 0
-
-        width = read_tag_val(tags[256])
-        height = read_tag_val(tags[257])
-        bits_per_sample = read_tag_val(tags[258])
-        sample_format = read_tag_val(tags.get(339, (3, 1, struct.pack(f"{endian}H", 1))))
-
-        if bits_per_sample == 16:
-            dtype = f"{endian}i2" if sample_format == 2 else f"{endian}u2"
-        elif bits_per_sample == 32:
-            dtype = f"{endian}f4" if sample_format == 3 else (f"{endian}i4" if sample_format == 2 else f"{endian}u4")
-        else:
-            raise ValueError(f"Unsupported bit depth: {bits_per_sample}")
-
-        dem = np.zeros((height, width), dtype=np.float32)
-
-        # Handle Tiled TIFF
-        if 322 in tags and 323 in tags:
-            tile_w = read_tag_val(tags[322])
-            tile_h = read_tag_val(tags[323])
-            tile_offsets = read_tag_val(tags[324])
-            tile_byte_counts = read_tag_val(tags[325])
-            
-            tiles_across = (width + tile_w - 1) // tile_w
-            tiles_down = (height + tile_h - 1) // tile_h
-            
-            for ty in range(tiles_down):
-                for tx in range(tiles_across):
-                    t_idx = ty * tiles_across + tx
-                    off = tile_offsets[t_idx] if isinstance(tile_offsets, tuple) else tile_offsets
-                    b_cnt = tile_byte_counts[t_idx] if isinstance(tile_byte_counts, tuple) else tile_byte_counts
-                    f.seek(off)
-                    tile_raw = f.read(b_cnt)
-                    tile_arr = np.frombuffer(tile_raw, dtype=dtype).reshape((tile_h, tile_w)).astype(np.float32)
-                    
-                    x0, x1 = tx * tile_w, min((tx + 1) * tile_w, width)
-                    y0, y1 = ty * tile_h, min((ty + 1) * tile_h, height)
-                    dem[y0:y1, x0:x1] = tile_arr[0:(y1 - y0), 0:(x1 - x0)]
-
-        # Handle Striped TIFF
-        elif 273 in tags:
-            strip_offsets = read_tag_val(tags[273])
-            rows_per_strip = read_tag_val(tags.get(278, (4, 1, struct.pack(f"{endian}I", height))))
-            strip_byte_counts = read_tag_val(tags[279])
-            num_strips = len(strip_offsets) if isinstance(strip_offsets, tuple) else 1
-
-            for s_idx in range(num_strips):
-                off = strip_offsets[s_idx] if isinstance(strip_offsets, tuple) else strip_offsets
-                b_cnt = strip_byte_counts[s_idx] if isinstance(strip_byte_counts, tuple) else strip_byte_counts
-                f.seek(off)
-                s_raw = f.read(b_cnt)
-                y0 = s_idx * rows_per_strip
-                y1 = min(y0 + rows_per_strip, height)
-                s_arr = np.frombuffer(s_raw, dtype=dtype).reshape((y1 - y0, width)).astype(np.float32)
-                dem[y0:y1, 0:width] = s_arr
-
-        return dem
+    return read_dem(dem_path)[0]
 
 # --- 3. Bilinear Grid Resampler ---
 def resample_grid(src, dst_h, dst_w):
@@ -191,7 +103,7 @@ def priority_flood(elevation, valid_mask):
     eliminating artificial sinks without iterative heuristics.
     """
     h, w = elevation.shape
-    dem = elevation.copy()
+    dem = elevation.astype(np.float64).copy()
     dem[~valid_mask] = -1e9
 
     pq = []
@@ -218,38 +130,38 @@ def priority_flood(elevation, valid_mask):
             nr, nc = r + dy[i], c + dx[i]
             if 0 <= nr < h and 0 <= nc < w and valid_mask[nr, nc] and not visited[nr, nc]:
                 visited[nr, nc] = True
-                if dem[nr, nc] < z:
-                    dem[nr, nc] = z + 1e-4  # Elevate sink to spillover threshold
+                if dem[nr, nc] <= z:
+                    dem[nr, nc] = np.nextafter(z, np.inf)  # Elevate sink to spillover threshold
                 heapq.heappush(pq, (float(dem[nr, nc]), nr, nc))
 
     return dem
 
-def compute_d8_flow(elevation, valid_mask):
+def compute_d8_flow(elevation, valid_mask, cell_x=1.0, cell_y=1.0):
     """Computes D8 steepest descent direction and continuous flow accumulation using Priority-Flood."""
     dem_flow = priority_flood(elevation, valid_mask)
     h, w = dem_flow.shape
     dy = np.array([0, -1, -1, -1,  0,  1, 1, 1])
     dx = np.array([1,  1,  0, -1, -1, -1, 0, 1])
-    dist = np.array([1.0, 1.414, 1.0, 1.414, 1.0, 1.414, 1.0, 1.414])
+    dist = np.hypot(dx * cell_x, dy * cell_y)
 
     flow_dir = np.full((h, w), -1, dtype=np.int8)
     elev_copy = dem_flow.copy()
     elev_copy[~valid_mask] = 1e9
 
     elev_padded = np.pad(elev_copy, 1, mode='edge')
-    max_slope = np.zeros((h, w), dtype=np.float32)
+    max_slope = np.zeros((h, w), dtype=np.float64)
     center = elev_padded[1:-1, 1:-1]
 
     for i in range(8):
         neighbor = elev_padded[1+dy[i]:1+dy[i]+h, 1+dx[i]:1+dx[i]+w]
         drop = center - neighbor
         slope = drop / dist[i]
-        steeper = (slope > max_slope) & (drop > 0)
+        steeper = (slope > max_slope) & (drop > 0) & valid_mask
         max_slope[steeper] = slope[steeper]
         flow_dir[steeper] = i
 
     flat_indices = np.argsort(-dem_flow.ravel())
-    accum = np.ones((h, w), dtype=np.float32)
+    accum = np.ones((h, w), dtype=np.float64)
     accum[~valid_mask] = 0.0
 
     for idx in flat_indices:
@@ -265,349 +177,292 @@ def compute_d8_flow(elevation, valid_mask):
 
     return flow_dir, accum, dem_flow
 
-# --- 5. Main Unified Pipeline Function ---
+
+def largest_component(mask):
+    """Four-connected footprint; isolated flats must not become one giant lake."""
+    seen = np.zeros_like(mask)
+    best = []
+    h, w = mask.shape
+    for r, c in zip(*np.where(mask)):
+        if seen[r, c]:
+            continue
+        todo = [(r, c)]
+        seen[r, c] = True
+        for y, x in todo:
+            for yy, xx in ((y-1,x), (y+1,x), (y,x-1), (y,x+1)):
+                if 0 <= yy < h and 0 <= xx < w and mask[yy,xx] and not seen[yy,xx]:
+                    seen[yy,xx] = True
+                    todo.append((yy,xx))
+        if len(todo) > len(best):
+            best = todo
+    result = np.zeros_like(mask)
+    if best:
+        yy, xx = np.array(best).T
+        result[yy, xx] = True
+    return result
+
+
+def normalized_smooth(values, valid, sigma):
+    return gaussian_filter_2d(np.where(valid, values, 0), sigma) / np.maximum(
+        gaussian_filter_2d(valid.astype(float), sigma), 1e-12)
+
+
+def distance_inside(mask, step_x, step_y):
+    """Eight-neighbor metric distance to dry/invalid nodes, including raster edge."""
+    h, w = mask.shape
+    dist = np.where(mask, np.inf, 0.0)
+    queue = []
+    for y, x in zip(*np.where(mask)):
+        if y == 0 or x == 0 or y == h-1 or x == w-1:
+            dist[y,x] = min(step_x, step_y)
+            heapq.heappush(queue, (dist[y,x], y, x))
+        elif not (mask[y-1,x] and mask[y+1,x] and mask[y,x-1] and mask[y,x+1]):
+            dist[y,x] = min(step_x if not (mask[y,x-1] and mask[y,x+1]) else np.inf,
+                            step_y if not (mask[y-1,x] and mask[y+1,x]) else np.inf)
+            heapq.heappush(queue, (dist[y,x], y, x))
+    neighbors = [(dy,dx,np.hypot(dx*step_x,dy*step_y)) for dy in (-1,0,1) for dx in (-1,0,1) if dx or dy]
+    while queue:
+        d,y,x = heapq.heappop(queue)
+        if d != dist[y,x]:
+            continue
+        for dy,dx,step in neighbors:
+            yy,xx=y+dy,x+dx
+            if 0<=yy<h and 0<=xx<w and mask[yy,xx] and d+step<dist[yy,xx]:
+                dist[yy,xx]=d+step
+                heapq.heappush(queue,(d+step,yy,xx))
+    return dist
+
+
+def write_water_mesh(path, ground, surface, sx, sz):
+    """Clip the terrain's two triangles per cell to positive water depth.
+
+    UV.x carries vertical depth in metres, independent of camera/depth buffer.
+    OBJ vertices are world-space. Shore intersections have exactly zero depth.
+    """
+    h,w=ground.shape
+    count=0
+    with open(path,'w') as f:
+        f.write('# DEM terrain water; vt.x = depth metres\n')
+        for r in range(h-1):
+            for c in range(w-1):
+                nodes=[(r,c),(r+1,c),(r,c+1),(r+1,c+1)]
+                verts=[np.array([x*sx,surface[y,x],y*sz,surface[y,x]-ground[y,x]]) for y,x in nodes]
+                for ids in ((0,1,2),(2,1,3)):
+                    polygon=[]
+                    for a,b in zip(ids,(ids[1],ids[2],ids[0])):
+                        va,vb=verts[a],verts[b]
+                        if va[3]>0: polygon.append(va)
+                        if (va[3]>0)!=(vb[3]>0):
+                            t=va[3]/(va[3]-vb[3])
+                            v=va+(vb-va)*t; v[3]=0
+                            polygon.append(v)
+                    for i in range(1,len(polygon)-1):
+                        for v in (polygon[0],polygon[i],polygon[i+1]):
+                            f.write(f'v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\nvt {max(0,v[3]):.6f} 0\n')
+                        f.write(f'f {count+1}/{count+1} {count+2}/{count+2} {count+3}/{count+3}\n')
+                        count+=3
+    return count//3
+
+
 def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
-                cliff_margin=5.0, res_scale=0.75, stream_ratio=0.003,
-                prefix="map", out_dir="assets/maps"):
-    print(f"=== [DEM PIPELINE] Processing {dem_path} ===")
-    dem_raw = read_geotiff(dem_path)
-    h_orig, w_orig = dem_raw.shape
-    
-    valid_mask_orig = (dem_raw > -1000.0) & (dem_raw < 10000.0)
-    ys, xs = np.where(valid_mask_orig)
-    if len(xs) == 0:
-        raise ValueError("No valid elevation data found in DEM!")
-
-    min_x, max_x = xs.min(), xs.max()
-    min_y, max_y = ys.min(), ys.max()
-    crop_w = max_x - min_x + 1
-    crop_h = max_y - min_y + 1
-    print(f"[*] Watershed crop: {crop_w}x{crop_h} (from {w_orig}x{h_orig})")
-
-    dem_cropped = dem_raw[min_y:max_y+1, min_x:max_x+1]
-    valid_mask_cropped = valid_mask_orig[min_y:max_y+1, min_x:max_x+1]
-
-    aspect = crop_w / crop_h
-    if aspect >= 1.0:
-        game_width = max_dim
-        game_depth = max_dim / aspect
+                cliff_margin=5.0, res_scale=1.0, stream_ratio=0.01,
+                prefix='map', out_dir='assets/maps', lake_level=None):
+    import hashlib
+    import re
+    import time
+    started=time.perf_counter()
+    if not re.fullmatch(r'[a-z][a-z0-9_]*',prefix):
+        raise ValueError('prefix must be a lowercase C identifier')
+    if not all(np.isfinite(v) and v>0 for v in (max_dim,height_range,cliff_depth,cliff_margin,res_scale)) or not 0<stream_ratio<1:
+        raise ValueError('Invalid dimensions or stream ratio')
+    raw,valid_raw,geo=read_dem(dem_path)
+    if not valid_raw.any(): raise ValueError('No valid elevations')
+    yy,xx=np.where(valid_raw)
+    crop=(slice(yy.min(),yy.max()+1),slice(xx.min(),xx.max()+1))
+    source=raw[crop]; valid_source=valid_raw[crop]
+    px,py=geo['pixel_size_m']
+    print(f'[DEM] EPSG:{geo["crs_epsg"]}, {px:g} x {py:g} m; valid footprint {geo["valid_area_m2"]/1e6:.4f} km2',flush=True)
+    # Source metrics precede artistic compression. NoData is never an elevation.
+    clean=normalized_smooth(source,valid_source,0.8)
+    gy,gx=np.gradient(clean,py,px)
+    slope=np.hypot(gx,gy)
+    slope_deg=np.degrees(np.arctan(slope))
+    aspect=np.mod(np.degrees(np.arctan2(-gx,gy)),360)
+    tpi=clean-normalized_smooth(source,valid_source,5.0)
+    curvature=np.gradient(gx,px,axis=1)+np.gradient(gy,py,axis=0)
+    source_dir,source_accum,_=compute_d8_flow(source,valid_source,px,py)
+    area=source_accum*px*py
+    twi=np.log(np.maximum(area/np.sqrt(px*py),1e-9)/np.maximum(slope,0.001))
+    lo,hi=float(source[valid_source].min()),float(source[valid_source].max())
+    # Large connected low-elevation plateaus are candidates, not surveyed water.
+    low=valid_source & (source<=lo+(hi-lo)*0.30)
+    if lake_level is None:
+        levels,counts=np.unique(source[low],return_counts=True)
+        lake_level=float(levels[np.argmax(counts)])
+        lake_origin='inferred largest connected lowland plateau; unverified water extent'
     else:
-        game_depth = max_dim
-        game_width = max_dim * aspect
+        lake_origin='user supplied source elevation; connected flat footprint'
+    lake_source=largest_component(valid_source & (np.abs(source-lake_level)<=0.5) & (slope_deg<4.0))
+    if lake_source.sum()<20: lake_source[:]=False
+    physical_w=(source.shape[1]-1)*px; physical_h=(source.shape[0]-1)*py
+    scale=max_dim/max(physical_w,physical_h)
+    width,depth=physical_w*scale,physical_h*scale
+    w,h=max(8,round(width*res_scale)+1),max(8,round(depth*res_scale)+1)
+    if w*h>65535: raise ValueError('Runtime heightfield supports at most 65535 nodes; reduce resolution')
+    sx,sz=width/(w-1),depth/(h-1)
+    sample=lambda a: resample_grid(a,h,w)
+    valid=sample(valid_source.astype(float))>0.75
+    valid[:2]=False; valid[-2:]=False; valid[:,:2]=False; valid[:,-2:]=False
+    dem=sample(clean)
+    # Two metre smoothing only; preserve ridges and tributaries at game scale.
+    rolling=normalized_smooth(dem,valid,max(0.5,2.0/min(sx,sz)))
+    normalized=np.clip((rolling-lo)/max(hi-lo,1e-9),0,1)
+    terrain=height_range*np.power(normalized,1.12)
+    perimeter=distance_inside(valid,sx,sz)
+    cliff=np.clip(perimeter/cliff_margin,0,1); cliff=cliff*cliff*(3-2*cliff)
+    lake_fraction=sample(lake_source.astype(float))
+    lake=valid & (lake_fraction>0.25) & (perimeter>cliff_margin)
+    lake_y=float(height_range*np.clip((lake_level-lo)/max(hi-lo,1e-9),0,1)**1.12)
+    lake_inside=distance_inside(lake,sx,sz)
+    lake_blend=gaussian_filter_2d(lake.astype(float),0.65)
+    terrain=np.where(lake, np.minimum(terrain,lake_y-0.35-1.1*np.clip(lake_inside/5,0,1)),terrain)
+    # Re-route after compression; retain every branch over the area threshold.
+    directions,accum,conditioned=compute_d8_flow(terrain,valid,sx,sz)
+    threshold=max(12,float(valid.sum())*stream_ratio)
+    streams=valid & (accum>=threshold) & (perimeter>cliff_margin)
+    dd=[(0,1),(-1,1),(-1,0),(-1,-1),(0,-1),(1,-1),(1,0),(1,1)]
+    X,Z=np.meshgrid(np.arange(w)*sx,np.arange(h)*sz)
+    surface=terrain-0.12
+    corridor=np.zeros_like(terrain)
+    # Vectorized segment distance over local bounding boxes, not grid x all segments.
+    for r,c in zip(*np.where(streams & ~lake)):
+        d=int(directions[r,c]); dr,dc=dd[d] if d>=0 else (0,0)
+        nr,nc=r+dr,c+dc
+        if d<0 or not valid[nr,nc] or perimeter[nr,nc]<=cliff_margin: continue
+        ax,az=c*sx,r*sz; bx,bz=nc*sx,nr*sz
+        half=float(np.clip(0.45+0.018*np.sqrt(accum[r,c]),0.5,1.8))
+        radius=half+max(sx,sz)*0.75
+        x0=max(0,int((min(ax,bx)-radius)/sx)); x1=min(w,int((max(ax,bx)+radius)/sx)+2)
+        z0=max(0,int((min(az,bz)-radius)/sz)); z1=min(h,int((max(az,bz)+radius)/sz)+2)
+        sl=np.s_[z0:z1,x0:x1]
+        t=np.clip(((X[sl]-ax)*(bx-ax)+(Z[sl]-az)*(bz-az))/max((bx-ax)**2+(bz-az)**2,1e-9),0,1)
+        dist=np.hypot(X[sl]-(ax+t*(bx-ax)),Z[sl]-(az+t*(bz-az)))
+        weight=0.5+0.5*np.cos(np.pi*np.clip(dist/radius,0,1))
+        corridor[sl]=np.maximum(corridor[sl],weight)
+        level=conditioned[r,c]*(1-t)+conditioned[nr,nc]*t
+        # Carve a bed and allow the terrain intersection to determine the banks.
+        bed=level-0.45*weight
+        terrain[sl]=np.minimum(terrain[sl],np.where(weight>0,bed,terrain[sl]))
+        surface[sl]=np.maximum(surface[sl],np.where(weight>0,level-0.12,surface[sl]))
+    # Connect lake surface to tributaries without inventing a radial lake.
+    lake_margin=lake_blend>0.08
+    surface=np.where(lake_margin & valid,np.maximum(surface,lake_y),surface)
+    terrain=terrain*cliff-(1-cliff)*cliff_depth
+    terrain[~valid]=-cliff_depth
+    surface=np.where(valid & (perimeter>cliff_margin),surface,terrain-0.12)
+    # Quantize exactly once, then derive water mesh/depth from the runtime heights.
+    total=height_range+cliff_depth
+    height_code=np.rint(np.clip((terrain+cliff_depth)/total,0,1)*65535).astype(np.uint16)
+    ground=height_code.astype(float)/65535*total-cliff_depth
+    encoded=np.rint(height_code.astype(float)/257).astype(np.uint8)
+    surface=np.where(surface>terrain+0.015,np.maximum(surface,ground+0.015),ground-0.12)
+    water_code=np.rint(np.clip((surface+cliff_depth)/total,0,1)*65535).astype(np.uint16)
+    surface=water_code.astype(float)/65535*total-cliff_depth
+    water_depth=np.maximum(0,surface-ground)
+    wet=water_depth>0.005
+    moisture=np.clip((sample(twi)-6)/8,0,1)
+    shore=gaussian_filter_2d(wet.astype(float),max(0.7,2/min(sx,sz)))
+    moisture=np.maximum(moisture,shore)
+    rock=np.maximum(np.clip((sample(slope_deg)-25)/25,0,1),1-cliff)
+    depositional=np.clip(-sample(tpi)/25,0,1)*moisture
+    growth=np.clip(0.35+0.65*moisture,0,1)*(1-rock)
+    coverage=(1-rock)*(1-wet)*(0.50+0.50*growth)
+    coverage[~valid]=0
+    flowers=coverage*(1-moisture)*np.clip(1-sample(slope_deg)/40,0,1)
+    splat=np.stack((coverage,rock,flowers,np.maximum(shore,wet)),axis=-1)
+    splat[~valid]=(0,1,0,0)
+    habitat=np.stack((coverage,growth,moisture,1-moisture),axis=-1)
+    habitat[~valid]=0
+    # Classification is morphological, not rock type or species observation.
+    landform=np.where(sample(tpi)<-8,1,np.where(sample(tpi)>8,3,2)).astype(np.uint8)
+    landform[~valid]=0
+    landform[lake]=4
+    os.makedirs(out_dir,exist_ok=True)
+    path=lambda suffix:os.path.join(out_dir,prefix+'_'+suffix)
+    write_png(path('island_heightmap.png'),encoded)
+    height_rgba=np.stack((height_code>>8,height_code&255,np.zeros_like(height_code),np.full_like(height_code,255)),axis=-1)
+    write_png(path('heightfield.png'),height_rgba,6)
+    write_png(path('ecology_splat.png'),np.rint(splat*255),6)
+    write_png(path('habitat.png'),np.rint(habitat*255),6)
+    write_png(path('stream_mask.png'),streams.astype(np.uint8)*255)
+    write_png(path('lake_mask.png'),lake.astype(np.uint8)*255)
+    write_png(path('landform.png'),landform)
+    write_png(path('substrate_proxy.png'),np.stack((rock,depositional,moisture),axis=-1)*255,2)
+    write_png(path('terrain_metrics.png'),np.stack((np.clip(sample(slope_deg)/60,0,1),
+        np.clip((sample(twi)-4)/12,0,1),np.clip(sample(tpi)/100+0.5,0,1)),axis=-1)*255,2)
+    water_rgba=np.stack((water_code>>8,water_code&255,wet*255,lake*255),axis=-1).astype(np.uint8)
+    write_png(path('water_height.png'),water_rgba,6)
+    # Road distance is +16 m (no authored road); shore signed distance is metres.
+    signed_shore=distance_inside(~wet,sx,sz)-distance_inside(wet,sx,sz)
+    shore_code=np.rint((np.clip(signed_shore/16,-1,1)*0.5+0.5)*65535).astype(np.uint16)
+    distance=np.stack((np.full_like(shore_code,255),np.full_like(shore_code,255),shore_code>>8,shore_code&255),axis=-1)
+    write_png(path('habitat_distance.png'),distance,6)
+    triangles=write_water_mesh(path('water.obj'),ground,surface,sx,sz)
+    fields=dict(valid=valid,source_elevation_m=sample(clean).astype('f4'),slope_deg=sample(slope_deg).astype('f4'),
+                aspect_deg=np.mod(np.degrees(np.arctan2(sample(np.sin(np.radians(aspect))),
+                sample(np.cos(np.radians(aspect))))),360).astype('f4'),curvature_per_m=sample(curvature).astype('f4'),
+                tpi_m=sample(tpi).astype('f4'),contributing_area_m2=sample(area).astype('f4'),twi=sample(twi).astype('f4'),
+                flow_direction=directions,accumulation_cells=accum.astype('f4'),ground_y_m=ground.astype('f4'),
+                water_y_m=surface.astype('f4'),water_depth_m=water_depth.astype('f4'),
+                exposed_substrate=rock.astype('f4'),deposition_potential=depositional.astype('f4'),landform=landform)
+    np.savez_compressed(path('analysis.npz'),**fields)
+    outlet=np.unravel_index(np.argmax(accum),accum.shape)
+    peak=np.unravel_index(np.argmax(np.where(valid,ground,-np.inf)),ground.shape)
+    lys,lxs=np.where(lake)
+    cx=float(lxs.mean()*sx) if lxs.size else 0.0; cz=float(lys.mean()*sz) if lys.size else 0.0
+    rx=float((lxs.max()-lxs.min()+1)*sx/2) if lxs.size else 0.0
+    rz=float((lys.max()-lys.min()+1)*sz/2) if lys.size else 0.0
+    # Compatibility metadata; runtime uses the water raster/mesh, not these bounds.
+    values=dict(MAP_WIDTH=width,MAP_DEPTH=depth,HEIGHT_RANGE=height_range,CLIFF_DEPTH=cliff_depth,
+                OUTLET_X=outlet[1]*sx,OUTLET_Z=outlet[0]*sz,PEAK_X=peak[1]*sx,PEAK_Z=peak[0]*sz,
+                LAKE_CENTER_X=cx,LAKE_CENTER_Z=cz,LAKE_RADIUS_X=rx,LAKE_RADIUS_Z=rz,LAKE_WATER_Y=lake_y,
+                LAKE_BED_MIN_Y=float(ground[lake].min()) if lake.any() else 0)
+    with open(path('generated_meta.h'),'w') as f:
+        guard=prefix.upper()+'_GENERATED_META_H'; f.write(f'// Generated by maps/pipeline/dem_pipeline.py\n#ifndef {guard}\n#define {guard}\n')
+        for k,v in values.items(): f.write(f'#define {prefix.upper()}_{k} {v:.6f}f\n')
+        f.write(f'#endif // {guard}\n')
+    with open(dem_path,'rb') as source_file: digest=hashlib.sha256(source_file.read()).hexdigest()
+    manifest=dict(schema=2,source=dict(geo,path=os.path.abspath(dem_path),sha256=digest,
+        crop_pixels=[int(xx.min()),int(yy.min()),int(source.shape[1]),int(source.shape[0])]),
+        game=dict(width_m=width,depth_m=depth,grid=[h,w],height_range_m=height_range,cliff_depth_m=cliff_depth,
+                  horizontal_scale=scale,vertical_transform='normalized elevation power 1.12',water_triangles=triangles),
+        inference=dict(lake=lake_origin,lake_source_level_m=lake_level,lake_source_area_m2=float(lake_source.sum()*px*py),
+                       geology='unknown; exposed substrate and deposition are terrain proxies only',
+                       biology='habitat suitability only; no surveyed species or land-cover input',
+                       drainage='D8 after priority flood; raster boundary outlets may truncate upstream area',
+                       landform_classes={'0':'outside','1':'valley','2':'slope or plain','3':'ridge','4':'candidate lake'},
+                       bathymetry='procedural game-scale reconstruction; not measured lake depth'),
+        source_statistics=dict(elevation_min_m=lo,elevation_max_m=hi,source_outlets=int(np.count_nonzero(valid_source & (source_dir<0)))),
+        parameters=dict(max_dim=max_dim,height_range=height_range,cliff_depth=cliff_depth,cliff_margin=cliff_margin,
+                        resolution_scale=res_scale,stream_ratio=stream_ratio),
+        metrics=dict(bake_seconds=time.perf_counter()-started,wet_nodes=int(wet.sum()),lake_nodes=int(lake.sum())))
+    with open(path('manifest.json'),'w') as f: json.dump(manifest,f,indent=2,allow_nan=False)
+    print(f'[DEM] {w}x{h} nodes; {triangles} water triangles; {wet.sum()} wet nodes; {time.perf_counter()-started:.2f}s',flush=True)
+    return manifest
 
-    print(f"[+] Scaled Game Dimensions: {game_width:.2f}m (W) x {game_depth:.2f}m (D) [Aspect: {aspect:.3f}]")
 
-    res_w = int(round(game_width * res_scale))
-    res_h = int(round(game_depth * res_scale))
-    res_w = (res_w // 2) * 2
-    res_h = (res_h // 2) * 2
-    print(f"[+] Raster Resolution: {res_w} x {res_h}")
-
-    e_raw_min = dem_cropped[valid_mask_cropped].min()
-    e_raw_max = dem_cropped[valid_mask_cropped].max()
-    dem_clean = dem_cropped.copy()
-    dem_clean[~valid_mask_cropped] = e_raw_min
-
-    dem = resample_grid(dem_clean, res_h, res_w)
-    valid_float = resample_grid(valid_mask_cropped.astype(np.float32), res_h, res_w)
-    valid_mask = valid_float > 0.45
-    # Enforce perimeter cliff abyss: outer 2 border texels are strictly abyss void
-    # This guarantees that contour extraction (MapProp_SetCloudSeaGroundBoundary)
-    # never hits an open perimeter edge and always closes loops smoothly.
-    valid_mask[0:2, :] = False
-    valid_mask[-2:, :] = False
-    valid_mask[:, 0:2] = False
-    valid_mask[:, -2:] = False
-
-    # --- Terrain Frequency Decomposition: Rolling Meadows & Gentle Slopes ---
-    # Raw DEM contains sharp 1195m elevation variation squeezed into 300m game space.
-    # We apply low-frequency Gaussian filtering to produce soft, rolling valleys and gentle slopes,
-    # then apply gamma scaling to keep the plateau open and walkable.
-    print("[*] Synthesizing Gentle Rolling Terrain via Elevation Low-Pass Filter...")
-    dem_smooth = gaussian_filter_2d(dem, sigma=4.2)
-    # Blend: 80% smooth rolling envelope + 20% gentle macro-relief
-    dem_rolling = dem_smooth * 0.80 + dem * 0.20
-    elev_valid = dem_rolling[valid_mask]
-    e_min, e_max = elev_valid.min(), elev_valid.max()
-    print(f"[*] Elevation range (rolling): {e_min:.1f}m -> {e_max:.1f}m (Delta: {e_max - e_min:.1f}m)")
-
-    # Non-linear gamma curve (gamma=1.28) keeps valleys wide and gentle, lifting basin floor
-    norm_raw = np.clip((dem_rolling - e_min) / max(e_max - e_min, 1e-4), 0.0, 1.0)
-    norm_height = np.zeros_like(dem)
-    norm_height[valid_mask] = np.power(norm_raw[valid_mask], 1.28)
-
-    # Perimeter distance transform for floating island abyss
-    print("[*] Computing floating island perimeter cliff falloff...")
-    inside_dist = np.zeros((res_h, res_w), dtype=np.float32)
-    cur_mask = valid_mask.copy()
-    step_m = (game_width / res_w + game_depth / res_h) * 0.5
-    for dist_step in range(1, 15):
-        eroded = cur_mask.copy()
-        eroded[1:-1, 1:-1] = (cur_mask[1:-1, 1:-1] & cur_mask[:-2, 1:-1] & cur_mask[2:, 1:-1] &
-                              cur_mask[1:-1, :-2] & cur_mask[1:-1, 2:])
-        diff = cur_mask & ~eroded
-        inside_dist[diff] = dist_step * step_m
-        cur_mask = eroded
-    inside_dist[cur_mask] = 15.0 * step_m
-
-    cliff_drop = np.clip(inside_dist / max(cliff_margin, 0.1), 0.0, 1.0)
-    cliff_drop = cliff_drop * cliff_drop * (3.0 - 2.0 * cliff_drop) # Hermite smoothstep
-
-    # Hydrology & Drainage (Priority Flood + D8 Routing on smooth terrain)
-    print("[*] Calculating D8 Flow and Stream Network...")
-    flow_dir, accum, dem_flow = compute_d8_flow(dem_rolling, valid_mask)
-    total_valid_cells = np.count_nonzero(valid_mask)
-    stream_threshold = max(20.0, total_valid_cells * stream_ratio)
-    stream_mask = (accum >= stream_threshold) & valid_mask
-
-    # Reservoir / Basin floor identification
-    flat_search_mask = (dem_rolling <= e_min + (e_max - e_min) * 0.30) & valid_mask
-    if np.count_nonzero(flat_search_mask) > 0:
-        unique_vals, val_counts = np.unique(np.round(dem_rolling[flat_search_mask], decimals=0), return_counts=True)
-        lake_flat_elev = unique_vals[np.argmax(val_counts)]
-        lake_candidates = (np.abs(dem_rolling - lake_flat_elev) <= 2.5) & valid_mask & (np.arange(res_w) > res_w * 0.55)[None, :]
-        if np.count_nonzero(lake_candidates) < 20:
-            lake_candidates = (dem_rolling <= e_min + (e_max - e_min) * 0.05) & valid_mask
-    else:
-        lake_candidates = np.zeros_like(valid_mask)
-
-    if np.count_nonzero(lake_candidates) > 0:
-        lake_ys, lake_xs = np.where(lake_candidates)
-        lake_cx = float(lake_xs.mean() / res_w * game_width)
-        lake_cz = float(lake_ys.mean() / res_h * game_depth)
-        lake_rx = float((lake_xs.max() - lake_xs.min() + 1) * 0.5 * (game_width / res_w))
-        lake_rz = float((lake_ys.max() - lake_ys.min() + 1) * 0.5 * (game_depth / res_h))
-        lake_norm_top = float(norm_height[lake_candidates].mean())
-        lake_y_level = lake_norm_top * height_range - cliff_depth + 0.10
-    else:
-        lake_cx, lake_cz, lake_rx, lake_rz = game_width * 0.85, game_depth * 0.75, 20.0, 18.0
-        lake_y_level = -2.48
-
-    # --- Extract Continuous Main River Corridor (Trunk River Spline) First ---
-    print("[*] Tracing Continuous Trunk River Spline from Mountain to Reservoir...")
-    dy_arr = np.array([0, -1, -1, -1,  0,  1, 1, 1])
-    dx_arr = np.array([1,  1,  0, -1, -1, -1, 0, 1])
-
-    max_idx = np.argmax(np.where(valid_mask, accum, -1))
-    outlet_r, outlet_c = divmod(max_idx, res_w)
-    outlet_world_x = (outlet_c / res_w) * game_width
-    outlet_world_z = (outlet_r / res_h) * game_depth
-
-    curr_r, curr_c = outlet_r, outlet_c
-    trunk = [(curr_r, curr_c)]
-    while True:
-        best_nr, best_nc, max_acc = -1, -1, 0
-        for d in range(8):
-            nr, nc = curr_r - dy_arr[d], curr_c - dx_arr[d]
-            if 0 <= nr < res_h and 0 <= nc < res_w and valid_mask[nr, nc]:
-                if flow_dir[nr, nc] == d and (nr, nc) not in trunk:
-                    if accum[nr, nc] > max_acc:
-                        max_acc = accum[nr, nc]
-                        best_nr, best_nc = nr, nc
-        if max_acc < 50.0 or best_nr == -1:
-            break
-        trunk.append((best_nr, best_nc))
-        curr_r, curr_c = best_nr, best_nc
-    trunk.reverse()
-
-    # Subsample trunk to smooth waypoints (~7.5m interval)
-    river_waypoints = [trunk[0]]
-    acc_dist = 0.0
-    for i in range(1, len(trunk)):
-        dr = trunk[i][0] - trunk[i-1][0]
-        dc = trunk[i][1] - trunk[i-1][1]
-        step_len = np.sqrt((dr * (game_depth / res_h))**2 + (dc * (game_width / res_w))**2)
-        acc_dist += step_len
-        if acc_dist >= 7.5 or i == len(trunk) - 1:
-            river_waypoints.append(trunk[i])
-            acc_dist = 0.0
-
-    print(f"[+] Extracted {len(river_waypoints)} smooth river waypoints along main river.")
-
-    # --- Bathymetric Bed Carving (Độ sụt lòng hồ & lòng sông suối) ---
-    print("[*] Carving Smooth Bathymetric Bed with Distance Transform...")
-    game_height_m = norm_height * height_range
-    carved_height_m = game_height_m.copy()
-
-    # 1. Carve Lake Basin: Parabolic bowl depression (sụt sâu -2.5m -> -3.5m ở tâm hồ)
-    if np.count_nonzero(lake_candidates) > 0:
-        for r in range(res_h):
-            for c in range(res_w):
-                if not valid_mask[r, c]: continue
-                gx = (c / res_w) * game_width
-                gz = (r / res_h) * game_depth
-                dx_lake = (gx - lake_cx) / max(lake_rx, 1.0)
-                dz_lake = (gz - lake_cz) / max(lake_rz, 1.0)
-                r2 = dx_lake * dx_lake + dz_lake * dz_lake
-                if r2 < 1.44: # within 1.2x lake radius
-                    r_norm = np.sqrt(r2) / 1.2
-                    depth_bowl = 2.80 * (0.5 + 0.5 * np.cos(np.pi * r_norm))
-                    carved_height_m[r, c] -= depth_bowl
-
-    # 2. Carve River Corridor via Continuous Distance-Transform Trench (Smooth Parabolic Bed)
-    # Uses line segment distance to waypoints, creating a soft, smooth trench without raster aliasing
-    wp_coords = []
-    for wp in river_waypoints:
-        r_idx, c_idx = wp
-        wx = (c_idx / res_w) * game_width
-        wz = (r_idx / res_h) * game_depth
-        acc_val = accum[r_idx, c_idx]
-        w_width = float(np.clip(1.4 + 0.045 * np.sqrt(acc_val), 1.8, 5.0))
-        wp_coords.append((wx, wz, w_width))
-
-    for r in range(res_h):
-        for c in range(res_w):
-            if not valid_mask[r, c]: continue
-            gx = (c / res_w) * game_width
-            gz = (r / res_h) * game_depth
-
-            # Don't carve deep riverbed inside lake center
-            dx_l = (gx - lake_cx) / max(lake_rx, 1.0)
-            dz_l = (gz - lake_cz) / max(lake_rz, 1.0)
-            if dx_l*dx_l + dz_l*dz_l < 0.85: continue
-
-            # Find minimum distance to river spline segments
-            min_dist = 1e9
-            channel_w = 2.0
-            for i in range(len(wp_coords) - 1):
-                x1, z1, w1 = wp_coords[i]
-                x2, z2, w2 = wp_coords[i+1]
-                dx = x2 - x1
-                dz = z2 - z1
-                l2 = dx*dx + dz*dz
-                if l2 < 1e-4: continue
-                t = max(0.0, min(1.0, ((gx - x1)*dx + (gz - z1)*dz) / l2))
-                px = x1 + t * dx
-                pz = z1 + t * dz
-                d = np.sqrt((gx - px)**2 + (gz - pz)**2)
-                if d < min_dist:
-                    min_dist = d
-                    channel_w = w1 * (1.0 - t) + w2 * t
-
-            # Carve smooth cosine/parabolic trench within 1.4x river corridor radius
-            trench_radius = channel_w * 0.70
-            if min_dist < trench_radius:
-                norm_d = min_dist / trench_radius
-                trench_depth = 1.15 * (0.5 + 0.5 * np.cos(np.pi * norm_d))
-                carved_height_m[r, c] -= trench_depth
-
-    # Recompute perimeter drop on carved elevation
-    final_ground_y = carved_height_m * cliff_drop - (1.0 - cliff_drop) * cliff_depth
-    final_ground_y[~valid_mask] = -cliff_depth
-
-    # Recalculate lake bed min Y after carving
-    if np.count_nonzero(lake_candidates) > 0:
-        lake_bed_min_y = float(final_ground_y[lake_candidates].min())
-    else:
-        lake_bed_min_y = -5.50
-
-    # Encode Heightmap 8-bit
-    total_range = height_range + cliff_depth
-    h_encoded = np.clip((final_ground_y + cliff_depth) / total_range, 0.0, 1.0)
-    heightmap_8bit = (h_encoded * 255.0 + 0.5).astype(np.uint8)
-
-    # Slope & Topographic Wetness Index (TWI)
-    print("[*] Computing Terrain Slopes & TWI...")
-    dy, dx = np.gradient(carved_height_m, game_depth / res_h, game_width / res_w)
-    slope_rad = np.arctan(np.sqrt(dx*dx + dy*dy))
-    slope_deg = np.degrees(slope_rad)
-    twi = np.log((accum + 1.0) / (np.tan(slope_rad) + 0.05))
-    twi[~valid_mask] = 0.0
-    twi_norm = np.clip((twi - 2.0) / 8.0, 0.0, 1.0)
-
-    # Ecology 4-Layer Splatmap Synthesis:
-    # R: Meadow Grass, G: Exposed Cliff/Rock, B: Wildflowers, A: Wetland/Water
-    print("[*] Synthesizing Ecology Splatmap...")
-    splat = np.zeros((res_h, res_w, 4), dtype=np.uint8)
-
-    rock_prob = np.clip((slope_deg - 22.0) / 12.0, 0.0, 1.0)
-    rock_prob = np.maximum(rock_prob, 1.0 - cliff_drop)
-    rock_prob[~valid_mask] = 1.0
-
-    wetland_prob = np.clip((twi_norm - 0.45) / 0.35, 0.0, 1.0)
-    wetland_prob = np.maximum(wetland_prob, stream_mask.astype(np.float32))
-    if np.count_nonzero(lake_candidates) > 0:
-        wetland_prob = np.maximum(wetland_prob, lake_candidates.astype(np.float32))
-
-    grass_prob = (1.0 - rock_prob) * (1.0 - wetland_prob * 0.95)
-    grass_prob[~valid_mask] = 0.0
-
-    flower_prob = grass_prob * np.clip(1.0 - wetland_prob * 1.5, 0.0, 1.0) * np.clip(norm_height * 1.5, 0.0, 1.0)
-
-    splat[:, :, 0] = (np.clip(grass_prob, 0, 1) * 255).astype(np.uint8)
-    splat[:, :, 1] = (np.clip(rock_prob, 0, 1) * 255).astype(np.uint8)
-    splat[:, :, 2] = (np.clip(flower_prob, 0, 1) * 255).astype(np.uint8)
-    splat[:, :, 3] = (np.clip(wetland_prob, 0, 1) * 255).astype(np.uint8)
-
-    # Export Artifacts
-    os.makedirs(out_dir, exist_ok=True)
-    heightmap_png = os.path.join(out_dir, f"{prefix}_island_heightmap.png")
-    ecology_splat_png = os.path.join(out_dir, f"{prefix}_ecology_splat.png")
-    stream_mask_png = os.path.join(out_dir, f"{prefix}_stream_mask.png")
-
-    write_png(heightmap_png, heightmap_8bit, color_type=0, bit_depth=8)
-    write_png(ecology_splat_png, splat, color_type=6, bit_depth=8)
-    write_png(stream_mask_png, (stream_mask.astype(np.uint8) * 255), color_type=0, bit_depth=8)
-
-    peak_y, peak_x = np.where(dem == dem[valid_mask].max())
-    peak_world_x = (peak_x[0] / res_w) * game_width
-    peak_world_z = (peak_y[0] / res_h) * game_depth
-
-    # Export C Metadata Header with River Waypoints
-    header_path = os.path.join(out_dir, f"{prefix}_generated_meta.h")
-    with open(header_path, "w") as f:
-        f.write(f"// Generated automatically by maps/pipeline/dem_pipeline.py for {prefix}\n")
-        f.write(f"#ifndef {prefix.upper()}_GENERATED_META_H\n")
-        f.write(f"#define {prefix.upper()}_GENERATED_META_H\n\n")
-        f.write(f"#define {prefix.upper()}_MAP_WIDTH      {game_width:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_MAP_DEPTH      {game_depth:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_HEIGHT_RANGE   {height_range:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_CLIFF_DEPTH    {cliff_depth:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_OUTLET_X       {outlet_world_x:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_OUTLET_Z       {outlet_world_z:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_PEAK_X         {peak_world_x:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_PEAK_Z         {peak_world_z:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_LAKE_CENTER_X  {lake_cx:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_LAKE_CENTER_Z  {lake_cz:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_LAKE_RADIUS_X  {lake_rx:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_LAKE_RADIUS_Z  {lake_rz:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_LAKE_WATER_Y   {lake_y_level:.2f}f\n")
-        f.write(f"#define {prefix.upper()}_LAKE_BED_MIN_Y {lake_bed_min_y:.2f}f\n\n")
-
-        # Export river waypoints array
-        f.write(f"#define {prefix.upper()}_RIVER_WAYPOINT_COUNT {len(river_waypoints)}\n")
-        f.write(f"typedef struct {{ float x; float z; float width; float elev; }} {prefix.capitalize()}RiverNode;\n\n")
-        f.write(f"static const {prefix.capitalize()}RiverNode k{prefix.capitalize()}RiverWaypoints[{len(river_waypoints)}] = {{\n")
-        for wp in river_waypoints:
-            r_idx, c_idx = wp
-            wx = (c_idx / res_w) * game_width
-            wz = (r_idx / res_h) * game_depth
-            acc_val = accum[r_idx, c_idx]
-            w_width = float(np.clip(1.2 + 0.045 * np.sqrt(acc_val), 1.6, 4.8))
-            w_elev = float(final_ground_y[r_idx, c_idx])
-            f.write(f"    {{ {wx:.2f}f, {wz:.2f}f, {w_width:.2f}f, {w_elev:.2f}f }},\n")
-        f.write("};\n\n")
-        f.write(f"#endif // {prefix.upper()}_GENERATED_META_H\n")
-
-    print(f"[+] Exported Heightmap: {heightmap_png}")
-    print(f"[+] Exported Splatmap:  {ecology_splat_png}")
-    print(f"[+] Exported Stream:    {stream_mask_png}")
-    print(f"[+] Exported Header:    {header_path}")
-    print("=== [DEM PIPELINE] Done successfully! ===")
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Universal DEM-to-Island Pipeline")
-    parser.add_argument("dem_path", help="Path to input GeoTIFF DEM file")
-    parser.add_argument("--max-dim", type=float, default=300.0, help="Maximum planar dimension in meters")
-    parser.add_argument("--height-range", type=float, default=16.0, help="Playable elevation range in meters")
-    parser.add_argument("--cliff-depth", type=float, default=8.0, help="Island abyss cliff depth in meters")
-    parser.add_argument("--cliff-margin", type=float, default=5.0, help="Perimeter cliff edge transition width")
-    parser.add_argument("--resolution-scale", type=float, default=0.75, help="Texels per meter")
-    parser.add_argument("--stream-ratio", type=float, default=0.003, help="Stream accumulation threshold ratio")
-    parser.add_argument("--prefix", default="song_quao", help="Prefix for generated asset names")
-    parser.add_argument("--out-dir", default="assets/maps/song_quao", help="Output directory")
-
-    args = parser.parse_args()
-    process_dem(args.dem_path, args.max_dim, args.height_range, args.cliff_depth,
-                args.cliff_margin, args.resolution_scale, args.stream_ratio,
-                args.prefix, args.out_dir)
+if __name__=='__main__':
+    parser=argparse.ArgumentParser(description='Projected DEM to terrain, drainage and inferred habitat')
+    parser.add_argument('dem_path')
+    parser.add_argument('--max-dim',type=float,default=300)
+    parser.add_argument('--height-range',type=float,default=16)
+    parser.add_argument('--cliff-depth',type=float,default=8)
+    parser.add_argument('--cliff-margin',type=float,default=5)
+    parser.add_argument('--resolution-scale',type=float,default=1.0)
+    parser.add_argument('--stream-ratio',type=float,default=0.01)
+    parser.add_argument('--lake-level',type=float,help='Candidate lake source elevation in metres; default detects a lowland plateau')
+    parser.add_argument('--prefix',default='song_quao')
+    parser.add_argument('--out-dir',default='assets/maps/song_quao')
+    args=parser.parse_args()
+    process_dem(args.dem_path,args.max_dim,args.height_range,args.cliff_depth,args.cliff_margin,
+                args.resolution_scale,args.stream_ratio,args.prefix,args.out_dir,args.lake_level)

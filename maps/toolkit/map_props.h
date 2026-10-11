@@ -96,6 +96,12 @@ MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float 
                                                const char *splatMapPath,
                                                const char *grassTexPath,
                                                const char *pathTexPath);
+// RG8 high/low bytes encode normalized uint16 height; <=65535 grid nodes.
+// Collision, shading and water bake share the same two triangles per cell.
+MapGroundSurface MapProp_CreateGroundHeightfield16(const char *heightmapPath, float width, float depth,
+                                                  float totalHeight, float cliffDepth, float tileSize,
+                                                  const char *splatMapPath, const char *grassTexPath,
+                                                  const char *pathTexPath);
 // Universal heightmap loader: totalHeight = cliffDepth + elevationRange.
 // Plateau/water level rests at its natural elevation while abyss sinks to -cliffDepth.
 MapGroundSurface MapProp_CreateGroundHeightmapEx(const char *heightmapPath, float width, float depth,
@@ -487,7 +493,8 @@ typedef enum {
 typedef enum {
     WATER_SHAPE_RADIAL = 0,        // Hồ, ao, vụng nước tròn/elip có bờ uốn lượn ngẫu nhiên
     WATER_SHAPE_RECT,              // Vũng nước sân đình, bể chứa, rãnh nước chữ nhật
-    WATER_SHAPE_STRIP              // Dải suối uốn lượn / dòng chảy có hướng theo vector
+    WATER_SHAPE_STRIP,             // Dải suối uốn lượn / dòng chảy có hướng theo vector
+    WATER_SHAPE_TERRAIN            // Baked world-space mesh, UV.x = vertical depth metres
 } MapWaterShape;
 
 typedef struct
@@ -582,6 +589,9 @@ typedef struct
 
 MapWaterConfig MapProp_DefaultWaterConfig(MapWaterEcosystem eco);
 MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config);
+// Offline terrain-clipped OBJ; UV.x is vertical water depth in metres.
+// No analytical bed or wake grid; caller queries the companion water raster.
+MapWaterSurface MapProp_CreateTerrainWater(const char *meshPath, MapWaterConfig config);
 MapWaterSurface MapProp_CreateWaterStrip(Vector3 start, Vector3 end, float width, MapWaterConfig config);
 MapWaterSurface MapProp_CreateWaterSpline(const Vector3 *points, const float *widths, int pointCount, MapWaterConfig config);
 MapWaterSurface MapProp_CreateWaterPatch(Vector3 center, float width, float depth, MapWaterConfig config);

@@ -94,6 +94,7 @@
 ## 10. Core layer (`core/`, `environment/`, `maps/`, common shaders)
 
 ### 10.1 General
+- DEM terrain and water must share grid diagonals and quantized heights; preserve projected metre units, NoData and provenance. Label geology/ecology proxies and reconstructed bathymetry as inferred.
 - Meadow habitat and canopy colors must agree between the CPU blade bake, ecology texture and distant ground. Keep `meadow_palette.h` and its GLSL counterpart synchronized; contour mist thresholds must remain below interior relief. Canonical GPU LOD reconstruction must retain the CPU authoring tip floor, bend and droop; compare all visible and shadow descriptors.
 - Typed fields keep Newton force, acceleration and medium velocity separate. Direct Motion receivers sample ordinary Wind excluding Motion publication; authored drag/buoyancy replace automatic material approximations. Legacy packed force IDs and units never change.
 - Rooted objects consume Motion Newton forces through their own mass/spring/damping; stateless queries must not capture free-particle lanes or fire arrival callbacks.

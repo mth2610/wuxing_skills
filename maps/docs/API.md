@@ -967,3 +967,40 @@ Cloud noise uses a separate ResourceManager mipmapped trilinear/repeat variant. 
 | 2026-10-02 | Codex | Per-tuft visible LOD and narrower distant fog | `maps/toolkit/shaders/nature_parametric.glsl`, `maps/worlds/verdant_path/verdant_path.c` | Ground-truth |
 | 2026-09-26 | Codex | Reusable meadow shadow contract | `maps/toolkit/map_props_nature.inl`, `environment/env_shadow.c` | Ground-truth |
 | 2026-09-26 | Codex | Radial water depth and shore transparency contract | `maps/toolkit/map_props_nature.inl`, `maps/toolkit/shaders/water_surface.fs` | Ground-truth |
+
+### DEM assets and terrain water
+
+`maps/pipeline/dem_pipeline.py DEM.tif --prefix song_quao --out-dir assets/maps/song_quao`
+accepts uncompressed, north-up, single-band GeoTIFFs in a projected metre CRS.
+NoData, pixel spacing, CRS and source digest are retained in `_manifest.json`.
+Source slope/aspect, curvature, topographic position, contributing area and TWI
+are computed before game compression; `_analysis.npz` samples those fields onto
+the game grid and includes the recomputed game drainage, terrain and water.
+Geology outputs are exposed-substrate/deposition **proxies**, biology is habitat
+suitability, and the largest connected lowland plateau is an **inferred** lake.
+`--lake-level` supplies its source elevation; bathymetry remains reconstructed.
+The valid DEM footprint is not asserted to be a delineated catchment.
+
+`_water_height.png` RG stores a big-endian uint16 normalized over
+`HEIGHT_RANGE + CLIFF_DEPTH`, offset by `-CLIFF_DEPTH`; B indicates wet nodes,
+A the inferred lake. Interpolate the two terrain triangles per raster cell,
+then compare against ground. `_water.obj` is clipped from those same triangles;
+UV.x stores vertical water depth in metres. `_habitat.png` uses the existing
+coverage/growth/moisture/habitat contract; `_habitat_distance.png` stores signed
+road/shore distances. `_landform.png` classes and inference limits are in the manifest.
+
+`MapProp_CreateTerrainWater(meshPath, config)` loads the baked world-space OBJ
+with `WATER_SHAPE_TERRAIN` (append-only enum value 3), no synthetic bank/bed or
+wake grid. Ground remains the bed; depth comes from UV.x, independent of camera.
+The map owns water-height queries from its companion raster. Existing analytical
+`MapProp_SampleWaterBed` does not apply to this shape. Model lifetime uses the
+normal water unload function; textures/shaders remain ResourceManager-owned.
+
+`MapProp_CreateGroundHeightfield16` decodes `_heightfield.png` RG as uint16;
+its signature matches `MapProp_CreateGroundHeightmapEx`. It accepts at most
+65,535 nodes, uses indexed immutable geometry, and keeps collision on the same
+triangles. The 8-bit `_island_heightmap.png` is a preview/legacy asset.
+`WUXING_GROUND_MESH=legacy` expands the exact same 16-bit geometry for A/B timing.
+The existing 8-bit loader retains its previous behavior. `_terrain_metrics.png`
+is slope/60°, normalized TWI, signed TPI/100 m + 0.5; `_substrate_proxy.png`
+is exposed substrate/deposition potential/moisture. Quantitative values live in NPZ.

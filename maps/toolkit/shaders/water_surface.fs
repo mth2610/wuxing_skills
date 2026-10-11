@@ -6,6 +6,7 @@ in vec2 fragLakeCoord;
 in vec2 fragWorldXZ;
 in vec4 fragScreenPos;
 in float fragShoreFade;
+in float fragWaterDepth;
 
 uniform sampler2D texture0;         // Noise / microdetail texture
 uniform sampler2D u_causticTex;     // Dual-phase caustics texture
@@ -147,7 +148,8 @@ void main()
 
     // ── 2. DEPTH & BATHYMETRY ESTIMATION (h <= 1.3m) ─────────────────────────
     float waterDepth = 0.0;
-    bool hasValidDepth = false;
+    bool hasValidDepth = u_waterShape == 3;
+    if (hasValidDepth) waterDepth = max(0.0, fragWaterDepth);
 
     // The radial lake has an exact continuous bed profile.
     if (u_waterShape == 0) {
@@ -272,6 +274,7 @@ void main()
     // Aquatic water column color (Beer-Lambert volumetric tint)
     vec3 shallowTint = mix(u_shallowColor, vec3(0.16, 0.64, 0.60), 0.50);
     vec3 deepTint = mix(u_deepColor, vec3(0.05, 0.34, 0.42), 0.50);
+    if (u_waterShape == 3) { shallowTint = u_shallowColor; deepTint = u_deepColor; }
     vec3 waterVolumeColor = mix(shallowTint, deepTint, smoothstep(0.05, 0.75, waterDepth));
     waterVolumeColor *= (0.75 + u_ambientColor * 0.30 + u_lightColor * 0.20);
 

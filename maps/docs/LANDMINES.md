@@ -187,3 +187,15 @@
 - **Symptom:** green blades disappear into a differently colored distant carpet or form unrelated golden stripes.
 - **Cause:** independent habitat noise and palettes in the blade bake and ground shader.
 - **Rule:** derive grass and distant ground color from the same ecology habitat and synchronize `meadow_palette.h` with `shaders/meadow_palette.glsl`; retain ecology coverage when replacing distant blades with ground shading.
+
+### DEM water and foliage must share the rendered terrain
+
+- **Symptom:** a stream has hard cyan sides, a lake is polygonally clipped, and its banks remain a large bare ellipse.
+- **Cause:** spline UV width and length were transposed; radial bathymetry, separately sampled water levels and elliptical foliage exclusion described different surfaces. Eight-bit terrain also stepped by about 9 cm over a 24 m range.
+- **Rule:** strip UV.y is width. For DEM maps, bake terrain and water from the same triangles and quantized heights; carry physical depth in water vertices and query the companion raster. Use packed 16-bit terrain for centimetre-scale banks. A lowland plateau is only a lake candidate; never call inferred bathymetry or substrate a survey.
+
+### A foliage budget must cover the whole map
+
+- **Symptom:** the southern portion of a dense map loses vegetation at a straight row boundary.
+- **Cause:** the placement scan stopped as soon as its capacity filled.
+- **Rule:** scan eligible habitat and use deterministic reservoir selection with a separate RNG. A storage budget must not become a geographic cutoff.

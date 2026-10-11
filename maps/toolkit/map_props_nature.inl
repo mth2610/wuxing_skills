@@ -1615,9 +1615,11 @@ int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxC
                           rowSpacing);
     unsigned int rng = distribution.seed ? distribution.seed : 1u;
     int count = 0;
-    for (int row = 0; row < rows && count < maxCount; row++) {
+    unsigned int accepted = 0;
+    unsigned int selectionRng = rng ^ 0xa511e9b3u;
+    for (int row = 0; row < rows; row++) {
         float rowOffset = (row & 1) ? (distribution.spacing * 0.5f) : 0.0f;
-        for (int column = 0; column < columns && count < maxCount; column++) {
+        for (int column = 0; column < columns; column++) {
             float jx = (Nature_Random01(&rng) - 0.5f) * distribution.spacing * distribution.jitter;
             float jz = (Nature_Random01(&rng) - 0.5f) * rowSpacing * distribution.jitter;
             float x = distribution.minBounds.x + column * distribution.spacing + rowOffset + jx;
@@ -1631,7 +1633,8 @@ int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxC
             float y = groundCenter.y;
             if (ground && ground->ready)
                 y = MapProp_SampleGroundHeight(ground, groundCenter, x, z);
-            MapMeadowPlacement *placement = &outPlacements[count++];
+            MapMeadowPlacement candidate;
+            MapMeadowPlacement *placement = &candidate;
             placement->position = (Vector3){x, y + distribution.yOffset, z};
             placement->radius = distribution.minRadius
                 + (distribution.maxRadius - distribution.minRadius) * Nature_Random01(&rng);
@@ -1639,6 +1642,15 @@ int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxC
                 + (distribution.maxHeight - distribution.minHeight) * Nature_Random01(&rng);
             placement->rotationDeg = Nature_Random01(&rng) * 360.0f;
             placement->phase = Nature_Random01(&rng);
+            // Reservoir selection covers the whole map when the budget fills.
+            // Keep a separate RNG so changing the budget cannot change habitat.
+            accepted++;
+            if (count < maxCount) outPlacements[count++] = candidate;
+            else {
+                unsigned int slot = (unsigned int)((double)Nature_NextRandom(&selectionRng) *
+                                                   (double)accepted / 4294967296.0);
+                if (slot < (unsigned int)maxCount) outPlacements[slot] = candidate;
+            }
         }
     }
     return count;
@@ -4019,6 +4031,31 @@ MapWaterSurface MapProp_CreateWaterStrip(Vector3 start, Vector3 end, float width
     return water;
 }
 
+MapWaterSurface MapProp_CreateTerrainWater(const char *meshPath, MapWaterConfig config)
+{
+    MapWaterSurface water = {0};
+    if (!meshPath || !FileExists(meshPath)) return water;
+    Water_ApplyConfigDefaults(&config);
+    config.shape = WATER_SHAPE_TERRAIN;
+    config.center = (Vector3){0};
+    water.config = config;
+    water.waterModel = LoadModel(meshPath);
+    if (water.waterModel.meshCount < 1 || water.waterModel.materialCount < 1) {
+        UnloadModel(water.waterModel);
+        return (MapWaterSurface){0};
+    }
+    Texture2D detail = ResourceManager_LoadTextureVariant("assets/textures/noise.png",
+        true, TEXTURE_FILTER_TRILINEAR, TEXTURE_WRAP_REPEAT);
+    water.causticTex = ResourceManager_LoadTextureVariant("assets/textures/water_caustics.png",
+        true, TEXTURE_FILTER_TRILINEAR, TEXTURE_WRAP_REPEAT);
+    for (int i = 0; i < water.waterModel.materialCount; i++) {
+        water.waterModel.materials[i].shader = Water_GetShader();
+        water.waterModel.materials[i].maps[MATERIAL_MAP_DIFFUSE].texture = detail;
+    }
+    water.ready = true;
+    return water;
+}
+
 MapWaterSurface MapProp_CreateWaterSpline(const Vector3 *points, const float *widths, int pointCount, MapWaterConfig config)
 {
     MapWaterSurface water = {0};
@@ -4100,10 +4137,10 @@ MapWaterSurface MapProp_CreateWaterSpline(const Vector3 *points, const float *wi
             Vector3 v10 = Vector3Add(p1, Vector3Scale(n1, off1_a));
             Vector3 v11 = Vector3Add(p1, Vector3Scale(n1, off1_b));
 
-            Vector2 uv00 = {fr0, v0};
-            Vector2 uv01 = {fr1, v0};
-            Vector2 uv10 = {fr0, v1};
-            Vector2 uv11 = {fr1, v1};
+            Vector2 uv00 = {v0, fr0};
+            Vector2 uv01 = {v0, fr1};
+            Vector2 uv10 = {v1, fr0};
+            Vector2 uv11 = {v1, fr1};
 
             Water_SetVertex(&splineMesh, cursor++, v00, uv00, WHITE);
             Water_SetVertex(&splineMesh, cursor++, v01, uv01, WHITE);

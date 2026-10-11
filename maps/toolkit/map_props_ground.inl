@@ -374,6 +374,29 @@ MapGroundSurface MapProp_CreateGround(float width, float depth, float tileSize,
     return SetupGroundMaterial(mesh, width, depth, tileSize, splatMapPath, grassTexPath, pathTexPath);
 }
 
+#include "maps/toolkit/map_props_heightfield.inl"
+
+MapGroundSurface MapProp_CreateGroundHeightfield16(const char *heightmapPath, float width, float depth,
+                                                  float totalHeight, float cliffDepth, float tileSize,
+                                                  const char *splatMapPath, const char *grassTexPath,
+                                                  const char *pathTexPath)
+{
+    Image image = LoadImage(heightmapPath);
+    const char *legacy = getenv("WUXING_GROUND_MESH");
+    Mesh mesh = Ground_CreateIndexedHeightfield(image, (Vector3){width, totalHeight, depth},
+                                                true, !legacy || strcmp(legacy, "legacy") != 0);
+    UnloadImage(image);
+    if (!mesh.vertices) {
+        TraceLog(LOG_WARNING, "Packed heightfield load failed: %s", heightmapPath);
+        return (MapGroundSurface){0};
+    }
+    TraceLog(LOG_INFO, "GROUND_MESH: vertices=%d triangles=%d indexed=%d", mesh.vertexCount,
+             mesh.triangleCount, mesh.indices != NULL);
+    MapGroundSurface ground = SetupGroundMaterial(mesh, width, depth, tileSize, splatMapPath, grassTexPath, pathTexPath);
+    ground.drawOffset = (Vector3){-width * 0.5f, -cliffDepth, -depth * 0.5f};
+    return ground;
+}
+
 MapGroundSurface MapProp_CreateGroundHeightmapEx(const char *heightmapPath, float width, float depth,
                                                  float totalHeight, float cliffDepth, float tileSize,
                                                  const char *splatMapPath,

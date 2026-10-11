@@ -85,3 +85,6 @@ unreal-engine-starter-content-main/
 __pycache__/
 *.pyc
 
+
+# Offline terrain water meshes are source assets, not object files.
+!assets/maps/**/*_water.obj

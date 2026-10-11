@@ -71,6 +71,7 @@ static void SetShaderValue(Shader s,int loc,const void *p,int type) {
    assert(t.x==expectedTiling.x && t.y==expectedTiling.y);tilingUploads++;}
 }
 static void SetShaderValueV(Shader s,int l,const void *p,int t,int n) {(void)n;SetShaderValue(s,l,p,t);}
+static void MapShadow_AttachMaterial(Material *material) {assert(material != NULL);}
 static void MapShadow_UpdateShader(Shader s) {assert(activeProgram==(int)s.id);}
 static int GfxQuality_Get(void) {return GFX_HIGH;}
 static int GetShaderLocation(Shader s,const char *n) {(void)s;(void)n;return 16;}
