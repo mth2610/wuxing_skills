@@ -23,7 +23,7 @@
 #define MAP_WIDTH SONG_QUAO_MAP_WIDTH
 #define MAP_DEPTH SONG_QUAO_MAP_DEPTH
 #define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
-#define CLOUD_SEA_Y -18.0f
+#define CLOUD_SEA_Y -7.75f
 #define ROCK_COUNT 24
 #define GRASS_TUFT_CAPACITY 65000
 #define FLOWER_COUNT 600
@@ -132,7 +132,7 @@ static void BuildReedsAndFlowers(void)
         Color splat = SampleSplat(rx, rz);
         Vector3 pos, normal;
         if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, rx, rz, &pos, &normal)) continue;
-        if (normal.y < 0.70f || pos.y < -1.0f) continue;
+        if (normal.y < 0.70f || pos.y < -CLIFF_DEPTH + 0.45f) continue;
 
         // Reeds in wetland / stream banks (Channel A > 80)
         if (splat.a > 80 && s_reedCount < REED_COUNT) {
@@ -172,15 +172,26 @@ static void BuildReedsAndFlowers(void)
 static void BuildRockPlacements(void)
 {
     unsigned int rng = 0x826412u;
-    for (int i = 0; i < ROCK_COUNT; i++) {
+    int placed = 0;
+    // Ecology-driven rock placement: focus rocks on rock scree (Channel G > 70)
+    // or near shoreline/riverbanks (Channel A > 60), avoiding open pure grass meadows
+    for (int attempts = 0; attempts < 1500 && placed < ROCK_COUNT; attempts++) {
         float rx = 10.0f + Random01(&rng) * (MAP_WIDTH - 20.0f);
         float rz = 10.0f + Random01(&rng) * (MAP_DEPTH - 20.0f);
-        float rScale = 0.75f + 1.25f * Random01(&rng);
-        float hScale = 0.60f + 0.80f * Random01(&rng);
+        Color splat = SampleSplat(rx, rz);
+        Vector3 pos, normal;
+        if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, rx, rz, &pos, &normal)) continue;
+        if (pos.y < -CLIFF_DEPTH + 0.5f) continue;
+
+        // Rock probability high if splat.g is high or near water
+        bool isRockZone = (splat.g > 70) || (splat.a > 60 && Random01(&rng) < 0.65f) || (normal.y < 0.78f);
+        if (!isRockZone && Random01(&rng) > 0.12f) continue;
+
+        float rScale = 0.75f + 1.35f * Random01(&rng);
+        float hScale = 0.60f + 0.85f * Random01(&rng);
         float rot = Random01(&rng) * 360.0f;
-        float gy = GetGroundHeightSongQuaoMap(rx, rz);
-        s_rockPlacements[i] = (MapRockPlacement){
-            .position = {rx, gy, rz},
+        s_rockPlacements[placed++] = (MapRockPlacement){
+            .position = pos,
             .radiusScale = rScale,
             .heightScale = hScale,
             .rotationDeg = rot
@@ -264,26 +275,41 @@ void InitSongQuaoMap(void)
         "assets/maps/song_quao/song_quao_island_heightmap.png", MAP_WIDTH, MAP_DEPTH,
         CLIFF_DEPTH, 3.6f, "assets/maps/song_quao/song_quao_ecology_splat.png",
         "assets/textures/verdant_meadow_substrate_diffuse.png", "assets/textures/dirt_diffuse.png");
+    // Valley stream corridor path segments flowing from upper north basin down to Song Quao Lake
+    static const Vector4 kValleyPathSegs[] = {
+        {86.70f, 83.41f, 89.41f, 91.48f},
+        {89.41f, 91.48f, 94.83f, 99.55f},
+        {94.83f, 99.55f, 96.19f, 108.97f},
+        {96.19f, 108.97f, 108.50f, 126.20f},
+        {108.50f, 126.20f, 125.00f, 152.00f},
+        {125.00f, 152.00f, 145.00f, 185.00f},
+        {145.00f, 185.00f, 158.00f, 210.00f},
+        {158.00f, 210.00f, SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z},
+    };
+    int valleyPathSegCount = (int)(sizeof(kValleyPathSegs) / sizeof(kValleyPathSegs[0]));
+
+    // Configure lake basin habitat blending for ground shader
+    Vector4 lakeParams = {SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z,
+                          SONG_QUAO_LAKE_RADIUS_X, SONG_QUAO_LAKE_RADIUS_Z};
+    MapProp_SetGroundHabitat(&s_ground, kValleyPathSegs, valleyPathSegCount, lakeParams);
+
+    // Sample ground height inside lake basin floor to position the water surface naturally
+    float lakeGroundY = MapProp_SampleGroundHeight(&s_ground, kMapCenter, SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z);
+    float lakeWaterY = lakeGroundY + 0.55f;
+
     MapProp_SetGroundTint(&s_ground, (Color){62, 88, 45, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
         "assets/textures/verdant_meadow_substrate_material.png",
         "assets/textures/dirt_material.png");
     MapProp_SetGroundReliefMap(&s_ground, "assets/textures/verdant_terrain_relief.png");
 
-    // Sample ground height inside lake basin floor to position the water surface naturally
-    float lakeGroundY = MapProp_SampleGroundHeight(&s_ground, kMapCenter, SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z);
-    float lakeWaterY = lakeGroundY + 0.55f;
-
-    // Configure lake basin habitat blending for ground shader
-    Vector4 lakeParams = {SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z,
-                          SONG_QUAO_LAKE_RADIUS_X, SONG_QUAO_LAKE_RADIUS_Z};
-    MapProp_SetGroundHabitat(&s_ground, NULL, 0, lakeParams);
-
     s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
                                   "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
-    MapBoundaryMistStyle rim = {1.2f, 4.0f, 0.5f, 2.0f, 0.35f};
+    // Boundary mist veil wraps around the perimeter cliff base below the lowest basin swales (-7.55f),
+    // ensuring the flat plain beyond the basin is completely occluded from higher vantage points.
+    MapBoundaryMistStyle rim = {1.8f, 6.5f, 0.25f, 1.2f, 0.45f};
     if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -1.25f, &rim))
         TraceLog(LOG_WARNING, "Song Quao: terrain boundary mist bake failed");
 
