@@ -360,15 +360,125 @@ static inline void Botanical_RenderBladeMesh(Vector3 root,Vector3 forward,Vector
             }
 }
 
+/* Fast Level-of-Detail blade renderer:
+ * lod = 0 (Near / High detail): 12 segments * 4 strips (288 vertices) - full micro-curvature and spine fold.
+ * lod = 1 (Mid detail): 4 segments * 2 strips (48 vertices) - smooth spine arch and width profile.
+ * lod = 2 (Far detail): 2 segments * 1 strip (12 vertices) - 2 curved quads along spine with normal shading.
+ */
+static inline void Botanical_RenderBladeMeshLOD(Vector3 root,Vector3 forward,Vector3 right,
+    Vector3 up,float lengthM,const BotanicalProfile *profile,float curveRatio,
+    float cupRatio,float asymmetry,Color cBase,Color cMid,Color cTip,Color cAccent,
+    Vector3 sunDir,bool petal,bool isShadowPass,unsigned char alphaByte,int lod)
+{
+    if (!isfinite(lengthM) || lengthM<=0) return;
+
+    if (lod <= 0) {
+        Botanical_RenderBladeMesh(root,forward,right,up,lengthM,profile,curveRatio,
+            cupRatio,asymmetry,cBase,cMid,cTip,cAccent,sunDir,petal,isShadowPass,alphaByte);
+        return;
+    }
+
+    if (lod == 1) {
+        // Mid LOD: 4 segments * 2 strips = 48 vertices
+        const int segs = 4;
+        const int strips = 2;
+        Vector3 points[5][3];
+        Vector3 normals[5][3];
+        Color colors[5][3];
+
+        for(int row=0;row<=segs;row++) {
+            float t = Botanical_CosineWarp((float)row / segs);
+            for(int col=0;col<=strips;col++) {
+                float across = -1.0f + 2.0f * (float)col / strips;
+                Vector3 local = Botanical_BladeLocalPoint(profile,lengthM,t,across,curveRatio,cupRatio,asymmetry);
+                Vector3 normal = Botanical_BladeLocalNormal(profile,lengthM,t,across,curveRatio,cupRatio,asymmetry);
+                points[row][col] = Vector3Add(root,Vector3Add(Vector3Scale(right,local.x),
+                    Vector3Add(Vector3Scale(up,local.y),Vector3Scale(forward,local.z))));
+                normals[row][col] = Vector3Normalize(Vector3Add(Vector3Scale(right,normal.x),
+                    Vector3Add(Vector3Scale(up,normal.y),Vector3Scale(forward,normal.z))));
+                if(!isShadowPass) {
+                    Color tint = t<=.5f ? ColorLerp(cBase,cMid,t*2) : ColorLerp(cMid,cTip,(t-.5f)*2);
+                    float accent = petal ? .04f*powf(fabsf(across),4) : .08f*powf(1-fabsf(across),4);
+                    tint = ColorLerp(tint,cAccent,accent);
+                    float light = .58f + .42f*fabsf(Vector3DotProduct(normals[row][col],sunDir));
+                    colors[row][col] = (Color){(unsigned char)(tint.r*light),(unsigned char)(tint.g*light),
+                        (unsigned char)(tint.b*light),alphaByte};
+                }
+            }
+        }
+        rlCheckRenderBatchLimit(segs * strips * 6);
+        const int offsets[6][2]={{0,0},{1,0},{1,1},{0,0},{1,1},{0,1}};
+        for(int row=0;row<segs;row++) {
+            for(int col=0;col<strips;col++) {
+                for(int v=0;v<6;v++) {
+                    int r = row + offsets[v][0], c = col + offsets[v][1];
+                    if(!isShadowPass) {
+                        Color tint = colors[r][c]; rlColor4ub(tint.r,tint.g,tint.b,tint.a);
+                    }
+                    Vector3 n = normals[r][c], p = points[r][c];
+                    rlNormal3f(n.x,n.y,n.z); rlVertex3f(p.x,p.y,p.z);
+                }
+            }
+        }
+        return;
+    }
+
+    // Far LOD: 2 segments * 1 strip = 12 vertices (6 quads)
+    const int segs = 2;
+    Vector3 points[3][2];
+    Vector3 normals[3][2];
+    Color colors[3][2];
+
+    for(int row=0;row<=segs;row++) {
+        float t = Botanical_CosineWarp((float)row / segs);
+        for(int col=0;col<=1;col++) {
+            float across = col == 0 ? -1.0f : 1.0f;
+            Vector3 local = Botanical_BladeLocalPoint(profile,lengthM,t,across,curveRatio,cupRatio,asymmetry);
+            Vector3 normal = Botanical_BladeLocalNormal(profile,lengthM,t,across,curveRatio,cupRatio,asymmetry);
+            points[row][col] = Vector3Add(root,Vector3Add(Vector3Scale(right,local.x),
+                Vector3Add(Vector3Scale(up,local.y),Vector3Scale(forward,local.z))));
+            normals[row][col] = Vector3Normalize(Vector3Add(Vector3Scale(right,normal.x),
+                Vector3Add(Vector3Scale(up,normal.y),Vector3Scale(forward,normal.z))));
+            if(!isShadowPass) {
+                Color tint = t<=.5f ? ColorLerp(cBase,cMid,t*2) : ColorLerp(cMid,cTip,(t-.5f)*2);
+                float light = .58f + .42f*fabsf(Vector3DotProduct(normals[row][col],sunDir));
+                colors[row][col] = (Color){(unsigned char)(tint.r*light),(unsigned char)(tint.g*light),
+                    (unsigned char)(tint.b*light),alphaByte};
+            }
+        }
+    }
+    rlCheckRenderBatchLimit(12);
+    const int offsets[6][2]={{0,0},{1,0},{1,1},{0,0},{1,1},{0,1}};
+    for(int row=0;row<segs;row++) {
+        for(int v=0;v<6;v++) {
+            int r = row + offsets[v][0], c = offsets[v][1];
+            if(!isShadowPass) {
+                Color tint = colors[r][c]; rlColor4ub(tint.r,tint.g,tint.b,tint.a);
+            }
+            Vector3 n = normals[r][c], p = points[r][c];
+            rlNormal3f(n.x,n.y,n.z); rlVertex3f(p.x,p.y,p.z);
+        }
+    }
+}
+
 // Standalone petals share the blade primitive; compound blossoms stay separate.
+static inline void Botanical_RenderSinglePetalMeshLOD(Vector3 root,Vector3 forward,
+    Vector3 right,Vector3 up,float petalLen,const BotanicalProfile *profile,
+    float curveAmount,Color cBase,Color cMid,Color cTip,Color cGlowRim,
+    Vector3 sunDir,bool isShadowPass,unsigned char alphaByte,int lod)
+{
+    Botanical_RenderBladeMeshLOD(root,forward,right,up,petalLen,profile,
+        petalLen>0?.6f*curveAmount/petalLen:0,profile->fold*.5f,.018f,
+        cBase,cMid,cTip,cGlowRim,sunDir,true,isShadowPass,alphaByte,lod);
+}
+
 static inline void Botanical_RenderSinglePetalMesh(Vector3 root,Vector3 forward,
     Vector3 right,Vector3 up,float petalLen,const BotanicalProfile *profile,
     float curveAmount,Color cBase,Color cMid,Color cTip,Color cGlowRim,
     Vector3 sunDir,bool isShadowPass,unsigned char alphaByte)
 {
-    Botanical_RenderBladeMesh(root,forward,right,up,petalLen,profile,
-        petalLen>0?.6f*curveAmount/petalLen:0,profile->fold*.5f,.018f,
-        cBase,cMid,cTip,cGlowRim,sunDir,true,isShadowPass,alphaByte);
+    Botanical_RenderSinglePetalMeshLOD(root,forward,right,up,petalLen,profile,
+        curveAmount,cBase,cMid,cTip,cGlowRim,sunDir,isShadowPass,alphaByte,0);
 }
 
 // ── 3D Golden Angle Phyllotaxis Receptacle Dome (From map_props_nature.inl) ──

@@ -409,16 +409,19 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
         ReceiverConstraints constraints = {.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
 
         if(p->state==BOTANICAL_STATE_SETTLED) {
-            BodyPhysicalProperties physicalBody = MotionBody_GetPhysicalProperties(&body);
-            MediumProperties medium = MotionBody_GetMediumProperties(&body);
-            medium.velocityMps = Wind_EvaluateBackgroundVelocity(p->pos,time);
-            FieldSample sample;
-            MotionFields_SampleBody(p->pos,p->vel,&physicalBody,&medium,&constraints,
-                0,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
-            if((p->motionReceiver.guide && !p->motionReceiver.arrived) ||
-                sample.accelerationMps2.y + sample.forceNewtons.y*body.inverseMassKg>9.81f ||
-                sample.mediumVelocityMps.y>1.0f) {
-                p->state=BOTANICAL_STATE_FREE;p->groundRestTimer=0;
+            // Only check lift every 4th frame or when homing is active
+            if(s_foliageHomingActive || ((p->seed + (unsigned int)(p->groundRestTimer * 10.0f)) & 3) == 0) {
+                BodyPhysicalProperties physicalBody = MotionBody_GetPhysicalProperties(&body);
+                MediumProperties medium = MotionBody_GetMediumProperties(&body);
+                medium.velocityMps = Wind_EvaluateBackgroundVelocity(p->pos,time);
+                FieldSample sample;
+                MotionFields_SampleBody(p->pos,p->vel,&physicalBody,&medium,&constraints,
+                    0,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
+                if((p->motionReceiver.guide && !p->motionReceiver.arrived) ||
+                    sample.accelerationMps2.y + sample.forceNewtons.y*body.inverseMassKg>9.81f ||
+                    sample.mediumVelocityMps.y>1.0f) {
+                    p->state=BOTANICAL_STATE_FREE;p->groundRestTimer=0;
+                }
             }
         }
         if (p->state == BOTANICAL_STATE_ATTACHED)
@@ -437,10 +440,10 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
             p->flutterPhase += dt*p->flutterSpeed;
             Vector3 flutter={(float)cosf(p->rot.y)*sinf(p->flutterPhase)*1.8f,0,
                              (float)sinf(p->rot.y)*sinf(p->flutterPhase)*1.8f};
-            float remaining=fminf(dt,0.25f);
+            float remaining=fminf(dt,0.066f); // Bound max frame hitch to 2 steps
             bool destroyed=false;
             while(remaining>1e-6f) {
-                float step=fminf(remaining,1.0f/120.0f);remaining-=step;
+                float step=fminf(remaining,1.0f/60.0f);remaining-=step;
                 MotionArrivalProfile post;
                 if(p->motionReceiver.arrived&&MotionFields_GetArrival(p->motionReceiver.guide,&post)&&post.overrideDynamics) {
                     float inverseMass=body.inverseMassKg;body=post.dynamics;
@@ -523,23 +526,25 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
                 }
             }
 
-            // 5. Terrain contact & ground settling
-            float groundH = MapManager_GetGroundHeightAt(p->pos.x, p->pos.z);
-            if (p->pos.y <= groundH + 0.015f)
-            {
-                p->pos.y = groundH + 0.012f;
-                p->vel.y = 0.0f;
-                p->vel.x *= 0.55f;
-                p->vel.z *= 0.55f;
-
-                // When speed drops below threshold, settle flat on the terrain
-                if (fabsf(p->vel.x) + fabsf(p->vel.z) < 0.15f)
+            // 5. Terrain contact & ground settling (altitude guard: only query terrain when near ground level)
+            if (p->pos.y <= 6.0f) {
+                float groundH = MapManager_GetGroundHeightAt(p->pos.x, p->pos.z);
+                if (p->pos.y <= groundH + 0.015f)
                 {
-                    p->vel = (Vector3){0, 0, 0};
-                    p->rotVel = (Vector3){0, 0, 0};
-                    p->rot.x = 0.0f;
-                    p->rot.z = 0.0f;
-                    p->state = BOTANICAL_STATE_SETTLED;
+                    p->pos.y = groundH + 0.012f;
+                    p->vel.y = 0.0f;
+                    p->vel.x *= 0.55f;
+                    p->vel.z *= 0.55f;
+
+                    // When speed drops below threshold, settle flat on the terrain
+                    if (fabsf(p->vel.x) + fabsf(p->vel.z) < 0.15f)
+                    {
+                        p->vel = (Vector3){0, 0, 0};
+                        p->rotVel = (Vector3){0, 0, 0};
+                        p->rot.x = 0.0f;
+                        p->rot.z = 0.0f;
+                        p->state = BOTANICAL_STATE_SETTLED;
+                    }
                 }
             }
         }
@@ -719,7 +724,7 @@ static inline Color Foliage_GetBaseColor(VFX_WoodVineStyle style, VFX_BotanicalK
     return cBase;
 }
 
-static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color cBase, Color cTip, Color cVein, bool isShadowPass)
+static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color cBase, Color cTip, Color cVein, bool isShadowPass, int lod)
 {
     float sz = p->scale * p->growth;
     if (sz <= 0.005f) return;
@@ -753,8 +758,8 @@ static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color cBase, 
     float leafLen = sz;
     Vector3 vRoot = p->pos;
 
-    // Tiny petiole stem
-    if (!isShadowPass)
+    // Tiny petiole stem (only on near LOD)
+    if (!isShadowPass && lod <= 0)
     {
         Vector3 vStemBase = Vector3Add(vRoot, Vector3Scale(forward, -leafLen * 0.22f));
         float stemLit = 0.35f + 0.65f * fmaxf(Vector3DotProduct(up, sunDir), 0.0f);
@@ -773,9 +778,9 @@ static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color cBase, 
             Botanical_ProfileWillow():Botanical_ProfileOval();
         float lengthM=leafLen*(p->leafShape==WOOD_LEAF_SHAPE_WILLOW?1.45f:1.05f);
         float flutter=sinf(p->flutterPhase)*(p->state==BOTANICAL_STATE_FREE?.04f:.015f);
-        Botanical_RenderBladeMesh(vRoot,forward,right,up,lengthM,&profile,
+        Botanical_RenderBladeMeshLOD(vRoot,forward,right,up,lengthM,&profile,
             profile.curl*.6f+flutter,profile.fold*.5f,.012f,
-            cBase,ColorLerp(cBase,cTip,.45f),cTip,cVein,sunDir,false,isShadowPass,alphaByte);
+            cBase,ColorLerp(cBase,cTip,.45f),cTip,cVein,sunDir,false,isShadowPass,alphaByte,lod);
     }
     else
     {
@@ -861,7 +866,7 @@ static void Foliage_RenderSingleLeaf(const VFX_FoliageParticle *p, Color cBase, 
     }
 }
 
-static void Foliage_RenderSingleFlower(const VFX_FoliageParticle *p, Color cBase, Color cTip, Color cStamen, bool isShadowPass)
+static void Foliage_RenderSingleFlower(const VFX_FoliageParticle *p, Color cBase, Color cTip, Color cStamen, bool isShadowPass, int lod)
 {
     float sz = p->scale * p->growth;
     if (sz <= 0.005f) return;
@@ -908,9 +913,9 @@ static void Foliage_RenderSingleFlower(const VFX_FoliageParticle *p, Color cBase
         };
         Color cGlowRim = cStamen;
 
-        Botanical_RenderSinglePetalMesh(
+        Botanical_RenderSinglePetalMeshLOD(
             center, forward, right, up, petalLen, &prof, curve,
-            cBase, cMid, cTip, cGlowRim, sunDir, isShadowPass, alphaByte
+            cBase, cMid, cTip, cGlowRim, sunDir, isShadowPass, alphaByte, lod
         );
         return;
     }
@@ -1166,7 +1171,14 @@ void VFX_FoliageSystem_Draw(void)
         float cdx = p->pos.x - camPos.x;
         float cdy = p->pos.y - camPos.y;
         float cdz = p->pos.z - camPos.z;
-        if (cdx * cdx + cdy * cdy + cdz * cdz > maxDistSq) continue;
+        float distSq = cdx * cdx + cdy * cdy + cdz * cdz;
+        if (distSq > maxDistSq) continue;
+
+        // Camera distance LOD selection:
+        // dist < 7m: High (LOD 0, 288 verts)
+        // 7m <= dist < 18m: Mid (LOD 1, 48 verts)
+        // dist >= 18m: Far (LOD 2, 12 verts)
+        int lod = (p->state == BOTANICAL_STATE_ATTACHED) ? 0 : (distSq < 49.0f ? 0 : (distSq < 324.0f ? 1 : 2));
 
         rlCheckRenderBatchLimit(48);
 
@@ -1174,9 +1186,9 @@ void VFX_FoliageSystem_Draw(void)
         Foliage_GetFoliageColors(p->style, p->kind, p->flowerType, p->wither, &cBase, &cTip, &cAccent);
 
         if (p->kind == BOTANICAL_KIND_LEAF) {
-            Foliage_RenderSingleLeaf(p, cBase, cTip, cAccent, false);
+            Foliage_RenderSingleLeaf(p, cBase, cTip, cAccent, false, lod);
         } else {
-            Foliage_RenderSingleFlower(p, cBase, cTip, cAccent, false);
+            Foliage_RenderSingleFlower(p, cBase, cTip, cAccent, false, lod);
         }
     }
 
@@ -1193,18 +1205,27 @@ void VFX_FoliageSystem_DrawShadowPass(void)
     rlBegin(RL_TRIANGLES);
 
     Color shadowCol = WHITE;
+    Vector3 camPos = camera.position;
 
     for (int i = 0; i < VFX_FOLIAGE_POOL_CAPACITY; i++)
     {
         const VFX_FoliageParticle *p = &s_foliagePool[i];
         if (!p->active || p->alpha <= 0.15f || p->growth <= 0.05f) continue;
 
+        float cdx = p->pos.x - camPos.x;
+        float cdy = p->pos.y - camPos.y;
+        float cdz = p->pos.z - camPos.z;
+        float distSq = cdx * cdx + cdy * cdy + cdz * cdz;
+        if (distSq > 35.0f * 35.0f) continue;
+
+        int lod = (p->state == BOTANICAL_STATE_ATTACHED) ? 1 : (distSq < 49.0f ? 1 : 2);
+
         rlCheckRenderBatchLimit(48);
 
         if (p->kind == BOTANICAL_KIND_LEAF) {
-            Foliage_RenderSingleLeaf(p, shadowCol, shadowCol, shadowCol, true);
+            Foliage_RenderSingleLeaf(p, shadowCol, shadowCol, shadowCol, true, lod);
         } else {
-            Foliage_RenderSingleFlower(p, shadowCol, shadowCol, shadowCol, true);
+            Foliage_RenderSingleFlower(p, shadowCol, shadowCol, shadowCol, true, lod);
         }
     }
 
