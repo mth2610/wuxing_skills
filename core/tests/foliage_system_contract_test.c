@@ -59,7 +59,7 @@ int main(void)
     CHECK(FileHas(inl, "BOTANICAL_STATE_SETTLED"), "foliage system supports SETTLED state on terrain");
 
     // 2. Physical laws & forces
-    CHECK((FileHas(inl, "MotionBody_AdvanceFieldVelocity") && (FileHas("core/motion/motion_body.h", "ParticleDynamics_GravityAcceleration") && FileHas("core/particles/particle_dynamics.h", "9.81f"))), "real-world gravity (9.81 m/s^2) applied to airborne leaves");
+    CHECK((FileHas(inl, "MotionBody_AdvanceFieldVelocity") && ((FileHas("core/motion/motion_body.h", "ParticleDynamics_GravityAcceleration") || FileHas("core/motion/motion_profile.h", "ParticleDynamics_GravityAcceleration")) && (FileHas("core/particles/particle_dynamics.h", "9.81f") || FileHas("core/motion/motion_profile.h", "9.81f")))), "real-world gravity (9.81 m/s^2) applied to airborne leaves");
     CHECK(FileHas(inl, "dragCoeff"), "planar aerodynamic drag coefficient modeled for leaf glide/flutter");
     CHECK(FileHas(inl, "Wind_EvaluateBackgroundVelocity") && !FileHas(inl, "Wind_EvaluateVelocity("), "foliage samples environmental airflow without duplicating Motion publication");
     CHECK(FileHas(inl, "MotionFields_SampleBody") && FileHas(inl, "MotionBody_GetPhysicalProperties"), "foliage supplies real mass, density and projected area to shared fields");

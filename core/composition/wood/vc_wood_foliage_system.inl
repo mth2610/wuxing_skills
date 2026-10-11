@@ -27,6 +27,7 @@
 #include "core/wind/wind_system.h"
 #include "core/force_field.h"
 #include "core/motion/motion_body.h"
+#include "core/camera_context.h"
 #include "core/composition/wood/vc_wood_botanical_math.h"
 #include <math.h>
 #include <stdlib.h>
@@ -455,6 +456,35 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
                     MotionVec_Add(medium.velocityMps,sample.mediumVelocityMps);
                 Vector3 accel=MotionVec_Scale(flutter,
                     Botanical_FlutterAirWeight(MotionVec_Sub(resolvedAir,p->vel)));
+                // Aerofoil dynamic response: compute current blade plane normal
+                float cy = cosf(p->rot.y), sy = sinf(p->rot.y);
+                float cp = cosf(p->rot.x), sp = sinf(p->rot.x);
+                float cr = cosf(p->rot.z), sr = sinf(p->rot.z);
+                Vector3 bladeNorm = (Vector3){ -sy * sr - cy * sp * cr, cp * cr, cy * sr - sy * sp * cr };
+                float nLen = sqrtf(bladeNorm.x * bladeNorm.x + bladeNorm.y * bladeNorm.y + bladeNorm.z * bladeNorm.z);
+                if (nLen > 1e-4f) { bladeNorm.x /= nLen; bladeNorm.y /= nLen; bladeNorm.z /= nLen; }
+                else bladeNorm = (Vector3){0, 1.0f, 0};
+
+                Vector3 relFlow = MotionVec_Sub(resolvedAir, p->vel);
+                float relSpeedSq = relFlow.x * relFlow.x + relFlow.y * relFlow.y + relFlow.z * relFlow.z;
+                if (relSpeedSq > 1e-4f) {
+                    float relSpeed = sqrtf(relSpeedSq);
+                    Vector3 flowDir = (Vector3){ relFlow.x / relSpeed, relFlow.y / relSpeed, relFlow.z / relSpeed };
+                    float cosAoA = bladeNorm.x * flowDir.x + bladeNorm.y * flowDir.y + bladeNorm.z * flowDir.z;
+                    // Aerofoil lift vector is perpendicular to flowDir, oriented towards normal
+                    Vector3 liftDir = (Vector3){ bladeNorm.x - flowDir.x * cosAoA,
+                                                bladeNorm.y - flowDir.y * cosAoA,
+                                                bladeNorm.z - flowDir.z * cosAoA };
+                    float lLen = sqrtf(liftDir.x * liftDir.x + liftDir.y * liftDir.y + liftDir.z * liftDir.z);
+                    if (lLen > 1e-4f) {
+                        float liftCoeff = 2.0f * fabsf(cosAoA) * sqrtf(fmaxf(0.0f, 1.0f - cosAoA * cosAoA));
+                        float liftAcc = 0.5f * 1.225f * p->projectedAreaM2 * (liftCoeff * 1.2f) * relSpeedSq * body.inverseMassKg;
+                        if (liftAcc > 18.0f) liftAcc = 18.0f; // safety clamp
+                        accel = MotionVec_Add(accel, (Vector3){ liftDir.x * liftAcc / lLen,
+                                                               liftDir.y * liftAcc / lLen,
+                                                               liftDir.z * liftAcc / lLen });
+                    }
+                }
                 if(activeFF)accel=MotionVec_Add(accel,ForceField_Evaluate(activeFF,p->pos,p->vel,time,(Vector3){0},(Vector3){0,1,0}));
                 p->vel=MotionBody_AdvanceFieldVelocity(p->vel,&body,accel,
                     (Vector3){0},&sample,medium.velocityMps,step);
@@ -470,9 +500,11 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
             }
             if(destroyed){p->active=false;s_foliageActiveCount--;continue;}
 
-            // Integrate rotation tumbling
+            // Integrate rotation tumbling with aerodynamic stabilizing torque
+            float relAirSpeed = sqrtf(p->vel.x * p->vel.x + p->vel.z * p->vel.z);
+            p->rotVel.y += (p->flutterPhase > 0 ? 0.35f : -0.35f) * relAirSpeed * dt;
             p->rot = Vector3Add(p->rot, Vector3Scale(p->rotVel, dt));
-            p->rotVel = Vector3Scale(p->rotVel, powf(0.985f, dt*60.0f)); // Air rotational damping
+            p->rotVel = Vector3Scale(p->rotVel, powf(0.970f, dt*60.0f)); // Natural aerofoil damping
 
             // Homing strike impact check: dissolve upon reaching target center
             if (s_foliageHomingActive)
@@ -1123,10 +1155,18 @@ void VFX_FoliageSystem_Draw(void)
     BeginBlendMode(BLEND_ALPHA);
     rlBegin(RL_TRIANGLES);
 
+    Vector3 camPos = camera.position;
+    const float maxDistSq = 65.0f * 65.0f;
+
     for (int i = 0; i < VFX_FOLIAGE_POOL_CAPACITY; i++)
     {
         const VFX_FoliageParticle *p = &s_foliagePool[i];
         if (!p->active || p->alpha <= 0.01f || p->growth <= 0.01f) continue;
+
+        float cdx = p->pos.x - camPos.x;
+        float cdy = p->pos.y - camPos.y;
+        float cdz = p->pos.z - camPos.z;
+        if (cdx * cdx + cdy * cdy + cdz * cdz > maxDistSq) continue;
 
         rlCheckRenderBatchLimit(48);
 

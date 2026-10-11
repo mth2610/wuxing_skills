@@ -426,12 +426,19 @@ Vector3 Wind_EvaluateVorticleVelocity(const VorticleData *v, Vector3 pos, float 
     if (v == NULL || !v->active)
         return velocity;
 
-    Vector3 delta = Vector3Subtract(pos, v->position);
-    float distSq = Vector3LengthSqr(delta);
+    float dx = fabsf(pos.x - v->position.x);
+    if (dx >= v->radius) return velocity;
+    float dy = fabsf(pos.y - v->position.y);
+    if (dy >= v->radius) return velocity;
+    float dz = fabsf(pos.z - v->position.z);
+    if (dz >= v->radius) return velocity;
+
+    float distSq = dx * dx + dy * dy + dz * dz;
     float rSq = v->radius * v->radius;
     if (distSq >= rSq || rSq < 1e-6f)
         return velocity;
 
+    Vector3 delta = (Vector3){ pos.x - v->position.x, pos.y - v->position.y, pos.z - v->position.z };
     float dist = sqrtf(distSq);
     float spatialAtten = 1.0f - (dist / v->radius);
     float temporalAtten = (v->maxLifetime > 1e-4f)
