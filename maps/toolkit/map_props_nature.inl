@@ -647,8 +647,29 @@ static void Nature_AddAnchoredMotion(void)
     int steps = (int)ceilf(s_natureForceDt * 120.0f);
     if (steps < 1) steps = 1;
     float step = s_natureForceDt / steps;
-    for (int y = 0; y < NATURE_INTERACTION_RESOLUTION; y++) {
-        for (int x = 0; x < NATURE_INTERACTION_RESOLUTION; x++) {
+
+    // AABB Bounds Culling: compute grid coordinate limits for active motion fields
+    int gridMinX = 0, gridMaxX = NATURE_INTERACTION_RESOLUTION - 1;
+    int gridMinY = 0, gridMaxY = NATURE_INTERACTION_RESOLUTION - 1;
+    if (fieldsActive && !s_natureForceAwake) {
+        float fMinX = minimum.x - kNatureInteractionMaxBend;
+        float fMaxX = maximum.x + kNatureInteractionMaxBend;
+        float fMinZ = minimum.z - kNatureInteractionMaxBend;
+        float fMaxZ = maximum.z + kNatureInteractionMaxBend;
+        gridMinX = (int)floorf((fMinX - (s_natureInteractionCenter.x - halfSize)) / cellSize);
+        gridMaxX = (int)ceilf((fMaxX - (s_natureInteractionCenter.x - halfSize)) / cellSize);
+        gridMinY = (int)floorf((fMinZ - (s_natureInteractionCenter.y - halfSize)) / cellSize);
+        gridMaxY = (int)ceilf((fMaxZ - (s_natureInteractionCenter.y - halfSize)) / cellSize);
+        if (gridMinX < 0) gridMinX = 0;
+        if (gridMinY < 0) gridMinY = 0;
+        if (gridMaxX >= NATURE_INTERACTION_RESOLUTION) gridMaxX = NATURE_INTERACTION_RESOLUTION - 1;
+        if (gridMaxY >= NATURE_INTERACTION_RESOLUTION) gridMaxY = NATURE_INTERACTION_RESOLUTION - 1;
+        if (gridMinX > gridMaxX || gridMinY > gridMaxY)
+            return;
+    }
+
+    for (int y = gridMinY; y <= gridMaxY; y++) {
+        for (int x = gridMinX; x <= gridMaxX; x++) {
             int index = y * NATURE_INTERACTION_RESOLUTION + x;
             Vector2 *bend = &s_natureForceBend[index];
             Vector2 *velocity = &s_natureForceVelocity[index];
@@ -766,13 +787,19 @@ void MapProp_AddNatureWindVorticles(float time)
         if (minX > maxX || minY > maxY)
             continue;
 
+        float vRadSq = vorticle->radius * vorticle->radius;
         for (int y = minY; y <= maxY; y++) {
+            float sampleZ = fieldMinZ + ((float)y + 0.5f) * cellSize;
+            float dz = sampleZ - vorticle->position.z;
+            float dzSq = dz * dz;
+            if (dzSq >= vRadSq) continue;
+
             for (int x = minX; x <= maxX; x++) {
-                Vector3 samplePosition = {
-                    fieldMinX + ((float)x + 0.5f) * cellSize,
-                    0.0f,
-                    fieldMinZ + ((float)y + 0.5f) * cellSize,
-                };
+                float sampleX = fieldMinX + ((float)x + 0.5f) * cellSize;
+                float dx = sampleX - vorticle->position.x;
+                if (dx * dx + dzSq >= vRadSq) continue;
+
+                Vector3 samplePosition = { sampleX, 0.0f, sampleZ };
                 float groundY = MapManager_GetGroundHeightAt(samplePosition.x,
                                                                samplePosition.z);
                 if (!isfinite(groundY))

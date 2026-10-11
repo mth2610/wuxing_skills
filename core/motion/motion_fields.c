@@ -13,6 +13,7 @@ typedef struct {
   MotionFieldHandle handle;
   float age, distance;
   bool fired;
+  Vector3 guideBoundsMin, guideBoundsMax;
 } MotionGuideRuntime;
 typedef struct {
   MotionTargetDesc desc;
@@ -165,6 +166,38 @@ static float Motion_GuideRadius(const MotionGuideDesc *d, float distance) {
          Motion_Profile(d->radiusScaleStart, d->radiusScaleEnd,
                         Motion_Clamp(distance / d->path.length, 0, 1));
 }
+
+static void Motion_CacheGuideBounds(MotionGuideRuntime *g) {
+  const MotionGuideDesc *d = &g->desc;
+  float radius = fmaxf(Motion_GuideRadius(d, 0), Motion_GuideRadius(d, d->path.length));
+  float start = 0, end = d->path.length;
+  if (d->formation == MOTION_FORMATION_SHELL) start = end = g->distance;
+  else if (d->mode == MOTION_GUIDE_PULSE) {
+    start = fmaxf(0, g->distance - d->pulseLength * 0.5f);
+    end = fminf(d->path.length, g->distance + d->pulseLength * 0.5f);
+  }
+  Vector3 lo = {FLT_MAX, FLT_MAX, FLT_MAX}, hi = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+  Vector3 pStart = MotionPath_Sample(&d->path, start).position;
+  lo.x = fminf(lo.x, pStart.x - radius); lo.y = fminf(lo.y, pStart.y - radius); lo.z = fminf(lo.z, pStart.z - radius);
+  hi.x = fmaxf(hi.x, pStart.x + radius); hi.y = fmaxf(hi.y, pStart.y + radius); hi.z = fmaxf(hi.z, pStart.z + radius);
+  Vector3 pEnd = MotionPath_Sample(&d->path, end).position;
+  lo.x = fminf(lo.x, pEnd.x - radius); lo.y = fminf(lo.y, pEnd.y - radius); lo.z = fminf(lo.z, pEnd.z - radius);
+  hi.x = fmaxf(hi.x, pEnd.x + radius); hi.y = fmaxf(hi.y, pEnd.y + radius); hi.z = fmaxf(hi.z, pEnd.z + radius);
+  for (int j = 0; j < d->path.count; ++j) {
+    if (d->path.distance[j] >= start && d->path.distance[j] <= end) {
+      Vector3 pt = d->path.points[j];
+      lo.x = fminf(lo.x, pt.x - radius); lo.y = fminf(lo.y, pt.y - radius); lo.z = fminf(lo.z, pt.z - radius);
+      hi.x = fmaxf(hi.x, pt.x + radius); hi.y = fmaxf(hi.y, pt.y + radius); hi.z = fmaxf(hi.z, pt.z + radius);
+    }
+  }
+  g->guideBoundsMin = lo; g->guideBoundsMax = hi;
+}
+
+static bool Motion_InGuideBounds(const MotionGuideRuntime *g, Vector3 p) {
+  return p.x >= g->guideBoundsMin.x && p.x <= g->guideBoundsMax.x &&
+         p.y >= g->guideBoundsMin.y && p.y <= g->guideBoundsMax.y &&
+         p.z >= g->guideBoundsMin.z && p.z <= g->guideBoundsMax.z;
+}
 static float Motion_GuideWeight(const MotionGuideRuntime *g, Vector3 p,
                                 const MotionReceiver *r) {
   if (r->arrived)
@@ -264,6 +297,7 @@ void MotionFields_Update(float dt) {
       s_guides[i].age += dt;
       if (s_guides[i].age >= s_guides[i].desc.duration)
         s_guides[i].handle = 0;
+      else Motion_CacheGuideBounds(&s_guides[i]);
     }
   for (int i = 0; i < MOTION_FIELDS_MAX_TARGETS; i++)
     if (s_targets[i].handle) {
@@ -351,6 +385,7 @@ MotionFieldHandle MotionFields_CreateGuide(const MotionGuideDesc *d) {
         s_guides[i].desc.controller=(GuideController){d->maxForceNewtons,1};
       if (!s_guides[i].desc.receiverMask)
         s_guides[i].desc.receiverMask = MOTION_RECEIVER_ALL_COMPONENTS;
+      Motion_CacheGuideBounds(&s_guides[i]);
       Motion_PublishWind();
       Motion_Trace("guide_created", s_guides[i].handle, (int)d->mode);
       return s_guides[i].handle;
@@ -404,6 +439,8 @@ int MotionFields_GetTargetCount(void) {
 }
 static bool Motion_InGuide(const MotionGuideRuntime *g, Vector3 p,
                            MotionPathSample *projection) {
+  if (!Motion_InGuideBounds(g, p))
+    return false;
   *projection = MotionPath_Project(&g->desc.path, p, 0, g->desc.path.count - 2);
   if (MotionVec_Length(MotionVec_Sub(p, projection->position)) >
       Motion_GuideRadius(&g->desc, projection->distance))
