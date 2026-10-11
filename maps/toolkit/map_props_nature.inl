@@ -635,6 +635,8 @@ static Vector3 Nature_AnchoredAirForce(Vector3 velocity, Vector3 airflow, float 
 
 static void Nature_AddAnchoredMotion(void)
 {
+    static int s_natureAwakeMinX = 0, s_natureAwakeMaxX = NATURE_INTERACTION_RESOLUTION - 1;
+    static int s_natureAwakeMinY = 0, s_natureAwakeMaxY = NATURE_INTERACTION_RESOLUTION - 1;
     Vector3 minimum, maximum;
     bool fieldsActive = MotionFields_GetAnchoredBounds(MOTION_RECEIVER_FOLIAGE, &minimum, &maximum);
     if (!fieldsActive && !s_natureForceAwake)
@@ -648,7 +650,7 @@ static void Nature_AddAnchoredMotion(void)
     if (steps < 1) steps = 1;
     float step = s_natureForceDt / steps;
 
-    // AABB Bounds Culling: compute grid coordinate limits for active motion fields
+    // AABB Bounds Culling: compute grid coordinate limits for active motion fields and awake cells
     int gridMinX = 0, gridMaxX = NATURE_INTERACTION_RESOLUTION - 1;
     int gridMinY = 0, gridMaxY = NATURE_INTERACTION_RESOLUTION - 1;
     if (fieldsActive && !s_natureForceAwake) {
@@ -666,7 +668,38 @@ static void Nature_AddAnchoredMotion(void)
         if (gridMaxY >= NATURE_INTERACTION_RESOLUTION) gridMaxY = NATURE_INTERACTION_RESOLUTION - 1;
         if (gridMinX > gridMaxX || gridMinY > gridMaxY)
             return;
+    } else if (!fieldsActive && s_natureForceAwake) {
+        gridMinX = s_natureAwakeMinX;
+        gridMaxX = s_natureAwakeMaxX;
+        gridMinY = s_natureAwakeMinY;
+        gridMaxY = s_natureAwakeMaxY;
+        if (gridMinX > gridMaxX || gridMinY > gridMaxY) {
+            s_natureForceAwake = false;
+            return;
+        }
+    } else if (fieldsActive && s_natureForceAwake) {
+        float fMinX = minimum.x - kNatureInteractionMaxBend;
+        float fMaxX = maximum.x + kNatureInteractionMaxBend;
+        float fMinZ = minimum.z - kNatureInteractionMaxBend;
+        float fMaxZ = maximum.z + kNatureInteractionMaxBend;
+        int fGridMinX = (int)floorf((fMinX - (s_natureInteractionCenter.x - halfSize)) / cellSize);
+        int fGridMaxX = (int)ceilf((fMaxX - (s_natureInteractionCenter.x - halfSize)) / cellSize);
+        int fGridMinY = (int)floorf((fMinZ - (s_natureInteractionCenter.y - halfSize)) / cellSize);
+        int fGridMaxY = (int)ceilf((fMaxZ - (s_natureInteractionCenter.y - halfSize)) / cellSize);
+        gridMinX = fminf(fGridMinX, s_natureAwakeMinX);
+        gridMaxX = fmaxf(fGridMaxX, s_natureAwakeMaxX);
+        gridMinY = fminf(fGridMinY, s_natureAwakeMinY);
+        gridMaxY = fmaxf(fGridMaxY, s_natureAwakeMaxY);
+        if (gridMinX < 0) gridMinX = 0;
+        if (gridMinY < 0) gridMinY = 0;
+        if (gridMaxX >= NATURE_INTERACTION_RESOLUTION) gridMaxX = NATURE_INTERACTION_RESOLUTION - 1;
+        if (gridMaxY >= NATURE_INTERACTION_RESOLUTION) gridMaxY = NATURE_INTERACTION_RESOLUTION - 1;
+        if (gridMinX > gridMaxX || gridMinY > gridMaxY)
+            return;
     }
+
+    int nextAwakeMinX = NATURE_INTERACTION_RESOLUTION - 1, nextAwakeMaxX = 0;
+    int nextAwakeMinY = NATURE_INTERACTION_RESOLUTION - 1, nextAwakeMaxY = 0;
 
     for (int y = gridMinY; y <= gridMaxY; y++) {
         for (int x = gridMinX; x <= gridMaxX; x++) {
@@ -718,7 +751,14 @@ static void Nature_AddAnchoredMotion(void)
                 Nature_AdvanceAnchoredCell(bend, velocity, sample.forceNewtons, step);
             }
             maxBend = fmaxf(maxBend, sqrtf(bend->x * bend->x + bend->y * bend->y));
-            awake |= fabsf(bend->x) + fabsf(bend->y) + fabsf(velocity->x) + fabsf(velocity->y) >= 0.001f;
+            bool cellAwake = fabsf(bend->x) + fabsf(bend->y) + fabsf(velocity->x) + fabsf(velocity->y) >= 0.001f;
+            if (cellAwake) {
+                awake = true;
+                if (x < nextAwakeMinX) nextAwakeMinX = x;
+                if (x > nextAwakeMaxX) nextAwakeMaxX = x;
+                if (y < nextAwakeMinY) nextAwakeMinY = y;
+                if (y > nextAwakeMaxY) nextAwakeMaxY = y;
+            }
             Vector2 windBend = Nature_DecodeInteractionPixel(s_natureWindPixels[index]);
             s_natureWindPixels[index] = Nature_EncodeInteractionPixel((Vector2){
                 windBend.x + bend->x, windBend.y + bend->y,
@@ -726,6 +766,15 @@ static void Nature_AddAnchoredMotion(void)
         }
     }
     s_natureForceAwake = awake;
+    if (awake) {
+        s_natureAwakeMinX = nextAwakeMinX;
+        s_natureAwakeMaxX = nextAwakeMaxX;
+        s_natureAwakeMinY = nextAwakeMinY;
+        s_natureAwakeMaxY = nextAwakeMaxY;
+    } else {
+        s_natureAwakeMinX = 0; s_natureAwakeMaxX = NATURE_INTERACTION_RESOLUTION - 1;
+        s_natureAwakeMinY = 0; s_natureAwakeMaxY = NATURE_INTERACTION_RESOLUTION - 1;
+    }
     if (Nature_WindTraceEnabled()) {
         static float traceElapsed = 0.5f;
         traceElapsed += s_natureForceDt;

@@ -573,16 +573,16 @@ void UpdateParticles(float dt)
             body->inverseMassKg>0?body->inverseMassKg:1);
         p->dynamicsImpulsePending=false;
       }
-      /* Resample spatial fields along the trajectory. Bound both dt and work
-       * during stalls; normal 30/60/120 Hz frames share the same substep. */
-      float remaining=fminf(dt,0.25f);
+      /* Resample spatial fields along the trajectory. Cap substeps to at most
+       * 2 per frame (1/60s minimum step) to prevent CPU stall spikes under heavy loads. */
+      float remaining=fminf(dt,0.066f);
       bool destroyed=false;
       BodyPhysicalProperties physicalBody=MotionBody_GetPhysicalProperties(body);
       ReceiverConstraints constraints={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
       while (remaining>1e-6f) {
         float timeOffset=-remaining;
         float sampleTime=s_particleTime+timeOffset;
-        float step=fminf(remaining,1.0f/120.0f);remaining-=step;
+        float step=fminf(remaining,1.0f/60.0f);remaining-=step;
         MediumProperties medium=Wind_EvaluateBackgroundMedium(position,sampleTime,
             (Vector3){0,-9.81f*body->gravityScale,0});
         if(body->airDensityKgM3>0) medium.densityKgM3=body->airDensityKgM3;

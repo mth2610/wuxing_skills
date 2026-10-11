@@ -393,6 +393,9 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
     if (dt <= 0.0001f || s_foliageActiveCount <= 0) return;
     float time = (float)TimeFX_Elapsed();
 
+    Vector3 fieldMin = {0}, fieldMax = {0};
+    bool hasFieldBounds = MotionFields_GetAnchoredBounds(MOTION_RECEIVER_FOLIAGE, &fieldMin, &fieldMax);
+
     const ForceField *activeFF = (externalForceField != NULL) ? externalForceField : (s_foliageHasForceField ? &s_foliageActiveForceField : NULL);
 
     for (int i = 0; i < VFX_FOLIAGE_POOL_CAPACITY; i++)
@@ -452,9 +455,16 @@ void VFX_FoliageSystem_Update(float dt, const ForceField *externalForceField)
                 BodyPhysicalProperties physicalBody = MotionBody_GetPhysicalProperties(&body);
                 MediumProperties medium = MotionBody_GetMediumProperties(&body);
                 medium.velocityMps = Wind_EvaluateBackgroundVelocity(p->pos,time);
-                FieldSample sample;
-                MotionFields_SampleBody(p->pos,p->vel,&physicalBody,&medium,&constraints,
-                    step,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
+                FieldSample sample = {0};
+                bool inFieldBounds = !hasFieldBounds || (
+                    p->pos.x >= fieldMin.x && p->pos.x <= fieldMax.x &&
+                    p->pos.y >= fieldMin.y && p->pos.y <= fieldMax.y &&
+                    p->pos.z >= fieldMin.z && p->pos.z <= fieldMax.z
+                );
+                if (inFieldBounds || p->motionReceiver.guide != 0) {
+                    MotionFields_SampleBody(p->pos,p->vel,&physicalBody,&medium,&constraints,
+                        step,MOTION_RECEIVER_FOLIAGE,&p->motionReceiver,&sample);
+                }
                 Vector3 resolvedAir = sample.mediumIsAbsolute ? sample.mediumVelocityMps :
                     MotionVec_Add(medium.velocityMps,sample.mediumVelocityMps);
                 Vector3 accel=MotionVec_Scale(flutter,
@@ -1163,6 +1173,15 @@ void VFX_FoliageSystem_Draw(void)
     Vector3 camPos = camera.position;
     const float maxDistSq = 65.0f * 65.0f;
 
+    float fdx = camera.position.x - camera.target.x;
+    float fdz = camera.position.z - camera.target.z;
+    float focalDist = sqrtf(fdx * fdx + fdz * fdz);
+    float zoomFactor = tanf(22.5f * DEG2RAD) / tanf(fmaxf(10.0f, camera.fovy) * 0.5f * DEG2RAD);
+    float nearLodDist = focalDist + 7.0f * zoomFactor;
+    float midLodDist  = focalDist + 18.0f * zoomFactor;
+    float nearLodDistSq = nearLodDist * nearLodDist;
+    float midLodDistSq  = midLodDist * midLodDist;
+
     for (int i = 0; i < VFX_FOLIAGE_POOL_CAPACITY; i++)
     {
         const VFX_FoliageParticle *p = &s_foliagePool[i];
@@ -1174,13 +1193,13 @@ void VFX_FoliageSystem_Draw(void)
         float distSq = cdx * cdx + cdy * cdy + cdz * cdz;
         if (distSq > maxDistSq) continue;
 
-        // Camera distance LOD selection:
-        // dist < 7m: High (LOD 0, 288 verts)
-        // 7m <= dist < 18m: Mid (LOD 1, 48 verts)
-        // dist >= 18m: Far (LOD 2, 12 verts)
-        int lod = (p->state == BOTANICAL_STATE_ATTACHED) ? 0 : (distSq < 49.0f ? 0 : (distSq < 324.0f ? 1 : 2));
+        // Focal & Zoom-adjusted Camera distance LOD selection:
+        // Near (LOD 0, 288 verts): within player focal range
+        // Mid (LOD 1, 48 verts): intermediate range
+        // Far (LOD 2, 12 verts): distant range
+        int lod = (p->state == BOTANICAL_STATE_ATTACHED) ? 0 : (distSq < nearLodDistSq ? 0 : (distSq < midLodDistSq ? 1 : 2));
 
-        rlCheckRenderBatchLimit(48);
+        rlCheckRenderBatchLimit(288);
 
         Color cBase, cTip, cAccent;
         Foliage_GetFoliageColors(p->style, p->kind, p->flowerType, p->wither, &cBase, &cTip, &cAccent);
@@ -1207,6 +1226,13 @@ void VFX_FoliageSystem_DrawShadowPass(void)
     Color shadowCol = WHITE;
     Vector3 camPos = camera.position;
 
+    float fdx = camera.position.x - camera.target.x;
+    float fdz = camera.position.z - camera.target.z;
+    float focalDist = sqrtf(fdx * fdx + fdz * fdz);
+    float zoomFactor = tanf(22.5f * DEG2RAD) / tanf(fmaxf(10.0f, camera.fovy) * 0.5f * DEG2RAD);
+    float nearLodDist = focalDist + 7.0f * zoomFactor;
+    float nearLodDistSq = nearLodDist * nearLodDist;
+
     for (int i = 0; i < VFX_FOLIAGE_POOL_CAPACITY; i++)
     {
         const VFX_FoliageParticle *p = &s_foliagePool[i];
@@ -1218,7 +1244,7 @@ void VFX_FoliageSystem_DrawShadowPass(void)
         float distSq = cdx * cdx + cdy * cdy + cdz * cdz;
         if (distSq > 35.0f * 35.0f) continue;
 
-        int lod = (p->state == BOTANICAL_STATE_ATTACHED) ? 1 : (distSq < 49.0f ? 1 : 2);
+        int lod = (p->state == BOTANICAL_STATE_ATTACHED) ? 1 : (distSq < nearLodDistSq ? 1 : 2);
 
         rlCheckRenderBatchLimit(48);
 

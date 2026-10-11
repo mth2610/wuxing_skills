@@ -112,7 +112,7 @@ void VFX_ComposeWoodFlower(const VFX_WoodFlowerConfig *config)
         s_freeFlowerTimer += GetFrameTime();
         int targetCount = config->count > 0 ? config->count : 48;
 
-        if (s_freeFlowerTimer > 1.4f || VFX_FoliageSystem_GetActiveCount() < targetCount / 3)
+        if (VFX_FoliageSystem_GetActiveCount() < targetCount && s_freeFlowerTimer > 1.4f)
         {
             s_freeFlowerTimer = 0.0f;
             VFX_FoliageSpawnParams sp = VFX_FoliageSpawnParams_Default();
@@ -121,7 +121,7 @@ void VFX_ComposeWoodFlower(const VFX_WoodFlowerConfig *config)
             sp.style = config->style;
             sp.origin = config->origin;
             sp.radius = config->radius > 0.1f ? config->radius : 1.2f;
-            sp.count = targetCount;
+            sp.count = targetCount - VFX_FoliageSystem_GetActiveCount();
             sp.attached = false;
             sp.mass = config->mass > 0 ? config->mass : 0.012f; // Compound head proxy.
             sp.initialVelocity = config->initialVelocity;

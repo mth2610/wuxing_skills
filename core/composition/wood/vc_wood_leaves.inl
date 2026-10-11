@@ -117,7 +117,7 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
         s_freeLeafTimer += TimeFX_RawDelta();
         int targetCount = config->count > 0 ? config->count : 64;
 
-        if (s_freeLeafTimer > 1.2f || VFX_FoliageSystem_GetActiveCount() < targetCount / 3)
+        if (VFX_FoliageSystem_GetActiveCount() < targetCount && s_freeLeafTimer > 1.2f)
         {
             s_freeLeafTimer = 0.0f;
             VFX_FoliageSpawnParams sp = VFX_FoliageSpawnParams_Default();
@@ -126,7 +126,7 @@ void VFX_ComposeWoodLeaves(const VFX_WoodLeavesConfig *config)
             sp.style = config->style;
             sp.origin = config->origin;
             sp.radius = config->radius > 0.1f ? config->radius : 1.5f;
-            sp.count = targetCount;
+            sp.count = targetCount - VFX_FoliageSystem_GetActiveCount();
             sp.attached = false;
             sp.mass = config->mass > 0 ? config->mass : 0;
             sp.bodyMaterial = config->bodyMaterial;

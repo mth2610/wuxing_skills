@@ -78,7 +78,7 @@ void VFX_ComposeWoodPetals(const VFX_WoodPetalConfig *config)
     s_petalSpawnTimer += TimeFX_RawDelta();
     int targetCount = config->count > 0 ? config->count : 64;
 
-    if (s_petalSpawnTimer > 1.2f || VFX_FoliageSystem_GetActiveCount() < targetCount / 3)
+    if (VFX_FoliageSystem_GetActiveCount() < targetCount && s_petalSpawnTimer > 1.2f)
     {
         s_petalSpawnTimer = 0.0f;
         VFX_FoliageSpawnParams sp = VFX_FoliageSpawnParams_Default();
@@ -87,7 +87,7 @@ void VFX_ComposeWoodPetals(const VFX_WoodPetalConfig *config)
         sp.style = config->style;
         sp.origin = config->origin;
         sp.radius = config->radius > 0.1f ? config->radius : 1.4f;
-        sp.count = targetCount;
+        sp.count = targetCount - VFX_FoliageSystem_GetActiveCount();
         sp.attached = false;
         sp.mass = config->mass > 0 ? config->mass : 0;
         sp.bodyMaterial = config->bodyMaterial;
