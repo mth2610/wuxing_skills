@@ -583,6 +583,7 @@ typedef struct
 MapWaterConfig MapProp_DefaultWaterConfig(MapWaterEcosystem eco);
 MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config);
 MapWaterSurface MapProp_CreateWaterStrip(Vector3 start, Vector3 end, float width, MapWaterConfig config);
+MapWaterSurface MapProp_CreateWaterSpline(const Vector3 *points, const float *widths, int pointCount, MapWaterConfig config);
 MapWaterSurface MapProp_CreateWaterPatch(Vector3 center, float width, float depth, MapWaterConfig config);
 Vector3 MapProp_GetWaterEdgePoint(const MapWaterSurface *water, float angleRad,
                                   float radialScale);

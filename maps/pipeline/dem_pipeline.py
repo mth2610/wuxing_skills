@@ -168,6 +168,19 @@ def resample_grid(src, dst_h, dst_w):
             src[y1, :][:, x0] * (1 - wx) * wy +
             src[y1, :][:, x1] * wx * wy)
 
+def gaussian_filter_2d(arr, sigma=3.0):
+    """Fast, boundary-preserving separable 2D Gaussian convolution in pure NumPy."""
+    k_size = int(round(sigma * 3)) * 2 + 1
+    x = np.arange(k_size) - (k_size // 2)
+    k1d = np.exp(-0.5 * (x / sigma)**2)
+    k1d /= k1d.sum()
+    
+    pad_h = np.pad(arr, ((0, 0), (k_size//2, k_size//2)), mode='edge')
+    tmp = np.apply_along_axis(lambda m: np.convolve(m, k1d, mode='valid'), axis=1, arr=pad_h)
+    pad_v = np.pad(tmp, ((k_size//2, k_size//2), (0, 0)), mode='edge')
+    out = np.apply_along_axis(lambda m: np.convolve(m, k1d, mode='valid'), axis=0, arr=pad_v)
+    return out
+
 # --- 4. Hydrology: Priority Flood Depression Filling & D8 Flow Routing ---
 import heapq
 
@@ -306,12 +319,22 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     valid_mask[:, 0:2] = False
     valid_mask[:, -2:] = False
 
-    elev_valid = dem[valid_mask]
+    # --- Terrain Frequency Decomposition: Rolling Meadows & Gentle Slopes ---
+    # Raw DEM contains sharp 1195m elevation variation squeezed into 300m game space.
+    # We apply low-frequency Gaussian filtering to produce soft, rolling valleys and gentle slopes,
+    # then apply gamma scaling to keep the plateau open and walkable.
+    print("[*] Synthesizing Gentle Rolling Terrain via Elevation Low-Pass Filter...")
+    dem_smooth = gaussian_filter_2d(dem, sigma=4.2)
+    # Blend: 80% smooth rolling envelope + 20% gentle macro-relief
+    dem_rolling = dem_smooth * 0.80 + dem * 0.20
+    elev_valid = dem_rolling[valid_mask]
     e_min, e_max = elev_valid.min(), elev_valid.max()
-    print(f"[*] Elevation range: {e_min:.1f}m -> {e_max:.1f}m (Delta: {e_max - e_min:.1f}m)")
+    print(f"[*] Elevation range (rolling): {e_min:.1f}m -> {e_max:.1f}m (Delta: {e_max - e_min:.1f}m)")
 
+    # Non-linear gamma curve (gamma=1.28) keeps valleys wide and gentle, lifting basin floor
+    norm_raw = np.clip((dem_rolling - e_min) / max(e_max - e_min, 1e-4), 0.0, 1.0)
     norm_height = np.zeros_like(dem)
-    norm_height[valid_mask] = (dem[valid_mask] - e_min) / max(e_max - e_min, 1e-4)
+    norm_height[valid_mask] = np.power(norm_raw[valid_mask], 1.28)
 
     # Perimeter distance transform for floating island abyss
     print("[*] Computing floating island perimeter cliff falloff...")
@@ -330,21 +353,21 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     cliff_drop = np.clip(inside_dist / max(cliff_margin, 0.1), 0.0, 1.0)
     cliff_drop = cliff_drop * cliff_drop * (3.0 - 2.0 * cliff_drop) # Hermite smoothstep
 
-    # Hydrology & Drainage (Priority Flood + D8 Routing)
+    # Hydrology & Drainage (Priority Flood + D8 Routing on smooth terrain)
     print("[*] Calculating D8 Flow and Stream Network...")
-    flow_dir, accum, dem_flow = compute_d8_flow(dem, valid_mask)
+    flow_dir, accum, dem_flow = compute_d8_flow(dem_rolling, valid_mask)
     total_valid_cells = np.count_nonzero(valid_mask)
     stream_threshold = max(20.0, total_valid_cells * stream_ratio)
     stream_mask = (accum >= stream_threshold) & valid_mask
 
     # Reservoir / Basin floor identification
-    flat_search_mask = (dem <= e_min + (e_max - e_min) * 0.30) & valid_mask
+    flat_search_mask = (dem_rolling <= e_min + (e_max - e_min) * 0.30) & valid_mask
     if np.count_nonzero(flat_search_mask) > 0:
-        unique_vals, val_counts = np.unique(np.round(dem[flat_search_mask], decimals=0), return_counts=True)
+        unique_vals, val_counts = np.unique(np.round(dem_rolling[flat_search_mask], decimals=0), return_counts=True)
         lake_flat_elev = unique_vals[np.argmax(val_counts)]
-        lake_candidates = (np.abs(dem - lake_flat_elev) <= 2.5) & valid_mask & (np.arange(res_w) > res_w * 0.55)[None, :]
+        lake_candidates = (np.abs(dem_rolling - lake_flat_elev) <= 2.5) & valid_mask & (np.arange(res_w) > res_w * 0.55)[None, :]
         if np.count_nonzero(lake_candidates) < 20:
-            lake_candidates = (dem <= e_min + (e_max - e_min) * 0.05) & valid_mask
+            lake_candidates = (dem_rolling <= e_min + (e_max - e_min) * 0.05) & valid_mask
     else:
         lake_candidates = np.zeros_like(valid_mask)
 
@@ -360,67 +383,16 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         lake_cx, lake_cz, lake_rx, lake_rz = game_width * 0.85, game_depth * 0.75, 20.0, 18.0
         lake_y_level = -2.48
 
-    # --- Bathymetric Bed Carving (Độ sụt lòng hồ & lòng sông suối) ---
-    print("[*] Carving Bathymetric Bed for Lake and River Channels...")
-    game_height_m = norm_height * height_range
-    carved_height_m = game_height_m.copy()
-
-    # 1. Carve Lake Basin: Parabolic bowl depression (sụt sâu -2.5m -> -3.5m ở tâm hồ)
-    if np.count_nonzero(lake_candidates) > 0:
-        for r in range(res_h):
-            for c in range(res_w):
-                if not valid_mask[r, c]: continue
-                gx = (c / res_w) * game_width
-                gz = (r / res_h) * game_depth
-                dx_lake = (gx - lake_cx) / max(lake_rx, 1.0)
-                dz_lake = (gz - lake_cz) / max(lake_rz, 1.0)
-                r2 = dx_lake * dx_lake + dz_lake * dz_lake
-                if r2 < 1.44: # within 1.2x lake radius
-                    r_norm = np.sqrt(r2) / 1.2
-                    # Cosine/parabolic profile: deepest at center, smooth transition to bank
-                    depth_bowl = 2.80 * (0.5 + 0.5 * np.cos(np.pi * r_norm))
-                    carved_height_m[r, c] -= depth_bowl
-
-    # 2. Carve River Channels: U-channel bed along stream lines (-0.8m -> -1.6m based on flow)
-    for r in range(res_h):
-        for c in range(res_w):
-            if stream_mask[r, c] and valid_mask[r, c]:
-                # Don't double carve if inside lake center
-                gx = (c / res_w) * game_width
-                gz = (r / res_h) * game_depth
-                dx_l = (gx - lake_cx) / max(lake_rx, 1.0)
-                dz_l = (gz - lake_cz) / max(lake_rz, 1.0)
-                if dx_l*dx_l + dz_l*dz_l >= 0.8:
-                    stream_depth = float(np.clip(0.40 + 0.02 * np.sqrt(accum[r, c]), 0.60, 1.60))
-                    carved_height_m[r, c] -= stream_depth
-
-    # Recompute perimeter drop on carved elevation
-    final_ground_y = carved_height_m * cliff_drop - (1.0 - cliff_drop) * cliff_depth
-    final_ground_y[~valid_mask] = -cliff_depth
-
-    # Recalculate lake bed min Y after carving
-    if np.count_nonzero(lake_candidates) > 0:
-        lake_bed_min_y = float(final_ground_y[lake_candidates].min())
-    else:
-        lake_bed_min_y = -5.50
-
-    # Encode Heightmap 8-bit
-    total_range = height_range + cliff_depth
-    h_encoded = np.clip((final_ground_y + cliff_depth) / total_range, 0.0, 1.0)
-    heightmap_8bit = (h_encoded * 255.0 + 0.5).astype(np.uint8)
-
-    # --- Extract Continuous Main River Corridor (Trunk River Spline) ---
+    # --- Extract Continuous Main River Corridor (Trunk River Spline) First ---
     print("[*] Tracing Continuous Trunk River Spline from Mountain to Reservoir...")
     dy_arr = np.array([0, -1, -1, -1,  0,  1, 1, 1])
     dx_arr = np.array([1,  1,  0, -1, -1, -1, 0, 1])
 
-    # Find global outlet (highest accumulation cell)
     max_idx = np.argmax(np.where(valid_mask, accum, -1))
     outlet_r, outlet_c = divmod(max_idx, res_w)
     outlet_world_x = (outlet_c / res_w) * game_width
     outlet_world_z = (outlet_r / res_h) * game_depth
 
-    # Trace upstream from outlet
     curr_r, curr_c = outlet_r, outlet_c
     trunk = [(curr_r, curr_c)]
     while True:
@@ -451,6 +423,88 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
             acc_dist = 0.0
 
     print(f"[+] Extracted {len(river_waypoints)} smooth river waypoints along main river.")
+
+    # --- Bathymetric Bed Carving (Độ sụt lòng hồ & lòng sông suối) ---
+    print("[*] Carving Smooth Bathymetric Bed with Distance Transform...")
+    game_height_m = norm_height * height_range
+    carved_height_m = game_height_m.copy()
+
+    # 1. Carve Lake Basin: Parabolic bowl depression (sụt sâu -2.5m -> -3.5m ở tâm hồ)
+    if np.count_nonzero(lake_candidates) > 0:
+        for r in range(res_h):
+            for c in range(res_w):
+                if not valid_mask[r, c]: continue
+                gx = (c / res_w) * game_width
+                gz = (r / res_h) * game_depth
+                dx_lake = (gx - lake_cx) / max(lake_rx, 1.0)
+                dz_lake = (gz - lake_cz) / max(lake_rz, 1.0)
+                r2 = dx_lake * dx_lake + dz_lake * dz_lake
+                if r2 < 1.44: # within 1.2x lake radius
+                    r_norm = np.sqrt(r2) / 1.2
+                    depth_bowl = 2.80 * (0.5 + 0.5 * np.cos(np.pi * r_norm))
+                    carved_height_m[r, c] -= depth_bowl
+
+    # 2. Carve River Corridor via Continuous Distance-Transform Trench (Smooth Parabolic Bed)
+    # Uses line segment distance to waypoints, creating a soft, smooth trench without raster aliasing
+    wp_coords = []
+    for wp in river_waypoints:
+        r_idx, c_idx = wp
+        wx = (c_idx / res_w) * game_width
+        wz = (r_idx / res_h) * game_depth
+        acc_val = accum[r_idx, c_idx]
+        w_width = float(np.clip(1.4 + 0.045 * np.sqrt(acc_val), 1.8, 5.0))
+        wp_coords.append((wx, wz, w_width))
+
+    for r in range(res_h):
+        for c in range(res_w):
+            if not valid_mask[r, c]: continue
+            gx = (c / res_w) * game_width
+            gz = (r / res_h) * game_depth
+
+            # Don't carve deep riverbed inside lake center
+            dx_l = (gx - lake_cx) / max(lake_rx, 1.0)
+            dz_l = (gz - lake_cz) / max(lake_rz, 1.0)
+            if dx_l*dx_l + dz_l*dz_l < 0.85: continue
+
+            # Find minimum distance to river spline segments
+            min_dist = 1e9
+            channel_w = 2.0
+            for i in range(len(wp_coords) - 1):
+                x1, z1, w1 = wp_coords[i]
+                x2, z2, w2 = wp_coords[i+1]
+                dx = x2 - x1
+                dz = z2 - z1
+                l2 = dx*dx + dz*dz
+                if l2 < 1e-4: continue
+                t = max(0.0, min(1.0, ((gx - x1)*dx + (gz - z1)*dz) / l2))
+                px = x1 + t * dx
+                pz = z1 + t * dz
+                d = np.sqrt((gx - px)**2 + (gz - pz)**2)
+                if d < min_dist:
+                    min_dist = d
+                    channel_w = w1 * (1.0 - t) + w2 * t
+
+            # Carve smooth cosine/parabolic trench within 1.4x river corridor radius
+            trench_radius = channel_w * 0.70
+            if min_dist < trench_radius:
+                norm_d = min_dist / trench_radius
+                trench_depth = 1.15 * (0.5 + 0.5 * np.cos(np.pi * norm_d))
+                carved_height_m[r, c] -= trench_depth
+
+    # Recompute perimeter drop on carved elevation
+    final_ground_y = carved_height_m * cliff_drop - (1.0 - cliff_drop) * cliff_depth
+    final_ground_y[~valid_mask] = -cliff_depth
+
+    # Recalculate lake bed min Y after carving
+    if np.count_nonzero(lake_candidates) > 0:
+        lake_bed_min_y = float(final_ground_y[lake_candidates].min())
+    else:
+        lake_bed_min_y = -5.50
+
+    # Encode Heightmap 8-bit
+    total_range = height_range + cliff_depth
+    h_encoded = np.clip((final_ground_y + cliff_depth) / total_range, 0.0, 1.0)
+    heightmap_8bit = (h_encoded * 255.0 + 0.5).astype(np.uint8)
 
     # Slope & Topographic Wetness Index (TWI)
     print("[*] Computing Terrain Slopes & TWI...")

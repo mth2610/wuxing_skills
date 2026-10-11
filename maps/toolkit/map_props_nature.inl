@@ -4019,6 +4019,118 @@ MapWaterSurface MapProp_CreateWaterStrip(Vector3 start, Vector3 end, float width
     return water;
 }
 
+MapWaterSurface MapProp_CreateWaterSpline(const Vector3 *points, const float *widths, int pointCount, MapWaterConfig config)
+{
+    MapWaterSurface water = {0};
+    if (!points || pointCount < 2) return water;
+
+    Water_ApplyConfigDefaults(&config);
+    config.center = (Vector3){0.0f, 0.0f, 0.0f}; // Absolute world space vertices
+    config.radiusX = 100.0f;
+    config.radiusZ = 100.0f;
+    config.shape = WATER_SHAPE_STRIP;
+    water.config = config;
+
+    int totalSegments = pointCount - 1;
+    int rings = 4; // Width subdivisions
+    int totalVerts = totalSegments * rings * 6;
+
+    Mesh splineMesh = {0};
+    splineMesh.vertexCount = totalVerts;
+    splineMesh.triangleCount = totalVerts / 3;
+    splineMesh.vertices = MemAlloc((unsigned int)totalVerts * 3u * sizeof(float));
+    splineMesh.texcoords = MemAlloc((unsigned int)totalVerts * 2u * sizeof(float));
+    splineMesh.colors = MemAlloc((unsigned int)totalVerts * 4u * sizeof(unsigned char));
+
+    // Calculate tangent and normal at each waypoint
+    Vector3 *tangents = MemAlloc((unsigned int)pointCount * sizeof(Vector3));
+    Vector3 *normals = MemAlloc((unsigned int)pointCount * sizeof(Vector3));
+    for (int i = 0; i < pointCount; i++) {
+        Vector3 t;
+        if (i == 0) {
+            t = Vector3Subtract(points[1], points[0]);
+        } else if (i == pointCount - 1) {
+            t = Vector3Subtract(points[pointCount - 1], points[pointCount - 2]);
+        } else {
+            Vector3 t1 = Vector3Subtract(points[i], points[i - 1]);
+            Vector3 t2 = Vector3Subtract(points[i + 1], points[i]);
+            t = Vector3Add(Vector3Normalize(t1), Vector3Normalize(t2));
+        }
+        t.y = 0.0f;
+        float tLen = Vector3Length(t);
+        if (tLen > 1e-4f) {
+            t = Vector3Scale(t, 1.0f / tLen);
+        } else {
+            t = (Vector3){0.0f, 0.0f, 1.0f};
+        }
+        tangents[i] = t;
+        // Horizontal perpendicular vector (right normal)
+        normals[i] = (Vector3){-t.z, 0.0f, t.x};
+    }
+
+    int cursor = 0;
+    float cumulativeDist = 0.0f;
+
+    for (int i = 0; i < totalSegments; i++) {
+        Vector3 p0 = points[i];
+        Vector3 p1 = points[i + 1];
+        float w0 = widths ? widths[i] : 2.5f;
+        float w1 = widths ? widths[i + 1] : 2.5f;
+        float halfW0 = w0 * 0.5f;
+        float halfW1 = w1 * 0.5f;
+
+        Vector3 n0 = normals[i];
+        Vector3 n1 = normals[i + 1];
+
+        float segDist = Vector3Distance(p0, p1);
+        float v0 = cumulativeDist * 0.25f;
+        float v1 = (cumulativeDist + segDist) * 0.25f;
+        cumulativeDist += segDist;
+
+        for (int r = 0; r < rings; r++) {
+            float fr0 = (float)r / (float)rings;
+            float fr1 = (float)(r + 1) / (float)rings;
+            float off0_a = -halfW0 + w0 * fr0;
+            float off0_b = -halfW0 + w0 * fr1;
+            float off1_a = -halfW1 + w1 * fr0;
+            float off1_b = -halfW1 + w1 * fr1;
+
+            Vector3 v00 = Vector3Add(p0, Vector3Scale(n0, off0_a));
+            Vector3 v01 = Vector3Add(p0, Vector3Scale(n0, off0_b));
+            Vector3 v10 = Vector3Add(p1, Vector3Scale(n1, off1_a));
+            Vector3 v11 = Vector3Add(p1, Vector3Scale(n1, off1_b));
+
+            Vector2 uv00 = {fr0, v0};
+            Vector2 uv01 = {fr1, v0};
+            Vector2 uv10 = {fr0, v1};
+            Vector2 uv11 = {fr1, v1};
+
+            Water_SetVertex(&splineMesh, cursor++, v00, uv00, WHITE);
+            Water_SetVertex(&splineMesh, cursor++, v01, uv01, WHITE);
+            Water_SetVertex(&splineMesh, cursor++, v11, uv11, WHITE);
+            Water_SetVertex(&splineMesh, cursor++, v00, uv00, WHITE);
+            Water_SetVertex(&splineMesh, cursor++, v11, uv11, WHITE);
+            Water_SetVertex(&splineMesh, cursor++, v10, uv10, WHITE);
+        }
+    }
+
+    MemFree(tangents);
+    MemFree(normals);
+
+    water.waterModel = Nature_ModelFromMesh(splineMesh, Water_GetShader());
+    Texture2D waterDetail = ResourceManager_LoadTexture("assets/textures/noise.png");
+    SetTextureWrap(waterDetail, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(waterDetail, TEXTURE_FILTER_BILINEAR);
+    water.waterModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = waterDetail;
+
+    water.causticTex = ResourceManager_LoadTexture("assets/textures/water_caustics.png");
+    SetTextureWrap(water.causticTex, TEXTURE_WRAP_REPEAT);
+    SetTextureFilter(water.causticTex, TEXTURE_FILTER_BILINEAR);
+
+    water.ready = true;
+    return water;
+}
+
 Vector3 MapProp_GetWaterEdgePoint(const MapWaterSurface *water, float angleRad,
                                   float radialScale)
 {

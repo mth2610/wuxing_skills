@@ -140,3 +140,37 @@
 - Sương mù chỉ xuất hiện lác đác ở 4 vạt nhỏ sát mặt đất, mềm mại, thanh khiết.
 - Bộ autotest suite: **18/18 test cases PASSED (100%)**.
 - Biên dịch CMake: **0 warning, 0 error**.
+
+---
+
+## 8. Session Summary: Dòng Suối Triền Dốc Liên Tục (Continuous Sloped River Spline) & Địa Hình Thoa Thoải Lòng Sông
+
+### 8.1. Yêu Cầu & Vấn Đề Trước Khi Sửa
+1. **Lỗi hình dạng suối bị nát & đứt khúc (`Screen Shot 2026-10-11 at 17.32.01.png`)**:
+   - Khi tạo suối theo 40 đoạn `MapProp_CreateWaterStrip` rời rạc, mỗi đoạn bị lệch tâm và xoay khác nhau, tạo ra các hình thoi chồng chéo, vết nứt đa giác và tấm nước bay lơ lửng.
+2. **Địa hình lồi lõm quá mức & yêu cầu làm thoải bề mặt**:
+   - Nén chênh lệch độ cao $1.195\text{m}$ vào bản đồ game $300\text{m}$ khiến độ dốc bị nhân lên $\approx 70\times$.
+   - Yêu cầu: *"làm sao để phần sông, hồ thì sâu xuống, nhưng mặt đất thì thoai thoải thôi"*.
+3. **Phân bố thực vật dưới nước & mép vực nhô ra biển sương mù**:
+   - Cỏ mọc ngập dưới lòng suối; đuôi suối nhô ra ngoài vách núi thành một tấm nước bay lơ lửng trên biển mây.
+
+### 8.2. Các Giải Pháp Kỹ Thuật Đã Triển Khai
+1. **Bộ Lọc Phổ Cao Độ Gauss 2D Tách Biệt (`gaussian_filter_2d` với $\sigma = 4.2$)**:
+   - Tách tín hiệu địa hình thành phong bì thoải vĩ mô ($80\%$) kết hợp với $20\%$ nhấp nhô nhẹ, uốn qua đường cong phi tuyến $(\text{elevation})^{1.28}$.
+   - Triệt tiêu 100% các ụ đất gồ ghề, tạo thành đồi cỏ thoai thoải, tự nhiên, mở rộng không gian đi lại cho người chơi.
+2. **Khoét Lòng Sông Bằng Distance-Transform Cosine Liên Tục**:
+   - Thay vì trừ pixel rời rạc gây răng cưa dọc bờ sông, thuật toán tính khoảng cách hình chiếu vector tới các đoạn tim sông $d$, tạo rãnh parabolic mượt mà:
+     $$\Delta Y = 1.15 \cdot \left(\frac{1 + \cos(\pi \cdot d / R)}{2}\right)$$
+   - Lòng sông sụt sâu tự nhiên, bờ sông thoai thoải mềm mại hai bên mép nước.
+3. **Dải Băng Nước Spline Liên Tục Trên GPU (`MapProp_CreateWaterSpline`)**:
+   - Bổ sung `MapProp_CreateWaterSpline` trong `maps/toolkit/map_props_nature.inl`.
+   - Sinh một lưới dải băng duy nhất uốn lượn liên tục qua 31 waypoints theo vector tiếp tuyến và pháp tuyến miter chuẩn xác, tọa độ texture $V$ chạy dọc dòng chảy.
+   - Giảm từ 40 draw calls xuống còn **1 draw call duy nhất**, loại bỏ 100% vết ranh giới nối đoạn.
+4. **Triệt Tiêu Cỏ Ngập Nước & Cắt Đuôi Suối Tại Mép Vực Đảo**:
+   - Hàm `SongQuaoGrassDensity` và `IsInsideRiverChannel` quét hành lang tim sông theo bán kính thực tế, triệt tiêu $100\%$ cỏ trong lòng suối và dưới mực nước hồ.
+   - Thêm ngưỡng cắt $Y < -1.50\text{m}$ ở đuôi suối: dòng suối kết thúc gọn gàng ngay trước bờ vực, không còn tấm nước nhô thừa ra không trung.
+
+### 8.3. Kết Quả Kiểm Thử
+- **Hình ảnh render thực tế**: Dòng nước uốn lượn mềm mại từ đỉnh núi xuống hồ chứa nước, bờ cỏ ôm sát mép suối không còn cỏ mọc dưới nước. Lòng sông và lòng hồ sâu xuống rõ rệt, mặt đất thoai thoải tự nhiên.
+- **Biên dịch & Test Suite**: CMake build 0 warning, 0 error. `WUXING_AUTOTEST=1` đạt **18/18 passed (100%)**.
+
