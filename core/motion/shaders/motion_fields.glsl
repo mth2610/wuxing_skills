@@ -271,10 +271,16 @@ void mSampleField(int fi,vec3 pos,vec3 vel,vec3 ordinary,float rho,float mass,fl
     life=life*life*(3.0-2.0*life);
     vec3 center,frameV;mFrame(fi,age,center,frameV);mat3 axes=mAxes(fi);
     vec3 off=pos-center,p=transpose(axes)*off;int shape=int(motionFields[fi].identity.y);
+    float radius=motionFields[fi].volume.x;
+    if(shape==0 && dot(off,off)>radius*radius) return;
+    if(shape==2) {
+        vec3 h=motionFields[fi].halfExtents.xyz;
+        if(any(greaterThan(abs(p),h))) return;
+    }
     MPath path;path.p=vec3(0);path.t=vec3(1,0,0);path.n=vec3(0,1,0);path.b=vec3(0,0,1);
     if(shape==3) path=mPath(fi,p);
     float w=mWeight(fi,p,path.p)*life;if(w<=0.0) return;
-    float radius=motionFields[fi].volume.x;uint flags=motionFields[fi].identity.w;
+    uint flags=motionFields[fi].identity.w;
     bool flowOn=motionFields[fi].volume.w>0.5;
     vec3 flow=ordinary,axis=mNorm(motionFields[fi].flowAxis.xyz);
     if(length(axis)<.1) axis=vec3(0,1,0);
