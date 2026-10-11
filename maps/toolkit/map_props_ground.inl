@@ -374,23 +374,14 @@ MapGroundSurface MapProp_CreateGround(float width, float depth, float tileSize,
     return SetupGroundMaterial(mesh, width, depth, tileSize, splatMapPath, grassTexPath, pathTexPath);
 }
 
-MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float width, float depth,
-                                               float cliffDepth, float tileSize,
-                                               const char *splatMapPath,
-                                               const char *grassTexPath,
-                                               const char *pathTexPath)
+MapGroundSurface MapProp_CreateGroundHeightmapEx(const char *heightmapPath, float width, float depth,
+                                                 float totalHeight, float cliffDepth, float tileSize,
+                                                 const char *splatMapPath,
+                                                 const char *grassTexPath,
+                                                 const char *pathTexPath)
 {
-    // Heightmap: WHITE = plateau (top, walkable), BLACK = cliff edge (bottom).
-    // GenMeshHeightmap spans local X/Z [0, width]/[0, depth] (NOT centered
-    // like GenMeshPlane) and Y [0, cliffDepth] (black=0, white=cliffDepth).
-    // Deliberately does NOT mutate mesh.vertices to re-center it (that was
-    // tried first and produced a mangled mesh — only ~1/4 of it actually
-    // rendered, root cause not identified, not worth chasing further) —
-    // instead the correction ships as drawOffset, applied at DrawModel time
-    // in MapProp_DrawGround, so the mesh itself stays exactly as
-    // GenMeshHeightmap produced it.
     Image heightmapImg = LoadImage(heightmapPath);
-    Mesh mesh = GenMeshHeightmap(heightmapImg, (Vector3){width, cliffDepth, depth});
+    Mesh mesh = GenMeshHeightmap(heightmapImg, (Vector3){width, totalHeight, depth});
 
     // Compute smooth Gouraud vertex normals by accumulating adjacent face normals
     // across each heightmap grid cell, eliminating polygonal facet creases.
@@ -445,6 +436,16 @@ MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float 
     MapGroundSurface result = SetupGroundMaterial(mesh, width, depth, tileSize, splatMapPath, grassTexPath, pathTexPath);
     result.drawOffset = (Vector3){-width * 0.5f, -cliffDepth, -depth * 0.5f};
     return result;
+}
+
+MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float width, float depth,
+                                               float cliffDepth, float tileSize,
+                                               const char *splatMapPath,
+                                               const char *grassTexPath,
+                                               const char *pathTexPath)
+{
+    return MapProp_CreateGroundHeightmapEx(heightmapPath, width, depth, cliffDepth, cliffDepth,
+                                           tileSize, splatMapPath, grassTexPath, pathTexPath);
 }
 
 float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z)

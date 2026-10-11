@@ -23,7 +23,7 @@
 #define MAP_WIDTH SONG_QUAO_MAP_WIDTH
 #define MAP_DEPTH SONG_QUAO_MAP_DEPTH
 #define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
-#define CLOUD_SEA_Y -7.75f
+#define CLOUD_SEA_Y -7.35f
 #define ROCK_COUNT 24
 #define GRASS_TUFT_CAPACITY 65000
 #define FLOWER_COUNT 600
@@ -53,6 +53,9 @@ static MapMeadowSurface s_meadow;
 static MapMeadowSurface s_reedMeadow;
 static MapFlowerField s_flowerField;
 static MapWaterSurface s_river;
+static MapWaterSurface s_riverSegments[SONG_QUAO_RIVER_WAYPOINT_COUNT - 1];
+static int s_riverSegmentCount = 0;
+static float s_lakeWaterY = SONG_QUAO_LAKE_WATER_Y;
 
 static int s_grassCount = 0;
 static int s_reedCount = 0;
@@ -75,15 +78,51 @@ static Color SampleSplat(float x, float z)
     return GetImageColor(s_splatImage, tx, tz);
 }
 
+static bool IsInsideRiverChannel(float x, float z, float bufferMeters)
+{
+    for (int i = 0; i < SONG_QUAO_RIVER_WAYPOINT_COUNT - 1; i++) {
+        float x1 = kSong_quaoRiverWaypoints[i].x, z1 = kSong_quaoRiverWaypoints[i].z;
+        float x2 = kSong_quaoRiverWaypoints[i+1].x, z2 = kSong_quaoRiverWaypoints[i+1].z;
+        float w = fmaxf(kSong_quaoRiverWaypoints[i].width, kSong_quaoRiverWaypoints[i+1].width) * 0.5f + bufferMeters;
+
+        float dx = x2 - x1, dz = z2 - z1;
+        float lenSq = dx * dx + dz * dz;
+        if (lenSq < 1e-4f) continue;
+        float t = fmaxf(0.0f, fminf(1.0f, ((x - x1) * dx + (z - z1) * dz) / lenSq));
+        float projX = x1 + t * dx, projZ = z1 + t * dz;
+        float distSq = (x - projX) * (x - projX) + (z - projZ) * (z - projZ);
+        if (distSq < w * w) return true;
+    }
+    return false;
+}
+
 static float SongQuaoGrassDensity(float x, float z, void *userData)
 {
     (void)userData;
+    // 1. Lake water absolute clearance (radial basin)
+    float dxLake = (x - SONG_QUAO_LAKE_CENTER_X) / SONG_QUAO_LAKE_RADIUS_X;
+    float dzLake = (z - SONG_QUAO_LAKE_CENTER_Z) / SONG_QUAO_LAKE_RADIUS_Z;
+    if (dxLake * dxLake + dzLake * dzLake <= 1.08f * 1.08f) {
+        return 0.0f; // Completely suppress grass submerged in lake basin
+    }
+
+    // 2. River channel corridor clearance
+    if (IsInsideRiverChannel(x, z, 0.45f)) {
+        return 0.0f; // Suppress grass inside river bed and water margins
+    }
+
+    // 3. Ground elevation test against lake waterline
+    float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
+    if (gy <= s_lakeWaterY + 0.12f && (dxLake * dxLake + dzLake * dzLake <= 1.35f * 1.35f)) {
+        return 0.0f; // Suppress grass in wet shoreline zones below waterline
+    }
+
     Color splat = SampleSplat(x, z);
-    // Grass probability from channel R, suppressed if rock or river
+    // Grass probability from channel R, suppressed if exposed rock or stream mask
     float grass = (float)splat.r / 255.0f;
     float rock = (float)splat.g / 255.0f;
     float water = (float)splat.a / 255.0f;
-    float density = grass * (1.0f - rock) * (1.0f - water * 0.85f);
+    float density = grass * (1.0f - rock) * (1.0f - water * 0.95f);
     return fmaxf(0.0f, fminf(1.0f, density));
 }
 
@@ -134,8 +173,13 @@ static void BuildReedsAndFlowers(void)
         if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, rx, rz, &pos, &normal)) continue;
         if (normal.y < 0.70f || pos.y < -CLIFF_DEPTH + 0.45f) continue;
 
-        // Reeds in wetland / stream banks (Channel A > 80)
-        if (splat.a > 80 && s_reedCount < REED_COUNT) {
+        // Reeds in wetland / stream banks (Channel A > 80), but strictly above waterline
+        float dxLake = (rx - SONG_QUAO_LAKE_CENTER_X) / SONG_QUAO_LAKE_RADIUS_X;
+        float dzLake = (rz - SONG_QUAO_LAKE_CENTER_Z) / SONG_QUAO_LAKE_RADIUS_Z;
+        bool inDeepWater = (dxLake * dxLake + dzLake * dzLake < 1.02f) || (pos.y < s_lakeWaterY);
+        bool inRiverBed = IsInsideRiverChannel(rx, rz, -0.15f);
+
+        if (splat.a > 80 && s_reedCount < REED_COUNT && !inDeepWater && !inRiverBed) {
             float rad = 0.16f + 0.08f * Random01(&rng);
             float h = 0.75f + 0.45f * Random01(&rng);
             float rot = Random01(&rng) * 360.0f;
@@ -149,7 +193,7 @@ static void BuildReedsAndFlowers(void)
             };
         }
         // Wildflowers in sunny knolls (Channel B > 60)
-        if (splat.b > 60 && s_flowerCount < FLOWER_COUNT) {
+        if (splat.b > 60 && s_flowerCount < FLOWER_COUNT && !inDeepWater && !inRiverBed) {
             float h = 0.25f + 0.15f * Random01(&rng);
             float bloomR = 0.12f + 0.06f * Random01(&rng);
             float rot = Random01(&rng) * 360.0f;
@@ -270,10 +314,10 @@ void InitSongQuaoMap(void)
     s_splatImage = LoadImage("assets/maps/song_quao/song_quao_ecology_splat.png");
     s_splatLoaded = (s_splatImage.data != NULL);
 
-    // Heightmap terrain using identical standard 3-layer materials and relief as Verdant Path
-    s_ground = MapProp_CreateGroundHeightmap(
+    // Heightmap terrain using universal heightmap loader: total range = CLIFF_DEPTH + HEIGHT_RANGE
+    s_ground = MapProp_CreateGroundHeightmapEx(
         "assets/maps/song_quao/song_quao_island_heightmap.png", MAP_WIDTH, MAP_DEPTH,
-        CLIFF_DEPTH, 3.6f, "assets/maps/song_quao/song_quao_ecology_splat.png",
+        CLIFF_DEPTH + SONG_QUAO_HEIGHT_RANGE, CLIFF_DEPTH, 3.6f, "assets/maps/song_quao/song_quao_ecology_splat.png",
         "assets/textures/verdant_meadow_substrate_diffuse.png", "assets/textures/dirt_diffuse.png");
     // Valley stream corridor path segments flowing from upper north basin down to Song Quao Lake
     static const Vector4 kValleyPathSegs[] = {
@@ -296,6 +340,7 @@ void InitSongQuaoMap(void)
     // Sample ground height inside lake basin floor to position the water surface naturally
     float lakeGroundY = MapProp_SampleGroundHeight(&s_ground, kMapCenter, SONG_QUAO_LAKE_CENTER_X, SONG_QUAO_LAKE_CENTER_Z);
     float lakeWaterY = lakeGroundY + 0.55f;
+    s_lakeWaterY = lakeWaterY;
 
     MapProp_SetGroundTint(&s_ground, (Color){62, 88, 45, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
@@ -307,10 +352,11 @@ void InitSongQuaoMap(void)
                                   "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
-    // Boundary mist veil wraps around the perimeter cliff base below the lowest basin swales (-7.55f),
-    // ensuring the flat plain beyond the basin is completely occluded from higher vantage points.
-    MapBoundaryMistStyle rim = {1.8f, 6.5f, 0.25f, 1.2f, 0.45f};
-    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -1.25f, &rim))
+    // Boundary mist veil wraps around the perimeter cliff base below the lowest basin swales (-6.75m),
+    // ensuring the flat plain beyond the basin is completely occluded from higher vantage points
+    // while guaranteeing mist never rises into the interior basin floor.
+    MapBoundaryMistStyle rim = {2.2f, 9.5f, 0.40f, 1.8f, 0.55f};
+    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -6.85f, &rim))
         TraceLog(LOG_WARNING, "Song Quao: terrain boundary mist bake failed");
 
     BuildMeadowLayout();
@@ -372,6 +418,42 @@ void InitSongQuaoMap(void)
         .bankInnerColor = {62, 58, 44, 255}, .bankOuterColor = {55, 75, 42, 255},
     });
 
+    // Natural sloped river stream ribbons from upper mountain source down to reservoir
+    s_riverSegmentCount = 0;
+    for (int i = 0; i < SONG_QUAO_RIVER_WAYPOINT_COUNT - 1; i++) {
+        float x1 = kSong_quaoRiverWaypoints[i].x, z1 = kSong_quaoRiverWaypoints[i].z;
+        float x2 = kSong_quaoRiverWaypoints[i+1].x, z2 = kSong_quaoRiverWaypoints[i+1].z;
+        float gy1 = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x1, z1);
+        float gy2 = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x2, z2);
+
+        // Water level rests 0.18m above carved stream bed
+        Vector3 p1 = {x1, gy1 + 0.18f, z1};
+        Vector3 p2 = {x2, gy2 + 0.18f, z2};
+        float w = fmaxf(kSong_quaoRiverWaypoints[i].width, kSong_quaoRiverWaypoints[i+1].width);
+
+        // If segment reaches lake, blend smoothly into lake water level
+        float dLake = hypotf(x2 - SONG_QUAO_LAKE_CENTER_X, z2 - SONG_QUAO_LAKE_CENTER_Z);
+        if (dLake < SONG_QUAO_LAKE_RADIUS_X * 1.15f) {
+            p2.y = lakeWaterY;
+        }
+
+        s_riverSegments[s_riverSegmentCount] = MapProp_CreateWaterStrip(
+            p1, p2, w, (MapWaterConfig){
+                .ecosystem = WATER_ECO_ALPINE_STREAM,
+                .waveHeight = 0.024f, .waveScale = 1.45f, .waveSpeed = 1.25f,
+                .detailScale = 0.12f, .detailStrength = 0.28f,
+                .maxDepth = 0.65f,
+                .absorption = {0.65f, 0.18f, 0.04f},
+                .scatterColor = {0.15f, 0.65f, 0.70f},
+                .scatterCoeff = 0.35f,
+                .causticsStrength = 0.65f, .causticsScale = 1.55f,
+                .foamThreshold = 0.12f,
+                .deepColor = {14, 48, 68, 255}, .shallowColor = {48, 145, 130, 220},
+                .foamColor = {235, 248, 242, 210},
+            });
+        s_riverSegmentCount++;
+    }
+
     for (int i = 0; i < ROCK_COUNT; i++) {
         float gy = GetGroundHeightSongQuaoMap(s_rockPlacements[i].position.x, s_rockPlacements[i].position.z);
         if (s_rockPlacements[i].position.y < lakeWaterY) {
@@ -424,6 +506,11 @@ void DrawSongQuaoMap(void)
 void DrawTransparentSongQuaoMap(void)
 {
     if (!s_ready) return;
+    // Draw sloped river ribbons
+    for (int i = 0; i < s_riverSegmentCount; i++) {
+        MapProp_DrawWaterOverlay(&s_riverSegments[i], s_time);
+    }
+    // Draw lake reservoir surface
     MapProp_DrawWaterOverlay(&s_river, s_time);
     MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
 }
@@ -436,6 +523,11 @@ void UnloadSongQuaoMap(void)
     EnvShadow_InvalidateStaticCache();
     Environment_SetCloudShadowConfig(NULL);
     VolumetricFog_SetDistantCoverage(1.0f);
+
+    for (int i = 0; i < s_riverSegmentCount; i++) {
+        MapProp_UnloadWaterSurface(&s_riverSegments[i]);
+    }
+    s_riverSegmentCount = 0;
     MapProp_UnloadWaterSurface(&s_river);
     if (s_flowerCount > 0) MapProp_UnloadFlowerField(&s_flowerField);
     if (s_reedCount > 0) MapProp_UnloadMeadow(&s_reedMeadow);
@@ -488,12 +580,36 @@ bool SampleGroundSurfaceSongQuaoMap(float x, float z, Vector3 *outPosition, Vect
 
 bool GetWaterInfoSongQuaoMap(float x, float z, float *outSurfaceY, float *outWaterDepth)
 {
-    float surfaceY = s_river.config.center.y;
     float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
-    if (gy < surfaceY) {
+
+    // 1. Check Lake Reservoir
+    float surfaceY = s_river.config.center.y;
+    float dxLake = (x - SONG_QUAO_LAKE_CENTER_X) / SONG_QUAO_LAKE_RADIUS_X;
+    float dzLake = (z - SONG_QUAO_LAKE_CENTER_Z) / SONG_QUAO_LAKE_RADIUS_Z;
+    if (dxLake * dxLake + dzLake * dzLake <= 1.25f * 1.25f && gy < surfaceY) {
         if (outSurfaceY) *outSurfaceY = surfaceY;
         if (outWaterDepth) *outWaterDepth = surfaceY - gy;
         return true;
+    }
+
+    // 2. Check Sloped River Channel
+    for (int i = 0; i < SONG_QUAO_RIVER_WAYPOINT_COUNT - 1; i++) {
+        float x1 = kSong_quaoRiverWaypoints[i].x, z1 = kSong_quaoRiverWaypoints[i].z;
+        float x2 = kSong_quaoRiverWaypoints[i+1].x, z2 = kSong_quaoRiverWaypoints[i+1].z;
+        float w = fmaxf(kSong_quaoRiverWaypoints[i].width, kSong_quaoRiverWaypoints[i+1].width) * 0.5f;
+        float dx = x2 - x1, dz = z2 - z1;
+        float lenSq = dx * dx + dz * dz;
+        if (lenSq < 1e-4f) continue;
+        float t = fmaxf(0.0f, fminf(1.0f, ((x - x1) * dx + (z - z1) * dz) / lenSq));
+        float px = x1 + t * dx, pz = z1 + t * dz;
+        float distSq = (x - px) * (x - px) + (z - pz) * (z - pz);
+        if (distSq <= w * w) {
+            float segWaterY = s_riverSegments[i].config.center.y * (1.0f - t) +
+                             (i + 1 < s_riverSegmentCount ? s_riverSegments[i+1].config.center.y : s_riverSegments[i].config.center.y) * t;
+            if (outSurfaceY) *outSurfaceY = segWaterY;
+            if (outWaterDepth) *outWaterDepth = fmaxf(0.05f, segWaterY - gy);
+            return true;
+        }
     }
     return false;
 }

@@ -96,6 +96,13 @@ MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float 
                                                const char *splatMapPath,
                                                const char *grassTexPath,
                                                const char *pathTexPath);
+// Universal heightmap loader: totalHeight = cliffDepth + elevationRange.
+// Plateau/water level rests at its natural elevation while abyss sinks to -cliffDepth.
+MapGroundSurface MapProp_CreateGroundHeightmapEx(const char *heightmapPath, float width, float depth,
+                                                 float totalHeight, float cliffDepth, float tileSize,
+                                                 const char *splatMapPath,
+                                                 const char *grassTexPath,
+                                                 const char *pathTexPath);
 void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter);
 // Geometry-only depth pass used by EnvShadow's cached static-map capture.
 // Call only between EnvShadow_BeginStaticCapture/EndStaticCapture.

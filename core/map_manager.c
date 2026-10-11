@@ -1,5 +1,6 @@
 #include "core/map_manager.h"
 #include "environment/environment_system.h"
+#include <stdlib.h>
 #include <string.h>
 
 #define MAX_MAPS 16
@@ -28,6 +29,7 @@ void MapManager_Init(void) {
     // falling back to whatever map the registry-generator scanned first,
     // which changes any time a new map/ directory is added. Pinning to a
     // map that actually exists keeps the default stable across additions.)
+    // Default map: DEFAULT_ARENA, or pinned via WUXING_MAP environment variable
     if (s_mapCount > 0) {
         for (int i = 0; i < s_mapCount; i++) {
             if (strcmp(s_maps[i].name, "DEFAULT_ARENA") == 0) {
