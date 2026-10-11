@@ -951,6 +951,7 @@ Cloud noise uses a separate ResourceManager mipmapped trilinear/repeat variant. 
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-12 | Codex | DEM provenance, native terrain analysis, packed heightfield and terrain water APIs | maps/pipeline/dem_pipeline.py; maps/toolkit/map_props.h | Ground-truth |
 | 2026-10-09 | Codex | Explicit meadow growth form, visibility fade and shared HDR sunlight | maps/toolkit/map_props.h; map_props_meadow_parametric.inl; maps/worlds/verdant_path/verdant_path.c | Ground-truth |
 | 2026-10-09 | Codex | Canonical far-blade shape and visible/shadow validation | maps/toolkit/shaders/nature_parametric.glsl; maps/toolkit/map_props_nature.inl; maps/tests/test_meadow_parametric.py; maps/tests/test_meadow_world_space.py | Ground-truth |
 | 2026-10-09 | Codex | Shared meadow palette, hemispheric canopy lighting and terrain relief | maps/toolkit/meadow_palette.h; shaders/meadow_palette.glsl; shaders/nature_surface.glsl; scripts/generate_island_heightmap.py; maps/tests/test_verdant_heightmap.py | Ground-truth |
@@ -1004,3 +1005,17 @@ triangles. The 8-bit `_island_heightmap.png` is a preview/legacy asset.
 The existing 8-bit loader retains its previous behavior. `_terrain_metrics.png`
 is slope/60°, normalized TWI, signed TPI/100 m + 0.5; `_substrate_proxy.png`
 is exposed substrate/deposition potential/moisture. Quantitative values live in NPZ.
+
+`_source_analysis.npz` retains native cropped source-grid elevation, slope,
+aspect, curvature, topographic position, TWI, contributing area, D8 directions,
+outlet basin IDs, primary catchment and lake candidate. Its origin follows the
+manifest's source origin plus crop offset. Invalid metric cells are NaN; basin
+ID zero is outside. `_main_catchment_mask.png` is the game-grid preview of the
+catchment draining to the largest-accumulation source outlet; the manifest
+records its area separately from the full valid DEM footprint. Raster-edge
+outlets remain potentially truncated by the supplied DEM.
+
+Slope uses projected metre spacing, consistent with [GDAL's slope units](https://gdal.org/en/stable/programs/gdal_raster_slope.html).
+TWI uses contributing area per contour width divided by slope, consistent with
+[the GRASS topographic-index definition](https://grass.osgeo.org/grass85/manuals/r.watershed.html).
+The implementation is a local D8 bake, not an invocation of GRASS.

@@ -183,6 +183,7 @@
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-12 | Codex | §10.1 DEM units and terrain/water correspondence | maps/pipeline/dem_pipeline.py; maps/toolkit/map_props_heightfield.inl; focused numerical tests | Ground-truth |
 | 2026-10-09 | Codex | §10.1 Adaptive quality and lit Low fallback | core/gfx_quality.h; core/volumetric/volumetric_fog_quality.h; core/shaders/surface_lit.fs | Ground-truth |
 | 2026-10-09 | Codex | §10.1 Meadow visibility and shared solar scale | maps/toolkit/shaders/nature_parametric.glsl; core/map_manager.h; environment/environment_system.h | Ground-truth |
 | 2026-10-09 | Codex | §10.1 Shared meadow habitat, relief contours and LOD geometry | maps/toolkit/meadow_palette.h; maps/toolkit/shaders/nature_parametric.glsl; maps/tests/test_meadow_parametric.py | Ground-truth |

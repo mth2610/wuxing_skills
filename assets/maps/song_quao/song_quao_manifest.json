@@ -58,7 +58,12 @@
   "source_statistics": {
     "elevation_min_m": 45.0,
     "elevation_max_m": 1240.0,
-    "source_outlets": 88
+    "source_outlets": 88,
+    "main_catchment_area_m2": 276376500.0,
+    "main_outlet_source_pixel": [
+      703,
+      892
+    ]
   },
   "parameters": {
     "max_dim": 300,
@@ -69,7 +74,7 @@
     "stream_ratio": 0.01
   },
   "metrics": {
-    "bake_seconds": 39.279348331,
+    "bake_seconds": 11.796916799,
     "wet_nodes": 3026,
     "lake_nodes": 180
   }

@@ -127,6 +127,7 @@
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-12 | Codex | DEM shoreline correspondence and foliage budget coverage | maps/pipeline/dem_pipeline.py; maps/toolkit/map_props_nature.inl; matched captures and focused tests | Ground-truth |
 | 2026-10-09 | Codex | Interior relief threshold and shared meadow palette | maps/tests/test_verdant_heightmap.py; maps/toolkit/meadow_palette.h; maps/toolkit/shaders/ground_splat.fs | Ground-truth |
 | 2026-10-04 | Codex | Heightmap normalization and background/water shader scopes | `scripts/generate_island_heightmap.py`, `maps/toolkit/map_props_cloud.inl`, `maps/toolkit/map_props_nature.inl`, `maps/tests/test_map_background_state.py` | Ground-truth |
 | 2026-10-03 | Codex | Translation-only parametric transform cancellation | `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/nature_parametric.glsl`, `maps/tests/test_meadow_world_space.py` | Ground-truth |

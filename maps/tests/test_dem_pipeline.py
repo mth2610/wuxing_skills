@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 import numpy as np
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'pipeline'))
-from dem_pipeline import compute_d8_flow, largest_component, resample_grid, write_water_mesh
+from dem_pipeline import delineate_basins, compute_d8_flow, largest_component, resample_grid, write_water_mesh
 import tempfile
 import struct
 from georaster import read_dem
@@ -56,6 +56,16 @@ class DrainageTests(unittest.TestCase):
         direction,accum,filled=compute_d8_flow(dem,valid)
         self.assertTrue(np.all(direction[~valid]==-1))
         self.assertEqual(accum[(direction<0)&valid].sum(),valid.sum())
+
+    def test_basin_area_matches_outlet_accumulation(self):
+        y,x=np.indices((13,19))
+        dem=10-np.abs(x-9)+y*0.1
+        valid=np.ones(dem.shape,bool)
+        direction,accum,filled=compute_d8_flow(dem,valid)
+        basin=delineate_basins(direction,filled,valid)
+        self.assertTrue(np.all(basin>0))
+        for r,c in zip(*np.where(direction<0)):
+            self.assertEqual((basin==basin[r,c]).sum(),accum[r,c])
 
     def test_disconnected_flats_are_not_merged(self):
         mask=np.zeros((10,10),bool);mask[1:4,1:4]=True;mask[6:8,6:8]=True

@@ -178,6 +178,27 @@ def compute_d8_flow(elevation, valid_mask, cell_x=1.0, cell_y=1.0):
     return flow_dir, accum, dem_flow
 
 
+def delineate_basins(directions, conditioned, valid):
+    """Assign every valid cell to its D8 terminal outlet, low to high."""
+    labels = np.zeros(valid.shape, dtype=np.int32)
+    offsets = [(0,1),(-1,1),(-1,0),(-1,-1),(0,-1),(1,-1),(1,0),(1,1)]
+    next_id = 0
+    width = valid.shape[1]
+    for i in np.argsort(conditioned, axis=None):
+        y,x = divmod(int(i),width)
+        if not valid[y,x]: continue
+        d = directions[y,x]
+        if d < 0:
+            next_id += 1
+            labels[y,x] = next_id
+        else:
+            dy,dx = offsets[d]
+            labels[y,x] = labels[y+dy,x+dx]
+            if labels[y,x] == 0:
+                raise ValueError('Drainage is not a strictly descending acyclic graph')
+    return labels
+
+
 def largest_component(mask):
     """Four-connected footprint; isolated flats must not become one giant lake."""
     seen = np.zeros_like(mask)
@@ -290,7 +311,10 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     aspect=np.mod(np.degrees(np.arctan2(-gx,gy)),360)
     tpi=clean-normalized_smooth(source,valid_source,5.0)
     curvature=np.gradient(gx,px,axis=1)+np.gradient(gy,py,axis=0)
-    source_dir,source_accum,_=compute_d8_flow(source,valid_source,px,py)
+    source_dir,source_accum,source_filled=compute_d8_flow(source,valid_source,px,py)
+    source_basins=delineate_basins(source_dir,source_filled,valid_source)
+    main_outlet=np.unravel_index(np.argmax(source_accum),source.shape)
+    main_basin=source_basins==source_basins[main_outlet]
     area=source_accum*px*py
     twi=np.log(np.maximum(area/np.sqrt(px*py),1e-9)/np.maximum(slope,0.001))
     lo,hi=float(source[valid_source].min()),float(source[valid_source].max())
@@ -395,6 +419,7 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     write_png(path('ecology_splat.png'),np.rint(splat*255),6)
     write_png(path('habitat.png'),np.rint(habitat*255),6)
     write_png(path('stream_mask.png'),streams.astype(np.uint8)*255)
+    write_png(path('main_catchment_mask.png'),(sample(main_basin.astype(float))>0.5).astype(np.uint8)*255)
     write_png(path('lake_mask.png'),lake.astype(np.uint8)*255)
     write_png(path('landform.png'),landform)
     write_png(path('substrate_proxy.png'),np.stack((rock,depositional,moisture),axis=-1)*255,2)
@@ -416,6 +441,13 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
                 water_y_m=surface.astype('f4'),water_depth_m=water_depth.astype('f4'),
                 exposed_substrate=rock.astype('f4'),deposition_potential=depositional.astype('f4'),landform=landform)
     np.savez_compressed(path('analysis.npz'),**fields)
+    # Preserve native source-grid metrics for scientific use and future rebakes.
+    native=lambda a:np.where(valid_source,a,np.nan).astype('f4')
+    np.savez_compressed(path('source_analysis.npz'),valid=valid_source,
+        elevation_m=native(source),slope_deg=native(slope_deg),aspect_deg=native(aspect),
+        tpi_m=native(tpi),curvature_per_m=native(curvature),twi=native(twi),
+        contributing_area_m2=native(area),flow_direction=source_dir,basin_id=source_basins,
+        main_catchment=main_basin,lake_candidate=lake_source)
     outlet=np.unravel_index(np.argmax(accum),accum.shape)
     peak=np.unravel_index(np.argmax(np.where(valid,ground,-np.inf)),ground.shape)
     lys,lxs=np.where(lake)
@@ -442,7 +474,9 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
                        drainage='D8 after priority flood; raster boundary outlets may truncate upstream area',
                        landform_classes={'0':'outside','1':'valley','2':'slope or plain','3':'ridge','4':'candidate lake'},
                        bathymetry='procedural game-scale reconstruction; not measured lake depth'),
-        source_statistics=dict(elevation_min_m=lo,elevation_max_m=hi,source_outlets=int(np.count_nonzero(valid_source & (source_dir<0)))),
+        source_statistics=dict(elevation_min_m=lo,elevation_max_m=hi,source_outlets=int(np.count_nonzero(valid_source & (source_dir<0))),
+            main_catchment_area_m2=float(main_basin.sum()*px*py),
+            main_outlet_source_pixel=[int(main_outlet[1]+xx.min()),int(main_outlet[0]+yy.min())]),
         parameters=dict(max_dim=max_dim,height_range=height_range,cliff_depth=cliff_depth,cliff_margin=cliff_margin,
                         resolution_scale=res_scale,stream_ratio=stream_ratio),
         metrics=dict(bake_seconds=time.perf_counter()-started,wet_nodes=int(wet.sum()),lake_nodes=int(lake.sum())))
