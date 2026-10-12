@@ -111,11 +111,16 @@ static int VC_GuidedInitialBurstCount(const VFX_GuidedParticleConfig *c) {
   return c && c->emitDuration<=0 ? c->count : 0;
 }
 static MotionFieldRecipe VC_GuidedRecipe(const VFX_GuidedParticleConfig *c) {
+  Vector3 fieldAxis = MotionVec_Sub(c->target,c->source);
+  if((c->motionPattern==VFX_GUIDED_CONVERGE || c->motionPattern==VFX_GUIDED_BLAST) &&
+     MotionVec_Length(fieldAxis) < 0.001f) {
+    fieldAxis = (Vector3){0, 1, 0};
+  }
   MotionFieldRecipe r={.kind=c->motionPattern==VFX_GUIDED_ORBIT?MOTION_RECIPE_ORBIT:
       c->motionPattern==VFX_GUIDED_AIRFLOW?MOTION_RECIPE_AIRFLOW:
       c->motionPattern==VFX_GUIDED_CONVERGE?MOTION_RECIPE_CONVERGE:
       c->motionPattern==VFX_GUIDED_BLAST?MOTION_RECIPE_BLAST:MOTION_RECIPE_MOVING_GUIDE,
-    .origin=c->source,.axis=MotionVec_Sub(c->target,c->source),
+    .origin=c->source,.axis=fieldAxis,
     .referenceBody={.massKg=c->massKg},.guidance=(GuidePreset)c->guidancePreset,
     .radiusM=c->guideRadius,.speedMps=c->speed,.swirlSpeedMps=c->swirlSpeed,
     .turbulenceSpeedMps=c->turbulenceSpeed,.maxForceNewtons=c->maxForceNewtons,
@@ -333,6 +338,9 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
       c->guidancePreset!=GUIDE_MANUAL && n<max)
     out[n++]=(VFX_ParamDef){.name="Field life s",.group="Field",.type=VFX_PARAM_FLOAT,
       .valPtr=&c->duration,.minFloat=.1f,.maxFloat=30,.stepFloat=.5f};
+  if(c->motionPattern==VFX_GUIDED_CONVERGE && n<max)
+    out[n++]=(VFX_ParamDef){.name="Despawn at center",.group="Field",.type=VFX_PARAM_BOOL,
+      .valPtr=&c->despawnAtCenter,.minInt=0,.maxInt=1};
 #define GUIDED_TRAIL_PARAM(label,member,typeValue,lo,hi,step) \
   do {if(n<max) out[n++]=(VFX_ParamDef){.name=label,.group="Trail", \
     .type=typeValue,.valPtr=&c->member,.minFloat=lo,.maxFloat=hi,.stepFloat=step, \
@@ -414,6 +422,24 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
     :VC_GuidedBody(c);
   const VFX_ElementMaterial *material=VFX_Material(c->material);
   float bodyLifetime=field.lifetime.startDelaySec+field.lifetime.durationSec;
+  if(c->despawnAtCenter && c->motionPattern==VFX_GUIDED_CONVERGE) {
+    float R = c->formationRadius > 0.05f ? c->formationRadius : c->guideRadius;
+    float vEff = c->speed;
+    /* Inward acceleration from pull force: a = F / m */
+    float pullN = (c->guidancePreset == GUIDE_MANUAL) ? c->maxForceNewtons : VC_GuidedTuning(c).maxForceNewtons;
+    float mass = c->massKg > 1e-5f ? c->massKg : 0.004f;
+    float a = pullN / mass;
+    /* If there is inward acceleration, t = (-v + sqrt(v^2 + 2*a*R)) / a; otherwise R / v */
+    float tArrival = 1.0f;
+    if(a > 1e-3f) {
+      tArrival = (-vEff + sqrtf(vEff*vEff + 2.0f*a*R)) / a;
+    } else if(vEff > 1e-3f) {
+      tArrival = R / vEff;
+    }
+    if(tArrival > 0.05f && tArrival < bodyLifetime) {
+      bodyLifetime = tArrival;
+    }
+  }
   s->particle=c->particleTemplate?*c->particleTemplate:(ParticleConfig){
     .position=c->source,.lifetime=bodyLifetime,.radius=c->particleRadius,
     .colorStart=VC_WithAlpha(material->body,220),.colorEnd=VC_WithAlpha(material->body,0),
@@ -461,10 +487,13 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
     float particleLaunchSpeed = 0.0f;
     if(c->motionPattern==VFX_GUIDED_CONVERGE) particleLaunchSpeed = -c->speed;
     else if(c->motionPattern==VFX_GUIDED_BLAST) particleLaunchSpeed = c->speed;
+    float particleSwirl = (c->motionPattern==VFX_GUIDED_CONVERGE || c->motionPattern==VFX_GUIDED_BLAST) ? c->swirlSpeed : 0.0f;
     s->sink = (EmissionParticleSink){
       .emitter = s->emitter,
       .initialSpeed = particleLaunchSpeed,
-      .center = c->source
+      .center = c->source,
+      .swirlAxis = field.flow.axis,
+      .swirlSpeed = particleSwirl
     };
   }
   EmissionConfig emission={.schedule=(VC_GuidedUsesTimedEmission(c) || (c->emitDuration>0 && trails>0))
@@ -485,7 +514,9 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
       .trailAlignAngleDeg=c->trailAlignAngleDeg,
       .trailVelocityAngleDeg=c->trailVelocityAngleDeg,
       .initialSpeed=trailLaunchSpeed,
-      .center=c->source
+      .center=c->source,
+      .swirlAxis=field.flow.axis,
+      .swirlSpeed=c->swirlSpeed
     };
     emission.kind=EMISSION_RIBBON; emission.count=(uint32_t)trails;
     emission.sink=EmissionSink_Ribbon; emission.sinkUser=&s->trailSink; emission.spawnTemplate=&s->ribbon;

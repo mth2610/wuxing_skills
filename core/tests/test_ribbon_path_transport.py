@@ -36,6 +36,7 @@ static void CopyRenderHistory(ModernRibbon *r,TrailEntity *t){(void)r;(void)t;co
 static bool SampleAnchor(const ModernRibbon *r,TrailRibbonAnchor *a){(void)r;(void)a;forces++;return false;}
 static void TrailRibbonGpu_Update(int slot,float dt,const TrailRibbonAnchor *a){(void)slot;(void)dt;(void)a;forces++;}
 static void SampleMotion(void *u,Vector3 p,Vector3 v,float dt,int n,float o,FieldSample *s,Vector3 *air){(void)u;(void)p;(void)v;(void)dt;(void)n;(void)o;(void)s;(void)air;forces++;}
+static bool Wind_SampleTerrain(float x,float z,float *out){(void)x;(void)z;*out=0.0f;return true;}
 '''
 main=r'''
 int main(void){

@@ -389,6 +389,8 @@ static int VFXTest_GuidedParameterEdited(const VFX_ParamDef *param, float before
         s_guidedSwirlRatio = cfg->swirlSpeed / reference;
     else if (param->valPtr == &cfg->turbulenceSpeed)
         s_guidedTurbulenceRatio = cfg->turbulenceSpeed / reference;
+    else if (param->valPtr == &cfg->trailAlign)
+        return VFX_GuidedMotion_GetParams(cfg, params, max);
     return count;
 }
 
@@ -1419,8 +1421,12 @@ static void VFXTest_UIEditParameter(int index, int direction)
         if (*value > param->maxInt) *value = param->maxInt;
     } else if (direction > 0) {
         VFX_Param_CycleNext(param);
+        s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, 0.0f,
+            s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
     } else {
         VFX_Param_CyclePrev(param);
+        s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, 0.0f,
+            s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
 }
 
@@ -1449,6 +1455,8 @@ static void VFXTest_UISetParameterNorm(int index, float norm01)
             int val = (int)(norm01 * (float)count);
             if (val >= count) val = count - 1;
             *(int *)param->valPtr = param->minInt + val;
+            s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, 0.0f,
+                s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
         }
     } else if (param->type == VFX_PARAM_BOOL) {
         *(bool *)param->valPtr = (norm01 >= 0.5f);

@@ -23,9 +23,13 @@ typedef struct MotionFieldRecipe {
 
 static inline GuideTuning MotionFieldRecipe_Tuning(const MotionFieldRecipe *r) {
     if(!r) return (GuideTuning){0};
+    /* For CONVERGE and BLAST, radial attraction/repulsion acts as an active
+     * trajectory guide; external gravity must not artificially inflate the omega
+     * derivation into violent 25G spikes. */
+    float effectiveGravity = (r->kind == MOTION_RECIPE_CONVERGE || r->kind == MOTION_RECIPE_BLAST) ? 0.0f : r->gravityMps2;
     return GuideTuning_Derive(&r->referenceBody,r->radiusM,
         (r->kind==MOTION_RECIPE_ORBIT||r->kind==MOTION_RECIPE_CONVERGE||r->kind==MOTION_RECIPE_BLAST)?0:r->speedMps,
-        r->swirlSpeedMps,r->turbulenceSpeedMps,r->gravityMps2,r->guidance);
+        r->swirlSpeedMps,r->turbulenceSpeedMps,effectiveGravity,r->guidance);
 }
 /* Failure leaves out untouched. AIRFLOW supplies medium velocity, so body
  * drag/wind coupling controls its response. Other recipes compile bounded
@@ -63,10 +67,14 @@ static inline bool MotionFieldRecipe_Build(const MotionFieldRecipe *r,FieldDesc 
        !isfinite(stiffness) || (automatic && stiffness<=0)) return false;
     d.forceLawCount=1;
     if(r->kind==MOTION_RECIPE_CONVERGE) {
-        d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_RADIAL_ATTRACTION,.magnitudeNewtons=pull};
+        /* When launch speed is already high or automatic guidance is used, scale pull force
+         * so radial acceleration stays smooth (~1.5G to 2.5G max) without velocity stacking. */
+        float convergePull = automatic ? (pull * 0.25f) : pull;
+        d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_RADIAL_ATTRACTION,.magnitudeNewtons=convergePull};
         d.preserveSphereOffsets=false;
     } else if(r->kind==MOTION_RECIPE_BLAST) {
-        d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_RADIAL_ATTRACTION,.magnitudeNewtons=-pull};
+        float blastPush = automatic ? (pull * 0.35f) : pull;
+        d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_RADIAL_ATTRACTION,.magnitudeNewtons=-blastPush};
         d.preserveSphereOffsets=false;
     } else {
         d.forceLaws[0]=(ForceLaw){.type=automatic?FORCE_LAW_MOVING_GUIDE:FORCE_LAW_RADIAL_ATTRACTION,

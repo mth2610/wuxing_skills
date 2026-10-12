@@ -11,6 +11,8 @@ typedef struct {
     ParticleEmitterHandle emitter;
     float initialSpeed;          /* Radial launch speed along normal: >0 outward, <0 inward */
     Vector3 center;              /* Emitter center for radial calculation */
+    Vector3 swirlAxis;           /* Swirl axis for tangential flow */
+    float swirlSpeed;            /* Tangential swirl velocity */
 } EmissionParticleSink;
 bool EmissionSink_Particle(void *user,const EmissionSpawn *spawn);
 /* spawnTemplate is TrailRibbonConfig. Free chains start at sampled position;
@@ -21,6 +23,8 @@ typedef struct {
     float trailVelocityAngleDeg; /* 0 deg = radial, 90 deg = tangent */
     float initialSpeed;          /* speed applied along velocity direction */
     Vector3 center;              /* Center of the emitter / sphere */
+    Vector3 swirlAxis;           /* Swirl axis for tangential flow */
+    float swirlSpeed;            /* Tangential swirl velocity */
 } EmissionRibbonSink;
 bool EmissionSink_Ribbon(void *user,const EmissionSpawn *spawn);
 #endif

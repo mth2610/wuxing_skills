@@ -1169,6 +1169,7 @@ typedef struct VFX_GuidedParticleConfig {
     int trailAlign;  /* VFX_GuidedTrailAlign; alignment relative to spawn surface/sphere. */
     float trailAlignAngleDeg;    /* Angle between trail spine and normal (0 deg = radial, 90 deg = tangent). */
     float trailVelocityAngleDeg; /* Angle between initial velocity and normal (0 deg = radial, 90 deg = tangent). */
+    bool despawnAtCenter;        /* For Converge: particle/trail life matches arrival time at center. */
 } VFX_GuidedParticleConfig;
 typedef VFX_GuidedParticleConfig VFX_GuidedMotionConfig;
 /* Shared field and source, independent particle/ribbon birth totals. AUTO uses

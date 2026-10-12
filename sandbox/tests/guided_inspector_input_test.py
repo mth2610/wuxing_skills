@@ -138,7 +138,7 @@ int main(void) {
         end = source.index("/* UI edits couple authored speeds", begin)
         preset = source[begin:end]
         begin = source.index("static void VFXTest_UIEditParameter(")
-        end = source.index("\nstatic bool VFXTest_UIHandleInput", begin)
+        end = source.index("\nstatic void VFXTest_UISetParameterNorm", begin)
         edit = source[begin:end]
         fixture = r'''
 #include <assert.h>
@@ -149,9 +149,13 @@ int main(void) {
 typedef struct {
     float speed, swirlSpeed, turbulenceSpeed, duration, guideRadius, maxForceNewtons, drag, formationRadius, emitDuration, gravityScale, massKg, trailLength, trailWidth;
     int count, output, trailCount, motionPattern, trailNodes, material, trailStyle, guidancePreset, trailMotion;
+    int trailAlign;
+    float trailAlignAngleDeg, trailVelocityAngleDeg;
+    bool despawnAtCenter;
 } VFX_GuidedMotionConfig;
 enum { VFX_GUIDED_PARTICLES, VFX_GUIDED_TRAILS, VFX_GUIDED_BOTH };
-enum { VFX_GUIDED_ROUTE, VFX_GUIDED_ORBIT, VFX_GUIDED_AIRFLOW };
+enum { VFX_GUIDED_ROUTE, VFX_GUIDED_ORBIT, VFX_GUIDED_AIRFLOW, VFX_GUIDED_CONVERGE, VFX_GUIDED_BLAST };
+enum { VFX_GUIDED_TRAIL_ALIGN_AUTO, VFX_GUIDED_TRAIL_ALIGN_RADIAL, VFX_GUIDED_TRAIL_ALIGN_SURFACE, VFX_GUIDED_TRAIL_ALIGN_CUSTOM };
 enum { GUIDE_TIGHT = 3 };
 enum { VFX_GUIDED_TRAIL_MOTION_FIELD, VFX_GUIDED_TRAIL_MOTION_SPLINE, VFX_GUIDED_TRAIL_MOTION_GUIDED };
 typedef int VC_MaterialId;
