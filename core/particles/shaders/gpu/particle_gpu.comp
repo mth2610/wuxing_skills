@@ -439,10 +439,14 @@ void main() {
             }
         }
     }
-    // Ground Collision Y-bounce
+    // Ground / Terrain Collision Y-bounce
     float elasticity = p.ff_data.z; // ff_pad1
     if (elasticity >= 0.0) {
         float floorY = p.ff_data.w; // ff_pad2
+        float terrainY = 0.0;
+        if (sampleTerrainHeight(p.pos_radius.xz, terrainY)) {
+            floorY = max(floorY, terrainY);
+        }
         if (p.pos_radius.y <= floorY) {
             p.vel_drag.y = -p.vel_drag.y * elasticity;
             p.vel_drag.xz *= motionBodies[idx].meta.x!=0u ? 0.75 : 0.8;

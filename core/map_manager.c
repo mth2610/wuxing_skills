@@ -16,6 +16,31 @@ static int s_zoneCount = 0;
 
 #include "core/maps_generated.h"
 
+#include "core/wind/wind_system.h"
+
+static float MapManager_WindTerrainQuery(float worldX, float worldZ, void *userData) {
+    (void)userData;
+    return MapManager_GetGroundHeightAt(worldX, worldZ);
+}
+
+static void MapManager_SyncWindTerrain(void) {
+    if (s_mapCount == 0) {
+        Wind_SetTerrainHeightQuery(NULL, NULL);
+        return;
+    }
+    if (s_maps[s_activeMapIndex].GetGroundHeight != NULL) {
+        Wind_SetTerrainHeightQuery(MapManager_WindTerrainQuery, NULL);
+        Vector3 center;
+        float radius = 18.0f;
+        MapManager_GetActiveBounds(&center, &radius);
+        Vector2 centerXZ = (Vector2){ center.x, center.z };
+        Vector2 halfExtentXZ = (Vector2){ radius, radius };
+        Wind_RebuildTerrainGrid(centerXZ, halfExtentXZ);
+    } else {
+        Wind_SetTerrainHeightQuery(NULL, NULL);
+    }
+}
+
 void MapManager_Init(void) {
     s_mapCount = 0;
     s_activeMapIndex = 0;
@@ -24,11 +49,6 @@ void MapManager_Init(void) {
 
     RegisterGeneratedMaps();
 
-    // Default map: DEFAULT_ARENA. (Previously searched for "BAMBOO_VALLEY",
-    // a map deleted in an earlier session — that left the default silently
-    // falling back to whatever map the registry-generator scanned first,
-    // which changes any time a new map/ directory is added. Pinning to a
-    // map that actually exists keeps the default stable across additions.)
     // Default map: DEFAULT_ARENA, or pinned via WUXING_MAP environment variable
     if (s_mapCount > 0) {
         for (int i = 0; i < s_mapCount; i++) {
@@ -41,6 +61,7 @@ void MapManager_Init(void) {
         if (s_maps[s_activeMapIndex].Init) {
             s_maps[s_activeMapIndex].Init();
         }
+        MapManager_SyncWindTerrain();
     }
 }
 
@@ -139,6 +160,7 @@ void MapManager_Unload(void) {
     s_mapCount = 0;
     s_zoneCount = 0;
     Environment_SetSunIntensity(1.0f);
+    Wind_SetTerrainHeightQuery(NULL, NULL);
 }
 
 int MapManager_GetCount(void) {
@@ -166,6 +188,7 @@ void MapManager_SetActiveIndex(int index) {
         if (s_maps[s_activeMapIndex].Init) {
             s_maps[s_activeMapIndex].Init();
         }
+        MapManager_SyncWindTerrain();
     }
 }
 

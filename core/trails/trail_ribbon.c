@@ -212,6 +212,19 @@ bool TrailRibbonSystem_Update(int id,float dt) {
     if(r->gpuSlot>=0) TrailRibbonGpu_Update(r->gpuSlot,dt,&anchor);
     else {
         TrailRibbon_Advance(&r->state,&r->config.material,dt,&anchor,SampleMotion,r);
+        /* Prevent nodes from penetrating under terrain / ground surface */
+        for(int n=0;n<r->state.count;n++) {
+            float terrainY=0.0f;
+            if(Wind_SampleTerrain(r->state.position[n].x,r->state.position[n].z,&terrainY)) {
+                float minY=terrainY+0.02f;
+                if(r->state.position[n].y<minY) {
+                    r->state.position[n].y=minY;
+                    if(r->state.velocity[n].y<0.0f) r->state.velocity[n].y=-r->state.velocity[n].y*0.2f;
+                    r->state.velocity[n].x*=0.8f;
+                    r->state.velocity[n].z*=0.8f;
+                }
+            }
+        }
         CopyRenderHistory(r,GetTrail(id));
     }
     return true;

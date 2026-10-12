@@ -805,25 +805,12 @@ void UpdateParticles(float dt)
       p->y += p->vy * step;
       p->z += p->vz * step;
       if (p->windInfluence > 0.0f) {
-        // Jitter per-particle: phá vỡ coherence Perlin khi tất cả hạt cùng vị trí target
-        float seed = (float)i;
-        float h1 = fmodf(sinf(seed * 127.1f) * 43758.5453f, 1.0f);
-        float h2 = fmodf(sinf(seed * 269.5f) * 43758.5453f, 1.0f);
-        float h3 = fmodf(sinf(seed * 419.2f) * 43758.5453f, 1.0f);
-        if (h1 < 0.0f) h1 += 1.0f;
-        if (h2 < 0.0f) h2 += 1.0f;
-        if (h3 < 0.0f) h3 += 1.0f;
-        Vector3 samplePos = {
-          p->x + (h1 - 0.5f) * 3.0f,
-          p->y + (h2 - 0.5f) * 3.0f,
-          p->z + (h3 - 0.5f) * 3.0f
-        };
-        Vector3 windVel = Wind_EvaluateVelocity(samplePos, s_particleTime);
-        float infl = p->windInfluence;
-        float blendRate = (1.0f - expf(-3.5f * dt)) * infl;
-        p->vx += (windVel.x - p->vx) * blendRate;
-        p->vy += (windVel.y - p->vy) * blendRate;
-        p->vz += (windVel.z - p->vz) * blendRate;
+        Vector3 windVel = Wind_EvaluateVelocity((Vector3){p->x, p->y, p->z}, s_particleTime);
+        Vector3 vel = (Vector3){p->vx, p->vy, p->vz};
+        vel = MotionProfile_CoupleToAirflow(vel, windVel, 3.5f * p->windInfluence, dt);
+        p->vx = vel.x;
+        p->vy = vel.y;
+        p->vz = vel.z;
       }
     }
 
@@ -859,16 +846,23 @@ particle_contacts:
       p->x = position.x; p->y = position.y; p->z = position.z;
       p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
     }
-    // Ground Collision
-    if (p->collisionEnabled && p->y <= p->collisionFloorY)
+    // Ground / Terrain Collision
+    if (p->collisionEnabled)
     {
-      p->vy = -p->vy * p->collisionElasticity;
-      p->vx *= 0.75f;
-      p->vz *= 0.75f;
-      p->y = p->collisionFloorY + 0.005f;
+      float floorY = p->collisionFloorY;
+      float terrainY = 0.0f;
+      if (Wind_SampleTerrain(p->x, p->z, &terrainY)) {
+        if (terrainY > floorY) floorY = terrainY;
+      }
+      if (p->y <= floorY) {
+        p->vy = -p->vy * p->collisionElasticity;
+        p->vx *= 0.75f;
+        p->vz *= 0.75f;
+        p->y = floorY + 0.005f;
 
-      EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_COLLISION,
-          .position={p->x,p->collisionFloorY+.005f,p->z},.velocity={p->vx,p->vy,p->vz},.normal={0,1,0}});
+        EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_COLLISION,
+            .position={p->x,floorY+.005f,p->z},.velocity={p->vx,p->vy,p->vz},.normal={0,1,0}});
+      }
     }
 
     // Particle Trail History Update

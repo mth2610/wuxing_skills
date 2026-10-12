@@ -219,7 +219,7 @@ static bool Wind_SampleTerrainGrid(float worldX, float worldZ, float *outHeight)
     return true;
 }
 
-static bool Wind_SampleTerrain(float worldX, float worldZ, float *outHeight) {
+bool Wind_SampleTerrain(float worldX, float worldZ, float *outHeight) {
     if (s_terrainGrid.built)
         return Wind_SampleTerrainGrid(worldX, worldZ, outHeight);
     if (s_terrainQuery == NULL || outHeight == NULL)

@@ -42,6 +42,10 @@ void Wind_RebuildTerrainGrid(Vector2 centerXZ, Vector2 halfExtentXZ);
 // Inspection nội bộ cho GPU packer; con trỏ sống đến lần rebuild/unload kế tiếp.
 const WindTerrainGrid *Wind_GetTerrainGrid(void);
 
+// Lấy độ cao bề mặt địa hình tại (worldX, worldZ) theo lưới grid hoặc queryFn đã liên kết.
+// Trả về false nếu không có dữ liệu địa hình tại tọa độ này.
+bool Wind_SampleTerrain(float worldX, float worldZ, float *outHeight);
+
 // -----------------------------------------------------------------------------
 // Emitters: Kích phát luồng gió cục bộ (Vorticles)
 // Trả về index của Vorticle trong pool, hoặc -1 nếu pool đầy (ring-buffer tự ghi đè

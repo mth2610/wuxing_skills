@@ -106,7 +106,16 @@ void main() {
             }
         }
         barrier();
-        if(node<count) velocities[node]=(positions[node]-previous[node])/fixedDt;
+        if(node<count) {
+            float terrainH=0.0;
+            if(sampleTerrainHeight(positions[node].xz,terrainH)) {
+                float minY=terrainH+0.02;
+                if(positions[node].y<minY) {
+                    positions[node].y=minY;
+                }
+            }
+            velocities[node]=(positions[node]-previous[node])/fixedDt;
+        }
         if(node==0 && pinned) velocities[0]=r.anchorVelocity.xyz;
         barrier();
     }
