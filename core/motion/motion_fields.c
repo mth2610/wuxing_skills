@@ -30,10 +30,32 @@ typedef struct {
 } MotionTargetRuntime;
 static MotionGuideRuntime s_guides[MOTION_FIELDS_MAX_GUIDES];
 static MotionTargetRuntime s_targets[MOTION_FIELDS_MAX_TARGETS];
+static int s_activeTargets[MOTION_FIELDS_MAX_TARGETS];
+static int s_activeTargetCount = 0;
+static int s_activeGuides[MOTION_FIELDS_MAX_GUIDES];
+static int s_activeGuideCount = 0;
 static uint32_t s_generation;
 static float s_time;
 static float s_updateDt;
 static MotionFrameRegistry s_frames;
+
+static void Motion_RebuildActiveLists(void) {
+  int tCount = 0;
+  for (int i = 0; i < MOTION_FIELDS_MAX_TARGETS; i++) {
+    if (s_targets[i].handle) {
+      s_activeTargets[tCount++] = i;
+    }
+  }
+  s_activeTargetCount = tCount;
+
+  int gCount = 0;
+  for (int i = 0; i < MOTION_FIELDS_MAX_GUIDES; i++) {
+    if (s_guides[i].handle) {
+      s_activeGuides[gCount++] = i;
+    }
+  }
+  s_activeGuideCount = gCount;
+}
 MotionFrameHandle MotionFrame_Create(Matrix transform) {return MotionFrameRegistry_Create(&s_frames,transform);}
 bool MotionFrame_Update(MotionFrameHandle handle,Matrix transform,float dt,bool discontinuity) {
   return MotionFrameRegistry_Update(&s_frames,handle,transform,dt,discontinuity);
@@ -275,6 +297,8 @@ MotionTargetDesc MotionTarget_Default(void) {
 void MotionFields_Reset(void) {
   memset(s_guides, 0, sizeof(s_guides));
   memset(s_targets, 0, sizeof(s_targets));
+  s_activeTargetCount = 0;
+  s_activeGuideCount = 0;
   s_time = 0;
   s_updateDt = 0;
   Wind_SetMotionAirflow(NULL, 0);
@@ -307,6 +331,7 @@ void MotionFields_Update(float dt) {
         s_targets[i].handle = 0;
       else { Motion_UpdateBoundFrame(&s_targets[i]); Motion_CachePhysicalTarget(&s_targets[i]); }
     }
+  Motion_RebuildActiveLists();
   Motion_PublishWind();
 }
 void MotionFields_RefreshFrames(void) {
@@ -386,6 +411,7 @@ MotionFieldHandle MotionFields_CreateGuide(const MotionGuideDesc *d) {
       if (!s_guides[i].desc.receiverMask)
         s_guides[i].desc.receiverMask = MOTION_RECEIVER_ALL_COMPONENTS;
       Motion_CacheGuideBounds(&s_guides[i]);
+      Motion_RebuildActiveLists();
       Motion_PublishWind();
       Motion_Trace("guide_created", s_guides[i].handle, (int)d->mode);
       return s_guides[i].handle;
@@ -402,6 +428,7 @@ MotionFieldHandle MotionFields_CreateTarget(const MotionTargetDesc *d) {
       if (!s_targets[i].desc.receiverMask)
         s_targets[i].desc.receiverMask = MOTION_RECEIVER_ALL_COMPONENTS;
       Motion_CachePhysicalTarget(&s_targets[i]);
+      Motion_RebuildActiveLists();
       Motion_Trace(
           "target_created", s_targets[i].handle,
           (d->field.layerCount > 0 ? 1 : 0) |
@@ -423,6 +450,7 @@ void MotionFields_Stop(MotionFieldHandle h) {
     g->handle = 0;
   if (t)
     t->handle = 0;
+  Motion_RebuildActiveLists();
   Motion_PublishWind();
 }
 int MotionFields_GetGuideCount(void) {
@@ -930,6 +958,7 @@ MotionFieldHandle MotionFields_CreateField(const FieldDesc *d) {
     if(d->trajectory.mode==FIELD_TRAJECTORY_PATH)
       MotionPath_Build(&t->physical.trajectory.path,d->trajectory.path.points,d->trajectory.path.count);
     Motion_CachePhysicalTarget(t);
+    Motion_RebuildActiveLists();
     return t->handle;
   }
   return MOTION_FIELD_INVALID;
@@ -1128,7 +1157,8 @@ static void Motion_SamplePhysical(Vector3 p,Vector3 v,const BodyPhysicalProperti
   bool needsDrag=false;
   for(int pass=0;pass<2;++pass) {
     if(pass && !needsDrag) break;
-    for(int i=0;i<MOTION_FIELDS_MAX_TARGETS;++i) {
+    for(int idx=0;idx<s_activeTargetCount;++idx) {
+      int i=s_activeTargets[idx];
       MotionTargetRuntime *t=&s_targets[i];
       if(!t->handle) continue;
       const FieldDesc *d=t->typed?&t->physical:t->desc.usePhysicalField?&t->desc.physicalField:NULL;
@@ -1141,8 +1171,9 @@ static void Motion_SamplePhysical(Vector3 p,Vector3 v,const BodyPhysicalProperti
       needsDrag|=t->physicalHasDrag;
       Motion_ComposePhysical(d,t->handle,fmaxf(t->age+timeOffset,0),p,v,body,medium,receiver,out,pass!=0,dt,NULL);
     }
-    for(int i=0;i<MOTION_FIELDS_MAX_GUIDES;++i) {
+    for(int idx=0;idx<s_activeGuideCount;++idx) {
       if(spatialOnly) break;
+      int i=s_activeGuides[idx];
       MotionGuideRuntime *g=&s_guides[i]; MotionPathSample projection;
       if(!g->handle || !g->desc.usePhysicalField || !(g->desc.receiverMask & mask) ||
          !Motion_InGuide(g,p,&projection)) continue;

@@ -579,13 +579,21 @@ void UpdateParticles(float dt)
       bool destroyed=false;
       BodyPhysicalProperties physicalBody=MotionBody_GetPhysicalProperties(body);
       ReceiverConstraints constraints={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
+      MediumProperties baseMedium=Wind_EvaluateBackgroundMedium(position,s_particleTime,
+          (Vector3){0,-9.81f*body->gravityScale,0});
+      if(body->airDensityKgM3>0) baseMedium.densityKgM3=body->airDensityKgM3;
+      int substepIdx=0;
       while (remaining>1e-6f) {
         float timeOffset=-remaining;
         float sampleTime=s_particleTime+timeOffset;
         float step=fminf(remaining,1.0f/60.0f);remaining-=step;
-        MediumProperties medium=Wind_EvaluateBackgroundMedium(position,sampleTime,
-            (Vector3){0,-9.81f*body->gravityScale,0});
-        if(body->airDensityKgM3>0) medium.densityKgM3=body->airDensityKgM3;
+        MediumProperties medium = baseMedium;
+        if (substepIdx > 0 && Wind_GetActiveCount() > 0) {
+          medium = Wind_EvaluateBackgroundMedium(position,sampleTime,
+              (Vector3){0,-9.81f*body->gravityScale,0});
+          if(body->airDensityKgM3>0) medium.densityKgM3=body->airDensityKgM3;
+        }
+        substepIdx++;
         FieldSample sample;
         if(p->spatialMotionOnly)
           MotionFields_SampleSpatialBodyAtOffset(position,velocity,&physicalBody,&medium,&constraints,

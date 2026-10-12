@@ -7,7 +7,7 @@
 #include "core/path_spline.h"
 #include "core/emitter/emitter_sinks.h"
 #include "core/emitter/particle_source.h"
-#define VC_GUIDED_MAX_STREAMS 8
+#define VC_GUIDED_MAX_STREAMS 16
 typedef struct {
   bool active;
   ParticleEmitterHandle emitter;
