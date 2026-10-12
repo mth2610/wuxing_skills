@@ -294,6 +294,7 @@ static void VFXTest_SetGuidedPreset(int preset)
         /* Converge field (implosion towards center) */
         s_liveGuidedMotionConfig.output = VFX_GUIDED_BOTH;
         s_liveGuidedMotionConfig.motionPattern = VFX_GUIDED_CONVERGE;
+        s_liveGuidedMotionConfig.trailAlign = VFX_GUIDED_TRAIL_ALIGN_RADIAL;
         s_liveGuidedMotionConfig.material = VC_MAT_LIGHTNING;
         s_liveGuidedMotionConfig.formationRadius = 2.4f;
         s_liveGuidedMotionConfig.guideRadius = 3.0f;

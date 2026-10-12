@@ -470,11 +470,14 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
     if(!s->particles) goto fail;
   }
   if(trails) {
+    float trailLaunchSpeed=c->speed;
+    if(c->motionPattern==VFX_GUIDED_CONVERGE) trailLaunchSpeed=-c->speed;
     s->trailSink=(EmissionRibbonSink){
       .trailAlign=c->trailAlign,
       .trailAlignAngleDeg=c->trailAlignAngleDeg,
       .trailVelocityAngleDeg=c->trailVelocityAngleDeg,
-      .initialSpeed=c->speed
+      .initialSpeed=trailLaunchSpeed,
+      .center=c->source
     };
     emission.kind=EMISSION_RIBBON; emission.count=(uint32_t)trails;
     emission.sink=EmissionSink_Ribbon; emission.sinkUser=&s->trailSink; emission.spawnTemplate=&s->ribbon;

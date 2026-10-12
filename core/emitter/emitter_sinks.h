@@ -16,6 +16,7 @@ typedef struct {
     float trailAlignAngleDeg;    /* 0 deg = radial, 90 deg = tangent */
     float trailVelocityAngleDeg; /* 0 deg = radial, 90 deg = tangent */
     float initialSpeed;          /* speed applied along velocity direction */
+    Vector3 center;              /* Center of the emitter / sphere */
 } EmissionRibbonSink;
 bool EmissionSink_Ribbon(void *user,const EmissionSpawn *spawn);
 #endif
