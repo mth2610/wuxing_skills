@@ -7,7 +7,11 @@
  * Particle handle must use PARTICLE_SOURCE_CONFIG_POSITION so the sampled
  * spawn position is not replaced. A true result means command submission,
  * not a readback-confirmed GPU allocation. spawnTemplate is ParticleConfig. */
-typedef struct {ParticleEmitterHandle emitter;} EmissionParticleSink;
+typedef struct {
+    ParticleEmitterHandle emitter;
+    float initialSpeed;          /* Radial launch speed along normal: >0 outward, <0 inward */
+    Vector3 center;              /* Emitter center for radial calculation */
+} EmissionParticleSink;
 bool EmissionSink_Particle(void *user,const EmissionSpawn *spawn);
 /* spawnTemplate is TrailRibbonConfig. Free chains start at sampled position;
  * anchored chains use their attachment. user may be NULL or EmissionRibbonSink*. */

@@ -321,10 +321,11 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
        (base[i].valPtr==&c->forwardForceNewtons || base[i].valPtr==&c->drag)) continue;
     bool particleRow=base[i].valPtr==&c->count || base[i].valPtr==&c->particleRadius;
     if(c->output==VFX_GUIDED_TRAILS && particleRow) continue;
-    if((c->motionPattern==VFX_GUIDED_ORBIT || c->motionPattern==VFX_GUIDED_CONVERGE || c->motionPattern==VFX_GUIDED_BLAST) && base[i].valPtr==&c->speed) continue;
+    if(c->motionPattern==VFX_GUIDED_ORBIT && base[i].valPtr==&c->speed) continue;
     if(c->motionPattern==VFX_GUIDED_AIRFLOW && (base[i].valPtr==&c->guidancePreset ||
         base[i].valPtr==&c->maxForceNewtons || base[i].valPtr==&c->forwardForceNewtons)) continue;
     if(c->motionPattern==VFX_GUIDED_AIRFLOW && base[i].valPtr==&c->speed) base[i].name="Air speed m/s";
+    if((c->motionPattern==VFX_GUIDED_CONVERGE || c->motionPattern==VFX_GUIDED_BLAST) && base[i].valPtr==&c->speed) base[i].name="Launch speed m/s";
     if(!strcmp(base[i].group,"Particle") && base[i].valPtr!=&c->particleRadius) base[i].group="Body";
     out[n++]=base[i];
   }
@@ -457,7 +458,14 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
       .source={.type=PARTICLE_SOURCE_CONFIG_POSITION}};
     s->emitter=ParticleManager_CreateEmitter(&desc);
     if(s->emitter==PARTICLE_EMITTER_INVALID || ParticleManager_GetEmitterStatus(s->emitter)!=PARTICLE_EMITTER_OK) goto fail;
-    s->sink.emitter=s->emitter;
+    float particleLaunchSpeed = 0.0f;
+    if(c->motionPattern==VFX_GUIDED_CONVERGE) particleLaunchSpeed = -c->speed;
+    else if(c->motionPattern==VFX_GUIDED_BLAST) particleLaunchSpeed = c->speed;
+    s->sink = (EmissionParticleSink){
+      .emitter = s->emitter,
+      .initialSpeed = particleLaunchSpeed,
+      .center = c->source
+    };
   }
   EmissionConfig emission={.schedule=(VC_GuidedUsesTimedEmission(c) || (c->emitDuration>0 && trails>0))
       ?EMISSION_TIMED_COUNT:EMISSION_BURST,
