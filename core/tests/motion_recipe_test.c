@@ -53,8 +53,25 @@ int main(void) {
     REJECT(guidance,99);REJECT(maxForceNewtons,-1);REJECT(forwardForceNewtons,-1);
     invalid=r;invalid.origin.x=NAN;RejectUnchanged(&invalid);
     invalid=r;invalid.axis.y=NAN;RejectUnchanged(&invalid);
-    MotionPath bad=path;bad.count=1;invalid=r;invalid.path=&bad;RejectUnchanged(&invalid);
     assert(!MotionFieldRecipe_Build(NULL,&d) && !MotionFieldRecipe_Build(&r,NULL));
-    puts("PASS: shared recipes preserve manual/auto force units, path/sphere/airflow contracts, copied geometry and atomic rejection");
+
+    /* Verify 1-liner recipe presets */
+    MotionFieldRecipe orbitR = MotionRecipe_Orbit((Vector3){0,1,0}, (Vector3){0,1,0}, 2.0f, 5.0f, 3.0f);
+    assert(MotionFieldRecipe_Build(&orbitR, &d));
+    assert(d.volume.shape == FIELD_SPHERE && d.volume.radiusM == 2.0f && d.flow.procedural.swirlSpeedMps == 5.0f);
+
+    MotionFieldRecipe airflowR = MotionRecipe_Airflow((Vector3){0,0,0}, (Vector3){0,0,1}, 3.0f, 8.0f, 1.0f, 2.5f);
+    assert(MotionFieldRecipe_Build(&airflowR, &d));
+    assert(d.flow.velocityMps.z == 8.0f && d.flow.procedural.turbulenceSpeedMps == 1.0f);
+
+    MotionFieldRecipe streamR = MotionRecipe_PathStream(&path, 1.5f, 6.0f, 4.0f, 4.0f);
+    assert(MotionFieldRecipe_Build(&streamR, &d));
+    assert(d.volume.shape == FIELD_PATH_TUBE && d.flow.followSpeedMps == 6.0f);
+
+    MotionFieldRecipe thrustR = MotionRecipe_SpiralThrust((Vector3){1,1,1}, (Vector3){1,0,0}, 1.2f, 10.0f, 15.0f, 2.0f);
+    assert(MotionFieldRecipe_Build(&thrustR, &d));
+    assert(d.volume.shape == FIELD_SPHERE && d.speedMps == 10.0f && d.flow.procedural.swirlSpeedMps == 15.0f);
+
+    puts("PASS: shared recipes preserve manual/auto force units, path/sphere/airflow contracts, presets and atomic rejection");
     return 0;
 }

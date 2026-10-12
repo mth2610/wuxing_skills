@@ -37,21 +37,20 @@ static void VC_MotionFieldRibbons_Clear(VC_MotionFieldRibbons *s)
     s->field=MOTION_FIELD_INVALID; s->attachment=0;
 }
 
+#include "core/motion/motion_recipe.h"
+
 static bool VC_MotionFieldRibbons_Start(VC_MotionFieldRibbons *s)
 {
     s->age=0; s->released=false;
     s->stone=Vector3Add(s->origin,(Vector3){-.5f,1.0f,0});
     s->velocity=(Vector3){.5f,1.0f,0};
     s->attachment=TrailAttachment_Create(MatrixTranslate(s->stone.x,s->stone.y,s->stone.z));
-    FieldDesc field=MotionField_Default();
-    field.volume.radiusM=4;
-    field.lifetime.durationSec=4.2f;
+    
+    MotionFieldRecipe recipe = MotionRecipe_Airflow(s->stone, (Vector3){.6f,.25f,.2f}, 4.0f, 0.7f, 0.2f, 4.2f);
+    FieldDesc field;
+    if(!MotionFieldRecipe_Build(&recipe, &field)) field=MotionField_Default();
     field.transform.position=s->stone;
-    field.flow.enabled=true;
-    field.flow.velocityMps=(Vector3){.6f,.25f,.2f};
-    field.forceLawCount=1;
-    field.forceLaws[0].type=FORCE_LAW_ACCELERATION;
-    field.forceLaws[0].accelerationMps2=(Vector3){0,.5f,0};
+    field.flow.addBackgroundVelocity=true;
     s->field=MotionFields_CreateField(&field);
     if(s->field && !MotionFields_BindFrame(s->field,s->attachment,NULL)) {
         MotionFields_Stop(s->field); s->field=MOTION_FIELD_INVALID;

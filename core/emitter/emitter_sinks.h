@@ -10,6 +10,12 @@
 typedef struct {ParticleEmitterHandle emitter;} EmissionParticleSink;
 bool EmissionSink_Particle(void *user,const EmissionSpawn *spawn);
 /* spawnTemplate is TrailRibbonConfig. Free chains start at sampled position;
- * anchored chains use their attachment. user may be NULL. */
+ * anchored chains use their attachment. user may be NULL or EmissionRibbonSink*. */
+typedef struct {
+    int trailAlign;              /* VFX_GuidedTrailAlign */
+    float trailAlignAngleDeg;    /* 0 deg = radial, 90 deg = tangent */
+    float trailVelocityAngleDeg; /* 0 deg = radial, 90 deg = tangent */
+    float initialSpeed;          /* speed applied along velocity direction */
+} EmissionRibbonSink;
 bool EmissionSink_Ribbon(void *user,const EmissionSpawn *spawn);
 #endif

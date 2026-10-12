@@ -9,7 +9,7 @@ def function(name):
  while depth:
   depth+=(s[end]=='{')-(s[end]=='}');end+=1
  return s[m.start():end]
-enums='\n'.join(re.search(r'typedef enum \{[^}]*\} '+name+r';',h,re.S).group() for name in ('VFX_GuidedOutput','VFX_GuidedPattern','VFX_GuidedTrailStyle','VFX_GuidedTrailMotion'))
+enums='\n'.join(re.search(r'typedef enum \{[^}]*\} '+name+r';',h,re.S).group() for name in ('VFX_GuidedOutput','VFX_GuidedPattern','VFX_GuidedTrailStyle','VFX_GuidedTrailMotion','VFX_GuidedTrailAlign'))
 config=re.search(r'typedef struct VFX_GuidedParticleConfig \{.*?\} VFX_GuidedParticleConfig;',h,re.S).group()
 stubs=r'''
 #include "core/motion/motion_fields.h"

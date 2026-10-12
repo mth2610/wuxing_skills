@@ -17,6 +17,7 @@ typedef struct {
   TrailRibbonConfig ribbon;
   EmissionParticleSourceAdapter source;
   EmissionParticleSink sink;
+  EmissionRibbonSink trailSink;
   MotionFrameHandle frame;
   EmissionParticleSourceAdapter localSource;
   Vector3 localVelocity, localRibbonVelocity, localTailDirection, frameVelocity;
@@ -63,19 +64,19 @@ int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *c, VFX_ParamDef *out,
     static const char * const guidanceNames[]={"Manual","Loose","Balanced","Tight"};
     const char *speedName=c->emitDuration>0?"Stream speed m/s":"Field travel speed m/s";
     if(n<max) out[n++]=(VFX_ParamDef){.name=speedName,.group=group,
-      .type=VFX_PARAM_FLOAT,.valPtr=&c->speed,.minFloat=0,.maxFloat=60,.stepFloat=1.0f};
-    GUIDE_FLOAT("Field radius m", guideRadius, .1f, 8, .1f);
+      .type=VFX_PARAM_FLOAT,.valPtr=&c->speed,.minFloat=0,.maxFloat=120,.stepFloat=1.0f};
+    GUIDE_FLOAT("Field radius m", guideRadius, .1f, 20, .1f);
     if(n<max) out[n++]=(VFX_ParamDef){.name="Guidance",
       .group=group,.type=VFX_PARAM_ENUM,.valPtr=&c->guidancePreset,
       .minInt=GUIDE_MANUAL,.maxInt=GUIDE_TIGHT,
       .enumNames=guidanceNames,.enumCount=4};
     if(c->guidancePreset==GUIDE_MANUAL) {
-      GUIDE_FLOAT("Pull force N", maxForceNewtons, 0, 5, .02f);
-      GUIDE_FLOAT("Forward force N", forwardForceNewtons, 0, 5, .02f);
+      GUIDE_FLOAT("Pull force N", maxForceNewtons, 0, 20, .05f);
+      GUIDE_FLOAT("Forward force N", forwardForceNewtons, 0, 20, .05f);
     }
     /* Absolute m/s API; inspector speed edits preserve authored flow ratios.
      * Bounds grow with travel speed instead of imposing a slow-effect ceiling. */
-    float flowMax=fmaxf(24,2*c->speed);
+    float flowMax=fmaxf(60,3*c->speed);
     GUIDE_FLOAT("Swirl m/s", swirlSpeed, -flowMax, flowMax, .5f);
     GUIDE_FLOAT("Turbulence m/s", turbulenceSpeed, 0, flowMax, .5f);
     if(c->guidancePreset==GUIDE_MANUAL)
@@ -86,12 +87,12 @@ int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *c, VFX_ParamDef *out,
     .type=VFX_PARAM_INT, .valPtr=&c->count, .minInt=0, .maxInt=2048};
   GUIDE_FLOAT("Emission time s", emitDuration, 0, 20, .5f);
   if (!c->emissionSource)
-    GUIDE_FLOAT("Source radius m", formationRadius, 0, 2, .025f);
+    GUIDE_FLOAT("Source radius m", formationRadius, 0, 10, .05f);
   if (!c->particleTemplate) {
     group = "Particle";
-    GUIDE_FLOAT("Particle radius m", particleRadius, .005f, .2f, .005f);
+    GUIDE_FLOAT("Particle radius m", particleRadius, .005f, .5f, .005f);
     if(c->guidancePreset==GUIDE_MANUAL)
-      GUIDE_FLOAT("Drag /s", drag, 0, 20, .25f);
+      GUIDE_FLOAT("Drag /s", drag, 0, 30, .25f);
     GUIDE_FLOAT("Mass kg", massKg, .000001f, 1, .0001f);
     GUIDE_FLOAT("Density kg/m3", densityKgM3, .1f, 2000, 100);
     GUIDE_FLOAT("Gravity scale", gravityScale, -2, 2, .1f);
@@ -111,7 +112,9 @@ static int VC_GuidedInitialBurstCount(const VFX_GuidedParticleConfig *c) {
 }
 static MotionFieldRecipe VC_GuidedRecipe(const VFX_GuidedParticleConfig *c) {
   MotionFieldRecipe r={.kind=c->motionPattern==VFX_GUIDED_ORBIT?MOTION_RECIPE_ORBIT:
-      c->motionPattern==VFX_GUIDED_AIRFLOW?MOTION_RECIPE_AIRFLOW:MOTION_RECIPE_MOVING_GUIDE,
+      c->motionPattern==VFX_GUIDED_AIRFLOW?MOTION_RECIPE_AIRFLOW:
+      c->motionPattern==VFX_GUIDED_CONVERGE?MOTION_RECIPE_CONVERGE:
+      c->motionPattern==VFX_GUIDED_BLAST?MOTION_RECIPE_BLAST:MOTION_RECIPE_MOVING_GUIDE,
     .origin=c->source,.axis=MotionVec_Sub(c->target,c->source),
     .referenceBody={.massKg=c->massKg},.guidance=(GuidePreset)c->guidancePreset,
     .radiusM=c->guideRadius,.speedMps=c->speed,.swirlSpeedMps=c->swirlSpeed,
@@ -293,7 +296,7 @@ VFX_GuidedMotionConfig VFX_GuidedMotion_DefaultConfig(void) {
 int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int max) {
   if(!c || !out || max<=0) return 0;
   static const char *const outputNames[]={"Particles","Trails","Particles + trails"};
-  static const char *const patternNames[]={"Route","Orbit","Airflow"};
+  static const char *const patternNames[]={"Route","Orbit","Airflow","Converge","Blast"};
   static const char *const trailMotionNames[]={"Physical field","Smooth spline","Guided field"};
   bool splineOnly=c->output==VFX_GUIDED_TRAILS && c->motionPattern==VFX_GUIDED_ROUTE &&
     c->trailMotion==VFX_GUIDED_TRAIL_MOTION_SPLINE && !c->trailTemplate && !c->trailAttachment;
@@ -303,8 +306,8 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
     .valPtr=&c->output,.minInt=VFX_GUIDED_PARTICLES,.maxInt=VFX_GUIDED_BOTH,
     .enumNames=outputNames,.enumCount=3};
   if(!c->fieldOverride && n<max) out[n++]=(VFX_ParamDef){.name="Motion",.group="Field",
-    .type=VFX_PARAM_ENUM,.valPtr=&c->motionPattern,.minInt=VFX_GUIDED_ROUTE,.maxInt=VFX_GUIDED_AIRFLOW,
-    .enumNames=patternNames,.enumCount=3};
+    .type=VFX_PARAM_ENUM,.valPtr=&c->motionPattern,.minInt=VFX_GUIDED_ROUTE,.maxInt=VFX_GUIDED_BLAST,
+    .enumNames=patternNames,.enumCount=5};
   VFX_ParamDef base[32];
   int count=VFX_GuidedParticle_GetParams(c,base,32);
   for(int i=0;i<count && n<max;i++) {
@@ -318,7 +321,7 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
        (base[i].valPtr==&c->forwardForceNewtons || base[i].valPtr==&c->drag)) continue;
     bool particleRow=base[i].valPtr==&c->count || base[i].valPtr==&c->particleRadius;
     if(c->output==VFX_GUIDED_TRAILS && particleRow) continue;
-    if(c->motionPattern==VFX_GUIDED_ORBIT && base[i].valPtr==&c->speed) continue;
+    if((c->motionPattern==VFX_GUIDED_ORBIT || c->motionPattern==VFX_GUIDED_CONVERGE || c->motionPattern==VFX_GUIDED_BLAST) && base[i].valPtr==&c->speed) continue;
     if(c->motionPattern==VFX_GUIDED_AIRFLOW && (base[i].valPtr==&c->guidancePreset ||
         base[i].valPtr==&c->maxForceNewtons || base[i].valPtr==&c->forwardForceNewtons)) continue;
     if(c->motionPattern==VFX_GUIDED_AIRFLOW && base[i].valPtr==&c->speed) base[i].name="Air speed m/s";
@@ -342,9 +345,16 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
       if(n<max) out[n++]=(VFX_ParamDef){.name="Trail style",.group="Trail",.type=VFX_PARAM_ENUM,
         .valPtr=&c->trailStyle,.minInt=VFX_GUIDED_TRAIL_PLAIN,.maxInt=VFX_GUIDED_TRAIL_WATER_STREAM,
         .enumNames=styleNames,.enumCount=5};
-      GUIDED_TRAIL_PARAM("Trail length m",trailLength,VFX_PARAM_FLOAT,.05f,4,.05f);
-      GUIDED_TRAIL_PARAM("Trail width m",trailWidth,VFX_PARAM_FLOAT,.005f,.5f,.005f);
-      GUIDED_TRAIL_PARAM("Trail nodes",trailNodes,VFX_PARAM_INT,2,60,1);
+      static const char * const alignNames[]={"Auto","Radial","Surface","Custom"};
+      if(n<max) out[n++]=(VFX_ParamDef){.name="Trail align",.group="Trail",.type=VFX_PARAM_ENUM,
+        .valPtr=&c->trailAlign,.minInt=0,.maxInt=3,.enumNames=alignNames,.enumCount=4};
+      if(c->trailAlign==VFX_GUIDED_TRAIL_ALIGN_CUSTOM) {
+        GUIDED_TRAIL_PARAM("Spine pitch deg",trailAlignAngleDeg,VFX_PARAM_FLOAT,0,180,5.0f);
+        GUIDED_TRAIL_PARAM("Velocity pitch deg",trailVelocityAngleDeg,VFX_PARAM_FLOAT,0,180,5.0f);
+      }
+      GUIDED_TRAIL_PARAM("Trail length m",trailLength,VFX_PARAM_FLOAT,.05f,12,.1f);
+      GUIDED_TRAIL_PARAM("Trail width m",trailWidth,VFX_PARAM_FLOAT,.005f,1.5f,.01f);
+      GUIDED_TRAIL_PARAM("Trail nodes",trailNodes,VFX_PARAM_INT,2,64,1);
     }
   }
 #undef GUIDED_TRAIL_PARAM
@@ -352,7 +362,7 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
 }
 static bool VC_GuidedMotion_Valid(const VFX_GuidedMotionConfig *c) {
   if(!c || c->output<VFX_GUIDED_PARTICLES || c->output>VFX_GUIDED_BOTH ||
-      c->motionPattern<VFX_GUIDED_ROUTE || c->motionPattern>VFX_GUIDED_AIRFLOW) return false;
+      c->motionPattern<VFX_GUIDED_ROUTE || c->motionPattern>VFX_GUIDED_BLAST) return false;
   VFX_GuidedParticleConfig check=*c;
   if(c->output==VFX_GUIDED_TRAILS) {
     check.count=c->trailCount; check.particleRadius=1; check.renderMode=PARTICLE_RENDER_BILLBOARD;
@@ -460,8 +470,14 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
     if(!s->particles) goto fail;
   }
   if(trails) {
+    s->trailSink=(EmissionRibbonSink){
+      .trailAlign=c->trailAlign,
+      .trailAlignAngleDeg=c->trailAlignAngleDeg,
+      .trailVelocityAngleDeg=c->trailVelocityAngleDeg,
+      .initialSpeed=c->speed
+    };
     emission.kind=EMISSION_RIBBON; emission.count=(uint32_t)trails;
-    emission.sink=EmissionSink_Ribbon; emission.sinkUser=NULL; emission.spawnTemplate=&s->ribbon;
+    emission.sink=EmissionSink_Ribbon; emission.sinkUser=&s->trailSink; emission.spawnTemplate=&s->ribbon;
     s->trails=Emission_Create(&emission,(Vector3){0});
     if(!s->trails) goto fail;
   }

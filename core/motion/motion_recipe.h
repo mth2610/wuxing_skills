@@ -6,7 +6,8 @@
  * solver, shader variant, runtime allocation or per-node recipe evaluation. */
 typedef enum {
     MOTION_RECIPE_MOVING_GUIDE, MOTION_RECIPE_PATH_STREAM,
-    MOTION_RECIPE_ORBIT, MOTION_RECIPE_AIRFLOW
+    MOTION_RECIPE_ORBIT, MOTION_RECIPE_AIRFLOW,
+    MOTION_RECIPE_CONVERGE, MOTION_RECIPE_BLAST
 } MotionFieldRecipeKind;
 typedef struct MotionFieldRecipe {
     MotionFieldRecipeKind kind;
@@ -23,14 +24,14 @@ typedef struct MotionFieldRecipe {
 static inline GuideTuning MotionFieldRecipe_Tuning(const MotionFieldRecipe *r) {
     if(!r) return (GuideTuning){0};
     return GuideTuning_Derive(&r->referenceBody,r->radiusM,
-        r->kind==MOTION_RECIPE_ORBIT?0:r->speedMps,r->swirlSpeedMps,
-        r->turbulenceSpeedMps,r->gravityMps2,r->guidance);
+        (r->kind==MOTION_RECIPE_ORBIT||r->kind==MOTION_RECIPE_CONVERGE||r->kind==MOTION_RECIPE_BLAST)?0:r->speedMps,
+        r->swirlSpeedMps,r->turbulenceSpeedMps,r->gravityMps2,r->guidance);
 }
 /* Failure leaves out untouched. AIRFLOW supplies medium velocity, so body
  * drag/wind coupling controls its response. Other recipes compile bounded
  * Newton actuators against the reference body; actual body mass still wins. */
 static inline bool MotionFieldRecipe_Build(const MotionFieldRecipe *r,FieldDesc *out) {
-    if(!r || !out || r->kind<MOTION_RECIPE_MOVING_GUIDE || r->kind>MOTION_RECIPE_AIRFLOW ||
+    if(!r || !out || r->kind<MOTION_RECIPE_MOVING_GUIDE || r->kind>MOTION_RECIPE_BLAST ||
        !Field_FiniteVector(r->origin) || !Field_FiniteVector(r->axis) ||
        !isfinite(r->radiusM) || r->radiusM<=0 || !isfinite(r->speedMps) || r->speedMps<0 ||
        !isfinite(r->swirlSpeedMps) || !isfinite(r->turbulenceSpeedMps) || r->turbulenceSpeedMps<0 ||
@@ -61,9 +62,17 @@ static inline bool MotionFieldRecipe_Build(const MotionFieldRecipe *r,FieldDesc 
     if(!isfinite(pull) || pull<0 || !isfinite(forward) || forward<0 ||
        !isfinite(stiffness) || (automatic && stiffness<=0)) return false;
     d.forceLawCount=1;
-    d.forceLaws[0]=(ForceLaw){.type=automatic?FORCE_LAW_MOVING_GUIDE:FORCE_LAW_RADIAL_ATTRACTION,
-        .magnitudeNewtons=pull,.springStiffnessNPerM=stiffness};
-    d.preserveSphereOffsets=automatic;
+    if(r->kind==MOTION_RECIPE_CONVERGE) {
+        d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_RADIAL_ATTRACTION,.magnitudeNewtons=pull};
+        d.preserveSphereOffsets=false;
+    } else if(r->kind==MOTION_RECIPE_BLAST) {
+        d.forceLaws[0]=(ForceLaw){.type=FORCE_LAW_RADIAL_ATTRACTION,.magnitudeNewtons=-pull};
+        d.preserveSphereOffsets=false;
+    } else {
+        d.forceLaws[0]=(ForceLaw){.type=automatic?FORCE_LAW_MOVING_GUIDE:FORCE_LAW_RADIAL_ATTRACTION,
+            .magnitudeNewtons=pull,.springStiffnessNPerM=stiffness};
+        d.preserveSphereOffsets=automatic;
+    }
     if(r->kind==MOTION_RECIPE_PATH_STREAM) {
         d.volume.shape=FIELD_PATH_TUBE; d.volume.path=path;
         d.preserveSphereOffsets=false; d.preservePathLanes=true; d.rotatePathLanes=automatic;
@@ -82,4 +91,129 @@ static inline bool MotionFieldRecipe_Build(const MotionFieldRecipe *r,FieldDesc 
     }
     *out=d; return true;
 }
+
+/* =========================================================================
+ * 1-LINER RECIPE PRESETS FOR SKILL & VFX AUTHORING
+ * ========================================================================= */
+
+// 1. Quỹ đạo quay tròn quanh tâm / nhân vật (kiếm khí, rune, khiên chắn bảo hộ)
+static inline MotionFieldRecipe MotionRecipe_Orbit(Vector3 center, Vector3 axis,
+    float radiusM, float swirlSpeedMps, float durationSec) {
+    MotionFieldRecipe r = {
+        .kind = MOTION_RECIPE_ORBIT,
+        .origin = center,
+        .axis = MotionVec_Length(axis) > 1e-5f ? axis : (Vector3){0, 1, 0},
+        .referenceBody = BodyPhysicalProperties_Sphere(0.004f, 600.0f, 0.47f),
+        .guidance = GUIDE_BALANCED,
+        .radiusM = radiusM > 0.0f ? radiusM : 1.0f,
+        .swirlSpeedMps = swirlSpeedMps,
+        .durationSec = durationSec > 0.0f ? durationSec : 1.0f,
+        .attackSec = 0.1f,
+        .fadeSec = 0.2f,
+        .receiverMask = MOTION_RECEIVER_ALL_COMPONENTS
+    };
+    return r;
+}
+
+// 2. Luồng gió / đối lưu thẳng có vận tốc định hướng
+static inline MotionFieldRecipe MotionRecipe_Airflow(Vector3 origin, Vector3 dir,
+    float radiusM, float speedMps, float turbulenceMps, float durationSec) {
+    MotionFieldRecipe r = {
+        .kind = MOTION_RECIPE_AIRFLOW,
+        .origin = origin,
+        .axis = MotionVec_Length(dir) > 1e-5f ? dir : (Vector3){0, 0, 1},
+        .referenceBody = BodyPhysicalProperties_Sphere(0.004f, 600.0f, 0.47f),
+        .guidance = GUIDE_BALANCED,
+        .radiusM = radiusM > 0.0f ? radiusM : 1.5f,
+        .speedMps = speedMps,
+        .turbulenceSpeedMps = turbulenceMps,
+        .durationSec = durationSec > 0.0f ? durationSec : 1.0f,
+        .attackSec = 0.05f,
+        .fadeSec = 0.15f,
+        .receiverMask = MOTION_RECEIVER_ALL_COMPONENTS
+    };
+    return r;
+}
+
+// 3. Đường dẫn dòng chảy theo spline (rồng bay, dải lụa tiên đạo, kiếm kích)
+static inline MotionFieldRecipe MotionRecipe_PathStream(const MotionPath *path,
+    float radiusM, float speedMps, float swirlSpeedMps, float durationSec) {
+    Vector3 first = (path && path->count > 0) ? path->points[0] : (Vector3){0};
+    MotionFieldRecipe r = {
+        .kind = MOTION_RECIPE_PATH_STREAM,
+        .origin = first,
+        .axis = (Vector3){0, 1, 0},
+        .path = path,
+        .referenceBody = BodyPhysicalProperties_Sphere(0.004f, 600.0f, 0.47f),
+        .guidance = GUIDE_BALANCED,
+        .radiusM = radiusM > 0.0f ? radiusM : 1.0f,
+        .speedMps = speedMps,
+        .swirlSpeedMps = swirlSpeedMps,
+        .durationSec = durationSec > 0.0f ? durationSec : 2.0f,
+        .attackSec = 0.1f,
+        .fadeSec = 0.2f,
+        .receiverMask = MOTION_RECEIVER_ALL_COMPONENTS
+    };
+    return r;
+}
+
+// 4. Xoắn ốc tiến tới (chưởng lực xoắn xuyên tâm, phi kiếm kích)
+static inline MotionFieldRecipe MotionRecipe_SpiralThrust(Vector3 origin, Vector3 forwardDir,
+    float radiusM, float forwardSpeedMps, float swirlSpeedMps, float durationSec) {
+    Vector3 fwd = MotionVec_Length(forwardDir) > 1e-5f ? MotionVec_Normalize(forwardDir) : (Vector3){0, 0, 1};
+    MotionFieldRecipe r = {
+        .kind = MOTION_RECIPE_MOVING_GUIDE,
+        .origin = origin,
+        .axis = fwd,
+        .referenceBody = BodyPhysicalProperties_Sphere(0.004f, 600.0f, 0.47f),
+        .guidance = GUIDE_BALANCED,
+        .radiusM = radiusM > 0.0f ? radiusM : 1.2f,
+        .speedMps = forwardSpeedMps,
+        .swirlSpeedMps = swirlSpeedMps,
+        .durationSec = durationSec > 0.0f ? durationSec : 1.5f,
+        .attackSec = 0.05f,
+        .fadeSec = 0.2f,
+        .receiverMask = MOTION_RECEIVER_ALL_COMPONENTS
+    };
+    return r;
+}
+
+// 5. Trường tụ lực / hố đen / tụ khí (hút particle và trail về tâm)
+static inline MotionFieldRecipe MotionRecipe_Converge(Vector3 center, float radiusM,
+    float pullForceNewtons, float durationSec) {
+    MotionFieldRecipe r = {
+        .kind = MOTION_RECIPE_CONVERGE,
+        .origin = center,
+        .axis = (Vector3){0, 1, 0},
+        .referenceBody = BodyPhysicalProperties_Sphere(0.004f, 600.0f, 0.47f),
+        .guidance = GUIDE_MANUAL,
+        .radiusM = radiusM > 0.0f ? radiusM : 3.0f,
+        .maxForceNewtons = pullForceNewtons > 0.0f ? pullForceNewtons : 1.5f,
+        .durationSec = durationSec > 0.0f ? durationSec : 1.0f,
+        .attackSec = 0.05f,
+        .fadeSec = 0.15f,
+        .receiverMask = MOTION_RECEIVER_ALL_COMPONENTS
+    };
+    return r;
+}
+
+// 6. Trường đẩy tỏa tròn / nổ xung kích (đẩy tung particle và vệt trail ra ngoài)
+static inline MotionFieldRecipe MotionRecipe_Blast(Vector3 center, float radiusM,
+    float blastForceNewtons, float durationSec) {
+    MotionFieldRecipe r = {
+        .kind = MOTION_RECIPE_BLAST,
+        .origin = center,
+        .axis = (Vector3){0, 1, 0},
+        .referenceBody = BodyPhysicalProperties_Sphere(0.004f, 600.0f, 0.47f),
+        .guidance = GUIDE_MANUAL,
+        .radiusM = radiusM > 0.0f ? radiusM : 4.0f,
+        .maxForceNewtons = blastForceNewtons > 0.0f ? blastForceNewtons : 3.0f,
+        .durationSec = durationSec > 0.0f ? durationSec : 0.6f,
+        .attackSec = 0.02f,
+        .fadeSec = 0.25f,
+        .receiverMask = MOTION_RECEIVER_ALL_COMPONENTS
+    };
+    return r;
+}
+
 #endif

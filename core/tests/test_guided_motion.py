@@ -11,7 +11,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 HEADER = (ROOT / 'core/composition/visual_composer.h').read_text()
-ENUMS = '\n'.join(re.search(r'typedef enum \{[^}]*\} '+name+r';', HEADER, re.S).group() for name in ('VFX_GuidedOutput','VFX_GuidedPattern','VFX_GuidedTrailStyle','VFX_GuidedTrailMotion'))
+ENUMS = '\n'.join(re.search(r'typedef enum \{[^}]*\} '+name+r';', HEADER, re.S).group() for name in ('VFX_GuidedOutput','VFX_GuidedPattern','VFX_GuidedTrailStyle','VFX_GuidedTrailMotion','VFX_GuidedTrailAlign'))
 CONFIG = ENUMS + re.search(r'typedef struct VFX_GuidedParticleConfig \{.*?\} VFX_GuidedParticleConfig;', HEADER, re.S).group() + '\ntypedef VFX_GuidedParticleConfig VFX_GuidedMotionConfig;\n'
 STUBS = r'''
 #include "raylib.h"

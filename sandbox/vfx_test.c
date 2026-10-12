@@ -160,9 +160,9 @@ static VFX_WoodLeavesConfig s_liveWoodLeavesConfig;
 static VFX_WoodFlowerConfig s_liveWoodFlowerConfig;
 static VFX_WoodPetalConfig  s_liveWoodPetalConfig;
 static bool                 s_liveWoodConfigsInit = false;
-// @gen:newfx_guided_state begin
 static VFX_GuidedMotionConfig s_liveGuidedMotionConfig;
 static bool s_liveGuidedMotionConfigInit = false;
+static int s_vfxDraggingInspectorSlider = -1; /* Parameter index being dragged by slider */
 static bool s_guidedCaptureActive = false;
 static int s_guidedCaptureRemaining, s_guidedCaptureFrame, s_guidedCaptureInterval;
 static Vector3 s_guidedCaptureSource, s_guidedCaptureTarget;
@@ -177,9 +177,11 @@ static const char *s_guidedFixturePresetNames[] = {
     "Timed particles and trails", "Timed trails only",
     "Orbit trails", "Anchored silk", "Released silk",
     "Energy silk ribbon", "Smoke wisp ribbon", "Ember filament ribbon", "Water stream ribbon",
-    "Spline ribbon", "Guided curl ribbon"
+    "Spline ribbon", "Guided curl ribbon",
+    "Converge field (implosion)", "Blast field (explosion)",
+    "Sphere tangent ring (90 deg)", "Radial needle blast (0 deg)"
 };
-#define VFXTEST_GUIDED_PRESET_COUNT 20
+#define VFXTEST_GUIDED_PRESET_COUNT 24
 
 static void VFXTest_SetGuidedPreset(int preset)
 {
@@ -287,6 +289,78 @@ static void VFXTest_SetGuidedPreset(int preset)
         s_liveGuidedMotionConfig.guideRadius = 0.45f;
         s_liveGuidedMotionConfig.swirlSpeed = 1.2f;
         s_liveGuidedMotionConfig.turbulenceSpeed = 0.6f;
+    }
+    if (preset == 20) {
+        /* Converge field (implosion towards center) */
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_BOTH;
+        s_liveGuidedMotionConfig.motionPattern = VFX_GUIDED_CONVERGE;
+        s_liveGuidedMotionConfig.material = VC_MAT_LIGHTNING;
+        s_liveGuidedMotionConfig.formationRadius = 2.4f;
+        s_liveGuidedMotionConfig.guideRadius = 3.0f;
+        s_liveGuidedMotionConfig.speed = 4.0f;
+        s_liveGuidedMotionConfig.swirlSpeed = 2.5f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 0.5f;
+        s_liveGuidedMotionConfig.count = 256;
+        s_liveGuidedMotionConfig.trailCount = 8;
+        s_liveGuidedMotionConfig.emitDuration = 1.2f;
+        s_liveGuidedMotionConfig.duration = 3.0f;
+        s_liveGuidedMotionConfig.gravityScale = 0.0f;
+    }
+    if (preset == 21) {
+        /* Blast field (radial explosion outward from center) */
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_BOTH;
+        s_liveGuidedMotionConfig.motionPattern = VFX_GUIDED_BLAST;
+        s_liveGuidedMotionConfig.material = VC_MAT_FIRE;
+        s_liveGuidedMotionConfig.formationRadius = 0.2f;
+        s_liveGuidedMotionConfig.guideRadius = 3.5f;
+        s_liveGuidedMotionConfig.speed = 8.0f;
+        s_liveGuidedMotionConfig.swirlSpeed = 1.0f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 1.5f;
+        s_liveGuidedMotionConfig.count = 320;
+        s_liveGuidedMotionConfig.trailCount = 12;
+        s_liveGuidedMotionConfig.emitDuration = 0.15f;
+        s_liveGuidedMotionConfig.duration = 2.5f;
+        s_liveGuidedMotionConfig.gravityScale = 0.2f;
+    }
+    if (preset == 22) {
+        /* Sphere tangent ring (trails tangent to sphere surface, 90 deg) */
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
+        s_liveGuidedMotionConfig.motionPattern = VFX_GUIDED_BLAST;
+        s_liveGuidedMotionConfig.trailAlign = VFX_GUIDED_TRAIL_ALIGN_SURFACE;
+        s_liveGuidedMotionConfig.trailAlignAngleDeg = 90.0f;
+        s_liveGuidedMotionConfig.trailVelocityAngleDeg = 0.0f; /* pushed radially outward */
+        s_liveGuidedMotionConfig.material = VC_MAT_WATER;
+        s_liveGuidedMotionConfig.formationRadius = 1.2f;
+        s_liveGuidedMotionConfig.guideRadius = 3.0f;
+        s_liveGuidedMotionConfig.speed = 3.5f;
+        s_liveGuidedMotionConfig.swirlSpeed = 0.5f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 0.0f;
+        s_liveGuidedMotionConfig.trailCount = 16;
+        s_liveGuidedMotionConfig.trailLength = 1.2f;
+        s_liveGuidedMotionConfig.trailWidth = 0.14f;
+        s_liveGuidedMotionConfig.emitDuration = 0.1f;
+        s_liveGuidedMotionConfig.duration = 2.0f;
+        s_liveGuidedMotionConfig.gravityScale = 0.0f;
+    }
+    if (preset == 23) {
+        /* Radial needle blast (trails aligned along radial normal, 0 deg) */
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
+        s_liveGuidedMotionConfig.motionPattern = VFX_GUIDED_BLAST;
+        s_liveGuidedMotionConfig.trailAlign = VFX_GUIDED_TRAIL_ALIGN_RADIAL;
+        s_liveGuidedMotionConfig.trailAlignAngleDeg = 0.0f;
+        s_liveGuidedMotionConfig.trailVelocityAngleDeg = 0.0f;
+        s_liveGuidedMotionConfig.material = VC_MAT_LIGHTNING;
+        s_liveGuidedMotionConfig.formationRadius = 0.5f;
+        s_liveGuidedMotionConfig.guideRadius = 4.0f;
+        s_liveGuidedMotionConfig.speed = 10.0f;
+        s_liveGuidedMotionConfig.swirlSpeed = 0.0f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 0.0f;
+        s_liveGuidedMotionConfig.trailCount = 20;
+        s_liveGuidedMotionConfig.trailLength = 0.8f;
+        s_liveGuidedMotionConfig.trailWidth = 0.06f;
+        s_liveGuidedMotionConfig.emitDuration = 0.05f;
+        s_liveGuidedMotionConfig.duration = 2.0f;
+        s_liveGuidedMotionConfig.gravityScale = 0.0f;
     }
     s_guidedRatioReferenceSpeed = s_liveGuidedMotionConfig.speed > 0.00001f
         ? s_liveGuidedMotionConfig.speed : 1.0f;
@@ -1163,7 +1237,7 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
         ui.sunSlider = (Rectangle){18.0f, top + 40.0f, 140.0f, 30.0f};
     }
     float panelTop = fmaxf(176.0f, statusBottom + 40.0f);
-    ui.rowHeight = 38.0f;
+    ui.rowHeight = 46.0f;
     float panelHeight = fminf(76.0f + fmaxf(1.0f, (float)s_inspectorParamCount) * ui.rowHeight, fmaxf(116.0f, h - panelTop - 48.0f));
     ui.inspector = (Rectangle){w - panelWidth - 12.0f, panelTop, panelWidth, panelHeight};
     ui.inspectorRows = (int)((ui.inspector.height - 76.0f) / ui.rowHeight);
@@ -1193,7 +1267,12 @@ static Rectangle VFXTest_UIInspectorRow(VFXTest_UILayout ui, int visibleRow)
 
 static Rectangle VFXTest_UIParameterButton(Rectangle row, int direction)
 {
-    return (Rectangle){row.x + row.width - (direction < 0 ? 68.0f : 32.0f), row.y + 2.0f, 30.0f, row.height - 4.0f};
+    return (Rectangle){row.x + row.width - (direction < 0 ? 54.0f : 26.0f), row.y + 2.0f, 24.0f, 20.0f};
+}
+
+static Rectangle VFXTest_UIParameterSlider(Rectangle row)
+{
+    return (Rectangle){row.x + 6.0f, row.y + row.height - 12.0f, row.width - 12.0f, 10.0f};
 }
 
 static Rectangle VFXTest_UITiltButton(VFXTest_UILayout ui, int direction)
@@ -1255,7 +1334,7 @@ bool VFXTest_IsPointerOverUI(void)
     if (CheckCollisionPointRec(mouse, ui.sunSlider) || s_vfxDraggingSunSlider) return true;
     for (int i = 0; i < 3; ++i) if (CheckCollisionPointRec(mouse, ui.metrics[i])) return true;
     if (s_isPanelOpen || s_vfxHelpOpen) return true; /* Modal panels own their backdrop. */
-    if (s_isPlayingMesh && s_inspectorParamCount > 0 && CheckCollisionPointRec(mouse, ui.inspector)) return true;
+    if (s_isPlayingMesh && s_inspectorParamCount > 0 && (CheckCollisionPointRec(mouse, ui.inspector) || s_vfxDraggingInspectorSlider >= 0)) return true;
     if (!s_hideDebugOverlays && CheckCollisionPointRec(mouse, (Rectangle){12.0f, 164.0f, 298.0f, 76.0f})) return true;
     return false;
 }
@@ -1344,6 +1423,37 @@ static void VFXTest_UIEditParameter(int index, int direction)
     }
 }
 
+static void VFXTest_UISetParameterNorm(int index, float norm01)
+{
+    VFX_ParamDef *param = &s_inspectorParams[index];
+    if (!param->valPtr) return;
+    norm01 = fmaxf(0.0f, fminf(1.0f, norm01));
+    if (param->type == VFX_PARAM_FLOAT) {
+        float *value = (float *)param->valPtr;
+        float before = *value;
+        float val = param->minFloat + norm01 * (param->maxFloat - param->minFloat);
+        if (param->stepFloat > 0.0f) {
+            val = roundf((val - param->minFloat) / param->stepFloat) * param->stepFloat + param->minFloat;
+        }
+        *value = fmaxf(param->minFloat, fminf(param->maxFloat, val));
+        s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, before,
+            s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    } else if (param->type == VFX_PARAM_INT) {
+        int *value = (int *)param->valPtr;
+        int val = (int)roundf((float)param->minInt + norm01 * (float)(param->maxInt - param->minInt));
+        *value = (val < param->minInt) ? param->minInt : ((val > param->maxInt) ? param->maxInt : val);
+    } else if (param->type == VFX_PARAM_ENUM) {
+        int count = param->enumCount > 0 ? param->enumCount : (param->maxInt - param->minInt + 1);
+        if (count > 0) {
+            int val = (int)(norm01 * (float)count);
+            if (val >= count) val = count - 1;
+            *(int *)param->valPtr = param->minInt + val;
+        }
+    } else if (param->type == VFX_PARAM_BOOL) {
+        *(bool *)param->valPtr = (norm01 >= 0.5f);
+    }
+}
+
 static bool VFXTest_UIHandleInput(Vector3 playerPos)
 {
     if (s_hideAllUI) { s_vfxPointerCaptured = false; s_vfxButtonArmed = false; return false; }
@@ -1406,17 +1516,44 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
         if (CheckCollisionPointRec(GetMousePosition(), ui.inspector)) s_vfxInspectorScroll -= (int)GetMouseWheelMove();
         if (s_vfxInspectorScroll < 0) s_vfxInspectorScroll = 0;
         if (s_vfxInspectorScroll > maxScroll) s_vfxInspectorScroll = maxScroll;
+
+        Vector2 mouse = GetMousePosition();
+        if (s_vfxDraggingInspectorSlider >= 0) {
+            if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+                int row = s_vfxDraggingInspectorSlider - s_vfxInspectorScroll;
+                if (row >= 0 && row < ui.inspectorRows) {
+                    Rectangle rect = VFXTest_UIInspectorRow(ui, row);
+                    Rectangle sliderRect = VFXTest_UIParameterSlider(rect);
+                    float norm = (mouse.x - sliderRect.x) / sliderRect.width;
+                    VFXTest_UISetParameterNorm(s_vfxDraggingInspectorSlider, norm);
+                }
+            } else {
+                VFXTest_UILogParameter(s_vfxDraggingInspectorSlider);
+                s_vfxDraggingInspectorSlider = -1;
+            }
+        }
+
         for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
             int index = row + s_vfxInspectorScroll;
             Rectangle rect = VFXTest_UIInspectorRow(ui, row);
-            if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, -1))) {
+            Rectangle sliderRect = VFXTest_UIParameterSlider(rect);
+            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, sliderRect)) {
+                s_inspectorSelectedParam = index;
+                s_vfxDraggingInspectorSlider = index;
+                float norm = (mouse.x - sliderRect.x) / sliderRect.width;
+                VFXTest_UISetParameterNorm(index, norm);
+            } else if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, -1))) {
                 s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, -1); VFXTest_UILogParameter(index);
             } else if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, 1))) {
                 s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, 1); VFXTest_UILogParameter(index);
             } else if (VFXTest_UIButtonReleased(rect)) s_inspectorSelectedParam = index;
         }
     }
-    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) { s_vfxButtonArmed = false; s_vfxPointerCaptured = false; }
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        s_vfxButtonArmed = false;
+        s_vfxPointerCaptured = false;
+        s_vfxDraggingInspectorSlider = -1;
+    }
     return back;
 }
 
@@ -1521,10 +1658,42 @@ static void VFXTest_UIDraw(void)
             DrawRectangleRounded(rect, 0.08f, 3, selected ? (Color){34, 56, 66, 245} : (Color){23, 29, 37, 245});
             char value[64]; VFX_Param_FormatValue(&s_inspectorParams[index], value, sizeof(value));
             VFXTest_UIText(TextFormat("%s / %s", s_inspectorParams[index].group, s_inspectorParams[index].name),
-                          (Rectangle){rect.x, rect.y, rect.width - 76, 17}, 11, selected ? SKYBLUE : LIGHTGRAY);
-            VFXTest_UIText(value, (Rectangle){rect.x, rect.y + 16, rect.width - 76, 18}, 12, RAYWHITE);
+                          (Rectangle){rect.x, rect.y + 1.0f, rect.width - 64.0f, 16.0f}, 11, selected ? SKYBLUE : LIGHTGRAY);
+            VFXTest_UIText(value, (Rectangle){rect.x, rect.y + 16.0f, rect.width - 64.0f, 16.0f}, 12, RAYWHITE);
             VFXTest_UIDrawButton(VFXTest_UIParameterButton(rect, -1), "<", false);
             VFXTest_UIDrawButton(VFXTest_UIParameterButton(rect, 1), ">", false);
+
+            /* Interactive slider bar */
+            Rectangle sliderRect = VFXTest_UIParameterSlider(rect);
+            float norm01 = 0.0f;
+            VFX_ParamDef *param = &s_inspectorParams[index];
+            if (param->type == VFX_PARAM_FLOAT && param->maxFloat > param->minFloat) {
+                norm01 = (*(float *)param->valPtr - param->minFloat) / (param->maxFloat - param->minFloat);
+            } else if (param->type == VFX_PARAM_INT && param->maxInt > param->minInt) {
+                norm01 = (float)(*(int *)param->valPtr - param->minInt) / (float)(param->maxInt - param->minInt);
+            } else if (param->type == VFX_PARAM_ENUM) {
+                int count = param->enumCount > 0 ? param->enumCount : (param->maxInt - param->minInt + 1);
+                if (count > 1) norm01 = (float)(*(int *)param->valPtr - param->minInt) / (float)(count - 1);
+            } else if (param->type == VFX_PARAM_BOOL) {
+                norm01 = (*(bool *)param->valPtr) ? 1.0f : 0.0f;
+            }
+            norm01 = fmaxf(0.0f, fminf(1.0f, norm01));
+
+            bool isDragging = (s_vfxDraggingInspectorSlider == index);
+            bool isHoverSlider = CheckCollisionPointRec(GetMousePosition(), sliderRect);
+            Color trackColor = (Color){16, 22, 30, 255};
+            Color fillColor = isDragging ? SKYBLUE : (selected ? (Color){45, 110, 140, 255} : (Color){38, 70, 90, 255});
+            DrawRectangleRounded(sliderRect, 0.4f, 2, trackColor);
+            if (norm01 > 0.005f) {
+                Rectangle fillRect = {sliderRect.x, sliderRect.y, sliderRect.width * norm01, sliderRect.height};
+                DrawRectangleRounded(fillRect, 0.4f, 2, fillColor);
+            }
+            DrawRectangleRoundedLines(sliderRect, 0.4f, 2, isHoverSlider || isDragging ? SKYBLUE : (Color){50, 65, 80, 255});
+
+            /* Knob */
+            float knobX = sliderRect.x + norm01 * sliderRect.width;
+            float knobY = sliderRect.y + sliderRect.height * 0.5f;
+            DrawCircle((int)knobX, (int)knobY, isDragging ? 5.0f : 4.0f, isDragging ? WHITE : (selected ? SKYBLUE : LIGHTGRAY));
         }
         VFXTest_UIText(TextFormat("%d-%d / %d   |   scroll or Tab   |   / edit", s_vfxInspectorScroll + 1,
                                   (int)fminf(s_inspectorParamCount, s_vfxInspectorScroll + ui.inspectorRows), s_inspectorParamCount),

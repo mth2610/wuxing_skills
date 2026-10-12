@@ -1079,7 +1079,8 @@ typedef enum {
     VFX_GUIDED_PARTICLES = 0, VFX_GUIDED_TRAILS = 1, VFX_GUIDED_BOTH = 2
 } VFX_GuidedOutput;
 typedef enum {
-    VFX_GUIDED_ROUTE = 0, VFX_GUIDED_ORBIT, VFX_GUIDED_AIRFLOW
+    VFX_GUIDED_ROUTE = 0, VFX_GUIDED_ORBIT, VFX_GUIDED_AIRFLOW,
+    VFX_GUIDED_CONVERGE, VFX_GUIDED_BLAST
 } VFX_GuidedPattern;
 typedef enum {
     VFX_GUIDED_TRAIL_PLAIN = 0, VFX_GUIDED_TRAIL_ENERGY_SILK,
@@ -1090,6 +1091,12 @@ typedef enum {
     VFX_GUIDED_TRAIL_MOTION_FIELD=0, VFX_GUIDED_TRAIL_MOTION_SPLINE=1,
     VFX_GUIDED_TRAIL_MOTION_GUIDED=2
 } VFX_GuidedTrailMotion;
+typedef enum {
+    VFX_GUIDED_TRAIL_ALIGN_AUTO = 0,     /* Default: follows route tangent or A->B */
+    VFX_GUIDED_TRAIL_ALIGN_RADIAL = 1,   /* Along sphere radius/normal (needle blast / through-center) */
+    VFX_GUIDED_TRAIL_ALIGN_SURFACE = 2,  /* Tangent to sphere surface (latitudinal / spherical crawl) */
+    VFX_GUIDED_TRAIL_ALIGN_CUSTOM = 3    /* Custom pitch angle (0 deg = radial, 90 deg = surface tangent) */
+} VFX_GuidedTrailAlign;
 /* Field-first composition. Zero emitDuration bursts `count` particles; positive
  * emitDuration spreads exactly `count` particles across that interval at the
  * derived average rate. Particle-only bursts use a sphere travelling source to
@@ -1159,6 +1166,9 @@ typedef struct VFX_GuidedParticleConfig {
     int trailMotion; /* VFX_GuidedTrailMotion. GUIDED locks progress while fields perturb bounded lateral offsets;
                       SPLINE prescribes smooth route positions;
                      * FIELD retains free-body forces. Ignored by templates/anchors/Orbit/Airflow. */
+    int trailAlign;  /* VFX_GuidedTrailAlign; alignment relative to spawn surface/sphere. */
+    float trailAlignAngleDeg;    /* Angle between trail spine and normal (0 deg = radial, 90 deg = tangent). */
+    float trailVelocityAngleDeg; /* Angle between initial velocity and normal (0 deg = radial, 90 deg = tangent). */
 } VFX_GuidedParticleConfig;
 typedef VFX_GuidedParticleConfig VFX_GuidedMotionConfig;
 /* Shared field and source, independent particle/ribbon birth totals. AUTO uses
