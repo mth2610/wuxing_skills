@@ -290,6 +290,7 @@ static void DrawRibbonStripInternal(const RibbonPoint *points, int count,
   Vector3 prevLeft = {0}, prevRight = {0}, prevCenter = {0};
   Color prevTint = WHITE;
   float prevV = 0.0f;
+  float prevHalfWidth = count > 0 ? points[0].halfWidth : 0.0f;
   Vector3 prevSide = {0};
   bool havePrevSide = false;
   Vector3 prevTangent = {0};
@@ -423,45 +424,48 @@ static void DrawRibbonStripInternal(const RibbonPoint *points, int count,
                                     Vector3Scale(side, halfWidth));
     Vector3 center = points[i].position;
 
+    Vector3 prevSideArm = Vector3Scale(prevSide, 1.0f + prevHalfWidth);
+    Vector3 sideArm = Vector3Scale(side, 1.0f + halfWidth);
+
     if (i > 0) {
       // Left Quad (U: 0.0 -> 0.5)
-      if (writeNormals) rlNormal3f(prevSide.x, prevSide.y, prevSide.z);
+      if (writeNormals) rlNormal3f(prevSideArm.x, prevSideArm.y, prevSideArm.z);
       rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
       rlTexCoord2f(0.0f, prevV);
       rlVertex3f(prevLeft.x, prevLeft.y, prevLeft.z);
 
-      if (writeNormals) rlNormal3f(prevSide.x, prevSide.y, prevSide.z);
+      if (writeNormals) rlNormal3f(prevSideArm.x, prevSideArm.y, prevSideArm.z);
       rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
       rlTexCoord2f(0.5f, prevV);
       rlVertex3f(prevCenter.x, prevCenter.y, prevCenter.z);
 
-      if (writeNormals) rlNormal3f(side.x, side.y, side.z);
+      if (writeNormals) rlNormal3f(sideArm.x, sideArm.y, sideArm.z);
       rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(0.5f, points[i].v);
       rlVertex3f(center.x, center.y, center.z);
 
-      if (writeNormals) rlNormal3f(side.x, side.y, side.z);
+      if (writeNormals) rlNormal3f(sideArm.x, sideArm.y, sideArm.z);
       rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(0.0f, points[i].v);
       rlVertex3f(left.x, left.y, left.z);
 
       // Right Quad (U: 0.5 -> 1.0)
-      if (writeNormals) rlNormal3f(prevSide.x, prevSide.y, prevSide.z);
+      if (writeNormals) rlNormal3f(prevSideArm.x, prevSideArm.y, prevSideArm.z);
       rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
       rlTexCoord2f(0.5f, prevV);
       rlVertex3f(prevCenter.x, prevCenter.y, prevCenter.z);
 
-      if (writeNormals) rlNormal3f(prevSide.x, prevSide.y, prevSide.z);
+      if (writeNormals) rlNormal3f(prevSideArm.x, prevSideArm.y, prevSideArm.z);
       rlColor4ub(prevTint.r, prevTint.g, prevTint.b, prevTint.a);
       rlTexCoord2f(1.0f, prevV);
       rlVertex3f(prevRight.x, prevRight.y, prevRight.z);
 
-      if (writeNormals) rlNormal3f(side.x, side.y, side.z);
+      if (writeNormals) rlNormal3f(sideArm.x, sideArm.y, sideArm.z);
       rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(1.0f, points[i].v);
       rlVertex3f(right.x, right.y, right.z);
 
-      if (writeNormals) rlNormal3f(side.x, side.y, side.z);
+      if (writeNormals) rlNormal3f(sideArm.x, sideArm.y, sideArm.z);
       rlColor4ub(tint.r, tint.g, tint.b, tint.a);
       rlTexCoord2f(0.5f, points[i].v);
       rlVertex3f(center.x, center.y, center.z);
@@ -472,6 +476,7 @@ static void DrawRibbonStripInternal(const RibbonPoint *points, int count,
     prevCenter = center;
     prevTint = tint;
     prevV = points[i].v;
+    prevHalfWidth = halfWidth;
   }
 
   rlEnd();

@@ -37,16 +37,20 @@ full reasoning).
    not duplicated here). Returns `false` gracefully if the file doesn't exist
    or has no usable animation clips — never crashes, safe to call before an
    asset has been provided.
-2. **`CharacterAnimSlot`** — `IDLE, WALK, PUNCH, KICK, PALM`. Clip names are
-   matched to slots by case-insensitive substring (`"idle"`, `"walk"`,
-   `"punch"`/`"jab"`, `"kick"`, `"palm"`/`"push"`/`"slap"`) since real Mixamo
-   export names aren't known ahead of time — `TraceLog` reports which slots
-   resolved/didn't on load.
-3. **`CharacterAnimState`** — one per character instance (`frame`,
-   `frameTimer`, `currentSlot`, `oneShotActive`). `CharacterModel_Update`
-   picks IDLE/WALK when no one-shot is playing; `CharacterModel_TriggerAttack`
-   starts a one-shot PUNCH/KICK/PALM that auto-reverts to IDLE on finish.
-4. **Player-only.** Only one `CharacterAnimState` is driven right now
+2. **`CharacterAnimSlot`** — Multi-variant slots covering locomotion, agility,
+   martial attacks, sword arts (Kiếm Pháp), casting, and hit reactions. Each slot
+   holds up to `CHAR_ANIM_MAX_VARIANTS` (8) animation choices, allowing multiple
+   combo/action variations per move. Supports auto-keyword matching and optional
+   JSON manifest overrides (`assets/characters/player_anims.json`).
+3. **`CharacterAnimState`** — one per character instance (`frame`, `frameTimer`,
+   `currentSlot`, `activeVariant`, `activeAnimIndex`, `oneShotActive`, `oneShotSpeed`).
+   Supports `CharacterModel_TriggerVariant`, `CharacterModel_TriggerTimed`, and
+   direct by-name playback via `CharacterModel_TriggerByName(state, "clip_name", secs)`.
+4. **Mixamo & Procedural Import Pipeline** (`scripts/import_character_anim.py`) —
+   CLI to import any external `.fbx` (e.g. `Jumping Down.fbx`) or `.bvh` directly
+   into `character/raw_model/animations/`, rebuild `assets/characters/player.glb`,
+   and map to slots/manifest automatically.
+5. **Player-only.** Only one `CharacterAnimState` is driven right now
    (`sandbox/sandbox_core.h`'s `PlayerEntity.anim` and the same shared player
    in `game/game_screen.c`). Enemy/dummy still use the old
    `DrawCharacter3D` stick figure — out of scope until explicitly asked.

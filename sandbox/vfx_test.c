@@ -121,7 +121,22 @@ bool VFXTest_ShouldHideCharacterRef(void)
     if (s_demoIaidoActive) return true;
     if (VFXTest_IsNewFxNamed("SILHOUETTE GLOW")) return true;
     if (VFXTest_IsNewFxNamed("IAIDO STANCE")) return true;
+    if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL")) return true;
     return s_hideCharacterRef;
+}
+
+float VFXTest_GetPreferredCameraDistance(void)
+{
+    if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
+        return 4.4f;
+    return 0.0f;
+}
+
+float VFXTest_GetPreferredCameraPitch(void)
+{
+    if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
+        return 10.3f;
+    return 0.0f;
 }
 
 static Vector3 s_currentPlayerPos = {0};
@@ -153,7 +168,14 @@ static VFX_MeshSurfaceAuraVariant s_meshSurfaceAuraFixtureVariant = VFX_MESH_SUR
 static VFX_DecalVariant s_decalFixtureVariant = VFX_DECAL_VARIANT_IMPACT;
 static VFX_SurfaceParticleRingVariant s_surfaceParticleRingFixtureVariant = VFX_SURFACE_PARTICLE_RING_VARIANT_DUST;
 static VFX_ImpactDustVariant s_impactDustFixtureVariant = VFX_IMPACT_DUST_VARIANT_DUST_PUFF;
-static TrailPresetId s_motionRibbonFixturePreset = MOTION_RIBBON_ENERGY_SILK;
+static TrailPresetId s_motionRibbonFixturePreset = MOTION_RIBBON_SWORD_COMET;
+static VFX_MotionRibbonConfig s_liveMotionRibbonConfig;
+static bool s_liveMotionRibbonConfigInit = false;
+static const char *MotionRibbonFixturePresetName(TrailPresetId preset);
+static VC_MaterialId MotionRibbonFixtureMaterial(TrailPresetId preset);
+static float MotionRibbonFixtureLifetime(TrailPresetId preset);
+static float MotionRibbonFixtureWidth(TrailPresetId preset);
+static Vector3 MotionRibbon_EvaluateTrajectory(TrailPresetId preset, float t, Vector3 origin);
 static VFX_FlameStyle s_ambientFireFixtureStyle = VFX_FLAME_STYLE_NIAGARA_ROIL;
 static VFX_WoodVineConfig   s_liveWoodVineConfig;
 static VFX_WoodLeavesConfig s_liveWoodLeavesConfig;
@@ -394,6 +416,37 @@ static int VFXTest_GuidedParameterEdited(const VFX_ParamDef *param, float before
     return count;
 }
 
+static void VFXTest_MotionRibbonParameterEdited(const VFX_ParamDef *param)
+{
+    static int s_lastPreset = -1;
+    if (param && param->valPtr == &s_liveMotionRibbonConfig.preset) {
+        s_motionRibbonFixturePreset = (TrailPresetId)s_liveMotionRibbonConfig.preset;
+        if (s_liveMotionRibbonConfig.preset != s_lastPreset) {
+            s_liveMotionRibbonConfig.material = (int)MotionRibbonFixtureMaterial(s_motionRibbonFixturePreset);
+            s_liveMotionRibbonConfig.width = MotionRibbonFixtureWidth(s_motionRibbonFixturePreset);
+            s_liveMotionRibbonConfig.lifetime = MotionRibbonFixtureLifetime(s_motionRibbonFixturePreset);
+            const TrailRecipe *rec = VFX_TrailGetPresetRecipe(s_motionRibbonFixturePreset);
+            if (rec) {
+                s_liveMotionRibbonConfig.hdrGain = rec->hdrGain;
+                s_liveMotionRibbonConfig.bodyOpacity = rec->bodyOpacity;
+                s_liveMotionRibbonConfig.rollRate = rec->rollRate;
+                s_liveMotionRibbonConfig.rollSpeed = rec->rollSpeed;
+                s_liveMotionRibbonConfig.driftY = rec->drift.y;
+                s_liveMotionRibbonConfig.jitterAmp = rec->jitter.x;
+                s_liveMotionRibbonConfig.widthTaper = rec->widthProf.x;
+            }
+            s_lastPreset = s_liveMotionRibbonConfig.preset;
+        }
+    } else {
+        s_motionRibbonFixturePreset = (TrailPresetId)s_liveMotionRibbonConfig.preset;
+    }
+    VFX_TrailApplyMotionConfig(&s_liveMotionRibbonConfig);
+    if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL") && s_vfxFixtureHandle[s_testIndex] >= 0) {
+        VFX_KillTrail(s_vfxFixtureHandle[s_testIndex]);
+        s_vfxFixtureHandle[s_testIndex] = -1;
+    }
+}
+
 static void VFXTest_InitGuidedConfig(void)
 {
     if (!s_liveGuidedMotionConfigInit) {
@@ -455,9 +508,7 @@ static void VFXTest_UpdateGuidedFrames(float dt)
         if (f->kinematic) {
             /* External emitter motion matches MOTION RIBBON TRAIL. Only the
              * anchor is prescribed; the ribbon nodes remain Motion receivers. */
-            float a = f->age * 1.35f;
-            f->position = Vector3Add(f->origin, (Vector3){3.0f * sinf(a),
-                1.5f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a * 1.3f)});
+            f->position = MotionRibbon_EvaluateTrajectory(s_motionRibbonFixturePreset, f->age * 1.35f, f->origin);
             if (f->frame)
                 MotionFrame_Update(f->frame, MatrixTranslate(f->position.x,
                     f->position.y, f->position.z), dt, false);
@@ -592,6 +643,12 @@ static bool         s_vfxAnimationPaused = false;
 
 static void VFXTest_InitLiveConfigs(void)
 {
+    if (!s_liveMotionRibbonConfigInit) {
+        s_liveMotionRibbonConfig = VFX_MotionRibbon_DefaultConfig();
+        s_liveMotionRibbonConfig.preset = (int)s_motionRibbonFixturePreset;
+        s_liveMotionRibbonConfig.material = (int)MotionRibbonFixtureMaterial(s_motionRibbonFixturePreset);
+        s_liveMotionRibbonConfigInit = true;
+    }
     if (s_liveWoodConfigsInit) return;
     s_liveWoodVineConfig = VFX_WoodVine_DefaultConfig();
     s_liveWoodLeavesConfig = VFX_WoodLeaves_DefaultConfig();
@@ -635,6 +692,15 @@ static void VFXTest_RefreshInspectorParams(bool force)
     else if (VFXTest_IsNewFxNamed("WOOD PETALS"))
     {
         s_inspectorParamCount = VFX_WoodPetals_GetParams(&s_liveWoodPetalConfig, s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+    else if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
+    {
+        if (!s_liveMotionRibbonConfigInit) {
+            s_liveMotionRibbonConfig = VFX_MotionRibbon_DefaultConfig();
+            s_liveMotionRibbonConfigInit = true;
+        }
+        s_liveMotionRibbonConfig.preset = (int)s_motionRibbonFixturePreset;
+        s_inspectorParamCount = VFX_MotionRibbon_GetParams(&s_liveMotionRibbonConfig, s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
 }
 
@@ -866,21 +932,182 @@ static const char *MotionRibbonFixturePresetName(TrailPresetId preset)
 {
     switch (preset)
     {
-    case MOTION_RIBBON_SMOKE_WISP: return "SMOKE WISP";
-    case MOTION_RIBBON_EMBER_FILAMENT: return "EMBER FILAMENT";
+    case TRAIL_PRESET_BLADE: return "BLADE / KIEM KHI";
+    case TRAIL_PRESET_MAIN: return "MAIN ENERGY";
+    case TRAIL_PRESET_WISP: return "WISP";
+    case TRAIL_PRESET_BACKDROP: return "BACKDROP";
+    case MOTION_RIBBON_ENERGY_SILK: return "ENERGY SILK";
+    case MOTION_RIBBON_SMOKE_WISP: return "SMOKE WISP (YEN VU)";
+    case TRAIL_PRESET_MAGIC: return "MAGIC PLUME";
     case MOTION_RIBBON_WATER_STREAM: return "WATER STREAM";
-    default: return "ENERGY SILK";
+    case MOTION_RIBBON_SWORD_COMET: return "SWORD COMET (PHI KIEM)";
+    case MOTION_RIBBON_SILK: return "CELESTIAL SILK (TIEN DOI)";
+    case MOTION_RIBBON_WOOD_SPIRAL: return "WOOD SPIRAL (LINH TOAN)";
+    case MOTION_RIBBON_LIGHTNING: return "LIGHTNING (LOI DIEN)";
+    case MOTION_RIBBON_FIRE_JET: return "FIRE JET (HOA DIEM)";
+    case MOTION_RIBBON_DRAGON: return "DRAGON QI (LONG KHI)";
+    case MOTION_RIBBON_INK: return "INK BRUSH (MAC TICH)";
+    case MOTION_RIBBON_TALISMAN: return "TALISMAN RUNES (PHU VAN)";
+    case MOTION_RIBBON_ICE_SHARD: return "ICE SHARD (HAN BANG)";
+    case MOTION_RIBBON_WIND_BLADE: return "WIND BLADE (PHONG NHAN)";
+    case MOTION_RIBBON_CROSS_BEAM: return "CROSS BEAM (THAP TU)";
+    case MOTION_RIBBON_DEMONIC: return "DEMONIC SMOKE (MA KHI)";
+    case MOTION_RIBBON_TAIJI: return "TAIJI (THAI CUC)";
+    case MOTION_RIBBON_GALAXY: return "GALAXY NEBULA (TINH HA)";
+    default: return "TRAIL RIBBON";
     }
 }
 static VC_MaterialId MotionRibbonFixtureMaterial(TrailPresetId preset)
 {
     switch (preset)
     {
+    case TRAIL_PRESET_BLADE: return VC_MAT_WATER;
     case MOTION_RIBBON_SMOKE_WISP: return VC_MAT_METAL;
-    case MOTION_RIBBON_EMBER_FILAMENT: return VC_MAT_FIRE;
     case MOTION_RIBBON_WATER_STREAM: return VC_MAT_WATER;
-    default: return VC_MAT_LIGHTNING;
+    case MOTION_RIBBON_ENERGY_SILK: return VC_MAT_FIRE;
+    case MOTION_RIBBON_SWORD_COMET: return VC_MAT_FIRE;
+    case MOTION_RIBBON_SILK: return VC_MAT_FIRE;
+    case MOTION_RIBBON_WOOD_SPIRAL: return VC_MAT_WOOD;
+    case MOTION_RIBBON_LIGHTNING: return VC_MAT_LIGHTNING;
+    case MOTION_RIBBON_FIRE_JET: return VC_MAT_FIRE;
+    case MOTION_RIBBON_DRAGON: return VC_MAT_EARTH;
+    case MOTION_RIBBON_INK: return VC_MAT_METAL;
+    case MOTION_RIBBON_TALISMAN: return VC_MAT_WATER;
+    case MOTION_RIBBON_ICE_SHARD: return VC_MAT_WATER;
+    case MOTION_RIBBON_WIND_BLADE: return VC_MAT_WOOD;
+    case MOTION_RIBBON_CROSS_BEAM: return VC_MAT_LIGHTNING;
+    case MOTION_RIBBON_DEMONIC: return VC_MAT_FIRE;
+    case MOTION_RIBBON_TAIJI: return VC_MAT_WATER;
+    case MOTION_RIBBON_GALAXY: return VC_MAT_LIGHTNING;
+    default: return VC_MAT_FIRE;
     }
+}
+
+static float MotionRibbonFixtureLifetime(TrailPresetId preset)
+{
+    switch (preset)
+    {
+    case TRAIL_PRESET_BLADE: return 1.0f;
+    case MOTION_RIBBON_SWORD_COMET: return 1.9f;
+    case MOTION_RIBBON_SILK: return 2.4f;
+    case MOTION_RIBBON_WOOD_SPIRAL: return 2.0f;
+    case MOTION_RIBBON_LIGHTNING: return 0.65f;
+    case MOTION_RIBBON_FIRE_JET: return 1.3f;
+    case MOTION_RIBBON_DRAGON: return 2.4f;
+    case MOTION_RIBBON_INK: return 3.2f;
+    case MOTION_RIBBON_TALISMAN: return 2.6f;
+    case MOTION_RIBBON_ICE_SHARD: return 1.5f;
+    case MOTION_RIBBON_WIND_BLADE: return 1.4f;
+    case MOTION_RIBBON_CROSS_BEAM: return 1.3f;
+    case MOTION_RIBBON_SMOKE_WISP: return 2.6f;
+    case MOTION_RIBBON_DEMONIC: return 2.4f;
+    case MOTION_RIBBON_TAIJI: return 2.0f;
+    case MOTION_RIBBON_GALAXY: return 2.4f;
+    default: return 2.0f;
+    }
+}
+
+static float MotionRibbonFixtureWidth(TrailPresetId preset)
+{
+    switch (preset)
+    {
+    case TRAIL_PRESET_BLADE: return 0.80f;
+    case MOTION_RIBBON_SWORD_COMET: return 0.22f;
+    case MOTION_RIBBON_SILK: return 0.28f;
+    case MOTION_RIBBON_WOOD_SPIRAL: return 0.16f;
+    case MOTION_RIBBON_LIGHTNING: return 0.16f;
+    case MOTION_RIBBON_FIRE_JET: return 0.30f;
+    case MOTION_RIBBON_DRAGON: return 0.20f;
+    case MOTION_RIBBON_INK: return 0.14f;
+    case MOTION_RIBBON_TALISMAN: return 0.30f;
+    case MOTION_RIBBON_ICE_SHARD: return 0.26f;
+    case MOTION_RIBBON_WIND_BLADE: return 0.18f;
+    case MOTION_RIBBON_CROSS_BEAM: return 0.26f;
+    case MOTION_RIBBON_SMOKE_WISP: return 0.30f;
+    case MOTION_RIBBON_DEMONIC: return 0.35f;
+    case MOTION_RIBBON_TAIJI: return 0.22f;
+    case MOTION_RIBBON_GALAXY: return 0.32f;
+    default: return 0.25f;
+    }
+}
+
+static Vector3 MotionRibbon_EvaluateTrajectory(TrailPresetId preset, float t, Vector3 origin)
+{
+    Vector3 p = (Vector3){0.0f, 0.0f, 0.0f};
+    switch (preset)
+    {
+    case TRAIL_PRESET_BLADE:
+    {
+        const float T = 2.4f;
+        int k = (int)floorf(t / T);
+        float ph = t - (float)k * T;
+        float dur = 0.5f;
+        float s = (ph > dur) ? 1.0f : ph / dur;
+        float e = (s < 0.5f) ? (2.0f * s * s) : (1.0f - powf(-2.0f * s + 2.0f, 2.0f) * 0.5f);
+        float th = -1.35f + 2.9f * e;
+        float phi = (k % 2 != 0) ? (PI - th) : th;
+        float tilt = (k % 2 != 0) ? 0.55f : -0.4f;
+        float vx = cosf(phi), vy = sinf(phi);
+        float ct = cosf(tilt), st = sinf(tilt);
+        float dx = vx, dy = vy * ct, dz = vy * st;
+        p = (Vector3){dx * 0.9f, -0.3f + dy * 0.9f, dz * 0.9f};
+        break;
+    }
+    case MOTION_RIBBON_SWORD_COMET:
+    case MOTION_RIBBON_ENERGY_SILK:
+        p = (Vector3){1.35f * sinf(1.7f * t + 0.3f), 0.55f * sinf(2.9f * t), 0.9f * sinf(1.1f * t + 1.0f)};
+        break;
+    case MOTION_RIBBON_SILK:
+        p = (Vector3){1.3f * sinf(0.7f * t), 0.6f * sinf(1.3f * t) + 0.2f * sinf(2.9f * t), 0.8f * sinf(0.5f * t + 1.0f)};
+        break;
+    case MOTION_RIBBON_WOOD_SPIRAL:
+        p = (Vector3){1.4f * sinf(0.9f * t), 0.3f * sinf(1.7f * t), 0.7f * cosf(0.6f * t)};
+        break;
+    case MOTION_RIBBON_LIGHTNING:
+        p = (Vector3){1.4f * sinf(2.1f * t), 0.7f * sinf(3.5f * t + 0.5f), 0.5f * sinf(1.4f * t)};
+        break;
+    case MOTION_RIBBON_FIRE_JET:
+        p = (Vector3){1.1f * cosf(1.4f * t), -0.3f + 0.2f * sinf(2.8f * t), 0.9f * sinf(1.4f * t)};
+        break;
+    case MOTION_RIBBON_DRAGON:
+        p = (Vector3){1.4f * sinf(0.8f * t + 0.5f), 0.6f * sinf(1.3f * t), 0.9f * cosf(0.65f * t)};
+        break;
+    case MOTION_RIBBON_INK:
+        p = (Vector3){1.3f * sinf(0.55f * t) + 0.2f * sinf(2.3f * t), 0.5f * sinf(1.1f * t + 1.0f) + 0.25f * sinf(3.1f * t), 0.0f};
+        break;
+    case MOTION_RIBBON_TALISMAN:
+        p = (Vector3){1.3f * sinf(0.6f * t), 0.55f * sinf(1.2f * t + 0.4f), 0.5f * sinf(0.4f * t)};
+        break;
+    case MOTION_RIBBON_ICE_SHARD:
+        p = (Vector3){1.4f * sinf(2.1f * t), 0.7f * sinf(1.4f * t + 0.7f), 0.6f * sinf(0.9f * t)};
+        break;
+    case MOTION_RIBBON_WIND_BLADE:
+        p = (Vector3){1.3f * sinf(1.1f * t + 0.2f), 0.6f * sinf(1.9f * t), 0.8f * cosf(0.8f * t)};
+        break;
+    case MOTION_RIBBON_CROSS_BEAM:
+        p = (Vector3){1.3f * sinf(1.9f * t), 0.65f * sinf(2.3f * t + 1.0f), 0.7f * sinf(1.3f * t + 0.5f)};
+        break;
+    case MOTION_RIBBON_SMOKE_WISP:
+        p = (Vector3){1.2f * sinf(0.7f * t), -0.5f + 0.35f * sinf(1.3f * t), 0.6f * sinf(0.5f * t + 1.0f)};
+        break;
+    case MOTION_RIBBON_DEMONIC:
+        p = (Vector3){1.25f * sinf(0.9f * t), 0.45f * sinf(1.8f * t) - 0.2f, 0.7f * cosf(0.7f * t)};
+        break;
+    case MOTION_RIBBON_TAIJI:
+        p = (Vector3){1.3f * sinf(0.8f * t), 0.4f * sinf(1.5f * t + 0.6f), 0.6f * cosf(0.55f * t)};
+        break;
+    case MOTION_RIBBON_GALAXY:
+    case MOTION_RIBBON_WATER_STREAM:
+        p = (Vector3){1.4f * sinf(0.6f * t + 0.5f), 0.55f * sinf(1.1f * t), 0.9f * cosf(0.5f * t)};
+        break;
+    default:
+    {
+        float a = t * 1.35f;
+        p = (Vector3){1.4f * sinf(a), 0.5f * sinf(a * 0.7f), 0.9f * cosf(a * 1.3f)};
+        break;
+    }
+    }
+    return Vector3Add(origin, p);
 }
 
 /* Sandbox-only contract fixture. It deliberately bypasses every production
@@ -1428,6 +1655,8 @@ static void VFXTest_UIEditParameter(int index, int direction)
         s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, 0.0f,
             s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
+    if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
+        VFXTest_MotionRibbonParameterEdited(param);
 }
 
 static void VFXTest_UISetParameterNorm(int index, float norm01)
@@ -1461,6 +1690,8 @@ static void VFXTest_UISetParameterNorm(int index, float norm01)
     } else if (param->type == VFX_PARAM_BOOL) {
         *(bool *)param->valPtr = (norm01 >= 0.5f);
     }
+    if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
+        VFXTest_MotionRibbonParameterEdited(param);
 }
 
 static bool VFXTest_UIHandleInput(Vector3 playerPos)
@@ -2407,17 +2638,49 @@ void VFXTest_Draw3D(void)
         else if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
         {
             static const TrailPresetId k_presets[] = {
-                MOTION_RIBBON_ENERGY_SILK, MOTION_RIBBON_SMOKE_WISP,
-                MOTION_RIBBON_EMBER_FILAMENT, MOTION_RIBBON_WATER_STREAM};
+                TRAIL_PRESET_BLADE,
+                MOTION_RIBBON_SWORD_COMET,
+                MOTION_RIBBON_SILK,
+                MOTION_RIBBON_WOOD_SPIRAL,
+                MOTION_RIBBON_LIGHTNING,
+                MOTION_RIBBON_FIRE_JET,
+                MOTION_RIBBON_DRAGON,
+                MOTION_RIBBON_INK,
+                MOTION_RIBBON_TALISMAN,
+                MOTION_RIBBON_ICE_SHARD,
+                MOTION_RIBBON_WIND_BLADE,
+                MOTION_RIBBON_CROSS_BEAM,
+                MOTION_RIBBON_SMOKE_WISP,
+                MOTION_RIBBON_DEMONIC,
+                MOTION_RIBBON_TAIJI,
+                MOTION_RIBBON_GALAXY
+            };
             int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
             if (direction != 0)
             {
+                int count = (int)(sizeof(k_presets) / sizeof(k_presets[0]));
                 int p;
-                for (p = 0; p < 4 && k_presets[p] != s_motionRibbonFixturePreset; ++p) {}
-                s_motionRibbonFixturePreset = k_presets[(p + direction + 4) % 4];
+                for (p = 0; p < count && k_presets[p] != s_motionRibbonFixturePreset; ++p) {}
+                s_motionRibbonFixturePreset = k_presets[(p + direction + count) % count];
+                s_liveMotionRibbonConfig.preset = (int)s_motionRibbonFixturePreset;
+                s_liveMotionRibbonConfig.material = (int)MotionRibbonFixtureMaterial(s_motionRibbonFixturePreset);
+                s_liveMotionRibbonConfig.width = MotionRibbonFixtureWidth(s_motionRibbonFixturePreset);
+                s_liveMotionRibbonConfig.lifetime = MotionRibbonFixtureLifetime(s_motionRibbonFixturePreset);
+                const TrailRecipe *rec = VFX_TrailGetPresetRecipe(s_motionRibbonFixturePreset);
+                if (rec) {
+                    s_liveMotionRibbonConfig.hdrGain = rec->hdrGain;
+                    s_liveMotionRibbonConfig.bodyOpacity = rec->bodyOpacity;
+                    s_liveMotionRibbonConfig.rollRate = rec->rollRate;
+                    s_liveMotionRibbonConfig.rollSpeed = rec->rollSpeed;
+                    s_liveMotionRibbonConfig.driftY = rec->drift.y;
+                    s_liveMotionRibbonConfig.jitterAmp = rec->jitter.x;
+                    s_liveMotionRibbonConfig.widthTaper = rec->widthProf.x;
+                }
+                VFX_TrailApplyMotionConfig(&s_liveMotionRibbonConfig);
                 if (s_vfxFixtureHandle[s_testIndex] >= 0)
                     VFX_KillTrail(s_vfxFixtureHandle[s_testIndex]);
                 s_vfxFixtureHandle[s_testIndex] = -1;
+                VFXTest_RefreshInspectorParams(true);
                 TraceLog(LOG_INFO, "MOTION RIBBON TRAIL: %s (>, next; ,, previous)",
                          MotionRibbonFixturePresetName(s_motionRibbonFixturePreset));
             }
@@ -2657,16 +2920,18 @@ void VFXTest_Draw3D(void)
               case 35: VFX_ComposeSweepSlash(s_prefabStartPos, (Vector3){1.0f, 0.0f, 0.0f}, VC_MAT_FIRE, 1.0f, 90.0f, progress); break;
               case 36:
               {
-                  float a = s_meshTime * 1.35f;
-                  Vector3 fixturePos = Vector3Add(s_prefabStartPos,
-                      (Vector3){3.0f * sinf(a), 1.5f + 0.45f * sinf(a * 0.7f), 2.1f * cosf(a * 1.3f)});
+                  Vector3 fixturePos = MotionRibbon_EvaluateTrajectory(s_motionRibbonFixturePreset, s_meshTime, s_prefabStartPos);
                   if (s_meshTime < s_vfxFixtureLastTime[36] && s_vfxFixtureHandle[36] >= 0)
                       VFX_KillTrail(s_vfxFixtureHandle[36]);
                   if (s_meshTime < s_vfxFixtureLastTime[36]) s_vfxFixtureHandle[36] = -1;
                   s_vfxFixtureLastTime[36] = s_meshTime;
                   s_vfxFixtureXf[36] = MatrixTranslate(fixturePos.x, fixturePos.y, fixturePos.z);
                   if (s_vfxFixtureHandle[36] < 0)
-                      s_vfxFixtureHandle[36] = VFX_ComposeTrail(&s_vfxFixtureXf[36], MotionRibbonFixtureMaterial(s_motionRibbonFixturePreset), 0.18f, 2.0f, s_motionRibbonFixturePreset);
+                  {
+                      s_liveMotionRibbonConfig.preset = (int)s_motionRibbonFixturePreset;
+                      VFX_TrailApplyMotionConfig(&s_liveMotionRibbonConfig);
+                      s_vfxFixtureHandle[36] = VFX_ComposeTrail(&s_vfxFixtureXf[36], (VC_MaterialId)s_liveMotionRibbonConfig.material, s_liveMotionRibbonConfig.width, s_liveMotionRibbonConfig.lifetime, s_motionRibbonFixturePreset);
+                  }
                   break;
               }
               case 37: VFX_ComposeVacuumConverge(Vector3Add(s_currentPlayerPos, (Vector3){0.0f, 1.05f, 0.0f}), 2.7f, progress, s_lastCam); break;
@@ -2776,13 +3041,34 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos)
 
     const char *ribbonPreset = getenv("WUXING_MOTION_RIBBON_PRESET");
     if (ribbonPreset && *ribbonPreset) {
-        static const TrailPresetId presets[] = {MOTION_RIBBON_ENERGY_SILK,
-            MOTION_RIBBON_SMOKE_WISP, MOTION_RIBBON_EMBER_FILAMENT,
-            MOTION_RIBBON_WATER_STREAM};
+        static const TrailPresetId presets[] = {
+            TRAIL_PRESET_BLADE,
+            MOTION_RIBBON_SWORD_COMET,
+            MOTION_RIBBON_SILK,
+            MOTION_RIBBON_WOOD_SPIRAL,
+            MOTION_RIBBON_LIGHTNING,
+            MOTION_RIBBON_FIRE_JET,
+            MOTION_RIBBON_DRAGON,
+            MOTION_RIBBON_INK,
+            MOTION_RIBBON_TALISMAN,
+            MOTION_RIBBON_ICE_SHARD,
+            MOTION_RIBBON_WIND_BLADE,
+            MOTION_RIBBON_CROSS_BEAM,
+            MOTION_RIBBON_SMOKE_WISP,
+            MOTION_RIBBON_DEMONIC,
+            MOTION_RIBBON_TAIJI,
+            MOTION_RIBBON_GALAXY
+        };
         char *end = NULL;
         long selected = strtol(ribbonPreset, &end, 10);
-        if (end != ribbonPreset && !*end && selected >= 0 && selected < 4)
+        int presetCount = (int)(sizeof(presets) / sizeof(presets[0]));
+        if (end != ribbonPreset && !*end && selected >= 0 && selected < presetCount) {
             s_motionRibbonFixturePreset = presets[selected];
+            s_liveMotionRibbonConfig.preset = (int)s_motionRibbonFixturePreset;
+            s_liveMotionRibbonConfig.material = (int)MotionRibbonFixtureMaterial(s_motionRibbonFixturePreset);
+            s_liveMotionRibbonConfig.width = MotionRibbonFixtureWidth(s_motionRibbonFixturePreset);
+            s_liveMotionRibbonConfig.lifetime = MotionRibbonFixtureLifetime(s_motionRibbonFixturePreset);
+        }
     }
 
     const char *envR = getenv("WUXING_WOOD_REACTION");

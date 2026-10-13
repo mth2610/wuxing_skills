@@ -93,13 +93,16 @@ def pipeline_import(character_fbx, anim_folder):
 
     # Import Animation Files (extract action, delete mesh/armature)
     character_resolved = character_fbx.resolve()
-    anim_files = [p for p in sorted(anim_folder.glob("*.fbx")) if p.resolve() != character_resolved]
+    anim_files = [p for p in sorted(list(anim_folder.glob("*.fbx")) + list(anim_folder.glob("*.bvh"))) if p.resolve() != character_resolved]
     
     existing_actions = set(bpy.data.actions.keys())
     
     for fbx_path in anim_files:
         before_objs = set(bpy.context.scene.objects)
-        bpy.ops.import_scene.fbx(filepath=str(fbx_path))
+        if fbx_path.suffix.lower() == ".bvh":
+            bpy.ops.import_anim.bvh(filepath=str(fbx_path))
+        else:
+            bpy.ops.import_scene.fbx(filepath=str(fbx_path))
         imported_objs = [o for o in bpy.context.scene.objects if o not in before_objs]
 
         new_actions = [a for a in bpy.data.actions if a.name not in existing_actions]

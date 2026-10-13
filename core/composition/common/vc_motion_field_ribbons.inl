@@ -64,11 +64,18 @@ static bool VC_MotionFieldRibbons_Start(VC_MotionFieldRibbons *s)
     ribbon.initialVelocity=s->velocity;
     ribbon.tailDirection=(Vector3){-1,-.35f,0};
     ribbon.mode=TRAIL_RIBBON_HEAD_ANCHORED; ribbon.attachment=s->attachment;
-    ribbon.color=VC_WithAlpha(VFX_Material(VC_MAT_WATER)->body,235);
+    VFX_TrailRibbonApplyPreset(&ribbon, TRAIL_PRESET_WATER, VC_MAT_WATER);
     s->tiedRibbon=TrailRibbon_Spawn(&ribbon);
+    ribbon=TrailRibbon_Default();
+    ribbon.nodeCount=32; ribbon.lengthM=1.25f; ribbon.widthM=.12f;
+    ribbon.lifetimeSec=4.2f;
+    ribbon.material.body=s_motionRibbonParticleBody;
+    ribbon.material.bendCompliance=.02f;
+    ribbon.initialVelocity=s->velocity;
+    ribbon.tailDirection=(Vector3){-1,-.35f,0};
     ribbon.mode=TRAIL_RIBBON_FREE; ribbon.attachment=0;
     ribbon.headPosition=Vector3Add(s->stone,(Vector3){.1f,.6f,.5f});
-    ribbon.color=VC_WithAlpha(VFX_Material(VC_MAT_WOOD)->body,235);
+    VFX_TrailRibbonApplyPreset(&ribbon, TRAIL_PRESET_WOOD_SPIRAL, VC_MAT_WOOD);
     s->freeRibbon=TrailRibbon_Spawn(&ribbon);
 
     s->particle=(ParticleConfig){0};
@@ -149,3 +156,91 @@ static void VC_MotionFieldRibbons_Draw3D(Camera3D cam)
         DrawCoreSphere(s_motionFieldRibbons[i].stone,.1f,8,12,VFX_Material(VC_MAT_EARTH)->body);
     VFXRender_EndDraw(&scope);
 }
+
+VFX_MotionRibbonConfig VFX_MotionRibbon_DefaultConfig(void)
+{
+    VFX_MotionRibbonConfig cfg = {0};
+    cfg.preset = (int)TRAIL_PRESET_SWORD_COMET;
+    cfg.material = (int)VC_MAT_WATER;
+    cfg.width = 0.22f;
+    cfg.lifetime = 2.0f;
+    cfg.nodeCount = 32;
+    cfg.fieldSpeed = 4.0f;
+    cfg.swirlSpeed = 1.5f;
+    cfg.turbulenceSpeed = 0.8f;
+    cfg.fieldRadius = 2.5f;
+    cfg.gravityScale = 0.05f;
+    cfg.hdrGain = 1.8f;
+    cfg.bodyOpacity = 0.85f;
+    cfg.rollRate = 0.0f;
+    cfg.rollSpeed = 0.0f;
+    cfg.driftY = 0.0f;
+    cfg.jitterAmp = 0.0f;
+    cfg.widthTaper = 1.0f;
+    return cfg;
+}
+
+int VFX_MotionRibbon_GetParams(VFX_MotionRibbonConfig *cfg, VFX_ParamDef *outParams, int maxParams)
+{
+    if (!cfg || !outParams || maxParams <= 0) return 0;
+    int n = 0;
+    static const char * const presetNames[] = {
+        "Blade (Kiem Khi)", "Main Energy", "Wisp", "Backdrop",
+        "Energy Silk", "Smoke (Yen Vu)", "Magic Plume", "Water Stream",
+        "Sword Comet (Phi Kiem)", "Silk (Tien Doi)", "Wood Spiral (Linh Toan)",
+        "Lightning (Loi Dien)", "Fire Jet (Hoa Diem)", "Dragon (Long Khi)",
+        "Ink (Mac Tich)", "Talisman (Phu Van)", "Ice Shard (Han Bang)",
+        "Wind Blade (Phong Nhan)", "Cross Beam (Thap Tu)", "Demonic (Ma Khi)",
+        "Taiji (Thai Cuc)", "Galaxy (Tinh Ha)"
+    };
+    static const char * const materialNames[] = {
+        "Earth", "Fire", "Wood", "Metal", "Water", "Lightning"
+    };
+
+    #define RIBBON_PARAM_FLOAT(lbl, grp, field, lo, hi, step) \
+        do { if (n < maxParams) outParams[n++] = (VFX_ParamDef){ \
+            .name = lbl, .group = grp, .type = VFX_PARAM_FLOAT, \
+            .valPtr = &cfg->field, .minFloat = lo, .maxFloat = hi, .stepFloat = step \
+        }; } while (0)
+
+    #define RIBBON_PARAM_INT(lbl, grp, field, lo, hi) \
+        do { if (n < maxParams) outParams[n++] = (VFX_ParamDef){ \
+            .name = lbl, .group = grp, .type = VFX_PARAM_INT, \
+            .valPtr = &cfg->field, .minInt = lo, .maxInt = hi \
+        }; } while (0)
+
+    #define RIBBON_PARAM_ENUM(lbl, grp, field, lo, hi, names, count) \
+        do { if (n < maxParams) outParams[n++] = (VFX_ParamDef){ \
+            .name = lbl, .group = grp, .type = VFX_PARAM_ENUM, \
+            .valPtr = &cfg->field, .minInt = lo, .maxInt = hi, \
+            .enumNames = names, .enumCount = count \
+        }; } while (0)
+
+    RIBBON_PARAM_ENUM("Preset Style", "Preset", preset, 0, TRAIL_PRESET_COUNT - 1, presetNames, TRAIL_PRESET_COUNT);
+    RIBBON_PARAM_ENUM("Element Material", "Preset", material, 0, 5, materialNames, 6);
+
+    RIBBON_PARAM_FLOAT("Width (m)", "Geometry", width, 0.02f, 2.0f, 0.02f);
+    RIBBON_PARAM_FLOAT("Lifetime (s)", "Geometry", lifetime, 0.2f, 8.0f, 0.1f);
+    RIBBON_PARAM_INT("Nodes", "Geometry", nodeCount, 8, 128);
+
+    RIBBON_PARAM_FLOAT("Field Speed", "MotionField", fieldSpeed, 0.0f, 20.0f, 0.5f);
+    RIBBON_PARAM_FLOAT("Swirl Speed", "MotionField", swirlSpeed, -15.0f, 15.0f, 0.5f);
+    RIBBON_PARAM_FLOAT("Turbulence", "MotionField", turbulenceSpeed, 0.0f, 10.0f, 0.2f);
+    RIBBON_PARAM_FLOAT("Radius (m)", "MotionField", fieldRadius, 0.2f, 10.0f, 0.2f);
+    RIBBON_PARAM_FLOAT("Gravity Scale", "MotionField", gravityScale, -2.0f, 2.0f, 0.05f);
+
+    RIBBON_PARAM_FLOAT("HDR Gain", "Shading", hdrGain, 0.2f, 5.0f, 0.1f);
+    RIBBON_PARAM_FLOAT("Body Opacity", "Shading", bodyOpacity, 0.0f, 1.0f, 0.05f);
+    RIBBON_PARAM_FLOAT("Roll Rate", "Deform", rollRate, -10.0f, 10.0f, 0.2f);
+    RIBBON_PARAM_FLOAT("Roll Speed", "Deform", rollSpeed, -20.0f, 20.0f, 0.5f);
+    RIBBON_PARAM_FLOAT("Drift Y", "Deform", driftY, -5.0f, 5.0f, 0.1f);
+    RIBBON_PARAM_FLOAT("Jitter Amp", "Deform", jitterAmp, 0.0f, 1.0f, 0.02f);
+    RIBBON_PARAM_FLOAT("Width Taper", "Deform", widthTaper, 0.1f, 3.0f, 0.1f);
+
+    #undef RIBBON_PARAM_FLOAT
+    #undef RIBBON_PARAM_INT
+    #undef RIBBON_PARAM_ENUM
+
+    return n;
+}
+

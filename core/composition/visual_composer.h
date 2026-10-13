@@ -605,6 +605,7 @@ void VFX_KillTrail(int handle);
 // that is ABSORBED at a destination rather than left behind — pair it with a
 // width ramp to nothing over the last stretch, or the cut pops.
 void VFX_Trail_Extinguish(int handle);
+const TrailRecipe *VFX_TrailGetPresetRecipe(TrailPresetId preset);
 
 // ── PRIMARY. Volume trail ───────────────────────────────────────────────────
 // A swept VOLUME, and nothing else. The tube that `VFX_TRAIL_HAZE` proved out on
@@ -1193,6 +1194,32 @@ int VFX_GuidedParticle_GetParams(VFX_GuidedParticleConfig *cfg,VFX_ParamDef *out
 MotionFieldHandle VFX_ComposeGuidedParticleEx(const VFX_GuidedParticleConfig *config);
 
 // ── Generic Parameter Introspection API (CapsLock + / dynamic editing) ──────
+typedef struct {
+    int   preset;     // TrailPresetId
+    int   material;   // VC_MaterialId
+    float width;
+    float lifetime;
+    int   nodeCount;
+    // Motion field parameters (for motion-field-driven ribbon chains)
+    float fieldSpeed;
+    float swirlSpeed;
+    float turbulenceSpeed;
+    float fieldRadius;
+    float gravityScale;
+    // Appearance & Deform live tuning
+    float hdrGain;
+    float bodyOpacity;
+    float rollRate;
+    float rollSpeed;
+    float driftY;
+    float jitterAmp;
+    float widthTaper;
+} VFX_MotionRibbonConfig;
+
+VFX_MotionRibbonConfig VFX_MotionRibbon_DefaultConfig(void);
+int VFX_MotionRibbon_GetParams(VFX_MotionRibbonConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+void VFX_TrailApplyMotionConfig(const VFX_MotionRibbonConfig *cfg);
+
 int VFX_WoodLeaves_GetParams(VFX_WoodLeavesConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 int VFX_WoodFlower_GetParams(VFX_WoodFlowerConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 int VFX_WoodPetals_GetParams(VFX_WoodPetalConfig *cfg, VFX_ParamDef *outParams, int maxParams);

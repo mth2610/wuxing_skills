@@ -45,4 +45,8 @@ void VFXTest_SetRenderTarget(int newfxIndex, Vector3 spawnPos);
 // Neutral means no elemental tint, not a white unshaded calibration material.
 void VFXTest_SetNeutralSmokeRenderTarget(Vector3 spawnPos);
 
+// Preferred camera framing override (0.0f = default sandbox camera).
+float VFXTest_GetPreferredCameraDistance(void);
+float VFXTest_GetPreferredCameraPitch(void);
+
 #endif // VFX_TEST_H

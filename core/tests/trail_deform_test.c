@@ -1026,7 +1026,7 @@ static void Test_MirrorStillMatchesSource(void)
           "the deform config is still copied at spawn");
 
     // The geometry: the side vector is only written by the deform entry point.
-    CHECK(FileHas(rb, "if (writeNormals) rlNormal3f(side.x, side.y, side.z);"),
+    CHECK(FileHas(rb, "if (writeNormals) rlNormal3f(sideArm.x, sideArm.y, sideArm.z);"),
           "the side vector is still written per-vertex only when asked");
     CHECK(FileHas(rb, "bool writeNormals)"),
           "the writeNormals flag still gates the whole path");

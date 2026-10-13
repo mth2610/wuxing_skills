@@ -1,0 +1,18 @@
+{
+  "description": "Wuxing Skills - Character Animation Slot & Variant Manifest",
+  "slots": {
+    "idle": ["idle"],
+    "walk": ["walking"],
+    "run": ["running"],
+    "jump": ["jumping_down"],
+    "jump_down": ["jumping_down"],
+    "punch": ["punching"],
+    "kick": ["kicking"],
+    "palm": ["palming"],
+    "cast": ["casting"],
+    "sword_idle": ["loco_idle_sword"],
+    "sword_slash": ["sword_slash_horizontal", "sword_slash_backhand"],
+    "sword_parry": ["sword_parry"],
+    "sword_block": ["sword_block"]
+  }
+}

@@ -228,6 +228,29 @@ typedef struct TrailRecipe {
     unsigned char tintAlpha;
     TrailTintSource tintSource;
     bool additive;            // false = the trail occludes instead of glowing
+
+    // ── DEFORM & MATERIAL ENHANCEMENTS (WebGL reference) ───────────────────
+    float style;              // 0 = strand default, 1..16 = WebGL specialized styles
+    Color colRamp[4];         // 4-stop gradient ramp (C0, C1, C2, C3)
+    Vector4 p0;               // uP0 shader parameter vector
+    Vector4 p1;               // uP1 shader parameter vector
+    Vector4 p2;               // uP2 shader parameter vector
+    Vector4 wave;             // uWave: amp, freq, speed, agePow
+    Vector4 noise;            // uNoise: amp, freq, speed, agePow
+    Vector4 helix;            // uHelix: radius, freq, speed, phase
+    Vector4 lane;             // uLane: offset, scale, freq, speed
+    Vector2 cap;              // uCap: headRound, tailEase
+    Vector2 uvScale;          // uUVScale: x, y
+    float seed;               // uSeed
+    float maxDist;            // uMaxD (0 = infinite)
+    float add;                // uAdd (1.0 = additive, 0.0 = alpha blend)
+    float alpha;              // uAlpha multiplier
+    float rollRate;           // rad/m along path (screw / axial twist)
+    float rollSpeed;          // rad/s spin rate
+    Vector3 drift;            // directional acceleration (m/s2 * seg^2)
+    Vector4 jitter;           // x = amp, y = freq, z = quantized Hz, w = head clamp
+    Vector4 widthProf;        // x = taperPow, y = headLen, z = growAge, w = bulgeMid
+    Vector2 shard;            // x = shardFreq, y = shardDepth
 } TrailRecipe;
 
 // ── Presets ─────────────────────────────────────────────────────────────────
@@ -235,12 +258,12 @@ typedef struct TrailRecipe {
 // replace VFX_RIBBON_* and VFX_STRAND_*, which were two enums over two style
 // tables that described the same thing twice.
 typedef enum {
-    TRAIL_PRESET_BLADE = 0, // swept blade: broad in the swing plane, edge-on side
+    TRAIL_PRESET_BLADE = 0, // swept blade: broad in the swing plane, edge-on side (Kiếm Khí)
     TRAIL_PRESET_MAIN,      // the general camera-facing energy wake
     TRAIL_PRESET_WISP,      // thinner, continuous inner core, softer
     TRAIL_PRESET_BACKDROP,  // wide dim underlay meant to sit behind another trail
     TRAIL_PRESET_ENERGY,    // braided hot filaments with a gold core
-    TRAIL_PRESET_SMOKE,     // many faint strands piling into occluding mass
+    TRAIL_PRESET_SMOKE,     // many faint strands piling into occluding mass (Yên Vụ)
     // SMOKE's plume, lit from inside. Same sheet, same strand read, same wave
     // field and the same flow pan — the ONLY differences are the ones that
     // decide whether a surface emits: it takes the element's glow tint instead
@@ -251,14 +274,44 @@ typedef enum {
     // of them.
     TRAIL_PRESET_MAGIC,
     TRAIL_PRESET_WATER,    // coherent alpha-lit water ribbon; no hot spark shed
-    TRAIL_PRESET_COUNT,    // range-check against THIS, never the last by name
+
+    // ── Xianxia / Martial Arts Motion Trail Presets (from WebGL reference) ──
+    TRAIL_PRESET_SWORD_COMET, // Phi Kiếm — comet trail, sharp tapered head, wave + noise, energy pulse
+    TRAIL_PRESET_SILK,        // Tiên Đới — celestial silk ribbon, wave with age, axial roll twist, sheen
+    TRAIL_PRESET_WOOD_SPIRAL, // Linh Toàn — wood element spiral qi, 3 helix strands around frame, energy dashes
+    TRAIL_PRESET_LIGHTNING,   // Lôi Điện — lightning strike, 4-octave zigzag jitter, 18Hz re-seed, branching
+    TRAIL_PRESET_FIRE_JET,    // Hỏa Diễm — rising fire jet, age^2 upward drift, 3D turbulence, 2-phase heat flow
+    TRAIL_PRESET_DRAGON,      // Long Khí — dragon qi tube / coiling, serpentine wave, hexagonal scales, Fresnel
+    TRAIL_PRESET_INK,         // Mặc Tích — calligraphy ink brush, speed-dependent width, dry-brush ragged edge
+    TRAIL_PRESET_TALISMAN,    // Phù Văn — talisman runes, procedural 3x3 glyphs pinned to world arc length
+    TRAIL_PRESET_ICE_SHARD,   // Hàn Băng — ice crystal shards, Voronoi facet cells, bright edges, sparkle
+    TRAIL_PRESET_WIND_BLADE,  // Phong Nhận — multi-lane wind blades, 7 lanes swirling around axis
+    TRAIL_PRESET_CROSS_BEAM,  // Thập Tự Quang — cross beam, 2 perpendicular ribbons, roll & spin, energetic core
+    TRAIL_PRESET_DEMONIC,     // Ma Khí — demonic dark smoke core with burning contour fringes
+    TRAIL_PRESET_TAIJI,       // Thái Cực — twin opposing yin-yang helix strands, rhythmic circulation pulse
+    TRAIL_PRESET_GALAXY,      // Tinh Hà — celestial galaxy nebula ribbon, dual FBM counter-flow, star seeds
+    TRAIL_PRESET_COUNT,       // range-check against THIS, never the last by name
     /* Public Motion Ribbon vocabulary.  These aliases deliberately share the
      * same enum type as VFX_ComposeTrail, so callers cannot accidentally mix
      * two nominal enum types for one recipe table. */
     MOTION_RIBBON_ENERGY_SILK = TRAIL_PRESET_ENERGY,
     MOTION_RIBBON_SMOKE_WISP = TRAIL_PRESET_SMOKE,
     MOTION_RIBBON_EMBER_FILAMENT = TRAIL_PRESET_BLADE,
-    MOTION_RIBBON_WATER_STREAM = TRAIL_PRESET_WATER
+    MOTION_RIBBON_WATER_STREAM = TRAIL_PRESET_WATER,
+    MOTION_RIBBON_SWORD_COMET = TRAIL_PRESET_SWORD_COMET,
+    MOTION_RIBBON_SILK = TRAIL_PRESET_SILK,
+    MOTION_RIBBON_WOOD_SPIRAL = TRAIL_PRESET_WOOD_SPIRAL,
+    MOTION_RIBBON_LIGHTNING = TRAIL_PRESET_LIGHTNING,
+    MOTION_RIBBON_FIRE_JET = TRAIL_PRESET_FIRE_JET,
+    MOTION_RIBBON_DRAGON = TRAIL_PRESET_DRAGON,
+    MOTION_RIBBON_INK = TRAIL_PRESET_INK,
+    MOTION_RIBBON_TALISMAN = TRAIL_PRESET_TALISMAN,
+    MOTION_RIBBON_ICE_SHARD = TRAIL_PRESET_ICE_SHARD,
+    MOTION_RIBBON_WIND_BLADE = TRAIL_PRESET_WIND_BLADE,
+    MOTION_RIBBON_CROSS_BEAM = TRAIL_PRESET_CROSS_BEAM,
+    MOTION_RIBBON_DEMONIC = TRAIL_PRESET_DEMONIC,
+    MOTION_RIBBON_TAIJI = TRAIL_PRESET_TAIJI,
+    MOTION_RIBBON_GALAXY = TRAIL_PRESET_GALAXY
 } TrailPresetId;
 
 #endif // CORE_TRAIL_RECIPE_H

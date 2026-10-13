@@ -95,6 +95,19 @@ typedef struct
     float envTail;    // wave amplitude -> 0 at the tail over this seg fraction
     float strength;   // global multiplier
     float curlScale;  // noise frequency for curl3 / noise modes
+
+    // ── DEFORM ENHANCEMENTS (WebGL reference) ───────────────────────────────
+    float rollRate;    // rad/m along path (screw / axial twist)
+    float rollSpeed;   // rad/sec spin rate around path
+    Vector3 drift;     // directional acceleration (m/s2 * seg^2) - e.g. fire/smoke rising
+    Vector4 jitter;    // x = amp, y = freq, z = quantized Hz, w = head clamp
+    Vector4 widthProf; // x = taperPow, y = headLen, z = growAge, w = bulgeMid
+    Vector2 shard;     // x = shardFreq, y = shardDepth
+    Vector4 wave;      // uWave: amp, freq, speed, agePow
+    Vector4 noise;     // uNoise: amp, freq, speed, agePow
+    Vector4 helix;     // uHelix: radius, freq, speed, phase
+    Vector4 lane;      // uLane: offset, scale, freq, speed
+    Vector2 cap;       // uCap: headRound, tailEase
 } TrailDeformConfig;
 
 // ── PACKED 4-CHANNEL MATERIAL (trail_deform.fs) ─────────────────────────────
@@ -213,6 +226,18 @@ typedef struct
     // that have not moved (the volume tube and the smoke puff). A trail sets one
     // or the other, never both; when a recipe is present `mode` is ignored.
     const struct TrailRecipe *recipe;
+
+    // ── PROCEDURAL PRESET STYLE (WebGL reference) ───────────────────────────
+    float style;       // 0 = standard strand, 1..16 = specialized WebGL styles
+    Color colRamp[4];  // 4-stop gradient ramp (C0, C1, C2, C3)
+    Vector4 p0;        // uP0
+    Vector4 p1;        // uP1
+    Vector4 p2;        // uP2
+    Vector2 uvScale;   // uUVScale
+    float seed;        // uSeed
+    float maxDist;     // uMaxD
+    float add;         // uAdd
+    float alpha;       // uAlpha
 } TrailMaterialConfig;
 
 // ── Trail Cross-section ─────────────────────────────────────────────────────

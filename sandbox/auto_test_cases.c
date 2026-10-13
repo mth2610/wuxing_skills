@@ -17,6 +17,7 @@
 #include "ui/ui.h"
 #include "skills/taiji/taiji_phong/taiji_phong_skill.h"
 #include "environment/environment_system.h"
+#include "character/character_model.h"
 #include "raymath.h"
 #include <math.h>
 #include <string.h>
@@ -982,6 +983,35 @@ static AutoTestResult AutoTest_AtmosphereFogStep(int frameInCase, char *outReaso
   return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
 }
 
+static AutoTestResult AutoTest_CharacterAnimSystemStep(int frameInCase, char *outReason, int outReasonSize) {
+  if (frameInCase > 0) return AUTOTEST_PASS;
+
+  bool ok = true;
+  ok &= AutoTest_ExpectTrue(CharacterModel_IsLoaded(), "CharacterModel is loaded", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(CharacterModel_GetTotalAnimCount() >= 14, "Total animation count >= 14", outReason, outReasonSize);
+
+  // Check multi-variant slots
+  int slashVariants = CharacterModel_GetVariantCount(CHAR_ANIM_SWORD_SLASH);
+  ok &= AutoTest_ExpectTrue(slashVariants >= 2, "SWORD_SLASH has multiple variants", outReason, outReasonSize);
+
+  int jumpDownVariants = CharacterModel_GetVariantCount(CHAR_ANIM_JUMP_DOWN);
+  ok &= AutoTest_ExpectTrue(jumpDownVariants >= 1, "JUMP_DOWN slot has matched clip", outReason, outReasonSize);
+
+  // Test state transitions & trigger by name
+  CharacterAnimState testState;
+  CharacterModel_ResetState(&testState);
+  ok &= AutoTest_ExpectTrue(testState.currentSlot == CHAR_ANIM_IDLE, "ResetState sets IDLE", outReason, outReasonSize);
+
+  CharacterModel_TriggerVariant(&testState, CHAR_ANIM_SWORD_SLASH, 1);
+  ok &= AutoTest_ExpectTrue(testState.oneShotActive, "TriggerVariant activates oneShot", outReason, outReasonSize);
+  ok &= AutoTest_ExpectTrue(testState.activeVariant == 1, "TriggerVariant sets variant 1", outReason, outReasonSize);
+
+  bool triggered = CharacterModel_TriggerByName(&testState, "jumping_down", 0.0f);
+  ok &= AutoTest_ExpectTrue(triggered, "TriggerByName finds and triggers jumping_down", outReason, outReasonSize);
+
+  return ok ? AUTOTEST_PASS : AUTOTEST_FAIL;
+}
+
 void AutoTestCases_Register(PlayerEntity *player)
 {
   s_player = player;
@@ -1002,5 +1032,6 @@ void AutoTestCases_Register(PlayerEntity *player)
   AutoTest_Register("hero_bot_handicap", AutoTest_HeroBotHandicapStep, 5);
   AutoTest_Register("shader_permutation", AutoTest_ShaderPermutationStep, 5);
   AutoTest_Register("atmosphere_and_fog_volumes", AutoTest_AtmosphereFogStep, 5);
+  AutoTest_Register("character_animation_system", AutoTest_CharacterAnimSystemStep, 5);
 }
 

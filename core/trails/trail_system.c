@@ -109,7 +109,11 @@ typedef struct
     int matMode, wispMix, dissolve, dissolveSoft;
     int tiling, panSpeed, tailFadeA, tailFadeB;
     int bandShape, pathArc, colHot, strandFlow, coreShape;
-    int renderPass, bodyOpacity, toneMapSafe, contrastParams, colTail, tailShape,nodeArc;
+    int renderPass, bodyOpacity, toneMapSafe, contrastParams, colTail, tailShape, nodeArc;
+    int roll, drift, jitter, widthProfile, shard;
+    int wave, noise, helix, lane, cap;
+    int p0, p1, p2, uvScale, seed, maxDist, add, alpha;
+    int style, colRamp[4];
     // The mode-2 sine warp's coordinate half, generalised 05/08/2026 onto
     // core/uv's UVDeformField (u_sinWave is GONE — see the "SIN-WAVE STRAND
     // TRAIL" push site for the reproduction). uv_field.glsl is shape-neutral
@@ -161,6 +165,29 @@ static void FillDeformLocs(Shader shader, DeformLocs *l)
     l->contrastParams = GetShaderLocation(shader, "u_contrastParams");
     l->colTail       = GetShaderLocation(shader, "u_colTail");
     l->tailShape     = GetShaderLocation(shader, "u_tailShape");
+    l->roll          = GetShaderLocation(shader, "u_roll");
+    l->drift         = GetShaderLocation(shader, "u_drift");
+    l->jitter        = GetShaderLocation(shader, "u_jitter");
+    l->widthProfile  = GetShaderLocation(shader, "u_widthProfile");
+    l->shard         = GetShaderLocation(shader, "u_shard");
+    l->wave          = GetShaderLocation(shader, "u_wave");
+    l->noise         = GetShaderLocation(shader, "u_noise");
+    l->helix         = GetShaderLocation(shader, "u_helix");
+    l->lane          = GetShaderLocation(shader, "u_lane");
+    l->cap           = GetShaderLocation(shader, "u_cap");
+    l->p0            = GetShaderLocation(shader, "u_p0");
+    l->p1            = GetShaderLocation(shader, "u_p1");
+    l->p2            = GetShaderLocation(shader, "u_p2");
+    l->uvScale       = GetShaderLocation(shader, "u_uvScale");
+    l->seed          = GetShaderLocation(shader, "u_seed");
+    l->maxDist       = GetShaderLocation(shader, "u_maxDist");
+    l->add           = GetShaderLocation(shader, "u_add");
+    l->alpha         = GetShaderLocation(shader, "u_alpha");
+    l->style         = GetShaderLocation(shader, "u_style");
+    l->colRamp[0]    = GetShaderLocation(shader, "u_colRamp[0]");
+    l->colRamp[1]    = GetShaderLocation(shader, "u_colRamp[1]");
+    l->colRamp[2]    = GetShaderLocation(shader, "u_colRamp[2]");
+    l->colRamp[3]    = GetShaderLocation(shader, "u_colRamp[3]");
 }
 
 static const DeformLocs *GetCachedDeformLocs(Shader shader)
@@ -2059,6 +2086,78 @@ void TrailRibbon_BindAppearance(Shader shader,const TrailEntity *t, Camera3D cam
     {
         float env[2] = {d->envHead, d->envTail};
         if (L->waveEnv >= 0) SetShaderValue(shader, L->waveEnv, env, SHADER_UNIFORM_VEC2);
+    }
+    if (L->roll >= 0) {
+        float roll[2] = {d->rollRate, d->rollSpeed};
+        SetShaderValue(shader, L->roll, roll, SHADER_UNIFORM_VEC2);
+    }
+    if (L->drift >= 0) {
+        float drift[3] = {d->drift.x, d->drift.y, d->drift.z};
+        SetShaderValue(shader, L->drift, drift, SHADER_UNIFORM_VEC3);
+    }
+    if (L->jitter >= 0) {
+        float jit[4] = {d->jitter.x, d->jitter.y, d->jitter.z, d->jitter.w};
+        SetShaderValue(shader, L->jitter, jit, SHADER_UNIFORM_VEC4);
+    }
+    if (L->widthProfile >= 0) {
+        float wp[4] = {d->widthProf.x, d->widthProf.y, d->widthProf.z, d->widthProf.w};
+        SetShaderValue(shader, L->widthProfile, wp, SHADER_UNIFORM_VEC4);
+    }
+    if (L->shard >= 0) {
+        float sh[2] = {d->shard.x, d->shard.y};
+        SetShaderValue(shader, L->shard, sh, SHADER_UNIFORM_VEC2);
+    }
+    if (L->wave >= 0) {
+        float w[4] = {d->wave.x, d->wave.y, d->wave.z, d->wave.w};
+        SetShaderValue(shader, L->wave, w, SHADER_UNIFORM_VEC4);
+    }
+    if (L->noise >= 0) {
+        float ns[4] = {d->noise.x, d->noise.y, d->noise.z, d->noise.w};
+        SetShaderValue(shader, L->noise, ns, SHADER_UNIFORM_VEC4);
+    }
+    if (L->helix >= 0) {
+        float hx[4] = {d->helix.x, d->helix.y, d->helix.z, d->helix.w};
+        SetShaderValue(shader, L->helix, hx, SHADER_UNIFORM_VEC4);
+    }
+    if (L->lane >= 0) {
+        float ln[4] = {d->lane.x, d->lane.y, d->lane.z, d->lane.w};
+        SetShaderValue(shader, L->lane, ln, SHADER_UNIFORM_VEC4);
+    }
+    if (L->cap >= 0) {
+        float cp[2] = {d->cap.x, d->cap.y};
+        SetShaderValue(shader, L->cap, cp, SHADER_UNIFORM_VEC2);
+    }
+    if (L->p0 >= 0) {
+        float p0[4] = {m->p0.x, m->p0.y, m->p0.z, m->p0.w};
+        SetShaderValue(shader, L->p0, p0, SHADER_UNIFORM_VEC4);
+    }
+    if (L->p1 >= 0) {
+        float p1[4] = {m->p1.x, m->p1.y, m->p1.z, m->p1.w};
+        SetShaderValue(shader, L->p1, p1, SHADER_UNIFORM_VEC4);
+    }
+    if (L->p2 >= 0) {
+        float p2[4] = {m->p2.x, m->p2.y, m->p2.z, m->p2.w};
+        SetShaderValue(shader, L->p2, p2, SHADER_UNIFORM_VEC4);
+    }
+    if (L->uvScale >= 0) {
+        float uvs[2] = {m->uvScale.x > 0.001f ? m->uvScale.x : 1.0f, m->uvScale.y > 0.001f ? m->uvScale.y : 1.0f};
+        SetShaderValue(shader, L->uvScale, uvs, SHADER_UNIFORM_VEC2);
+    }
+    if (L->seed >= 0) SetShaderValue(shader, L->seed, &m->seed, SHADER_UNIFORM_FLOAT);
+    if (L->maxDist >= 0) SetShaderValue(shader, L->maxDist, &m->maxDist, SHADER_UNIFORM_FLOAT);
+    if (L->add >= 0) SetShaderValue(shader, L->add, &m->add, SHADER_UNIFORM_FLOAT);
+    if (L->alpha >= 0) {
+        float al = m->alpha > 0.001f ? m->alpha : 1.0f;
+        SetShaderValue(shader, L->alpha, &al, SHADER_UNIFORM_FLOAT);
+    }
+    if (L->style >= 0) {
+        SetShaderValue(shader, L->style, &m->style, SHADER_UNIFORM_FLOAT);
+    }
+    for (int k = 0; k < 4; k++) {
+        if (L->colRamp[k] >= 0) {
+            float cr[3] = {m->colRamp[k].r / 255.0f, m->colRamp[k].g / 255.0f, m->colRamp[k].b / 255.0f};
+            SetShaderValue(shader, L->colRamp[k], cr, SHADER_UNIFORM_VEC3);
+        }
     }
     // MODE 1 (sin-multi) ONLY — core/deform's first GLSL mirror,
     // 05/08/2026 (core/deform/shaders/mesh_deform.glsl). 2 octaves along

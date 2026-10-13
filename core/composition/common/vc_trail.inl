@@ -81,7 +81,7 @@
 #include "core/uv/uv_fx.h"
 
 #define SWEPT_MAX 8         // concurrent trails
-#define SWEPT_STRANDS_MAX 4 // strands per trail (FILAMENT uses all of them)
+#define SWEPT_STRANDS_MAX 5 // strands per trail (FILAMENT and multi-layer presets)
 #define VFX_LEGACY_VOLUME_HANDLE_FLAG 0x40000000
 #define SWEPT_SAMPLE_HZ 60.0f
 #define SWEPT_IDLE_SPEED 0.12f  // m/s below which the tip counts as stationary
@@ -133,6 +133,7 @@ typedef struct
     // the trail's whole life, so it must live in the pool, not in the shared
     // table (which a live tunable would otherwise edit for every trail at once).
     TrailRecipe recipe;
+    TrailRecipe strandRecipe[SWEPT_STRANDS_MAX]; // per-strand recipe for multi-layer Xianxia trails
     float width;       // full width in metres, before the aspect cap
     float widthTarget; // 0..1, set by VFX_TrailSetWidth
     float widthLevel;  // what is actually drawn — ramps toward target
@@ -281,7 +282,7 @@ static const TrailMotion k_trailMotion[TRAIL_PRESET_COUNT] = {
     // Measured, not guessed — at the bench's own 0.1 m call the cap never binds
     // and this changes nothing on screen; it raises a CEILING. Still tighter
     // than MAIN (0.0715) and BACKDROP (0.1): a blade is struck, not draped.
-    [TRAIL_PRESET_BLADE]    = {0.0550f, true, true, 0.70f, 0.30f, 5.0f, 0.55f, 1, true, true,
+    [TRAIL_PRESET_BLADE]    = {0.0550f, true, true, 0.70f, 0.30f, 5.0f, 0.55f, 2, true, true,
                                SWEPT_SAMPLE_HZ, SWEPT_IDLE_SPEED, SWEPT_TELEPORT_SPEED,
                                true, TRAIL_WIDTH_ENVELOPE_TAPER_BOTH},
     [TRAIL_PRESET_MAIN]     = {0.0715f, true, true, 2.60f, 0.55f, 1.9f, 1.70f, 1, true, true,
@@ -315,6 +316,48 @@ static const TrailMotion k_trailMotion[TRAIL_PRESET_COUNT] = {
     [TRAIL_PRESET_WATER]    = {0.0600f, true, true, 0.35f, 0.18f, 4.2f, 0.75f, 1, false, true,
                                SWEPT_SAMPLE_HZ, SWEPT_IDLE_SPEED, SWEPT_TELEPORT_SPEED,
                                true, TRAIL_WIDTH_ENVELOPE_TAPER_BOTH},
+    [TRAIL_PRESET_SWORD_COMET] = {0.0f, false, false, 0, 0, 0, 0, 3, false, false,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
+    [TRAIL_PRESET_SILK]        = {0.0f, false, true, 0.80f, 0.45f, 3.5f, 0.80f, 3, false, true,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_TAPER_TAIL},
+    [TRAIL_PRESET_WOOD_SPIRAL] = {0.0f, false, false, 0, 0, 0, 0, 4, false, false,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
+    [TRAIL_PRESET_LIGHTNING]   = {0.0f, false, false, 0, 0, 0, 0, 4, false, false,
+                               SWEPT_SAMPLE_HZ, 0.05f, 45.0f,
+                               false, TRAIL_WIDTH_ENVELOPE_UNIFORM},
+    [TRAIL_PRESET_FIRE_JET]    = {0.0f, false, true, -1.20f, 0.80f, 2.0f, 1.00f, 2, false, true,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN},
+    [TRAIL_PRESET_DRAGON]      = {0.0600f, true, true, 0.30f, 0.50f, 4.0f, 0.60f, 1, false, true,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
+    [TRAIL_PRESET_INK]         = {0.0f, false, false, 0, 0, 0, 0, 1, false, false,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_TAPER_TAIL},
+    [TRAIL_PRESET_TALISMAN]    = {0.0f, false, false, 0, 0, 0, 0, 1, false, false,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_UNIFORM},
+    [TRAIL_PRESET_ICE_SHARD]   = {0.0f, false, false, 0, 0, 0, 0, 2, false, false,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
+    [TRAIL_PRESET_WIND_BLADE]  = {0.0f, false, true, 0.20f, 0.70f, 4.5f, 1.20f, 4, false, true,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
+    [TRAIL_PRESET_CROSS_BEAM]  = {0.0f, false, false, 0, 0, 0, 0, 2, false, false,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_UNIFORM},
+    [TRAIL_PRESET_DEMONIC]     = {0.0f, false, true, -0.50f, 0.90f, 2.5f, 1.10f, 3, false, true,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN},
+    [TRAIL_PRESET_TAIJI]       = {0.0f, false, false, 0, 0, 0, 0, 3, false, false,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
+    [TRAIL_PRESET_GALAXY]      = {0.0f, false, true, 0.10f, 0.40f, 3.0f, 0.50f, 2, false, true,
+                               SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
+                               true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
 };
 
 static const TrailMotion *TrailMotionOf(TrailPresetId p)
@@ -583,19 +626,23 @@ static void SweptTrail_InitShared(void)
     // actually bounds the deviation.
     // BLADE, MAIN, WISP, BACKDROP. A backdrop does not become a second main
     // tail: it settles quickly and only supplies soft mass behind the shape.
-    static const float sag[TRAIL_PRESET_COUNT] = {0.40f, 0.95f, 0.55f, 0.65f};
-    static const float curl[TRAIL_PRESET_COUNT] = {0.30f, 0.55f, 0.40f, 0.28f};
-    static const float drag[TRAIL_PRESET_COUNT] = {5.50f, 3.40f, 4.20f, 5.10f};
+    static const float sag[4] = {0.40f, 0.95f, 0.55f, 0.65f};
+    static const float curl[4] = {0.30f, 0.55f, 0.40f, 0.28f};
+    static const float drag[4] = {5.50f, 3.40f, 4.20f, 5.10f};
     for (int st = 0; st < TRAIL_PRESET_COUNT; st++)
     {
+        float s = (st < 4) ? sag[st] : k_trailMotion[st].sag;
+        float c = (st < 4) ? curl[st] : k_trailMotion[st].curl;
+        float d = (st < 4) ? drag[st] : k_trailMotion[st].drag;
+        if (st >= 4 && !k_trailMotion[st].cloth) continue;
         ForceField_AddLayer(&s_sweptCloth[st], (ForceLayer){
                                                    .type = FORCE_GRAVITY_DIR,
                                                    .direction = {0.0f, -1.0f, 0.0f},
-                                                   .strength = sag[st],
+                                                   .strength = s,
                                                });
         ForceField_AddLayer(&s_sweptCloth[st], (ForceLayer){
                                                    .type = FORCE_NOISE_CURL,
-                                                   .strength = curl[st],
+                                                   .strength = c,
                                                    .noiseScale = 0.95f, // finer eddies: a flutter, not a swing
                                                    .noiseSpeed = 0.45f, // the air itself moves, slowly
                                                });
@@ -603,7 +650,7 @@ static void SweptTrail_InitShared(void)
         // between a node that keeps its momentum and one that is glued to the path.
         ForceField_AddLayer(&s_sweptCloth[st], (ForceLayer){
                                                    .type = FORCE_DRAG,
-                                                   .strength = drag[st],
+                                                   .strength = d,
                                                });
     }
 
@@ -769,6 +816,20 @@ static const TrailLayer k_sweptLayers[TRAIL_PRESET_COUNT][3] = {
         {.widthMul = 1.00f, .alphaMul = 0.42f, .whiten = 0.00f, .scrollMul = 0.86f, .headAlphaPow = 0.0f, .texture = NULL},
         {.widthMul = 0.18f, .alphaMul = 0.12f, .whiten = 0.04f, .scrollMul = 1.25f, .headAlphaPow = 3.8f, .texture = NULL},
     },
+    [TRAIL_PRESET_SWORD_COMET] = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_SILK]        = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_WOOD_SPIRAL] = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_LIGHTNING]   = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_FIRE_JET]    = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_DRAGON]      = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_INK]         = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_TALISMAN]    = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_ICE_SHARD]   = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_WIND_BLADE]  = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_CROSS_BEAM]  = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_DEMONIC]     = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_TAIJI]       = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
+    [TRAIL_PRESET_GALAXY]      = {{.widthMul = 1.0f, .alphaMul = 1.0f, .scrollMul = 1.0f, .texture = NULL}, {0}, {0}},
 };
 
 // ── THE RECIPE TABLE — what each preset LOOKS like ──────────────────────────
@@ -785,7 +846,35 @@ static const TrailLayer k_sweptLayers[TRAIL_PRESET_COUNT][3] = {
 // coordinate; PARALLEL gives each wave layer its own sample and combines with
 // MAX, because the gaps between the bundles ARE the effect.
 static TrailRecipe k_trailPresets[TRAIL_PRESET_COUNT];
+static TrailRecipe k_trailStrands[TRAIL_PRESET_COUNT][SWEPT_STRANDS_MAX];
 static bool s_trailPresetsBuilt = false;
+
+static void InitMistLayer(TrailRecipe *r, Color c0, Color c1, Color c2, Color c3, float width, float alpha)
+{
+    r->topology = TRAIL_SAMPLE_PARALLEL;
+    r->surface = VFX_SURFACE_ENERGY_RIBBON;
+    r->radiusDefault = width;
+    r->additive = true;
+    r->hdrGain = 1.6f;
+    r->bodyOpacity = 0.5f;
+    r->tintAlpha = (unsigned char)(255.0f * alpha);
+    r->style = 13.0f;
+    r->cap = (Vector2){1.0f, 0.7f};
+    r->widthProf = (Vector4){0.3f, 0.25f, 1.4f, 0.0f};
+    r->drift = (Vector3){0.0f, 0.5f, 0.0f};
+    r->noise = (Vector4){0.18f, 1.6f, 0.6f, 1.1f};
+    r->wave = (Vector4){0.1f, 3.0f, 2.0f, 1.0f};
+    r->p0 = (Vector4){0.9f, 1.2f, 2.5f, 0.9f};
+    r->p1 = (Vector4){0.3f, 1.2f, 1.2f, 0.3f};
+    r->p2 = (Vector4){0.35f, 0.5f, 0.3f, 0.0f};
+    r->seed = 0.5f;
+    r->colRamp[0] = c0;
+    r->colRamp[1] = c1;
+    r->colRamp[2] = c2;
+    r->colRamp[3] = c3;
+    r->add = 1.0f;
+    r->alpha = alpha;
+}
 
 // Built rather than declared: UVDeformField/SurfaceFlow are layer stacks with
 // their own constructors, and a designated-initializer wall for four wave layers
@@ -1010,6 +1099,22 @@ static void TrailPresets_Build(void)
         // stretched once over the trail. Tiling a shape sheet gives a rope of
         // identical segments; the authoring decides this, not taste.
         UVFx_SyncStretch(&r->deform, &r->flow, true);
+
+        r->style = 13.0f;
+        r->cap = (Vector2){1.0f, 0.7f};
+        r->widthProf = (Vector4){0.2f, 0.3f, 3.2f, 0.0f};
+        r->drift = (Vector3){0.0f, 0.8f, 0.0f};
+        r->noise = (Vector4){0.42f, 1.3f, 0.5f, 1.1f};
+        r->wave = (Vector4){0.1f, 3.0f, 2.0f, 1.0f};
+        r->p0 = (Vector4){0.9f, 1.2f, 2.5f, 0.9f};
+        r->p1 = (Vector4){0.26f, 1.0f, 1.0f, 0.3f};
+        r->p2 = (Vector4){0.35f, 0.5f, 0.3f, 0.0f};
+        r->colRamp[0] = (Color){93, 102, 128, 255};
+        r->colRamp[1] = (Color){154, 164, 189, 255};
+        r->colRamp[2] = (Color){216, 222, 240, 255};
+        r->colRamp[3] = (Color){255, 255, 255, 255};
+        r->add = 0.0f;
+        r->alpha = 0.9f;
     }
 
     // ── MAGIC — SMOKE's plume, lit from inside ─────────────────────────────
@@ -1173,6 +1278,659 @@ static void TrailPresets_Build(void)
             .tiling = {0.75f, 0.90f}, .pan = {0.0f, 0.55f},
             .blend = SURFACE_FLOW_MAX, .env = UV_ENV_NONE});
     }
+
+    // Set style 1 for BLADE (Kiếm Khí)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_BLADE];
+        r->style = 1.0f;
+        r->layerCount = 1;
+        r->hdrGain = 2.4f;
+        r->bodyOpacity = 0.75f;
+        r->colRamp[0] = (Color){10, 28, 110, 255};
+        r->colRamp[1] = (Color){42, 140, 255, 255};
+        r->colRamp[2] = (Color){159, 232, 255, 255};
+        r->colRamp[3] = (Color){255, 255, 255, 255};
+        r->widthProf = (Vector4){0.45f, 0.22f, 0.0f, 0.15f};
+        r->cap = (Vector2){0.6f, 1.0f};
+        r->noise = (Vector4){0.05f, 3.5f, 2.0f, 1.2f};
+        r->wave = (Vector4){0.05f, 5.0f, 6.0f, 1.2f};
+        r->p0 = (Vector4){0.9f, 3.0f, 6.0f, 2.2f};
+        r->p1 = (Vector4){1.1f, 0.0f, 0.0f, 0.0f};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // Set style 2 for ENERGY (Phi Kiếm / Sword Streak)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_ENERGY];
+        r->style = 2.0f;
+        r->layerCount = 1;
+        r->hdrGain = 2.4f;
+        r->bodyOpacity = 0.85f;
+        r->colRamp[0] = (Color){90, 58, 5, 255};
+        r->colRamp[1] = (Color){224, 160, 32, 255};
+        r->colRamp[2] = (Color){255, 224, 138, 255};
+        r->colRamp[3] = (Color){255, 248, 224, 255};
+        r->widthProf = (Vector4){1.2f, 0.4f, 0.0f, 0.0f};
+        r->cap = (Vector2){0.0f, 1.0f};
+        r->wave = (Vector4){0.05f, 6.0f, 8.0f, 1.0f};
+        r->noise = (Vector4){0.05f, 2.5f, 1.2f, 1.0f};
+        r->p0 = (Vector4){1.4f, 3.5f, 3.0f, 7.0f};
+        r->p1 = (Vector4){5.0f, 1.4f, 1.4f, 1.0f};
+        r->p2 = (Vector4){10.0f, 1.0f, 1.0f, 1.0f};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // ── XIANXIA MOTION TRAIL PRESETS 8..21 (WebGL Reference) ─────────────────
+    // 8: Phi Kiếm (Sword Comet)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_SWORD_COMET];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_SWORD_COMET];
+        r->layerCount = 1;
+        r->radiusDefault = 0.22f;
+        r->additive = true;
+        r->hdrGain = 2.5f;
+        r->bodyOpacity = 0.85f;
+        r->tintAlpha = 255;
+        r->style = 2.0f;
+        r->widthProf = (Vector4){1.2f, 0.4f, 0.0f, 0.0f};
+        r->cap = (Vector2){0.0f, 1.0f};
+        r->wave = (Vector4){0.05f, 6.0f, 8.0f, 1.0f};
+        r->noise = (Vector4){0.05f, 2.5f, 1.2f, 1.0f};
+        r->p0 = (Vector4){1.4f, 3.5f, 3.0f, 7.0f};
+        r->p1 = (Vector4){5.0f, 1.4f, 1.4f, 1.0f};
+        r->p2 = (Vector4){10.0f, 1.0f, 1.0f, 1.0f};
+        r->colRamp[0] = (Color){90, 58, 5, 255};
+        r->colRamp[1] = (Color){224, 160, 32, 255};
+        r->colRamp[2] = (Color){255, 224, 138, 255};
+        r->colRamp[3] = (Color){255, 248, 224, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 9: Tiên Đới (Celestial Silk)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_SILK];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_SILK];
+        r->layerCount = 1;
+        r->radiusDefault = 0.28f;
+        r->additive = true;
+        r->hdrGain = 2.6f;
+        r->bodyOpacity = 0.92f;
+        r->tintAlpha = 240;
+        r->style = 3.0f;
+        r->cap = (Vector2){0.5f, 1.0f};
+        r->widthProf = (Vector4){0.35f, 0.4f, 0.25f, 0.0f};
+        r->wave = (Vector4){0.2f, 4.5f, 3.0f, 1.1f};
+        r->rollRate = 1.1f;
+        r->rollSpeed = 0.0f;
+        r->p0 = (Vector4){34.0f, 2.2f, 1.6f, 1.0f};
+        r->p1 = (Vector4){0.8f, 1.0f, 1.0f, 1.0f};
+        r->colRamp[0] = (Color){160, 44, 90, 255};
+        r->colRamp[1] = (Color){240, 138, 176, 255};
+        r->colRamp[2] = (Color){255, 217, 230, 255};
+        r->colRamp[3] = (Color){255, 255, 255, 255};
+        r->add = 0.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 10: Linh Toàn (Wood Spiral Qi)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_WOOD_SPIRAL];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_WOOD_SPIRAL];
+        r->layerCount = 1;
+        r->radiusDefault = 0.24f;
+        r->additive = true;
+        r->hdrGain = 1.8f;
+        r->bodyOpacity = 0.82f;
+        r->tintAlpha = 255;
+        r->style = 4.0f;
+        r->cap = (Vector2){0.6f, 1.0f};
+        r->widthProf = (Vector4){0.8f, 0.25f, 0.0f, 0.0f};
+        r->helix = (Vector4){0.24f, 6.5f, 5.5f, 0.0f};
+        r->rollRate = 2.5f;
+        r->rollSpeed = 4.0f;
+        r->p0 = (Vector4){3.2f, 4.0f, 0.0f, 0.0f};
+        r->p1 = (Vector4){3.0f, 1.2f, 1.0f, 1.0f};
+        r->colRamp[0] = (Color){10, 74, 42, 255};
+        r->colRamp[1] = (Color){47, 208, 112, 255};
+        r->colRamp[2] = (Color){166, 255, 200, 255};
+        r->colRamp[3] = (Color){240, 255, 244, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 11: Lôi Điện (Lightning Strike)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_LIGHTNING];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_LIGHTNING];
+        r->layerCount = 1;
+        r->radiusDefault = 0.16f;
+        r->additive = true;
+        r->hdrGain = 2.4f;
+        r->bodyOpacity = 0.75f;
+        r->tintAlpha = 255;
+        r->style = 5.0f;
+        r->cap = (Vector2){0.0f, 1.0f};
+        r->widthProf = (Vector4){0.4f, 0.12f, 0.0f, 0.0f};
+        r->jitter = (Vector4){0.1f, 6.0f, 18.0f, 0.15f};
+        r->p0 = (Vector4){24.0f, 8.0f, 2.0f, 1.0f};
+        r->p1 = (Vector4){1.1f, 1.0f, 1.0f, 1.0f};
+        r->colRamp[0] = (Color){58, 16, 128, 255};
+        r->colRamp[1] = (Color){138, 92, 255, 255};
+        r->colRamp[2] = (Color){208, 184, 255, 255};
+        r->colRamp[3] = (Color){255, 255, 255, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 12: Hỏa Diễm (Fire Jet)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_FIRE_JET];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_FIRE_JET];
+        r->layerCount = 1;
+        r->radiusDefault = 0.30f;
+        r->additive = true;
+        r->hdrGain = 1.9f;
+        r->bodyOpacity = 0.88f;
+        r->tintAlpha = 255;
+        r->style = 6.0f;
+        r->cap = (Vector2){0.8f, 0.6f};
+        r->widthProf = (Vector4){0.9f, 0.5f, 0.5f, 0.6f};
+        r->drift = (Vector3){0.0f, 0.9f, 0.0f};
+        r->noise = (Vector4){0.16f, 2.2f, 1.5f, 1.0f};
+        r->p0 = (Vector4){1.1f, 2.5f, 3.0f, 0.8f};
+        r->p1 = (Vector4){0.8f, 0.9f, 1.0f, 1.0f};
+        r->colRamp[0] = (Color){48, 4, 0, 255};
+        r->colRamp[1] = (Color){208, 42, 0, 255};
+        r->colRamp[2] = (Color){255, 154, 26, 255};
+        r->colRamp[3] = (Color){255, 243, 176, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 13: Long Khí (Dragon Qi)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_DRAGON];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_DRAGON];
+        r->layerCount = 1;
+        r->radiusDefault = 0.22f;
+        r->additive = true;
+        r->hdrGain = 1.8f;
+        r->bodyOpacity = 0.90f;
+        r->tintAlpha = 255;
+        r->style = 7.0f;
+        r->cap = (Vector2){1.0f, 1.0f};
+        r->widthProf = (Vector4){0.7f, 0.55f, 0.0f, 0.55f};
+        r->wave = (Vector4){0.3f, 4.2f, 3.0f, 0.5f};
+        r->noise = (Vector4){0.03f, 2.0f, 1.0f, 1.0f};
+        r->rollRate = 0.8f;
+        r->rollSpeed = 1.2f;
+        r->p0 = (Vector4){5.0f, 1.5f, 8.0f, 1.0f};
+        r->p1 = (Vector4){2.2f, 1.1f, 3.0f, 1.0f};
+        r->colRamp[0] = (Color){58, 32, 0, 255};
+        r->colRamp[1] = (Color){184, 112, 10, 255};
+        r->colRamp[2] = (Color){255, 192, 74, 255};
+        r->colRamp[3] = (Color){255, 241, 192, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 14: Mặc Tích (Ink Brush)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_INK];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_INK];
+        r->layerCount = 1;
+        r->radiusDefault = 0.20f;
+        r->additive = true;
+        r->hdrGain = 1.0f;
+        r->bodyOpacity = 0.98f;
+        r->tintAlpha = 250;
+        r->style = 8.0f;
+        r->cap = (Vector2){0.7f, 1.0f};
+        r->widthProf = (Vector4){0.45f, 0.5f, 0.12f, 0.0f};
+        r->colRamp[0] = (Color){10, 10, 12, 255};
+        r->colRamp[1] = (Color){58, 62, 68, 255};
+        r->colRamp[2] = (Color){112, 112, 120, 255};
+        r->colRamp[3] = (Color){192, 184, 160, 255};
+        r->add = 0.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 15: Phù Văn (Talisman Runes)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_TALISMAN];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_TALISMAN];
+        r->layerCount = 1;
+        r->radiusDefault = 0.28f;
+        r->additive = true;
+        r->hdrGain = 1.7f;
+        r->bodyOpacity = 0.85f;
+        r->tintAlpha = 255;
+        r->style = 9.0f;
+        r->cap = (Vector2){0.6f, 1.0f};
+        r->widthProf = (Vector4){0.3f, 0.2f, 0.0f, 0.0f};
+        r->p0 = (Vector4){2.1f, 0.3f, 1.0f, 1.0f};
+        r->p1 = (Vector4){0.8f, 1.0f, 1.0f, 1.0f};
+        r->colRamp[0] = (Color){10, 79, 90, 255};
+        r->colRamp[1] = (Color){37, 192, 208, 255};
+        r->colRamp[2] = (Color){154, 240, 255, 255};
+        r->colRamp[3] = (Color){255, 255, 255, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 16: Hàn Băng (Ice Shards)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_ICE_SHARD];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_ICE_SHARD];
+        r->layerCount = 1;
+        r->radiusDefault = 0.26f;
+        r->additive = true;
+        r->hdrGain = 1.9f;
+        r->bodyOpacity = 0.88f;
+        r->tintAlpha = 255;
+        r->style = 10.0f;
+        r->cap = (Vector2){0.0f, 1.0f};
+        r->widthProf = (Vector4){0.7f, 0.25f, 0.0f, 0.0f};
+        r->shard = (Vector2){3.2f, 0.75f};
+        r->p0 = (Vector4){6.0f, 3.0f, 1.0f, 1.0f};
+        r->p1 = (Vector4){1.2f, 1.0f, 1.0f, 1.0f};
+        r->colRamp[0] = (Color){26, 58, 122, 255};
+        r->colRamp[1] = (Color){90, 168, 255, 255};
+        r->colRamp[2] = (Color){191, 232, 255, 255};
+        r->colRamp[3] = (Color){255, 255, 255, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 17: Phong Nhận (Wind Blade)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_WIND_BLADE];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_WIND_BLADE];
+        r->layerCount = 1;
+        r->radiusDefault = 0.22f;
+        r->additive = true;
+        r->hdrGain = 1.6f;
+        r->bodyOpacity = 0.82f;
+        r->tintAlpha = 255;
+        r->style = 11.0f;
+        r->cap = (Vector2){0.0f, 1.0f};
+        r->widthProf = (Vector4){0.7f, 0.2f, 0.0f, 0.0f};
+        r->lane = (Vector4){1.0f, 0.3f, 2.2f, 0.0f};
+        r->noise = (Vector4){0.05f, 3.0f, 2.0f, 1.0f};
+        r->rollRate = 1.5f;
+        r->rollSpeed = 2.0f;
+        r->p0 = (Vector4){1.3f, 6.0f, 3.0f, 1.0f};
+        r->p1 = (Vector4){1.1f, 1.0f, 1.0f, 1.0f};
+        r->colRamp[0] = (Color){11, 74, 74, 255};
+        r->colRamp[1] = (Color){79, 214, 200, 255};
+        r->colRamp[2] = (Color){200, 255, 244, 255};
+        r->colRamp[3] = (Color){255, 255, 255, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 18: Thập Tự Quang (Cross Beam)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_CROSS_BEAM];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_CROSS_BEAM];
+        r->layerCount = 1;
+        r->radiusDefault = 0.26f;
+        r->additive = true;
+        r->hdrGain = 2.2f;
+        r->bodyOpacity = 0.85f;
+        r->tintAlpha = 255;
+        r->style = 12.0f;
+        r->cap = (Vector2){0.3f, 1.0f};
+        r->widthProf = (Vector4){0.9f, 0.3f, 0.0f, 0.0f};
+        r->wave = (Vector4){0.1f, 4.0f, 3.0f, 1.0f};
+        r->rollRate = 2.4f;
+        r->rollSpeed = 3.2f;
+        r->p0 = (Vector4){1.5f, 4.0f, 10.0f, 8.0f};
+        r->p1 = (Vector4){4.0f, 1.3f, 1.4f, 1.0f};
+        r->colRamp[0] = (Color){74, 10, 96, 255};
+        r->colRamp[1] = (Color){208, 48, 216, 255};
+        r->colRamp[2] = (Color){255, 154, 240, 255};
+        r->colRamp[3] = (Color){255, 255, 255, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 19: Ma Khí (Demonic Smoke / Contour)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_DEMONIC];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_SMOKE_STRAND;
+        r->layers = k_sweptLayers[TRAIL_PRESET_DEMONIC];
+        r->layerCount = 1;
+        r->radiusDefault = 0.35f;
+        r->additive = true;
+        r->hdrGain = 1.7f;
+        r->bodyOpacity = 0.95f;
+        r->tintAlpha = 245;
+        r->style = 13.0f;
+        r->cap = (Vector2){1.0f, 0.7f};
+        r->widthProf = (Vector4){0.2f, 0.3f, 3.2f, 0.0f};
+        r->drift = (Vector3){0.0f, 0.8f, 0.0f};
+        r->noise = (Vector4){0.42f, 1.3f, 0.5f, 1.1f};
+        r->wave = (Vector4){0.1f, 3.0f, 2.0f, 1.0f};
+        r->p0 = (Vector4){0.9f, 1.2f, 2.5f, 0.9f};
+        r->p1 = (Vector4){0.26f, 1.0f, 1.0f, 0.3f};
+        r->p2 = (Vector4){0.35f, 0.5f, 0.3f, 1.0f};
+        r->colRamp[0] = (Color){48, 0, 4, 255};
+        r->colRamp[1] = (Color){192, 16, 42, 255};
+        r->colRamp[2] = (Color){255, 90, 48, 255};
+        r->colRamp[3] = (Color){255, 208, 160, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 20: Thái Cực (Taiji)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_TAIJI];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_TAIJI];
+        r->layerCount = 1;
+        r->radiusDefault = 0.25f;
+        r->additive = true;
+        r->hdrGain = 2.4f;
+        r->bodyOpacity = 0.85f;
+        r->tintAlpha = 255;
+        r->style = 15.0f;
+        r->cap = (Vector2){1.0f, 1.0f};
+        r->widthProf = (Vector4){0.8f, 0.25f, 0.0f, 0.0f};
+        r->helix = (Vector4){0.24f, 5.0f, 3.2f, 0.0f};
+        r->rollRate = 1.8f;
+        r->rollSpeed = 2.5f;
+        r->p0 = (Vector4){2.5f, 2.0f, 0.0f, 0.0f};
+        r->p1 = (Vector4){0.9f, 1.0f, 1.0f, 1.0f};
+        r->colRamp[0] = (Color){5, 5, 5, 255};
+        r->colRamp[1] = (Color){122, 144, 255, 255};
+        r->colRamp[2] = (Color){255, 217, 138, 255};
+        r->colRamp[3] = (Color){255, 255, 255, 255};
+        r->add = 0.0f;
+        r->alpha = 1.0f;
+    }
+
+    // 21: Tinh Hà (Galaxy Nebula)
+    {
+        TrailRecipe *r = &k_trailPresets[TRAIL_PRESET_GALAXY];
+        r->topology = TRAIL_SAMPLE_PARALLEL;
+        r->surface = VFX_SURFACE_ENERGY_RIBBON;
+        r->layers = k_sweptLayers[TRAIL_PRESET_GALAXY];
+        r->layerCount = 1;
+        r->radiusDefault = 0.32f;
+        r->additive = true;
+        r->hdrGain = 2.1f;
+        r->bodyOpacity = 0.82f;
+        r->tintAlpha = 255;
+        r->style = 14.0f;
+        r->cap = (Vector2){0.6f, 1.0f};
+        r->widthProf = (Vector4){0.45f, 0.4f, 0.2f, 0.0f};
+        r->wave = (Vector4){0.12f, 3.0f, 1.5f, 1.0f};
+        r->noise = (Vector4){0.08f, 1.5f, 0.4f, 1.0f};
+        r->p0 = (Vector4){1.1f, 1.2f, 3.0f, 14.0f};
+        r->p1 = (Vector4){1.3f, 1.0f, 1.0f, 1.0f};
+        r->colRamp[0] = (Color){20, 16, 74, 255};
+        r->colRamp[1] = (Color){90, 58, 208, 255};
+        r->colRamp[2] = (Color){224, 138, 224, 255};
+        r->colRamp[3] = (Color){255, 240, 255, 255};
+        r->add = 1.0f;
+        r->alpha = 1.0f;
+    }
+
+    // Initialize all strands from primary preset recipes
+    for (int p = 0; p < TRAIL_PRESET_COUNT; p++)
+    {
+        for (int c = 0; c < SWEPT_STRANDS_MAX; c++)
+        {
+            k_trailStrands[p][c] = k_trailPresets[p];
+        }
+    }
+
+    // --- Preset-Specific Companion Layers (Strands) from WebGL trail.html ---
+
+    // 1. Tiên Đới (Celestial Silk): Pink Silk (c=0) + Gold Reverse-Roll Silk (c=1) + Mist Shroud (c=2)
+    {
+        TrailRecipe *s1 = &k_trailStrands[TRAIL_PRESET_SILK][1];
+        *s1 = k_trailPresets[TRAIL_PRESET_SILK];
+        s1->radiusDefault = 0.15f;
+        s1->seed = 0.4f;
+        s1->widthProf = (Vector4){0.4f, 0.4f, 0.2f, 0.0f};
+        s1->wave = (Vector4){0.28f, 3.5f, 2.4f, 1.3f};
+        s1->rollRate = -0.9f;
+        s1->p0 = (Vector4){26.0f, 1.7f, 1.2f, 1.0f};
+        s1->p1 = (Vector4){0.9f, 1.0f, 1.0f, 1.0f};
+        s1->colRamp[0] = (Color){106, 80, 24, 255};
+        s1->colRamp[1] = (Color){232, 192, 112, 255};
+        s1->colRamp[2] = (Color){255, 240, 200, 255};
+        s1->colRamp[3] = (Color){255, 255, 255, 255};
+        s1->add = 0.0f;
+
+        InitMistLayer(&k_trailStrands[TRAIL_PRESET_SILK][2],
+                      (Color){106, 32, 64, 255}, (Color){224, 112, 160, 255},
+                      (Color){255, 208, 228, 255}, (Color){255, 255, 255, 255},
+                      0.40f, 0.30f);
+    }
+
+    // 2. Tinh Hà (Galaxy Nebula): Galaxy Nebula Core (c=0) + Cosmic Mist Shroud (c=1)
+    {
+        InitMistLayer(&k_trailStrands[TRAIL_PRESET_GALAXY][1],
+                      (Color){16, 16, 80, 255}, (Color){74, 58, 192, 255},
+                      (Color){176, 128, 240, 255}, (Color){255, 255, 255, 255},
+                      0.50f, 0.25f);
+    }
+
+    // 3. Phi Kiếm (Flying Sword Comet): Streak Glow (c=0) + Hot Core (c=1) + Golden Mist (c=2)
+    {
+        TrailRecipe *s1 = &k_trailStrands[TRAIL_PRESET_SWORD_COMET][1];
+        *s1 = k_trailPresets[TRAIL_PRESET_SWORD_COMET];
+        s1->radiusDefault = 0.05f;
+        s1->widthProf = (Vector4){1.0f, 0.3f, 0.0f, 0.0f};
+        s1->p0 = (Vector4){2.0f, 4.0f, 3.0f, 9.0f};
+        s1->p1 = (Vector4){3.0f, 1.2f, 1.2f, 1.0f};
+        s1->p2 = (Vector4){14.0f, 1.0f, 1.0f, 1.0f};
+        s1->colRamp[0] = (Color){128, 80, 16, 255};
+        s1->colRamp[1] = (Color){255, 208, 96, 255};
+        s1->colRamp[2] = (Color){255, 242, 192, 255};
+        s1->colRamp[3] = (Color){255, 255, 255, 255};
+
+        InitMistLayer(&k_trailStrands[TRAIL_PRESET_SWORD_COMET][2],
+                      (Color){90, 58, 5, 255}, (Color){224, 160, 32, 255},
+                      (Color){255, 232, 168, 255}, (Color){255, 248, 224, 255},
+                      0.34f, 0.50f);
+    }
+
+    // 4. Linh Toàn (Wood Spiral Qi): Core (c=0) + Helical Dash 1 (c=1) + Helical Dash 2 (c=2) + Green Mist (c=3)
+    {
+        k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].style = 2.0f;
+        k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].radiusDefault = 0.05f;
+        k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].p0 = (Vector4){2.0f, 4.0f, 3.0f, 6.0f};
+        k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].p1 = (Vector4){3.0f, 1.5f, 1.4f, 1.0f};
+        k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].p2 = (Vector4){8.0f, 1.0f, 1.0f, 1.0f};
+
+        TrailRecipe *s1 = &k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][1];
+        *s1 = k_trailPresets[TRAIL_PRESET_WOOD_SPIRAL];
+        s1->style = 4.0f;
+        s1->radiusDefault = 0.05f;
+        s1->helix = (Vector4){0.24f, 6.5f, 5.5f, 0.0f};
+
+        TrailRecipe *s2 = &k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][2];
+        *s2 = k_trailPresets[TRAIL_PRESET_WOOD_SPIRAL];
+        s2->style = 4.0f;
+        s2->radiusDefault = 0.05f;
+        s2->helix = (Vector4){0.24f, 6.5f, 5.5f, 2.0944f};
+
+        InitMistLayer(&k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][3],
+                      (Color){10, 74, 42, 255}, (Color){47, 208, 112, 255},
+                      (Color){166, 255, 200, 255}, (Color){240, 255, 244, 255},
+                      0.40f, 0.40f);
+    }
+
+    // 5. Lôi Điện (Lightning Strike): Main Bolt (c=0) + Core Bolt (c=1) + Branch 1 (c=2) + Branch 2 (c=3)
+    {
+        k_trailStrands[TRAIL_PRESET_LIGHTNING][0].radiusDefault = 0.16f;
+
+        TrailRecipe *s1 = &k_trailStrands[TRAIL_PRESET_LIGHTNING][1];
+        *s1 = k_trailPresets[TRAIL_PRESET_LIGHTNING];
+        s1->radiusDefault = 0.04f;
+        s1->p0 = (Vector4){24.0f, 14.0f, 3.0f, 1.0f};
+
+        TrailRecipe *s2 = &k_trailStrands[TRAIL_PRESET_LIGHTNING][2];
+        *s2 = k_trailPresets[TRAIL_PRESET_LIGHTNING];
+        s2->radiusDefault = 0.035f;
+        s2->seed = 1.0f;
+        s2->maxDist = 0.9f;
+        s2->jitter = (Vector4){0.25f, 4.0f, 18.0f, 0.15f};
+
+        TrailRecipe *s3 = &k_trailStrands[TRAIL_PRESET_LIGHTNING][3];
+        *s3 = k_trailPresets[TRAIL_PRESET_LIGHTNING];
+        s3->radiusDefault = 0.03f;
+        s3->seed = 2.0f;
+        s3->maxDist = 0.6f;
+        s3->jitter = (Vector4){0.30f, 3.5f, 18.0f, 0.15f};
+    }
+
+    // 6. Hỏa Diễm (Fire Jet): Outer (c=0) + Core (c=1)
+    {
+        k_trailStrands[TRAIL_PRESET_FIRE_JET][0].radiusDefault = 0.30f;
+
+        TrailRecipe *s1 = &k_trailStrands[TRAIL_PRESET_FIRE_JET][1];
+        *s1 = k_trailPresets[TRAIL_PRESET_FIRE_JET];
+        s1->radiusDefault = 0.15f;
+        s1->seed = 0.3f;
+        s1->widthProf = (Vector4){1.1f, 0.5f, 0.3f, 0.4f};
+        s1->p0 = (Vector4){1.4f, 2.5f, 4.0f, 0.8f};
+        s1->p1 = (Vector4){0.9f, 0.7f, 1.0f, 1.0f};
+        s1->colRamp[0] = (Color){208, 42, 0, 255};
+        s1->colRamp[1] = (Color){255, 154, 26, 255};
+        s1->colRamp[2] = (Color){255, 243, 176, 255};
+        s1->colRamp[3] = (Color){255, 255, 255, 255};
+    }
+
+    // 7. Hàn Băng (Ice Shard): Shards (c=0) + Core (c=1)
+    {
+        k_trailStrands[TRAIL_PRESET_ICE_SHARD][0].radiusDefault = 0.26f;
+
+        TrailRecipe *s1 = &k_trailStrands[TRAIL_PRESET_ICE_SHARD][1];
+        *s1 = k_trailPresets[TRAIL_PRESET_ICE_SHARD];
+        s1->style = 2.0f;
+        s1->radiusDefault = 0.035f;
+        s1->widthProf = (Vector4){1.0f, 0.3f, 0.0f, 0.0f};
+        s1->p0 = (Vector4){2.0f, 3.0f, 3.0f, 8.0f};
+        s1->p1 = (Vector4){3.0f, 1.2f, 1.2f, 1.0f};
+        s1->p2 = (Vector4){10.0f, 1.0f, 1.0f, 1.0f};
+    }
+
+    // 8. Phong Nhận (Wind Blade): 4 Lanes
+    {
+        for (int l = 0; l < 4; l++)
+        {
+            float laneK = (float)(l - 1.5f);
+            TrailRecipe *sl = &k_trailStrands[TRAIL_PRESET_WIND_BLADE][l];
+            *sl = k_trailPresets[TRAIL_PRESET_WIND_BLADE];
+            sl->seed = (float)l + 1.0f;
+            sl->lane = (Vector4){laneK * 0.33f, 0.3f, 2.2f, 0.0f};
+            sl->radiusDefault = 0.06f;
+        }
+    }
+
+    // 9. Thập Tự Quang (Cross Radiant Beam): Beam (c=0) + Magenta Mist (c=1)
+    {
+        k_trailStrands[TRAIL_PRESET_CROSS_BEAM][0].radiusDefault = 0.26f;
+
+        InitMistLayer(&k_trailStrands[TRAIL_PRESET_CROSS_BEAM][1],
+                      (Color){58, 10, 80, 255}, (Color){176, 48, 192, 255},
+                      (Color){255, 154, 240, 255}, (Color){255, 255, 255, 255},
+                      0.42f, 0.35f);
+    }
+
+    // 10. Ma Khí (Demonic): Dark Smoke (c=0) + Ember Contour (c=1) + Secondary Smoke (c=2)
+    {
+        k_trailStrands[TRAIL_PRESET_DEMONIC][0].colRamp[0] = (Color){6, 2, 10, 255};
+        k_trailStrands[TRAIL_PRESET_DEMONIC][0].colRamp[1] = (Color){21, 10, 34, 255};
+        k_trailStrands[TRAIL_PRESET_DEMONIC][0].colRamp[2] = (Color){42, 18, 56, 255};
+        k_trailStrands[TRAIL_PRESET_DEMONIC][0].colRamp[3] = (Color){58, 26, 74, 255};
+
+        TrailRecipe *s1 = &k_trailStrands[TRAIL_PRESET_DEMONIC][1];
+        *s1 = k_trailPresets[TRAIL_PRESET_DEMONIC];
+        s1->radiusDefault = 0.35f;
+        s1->p2.w = 1.0f; // contour highlight!
+        s1->colRamp[0] = (Color){48, 0, 4, 255};
+        s1->colRamp[1] = (Color){192, 16, 42, 255};
+        s1->colRamp[2] = (Color){255, 90, 48, 255};
+        s1->colRamp[3] = (Color){255, 208, 160, 255};
+
+        TrailRecipe *s2 = &k_trailStrands[TRAIL_PRESET_DEMONIC][2];
+        *s2 = k_trailPresets[TRAIL_PRESET_DEMONIC];
+        s2->seed = 2.3f;
+        s2->radiusDefault = 0.20f;
+    }
+
+    // 11. Thái Cực (Twin Yin-Yang): Mist (c=0) + Yin Helix (c=1) + Yang Helix (c=2)
+    {
+        InitMistLayer(&k_trailStrands[TRAIL_PRESET_TAIJI][0],
+                      (Color){96, 112, 160, 255}, (Color){160, 180, 224, 255},
+                      (Color){232, 238, 255, 255}, (Color){255, 255, 255, 255},
+                      0.30f, 0.30f);
+
+        TrailRecipe *s1 = &k_trailStrands[TRAIL_PRESET_TAIJI][1];
+        *s1 = k_trailPresets[TRAIL_PRESET_TAIJI];
+        s1->style = 15.0f;
+        s1->radiusDefault = 0.075f;
+        s1->helix = (Vector4){0.24f, 5.0f, 3.2f, 3.14159f};
+        s1->colRamp[0] = (Color){5, 5, 5, 255};
+        s1->colRamp[1] = (Color){122, 144, 255, 255};
+        s1->colRamp[2] = (Color){0, 0, 0, 255};
+        s1->colRamp[3] = (Color){0, 0, 0, 255};
+        s1->add = 0.0f;
+
+        TrailRecipe *s2 = &k_trailStrands[TRAIL_PRESET_TAIJI][2];
+        *s2 = k_trailPresets[TRAIL_PRESET_TAIJI];
+        s2->style = 15.0f;
+        s2->radiusDefault = 0.075f;
+        s2->helix = (Vector4){0.24f, 5.0f, 3.2f, 0.0f};
+        s2->colRamp[0] = (Color){255, 255, 255, 255};
+        s2->colRamp[1] = (Color){255, 217, 138, 255};
+        s2->colRamp[2] = (Color){0, 0, 0, 255};
+        s2->colRamp[3] = (Color){0, 0, 0, 255};
+        s2->add = 0.0f;
+    }
+
+    // 12. Kiếm Khí (Blade): Slash (c=0) + Blue Mist (c=1)
+    {
+        k_trailStrands[TRAIL_PRESET_BLADE][0].radiusDefault = 1.0f;
+
+        InitMistLayer(&k_trailStrands[TRAIL_PRESET_BLADE][1],
+                      (Color){10, 42, 106, 255}, (Color){58, 140, 255, 255},
+                      (Color){160, 224, 255, 255}, (Color){255, 255, 255, 255},
+                      1.0f, 0.35f);
+    }
 }
 
 // ── RECIPE → the fragment shader's current uniform set ──────────────────────
@@ -1210,21 +1968,48 @@ static void TrailRecipe_ToLegacyMaterial(const TrailRecipe *r,
                              ? r->deform.layers[0].envEnd : 0.10f;
     outDeform->envTail = 0.99f;
     outDeform->phase = Random01() * 10.0f; // no two casts read identical
+    outDeform->rollRate = r->rollRate;
+    outDeform->rollSpeed = r->rollSpeed;
+    outDeform->drift = r->drift;
+    outDeform->jitter = r->jitter;
+    outDeform->widthProf = r->widthProf;
+    outDeform->shard = r->shard;
+    outDeform->wave = r->wave;
+    outDeform->noise = r->noise;
+    outDeform->helix = r->helix;
+    outDeform->lane = r->lane;
+    outDeform->cap = r->cap;
+
+    out->style = r->style;
+    out->colRamp[0] = r->colRamp[0];
+    out->colRamp[1] = r->colRamp[1];
+    out->colRamp[2] = r->colRamp[2];
+    out->colRamp[3] = r->colRamp[3];
+    out->p0 = r->p0;
+    out->p1 = r->p1;
+    out->p2 = r->p2;
+    out->uvScale = r->uvScale;
+    out->seed = r->seed;
+    out->maxDist = r->maxDist;
+    out->add = r->add;
+    out->alpha = r->alpha;
+
     // Mode 2 IS "PARALLEL topology over a strand-grammar sheet". A SUMMED preset
     // has no wave layers and wants the plain textured path, which is mode 0 —
     // the swept presets' layer stack draws through the body shader instead.
     out->mode = (r->topology == TRAIL_SAMPLE_PARALLEL) ? 2.0f : 0.0f;
+    if (r->style > 0.5f) out->mode = 2.0f;
     if (out->mode < 1.5f)
         return;
 
     // The three wave layers were authored as one amplitude/frequency with a
     // per-layer detune; recover the pair the shader still expects.
-    const UVDeformLayer *L0 = &r->deform.layers[0];
-    out->waveAmp = L0->amplitude;
-    out->waveFreq = L0->frequency;
-    out->waveTravel = L0->speed;
+    const UVDeformLayer *L0 = (r->deform.layerCount > 0) ? &r->deform.layers[0] : NULL;
+    out->waveAmp = L0 ? L0->amplitude : 0.0f;
+    out->waveFreq = L0 ? L0->frequency : 0.0f;
+    out->waveTravel = L0 ? L0->speed : 0.0f;
     // detune of layer 1 over layer 0 — the "spread" between the fields
-    out->waveSpread = (r->deform.layerCount > 1 && L0->frequency > 0.0f)
+    out->waveSpread = (r->deform.layerCount > 1 && L0 && L0->frequency > 0.0f)
                           ? (r->deform.layers[1].frequency / L0->frequency) - 1.0f
                           : 0.0f;
     // AUTHORED, not inferred. This used to be `amplitude * 0.85`, which ties
@@ -1236,11 +2021,11 @@ static void TrailRecipe_ToLegacyMaterial(const TrailRecipe *r,
     out->hdrGain = r->hdrGain;
     out->stretchUV = r->deform.stretchUV ? 1.0f : 0.0f;
 
-    const SurfaceFlowLayer *F0 = &r->flow.layers[0];
-    out->tilingX = F0->tiling.y;
+    const SurfaceFlowLayer *F0 = (r->flow.layerCount > 0) ? &r->flow.layers[0] : NULL;
+    out->tilingX = F0 ? F0->tiling.y : 1.0f;
     out->tilingY = 1.0f;
-    out->panCoarse = F0->pan.y;
-    out->panFine = F0->pan.y * 2.0f;
+    out->panCoarse = F0 ? F0->pan.y : 0.3f;
+    out->panFine = F0 ? F0->pan.y * 2.0f : 0.6f;
 
     out->dissolve = r->mask.dissolve;
     out->dissolveSoft = r->mask.dissolveSoft;
@@ -1301,11 +2086,30 @@ static void TrailRecipe_ToLegacyMaterial(const TrailRecipe *r,
     out->bundleWeight = r->strand.thirdWeight;
 }
 
-static const TrailRecipe *TrailPresetRecipe(TrailPresetId p)
+const TrailRecipe *VFX_TrailGetPresetRecipe(TrailPresetId p)
 {
     TrailPresets_Build();
     if (p < 0 || p >= TRAIL_PRESET_COUNT) p = TRAIL_PRESET_BLADE;
     return &k_trailPresets[p];
+}
+
+static const TrailRecipe *TrailPresetRecipe(TrailPresetId p)
+{
+    return VFX_TrailGetPresetRecipe(p);
+}
+
+void VFX_TrailApplyMotionConfig(const VFX_MotionRibbonConfig *cfg)
+{
+    if (!cfg || cfg->preset < 0 || cfg->preset >= TRAIL_PRESET_COUNT) return;
+    TrailPresets_Build();
+    TrailRecipe *r = &k_trailPresets[cfg->preset];
+    if (cfg->hdrGain > 0.0f) r->hdrGain = cfg->hdrGain;
+    if (cfg->bodyOpacity >= 0.0f) r->bodyOpacity = cfg->bodyOpacity;
+    if (cfg->rollRate != 0.0f) r->rollRate = cfg->rollRate;
+    if (cfg->rollSpeed != 0.0f) r->rollSpeed = cfg->rollSpeed;
+    if (cfg->driftY != 0.0f) r->drift.y = cfg->driftY;
+    if (cfg->jitterAmp > 0.0f) r->jitter.x = cfg->jitterAmp;
+    if (cfg->widthTaper > 0.0f) r->widthProf.x = cfg->widthTaper;
 }
 
 static int SweptTrail_LayerCount(TrailPresetId kind)
@@ -1323,30 +2127,18 @@ static void SweptTrail_ConfigureLayers(VC_SweptTrail *s)
     for (int L = 0; L < count; L++)
         s->layers[L] = k_sweptLayers[s->kind][L];
 
-    s->recipe = *TrailPresetRecipe(s->kind);
-    s->recipe.layers = s->layers;
-    s->recipe.layerCount = count;
-    // GATED ON sweptKnobs, 27/08/2026 — it was unconditional, and that made
-    // TrailRecipe::bodyOpacity DEAD for every preset: `swept_body` defaults to
-    // 1.0, so SMOKE's authored 0.96, ENERGY's 0.90 and MAGIC's own value were
-    // all overwritten with 1.0 before they ever reached a draw. Found by
-    // measuring: moving MAGIC's bodyOpacity 0.52 -> 0.78 produced a
-    // byte-identical bright-background table.
-    //
-    // This is TrailMotion::sweptKnobs' entire reason for existing, and its own
-    // doc already named the failure: "A unified composer inherits one family's
-    // GLOBAL multipliers, and applying them to a family that never had them is
-    // the §1 bug wearing different clothes." The strand presets never had a
-    // `swept_body` knob; they had authored values, and the knob was silently
-    // eating them.
-    if (TrailMotionOf(s->kind)->sweptKnobs)
-        s->recipe.bodyOpacity = s_sweptBodyOpacity;
+    for (int c = 0; c < s->strands && c < SWEPT_STRANDS_MAX; c++)
+    {
+        s->strandRecipe[c] = k_trailStrands[s->kind][c];
+        s->strandRecipe[c].layers = s->layers;
+        s->strandRecipe[c].layerCount = count;
+        if (TrailMotionOf(s->kind)->sweptKnobs)
+            s->strandRecipe[c].bodyOpacity = s_sweptBodyOpacity;
+    }
+    s->recipe = s->strandRecipe[0];
 
     // WHERE THE SHEET COMES FROM, in priority order: a per-instance surface, the
-    // preset's runtime-generated sheet, or the registry profile it names. The
-    // registry arm is the normal one and was the whole point of `recipe.surface`
-    // — a preset that names a profile and never resolves it renders NOTHING,
-    // which is not distinguishable on screen from a broken shader.
+    // preset's runtime-generated sheet, or the registry profile it names.
     const Texture2D *body = NULL;
     if (s->hasSurface && s->surface.texture.id != 0)
         body = &s->surface.texture;
@@ -1364,14 +2156,12 @@ static void SweptTrail_ConfigureLayers(VC_SweptTrail *s)
         }
         else
         {
-            TraceLog(LOG_WARNING,
-                     "VFX_TRAIL: preset %d names surface %d but the registry has "
-                     "no sheet for it — falling back to the procedural mask",
-                     (int)s->kind, (int)s->recipe.surface);
             body = &s_sweptBodyTex;
         }
     }
     s->recipe.sheetOverride = body;
+    for (int c = 0; c < s->strands && c < SWEPT_STRANDS_MAX; c++)
+        s->strandRecipe[c].sheetOverride = body;
 
     s->layers[count > 1 ? 1 : 0].texture = body;
     if (count >= 2)
@@ -1383,10 +2173,7 @@ static void SweptTrail_ConfigureLayers(VC_SweptTrail *s)
     }
 }
 
-// The tail→head colour ramp, one per material, built on first use. MOVED to
-// vc_common.inl when VFX_ComposeVolumeTrail became its second caller — the ramp
-// is the element's, not this composition's. Kept as a name here because the
-// spawn path reads better with it and one test pins the call site.
+// The tail→head colour ramp, one per material, built on first use.
 static const ColorGradient *SweptTrail_Gradient(VC_MaterialId mat)
 {
     return VC_ElementRamp(mat);
@@ -1423,9 +2210,6 @@ bool VFX_TrailRibbonApplyPreset(TrailRibbonConfig *config,TrailPresetId preset,V
 
 // ── Strand plumbing ─────────────────────────────────────────────────────────
 
-// The entity this handle's strand refers to, or NULL if it has been recycled
-// under us. NEVER trust a stored trail id: ids are reused and the pool evicts by
-// priority, so writing a thickness into a stale one corrupts an unrelated effect.
 static TrailEntity *SweptTrail_Strand(const VC_SweptTrail *s, int slot, int strand)
 {
     int id = s->strandId[strand];
@@ -1437,9 +2221,6 @@ static TrailEntity *SweptTrail_Strand(const VC_SweptTrail *s, int slot, int stra
     return t;
 }
 
-// A composition may request a visual helix without moving its attached Matrix.
-// The public swept-trail contract stays a path follower; this is private
-// composition plumbing for effects that know their flight axis.
 static void SweptTrail_SetAnchoredHelix(int handle, Vector3 axis, float radius,
                                         float turns, float phase)
 {
@@ -1465,13 +2246,10 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     TrailConfig cfg = {0};
     cfg.type = TRAIL_TYPE_FOLLOWER;
     cfg.pos = Vector3Transform((Vector3){0.0f, 0.0f, 0.0f}, *s->xf);
-    // Long-lived by construction: this trail dies when the caller kills it, or
-    // when it stops being fed and the idle fade drains it. A lifetime here would
-    // be a second, hidden death condition.
     cfg.life = 1.0e6f;
-    cfg.thick = 0.05f; // real value written every frame from the aspect cap
-    cfg.tint = WHITE;  // the gradient carries the colour
-    const TrailRecipe *rec = &s->recipe;
+    const TrailRecipe *rec = (strand >= 0 && strand < s->strands) ? &s->strandRecipe[strand] : &s->recipe;
+    cfg.thick = rec->radiusDefault > 0.001f ? rec->radiusDefault : 0.05f;
+    cfg.tint = WHITE;
     const TrailMotion *mot = TrailMotionOf(s->kind);
     // Two encodings of the along-trail ramp, one concept. The swept presets take
     // the element's authored N-stop gradient; the strand presets cool toward a
@@ -1900,8 +2678,17 @@ static void VC_SweptTrail_Update(float dt)
             const float knobW = mot->sweptKnobs ? s_sweptWidthMul : 1.0f;
             const float knobA = mot->sweptKnobs ? s_sweptAlphaMul : 1.0f;
             float travel = SweptTrail_TravelLength(t);
-            t->thickness = SweptTrail_HalfWidth(s->width * knobW,
+            float strandRadius = (c < SWEPT_STRANDS_MAX && s->strandRecipe[c].radiusDefault > 0.001f)
+                                     ? s->strandRecipe[c].radiusDefault
+                                     : s->recipe.radiusDefault;
+            float refRadius = s->recipe.radiusDefault > 0.001f ? s->recipe.radiusDefault : 0.25f;
+            float strandWidth = s->width * knobW * (strandRadius / refRadius);
+            t->thickness = SweptTrail_HalfWidth(strandWidth,
                                                 s->widthLevel, travel, s->kind);
+            if (c < SWEPT_STRANDS_MAX && s->strandRecipe[c].style > 0.5f)
+            {
+                TrailRecipe_ToLegacyMaterial(&s->strandRecipe[c], VFX_Material(s->matId), WHITE, &t->material, &t->deform);
+            }
             // THE NUMBER THAT DECIDES WHETHER ANY OF THIS IS VISIBLE. The width
             // is EARNED from the length the tip travelled, so a trail can be
             // configured perfectly and still draw as a hairline if the aspect

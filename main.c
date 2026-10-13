@@ -1170,8 +1170,10 @@ int main(int argc, char **argv) {
             s_vfxPlayerVelY = 0.0f;
             s_vfxPlayerJumping = false;
             vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
-            vfxCamDist = 14.50f; // Zoom 1.25x default
-            vfxCamPitch = SANDBOX_CAMERA_PITCH_DEGREES;
+            float prefDist = VFXTest_GetPreferredCameraDistance();
+            vfxCamDist = (prefDist > 0.0f) ? prefDist : 14.50f;
+            float prefPitch = VFXTest_GetPreferredCameraPitch();
+            vfxCamPitch = (prefPitch > 0.0f) ? prefPitch : SANDBOX_CAMERA_PITCH_DEGREES;
         }
 
         if (!renderVFXMode && IsKeyPressed(KEY_N)) {
@@ -1363,6 +1365,12 @@ int main(int argc, char **argv) {
 
         int tiltStep = VFXTest_ConsumeCameraTiltStep();
         vfxCamPitch = Clamp(vfxCamPitch + tiltStep * 2.0f, 5.0f, 80.0f);
+        if (renderVFXMode && !captureEyeSet) {
+            float prefDist = VFXTest_GetPreferredCameraDistance();
+            if (prefDist > 0.0f) vfxCamDist = prefDist;
+            float prefPitch = VFXTest_GetPreferredCameraPitch();
+            if (prefPitch > 0.0f) vfxCamPitch = prefPitch;
+        }
         camera.target = (Vector3){player.position.x, player.position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player.position.z};
         camera.position = SandboxCamera_OrbitPositionAtPitch(player.position, vfxCameraAngle, vfxCamDist, vfxCamPitch);
 
