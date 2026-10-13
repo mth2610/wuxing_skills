@@ -13,6 +13,17 @@
 #define ARENA_CENTER ((Vector3){6.0f, 1.0f, 4.4f}) // radius 18, y raised slightly (was 3, too far above the y=0 ground the shadow actually needs to cover)
 #define ARENA_RADIUS 18.0f
 
+// The light orientation is only rebuilt once the sun has moved this far
+// (squared chord distance of unit vectors, ~0.115 deg). Below it, the shadow map
+// keeps its previous orientation: a continuously rotating light re-grids every
+// texel each frame (shimmer) and, for the world-fixed static map, forces a full
+// recapture of every map caster. Worst-case shadow offset at the threshold is
+// ~1 cm per 10 m of caster height.
+#define ENV_SHADOW_SUN_EPS_SQ 4.0e-6f
+// halfExtent is rounded up to this step so a smoothly zooming camera doesn't
+// change the texel size (and therefore the snapping grid) every frame.
+#define ENV_SHADOW_EXTENT_STEP 0.5f
+
 static bool s_ready = false;
 static bool s_enabled = false;
 static bool s_capturing = false; // true between Begin/EndCapture (EnvShadow_IsCapturing)
@@ -60,6 +71,38 @@ static void *s_mapCasterUserData = NULL;
 
 static Vector3 ProjectLS(Matrix vp, Vector3 wp);
 
+// ---------------------------------------------------------------------------
+// Diagnostic environment overrides, read ONCE. getenv() is a linear scan of the
+// environment block; it used to run every frame (SetFocus x2, EndCapture x1,
+// forever when the variable was unset). The values can no longer change at
+// runtime, which none of these debug switches rely on.
+// ---------------------------------------------------------------------------
+static struct {
+    bool ready;
+    bool focusOverride;
+    float focusX, focusZ;
+    bool dynamicVerify;
+    bool staticVerify;
+} s_env;
+
+static void EnsureShadowEnv(void)
+{
+    if (s_env.ready) return;
+    // Reusable diagnostic override for inspecting a known caster region while
+    // the gameplay camera remains elsewhere. Both coordinates are required so
+    // a partially configured run cannot move only one axis by accident.
+    const char *focusX = getenv("WUXING_SHADOW_FOCUS_X");
+    const char *focusZ = getenv("WUXING_SHADOW_FOCUS_Z");
+    if (focusX != NULL && focusZ != NULL) {
+        s_env.focusOverride = true;
+        s_env.focusX = strtof(focusX, NULL);
+        s_env.focusZ = strtof(focusZ, NULL);
+    }
+    s_env.dynamicVerify = getenv("WUXING_SHADOW_DYNAMIC_VERIFY") != NULL;
+    s_env.staticVerify = getenv("WUXING_SHADOW_STATIC_VERIFY") != NULL;
+    s_env.ready = true;
+}
+
 static void DestroyShadowTarget(unsigned int fbo, unsigned int depth, unsigned int color)
 {
     if (fbo != 0) rlUnloadFramebuffer(fbo);
@@ -79,7 +122,69 @@ static void ShadowQualitySizes(int quality, int *dynamicSize, int *staticSize)
         *staticSize = atoi(staticOverride);
 }
 
-// TỐI ƯU: Biến cache hướng nắng để tránh tính toán lại ma trận mỗi frame
+// ---------------------------------------------------------------------------
+// Light basis. One definition shared by the dynamic focus snapping, the
+// dynamic light matrix and the static light matrix (the formulas used to be
+// copy-pasted three times).
+// ---------------------------------------------------------------------------
+typedef struct {
+    Vector3 dir;     // direction light TRAVELS (unit)
+    Vector3 up;      // look-at up vector
+    Vector3 right;   // light-plane axes used for texel snapping
+    Vector3 lightUp;
+} ShadowLightBasis;
+
+static ShadowLightBasis MakeLightBasis(Vector3 sunDirUnit)
+{
+    ShadowLightBasis b;
+    b.dir = sunDirUnit;
+    b.up = fabsf(b.dir.y) > 0.98f
+        ? (Vector3){0.0f, 0.0f, 1.0f} // avoid degenerate look-at
+        : (Vector3){0.0f, 1.0f, 0.0f};
+    b.right = Vector3Normalize(Vector3CrossProduct(b.up, b.dir));
+    b.lightUp = Vector3Normalize(Vector3CrossProduct(b.dir, b.right));
+    return b;
+}
+
+// Snap a point onto the texel grid of the light plane (grid anchored at the
+// world origin, so it is stable while the focus slides).
+static Vector3 SnapToLightTexels(Vector3 center, const ShadowLightBasis *b, float texelWorld)
+{
+    float rightCoord = Vector3DotProduct(center, b->right);
+    float upCoord = Vector3DotProduct(center, b->lightUp);
+    center = Vector3Add(center, Vector3Scale(
+        b->right, roundf(rightCoord / texelWorld) * texelWorld - rightCoord));
+    center = Vector3Add(center, Vector3Scale(
+        b->lightUp, roundf(upCoord / texelWorld) * texelWorld - upCoord));
+    return center;
+}
+
+static inline bool SameVec3(Vector3 a, Vector3 b)
+{
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+// The dynamic light keeps a "held" sun direction that only advances when the
+// real sun has moved past ENV_SHADOW_SUN_EPS_SQ. Snapping (SetFocus) and the
+// light matrix (ComputeLightVP) both read it, so they always agree on the grid
+// orientation — snapping against the live sun while the matrix used a stale
+// one would reintroduce exactly the sub-texel jitter snapping exists to remove.
+static Vector3 s_heldSun = {0};
+static ShadowLightBasis s_heldBasis;
+static bool s_heldValid = false;
+
+static const ShadowLightBasis *HeldLightBasis(void)
+{
+    Vector3 current = Vector3Normalize(Environment_GetSunDirection());
+    if (!s_heldValid || Vector3DistanceSqr(current, s_heldSun) >= ENV_SHADOW_SUN_EPS_SQ) {
+        s_heldSun = current;
+        s_heldBasis = MakeLightBasis(current);
+        s_heldValid = true;
+    }
+    return &s_heldBasis;
+}
+
+// Light-matrix cache keys: skip LookAt/Ortho/Multiply when nothing changed.
 static Vector3 s_lastSunDir = {0};
 static Vector3 s_lastShadowFocus = {1e30f, 1e30f, 1e30f};
 static float s_lastShadowHalfExtent = -1.0f;
@@ -127,7 +232,28 @@ static bool CreateShadowTarget(int resolution, unsigned int *outFbo,
 
 void EnvShadow_Init(void)
 {
+    // Re-init safety: release anything a previous call allocated.
+    DestroyShadowTarget(s_fboId, s_depthTexId, s_colorTexId);
+    DestroyShadowTarget(s_staticFboId, s_staticDepthTexId, s_staticColorTexId);
+    s_fboId = s_depthTexId = s_colorTexId = 0;
+    s_staticFboId = s_staticDepthTexId = s_staticColorTexId = 0;
+    s_staticTargetReady = false;
+    s_staticCacheValid = false;
+    s_ready = false;
+    s_lastShadowHalfExtent = -1.0f;
+
     ShadowQualitySizes(s_quality, &s_resolution, &s_staticResolution);
+
+    // Compile the shader FIRST: it is the cheapest thing that can fail, and the
+    // old order allocated both shadow targets (tens of MB) before discovering a
+    // bad shader, then returned without freeing them.
+    s_depthShader = ResourceManager_LoadShader("environment/shaders/shadow_depth.vs",
+                                               "environment/shaders/shadow_depth.fs");
+    if (s_depthShader.id == 0)
+    {
+        TraceLog(LOG_WARNING, "ENV_SHADOW: shader failed to compile, shadow map disabled");
+        return;
+    }
 
     // Depth + throwaway color attachment — same recipe as
     // core/screen_distort.c's LoadRenderTextureWithDepthTexture, which is
@@ -149,7 +275,6 @@ void EnvShadow_Init(void)
                             &s_colorTexId, &s_shadowMapTex))
     {
         TraceLog(LOG_WARNING, "ENV_SHADOW: failed to allocate depth FBO/texture, shadow map disabled");
-        s_ready = false;
         return;
     }
 
@@ -158,16 +283,6 @@ void EnvShadow_Init(void)
         &s_staticColorTexId, &s_staticShadowMapTex);
     if (!s_staticTargetReady)
         TraceLog(LOG_WARNING, "ENV_SHADOW: static cache target unavailable; dynamic shadows remain active");
-
-    s_depthShader = ResourceManager_LoadShader("environment/shaders/shadow_depth.vs",
-                                               "environment/shaders/shadow_depth.fs");
-
-    if (s_depthShader.id == 0)
-    {
-        TraceLog(LOG_WARNING, "ENV_SHADOW: shader failed to compile, shadow map disabled");
-        s_ready = false;
-        return;
-    }
 
     s_ready = true;
     s_enabled = true; // Real shadows remain available at every graphics tier.
@@ -233,34 +348,25 @@ bool EnvShadow_SetQuality(int resolvedTier)
 
 void EnvShadow_SetFocus(Vector3 center, float halfExtent)
 {
-    // Reusable diagnostic override for inspecting a known caster region while
-    // the gameplay camera remains elsewhere. Both coordinates are required so
-    // a partially configured run cannot move only one axis by accident.
-    const char *focusX = getenv("WUXING_SHADOW_FOCUS_X");
-    const char *focusZ = getenv("WUXING_SHADOW_FOCUS_Z");
-    if (focusX != NULL && focusZ != NULL) {
-        center.x = strtof(focusX, NULL);
-        center.z = strtof(focusZ, NULL);
+    EnsureShadowEnv();
+    if (s_env.focusOverride) {
+        center.x = s_env.focusX;
+        center.z = s_env.focusZ;
     }
     if (halfExtent < 8.0f) halfExtent = 8.0f;
+    if (halfExtent > 96.0f) halfExtent = 96.0f;
+    // Round up to a coarse step: the snapping grid below is sized from
+    // halfExtent, so a continuously changing extent (camera zoom) would move
+    // the grid every frame and shimmer fine edges. Rounding up only ever
+    // covers MORE than requested (<= one step), at a texel-density cost < 3%.
+    halfExtent = ceilf(halfExtent / ENV_SHADOW_EXTENT_STEP) * ENV_SHADOW_EXTENT_STEP;
     if (halfExtent > 96.0f) halfExtent = 96.0f;
     // Stabilize the orthographic projection in the light plane. Without this,
     // every sub-centimetre camera movement shifts all shadow texels and makes
     // fine grass/contact edges shimmer even when the scene is otherwise still.
     if (s_resolution > 0) {
-        Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
-        Vector3 up = fabsf(sunDir.y) > 0.98f
-            ? (Vector3){0.0f, 0.0f, 1.0f}
-            : (Vector3){0.0f, 1.0f, 0.0f};
-        Vector3 lightRight = Vector3Normalize(Vector3CrossProduct(up, sunDir));
-        Vector3 lightUp = Vector3Normalize(Vector3CrossProduct(sunDir, lightRight));
         float texelWorld = (halfExtent * 2.0f) / (float)s_resolution;
-        float rightCoord = Vector3DotProduct(center, lightRight);
-        float upCoord = Vector3DotProduct(center, lightUp);
-        float snappedRight = roundf(rightCoord / texelWorld) * texelWorld;
-        float snappedUp = roundf(upCoord / texelWorld) * texelWorld;
-        center = Vector3Add(center, Vector3Scale(lightRight, snappedRight - rightCoord));
-        center = Vector3Add(center, Vector3Scale(lightUp, snappedUp - upCoord));
+        center = SnapToLightTexels(center, HeldLightBasis(), texelWorld);
     }
     s_shadowFocus = center;
     s_shadowHalfExtent = halfExtent;
@@ -271,28 +377,24 @@ float EnvShadow_GetHalfExtent(void) { return s_shadowHalfExtent; }
 
 static Matrix ComputeLightVP(void)
 {
-    Vector3 currentSunDir = Environment_GetSunDirection();
+    const ShadowLightBasis *basis = HeldLightBasis();
 
     // TỐI ƯU: Cache lại VP matrix. Bỏ qua các phép toán Normalize, Multiply, LookAt
-    // nếu hướng nắng không thay đổi giữa các frame.
-    if (Vector3DistanceSqr(currentSunDir, s_lastSunDir) < 0.000001f &&
+    // nếu hướng nắng (đã giữ ổn định bởi HeldLightBasis), focus và extent không đổi.
+    if (SameVec3(basis->dir, s_lastSunDir) &&
         Vector3DistanceSqr(s_shadowFocus, s_lastShadowFocus) < 0.000001f &&
         fabsf(s_shadowHalfExtent - s_lastShadowHalfExtent) < 0.0001f)
     {
         return s_lightVP;
     }
-    s_lastSunDir = currentSunDir;
+    s_lastSunDir = basis->dir;
     s_lastShadowFocus = s_shadowFocus;
     s_lastShadowHalfExtent = s_shadowHalfExtent;
 
-    Vector3 sunDir = Vector3Normalize(currentSunDir); // direction light TRAVELS
     s_captureDistance = fmaxf(s_shadowHalfExtent * 1.65f, 24.0f);
-    Vector3 lightPos = Vector3Subtract(s_shadowFocus, Vector3Scale(sunDir, s_captureDistance));
-    Vector3 up = (Vector3){0.0f, 1.0f, 0.0f};
-    if (fabsf(sunDir.y) > 0.98f)
-        up = (Vector3){0.0f, 0.0f, 1.0f}; // avoid degenerate look-at
+    Vector3 lightPos = Vector3Subtract(s_shadowFocus, Vector3Scale(basis->dir, s_captureDistance));
 
-    s_lightView = MatrixLookAt(lightPos, s_shadowFocus, up);
+    s_lightView = MatrixLookAt(lightPos, s_shadowFocus, basis->up);
     // ARENA_RADIUS+2: covers the 18m-radius arena with margin. (A debug
     // session once "measured" the character outside this frustum and bumped
     // it to 45 — but that measurement used the pre-fix TRANSPOSED matrix in
@@ -304,32 +406,23 @@ static Matrix ComputeLightVP(void)
     float halfExtent = s_shadowHalfExtent;
     s_lightProj = MatrixOrtho(-halfExtent, halfExtent, -halfExtent, halfExtent,
                               0.1f, s_captureDistance * 2.0f);
-    Matrix vp = MatrixMultiply(s_lightView, s_lightProj);
-    return vp;
+    return MatrixMultiply(s_lightView, s_lightProj);
 }
 
 static Matrix ComputeStaticLightVP(Vector3 center, float halfExtent)
 {
     if (halfExtent < 8.0f) halfExtent = 8.0f;
     if (halfExtent > 128.0f) halfExtent = 128.0f;
-    Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
-    Vector3 up = fabsf(sunDir.y) > 0.98f
-        ? (Vector3){0.0f, 0.0f, 1.0f}
-        : (Vector3){0.0f, 1.0f, 0.0f};
-    Vector3 lightRight = Vector3Normalize(Vector3CrossProduct(up, sunDir));
-    Vector3 lightUp = Vector3Normalize(Vector3CrossProduct(sunDir, lightRight));
+    // The static map is world-fixed and captured on demand, so it uses the
+    // live sun at capture time (HasStaticCache validates against that).
+    ShadowLightBasis basis = MakeLightBasis(Vector3Normalize(Environment_GetSunDirection()));
     float texelWorld = halfExtent * 2.0f / (float)s_staticResolution;
-    float rightCoord = Vector3DotProduct(center, lightRight);
-    float upCoord = Vector3DotProduct(center, lightUp);
-    center = Vector3Add(center, Vector3Scale(
-        lightRight, roundf(rightCoord / texelWorld) * texelWorld - rightCoord));
-    center = Vector3Add(center, Vector3Scale(
-        lightUp, roundf(upCoord / texelWorld) * texelWorld - upCoord));
+    center = SnapToLightTexels(center, &basis, texelWorld);
 
     s_staticCaptureDistance = fmaxf(halfExtent * 1.65f, 24.0f);
     Vector3 lightPos = Vector3Subtract(
-        center, Vector3Scale(sunDir, s_staticCaptureDistance));
-    s_staticLightView = MatrixLookAt(lightPos, center, up);
+        center, Vector3Scale(basis.dir, s_staticCaptureDistance));
+    s_staticLightView = MatrixLookAt(lightPos, center, basis.up);
     s_staticLightProj = MatrixOrtho(-halfExtent, halfExtent, -halfExtent, halfExtent,
                                     0.1f, s_staticCaptureDistance * 2.0f);
     return MatrixMultiply(s_staticLightView, s_staticLightProj);
@@ -389,62 +482,100 @@ void EnvShadow_BeginCapture(void)
     }
 }
 
+// --- Debug readback helpers (kept out of the per-frame capture path) --------
+static void ScanShadowMap(const float *pixels, int total, float *minDepth, int *occupied)
+{
+    float mn = 1.0f;
+    int occ = 0;
+    for (int i = 0; i < total; i++) {
+        if (pixels[i] < mn) mn = pixels[i];
+        if (pixels[i] < 0.999f) occ++;
+    }
+    *minDepth = mn;
+    *occupied = occ;
+}
+
+static void VerifyDynamicShadowMap(void)
+{
+    float *pixels = (float *)rlReadTexturePixels(
+        s_shadowMapTex.id, s_resolution, s_resolution,
+        RL_PIXELFORMAT_UNCOMPRESSED_R32);
+    if (pixels == NULL) {
+        TraceLog(LOG_WARNING, "ENV_SHADOW: dynamic verify readback failed");
+        return;
+    }
+    int total = s_resolution * s_resolution;
+    float minDepth;
+    int occupied;
+    ScanShadowMap(pixels, total, &minDepth, &occupied);
+
+    // Exercise the same projection/depth comparison used by map
+    // receivers over a regular ground grid. Reporting both readback
+    // orientations makes a backend Y-flip regression unambiguous.
+    int receiverShadowed = 0;
+    int receiverShadowedFlipped = 0;
+    const int receiverGrid = 256;
+    for (int z = 0; z < receiverGrid; z++) {
+        for (int x = 0; x < receiverGrid; x++) {
+            float fx = ((float)x + 0.5f) / (float)receiverGrid;
+            float fz = ((float)z + 0.5f) / (float)receiverGrid;
+            Vector3 world = {
+                s_shadowFocus.x + (fx * 2.0f - 1.0f) * s_shadowHalfExtent,
+                0.0f,
+                s_shadowFocus.z + (fz * 2.0f - 1.0f) * s_shadowHalfExtent,
+            };
+            Vector3 projected = ProjectLS(s_lightVP, world);
+            if (projected.x <= 0.0f || projected.x >= 1.0f ||
+                projected.y <= 0.0f || projected.y >= 1.0f ||
+                projected.z <= 0.0f || projected.z >= 1.0f)
+                continue;
+            int tx = (int)(projected.x * (float)(s_resolution - 1));
+            int ty = (int)(projected.y * (float)(s_resolution - 1));
+            float compareDepth = projected.z - 0.00018f;
+            if (compareDepth > pixels[ty * s_resolution + tx])
+                receiverShadowed++;
+            int flippedY = s_resolution - 1 - ty;
+            if (compareDepth > pixels[flippedY * s_resolution + tx])
+                receiverShadowedFlipped++;
+        }
+    }
+    TraceLog(LOG_INFO,
+             "ENV_SHADOW: dynamic verify minDepth=%.4f occupied=%d/%d receiver=%d/%d flipped=%d/%d",
+             minDepth, occupied, total, receiverShadowed,
+             receiverGrid * receiverGrid, receiverShadowedFlipped,
+             receiverGrid * receiverGrid);
+    MemFree(pixels);
+}
+
+static void VerifyStaticShadowMap(void)
+{
+    float *pixels = (float *)rlReadTexturePixels(
+        s_staticShadowMapTex.id, s_staticResolution, s_staticResolution,
+        RL_PIXELFORMAT_UNCOMPRESSED_R32);
+    if (pixels == NULL) {
+        TraceLog(LOG_WARNING, "ENV_SHADOW: static verify readback failed");
+        return;
+    }
+    int total = s_staticResolution * s_staticResolution;
+    float minDepth;
+    int occupied;
+    ScanShadowMap(pixels, total, &minDepth, &occupied);
+    TraceLog(LOG_INFO,
+             "ENV_SHADOW: static verify minDepth=%.4f occupied=%d/%d",
+             minDepth, occupied, total);
+    MemFree(pixels);
+}
+
 void EnvShadow_EndCapture(void)
 {
     if (!s_ready || !s_enabled || !s_capturing || s_staticCaptureOpen)
         return;
     EndCaptureTarget();
-    if (!s_dynamicVerifyDumped && getenv("WUXING_SHADOW_DYNAMIC_VERIFY") != NULL) {
-        s_dynamicVerifyDumped = true;
-        float *pixels = (float *)rlReadTexturePixels(
-            s_shadowMapTex.id, s_resolution, s_resolution,
-            RL_PIXELFORMAT_UNCOMPRESSED_R32);
-        if (pixels != NULL) {
-            int occupied = 0;
-            int receiverShadowed = 0;
-            int receiverShadowedFlipped = 0;
-            float minDepth = 1.0f;
-            int total = s_resolution * s_resolution;
-            for (int i = 0; i < total; i++) {
-                if (pixels[i] < minDepth) minDepth = pixels[i];
-                if (pixels[i] < 0.999f) occupied++;
-            }
-            // Exercise the same projection/depth comparison used by map
-            // receivers over a regular ground grid. Reporting both readback
-            // orientations makes a backend Y-flip regression unambiguous.
-            const int receiverGrid = 256;
-            for (int z = 0; z < receiverGrid; z++) {
-                for (int x = 0; x < receiverGrid; x++) {
-                    float fx = ((float)x + 0.5f) / (float)receiverGrid;
-                    float fz = ((float)z + 0.5f) / (float)receiverGrid;
-                    Vector3 world = {
-                        s_shadowFocus.x + (fx * 2.0f - 1.0f) * s_shadowHalfExtent,
-                        0.0f,
-                        s_shadowFocus.z + (fz * 2.0f - 1.0f) * s_shadowHalfExtent,
-                    };
-                    Vector3 projected = ProjectLS(s_lightVP, world);
-                    if (projected.x <= 0.0f || projected.x >= 1.0f ||
-                        projected.y <= 0.0f || projected.y >= 1.0f ||
-                        projected.z <= 0.0f || projected.z >= 1.0f)
-                        continue;
-                    int tx = (int)(projected.x * (float)(s_resolution - 1));
-                    int ty = (int)(projected.y * (float)(s_resolution - 1));
-                    float compareDepth = projected.z - 0.00018f;
-                    if (compareDepth > pixels[ty * s_resolution + tx])
-                        receiverShadowed++;
-                    int flippedY = s_resolution - 1 - ty;
-                    if (compareDepth > pixels[flippedY * s_resolution + tx])
-                        receiverShadowedFlipped++;
-                }
-            }
-            TraceLog(LOG_INFO,
-                     "ENV_SHADOW: dynamic verify minDepth=%.4f occupied=%d/%d receiver=%d/%d flipped=%d/%d",
-                     minDepth, occupied, total, receiverShadowed,
-                     receiverGrid * receiverGrid, receiverShadowedFlipped,
-                     receiverGrid * receiverGrid);
-            MemFree(pixels);
-        } else {
-            TraceLog(LOG_WARNING, "ENV_SHADOW: dynamic verify readback failed");
+    if (!s_dynamicVerifyDumped) {
+        EnsureShadowEnv();
+        if (s_env.dynamicVerify) {
+            s_dynamicVerifyDumped = true;
+            VerifyDynamicShadowMap();
         }
     }
 }
@@ -483,26 +614,9 @@ void EnvShadow_EndStaticCapture(void)
     s_staticCacheValid = true;
     TraceLog(LOG_INFO, "ENV_SHADOW: static cache captured (%dx%d)",
              s_staticResolution, s_staticResolution);
-    if (getenv("WUXING_SHADOW_STATIC_VERIFY") != NULL) {
-        float *pixels = (float *)rlReadTexturePixels(
-            s_staticShadowMapTex.id, s_staticResolution, s_staticResolution,
-            RL_PIXELFORMAT_UNCOMPRESSED_R32);
-        if (pixels != NULL) {
-            int occupied = 0;
-            float minDepth = 1.0f;
-            int total = s_staticResolution * s_staticResolution;
-            for (int i = 0; i < total; i++) {
-                if (pixels[i] < minDepth) minDepth = pixels[i];
-                if (pixels[i] < 0.999f) occupied++;
-            }
-            TraceLog(LOG_INFO,
-                     "ENV_SHADOW: static verify minDepth=%.4f occupied=%d/%d",
-                     minDepth, occupied, total);
-            MemFree(pixels);
-        } else {
-            TraceLog(LOG_WARNING, "ENV_SHADOW: static verify readback failed");
-        }
-    }
+    EnsureShadowEnv();
+    if (s_env.staticVerify)
+        VerifyStaticShadowMap();
 }
 
 void EnvShadow_InvalidateStaticCache(void)
@@ -514,8 +628,11 @@ bool EnvShadow_HasStaticCache(void)
 {
     if (!s_ready || !s_enabled || !s_staticTargetReady || !s_staticCacheValid)
         return false;
+    // Same tolerance as the dynamic light: while the Time-of-Day cycle slowly
+    // rotates the sun, the static map (every map caster) is recaptured once per
+    // ENV_SHADOW_SUN_EPS_SQ of movement instead of at ~4x that rate.
     Vector3 current = Vector3Normalize(Environment_GetSunDirection());
-    return Vector3DistanceSqr(current, s_staticSunDir) < 0.000001f;
+    return Vector3DistanceSqr(current, s_staticSunDir) < ENV_SHADOW_SUN_EPS_SQ;
 }
 
 bool EnvShadow_NeedsStaticCapture(void)
