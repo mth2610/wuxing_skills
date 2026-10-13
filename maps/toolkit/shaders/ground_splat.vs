@@ -19,6 +19,8 @@ uniform mat4 matModel;
 uniform vec3 u_groundOffset;
 
 out vec2 fragTexCoord;
+// Not read by ground_splat.fs, but kept so other fragment shaders that share
+// this vertex stage (and expect the raylib default interface) still link.
 out vec4 fragColor;
 // DrawMesh under this project's custom 3D pass includes view in matModel.
 // This is therefore the shared surface/view space used by VFX lights; the
@@ -31,10 +33,12 @@ void main()
 {
     fragTexCoord = vertexTexCoord;
     fragColor    = vertexColor;
-    fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
+    fragPosition = (matModel * vec4(vertexPosition, 1.0)).xyz;
     // Ground surfaces draw with translation only. Lighting, habitat slope
     // and relief normals are world-space; matModel also contains the camera.
-    fragNormal   = normalize(vertexNormal);
+    // Mesh normals are already unit length and the fragment stage renormalizes
+    // after interpolation, so no per-vertex normalize is needed here.
+    fragNormal   = vertexNormal;
     fragWorldPos = vertexPosition + u_groundOffset;
     gl_Position  = mvp * vec4(vertexPosition, 1.0);
 }
