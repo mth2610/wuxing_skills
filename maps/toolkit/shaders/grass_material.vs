@@ -11,14 +11,23 @@
 // auto-bound by SkillManager_BeginShader, which never runs for a plain
 // DrawModel() call).
 //
-// No change needed from Item 37: the fragment shader derives all of
-// its texture UVs from world-space fragPosition.xz (not fragTexCoord),
-// same "no tiling-seam-decision, works at any mesh size" reasoning as
-// Item 37's noise sampling — so this vertex shader just needs to keep
-// passing fragPosition/fragNormal through, which it already did.
-// fragTexCoord is passed through unused for parity with prop_lit's
-// vertex layout; no tangent attribute here — grassDetail is a plain
-// grayscale grain multiplier, not a tangent-space normal map.
+// The fragment shader derives ALL texture and noise coordinates from
+// fragTexCoord (baked to world meters at mesh creation by TilePlaneUVs;
+// see the Item 38 follow-up in CORE_ISSUES.md), NOT from fragPosition.xz.
+// fragTexCoord is therefore the critical varying here and must stay a
+// plain pass-through of vertexTexCoord. fragPosition is still needed for
+// the VFX light accumulation, fragNormal for the sun/VFX lighting. No
+// tangent attribute — grassDetail is a plain grayscale grain multiplier,
+// not a tangent-space normal map.
+//
+// The vertex work is already minimal (one mat4*vec4 for world position,
+// one mat3 for the normal, one mvp). The ground is a handful of large
+// quads, so there is no per-vertex cost worth shaving; the optimization
+// effort for this material lives in grass_material.fs.
+//
+// Note: mat3(matModel) is only a correct normal transform for rotation +
+// uniform scale. If the ground model is ever drawn with non-uniform
+// scale, switch to the inverse-transpose (raylib's matNormal uniform).
 // ============================================================
 
 #ifdef GL_ES
