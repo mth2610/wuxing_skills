@@ -6,6 +6,7 @@
 #include "rlgl.h"
 #include <math.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #ifndef PI
 #define PI 3.14159265358979323846f
@@ -54,6 +55,10 @@ static AtmosphereProfile s_atmosphereProfile = {
 static LocalFogVolume s_fogVolumes[MAX_LOCAL_FOG_VOLUMES] = { 0 };
 static int            s_nextFogVolumeId = 1;
 
+// Declared before the Time-of-Day blend so continuous ToD changes can
+// invalidate consumers that cache GPU uploads by version.
+static unsigned int s_lightingVersion = 1;
+
 // --- Time-of-Day dynamic lighting cycle state ---
 // Static storage only (project-wide no-malloc rule). Inert until a map/system
 // opts in via Environment_SetTimeOfDayPresets() + Environment_SetTimeOfDaySpeed().
@@ -89,6 +94,21 @@ static float EnvCloudClamp(float value, float minimum, float maximum, float fall
     return fminf(fmaxf(value, minimum), maximum);
 }
 
+static inline bool EnvColorEq(Color a, Color b) {
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+}
+
+static inline bool EnvVec3Eq(Vector3 a, Vector3 b) {
+    return a.x == b.x && a.y == b.y && a.z == b.z;
+}
+
+// The cloud projection is derived from the sun direction, so any sun change
+// must invalidate both the lighting frame and the cloud frame.
+static inline void EnvSunDirectionChanged(void) {
+    s_lightingVersion++;
+    s_cloudVersion++;
+}
+
 static void EnvUpdateCloudShadow(float dt) {
     if (!s_cloudShadow.enabled || !isfinite(dt) || dt <= 0.0f) return;
     // Cloud transport follows the ambient airflow only; local skill vortices
@@ -105,6 +125,9 @@ static void EnvUpdateCloudShadow(float dt) {
     }
 }
 
+// Forward declaration: the shadow batch flag is also reset by Environment_Init.
+static bool s_shadowBatchOpen = false;
+
 void Environment_Init(void) {
     s_sunDirection = Vector3Normalize(s_sunDirection);
     s_sunIntensity = 1.0f;
@@ -114,10 +137,16 @@ void Environment_Init(void) {
     s_cloudNoise = (Texture2D){ 0 };
     for (int i = 0; i < ENV_CLOUD_SHADER_CACHE_CAPACITY; i++) s_cloudShaderLocations[i].shaderId = 0;
     s_cloudShaderReplacement = 0;
+    s_shadowBatchOpen = false;
 }
 
+// Rounded (not truncated) so slow Time-of-Day transitions don't bias every
+// channel toward the darker end and step visibly one level at a time.
 static inline unsigned char EnvLerpByte(unsigned char a, unsigned char b, float t) {
-    return (unsigned char)((float)a + ((float)b - (float)a) * t);
+    float v = (float)a + ((float)b - (float)a) * t + 0.5f;
+    if (v < 0.0f) v = 0.0f;
+    if (v > 255.0f) v = 255.0f;
+    return (unsigned char)v;
 }
 
 static inline Color EnvLerpColor(Color a, Color b, float t) {
@@ -129,6 +158,24 @@ static inline Color EnvLerpColor(Color a, Color b, float t) {
     return out;
 }
 
+// Spherical interpolation of two unit directions so the sun (and its shadows)
+// sweep at constant angular speed. Plain lerp+normalize speeds up mid-segment
+// and collapses to a zero vector for opposite directions.
+static Vector3 EnvSlerpDirection(Vector3 a, Vector3 b, float t) {
+    float d = Vector3DotProduct(a, b);
+    if (d > -0.9995f && d < 0.9995f) {
+        float theta = acosf(d);
+        float invSin = 1.0f / sinf(theta);
+        float wa = sinf((1.0f - t) * theta) * invSin;
+        float wb = sinf(t * theta) * invSin;
+        return Vector3Normalize((Vector3){
+            a.x * wa + b.x * wb, a.y * wa + b.y * wb, a.z * wa + b.z * wb });
+    }
+    Vector3 l = Vector3Lerp(a, b, t);
+    if (Vector3LengthSqr(l) > 1e-6f) return Vector3Normalize(l);
+    return t < 0.5f ? a : b; // exactly opposite: no unique path, avoid NaN/zero
+}
+
 // Blends two lighting presets and writes the result directly into the
 // existing engine-wide statics that Environment_DrawSmartShadow() and the
 // Get* accessors read — no other function needs to know ToD exists.
@@ -137,8 +184,8 @@ static void EnvApplyBlendedPreset(const EnvLightingPreset *a, const EnvLightingP
     s_sunColor     = EnvLerpColor(a->sunColor, b->sunColor, t);
     s_shadowColor  = EnvLerpColor(a->shadowColor, b->shadowColor, t);
 
-    Vector3 dir = Vector3Lerp(a->sunDirection, b->sunDirection, t);
-    s_sunDirection = Vector3Normalize(dir);
+    // Presets are normalized at registration (Environment_SetTimeOfDayPresets).
+    s_sunDirection = EnvSlerpDirection(a->sunDirection, b->sunDirection, t);
 
     s_fogConfig.color   = EnvLerpColor(a->fog.color, b->fog.color, t);
     s_fogConfig.start   = a->fog.start + (b->fog.start - a->fog.start) * t;
@@ -165,6 +212,10 @@ static void EnvApplyBlendedPreset(const EnvLightingPreset *a, const EnvLightingP
     s_atmosphereProfile.density.layerAltitude = a->atmosphere.density.layerAltitude + (b->atmosphere.density.layerAltitude - a->atmosphere.density.layerAltitude) * t;
     s_atmosphereProfile.density.layerThickness = a->atmosphere.density.layerThickness + (b->atmosphere.density.layerThickness - a->atmosphere.density.layerThickness) * t;
     s_atmosphereProfile.density.layerDensity = a->atmosphere.density.layerDensity + (b->atmosphere.density.layerDensity - a->atmosphere.density.layerDensity) * t;
+
+    // Every other setter bumps the version; the ToD path used to skip it, so
+    // version-keyed consumers never saw the cycle move.
+    EnvSunDirectionChanged();
 }
 
 void Environment_Update(float dt) {
@@ -224,182 +275,278 @@ void Environment_Update(float dt) {
     }
 }
 
-void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float width, float height) {
-    if (s_sunDirection.y >= -0.01f) return;
-    
-    float skewFactor = 1.0f / fabsf(s_sunDirection.y);
-    Vector2 shadowOffset = { s_sunDirection.x * skewFactor, s_sunDirection.z * skewFactor };
-    
+// ---------------------------------------------------------------------------
+// Shadow decals
+//
+// Each decal used to flush the render batch twice (before and after toggling
+// depth state), which turns N shadows into 2N draw calls. The state toggle is
+// now separable: wrap a group of Environment_DrawSmartShadow() calls in
+// Environment_BeginShadowBatch()/Environment_EndShadowBatch() and they share
+// one pair of flushes. Un-wrapped calls behave exactly as before.
+// ---------------------------------------------------------------------------
+#define ENV_SHADOW_SEGMENTS 12
+// Low sun makes 1/|sun.y| explode (100x height at y=-0.01). Cap the stretch
+// at ~7° elevation and fade the decal out toward the horizon instead of
+// popping it off at the hard cutoff.
+#define ENV_SHADOW_MAX_SKEW 8.0f
+#define ENV_SHADOW_FADE_START 0.01f
+#define ENV_SHADOW_FADE_RANGE 0.14f
+
+// cos/sin of i*PI/N, shared by every capsule decal (was ~100 sinf/cosf per decal).
+static float s_shadowArcCos[ENV_SHADOW_SEGMENTS + 1];
+static float s_shadowArcSin[ENV_SHADOW_SEGMENTS + 1];
+static bool  s_shadowArcReady = false;
+
+static void EnvBuildShadowArc(void) {
+    for (int i = 0; i <= ENV_SHADOW_SEGMENTS; i++) {
+        float a = ((float)i / (float)ENV_SHADOW_SEGMENTS) * PI;
+        s_shadowArcCos[i] = cosf(a);
+        s_shadowArcSin[i] = sinf(a);
+    }
+    s_shadowArcReady = true;
+}
+
+typedef struct {
+    float yGround;
+    float alpha;       // overall opacity: horizon fade * altitude fade
+    float hAbove;      // sphere/cylinder: height above ground
+    float scale;       // sphere/cylinder: altitude shrink factor
+    float offX, offZ;  // ground displacement per unit of height
+} EnvShadowPrep;
+
+static inline Color EnvShadowTint(float alphaScale) {
+    float a = (float)s_shadowColor.a * alphaScale;
+    if (a < 0.0f) a = 0.0f;
+    if (a > 255.0f) a = 255.0f;
+    return (Color){ s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)a };
+}
+
+static inline void EnvShadowVertex(Color c, float x, float y, float z) {
+    rlColor4ub(c.r, c.g, c.b, c.a);
+    rlVertex3f(x, y, z);
+}
+
+// All the early-outs and map queries run BEFORE any GL state changes. The old
+// sphere/cylinder path returned after disabling depth test/mask/culling and
+// never restored them whenever the shadow had fully faded.
+static bool EnvPrepareShadow(Vector3 pos, EnvShadowShapeType shape, EnvShadowPrep *out) {
+    if (shape != ENV_SHAPE_SPHERE && shape != ENV_SHAPE_CYLINDER && shape != ENV_SHAPE_BOX) return false;
+
+    float elevation = -s_sunDirection.y;
+    float fade = fminf(fmaxf((elevation - ENV_SHADOW_FADE_START) / ENV_SHADOW_FADE_RANGE, 0.0f), 1.0f);
+    if (fade <= 0.001f) return false; // sun at/below horizon (same cutoff as before)
+    fade = fade * fade * (3.0f - 2.0f * fade);
+    float skew = 1.0f / fmaxf(elevation, 1.0f / ENV_SHADOW_MAX_SKEW);
+
     float waterSurfaceY = 0.0f, waterDepth = 0.0f;
     if (MapManager_GetWaterInfoAt(pos.x, pos.z, &waterSurfaceY, &waterDepth)) {
-        if (pos.y < waterSurfaceY + 0.05f) {
-            return;
-        }
+        if (pos.y < waterSurfaceY + 0.05f) return false;
     }
 
-    float yGround = MapManager_GetGroundHeightAt(pos.x, pos.z) + 0.02f;
-    
+    out->yGround = MapManager_GetGroundHeightAt(pos.x, pos.z) + 0.02f;
+    out->offX = s_sunDirection.x * skew;
+    out->offZ = s_sunDirection.z * skew;
+    out->alpha = fade;
+    out->hAbove = 0.0f;
+    out->scale = 1.0f;
+
+    if (shape != ENV_SHAPE_BOX) {
+        float hAbove = fmaxf(pos.y - out->yGround, 0.0f);
+        float heightFactor = hAbove / 200.0f;
+        out->hAbove = hAbove;
+        out->scale = fmaxf(1.0f - heightFactor * 0.4f, 0.1f);
+        out->alpha *= fmaxf(1.0f - heightFactor * 1.2f, 0.0f);
+        if (out->alpha <= 0.001f) return false;
+    }
+    return true;
+}
+
+// Geometry only — assumes depth/cull state is already set up. Everything is
+// RL_TRIANGLES so a whole batch of decals stays a single draw call.
+static void EnvEmitShadow(Vector3 pos, EnvShadowShapeType shape, float width, float height,
+                          const EnvShadowPrep *prep) {
+    float yGround = prep->yGround;
+    Color cBase = EnvShadowTint(prep->alpha);
+    Color cTip  = EnvShadowTint(prep->alpha * 0.3f);
+    Color cEdge = { s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, 0 };
+
+    if (shape == ENV_SHAPE_SPHERE || shape == ENV_SHAPE_CYLINDER) {
+        if (!s_shadowArcReady) EnvBuildShadowArc();
+
+        float hAbove = prep->hAbove;
+        float shadowScale = prep->scale;
+
+        // Đổ bóng trụ đứng xiên: capsule bóng mượt (smooth capsule shadow)
+        float reach = height * shadowScale;
+        float bx = pos.x + prep->offX * hAbove;
+        float bz = pos.z + prep->offZ * hAbove;
+        float tx = pos.x + prep->offX * (hAbove + reach);
+        float tz = pos.z + prep->offZ * (hAbove + reach);
+
+        // Shadow axis f and its left perpendicular p, taken straight from the
+        // displacement vector instead of atan2 + sin/cos per vertex.
+        float dx = tx - bx, dz = tz - bz;
+        float len = sqrtf(dx * dx + dz * dz);
+        float fx = 1.0f, fz = 0.0f;
+        if (len > 0.001f) { fx = dx / len; fz = dz / len; }
+        float px = -fz, pz = fx;
+
+        float baseWidth = width * shadowScale;
+        float tipWidth = width * 1.2f * shadowScale;
+
+        // Arc points (i = 0..N). Base arc sweeps the half-disc behind the
+        // base, top arc the half-disc ahead of the tip.
+        float baseArcX[ENV_SHADOW_SEGMENTS + 1], baseArcZ[ENV_SHADOW_SEGMENTS + 1];
+        float topArcX[ENV_SHADOW_SEGMENTS + 1],  topArcZ[ENV_SHADOW_SEGMENTS + 1];
+        for (int i = 0; i <= ENV_SHADOW_SEGMENTS; i++) {
+            float c = s_shadowArcCos[i], s = s_shadowArcSin[i];
+            baseArcX[i] = bx + (-fx * s + px * c) * baseWidth;
+            baseArcZ[i] = bz + (-fz * s + pz * c) * baseWidth;
+            topArcX[i]  = tx + ( fx * s - px * c) * tipWidth;
+            topArcZ[i]  = tz + ( fz * s - pz * c) * tipWidth;
+        }
+
+        rlBegin(RL_TRIANGLES);
+
+        // 1. Base semi-circle
+        for (int i = 0; i < ENV_SHADOW_SEGMENTS; i++) {
+            EnvShadowVertex(cBase, bx, yGround, bz);
+            EnvShadowVertex(cEdge, baseArcX[i + 1], yGround, baseArcZ[i + 1]);
+            EnvShadowVertex(cEdge, baseArcX[i], yGround, baseArcZ[i]);
+        }
+
+        // 2. Right body quad (2 triangles): edge points at -p
+        float brx = bx - px * baseWidth, brz = bz - pz * baseWidth;
+        float trx = tx - px * tipWidth,  trz = tz - pz * tipWidth;
+        EnvShadowVertex(cBase, bx, yGround, bz);
+        EnvShadowVertex(cTip,  tx, yGround, tz);
+        EnvShadowVertex(cEdge, brx, yGround, brz);
+
+        EnvShadowVertex(cTip,  tx, yGround, tz);
+        EnvShadowVertex(cEdge, trx, yGround, trz);
+        EnvShadowVertex(cEdge, brx, yGround, brz);
+
+        // 3. Left body quad (2 triangles): edge points at +p
+        float blx = bx + px * baseWidth, blz = bz + pz * baseWidth;
+        float tlx = tx + px * tipWidth,  tlz = tz + pz * tipWidth;
+        EnvShadowVertex(cBase, bx, yGround, bz);
+        EnvShadowVertex(cEdge, blx, yGround, blz);
+        EnvShadowVertex(cTip,  tx, yGround, tz);
+
+        EnvShadowVertex(cEdge, blx, yGround, blz);
+        EnvShadowVertex(cEdge, tlx, yGround, tlz);
+        EnvShadowVertex(cTip,  tx, yGround, tz);
+
+        // 4. Top semi-circle
+        for (int i = 0; i < ENV_SHADOW_SEGMENTS; i++) {
+            EnvShadowVertex(cTip,  tx, yGround, tz);
+            EnvShadowVertex(cEdge, topArcX[i + 1], yGround, topArcZ[i + 1]);
+            EnvShadowVertex(cEdge, topArcX[i], yGround, topArcZ[i]);
+        }
+
+        rlEnd();
+    }
+    else if (shape == ENV_SHAPE_BOX) {
+        // Đổ bóng hộp đứng xiên. The swept footprint is the base square plus one
+        // parallelogram per leading edge (an edge whose outward normal faces the
+        // sweep direction). These pieces tile the footprint without overlapping,
+        // so translucent regions are no longer blended twice into dark seams.
+        float ox = prep->offX * height, oz = prep->offZ * height;
+        float x0 = pos.x - width, x1 = pos.x + width;
+        float z0 = pos.z - width, z1 = pos.z + width;
+        const float eps = 1e-4f;
+
+        rlBegin(RL_TRIANGLES);
+
+        // Mặt đáy (đậm)
+        EnvShadowVertex(cBase, x0, yGround, z0);
+        EnvShadowVertex(cBase, x1, yGround, z0);
+        EnvShadowVertex(cBase, x1, yGround, z1);
+        EnvShadowVertex(cBase, x0, yGround, z0);
+        EnvShadowVertex(cBase, x1, yGround, z1);
+        EnvShadowVertex(cBase, x0, yGround, z1);
+
+        // Leading X edge (right if sweeping +x, left if -x): dark at the base
+        // edge, fading to the tip alpha at the far edge.
+        if (ox > eps || ox < -eps) {
+            float ex = ox > 0.0f ? x1 : x0;
+            EnvShadowVertex(cBase, ex, yGround, z0);
+            EnvShadowVertex(cBase, ex, yGround, z1);
+            EnvShadowVertex(cTip,  ex + ox, yGround, z1 + oz);
+            EnvShadowVertex(cBase, ex, yGround, z0);
+            EnvShadowVertex(cTip,  ex + ox, yGround, z1 + oz);
+            EnvShadowVertex(cTip,  ex + ox, yGround, z0 + oz);
+        }
+        // Leading Z edge
+        if (oz > eps || oz < -eps) {
+            float ez = oz > 0.0f ? z1 : z0;
+            EnvShadowVertex(cBase, x0, yGround, ez);
+            EnvShadowVertex(cBase, x1, yGround, ez);
+            EnvShadowVertex(cTip,  x1 + ox, yGround, ez + oz);
+            EnvShadowVertex(cBase, x0, yGround, ez);
+            EnvShadowVertex(cTip,  x1 + ox, yGround, ez + oz);
+            EnvShadowVertex(cTip,  x0 + ox, yGround, ez + oz);
+        }
+
+        rlEnd();
+    }
+}
+
+static void EnvShadowStateBegin(void) {
     rlSetTexture(0);
     rlDrawRenderBatchActive(); // Bắt buộc xả batch trước khi đổi state!
     rlDisableDepthTest();
     rlDisableDepthMask(); rlDisableBackfaceCulling();
-    
-    if (shape == ENV_SHAPE_SPHERE || shape == ENV_SHAPE_CYLINDER) {
-        float hAboveGround = fmaxf(pos.y - yGround, 0.0f);
-        float heightFactor = hAboveGround / 200.0f;
-        float shadowScale = fmaxf(1.0f - heightFactor * 0.4f, 0.1f);
-        float shadowAlpha = fmaxf(1.0f - heightFactor * 1.2f, 0.0f);
-        
-        if (shadowAlpha <= 0.001f) return;
-        
-        // Đổ bóng trụ đứng xiên: capsule bóng mượt (smooth capsule shadow)
-        Vector3 baseCenter = { pos.x + shadowOffset.x * hAboveGround, yGround, pos.z + shadowOffset.y * hAboveGround };
-        Vector3 topCenter = { pos.x + shadowOffset.x * (hAboveGround + height * shadowScale), yGround, pos.z + shadowOffset.y * (hAboveGround + height * shadowScale) };
-        
-        float dx = topCenter.x - baseCenter.x;
-        float dz = topCenter.z - baseCenter.z;
-        float len = sqrtf(dx*dx + dz*dz);
-        float shadowAngle = 0.0f;
-        if (len > 0.001f) shadowAngle = atan2f(dz, dx);
-        
-        float baseWidth = width * shadowScale;
-        float tipWidth = width * 1.2f * shadowScale;
-        
-        Color colBaseCenter = { s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)(s_shadowColor.a * shadowAlpha) };
-        Color colTipCenter  = { s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)(s_shadowColor.a * shadowAlpha * 0.3f) };
-        Color colEdge       = { s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, 0 };
-        
-        rlBegin(RL_TRIANGLES);
-        
-        // 1. Base Semi-circle (from shadowAngle + PI/2 to shadowAngle + 3*PI/2)
-        int segments = 12;
-        for (int i = 0; i < segments; i++) {
-            float a1 = shadowAngle + PI/2.0f + ((float)i / segments) * PI;
-            float a2 = shadowAngle + PI/2.0f + ((float)(i + 1) / segments) * PI;
-            
-            rlColor4ub(colBaseCenter.r, colBaseCenter.g, colBaseCenter.b, colBaseCenter.a);
-            rlVertex3f(baseCenter.x, yGround, baseCenter.z);
-            
-            rlColor4ub(colEdge.r, colEdge.g, colEdge.b, colEdge.a);
-            rlVertex3f(baseCenter.x + cosf(a2) * baseWidth, yGround, baseCenter.z + sinf(a2) * baseWidth);
-            rlVertex3f(baseCenter.x + cosf(a1) * baseWidth, yGround, baseCenter.z + sinf(a1) * baseWidth);
-        }
-        
-        // 2. Right Body Quad (drawn as 2 triangles)
-        Vector3 br = { baseCenter.x + cosf(shadowAngle - PI/2.0f) * baseWidth, yGround, baseCenter.z + sinf(shadowAngle - PI/2.0f) * baseWidth };
-        Vector3 tr = { topCenter.x + cosf(shadowAngle - PI/2.0f) * tipWidth, yGround, topCenter.z + sinf(shadowAngle - PI/2.0f) * tipWidth };
-        
-        rlColor4ub(colBaseCenter.r, colBaseCenter.g, colBaseCenter.b, colBaseCenter.a); rlVertex3f(baseCenter.x, yGround, baseCenter.z);
-        rlColor4ub(colTipCenter.r, colTipCenter.g, colTipCenter.b, colTipCenter.a);   rlVertex3f(topCenter.x, yGround, topCenter.z);
-        rlColor4ub(colEdge.r, colEdge.g, colEdge.b, colEdge.a);                       rlVertex3f(br.x, yGround, br.z);
-        
-        rlColor4ub(colTipCenter.r, colTipCenter.g, colTipCenter.b, colTipCenter.a);   rlVertex3f(topCenter.x, yGround, topCenter.z);
-        rlColor4ub(colEdge.r, colEdge.g, colEdge.b, colEdge.a);                       rlVertex3f(tr.x, yGround, tr.z);
-        rlColor4ub(colEdge.r, colEdge.g, colEdge.b, colEdge.a);                       rlVertex3f(br.x, yGround, br.z);
-        
-        // 3. Left Body Quad (drawn as 2 triangles)
-        Vector3 bl = { baseCenter.x + cosf(shadowAngle + PI/2.0f) * baseWidth, yGround, baseCenter.z + sinf(shadowAngle + PI/2.0f) * baseWidth };
-        Vector3 tl = { topCenter.x + cosf(shadowAngle + PI/2.0f) * tipWidth, yGround, topCenter.z + sinf(shadowAngle + PI/2.0f) * tipWidth };
-        
-        rlColor4ub(colBaseCenter.r, colBaseCenter.g, colBaseCenter.b, colBaseCenter.a); rlVertex3f(baseCenter.x, yGround, baseCenter.z);
-        rlColor4ub(colEdge.r, colEdge.g, colEdge.b, colEdge.a);                       rlVertex3f(bl.x, yGround, bl.z);
-        rlColor4ub(colTipCenter.r, colTipCenter.g, colTipCenter.b, colTipCenter.a);   rlVertex3f(topCenter.x, yGround, topCenter.z);
-        
-        rlColor4ub(colEdge.r, colEdge.g, colEdge.b, colEdge.a);                       rlVertex3f(bl.x, yGround, bl.z);
-        rlColor4ub(colEdge.r, colEdge.g, colEdge.b, colEdge.a);                       rlVertex3f(tl.x, yGround, tl.z);
-        rlColor4ub(colTipCenter.r, colTipCenter.g, colTipCenter.b, colTipCenter.a);   rlVertex3f(topCenter.x, yGround, topCenter.z);
-        
-        // 4. Top Semi-circle (from shadowAngle - PI/2 to shadowAngle + PI/2)
-        for (int i = 0; i < segments; i++) {
-            float a1 = shadowAngle - PI/2.0f + ((float)i / segments) * PI;
-            float a2 = shadowAngle - PI/2.0f + ((float)(i + 1) / segments) * PI;
-            
-            rlColor4ub(colTipCenter.r, colTipCenter.g, colTipCenter.b, colTipCenter.a);
-            rlVertex3f(topCenter.x, yGround, topCenter.z);
-            
-            rlColor4ub(colEdge.r, colEdge.g, colEdge.b, colEdge.a);
-            rlVertex3f(topCenter.x + cosf(a2) * tipWidth, yGround, topCenter.z + sinf(a2) * tipWidth);
-            rlVertex3f(topCenter.x + cosf(a1) * tipWidth, yGround, topCenter.z + sinf(a1) * tipWidth);
-        }
-        
-        rlEnd();
-    }
-    else if (shape == ENV_SHAPE_BOX) {
-        // Đổ bóng hộp đứng xiên: Đóng gói toàn bộ hull bóng đổ 3D sập xuống đất
-        Vector3 b0 = { pos.x - width, yGround, pos.z - width };
-        Vector3 b1 = { pos.x + width, yGround, pos.z - width };
-        Vector3 b2 = { pos.x + width, yGround, pos.z + width };
-        Vector3 b3 = { pos.x - width, yGround, pos.z + width };
-        
-        Vector3 t0 = { pos.x - width + shadowOffset.x * height, yGround, pos.z - width + shadowOffset.y * height };
-        Vector3 t1 = { pos.x + width + shadowOffset.x * height, yGround, pos.z - width + shadowOffset.y * height };
-        Vector3 t2 = { pos.x + width + shadowOffset.x * height, yGround, pos.z + width + shadowOffset.y * height };
-        Vector3 t3 = { pos.x - width + shadowOffset.x * height, yGround, pos.z + width + shadowOffset.y * height };
-        
-        rlBegin(RL_QUADS);
-        
-        // Mặt đáy (đậm)
-        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, s_shadowColor.a);
-        rlVertex3f(b0.x, yGround, b0.z);
-        rlVertex3f(b1.x, yGround, b1.z);
-        rlVertex3f(b2.x, yGround, b2.z);
-        rlVertex3f(b3.x, yGround, b3.z);
-        
-        // Mặt đỉnh (nhạt dần)
-        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)(s_shadowColor.a * 0.3f));
-        rlVertex3f(t0.x, yGround, t0.z);
-        rlVertex3f(t3.x, yGround, t3.z);
-        rlVertex3f(t2.x, yGround, t2.z);
-        rlVertex3f(t1.x, yGround, t1.z);
-        
-        // Các mặt bên nối đáy lên đỉnh
-        // Mặt bên 0-1
-        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, s_shadowColor.a);
-        rlVertex3f(b0.x, yGround, b0.z);
-        rlVertex3f(b1.x, yGround, b1.z);
-        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)(s_shadowColor.a * 0.3f));
-        rlVertex3f(t1.x, yGround, t1.z);
-        rlVertex3f(t0.x, yGround, t0.z);
-        
-        // Mặt bên 1-2
-        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, s_shadowColor.a);
-        rlVertex3f(b1.x, yGround, b1.z);
-        rlVertex3f(b2.x, yGround, b2.z);
-        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)(s_shadowColor.a * 0.3f));
-        rlVertex3f(t2.x, yGround, t2.z);
-        rlVertex3f(t1.x, yGround, t1.z);
-        
-        // Mặt bên 2-3
-        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, s_shadowColor.a);
-        rlVertex3f(b2.x, yGround, b2.z);
-        rlVertex3f(b3.x, yGround, b3.z);
-        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)(s_shadowColor.a * 0.3f));
-        rlVertex3f(t3.x, yGround, t3.z);
-        rlVertex3f(t2.x, yGround, t2.z);
-        
-        // Mặt bên 3-0
-        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, s_shadowColor.a);
-        rlVertex3f(b3.x, yGround, b3.z);
-        rlVertex3f(b0.x, yGround, b0.z);
-        rlColor4ub(s_shadowColor.r, s_shadowColor.g, s_shadowColor.b, (unsigned char)(s_shadowColor.a * 0.3f));
-        rlVertex3f(t0.x, yGround, t0.z);
-        rlVertex3f(t3.x, yGround, t3.z);
-        
-        rlEnd();
-    }
-    
+}
+
+static void EnvShadowStateEnd(void) {
     rlDrawRenderBatchActive(); // Bắt buộc xả batch của shadow trước khi đổi state!
     rlEnableDepthMask(); rlEnableBackfaceCulling();
     rlEnableDepthTest();
 }
 
-static unsigned int s_lightingVersion = 1;
+// Optional grouping: between Begin and End, Environment_DrawSmartShadow() only
+// emits geometry (no flush, no state toggle). Do not draw anything else in
+// between. Nested/unbalanced calls are ignored safely.
+void Environment_BeginShadowBatch(void) {
+    if (s_shadowBatchOpen) return;
+    s_shadowBatchOpen = true;
+    EnvShadowStateBegin();
+}
+
+void Environment_EndShadowBatch(void) {
+    if (!s_shadowBatchOpen) return;
+    s_shadowBatchOpen = false;
+    EnvShadowStateEnd();
+}
+
+void Environment_DrawSmartShadow(Vector3 pos, EnvShadowShapeType shape, float width, float height) {
+    EnvShadowPrep prep;
+    if (!EnvPrepareShadow(pos, shape, &prep)) return;
+
+    if (s_shadowBatchOpen) {
+        EnvEmitShadow(pos, shape, width, height, &prep);
+        return;
+    }
+    EnvShadowStateBegin();
+    EnvEmitShadow(pos, shape, width, height, &prep);
+    EnvShadowStateEnd();
+}
 
 Vector3 Environment_GetSunDirection(void) { return s_sunDirection; }
-void Environment_SetSunDirection(Vector3 dir) { s_sunDirection = Vector3Normalize(dir); s_lightingVersion++; }
+void Environment_SetSunDirection(Vector3 dir) {
+    Vector3 n = Vector3Normalize(dir);
+    if (EnvVec3Eq(n, s_sunDirection)) return;
+    s_sunDirection = n;
+    EnvSunDirectionChanged();
+}
 
 Color Environment_GetSunColor(void) { return s_sunColor; }
-void Environment_SetSunColor(Color col) { s_sunColor = col; s_lightingVersion++; }
+void Environment_SetSunColor(Color col) {
+    if (EnvColorEq(col, s_sunColor)) return;
+    s_sunColor = col;
+    s_lightingVersion++;
+}
 
 float Environment_GetSunIntensity(void) { return s_sunIntensity; }
 void Environment_SetSunIntensity(float intensity) {
@@ -411,7 +558,11 @@ void Environment_SetSunIntensity(float intensity) {
 }
 
 Color Environment_GetAmbientColor(void) { return s_ambientColor; }
-void Environment_SetAmbientColor(Color col) { s_ambientColor = col; s_lightingVersion++; }
+void Environment_SetAmbientColor(Color col) {
+    if (EnvColorEq(col, s_ambientColor)) return;
+    s_ambientColor = col;
+    s_lightingVersion++;
+}
 
 // Real Shading P1c — hemispheric split derived from the existing flat
 // ambient (no preset-struct change yet): sky brighter/cooler, ground dimmer
@@ -441,7 +592,11 @@ Color Environment_GetGroundAmbient(void) {
 }
 
 Color Environment_GetShadowColor(void) { return s_shadowColor; }
-void Environment_SetShadowColor(Color col) { s_shadowColor = col; s_lightingVersion++; }
+void Environment_SetShadowColor(Color col) {
+    if (EnvColorEq(col, s_shadowColor)) return;
+    s_shadowColor = col;
+    s_lightingVersion++;
+}
 
 EnvFogConfig Environment_GetFogConfig(void) { return s_fogConfig; }
 void Environment_SetFogConfig(EnvFogConfig config) {
@@ -659,7 +814,7 @@ void Environment_ApplyProfile(const EnvLightingPreset *profile) {
     s_atmosphereProfile.start = s_fogConfig.start;
     s_atmosphereProfile.end = s_fogConfig.end;
     s_atmosphereProfile.enabled = s_fogConfig.enabled;
-    s_lightingVersion++;
+    EnvSunDirectionChanged();
 }
 
 void Environment_SetTimeOfDayPresets(const EnvLightingPreset *presets, const float *timePoints, int count) {
