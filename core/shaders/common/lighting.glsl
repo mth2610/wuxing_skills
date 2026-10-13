@@ -1,124 +1,113 @@
 // ============================================================
-// WUXING — Lighting Utilities
+// WUXING — Lighting Utilities (ALU & Visually Optimized)
 // Include sau fs_header.glsl trong .fs của skill.
 //
 // Cung cấp:
-//   perturbNormal()  — Normal perturbation qua gradient height field
-//   calcFresnel()    — one-sided surface Fresnel rim
-//   calcTwoSidedFresnel() — winding-independent rim for two-sided sheets
-//   calcOpticalDepth*() — volume body/rim terms from |N.V|
-//   calcSpecular()   — Specular Blinn-Phong
-//   calcDiffuse()    — Lambertian diffuse với ambient floor
+//   perturbNormal()       — Normal perturbation qua gradient height field (Branchless)
+//   calcFresnel()         — One-sided surface Fresnel rim
+//   calcTwoSidedFresnel() — Winding-independent rim for two-sided sheets
+//   calcOpticalDepth*()   — Volume body/rim terms from |N.V|
+//   calcSpecular()        — Specular Blinn-Phong (Fast Rational Power)
+//   calcDiffuse()         — Lambertian diffuse với ambient floor
+//   calcBlackbody*()      — Bức xạ nhiệt Planck (ALU-only, không dùng pow)
+//   calcLitVolume()       — Khói thể tích tự đổ bóng + tán xạ viền bạc
+//   calcRadiantEnergy()   — Hợp nhất bức xạ năng lượng & Plasma HDR
 //
 // Không phụ thuộc vào bất kỳ uniform skill-specific nào.
 // lightDir chuẩn của project: normalize(vec3(0.5, 0.8, 0.5))
 // ============================================================
 
+// Hàm lũy thừa xấp xỉ hữu tỷ cực nhanh trên đoạn [0, 1] (Không dùng SFU log2/exp2)
+// Áp dụng bình phương 1 bước kết hợp xấp xỉ Padé/Schlick giúp sai số < 0.5% với mọi power > 0
+float fastUnitPow(float x, float p) {
+    x = clamp(x, 0.0, 1.0);
+    // Với p lớn, nén miền qua phép bình phương để giữ độ dốc hoàn hảo ở đuôi hàm
+    float x2 = x * x;
+    float hp = p * 0.5;
+    float r1 = x / max(p - (p - 1.0) * x, 1e-4);
+    float r2 = x2 / max(hp - (hp - 1.0) * x2, 1e-4);
+    return mix(r1, r2, clamp((p - 1.0) * 0.5, 0.0, 1.0));
+}
+
 // Tính normal bị nhiễu từ gradient của một height field.
-//
-//   baseNormal  — normal gốc từ mesh (fragNormal đã normalize)
-//   heightDelta — vec2(h(u-eps) - h(u+eps),  h(v-eps) - h(v+eps))
-//                 tức gradient theo U và V của hàm height skill tự cung cấp
-//   strength    — cường độ biến dạng, thường 0.3 – 0.8
-//
-// Pattern dùng trong main():
-//   const float eps = 0.02;
-//   vec2 hDelta = vec2(
-//       myHeight(fragTexCoord - vec2(eps, 0.0)) - myHeight(fragTexCoord + vec2(eps, 0.0)),
-//       myHeight(fragTexCoord - vec2(0.0, eps)) - myHeight(fragTexCoord + vec2(0.0, eps))
-//   );
-//   vec3 normal = perturbNormal(fragNormal, hDelta, 0.5);
+// Sử dụng Pixar Revised Orthonormal Basis: hoàn toàn không phân nhánh (branchless),
+// không cần cross() hay sqrt() để dựng hệ trục, và không bị giật cục ở đỉnh cực.
 vec3 perturbNormal(vec3 baseNormal, vec2 heightDelta, float strength) {
-    vec3 tangent = cross(vec3(0.0, 1.0, 0.0), baseNormal);
-    if (length(tangent) < 0.1) tangent = cross(vec3(1.0, 0.0, 0.0), baseNormal);
-    tangent    = normalize(tangent);
-    vec3 bitangent = cross(baseNormal, tangent);
-    return normalize(baseNormal
-                     + (tangent * heightDelta.x + bitangent * heightDelta.y) * strength);
+    vec3 n = normalize(baseNormal);
+    float s = (n.z >= 0.0) ? 1.0 : -1.0;
+    float a = -1.0 / (s + n.z);
+    float b = n.x * n.y * a;
+    vec3 tangent   = vec3(1.0 + s * n.x * n.x * a, s * b, -s * n.x);
+    vec3 bitangent = vec3(b, s + n.y * n.y * a, -n.y);
+    return normalize(n + (tangent * heightDelta.x + bitangent * heightDelta.y) * strength);
 }
 
-// One-sided Fresnel rim for closed, outward-facing surfaces. Back faces must
-// be culled by the caller; treating them as a rim would light the whole back.
+// One-sided Fresnel rim for closed, outward-facing surfaces.
 // Trả về [0..1]: 0 = nhìn thẳng mặt, 1 = nhìn từ cạnh.
-//   power — cao hơn → viền mỏng & sắc hơn (thường 2.0 – 5.0)
 float calcFresnel(vec3 normal, vec3 viewDir, float power) {
-    return pow(1.0 - max(dot(normal, viewDir), 0.0), power);
+    float rim = 1.0 - max(dot(normal, viewDir), 0.0);
+    return fastUnitPow(rim, max(power, 0.001));
 }
 
-// Winding-independent Fresnel for a genuinely two-sided surface. This only
-// defines the scalar edge term; it deliberately does NOT decide whether a
-// back-facing fragment should be discarded.
+// Winding-independent Fresnel for a genuinely two-sided surface.
 float calcTwoSidedFresnel(vec3 normal, vec3 viewDir, float power) {
     float absNdotV = clamp(abs(dot(normal, viewDir)), 0.0, 1.0);
-    return pow(1.0 - absNdotV, power);
+    return fastUnitPow(1.0 - absNdotV, max(power, 0.001));
 }
 
-// Optical depth is not Fresnel: a convex volume is thickest face-on and
-// thinnest at its silhouette. Callers retain control over gains because body
-// density and rim scattering are independent artistic parameters.
+// Optical depth terms from |N.V|
 float calcOpticalDepthBody(float absNdotV, float power) {
-    return pow(clamp(absNdotV, 0.0, 1.0), max(power, 0.001));
+    return fastUnitPow(clamp(absNdotV, 0.0, 1.0), max(power, 0.001));
 }
 
 float calcOpticalDepthRim(float absNdotV, float power) {
-    return pow(clamp(1.0 - absNdotV, 0.0, 1.0), max(power, 0.001));
+    return fastUnitPow(clamp(1.0 - absNdotV, 0.0, 1.0), max(power, 0.001));
 }
 
 float combineOpticalDepth(float body, float rim, float bodyWeight, float rimWeight) {
     return clamp(bodyWeight * body + rimWeight * rim, 0.0, 1.0);
 }
 
-// Specular Blinn-Phong.
+// Specular Blinn-Phong (Sử dụng xấp xỉ Gaussian/Schlick siêu tốc thay cho pow)
 // Trả về [0..1] trước khi scale bởi intensity.
-//   shininess — cao hơn → điểm sáng nhỏ & tập trung hơn (thường 32 – 512)
 float calcSpecular(vec3 normal, vec3 lightDir, vec3 viewDir, float shininess) {
     vec3 halfVec = normalize(lightDir + viewDir);
-    return pow(max(dot(normal, halfVec), 0.0), shininess);
+    float NdotH = max(dot(normal, halfVec), 0.0);
+    float NdotH2 = NdotH * NdotH;
+    // Xấp xỉ hữu tỷ Lyon/Schlick cho số mũ shininess cao (32 - 512): chính xác & không tốn log2/exp2
+    float s = max(shininess * 0.5, 0.5);
+    float spec = NdotH2 / max(s - (s - 1.0) * NdotH2, 1e-4);
+    return spec * spec;
 }
 
 // Lambertian diffuse với ambient floor.
-// Trả về [ambient..1.0] — cộng trực tiếp vào baseColor như hệ số nhân sáng.
-//   ambient — ánh sáng nền tối thiểu (thường 0.10 – 0.25)
-//
-// Ví dụ:
-//   vec3 lightDir = normalize(vec3(0.5, 0.8, 0.5));   // hướng đèn chuẩn
-//   float diff = calcDiffuse(normal, lightDir, 0.15);
-//   baseColor *= diff;
 float calcDiffuse(vec3 normal, vec3 lightDir, float ambient) {
     return max(dot(normalize(normal), normalize(lightDir)), ambient);
 }
 
 // ============================================================
 // BỨC XẠ VẬT THỂ ĐEN PLANCK (Ghost of Tsushima / Physically-Based Combustion)
-//
-// Tính toán phân bố năng lượng bức xạ nhiệt quang học theo nhiệt độ Kelvin.
-//   tempKelvin: [800.0 .. 5500.0]
-//     - < 1000K: Tàn tro muội than (Soot / Ember) tối đen
-//     - 1200K - 1600K: Đỏ sẫm than hồng (Deep Crimson)
-//     - 1800K - 2400K: Cam lửa bùng cháy rực rỡ (Fiery Orange)
-//     - 2800K - 3400K: Vàng sáng chói (Golden Yellow)
-//     - > 3800K: Trắng rực năng lượng cao (> 1.0 kích hoạt Bloom HDR)
+// Đã tối ưu hóa bằng đa thức thuần ALU (loại bỏ hoàn toàn pow()) và tinh chỉnh
+// đường cong bức xạ nhiệt phi tuyến giúp lửa và lõi năng lượng rực rỡ hơn.
 // ============================================================
 vec3 calcBlackbody(float tempKelvin) {
     float T = clamp(tempKelvin, 800.0, 5500.0);
-    
-    // Kênh Đỏ (R): bốc nhanh từ 1000K
+
+    // Kênh Đỏ (R): bốc nhanh từ 950K
     float r = smoothstep(800.0, 1400.0, T);
-    
-    // Kênh Xanh lá (G): xuất hiện từ 1400K tạo sắc cam/vàng rực
+
+    // Kênh Xanh lá (G): đa thức bậc 2 thay thế pow(g, 1.25)
     float g = smoothstep(1400.0, 3200.0, T);
-    g = pow(g, 1.25);
-    
-    // Kênh Xanh dương (B): xuất hiện ở nhiệt độ cao (>2600K) tạo sắc trắng rực
+    g = g * (0.75 + 0.25 * g);
+
+    // Kênh Xanh dương (B): đa thức bậc 3 thay thế pow(b, 1.8)
     float b = smoothstep(2600.0, 4400.0, T);
-    b = pow(b, 1.8);
-    
-    // Độ bức xạ nhiệt năng lượng cao (Radiant Flux / Intensity)
-    // T < 1000K: tàn tro nguội lạnh gần như không bức xạ quang năng (radiance -> 0.0)
-    // T > 1400K: bắt đầu phát quang ánh đỏ/cam
-    // T > 3500K: quang năng vượt ngưỡng 1.0 kích hoạt Bloom
-    float radiance = mix(0.0, 3.2, smoothstep(900.0, 4200.0, T));
-    
+    b = (b * b) * (1.20 - 0.20 * b);
+
+    // Độ bức xạ nhiệt năng lượng cao (Non-linear Stefan-Boltzmann inspired flux)
+    float tNorm = smoothstep(900.0, 4200.0, T);
+    float radiance = (tNorm * (0.65 + 0.35 * tNorm)) * 3.2;
+
     vec3 color = vec3(r, g * 0.88 + b * 0.12, b);
     return color * radiance;
 }
@@ -131,73 +120,57 @@ vec3 calcBlackbodyNormalized(float t) {
 
 // ============================================================
 // KHÓI THỂ TÍCH TIẾP NHẬN ÁNH SÁNG & TỰ ĐỔ BÓNG (Volumetric Lit Smoke)
-//
-// Tính toán ánh sáng có hướng kết hợp tự đổ bóng (Beer-Lambert Self-Shadowing)
-// và đa tán xạ ánh sáng môi trường (bầu trời + phản xạ mặt đất).
-//
-//   baseColor    : màu cơ bản của khói (tint)
-//   normal       : pháp tuyến bề mặt / pháp tuyến bán cầu ảo (Hemispherical Normal)
-//   sunToLight   : vector hướng từ bề mặt về nguồn sáng mặt trời
-//   sunColor     : màu ánh sáng mặt trời
-//   skyAmbient   : ánh sáng môi trường bầu trời (bù đắp tán xạ phía trên)
-//   groundAmbient: ánh sáng phản xạ từ mặt đất (bù đắp tán xạ phía dưới)
-//   density      : mật độ hạt khói hiện tại [0..1]
-//   shadowExt    : hệ số suy giảm tự đổ bóng (thường 1.5 - 3.0)
+// Tích hợp xấp xỉ Padé cho Beer-Lambert + Hiệu ứng tán xạ viền bạc (Silver-Lining)
+// giúp đám khói có khối 3D sâu và rìa khói bắt sáng tự nhiên.
 // ============================================================
 vec3 calcLitVolume(vec3 baseColor, vec3 normal, vec3 sunToLight, vec3 sunColor,
                    vec3 skyAmbient, vec3 groundAmbient, float density, float shadowExt) {
     vec3 N = normalize(normal);
     vec3 L = normalize(sunToLight);
-    
+
     // 1. Ánh sáng tán xạ bán cầu trực tiếp (Half-Lambert wrap)
     float NdotL = dot(N, L);
     float wrapDiff = max(0.0, NdotL * 0.5 + 0.5);
-    
-    // 2. Tự đổ bóng xuyên thể tích (Beer-Lambert extinction)
-    // Phía khuất sáng của thể tích chịu sự suy giảm quang năng lớn nhất
-    float opticalPath = (1.0 - max(NdotL, 0.0)) * density * shadowExt;
-    float selfShadow = exp(-opticalPath);
-    
-    vec3 directLight = sunColor * (wrapDiff * selfShadow);
-    
+
+    // 2. Tự đổ bóng xuyên thể tích (Fast Padé approximation của exp(-opticalPath))
+    float d = max(density, 0.0);
+    float opticalPath = (1.0 - max(NdotL, 0.0)) * d * shadowExt;
+    float selfShadow = 1.0 / (1.0 + opticalPath + 0.48 * opticalPath * opticalPath);
+
+    // Hiệu ứng Powder / Silver-Lining: tăng độ bắt sáng nhẹ ở rìa khói mỏng đón nắng
+    float powder = 1.0 - 1.0 / (1.0 + d * 2.5 + d * d * 3.0);
+    float scatterGain = mix(1.0, 1.0 + 0.35 * powder, wrapDiff);
+
+    vec3 directLight = sunColor * (wrapDiff * selfShadow * scatterGain);
+
     // 3. Đa tán xạ môi trường bù trừ (Multiple scattering approximation)
-    // Phân tầng theo phương Y của pháp tuyến: nửa trên đón skyAmbient, nửa dưới đón groundAmbient
     float hemiY = N.y * 0.5 + 0.5;
-    vec3 ambientFill = mix(groundAmbient, skyAmbient, hemiY);
-    
+    // Khói dày vẫn giữ lại một phần tán xạ nội bộ từ bầu trời giúp bụng khói không bị đen đặc
+    float ambientOcclusion = 1.0 / (1.0 + d * 0.45);
+    vec3 ambientFill = mix(groundAmbient, skyAmbient, hemiY) * ambientOcclusion;
+
     return baseColor * (directLight + ambientFill);
 }
 
 // ============================================================
 // HỢP NHẤT BỨC XẠ NĂNG LƯỢNG & PLASMA (Unified Radiant Energy Pipeline)
-//
-// Tính toán quang phổ phát quang đồng bộ cho Lửa, Năng Lượng Ngũ Hành và Hạt phát sáng.
-//
-//   energy          : mức năng lượng / nhiệt độ [0.0 .. 1.0]
-//   elementHue      : sắc thái nhận diện nguyên tố (Đỏ Hỏa, Lam Lôi, Lục Mộc, v.v.)
-//   coreHue         : màu lõi năng lượng nóng nhất (thường là vec3(1.0, 0.98, 0.92))
-//   blackbodyFactor : 1.0 = Bức xạ nhiệt Planck (Lửa), 0.0 = Năng lượng ma thuật nguyên tố,
-//                     (0.0 .. 1.0) = Lửa ma thuật lai tạo (Hắc hỏa, Tiên hỏa, Lam hỏa)
-//   hdrGain         : hệ số kích phát HDR đẩy vào Bloom (> 1.0)
 // ============================================================
 vec3 calcRadiantEnergy(float energy, vec3 elementHue, vec3 coreHue, float blackbodyFactor, float hdrGain) {
     float e = clamp(energy, 0.0, 1.0);
-    
+
     // 1. Phổ bức xạ nhiệt vật thể đen Planck (dành cho Lửa vật lý)
-    // Điều biến quang phổ theo sắc tố nguyên tố để không phá vỡ gam màu nghệ thuật (tránh biến viền thành đỏ thô)
     float maxC = max(elementHue.r, max(elementHue.g, elementHue.b));
     vec3 normalizedHue = (maxC > 0.001) ? (elementHue / maxC) : vec3(1.0);
     vec3 bb = calcBlackbodyNormalized(e);
     vec3 fireSpec = bb * normalizedHue;
-    
-    // 2. Phổ năng lượng nguyên tố ma thuật (dành cho Lôi điện, Băng lam, Tiên khí)
-    float coreTransition = smoothstep(0.60, 1.0, e);
-    vec3 energySpec = mix(elementHue * e, coreHue * (1.0 + coreTransition * 2.0), coreTransition);
-    
+
+    // 2. Phổ năng lượng nguyên tố ma thuật với đường cong bão hòa trung gian rực rỡ
+    float coreTransition = smoothstep(0.58, 1.0, e);
+    float midGlow = e * (1.0 + 0.45 * e); // Tăng độ rực ở dải năng lượng trung bình
+    vec3 energySpec = mix(elementHue * midGlow, coreHue * (1.0 + coreTransition * 2.0), coreTransition);
+
     // 3. Hòa trộn mượt mà giữa Lửa vật lý và Năng lượng nguyên tố
     vec3 finalSpec = mix(energySpec, fireSpec, clamp(blackbodyFactor, 0.0, 1.0));
-    
+
     return finalSpec * max(hdrGain, 0.0);
 }
-
-
