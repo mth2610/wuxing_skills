@@ -1,14 +1,6 @@
 #version 330
 
 // Đợt E / E2 — added so ground_splat.fs can be lit by VFX point lights.
-//
-// The ground previously ran on raylib's DEFAULT vertex shader, which forwards
-// only texcoord and colour — no world position. Point lighting needs one, and
-// there is no way to recover it from a UV alone once the plane is scaled or
-// offset (the heightmap variant draws at a non-zero drawOffset). So this is the
-// default shader plus a single extra varying; everything else is unchanged, and
-// the fragment shader's existing inputs keep their meaning.
-
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 in vec3 vertexNormal;
@@ -19,12 +11,7 @@ uniform mat4 matModel;
 uniform vec3 u_groundOffset;
 
 out vec2 fragTexCoord;
-// Not read by ground_splat.fs, but kept so other fragment shaders that share
-// this vertex stage (and expect the raylib default interface) still link.
 out vec4 fragColor;
-// DrawMesh under this project's custom 3D pass includes view in matModel.
-// This is therefore the shared surface/view space used by VFX lights; the
-// shadow uploader folds inverse(view) into its light projection.
 out vec3 fragPosition;
 out vec3 fragNormal;
 out vec3 fragWorldPos;
@@ -33,12 +20,9 @@ void main()
 {
     fragTexCoord = vertexTexCoord;
     fragColor    = vertexColor;
-    fragPosition = (matModel * vec4(vertexPosition, 1.0)).xyz;
-    // Ground surfaces draw with translation only. Lighting, habitat slope
-    // and relief normals are world-space; matModel also contains the camera.
-    // Mesh normals are already unit length and the fragment stage renormalizes
-    // after interpolation, so no per-vertex normalize is needed here.
+    vec4 worldVertex = vec4(vertexPosition, 1.0);
+    fragPosition = (matModel * worldVertex).xyz;
     fragNormal   = vertexNormal;
     fragWorldPos = vertexPosition + u_groundOffset;
-    gl_Position  = mvp * vec4(vertexPosition, 1.0);
+    gl_Position  = mvp * worldVertex;
 }
