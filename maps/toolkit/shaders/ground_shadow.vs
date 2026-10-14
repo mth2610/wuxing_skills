@@ -1,8 +1,5 @@
 #version 330
 
-// Giữ nguyên tuyệt đối cấu trúc attribute và varying của ground_shadow.vs gốc
-// để tránh lệch Location của vertexColor trong chế độ Immediate-Mode (rlBegin) trên rlvk.
-
 in vec3 vertexPosition;
 in vec4 vertexColor;
 

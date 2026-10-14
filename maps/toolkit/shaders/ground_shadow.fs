@@ -5,65 +5,57 @@
 in vec4 fragColor;
 in vec3 fragWorldPos;
 
-uniform sampler2D texture0; // shadow depth map
+uniform sampler2D texture0;
 uniform mat4      u_lightVP;
 uniform float     u_shadowEnabled;
-uniform float     u_shadowTexel; // 1.0 / resolution
+uniform float     u_shadowTexel;
 
 out vec4 finalColor;
 
-// ----------------------------------------------------------------------------
-// 9-Tap Bilinear / Tent PCF (Thay thế cho 16-tap cũ)
-// * Chỉ tốn 9 lần đọc texture thay vì 16 lần (tiết kiệm 44% băng thông).
-// * Lấy mẫu lưới 3x3 texel liền kề và pha trộn mượt theo sub-texel (f.x, f.y),
-//   loại bỏ hoàn toàn hiện tượng ô vuông (blocky edge) trên Point-sampled R32F.
-// ----------------------------------------------------------------------------
+#define GROUND_SHADOW_PCF_RADIUS 3
+#define GROUND_SHADOW_PCF_STEP   1.0
+
+const vec2 poissonDisk[16] = vec2[]( 
+   vec2( -0.94201624, -0.39906216 ), vec2( 0.94558609, -0.76890725 ), 
+   vec2( -0.094184101, -0.92938870 ), vec2( 0.34495938, 0.29387760 ), 
+   vec2( -0.91588401, 0.45771432 ), vec2( -0.81544232, -0.87912464 ), 
+   vec2( -0.38277543, 0.27676845 ), vec2( 0.97484398, 0.75648379 ), 
+   vec2( 0.44323325, -0.97511554 ), vec2( 0.53742981, -0.47373420 ), 
+   vec2( -0.26496911, -0.41893023 ), vec2( 0.79197514, 0.19090188 ), 
+   vec2( -0.24188840, 0.99706507 ), vec2( -0.81409955, 0.91437590 ), 
+   vec2( 0.19984126, 0.78641367 ), vec2( 0.14383161, -0.14100790 ) 
+);
+
+float ShadowTapBilinear(vec2 uv, float z, float res) {
+    vec2  t    = uv * res - 0.5;
+    vec2  f    = fract(t);
+    vec2  base = (floor(t) + 0.5) * u_shadowTexel;
+    float s00 = step(z, texture(texture0, base).r);
+    float s10 = step(z, texture(texture0, base + vec2(u_shadowTexel, 0.0)).r);
+    float s01 = step(z, texture(texture0, base + vec2(0.0, u_shadowTexel)).r);
+    float s11 = step(z, texture(texture0, base + vec2(u_shadowTexel, u_shadowTexel)).r);
+    return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
+}
+
 float ShadowFactor(vec3 worldPos) {
     vec4 posLS = u_lightVP * vec4(worldPos, 1.0);
     vec3 proj = posLS.xyz / posLS.w;
     proj = proj * 0.5 + 0.5;
+    
+    if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
 
-    if (proj.z > 1.0 || proj.x <= 0.0 || proj.x >= 1.0 || proj.y <= 0.0 || proj.y >= 1.0) {
-        return 1.0;
-    }
+    float z = proj.z - 0.0015;
+    float res = 1.0 / u_shadowTexel;
+    const float S = 1.25;
 
-    float z = proj.z - 0.0015; // Depth bias
+    // Tính 1 lần res và lấy mẫu đối xứng mượt
+    float shadow = 0.0;
+    shadow += ShadowTapBilinear(proj.xy + vec2(-S, -S) * u_shadowTexel, z, res);
+    shadow += ShadowTapBilinear(proj.xy + vec2( S, -S) * u_shadowTexel, z, res);
+    shadow += ShadowTapBilinear(proj.xy + vec2(-S,  S) * u_shadowTexel, z, res);
+    shadow += ShadowTapBilinear(proj.xy + vec2( S,  S) * u_shadowTexel, z, res);
 
-    float res  = 1.0 / max(u_shadowTexel, 1e-6);
-    vec2  t    = proj.xy * res - 0.5;
-    vec2  f    = fract(t);
-    vec2  base = (floor(t) + 0.5) * u_shadowTexel;
-
-    float tx = u_shadowTexel;
-
-    // 9 lượt đọc texture liền kề (3x3)
-    float s00 = step(z, texture(texture0, base + vec2(-tx, -tx)).r);
-    float s10 = step(z, texture(texture0, base + vec2(0.0, -tx)).r);
-    float s20 = step(z, texture(texture0, base + vec2( tx, -tx)).r);
-
-    float s01 = step(z, texture(texture0, base + vec2(-tx, 0.0)).r);
-    float s11 = step(z, texture(texture0, base                ).r);
-    float s21 = step(z, texture(texture0, base + vec2( tx, 0.0)).r);
-
-    float s02 = step(z, texture(texture0, base + vec2(-tx,  tx)).r);
-    float s12 = step(z, texture(texture0, base + vec2(0.0,  tx)).r);
-    float s22 = step(z, texture(texture0, base + vec2( tx,  tx)).r);
-
-    // Trọng số nội suy Bilinear/Tent liên tục (Tổng trọng số = 4.0)
-    vec3 wx = vec3(1.0 - f.x, 1.0, f.x);
-    vec3 wy = vec3(1.0 - f.y, 1.0, f.y);
-
-    float row0 = dot(vec3(s00, s10, s20), wx);
-    float row1 = dot(vec3(s01, s11, s21), wx);
-    float row2 = dot(vec3(s02, s12, s22), wx);
-
-    float shadow = dot(vec3(row0, row1, row2), wy) * 0.25;
-
-    // Làm mờ mềm 4% ở mép ngoài của Shadow Map để bóng không bị cắt cụt đột ngột
-    vec2 edgeDist = min(proj.xy, 1.0 - proj.xy);
-    float frustumFade = smoothstep(0.0, 0.04, min(edgeDist.x, edgeDist.y));
-
-    return mix(1.0, shadow, frustumFade);
+    return shadow * 0.25;
 }
 
 #define GROUND_SHADOW_DEBUG_PROJ 0
@@ -82,15 +74,11 @@ void main() {
         return;
     }
 #endif
-
     float shadow = 1.0;
     if (u_shadowEnabled > 0.5) {
         shadow = ShadowFactor(fragWorldPos);
     }
-
-    // Giữ nguyên chuẩn màu vertex (xanh dương của Arena) và chỉ làm tối nhẹ vùng có bóng đổ
     vec3 floorLit = fragColor.rgb * mix(0.30, 1.0, shadow);
     floorLit += VFXLights_AccumulateFlat(fragWorldPos, fragColor.rgb);
-
     finalColor = vec4(floorLit, fragColor.a);
 }
