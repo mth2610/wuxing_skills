@@ -1,33 +1,8 @@
 #version 330
 
 // ============================================================
-// WUXING — grass_material Vertex Shader (CORE_ISSUES.md Item 38,
-// supersedes Item 37)
-//
-// Texture-blend hybrid ground material. Drawn via raylib's Material +
-// DrawModel()/DrawModelEx() pipeline (like prop_lit, CORE_ISSUES.md
-// Item 36) — NOT a skill VFX shader, so it deliberately does not pull in
-// core/shaders/common/vs_header.glsl (that header's uniforms are only
-// auto-bound by SkillManager_BeginShader, which never runs for a plain
-// DrawModel() call).
-//
-// The fragment shader derives ALL texture and noise coordinates from
-// fragTexCoord (baked to world meters at mesh creation by TilePlaneUVs;
-// see the Item 38 follow-up in CORE_ISSUES.md), NOT from fragPosition.xz.
-// fragTexCoord is therefore the critical varying here and must stay a
-// plain pass-through of vertexTexCoord. fragPosition is still needed for
-// the VFX light accumulation, fragNormal for the sun/VFX lighting. No
-// tangent attribute — grassDetail is a plain grayscale grain multiplier,
-// not a tangent-space normal map.
-//
-// The vertex work is already minimal (one mat4*vec4 for world position,
-// one mat3 for the normal, one mvp). The ground is a handful of large
-// quads, so there is no per-vertex cost worth shaving; the optimization
-// effort for this material lives in grass_material.fs.
-//
-// Note: mat3(matModel) is only a correct normal transform for rotation +
-// uniform scale. If the ground model is ever drawn with non-uniform
-// scale, switch to the inverse-transpose (raylib's matNormal uniform).
+// WUXING — grass_material Vertex Shader (Optimized)
+// Dời toàn bộ phép nhân/chia tọa độ UV và Noise từ Fragment sang Vertex
 // ============================================================
 
 #ifdef GL_ES
@@ -41,16 +16,31 @@ in vec3 vertexNormal;
 uniform mat4 mvp;
 uniform mat4 matModel;
 
+// Khai báo thêm các uniform tỉ lệ ở Vertex Shader để tính trước UV
+// (Raylib / OpenGL tự động chia sẻ chung vùng nhớ uniform trong cùng 1 Shader Program)
+uniform float u_baseTileSize;
+uniform float u_detailTileSize;
+uniform float u_maskNoiseScale;
+uniform float u_colorVarScale;
+
 out vec3 fragPosition;
-out vec2 fragTexCoord;
 out vec3 fragNormal;
+// Đóng gói 4 hệ tọa độ UV vào 2 biến vec4 để tối ưu thanh ghi nội suy
+out vec4 v_tileUVs;   // .xy = baseUV,      .zw = detailUV
+out vec4 v_noiseUVs;  // .xy = maskNoiseUV, .zw = colorVarUV
 
 void main() {
     fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
-    fragTexCoord = vertexTexCoord;
+    fragNormal   = normalize(mat3(matModel) * vertexNormal);
 
-    mat3 normalMat = mat3(matModel);
-    fragNormal = normalize(normalMat * vertexNormal);
+    // Tính toán sẵn toàn bộ tọa độ lấy mẫu tại đỉnh (chỉ chạy vài lần cho cả mặt đất)
+    vec2 worldXZ = vertexTexCoord;
+    vec2 invTile = 1.0 / max(vec2(u_baseTileSize, u_detailTileSize), vec2(0.0001));
+
+    v_tileUVs.xy  = worldXZ * invTile.x;          // baseUV
+    v_tileUVs.zw  = worldXZ * invTile.y;          // detailUV
+    v_noiseUVs.xy = worldXZ * u_maskNoiseScale;   // maskNoiseUV
+    v_noiseUVs.zw = worldXZ * u_colorVarScale;    // colorVarUV
 
     gl_Position = mvp * vec4(vertexPosition, 1.0);
 }
