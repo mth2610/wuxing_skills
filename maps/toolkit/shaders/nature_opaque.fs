@@ -18,17 +18,23 @@ out vec4 finalColor;
 void main()
 {
     vec3 albedo = fragColor.rgb * colDiffuse.rgb;
-    float tipPixels = max(fwidth(fragHeight) * 1.5, 0.012);
     vec3 lit = GrassShade(albedo, fragPosition, fragNormal, fragHeight,
                           fragTexCoord.x, v_lightSpace, v_staticLightSpace);
-    // On a single-sample scene target, the last subpixel of a pointed blade
-    // appears as a full-strength pixel. Lower only that final pixel's contrast;
-    // keep opaque coverage and depth writes for the vegetation render path.
+
+    // 1. Tối ưu Tip AA: dùng fwidth trực tiếp để giữ độ sắc nét ở gần và mượt ở xa
+    float tipPixels = max(fwidth(fragHeight) * 1.5, 0.012);
     float tip = 1.0 - smoothstep(0.0, tipPixels, 1.0 - fragHeight);
-    // An edge-on blade also becomes a full-strength one-pixel line along its
-    // body. UV.x spans [-1, 1], so its derivative estimates projected width.
-    float widthPixels = 2.0 / max(fwidth(fragTexCoord.x), 0.0001);
-    float thinBlade = 1.0 - smoothstep(0.75, 1.75, widthPixels);
-    lit *= 1.0 - u_grassTipSoftening * (0.28 * tip + 0.20 * thinBlade);
+
+    // 2. Tối ưu Thin-blade AA: Loại bỏ phép chia (2.0 / fw) bằng cách xét trực tiếp đạo hàm fw.
+    // Khi widthPixels nằm trong [0.75, 1.75], fw = 2.0 / widthPixels sẽ nằm trong [1.1428, 2.6667].
+    float fw = fwidth(fragTexCoord.x);
+    float thinBlade = smoothstep(1.1428, 2.6667, fw);
+
+    // 3. Visual: Dùng max() thay vì cộng dồn để tránh đầu cỏ bị tối đen (double-darkening),
+    // đồng thời giới hạn thinBlade theo fragHeight để gốc cỏ không bị mất độ tương phản.
+    float heightFade = smoothstep(0.15, 0.85, fragHeight);
+    float aaAttenuation = max(0.28 * tip, 0.22 * thinBlade * heightFade);
+
+    lit *= 1.0 - u_grassTipSoftening * aaAttenuation;
     finalColor = vec4(lit, 1.0);
 }
