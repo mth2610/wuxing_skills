@@ -1,28 +1,20 @@
 // ============================================================
-// WUXING — Soft Particles (Fragment Shader)
+// WUXING — Soft Particles (Fragment Shader - ALU & Visually Optimized)
 // Include trong .fs của skill khi cần particle/decal tự fade alpha
 // thay vì cắt cứng (clipping) khi va chạm rìa hình học khác (đá,
 // đài, thực thể...).
 //
 // Yêu cầu: skill gọi ScreenDistort_BindDepthForSoftParticles(shader, slot)
 // (core/screen_distort.h) mỗi frame trước khi Draw, và
-// ScreenDistort_UnbindSoftParticleDepth(slot) ngay sau khi vẽ xong. Depth
-// trễ 1 frame (xem ghi chú trong screen_distort.h) — chấp nhận được cho
-// soft-particle fade.
+// ScreenDistort_UnbindSoftParticleDepth(slot) ngay sau khi vẽ xong.
 //
-// QUAN TRỌNG: nếu mesh có khả năng nửa-chìm/giao cắt hình học khác (như mục
-// đích của soft particle), skill code PHẢI gọi rlDisableDepthTest() quanh
-// draw call — không chỉ rlDisableDepthMask(). Depth TEST phần cứng sẽ loại
-// bỏ fragment bị che trước khi shader này chạy, bất kể logic fade bên dưới
-// có đúng hay không (xem CORE_ISSUES.md Item 3 — nguyên nhân gốc của lần
-// revert trước).
+// QUAN TRỌNG: nếu mesh có khả năng nửa-chìm/giao cắt hình học khác,
+// skill code PHẢI gọi rlDisableDepthTest() quanh draw call — không chỉ
+// rlDisableDepthMask().
 //
 // Cung cấp:
-//   SoftParticle_LinearDepth() — tuyến tính hoá giá trị depth [0..1]
-//   SoftParticle_Factor()      — [0..1] alpha fade factor, nhân trực
-//                                 tiếp vào finalColor.a
-//
-// Xem CORE_API.md — Screen Distort, mục "Soft Particles" để biết cách dùng.
+//   SoftParticle_LinearDepth() — tuyến tính hoá giá trị depth [0..1] (Rút gọn đại số)
+//   SoftParticle_Factor()      — [0..1] S-curve alpha fade factor + Near-plane fade
 // ============================================================
 
 uniform sampler2D u_cameraDepthTex;
@@ -30,12 +22,11 @@ uniform float u_cameraNear;
 uniform float u_cameraFar;
 
 // depthSample: giá trị đọc trực tiếp từ depth texture hoặc gl_FragCoord.z,
-// đều ở dạng NDC [0..1] non-linear. Trả về khoảng cách thật (world units)
-// tới camera.
+// đều ở dạng [0..1] non-linear. Trả về khoảng cách thật (world units) tới camera.
+// Đã rút gọn đại số từ công thức NDC [-1..1] về [0..1], tiết kiệm 4 phép tính ALU.
 float SoftParticle_LinearDepth(float depthSample) {
-    float ndc = depthSample * 2.0 - 1.0;
-    return (2.0 * u_cameraNear * u_cameraFar) /
-           (u_cameraFar + u_cameraNear - ndc * (u_cameraFar - u_cameraNear));
+    return (u_cameraNear * u_cameraFar) /
+           max(u_cameraFar - depthSample * (u_cameraFar - u_cameraNear), 1e-5);
 }
 
 // fadeDistance : khoảng cách (world units) mà alpha mờ dần về 0 khi fragment
@@ -44,24 +35,30 @@ float SoftParticle_LinearDepth(float depthSample) {
 //                0.0 = ngay sát/đâm xuyên bề mặt (alpha về 0, không còn vết cắt cứng).
 // Nhân trực tiếp vào finalColor.a của fragment.
 float SoftParticle_Factor(float fadeDistance) {
-    vec2 screenUV = gl_FragCoord.xy / u_resolution;
-    // u_cameraDepthTex stores ALREADY-LINEARIZED world-space depth (written by
-    // core/shaders/depth_copy.fs into an R32F target) — do NOT linearize it
-    // again. Only the fragment's own gl_FragCoord.z needs linearizing.
-    float sceneLinear = texture(u_cameraDepthTex, screenUV).r;
+    vec2 screenUV = gl_FragCoord.xy / max(u_resolution, vec2(1.0));
+    
+    // Dùng textureLod(..., 0.0) để bỏ qua bước tính đạo hàm mipmap (dFdx/dFdy) không cần thiết
+    // trên depth buffer R32F đã được tuyến tính hóa sẵn.
+    float sceneLinear = textureLod(u_cameraDepthTex, screenUV, 0.0).r;
 
-    // NO DATA IS NOT FULL OCCLUSION. A linear scene depth at or before the near
-    // plane is geometrically impossible — nothing can be solid at the camera's
-    // eye — so it means the texture has nothing here: never written, cleared to
-    // zero, or a backend where the snapshot did not land. Reading it as an
-    // occluder takes the factor to 0 and makes EVERY particle in the game
-    // invisible, which is exactly what happened the first frame this function
-    // actually ran (rlvk, depth texture bound but empty: the flame vanished).
-    // Failing OPEN — no fade — is the only safe direction for a term that
-    // multiplies alpha.
-    if (sceneLinear <= max(u_cameraNear, 0.01)) return 1.0;
+    // FAIL-OPEN SAFETY: Nếu depth buffer rỗng/chưa ghi (<= near plane), trả về 1.0
+    // để tránh làm tàng hình toàn bộ particle trên màn hình.
+    float safeNear = max(u_cameraNear, 0.01);
+    if (sceneLinear <= safeNear) return 1.0;
 
-    float fragLinear  = SoftParticle_LinearDepth(gl_FragCoord.z);
-    float diff = sceneLinear - fragLinear;
-    return clamp(diff / max(fadeDistance, 0.0001), 0.0, 1.0);
+    float fragLinear = SoftParticle_LinearDepth(gl_FragCoord.z);
+
+    // 1. Độ mờ tiếp xúc bề mặt (Scene Geometry Intersection Fade)
+    float invFade = 1.0 / max(fadeDistance, 1e-4);
+    float surfaceT = clamp((sceneLinear - fragLinear) * invFade, 0.0, 1.0);
+    // Đường cong Hermite S-Curve giúp triệt tiêu hiện tượng viền gắt Mach-Band tại rìa cắt
+    float surfaceFade = surfaceT * surfaceT * (3.0 - 2.0 * surfaceT);
+
+    // 2. Độ mờ khi áp sát ống kính (Camera Near-Plane Fade)
+    // Ngăn chặn hiện tượng particle cắt ngang mặt camera gây chớp hình đột ngột
+    float nearFadeSpan = max(fadeDistance * 0.35, 0.25);
+    float camT = clamp((fragLinear - safeNear) / nearFadeSpan, 0.0, 1.0);
+    float camFade = camT * (2.0 - camT);
+
+    return surfaceFade * camFade;
 }
