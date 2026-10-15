@@ -24,6 +24,31 @@ void rlvkSetMsaaSamples(int samples)
         TRACELOG(RL_LOG_INFO, "RLVK: MSAA x%d enabled (matches GL FLAG_MSAA_4X_HINT)", RLVK.msaaSamples);
 }
 
+// Helper: drain all queued deferred resources for a given frame slot (caller guarantees slot fence is signaled/idle)
+static void rlvkDrainDeadResourcesForSlot(u32 frameIndex)
+{
+    int count = RLVK.deadResourceCount[frameIndex];
+    for (int d = 0; d < count; d++)
+    {
+        rlvkDeadResource *r = &RLVK.deadResources[frameIndex][d];
+        if (r->framebuffer)
+            vkDestroyFramebuffer(RLVK.device, r->framebuffer, RLVK_ALLOC);
+        if (r->pipeline)
+            vkDestroyPipeline(RLVK.device, r->pipeline, RLVK_ALLOC);
+        if (r->view)
+            vkDestroyImageView(RLVK.device, r->view, RLVK_ALLOC);
+        if (r->image)
+            vkDestroyImage(RLVK.device, r->image, RLVK_ALLOC);
+        if (r->buffer)
+            vkDestroyBuffer(RLVK.device, r->buffer, RLVK_ALLOC);
+        if (r->sampler)
+            vkDestroySampler(RLVK.device, r->sampler, RLVK_ALLOC);
+        if (r->memory)
+            vkFreeMemory(RLVK.device, r->memory, RLVK_ALLOC);
+    }
+    RLVK.deadResourceCount[frameIndex] = 0;
+}
+
 // Destroy everything sized to the swapchain (the swapchain itself, its views + present
 // semaphores, and the per-frame depth/intermediate/msaa targets), evicting cached
 // framebuffers built on the dying views. Callers guarantee the device is idle.
@@ -89,14 +114,38 @@ void rlvkDetachSurface(void)
     if (!isGpuReady || (RLVK.surface == VK_NULL_HANDLE))
         return;
     vkDeviceWaitIdle(RLVK.device); // nothing may still reference the surface/swapchain/images below
+
+    // If a frame was caught mid-recording, reset command pools first so no recording command buffer
+    // references framebuffers/views about to be destroyed, and re-initialize per-frame sync primitives
+    // so an aborted frame's unsignaled fence or unwaited acquire semaphore cannot deadlock on resume.
+    if (RLVK.frameActive)
+    {
+        rlvkProfileEndScope();
+        for (int i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
+        {
+            if (RLVK.cmdPools[i])
+                vkResetCommandPool(RLVK.device, RLVK.cmdPools[i], 0);
+            if (RLVK.acquireSemaphores[i])
+            {
+                vkDestroySemaphore(RLVK.device, RLVK.acquireSemaphores[i], RLVK_ALLOC);
+                RLVK.acquireSemaphores[i] = VK_NULL_HANDLE;
+            }
+            if (RLVK.frameFences[i])
+            {
+                vkDestroyFence(RLVK.device, RLVK.frameFences[i], RLVK_ALLOC);
+                RLVK.frameFences[i] = VK_NULL_HANDLE;
+            }
+        }
+    }
+
     rlvkDestroySwapchainSizedObjects();
+    for (u32 i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
+        rlvkDrainDeadResourcesForSlot(i);
+
     vkDestroySurfaceKHR(RLVK.instance, RLVK.surface, RLVK_ALLOC);
     RLVK.surface = VK_NULL_HANDLE;
-    // Fail visibly-safe: a frame caught mid-recording by APP_CMD_TERM_WINDOW has nowhere to
-    // present into. rlvkBeginFrame/rlvkPresent already no-op on !RLVK.swapchain, but clearing
-    // frameActive too means the NEXT rlvkBeginFrame starts clean rather than thinking a frame
-    // is still open.
     RLVK.frameActive = false;
+    RLVK.acquireWaited = false;
     TRACELOG(RL_LOG_INFO, "RLVK: surface detached");
 }
 
@@ -111,9 +160,8 @@ static void rlvkRecreateSwapchain(void)
     VkSurfaceCapabilitiesKHR caps;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(RLVK.physicalDevice, RLVK.surface, &caps);
 
-    // VÁ LỖI LOGIC: Khi window bị minimize (extent = 0x0), bắt buộc phải dọn dẹp
-    // và gán swapchain = NULL để rlvkBeginFrame có thể rẽ nhánh bỏ qua (skip frame)
-    // một cách an toàn thay vì lặp vô tận.
+    // When minimized (extent = 0x0), tear down swapchain-sized objects and leave swapchain = NULL
+    // so rlvkBeginFrame safely skips frames until the window is restored.
     if ((caps.currentExtent.width == 0) || (caps.currentExtent.height == 0))
     {
         rlvkDestroySwapchainSizedObjects();
@@ -131,8 +179,14 @@ static void rlvkRecreateSwapchain(void)
 void rlvkAttachSurface(VkSurfaceKHR surface)
 {
     RLVK.surface = surface;
-    if (!isGpuReady)
+    if (!isGpuReady || (surface == VK_NULL_HANDLE))
         return;
+
+    if ((RLVK.msaaSamples > 1) && !RLVK.Caps.msaa4x)
+    {
+        TRACELOG(RL_LOG_WARNING, "RLVK: 4x MSAA requested but not supported on this device; falling back to 1x");
+        RLVK.msaaSamples = 1;
+    }
 
     // Confirm the graphics queue family can present to this surface
     VkBool32 presentSupport = VK_FALSE;
@@ -153,27 +207,48 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
         extent.width = caps.minImageExtent.width;
     if (extent.height < caps.minImageExtent.height)
         extent.height = caps.minImageExtent.height;
+    if (caps.maxImageExtent.width > 0 && extent.width > caps.maxImageExtent.width)
+        extent.width = caps.maxImageExtent.width;
+    if (caps.maxImageExtent.height > 0 && extent.height > caps.maxImageExtent.height)
+        extent.height = caps.maxImageExtent.height;
 
-    // TỐI ƯU HIỆU NĂNG: Yêu cầu minImageCount + 1 để kích hoạt Mailbox/Triple Buffering
-    // Giúp GPU không bị nghẽn (stall) trong lúc chờ Display Engine trình xuất.
+    if ((extent.width == 0) || (extent.height == 0))
+        return;
+
+    // Request minImageCount + 1 to allow triple buffering / non-stalling acquire where supported
     u32 imageCount = caps.minImageCount + 1;
     if (caps.maxImageCount > 0 && imageCount > caps.maxImageCount)
         imageCount = caps.maxImageCount;
     if (imageCount > RLVK_MAX_SWAPCHAIN_IMAGES)
         imageCount = RLVK_MAX_SWAPCHAIN_IMAGES;
 
-    // Pick a UNORM (non-sRGB) BGRA format so stored bytes match the GL default framebuffer
+    // Pick a UNORM (non-sRGB) BGRA or RGBA format so stored bytes match the GL default framebuffer
     u32 fmtCount = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(RLVK.physicalDevice, surface, &fmtCount, NULL);
     VkSurfaceFormatKHR *fmts = (VkSurfaceFormatKHR *)RL_MALLOC(fmtCount * sizeof(VkSurfaceFormatKHR));
     vkGetPhysicalDeviceSurfaceFormatsKHR(RLVK.physicalDevice, surface, &fmtCount, fmts);
     VkSurfaceFormatKHR chosen = fmts[0];
+    bool foundBgra = false;
     for (u32 i = 0; i < fmtCount; i++)
+    {
         if (fmts[i].format == VK_FORMAT_B8G8R8A8_UNORM)
         {
             chosen = fmts[i];
+            foundBgra = true;
             break;
         }
+    }
+    if (!foundBgra)
+    {
+        for (u32 i = 0; i < fmtCount; i++)
+        {
+            if (fmts[i].format == VK_FORMAT_R8G8B8A8_UNORM)
+            {
+                chosen = fmts[i];
+                break;
+            }
+        }
+    }
     RL_FREE(fmts);
 
     RLVK.swapchainFormat = chosen.format;
@@ -212,8 +287,29 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
     // the human confirmed that bug pre-dates this change and is unrelated to rotation. Back to
     // forcing IDENTITY (the known-good, visually-correct state from §7.12's original fix). See
     // RLVK_HANDOFF.md §7.21 for the full writeup of what was tried and why it was reverted.
-    VkSurfaceTransformFlagBitsKHR preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+    VkSurfaceTransformFlagBitsKHR preTransform = (caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
+                                                     ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
+                                                     : caps.currentTransform;
     RLVK.preRotationQuarterTurns = 0;
+
+    // Pick a supported compositeAlpha bit (Android often only advertises INHERIT_BIT_KHR)
+    VkCompositeAlphaFlagBitsKHR compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    if (!(caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR))
+    {
+        static const VkCompositeAlphaFlagBitsKHR kAlphaOrder[] = {
+            VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+            VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+            VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+        };
+        for (u32 i = 0; i < RLVK_COUNTOF(kAlphaOrder); i++)
+        {
+            if (caps.supportedCompositeAlpha & kAlphaOrder[i])
+            {
+                compositeAlpha = kAlphaOrder[i];
+                break;
+            }
+        }
+    }
 
     RLVK_CHECK(vkCreateSwapchainKHR(RLVK.device,
                                     &(VkSwapchainCreateInfoKHR){
@@ -229,7 +325,7 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
                                         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                                         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
                                         .preTransform = preTransform,
-                                        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+                                        .compositeAlpha = compositeAlpha,
                                         .presentMode = presentMode,
                                         .clipped = VK_TRUE,
                                     },
@@ -375,13 +471,10 @@ void rlvkAttachSurface(VkSurfaceKHR surface)
 
     TRACELOG(RL_LOG_INFO, "RLVK: swapchain created (%ux%u, %u images, present=%s)",
              extent.width, extent.height, RLVK.swapchainImageCount,
-             presentMode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE" :
-             presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? "MAILBOX" : "FIFO");
+             presentMode == VK_PRESENT_MODE_IMMEDIATE_KHR ? "IMMEDIATE" : presentMode == VK_PRESENT_MODE_MAILBOX_KHR ? "MAILBOX"
+                                                                                                                     : "FIFO");
 }
 
-// Begin a frame: acquire a swapchain image, open the command buffer, transition the image to
-// COLOR_ATTACHMENT_OPTIMAL, and begin the dynamic-rendering scope with loadOp=CLEAR (the render
-// batch flush records draws into this scope; rlvkPresent closes and presents it).
 // Queue GPU objects for fence-gated destruction: a command buffer may still reference them
 // (recorded OR executing), and immediate destroy - even after vkDeviceWaitIdle - invalidates
 // a still-RECORDING command buffer
@@ -413,8 +506,18 @@ static void rlvkDeferDestroy(VkBuffer buffer, VkImage image, VkImageView view, V
     u32 frameIndex = (u32)((RLVK.frameActive ? RLVK.frameCounter : (RLVK.frameCounter + RLVK_FRAME_INDEX_COUNT - 1)) % RLVK_FRAME_INDEX_COUNT);
     if (RLVK.deadResourceCount[frameIndex] >= RLVK_MAX_DEAD_RESOURCES)
     {
-        TRACELOG(RL_LOG_WARNING, "RLVK: deferred-destruction queue full, leaking objects - raise RLVK_MAX_DEAD_RESOURCES");
-        return;
+        // Outside an active frame (e.g. scene unload between frames), wait for the slot's fence
+        // and drain its dead-resource ring so objects never leak under heavy unload bursts.
+        if (!RLVK.frameActive && RLVK.frameFences[frameIndex])
+        {
+            rlvkProfileWaitFences(RLVK.device, 1, &RLVK.frameFences[frameIndex], VK_TRUE, UINT64_MAX);
+            rlvkDrainDeadResourcesForSlot(frameIndex);
+        }
+        else
+        {
+            TRACELOG(RL_LOG_WARNING, "RLVK: deferred-destruction queue full, leaking objects - raise RLVK_MAX_DEAD_RESOURCES");
+            return;
+        }
     }
     RLVK.deadResources[frameIndex][RLVK.deadResourceCount[frameIndex]++] = (rlvkDeadResource){buffer, image, view, sampler, memory, pipeline, VK_NULL_HANDLE};
 }
@@ -432,8 +535,16 @@ static void rlvkDeferDestroyFramebufferOnly(VkFramebuffer framebuffer)
     u32 frameIndex = (u32)((RLVK.frameActive ? RLVK.frameCounter : (RLVK.frameCounter + RLVK_FRAME_INDEX_COUNT - 1)) % RLVK_FRAME_INDEX_COUNT);
     if (RLVK.deadResourceCount[frameIndex] >= RLVK_MAX_DEAD_RESOURCES)
     {
-        TRACELOG(RL_LOG_WARNING, "RLVK: deferred-destruction queue full, leaking objects - raise RLVK_MAX_DEAD_RESOURCES");
-        return;
+        if (!RLVK.frameActive && RLVK.frameFences[frameIndex])
+        {
+            rlvkProfileWaitFences(RLVK.device, 1, &RLVK.frameFences[frameIndex], VK_TRUE, UINT64_MAX);
+            rlvkDrainDeadResourcesForSlot(frameIndex);
+        }
+        else
+        {
+            TRACELOG(RL_LOG_WARNING, "RLVK: deferred-destruction queue full, leaking objects - raise RLVK_MAX_DEAD_RESOURCES");
+            return;
+        }
     }
     rlvkDeadResource *r = &RLVK.deadResources[frameIndex][RLVK.deadResourceCount[frameIndex]++];
     memset(r, 0, sizeof(*r));
@@ -451,31 +562,15 @@ static void rlvkBeginFrame(void)
     f64 profileTime = profile ? rlvkProfileNow() : 0;
     vkWaitForFences(RLVK.device, 1, &RLVK.frameFences[frameIndex], VK_TRUE, UINT64_MAX);
 
-    if (profile) s_profileFenceMs += rlvkProfileNow() - profileTime;
+    if (profile)
+        s_profileFenceMs += rlvkProfileNow() - profileTime;
 
     // This slot's previous submission has fully executed: destroy its deferred objects
-    for (int d = 0; d < RLVK.deadResourceCount[frameIndex]; d++)
-    {
-        rlvkDeadResource *r = &RLVK.deadResources[frameIndex][d];
-        if (r->framebuffer)
-            vkDestroyFramebuffer(RLVK.device, r->framebuffer, RLVK_ALLOC);
-        if (r->buffer)
-            vkDestroyBuffer(RLVK.device, r->buffer, RLVK_ALLOC);
-        if (r->view)
-            vkDestroyImageView(RLVK.device, r->view, RLVK_ALLOC);
-        if (r->image)
-            vkDestroyImage(RLVK.device, r->image, RLVK_ALLOC);
-        if (r->sampler)
-            vkDestroySampler(RLVK.device, r->sampler, RLVK_ALLOC);
-        if (r->memory)
-            vkFreeMemory(RLVK.device, r->memory, RLVK_ALLOC);
-        if (r->pipeline)
-            vkDestroyPipeline(RLVK.device, r->pipeline, RLVK_ALLOC);
-    }
-    RLVK.deadResourceCount[frameIndex] = 0;
+    rlvkDrainDeadResourcesForSlot(frameIndex);
 
     u32 imageIndex = 0;
-    if (profile) profileTime = rlvkProfileNow();
+    if (profile)
+        profileTime = rlvkProfileNow();
     VkResult acq = vk.AcquireNextImageKHR(RLVK.device, RLVK.swapchain, UINT64_MAX,
                                           RLVK.acquireSemaphores[frameIndex], VK_NULL_HANDLE, &imageIndex);
     if (acq == VK_ERROR_OUT_OF_DATE_KHR)
@@ -500,7 +595,8 @@ static void rlvkBeginFrame(void)
         TRACELOG(RL_LOG_WARNING, "RLVK: vkAcquireNextImageKHR failed (VkResult %i), skipping frame", (int)acq);
         return;
     }
-    if (profile) s_profileAcquireMs += rlvkProfileNow() - profileTime;
+    if (profile)
+        s_profileAcquireMs += rlvkProfileNow() - profileTime;
     RLVK.currentImageIndex = imageIndex;
     RLVK.acquireWaited = false;
 
@@ -510,8 +606,8 @@ static void rlvkBeginFrame(void)
     vkResetCommandPool(RLVK.device, RLVK.cmdPools[frameIndex], 0);
     vk.BeginCommandBuffer(cmdBuffer, &(VkCommandBufferBeginInfo){
                                          VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT});
-    RLVK.boundPipeline = VK_NULL_HANDLE;                 // pipeline binding is command-buffer state too
-    memset(RLVK.pushedView, 0, sizeof(RLVK.pushedView)); // push-descriptor state resets with the command buffer
+    RLVK.boundPipeline = VK_NULL_HANDLE;                    // pipeline binding is command-buffer state too
+    memset(RLVK.pushedView, 0, sizeof(RLVK.pushedView));    // push-descriptor state resets with the command buffer
     memset(RLVK.pushedSsbo, 0xFF, sizeof(RLVK.pushedSsbo)); // graphics-SSBO pushes die with the cb too (0xFF = never pushed)
     s_pipelineFastValid = false;
     RLVK.State.cbEpoch++;
@@ -570,13 +666,16 @@ static void rlvkBeginFrame(void)
              * being harvested is RLVK_FRAME_INDEX_COUNT behind and its fence has
              * already been waited on; the availability word is belt and braces,
              * and catches the same failure returning as garbage rather than zero. */
-            struct { u64 value, available; } qa[3] = {{0, 0}, {0, 0}, {0, 0}};
+            struct
+            {
+                u64 value, available;
+            } qa[3] = {{0, 0}, {0, 0}, {0, 0}};
             VkResult qres = vkGetQueryPoolResults(RLVK.device, s_gpuPool, frameIndex * 3, 3,
                                                   sizeof(qa), qa, sizeof(qa[0]),
                                                   VK_QUERY_RESULT_64_BIT |
-                                                  VK_QUERY_RESULT_WAIT_BIT |
-                                                  VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
-            u64 q[3] = { qa[0].value, qa[1].value, qa[2].value };
+                                                      VK_QUERY_RESULT_WAIT_BIT |
+                                                      VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
+            u64 q[3] = {qa[0].value, qa[1].value, qa[2].value};
             bool qok = (qres == VK_SUCCESS) && qa[0].available && qa[1].available && qa[2].available;
             if (RLVK.frameCounter >= RLVK_FRAME_INDEX_COUNT + 8)
             {
@@ -586,7 +685,7 @@ static void rlvkBeginFrame(void)
                     if (s_gpuWindow.valid)
                         TRACELOG(RL_LOG_WARNING, "VKGPU window=%u valid=%u scene=%.3fms present=%.3fms (valid samples only)",
                                  s_gpuWindow.frames, s_gpuWindow.valid,
-                                 s_gpuWindow.sceneMs/s_gpuWindow.valid, s_gpuWindow.presentMs/s_gpuWindow.valid);
+                                 s_gpuWindow.sceneMs / s_gpuWindow.valid, s_gpuWindow.presentMs / s_gpuWindow.valid);
                     else
                         TRACELOG(RL_LOG_WARNING, "VKGPU window=%u valid=0 timing=unavailable", s_gpuWindow.frames);
                     TRACELOG(RL_LOG_WARNING, "VKGPU rejected: unavailable=%u zero_or_nonmonotonic=%u fragmented=%u",
@@ -608,25 +707,19 @@ static void rlvkBeginFrame(void)
     }
     RLVK.arenaWanted[frameIndex] = 0;
 
-    // Make host writes to the persistent-mapped vertex buffers visible to the vertex shader (BDA reads)
-    vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                          VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                          .memoryBarrierCount = 1,
-                                          .pMemoryBarriers = &(VkMemoryBarrier2){
-                                              VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                                              .srcStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
-                                              .srcAccessMask = VK_ACCESS_2_HOST_WRITE_BIT,
-                                              .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                              .dstAccessMask = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
-                                          },
-                                      });
-
-    // The frame's render targets start UNDEFINED: the 1x unmirrored intermediate (also the
-    // resolve destination under MSAA) and, when MSAA is on, the multisampled color target
+    // Coalesced frame-start barrier: host-write visibility + layout transitions for interImage,
+    // optional msaaImage, swapchainImage, and depthImage in a SINGLE CmdPipelineBarrier2 call.
     {
-        VkImageMemoryBarrier2 targetBarriers[2];
-        u32 targetCount = 0;
-        targetBarriers[targetCount++] = (VkImageMemoryBarrier2){
+        VkMemoryBarrier2 hostBarrier = {
+            VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
+            .srcAccessMask = VK_ACCESS_2_HOST_WRITE_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            .dstAccessMask = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
+        };
+        VkImageMemoryBarrier2 imgBarriers[4];
+        u32 imgBarrierCount = 0;
+        imgBarriers[imgBarrierCount++] = (VkImageMemoryBarrier2){
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
             .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT,
             .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -637,7 +730,8 @@ static void rlvkBeginFrame(void)
             .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
         };
         if (RLVK.msaaSamples > 1)
-            targetBarriers[targetCount++] = (VkImageMemoryBarrier2){
+        {
+            imgBarriers[imgBarrierCount++] = (VkImageMemoryBarrier2){
                 VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
                 .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                 .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -647,41 +741,36 @@ static void rlvkBeginFrame(void)
                 .image = RLVK.msaaImage[frameIndex],
                 .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
             };
+        }
+        imgBarriers[imgBarrierCount++] = (VkImageMemoryBarrier2){
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            // srcStage matches the acquire-semaphore wait stage so the transition happens-after acquire
+            .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .image = RLVK.swapchainImages[imageIndex],
+            .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
+        };
+        imgBarriers[imgBarrierCount++] = (VkImageMemoryBarrier2){
+            VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+            .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            .image = RLVK.depthImage[frameIndex],
+            .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
+        };
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
                                               VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                              .imageMemoryBarrierCount = targetCount,
-                                              .pImageMemoryBarriers = targetBarriers,
+                                              .memoryBarrierCount = 1,
+                                              .pMemoryBarriers = &hostBarrier,
+                                              .imageMemoryBarrierCount = imgBarrierCount,
+                                              .pImageMemoryBarriers = imgBarriers,
                                           });
     }
-
-    // Transition color -> COLOR_ATTACHMENT_OPTIMAL and depth -> DEPTH_ATTACHMENT_OPTIMAL (cleared each frame)
-    vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-                                          VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-                                          .imageMemoryBarrierCount = 2,
-                                          .pImageMemoryBarriers = (VkImageMemoryBarrier2[]){
-                                              {
-                                                  VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                  // srcStage matches the acquire-semaphore wait stage so the transition happens-after acquire
-                                                  .srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                  .dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                                                  .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-                                                  .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                                                  .image = RLVK.swapchainImages[imageIndex],
-                                                  .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1},
-                                              },
-                                              {
-                                                  VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                  .srcStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                                  .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                                                  .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-                                                  .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                                  .image = RLVK.depthImage[frameIndex],
-                                                  .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
-                                              },
-                                          },
-                                      });
 
     // Query resets are illegal inside a render pass. Stamp before opening the
     // initial scope, and mark any later host-drained split as unsuitable timing.
@@ -724,8 +813,8 @@ static void rlvkBeginFrame(void)
     RLVK.scope.colorCount = 1;
     RLVK.scope.colorFormats[0] = RLVK.swapchainFormat;
     RLVK.scope.samples = (u32)RLVK.msaaSamples;
-    RLVK.scope.depthResolve = false;  // the swapchain scope resolves colour only
-    RLVK.scope.flipY = false; // UNMIRRORED: swapchain-scope rendering matches GL memory orientation
+    RLVK.scope.depthResolve = false; // the swapchain scope resolves colour only
+    RLVK.scope.flipY = false;        // UNMIRRORED: swapchain-scope rendering matches GL memory orientation
 
     RLVK.frameActive = true;
 }
@@ -797,7 +886,11 @@ void rlvkPresent(void)
                                            },
                     RLVK.frameFences[frameIndex]);
 
-    if (profile) { s_profileSubmitMs += rlvkProfileNow() - profileTime; profileTime = rlvkProfileNow(); }
+    if (profile)
+    {
+        s_profileSubmitMs += rlvkProfileNow() - profileTime;
+        profileTime = rlvkProfileNow();
+    }
     VkResult pres = vk.QueuePresentKHR(RLVK.graphicsQueue, &(VkPresentInfoKHR){
                                                                VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
                                                                .waitSemaphoreCount = 1,
@@ -807,7 +900,8 @@ void rlvkPresent(void)
                                                                .pImageIndices = &imageIndex,
                                                            });
 
-    if (profile) s_profilePresentMs += rlvkProfileNow() - profileTime;
+    if (profile)
+        s_profilePresentMs += rlvkProfileNow() - profileTime;
     rlvkProfileReport();
     RLVK.frameActive = false;
     RLVK.frameCounter++;
