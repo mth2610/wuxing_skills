@@ -19,7 +19,7 @@ uniform int u_interactionEnabled;
 
 out vec3 fragPosition;
 out vec3 fragNormal;
-out vec4 fragColor;
+out vec4 fragColor; // .rgb = blade color, .a = dynamic wind sheen factor
 out float fragHeight;
 out vec2 fragTexCoord;
 out vec4 v_lightSpace;
@@ -50,11 +50,12 @@ void main()
     vec3 world = local + u_worldOffset;
     float h = bladeWindUV.y;
     vec3 bentNormal = bladeNormal;
+    float windSheen = 0.0;
 
     // Skip all wind & texture evaluations for stationary root vertices (h == 0)
     if (h > 0.0001) {
         float rootMask = h * h;
-        float maxAllowedBend = u_interactionMaxBend * u_natureWindResponse.w;
+        float maxAllowedBend = max(u_interactionMaxBend * u_natureWindResponse.w, 0.001);
 
         vec2 windBend = NatureVegetationWindBend(
             world, bladeWindUV, u_time, u_windStrength, maxAllowedBend);
@@ -68,30 +69,36 @@ void main()
                 vec2 interactionUV = uvOffset + 0.5;
                 vec3 interactionSample = textureLod(u_interactionMap, interactionUV, 0.0).rgb;
                 vec2 pushDirection = interactionSample.rg * 2.0 - 1.0;
-                float edgeFeather = 1.0 - smoothstep(0.42, 0.50, maxAxis);
-                float interaction = interactionSample.b * edgeFeather;
-                windBend += pushDirection * (interaction * maxAllowedBend);
+                float edgeFeather = clamp((0.50 - maxAxis) * 12.5, 0.0, 1.0);
+                edgeFeather *= edgeFeather * (3.0 - 2.0 * edgeFeather);
+                windBend += pushDirection * (interactionSample.b * edgeFeather * maxAllowedBend);
             }
         }
 
         vec2 dispXZ = windBend * rootMask;
-        local.xz += dispXZ;
-
-        // Length-preserving vertical arc depression so blades bow down instead of stretching
         float dispSq = dot(dispXZ, dispXZ);
-        float effHeight = max(local.y, 0.12);
-        local.y -= dispSq / (effHeight * 1.6 + sqrt(effHeight * effHeight * 2.56 + dispSq));
+        float dispLen = sqrt(dispSq);
+
+        // Elevation-independent arc radius: fixes stretching on hills and clamping in valleys,
+        // while using Padé approximation with dispLen to avoid a second sqrt() call.
+        float arcRadius = max(maxAllowedBend * 1.35 * max(h, 0.22), 0.16);
+        local.xz += dispXZ;
+        local.y  -= dispSq / (2.0 * arcRadius + 0.42 * dispLen);
 
         world = local + u_worldOffset;
 
-        // Dynamic normal tilt + vertical curvature compensation for natural specular waves
-        bentNormal.xz -= windBend * (1.15 * h);
-        bentNormal.y  -= length(dispXZ) * 0.35;
+        // As the blade bends over, its upper surface tilts skyward (+Y) and along the bend slope,
+        // creating natural rolling specular wind waves instead of dark inverted patches.
+        bentNormal.xz += windBend * (0.95 * h);
+        bentNormal.y  += dispLen * 0.45;
+
+        // Pack normalized wind deflection into fragColor.a for specular/subsurface wave sheen in FS
+        windSheen = clamp(dispLen / maxAllowedBend, 0.0, 1.0) * h;
     }
 
     fragPosition = world;
     fragNormal = normalize(bentNormal);
-    fragColor = vec4(bladeColor.rgb, 1.0);
+    fragColor = vec4(bladeColor.rgb, windSheen);
     fragHeight = h;
     fragTexCoord = bladeSurfaceUV;
     v_lightSpace = u_lightVP * vec4(world, 1.0);
