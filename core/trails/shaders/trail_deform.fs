@@ -527,7 +527,14 @@ void main()
         }
 
         float pAlpha = c.a * u_alpha;
-        if (pAlpha < 0.003) discard;
+        /* A fixed alpha discard makes the procedural edge binary at subpixel
+         * widths. FXAA sees only the final emissive composite and cannot
+         * recover coverage lost here. Feather the cutoff over this fragment's
+         * screen-space alpha footprint before blending. */
+        float alphaFootprint = max(fwidth(pAlpha), 1e-5);
+        pAlpha *= smoothstep(0.003 - alphaFootprint,
+                             0.003 + alphaFootprint, pAlpha);
+        if (pAlpha < 1e-5) discard;
 
         bool isAdditive = (u_add > 0.5);
         vec3 emissiveCol = c.rgb;

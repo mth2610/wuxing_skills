@@ -145,6 +145,13 @@ typedef struct
     bool hasNormal;
     Vector3 lateralAxis; // `normal` with a CONTINUOUS sign (FILAMENT spread)
     bool hasLateral;
+    // Slew-limited copy of lateralAxis, the one strand offsets are actually
+    // built from (below). UpdateNormal SNAPS at inflections; applying the snap
+    // directly whips each strand's tip across the bundle in one frame, over
+    // the teleport threshold, so the trail cuts and restarts from a single
+    // node over and over — perpetual stop-start facets ("fish bones" + "khựng").
+    Vector3 lateralApplied;
+    bool hasLateralApplied;
     bool wasFrozen;
     bool widthLogged;
 } VC_SweptTrail;
@@ -408,16 +415,13 @@ static float SweptTrail_Wind(TrailPresetId kind) { return TrailMotionOf(kind)->w
 
 static int SweptTrail_StrandCount(TrailPresetId kind, bool lowTier)
 {
-    if (TrailMotionOf(kind)->strands <= 1)
-        return 1;
-    // E8 tier budget: each strand is its own ribbon submission. The gate only
-    // ever clamps DOWN — a low tier loses threads, never gains them.
-    // TWO, not four. The reference guide is explicit — "1-3 wisps is enough" —
-    // and a composite that spawns 2 wisps of a 4-strand style puts EIGHT bright
-    // ribbons on screen, which is the guide's "random chaos" mistake and reads
-    // as a bundle of wires rather than as energy. The bundle belongs to the
-    // caller, which already decides how many wisps it wants.
-    return lowTier ? 1 : TrailMotionOf(kind)->strands;
+    (void)kind;
+    (void)lowTier;
+    /* A Motion Ribbon composition represents one connected trail. The prior
+     * per-preset companions each spawned another follower and ribbon, so
+     * presets with 3-4 authored strands visibly broke into parallel strips.
+     * Keep material motion and strand detail on that one shared path. */
+    return 1;
 }
 
 // Tail memory in seconds → nodes. The arithmetic moved to vc_common.inl when the
@@ -1768,8 +1772,17 @@ static void TrailPresets_Build(void)
 
     // 4. Linh Toàn (Wood Spiral Qi): Core (c=0) + Helical Dash 1 (c=1) + Helical Dash 2 (c=2) + Green Mist (c=3)
     {
+        // NOTE: strand 0's radiusDefault is DELIBERATELY the preset row's
+        // (0.24) — do NOT "thin the core" by lowering it. The per-frame width
+        // resolver (SweptTrail per-frame: strandWidth = s->width *
+        // strandRadius/refRadius with refRadius = strandRecipe[0]) uses
+        // strand 0 as the unit for the WHOLE bundle, so lowering it here
+        // does not thin strand 0 (which always resolves to s->width) — it
+        // fattens every other strand instead (0.05 here made the dashes and
+        // the mist 4.8x too wide and pushed the mist offset to ~4 m, flapping
+        // over the teleport threshold every frame). Strand 0 reads thin
+        // already through its style-2 pow(e,3) core, not through this field.
         k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].style = 2.0f;
-        k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].radiusDefault = 0.05f;
         k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].p0 = (Vector4){2.0f, 4.0f, 3.0f, 6.0f};
         k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].p1 = (Vector4){3.0f, 1.5f, 1.4f, 1.0f};
         k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].p2 = (Vector4){8.0f, 1.0f, 1.0f, 1.0f};
@@ -2326,7 +2339,11 @@ static int SweptTrail_SpawnStrand(const VC_SweptTrail *s, int slot, int strand)
     cfg.sampleHz = 0.0f; /* spacingMeters, not a clock, owns node density */
     cfg.teleportSpeed = mot->teleportSpeed;
     cfg.idleSpeed = mot->idleSpeed;
-    cfg.smoothSpline = mot->smoothSpline;
+    /* All Motion Ribbon presets share the Catmull-Rom ribbon draw path. Keep
+     * its minimum 30-point subdivision enabled for longer paths so 10 cm
+     * simulation spacing does not become visible as a faceted silhouette.
+     * Render density is a ribbon geometry requirement, not a style choice. */
+    cfg.smoothSpline = true;
     cfg.trailLength = (float)SweptTrail_MaxNodesFor(s->kind, s->lifetime);
     cfg.useFlowMap = s->hasSurface && s->surface.flowMap.id != 0;
     cfg.flowMap = cfg.useFlowMap ? &s->surface.flowMap : NULL;
@@ -2419,6 +2436,7 @@ int VFX_ComposeTrailEx(const Matrix *followTransform, VC_MaterialId mat,
     s->hasNormal = false;
     s->lateralAxis = (Vector3){0.0f, 1.0f, 0.0f};
     s->hasLateral = false;
+    s->hasLateralApplied = false;
     s->wasFrozen = false;
     s->widthLogged = false;
     s->strands = SweptTrail_StrandCount(kind, GfxQuality_Get() < GFX_MED);
@@ -2725,7 +2743,50 @@ static void VC_SweptTrail_Update(float dt)
                                 ? s->surface.maskTiling : 1.0f;
 
             if (c == 0)
+            {
                 SweptTrail_UpdateNormal(s, t);
+                // SLEW the spread axis toward its target instead of applying
+                // UpdateNormal's output directly. The target SNAPS at
+                // inflections (see UpdateNormal), and a snapped axis whips
+                // each strand's lateral tip across the bundle in ONE frame —
+                // up to ~0.5 m, over the teleport threshold — so the trail
+                // cuts and restarts from a single node over and over:
+                // perpetual stop-start facets plus a stalled head. Slewing
+                // turns the snap into a fast sweep: no cut, no kink node.
+                // 9 rad/s keeps any lateral tip under ~7 m/s (cut is 25) while
+                // tracking every sustained swing with only phase lag.
+                if (s->hasLateral)
+                {
+                    if (!s->hasLateralApplied)
+                    {
+                        s->lateralApplied = s->lateralAxis;
+                        s->hasLateralApplied = true;
+                    }
+                    else
+                    {
+                        Vector3 cur = Vector3Normalize(s->lateralApplied);
+                        Vector3 want = Vector3Normalize(s->lateralAxis);
+                        float d = Vector3DotProduct(cur, want);
+                        d = (d < -1.0f) ? -1.0f : ((d > 1.0f) ? 1.0f : d);
+                        if (d > 0.9999f)
+                            s->lateralApplied = s->lateralAxis;
+                        else
+                        {
+                            float maxStep = 9.0f * dt;
+                            if (acosf(d) <= maxStep)
+                                s->lateralApplied = s->lateralAxis;
+                            else
+                            {
+                                float f = maxStep / acosf(d);
+                                Vector3 mid = Vector3Add(Vector3Scale(cur, 1.0f - f),
+                                                         Vector3Scale(want, f));
+                                s->lateralApplied = (Vector3LengthSqr(mid) > 1e-10f)
+                                                        ? Vector3Normalize(mid) : cur;
+                            }
+                        }
+                    }
+                }
+            }
             if (s->kind == TRAIL_PRESET_BLADE)
                 t->fixedNormal = s->normal;
 
@@ -2735,7 +2796,7 @@ static void VC_SweptTrail_Update(float dt)
             // pushed in each frame.
             if (s->strands > 1 && s->hasLateral)
                 Trail_SetLateralOffset(s->strandId[c],
-                                       Vector3Scale(s->lateralAxis,
+                                       Vector3Scale(s->hasLateralApplied ? s->lateralApplied : s->lateralAxis,
                                                     k_sweptSpread[c] * t->thickness *
                                                         s_sweptSpread));
         }

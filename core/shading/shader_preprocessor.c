@@ -109,6 +109,18 @@ static char *ProcessIncludes(const char *filePath, int depth) {
         return NULL;
       }
       RL_FREE(included);
+
+      // GUARD: an included file without a trailing newline fuses its last
+      // line with whatever follows (next expansion or host source) — e.g.
+      // lighting.glsl ended in `}` so uv_deform.glsl's `#ifndef` landed on
+      // the same line as `}` and rlvk failed with "'#' : preprocessor
+      // directive cannot be preceded by another token". Terminate the
+      // expansion. Only reached on success (overflow returns above).
+      if (outLen > 0 && output[outLen - 1] != '\n' &&
+          outLen + 1 < MAX_SHADER_SIZE - 1) {
+        output[outLen++] = '\n';
+        output[outLen] = '\0';
+      }
     }
 
     // Nhảy qua toàn bộ dòng #include

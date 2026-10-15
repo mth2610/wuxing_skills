@@ -593,6 +593,14 @@ typedef struct TrailEntity
     Vector3 prevAttachPos;
     Vector3 lateralOffset;
     Vector3 helixAxis;
+    // Spacing anchor for MotionRibbon_SampleFollower: the last laid control
+    // point, which the append loop measures from. The RENDER head rides the
+    // live tip every frame (see the sampler), so history[head] cannot serve
+    // as the anchor — moving it resets the accumulation and freezes the
+    // history at one node (a blank trail). When false, the sampler
+    // re-initialises it from the current head (spawn, cut, static path).
+    Vector3 spacingAnchor;
+    bool hasSpacingAnchor;
 
     Texture2D sprite;  // 20 bytes
     Texture2D flowMap; // 20 bytes (Thêm Flowmap Texture vào Entity)

@@ -113,7 +113,7 @@ typedef struct
     int roll, drift, jitter, widthProfile, shard;
     int wave, noise, helix, lane, cap;
     int p0, p1, p2, uvScale, seed, maxDist, add, alpha;
-    int style, colRamp[4];
+    int style, colRamp;
     // The mode-2 sine warp's coordinate half, generalised 05/08/2026 onto
     // core/uv's UVDeformField (u_sinWave is GONE — see the "SIN-WAVE STRAND
     // TRAIL" push site for the reproduction). uv_field.glsl is shape-neutral
@@ -184,10 +184,19 @@ static void FillDeformLocs(Shader shader, DeformLocs *l)
     l->add           = GetShaderLocation(shader, "u_add");
     l->alpha         = GetShaderLocation(shader, "u_alpha");
     l->style         = GetShaderLocation(shader, "u_style");
-    l->colRamp[0]    = GetShaderLocation(shader, "u_colRamp[0]");
-    l->colRamp[1]    = GetShaderLocation(shader, "u_colRamp[1]");
-    l->colRamp[2]    = GetShaderLocation(shader, "u_colRamp[2]");
-    l->colRamp[3]    = GetShaderLocation(shader, "u_colRamp[3]");
+    // ONE base location, not four element queries. rlvk's SPIR-V reflection
+    // stores a plain array under its BASE name ("u_colRamp"), so the GL-style
+    // "u_colRamp[0]" spelling never resolves there — all four came back -1,
+    // the pushes below were skipped in silence, every Ramp() read black, and
+    // 14 of 16 motion-ribbon presets drew nothing (only styles with
+    // constant-colour terms — SILK's border/headHot, LIGHTNING's white core —
+    // showed anything at all). Desktop GL wants the "[0]" spelling, so try it
+    // first and fall back to the base name; the upload is a single count=4
+    // call either way (glUniform3fv from [0]; rlvk's 16-byte-strided UBO
+    // write from base), so both backends land the same bytes.
+    l->colRamp = GetShaderLocation(shader, "u_colRamp[0]");
+    if (l->colRamp < 0)
+        l->colRamp = GetShaderLocation(shader, "u_colRamp");
 }
 
 static const DeformLocs *GetCachedDeformLocs(Shader shader)
@@ -1299,6 +1308,7 @@ int SpawnTrailEntity(TrailConfig config)
     t->uvMetresPerTile = config.uvMetresPerTile;
     t->spacingMeters = config.spacingMeters;
     t->laidDist = 0.0f;
+    t->hasSpacingAnchor = false;
     t->nodeHomeSpring = config.nodeHomeSpring;
     t->nodeHomeMaxDev = config.nodeHomeMaxDev;
     t->nodeOrderFrac = (config.nodeOrderFrac > 0.49f) ? 0.49f : config.nodeOrderFrac;
@@ -1476,20 +1486,44 @@ static void MotionRibbon_SampleFollower(int id, Vector3 newTipPos)
         UpdateFollowerPosition(id, newTipPos);
         return;
     }
+    // The append loop measures from the last LAID control point, tracked
+    // separately: the render head below rides the live tip every frame, so it
+    // cannot serve as the anchor (moving it resets the accumulation and the
+    // history freezes at one node — a blank trail).
+    if (!t->hasSpacingAnchor)
+    {
+        t->spacingAnchor = t->history[t->historyHead];
+        t->hasSpacingAnchor = true;
+    }
     for (;;)
     {
-        Vector3 anchor = t->history[t->historyHead];
-        float distance = Vector3Distance(anchor, newTipPos);
+        float distance = Vector3Distance(t->spacingAnchor, newTipPos);
         if (distance + 1e-5f < t->spacingMeters)
             break;
-        UpdateFollowerPosition(id, Vector3Lerp(anchor, newTipPos,
+        UpdateFollowerPosition(id, Vector3Lerp(t->spacingAnchor, newTipPos,
                                                 t->spacingMeters / distance));
+        t->spacingAnchor = t->history[t->historyHead];
     }
     /* Keep physics/ownership current even while the render head waits for the
      * next metre-spaced control point.  No zero-length frame is manufactured. */
     t->position = newTipPos;
     t->timeSinceLastFollowerUpdate = 0.0f;
     t->fadeAccumulator = 0.0f;
+    // LIVE HEAD: the drawn strip ends at the true tip every frame instead of
+    // dwelling at the last spaced point for up to spacingMeters (0.10 m of
+    // stop-start head motion, plus a 0.10 m lurch of every wave crest, since
+    // the fragment stage anchors to the head odometer). Interior nodes keep
+    // their even spacing — appends above still measure from the anchor — and
+    // the head UV advances by the same residual so the arc origin stays exact.
+    {
+        float residual = Vector3Distance(t->spacingAnchor, newTipPos);
+        if (residual > 1e-6f)
+        {
+            t->history[t->historyHead] = newTipPos;
+            t->nodeHome[t->historyHead] = newTipPos;
+            t->nodeUV[t->historyHead] = t->laidDist + residual;
+        }
+    }
 }
 
 // A cut throws the PATH away — the emitter is somewhere unrelated and the
@@ -1516,13 +1550,24 @@ static void FollowerCut(TrailEntity *t, Vector3 tip)
     t->nodeUV[0] = t->laidDist; // NOT 0 — see above
     t->prevAttachPos = tip;
     t->sampleAcc = 0.0f;
+    t->hasSpacingAnchor = false; // re-initialised from history[0] on next sample
 }
 
 void Trail_SetLateralOffset(int id, Vector3 worldOffset)
 {
     if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
         return;
-    trailPool[id].lateralOffset = worldOffset;
+    TrailEntity *t = &trailPool[id];
+    /* This offset is part of the follower's authored path. Keep it out of the
+     * transform-teleport test: otherwise the first offset (and any fast change
+     * in its frame) looks like the emitter jumped and FollowerCut discards the
+     * history. Slewing the offset still shapes the ribbon over time; moving
+     * the reference by the same delta prevents the control signal from being
+     * mistaken for emitter motion. */
+    if (t->attachedTransform && t->hasPrevAttach)
+        t->prevAttachPos = Vector3Add(t->prevAttachPos,
+            Vector3Subtract(worldOffset, t->lateralOffset));
+    t->lateralOffset = worldOffset;
 }
 
 void Trail_SetFrozen(int id, bool frozen)
@@ -1575,6 +1620,7 @@ void Trail_SetStaticPath(int id, Vector3 tail, Vector3 head, int nodeCount)
     t->hasPrevAttach = true;
     t->attachedTransform = NULL;
     t->sampleAcc = 0.0f;
+    t->hasSpacingAnchor = false;
     t->fadeAccumulator = 0.0f;
     t->frozen = true;
 }
@@ -2153,11 +2199,14 @@ void TrailRibbon_BindAppearance(Shader shader,const TrailEntity *t, Camera3D cam
     if (L->style >= 0) {
         SetShaderValue(shader, L->style, &m->style, SHADER_UNIFORM_FLOAT);
     }
-    for (int k = 0; k < 4; k++) {
-        if (L->colRamp[k] >= 0) {
-            float cr[3] = {m->colRamp[k].r / 255.0f, m->colRamp[k].g / 255.0f, m->colRamp[k].b / 255.0f};
-            SetShaderValue(shader, L->colRamp[k], cr, SHADER_UNIFORM_VEC3);
+    if (L->colRamp >= 0) {
+        float cr[12];
+        for (int k = 0; k < 4; k++) {
+            cr[k * 3 + 0] = m->colRamp[k].r / 255.0f;
+            cr[k * 3 + 1] = m->colRamp[k].g / 255.0f;
+            cr[k * 3 + 2] = m->colRamp[k].b / 255.0f;
         }
+        SetShaderValueV(shader, L->colRamp, cr, SHADER_UNIFORM_VEC3, 4);
     }
     // MODE 1 (sin-multi) ONLY — core/deform's first GLSL mirror,
     // 05/08/2026 (core/deform/shaders/mesh_deform.glsl). 2 octaves along

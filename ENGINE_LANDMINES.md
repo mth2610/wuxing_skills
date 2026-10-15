@@ -32,6 +32,31 @@
 | 22 | A silent headless capture looks hung and hides failures | Anyone maintaining visual regression harnesses |
 | 23 | Graphics SSBO bindings have a smaller limit than compute | Anyone adding raw instanced shader-buffer draws |
 | 24 | Duplicate physical response through field adapters | Particle, tracer and vegetation receivers using Wind and direct fields |
+| 25 | Per-element uniform-array query (`"u_x[0]"`) never resolves under rlvk — the whole array reads zero | Anyone uploading a `uniform vecN name[K]` (colour ramps, volume shapes) |
+
+---
+
+| 25 | Per-element uniform-array query (`"u_x[0]"`) never resolves under rlvk — the whole array reads zero | Anyone uploading a `uniform vecN name[K]` (colour ramps, volume shapes) |
+
+---
+
+## 25. Per-element uniform-array query (`"u_x[0]"`) never resolves under rlvk — the whole array reads zero (15/10/2026)
+
+**Symptom.** 14 of 16 motion-ribbon presets drew nothing; only the two styles with
+constant-colour terms (SILK's border/headHot, LIGHTNING's white core) showed anything.
+Compiles clean, all other uniforms resolve, geometry spawns — the effect is simply black.
+
+**Cause.** rlvk's SPIR-V reflection stores a plain array under its BASE name (`u_colRamp`),
+and `rlGetLocationUniform` is an exact `strcmp` — so `GetShaderLocation(sh, "u_colRamp[0]")`
+returns -1 for every element, the guarded pushes are skipped in silence, and every
+`Ramp()` in `trail_deform.fs` returns black. The same spelling is correct on desktop GL,
+which is why it was written that way and why nothing complained.
+
+**Rule.** Query `"u_x[0]"` first, fall back to `"u_x"`, and upload the array with ONE
+`SetShaderValueV(loc, values, TYPE, K)` call — correct under both backends (`glUniformNfv`
+from `[0]`; rlvk's 16-byte-strided UBO write from base). Never `loc+k` per element: rlvk
+locations are table indices, not consecutive addresses. Live instance of the same pattern:
+`core/volumetric/volumetric_fog.c` (`u_volPosShape[0]` etc.) — unverified, flag before trusting it.
 
 ---
 

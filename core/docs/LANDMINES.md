@@ -565,6 +565,27 @@ Corollary: `ResourceManager_LoadShader` caches by path, so never call
 
 ---
 
+## Every shared `.glsl` must end with a trailing newline (15/10/2026)
+
+**Symptom.** rlvk fails with `'#' : preprocessor directive cannot be preceded
+by another token` at a flattened line that is a clean `#ifndef` in its own
+file — the reported line matches no defect anywhere. Here it killed
+`trail_deform.fs`, and the dead program made every `u_uvField` lookup return
+-1, collapsing mode 2's three strand bundles onto one centre (the log's
+`u_uvField loc -1` line was the cascade, not the bug).
+
+**Cause.** `ProcessIncludes` splices includes by bare text with no
+line-boundary guarantee. `core/shaders/common/lighting.glsl` ended in `}`
+with no `\n`, so the next expansion fused onto it: `} #ifndef ...`.
+
+**Rule.** (1) Shared `.glsl` files end with `\n`. Audit:
+`for f in $(git ls-files '*.glsl'); do tail -c1 "$f" | grep -q $'\n' || echo "$f"; done`.
+(2) The preprocessor now appends the missing `\n` itself, so a future
+un-terminated include is harmless instead of a fused line — but keep (1), the
+guard is backstop, not licence.
+
+---
+
 ## std140: a `vec3` or `float` ARRAY uniform uploads garbage under rlvk
 
 **Symptom.** A shader's scalar uniforms arrive correctly but an ARRAY uniform is
@@ -4172,3 +4193,41 @@ return independently of disturbance strength, and bound offsets by field radius.
 Use the known path frame rather than searching the path again per force sample.
 Store GPU transverse state in dedicated mode-owned lanes; reset at spawn and never
 reinterpret physical receiver lanes while a physical chain is live.
+
+## The render head is the spacing anchor — moving it freezes the trail (15/10/2026)
+
+**Symptom.** After adding a "live head" (overwriting `history[historyHead]` with the
+tip every frame so the strip ends at the true emitter), every spacing-sampled
+follower trail went completely blank — footprint at noise floor on all presets,
+zero cuts, no errors. Reverting the three-line block restored everything.
+
+**Cause.** `MotionRibbon_SampleFollower`'s append loop measures from
+`history[historyHead]` — the head is BOTH the render head and the accumulation
+anchor ("the newest retained node is the fractional carry"). Moving the head to
+the tip every frame resets the measured distance to one frame of travel, so it
+never reaches `spacingMeters`, no node is ever appended, `historyCount` sticks
+at 1, and `historyCount > 1` never draws. The original dwell (head waits at the
+last spaced point) is structural, not incidental.
+
+**Rule.** Never move `history[historyHead]` except by appending. A live head
+needs its own anchor: `spacingAnchor` (last laid control point, advanced only
+on appends; re-initialised on spawn/cut/static-path) owns accumulation, the
+head slot rides the tip, and the head UV advances by the residual so the arc
+origin stays exact. Verify any sampler change with a footprint sweep — a frozen
+accumulator fails as total invisibility, not as a visible glitch.
+
+## A follower's lateral offset is authored motion, not an emitter teleport (15/10/2026)
+
+**Symptom.** Multi-strand Motion Ribbon trails cut into disconnected sections
+when their spread frame changes, even though the followed transform moves
+smoothly.
+
+**Cause.** `Trail_SetLateralOffset` changed the follower's world-space tip but
+left `prevAttachPos` at the previous offset. The next follower update counted
+the offset delta as emitter travel and `FollowerCut` discarded its history.
+Wood Spiral reproduced 0.48 m and 0.81 m apparent jumps in one 1/60 s step.
+
+**Rule.** When an attached follower's authored lateral offset changes, shift
+`prevAttachPos` by the same delta. Teleport detection should measure transform
+motion only; smooth offset evolution then bends the laid ribbon without cutting
+its history.

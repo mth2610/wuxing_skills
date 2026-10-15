@@ -121,7 +121,7 @@ bool VFXTest_ShouldHideCharacterRef(void)
     if (s_demoIaidoActive) return true;
     if (VFXTest_IsNewFxNamed("SILHOUETTE GLOW")) return true;
     if (VFXTest_IsNewFxNamed("IAIDO STANCE")) return true;
-    if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL")) return true;
+    if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL")) return !s_hideCharacterRef;
     return s_hideCharacterRef;
 }
 

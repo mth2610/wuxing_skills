@@ -10,6 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Cấu hình FetchContent để tự động tải Raylib
+# cmake -S . -B build
 include(FetchContent)
 
 # Tối ưu hóa build Raylib bằng cách tắt các module không cần thiết
