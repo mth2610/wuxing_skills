@@ -174,9 +174,9 @@ int main(void) {
    assert(ribbonCount==2&&ribbons[0].appearance.enabled&&ribbons[1].appearance.layerCount==3);
    Near(ribbons[0].lengthM,1.7f);assert(ribbons[0].mode==TRAIL_RIBBON_FREE);
  }
- Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;c.trailStyle=5;
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_TRAILS;c.trailStyle=VFX_GUIDED_TRAIL_STYLE_COUNT;
  assert(!VFX_ComposeGuidedMotionEx(&c)&&fieldCount==0&&styleCalls==0);
- Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_PARTICLES;c.trailStyle=5;
+ Reset();c=VFX_GuidedMotion_DefaultConfig();c.output=VFX_GUIDED_PARTICLES;c.trailStyle=VFX_GUIDED_TRAIL_STYLE_COUNT;
  assert(VFX_ComposeGuidedMotionEx(&c)&&styleCalls==0&&ribbonCount==0);
  /* Explicit source, body and templates are copied before the caller mutates them. */
  Reset();c=VFX_GuidedMotion_DefaultConfig();c.count=2;c.trailCount=2;c.emitDuration=1;

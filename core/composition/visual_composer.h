@@ -1084,9 +1084,33 @@ typedef enum {
     VFX_GUIDED_CONVERGE, VFX_GUIDED_BLAST
 } VFX_GuidedPattern;
 typedef enum {
-    VFX_GUIDED_TRAIL_PLAIN = 0, VFX_GUIDED_TRAIL_ENERGY_SILK,
-    VFX_GUIDED_TRAIL_SMOKE_WISP, VFX_GUIDED_TRAIL_EMBER_FILAMENT,
-    VFX_GUIDED_TRAIL_WATER_STREAM
+    VFX_GUIDED_TRAIL_PLAIN = 0,
+    VFX_GUIDED_TRAIL_ENERGY_SILK = 1,
+    VFX_GUIDED_TRAIL_SMOKE_WISP = 2,
+    VFX_GUIDED_TRAIL_EMBER_FILAMENT = 3,
+    VFX_GUIDED_TRAIL_WATER_STREAM = 4,
+    // Xianxia / Wuxing presets
+    VFX_GUIDED_TRAIL_SWORD_COMET = 5,   // Phi Kiếm
+    VFX_GUIDED_TRAIL_SILK = 6,          // Tiên Đới
+    VFX_GUIDED_TRAIL_WOOD_SPIRAL = 7,   // Linh Toàn
+    VFX_GUIDED_TRAIL_LIGHTNING = 8,     // Lôi Điện
+    VFX_GUIDED_TRAIL_FIRE_JET = 9,      // Hỏa Diễm
+    VFX_GUIDED_TRAIL_DRAGON = 10,       // Long Khí
+    VFX_GUIDED_TRAIL_INK = 11,          // Mặc Tích
+    VFX_GUIDED_TRAIL_TALISMAN = 12,     // Phù Văn
+    VFX_GUIDED_TRAIL_ICE_SHARD = 13,    // Hàn Băng
+    VFX_GUIDED_TRAIL_WIND_BLADE = 14,   // Phong Nhận
+    VFX_GUIDED_TRAIL_CROSS_BEAM = 15,   // Thập Tự Quang
+    VFX_GUIDED_TRAIL_DEMONIC = 16,      // Ma Khí
+    VFX_GUIDED_TRAIL_TAIJI = 17,        // Thái Cực
+    VFX_GUIDED_TRAIL_GALAXY = 18,       // Tinh Hà
+    // Classic core presets
+    VFX_GUIDED_TRAIL_BLADE = 19,        // Kiếm Khí
+    VFX_GUIDED_TRAIL_MAIN = 20,         // Main Energy
+    VFX_GUIDED_TRAIL_WISP = 21,         // Wisp
+    VFX_GUIDED_TRAIL_BACKDROP = 22,     // Backdrop
+    VFX_GUIDED_TRAIL_MAGIC = 23,        // Magic Plume
+    VFX_GUIDED_TRAIL_STYLE_COUNT = 24
 } VFX_GuidedTrailStyle;
 typedef enum {
     VFX_GUIDED_TRAIL_MOTION_FIELD=0, VFX_GUIDED_TRAIL_MOTION_SPLINE=1,

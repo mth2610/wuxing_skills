@@ -21,6 +21,13 @@ typedef unsigned MotionFrameHandle;
 typedef struct {float x,y,z;} Vector3;
 typedef struct {float x,y,z;} Matrix;
 typedef struct {float inverseMassKg,gravityScale;} MotionBodyProfile;
+typedef int TrailPresetId;
+static TrailPresetId s_motionRibbonFixturePreset = 0;
+static Vector3 MotionRibbon_EvaluateTrajectory(TrailPresetId preset, float t, Vector3 origin) {
+    (void)preset;
+    float a = t;
+    return (Vector3){origin.x + 3.0f * sinf(a), origin.y + 1.5f + 0.45f * sinf(a * 0.7f), origin.z + 2.1f * cosf(a * 1.3f)};
+}
 static int destroyed, updated;
 static bool seen[17];
 static void MotionFrame_Destroy(MotionFrameHandle h) {
@@ -132,14 +139,14 @@ int main(void) {
         root = Path(__file__).resolve().parents[2]
         source = (root / "sandbox/vfx_test.c").read_text()
         begin = source.index("static int VFXTest_GuidedParameterEdited(")
-        end = source.index("\nstatic void VFXTest_InitGuidedConfig", begin)
+        end = source.index("\nstatic void VFXTest_MotionRibbonParameterEdited", begin)
         hook = source[begin:end]
         begin = source.index("static void VFXTest_SetGuidedPreset(")
         end = source.index("/* UI edits couple authored speeds", begin)
         preset = source[begin:end]
         begin = source.index("static void VFXTest_UIEditParameter(")
-        end = source.index("\nstatic void VFXTest_UISetParameterNorm", begin)
-        edit = source[begin:end]
+        end = source.index("    if (VFXTest_IsNewFxNamed(\"MOTION RIBBON TRAIL\"))", begin)
+        edit = source[begin:end] + "}\n"
         fixture = r'''
 #include <assert.h>
 #include <math.h>
@@ -159,8 +166,33 @@ enum { VFX_GUIDED_TRAIL_ALIGN_AUTO, VFX_GUIDED_TRAIL_ALIGN_RADIAL, VFX_GUIDED_TR
 enum { GUIDE_TIGHT = 3 };
 enum { VFX_GUIDED_TRAIL_MOTION_FIELD, VFX_GUIDED_TRAIL_MOTION_SPLINE, VFX_GUIDED_TRAIL_MOTION_GUIDED };
 typedef int VC_MaterialId;
-enum { VC_MAT_WATER = 3, VC_MAT_LIGHTNING, VC_MAT_METAL, VC_MAT_FIRE };
-enum { VFX_GUIDED_TRAIL_PLAIN, VFX_GUIDED_TRAIL_ENERGY_SILK, VFX_GUIDED_TRAIL_SMOKE_WISP, VFX_GUIDED_TRAIL_EMBER_FILAMENT, VFX_GUIDED_TRAIL_WATER_STREAM };
+enum { VC_MAT_WATER = 3, VC_MAT_LIGHTNING, VC_MAT_METAL, VC_MAT_FIRE, VC_MAT_WOOD, VC_MAT_EARTH };
+typedef int TrailPresetId;
+static TrailPresetId s_motionRibbonFixturePreset;
+static VC_MaterialId MotionRibbonFixtureMaterial(TrailPresetId p) { (void)p; return VC_MAT_FIRE; }
+static float MotionRibbonFixtureLifetime(TrailPresetId p) { (void)p; return 2.0f; }
+static float MotionRibbonFixtureWidth(TrailPresetId p) { (void)p; return 0.25f; }
+enum {
+    TRAIL_PRESET_BLADE, TRAIL_PRESET_MAIN, TRAIL_PRESET_WISP, TRAIL_PRESET_BACKDROP,
+    TRAIL_PRESET_MAGIC,
+    MOTION_RIBBON_ENERGY_SILK, MOTION_RIBBON_SMOKE_WISP, MOTION_RIBBON_EMBER_FILAMENT,
+    MOTION_RIBBON_WATER_STREAM, MOTION_RIBBON_SWORD_COMET, MOTION_RIBBON_SILK,
+    MOTION_RIBBON_WOOD_SPIRAL, MOTION_RIBBON_LIGHTNING, MOTION_RIBBON_FIRE_JET,
+    MOTION_RIBBON_DRAGON, MOTION_RIBBON_INK, MOTION_RIBBON_TALISMAN,
+    MOTION_RIBBON_ICE_SHARD, MOTION_RIBBON_WIND_BLADE, MOTION_RIBBON_CROSS_BEAM,
+    MOTION_RIBBON_DEMONIC, MOTION_RIBBON_TAIJI, MOTION_RIBBON_GALAXY
+};
+enum {
+    VFX_GUIDED_TRAIL_PLAIN, VFX_GUIDED_TRAIL_ENERGY_SILK, VFX_GUIDED_TRAIL_SMOKE_WISP,
+    VFX_GUIDED_TRAIL_EMBER_FILAMENT, VFX_GUIDED_TRAIL_WATER_STREAM,
+    VFX_GUIDED_TRAIL_SWORD_COMET, VFX_GUIDED_TRAIL_SILK, VFX_GUIDED_TRAIL_WOOD_SPIRAL,
+    VFX_GUIDED_TRAIL_LIGHTNING, VFX_GUIDED_TRAIL_FIRE_JET, VFX_GUIDED_TRAIL_DRAGON,
+    VFX_GUIDED_TRAIL_INK, VFX_GUIDED_TRAIL_TALISMAN, VFX_GUIDED_TRAIL_ICE_SHARD,
+    VFX_GUIDED_TRAIL_WIND_BLADE, VFX_GUIDED_TRAIL_CROSS_BEAM, VFX_GUIDED_TRAIL_DEMONIC,
+    VFX_GUIDED_TRAIL_TAIJI, VFX_GUIDED_TRAIL_GALAXY, VFX_GUIDED_TRAIL_BLADE,
+    VFX_GUIDED_TRAIL_MAIN, VFX_GUIDED_TRAIL_WISP, VFX_GUIDED_TRAIL_BACKDROP,
+    VFX_GUIDED_TRAIL_MAGIC
+};
 static VFX_GuidedMotionConfig s_liveGuidedMotionConfig;
 static bool s_liveGuidedMotionConfigInit;
 static int s_guidedFixturePreset;

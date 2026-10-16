@@ -305,7 +305,32 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
   static const char *const trailMotionNames[]={"Physical field","Smooth spline","Guided field"};
   bool splineOnly=c->output==VFX_GUIDED_TRAILS && c->motionPattern==VFX_GUIDED_ROUTE &&
     c->trailMotion==VFX_GUIDED_TRAIL_MOTION_SPLINE && !c->trailTemplate && !c->trailAttachment;
-  static const char *const styleNames[]={"Plain","Energy Silk","Smoke Wisp","Ember Filament","Water Stream"};
+  static const char *const styleNames[] = {
+      "Plain",
+      "Energy Silk",
+      "Smoke Wisp (Yen Vu)",
+      "Ember Filament",
+      "Water Stream",
+      "Sword Comet (Phi Kiem)",
+      "Celestial Silk (Tien Doi)",
+      "Wood Spiral (Linh Toan)",
+      "Lightning (Loi Dien)",
+      "Fire Jet (Hoa Diem)",
+      "Dragon Qi (Long Khi)",
+      "Ink Brush (Mac Tich)",
+      "Talisman Runes (Phu Van)",
+      "Ice Shard (Han Bang)",
+      "Wind Blade (Phong Nhan)",
+      "Cross Beam (Thap Tu)",
+      "Demonic Smoke (Ma Khi)",
+      "Taiji (Thai Cuc)",
+      "Galaxy Nebula (Tinh Ha)",
+      "Blade / Kiem Khi",
+      "Main Energy",
+      "Wisp",
+      "Backdrop",
+      "Magic Plume"
+  };
   int n=0;
   out[n++]=(VFX_ParamDef){.name="Output",.group="Emission",.type=VFX_PARAM_ENUM,
     .valPtr=&c->output,.minInt=VFX_GUIDED_PARTICLES,.maxInt=VFX_GUIDED_BOTH,
@@ -352,8 +377,8 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
         out[n++]=(VFX_ParamDef){.name="Trail motion",.group="Trail",.type=VFX_PARAM_ENUM,
           .valPtr=&c->trailMotion,.minInt=0,.maxInt=2,.enumNames=trailMotionNames,.enumCount=3};
       if(n<max) out[n++]=(VFX_ParamDef){.name="Trail style",.group="Trail",.type=VFX_PARAM_ENUM,
-        .valPtr=&c->trailStyle,.minInt=VFX_GUIDED_TRAIL_PLAIN,.maxInt=VFX_GUIDED_TRAIL_WATER_STREAM,
-        .enumNames=styleNames,.enumCount=5};
+        .valPtr=&c->trailStyle,.minInt=VFX_GUIDED_TRAIL_PLAIN,.maxInt=VFX_GUIDED_TRAIL_STYLE_COUNT - 1,
+        .enumNames=styleNames,.enumCount=VFX_GUIDED_TRAIL_STYLE_COUNT};
       static const char * const alignNames[]={"Auto","Radial","Surface","Custom"};
       if(n<max) out[n++]=(VFX_ParamDef){.name="Trail align",.group="Trail",.type=VFX_PARAM_ENUM,
         .valPtr=&c->trailAlign,.minInt=0,.maxInt=3,.enumNames=alignNames,.enumCount=4};
@@ -380,7 +405,7 @@ static bool VC_GuidedMotion_Valid(const VFX_GuidedMotionConfig *c) {
   if(c->output!=VFX_GUIDED_PARTICLES && (c->trailCount<0 || c->trailCount>64 ||
       (!c->trailTemplate && (c->trailMotion<VFX_GUIDED_TRAIL_MOTION_FIELD ||
        c->trailMotion>VFX_GUIDED_TRAIL_MOTION_GUIDED || c->trailStyle<VFX_GUIDED_TRAIL_PLAIN ||
-       c->trailStyle>VFX_GUIDED_TRAIL_WATER_STREAM || !isfinite(c->trailLength) || c->trailLength<=0 ||
+       c->trailStyle>=VFX_GUIDED_TRAIL_STYLE_COUNT || !isfinite(c->trailLength) || c->trailLength<=0 ||
        !isfinite(c->trailWidth) || c->trailWidth<=0 || c->trailNodes<2 ||
        c->trailNodes>TRAIL_RIBBON_MAX_NODES)))) return false;
   return true;
@@ -457,8 +482,32 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
     s->ribbon.color=VC_WithAlpha(material->body,180);
     s->ribbon.material.body=s->body;
     if(trails && c->trailStyle!=VFX_GUIDED_TRAIL_PLAIN) {
-      static const TrailPresetId styles[]={TRAIL_PRESET_MAIN,TRAIL_PRESET_ENERGY,
-        TRAIL_PRESET_SMOKE,TRAIL_PRESET_BLADE,TRAIL_PRESET_WATER};
+      static const TrailPresetId styles[VFX_GUIDED_TRAIL_STYLE_COUNT] = {
+        TRAIL_PRESET_MAIN,         /* 0: Plain, unused */
+        TRAIL_PRESET_ENERGY,       /* 1: Energy Silk */
+        TRAIL_PRESET_SMOKE,        /* 2: Smoke Wisp */
+        TRAIL_PRESET_BLADE,        /* 3: Ember Filament */
+        TRAIL_PRESET_WATER,        /* 4: Water Stream */
+        TRAIL_PRESET_SWORD_COMET,  /* 5: Phi Kiếm */
+        TRAIL_PRESET_SILK,         /* 6: Tiên Đới */
+        TRAIL_PRESET_WOOD_SPIRAL,  /* 7: Linh Toàn */
+        TRAIL_PRESET_LIGHTNING,    /* 8: Lôi Điện */
+        TRAIL_PRESET_FIRE_JET,     /* 9: Hỏa Diễm */
+        TRAIL_PRESET_DRAGON,       /* 10: Long Khí */
+        TRAIL_PRESET_INK,          /* 11: Mặc Tích */
+        TRAIL_PRESET_TALISMAN,     /* 12: Phù Văn */
+        TRAIL_PRESET_ICE_SHARD,    /* 13: Hàn Băng */
+        TRAIL_PRESET_WIND_BLADE,   /* 14: Phong Nhận */
+        TRAIL_PRESET_CROSS_BEAM,   /* 15: Thập Tự Quang */
+        TRAIL_PRESET_DEMONIC,      /* 16: Ma Khí */
+        TRAIL_PRESET_TAIJI,        /* 17: Thái Cực */
+        TRAIL_PRESET_GALAXY,       /* 18: Tinh Hà */
+        TRAIL_PRESET_BLADE,        /* 19: Kiếm Khí */
+        TRAIL_PRESET_MAIN,         /* 20: Main Energy */
+        TRAIL_PRESET_WISP,         /* 21: Wisp */
+        TRAIL_PRESET_BACKDROP,     /* 22: Backdrop */
+        TRAIL_PRESET_MAGIC         /* 23: Magic Plume */
+      };
       if(!VFX_TrailRibbonApplyPreset(&s->ribbon,styles[c->trailStyle],c->material)) goto fail;
     }
     s->ribbon.mode=c->trailAttachment?TRAIL_RIBBON_HEAD_ANCHORED:TRAIL_RIBBON_FREE;

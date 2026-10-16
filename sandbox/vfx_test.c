@@ -201,9 +201,19 @@ static const char *s_guidedFixturePresetNames[] = {
     "Energy silk ribbon", "Smoke wisp ribbon", "Ember filament ribbon", "Water stream ribbon",
     "Spline ribbon", "Guided curl ribbon",
     "Converge field (implosion)", "Blast field (explosion)",
-    "Sphere tangent ring (90 deg)", "Radial needle blast (0 deg)"
+    "Sphere tangent ring (90 deg)", "Radial needle blast (0 deg)",
+    "Sword comet ribbon (Phi Kiem)", "Celestial silk ribbon (Tien Doi)",
+    "Wood spiral ribbon (Linh Toan)", "Lightning ribbon (Loi Dien)",
+    "Fire jet ribbon (Hoa Diem)", "Dragon Qi ribbon (Long Khi)",
+    "Ink brush ribbon (Mac Tich)", "Talisman runes ribbon (Phu Van)",
+    "Ice shard ribbon (Han Bang)", "Wind blade ribbon (Phong Nhan)",
+    "Cross beam ribbon (Thap Tu)", "Demonic smoke ribbon (Ma Khi)",
+    "Taiji ribbon (Thai Cuc)", "Galaxy nebula ribbon (Tinh Ha)",
+    "Blade slash ribbon (Kiem Khi)", "Main energy ribbon",
+    "Wisp ribbon", "Backdrop ribbon", "Magic plume ribbon"
 };
-#define VFXTEST_GUIDED_PRESET_COUNT 24
+#define VFXTEST_GUIDED_PRESET_COUNT 43
+
 
 static void VFXTest_SetGuidedPreset(int preset)
 {
@@ -269,6 +279,10 @@ static void VFXTest_SetGuidedPreset(int preset)
             VFX_GUIDED_TRAIL_WATER_STREAM};
         static const VC_MaterialId materials[] = {VC_MAT_LIGHTNING,
             VC_MAT_METAL, VC_MAT_FIRE, VC_MAT_WATER};
+        static const TrailPresetId trailPresets[] = {MOTION_RIBBON_ENERGY_SILK,
+            MOTION_RIBBON_SMOKE_WISP, MOTION_RIBBON_EMBER_FILAMENT,
+            MOTION_RIBBON_WATER_STREAM};
+        s_motionRibbonFixturePreset = trailPresets[preset - 14];
         s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
         s_liveGuidedMotionConfig.motionPattern = VFX_GUIDED_AIRFLOW;
         s_liveGuidedMotionConfig.trailStyle = styles[preset - 14];
@@ -384,6 +398,69 @@ static void VFXTest_SetGuidedPreset(int preset)
         s_liveGuidedMotionConfig.emitDuration = 0.05f;
         s_liveGuidedMotionConfig.duration = 2.0f;
         s_liveGuidedMotionConfig.gravityScale = 0.0f;
+    }
+    if (preset >= 24 && preset <= 42) {
+        static const TrailPresetId trailPresets[] = {
+            MOTION_RIBBON_SWORD_COMET,
+            MOTION_RIBBON_SILK,
+            MOTION_RIBBON_WOOD_SPIRAL,
+            MOTION_RIBBON_LIGHTNING,
+            MOTION_RIBBON_FIRE_JET,
+            MOTION_RIBBON_DRAGON,
+            MOTION_RIBBON_INK,
+            MOTION_RIBBON_TALISMAN,
+            MOTION_RIBBON_ICE_SHARD,
+            MOTION_RIBBON_WIND_BLADE,
+            MOTION_RIBBON_CROSS_BEAM,
+            MOTION_RIBBON_DEMONIC,
+            MOTION_RIBBON_TAIJI,
+            MOTION_RIBBON_GALAXY,
+            TRAIL_PRESET_BLADE,
+            TRAIL_PRESET_MAIN,
+            TRAIL_PRESET_WISP,
+            TRAIL_PRESET_BACKDROP,
+            TRAIL_PRESET_MAGIC
+        };
+        static const int trailStyles[] = {
+            VFX_GUIDED_TRAIL_SWORD_COMET,
+            VFX_GUIDED_TRAIL_SILK,
+            VFX_GUIDED_TRAIL_WOOD_SPIRAL,
+            VFX_GUIDED_TRAIL_LIGHTNING,
+            VFX_GUIDED_TRAIL_FIRE_JET,
+            VFX_GUIDED_TRAIL_DRAGON,
+            VFX_GUIDED_TRAIL_INK,
+            VFX_GUIDED_TRAIL_TALISMAN,
+            VFX_GUIDED_TRAIL_ICE_SHARD,
+            VFX_GUIDED_TRAIL_WIND_BLADE,
+            VFX_GUIDED_TRAIL_CROSS_BEAM,
+            VFX_GUIDED_TRAIL_DEMONIC,
+            VFX_GUIDED_TRAIL_TAIJI,
+            VFX_GUIDED_TRAIL_GALAXY,
+            VFX_GUIDED_TRAIL_BLADE,
+            VFX_GUIDED_TRAIL_MAIN,
+            VFX_GUIDED_TRAIL_WISP,
+            VFX_GUIDED_TRAIL_BACKDROP,
+            VFX_GUIDED_TRAIL_MAGIC
+        };
+        int idx = preset - 24;
+        TrailPresetId pId = trailPresets[idx];
+        s_motionRibbonFixturePreset = pId;
+        s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
+        s_liveGuidedMotionConfig.motionPattern = VFX_GUIDED_AIRFLOW;
+        s_liveGuidedMotionConfig.trailStyle = trailStyles[idx];
+        s_liveGuidedMotionConfig.material = MotionRibbonFixtureMaterial(pId);
+        s_liveGuidedMotionConfig.trailCount = 1;
+        s_liveGuidedMotionConfig.emitDuration = 0.0f;
+        s_liveGuidedMotionConfig.duration = 4.0f;
+        s_liveGuidedMotionConfig.trailLength = MotionRibbonFixtureLifetime(pId);
+        s_liveGuidedMotionConfig.trailWidth = MotionRibbonFixtureWidth(pId);
+        s_liveGuidedMotionConfig.trailNodes = 24;
+        s_liveGuidedMotionConfig.speed = 0.5f;
+        s_liveGuidedMotionConfig.swirlSpeed = 0.15f;
+        s_liveGuidedMotionConfig.turbulenceSpeed = 0.4f;
+        s_liveGuidedMotionConfig.guideRadius = 4.0f;
+        s_liveGuidedMotionConfig.gravityScale = 0.05f;
+        s_liveGuidedMotionConfig.massKg = 0.004f;
     }
     s_guidedRatioReferenceSpeed = s_liveGuidedMotionConfig.speed > 0.00001f
         ? s_liveGuidedMotionConfig.speed : 1.0f;
@@ -545,7 +622,8 @@ static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
                  (double)cfg.turbulenceSpeed, (double)cfg.swirlSpeed);
     }
     /* Match the swept reference's origin for fixed-camera material captures. */
-    if (s_guidedCaptureActive && s_guidedFixturePreset >= 14 && s_guidedFixturePreset <= 17)
+    if (s_guidedCaptureActive && ((s_guidedFixturePreset >= 14 && s_guidedFixturePreset <= 17) ||
+                                  (s_guidedFixturePreset >= 24 && s_guidedFixturePreset <= 42)))
         source = s_prefabStartPos;
     cfg.source = source;
     cfg.target = s_guidedFixturePreset == 5 ? source : target;
@@ -560,14 +638,16 @@ static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
                                   0.45f, 80, leaves.mass, leaves.style);
     }
     VFXTest_GuidedFrame *anchor = NULL;
-    if (s_guidedFixturePreset >= 12 && s_guidedFixturePreset <= 17) {
+    if ((s_guidedFixturePreset >= 12 && s_guidedFixturePreset <= 17) ||
+        (s_guidedFixturePreset >= 24 && s_guidedFixturePreset <= 42)) {
         for (int i = 0; i < VFXTEST_GUIDED_FRAME_COUNT; ++i)
             if (!s_guidedFrames[i].active) { anchor = &s_guidedFrames[i]; break; }
         if (!anchor) {
             TraceLog(LOG_WARNING, "GUIDED MOTION: anchor pool exhausted");
             return;
         }
-        bool kinematic = s_guidedFixturePreset >= 14;
+        bool kinematic = (s_guidedFixturePreset >= 14 && s_guidedFixturePreset <= 17) ||
+                         (s_guidedFixturePreset >= 24 && s_guidedFixturePreset <= 42);
         Vector3 initial = kinematic ? Vector3Add(source, (Vector3){0.0f, 1.5f, 2.1f}) : source;
         MotionFrameHandle frame = MotionFrame_Create(MatrixTranslate(initial.x, initial.y, initial.z));
         if (!frame) return;
@@ -979,6 +1059,10 @@ static VC_MaterialId MotionRibbonFixtureMaterial(TrailPresetId preset)
     case MOTION_RIBBON_DEMONIC: return VC_MAT_FIRE;
     case MOTION_RIBBON_TAIJI: return VC_MAT_WATER;
     case MOTION_RIBBON_GALAXY: return VC_MAT_LIGHTNING;
+    case TRAIL_PRESET_MAIN: return VC_MAT_FIRE;
+    case TRAIL_PRESET_WISP: return VC_MAT_FIRE;
+    case TRAIL_PRESET_BACKDROP: return VC_MAT_FIRE;
+    case TRAIL_PRESET_MAGIC: return VC_MAT_WATER;
     default: return VC_MAT_FIRE;
     }
 }
@@ -1003,6 +1087,10 @@ static float MotionRibbonFixtureLifetime(TrailPresetId preset)
     case MOTION_RIBBON_DEMONIC: return 2.4f;
     case MOTION_RIBBON_TAIJI: return 2.0f;
     case MOTION_RIBBON_GALAXY: return 2.4f;
+    case TRAIL_PRESET_MAIN: return 1.8f;
+    case TRAIL_PRESET_WISP: return 1.5f;
+    case TRAIL_PRESET_BACKDROP: return 2.0f;
+    case TRAIL_PRESET_MAGIC: return 2.2f;
     default: return 2.0f;
     }
 }
@@ -1027,6 +1115,10 @@ static float MotionRibbonFixtureWidth(TrailPresetId preset)
     case MOTION_RIBBON_DEMONIC: return 0.35f;
     case MOTION_RIBBON_TAIJI: return 0.22f;
     case MOTION_RIBBON_GALAXY: return 0.32f;
+    case TRAIL_PRESET_MAIN: return 0.35f;
+    case TRAIL_PRESET_WISP: return 0.15f;
+    case TRAIL_PRESET_BACKDROP: return 0.50f;
+    case TRAIL_PRESET_MAGIC: return 0.30f;
     default: return 0.25f;
     }
 }

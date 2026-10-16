@@ -12,12 +12,18 @@
 #define PI 3.14159265358979323846f
 #endif
 
+static const MapZone ARENA_ZONES[] = {
+    { NAT_RIVER,       {  0.0f, 0.0f, -2.0f }, 3.0f },
+    { NAT_FOREST,      { 14.0f, 0.0f, 10.0f }, 3.5f },
+    { NAT_DESERT_ZONE, { -2.0f, 0.0f, 10.0f }, 3.0f },
+};
 #define ARENA_ZONE_COUNT (int)(sizeof(ARENA_ZONES) / sizeof(ARENA_ZONES[0]))
 
 void InitDefaultArenaMap(void)
 {
     Environment_SetCloudShadowConfig(NULL);
     VolumetricFog_SetDistantCoverage(1.0f);
+    MapManager_SetZones(ARENA_ZONES, ARENA_ZONE_COUNT);
 }
 
 // Radial-gradient ground disc, same self-shaded vertex-color technique as
