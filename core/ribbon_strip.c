@@ -416,22 +416,13 @@ static void DrawRibbonStripInternal(const RibbonPoint *points, int count,
     if (havePrevSide && Vector3DotProduct(side, prevSide) < 0.0f)
       side = Vector3Negate(side);
 
-    if (havePrevSide) {
-      float segLen = Vector3Distance(points[i].position, prevCenter);
-      float maxArm = (halfWidth > prevHalfWidth) ? halfWidth : prevHalfWidth;
-      float maxTurn = (maxArm > 1e-4f) ? (0.65f * segLen / maxArm) : 0.65f;
-      if (maxTurn < 0.08f) maxTurn = 0.08f;
-      if (maxTurn > 0.65f) maxTurn = 0.65f;
-      side = Vector3Normalize(Vector3Lerp(prevSide, side, maxTurn));
-    }
-
     Vector3 left =
         Vector3Add(points[i].position, Vector3Scale(side, halfWidth));
     Vector3 right = Vector3Subtract(points[i].position,
                                     Vector3Scale(side, halfWidth));
     Vector3 center = points[i].position;
 
-    Vector3 prevSideArm = Vector3Scale(prevSide, 1.0f + prevHalfWidth);
+    Vector3 prevSideArm = Vector3Scale(havePrevSide ? prevSide : side, 1.0f + prevHalfWidth);
     Vector3 sideArm = Vector3Scale(side, 1.0f + halfWidth);
     prevSide = side;
     havePrevSide = true;

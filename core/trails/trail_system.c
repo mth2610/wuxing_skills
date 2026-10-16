@@ -626,24 +626,29 @@ static inline int NodeIndexForSegRatio(const TrailEntity *t, int drawCount, int 
     return GetHistoryNodeIndex(t, i);
 }
 
-static Vector3 GetSpacedHistoryKnot(const TrailEntity *t, int k, int N, float fHead)
+static inline Vector3 GetHistoryKnot(const TrailEntity *t, int k, int N)
 {
-    if (k <= 0)
-        return t->history[GetHistoryNodeIndex(t, 0)];
-    if (k <= N - 2)
-        return t->history[GetHistoryNodeIndex(t, k)];
-
-    Vector3 pPrev = t->history[GetHistoryNodeIndex(t, (N >= 3) ? (N - 3) : 0)];
-    Vector3 pAnc  = t->history[GetHistoryNodeIndex(t, N - 2)];
-    Vector3 pTip  = t->history[GetHistoryNodeIndex(t, N - 1)];
-    Vector3 dPrev = Vector3Subtract(pAnc, pPrev);
-    Vector3 dTip  = Vector3Subtract(pTip, pAnc);
-    // Unit-spaced virtual knot that is C1-continuous across fHead: 1 -> 0
-    Vector3 step  = Vector3Add(Vector3Scale(dPrev, 1.0f - fHead), dTip);
-    Vector3 pHat1 = Vector3Add(pAnc, step);
-    if (k == N - 1)
-        return pHat1;
-    return Vector3Add(pHat1, step);
+    if (k < 0)
+    {
+        Vector3 p0 = t->history[GetHistoryNodeIndex(t, 0)];
+        if (N > 1)
+        {
+            Vector3 p1 = t->history[GetHistoryNodeIndex(t, 1)];
+            return Vector3Subtract(p0, Vector3Scale(Vector3Subtract(p1, p0), (float)(-k)));
+        }
+        return p0;
+    }
+    if (k >= N)
+    {
+        Vector3 pN1 = t->history[GetHistoryNodeIndex(t, N - 1)];
+        if (N > 1)
+        {
+            Vector3 pN2 = t->history[GetHistoryNodeIndex(t, N - 2)];
+            return Vector3Add(pN1, Vector3Scale(Vector3Subtract(pN1, pN2), (float)(k - (N - 1))));
+        }
+        return pN1;
+    }
+    return t->history[GetHistoryNodeIndex(t, k)];
 }
 
 static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
@@ -671,19 +676,21 @@ static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
             i = N - 2;
         float f = idx - (float)i;
 
-        Vector3 P0 = GetSpacedHistoryKnot(t, i - 1, N, fHead);
-        Vector3 P1 = GetSpacedHistoryKnot(t, i,     N, fHead);
-        Vector3 P2 = GetSpacedHistoryKnot(t, i + 1, N, fHead);
-        Vector3 P3 = GetSpacedHistoryKnot(t, i + 2, N, fHead);
-        Vector3 pos = CatmullRom(P0, P1, P2, P3, f);
-        if (i == N - 2 && fHead > 1e-4f)
+        if (i == N - 2)
         {
-            float sTip = Clamp(f / fHead, 0.0f, 1.0f);
-            Vector3 pTip = t->history[GetHistoryNodeIndex(t, N - 1)];
-            Vector3 chordPos = Vector3Lerp(P1, pTip, sTip);
-            pos = Vector3Lerp(pos, chordPos, sTip * sTip);
+            float u = (fHead > 1e-4f) ? Clamp(f / fHead, 0.0f, 1.0f) : 0.0f;
+            Vector3 P0 = GetHistoryKnot(t, N - 3, N);
+            Vector3 P1 = GetHistoryKnot(t, N - 2, N);
+            Vector3 P2 = GetHistoryKnot(t, N - 1, N);
+            Vector3 P3 = Vector3Add(P2, Vector3Subtract(P2, P1));
+            return CatmullRom(P0, P1, P2, P3, u);
         }
-        return pos;
+
+        Vector3 P0 = GetHistoryKnot(t, i - 1, N);
+        Vector3 P1 = GetHistoryKnot(t, i,     N);
+        Vector3 P2 = GetHistoryKnot(t, i + 1, N);
+        Vector3 P3 = GetHistoryKnot(t, i + 2, N);
+        return CatmullRom(P0, P1, P2, P3, f);
     }
 
     float idx = segRatio * (t->historyCount - 1);
@@ -1552,25 +1559,38 @@ static void MotionRibbon_SampleFollower(int id, Vector3 newTipPos)
         t->nodeVelocity[t->historyHead] = (Vector3){0, 0, 0};
         t->nodeRest[t->historyHead] = 1e-4f;
         t->nodeUV[t->historyHead] = t->laidDist;
+        t->sampleAcc = 0.0f;
+        t->position = newTipPos;
     }
-    for (;;)
-    {
-        float distance = Vector3Distance(t->spacingAnchor, newTipPos);
-        if (distance + 1e-5f < t->spacingMeters)
-            break;
-        Vector3 spaced = Vector3Lerp(t->spacingAnchor, newTipPos,
-                                     t->spacingMeters / distance);
-        t->history[t->historyHead] = spaced;
-        t->nodeHome[t->historyHead] = spaced;
-        t->nodeVelocity[t->historyHead] = (Vector3){0, 0, 0};
-        t->nodeRest[t->historyHead] = t->spacingMeters;
-        t->laidDist += t->spacingMeters;
-        t->nodeUV[t->historyHead] = t->laidDist;
-        t->spacingAnchor = spaced;
 
-        t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
-        GrowHistoryTowardMaxNodes(t);
+    float stepDist = Vector3Distance(t->position, newTipPos);
+    if (stepDist >= 1e-6f)
+    {
+        Vector3 fromPos = t->position;
+        float remainingStep = stepDist;
+        while (t->sampleAcc + remainingStep + 1e-5f >= t->spacingMeters)
+        {
+            float needed = t->spacingMeters - t->sampleAcc;
+            float frac = (stepDist > 1e-6f) ? Clamp((stepDist - remainingStep + needed) / stepDist, 0.0f, 1.0f) : 1.0f;
+            Vector3 spaced = Vector3Lerp(fromPos, newTipPos, frac);
+
+            t->history[t->historyHead] = spaced;
+            t->nodeHome[t->historyHead] = spaced;
+            t->nodeVelocity[t->historyHead] = (Vector3){0, 0, 0};
+            t->nodeRest[t->historyHead] = t->spacingMeters;
+            t->laidDist += t->spacingMeters;
+            t->nodeUV[t->historyHead] = t->laidDist;
+            t->spacingAnchor = spaced;
+
+            t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
+            GrowHistoryTowardMaxNodes(t);
+
+            remainingStep -= needed;
+            t->sampleAcc = 0.0f;
+        }
+        t->sampleAcc += remainingStep;
     }
+
     /* Keep physics/ownership current even while the render head waits for the
      * next metre-spaced control point.  No zero-length frame is manufactured. */
     t->position = newTipPos;
@@ -1579,7 +1599,7 @@ static void MotionRibbon_SampleFollower(int id, Vector3 newTipPos)
     // LIVE HEAD: the drawn strip ends at the true tip every frame in the
     // dedicated live-head slot above spacingAnchor.
     {
-        float residual = Vector3Distance(t->spacingAnchor, newTipPos);
+        float residual = t->sampleAcc;
         t->history[t->historyHead] = newTipPos;
         t->nodeHome[t->historyHead] = newTipPos;
         t->nodeVelocity[t->historyHead] = (Vector3){0, 0, 0};

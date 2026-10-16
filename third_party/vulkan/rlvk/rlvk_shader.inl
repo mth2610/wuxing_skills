@@ -9,10 +9,12 @@
 // Shaders management (SPIR-V shader modules consumed by the cached-pipeline draw path)
 //-----------------------------------------------------------------------------------------
 
+static int s_dbgSsbo = -1;
+
 // Load (compile) shader and return shader id
 // Stage-compilation model: GL compiles stages separately and links them later. rlvk defers
 // everything to the program step - rlLoadShader just stashes a copy of the GLSL source in
-// the slot; rlLoadShaderProgramCompute (and, later, rlLoadShaderProgramEx) consumes it.
+// the slot; rlLoadShaderProgramCompute and rlLoadShaderProgramEx consume it.
 unsigned int rlLoadShader(const char *code, int type)
 {
     if (!isGpuReady)
@@ -35,6 +37,11 @@ unsigned int rlLoadShader(const char *code, int type)
     rlvkShaderSlot *s = &RLVK.shaderSlots[slot];
     size_t len = strlen(code);
     s->pendingCode = (char *)RL_MALLOC(len + 1);
+    if (!s->pendingCode)
+    {
+        s->inUse = false;
+        return RLVK_INVALID_SLOT;
+    }
     memcpy(s->pendingCode, code, len + 1);
     s->pendingType = type;
     return slot;
@@ -66,10 +73,6 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
     if (sanFs)
         fsCode = sanFs;
 
-    // gl_FragCoord needs NO wrapper: every scope rasterizes in GL's memory orientation
-    // (positive viewport, final flip at present), so Vulkan's framebuffer-row gl_FragCoord.y
-    // equals GL's bottom-left window y numerically.
-
     u32 *vsSpv = NULL, *fsSpv = NULL;
     size_t vsWords = 0, fsWords = 0;
     bool vsOk = rlvkCompileGlsl(vsCode, 0, &vsSpv, &vsWords);
@@ -93,10 +96,17 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
     u32 vsSsboMask = 0, fsSsboMask = 0;
     rlvkRebaseStorageBuffers(&vsSpv, &vsWords, !RLVK.Caps.graphicsSsboStores, &vsSsboMask);
     rlvkRebaseStorageBuffers(&fsSpv, &fsWords, !RLVK.Caps.graphicsSsboStores, &fsSsboMask);
-    if (getenv("RLVK_DUMP_SPV") && vsSsboMask)   // debug: post-rebase module for spirv-dis
+    const char *dumpSpvDir = getenv("RLVK_DUMP_SPV");
+    if (dumpSpvDir && vsSsboMask) // debug: post-rebase module for spirv-dis
     {
-        char path[256]; snprintf(path, sizeof(path), "%s/rlvk_rebased_vs.spv", getenv("RLVK_DUMP_SPV"));
-        FILE *df = fopen(path, "wb"); if (df) { fwrite(vsSpv, 4, vsWords, df); fclose(df); }
+        char path[256];
+        snprintf(path, sizeof(path), "%s/rlvk_rebased_vs.spv", dumpSpvDir);
+        FILE *df = fopen(path, "wb");
+        if (df)
+        {
+            fwrite(vsSpv, 4, vsWords, df);
+            fclose(df);
+        }
     }
     rlvkSpvReflection vsRef, fsRef;
     rlvkReflectSpv(vsSpv, vsWords, &vsRef);
@@ -121,7 +131,6 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
     if (r != VK_SUCCESS)
     {
         TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateShaderModule (custom shader) => %d", (int)r);
-        // VÁ LỖI LOGIC: Dọn dẹp module đã tạo nếu một trong hai thất bại
         if (vsMod)
             vkDestroyShaderModule(RLVK.device, vsMod, RLVK_ALLOC);
         if (fsMod)
@@ -132,7 +141,6 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
     u32 slot = rlvkAllocShaderSlot();
     if (slot == RLVK_INVALID_SLOT)
     {
-        // VÁ LỖI LOGIC: Tránh rò rỉ khi hết slot trống
         vkDestroyShaderModule(RLVK.device, vsMod, RLVK_ALLOC);
         vkDestroyShaderModule(RLVK.device, fsMod, RLVK_ALLOC);
         return RLVK.defaultShaderSlot;
@@ -170,7 +178,7 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
             {
                 found = shader->uniformCount++;
                 strncpy(shader->uniforms[found].name, ref->members[m].name, 63);
-                shader->uniforms[found].name[63] = '\0'; // VÁ LỖI OVERFLOW
+                shader->uniforms[found].name[63] = '\0';
                 shader->uniforms[found].vsOffset = -1;
                 shader->uniforms[found].fsOffset = -1;
                 shader->uniforms[found].samplerBinding = -1;
@@ -196,7 +204,7 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
             {
                 found = shader->uniformCount++;
                 strncpy(shader->uniforms[found].name, ref->samplers[sm].name, 63);
-                shader->uniforms[found].name[63] = '\0'; // VÁ LỖI OVERFLOW
+                shader->uniforms[found].name[63] = '\0';
                 shader->uniforms[found].vsOffset = -1;
                 shader->uniforms[found].fsOffset = -1;
                 shader->uniforms[found].samplerBinding = -1;
@@ -220,7 +228,8 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
     shader->fsStage = shader->fsBlockSize ? (unsigned char *)RL_CALLOC(1, shader->fsBlockSize) : NULL;
     shader->usesUbo = true;
     shader->ssboMask = vsSsboMask | fsSsboMask;
-    if (getenv("RLVK_DEBUG_SSBO")) TRACELOG(RL_LOG_WARNING, "VKSSBO compile slot=%u vsMask=0x%x fsMask=0x%x", slot, vsSsboMask, fsSsboMask);
+    if (rlvkDebugFlag("RLVK_DEBUG_SSBO", &s_dbgSsbo))
+        TRACELOG(RL_LOG_WARNING, "VKSSBO compile slot=%u vsMask=0x%x fsMask=0x%x", slot, vsSsboMask, fsSsboMask);
 
     TRACELOG(RL_LOG_INFO, "RLVK: [ID %u] shader program compiled (%d uniforms, VS block %uB at %u, FS block %uB at %u)",
              slot, shader->uniformCount, shader->vsBlockSize, vsRef.blockBinding, shader->fsBlockSize, fsRef.blockBinding);
@@ -230,9 +239,17 @@ unsigned int rlLoadShaderProgram(const char *vsCode, const char *fsCode)
 // Load shader program from already loaded shader ids
 unsigned int rlLoadShaderProgramEx(unsigned int vsId, unsigned int fsId)
 {
-    (void)vsId;
-    (void)fsId;
-    return RLVK_INVALID_SLOT;
+    if (!isGpuReady)
+        return RLVK_INVALID_SLOT;
+    const char *vsCode = (vsId > 0 && vsId < RLVK_MAX_SHADER_SLOTS && RLVK.shaderSlots[vsId].inUse)
+                             ? RLVK.shaderSlots[vsId].pendingCode
+                             : NULL;
+    const char *fsCode = (fsId > 0 && fsId < RLVK_MAX_SHADER_SLOTS && RLVK.shaderSlots[fsId].inUse)
+                             ? RLVK.shaderSlots[fsId].pendingCode
+                             : NULL;
+    if (!vsCode && !fsCode)
+        return RLVK_INVALID_SLOT;
+    return rlLoadShaderProgram(vsCode, fsCode);
 }
 
 // Lazily create the fixed compute set-0 layout + pipeline layout + per-frame pools
@@ -241,12 +258,6 @@ static bool rlvkInitComputeLayout(void)
     if (RLVK.computePipelineLayout != VK_NULL_HANDLE)
         return true;
 
-    // NOTE: NO storage-image bindings. Empirically (raw-Vulkan bisect on MoltenVK 1.2.11 /
-    // Intel Iris 6000): merely DECLARING storage-image bindings 8..11 in this layout makes
-    // the UBO at binding 14 read as zeros in the shader, even when the images are never
-    // written or statically used. rlBindImageTexture is a recorded no-op until a dedicated
-    // storage-image path exists (textures lack STORAGE usage anyway); when that lands, put
-    // the images in their own descriptor SET rather than re-adding them here.
     VkDescriptorSetLayoutBinding bindings[11];
     for (u32 b = 0; b < 8; b++)
         bindings[b] = (VkDescriptorSetLayoutBinding){.binding = b, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT};
@@ -284,9 +295,7 @@ static bool rlvkInitComputeLayout(void)
 }
 
 // Load compute shader program: compile the stashed GLSL (shaderc, Vulkan 1.1 target),
-// reflect the loose-uniform block, build the monolithic compute pipeline. Returns csId
-// itself - the stage slot becomes the program slot, mirroring GL id semantics closely
-// enough for raylib's LoadComputeShaderProgram flow.
+// reflect the loose-uniform block, build the monolithic compute pipeline.
 unsigned int rlLoadShaderProgramCompute(unsigned int csId)
 {
     if (!isGpuReady || csId == 0 || csId >= RLVK_MAX_SHADER_SLOTS)
@@ -297,10 +306,16 @@ unsigned int rlLoadShaderProgramCompute(unsigned int csId)
     if (!RLVK.shadercCompiler && !rlvkLoadShaderc())
     {
         TRACELOG(RL_LOG_WARNING, "RLVK: compute shader needs shaderc (GLSL compiler) - not available");
+        RL_FREE(shader->pendingCode);
+        memset(shader, 0, sizeof(*shader));
         return RLVK_INVALID_SLOT;
     }
     if (!rlvkInitComputeLayout())
+    {
+        RL_FREE(shader->pendingCode);
+        memset(shader, 0, sizeof(*shader));
         return RLVK_INVALID_SLOT;
+    }
 
     char *sanitized = rlvkSanitizeGlsl(shader->pendingCode);
     u32 *spv = NULL;
@@ -311,7 +326,10 @@ unsigned int rlLoadShaderProgramCompute(unsigned int csId)
     RL_FREE(shader->pendingCode);
     shader->pendingCode = NULL;
     if (!ok)
+    {
+        memset(shader, 0, sizeof(*shader));
         return RLVK_INVALID_SLOT;
+    }
 
     // Reflect the implicit loose-uniform block (binding 14) + samplers for rlGetLocationUniform
     rlvkSpvReflection ref;
@@ -325,6 +343,7 @@ unsigned int rlLoadShaderProgramCompute(unsigned int csId)
     if (r != VK_SUCCESS)
     {
         TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateShaderModule (compute) => %d", (int)r);
+        memset(shader, 0, sizeof(*shader));
         return RLVK_INVALID_SLOT;
     }
 
@@ -341,9 +360,8 @@ unsigned int rlLoadShaderProgramCompute(unsigned int csId)
     if (r != VK_SUCCESS)
     {
         TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateComputePipelines => %d", (int)r);
-        // VÁ LỖI LOGIC: Dọn dẹp compMod nếu tạo Pipeline thất bại
         vkDestroyShaderModule(RLVK.device, shader->compMod, RLVK_ALLOC);
-        shader->compMod = VK_NULL_HANDLE;
+        memset(shader, 0, sizeof(*shader));
         return RLVK_INVALID_SLOT;
     }
 
@@ -360,6 +378,7 @@ unsigned int rlLoadShaderProgramCompute(unsigned int csId)
     {
         rlvkUniform *u = &shader->uniforms[shader->uniformCount++];
         strncpy(u->name, ref.members[m].name, 63);
+        u->name[63] = '\0';
         u->vsOffset = (int)ref.members[m].offset; // compute block rides the VS staging fields
         u->fsOffset = -1;
         u->samplerBinding = -1;
@@ -368,6 +387,7 @@ unsigned int rlLoadShaderProgramCompute(unsigned int csId)
     {
         rlvkUniform *u = &shader->uniforms[shader->uniformCount++];
         strncpy(u->name, ref.samplers[sm].name, 63);
+        u->name[63] = '\0';
         u->vsOffset = -1;
         u->fsOffset = -1;
         u->samplerBinding = ref.samplers[sm].binding;
@@ -385,27 +405,19 @@ unsigned int rlLoadShaderProgramCompute(unsigned int csId)
 // Delete shader
 void rlUnloadShader(unsigned int id)
 {
-    if (id == 0 || id >= RLVK_MAX_SHADER_SLOTS)
+    if (id == 0 || id >= RLVK_MAX_SHADER_SLOTS || id == RLVK.defaultShaderSlot)
         return;
     rlvkShaderSlot *s = &RLVK.shaderSlots[id];
     if (!s->inUse)
         return;
-    // GL semantics: glDeleteShader on a stage object AFTER linking is harmless - the linked
-    // program lives on. In rlvk the compute STAGE slot becomes the PROGRAM slot
-    // (rlLoadShaderProgramCompute returns csId itself), so honoring the delete here would
-    // destroy the live program AND free the slot for the next shader load to recycle -
-    // rlEnableShader(prog) then activates an unrelated shader and rlComputeShaderDispatch
-    // silently no-ops (frozen particles; found via the GPU-particle hunt). Ignore the
-    // stage-handle delete; rlUnloadShaderProgram() performs the real destroy.
+
     if (s->isCompute && (s->computePipeline != VK_NULL_HANDLE))
     {
         TRACELOG(RL_LOG_DEBUG, "RLVK: rlUnloadShader(%u) on a linked compute program - ignored (GL stage-delete semantics)", id);
         return;
     }
 
-    // Evict this slot's cached pipelines (slot numbers recycle; a stale pipeline would draw
-    // the next shader with this one's modules): pipelines go through the fence-gated dead ring,
-    // modules destroy immediately (spec-legal after pipeline creation)
+    // Evict this slot's cached pipelines and keep pipelineHashes[] synchronized on swap-remove
     for (int i = RLVK.pipelineCount - 1; i >= 0; i--)
     {
         if (RLVK.pipelines[i].key.shaderSlot != id)
@@ -413,10 +425,24 @@ void rlUnloadShader(unsigned int id)
         if (RLVK.pipelines[i].pipeline == RLVK.boundPipeline)
             RLVK.boundPipeline = VK_NULL_HANDLE;
         rlvkDeferDestroy(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, RLVK.pipelines[i].pipeline);
-        RLVK.pipelines[i] = RLVK.pipelines[RLVK.pipelineCount - 1];
+        int last = RLVK.pipelineCount - 1;
+        RLVK.pipelines[i] = RLVK.pipelines[last];
+        RLVK.pipelineHashes[i] = RLVK.pipelineHashes[last];
         RLVK.pipelineCount--;
     }
+    if (RLVK.lastUboShader == s)
+        RLVK.lastUboShader = NULL;
+    if (RLVK.State.currentShaderSlot == id)
+    {
+        RLVK.State.currentShaderSlot = RLVK.defaultShaderSlot;
+        RLVK.State.currentShaderLocs = RLVK.defaultShaderLocs;
+    }
+    if (RLVK.State.activeShaderSlot == id)
+        RLVK.State.activeShaderSlot = RLVK.defaultShaderSlot;
+
     s_pipelineFastValid = false;
+    s_bindingValid = false;
+
     if (s->vertMod)
         vkDestroyShaderModule(RLVK.device, s->vertMod, RLVK_ALLOC);
     if (s->fragMod)
@@ -435,30 +461,29 @@ void rlUnloadShader(unsigned int id)
         RL_FREE(s->fsStage);
     memset(s, 0, sizeof(rlvkShaderSlot));
 }
-// Unload shader program: the REAL destroy for compute programs (rlUnloadShader ignores
-// them per GL stage-delete semantics - see the guard there). Clears the guard, then reuses
-// rlUnloadShader's full teardown (pipeline eviction + modules + tables).
+
+// Unload shader program: the REAL destroy for compute programs
 void rlUnloadShaderProgram(unsigned int id)
 {
     if (id != 0 && id < RLVK_MAX_SHADER_SLOTS && RLVK.shaderSlots[id].inUse)
-        RLVK.shaderSlots[id].isCompute = false;   // drop the stage-delete protection
+        RLVK.shaderSlots[id].isCompute = false; // drop the stage-delete protection
     rlUnloadShader(id);
 }
 
 // Get shader location uniform
-// NOTE: First parameter refers to shader program id
 int rlGetLocationUniform(unsigned int id, const char *name)
 {
-    if (id == 0 || id >= RLVK_MAX_SHADER_SLOTS || !name)
+    if (id == 0 || id >= RLVK_MAX_SHADER_SLOTS || !name || !name[0])
         return -1;
     rlvkShaderSlot *shader = &RLVK.shaderSlots[id];
+    char first = name[0];
     for (int i = 0; i < shader->uniformCount; i++)
-        if (strcmp(shader->uniforms[i].name, name) == 0)
+        if (shader->uniforms[i].name[0] == first && strcmp(shader->uniforms[i].name, name) == 0)
             return i;
     return -1;
 }
+
 // Get shader location attribute
-// NOTE: First parameter refers to shader program id
 int rlGetLocationAttrib(unsigned int id, const char *name)
 {
     if (id == 0 || id >= RLVK_MAX_SHADER_SLOTS || !name)
@@ -484,7 +509,14 @@ void rlSetUniform(int loc, const void *value, int uniformType, int count)
     {
         int b = shader->uniforms[loc].samplerBinding;
         if (b >= 0 && b < RLVK_MAX_TEXTURE_UNITS)
-            shader->bindingUnit[b] = *(const int *)value;
+        {
+            int newUnit = *(const int *)value;
+            if (shader->bindingUnit[b] != newUnit)
+            {
+                shader->bindingUnit[b] = newUnit;
+                s_bindingValid = false;
+            }
+        }
         return;
     }
 
@@ -515,7 +547,14 @@ void rlSetUniform(int loc, const void *value, int uniformType, int count)
     {
         int b = shader->uniforms[loc].samplerBinding;
         if (b >= 0 && b < RLVK_MAX_TEXTURE_UNITS)
-            shader->bindingUnit[b] = *(const int *)value;
+        {
+            int newUnit = *(const int *)value;
+            if (shader->bindingUnit[b] != newUnit)
+            {
+                shader->bindingUnit[b] = newUnit;
+                s_bindingValid = false;
+            }
+        }
         return;
     }
     default:
@@ -523,13 +562,15 @@ void rlSetUniform(int loc, const void *value, int uniformType, int count)
     }
 
     if (count <= 1)
+    {
         rlvkShaderWriteUniform(shader, loc, value, elemBytes);
+    }
     else
     {
-        // TỐI ƯU HIỆU NĂNG: Kéo Bounds Checking ra khỏi vòng lặp và dùng pointer direct access
         rlvkUniform *u = &shader->uniforms[loc];
-        bool writeVs = (u->vsOffset >= 0 && shader->vsStage && (u32)u->vsOffset + (count - 1) * 16 + elemBytes <= shader->vsBlockSize);
-        bool writeFs = (u->fsOffset >= 0 && shader->fsStage && (u32)u->fsOffset + (count - 1) * 16 + elemBytes <= shader->fsBlockSize);
+        u32 totalSpan = (u32)(count - 1) * 16u + elemBytes;
+        bool writeVs = (u->vsOffset >= 0 && shader->vsStage && (u32)u->vsOffset + totalSpan <= shader->vsBlockSize);
+        bool writeFs = (u->fsOffset >= 0 && shader->fsStage && (u32)u->fsOffset + totalSpan <= shader->fsBlockSize);
 
         if (writeVs || writeFs)
         {
@@ -537,28 +578,46 @@ void rlSetUniform(int loc, const void *value, int uniformType, int count)
             unsigned char *fsPtr = writeFs ? (shader->fsStage + u->fsOffset) : NULL;
             const unsigned char *src = (const unsigned char *)value;
 
-            for (int i = 0; i < count; i++)
+            if (elemBytes == 16)
             {
-                if (writeVs)
+                // Fast path: 16-byte elements (vec4/ivec4/uvec4) match std140 array stride (16B) contiguously
+                size_t totalBytes = (size_t)count * 16u;
+                if (writeVs && memcmp(vsPtr, src, totalBytes) != 0)
                 {
-                    memcpy(vsPtr, src, elemBytes);
-                    vsPtr += 16;
+                    memcpy(vsPtr, src, totalBytes);
+                    shader->vsWriteGen++;
                 }
-                if (writeFs)
+                if (writeFs && memcmp(fsPtr, src, totalBytes) != 0)
                 {
-                    memcpy(fsPtr, src, elemBytes);
-                    fsPtr += 16;
+                    memcpy(fsPtr, src, totalBytes);
+                    shader->fsWriteGen++;
                 }
-                src += elemBytes;
             }
-
-            if (writeVs)
-                shader->vsWriteGen++;
-            if (writeFs)
-                shader->fsWriteGen++;
+            else
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    if (writeVs)
+                    {
+                        memcpy(vsPtr, src, elemBytes);
+                        vsPtr += 16;
+                    }
+                    if (writeFs)
+                    {
+                        memcpy(fsPtr, src, elemBytes);
+                        fsPtr += 16;
+                    }
+                    src += elemBytes;
+                }
+                if (writeVs)
+                    shader->vsWriteGen++;
+                if (writeFs)
+                    shader->fsWriteGen++;
+            }
         }
     }
 }
+
 // Set shader value uniform matrix
 void rlSetUniformMatrix(int loc, Matrix mat)
 {
@@ -575,7 +634,8 @@ void rlSetUniformMatrix(int loc, Matrix mat)
         mat.m8, mat.m9, mat.m10, mat.m11, mat.m12, mat.m13, mat.m14, mat.m15};
     rlvkShaderWriteUniform(shader, loc, f, sizeof(f));
 }
-// Set shader value uniform matrix
+
+// Set shader value uniform matrix array
 void rlSetUniformMatrices(int loc, const Matrix *mat, int count)
 {
     rlvkShaderSlot *shader = &RLVK.shaderSlots[RLVK.State.activeShaderSlot];
@@ -583,35 +643,58 @@ void rlSetUniformMatrices(int loc, const Matrix *mat, int count)
         return;
 
     rlvkUniform *u = &shader->uniforms[loc];
-
-    // TỐI ƯU HIỆU NĂNG: Tính toán độ an toàn của vùng nhớ 1 lần duy nhất cho toàn bộ mảng
-    bool writeVs = (u->vsOffset >= 0 && shader->vsStage && (u32)u->vsOffset + count * 64 <= shader->vsBlockSize);
-    bool writeFs = (u->fsOffset >= 0 && shader->fsStage && (u32)u->fsOffset + count * 64 <= shader->fsBlockSize);
+    u32 byteCount = (u32)count * 64u;
+    bool writeVs = (u->vsOffset >= 0 && shader->vsStage && (u32)u->vsOffset + byteCount <= shader->vsBlockSize);
+    bool writeFs = (u->fsOffset >= 0 && shader->fsStage && (u32)u->fsOffset + byteCount <= shader->fsBlockSize);
 
     if (!writeVs && !writeFs)
         return;
 
-    unsigned char *vsPtr = writeVs ? (shader->vsStage + u->vsOffset) : NULL;
-    unsigned char *fsPtr = writeFs ? (shader->fsStage + u->fsOffset) : NULL;
+    f32 *vsOut = writeVs ? (f32 *)(shader->vsStage + u->vsOffset) : NULL;
+    f32 *fsOut = writeFs ? (f32 *)(shader->fsStage + u->fsOffset) : NULL;
 
     for (int i = 0; i < count; i++)
     {
-        // Thực hiện transpose thành định dạng std140 column-major
-        f32 f[16] = {
-            mat[i].m0, mat[i].m1, mat[i].m2, mat[i].m3,
-            mat[i].m4, mat[i].m5, mat[i].m6, mat[i].m7,
-            mat[i].m8, mat[i].m9, mat[i].m10, mat[i].m11,
-            mat[i].m12, mat[i].m13, mat[i].m14, mat[i].m15};
-
-        if (writeVs)
+        const Matrix *m = &mat[i];
+        if (vsOut)
         {
-            memcpy(vsPtr, f, 64);
-            vsPtr += 64;
+            vsOut[0] = m->m0;
+            vsOut[1] = m->m1;
+            vsOut[2] = m->m2;
+            vsOut[3] = m->m3;
+            vsOut[4] = m->m4;
+            vsOut[5] = m->m5;
+            vsOut[6] = m->m6;
+            vsOut[7] = m->m7;
+            vsOut[8] = m->m8;
+            vsOut[9] = m->m9;
+            vsOut[10] = m->m10;
+            vsOut[11] = m->m11;
+            vsOut[12] = m->m12;
+            vsOut[13] = m->m13;
+            vsOut[14] = m->m14;
+            vsOut[15] = m->m15;
+            vsOut += 16;
         }
-        if (writeFs)
+        if (fsOut)
         {
-            memcpy(fsPtr, f, 64);
-            fsPtr += 64;
+            fsOut[0] = m->m0;
+            fsOut[1] = m->m1;
+            fsOut[2] = m->m2;
+            fsOut[3] = m->m3;
+            fsOut[4] = m->m4;
+            fsOut[5] = m->m5;
+            fsOut[6] = m->m6;
+            fsOut[7] = m->m7;
+            fsOut[8] = m->m8;
+            fsOut[9] = m->m9;
+            fsOut[10] = m->m10;
+            fsOut[11] = m->m11;
+            fsOut[12] = m->m12;
+            fsOut[13] = m->m13;
+            fsOut[14] = m->m14;
+            fsOut[15] = m->m15;
+            fsOut += 16;
         }
     }
 
@@ -620,6 +703,7 @@ void rlSetUniformMatrices(int loc, const Matrix *mat, int count)
     if (writeFs)
         shader->fsWriteGen++;
 }
+
 // Set shader value uniform sampler
 void rlSetUniformSampler(int loc, unsigned int textureId)
 {
@@ -630,29 +714,37 @@ void rlSetUniformSampler(int loc, unsigned int textureId)
     if (b < 0 || b >= RLVK_MAX_TEXTURE_UNITS)
         return;
 
-    // Some callers pass a texture UNIT index (rlSetUniformSampler(loc, 1) after binding at unit 1
-    // - GL resolves this by binding-model coincidence): a small value naming a unit that has a
-    // texture bound aliases that unit LIVE. Anything else is a texture id, bound directly.
     if (textureId >= 1 && textureId <= 4 && RLVK.State.activeTextureSlots[textureId] != 0)
     {
-        shader->bindingUnit[b] = (int)textureId;
-        shader->bindingTexture[b] = 0;
+        if (shader->bindingUnit[b] != (int)textureId || shader->bindingTexture[b] != 0)
+        {
+            shader->bindingUnit[b] = (int)textureId;
+            shader->bindingTexture[b] = 0;
+            s_bindingValid = false;
+        }
     }
     else
     {
-        shader->bindingTexture[b] = textureId;
+        if (shader->bindingTexture[b] != textureId)
+        {
+            shader->bindingTexture[b] = textureId;
+            s_bindingValid = false;
+        }
     }
 }
 
 // Set shader currently active (id and locations)
 void rlSetShader(unsigned int id, int *locs)
 {
-    u32 slot = (id == 0) ? RLVK.defaultShaderSlot : id;
+    u32 slot = (id == 0 || id >= RLVK_MAX_SHADER_SLOTS || !RLVK.shaderSlots[id].inUse) ? RLVK.defaultShaderSlot : id;
     if (RLVK.State.currentShaderSlot != slot)
+    {
         rlDrawRenderBatch(RLVK.currentBatch); // flush old-shader geometry (mirrors rlgl)
-    if (locs && id != 0 && id < RLVK_MAX_SHADER_SLOTS)
-        memcpy(RLVK.shaderSlots[id].locs, locs, sizeof(int) * RL_MAX_SHADER_LOCATIONS);
+        RLVK.State.stateGeneration++;
+    }
+    if (locs && slot != RLVK.defaultShaderSlot)
+        memcpy(RLVK.shaderSlots[slot].locs, locs, sizeof(int) * RL_MAX_SHADER_LOCATIONS);
     RLVK.State.currentShaderSlot = slot;
     RLVK.State.activeShaderSlot = slot;
-    RLVK.State.currentShaderLocs = (id != 0 && id < RLVK_MAX_SHADER_SLOTS) ? RLVK.shaderSlots[id].locs : RLVK.defaultShaderLocs;
+    RLVK.State.currentShaderLocs = (slot != RLVK.defaultShaderSlot) ? RLVK.shaderSlots[slot].locs : RLVK.defaultShaderLocs;
 }
