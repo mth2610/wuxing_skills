@@ -42,6 +42,17 @@ static void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength, float 
     }
 }
 
+static unsigned int Nature_NextRandom(unsigned int *state)
+{
+    *state = *state * 1664525u + 1013904223u;
+    return *state;
+}
+
+static float Nature_Random01(unsigned int *state)
+{
+    return (float)(Nature_NextRandom(state) & 0x00ffffffu) / 16777215.0f;
+}
+
 #include "maps/toolkit/map_props_texture.inl"
 #include "maps/toolkit/map_props_boundary.inl"
 #include "maps/toolkit/map_props_boundary_contour.inl"
@@ -52,3 +63,4 @@ static void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength, float 
 #include "maps/toolkit/map_props_sky.inl"
 #include "maps/toolkit/map_props_mesh_index.inl"
 #include "maps/toolkit/map_props_nature.inl"
+#include "maps/toolkit/map_props_flora.inl"

@@ -3,10 +3,10 @@
 // paths are given. #include'd once from map_props.c — not a standalone
 // translation unit.
 
-static Mesh Nature_BuildProceduralRockMesh(bool isMountainCrag)
+static Mesh Nature_BuildProceduralRockMesh(int rockType)
 {
-    int rings = isMountainCrag ? 14 : 10;
-    int slices = isMountainCrag ? 18 : 12;
+    int rings = (rockType == 1) ? 14 : 10;
+    int slices = (rockType == 1) ? 18 : 12;
     Mesh mesh = GenMeshSphere(1.0f, rings, slices);
 
     for (int i = 0; i < mesh.vertexCount; i++) {
@@ -17,7 +17,7 @@ static Mesh Nature_BuildProceduralRockMesh(bool isMountainCrag)
         float horizR = sqrtf(x * x + z * z);
         float angle = atan2f(z, x);
 
-        if (isMountainCrag) {
+        if (rockType == 1) {
             // Jagged mountain cliff / crag:
             // 1. Taper upward with prominent sharp ridge lines (3-ridge karst/granite peak)
             float ridge = 1.0f + 0.32f * cosf(3.0f * angle + 0.5f) + 0.16f * cosf(5.0f * angle - 1.1f);
@@ -32,6 +32,15 @@ static Mesh Nature_BuildProceduralRockMesh(bool isMountainCrag)
             float newR = horizR * ridge * taper * baseWiden;
             mesh.vertices[i * 3 + 0] = cosf(angle) * newR;
             mesh.vertices[i * 3 + 1] = (y + 0.15f) * 2.2f + terrace;
+            mesh.vertices[i * 3 + 2] = sinf(angle) * newR;
+        } else if (rockType == 2) {
+            // River stone / stepping stone:
+            // Water-smoothed, flattened ellipsoid with gentle riverbed erosion
+            float facet = 1.0f + 0.08f * cosf(2.0f * angle + y * 2.0f) + 0.04f * sinf(4.0f * angle);
+            float flatY = (y < -0.1f) ? (-0.1f + (y + 0.1f) * 0.4f) : y * 0.45f;
+            float newR = horizR * facet * 1.15f;
+            mesh.vertices[i * 3 + 0] = cosf(angle) * newR;
+            mesh.vertices[i * 3 + 1] = flatY;
             mesh.vertices[i * 3 + 2] = sinf(angle) * newR;
         } else {
             // Natural weathered boulder:
@@ -89,7 +98,7 @@ static Mesh Nature_BuildProceduralRockMesh(bool isMountainCrag)
 MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, const char *roughnessPath)
 {
     MapRockSet rocks = {0};
-    Mesh mesh = Nature_BuildProceduralRockMesh(false);
+    Mesh mesh = Nature_BuildProceduralRockMesh(0);
 
     if (normalPath && roughnessPath)
     {
@@ -116,7 +125,34 @@ MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, 
 MapRockSet MapProp_CreateMountainCrags(const char *diffusePath, const char *normalPath, const char *roughnessPath)
 {
     MapRockSet rocks = {0};
-    Mesh mesh = Nature_BuildProceduralRockMesh(true);
+    Mesh mesh = Nature_BuildProceduralRockMesh(1);
+
+    if (normalPath && roughnessPath)
+    {
+        GenMeshTangents(&mesh);
+        rocks.model = LoadModelFromMesh(mesh);
+        Texture2D diffuse = MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT);
+        Texture2D normal = MapLoadMippedTexture(normalPath, TEXTURE_WRAP_REPEAT);
+        Texture2D roughness = MapLoadMippedTexture(roughnessPath, TEXTURE_WRAP_REPEAT);
+
+        rocks.model.materials[0] = PropLit_MakeMaterial(diffuse, normal, roughness);
+    }
+    else
+    {
+        rocks.model = LoadModelFromMesh(mesh);
+        Texture2D diffuse = MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT);
+
+        rocks.model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = diffuse;
+    }
+
+    rocks.ready = true;
+    return rocks;
+}
+
+MapRockSet MapProp_CreateRiverStones(const char *diffusePath, const char *normalPath, const char *roughnessPath)
+{
+    MapRockSet rocks = {0};
+    Mesh mesh = Nature_BuildProceduralRockMesh(2);
 
     if (normalPath && roughnessPath)
     {
@@ -264,3 +300,135 @@ int MapProp_GenerateMountainRing(MapRockPlacement *outPlacements, int maxCount,
 
     return maxCount;
 }
+
+// --- Unified Rock & Crag System -----------------------------------------
+
+MapRockSystem MapProp_CreateRockSystem(const char *diffusePath, const char *normalPath, const char *roughnessPath, int capacity)
+{
+    MapRockSystem sys = {0};
+    sys.boulders = MapProp_CreateRocks(diffusePath, normalPath, roughnessPath);
+    sys.crags = MapProp_CreateMountainCrags(diffusePath, normalPath, roughnessPath);
+    sys.riverStones = MapProp_CreateRiverStones(diffusePath, normalPath, roughnessPath);
+    if (capacity > 0) {
+        sys.items = (MapRockItem *)RL_MALLOC(capacity * sizeof(MapRockItem));
+        sys.capacity = capacity;
+    }
+    sys.count = 0;
+    sys.ready = (sys.boulders.ready || sys.crags.ready || sys.riverStones.ready);
+    return sys;
+}
+
+bool MapProp_AddRockItem(MapRockSystem *sys, Vector3 pos, float rScale, float hScale, float rotDeg, MapRockArchetype archetype)
+{
+    if (!sys || !sys->ready || sys->count >= sys->capacity) return false;
+    sys->items[sys->count++] = (MapRockItem){
+        .position = pos,
+        .radiusScale = rScale,
+        .heightScale = hScale,
+        .rotationDeg = rotDeg,
+        .archetype = archetype
+    };
+    return true;
+}
+
+int MapProp_AddRockCluster(MapRockSystem *sys, Vector3 center, MapRockArchetype archetype,
+                           int count, float clusterRadius, float baseScale, unsigned int seed)
+{
+    if (!sys || count <= 0) return 0;
+    unsigned int rng = seed ? seed : 0x7a3b19u;
+    int added = 0;
+
+    // Primary anchor stone
+    float anchorRot = Nature_Random01(&rng) * 360.0f;
+    float anchorH = (archetype == MAP_ROCK_CRAG) ? (baseScale * (1.6f + 0.6f * Nature_Random01(&rng)))
+                                                 : (baseScale * (0.65f + 0.25f * Nature_Random01(&rng)));
+    if (MapProp_AddRockItem(sys, center, baseScale, anchorH, anchorRot, archetype)) added++;
+
+    // Companion stones orbiting anchor
+    for (int i = 1; i < count; i++) {
+        float angle = Nature_Random01(&rng) * 2.0f * PI;
+        float dist = clusterRadius * (0.35f + 0.65f * Nature_Random01(&rng));
+        Vector3 compPos = {center.x + cosf(angle) * dist, center.y, center.z + sinf(angle) * dist};
+        float companionScale = baseScale * (0.35f + 0.45f * Nature_Random01(&rng));
+        float compRot = anchorRot + (Nature_Random01(&rng) - 0.5f) * 60.0f;
+        float compH = (archetype == MAP_ROCK_CRAG) ? (companionScale * (1.4f + 0.5f * Nature_Random01(&rng)))
+                                                   : (companionScale * (0.55f + 0.30f * Nature_Random01(&rng)));
+        if (MapProp_AddRockItem(sys, compPos, companionScale, compH, compRot, archetype)) added++;
+    }
+    return added;
+}
+
+void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
+{
+    if (!sys || !sys->ready || sys->count <= 0) return;
+
+    PropLit_UpdateLighting();
+    Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
+
+    for (int i = 0; i < sys->count; i++) {
+        const MapRockItem *p = &sys->items[i];
+        Model model;
+        if (p->archetype == MAP_ROCK_CRAG) {
+            model = sys->crags.model;
+        } else if (p->archetype == MAP_ROCK_RIVER_STONE) {
+            model = sys->riverStones.model;
+        } else {
+            model = sys->boulders.model;
+        }
+
+        Vector3 pos = {p->position.x, p->position.y - 0.3f * p->heightScale, p->position.z};
+        Vector3 scale = {p->radiusScale, p->heightScale, p->radiusScale};
+
+        if (drawShadows && p->archetype != MAP_ROCK_CRAG) {
+            float waterSurfaceY = 0.0f, waterDepth = 0.0f;
+            bool inWater = MapManager_GetWaterInfoAt(p->position.x, p->position.z, &waterSurfaceY, &waterDepth);
+            if (!inWater) {
+                Environment_DrawSmartShadow(p->position, ENV_SHAPE_SPHERE,
+                                            p->radiusScale * 2.0f, p->heightScale * 2.0f);
+            }
+        }
+
+        DrawModelEx(model, pos, rotAxis, p->rotationDeg, scale, WHITE);
+    }
+}
+
+void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader)
+{
+    if (!sys || !sys->ready || sys->count <= 0) return;
+
+    Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
+    for (int i = 0; i < sys->count; i++) {
+        const MapRockItem *p = &sys->items[i];
+        Model model;
+        if (p->archetype == MAP_ROCK_CRAG) model = sys->crags.model;
+        else if (p->archetype == MAP_ROCK_RIVER_STONE) model = sys->riverStones.model;
+        else model = sys->boulders.model;
+
+        if (model.materialCount < 1) continue;
+        Shader prev = model.materials[0].shader;
+        model.materials[0].shader = depthShader;
+
+        Vector3 pos = {p->position.x, p->position.y - 0.3f * p->heightScale, p->position.z};
+        Vector3 scale = {p->radiusScale, p->heightScale, p->radiusScale};
+        DrawModelEx(model, pos, rotAxis, p->rotationDeg, scale, WHITE);
+
+        rlDrawRenderBatchActive();
+        model.materials[0].shader = prev;
+    }
+}
+
+void MapProp_UnloadRockSystem(MapRockSystem *sys)
+{
+    if (!sys || !sys->ready) return;
+    MapProp_UnloadRocks(&sys->boulders);
+    MapProp_UnloadRocks(&sys->crags);
+    MapProp_UnloadRocks(&sys->riverStones);
+    if (sys->items) {
+        RL_FREE(sys->items);
+        sys->items = NULL;
+    }
+    sys->count = 0;
+    sys->capacity = 0;
+    sys->ready = false;
+}
+

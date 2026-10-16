@@ -217,6 +217,8 @@ typedef struct
 MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, const char *roughnessPath);
 // Procedural stratified mountain crag / cliff mesh for border rings and horizons
 MapRockSet MapProp_CreateMountainCrags(const char *diffusePath, const char *normalPath, const char *roughnessPath);
+// Procedural water-smoothed riverbed / stepping stone mesh
+MapRockSet MapProp_CreateRiverStones(const char *diffusePath, const char *normalPath, const char *roughnessPath);
 // drawShadow: pass false for large border/mountain-ring rocks — dozens of
 // giant fake-shadow decals stacked/overlapping is real alpha overdraw
 // (measured FPS cost, not theoretical) for a case where the shadow barely
@@ -228,6 +230,41 @@ void MapProp_DrawRockShadowCasters(MapRockSet *rocks,
                                    const MapRockPlacement *placements, int count,
                                    Shader depthShader);
 void MapProp_UnloadRocks(MapRockSet *rocks);
+
+// --- Unified Rock & Crag System -----------------------------------------
+
+typedef enum {
+    MAP_ROCK_BOULDER = 0,     // Weathered rounded boulder
+    MAP_ROCK_CRAG,            // Jagged karst/granite mountain crag/spire
+    MAP_ROCK_RIVER_STONE      // Smooth, flattened riverbed/shoreline stone
+} MapRockArchetype;
+
+typedef struct {
+    Vector3 position;
+    float radiusScale;
+    float heightScale;
+    float rotationDeg;
+    MapRockArchetype archetype;
+} MapRockItem;
+
+typedef struct {
+    MapRockSet boulders;
+    MapRockSet crags;
+    MapRockSet riverStones;
+    MapRockItem *items;
+    int count;
+    int capacity;
+    bool ready;
+} MapRockSystem;
+
+MapRockSystem MapProp_CreateRockSystem(const char *diffusePath, const char *normalPath, const char *roughnessPath, int capacity);
+bool MapProp_AddRockItem(MapRockSystem *sys, Vector3 pos, float rScale, float hScale, float rotDeg, MapRockArchetype archetype);
+int MapProp_AddRockCluster(MapRockSystem *sys, Vector3 center, MapRockArchetype archetype,
+                           int count, float clusterRadius, float baseScale, unsigned int seed);
+void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows);
+void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader);
+void MapProp_UnloadRockSystem(MapRockSystem *sys);
+
 
 // Fills outPlacements[] (capacity maxCount) with a ring of giant rock
 // placements around a mapWidth x mapDepth rectangle's border — the
@@ -481,6 +518,62 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
 void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOffset,
                                          float time, Vector2 windDirection, float windStrength);
 void MapProp_UnloadFlowerField(MapFlowerField *field);
+
+// --- Unified Flora System (Meadows, Reeds, Wildflower Colonies) ---------
+
+typedef struct {
+    Vector3 center;
+    float radius;
+    int flowerCount;
+    int primarySpecies;       // 0..7 (daisy, buttercup, poppy, cornflower, rose, cosmos, lavender, primrose)
+    Color primaryColor;
+    Color accentColor;
+} MapFloraFlowerCluster;
+
+typedef struct {
+    Color grassRootColor;
+    Color grassTipColor;
+    int bladesPerClump;       // Default: 6
+    int bladeSegments;        // Default: 4 (smooth Bézier, no stick grass!)
+    float bladeWidthScale;    // Default: 0.16
+    float lodDistance;        // Default: 32.0m
+    float drawDistance;       // Default: 60.0m
+
+    Color reedRootColor;
+    Color reedTipColor;
+    bool hasReedPlumes;
+
+    const char *flowerAtlasPath; // NULL defaults to "maps/toolkit/textures/wildflower_bloom_atlas_v2.png"
+} MapFloraStyle;
+
+typedef struct {
+    MapMeadowSurface valleyMeadow;
+    MapMeadowSurface reedMeadow;
+    int valleyGrassCount;
+    int reedCount;
+
+    MapFlowerField *flowerFields;
+    int flowerClusterCount;
+
+    float time;
+    Vector2 windDirection;
+    float windStrength;
+    bool ready;
+} MapFloraSystem;
+
+Color MapProp_GetFlowerSpeciesColor(int variant, bool accent);
+
+MapFloraSystem MapProp_CreateFloraSystem(
+    const MapMeadowPlacement *grassPlacements, int grassCount,
+    const MapMeadowPlacement *reedPlacements, int reedCount,
+    const MapFlowerPlacement *flowerPlacements, const MapFloraFlowerCluster *clusters, int clusterCount,
+    MapFloraStyle style);
+
+void MapProp_UpdateFloraSystem(MapFloraSystem *flora, Vector3 cameraTarget, float dt);
+void MapProp_DrawFloraSystem(MapFloraSystem *flora);
+void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora);
+void MapProp_UnloadFloraSystem(MapFloraSystem *flora);
+
 
 typedef enum {
     WATER_ECO_ALPINE_STREAM = 0,   // Suối núi / đá vôi trong vắt: ngọc bích sáng, độ trong cao

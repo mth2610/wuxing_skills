@@ -1661,17 +1661,6 @@ static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDir
                               s_natureInteractionTexture);
 }
 
-static unsigned int Nature_NextRandom(unsigned int *state)
-{
-    *state = *state * 1664525u + 1013904223u;
-    return *state;
-}
-
-static float Nature_Random01(unsigned int *state)
-{
-    return (float)(Nature_NextRandom(state) & 0x00ffffffu) / 16777215.0f;
-}
-
 #include "maps/toolkit/meadow_palette.h"
 
 int MapProp_GenerateMeadowPlacements(MapMeadowPlacement *outPlacements, int maxCount,

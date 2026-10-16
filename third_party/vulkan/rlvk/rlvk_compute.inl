@@ -24,10 +24,37 @@ static VkCommandBuffer rlvkComputeBatchAcquire(void)
 {
     if (RLVK.computeBatch.open)
         return RLVK.computeBatch.cmd;
+
+    u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
+    if (!RLVK.frameActive)
+    {
+        // Out-of-frame dispatches run before rlvkBeginFrame waits on this slot's fence or
+        // resets its descriptor pool and bump arena. Ensure the slot is idle and fresh now.
+        if (RLVK.frameFences[frameIndex] != VK_NULL_HANDLE)
+            vkWaitForFences(RLVK.device, 1, &RLVK.frameFences[frameIndex], VK_TRUE, UINT64_MAX);
+        if (RLVK.computeDescPools[frameIndex] != VK_NULL_HANDLE)
+            vkResetDescriptorPool(RLVK.device, RLVK.computeDescPools[frameIndex], 0);
+        RLVK.arenaOffset[frameIndex] = 0;
+    }
+
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandBuffer cmd = rlvkOneShotBegin(&pool);
     if (cmd == VK_NULL_HANDLE)
         return VK_NULL_HANDLE;
+
+    // Make host writes to the arena (compute uniform snapshots) visible to the compute stage
+    vk.CmdPipelineBarrier2(cmd, &(VkDependencyInfo){
+                                    VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                    .memoryBarrierCount = 1,
+                                    .pMemoryBarriers = &(VkMemoryBarrier2){
+                                        VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                        .srcStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
+                                        .srcAccessMask = VK_ACCESS_2_HOST_WRITE_BIT,
+                                        .dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_COPY_BIT,
+                                        .dstAccessMask = VK_ACCESS_2_UNIFORM_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT,
+                                    },
+                                });
+
     RLVK.computeBatch.pool = pool;
     RLVK.computeBatch.cmd = cmd;
     RLVK.computeBatch.open = true;
@@ -51,13 +78,17 @@ static void rlvkComputeBatchFlush(void)
 
 void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
 {
+    if (!isGpuReady || gx == 0 || gy == 0 || gz == 0 ||
+        RLVK.State.activeShaderSlot == 0 || RLVK.State.activeShaderSlot >= RLVK_MAX_SHADER_SLOTS)
+        return;
+
     rlvkShaderSlot *shader = &RLVK.shaderSlots[RLVK.State.activeShaderSlot];
-    if (!isGpuReady || !shader->isCompute || (shader->computePipeline == VK_NULL_HANDLE))
+    if (!shader->isCompute || (shader->computePipeline == VK_NULL_HANDLE))
     {
         // A silent no-op here looks like "physics frozen" upstream and is brutal to trace
         // (see RLVK_HANDOFF §7.7 epilogue) - name the reason, once per offending slot
         static u32 s_warnedSlot = 0;
-        if (isGpuReady && (s_warnedSlot != RLVK.State.activeShaderSlot))
+        if (s_warnedSlot != RLVK.State.activeShaderSlot)
         {
             s_warnedSlot = RLVK.State.activeShaderSlot;
             TRACELOG(RL_LOG_WARNING, "RLVK: rlComputeShaderDispatch on slot %u skipped (%s) - dispatch is a no-op",
@@ -69,7 +100,30 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
 
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
     bool inFrame = RLVK.frameActive;
-    VkCommandPool oneShotPool = VK_NULL_HANDLE;
+    VkDeviceSize uboNeed = (shader->vsBlockSize && shader->vsStage)
+                               ? (((VkDeviceSize)shader->vsBlockSize + 255) & ~(VkDeviceSize)255) + 256
+                               : 0;
+
+    if (inFrame && uboNeed > 0)
+    {
+        rlvkBatchBackingBuffer *arena = &RLVK.arena[frameIndex];
+        if (RLVK.arenaOffset[frameIndex] + uboNeed > arena->sizeBytes)
+        {
+            RLVK.arenaWanted[frameIndex] += uboNeed;
+            if (uboNeed <= arena->sizeBytes)
+                rlvkFlushFrame();
+        }
+    }
+    else if (!inFrame && RLVK.computeBatch.open && uboNeed > 0)
+    {
+        rlvkBatchBackingBuffer *arena = &RLVK.arena[frameIndex];
+        if (RLVK.arenaOffset[frameIndex] + uboNeed > arena->sizeBytes)
+        {
+            RLVK.arenaWanted[frameIndex] += uboNeed;
+            rlvkComputeBatchFlush();
+        }
+    }
+
     VkCommandBuffer cmdBuffer;
     u32 openFb = 0;
     if (inFrame)
@@ -90,25 +144,41 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
             return;
     }
 
-    // Snapshot descriptor set: bound SSBOs, storage images, sampler uniforms, uniform block
+    // Snapshot descriptor set: bound SSBOs, sampler uniforms, uniform block
     VkDescriptorSet ds = VK_NULL_HANDLE;
-    vkAllocateDescriptorSets(RLVK.device,
-                             &(VkDescriptorSetAllocateInfo){
-                                 VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-                                 .descriptorPool = RLVK.computeDescPools[frameIndex],
-                                 .descriptorSetCount = 1,
-                                 .pSetLayouts = &RLVK.computeSetLayout,
-                             },
-                             &ds);
+    VkResult allocRes = vkAllocateDescriptorSets(RLVK.device,
+                                                 &(VkDescriptorSetAllocateInfo){
+                                                     VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                                     .descriptorPool = RLVK.computeDescPools[frameIndex],
+                                                     .descriptorSetCount = 1,
+                                                     .pSetLayouts = &RLVK.computeSetLayout,
+                                                 },
+                                                 &ds);
+    if (allocRes != VK_SUCCESS && !inFrame)
+    {
+        // Out-of-frame batch exhausted the per-frame compute pool: flush batch, reset pool, retry
+        rlvkComputeBatchFlush();
+        cmdBuffer = rlvkComputeBatchAcquire();
+        if (cmdBuffer == VK_NULL_HANDLE)
+            return;
+        allocRes = vkAllocateDescriptorSets(RLVK.device,
+                                            &(VkDescriptorSetAllocateInfo){
+                                                VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+                                                .descriptorPool = RLVK.computeDescPools[frameIndex],
+                                                .descriptorSetCount = 1,
+                                                .pSetLayouts = &RLVK.computeSetLayout,
+                                            },
+                                            &ds);
+    }
+
     if (ds != VK_NULL_HANDLE)
     {
-        VkWriteDescriptorSet writes[18]; // 8 SSBO + 2 sampler defaults + 4 images + 2 sampler uniforms + 1 UBO
+        VkWriteDescriptorSet writes[11]; // 8 SSBO (0..7) + 2 Samplers (12..13) + 1 UBO (14)
         VkDescriptorBufferInfo bufInfos[9];
-        VkDescriptorImageInfo imgInfos[8];
-        u32 nWrites = 0, nBuf = 0, nImg = 0;
-        // Every SSBO binding gets a valid buffer (unbound slots alias the arena): unwritten
-        // "hole" bindings in a set are technically legal for unused bindings, but MoltenVK's
-        // Metal argument mapping is happier - and it costs nothing
+        VkDescriptorImageInfo imgInfos[2];
+        u32 nWrites = 0, nBuf = 0;
+
+        // Every SSBO binding gets a valid buffer (unbound slots alias the arena)
         for (u32 i = 0; i < 8; i++)
         {
             u32 slot = RLVK.computeSSBO[i];
@@ -117,37 +187,59 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
                                  ? (VkDescriptorBufferInfo){RLVK.bufferSlots[slot].buffer, 0, RLVK.bufferSlots[slot].sizeBytes}
                                  : (VkDescriptorBufferInfo){RLVK.arena[frameIndex].buffer, 0, 16};
             writes[nWrites++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
-                                                       .dstBinding = i, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &bufInfos[nBuf]};
+                                                       .dstBinding = i, .descriptorCount = 1,
+                                                       .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                                                       .pBufferInfo = &bufInfos[nBuf]};
             nBuf++;
         }
-        // Sampler bindings always get the default texture (overridden below when a sampler
-        // uniform names a real one)
-        for (u32 b = 12; b <= 13; b++)
+
+        // Resolve bindings 12 and 13 once (avoiding duplicate writes to the same binding in one update)
+        rlvkTextureSlot *dt = &RLVK.textureSlots[RLVK.defaultTextureSlot];
+        for (u32 s = 0; s < 2; s++)
         {
-            rlvkTextureSlot *dt = &RLVK.textureSlots[RLVK.defaultTextureSlot];
-            imgInfos[nImg] = (VkDescriptorImageInfo){.sampler = dt->sampler, .imageView = dt->view, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-            writes[nWrites++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
-                                                       .dstBinding = b, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &imgInfos[nImg]};
-            nImg++;
+            imgInfos[s] = (VkDescriptorImageInfo){
+                .sampler = dt->sampler,
+                .imageView = dt->view,
+                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         }
-        // (No storage-image writes: the fixed layout deliberately has no image bindings -
-        // see rlvkInitComputeLayout's MoltenVK note. rlBindImageTexture records + warns.)
-        // Sampler uniforms (bindings 12..13): rlSetUniformSampler's explicit texture, else default
         for (int u = 0; u < shader->uniformCount; u++)
         {
             int b = shader->uniforms[u].samplerBinding;
             if (b < 12 || b > 13)
                 continue;
             u32 texSlot = shader->bindingTexture[b];
+            if (texSlot == 0)
+            {
+                int unit = shader->bindingUnit[b];
+                if (unit >= 0 && unit < RLVK_MAX_TEXTURE_UNITS)
+                    texSlot = RLVK.State.activeTextureSlots[unit];
+            }
             rlvkTextureSlot *t = &RLVK.textureSlots[(texSlot && texSlot < RLVK_MAX_TEXTURE_SLOTS) ? texSlot : RLVK.defaultTextureSlot];
-            if (t->currentLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL || !t->view)
-                t = &RLVK.textureSlots[RLVK.defaultTextureSlot];
-            imgInfos[nImg] = (VkDescriptorImageInfo){.sampler = t->sampler, .imageView = t->view, .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-            writes[nWrites++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
-                                                       .dstBinding = (u32)b, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &imgInfos[nImg]};
-            nImg++;
+            VkImageView view = t->sampleImage ? t->sampleView : t->view;
+            VkImageLayout layout = t->sampleImage ? t->sampleLayout : t->currentLayout;
+            VkSampler sampler = t->sampler;
+            if (t->sampleImage)
+                t->sampleWantedFrame = RLVK.frameCounter + 1;
+            if (layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL || !view)
+            {
+                view = dt->view;
+                sampler = dt->sampler;
+            }
+            imgInfos[b - 12] = (VkDescriptorImageInfo){
+                .sampler = sampler,
+                .imageView = view,
+                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         }
+        for (u32 s = 0; s < 2; s++)
+        {
+            writes[nWrites++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
+                                                       .dstBinding = 12 + s, .descriptorCount = 1,
+                                                       .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                                                       .pImageInfo = &imgInfos[s]};
+        }
+
         // Loose-uniform block (binding 14): snapshot the staging block into the frame arena
+        bool uboWritten = false;
         if (shader->vsBlockSize && shader->vsStage)
         {
             rlvkBatchBackingBuffer *arena = &RLVK.arena[frameIndex];
@@ -159,11 +251,23 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
                 RLVK.arenaWanted[frameIndex] += shader->vsBlockSize + 256;
                 bufInfos[nBuf] = (VkDescriptorBufferInfo){arena->buffer, off, shader->vsBlockSize};
                 writes[nWrites++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
-                                                           .dstBinding = 14, .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .pBufferInfo = &bufInfos[nBuf]};
+                                                           .dstBinding = 14, .descriptorCount = 1,
+                                                           .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                                           .pBufferInfo = &bufInfos[nBuf]};
                 nBuf++;
+                uboWritten = true;
             }
             else
                 TRACELOG(RL_LOG_WARNING, "RLVK: arena full, compute uniforms skipped this dispatch");
+        }
+        if (!uboWritten)
+        {
+            bufInfos[nBuf] = (VkDescriptorBufferInfo){RLVK.arena[frameIndex].buffer, 0, 16};
+            writes[nWrites++] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = ds,
+                                                       .dstBinding = 14, .descriptorCount = 1,
+                                                       .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                                                       .pBufferInfo = &bufInfos[nBuf]};
+            nBuf++;
         }
         if (nWrites)
             vkUpdateDescriptorSets(RLVK.device, nWrites, writes, 0, NULL);
@@ -174,16 +278,16 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
             s_profileDispatches++;
         vkCmdDispatch(cmdBuffer, gx, gy, gz);
 
-        // glMemoryBarrier semantics: compute writes visible to every later consumer
+        // glMemoryBarrier semantics: compute writes visible to subsequent compute dispatches and graphics stages
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
                                               VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                                               .memoryBarrierCount = 1,
                                               .pMemoryBarriers = &(VkMemoryBarrier2){
                                                   VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                                                  .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                                                  .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                                                  .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                                  .srcAccessMask = VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT,
                                                   .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT,
                                               },
                                           });
     }
@@ -198,7 +302,6 @@ void rlComputeShaderDispatch(unsigned int gx, unsigned int gy, unsigned int gz)
     }
     /* Else: left OPEN in the batch. It is submitted by rlvkComputeBatchFlush,
      * which every path that must observe the result already calls. */
-    (void)oneShotPool;
 }
 
 // Load shader storage buffer object (SSBO): DEVICE_LOCAL storage buffer, optional initial data
@@ -210,6 +313,15 @@ unsigned int rlLoadShaderBuffer(unsigned int size, const void *data, int usageHi
     if (slot == RLVK_INVALID_SLOT)
         return RLVK_INVALID_SLOT;
     rlvkBufferSlot *b = &RLVK.bufferSlots[slot];
+    if (b->buffer != VK_NULL_HANDLE)
+    {
+        if (b->mapped && b->memory)
+            vkUnmapMemory(RLVK.device, b->memory);
+        rlvkDeferDestroy(b->buffer, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, b->memory, VK_NULL_HANDLE);
+        b->buffer = VK_NULL_HANDLE;
+        b->memory = VK_NULL_HANDLE;
+        b->mapped = NULL;
+    }
     b->sizeBytes = size;
     b->usageHint = usageHint;
     b->isIndex = false;
@@ -234,19 +346,28 @@ void rlUnloadShaderBuffer(unsigned int id)
     if (id == 0 || id >= RLVK_MAX_BUFFER_SLOTS)
         return;
     rlvkBufferSlot *b = &RLVK.bufferSlots[id];
+    if (b->mapped && b->memory)
+        vkUnmapMemory(RLVK.device, b->memory);
     rlvkDeferDestroy(b->buffer, VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, b->memory, VK_NULL_HANDLE);
     b->buffer = VK_NULL_HANDLE;
     b->memory = VK_NULL_HANDLE;
     b->mapped = NULL;
+    b->sizeBytes = 0;
     b->inUse = false;
-    b->freedFrame = (u32)RLVK.frameCounter;
+    b->freedFrame = RLVK.frameCounter;
     for (u32 i = 0; i < 8; i++)
+    {
         if (RLVK.computeSSBO[i] == id)
         {
             RLVK.computeSSBO[i] = 0;
             if (i < RLVK_SET0_SSBO_COUNT)
+            {
+                RLVK.pushedSsbo[i] = 0xFFFFFFFFu;
                 RLVK.set0Dirty = true;
+            }
         }
+    }
+    s_bindingValid = false;
 }
 
 // Update SSBO buffer data (in-stream mid-frame, one-shot staging at load time)
@@ -255,7 +376,7 @@ void rlUpdateShaderBuffer(unsigned int id, const void *data, unsigned int dataSi
     if (id == 0 || id >= RLVK_MAX_BUFFER_SLOTS || !data || !dataSize)
         return;
     rlvkBufferSlot *b = &RLVK.bufferSlots[id];
-    if (b->buffer == VK_NULL_HANDLE)
+    if (b->buffer == VK_NULL_HANDLE || offset + dataSize > b->sizeBytes)
         return;
     rlvkUploadBuffer(b->buffer, offset, data, dataSize);
 }
@@ -268,9 +389,13 @@ void rlBindShaderBuffer(unsigned int id, unsigned int index)
         TRACELOG(RL_LOG_WARNING, "RLVK: SSBO binding %u out of range (max 8)", index);
         return;
     }
-    RLVK.computeSSBO[index] = (id < RLVK_MAX_BUFFER_SLOTS) ? id : 0;
-    if (index < RLVK_SET0_SSBO_COUNT)
-        RLVK.set0Dirty = true; // graphics draws mirror bindings 0..3 into set 0
+    u32 newSlot = (id < RLVK_MAX_BUFFER_SLOTS) ? id : 0;
+    if (RLVK.computeSSBO[index] != newSlot)
+    {
+        RLVK.computeSSBO[index] = newSlot;
+        if (index < RLVK_SET0_SSBO_COUNT)
+            RLVK.set0Dirty = true; // graphics draws mirror bindings 0..3 into set 0
+    }
 }
 
 // Read SSBO buffer data (GPU->CPU): synchronous, GL glGetBufferSubData semantics
@@ -279,7 +404,7 @@ void rlReadShaderBuffer(unsigned int id, void *dest, unsigned int count, unsigne
     if (id == 0 || id >= RLVK_MAX_BUFFER_SLOTS || !dest || !count)
         return;
     rlvkBufferSlot *b = &RLVK.bufferSlots[id];
-    if (b->buffer == VK_NULL_HANDLE)
+    if (b->buffer == VK_NULL_HANDLE || offset + count > b->sizeBytes)
         return;
 
     // Execute everything recorded so far, then drain, so the read observes GL command order
@@ -296,6 +421,11 @@ void rlReadShaderBuffer(unsigned int id, void *dest, unsigned int count, unsigne
     VkMemoryRequirements memReq;
     vkGetBufferMemoryRequirements(RLVK.device, staging, &memReq);
     stagingMem = rlvkAllocMemory(memReq, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (stagingMem == VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(RLVK.device, staging, RLVK_ALLOC);
+        return;
+    }
     vkBindBufferMemory(RLVK.device, staging, stagingMem, 0);
 
     VkCommandPool pool = VK_NULL_HANDLE;
@@ -310,6 +440,7 @@ void rlReadShaderBuffer(unsigned int id, void *dest, unsigned int count, unsigne
     }
     vkDestroyBuffer(RLVK.device, staging, RLVK_ALLOC);
     vkFreeMemory(RLVK.device, stagingMem, RLVK_ALLOC);
+    s_memHostBytes -= (ill)memReq.size;
 }
 
 // Copy SSBO data between buffers (GPU-side)
@@ -319,6 +450,8 @@ void rlCopyShaderBuffer(unsigned int destId, unsigned int srcId, unsigned int de
         return;
     rlvkBufferSlot *dst = &RLVK.bufferSlots[destId], *src = &RLVK.bufferSlots[srcId];
     if (dst->buffer == VK_NULL_HANDLE || src->buffer == VK_NULL_HANDLE)
+        return;
+    if (srcOffset + count > src->sizeBytes || destOffset + count > dst->sizeBytes)
         return;
 
     if (RLVK.frameActive)
@@ -341,12 +474,30 @@ void rlCopyShaderBuffer(unsigned int destId, unsigned int srcId, unsigned int de
                                                   .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
                                                   .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
                                                   .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT,
                                               },
                                           });
         rlvkResumeSwapchainScope(cmdBuffer);
         if (openFb)
             rlEnableFramebuffer(openFb);
+    }
+    else if (RLVK.computeBatch.open)
+    {
+        // Append to the open out-of-frame compute batch instead of forcing a queue drain
+        VkCommandBuffer cmdBuffer = RLVK.computeBatch.cmd;
+        vkCmdCopyBuffer(cmdBuffer, src->buffer, dst->buffer, 1,
+                        &(VkBufferCopy){.srcOffset = srcOffset, .dstOffset = destOffset, .size = count});
+        vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
+                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .memoryBarrierCount = 1,
+                                              .pMemoryBarriers = &(VkMemoryBarrier2){
+                                                  VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+                                                  .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                                                  .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                                  .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT,
+                                              },
+                                          });
     }
     else
     {
@@ -456,8 +607,12 @@ void rlLoadDrawQuad(void)
         0.0f,
     };
     static u32 quadVbo = 0;
-    if (quadVbo == 0)
+    if (quadVbo == 0 || quadVbo >= RLVK_MAX_BUFFER_SLOTS ||
+        !RLVK.bufferSlots[quadVbo].inUse ||
+        RLVK.bufferSlots[quadVbo].buffer == VK_NULL_HANDLE)
+    {
         quadVbo = rlvkCreateVBO(quadVerts, (int)sizeof(quadVerts), false, false);
+    }
     if (quadVbo == RLVK_INVALID_SLOT)
         return;
 
@@ -469,6 +624,29 @@ void rlLoadDrawQuad(void)
 
     s_bindingValid = false; // quad blit rebinds vertex buffers outside the mesh-draw dedup cache
     rlvkShaderSlot *shader = &RLVK.shaderSlots[RLVK.State.activeShaderSlot];
+
+    if (shader->usesUbo)
+    {
+        VkDeviceSize need = 0;
+        if (shader->vsBlockSize)
+            need += ((VkDeviceSize)shader->vsBlockSize + 255) & ~(VkDeviceSize)255;
+        if (shader->fsBlockSize)
+            need += ((VkDeviceSize)shader->fsBlockSize + 255) & ~(VkDeviceSize)255;
+        if (need)
+        {
+            need += 256;
+            rlvkBatchBackingBuffer *arena = &RLVK.arena[frameIndex];
+            if (RLVK.arenaOffset[frameIndex] + need > arena->sizeBytes)
+            {
+                RLVK.arenaWanted[frameIndex] += need;
+                if (need <= arena->sizeBytes)
+                {
+                    rlvkFlushFrame();
+                    cmdBuffer = RLVK.cmdBuffers[frameIndex];
+                }
+            }
+        }
+    }
 
     // Interleaved pos+uv layout and shader stages are baked into the cached pipeline
     // Pipeline MUST be bound BEFORE vertex buffers (MoltenVK Metal buffer index resolution)
