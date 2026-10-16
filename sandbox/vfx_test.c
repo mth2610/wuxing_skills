@@ -198,7 +198,7 @@ static const char *s_guidedFixturePresetNames[] = {
     "Particles only", "Free trails", "Particles and trails",
     "Timed particles and trails", "Timed trails only",
     "Orbit trails", "Anchored silk", "Released silk",
-    "Energy silk ribbon", "Smoke wisp ribbon", "Ember filament ribbon", "Water stream ribbon",
+    "Energy silk ribbon", "Smoke wisp ribbon", "Blade slash ribbon (Kiem Khi)", "Water stream ribbon",
     "Spline ribbon", "Guided curl ribbon",
     "Converge field (implosion)", "Blast field (explosion)",
     "Sphere tangent ring (90 deg)", "Radial needle blast (0 deg)",
@@ -209,10 +209,9 @@ static const char *s_guidedFixturePresetNames[] = {
     "Ice shard ribbon (Han Bang)", "Wind blade ribbon (Phong Nhan)",
     "Cross beam ribbon (Thap Tu)", "Demonic smoke ribbon (Ma Khi)",
     "Taiji ribbon (Thai Cuc)", "Galaxy nebula ribbon (Tinh Ha)",
-    "Blade slash ribbon (Kiem Khi)", "Main energy ribbon",
     "Wisp ribbon", "Backdrop ribbon", "Magic plume ribbon"
 };
-#define VFXTEST_GUIDED_PRESET_COUNT 43
+#define VFXTEST_GUIDED_PRESET_COUNT 41
 
 
 static void VFXTest_SetGuidedPreset(int preset)
@@ -275,12 +274,12 @@ static void VFXTest_SetGuidedPreset(int preset)
     }
     if (preset >= 14 && preset <= 17) {
         static const int styles[] = {VFX_GUIDED_TRAIL_ENERGY_SILK,
-            VFX_GUIDED_TRAIL_SMOKE_WISP, VFX_GUIDED_TRAIL_EMBER_FILAMENT,
+            VFX_GUIDED_TRAIL_SMOKE_WISP, VFX_GUIDED_TRAIL_BLADE,
             VFX_GUIDED_TRAIL_WATER_STREAM};
         static const VC_MaterialId materials[] = {VC_MAT_LIGHTNING,
             VC_MAT_METAL, VC_MAT_FIRE, VC_MAT_WATER};
         static const TrailPresetId trailPresets[] = {MOTION_RIBBON_ENERGY_SILK,
-            MOTION_RIBBON_SMOKE_WISP, MOTION_RIBBON_EMBER_FILAMENT,
+            MOTION_RIBBON_SMOKE_WISP, MOTION_RIBBON_BLADE,
             MOTION_RIBBON_WATER_STREAM};
         s_motionRibbonFixturePreset = trailPresets[preset - 14];
         s_liveGuidedMotionConfig.output = VFX_GUIDED_TRAILS;
@@ -399,7 +398,7 @@ static void VFXTest_SetGuidedPreset(int preset)
         s_liveGuidedMotionConfig.duration = 2.0f;
         s_liveGuidedMotionConfig.gravityScale = 0.0f;
     }
-    if (preset >= 24 && preset <= 42) {
+    if (preset >= 24 && preset <= 40) {
         static const TrailPresetId trailPresets[] = {
             MOTION_RIBBON_SWORD_COMET,
             MOTION_RIBBON_SILK,
@@ -415,8 +414,6 @@ static void VFXTest_SetGuidedPreset(int preset)
             MOTION_RIBBON_DEMONIC,
             MOTION_RIBBON_TAIJI,
             MOTION_RIBBON_GALAXY,
-            TRAIL_PRESET_BLADE,
-            TRAIL_PRESET_MAIN,
             TRAIL_PRESET_WISP,
             TRAIL_PRESET_BACKDROP,
             TRAIL_PRESET_MAGIC
@@ -436,8 +433,6 @@ static void VFXTest_SetGuidedPreset(int preset)
             VFX_GUIDED_TRAIL_DEMONIC,
             VFX_GUIDED_TRAIL_TAIJI,
             VFX_GUIDED_TRAIL_GALAXY,
-            VFX_GUIDED_TRAIL_BLADE,
-            VFX_GUIDED_TRAIL_MAIN,
             VFX_GUIDED_TRAIL_WISP,
             VFX_GUIDED_TRAIL_BACKDROP,
             VFX_GUIDED_TRAIL_MAGIC
@@ -623,7 +618,7 @@ static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
     }
     /* Match the swept reference's origin for fixed-camera material captures. */
     if (s_guidedCaptureActive && ((s_guidedFixturePreset >= 14 && s_guidedFixturePreset <= 17) ||
-                                  (s_guidedFixturePreset >= 24 && s_guidedFixturePreset <= 42)))
+                                  (s_guidedFixturePreset >= 24 && s_guidedFixturePreset <= 40)))
         source = s_prefabStartPos;
     cfg.source = source;
     cfg.target = s_guidedFixturePreset == 5 ? source : target;
@@ -639,7 +634,7 @@ static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
     }
     VFXTest_GuidedFrame *anchor = NULL;
     if ((s_guidedFixturePreset >= 12 && s_guidedFixturePreset <= 17) ||
-        (s_guidedFixturePreset >= 24 && s_guidedFixturePreset <= 42)) {
+        (s_guidedFixturePreset >= 24 && s_guidedFixturePreset <= 40)) {
         for (int i = 0; i < VFXTEST_GUIDED_FRAME_COUNT; ++i)
             if (!s_guidedFrames[i].active) { anchor = &s_guidedFrames[i]; break; }
         if (!anchor) {
@@ -647,7 +642,7 @@ static void VFXTest_FireGuidedMotion(Vector3 source, Vector3 target)
             return;
         }
         bool kinematic = (s_guidedFixturePreset >= 14 && s_guidedFixturePreset <= 17) ||
-                         (s_guidedFixturePreset >= 24 && s_guidedFixturePreset <= 42);
+                         (s_guidedFixturePreset >= 24 && s_guidedFixturePreset <= 40);
         Vector3 initial = kinematic ? Vector3Add(source, (Vector3){0.0f, 1.5f, 2.1f}) : source;
         MotionFrameHandle frame = MotionFrame_Create(MatrixTranslate(initial.x, initial.y, initial.z));
         if (!frame) return;

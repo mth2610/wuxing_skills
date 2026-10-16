@@ -61,11 +61,20 @@ static bool SampleAnchor(const ModernRibbon *r,TrailRibbonAnchor *anchor) {
     return valid;
 }
 static void CopyRenderHistory(ModernRibbon *r,TrailEntity *t) {
+    if (t->historyCount > 0) {
+        float stepDist = Vector3Distance(r->state.position[0], t->position);
+        if (stepDist < 10.0f) t->laidDist += stepDist;
+    }
     t->position=r->state.position[0];t->velocity=r->state.velocity[0];
+    float totalArc=0;
+    for(int n=0;n<r->state.count-1;n++) {
+        totalArc+=Vector3Distance(r->state.position[n],r->state.position[n+1]);
+    }
+    float odo = (r->pathDistanceM > 0.001f) ? r->pathDistanceM : t->laidDist;
     float arc=0;
     for(int n=r->state.count-1;n>=0;n--) {
         if(n<r->state.count-1) arc+=Vector3Distance(r->state.position[n],r->state.position[n+1]);
-        t->nodeUV[r->state.count-1-n]=arc;
+        t->nodeUV[r->state.count-1-n]=odo - (totalArc - arc);
     }
     t->historyCount=r->state.count;t->historyHead=r->state.count-1;
     for(int i=0;i<r->state.count;i++) {
@@ -109,7 +118,7 @@ int TrailRibbon_Spawn(const TrailRibbonConfig *c) {
         }
     }
     int gpu=-1;
-    if(c->backend!=TRAIL_RIBBON_CPU_ONLY) gpu=TrailRibbonGpu_Spawn(&state,&c->material);
+    if(c->backend!=TRAIL_RIBBON_CPU_ONLY && !c->appearance.enabled) gpu=TrailRibbonGpu_Spawn(&state,&c->material);
     if(c->backend==TRAIL_RIBBON_GPU_ONLY && gpu<0) return -1;
     TrailConfig legacy={0};legacy.type=TRAIL_TYPE_FOLLOWER;legacy.pos=head;
     legacy.life=c->lifetimeSec;legacy.thick=c->widthM*.5f;legacy.tint=c->color;
@@ -129,6 +138,7 @@ int TrailRibbon_Spawn(const TrailRibbonConfig *c) {
         entity->alphaCurve=a->alphaCurve;entity->gradient=a->gradient;
         entity->ribbonMode=a->ribbonMode;entity->fixedNormal=a->fixedNormal;
         entity->blendMode=a->blendMode;entity->useCustomBlendMode=true;
+        entity->laidDist=r->config.lengthM;
     }
     CopyRenderHistory(r,entity);
     if(getenv("WUXING_TRAIL_MOTION_TRACE"))
@@ -268,7 +278,8 @@ static void DrawAppearance(ModernRibbon *r,TrailEntity *t,Camera3D camera,int fi
             points[n]=(RibbonPoint){.position=r->state.position[n],.halfWidth=r->config.widthM*.5f*widthMul*widths[n],
                 .v=(float)n/(count-1),.tint=c};
         }
-        Texture2D tex=ly->texture?*ly->texture:r->config.texture;
+        Texture2D fallbackTex = t->sprite.id ? t->sprite : TrailSystem_GetGlobalTexture();
+        Texture2D tex = ly->texture ? *ly->texture : (r->config.texture.id ? r->config.texture : fallbackTex);
         if(r->gpuSlot>=0) {
             TrailRibbonGpu_DrawAppearance(r->gpuSlot,camera,r->config.widthM*widthMul,tex,t,filter,colors,widths);
         } else {

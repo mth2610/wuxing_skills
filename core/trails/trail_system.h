@@ -725,6 +725,7 @@ typedef struct TrailEntity
 Shader Trail_GetVolumeShader(void);
 
 void TrailSystem_SetGlobalTexture(Texture2D tex);
+Texture2D TrailSystem_GetGlobalTexture(void);
 /* Loads its own default trail material (trail_glow.fs, one program per blend
  * law). Took a Shader until 20/08/2026; the caller cannot pick it any more,
  * because which variant a trail needs depends on the blend that trail resolves

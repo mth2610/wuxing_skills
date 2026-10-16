@@ -593,6 +593,8 @@ int  VFX_ComposeTrailEx(const Matrix *followTransform, VC_MaterialId mat,
                         const VFX_TrailSurface *surface);
 /* Copies the same preset appearance used by swept trails into a physical chain.
  * Geometry, lifetime, body and Motion ownership remain with the caller. */
+int  VFX_TrailPresetStrandCount(TrailPresetId preset);
+bool VFX_TrailRibbonApplyStrandPreset(TrailRibbonConfig *config, TrailPresetId preset, int strand, VC_MaterialId mat);
 bool VFX_TrailRibbonApplyPreset(TrailRibbonConfig *config, TrailPresetId preset, VC_MaterialId mat);
 void VFX_TrailSetWidth(int handle, float width01); // ramped, for wind-down
 // Per-instance EMISSION lift (the recipe's `hdrGain`, which is what bloom
@@ -1087,7 +1089,7 @@ typedef enum {
     VFX_GUIDED_TRAIL_PLAIN = 0,
     VFX_GUIDED_TRAIL_ENERGY_SILK = 1,
     VFX_GUIDED_TRAIL_SMOKE_WISP = 2,
-    VFX_GUIDED_TRAIL_EMBER_FILAMENT = 3,
+    VFX_GUIDED_TRAIL_BLADE = 3,         // Kiếm Khí (formerly EMBER_FILAMENT alias)
     VFX_GUIDED_TRAIL_WATER_STREAM = 4,
     // Xianxia / Wuxing presets
     VFX_GUIDED_TRAIL_SWORD_COMET = 5,   // Phi Kiếm
@@ -1104,14 +1106,14 @@ typedef enum {
     VFX_GUIDED_TRAIL_DEMONIC = 16,      // Ma Khí
     VFX_GUIDED_TRAIL_TAIJI = 17,        // Thái Cực
     VFX_GUIDED_TRAIL_GALAXY = 18,       // Tinh Hà
-    // Classic core presets
-    VFX_GUIDED_TRAIL_BLADE = 19,        // Kiếm Khí
-    VFX_GUIDED_TRAIL_MAIN = 20,         // Main Energy
-    VFX_GUIDED_TRAIL_WISP = 21,         // Wisp
-    VFX_GUIDED_TRAIL_BACKDROP = 22,     // Backdrop
-    VFX_GUIDED_TRAIL_MAGIC = 23,        // Magic Plume
-    VFX_GUIDED_TRAIL_STYLE_COUNT = 24
+    // Classic core presets (deduplicated)
+    VFX_GUIDED_TRAIL_WISP = 19,         // Wisp
+    VFX_GUIDED_TRAIL_BACKDROP = 20,     // Backdrop
+    VFX_GUIDED_TRAIL_MAGIC = 21,        // Magic Plume
+    VFX_GUIDED_TRAIL_STYLE_COUNT = 22
 } VFX_GuidedTrailStyle;
+#define VFX_GUIDED_TRAIL_EMBER_FILAMENT VFX_GUIDED_TRAIL_BLADE
+#define VFX_GUIDED_TRAIL_MAIN VFX_GUIDED_TRAIL_PLAIN
 typedef enum {
     VFX_GUIDED_TRAIL_MOTION_FIELD=0, VFX_GUIDED_TRAIL_MOTION_SPLINE=1,
     VFX_GUIDED_TRAIL_MOTION_GUIDED=2

@@ -34,6 +34,7 @@ static Texture2D s_tubeFlatTex = {0};
 static Image s_tubeNoiseImg = {0};
 static Texture2D s_globalTrailTex = {0};
 void TrailSystem_SetGlobalTexture(Texture2D tex) { s_globalTrailTex = tex; }
+Texture2D TrailSystem_GetGlobalTexture(void) { return s_globalTrailTex; }
 /* One trail_glow.fs source, one program per blend law a trail can be drawn
  * under — body (BLEND_ALPHA) and emission (BLEND_ADDITIVE). Those two are the
  * only outcomes: a premultiplied appearance is mapped onto alpha body plus

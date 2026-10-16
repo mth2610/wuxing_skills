@@ -2204,33 +2204,59 @@ static const ColorGradient *SweptTrail_Gradient(VC_MaterialId mat)
     return VC_ElementRamp(mat);
 }
 
-bool VFX_TrailRibbonApplyPreset(TrailRibbonConfig *config,TrailPresetId preset,VC_MaterialId mat)
+int VFX_TrailPresetStrandCount(TrailPresetId preset)
 {
-    if(!config||preset<0||preset>=TRAIL_PRESET_COUNT) return false;
+    if (preset < 0 || preset >= TRAIL_PRESET_COUNT) return 1;
+    return SweptTrail_StrandCount(preset, false);
+}
+
+bool VFX_TrailRibbonApplyStrandPreset(TrailRibbonConfig *config, TrailPresetId preset, int strand, VC_MaterialId mat)
+{
+    if(!config || preset < 0 || preset >= TRAIL_PRESET_COUNT) return false;
     SweptTrail_InitShared();
-    VC_SweptTrail surface={0};surface.kind=preset;surface.matId=mat;
+    int count = SweptTrail_StrandCount(preset, false);
+    if(strand < 0) strand = 0;
+    if(strand >= count) strand = count - 1;
+
+    VC_SweptTrail surface = {0};
+    surface.kind = preset;
+    surface.matId = mat;
+    surface.strands = count;
     SweptTrail_ConfigureLayers(&surface);
-    const TrailRecipe *r=&surface.recipe;
-    const VFX_ElementMaterial *m=VFX_Material(mat);
-    Color base=r->tintSource==TRAIL_TINT_NEUTRAL?(Color){236,236,240,255}:
-               r->tintSource==TRAIL_TINT_BODY?m->body:m->glow;
-    TrailRibbonAppearance *a=&config->appearance;memset(a,0,sizeof(*a));
-    a->enabled=true;a->material.contrastProfile=r->colour.contrast;
-    a->material.bodyOpacity=r->bodyOpacity;
-    TrailRecipe_ToLegacyMaterial(r,m,base,&a->material,&a->deform);
-    a->deform.mode=0; /* World-space geometry belongs to Motion. */
-    a->layerCount=r->layerCount;
-    for(int i=0;i<a->layerCount;i++) a->layers[i]=surface.layers[i];
-    const TrailMotion *motion=TrailMotionOf(preset);
-    a->widthEnvelope=motion->widthEnvelope;
-    a->widthCurve=motion->curves?&s_sweptWidthCurve[preset]:NULL;
-    a->alphaCurve=motion->curves?&s_sweptAlphaCurve[preset]:NULL;
-    a->gradient=r->colour.useElementRamp?SweptTrail_Gradient(mat):NULL;
-    a->ribbonMode=r->ribbonMode;a->fixedNormal=r->fixedNormal;
-    a->blendMode=r->additive?BLEND_ALPHA_PREMULTIPLY:BLEND_ALPHA;
-    config->color=VC_WithAlpha(base,r->tintAlpha);
-    config->texture=r->sheetOverride?*r->sheetOverride:(Texture2D){0};
+    const TrailRecipe *r = &surface.strandRecipe[strand];
+    const VFX_ElementMaterial *m = VFX_Material(mat);
+    Color base = r->tintSource == TRAIL_TINT_NEUTRAL ? (Color){236, 236, 240, 255} :
+                 r->tintSource == TRAIL_TINT_BODY ? m->body : m->glow;
+    TrailRibbonAppearance *a = &config->appearance;
+    memset(a, 0, sizeof(*a));
+    a->enabled = true;
+    a->material.recipe = &k_trailStrands[preset][strand];
+    a->material.contrastProfile = r->colour.contrast;
+    a->material.bodyOpacity = r->bodyOpacity;
+    TrailRecipe_ToLegacyMaterial(r, m, base, &a->material, &a->deform);
+    a->deform.mode = 0; /* World-space geometry belongs to Motion. */
+    a->layerCount = r->layerCount;
+    for(int i = 0; i < a->layerCount; i++) a->layers[i] = surface.layers[i];
+    const TrailMotion *motion = TrailMotionOf(preset);
+    a->widthEnvelope = motion->widthEnvelope;
+    a->widthCurve = motion->curves ? &s_sweptWidthCurve[preset] : NULL;
+    a->alphaCurve = motion->curves ? &s_sweptAlphaCurve[preset] : NULL;
+    a->gradient = r->colour.useElementRamp ? SweptTrail_Gradient(mat) : NULL;
+    a->ribbonMode = r->ribbonMode;
+    a->fixedNormal = r->fixedNormal;
+    a->blendMode = (r->add > 0.5f || r->additive) ? BLEND_ALPHA_PREMULTIPLY : BLEND_ALPHA;
+    config->color = VC_WithAlpha(base, r->tintAlpha);
+    config->texture = r->sheetOverride ? *r->sheetOverride : (Texture2D){0};
+    if (r->radiusDefault > 0.001f && k_trailPresets[preset].radiusDefault > 0.001f) {
+        config->widthM *= (r->radiusDefault / k_trailPresets[preset].radiusDefault);
+    }
+    config->backend = TRAIL_RIBBON_CPU_ONLY;
     return true;
+}
+
+bool VFX_TrailRibbonApplyPreset(TrailRibbonConfig *config, TrailPresetId preset, VC_MaterialId mat)
+{
+    return VFX_TrailRibbonApplyStrandPreset(config, preset, 0, mat);
 }
 
 // ── Strand plumbing ─────────────────────────────────────────────────────────

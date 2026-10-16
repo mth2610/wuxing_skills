@@ -8,19 +8,24 @@
 #include "core/emitter/emitter_sinks.h"
 #include "core/emitter/particle_source.h"
 #define VC_GUIDED_MAX_STREAMS 16
+#define VC_GUIDED_MAX_STRANDS 4
 typedef struct {
   bool active;
   ParticleEmitterHandle emitter;
-  EmissionHandle particles, trails;
+  EmissionHandle particles;
+  EmissionHandle trails[VC_GUIDED_MAX_STRANDS];
+  int strandCount;
   ParticleDynamicsProfile body;
   ParticleConfig particle;
-  TrailRibbonConfig ribbon;
+  TrailRibbonConfig ribbon[VC_GUIDED_MAX_STRANDS];
   EmissionParticleSourceAdapter source;
   EmissionParticleSink sink;
   EmissionRibbonSink trailSink;
   MotionFrameHandle frame;
   EmissionParticleSourceAdapter localSource;
-  Vector3 localVelocity, localRibbonVelocity, localTailDirection, frameVelocity;
+  Vector3 localVelocity, frameVelocity;
+  Vector3 localRibbonVelocity[VC_GUIDED_MAX_STRANDS];
+  Vector3 localTailDirection[VC_GUIDED_MAX_STRANDS];
 } VC_GuidedStream;
 static VC_GuidedStream s_guidedStreams[VC_GUIDED_MAX_STREAMS];
 static MeshAdjacency s_guidedSourceMesh;
@@ -162,10 +167,16 @@ static float VC_GuidedEstimatedTransitTime(const VFX_GuidedParticleConfig *c,
   return travel;
 }
 static void VC_GuidedStream_Clear(VC_GuidedStream *s) {
-  Emission_Destroy(s->particles); Emission_Destroy(s->trails);
+  Emission_Destroy(s->particles);
+  for (int i = 0; i < VC_GUIDED_MAX_STRANDS; i++) {
+    Emission_Destroy(s->trails[i]);
+    s->trails[i] = EMISSION_HANDLE_INVALID;
+  }
   ParticleManager_DestroyEmitter(s->emitter);
-  s->particles=s->trails=EMISSION_HANDLE_INVALID;
-  s->emitter=PARTICLE_EMITTER_INVALID; s->active=false;
+  s->particles = EMISSION_HANDLE_INVALID;
+  s->emitter = PARTICLE_EMITTER_INVALID;
+  s->active = false;
+  s->strandCount = 0;
 }
 static bool VC_GuidedSchedule_Update(EmissionHandle *h,float dt) {
   if(!*h) return true;
@@ -182,9 +193,11 @@ static void VC_GuidedStream_ApplyFrame(VC_GuidedStream *s) {
       !MotionFrame_IsRigidTransform(&frame.transform)) {
     s->particle.velocity=MotionVec_Sub(s->particle.velocity,s->frameVelocity);
     s->particle.physics.velocity=s->particle.velocity;
-    s->ribbon.initialVelocity=MotionVec_Sub(s->ribbon.initialVelocity,s->frameVelocity);
-    if(s->ribbon.mode==TRAIL_RIBBON_HEAD_ANCHORED && s->ribbon.attachment==s->frame) {
-      s->ribbon.mode=TRAIL_RIBBON_FREE; s->ribbon.attachment=0;
+    for (int i = 0; i < s->strandCount; i++) {
+      s->ribbon[i].initialVelocity=MotionVec_Sub(s->ribbon[i].initialVelocity,s->frameVelocity);
+      if(s->ribbon[i].mode==TRAIL_RIBBON_HEAD_ANCHORED && s->ribbon[i].attachment==s->frame) {
+        s->ribbon[i].mode=TRAIL_RIBBON_FREE; s->ribbon[i].attachment=0;
+      }
     }
     s->frame=0; return;
   }
@@ -201,8 +214,10 @@ static void VC_GuidedStream_ApplyFrame(VC_GuidedStream *s) {
   s->frameVelocity=frame.velocity;
   s->particle.velocity=MotionVec_Add(FieldTransform_Vector(&frame.transform,s->localVelocity),frame.velocity);
   s->particle.physics.velocity=s->particle.velocity;
-  s->ribbon.initialVelocity=MotionVec_Add(FieldTransform_Vector(&frame.transform,s->localRibbonVelocity),frame.velocity);
-  s->ribbon.tailDirection=FieldTransform_Vector(&frame.transform,s->localTailDirection);
+  for (int i = 0; i < s->strandCount; i++) {
+    s->ribbon[i].initialVelocity=MotionVec_Add(FieldTransform_Vector(&frame.transform,s->localRibbonVelocity[i]),frame.velocity);
+    s->ribbon[i].tailDirection=FieldTransform_Vector(&frame.transform,s->localTailDirection[i]);
+  }
 }
 static void VC_GuidedMotion_Update(float dt) {
   if(!isfinite(dt) || dt<=0) return;
@@ -211,7 +226,12 @@ static void VC_GuidedMotion_Update(float dt) {
     if(!s->active) continue;
     VC_GuidedStream_ApplyFrame(s);
     bool particlesDone=VC_GuidedSchedule_Update(&s->particles,dt);
-    bool trailsDone=VC_GuidedSchedule_Update(&s->trails,dt);
+    bool trailsDone=true;
+    for (int str = 0; str < s->strandCount; str++) {
+      if (!VC_GuidedSchedule_Update(&s->trails[str], dt)) {
+        trailsDone = false;
+      }
+    }
     if(particlesDone && trailsDone) VC_GuidedStream_Clear(s);
   }
 }
@@ -309,7 +329,7 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
       "Plain",
       "Energy Silk",
       "Smoke Wisp (Yen Vu)",
-      "Ember Filament",
+      "Blade / Kiem Khi",
       "Water Stream",
       "Sword Comet (Phi Kiem)",
       "Celestial Silk (Tien Doi)",
@@ -325,8 +345,6 @@ int VFX_GuidedMotion_GetParams(VFX_GuidedMotionConfig *c,VFX_ParamDef *out,int m
       "Demonic Smoke (Ma Khi)",
       "Taiji (Thai Cuc)",
       "Galaxy Nebula (Tinh Ha)",
-      "Blade / Kiem Khi",
-      "Main Energy",
       "Wisp",
       "Backdrop",
       "Magic Plume"
@@ -475,57 +493,67 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
   p->physics.receiveMotionFields=true; p->physics.spatialMotionOnly=true;
   p->physics.initialGuide=0;
   if(!c->particleTemplate || p->physics.dynamics) p->physics.dynamics=&s->body;
-  s->ribbon=c->trailTemplate?*c->trailTemplate:TrailRibbon_Default();
-  if(!c->trailTemplate) {
-    s->ribbon.nodeCount=c->trailNodes; s->ribbon.lengthM=c->trailLength;
-    s->ribbon.widthM=c->trailWidth; s->ribbon.lifetimeSec=bodyLifetime;
-    s->ribbon.color=VC_WithAlpha(material->body,180);
-    s->ribbon.material.body=s->body;
-    if(trails && c->trailStyle!=VFX_GUIDED_TRAIL_PLAIN) {
-      static const TrailPresetId styles[VFX_GUIDED_TRAIL_STYLE_COUNT] = {
-        TRAIL_PRESET_MAIN,         /* 0: Plain, unused */
-        TRAIL_PRESET_ENERGY,       /* 1: Energy Silk */
-        TRAIL_PRESET_SMOKE,        /* 2: Smoke Wisp */
-        TRAIL_PRESET_BLADE,        /* 3: Ember Filament */
-        TRAIL_PRESET_WATER,        /* 4: Water Stream */
-        TRAIL_PRESET_SWORD_COMET,  /* 5: Phi Kiếm */
-        TRAIL_PRESET_SILK,         /* 6: Tiên Đới */
-        TRAIL_PRESET_WOOD_SPIRAL,  /* 7: Linh Toàn */
-        TRAIL_PRESET_LIGHTNING,    /* 8: Lôi Điện */
-        TRAIL_PRESET_FIRE_JET,     /* 9: Hỏa Diễm */
-        TRAIL_PRESET_DRAGON,       /* 10: Long Khí */
-        TRAIL_PRESET_INK,          /* 11: Mặc Tích */
-        TRAIL_PRESET_TALISMAN,     /* 12: Phù Văn */
-        TRAIL_PRESET_ICE_SHARD,    /* 13: Hàn Băng */
-        TRAIL_PRESET_WIND_BLADE,   /* 14: Phong Nhận */
-        TRAIL_PRESET_CROSS_BEAM,   /* 15: Thập Tự Quang */
-        TRAIL_PRESET_DEMONIC,      /* 16: Ma Khí */
-        TRAIL_PRESET_TAIJI,        /* 17: Thái Cực */
-        TRAIL_PRESET_GALAXY,       /* 18: Tinh Hà */
-        TRAIL_PRESET_BLADE,        /* 19: Kiếm Khí */
-        TRAIL_PRESET_MAIN,         /* 20: Main Energy */
-        TRAIL_PRESET_WISP,         /* 21: Wisp */
-        TRAIL_PRESET_BACKDROP,     /* 22: Backdrop */
-        TRAIL_PRESET_MAGIC         /* 23: Magic Plume */
-      };
-      if(!VFX_TrailRibbonApplyPreset(&s->ribbon,styles[c->trailStyle],c->material)) goto fail;
-    }
-    s->ribbon.mode=c->trailAttachment?TRAIL_RIBBON_HEAD_ANCHORED:TRAIL_RIBBON_FREE;
-    s->ribbon.attachment=c->trailAttachment;
-    if(c->trailMotion!=VFX_GUIDED_TRAIL_MOTION_FIELD && !c->trailAttachment &&
-       c->motionPattern==VFX_GUIDED_ROUTE && field.volume.shape==FIELD_PATH_TUBE)
-      s->ribbon.pathTransport=(MotionPathTransport){.field=h,
-        .speedMps=c->fieldOverride?field.flow.followSpeedMps:c->speed,
-        .respondToField=c->trailMotion==VFX_GUIDED_TRAIL_MOTION_GUIDED,.captureBirthLane=true};
-    Vector3 delta=MotionVec_Sub(c->source,c->target);
-    /* Trail nodes start behind the local route tangent, not the A-to-B chord.
-     * The shared frame below rotates both births and this direction once. */
-    s->ribbon.tailDirection=field.volume.shape==FIELD_PATH_TUBE
-        ?MotionVec_Scale(FieldTransform_Vector(&field.transform,MotionVec_Normalize(MotionVec_Sub(field.volume.path.points[1],field.volume.path.points[0]))),-1)
-        :MotionVec_Length(delta)>.001f?MotionVec_Normalize(delta):(Vector3){0,-1,0};
+  static const TrailPresetId styles[VFX_GUIDED_TRAIL_STYLE_COUNT] = {
+    TRAIL_PRESET_MAIN,         /* 0: Plain, unused */
+    TRAIL_PRESET_ENERGY,       /* 1: Energy Silk */
+    TRAIL_PRESET_SMOKE,        /* 2: Smoke Wisp */
+    TRAIL_PRESET_BLADE,        /* 3: Blade / Kiem Khi */
+    TRAIL_PRESET_WATER,        /* 4: Water Stream */
+    TRAIL_PRESET_SWORD_COMET,  /* 5: Phi Kiem */
+    TRAIL_PRESET_SILK,         /* 6: Tien Doi */
+    TRAIL_PRESET_WOOD_SPIRAL,  /* 7: Linh Toan */
+    TRAIL_PRESET_LIGHTNING,    /* 8: Loi Dien */
+    TRAIL_PRESET_FIRE_JET,     /* 9: Hoa Diem */
+    TRAIL_PRESET_DRAGON,       /* 10: Long Khi */
+    TRAIL_PRESET_INK,          /* 11: Mac Tich */
+    TRAIL_PRESET_TALISMAN,     /* 12: Phu Van */
+    TRAIL_PRESET_ICE_SHARD,    /* 13: Han Bang */
+    TRAIL_PRESET_WIND_BLADE,   /* 14: Phong Nhan */
+    TRAIL_PRESET_CROSS_BEAM,   /* 15: Thap Tu */
+    TRAIL_PRESET_DEMONIC,      /* 16: Ma Khi */
+    TRAIL_PRESET_TAIJI,        /* 17: Thai Cuc */
+    TRAIL_PRESET_GALAXY,       /* 18: Tinh Ha */
+    TRAIL_PRESET_WISP,         /* 19: Wisp */
+    TRAIL_PRESET_BACKDROP,     /* 20: Backdrop */
+    TRAIL_PRESET_MAGIC         /* 21: Magic Plume */
+  };
+  int strandCount = 1;
+  if (trails && !c->trailTemplate && c->trailStyle != VFX_GUIDED_TRAIL_PLAIN) {
+    strandCount = VFX_TrailPresetStrandCount(styles[c->trailStyle]);
+    if (strandCount < 1) strandCount = 1;
+    if (strandCount > VC_GUIDED_MAX_STRANDS) strandCount = VC_GUIDED_MAX_STRANDS;
   }
-  s->frame=c->frame; s->localSource=s->source; s->localVelocity=p->velocity;
-  s->localRibbonVelocity=s->ribbon.initialVelocity; s->localTailDirection=s->ribbon.tailDirection;
+  s->strandCount = strandCount;
+  for (int str = 0; str < s->strandCount; str++) {
+    s->ribbon[str] = c->trailTemplate ? *c->trailTemplate : TrailRibbon_Default();
+    if (!c->trailTemplate) {
+      s->ribbon[str].nodeCount = c->trailNodes;
+      s->ribbon[str].lengthM = c->trailLength;
+      s->ribbon[str].widthM = c->trailWidth;
+      s->ribbon[str].lifetimeSec = bodyLifetime;
+      s->ribbon[str].color = VC_WithAlpha(material->body, 180);
+      s->ribbon[str].material.body = s->body;
+      if (trails && c->trailStyle != VFX_GUIDED_TRAIL_PLAIN) {
+        if (!VFX_TrailRibbonApplyStrandPreset(&s->ribbon[str], styles[c->trailStyle], str, c->material)) goto fail;
+      }
+      s->ribbon[str].mode = c->trailAttachment ? TRAIL_RIBBON_HEAD_ANCHORED : TRAIL_RIBBON_FREE;
+      s->ribbon[str].attachment = c->trailAttachment;
+      if (c->trailMotion != VFX_GUIDED_TRAIL_MOTION_FIELD && !c->trailAttachment &&
+          c->motionPattern == VFX_GUIDED_ROUTE && field.volume.shape == FIELD_PATH_TUBE)
+        s->ribbon[str].pathTransport = (MotionPathTransport){.field = h,
+          .speedMps = c->fieldOverride ? field.flow.followSpeedMps : c->speed,
+          .respondToField = c->trailMotion == VFX_GUIDED_TRAIL_MOTION_GUIDED, .captureBirthLane = true};
+      Vector3 delta = MotionVec_Sub(c->source, c->target);
+      /* Trail nodes start behind the local route tangent, not the A-to-B chord.
+       * The shared frame below rotates both births and this direction once. */
+      s->ribbon[str].tailDirection = field.volume.shape == FIELD_PATH_TUBE
+          ? MotionVec_Scale(FieldTransform_Vector(&field.transform, MotionVec_Normalize(MotionVec_Sub(field.volume.path.points[1], field.volume.path.points[0]))), -1)
+          : MotionVec_Length(delta) > .001f ? MotionVec_Normalize(delta) : (Vector3){0, -1, 0};
+    }
+    s->localRibbonVelocity[str] = s->ribbon[str].initialVelocity;
+    s->localTailDirection[str] = s->ribbon[str].tailDirection;
+  }
+  s->frame = c->frame; s->localSource = s->source; s->localVelocity = p->velocity;
   VC_GuidedStream_ApplyFrame(s);
   if(particles) {
     ParticleEmitterDesc desc={.simulationPolicy=PARTICLE_SIM_AUTO,.renderMode=c->renderMode,
@@ -568,13 +596,19 @@ MotionFieldHandle VFX_ComposeGuidedMotionEx(const VFX_GuidedMotionConfig *c) {
       .swirlSpeed=c->swirlSpeed
     };
     emission.kind=EMISSION_RIBBON; emission.count=(uint32_t)trails;
-    emission.sink=EmissionSink_Ribbon; emission.sinkUser=&s->trailSink; emission.spawnTemplate=&s->ribbon;
-    s->trails=Emission_Create(&emission,(Vector3){0});
-    if(!s->trails) goto fail;
+    emission.sink=EmissionSink_Ribbon; emission.sinkUser=&s->trailSink;
+    for (int str = 0; str < s->strandCount; str++) {
+      emission.spawnTemplate = &s->ribbon[str];
+      s->trails[str] = Emission_Create(&emission, (Vector3){0});
+      if(!s->trails[str]) goto fail;
+    }
   }
   if(particles && c->surfaceStreamOut) ParticleManager_GetSurfaceStream(s->emitter,c->surfaceStreamOut);
   if(c->emitDuration==0) {
-    VC_GuidedSchedule_Update(&s->particles,0); VC_GuidedSchedule_Update(&s->trails,0);
+    VC_GuidedSchedule_Update(&s->particles,0);
+    for (int str = 0; str < s->strandCount; str++) {
+      VC_GuidedSchedule_Update(&s->trails[str],0);
+    }
     VC_GuidedStream_Clear(s);
   }
   return h;

@@ -42,6 +42,10 @@ static TrailPresetId lastStyle;
 bool VFX_TrailRibbonApplyPreset(TrailRibbonConfig *r,TrailPresetId preset,VC_MaterialId mat){
  (void)mat;styleCalls++;lastStyle=preset;r->appearance.enabled=true;r->appearance.layerCount=3;return true;
 }
+int VFX_TrailPresetStrandCount(TrailPresetId preset){(void)preset;return 1;}
+bool VFX_TrailRibbonApplyStrandPreset(TrailRibbonConfig *r,TrailPresetId preset,int strand,VC_MaterialId mat){
+ (void)strand;return VFX_TrailRibbonApplyPreset(r,preset,mat);
+}
 static FieldDesc capturedField;
 static MotionFrameRegistry frames;
 static MotionFrameHandle boundFrame;
