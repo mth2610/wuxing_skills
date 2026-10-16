@@ -73,6 +73,7 @@ typedef struct
     const MapEcology *ecology; // Borrowed shared habitat data; owner outlives ground.
     Vector2 tiling; // Per-surface texture repeats, uploaded in the active draw scope.
     Texture2D reliefTexture; // ResourceManager-owned optional R/G heights, B/A litter/moss.
+    Texture2D debrisTexture; // Macro debris distribution map (R=litter, G=scree, B=twigs, A=moss).
     MapIslandBoundary boundary;
 } MapGroundSurface;
 
@@ -125,6 +126,8 @@ void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground,
 // Optional tileable relief: R substrate height, G soil height, B litter, A moss.
 // Normal RGB / roughness A remain in the separate material maps.
 void MapProp_SetGroundReliefMap(MapGroundSurface *ground, const char *reliefPath);
+// Macro debris map (R=litter, G=scree, B=twigs, A=moss).
+void MapProp_SetGroundDebrisMap(MapGroundSurface *ground, const char *debrisMapPath);
 // Configure multi-layer habitat blending (path corridors, shoreline wetness, soil transitions)
 void MapProp_SetGroundHabitat(MapGroundSurface *ground,
                               const Vector4 *pathSegments, int segmentCount,
@@ -523,11 +526,13 @@ void MapProp_UnloadFlowerField(MapFlowerField *field);
 
 typedef struct {
     Vector3 center;
-    float radius;
+    Vector2 radius;
     int flowerCount;
     int primarySpecies;       // 0..7 (daisy, buttercup, poppy, cornflower, rose, cosmos, lavender, primrose)
+    unsigned char species[4]; // 4 signature & companion species
     Color primaryColor;
     Color accentColor;
+    Color discalCenterColor;  // dome center color
 } MapFloraFlowerCluster;
 
 typedef struct {
@@ -541,9 +546,7 @@ typedef struct {
 
     Color reedRootColor;
     Color reedTipColor;
-    bool hasReedPlumes;
-
-    const char *flowerAtlasPath; // NULL defaults to "maps/toolkit/textures/wildflower_bloom_atlas_v2.png"
+    bool hasReedPlumes;       // Default: false (prevents flat white cards)
 } MapFloraStyle;
 
 typedef struct {
@@ -563,6 +566,27 @@ typedef struct {
 
 Color MapProp_GetFlowerSpeciesColor(int variant, bool accent);
 
+// Generalized procedural flower generator (100% procedural 3D geometric petals, no textures)
+void MapFlora_GenerateFlowerPlacements(
+    MapFlowerPlacement *outPlacements,
+    int totalFlowerCount,
+    const MapFloraFlowerCluster *clusters,
+    int clusterCount,
+    float (*sampleHeight)(float x, float z, void *ctx),
+    bool (*isExcluded)(float x, float z, void *ctx),
+    void *ctx,
+    unsigned int seed);
+
+float MapFlora_EvaluateFlowerUnderstorey(
+    float x, float z,
+    const MapFloraFlowerCluster *clusters,
+    int clusterCount);
+
+float MapFlora_EvaluateFlowerSuppression(
+    float x, float z,
+    const MapFloraFlowerCluster *clusters,
+    int clusterCount);
+
 MapFloraSystem MapProp_CreateFloraSystem(
     const MapMeadowPlacement *grassPlacements, int grassCount,
     const MapMeadowPlacement *reedPlacements, int reedCount,
@@ -573,6 +597,38 @@ void MapProp_UpdateFloraSystem(MapFloraSystem *flora, Vector3 cameraTarget, floa
 void MapProp_DrawFloraSystem(MapFloraSystem *flora);
 void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora);
 void MapProp_UnloadFloraSystem(MapFloraSystem *flora);
+
+// --- Debris System (Fallen Leaves, Pebbles, Twigs, Moss Patches) ---------
+
+typedef enum {
+    MAP_DEBRIS_LEAF = 0,    // Curved 3D fallen autumn leaf (ginkgo / maple / dead leaves)
+    MAP_DEBRIS_PEBBLE,      // Rounded river pebble / scree stone
+    MAP_DEBRIS_TWIG,        // Fallen forest twig / woody branch
+    MAP_DEBRIS_MOSS,        // Ground-hugging velvety moss clump
+    MAP_DEBRIS_TYPE_COUNT
+} MapDebrisType;
+
+typedef struct {
+    Vector3 position;
+    float rotationDeg;
+    float scale;
+    Color color;
+    unsigned char type;     // MapDebrisType
+} MapDebrisPlacement;
+
+typedef struct {
+    Model models[MAP_DEBRIS_TYPE_COUNT];
+    bool modelLoaded[MAP_DEBRIS_TYPE_COUNT];
+    int placementCount;
+    float drawDistance;     // Default: 32.0m
+    bool ready;
+} MapDebrisSystem;
+
+MapDebrisSystem MapProp_CreateDebrisSystem(
+    const MapDebrisPlacement *placements, int count, float drawDistance);
+void MapProp_DrawDebrisSystem(const MapDebrisSystem *debris, Vector3 cameraPosition);
+void MapProp_DrawDebrisShadowCasters(const MapDebrisSystem *debris);
+void MapProp_UnloadDebrisSystem(MapDebrisSystem *debris);
 
 
 typedef enum {

@@ -200,3 +200,22 @@
 - **Symptom:** the southern portion of a dense map loses vegetation at a straight row boundary.
 - **Cause:** the placement scan stopped as soon as its capacity filled.
 - **Rule:** scan eligible habitat and use deterministic reservoir selection with a separate RNG. A storage budget must not become a geographic cutoff.
+
+### White rectangular cards appear across shoreline reeds
+
+- **Symptom:** Ugly opaque white rectangular cards or paper billboards appear scattered across wetland or river reed thickets.
+- **Cause:** `hasPlumes = true` in `MapMeadowStyle` with `texturePath == NULL`. `map_props_nature.inl` fell back to generating planar quad cards intended for plume textures, but rendered them as flat white polygons.
+- **Rule:** Default `hasReedPlumes = false` and `hasPlumes = false`. Shoreline reeds should always render as elegant 3D tapered blades with multi-segment Bézier curves unless an explicit plume alpha cutout texture is supplied.
+
+### Ground ecology texture assignment overwrites the primary splatmap
+
+- **Symptom:** Ground splatting disappears and the terrain surface collapses into a flat single-texture look as soon as ecology or habitat is set.
+- **Cause:** `MapProp_SetGroundEcology` was assigning `habitatTexture` to `MATERIAL_MAP_DIFFUSE` (slot 0), directly overwriting `texSplat`.
+- **Rule:** Keep `texSplat` bound at slot 0 (`MATERIAL_MAP_DIFFUSE`), bind `u_ecology` to `MATERIAL_MAP_OCCLUSION` (slot 4), and bind macro debris to slot 9 (`GROUND_DEBRIS_TEXTURE_SLOT`). Test with `test_ground_binding.py`.
+
+### Billboard texture atlases degrade Xianxia botanical aesthetic
+
+- **Symptom:** Wildflowers appear as flat paper billboards or low-resolution sprites that break immersion under isometric or orbiting camera views.
+- **Cause:** Authoring flower fields with texture atlas cards (`petalTexturePath != NULL`).
+- **Rule:** Always set `petalTexturePath = NULL` in `MapFloraSystem` / `MapProp_CreateFlowerField`. The engine's procedural 3D phyllotaxis petal and pollen dome generator constructs rich geometric flowers with per-vertex lighting, two-sided transmission, and 8 Xianxia botanical palettes without atlas artifacts.
+

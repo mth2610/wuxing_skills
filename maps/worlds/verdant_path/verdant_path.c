@@ -38,22 +38,13 @@ static const Vector3 kLakeCenter = {63.0f, 0.0f, 25.5f};
 static const float kLakeRadiusX = 10.5f;
 static const float kLakeRadiusZ = 7.4f;
 
-static const Vector3 kFlowerCenters[FLOWER_CLUSTER_COUNT] = {
-    {27.0f, 0.0f, 20.0f}, // Cluster 0: Northwest meadow clearing
-    {28.0f, 0.0f, 52.0f}, // Cluster 1: South meadow & main overview view
-    {64.0f, 0.0f, 36.5f}, // Cluster 2: South lake bank
-    {48.0f, 0.0f, 29.0f}, // Cluster 3: Fork to lake path
-    {75.0f, 0.0f, 50.0f}, // Cluster 4: Southeast sunny knoll
-    {54.0f, 0.0f, 17.5f}, // Cluster 5: North lake bank wildflowers
-};
-
-static const Vector3 kFlowerRadii[FLOWER_CLUSTER_COUNT] = {
-    {14.0f, 0.0f, 10.0f},
-    {18.0f, 0.0f, 15.0f},
-    {8.5f,  0.0f, 6.0f},
-    {10.5f, 0.0f, 7.5f},
-    {15.0f, 0.0f, 11.5f},
-    {12.0f, 0.0f, 8.5f},
+static const MapFloraFlowerCluster VERDANT_FLOWER_CLUSTERS[FLOWER_CLUSTER_COUNT] = {
+    {{27.0f, 0.0f, 20.0f}, {14.0f, 10.0f}, FLOWERS_PER_CLUSTER, 0, {0, 4, 5, 6}, {0}, {0}, {218, 185, 65, 255}},
+    {{28.0f, 0.0f, 52.0f}, {18.0f, 15.0f}, FLOWERS_PER_CLUSTER, 1, {1, 2, 7, 0}, {0}, {0}, {112, 70, 38, 255}},
+    {{64.0f, 0.0f, 36.5f}, {8.5f,  6.0f},  FLOWERS_PER_CLUSTER, 0, {0, 7, 4, 1}, {0}, {0}, {191, 159, 82, 255}},
+    {{48.0f, 0.0f, 29.0f}, {10.5f, 7.5f},  FLOWERS_PER_CLUSTER, 3, {3, 6, 4, 1}, {0}, {0}, {78, 70, 125, 255}},
+    {{75.0f, 0.0f, 50.0f}, {15.0f, 11.5f}, FLOWERS_PER_CLUSTER, 1, {1, 0, 7, 4}, {0}, {0}, {120, 85, 45, 255}},
+    {{54.0f, 0.0f, 17.5f}, {12.0f, 8.5f},  FLOWERS_PER_CLUSTER, 0, {0, 3, 6, 5}, {0}, {0}, {210, 175, 75, 255}},
 };
 
 static const MapZone ISLAND_ZONES[] = {
@@ -102,11 +93,10 @@ static Texture2D s_farSunbeamTexture = {0};
 static MapMeadowPlacement s_grassPlacements[GRASS_TUFT_CAPACITY];
 static MapFlowerPlacement s_flowerPlacements[FLOWER_COUNT];
 static MapMeadowPlacement s_reedPlacements[REED_COUNT];
-static MapMeadowSurface s_meadow;
-static MapMeadowSurface s_reedMeadow;
-static MapFlowerField s_flowerFields[FLOWER_CLUSTER_COUNT];
+static MapFloraSystem s_flora;
 static MapWaterSurface s_lake;
 static int s_grassCount = 0;
+static int s_reedCount = 0;
 static bool s_shadowWasEnabled = false;
 static float s_time = 0.0f;
 static bool s_ready = false;
@@ -215,27 +205,6 @@ static bool IsNearPath(float x, float z, float margin)
     return DistanceToPaths(x, z) < margin;
 }
 
-static Color FlowerSpeciesColor(int variant, bool accent)
-{
-    static const Color primary[8] = {
-        {252, 250, 242, 255}, // 0: ivory white daisy
-        {255, 212, 48, 255},  // 1: warm golden buttercup
-        {232, 54, 42, 255},   // 2: vermilion crimson poppy
-        {88, 148, 242, 255},  // 3: heavenly sapphire cornflower
-        {248, 142, 175, 255}, // 4: wild peach-rose pink
-        {208, 88, 156, 255},  // 5: orchid magenta cosmos
-        {158, 128, 232, 255}, // 6: gentle lavender violet
-        {255, 240, 168, 255}, // 7: pale primrose cream
-    };
-    static const Color secondary[8] = {
-        {255, 246, 228, 255}, {255, 185, 28, 255},  {198, 32, 36, 255},
-        {64, 118, 224, 255},  {242, 112, 148, 255}, {178, 52, 126, 255},
-        {134, 98, 216, 255},  {255, 220, 130, 255},
-    };
-    variant &= 7;
-    return accent ? secondary[variant] : primary[variant];
-}
-
 static float VerdantGrassDensitySource(float x, float z, void *userData)
 {
     (void)userData;
@@ -265,23 +234,8 @@ static float VerdantGrassDensitySource(float x, float z, void *userData)
     patch = patch * patch * (3.0f - 2.0f * patch);
     float macro = 0.45f + 0.55f * patch;
 
-    // Flowers grow through a shorter, sparser meadow underlayer. A zero-density
-    // clearing exposes a large dark disc at gameplay distance and makes the
-    // flower clusters look planted on bare soil instead of part of the meadow.
-    float flowerSuppression = 1.0f;
-    for (int c = 0; c < FLOWER_CLUSTER_COUNT; c++) {
-        float dx = (x - kFlowerCenters[c].x) / kFlowerRadii[c].x;
-        float dz = (z - kFlowerCenters[c].z) / kFlowerRadii[c].z;
-        float d2 = dx * dx + dz * dz;
-        if (d2 < 1.25f) {
-            // Keep enough cover to connect the flowers to the surrounding turf.
-            // The broad fade still gives blooms room to read individually.
-            float localFactor = fmaxf(0.50f, (d2 - 0.40f) / 0.85f);
-            if (localFactor < flowerSuppression) {
-                flowerSuppression = localFactor;
-            }
-        }
-    }
+    // Flowers grow through a shorter, sparser meadow underlayer.
+    float flowerSuppression = MapFlora_EvaluateFlowerSuppression(x, z, VERDANT_FLOWER_CLUSTERS, FLOWER_CLUSTER_COUNT);
     macro *= flowerSuppression;
 
     return fmaxf(0.0f, fminf(1.0f, macro * edgeFade * pathFade));
@@ -300,6 +254,18 @@ static bool VerdantEcologyEligible(float x, float z, void *userData)
     Vector3 position, normal;
     return MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &position, &normal)
         && normal.y > 0.65f && position.y > -1.0f;
+}
+
+static float VerdantSampleFlowerHeight(float x, float z, void *ctx)
+{
+    (void)ctx;
+    return MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
+}
+
+static bool VerdantIsFlowerExcluded(float x, float z, void *ctx)
+{
+    (void)ctx;
+    return IsInsideLake(x, z, 0.85f) || DistanceToPaths(x, z) < 1.30f;
 }
 
 static void BuildMeadowLayout(void)
@@ -354,13 +320,7 @@ static void BuildMeadowLayout(void)
         if (s_ecology.ready)
             clump->height *= 0.65f + 0.35f * ecology.coverage;
         // Blooms occupy short understorey within a taller surrounding canopy.
-        float understorey = 1.0f;
-        for (int c = 0; c < FLOWER_CLUSTER_COUNT; c++) {
-            float dx = (cx - kFlowerCenters[c].x) / kFlowerRadii[c].x;
-            float dz = (cz - kFlowerCenters[c].z) / kFlowerRadii[c].z;
-            float blend = fminf(1.0f, fmaxf(0.0f, (dx*dx + dz*dz - 0.35f) / 0.90f));
-            understorey = fminf(understorey, 0.35f + 0.65f * blend*blend*(3.0f - 2.0f*blend));
-        }
+        float understorey = MapFlora_EvaluateFlowerUnderstorey(cx, cz, VERDANT_FLOWER_CLUSTERS, FLOWER_CLUSTER_COUNT);
         clump->height *= understorey;
         clump->radius = 0.22f + biome * 0.06f;
         clump->height *= 0.85f + 0.30f * (localHeight - 0.34f) / 0.20f;
@@ -377,94 +337,12 @@ static void BuildMeadowLayout(void)
         clump->radius *= (1.20f - 0.20f * pathTaper);
     }
 
-    for (int i = 0; i < FLOWER_COUNT; i++) {
-        int cluster = i / FLOWERS_PER_CLUSTER;
-        int localIndex = i % FLOWERS_PER_CLUSTER;
-
-        // 3 organic colony epicenters per cluster, positioned along organic wind/terrain axes
-        float clusterSeedAngle = (float)cluster * 1.047f + 0.35f;
-        Vector2 epicenters[3];
-        for (int c = 0; c < 3; c++) {
-            float epAngle = clusterSeedAngle + (float)c * 2.094f + 0.35f * sinf((float)(cluster * 7 + c * 3));
-            float epDist = 0.32f + 0.20f * cosf((float)(cluster * 3 + c * 5));
-            epicenters[c] = (Vector2){cosf(epAngle) * epDist, sinf(epAngle) * epDist};
-        }
-
-        // Each flower belongs to one of the 3 colony drifts, or is a loose meadow blossom
-        int colony = localIndex % 3;
-        if (Random01(&rng) < 0.20f) colony = (colony + 1) % 3; // intermingled colony edges
-        bool isColony = Random01(&rng) < 0.80f;
-
-        float x = kFlowerCenters[cluster].x;
-        float z = kFlowerCenters[cluster].z;
-        for (int attempt = 0; attempt < 24; attempt++) {
-            float angle = RandomRange(&rng, 0.0f, 2.0f * PI);
-            // Exponential falloff for dense organic heart with feathered margins
-            float rVal = powf(Random01(&rng), 1.35f);
-            if (isColony) {
-                // Wind-elongated elliptical dispersal along landscape flow (~45 deg)
-                float flowAngle = 0.785f + 0.30f * sinf(kFlowerCenters[cluster].x * 0.12f + (float)cluster);
-                float along = cosf(angle) * rVal * 0.46f;
-                float across = sinf(angle) * rVal * 0.26f;
-                float dxNorm = epicenters[colony].x + (cosf(flowAngle) * along - sinf(flowAngle) * across);
-                float dzNorm = epicenters[colony].y + (sinf(flowAngle) * along + cosf(flowAngle) * across);
-                x = kFlowerCenters[cluster].x + dxNorm * kFlowerRadii[cluster].x;
-                z = kFlowerCenters[cluster].z + dzNorm * kFlowerRadii[cluster].z;
-            } else {
-                // Loose wild meadow blossoms scattered in the surrounding grass
-                x = kFlowerCenters[cluster].x + cosf(angle) * kFlowerRadii[cluster].x * (0.35f + 0.65f * rVal);
-                z = kFlowerCenters[cluster].z + sinf(angle) * kFlowerRadii[cluster].z * (0.35f + 0.65f * rVal);
-            }
-            if (IsInsideLake(x, z, 0.85f) || DistanceToPaths(x, z) < 1.30f)
-                continue;
-
-            // Blue noise / Poisson minimum distance enforcement: avoid intersecting flowers
-            bool tooClose = false;
-            for (int prev = cluster * FLOWERS_PER_CLUSTER; prev < i; prev++) {
-                float pdx = x - s_flowerPlacements[prev].position.x;
-                float pdz = z - s_flowerPlacements[prev].position.z;
-                if (pdx * pdx + pdz * pdz < 0.055f * 0.055f) {
-                    tooClose = true;
-                    break;
-                }
-            }
-            if (!tooClose || attempt >= 23)
-                break;
-        }
-        float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
-        s_flowerPlacements[i].position = (Vector3){x, gy + 0.014f, z};
-        s_flowerPlacements[i].rotationDeg = RandomRange(&rng, 0.0f, 360.0f);
-        s_flowerPlacements[i].phase = Random01(&rng);
-
-        static const unsigned char speciesByCluster[FLOWER_CLUSTER_COUNT][4] = {
-            {0, 4, 5, 6}, // Ivory Daisy drift -> Peach Blossom -> Orchid Cosmos -> Lavender
-            {1, 2, 7, 0}, // Golden Buttercup drift -> Scarlet Poppy -> Primrose -> Daisy
-            {0, 7, 4, 1}, // South lake bank: ivory, primrose, peach and warm buttercup
-            {3, 6, 4, 1}, // Sapphire Cornflower drift -> Lavender -> Wild Rose -> Buttercup
-            {1, 0, 7, 4}, // Southeast knoll: buttercup, daisy, primrose, peach
-            {0, 3, 6, 5}, // North bank: daisy, cornflower, lavender, cosmos
-        };
-        int variant;
-        if (isColony) {
-            // Colony signature species with occasional wild hybrid/companion (16%)
-            variant = speciesByCluster[cluster][colony];
-            if (Random01(&rng) < 0.16f)
-                variant = speciesByCluster[cluster][3]; // companion accent blossom
-        } else {
-            // Stray blossoms can be any companion species
-            variant = speciesByCluster[cluster][(int)(Random01(&rng) * 4.0f) % 4];
-        }
-        bool tallAccent = variant == 2 || variant == 4 || variant == 6;
-
-        float driftHeightBase = tallAccent ? 0.44f : 0.36f;
-        s_flowerPlacements[i].height = driftHeightBase + RandomRange(&rng, -0.02f, 0.05f);
-        s_flowerPlacements[i].bloomRadius = (tallAccent ? 0.105f : 0.082f) * RandomRange(&rng, 0.95f, 1.15f);
-        s_flowerPlacements[i].petalColor = FlowerSpeciesColor(
-            variant, Random01(&rng) > 0.85f);
-        s_flowerPlacements[i].petalCount = (unsigned char)(4 + (variant % 3));
-        s_flowerPlacements[i].bloomVariant = (unsigned char)variant;
-        s_flowerPlacements[i].petalLengthScale = RandomRange(&rng, 0.92f, 1.15f);
-    }
+    // Generalized procedural 3D wildflower colony placement
+    MapFlora_GenerateFlowerPlacements(
+        s_flowerPlacements, FLOWER_COUNT,
+        VERDANT_FLOWER_CLUSTERS, FLOWER_CLUSTER_COUNT,
+        VerdantSampleFlowerHeight, VerdantIsFlowerExcluded, NULL,
+        0x51a7c3u);
 
     // Wetland Reeds organized into 3 natural thicket bays
     int validReeds = 0;
@@ -497,20 +375,14 @@ static void BuildMeadowLayout(void)
         s_reedPlacements[validReeds].phase = Random01(&rng);
         validReeds++;
     }
+    s_reedCount = validReeds;
 }
 
 static void DrawVerdantShadowCasters(Shader depthShader, void *userData)
 {
     (void)depthShader;
     (void)userData;
-    Vector3 offset = {0};
-    Vector2 wind = {0.86f, 0.51f};
-    MapProp_DrawMeadowShadowCasters(&s_meadow, offset, s_time, wind, 0.035f);
-    MapProp_DrawMeadowShadowCasters(&s_reedMeadow, offset, s_time, wind, 0.11f);
-    for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
-        MapProp_DrawFlowerFieldShadowCaster(&s_flowerFields[cluster], offset,
-                                             s_time, wind, 0.032f);
-    }
+    MapProp_DrawFloraShadowCasters(&s_flora);
 }
 
 static void CaptureVerdantStaticShadows(void)
@@ -741,42 +613,22 @@ void InitVerdantPathMap(void)
                                  s_rockPlacements[i].radiusScale * 0.92f, 0.75f);
     }
     BuildMeadowLayout();
-    s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
-        (MapMeadowStyle){
-            .rootColor = {18, 34, 16, 255}, .tipColor = {136, 186, 54, 255},
-            .bladesPerClump = 6, .bladeSegments = 3, .bladeWidthScale = 0.17f,
-            .chunkSize = 12.0f, .lodDistance = 32.0f, .midLodDistance = 16.0f, .drawDistance = 58.0f,
-            .shadowDistance = 14.0f,
-            .texturePath = NULL,
-            .botanicalVariation = 1.0f,
-            .growthForm = MAP_MEADOW_GROWTH_GRASS,
+    s_flora = MapProp_CreateFloraSystem(
+        s_grassPlacements, s_grassCount,
+        s_reedPlacements, s_reedCount,
+        s_flowerPlacements, VERDANT_FLOWER_CLUSTERS, FLOWER_CLUSTER_COUNT,
+        (MapFloraStyle){
+            .grassRootColor = {18, 34, 16, 255},
+            .grassTipColor  = {136, 186, 54, 255},
+            .bladesPerClump = 6,
+            .bladeSegments  = 4,
+            .bladeWidthScale = 0.17f,
+            .lodDistance = 28.0f,
+            .drawDistance = 58.0f,
+            .reedRootColor = {26, 42, 20, 255},
+            .reedTipColor  = {136, 172, 82, 255},
+            .hasReedPlumes = false,
         });
-    s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, REED_COUNT,
-        (MapMeadowStyle){
-            .rootColor = {26, 42, 20, 255}, .tipColor = {136, 172, 82, 255},
-            .bladesPerClump = 7, .bladeSegments = 3, .bladeWidthScale = 0.14f,
-            .chunkSize = 18.0f, .lodDistance = 36.0f, .midLodDistance = 18.0f, .drawDistance = 65.0f,
-            .shadowDistance = 12.0f,
-            .texturePath = NULL,
-            .hasPlumes = false,
-            .growthForm = MAP_MEADOW_GROWTH_REED,
-        });
-    static const Color clusterCenters[FLOWER_CLUSTER_COUNT] = {
-        {218, 185, 65, 255},  // Cluster 0: pale daisy golden center
-        {112, 70, 38, 255},   // Cluster 1: poppy/buttercup warm deep amber
-        {191, 159, 82, 255},  // Cluster 2: warm lake-bank flowers
-        {78, 70, 125, 255},   // Cluster 3: cornflower violet-indigo core
-        {120, 85, 45, 255},   // Cluster 4: sunny knoll golden amber
-        {210, 175, 75, 255},  // Cluster 5: north bank wildflowers
-    };
-    for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
-        s_flowerFields[cluster] = MapProp_CreateFlowerField(
-            &s_flowerPlacements[cluster * FLOWERS_PER_CLUSTER], FLOWERS_PER_CLUSTER,
-            (Color){91, 120, 65, 255}, clusterCenters[cluster],
-            NULL, 0.0f, 1, 1);
-        MapProp_SetFlowerFieldDrawDistance(&s_flowerFields[cluster], 78.0f);
-        MapProp_SetFlowerFieldLod(&s_flowerFields[cluster], 34.0f, 30.0f);
-    }
     EnvShadow_SetFocus(kMapCenter, 20.0f);
     EnvShadow_SetMapCasterCallback(DrawVerdantShadowCasters, NULL);
     // World-fixed terrain/rocks are captured now when enabled, or lazily after
@@ -801,10 +653,7 @@ void UpdateVerdantPathMap(float dt)
         }
         double mark = profileEnabled ? GetTime() : 0.0;
         s_time += dt;
-        // Stage grass visibility before any framebuffer capture or scene draw.
-        // Late uploads split the scene pass and copy its full depth attachment.
-        MapProp_PrepareMeadow(&s_meadow, (Vector3){0});
-        MapProp_PrepareMeadow(&s_reedMeadow, (Vector3){0});
+        MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
         MapProp_UpdateWaterSurface(&s_lake, dt);
         if (profileEnabled) {
             double now = GetTime(); profileMs[0] += (now - mark) * 1000.0; mark = now;
@@ -902,20 +751,11 @@ void DrawVerdantPathMap(void)
     V_MARK("op_terrain");
     MapProp_DrawRocks(&s_rocks, s_rockPlacements, ROCK_COUNT, true);
     V_MARK("op_rocks");
-    MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
-    V_MARK("op_grass_early");
+    MapProp_DrawFloraSystem(&s_flora);
+    V_MARK("op_flora");
     MapProp_DrawSkyDome(&s_sky);
     if (!getenv("WUXING_NO_CLOUD_SEA")) MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
     V_MARK("op_cloudsea");
-    V_MARK("op_grass");
-    MapProp_DrawMeadow(&s_reedMeadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.11f);
-    V_MARK("op_reeds");
-    // Lake bed is seamlessly integrated into the sunken ground mesh (op_terrain)
-    for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++) {
-        MapProp_DrawFlowerField(&s_flowerFields[cluster], (Vector3){0}, s_time,
-                                (Vector2){0.86f, 0.51f}, 0.032f);
-    }
-    V_MARK("op_flowers");
 }
 
 void DrawTransparentVerdantPathMap(void)
@@ -942,10 +782,7 @@ void UnloadVerdantPathMap(void)
         s_farSunbeamTexture = (Texture2D){0};
     }
     MapProp_UnloadWaterSurface(&s_lake);
-    for (int cluster = 0; cluster < FLOWER_CLUSTER_COUNT; cluster++)
-        MapProp_UnloadFlowerField(&s_flowerFields[cluster]);
-    MapProp_UnloadMeadow(&s_reedMeadow);
-    MapProp_UnloadMeadow(&s_meadow);
+    MapProp_UnloadFloraSystem(&s_flora);
     MapProp_UnloadCloudSea(&s_cloudSea);
     MapProp_UnloadRocks(&s_rocks);
     MapProp_UnloadSkyDome(&s_sky);

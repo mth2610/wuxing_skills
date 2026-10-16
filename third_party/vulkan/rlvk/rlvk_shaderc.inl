@@ -120,9 +120,12 @@ static const char *rlvkDefaultFShaderCode =
 // Returns NULL when nothing needed renaming; else an RL_MALLOC'd rewritten copy.
 static char *rlvkSanitizeGlsl(const char *src)
 {
-    static const char *bad = "sampler";
-    static const char *fix = "sampler_";
-    size_t badLen = strlen(bad), fixLen = strlen(fix);
+    if (!src)
+        return NULL;
+    static const char bad[] = "sampler";
+    static const char fix[] = "sampler_";
+    const size_t badLen = sizeof(bad) - 1;
+    const size_t fixLen = sizeof(fix) - 1;
     size_t n = 0;
 
     for (const char *c = strstr(src, bad); c; c = strstr(c + badLen, bad))
@@ -136,14 +139,17 @@ static char *rlvkSanitizeGlsl(const char *src)
     if (n == 0)
         return NULL;
 
-    char *out = (char *)RL_MALLOC(strlen(src) + n * (fixLen - badLen) + 1);
+    size_t srcLen = strlen(src);
+    char *out = (char *)RL_MALLOC(srcLen + n * (fixLen - badLen) + 1);
+    if (!out)
+        return NULL;
     char *w = out;
     const char *r = src;
     const char *nextMatch;
 
     while ((nextMatch = strstr(r, bad)) != NULL)
     {
-        size_t chunk = nextMatch - r;
+        size_t chunk = (size_t)(nextMatch - r);
         memcpy(w, r, chunk);
         w += chunk;
         r = nextMatch;
@@ -163,7 +169,8 @@ static char *rlvkSanitizeGlsl(const char *src)
             *w++ = *r++;
         }
     }
-    strcpy(w, r);
+    size_t tailLen = srcLen - (size_t)(r - src);
+    memcpy(w, r, tailLen + 1);
     return out;
 }
 
@@ -174,11 +181,15 @@ static char *rlvkSanitizeGlsl(const char *src)
 // deliberately not used. Returns an RL_MALLOC'd rewritten copy.
 static char *rlvkInjectClipZEpilogue(const char *src)
 {
-    static const char *epilogue =
+    if (!src)
+        return NULL;
+    static const char epilogue[] =
         "\nvoid main() { rlvk_main_(); gl_Position.z = (gl_Position.z + gl_Position.w)*0.5; }\n";
-    static const char *bad = "main";
-    static const char *fix = "rlvk_main_";
-    size_t badLen = strlen(bad), fixLen = strlen(fix);
+    static const char bad[] = "main";
+    static const char fix[] = "rlvk_main_";
+    const size_t badLen = sizeof(bad) - 1;
+    const size_t fixLen = sizeof(fix) - 1;
+    const size_t epiLen = sizeof(epilogue) - 1;
     size_t n = 0;
 
     for (const char *c = strstr(src, bad); c; c = strstr(c + badLen, bad))
@@ -190,14 +201,17 @@ static char *rlvkInjectClipZEpilogue(const char *src)
             n++;
     }
 
-    char *out = (char *)RL_MALLOC(strlen(src) + n * (fixLen - badLen) + strlen(epilogue) + 1);
+    size_t srcLen = strlen(src);
+    char *out = (char *)RL_MALLOC(srcLen + n * (fixLen - badLen) + epiLen + 1);
+    if (!out)
+        return NULL;
     char *w = out;
     const char *r = src;
     const char *nextMatch;
 
     while ((nextMatch = strstr(r, bad)) != NULL)
     {
-        size_t chunk = nextMatch - r;
+        size_t chunk = (size_t)(nextMatch - r);
         memcpy(w, r, chunk);
         w += chunk;
         r = nextMatch;
@@ -217,8 +231,10 @@ static char *rlvkInjectClipZEpilogue(const char *src)
             *w++ = *r++;
         }
     }
-    strcpy(w, r);
-    strcat(w, epilogue);
+    size_t tailLen = srcLen - (size_t)(r - src);
+    memcpy(w, r, tailLen);
+    w += tailLen;
+    memcpy(w, epilogue, epiLen + 1);
     return out;
 }
 
@@ -237,21 +253,15 @@ static bool rlvkCompileGlsl(const char *source, int stage /*0=vs 1=fs 2=cs*/, u3
     p_shaderc_compile_options_set_target_env(opts, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_1);
     p_shaderc_compile_options_set_vulkan_rules_relaxed(opts, true);
     // NOTE: spirv-opt stays OFF: it strips the symbol names reflection needs, and gains only
-    // ~0.15% even with debug info kept. The residual ~2% fragment-ALU deficit vs rlgl was
-    // isolated to NVIDIA's separate GL/Vulkan compiler backends (controlled three-way test,
-    // all spec-level levers audited); not addressable from application code, recheck after
-    // driver updates.
+    // ~0.15% even with debug info kept.
     p_shaderc_compile_options_set_auto_bind_uniforms(opts, true);
     p_shaderc_compile_options_set_auto_map_locations(opts, true);
     p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_vertex_shader, shaderc_uniform_kind_buffer, RLVK_UBO_BINDING_VS);
     p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_fragment_shader, shaderc_uniform_kind_buffer, RLVK_UBO_BINDING_FS);
-    // Vertex-stage samplers start at binding 8 so they never collide with FS samplers (0..7):
-    // both stages auto-bind from 0 otherwise (vertex texture fetch, e.g. displacement maps)
+    // Vertex-stage samplers start at binding 8 so they never collide with FS samplers (0..7)
     p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_vertex_shader, shaderc_uniform_kind_texture, 8);
     p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_vertex_shader, shaderc_uniform_kind_sampler, 8);
     // Compute stage: auto-bound resources land in the fixed compute set-0 layout ranges
-    // (SSBOs declare explicit std430 bindings 0..7 themselves; images 8..11, samplers 12..13,
-    // the implicit loose-uniform block at 14)
     p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_compute_shader, shaderc_uniform_kind_image, 8);
     p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_compute_shader, shaderc_uniform_kind_texture, 12);
     p_shaderc_compile_options_set_binding_base_for_stage(opts, shaderc_compute_shader, shaderc_uniform_kind_sampler, 12);
@@ -273,13 +283,19 @@ static bool rlvkCompileGlsl(const char *source, int stage /*0=vs 1=fs 2=cs*/, u3
     }
     size_t bytes = p_shaderc_result_get_length(res);
     *outWords = (u32 *)RL_MALLOC(bytes);
+    if (!*outWords)
+    {
+        p_shaderc_result_release(res);
+        return false;
+    }
     memcpy(*outWords, p_shaderc_result_get_bytes(res), bytes);
     *outWordCount = bytes / 4;
     p_shaderc_result_release(res);
-    if (getenv("RLVK_DUMP_SPV")) // debug: write the module for spirv-dis inspection
+    const char *dumpSpvDir = getenv("RLVK_DUMP_SPV");
+    if (dumpSpvDir) // debug: write the module for spirv-dis inspection
     {
         char path[256];
-        snprintf(path, sizeof(path), "%s/rlvk_dump_stage%d.spv", getenv("RLVK_DUMP_SPV"), stage);
+        snprintf(path, sizeof(path), "%s/rlvk_dump_stage%d.spv", dumpSpvDir, stage);
         FILE *f = fopen(path, "wb");
         if (f)
         {
@@ -318,6 +334,48 @@ typedef struct rlvkSpvReflection
     int memberCount, samplerCount, inputCount, outputCount;
     bool hasBlock;
 } rlvkSpvReflection;
+
+typedef struct rlvkSpvMemberName
+{
+    u32 structId, member;
+    const char *name;
+} rlvkSpvMemberName;
+
+typedef struct rlvkSpvMemberOff
+{
+    u32 structId, member, offset;
+} rlvkSpvMemberOff;
+
+typedef struct rlvkSpvStruct
+{
+    u32 id;
+    u32 members[RLVK_MAX_SHADER_UNIFORMS];
+    u32 count;
+} rlvkSpvStruct;
+
+static inline int rlvkFindSpvStruct(const rlvkSpvStruct *structs, int structCount, u32 sid)
+{
+    for (int t = 0; t < structCount; t++)
+        if (structs[t].id == sid)
+            return t;
+    return -1;
+}
+
+static inline const char *rlvkFindSpvMemberName(const rlvkSpvMemberName *mnames, int mnameCount, u32 sid, u32 m)
+{
+    for (int t = 0; t < mnameCount; t++)
+        if (mnames[t].structId == sid && mnames[t].member == m)
+            return mnames[t].name;
+    return NULL;
+}
+
+static inline u32 rlvkFindSpvMemberOff(const rlvkSpvMemberOff *moffs, int moffCount, u32 sid, u32 m)
+{
+    for (int t = 0; t < moffCount; t++)
+        if (moffs[t].structId == sid && moffs[t].member == m)
+            return moffs[t].offset;
+    return 0;
+}
 
 // Reflect a SPIR-V module: default uniform block members, samplers and vertex inputs
 static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *out)
@@ -361,30 +419,16 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
         idLoc[k] = -1;
     }
 
-    struct
-    {
-        u32 structId, member;
-        const char *name;
-    } mnames[256];
+    rlvkSpvMemberName mnames[512];
     int mnameCount = 0;
-    struct
-    {
-        u32 structId, member, offset;
-    } moffs[256];
+    rlvkSpvMemberOff moffs[512];
     int moffCount = 0;
     struct
     {
         u32 id, ptrTypeId, storage;
     } vars[128];
     int varCount = 0;
-    struct
-    {
-        u32 id;
-        // The default uniform block is one struct. Keep every supported
-        // uniform; truncating at 32 silently loses later camera/LOD controls.
-        u32 members[RLVK_MAX_SHADER_UNIFORMS];
-        u32 count;
-    } structs[32];
+    rlvkSpvStruct structs[32];
     int structCount = 0;
 
     size_t i = 5;
@@ -402,7 +446,7 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
                 idName[a[0]] = (const char *)&a[1];
             break;
         case SpvOpMemberName:
-            if (mnameCount < 256)
+            if (mnameCount < 512)
             {
                 mnames[mnameCount].structId = a[0];
                 mnames[mnameCount].member = a[1];
@@ -415,7 +459,8 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
             {
                 structs[structCount].id = a[0];
                 structs[structCount].count = (len - 2 < RLVK_MAX_SHADER_UNIFORMS)
-                    ? (len - 2) : RLVK_MAX_SHADER_UNIFORMS;
+                                                 ? (len - 2)
+                                                 : RLVK_MAX_SHADER_UNIFORMS;
                 for (u32 m = 0; m < structs[structCount].count; m++)
                     structs[structCount].members[m] = a[1 + m];
                 structCount++;
@@ -454,7 +499,7 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
                 arrStride[a[0]] = a[2];
             break;
         case SpvOpMemberDecorate:
-            if (a[2] == SpvDecorationOffset && moffCount < 256)
+            if (a[2] == SpvDecorationOffset && moffCount < 512)
             {
                 moffs[moffCount].structId = a[0];
                 moffs[moffCount].member = a[1];
@@ -468,10 +513,6 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
         i += len;
     }
 
-#define RLVK_FIND_STRUCT(_sid) ({ int _f = -1; for (int _t = 0; _t < structCount; _t++) if (structs[_t].id == (_sid)) { _f = _t; break; } _f; })
-#define RLVK_MEMBER_NAME(_sid, _m) ({ const char *_n = NULL; for (int _t = 0; _t < mnameCount; _t++) if (mnames[_t].structId == (_sid) && mnames[_t].member == (_m)) { _n = mnames[_t].name; break; } _n; })
-#define RLVK_MEMBER_OFF(_sid, _m) ({ u32 _o = 0; for (int _t = 0; _t < moffCount; _t++) if (moffs[_t].structId == (_sid) && moffs[_t].member == (_m)) { _o = moffs[_t].offset; break; } _o; })
-
     for (int v = 0; v < varCount; v++)
     {
         const char *name = (vars[v].id < bound) ? idName[vars[v].id] : NULL;
@@ -484,13 +525,13 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
 
             out->hasBlock = true;
             out->blockBinding = (idBinding[vars[v].id] >= 0) ? (u32)idBinding[vars[v].id] : 0;
-            int bs = RLVK_FIND_STRUCT(structId);
+            int bs = rlvkFindSpvStruct(structs, structCount, structId);
             u32 maxOff = 0;
             if (bs >= 0)
                 for (u32 m = 0; m < structs[bs].count; m++)
                 {
-                    const char *mn = RLVK_MEMBER_NAME(structId, m);
-                    u32 mo = RLVK_MEMBER_OFF(structId, m);
+                    const char *mn = rlvkFindSpvMemberName(mnames, mnameCount, structId, m);
+                    u32 mo = rlvkFindSpvMemberOff(moffs, moffCount, structId, m);
                     if (mo > maxOff)
                         maxOff = mo;
                     if (!mn)
@@ -500,7 +541,7 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
                     // Array of structs (e.g. "uniform Light lights[4]"): flatten to "lights[i].member",
                     // the composite names GL's glGetUniformLocation exposes and rlights.h queries.
                     u32 elemT = (T < bound) ? arrElem[T] : 0;
-                    int es = elemT ? RLVK_FIND_STRUCT(elemT) : -1;
+                    int es = elemT ? rlvkFindSpvStruct(structs, structCount, elemT) : -1;
                     if (es >= 0)
                     {
                         u32 stride = arrStride[T];
@@ -510,11 +551,11 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
                         for (u32 e = 0; e < count; e++)
                             for (u32 sm = 0; sm < structs[es].count; sm++)
                             {
-                                const char *sn = RLVK_MEMBER_NAME(elemT, sm);
+                                const char *sn = rlvkFindSpvMemberName(mnames, mnameCount, elemT, sm);
                                 if (!sn || out->memberCount >= RLVK_MAX_SHADER_UNIFORMS)
                                     continue;
                                 snprintf(out->members[out->memberCount].name, 64, "%s[%u].%s", mn, e, sn);
-                                out->members[out->memberCount].offset = mo + e * stride + RLVK_MEMBER_OFF(elemT, sm);
+                                out->members[out->memberCount].offset = mo + e * stride + rlvkFindSpvMemberOff(moffs, moffCount, elemT, sm);
                                 out->memberCount++;
                             }
                         u32 arrEnd = mo + count * stride;
@@ -523,16 +564,19 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
                         continue;
                     }
                     // Plain struct member: flatten to "name.member"
-                    int ms = (T < bound) ? RLVK_FIND_STRUCT(T) : -1;
+                    int ms = (T < bound) ? rlvkFindSpvStruct(structs, structCount, T) : -1;
                     if (ms >= 0 && idName[T] && strcmp(idName[T], "gl_DefaultUniformBlock") != 0)
                     {
                         for (u32 sm = 0; sm < structs[ms].count; sm++)
                         {
-                            const char *sn = RLVK_MEMBER_NAME(T, sm);
+                            const char *sn = rlvkFindSpvMemberName(mnames, mnameCount, T, sm);
+                            u32 subOff = mo + rlvkFindSpvMemberOff(moffs, moffCount, T, sm);
+                            if (subOff > maxOff)
+                                maxOff = subOff;
                             if (!sn || out->memberCount >= RLVK_MAX_SHADER_UNIFORMS)
                                 continue;
                             snprintf(out->members[out->memberCount].name, 64, "%s.%s", mn, sn);
-                            out->members[out->memberCount].offset = mo + RLVK_MEMBER_OFF(T, sm);
+                            out->members[out->memberCount].offset = subOff;
                             out->memberCount++;
                         }
                         continue;
@@ -541,7 +585,7 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
                     if (out->memberCount < RLVK_MAX_SHADER_UNIFORMS)
                     {
                         strncpy(out->members[out->memberCount].name, mn, 63);
-                        out->members[out->memberCount].name[63] = '\0'; // VÁ LỖI AN TOÀN BỘ NHỚ
+                        out->members[out->memberCount].name[63] = '\0';
                         out->members[out->memberCount].offset = mo;
                         out->memberCount++;
                     }
@@ -562,7 +606,7 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
             if (name && out->samplerCount < RLVK_MAX_TEXTURE_UNITS)
             {
                 strncpy(out->samplers[out->samplerCount].name, name, 63);
-                out->samplers[out->samplerCount].name[63] = '\0'; // VÁ LỖI AN TOÀN BỘ NHỚ
+                out->samplers[out->samplerCount].name[63] = '\0';
                 out->samplers[out->samplerCount].binding = idBinding[vars[v].id];
                 out->samplerCount++;
             }
@@ -572,7 +616,7 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
             if (name && name[0] && strncmp(name, "gl_", 3) != 0 && out->inputCount < 16)
             {
                 strncpy(out->inputs[out->inputCount].name, name, 63);
-                out->inputs[out->inputCount].name[63] = '\0'; // VÁ LỖI AN TOÀN BỘ NHỚ
+                out->inputs[out->inputCount].name[63] = '\0';
                 out->inputs[out->inputCount].location = idLoc[vars[v].id];
                 out->inputCount++;
             }
@@ -582,15 +626,12 @@ static void rlvkReflectSpv(const u32 *spv, size_t wordCount, rlvkSpvReflection *
             if (name && name[0] && strncmp(name, "gl_", 3) != 0 && out->outputCount < 16)
             {
                 strncpy(out->outputs[out->outputCount].name, name, 63);
-                out->outputs[out->outputCount].name[63] = '\0'; // VÁ LỖI AN TOÀN BỘ NHỚ
+                out->outputs[out->outputCount].name[63] = '\0';
                 out->outputs[out->outputCount].location = idLoc[vars[v].id];
                 out->outputCount++;
             }
         }
     }
-#undef RLVK_FIND_STRUCT
-#undef RLVK_MEMBER_NAME
-#undef RLVK_MEMBER_OFF
 
     RL_FREE(idName);
     RL_FREE(idBinding);
@@ -641,6 +682,7 @@ static VkBlendFactor rlvkBlendFactorFromGL(int glf)
         return VK_BLEND_FACTOR_ONE;
     }
 }
+
 // Translate a GL blend equation to the equivalent Vulkan blend operation
 static VkBlendOp rlvkBlendOpFromGL(int gleq)
 {
@@ -664,26 +706,31 @@ static VkBlendOp rlvkBlendOpFromGL(int gleq)
 // Canonical raylib attribute LOCATIONS (mirrors rlgl's glBindAttribLocation calls)
 static int rlvkCanonicalAttribLocation(const char *name)
 {
-    if (strcmp(name, "vertexPosition") == 0)
-        return 0; // RL_DEFAULT_SHADER_ATTRIB_LOCATION_POSITION
-    if (strcmp(name, "vertexTexCoord") == 0)
-        return 1;
-    if (strcmp(name, "vertexNormal") == 0)
-        return 2;
-    if (strcmp(name, "vertexColor") == 0)
-        return 3;
-    if (strcmp(name, "vertexTangent") == 0)
-        return 4;
-    if (strcmp(name, "vertexTexCoord2") == 0)
-        return 5;
-    if (strcmp(name, "vertexBoneIds") == 0)
-        return 7; // RL_DEFAULT_SHADER_ATTRIB_LOCATION_BONEINDICES
-    if (strcmp(name, "vertexBoneIndices") == 0)
-        return 7; // alternate spelling used by stock skinning.vs
-    if (strcmp(name, "vertexBoneWeights") == 0)
-        return 8;
-    if (strcmp(name, "instanceTransform") == 0)
+    if (!name)
+        return -1;
+    if (name[0] == 'v')
+    {
+        if (strcmp(name, "vertexPosition") == 0)
+            return 0; // RL_DEFAULT_SHADER_ATTRIB_LOCATION_POSITION
+        if (strcmp(name, "vertexTexCoord") == 0)
+            return 1;
+        if (strcmp(name, "vertexNormal") == 0)
+            return 2;
+        if (strcmp(name, "vertexColor") == 0)
+            return 3;
+        if (strcmp(name, "vertexTangent") == 0)
+            return 4;
+        if (strcmp(name, "vertexTexCoord2") == 0)
+            return 5;
+        if (strcmp(name, "vertexBoneIds") == 0 || strcmp(name, "vertexBoneIndices") == 0)
+            return 7; // RL_DEFAULT_SHADER_ATTRIB_LOCATION_BONEINDICES
+        if (strcmp(name, "vertexBoneWeights") == 0)
+            return 8;
+    }
+    else if (name[0] == 'i' && strcmp(name, "instanceTransform") == 0)
+    {
         return 9; // mat4: locations 9..12
+    }
     return -1;
 }
 
@@ -749,30 +796,46 @@ static void rlvkCanonicalizeInputLocations(u32 *spv, size_t wordCount)
 // May grow the SPIR-V (decoration insertion); buffer passed by reference.
 static void rlvkRebaseStorageBuffers(u32 **pSpv, size_t *pWordCount, bool injectNonWritable, u32 *outMask)
 {
-    enum { SpvOpTypePointer = 32, SpvOpVariable = 59, SpvOpDecorate = 71,
-           SpvDecorationBufferBlock = 3, SpvDecorationNonWritable = 24, SpvDecorationBinding = 33,
-           SpvStorageUniform = 2, SpvStorageStorageBuffer = 12 };
-    u32 *spv = *pSpv; size_t wordCount = *pWordCount;
+    enum
+    {
+        SpvOpTypePointer = 32,
+        SpvOpVariable = 59,
+        SpvOpDecorate = 71,
+        SpvDecorationBufferBlock = 3,
+        SpvDecorationNonWritable = 24,
+        SpvDecorationBinding = 33,
+        SpvStorageUniform = 2,
+        SpvStorageStorageBuffer = 12
+    };
+    u32 *spv = *pSpv;
+    size_t wordCount = *pWordCount;
     *outMask = 0;
-    if (wordCount < 5 || spv[0] != 0x07230203) return;
+    if (wordCount < 5 || spv[0] != 0x07230203)
+        return;
     u32 bound = spv[3];
-    unsigned char *isBufferBlock = (unsigned char *)RL_CALLOC(bound, 1);   // type ids decorated BufferBlock
-    u32 *ptrPointee = (u32 *)RL_CALLOC(bound, sizeof(u32));                // pointer type -> pointee type
-    unsigned char *ptrStorage = (unsigned char *)RL_CALLOC(bound, 1);     // pointer type -> storage class
-    u32 ssboVars[RLVK_SET0_SSBO_COUNT]; int ssboVarCount = 0;
+    unsigned char *isBufferBlock = (unsigned char *)RL_CALLOC(bound, 1); // type ids decorated BufferBlock
+    u32 *ptrPointee = (u32 *)RL_CALLOC(bound, sizeof(u32));              // pointer type -> pointee type
+    unsigned char *ptrStorage = (unsigned char *)RL_CALLOC(bound, 1);    // pointer type -> storage class
+    u32 ssboVars[RLVK_SET0_SSBO_COUNT];
+    bool hasNonWritable[RLVK_SET0_SSBO_COUNT] = {false};
+    int ssboVarCount = 0;
     size_t firstDecorateAt = 0;
 
     // Pass 1: collect BufferBlock types, pointer map, and the first decoration offset
     size_t i = 5;
     while (i < wordCount)
     {
-        u32 w = spv[i]; u32 op = w & 0xFFFF, len = w >> 16;
-        if (len == 0 || i + len > wordCount) break;
+        u32 w = spv[i];
+        u32 op = w & 0xFFFF, len = w >> 16;
+        if (len == 0 || i + len > wordCount)
+            break;
         const u32 *a = spv + i + 1;
         if (op == SpvOpDecorate)
         {
-            if (!firstDecorateAt) firstDecorateAt = i;
-            if ((a[1] == SpvDecorationBufferBlock) && (a[0] < bound)) isBufferBlock[a[0]] = 1;
+            if (!firstDecorateAt)
+                firstDecorateAt = i;
+            if ((a[1] == SpvDecorationBufferBlock) && (a[0] < bound))
+                isBufferBlock[a[0]] = 1;
         }
         else if (op == SpvOpTypePointer && a[0] < bound)
         {
@@ -786,8 +849,10 @@ static void rlvkRebaseStorageBuffers(u32 **pSpv, size_t *pWordCount, bool inject
     i = 5;
     while (i < wordCount)
     {
-        u32 w = spv[i]; u32 op = w & 0xFFFF, len = w >> 16;
-        if (len == 0 || i + len > wordCount) break;
+        u32 w = spv[i];
+        u32 op = w & 0xFFFF, len = w >> 16;
+        if (len == 0 || i + len > wordCount)
+            break;
         const u32 *a = spv + i + 1;
         if (op == SpvOpVariable && a[0] < bound)
         {
@@ -795,24 +860,35 @@ static void rlvkRebaseStorageBuffers(u32 **pSpv, size_t *pWordCount, bool inject
             bool ssbo = (sc == SpvStorageStorageBuffer) ||
                         ((sc == SpvStorageUniform) && (ptrStorage[a[0]] == SpvStorageUniform) &&
                          (ptrPointee[a[0]] < bound) && isBufferBlock[ptrPointee[a[0]]]);
-            if (ssbo && (ssboVarCount < (int)RLVK_SET0_SSBO_COUNT)) ssboVars[ssboVarCount++] = a[1];
-            else if (ssbo) TRACELOG(RL_LOG_WARNING, "RLVK: shader uses more than %d graphics SSBOs - extras ignored", (int)RLVK_SET0_SSBO_COUNT);
+            if (ssbo && (ssboVarCount < (int)RLVK_SET0_SSBO_COUNT))
+                ssboVars[ssboVarCount++] = a[1];
+            else if (ssbo)
+                TRACELOG(RL_LOG_WARNING, "RLVK: shader uses more than %d graphics SSBOs - extras ignored", (int)RLVK_SET0_SSBO_COUNT);
         }
         i += len;
     }
-    RL_FREE(isBufferBlock); RL_FREE(ptrPointee); RL_FREE(ptrStorage);
-    if (ssboVarCount == 0) return;
+    RL_FREE(isBufferBlock);
+    RL_FREE(ptrPointee);
+    RL_FREE(ptrStorage);
+    if (ssboVarCount == 0)
+        return;
 
-    // Pass 3: rewrite each SSBO variable's Binding decoration in place
+    // Pass 3: rewrite each SSBO variable's Binding decoration in place and check existing NonWritable
     i = 5;
     while (i < wordCount)
     {
-        u32 w = spv[i]; u32 op = w & 0xFFFF, len = w >> 16;
-        if (len == 0 || i + len > wordCount) break;
+        u32 w = spv[i];
+        u32 op = w & 0xFFFF, len = w >> 16;
+        if (len == 0 || i + len > wordCount)
+            break;
         u32 *a = spv + i + 1;
-        if (op == SpvOpDecorate && a[1] == SpvDecorationBinding)
+        if (op == SpvOpDecorate)
+        {
             for (int v = 0; v < ssboVarCount; v++)
-                if (a[0] == ssboVars[v])
+            {
+                if (a[0] != ssboVars[v])
+                    continue;
+                if (a[1] == SpvDecorationBinding)
                 {
                     u32 idx = a[2];
                     if (idx >= RLVK_SET0_SSBO_COUNT)
@@ -823,25 +899,40 @@ static void rlvkRebaseStorageBuffers(u32 **pSpv, size_t *pWordCount, bool inject
                     *outMask |= (1u << idx);
                     a[2] = RLVK_SSBO_BINDING_BASE + idx;
                 }
+                else if (a[1] == SpvDecorationNonWritable)
+                {
+                    hasNonWritable[v] = true;
+                }
+            }
+        }
         i += len;
     }
     // Pass 4: inject NonWritable decorations (3 words each) at the decoration section head
     if (injectNonWritable && firstDecorateAt)
     {
-        size_t grow = (size_t)ssboVarCount * 3;
-        u32 *grown = (u32 *)RL_MALLOC((wordCount + grow) * sizeof(u32));
-        memcpy(grown, spv, firstDecorateAt * sizeof(u32));
-        u32 *ins = grown + firstDecorateAt;
+        int injectCount = 0;
         for (int v = 0; v < ssboVarCount; v++)
+            if (!hasNonWritable[v])
+                injectCount++;
+        if (injectCount > 0)
         {
-            *ins++ = (3u << 16) | SpvOpDecorate;
-            *ins++ = ssboVars[v];
-            *ins++ = SpvDecorationNonWritable;
+            size_t grow = (size_t)injectCount * 3;
+            u32 *grown = (u32 *)RL_MALLOC((wordCount + grow) * sizeof(u32));
+            memcpy(grown, spv, firstDecorateAt * sizeof(u32));
+            u32 *ins = grown + firstDecorateAt;
+            for (int v = 0; v < ssboVarCount; v++)
+            {
+                if (hasNonWritable[v])
+                    continue;
+                *ins++ = (3u << 16) | SpvOpDecorate;
+                *ins++ = ssboVars[v];
+                *ins++ = SpvDecorationNonWritable;
+            }
+            memcpy(ins, spv + firstDecorateAt, (wordCount - firstDecorateAt) * sizeof(u32));
+            RL_FREE(spv);
+            *pSpv = grown;
+            *pWordCount = wordCount + grow;
         }
-        memcpy(ins, spv + firstDecorateAt, (wordCount - firstDecorateAt) * sizeof(u32));
-        RL_FREE(spv);
-        *pSpv = grown;
-        *pWordCount = wordCount + grow;
     }
 }
 
@@ -859,7 +950,12 @@ static void rlvkMatchStageInterface(u32 **pFsSpv, size_t *pWordCount, const rlvk
         SpvOpTypePointer = 32,
         SpvOpVariable = 59,
         SpvOpDecorate = 71,
+        SpvDecorationNoPerspective = 13,
+        SpvDecorationFlat = 14,
+        SpvDecorationCentroid = 16,
+        SpvDecorationSample = 17,
         SpvDecorationLocation = 30,
+        SpvDecorationComponent = 31,
         SpvStorageInput = 1,
         SpvStoragePrivate = 6
     };
@@ -886,8 +982,6 @@ static void rlvkMatchStageInterface(u32 **pFsSpv, size_t *pWordCount, const rlvk
         i += len;
     }
     u32 unmatched[16];
-    size_t unmatchedDecoAt[16];
-    u32 unmatchedDecoLen[16];
     int unmatchedCount = 0;
     i = 5;
     while (i < wordCount)
@@ -911,10 +1005,7 @@ static void rlvkMatchStageInterface(u32 **pFsSpv, size_t *pWordCount, const rlvk
                 a[2] = (u32)matched;
             else if (unmatchedCount < 16)
             {
-                unmatched[unmatchedCount] = a[0];
-                unmatchedDecoAt[unmatchedCount] = i;
-                unmatchedDecoLen[unmatchedCount] = len;
-                unmatchedCount++;
+                unmatched[unmatchedCount++] = a[0];
             }
         }
         i += len;
@@ -925,14 +1016,39 @@ static void rlvkMatchStageInterface(u32 **pFsSpv, size_t *pWordCount, const rlvk
     if (unmatchedCount == 0)
         return;
 
-    // Remove the demoted inputs' Location decorations (OpNop is only legal inside a function
-    // body, so the instructions must be compacted out, back-to-front to keep positions valid)
-    for (int u = unmatchedCount - 1; u >= 0; u--)
+    // Remove the demoted inputs' interface-only decorations (Location, Component, Flat,
+    // NoPerspective, Centroid, Sample) so demoting them to Private storage stays SPIR-V valid.
+    i = 5;
+    while (i < wordCount)
     {
-        size_t at = unmatchedDecoAt[u];
-        u32 len = unmatchedDecoLen[u];
-        memmove(fsSpv + at, fsSpv + at + len, (wordCount - at - len) * sizeof(u32));
-        wordCount -= len;
+        u32 w = fsSpv[i];
+        u32 op = w & 0xFFFF, len = w >> 16;
+        if (len == 0 || i + len > wordCount)
+            break;
+        if (op == SpvOpDecorate && len >= 3)
+        {
+            u32 targetId = fsSpv[i + 1];
+            u32 deco = fsSpv[i + 2];
+            if (deco == SpvDecorationLocation || deco == SpvDecorationComponent ||
+                deco == SpvDecorationFlat || deco == SpvDecorationNoPerspective ||
+                deco == SpvDecorationCentroid || deco == SpvDecorationSample)
+            {
+                bool isDemoted = false;
+                for (int u = 0; u < unmatchedCount; u++)
+                    if (unmatched[u] == targetId)
+                    {
+                        isDemoted = true;
+                        break;
+                    }
+                if (isDemoted)
+                {
+                    memmove(fsSpv + i, fsSpv + i + len, (wordCount - i - len) * sizeof(u32));
+                    wordCount -= len;
+                    continue;
+                }
+            }
+        }
+        i += len;
     }
 
     // Grow once: each demotion inserts one 4-word OpTypePointer Private right before its OpVariable
@@ -1009,14 +1125,11 @@ static void rlvkMatchStageInterface(u32 **pFsSpv, size_t *pWordCount, const rlvk
                     break;
                 if (op == SpvOpEntryPoint)
                 {
-                    // VÁ LỖI LOGIC: Phải bỏ qua Execution Model (word 1), Entry Point ID (word 2)
-                    // và chuỗi Tên Hàm (word 3 trở đi cho đến ký tự null) trước khi tìm Interface ID.
                     u32 interfaceStart = 3;
                     while (interfaceStart < len)
                     {
                         u32 word = fsSpv[i + interfaceStart];
                         interfaceStart++;
-                        // Dừng lại nếu tìm thấy NULL terminator trong word này
                         if ((word & 0xFF) == 0 || ((word >> 8) & 0xFF) == 0 ||
                             ((word >> 16) & 0xFF) == 0 || ((word >> 24) & 0xFF) == 0)
                         {
@@ -1046,26 +1159,31 @@ static void rlvkMatchStageInterface(u32 **pFsSpv, size_t *pWordCount, const rlvk
 // Get the canonical attribute table index for a vertex attribute name
 static int rlvkCanonicalAttribIndex(const char *name)
 {
-    if (strcmp(name, "vertexPosition") == 0)
-        return RLVK_ATTRIB_POSITION;
-    if (strcmp(name, "vertexTexCoord") == 0)
-        return RLVK_ATTRIB_TEXCOORD;
-    if (strcmp(name, "vertexNormal") == 0)
-        return RLVK_ATTRIB_NORMAL;
-    if (strcmp(name, "vertexColor") == 0)
-        return RLVK_ATTRIB_COLOR;
-    if (strcmp(name, "vertexTangent") == 0)
-        return RLVK_ATTRIB_TANGENT;
-    if (strcmp(name, "vertexTexCoord2") == 0)
-        return RLVK_ATTRIB_TEXCOORD2;
-    if (strcmp(name, "instanceTransform") == 0)
+    if (!name)
+        return -1;
+    if (name[0] == 'v')
+    {
+        if (strcmp(name, "vertexPosition") == 0)
+            return RLVK_ATTRIB_POSITION;
+        if (strcmp(name, "vertexTexCoord") == 0)
+            return RLVK_ATTRIB_TEXCOORD;
+        if (strcmp(name, "vertexNormal") == 0)
+            return RLVK_ATTRIB_NORMAL;
+        if (strcmp(name, "vertexColor") == 0)
+            return RLVK_ATTRIB_COLOR;
+        if (strcmp(name, "vertexTangent") == 0)
+            return RLVK_ATTRIB_TANGENT;
+        if (strcmp(name, "vertexTexCoord2") == 0)
+            return RLVK_ATTRIB_TEXCOORD2;
+        if (strcmp(name, "vertexBoneIds") == 0 || strcmp(name, "vertexBoneIndices") == 0)
+            return RLVK_ATTRIB_BONEIDS;
+        if (strcmp(name, "vertexBoneWeights") == 0)
+            return RLVK_ATTRIB_BONEWEIGHTS;
+    }
+    else if (name[0] == 'i' && strcmp(name, "instanceTransform") == 0)
+    {
         return RLVK_ATTRIB_INSTANCE_TX;
-    if (strcmp(name, "vertexBoneIds") == 0)
-        return RLVK_ATTRIB_BONEIDS;
-    if (strcmp(name, "vertexBoneIndices") == 0)
-        return RLVK_ATTRIB_BONEIDS;
-    if (strcmp(name, "vertexBoneWeights") == 0)
-        return RLVK_ATTRIB_BONEWEIGHTS;
+    }
     return -1;
 }
 
@@ -1086,7 +1204,8 @@ static void rlvkShaderWriteUniform(rlvkShaderSlot *shader, int loc, const void *
             memcpy(shader->vsStage + u->vsOffset, data, bytes);
             shader->vsWriteGen++;
         }
-        else if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileUniformSkipped++;
+        else if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile))
+            s_profileUniformSkipped++;
     }
     if (u->fsOffset >= 0 && shader->fsStage && (u32)u->fsOffset + bytes <= shader->fsBlockSize)
     {
@@ -1095,7 +1214,8 @@ static void rlvkShaderWriteUniform(rlvkShaderSlot *shader, int loc, const void *
             memcpy(shader->fsStage + u->fsOffset, data, bytes);
             shader->fsWriteGen++;
         }
-        else if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileUniformSkipped++;
+        else if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile))
+            s_profileUniformSkipped++;
     }
 }
 
@@ -1110,10 +1230,7 @@ static void rlvkShaderWriteMatrixUniform(rlvkShaderSlot *shader, int loc, Matrix
 
 // Snapshot the shader's dirty UBO stage blocks into the per-frame arena (glUniform semantics: each
 // draw sees the values current at record time) and APPEND the resulting descriptor writes to the
-// caller's arrays. Returns how many writes were appended (0..2). `bufferInfos`/`writes` must have
-// room for 2 entries and stay alive until the caller issues its CmdPushDescriptorSetKHR. The
-// pushed-gen bookkeeping is advanced exactly as a standalone push would; the caller is responsible
-// for setting uboPushedEpoch/lastUboShader after the actual push.
+// caller's arrays. Returns how many writes were appended (0..2).
 static u32 rlvkAppendUboWrites(rlvkShaderSlot *shader, VkDescriptorBufferInfo *bufferInfos, VkWriteDescriptorSet *writes)
 {
     if (!shader->usesUbo)
@@ -1139,11 +1256,6 @@ static u32 rlvkAppendUboWrites(rlvkShaderSlot *shader, VkDescriptorBufferInfo *b
         VkDeviceSize off = (RLVK.arenaOffset[frameIndex] + 255) & ~(VkDeviceSize)255; // minUniformBufferOffsetAlignment
         if (off + size > arena->sizeBytes)
         {
-            // Cannot drain here (this draw's binds would be lost): request growth, skip this stage.
-            // A skipped push is NOT harmless — the draw keeps the previously pushed UBO, i.e. stale
-            // mvp + stale uniforms (the "scrambled rectangles" class of artifact). Call sites that
-            // CAN drain must reserve the block up front (see rlDrawRenderBatch's arena loop); this
-            // warning fires when one of them forgot to.
             static bool s_warned = false;
             if (!s_warned)
             {
@@ -1153,7 +1265,11 @@ static u32 rlvkAppendUboWrites(rlvkShaderSlot *shader, VkDescriptorBufferInfo *b
             RLVK.arenaWanted[frameIndex] += size + 256; // demand grows even when the push is skipped
             return writeCount;
         }
-        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) { s_profileUboUploads++; s_profileUboBytes += size; }
+        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile))
+        {
+            s_profileUboUploads++;
+            s_profileUboBytes += size;
+        }
         memcpy((char *)arena->mapped + off, src, size);
         RLVK.arenaOffset[frameIndex] = off + size;
         RLVK.arenaWanted[frameIndex] += size + 256;
@@ -1184,7 +1300,8 @@ static void rlvkBindShaderUbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader
     u32 writeCount = rlvkAppendUboWrites(shader, bufferInfos, writes);
     if (writeCount == 0)
         return;
-    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileDescriptors += writeCount;
+    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile))
+        s_profileDescriptors += writeCount;
     vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, writeCount, writes);
     shader->uboPushedEpoch = RLVK.State.cbEpoch;
     RLVK.lastUboShader = shader;
@@ -1197,7 +1314,8 @@ static void rlvkBindShaderUbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader
 static void rlvkBindShaderSsbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shader)
 {
     static int s_dbgSsbo = -1;
-    if (rlvkDebugFlag("RLVK_DEBUG_SSBO", &s_dbgSsbo)) TRACELOG(RL_LOG_WARNING, "VKSSBO bind mask=0x%x pushDesc=%d slot0=%u", shader->ssboMask, (int)RLVK.Caps.pushDescriptor, RLVK.computeSSBO[0]);
+    if (rlvkDebugFlag("RLVK_DEBUG_SSBO", &s_dbgSsbo))
+        TRACELOG(RL_LOG_WARNING, "VKSSBO bind mask=0x%x pushDesc=%d slot0=%u", shader->ssboMask, (int)RLVK.Caps.pushDescriptor, RLVK.computeSSBO[0]);
     if (!shader->ssboMask || !RLVK.Caps.pushDescriptor)
         return;
     VkDescriptorBufferInfo infos[RLVK_SET0_SSBO_COUNT];
@@ -1209,7 +1327,7 @@ static void rlvkBindShaderSsbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shade
             continue;
         u32 slot = RLVK.computeSSBO[i];
         if (RLVK.pushedSsbo[i] == slot)
-            continue;   // unchanged since the last push in this command buffer
+            continue; // unchanged since the last push in this command buffer
         VkBuffer buf = (slot && slot < RLVK_MAX_BUFFER_SLOTS && RLVK.bufferSlots[slot].buffer)
                            ? RLVK.bufferSlots[slot].buffer
                            : RLVK.bufferSlots[RLVK.dummyAttribSlot].buffer;
@@ -1226,7 +1344,8 @@ static void rlvkBindShaderSsbos(VkCommandBuffer cmdBuffer, rlvkShaderSlot *shade
     }
     if (writeCount)
     {
-        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileDescriptors += writeCount;
+        if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile))
+            s_profileDescriptors += writeCount;
         vk.CmdPushDescriptorSetKHR(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, RLVK.pipelineLayout, 0, writeCount, writes);
     }
 }
@@ -1238,11 +1357,14 @@ static void rlvkBindShaderSamplers(VkCommandBuffer cmdBuffer, rlvkShaderSlot *sh
 {
     if (!shader->usesUbo)
         return;
+    bool dbgSamplers = rlvkDebugFlag("RLVK_DEBUG_SAMPLERS", &s_dbgSamplers) != 0;
     for (int i = 0; i < shader->uniformCount; i++)
     {
         int b = shader->uniforms[i].samplerBinding;
-        bool isTexture0 = (strcmp(shader->uniforms[i].name, "texture0") == 0);
-        if (b < 0 || b >= RLVK_MAX_TEXTURE_UNITS || (isTexture0 && !includeBinding0))
+        if (b < 0 || b >= RLVK_MAX_TEXTURE_UNITS)
+            continue;
+        bool isTexture0 = (shader->uniforms[i].name[0] == 't') && (strcmp(shader->uniforms[i].name, "texture0") == 0);
+        if (isTexture0 && !includeBinding0)
             continue;
         u32 tex = shader->bindingTexture[b];
         if (tex == 0)
@@ -1255,7 +1377,7 @@ static void rlvkBindShaderSamplers(VkCommandBuffer cmdBuffer, rlvkShaderSlot *sh
         }
         if (tex == 0 || tex >= RLVK_MAX_TEXTURE_SLOTS || !RLVK.textureSlots[tex].view)
             tex = RLVK.defaultTextureSlot;
-        if (rlvkDebugFlag("RLVK_DEBUG_SAMPLERS", &s_dbgSamplers))
+        if (dbgSamplers)
             TRACELOG(RL_LOG_WARNING, "VKDBG sampler %s b=%d bindTex=%u unit=%d unitTex=%u -> %u",
                      shader->uniforms[i].name, b, shader->bindingTexture[b], shader->bindingUnit[b],
                      (shader->bindingUnit[b] >= 0 && shader->bindingUnit[b] < RL_DEFAULT_BATCH_MAX_TEXTURE_UNITS) ? RLVK.State.activeTextureSlots[shader->bindingUnit[b]] : 9999, tex);

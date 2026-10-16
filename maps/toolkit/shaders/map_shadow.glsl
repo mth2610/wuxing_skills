@@ -218,7 +218,6 @@ float MapShadowVisibility(vec3 worldPos, vec3 normal, vec3 lightDir)
     float slope = 1.0 - max(cosTheta, 0.0);
 
     float dynamicShadow = MapDynamicShadowVisibility(worldPos, slope);
-    // min() cannot go below 0, so a fully shadowed fragment skips the static map.
     if (dynamicShadow <= 0.0)
         return 0.0;
     return min(dynamicShadow, MapStaticShadowVisibility(worldPos, slope));

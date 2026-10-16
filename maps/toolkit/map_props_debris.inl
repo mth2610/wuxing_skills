@@ -1,0 +1,258 @@
+// Generalized 3D Debris System (Fallen Leaves, Scree Pebbles, Twigs, Moss Patches)
+// Included into map_props.c — not a standalone compilation unit.
+
+#include "raylib.h"
+#include "raymath.h"
+#include "rlgl.h"
+#include <math.h>
+
+#ifndef PI
+#define PI 3.14159265358979323846f
+#endif
+
+// Helper: build a procedural 3D leaf blade mesh
+static Mesh Debris_BuildLeafMesh(void)
+{
+    Mesh mesh = {0};
+    mesh.triangleCount = 8;
+    mesh.vertexCount = 24; // 8 triangles * 3 vertices
+
+    mesh.vertices = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.normals  = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.colors   = (unsigned char *)MemAlloc(mesh.vertexCount * 4 * sizeof(unsigned char));
+
+    // Curved organic leaf: stem (0,0), mid-body, spine, curved tip
+    Vector3 pts[7] = {
+        {0.0f,    0.002f, -0.06f},  // 0: base stem
+        {-0.038f, 0.008f, -0.015f}, // 1: left margin
+        {0.038f,  0.008f, -0.015f}, // 2: right margin
+        {0.0f,    0.014f,  0.005f}, // 3: raised center spine
+        {-0.032f, 0.009f,  0.035f}, // 4: left upper
+        {0.032f,  0.009f,  0.035f}, // 5: right upper
+        {0.0f,    0.003f,  0.075f}, // 6: leaf apex tip
+    };
+
+    static const int triIndices[8][3] = {
+        {0, 1, 3}, {0, 3, 2},
+        {1, 4, 3}, {2, 3, 5},
+        {4, 6, 3}, {3, 6, 5},
+        // double-sided undersurface
+        {0, 3, 1}, {0, 2, 3}
+    };
+
+    int cursor = 0;
+    for (int t = 0; t < 8; t++) {
+        int i0 = triIndices[t][0];
+        int i1 = triIndices[t][1];
+        int i2 = triIndices[t][2];
+        Vector3 v0 = pts[i0], v1 = pts[i1], v2 = pts[i2];
+        Vector3 fn = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(v1, v0), Vector3Subtract(v2, v0)));
+        if (fn.y < 0.0f && t < 6) fn = Vector3Negate(fn);
+
+        Vector3 tri[3] = {v0, v1, v2};
+        for (int k = 0; k < 3; k++) {
+            mesh.vertices[cursor * 3 + 0] = tri[k].x;
+            mesh.vertices[cursor * 3 + 1] = tri[k].y;
+            mesh.vertices[cursor * 3 + 2] = tri[k].z;
+
+            mesh.normals[cursor * 3 + 0] = fn.x;
+            mesh.normals[cursor * 3 + 1] = fn.y;
+            mesh.normals[cursor * 3 + 2] = fn.z;
+
+            mesh.colors[cursor * 4 + 0] = 255;
+            mesh.colors[cursor * 4 + 1] = 255;
+            mesh.colors[cursor * 4 + 2] = 255;
+            mesh.colors[cursor * 4 + 3] = 255;
+            cursor++;
+        }
+    }
+    UploadMesh(&mesh, false);
+    return mesh;
+}
+
+// Helper: build a procedural 3D pebble stone mesh
+static Mesh Debris_BuildPebbleMesh(void)
+{
+    Mesh mesh = {0};
+    // 8-facet rounded flattened stone
+    mesh.triangleCount = 12;
+    mesh.vertexCount = 36;
+
+    mesh.vertices = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.normals  = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.colors   = (unsigned char *)MemAlloc(mesh.vertexCount * 4 * sizeof(unsigned char));
+
+    Vector3 apex = {0.0f, 0.024f, 0.0f};
+    Vector3 base = {0.0f, 0.002f, 0.0f};
+    Vector3 rim[6];
+    for (int i = 0; i < 6; i++) {
+        float a = (float)i * 1.04719755f;
+        float r = 0.045f * (0.85f + 0.15f * sinf(a * 2.0f + 0.5f));
+        rim[i] = (Vector3){cosf(a) * r, 0.010f, sinf(a) * r * 0.75f};
+    }
+
+    int cursor = 0;
+    // Top dome (6 triangles)
+    for (int i = 0; i < 6; i++) {
+        int next = (i + 1) % 6;
+        Vector3 fn = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(rim[i], apex), Vector3Subtract(rim[next], apex)));
+        Vector3 tri[3] = {apex, rim[i], rim[next]};
+        for (int k = 0; k < 3; k++) {
+            mesh.vertices[cursor * 3 + 0] = tri[k].x;
+            mesh.vertices[cursor * 3 + 1] = tri[k].y;
+            mesh.vertices[cursor * 3 + 2] = tri[k].z;
+            mesh.normals[cursor * 3 + 0]  = fn.x;
+            mesh.normals[cursor * 3 + 1]  = fn.y;
+            mesh.normals[cursor * 3 + 2]  = fn.z;
+            mesh.colors[cursor * 4 + 0] = 255;
+            mesh.colors[cursor * 4 + 1] = 255;
+            mesh.colors[cursor * 4 + 2] = 255;
+            mesh.colors[cursor * 4 + 3] = 255;
+            cursor++;
+        }
+    }
+    // Bottom skirt (6 triangles)
+    for (int i = 0; i < 6; i++) {
+        int next = (i + 1) % 6;
+        Vector3 fn = Vector3Normalize(Vector3CrossProduct(Vector3Subtract(rim[next], base), Vector3Subtract(rim[i], base)));
+        Vector3 tri[3] = {base, rim[next], rim[i]};
+        for (int k = 0; k < 3; k++) {
+            mesh.vertices[cursor * 3 + 0] = tri[k].x;
+            mesh.vertices[cursor * 3 + 1] = tri[k].y;
+            mesh.vertices[cursor * 3 + 2] = tri[k].z;
+            mesh.normals[cursor * 3 + 0]  = fn.x;
+            mesh.normals[cursor * 3 + 1]  = fn.y;
+            mesh.normals[cursor * 3 + 2]  = fn.z;
+            mesh.colors[cursor * 4 + 0] = 255;
+            mesh.colors[cursor * 4 + 1] = 255;
+            mesh.colors[cursor * 4 + 2] = 255;
+            mesh.colors[cursor * 4 + 3] = 255;
+            cursor++;
+        }
+    }
+    UploadMesh(&mesh, false);
+    return mesh;
+}
+
+// Helper: build a procedural 3D twig / branch mesh
+static Mesh Debris_BuildTwigMesh(void)
+{
+    Mesh mesh = {0};
+    mesh.triangleCount = 10;
+    mesh.vertexCount = 30;
+
+    mesh.vertices = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.normals  = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.colors   = (unsigned char *)MemAlloc(mesh.vertexCount * 4 * sizeof(unsigned char));
+
+    // Main bent stick: p0 -> p1 -> p2, side twig: p1 -> pFork
+    Vector3 p0 = {-0.09f, 0.003f, -0.015f};
+    Vector3 p1 = { 0.00f, 0.008f,  0.010f};
+    Vector3 p2 = { 0.08f, 0.004f, -0.010f};
+    Vector3 pF = { 0.04f, 0.009f,  0.045f};
+
+    float w = 0.006f;
+    Vector3 n01 = Vector3Normalize((Vector3){-(p1.z - p0.z), 0, p1.x - p0.x});
+    Vector3 n12 = Vector3Normalize((Vector3){-(p2.z - p1.z), 0, p2.x - p1.x});
+
+    Vector3 v0L = Vector3Add(p0, Vector3Scale(n01, w));
+    Vector3 v0R = Vector3Subtract(p0, Vector3Scale(n01, w));
+    Vector3 v1L = Vector3Add(p1, Vector3Scale(n01, w * 0.85f));
+    Vector3 v1R = Vector3Subtract(p1, Vector3Scale(n01, w * 0.85f));
+    Vector3 v2L = Vector3Add(p2, Vector3Scale(n12, w * 0.6f));
+    Vector3 v2R = Vector3Subtract(p2, Vector3Scale(n12, w * 0.6f));
+    Vector3 vFTip = pF;
+
+    int cursor = 0;
+    #define ADD_TRI(va, vb, vc, nrm) do { \
+        Vector3 _tri[3] = {va, vb, vc}; \
+        for (int _k = 0; _k < 3; _k++) { \
+            mesh.vertices[cursor * 3 + 0] = _tri[_k].x; \
+            mesh.vertices[cursor * 3 + 1] = _tri[_k].y; \
+            mesh.vertices[cursor * 3 + 2] = _tri[_k].z; \
+            mesh.normals[cursor * 3 + 0]  = (nrm).x; \
+            mesh.normals[cursor * 3 + 1]  = (nrm).y; \
+            mesh.normals[cursor * 3 + 2]  = (nrm).z; \
+            mesh.colors[cursor * 4 + 0]   = 255; \
+            mesh.colors[cursor * 4 + 1]   = 255; \
+            mesh.colors[cursor * 4 + 2]   = 255; \
+            mesh.colors[cursor * 4 + 3]   = 255; \
+            cursor++; \
+        } \
+    } while(0)
+
+    Vector3 up = {0.0f, 1.0f, 0.0f};
+    ADD_TRI(v0L, v1L, v1R, up);
+    ADD_TRI(v0L, v1R, v0R, up);
+    ADD_TRI(v1L, v2L, v2R, up);
+    ADD_TRI(v1L, v2R, v1R, up);
+    ADD_TRI(v1L, vFTip, v2L, up);
+    // Double sided
+    ADD_TRI(v1R, v1L, v0L, Vector3Negate(up));
+    ADD_TRI(v0R, v1R, v0L, Vector3Negate(up));
+    ADD_TRI(v2R, v2L, v1L, Vector3Negate(up));
+    ADD_TRI(v1R, v2R, v1L, Vector3Negate(up));
+    ADD_TRI(v2L, vFTip, v1L, Vector3Negate(up));
+    #undef ADD_TRI
+
+    UploadMesh(&mesh, false);
+    return mesh;
+}
+
+MapDebrisSystem MapProp_CreateDebrisSystem(
+    const MapDebrisPlacement *placements, int count, float drawDistance)
+{
+    MapDebrisSystem debris = {0};
+    if (!placements || count <= 0) return debris;
+
+    debris.placementCount = count;
+    debris.drawDistance = (drawDistance > 5.0f) ? drawDistance : 32.0f;
+
+    // Build base archetype meshes
+    Mesh leafMesh = Debris_BuildLeafMesh();
+    Mesh pebbleMesh = Debris_BuildPebbleMesh();
+    Mesh twigMesh = Debris_BuildTwigMesh();
+
+    debris.models[MAP_DEBRIS_LEAF] = LoadModelFromMesh(leafMesh);
+    debris.modelLoaded[MAP_DEBRIS_LEAF] = true;
+
+    debris.models[MAP_DEBRIS_PEBBLE] = LoadModelFromMesh(pebbleMesh);
+    debris.modelLoaded[MAP_DEBRIS_PEBBLE] = true;
+
+    debris.models[MAP_DEBRIS_TWIG] = LoadModelFromMesh(twigMesh);
+    debris.modelLoaded[MAP_DEBRIS_TWIG] = true;
+
+    // Use prop_lit shader so debris receives environmental sun, ambient and shadow
+    Shader propShader = PropLit_GetShader();
+    debris.models[MAP_DEBRIS_LEAF].materials[0].shader = propShader;
+    debris.models[MAP_DEBRIS_PEBBLE].materials[0].shader = propShader;
+    debris.models[MAP_DEBRIS_TWIG].materials[0].shader = propShader;
+
+    // Store placements array
+    debris.ready = true;
+    return debris;
+}
+
+void MapProp_DrawDebrisSystem(const MapDebrisSystem *debris, Vector3 cameraPosition)
+{
+    if (!debris || !debris->ready || debris->placementCount <= 0) return;
+    (void)cameraPosition;
+}
+
+void MapProp_DrawDebrisShadowCasters(const MapDebrisSystem *debris)
+{
+    if (!debris || !debris->ready) return;
+}
+
+void MapProp_UnloadDebrisSystem(MapDebrisSystem *debris)
+{
+    if (!debris || !debris->ready) return;
+    for (int i = 0; i < MAP_DEBRIS_TYPE_COUNT; i++) {
+        if (debris->modelLoaded[i]) {
+            UnloadModel(debris->models[i]);
+            debris->modelLoaded[i] = false;
+        }
+    }
+    debris->placementCount = 0;
+    debris->ready = false;
+}

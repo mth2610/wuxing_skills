@@ -397,16 +397,64 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     moisture=np.clip((sample(twi)-6)/8,0,1)
     shore=gaussian_filter_2d(wet.astype(float),max(0.7,2/min(sx,sz)))
     moisture=np.maximum(moisture,shore)
-    rock=np.maximum(np.clip((sample(slope_deg)-25)/25,0,1),1-cliff)
-    depositional=np.clip(-sample(tpi)/25,0,1)*moisture
-    growth=np.clip(0.35+0.65*moisture,0,1)*(1-rock)
-    coverage=(1-rock)*(1-wet)*(0.50+0.50*growth)
-    coverage[~valid]=0
-    flowers=coverage*(1-moisture)*np.clip(1-sample(slope_deg)/40,0,1)
-    splat=np.stack((coverage,rock,flowers,np.maximum(shore,wet)),axis=-1)
-    splat[~valid]=(0,1,0,0)
-    habitat=np.stack((coverage,growth,moisture,1-moisture),axis=-1)
-    habitat[~valid]=0
+    slope_s = sample(slope_deg)
+    tpi_s = sample(tpi)
+    twi_s = sample(twi)
+
+    # Rock scree naturally emerges on slopes > 13 deg, becoming prominent rock cliff by 26 deg
+    rock_slope = np.clip((slope_s - 13.0) / 13.0, 0.0, 1.0)
+    rock_ridge = np.clip((tpi_s - 4.0) / 12.0, 0.0, 1.0) * np.clip((ground - 2.0) / 8.0, 0.0, 1.0)
+    rock = np.maximum(np.maximum(rock_slope, rock_ridge), 1.0 - cliff)
+    rock[water_depth > 0.01] = 0.0
+
+    wet = water_depth > 0.005
+    moisture = np.clip((twi_s - 6.0) / 8.0, 0.0, 1.0)
+    shore = gaussian_filter_2d(wet.astype(float), max(0.7, 2.0 / min(sx, sz)))
+    moisture = np.maximum(moisture, shore)
+    depositional = np.clip(-tpi_s / 25.0, 0.0, 1.0) * moisture
+    growth = np.clip(0.35 + 0.65 * moisture, 0.0, 1.0) * (1.0 - rock)
+
+    # Lush valley meadow boost in gentle terrain
+    valley_boost = np.clip((14.0 - slope_s) / 14.0, 0.0, 1.0) * np.clip((10.0 - ground) / 12.0, 0.0, 1.0)
+    coverage = np.clip((1.0 - rock) * (1.0 - wet) * (0.65 + 0.35 * growth + 0.25 * valley_boost), 0.0, 1.0)
+    coverage[~valid] = 0.0
+
+    # Bare dirt / soil substrate along margins and transitions
+    soil = np.clip((1.0 - coverage) * (1.0 - rock) * (1.0 - wet.astype(float)) * 1.35, 0.0, 1.0)
+    wet_mud = np.clip(np.maximum(shore, wet.astype(float)), 0.0, 1.0)
+
+    # Debris Layers:
+    # 1. Leaf Litter (R): sheltered swales, under growth canopy, gentle ground
+    leaf_litter = np.clip(growth * 0.85 + depositional * 0.70, 0.0, 1.0) * np.clip((18.0 - slope_s) / 18.0, 0.0, 1.0) * (1.0 - wet.astype(float)) * (1.0 - rock * 0.8)
+    # 2. Scree Gravel (G): talus zones below cliffs, scree slopes, gravel washes
+    scree_gravel = np.clip((slope_s - 8.0) / 12.0, 0.0, 1.0) * np.clip((28.0 - slope_s) / 12.0, 0.0, 1.0) * (0.35 + 0.65 * rock)
+    scree_gravel = np.maximum(scree_gravel, np.clip(rock * (1.0 - wet.astype(float)), 0.0, 1.0) * 0.70)
+    # 3. Fallen Twigs & Wood (B): woodland margins
+    twigs = np.clip(growth * 0.65 * (1.0 - slope_s / 20.0), 0.0, 1.0) * (1.0 - wet.astype(float))
+    # 4. Moss & Lichen (A): moist shady swales, damp rock crevices
+    moss = np.clip(moisture * 0.85 * (0.3 + 0.7 * rock), 0.0, 1.0) * (1.0 - wet.astype(float))
+
+    # Wildflowers in sunny gentle knolls
+    flowers = np.clip(coverage * (1.0 - moisture * 0.7) * (1.0 - slope_s / 16.0) * np.clip((tpi_s + 5.0) / 10.0, 0.0, 1.0), 0.0, 1.0)
+    splat = np.stack((coverage, rock, flowers, np.maximum(shore, wet)), axis=-1)
+    splat[~valid] = (0, 1, 0, 0)
+    habitat = np.stack((coverage, growth, moisture, 1.0 - moisture), axis=-1)
+    habitat[~valid] = 0.0
+
+    debris_map = np.stack((leaf_litter, scree_gravel, twigs, moss), axis=-1)
+    debris_map[~valid] = 0
+
+    ground_material = np.stack((coverage, soil, wet_mud, rock), axis=-1)
+    ground_material[~valid] = (0, 0, 0, 255)
+
+    # Macro ground color tint (RGB)
+    sunny = np.clip(tpi_s / 15.0 + 0.5, 0.0, 1.0)
+    r_tint = np.clip(0.35 + 0.35 * sunny + 0.20 * soil + 0.15 * rock, 0.0, 1.0)
+    g_tint = np.clip(0.40 + 0.45 * coverage * (1.0 - rock) + 0.15 * moss, 0.0, 1.0)
+    b_tint = np.clip(0.25 + 0.25 * rock + 0.35 * wet_mud, 0.0, 1.0)
+    tint_map = np.stack((r_tint, g_tint, b_tint), axis=-1)
+    tint_map[~valid] = (0.3, 0.3, 0.3)
+
     # Classification is morphological, not rock type or species observation.
     landform=np.where(sample(tpi)<-8,1,np.where(sample(tpi)>8,3,2)).astype(np.uint8)
     landform[~valid]=0
@@ -417,6 +465,9 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     height_rgba=np.stack((height_code>>8,height_code&255,np.zeros_like(height_code),np.full_like(height_code,255)),axis=-1)
     write_png(path('heightfield.png'),height_rgba,6)
     write_png(path('ecology_splat.png'),np.rint(splat*255),6)
+    write_png(path('ground_material.png'),np.rint(ground_material*255),6)
+    write_png(path('debris_map.png'),np.rint(debris_map*255),6)
+    write_png(path('ground_tint.png'),np.rint(tint_map*255),2)
     write_png(path('habitat.png'),np.rint(habitat*255),6)
     write_png(path('stream_mask.png'),streams.astype(np.uint8)*255)
     write_png(path('main_catchment_mask.png'),(sample(main_basin.astype(float))>0.5).astype(np.uint8)*255)
@@ -454,6 +505,175 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     cx=float(lxs.mean()*sx) if lxs.size else 0.0; cz=float(lys.mean()*sz) if lys.size else 0.0
     rx=float((lxs.max()-lxs.min()+1)*sx/2) if lxs.size else 0.0
     rz=float((lys.max()-lys.min()+1)*sz/2) if lys.size else 0.0
+
+    # Geomorphological rock and flora feature extraction
+    max_g = max(float(ground[valid].max()), 1e-4) if valid.any() else 1.0
+    crag_score = np.where(valid & (perimeter > cliff_margin + 4) & (water_depth < 0.01) & (ground > 3.0) & (slope_s > 8.0) & (slope_s < 38.0),
+                          (ground / max_g) * 0.6 + np.clip((tpi_s + 20.0) / 50.0, 0, 1) * 0.4, 0.0)
+    crags = []
+    for idx in np.argsort(-crag_score.ravel()):
+        r, c = divmod(int(idx), w)
+        if crag_score[r, c] <= 0.3: break
+        x, z = float(c * sx), float(r * sz)
+        if all(np.hypot(x - cx, z - cz) >= 18.0 for cx, cz, cy in crags):
+            crags.append((x, z, float(ground[r, c])))
+            if len(crags) >= 12: break
+
+    talus_score = np.where(valid & (perimeter > cliff_margin + 3) & (water_depth < 0.01) & (ground > -1.5) & (slope_s > 6.0) & (slope_s < 18.0) & (tpi_s < 2.0),
+                           np.clip((18.0 - slope_s) / 12.0, 0, 1) * 0.5 + np.clip((2.0 - tpi_s) / 10.0, 0, 1) * 0.5, 0.0)
+    boulders = []
+    for idx in np.argsort(-talus_score.ravel()):
+        r, c = divmod(int(idx), w)
+        if talus_score[r, c] <= 0.4: break
+        x, z = float(c * sx), float(r * sz)
+        if all(np.hypot(x - cx, z - cz) >= 16.0 for cx, cz, cy in boulders):
+            boulders.append((x, z, float(ground[r, c])))
+            if len(boulders) >= 14: break
+
+    river_score = np.where(valid & (perimeter > cliff_margin) & streams & ~lake & (water_depth > 0.02) & (water_depth < 0.35),
+                           water_depth, 0.0)
+    river_stones = []
+    for idx in np.argsort(-river_score.ravel()):
+        r, c = divmod(int(idx), w)
+        if river_score[r, c] <= 0.02: break
+        x, z = float(c * sx), float(r * sz)
+        if all(np.hypot(x - cx, z - cz) >= 9.0 for cx, cz, cy in river_stones):
+            river_stones.append((x, z, float(ground[r, c])))
+            if len(river_stones) >= 16: break
+
+    flower_score = np.where(valid & (perimeter > cliff_margin + 4) & (water_depth < 0.01) & (ground > 0.0) & (ground < 8.0) & (slope_s < 10.0),
+                            (1.0 - slope_s / 10.0) * 0.6 + np.clip((tpi_s + 10.0) / 20.0, 0, 1) * 0.4, 0.0)
+    flower_colonies = []
+    for idx in np.argsort(-flower_score.ravel()):
+        r, c = divmod(int(idx), w)
+        if flower_score[r, c] <= 0.4: break
+        x, z = float(c * sx), float(r * sz)
+        if all(np.hypot(x - cx, z - cz) >= 22.0 for cx, cz, cy in flower_colonies):
+            flower_colonies.append((x, z, float(ground[r, c])))
+            if len(flower_colonies) >= 8: break
+
+    # Build rock items array: crags, boulder clusters with companions, river stones
+    rock_items = []
+    # 1. Ridge Crags
+    for i, (x, z, y) in enumerate(crags):
+        rScale = 1.35 + 0.65 * ((i * 17) % 10) / 10.0
+        hScale = 1.80 + 0.85 * ((i * 31) % 10) / 10.0
+        rot = float((i * 73) % 360)
+        rock_items.append(dict(x=x, y=y, z=z, rScale=rScale, hScale=hScale, rot=rot, archetype=1))
+    # 2. Boulder clusters
+    for i, (x, z, y) in enumerate(boulders):
+        rScale = 0.95 + 0.45 * ((i * 13) % 10) / 10.0
+        hScale = 0.65 + 0.35 * ((i * 29) % 10) / 10.0
+        rot = float((i * 47) % 360)
+        rock_items.append(dict(x=x, y=y, z=z, rScale=rScale, hScale=hScale, rot=rot, archetype=0))
+        # 2 companions
+        for c_idx in range(2):
+            ang = float((i * 120 + c_idx * 160) % 360) * np.pi / 180.0
+            dist = 2.0 + 1.2 * c_idx
+            cx_pos = x + np.cos(ang) * dist
+            cz_pos = z + np.sin(ang) * dist
+            c_rScale = rScale * (0.42 + 0.22 * c_idx)
+            c_hScale = hScale * (0.45 + 0.25 * c_idx)
+            rock_items.append(dict(x=cx_pos, y=y, z=cz_pos, rScale=c_rScale, hScale=c_hScale, rot=rot + 30 * c_idx, archetype=0))
+    # 3. River stones
+    for i, (x, z, y) in enumerate(river_stones):
+        rScale = 0.55 + 0.35 * ((i * 19) % 10) / 10.0
+        hScale = 0.38 + 0.25 * ((i * 23) % 10) / 10.0
+        rot = float((i * 61) % 360)
+        rock_items.append(dict(x=x, y=y, z=z, rScale=rScale, hScale=hScale, rot=rot, archetype=2))
+
+    # Write rock data C header
+    with open(path('rock_data.h'), 'w') as f:
+        guard = prefix.upper() + '_ROCK_DATA_H'
+        f.write(f'// Generated by maps/pipeline/dem_pipeline.py\n#ifndef {guard}\n#define {guard}\n\n')
+        f.write('#include "maps/toolkit/map_props.h"\n\n')
+        f.write(f'static const MapRockItem {prefix.upper()}_ROCK_ITEMS[] = {{\n')
+        for item in rock_items:
+            arch_str = 'MAP_ROCK_CRAG' if item['archetype'] == 1 else ('MAP_ROCK_RIVER_STONE' if item['archetype'] == 2 else 'MAP_ROCK_BOULDER')
+            f.write(f'    {{{{{item["x"]:.2f}f, {item["y"]:.2f}f, {item["z"]:.2f}f}}, {item["rScale"]:.2f}f, {item["hScale"]:.2f}f, {item["rot"]:.1f}f, {arch_str}}},\n')
+        f.write('};\n')
+        f.write(f'#define {prefix.upper()}_ROCK_ITEM_COUNT (int)(sizeof({prefix.upper()}_ROCK_ITEMS) / sizeof({prefix.upper()}_ROCK_ITEMS[0]))\n\n')
+        f.write(f'#endif // {guard}\n')
+
+    # Write flora data C header (Procedural 3D flower clusters)
+    with open(path('flora_data.h'), 'w') as f:
+        guard = prefix.upper() + '_FLORA_DATA_H'
+        f.write(f'// Generated by maps/pipeline/dem_pipeline.py\n#ifndef {guard}\n#define {guard}\n\n')
+        f.write('#include "maps/toolkit/map_props.h"\n\n')
+        f.write(f'static const MapFloraFlowerCluster {prefix.upper()}_FLOWER_CLUSTERS[] = {{\n')
+        total_flowers = 0
+        for i, (x, z, y) in enumerate(flower_colonies):
+            count = 130 + 15 * (i % 4)
+            total_flowers += count
+            species = i % 8
+            sp0, sp1, sp2, sp3 = species, (species + 2) % 8, (species + 4) % 8, (species + 6) % 8
+            f.write(f'    {{{{{x:.2f}f, {y:.2f}f, {z:.2f}f}}, {{11.5f, 11.5f}}, {count}, {species}, {{{sp0}, {sp1}, {sp2}, {sp3}}}, {{0}}, {{0}}, {{0}}}},\n')
+        f.write('};\n')
+        f.write(f'#define {prefix.upper()}_FLOWER_CLUSTER_COUNT (int)(sizeof({prefix.upper()}_FLOWER_CLUSTERS) / sizeof({prefix.upper()}_FLOWER_CLUSTERS[0]))\n')
+        f.write(f'#define {prefix.upper()}_TOTAL_FLOWERS {total_flowers}\n\n')
+        f.write(f'#endif // {guard}\n')
+
+    # Extract 3D physical debris placements
+    debris_items = []
+    # 1. Fallen leaves
+    leaf_cands = np.where(valid & (perimeter > cliff_margin) & (water_depth < 0.01) & (leaf_litter > 0.32))
+    if len(leaf_cands[0]) > 0:
+        step = max(1, len(leaf_cands[0]) // 400)
+        for idx in range(0, len(leaf_cands[0]), step):
+            r, c = int(leaf_cands[0][idx]), int(leaf_cands[1][idx])
+            lx = float(c * sx) + float((idx * 17) % 7 - 3) * 0.15
+            lz = float(r * sz) + float((idx * 31) % 7 - 3) * 0.15
+            ly = float(ground[r, c])
+            rot = float((idx * 73) % 360)
+            scale = 0.85 + 0.35 * ((idx * 11) % 10) / 10.0
+            debris_items.append(dict(x=lx, y=ly, z=lz, rot=rot, scale=scale, type=0))
+            if len(debris_items) >= 400: break
+
+    # 2. Scree pebbles
+    pebble_cands = np.where(valid & (perimeter > cliff_margin) & (scree_gravel > 0.32))
+    if len(pebble_cands[0]) > 0:
+        step = max(1, len(pebble_cands[0]) // 250)
+        for idx in range(0, len(pebble_cands[0]), step):
+            r, c = int(pebble_cands[0][idx]), int(pebble_cands[1][idx])
+            lx = float(c * sx) + float((idx * 23) % 7 - 3) * 0.15
+            lz = float(r * sz) + float((idx * 43) % 7 - 3) * 0.15
+            ly = float(ground[r, c])
+            rot = float((idx * 67) % 360)
+            scale = 0.80 + 0.40 * ((idx * 19) % 10) / 10.0
+            debris_items.append(dict(x=lx, y=ly, z=lz, rot=rot, scale=scale, type=1))
+            if len(debris_items) >= 650: break
+
+    # 3. Forest twigs
+    twig_cands = np.where(valid & (perimeter > cliff_margin) & (water_depth < 0.01) & (twigs > 0.28))
+    if len(twig_cands[0]) > 0:
+        step = max(1, len(twig_cands[0]) // 150)
+        for idx in range(0, len(twig_cands[0]), step):
+            r, c = int(twig_cands[0][idx]), int(twig_cands[1][idx])
+            lx = float(c * sx) + float((idx * 19) % 7 - 3) * 0.15
+            lz = float(r * sz) + float((idx * 37) % 7 - 3) * 0.15
+            ly = float(ground[r, c])
+            rot = float((idx * 89) % 360)
+            scale = 0.90 + 0.30 * ((idx * 13) % 10) / 10.0
+            debris_items.append(dict(x=lx, y=ly, z=lz, rot=rot, scale=scale, type=2))
+            if len(debris_items) >= 800: break
+
+    # Write debris data C header
+    with open(path('debris_data.h'), 'w') as f:
+        guard = prefix.upper() + '_DEBRIS_DATA_H'
+        f.write(f'// Generated by maps/pipeline/dem_pipeline.py\n#ifndef {guard}\n#define {guard}\n\n')
+        f.write('#include "maps/toolkit/map_props.h"\n\n')
+        f.write(f'static const MapDebrisPlacement {prefix.upper()}_DEBRIS_ITEMS[] = {{\n')
+        for item in debris_items:
+            f.write(f'    {{{{{item["x"]:.2f}f, {item["y"]:.2f}f, {item["z"]:.2f}f}}, {item["rot"]:.1f}f, {item["scale"]:.2f}f, {{255, 255, 255, 255}}, {item["type"]}}},\n')
+        f.write('};\n')
+        f.write(f'#define {prefix.upper()}_DEBRIS_ITEM_COUNT (int)(sizeof({prefix.upper()}_DEBRIS_ITEMS) / sizeof({prefix.upper()}_DEBRIS_ITEMS[0]))\n\n')
+        f.write(f'#endif // {guard}\n')
+
+    # Save JSON files
+    with open(path('rock_placements.json'), 'w') as f: json.dump(rock_items, f, indent=2)
+    with open(path('flora_clusters.json'), 'w') as f: json.dump([dict(x=x, z=z, y=y) for x, z, y in flower_colonies], f, indent=2)
+    with open(path('debris_placements.json'), 'w') as f: json.dump(debris_items, f, indent=2)
+
     # Compatibility metadata; runtime uses the water raster/mesh, not these bounds.
     values=dict(MAP_WIDTH=width,MAP_DEPTH=depth,HEIGHT_RANGE=height_range,CLIFF_DEPTH=cliff_depth,
                 OUTLET_X=outlet[1]*sx,OUTLET_Z=outlet[0]*sz,PEAK_X=peak[1]*sx,PEAK_Z=peak[0]*sz,
@@ -462,6 +682,9 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     with open(path('generated_meta.h'),'w') as f:
         guard=prefix.upper()+'_GENERATED_META_H'; f.write(f'// Generated by maps/pipeline/dem_pipeline.py\n#ifndef {guard}\n#define {guard}\n')
         for k,v in values.items(): f.write(f'#define {prefix.upper()}_{k} {v:.6f}f\n')
+        f.write(f'#include "{prefix}_rock_data.h"\n')
+        f.write(f'#include "{prefix}_flora_data.h"\n')
+        f.write(f'#include "{prefix}_debris_data.h"\n')
         f.write(f'#endif // {guard}\n')
     with open(dem_path,'rb') as source_file: digest=hashlib.sha256(source_file.read()).hexdigest()
     manifest=dict(schema=2,source=dict(geo,path=os.path.abspath(dem_path),sha256=digest,

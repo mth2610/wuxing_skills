@@ -124,6 +124,44 @@ void MapProp_UnloadSkyDome(MapSkyDome *sky);
 * Calling convention: `Create*` is called exactly once in `Init{Prefix}Map`, `Draw*` is called every frame in `Draw{Prefix}Map`, `Unload*` is called in `Unload{Prefix}Map` if the map declares an Unload function. `MapProp_GenerateMountainRing` is the exception — it doesn't load any resource, it only fills an array with numbers, so it can be called anywhere inside `Init`, even with no corresponding `Unload`.
 * Rocks using `prop_lit` (all 3 paths supplied) need `PropLit_UpdateLighting()` called **once per frame before drawing** (see the full example in section 6). Ground/strip/cloud sea each push their own lighting uniforms inside their own `Draw*`, no extra call needed.
 
+### Generalized Flora, Debris, and Ground Systems (`map_props_flora.inl`, `map_props_debris.inl`, `map_props_ground.inl`)
+
+1. **MapFloraSystem** (Meadow + Reeds + 3D Procedural Wildflowers):
+   - Integrates valley grass meadows (smooth 4-segment Bézier curves, zero stick grass), shoreline reeds (`hasReedPlumes = false` to eliminate white cards), and wildflower colonies into one unified system.
+   - `MapFlora_GenerateFlowerPlacements`: Generates colony-clustered 3D wildflower placements along landscape flow using 3 organic epicenters per cluster, Poisson-disc spacing, and 8 Xianxia botanical palettes:
+     - 0: Ivory Daisy (Bạch Cúc)
+     - 1: Golden Buttercup (Hoàng Anh)
+     - 2: Vermilion Poppy (Chu Sa Hồng)
+     - 3: Sapphire Cornflower (Lam Điệp)
+     - 4: Peach Blossom Rose (Đào Hoa)
+     - 5: Orchid Cosmos (Tử Mẫu)
+     - 6: Lavender (Huân Y Thảo)
+     - 7: Primrose Cream (Ngọc Lan)
+   - Procedural 3D Petals: Always passes `petalTexturePath = NULL` to `MapProp_CreateFlowerField`, generating 100% procedural 3D geometric petals and pollen domes with two-sided lighting transmission.
+   - `MapFlora_EvaluateFlowerUnderstorey`: Smoothly scales grass height down around flower colonies so blooms stand out against an organic meadow underlayer.
+   - `MapFlora_EvaluateFlowerSuppression`: Modulates grass density so blossoms have breathing room while connecting organically to the turf.
+   - `MapProp_CreateFloraSystem`, `MapProp_UpdateFloraSystem`, `MapProp_DrawFloraSystem`, `MapProp_DrawFloraShadowCasters`, `MapProp_UnloadFloraSystem`.
+
+2. **MapDebrisSystem** (3D Physical Debris + Macro Ground Debris Albedo Modulation):
+   - Macro Albedo Debris Modulation (`u_groundDebris`, slot 9 in `ground_splat.fs`):
+     - R: Russet/amber fallen leaf litter
+     - G: Stony scree gravel grit
+     - B: Weathered fallen twigs
+     - A: Velvety jade green moss
+     - Bound via `MapProp_SetGroundDebrisMap(&ground, "path/to/debris_map.png")`.
+   - 3D Physical Debris Instances (`MapProp_CreateDebrisSystem`):
+     - Procedural meshes for curved fallen autumn leaves (`MAP_DEBRIS_LEAF`), rounded/faceted pebbles (`MAP_DEBRIS_PEBBLE`), and branching twigs (`MAP_DEBRIS_TWIG`).
+     - Rendered with `prop_lit` PBR shading and distance-culling.
+     - `MapProp_DrawDebrisSystem(&s_debris, camera.position)`, `MapProp_UnloadDebrisSystem(&s_debris)`.
+
+3. **Ground Material Distribution Pipeline (`maps/pipeline/dem_pipeline.py`)**:
+   - Automated workflow transforming raw DEM geotiffs into:
+     - 16-bit heightfields (`_heightfield.png`)
+     - Ground material splatmaps (`_ground_material.png`: R=grass, G=soil, B=wet mud, A=rock)
+     - Macro debris maps (`_debris_map.png`)
+     - Macro RGB ground tint (`_ground_tint.png`)
+     - 3D physical debris placement header (`_debris_data.h`)
+
 ### Reusable meadow, flower, and water surfaces
 
 `map_props.h` also exposes three geometry-batched natural surfaces:

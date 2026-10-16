@@ -25,10 +25,9 @@
 #define MAP_DEPTH SONG_QUAO_MAP_DEPTH
 #define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
 #define CLOUD_SEA_Y -7.35f
-#define ROCK_COUNT 24
 #define GRASS_TUFT_CAPACITY 65000
-#define FLOWER_COUNT 600
-#define REED_COUNT 600
+#define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
+#define REED_COUNT 650
 
 static const Vector3 kMapCenter = {MAP_WIDTH * 0.5f, 0.0f, MAP_DEPTH * 0.5f};
 static const Vector3 kOutletPos = {SONG_QUAO_OUTLET_X, 0.0f, SONG_QUAO_OUTLET_Z};
@@ -43,26 +42,23 @@ static const MapZone SONG_QUAO_ZONES[] = {
 #define SONG_QUAO_ZONE_COUNT (int)(sizeof(SONG_QUAO_ZONES) / sizeof(SONG_QUAO_ZONES[0]))
 
 static MapGroundSurface s_ground;
-static MapRockSet s_rocks;
+static MapRockSystem s_rocks;
+static MapDebrisSystem s_debris;
+static MapFloraSystem s_flora;
 static MapSkyDome s_sky;
-static MapRockPlacement s_rockPlacements[ROCK_COUNT];
 static MapCloudSea s_cloudSea;
-static MapMeadowPlacement s_grassPlacements[GRASS_TUFT_CAPACITY];
-static MapFlowerPlacement s_flowerPlacements[FLOWER_COUNT];
-static MapMeadowPlacement s_reedPlacements[REED_COUNT];
-static MapMeadowSurface s_meadow;
-static MapMeadowSurface s_reedMeadow;
-static MapFlowerField s_flowerField;
 static MapWaterSurface s_river;
 static Image s_waterHeight;
 static MapEcology s_habitat;
-static int s_rockCount = 0;
 
+static MapMeadowPlacement s_grassPlacements[GRASS_TUFT_CAPACITY];
+static MapFlowerPlacement s_flowerPlacements[FLOWER_COUNT];
+static MapMeadowPlacement s_reedPlacements[REED_COUNT];
 static int s_grassCount = 0;
 static int s_reedCount = 0;
 static int s_flowerCount = 0;
+
 static bool s_shadowWasEnabled = false;
-static float s_time = 0.0f;
 static bool s_ready = false;
 
 // Ecology texture lookup helper
@@ -79,7 +75,6 @@ static Color SampleSplat(float x, float z)
     return GetImageColor(s_splatImage, tx, tz);
 }
 
-// The bake and runtime use the same diagonal and encoded node heights.
 static float SampleWaterHeight(float x, float z)
 {
     if (!s_waterHeight.data || x < 0.0f || z < 0.0f || x > MAP_WIDTH || z > MAP_DEPTH)
@@ -107,31 +102,23 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     (void)userData;
     float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
     if (gy < -0.25f || SampleWaterHeight(x, z) > gy - 0.025f) return 0.0f;
-    // R is already the final coverage probability; do not suppress wetness twice.
     return (float)SampleSplat(x, z).r / 255.0f;
 }
 
-static void BuildMeadowLayout(void)
+static float SongQuaoSampleGroundHeight(float x, float z, void *ctx)
 {
-    s_grassCount = MapProp_GenerateMeadowPlacements(
-        s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
-        (MapMeadowDistribution){
-            .minBounds = {6.0f, 6.0f}, .maxBounds = {MAP_WIDTH - 6.0f, MAP_DEPTH - 6.0f},
-            .spacing = 0.46f, .jitter = 0.85f,
-            .minRadius = 0.26f, .maxRadius = 0.38f,
-            .minHeight = 0.45f, .maxHeight = 0.70f,
-            .yOffset = 0.025f, .seed = 0x51a7c3u,
-        }, SongQuaoGrassDensity, NULL);
+    (void)ctx;
+    return MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
+}
 
-    TraceLog(LOG_INFO, "SONG_QUAO_MEADOW: placements=%d capacity=%d",
-             s_grassCount, GRASS_TUFT_CAPACITY);
-
-    for (int i = 0; i < s_grassCount; i++) {
-        MapMeadowPlacement *clump = &s_grassPlacements[i];
-        Color splat = SampleSplat(clump->position.x, clump->position.z);
-        float vigor = (float)splat.r / 255.0f;
-        clump->height *= 0.75f + 0.35f * vigor;
-    }
+static bool SongQuaoIsFlowerExcluded(float x, float z, void *ctx)
+{
+    (void)ctx;
+    float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
+    if (gy < -0.2f || SampleWaterHeight(x, z) >= gy - 0.02f) return true;
+    Color splat = SampleSplat(x, z);
+    if (splat.g > 180) return true; // excluded on steep rocky cliff faces
+    return false;
 }
 
 static float Random01(unsigned int *rng)
@@ -140,14 +127,35 @@ static float Random01(unsigned int *rng)
     return (float)*rng / 4294967296.0f;
 }
 
-static void BuildReedsAndFlowers(void)
+static void BuildFloraPlacements(void)
 {
+    // 1. Generate dense meadow grass in valleys & gentle terraces
+    s_grassCount = MapProp_GenerateMeadowPlacements(
+        s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
+        (MapMeadowDistribution){
+            .minBounds = {6.0f, 6.0f}, .maxBounds = {MAP_WIDTH - 6.0f, MAP_DEPTH - 6.0f},
+            .spacing = 0.42f, .jitter = 0.85f,
+            .minRadius = 0.28f, .maxRadius = 0.40f,
+            .minHeight = 0.45f, .maxHeight = 0.72f,
+            .yOffset = 0.025f, .seed = 0x51a7c3u,
+        }, SongQuaoGrassDensity, NULL);
+
+    for (int i = 0; i < s_grassCount; i++) {
+        MapMeadowPlacement *clump = &s_grassPlacements[i];
+        Color splat = SampleSplat(clump->position.x, clump->position.z);
+        float vigor = (float)splat.r / 255.0f;
+        clump->height *= 0.80f + 0.35f * vigor;
+        // Suppress meadow canopy inside wildflower colonies so blooms emerge cleanly
+        float understorey = MapFlora_EvaluateFlowerUnderstorey(
+            clump->position.x, clump->position.z,
+            SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
+        clump->height *= understorey;
+    }
+
+    // 2. Reeds along riverbanks & wetland margins
     unsigned int rng = 0x9371a5u;
     s_reedCount = 0;
-    s_flowerCount = 0;
-
-    // Scan for riverbanks (reeds) and sunny knolls (flowers)
-    for (int attempts = 0; attempts < 3000 && (s_reedCount < REED_COUNT || s_flowerCount < FLOWER_COUNT); attempts++) {
+    for (int attempts = 0; attempts < 3500 && s_reedCount < REED_COUNT; attempts++) {
         float rx = 8.0f + Random01(&rng) * (MAP_WIDTH - 16.0f);
         float rz = 8.0f + Random01(&rng) * (MAP_DEPTH - 16.0f);
         Color splat = SampleSplat(rx, rz);
@@ -155,108 +163,61 @@ static void BuildReedsAndFlowers(void)
         if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, rx, rz, &pos, &normal)) continue;
         if (normal.y < 0.70f || pos.y < -CLIFF_DEPTH + 0.45f) continue;
 
-        // Reeds in wetland / stream banks (Channel A > 80), but strictly above waterline
         float waterY = SampleWaterHeight(rx, rz);
-        bool inDeepWater = waterY >= pos.y - 0.015f;
-        bool inRiverBed = inDeepWater;
-
-        if (splat.a > 80 && s_reedCount < REED_COUNT && !inDeepWater && !inRiverBed) {
-            float rad = 0.16f + 0.08f * Random01(&rng);
-            float h = 0.75f + 0.45f * Random01(&rng);
-            float rot = Random01(&rng) * 360.0f;
-            float ph = Random01(&rng);
+        if (waterY >= pos.y - 0.02f) continue; // must be above water
+        if (splat.a > 70) {
+            float rad = 0.18f + 0.08f * Random01(&rng);
+            float h = 0.85f + 0.50f * Random01(&rng);
             s_reedPlacements[s_reedCount++] = (MapMeadowPlacement){
                 .position = pos,
                 .radius = rad,
                 .height = h,
-                .rotationDeg = rot,
-                .phase = ph
-            };
-        }
-        // Wildflowers in sunny knolls (Channel B > 60)
-        if (splat.b > 60 && s_flowerCount < FLOWER_COUNT && !inDeepWater && !inRiverBed) {
-            float h = 0.25f + 0.15f * Random01(&rng);
-            float bloomR = 0.12f + 0.06f * Random01(&rng);
-            float rot = Random01(&rng) * 360.0f;
-            float ph = Random01(&rng);
-            unsigned char tint = (unsigned char)(180 + (int)(60.0f * Random01(&rng)));
-            s_flowerPlacements[s_flowerCount++] = (MapFlowerPlacement){
-                .position = pos,
-                .height = h,
-                .bloomRadius = bloomR,
-                .rotationDeg = rot,
-                .phase = ph,
-                .petalColor = (Color){235, tint, 60, 255},
-                .petalCount = 5,
-                .petalLengthScale = 1.0f
+                .rotationDeg = Random01(&rng) * 360.0f,
+                .phase = Random01(&rng)
             };
         }
     }
+
+    // 3. Multi-species Wildflower Colonies: 100% Procedural 3D Flowers (No texture atlas)
+    MapFlora_GenerateFlowerPlacements(
+        s_flowerPlacements, FLOWER_COUNT,
+        SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
+        SongQuaoSampleGroundHeight, SongQuaoIsFlowerExcluded, NULL, 0x9371a5u);
+    s_flowerCount = FLOWER_COUNT;
 }
 
-static void BuildRockPlacements(void)
+static void BuildRocks(void)
 {
-    unsigned int rng = 0x826412u;
-    int placed = 0;
-    s_rockCount = 0;
-    // Ecology-driven rock placement: focus rocks on rock scree (Channel G > 70)
-    // or near shoreline/riverbanks (Channel A > 60), avoiding open pure grass meadows
-    for (int attempts = 0; attempts < 1500 && placed < ROCK_COUNT; attempts++) {
-        float rx = 10.0f + Random01(&rng) * (MAP_WIDTH - 20.0f);
-        float rz = 10.0f + Random01(&rng) * (MAP_DEPTH - 20.0f);
-        Color splat = SampleSplat(rx, rz);
+    s_rocks = MapProp_CreateRockSystem(
+        "assets/textures/rock_diffuse.png",
+        "assets/textures/rock_normal.png",
+        "assets/textures/rock_roughness.png",
+        SONG_QUAO_ROCK_ITEM_COUNT);
+
+    for (int i = 0; i < SONG_QUAO_ROCK_ITEM_COUNT; i++) {
+        const MapRockItem *item = &SONG_QUAO_ROCK_ITEMS[i];
         Vector3 pos, normal;
-        if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, rx, rz, &pos, &normal)) continue;
-        if (pos.y < -0.25f || SampleWaterHeight(rx, rz) > pos.y) continue;
-
-        // Rock probability high if splat.g is high or near water
-        bool isRockZone = (splat.g > 70) || (splat.a > 60 && Random01(&rng) < 0.65f) || (normal.y < 0.78f);
-        if (!isRockZone && Random01(&rng) > 0.12f) continue;
-
-        // Reject cliff-adjacent footprints, not just the centre sample.
-        if (normal.y < 0.85f) continue;
-        bool supported = true;
-        const Vector2 probes[4] = {{2,0},{-2,0},{0,2},{0,-2}};
-        for (int j = 0; j < 4; j++) {
-            float edgeY = MapProp_SampleGroundHeight(&s_ground, kMapCenter,
-                rx + probes[j].x, rz + probes[j].y);
-            if (edgeY < -0.25f || fabsf(edgeY - pos.y) > 0.75f) supported = false;
+        if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, item->position.x, item->position.z, &pos, &normal)) {
+            pos = item->position;
         }
-        if (!supported) continue;
-
-        float rScale = 0.75f + 1.35f * Random01(&rng);
-        float hScale = 0.60f + 0.85f * Random01(&rng);
-        float rot = Random01(&rng) * 360.0f;
-        s_rockPlacements[placed++] = (MapRockPlacement){
-            .position = pos,
-            .radiusScale = rScale,
-            .heightScale = hScale,
-            .rotationDeg = rot
-        };
+        MapProp_AddRockItem(&s_rocks, pos, item->radiusScale, item->heightScale, item->rotationDeg, item->archetype);
     }
-    s_rockCount = placed;
 }
 
 static void DrawSongQuaoShadowCasters(Shader depthShader, void *userData)
 {
     (void)depthShader;
     (void)userData;
-    Vector3 offset = {0};
-    Vector2 wind = {0.86f, 0.51f};
-    MapProp_DrawMeadowShadowCasters(&s_meadow, offset, s_time, wind, 0.035f);
-    MapProp_DrawMeadowShadowCasters(&s_reedMeadow, offset, s_time, wind, 0.11f);
-    MapProp_DrawFlowerFieldShadowCaster(&s_flowerField, offset, s_time, wind, 0.032f);
+    // MapProp_DrawFloraShadowCasters(&s_flora);
 }
 
 static void CaptureSongQuaoStaticShadows(void)
 {
-    if (!EnvShadow_NeedsStaticCapture())
-        return;
+    if (!EnvShadow_NeedsStaticCapture()) return;
     EnvShadow_BeginStaticCapture(kMapCenter, 64.0f);
-    if (!EnvShadow_IsCapturing())
-        return;
+    if (!EnvShadow_IsCapturing()) return;
     Shader depthShader = EnvShadow_GetDepthShader();
-    MapProp_DrawRockShadowCasters(&s_rocks, s_rockPlacements, s_rockCount, depthShader);
+    // MapProp_DrawRockSystemShadowCasters(&s_rocks, depthShader);
     EnvShadow_EndStaticCapture();
 }
 
@@ -310,7 +271,7 @@ void InitSongQuaoMap(void)
 
     s_waterHeight = LoadImage("assets/maps/song_quao/song_quao_water_height.png");
 
-    // Heightmap terrain using universal heightmap loader: total range = CLIFF_DEPTH + HEIGHT_RANGE
+    // Heightmap terrain using universal heightmap loader
     s_ground = MapProp_CreateGroundHeightfield16(
         "assets/maps/song_quao/song_quao_heightfield.png", MAP_WIDTH, MAP_DEPTH,
         CLIFF_DEPTH + SONG_QUAO_HEIGHT_RANGE, CLIFF_DEPTH, 3.6f, "assets/maps/song_quao/song_quao_ecology_splat.png",
@@ -325,60 +286,47 @@ void InitSongQuaoMap(void)
     s_habitat.ready = s_habitat.habitatTexture.id > 0 && s_habitat.distanceTexture.id > 0;
     MapProp_SetGroundEcology(&s_ground, &s_habitat);
 
-    MapProp_SetGroundTint(&s_ground, (Color){62, 88, 45, 255});
+    MapProp_SetGroundTint(&s_ground, (Color){76, 96, 52, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
         "assets/textures/verdant_meadow_substrate_material.png",
         "assets/textures/dirt_material.png");
     MapProp_SetGroundReliefMap(&s_ground, "assets/textures/verdant_terrain_relief.png");
+    MapProp_SetGroundDebrisMap(&s_ground, "assets/maps/song_quao/song_quao_debris_map.png");
 
-    s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
-                                  "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
+    // Sky dome & Cloud Sea
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
-    // Boundary mist veil wraps around the perimeter cliff base below the lowest basin swales (-6.75m),
-    // ensuring the flat plain beyond the basin is completely occluded from higher vantage points
-    // while guaranteeing mist never rises into the interior basin floor.
     MapBoundaryMistStyle rim = {2.2f, 9.5f, 0.40f, 1.8f, 0.55f};
     if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -6.85f, &rim))
         TraceLog(LOG_WARNING, "Song Quao: terrain boundary mist bake failed");
 
-    BuildMeadowLayout();
-    s_meadow = MapProp_CreateMeadow(s_grassPlacements, s_grassCount,
-        (MapMeadowStyle){
-            .rootColor = {18, 34, 16, 255}, .tipColor = {136, 186, 54, 255},
-            .bladesPerClump = 6, .bladeSegments = 3, .bladeWidthScale = 0.17f,
-            .chunkSize = 12.0f, .lodDistance = 32.0f, .midLodDistance = 16.0f, .drawDistance = 58.0f,
-            .shadowDistance = 14.0f,
-            .texturePath = NULL,
-            .botanicalVariation = 1.0f,
-            .growthForm = MAP_MEADOW_GROWTH_GRASS,
+    // Build Rocks (Mountain crags, talus clusters, river stones)
+    BuildRocks();
+
+    // Build Debris System (Fallen leaves, scree pebbles, twigs)
+    s_debris = MapProp_CreateDebrisSystem(
+        SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT, 35.0f);
+
+    // Build Flora (Lush valley grass, reeds, wildflower colonies)
+    BuildFloraPlacements();
+    s_flora = MapProp_CreateFloraSystem(
+        s_grassPlacements, s_grassCount,
+        s_reedPlacements, s_reedCount,
+        s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
+        (MapFloraStyle){
+            .grassRootColor = {18, 34, 16, 255},
+            .grassTipColor  = {136, 186, 54, 255},
+            .bladesPerClump = 6,
+            .bladeSegments  = 4,
+            .bladeWidthScale = 0.16f,
+            .lodDistance = 32.0f,
+            .drawDistance = 60.0f,
+            .reedRootColor = {26, 42, 20, 255},
+            .reedTipColor  = {136, 172, 82, 255},
+            .hasReedPlumes = false,
         });
 
-    BuildReedsAndFlowers();
-    if (s_reedCount > 0) {
-        s_reedMeadow = MapProp_CreateMeadow(s_reedPlacements, s_reedCount,
-            (MapMeadowStyle){
-                .rootColor = {26, 42, 20, 255}, .tipColor = {136, 172, 82, 255},
-                .bladesPerClump = 7, .bladeSegments = 3, .bladeWidthScale = 0.14f,
-                .chunkSize = 18.0f, .lodDistance = 36.0f, .midLodDistance = 18.0f, .drawDistance = 65.0f,
-                .shadowDistance = 12.0f,
-                .texturePath = NULL,
-                .hasPlumes = false,
-                .growthForm = MAP_MEADOW_GROWTH_REED,
-            });
-    }
-
-    if (s_flowerCount > 0) {
-        s_flowerField = MapProp_CreateFlowerField(
-            s_flowerPlacements, s_flowerCount,
-            (Color){91, 120, 65, 255}, (Color){218, 185, 65, 255},
-            NULL, 0.0f, 1, 1);
-        MapProp_SetFlowerFieldDrawDistance(&s_flowerField, 75.0f);
-    }
-
-    BuildRockPlacements();
-
-    // One terrain-clipped surface for connected lake and all stream branches.
+    // Terrain-clipped river & reservoir surface
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
         (MapWaterConfig){
             .ecosystem = WATER_ECO_CUSTOM,
@@ -397,48 +345,35 @@ void InitSongQuaoMap(void)
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);
     MapManager_SetZones(SONG_QUAO_ZONES, SONG_QUAO_ZONE_COUNT);
 
-    s_time = 0.0f;
     s_ready = true;
 }
 
 void UpdateSongQuaoMap(float dt)
 {
     if (!s_ready) return;
-    s_time += dt;
-    MapProp_PrepareMeadow(&s_meadow, (Vector3){0});
-    if (s_reedCount > 0) MapProp_PrepareMeadow(&s_reedMeadow, (Vector3){0});
+    MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
     MapProp_UpdateWaterSurface(&s_river, dt);
 
     Vector3 focus = {camera.target.x, 0.0f, camera.target.z};
     EnvShadow_SetFocus(focus, 20.0f);
     CaptureSongQuaoStaticShadows();
-
-    MapProp_BeginNatureInteraction(camera.target, dt);
-    MapProp_AddNatureInteractor(camera.target, 1.25f, 0.34f);
-    MapProp_AddNatureWindVorticles(s_time);
-    MapProp_EndNatureInteraction();
 }
 
 void DrawSongQuaoMap(void)
 {
     if (!s_ready) return;
-    PropLit_UpdateLighting();
     MapProp_DrawGround(&s_ground, kMapCenter);
-    MapProp_DrawRocks(&s_rocks, s_rockPlacements, s_rockCount, true);
-    MapProp_DrawMeadow(&s_meadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.035f);
+    MapProp_DrawRockSystem(&s_rocks, true);
+    MapProp_DrawDebrisSystem(&s_debris, camera.position);
+    MapProp_DrawFloraSystem(&s_flora);
     MapProp_DrawSkyDome(&s_sky);
     MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
-    if (s_reedCount > 0)
-        MapProp_DrawMeadow(&s_reedMeadow, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.11f);
-    if (s_flowerCount > 0)
-        MapProp_DrawFlowerField(&s_flowerField, (Vector3){0}, s_time, (Vector2){0.86f, 0.51f}, 0.032f);
 }
 
 void DrawTransparentSongQuaoMap(void)
 {
     if (!s_ready) return;
-    // Draw lake reservoir surface
-    MapProp_DrawWaterOverlay(&s_river, s_time);
+    MapProp_DrawWaterOverlay(&s_river, GetTime());
     MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
 }
 
@@ -452,15 +387,15 @@ void UnloadSongQuaoMap(void)
     VolumetricFog_SetDistantCoverage(1.0f);
 
     MapProp_UnloadWaterSurface(&s_river);
-    if (s_flowerCount > 0) MapProp_UnloadFlowerField(&s_flowerField);
-    if (s_reedCount > 0) MapProp_UnloadMeadow(&s_reedMeadow);
-    MapProp_UnloadMeadow(&s_meadow);
+    MapProp_UnloadFloraSystem(&s_flora);
+    MapProp_UnloadDebrisSystem(&s_debris);
+    MapProp_UnloadRockSystem(&s_rocks);
     MapProp_UnloadCloudSea(&s_cloudSea);
-    MapProp_UnloadRocks(&s_rocks);
     MapProp_UnloadSkyDome(&s_sky);
     MapProp_UnloadGround(&s_ground);
+
     if (s_waterHeight.data) { UnloadImage(s_waterHeight); s_waterHeight = (Image){0}; }
-    s_habitat = (MapEcology){0}; // ResourceManager owns the two textures.
+    s_habitat = (MapEcology){0};
     if (s_splatLoaded) {
         UnloadImage(s_splatImage);
         s_splatLoaded = false;
@@ -479,7 +414,7 @@ float GetGroundHeightSongQuaoMap(float x, float z)
     if (splat.g == 255 && splat.r == 0 && splat.b == 0 && splat.a == 0) {
         float rawY = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
         if (rawY <= -CLIFF_DEPTH + 0.15f)
-            return -100.0f; // Abyss void falloff outside floating island
+            return -100.0f;
     }
     return MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
 }

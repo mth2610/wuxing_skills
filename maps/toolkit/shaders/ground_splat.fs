@@ -13,6 +13,8 @@
 uniform sampler2D u_cloudNoise;
 uniform sampler2D u_groundRelief; // R/G derived substrate/soil height; B/A litter/moss classes
 uniform int u_groundReliefEnabled;
+uniform sampler2D u_groundDebris; // R: leaf litter, G: scree gravel, B: twigs, A: moss
+uniform int u_groundDebrisEnabled;
 
 in vec2 fragTexCoord;
 in vec3 fragPosition;   // project surface space; see ground_splat.vs
@@ -290,6 +292,33 @@ void main()
     if (streamWet > 0.55) {
         vec3 streamBedTint = vec3(0.22, 0.28, 0.24) * (0.8 + 0.4 * dirtDetail.r);
         blendedAlbedo = mix(blendedAlbedo, streamBedTint, smoothstep(0.55, 0.95, streamWet) * 0.55);
+    }
+
+    // Macro ground debris modulation (organic leaf litter, scree gravel, moss)
+    if (u_groundDebrisEnabled != 0) {
+        vec4 debris = texture(u_groundDebris, fragTexCoord);
+        float fineGrain = dirtDetail.r;
+
+        // Leaf litter: russet and amber organic decay
+        if (debris.r > 0.04) {
+            vec3 leafLitterColor = mix(vec3(0.38, 0.20, 0.07), vec3(0.65, 0.35, 0.11), fineGrain);
+            float leafMask = smoothstep(0.08, 0.55, debris.r) * (0.35 + 0.65 * fineGrain);
+            blendedAlbedo = mix(blendedAlbedo, leafLitterColor, leafMask * 0.70);
+        }
+
+        // Scree gravel: stony pebble grit
+        if (debris.g > 0.04) {
+            vec3 gravelColor = mix(vec3(0.26, 0.27, 0.26), vec3(0.44, 0.42, 0.38), fineGrain);
+            float gravelMask = smoothstep(0.10, 0.60, debris.g);
+            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * 0.75);
+        }
+
+        // Moss & lichen: velvety jade green in damp hollows
+        if (debris.a > 0.04) {
+            vec3 mossColor = mix(vec3(0.14, 0.26, 0.08), vec3(0.28, 0.42, 0.14), fineGrain);
+            float mossMask = smoothstep(0.08, 0.55, debris.a);
+            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * 0.85);
+        }
     }
 
     // Macro landscape modulation
