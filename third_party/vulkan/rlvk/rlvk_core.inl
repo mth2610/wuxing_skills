@@ -10,6 +10,9 @@
 // Module Functions Definition - rlgl functionality
 //----------------------------------------------------------------------------------
 
+static int s_expPushBeforePipe = -1;
+static int s_dbgDrawSite = -1;
+
 // Initialize rlgl: OpenGL extensions, default buffers/shaders/textures, OpenGL states
 void rlglInit(int width, int height)
 {
@@ -22,7 +25,6 @@ void rlglInit(int width, int height)
     RLVK.State.depthTest = false;
     RLVK.State.depthWrite = true;
     RLVK.State.cullEnabled = true; // rlgl does glEnable(GL_CULL_FACE) at init
-    RLVK.State.cullMode = RL_CULL_FACE_BACK;
     RLVK.State.cullMode = RL_CULL_FACE_BACK;
     RLVK.State.colorBlendEnabled = true;
     RLVK.State.colorMask[0] = RLVK.State.colorMask[1] = RLVK.State.colorMask[2] = RLVK.State.colorMask[3] = true;
@@ -132,6 +134,11 @@ void rlglClose(void)
     if (RLVK.device)
         vkDeviceWaitIdle(RLVK.device); // shutdown teardown: the one place a full device drain is the right tool
 
+    // Free CPU allocations of the default render batch before destroying its backing buffers
+    RL_FREE(RLVK.defaultBatch.vertexBuffer);
+    RL_FREE(RLVK.defaultBatch.draws);
+    memset(&RLVK.defaultBatch, 0, sizeof(RLVK.defaultBatch));
+
     // Release the persistent-mapped batch backing buffers and the per-frame bump arenas
     for (int i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
     {
@@ -182,6 +189,22 @@ void rlglClose(void)
         }
         RLVK.deadResourceCount[f] = 0;
     }
+    for (int i = 1; i < RLVK_MAX_FRAMEBUFFER_SLOTS; i++)
+    {
+        rlvkFramebufferSlot *fb = &RLVK.fbSlots[i];
+        if (fb->msColorView)
+            vkDestroyImageView(RLVK.device, fb->msColorView, RLVK_ALLOC);
+        if (fb->msColorImage)
+            vkDestroyImage(RLVK.device, fb->msColorImage, RLVK_ALLOC);
+        if (fb->msColorMemory)
+            vkFreeMemory(RLVK.device, fb->msColorMemory, RLVK_ALLOC);
+        if (fb->msDepthView)
+            vkDestroyImageView(RLVK.device, fb->msDepthView, RLVK_ALLOC);
+        if (fb->msDepthImage)
+            vkDestroyImage(RLVK.device, fb->msDepthImage, RLVK_ALLOC);
+        if (fb->msDepthMemory)
+            vkFreeMemory(RLVK.device, fb->msDepthMemory, RLVK_ALLOC);
+    }
     for (int i = 1; i < RLVK_MAX_TEXTURE_SLOTS; i++)
     {
         rlvkTextureSlot *t = &RLVK.textureSlots[i];
@@ -195,6 +218,16 @@ void rlglClose(void)
             vkDestroyImage(RLVK.device, t->image, RLVK_ALLOC);
         if (t->memory)
             vkFreeMemory(RLVK.device, t->memory, RLVK_ALLOC);
+        if (t->sampleView)
+            vkDestroyImageView(RLVK.device, t->sampleView, RLVK_ALLOC);
+        if (t->sampleImage)
+            vkDestroyImage(RLVK.device, t->sampleImage, RLVK_ALLOC);
+        if (t->sampleMemory)
+            vkFreeMemory(RLVK.device, t->sampleMemory, RLVK_ALLOC);
+        if (t->sampleScratch)
+            vkDestroyBuffer(RLVK.device, t->sampleScratch, RLVK_ALLOC);
+        if (t->sampleScratchMemory)
+            vkFreeMemory(RLVK.device, t->sampleScratchMemory, RLVK_ALLOC);
     }
     for (int i = 1; i < RLVK_MAX_BUFFER_SLOTS; i++)
     {
@@ -215,6 +248,8 @@ void rlglClose(void)
             vkDestroyShaderModule(RLVK.device, s->compMod, RLVK_ALLOC);
         if (s->computePipeline)
             vkDestroyPipeline(RLVK.device, s->computePipeline, RLVK_ALLOC);
+        if (s->pendingCode)
+            RL_FREE(s->pendingCode);
         if (s->uniforms)
             RL_FREE(s->uniforms);
         if (s->vsStage)
@@ -288,6 +323,8 @@ void rlglClose(void)
         p_shaderc_compiler_release(RLVK.shadercCompiler);
     memset(&RLVK, 0, sizeof(RLVK));
     s_pipelineFastValid = false;
+    s_viewportValid = false;
+    s_bindingValid = false;
     isGpuReady = false;
 }
 
@@ -323,34 +360,41 @@ int *rlGetShaderLocsDefault(void) { return RLVK.defaultShaderLocs; }
 rlRenderBatch rlLoadRenderBatch(int numBuffers, int bufferElements)
 {
     rlRenderBatch batch = {0};
-    if (!isGpuReady)
+    if (!isGpuReady || numBuffers <= 0 || bufferElements <= 0)
     {
-        TRACELOG(RL_LOG_WARNING, "RLVK: rlLoadRenderBatch called before rlglInit");
+        if (!isGpuReady)
+            TRACELOG(RL_LOG_WARNING, "RLVK: rlLoadRenderBatch called before rlglInit");
         return batch;
     }
 
+    rlvkWaitInFlightFrames();
     batch.vertexBuffer = (rlVertexBuffer *)RL_CALLOC(numBuffers, sizeof(rlVertexBuffer));
+
+    size_t posBytes = (size_t)bufferElements * 3 * 4 * sizeof(f32);
+    size_t uvBytes = (size_t)bufferElements * 2 * 4 * sizeof(f32);
+    size_t nrmBytes = (size_t)bufferElements * 3 * 4 * sizeof(f32);
+    size_t colBytes = (size_t)bufferElements * 4 * 4 * sizeof(unsigned char);
+    size_t idxBytes = (size_t)bufferElements * 6 * sizeof(unsigned int);
 
     for (int i = 0; i < numBuffers; i++)
     {
-        // Vá lỗi Leak Memory: Giải phóng backing buffer cũ nếu người dùng khởi tạo nhiều Render Batch
-        rlvkDestroyBatchBacking(&RLVK.batchBacking[i % RLVK_FRAME_INDEX_COUNT]);
+        int slot = i % RLVK_FRAME_INDEX_COUNT;
+        rlvkBatchBackingBuffer *backing = &RLVK.batchBacking[slot];
 
-        if (!rlvkCreateBatchBacking(bufferElements, &RLVK.batchBacking[i % RLVK_FRAME_INDEX_COUNT]))
+        // Only recreate the backing slot on the first pass over the frame ring (avoid unmapping
+        // a slot that an earlier vertexBuffer[i - RLVK_FRAME_INDEX_COUNT] already aliases)
+        if (i < RLVK_FRAME_INDEX_COUNT)
         {
-            TRACELOG(RL_LOG_ERROR, "RLVK: failed to create batch backing buffer #%d", i);
-            return batch;
+            rlvkDestroyBatchBacking(backing);
+            if (!rlvkCreateBatchBacking(bufferElements, backing))
+            {
+                TRACELOG(RL_LOG_ERROR, "RLVK: failed to create batch backing buffer #%d", i);
+                return batch;
+            }
         }
 
-        rlvkBatchBackingBuffer *backing = &RLVK.batchBacking[i % RLVK_FRAME_INDEX_COUNT];
         char *base = (char *)backing->mapped;
         size_t off = 0;
-
-        size_t posBytes = (size_t)bufferElements * 3 * 4 * sizeof(f32);
-        size_t uvBytes = (size_t)bufferElements * 2 * 4 * sizeof(f32);
-        size_t nrmBytes = (size_t)bufferElements * 3 * 4 * sizeof(f32);
-        size_t colBytes = (size_t)bufferElements * 4 * 4 * sizeof(unsigned char);
-        size_t idxBytes = (size_t)bufferElements * 6 * sizeof(unsigned int);
 
         batch.vertexBuffer[i].elementCount = bufferElements;
         batch.vertexBuffer[i].vertices = (f32 *)(base + off);
@@ -364,15 +408,18 @@ rlRenderBatch rlLoadRenderBatch(int numBuffers, int bufferElements)
         batch.vertexBuffer[i].indices = (unsigned int *)(base + off);
         off += idxBytes;
 
-        unsigned int *idx = batch.vertexBuffer[i].indices;
-        for (int j = 0, k = 0; j < bufferElements * 6; j += 6, k++)
+        if (i < RLVK_FRAME_INDEX_COUNT)
         {
-            idx[j + 0] = 4 * k + 0;
-            idx[j + 1] = 4 * k + 1;
-            idx[j + 2] = 4 * k + 2;
-            idx[j + 3] = 4 * k + 0;
-            idx[j + 4] = 4 * k + 2;
-            idx[j + 5] = 4 * k + 3;
+            unsigned int *idx = batch.vertexBuffer[i].indices;
+            for (int j = 0, k = 0; j < bufferElements * 6; j += 6, k++)
+            {
+                idx[j + 0] = 4 * k + 0;
+                idx[j + 1] = 4 * k + 1;
+                idx[j + 2] = 4 * k + 2;
+                idx[j + 3] = 4 * k + 0;
+                idx[j + 4] = 4 * k + 2;
+                idx[j + 5] = 4 * k + 3;
+            }
         }
 
         batch.vertexBuffer[i].vaoId = 0;
@@ -395,14 +442,15 @@ rlRenderBatch rlLoadRenderBatch(int numBuffers, int bufferElements)
 
     for (int i = 0; i < RLVK_FRAME_INDEX_COUNT; i++)
     {
-        // Cũng dọn dẹp arena cũ để tránh rò rỉ nếu re-load batch
-        rlvkDestroyBatchBacking(&RLVK.arena[i]);
-        if (!rlvkCreateBatchBacking(bufferElements * RLVK_ARENA_SLOTS, &RLVK.arena[i]))
+        if (RLVK.arena[i].buffer == VK_NULL_HANDLE)
         {
-            TRACELOG(RL_LOG_ERROR, "RLVK: failed to create flush arena #%d", i);
-            return batch;
+            if (!rlvkCreateBatchBacking(bufferElements * RLVK_ARENA_SLOTS, &RLVK.arena[i]))
+            {
+                TRACELOG(RL_LOG_ERROR, "RLVK: failed to create flush arena #%d", i);
+                return batch;
+            }
+            RLVK.arenaOffset[i] = 0;
         }
-        RLVK.arenaOffset[i] = 0;
     }
 
     RLVK.State.vertexCounter = 0;
@@ -436,10 +484,15 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
     if (!batch || RLVK.State.vertexCounter == 0)
     {
         if (batch)
+        {
             batch->currentDepth = -1.0f;
-        RLVK.State.vertexCounter = 0;
-        if (batch)
+            batch->draws[0].mode = RL_QUADS;
+            batch->draws[0].vertexCount = 0;
+            batch->draws[0].vertexAlignment = 0;
+            batch->draws[0].textureId = RLVK.defaultTextureSlot;
             batch->drawCounter = 1;
+        }
+        RLVK.State.vertexCounter = 0;
         return;
     }
 
@@ -456,7 +509,18 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
         rlVertexBuffer *srcvb = &batch->vertexBuffer[batch->currentBuffer];
         rlvkBatchBackingBuffer *arena = &RLVK.arena[frameIndex];
         u32 vcount = (u32)RLVK.State.vertexCounter; // vertices written this flush
-        u32 icount = (vcount / 4) * 6;              // quad indices (only RL_QUADS uses them)
+
+        // Only copy the quad index stream if at least one active draw call uses RL_QUADS
+        bool hasQuads = false;
+        for (int i = 0; i < batch->drawCounter; i++)
+        {
+            if (batch->draws[i].vertexCount > 0 && batch->draws[i].mode == RL_QUADS)
+            {
+                hasQuads = true;
+                break;
+            }
+        }
+        u32 icount = hasQuads ? ((vcount / 4) * 6) : 0;
 
         // The default shader consumes no normals: skip copying the normal stream entirely
         // (a third of the batch vertex bytes) and satisfy binding 2 with the dummy buffer
@@ -482,7 +546,7 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
             if (shader->fsBlockSize)
                 uboBytes += ((VkDeviceSize)shader->fsBlockSize + 255) & ~(VkDeviceSize)255;
             if (uboBytes)
-                uboBytes += 256; // alignment slack for the first block's 256-byte rounding
+                uboBytes = (uboBytes + 256) * (RLVK.State.stereoRender ? 2u : 1u);
         }
 
         // Arena exhaustion is handled, never dropped: drain the recording mid-frame (the wait
@@ -501,8 +565,17 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
             if (attempt > 0)
             {
                 // A single flush larger than the whole arena: drop it, the growth request stands
+                RLVK.arenaWanted[frameIndex] += (idxOff + idxBytes) - posOff + 16 + uboBytes;
                 batch->currentDepth = -1.0f;
                 RLVK.State.vertexCounter = 0;
+                int used = (batch->drawCounter <= RL_DEFAULT_BATCH_DRAWCALLS) ? batch->drawCounter : RL_DEFAULT_BATCH_DRAWCALLS;
+                for (int i = 0; i < used; i++)
+                {
+                    batch->draws[i].mode = RL_QUADS;
+                    batch->draws[i].vertexCount = 0;
+                    batch->draws[i].vertexAlignment = 0;
+                    batch->draws[i].textureId = RLVK.defaultTextureSlot;
+                }
                 batch->drawCounter = 1;
                 return;
             }
@@ -514,9 +587,6 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
 
         char *dst = (char *)arena->mapped;
         memcpy(dst + posOff, srcvb->vertices, (size_t)posBytes);
-        // (The old +0.5px horizontal-line tie-break nudge is GONE: every scope now rasterizes
-        // in GL's memory orientation - positive viewport, flip at present - so boundary
-        // tie-breaks match GL natively, in 2D and 3D, for lines, triangles, and points.)
         memcpy(dst + uvOff, srcvb->texcoords, (size_t)uvBytes);
         if (nrmBytes)
             memcpy(dst + nrmOff, srcvb->normals, (size_t)nrmBytes);
@@ -530,7 +600,7 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
         {
             const f32 *vp = (const f32 *)(dst + posOff);
             const unsigned char *cp = (const unsigned char *)(dst + colOff);
-            const unsigned int *ip = (const unsigned int *)(dst + idxOff);
+            const unsigned int *ip = idxBytes ? (const unsigned int *)(dst + idxOff) : srcvb->indices;
             TRACELOG(RL_LOG_WARNING, "VKDBG idx: [%u %u %u %u %u %u] [%u %u %u %u %u %u] idxOff=%u posOff=%u",
                      ip[0], ip[1], ip[2], ip[3], ip[4], ip[5], ip[6], ip[7], ip[8], ip[9], ip[10], ip[11], (u32)idxOff, (u32)posOff);
             TRACELOG(RL_LOG_WARNING, "VKDBG vtx: n=%u v0=(%.1f,%.1f,%.2f) v1=(%.1f,%.1f,%.2f) col0=(%u,%u,%u,%u) vpState=(%d,%d,%dx%d) scopeWH=%ux%u mvp[0]=%f mvp[5]=%f mvp[12]=%f mvp[13]=%f",
@@ -547,6 +617,9 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
         // buffer indices through the pipeline's vertex descriptor - binding buffers with no
         // (or a stale) pipeline bound leaves the attributes reading zeros on some drivers.
         bool batchBuffersBound = false;
+        bool expPushBeforePipe = rlvkDebugFlag("RLVK_EXP_PUSH_BEFORE_PIPE", &s_expPushBeforePipe) != 0;
+        bool dbgDrawSite = rlvkDebugFlag("RLVK_DBG_DRAWSITE", &s_dbgDrawSite) != 0;
+        bool dbgFlush = rlvkDebugFlag("RLVK_DEBUG_FLUSH", &s_dbgFlush) != 0;
 
         // Draw batch vertex buffers (considering VR stereo if required) - mirrors rlgl's eye
         // loop exactly: two half-width viewports, per-eye view offset multiplied into the
@@ -563,7 +636,7 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                 RLVK.State.projection = RLVK.State.projectionStereo[eye];
             }
 
-            rlvkPushConstants pc = {0};
+            rlvkPushConstants pc;
             Matrix matMVP = rlvkMatrixMultiply(RLVK.State.modelview, RLVK.State.projection);
             // Fill the MVP in rlMatrixToFloat order (column-major floats), exactly as the GL backend
             // passes it to glUniformMatrix4fv. NOTE: this is NOT raylib's struct memory order (its transpose).
@@ -607,11 +680,6 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                     if (L[SHADER_LOC_COLOR_DIFFUSE] >= 0)
                         rlvkShaderWriteUniform(shader, L[SHADER_LOC_COLOR_DIFFUSE], pc.colDiffuse, 16);
                 }
-                // NOTE: for a UBO shader the whole set-0 (UBO + binding-0 texture + samplers +
-                // SSBOs) is issued as ONE coalesced CmdPushDescriptorSetKHR per draw, inside the
-                // loop below after the pipeline bind (rlvkPushSet0Batch). MoltenVK drops the SECOND
-                // separate push-descriptor call of a draw, so pushing the UBO here and the texture
-                // later as two calls lost the texture (HANDOFF §7.26).
             }
             else
                 vk.CmdPushConstants(cmdBuffer, RLVK.pipelineLayout,
@@ -622,28 +690,22 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
             for (int i = 0, vertexOffset = 0; i < batch->drawCounter; i++)
             {
                 rlDrawCall *drawCall = &batch->draws[i];
-                if (rlvkDebugFlag("RLVK_DEBUG_FLUSH", &s_dbgFlush))
+                if (dbgFlush)
                     TRACELOG(RL_LOG_WARNING,
                              "VKDBG flush draw %d/%d mode=%d verts=%d tex=%u shader=%u scope=%u depthT=%d vtxCtr=%d",
                              i, batch->drawCounter, drawCall->mode, drawCall->vertexCount, drawCall->textureId,
                              RLVK.State.currentShaderSlot, RLVK.scope.fbSlot, (int)RLVK.State.depthTest, RLVK.State.vertexCounter);
-                // EXP: push set-0 BEFORE binding the ground pipeline (while the prior pipeline is
-                // still bound); compatible layouts mean the push must persist across the bind.
-                if (shader->usesUbo && drawCall->vertexCount > 0 && getenv("RLVK_EXP_PUSH_BEFORE_PIPE"))
+
+                if (shader->usesUbo && drawCall->vertexCount > 0 && expPushBeforePipe)
                     rlvkPushSet0Batch(cmdBuffer, shader, drawCall->textureId);
-                // A failed pipeline build leaves the previous pipeline bound; drawing this batch
-                // segment with it would rasterize it under the WRONG shader (a custom-shader VFX
-                // quad shows as an opaque square). Skip the segment's draw when the build fails.
+
                 if ((drawCall->vertexCount > 0) &&
                     rlvkBindPipeline(cmdBuffer, (drawCall->mode == RL_LINES) ? 0 : 1,
                                      RLVK_VLAYOUT_BATCH, RLVK.State.currentShaderSlot))
                 {
-                    // GL bind-at-draw semantics, atomically. A UBO shader coalesces its entire
-                    // set-0 into one push AFTER the pipeline bind (defeats the MoltenVK 2nd-push
-                    // drop, §7.26); the default shader pushes just its texture0 (a single call).
                     if (shader->usesUbo)
                     {
-                        if (!getenv("RLVK_EXP_PUSH_BEFORE_PIPE"))
+                        if (!expPushBeforePipe)
                             rlvkPushSet0Batch(cmdBuffer, shader, drawCall->textureId);
                     }
                     else
@@ -654,17 +716,26 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
                         vkCmdBindVertexBuffers(cmdBuffer, 0, 4,
                                                (VkBuffer[]){arena->buffer, arena->buffer, wantNormals ? arena->buffer : RLVK.bufferSlots[RLVK.dummyAttribSlot].buffer, arena->buffer},
                                                (VkDeviceSize[]){posOff, uvOff, wantNormals ? nrmOff : 12, colOff});
-                        vkCmdBindIndexBuffer(cmdBuffer, arena->buffer, idxOff, VK_INDEX_TYPE_UINT32);
+                        if (idxBytes)
+                            vkCmdBindIndexBuffer(cmdBuffer, arena->buffer, idxOff, VK_INDEX_TYPE_UINT32);
                         rlvkBindDummyAttribBuffers(cmdBuffer, RLVK_VLAYOUT_BATCH, shader);
                         batchBuffersBound = true;
                     }
-                    if (getenv("RLVK_DBG_DRAWSITE")) { fprintf(stderr, "[DRAW] pre mode=%d verts=%d ubo=%d slot=%u\n", drawCall->mode, drawCall->vertexCount, (int)shader->usesUbo, RLVK.State.currentShaderSlot); fflush(stderr); }
+                    if (dbgDrawSite)
+                    {
+                        fprintf(stderr, "[DRAW] pre mode=%d verts=%d ubo=%d slot=%u\n", drawCall->mode, drawCall->vertexCount, (int)shader->usesUbo, RLVK.State.currentShaderSlot);
+                        fflush(stderr);
+                    }
                     rlvkProfileDraw();
                     if ((drawCall->mode == RL_LINES) || (drawCall->mode == RL_TRIANGLES))
                         vk.CmdDraw(cmdBuffer, drawCall->vertexCount, 1, vertexOffset, 0);
                     else // RL_QUADS -> 2 triangles per quad via the index buffer
                         vk.CmdDrawIndexed(cmdBuffer, drawCall->vertexCount / 4 * 6, 1, vertexOffset / 4 * 6, 0, 0);
-                    if (getenv("RLVK_DBG_DRAWSITE")) { fprintf(stderr, "[DRAW] post\n"); fflush(stderr); }
+                    if (dbgDrawSite)
+                    {
+                        fprintf(stderr, "[DRAW] post\n");
+                        fflush(stderr);
+                    }
                 }
                 vertexOffset += drawCall->vertexCount + drawCall->vertexAlignment;
             }
@@ -682,15 +753,15 @@ void rlDrawRenderBatch(rlRenderBatch *batch)
             batch->currentBuffer = 0;
     }
 
-    // Reset batch buffers
-    //------------------------------------------------------------------------------------------------------------
-    // Reset vertex counter for next frame
+    // Reset only the drawCall slots that were touched during this batch (typically 1..2 instead of 512)
     RLVK.State.vertexCounter = 0;
     batch->currentDepth = -1.0f;
-    for (int i = 0; i < RL_DEFAULT_BATCH_DRAWCALLS; i++)
+    int usedDraws = (batch->drawCounter <= RL_DEFAULT_BATCH_DRAWCALLS) ? batch->drawCounter : RL_DEFAULT_BATCH_DRAWCALLS;
+    for (int i = 0; i < usedDraws; i++)
     {
         batch->draws[i].mode = RL_QUADS;
         batch->draws[i].vertexCount = 0;
+        batch->draws[i].vertexAlignment = 0;
         batch->draws[i].textureId = RLVK.defaultTextureSlot;
     }
     batch->drawCounter = 1;
@@ -761,6 +832,7 @@ void rlSetTexture(unsigned int id)
 
         batch->draws[batch->drawCounter - 1].textureId = id;
         batch->draws[batch->drawCounter - 1].vertexCount = 0;
+        batch->draws[batch->drawCounter - 1].vertexAlignment = 0;
     }
 }
 
@@ -772,6 +844,9 @@ void rlSetTexture(unsigned int id)
 // fenced submission through a transient staging buffer
 static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 size)
 {
+    if (!isGpuReady || dst == VK_NULL_HANDLE || data == NULL || size == 0)
+        return;
+
     if (RLVK.frameActive)
     {
         u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
@@ -814,11 +889,8 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
                                                   // GPU-particle vertex shader reads them as storage buffers);
                                                   // vertex-attribute/index visibility alone left those reads STALE
                                                   // (invisible particles - silently wrong, no validation error).
-                                                  .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT
-                                                                | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT
-                                                                | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
-                                                  .dstAccessMask = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT
-                                                                 | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT,
+                                                  .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT | VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                                                  .dstAccessMask = VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_INDEX_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT,
                                                   .buffer = dst,
                                                   .offset = dstOffset,
                                                   .size = size,
@@ -831,7 +903,9 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
         return;
     }
 
-    // Load time: Tối ưu hoàn toàn để loại bỏ overhead, ngăn ngừa hỏng state
+    // Flush any pending out-of-frame compute batch so command submission order stays sequential
+    rlvkComputeBatchFlush();
+
     VkBuffer staging = VK_NULL_HANDLE;
     VkDeviceMemory stagingMem = VK_NULL_HANDLE;
     void *map = NULL;
@@ -842,12 +916,16 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
     VkMemoryRequirements memReq;
     vkGetBufferMemoryRequirements(RLVK.device, staging, &memReq);
     stagingMem = rlvkAllocMemory(memReq, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (stagingMem == VK_NULL_HANDLE)
+    {
+        vkDestroyBuffer(RLVK.device, staging, RLVK_ALLOC);
+        return;
+    }
     vkBindBufferMemory(RLVK.device, staging, stagingMem, 0);
     vkMapMemory(RLVK.device, stagingMem, 0, size, 0, &map);
     memcpy(map, data, size);
     vkUnmapMemory(RLVK.device, stagingMem);
 
-    // Tối ưu: Dùng Command Pool tạm (Transient) thay vì can thiệp vào Frame Ring đang nghỉ
     VkCommandPool tempPool = VK_NULL_HANDLE;
     vkCreateCommandPool(RLVK.device, &(VkCommandPoolCreateInfo){
                                          VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -871,7 +949,6 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
     vkCmdCopyBuffer(tempCmd, staging, dst, 1, &(VkBufferCopy){.dstOffset = dstOffset, .size = size});
     vk.EndCommandBuffer(tempCmd);
 
-    // Bỏ `rlvkWaitInFlightFrames()` tại đây vì nó gây thắt cổ chai vô ích cho GPU
     vk.QueueSubmit2(RLVK.graphicsQueue, 1, &(VkSubmitInfo2){
                                                VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
                                                .commandBufferInfoCount = 1,
@@ -879,13 +956,14 @@ static void rlvkUploadBuffer(VkBuffer dst, u32 dstOffset, const void *data, u32 
                                            },
                     VK_NULL_HANDLE);
 
-    // Đồng bộ bằng vkQueueWaitIdle: gọn và ít tốn object hơn vkWaitForFences
     bool profile = rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile);
     f64 profileTime = profile ? rlvkProfileNow() : 0;
     vkQueueWaitIdle(RLVK.graphicsQueue);
-    if (profile) s_profileIdleMs += rlvkProfileNow() - profileTime;
+    if (profile)
+        s_profileIdleMs += rlvkProfileNow() - profileTime;
 
     vkDestroyCommandPool(RLVK.device, tempPool, RLVK_ALLOC);
     vkDestroyBuffer(RLVK.device, staging, RLVK_ALLOC);
     vkFreeMemory(RLVK.device, stagingMem, RLVK_ALLOC);
+    s_memHostBytes -= (ill)memReq.size;
 }
