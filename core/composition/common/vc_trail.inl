@@ -326,7 +326,7 @@ static const TrailMotion k_trailMotion[TRAIL_PRESET_COUNT] = {
     [TRAIL_PRESET_SWORD_COMET] = {0.0f, false, false, 0, 0, 0, 0, 3, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
                                true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
-    [TRAIL_PRESET_SILK]        = {0.0f, false, true, 0.80f, 0.45f, 3.5f, 0.80f, 3, false, true,
+    [TRAIL_PRESET_SILK]        = {0.0f, false, false, 0, 0, 0, 0, 3, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
                                true, TRAIL_WIDTH_ENVELOPE_TAPER_TAIL},
     [TRAIL_PRESET_WOOD_SPIRAL] = {0.0f, false, false, 0, 0, 0, 0, 4, false, false,
@@ -335,10 +335,10 @@ static const TrailMotion k_trailMotion[TRAIL_PRESET_COUNT] = {
     [TRAIL_PRESET_LIGHTNING]   = {0.0f, false, false, 0, 0, 0, 0, 4, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 45.0f,
                                false, TRAIL_WIDTH_ENVELOPE_UNIFORM},
-    [TRAIL_PRESET_FIRE_JET]    = {0.0f, false, true, -1.20f, 0.80f, 2.0f, 1.00f, 2, false, true,
+    [TRAIL_PRESET_FIRE_JET]    = {0.0f, false, false, 0, 0, 0, 0, 2, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
                                true, TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN},
-    [TRAIL_PRESET_DRAGON]      = {0.0600f, true, true, 0.30f, 0.50f, 4.0f, 0.60f, 1, false, true,
+    [TRAIL_PRESET_DRAGON]      = {0.0f, false, false, 0, 0, 0, 0, 2, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
                                true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
     [TRAIL_PRESET_INK]         = {0.0f, false, false, 0, 0, 0, 0, 1, false, false,
@@ -350,19 +350,19 @@ static const TrailMotion k_trailMotion[TRAIL_PRESET_COUNT] = {
     [TRAIL_PRESET_ICE_SHARD]   = {0.0f, false, false, 0, 0, 0, 0, 2, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
                                true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
-    [TRAIL_PRESET_WIND_BLADE]  = {0.0f, false, true, 0.20f, 0.70f, 4.5f, 1.20f, 4, false, true,
+    [TRAIL_PRESET_WIND_BLADE]  = {0.0f, false, false, 0, 0, 0, 0, 4, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
                                true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
     [TRAIL_PRESET_CROSS_BEAM]  = {0.0f, false, false, 0, 0, 0, 0, 2, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
                                true, TRAIL_WIDTH_ENVELOPE_UNIFORM},
-    [TRAIL_PRESET_DEMONIC]     = {0.0f, false, true, -0.50f, 0.90f, 2.5f, 1.10f, 3, false, true,
+    [TRAIL_PRESET_DEMONIC]     = {0.0f, false, false, 0, 0, 0, 0, 3, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
                                true, TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN},
     [TRAIL_PRESET_TAIJI]       = {0.0f, false, false, 0, 0, 0, 0, 3, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
                                true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
-    [TRAIL_PRESET_GALAXY]      = {0.0f, false, true, 0.10f, 0.40f, 3.0f, 0.50f, 2, false, true,
+    [TRAIL_PRESET_GALAXY]      = {0.0f, false, false, 0, 0, 0, 0, 2, false, false,
                                SWEPT_SAMPLE_HZ, 0.05f, 25.0f,
                                true, TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE},
 };
@@ -415,13 +415,7 @@ static float SweptTrail_Wind(TrailPresetId kind) { return TrailMotionOf(kind)->w
 
 static int SweptTrail_StrandCount(TrailPresetId kind, bool lowTier)
 {
-    (void)kind;
-    (void)lowTier;
-    /* A Motion Ribbon composition represents one connected trail. The prior
-     * per-preset companions each spawned another follower and ribbon, so
-     * presets with 3-4 authored strands visibly broke into parallel strips.
-     * Keep material motion and strand detail on that one shared path. */
-    return 1;
+    return lowTier ? 1 : TrailMotionOf(kind)->strands;
 }
 
 // Tail memory in seconds → nodes. The arithmetic moved to vc_common.inl when the
@@ -865,9 +859,15 @@ static void InitMistLayer(TrailRecipe *r, Color c0, Color c1, Color c2, Color c3
     r->style = 13.0f;
     r->cap = (Vector2){1.0f, 0.7f};
     r->widthProf = (Vector4){0.3f, 0.25f, 1.4f, 0.0f};
-    r->drift = (Vector3){0.0f, 0.5f, 0.0f};
-    r->noise = (Vector4){0.18f, 1.6f, 0.6f, 1.1f};
-    r->wave = (Vector4){0.1f, 3.0f, 2.0f, 1.0f};
+    r->drift = (Vector3){0.0f, 0.0f, 0.0f};
+    r->noise = (Vector4){0.05f, 1.6f, 0.6f, 1.1f};
+    r->wave = (Vector4){0.04f, 3.0f, 2.0f, 1.0f};
+    r->rollRate = 0.0f;
+    r->rollSpeed = 0.0f;
+    r->helix = (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
+    r->jitter = (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
+    r->lane = (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
+    r->shard = (Vector2){0.0f, 0.0f};
     r->p0 = (Vector4){0.9f, 1.2f, 2.5f, 0.9f};
     r->p1 = (Vector4){0.3f, 1.2f, 1.2f, 0.3f};
     r->p2 = (Vector4){0.35f, 0.5f, 0.3f, 0.0f};
@@ -1364,7 +1364,7 @@ static void TrailPresets_Build(void)
         r->layerCount = 1;
         r->radiusDefault = 0.28f;
         r->additive = true;
-        r->hdrGain = 2.6f;
+        r->hdrGain = 1.25f;
         r->bodyOpacity = 0.92f;
         r->tintAlpha = 240;
         r->style = 3.0f;
@@ -1479,10 +1479,10 @@ static void TrailPresets_Build(void)
         r->style = 7.0f;
         r->cap = (Vector2){1.0f, 1.0f};
         r->widthProf = (Vector4){0.7f, 0.55f, 0.0f, 0.55f};
-        r->wave = (Vector4){0.3f, 4.2f, 3.0f, 0.5f};
-        r->noise = (Vector4){0.03f, 2.0f, 1.0f, 1.0f};
-        r->rollRate = 0.8f;
-        r->rollSpeed = 1.2f;
+        r->wave = (Vector4){0.11f, 3.2f, 4.5f, 1.15f};
+        r->noise = (Vector4){0.025f, 2.0f, 1.2f, 1.2f};
+        r->rollRate = 0.5f;
+        r->rollSpeed = 0.8f;
         r->p0 = (Vector4){5.0f, 1.5f, 8.0f, 1.0f};
         r->p1 = (Vector4){2.2f, 1.1f, 3.0f, 1.0f};
         r->colRamp[0] = (Color){58, 32, 0, 255};
@@ -1772,17 +1772,11 @@ static void TrailPresets_Build(void)
 
     // 4. Linh Toàn (Wood Spiral Qi): Core (c=0) + Helical Dash 1 (c=1) + Helical Dash 2 (c=2) + Green Mist (c=3)
     {
-        // NOTE: strand 0's radiusDefault is DELIBERATELY the preset row's
-        // (0.24) — do NOT "thin the core" by lowering it. The per-frame width
-        // resolver (SweptTrail per-frame: strandWidth = s->width *
-        // strandRadius/refRadius with refRadius = strandRecipe[0]) uses
-        // strand 0 as the unit for the WHOLE bundle, so lowering it here
-        // does not thin strand 0 (which always resolves to s->width) — it
-        // fattens every other strand instead (0.05 here made the dashes and
-        // the mist 4.8x too wide and pushed the mist offset to ~4 m, flapping
-        // over the teleport threshold every frame). Strand 0 reads thin
-        // already through its style-2 pow(e,3) core, not through this field.
         k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].style = 2.0f;
+        k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].radiusDefault = 0.08f;
+        k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].helix = (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
+        k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].rollRate = 0.0f;
+        k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].rollSpeed = 0.0f;
         k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].p0 = (Vector4){2.0f, 4.0f, 3.0f, 6.0f};
         k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].p1 = (Vector4){3.0f, 1.5f, 1.4f, 1.0f};
         k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][0].p2 = (Vector4){8.0f, 1.0f, 1.0f, 1.0f};
@@ -1790,14 +1784,18 @@ static void TrailPresets_Build(void)
         TrailRecipe *s1 = &k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][1];
         *s1 = k_trailPresets[TRAIL_PRESET_WOOD_SPIRAL];
         s1->style = 4.0f;
-        s1->radiusDefault = 0.05f;
-        s1->helix = (Vector4){0.24f, 6.5f, 5.5f, 0.0f};
+        s1->radiusDefault = 0.065f;
+        s1->rollRate = 0.0f;
+        s1->rollSpeed = 0.0f;
+        s1->helix = (Vector4){0.18f, 6.0f, 5.5f, 0.0f};
 
         TrailRecipe *s2 = &k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][2];
         *s2 = k_trailPresets[TRAIL_PRESET_WOOD_SPIRAL];
         s2->style = 4.0f;
-        s2->radiusDefault = 0.05f;
-        s2->helix = (Vector4){0.24f, 6.5f, 5.5f, 2.0944f};
+        s2->radiusDefault = 0.065f;
+        s2->rollRate = 0.0f;
+        s2->rollSpeed = 0.0f;
+        s2->helix = (Vector4){0.18f, 6.0f, 5.5f, 3.14159f};
 
         InitMistLayer(&k_trailStrands[TRAIL_PRESET_WOOD_SPIRAL][3],
                       (Color){10, 74, 42, 255}, (Color){47, 208, 112, 255},
@@ -1871,6 +1869,16 @@ static void TrailPresets_Build(void)
             sl->lane = (Vector4){laneK * 0.33f, 0.3f, 2.2f, 0.0f};
             sl->radiusDefault = 0.06f;
         }
+    }
+
+    // 8b. Long Khí (Dragon Qi): Dragon Body (c=0) + Golden Dragon Aura Mist (c=1)
+    {
+        k_trailStrands[TRAIL_PRESET_DRAGON][0].radiusDefault = 0.22f;
+
+        InitMistLayer(&k_trailStrands[TRAIL_PRESET_DRAGON][1],
+                      (Color){74, 40, 0, 255}, (Color){208, 128, 16, 255},
+                      (Color){255, 208, 96, 255}, (Color){255, 250, 224, 255},
+                      0.38f, 0.35f);
     }
 
     // 9. Thập Tự Quang (Cross Radiant Beam): Beam (c=0) + Magenta Mist (c=1)
@@ -2140,7 +2148,10 @@ static void SweptTrail_ConfigureLayers(VC_SweptTrail *s)
     for (int L = 0; L < count; L++)
         s->layers[L] = k_sweptLayers[s->kind][L];
 
-    for (int c = 0; c < s->strands && c < SWEPT_STRANDS_MAX; c++)
+    int strandLim = (s->strands > 0) ? s->strands : 1;
+    if (strandLim > SWEPT_STRANDS_MAX)
+        strandLim = SWEPT_STRANDS_MAX;
+    for (int c = 0; c < strandLim; c++)
     {
         s->strandRecipe[c] = k_trailStrands[s->kind][c];
         s->strandRecipe[c].layers = s->layers;
@@ -2149,6 +2160,7 @@ static void SweptTrail_ConfigureLayers(VC_SweptTrail *s)
             s->strandRecipe[c].bodyOpacity = s_sweptBodyOpacity;
     }
     s->recipe = s->strandRecipe[0];
+    s->recipe.layers = s->layers;
 
     // WHERE THE SHEET COMES FROM, in priority order: a per-instance surface, the
     // preset's runtime-generated sheet, or the registry profile it names.
@@ -2698,8 +2710,10 @@ static void VC_SweptTrail_Update(float dt)
             float travel = SweptTrail_TravelLength(t);
             float strandRadius = (c < SWEPT_STRANDS_MAX && s->strandRecipe[c].radiusDefault > 0.001f)
                                      ? s->strandRecipe[c].radiusDefault
-                                     : s->recipe.radiusDefault;
-            float refRadius = s->recipe.radiusDefault > 0.001f ? s->recipe.radiusDefault : 0.25f;
+                                     : k_trailPresets[s->kind].radiusDefault;
+            float refRadius = k_trailPresets[s->kind].radiusDefault > 0.001f
+                                  ? k_trailPresets[s->kind].radiusDefault
+                                  : 0.25f;
             float strandWidth = s->width * knobW * (strandRadius / refRadius);
             t->thickness = SweptTrail_HalfWidth(strandWidth,
                                                 s->widthLevel, travel, s->kind);
@@ -2794,7 +2808,7 @@ static void VC_SweptTrail_Update(float dt)
             // fixed local offset: the axis is derived from the path the trail
             // has already travelled, so it only exists here and has to be
             // pushed in each frame.
-            if (s->strands > 1 && s->hasLateral)
+            if (s->recipe.style <= 0.5f && s->strands > 1 && s->hasLateral)
                 Trail_SetLateralOffset(s->strandId[c],
                                        Vector3Scale(s->hasLateralApplied ? s->lateralApplied : s->lateralAxis,
                                                     k_sweptSpread[c] * t->thickness *

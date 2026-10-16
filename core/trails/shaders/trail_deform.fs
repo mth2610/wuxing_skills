@@ -331,7 +331,7 @@ void main()
 
     float along = vSegUV.y;                   // 0 = head .. 1 = tail
     float across = (vSegUV.x - 0.5) * 2.0;    // -1 .. 1 across the width
-    float metres = u_nodeArc != 0 ? vPathMetres : u_pathArc.x - along * u_pathArc.y;
+    float metres = u_nodeArc!=0?vPathMetres:u_pathArc.x - along * u_pathArc.y;
     float e = 1.0 - abs(across);
 
     // ── PROCEDURAL PRESET STYLES (WebGL Trail Lab Pipeline) ─────────────────
@@ -343,9 +343,9 @@ void main()
         float vDist = a * max(u_pathArc.y, 1.0); // distance in metres from head
         if (u_maxDist > 0.0 && vDist > u_maxDist) discard;
 
-        float u = vDist * (u_uvScale.x > 0.001 ? u_uvScale.x : 1.0);
         float vS = u_pathArc.x - vDist;       // worldArcLen (stationary along world path)
-        float vShade = sin(vDist * u_wave.y - u_time * u_wave.z + u_seed * 6.2831853);
+        float u = -vS * (u_uvScale.x > 0.001 ? u_uvScale.x : 1.0);
+        float vShade = sin(vS * u_wave.y + u_time * u_wave.z + u_seed * 6.2831853);
         float vSpeed = 0.85;
 
         vec4 c = vec4(0.0);
@@ -386,9 +386,9 @@ void main()
             vec3 base = Ramp(v * 0.9 + Fbm2D(vec2(u * 1.2, v * 3.0)) * 0.25);
             vec3 col = base * sh * (0.85 + 0.15 * lines) + band * 0.3 * u_colRamp[3] + border * vec3(1.0, 0.85, 0.5) * 0.7;
 
-            // Glowing hot dome head (blooms into incandescent white-hot pearl halo)
-            float headHot = exp(-vDist * 6.5) * pow(e, 0.35);
-            col += vec3(1.5, 1.35, 1.2) * headHot * 3.2;
+            // Soft pearl sheen at the head without bleaching silk hue
+            float headHot = exp(-vDist * 6.5) * pow(e, 0.65);
+            col += vec3(1.0, 0.9, 0.8) * headHot * 0.75;
 
             c = vec4(col, smoothstep(0.0, 0.1, e) * pow(clamp(1.0 - a, 0.0, 1.0), u_p1.x) * 0.95);
         }
@@ -407,7 +407,7 @@ void main()
             float core = pow(e, u_p0.y);
             float glow = pow(e, u_p0.z);
             float fade = pow(clamp(1.0 - a, 0.0, 1.0), u_p1.x);
-            float tw = 0.6 + 0.4 * sin(vDist * 30.0 - u_time * 60.0);
+            float tw = 0.6 + 0.4 * sin(u * 30.0 - u_time * 60.0);
             c = vec4(mix(Ramp(0.5), vec3(1.0), core) * (1.0 + 2.0 * core), (glow * 0.55 * tw + core) * fade * flick);
         }
         else if (st == 6) // Hỏa Diễm (Rising Fire Jet)

@@ -415,8 +415,15 @@ static void DrawRibbonStripInternal(const RibbonPoint *points, int count,
     // before this line.
     if (havePrevSide && Vector3DotProduct(side, prevSide) < 0.0f)
       side = Vector3Negate(side);
-    prevSide = side;
-    havePrevSide = true;
+
+    if (havePrevSide) {
+      float segLen = Vector3Distance(points[i].position, prevCenter);
+      float maxArm = (halfWidth > prevHalfWidth) ? halfWidth : prevHalfWidth;
+      float maxTurn = (maxArm > 1e-4f) ? (0.65f * segLen / maxArm) : 0.65f;
+      if (maxTurn < 0.08f) maxTurn = 0.08f;
+      if (maxTurn > 0.65f) maxTurn = 0.65f;
+      side = Vector3Normalize(Vector3Lerp(prevSide, side, maxTurn));
+    }
 
     Vector3 left =
         Vector3Add(points[i].position, Vector3Scale(side, halfWidth));
@@ -426,6 +433,8 @@ static void DrawRibbonStripInternal(const RibbonPoint *points, int count,
 
     Vector3 prevSideArm = Vector3Scale(prevSide, 1.0f + prevHalfWidth);
     Vector3 sideArm = Vector3Scale(side, 1.0f + halfWidth);
+    prevSide = side;
+    havePrevSide = true;
 
     if (i > 0) {
       // Left Quad (U: 0.0 -> 0.5)

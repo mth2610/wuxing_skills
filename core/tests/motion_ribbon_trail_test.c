@@ -29,7 +29,7 @@ static Sim Run(int fps) {
     for (int i = 1; i <= (int)(seconds * fps); ++i) { float now = speed * (float)i / (float)fps; Sample(&s, prev, now, 0.125f); prev = now; }
     return s;
 }
-static int SourceHas(const char *path, const char *needle) { FILE *f = fopen(path, "rb"); static char b[131072]; size_t n; if (!f) return 0; n=fread(b,1,sizeof(b)-1,f); fclose(f); b[n]=0; return strstr(b,needle)!=NULL; }
+static int SourceHas(const char *path, const char *needle) { FILE *f = fopen(path, "rb"); static char b[262144]; size_t n; if (!f) return 0; n=fread(b,1,sizeof(b)-1,f); fclose(f); b[n]=0; return strstr(b,needle)!=NULL; }
 int main(void) {
     Sim a=Run(20), b=Run(60), c=Run(240); int i;
     CHECK(a.count == b.count && b.count == c.count, "20/60/240 FPS produce identical node counts");

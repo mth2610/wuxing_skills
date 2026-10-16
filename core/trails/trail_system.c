@@ -626,6 +626,26 @@ static inline int NodeIndexForSegRatio(const TrailEntity *t, int drawCount, int 
     return GetHistoryNodeIndex(t, i);
 }
 
+static Vector3 GetSpacedHistoryKnot(const TrailEntity *t, int k, int N, float fHead)
+{
+    if (k <= 0)
+        return t->history[GetHistoryNodeIndex(t, 0)];
+    if (k <= N - 2)
+        return t->history[GetHistoryNodeIndex(t, k)];
+
+    Vector3 pPrev = t->history[GetHistoryNodeIndex(t, (N >= 3) ? (N - 3) : 0)];
+    Vector3 pAnc  = t->history[GetHistoryNodeIndex(t, N - 2)];
+    Vector3 pTip  = t->history[GetHistoryNodeIndex(t, N - 1)];
+    Vector3 dPrev = Vector3Subtract(pAnc, pPrev);
+    Vector3 dTip  = Vector3Subtract(pTip, pAnc);
+    // Unit-spaced virtual knot that is C1-continuous across fHead: 1 -> 0
+    Vector3 step  = Vector3Add(Vector3Scale(dPrev, 1.0f - fHead), dTip);
+    Vector3 pHat1 = Vector3Add(pAnc, step);
+    if (k == N - 1)
+        return pHat1;
+    return Vector3Add(pHat1, step);
+}
+
 static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
 {
     if (t->historyCount < 1)
@@ -633,11 +653,43 @@ static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
     if (t->historyCount == 1)
         return t->history[GetHistoryNodeIndex(t, 0)];
 
+    int N = t->historyCount;
+    if (t->spacingMeters > 0.0f && t->hasSpacingAnchor && N >= 3)
+    {
+        int maxNodes = (t->trailLength > 0.0f) ? (int)t->trailLength : TRAIL_HISTORY_COUNT;
+        if (maxNodes > TRAIL_HISTORY_COUNT)
+            maxNodes = TRAIL_HISTORY_COUNT;
+        float residual = t->nodeUV[t->historyHead] - t->laidDist;
+        float fHead = Clamp(residual / t->spacingMeters, 0.0f, 1.0f);
+        float iHead = (float)(N - 2) + fHead;
+        float iTail = (N >= maxNodes) ? fHead : 0.0f;
+        float idx = iTail + segRatio * (iHead - iTail);
+        int i = (int)floorf(idx);
+        if (i < 0)
+            i = 0;
+        if (i > N - 2)
+            i = N - 2;
+        float f = idx - (float)i;
+
+        Vector3 P0 = GetSpacedHistoryKnot(t, i - 1, N, fHead);
+        Vector3 P1 = GetSpacedHistoryKnot(t, i,     N, fHead);
+        Vector3 P2 = GetSpacedHistoryKnot(t, i + 1, N, fHead);
+        Vector3 P3 = GetSpacedHistoryKnot(t, i + 2, N, fHead);
+        Vector3 pos = CatmullRom(P0, P1, P2, P3, f);
+        if (i == N - 2 && fHead > 1e-4f)
+        {
+            float sTip = Clamp(f / fHead, 0.0f, 1.0f);
+            Vector3 pTip = t->history[GetHistoryNodeIndex(t, N - 1)];
+            Vector3 chordPos = Vector3Lerp(P1, pTip, sTip);
+            pos = Vector3Lerp(pos, chordPos, sTip * sTip);
+        }
+        return pos;
+    }
+
     float idx = segRatio * (t->historyCount - 1);
     int i = (int)floorf(idx);
     float f = idx - (float)i;
 
-    int N = t->historyCount;
     int p0 = i - 1;
     if (p0 < 0)
         p0 = 0;
@@ -724,12 +776,10 @@ static inline int CalculateDrawCount(const TrailEntity *t)
     Vector3 tail = t->history[tailIdx];
     float distSqr = Vector3LengthSqr(Vector3Subtract(head, tail));
 
-    // Nếu trail quá ngắn (< 0.5m), không ép buộc sinh 30 điểm Spline
-    if (distSqr < 0.25f)
+    if (distSqr < 0.0025f && hc < 4)
         return hc;
 
-    int drawCount = hc < 30 ? 30 : hc;
-    return (drawCount > TRAIL_HISTORY_COUNT) ? TRAIL_HISTORY_COUNT : drawCount;
+    return TRAIL_HISTORY_COUNT;
 }
 
 static void DrawCameraFacingQuad(const TrailCameraBasis *cam, Vector3 center,
@@ -1083,8 +1133,9 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
     if ((!t->forceField && !windActive) || t->historyCount < 2)
         return;
     float viscDamp = t->forceField ? ForceField_GetViscosityDamping(t->forceField, dt) : 1.0f;
+    int hStart = (t->spacingMeters > 0.0f && t->hasSpacingAnchor && t->historyCount > 2) ? 2 : 1;
 
-    for (int h = 1; h < t->historyCount; h++)
+    for (int h = hStart; h < t->historyCount; h++)
     {
         int idx = (t->historyHead - h + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
         Vector3 acc = (Vector3){0, 0, 0};
@@ -1129,14 +1180,14 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
     {
         for (int pass = 0; pass < TRAIL_CLOTH_CONSTRAIN_ITERS; pass++)
         {
-            for (int h = 1; h < t->historyCount; h++)
+            for (int h = hStart; h < t->historyCount; h++)
             {
                 int idx = (t->historyHead - h + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
                 int lead = (t->historyHead - h + 1 + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT;
                 Ribbon_ConstrainSegment(&t->history[lead], &t->history[idx],
-                                        t->nodeRest[idx], true, RIBBON_CONSTRAIN_MAX);
+                                        t->nodeRest[lead], true, RIBBON_CONSTRAIN_MAX);
                 Ribbon_ConstrainSegment(&t->history[lead], &t->history[idx],
-                                        t->nodeRest[idx] * TRAIL_CLOTH_MIN_SPACING, true,
+                                        t->nodeRest[lead] * TRAIL_CLOTH_MIN_SPACING, true,
                                         RIBBON_CONSTRAIN_MIN);
             }
         }
@@ -1461,9 +1512,9 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos)
 
         float step = (t->historyCount > 1) ? Vector3Distance(newTipPos, t->history[prev]) : 0.0f;
         if (step < 1e-4f)
-            step = 1e-4f;
+            step = (t->spacingMeters > 1e-4f) ? t->spacingMeters : 1e-4f;
         t->nodeRest[t->historyHead] = step;
-        t->laidDist += step;
+        t->laidDist += (t->historyCount > 1) ? step : 0.0f;
         t->nodeUV[t->historyHead] = t->laidDist;
     }
 
@@ -1487,42 +1538,53 @@ static void MotionRibbon_SampleFollower(int id, Vector3 newTipPos)
         return;
     }
     // The append loop measures from the last LAID control point, tracked
-    // separately: the render head below rides the live tip every frame, so it
-    // cannot serve as the anchor (moving it resets the accumulation and the
-    // history freezes at one node — a blank trail).
+    // separately: the render head below rides the live tip every frame in its
+    // own dedicated slot above spacingAnchor, so spacingAnchor is never
+    // overwritten or snapped backward when the next interval completes.
     if (!t->hasSpacingAnchor)
     {
         t->spacingAnchor = t->history[t->historyHead];
         t->hasSpacingAnchor = true;
+        t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
+        GrowHistoryTowardMaxNodes(t);
+        t->history[t->historyHead] = t->spacingAnchor;
+        t->nodeHome[t->historyHead] = t->spacingAnchor;
+        t->nodeVelocity[t->historyHead] = (Vector3){0, 0, 0};
+        t->nodeRest[t->historyHead] = 1e-4f;
+        t->nodeUV[t->historyHead] = t->laidDist;
     }
     for (;;)
     {
         float distance = Vector3Distance(t->spacingAnchor, newTipPos);
         if (distance + 1e-5f < t->spacingMeters)
             break;
-        UpdateFollowerPosition(id, Vector3Lerp(t->spacingAnchor, newTipPos,
-                                                t->spacingMeters / distance));
-        t->spacingAnchor = t->history[t->historyHead];
+        Vector3 spaced = Vector3Lerp(t->spacingAnchor, newTipPos,
+                                     t->spacingMeters / distance);
+        t->history[t->historyHead] = spaced;
+        t->nodeHome[t->historyHead] = spaced;
+        t->nodeVelocity[t->historyHead] = (Vector3){0, 0, 0};
+        t->nodeRest[t->historyHead] = t->spacingMeters;
+        t->laidDist += t->spacingMeters;
+        t->nodeUV[t->historyHead] = t->laidDist;
+        t->spacingAnchor = spaced;
+
+        t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
+        GrowHistoryTowardMaxNodes(t);
     }
     /* Keep physics/ownership current even while the render head waits for the
      * next metre-spaced control point.  No zero-length frame is manufactured. */
     t->position = newTipPos;
     t->timeSinceLastFollowerUpdate = 0.0f;
     t->fadeAccumulator = 0.0f;
-    // LIVE HEAD: the drawn strip ends at the true tip every frame instead of
-    // dwelling at the last spaced point for up to spacingMeters (0.10 m of
-    // stop-start head motion, plus a 0.10 m lurch of every wave crest, since
-    // the fragment stage anchors to the head odometer). Interior nodes keep
-    // their even spacing — appends above still measure from the anchor — and
-    // the head UV advances by the same residual so the arc origin stays exact.
+    // LIVE HEAD: the drawn strip ends at the true tip every frame in the
+    // dedicated live-head slot above spacingAnchor.
     {
         float residual = Vector3Distance(t->spacingAnchor, newTipPos);
-        if (residual > 1e-6f)
-        {
-            t->history[t->historyHead] = newTipPos;
-            t->nodeHome[t->historyHead] = newTipPos;
-            t->nodeUV[t->historyHead] = t->laidDist + residual;
-        }
+        t->history[t->historyHead] = newTipPos;
+        t->nodeHome[t->historyHead] = newTipPos;
+        t->nodeVelocity[t->historyHead] = (Vector3){0, 0, 0};
+        t->nodeUV[t->historyHead] = t->laidDist + residual;
+        t->nodeRest[t->historyHead] = (residual > 1e-4f) ? residual : 1e-4f;
     }
 }
 
@@ -1546,7 +1608,7 @@ static void FollowerCut(TrailEntity *t, Vector3 tip)
     t->history[0] = tip;
     t->nodeHome[0] = tip;
     t->nodeVelocity[0] = (Vector3){0, 0, 0};
-    t->nodeRest[0] = 1e-4f;
+    t->nodeRest[0] = (t->spacingMeters > 1e-4f) ? t->spacingMeters : 1e-4f;
     t->nodeUV[0] = t->laidDist; // NOT 0 — see above
     t->prevAttachPos = tip;
     t->sampleAcc = 0.0f;
@@ -2416,6 +2478,18 @@ void TrailRibbon_BindAppearance(Shader shader,const TrailEntity *t, Camera3D cam
                 int headNode = NodeIndexForSegRatio(t, drawCount, 0);
                 int tailNode = NodeIndexForSegRatio(t, drawCount, drawCount - 1);
                 float span = t->nodeUV[headNode] - t->nodeUV[tailNode];
+                if (t->spacingMeters > 0.0f && t->hasSpacingAnchor && t->historyCount >= 3)
+                {
+                    int N = t->historyCount;
+                    int maxNodes = (t->trailLength > 0.0f) ? (int)t->trailLength : TRAIL_HISTORY_COUNT;
+                    if (maxNodes > TRAIL_HISTORY_COUNT)
+                        maxNodes = TRAIL_HISTORY_COUNT;
+                    float residual = t->nodeUV[t->historyHead] - t->laidDist;
+                    float fHead = Clamp(residual / t->spacingMeters, 0.0f, 1.0f);
+                    float iHead = (float)(N - 2) + fHead;
+                    float iTail = (N >= maxNodes) ? fHead : 0.0f;
+                    span = (iHead - iTail) * t->spacingMeters;
+                }
                 if (span > 0.001f)
                 {
                     // nodeUV is CUMULATIVE distance and never resets, so a
@@ -2695,8 +2769,9 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                     posNode.z += nZ * t->distortionStrength;
                 }
                 posNode = ApplyAnchoredHelix(t, posNode, segRatio);
+                float cpuTaper = (t->material.style > 0.5f) ? 1.0f : taper;
                 scratchOuter[h].position = posNode;
-                scratchOuter[h].halfWidth = t->thickness * taper;
+                scratchOuter[h].halfWidth = t->thickness * cpuTaper;
                 // Deform trails: texcoord.y carries the normalized segment
                 // (0 = head, 1 = tail) for the wave envelope; tiling/scroll
                 // live in the packed-material shader.
@@ -2706,8 +2781,8 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                                                ? (t->nodeUV[NodeIndexForSegRatio(t, drawCount, h)] / t->uvMetresPerTile)
                                                : (segRatio * t->uvTiling));
                 scratchOuter[h].tint = (Color){nodeColor.r, nodeColor.g, nodeColor.b,
-                                               (unsigned char)(nodeColor.a * lifeRatio * taper)};
-                scratchTaper[h] = taper;
+                                               (unsigned char)(nodeColor.a * lifeRatio * cpuTaper)};
+                scratchTaper[h] = cpuTaper;
                 scratchSegRatio[h] = segRatio;
             }
 

@@ -100,6 +100,8 @@ void main()
     float halfWidth = max(sideLen - 1.0, 0.0);
     float seg = clamp(vertexTexCoord.y, 0.0, 1.0);
     float vDist = seg * max(u_pathArc.y, 1.0);
+    float vArc = u_pathArc.x - vDist;
+    float headWeld = smoothstep(0.0, 0.16, seg);
 
     float headFade = max(u_waveEnv.x, 0.001);
     float tailStart = clamp(u_waveEnv.y, u_waveEnv.x, 0.999);
@@ -114,30 +116,31 @@ void main()
     // ── Tangent & Bi-normal for ribbon frame ────────────────────────────────
     vec3 T = normalize(cross(side, u_stripNormal));
     if (dot(T, T) < 0.01) T = vec3(0.0, 0.0, 1.0);
-    vec3 B = u_stripNormal;
+    vec3 B = normalize(cross(T, side));
+    if (dot(B, B) < 0.01) B = u_stripNormal;
 
-    // ── ROLL: twist ribbon frame around tangent axis (screw / twist) ────────
+    // ── ROLL: modulate ribbon width along stationary arc without out-of-plane twist spikes
     vec3 sd = side;
     if (u_roll.x != 0.0 || u_roll.y != 0.0)
     {
-        float th = vDist * u_roll.x - t * u_roll.y;
-        sd = sd * cos(th) + cross(T, sd) * sin(th);
+        float th = vArc * u_roll.x + t * u_roll.y;
+        sd = side * (0.72 + 0.28 * cos(th));
     }
 
-    // ── WAVE: sin dọc theo path, biên độ tăng theo tuổi (from trail.html) ──
+    // ── WAVE: sin dọc theo path (world-anchored), biên độ tăng theo tuổi ────
     if (u_wave.x > 0.0)
     {
-        float wv = sin(vDist * u_wave.y - t * u_wave.z + u_seed * 6.2831853);
-        float wa = u_wave.x * pow(seg, max(u_wave.w, 0.01));
-        c += u_stripNormal * wv * wa;
-        c += B * cos(vDist * u_wave.y * 0.7 - t * u_wave.z * 1.3 + u_seed * 4.0) * wa * 0.5;
+        float wv = sin(vArc * u_wave.y + t * u_wave.z + u_seed * 6.2831853);
+        float wa = u_wave.x * headWeld * pow(seg, max(u_wave.w, 0.35));
+        c += side * wv * wa;
+        c += B * cos(vArc * u_wave.y * 0.7 + t * u_wave.z * 1.3 + u_seed * 4.0) * wa * 0.35;
     }
 
     // ── NOISE: turbulence 3D trong world space (from trail.html) ────────────
     if (u_noise.x > 0.0)
     {
         vec3 q = c * u_noise.y + vec3(0.0, -t * u_noise.z, 0.0) + u_seed * 13.7;
-        c += (vec3(VNoise3D(q), VNoise3D(q + vec3(17.1)), VNoise3D(q + vec3(31.7))) - 0.5) * 2.0 * u_noise.x * pow(seg, max(u_noise.w, 0.01));
+        c += (vec3(VNoise3D(q), VNoise3D(q + vec3(17.1)), VNoise3D(q + vec3(31.7))) - 0.5) * 2.0 * u_noise.x * headWeld * pow(seg, max(u_noise.w, 0.35));
     }
 
     // ── DRIFT: directional acceleration by age^2 (rising fire / billowing smoke)
@@ -146,18 +149,18 @@ void main()
         c += u_drift * (seg * seg);
     }
 
-    // ── HELIX: quấn quanh path (Linh Toàn / Thái Cực, from trail.html) ───────
+    // ── HELIX: quấn quanh path (Linh Toàn / Thái Cực, world-anchored) ───────
     if (u_helix.x > 0.0)
     {
-        float ph = vDist * u_helix.y - t * u_helix.z + u_helix.w;
-        c += (u_stripNormal * cos(ph) + B * sin(ph)) * u_helix.x * smoothstep(0.0, 0.4, vDist) * (1.0 - 0.35 * seg);
+        float ph = vArc * u_helix.y + t * u_helix.z + u_helix.w;
+        c += (side * cos(ph) + B * sin(ph)) * u_helix.x * headWeld * smoothstep(0.0, 0.35, vDist) * (1.0 - 0.35 * seg);
     }
 
     // ── JITTER: multi-octave quantized zigzag (lightning arc) ────────────────
     if (u_jitter.x > 0.0)
     {
         float tq = floor(t * u_jitter.z) * 13.37 + u_seed * 91.7;
-        float x = vDist * u_jitter.y;
+        float x = -vArc * u_jitter.y;
         float amp = 1.0;
         vec2 o = vec2(0.0);
         for (int i = 0; i < 4; i++)
@@ -177,15 +180,15 @@ void main()
             x *= 2.1;
             amp *= 0.55;
         }
-        c += (u_stripNormal * o.x + B * o.y) * 2.0 * u_jitter.x * smoothstep(0.0, u_jitter.w, vDist) * (1.0 - 0.3 * seg);
+        c += (side * o.x + B * o.y) * 2.0 * u_jitter.x * headWeld * smoothstep(0.0, u_jitter.w, vDist) * (1.0 - 0.3 * seg);
     }
 
     // ── LANE: bundle nhiều sợi lệch khỏi trục, xoáy theo d (Phong Nhận) ─────
     if (u_lane.x != 0.0)
     {
-        float th = vDist * u_lane.z - t * u_lane.w;
-        vec3 ax = sd * cos(th) + cross(T, sd) * sin(th);
-        c += ax * u_lane.x * u_lane.y * (0.2 + 1.2 * seg);
+        float th = vArc * u_lane.z + t * u_lane.w;
+        vec3 ax = side * cos(th) + B * sin(th);
+        c += ax * u_lane.x * u_lane.y * headWeld * (0.25 + 0.95 * seg);
     }
 
     // ── WIDTH PROFILING & SHARD SERRATIONS ──────────────────────────────────
@@ -201,7 +204,7 @@ void main()
         float shard = 1.0;
         if (u_shard.y > 0.0)
         {
-            shard = mix(1.0, 0.2 + 0.8 * fract(vDist * u_shard.x), u_shard.y);
+            shard = mix(1.0, 0.2 + 0.8 * fract(-vArc * u_shard.x), u_shard.y);
         }
         hw = taper * head * bulge * grow * shard;
     }
