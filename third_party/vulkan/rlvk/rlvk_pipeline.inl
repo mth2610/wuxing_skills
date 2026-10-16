@@ -1,7 +1,6 @@
 //----------------------------------------------------------------------------------
 // rlvk.h implementation fragment: VkPipeline state cache (GL-equivalent state baked into pipelines)
 //
-// [OPTIMIZED VERSION - FIXED LINKAGE]
 // Part of the rlvk single-header backend. NOT a standalone header - it is textually
 // included by rlvk.h inside the ONE RLVK_IMPLEMENTATION translation unit. No include
 // guard: order is fixed by the #include chain in rlvk.h. Do not #include directly.
@@ -14,17 +13,23 @@
 
 #if defined(_WIN32)
 #include <process.h>
-#ifndef NOMINMAX
-#define NOMINMAX
+__declspec(dllimport) int __stdcall MoveFileExA(const char *lpExistingFileName, const char *lpNewFileName, unsigned int dwFlags);
+#ifndef MOVEFILE_REPLACE_EXISTING
+#define MOVEFILE_REPLACE_EXISTING 0x00000001u
 #endif
-#include <windows.h>
+#ifndef MOVEFILE_WRITE_THROUGH
+#define MOVEFILE_WRITE_THROUGH 0x00000008u
+#endif
 #define RLVK_CACHE_PROCESS_ID _getpid()
 #else
 #include <unistd.h>
 #define RLVK_CACHE_PROCESS_ID getpid()
 #endif
 
-typedef struct rlvkDiskPipelineCacheHeader {
+#define RLVK_BLEND_DISABLED 0xFFu
+
+typedef struct rlvkDiskPipelineCacheHeader
+{
     u32 magic, version, headerSize, vendorID, deviceID, driverVersion;
     unsigned char uuid[VK_UUID_SIZE];
     u64 payloadSize, checksum;
@@ -37,14 +42,26 @@ typedef char rlvkDiskCacheHeaderLayout[(sizeof(rlvkDiskPipelineCacheHeader) == 5
 
 static u64 rlvkDiskCacheChecksum(const void *data, size_t size)
 {
-    const unsigned char *bytes = data;
+    const unsigned char *bytes = (const unsigned char *)data;
     u64 hash = 14695981039346656037ull;
-    for (size_t i = 0; i < size; i++) { hash ^= bytes[i]; hash *= 1099511628211ull; }
+    // Process 8 bytes at a time for large driver cache payloads
+    size_t n8 = size >> 3;
+    const u64 *words = (const u64 *)bytes;
+    for (size_t i = 0; i < n8; i++)
+    {
+        hash ^= words[i];
+        hash *= 1099511628211ull;
+    }
+    for (size_t i = n8 << 3; i < size; i++)
+    {
+        hash ^= bytes[i];
+        hash *= 1099511628211ull;
+    }
     return hash;
 }
 
 static bool rlvkDiskCacheHeaderMatches(const rlvkDiskPipelineCacheHeader *header,
-                                      size_t fileSize, const VkPhysicalDeviceProperties *props)
+                                       size_t fileSize, const VkPhysicalDeviceProperties *props)
 {
     return header->magic == RLVK_DISK_CACHE_MAGIC && header->version == RLVK_DISK_CACHE_VERSION &&
            header->headerSize == sizeof(*header) && header->payloadSize >= sizeof(VkPipelineCacheHeaderVersionOne) &&
@@ -66,17 +83,15 @@ static bool rlvkDiskCachePayloadMatches(const rlvkDiskPipelineCacheHeader *heade
            rlvkDiskCacheChecksum(data, (size_t)header->payloadSize) == header->checksum;
 }
 
-static u32 s_pipelineHashes[RLVK_MAX_PIPELINES] = {0}; // OPTIMIZATION: Cache hashes for fast lookup
-
-// OPTIMIZATION: FNV-1a Hash function for fast pipeline key lookup
-static inline u32 rlvkHashPipelineKey(const rlvkPipelineKey *key)
+// Fast 64-bit word-at-a-time FNV-1a hash for the 64-byte rlvkPipelineKey (8 iterations instead of 64)
+static inline u64 rlvkHashPipelineKey(const rlvkPipelineKey *key)
 {
-    const unsigned char *data = (const unsigned char *)key;
-    u32 hash = 2166136261u;
-    for (size_t i = 0; i < sizeof(rlvkPipelineKey); i++)
+    const u64 *words = (const u64 *)key;
+    u64 hash = 14695981039346656037ull;
+    for (size_t i = 0; i < sizeof(rlvkPipelineKey) / sizeof(u64); i++)
     {
-        hash ^= data[i];
-        hash *= 16777619u;
+        hash ^= words[i];
+        hash *= 1099511628211ull;
     }
     return hash;
 }
@@ -87,7 +102,6 @@ static const char *rlvkGetPipelineCachePath(void)
     static char path[512] = {0};
     if (path[0] == 0)
     {
-        // OPTIMIZATION: Support TMPDIR for Linux/macOS environments before falling back
         const char *tmp = getenv("TMPDIR");
         if (tmp == NULL)
             tmp = getenv("TEMP");
@@ -111,7 +125,7 @@ static void rlvkInitPipelineCache(void)
     if (file != NULL)
     {
         fseek(file, 0, SEEK_END);
-        long pos = ftell(file); // OPTIMIZATION: Catch ftell errors (-1)
+        long pos = ftell(file);
         if (pos >= (long)sizeof(rlvkDiskPipelineCacheHeader))
         {
             rlvkDiskPipelineCacheHeader header;
@@ -131,7 +145,8 @@ static void rlvkInitPipelineCache(void)
             }
         }
         fclose(file);
-        if (!data) TRACELOG(RL_LOG_WARNING, "RLVK: unverified, stale or corrupt pipeline cache ignored; rebuilding safely");
+        if (!data)
+            TRACELOG(RL_LOG_WARNING, "RLVK: unverified, stale or corrupt pipeline cache ignored; rebuilding safely");
     }
 
     // A matching header can still contain truncated driver payload. Some drivers
@@ -177,17 +192,22 @@ static void rlvkSavePipelineCache(void)
         return;
 
     void *data = RL_MALLOC(dataSize);
-    if (!data) return;
+    if (!data)
+        return;
     if (vkGetPipelineCacheData(RLVK.device, RLVK.pipelineCache, &dataSize, data) == VK_SUCCESS)
     {
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(RLVK.physicalDevice, &props);
         rlvkDiskPipelineCacheHeader header = {0};
-        header.magic = RLVK_DISK_CACHE_MAGIC; header.version = RLVK_DISK_CACHE_VERSION;
-        header.headerSize = sizeof(header); header.vendorID = props.vendorID;
-        header.deviceID = props.deviceID; header.driverVersion = props.driverVersion;
+        header.magic = RLVK_DISK_CACHE_MAGIC;
+        header.version = RLVK_DISK_CACHE_VERSION;
+        header.headerSize = sizeof(header);
+        header.vendorID = props.vendorID;
+        header.deviceID = props.deviceID;
+        header.driverVersion = props.driverVersion;
         memcpy(header.uuid, props.pipelineCacheUUID, VK_UUID_SIZE);
-        header.payloadSize = dataSize; header.checksum = rlvkDiskCacheChecksum(data, dataSize);
+        header.payloadSize = dataSize;
+        header.checksum = rlvkDiskCacheChecksum(data, dataSize);
         char temporary[640];
         snprintf(temporary, sizeof(temporary), "%s.%lu.tmp", rlvkGetPipelineCachePath(), (unsigned long)RLVK_CACHE_PROCESS_ID);
         FILE *file = fopen(temporary, "wb");
@@ -195,20 +215,25 @@ static void rlvkSavePipelineCache(void)
         {
             bool complete = fwrite(&header, 1, sizeof(header), file) == sizeof(header) &&
                             fwrite(data, 1, dataSize, file) == dataSize;
-            if (fclose(file) != 0) complete = false;
+            if (fclose(file) != 0)
+                complete = false;
             bool replaced = false;
             if (complete)
             {
 #if defined(_WIN32)
                 replaced = MoveFileExA(temporary, rlvkGetPipelineCachePath(),
-                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+                                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
 #else
                 replaced = rename(temporary, rlvkGetPipelineCachePath()) == 0;
 #endif
             }
             if (replaced)
                 TRACELOG(RL_LOG_INFO, "RLVK: verified pipeline cache saved atomically (%llu bytes)", (ull)dataSize);
-            else { remove(temporary); TRACELOG(RL_LOG_WARNING, "RLVK: pipeline cache save skipped; previous file preserved"); }
+            else
+            {
+                remove(temporary);
+                TRACELOG(RL_LOG_WARNING, "RLVK: pipeline cache save skipped; previous file preserved");
+            }
         }
     }
     RL_FREE(data);
@@ -227,6 +252,9 @@ static VkPipelineColorBlendAttachmentState rlvkGetBlendAttachmentState(const rlv
         .alphaBlendOp = VK_BLEND_OP_ADD,
         .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
     };
+
+    if (!blendEnabled)
+        return state;
 
     switch (key->blendMode)
     {
@@ -372,7 +400,7 @@ static void rlvkAppendDummyAttribs(unsigned short vertexLayout, rlvkShaderSlot *
         u32 stride = 0;
         VkVertexInputRate rate = VK_VERTEX_INPUT_RATE_VERTEX;
 #endif
-        binds[*bindCount] = (VkVertexInputBindingDescription){.binding = dummyBinding, .stride = stride, .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
+        binds[*bindCount] = (VkVertexInputBindingDescription){.binding = dummyBinding, .stride = stride, .inputRate = rate};
         attrs[(*attrCount)++] = (VkVertexInputAttributeDescription){.location = (u32)shader->attribLocs[idx], .binding = dummyBinding, .format = rlvkDummyAttribs[i].format};
         (*bindCount)++;
         dummyBinding++;
@@ -484,12 +512,13 @@ static void rlvkBindDummyAttribBuffers(VkCommandBuffer cmdBuffer, unsigned short
     VkBuffer dummyBufs[8];
     VkDeviceSize dummyOffs[8];
     u32 dummyCount = 0;
+    VkBuffer dummyBuf = RLVK.bufferSlots[RLVK.dummyAttribSlot].buffer;
     for (int i = 0; i < (int)RLVK_COUNTOF(rlvkDummyAttribs); i++)
     {
         int idx = rlvkDummyAttribs[i].attrib;
         if ((covered & (1u << idx)) || (shader->attribLocs[idx] < 0))
             continue;
-        dummyBufs[dummyCount] = RLVK.bufferSlots[RLVK.dummyAttribSlot].buffer;
+        dummyBufs[dummyCount] = dummyBuf;
         dummyOffs[dummyCount] = rlvkDummyAttribs[i].dummyOffset;
         dummyCount++;
     }
@@ -499,6 +528,8 @@ static void rlvkBindDummyAttribBuffers(VkCommandBuffer cmdBuffer, unsigned short
 
 static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
 {
+    if (key->shaderSlot >= RLVK_MAX_SHADER_SLOTS)
+        return VK_NULL_HANDLE;
     VkShaderModule vertMod = RLVK.shaderSlots[key->shaderSlot].vertMod;
     VkShaderModule fragMod = RLVK.shaderSlots[key->shaderSlot].fragMod;
     if (vertMod == VK_NULL_HANDLE || fragMod == VK_NULL_HANDLE)
@@ -522,16 +553,16 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
         .pVertexAttributeDescriptions = attrs,
     };
 
-    bool blendEnabled = (key->blendMode >= 0);
+    bool blendEnabled = (key->blendMode != RLVK_BLEND_DISABLED) && ((int)key->blendMode >= 0);
     VkPipelineColorBlendAttachmentState blendAttachments[8];
     for (u32 a = 0; a < key->colorCount && a < 8; a++)
     {
         VkFormat fmt = key->colorFormats[a];
-        blendAttachments[a] = rlvkGetBlendAttachmentState(key, blendEnabled);
+        bool attBlend = blendEnabled && !(fmt == VK_FORMAT_R32_SFLOAT && !RLVK.Caps.floatBlendR32);
+        blendAttachments[a] = rlvkGetBlendAttachmentState(key, attBlend);
     }
 
-    rlvkRenderPassKey rpKey;
-    memset(&rpKey, 0, sizeof(rpKey));
+    rlvkRenderPassKey rpKey = {0};
     for (u32 a = 0; a < key->colorCount && a < 8; a++)
         rpKey.colorFormats[a] = key->colorFormats[a];
     rpKey.depthFormat = key->depthFormat;
@@ -546,6 +577,8 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
     // the swapchain's colour-only-resolve pass is a different compatibility class.
     rpKey.hasDepthResolve = (key->samples > 1) && key->depthResolve ? 1 : 0;
     VkRenderPass compatPass = rlvkGetRenderPass(&rpKey);
+    if (compatPass == VK_NULL_HANDLE)
+        return VK_NULL_HANDLE;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkResult result = vkCreateGraphicsPipelines(RLVK.device, RLVK.pipelineCache, 1,
@@ -608,22 +641,30 @@ static VkPipeline rlvkBuildPipeline(const rlvkPipelineKey *key)
     // pipelines render garbage), which makes a silent failure here pure invisibility.
     if (result != VK_SUCCESS)
         TRACELOG(RL_LOG_WARNING, "RLVK: vkCreateGraphicsPipelines => %d (shader slot %u, layout 0x%x) - draws with this state are SKIPPED",
-                 (int)result, key->shaderSlot, key->vertexLayout);
+                 (int)result, (unsigned int)key->shaderSlot, (unsigned int)key->vertexLayout);
     return pipeline;
 }
 
 // Get (or build and cache) the pipeline for a state key
 static VkPipeline rlvkGetPipeline(const rlvkPipelineKey *key)
 {
-    // OPTIMIZATION: Hash-based early out to avoid expensive linear memcmp search
-    u32 keyHash = rlvkHashPipelineKey(key);
-
-    for (int i = 0; i < RLVK.pipelineCount; i++)
+    // Direct hot-field pre-filter before full 64-byte comparison: immune to parallel-array
+    // desynchronization when rlUnloadShaderProgram swap-removes entries from RLVK.pipelines[],
+    // and avoids paying a 64-byte hash loop before checking small pipeline tables.
+    const int count = RLVK.pipelineCount;
+    for (int i = 0; i < count; i++)
     {
-        if (s_pipelineHashes[i] == keyHash)
+        const rlvkPipelineKey *k = &RLVK.pipelines[i].key;
+        if ((k->shaderSlot == key->shaderSlot) &&
+            (k->vertexLayout == key->vertexLayout) &&
+            (k->blendMode == key->blendMode) &&
+            (k->topology == key->topology) &&
+            (k->depthTest == key->depthTest) &&
+            (k->depthWrite == key->depthWrite) &&
+            (k->colorFormats[0] == key->colorFormats[0]) &&
+            (memcmp(k, key, sizeof(rlvkPipelineKey)) == 0))
         {
-            if (memcmp(&RLVK.pipelines[i].key, key, sizeof(rlvkPipelineKey)) == 0)
-                return RLVK.pipelines[i].pipeline;
+            return RLVK.pipelines[i].pipeline;
         }
     }
 
@@ -639,7 +680,7 @@ static VkPipeline rlvkGetPipeline(const rlvkPipelineKey *key)
 
     RLVK.pipelines[RLVK.pipelineCount].key = *key;
     RLVK.pipelines[RLVK.pipelineCount].pipeline = pipeline;
-    s_pipelineHashes[RLVK.pipelineCount] = keyHash; // OPTIMIZATION: Store the computed hash
+    RLVK.pipelineHashes[RLVK.pipelineCount] = rlvkHashPipelineKey(key);
     RLVK.pipelineCount++;
     return pipeline;
 }
@@ -650,18 +691,28 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
         (shaderSlot == s_lastShaderSlot) && (vertexLayout == s_lastVertexLayout) && (topology == s_lastTopology))
         return true;
 
+    VkFormat scopeDepthFormat = RLVK.depthFormat ? RLVK.depthFormat : VK_FORMAT_D32_SFLOAT;
     bool scopeHasDepth = true;
-    if (RLVK.scope.fbSlot != 0)
+    if (RLVK.scope.fbSlot != 0 && RLVK.scope.fbSlot < RLVK_MAX_FRAMEBUFFER_SLOTS)
     {
         rlvkFramebufferSlot *fb = &RLVK.fbSlots[RLVK.scope.fbSlot];
-        scopeHasDepth = fb->hasDepth && (RLVK.textureSlots[fb->depthTexture].image != VK_NULL_HANDLE);
+        if (fb->hasDepth && fb->depthTexture && fb->depthTexture < RLVK_MAX_TEXTURE_SLOTS &&
+            RLVK.textureSlots[fb->depthTexture].image != VK_NULL_HANDLE)
+        {
+            scopeHasDepth = true;
+            scopeDepthFormat = RLVK.textureSlots[fb->depthTexture].format;
+        }
+        else
+        {
+            scopeHasDepth = false;
+        }
     }
 
     rlvkPipelineKey key = {0};
     for (u32 a = 0; a < RLVK.scope.colorCount && a < 8; a++)
         key.colorFormats[a] = RLVK.scope.colorFormats[a];
-    key.depthFormat = scopeHasDepth ? RLVK.depthFormat : VK_FORMAT_UNDEFINED;
-    key.shaderSlot = shaderSlot;
+    key.depthFormat = scopeHasDepth ? scopeDepthFormat : VK_FORMAT_UNDEFINED;
+    key.shaderSlot = (unsigned short)shaderSlot;
     key.topology = topology;
     key.vertexLayout = vertexLayout;
     key.cullMode = (unsigned char)(RLVK.State.cullEnabled ? ((RLVK.State.cullMode == RL_CULL_FACE_FRONT) ? VK_CULL_MODE_FRONT_BIT : VK_CULL_MODE_BACK_BIT) : VK_CULL_MODE_NONE);
@@ -672,21 +723,24 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
     key.colorCount = (unsigned char)RLVK.scope.colorCount;
     key.depthTest = RLVK.State.depthTest ? 1 : 0;
     key.depthWrite = RLVK.State.depthWrite ? 1 : 0;
-    key.blendMode = RLVK.State.colorBlendEnabled ? RLVK.State.blendMode : -1;
-    if (RLVK.State.blendMode == RL_BLEND_CUSTOM)
+    key.blendMode = RLVK.State.colorBlendEnabled ? (unsigned char)RLVK.State.blendMode : RLVK_BLEND_DISABLED;
+    if (RLVK.State.colorBlendEnabled)
     {
-        key.blendSrcRGB = RLVK.State.blendSrc;
-        key.blendDstRGB = RLVK.State.blendDst;
-        key.blendEqRGB = RLVK.State.blendEq;
-    }
-    else if (RLVK.State.blendMode == RL_BLEND_CUSTOM_SEPARATE)
-    {
-        key.blendSrcRGB = RLVK.State.blendSrcRGB;
-        key.blendDstRGB = RLVK.State.blendDstRGB;
-        key.blendEqRGB = RLVK.State.blendEqRGB;
-        key.blendSrcA = RLVK.State.blendSrcA;
-        key.blendDstA = RLVK.State.blendDstA;
-        key.blendEqA = RLVK.State.blendEqA;
+        if (RLVK.State.blendMode == RL_BLEND_CUSTOM)
+        {
+            key.blendSrcRGB = (unsigned short)RLVK.State.blendSrc;
+            key.blendDstRGB = (unsigned short)RLVK.State.blendDst;
+            key.blendEqRGB = (unsigned short)RLVK.State.blendEq;
+        }
+        else if (RLVK.State.blendMode == RL_BLEND_CUSTOM_SEPARATE)
+        {
+            key.blendSrcRGB = (unsigned short)RLVK.State.blendSrcRGB;
+            key.blendDstRGB = (unsigned short)RLVK.State.blendDstRGB;
+            key.blendEqRGB = (unsigned short)RLVK.State.blendEqRGB;
+            key.blendSrcA = (unsigned short)RLVK.State.blendSrcA;
+            key.blendDstA = (unsigned short)RLVK.State.blendDstA;
+            key.blendEqA = (unsigned short)RLVK.State.blendEqA;
+        }
     }
 
     VkPipeline pipeline = rlvkGetPipeline(&key);
@@ -699,20 +753,20 @@ static bool rlvkBindPipeline(VkCommandBuffer cmdBuffer, unsigned char topology, 
         RLVK.boundPipeline = pipeline;
     }
 
-    rlvkViewportSig vpSig;
-    memset(&vpSig, 0, sizeof(vpSig));
-    vpSig.vx = RLVK.State.viewportX;
-    vpSig.vy = RLVK.State.viewportY;
-    vpSig.vw = RLVK.State.viewportW;
-    vpSig.vh = RLVK.State.viewportH;
-    vpSig.scEn = RLVK.State.scissorEnabled ? 1 : 0;
-    vpSig.scx = RLVK.State.scissorX;
-    vpSig.scy = RLVK.State.scissorY;
-    vpSig.scw = RLVK.State.scissorW;
-    vpSig.sch = RLVK.State.scissorH;
-    vpSig.scopeW = (int)RLVK.scope.width;
-    vpSig.scopeH = (int)RLVK.scope.height;
-    vpSig.flipY = RLVK.scope.flipY ? 1 : 0;
+    rlvkViewportSig vpSig = {
+        .vx = RLVK.State.viewportX,
+        .vy = RLVK.State.viewportY,
+        .vw = RLVK.State.viewportW,
+        .vh = RLVK.State.viewportH,
+        .scEn = RLVK.State.scissorEnabled ? 1 : 0,
+        .scx = RLVK.State.scissorX,
+        .scy = RLVK.State.scissorY,
+        .scw = RLVK.State.scissorW,
+        .sch = RLVK.State.scissorH,
+        .scopeW = (int)RLVK.scope.width,
+        .scopeH = (int)RLVK.scope.height,
+        .flipY = RLVK.scope.flipY ? 1 : 0,
+    };
     s_pipelineFastValid = true;
     s_lastGeneration = RLVK.State.stateGeneration;
     s_lastShaderSlot = shaderSlot;
@@ -930,10 +984,15 @@ void rlvkDestroyBatchBacking(rlvkBatchBackingBuffer *b)
 
 static u32 rlvkFindMemoryType(u32 typeBits, VkMemoryPropertyFlags wanted)
 {
-    VkPhysicalDeviceMemoryProperties props;
-    vkGetPhysicalDeviceMemoryProperties(RLVK.physicalDevice, &props);
-    for (u32 i = 0; i < props.memoryTypeCount; i++)
-        if ((typeBits & (1u << i)) && (props.memoryTypes[i].propertyFlags & wanted) == wanted)
+    static VkPhysicalDevice s_cachedDev = VK_NULL_HANDLE;
+    static VkPhysicalDeviceMemoryProperties s_memProps;
+    if (s_cachedDev != RLVK.physicalDevice)
+    {
+        vkGetPhysicalDeviceMemoryProperties(RLVK.physicalDevice, &s_memProps);
+        s_cachedDev = RLVK.physicalDevice;
+    }
+    for (u32 i = 0; i < s_memProps.memoryTypeCount; i++)
+        if ((typeBits & (1u << i)) && (s_memProps.memoryTypes[i].propertyFlags & wanted) == wanted)
             return i;
     return UINT32_MAX;
 }
@@ -941,25 +1000,35 @@ static u32 rlvkFindMemoryType(u32 typeBits, VkMemoryPropertyFlags wanted)
 // LINKAGE FIX: Xóa từ khóa static
 VkDeviceMemory rlvkAllocMemory(VkMemoryRequirements memReq, VkMemoryPropertyFlags props)
 {
-    if (props & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+    VkMemoryPropertyFlags effectiveProps = props;
+    if (effectiveProps & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
     {
-        if (rlvkFindMemoryType(memReq.memoryTypeBits, props | VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != UINT32_MAX)
-            props |= VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
+        if (rlvkFindMemoryType(memReq.memoryTypeBits, effectiveProps | VK_MEMORY_PROPERTY_HOST_CACHED_BIT) != UINT32_MAX)
+            effectiveProps |= VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
     }
+
+    u32 memTypeIndex = rlvkFindMemoryType(memReq.memoryTypeBits, effectiveProps);
+    if (memTypeIndex == UINT32_MAX)
+        memTypeIndex = rlvkFindMemoryType(memReq.memoryTypeBits, 0);
 
     VkMemoryPriorityAllocateInfoEXT priorityInfo = {
         VK_STRUCTURE_TYPE_MEMORY_PRIORITY_ALLOCATE_INFO_EXT,
         .priority = (props & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ? 1.0f : 0.5f,
     };
     VkDeviceMemory memory = VK_NULL_HANDLE;
-    RLVK_CHECK(vkAllocateMemory(RLVK.device,
-                                &(VkMemoryAllocateInfo){
-                                    VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-                                    RLVK.Caps.memoryPriority ? (void *)&priorityInfo : NULL,
-                                    .allocationSize = memReq.size,
-                                    .memoryTypeIndex = rlvkFindMemoryType(memReq.memoryTypeBits, props),
-                                },
-                                RLVK_ALLOC, &memory));
+    VkResult res = vkAllocateMemory(RLVK.device,
+                                    &(VkMemoryAllocateInfo){
+                                        VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                                        RLVK.Caps.memoryPriority ? (void *)&priorityInfo : NULL,
+                                        .allocationSize = memReq.size,
+                                        .memoryTypeIndex = memTypeIndex,
+                                    },
+                                    RLVK_ALLOC, &memory);
+    if (res != VK_SUCCESS)
+    {
+        TRACELOG(RL_LOG_ERROR, "VK: vkAllocateMemory(%llu bytes) => %d", (ull)memReq.size, (int)res);
+        return VK_NULL_HANDLE;
+    }
     if (props & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
         s_memLocalBytes += (ill)memReq.size;
     else
@@ -971,12 +1040,20 @@ VkDeviceMemory rlvkAllocMemory(VkMemoryRequirements memReq, VkMemoryPropertyFlag
 // LINKAGE FIX: Xóa từ khóa static
 u32 rlvkAllocTextureSlot(void)
 {
-    for (u32 i = 1; i < RLVK_MAX_TEXTURE_SLOTS; i++)
+    static u32 s_nextTexSlot = 1;
+    if (s_nextTexSlot >= RLVK_MAX_TEXTURE_SLOTS || (!RLVK.textureSlots[1].inUse && RLVK.frameCounter == 0))
+        s_nextTexSlot = 1;
+
+    for (u32 n = 1; n < RLVK_MAX_TEXTURE_SLOTS; n++)
+    {
+        u32 i = s_nextTexSlot;
+        s_nextTexSlot = (i + 1 < RLVK_MAX_TEXTURE_SLOTS) ? (i + 1) : 1;
         if (!RLVK.textureSlots[i].inUse)
         {
             RLVK.textureSlots[i].inUse = true;
             return i;
         }
+    }
     return RLVK_INVALID_SLOT;
 }
 
@@ -1007,12 +1084,20 @@ u32 rlvkAllocFramebufferSlot(void)
 // LINKAGE FIX: Xóa từ khóa static
 u32 rlvkAllocBufferSlot(void)
 {
-    for (u32 i = 1; i < RLVK_MAX_BUFFER_SLOTS; i++)
+    static u32 s_nextFreshBufSlot = 1;
+    if (s_nextFreshBufSlot >= RLVK_MAX_BUFFER_SLOTS || (!RLVK.bufferSlots[1].inUse && RLVK.frameCounter == 0))
+        s_nextFreshBufSlot = 1;
+
+    for (u32 n = 1; n < RLVK_MAX_BUFFER_SLOTS; n++)
+    {
+        u32 i = s_nextFreshBufSlot;
+        s_nextFreshBufSlot = (i + 1 < RLVK_MAX_BUFFER_SLOTS) ? (i + 1) : 1;
         if (!RLVK.bufferSlots[i].inUse && (RLVK.bufferSlots[i].buffer == VK_NULL_HANDLE))
         {
             RLVK.bufferSlots[i].inUse = true;
             return i;
         }
+    }
     for (u32 i = 1; i < RLVK_MAX_BUFFER_SLOTS; i++)
         if (!RLVK.bufferSlots[i].inUse)
         {

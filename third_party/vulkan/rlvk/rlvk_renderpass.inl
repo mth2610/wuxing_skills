@@ -10,6 +10,9 @@
 // Render-pass + framebuffer cache implementation (Vulkan 1.1 baseline)
 //----------------------------------------------------------------------------------
 
+static void rlvkDeferDestroy(VkBuffer buffer, VkImage image, VkImageView view, VkSampler sampler, VkDeviceMemory memory, VkPipeline pipeline);
+static void rlvkDeferDestroyFramebufferOnly(VkFramebuffer framebuffer);
+
 // Get (or build and cache) the render pass for a scope-shape key. Attachment layouts are
 // initial == final (rlvk transitions layouts with explicit barriers outside the pass), so a
 // pass never changes an image's layout behind the manual tracking's back.
@@ -17,8 +20,18 @@ static VkRenderPass rlvkGetRenderPass(const rlvkRenderPassKey *key)
 {
     const u32 count = RLVK.renderPassCount;
     for (u32 i = 0; i < count; i++)
-        if (memcmp(&RLVK.renderPasses[i].key, key, sizeof(rlvkRenderPassKey)) == 0)
+    {
+        const rlvkRenderPassKey *k = &RLVK.renderPasses[i].key;
+        if ((k->colorCount == key->colorCount) &&
+            (k->samples == key->samples) &&
+            (k->colorLoad == key->colorLoad) &&
+            (k->colorFormats[0] == key->colorFormats[0]) &&
+            (k->depthFormat == key->depthFormat) &&
+            (memcmp(k, key, sizeof(rlvkRenderPassKey)) == 0))
+        {
             return RLVK.renderPasses[i].pass;
+        }
+    }
 
     if (count >= RLVK_MAX_RENDER_PASSES)
     {
@@ -196,17 +209,27 @@ static VkRenderPass rlvkGetRenderPass(const rlvkRenderPassKey *key)
 static VkFramebuffer rlvkGetFramebuffer(VkRenderPass pass, const VkImageView *views, u32 viewCount, u32 width, u32 height)
 {
     const u32 count = RLVK.framebufferCount;
+    const VkImageView firstView = viewCount ? views[0] : VK_NULL_HANDLE;
     for (u32 i = 0; i < count; i++)
     {
         rlvkFramebufferEntry *e = &RLVK.framebuffers[i];
-        if ((e->pass == pass) && (e->viewCount == viewCount) && (e->width == width) && (e->height == height) && (memcmp(e->views, views, viewCount * sizeof(VkImageView)) == 0))
+        if ((e->pass == pass) &&
+            (e->viewCount == viewCount) &&
+            (e->width == width) &&
+            (e->height == height) &&
+            (!viewCount || e->views[0] == firstView) &&
+            (viewCount <= 1 || memcmp(e->views + 1, views + 1, (viewCount - 1) * sizeof(VkImageView)) == 0))
+        {
             return e->framebuffer;
+        }
     }
 
-    if (count >= RLVK_MAX_CACHED_FRAMEBUFFERS)
+    if (RLVK.framebufferCount >= RLVK_MAX_CACHED_FRAMEBUFFERS)
     {
-        TRACELOG(RL_LOG_WARNING, "RLVK: framebuffer cache full (%d), raise RLVK_MAX_CACHED_FRAMEBUFFERS", RLVK_MAX_CACHED_FRAMEBUFFERS);
-        return VK_NULL_HANDLE;
+        // Evict the oldest cached framebuffer via fence-gated destruction rather than returning
+        // VK_NULL_HANDLE (which would leave the command buffer outside a render pass).
+        rlvkDeferDestroyFramebufferOnly(RLVK.framebuffers[0].framebuffer);
+        RLVK.framebuffers[0] = RLVK.framebuffers[--RLVK.framebufferCount];
     }
 
     VkFramebuffer fb = VK_NULL_HANDLE;
@@ -228,7 +251,6 @@ static VkFramebuffer rlvkGetFramebuffer(VkRenderPass pass, const VkImageView *vi
     }
 
     rlvkFramebufferEntry *e = &RLVK.framebuffers[RLVK.framebufferCount++];
-    // Optimized: No need for memset(e, 0, ...) since all fields (except optional struct padding) are immediately populated
     e->framebuffer = fb;
     e->pass = pass;
     e->viewCount = viewCount;
@@ -237,9 +259,6 @@ static VkFramebuffer rlvkGetFramebuffer(VkRenderPass pass, const VkImageView *vi
     memcpy(e->views, views, viewCount * sizeof(VkImageView));
     return fb;
 }
-
-static void rlvkDeferDestroy(VkBuffer buffer, VkImage image, VkImageView view, VkSampler sampler, VkDeviceMemory memory, VkPipeline pipeline);
-static void rlvkDeferDestroyFramebufferOnly(VkFramebuffer framebuffer);
 
 // Evict every cached framebuffer that references a dying view. MUST run before the view is
 // destroyed or queued for deferred destruction; the framebuffers ride the same fence-gated
@@ -282,7 +301,7 @@ static void rlvkBeginScopeRenderPass(VkCommandBuffer cmdBuffer, const rlvkRender
         return;
 
     // pClearValues is indexed by attachment: colors [0..colorCount), resolve, depth last
-    VkClearValue clears[RLVK_MAX_SCOPE_ATTACHMENTS] = {0}; // Optimized: Replaced memset with zero-init
+    VkClearValue clears[RLVK_MAX_SCOPE_ATTACHMENTS] = {0};
     if (clearColor)
         for (u32 c = 0; c < key->colorCount; c++)
             clears[c] = *clearColor;
@@ -308,7 +327,7 @@ static bool rlvkDeferFramebufferDepthSample(u32 id)
     if (!id || id >= RLVK_MAX_FRAMEBUFFER_SLOTS)
         return false;
     rlvkFramebufferSlot *f = &RLVK.fbSlots[id];
-    if (!f->depthSampleOnDemand || !f->hasDepth)
+    if (!f->depthSampleOnDemand || !f->hasDepth || !f->depthTexture || f->depthTexture >= RLVK_MAX_TEXTURE_SLOTS)
         return false;
     rlvkTextureSlot *depth = &RLVK.textureSlots[f->depthTexture];
     if (!depth->sampleImage)
@@ -337,7 +356,10 @@ static void rlvkCloseFramebufferColorsForSwitch(VkCommandBuffer cmdBuffer, u32 i
     u32 count = 0;
     for (u32 c = 0; c < old->colorCount && c < 8; c++)
     {
-        rlvkTextureSlot *color = &RLVK.textureSlots[old->colorTextures[c]];
+        u32 texSlot = old->colorTextures[c];
+        if (!texSlot || texSlot >= RLVK_MAX_TEXTURE_SLOTS)
+            continue;
+        rlvkTextureSlot *color = &RLVK.textureSlots[texSlot];
         if (!color->image || color->currentLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
             continue;
         barriers[count++] = (VkImageMemoryBarrier2){
@@ -355,10 +377,10 @@ static void rlvkCloseFramebufferColorsForSwitch(VkCommandBuffer cmdBuffer, u32 i
     }
     if (count)
         vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-            VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-            .imageMemoryBarrierCount = count,
-            .pImageMemoryBarriers = barriers,
-        });
+                                              VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                              .imageMemoryBarrierCount = count,
+                                              .pImageMemoryBarriers = barriers,
+                                          });
 }
 
 void rlEnableFramebuffer(unsigned int id)
@@ -383,12 +405,17 @@ void rlEnableFramebuffer(unsigned int id)
     rlvkTextureSlot *colors[8] = {0};
     for (u32 c = 0; c < f->colorCount && c < 8; c++)
     {
-        rlvkTextureSlot *t = &RLVK.textureSlots[f->colorTextures[c]];
+        u32 texSlot = f->colorTextures[c];
+        if (!texSlot || texSlot >= RLVK_MAX_TEXTURE_SLOTS)
+            continue;
+        rlvkTextureSlot *t = &RLVK.textureSlots[texSlot];
         if (t->image)
             colors[colorCount++] = t;
     }
     rlvkTextureSlot *color = colorCount ? colors[0] : NULL;
-    rlvkTextureSlot *fbDepth = f->hasDepth ? &RLVK.textureSlots[f->depthTexture] : NULL;
+    rlvkTextureSlot *fbDepth = (f->hasDepth && f->depthTexture && f->depthTexture < RLVK_MAX_TEXTURE_SLOTS)
+                                   ? &RLVK.textureSlots[f->depthTexture]
+                                   : NULL;
     if (!color && !(fbDepth && fbDepth->image))
         return; // nothing attached yet
 
@@ -397,8 +424,7 @@ void rlEnableFramebuffer(unsigned int id)
     vkCmdEndRenderPass(cmdBuffer);
     rlvkCloseFramebufferColorsForSwitch(cmdBuffer, previousId);
 
-    // OPTIMIZATION: Batched Pipeline Barriers
-    // Instead of calling CmdPipelineBarrier2 multiple times in loops, collect them into one single submission.
+    // Collect all attachment transitions into a single batched CmdPipelineBarrier2 call
     VkImageMemoryBarrier2 batchedBarriers[11]; // max 8 colors + 1 depth + the 2 MSAA attachments
     u32 barrierCount = 0;
 
@@ -475,13 +501,16 @@ void rlEnableFramebuffer(unsigned int id)
     if (depth && depth->image && depth->currentLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
     {
         // The depth texture may have been SAMPLED since the last bind (depth shaders)
+        bool wasSampled = (depth->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         batchedBarriers[barrierCount++] = (VkImageMemoryBarrier2){
             VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-            .srcStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
-            .srcAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+            .srcStageMask = wasSampled
+                                ? (VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT)
+                                : (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT),
+            .srcAccessMask = wasSampled ? VK_ACCESS_2_SHADER_SAMPLED_READ_BIT : 0,
             .dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
             .dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            .oldLayout = (depth->currentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
+            .oldLayout = wasSampled ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED,
             .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             .image = depth->image,
             .subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1},
@@ -501,14 +530,12 @@ void rlEnableFramebuffer(unsigned int id)
     // GL semantics: framebuffer content persists across binds -> loadOp LOAD (ClearBackground
     // inside the texture mode clears explicitly). Depth-only framebuffers (shadowmaps) have no
     // color attachment at all; depth must be STORED so it can be sampled afterwards.
-    // GL semantics: framebuffer content persists across binds -> loadOp LOAD
     int fbW = color ? color->width : depth->width;
     int fbH = color ? color->height : depth->height;
     bool fbHasDepth = (depth && depth->image);
     VkImageView scopeViews[RLVK_MAX_SCOPE_ATTACHMENTS];
     u32 scopeViewCount = 0;
 
-    // Optimized: Replaced memset with zero-init
     rlvkRenderPassKey rpKey = {0};
 
     // Attachment order is the one convention used everywhere (rlvk_state.inl): colours, then the
@@ -543,13 +570,9 @@ void rlEnableFramebuffer(unsigned int id)
     rpKey.hasResolve = fbMsaa ? 1 : 0;
     rpKey.hasDepthResolve = fbMsaaDepth ? 1 : 0;
     rpKey.colorLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
-
-    // VÁ LỖI LOGIC: Sử dụng LOAD_OP_LOAD cho depth để không làm mất dữ liệu chiều sâu
-    // Người dùng sẽ tự xóa nó thông qua hàm rlClearScreenBuffers (ClearBackground)
     rpKey.depthLoad = VK_ATTACHMENT_LOAD_OP_LOAD;
     rpKey.depthStore = VK_ATTACHMENT_STORE_OP_STORE;
 
-    // Vì dùng LOAD, không cần truyền clearValues vào nữa
     rlvkBeginScopeRenderPass(cmdBuffer, &rpKey, scopeViews, scopeViewCount, (u32)fbW, (u32)fbH, NULL, NULL, id);
 
     RLVK.scope.fbSlot = id;
@@ -566,14 +589,15 @@ void rlEnableFramebuffer(unsigned int id)
 // Copy after the depth/twin transfer-layout barriers; shared by default close and opt-in binds.
 static void rlvkCopyDepthTwin(VkCommandBuffer cmdBuffer, rlvkTextureSlot *depth, u32 id)
 {
-    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile)) s_profileScopes[id].twinPixels += (u64)depth->width * depth->height;
+    if (rlvkDebugFlag("RLVK_PROFILE", &s_dbgProfile) && id < RLVK_MAX_FRAMEBUFFER_SLOTS)
+        s_profileScopes[id].twinPixels += (u64)depth->width * depth->height;
     // depth image (DEPTH aspect) -> scratch buffer -> twin (COLOR aspect), same 4 bytes/texel
-    vkCmdCopyImageToBuffer(cmdBuffer, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                           depth->sampleScratch, 1,
-                           &(VkBufferImageCopy){
-                               .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
-                               .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
-                           });
+    vk.CmdCopyImageToBuffer(cmdBuffer, depth->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                            depth->sampleScratch, 1,
+                            &(VkBufferImageCopy){
+                                .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
+                                .imageExtent = {(u32)depth->width, (u32)depth->height, 1},
+                            });
     vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
                                           VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
                                           .bufferMemoryBarrierCount = 1,
@@ -645,13 +669,16 @@ void rlDisableFramebuffer(void)
     rlvkProfileEndScope();
     vkCmdEndRenderPass(cmdBuffer);
 
-    // OPTIMIZATION: Batched Pipeline Barriers
+    // Batched Pipeline Barriers
     VkImageMemoryBarrier2 batchedBarriers[10]; // max 8 colors + up to 2 for depth
     u32 barrierCount = 0;
 
     for (u32 c = 0; c < f->colorCount && c < 8; c++)
     {
-        rlvkTextureSlot *color = &RLVK.textureSlots[f->colorTextures[c]];
+        u32 texSlot = f->colorTextures[c];
+        if (!texSlot || texSlot >= RLVK_MAX_TEXTURE_SLOTS)
+            continue;
+        rlvkTextureSlot *color = &RLVK.textureSlots[texSlot];
         if (!color->image || color->currentLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
             continue;
 
@@ -670,7 +697,9 @@ void rlDisableFramebuffer(void)
     }
 
     // Make the depth texture sampleable for depth-render / shadowmap / soft-particle shaders.
-    rlvkTextureSlot *depth = f->hasDepth ? &RLVK.textureSlots[f->depthTexture] : NULL;
+    rlvkTextureSlot *depth = (f->hasDepth && f->depthTexture && f->depthTexture < RLVK_MAX_TEXTURE_SLOTS)
+                                 ? &RLVK.textureSlots[f->depthTexture]
+                                 : NULL;
     // The twin is refilled only while a bind is RECENT; see rlvkTextureSlot.sampleWantedFrame.
     bool deferred = rlvkDeferFramebufferDepthSample(id);
     bool twinWanted = !deferred && depth && depth->sampleWantedFrame &&
@@ -754,10 +783,12 @@ void rlDisableFramebuffer(void)
 // Refresh a CLOSED depth source without reopening its pass (or repeating its MSAA resolve).
 static bool rlvkRefreshDepthTwin(u32 textureSlot, u32 profileSlot)
 {
+    if (!textureSlot || textureSlot >= RLVK_MAX_TEXTURE_SLOTS)
+        return false;
     rlvkTextureSlot *depth = &RLVK.textureSlots[textureSlot];
     u32 openFb = RLVK.scope.fbSlot;
-    if (RLVK.frameActive && openFb && RLVK.fbSlots[openFb].hasDepth &&
-        RLVK.fbSlots[openFb].depthTexture == textureSlot)
+    if (RLVK.frameActive && openFb && openFb < RLVK_MAX_FRAMEBUFFER_SLOTS &&
+        RLVK.fbSlots[openFb].hasDepth && RLVK.fbSlots[openFb].depthTexture == textureSlot)
         return false; // preserve the prior materialized snapshot while its source is open
     if (!depth->sampleImage)
         return true;
@@ -766,7 +797,7 @@ static bool rlvkRefreshDepthTwin(u32 textureSlot, u32 profileSlot)
         depth->sampleDeferredFb = 0;
         return true;
     }
-    if (!RLVK.frameActive)
+    if (!RLVK.frameActive || !depth->image || depth->currentLayout == VK_IMAGE_LAYOUT_UNDEFINED)
         return false;
 
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
@@ -800,10 +831,10 @@ static bool rlvkRefreshDepthTwin(u32 textureSlot, u32 profileSlot)
         },
     };
     vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
-        VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .imageMemoryBarrierCount = 2,
-        .pImageMemoryBarriers = barriers,
-    });
+                                          VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                                          .imageMemoryBarrierCount = 2,
+                                          .pImageMemoryBarriers = barriers,
+                                      });
     rlvkCopyDepthTwin(cmdBuffer, depth, profileSlot);
     depth->sampleWantedFrame = RLVK.frameCounter + 1;
     rlvkResumeSwapchainScope(cmdBuffer);
@@ -838,7 +869,6 @@ static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer)
         scopeViews[scopeViewCount++] = RLVK.interView[frameIndex];
     scopeViews[scopeViewCount++] = RLVK.depthView[frameIndex];
 
-    // Optimized: Replaced memset with zero-init
     rlvkRenderPassKey rpKey = {0};
     rpKey.colorFormats[0] = RLVK.swapchainFormat;
     rpKey.depthFormat = RLVK.depthFormat;
@@ -857,15 +887,12 @@ static void rlvkResumeSwapchainScope(VkCommandBuffer cmdBuffer)
     RLVK.scope.colorCount = 1;
     RLVK.scope.colorFormats[0] = RLVK.swapchainFormat;
     RLVK.scope.samples = (u32)RLVK.msaaSamples;
-    RLVK.scope.depthResolve = false;  // the swapchain scope resolves colour only
-    RLVK.scope.flipY = false; // UNMIRRORED: swapchain-scope rendering matches GL memory orientation
+    RLVK.scope.depthResolve = false; // the swapchain scope resolves colour only
+    RLVK.scope.flipY = false;        // UNMIRRORED: swapchain-scope rendering matches GL memory orientation
     if (rlvkDebugFlag("RLVK_DEBUG_FBO", &s_dbgFbo))
         TRACELOG(RL_LOG_WARNING, "VKDBG frameOPEN fc=%llu img=%u", (ull)RLVK.frameCounter, RLVK.currentImageIndex);
 }
 
-// Submit the current recording, wait for it, resume recording in the same frame (same arena and
-// swapchain image). Host reads of GPU-written resources need every RECORDED command executed
-// first, matching GL's in-order reads; vkDeviceWaitIdle cannot run work that was never submitted.
 // Wait the fences of every frame slot except the recording one: full completion of submitted
 // work without vkDeviceWaitIdle's whole-device drain (the recording slot's fence is reset with
 // nothing pending, so including it would deadlock)
@@ -877,12 +904,16 @@ static void rlvkWaitInFlightFrames(void)
             rlvkProfileWaitFences(RLVK.device, 1, &RLVK.frameFences[i], VK_TRUE, UINT64_MAX);
 }
 
+// Submit the current recording, wait for it, resume recording in the same frame (same arena and
+// swapchain image). Host reads of GPU-written resources need every RECORDED command executed
+// first, matching GL's in-order reads; vkDeviceWaitIdle cannot run work that was never submitted.
 static void rlvkFlushFrame(void)
 {
     if (!RLVK.frameActive)
         return;
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
-    if (s_gpuPool != VK_NULL_HANDLE) s_gpuFragmented[frameIndex] = true;
+    if (s_gpuPool != VK_NULL_HANDLE)
+        s_gpuFragmented[frameIndex] = true;
     VkCommandBuffer cmdBuffer = RLVK.cmdBuffers[frameIndex];
 
     // Close any open FBO scope through its normal path (attachment layout transitions), then
@@ -961,7 +992,12 @@ static void rlvkFlushFrame(void)
 void rlvkPassMark(const char *label)
 {
     static int s_dbgMark = -1;
-    static struct { char name[24]; f64 sumMs; u32 hits; } s_marks[RLVK_PASS_MARK_MAX];
+    static struct
+    {
+        char name[24];
+        f64 sumMs;
+        u32 hits;
+    } s_marks[RLVK_PASS_MARK_MAX];
     static int s_markCount = 0;
     static u32 s_endHits = 0;
     static f64 s_last = 0.0;
@@ -971,36 +1007,41 @@ void rlvkPassMark(const char *label)
     rlDrawRenderBatchActive();
     rlvkWaitInFlightFrames();
     rlvkFlushFrame();
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    f64 now = (f64)ts.tv_sec * 1000.0 + (f64)ts.tv_nsec * 1e-6;
+    f64 now = rlvkProfileNow();
 
     if (strcmp(label, "frame_start") != 0 && s_last > 0.0)
     {
         int i = 0;
-        while (i < s_markCount && strcmp(s_marks[i].name, label) != 0) i++;
+        while (i < s_markCount && strcmp(s_marks[i].name, label) != 0)
+            i++;
         if (i == s_markCount && s_markCount < RLVK_PASS_MARK_MAX)
         {
             strncpy(s_marks[i].name, label, sizeof(s_marks[i].name) - 1);
+            s_marks[i].name[sizeof(s_marks[i].name) - 1] = '\0';
             s_markCount++;
         }
-        if (i < s_markCount) { s_marks[i].sumMs += now - s_last; s_marks[i].hits++; }
+        if (i < s_markCount)
+        {
+            s_marks[i].sumMs += now - s_last;
+            s_marks[i].hits++;
+        }
     }
     if (strcmp(label, "frame_end") == 0 && ++s_endHits >= 120)
     {
         f64 total = 0.0;
-        for (int i = 0; i < s_markCount; i++) total += s_marks[i].sumMs / (s_marks[i].hits ? s_marks[i].hits : 1);
+        for (int i = 0; i < s_markCount; i++)
+            total += s_marks[i].sumMs / (s_marks[i].hits ? s_marks[i].hits : 1);
         TRACELOG(RL_LOG_WARNING, "VKPASS drained total=%.2fms (serialized; compare ratios)", total);
         for (int i = 0; i < s_markCount; i++)
         {
             f64 ms = s_marks[i].sumMs / (s_marks[i].hits ? s_marks[i].hits : 1);
             TRACELOG(RL_LOG_WARNING, "VKPASS %-16s %7.3f ms %5.1f%%", s_marks[i].name, ms, total > 0.0 ? 100.0 * ms / total : 0.0);
-            s_marks[i].sumMs = 0.0; s_marks[i].hits = 0;
+            s_marks[i].sumMs = 0.0;
+            s_marks[i].hits = 0;
         }
         s_endHits = 0;
     }
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    s_last = (f64)ts.tv_sec * 1000.0 + (f64)ts.tv_nsec * 1e-6;
+    s_last = rlvkProfileNow();
 }
 
 // return the active render texture (fbo)
@@ -1021,13 +1062,14 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
         return; // GL_DEPTH_BUFFER_BIT only
     if (!RLVK.frameActive || RLVK.blitReadFb == 0 || RLVK.blitReadFb >= RLVK_MAX_FRAMEBUFFER_SLOTS)
         return;
+    // vkCmdBlitImage forbids multisampled destination images (VUID-vkCmdBlitImage-dstImage-00234)
+    if (RLVK.scope.fbSlot != 0 || RLVK.msaaSamples > 1)
+        return;
     rlvkFramebufferSlot *src = &RLVK.fbSlots[RLVK.blitReadFb];
-    if (!src->hasDepth)
+    if (!src->hasDepth || !src->depthTexture || src->depthTexture >= RLVK_MAX_TEXTURE_SLOTS)
         return;
     rlvkTextureSlot *srcDepth = &RLVK.textureSlots[src->depthTexture];
-    if (!srcDepth->image)
-        return;
-    if (RLVK.scope.fbSlot != 0)
+    if (!srcDepth->image || srcDepth->currentLayout == VK_IMAGE_LAYOUT_UNDEFINED)
         return;
 
     u32 frameIndex = (u32)(RLVK.frameCounter % RLVK_FRAME_INDEX_COUNT);
@@ -1036,8 +1078,8 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
     rlvkProfileEndScope();
     vkCmdEndRenderPass(cmdBuffer);
 
-    // VÁ LỖI LOGIC: Lưu lại layout ban đầu của ảnh nguồn để trả về đúng trạng thái
     VkImageLayout originalSrcLayout = srcDepth->currentLayout;
+    bool wasAttachment = (originalSrcLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
     vk.CmdPipelineBarrier2(cmdBuffer, &(VkDependencyInfo){
                                           VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
@@ -1045,8 +1087,8 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
                                           .pImageMemoryBarriers = (VkImageMemoryBarrier2[]){
                                               {
                                                   VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-                                                  .srcStageMask = (originalSrcLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) ? (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT) : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                                  .srcAccessMask = (originalSrcLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) ? VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                                  .srcStageMask = wasAttachment ? (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT) : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                                  .srcAccessMask = wasAttachment ? VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                                                   .dstStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
                                                   .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
                                                   .oldLayout = originalSrcLayout,
@@ -1086,9 +1128,8 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
                                                   VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
                                                   .srcStageMask = VK_PIPELINE_STAGE_2_BLIT_BIT,
                                                   .srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
-                                                  // Trả về đúng Stage/Access dựa trên layout ban đầu
-                                                  .dstStageMask = (originalSrcLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) ? (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT) : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
-                                                  .dstAccessMask = (originalSrcLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) ? (VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                                                  .dstStageMask = wasAttachment ? (VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT) : VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                                                  .dstAccessMask = wasAttachment ? (VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT) : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                                                   .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                                   .newLayout = originalSrcLayout,
                                                   .image = srcDepth->image,
@@ -1108,7 +1149,6 @@ void rlBlitFramebuffer(int srcX, int srcY, int srcWidth, int srcHeight, int dstX
                                           },
                                       });
 
-    // Gán lại đúng layout cũ thay vì ép thành ATTACHMENT_OPTIMAL
     srcDepth->currentLayout = originalSrcLayout;
 
     rlvkResumeSwapchainScope(cmdBuffer);
@@ -1308,7 +1348,7 @@ void rlClearColor(unsigned char r, unsigned char g, unsigned char b, unsigned ch
     RLVK.State.clearA = a;
 }
 
-// Clear used screen buffers.  Like glClear(), the active write masks apply:
+// Clear used screen buffers. Like glClear(), the active write masks apply:
 // a colour-only layer clear must not erase a shared scene depth attachment.
 void rlClearScreenBuffers(void)
 {
@@ -1321,11 +1361,11 @@ void rlClearScreenBuffers(void)
     // Build the clear list from what the current scope actually has attached: the swapchain
     // scope always has color+depth; an FBO may lack either (depth-only shadowmaps have no color)
     bool hasColor = true, hasDepth = true;
-    if (RLVK.scope.fbSlot != 0)
+    if (RLVK.scope.fbSlot != 0 && RLVK.scope.fbSlot < RLVK_MAX_FRAMEBUFFER_SLOTS)
     {
         rlvkFramebufferSlot *f = &RLVK.fbSlots[RLVK.scope.fbSlot];
-        hasColor = (f->colorCount > 0) && RLVK.textureSlots[f->colorTextures[0]].image;
-        hasDepth = f->hasDepth && RLVK.textureSlots[f->depthTexture].image;
+        hasColor = (f->colorCount > 0) && (f->colorTextures[0] < RLVK_MAX_TEXTURE_SLOTS) && RLVK.textureSlots[f->colorTextures[0]].image;
+        hasDepth = f->hasDepth && (f->depthTexture < RLVK_MAX_TEXTURE_SLOTS) && RLVK.textureSlots[f->depthTexture].image;
     }
     VkClearAttachment clears[9];
     u32 clearCount = 0;
@@ -1385,7 +1425,6 @@ void rlSetBlendFactorsSeparate(int srcRGB, int dstRGB, int srcA, int dstA, int e
         RLVK.State.blendSrcA != srcA || RLVK.State.blendDstA != dstA ||
         RLVK.State.blendEqRGB != eqRGB || RLVK.State.blendEqA != eqA)
     {
-
         RLVK.State.stateGeneration++;
         RLVK.State.blendSrcRGB = srcRGB;
         RLVK.State.blendDstRGB = dstRGB;
