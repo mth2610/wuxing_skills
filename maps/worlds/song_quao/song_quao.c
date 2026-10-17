@@ -100,9 +100,18 @@ static float SampleWaterHeight(float x, float z)
 static float SongQuaoGrassDensity(float x, float z, void *userData)
 {
     (void)userData;
-    float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
-    if (gy < -0.25f || SampleWaterHeight(x, z) > gy - 0.025f) return 0.0f;
-    return (float)SampleSplat(x, z).r / 255.0f;
+    Vector3 pos, normal;
+    if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &pos, &normal))
+        return 0.0f;
+    // Exclude submerged beds, steep cliff drop-offs, and outer cliff margins
+    if (pos.y < -0.25f || normal.y < 0.72f || SampleWaterHeight(x, z) > pos.y - 0.02f)
+        return 0.0f;
+    Color splat = SampleSplat(x, z);
+    if (splat.g > 175) return 0.0f;
+    float splatGrass = (float)splat.r / 255.0f;
+    // Ensure lush, continuous meadow coverage across all gentle valleys and hills
+    float slopeBoost = (normal.y > 0.86f) ? 0.78f : 0.45f;
+    return fmaxf(splatGrass, slopeBoost * (1.0f - (float)splat.g / 255.0f));
 }
 
 static float SongQuaoSampleGroundHeight(float x, float z, void *ctx)
@@ -129,14 +138,14 @@ static float Random01(unsigned int *rng)
 
 static void BuildFloraPlacements(void)
 {
-    // 1. Generate dense meadow grass in valleys & gentle terraces
+    // 1. Generate dense meadow grass focused on the playable valley & reservoir terraces
     s_grassCount = MapProp_GenerateMeadowPlacements(
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
-            .minBounds = {6.0f, 6.0f}, .maxBounds = {MAP_WIDTH - 6.0f, MAP_DEPTH - 6.0f},
-            .spacing = 0.42f, .jitter = 0.85f,
-            .minRadius = 0.28f, .maxRadius = 0.40f,
-            .minHeight = 0.45f, .maxHeight = 0.72f,
+            .minBounds = {18.0f, 22.0f}, .maxBounds = {MAP_WIDTH - 18.0f, MAP_DEPTH - 22.0f},
+            .spacing = 0.35f, .jitter = 0.85f,
+            .minRadius = 0.32f, .maxRadius = 0.46f,
+            .minHeight = 0.48f, .maxHeight = 0.76f,
             .yOffset = 0.025f, .seed = 0x51a7c3u,
         }, SongQuaoGrassDensity, NULL);
 
@@ -144,8 +153,8 @@ static void BuildFloraPlacements(void)
         MapMeadowPlacement *clump = &s_grassPlacements[i];
         Color splat = SampleSplat(clump->position.x, clump->position.z);
         float vigor = (float)splat.r / 255.0f;
-        clump->height *= 0.80f + 0.35f * vigor;
-        // Suppress meadow canopy inside wildflower colonies so blooms emerge cleanly
+        clump->height *= 0.85f + 0.32f * vigor;
+        // Softly nestle meadow canopy inside wildflower colonies so blooms emerge cleanly
         float understorey = MapFlora_EvaluateFlowerUnderstorey(
             clump->position.x, clump->position.z,
             SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
@@ -319,10 +328,10 @@ void InitSongQuaoMap(void)
             .grassTipColor  = {136, 186, 54, 255},
             .bladesPerClump = 6,
             .bladeSegments  = 4,
-            .bladeWidthScale = 0.16f,
+            .bladeWidthScale = 0.175f,
             .lodDistance = 32.0f,
-            .drawDistance = 60.0f,
-            .shadowDistance = 16.0f,
+            .drawDistance = 62.0f,
+            .shadowDistance = 22.0f,
             .reedRootColor = {26, 42, 20, 255},
             .reedTipColor  = {136, 172, 82, 255},
             .hasReedPlumes = false,
@@ -333,14 +342,14 @@ void InitSongQuaoMap(void)
         (MapWaterConfig){
             .ecosystem = WATER_ECO_CUSTOM,
             .radiusX = MAP_WIDTH * 0.5f, .radiusZ = MAP_DEPTH * 0.5f,
-            .waveHeight = 0.024f, .waveScale = 1.15f, .waveSpeed = 0.65f,
-            .detailScale = 0.085f, .detailStrength = 0.16f,
-            .maxDepth = 1.5f, .absorption = {0.65f, 0.30f, 0.16f},
-            .scatterColor = {0.13f, 0.24f, 0.18f}, .scatterCoeff = 0.24f,
-            .causticsStrength = 0.32f, .causticsScale = 1.35f,
-            .foamThreshold = 0.08f,
-            .deepColor = {18, 48, 46, 255}, .shallowColor = {76, 100, 72, 255},
-            .foamColor = {215, 227, 216, 255},
+            .waveHeight = 0.022f, .waveScale = 1.15f, .waveSpeed = 0.65f,
+            .detailScale = 0.085f, .detailStrength = 0.15f,
+            .maxDepth = 1.5f, .absorption = {0.58f, 0.24f, 0.14f},
+            .scatterColor = {0.14f, 0.28f, 0.22f}, .scatterCoeff = 0.26f,
+            .causticsStrength = 0.34f, .causticsScale = 1.35f,
+            .foamThreshold = 0.09f,
+            .deepColor = {16, 52, 50, 255}, .shallowColor = {64, 106, 82, 255},
+            .foamColor = {222, 232, 224, 255},
         });
 
     EnvShadow_SetFocus(kMapCenter, 20.0f);
@@ -359,11 +368,18 @@ void UpdateSongQuaoMap(float dt)
     Vector3 focus = {camera.target.x, 0.0f, camera.target.z};
     EnvShadow_SetFocus(focus, 20.0f);
     CaptureSongQuaoStaticShadows();
+
+    MapProp_BeginNatureInteraction(camera.target, dt);
+    MapProp_AddNatureInteractor(camera.target, 1.25f, 0.34f);
+    MapProp_AddNatureWindVorticles((float)GetTime());
+    MapProp_EndNatureInteraction();
 }
 
 void DrawSongQuaoMap(void)
 {
     if (!s_ready) return;
+    MapProp_ResetNatureRenderStats();
+    PropLit_UpdateLighting();
     MapProp_DrawGround(&s_ground, kMapCenter);
     MapProp_DrawRockSystem(&s_rocks, true);
     MapProp_DrawDebrisSystem(&s_debris, camera.position);

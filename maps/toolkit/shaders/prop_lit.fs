@@ -5,24 +5,10 @@
 #include "core/shaders/common/vfx_lights.glsl"
 #include "maps/toolkit/shaders/map_shadow.glsl"
 #include "environment/shaders/cloud_shadow.glsl"
+#include "environment/shaders/hemisphere_lighting.glsl"
 
 // ============================================================
 // WUXING — prop_lit Fragment Shader (CORE_ISSUES.md Item 36)
-//
-// PBR-lite material for map terrain/props: diffuse + tangent-space normal
-// + roughness-scaled Blinn-Phong specular. Reuses lighting.glsl's
-// calcDiffuse/calcSpecular rather than reimplementing them.
-//
-// Lit by the environment sun/ambient (Environment_GetSunDirection/
-// GetSunColor/GetAmbientColor), pushed in once per frame by
-// core/prop_lit.c's PropLit_UpdateLighting() — this shader is drawn via
-// plain DrawModel()/DrawModelEx() (never wrapped by
-// SkillManager_BeginShader), so nothing auto-binds these uniforms; the map
-// must call PropLit_UpdateLighting() once per frame before drawing.
-//
-// Fog (EnvFogConfig) is deliberately NOT implemented here — see
-// CORE_ISSUES.md Item 36 "Related, NOT part of this item" (fog is unused
-// by every shader in the engine today; an open design question).
 // ============================================================
 
 #ifdef GL_ES
@@ -59,46 +45,52 @@ void main() {
     mat3 TBN = mat3(normalize(fragTangent), normalize(fragBitangent), normalize(fragNormal));
     vec3 normal = normalize(TBN * normalSample);
 
-    float roughness = clamp(texture(texture3, fragTexCoord).r, 0.04, 1.0);
+    float roughness = clamp(texture(texture3, fragTexCoord).r, 0.08, 1.0);
 
-    vec3 lightDir = normalize(u_lightDir);
+    // Safe fallback if a map forgot to push PropLit_UpdateLighting()
+    float lightLenSq = dot(u_lightDir, u_lightDir);
+    vec3 lightDir = (lightLenSq > 0.001) ? (u_lightDir * inversesqrt(lightLenSq)) : normalize(vec3(0.25, 0.75, -0.55));
+    vec3 actualLight = (dot(u_lightColor, u_lightColor) > 0.001) ? u_lightColor : vec3(1.0, 0.92, 0.80);
+    vec3 actualAmbient = (dot(u_ambientColor, u_ambientColor) > 0.001) ? u_ambientColor : vec3(0.36, 0.42, 0.50);
     vec3 viewDir  = normalize(u_viewPos - fragPosition);
 
-    // Lambertian term with no floor baked in (ambient is handled separately
-    // below via u_ambientColor, which carries its own hue — e.g. cool night
-    // ambient vs warm sun — rather than degenerating through calcDiffuse's
-    // single-scalar ambient floor).
-    float diff = calcDiffuse(normal, lightDir, 0.0);
+    // Warm mineral & geological strata variation so boulders never look like monochrome grey plastic
+    float strataNoise = sin(worldPosition.y * 3.4 + worldPosition.x * 0.45 - worldPosition.z * 0.35) * 0.5 + 0.5;
+    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.92, 0.90, 0.86), vec3(1.12, 1.06, 0.96), strataNoise);
 
-    // Roughness scales shininess: rough surfaces -> wide dim highlight,
-    // smooth surfaces -> tight bright highlight.
-    float shininess    = mix(96.0, 12.0, roughness);
-    float specStrength = mix(0.02, 0.28, 1.0 - roughness);
+    // Top-surface moss & lichen colonization on upward-facing boulder crowns
+    float topMossMask = smoothstep(0.48, 0.78, normal.y) * smoothstep(-0.15, 0.45, fragLocalY)
+                      * smoothstep(0.28, 0.68, albedo.g);
+    vec3 crownMossAlbedo = mix(vec3(0.18, 0.30, 0.11), vec3(0.29, 0.41, 0.15), albedo.r);
+    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.72);
+
+    // Lower skirt earthy moss & turf grounding blend
+    float skirtMask = (1.0 - smoothstep(-0.75, 0.08, fragLocalY));
+    vec3 skirtMossAlbedo = vec3(0.21, 0.31, 0.13);
+    rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.62);
+    albedo.rgb = rockAlbedo;
+    roughness = mix(roughness, 0.85, max(topMossMask, skirtMask) * 0.75);
+
+    float diff = calcDiffuse(normal, lightDir, 0.0);
+    float shininess    = mix(72.0, 10.0, roughness);
+    float specStrength = mix(0.02, 0.22, 1.0 - roughness);
     float spec = calcSpecular(normal, lightDir, viewDir, shininess) * specStrength;
 
     float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
     shadow *= Environment_CloudVisibility(u_cloudNoise, worldPosition);
-    vec3 lit = albedo.rgb * (u_ambientColor + diff * u_lightColor * shadow)
-             + spec * u_lightColor * shadow;
 
-    // `normal` is the TBN-perturbed normal built from fragNormal, which prop_lit.vs
-    // derives via mat3(matModel) — the same model*view matrix the lights are
-    // uploaded through, so it is already in their space and needs no conversion.
+    vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient);
+    float groundAO = clamp(0.76 + worldPosition.y * 0.30, 0.72, 1.0);
+    float skirtAO  = clamp(0.52 + 0.48 * smoothstep(-0.85, 0.25, fragLocalY), 0.48, 1.0);
+    vec3 lit = albedo.rgb * (ambient * groundAO * skirtAO + diff * actualLight * shadow)
+             + spec * actualLight * shadow;
+
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);
 
-    // Ground contact ambient occlusion: darken bottom of rocks to eliminate floating look
-    float groundAO = clamp(0.36 + 0.64 * smoothstep(-0.85, 0.25, fragLocalY), 0.32, 1.0);
-    lit *= groundAO;
-
-    // Contact moss & earthy soil staining on lower rock skirts
-    vec3 mossTint = vec3(0.20, 0.32, 0.14);
-    float mossFactor = clamp((1.0 - smoothstep(-0.85, -0.05, fragLocalY)) * (1.0 - max(normal.y, 0.0)), 0.0, 0.45);
-    lit = mix(lit, mossTint * u_ambientColor * 1.5, mossFactor);
-
-    // Atmospheric aerial haze for distant mountain crags (cool blue-sky horizon blending)
+    // Atmospheric aerial haze for distant mountain crags
     float camDist = length(u_viewPos - fragPosition);
-    float haze = smoothstep(35.0, 105.0, camDist) * 0.32;
-    vec3 hazeColor = u_ambientColor * 1.35;
+    float haze = smoothstep(38.0, 115.0, camDist) * 0.30;
+    vec3 hazeColor = actualAmbient * 1.35;
     lit = mix(lit, hazeColor, haze);
 
     finalColor = vec4(lit, albedo.a) * colDiffuse;

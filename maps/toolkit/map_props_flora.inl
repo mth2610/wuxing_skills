@@ -138,8 +138,8 @@ float MapFlora_EvaluateFlowerUnderstorey(
         float rz = (clusters[c].radius.y > 0.1f) ? clusters[c].radius.y : rx;
         float dx = (x - clusters[c].center.x) / rx;
         float dz = (z - clusters[c].center.z) / rz;
-        float blend = fminf(1.0f, fmaxf(0.0f, (dx * dx + dz * dz - 0.35f) / 0.90f));
-        understorey = fminf(understorey, 0.35f + 0.65f * blend * blend * (3.0f - 2.0f * blend));
+        float blend = fminf(1.0f, fmaxf(0.0f, (dx * dx + dz * dz - 0.30f) / 0.95f));
+        understorey = fminf(understorey, 0.58f + 0.42f * blend * blend * (3.0f - 2.0f * blend));
     }
     return understorey;
 }
@@ -158,7 +158,7 @@ float MapFlora_EvaluateFlowerSuppression(
         float dz = (z - clusters[c].center.z) / rz;
         float d2 = dx * dx + dz * dz;
         if (d2 < 1.25f) {
-            float localFactor = fmaxf(0.50f, (d2 - 0.40f) / 0.85f);
+            float localFactor = fmaxf(0.82f, (d2 - 0.30f) / 0.95f);
             flowerSuppression = fminf(flowerSuppression, localFactor);
         }
     }

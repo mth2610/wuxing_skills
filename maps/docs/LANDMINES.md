@@ -219,3 +219,27 @@
 - **Cause:** Authoring flower fields with texture atlas cards (`petalTexturePath != NULL`).
 - **Rule:** Always set `petalTexturePath = NULL` in `MapFloraSystem` / `MapProp_CreateFlowerField`. The engine's procedural 3D phyllotaxis petal and pollen dome generator constructs rich geometric flowers with per-vertex lighting, two-sided transmission, and 8 Xianxia botanical palettes without atlas artifacts.
 
+### Missing `PropLit_UpdateLighting()` renders rocks as unlit dark grey blobs
+
+- **Symptom:** Procedural boulders, mountain crags, and river stones using `prop_lit` appear pitch-dark or flat grey on a map until another map or pass updates lighting.
+- **Cause:** `prop_lit.fs` reads `u_lightDir`, `u_lightColor`, `u_ambientColor`, and `u_viewPos`, which are only pushed when `PropLit_UpdateLighting()` is called once per frame before drawing rocks. `DrawSongQuaoMap` omitted `PropLit_UpdateLighting()`.
+- **Rule:** Every map `Draw*Map()` function that draws `MapRockSet` or `MapRockSystem` MUST call `PropLit_UpdateLighting()` before drawing rocks. `prop_lit.fs` also guards against zero-length light uniforms with a safe fallback.
+
+### Boolean DEM lake step exposes low-poly triangle sawtooth under transparent water
+
+- **Symptom:** Through transparent shallow lake/river water, the submerged terrain bed shows a stark grid of alternating bright and dark triangles along the shoreline.
+- **Cause:** Applying a discontinuous boolean height drop (`np.where(lake, terrain - 0.35, terrain)`) on a `1.0m–1.5m` raster grid creates stair-stepped vertical cliff triangles right inside the translucent water zone, and omitting `vn` normals in `write_water_mesh` leaves water vertices without smooth normals.
+- **Rule:** Always smooth lake/stream bathymetry masks with a Gaussian kernel (`sigma >= 2.0–2.4`) before carving the terrain bed so the bank slopes with $C^2$ continuity, level cross-channel stream water heights via Gaussian weighted averaging, and emit explicit `vn 0 1 0` normals in generated water `.obj` files.
+
+### `WATER_SHAPE_TERRAIN` must not overwrite vertex depth with camera slant depth
+
+- **Symptom:** Terrain-clipped DEM water (`u_waterShape == 3`) flickers or clips its shoreline depth depending on camera pitch and backend depth range.
+- **Cause:** `MapProp_DrawWaterOverlay` requested `SceneTargets_RequestSoftDepthRegion` for `WATER_SHAPE_TERRAIN`, and `water_surface.fs` took `min(waterDepth, sceneDepth)` using a hardcoded OpenGL NDC depth reconstruction (`2000.0 / (1001.0 - ndc * 999.0)`) that disagrees with vertical water column depth stored in `vertexTexCoord.x`.
+- **Rule:** Skip `SceneTargets_RequestSoftDepthRegion` for both `WATER_SHAPE_RADIAL` and `WATER_SHAPE_TERRAIN`, and rely directly on `fragWaterDepth` (`vertexTexCoord.x`) with multi-octave shoreline noise feathering for `u_waterShape == 3`.
+
+### Meadow `shadowDistance` shorter than dynamic shadow cascade radius creates a diagonal seam
+
+- **Symptom:** A visible diagonal line splits the meadow into a darker foreground and brighter midground even when grass LOD is uniform.
+- **Cause:** Setting `.shadowDistance = 14.0f` while `EnvShadow_SetFocus(focus, 20.0f)` captures a 20m radius cascade causes grass chunks beyond 14m to stop casting self-shadows inside the active shadow map, and a narrow 3.5% UV border fade (`MapShadowCoverageFade`) exposes the cascade box edge.
+- **Rule:** Set `MapFloraStyle.shadowDistance >= 22.0f` to cover the entire 20m dynamic shadow cascade, use a wide UV border fade (`MapShadowCoverageFadeWidth(projected.xy, 0.18)`), and maintain a translucent grass self-shadow floor (`mix(0.38, 1.0, rawDyn)`) in `FoliageShadowVisibility`.
+

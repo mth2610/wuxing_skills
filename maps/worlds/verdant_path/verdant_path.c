@@ -625,7 +625,7 @@ void InitVerdantPathMap(void)
             .bladeWidthScale = 0.17f,
             .lodDistance = 28.0f,
             .drawDistance = 58.0f,
-            .shadowDistance = 14.0f,
+            .shadowDistance = 22.0f,
             .reedRootColor = {26, 42, 20, 255},
             .reedTipColor  = {136, 172, 82, 255},
             .hasReedPlumes = false,

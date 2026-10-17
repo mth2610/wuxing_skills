@@ -42,24 +42,27 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
                               vec3 normal, vec3 lightDir, vec3 worldPosition,
                               float distToCam)
 {
-    // Shading LOD: Bypass shadow lookups beyond near/mid gameplay range (28m).
-    float shadowFade = 1.0 - FastRamp(22.0, 28.0, distToCam);
+    // Shading LOD: Smoothly fade dynamic shadows across 18m..30m to avoid a visible cascade line
+    float shadowFade = 1.0 - FastRamp(18.0, 30.0, distToCam);
     if (shadowFade <= 0.0)
         return 1.0;
 
     float slope = 1.0 - max(dot(normal, lightDir), 0.0);
     float filterWeight = (u_shadowFilterQuality > 1.5)
-        ? (1.0 - FastRamp(14.0, 22.0, distToCam)) : 0.0;
+        ? (1.0 - FastRamp(14.0, 24.0, distToCam)) : 0.0;
 
     float dynamicShadow = 1.0;
     if (u_shadowEnabled > 0.5) {
         float invW = 1.0 / max(lightSpace.w, 1e-5);
         vec3 projected = (lightSpace.xyz * invW) * 0.5 + 0.5;
         if (all(greaterThan(projected, vec3(0.0))) && all(lessThan(projected, vec3(1.0)))) {
-            float bias = clamp(0.0018 + slope * 0.0035, 0.0015, 0.0055);
-            dynamicShadow = NatureShadowCompare(shadowMap, projected.xy,
+            float bias = clamp(0.0022 + slope * 0.0038, 0.0018, 0.0060);
+            float rawDyn = NatureShadowCompare(shadowMap, projected.xy,
                 projected.z - bias, u_shadowTexel, filterWeight);
-            dynamicShadow = mix(1.0, dynamicShadow, MapShadowCoverageFade(projected.xy));
+            // Translucent grass blades transmit ~38% of direct sunlight through the turf canopy,
+            // preventing a harsh dark/bright step at the dynamic shadow caster distance boundary.
+            rawDyn = mix(0.38, 1.0, rawDyn);
+            dynamicShadow = mix(1.0, rawDyn, MapShadowCoverageFadeWidth(projected.xy, 0.18));
         }
     }
 
@@ -72,7 +75,7 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
             float bias = clamp(0.0025 + slope * 0.0040, 0.0020, 0.0070);
             float staticShadow = NatureShadowCompare(staticShadowMap, projected.xy,
                 projected.z - bias, u_staticShadowTexel, filterWeight);
-            staticShadow = mix(1.0, staticShadow, MapShadowCoverageFade(projected.xy));
+            staticShadow = mix(1.0, staticShadow, MapShadowCoverageFadeWidth(projected.xy, 0.08));
             combined = min(dynamicShadow, staticShadow);
         }
     }

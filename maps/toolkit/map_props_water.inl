@@ -1015,11 +1015,14 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     Vector2 screenRes = { (float)GetScreenWidth(), (float)GetScreenHeight() };
     if (s_waterLocResolution >= 0) SetShaderValue(shader, s_waterLocResolution, &screenRes, SHADER_UNIFORM_VEC2);
 
-    // Radial lakes use their own exact bed profile and do not need a camera
-    // depth snapshot. The snapshot was both expensive and view dependent.
-    if (water->config.shape != WATER_SHAPE_RADIAL)
+    // Radial lakes and terrain-clipped water meshes carry their own exact bed
+    // depth profile and do not need a camera depth snapshot. The snapshot was
+    // both expensive and view-angle dependent.
+    bool needsSceneDepth = (water->config.shape != WATER_SHAPE_RADIAL &&
+                            water->config.shape != WATER_SHAPE_TERRAIN);
+    if (needsSceneDepth)
         SceneTargets_RequestSoftDepthRegion((Rectangle){ 0, 0, screenRes.x, screenRes.y });
-    Texture2D depthTex = water->config.shape != WATER_SHAPE_RADIAL
+    Texture2D depthTex = needsSceneDepth
         ? SceneTargets_GetDepthTexture() : (Texture2D){0};
     int hasDepth = (depthTex.id > 0) ? 1 : 0;
     SetShaderValue(shader, s_waterLocHasDepthTex, &hasDepth, SHADER_UNIFORM_INT);

@@ -264,6 +264,7 @@ def write_water_mesh(path, ground, surface, sx, sz):
     count=0
     with open(path,'w') as f:
         f.write('# DEM terrain water; vt.x = depth metres\n')
+        f.write('vn 0.000000 1.000000 0.000000\n')
         for r in range(h-1):
             for c in range(w-1):
                 nodes=[(r,c),(r+1,c),(r,c+1),(r+1,c+1)]
@@ -280,7 +281,7 @@ def write_water_mesh(path, ground, surface, sx, sz):
                     for i in range(1,len(polygon)-1):
                         for v in (polygon[0],polygon[i],polygon[i+1]):
                             f.write(f'v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\nvt {max(0,v[3]):.6f} 0\n')
-                        f.write(f'f {count+1}/{count+1} {count+2}/{count+2} {count+3}/{count+3}\n')
+                        f.write(f'f {count+1}/{count+1}/1 {count+2}/{count+2}/1 {count+3}/{count+3}/1\n')
                         count+=3
     return count//3
 
@@ -338,18 +339,21 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     valid=sample(valid_source.astype(float))>0.75
     valid[:2]=False; valid[-2:]=False; valid[:,:2]=False; valid[:,-2:]=False
     dem=sample(clean)
-    # Two metre smoothing only; preserve ridges and tributaries at game scale.
-    rolling=normalized_smooth(dem,valid,max(0.5,2.0/min(sx,sz)))
+    # Smooth macro rolling relief while preserving drainage valleys and ridges
+    rolling=normalized_smooth(dem,valid,max(0.8,2.4/min(sx,sz)))
     normalized=np.clip((rolling-lo)/max(hi-lo,1e-9),0,1)
-    terrain=height_range*np.power(normalized,1.12)
+    terrain=height_range*np.power(normalized,1.15)
     perimeter=distance_inside(valid,sx,sz)
     cliff=np.clip(perimeter/cliff_margin,0,1); cliff=cliff*cliff*(3-2*cliff)
     lake_fraction=sample(lake_source.astype(float))
     lake=valid & (lake_fraction>0.25) & (perimeter>cliff_margin)
-    lake_y=float(height_range*np.clip((lake_level-lo)/max(hi-lo,1e-9),0,1)**1.12)
+    lake_y=float(height_range*np.clip((lake_level-lo)/max(hi-lo,1e-9),0,1)**1.15)
     lake_inside=distance_inside(lake,sx,sz)
-    lake_blend=gaussian_filter_2d(lake.astype(float),0.65)
-    terrain=np.where(lake, np.minimum(terrain,lake_y-0.35-1.1*np.clip(lake_inside/5,0,1)),terrain)
+    lake_blend=gaussian_filter_2d(lake.astype(float),1.45)
+    # Smooth C2 bowl bathymetry: zero vertical step at shoreline eliminates staircased triangle facets
+    lake_depth_profile = gaussian_filter_2d(np.clip(lake_inside / 7.5, 0.0, 1.0), 1.6)
+    lake_carve = 0.08 * lake_blend + 1.25 * np.power(lake_depth_profile, 1.25)
+    terrain = np.where(lake_blend > 0.01, np.minimum(terrain, lake_y - lake_carve), terrain)
     # Re-route after compression; retain every branch over the area threshold.
     directions,accum,conditioned=compute_d8_flow(terrain,valid,sx,sz)
     threshold=max(12,float(valid.sum())*stream_ratio)
@@ -358,29 +362,46 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     X,Z=np.meshgrid(np.arange(w)*sx,np.arange(h)*sz)
     surface=terrain-0.12
     corridor=np.zeros_like(terrain)
+    stream_surface_num=np.zeros_like(terrain)
+    stream_surface_den=np.zeros_like(terrain)
     # Vectorized segment distance over local bounding boxes, not grid x all segments.
     for r,c in zip(*np.where(streams & ~lake)):
         d=int(directions[r,c]); dr,dc=dd[d] if d>=0 else (0,0)
         nr,nc=r+dr,c+dc
         if d<0 or not valid[nr,nc] or perimeter[nr,nc]<=cliff_margin: continue
         ax,az=c*sx,r*sz; bx,bz=nc*sx,nr*sz
-        half=float(np.clip(0.45+0.018*np.sqrt(accum[r,c]),0.5,1.8))
-        radius=half+max(sx,sz)*0.75
+        half=float(np.clip(0.75+0.022*np.sqrt(accum[r,c]),0.85,2.4))
+        radius=half+max(sx,sz)*1.45
         x0=max(0,int((min(ax,bx)-radius)/sx)); x1=min(w,int((max(ax,bx)+radius)/sx)+2)
         z0=max(0,int((min(az,bz)-radius)/sz)); z1=min(h,int((max(az,bz)+radius)/sz)+2)
         sl=np.s_[z0:z1,x0:x1]
         t=np.clip(((X[sl]-ax)*(bx-ax)+(Z[sl]-az)*(bz-az))/max((bx-ax)**2+(bz-az)**2,1e-9),0,1)
         dist=np.hypot(X[sl]-(ax+t*(bx-ax)),Z[sl]-(az+t*(bz-az)))
-        weight=0.5+0.5*np.cos(np.pi*np.clip(dist/radius,0,1))
+        w_raw=0.5+0.5*np.cos(np.pi*np.clip(dist/radius,0,1))
+        weight=w_raw*np.sqrt(np.maximum(w_raw,0.0))
         corridor[sl]=np.maximum(corridor[sl],weight)
         level=conditioned[r,c]*(1-t)+conditioned[nr,nc]*t
-        # Carve a bed and allow the terrain intersection to determine the banks.
-        bed=level-0.45*weight
+        # Carve a smooth U-shaped bed across multiple cells
+        bed=level-0.52*weight
         terrain[sl]=np.minimum(terrain[sl],np.where(weight>0,bed,terrain[sl]))
-        surface[sl]=np.maximum(surface[sl],np.where(weight>0,level-0.12,surface[sl]))
+        w_surf=np.clip((radius*0.88-dist)/max(radius*0.88,1e-6),0,1)
+        stream_surface_num[sl]+=w_surf*(level-0.08)
+        stream_surface_den[sl]+=w_surf
+    has_stream_surf = stream_surface_den > 1e-4
+    avg_stream_surf = np.where(has_stream_surf, stream_surface_num / np.maximum(stream_surface_den, 1e-4), surface)
+    surface = np.where(has_stream_surf, np.maximum(surface, avg_stream_surf), surface)
+    # Smooth bed & bank transitions inside wet corridors to eliminate diagonal grid facets
+    bed_smooth = normalized_smooth(terrain, valid, 0.90)
+    smooth_mask = np.clip(corridor * 0.80 + lake_blend * 0.85, 0.0, 0.85)
+    terrain = terrain * (1.0 - smooth_mask) + bed_smooth * smooth_mask
     # Connect lake surface to tributaries without inventing a radial lake.
-    lake_margin=lake_blend>0.08
+    lake_margin=lake_blend>0.06
     surface=np.where(lake_margin & valid,np.maximum(surface,lake_y),surface)
+    # Level water surface across channels so water sheets are transversely flat
+    wet_prelim = valid & (perimeter > cliff_margin) & (surface > terrain + 0.005)
+    if wet_prelim.any():
+        surface_smooth = normalized_smooth(surface, wet_prelim, 1.35)
+        surface = np.where(wet_prelim & ~lake_margin, surface_smooth, surface)
     terrain=terrain*cliff-(1-cliff)*cliff_depth
     terrain[~valid]=-cliff_depth
     surface=np.where(valid & (perimeter>cliff_margin),surface,terrain-0.12)
@@ -401,41 +422,42 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     tpi_s = sample(tpi)
     twi_s = sample(twi)
 
-    # Rock scree naturally emerges on slopes > 13 deg, becoming prominent rock cliff by 26 deg
-    rock_slope = np.clip((slope_s - 13.0) / 13.0, 0.0, 1.0)
-    rock_ridge = np.clip((tpi_s - 4.0) / 12.0, 0.0, 1.0) * np.clip((ground - 2.0) / 8.0, 0.0, 1.0)
+    # Rock scree emerges only on steeper cliffs (> 17 deg), keeping rolling hills green
+    rock_slope = np.clip((slope_s - 17.0) / 15.0, 0.0, 1.0)
+    rock_ridge = np.clip((tpi_s - 5.5) / 14.0, 0.0, 1.0) * np.clip((ground - 3.5) / 8.0, 0.0, 1.0)
     rock = np.maximum(np.maximum(rock_slope, rock_ridge), 1.0 - cliff)
     rock[water_depth > 0.01] = 0.0
 
     wet = water_depth > 0.005
-    moisture = np.clip((twi_s - 6.0) / 8.0, 0.0, 1.0)
+    moisture = np.clip((twi_s - 5.5) / 8.0, 0.0, 1.0)
     shore = gaussian_filter_2d(wet.astype(float), max(0.7, 2.0 / min(sx, sz)))
     moisture = np.maximum(moisture, shore)
     depositional = np.clip(-tpi_s / 25.0, 0.0, 1.0) * moisture
-    growth = np.clip(0.35 + 0.65 * moisture, 0.0, 1.0) * (1.0 - rock)
+    growth = np.clip(0.45 + 0.55 * moisture, 0.0, 1.0) * (1.0 - rock)
 
-    # Lush valley meadow boost in gentle terrain
-    valley_boost = np.clip((14.0 - slope_s) / 14.0, 0.0, 1.0) * np.clip((10.0 - ground) / 12.0, 0.0, 1.0)
-    coverage = np.clip((1.0 - rock) * (1.0 - wet) * (0.65 + 0.35 * growth + 0.25 * valley_boost), 0.0, 1.0)
+    # Lush valley & hillside meadow coverage
+    valley_boost = np.clip((18.0 - slope_s) / 18.0, 0.0, 1.0) * np.clip((12.0 - ground) / 12.0, 0.0, 1.0)
+    coverage = np.clip((1.0 - rock * 0.85) * (1.0 - wet) * (0.76 + 0.24 * growth + 0.22 * valley_boost), 0.0, 1.0)
     coverage[~valid] = 0.0
 
     # Bare dirt / soil substrate along margins and transitions
-    soil = np.clip((1.0 - coverage) * (1.0 - rock) * (1.0 - wet.astype(float)) * 1.35, 0.0, 1.0)
-    wet_mud = np.clip(np.maximum(shore, wet.astype(float)), 0.0, 1.0)
+    soil = np.clip((1.0 - coverage) * (1.0 - rock) * (1.0 - wet.astype(float)) * 1.15, 0.0, 1.0)
+    wet_mud = np.clip(np.maximum(shore * 0.75, wet.astype(float)), 0.0, 1.0)
 
     # Debris Layers:
-    # 1. Leaf Litter (R): sheltered swales, under growth canopy, gentle ground
-    leaf_litter = np.clip(growth * 0.85 + depositional * 0.70, 0.0, 1.0) * np.clip((18.0 - slope_s) / 18.0, 0.0, 1.0) * (1.0 - wet.astype(float)) * (1.0 - rock * 0.8)
-    # 2. Scree Gravel (G): talus zones below cliffs, scree slopes, gravel washes
-    scree_gravel = np.clip((slope_s - 8.0) / 12.0, 0.0, 1.0) * np.clip((28.0 - slope_s) / 12.0, 0.0, 1.0) * (0.35 + 0.65 * rock)
+    # 1. Leaf Litter (R): sheltered swales, under growth canopy, gentle ground (excluded near shoreline so shore isn't rusty red)
+    leaf_litter = np.clip(growth * 0.65 + depositional * 0.50, 0.0, 1.0) * np.clip((16.0 - slope_s) / 16.0, 0.0, 1.0) * np.clip(1.0 - shore * 1.8, 0.0, 1.0) * (1.0 - wet.astype(float)) * (1.0 - rock * 0.8)
+    # 2. Scree Gravel & River Shingle (G): talus zones below cliffs + natural pebble shingle along stream/lake shores
+    scree_gravel = np.clip((slope_s - 10.0) / 12.0, 0.0, 1.0) * np.clip((28.0 - slope_s) / 12.0, 0.0, 1.0) * (0.35 + 0.65 * rock)
     scree_gravel = np.maximum(scree_gravel, np.clip(rock * (1.0 - wet.astype(float)), 0.0, 1.0) * 0.70)
+    scree_gravel = np.maximum(scree_gravel, np.clip(shore * (1.0 - wet.astype(float)) * 0.85, 0.0, 1.0))
     # 3. Fallen Twigs & Wood (B): woodland margins
-    twigs = np.clip(growth * 0.65 * (1.0 - slope_s / 20.0), 0.0, 1.0) * (1.0 - wet.astype(float))
-    # 4. Moss & Lichen (A): moist shady swales, damp rock crevices
-    moss = np.clip(moisture * 0.85 * (0.3 + 0.7 * rock), 0.0, 1.0) * (1.0 - wet.astype(float))
+    twigs = np.clip(growth * 0.55 * (1.0 - slope_s / 20.0), 0.0, 1.0) * (1.0 - wet.astype(float))
+    # 4. Moss & Lichen (A): moist shady swales, damp rock crevices, lush riverbanks
+    moss = np.clip(moisture * 0.90 * (0.45 + 0.55 * rock), 0.0, 1.0) * (1.0 - wet.astype(float))
 
     # Wildflowers in sunny gentle knolls
-    flowers = np.clip(coverage * (1.0 - moisture * 0.7) * (1.0 - slope_s / 16.0) * np.clip((tpi_s + 5.0) / 10.0, 0.0, 1.0), 0.0, 1.0)
+    flowers = np.clip(coverage * (1.0 - moisture * 0.6) * (1.0 - slope_s / 18.0) * np.clip((tpi_s + 5.0) / 10.0, 0.0, 1.0), 0.0, 1.0)
     splat = np.stack((coverage, rock, flowers, np.maximum(shore, wet)), axis=-1)
     splat[~valid] = (0, 1, 0, 0)
     habitat = np.stack((coverage, growth, moisture, 1.0 - moisture), axis=-1)
@@ -449,9 +471,9 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
 
     # Macro ground color tint (RGB)
     sunny = np.clip(tpi_s / 15.0 + 0.5, 0.0, 1.0)
-    r_tint = np.clip(0.35 + 0.35 * sunny + 0.20 * soil + 0.15 * rock, 0.0, 1.0)
-    g_tint = np.clip(0.40 + 0.45 * coverage * (1.0 - rock) + 0.15 * moss, 0.0, 1.0)
-    b_tint = np.clip(0.25 + 0.25 * rock + 0.35 * wet_mud, 0.0, 1.0)
+    r_tint = np.clip(0.32 + 0.30 * sunny + 0.16 * soil + 0.12 * rock, 0.0, 1.0)
+    g_tint = np.clip(0.46 + 0.45 * coverage * (1.0 - rock * 0.6) + 0.15 * moss, 0.0, 1.0)
+    b_tint = np.clip(0.24 + 0.22 * rock + 0.28 * wet_mud, 0.0, 1.0)
     tint_map = np.stack((r_tint, g_tint, b_tint), axis=-1)
     tint_map[~valid] = (0.3, 0.3, 0.3)
 

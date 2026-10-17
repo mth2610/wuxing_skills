@@ -13,9 +13,20 @@ static inline float Rock_Smoothstep(float edge0, float edge1, float x)
 
 static Mesh Nature_BuildProceduralRockMesh(int rockType)
 {
-    int rings = (rockType == 1) ? 22 : 18;
-    int slices = (rockType == 1) ? 28 : 24;
+    int rings = (rockType == 1) ? 30 : 24;
+    int slices = (rockType == 1) ? 38 : 32;
     Mesh mesh = GenMeshSphere(1.0f, rings, slices);
+
+    // Planar cleavage normals for sharp, chiseled granite / karst facets
+    static const float kBoulderPlanes[7][4] = {
+        { 0.78f,  0.48f,  0.39f, 0.76f},
+        {-0.72f,  0.52f,  0.46f, 0.74f},
+        { 0.18f,  0.44f, -0.88f, 0.75f},
+        {-0.32f,  0.65f, -0.69f, 0.72f},
+        { 0.55f,  0.74f, -0.38f, 0.68f},
+        {-0.64f,  0.28f, -0.71f, 0.78f},
+        { 0.12f,  0.92f,  0.37f, 0.64f},
+    };
 
     for (int i = 0; i < mesh.vertexCount; i++) {
         float x = mesh.vertices[i * 3 + 0];
@@ -26,43 +37,45 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
         float angle = atan2f(z, x);
 
         if (rockType == 1) {
-            // Jagged mountain cliff / crag:
-            // 1. Asymmetrical karst peak with prominent cleavage planes
+            // Jagged mountain cliff / karst crag with sharp planar facets and stepped strata
             float c1 = cosf(3.0f * angle + 0.45f);
             float c2 = sinf(5.0f * angle - 0.85f);
-            float ridge = 1.0f + 0.38f * c1 + 0.18f * c2;
+            float c3 = cosf(7.0f * angle + 1.10f);
+            float ridge = 1.0f + 0.34f * (c1 >= 0.0f ? sqrtf(c1) : -sqrtf(-c1))
+                              + 0.18f * c2 + 0.09f * fabsf(c3);
 
-            // 2. Horizontal rock strata & stepped terraces
-            float terrace = 0.12f * sinf(y * 14.0f + angle * 2.0f);
+            // Sharp stepped sedimentary ledges
+            float strataPhase = y * 11.0f + angle * 1.5f;
+            float terrace = 0.09f * (sinf(strataPhase) + 0.35f * sinf(strataPhase * 2.0f));
 
-            // 3. Peak taper + chiseled summit ridge (eliminates rounded spherical dome)
             float heightFactor = (y + 1.0f) * 0.5f;
-            float taper = 1.25f - 0.85f * powf(heightFactor, 1.2f);
-            // Pinch summit along a dominant strike angle into a sharp chisel ridge
-            float summitPinch = Rock_Smoothstep(0.35f, 1.0f, y);
+            float taper = 1.28f - 0.82f * powf(heightFactor, 1.15f);
+            float summitPinch = Rock_Smoothstep(0.30f, 1.0f, y);
             float ridgeStrike = cosf(angle - 0.4f);
-            float ridgeChisel = 1.0f - summitPinch * 0.65f * (1.0f - fabsf(ridgeStrike));
+            float ridgeChisel = 1.0f - summitPinch * 0.68f * (1.0f - fabsf(ridgeStrike));
 
-            // 4. Flattened and expanded base skirt for solid grounding
-            float baseWiden = (y < -0.1f) ? (1.0f + (-0.1f - y) * 0.85f) : 1.0f;
-
-            // 5. Asymmetrical peak displacement: summit leans naturally along geological fault
-            float leanX = 0.28f * powf(heightFactor, 2.2f);
-            float leanZ = -0.18f * powf(heightFactor, 2.2f);
+            float baseWiden = (y < -0.05f) ? (1.0f + (-0.05f - y) * 0.92f) : 1.0f;
+            float leanX = 0.26f * powf(heightFactor, 2.0f);
+            float leanZ = -0.17f * powf(heightFactor, 2.0f);
 
             float newR = horizR * ridge * taper * ridgeChisel * baseWiden;
-            mesh.vertices[i * 3 + 0] = cosf(angle) * newR + leanX;
-            mesh.vertices[i * 3 + 1] = (y + 0.15f) * 2.4f + terrace;
-            mesh.vertices[i * 3 + 2] = sinf(angle) * newR + leanZ;
+            float vx = cosf(angle) * newR + leanX;
+            float vy = (y + 0.15f) * 2.35f + terrace;
+            float vz = sinf(angle) * newR + leanZ;
+
+            mesh.vertices[i * 3 + 0] = vx;
+            mesh.vertices[i * 3 + 1] = vy;
+            mesh.vertices[i * 3 + 2] = vz;
 
             mesh.texcoords[i * 2 + 0] *= 2.8f;
             mesh.texcoords[i * 2 + 1] *= 3.8f;
         } else if (rockType == 2) {
-            // River stone / stepping stone:
-            // Water-smoothed, flattened ellipsoid with gentle riverbed erosion
-            float facet = 1.0f + 0.08f * cosf(2.0f * angle + y * 2.0f) + 0.04f * sinf(4.0f * angle);
-            float flatY = (y < -0.1f) ? (-0.1f + (y + 0.1f) * 0.4f) : y * 0.45f;
-            float newR = horizR * facet * 1.15f;
+            // River stone / cobblestone: water-worn flattened alluvial boulder
+            float facet = 1.0f + 0.10f * cosf(2.0f * angle + y * 1.8f)
+                               + 0.06f * sinf(3.0f * angle - 0.6f)
+                               - 0.04f * fabsf(cosf(5.0f * angle));
+            float flatY = (y < -0.08f) ? (-0.08f + (y + 0.08f) * 0.35f) : y * 0.42f;
+            float newR = horizR * facet * 1.18f;
             mesh.vertices[i * 3 + 0] = cosf(angle) * newR;
             mesh.vertices[i * 3 + 1] = flatY;
             mesh.vertices[i * 3 + 2] = sinf(angle) * newR;
@@ -70,29 +83,47 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
             mesh.texcoords[i * 2 + 0] *= 1.6f;
             mesh.texcoords[i * 2 + 1] *= 1.4f;
         } else {
-            // Natural weathered boulder with crisp cleavage planes and granite fractures:
-            // 1. Dominant polygonal shear planes (hexagonal/octagonal fracturing)
+            // Chiseled granite boulder: planar cleavage facets + grounded skirt
             float c1 = cosf(3.0f * angle + 0.35f);
             float c2 = sinf(4.0f * angle - 0.65f);
-            float c3 = cosf(7.0f * angle + 1.2f);
-            float cleavage = 0.28f * c1 + 0.15f * c2 + 0.08f * c3;
+            float c3 = cosf(6.0f * angle + 1.2f);
+            float cleavage = 0.24f * c1 + 0.14f * c2 - 0.09f * fabsf(c3);
 
-            // 2. Horizontal geologic bedding terraces
-            float terrace = 0.08f * sinf(y * 9.0f + angle * 2.5f);
+            float vx = cosf(angle) * horizR * (1.0f + cleavage);
+            float vy = y * 0.88f;
+            float vz = sinf(angle) * horizR * (1.0f + cleavage);
 
-            // 3. Angular top facet: prevent smooth sphere cap by flattening and facet-shearing top
-            float topFlat = (y > 0.40f) ? (1.0f - (y - 0.40f) * 0.35f * (1.0f + cosf(2.0f * angle + 0.8f))) : 1.0f;
+            // Clip against tilted geological fracture planes for crisp angular rock faces
+            for (int p = 0; p < 7; p++) {
+                float nx = kBoulderPlanes[p][0];
+                float ny = kBoulderPlanes[p][1];
+                float nz = kBoulderPlanes[p][2];
+                float d  = kBoulderPlanes[p][3];
+                float dist = vx * nx + vy * ny + vz * nz - d;
+                if (dist > 0.0f) {
+                    float clipStrength = 0.72f;
+                    vx -= nx * dist * clipStrength;
+                    vy -= ny * dist * clipStrength;
+                    vz -= nz * dist * clipStrength;
+                }
+            }
 
-            // 4. Flatten base so it sits solidly on the ground
-            float flatY = (y < -0.12f) ? (-0.12f + (y + 0.12f) * 0.28f) : y * 0.85f;
-            float baseSpread = (y < -0.12f) ? (1.0f + (-0.12f - y) * 0.65f) : 1.0f;
+            // Horizontal bedding micro-terraces
+            float terrace = 0.045f * sinf(vy * 10.5f + angle * 2.0f);
+            vy += terrace;
 
-            float newR = horizR * (1.0f + cleavage) * topFlat * baseSpread;
-            mesh.vertices[i * 3 + 0] = cosf(angle) * newR;
-            mesh.vertices[i * 3 + 1] = flatY + terrace;
-            mesh.vertices[i * 3 + 2] = sinf(angle) * newR;
+            // Grounded flared skirt at the base
+            if (vy < -0.10f) {
+                float skirt = (-0.10f - vy);
+                vy = -0.10f - skirt * 0.32f;
+                vx *= 1.0f + skirt * 0.55f;
+                vz *= 1.0f + skirt * 0.55f;
+            }
 
-            // Density-calibrated UVs so stone texture reveals crisp micro-cracks
+            mesh.vertices[i * 3 + 0] = vx;
+            mesh.vertices[i * 3 + 1] = vy;
+            mesh.vertices[i * 3 + 2] = vz;
+
             mesh.texcoords[i * 2 + 0] *= 2.6f;
             mesh.texcoords[i * 2 + 1] *= 2.0f;
         }

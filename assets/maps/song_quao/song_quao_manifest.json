@@ -33,11 +33,11 @@
       301,
       189
     ],
-    "height_range_m": 16.0,
+    "height_range_m": 16,
     "cliff_depth_m": 8,
-    "horizontal_scale": 1.05,
+    "horizontal_scale": 1.1400000000000001,
     "vertical_transform": "normalized elevation power 1.12",
-    "water_triangles": 9750
+    "water_triangles": 12436
   },
   "inference": {
     "lake": "inferred largest connected lowland plateau; unverified water extent",
@@ -66,16 +66,16 @@
     ]
   },
   "parameters": {
-    "max_dim": 300.0,
-    "height_range": 16.0,
+    "max_dim": 300,
+    "height_range": 16,
     "cliff_depth": 8,
     "cliff_margin": 5,
     "resolution_scale": 1.0,
     "stream_ratio": 0.01
   },
   "metrics": {
-    "bake_seconds": 13.732541676999972,
-    "wet_nodes": 3026,
+    "bake_seconds": 14.365257143996132,
+    "wet_nodes": 4548,
     "lake_nodes": 180
   }
 }
