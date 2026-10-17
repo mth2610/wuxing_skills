@@ -19,7 +19,7 @@ void rlMatrixMode(int mode)
         RLVK.State.currentMatrix = &RLVK.State.projection;
         break;
     case RL_MODELVIEW:
-        RLVK.State.currentMatrix = &RLVK.State.modelview;
+        RLVK.State.currentMatrix = RLVK.State.transformRequired ? &RLVK.State.transform : &RLVK.State.modelview;
         break;
     // RL_TEXTURE intentionally unimplemented (no rlgl consumer; the texture matrix stays identity)
     default:
@@ -41,6 +41,8 @@ void rlPushMatrix(void)
     // must keep operating on the projection matrix (so BeginMode3D's rlFrustum lands there).
     if (RLVK.State.currentMatrixMode == RL_MODELVIEW)
     {
+        if (RLVK.State.mvStackDepth == 0)
+            RLVK.State.transform = rlvkMatrixIdentity();
         RLVK.State.transformRequired = true;
         RLVK.State.currentMatrix = &RLVK.State.transform;
         RLVK.State.mvStackDepth++;
@@ -53,7 +55,6 @@ void rlPushMatrix(void)
 // Pop latest inserted matrix from RLVK.State.stack
 void rlPopMatrix(void)
 {
-    // VÁ LỖI LOGIC: Bảo vệ chống tràn ngược (underflow) vẫn được giữ nguyên.
     if (RLVK.State.stackCounter > 0)
     {
         RLVK.State.stackCounter--;
@@ -91,7 +92,7 @@ void rlLoadIdentity(void)
 // Multiply the current matrix by a translation matrix
 void rlTranslatef(f32 x, f32 y, f32 z)
 {
-    Matrix t = {1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z, 0, 0, 0, 1};
+    Matrix t = {1.0f, 0.0f, 0.0f, x, 0.0f, 1.0f, 0.0f, y, 0.0f, 0.0f, 1.0f, z, 0.0f, 0.0f, 0.0f, 1.0f};
     *RLVK.State.currentMatrix = rlvkMatrixMultiply(t, *RLVK.State.currentMatrix);
 }
 
@@ -101,33 +102,35 @@ void rlRotatef(f32 angleDeg, f32 x, f32 y, f32 z)
 {
     f32 a = angleDeg * DEG2RAD;
     f32 c = cosf(a), s = sinf(a);
-    f32 len = sqrtf(x * x + y * y + z * z);
-    if (len > 1e-6f)
+    f32 lenSq = x * x + y * y + z * z;
+    if (lenSq > 1e-12f)
     {
-        f32 il = 1.0f / len;
+        f32 il = 1.0f / sqrtf(lenSq);
         x *= il;
         y *= il;
         z *= il;
     }
     f32 t = 1.0f - c;
     Matrix r = {
-        c + x * x * t, x * y * t - z * s, x * z * t + y * s, 0,
-        y * x * t + z * s, c + y * y * t, y * z * t - x * s, 0,
-        z * x * t - y * s, z * y * t + x * s, c + z * z * t, 0,
-        0, 0, 0, 1};
+        c + x * x * t, x * y * t - z * s, x * z * t + y * s, 0.0f,
+        y * x * t + z * s, c + y * y * t, y * z * t - x * s, 0.0f,
+        z * x * t - y * s, z * y * t + x * s, c + z * z * t, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f};
     *RLVK.State.currentMatrix = rlvkMatrixMultiply(r, *RLVK.State.currentMatrix);
 }
 
 // Multiply the current matrix by a scaling matrix
 void rlScalef(f32 x, f32 y, f32 z)
 {
-    Matrix s = {x, 0, 0, 0, 0, y, 0, 0, 0, 0, z, 0, 0, 0, 0, 1};
+    Matrix s = {x, 0.0f, 0.0f, 0.0f, 0.0f, y, 0.0f, 0.0f, 0.0f, 0.0f, z, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f};
     *RLVK.State.currentMatrix = rlvkMatrixMultiply(s, *RLVK.State.currentMatrix);
 }
 
 // Multiply the current matrix by another matrix
 void rlMultMatrixf(const f32 *matf)
 {
+    if (!matf)
+        return;
     Matrix m = {
         matf[0], matf[4], matf[8], matf[12],
         matf[1], matf[5], matf[9], matf[13],
@@ -140,11 +143,13 @@ void rlMultMatrixf(const f32 *matf)
 void rlFrustum(f64 left, f64 right, f64 bottom, f64 top, f64 znear, f64 zfar)
 {
     f32 rl = (f32)(right - left), tb = (f32)(top - bottom), fn = (f32)(zfar - znear);
+    if (rl == 0.0f || tb == 0.0f || fn == 0.0f)
+        return;
     Matrix m = {
-        (f32)(2 * znear) / rl, 0, (f32)(right + left) / rl, 0,
-        0, (f32)(2 * znear) / tb, (f32)(top + bottom) / tb, 0,
-        0, 0, -(f32)(zfar + znear) / fn, -(f32)(2 * zfar * znear) / fn,
-        0, 0, -1, 0};
+        (f32)(2.0 * znear) / rl, 0.0f, (f32)(right + left) / rl, 0.0f,
+        0.0f, (f32)(2.0 * znear) / tb, (f32)(top + bottom) / tb, 0.0f,
+        0.0f, 0.0f, -(f32)(zfar + znear) / fn, -(f32)(2.0 * zfar * znear) / fn,
+        0.0f, 0.0f, -1.0f, 0.0f};
     *RLVK.State.currentMatrix = rlvkMatrixMultiply(m, *RLVK.State.currentMatrix);
 }
 
@@ -152,24 +157,28 @@ void rlFrustum(f64 left, f64 right, f64 bottom, f64 top, f64 znear, f64 zfar)
 void rlOrtho(f64 left, f64 right, f64 bottom, f64 top, f64 znear, f64 zfar)
 {
     f32 rl = (f32)(right - left), tb = (f32)(top - bottom), fn = (f32)(zfar - znear);
+    if (rl == 0.0f || tb == 0.0f || fn == 0.0f)
+        return;
     Matrix m = {
-        2.0f / rl, 0, 0, -(f32)(right + left) / rl,
-        0, 2.0f / tb, 0, -(f32)(top + bottom) / tb,
-        0, 0, -2.0f / fn, -(f32)(zfar + znear) / fn,
-        0, 0, 0, 1};
+        2.0f / rl, 0.0f, 0.0f, -(f32)(right + left) / rl,
+        0.0f, 2.0f / tb, 0.0f, -(f32)(top + bottom) / tb,
+        0.0f, 0.0f, -2.0f / fn, -(f32)(zfar + znear) / fn,
+        0.0f, 0.0f, 0.0f, 1.0f};
     *RLVK.State.currentMatrix = rlvkMatrixMultiply(m, *RLVK.State.currentMatrix);
 }
 
 // Set the viewport area (transformation from normalized device coordinates to window coordinates)
 void rlViewport(int x, int y, int width, int height)
 {
-    RLVK.State.viewportX = x;
-    RLVK.State.viewportY = y;
-    RLVK.State.stateGeneration++;
-    RLVK.State.viewportW = width;
-    RLVK.State.viewportH = height;
-    // vkCmdSetViewport happens at draw flush; Y is flipped via negative-height
-    // viewport so GL-style up-Y conventions hold.
+    if (RLVK.State.viewportX != x || RLVK.State.viewportY != y ||
+        RLVK.State.viewportW != width || RLVK.State.viewportH != height)
+    {
+        RLVK.State.viewportX = x;
+        RLVK.State.viewportY = y;
+        RLVK.State.viewportW = width;
+        RLVK.State.viewportH = height;
+        RLVK.State.stateGeneration++;
+    }
 }
 
 // Set clip planes distances
@@ -217,6 +226,8 @@ void rlBegin(int mode)
 
         cur = &batch->draws[batch->drawCounter - 1];
         cur->mode = mode;
+        cur->vertexCount = 0;
+        cur->vertexAlignment = 0;
         cur->textureId = RLVK.State.currentTextureSlot;
         RLVK.State.currentTextureSlot = RLVK.defaultTextureSlot;
     }
@@ -230,7 +241,6 @@ void rlEnd(void)
 }
 
 // Hot path: writes go directly into the persistently-mapped GPU buffer behind rlVertexBuffer.
-// The vertex shader will pull these via BDA pointers at draw time - no intermediate copy.
 void rlVertex3f(f32 x, f32 y, f32 z)
 {
     rlRenderBatch *batch = RLVK.currentBatch;
@@ -239,47 +249,52 @@ void rlVertex3f(f32 x, f32 y, f32 z)
     rlVertexBuffer *vb = &batch->vertexBuffer[batch->currentBuffer];
     rlDrawCall *cur = &batch->draws[batch->drawCounter - 1];
 
-    // KHÔI PHỤC LOGIC: Bắt buộc phải nhân ma trận trên CPU để Render Batch của Raylib hoạt động đúng.
     f32 tx = x, ty = y, tz = z;
     if (RLVK.State.transformRequired)
     {
-        tx = RLVK.State.transform.m0 * x + RLVK.State.transform.m4 * y + RLVK.State.transform.m8 * z + RLVK.State.transform.m12;
-        ty = RLVK.State.transform.m1 * x + RLVK.State.transform.m5 * y + RLVK.State.transform.m9 * z + RLVK.State.transform.m13;
-        tz = RLVK.State.transform.m2 * x + RLVK.State.transform.m6 * y + RLVK.State.transform.m10 * z + RLVK.State.transform.m14;
+        const Matrix *tr = &RLVK.State.transform;
+        tx = tr->m0 * x + tr->m4 * y + tr->m8 * z + tr->m12;
+        ty = tr->m1 * x + tr->m5 * y + tr->m9 * z + tr->m13;
+        tz = tr->m2 * x + tr->m6 * y + tr->m10 * z + tr->m14;
     }
 
     if (RLVK.State.vertexCounter > (vb->elementCount * 4 - 4))
     {
-        if (cur->mode == RL_LINES && cur->vertexCount % 2 == 0)
-            rlCheckRenderBatchLimit(2 + 1);
-        else if (cur->mode == RL_TRIANGLES && cur->vertexCount % 3 == 0)
-            rlCheckRenderBatchLimit(3 + 1);
-        else if (cur->mode == RL_QUADS && cur->vertexCount % 4 == 0)
-            rlCheckRenderBatchLimit(4 + 1);
+        bool flushed = false;
+        if (cur->mode == RL_LINES && (cur->vertexCount & 1) == 0)
+            flushed = rlCheckRenderBatchLimit(2 + 1);
+        else if (cur->mode == RL_TRIANGLES && (cur->vertexCount % 3) == 0)
+            flushed = rlCheckRenderBatchLimit(3 + 1);
+        else if (cur->mode == RL_QUADS && (cur->vertexCount & 3) == 0)
+            flushed = rlCheckRenderBatchLimit(4 + 1);
 
-        // Refresh cached pointers after a potential flush
-        vb = &batch->vertexBuffer[batch->currentBuffer];
-        cur = &batch->draws[batch->drawCounter - 1];
+        if (flushed)
+        {
+            vb = &batch->vertexBuffer[batch->currentBuffer];
+            cur = &batch->draws[batch->drawCounter - 1];
+        }
     }
 
     int i = RLVK.State.vertexCounter;
 
-    // Ghi tọa độ đã được biến đổi (transformed) vào buffer
-    vb->vertices[3 * i + 0] = tx;
-    vb->vertices[3 * i + 1] = ty;
-    vb->vertices[3 * i + 2] = tz;
+    f32 *v = &vb->vertices[3 * i];
+    v[0] = tx;
+    v[1] = ty;
+    v[2] = tz;
 
-    vb->texcoords[2 * i + 0] = RLVK.State.texcoordx;
-    vb->texcoords[2 * i + 1] = RLVK.State.texcoordy;
-    vb->normals[3 * i + 0] = RLVK.State.normalx;
-    vb->normals[3 * i + 1] = RLVK.State.normaly;
-    vb->normals[3 * i + 2] = RLVK.State.normalz;
-    vb->colors[4 * i + 0] = RLVK.State.colorr;
-    vb->colors[4 * i + 1] = RLVK.State.colorg;
-    vb->colors[4 * i + 2] = RLVK.State.colorb;
-    vb->colors[4 * i + 3] = RLVK.State.colora;
+    f32 *tc = &vb->texcoords[2 * i];
+    tc[0] = RLVK.State.texcoordx;
+    tc[1] = RLVK.State.texcoordy;
 
-    RLVK.State.vertexCounter++;
+    f32 *nrm = &vb->normals[3 * i];
+    nrm[0] = RLVK.State.normalx;
+    nrm[1] = RLVK.State.normaly;
+    nrm[2] = RLVK.State.normalz;
+
+    unsigned char rgba[4] = {RLVK.State.colorr, RLVK.State.colorg, RLVK.State.colorb, RLVK.State.colora};
+    memcpy(&vb->colors[4 * i], rgba, 4);
+
+    RLVK.State.vertexCounter = i + 1;
     cur->vertexCount++;
 }
 
@@ -294,12 +309,12 @@ void rlTexCoord2f(f32 x, f32 y)
 
 void rlNormal3f(f32 x, f32 y, f32 z)
 {
-    // KHÔI PHỤC LOGIC: Nhân ma trận pháp tuyến trên CPU
     if (RLVK.State.transformRequired)
     {
-        RLVK.State.normalx = RLVK.State.transform.m0 * x + RLVK.State.transform.m4 * y + RLVK.State.transform.m8 * z;
-        RLVK.State.normaly = RLVK.State.transform.m1 * x + RLVK.State.transform.m5 * y + RLVK.State.transform.m9 * z;
-        RLVK.State.normalz = RLVK.State.transform.m2 * x + RLVK.State.transform.m6 * y + RLVK.State.transform.m10 * z;
+        const Matrix *tr = &RLVK.State.transform;
+        RLVK.State.normalx = tr->m0 * x + tr->m4 * y + tr->m8 * z;
+        RLVK.State.normaly = tr->m1 * x + tr->m5 * y + tr->m9 * z;
+        RLVK.State.normalz = tr->m2 * x + tr->m6 * y + tr->m10 * z;
     }
     else
     {
@@ -316,8 +331,18 @@ void rlColor4ub(unsigned char r, unsigned char g, unsigned char b, unsigned char
     RLVK.State.colorb = b;
     RLVK.State.colora = a;
 }
-void rlColor3f(f32 x, f32 y, f32 z) { rlColor4ub((unsigned char)(x * 255), (unsigned char)(y * 255), (unsigned char)(z * 255), 255); }
-void rlColor4f(f32 r, f32 g, f32 b, f32 a) { rlColor4ub((unsigned char)(r * 255), (unsigned char)(g * 255), (unsigned char)(b * 255), (unsigned char)(a * 255)); }
+
+static inline unsigned char rlvkFloatToByte(f32 v)
+{
+    if (v <= 0.0f)
+        return 0;
+    if (v >= 1.0f)
+        return 255;
+    return (unsigned char)(v * 255.0f);
+}
+
+void rlColor3f(f32 x, f32 y, f32 z) { rlColor4ub(rlvkFloatToByte(x), rlvkFloatToByte(y), rlvkFloatToByte(z), 255); }
+void rlColor4f(f32 r, f32 g, f32 b, f32 a) { rlColor4ub(rlvkFloatToByte(r), rlvkFloatToByte(g), rlvkFloatToByte(b), rlvkFloatToByte(a)); }
 
 //----------------------------------------------------------------------------------
 // Module Functions Definition - OpenGL style functions
@@ -371,22 +396,35 @@ void rlActiveTextureSlot(int slot)
 void rlEnableTexture(unsigned int id)
 {
     u32 tex = (id == 0) ? RLVK.defaultTextureSlot : id;
-    RLVK.State.activeTextureSlots[RLVK.State.activeTextureUnit] = tex;
+    int unit = RLVK.State.activeTextureUnit;
+    if (RLVK.State.activeTextureSlots[unit] != tex)
+    {
+        RLVK.State.activeTextureSlots[unit] = tex;
+        s_bindingValid = false;
+    }
 }
 // Disable texture. GL semantics: glBindTexture(GL_TEXTURE_2D, 0) on the ACTIVE UNIT -
 // clears that unit's binding. It must NOT touch the batch's current texture (that is
-// rlSetTexture(0)'s job). The old currentTextureSlot reset here left stale unit bindings
-// alive: a vector-field texture bound at unit 0 for a compute dispatch kept poisoning
-// every later draw's texture0 (square lemon-yellow GPU particles).
-void rlDisableTexture(void) { RLVK.State.activeTextureSlots[RLVK.State.activeTextureUnit] = 0; }
+// rlSetTexture(0)'s job).
+void rlDisableTexture(void)
+{
+    int unit = RLVK.State.activeTextureUnit;
+    if (RLVK.State.activeTextureSlots[unit] != 0)
+    {
+        RLVK.State.activeTextureSlots[unit] = 0;
+        s_bindingValid = false;
+    }
+}
 // Enable texture cubemap
 void rlEnableTextureCubemap(unsigned int id)
 {
-    u32 tex = (id == 0) ? RLVK.defaultTextureSlot : id;
-    RLVK.State.activeTextureSlots[RLVK.State.activeTextureUnit] = tex;
+    rlEnableTexture(id);
 }
 // Disable texture cubemap (same active-unit semantics as rlDisableTexture)
-void rlDisableTextureCubemap(void) { RLVK.State.activeTextureSlots[RLVK.State.activeTextureUnit] = 0; }
+void rlDisableTextureCubemap(void)
+{
+    rlDisableTexture();
+}
 
 // Set texture parameters (wrap mode/filter mode)
 void rlTextureParameters(unsigned int id, int param, int value)
@@ -397,19 +435,28 @@ void rlTextureParameters(unsigned int id, int param, int value)
     if (!t->image)
         return;
 
+    VkFilter newMag = t->magFilter;
+    VkFilter newMin = t->minFilter;
+    VkSamplerMipmapMode newMipMode = t->mipMode;
+    bool newMipEnabled = t->mipEnabled;
+    VkSamplerAddressMode newWrapS = t->wrapS;
+    VkSamplerAddressMode newWrapT = t->wrapT;
+
     switch (param)
     {
     case RL_TEXTURE_MAG_FILTER:
-        t->magFilter = (value == RL_TEXTURE_FILTER_NEAREST) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+        newMag = (value == RL_TEXTURE_FILTER_NEAREST) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
         break;
     case RL_TEXTURE_MIN_FILTER:
-        t->mipEnabled = value == RL_TEXTURE_FILTER_MIP_NEAREST || value == RL_TEXTURE_FILTER_LINEAR_MIP_NEAREST ||
+        newMipEnabled = value == RL_TEXTURE_FILTER_MIP_NEAREST || value == RL_TEXTURE_FILTER_LINEAR_MIP_NEAREST ||
                         value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR || value == RL_TEXTURE_FILTER_MIP_LINEAR;
-        t->minFilter = ((value == RL_TEXTURE_FILTER_NEAREST) || (value == RL_TEXTURE_FILTER_MIP_NEAREST) ||
-                        (value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR))
-                           ? VK_FILTER_NEAREST
-                           : VK_FILTER_LINEAR;
-        t->mipMode = ((value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR) || (value == RL_TEXTURE_FILTER_MIP_LINEAR)) ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        newMin = ((value == RL_TEXTURE_FILTER_NEAREST) || (value == RL_TEXTURE_FILTER_MIP_NEAREST) ||
+                  (value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR))
+                     ? VK_FILTER_NEAREST
+                     : VK_FILTER_LINEAR;
+        newMipMode = ((value == RL_TEXTURE_FILTER_NEAREST_MIP_LINEAR) || (value == RL_TEXTURE_FILTER_MIP_LINEAR))
+                         ? VK_SAMPLER_MIPMAP_MODE_LINEAR
+                         : VK_SAMPLER_MIPMAP_MODE_NEAREST;
         break;
     case RL_TEXTURE_WRAP_S:
     case RL_TEXTURE_WRAP_T:
@@ -417,24 +464,55 @@ void rlTextureParameters(unsigned int id, int param, int value)
         VkSamplerAddressMode m = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         if (value == RL_TEXTURE_WRAP_CLAMP)
             m = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-        if (value == RL_TEXTURE_WRAP_MIRROR_REPEAT)
+        else if (value == RL_TEXTURE_WRAP_MIRROR_REPEAT)
             m = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
-        if (value == RL_TEXTURE_WRAP_MIRROR_CLAMP)
+        else if (value == RL_TEXTURE_WRAP_MIRROR_CLAMP)
             m = VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE;
         if (param == RL_TEXTURE_WRAP_S)
-            t->wrapS = m;
+            newWrapS = m;
         else
-            t->wrapT = m;
+            newWrapT = m;
         break;
     }
     default:
         return; // anisotropy / mipmap bias unsupported for now
     }
 
-    // Recreate the sampler; it is pushed fresh each draw (push descriptors), so nothing else
-    // to update. The old sampler may still be referenced by in-flight or still-recording
-    // command buffers: destruction is deferred until this frame slot's fence
-    rlvkDeferDestroy(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, t->sampler, VK_NULL_HANDLE, VK_NULL_HANDLE);
+    // Clamp linear filter to nearest on formats that lack SAMPLED_IMAGE_FILTER_LINEAR support
+    if ((t->format == VK_FORMAT_R32_SFLOAT && !RLVK.Caps.floatFilterR32) || (t->format == VK_FORMAT_D32_SFLOAT))
+    {
+        newMag = VK_FILTER_NEAREST;
+        newMin = VK_FILTER_NEAREST;
+        newMipMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    }
+
+    if (t->sampler != VK_NULL_HANDLE &&
+        newMag == t->magFilter && newMin == t->minFilter &&
+        newMipMode == t->mipMode && newMipEnabled == t->mipEnabled &&
+        newWrapS == t->wrapS && newWrapT == t->wrapT)
+    {
+        return; // No sampler state changed; skip redundant vkCreateSampler
+    }
+
+    t->magFilter = newMag;
+    t->minFilter = newMin;
+    t->mipMode = newMipMode;
+    t->mipEnabled = newMipEnabled;
+    t->wrapS = newWrapS;
+    t->wrapT = newWrapT;
+
+    VkSampler oldSampler = t->sampler;
+    for (u32 b = 0; b < RLVK_MAX_TEXTURE_UNITS; b++)
+    {
+        if (oldSampler && RLVK.pushedSampler[b] == oldSampler)
+        {
+            RLVK.pushedSampler[b] = VK_NULL_HANDLE;
+            RLVK.set0Dirty = true;
+        }
+    }
+    s_bindingValid = false;
+
+    rlvkDeferDestroy(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE, oldSampler, VK_NULL_HANDLE, VK_NULL_HANDLE);
     RLVK_CHECK(vkCreateSampler(RLVK.device,
                                &(VkSamplerCreateInfo){
                                    VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -443,7 +521,7 @@ void rlTextureParameters(unsigned int id, int param, int value)
                                    .mipmapMode = t->mipMode,
                                    .addressModeU = t->wrapS,
                                    .addressModeV = t->wrapT,
-                                   .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                                   .addressModeW = t->wrapT,
                                    .maxLod = (t->mipEnabled && t->mipCount > 1) ? (f32)(t->mipCount - 1) : 0.0f,
                                },
                                RLVK_ALLOC, &t->sampler));
@@ -456,7 +534,9 @@ void rlCubemapParameters(unsigned int id, int param, int value) { rlTextureParam
 // through rlSetShader; a stray SetShaderValue before drawing must NOT hijack the batch.
 void rlEnableShader(unsigned int id)
 {
-    RLVK.State.activeShaderSlot = (id == 0 || id >= RLVK_MAX_SHADER_SLOTS) ? RLVK.defaultShaderSlot : id;
+    RLVK.State.activeShaderSlot = (id == 0 || id >= RLVK_MAX_SHADER_SLOTS || !RLVK.shaderSlots[id].inUse)
+                                      ? RLVK.defaultShaderSlot
+                                      : id;
 }
 // Disable shader program
 void rlDisableShader(void) { RLVK.State.activeShaderSlot = RLVK.defaultShaderSlot; }
