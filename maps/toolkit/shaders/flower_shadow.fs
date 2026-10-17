@@ -16,9 +16,9 @@ void main()
     float radialDist = sqrt(across * across + tipCurve * tipCurve);
 
     // VISUAL UPGRADE: Contact Hardening (Bóng sắc nét ở gốc cây, mờ rộng dần về phía ngọn)
-    // Gốc cây (along = 0): bắt đầu mờ từ 0.55 -> 1.0
-    // Ngọn bóng (along = 1): mờ mềm toàn bộ từ 0.15 -> 1.0
-    float innerSoftness = mix(0.55, 0.15, along);
+    // Gốc cây (along = 0): bắt đầu mờ từ 0.60 -> 1.0 (crisp root contact grounding)
+    // Ngọn bóng (along = 1): mờ mềm toàn bộ từ 0.10 -> 1.0 (soft diffuse penumbra)
+    float innerSoftness = mix(0.60, 0.10, along);
     float coverage = 1.0 - smoothstep(innerSoftness, 1.0, radialDist);
 
     // Khử hoàn toàn phần thừa ở mép cực đại của đỉnh bóng

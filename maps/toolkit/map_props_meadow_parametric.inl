@@ -580,7 +580,7 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
                         {d.p0.x, d.p0.y, d.p0.z, d.phase},
                         {d.p1.x, d.p1.y, d.p1.z, d.width},
                         {d.p2.x, d.p2.y, d.p2.z, d.isReed ? 1.0f : 0.0f},
-                        {d.p3.x, d.p3.y, d.p3.z, 0.0f},
+                        {d.p3.x, d.p3.y, d.p3.z, d.isSeedhead ? 1.0f : 0.0f},
                         {d.clump.x, d.clump.y, d.clump.z, d.leanAngle},
                         {d.rootColor.r, d.rootColor.g, d.rootColor.b, 255.0f},
                         {d.tipColor.r, d.tipColor.g, d.tipColor.b, 255.0f}};

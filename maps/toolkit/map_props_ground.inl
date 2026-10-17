@@ -10,6 +10,7 @@ static int locLightDir = -1;
 static int locLightColor = -1;
 static int locAmbientColor = -1;
 static int locViewPos = -1;
+static int locTime = -1;
 static int locPathSegs = -1;
 static int locPathSegCount = -1;
 static int locLakeParams = -1;
@@ -315,6 +316,7 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locLightColor = GetShaderLocation(groundShader, "lightColor");
         locAmbientColor = GetShaderLocation(groundShader, "ambientColor");
         locViewPos = GetShaderLocation(groundShader, "viewPos");
+        locTime = GetShaderLocation(groundShader, "u_time");
         locPathSegs = GetShaderLocation(groundShader, "u_pathSegs");
         locPathSegCount = GetShaderLocation(groundShader, "u_pathSegCount");
         locLakeParams = GetShaderLocation(groundShader, "u_lakeParams");
@@ -609,6 +611,10 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     SetShaderValue(groundShader, locAmbientColor, ambColArr, SHADER_UNIFORM_VEC4);
     if (locViewPos >= 0)
         SetShaderValue(groundShader, locViewPos, &camera.position, SHADER_UNIFORM_VEC3);
+    if (locTime >= 0) {
+        float timeVal = (float)GetTime();
+        SetShaderValue(groundShader, locTime, &timeVal, SHADER_UNIFORM_FLOAT);
+    }
     if (locPathSegCount >= 0)
         SetShaderValue(groundShader, locPathSegCount, &s_groundPathSegCount, SHADER_UNIFORM_INT);
     if (locPathSegs >= 0 && s_groundPathSegCount > 0)

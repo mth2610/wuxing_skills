@@ -38,6 +38,7 @@ uniform vec3 lightDir;
 uniform vec4 lightColor;
 uniform vec4 ambientColor;
 uniform vec3 viewPos;
+uniform float u_time;
 uniform vec4 u_islandRect, u_islandShape;
 #include "maps/toolkit/shaders/map_island_boundary.glsl"
 
@@ -295,7 +296,10 @@ void main()
                 float clumpNoise2 = sin(fragWorldPos.x * 4.20 - fragWorldPos.z * 3.80) * 0.5;
                 float tuftGrain = clamp(0.5 + 0.35 * clumpNoise1 + 0.20 * clumpNoise2 + (turfDetail - 0.22) * 0.9, 0.0, 1.0);
                 canopyColor *= mix(0.74, 1.22, tuftGrain);
-                grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.76);
+                // Passing wind waves on distant terrain (replicates WebGL reference windAmt on terrain)
+                float windWave = sin(dot(fragWorldPos.xz, vec2(0.28, 0.20)) - u_time * 2.2) * 0.5 + 0.5;
+                canopyColor *= 1.0 + 0.12 * (windWave - 0.5) * distantCanopyBlend;
+                grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.78);
             }
         }
     }
@@ -452,11 +456,11 @@ void main()
     vec3 halfDir = normalize(light + viewDir);
     float NdotH = max(dot(normal, halfDir), 0.0);
 
-    // Warm subsurface back-scattering on sunlit grass hummocks at grazing sun angles
+    // Warm subsurface back-scattering on sunlit grass hummocks at grazing sun angles (matches WebGL reference SSS)
     if (wGrass > 0.05 && sunVisibility > 0.01) {
         float backScatter = max(dot(viewDir, -light), 0.0);
-        float sssFactor = (backScatter * backScatter) * wGrass * sunVisibility * 0.08;
-        groundLit += grassAlbedo * actualLight * vec3(1.15, 1.25, 0.65) * sssFactor;
+        float sssFactor = (backScatter * backScatter * backScatter) * wGrass * sunVisibility * 0.16;
+        groundLit += grassAlbedo * actualLight * vec3(1.20, 1.35, 0.60) * sssFactor;
     }
 
     float specPower = mix(8.0, 28.0, 1.0 - roughness);

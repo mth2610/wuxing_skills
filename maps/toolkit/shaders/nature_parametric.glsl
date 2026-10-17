@@ -176,11 +176,19 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         geometricNormal = normalize(geometricNormal);
     }
 
-    // Slender botanical spear profile: fuller mid-body for coverage, graceful tapering tip
+    // Slender botanical spear profile: fuller mid-body for coverage, plush seedhead spindle, graceful tapering tip
     float sinPiT = 4.0 * ut;
     float powT18 = t2 * (0.82 + 0.18 * t);
-    float profile = (p2.w > 0.5) ? (0.85 + 0.25 * sinPiT) * (1.0 - powT18)
-                                 : (0.72 + 0.50 * t) * (1.0 - t2);
+    float profile;
+    if (p2.w > 0.5) {
+        profile = (0.85 + 0.25 * sinPiT) * (1.0 - powT18);
+    } else if (p3.w > 0.5) {
+        float s = clamp((t - 0.52) / 0.44, 0.0, 1.0);
+        float bulge = pow(sin(3.14159265 * s), 0.82);
+        profile = (t < 0.52) ? (0.36 + 0.14 * t) : (0.36 + 0.88 * bulge * (1.0 - t * 0.35));
+    } else {
+        profile = (0.76 + 0.44 * t) * (1.0 - pow(t, 1.65) * 0.95);
+    }
     float halfWidth = p1.w * 0.5 * max(profile, role < 1.5 ? 0.08 : 0.035);
 
     float fadeAlpha = 1.0;
@@ -195,7 +203,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 #endif
 
     // Taper midrib V-crease smoothly to 0 at the tip so the apex joins cleanly
-    float creaseOffset = halfWidth * 0.18 * u;
+    float creaseOffset = halfWidth * 0.22 * u;
     position = (role > 2.5)
         ? center
         : (center + side * (halfWidth * sideSign) + geometricNormal * creaseOffset);
@@ -221,7 +229,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 
     // Monotonic, natural root-to-tip botanical color gradient + subtle per-blade phase tone
     float bladeTone = 0.96 + 0.08 * fract(p0.w * 0.3183099);
-    float colorT = t * (0.70 + 0.30 * t);
+    float colorT = t * t * (3.0 - 2.0 * t);
     vec3 smoothCol = clamp(mix(rootColor, tipColor, colorT) * (occlusion * bladeTone * (1.0 / 255.0)), 0.0, 1.0);
 
     color = vec4(smoothCol, fadeAlpha);

@@ -412,7 +412,7 @@ void UnloadDesertLavaMap(void);
 
 Maps are drawn as a "floating island" to support the ring-out fall mechanic along the Z axis. When drawing a map, use the following coordinate constants to stay in sync with player/monster movement and collision logic:
 
-Real-world-scaled: 1 unit = 1 meter (rescaled from the old 1cm-scale — see root `CLAUDE.md` "Standard coordinates & scale"). Code samples further below in this doc (§ examples using `600.0f`/`440.0f`/`1800.0f`) predate the rescale — use the constants below, not the old sample literals, when writing a new map.
+Real-world-scaled: **1 unit = 1 meter** (engine-wide standard — see root `AGENTS.md` "Standard coordinates & scale"). All code samples and coordinate constants throughout this document strictly follow this meter scale.
 
 * **Arena Center:** `(6.0f, 0.0f, 4.4f)` (constant `arenaCenter`).
 * **Active Radius:** `18.0f` (constant `arenaRadius`). All walkable ground should stay within this radius.
@@ -524,7 +524,7 @@ void InitVerdantPathMap(void)
     //    python3 scripts/generate_island_heightmap.py assets/heightmaps/<map_name>_island.png 64 <seed>
     s_ground = MapProp_CreateGroundHeightmap("assets/heightmaps/verdant_path_island.png",
                                     MAP_WIDTH, MAP_DEPTH, CLIFF_DEPTH, 12.0f,
-                                    "assets/textures/grass_ground_diffuse.png",
+                                    "assets/textures/ground_splat_mask.png", // splatMapPath (R=1 grass, R=0 dirt)
                                     "assets/textures/grass_ground_diffuse.png",
                                     "assets/textures/dirt_diffuse.png");
 
@@ -612,16 +612,16 @@ void InitDesertLavaMap(void) {
     EnvFogConfig fog = {0};
     fog.enabled = true;
     fog.color = (Color){ 25, 10, 10, 255 }; 
-    fog.start = 700.0f;
-    fog.end = 2000.0f;
+    fog.start = 14.0f;
+    fog.end = 40.0f;
     fog.density = 1.0f;
     Environment_SetFogConfig(fog);
 }
 
 void DrawDesertLavaMap(void) {
-    Vector3 center = { 600.0f, 0.0f, 440.0f };
-    float radius = 1805.0f;
-    float poolRadius = 300.0f;
+    Vector3 center = { 6.0f, 0.0f, 4.4f };
+    float radius = 18.05f;
+    float poolRadius = 3.0f;
 
     // --- STEP 1: DRAW THE FLOATING SAND GROUND ---
     rlDisableBackfaceCulling();
@@ -632,11 +632,11 @@ void DrawDesertLavaMap(void) {
     for (int i = 0; i < segments; i++) {
         float a1 = ((float)i / segments) * 2.0f * PI;
         float a2 = ((float)(i + 1) / segments) * 2.0f * PI;
-        Vector3 p1 = { center.x + cosf(a1) * radius, center.y - 0.1f, center.z + sinf(a1) * radius };
-        Vector3 p2 = { center.x + cosf(a2) * radius, center.y - 0.1f, center.z + sinf(a2) * radius };
+        Vector3 p1 = { center.x + cosf(a1) * radius, center.y - 0.001f, center.z + sinf(a1) * radius };
+        Vector3 p2 = { center.x + cosf(a2) * radius, center.y - 0.001f, center.z + sinf(a2) * radius };
         
         rlColor4ub(cSandCenter.r, cSandCenter.g, cSandCenter.b, 255);
-        rlVertex3f(center.x, center.y - 0.1f, center.z);
+        rlVertex3f(center.x, center.y - 0.001f, center.z);
         rlColor4ub(cSandEdge.r, cSandEdge.g, cSandEdge.b, 255);
         rlVertex3f(p2.x, p2.y, p2.z);
         rlColor4ub(cSandEdge.r, cSandEdge.g, cSandEdge.b, 255);
@@ -652,8 +652,8 @@ void DrawDesertLavaMap(void) {
         float a1 = ((float)i / segments) * 2.0f * PI;
         float a2 = ((float)(i + 1) / segments) * 2.0f * PI;
         // Gentle rippling lava wave animation
-        float w1 = sinf(a1 * 6.0f + s_lavaTime) * 8.0f;
-        float w2 = sinf(a2 * 6.0f + s_lavaTime) * 8.0f;
+        float w1 = sinf(a1 * 6.0f + s_lavaTime) * 0.08f;
+        float w2 = sinf(a2 * 6.0f + s_lavaTime) * 0.08f;
         Vector3 p1 = { center.x + cosf(a1) * (poolRadius + w1), center.y, center.z + sinf(a1) * (poolRadius + w1) };
         Vector3 p2 = { center.x + cosf(a2) * (poolRadius + w2), center.y, center.z + sinf(a2) * (poolRadius + w2) };
         
@@ -668,9 +668,9 @@ void DrawDesertLavaMap(void) {
     rlEnableBackfaceCulling();
 
     // --- STEP 3: DRAW STATIC OBJECTS & FAKE SHADOWS ---
-    Vector3 pillarPos = { center.x + 350.0f, center.y, center.z - 250.0f };
-    float pHeight = 80.0f;
-    float pRadius = 20.0f;
+    Vector3 pillarPos = { center.x + 3.5f, center.y, center.z - 2.5f };
+    float pHeight = 0.80f;
+    float pRadius = 0.20f;
     // 1. Draw the fake shadow first
     Environment_DrawSmartShadow(pillarPos, ENV_SHAPE_CYLINDER, pRadius, pHeight);
     // 2. Draw a low-poly octagonal-prism stone pillar (segments = 8)
@@ -678,9 +678,9 @@ void DrawDesertLavaMap(void) {
     DrawCylinderWires((Vector3){pillarPos.x, pillarPos.y + pHeight * 0.5f, pillarPos.z}, pRadius, pRadius, pHeight, 8, GetColor(0x4A352BFF));
 
     // --- STEP 4: DRAW THE DISTANT MOON (Blood Moon) ---
-    Vector3 moonPos = { center.x - 600.0f, 300.0f, center.z - 1200.0f };
+    Vector3 moonPos = { center.x - 60.0f, 30.0f, center.z - 120.0f };
     rlDisableLighting();
-    DrawSphere(moonPos, 150.0f, GetColor(0xFF4400FF)); // Vivid blood moon
+    DrawSphere(moonPos, 15.0f, GetColor(0xFF4400FF)); // Vivid blood moon
     rlEnableLighting();
 }
 
@@ -744,10 +744,10 @@ void InitDesertLavaMap(void) {
 
 void DrawDesertLavaMap(void) {
     if (s_bambooLoaded) {
-        Vector3 treePos = { 500.0f, 0.0f, 300.0f };
+        Vector3 treePos = { 5.0f, 0.0f, 3.0f };
         
-        // 1. Draw the fake shadow flush to the ground
-        Environment_DrawSmartShadow(treePos, ENV_SHAPE_CYLINDER, 15.0f, 60.0f);
+        // 1. Draw the fake shadow flush to the ground (radius 0.40m, length 1.80m)
+        Environment_DrawSmartShadow(treePos, ENV_SHAPE_CYLINDER, 0.40f, 1.80f);
         
         // 2. Draw the 3D bamboo model (use DrawModelEx to support rotation/scale)
         Vector3 rotationAxis = { 0.0f, 1.0f, 0.0f }; // Rotate around the vertical Y axis
@@ -760,9 +760,9 @@ void DrawDesertLavaMap(void) {
 
 void UnloadDesertLavaMap(void) {
     if (s_bambooLoaded) {
-        // Free the texture assigned to the material first
-        UnloadTexture(s_bambooModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture);
-        // Free the 3D model from VRAM
+        // Free the 3D model from VRAM.
+        // NOTE: Raylib's UnloadModel automatically unloads materials and any textures
+        // assigned to material maps. Do NOT call UnloadTexture beforehand to avoid double-free.
         UnloadModel(s_bambooModel);
         s_bambooLoaded = false;
     }
@@ -790,7 +790,7 @@ If you only want the player to move on a flat `Y = 0` surface while the visuals 
 ### C. Solution 2: Creating Pits/Chasms (Holes & Cliffs)
 To create sinkholes where a player **falling in gets pulled down by gravity into the abyss and dies**:
 1. In the `Draw` function, draw terrain with holes left out (don't draw polygon mesh in that area, exposing dark empty space).
-2. Since the Core currently only checks for ring-out when the player exceeds `arenaRadius` (`1800.0f` from the center `600, 440`), if you want lethal holes *in the middle* of a map, you'll need to coordinate adding circular collision-check logic for that hole in the Core's physics file (or ask the Core Agent to set up an additional no-go/lethal zone, `NAT_CLIFF`).
+2. Since the Core currently only checks for ring-out when the player exceeds `arenaRadius` (`18.0f` from the center `(6.0f, 0.0f, 4.4f)`), if you want lethal holes *in the middle* of a map, you'll need to coordinate adding circular collision-check logic for that hole in the Core's physics file (or ask the Core Agent to set up an additional no-go/lethal zone, `NAT_CLIFF`).
 
 ---
 
@@ -818,15 +818,17 @@ void InitMap(void) {
 
 void DrawMap(void) {
     if (s_rockLoaded) {
-        DrawModel(s_rockModel, (Vector3){ 600.0f, 0.0f, 440.0f }, 1.0f, WHITE);
+        DrawModel(s_rockModel, (Vector3){ 6.0f, 0.0f, 4.4f }, 1.0f, WHITE);
     }
 }
 
 void UnloadMap(void) {
     if (s_rockLoaded) {
-        // Must unload the texture before unloading the model to avoid a VRAM leak
-        UnloadTexture(s_bambooModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture);
+        // Free the 3D model from VRAM.
+        // NOTE: Raylib's UnloadModel already automatically unloads materials and any textures
+        // assigned to material maps. Do NOT call UnloadTexture beforehand to avoid double-free.
         UnloadModel(s_rockModel);
+        s_rockLoaded = false;
     }
 }
 ```
@@ -847,17 +849,21 @@ void DrawMap(void) {
     rlBegin(RL_TRIANGLES);
         // Vertex 1
         rlTexCoord2f(0.0f, 0.0f); // UV coordinate (0,0)
-        rlVertex3f(500.0f, 0.0f, 300.0f);
+        rlVertex3f(5.0f, 0.0f, 3.0f);
         
         // Vertex 2
         rlTexCoord2f(1.0f, 0.0f); // UV coordinate (1,0)
-        rlVertex3f(600.0f, 0.0f, 300.0f);
+        rlVertex3f(6.0f, 0.0f, 3.0f);
         
         // Vertex 3
         rlTexCoord2f(0.5f, 1.0f); // UV coordinate (0.5,1)
-        rlVertex3f(550.0f, 0.0f, 400.0f);
+        rlVertex3f(5.5f, 0.0f, 4.0f);
     rlEnd();
     rlSetTexture(0); // Unbind the texture when done
+}
+
+void UnloadMap(void) {
+    UnloadTexture(s_groundTex);
 }
 ```
 
@@ -886,13 +892,13 @@ void InitMap(void) {
 
     // Randomly generate the bamboo forest's positions once here (do not generate inside Draw — causes stutter)
     for (int i = 0; i < MAX_BAMBOO_TREES; i++) {
-        // Generate coordinates around the map's border
+        // Generate coordinates around the map's border (radius 10.0m to 14.0m)
         float angle = ((float)i / MAX_BAMBOO_TREES) * 2.0f * PI;
-        float radius = 1000.0f + (float)GetRandomValue(-200, 200); 
+        float radius = 12.0f + (float)GetRandomValue(-200, 200) / 100.0f; 
         s_bambooPositions[i] = (Vector3){
-            600.0f + cosf(angle) * radius,
+            6.0f + cosf(angle) * radius,
             0.0f,
-            440.0f + sinf(angle) * radius
+            4.4f + sinf(angle) * radius
         };
         
         s_bambooRotations[i] = (float)GetRandomValue(0, 360);
@@ -907,8 +913,8 @@ void DrawMap(void) {
 
     // Loop drawing the whole forest
     for (int i = 0; i < MAX_BAMBOO_TREES; i++) {
-        // 1. Draw the shadow matching that tree's position
-        Environment_DrawSmartShadow(s_bambooPositions[i], ENV_SHAPE_CYLINDER, 15.0f, 80.0f);
+        // 1. Draw the shadow matching that tree's position (radius 0.35m, length 1.80m)
+        Environment_DrawSmartShadow(s_bambooPositions[i], ENV_SHAPE_CYLINDER, 0.35f, 1.80f);
         
         // 2. Draw the bamboo model at that position
         Vector3 scaleVec = { s_bambooScales[i], s_bambooScales[i], s_bambooScales[i] };
@@ -968,8 +974,8 @@ float GetHeightmapHeight(Image heightmap, Vector3 terrainSize, Vector3 terrainCe
 static Model s_terrainModel;
 static Model s_treeModel;
 static Image s_heightmapImage;
-static Vector3 s_terrainSize = { 1800.0f, 150.0f, 1800.0f }; // Width 1800, max height 150, depth 1800
-static Vector3 s_center = { 600.0f, 0.0f, 440.0f };
+static Vector3 s_terrainSize = { 36.0f, 3.0f, 36.0f }; // Width 36m, max height 3m, depth 36m
+static Vector3 s_center = { 6.0f, 0.0f, 4.4f };
 
 // Random positions for 10 bamboo trees
 static Vector3 s_treePositions[10];
@@ -985,8 +991,8 @@ void InitMap(void) {
 
     // 2. Scatter trees, automatically snapping them to the hilly terrain
     for (int i = 0; i < 10; i++) {
-        float x = s_center.x + (float)GetRandomValue(-600, 600);
-        float z = s_center.z + (float)GetRandomValue(-600, 600);
+        float x = s_center.x + (float)GetRandomValue(-1200, 1200) / 100.0f; // +/- 12m
+        float z = s_center.z + (float)GetRandomValue(-1200, 1200) / 100.0f; // +/- 12m
         
         // Query the heightmap image to get the Y value
         float y = GetHeightmapHeight(s_heightmapImage, s_terrainSize, s_center, x, z);
@@ -1001,7 +1007,7 @@ void DrawMap(void) {
     
     // Draw the trees, now snapped to the correct height
     for (int i = 0; i < 10; i++) {
-        Environment_DrawSmartShadow(s_treePositions[i], ENV_SHAPE_CYLINDER, 15.0f, 50.0f);
+        Environment_DrawSmartShadow(s_treePositions[i], ENV_SHAPE_CYLINDER, 0.40f, 1.80f);
         DrawModel(s_treeModel, s_treePositions[i], 1.0f, WHITE);
     }
 }
@@ -1074,7 +1080,7 @@ Cloud noise uses a separate ResourceManager mipmapped trilinear/repeat variant. 
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
-| 2026-10-17 | Antigravity | 3-tier botanical hierarchy, preserved midrib crease, golden-emerald SSS backlighting, continuous river spline, thresholded scree substrate | maps/toolkit/shaders/nature_parametric.glsl; maps/toolkit/shaders/nature_surface.glsl; maps/toolkit/shaders/ground_splat.fs; maps/toolkit/map_props_nature.inl; maps/worlds/song_quao/song_quao.c | Ground-truth |
+| 2026-10-17 | Antigravity | AAA map visual upgrade based on WebGL meadow reference: botanical spindle seedheads & varieties (rye, wild clover bloom, silvergrass), warm golden sunlit tip shift, V-crease 3D fold, curved normal canopy blend (mix 0.30 w/ up), forward cubic SSS flare & waxy cuticle glint, 3-band botanical canopy palette (deep moss, lush clover, sunlit gold), distant terrain passing wind waves & SSS back-scatter, contact hardening shadow tuning | maps/toolkit/map_props_meadow.inl; maps/toolkit/map_props_meadow_parametric.inl; maps/toolkit/shaders/nature_parametric.glsl; maps/toolkit/shaders/nature_opaque.fs; maps/toolkit/shaders/nature_surface.glsl; maps/toolkit/meadow_palette.h; maps/toolkit/shaders/meadow_palette.glsl; maps/toolkit/shaders/ground_splat.fs; maps/toolkit/map_props_ground.inl; maps/toolkit/shaders/flower_shadow.fs | Ground-truth |
 | 2026-10-12 | Codex | DEM provenance, native terrain analysis, packed heightfield and terrain water APIs | maps/pipeline/dem_pipeline.py; maps/toolkit/map_props.h | Ground-truth |
 | 2026-10-09 | Codex | Explicit meadow growth form, visibility fade and shared HDR sunlight | maps/toolkit/map_props.h; map_props_meadow_parametric.inl; maps/worlds/verdant_path/verdant_path.c | Ground-truth |
 | 2026-10-09 | Codex | Canonical far-blade shape and visible/shadow validation | maps/toolkit/shaders/nature_parametric.glsl; maps/toolkit/map_props_nature.inl; maps/tests/test_meadow_parametric.py; maps/tests/test_meadow_world_space.py | Ground-truth |

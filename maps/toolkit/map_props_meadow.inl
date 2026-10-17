@@ -199,6 +199,7 @@ typedef struct {
     Color rootColor, tipColor;
     float width, phase, leanAngle;
     bool isReed;
+    bool isSeedhead;
 } NatureBladeDescriptor;
 
 // Single authoring implementation for expanded meshes and compact templates.
@@ -233,6 +234,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     Vector3 pP1 = {0}, pP2 = {0}, pP3 = {0};
     Color bladeRoot = {0};
     Color bladeTip = {0};
+    bool isSeedhead = false;
 
     if (isReed) {
         float baseAngle = (float)blade * (2.0f * PI / (float)bladesPerClump);
@@ -391,13 +393,25 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             bz + sinf(bladeLeanAngle) * lean * 0.96f
         };
 
-        // Subtle sunlit meadow accents (fresh sunlit green, no yellow/brown patches)
+        // Subtle sunlit meadow accents (fresh sunlit green, warm golden rye, wild meadow blush)
         float strawNoise = sinf(clump->position.x * 0.16f + clump->position.z * 0.12f + 1.7f) * 0.5f
                          + sinf(clump->position.x * -0.10f + clump->position.z * 0.22f + 0.5f) * 0.5f;
-        bool isSeedhead = (strawNoise > 0.36f) && (bladeId == 0) && (bHash3 > 0.50f);
+        isSeedhead = (strawNoise > 0.36f) && (bladeId == 0) && (bHash3 > 0.40f);
         if (isSeedhead) {
-            bladeRoot = (Color){32, 54, 22, 255};    // lush moss-emerald sheath
-            bladeTip  = (Color){132, 184, 62, 255};  // sunlit meadow-green tip
+            float pick = bHash2;
+            if (pick < 0.45f) {
+                // 1. Golden Rye / Wheat Ear (warm sunlit straw spike)
+                bladeRoot = (Color){38, 52, 22, 255};
+                bladeTip  = (Color){218, 186, 105, 255};
+            } else if (pick < 0.75f) {
+                // 2. Wild Meadow Bloom (Red Fescue / Meadow Clover blush)
+                bladeRoot = (Color){32, 48, 20, 255};
+                bladeTip  = (Color){192, 78, 88, 255};
+            } else {
+                // 3. Silvergrass / Foxtail Feather (luminous ivory-gold plume)
+                bladeRoot = (Color){30, 50, 24, 255};
+                bladeTip  = (Color){224, 218, 192, 255};
+            }
         } else {
             float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f
                              + sinf(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f) * 0.45f;
@@ -406,9 +420,10 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             int rR = (int)(style.rootColor.r * tone * (1.0f + warmth));
             int rG = (int)(style.rootColor.g * tone);
             int rB = (int)(style.rootColor.b * tone * (1.0f - warmth));
-            int tR = (int)(style.tipColor.r * tone * (1.0f + warmth));
-            int tG = (int)(style.tipColor.g * tone);
-            int tB = (int)(style.tipColor.b * tone * (1.0f - warmth));
+            // Shift tip slightly towards warm sunlit gold (+vec3(0.06, 0.04, 0.0)) to replicate WebGL tip color formula:
+            int tR = (int)(style.tipColor.r * tone * (1.0f + warmth * 1.25f) + 10.0f * warmth);
+            int tG = (int)(style.tipColor.g * tone * (1.0f + warmth * 0.65f) + 6.0f * warmth);
+            int tB = (int)(style.tipColor.b * tone * (1.0f - warmth * 1.40f));
 
             // Botanical micro-diversity: 10% of hero blades have slightly brighter sunlit green tips
             if (bHash2 < 0.10f && bladeId < 2) {
@@ -440,7 +455,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             fminf(style.botanicalVariation, 1.0f) * 0.55f);
     }
     return (NatureBladeDescriptor){pBase, pP1, pP2, pP3, clump->position,
-        bladeRoot, bladeTip, width, clump->phase, bladeLeanAngle, isReed};
+        bladeRoot, bladeTip, width, clump->phase, bladeLeanAngle, isReed, isSeedhead};
 }
 
 static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int count,
@@ -521,17 +536,31 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Ngeo1.y = fmaxf(Ngeo1.y, 0.25f);
                 Ngeo1 = Vector3Normalize(Ngeo1);
 
-                // Botanical Spear Blade Profile: fuller mid-body for lush coverage, slender tip
-                float profile0 = isReed ? (0.85f + 0.25f * sinf(PI * t0)) * (1.0f - powf(t0, 1.8f))
-                                        : (0.72f + 0.50f * t0) * (1.0f - t0 * t0);
-                float profile1 = isReed ? (0.85f + 0.25f * sinf(PI * t1)) * (1.0f - powf(t1, 1.8f))
-                                        : (0.72f + 0.50f * t1) * (1.0f - t1 * t1);
+                bool isSeedhead = desc.isSeedhead;
+                // Botanical Spear Blade Profile: fuller mid-body for lush coverage, slender tip, plush seedhead spindle
+                float profile0;
+                float profile1;
+                if (isReed) {
+                    profile0 = (0.85f + 0.25f * sinf(PI * t0)) * (1.0f - powf(t0, 1.8f));
+                    profile1 = (0.85f + 0.25f * sinf(PI * t1)) * (1.0f - powf(t1, 1.8f));
+                } else if (isSeedhead) {
+                    float s0 = fminf(fmaxf((t0 - 0.52f) / 0.44f, 0.0f), 1.0f);
+                    float bulge0 = powf(sinf(PI * s0), 0.82f);
+                    profile0 = (t0 < 0.52f) ? (0.36f + 0.14f * t0) : (0.36f + 0.88f * bulge0 * (1.0f - t0 * 0.35f));
+
+                    float s1 = fminf(fmaxf((t1 - 0.52f) / 0.44f, 0.0f), 1.0f);
+                    float bulge1 = powf(sinf(PI * s1), 0.82f);
+                    profile1 = (t1 < 0.52f) ? (0.36f + 0.14f * t1) : (0.36f + 0.88f * bulge1 * (1.0f - t1 * 0.35f));
+                } else {
+                    profile0 = (0.76f + 0.44f * t0) * (1.0f - powf(t0, 1.65f) * 0.95f);
+                    profile1 = (0.76f + 0.44f * t1) * (1.0f - powf(t1, 1.65f) * 0.95f);
+                }
                 float halfW0 = (width * 0.5f) * fmaxf(profile0, 0.08f);
                 float halfW1 = (width * 0.5f) * fmaxf(profile1, 0.035f);
 
                 // Section 1.2: V-shaped cross section (creased spine, winged edges)
-                Vector3 fold0 = Vector3Scale(Ngeo0, halfW0 * 0.18f);
-                Vector3 fold1 = Vector3Scale(Ngeo1, halfW1 * 0.18f);
+                Vector3 fold0 = Vector3Scale(Ngeo0, halfW0 * 0.22f);
+                Vector3 fold1 = Vector3Scale(Ngeo1, halfW1 * 0.22f);
 
                 Vector3 p0 = Vector3Add(Vector3Subtract(center0, Vector3Scale(S0, halfW0)), fold0);
                 Vector3 p1 = Vector3Add(Vector3Add(center0, Vector3Scale(S0, halfW0)), fold0);
@@ -541,9 +570,11 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 // Root ambient occlusion: soft, natural ground grounding without harsh pitch-black spots
                 float occ0 = (t0 < 0.22f) ? (0.88f + 0.12f * (t0 / 0.22f)) : 1.0f;
                 float occ1 = (t1 < 0.22f) ? (0.88f + 0.12f * (t1 / 0.22f)) : 1.0f;
-                Color color0 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t0), occ0);
-                float tipTint = (segment == bladeSegments - 1 && !style.hasPlumes) ? 0.86f : 1.0f;
-                Color color1 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, t1),
+                float s0 = t0 * t0 * (3.0f - 2.0f * t0);
+                float s1 = t1 * t1 * (3.0f - 2.0f * t1);
+                Color color0 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, s0), occ0);
+                float tipTint = (segment == bladeSegments - 1 && !style.hasPlumes) ? 0.92f : 1.0f;
+                Color color1 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, s1),
                                                  occ1 * tipTint);
 
                 // Ghost of Tsushima / AAA Reference: Bent Vertex Normals

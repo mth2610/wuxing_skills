@@ -76,6 +76,7 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
             float bias = clamp(0.0025 + slope * 0.0040, 0.0020, 0.0070);
             float staticShadow = NatureShadowCompare(staticShadowMap, projected.xy,
                 projected.z - bias, u_staticShadowTexel, filterWeight);
+            staticShadow = mix(0.42, 1.0, staticShadow);
             staticShadow = mix(1.0, staticShadow, MapShadowCoverageFadeWidth(projected.xy, 0.08));
             combined = min(dynamicShadow, staticShadow);
         }
@@ -371,15 +372,18 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             // Subsurface Translucency (luminous golden-emerald backlight transmission)
             float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
             float backLight = max(-dot(faceNormal, modelLightDir), 0.0);
-            float forwardLobe = FastPow2(forwardScatter);
+            float forwardLobe = forwardScatter * forwardScatter * forwardScatter;
             float backLobe = FastPow1_4(backLight);
-            float edgeThinness = 0.74 + 0.42 * absU;
+            float edgeThinness = 0.70 + 0.50 * absU;
             float sssWindow = FastRamp(0.10, 0.55, h) * (1.0 - FastRamp(0.82, 0.99, h) * 0.45);
-            float transmission = (backLobe * 0.85 + forwardLobe * 0.62) * sssWindow * edgeThinness * sssScale;
-            vec3 goldenSSS = baseColor * vec3(1.35, 1.75, 0.42) + vec3(0.02, 0.05, 0.01) * sssScale;
+            float transmission = (backLobe * 0.82 + forwardLobe * 1.15 * (0.5 + 0.5 * h)) * sssWindow * edgeThinness * sssScale;
+            vec3 goldenSSS = baseColor * vec3(1.42, 1.82, 0.48) + vec3(0.04, 0.06, 0.015) * sssScale;
+
+            // Waxy cuticle glint on the curved blade
+            float waxySpec = FastPow32(max(NdotH, 0.0)) * (0.14 * h) * specAA;
 
             vec3 directSunTerms = baseColor * (wrapped * wrapped * 0.95)
-                                + anisoSpec
+                                + anisoSpec + (effectiveLightColor * waxySpec)
                                 + goldenSSS * (transmission * 1.35);
             lit += directSunTerms * effectiveLightColor * (canopy * sunVis);
         }

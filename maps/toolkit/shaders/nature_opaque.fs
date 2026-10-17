@@ -24,7 +24,9 @@ void main()
     vec3 sideAxis = vec3(-baseNormal.z, 0.0, baseNormal.x);
     float sideLenSq = dot(sideAxis, sideAxis);
     if (sideLenSq > 1e-6) sideAxis *= inversesqrt(sideLenSq);
-    vec3 curvedNormal = normalize(baseNormal + sideAxis * (u * 0.24));
+    // AAA WebGL-grade cylindrical curvature + upper-hemisphere canopy blend
+    vec3 curvedNormal = normalize(baseNormal + sideAxis * (u * 0.46));
+    curvedNormal = normalize(mix(curvedNormal, vec3(0.0, 1.0, 0.0), 0.30));
 
     // Botanical vascular bundle (midrib) + subtle parallel leaf veins
     float midrib = 1.0 - FastRamp(0.0, 0.28, absU) * 0.08;
@@ -36,7 +38,7 @@ void main()
 
     // 2. Arch-windowed Wind-Wave Sheen (already tapered to 0 at tip in VS so tips never flicker)
     float windSheen = fragColor.a;
-    lit *= 1.0 + windSheen * 0.16;
+    lit *= 1.0 + windSheen * 0.18;
 
     finalColor = vec4(lit, 1.0);
 }
