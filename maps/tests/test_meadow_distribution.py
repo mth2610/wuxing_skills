@@ -2,9 +2,11 @@
 from pathlib import Path
 import subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[2]
-s=(ROOT/'maps/toolkit/map_props_nature.inl').read_text()
-a=s.index('static unsigned int Nature_NextRandom');b=s.index('#include "maps/toolkit/meadow_palette.h"',a)
-rng=s[a:b]
+props=(ROOT/'maps/toolkit/map_props.c').read_text()
+a=props.index('static unsigned int Nature_NextRandom');b=props.index('#include "maps/toolkit/map_props_texture.inl"',a)
+rng=props[a:b]
+meadow_path = ROOT/'maps/toolkit/map_props_meadow.inl' if (ROOT/'maps/toolkit/map_props_meadow.inl').exists() else ROOT/'maps/toolkit/map_props_nature.inl'
+s=meadow_path.read_text()
 a=s.index('int MapProp_GenerateMeadowPlacements');b=s.index('static inline Vector3 Nature_EvalCubicBezier',a)
 production=s[a:b]
 stub=r'''

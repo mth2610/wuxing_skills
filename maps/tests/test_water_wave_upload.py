@@ -114,7 +114,8 @@ int main(void) {
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", type=pathlib.Path, default=ROOT / "maps/toolkit/map_props_nature.inl")
+    default_source = ROOT / "maps/toolkit/map_props_water.inl" if (ROOT / "maps/toolkit/map_props_water.inl").exists() else ROOT / "maps/toolkit/map_props_nature.inl"
+    parser.add_argument("--source", type=pathlib.Path, default=default_source)
     args = parser.parse_args()
     source = args.source.read_text()
     init = function(source, "Water_InitializeWaveUploadCache")
