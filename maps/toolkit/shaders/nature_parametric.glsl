@@ -23,6 +23,8 @@ uniform int u_visibleTuftOffset;
 // between NatureTuftUsesCurrentLod() and NatureEvaluateBlade().
 int s_cachedTuftId = -1;
 float s_cachedDistToCam = -1.0;
+vec4 s_cachedClumpTexel = vec4(0.0);
+bool s_hasCachedClumpTexel = false;
 
 int NatureTuftId()
 {
@@ -56,13 +58,16 @@ bool NatureTuftUsesCurrentLod()
 {
     s_cachedTuftId = -1;
     s_cachedDistToCam = -1.0;
+    s_hasCachedClumpTexel = false;
 
     if (u_compactTuftSubmission != 0) return true;
     if (u_tuftLodBands.y <= 0.0) return u_tuftLodLevel == 0;
 
     int blade = NatureBladeId(0);
-    vec3 root = texelFetch(u_bladeParameters,
-        ivec2((blade & 255) * 7 + 4, blade >> 8), 0).xyz;
+    s_cachedClumpTexel = texelFetch(u_bladeParameters,
+        ivec2((blade & 255) * 7 + 4, blade >> 8), 0);
+    s_hasCachedClumpTexel = true;
+    vec3 root = s_cachedClumpTexel.xyz;
     vec3 diff = (root + u_worldOffset) - u_tuftLodCamera;
     float d2 = dot(diff, diff);
 
@@ -108,13 +113,13 @@ void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p
         if (u_geometryLod == 2) {
             float height = (p1.y - p0.y) * 3.5714286; // 1.0 / 0.28
             float droop = height * 0.68 - (p3.y - p0.y);
-            p1.xz = p0.xz + (p1.xz - p0.xz) * 0.72;
-            p1.y  = p0.y  + (p1.y  - p0.y)  * 0.82;
-            p2.xz = p0.xz + (p2.xz - p0.xz) * 0.72;
-            p2.y  = p0.y  + (p2.y  - p0.y)  * 0.82;
-            p3.xz = p0.xz + (p3.xz - p0.xz) * 0.72;
-            p3.y  = p0.y  + max(height * 0.12, height * 0.58 - droop * 0.55);
-            p1.w *= 1.12; // Gentle silhouette boost for reduced vertical curvature
+            p1.xz = p0.xz + (p1.xz - p0.xz) * 0.78;
+            p1.y  = p0.y  + (p1.y  - p0.y)  * 0.85;
+            p2.xz = p0.xz + (p2.xz - p0.xz) * 0.78;
+            p2.y  = p0.y  + (p2.y  - p0.y)  * 0.85;
+            p3.xz = p0.xz + (p3.xz - p0.xz) * 0.78;
+            p3.y  = p0.y  + max(height * 0.14, height * 0.60 - droop * 0.55);
+            p1.w *= 1.16; // Preserve lush far-LOD canopy coverage
         }
     }
 }
@@ -125,13 +130,15 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     int localBlade = int(floor(vertexPosition.z));
     int blade = NatureBladeId(localBlade);
 
-    // Compute atlas base coordinate once for all 7 texel fetches
+    // Compute atlas base coordinate once; reuse cached clump texel when localBlade == 0
     ivec2 baseCoord = ivec2((blade & 255) * 7, blade >> 8);
     vec4 p0 = texelFetch(u_bladeParameters, baseCoord, 0);
     vec4 p1 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 1, baseCoord.y), 0);
     vec4 p2 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 2, baseCoord.y), 0);
     vec4 p3 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 3, baseCoord.y), 0);
-    vec4 clump = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 4, baseCoord.y), 0);
+    vec4 clump = (s_hasCachedClumpTexel && localBlade == 0)
+        ? s_cachedClumpTexel
+        : texelFetch(u_bladeParameters, ivec2(baseCoord.x + 4, baseCoord.y), 0);
     vec3 rootColor = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 5, baseCoord.y), 0).rgb;
     vec3 tipColor  = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 6, baseCoord.y), 0).rgb;
 
@@ -153,7 +160,6 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
                              (2.0 * ut) * (p2.xyz - p1.xyz) +
                              t2 * (p3.xyz - p2.xyz));
 
-    // Explicit branch avoids evaluating sin(clump.w) & cos(clump.w) on 99.99% of vertices
     vec3 side = vec3(-tangent.z, 0.0, tangent.x);
     float sideLenSq = dot(side, side);
     if (sideLenSq > 1e-6) {
@@ -170,23 +176,25 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         geometricNormal = normalize(geometricNormal);
     }
 
-    // Fast polynomial replacements for sin(pi * t) and pow(t, 1.8)
+    // Slender botanical spear profile: fuller mid-body for coverage, graceful tapering tip
     float sinPiT = 4.0 * ut;
     float powT18 = t2 * (0.82 + 0.18 * t);
     float profile = (p2.w > 0.5) ? (0.85 + 0.25 * sinPiT) * (1.0 - powT18)
                                  : (0.72 + 0.50 * t) * (1.0 - t2);
-    float halfWidth = p1.w * 0.5 * max(profile, role < 1.5 ? 0.08 : 0.03);
+    float halfWidth = p1.w * 0.5 * max(profile, role < 1.5 ? 0.08 : 0.035);
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
     float distToCam = (s_cachedDistToCam >= 0.0)
         ? s_cachedDistToCam
         : distance(p0.xyz + u_worldOffset, u_tuftLodCamera);
-    float minPxHalfWidth = distToCam * 0.00062 * (1.0 - 0.55 * t);
+    // Subtle sub-pixel minimum width prevents distant blades from breaking into 1px dots
+    // while keeping close-range blades slender and naturally tapered
+    float minPxHalfWidth = distToCam * 0.00052 * (1.0 - 0.58 * t);
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 
-    // Taper midrib crease smoothly to 0 at the tip so the apex joins cleanly
+    // Taper midrib V-crease smoothly to 0 at the tip so the apex joins cleanly
     float creaseOffset = halfWidth * 0.18 * u;
     position = (role > 2.5)
         ? center
@@ -204,17 +212,16 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 #endif
 
     vec3 sphereDirection = normalize(position - vec3(clump.x, clump.y - 0.04, clump.z));
-    vec3 target = mix(sphereDirection, vec3(0.0, 1.0, 0.0), role > 2.5 ? 0.55 : 0.45);
-    vec3 meshNormal = geometricNormal + side * (sideSign * (role < 1.5 ? 0.35 : 0.32));
-    // Single normalization happens in main() after wind tilt is applied
-    normal = mix(meshNormal, target, role > 2.5 ? 0.78 : 0.72);
+    vec3 target = mix(sphereDirection, vec3(0.0, 1.0, 0.0), role > 2.5 ? 0.58 : 0.46);
+    vec3 meshNormal = geometricNormal + side * (sideSign * (role < 1.5 ? 0.34 : 0.30));
+    // Balanced spherical volume fill + sharp blade midrib crease highlight
+    normal = mix(meshNormal, target, role > 2.5 ? 0.58 : 0.46);
 
-    float occlusion = (t < 0.25) ? (0.86 + 0.56 * t) : 1.0;
-    if (role > 2.5) occlusion *= 0.88;
+    float occlusion = (t < 0.25) ? (0.88 + 0.48 * t) : 1.0;
 
-    // Subtle per-blade tonal variation derived from blade phase (p0.w) + organic gradient
+    // Monotonic, natural root-to-tip botanical color gradient + subtle per-blade phase tone
     float bladeTone = 0.96 + 0.08 * fract(p0.w * 0.3183099);
-    float colorT = t * (0.68 + 0.32 * t);
+    float colorT = t * (0.70 + 0.30 * t);
     vec3 smoothCol = clamp(mix(rootColor, tipColor, colorT) * (occlusion * bladeTone * (1.0 / 255.0)), 0.0, 1.0);
 
     color = vec4(smoothCol, fadeAlpha);

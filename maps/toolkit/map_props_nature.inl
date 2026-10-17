@@ -943,6 +943,129 @@ void MapProp_ClearNatureInteraction(void)
     s_natureWindTraceDominantSlot = -1;
     s_natureWindTraceVisibleUploaded = false;
     s_natureWindTraceShadowUploaded = false;
+    MapProp_SetGrassState(MAP_GRASS_STATE_LUSH, 0.0f);
+    MapProp_ClearGrassBurnZones();
+}
+
+#define NATURE_MAX_BURN_ZONES 8
+static MapGrassCondition s_natureGrassCondition = {0.0f, 0.0f, 0.0f, 0.65f};
+static Vector4 s_natureBurnZones[NATURE_MAX_BURN_ZONES] = {0};
+static int s_natureBurnZoneCount = 0;
+
+static MapGrassCondition Nature_ResolveGrassPreset(MapGrassState state, float emberIntensity)
+{
+    switch (state) {
+        case MAP_GRASS_STATE_WITHERED:
+            return (MapGrassCondition){
+                .dryness = 0.50f,
+                .scorch = 0.0f,
+                .emberIntensity = 0.0f,
+                .patchVariation = 0.72f
+            };
+        case MAP_GRASS_STATE_DRY:
+            return (MapGrassCondition){
+                .dryness = 0.96f,
+                .scorch = 0.0f,
+                .emberIntensity = 0.0f,
+                .patchVariation = 0.60f
+            };
+        case MAP_GRASS_STATE_SCORCHED:
+            return (MapGrassCondition){
+                .dryness = 1.0f,
+                .scorch = 0.92f,
+                .emberIntensity = emberIntensity > 0.0f ? emberIntensity : 0.85f,
+                .patchVariation = 0.78f
+            };
+        case MAP_GRASS_STATE_LUSH:
+        default:
+            return (MapGrassCondition){
+                .dryness = 0.0f,
+                .scorch = 0.0f,
+                .emberIntensity = 0.0f,
+                .patchVariation = 0.65f
+            };
+    }
+}
+
+void MapProp_SetGrassState(MapGrassState state, float emberIntensity)
+{
+    s_natureGrassCondition = Nature_ResolveGrassPreset(state, emberIntensity);
+}
+
+void MapProp_SetGrassCondition(MapGrassCondition condition)
+{
+    condition.dryness = fminf(fmaxf(condition.dryness, 0.0f), 1.0f);
+    condition.scorch = fminf(fmaxf(condition.scorch, 0.0f), 1.0f);
+    condition.emberIntensity = fminf(fmaxf(condition.emberIntensity, 0.0f), 2.5f);
+    condition.patchVariation = fminf(fmaxf(condition.patchVariation, 0.0f), 1.0f);
+    s_natureGrassCondition = condition;
+}
+
+MapGrassCondition MapProp_GetGrassCondition(void)
+{
+    return s_natureGrassCondition;
+}
+
+void MapProp_ClearGrassBurnZones(void)
+{
+    s_natureBurnZoneCount = 0;
+    memset(s_natureBurnZones, 0, sizeof(s_natureBurnZones));
+}
+
+void MapProp_AddGrassBurnZone(Vector3 position, float radius, float scorchStrength)
+{
+    if (radius <= 0.05f || scorchStrength <= 0.001f)
+        return;
+    scorchStrength = fminf(fmaxf(scorchStrength, 0.0f), 1.5f);
+    // Merge with an existing nearby burn zone if close enough
+    for (int i = 0; i < s_natureBurnZoneCount; i++) {
+        float dx = s_natureBurnZones[i].x - position.x;
+        float dz = s_natureBurnZones[i].y - position.z;
+        if (dx * dx + dz * dz < (radius * 0.35f) * (radius * 0.35f)) {
+            s_natureBurnZones[i].z = fmaxf(s_natureBurnZones[i].z, radius);
+            s_natureBurnZones[i].w = fmaxf(s_natureBurnZones[i].w, scorchStrength);
+            return;
+        }
+    }
+    if (s_natureBurnZoneCount < NATURE_MAX_BURN_ZONES) {
+        s_natureBurnZones[s_natureBurnZoneCount++] =
+            (Vector4){position.x, position.z, radius, scorchStrength};
+    } else {
+        // Replace the smallest / weakest burn zone
+        int replaceIdx = 0;
+        float minWeight = s_natureBurnZones[0].z * s_natureBurnZones[0].w;
+        for (int i = 1; i < NATURE_MAX_BURN_ZONES; i++) {
+            float w = s_natureBurnZones[i].z * s_natureBurnZones[i].w;
+            if (w < minWeight) {
+                minWeight = w;
+                replaceIdx = i;
+            }
+        }
+        s_natureBurnZones[replaceIdx] =
+            (Vector4){position.x, position.z, radius, scorchStrength};
+    }
+}
+
+static void Nature_UploadGrassStateUniforms(Shader shader)
+{
+    Vector4 stateVec = {
+        s_natureGrassCondition.dryness,
+        s_natureGrassCondition.scorch,
+        s_natureGrassCondition.emberIntensity,
+        s_natureGrassCondition.patchVariation
+    };
+    int stateLoc = GetShaderLocation(shader, "u_grassStateParams");
+    if (stateLoc >= 0)
+        SetShaderValue(shader, stateLoc, &stateVec, SHADER_UNIFORM_VEC4);
+    int burnCountLoc = GetShaderLocation(shader, "u_grassBurnZoneCount");
+    if (burnCountLoc >= 0)
+        SetShaderValue(shader, burnCountLoc, &s_natureBurnZoneCount, SHADER_UNIFORM_INT);
+    if (s_natureBurnZoneCount > 0) {
+        int burnZonesLoc = GetShaderLocation(shader, "u_grassBurnZones");
+        if (burnZonesLoc >= 0)
+            SetShaderValueV(shader, burnZonesLoc, s_natureBurnZones,
+                            SHADER_UNIFORM_VEC4, s_natureBurnZoneCount);
+    }
 }
 
 static Color Nature_LerpColor(Color a, Color b, float t)
@@ -1376,6 +1499,7 @@ static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection
     int tipSofteningLoc = GetShaderLocation(shader, "u_grassTipSoftening");
     if (tipSofteningLoc >= 0)
         SetShaderValue(shader, tipSofteningLoc, &tipSoftening, SHADER_UNIFORM_FLOAT);
+    Nature_UploadGrassStateUniforms(shader);
     int interactionEnabled = s_natureInteractionReady ? 1 : 0;
     Vector2 interactionCenter = s_natureInteractionCenter;
     SetShaderValue(shader, GetShaderLocation(shader, "u_interactionEnabled"),

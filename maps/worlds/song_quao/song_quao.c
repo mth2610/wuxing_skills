@@ -25,7 +25,7 @@
 #define MAP_DEPTH SONG_QUAO_MAP_DEPTH
 #define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
 #define CLOUD_SEA_Y -4.20f
-#define GRASS_TUFT_CAPACITY 120000
+#define GRASS_TUFT_CAPACITY 150000
 #define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
 #define REED_COUNT 650
 
@@ -103,13 +103,47 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     Vector3 pos, normal;
     if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &pos, &normal))
         return 0.0f;
-    // Exclude submerged beds, steep cliff drop-offs, and outer cliff margins
-    if (pos.y < -0.25f || normal.y < 0.72f || SampleWaterHeight(x, z) > pos.y - 0.02f)
+    // Exclude cliff drop-offs and sheer vertical rock walls
+    if (pos.y < -0.25f || normal.y < 0.38f)
         return 0.0f;
+    float slopeFade = fminf(1.0f, (normal.y - 0.38f) / 0.18f);
+
+    // Only exclude grass if there is REAL visible water deep enough to submerge blades (> 6cm)
+    float surfaceY = SampleWaterHeight(x, z);
+    if (surfaceY > pos.y + 0.06f)
+        return 0.0f;
+
     Color splat = SampleSplat(x, z);
-    if (splat.g > 170) return 0.0f;
-    // Return continuous 0.98 density on all valid meadow terrain so tufts never leave bald patches
-    return 0.98f;
+    float rockScree = (float)splat.g / 255.0f;
+    if (rockScree > 0.92f) return 0.0f;
+    float rockFade = 1.0f - fmaxf(0.0f, (rockScree - 0.70f) / 0.22f);
+
+    // Generous elliptical valley envelope centered on the gameplay basin (108m x 132m)
+    float nx = (x - kMapCenter.x) / 54.0f;
+    float nz = (z - kMapCenter.z) / 66.0f;
+    float edge = nx * nx + nz * nz;
+    if (edge >= 1.0f) return 0.0f;
+    float edgeFade = 1.0f - fmaxf(0.0f, (edge - 0.72f) / 0.28f);
+
+    float warpedX = x + sinf(z * 0.17f) * 2.1f;
+    float macroField = sinf(warpedX * 0.15f + z * 0.08f) * 0.55f
+                     + sinf(z * 0.20f - x * 0.06f + 1.4f) * 0.30f
+                     + sinf(x * 0.33f + z * 0.29f) * 0.15f;
+    float patch = fminf(1.0f, fmaxf(0.0f, (macroField + 0.25f) / 0.70f));
+    patch = patch * patch * (3.0f - 2.0f * patch);
+    float macro = 0.75f + 0.25f * patch;
+
+    float flowerSuppression = MapFlora_EvaluateFlowerSuppression(
+        x, z, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
+    return fmaxf(0.0f, fminf(1.0f, macro * edgeFade * slopeFade * rockFade * flowerSuppression));
+}
+
+static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
+{
+    (void)userData;
+    float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, cx, cz);
+    float waterClearance = gy - SampleWaterHeight(cx, cz);
+    return fminf(1.0f, fmaxf(0.46f, (waterClearance + 0.04f) / 0.35f));
 }
 
 static float SongQuaoSampleGroundHeight(float x, float z, void *ctx)
@@ -122,9 +156,9 @@ static bool SongQuaoIsFlowerExcluded(float x, float z, void *ctx)
 {
     (void)ctx;
     float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, x, z);
-    if (gy < -0.2f || SampleWaterHeight(x, z) >= gy - 0.02f) return true;
+    if (gy < -0.2f || SampleWaterHeight(x, z) >= gy + 0.04f) return true;
     Color splat = SampleSplat(x, z);
-    if (splat.g > 180) return true; // excluded on steep rocky cliff faces
+    if (splat.g > 230) return true; // excluded only on sheer rocky cliff faces
     return false;
 }
 
@@ -136,40 +170,20 @@ static float Random01(unsigned int *rng)
 
 static void BuildFloraPlacements(void)
 {
-    // 1. Generate dense, continuous meadow grass across the valley & reservoir terraces
-    s_grassCount = MapProp_GenerateMeadowPlacements(
+    // 1. Unified meadow grass generation across the central basin & valley terraces
+    s_grassCount = MapFlora_GenerateMeadowPlacements(
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
-        (MapMeadowDistribution){
-            .minBounds = {20.0f, 28.0f}, .maxBounds = {MAP_WIDTH - 20.0f, MAP_DEPTH - 28.0f},
-            .spacing = 0.35f, .jitter = 0.85f,
-            .minRadius = 0.28f, .maxRadius = 0.38f,
-            .minHeight = 0.95f, .maxHeight = 1.48f,
-            .yOffset = 0.03f, .seed = 0x51a7c3u,
-        }, SongQuaoGrassDensity, NULL);
-
-    for (int i = 0; i < s_grassCount; i++) {
-        MapMeadowPlacement *clump = &s_grassPlacements[i];
-        float px = clump->position.x;
-        float pz = clump->position.z;
-        Color splat = SampleSplat(px, pz);
-        float vigor = (float)splat.r / 255.0f;
-
-        // Coherent wind-streamline flow fields + lush arching height matching verdant_path
-        float flowAngle = 28.0f
-            + 38.0f * sinf(px * 0.085f + pz * 0.065f)
-            + 22.0f * cosf(px * 0.16f - pz * 0.14f);
-        float hash = sinf(px * 12.9898f + pz * 78.233f) * 43758.5453f;
-        hash -= floorf(hash);
-        clump->rotationDeg = flowAngle + (hash - 0.5f) * 240.0f;
-
-        float growth = 0.5f + 0.5f * sinf(px * 0.12f - pz * 0.09f + 1.1f);
-        clump->height = 1.18f + (0.28f * growth + 0.22f * vigor);
-
-        // Softly nestle meadow canopy inside wildflower colonies so blooms emerge cleanly
-        float understorey = MapFlora_EvaluateFlowerUnderstorey(
-            px, pz, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
-        clump->height *= understorey;
-    }
+        (MapFloraMeadowConfig){
+            .minBounds = {kMapCenter.x - 54.0f, kMapCenter.z - 66.0f},
+            .maxBounds = {kMapCenter.x + 54.0f, kMapCenter.z + 66.0f},
+            .spacing = 0.22f, .seed = 0x51a7c3u,
+            .densityFn = SongQuaoGrassDensity, .ecology = &s_habitat,
+            .flowerClusters = SONG_QUAO_FLOWER_CLUSTERS,
+            .flowerClusterCount = SONG_QUAO_FLOWER_CLUSTER_COUNT,
+            .edgeTaperFn = SongQuaoEdgeTaper,
+        });
+    TraceLog(LOG_INFO, "SONG_QUAO_MEADOW: placements=%d capacity=%d",
+             s_grassCount, GRASS_TUFT_CAPACITY);
 
     // 2. Reeds along riverbanks & wetland margins
     unsigned int rng = 0x9371a5u;
@@ -243,10 +257,10 @@ static void CaptureSongQuaoStaticShadows(void)
 void InitSongQuaoMap(void)
 {
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){88, 102, 128, 255}); // Cool sky fill preserves shaded canopy volume
+    Environment_SetAmbientColor((Color){92, 110, 136, 255}); // Cool sky fill preserves shaded canopy volume
     Environment_SetSunColor((Color){255, 224, 185, 255});
-    Environment_SetSunIntensity(2.2f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.25f, -0.45f, 0.85f}));
+    Environment_SetSunIntensity(2.30f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.24f, -0.44f, 0.86f}));
     Environment_SetShadowColor((Color){28, 36, 48, 120});
 
     AtmosphereProfile atmos = {
@@ -305,7 +319,7 @@ void InitSongQuaoMap(void)
     s_habitat.ready = s_habitat.habitatTexture.id > 0 && s_habitat.distanceTexture.id > 0;
     MapProp_SetGroundEcology(&s_ground, &s_habitat);
 
-    MapProp_SetGroundTint(&s_ground, (Color){76, 96, 52, 255});
+    MapProp_SetGroundTint(&s_ground, (Color){68, 92, 48, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
         "assets/textures/verdant_meadow_substrate_material.png",
         "assets/textures/dirt_material.png");
@@ -334,16 +348,17 @@ void InitSongQuaoMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {18, 34, 16, 255},
-            .grassTipColor  = {136, 186, 54, 255},
+            .grassRootColor = {34, 58, 24, 255},
+            .grassTipColor  = {114, 172, 58, 255},
             .bladesPerClump = 6,
             .bladeSegments  = 4,
-            .bladeWidthScale = 0.19f,
-            .lodDistance = 42.0f,
-            .drawDistance = 105.0f,
+            .bladeWidthScale = 0.17f,
+            .lodDistance = 34.0f,
+            .drawDistance = 88.0f,
             .shadowDistance = 22.0f,
-            .reedRootColor = {26, 42, 20, 255},
-            .reedTipColor  = {136, 172, 82, 255},
+            .grassState = MAP_GRASS_STATE_LUSH,
+            .reedRootColor = {28, 46, 22, 255},
+            .reedTipColor  = {126, 168, 76, 255},
             .hasReedPlumes = false,
         });
 

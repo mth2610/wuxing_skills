@@ -193,10 +193,11 @@ void main()
     // ---- 7. Four-Layer Weights & Height-Based Relief Blending ----
     float wPath = 1.0 - smoothstep(1.10, 1.95, distToPath);
     float wPathMargin = smoothstep(0.95, 1.65, distToPath) * (1.0 - smoothstep(1.65, 3.1, distToPath));
-    float wWetSoil = max(shoreFactor * 0.88, smoothstep(0.45, 0.88, streamWet) * 0.85);
-    // Keep rolling hills green; only transition to rocky cliff/scree on genuinely steep slopes (>16 deg)
-    float wSlope = smoothstep(0.26, 0.62, slope);
-    float wCliff = clamp(max(wSlope, rockScree * 0.90), 0.0, 1.0);
+    float wWetSoil = max(shoreFactor * 0.88, smoothstep(0.68, 0.96, streamWet) * 0.85);
+    // Keep rolling hills and valley meadows green; transition to rocky cliff/scree only on sheer escarpments (>32 deg) or true cliff rock
+    float wSlope = smoothstep(0.32, 0.68, slope);
+    float rockCliff = smoothstep(0.72, 0.95, rockScree);
+    float wCliff = clamp(max(wSlope, rockCliff), 0.0, 1.0);
     float wDrySoil = clamp(max(wPathMargin * 0.78, wCliff * 0.92), 0.0, 1.0) * (1.0 - wWetSoil * 0.85) * (1.0 - wPath * 0.85);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 

@@ -38,64 +38,116 @@ The toolkit consists of several files, all **owned by the Map Agent** (not the C
 
 ```c
 // --- Ground plane ---
-typedef struct { Model model; Vector3 drawOffset; bool ready; } MapGroundSurface;
+typedef struct {
+    Model model;
+    Vector3 drawOffset;
+    MapGroundLookup lookup;
+    bool ready;
+    const MapEcology *ecology;
+    Vector2 tiling;
+    Texture2D reliefTexture;
+    Texture2D debrisTexture;
+    MapIslandBoundary boundary;
+} MapGroundSurface;
 
 MapGroundSurface MapProp_CreateGround(float width, float depth, float tileSize,
                                        const char *splatMapPath,
                                        const char *grassTexPath,
                                        const char *pathTexPath);
-// Sloped-island variant: heightmapPath grayscale (WHITE=plateau, BLACK=cliff
-// edge), cliffDepth = meters the edge sinks below the plateau. Same
-// splat/grass/path textures + shader as MapProp_CreateGround.
 MapGroundSurface MapProp_CreateGroundHeightmap(const char *heightmapPath, float width, float depth,
                                                 float cliffDepth, float tileSize,
                                                 const char *splatMapPath,
                                                 const char *grassTexPath,
                                                 const char *pathTexPath);
+MapGroundSurface MapProp_CreateGroundHeightfield16(const char *heightmapPath, float width, float depth,
+                                                  float totalHeight, float cliffDepth, float tileSize,
+                                                  const char *splatMapPath, const char *grassTexPath,
+                                                  const char *pathTexPath);
+MapGroundSurface MapProp_CreateGroundHeightmapEx(const char *heightmapPath, float width, float depth,
+                                                 float totalHeight, float cliffDepth, float tileSize,
+                                                 const char *splatMapPath,
+                                                 const char *grassTexPath,
+                                                 const char *pathTexPath);
 void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter);
+void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCenter, Shader depthShader);
+void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint);
+void MapProp_SetGroundEcology(MapGroundSurface *ground, const MapEcology *ecology);
+void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground, const char *grassMaterialPath, const char *soilMaterialPath);
+void MapProp_SetGroundReliefMap(MapGroundSurface *ground, const char *reliefPath);
+void MapProp_SetGroundDebrisMap(MapGroundSurface *ground, const char *debrisMapPath);
+void MapProp_SetGroundHabitat(MapGroundSurface *ground, const Vector4 *pathSegments, int segmentCount, Vector4 lakeParams);
 void MapProp_UnloadGround(MapGroundSurface *ground);
+float MapProp_SampleGroundHeight(const MapGroundSurface *ground, Vector3 worldCenter, float x, float z);
+bool MapProp_SampleGroundSurface(const MapGroundSurface *ground, Vector3 worldCenter,
+                                 float x, float z, Vector3 *outPosition, Vector3 *outNormal);
 
 // --- Flat strip (stone path, walkway, bridge) ---
-typedef struct { Model model; bool ready; } MapStripSurface;
+typedef struct { Model model; Vector2 tiling; bool useSurfaceMaps; bool ready; } MapStripSurface;
 
 MapStripSurface MapProp_CreateStrip(float length, float width, float tileSize,
                                      const char *diffusePath,
-                                     const char *normalPath,   // NULL = flat texture, no shader
-                                     const char *roughnessPath); // pass all 3 paths = uses prop_lit
+                                     const char *normalPath,
+                                     const char *roughnessPath);
 void MapProp_DrawStrip(const MapStripSurface *strip, Vector3 worldCenter, float yOffset);
+void MapProp_DrawStripEx(const MapStripSurface *strip, Vector3 worldCenter, float yOffset,
+                         float rotationDeg, Vector3 scale);
 void MapProp_UnloadStrip(MapStripSurface *strip);
 
-// --- Rock props (1 rock model, scattered at many positions) ---
-typedef struct { Model model; bool ready; } MapRockSet;
+// --- Unified Rock & Crag System (Boulders, Mountain Crags, Stepping Stones) ---
+typedef enum {
+    MAP_ROCK_BOULDER = 0,     // Weathered rounded boulder
+    MAP_ROCK_CRAG,            // Jagged karst/granite mountain crag/spire with stepped cleavage
+    MAP_ROCK_RIVER_STONE      // Smooth, flattened water-polished riverbed/shoreline stone
+} MapRockArchetype;
 
 typedef struct {
-    Vector3 position;   // X/Z world; Y is ignored — rocks auto-sink halfway into the ground
-    float   radiusScale; // XZ scale ratio
-    float   heightScale; // Y scale ratio — flattened for a boulder silhouette
-    float   rotationDeg;
-} MapRockPlacement;
+    Vector3 position;
+    float radiusScale, heightScale, rotationDeg;
+    MapRockArchetype archetype;
+} MapRockItem;
 
-MapRockSet MapProp_CreateRocks(const char *diffusePath,
-                                const char *normalPath, const char *roughnessPath); // NULL/NULL = flat
+typedef struct {
+    MapRockSet boulders, crags, riverStones;
+    MapRockItem *items;
+    int count, capacity;
+    bool ready;
+} MapRockSystem;
+
+MapRockSystem MapProp_CreateRockSystem(const char *diffusePath, const char *normalPath,
+                                       const char *roughnessPath, int capacity);
+bool MapProp_AddRockItem(MapRockSystem *sys, Vector3 pos, float rScale, float hScale,
+                         float rotDeg, MapRockArchetype archetype);
+int MapProp_AddRockCluster(MapRockSystem *sys, Vector3 center, MapRockArchetype archetype,
+                           int count, float clusterRadius, float baseScale, unsigned int seed);
+void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows);
+void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader);
+void MapProp_UnloadRockSystem(MapRockSystem *sys);
+
+// Legacy individual rock set (boulders only)
+typedef struct { Model model; bool ready; } MapRockSet;
+typedef struct { Vector3 position; float radiusScale, heightScale, rotationDeg; } MapRockPlacement;
+MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, const char *roughnessPath);
+MapRockSet MapProp_CreateMountainCrags(const char *diffusePath, const char *normalPath, const char *roughnessPath);
+MapRockSet MapProp_CreateRiverStones(const char *diffusePath, const char *normalPath, const char *roughnessPath);
 void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placements, int count, bool drawShadow);
+void MapProp_DrawRockShadowCasters(MapRockSet *rocks, const MapRockPlacement *placements, int count, Shader depthShader);
 void MapProp_UnloadRocks(MapRockSet *rocks);
-
-// Legacy placement helper for optional rock compositions. Not the map boundary
-// recipe: floating plains use cloud banks and open sky. Fixed seed = fixed layout.
 int MapProp_GenerateMountainRing(MapRockPlacement *outPlacements, int maxCount,
-                                  float mapWidth, float mapDepth,
-                                  float minRadiusScale, float maxRadiusScale,
-                                  float minHeightScale, float maxHeightScale,
-                                  unsigned int seed);
+                                 float mapWidth, float mapDepth,
+                                 float minRadiusScale, float maxRadiusScale,
+                                 float minHeightScale, float maxHeightScale,
+                                 unsigned int seed);
 
-// Legacy rounded-rectangle descriptor; new maps use actual terrain contours.
+// --- Sea of clouds (abyss beneath the floating island) ---
 typedef struct {
     Vector4 rect;
     float cornerRadius, mistWidth, cloudLift, cloudBankWidth, groundInset;
 } MapIslandBoundary;
 
-// --- Sea of clouds (abyss beneath the floating island) ---
-typedef struct { Model model; bool ready; Vector2 tiling, size; MapIslandBoundary boundary; Model mistModel; bool mistReady; Texture2D mistTexture; } MapCloudSea;
+typedef struct {
+    Model model; bool ready; Vector2 tiling, size;
+    MapIslandBoundary boundary; Model mistModel; bool mistReady; Texture2D mistTexture;
+} MapCloudSea;
 
 MapCloudSea MapProp_CreateCloudSea(float width, float depth, float tileSize);
 void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float yOffset);
@@ -108,7 +160,8 @@ bool MapProp_SetCloudSeaGroundBoundary(MapCloudSea *cloud,
     const MapGroundSurface *ground, float contourHeight, const MapBoundaryMistStyle *style);
 void MapProp_UnloadCloudSea(MapCloudSea *cloud);
 
-// Opt-in far-depth sky; draw after opaque scenery inside BeginMode3D.
+// Opt-in far-depth sky
+typedef struct { Model model; Shader shader; int sunLoc, skyLoc, hazeLoc, colorLoc; bool ready; } MapSkyDome;
 MapSkyDome MapProp_CreateSkyDome(void);
 void MapProp_DrawSkyDome(const MapSkyDome *sky);
 void MapProp_UnloadSkyDome(MapSkyDome *sky);
@@ -161,6 +214,38 @@ void MapProp_UnloadSkyDome(MapSkyDome *sky);
      - Macro debris maps (`_debris_map.png`)
      - Macro RGB ground tint (`_ground_tint.png`)
      - 3D physical debris placement header (`_debris_data.h`)
+
+4. **Generalized Multi-State Grass & Localized Fire Burn Zones (`map_props_nature.inl`, `shaders/grass_blade_state.glsl`)**:
+   - Single-blade morphology & anti-flicker architecture:
+     - View-assisted ribbon orientation (blends `side.xz` 42% toward `viewRightXZ` so edge-on blades never collapse into sub-pixel flickering lines).
+     - Fuller cubic botanical spear profile (`0.80 + 0.38*t - 0.84*t^3`) with a short lancet tip cap (`tipStart = 0.88`) and screen-space minimum ribbon width floor.
+     - 3-stop botanical gradient (`rootColor -> Viridian midColor -> Chartreuse tipColor`) with tip apex chroma convergence and mid-arch windowed Kajiya-Kay / wind sheen (`h in [0.14, 0.88]`), eliminating dotted-line tip sparkle.
+   - Zero-rebuild physiological & fire state transitions:
+     - Preset states (`MapGrassState`):
+       - `MAP_GRASS_STATE_LUSH`: Healthy emerald-to-chartreuse chlorophyll grass (fast-path zero shader overhead).
+       - `MAP_GRASS_STATE_WITHERED`: Yellowing senescent grass with progressive tip-to-root yellowing and turgor-loss droop.
+       - `MAP_GRASS_STATE_DRY`: Desiccated golden-straw grass with dry fibrous sheen and bowed stalks.
+       - `MAP_GRASS_STATE_SCORCHED`: Fire-charred carbon/ash stalks shriveled to 42% height with animated glowing orange-red embers along the char front.
+     - Runtime API:
+       - `MapProp_SetGrassState(MapGrassState state, float emberIntensity)`
+       - `MapProp_SetGrassCondition(MapGrassCondition condition)` / `MapProp_GetGrassCondition()`
+       - `MapProp_AddGrassBurnZone(Vector3 position, float radius, float scorchStrength)` / `MapProp_ClearGrassBurnZones()`: Stamps up to 8 real-time localized fire burn zones with organic ragged noise perimeters, shriveled carbon stalks inside the core, glowing embers at the fire front, and a heat-dried yellowing halo around the perimeter.
+
+5. **AAA Botanical Morphology & Volumetric Bézier Hierarchy (`map_props_nature.inl`, `shaders/nature_parametric.glsl`, `shaders/nature_surface.glsl`)**:
+   - 3-tier progressive cantilever arch hierarchy:
+     - Tier 1 (Hero Upright): `1.10x` length, `0.42x` lean factor — proud erect center spire catching high solar highlights.
+     - Tier 2 (Mid Billow): `0.88x` length, `0.64x` lean factor — lateral volume billow defining clump silhouette.
+     - Tier 3 (Ground Skirt): `0.64x` length, `0.86x` lean factor — sweeping cantilever perimeter draping outward to occlude ground root transitions.
+   - Preserved midrib spine crease: Spherical normal blend tuned to `0.46..0.58` (down from over-blended `0.72..0.80`), restoring blade physical relief, longitudinal specular crests, and bilateral contrast.
+   - Golden-emerald SSS backlighting: Subsurface scattering transmission boosted (`transmission * 1.35`) with golden-emerald chromatic shift (`baseColor * vec3(1.35, 1.75, 0.42)`), preventing midday chalkiness and glowing warmly against low-angle sunlight.
+
+6. **Continuous River Spline & Water Surface Architecture (`map_props_nature.inl`, `map_props_water.inl`)**:
+   - `MapProp_CreateWaterSpline`: Generates a single continuous GPU ribbon mesh conforming to authored river waypoints with analytical miter joins, progressive sloped elevation, and continuous V-axis flow coordinates. Eliminates discrete multi-segment seam artifacts, gaps, and z-fighting while reducing up to 40 draw calls down to 1 batched draw call.
+   - `MapProp_CreateTerrainWater`: Conformal water bodies conforming to arbitrary lake and river bed profiles with depth-dependent extinction, Fresnel reflection, broken edge foam, and dynamic wake ripple integration.
+
+7. **Ground Splatting & Substrate Harmony (`shaders/ground_splat.fs`, `maps/pipeline/dem_pipeline.py`)**:
+   - 4-layer physical splat blending (Grass turf, Bare soil, Wet mud, Rock scree) with Poisson-derived micro-relief displacement and height-conditioned transitions.
+   - Thresholded scree coverage (`smoothstep(0.72, 0.95, rockScree)`): Preserves continuous green grass turf and moss substrate underneath 3D clumps on rolling hills, eliminating brown barren patches on gentle slopes.
 
 ### Reusable meadow, flower, and water surfaces
 
@@ -989,6 +1074,7 @@ Cloud noise uses a separate ResourceManager mipmapped trilinear/repeat variant. 
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-17 | Antigravity | 3-tier botanical hierarchy, preserved midrib crease, golden-emerald SSS backlighting, continuous river spline, thresholded scree substrate | maps/toolkit/shaders/nature_parametric.glsl; maps/toolkit/shaders/nature_surface.glsl; maps/toolkit/shaders/ground_splat.fs; maps/toolkit/map_props_nature.inl; maps/worlds/song_quao/song_quao.c | Ground-truth |
 | 2026-10-12 | Codex | DEM provenance, native terrain analysis, packed heightfield and terrain water APIs | maps/pipeline/dem_pipeline.py; maps/toolkit/map_props.h | Ground-truth |
 | 2026-10-09 | Codex | Explicit meadow growth form, visibility fade and shared HDR sunlight | maps/toolkit/map_props.h; map_props_meadow_parametric.inl; maps/worlds/verdant_path/verdant_path.c | Ground-truth |
 | 2026-10-09 | Codex | Canonical far-blade shape and visible/shadow validation | maps/toolkit/shaders/nature_parametric.glsl; maps/toolkit/map_props_nature.inl; maps/tests/test_meadow_parametric.py; maps/tests/test_meadow_world_space.py | Ground-truth |

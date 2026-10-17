@@ -1,6 +1,7 @@
 #version 330
 #include "maps/toolkit/shaders/nature_wind_impact.glsl"
 #include "maps/toolkit/shaders/nature_wind_field.glsl"
+#include "maps/toolkit/shaders/grass_blade_state.glsl"
 
 in vec3 vertexPosition;
 
@@ -52,14 +53,22 @@ void main()
     vec3 bentNormal = bladeNormal;
     float windSheen = 0.0;
 
-    // Skip all wind & texture evaluations for stationary root vertices (h == 0)
+    // Skip all wind & state deformation evaluations for stationary root vertices (h == 0)
     if (h > 0.0001) {
+        float windCompliance = 1.0;
+        vec2 grassState = GrassEvaluateLocalState(world);
+        if (dot(grassState, grassState) > 1e-5) {
+            vec3 rootLocal = s_hasCachedClumpTexel ? s_cachedClumpTexel.xyz : vec3(local.x, local.y - h, local.z);
+            GrassApplyVertexMorphology(local, rootLocal, h, grassState, windCompliance);
+            world = local + u_worldOffset;
+        }
+
         float rootMask = h * h;
-        float maxAllowedBend = max(u_interactionMaxBend * u_natureWindResponse.w, 0.001);
+        float maxAllowedBend = max(u_interactionMaxBend * u_natureWindResponse.w * windCompliance, 0.001);
 
         vec2 windBend = NatureVegetationWindBend(
-            world, bladeWindUV, u_time, u_windStrength, maxAllowedBend);
-        windBend += NatureDominantWindImpact(world) * u_natureWindResponse.w;
+            world, bladeWindUV, u_time, u_windStrength * windCompliance, maxAllowedBend);
+        windBend += NatureDominantWindImpact(world) * (u_natureWindResponse.w * windCompliance);
 
         if (u_interactionEnabled != 0 && u_interactionWorldSize > 0.0001) {
             vec2 uvOffset = (world.xz - u_interactionCenter) / u_interactionWorldSize;
@@ -92,8 +101,9 @@ void main()
         bentNormal.xz += windBend * (0.95 * h);
         bentNormal.y  += dispLen * 0.45;
 
-        // Pack normalized wind deflection into fragColor.a for specular/subsurface wave sheen in FS
-        windSheen = clamp(dispLen / maxAllowedBend, 0.0, 1.0) * h;
+        // Window windSheen to the broad mid-upper arch (tapers to 0 at tip h > 0.85 so tips never flicker)
+        float archSheenMask = h * clamp((0.92 - h) * 4.5, 0.0, 1.0);
+        windSheen = clamp(dispLen / maxAllowedBend, 0.0, 1.0) * archSheenMask;
     }
 
     fragPosition = world;

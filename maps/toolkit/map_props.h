@@ -351,6 +351,22 @@ typedef enum {
     MAP_MEADOW_GROWTH_REED
 } MapMeadowGrowthForm;
 
+// Generalized physiological / environmental grass blade states.
+typedef enum {
+    MAP_GRASS_STATE_LUSH = 0,     // Healthy green chlorophyll meadow
+    MAP_GRASS_STATE_WITHERED = 1, // Yellowing / senescent grass (chlorophyll breakdown)
+    MAP_GRASS_STATE_DRY = 2,      // Desiccated golden-straw grass
+    MAP_GRASS_STATE_SCORCHED = 3  // Fire-charred carbon/ash stalks with optional embers
+} MapGrassState;
+
+// Continuous blendable grass condition parameters.
+typedef struct {
+    float dryness;        // [0..1]: 0.0 = lush green, 0.45 = withered yellow, 1.0 = dry straw
+    float scorch;         // [0..1]: 0.0 = unburned, 1.0 = fire-charred black & ash
+    float emberIntensity; // [0..2]: glowing smoldering ember strength on scorched grass
+    float patchVariation; // [0..1]: organic patchy transition variance across the meadow
+} MapGrassCondition;
+
 typedef struct
 {
     Color rootColor;
@@ -368,6 +384,9 @@ typedef struct
     bool hasPlumes;          // shore reeds: adds fluffy ivory plumes on top and arching side leaves
     float botanicalVariation; // 0 preserves authored shapes; [0,1] mixes patch-coherent arches/leaf accents.
     MapMeadowGrowthForm growthForm; // Explicit morphology independent of plant height.
+    MapGrassState grassState;       // Preset physiological state (default: MAP_GRASS_STATE_LUSH)
+    float dryness;                  // Optional explicit [0..1] dryness override when > 0
+    float scorch;                   // Optional explicit [0..1] fire scorch override when > 0
 } MapMeadowStyle;
 
 typedef struct
@@ -440,6 +459,14 @@ void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength)
 void MapProp_AddNatureWindVorticles(float time);
 void MapProp_EndNatureInteraction(void);
 void MapProp_ClearNatureInteraction(void);
+// Generalized multi-state grass condition & localized fire burn-zone API.
+// Transitions grass smoothly between Lush Green, Withered Yellow, Dry Straw, and
+// Fire-Scorched Carbon/Ash with glowing embers in the shader without rebuilding VBOs.
+void MapProp_SetGrassState(MapGrassState state, float emberIntensity);
+void MapProp_SetGrassCondition(MapGrassCondition condition);
+MapGrassCondition MapProp_GetGrassCondition(void);
+void MapProp_ClearGrassBurnZones(void);
+void MapProp_AddGrassBurnZone(Vector3 position, float radius, float scorchStrength);
 typedef struct
 {
     int meadowChunksTested;
@@ -544,6 +571,9 @@ typedef struct {
     float lodDistance;        // Default: 32.0m
     float drawDistance;       // Default: 60.0m
     float shadowDistance;     // Default: 16.0m (casts dynamic directional grass shadows within near range)
+    MapGrassState grassState; // Default: MAP_GRASS_STATE_LUSH
+    float dryness;            // Optional explicit [0..1] dryness override
+    float scorch;             // Optional explicit [0..1] fire scorch override
 
     Color reedRootColor;
     Color reedTipColor;
@@ -566,6 +596,29 @@ typedef struct {
 } MapFloraSystem;
 
 Color MapProp_GetFlowerSpeciesColor(int variant, bool accent);
+
+typedef struct {
+    Vector2 minBounds;
+    Vector2 maxBounds;
+    float spacing;             // <= 0 uses canonical 0.22m dense interlocking meadow carpet
+    unsigned int seed;         // 0 uses 0x51a7c3u
+    MapFoliageDensityFn densityFn;
+    void *densityUserData;
+    const MapEcology *ecology; // optional baked ecology for growth/coverage/habitat shaping
+    const MapFloraFlowerCluster *flowerClusters;
+    int flowerClusterCount;
+    // Optional callback returning [0..1] edge height taper (e.g. near paths or shorelines); NULL = 1.0
+    float (*edgeTaperFn)(float x, float z, void *userData);
+    void *edgeTaperUserData;
+} MapFloraMeadowConfig;
+
+// Unified meadow tuft placement & biome shaping used across all maps
+int MapFlora_GenerateMeadowPlacements(
+    MapMeadowPlacement *outPlacements,
+    int maxCount,
+    const MapGroundSurface *ground,
+    Vector3 groundCenter,
+    MapFloraMeadowConfig config);
 
 // Generalized procedural flower generator (100% procedural 3D geometric petals, no textures)
 void MapFlora_GenerateFlowerPlacements(

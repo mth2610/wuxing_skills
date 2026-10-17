@@ -85,7 +85,7 @@ static const MapRockPlacement kRocks[ROCK_COUNT] = {
 
 static MapGroundSurface s_ground;
 static MapEcology s_ecology;
-static MapRockSet s_rocks;
+static MapRockSystem s_rocks;
 static MapSkyDome s_sky;
 static MapRockPlacement s_rockPlacements[ROCK_COUNT];
 static MapCloudSea s_cloudSea;
@@ -268,74 +268,30 @@ static bool VerdantIsFlowerExcluded(float x, float z, void *ctx)
     return IsInsideLake(x, z, 0.85f) || DistanceToPaths(x, z) < 1.30f;
 }
 
+static float VerdantEdgeTaper(float cx, float cz, void *userData)
+{
+    (void)userData;
+    float pathMeander = sinf(cx * 0.85f + cz * 1.15f) * 0.22f
+                      + sinf(cx * 2.30f - cz * 1.70f) * 0.11f;
+    float distPath = DistanceToPaths(cx, cz) + pathMeander;
+    float pathEdgeT = fmaxf(0.0f, fminf(1.0f, (distPath - 0.95f) / 1.15f));
+    return 0.40f + 0.60f * (pathEdgeT * pathEdgeT * (3.0f - 2.0f * pathEdgeT));
+}
+
 static void BuildMeadowLayout(void)
 {
     unsigned int rng = 0x51a7c3u;
-    s_grassCount = MapProp_GenerateMeadowPlacements(
+    s_grassCount = MapFlora_GenerateMeadowPlacements(
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
-        (MapMeadowDistribution){
+        (MapFloraMeadowConfig){
             .minBounds = {7.0f, 6.0f}, .maxBounds = {93.0f, 69.0f},
-            .spacing = 0.22f, .jitter = 0.90f,
-            .minRadius = 0.22f, .maxRadius = 0.28f,
-            .minHeight = 0.34f, .maxHeight = 0.54f,
-            .yOffset = 0.025f, .seed = 0x51a7c3u,
-        }, VerdantGrassDensity, NULL);
+            .spacing = 0.22f, .seed = 0x51a7c3u,
+            .densityFn = VerdantGrassDensity, .ecology = &s_ecology,
+            .flowerClusters = VERDANT_FLOWER_CLUSTERS, .flowerClusterCount = FLOWER_CLUSTER_COUNT,
+            .edgeTaperFn = VerdantEdgeTaper,
+        });
     TraceLog(LOG_INFO, "VERDANT_MEADOW: placements=%d capacity=%d",
              s_grassCount, GRASS_TUFT_CAPACITY);
-
-    // Bake coherent canopy variation once; animated motion stays owned by Core Wind.
-    for (int i = 0; i < s_grassCount; i++) {
-        MapMeadowPlacement *clump = &s_grassPlacements[i];
-        float cx = clump->position.x;
-        float cz = clump->position.z;
-
-        // Static orientation follows broad landscape bands plus local yaw jitter.
-        float wave1 = sinf(cx * 0.07f + cz * 0.05f) * 0.60f
-                    + sinf(cx * -0.05f + cz * 0.11f + 1.2f) * 0.40f;
-        float eddy = sinf(cx * 0.22f - cz * 0.18f + 0.8f) * 0.55f
-                   + sinf(cx * 0.14f + cz * 0.26f + 2.3f) * 0.45f;
-        float micro = sinf(cx * 0.55f + cz * 0.45f + 3.1f) * 0.5f
-                    + sinf(cx * -0.42f + cz * 0.62f) * 0.5f;
-
-        float flowAngle = 45.0f + wave1 * 32.0f + eddy * 24.0f + micro * 16.0f;
-
-        // Clump-level yaw jitter.
-        float hash = sinf((float)(i * 47)) * 43758.5453f;
-        hash -= floorf(hash);
-        clump->rotationDeg = flowAngle + (hash - 0.5f) * 240.0f;
-        float localHeight = clump->height; // keep the placement jitter after biome shaping
-        float localRadius = clump->radius;
-
-        // Continuous habitat controls both ground palette and canopy structure.
-        float cell1 = sinf(cx * 0.15f + cz * 0.10f) * 0.5f + 0.5f;
-        float cell2 = sinf(cx * -0.11f + cz * 0.20f + 1.8f) * 0.5f + 0.5f;
-        MapEcologySample ecology = {0};
-        if (s_ecology.ready)
-            ecology = MapEcology_Sample(&s_ecology, cx, cz);
-        float biome = s_ecology.ready ? ecology.habitat : cell1 * 0.6f + cell2 * 0.4f;
-        float growth = s_ecology.ready ? ecology.growth : biome;
-        // Shared growth avoids abrupt species-height steps at biome thresholds.
-        clump->height = 1.25f + growth * 0.50f;
-        // Sparse flower colonies and meadow margins retain a shorter underlayer.
-        if (s_ecology.ready)
-            clump->height *= 0.65f + 0.35f * ecology.coverage;
-        // Blooms occupy short understorey within a taller surrounding canopy.
-        float understorey = MapFlora_EvaluateFlowerUnderstorey(cx, cz, VERDANT_FLOWER_CLUSTERS, FLOWER_CLUSTER_COUNT);
-        clump->height *= understorey;
-        clump->radius = 0.22f + biome * 0.06f;
-        clump->height *= 0.85f + 0.30f * (localHeight - 0.34f) / 0.20f;
-        clump->radius *= 0.92f + 0.16f * (localRadius - 0.22f) / 0.06f;
-
-        // Short trampled turf connects the canopy to the pathway edge.
-        float pathMeander = sinf(cx * 0.85f + cz * 1.15f) * 0.22f
-                          + sinf(cx * 2.30f - cz * 1.70f) * 0.11f;
-        float distPath = DistanceToPaths(cx, cz) + pathMeander;
-        float pathEdgeT = (distPath - 0.95f) / 1.15f;
-        pathEdgeT = fmaxf(0.0f, fminf(1.0f, pathEdgeT));
-        float pathTaper = 0.40f + 0.60f * (pathEdgeT * pathEdgeT * (3.0f - 2.0f * pathEdgeT));
-        clump->height *= pathTaper;
-        clump->radius *= (1.20f - 0.20f * pathTaper);
-    }
 
     // Generalized procedural 3D wildflower colony placement
     MapFlora_GenerateFlowerPlacements(
@@ -380,9 +336,9 @@ static void BuildMeadowLayout(void)
 
 static void DrawVerdantShadowCasters(Shader depthShader, void *userData)
 {
-    (void)depthShader;
     (void)userData;
     MapProp_DrawFloraShadowCasters(&s_flora);
+    MapProp_DrawRockSystemShadowCasters(&s_rocks, depthShader);
 }
 
 static void CaptureVerdantStaticShadows(void)
@@ -397,18 +353,18 @@ static void CaptureVerdantStaticShadows(void)
     // receiver/caster depth quantization turns its shallow slopes into long
     // parallel acne bands across the whole meadow. Terrain still receives
     // static rock shadows, dynamic vegetation shadows, and its own normal-based
-    MapProp_DrawRockShadowCasters(&s_rocks, s_rockPlacements, ROCK_COUNT, depthShader);
+    MapProp_DrawRockSystemShadowCasters(&s_rocks, depthShader);
     EnvShadow_EndStaticCapture();
 }
 
 static void ApplyVerdantEnvironment(void)
 {
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){88, 102, 128, 255}); // Cool sky fill preserves shaded canopy volume
-    Environment_SetSunColor((Color){255, 158, 79, 255});
-    Environment_SetSunIntensity(3.0f);
+    Environment_SetAmbientColor((Color){92, 110, 136, 255}); // Cool sky fill preserves shaded canopy volume
+    Environment_SetSunColor((Color){255, 224, 185, 255});
+    Environment_SetSunIntensity(2.30f);
     // Sun rises in the East-North ahead (X > 0, Z < 0), sunlight travels towards West-South (X < 0, Z > 0)
-    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.20f, -0.24f, 0.95f}));
+    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.24f, -0.44f, 0.86f}));
     Environment_SetShadowColor((Color){28, 36, 48, 120});
 
     // Keep the playable foreground clear; haze and sun shafts belong beyond it.
@@ -562,13 +518,13 @@ void InitVerdantPathMap(void)
         "assets/textures/verdant_meadow_substrate_diffuse.png", "assets/textures/dirt_diffuse.png");
     ApplyHabitatToGround();
     // Shader consumes normalized linear values; calibrated natural botanical meadow tint
-    MapProp_SetGroundTint(&s_ground, (Color){62, 88, 45, 255});
+    MapProp_SetGroundTint(&s_ground, (Color){68, 92, 48, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
         "assets/textures/verdant_meadow_substrate_material.png",
         "assets/textures/dirt_material.png");
     MapProp_SetGroundReliefMap(&s_ground, "assets/textures/verdant_terrain_relief.png");
-    s_rocks = MapProp_CreateRocks("assets/textures/rock_diffuse.png",
-        "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png");
+    s_rocks = MapProp_CreateRockSystem("assets/textures/rock_diffuse.png",
+        "assets/textures/rock_normal.png", "assets/textures/rock_roughness.png", ROCK_COUNT);
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
     // Bake from the actual plateau contour; no rectangular wall or per-frame search.
@@ -599,6 +555,9 @@ void InitVerdantPathMap(void)
     for (int i = 0; i < ROCK_COUNT; i++) {
         s_rockPlacements[i] = kRocks[i];
         float gy = GetGroundHeightVerdantPathMap(kRocks[i].position.x, kRocks[i].position.z);
+        MapRockArchetype archetype = (i >= ROCK_COUNT - 3) ? MAP_ROCK_RIVER_STONE
+                                   : (kRocks[i].radiusScale >= 0.70f ? MAP_ROCK_CRAG
+                                                                     : MAP_ROCK_BOULDER);
         if (i >= ROCK_COUNT - 3) {
             float waterSurfaceY = s_lake.config.center.y;
             float depth = fmaxf(0.0f, waterSurfaceY - gy);
@@ -607,6 +566,9 @@ void InitVerdantPathMap(void)
         } else {
             s_rockPlacements[i].position.y = gy;
         }
+        MapProp_AddRockItem(&s_rocks, s_rockPlacements[i].position,
+                            s_rockPlacements[i].radiusScale, s_rockPlacements[i].heightScale,
+                            s_rockPlacements[i].rotationDeg, archetype);
     }
     for (int i = ROCK_COUNT - 3; i < ROCK_COUNT; i++) {
         MapProp_AddWaterObstacle(&s_lake, s_rockPlacements[i].position,
@@ -618,16 +580,17 @@ void InitVerdantPathMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, VERDANT_FLOWER_CLUSTERS, FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {18, 34, 16, 255},
-            .grassTipColor  = {136, 186, 54, 255},
+            .grassRootColor = {34, 58, 24, 255},
+            .grassTipColor  = {114, 172, 58, 255},
             .bladesPerClump = 6,
             .bladeSegments  = 4,
             .bladeWidthScale = 0.17f,
-            .lodDistance = 28.0f,
-            .drawDistance = 58.0f,
+            .lodDistance = 34.0f,
+            .drawDistance = 68.0f,
             .shadowDistance = 22.0f,
-            .reedRootColor = {26, 42, 20, 255},
-            .reedTipColor  = {136, 172, 82, 255},
+            .grassState = MAP_GRASS_STATE_LUSH,
+            .reedRootColor = {28, 46, 22, 255},
+            .reedTipColor  = {126, 168, 76, 255},
             .hasReedPlumes = false,
         });
     EnvShadow_SetFocus(kMapCenter, 20.0f);
@@ -750,7 +713,7 @@ void DrawVerdantPathMap(void)
     PropLit_UpdateLighting();
     MapProp_DrawGround(&s_ground, kMapCenter);
     V_MARK("op_terrain");
-    MapProp_DrawRocks(&s_rocks, s_rockPlacements, ROCK_COUNT, true);
+    MapProp_DrawRockSystem(&s_rocks, true);
     V_MARK("op_rocks");
     MapProp_DrawFloraSystem(&s_flora);
     V_MARK("op_flora");
@@ -785,7 +748,7 @@ void UnloadVerdantPathMap(void)
     MapProp_UnloadWaterSurface(&s_lake);
     MapProp_UnloadFloraSystem(&s_flora);
     MapProp_UnloadCloudSea(&s_cloudSea);
-    MapProp_UnloadRocks(&s_rocks);
+    MapProp_UnloadRockSystem(&s_rocks);
     MapProp_UnloadSkyDome(&s_sky);
     MapProp_SetGroundEcology(&s_ground, NULL);
     MapEcology_Unload(&s_ecology);
