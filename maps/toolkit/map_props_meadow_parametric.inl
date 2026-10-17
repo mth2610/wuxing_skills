@@ -3,7 +3,7 @@
 #define NATURE_PARAMETRIC_LODS 4
 #define NATURE_PARAMETER_COLUMNS 7
 #define NATURE_PARAMETER_ROW_BLADES 256
-#define NATURE_PARAMETER_MAX_ROWS 2048
+#define NATURE_PARAMETER_MAX_ROWS 4096
 #define NATURE_TEMPLATE_MAX_VERTICES 230
 #define NATURE_TEMPLATE_MAX_INDICES 330
 #define NATURE_LOD_NEAR_BLEND_HALF_WIDTH 2.0f
@@ -63,11 +63,11 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
 {
     int quality = GfxQuality_Get();
     float rangeScale = quality >= GFX_HIGH  ? 1.0f
-                       : quality == GFX_MED ? 0.84f
-                       : quality == GFX_LOW ? 0.68f
-                                            : 0.55f;
-    float lodScale = quality >= GFX_HIGH ? 1.0f : quality == GFX_MED ? 0.84f
-                                                                     : 0.68f;
+                       : quality == GFX_MED ? 0.92f
+                       : quality == GFX_LOW ? 0.85f
+                                            : 0.72f;
+    float lodScale = quality >= GFX_HIGH ? 1.0f : quality == GFX_MED ? 0.88f
+                                                                     : 0.78f;
 
     // Visual Fix: Use full 3D focal distance so high-angle/top-down camera pitches
     // do not collapse horizontal distance and prematurely clip distant meadow chunks.

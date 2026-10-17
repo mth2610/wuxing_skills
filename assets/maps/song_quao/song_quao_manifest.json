@@ -37,7 +37,7 @@
     "cliff_depth_m": 8,
     "horizontal_scale": 1.1400000000000001,
     "vertical_transform": "normalized elevation power 1.12",
-    "water_triangles": 12436
+    "water_triangles": 9028
   },
   "inference": {
     "lake": "inferred largest connected lowland plateau; unverified water extent",
@@ -74,8 +74,8 @@
     "stream_ratio": 0.01
   },
   "metrics": {
-    "bake_seconds": 14.365257143996132,
-    "wet_nodes": 4548,
+    "bake_seconds": 15.897271471003478,
+    "wet_nodes": 2882,
     "lake_nodes": 180
   }
 }

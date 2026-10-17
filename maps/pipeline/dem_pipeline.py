@@ -349,11 +349,14 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     lake=valid & (lake_fraction>0.25) & (perimeter>cliff_margin)
     lake_y=float(height_range*np.clip((lake_level-lo)/max(hi-lo,1e-9),0,1)**1.15)
     lake_inside=distance_inside(lake,sx,sz)
-    lake_blend=gaussian_filter_2d(lake.astype(float),1.45)
-    # Smooth C2 bowl bathymetry: zero vertical step at shoreline eliminates staircased triangle facets
-    lake_depth_profile = gaussian_filter_2d(np.clip(lake_inside / 7.5, 0.0, 1.0), 1.6)
-    lake_carve = 0.08 * lake_blend + 1.25 * np.power(lake_depth_profile, 1.25)
-    terrain = np.where(lake_blend > 0.01, np.minimum(terrain, lake_y - lake_carve), terrain)
+    lake_blend=gaussian_filter_2d(lake.astype(float),2.6)
+    w_lake=np.clip((lake_blend-0.02)/0.90,0.0,1.0)
+    w_lake=w_lake*w_lake*(3.0-2.0*w_lake)
+    # Smooth C2 bowl bathymetry with convex bank blending: eliminates 1m grid-step sawtooth walls
+    lake_depth_profile = gaussian_filter_2d(np.clip(lake_inside / 7.5, 0.0, 1.0), 1.8)
+    lake_carve = 0.08 * w_lake + 1.25 * np.power(lake_depth_profile, 1.25)
+    target_lake_bed = np.minimum(terrain, lake_y - lake_carve)
+    terrain = terrain * (1.0 - w_lake) + target_lake_bed * w_lake
     # Re-route after compression; retain every branch over the area threshold.
     directions,accum,conditioned=compute_d8_flow(terrain,valid,sx,sz)
     threshold=max(12,float(valid.sum())*stream_ratio)
@@ -370,10 +373,10 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         nr,nc=r+dr,c+dc
         if d<0 or not valid[nr,nc] or perimeter[nr,nc]<=cliff_margin: continue
         ax,az=c*sx,r*sz; bx,bz=nc*sx,nr*sz
-        half=float(np.clip(0.75+0.022*np.sqrt(accum[r,c]),0.85,2.4))
-        radius=half+max(sx,sz)*1.45
-        x0=max(0,int((min(ax,bx)-radius)/sx)); x1=min(w,int((max(ax,bx)+radius)/sx)+2)
-        z0=max(0,int((min(az,bz)-radius)/sz)); z1=min(h,int((max(az,bz)+radius)/sz)+2)
+        half=float(np.clip(0.85+0.024*np.sqrt(accum[r,c]),0.95,2.6))
+        radius=half+max(sx,sz)*1.85
+        x0=max(0,int((min(ax,bx)-radius*1.4)/sx)); x1=min(w,int((max(ax,bx)+radius*1.4)/sx)+2)
+        z0=max(0,int((min(az,bz)-radius*1.4)/sz)); z1=min(h,int((max(az,bz)+radius*1.4)/sz)+2)
         sl=np.s_[z0:z1,x0:x1]
         t=np.clip(((X[sl]-ax)*(bx-ax)+(Z[sl]-az)*(bz-az))/max((bx-ax)**2+(bz-az)**2,1e-9),0,1)
         dist=np.hypot(X[sl]-(ax+t*(bx-ax)),Z[sl]-(az+t*(bz-az)))
@@ -381,39 +384,38 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         weight=w_raw*np.sqrt(np.maximum(w_raw,0.0))
         corridor[sl]=np.maximum(corridor[sl],weight)
         level=conditioned[r,c]*(1-t)+conditioned[nr,nc]*t
-        # Carve a smooth U-shaped bed across multiple cells
-        bed=level-0.52*weight
-        terrain[sl]=np.minimum(terrain[sl],np.where(weight>0,bed,terrain[sl]))
-        w_surf=np.clip((radius*0.88-dist)/max(radius*0.88,1e-6),0,1)
+        # Carve a smooth U-shaped bed with convex bank interpolation across cells
+        bed=np.minimum(terrain[sl],level-0.52*weight)
+        terrain[sl]=terrain[sl]*(1.0-weight)+bed*weight
+        w_surf=np.clip((radius*1.35-dist)/max(radius*1.35,1e-6),0,1)
         stream_surface_num[sl]+=w_surf*(level-0.08)
         stream_surface_den[sl]+=w_surf
     has_stream_surf = stream_surface_den > 1e-4
     avg_stream_surf = np.where(has_stream_surf, stream_surface_num / np.maximum(stream_surface_den, 1e-4), surface)
-    surface = np.where(has_stream_surf, np.maximum(surface, avg_stream_surf), surface)
     # Smooth bed & bank transitions inside wet corridors to eliminate diagonal grid facets
-    bed_smooth = normalized_smooth(terrain, valid, 0.90)
-    smooth_mask = np.clip(corridor * 0.80 + lake_blend * 0.85, 0.0, 0.85)
+    bed_smooth = normalized_smooth(terrain, valid, 1.35)
+    smooth_mask = np.clip(corridor * 0.85 + w_lake * 0.90, 0.0, 0.90)
     terrain = terrain * (1.0 - smooth_mask) + bed_smooth * smooth_mask
-    # Connect lake surface to tributaries without inventing a radial lake.
-    lake_margin=lake_blend>0.06
-    surface=np.where(lake_margin & valid,np.maximum(surface,lake_y),surface)
-    # Level water surface across channels so water sheets are transversely flat
-    wet_prelim = valid & (perimeter > cliff_margin) & (surface > terrain + 0.005)
-    if wet_prelim.any():
-        surface_smooth = normalized_smooth(surface, wet_prelim, 1.35)
-        surface = np.where(wet_prelim & ~lake_margin, surface_smooth, surface)
+    # Continuous water_plane field (extends smoothly onto adjacent dry banks for exact zero-depth contour clipping)
+    lake_plane_w = np.clip(lake_blend * 2.2, 0.0, 1.0)
+    stream_plane = np.where(has_stream_surf, avg_stream_surf, terrain - 0.25)
+    water_plane = stream_plane * (1.0 - lake_plane_w) + np.maximum(stream_plane, lake_y) * lake_plane_w
+    wet_corridor = valid & (perimeter > cliff_margin) & ((lake_blend > 0.01) | has_stream_surf)
+    if wet_corridor.any():
+        plane_smooth = normalized_smooth(water_plane, wet_corridor, 1.65)
+        water_plane = np.where(wet_corridor & (lake_blend < 0.25), plane_smooth, water_plane)
     terrain=terrain*cliff-(1-cliff)*cliff_depth
     terrain[~valid]=-cliff_depth
-    surface=np.where(valid & (perimeter>cliff_margin),surface,terrain-0.12)
-    # Quantize exactly once, then derive water mesh/depth from the runtime heights.
+    # Quantize terrain heightfield first, then clip water_plane against quantized ground
     total=height_range+cliff_depth
     height_code=np.rint(np.clip((terrain+cliff_depth)/total,0,1)*65535).astype(np.uint16)
     ground=height_code.astype(float)/65535*total-cliff_depth
     encoded=np.rint(height_code.astype(float)/257).astype(np.uint8)
-    surface=np.where(surface>terrain+0.015,np.maximum(surface,ground+0.015),ground-0.12)
+    water_plane=np.where(valid & (perimeter>cliff_margin),water_plane,ground-0.25)
+    surface=np.where(water_plane>ground+0.005,water_plane,ground-0.12)
     water_code=np.rint(np.clip((surface+cliff_depth)/total,0,1)*65535).astype(np.uint16)
     surface=water_code.astype(float)/65535*total-cliff_depth
-    water_depth=np.maximum(0,surface-ground)
+    water_depth=np.maximum(0,water_plane-ground)
     wet=water_depth>0.005
     moisture=np.clip((sample(twi)-6)/8,0,1)
     shore=gaussian_filter_2d(wet.astype(float),max(0.7,2/min(sx,sz)))
@@ -505,7 +507,7 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     shore_code=np.rint((np.clip(signed_shore/16,-1,1)*0.5+0.5)*65535).astype(np.uint16)
     distance=np.stack((np.full_like(shore_code,255),np.full_like(shore_code,255),shore_code>>8,shore_code&255),axis=-1)
     write_png(path('habitat_distance.png'),distance,6)
-    triangles=write_water_mesh(path('water.obj'),ground,surface,sx,sz)
+    triangles=write_water_mesh(path('water.obj'),ground,water_plane,sx,sz)
     fields=dict(valid=valid,source_elevation_m=sample(clean).astype('f4'),slope_deg=sample(slope_deg).astype('f4'),
                 aspect_deg=np.mod(np.degrees(np.arctan2(sample(np.sin(np.radians(aspect))),
                 sample(np.cos(np.radians(aspect))))),360).astype('f4'),curvature_per_m=sample(curvature).astype('f4'),
@@ -529,28 +531,32 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     rz=float((lys.max()-lys.min()+1)*sz/2) if lys.size else 0.0
 
     # Geomorphological rock and flora feature extraction
+    # Restrict large ridge crags strictly to outer perimeter cliffs so interior meadow hills stay clean
     max_g = max(float(ground[valid].max()), 1e-4) if valid.any() else 1.0
-    crag_score = np.where(valid & (perimeter > cliff_margin + 4) & (water_depth < 0.01) & (ground > 3.0) & (slope_s > 8.0) & (slope_s < 38.0),
-                          (ground / max_g) * 0.6 + np.clip((tpi_s + 20.0) / 50.0, 0, 1) * 0.4, 0.0)
+    crag_score = np.where(valid & (perimeter > cliff_margin + 1) & (perimeter < cliff_margin + 16) &
+                          (water_depth < 0.01) & (ground > 3.2) & (slope_s > 16.0),
+                          (ground / max_g) * 0.65 + np.clip((slope_s - 16.0) / 24.0, 0, 1) * 0.35, 0.0)
     crags = []
     for idx in np.argsort(-crag_score.ravel()):
         r, c = divmod(int(idx), w)
-        if crag_score[r, c] <= 0.3: break
+        if crag_score[r, c] <= 0.30: break
         x, z = float(c * sx), float(r * sz)
-        if all(np.hypot(x - cx, z - cz) >= 18.0 for cx, cz, cy in crags):
+        if all(np.hypot(x - cx, z - cz) >= 24.0 for cx, cz, cy in crags):
             crags.append((x, z, float(ground[r, c])))
-            if len(crags) >= 12: break
+            if len(crags) >= 8: break
 
-    talus_score = np.where(valid & (perimeter > cliff_margin + 3) & (water_depth < 0.01) & (ground > -1.5) & (slope_s > 6.0) & (slope_s < 18.0) & (tpi_s < 2.0),
-                           np.clip((18.0 - slope_s) / 12.0, 0, 1) * 0.5 + np.clip((2.0 - tpi_s) / 10.0, 0, 1) * 0.5, 0.0)
+    # Place boulders strictly along rocky banks, shoreline benches, and cliff toes (never on open grass hilltops)
+    talus_score = np.where(valid & (perimeter > cliff_margin + 3) & (water_depth < 0.01) & (ground > -1.5) & (ground < 3.4) &
+                           (((shore > 0.14) & (shore < 0.65)) | ((slope_s > 12.0) & (slope_s < 24.0) & (tpi_s < -2.0))),
+                           shore * 0.70 + np.clip((24.0 - slope_s) / 15.0, 0, 1) * 0.30, 0.0)
     boulders = []
     for idx in np.argsort(-talus_score.ravel()):
         r, c = divmod(int(idx), w)
-        if talus_score[r, c] <= 0.4: break
+        if talus_score[r, c] <= 0.25: break
         x, z = float(c * sx), float(r * sz)
-        if all(np.hypot(x - cx, z - cz) >= 16.0 for cx, cz, cy in boulders):
+        if all(np.hypot(x - cx, z - cz) >= 18.0 for cx, cz, cy in boulders):
             boulders.append((x, z, float(ground[r, c])))
-            if len(boulders) >= 14: break
+            if len(boulders) >= 10: break
 
     river_score = np.where(valid & (perimeter > cliff_margin) & streams & ~lake & (water_depth > 0.02) & (water_depth < 0.35),
                            water_depth, 0.0)
@@ -563,44 +569,44 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
             river_stones.append((x, z, float(ground[r, c])))
             if len(river_stones) >= 16: break
 
-    flower_score = np.where(valid & (perimeter > cliff_margin + 4) & (water_depth < 0.01) & (ground > 0.0) & (ground < 8.0) & (slope_s < 10.0),
-                            (1.0 - slope_s / 10.0) * 0.6 + np.clip((tpi_s + 10.0) / 20.0, 0, 1) * 0.4, 0.0)
+    flower_score = np.where(valid & (perimeter > cliff_margin + 4) & (water_depth < 0.01) & (ground > 0.0) & (ground < 8.5) & (slope_s < 12.0),
+                            (1.0 - slope_s / 12.0) * 0.6 + np.clip((tpi_s + 10.0) / 20.0, 0, 1) * 0.4, 0.0)
     flower_colonies = []
     for idx in np.argsort(-flower_score.ravel()):
         r, c = divmod(int(idx), w)
-        if flower_score[r, c] <= 0.4: break
+        if flower_score[r, c] <= 0.35: break
         x, z = float(c * sx), float(r * sz)
-        if all(np.hypot(x - cx, z - cz) >= 22.0 for cx, cz, cy in flower_colonies):
+        if all(np.hypot(x - cx, z - cz) >= 16.0 for cx, cz, cy in flower_colonies):
             flower_colonies.append((x, z, float(ground[r, c])))
-            if len(flower_colonies) >= 8: break
+            if len(flower_colonies) >= 14: break
 
     # Build rock items array: crags, boulder clusters with companions, river stones
     rock_items = []
-    # 1. Ridge Crags
+    # 1. Outer Rim Ridge Crags
     for i, (x, z, y) in enumerate(crags):
-        rScale = 1.35 + 0.65 * ((i * 17) % 10) / 10.0
-        hScale = 1.80 + 0.85 * ((i * 31) % 10) / 10.0
+        rScale = 0.95 + 0.38 * ((i * 17) % 10) / 10.0
+        hScale = 0.90 + 0.42 * ((i * 31) % 10) / 10.0
         rot = float((i * 73) % 360)
         rock_items.append(dict(x=x, y=y, z=z, rScale=rScale, hScale=hScale, rot=rot, archetype=1))
-    # 2. Boulder clusters
+    # 2. Boulder clusters (low-profile, grounded along banks & talus toes)
     for i, (x, z, y) in enumerate(boulders):
-        rScale = 0.95 + 0.45 * ((i * 13) % 10) / 10.0
-        hScale = 0.65 + 0.35 * ((i * 29) % 10) / 10.0
+        rScale = 0.64 + 0.28 * ((i * 13) % 10) / 10.0
+        hScale = 0.36 + 0.18 * ((i * 29) % 10) / 10.0
         rot = float((i * 47) % 360)
         rock_items.append(dict(x=x, y=y, z=z, rScale=rScale, hScale=hScale, rot=rot, archetype=0))
         # 2 companions
         for c_idx in range(2):
             ang = float((i * 120 + c_idx * 160) % 360) * np.pi / 180.0
-            dist = 2.0 + 1.2 * c_idx
+            dist = 1.35 + 0.80 * c_idx
             cx_pos = x + np.cos(ang) * dist
             cz_pos = z + np.sin(ang) * dist
-            c_rScale = rScale * (0.42 + 0.22 * c_idx)
-            c_hScale = hScale * (0.45 + 0.25 * c_idx)
+            c_rScale = rScale * (0.42 + 0.20 * c_idx)
+            c_hScale = hScale * (0.42 + 0.20 * c_idx)
             rock_items.append(dict(x=cx_pos, y=y, z=cz_pos, rScale=c_rScale, hScale=c_hScale, rot=rot + 30 * c_idx, archetype=0))
     # 3. River stones
     for i, (x, z, y) in enumerate(river_stones):
-        rScale = 0.55 + 0.35 * ((i * 19) % 10) / 10.0
-        hScale = 0.38 + 0.25 * ((i * 23) % 10) / 10.0
+        rScale = 0.45 + 0.26 * ((i * 19) % 10) / 10.0
+        hScale = 0.26 + 0.16 * ((i * 23) % 10) / 10.0
         rot = float((i * 61) % 360)
         rock_items.append(dict(x=x, y=y, z=z, rScale=rScale, hScale=hScale, rot=rot, archetype=2))
 
@@ -625,11 +631,11 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         f.write(f'static const MapFloraFlowerCluster {prefix.upper()}_FLOWER_CLUSTERS[] = {{\n')
         total_flowers = 0
         for i, (x, z, y) in enumerate(flower_colonies):
-            count = 130 + 15 * (i % 4)
+            count = 135 + 15 * (i % 4)
             total_flowers += count
             species = i % 8
             sp0, sp1, sp2, sp3 = species, (species + 2) % 8, (species + 4) % 8, (species + 6) % 8
-            f.write(f'    {{{{{x:.2f}f, {y:.2f}f, {z:.2f}f}}, {{11.5f, 11.5f}}, {count}, {species}, {{{sp0}, {sp1}, {sp2}, {sp3}}}, {{0}}, {{0}}, {{0}}}},\n')
+            f.write(f'    {{{{{x:.2f}f, {y:.2f}f, {z:.2f}f}}, {{12.5f, 12.5f}}, {count}, {species}, {{{sp0}, {sp1}, {sp2}, {sp3}}}, {{0}}, {{0}}, {{0}}}},\n')
         f.write('};\n')
         f.write(f'#define {prefix.upper()}_FLOWER_CLUSTER_COUNT (int)(sizeof({prefix.upper()}_FLOWER_CLUSTERS) / sizeof({prefix.upper()}_FLOWER_CLUSTERS[0]))\n')
         f.write(f'#define {prefix.upper()}_TOTAL_FLOWERS {total_flowers}\n\n')

@@ -104,16 +104,17 @@ float MapShadowFilteredVisibility(highp sampler2D mapTexture, vec2 uv,
 {
     float quality = MAP_SHADOW_QUALITY;
     if (quality < 0.5)
-        return MapShadowCompare(mapTexture, uv, compareDepth);
+        return MapShadowCompareBilinear(mapTexture, uv, compareDepth, texelSize);
 
     if (quality < 1.5) {
-        vec2 tap = vec2(texelSize * radiusScale);
-        float visibility = 0.0;
-        visibility += MapShadowCompare(mapTexture, uv + vec2(-tap.x, -tap.y), compareDepth);
-        visibility += MapShadowCompare(mapTexture, uv + vec2( tap.x, -tap.y), compareDepth);
-        visibility += MapShadowCompare(mapTexture, uv + vec2(-tap.x,  tap.y), compareDepth);
-        visibility += MapShadowCompare(mapTexture, uv + vec2( tap.x,  tap.y), compareDepth);
-        return visibility * 0.25;
+        float resolution = 1.0 / max(texelSize, 0.0000001);
+        vec2 centerPos = uv * resolution - 0.5;
+        float diag = radiusScale * 0.55;
+        float s0 = MapShadowCompareBilinearTexel(
+            mapTexture, centerPos + vec2(-diag, -diag), compareDepth, texelSize);
+        float s1 = MapShadowCompareBilinearTexel(
+            mapTexture, centerPos + vec2( diag,  diag), compareDepth, texelSize);
+        return (s0 + s1) * 0.5;
     }
 
     // HIGH: five bilinear taps = 5 fetches with gather (was 20 point fetches).

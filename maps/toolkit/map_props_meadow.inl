@@ -398,31 +398,20 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             bz + sinf(bladeLeanAngle) * lean * 0.95f
         };
 
-        // Coherent Macro Seedhead Biome Field (Ghost of Tsushima golden pampas/wheat waves, scale ~16m):
+        // Coherent Macro Seedhead Accents (subtle sunlit golden-lime plumes without dead brown bands):
         float strawNoise = sinf(clump->position.x * 0.16f + clump->position.z * 0.12f + 1.7f) * 0.5f
                          + sinf(clump->position.x * -0.10f + clump->position.z * 0.22f + 0.5f) * 0.5f;
-        bool isStrawBiome = strawNoise > 0.18f;
-        bool isSeedhead = false;
-        if (isStrawBiome) {
-            if (strawNoise > 0.42f) {
-                // Dense golden wheat ridge: 65% of blades catch the warm straw plume
-                isSeedhead = (bladeId < 4) || (bHash3 > 0.35f);
-            } else {
-                // Transition zone: top arching hero blades carry golden seedheads
-                isSeedhead = (bladeId < 2 && bHash3 > 0.20f) || (bladeId == style.bladesPerClump - 1);
-            }
-        }
+        bool isSeedhead = (strawNoise > 0.32f) && (bladeId == 0) && (bHash3 > 0.45f);
         if (isSeedhead) {
-            bladeRoot = (Color){52, 62, 24, 255};    // warm golden-olive sheath
-            bladeTip  = (Color){222, 194, 92, 255};  // ripe golden-amber wheat straw tip
-            if (bHash2 > 0.60f)
-                bladeTip = (Color){238, 222, 172, 255}; // ivory pampas feather plume
-            bladeTip = Nature_LerpColor(bladeTip, (Color){182, 168, 98, 255}, botanical * 0.5f);
+            bladeRoot = (Color){24, 44, 18, 255};    // lush olive-emerald sheath
+            bladeTip  = (Color){164, 202, 68, 255};  // sun-kissed chartreuse-gold tip
+            if (bHash2 > 0.65f)
+                bladeTip = (Color){184, 212, 88, 255};
         } else {
             float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f
                              + sinf(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f) * 0.45f;
-            float tone = 1.0f + colorField * 0.14f + (bHash - 0.5f) * 0.16f;
-            float warmth = colorField * 0.13f + (bHash3 - 0.5f) * 0.08f;
+            float tone = 1.0f + colorField * 0.10f + (bHash - 0.5f) * 0.12f;
+            float warmth = colorField * 0.08f + (bHash3 - 0.5f) * 0.06f;
             int rR = (int)(style.rootColor.r * tone * (1.0f + warmth));
             int rG = (int)(style.rootColor.g * tone);
             int rB = (int)(style.rootColor.b * tone * (1.0f - warmth));
@@ -430,17 +419,17 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             int tG = (int)(style.tipColor.g * tone);
             int tB = (int)(style.tipColor.b * tone * (1.0f - warmth));
 
-            // Botanical micro-diversity: 18% of blades have sun-kissed golden tips
-            if (bHash2 < 0.18f && bladeId < 3) {
-                tR = (int)(tR * 1.38f);
-                tG = (int)(tG * 1.12f);
-                tB = (int)(tB * 0.62f);
+            // Botanical micro-diversity: 12% of hero blades have warm sunlit lime tips
+            if (bHash2 < 0.12f && bladeId < 2) {
+                tR = (int)(tR * 1.16f);
+                tG = (int)(tG * 1.08f);
+                tB = (int)(tB * 0.82f);
             }
 
             if (bladeId >= 4) {
                 // Ground thatch has deeper forest shadow tones to anchor roots
-                rR = (int)(rR * 0.82f); rG = (int)(rG * 0.85f); rB = (int)(rB * 0.82f);
-                tR = (int)(tR * 0.74f); tG = (int)(tG * 0.80f); tB = (int)(tB * 0.74f);
+                rR = (int)(rR * 0.84f); rG = (int)(rG * 0.88f); rB = (int)(rB * 0.84f);
+                tR = (int)(tR * 0.78f); tG = (int)(tG * 0.84f); tB = (int)(tB * 0.78f);
             }
             bladeRoot = (Color){(unsigned char)fminf(255, fmaxf(0, rR)),
                                 (unsigned char)fminf(255, fmaxf(0, rG)),
@@ -452,12 +441,12 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     }
     if (!isReed && style.botanicalVariation > 0.0f) {
         Vector3 canopy = MeadowCanopyColor(MeadowHabitat(clump->position.x, clump->position.z));
-        float variation = 0.90f + 0.20f * bHash2;
+        float variation = 0.92f + 0.16f * bHash2;
         Color canopyTip = {(unsigned char)(canopy.x * variation * 255.0f),
                            (unsigned char)(canopy.y * variation * 255.0f),
                            (unsigned char)(canopy.z * variation * 255.0f), 255};
         bladeTip = Nature_LerpColor(bladeTip, canopyTip,
-            fminf(style.botanicalVariation, 1.0f) * 0.85f);
+            fminf(style.botanicalVariation, 1.0f) * 0.65f);
     }
     return (NatureBladeDescriptor){pBase, pP1, pP2, pP3, clump->position,
         bladeRoot, bladeTip, width, clump->phase, bladeLeanAngle, isReed};
@@ -1108,7 +1097,13 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
 void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffset,
                                      float time, Vector2 windDirection, float windStrength)
 {
-    if (!meadow || !meadow->ready || GfxQuality_Get() < GFX_LOW ||
+    // Sub-texel vertical grass blades (< 2cm wide) rasterized from overhead (Noon, |sun.y| > 0.72)
+    // or into a low-res GFX_LOW shadow map produce aliased single-pixel black confetti on the ground.
+    // Only cast directional blade shadows at oblique sun angles in MED/HIGH; ground_splat.fs
+    // provides continuous analytical canopy contact occlusion under grass at all sun angles.
+    Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
+    if (!meadow || !meadow->ready || GfxQuality_Get() < GFX_MED ||
+        fabsf(sunDir.y) > 0.72f ||
         meadow->shadowDistance <= 0.0f ||
         Nature_GetShadowMode() == NATURE_SHADOW_PROJECTED_ONLY ||
         !Nature_ShadowCasterTypeEnabled(false))

@@ -35,10 +35,10 @@ void main()
 
     // 2. Tối ưu khoảng cách và vector hướng nhìn (Chỉ dùng 1 lần sqrt duy nhất)
     float dist = length(v_viewVec);
-    float horizon = smoothstep(60.0, 140.0, dist);
+    float horizon = smoothstep(180.0, 420.0, dist) * 0.72;
 
     // Early out: Hủy ngay fragment nếu không đủ mật độ
-    if (u_cloudBankEnabled == 0 && density < 0.45 && horizon < 0.98) discard;
+    if (u_cloudBankEnabled == 0 && density < 0.42 && horizon < 0.98) discard;
 
     // Chuẩn hóa các vector (chỉ tính 1 lần)
     vec3 viewDir = v_viewVec / max(dist, 0.0001); // Tương đương normalize(v_viewVec) nhưng tận dụng lại dist
@@ -48,14 +48,17 @@ void main()
     // 3. Xử lý ánh sáng & Màu sắc
     vec3 actAmbient = (ambientColor.a == 0.0) ? vec3(0.4) : ambientColor.rgb;
     vec3 actLight   = (lightColor.a == 0.0) ? vec3(1.0) : lightColor.rgb;
+    float zenithDamp = 1.0 / (1.0 + max(L.y - 0.38, 0.0) * 0.75);
+    vec3 cloudSunLight = actLight * zenithDamp;
 
-    // Bầu trời nền (cần tính trước để hòa trộn làm mềm viền mây)
-    vec3 sky = MapSkyRadiance(v_viewVec, L, u_skyAmbient, u_hazeColor, actLight);
+    // Bầu trời nền (cần tính trước để hòa trộn làm mềm viền mây; giữ ray ngang tầm chân trời khi nhìn xuống biển mây)
+    vec3 skyRay = vec3(v_viewVec.x, max(v_viewVec.y, 0.14), v_viewVec.z);
+    vec3 sky = MapSkyRadiance(skyRay, L, u_skyAmbient, u_hazeColor, cloudSunLight);
 
     // VISUAL UPGRADE: Độ dày của mây & Bóng tự thân (Vertical AO)
     // Đáy mây (N.y < 0) sẽ tối hơn đỉnh mây, tạo chiều sâu khối 3D
-    float edge = smoothstep(0.45, 0.68, density);
-    float verticalAO = clamp(N.y * 0.35 + 0.65, 0.35, 1.0);
+    float edge = smoothstep(0.42, 0.68, density);
+    float verticalAO = clamp(N.y * 0.35 + 0.65, 0.38, 1.0);
     vec3 cloudBase = mix(CLOUD_DARK, CLOUD_LIGHT, edge * verticalAO);
 
     // Wrap lighting (Half-Lambert biến thể) giúp ánh sáng lan tỏa mềm mại
@@ -66,12 +69,12 @@ void main()
     float VdotL = max(dot(viewDir, L), 0.0);
     float silverLining = pow(VdotL, 4.0) * (1.0 - edge * 0.7) * 0.45;
 
-    vec3 totalLight = clamp(actAmbient + actLight * (NdotL * 0.55 + silverLining), 0.0, 1.15);
+    vec3 totalLight = clamp(actAmbient * 1.12 + cloudSunLight * (NdotL * 0.55 + silverLining), 0.0, 1.15);
     vec3 cloudColor = cloudBase * totalLight * colDiffuse.rgb;
 
     // 4. Làm mềm viền cắt (Soft Cutoff)
-    // Thay vì bị cắt gắt ở ngưỡng 0.45 khi discard, hòa trộn mềm viền ngoài của mây vào màu bầu trời
-    float edgeFade = (u_cloudBankEnabled == 0) ? smoothstep(0.45, 0.52, density) : 1.0;
+    // Thay vì bị cắt gắt ở ngưỡng 0.42 khi discard, hòa trộn mềm viền ngoài của mây vào màu bầu trời
+    float edgeFade = (u_cloudBankEnabled == 0) ? smoothstep(0.42, 0.52, density) : 1.0;
     float finalSkyBlend = mix(1.0, horizon, edgeFade);
 
     finalColor = vec4(mix(cloudColor, sky, finalSkyBlend), 1.0);

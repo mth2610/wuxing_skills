@@ -42,46 +42,62 @@ void main() {
     vec3 worldPosition = vec3(u_cloudWorldFromShader * vec4(fragPosition, 1.0));
 
     vec3 normalSample = texture(texture2, fragTexCoord).rgb * 2.0 - 1.0;
-    mat3 TBN = mat3(normalize(fragTangent), normalize(fragBitangent), normalize(fragNormal));
+    vec3 smoothN = normalize(fragNormal);
+    // Blend geometric triangle facet normal so rocks exhibit crisp, chiseled planar cleavage faces
+    vec3 dPdx = dFdx(fragPosition);
+    vec3 dPdy = dFdy(fragPosition);
+    vec3 facetN = cross(dPdx, dPdy);
+    float facetLenSq = dot(facetN, facetN);
+    if (facetLenSq > 1e-10) {
+        facetN *= inversesqrt(facetLenSq);
+        if (dot(facetN, smoothN) < 0.0) facetN = -facetN;
+        smoothN = normalize(mix(smoothN, facetN, 0.76));
+    }
+    mat3 TBN = mat3(normalize(fragTangent), normalize(fragBitangent), smoothN);
     vec3 normal = normalize(TBN * normalSample);
+    vec3 worldNormal = normalize(mat3(u_cloudWorldFromShader) * normal);
 
     float roughness = clamp(texture(texture3, fragTexCoord).r, 0.08, 1.0);
 
     // Safe fallback if a map forgot to push PropLit_UpdateLighting()
     float lightLenSq = dot(u_lightDir, u_lightDir);
     vec3 lightDir = (lightLenSq > 0.001) ? (u_lightDir * inversesqrt(lightLenSq)) : normalize(vec3(0.25, 0.75, -0.55));
+    vec3 worldLightDir = normalize(mat3(u_cloudWorldFromShader) * lightDir);
     vec3 actualLight = (dot(u_lightColor, u_lightColor) > 0.001) ? u_lightColor : vec3(1.0, 0.92, 0.80);
+    actualLight *= 1.0 / (1.0 + max(worldLightDir.y - 0.36, 0.0) * 0.82);
     vec3 actualAmbient = (dot(u_ambientColor, u_ambientColor) > 0.001) ? u_ambientColor : vec3(0.36, 0.42, 0.50);
     vec3 viewDir  = normalize(u_viewPos - fragPosition);
 
     // Warm mineral & geological strata variation so boulders never look like monochrome grey plastic
-    float strataNoise = sin(worldPosition.y * 3.4 + worldPosition.x * 0.45 - worldPosition.z * 0.35) * 0.5 + 0.5;
-    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.92, 0.90, 0.86), vec3(1.12, 1.06, 0.96), strataNoise);
+    float strataNoise = sin(worldPosition.y * 3.8 + worldPosition.x * 0.45 - worldPosition.z * 0.35) * 0.5 + 0.5;
+    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.76, 0.74, 0.70), vec3(1.04, 0.98, 0.88), strataNoise);
 
     // Top-surface moss & lichen colonization on upward-facing boulder crowns
-    float topMossMask = smoothstep(0.48, 0.78, normal.y) * smoothstep(-0.15, 0.45, fragLocalY)
-                      * smoothstep(0.28, 0.68, albedo.g);
-    vec3 crownMossAlbedo = mix(vec3(0.18, 0.30, 0.11), vec3(0.29, 0.41, 0.15), albedo.r);
-    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.72);
+    float topMossMask = smoothstep(0.42, 0.74, worldNormal.y) * smoothstep(-0.15, 0.45, fragLocalY)
+                      * smoothstep(0.22, 0.65, albedo.g);
+    vec3 crownMossAlbedo = mix(vec3(0.16, 0.28, 0.09), vec3(0.27, 0.39, 0.14), albedo.r);
+    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.78);
 
     // Lower skirt earthy moss & turf grounding blend
-    float skirtMask = (1.0 - smoothstep(-0.75, 0.08, fragLocalY));
-    vec3 skirtMossAlbedo = vec3(0.21, 0.31, 0.13);
-    rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.62);
+    float skirtMask = (1.0 - smoothstep(-0.75, 0.12, fragLocalY));
+    vec3 skirtMossAlbedo = vec3(0.18, 0.29, 0.11);
+    rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.68);
     albedo.rgb = rockAlbedo;
-    roughness = mix(roughness, 0.85, max(topMossMask, skirtMask) * 0.75);
+    roughness = mix(roughness, 0.86, max(topMossMask, skirtMask) * 0.78);
 
-    float diff = calcDiffuse(normal, lightDir, 0.0);
+    // Preserve lateral facet contrast even when the sun is near zenith (12:00 Noon)
+    vec3 modelLightDir = normalize(lightDir + vec3(0.32, -0.18, -0.26) * max(worldLightDir.y - 0.50, 0.0));
+    float diff = calcDiffuse(normal, modelLightDir, 0.0);
     float shininess    = mix(72.0, 10.0, roughness);
-    float specStrength = mix(0.02, 0.22, 1.0 - roughness);
-    float spec = calcSpecular(normal, lightDir, viewDir, shininess) * specStrength;
+    float specStrength = mix(0.02, 0.20, 1.0 - roughness);
+    float spec = calcSpecular(normal, modelLightDir, viewDir, shininess) * specStrength;
 
     float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
     shadow *= Environment_CloudVisibility(u_cloudNoise, worldPosition);
 
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient);
     float groundAO = clamp(0.76 + worldPosition.y * 0.30, 0.72, 1.0);
-    float skirtAO  = clamp(0.52 + 0.48 * smoothstep(-0.85, 0.25, fragLocalY), 0.48, 1.0);
+    float skirtAO  = clamp(0.46 + 0.54 * smoothstep(-0.85, 0.25, fragLocalY), 0.44, 1.0);
     vec3 lit = albedo.rgb * (ambient * groundAO * skirtAO + diff * actualLight * shadow)
              + spec * actualLight * shadow;
 

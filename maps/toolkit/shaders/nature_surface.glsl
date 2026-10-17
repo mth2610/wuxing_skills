@@ -33,7 +33,7 @@ float NatureShadowCompare(sampler2D mapTexture, vec2 uv, float depth,
                           float texelSize, float filterWeight)
 {
     if (filterWeight <= 0.05)
-        return MapShadowCompare(mapTexture, uv, depth);
+        return MapShadowCompareBilinear(mapTexture, uv, depth, texelSize);
     float effectiveTexel = texelSize * FastRamp(0.0, 0.35, filterWeight);
     return MapShadowCompareBilinear(mapTexture, uv, depth, effectiveTexel);
 }
@@ -59,9 +59,9 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
             float bias = clamp(0.0022 + slope * 0.0038, 0.0018, 0.0060);
             float rawDyn = NatureShadowCompare(shadowMap, projected.xy,
                 projected.z - bias, u_shadowTexel, filterWeight);
-            // Translucent grass blades transmit ~38% of direct sunlight through the turf canopy,
+            // Translucent grass blades transmit ~45% of direct sunlight through the turf canopy,
             // preventing a harsh dark/bright step at the dynamic shadow caster distance boundary.
-            rawDyn = mix(0.38, 1.0, rawDyn);
+            rawDyn = mix(0.45, 1.0, rawDyn);
             dynamicShadow = mix(1.0, rawDyn, MapShadowCoverageFadeWidth(projected.xy, 0.18));
         }
     }
@@ -123,13 +123,17 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 n = normalize(mix(faceNormal, vec3(0.0, 1.0, 0.0), totalTerrainBlend));
 
     // Root-to-ground color blending
-    const vec3 soilTone = vec3(0.18, 0.15, 0.09);
+    const vec3 soilTone = vec3(0.16, 0.14, 0.08);
     float stemRootBlend = (1.0 - FastRamp(0.0, 0.22, hNorm)) * (1.0 - bloomMask) * 0.65;
     baseColor = mix(baseColor, soilTone, stemRootBlend);
 
-    // Wrapped Diffuse Lighting
+    // Zenith irradiance compensation
+    vec3 effectiveLightColor = u_lightColor * (1.0 / (1.0 + max(u_lightDir.y - 0.38, 0.0) * 0.78));
+
+    // Wrapped Diffuse Lighting (with azimuthal modeling at Noon)
+    vec3 modelLightDir = normalize(vec3(u_lightDir.x + 0.30 * u_lightDir.y, u_lightDir.y * 0.78, u_lightDir.z - 0.22 * u_lightDir.y));
     float wrap = mix(0.32, 0.42, bloomMask);
-    float wrapped = clamp((dot(n, u_lightDir) + wrap) / (1.0 + wrap), 0.0, 1.0);
+    float wrapped = clamp((dot(faceNormal, modelLightDir) + wrap) / (1.0 + wrap), 0.0, 1.0);
     float directDiffuse = wrapped * wrapped;
 
     // Two-sided Subsurface Scattering (SSS) Transmission
@@ -171,16 +175,16 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         float NdotH = max(dot(faceNormal, halfDir), 0.0);
         float specLobeStem = FastPow32(NdotH);
         float specLobeBloom = FastPow16(NdotH);
-        float specIntensity = mix(0.75 * (1.0 - antiShimmer * 0.75), 0.45, bloomMask) * canopyExtinction;
+        float specIntensity = mix(0.65 * (1.0 - antiShimmer * 0.75), 0.40, bloomMask) * canopyExtinction;
         float spec = mix(specLobeStem, specLobeBloom, bloomMask) * specIntensity;
 
         float oneMinusNV = 1.0 - max(dot(faceNormal, viewDir), 0.0);
-        float rim = (oneMinusNV * oneMinusNV * sqrt(oneMinusNV)) * mix(0.22, 0.30, bloomMask);
+        float rim = (oneMinusNV * oneMinusNV * sqrt(oneMinusNV)) * mix(0.20, 0.28, bloomMask);
 
-        vec3 directSunTerms = baseColor * (directDiffuse * 1.10 + rim)
-                            + subsurfaceColor * (transmission * mix(0.75, 0.92, bloomMask))
+        vec3 directSunTerms = baseColor * (directDiffuse * 1.08 + rim)
+                            + subsurfaceColor * (transmission * mix(0.72, 0.88, bloomMask))
                             + vec3(spec, spec, spec * 0.94);
-        lit += directSunTerms * (u_lightColor * sunFactor);
+        lit += directSunTerms * (effectiveLightColor * sunFactor);
     }
 
     lit += subsurfaceColor * (transmission * mix(0.18, 0.24, bloomMask)) * skyAmbient;
@@ -194,7 +198,7 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 }
 
 // ============================================================================
-// HIGH-DENSITY BLADE GRASS SHADING (Dual-Lobe Anisotropic + Anti-Aliased)
+// HIGH-DENSITY BLADE GRASS SHADING (Dual-Lobe Anisotropic + Noon Volume)
 // ============================================================================
 vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                 float heightAlongPlant, float uTransverse,
@@ -224,26 +228,26 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     // Soft central rib & subtle edge relief (filtered away when unresolved)
     float rib = 1.0 - FastRamp(0.0, 0.34, absU);
-    baseColor *= 1.0 + (rib - 0.35) * 0.10 * (1.0 - unresolved);
+    baseColor *= 1.0 + (rib - 0.35) * 0.14 * (1.0 - unresolved);
 
-    // Root-to-Ground Color Blending
-    const vec3 soilTone = vec3(0.18, 0.15, 0.09);
-    float rootBlend = (1.0 - FastRamp(0.0, 0.24, h)) * 0.68;
+    // Root-to-Ground Color Blending (matches deep emerald moss understorey)
+    const vec3 soilTone = vec3(0.11, 0.19, 0.06);
+    float rootBlend = (1.0 - FastRamp(0.0, 0.28, h)) * 0.65;
     baseColor = mix(baseColor, soilTone, rootBlend);
 
     vec3 skyAmbient = Environment_HemisphereIrradiance(vec3(0.0, 1.0, 0.0), u_ambientColor);
     vec3 groundBounce = Environment_HemisphereIrradiance(vec3(0.0, -1.0, 0.0), u_ambientColor);
     vec3 ambient = mix(groundBounce, skyAmbient, n.y * 0.5 + 0.5);
 
-    // Deep ground contact ambient occlusion at blade base
-    float rootAO = mix(0.18, 1.0, smoothstep(0.0, 0.55, h));
+    // Deep ground contact ambient occlusion at blade base preserves tuft depth even at 12:00 Noon
+    float rootAO = mix(0.22, 1.0, smoothstep(0.0, 0.62, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     // Waxy cuticle grazing sheen (Fresnel reflecting sky)
     float nv = max(dot(faceNormal, viewDir), 0.0);
     float waxFresnel = FastPow4(1.0 - nv);
     float heightSheenMask = FastRamp(0.22, 0.88, h);
-    vec3 waxSheen = skyAmbient * (waxFresnel * 0.34 * heightSheenMask * (1.0 - antiShimmer * 0.5));
+    vec3 waxSheen = skyAmbient * (waxFresnel * 0.30 * heightSheenMask * (1.0 - antiShimmer * 0.5));
     lit += waxSheen * rootAO;
 
     // Shadow + conditional Cloud visibility (skips cloud texture lookup if shadowed)
@@ -251,20 +255,28 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     if (shadow > 0.001) {
         float sunVis = shadow * Environment_CloudVisibility(u_cloudNoise, worldPosition);
         if (sunVis > 0.001) {
-            float wrapped = clamp((dot(n, u_lightDir) + 0.42) * 0.704225, 0.0, 1.0);
+            // Zenith irradiance compensation prevents Noon over-exposure when SunIntensity is 2.2..3.0
+            vec3 effectiveLightColor = u_lightColor * (1.0 / (1.0 + max(u_lightDir.y - 0.38, 0.0) * 0.82));
 
-            // Beer-Lambert attenuation through the canopy
-            float canopyDepth = 0.45 * (1.0 - h);
-            float opticalDepth = canopyDepth * 0.9 / max(u_lightDir.y, 0.10);
+            // Azimuthal blade modeling: at 12:00 Noon (u_lightDir.xz == 0), dot(n, u_lightDir) collapses to n.y,
+            // erasing blade-to-blade azimuth contrast. Blend an oblique modeling azimuth at high sun elevation.
+            vec3 modelLightDir = normalize(vec3(u_lightDir.x + 0.36 * u_lightDir.y, u_lightDir.y * 0.72, u_lightDir.z - 0.28 * u_lightDir.y));
+            float wrappedSun   = clamp((dot(n, u_lightDir) + 0.42) * 0.704225, 0.0, 1.0);
+            float wrappedModel = clamp((dot(faceNormal, modelLightDir) + 0.38) * 0.724638, 0.0, 1.0);
+            float zenithBlend  = FastRamp(0.55, 0.92, u_lightDir.y) * (1.0 - antiShimmer * 0.65);
+            float wrapped = mix(wrappedSun, wrappedModel, zenithBlend * 0.72);
+
+            // Beer-Lambert attenuation + tuft interior self-occlusion
+            float canopyDepth = 0.55 * (1.0 - h);
+            float opticalDepth = canopyDepth * 0.95 / max(u_lightDir.y, 0.15);
             float expCanopy = 1.0 / (1.0 + opticalDepth + 0.48 * opticalDepth * opticalDepth);
-            float canopy = 0.12 + 0.88 * expCanopy;
+            float verticalSelfShadow = mix(0.32, 1.0, smoothstep(0.0, 0.82, h));
+            float canopy = (0.16 + 0.84 * expCanopy) * verticalSelfShadow;
 
             // Analytical Kajiya-Kay Anisotropic Specular without constructing or normalizing tangent vectors:
-            // Since T_raw = up - N.y * N and ||T_raw||^2 = 1 - N.y^2, dot(T, H)^2 = (H.y - N.y * dot(N, H))^2 / (1 - N.y^2)
-            vec3 halfDir = normalize(u_lightDir + viewDir);
+            vec3 halfDir = normalize(modelLightDir + viewDir);
             float NdotH = dot(faceNormal, halfDir);
             float tDotHUnnorm = halfDir.y - faceNormal.y * NdotH;
-            // Subtle cuticular tilt shift along blade height for cohesive Ghost of Tsushima specular waves
             float shiftedTH = tDotHUnnorm - (h - 0.55) * 0.12;
             float invTangentLenSq = 1.0 / max(1.0 - faceNormal.y * faceNormal.y, 1e-4);
             float sinTHSq = clamp(1.0 - (shiftedTH * shiftedTH) * invTangentLenSq, 0.0, 1.0);
@@ -281,24 +293,24 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float sinTH36 = sinTH16 * sinTHSq;
 
             float tipMask = FastRamp(0.18, 0.85, h);
-            vec3 primarySheen = mix(baseColor, vec3(1.0, 1.02, 0.94), 0.68) * (sinTH8 * 0.085);
-            vec3 secondaryGlint = vec3(1.0, 1.02, 0.95) * (sinTH36 * 0.24 * tipMask);
+            vec3 primarySheen = mix(baseColor, vec3(1.0, 1.02, 0.94), 0.65) * (sinTH8 * 0.075);
+            vec3 secondaryGlint = vec3(1.0, 1.02, 0.95) * (sinTH36 * 0.20 * tipMask);
             vec3 anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.35, 0.0));
 
             // Chlorophyll translucency: radiant emerald-gold backlight through leaf membrane
             float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
-            float backLight = max(-dot(faceNormal, u_lightDir), 0.0);
+            float backLight = max(-dot(faceNormal, modelLightDir), 0.0);
             float forwardLobe = FastPow2(forwardScatter);
             float backLobe = FastPow1_4(backLight);
             float edgeThinness = 0.72 + 0.56 * absU;
-            float transmission = (backLobe * 0.65 + forwardLobe * 0.65)
-                                * FastRamp(0.08, 0.75, h) * edgeThinness;
-            vec3 translucentColor = baseColor * vec3(1.22, 1.30, 0.70) + vec3(0.04, 0.06, 0.005) * edgeThinness;
+            float transmission = (backLobe * 0.58 + forwardLobe * 0.62)
+                                * FastRamp(0.12, 0.78, h) * edgeThinness;
+            vec3 translucentColor = baseColor * vec3(1.18, 1.26, 0.68) + vec3(0.03, 0.05, 0.005) * edgeThinness;
 
-            vec3 directSunTerms = baseColor * (wrapped * wrapped * 1.05)
+            vec3 directSunTerms = baseColor * (wrapped * wrapped * 1.02)
                                 + anisoSpec
-                                + translucentColor * (transmission * 1.12);
-            lit += directSunTerms * u_lightColor * (canopy * sunVis);
+                                + translucentColor * (transmission * 0.96);
+            lit += directSunTerms * effectiveLightColor * (canopy * sunVis);
         }
     }
 

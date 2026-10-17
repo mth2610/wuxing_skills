@@ -76,6 +76,8 @@ void main()
     vec3 light = (lightLenSq > 0.01) ? (-lightDir * inversesqrt(lightLenSq)) : vec3(0.0, 1.0, 0.0);
     vec3 actualAmbient = (ambientColor.a == 0.0) ? vec3(0.4) : ambientColor.rgb;
     vec3 actualLight   = (lightColor.a == 0.0)   ? vec3(1.0) : lightColor.rgb;
+    // Zenith irradiance compensation: prevents 300% over-exposure at 12:00 Noon when maps use dawn SunIntensity
+    actualLight *= 1.0 / (1.0 + max(light.y - 0.36, 0.0) * 0.88);
 
     // ---- 2. Cloud Veil Pre-Evaluation & Early Out ----
     // If the underside cliff is 100% occluded by the cloud veil, return immediately
@@ -157,7 +159,7 @@ void main()
     vec3 geomNormal = normalize(fragNormal);
     float slope = clamp(1.0 - geomNormal.y, 0.0, 1.0);
 
-    // ---- 6. Soil Detail (with Distance Dual-Scale Optimization) ----
+    // ---- 6. Soil Detail (with Crisp Micro-Grain Preservation) ----
     bool soilPossible = distToPath < PATH_INFLUENCE
                      || shoreFactor > 0.002
                      || streamWet > 0.40
@@ -172,7 +174,9 @@ void main()
             vec3 broadDirt = textureGrad(texPath, broadDirtUV,
                                          vec2(-uvDx.y, uvDx.x) * 0.31,
                                          vec2(-uvDy.y, uvDy.x) * 0.31).rgb;
-            dirtDetail = mix(colorDirt.rgb, broadDirt, 0.35);
+            // Multiplicative macro modulation preserves 100% of fine pebble/soil micro-contrast
+            vec3 broadMod = clamp(broadDirt / max(dot(broadDirt, vec3(0.3333)), 0.18), vec3(0.80), vec3(1.22));
+            dirtDetail = clamp(colorDirt.rgb * mix(vec3(1.0), broadMod, 0.45), vec3(0.0), vec3(1.0));
         } else {
             dirtDetail = colorDirt.rgb;
         }
@@ -187,13 +191,13 @@ void main()
     }
 
     // ---- 7. Four-Layer Weights & Height-Based Relief Blending ----
-    float wPath = 1.0 - smoothstep(1.15, 1.85, distToPath);
-    float wPathMargin = smoothstep(1.05, 1.75, distToPath) * (1.0 - smoothstep(1.75, 3.2, distToPath));
+    float wPath = 1.0 - smoothstep(1.10, 1.95, distToPath);
+    float wPathMargin = smoothstep(0.95, 1.65, distToPath) * (1.0 - smoothstep(1.65, 3.1, distToPath));
     float wWetSoil = max(shoreFactor * 0.88, smoothstep(0.45, 0.88, streamWet) * 0.85);
     // Keep rolling hills green; only transition to rocky cliff/scree on genuinely steep slopes (>16 deg)
     float wSlope = smoothstep(0.26, 0.62, slope);
     float wCliff = clamp(max(wSlope, rockScree * 0.90), 0.0, 1.0);
-    float wDrySoil = clamp(max(wPathMargin * 0.86, wCliff * 0.92), 0.0, 1.0) * (1.0 - wWetSoil * 0.85);
+    float wDrySoil = clamp(max(wPathMargin * 0.78, wCliff * 0.92), 0.0, 1.0) * (1.0 - wWetSoil * 0.85) * (1.0 - wPath * 0.85);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
     vec4 weights = vec4(wGrass, wDrySoil, wWetSoil, wPath);
@@ -202,23 +206,28 @@ void main()
     float reliefShadow = 1.0; // Visual upgrade: micro-shadowing at height-blend transitions
 
     if (u_groundReliefEnabled != 0 && detailResolve > 0.03) {
-        float dominantWeight = max(max(weights.x, weights.y), max(weights.z, weights.w));
+        // Combine dry soil + path when competing against grass so split soil channels never lose to grass
+        float combinedSoil = weights.y + weights.w;
+        float dominantWeight = max(max(weights.x, combinedSoil), weights.z);
         bool boundary = dominantWeight < 0.98;
         if (boundary || weights.x > 0.02) {
             vec4 substrateRelief = textureGrad(u_groundRelief, tiledUV, uvDx, uvDy);
             litterClasses = substrateRelief.ba;
             if (boundary) {
                 float soilHeight = textureGrad(u_groundRelief, tiledUV * 0.85, uvDx * 0.85, uvDy * 0.85).g;
-                vec4 relief = vec4(substrateRelief.r, soilHeight, soilHeight, soilHeight);
-                vec4 heights = weights + (relief - 0.5) * 0.24;
-                float peak = max(max(heights.x, heights.y), max(heights.z, heights.w));
-                vec4 candidates = max(heights - vec4(peak - 0.36), vec4(0.0)) * weights;
-                candidates /= max(dot(candidates, vec4(1.0)), 0.0001);
-                resolved = mix(resolved, candidates, detailResolve * 0.40);
+                vec3 groupWeights = vec3(weights.x, combinedSoil, weights.z);
+                vec3 groupRelief  = vec3(substrateRelief.r, soilHeight, soilHeight);
+                vec3 heights = groupWeights + (groupRelief - 0.5) * 0.26;
+                float peak = max(max(heights.x, heights.y), heights.z);
+                vec3 candidates = max(heights - vec3(peak - 0.34), vec3(0.0)) * groupWeights;
+                candidates /= max(dot(candidates, vec3(1.0)), 0.0001);
+                float pathRatio = weights.w / max(combinedSoil, 0.0001);
+                vec4 groupedResolved = vec4(candidates.x, candidates.y * (1.0 - pathRatio), candidates.z, candidates.y * pathRatio);
+                resolved = mix(resolved, groupedResolved, detailResolve * 0.45);
 
                 // Visual upgrade: Self-occlusion in recessed pockets between grass turf and path/soil
                 float heightDelta = (substrateRelief.r - soilHeight) * (resolved.x - (1.0 - resolved.x));
-                reliefShadow = clamp(1.0 + heightDelta * 0.22 * detailResolve, 0.84, 1.06);
+                reliefShadow = clamp(1.0 + heightDelta * 0.25 * detailResolve, 0.82, 1.06);
             }
         }
     }
@@ -229,7 +238,7 @@ void main()
     bool hasGrass = wGrass > LAYER_EPS;
     bool hasSoil  = soilWeight > LAYER_EPS;
 
-    // ---- 8. Grass Layer (Harmonized with 3D Meadow Turf & Clover Understorey) ----
+    // ---- 8. Grass Layer (Deep Emerald Moss & Clover Understorey) ----
     vec3 grassAlbedo = vec3(0.0);
     float fineGrassLuma = 0.5;
     vec4 grassMaterial = vec4(0.5, 0.5, 1.0, 0.8);
@@ -247,9 +256,9 @@ void main()
         fineGrassLuma = dot(colorGrass.rgb, vec3(0.2126, 0.7152, 0.0722));
 
         float turfDetail = dot(blendedGrass, vec3(0.2126, 0.7152, 0.0722));
-        float detailContrast = clamp((turfDetail - 0.20) * 1.45, -0.22, 0.24);
-        // Lush emerald-olive moss & clover understorey that matches the 3D grass root-to-mid palette
-        vec3 turfBase = vec3(0.245, 0.345, 0.148);
+        float detailContrast = clamp((turfDetail - 0.20) * 1.65, -0.28, 0.30);
+        // Deep, rich forest-emerald moss & clover understorey that grounds 3D grass tufts at Noon & Dawn
+        vec3 turfBase = vec3(0.155, 0.265, 0.082);
         vec3 litterChroma = clamp(blendedGrass / max(turfDetail, 0.06), vec3(0.68), vec3(1.42));
         float chromaStrength = mix(0.32, 0.58, detailResolve);
         grassAlbedo = turfBase * mix(vec3(1.0), litterChroma, chromaStrength) * (1.0 + detailContrast);
@@ -271,25 +280,33 @@ void main()
         if (u_ecologyEnabled != 0)
             grassAlbedo *= mix(vec3(1.0), vec3(0.92, 0.99, 0.93), ecology.b);
 
-        // Seamless Canopy Imposter Blend starting at 12m so inter-clump spaces read as continuous lush meadow
-        if (camDistSqXZ > 144.0) {
+        // Seamless Canopy Imposter Blend: matches 3D tuft self-shadowed luminance & grain (never neon plastic)
+        if (camDistSqXZ > 256.0) {
             float camDist = sqrt(camDistSqXZ);
-            float distantCanopyBlend = smoothstep(12.0, 42.0, camDist) * wGrass;
+            float distantCanopyBlend = smoothstep(16.0, 52.0, camDist) * wGrass;
             if (u_ecologyEnabled != 0)
-                distantCanopyBlend *= smoothstep(0.08, 0.65, ecology.r);
+                distantCanopyBlend *= smoothstep(0.12, 0.70, ecology.r);
             if (distantCanopyBlend > 0.002) {
-                vec3 canopyColor = MeadowCanopyColor(1.0 - habitatWarmth);
-                float distantClumpNoise = sin(fragWorldPos.x * 1.6 + fragWorldPos.z * 1.2) * 0.5
-                                        + sin(fragWorldPos.x * -1.1 + fragWorldPos.z * 2.1) * 0.5;
-                canopyColor *= mix(0.92, 1.08, distantClumpNoise * 0.5 + 0.5);
-                grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.88);
+                // Scale unlit tip palette by 0.54 to match average 3D tuft rootAO * canopyExtinction
+                vec3 canopyColor = MeadowCanopyColor(1.0 - habitatWarmth) * 0.54;
+                float clumpNoise1 = sin(fragWorldPos.x * 1.85 + fragWorldPos.z * 1.45)
+                                  * cos(fragWorldPos.x * -1.35 + fragWorldPos.z * 2.15);
+                float clumpNoise2 = sin(fragWorldPos.x * 4.20 - fragWorldPos.z * 3.80) * 0.5;
+                float tuftGrain = clamp(0.5 + 0.35 * clumpNoise1 + 0.20 * clumpNoise2 + (turfDetail - 0.22) * 0.9, 0.0, 1.0);
+                canopyColor *= mix(0.74, 1.22, tuftGrain);
+                grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.76);
             }
         }
     }
 
-    // ---- 9. Triplanar Cliff Strata, Soil & Alluvial Shingle Albedo ----
+    // ---- 9. Triplanar Cliff Strata, Woodland Loam Path & Alluvial Shingle Albedo ----
     float porousDarkening = smoothstep(0.0, 0.45, wWetSoil) * (1.0 - wWetSoil * 0.35);
-    vec3 warmLoamColor = dirtDetail * vec3(0.41, 0.38, 0.30) * (1.0 - porousDarkening * 0.16);
+    float soilLuma = dot(dirtDetail, vec3(0.299, 0.587, 0.114));
+    float pebbleRelief = smoothstep(0.26, 0.72, soilLuma);
+    // Warm woodland sienna-loam soil with distinct pebble/crevice contrast (never greenish khaki)
+    vec3 loamDark  = vec3(0.20, 0.145, 0.095);
+    vec3 loamLight = vec3(0.42, 0.315, 0.210);
+    vec3 warmLoamColor = mix(loamDark, loamLight, pebbleRelief) * (0.85 + 0.30 * dirtDetail) * (1.0 - porousDarkening * 0.18);
 
     // Triplanar world-space rock projection for steep slopes & escarpments (prevents UV stretching)
     vec3 cliffAlbedo = warmLoamColor;
@@ -310,9 +327,9 @@ void main()
         float jointCrack = smoothstep(0.12, 0.55, triRock.r);
         cliffStrataBump = (strataLedge - 0.5) * 0.38 + (jointCrack - 0.5) * 0.28;
 
-        vec3 darkSlate = vec3(0.22, 0.24, 0.25);
-        vec3 warmGranite = vec3(0.42, 0.40, 0.36);
-        vec3 lichenMoss = vec3(0.24, 0.33, 0.18);
+        vec3 darkSlate = vec3(0.20, 0.21, 0.22);
+        vec3 warmGranite = vec3(0.38, 0.35, 0.31);
+        vec3 lichenMoss = vec3(0.18, 0.27, 0.12);
         cliffAlbedo = mix(darkSlate, warmGranite, clamp(triRock.r * 0.75 + strataLedge * 0.35, 0.0, 1.0));
         // Ledge top-moss accumulation on flatter micro-terraces
         float ledgeMoss = clamp(geomNormal.y * 1.1 - 0.35, 0.0, 1.0) * smoothstep(0.45, 0.85, triRock.g);
@@ -324,14 +341,16 @@ void main()
 
     // Natural alluvial river shingle & damp mossy silt (eliminates chocolate-plastic shoreline ring)
     float pebbleGrain = smoothstep(0.22, 0.78, dirtDetail.r);
-    vec3 dampShingle = mix(vec3(0.24, 0.26, 0.22), vec3(0.35, 0.34, 0.29), pebbleGrain);
-    vec3 mossyBank   = vec3(0.20, 0.28, 0.17) * (0.75 + 0.45 * dirtDetail.g);
+    vec3 dampShingle = mix(vec3(0.20, 0.21, 0.18), vec3(0.32, 0.30, 0.25), pebbleGrain);
+    vec3 mossyBank   = vec3(0.16, 0.24, 0.12) * (0.75 + 0.45 * dirtDetail.g);
     vec3 wetSoilColor = mix(mossyBank, dampShingle, clamp(shoreFactor * 0.65 + streamWet * 0.35, 0.0, 1.0));
     if (lakeDepthFactor > 0.0) {
-        vec3 submergedBed = mix(vec3(0.18, 0.23, 0.19), vec3(0.11, 0.16, 0.15), lakeDepthFactor);
+        vec3 submergedBed = mix(vec3(0.15, 0.20, 0.16), vec3(0.09, 0.14, 0.13), lakeDepthFactor);
         wetSoilColor = mix(wetSoilColor, submergedBed * (0.82 + 0.36 * pebbleGrain), clamp(lakeDepthFactor * 1.15, 0.0, 1.0));
     }
-    vec3 pathMarginColor = mix(warmLoamColor, colorDirt.rgb * vec3(0.64, 0.58, 0.45), wPath);
+    // Sun-baked compacted earth trail with embedded mineral pebbles
+    vec3 trailCore = mix(vec3(0.27, 0.20, 0.13), vec3(0.49, 0.38, 0.26), pebbleRelief) * (0.86 + 0.28 * colorDirt.rgb);
+    vec3 pathMarginColor = mix(warmLoamColor, trailCore, wPath);
 
     vec3 blendedAlbedo = grassAlbedo * wGrass
                        + drySoilColor * wDrySoil
@@ -339,7 +358,7 @@ void main()
                        + pathMarginColor * wPath;
 
     if (streamWet > 0.50) {
-        vec3 streamBedTint = vec3(0.21, 0.27, 0.23) * (0.82 + 0.36 * dirtDetail.r);
+        vec3 streamBedTint = vec3(0.18, 0.24, 0.20) * (0.82 + 0.36 * dirtDetail.r);
         blendedAlbedo = mix(blendedAlbedo, streamBedTint, smoothstep(0.50, 0.92, streamWet) * 0.58);
     }
 
@@ -351,23 +370,23 @@ void main()
         // Leaf litter: muted woodland humus (suppressed near water so shorelines never turn rusty red)
         float dryWoodlandMask = 1.0 - clamp(shoreFactor + streamWet, 0.0, 1.0);
         if (debris.r > 0.05 && dryWoodlandMask > 0.05) {
-            vec3 leafLitterColor = mix(vec3(0.28, 0.24, 0.15), vec3(0.42, 0.34, 0.20), fineGrain);
+            vec3 leafLitterColor = mix(vec3(0.24, 0.19, 0.11), vec3(0.38, 0.29, 0.16), fineGrain);
             float leafMask = smoothstep(0.12, 0.62, debris.r) * (0.35 + 0.65 * fineGrain) * dryWoodlandMask;
-            blendedAlbedo = mix(blendedAlbedo, leafLitterColor, leafMask * 0.42);
+            blendedAlbedo = mix(blendedAlbedo, leafLitterColor, leafMask * 0.38);
         }
 
         // Scree gravel: stony pebble grit
         if (debris.g > 0.04) {
-            vec3 gravelColor = mix(vec3(0.26, 0.28, 0.27), vec3(0.42, 0.41, 0.37), fineGrain);
+            vec3 gravelColor = mix(vec3(0.24, 0.25, 0.23), vec3(0.38, 0.36, 0.32), fineGrain);
             float gravelMask = smoothstep(0.10, 0.60, debris.g);
-            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * 0.72);
+            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * 0.65);
         }
 
         // Moss & lichen: velvety jade green in damp hollows
         if (debris.a > 0.04) {
-            vec3 mossColor = mix(vec3(0.16, 0.28, 0.10), vec3(0.28, 0.42, 0.15), fineGrain);
+            vec3 mossColor = mix(vec3(0.14, 0.25, 0.08), vec3(0.24, 0.36, 0.12), fineGrain);
             float mossMask = smoothstep(0.08, 0.55, debris.a);
-            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * 0.85);
+            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * 0.78);
         }
     }
 
@@ -391,32 +410,37 @@ void main()
     vec3 tangent = normalize(vec3(1.0 - geomNormal.x * geomNormal.x, -geomNormal.x * geomNormal.y, -geomNormal.x * geomNormal.z));
     vec3 bitangent = cross(geomNormal, tangent);
 
-    // Puddle water surface flattens micro-bumps in saturated zones; cliff faces boost relief
+    // Boost soil & trail normal relief so pebbles and wheel/foot ruts catch directional light even near Noon
     float puddleFlatten = 1.0 - smoothstep(0.60, 0.95, wWetSoil) * 0.45;
-    float microStrength = mix(0.16, 0.38, max(soilWeight, wCliff)) * puddleFlatten * (0.40 + 0.60 * detailResolve);
-    vec3 normal = normalize(geomNormal * (0.70 + 0.30 * microNormal.z)
+    float microStrength = mix(0.22, 0.52, max(soilWeight, wCliff)) * puddleFlatten * (0.45 + 0.55 * detailResolve);
+    vec3 normal = normalize(geomNormal * (0.66 + 0.34 * microNormal.z)
                           + (tangent * microNormal.x + bitangent * microNormal.y) * microStrength);
 
     float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
-    roughness = mix(roughness, 0.76, wDrySoil * 0.80);
+    roughness = mix(roughness, 0.78, (wDrySoil + wPath) * 0.80);
     // Natural damp shingle roughness (avoids glossy plastic look on beaches/banks)
-    roughness = mix(roughness, 0.42, wWetSoil * 0.70);
+    roughness = mix(roughness, 0.44, wWetSoil * 0.70);
     // Geometric Specular AA prevents distant wet-surface sparkling
-    roughness = clamp(roughness + (1.0 - detailResolve) * 0.25, 0.18, 0.98);
+    roughness = clamp(roughness + (1.0 - detailResolve) * 0.25, 0.22, 0.98);
 
-    // Micro cavity AO + Height-blend boundary shadow + Cliff crevice AO
-    float cliffCreviceAO = 1.0 - max(0.0, -cliffStrataBump) * wCliff * 0.35;
-    float cavityAO = mix(0.88 + 0.12 * fineGrassLuma,
-                         0.76 + 0.24 * colorDirt.r, soilWeight) * reliefShadow * cliffCreviceAO;
+    // Continuous analytical grass-canopy root contact occlusion + soil pebble cavity AO
+    float nearCanopyMask = 1.0 - smoothstep(400.0, 2025.0, camDistSqXZ); // 20m..45m
+    float canopyContactAO = mix(1.0, 0.70 + 0.22 * fineGrassLuma, wGrass * nearCanopyMask);
+    float cliffCreviceAO = 1.0 - max(0.0, -cliffStrataBump) * wCliff * 0.38;
+    float cavityAO = mix(0.86 + 0.14 * fineGrassLuma,
+                         0.68 + 0.32 * pebbleRelief, soilWeight) * reliefShadow * cliffCreviceAO * canopyContactAO;
 
     // ---- 11. Physically Based Lighting & Foliage Subsurface ----
     float rawNdotL = dot(normal, light);
     float NdotL = max(rawNdotL, 0.0);
     // Soft wrap diffuse for grass/moss substrate (simulates light scattering through roots/moss)
     float grassWrapNdotL = max((rawNdotL + 0.22) * (1.0 / 1.22), 0.0);
-    float effectiveNdotL = mix(NdotL, grassWrapNdotL, wGrass * 0.55);
+    float effectiveNdotL = mix(NdotL, grassWrapNdotL, wGrass * 0.55) * (0.82 + 0.18 * cavityAO);
 
-    float shadow = MapShadowVisibility(fragPosition, normal, light);
+    float rawShadow = MapShadowVisibility(fragPosition, normal, light);
+    // Translucent foliage shadow floor on meadow turf prevents pitch-black shadow-map texels under grass
+    float shadowFloor = mix(0.26, 0.62, wGrass);
+    float shadow = mix(shadowFloor, 1.0, rawShadow);
     float sunVisibility = shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos);
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient) * cavityAO;
 
@@ -430,12 +454,12 @@ void main()
     // Warm subsurface back-scattering on sunlit grass hummocks at grazing sun angles
     if (wGrass > 0.05 && sunVisibility > 0.01) {
         float backScatter = max(dot(viewDir, -light), 0.0);
-        float sssFactor = (backScatter * backScatter) * wGrass * sunVisibility * 0.09;
+        float sssFactor = (backScatter * backScatter) * wGrass * sunVisibility * 0.08;
         groundLit += grassAlbedo * actualLight * vec3(1.15, 1.25, 0.65) * sssFactor;
     }
 
     float specPower = mix(8.0, 28.0, 1.0 - roughness);
-    float drySpec = pow(NdotH, specPower) * (1.0 - roughness) * 0.032;
+    float drySpec = pow(NdotH, specPower) * (1.0 - roughness) * 0.022;
     groundLit += actualLight * drySpec * sunVisibility;
 
     // ---- 12. Capillary Wetness Mechanics (Restrained Natural Shingle Sheen) ----

@@ -189,6 +189,9 @@ void main()
     // ── 3. OPTICAL BEER-LAMBERT TRANSMITTANCE & WATER COLUMN ─────────────────
     vec3 viewDir = viewVec * inversesqrt(max(distSq, 1e-8));
     vec3 L = normalize(u_lightDir);
+    // Zenith irradiance compensation so water volume and wave facets never wash out at 12:00 Noon
+    float zenithDamp = 1.0 / (1.0 + max(L.y - 0.38, 0.0) * 0.82);
+    vec3 effectiveLight = u_lightColor * zenithDamp;
     float NdotV = max(dot(normal, viewDir), 0.001);
     float opticalPath = waterDepth / max(NdotV, 0.25);
 
@@ -210,7 +213,7 @@ void main()
     float depthFadeCaustic = smoothstep(0.01, 0.18, waterDepth);
     float causticIntensity = smoothstep(0.50, 0.88, causticWave) *
                              u_causticsStrength * 0.065 * depthFadeCaustic;
-    vec3 causticLight = u_lightColor * causticIntensity * transmittance;
+    vec3 causticLight = effectiveLight * causticIntensity * transmittance;
 
     // ── 5. SINGLE-LAYER WATER SUBSURFACE SCATTERING (Wave-Crest SSS) ─────────
     float waveFacet = dot(sinP, vec3(0.52, 0.31, 0.17));
@@ -219,7 +222,7 @@ void main()
     float bl2 = backlight * backlight;
     float sssFactor = (bl2 * backlight * 0.75 + 0.25) * u_scatterCoeff;
     float crestThickness = clamp((1.0 - normal.y * 0.85) + max(0.0, waveFacet) * 0.35 + wakeCrestHighlight * 0.8, 0.0, 1.0);
-    vec3 sssLight = u_lightColor * u_scatterColor * sssFactor * (1.0 - exp(-2.4 * waterDepth)) * crestThickness;
+    vec3 sssLight = effectiveLight * u_scatterColor * sssFactor * (1.0 - exp(-2.4 * waterDepth)) * crestThickness;
 
     // ── 6. HYBRID FRESNEL & ENVIRONMENT REFLECTION (Fast Polynomials) ────────
     const float F0 = 0.02;
@@ -229,19 +232,19 @@ void main()
 
     vec3 reflectDir = reflect(-viewDir, normal);
     float skyAngle = clamp(reflectDir.y * 0.85 + 0.15, 0.0, 1.0);
-    vec3 skyZenith = vec3(0.20, 0.40, 0.72) * (0.80 + u_ambientColor.b * 0.4);
-    vec3 skyHorizon = vec3(0.46, 0.58, 0.68) * (0.70 + u_ambientColor.g * 0.3);
+    vec3 skyZenith = vec3(0.16, 0.36, 0.68) * (0.76 + u_ambientColor.b * 0.38);
+    vec3 skyHorizon = vec3(0.42, 0.55, 0.66) * (0.68 + u_ambientColor.g * 0.28);
     vec3 reflectedSky = mix(skyHorizon, skyZenith, skyAngle);
 
     // Subtle atmospheric sun-glow on horizon reflection
     float sunReflect = max(0.0, dot(reflectDir, L));
     float sr2 = sunReflect * sunReflect;
     float sr4 = sr2 * sr2;
-    reflectedSky += u_lightColor * (sr4 * sr4 * 0.18);
+    reflectedSky += effectiveLight * (sr4 * sr4 * 0.16);
 
     // Facet wave glints
-    float crest = smoothstep(0.48, 0.95, waveFacet) * 0.035;
-    vec3 waveHighlight = reflectedSky * (waveFacet * 0.030 + crest + wakeCrestHighlight * 0.45 + ringCrestHighlight * 0.55);
+    float crest = smoothstep(0.45, 0.92, waveFacet) * 0.055;
+    vec3 waveHighlight = reflectedSky * (waveFacet * 0.045 + crest + wakeCrestHighlight * 0.45 + ringCrestHighlight * 0.55);
 
     // Multi-scale specular sun glint via fast squaring (replaces 3 pow() calls)
     vec3 halfDir = normalize(L + viewDir);
@@ -256,12 +259,15 @@ void main()
     float nh64  = nh32 * nh32;
     float nh128 = nh64 * nh64;
     float glintSharp = nh128 * nh128; // NdotH^256
-    float glintMid   = nh48 * 0.20;   // NdotH^48 * 0.20
+    float glintMid   = nh48 * 0.32 + nh16 * 0.14; // Broad facet shimmer visible even at Noon
 
-    vec3 sunGlint = u_lightColor * (glintSharp * 3.5 + glintMid * 0.8) * (0.15 + fresnel * 0.85) * detailDistFade;
+    vec3 sunGlint = effectiveLight * (glintSharp * 3.5 + glintMid * 0.85) * (0.18 + fresnel * 0.82) * detailDistFade;
     float disturbance = clamp(length(interactSlope) * 2.2, 0.0, 1.0);
     vec3 waveReflection = reflectedSky * (nh12 * disturbance * 0.43);
-    vec3 waveLighting = u_lightColor * clamp(dot(normal, L) - L.y, -0.20, 0.20) * 0.28;
+    // Guarantee crisp wave-slope contrast even when L is straight overhead at 12:00 Noon (L.xz == 0)
+    vec2 horizAzimuth = normalize(L.xz + vec2(0.42, -0.34));
+    float waveSlopeContrast = dot(normal.xz, horizAzimuth) * 2.4;
+    vec3 waveLighting = effectiveLight * clamp(waveSlopeContrast + (dot(normal, L) - L.y), -0.26, 0.28) * 0.34;
 
     // ── 7. SHORELINE & SUBMERGED CONTACT WATERLINE MENISCUS ──────────────────
     float foamDist = max(u_foamThreshold, 0.16);
@@ -280,11 +286,15 @@ void main()
 
         float wakeFoamTex = dynamicWakeFoam * smoothstep(0.32, 0.78, foamNoise + dynamicWakeFoam * 0.35);
         brokenFoam = clamp(max(brokenFoam, wakeFoamTex), 0.0, 1.0);
+        if (u_waterShape == 3) {
+            // Fade foam to zero at the zero-depth shoreline lip so polygon edges are never outlined in white
+            brokenFoam *= smoothstep(0.025, 0.11, waterDepth);
+        }
     }
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
     float waterColumnAlpha = (u_waterShape == 3)
-        ? (0.24 + 0.54 * (1.0 - exp(-2.2 * waterDepth)))
+        ? (0.20 + 0.56 * (1.0 - exp(-2.2 * waterDepth)))
         : (0.12 + 0.34 * (1.0 - exp(-1.8 * waterDepth)));
     float surfaceAlpha = fresnel * 0.72 + waterColumnAlpha + min(length(sunGlint) * 0.22, 0.26);
 
@@ -299,10 +309,10 @@ void main()
         }
     } else if (u_waterShape == 3) {
         // AAA Organic Shoreline Blend: wide multi-octave feathering eliminates polygon edge stepping
-        float shoreNoise = texture(texture0, fragWorldXZ * 0.42).r;
-        float shoreFine  = texture(texture0, fragWorldXZ * 1.45).r;
-        float shorePerturb = (shoreNoise - 0.5) * 0.045 + (shoreFine - 0.5) * 0.016;
-        shoreEdgeFade = smoothstep(0.004, 0.16, waterDepth + shorePerturb);
+        float shoreNoise = texture(texture0, fragWorldXZ * 0.38).r;
+        float shoreFine  = texture(texture0, fragWorldXZ * 1.35).r;
+        float shorePerturb = (shoreNoise - 0.5) * 0.055 + (shoreFine - 0.5) * 0.020;
+        shoreEdgeFade = smoothstep(0.015, 0.22, waterDepth + shorePerturb);
     } else {
         shoreEdgeFade = smoothstep(0.002, 0.035, waterDepth);
     }
@@ -311,13 +321,13 @@ void main()
     float alpha = clamp(surfaceAlpha + brokenFoam * 0.28 * shoreEdgeFade, 0.0, 0.90);
 
     // ── 9. COMPOSITION ───────────────────────────────────────────────────────
-    vec3 shallowTint = (u_waterShape == 3) ? u_shallowColor : mix(u_shallowColor, vec3(0.16, 0.64, 0.60), 0.50);
-    vec3 deepTint    = (u_waterShape == 3) ? u_deepColor    : mix(u_deepColor,    vec3(0.05, 0.34, 0.42), 0.50);
+    vec3 shallowTint = (u_waterShape == 3) ? u_shallowColor : mix(u_shallowColor, vec3(0.14, 0.52, 0.50), 0.45);
+    vec3 deepTint    = (u_waterShape == 3) ? u_deepColor    : mix(u_deepColor,    vec3(0.04, 0.26, 0.34), 0.52);
 
     // Combine smooth depth transition with physical Beer-Lambert spectral transmittance
     vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.05, 0.75, waterDepth)), transmittance, 0.55), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);
-    waterVolumeColor *= (0.75 + u_ambientColor * 0.30 + u_lightColor * 0.20);
+    waterVolumeColor *= (0.64 + u_ambientColor * 0.26 + effectiveLight * 0.14);
 
     vec3 color = mix(waterVolumeColor, reflectedSky, clamp(fresnel * 0.68 + 0.10, 0.0, 1.0));
     color += causticLight;
@@ -325,9 +335,9 @@ void main()
     color += waveHighlight;
     color += sunGlint;
     color += waveReflection + waveLighting;
-    color += u_lightColor * vec3(0.66, 0.78, 0.88) * clamp(waveCurvature, -0.24, 0.24);
+    color += effectiveLight * vec3(0.66, 0.78, 0.88) * clamp(waveCurvature, -0.24, 0.24);
 
-    vec3 frothColor = mix(u_foamColor, vec3(1.0), 0.18) * (0.82 + u_lightColor * 0.18);
+    vec3 frothColor = mix(u_foamColor, vec3(1.0), 0.18) * (0.78 + effectiveLight * 0.16);
     color = mix(color, frothColor, brokenFoam);
 
     // VFX Point Light response

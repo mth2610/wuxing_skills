@@ -24,8 +24,8 @@
 #define MAP_WIDTH SONG_QUAO_MAP_WIDTH
 #define MAP_DEPTH SONG_QUAO_MAP_DEPTH
 #define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
-#define CLOUD_SEA_Y -7.35f
-#define GRASS_TUFT_CAPACITY 65000
+#define CLOUD_SEA_Y -4.20f
+#define GRASS_TUFT_CAPACITY 120000
 #define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
 #define REED_COUNT 650
 
@@ -107,11 +107,9 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     if (pos.y < -0.25f || normal.y < 0.72f || SampleWaterHeight(x, z) > pos.y - 0.02f)
         return 0.0f;
     Color splat = SampleSplat(x, z);
-    if (splat.g > 175) return 0.0f;
-    float splatGrass = (float)splat.r / 255.0f;
-    // Ensure lush, continuous meadow coverage across all gentle valleys and hills
-    float slopeBoost = (normal.y > 0.86f) ? 0.78f : 0.45f;
-    return fmaxf(splatGrass, slopeBoost * (1.0f - (float)splat.g / 255.0f));
+    if (splat.g > 170) return 0.0f;
+    // Return continuous 0.98 density on all valid meadow terrain so tufts never leave bald patches
+    return 0.98f;
 }
 
 static float SongQuaoSampleGroundHeight(float x, float z, void *ctx)
@@ -138,26 +136,38 @@ static float Random01(unsigned int *rng)
 
 static void BuildFloraPlacements(void)
 {
-    // 1. Generate dense meadow grass focused on the playable valley & reservoir terraces
+    // 1. Generate dense, continuous meadow grass across the valley & reservoir terraces
     s_grassCount = MapProp_GenerateMeadowPlacements(
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapMeadowDistribution){
-            .minBounds = {18.0f, 22.0f}, .maxBounds = {MAP_WIDTH - 18.0f, MAP_DEPTH - 22.0f},
+            .minBounds = {20.0f, 28.0f}, .maxBounds = {MAP_WIDTH - 20.0f, MAP_DEPTH - 28.0f},
             .spacing = 0.35f, .jitter = 0.85f,
-            .minRadius = 0.32f, .maxRadius = 0.46f,
-            .minHeight = 0.48f, .maxHeight = 0.76f,
-            .yOffset = 0.025f, .seed = 0x51a7c3u,
+            .minRadius = 0.28f, .maxRadius = 0.38f,
+            .minHeight = 0.95f, .maxHeight = 1.48f,
+            .yOffset = 0.03f, .seed = 0x51a7c3u,
         }, SongQuaoGrassDensity, NULL);
 
     for (int i = 0; i < s_grassCount; i++) {
         MapMeadowPlacement *clump = &s_grassPlacements[i];
-        Color splat = SampleSplat(clump->position.x, clump->position.z);
+        float px = clump->position.x;
+        float pz = clump->position.z;
+        Color splat = SampleSplat(px, pz);
         float vigor = (float)splat.r / 255.0f;
-        clump->height *= 0.85f + 0.32f * vigor;
+
+        // Coherent wind-streamline flow fields + lush arching height matching verdant_path
+        float flowAngle = 28.0f
+            + 38.0f * sinf(px * 0.085f + pz * 0.065f)
+            + 22.0f * cosf(px * 0.16f - pz * 0.14f);
+        float hash = sinf(px * 12.9898f + pz * 78.233f) * 43758.5453f;
+        hash -= floorf(hash);
+        clump->rotationDeg = flowAngle + (hash - 0.5f) * 240.0f;
+
+        float growth = 0.5f + 0.5f * sinf(px * 0.12f - pz * 0.09f + 1.1f);
+        clump->height = 1.18f + (0.28f * growth + 0.22f * vigor);
+
         // Softly nestle meadow canopy inside wildflower colonies so blooms emerge cleanly
         float understorey = MapFlora_EvaluateFlowerUnderstorey(
-            clump->position.x, clump->position.z,
-            SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
+            px, pz, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
         clump->height *= understorey;
     }
 
@@ -306,7 +316,7 @@ void InitSongQuaoMap(void)
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(MAP_WIDTH + 300.0f, MAP_DEPTH + 300.0f, 50.0f);
     MapBoundaryMistStyle rim = {2.2f, 9.5f, 0.40f, 1.8f, 0.55f};
-    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -6.85f, &rim))
+    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -3.85f, &rim))
         TraceLog(LOG_WARNING, "Song Quao: terrain boundary mist bake failed");
 
     // Build Rocks (Mountain crags, talus clusters, river stones)
@@ -328,9 +338,9 @@ void InitSongQuaoMap(void)
             .grassTipColor  = {136, 186, 54, 255},
             .bladesPerClump = 6,
             .bladeSegments  = 4,
-            .bladeWidthScale = 0.175f,
-            .lodDistance = 32.0f,
-            .drawDistance = 62.0f,
+            .bladeWidthScale = 0.19f,
+            .lodDistance = 42.0f,
+            .drawDistance = 105.0f,
             .shadowDistance = 22.0f,
             .reedRootColor = {26, 42, 20, 255},
             .reedTipColor  = {136, 172, 82, 255},

@@ -17,15 +17,17 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
     int slices = (rockType == 1) ? 38 : 32;
     Mesh mesh = GenMeshSphere(1.0f, rings, slices);
 
-    // Planar cleavage normals for sharp, chiseled granite / karst facets
-    static const float kBoulderPlanes[7][4] = {
-        { 0.78f,  0.48f,  0.39f, 0.76f},
-        {-0.72f,  0.52f,  0.46f, 0.74f},
-        { 0.18f,  0.44f, -0.88f, 0.75f},
-        {-0.32f,  0.65f, -0.69f, 0.72f},
-        { 0.55f,  0.74f, -0.38f, 0.68f},
-        {-0.64f,  0.28f, -0.71f, 0.78f},
-        { 0.12f,  0.92f,  0.37f, 0.64f},
+    // Deep polyhedral cleavage planes for sharp, chiseled granite / karst facets
+    static const float kBoulderPlanes[9][4] = {
+        { 0.78f,  0.48f,  0.39f, 0.52f},
+        {-0.72f,  0.52f,  0.46f, 0.50f},
+        { 0.18f,  0.44f, -0.88f, 0.51f},
+        {-0.32f,  0.65f, -0.69f, 0.48f},
+        { 0.55f,  0.74f, -0.38f, 0.45f},
+        {-0.64f,  0.28f, -0.71f, 0.54f},
+        { 0.12f,  0.92f,  0.37f, 0.44f},
+        { 0.84f,  0.18f, -0.51f, 0.53f},
+        {-0.22f,  0.58f,  0.78f, 0.49f},
     };
 
     for (int i = 0; i < mesh.vertexCount; i++) {
@@ -37,87 +39,101 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
         float angle = atan2f(z, x);
 
         if (rockType == 1) {
-            // Jagged mountain cliff / karst crag with sharp planar facets and stepped strata
+            // Jagged mountain cliff / karst crag with sharp polyhedral fracture planes and stepped strata
             float c1 = cosf(3.0f * angle + 0.45f);
             float c2 = sinf(5.0f * angle - 0.85f);
             float c3 = cosf(7.0f * angle + 1.10f);
-            float ridge = 1.0f + 0.34f * (c1 >= 0.0f ? sqrtf(c1) : -sqrtf(-c1))
-                              + 0.18f * c2 + 0.09f * fabsf(c3);
-
-            // Sharp stepped sedimentary ledges
-            float strataPhase = y * 11.0f + angle * 1.5f;
-            float terrace = 0.09f * (sinf(strataPhase) + 0.35f * sinf(strataPhase * 2.0f));
+            float ridge = 1.0f + 0.36f * (c1 >= 0.0f ? sqrtf(c1) : -sqrtf(-c1))
+                              + 0.22f * c2 - 0.14f * fabsf(c3);
 
             float heightFactor = (y + 1.0f) * 0.5f;
-            float taper = 1.28f - 0.82f * powf(heightFactor, 1.15f);
-            float summitPinch = Rock_Smoothstep(0.30f, 1.0f, y);
+            float taper = 1.32f - 0.88f * powf(heightFactor, 1.10f);
+            float summitPinch = Rock_Smoothstep(0.18f, 0.95f, y);
             float ridgeStrike = cosf(angle - 0.4f);
-            float ridgeChisel = 1.0f - summitPinch * 0.68f * (1.0f - fabsf(ridgeStrike));
+            float ridgeChisel = 1.0f - summitPinch * 0.74f * (1.0f - fabsf(ridgeStrike));
 
-            float baseWiden = (y < -0.05f) ? (1.0f + (-0.05f - y) * 0.92f) : 1.0f;
-            float leanX = 0.26f * powf(heightFactor, 2.0f);
-            float leanZ = -0.17f * powf(heightFactor, 2.0f);
+            float newR = horizR * ridge * taper * ridgeChisel;
+            float vx = cosf(angle) * newR * 1.22f;
+            float vy = y * 0.92f;
+            float vz = sinf(angle) * newR * 0.82f;
 
-            float newR = horizR * ridge * taper * ridgeChisel * baseWiden;
-            float vx = cosf(angle) * newR + leanX;
-            float vy = (y + 0.15f) * 2.35f + terrace;
-            float vz = sinf(angle) * newR + leanZ;
+            // Clip crag against geological cleavage planes so it is never a smooth cone/dome
+            for (int p = 0; p < 9; p++) {
+                float nx = kBoulderPlanes[p][0];
+                float ny = kBoulderPlanes[p][1];
+                float nz = kBoulderPlanes[p][2];
+                float d  = kBoulderPlanes[p][3] * 1.08f;
+                float dist = vx * nx + vy * ny + vz * nz - d;
+                if (dist > 0.0f) {
+                    vx -= nx * dist * 0.88f;
+                    vy -= ny * dist * 0.88f;
+                    vz -= nz * dist * 0.88f;
+                }
+            }
 
-            mesh.vertices[i * 3 + 0] = vx;
-            mesh.vertices[i * 3 + 1] = vy;
-            mesh.vertices[i * 3 + 2] = vz;
+            // Sharp stepped sedimentary ledges
+            float strataPhase = vy * 12.0f + angle * 1.5f;
+            float terrace = 0.085f * (sinf(strataPhase) + 0.40f * sinf(strataPhase * 2.0f));
+            float baseWiden = (vy < -0.05f) ? (1.0f + (-0.05f - vy) * 0.95f) : 1.0f;
+            float leanX = 0.24f * powf(heightFactor, 1.8f);
+            float leanZ = -0.16f * powf(heightFactor, 1.8f);
+
+            mesh.vertices[i * 3 + 0] = vx * baseWiden + leanX;
+            mesh.vertices[i * 3 + 1] = (vy + 0.18f) * 2.15f + terrace;
+            mesh.vertices[i * 3 + 2] = vz * baseWiden + leanZ;
 
             mesh.texcoords[i * 2 + 0] *= 2.8f;
             mesh.texcoords[i * 2 + 1] *= 3.8f;
         } else if (rockType == 2) {
             // River stone / cobblestone: water-worn flattened alluvial boulder
-            float facet = 1.0f + 0.10f * cosf(2.0f * angle + y * 1.8f)
-                               + 0.06f * sinf(3.0f * angle - 0.6f)
-                               - 0.04f * fabsf(cosf(5.0f * angle));
-            float flatY = (y < -0.08f) ? (-0.08f + (y + 0.08f) * 0.35f) : y * 0.42f;
+            float facet = 1.0f + 0.14f * cosf(2.0f * angle + y * 1.8f)
+                               + 0.09f * sinf(3.0f * angle - 0.6f)
+                               - 0.06f * fabsf(cosf(5.0f * angle));
+            float flatY = (y < -0.08f) ? (-0.08f + (y + 0.08f) * 0.32f) : y * 0.36f;
             float newR = horizR * facet * 1.18f;
-            mesh.vertices[i * 3 + 0] = cosf(angle) * newR;
+            mesh.vertices[i * 3 + 0] = cosf(angle) * newR * 1.15f;
             mesh.vertices[i * 3 + 1] = flatY;
-            mesh.vertices[i * 3 + 2] = sinf(angle) * newR;
+            mesh.vertices[i * 3 + 2] = sinf(angle) * newR * 0.88f;
 
             mesh.texcoords[i * 2 + 0] *= 1.6f;
             mesh.texcoords[i * 2 + 1] *= 1.4f;
         } else {
-            // Chiseled granite boulder: planar cleavage facets + grounded skirt
+            // Chiseled granite boulder: angular polyhedral cleavage blocks + grounded skirt
             float c1 = cosf(3.0f * angle + 0.35f);
             float c2 = sinf(4.0f * angle - 0.65f);
             float c3 = cosf(6.0f * angle + 1.2f);
-            float cleavage = 0.24f * c1 + 0.14f * c2 - 0.09f * fabsf(c3);
+            float cleavage = 0.28f * c1 + 0.18f * c2 - 0.14f * fabsf(c3);
 
-            float vx = cosf(angle) * horizR * (1.0f + cleavage);
-            float vy = y * 0.88f;
-            float vz = sinf(angle) * horizR * (1.0f + cleavage);
+            float vx = cosf(angle) * horizR * (1.0f + cleavage) * 1.24f;
+            float vy = y * 0.76f;
+            float vz = sinf(angle) * horizR * (1.0f + cleavage) * 0.84f;
 
-            // Clip against tilted geological fracture planes for crisp angular rock faces
-            for (int p = 0; p < 7; p++) {
+            // Clip deeply against 9 tilted geological fracture planes for crisp angular rock faces
+            for (int p = 0; p < 9; p++) {
                 float nx = kBoulderPlanes[p][0];
                 float ny = kBoulderPlanes[p][1];
                 float nz = kBoulderPlanes[p][2];
                 float d  = kBoulderPlanes[p][3];
                 float dist = vx * nx + vy * ny + vz * nz - d;
                 if (dist > 0.0f) {
-                    float clipStrength = 0.72f;
+                    float clipStrength = 0.90f;
                     vx -= nx * dist * clipStrength;
                     vy -= ny * dist * clipStrength;
                     vz -= nz * dist * clipStrength;
                 }
             }
 
-            // Horizontal bedding micro-terraces
-            float terrace = 0.045f * sinf(vy * 10.5f + angle * 2.0f);
+            // Stepped horizontal bedding ledges
+            float strata = vy * 11.5f + angle * 1.6f;
+            float terrace = 0.055f * (sinf(strata) + 0.35f * sinf(strata * 2.0f));
             vy += terrace;
 
             // Grounded flared skirt at the base
-            if (vy < -0.10f) {
-                float skirt = (-0.10f - vy);
-                vy = -0.10f - skirt * 0.32f;
-                vx *= 1.0f + skirt * 0.55f;
-                vz *= 1.0f + skirt * 0.55f;
+            if (vy < -0.06f) {
+                float skirt = (-0.06f - vy);
+                vy = -0.06f - skirt * 0.28f;
+                vx *= 1.0f + skirt * 0.62f;
+                vz *= 1.0f + skirt * 0.62f;
             }
 
             mesh.vertices[i * 3 + 0] = vx;
@@ -459,9 +475,9 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
         }
 
         Color rockTint;
-        if (p->archetype == MAP_ROCK_CRAG) rockTint = (Color){152, 148, 142, 255};
-        else if (p->archetype == MAP_ROCK_RIVER_STONE) rockTint = (Color){138, 142, 144, 255};
-        else rockTint = (Color){156, 150, 142, 255};
+        if (p->archetype == MAP_ROCK_CRAG) rockTint = (Color){242, 238, 228, 255};
+        else if (p->archetype == MAP_ROCK_RIVER_STONE) rockTint = (Color){230, 234, 230, 255};
+        else rockTint = (Color){245, 240, 230, 255};
 
         DrawModelEx(model, pos, rotAxis, p->rotationDeg, scale, rockTint);
     }
