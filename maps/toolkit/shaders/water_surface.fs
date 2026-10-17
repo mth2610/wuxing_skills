@@ -163,15 +163,22 @@ void main()
         hasValidDepth = true;
     }
 
-    if (!hasValidDepth && u_hasDepthTex > 0 && u_resolution.x > 1.0) {
+    // Hardware scene depth buffer refinement: provides pixel-perfect contact with ground
+    if (u_hasDepthTex > 0 && u_resolution.x > 1.0) {
         vec2 screenUV = gl_FragCoord.xy / u_resolution;
         float sceneLinear = texture(u_cameraDepthTex, screenUV).r;
         float ndc = gl_FragCoord.z * 2.0 - 1.0;
         float fragLinear = 2000.0 / (1001.0 - ndc * 999.0);
 
         if (sceneLinear > 1.01 && sceneLinear >= fragLinear - 0.05) {
-            waterDepth = clamp(sceneLinear - fragLinear, 0.0, u_maxDepth);
-            hasValidDepth = true;
+            float sceneDepth = clamp(sceneLinear - fragLinear, 0.0, u_maxDepth);
+            if (u_waterShape == 3) {
+                // Blend coarse DEM mesh depth with pixel-perfect hardware ground depth
+                waterDepth = min(waterDepth, sceneDepth);
+            } else if (!hasValidDepth) {
+                waterDepth = sceneDepth;
+                hasValidDepth = true;
+            }
         }
     }
 
@@ -294,8 +301,14 @@ void main()
             float shoreBreakup = (shoreNoise - 0.5) * 0.045 + (shoreFine - 0.5) * 0.012;
             shoreEdgeFade = 1.0 - smoothstep(0.91 + shoreBreakup, 1.0, radial);
         }
+    } else if (u_waterShape == 3) {
+        // AAA Organic Shoreline Blend: soft depth feathering eliminates triangle-edge stepping
+        float shoreNoise = texture(texture0, fragWorldXZ * 0.55).r;
+        float shoreFine  = texture(texture0, fragWorldXZ * 1.85).r;
+        float shorePerturb = (shoreNoise - 0.5) * 0.024 + (shoreFine - 0.5) * 0.008;
+        shoreEdgeFade = smoothstep(0.002, 0.065, waterDepth + shorePerturb);
     } else {
-        shoreEdgeFade = smoothstep(0.0005, 0.012, waterDepth);
+        shoreEdgeFade = smoothstep(0.002, 0.035, waterDepth);
     }
     surfaceAlpha *= shoreEdgeFade;
 

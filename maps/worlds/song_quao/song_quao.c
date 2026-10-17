@@ -206,9 +206,9 @@ static void BuildRocks(void)
 
 static void DrawSongQuaoShadowCasters(Shader depthShader, void *userData)
 {
-    (void)depthShader;
     (void)userData;
     MapProp_DrawFloraShadowCasters(&s_flora);
+    MapProp_DrawRockSystemShadowCasters(&s_rocks, depthShader);
 }
 
 static void CaptureSongQuaoStaticShadows(void)

@@ -34,6 +34,7 @@ in vec2 fragTexCoord;
 in vec3 fragNormal;
 in vec3 fragTangent;
 in vec3 fragBitangent;
+in float fragLocalY;
 
 uniform sampler2D texture0;   // diffuse/albedo (raylib MATERIAL_MAP_DIFFUSE convention)
 uniform sampler2D texture2;   // tangent-space normal map (MATERIAL_MAP_NORMAL convention)
@@ -71,8 +72,8 @@ void main() {
 
     // Roughness scales shininess: rough surfaces -> wide dim highlight,
     // smooth surfaces -> tight bright highlight.
-    float shininess    = mix(128.0, 8.0, roughness);
-    float specStrength = mix(0.05, 0.6, 1.0 - roughness);
+    float shininess    = mix(96.0, 12.0, roughness);
+    float specStrength = mix(0.02, 0.28, 1.0 - roughness);
     float spec = calcSpecular(normal, lightDir, viewDir, shininess) * specStrength;
 
     float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
@@ -86,13 +87,18 @@ void main() {
     lit += VFXLights_Accumulate(fragPosition, normal, albedo.rgb);
 
     // Ground contact ambient occlusion: darken bottom of rocks to eliminate floating look
-    float groundAO = clamp(worldPosition.y * 0.35 + 0.75, 0.40, 1.0);
+    float groundAO = clamp(0.36 + 0.64 * smoothstep(-0.85, 0.25, fragLocalY), 0.32, 1.0);
     lit *= groundAO;
 
-    // Atmospheric aerial haze for distant mountain crags (soft horizon blending)
+    // Contact moss & earthy soil staining on lower rock skirts
+    vec3 mossTint = vec3(0.20, 0.32, 0.14);
+    float mossFactor = clamp((1.0 - smoothstep(-0.85, -0.05, fragLocalY)) * (1.0 - max(normal.y, 0.0)), 0.0, 0.45);
+    lit = mix(lit, mossTint * u_ambientColor * 1.5, mossFactor);
+
+    // Atmospheric aerial haze for distant mountain crags (cool blue-sky horizon blending)
     float camDist = length(u_viewPos - fragPosition);
-    float haze = smoothstep(28.0, 75.0, camDist) * 0.40;
-    vec3 hazeColor = mix(u_ambientColor * 1.35, u_lightColor * 0.95, 0.45);
+    float haze = smoothstep(35.0, 105.0, camDist) * 0.32;
+    vec3 hazeColor = u_ambientColor * 1.35;
     lit = mix(lit, hazeColor, haze);
 
     finalColor = vec4(lit, albedo.a) * colDiffuse;

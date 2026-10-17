@@ -17,9 +17,10 @@ static Mesh Debris_BuildLeafMesh(void)
     mesh.triangleCount = 8;
     mesh.vertexCount = 24; // 8 triangles * 3 vertices
 
-    mesh.vertices = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
-    mesh.normals  = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
-    mesh.colors   = (unsigned char *)MemAlloc(mesh.vertexCount * 4 * sizeof(unsigned char));
+    mesh.vertices  = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.normals   = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.texcoords = (float *)MemAlloc(mesh.vertexCount * 2 * sizeof(float));
+    mesh.colors    = (unsigned char *)MemAlloc(mesh.vertexCount * 4 * sizeof(unsigned char));
 
     // Curved organic leaf: stem (0,0), mid-body, spine, curved tip
     Vector3 pts[7] = {
@@ -59,6 +60,9 @@ static Mesh Debris_BuildLeafMesh(void)
             mesh.normals[cursor * 3 + 1] = fn.y;
             mesh.normals[cursor * 3 + 2] = fn.z;
 
+            mesh.texcoords[cursor * 2 + 0] = tri[k].x / 0.04f;
+            mesh.texcoords[cursor * 2 + 1] = 0.5f;
+
             mesh.colors[cursor * 4 + 0] = 255;
             mesh.colors[cursor * 4 + 1] = 255;
             mesh.colors[cursor * 4 + 2] = 255;
@@ -66,7 +70,6 @@ static Mesh Debris_BuildLeafMesh(void)
             cursor++;
         }
     }
-    UploadMesh(&mesh, false);
     return mesh;
 }
 
@@ -78,9 +81,10 @@ static Mesh Debris_BuildPebbleMesh(void)
     mesh.triangleCount = 12;
     mesh.vertexCount = 36;
 
-    mesh.vertices = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
-    mesh.normals  = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
-    mesh.colors   = (unsigned char *)MemAlloc(mesh.vertexCount * 4 * sizeof(unsigned char));
+    mesh.vertices  = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.normals   = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.texcoords = (float *)MemAlloc(mesh.vertexCount * 2 * sizeof(float));
+    mesh.colors    = (unsigned char *)MemAlloc(mesh.vertexCount * 4 * sizeof(unsigned char));
 
     Vector3 apex = {0.0f, 0.024f, 0.0f};
     Vector3 base = {0.0f, 0.002f, 0.0f};
@@ -104,6 +108,8 @@ static Mesh Debris_BuildPebbleMesh(void)
             mesh.normals[cursor * 3 + 0]  = fn.x;
             mesh.normals[cursor * 3 + 1]  = fn.y;
             mesh.normals[cursor * 3 + 2]  = fn.z;
+            mesh.texcoords[cursor * 2 + 0] = tri[k].x / 0.05f;
+            mesh.texcoords[cursor * 2 + 1] = 0.5f;
             mesh.colors[cursor * 4 + 0] = 255;
             mesh.colors[cursor * 4 + 1] = 255;
             mesh.colors[cursor * 4 + 2] = 255;
@@ -123,6 +129,8 @@ static Mesh Debris_BuildPebbleMesh(void)
             mesh.normals[cursor * 3 + 0]  = fn.x;
             mesh.normals[cursor * 3 + 1]  = fn.y;
             mesh.normals[cursor * 3 + 2]  = fn.z;
+            mesh.texcoords[cursor * 2 + 0] = tri[k].x / 0.05f;
+            mesh.texcoords[cursor * 2 + 1] = 0.5f;
             mesh.colors[cursor * 4 + 0] = 255;
             mesh.colors[cursor * 4 + 1] = 255;
             mesh.colors[cursor * 4 + 2] = 255;
@@ -130,7 +138,6 @@ static Mesh Debris_BuildPebbleMesh(void)
             cursor++;
         }
     }
-    UploadMesh(&mesh, false);
     return mesh;
 }
 
@@ -141,9 +148,10 @@ static Mesh Debris_BuildTwigMesh(void)
     mesh.triangleCount = 10;
     mesh.vertexCount = 30;
 
-    mesh.vertices = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
-    mesh.normals  = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
-    mesh.colors   = (unsigned char *)MemAlloc(mesh.vertexCount * 4 * sizeof(unsigned char));
+    mesh.vertices  = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.normals   = (float *)MemAlloc(mesh.vertexCount * 3 * sizeof(float));
+    mesh.texcoords = (float *)MemAlloc(mesh.vertexCount * 2 * sizeof(float));
+    mesh.colors    = (unsigned char *)MemAlloc(mesh.vertexCount * 4 * sizeof(unsigned char));
 
     // Main bent stick: p0 -> p1 -> p2, side twig: p1 -> pFork
     Vector3 p0 = {-0.09f, 0.003f, -0.015f};
@@ -173,6 +181,8 @@ static Mesh Debris_BuildTwigMesh(void)
             mesh.normals[cursor * 3 + 0]  = (nrm).x; \
             mesh.normals[cursor * 3 + 1]  = (nrm).y; \
             mesh.normals[cursor * 3 + 2]  = (nrm).z; \
+            mesh.texcoords[cursor * 2 + 0] = _tri[_k].x / 0.1f; \
+            mesh.texcoords[cursor * 2 + 1] = 0.5f; \
             mesh.colors[cursor * 4 + 0]   = 255; \
             mesh.colors[cursor * 4 + 1]   = 255; \
             mesh.colors[cursor * 4 + 2]   = 255; \
@@ -195,7 +205,6 @@ static Mesh Debris_BuildTwigMesh(void)
     ADD_TRI(v2L, vFTip, v1L, Vector3Negate(up));
     #undef ADD_TRI
 
-    UploadMesh(&mesh, false);
     return mesh;
 }
 
@@ -267,20 +276,16 @@ MapDebrisSystem MapProp_CreateDebrisSystem(
     Mesh pebbleMesh = Debris_BuildPebbleMesh();
     Mesh twigMesh = Debris_BuildTwigMesh();
 
-    debris.models[MAP_DEBRIS_LEAF] = LoadModelFromMesh(leafMesh);
+    Shader shader = Nature_GetShader(true);
+
+    debris.models[MAP_DEBRIS_LEAF] = Nature_ModelFromMesh(leafMesh, shader);
     debris.modelLoaded[MAP_DEBRIS_LEAF] = true;
 
-    debris.models[MAP_DEBRIS_PEBBLE] = LoadModelFromMesh(pebbleMesh);
+    debris.models[MAP_DEBRIS_PEBBLE] = Nature_ModelFromMesh(pebbleMesh, shader);
     debris.modelLoaded[MAP_DEBRIS_PEBBLE] = true;
 
-    debris.models[MAP_DEBRIS_TWIG] = LoadModelFromMesh(twigMesh);
+    debris.models[MAP_DEBRIS_TWIG] = Nature_ModelFromMesh(twigMesh, shader);
     debris.modelLoaded[MAP_DEBRIS_TWIG] = true;
-
-    // Use prop_lit shader so debris receives environmental sun, ambient and shadow
-    Shader propShader = PropLit_GetShader();
-    debris.models[MAP_DEBRIS_LEAF].materials[0].shader = propShader;
-    debris.models[MAP_DEBRIS_PEBBLE].materials[0].shader = propShader;
-    debris.models[MAP_DEBRIS_TWIG].materials[0].shader = propShader;
 
     debris.ready = true;
     return debris;
@@ -290,7 +295,13 @@ void MapProp_DrawDebrisSystem(const MapDebrisSystem *debris, Vector3 cameraPosit
 {
     if (!debris || !debris->ready || debris->placementCount <= 0 || !debris->placements) return;
 
-    PropLit_UpdateLighting();
+    Shader shader = Nature_GetShader(true);
+    Nature_BeginWindReceiverShader(shader);
+    Nature_UpdateShader(shader, (float)GetTime(), (Vector2){1.0f, 0.0f}, 0.1f,
+                        false, 0.5f, NATURE_WIND_RESPONSE_STATIC);
+    SetShaderValue(shader, GetShaderLocation(shader, "u_viewPos"), &cameraPosition, SHADER_UNIFORM_VEC3);
+
+    rlDisableBackfaceCulling();
 
     float maxDist = debris->drawDistance;
     float maxDistSq = maxDist * maxDist;
@@ -304,9 +315,13 @@ void MapProp_DrawDebrisSystem(const MapDebrisSystem *debris, Vector3 cameraPosit
         if (dx * dx + dz * dz > maxDistSq) continue;
 
         Model model = debris->models[p->type];
-        Vector3 scale = {p->scale, p->scale, p->scale};
+        float s = p->scale * 1.8f;
+        Vector3 scale = {s, s, s};
         DrawModelEx(model, p->position, (Vector3){0.0f, 1.0f, 0.0f}, p->rotationDeg, scale, p->color);
     }
+
+    rlEnableBackfaceCulling();
+    Nature_EndWindReceiverShader();
 }
 
 void MapProp_DrawDebrisShadowCasters(const MapDebrisSystem *debris)

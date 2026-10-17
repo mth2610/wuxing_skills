@@ -104,12 +104,26 @@ void main()
     // ---- 3. Distance to Path (Sqrt-free loop) ----
     vec4 ecology = vec4(1.0, 0.6, 0.0, 0.5);
     float distToPath = 1000.0;
+    float shoreFactor = 0.0;
+    float lakeDepthFactor = 0.0;
     if (u_ecologyEnabled != 0) {
         vec2 ecoUV = (fragWorldPos.xz - u_ecologyRect.xy) / u_ecologyRect.zw;
         ecology = texture(u_ecology, ecoUV);
-        vec2 metricRG = texture(u_ecologyDistance, ecoUV).rg;
-        float roadEdge = ((metricRG.r + metricRG.g * (1.0 / 255.0)) * 2.0 - 1.0) * 16.0;
-        distToPath = roadEdge + 1.15;
+        vec4 metric = texture(u_ecologyDistance, ecoUV);
+        float roadU16 = (metric.r * 65280.0 + metric.g * 255.0) / 65535.0;
+        distToPath = (roadU16 * 2.0 - 1.0) * 16.0 + 1.15;
+
+        // Metric signed shore distance: < 0 is submerged, > 0 is dry terrain
+        float shoreU16 = (metric.b * 65280.0 + metric.a * 255.0) / 65535.0;
+        float signedShore = (shoreU16 * 2.0 - 1.0) * 16.0;
+        if (signedShore < 0.0) {
+            // Submerged ground / riverbed
+            lakeDepthFactor = clamp(-signedShore / 3.0, 0.0, 1.0);
+            shoreFactor = 1.0;
+        } else {
+            // Shore dampness extends 3.0m from water edge
+            shoreFactor = max(ecology.b, 1.0 - smoothstep(0.0, 3.0, signedShore));
+        }
     } else if (u_pathSegCount > 0) {
         float minDistSq = 1000000.0;
         int count = min(u_pathSegCount, MAX_PATH_SEGS);
@@ -125,21 +139,17 @@ void main()
     }
 
     // ---- 4. Shoreline Wetness & Lake Basin ----
-    float shoreFactor = 0.0;
-    float lakeDepthFactor = 0.0;
     if (u_lakeParams.z > 0.0) {
         vec2 lakeDelta = (fragWorldPos.xz - u_lakeParams.xy) / u_lakeParams.zw;
         float lakeDistSq = dot(lakeDelta, lakeDelta);
         if (lakeDistSq < 1.5625) { // 1.25^2
             float lakeDist = sqrt(lakeDistSq);
             float distWet = 1.0 - smoothstep(0.96, 1.25, lakeDist);
-            shoreFactor = (u_ecologyEnabled != 0) ? max(ecology.b, distWet) : distWet;
+            shoreFactor = max(shoreFactor, distWet);
             if (lakeDist < 1.0) {
                 // Fast & smooth approximation of 1.0 - pow(lakeDist, 1.6) without pow()
-                lakeDepthFactor = 1.0 - lakeDist * mix(1.0, lakeDist, 0.6);
+                lakeDepthFactor = max(lakeDepthFactor, 1.0 - lakeDist * mix(1.0, lakeDist, 0.6));
             }
-        } else if (u_ecologyEnabled != 0) {
-            shoreFactor = ecology.b;
         }
     }
 
@@ -181,7 +191,7 @@ void main()
     float wPathMargin = smoothstep(1.05, 1.75, distToPath) * (1.0 - smoothstep(1.75, 3.2, distToPath));
     float wWetSoil = max(shoreFactor * 0.95, smoothstep(0.40, 0.85, streamWet) * 0.90);
     float wSlope = smoothstep(0.14, 0.46, slope);
-    float wDrySoil = clamp(max(wPathMargin * 0.88 + wSlope * 0.92, rockScree * 0.85), 0.0, 1.0);
+    float wDrySoil = clamp(max(wPathMargin * 0.88 + wSlope * 0.92, rockScree * 0.85), 0.0, 1.0) * (1.0 - wWetSoil);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
     vec4 weights = vec4(wGrass, wDrySoil, wWetSoil, wPath);
@@ -402,8 +412,10 @@ void main()
         groundLit += (wetSheen * sunVisibility + skySheen) * wWetSoil;
     }
 
-    // Lake bank bounce light
-    groundLit += vec3(0.10, 0.13, 0.10) * shoreFactor * (0.75 + 0.25 * dirtDetail.r);
+    // Submerged riverbed ambient tint
+    if (lakeDepthFactor > 0.0) {
+        groundLit += vec3(0.015, 0.035, 0.028) * actualAmbient * (1.0 - lakeDepthFactor);
+    }
 
     // VFX Point Lights
     groundLit += VFXLights_AccumulateFlat(fragPosition, blendedAlbedo);

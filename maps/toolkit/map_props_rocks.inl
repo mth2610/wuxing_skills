@@ -3,10 +3,18 @@
 // paths are given. #include'd once from map_props.c — not a standalone
 // translation unit.
 
+static inline float Rock_Smoothstep(float edge0, float edge1, float x)
+{
+    float t = (x - edge0) / (edge1 - edge0);
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    return t * t * (3.0f - 2.0f * t);
+}
+
 static Mesh Nature_BuildProceduralRockMesh(int rockType)
 {
-    int rings = (rockType == 1) ? 14 : 10;
-    int slices = (rockType == 1) ? 18 : 12;
+    int rings = (rockType == 1) ? 22 : 18;
+    int slices = (rockType == 1) ? 28 : 24;
     Mesh mesh = GenMeshSphere(1.0f, rings, slices);
 
     for (int i = 0; i < mesh.vertexCount; i++) {
@@ -19,20 +27,36 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
 
         if (rockType == 1) {
             // Jagged mountain cliff / crag:
-            // 1. Taper upward with prominent sharp ridge lines (3-ridge karst/granite peak)
-            float ridge = 1.0f + 0.32f * cosf(3.0f * angle + 0.5f) + 0.16f * cosf(5.0f * angle - 1.1f);
-            // 2. Horizontal rock strata & stepped terraces
-            float terrace = 0.08f * sinf(y * 12.0f + angle * 1.5f);
-            // 3. Peak height factor: stretch upward into sharp spire
-            float heightFactor = (y + 1.0f) * 0.5f;
-            float taper = 1.12f - 0.72f * powf(heightFactor, 1.35f);
-            // 4. Flattened and expanded base for solid grounding
-            float baseWiden = (y < -0.1f) ? (1.0f + (-0.1f - y) * 0.75f) : 1.0f;
+            // 1. Asymmetrical karst peak with prominent cleavage planes
+            float c1 = cosf(3.0f * angle + 0.45f);
+            float c2 = sinf(5.0f * angle - 0.85f);
+            float ridge = 1.0f + 0.38f * c1 + 0.18f * c2;
 
-            float newR = horizR * ridge * taper * baseWiden;
-            mesh.vertices[i * 3 + 0] = cosf(angle) * newR;
-            mesh.vertices[i * 3 + 1] = (y + 0.15f) * 2.2f + terrace;
-            mesh.vertices[i * 3 + 2] = sinf(angle) * newR;
+            // 2. Horizontal rock strata & stepped terraces
+            float terrace = 0.12f * sinf(y * 14.0f + angle * 2.0f);
+
+            // 3. Peak taper + chiseled summit ridge (eliminates rounded spherical dome)
+            float heightFactor = (y + 1.0f) * 0.5f;
+            float taper = 1.25f - 0.85f * powf(heightFactor, 1.2f);
+            // Pinch summit along a dominant strike angle into a sharp chisel ridge
+            float summitPinch = Rock_Smoothstep(0.35f, 1.0f, y);
+            float ridgeStrike = cosf(angle - 0.4f);
+            float ridgeChisel = 1.0f - summitPinch * 0.65f * (1.0f - fabsf(ridgeStrike));
+
+            // 4. Flattened and expanded base skirt for solid grounding
+            float baseWiden = (y < -0.1f) ? (1.0f + (-0.1f - y) * 0.85f) : 1.0f;
+
+            // 5. Asymmetrical peak displacement: summit leans naturally along geological fault
+            float leanX = 0.28f * powf(heightFactor, 2.2f);
+            float leanZ = -0.18f * powf(heightFactor, 2.2f);
+
+            float newR = horizR * ridge * taper * ridgeChisel * baseWiden;
+            mesh.vertices[i * 3 + 0] = cosf(angle) * newR + leanX;
+            mesh.vertices[i * 3 + 1] = (y + 0.15f) * 2.4f + terrace;
+            mesh.vertices[i * 3 + 2] = sinf(angle) * newR + leanZ;
+
+            mesh.texcoords[i * 2 + 0] *= 2.8f;
+            mesh.texcoords[i * 2 + 1] *= 3.8f;
         } else if (rockType == 2) {
             // River stone / stepping stone:
             // Water-smoothed, flattened ellipsoid with gentle riverbed erosion
@@ -42,20 +66,35 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
             mesh.vertices[i * 3 + 0] = cosf(angle) * newR;
             mesh.vertices[i * 3 + 1] = flatY;
             mesh.vertices[i * 3 + 2] = sinf(angle) * newR;
-        } else {
-            // Natural weathered boulder:
-            // 1. Asymmetric faceted perturbation
-            float facet = 1.0f + 0.14f * cosf(3.0f * angle + y * 4.0f)
-                               + 0.09f * sinf(5.0f * angle - y * 3.0f)
-                               + 0.05f * cosf(7.0f * angle);
-            // 2. Flatten base so it sits solidly on the ground
-            float flatY = (y < -0.15f) ? (-0.15f + (y + 0.15f) * 0.35f) : y;
-            float baseSpread = (y < -0.15f) ? (1.0f + (-0.15f - y) * 0.45f) : 1.0f;
 
-            float newR = horizR * facet * baseSpread;
+            mesh.texcoords[i * 2 + 0] *= 1.6f;
+            mesh.texcoords[i * 2 + 1] *= 1.4f;
+        } else {
+            // Natural weathered boulder with crisp cleavage planes and granite fractures:
+            // 1. Dominant polygonal shear planes (hexagonal/octagonal fracturing)
+            float c1 = cosf(3.0f * angle + 0.35f);
+            float c2 = sinf(4.0f * angle - 0.65f);
+            float c3 = cosf(7.0f * angle + 1.2f);
+            float cleavage = 0.28f * c1 + 0.15f * c2 + 0.08f * c3;
+
+            // 2. Horizontal geologic bedding terraces
+            float terrace = 0.08f * sinf(y * 9.0f + angle * 2.5f);
+
+            // 3. Angular top facet: prevent smooth sphere cap by flattening and facet-shearing top
+            float topFlat = (y > 0.40f) ? (1.0f - (y - 0.40f) * 0.35f * (1.0f + cosf(2.0f * angle + 0.8f))) : 1.0f;
+
+            // 4. Flatten base so it sits solidly on the ground
+            float flatY = (y < -0.12f) ? (-0.12f + (y + 0.12f) * 0.28f) : y * 0.85f;
+            float baseSpread = (y < -0.12f) ? (1.0f + (-0.12f - y) * 0.65f) : 1.0f;
+
+            float newR = horizR * (1.0f + cleavage) * topFlat * baseSpread;
             mesh.vertices[i * 3 + 0] = cosf(angle) * newR;
-            mesh.vertices[i * 3 + 1] = flatY;
+            mesh.vertices[i * 3 + 1] = flatY + terrace;
             mesh.vertices[i * 3 + 2] = sinf(angle) * newR;
+
+            // Density-calibrated UVs so stone texture reveals crisp micro-cracks
+            mesh.texcoords[i * 2 + 0] *= 2.6f;
+            mesh.texcoords[i * 2 + 1] *= 2.0f;
         }
     }
 
@@ -388,7 +427,12 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
             }
         }
 
-        DrawModelEx(model, pos, rotAxis, p->rotationDeg, scale, WHITE);
+        Color rockTint;
+        if (p->archetype == MAP_ROCK_CRAG) rockTint = (Color){152, 148, 142, 255};
+        else if (p->archetype == MAP_ROCK_RIVER_STONE) rockTint = (Color){138, 142, 144, 255};
+        else rockTint = (Color){156, 150, 142, 255};
+
+        DrawModelEx(model, pos, rotAxis, p->rotationDeg, scale, rockTint);
     }
 }
 

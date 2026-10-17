@@ -36,10 +36,12 @@ out vec2 fragTexCoord;
 out vec3 fragNormal;
 out vec3 fragTangent;
 out vec3 fragBitangent;
+out float fragLocalY;
 
 void main() {
     fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
     fragTexCoord = vertexTexCoord;
+    fragLocalY   = vertexPosition.y;
 
     mat3 normalMat = mat3(matModel);
     fragNormal  = normalize(normalMat * vertexNormal);
