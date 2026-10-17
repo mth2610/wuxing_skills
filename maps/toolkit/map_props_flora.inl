@@ -188,7 +188,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
                 .lodDistance = (style.lodDistance > 0.0f) ? style.lodDistance : 32.0f,
                 .midLodDistance = 0.0f, // 0.0f prevents near-camera grass flattening
                 .drawDistance = (style.drawDistance > 0.0f) ? style.drawDistance : 60.0f,
-                .shadowDistance = 14.0f,
+                .shadowDistance = (style.shadowDistance > 0.0f) ? style.shadowDistance : 16.0f,
                 .texturePath = NULL,
                 .botanicalVariation = 1.0f,
                 .growthForm = MAP_MEADOW_GROWTH_GRASS,
@@ -209,7 +209,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
                 .lodDistance = 36.0f,
                 .midLodDistance = 18.0f,
                 .drawDistance = 65.0f,
-                .shadowDistance = 12.0f,
+                .shadowDistance = (style.shadowDistance > 0.0f) ? style.shadowDistance : 14.0f,
                 .texturePath = NULL,
                 .hasPlumes = false, // Strictly false: reeds are elegant curved blades, no white paper rectangles
                 .growthForm = MAP_MEADOW_GROWTH_REED,

@@ -12,6 +12,8 @@ draw = source[start:end]
 cloud_slot = re.search(r'#define GROUND_CLOUD_TEXTURE_SLOT\s+(\d+)', source).group(1)
 relief_slot = re.search(r'#define GROUND_RELIEF_TEXTURE_SLOT\s+(\d+)', source).group(1)
 debris_slot = re.search(r'#define GROUND_DEBRIS_TEXTURE_SLOT\s+(\d+)', source).group(1)
+eco_slot = re.search(r'#define GROUND_ECOLOGY_TEXTURE_SLOT\s+(\d+)', source).group(1)
+eco_dist_slot = re.search(r'#define GROUND_ECOLOGY_DIST_TEXTURE_SLOT\s+(\d+)', source).group(1)
 STUBS = r'''
 #include <assert.h>
 #include <stdbool.h>
@@ -32,7 +34,7 @@ enum {GFX_HIGH=2};
 typedef struct {Texture2D texture;} MaterialMap;
 typedef struct {MaterialMap *maps;} Material;
 typedef struct {Material *materials;} Model;
-typedef struct {bool ready;Vector4 rect;} MapEcology;
+typedef struct {bool ready;Vector4 rect;Texture2D habitatTexture,distanceTexture;} MapEcology;
 typedef struct {Vector4 rect;float cornerRadius,mistWidth,cloudLift,cloudBankWidth,groundInset;} MapIslandBoundary;
 typedef struct {bool ready;Model model;Vector3 drawOffset;Vector2 tiling;const MapEcology *ecology;Texture2D reliefTexture;Texture2D debrisTexture;MapIslandBoundary boundary;} MapGroundSurface;
 typedef struct {Texture2D noiseTexture;Vector4 uvTransform,shape;Vector2 projection;} EnvCloudShadowFrame;
@@ -41,13 +43,14 @@ static Shader groundShader={123};
 static int locIslandRect=19,locIslandShape=20;
 static int locGroundReliefSampler=17,locGroundReliefEnabled=18;
 static int locGroundDebrisSampler=21,locGroundDebrisEnabled=22;
+static int locEcologySampler=23,locEcologyDistanceSampler=24;
 static int locGroundCloudNoise=1,locGroundTiling=2,locGroundCloudUV=3,locGroundCloudShape=4,
  locGroundCloudProjection=5,locEcologyEnabled=6,locEcologyRect=7,locLightDir=8,locLightColor=9,
  locAmbientColor=10,locViewPos=11,locPathSegCount=12,locPathSegs=13,locLakeParams=14,locGroundOffset=15;
 static int s_groundPathSegCount;
 static Vector4 s_groundPathSegs[16],s_groundLakeParams;
 static struct {Vector3 position;} camera;
-static unsigned textures[11],expectedMaterialIds[11];
+static unsigned textures[16],expectedMaterialIds[11];
 static int activeProgram,activeSlot,cloudSampler,reliefSampler,reliefEnabled,debrisSampler,debrisEnabled,tilingUploads,drawCalls;
 static unsigned expectedReliefId;
 static Vector2 expectedTiling;
@@ -55,7 +58,7 @@ static EnvCloudShadowFrame cloudFrame={{456},{1,2,3,.12f},{.48f,.16f,80,0},{0,0}
 static void BeginShaderMode(Shader s) {assert(!activeProgram);activeProgram=s.id;}
 static void EndShaderMode(void) {assert(activeProgram==123);activeProgram=0;}
 static EnvCloudShadowFrame Environment_GetCloudShadowFrame(void) {return cloudFrame;}
-static void rlActiveTextureSlot(int s) {assert(s>=0 && s<11);activeSlot=s;}
+static void rlActiveTextureSlot(int s) {assert(s>=0 && s<16);activeSlot=s;}
 static void rlEnableTexture(unsigned id) {textures[activeSlot]=id;}
 static void rlDisableTexture(void) {textures[activeSlot]=0;}
 static unsigned rlGetTextureIdDefault(void) {return 999;}
@@ -96,22 +99,22 @@ MAIN = r'''
 int main(void) {
  MaterialMap maps[11]={0};
  for(int i=0;i<11;i++) {maps[i].texture.id=100+i;expectedMaterialIds[i]=100+i;}
- Material material={maps};MapEcology ecology={true,{0,0,100,75}};
+ Material material={maps};MapEcology ecology={true,{0,0,100,75},{888},{889}};
  MapGroundSurface g={true,{&material},{0,0,0},{27.777f,20.833f},&ecology,{670},{0},{0}};
  expectedReliefId=670;
  expectedTiling=g.tiling;MapProp_DrawGround(&g,(Vector3){50,0,37.5f});
- assert(!activeProgram && activeSlot==0 && textures[GROUND_CLOUD_TEXTURE_SLOT]==0 && textures[GROUND_RELIEF_TEXTURE_SLOT]==0 && textures[GROUND_DEBRIS_TEXTURE_SLOT]==0);
+ assert(!activeProgram && activeSlot==0 && textures[GROUND_CLOUD_TEXTURE_SLOT]==0 && textures[GROUND_RELIEF_TEXTURE_SLOT]==0 && textures[GROUND_DEBRIS_TEXTURE_SLOT]==0 && textures[GROUND_ECOLOGY_TEXTURE_SLOT]==0 && textures[GROUND_ECOLOGY_DIST_TEXTURE_SLOT]==0);
  g.tiling=(Vector2){7,9};expectedTiling=g.tiling;cloudFrame.noiseTexture.id=0;
  g.reliefTexture.id=0;expectedReliefId=0;
  MapProp_DrawGround(&g,(Vector3){0});assert(drawCalls==2 && tilingUploads==2);
- assert(!activeProgram && activeSlot==0 && textures[GROUND_CLOUD_TEXTURE_SLOT]==0 && textures[GROUND_RELIEF_TEXTURE_SLOT]==0 && textures[GROUND_DEBRIS_TEXTURE_SLOT]==0);
+ assert(!activeProgram && activeSlot==0 && textures[GROUND_CLOUD_TEXTURE_SLOT]==0 && textures[GROUND_RELIEF_TEXTURE_SLOT]==0 && textures[GROUND_DEBRIS_TEXTURE_SLOT]==0 && textures[GROUND_ECOLOGY_TEXTURE_SLOT]==0 && textures[GROUND_ECOLOGY_DIST_TEXTURE_SLOT]==0);
  g.ready=false;MapProp_DrawGround(&g,(Vector3){0});assert(drawCalls==2);
  puts("ground: alias-safe terrain textures, reserved cloud unit, active per-ground tiling and cleanup passed");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='wuxing-ground-binding-') as directory:
     work = pathlib.Path(directory)
-    prefix = '#define GROUND_CLOUD_TEXTURE_SLOT '+cloud_slot+'\n#define GROUND_RELIEF_TEXTURE_SLOT '+relief_slot+'\n#define GROUND_DEBRIS_TEXTURE_SLOT '+debris_slot+'\n'+STUBS
+    prefix = '#define GROUND_CLOUD_TEXTURE_SLOT '+cloud_slot+'\n#define GROUND_RELIEF_TEXTURE_SLOT '+relief_slot+'\n#define GROUND_DEBRIS_TEXTURE_SLOT '+debris_slot+'\n#define GROUND_ECOLOGY_TEXTURE_SLOT '+eco_slot+'\n#define GROUND_ECOLOGY_DIST_TEXTURE_SLOT '+eco_dist_slot+'\n'+STUBS
     def compile_and_run(body, name):
         c = work/(name+'.c')
         exe = work/name

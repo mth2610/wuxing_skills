@@ -200,13 +200,67 @@ static Mesh Debris_BuildTwigMesh(void)
 }
 
 MapDebrisSystem MapProp_CreateDebrisSystem(
-    const MapDebrisPlacement *placements, int count, float drawDistance)
+    const MapDebrisPlacement *placements, int count,
+    const MapGroundSurface *ground, Vector3 worldCenter, float drawDistance)
 {
     MapDebrisSystem debris = {0};
     if (!placements || count <= 0) return debris;
 
     debris.placementCount = count;
-    debris.drawDistance = (drawDistance > 5.0f) ? drawDistance : 32.0f;
+    debris.drawDistance = (drawDistance > 5.0f) ? drawDistance : 35.0f;
+    debris.placements = (MapDebrisPlacement *)MemAlloc(count * sizeof(MapDebrisPlacement));
+    if (!debris.placements) return debris;
+    memcpy(debris.placements, placements, count * sizeof(MapDebrisPlacement));
+
+    // Snap to rendered ground surface and assign harmonious botanical/stony tints
+    for (int i = 0; i < count; i++) {
+        MapDebrisPlacement *p = &debris.placements[i];
+        if (ground && ground->ready) {
+            Vector3 pos, normal;
+            if (MapProp_SampleGroundSurface(ground, worldCenter, p->position.x, p->position.z, &pos, &normal)) {
+                p->position = pos;
+                p->position.y += 0.012f; // prevent z-fighting with terrain surface
+            }
+        }
+
+        // Color variation based on type
+        switch (p->type) {
+            case MAP_DEBRIS_LEAF: {
+                // Autumn golden-amber to russet-orange leaf decay
+                float hueVar = (float)((i * 37) % 10) / 10.0f;
+                p->color = (Color){
+                    (unsigned char)(190 + 35 * hueVar),
+                    (unsigned char)(95 + 35 * hueVar),
+                    (unsigned char)(30 + 15 * hueVar),
+                    255
+                };
+                break;
+            }
+            case MAP_DEBRIS_PEBBLE: {
+                // Weathered river gravel / scree stone gray
+                float shade = (float)((i * 29) % 10) / 10.0f;
+                unsigned char val = (unsigned char)(140 + 25 * shade);
+                p->color = (Color){val, val, (unsigned char)(val - 4), 255};
+                break;
+            }
+            case MAP_DEBRIS_TWIG: {
+                // Forest understory fallen twig / woody bark brown
+                float shade = (float)((i * 41) % 10) / 10.0f;
+                p->color = (Color){
+                    (unsigned char)(85 + 20 * shade),
+                    (unsigned char)(54 + 15 * shade),
+                    (unsigned char)(36 + 10 * shade),
+                    255
+                };
+                break;
+            }
+            case MAP_DEBRIS_MOSS: {
+                p->color = (Color){68, 120, 46, 255};
+                break;
+            }
+            default: break;
+        }
+    }
 
     // Build base archetype meshes
     Mesh leafMesh = Debris_BuildLeafMesh();
@@ -228,15 +282,31 @@ MapDebrisSystem MapProp_CreateDebrisSystem(
     debris.models[MAP_DEBRIS_PEBBLE].materials[0].shader = propShader;
     debris.models[MAP_DEBRIS_TWIG].materials[0].shader = propShader;
 
-    // Store placements array
     debris.ready = true;
     return debris;
 }
 
 void MapProp_DrawDebrisSystem(const MapDebrisSystem *debris, Vector3 cameraPosition)
 {
-    if (!debris || !debris->ready || debris->placementCount <= 0) return;
-    (void)cameraPosition;
+    if (!debris || !debris->ready || debris->placementCount <= 0 || !debris->placements) return;
+
+    PropLit_UpdateLighting();
+
+    float maxDist = debris->drawDistance;
+    float maxDistSq = maxDist * maxDist;
+
+    for (int i = 0; i < debris->placementCount; i++) {
+        const MapDebrisPlacement *p = &debris->placements[i];
+        if (p->type >= MAP_DEBRIS_TYPE_COUNT || !debris->modelLoaded[p->type]) continue;
+
+        float dx = p->position.x - cameraPosition.x;
+        float dz = p->position.z - cameraPosition.z;
+        if (dx * dx + dz * dz > maxDistSq) continue;
+
+        Model model = debris->models[p->type];
+        Vector3 scale = {p->scale, p->scale, p->scale};
+        DrawModelEx(model, p->position, (Vector3){0.0f, 1.0f, 0.0f}, p->rotationDeg, scale, p->color);
+    }
 }
 
 void MapProp_DrawDebrisShadowCasters(const MapDebrisSystem *debris)
@@ -252,6 +322,10 @@ void MapProp_UnloadDebrisSystem(MapDebrisSystem *debris)
             UnloadModel(debris->models[i]);
             debris->modelLoaded[i] = false;
         }
+    }
+    if (debris->placements) {
+        MemFree(debris->placements);
+        debris->placements = NULL;
     }
     debris->placementCount = 0;
     debris->ready = false;

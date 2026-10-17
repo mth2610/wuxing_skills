@@ -19,12 +19,15 @@ static int locGroundReliefSampler = -1, locGroundReliefEnabled = -1;
 static int locGroundDebrisSampler = -1, locGroundDebrisEnabled = -1;
 static int locEcologyRect = -1;
 static int locEcologyEnabled = -1;
+static int locEcologySampler = -1, locEcologyDistanceSampler = -1;
 static int locGroundCloudUV = -1, locGroundCloudShape = -1, locGroundCloudProjection = -1;
 
 #define MAX_GROUND_PATH_SEGS 16
 #define GROUND_CLOUD_TEXTURE_SLOT 7 // Raw 2D binding; not a cubemap material map.
 #define GROUND_RELIEF_TEXTURE_SLOT 8 // Separate 2D resource, never material normals/roughness.
 #define GROUND_DEBRIS_TEXTURE_SLOT 9 // Macro debris distribution map (R=litter, G=scree, B=twigs, A=moss).
+#define GROUND_ECOLOGY_TEXTURE_SLOT 10 // Macro habitat / vegetation suitability.
+#define GROUND_ECOLOGY_DIST_TEXTURE_SLOT 11 // Metric path & shore signed distance.
 static Vector4 s_groundPathSegs[MAX_GROUND_PATH_SEGS];
 static int s_groundPathSegCount = 0;
 static Vector4 s_groundLakeParams = {0};
@@ -327,8 +330,8 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locGroundCloudUV = GetShaderLocation(groundShader, "u_cloudUV");
         locGroundCloudShape = GetShaderLocation(groundShader, "u_cloudShape");
         locGroundCloudProjection = GetShaderLocation(groundShader, "u_cloudProjection");
-        groundShader.locs[SHADER_LOC_MAP_OCCLUSION] = GetShaderLocation(groundShader, "u_ecology");
-        groundShader.locs[SHADER_LOC_MAP_BRDF] = GetShaderLocation(groundShader, "u_ecologyDistance");
+        locEcologySampler = GetShaderLocation(groundShader, "u_ecology");
+        locEcologyDistanceSampler = GetShaderLocation(groundShader, "u_ecologyDistance");
         VFXLight_RegisterShader(groundShader);   // main.c binds it each frame
 
         shaderLoaded = true;
@@ -557,6 +560,15 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     rlActiveTextureSlot(GROUND_DEBRIS_TEXTURE_SLOT);
     rlEnableTexture(ground->debrisTexture.id ? ground->debrisTexture.id : rlGetTextureIdDefault());
     rlActiveTextureSlot(0);
+    int ecologyEnabled = ground->ecology && ground->ecology->ready;
+    rlActiveTextureSlot(GROUND_ECOLOGY_TEXTURE_SLOT);
+    rlEnableTexture((ecologyEnabled && ground->ecology->habitatTexture.id)
+                    ? ground->ecology->habitatTexture.id : rlGetTextureIdDefault());
+    rlActiveTextureSlot(0);
+    rlActiveTextureSlot(GROUND_ECOLOGY_DIST_TEXTURE_SLOT);
+    rlEnableTexture((ecologyEnabled && ground->ecology->distanceTexture.id)
+                    ? ground->ecology->distanceTexture.id : rlGetTextureIdDefault());
+    rlActiveTextureSlot(0);
     int reliefSlot = GROUND_RELIEF_TEXTURE_SLOT;
     int reliefEnabled = ground->reliefTexture.id != 0;
     if (locGroundReliefSampler >= 0) SetShaderValue(groundShader, locGroundReliefSampler, &reliefSlot, SHADER_UNIFORM_INT);
@@ -565,13 +577,16 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     int debrisEnabled = ground->debrisTexture.id != 0;
     if (locGroundDebrisSampler >= 0) SetShaderValue(groundShader, locGroundDebrisSampler, &debrisSlot, SHADER_UNIFORM_INT);
     if (locGroundDebrisEnabled >= 0) SetShaderValue(groundShader, locGroundDebrisEnabled, &debrisEnabled, SHADER_UNIFORM_INT);
+    int ecoSlot = GROUND_ECOLOGY_TEXTURE_SLOT;
+    if (locEcologySampler >= 0) SetShaderValue(groundShader, locEcologySampler, &ecoSlot, SHADER_UNIFORM_INT);
+    int ecoDistSlot = GROUND_ECOLOGY_DIST_TEXTURE_SLOT;
+    if (locEcologyDistanceSampler >= 0) SetShaderValue(groundShader, locEcologyDistanceSampler, &ecoDistSlot, SHADER_UNIFORM_INT);
     int cloudSlot = GROUND_CLOUD_TEXTURE_SLOT;
     if (locGroundCloudNoise >= 0) SetShaderValue(groundShader, locGroundCloudNoise, &cloudSlot, SHADER_UNIFORM_INT);
     if (locGroundTiling >= 0) SetShaderValue(groundShader, locGroundTiling, &ground->tiling, SHADER_UNIFORM_VEC2);
     if (locGroundCloudUV >= 0) SetShaderValue(groundShader, locGroundCloudUV, &cloud.uvTransform, SHADER_UNIFORM_VEC4);
     if (locGroundCloudShape >= 0) SetShaderValue(groundShader, locGroundCloudShape, &cloud.shape, SHADER_UNIFORM_VEC4);
     if (locGroundCloudProjection >= 0) SetShaderValue(groundShader, locGroundCloudProjection, &cloud.projection, SHADER_UNIFORM_VEC2);
-    int ecologyEnabled = ground->ecology && ground->ecology->ready;
     if (locEcologyEnabled >= 0) SetShaderValue(groundShader, locEcologyEnabled, &ecologyEnabled, SHADER_UNIFORM_INT);
     if (ecologyEnabled && locEcologyRect >= 0) SetShaderValue(groundShader, locEcologyRect, &ground->ecology->rect, SHADER_UNIFORM_VEC4);
 
@@ -620,6 +635,10 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     if (locGroundOffset >= 0)
         SetShaderValue(groundShader, locGroundOffset, &pos, SHADER_UNIFORM_VEC3);
     DrawModel(ground->model, pos, 1.0f, WHITE);
+    rlActiveTextureSlot(GROUND_ECOLOGY_DIST_TEXTURE_SLOT);
+    rlDisableTexture();
+    rlActiveTextureSlot(GROUND_ECOLOGY_TEXTURE_SLOT);
+    rlDisableTexture();
     rlActiveTextureSlot(GROUND_RELIEF_TEXTURE_SLOT);
     rlDisableTexture();
     rlActiveTextureSlot(GROUND_DEBRIS_TEXTURE_SLOT);
@@ -650,18 +669,10 @@ void MapProp_DrawGroundShadowCaster(MapGroundSurface *ground, Vector3 worldCente
         return;
     Shader previous = ground->model.materials[0].shader;
     ground->model.materials[0].shader = depthShader;
-    Texture2D habitat = ground->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture;
-    Texture2D metrics = ground->model.materials[0].maps[MATERIAL_MAP_BRDF].texture;
-    if (ground->ecology) {
-        ground->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = (Texture2D){0};
-        ground->model.materials[0].maps[MATERIAL_MAP_BRDF].texture = (Texture2D){0};
-    }
     Vector3 pos = Vector3Add(worldCenter, ground->drawOffset);
     DrawModel(ground->model, pos, 1.0f, WHITE);
     rlDrawRenderBatchActive();
     ground->model.materials[0].shader = previous;
-    ground->model.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = habitat;
-    ground->model.materials[0].maps[MATERIAL_MAP_BRDF].texture = metrics;
 }
 
 void MapProp_SetGroundTint(MapGroundSurface *ground, Color tint)
@@ -704,8 +715,6 @@ void MapProp_SetGroundEcology(MapGroundSurface *ground, const MapEcology *ecolog
 {
     if (!ground || !ground->ready) return;
     ground->ecology = ecology;
-    ground->model.materials[0].maps[MATERIAL_MAP_OCCLUSION].texture = ecology ? ecology->habitatTexture : (Texture2D){0};
-    ground->model.materials[0].maps[MATERIAL_MAP_BRDF].texture = ecology ? ecology->distanceTexture : (Texture2D){0};
 }
 
 void MapProp_SetGroundReliefMap(MapGroundSurface *ground, const char *reliefPath)

@@ -543,6 +543,7 @@ typedef struct {
     float bladeWidthScale;    // Default: 0.16
     float lodDistance;        // Default: 32.0m
     float drawDistance;       // Default: 60.0m
+    float shadowDistance;     // Default: 16.0m (casts dynamic directional grass shadows within near range)
 
     Color reedRootColor;
     Color reedTipColor;
@@ -619,13 +620,15 @@ typedef struct {
 typedef struct {
     Model models[MAP_DEBRIS_TYPE_COUNT];
     bool modelLoaded[MAP_DEBRIS_TYPE_COUNT];
+    MapDebrisPlacement *placements;
     int placementCount;
     float drawDistance;     // Default: 32.0m
     bool ready;
 } MapDebrisSystem;
 
 MapDebrisSystem MapProp_CreateDebrisSystem(
-    const MapDebrisPlacement *placements, int count, float drawDistance);
+    const MapDebrisPlacement *placements, int count,
+    const MapGroundSurface *ground, Vector3 worldCenter, float drawDistance);
 void MapProp_DrawDebrisSystem(const MapDebrisSystem *debris, Vector3 cameraPosition);
 void MapProp_DrawDebrisShadowCasters(const MapDebrisSystem *debris);
 void MapProp_UnloadDebrisSystem(MapDebrisSystem *debris);

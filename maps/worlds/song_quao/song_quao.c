@@ -208,7 +208,7 @@ static void DrawSongQuaoShadowCasters(Shader depthShader, void *userData)
 {
     (void)depthShader;
     (void)userData;
-    // MapProp_DrawFloraShadowCasters(&s_flora);
+    MapProp_DrawFloraShadowCasters(&s_flora);
 }
 
 static void CaptureSongQuaoStaticShadows(void)
@@ -217,7 +217,7 @@ static void CaptureSongQuaoStaticShadows(void)
     EnvShadow_BeginStaticCapture(kMapCenter, 64.0f);
     if (!EnvShadow_IsCapturing()) return;
     Shader depthShader = EnvShadow_GetDepthShader();
-    // MapProp_DrawRockSystemShadowCasters(&s_rocks, depthShader);
+    MapProp_DrawRockSystemShadowCasters(&s_rocks, depthShader);
     EnvShadow_EndStaticCapture();
 }
 
@@ -305,7 +305,8 @@ void InitSongQuaoMap(void)
 
     // Build Debris System (Fallen leaves, scree pebbles, twigs)
     s_debris = MapProp_CreateDebrisSystem(
-        SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT, 35.0f);
+        SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT,
+        &s_ground, kMapCenter, 42.0f);
 
     // Build Flora (Lush valley grass, reeds, wildflower colonies)
     BuildFloraPlacements();
@@ -321,6 +322,7 @@ void InitSongQuaoMap(void)
             .bladeWidthScale = 0.16f,
             .lodDistance = 32.0f,
             .drawDistance = 60.0f,
+            .shadowDistance = 16.0f,
             .reedRootColor = {26, 42, 20, 255},
             .reedTipColor  = {136, 172, 82, 255},
             .hasReedPlumes = false,
