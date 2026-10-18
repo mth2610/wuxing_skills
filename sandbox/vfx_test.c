@@ -38,6 +38,7 @@ static bool s_hasTestPath = false;
 #include "raymath.h"
 #include "core/geometry/sdf_capsule.h"
 #include "core/surface_material.h"
+#include "core/gfx_quality.h"
 #include "character/character_model.h"
 
 // Messiah Engine Feature Demos (Items 2, 3, 4)
@@ -1524,6 +1525,7 @@ typedef struct VFXTest_UILayout {
 } VFXTest_UILayout;
 
 static Rectangle VFXTest_UIHeaderButton(VFXTest_UILayout ui, int index);
+static Rectangle VFXTest_UIGfxButton(VFXTest_UILayout ui);
 static Rectangle VFXTest_UIFogButton(VFXTest_UILayout ui);
 static Rectangle VFXTest_UISunSlider(VFXTest_UILayout ui);
 
@@ -1541,11 +1543,11 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
     float statusBottom = top + 40.0f;
     if (w >= 1100.0f) {
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){178.0f + i * 76.0f, top, 76.0f, 40.0f};
-        float sunSliderX = VFXTest_UIFogButton(ui).x - 160.0f;
+        float sunSliderX = VFXTest_UISunSlider(ui).x;
         float camRight = sunSliderX - 10.0f;
         float camW = fmaxf(120.0f, camRight - 412.0f);
         ui.cameraStatus = (Rectangle){412.0f, top, camW, 40.0f};
-        ui.sunSlider = (Rectangle){sunSliderX, top + 5.0f, 154.0f, 30.0f};
+        ui.sunSlider = (Rectangle){sunSliderX, top + 5.0f, 150.0f, 30.0f};
     } else {
         ui.header.height = 116.0f;
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){18.0f + i * ((w - 36.0f) / 3.0f), top + 40.0f, (w - 36.0f) / 3.0f, 36.0f};
@@ -1598,21 +1600,31 @@ static Rectangle VFXTest_UITiltButton(VFXTest_UILayout ui, int direction)
                        ui.cameraStatus.y + (ui.cameraStatus.height - 30.0f) * 0.5f, 30.0f, 30.0f};
 }
 
+static Rectangle VFXTest_UIGfxButton(VFXTest_UILayout ui)
+{
+    if (GetScreenWidth() >= 1100)
+        return (Rectangle){VFXTest_UIHeaderButton(ui, 0).x - 100.0f,
+                           ui.header.y + 5.0f, 94.0f, 30.0f};
+    float width = ui.cameraStatus.width >= 440.0f ? 94.0f : 78.0f;
+    return (Rectangle){VFXTest_UITiltButton(ui, -1).x - width - 8.0f,
+                       VFXTest_UITiltButton(ui, -1).y, width, 30.0f};
+}
+
 static Rectangle VFXTest_UIFogButton(VFXTest_UILayout ui)
 {
     if (GetScreenWidth() >= 1100)
-        return (Rectangle){VFXTest_UIHeaderButton(ui, 0).x - 152.0f,
-                           ui.header.y + 5.0f, 146.0f, 30.0f};
-    float width = ui.cameraStatus.width >= 440.0f ? 146.0f : 96.0f;
-    return (Rectangle){VFXTest_UITiltButton(ui, -1).x - width - 8.0f,
-                       VFXTest_UITiltButton(ui, -1).y, width, 30.0f};
+        return (Rectangle){VFXTest_UIGfxButton(ui).x - 146.0f,
+                           ui.header.y + 5.0f, 140.0f, 30.0f};
+    float width = ui.cameraStatus.width >= 440.0f ? 140.0f : 96.0f;
+    return (Rectangle){VFXTest_UIGfxButton(ui).x - width - 6.0f,
+                       VFXTest_UIGfxButton(ui).y, width, 30.0f};
 }
 
 static Rectangle VFXTest_UISunSlider(VFXTest_UILayout ui)
 {
     if (GetScreenWidth() >= 1100)
-        return (Rectangle){VFXTest_UIFogButton(ui).x - 160.0f,
-                           ui.header.y + 5.0f, 154.0f, 30.0f};
+        return (Rectangle){VFXTest_UIFogButton(ui).x - 156.0f,
+                           ui.header.y + 5.0f, 150.0f, 30.0f};
     return (Rectangle){VFXTest_UIFogButton(ui).x - 146.0f,
                        VFXTest_UIFogButton(ui).y, 140.0f, 30.0f};
 }
@@ -1806,6 +1818,10 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
         }
     }
 
+    if (VFXTest_UIButtonReleased(VFXTest_UIGfxButton(ui))) {
+        GfxQuality next = GfxQuality_Cycle();
+        TraceLog(LOG_INFO, "[VFXTest] Graphics quality toggled to %s", GfxQuality_GetName(next));
+    }
     if (VFXTest_UIButtonReleased(VFXTest_UIFogButton(ui))) {
         FogRenderMode mode = Fog_GetRenderMode();
         Fog_SetRenderMode(mode == FOG_MODE_OFF ? FOG_MODE_HEIGHT :
@@ -1927,6 +1943,9 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 0), "Fixtures", s_isPanelOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), "Help", s_vfxHelpOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Back", false);
+    GfxQuality gfx = GfxQuality_Get();
+    const char *gfxLabel = TextFormat("GFX: %s", GfxQuality_GetName(gfx));
+    VFXTest_UIDrawButton(VFXTest_UIGfxButton(ui), gfxLabel, gfx >= GFX_HIGH);
     FogRenderMode fogMode = Fog_GetRenderMode();
     const char *fogLabel = fogMode == FOG_MODE_OFF ? "Fog: None" :
                            fogMode == FOG_MODE_HEIGHT ?

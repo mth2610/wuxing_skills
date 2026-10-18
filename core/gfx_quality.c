@@ -75,11 +75,31 @@ void GfxQuality_UpdateAuto(float frameSeconds) {
     s_autoSlowWindows = averageSeconds > 1.0f / 57.0f ? s_autoSlowWindows + 1 : 0;
     s_autoWindowSeconds = 0.0f;
     s_autoWindowFrames = 0;
-    if (s_autoSlowWindows >= 2 && s_q > GFX_LOW) {
-        s_q = s_q > GFX_HIGH ? GFX_HIGH : GFX_LOW;
-        s_autoWarmup = 2.0f;
+    if (s_autoSlowWindows >= 3 && s_q > GFX_MED) {
+        s_q = (s_q == GFX_ULTRA) ? GFX_HIGH : GFX_MED;
+        s_autoWarmup = 3.0f;
         s_autoSlowWindows = 0;
     }
+}
+
+GfxQuality GfxQuality_Cycle(void) {
+    GfxQuality next;
+    switch (s_q) {
+        case GFX_LOW:   next = GFX_MED; break;
+        case GFX_MED:   next = GFX_HIGH; break;
+        case GFX_HIGH:  next = GFX_ULTRA; break;
+        case GFX_ULTRA: next = GFX_UNLIT; break;
+        case GFX_UNLIT: next = GFX_LOW; break;
+        default:        next = GFX_HIGH; break;
+    }
+    GfxQuality_Set(next);
+    return next;
+}
+
+const char *GfxQuality_GetName(GfxQuality q) {
+    static const char *names[] = { "UNLIT", "LOW", "MED", "HIGH", "ULTRA" };
+    if (q >= GFX_UNLIT && q <= GFX_ULTRA) return names[q];
+    return "UNKNOWN";
 }
 
 GfxQuality GfxQuality_Default(void) {
@@ -94,6 +114,6 @@ GfxQuality GfxQuality_Default(void) {
 void GfxQuality_InitDefault(void) {
     const char *override = getenv("WUXING_GFX_QUALITY");
     GfxQuality_Set(GfxQuality_Default());
-    GfxQuality_SetAuto(override == NULL || *override == '\0' ||
-                      GfxQuality_StringEqualsIgnoreCase(override, "auto"));
+    // Only enable auto-downgrade when explicitly requested via WUXING_GFX_QUALITY=auto
+    GfxQuality_SetAuto(override != NULL && GfxQuality_StringEqualsIgnoreCase(override, "auto"));
 }

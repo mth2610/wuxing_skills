@@ -27,5 +27,10 @@ bool       GfxQuality_IsAuto(void);
 // Ignores loading stalls >=250 ms; 1.5 s warmup, two slow 1 s windows and
 // 2 s settling after changes prevent transient drops and tier oscillation.
 void       GfxQuality_UpdateAuto(float frameSeconds);
+// Cycle through available quality tiers (LOW -> MED -> HIGH -> ULTRA -> UNLIT -> LOW).
+// Disables auto mode.
+GfxQuality GfxQuality_Cycle(void);
+// Human-readable quality name ("UNLIT", "LOW", "MED", "HIGH", "ULTRA").
+const char *GfxQuality_GetName(GfxQuality q);
 
 #endif // GFX_QUALITY_H

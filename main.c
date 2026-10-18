@@ -226,10 +226,7 @@ static Rectangle DebugToggleRect(int index, bool vfxTester) {
 
 static void CycleGraphicsQuality(void)
 {
-    if (GfxQuality_IsAuto()) GfxQuality_Set(GFX_LOW);
-    else if (GfxQuality_Get() < GFX_HIGH) GfxQuality_Set(GFX_HIGH);
-    else if (GfxQuality_Get() == GFX_HIGH) GfxQuality_Set(GFX_ULTRA);
-    else GfxQuality_SetAuto(true);
+    GfxQuality_Cycle();
 }
 
 /* Manager-owned VFX uses the common semantic passes. Standalone skills and
@@ -884,13 +881,14 @@ int main(int argc, char **argv) {
         }
         // Same two toggles by TOUCH, for Android (no keyboard). Only while the labels are actually
         // drawn (they are hidden on SCREEN_GAME), so gameplay taps are never swallowed.
+        // SCREEN_VFX_TESTER has its own dedicated top-bar GFX button and pointer hit-test.
         if (currentScreen != SCREEN_GAME &&
-            !(currentScreen == SCREEN_VFX_TESTER && VFXTest_ShouldHideDebugOverlays()) &&
+            currentScreen != SCREEN_VFX_TESTER &&
             IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             Vector2 tap = GetMousePosition();
-            if (CheckCollisionPointRec(tap, DebugToggleRect(1, currentScreen == SCREEN_VFX_TESTER))) {
+            if (CheckCollisionPointRec(tap, DebugToggleRect(1, false))) {
                 CycleGraphicsQuality();
-            } else if (CheckCollisionPointRec(tap, DebugToggleRect(2, currentScreen == SCREEN_VFX_TESTER))) {
+            } else if (CheckCollisionPointRec(tap, DebugToggleRect(2, false))) {
                 EnvShadow_SetEnabled(!EnvShadow_IsEnabled());
             }
         }
@@ -2006,9 +2004,8 @@ int main(int argc, char **argv) {
         // the only way to switch tier / turn the real shadow on, since there is no keyboard.
         if (currentScreen != SCREEN_GAME && showRootDiagnostics) {
             const int debugFontSize = currentScreen == SCREEN_VFX_TESTER ? 14 : 20;
-            static const char *gfxTierName[5] = { "UNLIT", "LOW", "MED", "HIGH", "ULTRA" };
             Rectangle rg = DebugToggleRect(1, currentScreen == SCREEN_VFX_TESTER), rs = DebugToggleRect(2, currentScreen == SCREEN_VFX_TESTER);
-            DrawText(TextFormat("GFX [L/tap]: %s%s", GfxQuality_IsAuto() ? "AUTO / " : "", gfxTierName[GfxQuality_Get()]),
+            DrawText(TextFormat("GFX [L/tap]: %s%s", GfxQuality_IsAuto() ? "AUTO / " : "", GfxQuality_GetName(GfxQuality_Get())),
                      (int)rg.x, (int)rg.y, debugFontSize, SKYBLUE);
             DrawText(TextFormat("SHADOW [J/tap]: %s", EnvShadow_IsEnabled() ? "ON" : "OFF"),
                      (int)rs.x, (int)rs.y, debugFontSize, EnvShadow_IsEnabled() ? GREEN : SKYBLUE);

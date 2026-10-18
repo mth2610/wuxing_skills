@@ -229,9 +229,10 @@ int MapFlora_GenerateMeadowPlacements(
             }
         }
 
-        // Canonical meadow canopy height & tuft radius across all maps
-        clump->height = 1.25f + growth * 0.45f;
-        clump->height *= 0.72f + 0.28f * coverage;
+        // Canonical meadow canopy height & tuft radius across all maps (natural knee-to-thigh turf: 0.36m - 0.56m)
+        float heightNorm = (localHeight - 0.34f) / 0.20f;
+        clump->height = (0.38f + heightNorm * 0.14f) * (0.88f + 0.24f * growth);
+        clump->height *= 0.78f + 0.22f * coverage;
 
         if (config.flowerClusters && config.flowerClusterCount > 0) {
             float understorey = MapFlora_EvaluateFlowerUnderstorey(
@@ -239,8 +240,7 @@ int MapFlora_GenerateMeadowPlacements(
             clump->height *= understorey;
         }
 
-        clump->radius = 0.22f + biome * 0.06f;
-        clump->height *= 0.85f + 0.30f * (localHeight - 0.34f) / 0.20f;
+        clump->radius = 0.20f + biome * 0.06f;
         clump->radius *= 0.92f + 0.16f * (localRadius - 0.22f) / 0.06f;
 
         if (config.edgeTaperFn) {
@@ -275,7 +275,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
                 .bladeWidthScale = (style.bladeWidthScale > 0.0f) ? style.bladeWidthScale : 0.17f,
                 .chunkSize = 12.0f,
                 .lodDistance = (style.lodDistance > 0.0f) ? style.lodDistance : 34.0f,
-                .midLodDistance = 0.0f, // 0.0f prevents near-camera grass flattening
+                .midLodDistance = (style.midLodDistance > 0.0f) ? style.midLodDistance : 0.0f,
                 .drawDistance = (style.drawDistance > 0.0f) ? style.drawDistance : 72.0f,
                 .shadowDistance = (style.shadowDistance > 0.0f) ? style.shadowDistance : 22.0f,
                 .texturePath = NULL,

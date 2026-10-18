@@ -569,6 +569,7 @@ typedef struct {
     int bladeSegments;        // Default: 4 (smooth Bézier, no stick grass!)
     float bladeWidthScale;    // Default: 0.16
     float lodDistance;        // Default: 32.0m
+    float midLodDistance;     // Optional mid-LOD distance (if <= 0, defaults to 0.45 * lodDistance)
     float drawDistance;       // Default: 60.0m
     float shadowDistance;     // Default: 16.0m (casts dynamic directional grass shadows within near range)
     MapGrassState grassState; // Default: MAP_GRASS_STATE_LUSH
