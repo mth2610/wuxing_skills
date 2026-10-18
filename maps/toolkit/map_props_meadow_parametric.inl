@@ -6,8 +6,8 @@
 #define NATURE_PARAMETER_MAX_ROWS 8192
 #define NATURE_TEMPLATE_MAX_VERTICES 230
 #define NATURE_TEMPLATE_MAX_INDICES 330
-#define NATURE_LOD_NEAR_BLEND_HALF_WIDTH 2.0f
-#define NATURE_LOD_FAR_BLEND_HALF_WIDTH 5.0f
+#define NATURE_LOD_NEAR_BLEND_HALF_WIDTH 1.8f
+#define NATURE_LOD_FAR_BLEND_HALF_WIDTH 4.2f
 #define NATURE_VISIBLE_ID_ROW_TEXELS 256
 #define NATURE_CAMERA_EPSILON_SQ 0.0001f
 
@@ -69,7 +69,7 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     float lodScale = quality >= GFX_HIGH ? 1.0f : quality == GFX_MED ? 0.88f
                                                                      : 0.78f;
 
-    // Visual Fix: Use full 3D focal distance so high-angle/top-down camera pitches
+    // Use full 3D focal distance so high-angle/top-down camera pitches
     // do not collapse horizontal distance and prematurely clip distant meadow chunks.
     float dx = camera.position.x - camera.target.x;
     float dy = camera.position.y - camera.target.y;
@@ -80,15 +80,21 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     float zoom = tanf(45.0f * 0.5f * DEG2RAD) / tanf(fovy * 0.5f);
     zoom = fminf(fmaxf(zoom, 0.8f), 2.5f);
 
-    float scale = lodScale * zoom;
+    // Sub-linear zoom scaling for geometry LOD prevents quadratic vertex explosion when zooming in
+    float lodZoom = (zoom > 1.0f) ? sqrtf(zoom) : zoom;
+    float scale = lodScale * lodZoom;
+
     NatureMeadowView view;
     view.lodScale = lodScale;
     view.zoomFactor = zoom;
     view.lodDistance = meadow->lodDistance * scale;
     view.drawDistance = meadow->drawDistance > 0.0f ? focalDistance + meadow->drawDistance * rangeScale * zoom : 0.0f;
 
-    // Visual Fix: Scale blend half-widths proportionally with zoom/LOD scale and prevent band overlap.
-    float midDist = meadow->midLodDistance > 0.0f ? meadow->midLodDistance * scale : 0.0f;
+    // Auto-derive midLodDistance when unset on large meadows so LOD 1 is actively utilized
+    float rawMidDist = meadow->midLodDistance > 0.0f
+                           ? meadow->midLodDistance
+                           : (meadow->lodDistance > 12.0f ? meadow->lodDistance * 0.48f : 0.0f);
+    float midDist = rawMidDist * scale;
     float nearBlend = NATURE_LOD_NEAR_BLEND_HALF_WIDTH * scale;
     float farBlend = NATURE_LOD_FAR_BLEND_HALF_WIDTH * scale;
     if (midDist > 0.0f && view.lodDistance > midDist)
@@ -140,7 +146,7 @@ static int s_natureTuftOffsetLoc[2], s_natureCompactLoc[2], s_natureVisibleIdsLo
 static int s_natureVisibleOffsetLoc;
 static int s_natureWorldOffsetLoc[2];
 
-// Visual Improvement: Combine golden-ratio spatial hashing with Interleaved Gradient Noise (IGN)
+// Combine golden-ratio spatial hashing with Interleaved Gradient Noise (IGN)
 // to prevent spatial clumping/popping artifacts during LOD transitions.
 static float NatureParametric_Rank(Vector3 root)
 {
@@ -185,6 +191,13 @@ static inline int NatureParametric_SelectLod(Vector3 root, float rank, Vector3 e
     float farMax = bands.y + bands.w;
     if (d2 >= farMax * farMax)
         return 2;
+    if (bands.x > 0.0f)
+    {
+        float midInnerMin = bands.x + bands.z;
+        float midInnerMax = bands.y - bands.w;
+        if (midInnerMax > midInnerMin && d2 >= midInnerMin * midInnerMin && d2 <= midInnerMax * midInnerMax)
+            return 1;
+    }
 
     float d = sqrtf(d2);
     float farWeight = NatureParametric_Smoothstep(bands.y - bands.w, bands.y + bands.w, d);
@@ -252,15 +265,15 @@ static Shader NatureParametric_Shader(bool shadow)
     return *shader;
 }
 
-// Performance & Visual Improvement:
-// 1. Welds shared vertices between consecutive segments along each blade (reduces vertex shader load by ~45%).
-// 2. Uses non-linear segment spacing so curvature detail is concentrated toward the bending upper blade & tip.
+// Welds shared vertices between consecutive segments along each blade.
+// Places the waist ring of 2-segment blades at t = 0.54 (the Bézier arch peak and widest profile point)
+// rather than 0.82 so LOD 1 and Shadow LOD 3 preserve full arch height and blade volume.
 static bool NatureParametric_BuildTemplate(NatureTuftTemplate *mesh, int blades, int segments)
 {
     Vector3 vertices[NATURE_TEMPLATE_MAX_VERTICES];
     unsigned short indices[NATURE_TEMPLATE_MAX_INDICES];
     int vertexCount = 0, indexCount = 0;
-    float tipStart = segments > 1 ? 0.82f : 0.0f;
+    float tipStart = (segments == 2) ? 0.54f : (segments > 2 ? 0.82f : 0.0f);
 
     for (int blade = 0; blade < blades; blade++)
     {
@@ -270,7 +283,6 @@ static bool NatureParametric_BuildTemplate(NatureTuftTemplate *mesh, int blades,
         for (int ring = 0; ring <= bodySegments; ring++)
         {
             float frac = bodySegments > 0 ? (float)ring / (float)bodySegments : 0.0f;
-            // Slight curve bias (pow ~ 0.9) puts smoother subdivision near the upper bend
             float t = tipStart * powf(frac, 0.90f);
             float zTag = (float)blade + (ring == 0 ? 0.25f : 0.50f);
             vertices[vertexCount++] = (Vector3){-1.0f, t, zTag};
@@ -394,7 +406,7 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     memset(data, 0, sizeof(*data));
     meadow->parametric = data;
 
-    // O(N) Spatial Binning instead of O(rows * columns * count)
+    // O(N) Spatial Binning
     cellCounts = MemAlloc(capacity * sizeof(int));
     cellToChunk = MemAlloc(capacity * sizeof(int));
     sortedIndices = MemAlloc(count * sizeof(int));
@@ -499,31 +511,57 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     SetTextureFilter(data->visibleIds, TEXTURE_FILTER_POINT);
     SetTextureWrap(data->visibleIds, TEXTURE_WRAP_CLAMP);
 
-    // Compute accurate 3D bounding spheres (including vertical Y elevation) for each chunk
+    // Compute tight 3D bounding spheres around actual tuft positions in each chunk.
+    // Reduces false multi-LOD band overlaps and improves frustum/shadow culling accuracy.
     for (int chunk = 0; chunk < meadow->chunkCount; chunk++)
     {
         int start = data->ranges[chunk].tuftOffset;
         int end = start + data->ranges[chunk].count;
-        float cMinY = placements[sortedIndices[start]].position.y;
-        float cMaxY = cMinY;
+        Vector3 pFirst = placements[sortedIndices[start]].position;
+        float cMinX = pFirst.x, cMaxX = pFirst.x;
+        float cMinY = pFirst.y, cMaxY = pFirst.y;
+        float cMinZ = pFirst.z, cMaxZ = pFirst.z;
+        float maxTuftReach = 0.85f;
+
         for (int t = start; t < end; t++)
         {
-            Vector3 p = placements[sortedIndices[t]].position;
+            const MapMeadowPlacement *pl = &placements[sortedIndices[t]];
+            Vector3 p = pl->position;
             data->roots[t] = p;
             data->ranks[t] = NatureParametric_Rank(p);
+            if (p.x < cMinX)
+                cMinX = p.x;
+            if (p.x > cMaxX)
+                cMaxX = p.x;
             if (p.y < cMinY)
                 cMinY = p.y;
             if (p.y > cMaxY)
                 cMaxY = p.y;
+            if (p.z < cMinZ)
+                cMinZ = p.z;
+            if (p.z > cMaxZ)
+                cMaxZ = p.z;
+            float reach = pl->radius + pl->height * 1.15f;
+            if (reach > maxTuftReach)
+                maxTuftReach = reach;
         }
-        float x0 = data->ranges[chunk].minimum.x;
-        float z0 = data->ranges[chunk].minimum.y;
-        float centerY = (cMinY + cMaxY) * 0.5f;
-        float halfY = (cMaxY - cMinY) * 0.5f + 1.0f;
-        float halfXZ = style.chunkSize * 0.72f + 1.5f;
+
+        Vector3 center = {
+            (cMinX + cMaxX) * 0.5f,
+            (cMinY + cMaxY) * 0.5f + 0.25f,
+            (cMinZ + cMaxZ) * 0.5f};
+        float maxDistSq = 0.0f;
+        for (int t = start; t < end; t++)
+        {
+            Vector3 d = Vector3Subtract(data->roots[t], center);
+            float d2 = d.x * d.x + d.y * d.y + d.z * d.z;
+            if (d2 > maxDistSq)
+                maxDistSq = d2;
+        }
+
         meadow->chunks[chunk] = (MapMeadowChunk){
-            .center = {x0 + style.chunkSize * 0.5f, centerY, z0 + style.chunkSize * 0.5f},
-            .radius = sqrtf(halfXZ * halfXZ + halfY * halfY),
+            .center = center,
+            .radius = sqrtf(maxDistSq) + maxTuftReach,
             .midReady = true,
             .realShadowReady = shadows,
             .ready = true};
@@ -536,8 +574,6 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
         style.bladesPerClump >= 3 ? 3 : style.bladesPerClump};
     int segments[4] = {style.bladeSegments, style.bladeSegments >= 3 ? 2 : 1, 1, 2};
 
-    // Visual Fix: Dynamically compensate blade width based on actual blade reduction ratio
-    // so distant LODs neither thin out nor bloat unnaturally.
     float baseBlades = (float)(blades[0] > 0 ? blades[0] : 1);
     float widths[4] = {
         1.0f,
@@ -616,7 +652,9 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
 
     long long parameterBytes = bytes;
     meadow->lodDistance = style.lodDistance;
-    meadow->midLodDistance = style.midLodDistance;
+    meadow->midLodDistance = style.midLodDistance > 0.0f
+                                 ? style.midLodDistance
+                                 : (style.lodDistance > 12.0f ? style.lodDistance * 0.48f : 0.0f);
     meadow->drawDistance = style.drawDistance;
     meadow->shadowDistance = style.shadowDistance;
     meadow->alphaCutoff = style.alphaCutoff;
