@@ -25,7 +25,7 @@
 #define MAP_DEPTH SONG_QUAO_MAP_DEPTH
 #define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
 #define CLOUD_SEA_Y -4.20f
-#define GRASS_TUFT_CAPACITY 120000
+#define GRASS_TUFT_CAPACITY 70000
 #define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
 #define REED_COUNT 650
 
@@ -135,33 +135,33 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
         return 0.0f;
 
     // Smoothly exclude only deep outer cliff drop-offs and sheer vertical rock walls,
-    // preserving lush turf across low-lying riverbanks and valley swales.
-    if (pos.y < PLAYABLE_BASIN_MIN_Y || normal.y < 0.36f)
+    // preserving lush turf across low-lying riverbanks, gentle slopes and valley swales.
+    if (pos.y < PLAYABLE_BASIN_MIN_Y || normal.y < 0.65f)
         return 0.0f;
     float heightFade = SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y, pos.y);
-    float slopeFade = SmoothStep01(0.36f, 0.56f, normal.y);
+    float slopeFade = SmoothStep01(0.65f, 0.82f, normal.y);
 
     // Smooth shoreline transition: prevent grass from spawning underwater while
     // feathering density naturally right up to the water's edge.
     float surfaceY = SampleWaterHeight(x, z);
     float waterClearance = pos.y - surfaceY;
-    if (waterClearance < -0.015f)
+    if (waterClearance < 0.02f)
         return 0.0f;
-    float shoreFade = SmoothStep01(-0.015f, 0.14f, waterClearance);
+    float shoreFade = SmoothStep01(0.02f, 0.22f, waterClearance);
 
     Color splat = SampleSplat(x, z);
     float rockScree = (float)splat.g / 255.0f;
-    if (rockScree > 0.94f)
+    if (rockScree > 0.90f)
         return 0.0f;
-    float rockFade = 1.0f - SmoothStep01(0.72f, 0.94f, rockScree);
+    float rockFade = 1.0f - SmoothStep01(0.65f, 0.90f, rockScree);
 
-    // Generous elliptical valley envelope centered on the gameplay basin (108m x 132m)
-    float nx = (x - kMapCenter.x) / 54.0f;
-    float nz = (z - kMapCenter.z) / 66.0f;
-    float edge = nx * nx + nz * nz;
-    if (edge >= 1.0f)
+    // Island boundary fade: gentle taper towards the outer cliff edge (margin 8m)
+    float edgeDistX = fminf(x - 8.0f, (MAP_WIDTH - 8.0f) - x);
+    float edgeDistZ = fminf(z - 8.0f, (MAP_DEPTH - 8.0f) - z);
+    float edgeDist = fminf(edgeDistX, edgeDistZ);
+    if (edgeDist <= 0.0f)
         return 0.0f;
-    float edgeFade = 1.0f - SmoothStep01(0.72f, 1.0f, edge);
+    float edgeFade = SmoothStep01(0.0f, 6.0f, edgeDist);
 
     float warpedX = x + sinf(z * 0.17f) * 2.1f;
     float macroField = sinf(warpedX * 0.15f + z * 0.08f) * 0.55f + sinf(z * 0.20f - x * 0.06f + 1.4f) * 0.30f + sinf(x * 0.33f + z * 0.29f) * 0.15f;
@@ -221,9 +221,9 @@ static void BuildFloraPlacements(void)
     s_grassCount = MapFlora_GenerateMeadowPlacements(
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapFloraMeadowConfig){
-            .minBounds = {kMapCenter.x - 54.0f, kMapCenter.z - 66.0f},
-            .maxBounds = {kMapCenter.x + 54.0f, kMapCenter.z + 66.0f},
-            .spacing = 0.255f,
+            .minBounds = {8.0f, 8.0f},
+            .maxBounds = {MAP_WIDTH - 8.0f, MAP_DEPTH - 8.0f},
+            .spacing = 0.34f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -277,11 +277,21 @@ static void BuildFloraPlacements(void)
 
 static void BuildRocks(void)
 {
+    static const Vector2 kDistantCrags[] = {
+        {120.0f, 25.0f},
+        {105.0f, 40.0f},
+        {80.0f, 30.0f},
+        {35.0f, 280.0f},
+        {55.0f, 270.0f},
+        {155.0f, 265.0f},
+    };
+    int distantCragCount = (int)(sizeof(kDistantCrags) / sizeof(kDistantCrags[0]));
+
     s_rocks = MapProp_CreateRockSystem(
         "assets/textures/rock_diffuse.png",
         "assets/textures/rock_normal.png",
         "assets/textures/rock_roughness.png",
-        SONG_QUAO_ROCK_ITEM_COUNT);
+        SONG_QUAO_ROCK_ITEM_COUNT + distantCragCount);
 
     for (int i = 0; i < SONG_QUAO_ROCK_ITEM_COUNT; i++)
     {
@@ -292,6 +302,17 @@ static void BuildRocks(void)
             pos = item->position;
         }
         MapProp_AddRockItem(&s_rocks, pos, item->radiusScale, item->heightScale, item->rotationDeg, item->archetype);
+    }
+
+    for (int i = 0; i < distantCragCount; i++)
+    {
+        Vector3 pos, normal;
+        if (MapProp_SampleGroundSurface(&s_ground, kMapCenter, kDistantCrags[i].x, kDistantCrags[i].y, &pos, &normal))
+        {
+            float rot = (float)(i * 67 % 360);
+            float scale = 1.35f + 0.35f * (float)(i % 3);
+            MapProp_AddRockItem(&s_rocks, pos, scale, scale * 1.15f, rot, MAP_ROCK_CRAG);
+        }
     }
 }
 
@@ -419,10 +440,10 @@ void InitSongQuaoMap(void)
             .grassTipColor = {122, 178, 62, 255},
             .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.205f,
+            .bladeWidthScale = 0.245f,
             .lodDistance = 28.0f,
-            .drawDistance = 78.0f,
-            .shadowDistance = 16.5f,
+            .drawDistance = 64.0f,
+            .shadowDistance = 20.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {30, 50, 24, 255},
             .reedTipColor = {132, 172, 78, 255},
@@ -470,11 +491,6 @@ void UpdateSongQuaoMap(float dt)
     Vector3 focus = {camera.target.x, 0.0f, camera.target.z};
     EnvShadow_SetFocus(focus, 18.0f);
     CaptureSongQuaoStaticShadows();
-
-    MapProp_BeginNatureInteraction(camera.target, dt);
-    MapProp_AddNatureInteractor(camera.target, 1.25f, 0.34f);
-    MapProp_AddNatureWindVorticles((float)GetTime());
-    MapProp_EndNatureInteraction();
 }
 
 void DrawSongQuaoMap(void)

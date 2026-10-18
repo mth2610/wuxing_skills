@@ -287,7 +287,7 @@ def write_water_mesh(path, ground, surface, sx, sz):
 
 
 def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
-                cliff_margin=5.0, res_scale=1.0, stream_ratio=0.01,
+                cliff_margin=8.5, res_scale=1.0, stream_ratio=0.01,
                 prefix='map', out_dir='assets/maps', lake_level=None):
     import hashlib
     import re
@@ -345,6 +345,7 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     terrain=height_range*np.power(normalized,1.15)
     perimeter=distance_inside(valid,sx,sz)
     cliff=np.clip(perimeter/cliff_margin,0,1); cliff=cliff*cliff*(3-2*cliff)
+    cliff=gaussian_filter_2d(cliff, 1.4)
     lake_fraction=sample(lake_source.astype(float))
     lake=valid & (lake_fraction>0.25) & (perimeter>cliff_margin)
     lake_y=float(height_range*np.clip((lake_level-lo)/max(hi-lo,1e-9),0,1)**1.15)
@@ -742,7 +743,7 @@ if __name__=='__main__':
     parser.add_argument('--max-dim',type=float,default=300)
     parser.add_argument('--height-range',type=float,default=16)
     parser.add_argument('--cliff-depth',type=float,default=8)
-    parser.add_argument('--cliff-margin',type=float,default=5)
+    parser.add_argument('--cliff-margin',type=float,default=8.5)
     parser.add_argument('--resolution-scale',type=float,default=1.0)
     parser.add_argument('--stream-ratio',type=float,default=0.01)
     parser.add_argument('--lake-level',type=float,help='Candidate lake source elevation in metres; default detects a lowland plateau')

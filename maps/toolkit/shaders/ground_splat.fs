@@ -327,34 +327,35 @@ void main()
     vec3 warmLoamColor = mix(loamDark, loamLight, pebbleRelief) * (0.86 + 0.28 * dirtDetail) * (1.0 - porousDarkening * 0.18);
 
     // 3-Axis Triplanar world-space rock projection for steep slopes & escarpments
-    // Uses explicit gradients (textureGrad) and includes Y-axis weight so gentle slopes never collapse to black
+    // Uses native anisotropic texture projection and includes Y-axis weight so gentle slopes never collapse to black
     vec3 cliffAlbedo = warmLoamColor;
     float cliffStrataBump = 0.0;
-    if (wCliff > 0.02) {
+    if (wCliff > 0.10 && (slope > 0.28 || outerAbyssMask > 0.05)) {
         vec2 triUVx = fragWorldPos.zy * 0.28;
         vec2 triUVz = fragWorldPos.xy * 0.28;
         vec3 triWeights = abs(geomNormal);
         triWeights /= max(triWeights.x + triWeights.y + triWeights.z, 0.001);
 
-        vec3 rockTexX = textureGrad(texPath, triUVx, uvDx * 0.5, uvDy * 0.5).rgb;
-        vec3 rockTexZ = textureGrad(texPath, triUVz, uvDx * 0.5, uvDy * 0.5).rgb;
+        vec3 rockTexX = texture(texPath, triUVx).rgb;
+        vec3 rockTexZ = texture(texPath, triUVz).rgb;
         vec3 triRock  = rockTexX * triWeights.x + dirtDetail * triWeights.y + rockTexZ * triWeights.z;
 
-        // Geological horizontal sedimentary strata + vertical joint fractures (attenuated on flat tops)
+        // Geological horizontal sedimentary strata + vertical joint fractures (organic multi-octave)
         float wallMask = 1.0 - triWeights.y;
-        float strataCoord = fragWorldPos.y * 2.4 + sin(fragWorldPos.x * 0.18 + fragWorldPos.z * 0.14) * 0.85;
+        float strataWarp = sin(fragWorldPos.x * 0.14 + fragWorldPos.z * 0.11) * 1.6;
+        float strataCoord = (fragWorldPos.y + strataWarp) * 0.42;
         float strataBand = sin(strataCoord * 3.14159) * 0.5 + 0.5;
-        float strataLedge = smoothstep(0.25, 0.75, strataBand);
+        float strataLedge = smoothstep(0.35, 0.65, strataBand);
         float jointCrack = smoothstep(0.12, 0.55, triRock.r);
-        cliffStrataBump = ((strataLedge - 0.5) * 0.34 + (jointCrack - 0.5) * 0.24) * wallMask;
+        cliffStrataBump = ((strataLedge - 0.5) * 0.20 + (jointCrack - 0.5) * 0.15) * wallMask;
 
-        vec3 warmSlate   = vec3(0.22, 0.24, 0.21);
-        vec3 warmGranite = vec3(0.38, 0.36, 0.31);
-        vec3 lichenMoss  = vec3(0.18, 0.28, 0.12);
-        cliffAlbedo = mix(warmSlate, warmGranite, clamp(triRock.r * 0.72 + strataLedge * 0.32, 0.0, 1.0));
+        vec3 warmSlate   = vec3(0.24, 0.25, 0.22);
+        vec3 warmGranite = vec3(0.40, 0.38, 0.32);
+        vec3 lichenMoss  = vec3(0.20, 0.28, 0.14);
+        cliffAlbedo = mix(warmSlate, warmGranite, clamp(triRock.r * 0.72 + strataLedge * 0.28, 0.0, 1.0));
         // Ledge top-moss accumulation on flatter micro-terraces
         float ledgeMoss = clamp(geomNormal.y * 1.15 - 0.30, 0.0, 1.0) * smoothstep(0.38, 0.80, triRock.g);
-        cliffAlbedo = mix(cliffAlbedo, lichenMoss, ledgeMoss * 0.65);
+        cliffAlbedo = mix(cliffAlbedo, lichenMoss, ledgeMoss * 0.55);
     }
 
     float cliffMix = clamp(wCliff / max(wDrySoil, 0.001), 0.0, 1.0);
@@ -416,7 +417,14 @@ void main()
     float macroA = sin(fragWorldPos.x * 0.042 + fragWorldPos.z * 0.028);
     float macroB = sin(fragWorldPos.x * -0.022 + fragWorldPos.z * 0.048 + 1.35);
     float macroField = 0.50 + 0.32 * macroA + 0.18 * macroB;
-    blendedAlbedo *= mix(vec3(0.94, 0.97, 0.92), vec3(1.04, 1.02, 0.96), macroField);
+    blendedAlbedo *= mix(vec3(0.92, 0.96, 0.90), vec3(1.06, 1.03, 0.96), macroField);
+
+    // Distant ridge granite outcrops on high mountain peaks
+    if (camDistSqXZ > 1600.0 && fragWorldPos.y > 5.5) {
+        float ridgeOutcrop = smoothstep(5.5, 11.5, fragWorldPos.y) * smoothstep(0.22, 0.52, slope);
+        vec3 distantGranite = vec3(0.35, 0.34, 0.30);
+        blendedAlbedo = mix(blendedAlbedo, distantGranite, ridgeOutcrop * 0.55);
+    }
 
     // ---- 10. Singularity-Free Tangent Frame, Cliff Relief & Specular AA ----
     vec4 soilMaterial = vec4(0.5, 0.5, 1.0, 0.8);
@@ -424,8 +432,8 @@ void main()
         soilMaterial = textureGrad(texSoilMaterial, tiledUV * 0.85, uvDx * 0.85, uvDy * 0.85);
 
     vec3 microNormal = normalize(mix(grassMaterial.rgb, soilMaterial.rgb, soilWeight) * 2.0 - 1.0);
-    if (wCliff > 0.02) {
-        microNormal.y += cliffStrataBump * wCliff * 1.25;
+    if (wCliff > 0.05) {
+        microNormal.y += cliffStrataBump * wCliff * 0.40;
         microNormal = normalize(microNormal);
     }
     if (abs(distantTuftRelief) > 0.001) {
