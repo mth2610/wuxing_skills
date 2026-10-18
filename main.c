@@ -1923,7 +1923,8 @@ int main(int argc, char **argv) {
 
     PostFXConfig scenePostFX = postFXConfig;
     const char *activeMapName = MapManager_GetName(MapManager_GetActiveIndex());
-    if (activeMapName && strcmp(activeMapName, "VERDANT_PATH") == 0) {
+    if (activeMapName && (strcmp(activeMapName, "VERDANT_PATH") == 0 ||
+                          strcmp(activeMapName, "SONG_QUAO") == 0)) {
         scenePostFX.saturation = 1.30f;
         scenePostFX.contrast = 1.07f;
         scenePostFX.lutEnabled = true;

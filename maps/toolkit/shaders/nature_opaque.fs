@@ -35,7 +35,7 @@ void main()
 
     // 2. Arch-windowed Wind-Wave Sheen (tapered to 0 at tip in VS so tips never flicker)
     float windSheen = fragColor.a;
-    lit *= 1.0 + windSheen * 0.18;
+    lit *= 1.0 + windSheen * 0.32;
 
     finalColor = vec4(lit, 1.0);
 }

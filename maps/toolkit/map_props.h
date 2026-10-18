@@ -579,6 +579,7 @@ typedef struct {
     Color reedRootColor;
     Color reedTipColor;
     bool hasReedPlumes;       // Default: false (prevents flat white cards)
+    float botanicalVariation; // Optional [0..1] habitat-based color variation (0 = 100% pure artist tip color)
 } MapFloraStyle;
 
 typedef struct {

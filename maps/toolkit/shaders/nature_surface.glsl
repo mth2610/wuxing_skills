@@ -233,7 +233,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float sideLenSq = dot(bladeSide, bladeSide);
     if (sideLenSq > 1e-6) {
         bladeSide *= inversesqrt(sideLenSq);
-        float creaseStrength = 0.48 * (1.0 - antiShimmer * 0.88);
+        float creaseStrength = 0.18 * (1.0 - antiShimmer * 0.88);
         faceNormal = normalize(faceNormal + bladeSide * (u * creaseStrength));
     }
 
@@ -249,12 +249,12 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float rib = 1.0 - FastRamp(0.0, 0.32, absU);
     baseColor *= 1.0 + (rib - 0.32) * 0.14 * (1.0 - antiShimmer);
 
-    // Coherent macro botanical hue shift (breaks up uniform lime-green carpet across the valley)
+    // Coherent macro botanical hue shift (subtle natural variation between deep viridian & vibrant spring green)
     float macroPatch = sin(worldPosition.x * 0.14 + worldPosition.z * 0.09) * 0.55
                      + cos(worldPosition.x * -0.08 + worldPosition.z * 0.19) * 0.45;
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
-    vec3 tipWarmth = mix(vec3(0.95, 1.01, 0.96), vec3(1.08, 1.03, 0.86), warmShift * FastRamp(0.35, 0.92, h));
-    baseColor *= tipWarmth;
+    vec3 tipTone = mix(vec3(0.94, 1.02, 0.98), vec3(1.01, 1.05, 0.94), warmShift * FastRamp(0.35, 0.92, h));
+    baseColor *= tipTone;
 
     // ── GENERALIZED 4-STATE BOTANICAL TRANSITION ─────────────────────────────
     // Fast-paths when in default Lush Green state (dryness == 0 && scorch == 0)
@@ -326,7 +326,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambient = mix(groundBounce, skyAmbient, n.y * 0.5 + 0.5);
 
     // Grounded contact ambient occlusion: creates lush 3D tuft depth that anchors blades to the turf
-    float rootAO = mix(0.40, 1.0, smoothstep(0.0, 0.56, h));
+    float rootAO = mix(0.55, 1.0, smoothstep(0.0, 0.56, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     // Waxy cuticle grazing sheen (windowed by archWindow so tips never shimmer)
@@ -361,43 +361,42 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float canopy = (0.28 + 0.72 * expCanopy) * verticalSelfShadow;
 
             // Analytical Kajiya-Kay Anisotropic Specular on the curved mid-upper arch (archWindow)
-            vec3 halfDir = normalize(modelLightDir + viewDir);
-            float NdotH = dot(faceNormal, halfDir);
-            float tDotHUnnorm = halfDir.y - faceNormal.y * NdotH;
-            float shiftedTH = tDotHUnnorm - (h - 0.48) * 0.10;
-            float invTangentLenSq = 1.0 / max(1.0 - faceNormal.y * faceNormal.y, 1e-4);
-            float sinTHSq = clamp(1.0 - (shiftedTH * shiftedTH) * invTangentLenSq, 0.0, 1.0);
+            vec3 anisoSpec = vec3(0.0);
+            float waxySpec = 0.0;
+            if (archWindow > 0.005) {
+                vec3 halfDir = normalize(modelLightDir + viewDir);
+                float NdotH = max(dot(faceNormal, halfDir), 0.0);
+                float tDotHUnnorm = halfDir.y - faceNormal.y * NdotH;
+                float shiftedTH = tDotHUnnorm - (h - 0.48) * 0.10;
+                float invTangentLenSq = 1.0 / max(1.0 - faceNormal.y * faceNormal.y, 1e-4);
+                float sinTHSq = clamp(1.0 - (shiftedTH * shiftedTH) * invTangentLenSq, 0.0, 1.0);
 
-            // Normal variance Toksvig-style anti-aliasing + archWindow tip suppression
-            vec3 normalDx = dFdx(faceNormal);
-            vec3 normalDy = dFdy(faceNormal);
-            float variance = dot(normalDx, normalDx) + dot(normalDy, normalDy);
-            float specAA = (1.0 - antiShimmer) * archWindow * specScale / (1.0 + 12.0 * variance);
+                float specAA = (1.0 - antiShimmer) * archWindow * specScale;
+                float sinTH4  = sinTHSq * sinTHSq;
+                float sinTH8  = sinTH4 * sinTH4;
+                float sinTH16 = sinTH8 * sinTH8;
 
-            float sinTH4  = sinTHSq * sinTHSq;
-            float sinTH8  = sinTH4 * sinTH4;
-            float sinTH16 = sinTH8 * sinTH8;
+                vec3 primarySheen   = mix(baseColor, vec3(0.96, 1.0, 0.88), 0.50) * (sinTH8 * 0.062);
+                vec3 secondaryGlint = vec3(0.96, 1.0, 0.90) * (sinTH16 * 0.10);
+                anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.30, 0.0));
+                waxySpec = FastPow32(NdotH) * (0.12 * h) * specAA;
+            }
 
-            vec3 primarySheen   = mix(baseColor, vec3(0.96, 1.0, 0.88), 0.50) * (sinTH8 * 0.062);
-            vec3 secondaryGlint = vec3(0.96, 1.0, 0.90) * (sinTH16 * 0.10);
-            vec3 anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.30, 0.0));
-
-            // Subsurface Translucency (luminous golden-emerald backlight transmission)
+            // Subsurface Translucency (fresh, vibrant emerald backlight transmission)
             float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
             float backLight = max(-dot(faceNormal, modelLightDir), 0.0);
             float forwardLobe = forwardScatter * forwardScatter * forwardScatter;
             float backLobe = FastPow1_4(backLight);
             float edgeThinness = 0.68 + 0.52 * absU;
             float sssWindow = FastRamp(0.10, 0.55, h) * (1.0 - FastRamp(0.82, 0.99, h) * 0.45);
-            float transmission = (backLobe * 0.80 + forwardLobe * 1.15 * (0.5 + 0.5 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 goldenSSS = baseColor * vec3(1.35, 1.75, 0.44) + vec3(0.035, 0.055, 0.012) * sssScale;
+            float transmission = (backLobe * 0.80 + forwardLobe * 1.35 * (0.5 + 0.5 * h)) * sssWindow * edgeThinness * sssScale;
+            vec3 emeraldSSS = baseColor * vec3(1.15, 1.95, 0.65) + vec3(0.020, 0.065, 0.020) * sssScale;
 
-            // Waxy cuticle glint on the curved blade
-            float waxySpec = FastPow32(max(NdotH, 0.0)) * (0.12 * h) * specAA;
 
-            vec3 directSunTerms = baseColor * (wrapped * wrapped * 0.94)
+            float diffuseLobe = mix(wrapped * wrapped, wrapped, 0.40);
+            vec3 directSunTerms = baseColor * (diffuseLobe * 0.92)
                                 + anisoSpec + (effectiveLightColor * waxySpec)
-                                + goldenSSS * (transmission * 1.32);
+                                + emeraldSSS * (transmission * 1.45);
             lit += directSunTerms * effectiveLightColor * (canopy * sunVis);
         }
     }

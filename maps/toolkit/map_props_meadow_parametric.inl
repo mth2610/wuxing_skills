@@ -616,7 +616,7 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
                         {d.p0.x, d.p0.y, d.p0.z, d.phase},
                         {d.p1.x, d.p1.y, d.p1.z, d.width},
                         {d.p2.x, d.p2.y, d.p2.z, d.isReed ? 1.0f : 0.0f},
-                        {d.p3.x, d.p3.y, d.p3.z, d.isSeedhead ? 1.0f : 0.0f},
+                        {d.p3.x, d.p3.y, d.p3.z, 0.0f},
                         {d.clump.x, d.clump.y, d.clump.z, d.leanAngle},
                         {d.rootColor.r, d.rootColor.g, d.rootColor.b, 255.0f},
                         {d.tipColor.r, d.tipColor.g, d.tipColor.b, 255.0f}};
@@ -701,8 +701,22 @@ static void NatureParametric_BindReceivers(Shader shader, bool shadow)
     rlActiveTextureSlot(0);
 }
 
+static unsigned int s_lastParamShaderId = 0;
+static int s_lastParamLod = -1;
+static const void *s_lastParamMeadow = NULL;
+static Vector3 s_lastParamOffset = {999999.0f, 999999.0f, 999999.0f};
+
+static void NatureParametric_ResetDrawCache(void)
+{
+    s_lastParamShaderId = 0;
+    s_lastParamLod = -1;
+    s_lastParamMeadow = NULL;
+    s_lastParamOffset = (Vector3){999999.0f, 999999.0f, 999999.0f};
+}
+
 static void NatureParametric_EndReceivers(void)
 {
+    NatureParametric_ResetDrawCache();
     for (int unit = 0; unit <= 6; unit++)
     {
         rlActiveTextureSlot(unit);
@@ -893,36 +907,55 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
         return;
 
     NatureTuftTemplate *mesh = &data->templates[lod];
-    Matrix model = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
-    Matrix mvp;
-    if (lod == 3)
-    {
-        mvp = MatrixMultiply(model, EnvShadow_GetLightVP());
-    }
-    else
-    {
-        model = MatrixMultiply(model, rlGetMatrixTransform());
-        mvp = MatrixMultiply(MatrixMultiply(model, rlGetMatrixModelview()), rlGetMatrixProjection());
-    }
-    SetShaderValueMatrix(shader, shader.locs[SHADER_LOC_MATRIX_MVP], mvp);
+    bool stateChanged = (s_lastParamShaderId != shader.id ||
+                         s_lastParamLod != lod ||
+                         s_lastParamMeadow != (const void *)meadow ||
+                         !NatureParametric_SameVector(s_lastParamOffset, worldOffset));
 
-    const Vector4 white = {1.0f, 1.0f, 1.0f, 1.0f};
-    if (shader.locs[SHADER_LOC_COLOR_DIFFUSE] >= 0)
-        SetShaderValue(shader, shader.locs[SHADER_LOC_COLOR_DIFFUSE], &white, SHADER_UNIFORM_VEC4);
+    if (stateChanged)
+    {
+        s_lastParamShaderId = shader.id;
+        s_lastParamLod = lod;
+        s_lastParamMeadow = (const void *)meadow;
+        s_lastParamOffset = worldOffset;
 
-    SetShaderValue(shader, s_natureWorldOffsetLoc[pass], &worldOffset, SHADER_UNIFORM_VEC3);
-    if (pass == 0)
-        SetShaderValue(shader, s_natureTuftLodLevelLoc, &lod, SHADER_UNIFORM_INT);
-    SetShaderValue(shader, s_natureBladeCountLoc[pass], &mesh->blades, SHADER_UNIFORM_INT);
+        Matrix model = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
+        Matrix mvp;
+        if (lod == 3)
+        {
+            mvp = MatrixMultiply(model, EnvShadow_GetLightVP());
+        }
+        else
+        {
+            model = MatrixMultiply(model, rlGetMatrixTransform());
+            mvp = MatrixMultiply(MatrixMultiply(model, rlGetMatrixModelview()), rlGetMatrixProjection());
+        }
+        SetShaderValueMatrix(shader, shader.locs[SHADER_LOC_MATRIX_MVP], mvp);
+
+        const Vector4 white = {1.0f, 1.0f, 1.0f, 1.0f};
+        if (shader.locs[SHADER_LOC_COLOR_DIFFUSE] >= 0)
+            SetShaderValue(shader, shader.locs[SHADER_LOC_COLOR_DIFFUSE], &white, SHADER_UNIFORM_VEC4);
+
+        SetShaderValue(shader, s_natureWorldOffsetLoc[pass], &worldOffset, SHADER_UNIFORM_VEC3);
+        if (pass == 0)
+            SetShaderValue(shader, s_natureTuftLodLevelLoc, &lod, SHADER_UNIFORM_INT);
+        SetShaderValue(shader, s_natureBladeCountLoc[pass], &mesh->blades, SHADER_UNIFORM_INT);
+
+        int canonical = data->canonical ? 1 : 0, compactValue = compact ? 1 : 0;
+        SetShaderValue(shader, s_natureCanonicalLoc[pass], &canonical, SHADER_UNIFORM_INT);
+        SetShaderValue(shader, s_natureCanonicalBladesLoc[pass], &data->canonicalBlades, SHADER_UNIFORM_INT);
+        SetShaderValue(shader, s_natureGeometryLodLoc[pass], &lod, SHADER_UNIFORM_INT);
+        if (s_natureCompactLoc[pass] >= 0)
+            SetShaderValue(shader, s_natureCompactLoc[pass], &compactValue, SHADER_UNIFORM_INT);
+
+        rlActiveTextureSlot(0);
+        rlEnableTexture(data->parameters.id);
+        int unit = 0;
+        SetShaderValue(shader, s_natureParameterLoc[pass], &unit, SHADER_UNIFORM_INT);
+    }
+
     SetShaderValue(shader, s_natureBladeOffsetLoc[pass], &data->ranges[chunk].offset[lod], SHADER_UNIFORM_INT);
-
-    int canonical = data->canonical ? 1 : 0, compactValue = compact ? 1 : 0;
-    SetShaderValue(shader, s_natureCanonicalLoc[pass], &canonical, SHADER_UNIFORM_INT);
-    SetShaderValue(shader, s_natureCanonicalBladesLoc[pass], &data->canonicalBlades, SHADER_UNIFORM_INT);
-    SetShaderValue(shader, s_natureGeometryLodLoc[pass], &lod, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureTuftOffsetLoc[pass], &data->ranges[chunk].tuftOffset, SHADER_UNIFORM_INT);
-    if (s_natureCompactLoc[pass] >= 0)
-        SetShaderValue(shader, s_natureCompactLoc[pass], &compactValue, SHADER_UNIFORM_INT);
 
     if (compact)
     {
@@ -932,11 +965,6 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
         rlEnableTexture(data->visibleIds.id);
         SetShaderValue(shader, s_natureVisibleIdsLoc, &idUnit, SHADER_UNIFORM_INT);
     }
-
-    rlActiveTextureSlot(0);
-    rlEnableTexture(data->parameters.id);
-    int unit = 0;
-    SetShaderValue(shader, s_natureParameterLoc[pass], &unit, SHADER_UNIFORM_INT);
 
     rlEnableVertexArray(mesh->vao);
     rlDrawVertexArrayElementsInstanced(0, mesh->indexCount, NULL, instanceCount);

@@ -206,8 +206,7 @@ static inline Vector3 Nature_EvalCubicBezierTangent(Vector3 p0, Vector3 p1, Vect
         c0 * v0.z + c1 * v1.z + c2 * v2.z};
 }
 
-typedef struct
-{
+typedef struct {
     Vector3 p0, p1, p2, p3, clump;
     Color rootColor, tipColor;
     float width, phase, leanAngle;
@@ -363,31 +362,31 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         }
         bladeLeanAngle = atan2f(dirZ, dirX);
 
-        // AAA Volumetric 3-Tier Morphology Hierarchy (Progressive cantilever droop)
+        // AAA Volumetric 3-Tier Morphology Hierarchy (Upright center, graceful arch, natural lift)
         float lengthScale, widthScaleVal, leanFactor, droopFactor;
-        if (bladeId < 2)
+        if (bladeId < 3)
         {
-            // Tier 1: Hero Upright & Arching Spears (reaches highest for sunlight)
-            lengthScale = 1.10f + 0.18f * bHash2;
-            widthScaleVal = 0.82f + 0.12f * bHash3;
-            leanFactor = 0.42f + 0.16f * bHash;
-            droopFactor = 0.14f + 0.10f * bHash3;
+            // Tier 1: Hero Upright & Reaching Spears (stands proud toward the sun)
+            lengthScale = 1.06f + 0.16f * bHash2;
+            widthScaleVal = 0.88f + 0.10f * bHash3;
+            leanFactor = 0.24f + 0.12f * bHash;
+            droopFactor = 0.08f + 0.06f * bHash3;
         }
-        else if (bladeId < 4)
+        else if (bladeId < 6)
         {
-            // Tier 2: Mid-Canopy Billows (sweeps outward to catch directional light)
-            lengthScale = 0.88f + 0.14f * bHash2;
-            widthScaleVal = 0.96f + 0.14f * bHash3;
-            leanFactor = 0.64f + 0.20f * bHash;
-            droopFactor = 0.24f + 0.10f * bHash3;
+            // Tier 2: Mid-Canopy Billows (graceful sweeping arch catching breeze)
+            lengthScale = 0.88f + 0.12f * bHash2;
+            widthScaleVal = 0.94f + 0.10f * bHash3;
+            leanFactor = 0.38f + 0.14f * bHash;
+            droopFactor = 0.14f + 0.08f * bHash3;
         }
         else
         {
-            // Tier 3: Low Ground Drape & Skirt (curves downward to conceal roots and terrain)
-            lengthScale = 0.64f + 0.12f * bHash2;
-            widthScaleVal = 1.18f + 0.16f * bHash3;
-            leanFactor = 0.86f + 0.22f * bHash;
-            droopFactor = 0.36f + 0.08f * bHash3;
+            // Tier 3: Soft Ground Fringe & Base Skirt (curving skirt concealing roots)
+            lengthScale = 0.70f + 0.10f * bHash2;
+            widthScaleVal = 1.02f + 0.10f * bHash3;
+            leanFactor = 0.52f + 0.14f * bHash;
+            droopFactor = 0.20f + 0.06f * bHash3;
         }
 
         height = clump->height * lengthScale;
@@ -422,81 +421,54 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             droopY *= 0.65f;
         }
 
-        // True progressive cantilever Bézier arch (slanted rise, apex at 0.78h, graceful droop at tip)
+        // True progressive cantilever Bézier arch (slanted rise, apex at 0.78h, graceful elevated tip)
         pBase = (Vector3){bx, clump->position.y, bz};
         pP1 = (Vector3){
             bx + dirX * (lean * 0.10f),
-            pBase.y + height * 0.38f,
+            pBase.y + height * 0.42f,
             bz + dirZ * (lean * 0.10f)};
         pP2 = (Vector3){
-            bx + dirX * (lean * 0.46f),
-            pBase.y + height * 0.78f,
-            bz + dirZ * (lean * 0.46f)};
+            bx + dirX * (lean * 0.44f),
+            pBase.y + height * 0.82f,
+            bz + dirZ * (lean * 0.44f)};
         pP3 = (Vector3){
-            bx + dirX * (lean * 0.96f),
-            pBase.y + fmaxf(height * 0.08f, height * (0.86f - droopFactor * 1.55f) - droopY * 0.45f),
-            bz + dirZ * (lean * 0.96f)};
+            bx + dirX * (lean * 0.92f),
+            pBase.y + fmaxf(height * 0.42f, height * (0.88f - droopFactor * 1.10f) - droopY * 0.30f),
+            bz + dirZ * (lean * 0.92f)};
 
-        // Harmonized sunlit meadow seedheads (eliminates discordant red/orange dots on grass hills)
-        float strawNoise = sinf(clump->position.x * 0.16f + clump->position.z * 0.12f + 1.7f) * 0.5f + sinf(clump->position.x * -0.10f + clump->position.z * 0.22f + 0.5f) * 0.5f;
-        isSeedhead = (strawNoise > 0.38f) && (bladeId == 0) && (bHash3 > 0.42f);
-        if (isSeedhead)
+        // 100% Pure Lush Green Blades: No seedheads, no withered yellow tips!
+        isSeedhead = false;
+        float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f + sinf(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f) * 0.45f;
+        float tone = 1.0f + colorField * 0.06f + (bHash - 0.5f) * 0.08f;
+        int rR = (int)(style.rootColor.r * tone);
+        int rG = (int)(style.rootColor.g * tone);
+        int rB = (int)(style.rootColor.b * tone);
+        int tR = (int)(style.tipColor.r * tone * 0.96f);
+        int tG = (int)(style.tipColor.g * tone * 1.04f);
+        int tB = (int)(style.tipColor.b * tone * 1.02f);
+
+        if (bHash2 < 0.10f && bladeId < 2)
         {
-            float pick = bHash2;
-            if (pick < 0.45f)
-            {
-                // 1. Golden Rye / Wheat Ear (warm sunlit straw spike)
-                bladeRoot = (Color){38, 56, 24, 255};
-                bladeTip = (Color){206, 184, 98, 255};
-            }
-            else if (pick < 0.75f)
-            {
-                // 2. Sunlit Meadow Oat (warm golden-chartreuse ear, harmonized with valley turf)
-                bladeRoot = (Color){34, 54, 22, 255};
-                bladeTip = (Color){184, 192, 86, 255};
-            }
-            else
-            {
-                // 3. Silvergrass / Foxtail Feather (luminous ivory-gold plume)
-                bladeRoot = (Color){32, 52, 24, 255};
-                bladeTip = (Color){214, 212, 168, 255};
-            }
+            tR = (int)(tR * 1.02f);
+            tG = (int)(tG * 1.06f);
+            tB = (int)(tB * 0.98f);
         }
-        else
+
+        if (bladeId >= 4)
         {
-            float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f + sinf(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f) * 0.45f;
-            float tone = 1.0f + colorField * 0.08f + (bHash - 0.5f) * 0.10f;
-            float warmth = colorField * 0.05f + (bHash3 - 0.5f) * 0.04f;
-            int rR = (int)(style.rootColor.r * tone * (1.0f + warmth));
-            int rG = (int)(style.rootColor.g * tone);
-            int rB = (int)(style.rootColor.b * tone * (1.0f - warmth));
-            int tR = (int)(style.tipColor.r * tone * (1.0f + warmth * 1.25f) + 10.0f * warmth);
-            int tG = (int)(style.tipColor.g * tone * (1.0f + warmth * 0.65f) + 6.0f * warmth);
-            int tB = (int)(style.tipColor.b * tone * (1.0f - warmth * 1.40f));
-
-            if (bHash2 < 0.10f && bladeId < 2)
-            {
-                tR = (int)(tR * 1.08f);
-                tG = (int)(tG * 1.06f);
-                tB = (int)(tB * 0.92f);
-            }
-
-            if (bladeId >= 4)
-            {
-                rR = (int)(rR * 0.90f);
-                rG = (int)(rG * 0.92f);
-                rB = (int)(rB * 0.90f);
-                tR = (int)(tR * 0.85f);
-                tG = (int)(tG * 0.88f);
-                tB = (int)(tB * 0.85f);
-            }
-            bladeRoot = (Color){(unsigned char)fminf(255, fmaxf(0, rR)),
-                                (unsigned char)fminf(255, fmaxf(0, rG)),
-                                (unsigned char)fminf(255, fmaxf(0, rB)), 255};
-            bladeTip = (Color){(unsigned char)fminf(255, fmaxf(0, tR)),
-                               (unsigned char)fminf(255, fmaxf(0, tG)),
-                               (unsigned char)fminf(255, fmaxf(0, tB)), 255};
+            rR = (int)(rR * 0.88f);
+            rG = (int)(rG * 0.90f);
+            rB = (int)(rB * 0.88f);
+            tR = (int)(tR * 0.84f);
+            tG = (int)(tG * 0.88f);
+            tB = (int)(tB * 0.86f);
         }
+        bladeRoot = (Color){(unsigned char)fminf(255, fmaxf(0, rR)),
+                            (unsigned char)fminf(255, fmaxf(0, rG)),
+                            (unsigned char)fminf(255, fmaxf(0, rB)), 255};
+        bladeTip = (Color){(unsigned char)fminf(255, fmaxf(0, tR)),
+                           (unsigned char)fminf(255, fmaxf(0, tG)),
+                           (unsigned char)fminf(255, fmaxf(0, tB)), 255};
     }
     if (!isReed && style.botanicalVariation > 0.0f)
     {
@@ -603,24 +575,24 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 }
                 else if (isSeedhead)
                 {
-                    float s0 = fminf(fmaxf((t0 - 0.52f) / 0.44f, 0.0f), 1.0f);
+                    float s0 = fminf(fmaxf((t0 - 0.48f) / 0.46f, 0.0f), 1.0f);
                     float bulge0 = powf(sinf(PI * s0), 0.82f);
-                    profile0 = (t0 < 0.52f) ? (0.36f + 0.14f * t0) : (0.36f + 0.88f * bulge0 * (1.0f - t0 * 0.35f));
+                    profile0 = (t0 < 0.48f) ? (0.36f + 0.14f * t0) : (0.36f + 1.45f * bulge0 * (1.0f - t0 * 0.26f));
 
-                    float s1 = fminf(fmaxf((t1 - 0.52f) / 0.44f, 0.0f), 1.0f);
+                    float s1 = fminf(fmaxf((t1 - 0.48f) / 0.46f, 0.0f), 1.0f);
                     float bulge1 = powf(sinf(PI * s1), 0.82f);
-                    profile1 = (t1 < 0.52f) ? (0.36f + 0.14f * t1) : (0.36f + 0.88f * bulge1 * (1.0f - t1 * 0.35f));
+                    profile1 = (t1 < 0.48f) ? (0.36f + 0.14f * t1) : (0.36f + 1.45f * bulge1 * (1.0f - t1 * 0.26f));
                 }
                 else
                 {
-                    profile0 = (0.76f + 0.44f * t0) * (1.0f - powf(t0, 1.65f) * 0.95f);
-                    profile1 = (0.76f + 0.44f * t1) * (1.0f - powf(t1, 1.65f) * 0.95f);
+                    profile0 = (1.0f - 0.15f * t0) * (1.0f - powf(t0, 1.45f) * 0.94f);
+                    profile1 = (1.0f - 0.15f * t1) * (1.0f - powf(t1, 1.45f) * 0.94f);
                 }
-                float halfW0 = (width * 0.5f) * fmaxf(profile0, 0.08f);
-                float halfW1 = (width * 0.5f) * fmaxf(profile1, 0.035f);
+                float halfW0 = (width * 0.5f) * fmaxf(profile0, 0.06f);
+                float halfW1 = (width * 0.5f) * fmaxf(profile1, 0.025f);
 
-                Vector3 fold0 = Vector3Scale(Ngeo0, halfW0 * 0.22f);
-                Vector3 fold1 = Vector3Scale(Ngeo1, halfW1 * 0.22f);
+                Vector3 fold0 = Vector3Scale(Ngeo0, halfW0 * 0.08f);
+                Vector3 fold1 = Vector3Scale(Ngeo1, halfW1 * 0.08f);
 
                 Vector3 p0 = Vector3Add(Vector3Subtract(center0, Vector3Scale(S0, halfW0)), fold0);
                 Vector3 p1 = Vector3Add(Vector3Add(center0, Vector3Scale(S0, halfW0)), fold0);
@@ -650,10 +622,10 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Vector3 nTarget1R = Vector3Normalize(Vector3Lerp(dSphere1R, terrainNormal, 0.45f));
                 Vector3 nTargetTip = Vector3Normalize(Vector3Lerp(dSphereTip, terrainNormal, 0.55f));
 
-                Vector3 nMesh0L = Vector3Normalize(Vector3Subtract(Ngeo0, Vector3Scale(S0, 0.35f)));
-                Vector3 nMesh0R = Vector3Normalize(Vector3Add(Ngeo0, Vector3Scale(S0, 0.35f)));
-                Vector3 nMesh1L = Vector3Normalize(Vector3Subtract(Ngeo1, Vector3Scale(S1, 0.32f)));
-                Vector3 nMesh1R = Vector3Normalize(Vector3Add(Ngeo1, Vector3Scale(S1, 0.32f)));
+                Vector3 nMesh0L = Vector3Normalize(Vector3Subtract(Ngeo0, Vector3Scale(S0, 0.22f)));
+                Vector3 nMesh0R = Vector3Normalize(Vector3Add(Ngeo0, Vector3Scale(S0, 0.22f)));
+                Vector3 nMesh1L = Vector3Normalize(Vector3Subtract(Ngeo1, Vector3Scale(S1, 0.18f)));
+                Vector3 nMesh1R = Vector3Normalize(Vector3Add(Ngeo1, Vector3Scale(S1, 0.18f)));
 
                 // Preserved midrib spine crease & spherical volume (API spec: 0.46..0.58)
                 Vector3 nL0 = Vector3Normalize(Vector3Lerp(nMesh0L, nTarget0L, 0.46f));

@@ -28,7 +28,7 @@ def function(source, name):
 
 
 def typedef(source, name):
-    return re.search(r"typedef struct \{[^}]*\} " + name + r";", source).group()
+    return re.search(r"typedef struct\s*\{[^}]*\}\s*" + name + r";", source).group()
 
 
 PREAMBLE = r'''
@@ -418,7 +418,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--raylib-include", default="/tmp/rlvk_visual_cache/raylib/src")
     args = parser.parse_args()
-    nature = (ROOT / "maps/toolkit/map_props_nature.inl").read_text()
+    nature = (ROOT / "maps/toolkit/map_props.c").read_text() + "\n" + \
+             (ROOT / "maps/toolkit/map_props_nature.inl").read_text() + "\n" + \
+             (ROOT / "maps/toolkit/map_props_meadow.inl").read_text()
     compact = (ROOT / "maps/toolkit/map_props_meadow_parametric.inl").read_text()
     source = PREAMBLE + "\n" + "\n".join(
         re.findall(r"^#define NATURE_[^\n]+", compact, re.M))

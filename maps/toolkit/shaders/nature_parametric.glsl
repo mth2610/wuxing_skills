@@ -205,17 +205,11 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     if (p2.w > 0.5) {
         // Broad leaf / wild clover variety
         profile = (0.86 + 0.26 * sinPiT) * (1.0 - powT18);
-    } else if (p3.w > 0.5) {
-        // Botanical spindle seedhead variety (plush upper plume)
-        float s = clamp((t - 0.50) * 2.173913, 0.0, 1.0); // 1.0 / 0.46
-        float para = 4.0 * s * (1.0 - s);
-        float bulge = para * (1.18 - 0.18 * para);
-        profile = (t < 0.50) ? (0.38 + 0.14 * t) : (0.38 + 0.90 * bulge * (1.0 - t * 0.34));
     } else {
-        // Standard fuller cubic botanical spear profile
-        profile = (0.78 + 0.42 * t) * (1.0 - powT165 * 0.94);
+        // Slender aerodynamic botanical spear profile
+        profile = (1.0 - 0.15 * t) * (1.0 - powT165 * 0.94);
     }
-    float halfWidth = p1.w * 0.5 * max(profile, role < 1.5 ? 0.085 : 0.038);
+    float halfWidth = p1.w * 0.5 * max(profile, role < 1.5 ? 0.065 : 0.025);
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
@@ -224,8 +218,8 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 
-    // Taper midrib V-crease smoothly to 0 at the tip so the apex joins cleanly
-    float creaseOffset = halfWidth * 0.24 * u;
+    // Subtle midrib structural curve (tapered smoothly to 0 at tip)
+    float creaseOffset = halfWidth * 0.08 * u;
     position = (role > 2.5)
         ? center
         : (center + side * (halfWidth * sideSign) + geometricNormal * creaseOffset);
@@ -250,7 +244,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     float occlusion = (t < 0.28) ? (0.84 + 0.57 * t) : 1.0;
 
     // 3-Stop Botanical Color Gradient:
-    // Stop 1 (Root) -> Stop 2 (Rich Viridian Mid-Body) -> Stop 3 (Sunlit Chartreuse / Seedhead Gold Tip)
+    // Stop 1 (Root) -> Stop 2 (Rich Viridian Mid-Body) -> Stop 3 (Sunlit Fresh Green Tip)
     vec3 rootNorm = rootColor * (1.0 / 255.0);
     vec3 tipNorm  = tipColor  * (1.0 / 255.0);
     vec3 viridianMid = mix(rootNorm, tipNorm, 0.46) * vec3(0.88, 1.02, 0.92);
@@ -258,13 +252,6 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     float lowerMix = smoothstep(0.0, 0.52, t);
     float upperMix = smoothstep(0.42, 0.96, t);
     vec3 gradCol = mix(mix(rootNorm, viridianMid, lowerMix), tipNorm, upperMix);
-
-    // Warm golden-straw tint on upper spindle seedheads (p3.w > 0.5)
-    if (p3.w > 0.5 && t > 0.48) {
-        float seedMask = smoothstep(0.48, 0.82, t);
-        vec3 seedGold = mix(tipNorm, vec3(0.68, 0.62, 0.28), 0.45);
-        gradCol = mix(gradCol, seedGold, seedMask);
-    }
 
     float bladeTone = 0.95 + 0.10 * fract(p0.w * 0.3183099);
     vec3 smoothCol = clamp(gradCol * (occlusion * bladeTone), 0.0, 1.0);
