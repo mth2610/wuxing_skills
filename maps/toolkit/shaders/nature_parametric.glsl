@@ -20,7 +20,7 @@ uniform int u_visibleTuftOffset;
 #endif
 
 // Per-vertex cache to avoid duplicate texture fetches and distance sqrt() calls
-// between NatureTuftUsesCurrentLod() and NatureEvaluateBlade().
+// between NatureTuftUsesCurrentLod(), NatureEvaluateBlade(), and the vertex shader.
 int s_cachedTuftId = -1;
 float s_cachedDistToCam = -1.0;
 vec4 s_cachedClumpTexel = vec4(0.0);
@@ -105,10 +105,11 @@ void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p
 {
     if (u_canonicalBladeData != 0) {
         // Dynamic optical density compensation matching CPU blade-reduction ratio
-        float bladeRatio = float(max(u_canonicalBlades, 1)) / float(max(u_bladesPerTuft, 1));
-        float expPower = (u_geometryLod == 2) ? 0.68 : ((u_geometryLod == 1) ? 0.62 : 0.55);
-        float widthScale = (u_geometryLod > 0) ? pow(bladeRatio, expPower) : 1.0;
-        p1.w *= widthScale;
+        if (u_geometryLod > 0) {
+            float bladeRatio = max(float(max(u_canonicalBlades, 1)) / float(max(u_bladesPerTuft, 1)), 1.0);
+            float expPower = (u_geometryLod == 2) ? 0.68 : 0.62;
+            p1.w *= pow(bladeRatio, expPower);
+        }
 
         if (u_geometryLod == 2) {
             float height = (p1.y - p0.y) * 3.5714286; // 1.0 / 0.28
@@ -130,7 +131,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     int localBlade = int(floor(vertexPosition.z));
     int blade = NatureBladeId(localBlade);
 
-    // Compute atlas base coordinate once; reuse cached clump texel when localBlade == 0
+    // Compute atlas base coordinate once; reuse cached clump texel when available
     ivec2 baseCoord = ivec2((blade & 255) * 7, blade >> 8);
     vec4 p0 = texelFetch(u_bladeParameters, baseCoord, 0);
     vec4 p1 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 1, baseCoord.y), 0);
@@ -139,12 +140,16 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     vec4 clump = (s_hasCachedClumpTexel && localBlade == 0)
         ? s_cachedClumpTexel
         : texelFetch(u_bladeParameters, ivec2(baseCoord.x + 4, baseCoord.y), 0);
+    // Guarantee s_cachedClumpTexel is always populated for downstream vertex morphology (e.g. compact mode)
+    s_cachedClumpTexel = vec4(p0.xyz, clump.w);
+    s_hasCachedClumpTexel = true;
+
     vec3 rootColor = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 5, baseCoord.y), 0).rgb;
     vec3 tipColor  = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 6, baseCoord.y), 0).rgb;
 
     NatureApplyCanonicalLod(p0, p1, p2, p3);
 
-    float t = vertexPosition.y;
+    float t = clamp(vertexPosition.y, 0.0, 1.0);
     float sideSign = vertexPosition.x;
     float role = fract(vertexPosition.z) * 4.0;
     float u = 1.0 - t;
@@ -156,9 +161,10 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
                   p2.xyz * (3.0 * ut * t) + p3.xyz * (t2 * t);
 
     // Factor out scalar 3.0 before normalize() to save 3 multiplies
-    vec3 tangent = normalize(u2 * (p1.xyz - p0.xyz) +
-                             (2.0 * ut) * (p2.xyz - p1.xyz) +
-                             t2 * (p3.xyz - p2.xyz));
+    vec3 rawTangent = u2 * (p1.xyz - p0.xyz) +
+                      (2.0 * ut) * (p2.xyz - p1.xyz) +
+                      t2 * (p3.xyz - p2.xyz);
+    vec3 tangent = normalize(rawTangent);
 
     vec3 side = vec3(-tangent.z, 0.0, tangent.x);
     float sideLenSq = dot(side, side);
@@ -168,42 +174,58 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         side = vec3(-sin(clump.w), 0.0, cos(clump.w));
     }
 
-    // cross(side, tangent) is already unit-length because side and tangent are unit & orthogonal
-    vec3 geometricNormal = cross(side, tangent);
+#ifdef NATURE_VISIBLE_TUFT_LOD
+    // View-assisted ribbon orientation: blends side.xz toward viewRightXZ so edge-on
+    // blades never collapse into 1px flickering lines while keeping 3D tuft volume.
+    vec3 toCamVec = (p0.xyz + u_worldOffset) - u_tuftLodCamera;
+    float distToCam = (s_cachedDistToCam >= 0.0) ? s_cachedDistToCam : length(toCamVec);
+    s_cachedDistToCam = distToCam;
+
+    vec2 viewRightXZ = vec2(-toCamVec.z, toCamVec.x);
+    float vrLenSq = dot(viewRightXZ, viewRightXZ);
+    if (vrLenSq > 1e-4) {
+        viewRightXZ *= inversesqrt(vrLenSq);
+        if (dot(side.xz, viewRightXZ) < 0.0) viewRightXZ = -viewRightXZ;
+        side.xz = normalize(mix(side.xz, viewRightXZ, 0.38));
+    }
+#endif
+
+    vec3 geometricNormal = normalize(cross(side, tangent));
     if (geometricNormal.y < 0.0) geometricNormal = -geometricNormal;
     if (geometricNormal.y < 0.25) {
         geometricNormal.y = 0.25;
         geometricNormal = normalize(geometricNormal);
     }
 
-    // Slender botanical spear profile: fuller mid-body for coverage, plush seedhead spindle, graceful tapering tip
+    // ALU-only botanical spear & seedhead profiles (eliminates per-vertex pow(0, x) NaN risk & sin() SFU cost)
     float sinPiT = 4.0 * ut;
     float powT18 = t2 * (0.82 + 0.18 * t);
+    float powT165 = t2 * (0.35 + 0.65 * t);
     float profile;
     if (p2.w > 0.5) {
-        profile = (0.85 + 0.25 * sinPiT) * (1.0 - powT18);
+        // Broad leaf / wild clover variety
+        profile = (0.86 + 0.26 * sinPiT) * (1.0 - powT18);
     } else if (p3.w > 0.5) {
-        float s = clamp((t - 0.52) / 0.44, 0.0, 1.0);
-        float bulge = pow(sin(3.14159265 * s), 0.82);
-        profile = (t < 0.52) ? (0.36 + 0.14 * t) : (0.36 + 0.88 * bulge * (1.0 - t * 0.35));
+        // Botanical spindle seedhead variety (plush upper plume)
+        float s = clamp((t - 0.50) * 2.173913, 0.0, 1.0); // 1.0 / 0.46
+        float para = 4.0 * s * (1.0 - s);
+        float bulge = para * (1.18 - 0.18 * para);
+        profile = (t < 0.50) ? (0.38 + 0.14 * t) : (0.38 + 0.90 * bulge * (1.0 - t * 0.34));
     } else {
-        profile = (0.76 + 0.44 * t) * (1.0 - pow(t, 1.65) * 0.95);
+        // Standard fuller cubic botanical spear profile
+        profile = (0.78 + 0.42 * t) * (1.0 - powT165 * 0.94);
     }
-    float halfWidth = p1.w * 0.5 * max(profile, role < 1.5 ? 0.08 : 0.035);
+    float halfWidth = p1.w * 0.5 * max(profile, role < 1.5 ? 0.085 : 0.038);
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    float distToCam = (s_cachedDistToCam >= 0.0)
-        ? s_cachedDistToCam
-        : distance(p0.xyz + u_worldOffset, u_tuftLodCamera);
     // Subtle sub-pixel minimum width prevents distant blades from breaking into 1px dots
-    // while keeping close-range blades slender and naturally tapered
-    float minPxHalfWidth = distToCam * 0.00052 * (1.0 - 0.58 * t);
+    float minPxHalfWidth = distToCam * 0.00054 * (1.0 - 0.55 * t);
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 
     // Taper midrib V-crease smoothly to 0 at the tip so the apex joins cleanly
-    float creaseOffset = halfWidth * 0.22 * u;
+    float creaseOffset = halfWidth * 0.24 * u;
     position = (role > 2.5)
         ? center
         : (center + side * (halfWidth * sideSign) + geometricNormal * creaseOffset);
@@ -219,18 +241,33 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     }
 #endif
 
+    // Preserved midrib spine crease & spherical tuft volume normal (API spec: 0.46..0.58)
     vec3 sphereDirection = normalize(position - vec3(clump.x, clump.y - 0.04, clump.z));
-    vec3 target = mix(sphereDirection, vec3(0.0, 1.0, 0.0), role > 2.5 ? 0.58 : 0.46);
-    vec3 meshNormal = geometricNormal + side * (sideSign * (role < 1.5 ? 0.34 : 0.30));
-    // Balanced spherical volume fill + sharp blade midrib crease highlight
-    normal = mix(meshNormal, target, role > 2.5 ? 0.58 : 0.46);
+    vec3 target = normalize(mix(sphereDirection, vec3(0.0, 1.0, 0.0), role > 2.5 ? 0.56 : 0.44));
+    vec3 meshNormal = normalize(geometricNormal + side * (sideSign * (role < 1.5 ? 0.36 : 0.30)));
+    normal = normalize(mix(meshNormal, target, role > 2.5 ? 0.56 : 0.46));
 
-    float occlusion = (t < 0.25) ? (0.88 + 0.48 * t) : 1.0;
+    float occlusion = (t < 0.28) ? (0.84 + 0.57 * t) : 1.0;
 
-    // Monotonic, natural root-to-tip botanical color gradient + subtle per-blade phase tone
-    float bladeTone = 0.96 + 0.08 * fract(p0.w * 0.3183099);
-    float colorT = t * t * (3.0 - 2.0 * t);
-    vec3 smoothCol = clamp(mix(rootColor, tipColor, colorT) * (occlusion * bladeTone * (1.0 / 255.0)), 0.0, 1.0);
+    // 3-Stop Botanical Color Gradient:
+    // Stop 1 (Root) -> Stop 2 (Rich Viridian Mid-Body) -> Stop 3 (Sunlit Chartreuse / Seedhead Gold Tip)
+    vec3 rootNorm = rootColor * (1.0 / 255.0);
+    vec3 tipNorm  = tipColor  * (1.0 / 255.0);
+    vec3 viridianMid = mix(rootNorm, tipNorm, 0.46) * vec3(0.88, 1.02, 0.92);
+
+    float lowerMix = smoothstep(0.0, 0.52, t);
+    float upperMix = smoothstep(0.42, 0.96, t);
+    vec3 gradCol = mix(mix(rootNorm, viridianMid, lowerMix), tipNorm, upperMix);
+
+    // Warm golden-straw tint on upper spindle seedheads (p3.w > 0.5)
+    if (p3.w > 0.5 && t > 0.48) {
+        float seedMask = smoothstep(0.48, 0.82, t);
+        vec3 seedGold = mix(tipNorm, vec3(0.68, 0.62, 0.28), 0.45);
+        gradCol = mix(gradCol, seedGold, seedMask);
+    }
+
+    float bladeTone = 0.95 + 0.10 * fract(p0.w * 0.3183099);
+    vec3 smoothCol = clamp(gradCol * (occlusion * bladeTone), 0.0, 1.0);
 
     color = vec4(smoothCol, fadeAlpha);
     windUV = vec2(p0.w, t);

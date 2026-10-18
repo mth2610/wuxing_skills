@@ -106,9 +106,10 @@ float MapShadowFilteredVisibility(highp sampler2D mapTexture, vec2 uv,
     if (quality < 0.5)
         return MapShadowCompareBilinear(mapTexture, uv, compareDepth, texelSize);
 
+    float resolution = 1.0 / max(texelSize, 0.0000001);
+    vec2 centerPos = uv * resolution - 0.5;
+
     if (quality < 1.5) {
-        float resolution = 1.0 / max(texelSize, 0.0000001);
-        vec2 centerPos = uv * resolution - 0.5;
         float diag = radiusScale * 0.55;
         float s0 = MapShadowCompareBilinearTexel(
             mapTexture, centerPos + vec2(-diag, -diag), compareDepth, texelSize);
@@ -117,11 +118,10 @@ float MapShadowFilteredVisibility(highp sampler2D mapTexture, vec2 uv,
         return (s0 + s1) * 0.5;
     }
 
-    // HIGH: five bilinear taps = 5 fetches with gather (was 20 point fetches).
-    float resolution = 1.0 / max(texelSize, 0.0000001);
-    vec2 centerPos = uv * resolution - 0.5;
     float diagonal = radiusScale * 0.707;   // diagonal tap offset, in texels
 
+#if MAP_SHADOW_USE_GATHER
+    // HIGH with textureGather: 5 hardware gather instructions.
     float center = MapShadowCompareBilinearTexel(
         mapTexture, centerPos, compareDepth, texelSize);
     float downLeft = MapShadowCompareBilinearTexel(
@@ -132,6 +132,46 @@ float MapShadowFilteredVisibility(highp sampler2D mapTexture, vec2 uv,
         mapTexture, centerPos + vec2(-diagonal,  diagonal), compareDepth, texelSize);
     float upRight = MapShadowCompareBilinearTexel(
         mapTexture, centerPos + vec2( diagonal,  diagonal), compareDepth, texelSize);
+#else
+    // HIGH without textureGather (e.g. Desktop GLSL 330):
+    // Deduplicate overlapping 2x2 taps into a single shared 3x3 neighborhood fetch
+    // (9 point fetches total instead of 20), reconstructing the exact bilinear
+    // center tap and all four quadrant bilinear penumbra taps in registers.
+    vec2 nearest = floor(centerPos + 0.5);
+    vec2 d = centerPos - nearest; // fractional offset in [-0.5, 0.5)
+    vec2 uvCenter = (nearest + 0.5) * texelSize;
+
+    float s00 = MapShadowCompare(mapTexture, uvCenter + vec2(-texelSize, -texelSize), compareDepth);
+    float s10 = MapShadowCompare(mapTexture, uvCenter + vec2(       0.0, -texelSize), compareDepth);
+    float s20 = MapShadowCompare(mapTexture, uvCenter + vec2( texelSize, -texelSize), compareDepth);
+    float s01 = MapShadowCompare(mapTexture, uvCenter + vec2(-texelSize,        0.0), compareDepth);
+    float s11 = MapShadowCompare(mapTexture, uvCenter,                                compareDepth);
+    float s21 = MapShadowCompare(mapTexture, uvCenter + vec2( texelSize,        0.0), compareDepth);
+    float s02 = MapShadowCompare(mapTexture, uvCenter + vec2(-texelSize,  texelSize), compareDepth);
+    float s12 = MapShadowCompare(mapTexture, uvCenter + vec2(       0.0,  texelSize), compareDepth);
+    float s22 = MapShadowCompare(mapTexture, uvCenter + vec2( texelSize,  texelSize), compareDepth);
+
+    // Mathematically exact bilinear resolve for centerPos
+    vec2 w0 = max(-d, 0.0);
+    vec2 w1 = 1.0 - abs(d);
+    vec2 w2 = max(d, 0.0);
+    float row0 = s00 * w0.x + s10 * w1.x + s20 * w2.x;
+    float row1 = s01 * w0.x + s11 * w1.x + s21 * w2.x;
+    float row2 = s02 * w0.x + s12 * w1.x + s22 * w2.x;
+    float center = row0 * w0.y + row1 * w1.y + row2 * w2.y;
+
+    // Continuous C0-seamless quadrant bilinear taps across the 4 sub-quads of the 3x3 grid
+    float effDiag = min(diagonal, 0.5);
+    vec2 fDL = clamp(d + vec2(1.0 - effDiag), 0.0, 1.0);
+    vec2 fDR = clamp(vec2(d.x + effDiag, d.y + 1.0 - effDiag), 0.0, 1.0);
+    vec2 fUL = clamp(vec2(d.x + 1.0 - effDiag, d.y + effDiag), 0.0, 1.0);
+    vec2 fUR = clamp(d + vec2(effDiag), 0.0, 1.0);
+
+    float downLeft  = mix(mix(s00, s10, fDL.x), mix(s01, s11, fDL.x), fDL.y);
+    float downRight = mix(mix(s10, s20, fDR.x), mix(s11, s21, fDR.x), fDR.y);
+    float upLeft    = mix(mix(s01, s11, fUL.x), mix(s02, s12, fUL.x), fUL.y);
+    float upRight   = mix(mix(s11, s21, fUR.x), mix(s12, s22, fUR.x), fUR.y);
+#endif
 
     float smoothVisibility = center * 0.36
                            + (downLeft + downRight + upLeft + upRight) * 0.16;
@@ -213,13 +253,13 @@ float MapShadowVisibility(vec3 worldPos, vec3 normal, vec3 lightDir)
     if (u_shadowEnabled < 0.5 && u_staticShadowEnabled < 0.5)
         return 1.0;
 
-    // cos(theta) with a single inversesqrt instead of two normalize() calls.
-    float cosTheta = dot(normal, lightDir)
-                   * inversesqrt(dot(normal, normal) * dot(lightDir, lightDir));
-    float slope = 1.0 - max(cosTheta, 0.0);
+    // Guard against degenerate zero-length normals/light vectors to prevent NaN propagation
+    float normLenSq = dot(normal, normal) * dot(lightDir, lightDir);
+    float cosTheta = dot(normal, lightDir) * inversesqrt(max(normLenSq, 1e-12));
+    float slope = 1.0 - clamp(cosTheta, 0.0, 1.0);
 
     float dynamicShadow = MapDynamicShadowVisibility(worldPos, slope);
-    if (dynamicShadow <= 0.0)
+    if (dynamicShadow <= 0.001)
         return 0.0;
     return min(dynamicShadow, MapStaticShadowVisibility(worldPos, slope));
 }

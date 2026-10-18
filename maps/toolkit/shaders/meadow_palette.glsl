@@ -8,4 +8,3 @@ vec3 MeadowCanopyColor(float habitat)
     vec3 color = mix(deepMoss, lushClover, smoothstep(0.20, 0.60, habitat));
     return mix(color, sunlitGold, smoothstep(0.55, 0.90, habitat));
 }
-

@@ -17,26 +17,23 @@ out vec4 finalColor;
 
 void main()
 {
-    // 1. Cylindrical cross-section & vascular midrib + parallel venation micro-relief
+    // 1. Two-sided normal orientation (V-crease fold & distance-aware terrain blend
+    // are handled analytically inside GrassShade to avoid double-flattening the normal)
     float u = fragTexCoord.x;
     float absU = abs(u);
     vec3 baseNormal = gl_FrontFacing ? fragNormal : -fragNormal;
-    vec3 sideAxis = vec3(-baseNormal.z, 0.0, baseNormal.x);
-    float sideLenSq = dot(sideAxis, sideAxis);
-    if (sideLenSq > 1e-6) sideAxis *= inversesqrt(sideLenSq);
-    // AAA WebGL-grade cylindrical curvature + upper-hemisphere canopy blend
-    vec3 curvedNormal = normalize(baseNormal + sideAxis * (u * 0.46));
-    curvedNormal = normalize(mix(curvedNormal, vec3(0.0, 1.0, 0.0), 0.30));
 
-    // Botanical vascular bundle (midrib) + subtle parallel leaf veins
-    float midrib = 1.0 - FastRamp(0.0, 0.28, absU) * 0.08;
-    float veins  = sin(absU * 18.84955) * 0.025 * (1.0 - fragHeight * 0.5);
-    vec3 albedo = fragColor.rgb * colDiffuse.rgb * (midrib + veins);
+    // Anti-aliased vascular bundle (midrib) + soft parallel ridge (avoids high-frequency sin() Moire)
+    float fwU = fwidth(u);
+    float detailFade = 1.0 - FastRamp(0.35, 1.10, fwU);
+    float midrib = 1.0 - FastRamp(0.0, 0.26, absU) * (0.09 * detailFade);
+    float vascularRidge = (absU * (1.0 - absU) - 0.16) * (0.12 * detailFade * (1.0 - fragHeight * 0.5));
+    vec3 albedo = fragColor.rgb * colDiffuse.rgb * (midrib + vascularRidge);
 
-    vec3 lit = GrassShade(albedo, fragPosition, curvedNormal, fragHeight,
+    vec3 lit = GrassShade(albedo, fragPosition, baseNormal, fragHeight,
                           u, v_lightSpace, v_staticLightSpace);
 
-    // 2. Arch-windowed Wind-Wave Sheen (already tapered to 0 at tip in VS so tips never flicker)
+    // 2. Arch-windowed Wind-Wave Sheen (tapered to 0 at tip in VS so tips never flicker)
     float windSheen = fragColor.a;
     lit *= 1.0 + windSheen * 0.18;
 

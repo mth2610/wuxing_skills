@@ -28,15 +28,12 @@ float FastRamp(float edge0, float edge1, float x)
 }
 
 // ============================================================================
-// SHADOW MAPPING (Zero Redundant Texture Fetches)
+// SHADOW MAPPING (True Early-Out & Exact Texel-Grid Alignment)
 // ============================================================================
 float NatureShadowCompare(sampler2D mapTexture, vec2 uv, float depth,
-                          float texelSize, float filterWeight)
+                          float texelSize)
 {
-    if (filterWeight <= 0.05)
-        return MapShadowCompareBilinear(mapTexture, uv, depth, texelSize);
-    float effectiveTexel = texelSize * FastRamp(0.0, 0.35, filterWeight);
-    return MapShadowCompareBilinear(mapTexture, uv, depth, effectiveTexel);
+    return MapShadowCompareBilinear(mapTexture, uv, depth, texelSize);
 }
 
 float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
@@ -49,40 +46,43 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
         return 1.0;
 
     float slope = 1.0 - max(dot(normal, lightDir), 0.0);
-    float filterWeight = (u_shadowFilterQuality > 1.5)
-        ? (1.0 - FastRamp(14.0, 24.0, distToCam)) : 0.0;
 
-    float dynamicShadow = 1.0;
+    float rawDyn = 1.0;
     if (u_shadowEnabled > 0.5) {
         float invW = 1.0 / max(lightSpace.w, 1e-5);
         vec3 projected = (lightSpace.xyz * invW) * 0.5 + 0.5;
         if (all(greaterThan(projected, vec3(0.0))) && all(lessThan(projected, vec3(1.0)))) {
-            float bias = clamp(0.0022 + slope * 0.0038, 0.0018, 0.0060);
-            float rawDyn = NatureShadowCompare(shadowMap, projected.xy,
-                projected.z - bias, u_shadowTexel, filterWeight);
-            // Translucent grass blades transmit ~45% of direct sunlight through the turf canopy,
-            // preventing a harsh dark/bright step at the dynamic shadow caster distance boundary.
-            rawDyn = mix(0.45, 1.0, rawDyn);
-            dynamicShadow = mix(1.0, rawDyn, MapShadowCoverageFadeWidth(projected.xy, 0.18));
+            float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.18);
+            if (edgeFade > 0.0) {
+                float bias = clamp(0.0020 + slope * 0.0036, 0.0016, 0.0058);
+                float sampleDyn = NatureShadowCompare(shadowMap, projected.xy,
+                    projected.z - bias, u_shadowTexel);
+                rawDyn = mix(1.0, sampleDyn, edgeFade);
+            }
         }
     }
 
-    // Early-out optimization: Only sample static shadow map if dynamic shadow isn't already occluded
-    float combined = dynamicShadow;
-    if (u_staticShadowEnabled > 0.5 && dynamicShadow > 0.01) {
+    // True early-out: Only sample static shadow map if dynamic shadow is not already fully occluded
+    float rawCombined = rawDyn;
+    if (u_staticShadowEnabled > 0.5 && rawDyn > 0.02) {
         float invW = 1.0 / max(staticLightSpace.w, 1e-5);
         vec3 projected = (staticLightSpace.xyz * invW) * 0.5 + 0.5;
         if (all(greaterThan(projected, vec3(0.0))) && all(lessThan(projected, vec3(1.0)))) {
-            float bias = clamp(0.0025 + slope * 0.0040, 0.0020, 0.0070);
-            float staticShadow = NatureShadowCompare(staticShadowMap, projected.xy,
-                projected.z - bias, u_staticShadowTexel, filterWeight);
-            staticShadow = mix(0.42, 1.0, staticShadow);
-            staticShadow = mix(1.0, staticShadow, MapShadowCoverageFadeWidth(projected.xy, 0.08));
-            combined = min(dynamicShadow, staticShadow);
+            float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.08);
+            if (edgeFade > 0.0) {
+                float bias = clamp(0.0024 + slope * 0.0038, 0.0018, 0.0068);
+                float sampleStatic = NatureShadowCompare(staticShadowMap, projected.xy,
+                    projected.z - bias, u_staticShadowTexel);
+                float rawStatic = mix(1.0, sampleStatic, edgeFade);
+                rawCombined = min(rawDyn, rawStatic);
+            }
         }
     }
 
-    return mix(1.0, combined, shadowFade);
+    // Translucent grass blades transmit ~42% of direct sunlight through the turf canopy,
+    // preventing a harsh dark/bright step at the dynamic shadow caster distance boundary.
+    float translucentVis = mix(0.42, 1.0, rawCombined);
+    return mix(1.0, translucentVis, shadowFade);
 }
 
 // ============================================================================
@@ -125,8 +125,8 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 n = normalize(mix(faceNormal, vec3(0.0, 1.0, 0.0), totalTerrainBlend));
 
     // Root-to-ground color blending
-    const vec3 soilTone = vec3(0.16, 0.14, 0.08);
-    float stemRootBlend = (1.0 - FastRamp(0.0, 0.22, hNorm)) * (1.0 - bloomMask) * 0.65;
+    const vec3 soilTone = vec3(0.16, 0.15, 0.08);
+    float stemRootBlend = (1.0 - FastRamp(0.0, 0.22, hNorm)) * (1.0 - bloomMask) * 0.62;
     baseColor = mix(baseColor, soilTone, stemRootBlend);
 
     // Zenith irradiance compensation
@@ -148,7 +148,7 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float thinness = mix(0.20, 1.0, FastRamp(0.06, 0.65, hNorm));
     float transmission = transmissionAngle * thinness;
 
-    vec3 foliageSSS = baseColor * vec3(1.65, 1.82, 0.52) + vec3(0.05, 0.08, 0.015) * thinness;
+    vec3 foliageSSS = baseColor * vec3(1.60, 1.78, 0.52) + vec3(0.04, 0.07, 0.015) * thinness;
     vec3 petalSSS   = baseColor * vec3(1.48, 1.28, 0.92) + vec3(0.08, 0.04, 0.02);
     vec3 subsurfaceColor = mix(foliageSSS, petalSSS, bloomMask);
 
@@ -157,7 +157,7 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float cloudVis = (shadow > 0.001) ? Environment_CloudVisibility(u_cloudNoise, worldPosition) : 0.0;
 
     float invH = 1.0 - hNorm;
-    float canopyExtinction = clamp(1.0 / (1.0 + 1.2 * invH + 0.72 * invH * invH), 0.58, 1.0);
+    float canopyExtinction = clamp(1.0 / (1.0 + 1.2 * invH + 0.72 * invH * invH), 0.56, 1.0);
 
     // Hemispheric Ambient Lighting
     float skyWeight = n.y * 0.5 + 0.5;
@@ -177,22 +177,22 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         float NdotH = max(dot(faceNormal, halfDir), 0.0);
         float specLobeStem = FastPow32(NdotH);
         float specLobeBloom = FastPow16(NdotH);
-        float specIntensity = mix(0.65 * (1.0 - antiShimmer * 0.75), 0.40, bloomMask) * canopyExtinction;
+        float specIntensity = mix(0.62 * (1.0 - antiShimmer * 0.75), 0.38, bloomMask) * canopyExtinction;
         float spec = mix(specLobeStem, specLobeBloom, bloomMask) * specIntensity;
 
         float oneMinusNV = 1.0 - max(dot(faceNormal, viewDir), 0.0);
-        float rim = (oneMinusNV * oneMinusNV * sqrt(oneMinusNV)) * mix(0.20, 0.28, bloomMask);
+        float rim = (oneMinusNV * oneMinusNV * sqrt(oneMinusNV)) * mix(0.18, 0.26, bloomMask);
 
-        vec3 directSunTerms = baseColor * (directDiffuse * 1.08 + rim)
+        vec3 directSunTerms = baseColor * (directDiffuse * 1.06 + rim)
                             + subsurfaceColor * (transmission * mix(0.72, 0.88, bloomMask))
                             + vec3(spec, spec, spec * 0.94);
         lit += directSunTerms * (effectiveLightColor * sunFactor);
     }
 
-    lit += subsurfaceColor * (transmission * mix(0.18, 0.24, bloomMask)) * skyAmbient;
+    lit += subsurfaceColor * (transmission * mix(0.16, 0.22, bloomMask)) * skyAmbient;
 
     float hCurve = hNorm / (0.70 + 0.30 * hNorm);
-    float rootAO = clamp(0.74 + 0.26 * hCurve, 0.74, 1.0);
+    float rootAO = clamp(0.72 + 0.28 * hCurve, 0.72, 1.0);
     lit *= rootAO;
 
     lit += VFXLights_Accumulate(worldPosition, n, baseColor);
@@ -202,7 +202,7 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 // ============================================================================
 // HIGH-DENSITY BLADE GRASS SHADING
 // Generalized 4-State Botanical Optics (Lush, Withered, Dry, Scorched + Embers)
-// + 5-Layer Anti-Flicker Tip Convergence & Balanced Root Grounding
+// + 3D V-Crease Fold, Macro Botanical Harmony & 5-Layer Anti-Flicker Convergence
 // ============================================================================
 vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                 float heightAlongPlant, float uTransverse,
@@ -216,28 +216,45 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 viewDir = toCam * invDist;
     float distToCam = distSq * invDist;
 
-    // Smooth upward normal bias avoids derivative discontinuities in dFdx/dFdy
-    vec3 faceNormal = normalize(vec3(worldNormal.x, max(abs(worldNormal.y), 0.24), worldNormal.z));
+    float u = clamp(uTransverse, -1.0, 1.0);
+    float absU = abs(u);
 
-    float absU = abs(uTransverse);
-    // Division-free unresolved blade metric: widthPixels in [1.2, 3.2] + vertical tip derivative
+    // Division-free unresolved blade metric: widthPixels + vertical tip derivative
     float fwU = fwidth(uTransverse);
     float fwH = fwidth(h);
-    float unresolved = max(FastRamp(0.55, 1.80, fwU), FastRamp(0.16, 0.45, fwH));
-    float tipConvergence = FastRamp(0.78, 0.98, h);
-    float antiShimmer = max(max(unresolved, FastRamp(10.0, 32.0, distToCam)), tipConvergence * 0.65);
+    float unresolved = max(FastRamp(0.50, 1.70, fwU), FastRamp(0.15, 0.42, fwH));
+    float tipConvergence = FastRamp(0.76, 0.98, h);
+    float antiShimmer = max(max(unresolved, FastRamp(10.0, 30.0, distToCam)), tipConvergence * 0.68);
+
+    // Smooth upward normal bias + 3D V-crease lateral fold across the blade width
+    // Restores physical midrib crease & bilateral sunlit/shaded contrast per blade
+    vec3 faceNormal = normalize(vec3(worldNormal.x, max(abs(worldNormal.y), 0.26), worldNormal.z));
+    vec3 bladeSide = vec3(-faceNormal.z, 0.0, faceNormal.x);
+    float sideLenSq = dot(bladeSide, bladeSide);
+    if (sideLenSq > 1e-6) {
+        bladeSide *= inversesqrt(sideLenSq);
+        float creaseStrength = 0.48 * (1.0 - antiShimmer * 0.88);
+        faceNormal = normalize(faceNormal + bladeSide * (u * creaseStrength));
+    }
 
     // Arch Bell Window: concentrates specular & grazing sheen on the broad curved mid-upper arch
-    // (h in [0.20, 0.76]) and tapers strictly to 0.0 at the narrow tip (h > 0.85) so tips NEVER flicker!
-    float archWindow = FastRamp(0.14, 0.46, h) * (1.0 - FastRamp(0.70, 0.90, h));
+    // (h in [0.16, 0.86]) and tapers strictly to 0.0 at the narrow tip so tips NEVER flicker
+    float archWindow = FastRamp(0.14, 0.44, h) * (1.0 - FastRamp(0.68, 0.88, h));
 
-    float groundBlend = (1.0 - FastRamp(0.0, 0.28, h)) * 0.28;
-    float terrainBlend = 1.0 - (1.0 - antiShimmer * 0.82) * (1.0 - groundBlend);
+    float groundBlend = (1.0 - FastRamp(0.0, 0.30, h)) * 0.32;
+    float terrainBlend = 1.0 - (1.0 - antiShimmer * 0.84) * (1.0 - groundBlend);
     vec3 n = normalize(mix(faceNormal, vec3(0.0, 1.0, 0.0), terrainBlend));
 
-    // Soft central rib & subtle edge relief (filtered away when unresolved or near tip)
-    float rib = 1.0 - FastRamp(0.0, 0.34, absU);
-    baseColor *= 1.0 + (rib - 0.35) * 0.12 * (1.0 - antiShimmer);
+    // Soft central midrib highlight & subtle edge relief (filtered out when unresolved)
+    float rib = 1.0 - FastRamp(0.0, 0.32, absU);
+    baseColor *= 1.0 + (rib - 0.32) * 0.14 * (1.0 - antiShimmer);
+
+    // Coherent macro botanical hue shift (breaks up uniform lime-green carpet across the valley)
+    float macroPatch = sin(worldPosition.x * 0.14 + worldPosition.z * 0.09) * 0.55
+                     + cos(worldPosition.x * -0.08 + worldPosition.z * 0.19) * 0.45;
+    float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
+    vec3 tipWarmth = mix(vec3(0.95, 1.01, 0.96), vec3(1.08, 1.03, 0.86), warmShift * FastRamp(0.35, 0.92, h));
+    baseColor *= tipWarmth;
 
     // ── GENERALIZED 4-STATE BOTANICAL TRANSITION ─────────────────────────────
     // Fast-paths when in default Lush Green state (dryness == 0 && scorch == 0)
@@ -246,14 +263,12 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float scorch  = grassState.y;
     float specScale = 1.0;
     float sssScale  = 1.0;
-    vec3 sssTint    = vec3(1.06, 1.18, 0.72);
     vec3 emberGlow  = vec3(0.0);
-    // Matches ground_splat.fs turfBase so grass roots melt seamlessly into the terrain without dark smudges
-    vec3 rootSubstrateTone = vec3(0.20, 0.29, 0.12);
+    // Matches ground_splat.fs turfBase so grass roots melt seamlessly into the terrain
+    vec3 rootSubstrateTone = vec3(0.165, 0.270, 0.088);
 
     if (dryness > 0.001 || scorch > 0.001) {
         // 1. Lush Green -> Withered Yellow (0.0 .. 0.55):
-        // Senescence progresses from blade tip & outer margins downward as chlorophyll breaks down
         float wiltWeight = clamp(dryness * 1.85, 0.0, 1.0);
         float senescenceMask = clamp(wiltWeight * (0.58 + 0.52 * h + 0.22 * absU), 0.0, 1.0);
         vec3 witheredRoot = vec3(0.22, 0.24, 0.09);
@@ -277,7 +292,6 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         // Adjust optical sheen & subsurface scattering for yellowing/dry states
         specScale = mix(1.0, 0.42, dryness);
         sssScale  = mix(1.0, 0.58, dryness);
-        sssTint   = mix(sssTint, vec3(1.25, 1.02, 0.48), wiltWeight);
 
         // 3. Fire-Scorched / Charred Black (scorch > 0.0):
         if (scorch > 0.001) {
@@ -304,21 +318,21 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     }
 
     // Seamless Root-to-Ground Turf Color Blending
-    float rootBlend = (1.0 - FastRamp(0.0, 0.30, h)) * 0.52;
+    float rootBlend = (1.0 - FastRamp(0.0, 0.34, h)) * 0.58;
     baseColor = mix(baseColor, rootSubstrateTone, rootBlend);
 
     vec3 skyAmbient = Environment_HemisphereIrradiance(vec3(0.0, 1.0, 0.0), u_ambientColor);
     vec3 groundBounce = Environment_HemisphereIrradiance(vec3(0.0, -1.0, 0.0), u_ambientColor);
     vec3 ambient = mix(groundBounce, skyAmbient, n.y * 0.5 + 0.5);
 
-    // Balanced ground contact ambient occlusion: preserves 3D tuft depth without black root smudges
-    float rootAO = mix(0.48, 1.0, smoothstep(0.0, 0.52, h));
+    // Grounded contact ambient occlusion: creates lush 3D tuft depth that anchors blades to the turf
+    float rootAO = mix(0.40, 1.0, smoothstep(0.0, 0.56, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     // Waxy cuticle grazing sheen (windowed by archWindow so tips never shimmer)
     float nv = max(dot(faceNormal, viewDir), 0.0);
     float waxFresnel = FastPow4(1.0 - nv);
-    vec3 waxSheen = skyAmbient * (waxFresnel * 0.24 * archWindow * specScale * (1.0 - antiShimmer * 0.75));
+    vec3 waxSheen = skyAmbient * (waxFresnel * 0.22 * archWindow * specScale * (1.0 - antiShimmer * 0.78));
     lit += waxSheen * rootAO;
 
     // Shadow + conditional Cloud visibility (skips cloud texture lookup if shadowed)
@@ -326,26 +340,25 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     if (shadow > 0.001) {
         float sunVis = shadow * Environment_CloudVisibility(u_cloudNoise, worldPosition);
         if (sunVis > 0.001) {
-            // Zenith irradiance compensation + warm-sun red-overdrive protection so green grass
-            // under warm morning/sunset light stays lush sunlit green rather than yellow mustard
+            // Zenith irradiance compensation + warm-sun balance
             vec3 effectiveLightColor = u_lightColor * (1.0 / (1.0 + max(u_lightDir.y - 0.38, 0.0) * 0.82));
             float sunLuma = dot(effectiveLightColor, vec3(0.28, 0.58, 0.14));
-            vec3 balancedSun = vec3(sunLuma) * vec3(1.06, 1.02, 0.88);
-            effectiveLightColor = mix(effectiveLightColor, balancedSun, 0.42 * (1.0 - dryness));
+            vec3 balancedSun = vec3(sunLuma) * vec3(1.05, 1.02, 0.90);
+            effectiveLightColor = mix(effectiveLightColor, balancedSun, 0.38 * (1.0 - dryness));
 
             // Azimuthal blade modeling: preserves blade-to-blade relief even at 12:00 Noon
             vec3 modelLightDir = normalize(vec3(u_lightDir.x + 0.36 * u_lightDir.y, u_lightDir.y * 0.72, u_lightDir.z - 0.28 * u_lightDir.y));
-            float wrappedSun   = clamp((dot(n, u_lightDir) + 0.42) * 0.704225, 0.0, 1.0);
-            float wrappedModel = clamp((dot(faceNormal, modelLightDir) + 0.38) * 0.724638, 0.0, 1.0);
-            float zenithBlend  = FastRamp(0.55, 0.92, u_lightDir.y) * (1.0 - antiShimmer * 0.75);
-            float wrapped = mix(wrappedSun, wrappedModel, zenithBlend * 0.68);
+            float wrappedSun   = clamp((dot(n, u_lightDir) + 0.40) * 0.714286, 0.0, 1.0);
+            float wrappedModel = clamp((dot(faceNormal, modelLightDir) + 0.36) * 0.735294, 0.0, 1.0);
+            float zenithBlend  = FastRamp(0.50, 0.90, u_lightDir.y) * (1.0 - antiShimmer * 0.75);
+            float wrapped = mix(wrappedSun, wrappedModel, zenithBlend * 0.65);
 
             // Beer-Lambert attenuation + balanced tuft interior self-occlusion
-            float canopyDepth = 0.42 * (1.0 - h);
+            float canopyDepth = 0.44 * (1.0 - h);
             float opticalDepth = canopyDepth * 0.85 / max(u_lightDir.y, 0.22);
             float expCanopy = 1.0 / (1.0 + opticalDepth + 0.40 * opticalDepth * opticalDepth);
-            float verticalSelfShadow = mix(0.56, 1.0, smoothstep(0.0, 0.62, h));
-            float canopy = (0.30 + 0.70 * expCanopy) * verticalSelfShadow;
+            float verticalSelfShadow = mix(0.50, 1.0, smoothstep(0.0, 0.65, h));
+            float canopy = (0.28 + 0.72 * expCanopy) * verticalSelfShadow;
 
             // Analytical Kajiya-Kay Anisotropic Specular on the curved mid-upper arch (archWindow)
             vec3 halfDir = normalize(modelLightDir + viewDir);
@@ -359,32 +372,32 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             vec3 normalDx = dFdx(faceNormal);
             vec3 normalDy = dFdy(faceNormal);
             float variance = dot(normalDx, normalDx) + dot(normalDy, normalDy);
-            float specAA = (1.0 - antiShimmer) * archWindow * specScale / (1.0 + 10.0 * variance);
+            float specAA = (1.0 - antiShimmer) * archWindow * specScale / (1.0 + 12.0 * variance);
 
             float sinTH4  = sinTHSq * sinTHSq;
             float sinTH8  = sinTH4 * sinTH4;
             float sinTH16 = sinTH8 * sinTH8;
 
-            vec3 primarySheen   = mix(baseColor, vec3(0.96, 1.0, 0.88), 0.55) * (sinTH8 * 0.068);
-            vec3 secondaryGlint = vec3(0.96, 1.0, 0.90) * (sinTH16 * 0.12);
-            vec3 anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.32, 0.0));
+            vec3 primarySheen   = mix(baseColor, vec3(0.96, 1.0, 0.88), 0.50) * (sinTH8 * 0.062);
+            vec3 secondaryGlint = vec3(0.96, 1.0, 0.90) * (sinTH16 * 0.10);
+            vec3 anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.30, 0.0));
 
             // Subsurface Translucency (luminous golden-emerald backlight transmission)
             float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
             float backLight = max(-dot(faceNormal, modelLightDir), 0.0);
             float forwardLobe = forwardScatter * forwardScatter * forwardScatter;
             float backLobe = FastPow1_4(backLight);
-            float edgeThinness = 0.70 + 0.50 * absU;
+            float edgeThinness = 0.68 + 0.52 * absU;
             float sssWindow = FastRamp(0.10, 0.55, h) * (1.0 - FastRamp(0.82, 0.99, h) * 0.45);
-            float transmission = (backLobe * 0.82 + forwardLobe * 1.15 * (0.5 + 0.5 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 goldenSSS = baseColor * vec3(1.42, 1.82, 0.48) + vec3(0.04, 0.06, 0.015) * sssScale;
+            float transmission = (backLobe * 0.80 + forwardLobe * 1.15 * (0.5 + 0.5 * h)) * sssWindow * edgeThinness * sssScale;
+            vec3 goldenSSS = baseColor * vec3(1.35, 1.75, 0.44) + vec3(0.035, 0.055, 0.012) * sssScale;
 
             // Waxy cuticle glint on the curved blade
-            float waxySpec = FastPow32(max(NdotH, 0.0)) * (0.14 * h) * specAA;
+            float waxySpec = FastPow32(max(NdotH, 0.0)) * (0.12 * h) * specAA;
 
-            vec3 directSunTerms = baseColor * (wrapped * wrapped * 0.95)
+            vec3 directSunTerms = baseColor * (wrapped * wrapped * 0.94)
                                 + anisoSpec + (effectiveLightColor * waxySpec)
-                                + goldenSSS * (transmission * 1.35);
+                                + goldenSSS * (transmission * 1.32);
             lit += directSunTerms * effectiveLightColor * (canopy * sunVis);
         }
     }

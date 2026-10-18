@@ -58,7 +58,8 @@ void main()
         float windCompliance = 1.0;
         vec2 grassState = GrassEvaluateLocalState(world);
         if (dot(grassState, grassState) > 1e-5) {
-            vec3 rootLocal = s_hasCachedClumpTexel ? s_cachedClumpTexel.xyz : vec3(local.x, local.y - h, local.z);
+            // s_cachedClumpTexel.xyz is guaranteed by NatureEvaluateBlade to hold exact root p0.xyz
+            vec3 rootLocal = s_cachedClumpTexel.xyz;
             GrassApplyVertexMorphology(local, rootLocal, h, grassState, windCompliance);
             world = local + u_worldOffset;
         }
@@ -73,7 +74,7 @@ void main()
         if (u_interactionEnabled != 0 && u_interactionWorldSize > 0.0001) {
             vec2 uvOffset = (world.xz - u_interactionCenter) / u_interactionWorldSize;
             float maxAxis = max(abs(uvOffset.x), abs(uvOffset.y));
-            // Only sample interaction texture when vertex is inside the active region
+            // Only sample interaction texture when vertex is inside the active 18m region
             if (maxAxis < 0.5) {
                 vec2 interactionUV = uvOffset + 0.5;
                 vec3 interactionSample = textureLod(u_interactionMap, interactionUV, 0.0).rgb;
@@ -102,7 +103,7 @@ void main()
         bentNormal.y  += dispLen * 0.45;
 
         // Window windSheen to the broad mid-upper arch (tapers to 0 at tip h > 0.85 so tips never flicker)
-        float archSheenMask = h * clamp((0.92 - h) * 4.5, 0.0, 1.0);
+        float archSheenMask = h * clamp((0.90 - h) * 4.5, 0.0, 1.0);
         windSheen = clamp(dispLen / maxAllowedBend, 0.0, 1.0) * archSheenMask;
     }
 
