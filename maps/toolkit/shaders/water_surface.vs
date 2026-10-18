@@ -43,7 +43,19 @@ void main()
         // Stream / strip: bank damping along width (Y in local UV)
         shoreFade = 1.0 - smoothstep(0.72, 0.98, abs(coord.y));
     } else if (u_waterShape == 3) {
+        // Terrain-clipped water: vertexTexCoord.x is depth in meters (0 at exact shoreline)
         shoreFade = smoothstep(0.0, 0.25, vertexTexCoord.x);
+    }
+
+    // Gentle 3D vertical wave undulation damped to 0.0 at the shoreline so edges never detach from terrain
+    if (shoreFade > 0.001 && u_waveHeight > 0.0001) {
+        float t = u_time * u_waveSpeed;
+        vec2 pFlow = world.xz - u_flowVelocity * (u_time * 0.45);
+        float w0 = sin(dot(pFlow, vec2(0.82, 0.57)) * u_waveScale + t);
+        float w1 = sin(dot(pFlow, vec2(-0.31, 0.95)) * (u_waveScale * 1.73) - t * 1.31);
+        float dispY = (w0 * 0.60 + w1 * 0.40) * u_waveHeight * shoreFade;
+        local.y += dispY;
+        world.y += dispY;
     }
 
     fragPosition   = world;
