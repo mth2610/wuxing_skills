@@ -4,26 +4,53 @@
 #include <math.h>
 #include "raylib.h"
 
-/* The ecology bake and immutable blade colors use the same broad habitat.
- * Linear RGB counterpart: shaders/meadow_palette.glsl. */
+/* Habitat -> canopy colour model. The ecology bake and the immutable blade colours use the
+ * same broad habitat. GLSL counterpart: shaders/meadow_palette.glsl.
+ *
+ * ===== PALETTE DEFINITION: must stay IDENTICAL in both files =====
+ * Near blades take their tip colour from this header (baked at init) and distant ground takes
+ * it from the shader, so any drift shows up as a visible seam where blades fade into ground.
+ * maps/tests/test_meadow_palette_sync.py parses the MEADOW_PALETTE_* block below and the
+ * matching block in meadow_palette.glsl, and fails on any mismatch. Edit both in one change.
+ *
+ * Three bands are blended by two overlapping smoothsteps over habitat:
+ *   deep moss    -> lush clover : habitat 0.20 .. 0.60
+ *   lush clover  -> sunlit gold : habitat 0.55 .. 0.90
+ * (the second blend starts before the first ends, so 0.55 .. 0.60 mixes all three.)
+ *
+ * Colour-space note: this file passes the values through unchanged. Whether they are read as
+ * linear or display-referred is decided by the consuming shader, not here.
+ */
+#define MEADOW_PALETTE_DEEP_MOSS    0.24f, 0.40f, 0.13f
+#define MEADOW_PALETTE_LUSH_CLOVER  0.32f, 0.50f, 0.16f
+#define MEADOW_PALETTE_SUNLIT_GOLD  0.44f, 0.56f, 0.22f
+#define MEADOW_PALETTE_CLOVER_EDGE0 0.20f
+#define MEADOW_PALETTE_CLOVER_EDGE1 0.60f
+#define MEADOW_PALETTE_GOLD_EDGE0   0.55f
+#define MEADOW_PALETTE_GOLD_EDGE1   0.90f
+
 static inline float MeadowHabitat(float x, float z)
 {
     return (sinf(x * 0.15f + z * 0.10f) * 0.5f + 0.5f) * 0.6f
          + (sinf(x * -0.11f + z * 0.20f + 1.8f) * 0.5f + 0.5f) * 0.4f;
 }
 
+/* Same definition as GLSL smoothstep(): clamps to [0,1] first, so out-of-range (and NaN)
+ * habitat resolves to the first / last band exactly like the shader does. */
+static inline float MeadowSmoothstep(float edge0, float edge1, float x)
+{
+    float t = fminf(1.0f, fmaxf(0.0f, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3.0f - 2.0f * t);
+}
+
 static inline Vector3 MeadowCanopyColor(float habitat)
 {
-    float h = fminf(1.0f, fmaxf(0.0f, habitat));
-    // 3 botanical bands: deep mossy olive (0.0 .. 0.35), lush emerald clover (0.35 .. 0.75), sunlit golden meadow (0.75 .. 1.0)
-    float t0 = fminf(1.0f, fmaxf(0.0f, (h - 0.20f) / 0.40f));
-    float s0 = t0 * t0 * (3.0f - 2.0f * t0);
-    float t1 = fminf(1.0f, fmaxf(0.0f, (h - 0.55f) / 0.35f));
-    float s1 = t1 * t1 * (3.0f - 2.0f * t1);
+    const Vector3 deepMoss   = { MEADOW_PALETTE_DEEP_MOSS };
+    const Vector3 lushClover = { MEADOW_PALETTE_LUSH_CLOVER };
+    const Vector3 sunlitGold = { MEADOW_PALETTE_SUNLIT_GOLD };
 
-    Vector3 deepMoss   = {0.24f, 0.40f, 0.13f};
-    Vector3 lushClover = {0.32f, 0.50f, 0.16f};
-    Vector3 sunlitGold = {0.44f, 0.56f, 0.22f};
+    float s0 = MeadowSmoothstep(MEADOW_PALETTE_CLOVER_EDGE0, MEADOW_PALETTE_CLOVER_EDGE1, habitat);
+    float s1 = MeadowSmoothstep(MEADOW_PALETTE_GOLD_EDGE0, MEADOW_PALETTE_GOLD_EDGE1, habitat);
 
     Vector3 c = {
         deepMoss.x + (lushClover.x - deepMoss.x) * s0,

@@ -9,8 +9,29 @@
 //                              compiled out, which also lowers register pressure (and thus
 //                              raises occupancy on mobile GPUs). If undefined, the tier is
 //                              read from u_shadowFilterQuality at runtime as before.
+//   MAP_STATIC_SHADOW_FILTER_CAP
+//                              Highest filter tier the WORLD-FIXED static layer may use
+//                              (default 1 = two bilinear taps). The static layer only carries
+//                              distant terrain/rock occlusion at a coarser texel size and has
+//                              no thin features to protect, so the 5-tap HIGH kernel bought
+//                              almost nothing there while costing 3 extra gathers per pixel.
+//                              Define as 2 to restore the previous behaviour exactly.
+//   MAP_SHADOW_NORMAL_OFFSET_TEXELS
+//                              OPT-IN (undefined = off, identical to legacy output). Pushes the
+//                              receiver position along its geometric normal by this many shadow
+//                              texels * sin(theta) before the light-space lookup. This is the
+//                              standard cure for terrain self-shadow acne under a low sun and
+//                              lets rolling ground receive its own shadows without raising the
+//                              constant depth bias (which erases thin blades). Assumes an
+//                              orthographic light matrix and a rigid (no-scale) view transform.
+//                              Typical values 1.0 - 2.5. Do not enable for thin foliage
+//                              receivers; use it from ground/rock shaders.
 #ifndef MAP_DYNAMIC_SHADOW_RADIUS
 #define MAP_DYNAMIC_SHADOW_RADIUS 1.15
+#endif
+
+#ifndef MAP_STATIC_SHADOW_FILTER_CAP
+#define MAP_STATIC_SHADOW_FILTER_CAP 1
 #endif
 
 #ifndef MAP_SHADOW_USE_GATHER
@@ -46,9 +67,13 @@ uniform mat4 u_staticLightVP;
 uniform float u_staticShadowEnabled;
 uniform float u_staticShadowTexel;
 
+// Explicit LOD 0: the shadow targets have no mip chain, and every call site sits behind
+// per-pixel early-outs (non-uniform control flow), where implicit-derivative texture()
+// has undefined LOD selection and forces the GPU to keep helper lanes alive for the
+// derivative quad. textureLod needs neither.
 float MapShadowCompare(highp sampler2D mapTexture, vec2 uv, float compareDepth)
 {
-    return step(compareDepth, texture(mapTexture, uv).r);
+    return step(compareDepth, textureLod(mapTexture, uv, 0.0).r);
 }
 
 // R32F shadow targets intentionally use POINT filtering because linear
@@ -98,11 +123,14 @@ float MapShadowCompareBilinear(highp sampler2D mapTexture, vec2 uv,
 // center tap, then uses four diagonals only for penumbra. Omitting the center
 // made sub-texel stems fall between all four taps when the radius was reduced.
 // Lower tiers retain cheaper kernels for mobile fill-rate budgets.
-float MapShadowFilteredVisibility(highp sampler2D mapTexture, vec2 uv,
-                                  float compareDepth, float texelSize,
-                                  float radiusScale, float thinFeatureBoost)
+//
+// `quality` selects the tier explicitly so the static layer can run a cheaper tier than
+// the dynamic one; MapShadowFilteredVisibility() below keeps the original signature.
+float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
+                                      float compareDepth, float texelSize,
+                                      float radiusScale, float thinFeatureBoost,
+                                      float quality)
 {
-    float quality = MAP_SHADOW_QUALITY;
     if (quality < 0.5)
         return MapShadowCompareBilinear(mapTexture, uv, compareDepth, texelSize);
 
@@ -160,7 +188,11 @@ float MapShadowFilteredVisibility(highp sampler2D mapTexture, vec2 uv,
     float row2 = s02 * w0.x + s12 * w1.x + s22 * w2.x;
     float center = row0 * w0.y + row1 * w1.y + row2 * w2.y;
 
-    // Continuous C0-seamless quadrant bilinear taps across the 4 sub-quads of the 3x3 grid
+    // Continuous C0-seamless quadrant bilinear taps across the 4 sub-quads of the 3x3 grid.
+    // NOTE: a 3x3 neighbourhood can only reach 0.5 texel beyond the nearest texel without
+    // another row/column of fetches, so the diagonal offset is clamped to 0.5 here. With the
+    // default radius (1.15 -> 0.81 texel) this path therefore resolves a slightly NARROWER
+    // penumbra than the textureGather path. Radii <= 0.707 (e.g. the ground's 0.65) are exact.
     float effDiag = min(diagonal, 0.5);
     vec2 fDL = clamp(d + vec2(1.0 - effDiag), 0.0, 1.0);
     vec2 fDR = clamp(vec2(d.x + effDiag, d.y + 1.0 - effDiag), 0.0, 1.0);
@@ -178,6 +210,15 @@ float MapShadowFilteredVisibility(highp sampler2D mapTexture, vec2 uv,
     float darkestVisibility = min(center,
         min(min(downLeft, downRight), min(upLeft, upRight)));
     return mix(smoothVisibility, darkestVisibility, thinFeatureBoost * 0.20);
+}
+
+float MapShadowFilteredVisibility(highp sampler2D mapTexture, vec2 uv,
+                                  float compareDepth, float texelSize,
+                                  float radiusScale, float thinFeatureBoost)
+{
+    return MapShadowFilteredVisibilityTier(mapTexture, uv, compareDepth, texelSize,
+                                           radiusScale, thinFeatureBoost,
+                                           MAP_SHADOW_QUALITY);
 }
 
 float MapShadowCoverageFadeWidth(vec2 uv, float width)
@@ -243,10 +284,27 @@ float MapStaticShadowVisibility(vec3 worldPos, float slope)
     if (fade <= 0.0)
         return 1.0;
     float compareDepth = projected.z - mix(0.0012, 0.0032, slope);
-    float visibility = MapShadowFilteredVisibility(
-        staticShadowMap, projected.xy, compareDepth, u_staticShadowTexel, 1.10, 0.0);
+    // The static layer never carries thin features (thinFeatureBoost 0), so it is capped to
+    // a cheaper tier than the dynamic one (see MAP_STATIC_SHADOW_FILTER_CAP).
+    float staticQuality = min(MAP_SHADOW_QUALITY, float(MAP_STATIC_SHADOW_FILTER_CAP));
+    float visibility = MapShadowFilteredVisibilityTier(
+        staticShadowMap, projected.xy, compareDepth, u_staticShadowTexel, 1.10, 0.0,
+        staticQuality);
     return mix(1.0, visibility, fade);
 }
+
+#ifdef MAP_SHADOW_NORMAL_OFFSET_TEXELS
+// World-space size of one shadow texel for an orthographic light matrix. Row 0 of the
+// light view-projection maps world -> clip x; for an orthographic projection its xyz length
+// is 2 / (world width covered), so one uv unit (0.5 clip units) spans 1 / (0.5 * |row0|).
+// u_lightVP / u_staticLightVP already carry the inverse view, which is a pure rotation +
+// translation, so the length is unchanged.
+float MapShadowWorldTexelSize(mat4 lightVP, float texelSize)
+{
+    vec3 row0 = vec3(lightVP[0][0], lightVP[1][0], lightVP[2][0]);
+    return texelSize / max(0.5 * length(row0), 0.000001);
+}
+#endif
 
 float MapShadowVisibility(vec3 worldPos, vec3 normal, vec3 lightDir)
 {
@@ -258,8 +316,24 @@ float MapShadowVisibility(vec3 worldPos, vec3 normal, vec3 lightDir)
     float cosTheta = dot(normal, lightDir) * inversesqrt(max(normLenSq, 1e-12));
     float slope = 1.0 - clamp(cosTheta, 0.0, 1.0);
 
-    float dynamicShadow = MapDynamicShadowVisibility(worldPos, slope);
+#ifdef MAP_SHADOW_NORMAL_OFFSET_TEXELS
+    // sin(theta) scaled unit-normal push: zero when facing the light, full at grazing angles.
+    float sinTheta = sqrt(max(1.0 - cosTheta * cosTheta, 0.0));
+    vec3 pushDir = normal * (inversesqrt(max(dot(normal, normal), 1e-12)) * sinTheta
+                             * float(MAP_SHADOW_NORMAL_OFFSET_TEXELS));
+    vec3 dynamicPos = worldPos + pushDir * MapShadowWorldTexelSize(u_lightVP, u_shadowTexel);
+#else
+    vec3 dynamicPos = worldPos;
+#endif
+
+    float dynamicShadow = MapDynamicShadowVisibility(dynamicPos, slope);
     if (dynamicShadow <= 0.001)
         return 0.0;
-    return min(dynamicShadow, MapStaticShadowVisibility(worldPos, slope));
+
+#ifdef MAP_SHADOW_NORMAL_OFFSET_TEXELS
+    vec3 staticPos = worldPos + pushDir * MapShadowWorldTexelSize(u_staticLightVP, u_staticShadowTexel);
+#else
+    vec3 staticPos = worldPos;
+#endif
+    return min(dynamicShadow, MapStaticShadowVisibility(staticPos, slope));
 }
