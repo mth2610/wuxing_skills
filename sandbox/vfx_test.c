@@ -1542,12 +1542,15 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
     ui.header = (Rectangle){12.0f, top, w - 24.0f, 40.0f};
     float statusBottom = top + 40.0f;
     if (w >= 1100.0f) {
-        for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){178.0f + i * 76.0f, top, 76.0f, 40.0f};
+        ui.metrics[0] = (Rectangle){160.0f, top, 56.0f, 40.0f};
+        ui.metrics[1] = (Rectangle){220.0f, top, 58.0f, 40.0f};
+        ui.metrics[2] = (Rectangle){282.0f, top, 66.0f, 40.0f};
         float sunSliderX = VFXTest_UISunSlider(ui).x;
-        float camRight = sunSliderX - 10.0f;
-        float camW = fmaxf(120.0f, camRight - 412.0f);
-        ui.cameraStatus = (Rectangle){412.0f, top, camW, 40.0f};
-        ui.sunSlider = (Rectangle){sunSliderX, top + 5.0f, 150.0f, 30.0f};
+        float camRight = sunSliderX - 8.0f;
+        float camLeft = 354.0f;
+        float camW = fmaxf(160.0f, camRight - camLeft);
+        ui.cameraStatus = (Rectangle){camLeft, top, camW, 40.0f};
+        ui.sunSlider = (Rectangle){sunSliderX, top + 5.0f, 136.0f, 30.0f};
     } else {
         ui.header.height = 116.0f;
         for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){18.0f + i * ((w - 36.0f) / 3.0f), top + 40.0f, (w - 36.0f) / 3.0f, 36.0f};
@@ -1573,7 +1576,7 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
 
 static Rectangle VFXTest_UIHeaderButton(VFXTest_UILayout ui, int index)
 {
-    float width = ui.header.width < 580.0f ? 56.0f : 76.0f;
+    float width = ui.header.width < 580.0f ? 56.0f : 70.0f;
     return (Rectangle){ui.header.x + ui.header.width - (3 - index) * (width + 6.0f) - 4.0f,
                        ui.header.y + 5.0f, width, 30.0f};
 }
@@ -1596,15 +1599,15 @@ static Rectangle VFXTest_UIParameterSlider(Rectangle row)
 
 static Rectangle VFXTest_UITiltButton(VFXTest_UILayout ui, int direction)
 {
-    return (Rectangle){ui.cameraStatus.x + ui.cameraStatus.width - (direction < 0 ? 72.0f : 36.0f),
-                       ui.cameraStatus.y + (ui.cameraStatus.height - 30.0f) * 0.5f, 30.0f, 30.0f};
+    return (Rectangle){ui.cameraStatus.x + ui.cameraStatus.width - (direction < 0 ? 68.0f : 34.0f),
+                       ui.cameraStatus.y + (ui.cameraStatus.height - 30.0f) * 0.5f, 28.0f, 30.0f};
 }
 
 static Rectangle VFXTest_UIGfxButton(VFXTest_UILayout ui)
 {
     if (GetScreenWidth() >= 1100)
-        return (Rectangle){VFXTest_UIHeaderButton(ui, 0).x - 100.0f,
-                           ui.header.y + 5.0f, 94.0f, 30.0f};
+        return (Rectangle){VFXTest_UIHeaderButton(ui, 0).x - 90.0f,
+                           ui.header.y + 5.0f, 84.0f, 30.0f};
     float width = ui.cameraStatus.width >= 440.0f ? 94.0f : 78.0f;
     return (Rectangle){VFXTest_UITiltButton(ui, -1).x - width - 8.0f,
                        VFXTest_UITiltButton(ui, -1).y, width, 30.0f};
@@ -1613,8 +1616,8 @@ static Rectangle VFXTest_UIGfxButton(VFXTest_UILayout ui)
 static Rectangle VFXTest_UIFogButton(VFXTest_UILayout ui)
 {
     if (GetScreenWidth() >= 1100)
-        return (Rectangle){VFXTest_UIGfxButton(ui).x - 146.0f,
-                           ui.header.y + 5.0f, 140.0f, 30.0f};
+        return (Rectangle){VFXTest_UIGfxButton(ui).x - 134.0f,
+                           ui.header.y + 5.0f, 128.0f, 30.0f};
     float width = ui.cameraStatus.width >= 440.0f ? 140.0f : 96.0f;
     return (Rectangle){VFXTest_UIGfxButton(ui).x - width - 6.0f,
                        VFXTest_UIGfxButton(ui).y, width, 30.0f};
@@ -1623,8 +1626,8 @@ static Rectangle VFXTest_UIFogButton(VFXTest_UILayout ui)
 static Rectangle VFXTest_UISunSlider(VFXTest_UILayout ui)
 {
     if (GetScreenWidth() >= 1100)
-        return (Rectangle){VFXTest_UIFogButton(ui).x - 156.0f,
-                           ui.header.y + 5.0f, 150.0f, 30.0f};
+        return (Rectangle){VFXTest_UIFogButton(ui).x - 142.0f,
+                           ui.header.y + 5.0f, 136.0f, 30.0f};
     return (Rectangle){VFXTest_UIFogButton(ui).x - 146.0f,
                        VFXTest_UIFogButton(ui).y, 140.0f, 30.0f};
 }
@@ -1989,9 +1992,21 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIText(TextFormat("%.0f FPS", s_vfxTelemetryFps), ui.metrics[0], 12, RAYWHITE);
     VFXTest_UIText(TextFormat("%.1f ms", s_vfxTelemetryFrameMs), ui.metrics[1], 12, LIGHTGRAY);
     VFXTest_UIText(TextFormat("peak %.1f", s_vfxTelemetryPeakMs), ui.metrics[2], 11, LIGHTGRAY);
-    Rectangle cameraLabel = {ui.cameraStatus.x, ui.cameraStatus.y, ui.cameraStatus.width - 78.0f, ui.cameraStatus.height};
-    if (GetScreenWidth() < 1100) cameraLabel.width = VFXTest_UIFogButton(ui).x - cameraLabel.x - 6.0f;
-    VFXTest_UIText(TextFormat("Tilt %.0f deg  Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 12, RAYWHITE);
+    Rectangle btnMinus = VFXTest_UITiltButton(ui, -1);
+    float availW = btnMinus.x - ui.cameraStatus.x - 6.0f;
+    if (GetScreenWidth() < 1100)
+        availW = VFXTest_UIFogButton(ui).x - ui.cameraStatus.x - 6.0f;
+
+    if (availW >= 170.0f) {
+        float zoomW = 92.0f;
+        Rectangle zoomRect = {ui.cameraStatus.x, ui.cameraStatus.y, zoomW, ui.cameraStatus.height};
+        Rectangle tiltRect = {ui.cameraStatus.x + zoomW + 2.0f, ui.cameraStatus.y, availW - zoomW - 2.0f, ui.cameraStatus.height};
+        VFXTest_UIText(TextFormat("Zoom %.2fx", s_vfxTelemetryZoom), zoomRect, 12, SKYBLUE);
+        VFXTest_UIText(TextFormat("Tilt %.0f deg", s_vfxTelemetryTilt), tiltRect, 12, RAYWHITE);
+    } else {
+        Rectangle cameraLabel = {ui.cameraStatus.x, ui.cameraStatus.y, availW, ui.cameraStatus.height};
+        VFXTest_UIText(TextFormat("Tilt %.0f deg  Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 12, RAYWHITE);
+    }
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, -1), "-", false);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
     if (!s_isPanelOpen && !s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
