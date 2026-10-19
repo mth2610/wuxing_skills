@@ -71,13 +71,11 @@ bool NatureTuftUsesCurrentLod()
     vec3 diff = (root + u_worldOffset) - u_tuftLodCamera;
     float d2 = dot(diff, diff);
 
-    // Fast squared-distance reject before computing sqrt()
     if (u_tuftFadeRange.y > 0.0 && d2 >= u_tuftFadeRange.y * u_tuftFadeRange.y) return false;
 
     float d = sqrt(d2);
     s_cachedDistToCam = d;
 
-    // Synchronized spatial hash + Interleaved Gradient Noise (matches CPU rank)
     uint x = floatBitsToUint(root.x);
     uint z = floatBitsToUint(root.z);
     uint h = (x * 0x8da6b343u) ^ (z * 0xd8163841u);
@@ -111,15 +109,15 @@ void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p
         }
 
         if (u_geometryLod == 2) {
-            float height = (p1.y - p0.y) * 3.5714286; // 1.0 / 0.28
+            float height = (p1.y - p0.y) * 2.7777778; // 1.0 / 0.36
             float droop = height * 0.68 - (p3.y - p0.y);
-            p1.xz = p0.xz + (p1.xz - p0.xz) * 0.78;
-            p1.y  = p0.y  + (p1.y  - p0.y)  * 0.85;
-            p2.xz = p0.xz + (p2.xz - p0.xz) * 0.78;
-            p2.y  = p0.y  + (p2.y  - p0.y)  * 0.85;
-            p3.xz = p0.xz + (p3.xz - p0.xz) * 0.78;
-            p3.y  = p0.y  + max(height * 0.14, height * 0.60 - droop * 0.55);
-            p1.w *= 1.18;
+            p1.xz = p0.xz + (p1.xz - p0.xz) * 0.80;
+            p1.y  = p0.y  + (p1.y  - p0.y)  * 0.86;
+            p2.xz = p0.xz + (p2.xz - p0.xz) * 0.80;
+            p2.y  = p0.y  + (p2.y  - p0.y)  * 0.86;
+            p3.xz = p0.xz + (p3.xz - p0.xz) * 0.80;
+            p3.y  = p0.y  + max(height * 0.18, height * 0.62 - droop * 0.50);
+            p1.w *= 1.16;
         }
     }
 }
@@ -148,7 +146,6 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 
     float t = clamp(vertexPosition.y, 0.0, 1.0);
     float sideSign = vertexPosition.x;
-    float role = fract(vertexPosition.z) * 4.0;
     float u = 1.0 - t;
     float u2 = u * u;
     float t2 = t * t;
@@ -171,8 +168,8 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     }
 
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    // View-assisted ribbon orientation (42% blend toward viewRightXZ per API spec)
-    // Prevents edge-on blades from collapsing into thin lines and boosts apparent canopy fullness
+    // View-assisted ribbon orientation: gently turns edge-on blades toward the camera
+    // so they never collapse into 1px wires, while preserving natural 3D twist at close range.
     vec3 toCamVec = (p0.xyz + u_worldOffset) - u_tuftLodCamera;
     float distToCam = (s_cachedDistToCam >= 0.0) ? s_cachedDistToCam : length(toCamVec);
     s_cachedDistToCam = distToCam;
@@ -182,7 +179,9 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     if (vrLenSq > 1e-4) {
         viewRightXZ *= inversesqrt(vrLenSq);
         if (dot(side.xz, viewRightXZ) < 0.0) viewRightXZ = -viewRightXZ;
-        side.xz = normalize(mix(side.xz, viewRightXZ, 0.42));
+        // Less billboarding up close (0.26) for true 3D blade angles; stronger at distance (0.44) for coverage
+        float viewAssist = mix(0.26, 0.44, clamp(distToCam * 0.04, 0.0, 1.0));
+        side.xz = normalize(mix(side.xz, viewRightXZ, viewAssist));
     }
 #endif
 
@@ -193,30 +192,34 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         geometricNormal = normalize(geometricNormal);
     }
 
-    // Fuller cubic botanical spear profile (prevents sub-pixel upper-blade dropout into dotted pixels)
+    // Continuous AAA Sword-Leaf Taper Profile:
+    // Swells gently in the lower third (t = 0.25) and tapers continuously from t = 0.30 to 1.00.
+    // Eliminates the wide "Popsicle-stick" rectangle look and the abrupt elbow at t = 0.86!
     float sinPiT = 4.0 * ut;
-    float powT18 = t2 * (0.82 + 0.18 * t);
-    float powT165 = t2 * (0.35 + 0.65 * t);
     float profile;
     if (p2.w > 0.5) {
-        profile = (0.86 + 0.26 * sinPiT) * (1.0 - powT18);
+        // Reed / broad leaf profile
+        profile = (0.78 + 0.36 * sinPiT) * (1.0 - t2 * (0.72 + 0.24 * t));
     } else {
-        profile = (0.84 + 0.34 * t) * (1.0 - powT165 * 0.88);
+        // Graceful botanical sword-leaf taper:
+        // t=0.00 -> 0.74, t=0.28 -> 0.81, t=0.58 -> 0.57, t=0.86 -> 0.21, t=1.00 -> 0.0
+        float belly = 0.74 + 0.62 * t * u;
+        float taper = 1.0 - t * (0.18 + 0.78 * t);
+        profile = belly * max(taper, 0.0);
     }
-    // Keep upper ring before tip at >= 12% width so rasterizer never drops sub-pixel fragments
-    float halfWidth = p1.w * 0.5 * max(profile, role < 1.5 ? 0.14 : 0.10);
+    float halfWidth = p1.w * 0.5 * profile;
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    // Anti-aliasing screen-space ribbon floor (prevents pixel breakup at both close and far range)
-    float minPxHalfWidth = max(0.0042, distToCam * 0.00068) * (1.0 - 0.38 * t);
+    // Distance-only sub-pixel anti-aliasing floor (0 at close range so close-up tips are razor-sharp!)
+    float farAntiAlias = clamp((distToCam - 6.0) * 0.05, 0.0, 1.0);
+    float minPxHalfWidth = farAntiAlias * distToCam * 0.00048 * (1.0 - 0.72 * t);
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 
-    float creaseOffset = halfWidth * 0.16 * u;
-    position = (role > 2.5)
-        ? center
-        : (center + side * (halfWidth * sideSign) + geometricNormal * creaseOffset);
+    // Smoothly arch the blade spine without creating a step between ring vertices and the tip apex
+    float spineArch = p1.w * 0.08 * sinPiT;
+    position = center + side * (halfWidth * sideSign) + geometricNormal * spineArch;
 
 #ifdef NATURE_VISIBLE_TUFT_LOD
     if (u_tuftFadeRange.y > 0.0 && distToCam > u_tuftFadeRange.x) {
@@ -228,25 +231,34 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     }
 #endif
 
+    // Continuous normal interpolation along t (eliminates the sudden role > 2.5 normal jump at the tip!)
     vec3 sphereDirection = normalize(position - vec3(clump.x, clump.y - 0.04, clump.z));
-    vec3 target = normalize(mix(sphereDirection, vec3(0.0, 1.0, 0.0), role > 2.5 ? 0.56 : 0.44));
-    vec3 meshNormal = normalize(geometricNormal + side * (sideSign * (role < 1.5 ? 0.32 : 0.26)));
-    normal = normalize(mix(meshNormal, target, role > 2.5 ? 0.56 : 0.46));
+    float upBlend = mix(0.42, 0.54, t);
+    vec3 target = normalize(mix(sphereDirection, vec3(0.0, 1.0, 0.0), upBlend));
+    vec3 meshNormal = normalize(geometricNormal + side * (sideSign * (0.34 * (1.0 - 0.35 * t))));
+    normal = normalize(mix(meshNormal, target, mix(0.44, 0.54, t)));
 
-    // Gentle root occlusion (0.90..1.0) so roots never turn pitch black before fragment shading
-    float occlusion = (t < 0.25) ? (0.90 + 0.40 * t) : 1.0;
+    // Per-blade botanical identity (0..1) derived from blade index & phase
+    float bladeHash = fract(float(localBlade) * 0.6180339 + p0.w * 1.73205);
+    // Inner hero blades are fresher/brighter; outer skirt blades are deeper olive/emerald
+    float tierShade = (localBlade < 2) ? 1.06 : ((localBlade < 4) ? 0.98 : 0.88);
+    float bladeTone = (0.92 + 0.16 * bladeHash) * tierShade;
 
-    // 3-Stop Botanical Color Gradient:
+    // Rich 3-Stop Botanical Color Gradient:
+    // Stop 1 (Deep Mossy Sheath Base) -> Stop 2 (Vibrant Viridian Body) -> Stop 3 (Warm Sunlit Chartreuse Tip)
     vec3 rootNorm = rootColor * (1.0 / 255.0);
     vec3 tipNorm  = tipColor  * (1.0 / 255.0);
-    vec3 viridianMid = mix(rootNorm, tipNorm, 0.52) * vec3(0.92, 1.03, 0.92);
+    // Subtle per-blade hue shift between emerald and warm spring-gold
+    vec3 hueVar = mix(vec3(0.94, 1.02, 0.96), vec3(1.08, 1.02, 0.84), bladeHash);
+    tipNorm *= hueVar;
+    vec3 viridianMid = mix(rootNorm, tipNorm, 0.50) * vec3(0.90, 1.04, 0.88);
 
-    float lowerMix = smoothstep(0.0, 0.45, t);
-    float upperMix = smoothstep(0.38, 0.94, t);
+    float lowerMix = smoothstep(0.0, 0.44, t);
+    float upperMix = smoothstep(0.36, 0.92, t);
     vec3 gradCol = mix(mix(rootNorm, viridianMid, lowerMix), tipNorm, upperMix);
 
-    float bladeTone = 0.96 + 0.08 * fract(p0.w * 0.3183099);
-    vec3 smoothCol = clamp(gradCol * (occlusion * bladeTone), 0.0, 1.0);
+    float baseOcclusion = mix(0.78, 1.0, smoothstep(0.0, 0.32, t));
+    vec3 smoothCol = clamp(gradCol * (baseOcclusion * bladeTone), 0.0, 1.0);
 
     color = vec4(smoothCol, fadeAlpha);
     windUV = vec2(p0.w, t);

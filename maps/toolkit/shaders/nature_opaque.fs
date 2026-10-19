@@ -17,25 +17,23 @@ out vec4 finalColor;
 
 void main()
 {
-    // 1. Two-sided normal orientation (V-crease fold & distance-aware terrain blend
-    // are handled analytically inside GrassShade to avoid double-flattening the normal)
-    float u = fragTexCoord.x;
-    float absU = abs(u);
-    vec3 baseNormal = gl_FrontFacing ? fragNormal : -fragNormal;
+    // Recover true edge-to-edge normalized transverse coordinate uNorm in [-1.0, +1.0]
+    // Inside the tip triangle (fragHeight > 0.86), vertex u converges toward 0.0 at the apex;
+    // rescaling by the tip triangle envelope eliminates the horizontal shading seam at t = 0.86!
+    float tipEnvelope = max((1.0 - fragHeight) * 7.142857, 0.08); // 1.0 / (1.0 - 0.86)
+    float uNorm = (fragHeight > 0.86)
+        ? clamp(fragTexCoord.x / min(tipEnvelope, 1.0), -1.0, 1.0)
+        : clamp(fragTexCoord.x, -1.0, 1.0);
 
-    // Anti-aliased vascular bundle (midrib) + soft parallel ridge (avoids high-frequency sin() Moire)
-    float fwU = fwidth(u);
-    float detailFade = 1.0 - FastRamp(0.35, 1.10, fwU);
-    float midrib = 1.0 - FastRamp(0.0, 0.26, absU) * (0.09 * detailFade);
-    float vascularRidge = (absU * (1.0 - absU) - 0.16) * (0.12 * detailFade * (1.0 - fragHeight * 0.5));
-    vec3 albedo = fragColor.rgb * colDiffuse.rgb * (midrib + vascularRidge);
+    vec3 baseNormal = gl_FrontFacing ? fragNormal : -fragNormal;
+    vec3 albedo = fragColor.rgb * colDiffuse.rgb;
 
     vec3 lit = GrassShade(albedo, fragPosition, baseNormal, fragHeight,
-                          u, v_lightSpace, v_staticLightSpace);
+                          uNorm, v_lightSpace, v_staticLightSpace);
 
-    // 2. Arch-windowed Wind-Wave Sheen (tapered to 0 at tip in VS so tips never flicker)
+    // Arch-windowed Wind-Wave Sheen (tapered to 0 at tip so tips never flicker)
     float windSheen = fragColor.a;
-    lit *= 1.0 + windSheen * 0.32;
+    lit *= 1.0 + windSheen * 0.18;
 
     finalColor = vec4(lit, 1.0);
 }

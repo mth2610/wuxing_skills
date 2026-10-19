@@ -4,7 +4,8 @@
 // characters and the smoke about where the light is.
 #include "core/shaders/common/vfx_lights.glsl"
 // Preserve thin grass silhouettes without adding shadow-map samples.
-#define MAP_DYNAMIC_SHADOW_RADIUS 0.65
+#define MAP_DYNAMIC_SHADOW_RADIUS 1.45
+
 #include "maps/toolkit/shaders/map_shadow.glsl"
 #include "environment/shaders/cloud_shadow.glsl"
 #include "environment/shaders/hemisphere_lighting.glsl"

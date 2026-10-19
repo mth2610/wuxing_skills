@@ -23,7 +23,7 @@ typedef struct
     int count;
     int tuftOffset;
     int visibleOffset[3], visibleCount[3];
-    Vector2 minimum; // Exact authoring bounds; reconstructing from center can round outward.
+    Vector2 minimum;
 } NatureTuftRange;
 
 typedef struct
@@ -69,8 +69,6 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     float lodScale = quality >= GFX_HIGH ? 1.0f : quality == GFX_MED ? 0.88f
                                                                      : 0.78f;
 
-    // Use full 3D focal distance so high-angle/top-down camera pitches
-    // do not collapse horizontal distance and prematurely clip distant meadow chunks.
     float dx = camera.position.x - camera.target.x;
     float dy = camera.position.y - camera.target.y;
     float dz = camera.position.z - camera.target.z;
@@ -80,7 +78,6 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     float zoom = tanf(45.0f * 0.5f * DEG2RAD) / tanf(fovy * 0.5f);
     zoom = fminf(fmaxf(zoom, 0.8f), 2.5f);
 
-    // Sub-linear zoom scaling for geometry LOD prevents quadratic vertex explosion when zooming in
     float lodZoom = (zoom > 1.0f) ? sqrtf(zoom) : zoom;
     float scale = lodScale * lodZoom;
 
@@ -90,7 +87,6 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     view.lodDistance = meadow->lodDistance * scale;
     view.drawDistance = meadow->drawDistance > 0.0f ? focalDistance + meadow->drawDistance * rangeScale * zoom : 0.0f;
 
-    // Auto-derive midLodDistance when unset on large meadows so LOD 1 is actively utilized
     float rawMidDist = meadow->midLodDistance > 0.0f
                            ? meadow->midLodDistance
                            : (meadow->lodDistance > 12.0f ? meadow->lodDistance * 0.48f : 0.0f);
@@ -146,8 +142,6 @@ static int s_natureTuftOffsetLoc[2], s_natureCompactLoc[2], s_natureVisibleIdsLo
 static int s_natureVisibleOffsetLoc;
 static int s_natureWorldOffsetLoc[2];
 
-// Combine golden-ratio spatial hashing with Interleaved Gradient Noise (IGN)
-// to prevent spatial clumping/popping artifacts during LOD transitions.
 static float NatureParametric_Rank(Vector3 root)
 {
     unsigned int x, z;
@@ -184,7 +178,6 @@ static inline int NatureParametric_SelectLod(Vector3 root, float rank, Vector3 e
     float dx = root.x - eye.x, dy = root.y - eye.y, dz = root.z - eye.z;
     float d2 = dx * dx + dy * dy + dz * dz;
 
-    // Fast path: skip sqrtf and smoothstep if clearly outside transition bands
     float nearMin = bands.x > 0.0f ? (bands.x - bands.z) : (bands.y - bands.w);
     if (nearMin > 0.0f && d2 <= nearMin * nearMin)
         return 0;
@@ -261,19 +254,19 @@ static Shader NatureParametric_Shader(bool shadow)
             MapShadow_ConfigureShader(*shader);
             VFXLight_RegisterShader(*shader);
         }
+        (void)Nature_GetCachedLocs(*shader);
     }
     return *shader;
 }
 
-// Welds shared vertices between consecutive segments along each blade.
-// Places the waist ring of 2-segment blades at t = 0.54 (the Bézier arch peak and widest profile point)
-// rather than 0.82 so LOD 1 and Shadow LOD 3 preserve full arch height and blade volume.
+// Builds welded blade template with lancet shoulder at tipStart = 0.86 (for segments > 2)
+// and arch-peak waist at 0.54 (for segments == 2), eliminating upper-blade kinks.
 static bool NatureParametric_BuildTemplate(NatureTuftTemplate *mesh, int blades, int segments)
 {
     Vector3 vertices[NATURE_TEMPLATE_MAX_VERTICES];
     unsigned short indices[NATURE_TEMPLATE_MAX_INDICES];
     int vertexCount = 0, indexCount = 0;
-    float tipStart = (segments == 2) ? 0.54f : (segments > 2 ? 0.82f : 0.0f);
+    float tipStart = (segments == 2) ? 0.54f : (segments > 2 ? 0.86f : 0.0f);
 
     for (int blade = 0; blade < blades; blade++)
     {
@@ -283,12 +276,11 @@ static bool NatureParametric_BuildTemplate(NatureTuftTemplate *mesh, int blades,
         for (int ring = 0; ring <= bodySegments; ring++)
         {
             float frac = bodySegments > 0 ? (float)ring / (float)bodySegments : 0.0f;
-            float t = tipStart * powf(frac, 0.90f);
+            float t = tipStart * powf(frac, 0.96f);
             float zTag = (float)blade + (ring == 0 ? 0.25f : 0.50f);
             vertices[vertexCount++] = (Vector3){-1.0f, t, zTag};
             vertices[vertexCount++] = (Vector3){1.0f, t, zTag};
         }
-        // Tip apex vertex
         vertices[vertexCount++] = (Vector3){0.0f, 1.0f, (float)blade + 0.75f};
 
         for (int segment = 0; segment < bodySegments; segment++)
@@ -406,7 +398,6 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     memset(data, 0, sizeof(*data));
     meadow->parametric = data;
 
-    // O(N) Spatial Binning
     cellCounts = MemAlloc(capacity * sizeof(int));
     cellToChunk = MemAlloc(capacity * sizeof(int));
     sortedIndices = MemAlloc(count * sizeof(int));
@@ -511,8 +502,6 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     SetTextureFilter(data->visibleIds, TEXTURE_FILTER_POINT);
     SetTextureWrap(data->visibleIds, TEXTURE_WRAP_CLAMP);
 
-    // Compute tight 3D bounding spheres around actual tuft positions in each chunk.
-    // Reduces false multi-LOD band overlaps and improves frustum/shadow culling accuracy.
     for (int chunk = 0; chunk < meadow->chunkCount; chunk++)
     {
         int start = data->ranges[chunk].tuftOffset;
@@ -616,7 +605,7 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
                         {d.p0.x, d.p0.y, d.p0.z, d.phase},
                         {d.p1.x, d.p1.y, d.p1.z, d.width},
                         {d.p2.x, d.p2.y, d.p2.z, d.isReed ? 1.0f : 0.0f},
-                        {d.p3.x, d.p3.y, d.p3.z, 0.0f},
+                        {d.p3.x, d.p3.y, d.p3.z, d.isSeedhead ? 1.0f : 0.0f},
                         {d.clump.x, d.clump.y, d.clump.z, d.leanAngle},
                         {d.rootColor.r, d.rootColor.g, d.rootColor.b, 255.0f},
                         {d.tipColor.r, d.tipColor.g, d.tipColor.b, 255.0f}};
@@ -682,14 +671,12 @@ failed:
     return false;
 }
 
-// SetShaderValueTexture queues bindings for rlgl's immediate-mode batch.
-// Raw VAO draws must bind receivers explicitly; never inherit a prior mesh.
 static void NatureParametric_BindReceivers(Shader shader, bool shadow)
 {
     int pass = shadow ? 1 : 0;
     unsigned int textures[4] = {s_natureMacroTexture.id, s_natureInteractionTexture.id,
                                 EnvShadow_GetShadowMap().id, EnvShadow_GetStaticShadowMap().id};
-    const int units[4] = {1, 2, 4, 5}; // Cloud field occupies unit three.
+    const int units[4] = {1, 2, 4, 5};
     for (int i = 0; i < (shadow ? 2 : 4); i++)
     {
         if (s_natureReceiverSamplerLoc[pass][i] < 0)
@@ -701,22 +688,8 @@ static void NatureParametric_BindReceivers(Shader shader, bool shadow)
     rlActiveTextureSlot(0);
 }
 
-static unsigned int s_lastParamShaderId = 0;
-static int s_lastParamLod = -1;
-static const void *s_lastParamMeadow = NULL;
-static Vector3 s_lastParamOffset = {999999.0f, 999999.0f, 999999.0f};
-
-static void NatureParametric_ResetDrawCache(void)
-{
-    s_lastParamShaderId = 0;
-    s_lastParamLod = -1;
-    s_lastParamMeadow = NULL;
-    s_lastParamOffset = (Vector3){999999.0f, 999999.0f, 999999.0f};
-}
-
 static void NatureParametric_EndReceivers(void)
 {
-    NatureParametric_ResetDrawCache();
     for (int unit = 0; unit <= 6; unit++)
     {
         rlActiveTextureSlot(unit);
@@ -725,8 +698,6 @@ static void NatureParametric_EndReceivers(void)
     rlActiveTextureSlot(0);
 }
 
-// Stable nested detail selection matches the previous shader rank/thresholds.
-// Upload once before any visible draw; shadows never read this mutable ID list.
 static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 worldOffset, Vector4 bands)
 {
     NatureParametricMeadow *data = meadow->parametric;
@@ -768,7 +739,6 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
     if (!data->compact)
         return;
 
-    // Reset visible counts for all chunks, then only process visible ones
     for (int chunk = 0; chunk < meadow->chunkCount; chunk++)
     {
         NatureTuftRange *range = &data->ranges[chunk];
@@ -777,7 +747,6 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
         range->visibleCount[2] = 0;
     }
 
-    // Shift camera into local meadow space once to avoid adding worldOffset to every tuft root
     Vector3 localEye = Vector3Subtract(camera.position, worldOffset);
     float lod0MaxD = bands.x > 0.0f ? (bands.x - bands.z) : (bands.y - bands.w);
     float lod1MinD = bands.x + bands.z;
@@ -794,7 +763,6 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
         float nearD = chunkDist - meadow->chunks[chunk].radius;
         float farD = chunkDist + meadow->chunks[chunk].radius;
 
-        // Fast-path: Entire chunk lies strictly inside a single non-blending LOD zone
         if (bands.y <= 0.0f || farD <= lod0MaxD)
         {
             range->visibleCount[0] = range->count;
@@ -815,7 +783,6 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
         }
         else
         {
-            // Transition zone: evaluate per-tuft LOD using localEye
             int start = range->tuftOffset;
             int end = start + range->count;
             for (int id = start; id < end; id++)
@@ -843,7 +810,6 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
 
             int start = range->tuftOffset;
             int end = start + range->count;
-            // Fast-path: all tufts in this chunk belong to the current LOD
             if (cCount == range->count)
             {
                 for (int id = start; id < end; id++)
@@ -862,7 +828,6 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
         }
     }
 
-    // Upload only the active rows of visibleIds texture rather than the entire buffer
     if (cursor > 0)
     {
         int activeRows = (cursor + NATURE_VISIBLE_ID_ROW_TEXELS * 4 - 1) / (NATURE_VISIBLE_ID_ROW_TEXELS * 4);
@@ -902,60 +867,40 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
     int pass = lod == 3 ? 1 : 0;
     bool compact = pass == 0 && data->compact;
     int instanceCount = compact ? data->ranges[chunk].visibleCount[lod] : data->ranges[chunk].count;
-    // Early-out before computing any matrix multiplications or setting uniforms
     if (instanceCount <= 0)
         return;
 
     NatureTuftTemplate *mesh = &data->templates[lod];
-    bool stateChanged = (s_lastParamShaderId != shader.id ||
-                         s_lastParamLod != lod ||
-                         s_lastParamMeadow != (const void *)meadow ||
-                         !NatureParametric_SameVector(s_lastParamOffset, worldOffset));
-
-    if (stateChanged)
+    Matrix model = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
+    Matrix mvp;
+    if (lod == 3)
     {
-        s_lastParamShaderId = shader.id;
-        s_lastParamLod = lod;
-        s_lastParamMeadow = (const void *)meadow;
-        s_lastParamOffset = worldOffset;
-
-        Matrix model = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
-        Matrix mvp;
-        if (lod == 3)
-        {
-            mvp = MatrixMultiply(model, EnvShadow_GetLightVP());
-        }
-        else
-        {
-            model = MatrixMultiply(model, rlGetMatrixTransform());
-            mvp = MatrixMultiply(MatrixMultiply(model, rlGetMatrixModelview()), rlGetMatrixProjection());
-        }
-        SetShaderValueMatrix(shader, shader.locs[SHADER_LOC_MATRIX_MVP], mvp);
-
-        const Vector4 white = {1.0f, 1.0f, 1.0f, 1.0f};
-        if (shader.locs[SHADER_LOC_COLOR_DIFFUSE] >= 0)
-            SetShaderValue(shader, shader.locs[SHADER_LOC_COLOR_DIFFUSE], &white, SHADER_UNIFORM_VEC4);
-
-        SetShaderValue(shader, s_natureWorldOffsetLoc[pass], &worldOffset, SHADER_UNIFORM_VEC3);
-        if (pass == 0)
-            SetShaderValue(shader, s_natureTuftLodLevelLoc, &lod, SHADER_UNIFORM_INT);
-        SetShaderValue(shader, s_natureBladeCountLoc[pass], &mesh->blades, SHADER_UNIFORM_INT);
-
-        int canonical = data->canonical ? 1 : 0, compactValue = compact ? 1 : 0;
-        SetShaderValue(shader, s_natureCanonicalLoc[pass], &canonical, SHADER_UNIFORM_INT);
-        SetShaderValue(shader, s_natureCanonicalBladesLoc[pass], &data->canonicalBlades, SHADER_UNIFORM_INT);
-        SetShaderValue(shader, s_natureGeometryLodLoc[pass], &lod, SHADER_UNIFORM_INT);
-        if (s_natureCompactLoc[pass] >= 0)
-            SetShaderValue(shader, s_natureCompactLoc[pass], &compactValue, SHADER_UNIFORM_INT);
-
-        rlActiveTextureSlot(0);
-        rlEnableTexture(data->parameters.id);
-        int unit = 0;
-        SetShaderValue(shader, s_natureParameterLoc[pass], &unit, SHADER_UNIFORM_INT);
+        mvp = MatrixMultiply(model, EnvShadow_GetLightVP());
     }
+    else
+    {
+        model = MatrixMultiply(model, rlGetMatrixTransform());
+        mvp = MatrixMultiply(MatrixMultiply(model, rlGetMatrixModelview()), rlGetMatrixProjection());
+    }
+    SetShaderValueMatrix(shader, shader.locs[SHADER_LOC_MATRIX_MVP], mvp);
 
+    const Vector4 white = {1.0f, 1.0f, 1.0f, 1.0f};
+    if (shader.locs[SHADER_LOC_COLOR_DIFFUSE] >= 0)
+        SetShaderValue(shader, shader.locs[SHADER_LOC_COLOR_DIFFUSE], &white, SHADER_UNIFORM_VEC4);
+
+    SetShaderValue(shader, s_natureWorldOffsetLoc[pass], &worldOffset, SHADER_UNIFORM_VEC3);
+    if (pass == 0)
+        SetShaderValue(shader, s_natureTuftLodLevelLoc, &lod, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, s_natureBladeCountLoc[pass], &mesh->blades, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureBladeOffsetLoc[pass], &data->ranges[chunk].offset[lod], SHADER_UNIFORM_INT);
+
+    int canonical = data->canonical ? 1 : 0, compactValue = compact ? 1 : 0;
+    SetShaderValue(shader, s_natureCanonicalLoc[pass], &canonical, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, s_natureCanonicalBladesLoc[pass], &data->canonicalBlades, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, s_natureGeometryLodLoc[pass], &lod, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureTuftOffsetLoc[pass], &data->ranges[chunk].tuftOffset, SHADER_UNIFORM_INT);
+    if (s_natureCompactLoc[pass] >= 0)
+        SetShaderValue(shader, s_natureCompactLoc[pass], &compactValue, SHADER_UNIFORM_INT);
 
     if (compact)
     {
@@ -965,6 +910,11 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
         rlEnableTexture(data->visibleIds.id);
         SetShaderValue(shader, s_natureVisibleIdsLoc, &idUnit, SHADER_UNIFORM_INT);
     }
+
+    rlActiveTextureSlot(0);
+    rlEnableTexture(data->parameters.id);
+    int unit = 0;
+    SetShaderValue(shader, s_natureParameterLoc[pass], &unit, SHADER_UNIFORM_INT);
 
     rlEnableVertexArray(mesh->vao);
     rlDrawVertexArrayElementsInstanced(0, mesh->indexCount, NULL, instanceCount);

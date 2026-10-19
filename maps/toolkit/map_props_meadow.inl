@@ -42,6 +42,7 @@ static void Nature_AddCurvedBladeQuad(Mesh *mesh, int *cursor,
     Nature_SetVertex(mesh, (*cursor)++, p0, n0, phase, h0, c0);
     Nature_SetVertex(mesh, (*cursor)++, p2, n2, phase, h1, c1);
     Nature_SetVertex(mesh, (*cursor)++, p3, n3, phase, h1, c1);
+    // Transverse coordinate u in [-1.0, +1.0] across blade width
     Nature_SetUv2(mesh, base + 0, -1.0f, h0);
     Nature_SetUv2(mesh, base + 1, 1.0f, h0);
     Nature_SetUv2(mesh, base + 2, 1.0f, h1);
@@ -60,7 +61,7 @@ static void Nature_AddCurvedBladeTip(Mesh *mesh, int *cursor, Vector3 p0, Vector
     Nature_SetVertex(mesh, (*cursor)++, tip, nTip, phase, 1.0f, c1);
     Nature_SetUv2(mesh, base + 0, -1.0f, h0);
     Nature_SetUv2(mesh, base + 1, 1.0f, h0);
-    Nature_SetUv2(mesh, base + 2, 0.0f, 1.0f);
+    Nature_SetUv2(mesh, base + 2, 0.0f, 1.0f); // Tip apex is center spine (u = 0.0)
 }
 
 static Model Nature_BuildMeadowShadowChunk(const MapMeadowPlacement *placements, int count,
@@ -281,19 +282,19 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         lean = height * (0.38f + 0.22f * tierFrac);
         droopY = height * (0.08f + 0.16f * bHash2);
 
-        pBase = (Vector3){bx, clump->position.y, bz};
+        pBase = (Vector3){bx, clump->position.y - 0.010f, bz};
         pP1 = (Vector3){
-            bx + dirX * (lean * 0.12f),
-            pBase.y + height * 0.38f,
-            bz + dirZ * (lean * 0.12f)};
+            bx + dirX * (lean * 0.24f),
+            pBase.y + height * 0.36f,
+            bz + dirZ * (lean * 0.24f)};
         pP2 = (Vector3){
-            bx + dirX * (lean * 0.46f),
-            pBase.y + height * 0.74f,
-            bz + dirZ * (lean * 0.46f)};
+            bx + dirX * (lean * 0.60f),
+            pBase.y + height * 0.72f,
+            bz + dirZ * (lean * 0.60f)};
         pP3 = (Vector3){
-            bx + dirX * (lean * 0.95f),
+            bx + dirX * (lean * 0.98f),
             pBase.y + (height * 0.86f - droopY),
-            bz + dirZ * (lean * 0.95f)};
+            bz + dirZ * (lean * 0.98f)};
 
         bool isOuterDrySheath = (blade < 2);
         if (isOuterDrySheath)
@@ -321,10 +322,10 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         lean = height * (0.46f + 0.16f * bHash3);
         droopY = height * 0.10f;
 
-        pBase = (Vector3){bx, clump->position.y, bz};
-        pP1 = (Vector3){bx + dirX * (lean * 0.12f), pBase.y + height * 0.38f, bz + dirZ * (lean * 0.12f)};
-        pP2 = (Vector3){bx + dirX * (lean * 0.46f), pBase.y + height * 0.74f, bz + dirZ * (lean * 0.46f)};
-        pP3 = (Vector3){bx + dirX * (lean * 0.94f), pBase.y + (height * 0.84f - droopY), bz + dirZ * (lean * 0.94f)};
+        pBase = (Vector3){bx, clump->position.y - 0.010f, bz};
+        pP1 = (Vector3){bx + dirX * (lean * 0.24f), pBase.y + height * 0.36f, bz + dirZ * (lean * 0.24f)};
+        pP2 = (Vector3){bx + dirX * (lean * 0.60f), pBase.y + height * 0.72f, bz + dirZ * (lean * 0.60f)};
+        pP3 = (Vector3){bx + dirX * (lean * 0.96f), pBase.y + (height * 0.84f - droopY), bz + dirZ * (lean * 0.96f)};
 
         bladeRoot = style.rootColor;
         bladeTip = style.tipColor;
@@ -332,12 +333,11 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     else
     {
         // Volumetric 3D fountain clump architecture:
-        // Wider collar radius (0.20..0.34 of clump radius) and 360-degree golden-angle fan
-        // prevent blades from bundling into narrow vertical broomsticks!
+        // Natural collar radius and 360-degree golden-angle fan with organic splay
         float baseAzimuth = clumpAngle + (float)bladeId * golden + (bHash - 0.5f) * 1.15f;
         float radX = cosf(baseAzimuth);
         float radZ = sinf(baseAzimuth);
-        float collarRadius = clump->radius * (0.20f + 0.14f * bHash3);
+        float collarRadius = clump->radius * (0.18f + 0.14f * bHash3);
         float bx = clump->position.x + radX * collarRadius;
         float bz = clump->position.z + radZ * collarRadius;
 
@@ -366,7 +366,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             // Tier 1: Hero Upright & Arching Spears (reaches highest for sunlight)
             lengthScale = 1.08f + 0.16f * bHash2;
             widthScaleVal = 0.88f + 0.12f * bHash3;
-            leanFactor = 0.38f + 0.16f * bHash;
+            leanFactor = 0.42f + 0.16f * bHash;
             droopFactor = 0.12f + 0.08f * bHash3;
         }
         else if (bladeId < 4)
@@ -374,15 +374,15 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             // Tier 2: Mid-Canopy Billows (sweeps outward to interlock with neighboring tufts)
             lengthScale = 0.90f + 0.14f * bHash2;
             widthScaleVal = 1.00f + 0.14f * bHash3;
-            leanFactor = 0.58f + 0.18f * bHash;
+            leanFactor = 0.62f + 0.18f * bHash;
             droopFactor = 0.20f + 0.08f * bHash3;
         }
         else
         {
             // Tier 3: Ground Skirt & Drape (curves outward to cover ground between tufts)
             lengthScale = 0.72f + 0.12f * bHash2;
-            widthScaleVal = 1.16f + 0.16f * bHash3;
-            leanFactor = 0.78f + 0.20f * bHash;
+            widthScaleVal = 1.14f + 0.16f * bHash3;
+            leanFactor = 0.82f + 0.20f * bHash;
             droopFactor = 0.28f + 0.08f * bHash3;
         }
 
@@ -418,20 +418,20 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             droopY *= 0.65f;
         }
 
-        // Smooth progressive cantilever Bézier arch with outward volume
-        pBase = (Vector3){bx, clump->position.y, bz};
+        // Smooth constant-curvature cantilever Bézier arch (zero polygonal elbows!)
+        pBase = (Vector3){bx, clump->position.y - 0.012f, bz};
         pP1 = (Vector3){
-            bx + dirX * (lean * 0.14f),
-            pBase.y + height * 0.40f,
-            bz + dirZ * (lean * 0.14f)};
+            bx + dirX * (lean * 0.26f),
+            pBase.y + height * 0.36f,
+            bz + dirZ * (lean * 0.26f)};
         pP2 = (Vector3){
-            bx + dirX * (lean * 0.50f),
-            pBase.y + height * 0.78f,
-            bz + dirZ * (lean * 0.50f)};
+            bx + dirX * (lean * 0.62f),
+            pBase.y + height * 0.72f,
+            bz + dirZ * (lean * 0.62f)};
         pP3 = (Vector3){
-            bx + dirX * (lean * 0.96f),
-            pBase.y + fmaxf(height * 0.18f, height * (0.86f - droopFactor * 1.25f) - droopY * 0.35f),
-            bz + dirZ * (lean * 0.96f)};
+            bx + dirX * (lean * 1.00f),
+            pBase.y + fmaxf(height * 0.24f, height * (0.92f - droopFactor * 1.15f) - droopY * 0.25f),
+            bz + dirZ * (lean * 1.00f)};
 
         isSeedhead = false;
         float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f +
@@ -530,7 +530,7 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
 
             for (int segment = 0; segment < bladeSegments; segment++)
             {
-                float tipStart = bladeSegments > 1 ? 0.80f : 0.0f;
+                float tipStart = (bladeSegments == 2) ? 0.54f : (bladeSegments > 2 ? 0.86f : 0.0f);
                 float t0 = segment == bladeSegments - 1 ? tipStart
                                                         : tipStart * (float)segment / (float)(bladeSegments - 1);
                 float t1 = segment == bladeSegments - 1 ? 1.0f
@@ -562,48 +562,42 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Ngeo1.y = fmaxf(Ngeo1.y, 0.25f);
                 Ngeo1 = Vector3Normalize(Ngeo1);
 
-                bool isSeedhead = desc.isSeedhead;
+                float u0 = 1.0f - t0;
+                float u1 = 1.0f - t1;
                 float profile0;
                 float profile1;
                 if (isReed)
                 {
-                    profile0 = (0.85f + 0.25f * sinf(PI * t0)) * (1.0f - powf(t0, 1.8f));
-                    profile1 = (0.85f + 0.25f * sinf(PI * t1)) * (1.0f - powf(t1, 1.8f));
-                }
-                else if (isSeedhead)
-                {
-                    float s0 = fminf(fmaxf((t0 - 0.48f) / 0.46f, 0.0f), 1.0f);
-                    float bulge0 = powf(sinf(PI * s0), 0.82f);
-                    profile0 = (t0 < 0.48f) ? (0.36f + 0.14f * t0) : (0.36f + 1.45f * bulge0 * (1.0f - t0 * 0.26f));
-
-                    float s1 = fminf(fmaxf((t1 - 0.48f) / 0.46f, 0.0f), 1.0f);
-                    float bulge1 = powf(sinf(PI * s1), 0.82f);
-                    profile1 = (t1 < 0.48f) ? (0.36f + 0.14f * t1) : (0.36f + 1.45f * bulge1 * (1.0f - t1 * 0.26f));
+                    profile0 = (0.78f + 0.36f * sinf(PI * t0)) * (1.0f - powf(t0, 1.8f));
+                    profile1 = (0.78f + 0.36f * sinf(PI * t1)) * (1.0f - powf(t1, 1.8f));
                 }
                 else
                 {
-                    profile0 = (0.84f + 0.34f * t0) * (1.0f - powf(t0, 1.65f) * 0.88f);
-                    profile1 = (0.84f + 0.34f * t1) * (1.0f - powf(t1, 1.65f) * 0.88f);
-                }
-                float halfW0 = (width * 0.5f) * fmaxf(profile0, 0.12f);
-                float halfW1 = (width * 0.5f) * fmaxf(profile1, 0.08f);
+                    float belly0 = 0.74f + 0.62f * t0 * u0;
+                    float taper0 = fmaxf(0.0f, 1.0f - t0 * (0.18f + 0.78f * t0));
+                    profile0 = belly0 * taper0;
 
-                Vector3 fold0 = Vector3Scale(Ngeo0, halfW0 * 0.16f);
-                Vector3 fold1 = Vector3Scale(Ngeo1, halfW1 * 0.16f);
+                    float belly1 = 0.74f + 0.62f * t1 * u1;
+                    float taper1 = fmaxf(0.0f, 1.0f - t1 * (0.18f + 0.78f * t1));
+                    profile1 = belly1 * taper1;
+                }
+                float halfW0 = (width * 0.5f) * profile0;
+                float halfW1 = (width * 0.5f) * profile1;
+
+                Vector3 fold0 = Vector3Scale(Ngeo0, width * 0.08f * (4.0f * t0 * u0));
+                Vector3 fold1 = Vector3Scale(Ngeo1, width * 0.08f * (4.0f * t1 * u1));
 
                 Vector3 p0 = Vector3Add(Vector3Subtract(center0, Vector3Scale(S0, halfW0)), fold0);
                 Vector3 p1 = Vector3Add(Vector3Add(center0, Vector3Scale(S0, halfW0)), fold0);
                 Vector3 p2 = Vector3Add(Vector3Add(center1, Vector3Scale(S1, halfW1)), fold1);
                 Vector3 p3 = Vector3Add(Vector3Subtract(center1, Vector3Scale(S1, halfW1)), fold1);
 
-                float occ0 = (t0 < 0.22f) ? (0.90f + 0.10f * (t0 / 0.22f)) : 1.0f;
-                float occ1 = (t1 < 0.22f) ? (0.90f + 0.10f * (t1 / 0.22f)) : 1.0f;
+                float occ0 = (t0 < 0.25f) ? (0.82f + 0.72f * t0) : 1.0f;
+                float occ1 = (t1 < 0.25f) ? (0.82f + 0.72f * t1) : 1.0f;
                 float s0 = t0 * t0 * (3.0f - 2.0f * t0);
                 float s1 = t1 * t1 * (3.0f - 2.0f * t1);
                 Color color0 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, s0), occ0);
-                float tipTint = (segment == bladeSegments - 1 && !style.hasPlumes) ? 0.95f : 1.0f;
-                Color color1 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, s1),
-                                                 occ1 * tipTint);
+                Color color1 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, s1), occ1);
 
                 Vector3 clumpSphereCenter = (Vector3){clump->position.x, clump->position.y - 0.04f, clump->position.z};
 
@@ -617,18 +611,18 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
                 Vector3 nTarget0R = Vector3Normalize(Vector3Lerp(dSphere0R, terrainNormal, 0.45f));
                 Vector3 nTarget1L = Vector3Normalize(Vector3Lerp(dSphere1L, terrainNormal, 0.45f));
                 Vector3 nTarget1R = Vector3Normalize(Vector3Lerp(dSphere1R, terrainNormal, 0.45f));
-                Vector3 nTargetTip = Vector3Normalize(Vector3Lerp(dSphereTip, terrainNormal, 0.55f));
+                Vector3 nTargetTip = Vector3Normalize(Vector3Lerp(dSphereTip, terrainNormal, 0.54f));
 
-                Vector3 nMesh0L = Vector3Normalize(Vector3Subtract(Ngeo0, Vector3Scale(S0, 0.28f)));
-                Vector3 nMesh0R = Vector3Normalize(Vector3Add(Ngeo0, Vector3Scale(S0, 0.28f)));
+                Vector3 nMesh0L = Vector3Normalize(Vector3Subtract(Ngeo0, Vector3Scale(S0, 0.30f)));
+                Vector3 nMesh0R = Vector3Normalize(Vector3Add(Ngeo0, Vector3Scale(S0, 0.30f)));
                 Vector3 nMesh1L = Vector3Normalize(Vector3Subtract(Ngeo1, Vector3Scale(S1, 0.24f)));
                 Vector3 nMesh1R = Vector3Normalize(Vector3Add(Ngeo1, Vector3Scale(S1, 0.24f)));
 
                 Vector3 nL0 = Vector3Normalize(Vector3Lerp(nMesh0L, nTarget0L, 0.46f));
                 Vector3 nR0 = Vector3Normalize(Vector3Lerp(nMesh0R, nTarget0R, 0.46f));
-                Vector3 nL1 = Vector3Normalize(Vector3Lerp(nMesh1L, nTarget1L, 0.46f));
-                Vector3 nR1 = Vector3Normalize(Vector3Lerp(nMesh1R, nTarget1R, 0.46f));
-                Vector3 nTip = Vector3Normalize(Vector3Lerp(Ngeo1, nTargetTip, 0.56f));
+                Vector3 nL1 = Vector3Normalize(Vector3Lerp(nMesh1L, nTarget1L, 0.50f));
+                Vector3 nR1 = Vector3Normalize(Vector3Lerp(nMesh1R, nTarget1R, 0.50f));
+                Vector3 nTip = Vector3Normalize(Vector3Lerp(Ngeo1, nTargetTip, 0.54f));
 
                 if (style.hasPlumes)
                 {
