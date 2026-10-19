@@ -259,14 +259,14 @@ static Shader NatureParametric_Shader(bool shadow)
     return *shader;
 }
 
-// Builds welded blade template with lancet shoulder at tipStart = 0.86 (for segments > 2)
+// Builds welded blade template with lancet shoulder at tipStart = 0.76 (for segments > 2)
 // and arch-peak waist at 0.54 (for segments == 2), eliminating upper-blade kinks.
 static bool NatureParametric_BuildTemplate(NatureTuftTemplate *mesh, int blades, int segments)
 {
     Vector3 vertices[NATURE_TEMPLATE_MAX_VERTICES];
     unsigned short indices[NATURE_TEMPLATE_MAX_INDICES];
     int vertexCount = 0, indexCount = 0;
-    float tipStart = (segments == 2) ? 0.54f : (segments > 2 ? 0.86f : 0.0f);
+    float tipStart = (segments == 2) ? 0.54f : (segments > 2 ? 0.76f : 0.0f);
 
     for (int blade = 0; blade < blades; blade++)
     {

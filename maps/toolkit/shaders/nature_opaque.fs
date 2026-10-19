@@ -18,10 +18,10 @@ out vec4 finalColor;
 void main()
 {
     // Recover true edge-to-edge normalized transverse coordinate uNorm in [-1.0, +1.0]
-    // Inside the tip triangle (fragHeight > 0.86), vertex u converges toward 0.0 at the apex;
-    // rescaling by the tip triangle envelope eliminates the horizontal shading seam at t = 0.86!
-    float tipEnvelope = max((1.0 - fragHeight) * 7.142857, 0.08); // 1.0 / (1.0 - 0.86)
-    float uNorm = (fragHeight > 0.86)
+    // Inside the tip triangle (fragHeight > 0.76), vertex u converges toward 0.0 at the apex;
+    // rescaling by the tip triangle envelope eliminates the horizontal shading seam at t = 0.76!
+    float tipEnvelope = max((1.0 - fragHeight) * 4.166667, 0.08); // 1.0 / (1.0 - 0.76)
+    float uNorm = (fragHeight > 0.76)
         ? clamp(fragTexCoord.x / min(tipEnvelope, 1.0), -1.0, 1.0)
         : clamp(fragTexCoord.x, -1.0, 1.0);
 

@@ -201,11 +201,12 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         // Reed / broad leaf profile
         profile = (0.78 + 0.36 * sinPiT) * (1.0 - t2 * (0.72 + 0.24 * t));
     } else {
-        // Graceful botanical sword-leaf taper:
-        // t=0.00 -> 0.74, t=0.28 -> 0.81, t=0.58 -> 0.57, t=0.86 -> 0.21, t=1.00 -> 0.0
-        float belly = 0.74 + 0.62 * t * u;
-        float taper = 1.0 - t * (0.18 + 0.78 * t);
-        profile = belly * max(taper, 0.0);
+        // AAA Botanical sword-leaf taper:
+        float sheath = min(1.0, 0.65 + 2.5 * t);
+        float body = 0.82 + 0.32 * sin(3.14159265 * min(t * 1.35, 1.0));
+        float tipT = max(0.0, (t - 0.35) * (1.0 / 0.65));
+        float taper = max(0.0, 1.0 - tipT * tipT);
+        profile = sheath * body * taper;
     }
     float halfWidth = p1.w * 0.5 * profile;
 

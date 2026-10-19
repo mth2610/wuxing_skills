@@ -212,19 +212,18 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float tipConvergence = FastRamp(0.82, 0.99, h);
     float antiShimmer = max(max(unresolved, FastRamp(12.0, 34.0, distToCam)), tipConvergence * 0.75);
 
-    // 1. Bilateral V-Crease Fold Normal (Ghost of Tsushima technique):
-    // Tilts the left and right halves of the blade oppositely across the central midrib (u = 0),
-    // creating authentic 3D bilateral light/shadow contrast across each blade's width
-    // without painting an artificial stripe texture!
+    // 1. Continuous Cylindrical Transverse Normal:
+    // Smoothly curves across the blade width from left to right like an authentic natural leaf,
+    // completely eliminating the artificial origami crease and fake central stripe!
     vec3 faceNormal = normalize(vec3(worldNormal.x, max(abs(worldNormal.y), 0.26), worldNormal.z));
-    vec3 bladeSide = vec3(-faceNormal.z, 0.0, faceNormal.x);
-    float sideLenSq = dot(bladeSide, bladeSide);
-    if (sideLenSq > 1e-6) {
-        bladeSide *= inversesqrt(sideLenSq);
-        // Smooth signed V-fold across center spine (filtered by fwU so it never aliases)
-        float vFold = u / sqrt(u * u + max(fwU * fwU * 2.0, 0.015));
-        float foldStrength = 0.44 * (1.0 - antiShimmer * 0.88) * (1.0 - FastRamp(0.75, 0.98, h));
-        faceNormal = normalize(faceNormal + bladeSide * (vFold * foldStrength));
+    if (distToCam < 22.0) {
+        vec3 bladeSide = vec3(-faceNormal.z, 0.0, faceNormal.x);
+        float sideLenSq = dot(bladeSide, bladeSide);
+        if (sideLenSq > 1e-6) {
+            bladeSide *= inversesqrt(sideLenSq);
+            float curvature = u * 0.26 * (1.0 - antiShimmer * 0.88);
+            faceNormal = normalize(faceNormal + bladeSide * curvature);
+        }
     }
 
     // Arch Bell Window: concentrates specular sheen on the curved mid-upper arch (h in [0.16, 0.86])
@@ -234,15 +233,11 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float terrainBlend = 1.0 - (1.0 - antiShimmer * 0.84) * (1.0 - groundBlend);
     vec3 n = normalize(mix(faceNormal, vec3(0.0, 1.0, 0.0), terrainBlend));
 
-    // Smooth parabolic edge darkening + delicate central midrib (tapered to 0 before the tip)
-    float crossSectionShade = 1.0 + (0.06 * exp(-absU * 6.0) - 0.08 * absU * absU) * (1.0 - antiShimmer);
-    baseColor *= crossSectionShade;
-
     // Coherent macro botanical hue shift across the valley
-    float macroPatch = sin(worldPosition.x * 0.14 + worldPosition.z * 0.09) * 0.55
-                     + cos(worldPosition.x * -0.08 + worldPosition.z * 0.19) * 0.45;
+    float macroPatch = sin(worldPosition.x * 0.12 + worldPosition.z * 0.08) * 0.55
+                     + cos(worldPosition.x * -0.07 + worldPosition.z * 0.16) * 0.45;
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
-    vec3 tipTone = mix(vec3(0.95, 1.02, 0.96), vec3(1.06, 1.04, 0.86), warmShift * FastRamp(0.32, 0.92, h));
+    vec3 tipTone = mix(vec3(0.96, 1.01, 0.95), vec3(1.04, 1.02, 0.88), warmShift * FastRamp(0.35, 0.90, h));
     baseColor *= tipTone;
 
     // ── GENERALIZED 4-STATE BOTANICAL TRANSITION ─────────────────────────────
@@ -305,15 +300,18 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     vec3 skyAmbient = Environment_HemisphereIrradiance(vec3(0.0, 1.0, 0.0), u_ambientColor);
     vec3 groundBounce = Environment_HemisphereIrradiance(vec3(0.0, -1.0, 0.0), u_ambientColor);
-    vec3 ambient = mix(groundBounce, skyAmbient, n.y * 0.5 + 0.5);
+    // Chlorophyll green bounce in shadows: keeps shadowed hills vibrant and fresh, never dead slate gray!
+    vec3 greenBounce = baseColor * (u_ambientColor * 1.35 + vec3(0.035, 0.075, 0.018));
+    vec3 ambientGround = mix(groundBounce, greenBounce, 0.46);
+    vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
-    // Rich 3D root contact occlusion (0.58..1.0): grounds tufts into the turf with natural depth
-    float rootAO = mix(0.58, 1.0, smoothstep(0.0, 0.46, h));
+    // Smooth root contact occlusion (0.64..1.0): eliminates harsh black root blotches
+    float rootAO = mix(0.64, 1.0, smoothstep(0.0, 0.44, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
     float waxFresnel = FastPow4(1.0 - nv);
-    vec3 waxSheen = skyAmbient * (waxFresnel * 0.24 * archWindow * specScale * (1.0 - antiShimmer * 0.78));
+    vec3 waxSheen = skyAmbient * (waxFresnel * 0.18 * archWindow * specScale * (1.0 - antiShimmer * 0.82));
     lit += waxSheen * rootAO;
 
     float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, u_lightDir, worldPosition, distToCam);
@@ -322,11 +320,10 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         if (sunVis > 0.001) {
             vec3 effectiveLightColor = u_lightColor * (1.0 / (1.0 + max(u_lightDir.y - 0.38, 0.0) * 0.82));
             float sunLuma = dot(effectiveLightColor, vec3(0.28, 0.58, 0.14));
-            vec3 balancedSun = vec3(sunLuma) * vec3(1.05, 1.02, 0.90);
-            effectiveLightColor = mix(effectiveLightColor, balancedSun, 0.38 * (1.0 - dryness));
+            vec3 balancedSun = vec3(sunLuma) * vec3(1.02, 1.00, 0.92);
+            effectiveLightColor = mix(effectiveLightColor, balancedSun, 0.42 * (1.0 - dryness));
 
-            // Use faceNormal (which carries the bilateral V-fold) for direct diffuse modeling
-            // so the two halves of each blade show crisp 3D sunlit vs shaded contrast!
+            // Use faceNormal for direct diffuse modeling with bilateral depth
             vec3 modelLightDir = normalize(vec3(u_lightDir.x + 0.36 * u_lightDir.y, u_lightDir.y * 0.72, u_lightDir.z - 0.28 * u_lightDir.y));
             float wrappedFace  = clamp((dot(faceNormal, u_lightDir) + 0.34) * 0.746269, 0.0, 1.0);
             float wrappedModel = clamp((dot(faceNormal, modelLightDir) + 0.34) * 0.746269, 0.0, 1.0);
@@ -337,8 +334,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float canopyDepth = 0.38 * (1.0 - h);
             float opticalDepth = canopyDepth * 0.80 / max(u_lightDir.y, 0.24);
             float expCanopy = 1.0 / (1.0 + opticalDepth + 0.38 * opticalDepth * opticalDepth);
-            float verticalSelfShadow = mix(0.58, 1.0, smoothstep(0.0, 0.56, h));
-            float canopy = (0.34 + 0.66 * expCanopy) * verticalSelfShadow;
+            float verticalSelfShadow = mix(0.62, 1.0, smoothstep(0.0, 0.54, h));
+            float canopy = (0.36 + 0.64 * expCanopy) * verticalSelfShadow;
 
             vec3 anisoSpec = vec3(0.0);
             float waxySpec = 0.0;
@@ -350,32 +347,41 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                 float invTangentLenSq = 1.0 / max(1.0 - faceNormal.y * faceNormal.y, 1e-4);
                 float sinTHSq = clamp(1.0 - (shiftedTH * shiftedTH) * invTangentLenSq, 0.0, 1.0);
 
+                // Anti-shimmering roughness transition: broadens specular glints on distant hills
+                float distRoughness = FastRamp(8.0, 22.0, distToCam);
                 float specAA = (1.0 - antiShimmer) * archWindow * specScale;
                 float sinTH4  = sinTHSq * sinTHSq;
                 float sinTH8  = sinTH4 * sinTH4;
                 float sinTH16 = sinTH8 * sinTH8;
+                float sinTHBroad = mix(sinTH16, sinTH4, distRoughness);
 
-                vec3 primarySheen   = mix(baseColor, vec3(0.98, 1.0, 0.86), 0.55) * (sinTH8 * 0.075);
-                vec3 secondaryGlint = vec3(0.98, 1.0, 0.90) * (sinTH16 * 0.12);
-                anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.28, 0.0));
-                waxySpec = FastPow32(NdotH) * (0.14 * h) * specAA;
+                vec3 primarySheen   = mix(baseColor, vec3(0.96, 0.98, 0.88), 0.48) * (sinTH8 * 0.065);
+                vec3 secondaryGlint = vec3(0.96, 0.98, 0.90) * (sinTHBroad * 0.085 * (1.0 - distRoughness * 0.75));
+                anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.25, 0.0));
+                waxySpec = FastPow32(NdotH) * (0.11 * h) * specAA * (1.0 - distRoughness);
             }
 
-            // Warm Golden-Emerald Subsurface Translucency (SSS)
+            // Balanced Golden-Jade Subsurface Translucency (SSS):
+            // Energy-conserving transmission through leaf body with warm jade undertone,
+            // strictly preventing ACES neon lime channel blowout.
             float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
             float backLight = max(-dot(faceNormal, modelLightDir), 0.0);
             float forwardLobe = forwardScatter * forwardScatter * forwardScatter;
             float backLobe = FastPow1_4(backLight);
-            float edgeThinness = 0.65 + 0.55 * absU;
-            float sssWindow = FastRamp(0.10, 0.52, h) * (1.0 - FastRamp(0.84, 0.99, h) * 0.40);
-            float transmission = (backLobe * 0.82 + forwardLobe * 1.32 * (0.45 + 0.55 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 goldenEmeraldSSS = baseColor * vec3(1.32, 1.85, 0.48) + vec3(0.035, 0.065, 0.015) * sssScale;
+            float edgeThinness = 0.68 + 0.32 * absU;
+            float sssWindow = FastRamp(0.12, 0.48, h) * (1.0 - FastRamp(0.82, 0.98, h) * 0.40);
+            float transmission = (backLobe * 0.55 + forwardLobe * 0.75 * (0.40 + 0.60 * h)) * sssWindow * edgeThinness * sssScale;
+            vec3 goldenJadeSSS = baseColor * vec3(1.05, 1.15, 0.45) + vec3(0.015, 0.025, 0.006) * sssScale;
 
+            // Energy-conserving Direct Lighting:
+            // Sum of diffuse (0.50) + SSS (0.38) <= 0.88, leaving budget for specular without blowing out.
             float diffuseLobe = wrapped * (0.35 + 0.65 * wrapped);
-            vec3 directSunTerms = baseColor * (diffuseLobe * 0.96)
-                                + anisoSpec + (effectiveLightColor * waxySpec)
-                                + goldenEmeraldSSS * (transmission * 1.38);
-            lit += directSunTerms * effectiveLightColor * (canopy * sunVis);
+            vec3 directDiffuse = baseColor * (diffuseLobe * 0.50);
+            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.38);
+            vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.40);
+
+            vec3 directSun = (directDiffuse + jadeTrans) * (canopy * sunVis) + specHighlight * sunVis;
+            lit += directSun * effectiveLightColor;
         }
     }
 

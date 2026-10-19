@@ -450,7 +450,7 @@ void InitSongQuaoMap(void)
     MapProp_SetGroundEcology(&s_ground, &s_habitat);
 
     // Harmonized moss-emerald tint matching grass root luminance
-    MapProp_SetGroundTint(&s_ground, (Color){68, 98, 48, 255});
+    MapProp_SetGroundTint(&s_ground, (Color){54, 82, 42, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
                                  "assets/textures/verdant_meadow_substrate_material.png",
                                  "assets/textures/dirt_material.png");
@@ -469,26 +469,25 @@ void InitSongQuaoMap(void)
         SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT,
         &s_ground, kMapCenter, 36.0f);
 
-    // Build Flora: 6 fuller arching blades (bladeWidthScale = 0.185) + harmonized root green
-    // Eliminates black root spikes & bare ground while using 25% fewer vertices per tuft than 8 thin blades!
+    // Build Flora: 6 slender organic sword-leaf blades (bladeWidthScale = 0.125) + botanical emerald palette
     BuildFloraPlacements();
     s_flora = MapProp_CreateFloraSystem(
         s_grassPlacements, s_grassCount,
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {38, 68, 28, 255},
-            .grassTipColor = {110, 178, 58, 255},
+            .grassRootColor = {24, 46, 20, 255},
+            .grassTipColor = {58, 132, 44, 255},
             .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.185f,
-            .lodDistance = 28.0f,
-            .midLodDistance = 14.5f,
+            .bladeWidthScale = 0.125f,
+            .lodDistance = 32.0f,
+            .midLodDistance = 18.0f,
             .drawDistance = 64.0f,
             .shadowDistance = 14.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
-            .reedRootColor = {28, 52, 22, 255},
-            .reedTipColor = {116, 168, 68, 255},
+            .reedRootColor = {26, 48, 22, 255},
+            .reedTipColor = {68, 138, 54, 255},
             .hasReedPlumes = false,
             .botanicalVariation = 0.85f,
         });
