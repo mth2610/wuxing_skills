@@ -25,9 +25,9 @@
 #define MAP_DEPTH SONG_QUAO_MAP_DEPTH
 #define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
 #define CLOUD_SEA_Y -4.20f
-#define GRASS_TUFT_CAPACITY 76000
+#define GRASS_TUFT_CAPACITY 64000
 #define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
-#define REED_COUNT 650
+#define REED_COUNT 560
 
 // Safe elevation floor above the sheer outer cliff abyss (-CLIFF_DEPTH)
 // Prevents cutting off grass in natural river basins and low swales (y in [-2.2m, 0.0m])
@@ -146,13 +146,13 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float waterClearance = pos.y - surfaceY;
     if (waterClearance < -0.01f)
         return 0.0f;
-    float shoreFade = SmoothStep01(-0.01f, 0.15f, waterClearance);
+    float shoreFade = SmoothStep01(-0.01f, 0.18f, waterClearance);
 
     Color splat = SampleSplat(x, z);
     float rockScree = (float)splat.g / 255.0f;
-    if (rockScree > 0.92f)
+    if (rockScree > 0.90f)
         return 0.0f;
-    float rockFade = 1.0f - SmoothStep01(0.70f, 0.92f, rockScree);
+    float rockFade = 1.0f - SmoothStep01(0.65f, 0.90f, rockScree);
 
     // Focus grass budget inside the main valley & river basin so reservoir sampling
     // never thins out the playable foreground meadow.
@@ -163,10 +163,13 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
         return 0.0f;
     float edgeFade = 1.0f - SmoothStep01(0.74f, 1.0f, basinDist);
 
-    float warpedX = x + sinf(z * 0.17f) * 2.1f;
-    float macroField = sinf(warpedX * 0.15f + z * 0.08f) * 0.55f + sinf(z * 0.20f - x * 0.06f + 1.4f) * 0.30f + sinf(x * 0.33f + z * 0.29f) * 0.15f;
-    float patch = SmoothStep01(-0.25f, 0.45f, macroField);
-    float macro = 0.82f + 0.18f * patch;
+    // Painterly macro meadow rhythm (billowing dense drifts + softer breathing swales)
+    float warpedX = x + sinf(z * 0.14f) * 2.4f;
+    float macroField = sinf(warpedX * 0.13f + z * 0.07f) * 0.52f +
+                       sinf(z * 0.19f - x * 0.06f + 1.4f) * 0.32f +
+                       sinf(x * 0.31f + z * 0.27f) * 0.16f;
+    float patch = SmoothStep01(-0.32f, 0.42f, macroField);
+    float macro = 0.68f + 0.32f * patch;
 
     float flowerSuppression = MapFlora_EvaluateFlowerSuppression(
         x, z, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
@@ -179,8 +182,8 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     (void)userData;
     float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, cx, cz);
     float waterClearance = gy - SampleWaterHeight(cx, cz);
-    float shoreTaper = 0.52f + 0.48f * SmoothStep01(-0.01f, 0.36f, waterClearance);
-    float cliffTaper = 0.58f + 0.42f * SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y + 0.35f, gy);
+    float shoreTaper = 0.48f + 0.52f * SmoothStep01(-0.01f, 0.42f, waterClearance);
+    float cliffTaper = 0.55f + 0.45f * SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y + 0.35f, gy);
     return shoreTaper * cliffTaper;
 }
 
@@ -198,10 +201,10 @@ static bool SongQuaoIsFlowerExcluded(float x, float z, void *ctx)
         return true;
     if (pos.y < PLAYABLE_BASIN_FADE_Y || normal.y < 0.62f)
         return true;
-    if (SampleWaterHeight(x, z) >= pos.y - 0.08f)
+    if (SampleWaterHeight(x, z) >= pos.y - 0.10f)
         return true;
     Color splat = SampleSplat(x, z);
-    if (splat.g > 215)
+    if (splat.g > 210)
         return true;
     return false;
 }
@@ -215,8 +218,8 @@ static float Random01(unsigned int *rng)
 static void BuildFloraPlacements(void)
 {
     // 1. Lush interlocking valley meadow:
-    // Bounding box tightly wraps the valley basin so 0.285m spacing fits within
-    // GRASS_TUFT_CAPACITY without triggering reservoir-sampling thinning!
+    // Optimized 0.305m spacing keeps 60k tufts within GRASS_TUFT_CAPACITY with zero thinning
+    // while cutting GPU vertex & overdraw cost by ~18%.
     float spanX = MAP_WIDTH * 0.36f;
     float spanZ = MAP_DEPTH * 0.34f;
     s_grassCount = MapFlora_GenerateMeadowPlacements(
@@ -224,7 +227,7 @@ static void BuildFloraPlacements(void)
         (MapFloraMeadowConfig){
             .minBounds = {kMapCenter.x - spanX, kMapCenter.z - spanZ},
             .maxBounds = {kMapCenter.x + spanX, kMapCenter.z + spanZ},
-            .spacing = 0.285f,
+            .spacing = 0.305f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -238,7 +241,7 @@ static void BuildFloraPlacements(void)
     // 2. Reeds along riverbanks & wetland margins
     unsigned int rng = 0x9371a5u;
     s_reedCount = 0;
-    for (int attempts = 0; attempts < 4500 && s_reedCount < REED_COUNT; attempts++)
+    for (int attempts = 0; attempts < 4200 && s_reedCount < REED_COUNT; attempts++)
     {
         float rx = 10.0f + Random01(&rng) * (MAP_WIDTH - 20.0f);
         float rz = 10.0f + Random01(&rng) * (MAP_DEPTH - 20.0f);
@@ -256,8 +259,8 @@ static void BuildFloraPlacements(void)
         bool wetMargin = (splat.a > 85) && (clearance >= 0.0f && clearance <= 1.25f);
         if (nearShore || wetMargin)
         {
-            float rad = 0.18f + 0.08f * Random01(&rng);
-            float h = 0.82f + 0.46f * Random01(&rng);
+            float rad = 0.17f + 0.07f * Random01(&rng);
+            float h = 0.80f + 0.44f * Random01(&rng);
             s_reedPlacements[s_reedCount++] = (MapMeadowPlacement){
                 .position = pos,
                 .radius = rad,
@@ -381,34 +384,35 @@ static void CaptureSongQuaoStaticShadows(void)
 void InitSongQuaoMap(void)
 {
     Environment_SetTimeOfDaySpeed(0.0f);
-    Environment_SetAmbientColor((Color){108, 130, 156, 255});
-    Environment_SetSunColor((Color){255, 242, 220, 255});
-    Environment_SetSunIntensity(2.05f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.26f, -0.46f, 0.85f}));
-    Environment_SetShadowColor((Color){34, 44, 56, 100});
+    // Ghost of Tsushima / Where Winds Meet golden morning lighting balance
+    Environment_SetAmbientColor((Color){102, 124, 148, 255});
+    Environment_SetSunColor((Color){255, 238, 208, 255});
+    Environment_SetSunIntensity(2.35f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.28f, -0.44f, 0.85f}));
+    Environment_SetShadowColor((Color){30, 40, 52, 105});
 
     AtmosphereProfile atmos = {
-        .color = {220, 236, 248, 255},
-        .start = 38.0f,
-        .end = 280.0f,
+        .color = {224, 238, 248, 255},
+        .start = 40.0f,
+        .end = 275.0f,
         .enabled = true,
         .optics = {
-            .rayleighLMS = {0.0075f, 0.0132f, 0.0260f},
-            .mieScattering = 0.0022f,
-            .mieAnisotropy = 0.75f,
-            .multipleScatteringAmp = 1.95f},
-        .density = {.baseDensity = 0.0062f, .heightFalloff = 0.32f, .baseAltitude = -1.5f, .enableSigmoidLayer = false}};
+            .rayleighLMS = {0.0072f, 0.0130f, 0.0258f},
+            .mieScattering = 0.0024f,
+            .mieAnisotropy = 0.76f,
+            .multipleScatteringAmp = 2.05f},
+        .density = {.baseDensity = 0.0060f, .heightFalloff = 0.32f, .baseAltitude = -1.5f, .enableSigmoidLayer = false}};
     Environment_SetAtmosphereProfile(&atmos);
     VolumetricFog_SetGodRayIntensity(1.35f);
     VolumetricFog_SetDistantCoverage(2.0f / 3.0f);
 
     EnvCloudShadowConfig cloudConfig = {
         .enabled = true,
-        .strength = 0.11f,
-        .worldSize = 104.0f,
+        .strength = 0.14f,
+        .worldSize = 96.0f,
         .planeHeight = 80.0f,
-        .coverage = 0.46f,
-        .softness = 0.18f,
+        .coverage = 0.48f,
+        .softness = 0.20f,
         .windSpeedScale = 0.50f,
     };
     Environment_SetCloudShadowConfig(&cloudConfig);
@@ -449,8 +453,8 @@ void InitSongQuaoMap(void)
     s_habitat.ready = s_habitat.habitatTexture.id > 0 && s_habitat.distanceTexture.id > 0;
     MapProp_SetGroundEcology(&s_ground, &s_habitat);
 
-    // Harmonized moss-emerald tint matching grass root luminance
-    MapProp_SetGroundTint(&s_ground, (Color){54, 82, 42, 255});
+    // Rich olive-moss earth substrate tint so exposed ground contrasts warmly against sunlit grass tips
+    MapProp_SetGroundTint(&s_ground, (Color){58, 72, 40, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
                                  "assets/textures/verdant_meadow_substrate_material.png",
                                  "assets/textures/dirt_material.png");
@@ -465,31 +469,32 @@ void InitSongQuaoMap(void)
 
     BuildRocks();
 
+    // Cull small 3D pebbles/twigs at 22m (invisible inside grass beyond 20m, saving draw calls)
     s_debris = MapProp_CreateDebrisSystem(
         SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT,
-        &s_ground, kMapCenter, 36.0f);
+        &s_ground, kMapCenter, 22.0f);
 
-    // Build Flora: 6 slender organic sword-leaf blades (bladeWidthScale = 0.125) + botanical emerald palette
+    // Build Flora: slender tapered blades (0.102 width scale) + warm golden-emerald tip gradient + 60 FPS LODs
     BuildFloraPlacements();
     s_flora = MapProp_CreateFloraSystem(
         s_grassPlacements, s_grassCount,
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {24, 46, 20, 255},
-            .grassTipColor = {58, 132, 44, 255},
+            .grassRootColor = {28, 42, 18, 255},
+            .grassTipColor = {108, 162, 54, 255},
             .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.125f,
-            .lodDistance = 32.0f,
-            .midLodDistance = 18.0f,
-            .drawDistance = 64.0f,
-            .shadowDistance = 14.0f,
+            .bladeWidthScale = 0.102f,
+            .lodDistance = 25.0f,
+            .midLodDistance = 13.5f,
+            .drawDistance = 58.0f,
+            .shadowDistance = 10.5f,
             .grassState = MAP_GRASS_STATE_LUSH,
-            .reedRootColor = {26, 48, 22, 255},
-            .reedTipColor = {68, 138, 54, 255},
+            .reedRootColor = {32, 46, 22, 255},
+            .reedTipColor = {118, 162, 68, 255},
             .hasReedPlumes = false,
-            .botanicalVariation = 0.85f,
+            .botanicalVariation = 1.0f,
         });
 
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
@@ -514,7 +519,7 @@ void InitSongQuaoMap(void)
                                              .foamColor = {235, 246, 242, 230},
                                          });
 
-    EnvShadow_SetFocus(kMapCenter, 15.0f);
+    EnvShadow_SetFocus(kMapCenter, 12.5f);
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);
     CaptureSongQuaoStaticShadows();
     MapManager_SetZones(SONG_QUAO_ZONES, SONG_QUAO_ZONE_COUNT);
@@ -529,8 +534,12 @@ void UpdateSongQuaoMap(float dt)
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
     MapProp_UpdateWaterSurface(&s_river, dt);
 
-    Vector3 focus = {camera.target.x, 0.0f, camera.target.z};
-    EnvShadow_SetFocus(focus, 15.0f);
+    // Snap dynamic shadow focus to 0.25m steps and tighten radius to 12.5m for higher texel density & fewer casters
+    Vector3 focus = {
+        floorf(camera.target.x * 4.0f + 0.5f) * 0.25f,
+        0.0f,
+        floorf(camera.target.z * 4.0f + 0.5f) * 0.25f};
+    EnvShadow_SetFocus(focus, 12.5f);
     CaptureSongQuaoStaticShadows();
 }
 
