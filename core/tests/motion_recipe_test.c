@@ -70,7 +70,7 @@ int main(void) {
 
     MotionFieldRecipe thrustR = MotionRecipe_SpiralThrust((Vector3){1,1,1}, (Vector3){1,0,0}, 1.2f, 10.0f, 15.0f, 2.0f);
     assert(MotionFieldRecipe_Build(&thrustR, &d));
-    assert(d.volume.shape == FIELD_SPHERE && d.speedMps == 10.0f && d.flow.procedural.swirlSpeedMps == 15.0f);
+    assert(d.volume.shape == FIELD_SPHERE && d.trajectory.speedMps == 10.0f && d.flow.procedural.swirlSpeedMps == 15.0f);
 
     puts("PASS: shared recipes preserve manual/auto force units, path/sphere/airflow contracts, presets and atomic rejection");
     return 0;

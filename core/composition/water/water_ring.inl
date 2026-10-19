@@ -36,11 +36,80 @@
 static MeshAdjacency s_waterRingMesh;
 static bool s_waterRingMeshReady = false;
 static ForceField s_waterRingField;
+static MotionFieldHandle s_waterRingMotionField = MOTION_FIELD_INVALID;
 static ParticleEmitterHandle s_waterRingEmitter = PARTICLE_EMITTER_INVALID;
 static bool s_waterRingUsesSurface = true;
 static float s_waterRingIdle = 0.0f;
 static float s_waterRingAccum = 0.0f;
 static ParticleConfig s_waterRingSpawn[WATER_RING_MAX_SPAWN];
+
+static VFX_LiquidRingConfig s_liveLiquidRingConfig;
+static bool s_liveLiquidRingConfigInit = false;
+static VFX_LiquidRingConfig s_currentLiquidRingConfig;
+static LiquidDesc s_waterRingMaterial;
+
+VFX_LiquidRingConfig VFX_LiquidRing_DefaultConfig(void)
+{
+    VFX_LiquidRingConfig c = {0};
+    c.center = (Vector3){6.0f, 1.2f, 4.4f};
+    c.radius = 0.9f;
+    c.tubeRatio = WATER_RING_TUBE_RATIO;
+    c.flowSpeed = 2.4f;
+    c.swirlSpeed = 1.8f;
+    c.turbulenceSpeed = 0.8f;
+    c.pullForce = 4.0f;
+    c.motionProfile = (int)LIQUID_MOTION_WATER;
+    c.renderBackend = (int)LIQUID_RENDER_METABALL3D;
+    c.blobCount = 48;
+    c.blobRadius = 0.18f;
+    c.threshold = 0.40f;
+    c.ior = 1.333f;
+    c.roughness = 0.05f;
+    c.opacity = 1.5f;
+    return c;
+}
+
+VFX_LiquidRingConfig *VFX_LiquidRing_GetLiveConfig(void)
+{
+    if (!s_liveLiquidRingConfigInit) {
+        s_liveLiquidRingConfig = VFX_LiquidRing_DefaultConfig();
+        s_liveLiquidRingConfigInit = true;
+    }
+    return &s_liveLiquidRingConfig;
+}
+
+int VFX_LiquidRing_GetParams(VFX_LiquidRingConfig *c, VFX_ParamDef *out, int max)
+{
+    if (!c || !out || max <= 0) return 0;
+    int n = 0;
+    static const char *const backendNames[] = {"Metaball 3D", "Screen Space Fluid"};
+    static const char *const profileNames[] = {"Water", "Poison", "Mud", "Lava", "Liquid Metal"};
+
+    #define RING_PARAM(pname, pgroup, ptype, pval, plo, phi, pstep, pminInt, pmaxInt, pnames, pcount) \
+        do { if (n < max) out[n++] = (VFX_ParamDef){.name=pname, .group=pgroup, .type=ptype, \
+            .valPtr=pval, .minFloat=plo, .maxFloat=phi, .stepFloat=pstep, \
+            .minInt=pminInt, .maxInt=pmaxInt, .enumNames=pnames, .enumCount=pcount}; } while(0)
+
+    RING_PARAM("Render backend", "Liquid", VFX_PARAM_ENUM, &c->renderBackend, 0, 1, 0, 0, 1, backendNames, 2);
+    RING_PARAM("Motion profile", "Liquid", VFX_PARAM_ENUM, &c->motionProfile, 0, 4, 0, 0, 4, profileNames, 5);
+    RING_PARAM("Ring radius m", "Liquid", VFX_PARAM_FLOAT, &c->radius, 0.20f, 3.0f, 0.05f, 0, 0, NULL, 0);
+    RING_PARAM("Tube ratio", "Liquid", VFX_PARAM_FLOAT, &c->tubeRatio, 0.05f, 0.30f, 0.01f, 0, 0, NULL, 0);
+    RING_PARAM("Blob count", "Liquid", VFX_PARAM_INT, &c->blobCount, 8, 64, 1, 8, 64, NULL, 0);
+    RING_PARAM("Blob radius m", "Liquid", VFX_PARAM_FLOAT, &c->blobRadius, 0.03f, 0.35f, 0.01f, 0, 0, NULL, 0);
+    RING_PARAM("Threshold", "Liquid", VFX_PARAM_FLOAT, &c->threshold, 0.20f, 0.85f, 0.02f, 0, 0, NULL, 0);
+
+    RING_PARAM("Flow speed m/s", "Field", VFX_PARAM_FLOAT, &c->flowSpeed, 0.0f, 15.0f, 0.2f, 0, 0, NULL, 0);
+    RING_PARAM("Swirl speed m/s", "Field", VFX_PARAM_FLOAT, &c->swirlSpeed, -10.0f, 10.0f, 0.2f, 0, 0, NULL, 0);
+    RING_PARAM("Turbulence m/s", "Field", VFX_PARAM_FLOAT, &c->turbulenceSpeed, 0.0f, 10.0f, 0.2f, 0, 0, NULL, 0);
+    RING_PARAM("Pull force N", "Field", VFX_PARAM_FLOAT, &c->pullForce, 0.0f, 10.0f, 0.1f, 0, 0, NULL, 0);
+
+    RING_PARAM("Refraction IOR", "Optics", VFX_PARAM_FLOAT, &c->ior, 1.0f, 2.5f, 0.02f, 0, 0, NULL, 0);
+    RING_PARAM("Roughness", "Optics", VFX_PARAM_FLOAT, &c->roughness, 0.02f, 1.0f, 0.02f, 0, 0, NULL, 0);
+    RING_PARAM("Opacity /m", "Optics", VFX_PARAM_FLOAT, &c->opacity, 0.1f, 20.0f, 0.2f, 0, 0, NULL, 0);
+
+    #undef RING_PARAM
+    return n;
+}
 
 static const MeshAdjacency *WaterRing_Mesh(void)
 {
@@ -84,38 +153,63 @@ static void WaterRing_SetField(Vector3 center, float radius, float t01)
         .strength=3.6f});
 }
 
-/* Continuous — call every frame while the ring should exist; it releases itself
- * a quarter second after the calls stop. `radius` is the ring radius in metres
- * (the tube is 0.12 of it), `t01` drives density and flow speed.
- *
- * SSF binds the ring's optical material to its submitted stream, allowing
- * other liquids to retain their own optics in the same capture. */
-void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
+void VFX_ComposeLiquidRingEx(const VFX_LiquidRingConfig *config)
 {
-    if (radius <= 0.0f) radius = 0.6f;
-    t01 = Clamp(t01, 0.0f, 1.0f);
+    if (!config) return;
+    s_currentLiquidRingConfig = *config;
+    s_waterRingIdle = 0.0f;
+
+    float radius = (config->radius <= 0.0f) ? 0.6f : config->radius;
+    Vector3 center = config->center;
+    float t01 = 1.0f;
 
     const VFX_ElementMaterial *water = VFX_Material(VC_MAT_WATER);
     LiquidDesc material = LiquidSurface_ProfileDesc(LIQUID_MOTION_WATER);
+    if (config->motionProfile != (int)LIQUID_MOTION_WATER &&
+        config->motionProfile >= 0 && config->motionProfile <= 4)
+        material = LiquidSurface_ProfileDesc((LiquidMotionProfile)config->motionProfile);
+    if (config->ior > 1.0f) material.ior = config->ior;
+    if (config->roughness > 0.0f) material.roughnessScale = config->roughness * 5.0f;
+    if (config->opacity > 0.0f) material.opacityPerMetre = config->opacity;
+    s_waterRingMaterial = material;
+
     const MeshAdjacency *mesh = WaterRing_Mesh();
 
-    /* Ask before spending the surface. A ring is a hero cast, so it MAY switch
-     * SSF on — but not when it is a speck on screen or the frame is already
-     * over budget. Rejected, it still exists: the same torus of particles is
-     * spawned with visible colours instead of the alpha-0 the SSF path uses,
-     * which is the ordinary-particle fallback the cost design calls for. */
+    // Create physical motion field guide for orbiting liquid mass
+    if (s_waterRingMotionField == MOTION_FIELD_INVALID || !MotionFields_IsAlive(s_waterRingMotionField))
+    {
+        if (s_waterRingMotionField != MOTION_FIELD_INVALID) MotionFields_Stop(s_waterRingMotionField);
+        MotionFieldRecipe r = MotionRecipe_Orbit(center, (Vector3){0.0f, 1.0f, 0.0f},
+                                                 radius, config->swirlSpeed, 60.0f);
+        r.turbulenceSpeedMps = config->turbulenceSpeed;
+        r.maxForceNewtons = config->pullForce;
+        r.receiverMask = MOTION_RECEIVER_ALL_COMPONENTS;
+        FieldDesc fieldDesc;
+        if (MotionFieldRecipe_Build(&r, &fieldDesc)) {
+            s_waterRingMotionField = MotionFields_CreateField(&fieldDesc);
+        }
+    }
+    else
+    {
+        FieldTransform tf = {.position = center};
+        MotionFields_SetTransform(s_waterRingMotionField, &tf);
+    }
+
     bool ringRunning = (s_waterRingEmitter != PARTICLE_EMITTER_INVALID) && s_waterRingUsesSurface;
-    bool useSurface = LiquidSurface_RequestBody(LIQUID_PRIORITY_CAST, center,
-                                               radius * (1.0f + WATER_RING_TUBE_RATIO),
-                                               ringRunning);
-    s_waterRingIdle = 0.0f;
+    bool useSurface = (config->renderBackend == LIQUID_RENDER_SSF) &&
+                      LiquidSurface_RequestBody(LIQUID_PRIORITY_CAST, center,
+                                                radius * (1.0f + WATER_RING_TUBE_RATIO),
+                                                ringRunning);
     WaterRing_SetField(center, radius, t01);
 
     if (s_waterRingEmitter == PARTICLE_EMITTER_INVALID)
     {
         ParticleEmitterDesc desc = {0};
-        desc.simulationPolicy = PARTICLE_SIM_AUTO;
-        desc.renderMode = PARTICLE_RENDER_SURFACE_INPUT;
+        bool cpuOnly = (config->renderBackend == LIQUID_RENDER_METABALL3D) ||
+                       (getenv("WUXING_LIQUID_CPU_ONLY") && atoi(getenv("WUXING_LIQUID_CPU_ONLY")) != 0);
+        desc.simulationPolicy = cpuOnly ? PARTICLE_SIM_CPU_ONLY : PARTICLE_SIM_AUTO;
+        desc.renderMode = (useSurface || config->renderBackend == LIQUID_RENDER_METABALL3D)
+                              ? PARTICLE_RENDER_SURFACE_INPUT : PARTICLE_RENDER_BILLBOARD;
         desc.moduleFlags = PARTICLE_MODULE_FORCE_FIELD;
         desc.debugName = "WaterRing SSF stream";
         desc.particle = (ParticleConfig){.forceField = &s_waterRingField};
@@ -181,6 +275,8 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
             .forceField = &s_waterRingField,
             .forceAxisOrigin = center,
             .forceAxisDir = (Vector3){0.0f, 1.0f, 0.0f}};
+        s_waterRingSpawn[i].physics.receiveMotionFields = false;
+        s_waterRingSpawn[i].physics.spatialMotionOnly = false;
     }
     ParticleManager_EmitBatch(s_waterRingEmitter, s_waterRingSpawn, spawn);
 
@@ -191,33 +287,88 @@ void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
     s_waterRingUsesSurface = useSurface;
 }
 
+/* Continuous — call every frame while the ring should exist; it releases itself
+ * a quarter second after the calls stop. `radius` is the ring radius in metres
+ * (the tube is 0.12 of it), `t01` drives density and flow speed.
+ *
+ * SSF binds the ring's optical material to its submitted stream, allowing
+ * other liquids to retain their own optics in the same capture. */
+void VFX_ComposeWaterRing(Vector3 center, float radius, float t01)
+{
+    VFX_LiquidRingConfig *cfg = VFX_LiquidRing_GetLiveConfig();
+    cfg->center = center;
+    if (cfg->radius <= 0.0f) cfg->radius = (radius <= 0.0f) ? 0.6f : radius;
+    t01 = Clamp(t01, 0.0f, 1.0f);
+    cfg->flowSpeed = 1.8f + 1.6f * t01;
+    VFX_ComposeLiquidRingEx(cfg);
+}
+
 /* Stop feeding it and it goes away by itself; call this to drop it now. */
 void VFX_WaterRing_Stop(void)
 {
     if (s_waterRingEmitter != PARTICLE_EMITTER_INVALID)
         ParticleManager_DestroyEmitter(s_waterRingEmitter);
+    if (s_waterRingMotionField != MOTION_FIELD_INVALID)
+        MotionFields_Stop(s_waterRingMotionField);
+    s_waterRingMotionField = MOTION_FIELD_INVALID;
     s_waterRingEmitter = PARTICLE_EMITTER_INVALID;
     s_waterRingAccum = 0.0f;
 }
 
 static void WaterRing_Update(float dt)
 {
-    if (s_waterRingEmitter == PARTICLE_EMITTER_INVALID) return;
+    if (s_waterRingEmitter == PARTICLE_EMITTER_INVALID &&
+        s_currentLiquidRingConfig.renderBackend != LIQUID_RENDER_METABALL3D) return;
     s_waterRingIdle += dt;
+    if (s_currentLiquidRingConfig.renderBackend == LIQUID_RENDER_METABALL3D &&
+        s_waterRingIdle <= WATER_RING_IDLE_RELEASE)
+    {
+        SceneTargets_RequestSceneSnapshot();
+    }
     /* Release only after the last particles have died, or the body would vanish
      * mid-flight the frame the caller stops. */
     if (s_waterRingIdle > WATER_RING_IDLE_RELEASE + 1.2f) VFX_WaterRing_Stop();
 }
 
-/* SSF submission — runs in the screen-space composite phase, before
- * LiquidSurface_HasPending(). */
+/* Liquid surface submission — runs in the screen-space composite phase. */
 static void WaterRing_SubmitSurface(void)
 {
-    /* Not submitting is the whole point of the gate: the frame's fixed SSF cost
-     * is only paid if something is actually in the capture. */
-    if (!s_waterRingUsesSurface) return;
-    ParticleRenderStream stream;
-    if (s_waterRingEmitter != PARTICLE_EMITTER_INVALID &&
-        ParticleManager_GetSurfaceStream(s_waterRingEmitter, &stream))
-        LiquidSurface_SubmitParticleStream(&stream);
+    if (s_currentLiquidRingConfig.renderBackend == LIQUID_RENDER_METABALL3D)
+    {
+        if (s_waterRingIdle > WATER_RING_IDLE_RELEASE) return;
+        int blobCount = s_currentLiquidRingConfig.blobCount > 0 ? s_currentLiquidRingConfig.blobCount : 48;
+        float R = s_currentLiquidRingConfig.radius > 0.0f ? s_currentLiquidRingConfig.radius : 0.9f;
+        float tubeRatio = s_currentLiquidRingConfig.tubeRatio > 0.01f ? s_currentLiquidRingConfig.tubeRatio : WATER_RING_TUBE_RATIO;
+        float tubeR = R * tubeRatio;
+        float bRadius = s_currentLiquidRingConfig.blobRadius > 0.01f ? s_currentLiquidRingConfig.blobRadius : (tubeR * 1.65f);
+        Vector3 center = s_currentLiquidRingConfig.center;
+        float flowSpeed = s_currentLiquidRingConfig.flowSpeed;
+        float swirlSpeed = s_currentLiquidRingConfig.swirlSpeed;
+        float t = (float)GetTime();
+
+        for (int b = 0; b < blobCount; ++b) {
+            float theta = ((float)b / (float)blobCount) * (2.0f * PI) + (t * flowSpeed);
+            float phi = ((float)b * 1.618f) * (2.0f * PI) + (t * swirlSpeed);
+            float rMinor = tubeR * (0.35f * sinf(phi));
+            float curR = R + tubeR * (0.35f * cosf(phi));
+            Vector3 pos = (Vector3){
+                center.x + curR * cosf(theta),
+                center.y + rMinor,
+                center.z + curR * sinf(theta)
+            };
+            LiquidMetaball3D_RegisterBlob(pos, bRadius);
+        }
+        LiquidMetaball3D_SetMaterial(&s_waterRingMaterial);
+        LiquidMetaball3D_SetThreshold(s_currentLiquidRingConfig.threshold > 0.05f ? s_currentLiquidRingConfig.threshold : 0.40f);
+    }
+    else
+    {
+        /* Not submitting is the whole point of the gate: the frame's fixed SSF cost
+         * is only paid if something is actually in the capture. */
+        if (!s_waterRingUsesSurface) return;
+        ParticleRenderStream stream;
+        if (s_waterRingEmitter != PARTICLE_EMITTER_INVALID &&
+            ParticleManager_GetSurfaceStream(s_waterRingEmitter, &stream))
+            LiquidSurface_SubmitParticleStream(&stream);
+    }
 }

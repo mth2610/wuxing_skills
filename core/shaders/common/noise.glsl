@@ -88,6 +88,7 @@ float fbm2N(vec2 p, int octaves) {
 // giảm >55% số lượng lệnh ALU so với việc gọi 8 lần hash3() rời rạc.
 // Sử dụng nội suy Quintic C2 để loại bỏ hoàn toàn vết gãy lưới trên bề mặt cầu 3D.
 float vnoise3(vec3 p) {
+    // Built on mobile-safe hash, not on fract(sin(...)): hash3(i + vec3(1.0, 1.0, 1.0))
     vec3 i = floor(p);
     vec3 f = fract(p);
     vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);

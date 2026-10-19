@@ -569,28 +569,6 @@
       "trigger_call": "VFX_ComposeIceCrystal($POS, $SEED)"
     },
     {
-      "source": "water/liquid_bench.inl",
-      "fn": "VFX_ComposeLiquidBench",
-      "label": "LIQUID BENCH",
-      "category": "water",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeLiquidBench($POS, 1.1f, 1.0f)"
-    },
-    {
-      "source": "water/liquid_impact_test.inl",
-      "fn": "VFX_ComposeLiquidImpact",
-      "label": "LIQUID IMPACT",
-      "category": "water",
-      "fixture": "burst",
-      "lifecycle": "event",
-      "_auto": true,
-      "type": "oneshot",
-      "trigger_call": "VFX_ComposeLiquidImpact($POS)"
-    },
-    {
       "source": "water/water_orb.inl",
       "fn": "VFX_ComposeWaterOrb",
       "label": "WATER ORB",
@@ -600,17 +578,6 @@
       "_auto": true,
       "type": "oneshot",
       "trigger_call": "VFX_ComposeWaterOrb($SOURCE, $TARGET)"
-    },
-    {
-      "source": "water/water_ring.inl",
-      "fn": "VFX_ComposeWaterRing",
-      "label": "WATER RING",
-      "category": "water",
-      "fixture": "timed",
-      "lifecycle": "draw",
-      "_auto": true,
-      "type": "continuous",
-      "draw_call": "VFX_ComposeWaterRing($POS, 0.9f, 1.0f)"
     },
     {
       "source": "water/water_stream.inl",

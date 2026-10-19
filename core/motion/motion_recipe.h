@@ -86,8 +86,10 @@ static inline bool MotionFieldRecipe_Build(const MotionFieldRecipe *r,FieldDesc 
         d.preserveSphereOffsets=false; d.preservePathLanes=true; d.rotatePathLanes=automatic;
         d.forceLaws[0].type=FORCE_LAW_PATH_GUIDE;
         d.forceLaws[0].forwardForceNewtons=forward; d.flow.followSpeedMps=r->speedMps;
-    } else if(r->kind==MOTION_RECIPE_MOVING_GUIDE && r->path) {
-        d.trajectory.mode=FIELD_TRAJECTORY_PATH; d.trajectory.path=path;
+    } else if(r->kind==MOTION_RECIPE_MOVING_GUIDE) {
+        if (r->path) {
+            d.trajectory.mode=FIELD_TRAJECTORY_PATH; d.trajectory.path=path;
+        }
         d.trajectory.speedMps=r->speedMps;
     }
     d.flow.procedural.turbulenceSpeedMps=automatic?0:r->turbulenceSpeedMps;

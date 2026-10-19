@@ -742,6 +742,8 @@ def is_fixture_candidate(fn_name):
     helpers never deserve their own button."""
     if fn_name.endswith('Ex') or 'Test' in fn_name:
         return False
+    if fn_name in ('VFX_ComposeWaterRing', 'VFX_ComposeLiquidBench', 'VFX_ComposeLiquidImpact'):
+        return False
     return fn_name.startswith('VFX_Compose') or fn_name.startswith('VFX_Draw')
 
 def source_fixture_entries(inl_fns, excluded):
@@ -2009,12 +2011,7 @@ def regenerate_vfx_test(content, entries):
         content = content[:start] + body + content[end:]
     # The shared UI replaces legacy inspector/variant/footer drawing below;
     # install selectors in the draw function first, then canonicalize the HUD.
-    content = ensure_generated_section(content, "newfx_guided_state",
-                                       "static bool                 s_liveWoodConfigsInit = false;")
-    content = relocate_generated_section(content, "newfx_guided_inspector",
-                                        "    s_inspectorSelectedParam = 0;\n    s_inspectorParamCount = 0;\n")
-    content = ensure_generated_section(content, "newfx_guided_input",
-                                       "        VFXTest_RefreshInspectorParams(false);\n")
+
     # Migrate the earlier world-click branch too; preview and live casts share
     # exactly one configuration helper. Reserve >/< for Guided presets.
     content = content.replace("VFX_ComposeGuidedMotion(castSocket, mouseTarget3D);",
@@ -2044,9 +2041,6 @@ def regenerate_vfx_test(content, entries):
         ("newfx_trigger", gen_trigger_block(entries)),
         ("newfx_render_trigger", gen_render_trigger_block(entries)),
         ("newfx_draw", gen_draw_block(entries)),
-        ("newfx_guided_state", gen_guided_fixture_state()),
-        ("newfx_guided_inspector", gen_guided_fixture_inspector()),
-        ("newfx_guided_input", gen_guided_fixture_input()),
         ("newfx_surface_impact_selector_state", gen_surface_impact_selector_state()),
         ("newfx_surface_impact_selector_input", gen_surface_impact_selector_input()),
     ]:

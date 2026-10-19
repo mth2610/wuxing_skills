@@ -14,25 +14,24 @@
  * matching block in meadow_palette.glsl, and fails on any mismatch. Edit both in one change.
  *
  * Three bands are blended by two overlapping smoothsteps over habitat:
- *   deep moss    -> lush clover : habitat 0.20 .. 0.60
- *   lush clover  -> sunlit gold : habitat 0.55 .. 0.90
- * (the second blend starts before the first ends, so 0.55 .. 0.60 mixes all three.)
+ *   deep moss    -> lush clover : habitat 0.18 .. 0.54
+ *   lush clover  -> sunlit gold : habitat 0.48 .. 0.82
+ * (the second blend starts before the first ends, so 0.48 .. 0.54 mixes all three.)
  *
  * Colour-space note: this file passes the values through unchanged. Whether they are read as
  * linear or display-referred is decided by the consuming shader, not here.
  */
-#define MEADOW_PALETTE_DEEP_MOSS    0.24f, 0.40f, 0.13f
-#define MEADOW_PALETTE_LUSH_CLOVER  0.32f, 0.50f, 0.16f
-#define MEADOW_PALETTE_SUNLIT_GOLD  0.44f, 0.56f, 0.22f
-#define MEADOW_PALETTE_CLOVER_EDGE0 0.20f
-#define MEADOW_PALETTE_CLOVER_EDGE1 0.60f
-#define MEADOW_PALETTE_GOLD_EDGE0   0.55f
-#define MEADOW_PALETTE_GOLD_EDGE1   0.90f
+#define MEADOW_PALETTE_DEEP_MOSS 0.17f, 0.34f, 0.14f
+#define MEADOW_PALETTE_LUSH_CLOVER 0.30f, 0.47f, 0.15f
+#define MEADOW_PALETTE_SUNLIT_GOLD 0.54f, 0.56f, 0.20f
+#define MEADOW_PALETTE_CLOVER_EDGE0 0.18f
+#define MEADOW_PALETTE_CLOVER_EDGE1 0.54f
+#define MEADOW_PALETTE_GOLD_EDGE0 0.48f
+#define MEADOW_PALETTE_GOLD_EDGE1 0.82f
 
 static inline float MeadowHabitat(float x, float z)
 {
-    return (sinf(x * 0.15f + z * 0.10f) * 0.5f + 0.5f) * 0.6f
-         + (sinf(x * -0.11f + z * 0.20f + 1.8f) * 0.5f + 0.5f) * 0.4f;
+    return (sinf(x * 0.15f + z * 0.10f) * 0.5f + 0.5f) * 0.6f + (sinf(x * -0.11f + z * 0.20f + 1.8f) * 0.5f + 0.5f) * 0.4f;
 }
 
 /* Same definition as GLSL smoothstep(): clamps to [0,1] first, so out-of-range (and NaN)
@@ -45,9 +44,9 @@ static inline float MeadowSmoothstep(float edge0, float edge1, float x)
 
 static inline Vector3 MeadowCanopyColor(float habitat)
 {
-    const Vector3 deepMoss   = { MEADOW_PALETTE_DEEP_MOSS };
-    const Vector3 lushClover = { MEADOW_PALETTE_LUSH_CLOVER };
-    const Vector3 sunlitGold = { MEADOW_PALETTE_SUNLIT_GOLD };
+    const Vector3 deepMoss = {MEADOW_PALETTE_DEEP_MOSS};
+    const Vector3 lushClover = {MEADOW_PALETTE_LUSH_CLOVER};
+    const Vector3 sunlitGold = {MEADOW_PALETTE_SUNLIT_GOLD};
 
     float s0 = MeadowSmoothstep(MEADOW_PALETTE_CLOVER_EDGE0, MEADOW_PALETTE_CLOVER_EDGE1, habitat);
     float s1 = MeadowSmoothstep(MEADOW_PALETTE_GOLD_EDGE0, MEADOW_PALETTE_GOLD_EDGE1, habitat);

@@ -1251,6 +1251,59 @@ int VFX_WoodFlower_GetParams(VFX_WoodFlowerConfig *cfg, VFX_ParamDef *outParams,
 int VFX_WoodPetals_GetParams(VFX_WoodPetalConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 int VFX_WoodVine_GetParams(VFX_WoodVineConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 
+// ── Liquid VFX Parameter Introspection & Guided Motion API ────────────────────
+typedef enum {
+    LIQUID_RENDER_METABALL3D = 0,
+    LIQUID_RENDER_SSF = 1
+} LiquidRenderBackend;
+
+typedef struct {
+    Vector3 start;
+    Vector3 target;
+    float speed;
+    float radius;
+    float swirlSpeed;
+    float turbulenceSpeed;
+    float pullForce;
+    int   guidancePreset;
+    int   motionProfile;
+    int   renderBackend;
+    int   blobCount;
+    float blobRadius;
+    float threshold;
+    float ior;
+    float roughness;
+    float opacity;
+} VFX_LiquidOrbConfig;
+
+VFX_LiquidOrbConfig VFX_LiquidOrb_DefaultConfig(void);
+VFX_LiquidOrbConfig *VFX_LiquidOrb_GetLiveConfig(void);
+int VFX_LiquidOrb_GetParams(VFX_LiquidOrbConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config);
+
+typedef struct {
+    Vector3 center;
+    float radius;
+    float tubeRatio;
+    float flowSpeed;
+    float swirlSpeed;
+    float turbulenceSpeed;
+    float pullForce;
+    int   motionProfile;
+    int   renderBackend;
+    int   blobCount;
+    float blobRadius;
+    float threshold;
+    float ior;
+    float roughness;
+    float opacity;
+} VFX_LiquidRingConfig;
+
+VFX_LiquidRingConfig VFX_LiquidRing_DefaultConfig(void);
+VFX_LiquidRingConfig *VFX_LiquidRing_GetLiveConfig(void);
+int VFX_LiquidRing_GetParams(VFX_LiquidRingConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+void VFX_ComposeLiquidRingEx(const VFX_LiquidRingConfig *config);
+
 // ── Universal Botanical Foliage & Petal Simulation System ────────────────────
 typedef enum {
     BOTANICAL_KIND_LEAF = 0,

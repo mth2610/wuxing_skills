@@ -28,7 +28,7 @@ glsl = re.sub(r'vec3 worldRoot = root \+ u_worldOffset;',
 glsl = re.sub(r'\buint\b', 'uint32_t', glsl)
 glsl = re.sub(r'\bfloat\(', '(float)(', glsl)
 compact_source = (ROOT/'maps/toolkit/map_props_meadow_parametric.inl').read_text()
-view_type = re.search(r'typedef struct \{[^}]*\} NatureMeadowView;', compact_source).group()
+view_type = re.search(r'typedef struct\s*\{[^}]*\} NatureMeadowView;', compact_source).group()
 view_function = function(compact_source, 'NatureParametric_View')
 cpu_selection = '\n'.join(function(compact_source,name) for name in ('NatureParametric_Rank','NatureParametric_Smoothstep','NatureParametric_SelectLod'))
 culling = function((ROOT/'maps/toolkit/map_props_meadow_parametric.inl').read_text(),

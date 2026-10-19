@@ -4231,3 +4231,28 @@ Wood Spiral reproduced 0.48 m and 0.81 m apparent jumps in one 1/60 s step.
 `prevAttachPos` by the same delta. Teleport detection should measure transform
 motion only; smooth offset evolution then bends the laid ribbon without cutting
 its history.
+
+## Raymarched 3D Implicit Surfaces (Metaballs) Must Match Scene Camera Frustum & Disable Depth Write (19/10/2026)
+
+**Symptom.** 3D metaball liquid (or any raymarched volume) completely disappears
+from screen in front of ordinary scene geometry, rendering fully invisible despite
+bounding box quads and blobs being submitted.
+
+**Cause.** (1) The raymarch fragment shader computes `gl_FragDepth` from `u_viewProj * hitPos`.
+If `u_viewProj` is built with a different near plane (e.g. 0.05m) than the scene's
+`MyBeginMode3D` frustum (1.0m to 1000.0m), the resulting non-linear NDC depth is
+vastly deeper than the scene depth buffer (e.g. 0.995 vs 0.900 for objects at 5-10m).
+The GPU hardware depth test (`LEQUAL`) sees `0.995 > 0.900` and discards every single fragment
+as if it were occluded behind the background.
+(2) Array uniform queries (`glGetUniformLocation`) on macOS/rlvk return -1 for `"u_blobs"`;
+the first element index `"u_blobs[0]"` is mandatory to get a valid uniform location.
+Without it, blob arrays remain zeroed and potential fields evaluate to 0/NaN.
+
+**Rule.** Always construct the shader's `u_viewProj` with `MatrixFrustum` using the
+identical near/far planes as the active scene camera (`1.0f` to `1000.0f`).
+Always query uniform arrays as `"name[0]"`. For transparent refractive liquid volumes,
+keep depth test on (`rlEnableDepthTest()`) but disable depth write (`rlDisableDepthMask()`).
+When particles have local force fields (`s_waterRingField`, `orb->field`), keep
+`receiveMotionFields = false` to avoid high-frequency spring fighting between
+competing guidance fields.
+

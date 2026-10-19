@@ -195,6 +195,7 @@ add_executable(wuxing
     core/liquid/liquid_pbd_gpu.c
     core/liquid/liquid_capture_cpu.c
     core/liquid/liquid_surface.c
+    core/liquid/liquid_metaball3d.c
     core/gas/gas_sim.c
     core/gas/gas_system.c
     core/path_spline.c
@@ -398,6 +399,8 @@ configure_file(core/liquid/shaders/liquid_thickness_resolve.fs ${CMAKE_CURRENT_B
 configure_file(core/liquid/shaders/liquid_thickness_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_thickness_blur.fs COPYONLY)
 configure_file(core/liquid/shaders/liquid_depth_narrow_range.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_depth_narrow_range.fs COPYONLY)
 configure_file(core/liquid/shaders/liquid_surface.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_surface.fs COPYONLY)
+configure_file(core/liquid/shaders/liquid_metaball3d.vs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_metaball3d.vs COPYONLY)
+configure_file(core/liquid/shaders/liquid_metaball3d.fs ${CMAKE_CURRENT_BINARY_DIR}/core/liquid/shaders/liquid_metaball3d.fs COPYONLY)
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders)
 configure_file(core/gas/shaders/gas_volume.fs ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders/gas_volume.fs COPYONLY)
 configure_file(core/gas/shaders/gas_denoise.fs ${CMAKE_CURRENT_BINARY_DIR}/core/gas/shaders/gas_denoise.fs COPYONLY)

@@ -3,6 +3,7 @@
 #include "core/decals/decal_system.h"
 #include "core/liquid/liquid_impact.h"
 #include "core/liquid/liquid_surface.h"
+#include "core/liquid/liquid_metaball3d.h"
 #include "core/gas/gas_system.h"
 #include "core/metaball_fx.h"
 #include "core/particles/particle_manager.h"
@@ -290,10 +291,6 @@ static void DrawParticleTrailVFXLayers(Camera3D camera, Texture2D particleTextur
 /* Post-scene VFX that need screen-space preparation before their body pass. */
 static void CompositeScreenSpaceVFX(Camera3D camera)
 {
-  /* SSF producers submit before the pending check. They must never be gated
-   * by decal or ordinary-particle passes: an airborne water orb has neither. */
-  LiquidImpact_Draw();
-  VFX_Compose_SubmitScreenSpaceVFX();
   bool hasLiquid = LiquidSurface_HasPending();
   bool hasMetaballs = MetaballFX_HasRegisteredBlobs();
   bool hasGas = GasSystem_HasPending();
@@ -511,6 +508,7 @@ int main(int argc, char **argv) {
   SceneTargets_Init(screenWidth, screenHeight);
   ScreenDistort_Init();
   LiquidSurface_Init(screenWidth, screenHeight);
+  LiquidMetaball3D_Init();
   PostFX_Init(screenWidth, screenHeight);
   SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
   GfxQuality_InitDefault();
@@ -1844,6 +1842,12 @@ int main(int argc, char **argv) {
     MyEndMode3D();
     SceneTargets_End();
     SceneTargets_SnapshotDepth(); // soft particles: snapshot this frame's depth for next frame's sampling
+
+    /* SSF & 3D metaball fluid producers submit their streams/blobs before the
+     * scene snapshot so refractive passes can capture the finished opaque scene. */
+    LiquidImpact_Draw();
+    VFX_Compose_SubmitScreenSpaceVFX();
+
     // Glass shields refract the COMPLETE scene (characters, trails, atmosphere
     // all drawn by now). Copy it at 2D time while renderTex is still only a
     // source — the copy must not happen inside the 3D pass (landmine #15) —
@@ -1854,6 +1858,9 @@ int main(int argc, char **argv) {
     VFX_ShieldShell_DrawRefraction(camera);
     VFX_FlowShield_DrawRefraction(camera);
     VFXTest_DrawRefraction(camera);
+    if (LiquidMetaball3D_HasBlobs()) {
+        LiquidMetaball3D_Draw(camera, NULL, 0.0f);
+    }
     MyEndMode3D();
     CompositeScreenSpaceVFX(camera);
     if (benchmarkVisible) profileTime[6] = GetTime();
@@ -2135,6 +2142,7 @@ int main(int argc, char **argv) {
   GasSystem_Unload();
   SceneTargets_Unload();
   LiquidSurface_Unload();
+  LiquidMetaball3D_Unload();
   Atmosphere_Unload();
   VolumetricFog_Unload();
   Wind_Unload();

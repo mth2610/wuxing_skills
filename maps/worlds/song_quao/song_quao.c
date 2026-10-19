@@ -6,6 +6,7 @@
 #include "maps/toolkit/map_props.h"
 #include "maps/toolkit/prop_lit.h"
 #include "core/camera_context.h"
+#include "core/color_grade_lut.h"
 #include "core/map_manager.h"
 #include "core/resource_manager.h"
 #include "core/volumetric/volumetric_fog.h"
@@ -16,6 +17,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifndef PI
 #define PI 3.14159265358979323846f
@@ -62,6 +64,37 @@ static int s_flowerCount = 0;
 
 static bool s_shadowWasEnabled = false;
 static bool s_ready = false;
+
+// Subtractive GPU profiling skip mask (WUXING_SONGQUAO_SKIP)
+enum {
+    SQ_SKIP_GROUND        = 1 << 0,
+    SQ_SKIP_ROCKS         = 1 << 1,
+    SQ_SKIP_DEBRIS        = 1 << 2,
+    SQ_SKIP_FLORA         = 1 << 3,
+    SQ_SKIP_SKY           = 1 << 4,
+    SQ_SKIP_CLOUDSEA      = 1 << 5,
+    SQ_SKIP_WATER         = 1 << 6,
+    SQ_SKIP_MIST          = 1 << 7,
+    SQ_SKIP_SHADOWCASTERS = 1 << 8,
+};
+static unsigned int s_skipMask = 0;
+
+static void ParseSkipMask(void)
+{
+    s_skipMask = 0;
+    const char *env = getenv("WUXING_SONGQUAO_SKIP");
+    if (!env || !*env)
+        return;
+    if (strstr(env, "ground")) s_skipMask |= SQ_SKIP_GROUND;
+    if (strstr(env, "rocks")) s_skipMask |= SQ_SKIP_ROCKS;
+    if (strstr(env, "debris")) s_skipMask |= SQ_SKIP_DEBRIS;
+    if (strstr(env, "flora") || strstr(env, "grass")) s_skipMask |= SQ_SKIP_FLORA;
+    if (strstr(env, "sky")) s_skipMask |= SQ_SKIP_SKY;
+    if (strstr(env, "cloudsea")) s_skipMask |= SQ_SKIP_CLOUDSEA;
+    if (strstr(env, "water")) s_skipMask |= SQ_SKIP_WATER;
+    if (strstr(env, "mist")) s_skipMask |= SQ_SKIP_MIST;
+    if (strstr(env, "shadowcasters") || strstr(env, "casters")) s_skipMask |= SQ_SKIP_SHADOWCASTERS;
+}
 
 // Ecology texture lookup helper
 static Image s_splatImage;
@@ -365,12 +398,17 @@ static void DrawSongQuaoShadowCasters(Shader depthShader, void *userData)
 {
     (void)depthShader;
     (void)userData;
-    MapProp_DrawFloraShadowCasters(&s_flora);
+    if (!(s_skipMask & SQ_SKIP_SHADOWCASTERS) && !(s_skipMask & SQ_SKIP_FLORA))
+    {
+        MapProp_DrawFloraShadowCasters(&s_flora);
+    }
 }
 
 static void CaptureSongQuaoStaticShadows(void)
 {
     if (!EnvShadow_NeedsStaticCapture())
+        return;
+    if ((s_skipMask & SQ_SKIP_SHADOWCASTERS) || (s_skipMask & SQ_SKIP_ROCKS))
         return;
     float staticRadius = fmaxf(MAP_WIDTH, MAP_DEPTH) * 0.52f;
     EnvShadow_BeginStaticCapture(kMapCenter, staticRadius);
@@ -383,27 +421,30 @@ static void CaptureSongQuaoStaticShadows(void)
 
 void InitSongQuaoMap(void)
 {
+    ParseSkipMask();
+    ColorGradeLut_Load("assets/maps/song_quao/song_quao_grade.png");
+
     Environment_SetTimeOfDaySpeed(0.0f);
-    // Ghost of Tsushima / Where Winds Meet golden morning lighting balance
-    Environment_SetAmbientColor((Color){102, 124, 148, 255});
-    Environment_SetSunColor((Color){255, 238, 208, 255});
-    Environment_SetSunIntensity(2.35f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){-0.28f, -0.44f, 0.85f}));
-    Environment_SetShadowColor((Color){30, 40, 52, 105});
+    // Ghost of Tsushima golden-hour lighting: warm sun, cool sky ambient, back-lighting
+    Environment_SetAmbientColor((Color){86, 110, 146, 255});
+    Environment_SetSunColor((Color){255, 222, 172, 255});
+    Environment_SetSunIntensity(2.15f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){0.42f, -0.38f, -0.82f}));
+    Environment_SetShadowColor((Color){36, 48, 68, 90});
 
     AtmosphereProfile atmos = {
-        .color = {224, 238, 248, 255},
-        .start = 40.0f,
-        .end = 275.0f,
+        .color = {228, 238, 248, 255},
+        .start = 35.0f,
+        .end = 250.0f,
         .enabled = true,
         .optics = {
-            .rayleighLMS = {0.0072f, 0.0130f, 0.0258f},
-            .mieScattering = 0.0024f,
-            .mieAnisotropy = 0.76f,
-            .multipleScatteringAmp = 2.05f},
-        .density = {.baseDensity = 0.0060f, .heightFalloff = 0.32f, .baseAltitude = -1.5f, .enableSigmoidLayer = false}};
+            .rayleighLMS = {0.0078f, 0.0135f, 0.0265f},
+            .mieScattering = 0.0028f,
+            .mieAnisotropy = 0.78f,
+            .multipleScatteringAmp = 2.15f},
+        .density = {.baseDensity = 0.0065f, .heightFalloff = 0.35f, .baseAltitude = -1.5f, .enableSigmoidLayer = false}};
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity(1.35f);
+    VolumetricFog_SetGodRayIntensity(1.45f);
     VolumetricFog_SetDistantCoverage(2.0f / 3.0f);
 
     EnvCloudShadowConfig cloudConfig = {
@@ -454,7 +495,7 @@ void InitSongQuaoMap(void)
     MapProp_SetGroundEcology(&s_ground, &s_habitat);
 
     // Rich olive-moss earth substrate tint so exposed ground contrasts warmly against sunlit grass tips
-    MapProp_SetGroundTint(&s_ground, (Color){58, 72, 40, 255});
+    MapProp_SetGroundTint(&s_ground, (Color){46, 58, 34, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
                                  "assets/textures/verdant_meadow_substrate_material.png",
                                  "assets/textures/dirt_material.png");
@@ -481,15 +522,15 @@ void InitSongQuaoMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {28, 42, 18, 255},
-            .grassTipColor = {108, 162, 54, 255},
+            .grassRootColor = {24, 38, 16, 255},
+            .grassTipColor = {128, 172, 62, 255},
             .bladesPerClump = 6,
             .bladeSegments = 4,
             .bladeWidthScale = 0.102f,
             .lodDistance = 25.0f,
             .midLodDistance = 13.5f,
             .drawDistance = 58.0f,
-            .shadowDistance = 10.5f,
+            .shadowDistance = 14.5f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {32, 46, 22, 255},
             .reedTipColor = {118, 162, 68, 255},
@@ -549,27 +590,37 @@ void DrawSongQuaoMap(void)
         return;
     MapProp_ResetNatureRenderStats();
     PropLit_UpdateLighting();
-    MapProp_DrawGround(&s_ground, kMapCenter);
+
+    if (!(s_skipMask & SQ_SKIP_GROUND))
+        MapProp_DrawGround(&s_ground, kMapCenter);
 
     bool useFakeRockShadows = !EnvShadow_IsEnabled();
-    MapProp_DrawRockSystem(&s_rocks, useFakeRockShadows);
+    if (!(s_skipMask & SQ_SKIP_ROCKS))
+        MapProp_DrawRockSystem(&s_rocks, useFakeRockShadows);
 
-    MapProp_DrawDebrisSystem(&s_debris, camera.position);
-    MapProp_DrawFloraSystem(&s_flora);
-    MapProp_DrawSkyDome(&s_sky);
-    MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
+    if (!(s_skipMask & SQ_SKIP_DEBRIS))
+        MapProp_DrawDebrisSystem(&s_debris, camera.position);
+    if (!(s_skipMask & SQ_SKIP_FLORA))
+        MapProp_DrawFloraSystem(&s_flora);
+    if (!(s_skipMask & SQ_SKIP_SKY))
+        MapProp_DrawSkyDome(&s_sky);
+    if (!(s_skipMask & SQ_SKIP_CLOUDSEA))
+        MapProp_DrawCloudSea(&s_cloudSea, kMapCenter, CLOUD_SEA_Y);
 }
 
 void DrawTransparentSongQuaoMap(void)
 {
     if (!s_ready)
         return;
-    MapProp_DrawWaterOverlay(&s_river, GetTime());
-    MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
+    if (!(s_skipMask & SQ_SKIP_WATER))
+        MapProp_DrawWaterOverlay(&s_river, GetTime());
+    if (!(s_skipMask & SQ_SKIP_MIST))
+        MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
 }
 
 void UnloadSongQuaoMap(void)
 {
+    ColorGradeLut_UseNeutral();
     Environment_SetSunIntensity(1.0f);
     if (!s_ready)
         return;
