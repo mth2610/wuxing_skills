@@ -104,7 +104,6 @@ vec4 NatureBladeParameter(int blade, int column)
 void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p3)
 {
     if (u_canonicalBladeData != 0) {
-        // Dynamic optical density compensation matching CPU blade-reduction ratio
         if (u_geometryLod > 0) {
             float bladeRatio = max(float(max(u_canonicalBlades, 1)) / float(max(u_bladesPerTuft, 1)), 1.0);
             float expPower = (u_geometryLod == 2) ? 0.68 : 0.62;
@@ -120,7 +119,7 @@ void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p
             p2.y  = p0.y  + (p2.y  - p0.y)  * 0.85;
             p3.xz = p0.xz + (p3.xz - p0.xz) * 0.78;
             p3.y  = p0.y  + max(height * 0.14, height * 0.60 - droop * 0.55);
-            p1.w *= 1.16; // Preserve lush far-LOD canopy coverage
+            p1.w *= 1.18;
         }
     }
 }
@@ -131,7 +130,6 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     int localBlade = int(floor(vertexPosition.z));
     int blade = NatureBladeId(localBlade);
 
-    // Compute atlas base coordinate once; reuse cached clump texel when available
     ivec2 baseCoord = ivec2((blade & 255) * 7, blade >> 8);
     vec4 p0 = texelFetch(u_bladeParameters, baseCoord, 0);
     vec4 p1 = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 1, baseCoord.y), 0);
@@ -140,7 +138,6 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     vec4 clump = (s_hasCachedClumpTexel && localBlade == 0)
         ? s_cachedClumpTexel
         : texelFetch(u_bladeParameters, ivec2(baseCoord.x + 4, baseCoord.y), 0);
-    // Guarantee s_cachedClumpTexel is always populated for downstream vertex morphology (e.g. compact mode)
     s_cachedClumpTexel = vec4(p0.xyz, clump.w);
     s_hasCachedClumpTexel = true;
 
@@ -160,7 +157,6 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     vec3 center = p0.xyz * (u2 * u) + p1.xyz * (3.0 * u2 * t) +
                   p2.xyz * (3.0 * ut * t) + p3.xyz * (t2 * t);
 
-    // Factor out scalar 3.0 before normalize() to save 3 multiplies
     vec3 rawTangent = u2 * (p1.xyz - p0.xyz) +
                       (2.0 * ut) * (p2.xyz - p1.xyz) +
                       t2 * (p3.xyz - p2.xyz);
@@ -175,8 +171,8 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     }
 
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    // View-assisted ribbon orientation: blends side.xz toward viewRightXZ so edge-on
-    // blades never collapse into 1px flickering lines while keeping 3D tuft volume.
+    // View-assisted ribbon orientation (42% blend toward viewRightXZ per API spec)
+    // Prevents edge-on blades from collapsing into thin lines and boosts apparent canopy fullness
     vec3 toCamVec = (p0.xyz + u_worldOffset) - u_tuftLodCamera;
     float distToCam = (s_cachedDistToCam >= 0.0) ? s_cachedDistToCam : length(toCamVec);
     s_cachedDistToCam = distToCam;
@@ -186,7 +182,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     if (vrLenSq > 1e-4) {
         viewRightXZ *= inversesqrt(vrLenSq);
         if (dot(side.xz, viewRightXZ) < 0.0) viewRightXZ = -viewRightXZ;
-        side.xz = normalize(mix(side.xz, viewRightXZ, 0.38));
+        side.xz = normalize(mix(side.xz, viewRightXZ, 0.42));
     }
 #endif
 
@@ -197,29 +193,27 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         geometricNormal = normalize(geometricNormal);
     }
 
-    // ALU-only botanical spear & seedhead profiles (eliminates per-vertex pow(0, x) NaN risk & sin() SFU cost)
+    // Fuller cubic botanical spear profile (prevents sub-pixel upper-blade dropout into dotted pixels)
     float sinPiT = 4.0 * ut;
     float powT18 = t2 * (0.82 + 0.18 * t);
     float powT165 = t2 * (0.35 + 0.65 * t);
     float profile;
     if (p2.w > 0.5) {
-        // Broad leaf / wild clover variety
         profile = (0.86 + 0.26 * sinPiT) * (1.0 - powT18);
     } else {
-        // Slender aerodynamic botanical spear profile
-        profile = (1.0 - 0.15 * t) * (1.0 - powT165 * 0.94);
+        profile = (0.84 + 0.34 * t) * (1.0 - powT165 * 0.88);
     }
-    float halfWidth = p1.w * 0.5 * max(profile, role < 1.5 ? 0.065 : 0.025);
+    // Keep upper ring before tip at >= 12% width so rasterizer never drops sub-pixel fragments
+    float halfWidth = p1.w * 0.5 * max(profile, role < 1.5 ? 0.14 : 0.10);
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    // Subtle sub-pixel minimum width prevents distant blades from breaking into 1px dots
-    float minPxHalfWidth = distToCam * 0.00054 * (1.0 - 0.55 * t);
+    // Anti-aliasing screen-space ribbon floor (prevents pixel breakup at both close and far range)
+    float minPxHalfWidth = max(0.0042, distToCam * 0.00068) * (1.0 - 0.38 * t);
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 
-    // Subtle midrib structural curve (tapered smoothly to 0 at tip)
-    float creaseOffset = halfWidth * 0.08 * u;
+    float creaseOffset = halfWidth * 0.16 * u;
     position = (role > 2.5)
         ? center
         : (center + side * (halfWidth * sideSign) + geometricNormal * creaseOffset);
@@ -228,32 +222,30 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     if (u_tuftFadeRange.y > 0.0 && distToCam > u_tuftFadeRange.x) {
         float perimeterFade = clamp((u_tuftFadeRange.y - distToCam) /
                                     max(u_tuftFadeRange.y - u_tuftFadeRange.x, 0.001), 0.0, 1.0);
-        // Smooth ease-out scaling so distant tufts settle into the ground organically
         float scaleFade = perimeterFade * (2.0 - perimeterFade);
         position = p0.xyz + (position - p0.xyz) * scaleFade;
         fadeAlpha = perimeterFade;
     }
 #endif
 
-    // Preserved midrib spine crease & spherical tuft volume normal (API spec: 0.46..0.58)
     vec3 sphereDirection = normalize(position - vec3(clump.x, clump.y - 0.04, clump.z));
     vec3 target = normalize(mix(sphereDirection, vec3(0.0, 1.0, 0.0), role > 2.5 ? 0.56 : 0.44));
-    vec3 meshNormal = normalize(geometricNormal + side * (sideSign * (role < 1.5 ? 0.36 : 0.30)));
+    vec3 meshNormal = normalize(geometricNormal + side * (sideSign * (role < 1.5 ? 0.32 : 0.26)));
     normal = normalize(mix(meshNormal, target, role > 2.5 ? 0.56 : 0.46));
 
-    float occlusion = (t < 0.28) ? (0.84 + 0.57 * t) : 1.0;
+    // Gentle root occlusion (0.90..1.0) so roots never turn pitch black before fragment shading
+    float occlusion = (t < 0.25) ? (0.90 + 0.40 * t) : 1.0;
 
     // 3-Stop Botanical Color Gradient:
-    // Stop 1 (Root) -> Stop 2 (Rich Viridian Mid-Body) -> Stop 3 (Sunlit Fresh Green Tip)
     vec3 rootNorm = rootColor * (1.0 / 255.0);
     vec3 tipNorm  = tipColor  * (1.0 / 255.0);
-    vec3 viridianMid = mix(rootNorm, tipNorm, 0.46) * vec3(0.88, 1.02, 0.92);
+    vec3 viridianMid = mix(rootNorm, tipNorm, 0.52) * vec3(0.92, 1.03, 0.92);
 
-    float lowerMix = smoothstep(0.0, 0.52, t);
-    float upperMix = smoothstep(0.42, 0.96, t);
+    float lowerMix = smoothstep(0.0, 0.45, t);
+    float upperMix = smoothstep(0.38, 0.94, t);
     vec3 gradCol = mix(mix(rootNorm, viridianMid, lowerMix), tipNorm, upperMix);
 
-    float bladeTone = 0.95 + 0.10 * fract(p0.w * 0.3183099);
+    float bladeTone = 0.96 + 0.08 * fract(p0.w * 0.3183099);
     vec3 smoothCol = clamp(gradCol * (occlusion * bladeTone), 0.0, 1.0);
 
     color = vec4(smoothCol, fadeAlpha);
