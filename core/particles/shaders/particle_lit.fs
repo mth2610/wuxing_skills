@@ -562,7 +562,7 @@ void main()
     // ── EXTRACTED FIRE EOO + NORMAL ATLAS (MODE 4) ───────────────────────
     // R is emission, G is transmittance, B is unused and A is coverage.
     // This is neither display RGB nor the engine-authored VOLUME packing.
-    if (u_volumeSheet > 3.5)
+    if (u_volumeSheet > 3.5 && u_volumeSheet < 4.5)
     {
         vec4 normalSample = texture(u_normalTex, sampleUV);
         vec3 fireN = ParticleNormalWorld(ParticleNormalXY(normalSample));
@@ -580,6 +580,84 @@ void main()
         vec3 smoke = u_smokeTint * envLit * bodyAlpha;
         if (coverage < 0.005 && bodyAlpha < 0.005) discard;
         finalColor = vec4(flame + smoke, bodyAlpha);
+        return;
+    }
+
+    // ── MODE 5: PROCEDURAL SHADER TONGUE (Zero-flipbook, slender rising tongue) ──
+    if (u_volumeSheet > 4.5 && u_volumeSheet < 5.5)
+    {
+        float age = fragColor.g;
+        float rnd = fragColor.b;
+        float t = u_time * (u_heatGain > 0.0 ? u_heatGain : 2.5);
+        float x = (fragTexCoord.x - 0.5) * 2.0;
+        float y = 1.0 - fragTexCoord.y; // Raylib top-to-bottom UV correction
+        float distort = (u_motionWarp > 0.0) ? u_motionWarp : 0.40;
+
+        float w1 = texture(texture0, vec2(x * 0.175 + rnd * 1.25, y * 0.225 - t * 0.069)).r - 0.5;
+        x += w1 * distort * 2.2 * smoothstep(0.0, 0.8, y);
+        float n = texture(texture0, vec2(x * 0.41 + rnd * 0.9 + w1 * 0.5, y * 0.275 - t * 0.125 + w1 * 0.25)).r;
+        float d = texture(texture0, vec2(x * 0.69 + rnd * 0.4 + 1.1, y * 0.5 - t * 0.1625)).r;
+        x += (n - 0.5) * distort * 1.3 * y;
+
+        float by = clamp(y / 0.24, 0.0, 1.0);
+        float rb = sqrt(max(1.0 - (1.0 - by) * (1.0 - by), 0.0));
+        float width = 0.8 * pow(max(1.0 - y, 0.0), 0.8) * rb;
+        float field = max(1.0 - abs(x) / max(width, 1e-3), -1.0) * 0.9 +
+                      (n - 0.5) * 1.6 * (0.3 + y) + w1 * 0.6 * y + (d - 0.5) * 0.35;
+
+        if (field < -0.4) discard;
+
+        float hf = smoothstep(0.05, 1.0, field) * (1.0 - y * 0.8) + (d - 0.5) * 0.25 - age * 0.25;
+        float fade = smoothstep(0.0, 0.08, age) * (1.0 - smoothstep(0.75, 1.0, age)) * smoothstep(0.0, 0.05, y);
+        float softVal = (u_smokeGain > 0.0) ? u_smokeGain : 0.5;
+        float density = smoothstep(0.05, 0.05 + softVal * 0.5, field);
+        float glow = smoothstep(-0.4, 0.1, field) * 0.18;
+        float heat = clamp(hf, 0.0, 1.0) * smoothstep(-0.1, 0.5, field);
+        float fl = 0.88 + 0.12 * sin(u_time * 14.0 + rnd * 60.0);
+
+        vec3 rampCol = texture(u_rampLUT, vec2(clamp(heat, 0.0, 1.0), 0.5)).rgb;
+        if (dot(rampCol, rampCol) < 0.001) rampCol = calcBlackbodyNormalized(heat);
+        vec3 col = rampCol * (fragColor.r * 2.0) * fl * (0.1 + heat * heat * 1.1);
+        float alpha = clamp(density + glow, 0.0, 1.0) * fade * 0.35 * fragColor.a * soft;
+        if (alpha < 0.004) discard;
+
+        finalColor = vec4(col * alpha * u_emissiveBoost, 0.0);
+        return;
+    }
+
+    // ── MODE 6: PROCEDURAL SHADER PUFF (Zero-flipbook, rolling radial billow) ─────
+    if (u_volumeSheet > 5.5)
+    {
+        float age = fragColor.g;
+        float rnd = fragColor.b;
+        float distort = (u_motionWarp > 0.0) ? u_motionWarp : 0.40;
+        vec2 p = (fragTexCoord - 0.5) * 2.0;
+        vec2 off = vec2(0.0, -age * 0.35);
+
+        float w = texture(texture0, p * 0.22 + rnd * 1.3 + off).r - 0.5;
+        p += w * distort * 1.2 * (0.4 + length(p));
+        float r = length(p);
+        float n = texture(texture0, p * 0.45 + rnd * 0.9 + vec2(1.7, 0.0) + off * 1.5).r;
+        float d = texture(texture0, p * 0.9 + rnd * 0.4 + 3.1 + off * 2.0).r;
+
+        float field = (1.0 - r) * 1.15 + (n - 0.5) * 1.4 * (0.3 + r) + (d - 0.5) * 0.35 - age * 0.55;
+        if (field < -0.4) discard;
+
+        float hf = smoothstep(0.1, 1.0, field) * (1.0 - age * 0.85) + (d - 0.5) * 0.25;
+        float fade = smoothstep(0.0, 0.05, age) * (1.0 - smoothstep(0.55, 1.0, age));
+        float softVal = (u_smokeGain > 0.0) ? u_smokeGain : 0.5;
+        float density = smoothstep(0.05, 0.05 + softVal * 0.5, field);
+        float glow = smoothstep(-0.4, 0.1, field) * 0.18;
+        float heat = clamp(hf, 0.0, 1.0) * smoothstep(-0.1, 0.5, field);
+        float fl = 0.88 + 0.12 * sin(u_time * 14.0 + rnd * 60.0);
+
+        vec3 rampCol = texture(u_rampLUT, vec2(clamp(heat, 0.0, 1.0), 0.5)).rgb;
+        if (dot(rampCol, rampCol) < 0.001) rampCol = calcBlackbodyNormalized(heat);
+        vec3 col = rampCol * (fragColor.r * 2.0) * fl * (0.1 + heat * heat * 1.1);
+        float alpha = clamp(density + glow, 0.0, 1.0) * fade * 0.40 * fragColor.a * soft;
+        if (alpha < 0.004) discard;
+
+        finalColor = vec4(col * alpha * u_emissiveBoost, 0.0);
         return;
     }
 

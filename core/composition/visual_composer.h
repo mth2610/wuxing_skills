@@ -170,6 +170,55 @@ typedef enum {
     VFX_FLAME_STYLE_DEFAULT = VFX_FLAME_STYLE_NIAGARA_ROIL
 } VFX_FlameStyle;
 
+// ── UNIFIED FIRE SYSTEM (4 MODES + MOTION FIELD GUIDANCE) ────────────────
+typedef enum {
+    VFX_FIRE_MODE_FLIPBOOK_TONGUE = 0, // Flipbook dạng tongue (fire_tongue_01_8x8)
+    VFX_FIRE_MODE_FLIPBOOK_PUFF   = 1, // Flipbook dạng puff (fireroil_8x8 / fire_puff_8x8)
+    VFX_FIRE_MODE_SHADER_TONGUE   = 2, // Shader dạng tongue (Procedural slender tongue, zero flipbook)
+    VFX_FIRE_MODE_SHADER_PUFF     = 3, // Shader dạng puff (Procedural rolling puff, zero flipbook)
+    VFX_FIRE_MODE_COUNT           = 4
+} VFX_FireMode;
+
+typedef enum {
+    VFX_FIRE_MOTION_AIRFLOW = 0, // Buoyant upward draft + swirl + eddy turbulence
+    VFX_FIRE_MOTION_VORTEX  = 1, // High-speed swirling spiral vortex
+    VFX_FIRE_MOTION_BLAST   = 2, // Outward radial detonation / explosion
+    VFX_FIRE_MOTION_ROUTE   = 3, // Guided stream from source to target
+    VFX_FIRE_MOTION_COUNT   = 4
+} VFX_FireMotionType;
+
+typedef struct VFX_FireConfig {
+    VFX_FireMode mode;
+    VFX_FireMotionType motionType;
+    float fieldSpeed;       // m/s
+    float fieldRadius;      // m
+    float swirlSpeed;       // m/s
+    float turbulenceSpeed;  // m/s
+    float buoyancy;         // m/s^2
+    int particleCount;      // 1 to 1000
+    float emitDuration;     // s (0 = continuous)
+    float sourceRadius;     // m
+    float lifetime;         // s
+    float particleRadius;   // m
+    float intensity;        // 0.5 to 5.0
+    float distortion;       // 0.0 to 1.0
+    float softness;         // 0.05 to 1.0
+    float emissiveBoost;    // 0.5 to 3.0
+    float riseMultiplier;   // vertical stretch / rise speed
+    float windStrength;     // m/s
+    float windAngleDeg;     // 0 to 360 deg
+    bool autoSize;          // auto-scale (N/50)^-0.25 to maintain 60 FPS at 1000 particles
+    bool emitSmoke;         // emit smoke on cooldown
+} VFX_FireConfig;
+
+VFX_FireConfig VFX_Fire_DefaultConfig(void);
+VFX_FireConfig *VFX_Fire_GetLiveConfig(void);
+int VFX_Fire_GetParams(VFX_FireConfig *cfg, VFX_ParamDef *outParams, int maxParams);
+int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg);
+void VFX_KillFire(int handle);
+const char *VFX_FireMode_Name(VFX_FireMode mode);
+const char *VFX_FireMotion_Name(VFX_FireMotionType motion);
+
 // Unified / Generalized API
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
 void VFX_ComposeAmbientFire(Vector3 pos, VC_MaterialId matId, float scale, float intensity);
@@ -1408,7 +1457,6 @@ void VFX_KillGasMaterialLab(int handle);
 void VFX_KillRefBands(int id);
 void VFX_KillRefParticles(int id);
 void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile profile);
-bool VFX_WaterOrb_IsAnyActive(void);
 void VFX_SmokeTrail_Stop(int handle);
 void VFX_WaterRing_Stop(void);
 // @gen:vc_declarations end

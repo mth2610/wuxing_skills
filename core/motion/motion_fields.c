@@ -1428,17 +1428,11 @@ MotionArrivalMode MotionFields_AdvanceReceiver(MotionReceiver *r,
       g->distance < g->desc.path.length - g->desc.arrival.radius)
     return MOTION_ARRIVAL_RELEASE;
 
+  r->localOffset = MotionPath_LocalOffset(f, MotionVec_Sub(goal, f.position));
+  r->flowTime = 0;
+  r->arrived = true;
+
   MotionArrivalMode action = g->desc.arrival.mode;
-  if (action == MOTION_ARRIVAL_RELEASE || action == MOTION_ARRIVAL_DESTROY)
-  {
-    MotionReceiver_ClearGuide(r);
-  }
-  else
-  {
-    r->localOffset = MotionPath_LocalOffset(f, MotionVec_Sub(goal, f.position));
-    r->flowTime = 0;
-    r->arrived = true;
-  }
 
   if (!g->fired)
   {

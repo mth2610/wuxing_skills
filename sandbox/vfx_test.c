@@ -786,6 +786,10 @@ static void VFXTest_RefreshInspectorParams(bool force)
     {
         s_inspectorParamCount = VFX_LiquidOrb_GetParams(VFX_LiquidOrb_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
+    else if (VFXTest_IsNewFxNamed("AMBIENT FIRE"))
+    {
+        s_inspectorParamCount = VFX_Fire_GetParams(VFX_Fire_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
 }
 
 static inline float VFXTest_Smoothstep(float e0, float e1, float x)
@@ -1302,6 +1306,7 @@ static void VFXTest_InitFixtures(void)
 static void VFXTest_StopFixtures(void)
 {
     VFXTest_ClearGuidedFrames();
+    VFX_KillFire(0);
     VFXTest_InitFixtures();
     // @gen:newfx_stop begin
     if (s_vfxFixtureHandle[6] >= 0)
@@ -1471,6 +1476,7 @@ static bool s_vfxButtonArmed = false;
 static Rectangle s_vfxArmedButton;
 static int s_vfxInspectorScroll = 0;
 static int s_vfxBrowserScroll = 0;
+static int s_vfxDraggingSlider = -1;
 static float s_vfxTelemetryFps, s_vfxTelemetryFrameMs, s_vfxTelemetryPeakMs;
 static float s_vfxTelemetryTilt = 18.0f, s_vfxTelemetryDistance = 20.571864f, s_vfxTelemetryZoom = 1.0f;
 static int s_vfxPendingTiltStep;
@@ -1524,7 +1530,7 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
         statusBottom = top + 116.0f;
     }
     float panelTop = fmaxf(176.0f, statusBottom + 40.0f);
-    ui.rowHeight = 38.0f;
+    ui.rowHeight = 44.0f;
     float panelHeight = fminf(76.0f + fmaxf(1.0f, (float)s_inspectorParamCount) * ui.rowHeight, fmaxf(116.0f, h - panelTop - 48.0f));
     ui.inspector = (Rectangle){w - panelWidth - 12.0f, panelTop, panelWidth, panelHeight};
     ui.inspectorRows = (int)((ui.inspector.height - 76.0f) / ui.rowHeight);
@@ -1550,6 +1556,11 @@ static Rectangle VFXTest_UIInspectorRow(VFXTest_UILayout ui, int visibleRow)
 {
     return (Rectangle){ui.inspector.x + 8.0f, ui.inspector.y + 42.0f + visibleRow * ui.rowHeight,
                        ui.inspector.width - 16.0f, ui.rowHeight - 4.0f};
+}
+
+static Rectangle VFXTest_UISliderTrack(Rectangle row)
+{
+    return (Rectangle){row.x + 8.0f, row.y + row.height - 7.0f, row.width - 84.0f, 5.0f};
 }
 
 static Rectangle VFXTest_UIParameterButton(Rectangle row, int direction)
@@ -1739,17 +1750,58 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
         if (CheckCollisionPointRec(GetMousePosition(), ui.inspector)) s_vfxInspectorScroll -= (int)GetMouseWheelMove();
         if (s_vfxInspectorScroll < 0) s_vfxInspectorScroll = 0;
         if (s_vfxInspectorScroll > maxScroll) s_vfxInspectorScroll = maxScroll;
-        for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
-            int index = row + s_vfxInspectorScroll;
-            Rectangle rect = VFXTest_UIInspectorRow(ui, row);
-            if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, -1))) {
-                s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, -1); VFXTest_UILogParameter(index);
-            } else if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, 1))) {
-                s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, 1); VFXTest_UILogParameter(index);
-            } else if (VFXTest_UIButtonReleased(rect)) s_inspectorSelectedParam = index;
+
+        Vector2 mouse = GetMousePosition();
+        if (s_vfxDraggingSlider >= 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            s_vfxPointerCaptured = true;
+            int visRow = s_vfxDraggingSlider - s_vfxInspectorScroll;
+            Rectangle rect = VFXTest_UIInspectorRow(ui, visRow);
+            Rectangle track = VFXTest_UISliderTrack(rect);
+            float t = fmaxf(0.0f, fminf(1.0f, (mouse.x - track.x) / track.width));
+            VFX_ParamDef *param = &s_inspectorParams[s_vfxDraggingSlider];
+            float before = (param->type == VFX_PARAM_FLOAT && param->valPtr) ? *(float*)param->valPtr : 0.0f;
+            VFX_Param_SetNormalized(param, t);
+            if (param->type == VFX_PARAM_FLOAT) {
+                s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, before,
+                    s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
+            }
+            VFXTest_UILogParameter(s_vfxDraggingSlider);
+        } else {
+            for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
+                int index = row + s_vfxInspectorScroll;
+                Rectangle rect = VFXTest_UIInspectorRow(ui, row);
+                Rectangle track = VFXTest_UISliderTrack(rect);
+                Rectangle trackHit = {track.x, track.y - 6.0f, track.width, track.height + 12.0f};
+
+                if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, trackHit) &&
+                    !CheckCollisionPointRec(mouse, VFXTest_UIParameterButton(rect, -1)) &&
+                    !CheckCollisionPointRec(mouse, VFXTest_UIParameterButton(rect, 1))) {
+                    s_vfxDraggingSlider = index;
+                    s_inspectorSelectedParam = index;
+                    s_vfxPointerCaptured = true;
+                    float t = fmaxf(0.0f, fminf(1.0f, (mouse.x - track.x) / track.width));
+                    VFX_ParamDef *param = &s_inspectorParams[index];
+                    float before = (param->type == VFX_PARAM_FLOAT && param->valPtr) ? *(float*)param->valPtr : 0.0f;
+                    VFX_Param_SetNormalized(param, t);
+                    if (param->type == VFX_PARAM_FLOAT) {
+                        s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, before,
+                            s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
+                    }
+                    VFXTest_UILogParameter(index);
+                    break;
+                } else if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, -1))) {
+                    s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, -1); VFXTest_UILogParameter(index);
+                } else if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, 1))) {
+                    s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, 1); VFXTest_UILogParameter(index);
+                } else if (VFXTest_UIButtonReleased(rect)) s_inspectorSelectedParam = index;
+            }
         }
     }
-    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) { s_vfxButtonArmed = false; s_vfxPointerCaptured = false; }
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        s_vfxButtonArmed = false;
+        s_vfxPointerCaptured = false;
+        s_vfxDraggingSlider = -1;
+    }
     return back;
 }
 
@@ -1779,7 +1831,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("DECAL")) return VFX_DecalVariant_Name(s_decalFixtureVariant);
     if (VFXTest_IsNewFxNamed("SURFACE PARTICLE RING")) return VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant);
     if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
-    if (VFXTest_IsNewFxNamed("AMBIENT FIRE")) return VFX_FlameStyle_Name(s_ambientFireFixtureStyle);
+    if (VFXTest_IsNewFxNamed("AMBIENT FIRE")) return VFX_FireMode_Name(VFX_Fire_GetLiveConfig()->mode);
     if (VFXTest_IsNewFxNamed("SURFACE IMPACT")) return VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface);
     return NULL;
 }
@@ -1825,6 +1877,18 @@ static void VFXTest_UIDraw(void)
             VFXTest_UIText(TextFormat("%s / %s", s_inspectorParams[index].group, s_inspectorParams[index].name),
                           (Rectangle){rect.x, rect.y, rect.width - 76, 17}, 11, selected ? SKYBLUE : LIGHTGRAY);
             VFXTest_UIText(value, (Rectangle){rect.x, rect.y + 16, rect.width - 76, 18}, 12, RAYWHITE);
+
+            // Render interactive slider track
+            Rectangle track = VFXTest_UISliderTrack(rect);
+            DrawRectangleRounded(track, 0.5f, 2, (Color){38, 48, 60, 240});
+            float t = VFX_Param_GetNormalized(&s_inspectorParams[index]);
+            float fillW = fmaxf(4.0f, track.width * t);
+            DrawRectangleRounded((Rectangle){track.x, track.y, fillW, track.height}, 0.5f, 2,
+                                 selected ? (Color){90, 185, 255, 255} : (Color){60, 140, 200, 230});
+            float thumbX = track.x + t * track.width;
+            DrawRectangleRounded((Rectangle){thumbX - 3.0f, track.y - 2.0f, 6.0f, track.height + 4.0f},
+                                 0.5f, 2, (Color){240, 250, 255, 255});
+
             VFXTest_UIDrawButton(VFXTest_UIParameterButton(rect, -1), "<", false);
             VFXTest_UIDrawButton(VFXTest_UIParameterButton(rect, 1), ">", false);
         }
@@ -2276,23 +2340,6 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             VFXTest_FireGuidedMotion(castSocket, guidedTarget);
             return false;
         }
-        if (s_testCategory == TEST_CAT_NEWFX && VFXTest_IsNewFxNamed("WATER ORB")) {
-            Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.85f, 0.0f});
-            Vector3 orbTarget = mouseTarget3D;
-            if (s_clickedOnUI) {
-                Vector3 fwd = (Vector3){ sinf(s_currentPlayerYaw), 0.0f, cosf(s_currentPlayerYaw) };
-                if (Vector3Length(fwd) < 0.1f) fwd = (Vector3){1.0f, 0.0f, 0.0f};
-                orbTarget = Vector3Add(playerPos, Vector3Scale(fwd, 6.0f));
-                orbTarget.y = MapManager_GetGroundHeightAt(orbTarget.x, orbTarget.z);
-            }
-            Vector3 toTarget = Vector3Subtract(orbTarget, castSocket);
-            if (Vector3Length(toTarget) > 0.1f) {
-                Vector3 dir = Vector3Normalize(toTarget);
-                castSocket = Vector3Add(castSocket, Vector3Scale(dir, 0.45f));
-            }
-            VFX_ComposeWaterOrb(castSocket, orbTarget);
-            return false;
-        }
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
               /* continuous — handled per-frame in VFXTest_Draw3D */
               switch (s_testIndex) {
@@ -2665,8 +2712,9 @@ void VFXTest_Draw3D(void)
             int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
             if (direction != 0)
             {
-                s_ambientFireFixtureStyle = (VFX_FlameStyle)(((int)s_ambientFireFixtureStyle + direction + VFX_FLAME_STYLE_COUNT) % VFX_FLAME_STYLE_COUNT);
-                TraceLog(LOG_INFO, "AMBIENT FIRE style: %s (>, next; <, previous)", VFX_FlameStyle_Name(s_ambientFireFixtureStyle));
+                VFX_FireConfig *fcfg = VFX_Fire_GetLiveConfig();
+                fcfg->mode = (VFX_FireMode)(((int)fcfg->mode + direction + VFX_FIRE_MODE_COUNT) % VFX_FIRE_MODE_COUNT);
+                TraceLog(LOG_INFO, "AMBIENT FIRE mode: %s (>, next; <, previous)", VFX_FireMode_Name(fcfg->mode));
             }
         }
         else if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER") || VFXTest_IsNewFxNamed("WOOD PETALS"))
@@ -2872,7 +2920,7 @@ void VFXTest_Draw3D(void)
               }
               case 40: VFX_ComposeFissureStreak(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.1f, progress, s_meshTime); break;
               case 41: VFX_ComposeStonePillar(s_prefabStartPos, progress); break;
-              case 42: VFX_ComposeAmbientFireEx(s_prefabStartPos, VC_MAT_FIRE, 1.5f, 1.0f, s_ambientFireFixtureStyle); break;
+              case 42: VFX_ComposeFireEx(s_prefabStartPos, VFX_Fire_GetLiveConfig()); break;
               case 44: VFX_ComposeBlackHole(VC_MAT_FIRE, s_prefabStartPos, 1.5f, s_meshTime); break;
               case 47: VFX_ComposeWaterStream(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.33f), (Vector3){0.0f, 0.9f, 0.7f}), Vector3Add(Vector3Lerp(Vector3Add(s_prefabStartPos, (Vector3){-2.0f, 1.2f, 0.0f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 0.66f), (Vector3){0.0f, 0.5f, -0.7f}), Vector3Add(s_prefabStartPos, (Vector3){2.5f, 1.8f, 0.8f}), 1.5f, progress, s_meshTime); break;
               case 48: do { VFX_WoodFlowerConfig _cfg = VFXTest_BuildWoodFlowerConfig(s_prefabStartPos, s_currentPlayerPos, s_meshTime); VFX_ComposeWoodFlower(&_cfg); } while(0); break;

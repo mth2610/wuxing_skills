@@ -3,6 +3,7 @@
 
 #include <stdbool.h>
 #include <stdio.h>
+#include <math.h>
 
 // ============================================================================
 // UNIVERSAL VFX PARAMETER SYSTEM
@@ -107,6 +108,60 @@ static inline void VFX_Param_FormatValue(const VFX_ParamDef *p, char *buf, int m
         case VFX_PARAM_FLOAT:
             snprintf(buf, maxLen, p->stepFloat > 0 && p->stepFloat < .01f ? "%.6g" : "%.2f",
                      *(float*)p->valPtr);
+            break;
+    }
+}
+
+// Calculate the normalized fraction t in [0.0, 1.0] representing the current parameter value
+static inline float VFX_Param_GetNormalized(const VFX_ParamDef *p)
+{
+    if (!p || !p->valPtr) return 0.0f;
+    switch (p->type)
+    {
+        case VFX_PARAM_FLOAT: {
+            if (p->maxFloat <= p->minFloat) return 0.0f;
+            float val = *(float*)p->valPtr;
+            return fmaxf(0.0f, fminf(1.0f, (val - p->minFloat) / (p->maxFloat - p->minFloat)));
+        }
+        case VFX_PARAM_INT:
+        case VFX_PARAM_ENUM: {
+            if (p->maxInt <= p->minInt) return 0.0f;
+            int val = *(int*)p->valPtr;
+            return fmaxf(0.0f, fminf(1.0f, (float)(val - p->minInt) / (float)(p->maxInt - p->minInt)));
+        }
+        case VFX_PARAM_BOOL:
+            return *(bool*)p->valPtr ? 1.0f : 0.0f;
+    }
+    return 0.0f;
+}
+
+// Set parameter value from normalized fraction t in [0.0, 1.0] (snaps to stepFloat if specified)
+static inline void VFX_Param_SetNormalized(VFX_ParamDef *p, float t)
+{
+    if (!p || !p->valPtr) return;
+    t = fmaxf(0.0f, fminf(1.0f, t));
+    switch (p->type)
+    {
+        case VFX_PARAM_FLOAT: {
+            float v = p->minFloat + t * (p->maxFloat - p->minFloat);
+            if (p->stepFloat > 0.0f) {
+                v = p->minFloat + roundf((v - p->minFloat) / p->stepFloat) * p->stepFloat;
+            }
+            if (v < p->minFloat) v = p->minFloat;
+            if (v > p->maxFloat) v = p->maxFloat;
+            *(float*)p->valPtr = v;
+            break;
+        }
+        case VFX_PARAM_INT:
+        case VFX_PARAM_ENUM: {
+            int v = p->minInt + (int)roundf(t * (float)(p->maxInt - p->minInt));
+            if (v < p->minInt) v = p->minInt;
+            if (v > p->maxInt) v = p->maxInt;
+            *(int*)p->valPtr = v;
+            break;
+        }
+        case VFX_PARAM_BOOL:
+            *(bool*)p->valPtr = (t >= 0.5f);
             break;
     }
 }

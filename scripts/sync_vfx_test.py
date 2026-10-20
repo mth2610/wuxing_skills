@@ -351,7 +351,7 @@ FIXTURE_METADATA_OVERRIDES = {
 # spawn table's contract (persistent, handle-owning) is not this one's.
 FIXTURE_DRAW_OVERRIDES = {
     "VFX_ComposeAmbientFire":
-        "VFX_ComposeAmbientFireEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, s_ambientFireFixtureStyle)",
+        "VFX_ComposeFireEx($POS, VFX_Fire_GetLiveConfig())",
     "VFX_ComposeSmokeVolume":
         "VFX_ComposeSmokeVolume($POS, 1.5f, 1.0f, s_smokeVolumeFixtureStyle)",
     "VFX_ComposeOpticalFlare":

@@ -216,4 +216,95 @@
   - `run_core_tests.sh motion`: **21/21 suites PASSED (100%)**.
   - `WUXING_AUTOTEST=1`: **19/19 test cases PASSED (100%)**.
 
+---
 
+## 10. Session Summary: Nâng Cấp Visual Map Song Quao (Ghost of Tsushima & Where Winds Meet Style) & Thủy Hệ Tự Nhiên
+
+### 10.1. Bối Cảnh & Ràng Buộc Thiết Kế Từ Người Dùng
+- **Mục tiêu**: Nâng cấp visual bản đồ `song_quao` đạt chuẩn thẩm mỹ AAA Kiếm Hiệp (*Ghost of Tsushima*, *Where Winds Meet*) và khóa cứng hiệu năng 60 FPS.
+- **Ràng buộc cốt lõi**:
+  1. *Đảo nổi thiên giới (Celestial Floating Island)*: Bản đồ là một hòn đảo bồng bềnh lơ lửng trên chín tầng mây, bên dưới là biển mây cuộn trào vô tận, bên trên là bầu trời trong trẻo với mặt trời ban ngày, trăng sao ban đêm. Tuyệt đối không vẽ núi non hậu cảnh ở đường chân trời.
+  2. *Tạm thời chưa làm cây và công trình*: Tập trung hoàn thiện địa mạo, đồng cỏ, hoa dại, thủy hệ, khí quyển và các hiệu ứng hạt vi khí hậu.
+
+### 10.2. Các Giải Pháp Kỹ Thuật Đã Hoàn Thành
+1. **Nắn Chỉnh Dòng Chảy & Khử Vũng Nước Lơ Lửng (`maps/pipeline/dem_pipeline.py`)**:
+   - **Branch Length Pruning**: Kiểm tra chuỗi dòng chảy hạ lưu (`branch_len >= 6`), loại bỏ 100% hiện tượng suối chẻ đôi bò ngược lên đỉnh đồi do nhiễu số D8.
+   - **Lọc Cụm Nước Liên Thông (Connected Component BFS)**: Loại bỏ các vũng nước nhỏ rời rạc ($< 80\text{ cells}$), xóa bỏ hoàn toàn hiện tượng vũng nước bay lơ lửng giữa vách núi đá.
+   - **Re-bake tài nguyên**: Số tam giác nước giảm từ $10.064$ xuống $6.628$ triangles; số nút nước giảm từ $2.908$ xuống $2.160$ wet nodes. Suối uốn lượn liên tục từ khe đá nguồn cao phía Bắc qua thung lũng vào hồ trung tâm và thoát ra vách đá Tây Nam.
+2. **Đất Bờ Ẩm & Sỏi Cuội Bờ Suối Lấp Lánh (`maps/toolkit/shaders/ground_splat.fs`)**:
+   - **Capillary Darkening**: Khi tiếp xúc mép nước (`wWetSoil > 0.15`), giảm độ sáng $32\%$ và tăng bão hòa màu đất bùn ẩm đen màu mỡ.
+   - **Dual-Lobe Wet Specular**: Kết hợp thùy bóng nước sắc nét $\text{pow}(N \cdot H, 64) \cdot 0.42$ và thùy sỏi ướt $h_{24} \cdot 0.22$, tạo viền sáng lấp lánh tự nhiên phân định bờ đất và làn nước.
+3. **Thảm Cỏ SSS Ngọc Bích, Root Contact AO & Sóng Gió Tsushima**:
+   - `nature_surface.glsl`: Deep Root Contact AO ($0.24$) dìm gốc cỏ trong đất màu mỡ; Jade SSS tán xạ xuyên sáng vàng ngọc rực rỡ khi nhìn ngược nắng.
+   - `nature_opaque.fs`: Anisotropic Specular Glint Sheen quét thành từng vệt sóng ánh sáng vàng óng ả theo nhịp gió giật.
+   - `song_quao.c`: Hàng nghìn khóm cỏ lau trắng (Pampas / Susuki) phủ kín các triền đồi; suối nước hấp thụ quang học Beer-Lambert và khúc xạ caustics dưới đáy.
+4. **Biển Mây 1400m x 1400m & Bầu Trời Thiên Giới (`cloud_sea.fs`, `map_sky.glsl`)**:
+   - Mở rộng biển mây lên $1400\text{m} \times 1400\text{m}$ đến tận chân trời thiên giới với viền sáng bạc (Silver Lining) và sóng mây 3D.
+   - Vòm trời trong trẻo ban ngày với quầng nhật hoa, ban đêm với trăng sao, dải ngân hà và cực quang huyền ảo.
+5. **Hạt Hoa Cỏ Lau & Phấn Hoa Bay Bồng Bềnh Trong Gió (`song_quao.c`)**:
+   - Hệ thống 140 hạt hoa cỏ lau và phấn hoa vàng kim bay lơ lửng quanh người chơi với chuyển động sóng và nâng tự nhiên của gió.
+   - Chi phí render cực nhẹ ($< 0.05\text{ ms}$).
+
+
+
+
+---
+
+## 11. Session Summary: Procedural Shader Fire VFX (4 Modes), Motion Fields & Interactive Slider Inspector
+
+### 11.1. Bối Cảnh & Yêu Cầu Cốt Lõi
+- **Mục tiêu**:
+  1. Thêm hướng làm Fire VFX hoàn toàn bằng Shader (không dùng flipbook) bên cạnh flipbook truyền thống.
+  2. Hỗ trợ đầy đủ 4 hướng VFX lửa:
+     - `Flipbook Tongue` (atlas lưỡi lửa)
+     - `Flipbook Puff` (atlas cuộn khói lửa có optical-flow)
+     - `Shader Tongue` (shader ngọn lửa uốn lượn Bézier)
+     - `Shader Puff` (shader cuộn lửa nổ/bung tròn)
+  3. Quỹ đạo chuyển động của hạt lửa được điều khiển bằng **Motion Fields** (Updraft airflow, Vortex xoáy, Blast nổ bung, Route dẫn hướng).
+  4. Cập nhật bảng điều khiển Inspector có thể kéo thanh trượt (**interactive slider**) trực tiếp bằng chuột thay vì chỉ bấm nút `<` và `>`.
+  5. Tích hợp các kỹ thuật tối ưu từ WebGL reference (`Fire VFX 3D.html`) để hỗ trợ tới 1.000 hạt mà không bị tụt FPS (khóa cứng 60 FPS).
+
+### 11.2. Các Giải Pháp Kỹ Thuật Đã Triển Khai
+1. **Bảng Điều Khiển Thanh Trượt Tương Tác (UI Sliders) (`vc_params.h`, `vfx_test_ui.c.in`, `vfx_test.c`)**:
+   - `vc_params.h`: Thêm các hàm chuẩn hóa `VFX_Param_GetNormalized()` và `VFX_Param_SetNormalized()` hỗ trợ float, int, enum, bool có bước nhảy snapping `stepFloat`.
+   - `vfx_test_ui.c.in`: Mở rộng chiều cao hàng tham số lên 44px, vẽ thanh ray trượt (slider track), dải màu kích hoạt và nút trượt (thumb knob).
+   - `VFXTest_UIHandleInput`: Bổ sung trạng thái kéo chuột liên tục `s_vfxDraggingSlider` mượt mà.
+   - Thêm bộ kiểm thử `vfx_test_ui_test.c` kiểm tra tính toàn vẹn 100%.
+2. **Procedural Fire Shaders (Tongue & Puff) (`particle_lit.fs`)**:
+   - Mode 5 (`Procedural Tongue`): Mô phỏng ngọn lửa thon dài vươn lên bằng đường cong Bézier, cấu trúc bề ngang Parabolic thắt dần về ngọn, advection nhiễu đa tầng (multi-octave simplex noise), và bảng màu bức xạ vật đen Planck (`calcBlackbodyNormalized`).
+   - Mode 6 (`Procedural Puff`): Mô phỏng cuộn lửa tròn bồng bềnh bằng trường khoảng cách bán kính (radial distance field), viền ngoài cuộn xoáy tự nhiên, phân rã vận tốc và tàn lụi thành khói.
+   - **Tối ưu hóa fillrate WebGL**: Bổ sung `if (field < -0.4) discard;` loại bỏ sớm fragment ngoài rìa ngọn lửa trước khi tính toán chiếu sáng và màu sắc.
+   - **LOD Tap Pruning**: Cắt giảm số bước lấy mẫu noise khi hạt ở xa hoặc có độ phủ màn hình nhỏ (`u_scatterStrength > 0.5`).
+3. **Cơ Chế Phân Bổ Pha Tỉ Lệ Vàng (Golden Ratio Phase Distribution) (`particle_system.c`)**:
+   - Truyền hạt giống pha thời gian $(\text{id} \cdot 0.6180339887)$ qua `fragColor.b` khi `volumeSheet >= 5`.
+   - Triệt tiêu hoàn toàn hiện tượng các hạt lửa nhấp nháy đồng pha cùng một lúc.
+4. **Tích Hợp Motion Fields Điều Khiển Quỹ Đạo Hạt (`flame_volume.inl`)**:
+   - Tích hợp 4 loại trường lực: `VFX_FIRE_MOTION_AIRFLOW`, `VFX_FIRE_MOTION_VORTEX`, `VFX_FIRE_MOTION_BLAST`, `VFX_FIRE_MOTION_ROUTE`.
+   - Khởi tạo và cập nhật khung biến đổi vị trí trường lực theo thời gian thực bằng `MotionFields_CreateField` và `MotionFields_SetTransform`.
+   - Tự động co giãn bán kính hạt theo công thức $(50 / N)^{0.25}$ khi số lượng hạt tăng từ $50 \to 1.000$, đảm bảo tổng diện tích overdraw trên màn hình không đổi.
+5. **Cấu Trúc Tham Số & Sandbox Hook (`flame_volume.inl`, `vfx_test.c`)**:
+   - Cung cấp hàm `VFX_Fire_GetParams(...)` phân nhóm 4 nhóm tham số: `Mode`, `Field`, `Emission`, `Optics`.
+   - Fixture `AMBIENT FIRE` (ID 42) hiển thị đầy đủ tên biến thể, phím `,` và `.` để đổi chế độ tức thì.
+
+### 11.3. Kết Quả Đo Đạc & Kiểm Thử
+- **Đo kiểm tương phản nền sáng (§11b - `render_vfx_matrix.sh`)**:
+  - `darken%` trên nền trắng đạt **47.8% - 57.1%**, đảm bảo ngọn lửa có chiều sâu, tương phản rõ rệt trên cảnh nền ban ngày mà không bị bạc màu hay biến mất.
+- **Bộ Kiểm Thử Tự Động**:
+  - `bash scripts/run_core_tests.sh flame`: **4/4 passed (100%)**.
+  - `bash scripts/run_core_tests.sh motion`: **21/21 suites passed (100%)**.
+  - `WUXING_AUTOTEST=1 ./build/wuxing`: **19/19 passed (100%)**.
+  - Unit test `vfx_test_ui_test`: **PASSED**.
+- **Biên dịch**: CMake build hoàn tất **0 warning, 0 error**.
+
+### 11.4. Phân Tích & Khắc Phục Lỗi Bảng Tham Số Không Tác Dụng Với AMBIENT FIRE
+- **Hiện tượng**: Người dùng kéo thanh trượt (slider) trên bảng Parameters nhưng hiệu ứng lửa không hề thay đổi.
+- **Nguyên nhân gốc rễ**:
+  1. Trong `scripts/sync_vfx_test.py` và `scripts/vfx_test_manifest.json`, mục `FIXTURE_DRAW_OVERRIDES["VFX_ComposeAmbientFire"]` bị gắn cứng vào hàm legacy `VFX_ComposeAmbientFireEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, s_ambientFireFixtureStyle)`. Do đó, `vfx_test.c` (case 42 trong `VFXTest_Draw3D`) tiếp tục render emitter cũ mà hoàn toàn không gọi `VFX_ComposeFireEx(pos, cfg)` hay đọc cấu hình từ `VFX_Fire_GetLiveConfig()`.
+  2. Trong `flame_volume.inl`, khi các tham số trường lực thay đổi (như `swirlSpeed`, `turbulenceSpeed`, `buoyancy`, `motionType`), `VFX_ComposeFireEx` chỉ gọi `MotionFields_SetTransform`, vốn chỉ cập nhật ma trận vị trí mà không cập nhật công thức trường lực của `MotionFieldRecipe`.
+  3. Trong `particle_lit.fs`, tọa độ UV của Raylib quad billboard có $V=0.0$ ở đỉnh trên và $V=1.0$ ở chân dưới, ngược với hệ tọa độ của WebGL ($Y=0.0$ ở đáy), khiến hình dáng lưỡi lửa bị lộn ngược và thắt sai vị trí.
+- **Giải pháp xử lý triệt để**:
+  1. Sửa `FIXTURE_DRAW_OVERRIDES` trong `scripts/sync_vfx_test.py` và `scripts/vfx_test_manifest.json` trỏ trực tiếp về `VFX_ComposeFireEx($POS, VFX_Fire_GetLiveConfig())`.
+  2. Đồng bộ hóa lại `sandbox/vfx_test.c`: case 42 trong `VFXTest_Draw3D` gọi trực tiếp `VFX_ComposeFireEx(s_prefabStartPos, VFX_Fire_GetLiveConfig())`. Thêm `VFX_KillFire(0)` vào `VFXTest_StopFixtures`.
+  3. Bổ sung cơ chế phát hiện thay đổi tham số trường lực `recipeChanged` trong `VFX_ComposeFireEx`: dừng field cũ và tái tạo field mới ngay trong frame đó khi người dùng kéo slider liên quan đến chuyển động / trường lực.
+  4. Đảo ngược tọa độ $Y$ trong `particle_lit.fs` thành `float y = 1.0 - fragTexCoord.y;` giúp ngọn lửa vươn thẳng đứng tự nhiên, kích hoạt đầy đủ các tầng noise advection `w1` và `d`.
+  5. Cấu hình `ParticleDynamicsProfile` (`inverseMassKg = 4.0f`, `windCouplingHz = 8.0f`, `spatialMotionOnly = true`, `receiveMotionFields = true`) giúp hạt lửa phản hồi tức thì và sinh động theo từng nhịp xoáy vortex, luồng khí bốc lên hoặc nổ tung blast.

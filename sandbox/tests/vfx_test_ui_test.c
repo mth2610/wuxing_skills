@@ -71,6 +71,10 @@ static Color ColorAlpha(Color c, float alpha) { c.a = (unsigned char)(alpha * 25
 #define VFX_SurfaceParticleRingVariant_Name(x) "Variant"
 #define VFX_ImpactDustVariant_Name(x) "Variant"
 #define VFX_FlameStyle_Name(x) "Variant"
+#define VFX_FireMode_Name(x) "Variant"
+typedef struct { int mode; } VFXTest_DummyFireConfig;
+static VFXTest_DummyFireConfig s_dummyFireConfig = {0};
+#define VFX_Fire_GetLiveConfig() (&s_dummyFireConfig)
 #define VFXTest_SurfaceImpactReceiverName(x) "Variant"
 static void TraceLog(int level, const char *format, ...) { (void)level; (void)format; }
 static void BeginScissorMode(int x, int y, int width, int height) { (void)x; (void)y; (void)width; (void)height; }
@@ -95,6 +99,7 @@ static void Click(Rectangle rect)
 
 int main(void)
 {
+    (void)s_dummyFireConfig;
     float value = 0.5f; int integer = 1, enumeration = 0; bool enabled = false;
     s_inspectorParamCount = 4;
     s_inspectorParams[0] = (VFX_ParamDef){.name="Float",.group="Body",.type=VFX_PARAM_FLOAT,.valPtr=&value,.minFloat=0,.maxFloat=1,.stepFloat=.25f};
@@ -142,6 +147,26 @@ int main(void)
     Click(VFXTest_UIParameterButton(VFXTest_UIInspectorRow(ui, 3), -1)); assert(!enabled);
     value = 1; VFXTest_UIEditParameter(0, 1); assert(value == 1);
     value = 0; VFXTest_UIEditParameter(0, -1); assert(value == 0);
+
+    // Test slider click and drag on parameter 0 (Float [0..1] with step 0.25)
+    Rectangle row0 = VFXTest_UIInspectorRow(ui, 0);
+    Rectangle track0 = VFXTest_UISliderTrack(row0);
+    s_testMouse = (Vector2){track0.x + track0.width * 0.5f, track0.y + track0.height * 0.5f};
+    s_testDown = true; s_testReleased = false;
+    VFXTest_UIHandleInput((Vector3){0});
+    assert(s_vfxDraggingSlider == 0);
+    assert(fabsf(value - 0.5f) < 0.05f);
+
+    // Drag along track to 80% (snaps to step 0.75)
+    s_testMouse = (Vector2){track0.x + track0.width * 0.8f, track0.y + track0.height * 0.5f};
+    VFXTest_UIHandleInput((Vector3){0});
+    assert(fabsf(value - 0.75f) < 0.05f);
+
+    s_testDown = false; s_testReleased = true;
+    VFXTest_UIHandleInput((Vector3){0});
+    assert(s_vfxDraggingSlider == -1);
+    s_testReleased = false;
+
     VFXTest_UIDraw();
     s_inspectorParamCount = 23;
     s_inspectorSelectedParam = 22; VFXTest_UIRevealSelectedParameter();

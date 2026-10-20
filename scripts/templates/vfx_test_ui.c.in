@@ -5,6 +5,7 @@ static bool s_vfxButtonArmed = false;
 static Rectangle s_vfxArmedButton;
 static int s_vfxInspectorScroll = 0;
 static int s_vfxBrowserScroll = 0;
+static int s_vfxDraggingSlider = -1;
 static float s_vfxTelemetryFps, s_vfxTelemetryFrameMs, s_vfxTelemetryPeakMs;
 static float s_vfxTelemetryTilt = 18.0f, s_vfxTelemetryDistance = 20.571864f, s_vfxTelemetryZoom = 1.0f;
 static int s_vfxPendingTiltStep;
@@ -58,7 +59,7 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
         statusBottom = top + 116.0f;
     }
     float panelTop = fmaxf(176.0f, statusBottom + 40.0f);
-    ui.rowHeight = 38.0f;
+    ui.rowHeight = 44.0f;
     float panelHeight = fminf(76.0f + fmaxf(1.0f, (float)s_inspectorParamCount) * ui.rowHeight, fmaxf(116.0f, h - panelTop - 48.0f));
     ui.inspector = (Rectangle){w - panelWidth - 12.0f, panelTop, panelWidth, panelHeight};
     ui.inspectorRows = (int)((ui.inspector.height - 76.0f) / ui.rowHeight);
@@ -84,6 +85,11 @@ static Rectangle VFXTest_UIInspectorRow(VFXTest_UILayout ui, int visibleRow)
 {
     return (Rectangle){ui.inspector.x + 8.0f, ui.inspector.y + 42.0f + visibleRow * ui.rowHeight,
                        ui.inspector.width - 16.0f, ui.rowHeight - 4.0f};
+}
+
+static Rectangle VFXTest_UISliderTrack(Rectangle row)
+{
+    return (Rectangle){row.x + 8.0f, row.y + row.height - 7.0f, row.width - 84.0f, 5.0f};
 }
 
 static Rectangle VFXTest_UIParameterButton(Rectangle row, int direction)
@@ -140,7 +146,7 @@ bool VFXTest_IsPointerOverUI(void)
     if (CheckCollisionPointRec(mouse, ui.cameraStatus)) return true;
     for (int i = 0; i < 3; ++i) if (CheckCollisionPointRec(mouse, ui.metrics[i])) return true;
     if (s_isPanelOpen || s_vfxHelpOpen) return true; /* Modal panels own their backdrop. */
-    if (s_isPlayingMesh && s_inspectorParamCount > 0 && CheckCollisionPointRec(mouse, ui.inspector)) return true;
+    if (s_inspectorParamCount > 0 && CheckCollisionPointRec(mouse, ui.inspector)) return true;
     if (!s_hideDebugOverlays && CheckCollisionPointRec(mouse, (Rectangle){12.0f, 164.0f, 298.0f, 76.0f})) return true;
     return false;
 }
@@ -267,23 +273,64 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
                 if (index >= 0) VFXTest_UISelectFixture(index, playerPos);
                 break;
             }
-    } else if (!s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
+    } else if (!s_vfxHelpOpen && s_inspectorParamCount > 0) {
         int maxScroll = s_inspectorParamCount - ui.inspectorRows;
         if (maxScroll < 0) maxScroll = 0;
         if (CheckCollisionPointRec(GetMousePosition(), ui.inspector)) s_vfxInspectorScroll -= (int)GetMouseWheelMove();
         if (s_vfxInspectorScroll < 0) s_vfxInspectorScroll = 0;
         if (s_vfxInspectorScroll > maxScroll) s_vfxInspectorScroll = maxScroll;
-        for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
-            int index = row + s_vfxInspectorScroll;
-            Rectangle rect = VFXTest_UIInspectorRow(ui, row);
-            if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, -1))) {
-                s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, -1); VFXTest_UILogParameter(index);
-            } else if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, 1))) {
-                s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, 1); VFXTest_UILogParameter(index);
-            } else if (VFXTest_UIButtonReleased(rect)) s_inspectorSelectedParam = index;
+
+        Vector2 mouse = GetMousePosition();
+        if (s_vfxDraggingSlider >= 0 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            s_vfxPointerCaptured = true;
+            int visRow = s_vfxDraggingSlider - s_vfxInspectorScroll;
+            Rectangle rect = VFXTest_UIInspectorRow(ui, visRow);
+            Rectangle track = VFXTest_UISliderTrack(rect);
+            float t = fmaxf(0.0f, fminf(1.0f, (mouse.x - track.x) / track.width));
+            VFX_ParamDef *param = &s_inspectorParams[s_vfxDraggingSlider];
+            float before = (param->type == VFX_PARAM_FLOAT && param->valPtr) ? *(float*)param->valPtr : 0.0f;
+            VFX_Param_SetNormalized(param, t);
+            if (param->type == VFX_PARAM_FLOAT) {
+                s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, before,
+                    s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
+            }
+            VFXTest_UILogParameter(s_vfxDraggingSlider);
+        } else {
+            for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
+                int index = row + s_vfxInspectorScroll;
+                Rectangle rect = VFXTest_UIInspectorRow(ui, row);
+                Rectangle track = VFXTest_UISliderTrack(rect);
+                Rectangle trackHit = {track.x, track.y - 6.0f, track.width, track.height + 12.0f};
+
+                if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, trackHit) &&
+                    !CheckCollisionPointRec(mouse, VFXTest_UIParameterButton(rect, -1)) &&
+                    !CheckCollisionPointRec(mouse, VFXTest_UIParameterButton(rect, 1))) {
+                    s_vfxDraggingSlider = index;
+                    s_inspectorSelectedParam = index;
+                    s_vfxPointerCaptured = true;
+                    float t = fmaxf(0.0f, fminf(1.0f, (mouse.x - track.x) / track.width));
+                    VFX_ParamDef *param = &s_inspectorParams[index];
+                    float before = (param->type == VFX_PARAM_FLOAT && param->valPtr) ? *(float*)param->valPtr : 0.0f;
+                    VFX_Param_SetNormalized(param, t);
+                    if (param->type == VFX_PARAM_FLOAT) {
+                        s_inspectorParamCount = VFXTest_GuidedParameterEdited(param, before,
+                            s_inspectorParams, s_inspectorParamCount, VFX_TEST_MAX_INSPECTOR_PARAMS);
+                    }
+                    VFXTest_UILogParameter(index);
+                    break;
+                } else if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, -1))) {
+                    s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, -1); VFXTest_UILogParameter(index);
+                } else if (VFXTest_UIButtonReleased(VFXTest_UIParameterButton(rect, 1))) {
+                    s_inspectorSelectedParam = index; VFXTest_UIEditParameter(index, 1); VFXTest_UILogParameter(index);
+                } else if (VFXTest_UIButtonReleased(rect)) s_inspectorSelectedParam = index;
+            }
         }
     }
-    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) { s_vfxButtonArmed = false; s_vfxPointerCaptured = false; }
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+        s_vfxButtonArmed = false;
+        s_vfxPointerCaptured = false;
+        s_vfxDraggingSlider = -1;
+    }
     return back;
 }
 
@@ -313,7 +360,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("DECAL")) return VFX_DecalVariant_Name(s_decalFixtureVariant);
     if (VFXTest_IsNewFxNamed("SURFACE PARTICLE RING")) return VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant);
     if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
-    if (VFXTest_IsNewFxNamed("AMBIENT FIRE")) return VFX_FlameStyle_Name(s_ambientFireFixtureStyle);
+    if (VFXTest_IsNewFxNamed("AMBIENT FIRE")) return VFX_FireMode_Name(VFX_Fire_GetLiveConfig()->mode);
     if (VFXTest_IsNewFxNamed("SURFACE IMPACT")) return VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface);
     return NULL;
 }
@@ -347,7 +394,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIText(TextFormat("Tilt %.0f deg  Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 12, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, -1), "-", false);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
-    if (!s_isPanelOpen && !s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
+    if (!s_isPanelOpen && !s_vfxHelpOpen && s_inspectorParamCount > 0) {
         DrawRectangleRounded(ui.inspector, 0.035f, 4, (Color){15, 20, 27, 235});
         VFXTest_UIText(VFXTest_IsNewFxNamed("GUIDED MOTION") ? "Parameters - next cast" : "Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
         for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {
@@ -359,6 +406,18 @@ static void VFXTest_UIDraw(void)
             VFXTest_UIText(TextFormat("%s / %s", s_inspectorParams[index].group, s_inspectorParams[index].name),
                           (Rectangle){rect.x, rect.y, rect.width - 76, 17}, 11, selected ? SKYBLUE : LIGHTGRAY);
             VFXTest_UIText(value, (Rectangle){rect.x, rect.y + 16, rect.width - 76, 18}, 12, RAYWHITE);
+
+            // Render interactive slider track
+            Rectangle track = VFXTest_UISliderTrack(rect);
+            DrawRectangleRounded(track, 0.5f, 2, (Color){38, 48, 60, 240});
+            float t = VFX_Param_GetNormalized(&s_inspectorParams[index]);
+            float fillW = fmaxf(4.0f, track.width * t);
+            DrawRectangleRounded((Rectangle){track.x, track.y, fillW, track.height}, 0.5f, 2,
+                                 selected ? (Color){90, 185, 255, 255} : (Color){60, 140, 200, 230});
+            float thumbX = track.x + t * track.width;
+            DrawRectangleRounded((Rectangle){thumbX - 3.0f, track.y - 2.0f, 6.0f, track.height + 4.0f},
+                                 0.5f, 2, (Color){240, 250, 255, 255});
+
             VFXTest_UIDrawButton(VFXTest_UIParameterButton(rect, -1), "<", false);
             VFXTest_UIDrawButton(VFXTest_UIParameterButton(rect, 1), ">", false);
         }

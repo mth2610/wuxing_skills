@@ -1763,8 +1763,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         heat = 1.0f;
       unsigned char h = (unsigned char)(heat * 255.0f);
       c.r = h;
-      c.g = (p->volumeSheet == 2) ? (unsigned char)(invRatio * 255.0f) : h;
-      c.b = h;
+      c.g = (p->volumeSheet >= 5 || p->volumeSheet == 2) ? (unsigned char)(invRatio * 255.0f) : h;
+      c.b = (p->volumeSheet >= 5) ? (unsigned char)(p->colorStart.b) : h;
     }
 
     float drawRadius = p->radius;

@@ -533,7 +533,7 @@
       "lifecycle": "emitter",
       "_auto": true,
       "type": "continuous",
-      "draw_call": "VFX_ComposeAmbientFireEx($POS, VC_MAT_FIRE, 1.5f, 1.0f, s_ambientFireFixtureStyle)"
+      "draw_call": "VFX_ComposeFireEx($POS, VFX_Fire_GetLiveConfig())"
     },
     {
       "source": "fire/vc_fireball_burst.inl",
