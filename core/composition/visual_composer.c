@@ -115,8 +115,7 @@ void VFX_Compose_Update(float dt)
     VC_RefParticles_Update(dt);   /* calibration target — vc_ref_particle.inl */
     VC_GuidedMotion_Update(dt);
     WaterOrb_Update(dt);
-    WaterRing_Update(dt);
-    LiquidBench_Update(dt);
+    // LiquidBench_Update(dt);
     /* Choreography can update parent frames after field ages advance. Refresh
      * bindings without advancing clocks before component GPU snapshots. */
     MotionFields_RefreshFrames();
@@ -156,6 +155,5 @@ void VFX_Compose_Draw3D(Camera3D cam)
 void VFX_Compose_SubmitScreenSpaceVFX(void)
 {
     WaterOrb_SubmitSurface();
-    WaterRing_SubmitSurface();
-    LiquidBench_SubmitSurface();
+    // LiquidBench_SubmitSurface();
 }

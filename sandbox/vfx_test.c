@@ -130,6 +130,8 @@ float VFXTest_GetPreferredCameraDistance(void)
 {
     if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
         return 4.4f;
+    if (VFXTest_IsNewFxNamed("WATER ORB"))
+        return 4.2f;
     return 0.0f;
 }
 
@@ -137,6 +139,8 @@ float VFXTest_GetPreferredCameraPitch(void)
 {
     if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
         return 10.3f;
+    if (VFXTest_IsNewFxNamed("WATER ORB"))
+        return 18.0f;
     return 0.0f;
 }
 
@@ -777,6 +781,10 @@ static void VFXTest_RefreshInspectorParams(bool force)
         }
         s_liveMotionRibbonConfig.preset = (int)s_motionRibbonFixturePreset;
         s_inspectorParamCount = VFX_MotionRibbon_GetParams(&s_liveMotionRibbonConfig, s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
+    }
+    else if (VFXTest_IsNewFxNamed("WATER ORB"))
+    {
+        s_inspectorParamCount = VFX_LiquidOrb_GetParams(VFX_LiquidOrb_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
 }
 
@@ -1598,7 +1606,7 @@ bool VFXTest_IsPointerOverUI(void)
     if (CheckCollisionPointRec(mouse, ui.cameraStatus)) return true;
     for (int i = 0; i < 3; ++i) if (CheckCollisionPointRec(mouse, ui.metrics[i])) return true;
     if (s_isPanelOpen || s_vfxHelpOpen) return true; /* Modal panels own their backdrop. */
-    if (s_isPlayingMesh && s_inspectorParamCount > 0 && CheckCollisionPointRec(mouse, ui.inspector)) return true;
+    if (s_inspectorParamCount > 0 && CheckCollisionPointRec(mouse, ui.inspector)) return true;
     if (!s_hideDebugOverlays && CheckCollisionPointRec(mouse, (Rectangle){12.0f, 164.0f, 298.0f, 76.0f})) return true;
     return false;
 }
@@ -1725,7 +1733,7 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
                 if (index >= 0) VFXTest_UISelectFixture(index, playerPos);
                 break;
             }
-    } else if (!s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
+    } else if (!s_vfxHelpOpen && s_inspectorParamCount > 0) {
         int maxScroll = s_inspectorParamCount - ui.inspectorRows;
         if (maxScroll < 0) maxScroll = 0;
         if (CheckCollisionPointRec(GetMousePosition(), ui.inspector)) s_vfxInspectorScroll -= (int)GetMouseWheelMove();
@@ -1805,7 +1813,7 @@ static void VFXTest_UIDraw(void)
     VFXTest_UIText(TextFormat("Tilt %.0f deg  Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 12, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, -1), "-", false);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
-    if (!s_isPanelOpen && !s_vfxHelpOpen && s_isPlayingMesh && s_inspectorParamCount > 0) {
+    if (!s_isPanelOpen && !s_vfxHelpOpen && s_inspectorParamCount > 0) {
         DrawRectangleRounded(ui.inspector, 0.035f, 4, (Color){15, 20, 27, 235});
         VFXTest_UIText(VFXTest_IsNewFxNamed("GUIDED MOTION") ? "Parameters - next cast" : "Parameters", (Rectangle){ui.inspector.x + 8, ui.inspector.y + 6, ui.inspector.width - 16, 28}, 14, RAYWHITE);
         for (int row = 0; row < ui.inspectorRows && row + s_vfxInspectorScroll < s_inspectorParamCount; ++row) {

@@ -97,10 +97,12 @@ void main() {
     vec2 screenUV = gl_FragCoord.xy / max(u_resolution, vec2(1.0));
     if (u_hasSceneDepth != 0) {
         float sceneLinear = texture(u_sceneDepth, screenUV).r;
-        if (sceneLinear > 0.15 && sceneLinear < 800.0) {
+        if (sceneLinear > 1.0 && sceneLinear < 800.0) {
             float cosTheta = max(dot(rayDir, u_cameraForward), 0.1);
             float sceneRayDist = sceneLinear / cosTheta;
-            tEnd = min(tEnd, sceneRayDist);
+            if (sceneRayDist > tStart) {
+                tEnd = min(tEnd, sceneRayDist);
+            }
         }
     }
 
@@ -126,7 +128,6 @@ void main() {
             if (t > tEnd) break;
             float phi = EvaluateField(rayOrigin + rayDir * t);
             if (phi >= u_threshold) {
-                // 4-step binary search refinement
                 float tA = tPrev;
                 float tB = t;
                 for (int b = 0; b < 4; b++) {

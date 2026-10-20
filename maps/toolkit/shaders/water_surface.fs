@@ -369,13 +369,13 @@ void main()
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
     float waterColumnAlpha = (u_waterShape == 3)
-        ? (0.18 + 0.58 * (1.0 - exp(-2.1 * waterDepth)))
+        ? (0.05 + 0.68 * smoothstep(0.02, 0.75, waterDepth))
         : (0.12 + 0.36 * (1.0 - exp(-1.8 * waterDepth)));
     // Only crisp pinpoint glintSharp contributes to alpha, preventing broad milky opacity blobs
     float glintAlphaBoost = clamp(glintSharp * 0.35, 0.0, 0.22);
     float surfaceAlpha = fresnel * 0.65 + waterColumnAlpha + glintAlphaBoost;
 
-    // Gated shoreline edge feathering (skips 2 texture fetches for interior river pixels > 0.28m deep)
+    // Smooth analytical shoreline edge feathering (clean, antialiased contact lip)
     float shoreEdgeFade = 1.0;
     if (u_waterShape == 0) {
         if (radial > 0.84) {
@@ -385,12 +385,8 @@ void main()
             shoreEdgeFade = 1.0 - smoothstep(0.91 + shoreBreakup, 1.0, radial);
         }
     } else if (u_waterShape == 3) {
-        if (waterDepth < 0.28) {
-            float shoreNoise = texture(texture0, fragWorldXZ * 0.38).r;
-            float shoreFine  = texture(texture0, fragWorldXZ * 1.35).r;
-            float shorePerturb = (shoreNoise - 0.5) * 0.055 + (shoreFine - 0.5) * 0.020;
-            shoreEdgeFade = smoothstep(0.012, 0.21, waterDepth + shorePerturb);
-        }
+        // Clean linear feathering from depth = 0.002m to 0.12m eliminates jagged pixel steps
+        shoreEdgeFade = smoothstep(0.002, 0.12, waterDepth);
     } else {
         shoreEdgeFade = smoothstep(0.002, 0.035, waterDepth);
     }

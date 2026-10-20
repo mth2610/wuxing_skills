@@ -1408,6 +1408,7 @@ void VFX_KillGasMaterialLab(int handle);
 void VFX_KillRefBands(int id);
 void VFX_KillRefParticles(int id);
 void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile profile);
+bool VFX_WaterOrb_IsAnyActive(void);
 void VFX_SmokeTrail_Stop(int handle);
 void VFX_WaterRing_Stop(void);
 // @gen:vc_declarations end

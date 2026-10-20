@@ -221,6 +221,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     const float golden = 2.39996323f;
     bool isReed = style.growthForm == MAP_MEADOW_GROWTH_REED ||
                   (style.growthForm == MAP_MEADOW_GROWTH_AUTO && clump->height > 0.95f);
+    bool isPampas = style.growthForm == MAP_MEADOW_GROWTH_PAMPAS;
     float clumpAngle = clump->rotationDeg * DEG2RAD;
 
     int bladeId = bladesPerClump > 1 && bladesPerClump < style.bladesPerClump
@@ -306,6 +307,62 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         {
             bladeRoot = (Color){28, 48, 20, 255};
             bladeTip = (Color){132, 182, 68, 255};
+        }
+    }
+    else if (isPampas)
+    {
+        // Ghost of Tsushima Japanese Pampas / Chè Cỏ Tranh:
+        // Blades 0 and 1: Tall erect stalks crowned with silvery-gold plumes (isSeedhead = true)
+        // Blades 2+: Arching basal foliage ribbons framing the plumes
+        float baseAzimuth = clumpAngle + (float)bladeId * golden + (bHash - 0.5f) * 0.65f;
+        float radX = cosf(baseAzimuth);
+        float radZ = sinf(baseAzimuth);
+
+        float windWeight = (bladeId < 2) ? 0.38f : 0.25f;
+        float combX = radX * (1.0f - windWeight) + flowX * windWeight;
+        float combZ = radZ * (1.0f - windWeight) + flowZ * windWeight;
+        float combLen = sqrtf(combX * combX + combZ * combZ);
+        float dirX = (combLen > 0.01f) ? (combX / combLen) : flowX;
+        float dirZ = (combLen > 0.01f) ? (combZ / combLen) : flowZ;
+        bladeLeanAngle = atan2f(dirZ, dirX);
+
+        float collarRadius = clump->radius * ((bladeId < 2) ? 0.12f : (0.24f + 0.12f * bHash3));
+        float bx = clump->position.x + radX * collarRadius;
+        float bz = clump->position.z + radZ * collarRadius;
+
+        if (bladeId == 0)
+        {
+            // Center plume stalk with feathery seedhead
+            isSeedhead = true;
+            height = clump->height * (1.30f + 0.30f * bHash2);
+            width = clump->radius * style.bladeWidthScale * (1.10f + 0.20f * bHash3);
+            lean = height * (0.22f + 0.08f * bHash);
+            droopY = height * 0.05f;
+
+            pBase = (Vector3){bx, clump->position.y - 0.010f, bz};
+            pP1 = (Vector3){bx + dirX * (lean * 0.20f), pBase.y + height * 0.38f, bz + dirZ * (lean * 0.20f)};
+            pP2 = (Vector3){bx + dirX * (lean * 0.52f), pBase.y + height * 0.74f, bz + dirZ * (lean * 0.52f)};
+            pP3 = (Vector3){bx + dirX * (lean * 0.90f), pBase.y + (height * 0.96f - droopY), bz + dirZ * (lean * 0.90f)};
+
+            bladeRoot = (Color){38, 46, 22, 255};
+            bladeTip = (Color){172, 178, 102, 255}; // Golden cane stalk
+        }
+        else
+        {
+            // Basal arching ribbon
+            isSeedhead = false;
+            height = clump->height * (0.65f + 0.18f * bHash2);
+            width = clump->radius * style.bladeWidthScale * 0.88f;
+            lean = height * (0.65f + 0.18f * bHash);
+            droopY = height * (0.24f + 0.08f * bHash3);
+
+            pBase = (Vector3){bx, clump->position.y - 0.012f, bz};
+            pP1 = (Vector3){bx + dirX * (lean * 0.24f), pBase.y + height * 0.34f, bz + dirZ * (lean * 0.24f)};
+            pP2 = (Vector3){bx + dirX * (lean * 0.58f), pBase.y + height * 0.66f, bz + dirZ * (lean * 0.58f)};
+            pP3 = (Vector3){bx + dirX * (lean * 0.96f), pBase.y + (height * 0.86f - droopY), bz + dirZ * (lean * 0.96f)};
+
+            bladeRoot = (Color){24, 36, 16, 255};
+            bladeTip = (Color){124, 162, 64, 255}; // Olive-gold foliage
         }
     }
     else if (bladesPerClump <= 2 && bladeSegments <= 2)
@@ -473,7 +530,7 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
                            (unsigned char)fminf(255, fmaxf(0, tG)),
                            (unsigned char)fminf(255, fmaxf(0, tB)), 255};
     }
-    if (!isReed && style.botanicalVariation > 0.0f)
+    if (!isReed && !isPampas && style.botanicalVariation > 0.0f)
     {
         Vector3 canopy = MeadowCanopyColor(MeadowHabitat(clump->position.x, clump->position.z));
         float variation = 0.95f + 0.10f * bHash2;

@@ -468,7 +468,8 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     data->tuftCount = count;
     data->canonicalBlades = style.bladesPerClump;
     data->canonical = style.bladesPerClump >= 3 && style.bladeSegments >= 2 &&
-                      style.growthForm != MAP_MEADOW_GROWTH_REED;
+                      style.growthForm != MAP_MEADOW_GROWTH_REED &&
+                      style.growthForm != MAP_MEADOW_GROWTH_PAMPAS;
     for (int i = 0; i < count; i++)
     {
         if (style.growthForm == MAP_MEADOW_GROWTH_AUTO && placements[i].height > 0.95f)

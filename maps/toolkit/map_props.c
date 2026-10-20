@@ -65,3 +65,4 @@ static float Nature_Random01(unsigned int *state)
 #include "maps/toolkit/map_props_nature.inl"
 #include "maps/toolkit/map_props_flora.inl"
 #include "maps/toolkit/map_props_debris.inl"
+

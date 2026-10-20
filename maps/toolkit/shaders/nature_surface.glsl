@@ -321,7 +321,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
     float waxFresnel = FastPow4(1.0 - nv);
-    vec3 waxSheen = skyAmbient * (waxFresnel * 0.16 * archWindow * specScale * (1.0 - antiShimmer * 0.85));
+    vec3 waxSheen = skyAmbient * (waxFresnel * 0.07 * archWindow * specScale * (1.0 - antiShimmer * 0.85));
     lit += waxSheen * rootAO;
 
     float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, u_lightDir, worldPosition, distToCam);
@@ -363,10 +363,10 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                 float sinTH16 = sinTH8 * sinTH8;
                 float sinTHBroad = mix(sinTH16, sinTH4, distRoughness);
 
-                vec3 primarySheen   = mix(baseColor, vec3(1.00, 0.98, 0.84), 0.52) * (sinTH8 * 0.062);
-                vec3 secondaryGlint = vec3(1.00, 0.98, 0.88) * (sinTHBroad * 0.075 * (1.0 - distRoughness * 0.78));
+                vec3 primarySheen   = mix(baseColor, vec3(1.00, 0.98, 0.84), 0.52) * (sinTH8 * 0.045);
+                vec3 secondaryGlint = mix(baseColor, vec3(1.00, 0.98, 0.88), 0.40) * (sinTHBroad * 0.032 * (1.0 - distRoughness * 0.78));
                 anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.25, 0.0));
-                waxySpec = FastPow32(NdotH) * (0.095 * h) * specAA * (1.0 - distRoughness);
+                waxySpec = FastPow32(NdotH) * (0.038 * h) * specAA * (1.0 - distRoughness);
             }
 
             // Luminous Golden-Jade Subsurface Translucency (Ghost of Tsushima Morning Glow):
@@ -377,12 +377,12 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float edgeThinness = 0.72 + 0.28 * absU;
             float sssWindow = FastRamp(0.10, 0.46, h) * (1.0 - FastRamp(0.84, 0.99, h) * 0.32);
             float transmission = (backLobe * 0.62 + forwardLobe * 0.82 * (0.42 + 0.58 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 goldenJadeSSS = baseColor * vec3(1.36, 1.46, 0.46) + vec3(0.032, 0.042, 0.008) * sssScale;
+            vec3 goldenJadeSSS = baseColor * vec3(1.48, 1.55, 0.48) + vec3(0.045, 0.058, 0.012) * sssScale;
 
             float diffuseLobe = wrapped * (0.42 + 0.58 * wrapped);
             vec3 directDiffuse = baseColor * (diffuseLobe * 0.62);
-            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.46);
-            vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.36);
+            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.68);
+            vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.36) * baseColor;
 
             vec3 directSun = (directDiffuse + jadeTrans) * (canopy * sunVis) + specHighlight * sunVis;
             lit += directSun * effectiveLightColor;

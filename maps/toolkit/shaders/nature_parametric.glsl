@@ -200,6 +200,11 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     if (p2.w > 0.5) {
         // Reed / broad leaf profile
         profile = (0.78 + 0.36 * sinPiT) * (1.0 - t2 * (0.72 + 0.24 * t));
+    } else if (p3.w > 0.5) {
+        // Pampas feather plume: slender stalk below, expanding into soft feathery plume at top
+        float stalk = min(1.0, 0.45 + 1.8 * t);
+        float plumeShape = (t > 0.72) ? (1.0 + 1.25 * sin((t - 0.72) * 11.22)) : 1.0;
+        profile = stalk * plumeShape;
     } else {
         // AAA Botanical sword-leaf taper:
         float sheath = min(1.0, 0.65 + 2.5 * t);
@@ -260,6 +265,11 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 
     float baseOcclusion = mix(0.78, 1.0, smoothstep(0.0, 0.32, t));
     vec3 smoothCol = clamp(gradCol * (baseOcclusion * bladeTone), 0.0, 1.0);
+    if (p3.w > 0.5 && t > 0.70) {
+        float plumeT = smoothstep(0.70, 0.86, t);
+        vec3 plumeSilk = vec3(0.95, 0.91, 0.80); // Luminous silvery-gold silk plume head
+        smoothCol = mix(smoothCol, plumeSilk * bladeTone * 1.15, plumeT * 0.85);
+    }
 
     color = vec4(smoothCol, fadeAlpha);
     windUV = vec2(p0.w, t);

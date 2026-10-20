@@ -30,6 +30,7 @@
 #define GRASS_TUFT_CAPACITY 64000
 #define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
 #define REED_COUNT 560
+#define PAMPAS_COUNT 2400
 
 // Safe elevation floor above the sheer outer cliff abyss (-CLIFF_DEPTH)
 // Prevents cutting off grass in natural river basins and low swales (y in [-2.2m, 0.0m])
@@ -58,8 +59,10 @@ static MapEcology s_habitat;
 static MapMeadowPlacement s_grassPlacements[GRASS_TUFT_CAPACITY];
 static MapFlowerPlacement s_flowerPlacements[FLOWER_COUNT];
 static MapMeadowPlacement s_reedPlacements[REED_COUNT];
+static MapMeadowPlacement s_pampasPlacements[PAMPAS_COUNT];
 static int s_grassCount = 0;
 static int s_reedCount = 0;
+static int s_pampasCount = 0;
 static int s_flowerCount = 0;
 
 static bool s_shadowWasEnabled = false;
@@ -189,8 +192,8 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
 
     // Focus grass budget inside the main valley & river basin so reservoir sampling
     // never thins out the playable foreground meadow.
-    float nx = (x - kMapCenter.x) / (MAP_WIDTH * 0.36f);
-    float nz = (z - kMapCenter.z) / (MAP_DEPTH * 0.34f);
+    float nx = (x - kMapCenter.x) / (MAP_WIDTH * 0.28f);
+    float nz = (z - kMapCenter.z) / (MAP_DEPTH * 0.28f);
     float basinDist = nx * nx + nz * nz;
     if (basinDist >= 1.0f)
         return 0.0f;
@@ -251,16 +254,15 @@ static float Random01(unsigned int *rng)
 static void BuildFloraPlacements(void)
 {
     // 1. Lush interlocking valley meadow:
-    // Optimized 0.305m spacing keeps 60k tufts within GRASS_TUFT_CAPACITY with zero thinning
-    // while cutting GPU vertex & overdraw cost by ~18%.
-    float spanX = MAP_WIDTH * 0.36f;
-    float spanZ = MAP_DEPTH * 0.34f;
+    // Focused in central playable valley with dense 0.255m spacing for a continuous, velvety carpet
+    float spanX = MAP_WIDTH * 0.28f;
+    float spanZ = MAP_DEPTH * 0.28f;
     s_grassCount = MapFlora_GenerateMeadowPlacements(
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapFloraMeadowConfig){
             .minBounds = {kMapCenter.x - spanX, kMapCenter.z - spanZ},
             .maxBounds = {kMapCenter.x + spanX, kMapCenter.z + spanZ},
-            .spacing = 0.305f,
+            .spacing = 0.255f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -303,7 +305,40 @@ static void BuildFloraPlacements(void)
         }
     }
 
-    // 3. Multi-species Wildflower Colonies
+    // 3. Hillside Japanese Pampas / Chè Cỏ Tranh Plumes (Ghost of Tsushima Aesthetic)
+    s_pampasCount = 0;
+    for (int attempts = 0; attempts < 6000 && s_pampasCount < PAMPAS_COUNT; attempts++)
+    {
+        float rx = 15.0f + Random01(&rng) * (MAP_WIDTH - 30.0f);
+        float rz = 15.0f + Random01(&rng) * (MAP_DEPTH - 30.0f);
+        Vector3 pos, normal;
+        if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, rx, rz, &pos, &normal))
+            continue;
+        // Pampas colonizes rolling hill flanks and ridges above the valley floor:
+        if (normal.y < 0.52f || normal.y > 0.92f || pos.y < PLAYABLE_BASIN_FADE_Y + 0.65f)
+            continue;
+
+        float waterY = SampleWaterHeight(rx, rz);
+        if (pos.y - waterY < 1.2f)
+            continue;
+
+        Color splat = SampleSplat(rx, rz);
+        if (splat.g > 200)
+            continue;
+
+        float rad = 0.24f + 0.08f * Random01(&rng);
+        float h = 1.25f + 0.55f * Random01(&rng);
+        s_pampasPlacements[s_pampasCount++] = (MapMeadowPlacement){
+            .position = pos,
+            .radius = rad,
+            .height = h,
+            .rotationDeg = Random01(&rng) * 360.0f,
+            .phase = Random01(&rng)};
+    }
+    TraceLog(LOG_INFO, "SONG_QUAO_PAMPAS: placements=%d capacity=%d",
+             s_pampasCount, PAMPAS_COUNT);
+
+    // 4. Multi-species Wildflower Colonies
     MapFlora_GenerateFlowerPlacements(
         s_flowerPlacements, FLOWER_COUNT,
         SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
@@ -341,6 +376,11 @@ static void BuildRocks(void)
         {
             pos = item->position;
         }
+        // Bury rock base 22-30% into the terrain so rocks emerge organically from the earth
+        float sinkOffset = (item->archetype == MAP_ROCK_RIVER_STONE)
+            ? (item->heightScale * 0.20f)
+            : (item->heightScale * 0.28f);
+        pos.y -= sinkOffset;
         MapProp_AddRockItem(&s_rocks, pos, item->radiusScale, item->heightScale, item->rotationDeg, item->archetype);
     }
 
@@ -526,16 +566,20 @@ void InitSongQuaoMap(void)
             .grassTipColor = {128, 172, 62, 255},
             .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.102f,
-            .lodDistance = 25.0f,
-            .midLodDistance = 13.5f,
-            .drawDistance = 58.0f,
+            .bladeWidthScale = 0.112f,
+            .lodDistance = 24.0f,
+            .midLodDistance = 12.0f,
+            .drawDistance = 34.0f,
             .shadowDistance = 14.5f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {32, 46, 22, 255},
             .reedTipColor = {118, 162, 68, 255},
             .hasReedPlumes = false,
             .botanicalVariation = 1.0f,
+            .pampasPlacements = s_pampasPlacements,
+            .pampasCount = s_pampasCount,
+            .pampasRootColor = {44, 52, 28, 255},
+            .pampasTipColor = {246, 238, 218, 255},
         });
 
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
@@ -543,21 +587,22 @@ void InitSongQuaoMap(void)
                                              .ecosystem = WATER_ECO_CUSTOM,
                                              .radiusX = MAP_WIDTH * 0.5f,
                                              .radiusZ = MAP_DEPTH * 0.5f,
-                                             .waveHeight = 0.018f,
-                                             .waveScale = 1.25f,
-                                             .waveSpeed = 0.60f,
-                                             .detailScale = 0.12f,
-                                             .detailStrength = 0.22f,
+                                             .waveHeight = 0.016f,
+                                             .waveScale = 1.65f,
+                                             .waveSpeed = 0.85f,
+                                             .flowVelocity = {0.24f, 0.38f},
+                                             .detailScale = 0.18f,
+                                             .detailStrength = 0.28f,
                                              .maxDepth = 1.35f,
-                                             .absorption = {0.72f, 0.24f, 0.12f},
-                                             .scatterColor = {0.12f, 0.42f, 0.45f},
-                                             .scatterCoeff = 0.30f,
-                                             .causticsStrength = 0.55f,
+                                             .absorption = {0.60f, 0.18f, 0.08f},
+                                             .scatterColor = {0.16f, 0.54f, 0.48f},
+                                             .scatterCoeff = 0.35f,
+                                             .causticsStrength = 0.65f,
                                              .causticsScale = 1.45f,
-                                             .foamThreshold = 0.125f,
-                                             .deepColor = {12, 38, 48, 255},
-                                             .shallowColor = {34, 112, 98, 240},
-                                             .foamColor = {235, 246, 242, 230},
+                                             .foamThreshold = 0.105f,
+                                             .deepColor = {10, 32, 44, 255},
+                                             .shallowColor = {68, 162, 142, 160},
+                                             .foamColor = {240, 248, 244, 210},
                                          });
 
     EnvShadow_SetFocus(kMapCenter, 12.5f);

@@ -59,6 +59,8 @@ VFX_LiquidOrbConfig *VFX_LiquidOrb_GetLiveConfig(void)
 {
     if (!s_liveLiquidOrbConfigInit) {
         s_liveLiquidOrbConfig = VFX_LiquidOrb_DefaultConfig();
+        const char *backendEnv = getenv("WUXING_LIQUID_BACKEND");
+        if (backendEnv) s_liveLiquidOrbConfig.renderBackend = atoi(backendEnv);
         s_liveLiquidOrbConfigInit = true;
     }
     return &s_liveLiquidOrbConfig;
@@ -115,6 +117,11 @@ static void WaterOrb_SetPhaseField(WaterOrb *orb, LiquidBodyPhase phase, float s
         .receiverNormal = orb->hitNormal, .incomingVelocity = orb->velocity,
         .phaseAge = orb->phaseAge, .stepSeconds = stepSeconds, .applyContactImpulse = true};
     LiquidBodyRecipe_BuildField(&orb->recipe, phase, &context, false, &orb->field);
+
+    if (phase == LIQUID_BODY_FLIGHT) {
+        if (orb->field.layerCount > 0) orb->field.layers[0].strength = 8.0f; // Soft gather into center
+        if (orb->field.layerCount >= 4) orb->field.layers[3].strength = 0.85f; // Strong viscosity damping
+    }
 }
 
 void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
@@ -182,13 +189,13 @@ void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
                       atoi(getenv("WUXING_LIQUID_FORCE_SURFACE")) != 0;
     orb->surfaceAdmitted = forceSurface ||
         (orb->config.renderBackend == LIQUID_RENDER_SSF &&
-         LiquidSurface_RequestBody(LIQUID_PRIORITY_CAST, config->start, orb->radius, false));
+         LiquidSurface_RequestBody(LIQUID_PRIORITY_ULTIMATE, config->start, orb->radius, false));
 
     ParticleEmitterDesc desc = {0};
     bool cpuOnly = (orb->config.renderBackend == LIQUID_RENDER_METABALL3D) ||
                    (getenv("WUXING_LIQUID_CPU_ONLY") && atoi(getenv("WUXING_LIQUID_CPU_ONLY")) != 0);
     desc.simulationPolicy = cpuOnly ? PARTICLE_SIM_CPU_ONLY : PARTICLE_SIM_AUTO;
-    desc.renderMode = orb->surfaceAdmitted ? PARTICLE_RENDER_SURFACE_INPUT : PARTICLE_RENDER_BILLBOARD;
+    desc.renderMode = PARTICLE_RENDER_SURFACE_INPUT;
     desc.moduleFlags=PARTICLE_MODULE_FORCE_FIELD;
     desc.debugName = "WaterOrb SSF batch";
     desc.particle = (ParticleConfig){.forceField = &orb->field};
@@ -199,18 +206,19 @@ void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
     int count=caps->computeShader ? ((orb->config.renderBackend == LIQUID_RENDER_METABALL3D)
         ? (orb->config.blobCount > 0 ? orb->config.blobCount : 24)
         : (!cpuOnly
-            ? (GfxQuality_Get() >= GFX_HIGH ? WATER_ORB_PARTICLES :
-               GfxQuality_Get() <= GFX_LOW ? 768 : 1536)
-            : (GfxQuality_Get() <= GFX_LOW ? 192 : 384)))
-        : (GfxQuality_Get() <= GFX_LOW ? 192 : 384);
+            ? (GfxQuality_Get() >= GFX_HIGH ? 384 :
+               GfxQuality_Get() <= GFX_LOW ? 128 : 256)
+            : (GfxQuality_Get() <= GFX_LOW ? 128 : 256)))
+        : (GfxQuality_Get() <= GFX_LOW ? 128 : 256);
 
     for (int i = 0; i < count; ++i) {
-        Vector3 offset = LiquidBodyRecipe_VolumeOffset(orb->radius * 0.80f, i, count, 0u);
+        Vector3 offset = LiquidBodyRecipe_VolumeOffset(orb->radius * 0.70f, i, count, 0u);
+        Color startCol = (Color){0, 0, 0, 0};
         s_waterOrbSpawn[i] = (ParticleConfig){
             .position = Vector3Add(config->start, offset),
             .velocity = orb->velocity,
-            .colorStart = VC_WithAlpha(orb->soft, orb->surfaceAdmitted ? 0 : 150),
-            .colorEnd = VC_WithAlpha(orb->body, 0),
+            .colorStart = startCol,
+            .colorEnd = (Color){0, 0, 0, 0},
             .radius = orb->config.blobRadius > 0.01f ? orb->config.blobRadius : (0.44f * 0.09f),
             .lifetime = orb->travelTime + motion.lifetime,
             .forceField = &orb->field,
@@ -226,6 +234,14 @@ void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
         LiquidSurface_BindMaterial(&orb->material);
         LiquidSurface_SetReconstructionRadius(0.44f * 0.09f);
     }
+}
+
+bool VFX_WaterOrb_IsAnyActive(void)
+{
+    for (int i = 0; i < WATER_ORB_MAX; ++i) {
+        if (s_waterOrbs[i].active) return true;
+    }
+    return false;
 }
 
 void VFX_LiquidOrb_Spawn(Vector3 start, Vector3 target, LiquidMotionProfile profile)

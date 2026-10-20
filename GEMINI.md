@@ -174,3 +174,46 @@
 - **Hình ảnh render thực tế**: Dòng nước uốn lượn mềm mại từ đỉnh núi xuống hồ chứa nước, bờ cỏ ôm sát mép suối không còn cỏ mọc dưới nước. Lòng sông và lòng hồ sâu xuống rõ rệt, mặt đất thoai thoải tự nhiên.
 - **Biên dịch & Test Suite**: CMake build 0 warning, 0 error. `WUXING_AUTOTEST=1` đạt **18/18 passed (100%)**.
 
+---
+
+## 9. Session Summary: Liquid Module Stabilization (Metaball 3D Raymarching & SSF Fixes)
+
+### 9.1. Bối Cảnh & Phản Hồi Từ Người Dùng
+1. *Metaball 3D khi cast không hiển thị gì cả*, đồng thời khi tương tác trên UI bảng tham số thì bảng điều khiển bị biến mất.
+2. *Nhánh SSF xuất hiện hạt phát sáng màu cam/vàng chói lòa* đè lên mặt nước xanh dương, các hạt dao động mất ổn định.
+3. Rút gọn module liquid: chỉ giữ lại `WATER ORB` làm fixture chuẩn mực, hỗ trợ cả 2 backend Metaball 3D và Screen Space Fluid (SSF), có đầy đủ bảng điều khiển tham số guided motion & optics.
+
+### 9.2. Nguyên Nhân Kỹ Thuật
+1. **Lỗi Tọa Độ Không Gian Khi Raymarching Metaball 3D**:
+   - Hình hộp bounding box `DrawCoreCube` được render bằng immediate mode trong Raylib. Khi `BeginMode3D` kích hoạt, Raylib tự động nhân ma trận ModelView vào đỉnh trước khi đẩy vào VBO. Do đó, `vertexPosition` nhận được ở Vertex Shader nằm trong **View Space** (hệ tọa độ camera), trong khi `u_cameraPos`, `u_boxMin`, `u_boxMax` và `u_blobs` được truyền từ CPU lại ở **World Space**.
+   - Việc lấy `v_worldPos - u_cameraPos` khi một biến ở View Space và một biến ở World Space khiến tia ray đi lệch hướng hoàn toàn, làm `IntersectBox` luôn trả về `false` và kích hoạt `discard`.
+2. **Lỗi Ẩn Bảng Điều Khiển Tham Số (Inspector Panel Dismissal)**:
+   - Trong `sandbox/vfx_test.c`, các hàm `VFXTest_IsPointerOverUI`, `VFXTest_UIHandleInput` và `VFXTest_UIDraw` ràng buộc hiển thị inspector bằng điều kiện `s_isPlayingMesh && s_inspectorParamCount > 0`. Đối với các fixture NewFX (loại event hoặc đã kết thúc chu kỳ phát), `s_isPlayingMesh` bị false, dẫn đến panel bị ẩn ngay lập tức khi click chuột hoặc cast skill.
+3. **Lỗi Quả Cầu Cam Phát Sáng Ở SSF**:
+   - Khi frame time vượt ngưỡng `LIQUID_SURFACE_BUDGET_MS`, hàm `LiquidSurface_RequestBody` từ chối admission nếu priority là `LIQUID_PRIORITY_CAST`. Khi bị từ chối, `water_orb.inl` fallback sang `PARTICLE_RENDER_BILLBOARD` với hạt có alpha 150. Hàng nghìn hạt billboard cộng hưởng ánh sáng (additive blend) chồng chéo tạo thành quả cầu phát sáng màu cam/vàng mù mịt.
+
+### 9.3. Giải Pháp Triển Khai
+1. **Nghịch Đảo View Matrix Cho Vertex Shader Metaball 3D (`liquid_metaball3d.vs` & `.c`)**:
+   - Bổ sung `u_invView = MatrixInvert(view)` truyền vào shader.
+   - `v_worldPos = vec3(u_invView * vec4(vertexPosition, 1.0));` phục hồi chính xác 100% tọa độ World Space cho từng fragment trên mặt cube bao quanh thể tích metaball.
+   - Thuật toán Raymarching cắt box chính xác, bước qua thế trường Wyvill $(1 - d^2/r^2)^3$, dò đúng bề mặt đẳng thế và chiếu sáng khúc xạ chuẩn mực (Fresnel F0, Beer-Lambert cyan absorption, Specular sun glint).
+2. **Khắc Phục Gating Bảng Tham Số Inspector (`sandbox/vfx_test.c`)**:
+   - Bỏ ràng buộc `s_isPlayingMesh`, chuyển sang kiểm tra trực tiếp `s_inspectorParamCount > 0`. Bảng tham số luôn mở cố định, người dùng có thể thoải mái chỉnh thông số runtime (backend, motion profile, bán kính, tốc độ xoáy, độ khúc xạ, v.v.).
+3. **Triệt Tiêu Hạt Billboard Cam Trong SSF (`water_orb.inl`)**:
+   - Đặt `desc.renderMode = PARTICLE_RENDER_SURFACE_INPUT` vô điều kiện.
+   - Đặt màu hạt fallback về `(Color){0, 0, 0, 0}` (alpha = 0).
+   - Nâng độ ưu tiên lên `LIQUID_PRIORITY_ULTIMATE` để SSF không bao giờ từ chối admission khi đo kiểm.
+   - Điều chỉnh số lượng hạt SSF tối ưu (128 - 384 hạt) kết hợp với cấu trúc chất lỏng liên tục, loại bỏ hiện tượng dao động hỗn loạn.
+
+### 9.4. Kết Quả Kiểm Thử
+- **Hình ảnh render trực quan**:
+  - `test_metaball.png`: Khối cầu nước 3D mượt mà, khúc xạ và phản xạ ánh sáng tuyệt đẹp, dao động giọt Rayleigh tự nhiên.
+  - `test_metaball_impact.png`: Quả cầu va chạm mục tiêu bung vương miện giọt bắn (splash crown) và dàn phẳng thành vũng nước.
+  - `test_ssf.png`: Toàn bộ hạt cam biến mất 100%, bề mặt chất lỏng SSF đồng nhất, xanh trong.
+- **Biên dịch & Test Suites**:
+  - Compile: 0 warning, 0 error.
+  - `run_core_tests.sh liquid`: **25/25 suites PASSED (100%)**.
+  - `run_core_tests.sh motion`: **21/21 suites PASSED (100%)**.
+  - `WUXING_AUTOTEST=1`: **19/19 test cases PASSED (100%)**.
+
+

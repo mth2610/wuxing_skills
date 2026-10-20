@@ -348,7 +348,8 @@ typedef struct
 typedef enum {
     MAP_MEADOW_GROWTH_AUTO = 0, // Legacy height-based grass/reed choice.
     MAP_MEADOW_GROWTH_GRASS,
-    MAP_MEADOW_GROWTH_REED
+    MAP_MEADOW_GROWTH_REED,
+    MAP_MEADOW_GROWTH_PAMPAS
 } MapMeadowGrowthForm;
 
 // Generalized physiological / environmental grass blade states.
@@ -580,13 +581,20 @@ typedef struct {
     Color reedTipColor;
     bool hasReedPlumes;       // Default: false (prevents flat white cards)
     float botanicalVariation; // Optional [0..1] habitat-based color variation (0 = 100% pure artist tip color)
+
+    const MapMeadowPlacement *pampasPlacements;
+    int pampasCount;
+    Color pampasRootColor;
+    Color pampasTipColor;
 } MapFloraStyle;
 
 typedef struct {
     MapMeadowSurface valleyMeadow;
     MapMeadowSurface reedMeadow;
+    MapMeadowSurface pampasMeadow;
     int valleyGrassCount;
     int reedCount;
+    int pampasCount;
 
     MapFlowerField *flowerFields;
     int flowerClusterCount;

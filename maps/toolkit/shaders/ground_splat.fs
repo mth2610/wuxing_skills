@@ -195,7 +195,7 @@ void main()
     float wPathMargin = smoothstep(0.95, 1.65, distToPath) * (1.0 - smoothstep(1.65, 3.1, distToPath));
     float wWetSoil = max(shoreFactor * 0.82, smoothstep(0.68, 0.96, streamWet) * 0.82);
 
-    float wSlope = smoothstep(0.36, 0.70, slope);
+    float wSlope = smoothstep(0.28, 0.58, slope);
     float outerAbyssMask = 1.0 - smoothstep(-2.40, -1.10, fragWorldPos.y);
     float steepOrAbyssMask = max(smoothstep(0.22, 0.48, slope), outerAbyssMask);
     float rockCliff = smoothstep(0.76, 0.96, rockScree) * steepOrAbyssMask;
@@ -299,7 +299,7 @@ void main()
         // substrate naturally shifts from deep moss in swales to warm olive-gold on sunlit hills.
         vec3 targetCanopyColor = MeadowCanopyColor(habitatVal);
         vec3 nearCanopySubstrate = targetCanopyColor * 0.52;
-        grassAlbedo = mix(grassAlbedo, nearCanopySubstrate * (1.0 + detailContrast * 0.75), 0.38);
+        grassAlbedo = mix(grassAlbedo, nearCanopySubstrate * (1.0 + detailContrast * 0.75), 0.55);
 
         if (u_ecologyEnabled != 0)
             grassAlbedo *= mix(vec3(1.0), vec3(0.88, 0.98, 0.90), ecology.b);
@@ -421,7 +421,9 @@ void main()
     float macroA = sin(fragWorldPos.x * 0.042 + fragWorldPos.z * 0.028);
     float macroB = sin(fragWorldPos.x * -0.022 + fragWorldPos.z * 0.048 + 1.35);
     float macroField = 0.50 + 0.32 * macroA + 0.18 * macroB;
-    blendedAlbedo *= mix(vec3(0.88, 0.95, 0.88), vec3(1.10, 1.05, 0.92), macroField);
+    float heightInfluence = clamp((fragWorldPos.y - 1.2) * 0.08, -0.20, 0.30);
+    float crestWarmth = clamp(macroField + heightInfluence, 0.0, 1.0);
+    blendedAlbedo *= mix(vec3(0.86, 0.96, 0.88), vec3(1.14, 1.06, 0.90), crestWarmth);
 
     // Distant ridge granite outcrops on high mountain peaks
     if (camDistSqXZ > 1600.0 && fragWorldPos.y > 5.5) {

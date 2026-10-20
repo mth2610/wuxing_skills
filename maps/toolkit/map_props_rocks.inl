@@ -85,18 +85,39 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
             mesh.texcoords[i * 2 + 0] *= 2.8f;
             mesh.texcoords[i * 2 + 1] *= 3.8f;
         } else if (rockType == 2) {
-            // River stone / cobblestone: water-worn flattened alluvial boulder
-            float facet = 1.0f + 0.14f * cosf(2.0f * angle + y * 1.8f)
-                               + 0.09f * sinf(3.0f * angle - 0.6f)
-                               - 0.06f * fabsf(cosf(5.0f * angle));
-            float flatY = (y < -0.08f) ? (-0.08f + (y + 0.08f) * 0.32f) : y * 0.36f;
-            float newR = horizR * facet * 1.18f;
-            mesh.vertices[i * 3 + 0] = cosf(angle) * newR * 1.15f;
-            mesh.vertices[i * 3 + 1] = flatY;
-            mesh.vertices[i * 3 + 2] = sinf(angle) * newR * 0.88f;
+            // River stone / cobblestone: water-worn flattened alluvial boulder with planar shears
+            float facet = 1.0f + 0.18f * cosf(2.0f * angle + y * 1.6f)
+                               + 0.12f * sinf(3.0f * angle - 0.75f)
+                               - 0.08f * fabsf(cosf(5.0f * angle));
+            // Flat base seating: bottom half is flattened so rock rests firmly on soil/riverbed
+            float flatY = (y < 0.0f) ? (y * 0.45f - 0.08f) : (y * 0.58f);
+            float newR = horizR * facet * 1.25f;
+            float vx = cosf(angle) * newR * 1.20f;
+            float vy = flatY;
+            float vz = sinf(angle) * newR * 0.85f;
 
-            mesh.texcoords[i * 2 + 0] *= 1.6f;
-            mesh.texcoords[i * 2 + 1] *= 1.4f;
+            // Planar shearing planes: gives alluvial stones natural flat faces from hydraulic tumbling
+            static const float kRiverPlanes[4][4] = {
+                { 0.65f, 0.65f,  0.39f, 0.38f},
+                {-0.70f, 0.60f, -0.38f, 0.40f},
+                { 0.25f, 0.85f, -0.46f, 0.35f},
+                {-0.30f, 0.82f,  0.48f, 0.36f},
+            };
+            for (int p = 0; p < 4; p++) {
+                float dist = vx * kRiverPlanes[p][0] + vy * kRiverPlanes[p][1] + vz * kRiverPlanes[p][2] - kRiverPlanes[p][3];
+                if (dist > 0.0f) {
+                    vx -= kRiverPlanes[p][0] * dist * 0.82f;
+                    vy -= kRiverPlanes[p][1] * dist * 0.82f;
+                    vz -= kRiverPlanes[p][2] * dist * 0.82f;
+                }
+            }
+
+            mesh.vertices[i * 3 + 0] = vx;
+            mesh.vertices[i * 3 + 1] = vy;
+            mesh.vertices[i * 3 + 2] = vz;
+
+            mesh.texcoords[i * 2 + 0] *= 1.8f;
+            mesh.texcoords[i * 2 + 1] *= 1.6f;
         } else {
             // Chiseled granite boulder: angular polyhedral cleavage blocks + grounded skirt
             float c1 = cosf(3.0f * angle + 0.35f);

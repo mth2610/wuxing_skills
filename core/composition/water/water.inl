@@ -129,10 +129,7 @@ static void WaterFx_InitShared(void)
 
 #include "ice_crystal.inl"
 // @gen:water_includes begin
-// 5 include(s) — auto-managed by sync_vfx_test.py
+// 2 include(s) — auto-managed by sync_vfx_test.py
 #include "water_stream.inl"
-#include "liquid_impact_test.inl"
 #include "water_orb.inl"
-#include "water_ring.inl"
-#include "liquid_bench.inl"
 // @gen:water_includes end

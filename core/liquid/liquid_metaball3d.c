@@ -27,6 +27,7 @@ static int s_locBoxMax = -1;
 static int s_locThreshold = -1;
 static int s_locCameraPos = -1;
 static int s_locViewProj = -1;
+static int s_locInvView = -1;
 static int s_locResolution = -1;
 static int s_locSceneColor = -1;
 static int s_locSceneDepth = -1;
@@ -62,6 +63,7 @@ void LiquidMetaball3D_Init(void)
     s_locCameraPos = GetShaderLocation(s_shader, "u_cameraPos");
     s_locCameraForward = GetShaderLocation(s_shader, "u_cameraForward");
     s_locViewProj = GetShaderLocation(s_shader, "u_viewProj");
+    s_locInvView = GetShaderLocation(s_shader, "u_invView");
     s_locResolution = GetShaderLocation(s_shader, "u_resolution");
     s_locSceneColor = GetShaderLocation(s_shader, "u_sceneColor");
     s_locSceneDepth = GetShaderLocation(s_shader, "u_sceneDepth");
@@ -233,7 +235,9 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
     if (s_locThreshold >= 0) SetShaderValue(s_shader, s_locThreshold, &threshold, SHADER_UNIFORM_FLOAT);
     if (s_locCameraPos >= 0) SetShaderValue(s_shader, s_locCameraPos, &camera.position, SHADER_UNIFORM_VEC3);
     if (s_locCameraForward >= 0) SetShaderValue(s_shader, s_locCameraForward, &camForward, SHADER_UNIFORM_VEC3);
+    Matrix invView = MatrixInvert(view);
     if (s_locViewProj >= 0) SetShaderValueMatrix(s_shader, s_locViewProj, viewProj);
+    if (s_locInvView >= 0) SetShaderValueMatrix(s_shader, s_locInvView, invView);
     if (s_locResolution >= 0) SetShaderValue(s_shader, s_locResolution, &resolution, SHADER_UNIFORM_VEC2);
 
     if (s_locHasSceneColor >= 0) SetShaderValue(s_shader, s_locHasSceneColor, &hasSceneColor, SHADER_UNIFORM_INT);

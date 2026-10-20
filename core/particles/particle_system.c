@@ -25,10 +25,10 @@
 #include <stdlib.h>
 
 #define MAX_PARTICLES 2000
-typedef char ParticleEmissionCapacity[(MAX_PARTICLES==EMISSION_PARTICLE_PARENT_CAPACITY)?1:-1];
+typedef char ParticleEmissionCapacity[(MAX_PARTICLES == EMISSION_PARTICLE_PARENT_CAPACITY) ? 1 : -1];
 
 // Trail ribbon buffer: 8 recorded history points, optionally subdivided.
-#define PS_TRAIL_SUBDIV         4
+#define PS_TRAIL_SUBDIV 4
 #define PS_TRAIL_MAX_RIBBON_PTS 32
 
 // Centripetal Catmull-Rom (alpha = 0.5) through p1..p2 - Messiah Engine standard.
@@ -43,7 +43,8 @@ static inline float PS_KnotInterval(Vector3 a, Vector3 b)
 static inline Vector3 PS_V3LerpParam(Vector3 v1, Vector3 v2, float t1, float t2, float t)
 {
   float denom = t2 - t1;
-  if (fabsf(denom) < 1e-5f) return v1;
+  if (fabsf(denom) < 1e-5f)
+    return v1;
   float factor = (t - t1) / denom;
   return (Vector3){
       v1.x + factor * (v2.x - v1.x),
@@ -53,8 +54,10 @@ static inline Vector3 PS_V3LerpParam(Vector3 v1, Vector3 v2, float t1, float t2,
 
 static inline Vector3 PS_CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
 {
-  if (t <= 0.0f) return p1;
-  if (t >= 1.0f) return p2;
+  if (t <= 0.0f)
+    return p1;
+  if (t >= 1.0f)
+    return p2;
 
   float t0 = 0.0f;
   float t1 = t0 + PS_KnotInterval(p0, p1);
@@ -78,7 +81,8 @@ static bool PS_AxisCrossBasis(Vector3 authoredAxis, Vector3 viewDir,
                               Vector3 *sideB)
 {
   const float facingDirectionLengthSq = Vector3LengthSqr(authoredAxis);
-  if (facingDirectionLengthSq < 1e-8f) return false;
+  if (facingDirectionLengthSq < 1e-8f)
+    return false;
 
   Vector3 axis = Vector3Scale(authoredAxis, 1.0f / sqrtf(facingDirectionLengthSq));
   Vector3 first = Vector3CrossProduct(axis, viewDir);
@@ -148,23 +152,23 @@ typedef struct
   Vector3 followTargetLast;
   float followStrength;
   const SkillCurve *followCurve;
-  unsigned int texId;   // 0 = use the batch default passed to DrawParticles
-  int blendMode;        // VFX_BlendMode — see the blend law in vfx_config.h
-  int unlit;            // 1 = emissive, skip the lighting multiply
-  float emissiveBoost;  // >1 = HDR headroom for a glowing core (see vfx_config.h)
-  int volumeSheet;      // 1 = texture is a packed 4-channel volume flipbook
-  unsigned int rampTexId; // black-body/magic LUT for volumeSheet; 0 = none
-  float heatGain;       // exposure on the sheet's emission before the ramp
-  float smokeGain;      // multiplier on the sheet's soot density
-  Color smokeTint;      // colour of the soot half (black/white smoke)
-  int sixWayLighting;   // 0 = off, 1 = synthetic 6-way, 2 = dual-texture 6-way pair
+  unsigned int texId;        // 0 = use the batch default passed to DrawParticles
+  int blendMode;             // VFX_BlendMode — see the blend law in vfx_config.h
+  int unlit;                 // 1 = emissive, skip the lighting multiply
+  float emissiveBoost;       // >1 = HDR headroom for a glowing core (see vfx_config.h)
+  int volumeSheet;           // 1 = texture is a packed 4-channel volume flipbook
+  unsigned int rampTexId;    // black-body/magic LUT for volumeSheet; 0 = none
+  float heatGain;            // exposure on the sheet's emission before the ramp
+  float smokeGain;           // multiplier on the sheet's soot density
+  Color smokeTint;           // colour of the soot half (black/white smoke)
+  int sixWayLighting;        // 0 = off, 1 = synthetic 6-way, 2 = dual-texture 6-way pair
   unsigned int sixWayTexBId; // Map B texture id for dual-texture 6-way
-  float sixWayScattering; // forward scatter / backlit boost factor
-  float sixWayAbsorption; // multi-axis extinction factor
-  int smokeSheet;       // 1 = extracted EOO smoke body + BC5 normal companion
+  float sixWayScattering;    // forward scatter / backlit boost factor
+  float sixWayAbsorption;    // multi-axis extinction factor
+  int smokeSheet;            // 1 = extracted EOO smoke body + BC5 normal companion
   unsigned int normalTexId;
   unsigned int motionTexId; // 2D optical flow texture id for subframe advection
-  float motionWarpScale; // motion vector displacement scale
+  float motionWarpScale;    // motion vector displacement scale
   VFXContrastProfileId contrastProfile;
   const SkillCurve *radiusCurve;
   const SkillCurve *speedCurve;
@@ -247,13 +251,13 @@ static inline int Particle_AllocSlot(void)
 // nothing already shipped changes look; the rest are the values that made smoke
 // read as smoke, promoted out of tuning.cfg so a fresh clone gets them.
 static float s_lightingStrength = 0.0f;
-static float s_scatterStrength  = 0.0f;  // shape-neutral: raise only for backlit glow
-static float s_debugNormal      = 0.0f;  // 1 = paint particle normals as RGB
-static float s_normalBulge      = 1.0f;  // 1 = true hemisphere; >1 exaggerates
-static float s_sunGain          = 1.0f;  // night sun/ambient are ~0.2 — without
-static float s_ambientGain      = 0.25f; // gain, lighting just dims the smoke
-static float s_lightAzimuth     = -1.0f; // <0 = real sun; >=0 = debug override
-static float s_analyticUV       = 1.0f;  // 0 only if a SpriteAnim atlas is in use
+static float s_scatterStrength = 0.0f; // shape-neutral: raise only for backlit glow
+static float s_debugNormal = 0.0f;     // 1 = paint particle normals as RGB
+static float s_normalBulge = 1.0f;     // 1 = true hemisphere; >1 exaggerates
+static float s_sunGain = 1.0f;         // night sun/ambient are ~0.2 — without
+static float s_ambientGain = 0.25f;    // gain, lighting just dims the smoke
+static float s_lightAzimuth = -1.0f;   // <0 = real sun; >=0 = debug override
+static float s_analyticUV = 1.0f;      // 0 only if a SpriteAnim atlas is in use
 // SOFT PARTICLES. A billboard that intersects the ground is CUT by the depth
 // test along a dead-straight line, and the bigger the sprite the more it reads
 // as a sheet of paper pushed into the floor. The fade hides the cut by taking
@@ -265,25 +269,33 @@ static float s_analyticUV       = 1.0f;  // 0 only if a SpriteAnim atlas is in u
 // smoke billows.
 // rlvk now resolves texture0 by reflected sampler name, so its second depth
 // sampler no longer displaces the sprite texture (HANDOFF §7.30).
-static float s_softFade         = 0.35f;
-static float s_softDebug        = 0.0f;
-static int   s_locSoftFade      = -1;
-static int   s_locSoftDebug     = -1;
-static bool  s_softBound        = false;
+static float s_softFade = 0.35f;
+static float s_softDebug = 0.0f;
+static int s_locSoftFade = -1;
+static int s_locSoftDebug = -1;
+static bool s_softBound = false;
 #define PARTICLE_SOFT_DEPTH_SLOT 3
-static int   s_locAtlasGrid     = -1;
-static int   s_locEmissiveBoost = -1;
+static int s_locAtlasGrid = -1;
+static int s_locEmissiveBoost = -1;
 // How far above 1.0 an EMISSIVE particle writes into the HDR scene buffer. 1.0
 // reproduces the old look exactly (no core, no bloom); ~3 gives the AAA
 // white-hot core with a coloured rim. Only applied to unlit/additive batches.
-static float s_emissiveBoost    = 1.0f;  // GLOBAL multiplier; per-particle value carries the intent
+static float s_emissiveBoost = 1.0f; // GLOBAL multiplier; per-particle value carries the intent
 
-static void SpawnEmissionChild(void *user,ParticleConfig child) { (void)user;SpawnParticle(child); }
-static float EmissionRandom01(void *user) { (void)user;return Random01(); }
+static void SpawnEmissionChild(void *user, ParticleConfig child)
+{
+  (void)user;
+  SpawnParticle(child);
+}
+static float EmissionRandom01(void *user)
+{
+  (void)user;
+  return Random01();
+}
 
 void InitParticleSystem(void)
 {
-  EmissionChildren_Init(SpawnEmissionChild,EmissionRandom01,NULL);
+  EmissionChildren_Init(SpawnEmissionChild, EmissionRandom01, NULL);
   for (int i = 0; i < MAX_PARTICLES - 1; i++)
     s_nextFree[i] = i + 1;
   s_nextFree[MAX_PARTICLES - 1] = MAX_PARTICLES;
@@ -294,7 +306,6 @@ void InitParticleSystem(void)
     g_Particles[i].active = false;
     s_slotListIndex[i] = -1;
   }
-
 }
 
 void SpawnParticle(ParticleConfig config)
@@ -313,16 +324,19 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
 {
   ParticleConfig_Unify(&config);
   if (!ParticleField_CpuSupported(config.forceField) ||
-      (config.travelPath && !ParticleField_CpuSupported(config.travelPath->arrivalForceField))) {
+      (config.travelPath && !ParticleField_CpuSupported(config.travelPath->arrivalForceField)))
+  {
     TraceLog(LOG_WARNING, "ParticleSystem: CPU particle rejected unsupported vector-texture field");
     return;
   }
-  if (config.render.texture.id == 0) {
+  if (config.render.texture.id == 0)
+  {
     config.render.texture = ParticleSystem_DefaultSprite();
     /* This is a complete default appearance, not an alpha mask. Keep its
        white-hot core/orange rim; authors still own lifetime alpha. A gradient
        is an explicit colour treatment and remains authoritative. */
-    if (config.render.gradient == NULL) {
+    if (config.render.gradient == NULL)
+    {
       config.colorStart.r = config.colorStart.g = config.colorStart.b = 255;
       config.colorEnd.r = config.colorEnd.g = config.colorEnd.b = 255;
     }
@@ -354,16 +368,18 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->travelFormationOffset = (Vector3){0};
   if (config.travelPath && config.travelPath->formationOrigin)
     p->travelFormationOffset = Vector3Subtract(config.position,
-                                                *config.travelPath->formationOrigin);
+                                               *config.travelPath->formationOrigin);
   p->travelWaypoint = 0;
   p->travelImpactActive = false;
   p->travelImpactAge = 0.0f;
   p->windInfluence = config.physics.windInfluence > 0.0f ? config.physics.windInfluence : config.windInfluence;
   p->drag = config.physics.drag > 0.0f ? config.physics.drag : config.drag;
   p->dynamics = NULL;
-  if (config.physics.dynamics) {
+  if (config.physics.dynamics)
+  {
     p->dynamicsStorage = *config.physics.dynamics;
-    if (p->drag > 0.0f && p->dynamicsStorage.linearDragPerSecond <= 0.0f) {
+    if (p->drag > 0.0f && p->dynamicsStorage.linearDragPerSecond <= 0.0f)
+    {
       p->dynamicsStorage.linearDragPerSecond = p->drag;
     }
     p->dynamics = &p->dynamicsStorage;
@@ -397,10 +413,10 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
           .contrast = config.render.contrastProfile,
           .bodyOpacity = config.render.blendMode == VFX_BLEND_ALPHA ? 1.0f : 0.0f,
           .emissionIntensity = config.render.emissiveBoost > 0.0f
-                                   ? config.render.emissiveBoost : 1.0f,
+                                   ? config.render.emissiveBoost
+                                   : 1.0f,
           .emissionThreshold = 1.0f,
-          .unlit = config.render.unlit != 0
-      });
+          .unlit = config.render.unlit != 0});
   // Only the packed-volume shader produces mathematically premultiplied RGB.
   // A regular sprite still gets the look in one alpha/HDR draw, without feeding
   // straight RGB into a premultiplied blend law — which would leave partially
@@ -421,7 +437,8 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   // Particle shaders use this as a colour gain even for non-emissive alpha
   // particles, so semantic emission 0 maps to neutral gain 1 here.
   p->emissiveBoost = particleAppearance.emissionIntensity > 0.0f
-                         ? particleAppearance.emissionIntensity : 1.0f;
+                         ? particleAppearance.emissionIntensity
+                         : 1.0f;
   p->volumeSheet = config.render.volumeSheet;
   p->rampTexId = config.render.rampLUT.id;
   p->heatGain = (config.render.heatGain > 0.0f) ? config.render.heatGain : 1.0f;
@@ -467,7 +484,7 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->angularVelocity = config.angularVelocity;
   p->active = true;
 
-  p->children=EmissionChildren_Bind(targetIdx,&config);
+  p->children = EmissionChildren_Bind(targetIdx, &config);
 
   // Populate stretch, collision, and trail parameters
   p->stretchStrength = config.render.stretchStrength;
@@ -477,7 +494,8 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->collisionElasticity = config.physics.collisionElasticity;
   p->collisionFloorY = config.physics.collisionFloorY;
   p->trailLength = config.render.trailLength;
-  if (p->trailLength > 8) p->trailLength = 8; // clamp to static buffer size
+  if (p->trailLength > 8)
+    p->trailLength = 8; // clamp to static buffer size
   p->trailWidthRatio = config.render.trailWidthRatio;
   p->trailColorStart = config.render.trailColorStart;
   p->trailColorEnd = config.render.trailColorEnd;
@@ -492,7 +510,7 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->facingDirection = config.render.facingDirection;
   p->facingAspect = config.render.facingAspect > 0.0f ? config.render.facingAspect : 1.0f;
   p->meshModel = config.render.meshModel;
-  p->meshRotation = (Vector3){ 0.0f, 0.0f, 0.0f };
+  p->meshRotation = (Vector3){0.0f, 0.0f, 0.0f};
   p->meshRotationRate = config.render.meshRotationRate;
 }
 
@@ -517,8 +535,9 @@ void UpdateParticles(float dt)
 
     if (p->lifetime <= 0.0f)
     {
-      EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_DEATH,
-          .position={p->x,p->y,p->z},.velocity={p->vx,p->vy,p->vz}});
+      EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_DEATH,
+                                                             .position = {p->x, p->y, p->z},
+                                                             .velocity = {p->vx, p->vy, p->vz}});
       Particle_Deactivate(i);
       continue;
     }
@@ -534,7 +553,7 @@ void UpdateParticles(float dt)
       Vector3 now = *p->followTarget;
       float ageT = 1.0f - Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
       float strength = p->followStrength *
-          (p->followCurve ? SkillCurve_Eval(p->followCurve, ageT) : (1.0f - ageT));
+                       (p->followCurve ? SkillCurve_Eval(p->followCurve, ageT) : (1.0f - ageT));
       p->x += (now.x - p->followTargetLast.x) * strength;
       p->y += (now.y - p->followTargetLast.y) * strength;
       p->z += (now.z - p->followTargetLast.z) * strength;
@@ -545,89 +564,124 @@ void UpdateParticles(float dt)
       p->followTarget = NULL;
     }
 
-    if (p->children) {
-      float speedMul=1;
-      if(p->speedCurve) {
-        float ageT=1-Clamp(p->lifetime/p->maxLifetime,0,1);
-        speedMul=SkillCurve_Eval(p->speedCurve,ageT);
+    if (p->children)
+    {
+      float speedMul = 1;
+      if (p->speedCurve)
+      {
+        float ageT = 1 - Clamp(p->lifetime / p->maxLifetime, 0, 1);
+        speedMul = SkillCurve_Eval(p->speedCurve, ageT);
       }
-      EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_LIVE,
-          .position={p->x,p->y,p->z},.velocity={p->vx,p->vy,p->vz},.dt=dt,
-          .stepDisplacement={p->vx*dt*speedMul,p->vy*dt*speedMul,p->vz*dt*speedMul}});
+      EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_LIVE,
+                                                             .position = {p->x, p->y, p->z},
+                                                             .velocity = {p->vx, p->vy, p->vz},
+                                                             .dt = dt,
+                                                             .stepDisplacement = {p->vx * dt * speedMul, p->vy * dt * speedMul, p->vz * dt * speedMul}});
     }
 
     const ForceField *activeField = p->forceField;
-    if(p->travelImpactActive) {
-      p->travelImpactAge+=dt;
-      activeField=(p->travelPath&&p->travelPath->arrivalForceField&&
-          (p->travelPath->arrivalForceDuration<=0||p->travelImpactAge<=p->travelPath->arrivalForceDuration))
-          ?p->travelPath->arrivalForceField:NULL;
+    if (p->travelImpactActive)
+    {
+      p->travelImpactAge += dt;
+      activeField = (p->travelPath && p->travelPath->arrivalForceField &&
+                     (p->travelPath->arrivalForceDuration <= 0 || p->travelImpactAge <= p->travelPath->arrivalForceDuration))
+                        ? p->travelPath->arrivalForceField
+                        : NULL;
     }
-    if (p->receiveMotionFields || p->spatialMotionOnly) {
-      ParticleDynamicsProfile fallback = {.inverseMassKg=1, .gravityScale=0,
-          .windCouplingHz=3.5f, .windSusceptibility=p->windInfluence};
+    if (p->receiveMotionFields || p->spatialMotionOnly)
+    {
+      ParticleDynamicsProfile fallback = {.inverseMassKg = 1, .gravityScale = 0, .windCouplingHz = 3.5f, .windSusceptibility = p->windInfluence};
       const ParticleDynamicsProfile *body = p->dynamics ? p->dynamics : &fallback;
-      Vector3 position = {p->x,p->y,p->z}, velocity = {p->vx,p->vy,p->vz};
-      if (p->dynamicsImpulsePending) {
-        velocity = ParticleDynamics_ApplyImpulse(velocity,p->dynamicsInitialImpulseNs,
-            body->inverseMassKg>0?body->inverseMassKg:1);
-        p->dynamicsImpulsePending=false;
+      Vector3 position = {p->x, p->y, p->z}, velocity = {p->vx, p->vy, p->vz};
+      if (p->dynamicsImpulsePending)
+      {
+        velocity = ParticleDynamics_ApplyImpulse(velocity, p->dynamicsInitialImpulseNs,
+                                                 body->inverseMassKg > 0 ? body->inverseMassKg : 1);
+        p->dynamicsImpulsePending = false;
       }
       /* Resample spatial fields along the trajectory. Cap substeps to at most
        * 2 per frame (1/60s minimum step) to prevent CPU stall spikes under heavy loads. */
-      float remaining=fminf(dt,0.066f);
-      bool destroyed=false;
-      BodyPhysicalProperties physicalBody=MotionBody_GetPhysicalProperties(body);
-      ReceiverConstraints constraints={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
-      MediumProperties baseMedium=Wind_EvaluateBackgroundMedium(position,s_particleTime,
-          (Vector3){0,-9.81f*body->gravityScale,0});
-      if(body->airDensityKgM3>0) baseMedium.densityKgM3=body->airDensityKgM3;
-      int substepIdx=0;
-      while (remaining>1e-6f) {
-        float timeOffset=-remaining;
-        float sampleTime=s_particleTime+timeOffset;
-        float step=fminf(remaining,1.0f/60.0f);remaining-=step;
+      float remaining = fminf(dt, 0.066f);
+      bool destroyed = false;
+      BodyPhysicalProperties physicalBody = MotionBody_GetPhysicalProperties(body);
+      ReceiverConstraints constraints = {.mode = RECEIVER_FREE, .permittedAxes = {1, 1, 1}};
+      MediumProperties baseMedium = Wind_EvaluateBackgroundMedium(position, s_particleTime,
+                                                                  (Vector3){0, -9.81f * body->gravityScale, 0});
+      if (body->airDensityKgM3 > 0)
+        baseMedium.densityKgM3 = body->airDensityKgM3;
+      int substepIdx = 0;
+      while (remaining > 1e-6f)
+      {
+        float timeOffset = -remaining;
+        float sampleTime = s_particleTime + timeOffset;
+        float step = fminf(remaining, 1.0f / 60.0f);
+        remaining -= step;
         MediumProperties medium = baseMedium;
-        if (substepIdx > 0 && Wind_GetActiveCount() > 0) {
-          medium = Wind_EvaluateBackgroundMedium(position,sampleTime,
-              (Vector3){0,-9.81f*body->gravityScale,0});
-          if(body->airDensityKgM3>0) medium.densityKgM3=body->airDensityKgM3;
+        if (substepIdx > 0 && Wind_GetActiveCount() > 0)
+        {
+          medium = Wind_EvaluateBackgroundMedium(position, sampleTime,
+                                                 (Vector3){0, -9.81f * body->gravityScale, 0});
+          if (body->airDensityKgM3 > 0)
+            medium.densityKgM3 = body->airDensityKgM3;
         }
         substepIdx++;
         FieldSample sample;
-        if(p->spatialMotionOnly)
-          MotionFields_SampleSpatialBodyAtOffset(position,velocity,&physicalBody,&medium,&constraints,
-              step,timeOffset,MOTION_RECEIVER_PARTICLE,p->receiveMotionFields?&p->motionReceiver:NULL,&sample);
-        else MotionFields_SampleBodyAtOffset(position,velocity,&physicalBody,&medium,&constraints,
-              step,timeOffset,MOTION_RECEIVER_PARTICLE,&p->motionReceiver,&sample);
-        Vector3 acceleration=p->dynamicsInitialAccelerationMps2;
-        if (activeField) acceleration=MotionVec_Add(acceleration,ForceField_Evaluate(
-            activeField,position,velocity,sampleTime,p->forceAxisOrigin,p->forceAxisDir));
-        if (windActive) acceleration=MotionVec_Add(acceleration,MotionVec_Scale(
-            WindZone_Evaluate(position,velocity,sampleTime),body->windAccelerationScale*body->windSusceptibility));
-        velocity=MotionBody_AdvanceFieldVelocity(velocity,body,acceleration,
-            p->dynamicsConstantForceNewtons,&sample,medium.velocityMps,step);
-        if(activeField) velocity=MotionVec_Scale(velocity,ForceField_GetViscosityDamping(activeField,step));
-        Vector3 previous=position;position=MotionVec_Add(position,MotionVec_Scale(velocity,step));
-        bool wasArrived=p->motionReceiver.arrived;
-        MotionArrivalMode action=MotionFields_AdvanceReceiver(&p->motionReceiver,previous,position,velocity);
-        if (!wasArrived && p->motionReceiver.arrived) {
+        if (p->spatialMotionOnly)
+          MotionFields_SampleSpatialBodyAtOffset(position, velocity, &physicalBody, &medium, &constraints,
+                                                 step, timeOffset, MOTION_RECEIVER_PARTICLE, p->receiveMotionFields ? &p->motionReceiver : NULL, &sample);
+        else
+          MotionFields_SampleBodyAtOffset(position, velocity, &physicalBody, &medium, &constraints,
+                                          step, timeOffset, MOTION_RECEIVER_PARTICLE, &p->motionReceiver, &sample);
+        Vector3 acceleration = p->dynamicsInitialAccelerationMps2;
+        if (activeField)
+          acceleration = MotionVec_Add(acceleration, ForceField_Evaluate(
+                                                         activeField, position, velocity, sampleTime, p->forceAxisOrigin, p->forceAxisDir));
+        if (windActive)
+          acceleration = MotionVec_Add(acceleration, MotionVec_Scale(
+                                                         WindZone_Evaluate(position, velocity, sampleTime), body->windAccelerationScale * body->windSusceptibility));
+        velocity = MotionBody_AdvanceFieldVelocity(velocity, body, acceleration,
+                                                   p->dynamicsConstantForceNewtons, &sample, medium.velocityMps, step);
+        if (activeField)
+          velocity = MotionVec_Scale(velocity, ForceField_GetViscosityDamping(activeField, step));
+        Vector3 previous = position;
+        position = MotionVec_Add(position, MotionVec_Scale(velocity, step));
+        bool wasArrived = p->motionReceiver.arrived;
+        MotionArrivalMode action = MotionFields_AdvanceReceiver(&p->motionReceiver, previous, position, velocity);
+        if (!wasArrived && p->motionReceiver.arrived)
+        {
           MotionArrivalProfile arrival;
-          if(MotionFields_GetArrival(p->motionReceiver.guide,&arrival)) {
-            velocity=ParticleDynamics_ApplyImpulse(velocity,arrival.impulseNs,body->inverseMassKg>0?body->inverseMassKg:1);
-            if(arrival.overrideDynamics) {
-              p->dynamicsStorage=arrival.dynamics;p->dynamics=&p->dynamicsStorage;body=p->dynamics;
-              physicalBody=MotionBody_GetPhysicalProperties(body);
+          if (MotionFields_GetArrival(p->motionReceiver.guide, &arrival))
+          {
+            velocity = ParticleDynamics_ApplyImpulse(velocity, arrival.impulseNs, body->inverseMassKg > 0 ? body->inverseMassKg : 1);
+            if (arrival.overrideDynamics)
+            {
+              p->dynamicsStorage = arrival.dynamics;
+              p->dynamics = &p->dynamicsStorage;
+              body = p->dynamics;
+              physicalBody = MotionBody_GetPhysicalProperties(body);
             }
           }
-          EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_ARRIVAL,
-              .position=position,.velocity=velocity});
-          if(action==MOTION_ARRIVAL_DESTROY) { destroyed=true;break; }
+          EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_ARRIVAL,
+                                                                 .position = position,
+                                                                 .velocity = velocity});
+          if (action == MOTION_ARRIVAL_DESTROY)
+          {
+            destroyed = true;
+            break;
+          }
         }
       }
-      p->x=position.x;p->y=position.y;p->z=position.z;
-      p->vx=velocity.x;p->vy=velocity.y;p->vz=velocity.z;
-      if(destroyed) {Particle_Deactivate(i);continue;}
+      p->x = position.x;
+      p->y = position.y;
+      p->z = position.z;
+      p->vx = velocity.x;
+      p->vy = velocity.y;
+      p->vz = velocity.z;
+      if (destroyed)
+      {
+        Particle_Deactivate(i);
+        continue;
+      }
       goto particle_contacts;
     }
     if (p->dynamics)
@@ -635,31 +689,36 @@ void UpdateParticles(float dt)
       const ParticleDynamicsProfile *d = p->dynamics;
       Vector3 position = {p->x, p->y, p->z};
       Vector3 velocity = {p->vx, p->vy, p->vz};
-      BodyPhysicalProperties physicalBody=MotionBody_GetPhysicalProperties(d);
-      MediumProperties medium=Wind_EvaluateBackgroundMedium(position,s_particleTime,
-          (Vector3){0,-9.81f*d->gravityScale,0});
-      if(d->airDensityKgM3>0) medium.densityKgM3=d->airDensityKgM3;
-      ReceiverConstraints constraints={.mode=RECEIVER_FREE,.permittedAxes={1,1,1}};
+      BodyPhysicalProperties physicalBody = MotionBody_GetPhysicalProperties(d);
+      MediumProperties medium = Wind_EvaluateBackgroundMedium(position, s_particleTime,
+                                                              (Vector3){0, -9.81f * d->gravityScale, 0});
+      if (d->airDensityKgM3 > 0)
+        medium.densityKgM3 = d->airDensityKgM3;
+      ReceiverConstraints constraints = {.mode = RECEIVER_FREE, .permittedAxes = {1, 1, 1}};
       FieldSample externalSample;
       /* Independent fields do not require a captured guide or emit particles.
        * Optional guide capture remains governed by receiveMotionFields. */
-      MotionFields_SampleExternalBodyStep(position,velocity,&physicalBody,&medium,
-          &constraints,dt,MOTION_RECEIVER_PARTICLE,&externalSample);
-      ParticleDynamicsProfile integrationBody=*d;
-      if(externalSample.hasBuoyancyForce) integrationBody.densityKgM3=0;
-      if(externalSample.hasDragForce) integrationBody.windCouplingHz=0;
-      d=&integrationBody;
+      MotionFields_SampleExternalBodyStep(position, velocity, &physicalBody, &medium,
+                                          &constraints, dt, MOTION_RECEIVER_PARTICLE, &externalSample);
+      ParticleDynamicsProfile integrationBody = *d;
+      if (externalSample.hasBuoyancyForce)
+        integrationBody.densityKgM3 = 0;
+      if (externalSample.hasDragForce)
+        integrationBody.windCouplingHz = 0;
+      d = &integrationBody;
       Vector3 acceleration = MotionVec_Add(p->dynamicsInitialAccelerationMps2,
-          externalSample.accelerationMps2);
+                                           externalSample.accelerationMps2);
       float inverseMass = d->inverseMassKg > 0.0f ? d->inverseMassKg : 1.0f;
-      if (p->dynamicsImpulsePending) {
+      if (p->dynamicsImpulsePending)
+      {
         velocity = ParticleDynamics_ApplyImpulse(velocity,
-                                                  p->dynamicsInitialImpulseNs,
-                                                  inverseMass);
+                                                 p->dynamicsInitialImpulseNs,
+                                                 inverseMass);
         p->dynamicsImpulsePending = false;
       }
       acceleration.y += ParticleDynamics_GravityAcceleration(d);
-      if (activeField) {
+      if (activeField)
+      {
         Vector3 fieldAcceleration = ForceField_Evaluate(
             activeField, position, velocity, p->lifetime,
             p->forceAxisOrigin, p->forceAxisDir);
@@ -667,46 +726,54 @@ void UpdateParticles(float dt)
         acceleration.y += fieldAcceleration.y;
         acceleration.z += fieldAcceleration.z;
       }
-      if (windActive) {
+      if (windActive)
+      {
         Vector3 windAcceleration = WindZone_Evaluate(position, velocity,
-                                                      s_particleTime);
+                                                     s_particleTime);
         float windScale = d->windAccelerationScale * d->windSusceptibility;
         acceleration.x += windAcceleration.x * windScale;
         acceleration.y += windAcceleration.y * windScale;
         acceleration.z += windAcceleration.z * windScale;
       }
-      if (ParticleField_UsesSharedIntegration(&externalSample)) {
+      if (ParticleField_UsesSharedIntegration(&externalSample))
+      {
         /* Typed media use material aerodynamics; authored quadratic drag stays
          * implicit even without guide capture. Empty fields retain legacy order. */
-        Vector3 otherAcceleration=MotionVec_Sub(acceleration,externalSample.accelerationMps2);
-        otherAcceleration.y-=ParticleDynamics_GravityAcceleration(d);
-        velocity=MotionBody_AdvanceFieldVelocity(velocity,d,otherAcceleration,
-            p->dynamicsConstantForceNewtons,&externalSample,medium.velocityMps,dt);
-        if (activeField) velocity=MotionVec_Scale(velocity,
-            ForceField_GetViscosityDamping(activeField,dt));
-      } else {
+        Vector3 otherAcceleration = MotionVec_Sub(acceleration, externalSample.accelerationMps2);
+        otherAcceleration.y -= ParticleDynamics_GravityAcceleration(d);
+        velocity = MotionBody_AdvanceFieldVelocity(velocity, d, otherAcceleration,
+                                                   p->dynamicsConstantForceNewtons, &externalSample, medium.velocityMps, dt);
+        if (activeField)
+          velocity = MotionVec_Scale(velocity,
+                                     ForceField_GetViscosityDamping(activeField, dt));
+      }
+      else
+      {
         velocity = ParticleDynamics_ApplyAccelerationAndForce(
-            velocity, acceleration, MotionVec_Add(p->dynamicsConstantForceNewtons,
-                externalSample.forceNewtons), inverseMass, dt);
-        if (activeField) {
+            velocity, acceleration, MotionVec_Add(p->dynamicsConstantForceNewtons, externalSample.forceNewtons), inverseMass, dt);
+        if (activeField)
+        {
           float viscosity = ForceField_GetViscosityDamping(activeField, dt);
-          velocity.x *= viscosity; velocity.y *= viscosity; velocity.z *= viscosity;
+          velocity.x *= viscosity;
+          velocity.y *= viscosity;
+          velocity.z *= viscosity;
         }
         velocity = ParticleDynamics_ApplyLinearDrag(velocity,
-                                                      d->linearDragPerSecond, dt);
+                                                    d->linearDragPerSecond, dt);
         velocity = ParticleDynamics_ClampTerminalSpeed(velocity, d->terminalSpeedMps);
         if ((d->windCouplingHz > 0.0f && d->windSusceptibility > 0.0f) ||
-            p->travelImpactActive) {
+            p->travelImpactActive)
+        {
           float couplingHz = d->windCouplingHz;
           float susceptibility = d->windSusceptibility;
-          Vector3 airflow = externalSample.mediumIsAbsolute ? externalSample.mediumVelocityMps :
-              MotionVec_Add(medium.velocityMps,externalSample.mediumVelocityMps);
+          Vector3 airflow = externalSample.mediumIsAbsolute ? externalSample.mediumVelocityMps : MotionVec_Add(medium.velocityMps, externalSample.mediumVelocityMps);
           velocity = ParticleDynamics_CoupleToAirflow(velocity, airflow,
-                                                       couplingHz * susceptibility, dt);
+                                                      couplingHz * susceptibility, dt);
         }
       }
       if (p->travelPath && !p->travelImpactActive &&
-          d->steeringFrequencyHz > 0.0f) {
+          d->steeringFrequencyHz > 0.0f)
+      {
         float maxSteering = d->maxSteeringAccelMps2 > 0.0f
                                 ? d->maxSteeringAccelMps2
                                 : p->travelPath->maxAcceleration;
@@ -717,21 +784,33 @@ void UpdateParticles(float dt)
         velocity.y += steering.y * dt;
         velocity.z += steering.z * dt;
       }
-      p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
-      p->x += velocity.x * dt; p->y += velocity.y * dt; p->z += velocity.z * dt;
+      p->vx = velocity.x;
+      p->vy = velocity.y;
+      p->vz = velocity.z;
+      p->x += velocity.x * dt;
+      p->y += velocity.y * dt;
+      p->z += velocity.z * dt;
       if (p->travelPath && !p->travelImpactActive &&
           ParticleTravel_AdvancePhysical(p->travelPath, position,
-              (Vector3){p->x, p->y, p->z}, &p->travelWaypoint,
-              p->travelFormationOffset)) {
-        Vector3 blastPos = p->travelPath->target ? *p->travelPath->target : (Vector3){p->x,p->y,p->z};
-        Vector3 impactOffset = ParticleTravel_TransportOffset(p->travelPath,p->travelWaypoint,p->travelFormationOffset);
-        p->x=blastPos.x+impactOffset.x;p->y=blastPos.y+impactOffset.y;p->z=blastPos.z+impactOffset.z;
-        EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_ARRIVAL,
-            .position={p->x,p->y,p->z},.velocity={p->vx,p->vy,p->vz}});
-        Vector3 enteredPosition={p->x,p->y,p->z},enteredVelocity={p->vx,p->vy,p->vz};
-        ParticleTravel_ApplyImpactEntry(p->travelPath,&enteredPosition,&enteredVelocity);
-        p->x=enteredPosition.x;p->y=enteredPosition.y;p->z=enteredPosition.z;
-        p->vx=enteredVelocity.x;p->vy=enteredVelocity.y;p->vz=enteredVelocity.z;
+                                         (Vector3){p->x, p->y, p->z}, &p->travelWaypoint,
+                                         p->travelFormationOffset))
+      {
+        Vector3 blastPos = p->travelPath->target ? *p->travelPath->target : (Vector3){p->x, p->y, p->z};
+        Vector3 impactOffset = ParticleTravel_TransportOffset(p->travelPath, p->travelWaypoint, p->travelFormationOffset);
+        p->x = blastPos.x + impactOffset.x;
+        p->y = blastPos.y + impactOffset.y;
+        p->z = blastPos.z + impactOffset.z;
+        EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_ARRIVAL,
+                                                               .position = {p->x, p->y, p->z},
+                                                               .velocity = {p->vx, p->vy, p->vz}});
+        Vector3 enteredPosition = {p->x, p->y, p->z}, enteredVelocity = {p->vx, p->vy, p->vz};
+        ParticleTravel_ApplyImpactEntry(p->travelPath, &enteredPosition, &enteredVelocity);
+        p->x = enteredPosition.x;
+        p->y = enteredPosition.y;
+        p->z = enteredPosition.z;
+        p->vx = enteredVelocity.x;
+        p->vy = enteredVelocity.y;
+        p->vz = enteredVelocity.z;
         p->travelImpactActive = true;
         p->travelImpactAge = 0.0f;
         continue;
@@ -798,8 +877,8 @@ void UpdateParticles(float dt)
       Vector3 position = {p->x, p->y, p->z};
       Vector3 velocity = {p->vx, p->vy, p->vz};
       reachedTarget = ParticleTravel_StepFormation(p->travelPath, step, &position,
-                                          &velocity, &p->travelWaypoint,
-                                          p->travelFormationOffset);
+                                                   &velocity, &p->travelWaypoint,
+                                                   p->travelFormationOffset);
       p->x = position.x;
       p->y = position.y;
       p->z = position.z;
@@ -812,7 +891,8 @@ void UpdateParticles(float dt)
       p->x += p->vx * step;
       p->y += p->vy * step;
       p->z += p->vz * step;
-      if (p->windInfluence > 0.0f) {
+      if (p->windInfluence > 0.0f)
+      {
         Vector3 windVel = Wind_EvaluateVelocity((Vector3){p->x, p->y, p->z}, s_particleTime);
         Vector3 vel = (Vector3){p->vx, p->vy, p->vz};
         vel = MotionProfile_CoupleToAirflow(vel, windVel, 3.5f * p->windInfluence, dt);
@@ -840,36 +920,47 @@ void UpdateParticles(float dt)
 
         continue;
       }
-      EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_ARRIVAL,
-          .position={p->x,p->y,p->z},.velocity={p->vx,p->vy,p->vz}});
+      EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_ARRIVAL,
+                                                             .position = {p->x, p->y, p->z},
+                                                             .velocity = {p->vx, p->vy, p->vz}});
       Particle_Deactivate(i);
       continue;
     }
 
-particle_contacts:
-    if (activeField) {
+  particle_contacts:
+    if (activeField)
+    {
       Vector3 position = {p->x, p->y, p->z};
       Vector3 velocity = {p->vx, p->vy, p->vz};
       ForceField_ResolveParticleContacts(activeField, p->radius, &position, &velocity);
-      p->x = position.x; p->y = position.y; p->z = position.z;
-      p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
+      p->x = position.x;
+      p->y = position.y;
+      p->z = position.z;
+      p->vx = velocity.x;
+      p->vy = velocity.y;
+      p->vz = velocity.z;
     }
     // Ground / Terrain Collision
     if (p->collisionEnabled)
     {
       float floorY = p->collisionFloorY;
       float terrainY = 0.0f;
-      if (Wind_SampleTerrain(p->x, p->z, &terrainY)) {
-        if (terrainY > floorY) floorY = terrainY;
+      if (Wind_SampleTerrain(p->x, p->z, &terrainY))
+      {
+        if (terrainY > floorY)
+          floorY = terrainY;
       }
-      if (p->y <= floorY) {
+      if (p->y <= floorY)
+      {
         p->vy = -p->vy * p->collisionElasticity;
         p->vx *= 0.75f;
         p->vz *= 0.75f;
         p->y = floorY + 0.005f;
 
-        EmissionChildren_Publish(p->children,&(EmissionEvent){.kind=EMISSION_EVENT_COLLISION,
-            .position={p->x,floorY+.005f,p->z},.velocity={p->vx,p->vy,p->vz},.normal={0,1,0}});
+        EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_COLLISION,
+                                                               .position = {p->x, floorY + .005f, p->z},
+                                                               .velocity = {p->vx, p->vy, p->vz},
+                                                               .normal = {0, 1, 0}});
       }
     }
 
@@ -881,7 +972,8 @@ particle_contacts:
       {
         p->trailHistoryTimer = 0.0f;
         int maxLen = p->trailLength;
-        if (maxLen > 8) maxLen = 8;
+        if (maxLen > 8)
+          maxLen = 8;
         int limit = (p->trailHistoryCount < maxLen) ? p->trailHistoryCount : maxLen - 1;
         for (int h = limit; h > 0; h--)
         {
@@ -933,8 +1025,8 @@ static void SortParticlesByDepth(int *ids, int count, const float *depths)
 // (s_lightingStrength / s_scatterStrength are declared above InitParticleSystem,
 // which registers them as hot-reloadable tunables.)
 static Shader s_litShader = {0};
-static int   s_locBgLuma = -1;
-static int   s_locBgAdapt = -1;
+static int s_locBgLuma = -1;
+static int s_locBgAdapt = -1;
 /* tuning.cfg -> particle_bg_adapt. DEFAULT 0 = OFF, and the reason is a mistake
    worth keeping: it was shipped at 1.0 on a measurement taken ONLY on the
    dark-core row, where legibility on white rose 0.132 -> 0.324. Applied to a
@@ -944,8 +1036,8 @@ static int   s_locBgAdapt = -1;
    The term is correct and stays available; it belongs with the negative-contrast
    STRUCTURE, not on its own. Set 1 only where the effect has an opaque core. */
 static float s_bgAdapt = 0.0f;
-static bool   s_litShaderTried = false;
-static bool   s_litActive = false;
+static bool s_litShaderTried = false;
+static bool s_litActive = false;
 static int s_locSunToLight, s_locSunColor, s_locAmbient, s_locViewPos;
 static int s_locLightStrength, s_locScatterStrength;
 static int s_locVfxCount, s_locVfxPos, s_locVfxColor, s_locVfxRadius;
@@ -965,13 +1057,15 @@ static int s_locTime = -1;
 void ParticleSystem_SetLighting(float strength01, float scatter01)
 {
   s_lightingStrength = strength01 < 0.0f ? 0.0f : (strength01 > 1.0f ? 1.0f : strength01);
-  s_scatterStrength  = scatter01  < 0.0f ? 0.0f : (scatter01  > 2.0f ? 2.0f : scatter01);
+  s_scatterStrength = scatter01 < 0.0f ? 0.0f : (scatter01 > 2.0f ? 2.0f : scatter01);
 }
 
 void ParticleSystem_GetLighting(float *outStrength, float *outScatter)
 {
-  if (outStrength) *outStrength = s_lightingStrength;
-  if (outScatter)  *outScatter  = s_scatterStrength;
+  if (outStrength)
+    *outStrength = s_lightingStrength;
+  if (outScatter)
+    *outScatter = s_scatterStrength;
 }
 
 static Vector3 ColorToVec3_Particle(Color c)
@@ -1008,10 +1102,14 @@ static void ParticleLighting_Begin(Camera3D camera)
   s_litActive = false;
   // Clamp HERE, not only in the setter: a tuning.cfg hot-reload writes the
   // float directly and never goes through ParticleSystem_SetLighting.
-  if (s_lightingStrength < 0.0f) s_lightingStrength = 0.0f;
-  else if (s_lightingStrength > 1.0f) s_lightingStrength = 1.0f;
-  if (s_scatterStrength < 0.0f) s_scatterStrength = 0.0f;
-  else if (s_scatterStrength > 2.0f) s_scatterStrength = 2.0f;
+  if (s_lightingStrength < 0.0f)
+    s_lightingStrength = 0.0f;
+  else if (s_lightingStrength > 1.0f)
+    s_lightingStrength = 1.0f;
+  if (s_scatterStrength < 0.0f)
+    s_scatterStrength = 0.0f;
+  else if (s_scatterStrength > 2.0f)
+    s_scatterStrength = 2.0f;
 
   // State report — re-emitted whenever a value CHANGES, not just once. The
   // first version logged one line at startup, which was useless for the actual
@@ -1025,18 +1123,19 @@ static void ParticleLighting_Begin(Camera3D camera)
                           s_lightAzimuth, s_analyticUV};
     bool changed = false;
     for (int i = 0; i < 5; i++)
-      if (fabsf(now[i] - last[i]) > 1e-4f) changed = true;
+      if (fabsf(now[i] - last[i]) > 1e-4f)
+        changed = true;
     if (changed)
     {
-      for (int i = 0; i < 5; i++) last[i] = now[i];
+      for (int i = 0; i < 5; i++)
+        last[i] = now[i];
       TraceLog(LOG_INFO,
                "PARTICLE F1: strength=%.2f scatter=%.2f bulge=%.2f azimuth=%.1f "
                "analyticUV=%.0f sunGain=%.2f ambGain=%.2f quality=%d%s",
                s_lightingStrength, s_scatterStrength, s_normalBulge, s_lightAzimuth,
                s_analyticUV, s_sunGain, s_ambientGain, (int)GfxQuality_Get(),
-               (s_lightingStrength <= 0.0f)  ? "  -> OFF (strength is 0)" :
-               (GfxQuality_Get() <= GFX_LOW) ? "  -> OFF (needs GfxQuality >= MED)" :
-                                               "  -> lit path ACTIVE");
+               (s_lightingStrength <= 0.0f) ? "  -> OFF (strength is 0)" : (GfxQuality_Get() <= GFX_LOW) ? "  -> OFF (needs GfxQuality >= MED)"
+                                                                                                         : "  -> lit path ACTIVE");
     }
   }
 
@@ -1063,44 +1162,44 @@ static void ParticleLighting_Begin(Camera3D camera)
                                              "core/particles/shaders/particle_lit.fs");
     if (s_litShader.id != 0)
     {
-      s_locSunToLight      = GetShaderLocation(s_litShader, "u_sunToLight");
-      s_locSunColor        = GetShaderLocation(s_litShader, "u_sunColor");
-      s_locAmbient         = GetShaderLocation(s_litShader, "u_ambient");
-      s_locViewPos         = GetShaderLocation(s_litShader, "viewPos");
-      s_locLightStrength   = GetShaderLocation(s_litShader, "u_lightingStrength");
-      s_locBgLuma          = GetShaderLocation(s_litShader, "u_bgLuma");
-      s_locBgAdapt         = GetShaderLocation(s_litShader, "u_bgAdapt");
+      s_locSunToLight = GetShaderLocation(s_litShader, "u_sunToLight");
+      s_locSunColor = GetShaderLocation(s_litShader, "u_sunColor");
+      s_locAmbient = GetShaderLocation(s_litShader, "u_ambient");
+      s_locViewPos = GetShaderLocation(s_litShader, "viewPos");
+      s_locLightStrength = GetShaderLocation(s_litShader, "u_lightingStrength");
+      s_locBgLuma = GetShaderLocation(s_litShader, "u_bgLuma");
+      s_locBgAdapt = GetShaderLocation(s_litShader, "u_bgAdapt");
       s_locScatterStrength = GetShaderLocation(s_litShader, "u_scatterStrength");
-      s_locVfxCount        = GetShaderLocation(s_litShader, "u_vfxLightCount");
-      s_locVfxPos          = GetShaderLocation(s_litShader, "u_vfxLightPos");
-      s_locVfxColor        = GetShaderLocation(s_litShader, "u_vfxLightColor");
-      s_locVfxRadius       = GetShaderLocation(s_litShader, "u_vfxLightRadius");
-      s_locDebugNormal     = GetShaderLocation(s_litShader, "u_debugNormal");
-      s_locNormalBulge     = GetShaderLocation(s_litShader, "u_normalBulge");
-      s_locSunGain         = GetShaderLocation(s_litShader, "u_sunGain");
-      s_locAmbientGain     = GetShaderLocation(s_litShader, "u_ambientGain");
-      s_locLightAzimuth    = GetShaderLocation(s_litShader, "u_lightAzimuth");
-      s_locAnalyticUV      = GetShaderLocation(s_litShader, "u_analyticUV");
-      s_locSoftFade        = GetShaderLocation(s_litShader, "u_softFade");
-      s_locSoftDebug       = GetShaderLocation(s_litShader, "u_softDebug");
-      s_locAtlasGrid       = GetShaderLocation(s_litShader, "u_atlasGrid");
-      s_locEmissiveBoost   = GetShaderLocation(s_litShader, "u_emissiveBoost");
-      s_locVolumeSheet     = GetShaderLocation(s_litShader, "u_volumeSheet");
-      s_locRampLUT         = GetShaderLocation(s_litShader, "u_rampLUT");
-      s_locHeatGain        = GetShaderLocation(s_litShader, "u_heatGain");
-      s_locSmokeTint       = GetShaderLocation(s_litShader, "u_smokeTint");
-      s_locSmokeGain       = GetShaderLocation(s_litShader, "u_smokeGain");
-      s_locSixWayLighting   = GetShaderLocation(s_litShader, "u_sixWayLighting");
-      s_locSixWayTexB       = GetShaderLocation(s_litShader, "u_sixWayTexB");
+      s_locVfxCount = GetShaderLocation(s_litShader, "u_vfxLightCount");
+      s_locVfxPos = GetShaderLocation(s_litShader, "u_vfxLightPos");
+      s_locVfxColor = GetShaderLocation(s_litShader, "u_vfxLightColor");
+      s_locVfxRadius = GetShaderLocation(s_litShader, "u_vfxLightRadius");
+      s_locDebugNormal = GetShaderLocation(s_litShader, "u_debugNormal");
+      s_locNormalBulge = GetShaderLocation(s_litShader, "u_normalBulge");
+      s_locSunGain = GetShaderLocation(s_litShader, "u_sunGain");
+      s_locAmbientGain = GetShaderLocation(s_litShader, "u_ambientGain");
+      s_locLightAzimuth = GetShaderLocation(s_litShader, "u_lightAzimuth");
+      s_locAnalyticUV = GetShaderLocation(s_litShader, "u_analyticUV");
+      s_locSoftFade = GetShaderLocation(s_litShader, "u_softFade");
+      s_locSoftDebug = GetShaderLocation(s_litShader, "u_softDebug");
+      s_locAtlasGrid = GetShaderLocation(s_litShader, "u_atlasGrid");
+      s_locEmissiveBoost = GetShaderLocation(s_litShader, "u_emissiveBoost");
+      s_locVolumeSheet = GetShaderLocation(s_litShader, "u_volumeSheet");
+      s_locRampLUT = GetShaderLocation(s_litShader, "u_rampLUT");
+      s_locHeatGain = GetShaderLocation(s_litShader, "u_heatGain");
+      s_locSmokeTint = GetShaderLocation(s_litShader, "u_smokeTint");
+      s_locSmokeGain = GetShaderLocation(s_litShader, "u_smokeGain");
+      s_locSixWayLighting = GetShaderLocation(s_litShader, "u_sixWayLighting");
+      s_locSixWayTexB = GetShaderLocation(s_litShader, "u_sixWayTexB");
       s_locSixWayScattering = GetShaderLocation(s_litShader, "u_sixWayScattering");
       s_locSixWayAbsorption = GetShaderLocation(s_litShader, "u_sixWayAbsorption");
-      s_locAmbientGround    = GetShaderLocation(s_litShader, "u_ambientGround");
-      s_locAmbientHorizon   = GetShaderLocation(s_litShader, "u_ambientHorizon");
-      s_locNormalTex        = GetShaderLocation(s_litShader, "u_normalTex");
+      s_locAmbientGround = GetShaderLocation(s_litShader, "u_ambientGround");
+      s_locAmbientHorizon = GetShaderLocation(s_litShader, "u_ambientHorizon");
+      s_locNormalTex = GetShaderLocation(s_litShader, "u_normalTex");
       s_locUseMotionVectors = GetShaderLocation(s_litShader, "u_useMotionVectors");
-      s_locMotionTex        = GetShaderLocation(s_litShader, "u_motionTex");
-      s_locMotionWarp       = GetShaderLocation(s_litShader, "u_motionWarp");
-      s_locTime             = GetShaderLocation(s_litShader, "u_time");
+      s_locMotionTex = GetShaderLocation(s_litShader, "u_motionTex");
+      s_locMotionWarp = GetShaderLocation(s_litShader, "u_motionWarp");
+      s_locTime = GetShaderLocation(s_litShader, "u_time");
     }
     else
     {
@@ -1132,9 +1231,9 @@ static void ParticleLighting_Begin(Camera3D camera)
     return;
 
   Vector3 sunToLight = Vector3Normalize(Vector3Negate(Environment_GetSunDirection()));
-  Vector3 sunColor   = Vector3Scale(ColorToVec3_Particle(Environment_GetSunColor()),
+  Vector3 sunColor = Vector3Scale(ColorToVec3_Particle(Environment_GetSunColor()),
                                   Environment_GetSunIntensity());
-  Vector3 ambient    = ColorToVec3_Particle(Environment_GetAmbientColor());
+  Vector3 ambient = ColorToVec3_Particle(Environment_GetAmbientColor());
 
   BeginShaderMode(s_litShader);
   s_litActive = true;
@@ -1155,13 +1254,19 @@ static void ParticleLighting_Begin(Camera3D camera)
      the default silently (core/docs/LANDMINES.md). */
   {
     static bool reg = false;
-    if (!reg) { Tuning_RegisterFloat("particle_bg_adapt", &s_bgAdapt, 0.0f); reg = true; }
+    if (!reg)
+    {
+      Tuning_RegisterFloat("particle_bg_adapt", &s_bgAdapt, 0.0f);
+      reg = true;
+    }
   }
   if (s_locBgAdapt >= 0)
     SetShaderValue(s_litShader, s_locBgAdapt, &s_bgAdapt, SHADER_UNIFORM_FLOAT);
-  if (s_locBgLuma >= 0) {
+  if (s_locBgLuma >= 0)
+  {
     Texture2D bl = SceneTargets_GetBackgroundLuma();
-    if (bl.id != 0) SetShaderValueTexture(s_litShader, s_locBgLuma, bl);
+    if (bl.id != 0)
+      SetShaderValueTexture(s_litShader, s_locBgLuma, bl);
   }
   SetShaderValue(s_litShader, s_locScatterStrength, &s_scatterStrength, SHADER_UNIFORM_FLOAT);
   SetShaderValue(s_litShader, s_locDebugNormal, &s_debugNormal, SHADER_UNIFORM_FLOAT);
@@ -1175,8 +1280,11 @@ static void ParticleLighting_Begin(Camera3D camera)
     float timeNow = TimeFX_Elapsed();
     SetShaderValue(s_litShader, s_locTime, &timeNow, SHADER_UNIFORM_FLOAT);
   }
-  { float one = 1.0f;   // lit default; flipped per batch for emissive particles
-    if (s_locEmissiveBoost >= 0) SetShaderValue(s_litShader, s_locEmissiveBoost, &one, SHADER_UNIFORM_FLOAT); }
+  {
+    float one = 1.0f; // lit default; flipped per batch for emissive particles
+    if (s_locEmissiveBoost >= 0)
+      SetShaderValue(s_litShader, s_locEmissiveBoost, &one, SHADER_UNIFORM_FLOAT);
+  }
   // SOFT PARTICLES — bind the previous frame's linearised scene depth.
   //
   // OFF unless there is really a depth texture to sample. The failure mode of
@@ -1187,7 +1295,8 @@ static void ParticleLighting_Begin(Camera3D camera)
   {
     Texture2D depthTex = SceneTargets_GetDepthTexture();
     float fade = (depthTex.id != 0 && s_softFade > 0.0f && s_locSoftFade >= 0)
-                     ? s_softFade : 0.0f;
+                     ? s_softFade
+                     : 0.0f;
     if (fade > 0.0f && depthTex.id != 0)
       SceneTargets_BindDepthForSoftParticles(s_litShader, PARTICLE_SOFT_DEPTH_SLOT);
     if (s_locSoftFade >= 0)
@@ -1216,13 +1325,17 @@ static void ParticleLighting_Begin(Camera3D camera)
   }
   { // default: not an atlas. Flipped per batch in the draw loop.
     float grid[2] = {1.0f, 1.0f};
-    if (s_locAtlasGrid >= 0) SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
+    if (s_locAtlasGrid >= 0)
+      SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
   }
   { // default: legacy colour sheet. Flipped per batch in the draw loop.
     float off = 0.0f, one = 1.0f;
-    if (s_locVolumeSheet >= 0) SetShaderValue(s_litShader, s_locVolumeSheet, &off, SHADER_UNIFORM_FLOAT);
-    if (s_locHeatGain >= 0)    SetShaderValue(s_litShader, s_locHeatGain, &one, SHADER_UNIFORM_FLOAT);
-    if (s_locSmokeGain >= 0) SetShaderValue(s_litShader, s_locSmokeGain, &one, SHADER_UNIFORM_FLOAT);
+    if (s_locVolumeSheet >= 0)
+      SetShaderValue(s_litShader, s_locVolumeSheet, &off, SHADER_UNIFORM_FLOAT);
+    if (s_locHeatGain >= 0)
+      SetShaderValue(s_litShader, s_locHeatGain, &one, SHADER_UNIFORM_FLOAT);
+    if (s_locSmokeGain >= 0)
+      SetShaderValue(s_litShader, s_locSmokeGain, &one, SHADER_UNIFORM_FLOAT);
     if (s_locSmokeTint >= 0)
     {
       // Soot, not neutral grey. The volume path multiplies this by the scene
@@ -1234,16 +1347,20 @@ static void ParticleLighting_Begin(Camera3D camera)
   }
   { // default: 6-way lighting off. Flipped per batch in the draw loop.
     float zero = 0.0f, one = 1.0f;
-    if (s_locSixWayLighting >= 0)   SetShaderValue(s_litShader, s_locSixWayLighting, &zero, SHADER_UNIFORM_FLOAT);
-    if (s_locSixWayScattering >= 0) SetShaderValue(s_litShader, s_locSixWayScattering, &one, SHADER_UNIFORM_FLOAT);
-    if (s_locSixWayAbsorption >= 0) SetShaderValue(s_litShader, s_locSixWayAbsorption, &one, SHADER_UNIFORM_FLOAT);
+    if (s_locSixWayLighting >= 0)
+      SetShaderValue(s_litShader, s_locSixWayLighting, &zero, SHADER_UNIFORM_FLOAT);
+    if (s_locSixWayScattering >= 0)
+      SetShaderValue(s_litShader, s_locSixWayScattering, &one, SHADER_UNIFORM_FLOAT);
+    if (s_locSixWayAbsorption >= 0)
+      SetShaderValue(s_litShader, s_locSixWayAbsorption, &one, SHADER_UNIFORM_FLOAT);
   }
 
   // VFX point lights — the caster's own fireball lighting the smoke inside it.
   VFXLightData lights[PARTICLE_MAX_VFX_LIGHTS];
   int count = 0;
   VFXLight_GetActive(lights, &count, PARTICLE_MAX_VFX_LIGHTS);
-  if (count > PARTICLE_MAX_VFX_LIGHTS) count = PARTICLE_MAX_VFX_LIGHTS;
+  if (count > PARTICLE_MAX_VFX_LIGHTS)
+    count = PARTICLE_MAX_VFX_LIGHTS;
 
   float pos[PARTICLE_MAX_VFX_LIGHTS * 3] = {0};
   float col[PARTICLE_MAX_VFX_LIGHTS * 3] = {0};
@@ -1269,14 +1386,16 @@ static void ParticleLighting_Begin(Camera3D camera)
 // particles skip lighting mid-batch.
 static void ParticleLighting_SetStrength(float v)
 {
-  if (!s_litActive) return;
+  if (!s_litActive)
+    return;
   rlDrawRenderBatchActive();
   SetShaderValue(s_litShader, s_locLightStrength, &v, SHADER_UNIFORM_FLOAT);
 }
 
 static void ParticleLighting_SetEmissive(float v)
 {
-  if (!s_litActive || s_locEmissiveBoost < 0) return;
+  if (!s_litActive || s_locEmissiveBoost < 0)
+    return;
   rlDrawRenderBatchActive();
   SetShaderValue(s_litShader, s_locEmissiveBoost, &v, SHADER_UNIFORM_FLOAT);
 }
@@ -1320,9 +1439,9 @@ static inline unsigned int VFXPackColor(Color c)
          ((unsigned int)c.b << 8) | (unsigned int)c.a;
 }
 
-static int   s_perfBatches = 0;
-static int   s_perfQuads   = 0;
-static float s_perfLog     = 0.0f;
+static int s_perfBatches = 0;
+static int s_perfQuads = 0;
+static float s_perfLog = 0.0f;
 
 static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilter)
 {
@@ -1367,10 +1486,12 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     for (int a = 0; a < s_activeCount; ++a)
     {
       ParticleInternal *p = &g_Particles[s_activeIds[a]];
-      if (p->renderMode == 3 || p->trailOnly) continue;
+      if (p->renderMode == 3 || p->trailOnly)
+        continue;
       Vector3 pos = {p->x, p->y, p->z};
       float distance = Vector3Distance(camera.position, pos);
-      if (distance <= 0.01f) continue;
+      if (distance <= 0.01f)
+        continue;
       Vector2 center = GetWorldToScreen(pos, camera);
       // THE DRAWN radius, not the authored one. The draw loop scales by
       // radiusCurve, so a growing sprite is larger than `p->radius` — up to
@@ -1385,7 +1506,10 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       if (p->radiusCurve)
       {
         float lr = p->lifetime / p->maxLifetime;
-        if (lr < 0.0f) lr = 0.0f; else if (lr > 1.0f) lr = 1.0f;
+        if (lr < 0.0f)
+          lr = 0.0f;
+        else if (lr > 1.0f)
+          lr = 1.0f;
         drawRadius *= SkillCurve_Eval(p->radiusCurve, 1.0f - lr);
       }
       // The copied depth region must cover the actual rectangular billboard,
@@ -1394,15 +1518,23 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       float softDepthRadius = drawRadius * fmaxf(p->facingAspect, 1.0f);
       float radiusPx = softDepthRadius * screenH / (2.0f * distance * tanf(halfFovy));
       Rectangle r = {center.x - radiusPx, center.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f};
-      if (!hasBounds) { bounds = r; hasBounds = true; }
-      else {
+      if (!hasBounds)
+      {
+        bounds = r;
+        hasBounds = true;
+      }
+      else
+      {
         float x1 = fmaxf(bounds.x + bounds.width, r.x + r.width);
         float y1 = fmaxf(bounds.y + bounds.height, r.y + r.height);
-        bounds.x = fminf(bounds.x, r.x); bounds.y = fminf(bounds.y, r.y);
-        bounds.width = x1 - bounds.x; bounds.height = y1 - bounds.y;
+        bounds.x = fminf(bounds.x, r.x);
+        bounds.y = fminf(bounds.y, r.y);
+        bounds.width = x1 - bounds.x;
+        bounds.height = y1 - bounds.y;
       }
     }
-    if (hasBounds) SceneTargets_RequestSoftDepthRegion(bounds);
+    if (hasBounds)
+      SceneTargets_RequestSoftDepthRegion(bounds);
   }
 
   // Sắp xếp các hạt từ xa đến gần (Back-to-Front Depth Sorting)
@@ -1483,14 +1615,18 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // and the original reason is gone. Drawing it in BODY instead cost sharp
     // horizontal bands — that pass also carries trails, decals and afterimages
     // and their depth-mask handling.
-    if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA) continue;
-    if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA) continue;
+    if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA)
+      continue;
+    if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA)
+      continue;
     // SURFACE_INPUT is rendered exclusively by LiquidSurface; drawing it here
     // would reveal its source particles as billboards as well.
-    if (p->renderMode == 3) continue;
+    if (p->renderMode == 3)
+      continue;
     // Headless wisp: the particle exists to carry a path, not to be a sprite.
     // Skipped before the batching decision so it cannot split a batch either.
-    if (p->trailOnly) continue;
+    if (p->trailOnly)
+      continue;
 
     unsigned int want = p->texId ? p->texId : texture.id;
     int wantGridC = (p->spriteAnim ? p->spriteAnim->cols : 1);
@@ -1515,15 +1651,17 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         p->smokeSheet != curSmokeSheet || p->normalTexId != curNormalTex ||
         p->motionTexId != curMotionTex || p->motionWarpScale != curMotionWarp)
     {
-      if (curTex != 0xFFFFFFFFu) rlEnd();
+      if (curTex != 0xFFFFFFFFu)
+        rlEnd();
       s_perfBatches++;
       if (drawBlend != curBlend)
       {
         // Blend state must be flushed either side or it leaks across the batch
         // boundary — ENGINE_LANDMINES.md §1, the raylib batching hazard.
         rlDrawRenderBatchActive();
-        if (curBlend >= 0) EndBlendMode();
-        BeginBlendMode(drawBlend == VFX_BLEND_ADDITIVE      ? BLEND_ADDITIVE
+        if (curBlend >= 0)
+          EndBlendMode();
+        BeginBlendMode(drawBlend == VFX_BLEND_ADDITIVE        ? BLEND_ADDITIVE
                        : drawBlend == VFX_BLEND_PREMULTIPLIED ? BLEND_ALPHA_PREMULTIPLY
                                                               : BLEND_ALPHA);
         rlDrawRenderBatchActive();
@@ -1554,7 +1692,9 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         {
           Texture2D ramp = {0};
           ramp.id = p->rampTexId;
-          ramp.width = 1; ramp.height = 1; ramp.mipmaps = 1;
+          ramp.width = 1;
+          ramp.height = 1;
+          ramp.mipmaps = 1;
           ramp.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
           SetShaderValueTexture(s_litShader, s_locRampLUT, ramp);
         }
@@ -1593,7 +1733,9 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         {
           Texture2D texB = {0};
           texB.id = p->sixWayTexBId;
-          texB.width = 1; texB.height = 1; texB.mipmaps = 1;
+          texB.width = 1;
+          texB.height = 1;
+          texB.mipmaps = 1;
           texB.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
           SetShaderValueTexture(s_litShader, s_locSixWayTexB, texB);
         }
@@ -1609,7 +1751,9 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         {
           Texture2D nTex = {0};
           nTex.id = p->normalTexId;
-          nTex.width = 1; nTex.height = 1; nTex.mipmaps = 1;
+          nTex.width = 1;
+          nTex.height = 1;
+          nTex.mipmaps = 1;
           nTex.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
           SetShaderValueTexture(s_litShader, s_locNormalTex, nTex);
         }
@@ -1629,7 +1773,9 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         {
           Texture2D mTex = {0};
           mTex.id = p->motionTexId;
-          mTex.width = 1; mTex.height = 1; mTex.mipmaps = 1;
+          mTex.width = 1;
+          mTex.height = 1;
+          mTex.mipmaps = 1;
           mTex.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
           SetShaderValueTexture(s_litShader, s_locMotionTex, mTex);
         }
@@ -1738,8 +1884,10 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       float heat = 1.0f;
       if (p->emissiveCurve)
         heat = SkillCurve_Eval(p->emissiveCurve, invRatio);
-      if (heat < 0.0f) heat = 0.0f;
-      else if (heat > 1.0f) heat = 1.0f;
+      if (heat < 0.0f)
+        heat = 0.0f;
+      else if (heat > 1.0f)
+        heat = 1.0f;
       unsigned char h = (unsigned char)(heat * 255.0f);
       c.r = h;
       c.g = (p->volumeSheet == 2) ? (unsigned char)(invRatio * 255.0f) : h;
@@ -1756,7 +1904,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     if (p->meshModel.meshCount > 0)
     {
       // Flush current quad batch before switching to mesh draw
-      if (curTex != 0xFFFFFFFFu) {
+      if (curTex != 0xFFFFFFFFu)
+      {
         rlEnd();
         curTex = 0xFFFFFFFFu;
       }
@@ -1795,8 +1944,10 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       Vector3 sideA;
       Vector3 particleView = Vector3Subtract(camera.position,
                                              (Vector3){p->x, p->y, p->z});
-      if (Vector3LengthSqr(particleView) < 1e-8f) particleView = viewDir;
-      else particleView = Vector3Normalize(particleView);
+      if (Vector3LengthSqr(particleView) < 1e-8f)
+        particleView = viewDir;
+      else
+        particleView = Vector3Normalize(particleView);
       authoredAxisCross = PS_AxisCrossBasis(p->facingDirection, particleView,
                                             camera.up, &sideA,
                                             &authoredCrossSideB);
@@ -1842,18 +1993,17 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         float dirY = vy * invSpeed;
 
         Vector3 tangentDir = {
-          right.x * dirX + up.x * dirY,
-          right.y * dirX + up.y * dirY,
-          right.z * dirX + up.z * dirY
-        };
+            right.x * dirX + up.x * dirY,
+            right.y * dirX + up.y * dirY,
+            right.z * dirX + up.z * dirY};
         Vector3 rightDir = {
-          right.x * dirY - up.x * dirX,
-          right.y * dirY - up.y * dirX,
-          right.z * dirY - up.z * dirX
-        };
+            right.x * dirY - up.x * dirX,
+            right.y * dirY - up.y * dirX,
+            right.z * dirY - up.z * dirX};
 
         float stretchFactor = 1.0f + screenSpeed * (p->stretchStrength > 0.0f ? p->stretchStrength : 0.05f);
-        if (stretchFactor > 3.5f) stretchFactor = 3.5f;
+        if (stretchFactor > 3.5f)
+          stretchFactor = 3.5f;
 
         rx = rightDir.x * drawRadius;
         ry = rightDir.y * drawRadius;
@@ -1878,8 +2028,12 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       float uyRot = (-right.y * sinT + up.y * cosT) * drawRadius;
       float uzRot = (-right.z * sinT + up.z * cosT) * drawRadius;
 
-      rx = rxRot; ry = ryRot; rz = rzRot;
-      ux = uxRot; uy = uyRot; uz = uzRot;
+      rx = rxRot;
+      ry = ryRot;
+      rz = rzRot;
+      ux = uxRot;
+      uy = uyRot;
+      uz = uzRot;
     }
 
     if (!authoredAxisCross && p->facingAspect != 1.0f)
@@ -1893,7 +2047,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     SpriteAnimFrameSample sample = {
         .uv = {0.0f, 0.0f, 1.0f, 1.0f}, .offset = {0}, .scale = {1.0f, 1.0f}};
     SpriteAnimFrameSample sampleNext = sample;
-    float     fbBlend = 0.0f;
+    float fbBlend = 0.0f;
     if (p->spriteAnim)
     {
       // Phase-shifted age: without the offset every sprite from one burst
@@ -1906,18 +2060,22 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       // a different simulation state). Blending the two adjacent frames removes
       // the jump entirely.
       sample = SpriteAnim_CalculateFrameSampleBlend(p->spriteAnim, age,
-                                                     &sampleNext, &fbBlend);
+                                                    &sampleNext, &fbBlend);
       // Kill switch + A/B. Cross-fading emits TWO quads per particle, so this is
       // also the lever if the vertex cost ever matters on a weak device.
       // Registered lazily on first use, never from an Init (docs/LANDMINES.md).
       {
         static float s_fbBlendOn = 1.0f;
         static float s_fbBlendMax = 220.0f;
-        static bool  s_fbBlendReg = false;
-        if (!s_fbBlendReg) { s_fbBlendReg = true;
+        static bool s_fbBlendReg = false;
+        if (!s_fbBlendReg)
+        {
+          s_fbBlendReg = true;
           Tuning_RegisterFloat("particle_fb_blend", &s_fbBlendOn, 1.0f);
-          Tuning_RegisterFloat("particle_fb_blend_max", &s_fbBlendMax, 220.0f); }
-        if (s_fbBlendOn <= 0.5f) fbBlend = 0.0f;
+          Tuning_RegisterFloat("particle_fb_blend_max", &s_fbBlendMax, 220.0f);
+        }
+        if (s_fbBlendOn <= 0.5f)
+          fbBlend = 0.0f;
         // LOAD SHEDDING. The cross-fade costs a SECOND full-size quad for every
         // animated particle — it exists to hide the ~2-render-frame step of a
         // 25 fps atlas, which is a subtle artifact, while the second quad is a
@@ -1926,7 +2084,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         // nobody sees the step in a screen full of overlapping sprites, and
         // everybody sees 20 fps. Dropping it is exactly a 2x fill saving on the
         // frames that need it, and it costs nothing on the frames that do not.
-        else if ((float)s_activeCount > s_fbBlendMax) fbBlend = 0.0f;
+        else if ((float)s_activeCount > s_fbBlendMax)
+          fbBlend = 0.0f;
       }
       if (p->motionTexId != 0 && p->motionWarpScale > 0.0f)
       {
@@ -1935,56 +2094,58 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       }
     }
 
-    // The quad, emitted once per frame being cross-faded. rlgl's immediate batch
-    // carries position/texcoord/colour only — there is no spare attribute to
-    // hand a second UV set plus a blend factor to the shader — so the fade is
-    // done the standard way: draw A at (1-t) and B at t.
-    //
-    // The mid-blend coverage dip this causes (two alpha draws are not exactly a
-    // lerp) is ~7% at smoke's 0.28 alpha and is not visible; it would matter for
-    // near-opaque sprites, which flipbooks here are not.
-    #define PS_EMIT_QUAD(_sample, _a)                                              \
-      do {                                                                         \
-        if ((_a) > 0) {                                                            \
-          const SpriteAnimFrameSample psSample = (_sample);                       \
-          const Rectangle psUV = psSample.uv;                                     \
-          const float psU0 = p->spriteFlipX ? psUV.x + psUV.width : psUV.x;       \
-          const float psU1 = p->spriteFlipX ? psUV.x : psUV.x + psUV.width;       \
-          const float psV0 = p->spriteFlipY ? psUV.y + psUV.height : psUV.y;      \
-          const float psV1 = p->spriteFlipY ? psUV.y : psUV.y + psUV.height;      \
-          const float psRx = rx * psSample.scale.x;                               \
-          const float psRy = ry * psSample.scale.x;                               \
-          const float psRz = rz * psSample.scale.x;                               \
-          const float psUx = ux * psSample.scale.y;                               \
-          const float psUy = uy * psSample.scale.y;                               \
-          const float psUz = uz * psSample.scale.y;                               \
-          const float psX = p->x - 2.0f * (rx * psSample.offset.x +              \
-                                           ux * psSample.offset.y);                \
-          const float psY = p->y - 2.0f * (ry * psSample.offset.x +              \
-                                           uy * psSample.offset.y);                \
-          const float psZ = p->z - 2.0f * (rz * psSample.offset.x +              \
-                                           uz * psSample.offset.y);                \
-          rlColor4ub(c.r, c.g, c.b, (unsigned char)(_a));                           \
-          /* V runs DOWN the image while +up runs UP in the world, so the      \
-             top-left texel must land on the TOP vertex. It used to be paired    \
-             with the bottom one, i.e. every particle sprite was drawn flipped   \
-             vertically. Nobody noticed because every sprite this engine had was \
-             round and symmetric; the E4 flame flipbook, which has an UP, came   \
-             out upside down. */                                                 \
-          rlTexCoord2f(psU0, psV1);                                               \
-          rlVertex3f(psX + psRx - psUx, psY + psRy - psUy, psZ + psRz - psUz);    \
-          rlTexCoord2f(psU0, psV0);                                               \
-          rlVertex3f(psX + psRx + psUx, psY + psRy + psUy, psZ + psRz + psUz);    \
-          rlTexCoord2f(psU1, psV0);                                               \
-          rlVertex3f(psX - psRx + psUx, psY - psRy + psUy, psZ - psRz + psUz);    \
-          rlTexCoord2f(psU1, psV1);                                               \
-          rlVertex3f(psX - psRx - psUx, psY - psRy - psUy, psZ - psRz - psUz);    \
-        }                                                                          \
-      } while (0)
+// The quad, emitted once per frame being cross-faded. rlgl's immediate batch
+// carries position/texcoord/colour only — there is no spare attribute to
+// hand a second UV set plus a blend factor to the shader — so the fade is
+// done the standard way: draw A at (1-t) and B at t.
+//
+// The mid-blend coverage dip this causes (two alpha draws are not exactly a
+// lerp) is ~7% at smoke's 0.28 alpha and is not visible; it would matter for
+// near-opaque sprites, which flipbooks here are not.
+#define PS_EMIT_QUAD(_sample, _a)                                            \
+  do                                                                         \
+  {                                                                          \
+    if ((_a) > 0)                                                            \
+    {                                                                        \
+      const SpriteAnimFrameSample psSample = (_sample);                      \
+      const Rectangle psUV = psSample.uv;                                    \
+      const float psU0 = p->spriteFlipX ? psUV.x + psUV.width : psUV.x;      \
+      const float psU1 = p->spriteFlipX ? psUV.x : psUV.x + psUV.width;      \
+      const float psV0 = p->spriteFlipY ? psUV.y + psUV.height : psUV.y;     \
+      const float psV1 = p->spriteFlipY ? psUV.y : psUV.y + psUV.height;     \
+      const float psRx = rx * psSample.scale.x;                              \
+      const float psRy = ry * psSample.scale.x;                              \
+      const float psRz = rz * psSample.scale.x;                              \
+      const float psUx = ux * psSample.scale.y;                              \
+      const float psUy = uy * psSample.scale.y;                              \
+      const float psUz = uz * psSample.scale.y;                              \
+      const float psX = p->x - 2.0f * (rx * psSample.offset.x +              \
+                                       ux * psSample.offset.y);              \
+      const float psY = p->y - 2.0f * (ry * psSample.offset.x +              \
+                                       uy * psSample.offset.y);              \
+      const float psZ = p->z - 2.0f * (rz * psSample.offset.x +              \
+                                       uz * psSample.offset.y);              \
+      rlColor4ub(c.r, c.g, c.b, (unsigned char)(_a));                        \
+      /* V runs DOWN the image while +up runs UP in the world, so the        \
+         top-left texel must land on the TOP vertex. It used to be paired    \
+         with the bottom one, i.e. every particle sprite was drawn flipped   \
+         vertically. Nobody noticed because every sprite this engine had was \
+         round and symmetric; the E4 flame flipbook, which has an UP, came   \
+         out upside down. */                                                 \
+      rlTexCoord2f(psU0, psV1);                                              \
+      rlVertex3f(psX + psRx - psUx, psY + psRy - psUy, psZ + psRz - psUz);   \
+      rlTexCoord2f(psU0, psV0);                                              \
+      rlVertex3f(psX + psRx + psUx, psY + psRy + psUy, psZ + psRz + psUz);   \
+      rlTexCoord2f(psU1, psV0);                                              \
+      rlVertex3f(psX - psRx + psUx, psY - psRy + psUy, psZ - psRz + psUz);   \
+      rlTexCoord2f(psU1, psV1);                                              \
+      rlVertex3f(psX - psRx - psUx, psY - psRy - psUy, psZ - psRz - psUz);   \
+    }                                                                        \
+  } while (0)
 
     if (fbBlend > 0.001f)
     {
-      PS_EMIT_QUAD(sample,     (float)c.a * (1.0f - fbBlend));
+      PS_EMIT_QUAD(sample, (float)c.a * (1.0f - fbBlend));
       PS_EMIT_QUAD(sampleNext, (float)c.a * fbBlend);
       s_perfQuads += 2;
     }
@@ -2007,13 +2168,17 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       {
         // Preserve the legacy camera-space cross for all existing callers.
         float tempRx = rx, tempRy = ry, tempRz = rz;
-        rx = -uz; ry = uy; rz = ux;
-        ux = tempRx; uy = tempRy; uz = tempRz;
+        rx = -uz;
+        ry = uy;
+        rz = ux;
+        ux = tempRx;
+        uy = tempRy;
+        uz = tempRz;
       }
 
       if (fbBlend > 0.001f)
       {
-        PS_EMIT_QUAD(sample,     (float)c.a * (1.0f - fbBlend));
+        PS_EMIT_QUAD(sample, (float)c.a * (1.0f - fbBlend));
         PS_EMIT_QUAD(sampleNext, (float)c.a * fbBlend);
         s_perfQuads += 2;
       }
@@ -2023,10 +2188,11 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         s_perfQuads++;
       }
     }
-    #undef PS_EMIT_QUAD
+#undef PS_EMIT_QUAD
   }
 
-  if (curTex != 0xFFFFFFFFu) rlEnd();
+  if (curTex != 0xFFFFFFFFu)
+    rlEnd();
   if (curBlend >= 0)
   {
     rlDrawRenderBatchActive();
@@ -2040,9 +2206,12 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   // never from an Init (docs/LANDMINES.md).
   {
     static float s_perfOn = 0.0f;
-    static bool  s_perfReg = false;
-    if (!s_perfReg) { s_perfReg = true;
-      Tuning_RegisterFloat("particle_perf_log", &s_perfOn, 0.0f); }
+    static bool s_perfReg = false;
+    if (!s_perfReg)
+    {
+      s_perfReg = true;
+      Tuning_RegisterFloat("particle_perf_log", &s_perfOn, 0.0f);
+    }
     // Report and reset ONLY after the emission pass, which is the last of the
     // two layer calls. Doing it per call made the counters lie: the body pass
     // zeroed them before emission ran, so whichever layer happened to cross the
@@ -2084,32 +2253,40 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
     if (p->trailLength > 0 && p->trailHistoryCount >= 2)
     {
-      if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA) continue;
-      if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA) continue;
+      if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA)
+        continue;
+      if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA)
+        continue;
       // Ribbon trails carry no volume sheet, so a PREMULTIPLIED head still
       // trails in plain ADDITIVE — the trail is a solid-colour strip, and
       // premultiplied output would need an alpha it does not compute.
       int want = (layerFilter == 0 || p->blendMode == VFX_BLEND_ALPHA) ? BLEND_ALPHA : BLEND_ADDITIVE;
       if (want != trailBlend)
       {
-        if (trailBlend >= 0) EndBlendMode();
+        if (trailBlend >= 0)
+          EndBlendMode();
         BeginBlendMode(want);
         trailBlend = want;
       }
       RibbonPoint trailPoints[PS_TRAIL_MAX_RIBBON_PTS];
       int count = p->trailHistoryCount;
-      if (count > p->trailLength) count = p->trailLength;
+      if (count > p->trailLength)
+        count = p->trailLength;
 
       // Sample base particle alpha for alpha scaling
       float lifeRatio = p->lifetime / p->maxLifetime;
       float invRatio = 1.0f - lifeRatio;
       Color baseColor = p->colorStart;
-      if (p->gradient) {
+      if (p->gradient)
+      {
         baseColor = ColorGradient_Sample(p->gradient, invRatio);
-      } else {
+      }
+      else
+      {
         baseColor.a = (unsigned char)((int)p->colorStart.a * lifeRatio + (int)p->colorEnd.a * invRatio);
       }
-      if (p->alphaCurve) {
+      if (p->alphaCurve)
+      {
         float mul = SkillCurve_Eval(p->alphaCurve, invRatio);
         int a_val = (int)((float)p->colorStart.a * mul);
         baseColor.a = (unsigned char)(a_val < 0 ? 0 : (a_val > 255 ? 255 : a_val));
@@ -2125,14 +2302,22 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       // control points to invent) and stays C1 across joints.
       int sub = p->trailSmooth ? PS_TRAIL_SUBDIV : 1;
       int outCount = (count - 1) * sub + 1;
-      if (outCount > PS_TRAIL_MAX_RIBBON_PTS) { sub = 1; outCount = count; }
+      if (outCount > PS_TRAIL_MAX_RIBBON_PTS)
+      {
+        sub = 1;
+        outCount = count;
+      }
 
       for (int o = 0; o < outCount; o++)
       {
-        float fh = (float)o / (float)sub;      // position in history index space
-        int   h  = (int)fh;
+        float fh = (float)o / (float)sub; // position in history index space
+        int h = (int)fh;
         float ft = fh - (float)h;
-        if (h > count - 1) { h = count - 1; ft = 0.0f; }
+        if (h > count - 1)
+        {
+          h = count - 1;
+          ft = 0.0f;
+        }
 
         Vector3 pos;
         if (sub == 1 || ft <= 0.0001f)
@@ -2170,7 +2355,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
               : VFX_CONTRAST_BODY);
     }
   }
-  if (trailBlend >= 0) EndBlendMode();
+  if (trailBlend >= 0)
+    EndBlendMode();
 
   rlSetTexture(0);
 }
@@ -2226,8 +2412,10 @@ bool ParticleSystem_HasAdditiveParticles(void)
     // counts once its ribbon has something to draw (>= 2 history points), and
     // not before, or an effect whose threads have only just spawned would open
     // an empty pass.
-    if (p->blendMode == VFX_BLEND_ALPHA || p->renderMode == 3) continue;
-    if (p->trailOnly && !(p->trailLength > 0 && p->trailHistoryCount >= 2)) continue;
+    if (p->blendMode == VFX_BLEND_ALPHA || p->renderMode == 3)
+      continue;
+    if (p->trailOnly && !(p->trailLength > 0 && p->trailHistoryCount >= 2))
+      continue;
     return true;
   }
   return false;
@@ -2244,35 +2432,45 @@ void ParticleSystem_GetStats(int *active, int *max)
 int ParticleSystem_CountSurfaceSamples(int emitterId)
 {
   int count = 0;
-  for (int i = 0; i < MAX_PARTICLES; ++i) {
+  for (int i = 0; i < MAX_PARTICLES; ++i)
+  {
     const ParticleInternal *p = &g_Particles[i];
-    if (p->active && p->emitterId == emitterId && p->renderMode == 3) ++count;
+    if (p->active && p->emitterId == emitterId && p->renderMode == 3)
+      ++count;
   }
   return count;
 }
 
 bool ParticleSystem_IsForceFieldInUse(const ForceField *field)
 {
-  if (!field) return false;
-  for (int i = 0; i < s_activeCount; ++i) {
+  if (!field)
+    return false;
+  for (int i = 0; i < s_activeCount; ++i)
+  {
     const ParticleInternal *p = &g_Particles[s_activeIds[i]];
-    if (!p->active) continue;
+    if (!p->active)
+      continue;
     const ForceField *arrival = p->travelPath ? p->travelPath->arrivalForceField : NULL;
-    if (ParticleFieldReference_Matches(p->active, field, p->forceField, arrival)) return true;
+    if (ParticleFieldReference_Matches(p->active, field, p->forceField, arrival))
+      return true;
   }
   return false;
 }
 
 int ParticleSystem_GetSurfaceSamplesSpaced(int emitterId, ParticleSurfaceSample *outSamples, int maxSamples)
 {
-  if (!outSamples || maxSamples <= 0) return 0;
+  if (!outSamples || maxSamples <= 0)
+    return 0;
   int demand = ParticleSystem_CountSurfaceSamples(emitterId);
   int admitted = demand < maxSamples ? demand : maxSamples;
   int ordinal = 0, count = 0;
-  for (int i = 0; i < MAX_PARTICLES && count < admitted; ++i) {
+  for (int i = 0; i < MAX_PARTICLES && count < admitted; ++i)
+  {
     const ParticleInternal *p = &g_Particles[i];
-    if (!p->active || p->emitterId != emitterId || p->renderMode != 3) continue;
-    if (ordinal++ != ParticleSurfaceSampling_Ordinal(count, admitted, demand)) continue;
+    if (!p->active || p->emitterId != emitterId || p->renderMode != 3)
+      continue;
+    if (ordinal++ != ParticleSurfaceSampling_Ordinal(count, admitted, demand))
+      continue;
     outSamples[count++] = (ParticleSurfaceSample){{p->x, p->y, p->z}, p->radius};
   }
   return count;
@@ -2280,12 +2478,15 @@ int ParticleSystem_GetSurfaceSamplesSpaced(int emitterId, ParticleSurfaceSample 
 
 int ParticleSystem_GetSurfaceSamples(int emitterId, ParticleSurfaceSample *outSamples, int maxSamples)
 {
-  if (!outSamples || maxSamples <= 0) return 0;
+  if (!outSamples || maxSamples <= 0)
+    return 0;
   int count = 0;
-  for (int i = 0; i < MAX_PARTICLES && count < maxSamples; ++i) {
+  for (int i = 0; i < MAX_PARTICLES && count < maxSamples; ++i)
+  {
     ParticleInternal *p = &g_Particles[i];
-    if (!p->active || p->emitterId != emitterId || p->renderMode != 3) continue;
-    outSamples[count++] = (ParticleSurfaceSample){ {p->x, p->y, p->z}, p->radius };
+    if (!p->active || p->emitterId != emitterId || p->renderMode != 3)
+      continue;
+    outSamples[count++] = (ParticleSurfaceSample){{p->x, p->y, p->z}, p->radius};
   }
   return count;
 }
@@ -2332,12 +2533,12 @@ void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const Part
 
 void ParticleSystem_SpawnGlow(ParticleConfig core)
 {
-    /* Premultiplied, unlit — the two things that make a particle glow AND keep a
-       silhouette. Overriding the caller's blend is deliberate: this function IS
-       the recipe, and a caller that wanted something else would not call it. */
-    core.render.blendMode = VFX_BLEND_PREMULTIPLIED;
-    core.render.unlit = 1;
-    SpawnParticle(core);
+  /* Premultiplied, unlit — the two things that make a particle glow AND keep a
+     silhouette. Overriding the caller's blend is deliberate: this function IS
+     the recipe, and a caller that wanted something else would not call it. */
+  core.render.blendMode = VFX_BLEND_PREMULTIPLIED;
+  core.render.unlit = 1;
+  SpawnParticle(core);
 }
 
 static Texture2D s_defaultParticleSprite = {0};
@@ -2347,136 +2548,163 @@ static Texture2D s_sparkCapsuleSprite = {0};
 
 Texture2D ParticleSystem_DefaultSprite(void)
 {
-    if (s_defaultParticleSprite.id != 0) return s_defaultParticleSprite;
-    const int N = 128;
-    const float half = N * 0.5f;
-    const float radius = 0.84f;
-    const float feather = 0.22f;
-    Image img = GenImageColor(N, N, BLANK);
-    for (int y = 0; y < N; ++y) {
-        for (int x = 0; x < N; ++x) {
-            float px = ((float)x + 0.5f - half) / half;
-            float py = ((float)y + 0.5f - half) / half;
-            float dist = sqrtf(px * px + py * py);
-            float coverage = (radius - dist) / feather;
-            if (coverage < 0.0f) coverage = 0.0f;
-            if (coverage > 1.0f) coverage = 1.0f;
-            float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
-            float core = 1.0f - dist / 0.50f;
-            if (core < 0.0f) core = 0.0f;
-            if (core > 1.0f) core = 1.0f;
-            float whiteCore = core * core * (3.0f - 2.0f * core);
-            ImageDrawPixel(&img, x, y,
-                           (Color){255,
-                                   (unsigned char)(70.0f + 185.0f * whiteCore),
-                                   (unsigned char)(8.0f + 172.0f * whiteCore),
-                                   (unsigned char)(255.0f * alpha)});
-        }
-    }
-    s_defaultParticleSprite = LoadTextureFromImage(img);
-    SetTextureFilter(s_defaultParticleSprite, TEXTURE_FILTER_BILINEAR);
-    UnloadImage(img);
+  if (s_defaultParticleSprite.id != 0)
     return s_defaultParticleSprite;
+  const int N = 128;
+  const float half = N * 0.5f;
+  const float radius = 0.84f;
+  const float feather = 0.22f;
+  Image img = GenImageColor(N, N, BLANK);
+  for (int y = 0; y < N; ++y)
+  {
+    for (int x = 0; x < N; ++x)
+    {
+      float px = ((float)x + 0.5f - half) / half;
+      float py = ((float)y + 0.5f - half) / half;
+      float dist = sqrtf(px * px + py * py);
+      float coverage = (radius - dist) / feather;
+      if (coverage < 0.0f)
+        coverage = 0.0f;
+      if (coverage > 1.0f)
+        coverage = 1.0f;
+      float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
+      float core = 1.0f - dist / 0.50f;
+      if (core < 0.0f)
+        core = 0.0f;
+      if (core > 1.0f)
+        core = 1.0f;
+      float whiteCore = core * core * (3.0f - 2.0f * core);
+      ImageDrawPixel(&img, x, y,
+                     (Color){255,
+                             (unsigned char)(70.0f + 185.0f * whiteCore),
+                             (unsigned char)(8.0f + 172.0f * whiteCore),
+                             (unsigned char)(255.0f * alpha)});
+    }
+  }
+  s_defaultParticleSprite = LoadTextureFromImage(img);
+  SetTextureFilter(s_defaultParticleSprite, TEXTURE_FILTER_BILINEAR);
+  UnloadImage(img);
+  return s_defaultParticleSprite;
 }
 
 Texture2D ParticleSystem_ElementSparkSprite(void)
 {
-    if (s_elementSparkSprite.id != 0) return s_elementSparkSprite;
-    const int N = 128;
-    const float half = N * 0.5f;
-    const float radius = 0.84f;
-    const float feather = 0.22f;
-    Image img = GenImageColor(N, N, BLANK);
-    for (int y = 0; y < N; ++y) {
-        for (int x = 0; x < N; ++x) {
-            float px = ((float)x + 0.5f - half) / half;
-            float py = ((float)y + 0.5f - half) / half;
-            float dist = sqrtf(px * px + py * py);
-            float coverage = (radius - dist) / feather;
-            if (coverage < 0.0f) coverage = 0.0f;
-            if (coverage > 1.0f) coverage = 1.0f;
-            float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
-            float core = 1.0f - dist / 0.50f;
-            if (core < 0.0f) core = 0.0f;
-            if (core > 1.0f) core = 1.0f;
-            float whiteCore = core * core * (3.0f - 2.0f * core);
-            /* Neutral value profile: the particle's material supplies hue;
-             * particle_lit.fs promotes the concentrated high-value core to a
-             * restrained white-hot highlight. */
-            unsigned char value = (unsigned char)(72.0f + 183.0f * whiteCore);
-            ImageDrawPixel(&img, x, y,
-                           (Color){value, value, value, (unsigned char)(255.0f * alpha)});
-        }
-    }
-    s_elementSparkSprite = LoadTextureFromImage(img);
-    SetTextureFilter(s_elementSparkSprite, TEXTURE_FILTER_BILINEAR);
-    UnloadImage(img);
+  if (s_elementSparkSprite.id != 0)
     return s_elementSparkSprite;
+  const int N = 128;
+  const float half = N * 0.5f;
+  const float radius = 0.84f;
+  const float feather = 0.22f;
+  Image img = GenImageColor(N, N, BLANK);
+  for (int y = 0; y < N; ++y)
+  {
+    for (int x = 0; x < N; ++x)
+    {
+      float px = ((float)x + 0.5f - half) / half;
+      float py = ((float)y + 0.5f - half) / half;
+      float dist = sqrtf(px * px + py * py);
+      float coverage = (radius - dist) / feather;
+      if (coverage < 0.0f)
+        coverage = 0.0f;
+      if (coverage > 1.0f)
+        coverage = 1.0f;
+      float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
+      float core = 1.0f - dist / 0.50f;
+      if (core < 0.0f)
+        core = 0.0f;
+      if (core > 1.0f)
+        core = 1.0f;
+      float whiteCore = core * core * (3.0f - 2.0f * core);
+      /* Neutral value profile: the particle's material supplies hue;
+       * particle_lit.fs promotes the concentrated high-value core to a
+       * restrained white-hot highlight. */
+      unsigned char value = (unsigned char)(72.0f + 183.0f * whiteCore);
+      ImageDrawPixel(&img, x, y,
+                     (Color){value, value, value, (unsigned char)(255.0f * alpha)});
+    }
+  }
+  s_elementSparkSprite = LoadTextureFromImage(img);
+  SetTextureFilter(s_elementSparkSprite, TEXTURE_FILTER_BILINEAR);
+  UnloadImage(img);
+  return s_elementSparkSprite;
 }
 
 Texture2D ParticleSystem_GlowSprite(void)
 {
-    if (s_glowSprite.id != 0) return s_glowSprite;
-    const int N = 128;
-    Image img = GenImageColor(N, N, BLANK);
-    const float half = N * 0.5f;
-    for (int y = 0; y < N; y++) {
-        for (int x = 0; x < N; x++) {
-            float px = ((float)x + 0.5f - half) / half;
-            float py = ((float)y + 0.5f - half) / half;
-            float r2 = px * px + py * py;
-            /* (1 - r^2)^3 — zero value AND zero slope at r = 1, so nothing of
-               the quad can show through at the sprite's own edge. */
-            float v = (r2 >= 1.0f) ? 0.0f : (1.0f - r2);
-            float a = v * v * v;
-            ImageDrawPixel(&img, x, y, (Color){255, 255, 255, (unsigned char)(255.0f * a)});
-        }
-    }
-    s_glowSprite = LoadTextureFromImage(img);
-    SetTextureFilter(s_glowSprite, TEXTURE_FILTER_BILINEAR);
-    UnloadImage(img);
+  if (s_glowSprite.id != 0)
     return s_glowSprite;
+  const int N = 128;
+  Image img = GenImageColor(N, N, BLANK);
+  const float half = N * 0.5f;
+  for (int y = 0; y < N; y++)
+  {
+    for (int x = 0; x < N; x++)
+    {
+      float px = ((float)x + 0.5f - half) / half;
+      float py = ((float)y + 0.5f - half) / half;
+      float r2 = px * px + py * py;
+      /* (1 - r^2)^3 — zero value AND zero slope at r = 1, so nothing of
+         the quad can show through at the sprite's own edge. */
+      float v = (r2 >= 1.0f) ? 0.0f : (1.0f - r2);
+      float a = v * v * v;
+      ImageDrawPixel(&img, x, y, (Color){255, 255, 255, (unsigned char)(255.0f * a)});
+    }
+  }
+  s_glowSprite = LoadTextureFromImage(img);
+  SetTextureFilter(s_glowSprite, TEXTURE_FILTER_BILINEAR);
+  UnloadImage(img);
+  return s_glowSprite;
 }
 
 Texture2D ParticleSystem_SparkCapsuleSprite(void)
 {
-    if (s_sparkCapsuleSprite.id != 0) return s_sparkCapsuleSprite;
-    const int N = 128;
-    const float half = N * 0.5f;
-    const float halfSegment = 0.62f;
-    const float capsuleRadius = 0.22f;
-    const float feather = 0.090f;
-    Image img = GenImageColor(N, N, BLANK);
-    for (int y = 0; y < N; ++y) {
-        for (int x = 0; x < N; ++x) {
-            float px = ((float)x + 0.5f - half) / half;
-            float py = ((float)y + 0.5f - half) / half;
-            float qy = fabsf(py) - halfSegment;
-            if (qy < 0.0f) qy = 0.0f;
-            float dist = sqrtf(px * px + qy * qy);
-            float coverage = (capsuleRadius - dist) / feather;
-            if (coverage < 0.0f) coverage = 0.0f;
-            if (coverage > 1.0f) coverage = 1.0f;
-            float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
-            float core = 1.0f - dist / (capsuleRadius * 0.72f);
-            if (core < 0.0f) core = 0.0f;
-            if (core > 1.0f) core = 1.0f;
-            float whiteCore = core * core * (3.0f - 2.0f * core);
-            ImageDrawPixel(&img, x, y,
-                           (Color){255,
-                                   (unsigned char)(70.0f + 185.0f * whiteCore),
-                                   (unsigned char)(8.0f + 172.0f * whiteCore),
-                                   (unsigned char)(255.0f * alpha)});
-        }
-    }
-    s_sparkCapsuleSprite = LoadTextureFromImage(img);
-    SetTextureFilter(s_sparkCapsuleSprite, TEXTURE_FILTER_BILINEAR);
-    UnloadImage(img);
+  if (s_sparkCapsuleSprite.id != 0)
     return s_sparkCapsuleSprite;
+  const int N = 128;
+  const float half = N * 0.5f;
+  const float halfSegment = 0.62f;
+  const float capsuleRadius = 0.22f;
+  const float feather = 0.090f;
+  Image img = GenImageColor(N, N, BLANK);
+  for (int y = 0; y < N; ++y)
+  {
+    for (int x = 0; x < N; ++x)
+    {
+      float px = ((float)x + 0.5f - half) / half;
+      float py = ((float)y + 0.5f - half) / half;
+      float qy = fabsf(py) - halfSegment;
+      if (qy < 0.0f)
+        qy = 0.0f;
+      float dist = sqrtf(px * px + qy * qy);
+      float coverage = (capsuleRadius - dist) / feather;
+      if (coverage < 0.0f)
+        coverage = 0.0f;
+      if (coverage > 1.0f)
+        coverage = 1.0f;
+      float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
+      float core = 1.0f - dist / (capsuleRadius * 0.72f);
+      if (core < 0.0f)
+        core = 0.0f;
+      if (core > 1.0f)
+        core = 1.0f;
+      float whiteCore = core * core * (3.0f - 2.0f * core);
+      ImageDrawPixel(&img, x, y,
+                     (Color){255,
+                             (unsigned char)(70.0f + 185.0f * whiteCore),
+                             (unsigned char)(8.0f + 172.0f * whiteCore),
+                             (unsigned char)(255.0f * alpha)});
+    }
+  }
+  s_sparkCapsuleSprite = LoadTextureFromImage(img);
+  SetTextureFilter(s_sparkCapsuleSprite, TEXTURE_FILTER_BILINEAR);
+  UnloadImage(img);
+  return s_sparkCapsuleSprite;
 }
 
-void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config) {
-  if (!adj || adj->count == 0) return;
+void SpawnParticleOnMesh(const struct MeshAdjacency *adj, Matrix transform, ParticleConfig config)
+{
+  if (!adj || adj->count == 0)
+    return;
   Vector3 localPos = MeshAdjacency_SampleEdge(adj);
   Vector3 worldPos = Vector3Transform(localPos, transform);
   config.position = worldPos;

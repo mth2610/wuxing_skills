@@ -400,7 +400,28 @@ MapFloraSystem MapProp_CreateFloraSystem(
         flora.reedCount = reedCount;
     }
 
-    // 3. Clustered Wildflower Fields: 100% Procedural 3D Petals (NO texture atlas!)
+    // 3. Hillside Pampas Grass (Ghost of Tsushima Susuki Plumes)
+    if (style.pampasPlacements && style.pampasCount > 0)
+    {
+        flora.pampasMeadow = MapProp_CreateMeadow(style.pampasPlacements, style.pampasCount,
+                                                  (MapMeadowStyle){
+                                                      .rootColor = (style.pampasRootColor.a > 0) ? style.pampasRootColor : (Color){48, 54, 28, 255},
+                                                      .tipColor = (style.pampasTipColor.a > 0) ? style.pampasTipColor : (Color){246, 238, 218, 255},
+                                                      .bladesPerClump = 6,
+                                                      .bladeSegments = 4,
+                                                      .bladeWidthScale = 0.082f,
+                                                      .chunkSize = 16.0f,
+                                                      .lodDistance = 28.0f,
+                                                      .midLodDistance = 14.0f,
+                                                      .drawDistance = 42.0f,
+                                                      .shadowDistance = (style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 14.0f) : 12.0f,
+                                                      .texturePath = NULL,
+                                                      .growthForm = MAP_MEADOW_GROWTH_PAMPAS,
+                                                  });
+        flora.pampasCount = style.pampasCount;
+    }
+
+    // 4. Clustered Wildflower Fields: 100% Procedural 3D Petals (NO texture atlas!)
     if (flowerPlacements && clusters && clusterCount > 0)
     {
         flora.flowerFields = (MapFlowerField *)RL_MALLOC(clusterCount * sizeof(MapFlowerField));
@@ -435,7 +456,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
     }
 
     flora.time = 0.0f;
-    flora.ready = (flora.valleyMeadow.ready || flora.reedMeadow.ready || flora.flowerClusterCount > 0);
+    flora.ready = (flora.valleyMeadow.ready || flora.reedMeadow.ready || flora.pampasMeadow.ready || flora.flowerClusterCount > 0);
     return flora;
 }
 
@@ -452,6 +473,10 @@ void MapProp_UpdateFloraSystem(MapFloraSystem *flora, Vector3 cameraTarget, floa
     if (flora->reedCount > 0)
     {
         MapProp_PrepareMeadow(&flora->reedMeadow, (Vector3){0});
+    }
+    if (flora->pampasCount > 0)
+    {
+        MapProp_PrepareMeadow(&flora->pampasMeadow, (Vector3){0});
     }
 
     // Only run default interaction pass if the map hasn't already opened a custom interaction frame
@@ -479,6 +504,11 @@ void MapProp_DrawFloraSystem(MapFloraSystem *flora)
         MapProp_DrawMeadow(&flora->reedMeadow, (Vector3){0}, flora->time,
                            flora->windDirection, 0.11f);
     }
+    if (flora->pampasCount > 0)
+    {
+        MapProp_DrawMeadow(&flora->pampasMeadow, (Vector3){0}, flora->time,
+                           flora->windDirection, 0.055f);
+    }
     for (int i = 0; i < flora->flowerClusterCount; i++)
     {
         if (flora->flowerFields[i].ready)
@@ -504,6 +534,11 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
     {
         MapProp_DrawMeadowShadowCasters(&flora->reedMeadow, offset, flora->time,
                                         flora->windDirection, 0.11f);
+    }
+    if (flora->pampasCount > 0)
+    {
+        MapProp_DrawMeadowShadowCasters(&flora->pampasMeadow, offset, flora->time,
+                                        flora->windDirection, 0.055f);
     }
 
     // Optimization: 3D procedural flowers sit nested inside grass and already draw batched
@@ -542,6 +577,11 @@ void MapProp_UnloadFloraSystem(MapFloraSystem *flora)
     }
     flora->flowerClusterCount = 0;
 
+    if (flora->pampasCount > 0)
+    {
+        MapProp_UnloadMeadow(&flora->pampasMeadow);
+        flora->pampasCount = 0;
+    }
     if (flora->reedCount > 0)
     {
         MapProp_UnloadMeadow(&flora->reedMeadow);
