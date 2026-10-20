@@ -17,7 +17,7 @@
       725
     ],
     "valid_area_m2": 278245800.0,
-    "path": "/Users/mth2610/Desktop/vfx/DEM_SongQuao.tif",
+    "path": "/Users/mth2610/Desktop/c_games/wuxing_skills/assets/maps/song_quao/DEM_SongQuao.tif",
     "sha256": "53273f3c251eae957a4306d30fa12cc40a29842437614d0a519ecefa11a45499",
     "crop_pixels": [
       0,
@@ -34,10 +34,10 @@
       189
     ],
     "height_range_m": 16.0,
-    "cliff_depth_m": 8,
-    "horizontal_scale": 0.93,
+    "cliff_depth_m": 8.0,
+    "horizontal_scale": 1.1400000000000001,
     "vertical_transform": "normalized elevation power 1.12",
-    "water_triangles": 10064
+    "water_triangles": 6628
   },
   "inference": {
     "lake": "inferred largest connected lowland plateau; unverified water extent",
@@ -68,14 +68,14 @@
   "parameters": {
     "max_dim": 300.0,
     "height_range": 16.0,
-    "cliff_depth": 8,
+    "cliff_depth": 8.0,
     "cliff_margin": 8.5,
     "resolution_scale": 1.0,
-    "stream_ratio": 0.01
+    "stream_ratio": 0.016
   },
   "metrics": {
-    "bake_seconds": 26.899919903999944,
-    "wet_nodes": 2908,
+    "bake_seconds": 38.54825068999344,
+    "wet_nodes": 2160,
     "lake_nodes": 107
   }
 }

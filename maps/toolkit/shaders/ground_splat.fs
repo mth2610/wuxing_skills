@@ -384,6 +384,10 @@ void main()
                        + wetSoilColor * wWetSoil
                        + pathMarginColor * wPath;
 
+    // Wet capillary saturation & darkening (rich glistening dark loam along riverbanks)
+    float wetCapillaryDarken = smoothstep(0.15, 0.85, wWetSoil) * (1.0 - lakeDepthFactor * 0.5) * 0.32;
+    blendedAlbedo *= (1.0 - wetCapillaryDarken);
+
     if (streamWet > 0.50) {
         vec3 streamBedTint = vec3(0.17, 0.23, 0.18) * (0.84 + 0.32 * dirtDetail.r);
         blendedAlbedo = mix(blendedAlbedo, streamBedTint, smoothstep(0.50, 0.92, streamWet) * 0.55);
@@ -507,15 +511,17 @@ void main()
     groundLit += actualLight * drySpec * sunVisibility;
 
     // ---- 12. Capillary Wetness Mechanics (Restrained Natural Shingle Sheen) ----
-    if (wWetSoil > 0.08 && lakeDepthFactor < 0.25) {
-        float waterlineBand = wWetSoil * (1.0 - smoothstep(0.05, 0.25, lakeDepthFactor));
+    if (wWetSoil > 0.05 && lakeDepthFactor < 0.35) {
+        float waterlineBand = smoothstep(0.05, 0.55, wWetSoil) * (1.0 - smoothstep(0.08, 0.35, lakeDepthFactor));
         float oneMinusNdotV = 1.0 - max(dot(normal, viewDir), 0.0);
         float om2 = oneMinusNdotV * oneMinusNdotV;
-        float fresnelWet = 0.02 + 0.98 * (om2 * om2 * oneMinusNdotV);
+        float fresnelWet = 0.04 + 0.96 * (om2 * om2 * oneMinusNdotV);
 
-        float wetSpecBroad = h24 * 0.14;
-        vec3 wetSheen = actualLight * (wetSpecBroad * detailResolve) * (0.25 + fresnelWet * 0.45);
-        vec3 skySheen = actualAmbient * (fresnelWet * 0.12) * cavityAO;
+        // Dual-lobe specular for wet riverbed: sharp water glint + broad wet pebble sheen
+        float wetSpecSharp = pow(NdotH, 64.0) * 0.42;
+        float wetSpecBroad = h24 * 0.22;
+        vec3 wetSheen = actualLight * (wetSpecSharp + wetSpecBroad * detailResolve) * (0.32 + fresnelWet * 0.68);
+        vec3 skySheen = actualAmbient * (fresnelWet * 0.22) * cavityAO;
         groundLit += (wetSheen * sunVisibility + skySheen) * waterlineBand;
     }
 

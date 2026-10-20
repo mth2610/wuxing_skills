@@ -31,9 +31,14 @@ void main()
     vec3 lit = GrassShade(albedo, fragPosition, baseNormal, fragHeight,
                           uNorm, v_lightSpace, v_staticLightSpace);
 
-    // Arch-windowed Wind-Wave Sheen (tapered to 0 at tip so tips never flicker)
+    // Dynamic Wind-Wave Glint & Sheen (Ghost of Tsushima Wind Gust Waves)
     float windSheen = fragColor.a;
-    lit *= 1.0 + windSheen * 0.18;
+    if (windSheen > 0.001) {
+        float archMask = smoothstep(0.12, 0.45, fragHeight) * (1.0 - smoothstep(0.72, 0.95, fragHeight));
+        vec3 sheenCol = u_lightColor * vec3(1.15, 1.08, 0.68) * (windSheen * 0.32 * archMask);
+        lit += sheenCol;
+        lit *= 1.0 + windSheen * 0.12;
+    }
 
     finalColor = vec4(lit, 1.0);
 }

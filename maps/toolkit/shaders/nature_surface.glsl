@@ -315,8 +315,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambientGround = mix(groundBounce, greenBounce, 0.50);
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
-    // Balanced root contact occlusion (0.70..1.0): grounds tufts without black bands
-    float rootAO = mix(0.70, 1.0, smoothstep(0.0, 0.42, h));
+    // Deep rooted contact occlusion (0.24..1.0): firmly anchors grass tufts into dark fertile soil bed
+    float rootAO = mix(0.24, 1.0, smoothstep(0.0, 0.48, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
@@ -370,18 +370,20 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             }
 
             // Luminous Golden-Jade Subsurface Translucency (Ghost of Tsushima Morning Glow):
+            // Thin-leaf isotropic internal scattering + forward specular peak
             float forwardScatter = max(dot(-u_lightDir, viewDir), 0.0);
             float backLight = max(-dot(faceNormal, modelLightDir), 0.0);
+            float backWrap = max(-dot(shadingN, u_lightDir) + 0.38, 0.0) * 0.72;
             float forwardLobe = forwardScatter * forwardScatter * forwardScatter;
             float backLobe = FastPow1_4(backLight);
-            float edgeThinness = 0.72 + 0.28 * absU;
-            float sssWindow = FastRamp(0.10, 0.46, h) * (1.0 - FastRamp(0.84, 0.99, h) * 0.32);
-            float transmission = (backLobe * 0.62 + forwardLobe * 0.82 * (0.42 + 0.58 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 goldenJadeSSS = baseColor * vec3(1.48, 1.55, 0.48) + vec3(0.045, 0.058, 0.012) * sssScale;
+            float edgeThinness = 0.68 + 0.32 * absU;
+            float sssWindow = FastRamp(0.08, 0.44, h) * (1.0 - FastRamp(0.86, 1.0, h) * 0.28);
+            float transmission = (backLobe * 0.65 + backWrap * 0.45 + forwardLobe * 1.15 * (0.35 + 0.65 * h)) * sssWindow * edgeThinness * sssScale;
+            vec3 goldenJadeSSS = mix(baseColor * vec3(1.72, 1.88, 0.62), vec3(0.98, 1.05, 0.45) * (dot(baseColor, vec3(0.333)) * 1.85), 0.38) + vec3(0.045, 0.058, 0.012) * sssScale;
 
             float diffuseLobe = wrapped * (0.42 + 0.58 * wrapped);
             vec3 directDiffuse = baseColor * (diffuseLobe * 0.62);
-            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.68);
+            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.95);
             vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.36) * baseColor;
 
             vec3 directSun = (directDiffuse + jadeTrans) * (canopy * sunVis) + specHighlight * sunVis;

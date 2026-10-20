@@ -1696,10 +1696,12 @@ int main(int argc, char **argv) {
             Formation_Draw();
         }
         if (currentScreen == SCREEN_VFX_TESTER) {
-            if (!VFXTest_ShouldHideCharacterRef() && CharacterModel_IsLoaded()) {
+            if ((!renderVFXMode || renderVFXIndex == -1) && !VFXTest_ShouldHideCharacterRef() && CharacterModel_IsLoaded()) {
                 CharacterModel_Draw(&player.anim, player.position, s_vfxPlayerYaw, 1.0f, WHITE);
             }
             VFXTest_DrawShadowPass();
+        } else {
+            VFX_WaterOrb_DrawShadowPass();
         }
         if (CharacterModel_IsLoaded()) {
             SurfaceMaterial_EndShadowCast(charModel);

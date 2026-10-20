@@ -363,6 +363,23 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     threshold=max(12,float(valid.sum())*stream_ratio)
     streams=valid & (accum>=threshold) & (perimeter>cliff_margin)
     dd=[(0,1),(-1,1),(-1,0),(-1,-1),(0,-1),(1,-1),(1,0),(1,1)]
+
+    # Prune transient micro-rills (< 6 cells) so only sustained valley channels are incised
+    branch_len = np.zeros_like(accum, dtype=int)
+    for r in range(h):
+        for c in range(w):
+            if streams[r, c]:
+                length = 0
+                cr, cc = r, c
+                while 0 <= cr < h and 0 <= cc < w and streams[cr, cc] and length < 100:
+                    length += 1
+                    d = int(directions[cr, cc])
+                    if d < 0:
+                        break
+                    cr += dd[d][0]
+                    cc += dd[d][1]
+                branch_len[r, c] = length
+    streams = streams & (branch_len >= 6)
     X,Z=np.meshgrid(np.arange(w)*sx,np.arange(h)*sz)
     surface=terrain-0.12
     corridor=np.zeros_like(terrain)
@@ -418,6 +435,33 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     surface=water_code.astype(float)/65535*total-cliff_depth
     water_depth=np.maximum(0,water_plane-ground)
     wet=water_depth>0.005
+
+    # Eliminate small disconnected puddle clusters (< 80 cells) on hill slopes
+    visited_wet = np.zeros((h, w), dtype=bool)
+    clean_wet = np.zeros((h, w), dtype=bool)
+    for r in range(h):
+        for c in range(w):
+            if wet[r, c] and not visited_wet[r, c]:
+                comp = []
+                q = [(r, c)]
+                visited_wet[r, c] = True
+                for y, x in q:
+                    comp.append((y, x))
+                    for dy, dx in ((-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)):
+                        ny, nx = y + dy, x + dx
+                        if 0 <= ny < h and 0 <= nx < w and wet[ny, nx] and not visited_wet[ny, nx]:
+                            visited_wet[ny, nx] = True
+                            q.append((ny, nx))
+                if len(comp) >= 80:
+                    for y, x in comp:
+                        clean_wet[y, x] = True
+    wet = clean_wet
+    water_depth = np.where(wet, water_depth, 0.0)
+    water_plane = np.where(wet, water_plane, ground - 0.25)
+    surface = np.where(wet, water_plane, ground - 0.12)
+    water_code = np.rint(np.clip((surface + cliff_depth) / total, 0, 1) * 65535).astype(np.uint16)
+    surface = water_code.astype(float) / 65535 * total - cliff_depth
+
     moisture=np.clip((sample(twi)-6)/8,0,1)
     shore=gaussian_filter_2d(wet.astype(float),max(0.7,2/min(sx,sz)))
     moisture=np.maximum(moisture,shore)
