@@ -50,7 +50,11 @@ static inline float MotionVec_Length(Vector3 a)
 static inline Vector3 MotionVec_Normalize(Vector3 a)
 {
   float lSq = MotionVec_Dot(a, a);
-  return lSq > 1e-12f ? MotionVec_Scale(a, 1.0f / sqrtf(lSq)) : (Vector3){0};
+  if (lSq <= 1e-12f)
+    return (Vector3){0};
+  if (fabsf(lSq - 1.0f) <= 1e-5f)
+    return a;
+  return MotionVec_Scale(a, 1.0f / sqrtf(lSq));
 }
 static inline Vector3 MotionVec_Limit(Vector3 a, float maximum)
 {
@@ -119,7 +123,8 @@ static inline bool MotionPath_Build(MotionPath *path, const Vector3 *points,
   {
     Vector3 delta = MotionVec_Sub(path->points[i + 1], path->points[i]);
     float len = MotionVec_Length(delta);
-    path->tangents[i] = len > 1e-6f ? MotionVec_Scale(delta, 1.0f / len) : (Vector3){0, 0, 1};
+    path->tangents[i] =
+        len > 1e-6f ? MotionVec_Scale(delta, 1.0f / len) : (Vector3){0, 0, 1};
     path->distance[i + 1] = path->distance[i] + len;
     path->normals[i] = MotionPath_TransportNormal(
         i ? path->normals[i - 1] : (Vector3){0, 1, 0},
@@ -137,27 +142,40 @@ static inline MotionPathSample MotionPath_Sample(const MotionPath *path,
   MotionPathSample out = {0};
   if (!path || path->count < 2)
     return out;
-  out.distance = Motion_Clamp(distance, 0.0f, path->length);
-  /* Binary search thay cho linear scan O(N) */
-  int lo = 0, hi = path->count - 2;
-  while (lo < hi)
+  float d = Motion_Clamp(distance, 0.0f, path->length);
+  out.distance = d;
+
+  int maxSeg = path->count - 2;
+  int i = 0;
+  /* Fast-path cho đoạn đầu, đoạn cuối hoặc đường dẫn chỉ có 1 đoạn thẳng */
+  if (maxSeg > 0 && d > path->distance[1])
   {
-    int mid = (lo + hi + 1) >> 1;
-    if (path->distance[mid] <= out.distance)
-      lo = mid;
+    if (d >= path->distance[maxSeg])
+    {
+      i = maxSeg;
+    }
     else
-      hi = mid - 1;
+    {
+      int lo = 1, hi = maxSeg - 1;
+      while (lo < hi)
+      {
+        int mid = (lo + hi + 1) >> 1;
+        if (path->distance[mid] <= d)
+          lo = mid;
+        else
+          hi = mid - 1;
+      }
+      i = lo;
+    }
   }
-  int i = lo;
-  float segLen = path->distance[i + 1] - path->distance[i];
-  float along = out.distance - path->distance[i];
-  out.position = MotionVec_Add(path->points[i],
-                               MotionVec_Scale(path->tangents[i], along));
+
+  float along = d - path->distance[i];
+  out.position =
+      MotionVec_Add(path->points[i], MotionVec_Scale(path->tangents[i], along));
   out.tangent = path->tangents[i];
   out.normal = path->normals[i];
   out.binormal = MotionVec_Cross(out.tangent, out.normal);
   out.segment = i;
-  (void)segLen;
   return out;
 }
 
@@ -167,9 +185,6 @@ MotionPath_Project(const MotionPath *path, Vector3 p, int first, int last)
   MotionPathSample best = {0};
   if (!path || path->count < 2)
     return best;
-  float bestSq = 1e30f;
-  float bestDistance = 0.0f;
-  Vector3 bestPos = path->points[0];
   int maxSeg = path->count - 2;
   if (first < 0)
     first = 0;
@@ -179,30 +194,43 @@ MotionPath_Project(const MotionPath *path, Vector3 p, int first, int last)
     last = first;
   if (last > maxSeg)
     last = maxSeg;
+
+  float bestSq = 1e30f;
+  float bestAlong = 0.0f;
   int bestSegment = first;
 
   for (int i = first; i <= last; i++)
   {
-    /* Dùng trực tiếp tangent đơn vị và segLen đã tính sẵn, không cần phép chia */
     Vector3 toP = MotionVec_Sub(p, path->points[i]);
-    float segLen = path->distance[i + 1] - path->distance[i];
-    float along = Motion_Clamp(MotionVec_Dot(toP, path->tangents[i]), 0.0f, segLen);
-    Vector3 q = MotionVec_Add(path->points[i], MotionVec_Scale(path->tangents[i], along));
-    Vector3 diff = MotionVec_Sub(p, q);
-    float sq = MotionVec_Dot(diff, diff);
+    Vector3 t = path->tangents[i];
+    float dot = MotionVec_Dot(toP, t);
+    float along = 0.0f;
+    float sq;
+    if (dot <= 0.0f)
+    {
+      sq = MotionVec_Dot(toP, toP);
+    }
+    else
+    {
+      float segLen = path->distance[i + 1] - path->distance[i];
+      along = dot < segLen ? dot : segLen;
+      Vector3 diff = MotionVec_Sub(toP, MotionVec_Scale(t, along));
+      sq = MotionVec_Dot(diff, diff);
+    }
     if (sq < bestSq)
     {
       bestSq = sq;
-      bestDistance = path->distance[i] + along;
-      bestPos = q;
+      bestAlong = along;
       bestSegment = i;
     }
   }
-  best.position = bestPos;
+
   best.tangent = path->tangents[bestSegment];
   best.normal = path->normals[bestSegment];
   best.binormal = MotionVec_Cross(best.tangent, best.normal);
-  best.distance = bestDistance;
+  best.position = MotionVec_Add(path->points[bestSegment],
+                                MotionVec_Scale(best.tangent, bestAlong));
+  best.distance = path->distance[bestSegment] + bestAlong;
   best.segment = bestSegment;
   return best;
 }
@@ -221,14 +249,19 @@ static inline Vector3 MotionPath_LocalOffset(MotionPathSample f,
                    MotionVec_Dot(world, f.normal),
                    MotionVec_Dot(world, f.binormal)};
 }
-static inline float Motion_SegmentDistance(Vector3 a, Vector3 b, Vector3 p)
+static inline float Motion_SegmentDistanceSq(Vector3 a, Vector3 b, Vector3 p)
 {
   Vector3 d = MotionVec_Sub(b, a);
+  Vector3 pa = MotionVec_Sub(p, a);
   float sq = MotionVec_Dot(d, d);
-  float t = sq > 1e-10f
-                ? Motion_Clamp(MotionVec_Dot(MotionVec_Sub(p, a), d) / sq, 0.0f, 1.0f)
-                : 0.0f;
-  return MotionVec_Length(
-      MotionVec_Sub(p, MotionVec_Add(a, MotionVec_Scale(d, t))));
+  if (sq <= 1e-10f)
+    return MotionVec_Dot(pa, pa);
+  float t = Motion_Clamp(MotionVec_Dot(pa, d) / sq, 0.0f, 1.0f);
+  Vector3 diff = MotionVec_Sub(pa, MotionVec_Scale(d, t));
+  return MotionVec_Dot(diff, diff);
+}
+static inline float Motion_SegmentDistance(Vector3 a, Vector3 b, Vector3 p)
+{
+  return sqrtf(Motion_SegmentDistanceSq(a, b, p));
 }
 #endif

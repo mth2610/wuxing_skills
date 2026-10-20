@@ -269,6 +269,18 @@ static inline Vector3 FieldTransform_LocalVector(const FieldTransform *t, Vector
       MotionVec_Dot(v, t->axisZ)};
 }
 
+/* Chuẩn hóa vector trục nhanh: nếu đã là vector đơn vị (phổ biến nhất là {0,1,0})
+ * thì trả về ngay không cần gọi sqrtf(). */
+static inline Vector3 Field_NormalizeAxisOrUp(Vector3 axis)
+{
+  float lenSq = MotionVec_Dot(axis, axis);
+  if (lenSq < 0.01f)
+    return (Vector3){0, 1, 0};
+  if (fabsf(lenSq - 1.0f) <= 1e-5f)
+    return axis;
+  return MotionVec_Scale(axis, 1.0f / sqrtf(lenSq));
+}
+
 static inline float FieldLifetime_Weight(const FieldLifetime *l, float age)
 {
   age -= l->startDelaySec;
@@ -323,8 +335,6 @@ static inline float FieldVolume_NormalizedDistanceAt(
   return MotionVec_Length(p) / v->radiusM;
 }
 
-/* Fast-path cho nội bộ: sử dụng khoảng cách bình phương để tránh gọi sqrtf khi
- * điểm nằm ngoài hình cầu/ống hoặc nằm sâu trong vùng lõi (coreFraction). */
 static inline float FieldVolume_WeightFastAt(
     const FieldVolume *v, Vector3 p, const MotionPathSample *pathSample)
 {
@@ -529,27 +539,44 @@ static inline Vector3 FieldFlow_Potential(
   return FieldFlow_PotentialAt(flow, volume, p, time, NULL);
 }
 
-static inline Vector3 FieldFlow_EvaluateAt(
+/* Kiểm tra nhanh xem mọi điểm lân cận p +/- h có nằm hoàn toàn trong vùng lõi
+ * (trọng số == 1.0f) hay không để bỏ qua 6 lần gọi FieldVolume_WeightFastAt. */
+static inline bool FieldVolume_IsDeepInCore(
+    const FieldVolume *v, Vector3 p, float h, const MotionPathSample *pathSample)
+{
+  if (v->coreFraction <= 0.0f)
+    return false;
+  if (v->shape == FIELD_SPHERE)
+  {
+    float shrunkCore = v->radiusM * v->coreFraction - h;
+    return shrunkCore > 0.0f && MotionVec_Dot(p, p) <= shrunkCore * shrunkCore;
+  }
+  if (v->shape == FIELD_PATH_TUBE && pathSample)
+  {
+    float shrunkCore = v->radiusM * v->coreFraction - h;
+    if (shrunkCore <= 0.0f)
+      return false;
+    Vector3 diff = MotionVec_Sub(p, pathSample->position);
+    return MotionVec_Dot(diff, diff) <= shrunkCore * shrunkCore;
+  }
+  if (v->shape == FIELD_BOX)
+  {
+    return (fabsf(p.x) + h <= v->halfExtentsM.x * v->coreFraction) &&
+           (fabsf(p.y) + h <= v->halfExtentsM.y * v->coreFraction) &&
+           (fabsf(p.z) + h <= v->halfExtentsM.z * v->coreFraction);
+  }
+  return false;
+}
+
+static inline Vector3 FieldFlow_EvaluateWithWeightAt(
     const FlowField *flow, const FieldVolume *volume, Vector3 p, float time,
-    const MotionPathSample *pathSample)
+    const MotionPathSample *pathSample, float weight)
 {
   Vector3 out = {0};
-  MotionPathSample localSample;
-  if (volume->shape == FIELD_PATH_TUBE && !pathSample)
-  {
-    if (volume->path.count < 2 || volume->path.count > MOTION_PATH_MAX_POINTS)
-      return out;
-    localSample = MotionPath_Project(&volume->path, p, 0, volume->path.count - 2);
-    pathSample = &localSample;
-  }
-
-  float weight = FieldVolume_WeightAt(volume, p, pathSample);
   if (weight <= 0.0f || !MotionFlow_IsValid(&flow->procedural))
     return out;
   float radius = FieldFlow_CharacteristicRadius(volume);
-  Vector3 center = {0}, axis = MotionVec_Normalize(flow->axis);
-  if (MotionVec_Dot(axis, axis) < 0.01f)
-    axis = (Vector3){0, 1, 0};
+  Vector3 center = {0}, axis = Field_NormalizeAxisOrUp(flow->axis);
 
   if (volume->shape == FIELD_PATH_TUBE)
   {
@@ -592,50 +619,81 @@ static inline Vector3 FieldFlow_EvaluateAt(
     if (h <= 0.0f || !isfinite(h))
       return out;
 
-    /* Tối ưu Curl Noise:
-     * 1. Tiền tính toán invEddy, phaseOffset và hScaled một lần duy nhất.
-     * 2. Chỉ gọi các kênh Perlin thực sự tham gia vào tích có hướng Curl
-     *    (loại bỏ ax.x, ay.y, az.z -> giảm 18 xuống 12 lệnh gọi Noise_Perlin3D). */
     float invEddy = 1.0f / eddy;
     float phase = time * flow->procedural.turbulenceSpeedMps * invEddy;
     Vector3 q = {p.x * invEddy + phase * 0.37f,
                  p.y * invEddy + phase * 0.51f,
                  p.z * invEddy + phase * 0.29f};
-    float step = 0.02f; /* h * invEddy == (eddy * 0.02f) / eddy == 0.02f */
+    float step = 0.02f;
     float amp = flow->procedural.turbulenceSpeedMps * eddy;
-
-    float wxPos = FieldVolume_WeightFastAt(volume, (Vector3){p.x + h, p.y, p.z}, pathSample);
-    float wxNeg = FieldVolume_WeightFastAt(volume, (Vector3){p.x - h, p.y, p.z}, pathSample);
-    float wyPos = FieldVolume_WeightFastAt(volume, (Vector3){p.x, p.y + h, p.z}, pathSample);
-    float wyNeg = FieldVolume_WeightFastAt(volume, (Vector3){p.x, p.y - h, p.z}, pathSample);
-    float wzPos = FieldVolume_WeightFastAt(volume, (Vector3){p.x, p.y, p.z + h}, pathSample);
-    float wzNeg = FieldVolume_WeightFastAt(volume, (Vector3){p.x, p.y, p.z - h}, pathSample);
-
-    /* Đạo hàm theo X: chỉ cần kênh Y (+31.416f) và kênh Z (+67.234f) */
-    float ax_y = (wxPos > 0.0f ? wxPos * Noise_Perlin3D(q.x + step + 31.416f, q.y + 31.416f, q.z + 31.416f) : 0.0f) -
-                 (wxNeg > 0.0f ? wxNeg * Noise_Perlin3D(q.x - step + 31.416f, q.y + 31.416f, q.z + 31.416f) : 0.0f);
-    float ax_z = (wxPos > 0.0f ? wxPos * Noise_Perlin3D(q.x + step + 67.234f, q.y + 67.234f, q.z + 67.234f) : 0.0f) -
-                 (wxNeg > 0.0f ? wxNeg * Noise_Perlin3D(q.x - step + 67.234f, q.y + 67.234f, q.z + 67.234f) : 0.0f);
-
-    /* Đạo hàm theo Y: chỉ cần kênh X (+0.0f) và kênh Z (+67.234f) */
-    float ay_x = (wyPos > 0.0f ? wyPos * Noise_Perlin3D(q.x, q.y + step, q.z) : 0.0f) -
-                 (wyNeg > 0.0f ? wyNeg * Noise_Perlin3D(q.x, q.y - step, q.z) : 0.0f);
-    float ay_z = (wyPos > 0.0f ? wyPos * Noise_Perlin3D(q.x + 67.234f, q.y + step + 67.234f, q.z + 67.234f) : 0.0f) -
-                 (wyNeg > 0.0f ? wyNeg * Noise_Perlin3D(q.x + 67.234f, q.y - step + 67.234f, q.z + 67.234f) : 0.0f);
-
-    /* Đạo hàm theo Z: chỉ cần kênh X (+0.0f) và kênh Y (+31.416f) */
-    float az_x = (wzPos > 0.0f ? wzPos * Noise_Perlin3D(q.x, q.y, q.z + step) : 0.0f) -
-                 (wzNeg > 0.0f ? wzNeg * Noise_Perlin3D(q.x, q.y, q.z - step) : 0.0f);
-    float az_y = (wzPos > 0.0f ? wzPos * Noise_Perlin3D(q.x + 31.416f, q.y + 31.416f, q.z + step + 31.416f) : 0.0f) -
-                 (wzNeg > 0.0f ? wzNeg * Noise_Perlin3D(q.x + 31.416f, q.y + 31.416f, q.z - step + 31.416f) : 0.0f);
-
     float scale = amp / (2.0f * h);
+
+    float ax_y, ax_z, ay_x, ay_z, az_x, az_y;
+    if (weight >= 1.0f && FieldVolume_IsDeepInCore(volume, p, h, pathSample))
+    {
+      /* Fast-path: cả 6 điểm dịch chuyển đều nằm trong vùng lõi (weight == 1.0f) */
+      ax_y = Noise_Perlin3D(q.x + step + 31.416f, q.y + 31.416f, q.z + 31.416f) -
+             Noise_Perlin3D(q.x - step + 31.416f, q.y + 31.416f, q.z + 31.416f);
+      ax_z = Noise_Perlin3D(q.x + step + 67.234f, q.y + 67.234f, q.z + 67.234f) -
+             Noise_Perlin3D(q.x - step + 67.234f, q.y + 67.234f, q.z + 67.234f);
+
+      ay_x = Noise_Perlin3D(q.x, q.y + step, q.z) -
+             Noise_Perlin3D(q.x, q.y - step, q.z);
+      ay_z = Noise_Perlin3D(q.x + 67.234f, q.y + step + 67.234f, q.z + 67.234f) -
+             Noise_Perlin3D(q.x + 67.234f, q.y - step + 67.234f, q.z + 67.234f);
+
+      az_x = Noise_Perlin3D(q.x, q.y, q.z + step) -
+             Noise_Perlin3D(q.x, q.y, q.z - step);
+      az_y = Noise_Perlin3D(q.x + 31.416f, q.y + 31.416f, q.z + step + 31.416f) -
+             Noise_Perlin3D(q.x + 31.416f, q.y + 31.416f, q.z - step + 31.416f);
+    }
+    else
+    {
+      float wxPos = FieldVolume_WeightFastAt(volume, (Vector3){p.x + h, p.y, p.z}, pathSample);
+      float wxNeg = FieldVolume_WeightFastAt(volume, (Vector3){p.x - h, p.y, p.z}, pathSample);
+      float wyPos = FieldVolume_WeightFastAt(volume, (Vector3){p.x, p.y + h, p.z}, pathSample);
+      float wyNeg = FieldVolume_WeightFastAt(volume, (Vector3){p.x, p.y - h, p.z}, pathSample);
+      float wzPos = FieldVolume_WeightFastAt(volume, (Vector3){p.x, p.y, p.z + h}, pathSample);
+      float wzNeg = FieldVolume_WeightFastAt(volume, (Vector3){p.x, p.y, p.z - h}, pathSample);
+
+      ax_y = (wxPos > 0.0f ? wxPos * Noise_Perlin3D(q.x + step + 31.416f, q.y + 31.416f, q.z + 31.416f) : 0.0f) -
+             (wxNeg > 0.0f ? wxNeg * Noise_Perlin3D(q.x - step + 31.416f, q.y + 31.416f, q.z + 31.416f) : 0.0f);
+      ax_z = (wxPos > 0.0f ? wxPos * Noise_Perlin3D(q.x + step + 67.234f, q.y + 67.234f, q.z + 67.234f) : 0.0f) -
+             (wxNeg > 0.0f ? wxNeg * Noise_Perlin3D(q.x - step + 67.234f, q.y + 67.234f, q.z + 67.234f) : 0.0f);
+
+      ay_x = (wyPos > 0.0f ? wyPos * Noise_Perlin3D(q.x, q.y + step, q.z) : 0.0f) -
+             (wyNeg > 0.0f ? wyNeg * Noise_Perlin3D(q.x, q.y - step, q.z) : 0.0f);
+      ay_z = (wyPos > 0.0f ? wyPos * Noise_Perlin3D(q.x + 67.234f, q.y + step + 67.234f, q.z + 67.234f) : 0.0f) -
+             (wyNeg > 0.0f ? wyNeg * Noise_Perlin3D(q.x + 67.234f, q.y - step + 67.234f, q.z + 67.234f) : 0.0f);
+
+      az_x = (wzPos > 0.0f ? wzPos * Noise_Perlin3D(q.x, q.y, q.z + step) : 0.0f) -
+             (wzNeg > 0.0f ? wzNeg * Noise_Perlin3D(q.x, q.y, q.z - step) : 0.0f);
+      az_y = (wzPos > 0.0f ? wzPos * Noise_Perlin3D(q.x + 31.416f, q.y + 31.416f, q.z + step + 31.416f) : 0.0f) -
+             (wzNeg > 0.0f ? wzNeg * Noise_Perlin3D(q.x + 31.416f, q.y + 31.416f, q.z - step + 31.416f) : 0.0f);
+    }
+
     out = MotionVec_Add(
         out, (Vector3){(ay_z - az_y) * scale,
                        (az_x - ax_z) * scale,
                        (ax_y - ay_x) * scale});
   }
   return out;
+}
+
+static inline Vector3 FieldFlow_EvaluateAt(
+    const FlowField *flow, const FieldVolume *volume, Vector3 p, float time,
+    const MotionPathSample *pathSample)
+{
+  MotionPathSample localSample;
+  if (volume && volume->shape == FIELD_PATH_TUBE && !pathSample)
+  {
+    if (volume->path.count < 2 || volume->path.count > MOTION_PATH_MAX_POINTS)
+      return (Vector3){0};
+    localSample = MotionPath_Project(&volume->path, p, 0, volume->path.count - 2);
+    pathSample = &localSample;
+  }
+  float weight = FieldVolume_WeightAt(volume, p, pathSample);
+  return FieldFlow_EvaluateWithWeightAt(flow, volume, p, time, pathSample, weight);
 }
 
 static inline Vector3 FieldFlow_Evaluate(
@@ -693,9 +751,7 @@ static inline Vector3 FieldGuide_RotateOffset(const FieldDesc *d, Vector3 offset
 {
   if (!d->flow.enabled || d->flow.procedural.swirlSpeedMps == 0.0f)
     return offset;
-  Vector3 axis = MotionVec_Normalize(d->flow.axis);
-  if (MotionVec_Dot(axis, axis) < 0.01f)
-    axis = (Vector3){0, 1, 0};
+  Vector3 axis = Field_NormalizeAxisOrUp(d->flow.axis);
   float angle =
       d->flow.procedural.swirlSpeedMps / fmaxf(d->volume.radiusM, 1e-5f) * age;
   float c = cosf(angle), s = sinf(angle);
@@ -716,69 +772,131 @@ static inline Vector3 FieldGuide_RotatePathLane(const FieldDesc *d, Vector3 lane
   return (Vector3){lane.x, lane.y * c - lane.z * s, lane.y * s + lane.z * c};
 }
 
-static inline FieldSample Field_EvaluateFrameStepPass(
-    const FieldDesc *d, float age, Vector3 position, Vector3 velocity,
-    const BodyPhysicalProperties *body, const MediumProperties *medium,
-    bool includeFlow, bool filterDrag, bool dragPass,
-    const Vector3 *pathLaneOffset, float dt, const FieldTransform *frame)
+/* Struct lưu kết quả hình học đã tính ở Pass 0 để tái sử dụng cho
+ * Motion_PhysicalPathLane, Pass 0 (Non-Drag) và Pass 1 (Drag). */
+typedef struct FieldPreparedQuery
 {
-  FieldSample out = {0};
-  if (!d || !body || !medium || !isfinite(dt) || dt < 0.0f ||
-      d->forceLawCount < 0 || d->forceLawCount > FIELD_MAX_FORCE_LAWS ||
-      !isfinite(age) || !isfinite(body->massKg) || body->massKg < 0.0f ||
-      !isfinite(body->projectedAreaM2) || body->projectedAreaM2 < 0.0f ||
-      !isfinite(body->densityKgM3) || body->densityKgM3 < 0.0f ||
-      !isfinite(body->volumeM3) || body->volumeM3 < 0.0f ||
-      !isfinite(body->dragCoefficient) || body->dragCoefficient < 0.0f ||
-      !isfinite(body->immersionFraction) || body->immersionFraction < 0.0f ||
-      body->immersionFraction > 1.0f || !isfinite(medium->densityKgM3) ||
-      medium->densityKgM3 < 0.0f || !Field_FiniteVector(position) ||
-      !Field_FiniteVector(velocity) || !Field_FiniteVector(medium->velocityMps) ||
-      !Field_FiniteVector(medium->gravityMps2))
-    return out;
+  FieldTransform frame;
+  Vector3 worldOffset;
+  Vector3 localPos;
+  MotionPathSample nearestPath;
+  bool hasPathSample;
+  float lifetimeWeight;
+  float volumeWeight;
+  float combinedWeight;
+} FieldPreparedQuery;
 
-  /* Thoát sớm nếu field chưa bắt đầu hoặc đã hết tuổi thọ trước khi chiếu hình học */
+static inline bool Field_PrepareQueryFast(
+    const FieldDesc *d, float age, Vector3 position,
+    const FieldTransform *preparedFrame, FieldPreparedQuery *out)
+{
   float lifetime = FieldLifetime_Weight(&d->lifetime, age);
   if (lifetime <= 0.0f)
-    return out;
+    return false;
+  out->frame = preparedFrame ? *preparedFrame : FieldTrajectory_Transform(d, age);
+  out->worldOffset = MotionVec_Sub(position, out->frame.position);
+  out->localPos = FieldTransform_LocalVector(&out->frame, out->worldOffset);
+  out->hasPathSample = false;
 
-  FieldTransform t = frame ? *frame : FieldTrajectory_Transform(d, age);
-  Vector3 offset = MotionVec_Sub(position, t.position);
-  Vector3 p = FieldTransform_LocalVector(&t, offset);
-
-  MotionPathSample nearestPath;
-  const MotionPathSample *pathSample = NULL;
+  const MotionPathSample *pathPtr = NULL;
   if (d->volume.shape == FIELD_PATH_TUBE)
   {
     if (d->volume.path.count < 2 || d->volume.path.count > MOTION_PATH_MAX_POINTS)
-      return out;
-    nearestPath =
-        MotionPath_Project(&d->volume.path, p, 0, d->volume.path.count - 2);
-    pathSample = &nearestPath;
+      return false;
+    out->nearestPath = MotionPath_Project(&d->volume.path, out->localPos, 0,
+                                          d->volume.path.count - 2);
+    out->hasPathSample = true;
+    pathPtr = &out->nearestPath;
   }
 
-  float volWeight = FieldVolume_WeightAt(&d->volume, p, pathSample);
-  float w = volWeight * lifetime;
-  if (w <= 0.0f)
-    return out;
+  float volWeight = FieldVolume_WeightFastAt(&d->volume, out->localPos, pathPtr);
+  if (volWeight <= 0.0f)
+    return false;
 
-  /* Tiền tính toán vận tốc khung quy chiếu tại điểm p một lần duy nhất */
+  out->lifetimeWeight = lifetime;
+  out->volumeWeight = volWeight;
+  out->combinedWeight = volWeight * lifetime;
+  return out->combinedWeight > 0.0f;
+}
+
+/* Đánh giá trực tiếp lực cản (Drag) cho Pass 1 khi đã biết trọng số combinedWeight
+ * mà không cần biến đổi lại tọa độ hay chiếu lại hình học. */
+static inline void Field_AccumulateDragPassFast(
+    const FieldDesc *d, float combinedWeight, int dragLawCount,
+    Vector3 velocity, const BodyPhysicalProperties *body,
+    const MediumProperties *medium, FieldSample *ioSample)
+{
+  if (dragLawCount <= 0 || combinedWeight <= 0.0f)
+    return;
+  Vector3 flow = medium->velocityMps;
+  if (ioSample->mediumWeight > 0.0f)
+  {
+    flow = ioSample->mediumIsAbsolute
+               ? ioSample->mediumVelocityMps
+               : MotionVec_Add(medium->velocityMps, ioSample->mediumVelocityMps);
+  }
+  Vector3 relative = MotionVec_Sub(flow, velocity);
+  float relSpeed = MotionVec_Length(relative);
+  float baseDragCoeff =
+      0.5f * medium->densityKgM3 * body->dragCoefficient * body->projectedAreaM2;
+  float totalWeight = combinedWeight * (float)dragLawCount;
+  float stepDragCoeff = totalWeight * baseDragCoeff;
+  Vector3 dragForce = MotionVec_Scale(relative, stepDragCoeff * relSpeed);
+
+  ioSample->hasDragForce = true;
+  ioSample->dragForceNewtons = MotionVec_Add(ioSample->dragForceNewtons, dragForce);
+  ioSample->forceNewtons = MotionVec_Add(ioSample->forceNewtons, dragForce);
+
+  float prevCoeff = ioSample->dragCoefficientKgPerM;
+  float newCoeff = prevCoeff + stepDragCoeff;
+  if (prevCoeff <= 0.0f || newCoeff <= 1e-12f)
+  {
+    ioSample->dragMediumVelocityMps = flow;
+  }
+  else if (stepDragCoeff > 0.0f)
+  {
+    ioSample->dragMediumVelocityMps = MotionVec_Scale(
+        MotionVec_Add(MotionVec_Scale(ioSample->dragMediumVelocityMps, prevCoeff),
+                      MotionVec_Scale(flow, stepDragCoeff)),
+        1.0f / newCoeff);
+  }
+  ioSample->dragCoefficientKgPerM = newCoeff;
+}
+
+static inline FieldSample Field_EvaluatePreparedCore(
+    const FieldDesc *d, float age, Vector3 position, Vector3 velocity,
+    const BodyPhysicalProperties *body, const MediumProperties *medium,
+    bool includeFlow, bool filterDrag, bool dragPass,
+    const Vector3 *pathLaneOffset, float dt, const FieldPreparedQuery *q,
+    bool validateLaws)
+{
+  FieldSample out = {0};
+  const FieldTransform *t = &q->frame;
+  Vector3 p = q->localPos;
+  const MotionPathSample *pathSample =
+      q->hasPathSample ? &q->nearestPath : NULL;
+  float lifetime = q->lifetimeWeight;
+  float volWeight = q->volumeWeight;
+  float w = q->combinedWeight;
+
   Vector3 frameVelocityAtPoint = MotionVec_Add(
-      t.frameVelocityMps, MotionVec_Cross(t.angularVelocityRadPerSec, offset));
+      t->frameVelocityMps,
+      MotionVec_Cross(t->angularVelocityRadPerSec, q->worldOffset));
 
   Vector3 flow = medium->velocityMps;
   if (includeFlow && d->flow.enabled)
   {
-    Vector3 local = MotionVec_Add(
-        MotionVec_Scale(d->flow.velocityMps, w),
-        MotionVec_Scale(FieldFlow_EvaluateAt(&d->flow, &d->volume, p, age, pathSample),
-                        lifetime));
+    Vector3 evalFlow = FieldFlow_EvaluateWithWeightAt(
+        &d->flow, &d->volume, p, age, pathSample, volWeight);
+    Vector3 local = MotionVec_Add(MotionVec_Scale(d->flow.velocityMps, w),
+                                  MotionVec_Scale(evalFlow, lifetime));
     flow = MotionVec_Add(MotionVec_Scale(frameVelocityAtPoint, w),
-                         FieldTransform_Vector(&t, local));
+                         FieldTransform_Vector(t, local));
     if (d->flow.addBackgroundVelocity)
       flow = MotionVec_Add(flow, medium->velocityMps);
     out.mediumVelocityMps = flow;
-    out.mediumWeight = w * (d->flow.blendWeight > 0.0f ? d->flow.blendWeight : 1.0f);
+    out.mediumWeight =
+        w * (d->flow.blendWeight > 0.0f ? d->flow.blendWeight : 1.0f);
     out.mediumPriority = d->flow.priority;
     out.mediumIsAbsolute = true;
   }
@@ -788,52 +906,56 @@ static inline FieldSample Field_EvaluateFrameStepPass(
     ForceLaw law = d->forceLaws[i];
     if (filterDrag && ((law.type == FORCE_LAW_DRAG) != dragPass))
       continue;
-    if (!Field_FiniteVector(law.forceNewtons) ||
-        !Field_FiniteVector(law.accelerationMps2) ||
-        !Field_FiniteVector(law.center) || !isfinite(law.magnitudeNewtons) ||
-        !isfinite(law.springStiffnessNPerM) || !isfinite(law.dampingNsPerM) ||
-        !isfinite(law.forwardForceNewtons) || law.forwardForceNewtons < 0.0f)
-      return (FieldSample){0};
+    if (validateLaws)
+    {
+      if (!Field_FiniteVector(law.forceNewtons) ||
+          !Field_FiniteVector(law.accelerationMps2) ||
+          !Field_FiniteVector(law.center) || !isfinite(law.magnitudeNewtons) ||
+          !isfinite(law.springStiffnessNPerM) || !isfinite(law.dampingNsPerM) ||
+          !isfinite(law.forwardForceNewtons) || law.forwardForceNewtons < 0.0f)
+        return (FieldSample){0};
+    }
 
     if (law.type == FORCE_LAW_DRAG)
       out.hasDragForce = true;
     if (law.type == FORCE_LAW_BUOYANCY)
       out.hasBuoyancyForce = true;
 
-    law.forceNewtons = FieldTransform_Vector(&t, law.forceNewtons);
-    law.accelerationMps2 = FieldTransform_Vector(&t, law.accelerationMps2);
-    law.center = MotionVec_Add(t.position, FieldTransform_Vector(&t, law.center));
-
     Vector3 f;
     if (law.type == FORCE_LAW_CURL_FORCE)
     {
-      if (!MotionFlow_IsValid(&law.procedural) || law.magnitudeNewtons < 0.0f)
+      if (validateLaws &&
+          (!MotionFlow_IsValid(&law.procedural) || law.magnitudeNewtons < 0.0f))
         return (FieldSample){0};
       float speed = law.procedural.turbulenceSpeedMps;
       FlowField noise = {0};
       noise.procedural = law.procedural;
       noise.procedural.swirlSpeedMps = 0.0f;
-      Vector3 curl = (speed > 0.0f && law.magnitudeNewtons > 0.0f)
-                         ? FieldFlow_EvaluateAt(&noise, &d->volume, p, age, pathSample)
-                         : (Vector3){0};
+      Vector3 curl =
+          (speed > 0.0f && law.magnitudeNewtons > 0.0f)
+              ? FieldFlow_EvaluateWithWeightAt(&noise, &d->volume, p, age,
+                                               pathSample, volWeight)
+              : (Vector3){0};
       Vector3 raw = MotionVec_Scale(
           curl, speed > 0.0f ? law.magnitudeNewtons * lifetime / speed : 0.0f);
-      f = FieldTransform_Vector(&t, Field_LimitVector(raw, law.magnitudeNewtons * w));
+      f = FieldTransform_Vector(t, Field_LimitVector(raw, law.magnitudeNewtons * w));
     }
     else if (law.type == FORCE_LAW_PATH_GUIDE &&
              d->volume.shape == FIELD_PATH_TUBE)
     {
       MotionPathSample nearest = *pathSample;
-      Vector3 tangent = FieldTransform_Vector(&t, nearest.tangent);
+      Vector3 tangent = FieldTransform_Vector(t, nearest.tangent);
       Vector3 pathGoal = nearest.position;
       Vector3 rotatedLane = {0};
       if (pathLaneOffset)
       {
         rotatedLane = FieldGuide_RotatePathLane(d, *pathLaneOffset, age);
-        pathGoal = MotionVec_Add(pathGoal, MotionPath_WorldOffset(nearest, rotatedLane));
+        pathGoal =
+            MotionVec_Add(pathGoal, MotionPath_WorldOffset(nearest, rotatedLane));
       }
       Vector3 toPath = MotionVec_Sub(
-          MotionVec_Add(t.position, FieldTransform_Vector(&t, pathGoal)), position);
+          MotionVec_Add(t->position, FieldTransform_Vector(t, pathGoal)),
+          position);
       Vector3 normalOffset = MotionVec_Sub(
           toPath, MotionVec_Scale(tangent, MotionVec_Dot(toPath, tangent)));
       Vector3 relativeVelocity = MotionVec_Sub(velocity, frameVelocityAtPoint);
@@ -843,7 +965,7 @@ static inline FieldSample Field_EvaluateFrameStepPass(
       if (pathLaneOffset && d->rotatePathLanes && d->flow.enabled)
       {
         Vector3 laneWorld =
-            FieldTransform_Vector(&t, MotionPath_WorldOffset(nearest, rotatedLane));
+            FieldTransform_Vector(t, MotionPath_WorldOffset(nearest, rotatedLane));
         relativeVelocity = MotionVec_Sub(
             relativeVelocity,
             MotionVec_Scale(MotionVec_Cross(tangent, laneWorld),
@@ -872,7 +994,7 @@ static inline FieldSample Field_EvaluateFrameStepPass(
         if (radialSq > 1e-10f)
         {
           Vector3 radial = MotionVec_Scale(
-              FieldTransform_Vector(&t, swirlRadial), 1.0f / sqrtf(radialSq));
+              FieldTransform_Vector(t, swirlRadial), 1.0f / sqrtf(radialSq));
           dampingVelocity =
               MotionVec_Scale(radial, MotionVec_Dot(relativeVelocity, radial));
           dampingAxis = radial;
@@ -899,7 +1021,8 @@ static inline FieldSample Field_EvaluateFrameStepPass(
             -law.forwardForceNewtons, law.forwardForceNewtons);
         forwardForce = MotionVec_Scale(tangent, force);
         FieldSample_AddController(
-            &out, MotionVec_Scale(tangent, (targetSpeed - tangentSpeed) * gain * w),
+            &out,
+            MotionVec_Scale(tangent, (targetSpeed - tangentSpeed) * gain * w),
             MotionVec_Scale(forwardForce, w), 0.0f, gain * w, tangent,
             law.forwardForceNewtons * w, dt);
       }
@@ -912,22 +1035,20 @@ static inline FieldSample Field_EvaluateFrameStepPass(
           law.springStiffnessNPerM > 0.0f
               ? law.springStiffnessNPerM
               : law.magnitudeNewtons / fmaxf(d->volume.radiusM, 1e-5f);
-      Vector3 goal = law.center;
+      Vector3 goal = MotionVec_Add(t->position, FieldTransform_Vector(t, law.center));
       Vector3 goalVelocity = frameVelocityAtPoint;
       if (pathLaneOffset)
       {
         Vector3 lane = FieldGuide_RotateOffset(d, *pathLaneOffset, age);
-        goal = MotionVec_Add(goal, FieldTransform_Vector(&t, lane));
+        goal = MotionVec_Add(goal, FieldTransform_Vector(t, lane));
         if (d->flow.enabled && d->flow.procedural.swirlSpeedMps != 0.0f)
         {
-          Vector3 axis = MotionVec_Normalize(d->flow.axis);
-          if (MotionVec_Dot(axis, axis) < 0.01f)
-            axis = (Vector3){0, 1, 0};
+          Vector3 axis = Field_NormalizeAxisOrUp(d->flow.axis);
           Vector3 spin = MotionVec_Scale(
               MotionVec_Cross(axis, lane),
               d->flow.procedural.swirlSpeedMps / fmaxf(d->volume.radiusM, 1e-5f));
           goalVelocity =
-              MotionVec_Add(goalVelocity, FieldTransform_Vector(&t, spin));
+              MotionVec_Add(goalVelocity, FieldTransform_Vector(t, spin));
         }
       }
       f = Field_LimitVector(
@@ -944,6 +1065,15 @@ static inline FieldSample Field_EvaluateFrameStepPass(
     }
     else
     {
+      /* Chỉ biến đổi đúng vector mà law.type thực sự sử dụng */
+      if (law.type == FORCE_LAW_NEWTONS)
+        law.forceNewtons = FieldTransform_Vector(t, law.forceNewtons);
+      else if (law.type == FORCE_LAW_ACCELERATION)
+        law.accelerationMps2 = FieldTransform_Vector(t, law.accelerationMps2);
+      else if (law.type == FORCE_LAW_RADIAL_ATTRACTION ||
+               law.type == FORCE_LAW_SPRING)
+        law.center = MotionVec_Add(t->position, FieldTransform_Vector(t, law.center));
+
       f = MotionVec_Scale(
           ForceLaw_Evaluate(
               &law, position,
@@ -966,6 +1096,48 @@ static inline FieldSample Field_EvaluateFrameStepPass(
       out.forceNewtons = MotionVec_Add(out.forceNewtons, f);
   }
   return out;
+}
+
+static inline FieldSample Field_EvaluateFrameStepPass(
+    const FieldDesc *d, float age, Vector3 position, Vector3 velocity,
+    const BodyPhysicalProperties *body, const MediumProperties *medium,
+    bool includeFlow, bool filterDrag, bool dragPass,
+    const Vector3 *pathLaneOffset, float dt, const FieldTransform *frame)
+{
+  FieldSample out = {0};
+  if (!d || !body || !medium || !isfinite(dt) || dt < 0.0f ||
+      d->forceLawCount < 0 || d->forceLawCount > FIELD_MAX_FORCE_LAWS ||
+      !isfinite(age) || !isfinite(body->massKg) || body->massKg < 0.0f ||
+      !isfinite(body->projectedAreaM2) || body->projectedAreaM2 < 0.0f ||
+      !isfinite(body->densityKgM3) || body->densityKgM3 < 0.0f ||
+      !isfinite(body->volumeM3) || body->volumeM3 < 0.0f ||
+      !isfinite(body->dragCoefficient) || body->dragCoefficient < 0.0f ||
+      !isfinite(body->immersionFraction) || body->immersionFraction < 0.0f ||
+      body->immersionFraction > 1.0f || !isfinite(medium->densityKgM3) ||
+      medium->densityKgM3 < 0.0f || !Field_FiniteVector(position) ||
+      !Field_FiniteVector(velocity) || !Field_FiniteVector(medium->velocityMps) ||
+      !Field_FiniteVector(medium->gravityMps2))
+    return out;
+
+  /* Giữ kiểm tra hợp lệ của volume cho các lệnh gọi trực tiếp từ bên ngoài */
+  const FieldVolume *v = &d->volume;
+  if (v->shape < FIELD_SPHERE || v->shape > FIELD_PATH_TUBE ||
+      !isfinite(v->coreFraction) || v->coreFraction < 0.0f ||
+      v->coreFraction >= 1.0f ||
+      (v->shape == FIELD_BOX &&
+       (!isfinite(v->halfExtentsM.x) || !isfinite(v->halfExtentsM.y) ||
+        !isfinite(v->halfExtentsM.z) || v->halfExtentsM.x <= 0.0f ||
+        v->halfExtentsM.y <= 0.0f || v->halfExtentsM.z <= 0.0f)) ||
+      (v->shape != FIELD_BOX && (!isfinite(v->radiusM) || v->radiusM <= 0.0f)))
+    return out;
+
+  FieldPreparedQuery q;
+  if (!Field_PrepareQueryFast(d, age, position, frame, &q))
+    return out;
+
+  return Field_EvaluatePreparedCore(d, age, position, velocity, body, medium,
+                                    includeFlow, filterDrag, dragPass,
+                                    pathLaneOffset, dt, &q, true);
 }
 
 static inline FieldSample Field_EvaluateStepPass(
