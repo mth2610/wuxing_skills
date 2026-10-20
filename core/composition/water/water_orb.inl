@@ -2,6 +2,7 @@
 #include "core/liquid/liquid_metaball3d.h"
 #include "core/motion/motion_fields.h"
 #include "core/map_manager.h"
+#include "core/skill_manager.h"
 
 // water_orb.inl — Water orb: a coherent liquid projectile driven by motion fields
 // and force fields, supporting both 3D raymarched metaballs and SSF.
@@ -158,11 +159,36 @@ void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
 
     Vector3 flight = Vector3Subtract(config->target, config->start);
     float dist = Vector3Length(flight);
-    float speed = config->speed > 0.1f ? config->speed : 8.0f;
-    float travelTime = fmaxf(dist / speed, 0.25f);
+    Vector3 dir = (dist > 1e-4f) ? Vector3Scale(flight, 1.0f / dist) : (Vector3){0, 1, 0};
+
+    Vector3 horiz = (Vector3){flight.x, 0.0f, flight.z};
+    float distXZ = Vector3Length(horiz);
+    Vector3 dirXZ = (distXZ > 1e-4f) ? Vector3Scale(horiz, 1.0f / distXZ) : (Vector3){1, 0, 0};
+    float speed = config->speed > 0.1f ? config->speed : 9.0f;
+    float speedXZ = fmaxf(speed, 6.0f);
+    float targetReachTime = fmaxf(distXZ / speedXZ, 0.18f);
+    float gravity = 9.81f * 0.70f;
+    float vY0 = ((config->target.y - config->start.y) + 0.5f * gravity * targetReachTime * targetReachTime) / targetReachTime;
+
+    // Ballistic trajectory simulation to find ground contact time
+    float tGround = targetReachTime;
+    bool foundGround = false;
+    for (float t = 0.06f; t <= targetReachTime + 2.5f; t += 0.04f) {
+        float px = config->start.x + dirXZ.x * speedXZ * t;
+        float pz = config->start.z + dirXZ.z * speedXZ * t;
+        float py = config->start.y + vY0 * t - 0.5f * gravity * t * t;
+        float gy = MapManager_GetGroundHeightAt(px, pz);
+        if (py <= gy + (config->radius > 0.05f ? config->radius : 0.44f) * 0.45f) {
+            tGround = t;
+            foundGround = true;
+            break;
+        }
+    }
+    if (!foundGround) tGround = targetReachTime;
+    float travelTime = fmaxf(tGround, 0.20f);
 
     *orb = (WaterOrb){.start = config->start, .target = config->target, .center = config->start,
-        .velocity = Vector3Scale(flight, 1.0f / travelTime), .travelTime = travelTime,
+        .velocity = (Vector3){dirXZ.x * speedXZ, vY0, dirXZ.z * speedXZ}, .travelTime = travelTime,
         .radius = config->radius > 0.05f ? config->radius : 0.44f, .hitNormal = (Vector3){0, 1, 0},
         .body = material.body, .glow = material.glow, .soft = material.soft,
         .material = material, .motion = motion,
@@ -174,18 +200,14 @@ void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
     orb->crownDuration = LiquidBodyRecipe_CrownDuration(&orb->recipe, orb->velocity, orb->hitNormal);
     WaterOrb_SetPhaseField(orb, LIQUID_BODY_FLIGHT, 0.0f);
 
-    // Build curved flight trajectory path for moving guide
-    Vector3 dir = (dist > 1e-4f) ? Vector3Scale(flight, 1.0f / dist) : (Vector3){0, 1, 0};
-    Vector3 up = (fabsf(dir.y) < 0.90f) ? (Vector3){0, 1, 0} : (Vector3){1, 0, 0};
-    Vector3 side = Vector3Normalize(Vector3CrossProduct(up, dir));
-    Vector3 lift = Vector3CrossProduct(dir, side);
-    Vector3 arcPeak = Vector3Scale(lift, dist * 0.07f);
-
+    // Build true ballistic flight path for moving guide
     Vector3 pathPoints[17];
     for (int p = 0; p < 17; ++p) {
-        float t = (float)p / 16.0f;
-        float arc = 4.0f * t * (1.0f - t);
-        pathPoints[p] = Vector3Add(Vector3Scale(flight, t), Vector3Scale(arcPeak, arc));
+        float t = (float)p / 16.0f * travelTime;
+        float px = dirXZ.x * speedXZ * t;
+        float pz = dirXZ.z * speedXZ * t;
+        float py = vY0 * t - 0.5f * gravity * t * t;
+        pathPoints[p] = (Vector3){px, py, pz};
     }
     MotionPath_Build(&orb->flightPath, pathPoints, 17);
 
@@ -325,21 +347,23 @@ static void WaterOrb_Update(float dt)
             bool hit = false;
             Vector3 hitNormal = (Vector3){0, 1, 0};
 
-            // 1. Collision with target
-            if (Vector3Distance(orb->center, orb->target) <= orb->radius * 0.90f || orb->age >= orb->travelTime) {
-                hit = true;
-                orb->center = orb->target;
-                Vector3 toTarget = Vector3Subtract(orb->target, orb->start);
-                hitNormal = (Vector3Length(toTarget) > 1e-4f) ? Vector3Normalize(Vector3Negate(toTarget)) : (Vector3){0, 1, 0};
-                if (hitNormal.y < 0.25f) hitNormal.y = 0.60f;
-                hitNormal = Vector3Normalize(hitNormal);
+            // 1. Collision with target entity / obstacle
+            int nearbyTargetIds[4];
+            int targetCount = SkillManager_GetNearbyTargets(orb->center, orb->radius + 0.35f, nearbyTargetIds, 4);
+            if (targetCount > 0) {
+                Vector3 agentPos;
+                if (SkillManager_GetAgentPos(nearbyTargetIds[0], &agentPos)) {
+                    Vector3 away = Vector3Subtract(orb->center, agentPos);
+                    hitNormal = (Vector3Length(away) > 1e-4f) ? Vector3Normalize(away) : (Vector3){0, 1, 0};
+                    hit = true;
+                }
             }
 
             // 2. Collision with terrain / ground
             float groundY = MapManager_GetGroundHeightAt(orb->center.x, orb->center.z);
-            if (!hit && orb->center.y <= groundY + orb->radius * 0.85f) {
+            if (!hit && (orb->center.y <= groundY + orb->radius * 0.45f || orb->age >= orb->travelTime)) {
                 hit = true;
-                orb->center.y = groundY + orb->radius * 0.35f;
+                orb->center.y = groundY + orb->radius * 0.20f;
                 float eps = 0.25f;
                 float hL = MapManager_GetGroundHeightAt(orb->center.x - eps, orb->center.z);
                 float hR = MapManager_GetGroundHeightAt(orb->center.x + eps, orb->center.z);
@@ -355,6 +379,7 @@ static void WaterOrb_Update(float dt)
                     orb->motionField = MOTION_FIELD_INVALID;
                 }
 
+                orb->travelTime = orb->age;
                 orb->phase = WATER_ORB_IMPACT;
                 orb->impactPos = orb->center;
                 orb->hitNormal = hitNormal;
@@ -428,12 +453,17 @@ static void WaterOrb_SubmitSurface(void)
 
             // 2. Cohesive fluid body core (in flight) or ground contact puddle (on impact)
             if (orb->phase == WATER_ORB_FLIGHT) {
-                LiquidMetaball3D_RegisterBlob(orb->center, orb->radius * 0.88f * rScale);
+                float osc = sinf(orb->age * 14.0f) * 0.10f;
+                LiquidMetaball3D_RegisterBlob(orb->center, orb->radius * (0.88f + osc * 0.5f) * rScale);
+                Vector3 vDir = (Vector3Length(orb->velocity) > 1e-4f) ? Vector3Normalize(orb->velocity) : (Vector3){1, 0, 0};
+                Vector3 tailPos = Vector3Subtract(orb->center, Vector3Scale(vDir, orb->radius * 0.35f));
+                LiquidMetaball3D_RegisterBlob(tailPos, orb->radius * (0.55f - osc * 0.3f) * rScale);
             } else {
                 float totalImpactTime = fmaxf(orb->crownDuration + orb->settleDuration, 0.1f);
                 float fade = 1.0f - Clamp(orb->phaseAge / totalImpactTime, 0.0f, 1.0f);
                 if (fade > 0.04f) {
-                    LiquidMetaball3D_RegisterBlob(Vector3Add(orb->impactPos, Vector3Scale(orb->hitNormal, 0.02f)), orb->radius * 1.15f * fade * rScale);
+                    float puddleRad = orb->radius * (1.15f + 1.10f * (1.0f - fade)) * fade * rScale;
+                    LiquidMetaball3D_RegisterBlob(Vector3Add(orb->impactPos, Vector3Scale(orb->hitNormal, 0.02f)), puddleRad);
                 }
             }
 
@@ -448,12 +478,17 @@ static void WaterOrb_SubmitSurface(void)
             LiquidSurface_SetReconstructionRadius(orb->radius * 0.38f);
 
             if (orb->phase == WATER_ORB_FLIGHT) {
-                LiquidSurface_RegisterParticle(orb->center, orb->radius * 0.85f);
+                float osc = sinf(orb->age * 14.0f) * 0.10f;
+                LiquidSurface_RegisterParticle(orb->center, orb->radius * (0.85f + osc * 0.4f));
+                Vector3 vDir = (Vector3Length(orb->velocity) > 1e-4f) ? Vector3Normalize(orb->velocity) : (Vector3){1, 0, 0};
+                Vector3 tailPos = Vector3Subtract(orb->center, Vector3Scale(vDir, orb->radius * 0.35f));
+                LiquidSurface_RegisterParticle(tailPos, orb->radius * (0.50f - osc * 0.3f));
             } else {
                 float totalImpactTime = fmaxf(orb->crownDuration + orb->settleDuration, 0.1f);
                 float fade = 1.0f - Clamp(orb->phaseAge / totalImpactTime, 0.0f, 1.0f);
                 if (fade > 0.04f) {
-                    LiquidSurface_RegisterParticle(Vector3Add(orb->impactPos, Vector3Scale(orb->hitNormal, 0.02f)), orb->radius * 1.10f * fade);
+                    float ssfPuddleRad = orb->radius * (1.10f + 1.0f * (1.0f - fade)) * fade;
+                    LiquidSurface_RegisterParticle(Vector3Add(orb->impactPos, Vector3Scale(orb->hitNormal, 0.02f)), ssfPuddleRad);
                 }
             }
 

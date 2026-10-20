@@ -2196,6 +2196,18 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
             s_prefabStartPos = mouseTarget3D;
             return false;
         }
+        if (VFXTest_IsNewFxNamed("WATER ORB"))
+        {
+            Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.85f, 0.0f});
+            Vector3 toTarget = Vector3Subtract(mouseTarget3D, castSocket);
+            if (Vector3Length(toTarget) > 0.1f) {
+                Vector3 dir = Vector3Normalize(toTarget);
+                castSocket = Vector3Add(castSocket, Vector3Scale(dir, 0.45f));
+            }
+            VFX_ComposeWaterOrb(castSocket, mouseTarget3D);
+            s_prefabStartPos = mouseTarget3D;
+            return false;
+        }
 
         VFXTest_StopFixtures();
         s_prefabStartPos = mouseTarget3D;
@@ -2262,6 +2274,23 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
                 guidedTarget.y = MapManager_GetGroundHeightAt(guidedTarget.x, guidedTarget.z);
             }
             VFXTest_FireGuidedMotion(castSocket, guidedTarget);
+            return false;
+        }
+        if (s_testCategory == TEST_CAT_NEWFX && VFXTest_IsNewFxNamed("WATER ORB")) {
+            Vector3 castSocket = Vector3Add(playerPos, (Vector3){0.0f, 0.85f, 0.0f});
+            Vector3 orbTarget = mouseTarget3D;
+            if (s_clickedOnUI) {
+                Vector3 fwd = (Vector3){ sinf(s_currentPlayerYaw), 0.0f, cosf(s_currentPlayerYaw) };
+                if (Vector3Length(fwd) < 0.1f) fwd = (Vector3){1.0f, 0.0f, 0.0f};
+                orbTarget = Vector3Add(playerPos, Vector3Scale(fwd, 6.0f));
+                orbTarget.y = MapManager_GetGroundHeightAt(orbTarget.x, orbTarget.z);
+            }
+            Vector3 toTarget = Vector3Subtract(orbTarget, castSocket);
+            if (Vector3Length(toTarget) > 0.1f) {
+                Vector3 dir = Vector3Normalize(toTarget);
+                castSocket = Vector3Add(castSocket, Vector3Scale(dir, 0.45f));
+            }
+            VFX_ComposeWaterOrb(castSocket, orbTarget);
             return false;
         }
           if (!VFXTest_FireNewFx(s_testIndex, s_prefabStartPos)) {
