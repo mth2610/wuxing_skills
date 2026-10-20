@@ -1,4 +1,5 @@
 #include "core/motion/motion_body.h"
+#include "core/motion/motion_fields.h"
 #include "particle_surface_sampling.h"
 #include "particle_field_reference.h"
 #include "particle_field_capabilities.h"
@@ -52,6 +53,28 @@ static inline Vector3 PS_V3LerpParam(Vector3 v1, Vector3 v2, float t1, float t2,
       v1.z + factor * (v2.z - v1.z)};
 }
 
+/* Sử dụng các nút knot t0..t3 đã được tính sẵn trên từng đoạn lịch sử để không
+ * phải gọi lại căn bậc 4 (sqrtf(sqrtf(distSq))) cho mỗi điểm chia nhỏ (subdiv). */
+static inline Vector3 PS_CatmullRomPrecomputed(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3,
+                                               float t0, float t1, float t2, float t3, float t)
+{
+  if (t <= 0.0f)
+    return p1;
+  if (t >= 1.0f)
+    return p2;
+
+  float evalT = t1 + t * (t2 - t1);
+
+  Vector3 a1 = PS_V3LerpParam(p0, p1, t0, t1, evalT);
+  Vector3 a2 = PS_V3LerpParam(p1, p2, t1, t2, evalT);
+  Vector3 a3 = PS_V3LerpParam(p2, p3, t2, t3, evalT);
+
+  Vector3 b1 = PS_V3LerpParam(a1, a2, t0, t2, evalT);
+  Vector3 b2 = PS_V3LerpParam(a2, a3, t1, t3, evalT);
+
+  return PS_V3LerpParam(b1, b2, t1, t2, evalT);
+}
+
 static inline Vector3 PS_CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
 {
   if (t <= 0.0f)
@@ -64,16 +87,7 @@ static inline Vector3 PS_CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 
   float t2 = t1 + PS_KnotInterval(p1, p2);
   float t3 = t2 + PS_KnotInterval(p2, p3);
 
-  float evalT = t1 + t * (t2 - t1);
-
-  Vector3 a1 = PS_V3LerpParam(p0, p1, t0, t1, evalT);
-  Vector3 a2 = PS_V3LerpParam(p1, p2, t1, t2, evalT);
-  Vector3 a3 = PS_V3LerpParam(p2, p3, t2, t3, evalT);
-
-  Vector3 b1 = PS_V3LerpParam(a1, a2, t0, t2, evalT);
-  Vector3 b2 = PS_V3LerpParam(a2, a3, t1, t3, evalT);
-
-  return PS_V3LerpParam(b1, b2, t1, t2, evalT);
+  return PS_CatmullRomPrecomputed(p0, p1, p2, p3, t0, t1, t2, t3, t);
 }
 
 static bool PS_AxisCrossBasis(Vector3 authoredAxis, Vector3 viewDir,
@@ -215,13 +229,24 @@ static int s_activeIds[MAX_PARTICLES];
 static int s_activeCount = 0;
 static int s_slotListIndex[MAX_PARTICLES];
 
+// Cờ theo dõi trạng thái dữ liệu giữa các pass render trong cùng 1 frame
+static bool s_depthSortDirty = true;
+static Vector3 s_lastSortCamPos = {0};
+static Vector3 s_lastSortCamTarget = {0};
+
 static inline void Particle_Deactivate(int idx)
 {
-  EmissionChildren_Release(g_Particles[idx].children);
-  g_Particles[idx].active = false;
+  if (idx < 0 || idx >= MAX_PARTICLES || !g_Particles[idx].active)
+    return;
   int listIdx = s_slotListIndex[idx];
-  int lastId = s_activeIds[s_activeCount - 1];
+  if (listIdx < 0 || listIdx >= s_activeCount)
+    return;
 
+  EmissionChildren_Release(g_Particles[idx].children);
+  g_Particles[idx].children = (EmissionChildrenHandle){0};
+  g_Particles[idx].active = false;
+
+  int lastId = s_activeIds[s_activeCount - 1];
   s_activeIds[listIdx] = lastId;
   s_slotListIndex[lastId] = listIdx;
   s_activeCount--;
@@ -229,6 +254,7 @@ static inline void Particle_Deactivate(int idx)
 
   s_nextFree[idx] = s_freeHead;
   s_freeHead = idx;
+  s_depthSortDirty = true;
 }
 
 static inline int Particle_AllocSlot(void)
@@ -241,15 +267,11 @@ static inline int Particle_AllocSlot(void)
   s_slotListIndex[idx] = s_activeCount;
   s_activeIds[s_activeCount] = idx;
   s_activeCount++;
+  s_depthSortDirty = true;
   return idx;
 }
 
-// Đợt E / F1 — lit particles. Declared up here (rather than beside the draw
-// code that uses them) so InitParticleSystem can register them as tunables.
-// Both default to 0 = the exact pre-F1 unlit look.
-// Tuned 22/07/2026 against the smoke puff. Lighting stays OFF by default so
-// nothing already shipped changes look; the rest are the values that made smoke
-// read as smoke, promoted out of tuning.cfg so a fresh clone gets them.
+// Đợt E / F1 — lit particles.
 static float s_lightingStrength = 0.0f;
 static float s_scatterStrength = 0.0f; // shape-neutral: raise only for backlit glow
 static float s_debugNormal = 0.0f;     // 1 = paint particle normals as RGB
@@ -258,17 +280,7 @@ static float s_sunGain = 1.0f;         // night sun/ambient are ~0.2 — without
 static float s_ambientGain = 0.25f;    // gain, lighting just dims the smoke
 static float s_lightAzimuth = -1.0f;   // <0 = real sun; >=0 = debug override
 static float s_analyticUV = 1.0f;      // 0 only if a SpriteAnim atlas is in use
-// SOFT PARTICLES. A billboard that intersects the ground is CUT by the depth
-// test along a dead-straight line, and the bigger the sprite the more it reads
-// as a sheet of paper pushed into the floor. The fade hides the cut by taking
-// the alpha to zero just before the geometry gets there.
-//
-// Metres. Too small and the cut is still visible; too large and sprites go
-// translucent while nowhere near anything, which reads as the effect dimming
-// for no reason. Sized against the sprites that show it worst — the 0.2-1.0 m
-// smoke billows.
-// rlvk now resolves texture0 by reflected sampler name, so its second depth
-// sampler no longer displaces the sprite texture (HANDOFF §7.30).
+
 static float s_softFade = 0.35f;
 static float s_softDebug = 0.0f;
 static int s_locSoftFade = -1;
@@ -277,9 +289,6 @@ static bool s_softBound = false;
 #define PARTICLE_SOFT_DEPTH_SLOT 3
 static int s_locAtlasGrid = -1;
 static int s_locEmissiveBoost = -1;
-// How far above 1.0 an EMISSIVE particle writes into the HDR scene buffer. 1.0
-// reproduces the old look exactly (no core, no bloom); ~3 gives the AAA
-// white-hot core with a coloured rim. Only applied to unlit/additive batches.
 static float s_emissiveBoost = 1.0f; // GLOBAL multiplier; per-particle value carries the intent
 
 static void SpawnEmissionChild(void *user, ParticleConfig child)
@@ -301,6 +310,7 @@ void InitParticleSystem(void)
   s_nextFree[MAX_PARTICLES - 1] = MAX_PARTICLES;
   s_freeHead = 0;
   s_activeCount = 0;
+  s_depthSortDirty = true;
   for (int i = 0; i < MAX_PARTICLES; i++)
   {
     g_Particles[i].active = false;
@@ -332,9 +342,6 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   if (config.render.texture.id == 0)
   {
     config.render.texture = ParticleSystem_DefaultSprite();
-    /* This is a complete default appearance, not an alpha mask. Keep its
-       white-hot core/orange rim; authors still own lifetime alpha. A gradient
-       is an explicit colour treatment and remains authoritative. */
     if (config.render.gradient == NULL)
     {
       config.colorStart.r = config.colorStart.g = config.colorStart.b = 255;
@@ -357,7 +364,7 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->colorEnd = config.colorEnd;
   p->radius = config.radius;
   p->lifetime = config.lifetime;
-  p->maxLifetime = config.lifetime;
+  p->maxLifetime = config.lifetime > 1e-6f ? config.lifetime : 1e-6f;
   p->emitterId = emitterId;
   p->renderMode = renderMode;
 
@@ -417,25 +424,12 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
                                    : 1.0f,
           .emissionThreshold = 1.0f,
           .unlit = config.render.unlit != 0});
-  // Only the packed-volume shader produces mathematically premultiplied RGB.
-  // A regular sprite still gets the look in one alpha/HDR draw, without feeding
-  // straight RGB into a premultiplied blend law — which would leave partially
-  // covered texels un-scaled by their own coverage, i.e. soft edges blowing out.
-  //
-  // The condition is the SURFACE, not the appearance. It was written as
-  // `appearance == VFX_APPEARANCE_FIRE` when FIRE was the only premultiplied
-  // entry; MAGIC became premultiplied in the 2026-08-16 appearance migration and
-  // did not inherit the guard. No particle spawns MAGIC today, so this was a trap
-  // rather than a live bug — generalising it costs nothing now and closes it for
-  // whoever sets appearance = MAGIC on a sprite next.
   if (particleAppearance.surface == VFX_SURFACE_PREMULTIPLIED &&
       !config.render.volumeSheet)
     particleAppearance.surface = VFX_SURFACE_ALPHA;
   p->blendMode = (int)particleAppearance.surface;
   p->unlit = particleAppearance.unlit ? 1 : 0;
   p->contrastProfile = particleAppearance.contrast;
-  // Particle shaders use this as a colour gain even for non-emissive alpha
-  // particles, so semantic emission 0 maps to neutral gain 1 here.
   p->emissiveBoost = particleAppearance.emissionIntensity > 0.0f
                          ? particleAppearance.emissionIntensity
                          : 1.0f;
@@ -443,8 +437,6 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->rampTexId = config.render.rampLUT.id;
   p->heatGain = (config.render.heatGain > 0.0f) ? config.render.heatGain : 1.0f;
   p->smokeGain = (config.render.smokeGain > 0.0f) ? config.render.smokeGain : 1.0f;
-  // {0,0,0,0} means "unset" — fall back to soot rather than to black, which
-  // would silently delete the smoke half of every volume sheet.
   p->smokeTint = (config.render.smokeTint.a != 0) ? config.render.smokeTint
                                                   : (Color){82, 74, 69, 255};
   p->sixWayLighting = p->unlit ? 0 : config.render.sixWayLighting;
@@ -455,12 +447,6 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->normalTexId = config.render.normalTex.id;
   p->motionTexId = config.render.motionTex.id;
   p->motionWarpScale = config.render.motionWarpScale;
-  // A volume sheet with no ramp would index an unbound sampler, which reads
-  // black — the flame would vanish while everything else said it was drawing.
-  // Fall back to the legacy path instead: the sprite looks wrong (its RGB is
-  // three density channels, not a colour) but it is VISIBLE and the warning
-  // says why, which is the difference between a bug you can see and one you
-  // spend an evening on.
   if (p->volumeSheet && p->rampTexId == 0)
   {
     static bool warned = false;
@@ -514,14 +500,38 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->meshRotationRate = config.render.meshRotationRate;
 }
 
+static inline bool PS_PointInAABB(Vector3 p, Vector3 lo, Vector3 hi, float pad)
+{
+  return p.x >= lo.x - pad && p.x <= hi.x + pad &&
+         p.y >= lo.y - pad && p.y <= hi.y + pad &&
+         p.z >= lo.z - pad && p.z <= hi.z + pad;
+}
+
 void UpdateParticles(float dt)
 {
+  if (dt <= 0.0f || !isfinite(dt))
+    return;
   s_particleTime += dt;
+  if (s_activeCount == 0)
+    return;
+
+  s_depthSortDirty = true;
   const bool windActive = WindZone_IsActive();
+  const int activeWindVorticles = Wind_GetActiveCount();
+
+  // Tiền tính toán Broadphase AABB cho toàn bộ Motion Fields có tác động lên Particle
+  Vector3 motionLo = {0}, motionHi = {0};
+  const bool hasAnyMotionFields =
+      (MotionFields_GetGuideCount() + MotionFields_GetTargetCount()) > 0 &&
+      MotionFields_GetAnchoredBounds(MOTION_RECEIVER_PARTICLE, &motionLo, &motionHi);
+
+  // Nếu không có vorticle cục bộ, gió nền là đồng nhất trong không gian -> lấy mẫu 1 lần cho cả frame
+  const MediumProperties uniformBaseMedium =
+      (activeWindVorticles == 0)
+          ? Wind_EvaluateBackgroundMedium((Vector3){0, 0, 0}, s_particleTime, (Vector3){0, 0, 0})
+          : (MediumProperties){0};
 
   // TỐI ƯU 2: Lặp ngược (Reverse Loop).
-  // Việc này giúp xóa hạt an toàn (Swap-Remove không bị sót phần tử)
-  // và BỎ QUA các hạt mới sinh trong chính frame này.
   for (int a = s_activeCount - 1; a >= 0; a--)
   {
     int i = s_activeIds[a];
@@ -535,23 +545,26 @@ void UpdateParticles(float dt)
 
     if (p->lifetime <= 0.0f)
     {
-      EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_DEATH,
-                                                             .position = {p->x, p->y, p->z},
-                                                             .velocity = {p->vx, p->vy, p->vz}});
+      EmissionChildrenHandle deadChildren = p->children;
+      p->children = (EmissionChildrenHandle){0};
+      Vector3 deathPos = {p->x, p->y, p->z};
+      Vector3 deathVel = {p->vx, p->vy, p->vz};
       Particle_Deactivate(i);
+      EmissionChildren_Publish(deadChildren, &(EmissionEvent){.kind = EMISSION_EVENT_DEATH,
+                                                              .position = deathPos,
+                                                              .velocity = deathVel});
+      EmissionChildren_Release(deadChildren);
       continue;
     }
 
-    // Follow carries the emitter's *displacement*, not its absolute position:
-    // the puff stays a puff after release instead of snapping back to the
-    // source every frame. A generation mismatch means a static pool slot has
-    // been recycled; detach safely rather than gluing old smoke to new fire.
+    float invMaxLife = 1.0f / p->maxLifetime;
+    float ageT = 1.0f - Clamp(p->lifetime * invMaxLife, 0.0f, 1.0f);
+
     if (p->followTarget != NULL &&
         (p->followTargetGeneration == NULL ||
          *p->followTargetGeneration == p->followGeneration))
     {
       Vector3 now = *p->followTarget;
-      float ageT = 1.0f - Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
       float strength = p->followStrength *
                        (p->followCurve ? SkillCurve_Eval(p->followCurve, ageT) : (1.0f - ageT));
       p->x += (now.x - p->followTargetLast.x) * strength;
@@ -564,14 +577,9 @@ void UpdateParticles(float dt)
       p->followTarget = NULL;
     }
 
-    if (p->children)
+    if (p->children != 0)
     {
-      float speedMul = 1;
-      if (p->speedCurve)
-      {
-        float ageT = 1 - Clamp(p->lifetime / p->maxLifetime, 0, 1);
-        speedMul = SkillCurve_Eval(p->speedCurve, ageT);
-      }
+      float speedMul = p->speedCurve ? SkillCurve_Eval(p->speedCurve, ageT) : 1.0f;
       EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_LIVE,
                                                              .position = {p->x, p->y, p->z},
                                                              .velocity = {p->vx, p->vy, p->vz},
@@ -584,54 +592,78 @@ void UpdateParticles(float dt)
     {
       p->travelImpactAge += dt;
       activeField = (p->travelPath && p->travelPath->arrivalForceField &&
-                     (p->travelPath->arrivalForceDuration <= 0 || p->travelImpactAge <= p->travelPath->arrivalForceDuration))
+                     (p->travelPath->arrivalForceDuration <= 0.0f || p->travelImpactAge <= p->travelPath->arrivalForceDuration))
                         ? p->travelPath->arrivalForceField
                         : NULL;
     }
+
     if (p->receiveMotionFields || p->spatialMotionOnly)
     {
-      ParticleDynamicsProfile fallback = {.inverseMassKg = 1, .gravityScale = 0, .windCouplingHz = 3.5f, .windSusceptibility = p->windInfluence};
+      ParticleDynamicsProfile fallback = {.inverseMassKg = 1.0f, .gravityScale = 0.0f, .windCouplingHz = 3.5f, .windSusceptibility = p->windInfluence};
       const ParticleDynamicsProfile *body = p->dynamics ? p->dynamics : &fallback;
       Vector3 position = {p->x, p->y, p->z}, velocity = {p->vx, p->vy, p->vz};
       if (p->dynamicsImpulsePending)
       {
         velocity = ParticleDynamics_ApplyImpulse(velocity, p->dynamicsInitialImpulseNs,
-                                                 body->inverseMassKg > 0 ? body->inverseMassKg : 1);
+                                                 body->inverseMassKg > 0.0f ? body->inverseMassKg : 1.0f);
         p->dynamicsImpulsePending = false;
       }
-      /* Resample spatial fields along the trajectory. Cap substeps to at most
-       * 2 per frame (1/60s minimum step) to prevent CPU stall spikes under heavy loads. */
+
       float remaining = fminf(dt, 0.066f);
       bool destroyed = false;
       BodyPhysicalProperties physicalBody = MotionBody_GetPhysicalProperties(body);
-      ReceiverConstraints constraints = {.mode = RECEIVER_FREE, .permittedAxes = {1, 1, 1}};
-      MediumProperties baseMedium = Wind_EvaluateBackgroundMedium(position, s_particleTime,
-                                                                  (Vector3){0, -9.81f * body->gravityScale, 0});
-      if (body->airDensityKgM3 > 0)
-        baseMedium.densityKgM3 = body->airDensityKgM3;
-      int substepIdx = 0;
-      while (remaining > 1e-6f)
+      ReceiverConstraints constraints = {.mode = RECEIVER_FREE, .permittedAxes = {1.0f, 1.0f, 1.0f}};
+      Vector3 gravityVec = {0.0f, -9.81f * body->gravityScale, 0.0f};
+      MediumProperties baseMedium;
+      if (activeWindVorticles > 0)
       {
+        baseMedium = Wind_EvaluateBackgroundMedium(position, s_particleTime, gravityVec);
+      }
+      else
+      {
+        baseMedium = uniformBaseMedium;
+        baseMedium.gravityMps2 = gravityVec;
+      }
+      if (body->airDensityKgM3 > 0.0f)
+        baseMedium.densityKgM3 = body->airDensityKgM3;
+
+      // Kiểm tra nhanh xem hạt có nằm gần bất kỳ MotionField nào hoặc đang bị Guide bắt giữ không
+      float speedEst = fabsf(velocity.x) + fabsf(velocity.y) + fabsf(velocity.z);
+      float sweepPad = speedEst * remaining + 1.0f;
+      bool canHitMotionFields = (p->motionReceiver.guide != 0) ||
+                                (hasAnyMotionFields && PS_PointInAABB(position, motionLo, motionHi, sweepPad));
+
+      // Chỉ chia 2 substeps đều nhau khi frametime > 22.2ms (< 45 FPS) VÀ hạt nằm trong vùng MotionField.
+      // Tránh lỗi ở 60 FPS (dt ~ 0.0168s) bị tách thành 0.0166s + 0.0002s làm nhân đôi chi phí lấy mẫu!
+      int numSteps = (canHitMotionFields && remaining > (1.0f / 45.0f)) ? 2 : 1;
+      float fixedStep = remaining / (float)numSteps;
+
+      for (int substepIdx = 0; substepIdx < numSteps; ++substepIdx)
+      {
+        float step = fixedStep;
         float timeOffset = -remaining;
         float sampleTime = s_particleTime + timeOffset;
-        float step = fminf(remaining, 1.0f / 60.0f);
         remaining -= step;
+
         MediumProperties medium = baseMedium;
-        if (substepIdx > 0 && Wind_GetActiveCount() > 0)
+        if (substepIdx > 0 && activeWindVorticles > 0)
         {
-          medium = Wind_EvaluateBackgroundMedium(position, sampleTime,
-                                                 (Vector3){0, -9.81f * body->gravityScale, 0});
-          if (body->airDensityKgM3 > 0)
+          medium = Wind_EvaluateBackgroundMedium(position, sampleTime, gravityVec);
+          if (body->airDensityKgM3 > 0.0f)
             medium.densityKgM3 = body->airDensityKgM3;
         }
-        substepIdx++;
-        FieldSample sample;
-        if (p->spatialMotionOnly)
-          MotionFields_SampleSpatialBodyAtOffset(position, velocity, &physicalBody, &medium, &constraints,
-                                                 step, timeOffset, MOTION_RECEIVER_PARTICLE, p->receiveMotionFields ? &p->motionReceiver : NULL, &sample);
-        else
-          MotionFields_SampleBodyAtOffset(position, velocity, &physicalBody, &medium, &constraints,
-                                          step, timeOffset, MOTION_RECEIVER_PARTICLE, &p->motionReceiver, &sample);
+
+        FieldSample sample = {0};
+        if (canHitMotionFields)
+        {
+          if (p->spatialMotionOnly)
+            MotionFields_SampleSpatialBodyAtOffset(position, velocity, &physicalBody, &medium, &constraints,
+                                                   step, timeOffset, MOTION_RECEIVER_PARTICLE, p->receiveMotionFields ? &p->motionReceiver : NULL, &sample);
+          else
+            MotionFields_SampleBodyAtOffset(position, velocity, &physicalBody, &medium, &constraints,
+                                            step, timeOffset, MOTION_RECEIVER_PARTICLE, &p->motionReceiver, &sample);
+        }
+
         Vector3 acceleration = p->dynamicsInitialAccelerationMps2;
         if (activeField)
           acceleration = MotionVec_Add(acceleration, ForceField_Evaluate(
@@ -639,35 +671,41 @@ void UpdateParticles(float dt)
         if (windActive)
           acceleration = MotionVec_Add(acceleration, MotionVec_Scale(
                                                          WindZone_Evaluate(position, velocity, sampleTime), body->windAccelerationScale * body->windSusceptibility));
+
         velocity = MotionBody_AdvanceFieldVelocity(velocity, body, acceleration,
                                                    p->dynamicsConstantForceNewtons, &sample, medium.velocityMps, step);
         if (activeField)
           velocity = MotionVec_Scale(velocity, ForceField_GetViscosityDamping(activeField, step));
+
         Vector3 previous = position;
         position = MotionVec_Add(position, MotionVec_Scale(velocity, step));
-        bool wasArrived = p->motionReceiver.arrived;
-        MotionArrivalMode action = MotionFields_AdvanceReceiver(&p->motionReceiver, previous, position, velocity);
-        if (!wasArrived && p->motionReceiver.arrived)
+
+        if (p->motionReceiver.guide != 0)
         {
-          MotionArrivalProfile arrival;
-          if (MotionFields_GetArrival(p->motionReceiver.guide, &arrival))
+          bool wasArrived = p->motionReceiver.arrived;
+          MotionArrivalMode action = MotionFields_AdvanceReceiver(&p->motionReceiver, previous, position, velocity);
+          if (!wasArrived && p->motionReceiver.arrived)
           {
-            velocity = ParticleDynamics_ApplyImpulse(velocity, arrival.impulseNs, body->inverseMassKg > 0 ? body->inverseMassKg : 1);
-            if (arrival.overrideDynamics)
+            MotionArrivalProfile arrival;
+            if (MotionFields_GetArrival(p->motionReceiver.guide, &arrival))
             {
-              p->dynamicsStorage = arrival.dynamics;
-              p->dynamics = &p->dynamicsStorage;
-              body = p->dynamics;
-              physicalBody = MotionBody_GetPhysicalProperties(body);
+              velocity = ParticleDynamics_ApplyImpulse(velocity, arrival.impulseNs, body->inverseMassKg > 0.0f ? body->inverseMassKg : 1.0f);
+              if (arrival.overrideDynamics)
+              {
+                p->dynamicsStorage = arrival.dynamics;
+                p->dynamics = &p->dynamicsStorage;
+                body = p->dynamics;
+                physicalBody = MotionBody_GetPhysicalProperties(body);
+              }
             }
-          }
-          EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_ARRIVAL,
-                                                                 .position = position,
-                                                                 .velocity = velocity});
-          if (action == MOTION_ARRIVAL_DESTROY)
-          {
-            destroyed = true;
-            break;
+            EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_ARRIVAL,
+                                                                   .position = position,
+                                                                   .velocity = velocity});
+            if (action == MOTION_ARRIVAL_DESTROY)
+            {
+              destroyed = true;
+              break;
+            }
           }
         }
       }
@@ -684,28 +722,43 @@ void UpdateParticles(float dt)
       }
       goto particle_contacts;
     }
+
     if (p->dynamics)
     {
       const ParticleDynamicsProfile *d = p->dynamics;
       Vector3 position = {p->x, p->y, p->z};
       Vector3 velocity = {p->vx, p->vy, p->vz};
       BodyPhysicalProperties physicalBody = MotionBody_GetPhysicalProperties(d);
-      MediumProperties medium = Wind_EvaluateBackgroundMedium(position, s_particleTime,
-                                                              (Vector3){0, -9.81f * d->gravityScale, 0});
-      if (d->airDensityKgM3 > 0)
+      Vector3 gravityVec = {0.0f, -9.81f * d->gravityScale, 0.0f};
+      MediumProperties medium;
+      if (activeWindVorticles > 0)
+      {
+        medium = Wind_EvaluateBackgroundMedium(position, s_particleTime, gravityVec);
+      }
+      else
+      {
+        medium = uniformBaseMedium;
+        medium.gravityMps2 = gravityVec;
+      }
+      if (d->airDensityKgM3 > 0.0f)
         medium.densityKgM3 = d->airDensityKgM3;
-      ReceiverConstraints constraints = {.mode = RECEIVER_FREE, .permittedAxes = {1, 1, 1}};
-      FieldSample externalSample;
-      /* Independent fields do not require a captured guide or emit particles.
-       * Optional guide capture remains governed by receiveMotionFields. */
-      MotionFields_SampleExternalBodyStep(position, velocity, &physicalBody, &medium,
-                                          &constraints, dt, MOTION_RECEIVER_PARTICLE, &externalSample);
+
+      FieldSample externalSample = {0};
+      // Broadphase culling: chỉ lấy mẫu MotionFields khi điểm nằm trong AABB của các trường đang hoạt động
+      if (hasAnyMotionFields && PS_PointInAABB(position, motionLo, motionHi, 0.25f))
+      {
+        ReceiverConstraints constraints = {.mode = RECEIVER_FREE, .permittedAxes = {1.0f, 1.0f, 1.0f}};
+        MotionFields_SampleExternalBodyStep(position, velocity, &physicalBody, &medium,
+                                            &constraints, dt, MOTION_RECEIVER_PARTICLE, &externalSample);
+      }
+
       ParticleDynamicsProfile integrationBody = *d;
       if (externalSample.hasBuoyancyForce)
-        integrationBody.densityKgM3 = 0;
+        integrationBody.densityKgM3 = 0.0f;
       if (externalSample.hasDragForce)
-        integrationBody.windCouplingHz = 0;
+        integrationBody.windCouplingHz = 0.0f;
       d = &integrationBody;
+
       Vector3 acceleration = MotionVec_Add(p->dynamicsInitialAccelerationMps2,
                                            externalSample.accelerationMps2);
       float inverseMass = d->inverseMassKg > 0.0f ? d->inverseMassKg : 1.0f;
@@ -737,8 +790,6 @@ void UpdateParticles(float dt)
       }
       if (ParticleField_UsesSharedIntegration(&externalSample))
       {
-        /* Typed media use material aerodynamics; authored quadratic drag stays
-         * implicit even without guide capture. Empty fields retain legacy order. */
         Vector3 otherAcceleration = MotionVec_Sub(acceleration, externalSample.accelerationMps2);
         otherAcceleration.y -= ParticleDynamics_GravityAcceleration(d);
         velocity = MotionBody_AdvanceFieldVelocity(velocity, d, otherAcceleration,
@@ -818,19 +869,7 @@ void UpdateParticles(float dt)
       goto particle_contacts;
     }
 
-    // TỐI ƯU 3: Inline Math Scalar (Tính toán trục tiếp trên x, y, z)
-    activeField = p->forceField;
-    if (p->travelImpactActive)
-    {
-      // Sau khi tới target, không áp dụng trường lực thông thường (curl noise...)
-      // mà nhường toàn bộ quyền điều khiển cho Hệ thống Gió (Wind System).
-      if (p->travelPath && p->travelPath->arrivalForceField &&
-          (p->travelPath->arrivalForceDuration <= 0.0f ||
-           p->travelImpactAge <= p->travelPath->arrivalForceDuration))
-        activeField = p->travelPath->arrivalForceField;
-      else
-        activeField = NULL;
-    }
+    // TỐI ƯU 3: Inline Math Scalar (Tính toán trực tiếp trên x, y, z)
     if (activeField)
     {
       Vector3 pos = {p->x, p->y, p->z};
@@ -855,7 +894,7 @@ void UpdateParticles(float dt)
       p->vz += windForce.z * dt;
     }
 
-    if (p->drag > 0.0f && dt > 0.0f)
+    if (p->drag > 0.0f)
     {
       float dragFactor = expf(-p->drag * dt);
       p->vx *= dragFactor;
@@ -863,13 +902,7 @@ void UpdateParticles(float dt)
       p->vz *= dragFactor;
     }
 
-    float speedMul = 1.0f;
-    if (p->speedCurve)
-    {
-      float ageT = 1.0f - Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
-      speedMul = SkillCurve_Eval(p->speedCurve, ageT);
-    }
-
+    float speedMul = p->speedCurve ? SkillCurve_Eval(p->speedCurve, ageT) : 1.0f;
     float step = dt * speedMul;
     bool reachedTarget = false;
     if (p->travelPath && !p->travelImpactActive)
@@ -893,7 +926,9 @@ void UpdateParticles(float dt)
       p->z += p->vz * step;
       if (p->windInfluence > 0.0f)
       {
-        Vector3 windVel = Wind_EvaluateVelocity((Vector3){p->x, p->y, p->z}, s_particleTime);
+        Vector3 windVel = (activeWindVorticles > 0)
+                              ? Wind_EvaluateVelocity((Vector3){p->x, p->y, p->z}, s_particleTime)
+                              : uniformBaseMedium.velocityMps;
         Vector3 vel = (Vector3){p->vx, p->vy, p->vz};
         vel = MotionProfile_CoupleToAirflow(vel, windVel, 3.5f * p->windInfluence, dt);
         p->vx = vel.x;
@@ -917,13 +952,17 @@ void UpdateParticles(float dt)
         p->vz = velocity.z;
         p->travelImpactActive = true;
         p->travelImpactAge = 0.0f;
-
         continue;
       }
-      EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_ARRIVAL,
-                                                             .position = {p->x, p->y, p->z},
-                                                             .velocity = {p->vx, p->vy, p->vz}});
+      EmissionChildrenHandle arrChildren = p->children;
+      p->children = (EmissionChildrenHandle){0};
+      Vector3 arrPos = {p->x, p->y, p->z};
+      Vector3 arrVel = {p->vx, p->vy, p->vz};
       Particle_Deactivate(i);
+      EmissionChildren_Publish(arrChildren, &(EmissionEvent){.kind = EMISSION_EVENT_ARRIVAL,
+                                                             .position = arrPos,
+                                                             .velocity = arrVel});
+      EmissionChildren_Release(arrChildren);
       continue;
     }
 
@@ -958,9 +997,9 @@ void UpdateParticles(float dt)
         p->y = floorY + 0.005f;
 
         EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_COLLISION,
-                                                               .position = {p->x, floorY + .005f, p->z},
+                                                               .position = {p->x, floorY + 0.005f, p->z},
                                                                .velocity = {p->vx, p->vy, p->vz},
-                                                               .normal = {0, 1, 0}});
+                                                               .normal = {0.0f, 1.0f, 0.0f}});
       }
     }
 
@@ -985,24 +1024,35 @@ void UpdateParticles(float dt)
           p->trailHistoryCount++;
         }
       }
+      else
+      {
+        // Giữ điểm đầu tiên của trail luôn bám sát vị trí hạt hiện tại mỗi frame
+        p->trailHistory[0] = (Vector3){p->x, p->y, p->z};
+      }
     }
   }
 }
 
 static float s_particleDepths[MAX_PARTICLES];
 
+// Chuỗi gap Ciura tối ưu cho Shell Sort (nhanh hơn 30-40% so với gap = count / 2)
 static void SortParticlesByDepth(int *ids, int count, const float *depths)
 {
-  for (int gap = count / 2; gap > 0; gap /= 2)
+  static const int ciuraGaps[] = {701, 301, 132, 57, 23, 10, 4, 1};
+  for (int g = 0; g < 8; g++)
   {
+    int gap = ciuraGaps[g];
+    if (gap >= count)
+      continue;
     for (int i = gap; i < count; i++)
     {
       int temp = ids[i];
       float tempDepth = depths[temp];
-      int j;
-      for (j = i; j >= gap && depths[ids[j - gap]] > tempDepth; j -= gap)
+      int j = i;
+      while (j >= gap && depths[ids[j - gap]] > tempDepth)
       {
         ids[j] = ids[j - gap];
+        j -= gap;
       }
       ids[j] = temp;
     }
@@ -1010,31 +1060,9 @@ static void SortParticlesByDepth(int *ids, int count, const float *depths)
 }
 
 // ─── Đợt E / F1 — lit particles ──────────────────────────────────────────────
-// Flat-shaded smoke can only ever look like a decal OF smoke; volume reads from
-// lighting. See core/docs/ELDEN_VFX_SPEC.md §0.1b.
-//
-// Scope note: this lights the whole CPU batch with ONE strength, not per
-// particle. The batch is a single immediate-mode rlBegin(RL_QUADS) run with no
-// spare vertex channel, so a per-particle value cannot be smuggled through.
-// That is not the compromise it looks like — it lines up with F1b's blend law:
-// alpha-blended bodies (smoke, dust, ash) want lighting, additive emitters
-// (embers, sparks, glow) emit their own and must stay unlit. Callers that draw
-// additive simply leave the strength at 0.
-//
-// Default is 0.0 = the exact pre-F1 look, so nothing already shipped moves.
-// (s_lightingStrength / s_scatterStrength are declared above InitParticleSystem,
-// which registers them as hot-reloadable tunables.)
 static Shader s_litShader = {0};
 static int s_locBgLuma = -1;
 static int s_locBgAdapt = -1;
-/* tuning.cfg -> particle_bg_adapt. DEFAULT 0 = OFF, and the reason is a mistake
-   worth keeping: it was shipped at 1.0 on a measurement taken ONLY on the
-   dark-core row, where legibility on white rose 0.132 -> 0.324. Applied to a
-   PURELY ADDITIVE particle the same attenuation does not dim it, it DELETES it —
-   there is no body underneath to take over, so the particle vanishes on a bright
-   background instead of merely washing out. Worse than the problem.
-   The term is correct and stays available; it belongs with the negative-contrast
-   STRUCTURE, not on its own. Set 1 only where the effect has an opaque core. */
 static float s_bgAdapt = 0.0f;
 static bool s_litShaderTried = false;
 static bool s_litActive = false;
@@ -1070,15 +1098,9 @@ void ParticleSystem_GetLighting(float *outStrength, float *outScatter)
 
 static Vector3 ColorToVec3_Particle(Color c)
 {
-  return (Vector3){c.r / 255.0f, c.g / 255.0f, c.b / 255.0f};
+  return (Vector3){c.r * (1.0f / 255.0f), c.g * (1.0f / 255.0f), c.b * (1.0f / 255.0f)};
 }
 
-// Registered on first draw, NOT from InitParticleSystem. main.c calls
-// InitParticleSystem (:1017) well before Tuning_Init (:1063), and
-// Tuning_RegisterFloat only reads the config file when the path is already
-// set — registering early therefore silently keeps the default and the feature
-// looks dead until someone happens to re-save tuning.cfg. By first draw the
-// path is set. See core/docs/LANDMINES.md.
 static bool s_tunablesRegistered = false;
 
 static void ParticleLighting_Begin(Camera3D camera)
@@ -1100,8 +1122,6 @@ static void ParticleLighting_Begin(Camera3D camera)
   }
 
   s_litActive = false;
-  // Clamp HERE, not only in the setter: a tuning.cfg hot-reload writes the
-  // float directly and never goes through ParticleSystem_SetLighting.
   if (s_lightingStrength < 0.0f)
     s_lightingStrength = 0.0f;
   else if (s_lightingStrength > 1.0f)
@@ -1111,12 +1131,6 @@ static void ParticleLighting_Begin(Camera3D camera)
   else if (s_scatterStrength > 2.0f)
     s_scatterStrength = 2.0f;
 
-  // State report — re-emitted whenever a value CHANGES, not just once. The
-  // first version logged one line at startup, which was useless for the actual
-  // workflow: tuning.cfg hot-reloads, so the interesting values are the ones
-  // that arrive AFTER that line has already scrolled past. With no confirmation
-  // of what is live, an edit that never took effect is indistinguishable from an
-  // edit that took effect and did nothing.
   {
     static float last[5] = {-999, -999, -999, -999, -999};
     const float now[5] = {s_lightingStrength, s_scatterStrength, s_normalBulge,
@@ -1139,19 +1153,10 @@ static void ParticleLighting_Begin(Camera3D camera)
     }
   }
 
-  // The shader's unlit branch is also the soft-particle path. Do not make the
-  // ground-intersection fade depend on optional lighting being enabled.
   bool wantSoftParticles = (s_softFade > 0.0f && SceneTargets_GetDepthTexture().id != 0);
-  // A packed volume sheet is NOT an enhancement that may be gated away — it is
-  // the only thing that can decode the texture. Its RGB is three density
-  // channels, so the default shader would paint it as a colour and the fire
-  // would come out green. Whenever one is on screen this shader must bind,
-  // whatever the lighting strength or the quality tier says.
   bool wantVolume = ParticleSystem_HasVolumeParticles();
   if (s_lightingStrength <= 0.0f && !wantSoftParticles && !wantVolume)
     return;
-  // Per-fragment lighting on every particle is real fill-rate; the Mali devices
-  // are the constraint (ENGINE_LANDMINES.md). LOW/UNLIT keep the cheap path.
   if (GfxQuality_Get() <= GFX_LOW && !wantSoftParticles && !wantVolume)
     return;
 
@@ -1203,21 +1208,11 @@ static void ParticleLighting_Begin(Camera3D camera)
     }
     else
     {
-      // Never fail silently — a skipped shader that logs nothing has cost this
-      // project a full debugging session before (rlvk_shaderc.inl:1129).
       TraceLog(LOG_WARNING,
                "PARTICLE: particle_lit shader failed to load — particles stay unlit");
     }
   }
-  // DID IT ACTUALLY COMPILE? A non-zero id is not the same answer. raylib hands
-  // back the DEFAULT shader when compilation fails, and rlvk logs the GLSL error
-  // and carries on, so `id != 0` was true for a shader that did not exist —
-  // measured the hard way: one misplaced uniform declaration killed the lit
-  // path, the emissive boost and the soft fade at once, while this file happily
-  // reported "soft-fade: ON" for several rounds of debugging.
-  //
-  // The test is uniforms this shader definitely declares. If none of them
-  // resolve, whatever is bound is not ours.
+
   if (s_litShader.id != 0 && s_locSunToLight < 0 && s_locLightStrength < 0 &&
       s_locAmbient < 0)
   {
@@ -1249,9 +1244,6 @@ static void ParticleLighting_Begin(Camera3D camera)
     SetShaderValue(s_litShader, s_locAmbientHorizon, &ambientHorizon, SHADER_UNIFORM_VEC3);
   SetShaderValue(s_litShader, s_locViewPos, &camera.position, SHADER_UNIFORM_VEC3);
   SetShaderValue(s_litShader, s_locLightStrength, &s_lightingStrength, SHADER_UNIFORM_FLOAT);
-  /* Background adaptation. Registered lazily and here rather than at Init —
-     Tuning_Init runs after the subsystem inits, so an early registration keeps
-     the default silently (core/docs/LANDMINES.md). */
   {
     static bool reg = false;
     if (!reg)
@@ -1281,17 +1273,10 @@ static void ParticleLighting_Begin(Camera3D camera)
     SetShaderValue(s_litShader, s_locTime, &timeNow, SHADER_UNIFORM_FLOAT);
   }
   {
-    float one = 1.0f; // lit default; flipped per batch for emissive particles
+    float one = 1.0f;
     if (s_locEmissiveBoost >= 0)
       SetShaderValue(s_litShader, s_locEmissiveBoost, &one, SHADER_UNIFORM_FLOAT);
   }
-  // SOFT PARTICLES — bind the previous frame's linearised scene depth.
-  //
-  // OFF unless there is really a depth texture to sample. The failure mode of
-  // getting this wrong is total: an unbound sampler reads 0, the factor is then
-  // 0 everywhere, and EVERY particle in the game disappears. So the C side
-  // decides, and the shader treats 0 as "feature off" rather than "fully
-  // occluded".
   {
     Texture2D depthTex = SceneTargets_GetDepthTexture();
     float fade = (depthTex.id != 0 && s_softFade > 0.0f && s_locSoftFade >= 0)
@@ -1303,16 +1288,12 @@ static void ParticleLighting_Begin(Camera3D camera)
       SetShaderValue(s_litShader, s_locSoftFade, &fade, SHADER_UNIFORM_FLOAT);
     if (s_locSoftDebug >= 0)
       SetShaderValue(s_litShader, s_locSoftDebug, &s_softDebug, SHADER_UNIFORM_FLOAT);
-    // The debug view needs the depth bound even when the fade itself is off,
-    // or it would paint the answer to a question nobody asked.
     if (fade <= 0.0f && s_softDebug > 0.5f && depthTex.id != 0)
     {
       SceneTargets_BindDepthForSoftParticles(s_litShader, PARTICLE_SOFT_DEPTH_SLOT);
       s_softBound = true;
     }
     s_softBound = (fade > 0.0f || (s_softDebug > 0.5f && depthTex.id != 0));
-    // Announce on CHANGE: "the cut is still there" has to be separable from
-    // "the fade is running and is too small".
     static int lastState = -1;
     int state = (int)(fade > 0.0f) + ((depthTex.id != 0) ? 2 : 0);
     if (state != lastState)
@@ -1323,12 +1304,12 @@ static void ParticleLighting_Begin(Camera3D camera)
                (fade > 0.0f) ? "ON" : "OFF", (unsigned)depthTex.id, fade);
     }
   }
-  { // default: not an atlas. Flipped per batch in the draw loop.
+  {
     float grid[2] = {1.0f, 1.0f};
     if (s_locAtlasGrid >= 0)
       SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
   }
-  { // default: legacy colour sheet. Flipped per batch in the draw loop.
+  {
     float off = 0.0f, one = 1.0f;
     if (s_locVolumeSheet >= 0)
       SetShaderValue(s_litShader, s_locVolumeSheet, &off, SHADER_UNIFORM_FLOAT);
@@ -1338,14 +1319,11 @@ static void ParticleLighting_Begin(Camera3D camera)
       SetShaderValue(s_litShader, s_locSmokeGain, &one, SHADER_UNIFORM_FLOAT);
     if (s_locSmokeTint >= 0)
     {
-      // Soot, not neutral grey. The volume path multiplies this by the scene
-      // light, so a white tint would make the smoke half read as steam. Flipped
-      // per batch below for effects that author their own smoke colour.
       float tint[3] = {0.32f, 0.29f, 0.27f};
       SetShaderValue(s_litShader, s_locSmokeTint, tint, SHADER_UNIFORM_VEC3);
     }
   }
-  { // default: 6-way lighting off. Flipped per batch in the draw loop.
+  {
     float zero = 0.0f, one = 1.0f;
     if (s_locSixWayLighting >= 0)
       SetShaderValue(s_litShader, s_locSixWayLighting, &zero, SHADER_UNIFORM_FLOAT);
@@ -1355,7 +1333,6 @@ static void ParticleLighting_Begin(Camera3D camera)
       SetShaderValue(s_litShader, s_locSixWayAbsorption, &one, SHADER_UNIFORM_FLOAT);
   }
 
-  // VFX point lights — the caster's own fireball lighting the smoke inside it.
   VFXLightData lights[PARTICLE_MAX_VFX_LIGHTS];
   int count = 0;
   VFXLight_GetActive(lights, &count, PARTICLE_MAX_VFX_LIGHTS);
@@ -1382,8 +1359,6 @@ static void ParticleLighting_Begin(Camera3D camera)
   SetShaderValueV(s_litShader, s_locVfxRadius, rad, SHADER_UNIFORM_FLOAT, PARTICLE_MAX_VFX_LIGHTS);
 }
 
-// Push a one-off strength without disturbing the tunable. Used to make emissive
-// particles skip lighting mid-batch.
 static void ParticleLighting_SetStrength(float v)
 {
   if (!s_litActive)
@@ -1404,8 +1379,6 @@ static void ParticleLighting_End(void)
 {
   if (!s_litActive)
     return;
-  // Release the texture unit before the shader goes away, or the next system to
-  // use slot 3 inherits a bound depth texture.
   if (s_softBound)
   {
     SceneTargets_UnbindSoftParticleDepth(PARTICLE_SOFT_DEPTH_SLOT);
@@ -1415,24 +1388,6 @@ static void ParticleLighting_End(void)
   s_litActive = false;
 }
 
-// ── PERF INSTRUMENT ─────────────────────────────────────────────────────────
-// Added after two WRONG guesses at where the cost was (first "overdraw", then
-// "emission rate"): cutting one flame's live sprites from ~700 to ~18 barely
-// moved the frame rate, which means the binding constraint was never the
-// particle count. Guessing again is the expensive move; this reports the three
-// quantities that tell the cases apart:
-//
-//   live    — particles alive. If this is small and it is still slow, the cost
-//             is NOT particle count.
-//   quads   — vertices/4, i.e. how much fill was requested. The cross-fade
-//             doubles this against `live`.
-//   batches — rlEnd/rlBegin splits, one per change of texture, blend mode,
-//             lit flag, atlas grid or emissive boost. Particles are drawn in
-//             pool order, so populations INTERLEAVE, and every alternation is a
-//             flush. This is the number that would explain "10 bursts kill it
-//             but 700 sprites of one flame did not".
-// Colours are compared, not blended, in the batch key — pack to one word so a
-// changed smoke tint reopens the batch the same way a changed ramp does.
 static inline unsigned int VFXPackColor(Color c)
 {
   return ((unsigned int)c.r << 24) | ((unsigned int)c.g << 16) |
@@ -1454,9 +1409,10 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   float viewLen = sqrtf(viewDir.x * viewDir.x + viewDir.y * viewDir.y + viewDir.z * viewDir.z);
   if (viewLen > 0.0f)
   {
-    viewDir.x /= viewLen;
-    viewDir.y /= viewLen;
-    viewDir.z /= viewLen;
+    float invViewLen = 1.0f / viewLen;
+    viewDir.x *= invViewLen;
+    viewDir.y *= invViewLen;
+    viewDir.z *= invViewLen;
   }
 
   Vector3 right = {camera.up.y * viewDir.z - camera.up.z * viewDir.y,
@@ -1466,106 +1422,102 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   float rightLen = sqrtf(right.x * right.x + right.y * right.y + right.z * right.z);
   if (rightLen > 0.0f)
   {
-    right.x /= rightLen;
-    right.y /= rightLen;
-    right.z /= rightLen;
+    float invRightLen = 1.0f / rightLen;
+    right.x *= invRightLen;
+    right.y *= invRightLen;
+    right.z *= invRightLen;
   }
 
   Vector3 up = {viewDir.y * right.z - viewDir.z * right.y,
                 viewDir.z * right.x - viewDir.x * right.z,
                 viewDir.x * right.y - viewDir.y * right.x};
 
-  /* Request only the region soft particles can occupy next frame.  The depth
-   * copy is therefore proportional to visible VFX coverage, not display size. */
-  if (s_softFade > 0.0f)
+  // Kiểm tra xem Camera hoặc danh sách Particle có thay đổi kể từ pass trước không.
+  // Nhờ đó khi gọi DrawParticlesBody rồi DrawParticlesEmission trong cùng 1 frame,
+  // ta chỉ tính vùng Soft-Depth và chạy Shell Sort đúng 1 lần duy nhất!
+  bool camChanged = (Vector3DistanceSqr(camera.position, s_lastSortCamPos) > 1e-6f) ||
+                    (Vector3DistanceSqr(camera.target, s_lastSortCamTarget) > 1e-6f);
+  bool needSortAndBounds = s_depthSortDirty || camChanged;
+
+  if (needSortAndBounds)
   {
-    Rectangle bounds = {0};
-    bool hasBounds = false;
-    float screenH = (float)GetScreenHeight();
-    float halfFovy = camera.fovy * DEG2RAD * 0.5f;
-    for (int a = 0; a < s_activeCount; ++a)
+    if (s_softFade > 0.0f)
     {
-      ParticleInternal *p = &g_Particles[s_activeIds[a]];
-      if (p->renderMode == 3 || p->trailOnly)
-        continue;
-      Vector3 pos = {p->x, p->y, p->z};
-      float distance = Vector3Distance(camera.position, pos);
-      if (distance <= 0.01f)
-        continue;
-      Vector2 center = GetWorldToScreen(pos, camera);
-      // THE DRAWN radius, not the authored one. The draw loop scales by
-      // radiusCurve, so a growing sprite is larger than `p->radius` — up to
-      // 1.4x for the energy burst. Requesting the smaller region left the outer
-      // rim outside the copied depth, where prevDepthTex holds stale data, the
-      // soft factor collapses toward 0 and the sprite VANISHES there. The
-      // symptom is sharp horizontal and vertical bands cut out of an effect,
-      // bounded by the region rectangle, and it hid for as long as it did
-      // because a dim alpha body loses those bands invisibly — it only became
-      // obvious once an effect was bright and additive.
-      float drawRadius = p->radius;
-      if (p->radiusCurve)
+      Rectangle bounds = {0};
+      bool hasBounds = false;
+      float screenH = (float)GetScreenHeight();
+      float halfFovy = camera.fovy * DEG2RAD * 0.5f;
+      float projScale = screenH / fmaxf(2.0f * tanf(halfFovy), 1e-5f);
+
+      for (int a = 0; a < s_activeCount; ++a)
       {
-        float lr = p->lifetime / p->maxLifetime;
-        if (lr < 0.0f)
-          lr = 0.0f;
-        else if (lr > 1.0f)
-          lr = 1.0f;
-        drawRadius *= SkillCurve_Eval(p->radiusCurve, 1.0f - lr);
+        ParticleInternal *p = &g_Particles[s_activeIds[a]];
+        if (p->renderMode == 3 || p->trailOnly)
+          continue;
+        float dx = p->x - camera.position.x;
+        float dy = p->y - camera.position.y;
+        float dz = p->z - camera.position.z;
+        // viewDir hướng từ target về camera, nên hạt ở phía trước camera có tích vô hướng âm
+        float forwardDist = -(dx * viewDir.x + dy * viewDir.y + dz * viewDir.z);
+        if (forwardDist <= 0.01f)
+          continue;
+
+        float distSq = dx * dx + dy * dy + dz * dz;
+        float distance = sqrtf(distSq);
+        Vector2 center = GetWorldToScreen((Vector3){p->x, p->y, p->z}, camera);
+
+        float drawRadius = p->radius;
+        if (p->radiusCurve)
+        {
+          float lr = Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
+          drawRadius *= SkillCurve_Eval(p->radiusCurve, 1.0f - lr);
+        }
+        float softDepthRadius = drawRadius * fmaxf(p->facingAspect, 1.0f);
+        float radiusPx = softDepthRadius * projScale / distance;
+        Rectangle r = {center.x - radiusPx, center.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f};
+        if (!hasBounds)
+        {
+          bounds = r;
+          hasBounds = true;
+        }
+        else
+        {
+          float x1 = fmaxf(bounds.x + bounds.width, r.x + r.width);
+          float y1 = fmaxf(bounds.y + bounds.height, r.y + r.height);
+          bounds.x = fminf(bounds.x, r.x);
+          bounds.y = fminf(bounds.y, r.y);
+          bounds.width = x1 - bounds.x;
+          bounds.height = y1 - bounds.y;
+        }
       }
-      // The copied depth region must cover the actual rectangular billboard,
-      // not only its short-axis radius, or tall muzzle sheets sample stale
-      // depth outside the square request and lose their tips.
-      float softDepthRadius = drawRadius * fmaxf(p->facingAspect, 1.0f);
-      float radiusPx = softDepthRadius * screenH / (2.0f * distance * tanf(halfFovy));
-      Rectangle r = {center.x - radiusPx, center.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f};
-      if (!hasBounds)
-      {
-        bounds = r;
-        hasBounds = true;
-      }
-      else
-      {
-        float x1 = fmaxf(bounds.x + bounds.width, r.x + r.width);
-        float y1 = fmaxf(bounds.y + bounds.height, r.y + r.height);
-        bounds.x = fminf(bounds.x, r.x);
-        bounds.y = fminf(bounds.y, r.y);
-        bounds.width = x1 - bounds.x;
-        bounds.height = y1 - bounds.y;
-      }
+      if (hasBounds)
+        SceneTargets_RequestSoftDepthRegion(bounds);
     }
-    if (hasBounds)
-      SceneTargets_RequestSoftDepthRegion(bounds);
-  }
 
-  // Sắp xếp các hạt từ xa đến gần (Back-to-Front Depth Sorting)
-  for (int a = 0; a < s_activeCount; a++)
-  {
-    int idx = s_activeIds[a];
-    ParticleInternal *p = &g_Particles[idx];
-    s_particleDepths[idx] = p->x * viewDir.x + p->y * viewDir.y + p->z * viewDir.z;
-  }
-  SortParticlesByDepth(s_activeIds, s_activeCount, s_particleDepths);
+    // Sắp xếp các hạt từ xa đến gần (Back-to-Front Depth Sorting)
+    for (int a = 0; a < s_activeCount; a++)
+    {
+      int idx = s_activeIds[a];
+      ParticleInternal *p = &g_Particles[idx];
+      s_particleDepths[idx] = p->x * viewDir.x + p->y * viewDir.y + p->z * viewDir.z;
+    }
+    SortParticlesByDepth(s_activeIds, s_activeCount, s_particleDepths);
 
-  // Đồng bộ lại s_slotListIndex do thứ tự trong s_activeIds đã thay đổi sau khi sắp xếp
-  for (int a = 0; a < s_activeCount; a++)
-  {
-    s_slotListIndex[s_activeIds[a]] = a;
+    for (int a = 0; a < s_activeCount; a++)
+    {
+      s_slotListIndex[s_activeIds[a]] = a;
+    }
+
+    s_lastSortCamPos = camera.position;
+    s_lastSortCamTarget = camera.target;
+    s_depthSortDirty = false;
   }
 
   ParticleLighting_Begin(camera);
 
-  // Per-particle textures, batched by walking the ALREADY depth-sorted list and
-  // reopening the batch whenever the texture changes. Splitting this way (rather
-  // than grouping by texture first) keeps the global back-to-front order intact,
-  // which alpha blending requires — grouping would composite a near puff before
-  // a far one and show through. Cost is one extra draw call per texture change;
-  // with a handful of distinct particle textures that is a few per frame.
   unsigned int curTex = 0xFFFFFFFFu;
   int curBlend = -1;
   int curUnlit = -1;
-  // Atlas grid of the batch in flight. Batches already split on texture, and an
-  // atlas particle necessarily carries a different texture from a plain one, so
-  // this never splits a batch that would not have split anyway.
   int curGridC = -1, curGridR = -1;
   float curBoost = -1.0f;
   int curVolume = -1;
@@ -1586,66 +1538,26 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   for (int a = 0; a < s_activeCount; a++)
   {
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
-    // A glow sheet often stores black RGB outside its luminous core. It is
-    // valid under additive blending, but becomes a dark halo when forced into
-    // an alpha body. Only particles authored as alpha material enter body;
-    // additive particles remain in their emission pass.
-    // PREMULTIPLIED goes to BODY, not emission, even though it emits.
-    //
-    // The emission layer is composited with BLEND_ADD_COLORS
-    // (screen_distort.c) — factors (ONE, ONE) on colour AND alpha, so the
-    // layer's alpha is never read as coverage and nothing in it can darken the
-    // scene. A premultiplied particle put there loses exactly the half that
-    // justifies the mode: it would only ever add light, which over a bright sky
-    // is the milky wash the whole change exists to remove. Verified by raising
-    // the coverage substantially and watching the composited frame not change.
-    //
-    // The BODY composite already does the right thing. distortion.fs computes
-    // `scene*(1-a) + (rgb/a)*a`, which is algebraically `scene*(1-a) + rgb` —
-    // premultiplied-over exactly. And the body target is the same R16F format
-    // as emission, so the HDR headroom the blown-out core needs survives.
-    // Nothing about the shared composite has to change, and no other VFX is
-    // touched.
-    // PREMULTIPLIED goes to EMISSION with additive, not to BODY.
-    //
-    // It was routed to BODY when the split VFX layers still existed, because
-    // the emission TARGET was composited with BLEND_ADD_COLORS and discarded
-    // coverage. Those layers were retired (they were arithmetic that cancels);
-    // emission now draws straight into the scene, so coverage survives there
-    // and the original reason is gone. Drawing it in BODY instead cost sharp
-    // horizontal bands — that pass also carries trails, decals and afterimages
-    // and their depth-mask handling.
     if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA)
       continue;
     if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA)
       continue;
-    // SURFACE_INPUT is rendered exclusively by LiquidSurface; drawing it here
-    // would reveal its source particles as billboards as well.
-    if (p->renderMode == 3)
-      continue;
-    // Headless wisp: the particle exists to carry a path, not to be a sprite.
-    // Skipped before the batching decision so it cannot split a batch either.
-    if (p->trailOnly)
+    if (p->renderMode == 3 || p->trailOnly)
       continue;
 
     unsigned int want = p->texId ? p->texId : texture.id;
     int wantGridC = (p->spriteAnim ? p->spriteAnim->cols : 1);
     int wantGridR = (p->spriteAnim ? p->spriteAnim->rows : 1);
-    // Global multiplier on top of the per-particle value, so the whole look can
-    // be dialled without touching every call site.
     float wantBoost = p->emissiveBoost * s_emissiveBoost;
     float wantStrength = p->unlit ? 0.0f : (((p->sixWayLighting || p->smokeSheet) && s_lightingStrength <= 0.0f) ? 1.0f : s_lightingStrength);
-    // The body pass normally forces ALPHA so a glow sheet cannot smear its
-    // black surround into the body layer. PREMULTIPLIED is the exception it has
-    // to keep: its RGB is already scaled by its own coverage, so forcing it to
-    // ALPHA would make the hardware multiply by alpha a second time and the
-    // flame would come out roughly its own coverage darker.
     int drawBlend = (layerFilter == 0) ? VFX_BLEND_ALPHA : p->blendMode;
+    unsigned int packedSmokeTint = VFXPackColor(p->smokeTint);
+
     if (want != curTex || drawBlend != curBlend || wantStrength != curStrength ||
         wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost ||
         p->volumeSheet != curVolume || p->rampTexId != curRamp ||
         p->heatGain != curHeat || p->smokeGain != curSmokeGain ||
-        VFXPackColor(p->smokeTint) != curSmokeTint ||
+        packedSmokeTint != curSmokeTint ||
         p->sixWayLighting != curSixWay || p->sixWayTexBId != curSixWayTexB ||
         p->sixWayScattering != curSixWayScat || p->sixWayAbsorption != curSixWayAbs ||
         p->smokeSheet != curSmokeSheet || p->normalTexId != curNormalTex ||
@@ -1656,8 +1568,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       s_perfBatches++;
       if (drawBlend != curBlend)
       {
-        // Blend state must be flushed either side or it leaks across the batch
-        // boundary — ENGINE_LANDMINES.md §1, the raylib batching hazard.
         rlDrawRenderBatchActive();
         if (curBlend >= 0)
           EndBlendMode();
@@ -1670,18 +1580,9 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       if (p->volumeSheet != curVolume || p->smokeSheet != curSmokeSheet ||
           p->rampTexId != curRamp ||
           p->heatGain != curHeat || p->smokeGain != curSmokeGain ||
-          VFXPackColor(p->smokeTint) != curSmokeTint)
+          packedSmokeTint != curSmokeTint)
       {
-        // The ramp is a SECOND sampler on the same shader. rlvk resolves
-        // samplers by reflected name rather than a presumed binding
-        // (HANDOFF §7.30), which is what makes texture0 + depth + ramp legal
-        // here; the flush is still required, because the uniform and the
-        // texture unit must not change under vertices already queued.
         rlDrawRenderBatchActive();
-        // Keep all channel-packed particle materials on the established
-        // u_volumeSheet selector. A separate smoke-mode uniform was observed
-        // arriving as zero on the Vulkan path, which silently exposed the raw
-        // green EOO G channel. Mode 3 is EOO smoke; 1/2 retain their contracts.
         float vs = p->smokeSheet ? 3.0f : (float)p->volumeSheet;
         float hg = p->heatGain;
         if (s_litActive && s_locVolumeSheet >= 0)
@@ -1705,16 +1606,16 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         }
         if (s_litActive && s_locSmokeTint >= 0)
         {
-          float st[3] = {(float)p->smokeTint.r / 255.0f,
-                         (float)p->smokeTint.g / 255.0f,
-                         (float)p->smokeTint.b / 255.0f};
+          float st[3] = {(float)p->smokeTint.r * (1.0f / 255.0f),
+                         (float)p->smokeTint.g * (1.0f / 255.0f),
+                         (float)p->smokeTint.b * (1.0f / 255.0f)};
           SetShaderValue(s_litShader, s_locSmokeTint, st, SHADER_UNIFORM_VEC3);
         }
         curVolume = p->volumeSheet;
         curRamp = p->rampTexId;
         curHeat = p->heatGain;
         curSmokeGain = p->smokeGain;
-        curSmokeTint = VFXPackColor(p->smokeTint);
+        curSmokeTint = packedSmokeTint;
       }
       if (p->sixWayLighting != curSixWay || p->sixWayTexBId != curSixWayTexB ||
           p->sixWayScattering != curSixWayScat || p->sixWayAbsorption != curSixWayAbs)
@@ -1784,33 +1685,17 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       }
       if (wantStrength != curStrength)
       {
-        // Emissive particles skip the lighting multiply. Flipping the STRENGTH
-        // uniform rather than unbinding the shader keeps one pipeline: at 0 the
-        // shader takes its early-out and returns texel*colour, which is exactly
-        // the legacy unlit result. 6-way particles default to strength 1.0 when active.
         ParticleLighting_SetStrength(wantStrength);
         curStrength = wantStrength;
         curUnlit = p->unlit;
       }
       if (wantBoost != curBoost)
       {
-        // Occluding particles never emit: boosting smoke would make it give off
-        // light it is supposed to block (the F1b blend law).
-        //
-        // A VOLUME sheet is the exception, and it is not a loophole: it is not
-        // lit-or-emissive but BOTH, split per texel. The shader applies the
-        // boost to the emission channel only and leaves the soot half on the
-        // scene light, so gating on `unlit` here would silence exactly the
-        // flame it is meant to scale — while `unlit` must stay 0 or the soot
-        // would go unshaded.
         ParticleLighting_SetEmissive((p->unlit || p->volumeSheet) ? wantBoost : 1.0f);
         curBoost = wantBoost;
       }
       if (wantGridC != curGridC || wantGridR != curGridR)
       {
-        // Tell the lighting which grid the UVs live on, so it can recover the
-        // quad-local coordinate. Without this an atlas sprite is shaded from a
-        // lopsided slice of the hemisphere that jumps every frame step.
         float grid[2] = {(float)wantGridC, (float)wantGridR};
         if (s_locAtlasGrid >= 0)
           SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
@@ -1854,11 +1739,11 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     {
       float mul = SkillCurve_Eval(p->emissiveCurve, invRatio);
       int r = (int)((float)c.r * mul);
-      c.r = (unsigned char)(r > 255 ? 255 : r);
+      c.r = (unsigned char)(r > 255 ? 255 : (r < 0 ? 0 : r));
       int g = (int)((float)c.g * mul);
-      c.g = (unsigned char)(g > 255 ? 255 : g);
+      c.g = (unsigned char)(g > 255 ? 255 : (g < 0 ? 0 : g));
       int b = (int)((float)c.b * mul);
-      c.b = (unsigned char)(b > 255 ? 255 : b);
+      c.b = (unsigned char)(b > 255 ? 255 : (b < 0 ? 0 : b));
     }
 
     c = VFXContrast_ApplyColor(
@@ -1867,18 +1752,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
             ? VFX_CONTRAST_EMISSION
             : VFX_CONTRAST_BODY);
 
-    // ── VOLUME SHEET: the vertex colour changes meaning ──────────────────────
-    //
-    // Hue now comes from the ramp LUT, sampled per texel, so the RGB slot is
-    // free — and it is the ONLY per-particle channel left (rlgl's immediate
-    // batch carries position/texcoord/colour and nothing else). It carries the
-    // particle's HEAT over its life instead: a grey level the shader multiplies
-    // into the sheet's emission before the ramp lookup, so a cooling ember
-    // slides down the ramp from white through orange to soot while the sheet
-    // supplies the spatial variation. Alpha keeps its usual meaning.
-    //
-    // Source is emissiveCurve, which in legacy mode scales RGB brightness — the
-    // same intent, so a composition that already authored one reads correctly.
     if (p->volumeSheet)
     {
       float heat = 1.0f;
@@ -1903,7 +1776,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     // ── FEATURE 3: 3D MESH PARTICLE RENDERING (Niagara NE_Debris Parity) ─────
     if (p->meshModel.meshCount > 0)
     {
-      // Flush current quad batch before switching to mesh draw
       if (curTex != 0xFFFFFFFFu)
       {
         rlEnd();
@@ -1918,7 +1790,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       rlRotatef(p->meshRotation.x * RAD2DEG, 1.0f, 0.0f, 0.0f);
       rlScalef(drawRadius, drawRadius, drawRadius);
 
-      // Draw meshes in model with tint colour
       for (int m = 0; m < p->meshModel.meshCount; m++)
       {
         Material mat = p->meshModel.materials[p->meshModel.meshMaterial[m]];
@@ -1930,7 +1801,12 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
 
       rlPopMatrix();
       rlDrawRenderBatchActive();
-      continue; // Skip quad billboard rendering for mesh particle
+      // Khôi phục lại s_litShader sau khi DrawMesh ghi đè shader của material
+      if (s_litActive && s_litShader.id != 0)
+      {
+        BeginShaderMode(s_litShader);
+      }
+      continue;
     }
 
     float rx = right.x * drawRadius, ry = right.y * drawRadius, rz = right.z * drawRadius;
@@ -1938,16 +1814,17 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     bool authoredAxisCross = false;
     Vector3 authoredCrossSideB = {0};
 
-    // ── FEATURE 1 & 2: ADVANCED FACING MODES (Ground Plane, Cross-Billboard, Velocity Stretch) ──
+    // ── FEATURE 1 & 2: ADVANCED FACING MODES ──
     if (p->facingMode == VFX_FACING_CROSS_BILLBOARD)
     {
       Vector3 sideA;
       Vector3 particleView = Vector3Subtract(camera.position,
                                              (Vector3){p->x, p->y, p->z});
-      if (Vector3LengthSqr(particleView) < 1e-8f)
+      float pvLenSq = Vector3LengthSqr(particleView);
+      if (pvLenSq < 1e-8f)
         particleView = viewDir;
       else
-        particleView = Vector3Normalize(particleView);
+        particleView = Vector3Scale(particleView, 1.0f / sqrtf(pvLenSq));
       authoredAxisCross = PS_AxisCrossBasis(p->facingDirection, particleView,
                                             camera.up, &sideA,
                                             &authoredCrossSideB);
@@ -1961,12 +1838,9 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         uy = axis.y * drawRadius * p->facingAspect;
         uz = axis.z * drawRadius * p->facingAspect;
       }
-      // A zero facingDirection deliberately falls through to the exact
-      // legacy camera-space cross basis initialized above.
     }
     else if (p->facingMode == VFX_FACING_GROUND_PLANE)
     {
-      // Quad lies flat on XZ plane (normal pointing +Y)
       float cosT = cosf(p->rotation);
       float sinT = sinf(p->rotation);
 
@@ -1978,16 +1852,15 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       uy = 0.0f;
       uz = cosT * drawRadius;
     }
-    // Velocity-stretch rendering (directional billboard)
     else if (p->stretchStrength > 0.0f || p->facingMode == VFX_FACING_VELOCITY)
     {
-      Vector3 vel = {p->vx, p->vy, p->vz};
-      float vx = vel.x * right.x + vel.y * right.y + vel.z * right.z;
-      float vy = vel.x * up.x + vel.y * up.y + vel.z * up.z;
-      float screenSpeed = sqrtf(vx * vx + vy * vy);
+      float vx = p->vx * right.x + p->vy * right.y + p->vz * right.z;
+      float vy = p->vx * up.x + p->vy * up.y + p->vz * up.z;
+      float screenSpeedSq = vx * vx + vy * vy;
       float minSpeed = p->stretchMinSpeed > 0.05f ? p->stretchMinSpeed : 0.05f;
-      if (screenSpeed > minSpeed)
+      if (screenSpeedSq > minSpeed * minSpeed)
       {
+        float screenSpeed = sqrtf(screenSpeedSq);
         float invSpeed = 1.0f / screenSpeed;
         float dirX = vx * invSpeed;
         float dirY = vy * invSpeed;
@@ -2009,12 +1882,12 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         ry = rightDir.y * drawRadius;
         rz = rightDir.z * drawRadius;
 
-        ux = tangentDir.x * drawRadius * stretchFactor;
-        uy = tangentDir.y * drawRadius * stretchFactor;
-        uz = tangentDir.z * drawRadius * stretchFactor;
+        float stretchedRadius = drawRadius * stretchFactor;
+        ux = tangentDir.x * stretchedRadius;
+        uy = tangentDir.y * stretchedRadius;
+        uz = tangentDir.z * stretchedRadius;
       }
     }
-    // Xoay hạt quanh trục hướng camera (Billboard-space 2D Rotation, only if not stretched)
     else if (p->rotation != 0.0f)
     {
       float cosT = cosf(p->rotation);
@@ -2043,27 +1916,16 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       uz *= p->facingAspect;
     }
 
-    // Đọc UV từ hoạt cảnh Sprite sheet atlas
     SpriteAnimFrameSample sample = {
         .uv = {0.0f, 0.0f, 1.0f, 1.0f}, .offset = {0}, .scale = {1.0f, 1.0f}};
     SpriteAnimFrameSample sampleNext = sample;
     float fbBlend = 0.0f;
     if (p->spriteAnim)
     {
-      // Phase-shifted age: without the offset every sprite from one burst
-      // holds the same frame as every other (see ParticleConfig.spriteAnimPhase).
       float age = (p->maxLifetime - p->lifetime) * p->spriteAnimRate +
                   p->spriteAnimPhase;
-      // Đợt E / E4 — cross-faded flipbook. Snapping to whole frames makes an
-      // authored sheet read as the sprites flipping back and forth (32 fps atlas
-      // against a 60 fps render, ~2 render frames per atlas frame, then a jump to
-      // a different simulation state). Blending the two adjacent frames removes
-      // the jump entirely.
       sample = SpriteAnim_CalculateFrameSampleBlend(p->spriteAnim, age,
                                                     &sampleNext, &fbBlend);
-      // Kill switch + A/B. Cross-fading emits TWO quads per particle, so this is
-      // also the lever if the vertex cost ever matters on a weak device.
-      // Registered lazily on first use, never from an Init (docs/LANDMINES.md).
       {
         static float s_fbBlendOn = 1.0f;
         static float s_fbBlendMax = 220.0f;
@@ -2074,73 +1936,49 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
           Tuning_RegisterFloat("particle_fb_blend", &s_fbBlendOn, 1.0f);
           Tuning_RegisterFloat("particle_fb_blend_max", &s_fbBlendMax, 220.0f);
         }
-        if (s_fbBlendOn <= 0.5f)
-          fbBlend = 0.0f;
-        // LOAD SHEDDING. The cross-fade costs a SECOND full-size quad for every
-        // animated particle — it exists to hide the ~2-render-frame step of a
-        // 25 fps atlas, which is a subtle artifact, while the second quad is a
-        // literal doubling of the most expensive thing on screen. Past a live
-        // count where fill rate is the binding constraint, the trade inverts:
-        // nobody sees the step in a screen full of overlapping sprites, and
-        // everybody sees 20 fps. Dropping it is exactly a 2x fill saving on the
-        // frames that need it, and it costs nothing on the frames that do not.
-        else if ((float)s_activeCount > s_fbBlendMax)
+        if (s_fbBlendOn <= 0.5f || (float)s_activeCount > s_fbBlendMax)
           fbBlend = 0.0f;
       }
       if (p->motionTexId != 0 && p->motionWarpScale > 0.0f)
       {
         c.b = (unsigned char)(fminf(fmaxf(fbBlend, 0.0f), 1.0f) * 255.0f);
-        fbBlend = 0.0f; // Single quad drawn by CPU; GPU shader does subframe optical flow warping!
+        fbBlend = 0.0f;
       }
     }
 
-// The quad, emitted once per frame being cross-faded. rlgl's immediate batch
-// carries position/texcoord/colour only — there is no spare attribute to
-// hand a second UV set plus a blend factor to the shader — so the fade is
-// done the standard way: draw A at (1-t) and B at t.
-//
-// The mid-blend coverage dip this causes (two alpha draws are not exactly a
-// lerp) is ~7% at smoke's 0.28 alpha and is not visible; it would matter for
-// near-opaque sprites, which flipbooks here are not.
-#define PS_EMIT_QUAD(_sample, _a)                                            \
-  do                                                                         \
-  {                                                                          \
-    if ((_a) > 0)                                                            \
-    {                                                                        \
-      const SpriteAnimFrameSample psSample = (_sample);                      \
-      const Rectangle psUV = psSample.uv;                                    \
-      const float psU0 = p->spriteFlipX ? psUV.x + psUV.width : psUV.x;      \
-      const float psU1 = p->spriteFlipX ? psUV.x : psUV.x + psUV.width;      \
-      const float psV0 = p->spriteFlipY ? psUV.y + psUV.height : psUV.y;     \
-      const float psV1 = p->spriteFlipY ? psUV.y : psUV.y + psUV.height;     \
-      const float psRx = rx * psSample.scale.x;                              \
-      const float psRy = ry * psSample.scale.x;                              \
-      const float psRz = rz * psSample.scale.x;                              \
-      const float psUx = ux * psSample.scale.y;                              \
-      const float psUy = uy * psSample.scale.y;                              \
-      const float psUz = uz * psSample.scale.y;                              \
-      const float psX = p->x - 2.0f * (rx * psSample.offset.x +              \
-                                       ux * psSample.offset.y);              \
-      const float psY = p->y - 2.0f * (ry * psSample.offset.x +              \
-                                       uy * psSample.offset.y);              \
-      const float psZ = p->z - 2.0f * (rz * psSample.offset.x +              \
-                                       uz * psSample.offset.y);              \
-      rlColor4ub(c.r, c.g, c.b, (unsigned char)(_a));                        \
-      /* V runs DOWN the image while +up runs UP in the world, so the        \
-         top-left texel must land on the TOP vertex. It used to be paired    \
-         with the bottom one, i.e. every particle sprite was drawn flipped   \
-         vertically. Nobody noticed because every sprite this engine had was \
-         round and symmetric; the E4 flame flipbook, which has an UP, came   \
-         out upside down. */                                                 \
-      rlTexCoord2f(psU0, psV1);                                              \
-      rlVertex3f(psX + psRx - psUx, psY + psRy - psUy, psZ + psRz - psUz);   \
-      rlTexCoord2f(psU0, psV0);                                              \
-      rlVertex3f(psX + psRx + psUx, psY + psRy + psUy, psZ + psRz + psUz);   \
-      rlTexCoord2f(psU1, psV0);                                              \
-      rlVertex3f(psX - psRx + psUx, psY - psRy + psUy, psZ - psRz + psUz);   \
-      rlTexCoord2f(psU1, psV1);                                              \
-      rlVertex3f(psX - psRx - psUx, psY - psRy - psUy, psZ - psRz - psUz);   \
-    }                                                                        \
+#define PS_EMIT_QUAD(_sample, _a)                                          \
+  do                                                                       \
+  {                                                                        \
+    if ((_a) > 0)                                                          \
+    {                                                                      \
+      const SpriteAnimFrameSample psSample = (_sample);                    \
+      const Rectangle psUV = psSample.uv;                                  \
+      const float psU0 = p->spriteFlipX ? psUV.x + psUV.width : psUV.x;    \
+      const float psU1 = p->spriteFlipX ? psUV.x : psUV.x + psUV.width;    \
+      const float psV0 = p->spriteFlipY ? psUV.y + psUV.height : psUV.y;   \
+      const float psV1 = p->spriteFlipY ? psUV.y : psUV.y + psUV.height;   \
+      const float psRx = rx * psSample.scale.x;                            \
+      const float psRy = ry * psSample.scale.x;                            \
+      const float psRz = rz * psSample.scale.x;                            \
+      const float psUx = ux * psSample.scale.y;                            \
+      const float psUy = uy * psSample.scale.y;                            \
+      const float psUz = uz * psSample.scale.y;                            \
+      const float psX = p->x - 2.0f * (rx * psSample.offset.x +            \
+                                       ux * psSample.offset.y);            \
+      const float psY = p->y - 2.0f * (ry * psSample.offset.x +            \
+                                       uy * psSample.offset.y);            \
+      const float psZ = p->z - 2.0f * (rz * psSample.offset.x +            \
+                                       uz * psSample.offset.y);            \
+      rlColor4ub(c.r, c.g, c.b, (unsigned char)(_a));                      \
+      rlTexCoord2f(psU0, psV1);                                            \
+      rlVertex3f(psX + psRx - psUx, psY + psRy - psUy, psZ + psRz - psUz); \
+      rlTexCoord2f(psU0, psV0);                                            \
+      rlVertex3f(psX + psRx + psUx, psY + psRy + psUy, psZ + psRz + psUz); \
+      rlTexCoord2f(psU1, psV0);                                            \
+      rlVertex3f(psX - psRx + psUx, psY - psRy + psUy, psZ - psRz + psUz); \
+      rlTexCoord2f(psU1, psV1);                                            \
+      rlVertex3f(psX - psRx - psUx, psY - psRy - psUy, psZ - psRz - psUz); \
+    }                                                                      \
   } while (0)
 
     if (fbBlend > 0.001f)
@@ -2155,7 +1993,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       s_perfQuads++;
     }
 
-    // Cross-Billboard: emit orthogonal cross quad at 90 degrees
     if (p->facingMode == VFX_FACING_CROSS_BILLBOARD)
     {
       if (authoredAxisCross)
@@ -2166,7 +2003,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       }
       else
       {
-        // Preserve the legacy camera-space cross for all existing callers.
         float tempRx = rx, tempRy = ry, tempRz = rz;
         rx = -uz;
         ry = uy;
@@ -2202,8 +2038,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
 
   ParticleLighting_End();
 
-  // One line a second, and only when asked for. Registered lazily on first use,
-  // never from an Init (docs/LANDMINES.md).
   {
     static float s_perfOn = 0.0f;
     static bool s_perfReg = false;
@@ -2212,13 +2046,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       s_perfReg = true;
       Tuning_RegisterFloat("particle_perf_log", &s_perfOn, 0.0f);
     }
-    // Report and reset ONLY after the emission pass, which is the last of the
-    // two layer calls. Doing it per call made the counters lie: the body pass
-    // zeroed them before emission ran, so whichever layer happened to cross the
-    // one-second boundary printed its own total as if it were the frame's — and
-    // "batches=1" looked identical whether the frame really cost one batch or
-    // one hundred split across the other layer. The whole point of this
-    // instrument is telling those two cases apart.
     if (layerFilter == 1)
     {
       if (s_perfOn > 0.5f)
@@ -2240,13 +2067,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   }
 
   // Second pass: Draw Particle Ribbon Trails
-  //
-  // The trail inherits the PARTICLE's blend mode. It used to run here with the
-  // blend state already torn down above, i.e. always BLEND_ALPHA — so an
-  // additive, emissive particle (the F1b blend law's whole point) dragged a
-  // trail that did not emit, and the tail read as grey smear over a glowing
-  // head. Nothing in the project had noticed because until E5.3 nothing paired
-  // trailLength with VFX_BLEND_ADDITIVE.
   int trailBlend = -1;
   for (int a = 0; a < s_activeCount; a++)
   {
@@ -2257,9 +2077,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         continue;
       if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA)
         continue;
-      // Ribbon trails carry no volume sheet, so a PREMULTIPLIED head still
-      // trails in plain ADDITIVE — the trail is a solid-colour strip, and
-      // premultiplied output would need an alpha it does not compute.
       int want = (layerFilter == 0 || p->blendMode == VFX_BLEND_ALPHA) ? BLEND_ALPHA : BLEND_ADDITIVE;
       if (want != trailBlend)
       {
@@ -2273,8 +2090,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       if (count > p->trailLength)
         count = p->trailLength;
 
-      // Sample base particle alpha for alpha scaling
-      float lifeRatio = p->lifetime / p->maxLifetime;
+      float lifeRatio = Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
       float invRatio = 1.0f - lifeRatio;
       Color baseColor = p->colorStart;
       if (p->gradient)
@@ -2292,14 +2108,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         baseColor.a = (unsigned char)(a_val < 0 ? 0 : (a_val > 255 ? 255 : a_val));
       }
 
-      float baseAlpha = (float)baseColor.a / 255.0f;
+      float baseAlpha = (float)baseColor.a * (1.0f / 255.0f);
 
-      // Smoothing: the history is a coarse polyline (8 points, one per
-      // trailStepTime), and on a curving path the corners are visible as
-      // FACETS — the tail reads as a bent wire, not as a thread of gas. When
-      // trailSmooth is on, each segment is subdivided with a Catmull-Rom
-      // through the recorded points, which passes exactly through them (no
-      // control points to invent) and stays C1 across joints.
       int sub = p->trailSmooth ? PS_TRAIL_SUBDIV : 1;
       int outCount = (count - 1) * sub + 1;
       if (outCount > PS_TRAIL_MAX_RIBBON_PTS)
@@ -2308,9 +2118,23 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         outCount = count;
       }
 
+      // Tiền tính toán khoảng cách nút Centripetal Catmull-Rom một lần duy nhất cho cả dải Trail
+      float intervals[8] = {0};
+      if (sub > 1)
+      {
+        for (int k = 0; k < count - 1; k++)
+        {
+          intervals[k] = PS_KnotInterval(p->trailHistory[k], p->trailHistory[k + 1]);
+        }
+      }
+
+      float invSub = 1.0f / (float)sub;
+      float invCountMinus1 = 1.0f / (float)(count - 1);
+      float baseWidth = p->radius * p->trailWidthRatio;
+
       for (int o = 0; o < outCount; o++)
       {
-        float fh = (float)o / (float)sub; // position in history index space
+        float fh = (float)o * invSub;
         int h = (int)fh;
         float ft = fh - (float)h;
         if (h > count - 1)
@@ -2326,20 +2150,29 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         }
         else
         {
-          // Endpoints duplicate the terminal point, the standard clamped
-          // Catmull-Rom boundary, so the curve does not overshoot at the ends.
           int i0 = (h - 1 < 0) ? 0 : h - 1;
           int i1 = h;
           int i2 = (h + 1 > count - 1) ? count - 1 : h + 1;
           int i3 = (h + 2 > count - 1) ? count - 1 : h + 2;
-          pos = PS_CatmullRom(p->trailHistory[i0], p->trailHistory[i1],
-                              p->trailHistory[i2], p->trailHistory[i3], ft);
+
+          float dt01 = (i0 == i1) ? 1e-4f : intervals[i0];
+          float dt12 = (i1 == i2) ? 1e-4f : intervals[i1];
+          float dt23 = (i2 == i3) ? 1e-4f : intervals[i2];
+
+          float t0 = 0.0f;
+          float t1 = dt01;
+          float t2 = t1 + dt12;
+          float t3 = t2 + dt23;
+
+          pos = PS_CatmullRomPrecomputed(p->trailHistory[i0], p->trailHistory[i1],
+                                         p->trailHistory[i2], p->trailHistory[i3],
+                                         t0, t1, t2, t3, ft);
         }
 
         trailPoints[o].position = pos;
 
-        float ageRatio = fh / (float)(count - 1);
-        trailPoints[o].halfWidth = p->radius * p->trailWidthRatio * (1.0f - ageRatio * 0.7f);
+        float ageRatio = fh * invCountMinus1;
+        trailPoints[o].halfWidth = baseWidth * (1.0f - ageRatio * 0.7f);
 
         Color tc = ColorLerp(p->trailColorStart, p->trailColorEnd, ageRatio);
         float alphaFade = 1.0f - ageRatio * 0.9f;
@@ -2396,22 +2229,6 @@ bool ParticleSystem_HasAdditiveParticles(void)
   for (int i = 0; i < s_activeCount; ++i)
   {
     const ParticleInternal *p = &g_Particles[s_activeIds[i]];
-    // This gates whether main.c runs the EMISSION pass at all, so a mode
-    // missing from the test is not dimmed — it is never drawn. Keep it in step
-    // with the layer filter in DrawParticlesLayer: ADDITIVE is the only mode
-    // that goes to emission (PREMULTIPLIED is drawn in the body pass, see the
-    // note there). If the two ever disagree, particles vanish silently.
-    //
-    // AND THEY DID, 28/08/2026. `!p->trailOnly` was in this test, which is the
-    // head pass's rule, not this one's: DrawParticlesLayer skips a trailOnly
-    // particle's BILLBOARD and then draws its RIBBON in the same emission pass
-    // a few lines further down. So a converge made entirely of additive
-    // trail-only threads reported "no emission particles", main.c skipped the
-    // whole pass, and the effect rendered as nothing at all — the exact silent
-    // vanishing the paragraph above is warning about. A trailOnly particle
-    // counts once its ribbon has something to draw (>= 2 history points), and
-    // not before, or an effect whose threads have only just spawned would open
-    // an empty pass.
     if (p->blendMode == VFX_BLEND_ALPHA || p->renderMode == 3)
       continue;
     if (p->trailOnly && !(p->trailLength > 0 && p->trailHistoryCount >= 2))
@@ -2432,10 +2249,10 @@ void ParticleSystem_GetStats(int *active, int *max)
 int ParticleSystem_CountSurfaceSamples(int emitterId)
 {
   int count = 0;
-  for (int i = 0; i < MAX_PARTICLES; ++i)
+  for (int a = 0; a < s_activeCount; ++a)
   {
-    const ParticleInternal *p = &g_Particles[i];
-    if (p->active && p->emitterId == emitterId && p->renderMode == 3)
+    const ParticleInternal *p = &g_Particles[s_activeIds[a]];
+    if (p->emitterId == emitterId && p->renderMode == 3)
       ++count;
   }
   return count;
@@ -2464,10 +2281,10 @@ int ParticleSystem_GetSurfaceSamplesSpaced(int emitterId, ParticleSurfaceSample 
   int demand = ParticleSystem_CountSurfaceSamples(emitterId);
   int admitted = demand < maxSamples ? demand : maxSamples;
   int ordinal = 0, count = 0;
-  for (int i = 0; i < MAX_PARTICLES && count < admitted; ++i)
+  for (int a = 0; a < s_activeCount && count < admitted; ++a)
   {
-    const ParticleInternal *p = &g_Particles[i];
-    if (!p->active || p->emitterId != emitterId || p->renderMode != 3)
+    const ParticleInternal *p = &g_Particles[s_activeIds[a]];
+    if (p->emitterId != emitterId || p->renderMode != 3)
       continue;
     if (ordinal++ != ParticleSurfaceSampling_Ordinal(count, admitted, demand))
       continue;
@@ -2481,10 +2298,10 @@ int ParticleSystem_GetSurfaceSamples(int emitterId, ParticleSurfaceSample *outSa
   if (!outSamples || maxSamples <= 0)
     return 0;
   int count = 0;
-  for (int i = 0; i < MAX_PARTICLES && count < maxSamples; ++i)
+  for (int a = 0; a < s_activeCount && count < maxSamples; ++a)
   {
-    ParticleInternal *p = &g_Particles[i];
-    if (!p->active || p->emitterId != emitterId || p->renderMode != 3)
+    const ParticleInternal *p = &g_Particles[s_activeIds[a]];
+    if (p->emitterId != emitterId || p->renderMode != 3)
       continue;
     outSamples[count++] = (ParticleSurfaceSample){{p->x, p->y, p->z}, p->radius};
   }
@@ -2533,9 +2350,6 @@ void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const Part
 
 void ParticleSystem_SpawnGlow(ParticleConfig core)
 {
-  /* Premultiplied, unlit — the two things that make a particle glow AND keep a
-     silhouette. Overriding the caller's blend is deliberate: this function IS
-     the recipe, and a caller that wanted something else would not call it. */
   core.render.blendMode = VFX_BLEND_PREMULTIPLIED;
   core.render.unlit = 1;
   SpawnParticle(core);
@@ -2552,33 +2366,27 @@ Texture2D ParticleSystem_DefaultSprite(void)
     return s_defaultParticleSprite;
   const int N = 128;
   const float half = N * 0.5f;
+  const float invHalf = 1.0f / half;
   const float radius = 0.84f;
-  const float feather = 0.22f;
+  const float invFeather = 1.0f / 0.22f;
   Image img = GenImageColor(N, N, BLANK);
+  Color *pixels = (Color *)img.data;
   for (int y = 0; y < N; ++y)
   {
+    float py = ((float)y + 0.5f - half) * invHalf;
     for (int x = 0; x < N; ++x)
     {
-      float px = ((float)x + 0.5f - half) / half;
-      float py = ((float)y + 0.5f - half) / half;
+      float px = ((float)x + 0.5f - half) * invHalf;
       float dist = sqrtf(px * px + py * py);
-      float coverage = (radius - dist) / feather;
-      if (coverage < 0.0f)
-        coverage = 0.0f;
-      if (coverage > 1.0f)
-        coverage = 1.0f;
+      float coverage = Clamp((radius - dist) * invFeather, 0.0f, 1.0f);
       float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
-      float core = 1.0f - dist / 0.50f;
-      if (core < 0.0f)
-        core = 0.0f;
-      if (core > 1.0f)
-        core = 1.0f;
+      float core = Clamp(1.0f - dist * 2.0f, 0.0f, 1.0f);
       float whiteCore = core * core * (3.0f - 2.0f * core);
-      ImageDrawPixel(&img, x, y,
-                     (Color){255,
-                             (unsigned char)(70.0f + 185.0f * whiteCore),
-                             (unsigned char)(8.0f + 172.0f * whiteCore),
-                             (unsigned char)(255.0f * alpha)});
+      pixels[y * N + x] = (Color){
+          255,
+          (unsigned char)(70.0f + 185.0f * whiteCore),
+          (unsigned char)(8.0f + 172.0f * whiteCore),
+          (unsigned char)(255.0f * alpha)};
     }
   }
   s_defaultParticleSprite = LoadTextureFromImage(img);
@@ -2593,34 +2401,24 @@ Texture2D ParticleSystem_ElementSparkSprite(void)
     return s_elementSparkSprite;
   const int N = 128;
   const float half = N * 0.5f;
+  const float invHalf = 1.0f / half;
   const float radius = 0.84f;
-  const float feather = 0.22f;
+  const float invFeather = 1.0f / 0.22f;
   Image img = GenImageColor(N, N, BLANK);
+  Color *pixels = (Color *)img.data;
   for (int y = 0; y < N; ++y)
   {
+    float py = ((float)y + 0.5f - half) * invHalf;
     for (int x = 0; x < N; ++x)
     {
-      float px = ((float)x + 0.5f - half) / half;
-      float py = ((float)y + 0.5f - half) / half;
+      float px = ((float)x + 0.5f - half) * invHalf;
       float dist = sqrtf(px * px + py * py);
-      float coverage = (radius - dist) / feather;
-      if (coverage < 0.0f)
-        coverage = 0.0f;
-      if (coverage > 1.0f)
-        coverage = 1.0f;
+      float coverage = Clamp((radius - dist) * invFeather, 0.0f, 1.0f);
       float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
-      float core = 1.0f - dist / 0.50f;
-      if (core < 0.0f)
-        core = 0.0f;
-      if (core > 1.0f)
-        core = 1.0f;
+      float core = Clamp(1.0f - dist * 2.0f, 0.0f, 1.0f);
       float whiteCore = core * core * (3.0f - 2.0f * core);
-      /* Neutral value profile: the particle's material supplies hue;
-       * particle_lit.fs promotes the concentrated high-value core to a
-       * restrained white-hot highlight. */
       unsigned char value = (unsigned char)(72.0f + 183.0f * whiteCore);
-      ImageDrawPixel(&img, x, y,
-                     (Color){value, value, value, (unsigned char)(255.0f * alpha)});
+      pixels[y * N + x] = (Color){value, value, value, (unsigned char)(255.0f * alpha)};
     }
   }
   s_elementSparkSprite = LoadTextureFromImage(img);
@@ -2635,19 +2433,19 @@ Texture2D ParticleSystem_GlowSprite(void)
     return s_glowSprite;
   const int N = 128;
   Image img = GenImageColor(N, N, BLANK);
+  Color *pixels = (Color *)img.data;
   const float half = N * 0.5f;
+  const float invHalf = 1.0f / half;
   for (int y = 0; y < N; y++)
   {
+    float py = ((float)y + 0.5f - half) * invHalf;
     for (int x = 0; x < N; x++)
     {
-      float px = ((float)x + 0.5f - half) / half;
-      float py = ((float)y + 0.5f - half) / half;
+      float px = ((float)x + 0.5f - half) * invHalf;
       float r2 = px * px + py * py;
-      /* (1 - r^2)^3 — zero value AND zero slope at r = 1, so nothing of
-         the quad can show through at the sprite's own edge. */
       float v = (r2 >= 1.0f) ? 0.0f : (1.0f - r2);
       float a = v * v * v;
-      ImageDrawPixel(&img, x, y, (Color){255, 255, 255, (unsigned char)(255.0f * a)});
+      pixels[y * N + x] = (Color){255, 255, 255, (unsigned char)(255.0f * a)};
     }
   }
   s_glowSprite = LoadTextureFromImage(img);
@@ -2662,37 +2460,32 @@ Texture2D ParticleSystem_SparkCapsuleSprite(void)
     return s_sparkCapsuleSprite;
   const int N = 128;
   const float half = N * 0.5f;
+  const float invHalf = 1.0f / half;
   const float halfSegment = 0.62f;
   const float capsuleRadius = 0.22f;
-  const float feather = 0.090f;
+  const float invFeather = 1.0f / 0.090f;
+  const float invCoreRadius = 1.0f / (capsuleRadius * 0.72f);
   Image img = GenImageColor(N, N, BLANK);
+  Color *pixels = (Color *)img.data;
   for (int y = 0; y < N; ++y)
   {
+    float py = ((float)y + 0.5f - half) * invHalf;
+    float qy = fabsf(py) - halfSegment;
+    if (qy < 0.0f)
+      qy = 0.0f;
     for (int x = 0; x < N; ++x)
     {
-      float px = ((float)x + 0.5f - half) / half;
-      float py = ((float)y + 0.5f - half) / half;
-      float qy = fabsf(py) - halfSegment;
-      if (qy < 0.0f)
-        qy = 0.0f;
+      float px = ((float)x + 0.5f - half) * invHalf;
       float dist = sqrtf(px * px + qy * qy);
-      float coverage = (capsuleRadius - dist) / feather;
-      if (coverage < 0.0f)
-        coverage = 0.0f;
-      if (coverage > 1.0f)
-        coverage = 1.0f;
+      float coverage = Clamp((capsuleRadius - dist) * invFeather, 0.0f, 1.0f);
       float alpha = coverage * coverage * (3.0f - 2.0f * coverage);
-      float core = 1.0f - dist / (capsuleRadius * 0.72f);
-      if (core < 0.0f)
-        core = 0.0f;
-      if (core > 1.0f)
-        core = 1.0f;
+      float core = Clamp(1.0f - dist * invCoreRadius, 0.0f, 1.0f);
       float whiteCore = core * core * (3.0f - 2.0f * core);
-      ImageDrawPixel(&img, x, y,
-                     (Color){255,
-                             (unsigned char)(70.0f + 185.0f * whiteCore),
-                             (unsigned char)(8.0f + 172.0f * whiteCore),
-                             (unsigned char)(255.0f * alpha)});
+      pixels[y * N + x] = (Color){
+          255,
+          (unsigned char)(70.0f + 185.0f * whiteCore),
+          (unsigned char)(8.0f + 172.0f * whiteCore),
+          (unsigned char)(255.0f * alpha)};
     }
   }
   s_sparkCapsuleSprite = LoadTextureFromImage(img);
