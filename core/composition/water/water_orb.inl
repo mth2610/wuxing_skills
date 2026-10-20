@@ -21,11 +21,20 @@ typedef struct {
     LiquidBodyRecipe recipe;
     ForceField field;
     MotionFieldHandle motionField;
+    MotionPath flightPath;
     ParticleEmitterHandle emitter;
     WaterOrbPhase phase;
     bool surfaceAdmitted, active;
     VFX_LiquidOrbConfig config;
 } WaterOrb;
+
+static const ParticleDynamicsProfile s_waterOrbDynamics = {
+    .inverseMassKg = 1.0f / 0.004f,
+    .densityKgM3 = 1000.0f,
+    .gravityScale = 0.35f,
+    .windSusceptibility = 1.0f,
+    .windCouplingHz = 3.0f
+};
 
 static WaterOrb s_waterOrbs[WATER_ORB_MAX];
 static int s_nextWaterOrb = 0;
@@ -40,14 +49,14 @@ VFX_LiquidOrbConfig VFX_LiquidOrb_DefaultConfig(void)
     c.target = (Vector3){2.5f, 1.8f, 0.8f};
     c.speed = 9.0f;
     c.radius = 0.38f;
-    c.swirlSpeed = 4.0f;
-    c.turbulenceSpeed = 0.8f;
-    c.pullForce = 3.5f;
+    c.swirlSpeed = 3.5f;
+    c.turbulenceSpeed = 0.6f;
+    c.pullForce = 0.35f;
     c.guidancePreset = GUIDE_BALANCED;
     c.motionProfile = LIQUID_MOTION_WATER;
     c.renderBackend = LIQUID_RENDER_METABALL3D;
-    c.blobCount = 16;
-    c.blobRadius = 0.18f;
+    c.blobCount = 28;
+    c.blobRadius = 0.16f;
     c.threshold = 0.42f;
     c.ior = 1.333f;
     c.roughness = 0.04f;
@@ -89,7 +98,7 @@ int VFX_LiquidOrb_GetParams(VFX_LiquidOrbConfig *c, VFX_ParamDef *out, int max)
     ORB_PARAM("Travel speed m/s", "Field", VFX_PARAM_FLOAT, &c->speed, 1.0f, 30.0f, 0.5f, 0, 0, NULL, 0);
     ORB_PARAM("Swirl speed m/s", "Field", VFX_PARAM_FLOAT, &c->swirlSpeed, -20.0f, 20.0f, 0.5f, 0, 0, NULL, 0);
     ORB_PARAM("Turbulence m/s", "Field", VFX_PARAM_FLOAT, &c->turbulenceSpeed, 0.0f, 20.0f, 0.5f, 0, 0, NULL, 0);
-    ORB_PARAM("Pull force N", "Field", VFX_PARAM_FLOAT, &c->pullForce, 0.0f, 10.0f, 0.1f, 0, 0, NULL, 0);
+    ORB_PARAM("Pull force N", "Field", VFX_PARAM_FLOAT, &c->pullForce, 0.02f, 2.0f, 0.02f, 0, 0, NULL, 0);
     ORB_PARAM("Guidance", "Field", VFX_PARAM_ENUM, &c->guidancePreset, 0, 3, 0, 0, 3, guidanceNames, 4);
 
     ORB_PARAM("Refraction IOR", "Optics", VFX_PARAM_FLOAT, &c->ior, 1.0f, 2.5f, 0.02f, 0, 0, NULL, 0);
@@ -165,20 +174,39 @@ void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
     orb->crownDuration = LiquidBodyRecipe_CrownDuration(&orb->recipe, orb->velocity, orb->hitNormal);
     WaterOrb_SetPhaseField(orb, LIQUID_BODY_FLIGHT, 0.0f);
 
-    // Create physical motion field guide along trajectory
+    // Build curved flight trajectory path for moving guide
+    Vector3 dir = (dist > 1e-4f) ? Vector3Scale(flight, 1.0f / dist) : (Vector3){0, 1, 0};
+    Vector3 up = (fabsf(dir.y) < 0.90f) ? (Vector3){0, 1, 0} : (Vector3){1, 0, 0};
+    Vector3 side = Vector3Normalize(Vector3CrossProduct(up, dir));
+    Vector3 lift = Vector3CrossProduct(dir, side);
+    Vector3 arcPeak = Vector3Scale(lift, dist * 0.07f);
+
+    Vector3 pathPoints[17];
+    for (int p = 0; p < 17; ++p) {
+        float t = (float)p / 16.0f;
+        float arc = 4.0f * t * (1.0f - t);
+        pathPoints[p] = Vector3Add(Vector3Scale(flight, t), Vector3Scale(arcPeak, arc));
+    }
+    MotionPath_Build(&orb->flightPath, pathPoints, 17);
+
+    // Create physical moving guide motion field along trajectory (guided motion paradigm)
     MotionFieldRecipe r = {
         .kind = MOTION_RECIPE_MOVING_GUIDE,
         .origin = config->start,
         .axis = flight,
-        .radiusM = orb->radius * 2.2f,
+        .path = &orb->flightPath,
+        .radiusM = orb->radius * 1.85f,
         .speedMps = speed,
         .swirlSpeedMps = config->swirlSpeed,
         .turbulenceSpeedMps = config->turbulenceSpeed,
         .maxForceNewtons = config->pullForce,
-        .forwardForceNewtons = config->pullForce * 0.4f,
+        .forwardForceNewtons = config->pullForce * 0.45f,
         .guidance = (GuidePreset)config->guidancePreset,
+        .referenceBody = BodyPhysicalProperties_Sphere(0.004f, 1000.0f, 0.47f),
         .receiverMask = MOTION_RECEIVER_ALL_COMPONENTS,
-        .durationSec = travelTime + motion.lifetime
+        .durationSec = travelTime + motion.lifetime + 1.0f,
+        .attackSec = 0.05f,
+        .fadeSec = 0.25f
     };
     FieldDesc fieldDesc;
     if (MotionFieldRecipe_Build(&r, &fieldDesc)) {
@@ -191,42 +219,49 @@ void VFX_ComposeLiquidOrbEx(const VFX_LiquidOrbConfig *config)
         (orb->config.renderBackend == LIQUID_RENDER_SSF &&
          LiquidSurface_RequestBody(LIQUID_PRIORITY_ULTIMATE, config->start, orb->radius, false));
 
-    ParticleEmitterDesc desc = {0};
     bool cpuOnly = (orb->config.renderBackend == LIQUID_RENDER_METABALL3D) ||
                    (getenv("WUXING_LIQUID_CPU_ONLY") && atoi(getenv("WUXING_LIQUID_CPU_ONLY")) != 0);
+    ParticleEmitterDesc desc = {0};
     desc.simulationPolicy = cpuOnly ? PARTICLE_SIM_CPU_ONLY : PARTICLE_SIM_AUTO;
     desc.renderMode = PARTICLE_RENDER_SURFACE_INPUT;
     desc.moduleFlags=PARTICLE_MODULE_FORCE_FIELD;
-    desc.debugName = "WaterOrb SSF batch";
+    desc.debugName = "WaterOrb MotionField batch";
     desc.particle = (ParticleConfig){.forceField = &orb->field};
     orb->emitter = ParticleManager_CreateEmitter(&desc);
     if (orb->emitter == PARTICLE_EMITTER_INVALID) { orb->active = false; return; }
 
     const ParticleGPUCaps *caps = ParticleSystem_GetGPUCaps();
     int count=caps->computeShader ? ((orb->config.renderBackend == LIQUID_RENDER_METABALL3D)
-        ? (orb->config.blobCount > 0 ? orb->config.blobCount : 24)
+        ? (orb->config.blobCount > 0 ? orb->config.blobCount : 32)
         : (!cpuOnly
             ? (GfxQuality_Get() >= GFX_HIGH ? 384 :
                GfxQuality_Get() <= GFX_LOW ? 128 : 256)
             : (GfxQuality_Get() <= GFX_LOW ? 128 : 256)))
         : (GfxQuality_Get() <= GFX_LOW ? 128 : 256);
+    if (count > WATER_ORB_PARTICLES) count = WATER_ORB_PARTICLES;
+    if (orb->config.renderBackend == LIQUID_RENDER_METABALL3D && count > LIQUID_METABALL3D_MAX_BLOBS - 4) {
+        count = LIQUID_METABALL3D_MAX_BLOBS - 4;
+    }
 
     for (int i = 0; i < count; ++i) {
-        Vector3 offset = LiquidBodyRecipe_VolumeOffset(orb->radius * 0.70f, i, count, 0u);
+        Vector3 offset = LiquidBodyRecipe_VolumeOffset(orb->radius * 0.65f, i, count, 0u);
         Color startCol = (Color){0, 0, 0, 0};
         s_waterOrbSpawn[i] = (ParticleConfig){
             .position = Vector3Add(config->start, offset),
-            .velocity = orb->velocity,
+            .velocity = Vector3Scale(dir, speed * 0.90f),
             .colorStart = startCol,
             .colorEnd = (Color){0, 0, 0, 0},
-            .radius = orb->config.blobRadius > 0.01f ? orb->config.blobRadius : (0.44f * 0.09f),
-            .lifetime = orb->travelTime + motion.lifetime,
+            .radius = orb->config.blobRadius > 0.01f ? orb->config.blobRadius : (orb->radius * 0.25f),
+            .lifetime = orb->travelTime + orb->crownDuration + orb->settleDuration + 0.6f,
             .forceField = &orb->field,
             .forceAxisOrigin = config->target,
-            .forceAxisDir = orb->hitNormal
+            .forceAxisDir = orb->hitNormal,
+            .physics = {
+                .dynamics = &s_waterOrbDynamics,
+                .receiveMotionFields = true,
+                .spatialMotionOnly = true
+            }
         };
-        s_waterOrbSpawn[i].physics.receiveMotionFields = false;
-        s_waterOrbSpawn[i].physics.spatialMotionOnly = false;
     }
     ParticleManager_EmitBatch(orb->emitter, s_waterOrbSpawn, count);
 
@@ -278,8 +313,12 @@ static void WaterOrb_Update(float dt)
         orb->age += dt;
 
         if (orb->phase == WATER_ORB_FLIGHT) {
-            float t = Clamp(orb->age / orb->travelTime, 0.0f, 1.0f);
-            orb->center = Vector3Lerp(orb->start, orb->target, t);
+            float traveled = fminf(orb->age * orb->config.speed, orb->flightPath.length);
+            MotionPathSample samp = MotionPath_Sample(&orb->flightPath, traveled);
+            orb->center = (orb->flightPath.length > 0.001f)
+                ? Vector3Add(orb->start, samp.position)
+                : Vector3Lerp(orb->start, orb->target, Clamp(orb->age / orb->travelTime, 0.0f, 1.0f));
+
             orb->field.layers[0].origin = orb->center;
             orb->field.layers[1].origin = orb->center;
 
@@ -310,6 +349,12 @@ static void WaterOrb_Update(float dt)
             }
 
             if (hit) {
+                // STOP FLIGHT MOTION FIELD
+                if (orb->motionField != MOTION_FIELD_INVALID) {
+                    MotionFields_Stop(orb->motionField);
+                    orb->motionField = MOTION_FIELD_INVALID;
+                }
+
                 orb->phase = WATER_ORB_IMPACT;
                 orb->impactPos = orb->center;
                 orb->hitNormal = hitNormal;
@@ -317,6 +362,26 @@ static void WaterOrb_Update(float dt)
                 orb->phaseAge = 0.0f;
                 orb->crownDuration = fminf(orb->crownDuration, 0.35f);
                 orb->settleDuration = 0.40f;
+
+                // CREATE PHYSICAL IMPACT BLAST MOTION FIELD
+                MotionFieldRecipe impactR = {
+                    .kind = MOTION_RECIPE_BLAST,
+                    .origin = orb->impactPos,
+                    .axis = orb->hitNormal,
+                    .referenceBody = BodyPhysicalProperties_Sphere(0.004f, 1000.0f, 0.47f),
+                    .guidance = GUIDE_BALANCED,
+                    .radiusM = orb->radius * 1.8f,
+                    .maxForceNewtons = fminf(orb->config.pullForce * 0.75f, 0.22f),
+                    .durationSec = orb->crownDuration + orb->settleDuration,
+                    .attackSec = 0.02f,
+                    .fadeSec = orb->settleDuration * 0.85f,
+                    .receiverMask = MOTION_RECEIVER_ALL_COMPONENTS
+                };
+                FieldDesc impactFieldDesc;
+                if (MotionFieldRecipe_Build(&impactR, &impactFieldDesc)) {
+                    orb->motionField = MotionFields_CreateField(&impactFieldDesc);
+                }
+
                 WaterOrb_SetPhaseField(orb, LIQUID_BODY_IMPACT, dt);
                 continue;
             }
@@ -341,82 +406,34 @@ static void WaterOrb_SubmitSurface(void)
         WaterOrb *orb = &s_waterOrbs[i];
         if (!orb->active) continue;
 
+        ParticleRenderStream stream;
+        bool hasStream = (orb->emitter != PARTICLE_EMITTER_INVALID) &&
+                         ParticleManager_GetSurfaceStream(orb->emitter, &stream);
+        ParticleSurfaceSample samples[LIQUID_METABALL3D_MAX_BLOBS];
+        int sampleCount = 0;
+        if (hasStream) {
+            sampleCount = ParticleManager_CopySurfaceSamplesSpaced(&stream, samples, LIQUID_METABALL3D_MAX_BLOBS - 2);
+        }
+
         if (orb->config.renderBackend == LIQUID_RENDER_METABALL3D) {
             float thresh = orb->config.threshold > 0.05f ? orb->config.threshold : 0.42f;
-            float rScale = 1.95f; // Scale visible radius to Wyvill field support at threshold ~0.42
+            float rScale = 1.35f;
+            float baseBlobRad = (orb->config.blobRadius > 0.01f) ? orb->config.blobRadius : (orb->radius * 0.22f);
 
+            // 1. Live particles driven by Motion Fields (moving guide during flight, radial blast on impact)
+            for (int s = 0; s < sampleCount; ++s) {
+                float r = fmaxf(samples[s].radius, baseBlobRad) * rScale;
+                LiquidMetaball3D_RegisterBlob(samples[s].position, r);
+            }
+
+            // 2. Cohesive fluid body core (in flight) or ground contact puddle (on impact)
             if (orb->phase == WATER_ORB_FLIGHT) {
-                // 1. Dominant cohesive fluid sphere core
-                float rCore = orb->radius * rScale;
-                LiquidMetaball3D_RegisterBlob(orb->center, rCore);
-
-                // 2. Trailing teardrop elongation along -velocity
-                Vector3 vDir = (Vector3Length(orb->velocity) > 1e-4f) ? Vector3Normalize(orb->velocity) : (Vector3){1, 0, 0};
-                Vector3 tail1 = Vector3Subtract(orb->center, Vector3Scale(vDir, orb->radius * 0.32f));
-                LiquidMetaball3D_RegisterBlob(tail1, rCore * 0.76f);
-
-                Vector3 tail2 = Vector3Subtract(orb->center, Vector3Scale(vDir, orb->radius * 0.65f));
-                LiquidMetaball3D_RegisterBlob(tail2, rCore * 0.52f);
-
-                // 3. Fluid surface tension wobble (Rayleigh droplet oscillation)
-                Vector3 up = (fabsf(vDir.y) < 0.90f) ? (Vector3){0, 1, 0} : (Vector3){1, 0, 0};
-                Vector3 side = Vector3Normalize(Vector3CrossProduct(up, vDir));
-                Vector3 norm = Vector3CrossProduct(vDir, side);
-
-                float wobblePhase = orb->age * 12.0f;
-                float wobbleAmp = orb->radius * 0.12f;
-
-                Vector3 wobblePos1 = Vector3Add(orb->center, Vector3Scale(side, cosf(wobblePhase) * wobbleAmp));
-                wobblePos1 = Vector3Add(wobblePos1, Vector3Scale(norm, sinf(wobblePhase) * wobbleAmp));
-                LiquidMetaball3D_RegisterBlob(wobblePos1, rCore * 0.64f);
-
-                Vector3 wobblePos2 = Vector3Add(orb->center, Vector3Scale(side, -cosf(wobblePhase * 1.35f) * wobbleAmp * 0.75f));
-                wobblePos2 = Vector3Add(wobblePos2, Vector3Scale(norm, -sinf(wobblePhase * 1.35f) * wobbleAmp * 0.75f));
-                LiquidMetaball3D_RegisterBlob(wobblePos2, rCore * 0.58f);
-
-                // 4. Detached trailing micro-droplet
-                float dropCycle = fmodf(orb->age * 3.8f, 1.0f);
-                Vector3 dropPos = Vector3Subtract(orb->center, Vector3Scale(vDir, orb->radius * (1.15f + dropCycle * 0.75f)));
-                float dropRad = (1.0f - dropCycle) * (rCore * 0.28f);
-                if (dropRad > 0.04f) {
-                    LiquidMetaball3D_RegisterBlob(dropPos, dropRad);
-                }
+                LiquidMetaball3D_RegisterBlob(orb->center, orb->radius * 0.88f * rScale);
             } else {
-                // IMPACT & SETTLE PHASE:
-                // Pancake compression on contact surface + expanding radial splash crown
                 float totalImpactTime = fmaxf(orb->crownDuration + orb->settleDuration, 0.1f);
-                float impactT01 = Clamp(orb->phaseAge / totalImpactTime, 0.0f, 1.0f);
-                float crownT01 = Clamp(orb->phaseAge / fmaxf(orb->crownDuration, 0.05f), 0.0f, 1.0f);
-                float fade = 1.0f - impactT01;
-
-                Vector3 n = orb->hitNormal;
-                Vector3 up = (fabsf(n.y) < 0.90f) ? (Vector3){0, 1, 0} : (Vector3){1, 0, 0};
-                Vector3 tX = Vector3Normalize(Vector3CrossProduct(up, n));
-                Vector3 tZ = Vector3CrossProduct(n, tX);
-
-                // Center flattening puddle blob
-                float centerRad = orb->radius * 1.70f * fade;
-                if (centerRad > 0.05f) {
-                    LiquidMetaball3D_RegisterBlob(Vector3Add(orb->impactPos, Vector3Scale(n, 0.03f)), centerRad);
-                }
-
-                // Radial splash droplets expanding in crown
-                int splashCount = 10;
-                float splashRadius = orb->radius * (1.0f + 2.5f * crownT01);
-                float splashHeight = orb->radius * (0.80f * sinf(crownT01 * 3.14159f) * (1.0f - crownT01 * 0.35f));
-
-                for (int s = 0; s < splashCount; ++s) {
-                    float angle = ((float)s / (float)splashCount) * 2.0f * 3.14159f;
-                    float rVar = 1.0f + 0.20f * sinf((float)s * 3.8f);
-                    Vector3 splashPos = orb->impactPos;
-                    splashPos = Vector3Add(splashPos, Vector3Scale(tX, cosf(angle) * splashRadius * rVar));
-                    splashPos = Vector3Add(splashPos, Vector3Scale(tZ, sinf(angle) * splashRadius * rVar));
-                    splashPos = Vector3Add(splashPos, Vector3Scale(n, splashHeight * rVar + 0.02f));
-
-                    float dropletRad = orb->radius * 0.40f * (1.0f - crownT01 * 0.80f) * fade * rScale;
-                    if (dropletRad > 0.04f) {
-                        LiquidMetaball3D_RegisterBlob(splashPos, dropletRad);
-                    }
+                float fade = 1.0f - Clamp(orb->phaseAge / totalImpactTime, 0.0f, 1.0f);
+                if (fade > 0.04f) {
+                    LiquidMetaball3D_RegisterBlob(Vector3Add(orb->impactPos, Vector3Scale(orb->hitNormal, 0.02f)), orb->radius * 1.15f * fade * rScale);
                 }
             }
 
@@ -428,65 +445,19 @@ static void WaterOrb_SubmitSurface(void)
             float surfaceRadius = (orb->phase == WATER_ORB_FLIGHT) ? orb->radius :
                 LiquidBodyRecipe_EstimateRadius(&orb->recipe, orb->velocity, orb->phaseAge);
             LiquidSurface_HintBody(orb->center,surfaceRadius);
-            LiquidSurface_SetReconstructionRadius(orb->radius * 0.42f);
+            LiquidSurface_SetReconstructionRadius(orb->radius * 0.38f);
 
             if (orb->phase == WATER_ORB_FLIGHT) {
-                // Register 3D spherical fluid core + teardrop
-                LiquidSurface_RegisterParticle(orb->center, orb->radius * 0.92f);
-                Vector3 vDir = (Vector3Length(orb->velocity) > 1e-4f) ? Vector3Normalize(orb->velocity) : (Vector3){1, 0, 0};
-                Vector3 tail1 = Vector3Subtract(orb->center, Vector3Scale(vDir, orb->radius * 0.35f));
-                LiquidSurface_RegisterParticle(tail1, orb->radius * 0.72f);
-                Vector3 tail2 = Vector3Subtract(orb->center, Vector3Scale(vDir, orb->radius * 0.65f));
-                LiquidSurface_RegisterParticle(tail2, orb->radius * 0.50f);
-
-                // Subtle surface oscillation
-                Vector3 up = (fabsf(vDir.y) < 0.90f) ? (Vector3){0, 1, 0} : (Vector3){1, 0, 0};
-                Vector3 side = Vector3Normalize(Vector3CrossProduct(up, vDir));
-                Vector3 norm = Vector3CrossProduct(vDir, side);
-                float wobblePhase = orb->age * 12.0f;
-                float wobbleAmp = orb->radius * 0.12f;
-                Vector3 wobblePos1 = Vector3Add(orb->center, Vector3Scale(side, cosf(wobblePhase) * wobbleAmp));
-                wobblePos1 = Vector3Add(wobblePos1, Vector3Scale(norm, sinf(wobblePhase) * wobbleAmp));
-                LiquidSurface_RegisterParticle(wobblePos1, orb->radius * 0.60f);
+                LiquidSurface_RegisterParticle(orb->center, orb->radius * 0.85f);
             } else {
-                // SSF Impact: flattening puddle + splash crown
                 float totalImpactTime = fmaxf(orb->crownDuration + orb->settleDuration, 0.1f);
-                float impactT01 = Clamp(orb->phaseAge / totalImpactTime, 0.0f, 1.0f);
-                float crownT01 = Clamp(orb->phaseAge / fmaxf(orb->crownDuration, 0.05f), 0.0f, 1.0f);
-                float fade = 1.0f - impactT01;
-
-                Vector3 n = orb->hitNormal;
-                Vector3 up = (fabsf(n.y) < 0.90f) ? (Vector3){0, 1, 0} : (Vector3){1, 0, 0};
-                Vector3 tX = Vector3Normalize(Vector3CrossProduct(up, n));
-                Vector3 tZ = Vector3CrossProduct(n, tX);
-
-                float centerRad = orb->radius * 1.5f * fade;
-                if (centerRad > 0.04f) {
-                    LiquidSurface_RegisterParticle(Vector3Add(orb->impactPos, Vector3Scale(n, 0.02f)), centerRad);
-                }
-
-                int splashCount = 10;
-                float splashRadius = orb->radius * (1.0f + 2.4f * crownT01);
-                float splashHeight = orb->radius * (0.80f * sinf(crownT01 * 3.14159f) * (1.0f - crownT01 * 0.35f));
-
-                for (int s = 0; s < splashCount; ++s) {
-                    float angle = ((float)s / (float)splashCount) * 2.0f * 3.14159f;
-                    float rVar = 1.0f + 0.20f * sinf((float)s * 3.8f);
-                    Vector3 splashPos = orb->impactPos;
-                    splashPos = Vector3Add(splashPos, Vector3Scale(tX, cosf(angle) * splashRadius * rVar));
-                    splashPos = Vector3Add(splashPos, Vector3Scale(tZ, sinf(angle) * splashRadius * rVar));
-                    splashPos = Vector3Add(splashPos, Vector3Scale(n, splashHeight * rVar + 0.02f));
-
-                    float dropletRad = orb->radius * 0.38f * (1.0f - crownT01 * 0.80f) * fade;
-                    if (dropletRad > 0.03f) {
-                        LiquidSurface_RegisterParticle(splashPos, dropletRad);
-                    }
+                float fade = 1.0f - Clamp(orb->phaseAge / totalImpactTime, 0.0f, 1.0f);
+                if (fade > 0.04f) {
+                    LiquidSurface_RegisterParticle(Vector3Add(orb->impactPos, Vector3Scale(orb->hitNormal, 0.02f)), orb->radius * 1.10f * fade);
                 }
             }
 
-            // Also submit any particle stream if emitter is active
-            ParticleRenderStream stream;
-            if (orb->surfaceAdmitted && ParticleManager_GetSurfaceStream(orb->emitter, &stream)) {
+            if (hasStream && orb->surfaceAdmitted) {
                 LiquidSurface_SubmitParticleStream(&stream);
             }
         }

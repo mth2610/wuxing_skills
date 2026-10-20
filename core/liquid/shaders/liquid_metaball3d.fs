@@ -151,14 +151,24 @@ void main() {
         discard;
     }
 
-    // Measure internal thickness for absorption
+    // Measure internal thickness for absorption with bisection refinement
     float tThickSearch = tHit;
     float tBackHit = tEnd;
-    float thickStep = (tEnd - tHit) / 6.0;
-    for (int k = 0; k < 6; k++) {
+    float thickStep = (tEnd - tHit) / 8.0;
+    for (int k = 0; k < 8; k++) {
         tThickSearch += thickStep;
         if (EvaluateField(rayOrigin + rayDir * tThickSearch) < u_threshold) {
-            tBackHit = tThickSearch;
+            float tA = tThickSearch - thickStep;
+            float tB = tThickSearch;
+            for (int b = 0; b < 4; b++) {
+                float tMid = (tA + tB) * 0.5;
+                if (EvaluateField(rayOrigin + rayDir * tMid) >= u_threshold) {
+                    tA = tMid;
+                } else {
+                    tB = tMid;
+                }
+            }
+            tBackHit = tB;
             break;
         }
         tBackHit = tThickSearch;
@@ -168,37 +178,67 @@ void main() {
     vec3 hitPos = rayOrigin + rayDir * tHit;
     vec3 normal = EvaluateNormal(hitPos);
 
+    // Procedural fluid capillary wave & ripple perturbation
+    vec3 waveNormal = normal;
+    if (u_liquidClass == 0) { // Dielectric fluids: water, poison
+        vec3 wp = hitPos * 9.0 + vec3(u_time * 0.6, -u_time * 1.3, u_time * 0.5);
+        float w1 = sin(wp.x * 2.2 + wp.y * 3.1 + u_time * 3.8);
+        float w2 = cos(wp.z * 2.8 - wp.y * 1.9 + u_time * 2.9);
+        float w3 = sin((wp.x + wp.z) * 3.3 - u_time * 4.5);
+        vec3 waveGrad = vec3(
+            cos(wp.y * 2.6 + u_time * 2.8) * 0.35 + w1 * 0.25,
+            sin(wp.x * 2.4 + u_time * 2.4) * 0.35 + w2 * 0.25,
+            cos(wp.x * 2.8 - u_time * 2.9) * 0.35 + w3 * 0.25
+        );
+        vec3 np = hitPos * 18.0 + vec3(-u_time * 1.4, 0.0, u_time * 1.1);
+        vec3 microTurb = vec3(
+            sin(np.y * 3.8 + np.z * 2.6),
+            cos(np.x * 3.8 + np.z * 2.6),
+            sin(np.x * 2.6 + np.y * 3.8)
+        ) * 0.18;
+        waveNormal = normalize(normal + (waveGrad + microTurb) * (0.20 + u_roughness * 0.15));
+    }
+
     vec3 viewDir = -rayDir;
-    float NdotV = max(dot(normal, viewDir), 0.0);
+    float NdotV = max(dot(waveNormal, viewDir), 0.0);
 
     // Fresnel
     float F0 = (u_liquidClass == 2) ? 0.78 : (u_liquidClass == 1 ? 0.06 : 0.02);
-    float fresnel = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+    float fresnel = F0 + (1.0 - F0) * pow(1.0 - NdotV, 4.0);
 
-    // Refraction
-    vec3 refrDir = refract(rayDir, normal, 1.0 / max(u_ior, 1.001));
-    vec2 refrUV = screenUV + refrDir.xy * (0.024 * clamp(thickness * 1.5, 0.1, 1.2));
+    // Refraction with wave-perturbed normal
+    vec3 refrDir = refract(rayDir, waveNormal, 1.0 / max(u_ior, 1.001));
+    vec2 refrUV = screenUV + refrDir.xy * (0.040 * clamp(thickness * 1.6, 0.1, 1.4));
     refrUV = clamp(refrUV, 0.002, 0.998);
 
-    vec3 sceneCol = (u_hasSceneColor != 0) ? texture(u_sceneColor, refrUV).rgb : vec3(0.08, 0.14, 0.20);
+    vec3 sceneCol = (u_hasSceneColor != 0) ? texture(u_sceneColor, refrUV).rgb : mix(vec3(0.04, 0.08, 0.12), vec3(0.08, 0.15, 0.22), screenUV.y);
 
-    // Beer-Lambert absorption:
-    // Water absorbs red light quickly, preserving clear cyan-blue.
+    // Beer-Lambert absorption: Water absorbs red while freely transmitting cyan-blue
     vec3 extinction = (vec3(1.0) - clamp(u_bodyColor.rgb, 0.0, 1.0)) * max(u_opacityPerMeter, 0.4);
-    vec3 transmission = exp(-extinction * thickness * 2.5);
-    vec3 refractedBody = sceneCol * transmission;
-    refractedBody += (vec3(1.0) - transmission) * u_bodyColor.rgb * 0.12;
+    // Real clear water absorption spectrum
+    vec3 waterAbsorption = vec3(1.1, 0.40, 0.08) * max(u_opacityPerMeter, 0.5);
+    vec3 transmission = (u_liquidClass == 0) ? exp(-waterAbsorption * thickness * 1.5) : exp(-extinction * thickness * 2.5);
 
-    // Direct lighting & specular highlight
+    // Internal caustic glow & light focusing
     vec3 lightDir = normalize(u_sunDir);
     vec3 halfVec = normalize(lightDir + viewDir);
-    float NdotL = max(dot(normal, lightDir), 0.0);
-    float NdotH = max(dot(normal, halfVec), 0.0);
-    // Smooth dielectric water has high specular exponent for sharp, brilliant sun glint
-    float specPower = mix(256.0, 32.0, clamp(u_roughness, 0.0, 1.0));
-    float specular = pow(NdotH, specPower) * (NdotL > 0.0 ? 1.0 : 0.0);
+    float NdotL = max(dot(waveNormal, lightDir), 0.0);
+    float NdotH = max(dot(waveNormal, halfVec), 0.0);
+
+    float internalCaustic = pow(NdotL, 2.0) * 0.25 + pow(clamp(1.0 - thickness * 1.4, 0.0, 1.0), 2.0) * 0.18;
+    vec3 internalScatter = u_glowColor.rgb * internalCaustic;
+
+    vec3 refractedBody = sceneCol * transmission;
+    refractedBody += (vec3(1.0) - transmission) * u_bodyColor.rgb * 0.25 + internalScatter;
+
+    // Multi-lobe specular highlights: sharp sun glint + soft water luster
+    float specSharp = pow(NdotH, 256.0) * (NdotL > 0.0 ? 2.5 : 0.0);
+    float specSoft = pow(NdotH, 32.0) * (NdotL > 0.0 ? 0.45 : 0.0);
     vec3 glintColor = mix(vec3(1.0), normalize(u_sunColor + vec3(0.3)), 0.35);
-    vec3 specularLight = glintColor * specular * 1.5;
+    vec3 specularLight = glintColor * (specSharp + specSoft);
+
+    // Subtle edge froth / aeration on water rim
+    float edgeFroth = pow(1.0 - NdotV, 5.0) * 0.25;
 
     // Scene contact foam
     float contactFoam = 0.0;
@@ -228,9 +268,10 @@ void main() {
         alpha = 1.0;
     } else {
         // Dielectric (Water, Poison, Mud)
-        vec3 skyReflect = mix(vec3(0.70, 0.88, 1.0), u_glowColor.rgb, 0.45);
-        vec3 waterColor = mix(refractedBody, skyReflect, fresnel * 0.75);
+        vec3 skyReflect = mix(vec3(0.40, 0.70, 0.95), u_glowColor.rgb, 0.35);
+        vec3 waterColor = mix(refractedBody, skyReflect, fresnel * 0.72);
         waterColor += specularLight;
+        waterColor += u_softColor.rgb * edgeFroth;
         waterColor = mix(waterColor, u_softColor.rgb, contactFoam * 0.70);
         color = waterColor;
         alpha = 1.0;
