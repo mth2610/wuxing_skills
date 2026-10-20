@@ -8,50 +8,32 @@
  * TUNING CONSTANTS
  * ============================================================ */
 
-/* A layer with |strength| below this is skipped (no visible contribution). */
 #define FF_MIN_STRENGTH 1e-4f
-/* GRAVITY_POINT: closer than sqrt(this) to the point -> force is zero
- * (avoids the singularity at the center). */
 #define FF_MIN_POINT_DIST_SQ 1e-4f
-/* Axis-type layers: a point closer than sqrt(this) to the axis has no
- * defined radial direction -> force is zero. */
 #define FF_MIN_AXIS_DIST_SQ 1e-6f
-/* axisDir shorter than sqrt(this) is not a valid axis. */
 #define FF_MIN_AXIS_LEN_SQ 1e-6f
 
-/* WIND layer: gust amplitude relative to the base strength, and the lattice
- * offset that decorrelates the Z gust from the X gust. */
 #define FF_WIND_GUST_FACTOR 0.35f
 #define FF_WIND_Z_OFFSET 53.9f
 
-/* NOISE_PERLIN: per-axis lattice offsets that decorrelate X/Y/Z channels. */
 #define FF_NOISE_OFFSET_A 17.7f
 #define FF_NOISE_OFFSET_B 37.3f
 #define FF_NOISE_OFFSET_C 73.1f
 
-/* Curl noise: finite-difference step and the lattice offsets that decorrelate
- * the three Perlin potentials. */
 #define FF_CURL_EPS 0.1f
 #define FF_CURL_INV_2EPS (1.0f / (2.0f * FF_CURL_EPS))
 #define FF_CURL_OFFSET_1 31.416f
 #define FF_CURL_OFFSET_2 67.234f
 
-/* WindZone: curl layer scroll speed and the shortest direction that can be
- * normalized. */
 #define FF_WINDZONE_CURL_SPEED 0.4f
 #define FF_WINDZONE_MIN_DIR_LEN 0.0001f
 
-/* Perlin lattice wrap mask (table has 256 unique entries). */
 #define FF_PERLIN_MASK 255
 
 /* ============================================================
  * PERLIN NOISE 3D
  * ============================================================ */
 
-/* The permutation table is a compile-time constant (doubled to 512 so the
- * +1 lookups never wrap) stored as bytes: 512 B instead of 2 KB keeps it in
- * a single handful of cache lines, and there is no lazy init, so no
- * data race when particles are updated from several threads. */
 /* clang-format off */
 #define FF_PERM_DATA \
     151,160,137, 91, 90, 15,131, 13,201, 95, 96, 53,194,233,  7,225, \
@@ -73,8 +55,6 @@
 static const unsigned char FF_PERM[512] = { FF_PERM_DATA, FF_PERM_DATA };
 /* clang-format on */
 
-/* Fast floor (replaces floorf). Inputs are expected to be finite and within
- * int range, which is always true for particle-space coordinates. */
 static inline int FF_FastFloor(float x)
 {
   int xi = (int)x;
@@ -91,12 +71,6 @@ static inline float FF_Lerp(float a, float b, float t)
   return a + t * (b - a);
 }
 
-/* Perlin's 12 edge gradients (4 repeated to fill 16 slots), as coefficients
- * of (x, y, z). The classic implementation picks u/v and their signs with
- * data-dependent branches; the hash is effectively random, so those branches
- * mispredict constantly (about 6x slower than this table on the same input,
- * 8 gradients per Perlin sample). Every coefficient is -1, 0 or +1, so the
- * products are exact and the result is bit-identical to the branchy form. */
 static const float FF_PERLIN_GRAD_TABLE[16][3] = {
     {1.0f, 1.0f, 0.0f}, {-1.0f, 1.0f, 0.0f}, {1.0f, -1.0f, 0.0f}, {-1.0f, -1.0f, 0.0f}, {1.0f, 0.0f, 1.0f}, {-1.0f, 0.0f, 1.0f}, {1.0f, 0.0f, -1.0f}, {-1.0f, 0.0f, -1.0f}, {0.0f, 1.0f, 1.0f}, {0.0f, -1.0f, 1.0f}, {0.0f, 1.0f, -1.0f}, {0.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 0.0f}, {0.0f, -1.0f, 1.0f}, {-1.0f, 1.0f, 0.0f}, {0.0f, -1.0f, -1.0f}};
 
@@ -106,10 +80,8 @@ static inline float FF_PerlinGrad(int hash, float x, float y, float z)
   return g[0] * x + g[1] * y + g[2] * z;
 }
 
-/* Internal version so callers inside this file can be inlined. */
 static inline float FF_PerlinImpl(float x, float y, float z)
 {
-  /* One floor per axis (the lattice index and the fraction share it). */
   int ix = FF_FastFloor(x);
   int iy = FF_FastFloor(y);
   int iz = FF_FastFloor(z);
@@ -147,6 +119,244 @@ static inline float FF_PerlinImpl(float x, float y, float z)
                       FF_PerlinGrad(FF_PERM[BB + 1], x1, y1, z1), u);
 
   return FF_Lerp(FF_Lerp(l00, l10, v), FF_Lerp(l01, l11, v), w);
+}
+
+/* Lấy mẫu cặp dọc theo trục X: chia sẻ hoàn toàn trục Y, Z và tái sử dụng
+ * 8 mã băm đỉnh khi ixp == ixm (đúng >90% thời gian). */
+static inline void FF_PerlinPairX(float xp, float xm, float y, float z,
+                                  float *outP, float *outM)
+{
+  int iy = FF_FastFloor(y);
+  int iz = FF_FastFloor(z);
+  int Y = iy & FF_PERLIN_MASK;
+  int Z = iz & FF_PERLIN_MASK;
+  float yf = y - (float)iy;
+  float zf = z - (float)iz;
+  float v = FF_Fade(yf);
+  float w = FF_Fade(zf);
+  float y1 = yf - 1.0f;
+  float z1 = zf - 1.0f;
+
+  int ixp = FF_FastFloor(xp);
+  int ixm = FF_FastFloor(xm);
+  float xfp = xp - (float)ixp;
+  float xfm = xm - (float)ixm;
+  float up = FF_Fade(xfp);
+  float um = FF_Fade(xfm);
+  float x1p = xfp - 1.0f;
+  float x1m = xfm - 1.0f;
+
+  int Xp = ixp & FF_PERLIN_MASK;
+  int A = FF_PERM[Xp] + Y;
+  int AA = FF_PERM[A] + Z;
+  int AB = FF_PERM[A + 1] + Z;
+  int B = FF_PERM[Xp + 1] + Y;
+  int BA = FF_PERM[B] + Z;
+  int BB = FF_PERM[B + 1] + Z;
+
+  int hAA0 = FF_PERM[AA], hBA0 = FF_PERM[BA];
+  int hAB0 = FF_PERM[AB], hBB0 = FF_PERM[BB];
+  int hAA1 = FF_PERM[AA + 1], hBA1 = FF_PERM[BA + 1];
+  int hAB1 = FF_PERM[AB + 1], hBB1 = FF_PERM[BB + 1];
+
+  float l00p = FF_Lerp(FF_PerlinGrad(hAA0, xfp, yf, zf),
+                       FF_PerlinGrad(hBA0, x1p, yf, zf), up);
+  float l10p = FF_Lerp(FF_PerlinGrad(hAB0, xfp, y1, zf),
+                       FF_PerlinGrad(hBB0, x1p, y1, zf), up);
+  float l01p = FF_Lerp(FF_PerlinGrad(hAA1, xfp, yf, z1),
+                       FF_PerlinGrad(hBA1, x1p, yf, z1), up);
+  float l11p = FF_Lerp(FF_PerlinGrad(hAB1, xfp, y1, z1),
+                       FF_PerlinGrad(hBB1, x1p, y1, z1), up);
+  *outP = FF_Lerp(FF_Lerp(l00p, l10p, v), FF_Lerp(l01p, l11p, v), w);
+
+  if (ixm != ixp)
+  {
+    int Xm = ixm & FF_PERLIN_MASK;
+    int Am = FF_PERM[Xm] + Y;
+    int AAm = FF_PERM[Am] + Z;
+    int ABm = FF_PERM[Am + 1] + Z;
+    int Bm = FF_PERM[Xm + 1] + Y;
+    int BAm = FF_PERM[Bm] + Z;
+    int BBm = FF_PERM[Bm + 1] + Z;
+    hAA0 = FF_PERM[AAm];
+    hBA0 = FF_PERM[BAm];
+    hAB0 = FF_PERM[ABm];
+    hBB0 = FF_PERM[BBm];
+    hAA1 = FF_PERM[AAm + 1];
+    hBA1 = FF_PERM[BAm + 1];
+    hAB1 = FF_PERM[ABm + 1];
+    hBB1 = FF_PERM[BBm + 1];
+  }
+
+  float l00m = FF_Lerp(FF_PerlinGrad(hAA0, xfm, yf, zf),
+                       FF_PerlinGrad(hBA0, x1m, yf, zf), um);
+  float l10m = FF_Lerp(FF_PerlinGrad(hAB0, xfm, y1, zf),
+                       FF_PerlinGrad(hBB0, x1m, y1, zf), um);
+  float l01m = FF_Lerp(FF_PerlinGrad(hAA1, xfm, yf, z1),
+                       FF_PerlinGrad(hBA1, x1m, yf, z1), um);
+  float l11m = FF_Lerp(FF_PerlinGrad(hAB1, xfm, y1, z1),
+                       FF_PerlinGrad(hBB1, x1m, y1, z1), um);
+  *outM = FF_Lerp(FF_Lerp(l00m, l10m, v), FF_Lerp(l01m, l11m, v), w);
+}
+
+/* Lấy mẫu cặp dọc theo trục Y: chia sẻ hoàn toàn trục X, Z */
+static inline void FF_PerlinPairY(float x, float yp, float ym, float z,
+                                  float *outP, float *outM)
+{
+  int ix = FF_FastFloor(x);
+  int iz = FF_FastFloor(z);
+  int X = ix & FF_PERLIN_MASK;
+  int Z = iz & FF_PERLIN_MASK;
+  float xf = x - (float)ix;
+  float zf = z - (float)iz;
+  float u = FF_Fade(xf);
+  float w = FF_Fade(zf);
+  float x1 = xf - 1.0f;
+  float z1 = zf - 1.0f;
+
+  int iyp = FF_FastFloor(yp);
+  int iym = FF_FastFloor(ym);
+  float yfp = yp - (float)iyp;
+  float yfm = ym - (float)iym;
+  float vp = FF_Fade(yfp);
+  float vm = FF_Fade(yfm);
+  float y1p = yfp - 1.0f;
+  float y1m = yfm - 1.0f;
+
+  int permX0 = FF_PERM[X];
+  int permX1 = FF_PERM[X + 1];
+
+  int Yp = iyp & FF_PERLIN_MASK;
+  int A = permX0 + Yp;
+  int AA = FF_PERM[A] + Z;
+  int AB = FF_PERM[A + 1] + Z;
+  int B = permX1 + Yp;
+  int BA = FF_PERM[B] + Z;
+  int BB = FF_PERM[B + 1] + Z;
+
+  int hAA0 = FF_PERM[AA], hBA0 = FF_PERM[BA];
+  int hAB0 = FF_PERM[AB], hBB0 = FF_PERM[BB];
+  int hAA1 = FF_PERM[AA + 1], hBA1 = FF_PERM[BA + 1];
+  int hAB1 = FF_PERM[AB + 1], hBB1 = FF_PERM[BB + 1];
+
+  float l00p = FF_Lerp(FF_PerlinGrad(hAA0, xf, yfp, zf),
+                       FF_PerlinGrad(hBA0, x1, yfp, zf), u);
+  float l10p = FF_Lerp(FF_PerlinGrad(hAB0, xf, y1p, zf),
+                       FF_PerlinGrad(hBB0, x1, y1p, zf), u);
+  float l01p = FF_Lerp(FF_PerlinGrad(hAA1, xf, yfp, z1),
+                       FF_PerlinGrad(hBA1, x1, yfp, z1), u);
+  float l11p = FF_Lerp(FF_PerlinGrad(hAB1, xf, y1p, z1),
+                       FF_PerlinGrad(hBB1, x1, y1p, z1), u);
+  *outP = FF_Lerp(FF_Lerp(l00p, l10p, vp), FF_Lerp(l01p, l11p, vp), w);
+
+  if (iym != iyp)
+  {
+    int Ym = iym & FF_PERLIN_MASK;
+    int Am = permX0 + Ym;
+    int AAm = FF_PERM[Am] + Z;
+    int ABm = FF_PERM[Am + 1] + Z;
+    int Bm = permX1 + Ym;
+    int BAm = FF_PERM[Bm] + Z;
+    int BBm = FF_PERM[Bm + 1] + Z;
+    hAA0 = FF_PERM[AAm];
+    hBA0 = FF_PERM[BAm];
+    hAB0 = FF_PERM[ABm];
+    hBB0 = FF_PERM[BBm];
+    hAA1 = FF_PERM[AAm + 1];
+    hBA1 = FF_PERM[BAm + 1];
+    hAB1 = FF_PERM[ABm + 1];
+    hBB1 = FF_PERM[BBm + 1];
+  }
+
+  float l00m = FF_Lerp(FF_PerlinGrad(hAA0, xf, yfm, zf),
+                       FF_PerlinGrad(hBA0, x1, yfm, zf), u);
+  float l10m = FF_Lerp(FF_PerlinGrad(hAB0, xf, y1m, zf),
+                       FF_PerlinGrad(hBB0, x1, y1m, zf), u);
+  float l01m = FF_Lerp(FF_PerlinGrad(hAA1, xf, yfm, z1),
+                       FF_PerlinGrad(hBA1, x1, yfm, z1), u);
+  float l11m = FF_Lerp(FF_PerlinGrad(hAB1, xf, y1m, z1),
+                       FF_PerlinGrad(hBB1, x1, y1m, z1), u);
+  *outM = FF_Lerp(FF_Lerp(l00m, l10m, vm), FF_Lerp(l01m, l11m, vm), w);
+}
+
+/* Lấy mẫu cặp dọc theo trục Z: chia sẻ hoàn toàn trục X, Y và 4 bảng băm trung gian */
+static inline void FF_PerlinPairZ(float x, float y, float zp, float zm,
+                                  float *outP, float *outM)
+{
+  int ix = FF_FastFloor(x);
+  int iy = FF_FastFloor(y);
+  int X = ix & FF_PERLIN_MASK;
+  int Y = iy & FF_PERLIN_MASK;
+  float xf = x - (float)ix;
+  float yf = y - (float)iy;
+  float u = FF_Fade(xf);
+  float v = FF_Fade(yf);
+  float x1 = xf - 1.0f;
+  float y1 = yf - 1.0f;
+
+  int izp = FF_FastFloor(zp);
+  int izm = FF_FastFloor(zm);
+  float zfp = zp - (float)izp;
+  float zfm = zm - (float)izm;
+  float wp = FF_Fade(zfp);
+  float wm = FF_Fade(zfm);
+  float z1p = zfp - 1.0f;
+  float z1m = zfm - 1.0f;
+
+  int A = FF_PERM[X] + Y;
+  int B = FF_PERM[X + 1] + Y;
+  int permA0 = FF_PERM[A];
+  int permA1 = FF_PERM[A + 1];
+  int permB0 = FF_PERM[B];
+  int permB1 = FF_PERM[B + 1];
+
+  int Zp = izp & FF_PERLIN_MASK;
+  int AA = permA0 + Zp;
+  int AB = permA1 + Zp;
+  int BA = permB0 + Zp;
+  int BB = permB1 + Zp;
+
+  int hAA0 = FF_PERM[AA], hBA0 = FF_PERM[BA];
+  int hAB0 = FF_PERM[AB], hBB0 = FF_PERM[BB];
+  int hAA1 = FF_PERM[AA + 1], hBA1 = FF_PERM[BA + 1];
+  int hAB1 = FF_PERM[AB + 1], hBB1 = FF_PERM[BB + 1];
+
+  float l00p = FF_Lerp(FF_PerlinGrad(hAA0, xf, yf, zfp),
+                       FF_PerlinGrad(hBA0, x1, yf, zfp), u);
+  float l10p = FF_Lerp(FF_PerlinGrad(hAB0, xf, y1, zfp),
+                       FF_PerlinGrad(hBB0, x1, y1, zfp), u);
+  float l01p = FF_Lerp(FF_PerlinGrad(hAA1, xf, yf, z1p),
+                       FF_PerlinGrad(hBA1, x1, yf, z1p), u);
+  float l11p = FF_Lerp(FF_PerlinGrad(hAB1, xf, y1, z1p),
+                       FF_PerlinGrad(hBB1, x1, y1, z1p), u);
+  *outP = FF_Lerp(FF_Lerp(l00p, l10p, v), FF_Lerp(l01p, l11p, v), wp);
+
+  if (izm != izp)
+  {
+    int Zm = izm & FF_PERLIN_MASK;
+    int AAm = permA0 + Zm;
+    int ABm = permA1 + Zm;
+    int BAm = permB0 + Zm;
+    int BBm = permB1 + Zm;
+    hAA0 = FF_PERM[AAm];
+    hBA0 = FF_PERM[BAm];
+    hAB0 = FF_PERM[ABm];
+    hBB0 = FF_PERM[BBm];
+    hAA1 = FF_PERM[AAm + 1];
+    hBA1 = FF_PERM[BAm + 1];
+    hAB1 = FF_PERM[ABm + 1];
+    hBB1 = FF_PERM[BBm + 1];
+  }
+
+  float l00m = FF_Lerp(FF_PerlinGrad(hAA0, xf, yf, zfm),
+                       FF_PerlinGrad(hBA0, x1, yf, zfm), u);
+  float l10m = FF_Lerp(FF_PerlinGrad(hAB0, xf, y1, zfm),
+                       FF_PerlinGrad(hBB0, x1, y1, zfm), u);
+  float l01m = FF_Lerp(FF_PerlinGrad(hAA1, xf, yf, z1m),
+                       FF_PerlinGrad(hBA1, x1, yf, z1m), u);
+  float l11m = FF_Lerp(FF_PerlinGrad(hAB1, xf, y1, z1m),
+                       FF_PerlinGrad(hBB1, x1, y1, z1m), u);
+  *outM = FF_Lerp(FF_Lerp(l00m, l10m, v), FF_Lerp(l01m, l11m, v), wm);
 }
 
 float Noise_Perlin3D(float x, float y, float z)
@@ -204,10 +414,8 @@ float Noise_Value3D(float x, float y, float z)
  * CURL NOISE 3D
  * ============================================================ */
 
-/* sx/sy/sz are already scaled by the spatial frequency. */
 static inline Vector3 FF_CurlImpl(float sx, float sy, float sz)
 {
-  /* Shared bases: the same float additions the samples would redo anyway. */
   const float bx1 = sx + FF_CURL_OFFSET_1;
   const float by1 = sy + FF_CURL_OFFSET_1;
   const float bz1 = sz + FF_CURL_OFFSET_1;
@@ -215,20 +423,17 @@ static inline Vector3 FF_CurlImpl(float sx, float sy, float sz)
   const float by2 = sy + FF_CURL_OFFSET_2;
   const float bz2 = sz + FF_CURL_OFFSET_2;
 
-  float psi1_pz = FF_PerlinImpl(sx, sy, sz + FF_CURL_EPS);
-  float psi1_mz = FF_PerlinImpl(sx, sy, sz - FF_CURL_EPS);
-  float psi1_py = FF_PerlinImpl(sx, sy + FF_CURL_EPS, sz);
-  float psi1_my = FF_PerlinImpl(sx, sy - FF_CURL_EPS, sz);
+  float psi1_pz, psi1_mz, psi1_py, psi1_my;
+  FF_PerlinPairZ(sx, sy, sz + FF_CURL_EPS, sz - FF_CURL_EPS, &psi1_pz, &psi1_mz);
+  FF_PerlinPairY(sx, sy + FF_CURL_EPS, sy - FF_CURL_EPS, sz, &psi1_py, &psi1_my);
 
-  float psi2_px = FF_PerlinImpl(bx1 + FF_CURL_EPS, by1, bz1);
-  float psi2_mx = FF_PerlinImpl(bx1 - FF_CURL_EPS, by1, bz1);
-  float psi2_pz = FF_PerlinImpl(bx1, by1, bz1 + FF_CURL_EPS);
-  float psi2_mz = FF_PerlinImpl(bx1, by1, bz1 - FF_CURL_EPS);
+  float psi2_px, psi2_mx, psi2_pz, psi2_mz;
+  FF_PerlinPairX(bx1 + FF_CURL_EPS, bx1 - FF_CURL_EPS, by1, bz1, &psi2_px, &psi2_mx);
+  FF_PerlinPairZ(bx1, by1, bz1 + FF_CURL_EPS, bz1 - FF_CURL_EPS, &psi2_pz, &psi2_mz);
 
-  float psi3_py = FF_PerlinImpl(bx2, by2 + FF_CURL_EPS, bz2);
-  float psi3_my = FF_PerlinImpl(bx2, by2 - FF_CURL_EPS, bz2);
-  float psi3_px = FF_PerlinImpl(bx2 + FF_CURL_EPS, by2, bz2);
-  float psi3_mx = FF_PerlinImpl(bx2 - FF_CURL_EPS, by2, bz2);
+  float psi3_py, psi3_my, psi3_px, psi3_mx;
+  FF_PerlinPairY(bx2, by2 + FF_CURL_EPS, by2 - FF_CURL_EPS, bz2, &psi3_py, &psi3_my);
+  FF_PerlinPairX(bx2 + FF_CURL_EPS, bx2 - FF_CURL_EPS, by2, bz2, &psi3_px, &psi3_mx);
 
   Vector3 c;
   c.x = ((psi3_py - psi3_my) - (psi2_pz - psi2_mz)) * FF_CURL_INV_2EPS;
@@ -264,7 +469,6 @@ bool ForceField_AddLayer(ForceField *ff, ForceLayer layer)
   return true;
 }
 
-/* layerCount comes from user-visible data; never trust it as an array bound. */
 static inline int FF_ClampedLayerCount(const ForceField *ff)
 {
   int n = ff->layerCount;
@@ -273,7 +477,6 @@ static inline int FF_ClampedLayerCount(const ForceField *ff)
   return n > FORCE_FIELD_MAX_LAYERS ? FORCE_FIELD_MAX_LAYERS : n;
 }
 
-/* Attenuation for t = dist / radius in [0, 1): constant, linear or squared. */
 static inline float FF_FalloffFactor(float t, float falloff)
 {
   if (falloff <= 0.0f)
@@ -286,25 +489,18 @@ static inline float FF_FalloffFactor(float t, float falloff)
   }
 }
 
-/* Geometry of a point relative to the dynamic axis, built at most once per
- * ForceField_Evaluate call and shared by every axis-type layer. */
 typedef struct
 {
-  float distSq;    /* squared perpendicular distance to the axis */
-  float dist;      /* perpendicular distance to the axis */
-  Vector3 radial;  /* unit vector from the axis toward the point */
-  Vector3 tangent; /* unit vector cross(axisDir, radial) */
+  float distSq;
+  float dist;
+  Vector3 radial;
+  Vector3 tangent;
 } FF_AxisFrame;
 
 #define FF_AXIS_UNKNOWN 0
 #define FF_AXIS_VALID 1
 #define FF_AXIS_INVALID (-1)
 
-/* Deliberately NOT inlined. Inlined, Clang hoists the loop-invariant axis
- * normalization (sqrt + divide + projection) above the layer loop, so every
- * call pays for it even when the field has no axis-type layer (measured: about
- * +20 ns per ForceField_Evaluate call). As an opaque call it only runs when an
- * axis layer is actually met, and at most once per Evaluate. */
 #if defined(__GNUC__) || defined(__clang__)
 #define FF_NOINLINE __attribute__((noinline))
 #elif defined(_MSC_VER)
@@ -313,21 +509,23 @@ typedef struct
 #define FF_NOINLINE
 #endif
 
-/* Returns false when the axis is unusable (zero length, NaN) or the point is
- * (almost) on the axis. axisDir is normalized here, and the radial vector is
- * taken as pos - origin - dir * along. */
-static FF_NOINLINE bool FF_AxisFrame_Build(FF_AxisFrame *f, float px, float py, float pz,
-                                           Vector3 axisOrigin, Vector3 axisDir)
+static FF_NOINLINE bool FF_AxisFrame_Build(FF_AxisFrame *f, float px, float py,
+                                           float pz, Vector3 axisOrigin,
+                                           Vector3 axisDir)
 {
   float lenSq = axisDir.x * axisDir.x + axisDir.y * axisDir.y +
                 axisDir.z * axisDir.z;
   if (!(lenSq >= FF_MIN_AXIS_LEN_SQ))
     return false;
 
-  float invLen = 1.0f / sqrtf(lenSq);
-  float adx = axisDir.x * invLen;
-  float ady = axisDir.y * invLen;
-  float adz = axisDir.z * invLen;
+  float adx = axisDir.x, ady = axisDir.y, adz = axisDir.z;
+  if (fabsf(lenSq - 1.0f) > 1e-5f)
+  {
+    float invLen = 1.0f / sqrtf(lenSq);
+    adx *= invLen;
+    ady *= invLen;
+    adz *= invLen;
+  }
 
   float tx = px - axisOrigin.x;
   float ty = py - axisOrigin.y;
@@ -373,8 +571,6 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
   const int count = FF_ClampedLayerCount(ff);
   const float px = pos.x, py = pos.y, pz = pos.z;
 
-  /* Only read after FF_AxisFrame_Build succeeded (axisState == FF_AXIS_VALID);
-   * the initializer just keeps compilers from flagging the lazy build. */
   FF_AxisFrame axis = {0.0f, 0.0f, {0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
   int axisState = FF_AXIS_UNKNOWN;
 
@@ -384,36 +580,36 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
     const float strength = L->strength;
     const int type = L->type;
 
-    if (fabsf(strength) < FF_MIN_STRENGTH)
+    /* Chặn cả strength quá nhỏ lẫn NaN/Inf */
+    if (!(fabsf(strength) >= FF_MIN_STRENGTH) || !isfinite(strength))
       continue;
 
-    /* Types that never produce an acceleration on the CPU path: skip them
-     * before any attenuation work. */
     if (type == FORCE_VISCOSITY || type == FORCE_VECTOR_TEXTURE ||
         type == FORCE_RECEIVER_PLANE)
       continue;
 
     float atten = 1.0f;
+    float relDist = -1.0f;
+    float relDistSq = -1.0f;
+    float dx = 0.0f, dy = 0.0f, dz = 0.0f;
+    bool hasOriginDelta = false;
 
-    /* Spherical attenuation around origin (axis-type layers use the
-     * perpendicular distance to the axis instead, handled in their case). */
-    float relDist = -1.0f; /* >= 0 once the sqrt has been taken */
     if (type != FORCE_RADIAL_AXIS && type != FORCE_VORTEX_AXIS &&
         L->radius > 0.0f)
     {
-      float dx = px - L->origin.x;
-      float dy = py - L->origin.y;
-      float dz = pz - L->origin.z;
-      float distSq = dx * dx + dy * dy + dz * dz;
+      dx = px - L->origin.x;
+      dy = py - L->origin.y;
+      dz = pz - L->origin.z;
+      relDistSq = dx * dx + dy * dy + dz * dz;
+      hasOriginDelta = true;
       float radius = L->radius;
 
-      if (distSq >= radius * radius)
+      if (!(relDistSq < radius * radius))
         continue;
 
-      /* The sqrt is only needed when the falloff actually uses it. */
       if (L->falloff > 0.0f)
       {
-        relDist = sqrtf(distSq);
+        relDist = sqrtf(relDistSq);
         atten = FF_FalloffFactor(relDist / radius, L->falloff);
       }
     }
@@ -430,37 +626,43 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
 
     case FORCE_GRAVITY_POINT:
     {
-      float dx = L->origin.x - px;
-      float dy = L->origin.y - py;
-      float dz = L->origin.z - pz;
-      float distSq = dx * dx + dy * dy + dz * dz;
-      if (distSq < FF_MIN_POINT_DIST_SQ)
+      if (!hasOriginDelta)
+      {
+        dx = px - L->origin.x;
+        dy = py - L->origin.y;
+        dz = pz - L->origin.z;
+        relDistSq = dx * dx + dy * dy + dz * dz;
+      }
+      if (!(relDistSq >= FF_MIN_POINT_DIST_SQ))
         break;
-      /* Reuse the attenuation sqrt when it was already taken. */
-      float dist = (relDist >= 0.0f) ? relDist : sqrtf(distSq);
-      float s = strength / (dist + 1.0f);
-      float invDist = 1.0f / dist;
-      acc_x = dx * invDist * s;
-      acc_y = dy * invDist * s;
-      acc_z = dz * invDist * s;
+      float dist = (relDist >= 0.0f) ? relDist : sqrtf(relDistSq);
+      float k = -strength / (dist * (dist + 1.0f));
+      acc_x = dx * k;
+      acc_y = dy * k;
+      acc_z = dz * k;
     }
     break;
 
     case FORCE_VORTEX:
     {
-      /* axis = normalize(direction) */
       float ax = L->direction.x, ay = L->direction.y, az = L->direction.z;
       float alenSq = ax * ax + ay * ay + az * az;
-      if (alenSq <= 0.0f)
+      if (!(alenSq > 0.0f))
         break;
-      float invALen = 1.0f / sqrtf(alenSq);
-      ax *= invALen;
-      ay *= invALen;
-      az *= invALen;
+      if (fabsf(alenSq - 1.0f) > 1e-5f)
+      {
+        float invALen = 1.0f / sqrtf(alenSq);
+        ax *= invALen;
+        ay *= invALen;
+        az *= invALen;
+      }
 
-      float dx = px - L->origin.x;
-      float dy = py - L->origin.y;
-      float dz = pz - L->origin.z;
+      if (!hasOriginDelta)
+      {
+        dx = px - L->origin.x;
+        dy = py - L->origin.y;
+        dz = pz - L->origin.z;
+      }
 
       float proj = dx * ax + dy * ay + dz * az;
       float rad_x = dx - ax * proj;
@@ -468,13 +670,10 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
       float rad_z = dz - az * proj;
 
       float distSq = rad_x * rad_x + rad_y * rad_y + rad_z * rad_z;
-      if (distSq < FF_MIN_AXIS_DIST_SQ)
+      if (!(distSq >= FF_MIN_AXIS_DIST_SQ))
         break;
 
       float dist = sqrtf(distSq);
-      /* cross(axis, radial) has length dist when radial is not normalized, so
-       * dividing the magnitude by dist yields the unit tangent times
-       * strength / (dist + 1) in one step. */
       float k = strength / (dist * (dist + 1.0f));
       acc_x = (ay * rad_z - az * rad_y) * k;
       acc_y = (az * rad_x - ax * rad_z) * k;
@@ -486,8 +685,9 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
     {
       float t = time * L->noiseSpeed;
       float ns = L->noiseScale;
-      float nx = FF_PerlinImpl(px * ns + t, py * ns, pz * ns);
-      float nz = FF_PerlinImpl(px * ns + FF_WIND_Z_OFFSET, py * ns, pz * ns + t);
+      float px_s = px * ns, py_s = py * ns, pz_s = pz * ns;
+      float nx = FF_PerlinImpl(px_s + t, py_s, pz_s);
+      float nz = FF_PerlinImpl(px_s + FF_WIND_Z_OFFSET, py_s, pz_s + t);
 
       acc_x = (L->direction.x * strength) + (nx * strength * FF_WIND_GUST_FACTOR);
       acc_y = (L->direction.y * strength);
@@ -537,14 +737,13 @@ Vector3 ForceField_Evaluate(const ForceField *ff, Vector3 pos, Vector3 vel,
       float radius = L->radius;
       if (radius > 0.0f)
       {
-        if (axis.distSq >= radius * radius)
+        if (!(axis.distSq < radius * radius))
           continue;
         atten = FF_FalloffFactor(axis.dist / radius, L->falloff);
       }
 
       if (type == FORCE_RADIAL_AXIS)
       {
-        /* positive strength pulls toward the axis */
         acc_x = axis.radial.x * -strength;
         acc_y = axis.radial.y * -strength;
         acc_z = axis.radial.z * -strength;
@@ -576,7 +775,6 @@ float ForceField_GetViscosityDamping(const ForceField *ff, float dt)
   if (!ff)
     return 1.0f;
 
-  /* exp(-a*dt) * exp(-b*dt) == exp(-(a+b)*dt): one expf for all layers. */
   const int count = FF_ClampedLayerCount(ff);
   float rate = 0.0f;
   for (int i = 0; i < count; i++)
@@ -618,17 +816,18 @@ void ForceField_PackGPU(const ForceField *ff, Vector3 axisOrigin,
   if (!ff)
     return;
 
-  /* The shader assumes a unit axis, so normalize once here. An unusable axis
-   * leaves axis-type layers out, like the CPU path where they are no-ops. */
   bool axisOk = false;
   float lenSq = axisDir.x * axisDir.x + axisDir.y * axisDir.y +
                 axisDir.z * axisDir.z;
   if (lenSq >= FF_MIN_AXIS_LEN_SQ)
   {
-    float invLen = 1.0f / sqrtf(lenSq);
-    axisDir.x *= invLen;
-    axisDir.y *= invLen;
-    axisDir.z *= invLen;
+    if (fabsf(lenSq - 1.0f) > 1e-5f)
+    {
+      float invLen = 1.0f / sqrtf(lenSq);
+      axisDir.x *= invLen;
+      axisDir.y *= invLen;
+      axisDir.z *= invLen;
+    }
     axisOk = true;
   }
 
@@ -637,7 +836,8 @@ void ForceField_PackGPU(const ForceField *ff, Vector3 axisOrigin,
   for (int i = 0; i < count; i++)
   {
     const ForceLayer *L = &ff->layers[i];
-    if (fabsf(L->strength) < FF_MIN_STRENGTH && L->type != FORCE_RECEIVER_PLANE)
+    if ((!(fabsf(L->strength) >= FF_MIN_STRENGTH) || !isfinite(L->strength)) &&
+        L->type != FORCE_RECEIVER_PLANE)
       continue;
 
     Vector3 o = L->origin;
@@ -681,14 +881,9 @@ void WindZone_Set(Vector3 direction, float strength, float noiseAmp, float noise
   }
   else
   {
-    /* too short (or NaN) to normalize: no directional wind */
     direction = (Vector3){0.0f, 0.0f, 0.0f};
   }
 
-  /* The base wind is a constant acceleration. It used to be a FORCE_WIND
-   * layer with noiseScale = noiseSpeed = 0, which sampled Perlin at a fixed
-   * lattice point: two wasted noise evaluations per call and a constant
-   * sideways (Z) push. The turbulence comes from the curl layer below. */
   ForceField_AddLayer(&g_windZone, (ForceLayer){
                                        .type = FORCE_GRAVITY_DIR,
                                        .direction = direction,
