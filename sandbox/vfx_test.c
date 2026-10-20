@@ -131,7 +131,7 @@ float VFXTest_GetPreferredCameraDistance(void)
     if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
         return 4.4f;
     if (VFXTest_IsNewFxNamed("WATER ORB"))
-        return 4.2f;
+        return 5.2f;
     return 0.0f;
 }
 
@@ -140,7 +140,7 @@ float VFXTest_GetPreferredCameraPitch(void)
     if (VFXTest_IsNewFxNamed("MOTION RIBBON TRAIL"))
         return 10.3f;
     if (VFXTest_IsNewFxNamed("WATER ORB"))
-        return 18.0f;
+        return 28.0f;
     return 0.0f;
 }
 
@@ -2921,6 +2921,7 @@ void VFXTest_DrawShadowPass(void)
         }
     }
     VFX_FoliageSystem_DrawShadowPass();
+    VFX_WaterOrb_DrawShadowPass();
 }
 
 void VFXTest_DrawHUD(void)

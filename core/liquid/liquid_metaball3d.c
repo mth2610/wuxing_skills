@@ -43,6 +43,8 @@ static int s_locEmission = -1;
 static int s_locLiquidClass = -1;
 static int s_locSunDir = -1;
 static int s_locSunColor = -1;
+static int s_locSkyAmbient = -1;
+static int s_locGroundAmbient = -1;
 static int s_locTime = -1;
 static int s_locCameraForward = -1;
 
@@ -79,6 +81,8 @@ void LiquidMetaball3D_Init(void)
     s_locLiquidClass = GetShaderLocation(s_shader, "u_liquidClass");
     s_locSunDir = GetShaderLocation(s_shader, "u_sunDir");
     s_locSunColor = GetShaderLocation(s_shader, "u_sunColor");
+    s_locSkyAmbient = GetShaderLocation(s_shader, "u_skyAmbient");
+    s_locGroundAmbient = GetShaderLocation(s_shader, "u_groundAmbient");
     s_locTime = GetShaderLocation(s_shader, "u_time");
 
     s_initialized = true;
@@ -208,7 +212,7 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
     sunColor = Vector3Scale(sunColor, Environment_GetSunIntensity());
 
     LiquidDesc defaultMat = LiquidSurface_ProfileDesc(LIQUID_MOTION_WATER);
-    const LiquidDesc *mat = material ? material : &defaultMat;
+    const LiquidDesc *mat = material ? material : (s_hasCustomMaterial ? &s_activeMaterial : &defaultMat);
 
     Vector4 bodyColor = ColorNormalize(mat->body);
     Vector4 glowColor = ColorNormalize(mat->glow);
@@ -257,6 +261,14 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
 
     if (s_locSunDir >= 0) SetShaderValue(s_shader, s_locSunDir, &sunDir, SHADER_UNIFORM_VEC3);
     if (s_locSunColor >= 0) SetShaderValue(s_shader, s_locSunColor, &sunColor, SHADER_UNIFORM_VEC3);
+
+    Color skyAmbCol = Environment_GetSkyAmbient();
+    Vector3 skyAmbient = (Vector3){skyAmbCol.r / 255.0f, skyAmbCol.g / 255.0f, skyAmbCol.b / 255.0f};
+    Color gndAmbCol = Environment_GetGroundAmbient();
+    Vector3 groundAmbient = (Vector3){gndAmbCol.r / 255.0f, gndAmbCol.g / 255.0f, gndAmbCol.b / 255.0f};
+    if (s_locSkyAmbient >= 0) SetShaderValue(s_shader, s_locSkyAmbient, &skyAmbient, SHADER_UNIFORM_VEC3);
+    if (s_locGroundAmbient >= 0) SetShaderValue(s_shader, s_locGroundAmbient, &groundAmbient, SHADER_UNIFORM_VEC3);
+
     if (s_locTime >= 0) SetShaderValue(s_shader, s_locTime, &time, SHADER_UNIFORM_FLOAT);
 
     bool camInside = (camera.position.x >= boxMin.x && camera.position.x <= boxMax.x &&

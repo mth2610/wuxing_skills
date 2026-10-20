@@ -3,6 +3,7 @@
 #include "core/motion/motion_fields.h"
 #include "core/map_manager.h"
 #include "core/skill_manager.h"
+#include "environment/env_shadow.h"
 
 // water_orb.inl — Water orb: a coherent liquid projectile driven by motion fields
 // and force fields, supporting both 3D raymarched metaballs and SSF.
@@ -494,6 +495,64 @@ static void WaterOrb_SubmitSurface(void)
 
             if (hasStream && orb->surfaceAdmitted) {
                 LiquidSurface_SubmitParticleStream(&stream);
+            }
+        }
+    }
+}
+
+static Mesh s_waterOrbShadowMesh = {0};
+static Material s_waterOrbShadowMat = {0};
+static bool s_waterOrbShadowInit = false;
+
+static void WaterOrb_InitShadowMesh(void)
+{
+    if (s_waterOrbShadowInit) return;
+    s_waterOrbShadowMesh = GenMeshSphere(1.0f, 16, 16);
+    s_waterOrbShadowMat = LoadMaterialDefault();
+    s_waterOrbShadowInit = true;
+}
+
+void VFX_WaterOrb_DrawShadowPass(void)
+{
+    if (!VFX_WaterOrb_IsAnyActive()) {
+        return;
+    }
+
+    WaterOrb_InitShadowMesh();
+    Shader depthShader = EnvShadow_GetDepthShader();
+    if (depthShader.id == 0) return;
+    s_waterOrbShadowMat.shader = depthShader;
+
+    for (int i = 0; i < WATER_ORB_MAX; ++i) {
+        WaterOrb *orb = &s_waterOrbs[i];
+        if (!orb->active) continue;
+
+        if (orb->phase == WATER_ORB_FLIGHT) {
+            float osc = sinf(orb->age * 14.0f) * 0.10f;
+            float coreRad = orb->radius * (0.92f + osc * 0.40f);
+            Matrix xfCore = MatrixIdentity();
+            xfCore.m0 = coreRad;
+            xfCore.m5 = coreRad;
+            xfCore.m10 = coreRad;
+            xfCore.m12 = orb->center.x;
+            xfCore.m13 = orb->center.y;
+            xfCore.m14 = orb->center.z;
+            DrawMesh(s_waterOrbShadowMesh, s_waterOrbShadowMat, xfCore);
+        } else {
+            // Impact & settle phase: expanding flattening puddle
+            float totalImpactTime = fmaxf(orb->crownDuration + orb->settleDuration, 0.1f);
+            float fade = 1.0f - Clamp(orb->phaseAge / totalImpactTime, 0.0f, 1.0f);
+            if (fade > 0.04f) {
+                float puddleRad = orb->radius * (1.15f + 1.10f * (1.0f - fade)) * fade;
+                Vector3 puddlePos = Vector3Add(orb->impactPos, Vector3Scale(orb->hitNormal, 0.04f));
+                Matrix xfPuddle = MatrixIdentity();
+                xfPuddle.m0 = puddleRad;
+                xfPuddle.m5 = puddleRad * 0.25f;
+                xfPuddle.m10 = puddleRad;
+                xfPuddle.m12 = puddlePos.x;
+                xfPuddle.m13 = puddlePos.y;
+                xfPuddle.m14 = puddlePos.z;
+                DrawMesh(s_waterOrbShadowMesh, s_waterOrbShadowMat, xfPuddle);
             }
         }
     }

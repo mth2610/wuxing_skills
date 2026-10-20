@@ -32,6 +32,8 @@ uniform float u_emission;
 uniform int u_liquidClass; // 0: dielectric (water/poison), 1: emissive (lava), 2: conductor (metal)
 uniform vec3 u_sunDir;
 uniform vec3 u_sunColor;
+uniform vec3 u_skyAmbient;
+uniform vec3 u_groundAmbient;
 uniform float u_time;
 
 // Wyvill potential field: (1 - d^2)^3 for d < 1
@@ -178,76 +180,106 @@ void main() {
     vec3 hitPos = rayOrigin + rayDir * tHit;
     vec3 normal = EvaluateNormal(hitPos);
 
-    // Procedural fluid capillary wave & ripple perturbation
+    // Procedural fluid capillary wave & ripple perturbation (high surface tension)
     vec3 waveNormal = normal;
     if (u_liquidClass == 0) { // Dielectric fluids: water, poison
-        vec3 wp = hitPos * 9.0 + vec3(u_time * 0.6, -u_time * 1.3, u_time * 0.5);
-        float w1 = sin(wp.x * 2.2 + wp.y * 3.1 + u_time * 3.8);
-        float w2 = cos(wp.z * 2.8 - wp.y * 1.9 + u_time * 2.9);
-        float w3 = sin((wp.x + wp.z) * 3.3 - u_time * 4.5);
-        vec3 waveGrad = vec3(
-            cos(wp.y * 2.6 + u_time * 2.8) * 0.35 + w1 * 0.25,
-            sin(wp.x * 2.4 + u_time * 2.4) * 0.35 + w2 * 0.25,
-            cos(wp.x * 2.8 - u_time * 2.9) * 0.35 + w3 * 0.25
+        vec3 wp = hitPos * 22.0 + vec3(u_time * 0.9, -u_time * 1.6, u_time * 1.2);
+        float w1 = sin(wp.x * 1.8 + wp.y * 2.2 + u_time * 2.8);
+        float w2 = cos(wp.z * 2.0 - wp.y * 1.6 + u_time * 2.1);
+        float w3 = sin((wp.x + wp.z) * 2.5 - u_time * 3.4);
+        vec3 capillary = vec3(
+            cos(wp.y * 2.0 + u_time * 2.0) * 0.035 + w1 * 0.025,
+            sin(wp.x * 1.8 + u_time * 1.8) * 0.035 + w2 * 0.025,
+            cos(wp.x * 2.1 - u_time * 2.1) * 0.035 + w3 * 0.025
         );
-        vec3 np = hitPos * 18.0 + vec3(-u_time * 1.4, 0.0, u_time * 1.1);
-        vec3 microTurb = vec3(
-            sin(np.y * 3.8 + np.z * 2.6),
-            cos(np.x * 3.8 + np.z * 2.6),
-            sin(np.x * 2.6 + np.y * 3.8)
-        ) * 0.18;
-        waveNormal = normalize(normal + (waveGrad + microTurb) * (0.20 + u_roughness * 0.15));
+        waveNormal = normalize(normal + capillary * (0.35 + u_roughness * 1.1));
     }
 
     vec3 viewDir = -rayDir;
     float NdotV = max(dot(waveNormal, viewDir), 0.0);
 
-    // Fresnel
+    // Dielectric Fresnel (water F0 = 0.020, conductor F0 = 0.78, emissive F0 = 0.06)
     float F0 = (u_liquidClass == 2) ? 0.78 : (u_liquidClass == 1 ? 0.06 : 0.02);
-    float fresnel = F0 + (1.0 - F0) * pow(1.0 - NdotV, 4.0);
+    float fresnel = F0 + (1.0 - F0) * pow(clamp(1.0 - NdotV, 0.0, 1.0), 5.0);
 
-    // Refraction with wave-perturbed normal
+    // Perspective-correct screen-space refraction with 3D exit ray projection
     vec3 refrDir = refract(rayDir, waveNormal, 1.0 / max(u_ior, 1.001));
-    vec2 refrUV = screenUV + refrDir.xy * (0.040 * clamp(thickness * 1.6, 0.1, 1.4));
-    refrUV = clamp(refrUV, 0.002, 0.998);
+    vec3 exitPos = hitPos + refrDir * thickness;
 
-    vec3 sceneCol = (u_hasSceneColor != 0) ? texture(u_sceneColor, refrUV).rgb : mix(vec3(0.04, 0.08, 0.12), vec3(0.08, 0.15, 0.22), screenUV.y);
+    vec4 hitClip = u_viewProj * vec4(hitPos, 1.0);
+    vec4 exitClip = u_viewProj * vec4(exitPos, 1.0);
+    vec2 disp = vec2(0.0);
+    if (hitClip.w > 0.001 && exitClip.w > 0.001) {
+        vec2 hitNDC = hitClip.xy / hitClip.w;
+        vec2 exitNDC = exitClip.xy / exitClip.w;
+        disp = (exitNDC - hitNDC) * 0.5;
+    } else {
+        disp = refrDir.xy * (0.04 * clamp(thickness, 0.1, 1.0));
+    }
+    disp = clamp(disp, vec2(-0.06), vec2(0.06));
 
-    // Beer-Lambert absorption: Water absorbs red while freely transmitting cyan-blue
-    vec3 extinction = (vec3(1.0) - clamp(u_bodyColor.rgb, 0.0, 1.0)) * max(u_opacityPerMeter, 0.4);
-    // Real clear water absorption spectrum
-    vec3 waterAbsorption = vec3(1.1, 0.40, 0.08) * max(u_opacityPerMeter, 0.5);
-    vec3 transmission = (u_liquidClass == 0) ? exp(-waterAbsorption * thickness * 1.5) : exp(-extinction * thickness * 2.5);
+    // High-fidelity chromatic dispersion across RGB channels
+    vec3 sceneCol = vec3(0.0);
+    if (u_hasSceneColor != 0) {
+        vec2 uvR = clamp(screenUV + disp * 0.985, vec2(0.002), vec2(0.998));
+        vec2 uvG = clamp(screenUV + disp * 1.000, vec2(0.002), vec2(0.998));
+        vec2 uvB = clamp(screenUV + disp * 1.015, vec2(0.002), vec2(0.998));
+        sceneCol.r = texture(u_sceneColor, uvR).r;
+        sceneCol.g = texture(u_sceneColor, uvG).g;
+        sceneCol.b = texture(u_sceneColor, uvB).b;
+    } else {
+        sceneCol = mix(vec3(0.05, 0.08, 0.10), vec3(0.12, 0.18, 0.22), screenUV.y);
+    }
 
-    // Internal caustic glow & light focusing
+    // Physical Beer-Lambert transmission
+    float materialPeak = max(max(u_bodyColor.r, u_bodyColor.g), max(u_bodyColor.b, 0.001));
+    vec3 materialTransmission = clamp(u_bodyColor.rgb / materialPeak, vec3(0.035), vec3(1.0));
+    // Water reference depth 0.22m (matching SSF liquid_surface.fs)
+    vec3 absorption = -log(materialTransmission) / 0.22 + vec3(0.12 + u_opacityPerMeter);
+    vec3 transmittance = exp(-absorption * thickness);
+    vec3 transmittedBody = sceneCol * transmittance;
+
+    if (u_opacityPerMeter > 8.0) { // Opaque muddy liquids (e.g. mud)
+        float mudDiffuse = max(dot(waveNormal, normalize(u_sunDir)), 0.0) * 0.7 + 0.3;
+        transmittedBody = mix(transmittedBody, u_bodyColor.rgb * mudDiffuse, 1.0 - transmittance.g);
+    }
+
+    // Direct sun specular highlights: pinpoint diamond spark + soft water sheen
     vec3 lightDir = normalize(u_sunDir);
     vec3 halfVec = normalize(lightDir + viewDir);
     float NdotL = max(dot(waveNormal, lightDir), 0.0);
     float NdotH = max(dot(waveNormal, halfVec), 0.0);
 
-    float internalCaustic = pow(NdotL, 2.0) * 0.25 + pow(clamp(1.0 - thickness * 1.4, 0.0, 1.0), 2.0) * 0.18;
-    vec3 internalScatter = u_glowColor.rgb * internalCaustic;
+    float sunSpark = pow(NdotH, 384.0) * (NdotL > 0.0 ? 4.5 : 0.0);
+    float sunSheen = pow(NdotH, 48.0) * (NdotL > 0.0 ? 0.40 : 0.0);
+    vec3 sunSpecular = (u_sunColor + vec3(0.6)) * (sunSpark + sunSheen);
 
-    vec3 refractedBody = sceneCol * transmission;
-    refractedBody += (vec3(1.0) - transmission) * u_bodyColor.rgb * 0.25 + internalScatter;
+    // Dynamic environment reflection matching current map atmosphere (sky ambient & ground bounce)
+    vec3 reflDir = reflect(rayDir, waveNormal);
+    float hemi = clamp(reflDir.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 envSky = mix(u_groundAmbient * 0.85, u_skyAmbient * 1.35, hemi);
 
-    // Multi-lobe specular highlights: sharp sun glint + soft water luster
-    float specSharp = pow(NdotH, 256.0) * (NdotL > 0.0 ? 2.5 : 0.0);
-    float specSoft = pow(NdotH, 32.0) * (NdotL > 0.0 ? 0.45 : 0.0);
-    vec3 glintColor = mix(vec3(1.0), normalize(u_sunColor + vec3(0.3)), 0.35);
-    vec3 specularLight = glintColor * (specSharp + specSoft);
+    // Ambient illumination & subtle suspended in-scatter
+    vec3 ambientLight = mix(u_groundAmbient, u_skyAmbient, clamp(waveNormal.y * 0.5 + 0.5, 0.0, 1.0));
+    vec3 illumination = ambientLight + u_sunColor * (0.10 + 0.28 * NdotL);
+    float mediumOpacity = 1.0 - exp(-u_opacityPerMeter * 0.22);
+    float grazingWeight = mix(mix(0.30, 1.0, pow(1.0 - NdotV, 1.5)), 1.0, mediumOpacity);
+    float suspendedScatter = mix(0.15, 1.0, mediumOpacity);
+    vec3 inScatter = u_bodyColor.rgb * (vec3(1.0) - transmittance) * illumination * (grazingWeight * suspendedScatter * 0.35);
 
-    // Subtle edge froth / aeration on water rim
-    float edgeFroth = pow(1.0 - NdotV, 5.0) * 0.25;
+    // Optical forward caustic lensing: brightens when refracted ray aligns with sun beam
+    float sunForward = max(dot(refrDir, -lightDir), 0.0);
+    float causticLensing = pow(sunForward, 8.0) * 0.35 * (1.0 - transmittance.r);
+    vec3 causticLight = u_sunColor * causticLensing;
 
-    // Scene contact foam
+    // Scene contact foam only when touching geometry
     float contactFoam = 0.0;
     if (u_hasSceneDepth != 0) {
         float sceneLinear = texture(u_sceneDepth, screenUV).r;
         if (sceneLinear > 0.15 && sceneLinear < 800.0) {
             float viewZ = (u_viewProj * vec4(hitPos, 1.0)).w;
             float distToScene = max(sceneLinear - viewZ, 0.0);
-            contactFoam = 1.0 - smoothstep(0.0, 0.10, distToScene);
+            contactFoam = 1.0 - smoothstep(0.0, 0.06, distToScene);
         }
     }
 
@@ -256,23 +288,23 @@ void main() {
 
     if (u_liquidClass == 2) {
         // Conductor (Liquid metal, mercury)
-        vec3 envReflection = mix(u_bodyColor.rgb * 0.45, u_glowColor.rgb, fresnel);
-        color = envReflection + specularLight * u_glowColor.rgb;
+        vec3 metalReflection = mix(u_bodyColor.rgb * 0.75, u_glowColor.rgb, fresnel) * envSky;
+        color = metalReflection + sunSpecular * u_glowColor.rgb;
         alpha = 1.0;
     } else if (u_liquidClass == 1) {
         // Emissive (Lava)
-        float crust = smoothstep(0.25, 0.75, 1.0 - NdotV);
-        vec3 coreEmissive = u_glowColor.rgb * (u_emission * (1.2 + 0.4 * sin(u_time * 2.5)));
-        vec3 cooledCrust = u_bodyColor.rgb * 0.4;
-        color = mix(coreEmissive, cooledCrust, crust) + specularLight * 0.5;
+        float crust = smoothstep(0.20, 0.75, 1.0 - NdotV);
+        vec3 coreEmissive = u_glowColor.rgb * (u_emission * (1.2 + 0.35 * sin(u_time * 2.5)));
+        vec3 cooledCrust = u_bodyColor.rgb * 0.35;
+        color = mix(coreEmissive, cooledCrust, crust) + sunSpecular * 0.4;
         alpha = 1.0;
     } else {
         // Dielectric (Water, Poison, Mud)
-        vec3 skyReflect = mix(vec3(0.40, 0.70, 0.95), u_glowColor.rgb, 0.35);
-        vec3 waterColor = mix(refractedBody, skyReflect, fresnel * 0.72);
-        waterColor += specularLight;
-        waterColor += u_softColor.rgb * edgeFroth;
-        waterColor = mix(waterColor, u_softColor.rgb, contactFoam * 0.70);
+        vec3 waterColor = mix(transmittedBody + inScatter + causticLight, envSky, fresnel);
+        waterColor += sunSpecular;
+        if (contactFoam > 0.01) {
+            waterColor = mix(waterColor, vec3(0.92, 0.96, 1.0), contactFoam * 0.65);
+        }
         color = waterColor;
         alpha = 1.0;
     }

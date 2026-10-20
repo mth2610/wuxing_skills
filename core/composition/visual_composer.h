@@ -1420,5 +1420,6 @@ void VFX_WaterRing_Stop(void);
 
 // Screen-space producers that submit SSF streams before LiquidSurface_HasPending().
 void VFX_Compose_SubmitScreenSpaceVFX(void);
+void VFX_WaterOrb_DrawShadowPass(void);
 
 #endif // VISUAL_COMPOSER_H
