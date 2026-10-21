@@ -43,3 +43,24 @@ Debugging lessons learned in post-processing. Format: **Symptom → Cause → Ru
 - **Symptom:** One-pixel hot features (lightning bolts, thin shield rims) fail to bloom.
 - **Cause:** Standard box-filter downsampling averages a $4 \times 4$ cell into a single sample, dropping a $4.5$ HDR peak below the $1.25$ threshold.
 - **Rule:** Use a brightest-sample prefilter in `bloom_bright.fs` to preserve maximum HDR energy across the $4 \times 4$ source footprint.
+
+---
+
+### 7. Chromatic aberration border wrap bleeding
+- **Symptom:** 1-pixel color lines along screen borders when chromatic aberration or radial blur is active.
+- **Cause:** `mainRenderTex` defaulted to `TEXTURE_WRAP_REPEAT`, causing samples slightly outside $[0, 1]$ to sample the opposite screen edge.
+- **Rule:** Always explicitly set `SetTextureWrap(mainRenderTex.texture, TEXTURE_WRAP_CLAMP)` upon creation.
+
+---
+
+### 8. Screen black/grey-out during `PostFX_SetMonochrome`
+- **Symptom:** Calling `PostFX_SetMonochrome` turns the screen completely dark or 50% grey when the caller had `colorGradeEnabled = false`.
+- **Cause:** PostFX enabled the color grade shader branch but passed uninitialized zero contrast and zero `colorTint`.
+- **Rule:** Fallback `contrast = 1.0f` and `colorTint = (1, 1, 1)` whenever color grading is inactive but monochrome overlay is engaged.
+
+---
+
+### 9. GPU FBO and Shader leak on repeated `PostFX_Init`
+- **Symptom:** VRAM consumption climbs when switching maps or resizing windows.
+- **Cause:** `PostFX_Init()` reallocated all render textures without releasing existing ones if `mainRenderTex.id != 0`.
+- **Rule:** Always check `if (mainRenderTex.id != 0) PostFX_Unload();` at the beginning of `PostFX_Init()`.

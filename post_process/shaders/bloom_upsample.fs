@@ -21,21 +21,15 @@ out vec4 finalColor;
 
 void main() {
     vec2 uv = fragTexCoord;
-    vec2 t = u_texelSize;
+    vec2 d = u_texelSize * 0.5;
 
-    // 3x3 tent (1 2 1 / 2 4 2 / 1 2 1) / 16. The old 4-tap cross left a visible
-    // plus-shaped kernel once the pyramid went deep enough for one level's
-    // texel to cover many screen pixels; the corner taps are what turn that
-    // into a smooth halo.
-    vec3 sum = texture(texture0, uv + vec2(-1.0,  1.0) * t).rgb * 1.0
-             + texture(texture0, uv + vec2( 0.0,  1.0) * t).rgb * 2.0
-             + texture(texture0, uv + vec2( 1.0,  1.0) * t).rgb * 1.0
-             + texture(texture0, uv + vec2(-1.0,  0.0) * t).rgb * 2.0
-             + texture(texture0, uv                       ).rgb * 4.0
-             + texture(texture0, uv + vec2( 1.0,  0.0) * t).rgb * 2.0
-             + texture(texture0, uv + vec2(-1.0, -1.0) * t).rgb * 1.0
-             + texture(texture0, uv + vec2( 0.0, -1.0) * t).rgb * 2.0
-             + texture(texture0, uv + vec2( 1.0, -1.0) * t).rgb * 1.0;
+    // 4 bilinear taps with half-texel offset evaluate the exact 3x3 tent filter
+    // (weights 1,2,1 / 2,4,2 / 1,2,1) using hardware texture filtering.
+    // Cuts texture fetches from 9 down to 4 taps per fragment (-55% bandwidth).
+    vec3 sum = (texture(texture0, uv + vec2(-d.x,  d.y)).rgb
+              + texture(texture0, uv + vec2( d.x,  d.y)).rgb
+              + texture(texture0, uv + vec2(-d.x, -d.y)).rgb
+              + texture(texture0, uv + vec2( d.x, -d.y)).rgb) * 4.0;
 
     finalColor = vec4(sum / 16.0, clamp(u_scatter, 0.0, 1.0));
 }

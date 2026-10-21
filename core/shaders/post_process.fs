@@ -298,7 +298,8 @@ void main() {
     if (u_vignetteEnabled > 0.5) {
         // [TỐI ƯU 6]: Tái sử dụng vector toCenter đã tính từ bước đầu tiên thay vì tính lại.
         float len = length(toCenter);
-        float darkness = smoothstep(u_vignetteRadius - u_vignetteSoftness, u_vignetteRadius, len);
+        float innerRadius = max(u_vignetteRadius - u_vignetteSoftness, 0.0);
+        float darkness = smoothstep(innerRadius, u_vignetteRadius, len);
         sceneCol.rgb *= (1.0 - darkness);
     }
 

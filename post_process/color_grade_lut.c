@@ -104,6 +104,9 @@ bool ColorGradeLut_Load(const char *path)
         UnloadImage(img);
         return false;
     }
+    if (img.format != PIXELFORMAT_UNCOMPRESSED_R8G8B8A8) {
+        ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    }
     ColorGradeLut_Adopt(img, false);
     UnloadImage(img);
     TraceLog(LOG_INFO, "LUT: loaded '%s'", path);

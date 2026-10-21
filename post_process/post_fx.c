@@ -206,6 +206,11 @@ static RenderTexture2D LoadRenderTextureWithFormat(int width, int height, int fo
 
 void PostFX_Init(int width, int height)
 {
+  if (mainRenderTex.id != 0)
+  {
+    PostFX_Unload();
+  }
+
   // --- HDR: match ScreenDistort's authoritative decision. ScreenDistort_Init
   // runs first (main.c) and probes the real scene buffer (float color + depth);
   // PostFX only receives the composited distort quad, so it must use the SAME
@@ -217,6 +222,8 @@ void PostFX_Init(int width, int height)
   s_hdrActive = SceneTargets_IsHDR();
   const int colorFmt = s_hdrActive ? hdrFmt : ldrFmt;
   mainRenderTex = LoadRenderTextureWithFormat(width, height, colorFmt);
+  SetTextureFilter(mainRenderTex.texture, TEXTURE_FILTER_BILINEAR);
+  SetTextureWrap(mainRenderTex.texture, TEXTURE_WRAP_CLAMP);
   TraceLog(LOG_INFO, "PostFX: %s pipeline (%s)", s_hdrActive ? "HDR float" : "LDR",
            s_hdrActive ? "R16G16B16A16" : "R8G8B8A8");
 
@@ -292,6 +299,11 @@ void PostFX_Init(int width, int height)
   lutParamsLoc = GetShaderLocation(compositeShader, "u_lutParams");
   lutSizeLoc = GetShaderLocation(compositeShader, "u_lutSize");
   ColorGradeLut_Init();
+  Vector2 lutParams = {1.0f / (float)(COLOR_GRADE_LUT_SIZE * COLOR_GRADE_LUT_SIZE),
+                       1.0f / (float)COLOR_GRADE_LUT_SIZE};
+  float lutSize = (float)COLOR_GRADE_LUT_SIZE;
+  SetShaderValue(compositeShader, lutParamsLoc, &lutParams, SHADER_UNIFORM_VEC2);
+  SetShaderValue(compositeShader, lutSizeLoc, &lutSize, SHADER_UNIFORM_FLOAT);
   fxaaShader = LoadShader(0, "post_process/shaders/fxaa.fs");
   fxaaTexelLoc = GetShaderLocation(fxaaShader, "u_texel");
   radialBlurEnabledLoc = GetShaderLocation(compositeShader, "u_radialBlurEnabled");
@@ -352,18 +364,20 @@ static void DualFilterPass(Shader sh, int texSizeLoc, Texture2D src,
   if (streakCfg != NULL && streakEnabledLoc >= 0)
   {
     float on = (float)streakCfg->bloomStreakEnabled;
-    float str = streakCfg->bloomStreakStrength;
-    float ang = streakCfg->bloomStreakAngle;
-    if (str < 0.0f) str = 0.0f;
-    else if (str > 1.0f) str = 1.0f;
     SetShaderValue(sh, streakEnabledLoc, &on, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(sh, streakStrengthLoc, &str, SHADER_UNIFORM_FLOAT);
-    SetShaderValue(sh, streakAngleLoc, &ang, SHADER_UNIFORM_FLOAT);
+    if (streakCfg->bloomStreakEnabled)
+    {
+      float str = streakCfg->bloomStreakStrength;
+      float ang = streakCfg->bloomStreakAngle;
+      if (str < 0.0f) str = 0.0f;
+      else if (str > 1.0f) str = 1.0f;
+      SetShaderValue(sh, streakStrengthLoc, &str, SHADER_UNIFORM_FLOAT);
+      SetShaderValue(sh, streakAngleLoc, &ang, SHADER_UNIFORM_FLOAT);
+    }
   }
-  if (streakCfg != NULL && dsKarisLoc >= 0)
+  if (karis >= 0.0f && dsKarisLoc >= 0)
     SetShaderValue(sh, dsKarisLoc, &karis, SHADER_UNIFORM_FLOAT);
 
-  // [TỐI ƯU]: Chuyển sang ép kiểu nghịch đảo
   Vector2 ts = {1.0f / (float)srcW, 1.0f / (float)srcH};
   SetShaderValue(sh, texSizeLoc, &ts, SHADER_UNIFORM_VEC2);
 
@@ -375,24 +389,12 @@ static void DualFilterPass(Shader sh, int texSizeLoc, Texture2D src,
     if (mixAlpha > 1.0f) mixAlpha = 1.0f;
     if (usScatterLoc >= 0)
       SetShaderValue(sh, usScatterLoc, &mixAlpha, SHADER_UNIFORM_FLOAT);
-    // Straight (non-premultiplied) alpha: result = src.rgb*a + dst.rgb*(1-a),
-    // i.e. an exact mix() with a = the fragment alpha the shader emits.
     BeginBlendMode(BLEND_ALPHA);
     DrawTexturePro(src, srcRect, dstRect, (Vector2){0, 0}, 0.0f, WHITE);
     EndBlendMode();
   }
   else
   {
-    // [TỐI ƯU 1]: Tắt Alpha Blending để GPU ghi đè 100% pixel ảnh thay vì trộn màu
-    //
-    // AND FLUSH INSIDE THE WINDOW. rlDisableColorBlend() is flush-scoped on both
-    // backends: without the flush the toggle never reaches the GPU before it is
-    // undone, so this draw goes through the blender after all. It happens to be
-    // harmless today only because bloom_downsample.fs writes a literal 1.0
-    // alpha, which makes BLEND_ALPHA an exact no-op — i.e. the correctness of
-    // this line currently lives in a different file that says nothing about it.
-    // Same defect as the final composite below, where it was NOT harmless.
-    // Found by core/tests/scene_target_alpha_contract_test.c.
     rlDisableColorBlend();
     DrawTexturePro(src, srcRect, dstRect, (Vector2){0, 0}, 0.0f, WHITE);
     rlDrawRenderBatchActive();
@@ -699,12 +701,26 @@ void PostFX_Draw(const PostFXConfig *config)
     // weighting those would just dim legitimately large bright regions.
     Texture2D prevTex = bloomTex.texture;
     int prevW = bloomTex.texture.width, prevH = bloomTex.texture.height;
+
+    if (streakEnabledLoc >= 0)
+    {
+      float on = (float)config->bloomStreakEnabled;
+      SetShaderValue(dsShader, streakEnabledLoc, &on, SHADER_UNIFORM_FLOAT);
+      if (config->bloomStreakEnabled)
+      {
+        float str = config->bloomStreakStrength;
+        float ang = config->bloomStreakAngle;
+        if (str < 0.0f) str = 0.0f; else if (str > 1.0f) str = 1.0f;
+        SetShaderValue(dsShader, streakStrengthLoc, &str, SHADER_UNIFORM_FLOAT);
+        SetShaderValue(dsShader, streakAngleLoc, &ang, SHADER_UNIFORM_FLOAT);
+      }
+    }
+
     for (int i = 0; i < s_dfLevels; i++)
     {
       int dstW = dfTex[i].texture.width, dstH = dfTex[i].texture.height;
       float karis = (i == 0) ? s_bloomKaris : 0.0f;
       BeginTextureMode(dfTex[i]);
-      // [TỐI ƯU 1]: Xóa ClearBackground(BLACK)
       DualFilterPass(dsShader, dsTexSizeLoc, prevTex, prevW, prevH, dstW, dstH,
                      config, karis, -1.0f);
       EndTextureMode();
@@ -720,12 +736,16 @@ void PostFX_Draw(const PostFXConfig *config)
     float scatter = (s_bloomScatterOverride > 0.0f) ? s_bloomScatterOverride
                     : (config->bloomScatter > 0.0f) ? config->bloomScatter
                                                     : BLOOM_SCATTER_DEFAULT;
+    if (scatter < 0.0f) scatter = 0.0f;
+    else if (scatter > 1.0f) scatter = 1.0f;
+    if (usScatterLoc >= 0)
+      SetShaderValue(usShader, usScatterLoc, &scatter, SHADER_UNIFORM_FLOAT);
+
     for (int i = s_dfLevels - 1; i >= 0; i--)
     {
       RenderTexture2D dst = (i == 0) ? bloomTex : dfTex[i - 1];
       int dstW = dst.texture.width, dstH = dst.texture.height;
       BeginTextureMode(dst);
-      // [TỐI ƯU 1]: Xóa ClearBackground(BLACK)
       DualFilterPass(usShader, usTexSizeLoc, prevTex, prevW, prevH, dstW, dstH,
                      NULL, 0.0f, scatter);
       EndTextureMode();
@@ -764,10 +784,17 @@ void PostFX_Draw(const PostFXConfig *config)
                             : 1.0f;
   saturationVal *= (1.0f - s_monochrome);
   SetShaderValue(compositeShader, colorGradeEnabledLoc, &colorGradeEnabledVal, SHADER_UNIFORM_FLOAT);
-  float contrastVal = (s_contrastOverride > 0.0f) ? s_contrastOverride : config->contrast;
+  float contrastVal = config->colorGradeEnabled
+                            ? ((s_contrastOverride > 0.0f) ? s_contrastOverride : config->contrast)
+                            : ((s_contrastOverride > 0.0f) ? s_contrastOverride : 1.0f);
+  if (contrastVal <= 0.0f) contrastVal = 1.0f;
   SetShaderValue(compositeShader, contrastLoc, &contrastVal, SHADER_UNIFORM_FLOAT);
   SetShaderValue(compositeShader, saturationLoc, &saturationVal, SHADER_UNIFORM_FLOAT);
-  SetShaderValue(compositeShader, colorTintLoc, &config->colorTint, SHADER_UNIFORM_VEC3);
+
+  Vector3 colorTint = config->colorGradeEnabled ? config->colorTint : (Vector3){1.0f, 1.0f, 1.0f};
+  if (colorTint.x <= 0.0f && colorTint.y <= 0.0f && colorTint.z <= 0.0f)
+      colorTint = (Vector3){1.0f, 1.0f, 1.0f};
+  SetShaderValue(compositeShader, colorTintLoc, &colorTint, SHADER_UNIFORM_VEC3);
 
   Vector3 shadowTint = (config->shadowTint.x + config->shadowTint.y + config->shadowTint.z > 0.0f)
                            ? config->shadowTint

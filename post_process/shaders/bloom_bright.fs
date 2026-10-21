@@ -82,6 +82,10 @@ void main() {
     // Tạo một vùng đệm mượt mờ quanh ngưỡng threshold để triệt tiêu răng cưa
     float knee = (u_knee > 0.0) ? u_knee : 0.15;
     float soft = brightness - u_threshold + knee;
+    if (soft <= 0.0) {
+        finalColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
     soft = clamp(soft, 0.0, 2.0 * knee);
     soft = soft * soft / (4.0 * knee + 0.00001);
 
