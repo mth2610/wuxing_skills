@@ -527,7 +527,7 @@
     {
       "source": "fire/flame_volume.inl",
       "fn": "VFX_ComposeAmbientFire",
-      "label": "AMBIENT FIRE",
+      "label": "GUIDED FIRE",
       "category": "fire",
       "fixture": "timed",
       "lifecycle": "emitter",

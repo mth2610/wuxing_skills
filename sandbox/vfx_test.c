@@ -786,7 +786,7 @@ static void VFXTest_RefreshInspectorParams(bool force)
     {
         s_inspectorParamCount = VFX_LiquidOrb_GetParams(VFX_LiquidOrb_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
-    else if (VFXTest_IsNewFxNamed("AMBIENT FIRE"))
+    else if (VFXTest_IsNewFxNamed("GUIDED FIRE"))
     {
         s_inspectorParamCount = VFX_Fire_GetParams(VFX_Fire_GetLiveConfig(), s_inspectorParams, VFX_TEST_MAX_INSPECTOR_PARAMS);
     }
@@ -1425,7 +1425,7 @@ static const char* s_newFxNames[] = {
     "REF BANDS", "REF PARTICLES", "RIFT BOLT", "RUNE CIRCLE", "SHIELD SHELL", "SHOCK RING",
     "SMOKE COLUMN", "SMOKE PUFF", "[PARTICLE] SMOKE VOLUME", "SURFACE IMPACT", "SURFACE PARTICLE RING", "SWEEP SLASH",
     "MOTION RIBBON TRAIL", "VACUUM CONVERGE", "VACUUM RING", "[TRAIL/FLOW] VOLUME TRAIL", "FISSURE STREAK", "STONE PILLAR",
-    "AMBIENT FIRE", "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "WATER ORB", "WATER STREAM",
+    "GUIDED FIRE", "FIREBALL BURST", "BLACK HOLE", "ICE CRYSTAL", "WATER ORB", "WATER STREAM",
     "WOOD FLOWER", "WOOD LEAVES", "WOOD PETALS", "WOOD VINE",
 };
 // @gen:newfx_names end
@@ -1831,7 +1831,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("DECAL")) return VFX_DecalVariant_Name(s_decalFixtureVariant);
     if (VFXTest_IsNewFxNamed("SURFACE PARTICLE RING")) return VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant);
     if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
-    if (VFXTest_IsNewFxNamed("AMBIENT FIRE")) return VFX_FireMode_Name(VFX_Fire_GetLiveConfig()->mode);
+    if (VFXTest_IsNewFxNamed("GUIDED FIRE")) return VFX_FirePreset_Name(VFX_Fire_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("SURFACE IMPACT")) return VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface);
     return NULL;
 }
@@ -2564,7 +2564,7 @@ void VFXTest_Draw3D(void)
             }
 
             // Slash '/' (and '>' or '.') cycles the value of the selected variable
-            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && (!VFXTest_IsNewFxNamed("GUIDED MOTION") ||
+            if ((IsKeyPressed(KEY_SLASH) || (IsKeyPressed(KEY_PERIOD) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE")) ||
                 !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))))
             {
                 if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
@@ -2577,7 +2577,7 @@ void VFXTest_Draw3D(void)
                 TraceLog(LOG_INFO, "[Inspector] Param '%s' = %s",
                          s_inspectorParams[s_inspectorSelectedParam].name, valBuf);
             }
-            else if (IsKeyPressed(KEY_COMMA) && (!VFXTest_IsNewFxNamed("GUIDED MOTION") ||
+            else if (IsKeyPressed(KEY_COMMA) && ((!VFXTest_IsNewFxNamed("GUIDED MOTION") && !VFXTest_IsNewFxNamed("GUIDED FIRE")) ||
                      !(IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))))
             {
                 VFXTest_UIEditParameter(s_inspectorSelectedParam, -1);
@@ -2707,14 +2707,19 @@ void VFXTest_Draw3D(void)
                     1.5f, 1.0f, s_impactDustFixtureVariant);
             }
         }
-        else if (VFXTest_IsNewFxNamed("AMBIENT FIRE"))
+        else if (VFXTest_IsNewFxNamed("GUIDED FIRE"))
         {
-            int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
-            if (direction != 0)
+            if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
             {
-                VFX_FireConfig *fcfg = VFX_Fire_GetLiveConfig();
-                fcfg->mode = (VFX_FireMode)(((int)fcfg->mode + direction + VFX_FIRE_MODE_COUNT) % VFX_FIRE_MODE_COUNT);
-                TraceLog(LOG_INFO, "AMBIENT FIRE mode: %s (>, next; <, previous)", VFX_FireMode_Name(fcfg->mode));
+                int direction = IsKeyPressed(KEY_PERIOD) ? 1 : (IsKeyPressed(KEY_COMMA) ? -1 : 0);
+                if (direction != 0)
+                {
+                    VFX_FireConfig *fcfg = VFX_Fire_GetLiveConfig();
+                    VFX_FirePreset nextPreset = (VFX_FirePreset)(((int)fcfg->preset + direction + VFX_FIRE_PRESET_COUNT) % VFX_FIRE_PRESET_COUNT);
+                    VFX_Fire_ApplyPreset(fcfg, nextPreset);
+                    VFXTest_RefreshInspectorParams(true);
+                    TraceLog(LOG_INFO, "GUIDED FIRE preset: %s (Shift+> next; Shift+< previous)", VFX_FirePreset_Name(fcfg->preset));
+                }
             }
         }
         else if (VFXTest_IsNewFxNamed("WOOD VINE") || VFXTest_IsNewFxNamed("WOOD LEAVES") || VFXTest_IsNewFxNamed("WOOD FLOWER") || VFXTest_IsNewFxNamed("WOOD PETALS"))

@@ -11,6 +11,22 @@
 #include "environment/shaders/hemisphere_lighting.glsl"
 #include "maps/toolkit/shaders/meadow_palette.glsl"
 
+// ---- Look knobs (this shader is shared by every map that uses MapProp_CreateGround) ----
+// Distant canopy imposter gain. Original 0.64 made far ground ~23% brighter than the near
+// substrate (0.52) while the 3D tufts stay dark, so sparse far tufts read as dark specks.
+#define GS_DISTANT_CANOPY_GAIN 0.54
+// Macro ridge/swale tint. Originals: cool vec3(0.86, 0.96, 0.88), warm vec3(1.14, 1.06, 0.90)
+#define GS_CREST_COOL vec3(0.90, 0.97, 0.92)
+#define GS_CREST_WARM vec3(1.08, 1.04, 0.94)
+// Chroma kept on grass-covered ground albedo (1.0 = original). Keeps the ground from forming a
+// separate hyper-saturated colour system next to the blades.
+#define GS_GRASS_CHROMA 0.86
+// Extra close-range texture presence on the ground between tufts (0.0 = original).
+#define GS_NEAR_DETAIL_BOOST 0.20
+// Mean direct-sun occlusion approximating blade shadows where the dynamic shadow window does not
+// reach (0.0 = original). Inside the window the real blade shadows are used unchanged.
+#define GS_FAR_CANOPY_SHADE 0.22
+
 uniform sampler2D u_cloudNoise;
 uniform sampler2D u_groundRelief; // R/G derived substrate/soil height; B/A litter/moss classes
 uniform int u_groundReliefEnabled;
@@ -299,7 +315,9 @@ void main()
         // substrate naturally shifts from deep moss in swales to warm olive-gold on sunlit hills.
         vec3 targetCanopyColor = MeadowCanopyColor(habitatVal);
         vec3 nearCanopySubstrate = targetCanopyColor * 0.52;
-        grassAlbedo = mix(grassAlbedo, nearCanopySubstrate * (1.0 + detailContrast * 0.75), 0.55);
+        grassAlbedo = mix(grassAlbedo,
+                          nearCanopySubstrate * (1.0 + detailContrast * (0.75 + GS_NEAR_DETAIL_BOOST * detailResolve)),
+                          0.55 - GS_NEAR_DETAIL_BOOST * 0.5 * detailResolve);
 
         if (u_ecologyEnabled != 0)
             grassAlbedo *= mix(vec3(1.0), vec3(0.88, 0.98, 0.90), ecology.b);
@@ -311,7 +329,7 @@ void main()
             if (u_ecologyEnabled != 0)
                 distantCanopyBlend *= smoothstep(0.08, 0.60, ecology.r);
             if (distantCanopyBlend > 0.002) {
-                vec3 canopyColor = targetCanopyColor * 0.64;
+                vec3 canopyColor = targetCanopyColor * GS_DISTANT_CANOPY_GAIN;
                 float clumpNoise1 = sin(fragWorldPos.x * 1.85 + fragWorldPos.z * 1.45)
                                   * cos(fragWorldPos.x * -1.35 + fragWorldPos.z * 2.15);
                 float clumpNoise2 = sin(fragWorldPos.x * 4.20 - fragWorldPos.z * 3.80) * 0.5;
@@ -325,6 +343,9 @@ void main()
                 grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.86);
             }
         }
+
+        float grassAlbedoLuma = dot(grassAlbedo, vec3(0.2126, 0.7152, 0.0722));
+        grassAlbedo = mix(vec3(grassAlbedoLuma), grassAlbedo, GS_GRASS_CHROMA);
     }
 
     // ---- 9. Full 3-Axis Triplanar Cliff Strata, Woodland Loam & Alluvial Shingle Albedo ----
@@ -427,7 +448,7 @@ void main()
     float macroField = 0.50 + 0.32 * macroA + 0.18 * macroB;
     float heightInfluence = clamp((fragWorldPos.y - 1.2) * 0.08, -0.20, 0.30);
     float crestWarmth = clamp(macroField + heightInfluence, 0.0, 1.0);
-    blendedAlbedo *= mix(vec3(0.86, 0.96, 0.88), vec3(1.14, 1.06, 0.90), crestWarmth);
+    blendedAlbedo *= mix(GS_CREST_COOL, GS_CREST_WARM, crestWarmth);
 
     // Distant ridge granite outcrops on high mountain peaks
     if (camDistSqXZ > 1600.0 && fragWorldPos.y > 5.5) {
@@ -478,7 +499,16 @@ void main()
     float grassWrapNdotL = max((rawNdotL + 0.28) * (1.0 / 1.28), 0.0);
     float effectiveNdotL = mix(NdotL, grassWrapNdotL, wGrass * 0.62) * (0.82 + 0.18 * cavityAO);
 
-    float rawShadow = MapShadowVisibility(fragPosition, normal, light);
+    float dynShadowCoverage;
+    float rawShadow = MapShadowVisibilityCov(fragPosition, normal, light, dynShadowCoverage);
+    // Real blade shadows only exist inside the dynamic shadow window around the focus. Outside it,
+    // ground between tufts would stay fully sunlit while the same ground inside the window is
+    // heavily dappled (flat bright carpet in wide views, plus a visible window edge). Approximate
+    // the missing mean canopy occlusion there, only where 3D tufts are drawn (~30..42 m taper).
+    float canopyFarField = wGrass * (1.0 - dynShadowCoverage)
+                         * (1.0 - smoothstep(900.0, 1764.0, camDistSqXZ))
+                         * smoothstep(0.08, 0.60, ecology.r);
+    rawShadow *= 1.0 - GS_FAR_CANOPY_SHADE * canopyFarField;
     float turfShadowVis = rawShadow * mix(rawShadow, 1.0, 0.55);
     float resolvedShadow = mix(rawShadow, turfShadowVis, wGrass);
     float shadowFloor = mix(0.24, 0.46, wGrass);

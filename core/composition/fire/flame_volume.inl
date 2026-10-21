@@ -1254,27 +1254,33 @@ static void FVol_EnsureProceduralNoise(void)
 }
 
 static VFX_FireConfig s_liveFireConfig = {
+    .preset = VFX_FIRE_PRESET_TORCH,
     .mode = VFX_FIRE_MODE_SHADER_TONGUE,
+    .emitterShape = VFX_FIRE_EMITTER_POINT,
+    .emissionMode = VFX_FIRE_EMIT_STEADY,
     .motionType = VFX_FIRE_MOTION_AIRFLOW,
-    .fieldSpeed = 2.4f,
+    .attachment = VFX_FIRE_ATTACH_ANCHORED,
+    .sourceRadius = 0.12f,
+    .sourceLength = 2.0f,
     .fieldRadius = 1.0f,
-    .swirlSpeed = 3.5f,
-    .turbulenceSpeed = 2.2f,
+    .fieldSpeed = 2.4f,
+    .swirlSpeed = 2.0f,
+    .turbulenceSpeed = 1.8f,
     .buoyancy = 4.8f,
     .particleCount = 50,
-    .emitDuration = 0.0f,
-    .sourceRadius = 0.22f,
     .lifetime = 1.5f,
-    .particleRadius = 0.24f,
+    .particleRadius = 0.22f,
+    .riseMultiplier = 1.4f,
+    .emitDuration = 0.0f,
     .intensity = 2.0f,
+    .coreHeat = 1.25f,
     .distortion = 0.40f,
     .softness = 0.50f,
     .emissiveBoost = 1.0f,
-    .riseMultiplier = 1.45f,
-    .windStrength = 0.8f,
-    .windAngleDeg = 20.0f,
-    .autoSize = true,
-    .emitSmoke = false
+    .flickerRate = 14.0f,
+    .emitSparks = true,
+    .emitSmoke = false,
+    .dynamicLight = true
 };
 
 VFX_FireConfig VFX_Fire_DefaultConfig(void)
@@ -1287,35 +1293,211 @@ VFX_FireConfig *VFX_Fire_GetLiveConfig(void)
     return &s_liveFireConfig;
 }
 
+void VFX_Fire_ApplyPreset(VFX_FireConfig *cfg, VFX_FirePreset preset)
+{
+    if (!cfg) return;
+    cfg->preset = preset;
+    switch (preset) {
+    case VFX_FIRE_PRESET_TORCH:
+        cfg->emitterShape = VFX_FIRE_EMITTER_POINT;
+        cfg->emissionMode = VFX_FIRE_EMIT_STEADY;
+        cfg->motionType = VFX_FIRE_MOTION_AIRFLOW;
+        cfg->attachment = VFX_FIRE_ATTACH_ANCHORED;
+        cfg->mode = VFX_FIRE_MODE_SHADER_TONGUE;
+        cfg->sourceRadius = 0.08f;
+        cfg->particleCount = 50;
+        cfg->particleRadius = 0.20f;
+        cfg->buoyancy = 4.5f;
+        cfg->swirlSpeed = 1.5f;
+        cfg->turbulenceSpeed = 1.8f;
+        cfg->coreHeat = 1.30f;
+        cfg->intensity = 2.0f;
+        cfg->emitSparks = true;
+        cfg->dynamicLight = true;
+        break;
+    case VFX_FIRE_PRESET_CAMPFIRE:
+        cfg->emitterShape = VFX_FIRE_EMITTER_CIRCLE;
+        cfg->emissionMode = VFX_FIRE_EMIT_PULSING;
+        cfg->motionType = VFX_FIRE_MOTION_AIRFLOW;
+        cfg->attachment = VFX_FIRE_ATTACH_ANCHORED;
+        cfg->mode = VFX_FIRE_MODE_SHADER_TONGUE;
+        cfg->sourceRadius = 0.45f;
+        cfg->particleCount = 120;
+        cfg->particleRadius = 0.26f;
+        cfg->buoyancy = 5.2f;
+        cfg->swirlSpeed = 2.5f;
+        cfg->turbulenceSpeed = 2.4f;
+        cfg->coreHeat = 1.20f;
+        cfg->intensity = 2.2f;
+        cfg->emitSparks = true;
+        cfg->dynamicLight = true;
+        break;
+    case VFX_FIRE_PRESET_FIRE_TORNADO:
+        cfg->emitterShape = VFX_FIRE_EMITTER_CIRCLE;
+        cfg->emissionMode = VFX_FIRE_EMIT_STEADY;
+        cfg->motionType = VFX_FIRE_MOTION_VORTEX;
+        cfg->attachment = VFX_FIRE_ATTACH_ANCHORED;
+        cfg->mode = VFX_FIRE_MODE_SHADER_TONGUE;
+        cfg->sourceRadius = 0.75f;
+        cfg->particleCount = 350;
+        cfg->particleRadius = 0.35f;
+        cfg->buoyancy = 12.0f;
+        cfg->swirlSpeed = 18.0f;
+        cfg->turbulenceSpeed = 4.5f;
+        cfg->coreHeat = 1.60f;
+        cfg->intensity = 2.5f;
+        cfg->emitSparks = true;
+        cfg->dynamicLight = true;
+        break;
+    case VFX_FIRE_PRESET_FLAMETHROWER:
+        cfg->emitterShape = VFX_FIRE_EMITTER_POINT;
+        cfg->emissionMode = VFX_FIRE_EMIT_SPRAY;
+        cfg->motionType = VFX_FIRE_MOTION_JET;
+        cfg->attachment = VFX_FIRE_ATTACH_FREE;
+        cfg->mode = VFX_FIRE_MODE_SHADER_PUFF;
+        cfg->sourceRadius = 0.10f;
+        cfg->particleCount = 220;
+        cfg->particleRadius = 0.32f;
+        cfg->fieldSpeed = 14.0f;
+        cfg->buoyancy = 1.2f;
+        cfg->swirlSpeed = 1.0f;
+        cfg->distortion = 0.55f;
+        cfg->intensity = 2.2f;
+        cfg->emitSparks = false;
+        cfg->dynamicLight = true;
+        break;
+    case VFX_FIRE_PRESET_FIREBALL:
+        cfg->emitterShape = VFX_FIRE_EMITTER_SPHERE;
+        cfg->emissionMode = VFX_FIRE_EMIT_BURST;
+        cfg->motionType = VFX_FIRE_MOTION_BLAST;
+        cfg->attachment = VFX_FIRE_ATTACH_FREE;
+        cfg->mode = VFX_FIRE_MODE_SHADER_PUFF;
+        cfg->sourceRadius = 0.45f;
+        cfg->particleCount = 180;
+        cfg->particleRadius = 0.35f;
+        cfg->fieldSpeed = 8.0f;
+        cfg->distortion = 0.60f;
+        cfg->intensity = 3.0f;
+        cfg->emitSparks = true;
+        cfg->dynamicLight = true;
+        break;
+    case VFX_FIRE_PRESET_FIRE_WALL:
+        cfg->emitterShape = VFX_FIRE_EMITTER_LINE;
+        cfg->emissionMode = VFX_FIRE_EMIT_STEADY;
+        cfg->motionType = VFX_FIRE_MOTION_AIRFLOW;
+        cfg->attachment = VFX_FIRE_ATTACH_ANCHORED;
+        cfg->mode = VFX_FIRE_MODE_SHADER_TONGUE;
+        cfg->sourceLength = 4.0f;
+        cfg->particleCount = 240;
+        cfg->particleRadius = 0.28f;
+        cfg->buoyancy = 6.0f;
+        cfg->swirlSpeed = 2.0f;
+        cfg->turbulenceSpeed = 2.2f;
+        cfg->emitSparks = true;
+        cfg->dynamicLight = true;
+        break;
+    case VFX_FIRE_PRESET_GROUND_FIRE:
+        cfg->emitterShape = VFX_FIRE_EMITTER_CIRCLE;
+        cfg->emissionMode = VFX_FIRE_EMIT_PULSING;
+        cfg->motionType = VFX_FIRE_MOTION_AIRFLOW;
+        cfg->attachment = VFX_FIRE_ATTACH_SURFACE_CLING;
+        cfg->mode = VFX_FIRE_MODE_SHADER_TONGUE;
+        cfg->sourceRadius = 1.8f;
+        cfg->particleCount = 160;
+        cfg->particleRadius = 0.25f;
+        cfg->buoyancy = 3.0f;
+        cfg->swirlSpeed = 1.0f;
+        cfg->turbulenceSpeed = 2.5f;
+        cfg->emitSparks = true;
+        cfg->dynamicLight = true;
+        break;
+    default:
+        break;
+    }
+}
+
+const char *VFX_FirePreset_Name(VFX_FirePreset preset)
+{
+    static const char *const names[VFX_FIRE_PRESET_COUNT] = {
+        "Custom", "Torch", "Campfire", "Fire Tornado", "Flamethrower", "Fireball", "Fire Wall", "Ground Fire"
+    };
+    int p = (int)preset;
+    if (p < 0 || p >= VFX_FIRE_PRESET_COUNT) p = 0;
+    return names[p];
+}
+
 const char *VFX_FireMode_Name(VFX_FireMode mode)
 {
     static const char *const names[VFX_FIRE_MODE_COUNT] = {
-        "Flipbook Tongue", "Flipbook Puff", "Shader Tongue", "Shader Puff"
+        "Shader Tongue", "Shader Puff", "Flipbook Tongue", "Flipbook Puff"
     };
     int m = (int)mode;
     if (m < 0 || m >= VFX_FIRE_MODE_COUNT) m = 0;
     return names[m];
 }
 
+const char *VFX_FireEmitterShape_Name(VFX_FireEmitterShape shape)
+{
+    static const char *const names[VFX_FIRE_EMITTER_COUNT] = {
+        "Point", "Circle (Disc)", "Sphere (3D)", "Line (Wall)", "Ring", "Hemisphere"
+    };
+    int s = (int)shape;
+    if (s < 0 || s >= VFX_FIRE_EMITTER_COUNT) s = 0;
+    return names[s];
+}
+
+const char *VFX_FireEmissionMode_Name(VFX_FireEmissionMode mode)
+{
+    static const char *const names[VFX_FIRE_EMIT_COUNT] = {
+        "Steady", "Pulsing (Breathing)", "Burst (Detonation)", "Spray (Jet)"
+    };
+    int e = (int)mode;
+    if (e < 0 || e >= VFX_FIRE_EMIT_COUNT) e = 0;
+    return names[e];
+}
+
 const char *VFX_FireMotion_Name(VFX_FireMotionType motion)
 {
     static const char *const names[VFX_FIRE_MOTION_COUNT] = {
-        "Airflow (Upward)", "Vortex (Swirl)", "Blast (Explosion)", "Route (Guided)"
+        "Airflow (Upward)", "Vortex (Whirlwind)", "Blast (Radial)", "Jet (Forward)", "Inward (Suction)"
     };
     int m = (int)motion;
     if (m < 0 || m >= VFX_FIRE_MOTION_COUNT) m = 0;
     return names[m];
 }
 
+const char *VFX_FireAttachment_Name(VFX_FireAttachment attachment)
+{
+    static const char *const names[VFX_FIRE_ATTACH_COUNT] = {
+        "Anchored (Attached)", "Free (Ballistic)", "Surface Cling (Ground)"
+    };
+    int a = (int)attachment;
+    if (a < 0 || a >= VFX_FIRE_ATTACH_COUNT) a = 0;
+    return names[a];
+}
+
 int VFX_Fire_GetParams(VFX_FireConfig *cfg, VFX_ParamDef *out, int max)
 {
     if (!cfg || !out || max <= 0) return 0;
     int n = 0;
+
+    static const char *const presetNames[] = {
+        "Custom", "Torch", "Campfire", "Fire Tornado", "Flamethrower", "Fireball", "Fire Wall", "Ground Fire"
+    };
     static const char *const modeNames[] = {
-        "Flipbook Tongue", "Flipbook Puff", "Shader Tongue", "Shader Puff"
+        "Shader Tongue", "Shader Puff", "Flipbook Tongue", "Flipbook Puff"
+    };
+    static const char *const shapeNames[] = {
+        "Point", "Circle (Disc)", "Sphere (3D)", "Line (Wall)", "Ring", "Hemisphere"
+    };
+    static const char *const emitNames[] = {
+        "Steady", "Pulsing (Breathing)", "Burst (Detonation)", "Spray (Jet)"
     };
     static const char *const motionNames[] = {
-        "Airflow", "Vortex", "Blast", "Route"
+        "Airflow (Upward)", "Vortex (Whirlwind)", "Blast (Radial)", "Jet (Forward)", "Inward (Suction)"
+    };
+    static const char *const attachNames[] = {
+        "Anchored (Attached)", "Free (Ballistic)", "Surface Cling (Ground)"
     };
 
 #define FIRE_PARAM_ENUM(pname, pgroup, val, enames, ecount) \
@@ -1345,33 +1527,41 @@ int VFX_Fire_GetParams(VFX_FireConfig *cfg, VFX_ParamDef *out, int max)
         .valPtr = (void*)&(val) \
     }; } while(0)
 
-    // Mode
-    FIRE_PARAM_ENUM("Fire Mode", "Mode", cfg->mode, modeNames, VFX_FIRE_MODE_COUNT);
+    // Preset & Architecture
+    FIRE_PARAM_ENUM("Preset", "Preset", cfg->preset, presetNames, VFX_FIRE_PRESET_COUNT);
+    FIRE_PARAM_ENUM("Fire Mode", "Preset", cfg->mode, modeNames, VFX_FIRE_MODE_COUNT);
+    FIRE_PARAM_ENUM("Attachment", "Preset", cfg->attachment, attachNames, VFX_FIRE_ATTACH_COUNT);
 
-    // Field
-    FIRE_PARAM_ENUM("Motion", "Field", cfg->motionType, motionNames, VFX_FIRE_MOTION_COUNT);
-    FIRE_PARAM_FLOAT("Travel speed m/s", "Field", cfg->fieldSpeed, 0.0f, 30.0f, 0.5f);
-    FIRE_PARAM_FLOAT("Field radius m", "Field", cfg->fieldRadius, 0.2f, 10.0f, 0.1f);
-    FIRE_PARAM_FLOAT("Swirl m/s", "Field", cfg->swirlSpeed, -30.0f, 30.0f, 0.5f);
-    FIRE_PARAM_FLOAT("Turbulence m/s", "Field", cfg->turbulenceSpeed, 0.0f, 20.0f, 0.5f);
-    FIRE_PARAM_FLOAT("Buoyancy m/s2", "Field", cfg->buoyancy, 0.0f, 25.0f, 0.5f);
+    // Particle Configuration & Scale
+    FIRE_PARAM_FLOAT("Particle size m", "Particle", cfg->particleRadius, 0.05f, 3.0f, 0.05f);
+    FIRE_PARAM_INT("Particle count", "Particle", cfg->particleCount, 5, 1000);
+    FIRE_PARAM_FLOAT("Lifetime s", "Particle", cfg->lifetime, 0.2f, 5.0f, 0.1f);
+    FIRE_PARAM_FLOAT("Rise multiplier", "Particle", cfg->riseMultiplier, 0.2f, 5.0f, 0.1f);
+    FIRE_PARAM_FLOAT("Emission time s", "Particle", cfg->emitDuration, 0.0f, 10.0f, 0.5f);
 
-    // Emission
-    FIRE_PARAM_INT("Particle count", "Emission", cfg->particleCount, 1, 1000);
-    FIRE_PARAM_FLOAT("Emission time s", "Emission", cfg->emitDuration, 0.0f, 10.0f, 0.5f);
-    FIRE_PARAM_FLOAT("Source radius m", "Emission", cfg->sourceRadius, 0.05f, 5.0f, 0.05f);
-    FIRE_PARAM_FLOAT("Lifetime s", "Emission", cfg->lifetime, 0.2f, 5.0f, 0.1f);
+    // Emitter Geometry & Pattern
+    FIRE_PARAM_ENUM("Shape", "Emitter", cfg->emitterShape, shapeNames, VFX_FIRE_EMITTER_COUNT);
+    FIRE_PARAM_ENUM("Pattern", "Emitter", cfg->emissionMode, emitNames, VFX_FIRE_EMIT_COUNT);
+    FIRE_PARAM_FLOAT("Source radius m", "Emitter", cfg->sourceRadius, 0.05f, 5.0f, 0.05f);
+    FIRE_PARAM_FLOAT("Source length m", "Emitter", cfg->sourceLength, 0.2f, 10.0f, 0.2f);
 
-    // Optics & Appearance
-    FIRE_PARAM_FLOAT("Particle radius m", "Optics", cfg->particleRadius, 0.02f, 1.5f, 0.01f);
+    // Motion Field & Fluid Dynamics
+    FIRE_PARAM_ENUM("Motion", "Motion", cfg->motionType, motionNames, VFX_FIRE_MOTION_COUNT);
+    FIRE_PARAM_FLOAT("Field speed m/s", "Motion", cfg->fieldSpeed, 0.0f, 30.0f, 0.5f);
+    FIRE_PARAM_FLOAT("Field radius m", "Motion", cfg->fieldRadius, 0.2f, 10.0f, 0.1f);
+    FIRE_PARAM_FLOAT("Swirl m/s", "Motion", cfg->swirlSpeed, -30.0f, 30.0f, 0.5f);
+    FIRE_PARAM_FLOAT("Turbulence m/s", "Motion", cfg->turbulenceSpeed, 0.0f, 20.0f, 0.5f);
+    FIRE_PARAM_FLOAT("Buoyancy m/s2", "Motion", cfg->buoyancy, 0.0f, 25.0f, 0.5f);
+
+    // Optics & Combustion Essence
     FIRE_PARAM_FLOAT("Intensity", "Optics", cfg->intensity, 0.5f, 5.0f, 0.1f);
+    FIRE_PARAM_FLOAT("Core heat", "Optics", cfg->coreHeat, 0.5f, 3.0f, 0.05f);
     FIRE_PARAM_FLOAT("Distortion", "Optics", cfg->distortion, 0.0f, 1.0f, 0.01f);
     FIRE_PARAM_FLOAT("Softness", "Optics", cfg->softness, 0.05f, 1.0f, 0.01f);
-    FIRE_PARAM_FLOAT("Emissive boost", "Optics", cfg->emissiveBoost, 0.5f, 3.0f, 0.05f);
-    FIRE_PARAM_FLOAT("Wind strength m/s", "Optics", cfg->windStrength, 0.0f, 10.0f, 0.1f);
-    FIRE_PARAM_FLOAT("Wind direction deg", "Optics", cfg->windAngleDeg, 0.0f, 360.0f, 5.0f);
-    FIRE_PARAM_BOOL("Auto size scaling", "Optics", cfg->autoSize);
-    FIRE_PARAM_BOOL("Emit smoke", "Optics", cfg->emitSmoke);
+    FIRE_PARAM_FLOAT("Emissive boost", "Optics", cfg->emissiveBoost, 0.5f, 4.0f, 0.05f);
+    FIRE_PARAM_FLOAT("Flicker rate Hz", "Optics", cfg->flickerRate, 0.0f, 30.0f, 1.0f);
+    FIRE_PARAM_BOOL("Emit sparks", "Optics", cfg->emitSparks);
+    FIRE_PARAM_BOOL("Dynamic light", "Optics", cfg->dynamicLight);
 
 #undef FIRE_PARAM_ENUM
 #undef FIRE_PARAM_FLOAT
@@ -1393,38 +1583,95 @@ void VFX_KillFire(int handle)
     }
 }
 
+static SkillCurve s_anchoredFollowCurve = {0};
+static bool s_anchoredFollowInit = false;
+static void FVol_EnsureAnchoredCurve(void) {
+    if (!s_anchoredFollowInit) {
+        s_anchoredFollowInit = true;
+        FloatCurve_AddStop(&s_anchoredFollowCurve, 0.0f, 1.0f);
+        FloatCurve_AddStop(&s_anchoredFollowCurve, 0.85f, 1.0f);
+        FloatCurve_AddStop(&s_anchoredFollowCurve, 1.0f, 0.70f);
+    }
+}
+
 int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
 {
     if (!cfg) cfg = &s_liveFireConfig;
     FVol_InitShared();
     FVol_EnsureProceduralNoise();
+    FVol_EnsureAnchoredCurve();
 
     float dt = TimeFX_RawDelta();
     if (dt <= 0.0f || dt > 0.1f) dt = 0.016f;
+
+    static Vector3 s_anchoredEmitterPos = {0};
+    s_anchoredEmitterPos = pos;
+
+    // Detect preset changes on live config
+    static VFX_FirePreset s_lastPreset = VFX_FIRE_PRESET_TORCH;
+    if (cfg->preset != s_lastPreset && cfg->preset != VFX_FIRE_PRESET_CUSTOM) {
+        s_lastPreset = cfg->preset;
+        VFX_Fire_ApplyPreset((VFX_FireConfig*)cfg, cfg->preset);
+    } else if (cfg->preset != s_lastPreset) {
+        s_lastPreset = cfg->preset;
+    }
+
+    // 0. Sample dynamic environmental wind from Wind System
+    Vector3 sceneWind = Wind_EvaluateVelocity(pos, TimeFX_Elapsed());
+    float sceneWindSpeed = Vector3Length(sceneWind);
 
     // 1. Maintain or update Motion Field
     MotionFieldRecipe recipe = {0};
     recipe.origin = pos;
     recipe.axis = (Vector3){0.0f, 1.0f, 0.0f};
-    recipe.radiusM = cfg->fieldRadius > 0.1f ? cfg->fieldRadius : 1.0f;
-    recipe.speedMps = cfg->fieldSpeed;
-    recipe.swirlSpeedMps = cfg->swirlSpeed;
-    recipe.turbulenceSpeedMps = cfg->turbulenceSpeed;
-    recipe.gravityMps2 = -cfg->buoyancy; // Updraft buoyancy
     recipe.durationSec = cfg->emitDuration > 0.0f ? (cfg->emitDuration + cfg->lifetime + 1.0f) : 3600.0f;
     recipe.attackSec = 0.05f;
     recipe.fadeSec = 0.3f;
-    recipe.guidance = GUIDE_BALANCED;
 
-    if (cfg->motionType == VFX_FIRE_MOTION_BLAST) {
-        recipe.kind = MOTION_RECIPE_BLAST;
-    } else if (cfg->motionType == VFX_FIRE_MOTION_VORTEX) {
+    if (cfg->attachment == VFX_FIRE_ATTACH_ANCHORED) {
+        // Contained local envelope around anchor
+        recipe.radiusM = (cfg->sourceRadius > 0.05f ? cfg->sourceRadius * 2.2f : 0.8f);
+        recipe.speedMps = fminf(cfg->fieldSpeed, 2.0f);
+        recipe.swirlSpeedMps = fminf(cfg->swirlSpeed, 3.5f);
+        recipe.turbulenceSpeedMps = fminf(cfg->turbulenceSpeed, 1.2f);
+        recipe.gravityMps2 = -fminf(cfg->buoyancy, 4.5f);
+        recipe.guidance = GUIDE_TIGHT;
         recipe.kind = MOTION_RECIPE_AIRFLOW;
-        recipe.swirlSpeedMps = cfg->swirlSpeed * 1.5f;
-    } else if (cfg->motionType == VFX_FIRE_MOTION_ROUTE) {
-        recipe.kind = MOTION_RECIPE_MOVING_GUIDE;
+    } else if (cfg->attachment == VFX_FIRE_ATTACH_SURFACE_CLING) {
+        recipe.radiusM = cfg->fieldRadius > 0.1f ? cfg->fieldRadius : 2.0f;
+        recipe.speedMps = fminf(cfg->fieldSpeed, 1.5f);
+        recipe.swirlSpeedMps = 0.0f;
+        recipe.turbulenceSpeedMps = fminf(cfg->turbulenceSpeed, 0.5f);
+        recipe.gravityMps2 = 0.0f;
+        recipe.guidance = GUIDE_BALANCED;
+        recipe.kind = MOTION_RECIPE_AIRFLOW;
     } else {
-        recipe.kind = MOTION_RECIPE_AIRFLOW;
+        // Free ballistic
+        recipe.radiusM = cfg->fieldRadius > 0.1f ? cfg->fieldRadius : 1.0f;
+        recipe.speedMps = cfg->fieldSpeed;
+        recipe.swirlSpeedMps = cfg->swirlSpeed;
+        recipe.turbulenceSpeedMps = cfg->turbulenceSpeed;
+        recipe.gravityMps2 = -cfg->buoyancy;
+        recipe.guidance = GUIDE_BALANCED;
+        if (cfg->motionType == VFX_FIRE_MOTION_BLAST) {
+            recipe.kind = MOTION_RECIPE_BLAST;
+            recipe.speedMps = (cfg->fieldSpeed > 1.0f) ? cfg->fieldSpeed : 6.0f;
+        } else if (cfg->motionType == VFX_FIRE_MOTION_VORTEX) {
+            recipe.kind = MOTION_RECIPE_AIRFLOW;
+            recipe.swirlSpeedMps = cfg->swirlSpeed * 1.5f;
+        } else if (cfg->motionType == VFX_FIRE_MOTION_JET) {
+            recipe.kind = MOTION_RECIPE_AIRFLOW;
+            Vector3 jetDir = (sceneWindSpeed > 0.05f)
+                ? Vector3Normalize((Vector3){sceneWind.x, 0.2f * sceneWindSpeed, sceneWind.z})
+                : (Vector3){0.0f, 0.2f, 1.0f};
+            recipe.axis = jetDir;
+            recipe.speedMps = (cfg->fieldSpeed > 1.0f) ? cfg->fieldSpeed : 12.0f;
+        } else if (cfg->motionType == VFX_FIRE_MOTION_INWARD) {
+            recipe.kind = MOTION_RECIPE_AIRFLOW;
+            recipe.speedMps = -(cfg->fieldSpeed > 1.0f ? cfg->fieldSpeed : 4.0f);
+        } else {
+            recipe.kind = MOTION_RECIPE_AIRFLOW;
+        }
     }
 
     static VFX_FireConfig s_prevAppliedCfg;
@@ -1438,17 +1685,14 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
         s_prevAppliedCfg.swirlSpeed != cfg->swirlSpeed ||
         s_prevAppliedCfg.turbulenceSpeed != cfg->turbulenceSpeed ||
         s_prevAppliedCfg.buoyancy != cfg->buoyancy ||
-        s_prevAppliedCfg.windStrength != cfg->windStrength ||
-        s_prevAppliedCfg.windAngleDeg != cfg->windAngleDeg;
+        s_prevAppliedCfg.attachment != cfg->attachment;
 
     bool posChanged = (Vector3Distance(s_prevAppliedPos, pos) > 0.01f);
 
     FieldDesc field;
     if (MotionFieldRecipe_Build(&recipe, &field)) {
-        if (cfg->windStrength > 0.0f) {
-            float rad = cfg->windAngleDeg * DEG2RAD;
-            Vector3 windVec = {cosf(rad) * cfg->windStrength, 0.0f, sinf(rad) * cfg->windStrength};
-            field.flow.velocityMps = Vector3Add(field.flow.velocityMps, windVec);
+        if (cfg->attachment != VFX_FIRE_ATTACH_ANCHORED && sceneWindSpeed > 0.01f) {
+            field.flow.velocityMps = Vector3Add(field.flow.velocityMps, sceneWind);
         }
         if (recipeChanged || s_unifiedFireFieldHandle == MOTION_FIELD_INVALID || !MotionFields_IsAlive(s_unifiedFireFieldHandle)) {
             if (s_unifiedFireFieldHandle != MOTION_FIELD_INVALID && MotionFields_IsAlive(s_unifiedFireFieldHandle)) {
@@ -1464,24 +1708,37 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
         }
     }
 
-    // 2. Emission rate
+    // 2. Dynamic Lighting: Realistic warm flickering point light
+    if (cfg->dynamicLight && cfg->intensity > 0.1f) {
+        float flicker = 0.82f + 0.18f * sinf(TimeFX_Elapsed() * (cfg->flickerRate > 0.1f ? cfg->flickerRate : 14.0f));
+        float lightRadius = (cfg->sourceRadius * 1.5f + cfg->fieldRadius * 0.8f + 1.2f) * flicker;
+        float lightLife = dt * 1.5f;
+        if (lightLife < 0.04f) lightLife = 0.04f;
+        VFXLight_Spawn(Vector3Add(pos, (Vector3){0.0f, cfg->sourceRadius * 0.5f + 0.25f, 0.0f}),
+                       (Color){255, 145, 35, 255}, lightRadius, lightLife, VFX_PRIORITY_LOW);
+    }
+
+    // 3. Emission Rate Modulation
     float life = cfg->lifetime > 0.1f ? cfg->lifetime : 1.5f;
     int targetCount = cfg->particleCount > 0 ? cfg->particleCount : 50;
     if (targetCount > 1000) targetCount = 1000;
 
     float rate = (float)targetCount / life;
+    if (cfg->emissionMode == VFX_FIRE_EMIT_PULSING) {
+        float fHz = cfg->flickerRate > 0.1f ? cfg->flickerRate * 0.25f : 3.0f;
+        rate *= (1.0f + 0.45f * sinf(TimeFX_Elapsed() * fHz * 2.0f * PI));
+    } else if (cfg->emissionMode == VFX_FIRE_EMIT_SPRAY) {
+        rate *= 1.35f;
+    }
+
     s_unifiedFireAccum += dt * rate;
     int spawnNow = (int)s_unifiedFireAccum;
     s_unifiedFireAccum -= (float)spawnNow;
     if (spawnNow > 50) { spawnNow = 50; s_unifiedFireAccum = 0.0f; }
     if (spawnNow <= 0) return 0;
 
-    // Auto size factor to maintain 60 FPS at 1000 particles
-    float sizeScale = 1.0f;
-    if (cfg->autoSize && targetCount > 50) {
-        sizeScale = powf(50.0f / (float)targetCount, 0.25f);
-    }
-    float drawRadius = cfg->particleRadius * sizeScale;
+    // Direct particle radius from user configuration (meter-scale)
+    float drawRadius = (cfg->particleRadius > 0.01f) ? cfg->particleRadius : 0.22f;
 
     // Resolve mode texture and volumeSheet
     Texture2D pTex = s_fvolProceduralNoiseTex;
@@ -1514,50 +1771,200 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
         facingAspect = 1.0f;
     }
 
+    static const ParticleDynamicsProfile s_anchoredDynamics = {
+        .inverseMassKg = 1.0f,
+        .gravityScale = 0.0f,
+        .linearDragPerSecond = 5.5f,
+        .terminalSpeedMps = 1.6f,
+        .windCouplingHz = 0.5f,
+        .windSusceptibility = 0.05f
+    };
+    static const ParticleDynamicsProfile s_surfaceClingDynamics = {
+        .inverseMassKg = 1.0f,
+        .gravityScale = 0.0f,
+        .linearDragPerSecond = 4.2f,
+        .terminalSpeedMps = 1.2f,
+        .windCouplingHz = 0.6f,
+        .windSusceptibility = 0.12f
+    };
+    static const ParticleDynamicsProfile s_freeDynamics = {
+        .inverseMassKg = 5.0f,
+        .gravityScale = 0.0f,
+        .linearDragPerSecond = 0.4f,
+        .terminalSpeedMps = 0.0f,
+        .windCouplingHz = 4.5f,
+        .windSusceptibility = 1.0f
+    };
+
+    float effectiveLife = life;
+    if (cfg->attachment == VFX_FIRE_ATTACH_ANCHORED) {
+        // Confine the flame envelope proportionally to both source footprint and particle scale
+        float flameDimension = fmaxf(cfg->sourceRadius, drawRadius * 1.2f);
+        float maxFlameHeight = (flameDimension * 1.8f + 0.35f) * (cfg->riseMultiplier > 0.1f ? cfg->riseMultiplier : 1.0f);
+        effectiveLife = fminf(life, maxFlameHeight / 0.85f);
+        if (effectiveLife < 0.25f) effectiveLife = 0.25f;
+    } else if (cfg->attachment == VFX_FIRE_ATTACH_SURFACE_CLING) {
+        effectiveLife = fminf(life, 1.2f);
+    }
+
     static unsigned int s_seedCounter = 0;
     for (int i = 0; i < spawnNow; ++i) {
         s_seedCounter++;
         float phase = fmodf((float)s_seedCounter * 0.6180339f, 1.0f);
         float ang = phase * 2.0f * PI;
-        float r = sqrtf(fmodf(phase * 7.13f, 1.0f)) * cfg->sourceRadius;
-        Vector3 p = {
-            pos.x + cosf(ang) * r,
-            pos.y + fmodf(phase * 13.7f, 1.0f) * 0.08f,
-            pos.z + sinf(ang) * r
-        };
 
-        Vector3 vel = {
-            cosf(ang) * 0.08f,
-            (0.8f + fmodf(phase * 3.9f, 0.6f)) * cfg->riseMultiplier,
-            sinf(ang) * 0.08f
-        };
+        // 4. Calculate spawn position based on Emitter Shape
+        Vector3 p = pos;
+        switch (cfg->emitterShape) {
+        case VFX_FIRE_EMITTER_POINT:
+            p.x += (fmodf(phase * 11.3f, 1.0f) - 0.5f) * 0.04f;
+            p.y += (fmodf(phase * 7.1f, 1.0f) - 0.5f) * 0.04f;
+            p.z += (fmodf(phase * 13.9f, 1.0f) - 0.5f) * 0.04f;
+            break;
+        case VFX_FIRE_EMITTER_CIRCLE: {
+            float r = sqrtf(fmodf(phase * 7.13f, 1.0f)) * cfg->sourceRadius;
+            p.x += cosf(ang) * r;
+            p.z += sinf(ang) * r;
+            break;
+        }
+        case VFX_FIRE_EMITTER_SPHERE: {
+            float u = fmodf(phase * 5.17f, 1.0f) * 2.0f - 1.0f;
+            float rSph = cbrtf(fmodf(phase * 9.31f, 1.0f)) * cfg->sourceRadius;
+            float rCross = sqrtf(fmaxf(0.0f, 1.0f - u * u));
+            p.x += rCross * cosf(ang) * rSph;
+            p.y += u * rSph;
+            p.z += rCross * sinf(ang) * rSph;
+            break;
+        }
+        case VFX_FIRE_EMITTER_LINE: {
+            float t = fmodf(phase * 17.1f, 1.0f) - 0.5f;
+            Vector3 lineDir = (sceneWindSpeed > 0.05f)
+                ? Vector3Normalize((Vector3){-sceneWind.z, 0.0f, sceneWind.x})
+                : (Vector3){1.0f, 0.0f, 0.0f};
+            p = Vector3Add(p, Vector3Scale(lineDir, t * (cfg->sourceLength > 0.1f ? cfg->sourceLength : 2.0f)));
+            break;
+        }
+        case VFX_FIRE_EMITTER_RING: {
+            p.x += cosf(ang) * cfg->sourceRadius;
+            p.z += sinf(ang) * cfg->sourceRadius;
+            break;
+        }
+        case VFX_FIRE_EMITTER_HEMISPHERE: {
+            float u = fmodf(phase * 5.17f, 1.0f); // upper hemisphere
+            float rHemi = cbrtf(fmodf(phase * 9.31f, 1.0f)) * cfg->sourceRadius;
+            float rCross = sqrtf(fmaxf(0.0f, 1.0f - u * u));
+            p.x += rCross * cosf(ang) * rHemi;
+            p.y += u * rHemi;
+            p.z += rCross * sinf(ang) * rHemi;
+            break;
+        }
+        default:
+            break;
+        }
 
-        if (cfg->motionType == VFX_FIRE_MOTION_BLAST) {
-            float spd = 2.0f + fmodf(phase * 5.1f, 2.5f);
-            vel = (Vector3){cosf(ang) * spd, 0.5f + fmodf(phase * 3.3f, 1.5f), sinf(ang) * spd};
+        // Surface Cling clamping
+        if (cfg->attachment == VFX_FIRE_ATTACH_SURFACE_CLING) {
+            p.y = MapManager_GetGroundHeightAt(p.x, p.z) + 0.02f;
+        }
+
+        // 5. Calculate initial velocity based on Motion Field & Pattern
+        Vector3 vel;
+        if (cfg->attachment == VFX_FIRE_ATTACH_ANCHORED) {
+            // Rooted flame: gentle vertical lick + inward centripetal convergence toward axis + ambient wind tilt
+            float riseSpd = (0.32f + fmodf(phase * 1.7f, 0.28f)) * (cfg->riseMultiplier > 0.1f ? cfg->riseMultiplier : 1.0f);
+            Vector3 toAxis = Vector3Subtract(pos, p);
+            toAxis.y = 0.0f;
+            float distFromAxis = Vector3Length(toAxis);
+            Vector3 inwardVel = {0};
+            if (distFromAxis > 0.001f) {
+                inwardVel = Vector3Scale(Vector3Normalize(toAxis), distFromAxis * 0.95f);
+            }
+            vel = (Vector3){
+                inwardVel.x + sceneWind.x * 0.08f,
+                riseSpd,
+                inwardVel.z + sceneWind.z * 0.08f
+            };
+            if (cfg->motionType == VFX_FIRE_MOTION_VORTEX) {
+                Vector3 rVec = Vector3Subtract(p, pos);
+                rVec.y = 0.0f;
+                Vector3 tangent = {-rVec.z, 0.0f, rVec.x};
+                if (Vector3Length(tangent) > 0.001f) {
+                    tangent = Vector3Normalize(tangent);
+                    vel = Vector3Add(vel, Vector3Scale(tangent, cfg->swirlSpeed * 0.18f));
+                }
+            }
+        } else if (cfg->attachment == VFX_FIRE_ATTACH_SURFACE_CLING) {
+            float creepSpd = (0.15f + fmodf(phase * 1.3f, 0.25f));
+            vel = (Vector3){
+                cosf(ang) * creepSpd,
+                0.04f,
+                sinf(ang) * creepSpd
+            };
+        } else {
+            vel = (Vector3){
+                cosf(ang) * 0.08f,
+                (0.8f + fmodf(phase * 3.9f, 0.6f)) * cfg->riseMultiplier,
+                sinf(ang) * 0.08f
+            };
+            if (cfg->motionType == VFX_FIRE_MOTION_BLAST) {
+                Vector3 outDir = Vector3Normalize(Vector3Subtract(p, pos));
+                if (Vector3Length(outDir) < 0.01f) outDir = (Vector3){cosf(ang), 0.6f, sinf(ang)};
+                float spd = (cfg->fieldSpeed > 1.0f ? cfg->fieldSpeed : 5.0f) * (0.8f + 0.4f * fmodf(phase * 3.3f, 1.0f));
+                vel = Vector3Scale(outDir, spd);
+            } else if (cfg->motionType == VFX_FIRE_MOTION_JET) {
+                float spd = (cfg->fieldSpeed > 1.0f ? cfg->fieldSpeed : 12.0f);
+                Vector3 fwd = (sceneWindSpeed > 0.05f)
+                    ? Vector3Normalize((Vector3){sceneWind.x, 0.12f * sceneWindSpeed, sceneWind.z})
+                    : (Vector3){0.0f, 0.12f, 1.0f};
+                Vector3 right = {-fwd.z, 0.0f, fwd.x};
+                float rx = (fmodf(phase * 11.3f, 1.0f) - 0.5f) * 0.30f;
+                float ry = (fmodf(phase * 7.7f, 1.0f) - 0.5f) * 0.25f;
+                vel = Vector3Scale(Vector3Normalize(Vector3Add(fwd, Vector3Add(Vector3Scale(right, rx), (Vector3){0, ry, 0}))), spd);
+            } else if (cfg->motionType == VFX_FIRE_MOTION_VORTEX) {
+                Vector3 rVec = Vector3Subtract(p, pos);
+                rVec.y = 0.0f;
+                Vector3 tangent = {-rVec.z, 0.0f, rVec.x};
+                if (Vector3Length(tangent) > 0.001f) {
+                    tangent = Vector3Normalize(tangent);
+                    vel = Vector3Add(vel, Vector3Scale(tangent, cfg->swirlSpeed * 0.45f));
+                }
+            }
         }
 
         ParticleConfig pc = {0};
         pc.position = p;
         pc.velocity = vel;
         pc.radius = drawRadius * (0.85f + 0.35f * fmodf(phase * 17.3f, 1.0f));
-        pc.lifetime = life * (0.80f + 0.40f * fmodf(phase * 29.7f, 1.0f));
+        pc.lifetime = effectiveLife * (0.80f + 0.40f * fmodf(phase * 29.7f, 1.0f));
         pc.colorStart = (Color){(unsigned char)fminf(255.0f, cfg->intensity * 60.0f), 0, (unsigned char)(phase * 255.0f), 255};
         pc.colorEnd = (Color){(unsigned char)fminf(255.0f, cfg->intensity * 20.0f), 0, (unsigned char)(phase * 255.0f), 0};
         pc.alphaCurve = &s_fvolFade;
         pc.speedCurve = &s_fvolRise;
         pc.emissiveCurve = &s_fvolCool;
         pc.radiusCurve = &s_fvolGrow;
-        pc.windInfluence = 1.0f;
         pc.facingAspect = facingAspect;
 
-        static const ParticleDynamicsProfile s_fireDynamics = {
-            .inverseMassKg = 4.0f,
-            .gravityScale = 0.0f,
-            .windCouplingHz = 8.0f,
-            .windSusceptibility = 1.0f
-        };
-        pc.physics.dynamics = &s_fireDynamics;
+        if (cfg->attachment == VFX_FIRE_ATTACH_ANCHORED) {
+            pc.followTarget = &s_anchoredEmitterPos;
+            pc.followStrength = 1.0f;
+            pc.followCurve = &s_anchoredFollowCurve;
+            pc.windInfluence = 0.04f;
+            pc.drag = 5.0f;
+            pc.physics.dynamics = &s_anchoredDynamics;
+        } else if (cfg->attachment == VFX_FIRE_ATTACH_SURFACE_CLING) {
+            pc.followTarget = &s_anchoredEmitterPos;
+            pc.followStrength = 0.85f;
+            pc.windInfluence = 0.15f;
+            pc.drag = 3.5f;
+            pc.physics.dynamics = &s_surfaceClingDynamics;
+        } else {
+            pc.followTarget = NULL;
+            pc.followStrength = 0.0f;
+            pc.windInfluence = 1.0f;
+            pc.drag = 0.2f;
+            pc.physics.dynamics = &s_freeDynamics;
+        }
+
         pc.physics.receiveMotionFields = true;
         pc.physics.spatialMotionOnly = true;
 
@@ -1565,7 +1972,7 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
         pc.render.texture = pTex;
         pc.render.normalTex = pNormalTex;
         pc.render.rampLUT = FVol_RampLUT(VC_MAT_FIRE);
-        pc.render.heatGain = cfg->riseMultiplier;
+        pc.render.heatGain = cfg->coreHeat * cfg->riseMultiplier;
         pc.render.smokeGain = cfg->softness;
         pc.render.emissiveBoost = cfg->intensity * cfg->emissiveBoost;
         pc.render.motionWarpScale = cfg->distortion;
@@ -1578,6 +1985,41 @@ int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg)
         }
 
         SpawnParticle(pc);
+
+        // 6. Secondary Effect: Shed Sparks / Embers fluttering from flame tips
+        if (cfg->emitSparks && (s_seedCounter % 6 == 0)) {
+            ParticleConfig sc = {0};
+            sc.position = Vector3Add(p, (Vector3){0.0f, drawRadius * 0.8f, 0.0f});
+            if (cfg->attachment == VFX_FIRE_ATTACH_ANCHORED) {
+                float sparkSpd = 0.38f + fmodf(phase * 3.7f, 0.32f);
+                sc.velocity = (Vector3){cosf(ang) * 0.06f, sparkSpd * (cfg->riseMultiplier > 0.1f ? cfg->riseMultiplier : 1.0f), sinf(ang) * 0.06f};
+                sc.lifetime = effectiveLife * 0.60f;
+                sc.followTarget = &s_anchoredEmitterPos;
+                sc.followStrength = 0.95f;
+                sc.windInfluence = 0.06f;
+                sc.drag = 4.0f;
+                sc.physics.dynamics = &s_anchoredDynamics;
+            } else if (cfg->attachment == VFX_FIRE_ATTACH_SURFACE_CLING) {
+                sc.velocity = (Vector3){cosf(ang) * 0.20f, 0.08f, sinf(ang) * 0.20f};
+                sc.lifetime = 0.40f;
+                sc.windInfluence = 0.20f;
+                sc.drag = 2.5f;
+                sc.physics.dynamics = &s_surfaceClingDynamics;
+            } else {
+                float sparkSpd = 1.4f + fmodf(phase * 7.7f, 1.8f);
+                sc.velocity = (Vector3){cosf(ang) * 0.4f, sparkSpd * cfg->riseMultiplier, sinf(ang) * 0.4f};
+                sc.lifetime = life * 0.55f;
+                sc.windInfluence = 1.0f;
+                sc.physics.dynamics = &s_freeDynamics;
+            }
+            sc.radius = drawRadius * 0.12f;
+            sc.colorStart = (Color){255, 240, 180, 255};
+            sc.colorEnd = (Color){255, 110, 20, 0};
+            sc.physics.receiveMotionFields = true;
+            sc.physics.spatialMotionOnly = true;
+            sc.render.blendMode = VFX_BLEND_ADDITIVE;
+            SpawnParticle(sc);
+        }
     }
 
     return spawnNow;

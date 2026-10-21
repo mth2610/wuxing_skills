@@ -294,6 +294,9 @@ FIXTURE_EVENT_OVERRIDES = {
 # elemental visual. Inference remains useful for the broad registry, while
 # these authored names keep the tester panel describing the actual effect.
 FIXTURE_METADATA_OVERRIDES = {
+    "VFX_ComposeAmbientFire": {
+        "label": "GUIDED FIRE",
+    },
     # Public composition APIs remain semantic so their implementation may
     # evolve. Diagnostic fixtures expose the backend family explicitly: these
     # three can all produce a volumetric smoke vocabulary but have very

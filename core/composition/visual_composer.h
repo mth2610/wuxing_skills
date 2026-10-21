@@ -170,54 +170,114 @@ typedef enum {
     VFX_FLAME_STYLE_DEFAULT = VFX_FLAME_STYLE_NIAGARA_ROIL
 } VFX_FlameStyle;
 
-// ── UNIFIED FIRE SYSTEM (4 MODES + MOTION FIELD GUIDANCE) ────────────────
+// ── GENERALIZED GUIDED FIRE SYSTEM ──────────────────────────────────────────
 typedef enum {
-    VFX_FIRE_MODE_FLIPBOOK_TONGUE = 0, // Flipbook dạng tongue (fire_tongue_01_8x8)
-    VFX_FIRE_MODE_FLIPBOOK_PUFF   = 1, // Flipbook dạng puff (fireroil_8x8 / fire_puff_8x8)
-    VFX_FIRE_MODE_SHADER_TONGUE   = 2, // Shader dạng tongue (Procedural slender tongue, zero flipbook)
-    VFX_FIRE_MODE_SHADER_PUFF     = 3, // Shader dạng puff (Procedural rolling puff, zero flipbook)
+    VFX_FIRE_PRESET_CUSTOM = 0,
+    VFX_FIRE_PRESET_TORCH,          // Point source, steady updraft, anchored, slender tongue
+    VFX_FIRE_PRESET_CAMPFIRE,       // Circular bed, pulsing embers, updraft + eddy turbulence
+    VFX_FIRE_PRESET_FIRE_TORNADO,   // Swirling cylinder vortex, high angular speed, buoyant column
+    VFX_FIRE_PRESET_FLAMETHROWER,   // Directional jet spray forward, free momentum, billowing puffs
+    VFX_FIRE_PRESET_FIREBALL,       // Expanding spherical blast, radial shock, rolling puffs
+    VFX_FIRE_PRESET_FIRE_WALL,      // Linear ribbon edge, upward licking flames, anchored
+    VFX_FIRE_PRESET_GROUND_FIRE,    // Surface clinging flame creeping over terrain
+    VFX_FIRE_PRESET_COUNT
+} VFX_FirePreset;
+
+typedef enum {
+    VFX_FIRE_MODE_SHADER_TONGUE = 0, // Procedural Bézier tongue (Zero flipbook, dynamic advection)
+    VFX_FIRE_MODE_SHADER_PUFF   = 1, // Procedural rolling puff (Zero flipbook, radial billow)
+    VFX_FIRE_MODE_FLIPBOOK_TONGUE = 2, // Authored flipbook tongue atlas
+    VFX_FIRE_MODE_FLIPBOOK_PUFF   = 3, // Authored flipbook puff with optical-flow motion vectors
     VFX_FIRE_MODE_COUNT           = 4
 } VFX_FireMode;
 
 typedef enum {
-    VFX_FIRE_MOTION_AIRFLOW = 0, // Buoyant upward draft + swirl + eddy turbulence
-    VFX_FIRE_MOTION_VORTEX  = 1, // High-speed swirling spiral vortex
-    VFX_FIRE_MOTION_BLAST   = 2, // Outward radial detonation / explosion
-    VFX_FIRE_MOTION_ROUTE   = 3, // Guided stream from source to target
-    VFX_FIRE_MOTION_COUNT   = 4
+    VFX_FIRE_EMITTER_POINT = 0,     // Single focal point (torch tip, wand socket, impact center)
+    VFX_FIRE_EMITTER_CIRCLE,        // Horizontal disc/circle (bonfire bed, summoning circle)
+    VFX_FIRE_EMITTER_SPHERE,        // 3D sphere volume (fireball, explosive core, plasma orb)
+    VFX_FIRE_EMITTER_LINE,          // 1D line segment (fire wall, flame blade trail, trench)
+    VFX_FIRE_EMITTER_RING,          // Expanding or static ring (shock ring, halo of flame)
+    VFX_FIRE_EMITTER_HEMISPHERE,    // Ground dome / hemisphere
+    VFX_FIRE_EMITTER_COUNT
+} VFX_FireEmitterShape;
+
+typedef enum {
+    VFX_FIRE_EMIT_STEADY = 0,       // Continuous uniform emission rate
+    VFX_FIRE_EMIT_PULSING,          // Periodic rhythmic breathing flame (natural wood fire surging)
+    VFX_FIRE_EMIT_BURST,            // Concentrated one-shot burst / detonation
+    VFX_FIRE_EMIT_SPRAY,            // High-pressure directional stream (flamethrower nozzle)
+    VFX_FIRE_EMIT_COUNT
+} VFX_FireEmissionMode;
+
+typedef enum {
+    VFX_FIRE_MOTION_AIRFLOW = 0,    // Thermal updraft (buoyant lift + turbulence + mild curl)
+    VFX_FIRE_MOTION_VORTEX,         // Swirling spiral whirlwind / fire tornado
+    VFX_FIRE_MOTION_BLAST,          // Explosive radial centrifugal expansion
+    VFX_FIRE_MOTION_JET,            // Directional forward jet / stream
+    VFX_FIRE_MOTION_INWARD,         // Suction / implosion (drawing ambient flames to center)
+    VFX_FIRE_MOTION_COUNT
 } VFX_FireMotionType;
 
+typedef enum {
+    VFX_FIRE_ATTACH_ANCHORED = 0,   // Clings to emitter origin (moves with torch / weapon / source)
+    VFX_FIRE_ATTACH_FREE,           // Fully detached into world space (carried by wind & ballistic velocity)
+    VFX_FIRE_ATTACH_SURFACE_CLING,  // Hugs the terrain surface (crawling ground fire)
+    VFX_FIRE_ATTACH_COUNT
+} VFX_FireAttachment;
+
 typedef struct VFX_FireConfig {
+    VFX_FirePreset preset;
     VFX_FireMode mode;
+    VFX_FireEmitterShape emitterShape;
+    VFX_FireEmissionMode emissionMode;
     VFX_FireMotionType motionType;
-    float fieldSpeed;       // m/s
-    float fieldRadius;      // m
-    float swirlSpeed;       // m/s
-    float turbulenceSpeed;  // m/s
-    float buoyancy;         // m/s^2
-    int particleCount;      // 1 to 1000
-    float emitDuration;     // s (0 = continuous)
-    float sourceRadius;     // m
-    float lifetime;         // s
-    float particleRadius;   // m
-    float intensity;        // 0.5 to 5.0
-    float distortion;       // 0.0 to 1.0
-    float softness;         // 0.05 to 1.0
-    float emissiveBoost;    // 0.5 to 3.0
-    float riseMultiplier;   // vertical stretch / rise speed
-    float windStrength;     // m/s
-    float windAngleDeg;     // 0 to 360 deg
-    bool autoSize;          // auto-scale (N/50)^-0.25 to maintain 60 FPS at 1000 particles
-    bool emitSmoke;         // emit smoke on cooldown
+    VFX_FireAttachment attachment;
+
+    // Particle & Lifecycle
+    int particleCount;      // Live particle count budget (5 to 1000)
+    float particleRadius;   // m (visual radius per particle)
+    float lifetime;         // s (particle lifespan)
+    float riseMultiplier;   // Initial launch / vertical velocity multiplier
+    float emitDuration;     // s (0 = continuous, >0 = timed duration)
+
+    // Emitter Geometry
+    float sourceRadius;     // m (radius for circle, sphere, ring)
+    float sourceLength;     // m (length for line / fire wall)
+
+    // Motion Field & Aerodynamics
+    float fieldRadius;      // m (influence radius of motion field)
+    float fieldSpeed;       // m/s (travel speed of jet / airflow)
+    float swirlSpeed;       // m/s (tangential velocity of vortex)
+    float turbulenceSpeed;  // m/s (micro-eddy curl intensity)
+    float buoyancy;         // m/s^2 (thermal upward acceleration)
+
+    // Fire Optics & Physical Essence
+    float intensity;        // Global radiant brightness multiplier (0.5 to 5.0)
+    float coreHeat;         // Incandescent core temperature / Planck peak (0.5 to 3.0)
+    float distortion;       // Noise advection / warp scale (0.0 to 1.0)
+    float softness;         // Edge falloff & soot envelope (0.05 to 1.0)
+    float emissiveBoost;    // Bloom & HDR radiance multiplier (0.5 to 4.0)
+    float flickerRate;      // Hz (flame breathing & light flicker frequency, 0 to 30)
+
+    // Secondary Effects & Lights
+    bool emitSparks;        // Emit shed embers / sparks from flame tips
+    bool emitSmoke;         // Emit cooling soot / smoke from decaying flames
+    bool dynamicLight;      // Cast real-time flickering warm point light onto scene
 } VFX_FireConfig;
 
 VFX_FireConfig VFX_Fire_DefaultConfig(void);
 VFX_FireConfig *VFX_Fire_GetLiveConfig(void);
+void VFX_Fire_ApplyPreset(VFX_FireConfig *cfg, VFX_FirePreset preset);
 int VFX_Fire_GetParams(VFX_FireConfig *cfg, VFX_ParamDef *outParams, int maxParams);
 int VFX_ComposeFireEx(Vector3 pos, const VFX_FireConfig *cfg);
+#define VFX_ComposeGuidedFire VFX_ComposeFireEx
 void VFX_KillFire(int handle);
+const char *VFX_FirePreset_Name(VFX_FirePreset preset);
 const char *VFX_FireMode_Name(VFX_FireMode mode);
+const char *VFX_FireEmitterShape_Name(VFX_FireEmitterShape shape);
+const char *VFX_FireEmissionMode_Name(VFX_FireEmissionMode mode);
 const char *VFX_FireMotion_Name(VFX_FireMotionType motion);
+const char *VFX_FireAttachment_Name(VFX_FireAttachment attachment);
 
 // Unified / Generalized API
 void VFX_ComposeFlame(Vector3 pos, VC_MaterialId matId, float scale, float intensity);

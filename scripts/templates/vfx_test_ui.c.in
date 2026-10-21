@@ -360,7 +360,7 @@ static const char *VFXTest_UIActiveVariant(void)
     if (VFXTest_IsNewFxNamed("DECAL")) return VFX_DecalVariant_Name(s_decalFixtureVariant);
     if (VFXTest_IsNewFxNamed("SURFACE PARTICLE RING")) return VFX_SurfaceParticleRingVariant_Name(s_surfaceParticleRingFixtureVariant);
     if (VFXTest_IsNewFxNamed("IMPACT DUST")) return VFX_ImpactDustVariant_Name(s_impactDustFixtureVariant);
-    if (VFXTest_IsNewFxNamed("AMBIENT FIRE")) return VFX_FireMode_Name(VFX_Fire_GetLiveConfig()->mode);
+    if (VFXTest_IsNewFxNamed("GUIDED FIRE")) return VFX_FirePreset_Name(VFX_Fire_GetLiveConfig()->preset);
     if (VFXTest_IsNewFxNamed("SURFACE IMPACT")) return VFXTest_SurfaceImpactReceiverName(s_surfaceImpactFixtureSurface);
     return NULL;
 }

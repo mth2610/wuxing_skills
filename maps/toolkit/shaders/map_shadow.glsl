@@ -216,8 +216,13 @@ float MapShadowContrast(float visibility)
     return visibility * (1.0 - 0.0471 * (1.0 - visibility));
 }
 
-float MapDynamicShadowVisibility(vec3 worldPos, float slope)
+// Same result as MapDynamicShadowVisibility, and additionally reports how much of the dynamic
+// capture window covers this receiver: 0 = outside the window (or dynamic shadows disabled),
+// 1 = fully inside, smooth across the window's outer 12% edge fade. Receivers can use it to
+// approximate occlusion the window cannot provide (e.g. blade shadows far from the focus).
+float MapDynamicShadowVisibilityCov(vec3 worldPos, float slope, out float coverage)
 {
+    coverage = 0.0;
     if (u_shadowEnabled < 0.5)
         return 1.0;
 
@@ -230,12 +235,19 @@ float MapDynamicShadowVisibility(vec3 worldPos, float slope)
     float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.12);
     if (edgeFade <= 0.0)
         return 1.0;
+    coverage = edgeFade;
 
     float compareDepth = projected.z - mix(0.00028, 0.00085, slope);
     float visibility = MapShadowFilteredVisibility(
         shadowMap, projected.xy, compareDepth, u_shadowTexel, MAP_DYNAMIC_SHADOW_RADIUS,
         u_shadowThinFeatureBoost);
     return MapShadowContrast(mix(1.0, visibility, edgeFade));
+}
+
+float MapDynamicShadowVisibility(vec3 worldPos, float slope)
+{
+    float coverage;
+    return MapDynamicShadowVisibilityCov(worldPos, slope, coverage);
 }
 
 float MapStaticShadowVisibility(vec3 worldPos, float slope)
@@ -266,8 +278,9 @@ float MapShadowWorldTexelSize(mat4 lightVP, float texelSize)
 }
 #endif
 
-float MapShadowVisibility(vec3 worldPos, vec3 normal, vec3 lightDir)
+float MapShadowVisibilityCov(vec3 worldPos, vec3 normal, vec3 lightDir, out float dynamicCoverage)
 {
+    dynamicCoverage = 0.0;
     if (u_shadowEnabled < 0.5 && u_staticShadowEnabled < 0.5)
         return 1.0;
 
@@ -284,7 +297,7 @@ float MapShadowVisibility(vec3 worldPos, vec3 normal, vec3 lightDir)
     vec3 dynamicPos = worldPos;
 #endif
 
-    float dynamicShadow = MapDynamicShadowVisibility(dynamicPos, slope);
+    float dynamicShadow = MapDynamicShadowVisibilityCov(dynamicPos, slope, dynamicCoverage);
     if (dynamicShadow <= 0.001)
         return 0.0;
 
@@ -294,4 +307,10 @@ float MapShadowVisibility(vec3 worldPos, vec3 normal, vec3 lightDir)
     vec3 staticPos = worldPos;
 #endif
     return min(dynamicShadow, MapStaticShadowVisibility(staticPos, slope));
+}
+
+float MapShadowVisibility(vec3 worldPos, vec3 normal, vec3 lightDir)
+{
+    float dynamicCoverage;
+    return MapShadowVisibilityCov(worldPos, normal, lightDir, dynamicCoverage);
 }

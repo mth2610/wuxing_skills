@@ -308,3 +308,113 @@
   3. Bổ sung cơ chế phát hiện thay đổi tham số trường lực `recipeChanged` trong `VFX_ComposeFireEx`: dừng field cũ và tái tạo field mới ngay trong frame đó khi người dùng kéo slider liên quan đến chuyển động / trường lực.
   4. Đảo ngược tọa độ $Y$ trong `particle_lit.fs` thành `float y = 1.0 - fragTexCoord.y;` giúp ngọn lửa vươn thẳng đứng tự nhiên, kích hoạt đầy đủ các tầng noise advection `w1` và `d`.
   5. Cấu hình `ParticleDynamicsProfile` (`inverseMassKg = 4.0f`, `windCouplingHz = 8.0f`, `spatialMotionOnly = true`, `receiveMotionFields = true`) giúp hạt lửa phản hồi tức thì và sinh động theo từng nhịp xoáy vortex, luồng khí bốc lên hoặc nổ tung blast.
+
+---
+
+## 12. Session Summary: Tổng Quát Hóa Guided Fire VFX & Bản Chất Vật Lý Của Lửa
+
+### 12.1. Yêu Cầu & Mục Tiêu Thiết Kế
+1. Đổi tên hiệu ứng lửa thành **`GUIDED FIRE`** (thay thế hoàn toàn `AMBIENT FIRE`).
+2. Viết tổng quát hóa hệ thống để mô tả đầy đủ mọi biểu hiện và trạng thái của lửa:
+   - **Hình dạng Emitter**: Điểm (Point), Hình tròn (Circle/Disc), Khối cầu (Sphere), Đoạn thẳng (Line/Wall), Vòng tròn (Ring), Bán cầu (Hemisphere).
+   - **Cách Phát Tán (Emission Pattern)**: Liên tục (Steady), Nhấp nháy / Thở (Pulsing), Bùng nổ (Burst), Phun tia (Spray/Jet).
+   - **Dạng Trường Lực (Motion Field Type)**: Khí động bốc lên (Airflow), Lốc xoáy (Vortex), Nổ tỏa tròn (Blast), Đẩy phản lực (Jet), Hút vào tâm (Inward).
+   - **Chế Độ Bám / Bay Tự Do (Attachment Mode)**: Neo giữ tại nguồn (Anchored), Bay tự do (Free), Bám sát mặt đất (Surface Cling).
+3. Thể hiện **đúng chất của lửa nhất (Combustion Essence)**:
+   - Lõi nóng sáng bức xạ vật đen (Blackbody radiation): Lõi trắng sáng (White-hot core) $\to$ Vàng kim $\to$ Cam $\to$ Đỏ hồng $\to$ Khói mụi than.
+   - Bốc nhiệt Archimedes (buoyancy) và lực cản khí động học (fluid drag).
+   - Đốm than hồng / tia lửa bay lơ lửng từ đầu ngọn lửa (`emitSparks`).
+   - Nguồn sáng động chiếu sáng môi trường (`VFXLight_Spawn`) nhấp nháy chân thực theo thời gian thực.
+   - 7 Presets cấu hình nhanh: Torch, Campfire, Fire Tornado, Flamethrower, Fireball, Fire Wall, Ground Fire (có thể chuyển bằng `Shift+.` / `Shift+,` hoặc trên UI).
+
+### 12.2. Các Giải Pháp Triển Khai
+1. **Kiến Trúc Tổng Quát Tại `core/composition/visual_composer.h`**:
+   - Định nghĩa các enum `VFX_FirePreset`, `VFX_FireMode`, `VFX_FireEmitterShape`, `VFX_FireEmissionMode`, `VFX_FireMotionType`, `VFX_FireAttachment`.
+   - Bổ sung cấu trúc `VFX_FireConfig` với các tham số hình học nguồn (`sourceLength`, `sourceRadius`), động lực học, quang học và bản chất lửa (`coreHeat`, `flickerRate`, `emitSparks`, `dynamicLight`).
+   - Cung cấp macro `#define VFX_ComposeGuidedFire VFX_ComposeFireEx`.
+2. **Triển Khai Core Tại `core/composition/fire/flame_volume.inl`**:
+   - `VFX_Fire_ApplyPreset`: Cài đặt thông số chuẩn mực cho 7 preset đặc trưng.
+   - `VFX_Fire_GetParams`: Đăng ký 5 nhóm tham số trong Inspector (`Preset`, `Emitter`, `Motion`, `Emission`, `Optics`).
+   - Toán học phân bổ vị trí sinh hạt theo từng hình học Emitter: Point, Circle (Polar), Sphere (Fibonacci/Spherical), Line (Tangent vector), Ring, Hemisphere.
+   - Thiết lập vận tốc ban đầu đồng bộ với trường lực (Blast radial, Jet directional, Vortex tangential, Surface cling damping).
+   - Bám địa hình với `MapManager_GetGroundHeightAt` khi bật `VFX_FIRE_ATTACH_SURFACE_CLING`.
+   - Chiếu sáng động bằng `VFXLight_Spawn` với bán kính và độ chói nhấp nháy tự nhiên.
+   - Sinh tia lửa / tàn lửa (`emitSparks`) tách biệt với blend mode additive.
+3. **Đồng Bộ Hóa Fixture Sandbox & UI**:
+   - Đổi tên nhãn thành `"GUIDED FIRE"` trong `scripts/sync_vfx_test.py`, `scripts/vfx_test_manifest.json`, `scripts/templates/vfx_test_ui.c.in` và `sandbox/vfx_test.c`.
+   - Hỗ trợ đổi Preset bằng phím nóng `Shift+.` / `Shift+,` và điều chỉnh giá trị từng tham số bằng phím `,` / `.`.
+
+### 12.3. Kết Quả Đo Đạc & Kiểm Thử
+- **Đo kiểm tương phản nền sáng (§11b - `render_vfx_matrix.sh "GUIDED FIRE" 40`)**:
+  - Dark: Cover 0.195%, Darken 30.4%, Structure 1.150, AbsVar 87.4.
+  - Mid: Cover 0.328%, Darken 26.6%, Structure 0.495.
+  - White: Cover 0.073%, Darken 15.4%, Structure 0.044.
+  - Warm: Cover 0.214%, Darken 33.6%, Structure 0.114.
+  - Cool: Cover 0.239%, Darken 25.4%, Structure 0.127.
+- **Bộ Kiểm Thử Tự Động**:
+  - `bash scripts/run_core_tests.sh flame`: **4/4 passed (100%)**.
+  - `WUXING_AUTOTEST=1 ./build/wuxing`: **19/19 passed (100%)**.
+  - Build CMake: **0 warning, 0 error**.
+
+### 12.4. Phân Tích & Khắc Phục Lỗi Hạt Bay Tùm Lum Ở Chế Độ Anchored
+- **Hiện tượng**: Khi chuyển `Attachment` sang `Anchored (Attached)` ("bám vào 1 chỗ"), các hạt lửa và tàn lửa vẫn bay tứ tung, phát tán xa khỏi nguồn.
+- **Nguyên nhân kỹ thuật**:
+  1. Chưa gán con trỏ `followTarget` trong `ParticleConfig`: hạt sinh ra bị bỏ lại trong không gian thế giới mà không neo giữ vào tọa độ nguồn `pos`.
+  2. Thời gian sống `lifetime` không bị khống chế theo chiều cao ngọn lửa: hạt sống tới 1.5 - 3.0s, liên tục bay cao và tản ra ngoài tầm kiểm soát.
+  3. Thiếu lực cản khí động (`linearDragPerSecond = 0.0f` và `pc.drag = 0.0f`), độ nhạy gió quá cao (`windCouplingHz = 8.5f`, `windSusceptibility = 0.90f`): gió môi trường thổi dạt cả khối lửa đi xa.
+  4. Trường lực cộng thêm vector gió `windVec` làm dịch chuyển tâm luồng khí bốc lên ra khỏi vị trí neo.
+  5. Vận tốc ban đầu phân kỳ theo hướng ngẫu nhiên thay vì hội tụ hướng tâm tạo thành búp lửa.
+- **Giải pháp xử lý**:
+  1. Gán `pc.followTarget = &s_anchoredEmitterPos`, `followStrength = 1.0f` và đường cong `s_anchoredFollowCurve` giữ chặt hạt vào nguồn.
+  2. Giới hạn `effectiveLife` theo chiều cao ngọn lửa: $H_{\text{flame}} \approx (1.8 R + 0.35) \times \text{riseMultiplier}$, hạt tự tắt gọn gàng ở đỉnh búp lửa.
+  3. Bổ sung `linearDragPerSecond = 5.5f`, `terminalSpeedMps = 1.6f`, `pc.drag = 5.0f`, triệt tiêu ảnh hưởng gió (`windInfluence = 0.04f`, `windSusceptibility = 0.05f`).
+  4. Thu nhỏ bán kính trường lực trong chế độ Anchored xuống $2.2 \times \text{sourceRadius}$, không cộng vector gió vào trường lực để giữ nguyên tâm búp lửa.
+  5. Thêm vector vận tốc hướng tâm `inwardVel = normalize(toAxis) * distFromAxis * 0.95f` kéo các hạt uốn vào trục giữa, tạo hình dáng búp lửa / lưỡi lửa chuẩn mực.
+  6. Tàn lửa / tia lửa (`emitSparks`) neo chặt vào nguồn, giảm tốc độ và tắt ngay trên đầu ngọn lửa.
+
+---
+
+## 13. Session Summary: Tích Hợp Hệ Thống Gió Môi Trường (Wind System) & Điều Khiển Trực Tiếp Kích Thước Hạt Lửa
+
+### 13.1. Bối Cảnh & Phản Hồi Từ Người Dùng
+- **Phản hồi của người dùng**:
+  1. *"đưa 2 tham số gió này vào chỉnh là sai, gió phải lấy từ wind system, ko được chỉnh"*: Việc đặt 2 thanh trượt `Wind strength m/s` và `Wind direction deg` trên bảng điều khiển ngọn lửa là sai quy chuẩn kiến trúc vật lý. Gió môi trường phải được đo đạc động từ hệ thống gió của engine (`core/wind/wind_system.h`), không thể cấu hình thủ công riêng rẽ cho từng ngọn lửa.
+  2. *"Với chưa có chỉnh được kích thước hạt lửa"*: Người dùng chưa điều chỉnh được kích thước hạt lửa trực tiếp và nhạy bén trên giao diện UI Inspector.
+
+### 13.2. Nguyên Nhân Kỹ Thuật
+1. **Lỗi Thiết Kế Gió Thủ Công**:
+   - Hai tham số gió trước đây bị đặt nhầm vào nhóm `"Optics"` và cấu hình tĩnh trong `VFX_FireConfig`, phá vỡ tính nhất quán vật lý với Macro Wind, Vorticles, và Boundary Layer của hệ thống gió môi trường.
+2. **Khó Điều Khiển Kích Thước Hạt Lửa**:
+   - `particleRadius` bị chôn sâu trong nhóm `"Emission"` với nhãn `"Particle radius m"` và dải giá trị hẹp ($0.02\text{m} - 1.5\text{m}$).
+   - Cơ chế `autoSize` mặc định bật áp dụng tỉ lệ $(50 / N)^{0.25}$, tự động thu nhỏ hạt lại khi số lượng hạt tăng lên, làm triệt tiêu hiệu ứng khi người dùng kéo thanh trượt kích thước.
+   - Trong chế độ `ANCHORED`, trần chiều cao `maxFlameHeight` chỉ tính theo `sourceRadius` mà không tính theo kích thước hạt, khiến các hạt kích thước lớn vừa sinh ra đã bị cắt cụt vòng đời vì vượt quá trần chiều cao.
+
+### 13.3. Giải Pháp Triển Khai
+1. **Liên Kết Động Hệ Thống Gió Môi Trường (`core/wind/wind_system.h`)**:
+   - Xóa bỏ hoàn toàn 2 tham số `Wind strength m/s` và `Wind direction deg` khỏi bảng Inspector và `VFX_FireConfig`.
+   - Trong `VFX_ComposeFireEx`, lấy mẫu vận tốc gió tức thời tại vị trí ngọn lửa qua `Wind_EvaluateVelocity(pos, TimeFX_Elapsed())`.
+   - Chế độ `FREE`: Trường lực `field.flow.velocityMps` tự động trôi theo `sceneWind`, các hạt bay tự do được cuốn theo gió tự nhiên qua `pc.windInfluence = 1.0f`.
+   - Chế độ `JET`: Hướng phụt lửa tự động uốn theo hướng gió chủ đạo nếu có gió.
+   - Chế độ `ANCHORED`: Chân ngọn lửa neo chặt tại nguồn, thân ngọn lửa nghiêng nhẹ theo gió thổi (`vel.x += sceneWind.x * 0.08f; vel.z += sceneWind.z * 0.08f;`), tái hiện chính xác hình ảnh ngọn đuốc bập bùng trước gió.
+2. **Thanh Trượt Kích Thước Hạt Lửa Nổi Bật & Phản Hồi Trực Tiếp 1:1**:
+   - Tạo nhóm tham số `"Particle"` riêng biệt ngay dưới nhóm `"Preset"`:
+     - `"Particle size m"` liên kết với `cfg->particleRadius` với dải giá trị rộng $0.05\text{m} - 3.0\text{m}$ (bước nhảy $0.05\text{m}$).
+     - Đi kèm `"Particle count"`, `"Lifetime s"`, `"Rise multiplier"`, `"Emission time s"`.
+   - Gỡ bỏ hoàn toàn giảm tỉ lệ `autoSize`: kích thước vẽ hạt `drawRadius = cfg->particleRadius` phản hồi 1:1 tức thì theo thanh trượt.
+   - Nới rộng trần chiều cao trong chế độ `ANCHORED`:
+     $$\text{flameDimension} = \max(\text{sourceRadius}, \text{drawRadius} \times 1.2)$$
+     $$\text{maxFlameHeight} = (\text{flameDimension} \times 1.8 + 0.35) \times \text{riseMultiplier}$$
+     Đảm bảo khi tăng kích thước hạt, ngọn lửa có đủ không gian vươn cao, phập phồng và cuộn sóng tự nhiên.
+
+### 13.4. Kết Quả Đo Đạc & Kiểm Thử
+- **Đo kiểm tương phản nền sáng (§11b - `scripts/render_vfx_matrix.sh "GUIDED FIRE" 40`)**:
+  - Dark: Cover 0.203%, Darken 29.2%, Structure 1.138, AbsVar 88.9, Detail 0.473.
+  - Mid: Cover 0.347%, Darken 25.1%, Structure 0.500, AbsVar 66.8.
+  - White: Cover 0.080%, Darken 14.1%, Structure 0.048, AbsVar 11.3.
+  - Warm: Cover 0.220%, Darken 32.6%, Structure 0.118, AbsVar 25.1.
+  - Cool: Cover 0.252%, Darken 24.1%, Structure 0.128, AbsVar 28.9.
+- **Bộ Kiểm Thử Tự Động**:
+  - `WUXING_AUTOTEST=1 ./build/wuxing`: **19/19 test cases PASSED (100%)**.
+  - `bash scripts/run_core_tests.sh flame`: **4/4 suites PASSED (100%)**.
+  - Biên dịch CMake: **0 warning, 0 error**.
+
