@@ -1,0 +1,59 @@
+#ifndef VOLUMETRIC_FOG_H
+#define VOLUMETRIC_FOG_H
+
+#include "raylib.h"
+#include <stdbool.h>
+
+// Khởi tạo hệ thống sương mù thể tích không gian & God-Rays
+void VolumetricFog_Init(int width, int height);
+
+// Giải phóng tài nguyên
+void VolumetricFog_Unload(void);
+
+// Cập nhật khi kích thước cửa sổ thay đổi
+void VolumetricFog_Resize(int width, int height);
+
+// Gọi trong 3D pass để yêu cầu snapshot depth cho volumetric raymarch
+void VolumetricFog_PreFrame(void);
+
+// Thực thi render pass sương mù thể tích & God-rays, sau đó hòa trộn vào Scene HDR
+// Direct radiance uses normalized Henyey-Greenstein Mie scattering and enabled
+// dynamic/static directional-shadow visibility; no synthetic canopy is added.
+// Density controls extinction independently. The 0.20 transmittance floor is
+// applied before in-scattering so premultiplied radiance and opacity agree.
+void VolumetricFog_Render(Camera3D camera);
+
+// Bật/tắt sương mù thể tích
+// Effective enable state, including tuning.cfg volumetric_fog_enabled (default 1).
+bool VolumetricFog_IsEnabled(void);
+void VolumetricFog_SetEnabled(bool enabled);
+
+// Cấu hình cường độ God-rays (0.0 = tắt god rays, 1.0 = mặc định)
+void  VolumetricFog_SetGodRayIntensity(float intensity);
+float VolumetricFog_GetGodRayIntensity(void);
+
+// Fraction of the legacy distant ground-depth footprint, compressed toward
+// the far edge of the camera frame. Default 1; clamped to [0,1]; NaN resets 1.
+// 2/3 moves the distant onset from 12% to 41.33% of the projected ground
+// half-span. Zero removes global distant haze. Local volumes, nearby profiles,
+// density and light intensity are unaffected. Persists across resize; map
+// owners must restore 1 when leaving a map with a custom footprint.
+// Applies to both analytical height fog and volumetric rendering.
+void VolumetricFog_SetDistantCoverage(float areaRatio);
+float VolumetricFog_GetDistantCoverage(void);
+
+typedef enum {
+    FOG_MODE_VOLUMETRIC = 0, // Full 3D raymarching with light shafts
+    FOG_MODE_HEIGHT     = 1, // Analytical closed-form exponential height fog (ultra-fast)
+    FOG_MODE_OFF        = 2, // Disabled
+} FogRenderMode;
+
+// Cấu hình chế độ dựng hình sương mù
+// The requested volumetric mode renders analytically at Low quality; the
+// request is retained and resumes raymarching when the resolved tier rises.
+void          Fog_SetRenderMode(FogRenderMode mode);
+FogRenderMode Fog_GetRenderMode(void);
+const char*   Fog_GetRenderModeName(FogRenderMode mode);
+void          Fog_CycleRenderMode(void);
+
+#endif // VOLUMETRIC_FOG_H

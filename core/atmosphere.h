@@ -1,50 +1,7 @@
-#ifndef ATMOSPHERE_H
-#define ATMOSPHERE_H
+// core/atmosphere.h — Forwarding header for backward compatibility
+#ifndef CORE_ATMOSPHERE_H
+#define CORE_ATMOSPHERE_H
 
-#include "raylib.h"
+#include "environment/atmosphere.h"
 
-// Đợt G3 — ambient atmosphere: slow-drifting dust/ash motes that catch the
-// moonlight and fill the dead night air with depth and life. Self-contained
-// (own soft-dot texture, fixed static pool, no malloc), reusable by any scene.
-// Motes live in a box volume and wrap inside it, so density stays constant and
-// the field never empties. Drawn as additive billboards → in the HDR pipeline
-// overlapping motes bloom softly on their own.
-// Receiver mode is a velocity tracer with relaxation and authored settling slip:
-// no effective mass, displaced volume or Newton force response is implied.
-// Legacy Motion publication arrives through Wind; typed absolute FlowField
-// samples replace the medium velocity. Neither source is sampled twice.
-// Motion follows the shared Wind field with size-dependent linear drag and
-// integrated velocity. Dust has gentle settling slip; embers retain thermal
-// rise. The recycling faces fade to zero emission to hide wrap discontinuities.
-// Turning airflow is sampled at predicted trajectory midpoints, with 1/60 s
-// integration intervals during ordinary frames (catch-up is capped at 64 steps).
-//
-// Usage:
-//   Atmosphere_Init();                                  // once, after GL is up
-//   Atmosphere_Configure(center, extent, count, tint);  // optional; sane default
-//   ... each frame:
-//   Atmosphere_Update(dt, camera);
-//   Atmosphere_Draw(camera);   // inside the 3D pass, manages its own blend
-//   Atmosphere_Unload();                                // at shutdown
-
-typedef enum {
-    ATMO_MODE_MOONLIGHT_DUST = 0, // Bụi trôi ánh trăng dịu mát (mặc định)
-    ATMO_MODE_WAR_EMBERS,         // Tàn tro than hồng rực lửa từ chiến địa (Ghost of Tsushima style)
-    ATMO_MODE_SPIRIT_SPARKS       // Đốm sáng tiên khí lấp lánh (phong cách tiên hiệp)
-} AtmosphereMode;
-
-void Atmosphere_Init(void);
-
-// center/extent define the box the motes fill (extent = half-size per axis).
-// count is clamped to the internal pool. tint is the mote color (moonlight).
-void Atmosphere_Configure(Vector3 center, Vector3 extent, int count, Color tint);
-
-// Thiết lập chế độ hạt khí quyển (Ánh trăng, Tàn tro chiến địa, Tiên khí)
-void Atmosphere_SetMode(AtmosphereMode mode);
-AtmosphereMode Atmosphere_GetMode(void);
-
-void Atmosphere_Update(float dt, Camera3D camera);
-void Atmosphere_Draw(Camera3D camera);
-void Atmosphere_Unload(void);
-
-#endif // ATMOSPHERE_H
+#endif // CORE_ATMOSPHERE_H

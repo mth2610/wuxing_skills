@@ -11,7 +11,10 @@ static int failures;
 static int defaultInitCount;
 #define CHECK(c, label) do { if (!(c)) { puts("FAIL: " label); failures++; } } while (0)
 
+#include "core/wind/wind_system.h"
 void Environment_SetSunIntensity(float value) { intensity = value; }
+void Wind_RebuildTerrainGrid(Vector2 centerXZ, Vector2 halfExtentXZ) { (void)centerXZ; (void)halfExtentXZ; }
+void Wind_SetTerrainHeightQuery(TerrainHeightQueryFn queryFn, void *userData) { (void)queryFn; (void)userData; }
 static void DrawCircle3D(Vector3 center, float radius, Vector3 axis, float angle, Color color) {
     (void)center; (void)radius; (void)axis; (void)angle; (void)color;
 }
@@ -28,7 +31,7 @@ static void RegisterGeneratedMaps(void) {
     MapManager_Register("HDR", InitHDR, NULL, NULL, NULL);
     MapManager_Register("NO_INIT", NULL, NULL, NULL, NULL);
 }
-#include "core/map_manager.c"
+#include "maps/map_manager.c"
 
 int main(void) {
     intensity = 7.0f;

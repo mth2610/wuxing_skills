@@ -50,11 +50,14 @@ PROJECT_RESOURCES_PATH ?= resources
 PROJECT_SOURCE_FILES   := main.c \
                           environment/environment_system.c \
                           environment/env_shadow.c \
-                          core/map_manager.c \
+                          environment/atmosphere.c \
+                          maps/map_manager.c \
+                          skills/skill_manager.c \
+                          skills/skill_helper.c \
+                          skills/skill_curve.c \
                           core/resource_manager.c \
                           core/color_gradient.c \
                           core/float_curve.c \
-                          core/skill_curve.c \
                           core/tuning.c \
                           core/emitter_system.c \
                           core/uv/flow_map.c \
@@ -62,15 +65,15 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/uv/uv_deform.c \
                           core/uv/surface_flow.c \
                           core/force_field.c \
-                          core/camera_fx.c \
                           core/particles/particle_system.c \
                           core/particles/gpu/particle_gpu_backend.c \
                           core/path_spline.c \
                           post_process/post_fx.c \
                           post_process/color_grade_lut.c \
+                          post_process/scene_targets.c \
+                          post_process/screen_distort.c \
+                          post_process/camera_fx.c \
                           core/ribbon_strip.c \
-                          core/screen_distort.c \
-                          core/skill_manager.c \
                           core/sprite_anim.c \
                           core/trails/trail_system.c \
                           core/utils_math.c \
@@ -86,7 +89,6 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/time_fx.c \
                           core/motion_controller.c \
                           core/status_vfx.c \
-                          core/skill_helper.c \
                           core/shader_preprocessor.c \
                           core/metaball_fx.c \
                           core/mesh_adjacency.c \
@@ -99,8 +101,7 @@ PROJECT_SOURCE_FILES   := main.c \
     sandbox/colour_probe.c \
                           sandbox/visual_verify.c \
                           sandbox/pool_stats.c \
-                          core/atmosphere.c \
-                          core/audio_system.c \
+                          audio/audio_system.c \
                           core/debug_draw.c \
                           core/surface_material.c \
                           core/gfx_quality.c \

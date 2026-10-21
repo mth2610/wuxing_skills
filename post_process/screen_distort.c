@@ -5,8 +5,8 @@
  * colour from there. Effect code only ever needed ScreenDistort_Add, which is
  * why that name is unchanged and no skill or composition had to be touched.
  */
-#include "core/screen_distort.h"
-#include "core/scene_targets.h"
+#include "post_process/screen_distort.h"
+#include "post_process/scene_targets.h"
 #include "core/resource_manager.h"
 #include "rlgl.h"
 #include <math.h>

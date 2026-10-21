@@ -1,6 +1,6 @@
-#include "core/skill_manager.h"
+#include "skills/skill_manager.h"
 #include "core/time_fx.h"   // TimeFX_Elapsed — pinned clock; GetTime() is wall clock
-#include "core/skills_config.h"
+#include "skills/skills_config.h"
 #include "entities/entities.h"
 
 #if HAS_SKILL_ELECTRIC
@@ -30,7 +30,7 @@
 #include "skills/wood/wood_roots/wood_skill.h"
 #endif
 #include "sandbox/sandbox_core.h"
-#include "core/skills_generated.h"
+#include "skills/skills_generated.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>

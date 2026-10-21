@@ -1,4 +1,4 @@
-#include "core/skill_curve.h"
+#include "skills/skill_curve.h"
 
 void SkillCurve_SetConstant(SkillCurve *curve, float value) {
   curve->count = 0;

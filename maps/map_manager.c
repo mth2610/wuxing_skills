@@ -1,4 +1,4 @@
-#include "core/map_manager.h"
+#include "maps/map_manager.h"
 #include "environment/environment_system.h"
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +14,7 @@ static int s_activeMapIndex = 0;
 static MapZone s_zones[MAX_MAP_ZONES];
 static int s_zoneCount = 0;
 
-#include "core/maps_generated.h"
+#include "maps/maps_generated.h"
 
 #include "core/wind/wind_system.h"
 

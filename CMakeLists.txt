@@ -163,12 +163,21 @@ add_executable(wuxing
     # --- Environment System ---
     environment/environment_system.c
     environment/env_shadow.c
+    environment/atmosphere.c
+    environment/volumetric/volumetric_fog.c
+    environment/wind/wind_system.c
+    # --- Audio System ---
+    audio/audio_system.c
+    # --- Maps System ---
+    maps/map_manager.c
+    # --- Skills System ---
+    skills/skill_manager.c
+    skills/skill_helper.c
+    skills/skill_curve.c
     # --- Core Systems ---
-    core/map_manager.c
     core/resource_manager.c
     core/color_gradient.c
     core/float_curve.c
-    core/skill_curve.c
     core/tuning.c
     core/emitter/emitter.c
     core/emitter/emitter_sources.c
@@ -185,8 +194,6 @@ add_executable(wuxing
     core/uv/surface_flow.c
     core/force_field.c
     core/motion/motion_fields.c
-    core/camera_fx.c
-    core/audio_system.c
     core/particles/particle_system.c
     core/particles/particle_manager.c
     core/particles/gpu/particle_gpu_backend.c
@@ -199,18 +206,16 @@ add_executable(wuxing
     core/gas/gas_sim.c
     core/gas/gas_system.c
     core/path_spline.c
+    # --- Post Process ---
     post_process/post_fx.c
     post_process/color_grade_lut.c
+    post_process/scene_targets.c
+    post_process/screen_distort.c
+    post_process/camera_fx.c
     core/ribbon_strip.c
     core/lightning/lightning_stroke.c
-    core/scene_targets.c
-    core/screen_distort.c
     core/surface_material.c
     core/gfx_quality.c
-    core/atmosphere.c
-    core/volumetric/volumetric_fog.c
-    core/wind/wind_system.c
-    core/skill_manager.c
     core/sprite_anim.c
     core/trails/trail_system.c
     core/trails/trail_ribbon.c
@@ -226,7 +231,6 @@ add_executable(wuxing
     core/composition/visual_composer.c
     core/composition/vfx_sequence.c
     core/presets/vfx_presets.c
-    core/skill_helper.c
     core/vfx_surface_registry.c
     core/time_fx.c
     core/motion_controller.c
@@ -356,6 +360,17 @@ configure_file(core/shaders/dissolve.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders
 configure_file(core/shaders/flow_map.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/flow_map.fs COPYONLY)
 configure_file(core/shaders/distortion.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/distortion.fs COPYONLY)
 
+# --- Environment module shaders ---
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/environment/volumetric/shaders)
+configure_file(environment/volumetric/shaders/volumetric_fog.fs ${CMAKE_CURRENT_BINARY_DIR}/environment/volumetric/shaders/volumetric_fog.fs COPYONLY)
+configure_file(environment/volumetric/shaders/volumetric_composite.fs ${CMAKE_CURRENT_BINARY_DIR}/environment/volumetric/shaders/volumetric_composite.fs COPYONLY)
+configure_file(environment/volumetric/shaders/height_fog.fs ${CMAKE_CURRENT_BINARY_DIR}/environment/volumetric/shaders/height_fog.fs COPYONLY)
+# Backward-compatibility copies for core/volumetric/shaders
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/core/volumetric/shaders)
+configure_file(environment/volumetric/shaders/volumetric_fog.fs ${CMAKE_CURRENT_BINARY_DIR}/core/volumetric/shaders/volumetric_fog.fs COPYONLY)
+configure_file(environment/volumetric/shaders/volumetric_composite.fs ${CMAKE_CURRENT_BINARY_DIR}/core/volumetric/shaders/volumetric_composite.fs COPYONLY)
+configure_file(environment/volumetric/shaders/height_fog.fs ${CMAKE_CURRENT_BINARY_DIR}/core/volumetric/shaders/height_fog.fs COPYONLY)
+
 # --- Post-process module shaders ---
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders)
 configure_file(post_process/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/bloom_bright.fs COPYONLY)
@@ -363,6 +378,12 @@ configure_file(post_process/shaders/bloom_downsample.fs ${CMAKE_CURRENT_BINARY_D
 configure_file(post_process/shaders/bloom_upsample.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/bloom_upsample.fs COPYONLY)
 configure_file(post_process/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/post_process.fs COPYONLY)
 configure_file(post_process/shaders/fxaa.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/fxaa.fs COPYONLY)
+configure_file(post_process/shaders/distortion.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/distortion.fs COPYONLY)
+configure_file(post_process/shaders/distortion_mesh.vs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/distortion_mesh.vs COPYONLY)
+configure_file(post_process/shaders/distortion_mesh.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/distortion_mesh.fs COPYONLY)
+configure_file(post_process/shaders/depth_copy.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/depth_copy.fs COPYONLY)
+configure_file(post_process/shaders/exposure.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/exposure.fs COPYONLY)
+configure_file(post_process/shaders/bg_luma.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/bg_luma.fs COPYONLY)
 
 # Backward-compatibility copies for core/shaders (and external visual tests)
 configure_file(core/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_bright.fs COPYONLY)

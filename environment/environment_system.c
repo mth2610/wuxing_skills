@@ -1,6 +1,6 @@
 #include "environment_system.h"
-#include "core/map_manager.h"
-#include "core/wind/wind_system.h"
+#include "maps/map_manager.h"
+#include "environment/wind/wind_system.h"
 #include "core/resource_manager.h"
 #include "raymath.h"
 #include "rlgl.h"

@@ -84,19 +84,20 @@ Never edit another module's files — ask that module's agent. Never read/list/t
 | **Core Agent** | `core/` | `.h` headers of skills, maps, environment |
 | **Core Agent** | `core/particles/` | `core/particles/docs/GPU_BACKEND_API.md`, `core/resource_manager.h` |
 | **Skills Agent** | `skills/`, `core/docs/API.md` (shared write w/ Core Agent) | `core/*.h`, `environment/environment_system.h`, `assets/` |
-| **Map Agent** | `maps/` | `environment/environment_system.h`, `core/skill_manager.h`, `assets/` |
-| **Environment Agent** | `environment/` | `core/decals/decal_system.h`, `core/skill_manager.h`, `core/particles/particle_manager.h` |
-| **Entities Agent** | `entities/` | `core/skill_manager.h`, `entities/docs/API.md` — teams/mana/Vô Hệ/Thái Cực state, see `entities/AGENTS.md` |
-| **Combat Agent** | `combat/` | `entities/entities.h`, `core/map_manager.h`, `combat/docs/API.md` — Đấu Pháp registry + clash matrix, see `combat/AGENTS.md` |
-| **Control Agent** | `control/` | `entities/entities.h`, `core/skill_manager.h`, `combat/combat.h`, `control/docs/API.md` — PlayerIntent layer, see `control/AGENTS.md` |
-| **Boss Agent** | `boss/` | `entities/entities.h`, `combat/combat.h`, `core/skill_manager.h`, core VFX `.h` (chỉ trong `_def.c`), `boss/docs/API.md` — see `boss/AGENTS.md` |
+| **Map Agent** | `maps/` | `environment/environment_system.h`, `skills/skill_manager.h`, `assets/` |
+| **Environment Agent** | `environment/` | `core/decals/decal_system.h`, `skills/skill_manager.h`, `core/particles/particle_manager.h` |
+| **Audio Agent** | `audio/` | `core/resource_manager.h`, `assets/audio/` — see `audio/CLAUDE.md` |
+| **Entities Agent** | `entities/` | `skills/skill_manager.h`, `entities/docs/API.md` — teams/mana/Vô Hệ/Thái Cực state, see `entities/AGENTS.md` |
+| **Combat Agent** | `combat/` | `entities/entities.h`, `maps/map_manager.h`, `combat/docs/API.md` — Đấu Pháp registry + clash matrix, see `combat/AGENTS.md` |
+| **Control Agent** | `control/` | `entities/entities.h`, `skills/skill_manager.h`, `combat/combat.h`, `control/docs/API.md` — PlayerIntent layer, see `control/AGENTS.md` |
+| **Boss Agent** | `boss/` | `entities/entities.h`, `combat/combat.h`, `skills/skill_manager.h`, core VFX `.h` (chỉ trong `_def.c`), `boss/docs/API.md` — see `boss/AGENTS.md` |
 | **AI Agent** | `ai/` | `entities/entities.h`, `combat/combat.h`, `ai/docs/API.md` — minion brain, see `ai/AGENTS.md` |
-| **UI Agent** | `ui/` | `entities/entities.h`, `combat/combat.h`, `boss/boss_system.h`, `core/skill_manager.h`, `ui/docs/API.md` — HUD + auto-target, see `ui/AGENTS.md` |
-| **Formations Agent** | `formations/` | `entities/entities.h`, `combat/combat.h`, `core/map_manager.h`, core VFX `.h` (chỉ trong `_def.c`), `formations/docs/API.md` — see `formations/AGENTS.md` |
+| **UI Agent** | `ui/` | `entities/entities.h`, `combat/combat.h`, `boss/boss_system.h`, `skills/skill_manager.h`, `ui/docs/API.md` — HUD + auto-target, see `ui/AGENTS.md` |
+| **Formations Agent** | `formations/` | `entities/entities.h`, `combat/combat.h`, `maps/map_manager.h`, core VFX `.h` (chỉ trong `_def.c`), `formations/docs/API.md` — see `formations/AGENTS.md` |
 | **Net Agent** | `net/` | `control/control.h`, `entities/entities.h`, `net/docs/API.md` — wire formats (ENet transport gated), see `net/AGENTS.md` |
 | **Character Agent** | `character/` | `core/resource_manager.h` — model/animation rendering, counterpart to `entities/`'s pure logic, see `character/AGENTS.md` |
-| **Game Agent** | `game/` | `entities/entities.h`, `environment/environment_system.h`, `core/map_manager.h`, `sandbox/sandbox_core.h`, `character/character_model.h`, `control/control.h`, `boss/boss_system.h`, `game/docs/API.md` — match state machine + zone rule table, see `game/AGENTS.md` |
-| **Post-Process Agent** | `post_process/` | `core/scene_targets.h`, `core/screen_distort.h`, `core/tuning.h`, `core/gfx_quality.h` — see `post_process/CLAUDE.md` |
+| **Game Agent** | `game/` | `entities/entities.h`, `environment/environment_system.h`, `maps/map_manager.h`, `sandbox/sandbox_core.h`, `character/character_model.h`, `control/control.h`, `boss/boss_system.h`, `game/docs/API.md` — match state machine + zone rule table, see `game/AGENTS.md` |
+| **Post-Process Agent** | `post_process/` | `core/tuning.h`, `core/gfx_quality.h` — see `post_process/CLAUDE.md` |
 | **Sandbox Agent** | `sandbox/` | `.h` headers of ALL modules (dev/test integration harness, not shipped gameplay) — see `sandbox/AGENTS.md` |
 | **Renderer Agent (rlvk)** | `third_party/vulkan/` (umbrella + `rlvk/*.inl` + tests), `scripts/*rlvk*` | `third_party/vulkan/docs/HANDOFF.md` — Vulkan 1.1 backend; 3-tier test ladder (compile/headless/visual), never debugs via the game first — see `third_party/vulkan/AGENTS.md` |
 

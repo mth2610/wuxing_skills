@@ -62,117 +62,6 @@
   bool Tuning_SaveFloats(const char *path, const char *const *keys, const float *values, int count);
 ```
 
-### `core/skill_manager.h`
-```c
-  float Skill_CalculateDamage(SkillCategory cat, SkillParams params);
-  float Skill_CalculateCooldown(SkillCategory cat, SkillParams params);
-  float Skill_CalculateKnockback(SkillCategory cat, SkillParams params);
-  float Skill_CalculateManaCost(SkillCategory cat, SkillParams params);
-  const char* Skill_GetCategoryName(SkillCategory cat);
-  void InitSkillManager(int screenWidth, int screenHeight);
-  void UpdateSkillManager(float dt, Vector3 enemyPos, float enemyRadius);
-  void DrawSkillManagerWorld3D(void);
-  void DrawSkillManagerOverlay(void);
-  void UnloadSkillManager(void);
-  bool CastSkill(int skillIndex, int agentId, Vector3 startPos, Vector3 target, SkillParams params);
-  int RegisterSkill(const char* name, Color color, void (*init)(int screenWidth, int screenHeight), void (*cast)(int agentId, Vector3 startPos, Vector3 target, SkillParams params), void (*update)(float dt, Vector3 enemyPos, float enemyRadius), void (*draw)(void), void (*unload)(void));
-  void SetSkillOverrides(int skillIndex, int pathType, int anchorType, int quantity, float sizeScale);
-  int GetRegisteredSkillCount(void);
-  const char* GetRegisteredSkillName(int index);
-  Color GetRegisteredSkillColor(int index);
-  int Skill_GetIndexByName(const char *name);
-  ProjectedPoint ProjectPointCached(Vector3 worldPos, Camera3D cam);
-  void RegisterStaticOccluder(Vector3 center, float radius, float height);
-  void ClearStaticOccluders(void);
-  float GetLineOfSightVisibility(Vector3 viewPoint, Vector3 targetPoint);
-  bool IsAnySkillCoiling(void);
-  bool IsAnySkillShocking(void);
-  bool IsEnemySlowed(void);
-  bool IsEnemyBurning(void);
-  bool IsEnemyRooted(void);
-  void AddRootToEnemy(float duration);
-  void AddSlowToEnemy(float duration);
-  void AddFloatingText(Vector3 pos, const char *text, Color color, float size, float lifetime);
-  Vector3 GetAccumulatedKnockback(void);
-  void ClearAccumulatedKnockback(void);
-  void AddKnockbackToEnemy(Vector3 force);
-  void ApplyAoEDamage(Vector3 position, float radius, float damage, float knockback);
-  void SkillManager_BeginShader(Shader shader);
-  void SkillManager_EndShader(void);
-  bool SkillManager_CanCast(int skillIndex, int agentId);
-  void SkillManager_SetFreeCast(bool on);
-  void SkillManager_TriggerCooldown(int skillIndex, int agentId, float cooldownSeconds);
-  void SkillManager_ResetAgentCooldowns(int agentId);
-  void RegisterSkillAbort(int skillIndex, void (*abort)(int agentId));
-  void AbortSkill(int skillIndex, int agentId);
-  void RegisterSkillLifecycleQuery(int skillIndex, bool (*hasActiveInstance)(int agentId));
-  bool Skill_HasActiveInstance(int skillIndex, int agentId);
-  void RegisterSkillTunables(int skillIndex, const SkillTunableEntry *entries, int count);
-  int Skill_GetTunables(int skillIndex, SkillTunableEntry *outEntries, int maxEntries);
-  int SkillTunables_Flatten(const SkillTunableEntry *entries, int count, char outKeys[][TUNING_MAX_KEY_LEN], float *outValues, int maxKeys);
-  void SkillTunables_Unflatten(const SkillTunableEntry *entries, int count, const char *const *keys, const float *values, int keyCount);
-  bool SkillTunables_LoadPersisted(const char *path, SkillTunableEntry *entries, int count);
-  void SkillManager_SetAgentPosProvider(AgentPosProviderFn fn);
-  bool SkillManager_GetAgentPos(int agentId, Vector3 *outPos);
-  void SkillManager_SetNearbyTargetsProvider(NearbyTargetsProviderFn fn);
-  int SkillManager_GetNearbyTargets(Vector3 center, float radius, int *outIds, int maxIds);
-  void SkillManager_SetEnemyAgentId(int agentId);
-  int SkillManager_GetEnemyAgentId(void);
-  void SkillManager_RegisterWall(Vector3 position, int element, float radius, float refreshDuration);
-  bool SkillManager_FindNearbyWall(Vector3 casterPos, float checkRadius, Vector3 *outWallPos, int *outElement);
-  void RegisterSkillManaCost(int skillIndex, float cost);
-  float Skill_GetManaCost(int skillIndex);
-  void RegisterSkillCastAnimSeconds(int skillIndex, float seconds);
-  float Skill_GetCastAnimSeconds(int skillIndex);
-```
-**Enums:** SkillType { SKILL_WATER,SKILL_METAL,SKILL_FIRE,SKILL_WOOD,SKILL_ELECTRIC };CastAnchorType { CAST_ANCHOR_CASTER,CAST_ANCHOR_TARGET } CastPathType { CAST_PATH_PROJECTILE,CAST_PATH_UNDERGROUND,CAST_PATH_SKY };SkillCategory { SKILL_CAT_PROJECTILE,SKILL_CAT_AOE_CONTROL,SKILL_CAT_MELEE,SKILL_CAT_TRAP_UTILITY,SKILL_CAT_BUFF_SUPPORT }
-**Structs** (fields in header): SkillParams, ProjectedPoint, SkillTunableEntry
-
-### `core/skill_helper.h`
-```c
-  void PlayCastSound(EffectPresetType preset);
-  void PlayImpactSound(EffectPresetType preset);
-  void DamageVolume_Init(void);
-  void DamageVolume_Update(float dt);
-  int SpawnDamageVolume(DamageVolume config);
-  void DamageVolume_Unload(void);
-  void Timeline_Start(SkillTimeline *t, float duration);
-  bool Timeline_Event(SkillTimeline *t, float triggerTime, float dt);
-  bool Timeline_Finished(SkillTimeline *t);
-  void Timeline_LayeredStart(LayeredTimeline *t);
-  bool Timeline_AddLayer(LayeredTimeline *t, const char *tag, float start, float duration);
-  bool Timeline_IsLayerActive(const LayeredTimeline *t, int layerIndex);
-  float Timeline_LayerProgress(const LayeredTimeline *t, int layerIndex);
-  bool Timeline_LayerEvent(const LayeredTimeline *t, int layerIndex, float dt);
-  void SkillHelper_StepCurveFlight(const SkillCurve *speedCurve, float elapsed, float dt, float maxDuration, float maxRange, float targetDistance, float *traveled, bool *arrived);
-  Vector3 SkillHelper_EvaluateForceLayer(const ForceLayer *layer, Vector3 pos, Vector3 vel, float time, Vector3 axisOrigin, Vector3 axisDir);
-  void SkillForceMix_AddLayers(const SkillForceMix *mix, ForceField *ff);
-  int SkillForceMix_MakeTunables(SkillForceMix *mix, const char *labelPrefix, const char *phase, SkillTunableEntry *outEntries);
-  void DrawEffectMesh(MeshPresetType type, Vector3 pos, Vector3 scale, Color color);
-  void Material_LoadElement(EffectMaterial *outMat, EffectPresetType element);
-  void SpawnGroundDecal(DecalPresetType type, Vector3 pos, float radius, float duration);
-  void SpawnGroundDecalEx(DecalPresetType type, Vector3 pos, float scaleStart, float scaleEnd, float lifetime, float rotSpeed, float yOffset);
-  void CameraFX_AddImpulse(Vector3 origin, CameraImpulse impulse);
-  ForceField ForceField_CreatePreset(ForceFieldPreset preset);
-  void SkillBuilder_Start(SkillBuildContext *ctx, Vector3 target, float scale);
-  void SkillBuilder_AddExplosion(SkillBuildContext *ctx, EffectPresetType vfx);
-  void SkillBuilder_AddDecal(SkillBuildContext *ctx, DecalPresetType decal, float radius, float duration);
-  void SkillBuilder_AddDamageVolume(SkillBuildContext *ctx, float radius, float dps, float duration);
-  void SkillBuilder_Build(SkillBuildContext *ctx);
-  void SkillBuilder_AddCastEffect(SkillBuildContext *ctx, EffectPresetType preset);
-  int SkillHelper_ChainTargets(Vector3 origin, float jumpRadius, int maxJumps, Vector3 *outPoints, int maxOut);
-  void DamageVolume_GetStats(int *active, int *max);
-  void InitHelperResources(void);
-```
-**Enums:** EffectPresetType { EFFECT_PRESET_FIRE_EXPLOSION,EFFECT_PRESET_ICE_SHATTER,EFFECT_PRESET_WATER_SPLASH,EFFECT_PRESET_LIGHTNING_IMPACT,EFFECT_PRESET_EARTH_CRACK,EFFECT_PRESET_WOOD_BLOOM,EFFECT_PRESET_METAL_SHARD,EFFECT_PRESET_TAIJI_BURST };ShapeType { SHAPE_CIRCLE,SHAPE_BOX,SHAPE_CONE } MeshPresetType { MESH_PRESET_DISC,MESH_PRESET_RING,MESH_PRESET_CONE,MESH_PRESET_TORNADO,MESH_PRESET_CYLINDER,MESH_PRESET_SPHERE,MESH_PRESET_SHOCKWAVE,MESH_PRESET_PYRAMID,MESH_PRESET_TETRAHEDRON };DecalPresetType { DECAL_PRESET_CRACK,DECAL_PRESET_EARTH_SHATTER,DECAL_PRESET_EARTH_RUNE,DECAL_PRESET_BURN,DECAL_PRESET_FIRE_LAVA,DECAL_PRESET_WATER,DECAL_PRESET_WATER_SPLASH,DECAL_PRESET_WATER_RIPPLE,DECAL_PRESET_ICE,DECAL_PRESET_WOOD_ROOT,DECAL_PRESET_WOOD_MOSS,DECAL_PRESET_METAL_SLASH,DECAL_PRESET_METAL_CRATER,DECAL_PRESET_METAL_RUNE,DECAL_PRESET_TAIJI_RING,DECAL_PRESET_TAIJI_LIGHTNING,DECAL_PRESET_TAIJI_WIND,DECAL_PRESET_GENERIC_IMPACT_RING,DECAL_PRESET_GENERIC_GLOW,DECAL_PRESET_GENERIC_SHADOW } ForceFieldPreset { FORCE_PRESET_FIRE_UPDRAFT,FORCE_PRESET_SNOW_BLIZZARD,FORCE_PRESET_WATER_VORTEX,FORCE_PRESET_EARTH_RUMBLE,FORCE_PRESET_WOOD_GROWTH,FORCE_PRESET_METAL_IMPLOSION,FORCE_PRESET_TAIJI_ORBIT }
-**Structs** (fields in header): DamageVolume, SkillTimeline, TimelineLayer, LayeredTimeline, SkillForceMix, CameraImpulse, SkillBuildContext
-
-### `core/skill_curve.h`
-```c
-  void SkillCurve_SetConstant(SkillCurve *curve, float value);
-  float SkillCurve_Eval(const SkillCurve *curve, float t01);
-```
-
 ### `core/liquid/liquid_motion.h`
 _Inline helpers / macros only — see header._
 **Enums:** LiquidMotionProfile { LIQUID_MOTION_WATER,LIQUID_MOTION_POISON,LIQUID_MOTION_MUD,LIQUID_MOTION_LAVA,LIQUID_MOTION_LIQUID_METAL }
@@ -185,26 +74,6 @@ _Inline helpers / macros only — see header._
 _Inline helpers / macros only — see header._
 **Enums:** LiquidBodyPhase { LIQUID_BODY_FLIGHT,LIQUID_BODY_IMPACT,LIQUID_BODY_SETTLE }
 **Structs** (fields in header): LiquidBodyRecipe, LiquidBodyContext, LiquidBodySeed
-
-### `core/volumetric/volumetric_fog.h`
-```c
-  void VolumetricFog_Init(int width, int height);
-  void VolumetricFog_Unload(void);
-  void VolumetricFog_Resize(int width, int height);
-  void VolumetricFog_PreFrame(void);
-  void VolumetricFog_Render(Camera3D camera);
-  bool VolumetricFog_IsEnabled(void);
-  void VolumetricFog_SetEnabled(bool enabled);
-  void VolumetricFog_SetGodRayIntensity(float intensity);
-  float VolumetricFog_GetGodRayIntensity(void);
-  void VolumetricFog_SetDistantCoverage(float areaRatio);
-  float VolumetricFog_GetDistantCoverage(void);
-  void Fog_SetRenderMode(FogRenderMode mode);
-  FogRenderMode Fog_GetRenderMode(void);
-  const char* Fog_GetRenderModeName(FogRenderMode mode);
-  void Fog_CycleRenderMode(void);
-```
-**Enums:** FogRenderMode { FOG_MODE_VOLUMETRIC,FOG_MODE_HEIGHT,FOG_MODE_OFF }
 
 ### `core/liquid/liquid_impact.h`
 ```c
@@ -673,21 +542,6 @@ _Inline helpers / macros only — see header._
 **Enums:** VFXRenderPass { VFX_RENDER_PASS_BODY,VFX_RENDER_PASS_EMISSION }
 **Structs** (fields in header): VFXRenderScope
 
-### `core/screen_distort.h`
-```c
-  void ScreenDistort_Init(void);
-  void ScreenDistort_Unload(void);
-  void ScreenDistort_Add(Vector3 worldPos, float radius, float strength, float lifetime, float speed);
-  void ScreenDistort_Update(float dt);
-  void ScreenDistort_Draw(Camera3D camera);
-  bool ScreenDistort_HasLiveSources(void);
-  void ScreenDistort_RequestMeshPass(void);
-  Shader ScreenDistort_GetMeshShader(void);
-  void ScreenDistort_BeginMeshPass(Texture2D flowMap, float strength, Vector2 flowSpeed, Color tintColor);
-  void ScreenDistort_EndMeshPass(void);
-```
-**Structs** (fields in header): DistortionSource
-
 ### `core/metaball_fx.h`
 ```c
   void MetaballFX_Init(int width, int height);
@@ -821,12 +675,6 @@ _Inline helpers / macros only — see header._
 **Enums:** VFXPriority { VFX_PRIORITY_LOW,VFX_PRIORITY_HIGH_ULTIMATE }
 **Structs** (fields in header): VFXLightData
 
-### `core/camera_fx.h`
-```c
-  void CameraFX_Shake(float trauma);
-  void CameraFX_Update(Camera3D *camera, float dt);
-```
-
 ### `core/debug_draw.h`
 ```c
   void DebugDraw_SetEnabled(bool enabled);
@@ -894,74 +742,6 @@ _Inline helpers / macros only — see header._
   const char *GfxQuality_GetName(GfxQuality q);
 ```
 **Enums:** GfxQuality { GFX_UNLIT,GFX_LOW,GFX_MED,GFX_HIGH,GFX_ULTRA }
-
-### `core/audio_system.h`
-```c
-  void Audio_Init(void);
-  void Audio_Shutdown(void);
-  void Audio_Update(float dt);
-  void Audio_SetMasterVolume(float volume01);
-  void Audio_SetListener(Vector3 pos);
-  void Audio_PlaySFX(SfxId id);
-  void Audio_PlaySFXAt(SfxId id, Vector3 worldPos);
-  SfxId Audio_CastSfxForElement(int element);
-  void Audio_PlayMusic(MusicId id);
-  void Audio_StopMusic(void);
-```
-**Enums:** SfxId { SFX_UI_CLICK,SFX_CAST_WATER,SFX_CAST_WOOD,SFX_CAST_FIRE,SFX_CAST_EARTH,SFX_CAST_METAL,SFX_CAST_TAIJI,SFX_MELEE_HIT,SFX_SKILL_HIT,SFX_CLASH,SFX_EXPLOSION,SFX_TAIJI_ENTER,SFX_RINGOUT,SFX_VICTORY,SFX_DEFEAT,SFX_COUNT };MusicId { MUS_NONE,MUS_ARENA_NIGHT,MUS_COUNT }
-
-### `core/atmosphere.h`
-```c
-  void Atmosphere_Init(void);
-  void Atmosphere_Configure(Vector3 center, Vector3 extent, int count, Color tint);
-  void Atmosphere_SetMode(AtmosphereMode mode);
-  AtmosphereMode Atmosphere_GetMode(void);
-  void Atmosphere_Update(float dt, Camera3D camera);
-  void Atmosphere_Draw(Camera3D camera);
-  void Atmosphere_Unload(void);
-```
-**Enums:** AtmosphereMode { ATMO_MODE_MOONLIGHT_DUST,ATMO_MODE_WAR_EMBERS,ATMO_MODE_SPIRIT_SPARKS }
-
-### `core/wind/wind_types.h`
-_Inline helpers / macros only — see header._
-**Enums:** VorticleType { VORTICLE_LINEAR_GUST,VORTICLE_RADIAL_BLAST,VORTICLE_VORTEX,VORTICLE_TURBULENCE }
-**Structs** (fields in header): VorticleData, WindMacroConfig, WindTerrainGrid, WindGuidingGust
-
-### `core/wind/wind_system.h`
-```c
-  void Wind_Init(void);
-  void Wind_Update(float dt);
-  void Wind_Unload(void);
-  void Wind_Clear(void);
-  void Wind_SetMacro(const WindMacroConfig *cfg);
-  WindMacroConfig Wind_GetMacro(void);
-  void Wind_SetTerrainHeightQuery(TerrainHeightQueryFn queryFn, void *userData);
-  void Wind_RebuildTerrainGrid(Vector2 centerXZ, Vector2 halfExtentXZ);
-  const WindTerrainGrid *Wind_GetTerrainGrid(void);
-  bool Wind_SampleTerrain(float worldX, float worldZ, float *outHeight);
-  int Wind_SpawnGust(Vector3 pos, Vector3 dir, float radius, float strength, float duration);
-  int Wind_SpawnRadialBlast(Vector3 pos, float radius, float strength, float duration);
-  int Wind_SpawnVortex(Vector3 pos, Vector3 axis, float radius, float strength, float inwardPull, float duration);
-  int Wind_SpawnTurbulence(Vector3 pos, float radius, float strength, float noiseScale, float noiseSpeed, float duration);
-  Vector3 Wind_EvaluateVelocity(Vector3 pos, float time);
-  Vector3 Wind_EvaluateBackgroundVelocity(Vector3 pos, float time);
-  MediumProperties Wind_EvaluateBackgroundMedium(Vector3 pos, float time, Vector3 gravityMps2);
-  Vector3 Wind_EvaluateVorticleVelocity(const VorticleData *vorticle, Vector3 pos, float time);
-  Vector3 Wind_EvaluateAcceleration(Vector3 pos, float time, Vector3 currentVel);
-  Vector3 Wind_GetMacroAt(Vector3 pos, float time);
-  float Wind_HeightFactor(float hRel);
-  void Wind_SetMotionAirflow(const VorticleData *sources, int count);
-  const VorticleData* Wind_GetActiveVorticles(int *outCount);
-  int Wind_GetPublishedMotionAirflowCount(void);
-  int Wind_GetActiveCount(void);
-  void Wind_TriggerGuidingWind(Vector3 playerPos, Vector3 targetPos, float speed, float duration);
-  void Wind_StopGuidingWind(void);
-  bool Wind_IsGuidingWindActive(void);
-  float Wind_GetGuidingWindProgress(void);
-  WindGuidingGust Wind_GetGuidingWindState(void);
-  void Wind_AddDisplacement(Vector3 pos, Vector3 velocity, float radius, float duration);
-  void Wind_DrawDebug(Vector3 anchorPos);
-```
 
 ### `core/material/material_system.h`
 ```c

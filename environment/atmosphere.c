@@ -1,6 +1,6 @@
-#include "core/atmosphere.h"
+#include "environment/atmosphere.h"
 #include "core/vfx_render.h"
-#include "core/wind/wind_system.h"
+#include "environment/wind/wind_system.h"
 #include "core/motion/motion_fields.h"
 #include "raymath.h"
 #include "rlgl.h"

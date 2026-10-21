@@ -24,9 +24,9 @@
  * blending — see the flush note in post_fx.c, which is the bug that rule exists
  * to prevent.
  */
-#include "core/scene_targets.h"
+#include "post_process/scene_targets.h"
 #include "core/vfx_render.h"
-#include "core/render_target_probe.h"
+#include "post_process/render_target_probe.h"
 #include "rlgl.h"
 #include <math.h>
 #include <string.h>

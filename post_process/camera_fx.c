@@ -1,4 +1,4 @@
-#include "core/camera_fx.h"
+#include "post_process/camera_fx.h"
 #include "core/time_fx.h"   // TimeFX_Elapsed — pinned clock; GetTime() is wall clock
 #include "raymath.h"
 #include <math.h>

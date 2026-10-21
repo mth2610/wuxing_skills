@@ -1,17 +1,17 @@
-#include "core/volumetric/volumetric_fog.h"
-#include "core/volumetric/volumetric_fog_distance.h"
-#include "core/volumetric/volumetric_fog_quality.h"
-#include "core/volumetric/fog_blue_noise.h"
+#include "environment/volumetric/volumetric_fog.h"
+#include "environment/volumetric/volumetric_fog_distance.h"
+#include "environment/volumetric/volumetric_fog_quality.h"
+#include "environment/volumetric/fog_blue_noise.h"
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
-#include "core/scene_targets.h"
+#include "post_process/scene_targets.h"
 #include "core/gfx_quality.h"
 #include "core/tuning.h"
 #include "raylib.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <stddef.h>
-#include "core/volumetric/volumetric_fog_volume.inl"
+#include "environment/volumetric/volumetric_fog_volume.inl"
 extern void rlvkPassMark(const char *label) __attribute__((weak));
 #define PASS_MARK(label) do { if (rlvkPassMark) rlvkPassMark(label); } while (0)
 
@@ -130,7 +130,9 @@ void VolumetricFog_Init(int width, int height) {
         SetTextureWrap(s_jitterTex, TEXTURE_WRAP_REPEAT);
     }
 
-    s_raymarchShader = LoadShader(NULL, "core/volumetric/shaders/volumetric_fog.fs");
+    const char *raymarchFs = FileExists("environment/volumetric/shaders/volumetric_fog.fs")
+        ? "environment/volumetric/shaders/volumetric_fog.fs" : "core/volumetric/shaders/volumetric_fog.fs";
+    s_raymarchShader = LoadShader(NULL, raymarchFs);
     s_locDepthTex          = GetShaderLocation(s_raymarchShader, "u_depthTex");
     s_locShadowMap         = GetShaderLocation(s_raymarchShader, "u_shadowMap");
     s_locStaticShadowMap   = GetShaderLocation(s_raymarchShader, "u_staticShadowMap");
@@ -169,14 +171,18 @@ void VolumetricFog_Init(int width, int height) {
     s_locVolColorSoft      = GetShaderLocation(s_raymarchShader, "u_volColorSoft");
     if (s_locVolColorSoft < 0) s_locVolColorSoft = GetShaderLocation(s_raymarchShader, "u_volColorSoft[0]");
 
-    s_compositeShader = LoadShader(NULL, "core/volumetric/shaders/volumetric_composite.fs");
+    const char *compositeFs = FileExists("environment/volumetric/shaders/volumetric_composite.fs")
+        ? "environment/volumetric/shaders/volumetric_composite.fs" : "core/volumetric/shaders/volumetric_composite.fs";
+    s_compositeShader = LoadShader(NULL, compositeFs);
     s_locCompVolTex        = GetShaderLocation(s_compositeShader, "u_volumetricTex");
     s_locCompFullDepth     = GetShaderLocation(s_compositeShader, "u_fullResDepthTex");
     s_locCompLowDepth      = GetShaderLocation(s_compositeShader, "u_lowResDepthTex");
     s_locCompLowTexel      = GetShaderLocation(s_compositeShader, "u_lowResTexel");
     s_locCompDepthThreshold= GetShaderLocation(s_compositeShader, "u_depthThreshold");
 
-    s_heightFogShader = LoadShader(NULL, "core/volumetric/shaders/height_fog.fs");
+    const char *heightFogFs = FileExists("environment/volumetric/shaders/height_fog.fs")
+        ? "environment/volumetric/shaders/height_fog.fs" : "core/volumetric/shaders/height_fog.fs";
+    s_heightFogShader = LoadShader(NULL, heightFogFs);
     s_locHfInvViewProj        = GetShaderLocation(s_heightFogShader, "u_invViewProj");
     s_locHfCamPos             = GetShaderLocation(s_heightFogShader, "u_camPos");
     s_locHfViewForward        = GetShaderLocation(s_heightFogShader, "u_viewForward");

@@ -1,7 +1,7 @@
-// core/audio_system.c — see audio_system.h. SFX go through
+// audio/audio_system.c — see audio/audio_system.h. SFX go through
 // ResourceManager's Sound cache (lazy-loaded on first play); the music bed
 // is a single streamed track owned here. Missing files degrade to silence.
-#include "core/audio_system.h"
+#include "audio/audio_system.h"
 #include "core/resource_manager.h"
 #include <math.h>
 #include <stddef.h>
