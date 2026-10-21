@@ -69,16 +69,22 @@ static bool s_shadowWasEnabled = false;
 static bool s_ready = false;
 
 // Subtractive GPU profiling skip mask (WUXING_SONGQUAO_SKIP)
-enum {
-    SQ_SKIP_GROUND        = 1 << 0,
-    SQ_SKIP_ROCKS         = 1 << 1,
-    SQ_SKIP_DEBRIS        = 1 << 2,
-    SQ_SKIP_FLORA         = 1 << 3,
-    SQ_SKIP_SKY           = 1 << 4,
-    SQ_SKIP_CLOUDSEA      = 1 << 5,
-    SQ_SKIP_WATER         = 1 << 6,
-    SQ_SKIP_MIST          = 1 << 7,
+enum
+{
+    SQ_SKIP_GROUND = 1 << 0,
+    SQ_SKIP_ROCKS = 1 << 1,
+    SQ_SKIP_DEBRIS = 1 << 2,
+    SQ_SKIP_FLORA = 1 << 3,
+    SQ_SKIP_SKY = 1 << 4,
+    SQ_SKIP_CLOUDSEA = 1 << 5,
+    SQ_SKIP_WATER = 1 << 6,
+    SQ_SKIP_MIST = 1 << 7,
     SQ_SKIP_SHADOWCASTERS = 1 << 8,
+    SQ_SKIP_FLUFF = 1 << 9,
+    SQ_SKIP_CLOUDSHADOW = 1 << 10,
+    SQ_SKIP_FOGVOLUMES = 1 << 11,
+    SQ_SKIP_GODRAYS = 1 << 12,
+    SQ_SKIP_GRADE = 1 << 13,
 };
 static unsigned int s_skipMask = 0;
 
@@ -88,15 +94,34 @@ static void ParseSkipMask(void)
     const char *env = getenv("WUXING_SONGQUAO_SKIP");
     if (!env || !*env)
         return;
-    if (strstr(env, "ground")) s_skipMask |= SQ_SKIP_GROUND;
-    if (strstr(env, "rocks")) s_skipMask |= SQ_SKIP_ROCKS;
-    if (strstr(env, "debris")) s_skipMask |= SQ_SKIP_DEBRIS;
-    if (strstr(env, "flora") || strstr(env, "grass")) s_skipMask |= SQ_SKIP_FLORA;
-    if (strstr(env, "sky")) s_skipMask |= SQ_SKIP_SKY;
-    if (strstr(env, "cloudsea")) s_skipMask |= SQ_SKIP_CLOUDSEA;
-    if (strstr(env, "water")) s_skipMask |= SQ_SKIP_WATER;
-    if (strstr(env, "mist")) s_skipMask |= SQ_SKIP_MIST;
-    if (strstr(env, "shadowcasters") || strstr(env, "casters")) s_skipMask |= SQ_SKIP_SHADOWCASTERS;
+    if (strstr(env, "ground"))
+        s_skipMask |= SQ_SKIP_GROUND;
+    if (strstr(env, "rocks"))
+        s_skipMask |= SQ_SKIP_ROCKS;
+    if (strstr(env, "debris"))
+        s_skipMask |= SQ_SKIP_DEBRIS;
+    if (strstr(env, "flora") || strstr(env, "grass"))
+        s_skipMask |= SQ_SKIP_FLORA;
+    if (strstr(env, "sky"))
+        s_skipMask |= SQ_SKIP_SKY;
+    if (strstr(env, "cloudsea"))
+        s_skipMask |= SQ_SKIP_CLOUDSEA;
+    if (strstr(env, "water"))
+        s_skipMask |= SQ_SKIP_WATER;
+    if (strstr(env, "mist"))
+        s_skipMask |= SQ_SKIP_MIST;
+    if (strstr(env, "shadowcasters") || strstr(env, "casters"))
+        s_skipMask |= SQ_SKIP_SHADOWCASTERS;
+    if (strstr(env, "fluff"))
+        s_skipMask |= SQ_SKIP_FLUFF;
+    if (strstr(env, "cloudshadow"))
+        s_skipMask |= SQ_SKIP_CLOUDSHADOW;
+    if (strstr(env, "fogvolumes"))
+        s_skipMask |= SQ_SKIP_FOGVOLUMES;
+    if (strstr(env, "godrays"))
+        s_skipMask |= SQ_SKIP_GODRAYS;
+    if (strstr(env, "grade"))
+        s_skipMask |= SQ_SKIP_GRADE;
 }
 
 // Ecology texture lookup helper
@@ -166,6 +191,15 @@ static float SampleWaterHeight(float x, float z)
 static float SongQuaoGrassDensity(float x, float z, void *userData)
 {
     (void)userData;
+
+    // Cheap valley-ellipse rejection first: the generator's bounding box is ~21% larger than
+    // the ellipse, so those candidates never reach ground/water/splat sampling.
+    float nx = (x - kMapCenter.x) / (MAP_WIDTH * 0.28f);
+    float nz = (z - kMapCenter.z) / (MAP_DEPTH * 0.28f);
+    float basinDist = nx * nx + nz * nz;
+    if (basinDist >= 1.0f)
+        return 0.0f;
+
     Vector3 pos, normal;
     if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &pos, &normal))
         return 0.0f;
@@ -190,13 +224,7 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
         return 0.0f;
     float rockFade = 1.0f - SmoothStep01(0.65f, 0.90f, rockScree);
 
-    // Focus grass budget inside the main valley & river basin so reservoir sampling
-    // never thins out the playable foreground meadow.
-    float nx = (x - kMapCenter.x) / (MAP_WIDTH * 0.28f);
-    float nz = (z - kMapCenter.z) / (MAP_DEPTH * 0.28f);
-    float basinDist = nx * nx + nz * nz;
-    if (basinDist >= 1.0f)
-        return 0.0f;
+    // Valley edge falloff (basinDist computed at the top of this function).
     float edgeFade = 1.0f - SmoothStep01(0.74f, 1.0f, basinDist);
 
     // Painterly macro meadow rhythm (billowing dense drifts + softer breathing swales)
@@ -378,8 +406,8 @@ static void BuildRocks(void)
         }
         // Bury rock base 22-30% into the terrain so rocks emerge organically from the earth
         float sinkOffset = (item->archetype == MAP_ROCK_RIVER_STONE)
-            ? (item->heightScale * 0.20f)
-            : (item->heightScale * 0.28f);
+                               ? (item->heightScale * 0.20f)
+                               : (item->heightScale * 0.28f);
         pos.y -= sinkOffset;
         MapProp_AddRockItem(&s_rocks, pos, item->radiusScale, item->heightScale, item->rotationDeg, item->archetype);
     }
@@ -436,7 +464,8 @@ static void SpawnSongQuaoMistVolumes(void)
 
 #define AMBIENT_FLUFF_COUNT 140
 
-typedef struct AmbientFluffParticle {
+typedef struct AmbientFluffParticle
+{
     Vector3 position;
     float phase;
     float size;
@@ -483,8 +512,7 @@ static void InitAmbientFluff(void)
         s_fluffParticles[i].position = (Vector3){
             kMapCenter.x + cosf(theta) * dist,
             h,
-            kMapCenter.z + sinf(theta) * dist
-        };
+            kMapCenter.z + sinf(theta) * dist};
         s_fluffParticles[i].phase = Random01(&rng) * 2.0f * PI;
         s_fluffParticles[i].size = 0.038f + 0.032f * Random01(&rng);
         s_fluffParticles[i].speed = 0.85f + 0.45f * Random01(&rng);
@@ -541,8 +569,7 @@ static void DrawAmbientFluff(void)
         (unsigned char)fminf(255.0f, 245.0f * (sunColor.r / 255.0f) * 1.1f),
         (unsigned char)fminf(255.0f, 238.0f * (sunColor.g / 255.0f) * 1.1f),
         (unsigned char)fminf(255.0f, 215.0f * (sunColor.b / 255.0f) * 1.0f),
-        255
-    };
+        255};
 
     for (int i = 0; i < AMBIENT_FLUFF_COUNT; i++)
     {
@@ -597,7 +624,10 @@ static void CaptureSongQuaoStaticShadows(void)
 void InitSongQuaoMap(void)
 {
     ParseSkipMask();
-    ColorGradeLut_Load("assets/maps/song_quao/song_quao_grade.png");
+    if (s_skipMask & SQ_SKIP_GRADE)
+        ColorGradeLut_UseNeutral();
+    else
+        ColorGradeLut_Load("assets/maps/song_quao/song_quao_grade.png");
 
     Environment_SetTimeOfDaySpeed(0.0f);
     // Ghost of Tsushima golden-hour lighting: warm sun, cool sky ambient, back-lighting
@@ -619,7 +649,7 @@ void InitSongQuaoMap(void)
             .multipleScatteringAmp = 2.15f},
         .density = {.baseDensity = 0.0065f, .heightFalloff = 0.35f, .baseAltitude = -1.5f, .enableSigmoidLayer = false}};
     Environment_SetAtmosphereProfile(&atmos);
-    VolumetricFog_SetGodRayIntensity(1.45f);
+    VolumetricFog_SetGodRayIntensity((s_skipMask & SQ_SKIP_GODRAYS) ? 0.0f : 1.45f);
     VolumetricFog_SetDistantCoverage(2.0f / 3.0f);
 
     EnvCloudShadowConfig cloudConfig = {
@@ -631,8 +661,11 @@ void InitSongQuaoMap(void)
         .softness = 0.20f,
         .windSpeedScale = 0.50f,
     };
-    Environment_SetCloudShadowConfig(&cloudConfig);
-    SpawnSongQuaoMistVolumes();
+    Environment_SetCloudShadowConfig((s_skipMask & SQ_SKIP_CLOUDSHADOW) ? NULL : &cloudConfig);
+    if (s_skipMask & SQ_SKIP_FOGVOLUMES)
+        FogVolume_ClearAll();
+    else
+        SpawnSongQuaoMistVolumes();
 
     if (s_ready)
     {
@@ -698,11 +731,11 @@ void InitSongQuaoMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {16, 26, 10, 255},       // Deep rich soil root
-            .grassTipColor = {142, 192, 68, 255},       // Luminous golden-emerald tip (Tsushima grade)
+            .grassRootColor = {16, 26, 10, 255},  // Deep rich soil root
+            .grassTipColor = {142, 192, 68, 255}, // Luminous golden-emerald tip (Tsushima grade)
             .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.098f,                  // Slender, elegant grass blades
+            .bladeWidthScale = 0.098f, // Slender, elegant grass blades
             .lodDistance = 26.0f,
             .midLodDistance = 14.0f,
             .drawDistance = 42.0f,
@@ -715,7 +748,7 @@ void InitSongQuaoMap(void)
             .pampasPlacements = s_pampasPlacements,
             .pampasCount = s_pampasCount,
             .pampasRootColor = {38, 44, 24, 255},
-            .pampasTipColor = {250, 244, 226, 255},     // Silvery-white golden plume
+            .pampasTipColor = {214, 198, 150, 255}, // Warm straw-gold (was 250/244/226, which reads paper-white under sun x2.25)
         });
 
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
@@ -736,7 +769,7 @@ void InitSongQuaoMap(void)
                                              .causticsStrength = 0.85f,
                                              .causticsScale = 1.65f,
                                              .foamThreshold = 0.135f,
-                                             .deepColor = {14, 38, 48, 245},
+                                             .deepColor = {22, 60, 68, 245},
                                              .shallowColor = {95, 158, 148, 80},
                                              .foamColor = {248, 252, 255, 230},
                                          });
@@ -756,7 +789,8 @@ void UpdateSongQuaoMap(float dt)
         return;
     MapProp_UpdateFloraSystem(&s_flora, camera.target, dt);
     MapProp_UpdateWaterSurface(&s_river, dt);
-    UpdateAmbientFluff(camera.target, dt);
+    if (!(s_skipMask & SQ_SKIP_FLUFF))
+        UpdateAmbientFluff(camera.target, dt);
 
     // Snap dynamic shadow focus to 0.25m steps and tighten radius to 12.5m for higher texel density & fewer casters
     Vector3 focus = {
@@ -799,7 +833,8 @@ void DrawTransparentSongQuaoMap(void)
         MapProp_DrawWaterOverlay(&s_river, GetTime());
     if (!(s_skipMask & SQ_SKIP_MIST))
         MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
-    DrawAmbientFluff();
+    if (!(s_skipMask & SQ_SKIP_FLUFF))
+        DrawAmbientFluff();
 }
 
 void UnloadSongQuaoMap(void)
