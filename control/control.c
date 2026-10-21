@@ -1,8 +1,8 @@
 // control/control.c
 #include "control/control.h"
 #include "entities/entities.h"
-#include "core/skill_manager.h"
-#include "core/map_manager.h"
+#include "skills/skill_manager.h"
+#include "maps/map_manager.h"
 #include <math.h>
 #include <stddef.h>
 

@@ -83,6 +83,9 @@ static Color s_natureInteractionPixels[NATURE_INTERACTION_PIXEL_COUNT];
 static Color s_natureInteractionScratch[NATURE_INTERACTION_PIXEL_COUNT];
 static Color s_natureInteractionUploaded[NATURE_INTERACTION_PIXEL_COUNT];
 static bool s_natureInteractionUploadValid = false;
+static bool s_natureInteractionDirty = false;
+static bool s_natureInteractionScrolled = false;
+static float s_natureInteractionUploadTimer = 0.0f;
 static Color s_natureWindPixels[NATURE_INTERACTION_PIXEL_COUNT];
 // Tip displacement of a rooted canopy element; independent of pixel recovery.
 static Vector2 s_natureForceBend[NATURE_INTERACTION_PIXEL_COUNT];
@@ -112,7 +115,7 @@ static bool s_natureWindTraceShadowUploaded = false;
 static MapNatureRenderStats s_natureRenderStats = {0};
 
 // Cache the Core macro field on a 32x32 grid (4 KB) at 30 Hz intervals per API spec
-// instead of evaluating sixteen gradient-noise corners per vertex.
+// and reuse the previous future sample slice when only advancing in time (cuts CPU noise evals by 50%).
 #define NATURE_MACRO_RESOLUTION 32
 static const float kNatureMacroWorldSize = 64.0f;
 static const float kNatureMacroInterval = 1.0f / 30.0f;
@@ -124,6 +127,101 @@ static Vector4 s_natureMacroRegion = {0}; // centre x/z, size, reference height
 static float s_natureMacroScale = 1.0f;
 static bool s_natureMacroReady = false;
 static bool s_natureMacroVerified = false;
+
+// ============================================================================
+// CACHED ENVIRONMENT FLAGS (Avoids per-frame/per-draw getenv() string scans)
+// ============================================================================
+typedef enum NatureShadowMode
+{
+    NATURE_SHADOW_HYBRID = 0,
+    NATURE_SHADOW_REAL_ONLY,
+    NATURE_SHADOW_PROJECTED_ONLY,
+} NatureShadowMode;
+
+static bool s_envFlagsInitialized = false;
+static bool s_cachedWindTraceEnabled = false;
+static NatureShadowMode s_cachedShadowMode = NATURE_SHADOW_HYBRID;
+static bool s_cachedCasterFilterActive = false;
+static bool s_cachedCasterAllowFlower = true;
+static bool s_cachedCasterAllowMeadow = true;
+
+static void Nature_InitEnvFlags(void)
+{
+    if (s_envFlagsInitialized)
+        return;
+    s_envFlagsInitialized = true;
+
+    const char *trace = getenv("WUXING_WIND_RECEIVER_TRACE");
+    s_cachedWindTraceEnabled = (trace != NULL && trace[0] != '\0' && trace[0] != '0');
+
+    const char *mode = getenv("WUXING_NATURE_SHADOW_MODE");
+    if (mode != NULL && (mode[0] == 'r' || mode[0] == 'R'))
+        s_cachedShadowMode = NATURE_SHADOW_REAL_ONLY;
+    else if (mode != NULL && (mode[0] == 'p' || mode[0] == 'P'))
+        s_cachedShadowMode = NATURE_SHADOW_PROJECTED_ONLY;
+    else
+        s_cachedShadowMode = NATURE_SHADOW_HYBRID;
+
+    const char *filter = getenv("WUXING_NATURE_SHADOW_CASTERS");
+    if (filter == NULL || filter[0] == '\0' || filter[0] == 'a' || filter[0] == 'A')
+    {
+        s_cachedCasterFilterActive = false;
+        s_cachedCasterAllowFlower = true;
+        s_cachedCasterAllowMeadow = true;
+    }
+    else
+    {
+        s_cachedCasterFilterActive = true;
+        if (filter[0] == 'f' || filter[0] == 'F')
+        {
+            s_cachedCasterAllowFlower = true;
+            s_cachedCasterAllowMeadow = false;
+        }
+        else if (filter[0] == 'm' || filter[0] == 'M' || filter[0] == 'g' || filter[0] == 'G')
+        {
+            s_cachedCasterAllowFlower = false;
+            s_cachedCasterAllowMeadow = true;
+        }
+        else if (filter[0] == 'n' || filter[0] == 'N')
+        {
+            s_cachedCasterAllowFlower = false;
+            s_cachedCasterAllowMeadow = false;
+        }
+        else
+        {
+            s_cachedCasterAllowFlower = true;
+            s_cachedCasterAllowMeadow = true;
+        }
+    }
+}
+
+static inline bool Nature_WindTraceEnabled(void)
+{
+    if (!s_envFlagsInitialized)
+        Nature_InitEnvFlags();
+    return s_cachedWindTraceEnabled;
+}
+
+static inline NatureShadowMode Nature_GetShadowMode(void)
+{
+    if (!s_envFlagsInitialized)
+        Nature_InitEnvFlags();
+    return s_cachedShadowMode;
+}
+
+static inline bool Nature_ShadowCasterTypeEnabled(bool flower)
+{
+    if (!s_envFlagsInitialized)
+        Nature_InitEnvFlags();
+    return flower ? s_cachedCasterAllowFlower : s_cachedCasterAllowMeadow;
+}
+
+static inline bool Nature_ShadowCasterFilterActive(void)
+{
+    if (!s_envFlagsInitialized)
+        Nature_InitEnvFlags();
+    return s_cachedCasterFilterActive;
+}
 
 // ============================================================================
 // PER-SHADER UNIFORM LOCATION CACHE (Eliminates runtime glGetUniformLocation stalls)
@@ -269,12 +367,9 @@ static Vector2 Nature_DecodeMacroAtCell(int x, int z, float fraction)
     };
 }
 
-static bool Nature_WindTraceEnabled(void);
-
 static void Nature_VerifyMacroCache(void)
 {
-    const char *trace = getenv("WUXING_WIND_RECEIVER_TRACE");
-    if (s_natureMacroVerified || !trace || trace[0] == '\0' || trace[0] == '0')
+    if (s_natureMacroVerified || !Nature_WindTraceEnabled())
         return;
     s_natureMacroVerified = true;
     float cellSize = kNatureMacroWorldSize / NATURE_MACRO_RESOLUTION;
@@ -332,12 +427,27 @@ static void Nature_UpdateMacroCache(float time)
                      s_natureWindMacro.gustAmplitude == s_natureMacroCachedConfig.gustAmplitude &&
                      s_natureWindMacro.noiseScale == s_natureMacroCachedConfig.noiseScale &&
                      s_natureWindMacro.noiseSpeed == s_natureMacroCachedConfig.noiseSpeed;
-    if (s_natureMacroReady && sameMacro &&
-        region.x == s_natureMacroRegion.x && region.y == s_natureMacroRegion.y &&
-        fabsf(region.w - s_natureMacroRegion.w) < 0.25f &&
+    bool sameRegion = s_natureMacroReady && sameMacro &&
+                      region.x == s_natureMacroRegion.x && region.y == s_natureMacroRegion.y &&
+                      fabsf(region.w - s_natureMacroRegion.w) < 0.25f;
+
+    if (sameRegion &&
         sampleTime >= s_natureMacroTimeRange.x &&
         sampleTime <= s_natureMacroTimeRange.x + kNatureMacroInterval)
         return;
+
+    // Fast time-step handoff: if we simply advanced into the next 30 Hz window at the same
+    // region, reuse the previous future (B,A) slice as the new current (R,G) slice and
+    // evaluate Wind_GetMacroAt only ONCE per cell instead of twice (cuts CPU work by 50%)!
+    bool canShiftSlice = sameRegion &&
+                         (sampleTime >= s_natureMacroTimeRange.x + kNatureMacroInterval) &&
+                         (sampleTime < s_natureMacroTimeRange.x + kNatureMacroInterval * 2.0f);
+
+    if (canShiftSlice)
+    {
+        sampleTime = s_natureMacroTimeRange.x + kNatureMacroInterval;
+    }
+
     s_natureMacroRegion = region;
     s_natureMacroTimeRange = (Vector2){sampleTime, kNatureMacroInterval};
     s_natureMacroCachedConfig = s_natureWindMacro;
@@ -346,23 +456,40 @@ static void Nature_UpdateMacroCache(float time)
     float maxBase = fmaxf(fabsf(s_natureWindMacro.baseDirection.x),
                           fabsf(s_natureWindMacro.baseDirection.z));
     s_natureMacroScale = fmaxf(1.0f, maxBase * (1.0f + gust) + gust * fmaxf(baseSpeed, 2.0f));
+
+    float futureTime = sampleTime + kNatureMacroInterval;
     for (int z = 0; z < NATURE_MACRO_RESOLUTION; z++)
     {
+        float posZ = s_natureMacroRegion.y + ((float)z + 0.5f) * cellSize - kNatureMacroWorldSize * 0.5f;
         for (int x = 0; x < NATURE_MACRO_RESOLUTION; x++)
         {
+            int idx = z * NATURE_MACRO_RESOLUTION + x;
             Vector3 position = {
                 s_natureMacroRegion.x + ((float)x + 0.5f) * cellSize - kNatureMacroWorldSize * 0.5f,
                 s_natureMacroRegion.w,
-                s_natureMacroRegion.y + ((float)z + 0.5f) * cellSize - kNatureMacroWorldSize * 0.5f,
+                posZ,
             };
-            Vector3 grass = Wind_GetMacroAt(position, sampleTime);
-            Vector3 future = Wind_GetMacroAt(position, sampleTime + kNatureMacroInterval);
-            s_natureMacroPixels[z * NATURE_MACRO_RESOLUTION + x] = (Color){
-                Nature_EncodeMacroComponent(grass.x),
-                Nature_EncodeMacroComponent(grass.z),
-                Nature_EncodeMacroComponent(future.x),
-                Nature_EncodeMacroComponent(future.z),
-            };
+            Vector3 future = Wind_GetMacroAt(position, futureTime);
+            if (canShiftSlice)
+            {
+                Color prev = s_natureMacroPixels[idx];
+                s_natureMacroPixels[idx] = (Color){
+                    prev.b,
+                    prev.a,
+                    Nature_EncodeMacroComponent(future.x),
+                    Nature_EncodeMacroComponent(future.z),
+                };
+            }
+            else
+            {
+                Vector3 grass = Wind_GetMacroAt(position, sampleTime);
+                s_natureMacroPixels[idx] = (Color){
+                    Nature_EncodeMacroComponent(grass.x),
+                    Nature_EncodeMacroComponent(grass.z),
+                    Nature_EncodeMacroComponent(future.x),
+                    Nature_EncodeMacroComponent(future.z),
+                };
+            }
         }
     }
     if (s_natureMacroTexture.id == 0)
@@ -390,12 +517,6 @@ static void Nature_UpdateMacroCache(float time)
         Nature_VerifyMacroCache();
 }
 
-static bool Nature_WindTraceEnabled(void)
-{
-    const char *value = getenv("WUXING_WIND_RECEIVER_TRACE");
-    return value != NULL && value[0] != '\0' && value[0] != '0';
-}
-
 static void Nature_BeginWindReceiverShader(Shader shader)
 {
     BeginShaderMode(shader); // WIND_RECEIVER_UNIFORM_SCOPE
@@ -404,44 +525,6 @@ static void Nature_BeginWindReceiverShader(Shader shader)
 static void Nature_EndWindReceiverShader(void)
 {
     EndShaderMode(); // WIND_RECEIVER_UNIFORM_SCOPE
-}
-
-typedef enum NatureShadowMode
-{
-    NATURE_SHADOW_HYBRID = 0,
-    NATURE_SHADOW_REAL_ONLY,
-    NATURE_SHADOW_PROJECTED_ONLY,
-} NatureShadowMode;
-
-static NatureShadowMode Nature_GetShadowMode(void)
-{
-    const char *mode = getenv("WUXING_NATURE_SHADOW_MODE");
-    if (mode != NULL && (mode[0] == 'r' || mode[0] == 'R'))
-        return NATURE_SHADOW_REAL_ONLY;
-    if (mode != NULL && (mode[0] == 'p' || mode[0] == 'P'))
-        return NATURE_SHADOW_PROJECTED_ONLY;
-    return NATURE_SHADOW_HYBRID;
-}
-
-static bool Nature_ShadowCasterTypeEnabled(bool flower)
-{
-    const char *filter = getenv("WUXING_NATURE_SHADOW_CASTERS");
-    if (filter == NULL || filter[0] == '\0' || filter[0] == 'a' || filter[0] == 'A')
-        return true;
-    if (filter[0] == 'f' || filter[0] == 'F')
-        return flower;
-    if (filter[0] == 'm' || filter[0] == 'M' || filter[0] == 'g' || filter[0] == 'G')
-        return !flower;
-    if (filter[0] == 'n' || filter[0] == 'N')
-        return false;
-    return true;
-}
-
-static bool Nature_ShadowCasterFilterActive(void)
-{
-    const char *filter = getenv("WUXING_NATURE_SHADOW_CASTERS");
-    return filter != NULL && filter[0] != '\0' &&
-           filter[0] != 'a' && filter[0] != 'A';
 }
 
 void MapProp_ResetNatureRenderStats(void)
@@ -499,6 +582,9 @@ static void Nature_InitInteraction(void)
     if (s_natureInteractionReady)
         return;
     s_natureInteractionUploadValid = false;
+    s_natureInteractionDirty = false;
+    s_natureInteractionScrolled = false;
+    s_natureInteractionUploadTimer = 0.0f;
     Color empty = Nature_EmptyInteractionPixel();
     for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
         s_natureInteractionPixels[i] = empty;
@@ -507,6 +593,7 @@ static void Nature_InitInteraction(void)
     s_natureInteractionTexture = LoadTextureFromImage(image);
     UnloadImage(image);
     SetTextureFilter(s_natureInteractionTexture, TEXTURE_FILTER_BILINEAR);
+    SetTextureWrap(s_natureInteractionTexture, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(s_natureInteractionTexture, TEXTURE_WRAP_CLAMP);
     s_natureInteractionReady = s_natureInteractionTexture.id != 0;
 }
@@ -530,15 +617,21 @@ static void Nature_ScrollAndDecayInteraction(Vector2 newCenter, float dt)
                 if (b > 0)
                 {
                     unsigned char nextB = (unsigned char)((float)b * decay);
-                    s_natureInteractionPixels[i] = (nextB < 2)
-                                                       ? empty
-                                                       : (Color){s_natureInteractionPixels[i].r, s_natureInteractionPixels[i].g, nextB, 255};
+                    if (nextB != b)
+                    {
+                        s_natureInteractionDirty = true;
+                        s_natureInteractionPixels[i] = (nextB < 2)
+                                                           ? empty
+                                                           : (Color){s_natureInteractionPixels[i].r, s_natureInteractionPixels[i].g, nextB, 255};
+                    }
                 }
             }
         }
         return;
     }
 
+    s_natureInteractionScrolled = true;
+    s_natureInteractionDirty = true;
     for (int y = 0; y < NATURE_INTERACTION_RESOLUTION; y++)
     {
         int sourceY = y + shiftY;
@@ -579,6 +672,8 @@ void MapProp_BeginNatureInteraction(Vector3 focus, float dt)
 {
     Nature_InitInteraction();
     s_natureForceDt = fminf(fmaxf(dt, 0.0f), 0.1f);
+    s_natureInteractionUploadTimer += s_natureForceDt;
+    s_natureInteractionScrolled = false;
     if (!s_natureInteractionReady)
         return;
     float cellSize = kNatureInteractionWorldSize / NATURE_INTERACTION_RESOLUTION;
@@ -645,6 +740,7 @@ void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength)
             pixel->g = (unsigned char)((dz * inverseDistance * 0.5f + 0.5f) * 255.0f);
             pixel->b = encodedBend;
             pixel->a = 255;
+            s_natureInteractionDirty = true;
         }
     }
 }
@@ -760,8 +856,6 @@ static int Nature_UpdateDominantWindImpact(const VorticleData *vorticles,
     return directImpact;
 }
 
-// Rooted vegetation responds to force through material mass and flexure, never
-// free-body capture/arrival. Underdamped release gives an opposite return beat.
 static void Nature_AdvanceAnchoredCell(Vector2 *bend, Vector2 *velocity,
                                        Vector3 forceNewtons, float dt)
 {
@@ -978,6 +1072,7 @@ static void Nature_AddAnchoredMotion(void)
                 windBend.x + bend->x,
                 windBend.y + bend->y,
             });
+            s_natureInteractionDirty = true;
         }
     }
     s_natureForceAwake = awake;
@@ -1015,7 +1110,7 @@ void MapProp_AddNatureWindVorticles(float time)
 
     s_natureWindMacro = Wind_GetMacro();
     s_natureWindReceiverReady = true;
-    double cacheStart = GetTime();
+    double cacheStart = Nature_WindTraceEnabled() ? GetTime() : 0.0;
     Nature_UpdateMacroCache(time);
     if (Nature_WindTraceEnabled())
     {
@@ -1101,6 +1196,7 @@ void MapProp_AddNatureWindVorticles(float time)
                     existingBend.y + airVelocity.z * kNatureWindBendPerMps,
                 };
                 *pixel = Nature_EncodeInteractionPixel(combinedBend);
+                s_natureInteractionDirty = true;
             }
         }
     }
@@ -1111,36 +1207,48 @@ void MapProp_EndNatureInteraction(void)
 {
     if (!s_natureInteractionOpen || !s_natureInteractionReady)
         return;
-    Color empty = Nature_EmptyInteractionPixel();
-    for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
+
+    // Rate-limit GPU texture uploads to 30 Hz when the interaction window hasn't scrolled,
+    // eliminating per-frame CPU->GPU staging stalls when standing still!
+    bool shouldUpload = !s_natureInteractionUploadValid ||
+                        s_natureInteractionScrolled ||
+                        (s_natureInteractionDirty && s_natureInteractionUploadTimer >= (1.0f / 30.0f));
+
+    if (shouldUpload)
     {
-        Color pInt = s_natureInteractionPixels[i];
-        Color pWind = s_natureWindPixels[i];
-        if (pWind.b == 0)
+        Color empty = Nature_EmptyInteractionPixel();
+        for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
         {
-            s_natureInteractionScratch[i] = (pInt.b == 0) ? empty : pInt;
-            continue;
+            Color pInt = s_natureInteractionPixels[i];
+            Color pWind = s_natureWindPixels[i];
+            if (pWind.b == 0)
+            {
+                s_natureInteractionScratch[i] = (pInt.b == 0) ? empty : pInt;
+                continue;
+            }
+            if (pInt.b == 0)
+            {
+                s_natureInteractionScratch[i] = pWind;
+                continue;
+            }
+            Vector2 interactionBend = Nature_DecodeInteractionPixel(pInt);
+            Vector2 windBend = Nature_DecodeInteractionPixel(pWind);
+            s_natureInteractionScratch[i] = Nature_EncodeInteractionPixel((Vector2){
+                interactionBend.x + windBend.x,
+                interactionBend.y + windBend.y,
+            });
         }
-        if (pInt.b == 0)
+        if (!s_natureInteractionUploadValid ||
+            memcmp(s_natureInteractionUploaded, s_natureInteractionScratch,
+                   sizeof(s_natureInteractionScratch)) != 0)
         {
-            s_natureInteractionScratch[i] = pWind;
-            continue;
+            UpdateTexture(s_natureInteractionTexture, s_natureInteractionScratch);
+            memcpy(s_natureInteractionUploaded, s_natureInteractionScratch,
+                   sizeof(s_natureInteractionScratch));
+            s_natureInteractionUploadValid = true;
         }
-        Vector2 interactionBend = Nature_DecodeInteractionPixel(pInt);
-        Vector2 windBend = Nature_DecodeInteractionPixel(pWind);
-        s_natureInteractionScratch[i] = Nature_EncodeInteractionPixel((Vector2){
-            interactionBend.x + windBend.x,
-            interactionBend.y + windBend.y,
-        });
-    }
-    if (!s_natureInteractionUploadValid ||
-        memcmp(s_natureInteractionUploaded, s_natureInteractionScratch,
-               sizeof(s_natureInteractionScratch)) != 0)
-    {
-        UpdateTexture(s_natureInteractionTexture, s_natureInteractionScratch);
-        memcpy(s_natureInteractionUploaded, s_natureInteractionScratch,
-               sizeof(s_natureInteractionScratch));
-        s_natureInteractionUploadValid = true;
+        s_natureInteractionDirty = false;
+        s_natureInteractionUploadTimer = 0.0f;
     }
     s_natureInteractionOpen = false;
 }
@@ -1158,6 +1266,9 @@ void MapProp_ClearNatureInteraction(void)
         UnloadTexture(s_natureInteractionTexture);
     s_natureInteractionTexture = (Texture2D){0};
     s_natureInteractionUploadValid = false;
+    s_natureInteractionDirty = false;
+    s_natureInteractionScrolled = false;
+    s_natureInteractionUploadTimer = 0.0f;
     if (s_natureMacroTexture.id != 0)
         UnloadTexture(s_natureMacroTexture);
     s_natureMacroTexture = (Texture2D){0};
@@ -1546,7 +1657,7 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
     float projectionScale = realShadowActive ? 0.16f : 0.62f;
     float widthScale = realShadowActive ? 1.25f : 1.20f;
     float tipWidth = realShadowActive ? 0.85f : 0.75f;
-    float shadowStrength = realShadowActive ? 0.52f : 0.82f;
+    float shadowStrength = realShadowActive ? 0.46f : 0.78f;
 
     if (locs->lightTravel >= 0)
         SetShaderValue(shader, locs->lightTravel, &lightTravel, SHADER_UNIFORM_VEC3);
@@ -1683,8 +1794,9 @@ static void Nature_UpdateWindFieldShader(Shader shader, Vector2 fallbackDirectio
 {
     const NatureShaderLocs *locs = Nature_GetCachedLocs(shader);
     WindMacroConfig macro = s_natureWindMacro;
+    // Allow compliance up to 0.12f so grass, reeds, and pampas all utilize the fast 32x32 GPU wind cache
     int cacheEnabled = s_natureMacroReady && s_natureWindReceiverReady &&
-                               responseKind == NATURE_WIND_RESPONSE_GRASS && compliance <= 0.06f
+                               responseKind == NATURE_WIND_RESPONSE_GRASS && compliance <= 0.12f
                            ? 1
                            : 0;
     if (locs->windCacheEnabled >= 0)

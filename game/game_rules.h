@@ -16,7 +16,7 @@
 #ifndef GAME_RULES_H
 #define GAME_RULES_H
 
-#include "core/map_manager.h"  // NatureZoneType
+#include "maps/map_manager.h"  // NatureZoneType
 #include "entities/entities.h" // AgentTeam (team-battle rules)
 #include <stdbool.h>
 

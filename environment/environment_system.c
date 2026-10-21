@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdlib.h> // getenv, strtof (read once, see EnvTodEvalInterval / EnvDebugTick)
 
 #ifndef PI
 #define PI 3.14159265358979323846f
@@ -52,6 +53,17 @@ static float s_todTimePoints[MAX_TIME_OF_DAY_PRESETS];
 static int s_todCount = 0;
 static float s_todCurrentTime = 0.0f;
 static float s_todSpeed = 0.0f;
+// Time-of-Day *time* advances every frame, but the (comparatively expensive)
+// preset blend + version bump only runs at this rate. EnvApplyBlendedPreset bumps
+// s_lightingVersion/s_cloudVersion unconditionally, so evaluating at frame rate
+// makes every consumer keyed on the version (uniform uploads, fog/atmosphere
+// rebuilds, cloud shader rebinding) redo its work every single frame. 20 Hz moves
+// the sun < 0.03 deg per step at a 10-minute day: invisible. WUXING_TOD_HZ=0
+// restores per-frame evaluation.
+#define ENV_TOD_EVAL_HZ_DEFAULT 20.0f
+static float s_todEvalInterval = -1.0f; // seconds; <0 = env not read yet, 0 = every frame
+static float s_todEvalAccum = 1.0f;     // starts above any interval so the first Update evaluates
+static bool s_todEvalPending = false;   // time advanced since the last evaluation
 
 static EnvCloudShadowConfig s_cloudShadow = {
     .enabled = false,
@@ -67,7 +79,11 @@ static Texture2D s_cloudNoise = {0};
 static EnvCloudShadowFrame s_cachedCloudFrame = {0};
 static bool s_cloudFrameDirty = true;
 
-#define ENV_CLOUD_SHADER_CACHE_CAPACITY 16
+// Was 16. With more than 16 distinct cloud-receiving shaders the round-robin
+// replacement below evicts entries every frame, and every eviction costs four
+// GetShaderLocation() string lookups plus a full uniform re-upload (boundVersion
+// is reset to 0). 64 entries is ~3 KB of static memory.
+#define ENV_CLOUD_SHADER_CACHE_CAPACITY 64
 #define ENV_CLOUD_TEXTURE_SLOT 3
 typedef struct
 {
@@ -79,6 +95,7 @@ typedef struct
 } EnvCloudShaderLocations;
 static EnvCloudShaderLocations s_cloudShaderLocations[ENV_CLOUD_SHADER_CACHE_CAPACITY];
 static unsigned int s_cloudShaderReplacement = 0;
+static EnvCloudShaderLocations *s_lastCloudLocations = NULL; // O(1) hit when the same shader binds repeatedly
 
 static bool s_shadowBatchOpen = false;
 
@@ -195,6 +212,7 @@ void Environment_Init(void)
         s_cloudShaderLocations[i] = (EnvCloudShaderLocations){0};
     }
     s_cloudShaderReplacement = 0;
+    s_lastCloudLocations = NULL;
     s_shadowBatchOpen = false;
     FogVolume_RebuildActiveList();
 }
@@ -307,11 +325,53 @@ static void EnvEvaluateTimeOfDay(void)
     }
 }
 
+static float EnvTodEvalInterval(void)
+{
+    if (s_todEvalInterval < 0.0f)
+    {
+        float hz = ENV_TOD_EVAL_HZ_DEFAULT;
+        const char *e = getenv("WUXING_TOD_HZ");
+        if (e != NULL)
+        {
+            float v = strtof(e, NULL);
+            hz = v > 0.0f ? v : 0.0f;
+        }
+        s_todEvalInterval = hz > 0.0f ? 1.0f / hz : 0.0f;
+    }
+    return s_todEvalInterval;
+}
+
+// Opt-in diagnostics (WUXING_ENV_DEBUG=1): every 5 s log the number of active
+// local fog volumes and how many lighting-version bumps happened. A fog count
+// that keeps climbing while the player stands still is a leak; ~60 bumps/s
+// means something is re-evaluating lighting every frame.
+static void EnvDebugTick(float dt)
+{
+    static int enabled = -1;
+    static float accum = 0.0f;
+    static unsigned int lastVersion = 0;
+    if (enabled < 0)
+    {
+        enabled = getenv("WUXING_ENV_DEBUG") != NULL ? 1 : 0;
+        lastVersion = s_lightingVersion;
+    }
+    if (!enabled)
+        return;
+    accum += dt;
+    if (accum < 5.0f)
+        return;
+    TraceLog(LOG_INFO, "ENV_DEBUG: fogVolumes=%d/%d lightingVersion=+%u in %.1fs todSpeed=%.6f",
+             s_activeFogCount, MAX_LOCAL_FOG_VOLUMES, s_lightingVersion - lastVersion, accum, s_todSpeed);
+    accum = 0.0f;
+    lastVersion = s_lightingVersion;
+}
+
 void Environment_Update(float dt)
 {
     if (!isfinite(dt) || dt <= 0.0f)
         return;
 
+    EnvDebugTick(dt);
     EnvUpdateCloudShadow(dt);
 
     // 1. Update transient Local Fog Volumes (chỉ duyệt các fog volume đang active)
@@ -354,7 +414,18 @@ void Environment_Update(float dt)
     if (s_todCurrentTime < 0.0f)
         s_todCurrentTime += 1.0f;
 
-    EnvEvaluateTimeOfDay();
+    float interval = EnvTodEvalInterval();
+    s_todEvalAccum += dt;
+    if (interval <= 0.0f || s_todEvalAccum >= interval)
+    {
+        s_todEvalAccum = 0.0f;
+        s_todEvalPending = false;
+        EnvEvaluateTimeOfDay();
+    }
+    else
+    {
+        s_todEvalPending = true;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +786,16 @@ int FogVolume_Create(const LocalFogVolume *volume)
             return s_fogVolumes[i].id;
         }
     }
+    {
+        static bool warned = false;
+        if (!warned)
+        {
+            warned = true;
+            TraceLog(LOG_WARNING, "ENV: local fog volume pool full (%d). Volumes with maxLifetime<=0 never expire "
+                                  "- check for a spawner that is not paired with FogVolume_Destroy.",
+                     MAX_LOCAL_FOG_VOLUMES);
+        }
+    }
     return 0;
 }
 
@@ -765,6 +846,17 @@ void FogVolume_ClearAll(void)
 
 int FogVolume_SpawnTransient(Vector3 pos, float radius, Color color, float density, float duration)
 {
+    if (!(duration > 0.0f))
+    {
+        static bool warned = false;
+        if (!warned)
+        {
+            warned = true;
+            TraceLog(LOG_WARNING, "ENV: FogVolume_SpawnTransient(duration=%.3f) creates a volume that NEVER expires "
+                                  "(maxLifetime<=0). Repeated calls fill the pool and grow fog raymarch cost.",
+                     (double)duration);
+        }
+    }
     LocalFogVolume v = {0};
     v.shape = FOG_SHAPE_SPHERE;
     v.position = pos;
@@ -880,12 +972,19 @@ void Environment_BindCloudShadowShader(Shader shader)
     if (!shader.id)
         return;
     EnvCloudShaderLocations *locations = NULL;
-    for (int i = 0; i < ENV_CLOUD_SHADER_CACHE_CAPACITY; i++)
+    if (s_lastCloudLocations != NULL && s_lastCloudLocations->shaderId == shader.id)
     {
-        if (s_cloudShaderLocations[i].shaderId == shader.id)
+        locations = s_lastCloudLocations;
+    }
+    else
+    {
+        for (int i = 0; i < ENV_CLOUD_SHADER_CACHE_CAPACITY; i++)
         {
-            locations = &s_cloudShaderLocations[i];
-            break;
+            if (s_cloudShaderLocations[i].shaderId == shader.id)
+            {
+                locations = &s_cloudShaderLocations[i];
+                break;
+            }
         }
     }
     if (!locations)
@@ -900,6 +999,15 @@ void Environment_BindCloudShadowShader(Shader shader)
         }
         if (!locations)
         {
+            static bool warned = false;
+            if (!warned)
+            {
+                warned = true;
+                TraceLog(LOG_WARNING, "ENV: cloud-shadow shader cache full (%d entries); "
+                                      "evicting -> uniform locations re-queried every frame. "
+                                      "Raise ENV_CLOUD_SHADER_CACHE_CAPACITY.",
+                         ENV_CLOUD_SHADER_CACHE_CAPACITY);
+            }
             locations = &s_cloudShaderLocations[s_cloudShaderReplacement++ % ENV_CLOUD_SHADER_CACHE_CAPACITY];
         }
         *locations = (EnvCloudShaderLocations){
@@ -912,6 +1020,8 @@ void Environment_BindCloudShadowShader(Shader shader)
             .boundDriftUV = {-1.0f, -1.0f},
             .boundTextureId = 0};
     }
+
+    s_lastCloudLocations = locations;
 
     EnvCloudShadowFrame frame = Environment_GetCloudShadowFrame();
     bool versionChanged = (locations->boundVersion != frame.version);
@@ -992,6 +1102,7 @@ void Environment_SetTimeOfDayPresets(const EnvLightingPreset *presets, const flo
         count = MAX_TIME_OF_DAY_PRESETS;
 
     s_todCount = count;
+    s_todEvalAccum = 1.0f; // re-evaluate on the next Update
     for (int i = 0; i < count; i++)
     {
         s_todPresets[i] = presets[i];
@@ -1004,6 +1115,13 @@ void Environment_SetTimeOfDayPresets(const EnvLightingPreset *presets, const flo
 void Environment_SetTimeOfDaySpeed(float cyclesPerSecond)
 {
     s_todSpeed = isfinite(cyclesPerSecond) ? cyclesPerSecond : 0.0f;
+    // Update() stops evaluating once the speed is 0, so flush a pending step.
+    if (s_todSpeed == 0.0f && s_todEvalPending)
+    {
+        s_todEvalPending = false;
+        s_todEvalAccum = 0.0f;
+        EnvEvaluateTimeOfDay();
+    }
 }
 
 void Environment_SetTimeOfDay(float t)
@@ -1014,6 +1132,8 @@ void Environment_SetTimeOfDay(float t)
     if (t < 0.0f)
         t += 1.0f;
     s_todCurrentTime = t;
+    s_todEvalAccum = 0.0f;
+    s_todEvalPending = false;
     EnvEvaluateTimeOfDay();
 }
 

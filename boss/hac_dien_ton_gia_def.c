@@ -2,7 +2,7 @@
 // boss, thiết kế §V.2). New bosses = new files like this one; only _def.c
 // files may include VFX/draw headers (boss_system.c stays pure logic).
 #include "boss/boss_system.h"
-#include "core/skill_manager.h" // ELEMENT_COLOR_* — the phase visual cue
+#include "skills/skill_manager.h" // ELEMENT_COLOR_* — the phase visual cue
 #include "raylib.h"
 #include <math.h>
 

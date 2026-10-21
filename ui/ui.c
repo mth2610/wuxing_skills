@@ -4,7 +4,7 @@
 #include "entities/entities.h"
 #include "combat/combat.h"
 #include "boss/boss_system.h"
-#include "core/skill_manager.h" // slot names + CanCast shading + element colors
+#include "skills/skill_manager.h" // slot names + CanCast shading + element colors
 #include <math.h>
 #include <stddef.h>
 #include <string.h>

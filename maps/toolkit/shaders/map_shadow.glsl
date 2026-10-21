@@ -11,11 +11,7 @@
 //                              read from u_shadowFilterQuality at runtime as before.
 //   MAP_STATIC_SHADOW_FILTER_CAP
 //                              Highest filter tier the WORLD-FIXED static layer may use
-//                              (default 1 = two bilinear taps). The static layer only carries
-//                              distant terrain/rock occlusion at a coarser texel size and has
-//                              no thin features to protect, so the 5-tap HIGH kernel bought
-//                              almost nothing there while costing 3 extra gathers per pixel.
-//                              Define as 2 to restore the previous behaviour exactly.
+//                              (default 1 = two bilinear taps).
 //   MAP_SHADOW_NORMAL_OFFSET_TEXELS
 //                              OPT-IN (undefined = off, identical to legacy output). Pushes the
 //                              receiver position along its geometric normal by this many shadow
@@ -66,6 +62,15 @@ float MapShadowCompare(highp sampler2D mapTexture, vec2 uv, float compareDepth)
     return step(compareDepth, textureLod(mapTexture, uv, 0.0).r);
 }
 
+#if MAP_SHADOW_USE_GATHER
+// Fast 2x2 box average using a single hardware textureGather (no floor/mix ALU overhead)
+float MapShadowGatherBox4(highp sampler2D mapTexture, vec2 uv, float compareDepth)
+{
+    vec4 s = step(vec4(compareDepth), textureGather(mapTexture, uv));
+    return dot(s, vec4(0.25));
+}
+#endif
+
 float MapShadowCompareBilinearTexel(highp sampler2D mapTexture, vec2 texelPos,
                                     float compareDepth, float texelSize)
 {
@@ -108,14 +113,17 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
 
     if (quality < 1.5) {
 #if MAP_SHADOW_USE_GATHER
-        float diag = radiusScale * 0.55;
-        float s0 = MapShadowCompareBilinearTexel(
-            mapTexture, centerPos + vec2(-diag, -diag), compareDepth, texelSize);
-        float s1 = MapShadowCompareBilinearTexel(
-            mapTexture, centerPos + vec2( diag,  diag), compareDepth, texelSize);
-        return (s0 + s1) * 0.5;
+        // Single bilinear gather + 1 offset box gather (2 gathers total, half ALU)
+        vec2 base = floor(centerPos);
+        vec2 fraction = centerPos - base;
+        vec4 sc = step(vec4(compareDepth), textureGather(mapTexture, (base + 1.0) * texelSize));
+        float cSum = sc.x + sc.y + sc.z + sc.w;
+        if (cSum <= 0.001) return 0.0;
+        if (cSum >= 3.999) return 1.0;
+        float s0 = mix(mix(sc.w, sc.z, fraction.x), mix(sc.x, sc.y, fraction.x), fraction.y);
+        float s1 = MapShadowGatherBox4(mapTexture, uv + vec2(radiusScale * 0.45 * texelSize), compareDepth);
+        return (s0 * 0.65 + s1 * 0.35);
 #else
-        // Single shared 2x2 neighborhood fetch (4 textureLod taps instead of 8)
         return MapShadowCompareBilinearTexel(mapTexture, centerPos, compareDepth, texelSize);
 #endif
     }
@@ -123,23 +131,35 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
     float diagonal = radiusScale * 0.707;   // diagonal tap offset, in texels
 
 #if MAP_SHADOW_USE_GATHER
-    // HIGH with textureGather: 5 hardware gather instructions.
-    float center = MapShadowCompareBilinearTexel(
-        mapTexture, centerPos, compareDepth, texelSize);
-    float downLeft = MapShadowCompareBilinearTexel(
-        mapTexture, centerPos + vec2(-diagonal, -diagonal), compareDepth, texelSize);
-    float downRight = MapShadowCompareBilinearTexel(
-        mapTexture, centerPos + vec2( diagonal, -diagonal), compareDepth, texelSize);
-    float upLeft = MapShadowCompareBilinearTexel(
-        mapTexture, centerPos + vec2(-diagonal,  diagonal), compareDepth, texelSize);
-    float upRight = MapShadowCompareBilinearTexel(
-        mapTexture, centerPos + vec2( diagonal,  diagonal), compareDepth, texelSize);
+    // HIGH with textureGather:
+    // Stage 1: Fetch center 2x2 neighborhood + 2 opposing rotated diagonal gathers first (3 gathers).
+    // If all 12 texels agree (fully lit or deep umbra, >80% of screen pixels), early-out immediately
+    // and skip the remaining 2 gathers + bilinear ALU!
+    vec2 base = floor(centerPos);
+    vec2 fraction = centerPos - base;
+    vec4 sc = step(vec4(compareDepth), textureGather(mapTexture, (base + 1.0) * texelSize));
+    float center = mix(mix(sc.w, sc.z, fraction.x),
+                       mix(sc.x, sc.y, fraction.x), fraction.y);
+
+    // Subtle rotated disk offsets (26.5 deg golden-ratio tilt) break up blocky axis-aligned staircase edges
+    vec2 offA = vec2(diagonal * 0.894, diagonal * 0.447) * texelSize;
+    vec2 offB = vec2(-diagonal * 0.447, diagonal * 0.894) * texelSize;
+
+    float downLeft = MapShadowGatherBox4(mapTexture, uv - offA, compareDepth);
+    float upRight  = MapShadowGatherBox4(mapTexture, uv + offA, compareDepth);
+
+    float earlySum = center + downLeft + upRight;
+    if (earlySum <= 0.001)
+        return 0.0;
+    if (earlySum >= 2.999 && thinFeatureBoost < 0.01)
+        return 1.0;
+
+    // Stage 2: Penumbra boundary or thin-feature candidate — fetch remaining 2 orthogonal gathers
+    float downRight = MapShadowGatherBox4(mapTexture, uv + offB, compareDepth);
+    float upLeft    = MapShadowGatherBox4(mapTexture, uv - offB, compareDepth);
 #else
     // HIGH without textureGather (e.g. Desktop GLSL 330):
-    // 2-Stage 5-Tap Cross Early-Out + 4-Corner Penumbra Refine:
-    // Fetches the 5-tap cross first (center + 4 cardinal neighbors). If all 5 taps agree
-    // (fully lit or fully umbra, which covers >85% of screen pixels), returns immediately
-    // and skips the 4 corner texture fetches and bilinear quadrant math!
+    // 2-Stage 5-Tap Cross Early-Out + 4-Corner Penumbra Refine
     vec2 nearest = floor(centerPos + 0.5);
     vec2 d = centerPos - nearest; // fractional offset in [-0.5, 0.5)
     vec2 uvCenter = (nearest + 0.5) * texelSize;
@@ -182,11 +202,11 @@ float MapShadowFilteredVisibilityTier(highp sampler2D mapTexture, vec2 uv,
     float upRight   = mix(mix(s11, s21, fUR.x), mix(s12, s22, fUR.x), fUR.y);
 #endif
 
-    float smoothVisibility = center * 0.36
-                           + (downLeft + downRight + upLeft + upRight) * 0.16;
+    float smoothVisibility = center * 0.34
+                           + (downLeft + downRight + upLeft + upRight) * 0.165;
     float darkestVisibility = min(center,
         min(min(downLeft, downRight), min(upLeft, upRight)));
-    return mix(smoothVisibility, darkestVisibility, thinFeatureBoost * 0.20);
+    return mix(smoothVisibility, darkestVisibility, thinFeatureBoost * 0.18);
 }
 
 float MapShadowFilteredVisibility(highp sampler2D mapTexture, vec2 uv,
@@ -213,13 +233,11 @@ float MapShadowCoverageFade(vec2 uv)
 float MapShadowContrast(float visibility)
 {
     visibility = clamp(visibility, 0.0, 1.0);
-    return visibility * (1.0 - 0.0471 * (1.0 - visibility));
+    // Natural penumbra rolloff: preserves delicate mid-tone shadow softness while grounding core umbra
+    float sCurve = visibility * visibility * (3.0 - 2.0 * visibility);
+    return mix(visibility, sCurve, 0.18);
 }
 
-// Same result as MapDynamicShadowVisibility, and additionally reports how much of the dynamic
-// capture window covers this receiver: 0 = outside the window (or dynamic shadows disabled),
-// 1 = fully inside, smooth across the window's outer 12% edge fade. Receivers can use it to
-// approximate occlusion the window cannot provide (e.g. blade shadows far from the focus).
 float MapDynamicShadowVisibilityCov(vec3 worldPos, float slope, out float coverage)
 {
     coverage = 0.0;
@@ -227,9 +245,10 @@ float MapDynamicShadowVisibilityCov(vec3 worldPos, float slope, out float covera
         return 1.0;
 
     vec4 lightSpace = u_lightVP * vec4(worldPos, 1.0);
-    vec3 projected = lightSpace.xyz / max(lightSpace.w, 0.00001);
-    projected = projected * 0.5 + 0.5;
-    if (projected.z <= 0.0 || projected.z >= 1.0)
+    vec3 projected = lightSpace.xyz * (0.5 / max(lightSpace.w, 0.00001)) + 0.5;
+    if (projected.z <= 0.0 || projected.z >= 1.0 ||
+        projected.x <= 0.0 || projected.x >= 1.0 ||
+        projected.y <= 0.0 || projected.y >= 1.0)
         return 1.0;
 
     float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.12);
@@ -237,7 +256,7 @@ float MapDynamicShadowVisibilityCov(vec3 worldPos, float slope, out float covera
         return 1.0;
     coverage = edgeFade;
 
-    float compareDepth = projected.z - mix(0.00028, 0.00085, slope);
+    float compareDepth = projected.z - mix(0.00026, 0.00080, slope);
     float visibility = MapShadowFilteredVisibility(
         shadowMap, projected.xy, compareDepth, u_shadowTexel, MAP_DYNAMIC_SHADOW_RADIUS,
         u_shadowThinFeatureBoost);
@@ -255,9 +274,10 @@ float MapStaticShadowVisibility(vec3 worldPos, float slope)
     if (u_staticShadowEnabled < 0.5)
         return 1.0;
     vec4 lightSpace = u_staticLightVP * vec4(worldPos, 1.0);
-    vec3 projected = lightSpace.xyz / max(lightSpace.w, 0.00001);
-    projected = projected * 0.5 + 0.5;
-    if (projected.z <= 0.0 || projected.z >= 1.0)
+    vec3 projected = lightSpace.xyz * (0.5 / max(lightSpace.w, 0.00001)) + 0.5;
+    if (projected.z <= 0.0 || projected.z >= 1.0 ||
+        projected.x <= 0.0 || projected.x >= 1.0 ||
+        projected.y <= 0.0 || projected.y >= 1.0)
         return 1.0;
     float fade = MapShadowCoverageFade(projected.xy);
     if (fade <= 0.0)

@@ -4,7 +4,7 @@
 // file may include VFX headers (drawGround), onTick stays Entity_*-only.
 #include "formations/formation_system.h"
 #include "core/composition/visual_composer.h"
-#include "core/skill_manager.h" // ELEMENT_COLOR_TAIJI accent
+#include "skills/skill_manager.h" // ELEMENT_COLOR_TAIJI accent
 #include "raylib.h"
 #include <math.h>
 

@@ -1,9 +1,9 @@
 #include "sandbox/auto_test_cases.h"
 
 #include "sandbox/auto_test.h"
-#include "core/skill_manager.h"
+#include "skills/skill_manager.h"
 #include "core/material/material_system.h"
-#include "core/map_manager.h"
+#include "maps/map_manager.h"
 #include "entities/entities.h"
 #include "combat/combat.h"
 #include "control/control.h"

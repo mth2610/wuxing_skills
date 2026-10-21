@@ -4,7 +4,7 @@
 #include "core/decals/decal_system.h"
 #include "core/vfx_light.h"
 #include "core/emitter_system.h"
-#include "core/skill_helper.h"
+#include "skills/skill_helper.h"
 #include "core/status_vfx.h"
 #include "core/afterimage.h"
 #include "raylib.h"

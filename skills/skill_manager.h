@@ -3,9 +3,9 @@
 
 #include "raylib.h"
 #include "core/tuning.h"
-#include "core/skill_curve.h"
+#include "skills/skill_curve.h"
 #include <stdbool.h>
-#include "core/camera_context.h"
+#include "post_process/camera_context.h"
 
 // Base colors for Wuxing and Taiji elements
 #define ELEMENT_COLOR_WATER (Color){ 41, 128, 185, 255 }  // Cyan-Blue

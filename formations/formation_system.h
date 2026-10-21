@@ -13,7 +13,7 @@
 
 #include "entities/entities.h"
 #include "combat/combat.h"     // CombatElement
-#include "core/map_manager.h"  // NatureZoneType (resonance)
+#include "maps/map_manager.h"  // NatureZoneType (resonance)
 
 #define MAX_FORMATIONS 4
 

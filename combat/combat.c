@@ -1,6 +1,6 @@
 // combat/combat.c
 #include "combat/combat.h"
-#include "core/map_manager.h" // Map_QueryZoneAt — Thổ-in-forest penalty
+#include "maps/map_manager.h" // Map_QueryZoneAt — Thổ-in-forest penalty
 #include "raylib.h"
 #include <math.h>
 #include <stddef.h>

@@ -8,8 +8,8 @@
 #include "net/net_transport_internal.h"
 #include "net/net.h"
 #include "entities/entities.h"
-#include "core/skill_manager.h"
-#include "core/map_manager.h"  // Map_QueryZoneAt — zone rules for remote heroes
+#include "skills/skill_manager.h"
+#include "maps/map_manager.h"  // Map_QueryZoneAt — zone rules for remote heroes
 #include "game/game_rules.h"   // cooldown/stealth table (the ONE rule table)
 #include <enet/enet.h>
 #include "raylib.h" // TraceLog only — no rendering in this module

@@ -8,7 +8,7 @@
 #define TAIJI_PHONG_SKILL_H
 
 #include "raylib.h"
-#include "core/skill_manager.h"
+#include "skills/skill_manager.h"
 #include <stdbool.h>
 
 void InitTaijiPhongSkill(int screenWidth, int screenHeight);

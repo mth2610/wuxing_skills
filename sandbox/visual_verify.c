@@ -1,6 +1,6 @@
 #include "sandbox/visual_verify.h"
 #include "sandbox/auto_test.h"
-#include "core/skill_manager.h"
+#include "skills/skill_manager.h"
 #include "raylib.h"
 #include <stdlib.h>
 #include <string.h>

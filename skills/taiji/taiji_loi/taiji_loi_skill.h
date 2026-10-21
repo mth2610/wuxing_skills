@@ -7,7 +7,7 @@
 #define TAIJI_LOI_SKILL_H
 
 #include "raylib.h"
-#include "core/skill_manager.h"
+#include "skills/skill_manager.h"
 
 void InitTaijiLoiSkill(int screenWidth, int screenHeight);
 void CastTaijiLoiSkill(int agentId, Vector3 startPos, Vector3 target, SkillParams params);

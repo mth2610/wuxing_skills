@@ -2,11 +2,11 @@
 #define SKILL_HELPER_H
 
 #include "raylib.h"
-#include "core/skill_curve.h"
+#include "skills/skill_curve.h"
 #include "core/force_field.h"
-#include "core/skill_manager.h"
+#include "skills/skill_manager.h"
 #include <stdbool.h>
-#include "core/camera_context.h"
+#include "post_process/camera_context.h"
 
 // 1. Effect Preset
 typedef enum {

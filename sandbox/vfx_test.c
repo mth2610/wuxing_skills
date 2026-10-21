@@ -1,6 +1,6 @@
 #include "vfx_test.h"
 #include "core/particles/gpu/particle_gpu_legacy.h"
-#include "core/camera_fx.h"
+#include "post_process/camera_fx.h"
 #include "core/motion/motion_body.h"
 #include "core/time_fx.h"   // TimeFX_RawDelta — headless captures pin dt; GetFrameTime does not
 #include "sandbox/auto_test.h"
@@ -13,19 +13,19 @@
 #include <math.h>
 #include "core/decals/decal_system.h"
 #include "core/particles/particle_system.h"
-#include "core/screen_distort.h"
+#include "post_process/screen_distort.h"
 #include "core/trails/trail_system.h"
 #include "core/vfx_light.h"
-#include "core/post_fx.h"
+#include "post_process/post_fx.h"
 #include "core/presets/vfx_presets.h"
 #include "core/composition/visual_composer.h"
 #include "core/material/material_system.h"
-#include "core/skill_helper.h"
+#include "skills/skill_helper.h"
 #include "core/path_spline.h"
 #include "core/ribbon_strip.h"
-#include "core/map_manager.h"
-#include "core/wind/wind_system.h"
-#include "core/volumetric/volumetric_fog.h"
+#include "maps/map_manager.h"
+#include "environment/wind/wind_system.h"
+#include "environment/volumetric/volumetric_fog.h"
 #include "environment/environment_system.h"
 
 #define TEST_PATH_POINT_COUNT 16

@@ -1,6 +1,6 @@
 #include "core_test_skill.h"
 #include "core/composition/visual_composer.h"
-#include "core/camera_context.h"
+#include "post_process/camera_context.h"
 #include "sandbox/auto_test.h"
 #include "raymath.h"
 

@@ -2,7 +2,7 @@
 #define STONE_PRISON_SKILL_H
 
 #include "raylib.h"
-#include "core/skill_manager.h"
+#include "skills/skill_manager.h"
 
 #ifndef SKILL_PROJECTILE_DEF
 #define SKILL_PROJECTILE_DEF

@@ -3,26 +3,27 @@
 
 Color MapProp_GetFlowerSpeciesColor(int variant, bool accent)
 {
-    // Painterly high-luminance Xianxia & Tsushima botanical palette
+    // Painterly Ghost of Tsushima & Where Winds Meet botanical palette:
+    // Balanced chroma so petals glow naturally under HDR sun without clipping into flat white cones
     static const Color primary[8] = {
-        {255, 252, 240, 255}, // 0: ivory white daisy (Bạch Cúc)
-        {255, 218, 56, 255},  // 1: warm golden buttercup (Hoàng Anh)
-        {244, 68, 52, 255},   // 2: vermilion crimson poppy (Chu Sa Hồng)
-        {104, 168, 252, 255}, // 3: heavenly sapphire cornflower (Lam Điệp)
-        {252, 154, 186, 255}, // 4: wild peach-rose pink (Đào Hoa)
-        {224, 102, 174, 255}, // 5: orchid magenta cosmos (Tử Mẫu)
-        {174, 142, 244, 255}, // 6: gentle lavender violet (Huân Y Thảo)
-        {255, 242, 172, 255}, // 7: pale primrose cream (Ngọc Lan)
+        {248, 242, 224, 255}, // 0: warm ivory daisy (Bạch Cúc)
+        {250, 204, 48, 255},  // 1: golden amber buttercup (Hoàng Anh)
+        {232, 62, 48, 255},   // 2: vermilion crimson poppy (Chu Sa Hồng)
+        {96, 158, 242, 255},  // 3: cerulean sapphire cornflower (Lam Điệp)
+        {244, 146, 176, 255}, // 4: wild peach-rose blossom (Đào Hoa)
+        {214, 96, 164, 255},  // 5: orchid magenta cosmos (Tử Mẫu)
+        {164, 134, 234, 255}, // 6: misty lavender violet (Huân Y Thảo)
+        {248, 232, 158, 255}, // 7: soft primrose cream (Ngọc Lan)
     };
     static const Color secondary[8] = {
-        {255, 244, 220, 255},
-        {255, 190, 32, 255},
-        {214, 42, 40, 255},
-        {76, 136, 236, 255},
-        {244, 120, 158, 255},
-        {192, 68, 144, 255},
-        {146, 110, 228, 255},
-        {255, 224, 136, 255},
+        {238, 228, 202, 255},
+        {242, 176, 28, 255},
+        {204, 38, 36, 255},
+        {72, 128, 224, 255},
+        {232, 114, 148, 255},
+        {184, 64, 136, 255},
+        {138, 104, 216, 255},
+        {242, 212, 124, 255},
     };
     variant &= 7;
     return accent ? secondary[variant] : primary[variant];
@@ -94,7 +95,7 @@ void MapFlora_GenerateFlowerPlacements(
             {
                 float angle = Nature_Random01(&rng) * (2.0f * PI);
                 float uRand = Nature_Random01(&rng);
-                float rVal = uRand * sqrtf(uRand); // Fast & exact replacement for powf(u, 1.5)
+                float rVal = uRand * sqrtf(uRand);
                 radialNorm = rVal;
                 if (isColony)
                 {
@@ -120,7 +121,7 @@ void MapFlora_GenerateFlowerPlacements(
                 {
                     float pdx = x - outPlacements[prev].position.x;
                     float pdz = z - outPlacements[prev].position.z;
-                    if (pdx * pdx + pdz * pdz < 0.062f * 0.062f)
+                    if (pdx * pdx + pdz * pdz < 0.068f * 0.068f)
                     {
                         tooClose = true;
                         break;
@@ -132,7 +133,7 @@ void MapFlora_GenerateFlowerPlacements(
 
             float gy = sampleHeight ? sampleHeight(x, z, ctx) : 0.0f;
             int outIdx = placementCursor++;
-            outPlacements[outIdx].position = (Vector3){x, gy + 0.018f, z};
+            outPlacements[outIdx].position = (Vector3){x, gy + 0.015f, z};
             outPlacements[outIdx].rotationDeg = Nature_Random01(&rng) * 360.0f;
             outPlacements[outIdx].phase = Nature_Random01(&rng);
 
@@ -149,18 +150,18 @@ void MapFlora_GenerateFlowerPlacements(
             }
 
             bool tallAccent = (variant == 2 || variant == 4 || variant == 6);
-            // Proud hero posture in colony core, tapering gracefully toward drift edges
-            float coreLift = isColony ? (1.0f - 0.22f * radialNorm) : 0.85f;
-            float driftHeightBase = tallAccent ? 0.60f : 0.52f;
-            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.10f - 0.02f)) * coreLift;
+            // Natural wildflower height nestled organically into the grass canopy
+            float coreLift = isColony ? (1.0f - 0.20f * radialNorm) : 0.84f;
+            float driftHeightBase = tallAccent ? 0.52f : 0.44f;
+            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.09f - 0.02f)) * coreLift;
 
-            // Fuller 3D bloom silhouettes so flowers read as lush drifts at both close and wide zoom
-            float baseBloomRadius = tallAccent ? 0.148f : 0.122f;
-            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.94f + Nature_Random01(&rng) * 0.24f) * (0.90f + 0.15f * coreLift);
-            outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.78f);
+            // Delicate, natural bloom proportions
+            float baseBloomRadius = tallAccent ? 0.128f : 0.106f;
+            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.92f + Nature_Random01(&rng) * 0.22f) * (0.90f + 0.14f * coreLift);
+            outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.74f);
             outPlacements[outIdx].petalCount = (unsigned char)(5 + (variant % 3));
             outPlacements[outIdx].bloomVariant = (unsigned char)variant;
-            outPlacements[outIdx].petalLengthScale = 1.02f + Nature_Random01(&rng) * 0.24f;
+            outPlacements[outIdx].petalLengthScale = 0.98f + Nature_Random01(&rng) * 0.22f;
         }
     }
 }
@@ -195,13 +196,12 @@ float MapFlora_EvaluateFlowerUnderstorey(
                 minColonyD2 = ed2;
         }
 
-        // Depress grass height down to 42% right under the flower colony epicenters
-        // so 0.52m..0.66m blooms rise proudly above a soft 0.22m..0.28m grass bed.
+        // Softly nestle grass height around flower colonies (54% floor instead of harsh 42% depression)
         if (minColonyD2 < 0.48f)
         {
             float blend = fminf(1.0f, fmaxf(0.0f, (minColonyD2 - 0.06f) / 0.42f));
             float smooth = blend * blend * (3.0f - 2.0f * blend);
-            understorey = fminf(understorey, 0.42f + 0.58f * smooth);
+            understorey = fminf(understorey, 0.54f + 0.46f * smooth);
         }
     }
     return understorey;
@@ -237,12 +237,12 @@ float MapFlora_EvaluateFlowerSuppression(
                 minColonyD2 = ed2;
         }
 
-        // Thin grass tuft density to 48% inside flower colony cores so petals aren't pierced by blades
+        // Keep 62% grass tuft density under flowers so flower stems blend into turf instead of bare dirt
         if (minColonyD2 < 0.45f)
         {
             float blend = fminf(1.0f, fmaxf(0.0f, (minColonyD2 - 0.05f) / 0.40f));
             float smooth = blend * blend * (3.0f - 2.0f * blend);
-            flowerSuppression = fminf(flowerSuppression, 0.48f + 0.52f * smooth);
+            flowerSuppression = fminf(flowerSuppression, 0.62f + 0.38f * smooth);
         }
     }
     return flowerSuppression;
@@ -258,7 +258,7 @@ int MapFlora_GenerateMeadowPlacements(
     if (!outPlacements || maxCount <= 0 || !ground)
         return 0;
 
-    float spacing = (config.spacing > 0.0f) ? config.spacing : 0.24f;
+    float spacing = (config.spacing > 0.0f) ? config.spacing : 0.26f;
     unsigned int seed = config.seed ? config.seed : 0x51a7c3u;
 
     int count = MapProp_GenerateMeadowPlacements(
@@ -267,12 +267,12 @@ int MapFlora_GenerateMeadowPlacements(
             .minBounds = config.minBounds,
             .maxBounds = config.maxBounds,
             .spacing = spacing,
-            .jitter = 0.90f,
-            .minRadius = 0.21f,
-            .maxRadius = 0.28f,
-            .minHeight = 0.36f,
-            .maxHeight = 0.58f,
-            .yOffset = 0.018f,
+            .jitter = 0.92f,
+            .minRadius = 0.24f,
+            .maxRadius = 0.32f,
+            .minHeight = 0.34f,
+            .maxHeight = 0.54f,
+            .yOffset = 0.016f,
             .seed = seed,
         },
         config.densityFn, config.densityUserData);
@@ -284,7 +284,6 @@ int MapFlora_GenerateMeadowPlacements(
         float cz = clump->position.z;
 
         // Unified 3-wave landscape streamline orientation + full 240-degree yaw jitter
-        // so neighboring tufts interlock in 360 degrees instead of combing into flat rows
         float wave1 = sinf(cx * 0.07f + cz * 0.05f) * 0.60f + sinf(cx * -0.05f + cz * 0.11f + 1.2f) * 0.40f;
         float eddy = sinf(cx * 0.22f - cz * 0.18f + 0.8f) * 0.55f + sinf(cx * 0.14f + cz * 0.26f + 2.3f) * 0.45f;
         float micro = sinf(cx * 0.55f + cz * 0.45f + 3.1f) * 0.50f + sinf(cx * -0.42f + cz * 0.62f) * 0.50f;
@@ -312,11 +311,11 @@ int MapFlora_GenerateMeadowPlacements(
             }
         }
 
-        // Organic billowing meadow rhythm: alternates lush tall drifts with softer low-turf pockets
+        // Organic billowing meadow rhythm
         float canopyWave = 0.86f + 0.18f * (wave1 * 0.65f + eddy * 0.35f);
-        float heightNorm = (localHeight - 0.36f) / 0.22f;
-        clump->height = (0.36f + heightNorm * 0.18f) * (0.88f + 0.22f * growth) * canopyWave;
-        clump->height *= 0.80f + 0.20f * coverage;
+        float heightNorm = (localHeight - 0.34f) / 0.20f;
+        clump->height = (0.34f + heightNorm * 0.16f) * (0.88f + 0.20f * growth) * canopyWave;
+        clump->height *= 0.82f + 0.18f * coverage;
 
         if (config.flowerClusters && config.flowerClusterCount > 0)
         {
@@ -325,9 +324,9 @@ int MapFlora_GenerateMeadowPlacements(
             clump->height *= understorey;
         }
 
-        // Refined tuft collar radius (0.21m..0.28m) prevents overly wide/spiky blade spread
-        clump->radius = 0.21f + biome * 0.06f;
-        clump->radius *= 0.92f + 0.16f * (localRadius - 0.21f) / 0.07f;
+        // Slightly broader tuft collar radius (0.24m..0.32m) so adjacent clumps interlock seamlessly
+        clump->radius = 0.24f + biome * 0.07f;
+        clump->radius *= 0.92f + 0.16f * (localRadius - 0.24f) / 0.08f;
 
         if (config.edgeTaperFn)
         {
@@ -349,25 +348,25 @@ MapFloraSystem MapProp_CreateFloraSystem(
 {
     MapFloraSystem flora = {0};
     flora.windDirection = (Vector2){0.86f, 0.51f};
-    flora.windStrength = 0.035f;
+    flora.windStrength = 0.038f;
 
-    // 1. Valley / Meadow Grass (Smooth 4-segment Bézier clumps with unified botanical palette)
+    // 1. Valley / Meadow Grass (16m chunk size cuts draw calls by ~44% vs 12m chunks)
     if (grassPlacements && grassCount > 0)
     {
-        float lodDist = (style.lodDistance > 0.0f) ? style.lodDistance : 26.0f;
-        float midDist = (style.midLodDistance > 0.0f) ? style.midLodDistance : (lodDist * 0.54f);
+        float lodDist = (style.lodDistance > 0.0f) ? style.lodDistance : 20.0f;
+        float midDist = (style.midLodDistance > 0.0f) ? style.midLodDistance : (lodDist * 0.52f);
         flora.valleyMeadow = MapProp_CreateMeadow(grassPlacements, grassCount,
                                                   (MapMeadowStyle){
-                                                      .rootColor = (style.grassRootColor.a > 0) ? style.grassRootColor : (Color){28, 46, 20, 255},
-                                                      .tipColor = (style.grassTipColor.a > 0) ? style.grassTipColor : (Color){114, 172, 58, 255},
-                                                      .bladesPerClump = (style.bladesPerClump > 0) ? style.bladesPerClump : 6,
+                                                      .rootColor = (style.grassRootColor.a > 0) ? style.grassRootColor : (Color){24, 38, 16, 255},
+                                                      .tipColor = (style.grassTipColor.a > 0) ? style.grassTipColor : (Color){142, 192, 64, 255},
+                                                      .bladesPerClump = (style.bladesPerClump > 0) ? style.bladesPerClump : 5,
                                                       .bladeSegments = (style.bladeSegments > 0) ? style.bladeSegments : 4,
-                                                      .bladeWidthScale = (style.bladeWidthScale > 0.0f) ? style.bladeWidthScale : 0.14f,
-                                                      .chunkSize = 12.0f,
+                                                      .bladeWidthScale = (style.bladeWidthScale > 0.0f) ? style.bladeWidthScale : 0.128f,
+                                                      .chunkSize = 16.0f,
                                                       .lodDistance = lodDist,
                                                       .midLodDistance = midDist,
-                                                      .drawDistance = (style.drawDistance > 0.0f) ? style.drawDistance : 60.0f,
-                                                      .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? style.shadowDistance : 11.0f),
+                                                      .drawDistance = (style.drawDistance > 0.0f) ? style.drawDistance : 36.0f,
+                                                      .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? style.shadowDistance : 10.0f),
                                                       .texturePath = NULL,
                                                       .botanicalVariation = style.botanicalVariation,
                                                       .growthForm = MAP_MEADOW_GROWTH_GRASS,
@@ -378,21 +377,21 @@ MapFloraSystem MapProp_CreateFloraSystem(
         flora.valleyGrassCount = grassCount;
     }
 
-    // 2. Shoreline & River Reeds (No plumes by default to prevent flat white cards)
+    // 2. Shoreline & River Reeds
     if (reedPlacements && reedCount > 0)
     {
         flora.reedMeadow = MapProp_CreateMeadow(reedPlacements, reedCount,
                                                 (MapMeadowStyle){
-                                                    .rootColor = (style.reedRootColor.a > 0) ? style.reedRootColor : (Color){28, 46, 22, 255},
-                                                    .tipColor = (style.reedTipColor.a > 0) ? style.reedTipColor : (Color){126, 168, 76, 255},
-                                                    .bladesPerClump = 6,
-                                                    .bladeSegments = 4,
-                                                    .bladeWidthScale = 0.135f,
-                                                    .chunkSize = 18.0f,
-                                                    .lodDistance = 28.0f,
-                                                    .midLodDistance = 15.0f,
-                                                    .drawDistance = 58.0f,
-                                                    .shadowDistance = (style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 10.5f) : 10.5f,
+                                                    .rootColor = (style.reedRootColor.a > 0) ? style.reedRootColor : (Color){24, 38, 18, 255},
+                                                    .tipColor = (style.reedTipColor.a > 0) ? style.reedTipColor : (Color){126, 168, 72, 255},
+                                                    .bladesPerClump = 5,
+                                                    .bladeSegments = 3,
+                                                    .bladeWidthScale = 0.132f,
+                                                    .chunkSize = 20.0f,
+                                                    .lodDistance = 20.0f,
+                                                    .midLodDistance = 11.0f,
+                                                    .drawDistance = 36.0f,
+                                                    .shadowDistance = (style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 9.0f) : 9.0f,
                                                     .texturePath = NULL,
                                                     .hasPlumes = false,
                                                     .growthForm = MAP_MEADOW_GROWTH_REED,
@@ -405,23 +404,23 @@ MapFloraSystem MapProp_CreateFloraSystem(
     {
         flora.pampasMeadow = MapProp_CreateMeadow(style.pampasPlacements, style.pampasCount,
                                                   (MapMeadowStyle){
-                                                      .rootColor = (style.pampasRootColor.a > 0) ? style.pampasRootColor : (Color){48, 54, 28, 255},
-                                                      .tipColor = (style.pampasTipColor.a > 0) ? style.pampasTipColor : (Color){246, 238, 218, 255},
-                                                      .bladesPerClump = 6,
-                                                      .bladeSegments = 4,
-                                                      .bladeWidthScale = 0.082f,
-                                                      .chunkSize = 16.0f,
-                                                      .lodDistance = 28.0f,
-                                                      .midLodDistance = 14.0f,
-                                                      .drawDistance = 42.0f,
-                                                      .shadowDistance = (style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 14.0f) : 12.0f,
+                                                      .rootColor = (style.pampasRootColor.a > 0) ? style.pampasRootColor : (Color){36, 46, 22, 255},
+                                                      .tipColor = (style.pampasTipColor.a > 0) ? style.pampasTipColor : (Color){194, 188, 134, 255},
+                                                      .bladesPerClump = 5,
+                                                      .bladeSegments = 3,
+                                                      .bladeWidthScale = 0.095f,
+                                                      .chunkSize = 20.0f,
+                                                      .lodDistance = 20.0f,
+                                                      .midLodDistance = 11.0f,
+                                                      .drawDistance = 34.0f,
+                                                      .shadowDistance = (style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 9.5f) : 9.5f,
                                                       .texturePath = NULL,
                                                       .growthForm = MAP_MEADOW_GROWTH_PAMPAS,
                                                   });
         flora.pampasCount = style.pampasCount;
     }
 
-    // 4. Clustered Wildflower Fields: 100% Procedural 3D Petals (NO texture atlas!)
+    // 4. Clustered Wildflower Fields: 100% Procedural 3D Petals
     if (flowerPlacements && clusters && clusterCount > 0)
     {
         flora.flowerFields = (MapFlowerField *)RL_MALLOC(clusterCount * sizeof(MapFlowerField));
@@ -438,19 +437,18 @@ MapFloraSystem MapProp_CreateFloraSystem(
                 continue;
             }
 
-            Color stemColor = (Color){82, 114, 54, 255};
+            Color stemColor = (Color){68, 98, 44, 255};
             Color centerColor = (cl->discalCenterColor.a > 0) ? cl->discalCenterColor
-                                                              : (Color){255, 208, 46, 255};
+                                                              : (Color){248, 196, 38, 255};
 
-            // Passing NULL as petalTexturePath enables high-fidelity 3D procedural petals
             flora.flowerFields[i] = MapProp_CreateFlowerField(
                 &flowerPlacements[placementOffset], count,
                 stemColor, centerColor,
                 NULL, 0.0f, 1, 1);
 
-            // Tuned LOD & contact-shadow distances to eliminate distant sub-pixel overdraw
-            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 22.0f, 10.5f);
-            MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 56.0f);
+            // Optimized LOD (15m) & draw distance (36m) eliminate sub-pixel distant flower draw calls
+            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 15.0f, 8.5f);
+            MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 36.0f);
             placementOffset += count;
         }
     }
@@ -501,13 +499,14 @@ void MapProp_DrawFloraSystem(MapFloraSystem *flora)
     }
     if (flora->reedCount > 0)
     {
+        // Keep windStrength <= 0.06f so reeds use the fast 32x32 GPU wind cache
         MapProp_DrawMeadow(&flora->reedMeadow, (Vector3){0}, flora->time,
-                           flora->windDirection, 0.11f);
+                           flora->windDirection, 0.058f);
     }
     if (flora->pampasCount > 0)
     {
         MapProp_DrawMeadow(&flora->pampasMeadow, (Vector3){0}, flora->time,
-                           flora->windDirection, 0.055f);
+                           flora->windDirection, 0.052f);
     }
     for (int i = 0; i < flora->flowerClusterCount; i++)
     {
@@ -530,23 +529,30 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
         MapProp_DrawMeadowShadowCasters(&flora->valleyMeadow, offset, flora->time,
                                         flora->windDirection, flora->windStrength);
     }
-    if (flora->reedCount > 0)
+
+    // Optimization: Only rasterize reed/pampas/flower casters when explicitly requested by
+    // diagnostic filter WUXING_NATURE_SHADOW_CASTERS; valleyMeadow + contact shadows already ground them.
+    static int s_casterFilterChecked = 0;
+    static bool s_casterFilterHasValue = false;
+    if (!s_casterFilterChecked)
     {
-        MapProp_DrawMeadowShadowCasters(&flora->reedMeadow, offset, flora->time,
-                                        flora->windDirection, 0.11f);
-    }
-    if (flora->pampasCount > 0)
-    {
-        MapProp_DrawMeadowShadowCasters(&flora->pampasMeadow, offset, flora->time,
-                                        flora->windDirection, 0.055f);
+        const char *casterFilter = getenv("WUXING_NATURE_SHADOW_CASTERS");
+        s_casterFilterHasValue = (casterFilter && casterFilter[0] != '\0');
+        s_casterFilterChecked = 1;
     }
 
-    // Optimization: 3D procedural flowers sit nested inside grass and already draw batched
-    // contact shadows. Only rasterize flower geometry into the R32F directional shadow map
-    // when explicitly requested by diagnostic filter WUXING_NATURE_SHADOW_CASTERS.
-    const char *casterFilter = getenv("WUXING_NATURE_SHADOW_CASTERS");
-    if (casterFilter && casterFilter[0] != '\0')
+    if (s_casterFilterHasValue)
     {
+        if (flora->reedCount > 0)
+        {
+            MapProp_DrawMeadowShadowCasters(&flora->reedMeadow, offset, flora->time,
+                                            flora->windDirection, 0.058f);
+        }
+        if (flora->pampasCount > 0)
+        {
+            MapProp_DrawMeadowShadowCasters(&flora->pampasMeadow, offset, flora->time,
+                                            flora->windDirection, 0.052f);
+        }
         for (int i = 0; i < flora->flowerClusterCount; i++)
         {
             if (flora->flowerFields[i].ready)

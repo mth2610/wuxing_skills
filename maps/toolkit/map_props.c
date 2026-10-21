@@ -1,15 +1,15 @@
 #include "maps/toolkit/map_props.h"
-#include "core/map_manager.h"
+#include "maps/map_manager.h"
 #include "core/resource_manager.h"
 #include "maps/toolkit/prop_lit.h"
 #include "maps/toolkit/map_shadow.h"
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
 #include "core/vfx_light.h"   // Đợt E / E2 — VFXLight_BindToShader on the ground
-#include "core/scene_targets.h" // Depth buffer for soft particles & shallow water
+#include "post_process/scene_targets.h" // Depth buffer for soft particles & shallow water
 #include "core/gfx_quality.h"
-#include "core/camera_context.h"
-#include "core/wind/wind_system.h"
+#include "post_process/camera_context.h"
+#include "environment/wind/wind_system.h"
 #include "core/motion/motion_fields.h"
 #include "core/time_fx.h"
 #include "rlgl.h"

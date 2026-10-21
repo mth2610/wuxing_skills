@@ -1,7 +1,7 @@
 #include "post_process/post_fx.h"
 #include "core/tuning.h"
-#include "core/scene_targets.h"
-#include "core/screen_distort.h" // SceneTargets_IsHDR — scene buffer is the HDR authority
+#include "post_process/scene_targets.h"
+#include "post_process/screen_distort.h" // SceneTargets_IsHDR — scene buffer is the HDR authority
 #include "core/gfx_quality.h"    // E8 — the tier budget for the two new passes
 #include "post_process/color_grade_lut.h" // G5 — display-referred grading strip
 #include "post_process/post_fx_debug_internal.inl"

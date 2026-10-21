@@ -7,7 +7,7 @@
 #include <math.h>
 #include <stdio.h>
 #include "raylib.h"
-#include "core/wind/wind_system.h"
+#include "environment/wind/wind_system.h"
 
 static WindMacroConfig testWind;
 static unsigned int textureLoads;

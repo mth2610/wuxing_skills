@@ -16,7 +16,7 @@ static int s_zoneCount = 0;
 
 #include "maps/maps_generated.h"
 
-#include "core/wind/wind_system.h"
+#include "environment/wind/wind_system.h"
 
 static float MapManager_WindTerrainQuery(float worldX, float worldZ, void *userData) {
     (void)userData;

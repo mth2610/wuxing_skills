@@ -23,6 +23,15 @@
 // halfExtent is rounded up to this step so a smoothly zooming camera doesn't
 // change the texel size (and therefore the snapping grid) every frame.
 #define ENV_SHADOW_EXTENT_STEP 0.5f
+// Minimum seconds between SUN-DRIFT-triggered static recaptures. With a running
+// Time-of-Day cycle the sun crosses ENV_SHADOW_SUN_EPS_SQ every fraction of a
+// second, and each crossing redraws every map caster into the static target.
+// Holding the previous capture for this long costs a sub-degree direction lag
+// on the static shadows and nothing else. Explicit invalidation
+// (EnvShadow_InvalidateStaticCache, quality change, re-init) is NOT throttled.
+// Override at runtime with WUXING_SHADOW_STATIC_MIN_INTERVAL=<seconds>; 0
+// restores the old "recapture on every EPS crossing" behaviour.
+#define ENV_SHADOW_STATIC_MIN_INTERVAL 0.5
 
 static bool s_ready = false;
 static bool s_enabled = false;
@@ -61,6 +70,8 @@ static Vector3 s_staticSunDir = {0};
 static bool s_staticTargetReady = false;
 static bool s_staticCacheValid = false;
 static bool s_dynamicVerifyDumped = false;
+static double s_staticCaptureTime = 0.0;      // GetTime() of the last completed static capture
+static unsigned int s_staticCaptureCount = 0; // how many static captures so far (diagnostic)
 #if defined(__ANDROID__)
 static int s_quality = 1;
 #else
@@ -77,49 +88,70 @@ static Vector3 ProjectLS(Matrix vp, Vector3 wp);
 // forever when the variable was unset). The values can no longer change at
 // runtime, which none of these debug switches rely on.
 // ---------------------------------------------------------------------------
-static struct {
+static struct
+{
     bool ready;
     bool focusOverride;
     float focusX, focusZ;
     bool dynamicVerify;
     bool staticVerify;
+    int dynamicRes;           // WUXING_SHADOW_RES        (0 = unset)
+    int staticRes;            // WUXING_SHADOW_STATIC_RES (0 = unset)
+    double staticMinInterval; // seconds, see ENV_SHADOW_STATIC_MIN_INTERVAL
 } s_env;
 
 static void EnsureShadowEnv(void)
 {
-    if (s_env.ready) return;
+    if (s_env.ready)
+        return;
     // Reusable diagnostic override for inspecting a known caster region while
     // the gameplay camera remains elsewhere. Both coordinates are required so
     // a partially configured run cannot move only one axis by accident.
     const char *focusX = getenv("WUXING_SHADOW_FOCUS_X");
     const char *focusZ = getenv("WUXING_SHADOW_FOCUS_Z");
-    if (focusX != NULL && focusZ != NULL) {
+    if (focusX != NULL && focusZ != NULL)
+    {
         s_env.focusOverride = true;
         s_env.focusX = strtof(focusX, NULL);
         s_env.focusZ = strtof(focusZ, NULL);
     }
     s_env.dynamicVerify = getenv("WUXING_SHADOW_DYNAMIC_VERIFY") != NULL;
     s_env.staticVerify = getenv("WUXING_SHADOW_STATIC_VERIFY") != NULL;
+
+    const char *dynamicRes = getenv("WUXING_SHADOW_RES");
+    const char *staticRes = getenv("WUXING_SHADOW_STATIC_RES");
+    s_env.dynamicRes = dynamicRes != NULL ? atoi(dynamicRes) : 0;
+    s_env.staticRes = staticRes != NULL ? atoi(staticRes) : 0;
+
+    s_env.staticMinInterval = ENV_SHADOW_STATIC_MIN_INTERVAL;
+    const char *minInterval = getenv("WUXING_SHADOW_STATIC_MIN_INTERVAL");
+    if (minInterval != NULL)
+    {
+        double v = strtod(minInterval, NULL);
+        s_env.staticMinInterval = v > 0.0 ? v : 0.0;
+    }
     s_env.ready = true;
 }
 
 static void DestroyShadowTarget(unsigned int fbo, unsigned int depth, unsigned int color)
 {
-    if (fbo != 0) rlUnloadFramebuffer(fbo);
-    if (depth != 0) rlUnloadTexture(depth);
-    if (color != 0) rlUnloadTexture(color);
+    if (fbo != 0)
+        rlUnloadFramebuffer(fbo);
+    if (depth != 0)
+        rlUnloadTexture(depth);
+    if (color != 0)
+        rlUnloadTexture(color);
 }
 
 static void ShadowQualitySizes(int quality, int *dynamicSize, int *staticSize)
 {
+    EnsureShadowEnv();
     *dynamicSize = quality < 2 ? 1024 : 2048;
     *staticSize = quality < 2 ? 512 : 1024;
-    const char *dynamicOverride = getenv("WUXING_SHADOW_RES");
-    const char *staticOverride = getenv("WUXING_SHADOW_STATIC_RES");
-    if (dynamicOverride != NULL && atoi(dynamicOverride) > 0)
-        *dynamicSize = atoi(dynamicOverride);
-    if (staticOverride != NULL && atoi(staticOverride) > 0)
-        *staticSize = atoi(staticOverride);
+    if (s_env.dynamicRes > 0)
+        *dynamicSize = s_env.dynamicRes;
+    if (s_env.staticRes > 0)
+        *staticSize = s_env.staticRes;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,10 +159,11 @@ static void ShadowQualitySizes(int quality, int *dynamicSize, int *staticSize)
 // dynamic light matrix and the static light matrix (the formulas used to be
 // copy-pasted three times).
 // ---------------------------------------------------------------------------
-typedef struct {
-    Vector3 dir;     // direction light TRAVELS (unit)
-    Vector3 up;      // look-at up vector
-    Vector3 right;   // light-plane axes used for texel snapping
+typedef struct
+{
+    Vector3 dir;   // direction light TRAVELS (unit)
+    Vector3 up;    // look-at up vector
+    Vector3 right; // light-plane axes used for texel snapping
     Vector3 lightUp;
 } ShadowLightBasis;
 
@@ -139,8 +172,8 @@ static ShadowLightBasis MakeLightBasis(Vector3 sunDirUnit)
     ShadowLightBasis b;
     b.dir = sunDirUnit;
     b.up = fabsf(b.dir.y) > 0.98f
-        ? (Vector3){0.0f, 0.0f, 1.0f} // avoid degenerate look-at
-        : (Vector3){0.0f, 1.0f, 0.0f};
+               ? (Vector3){0.0f, 0.0f, 1.0f} // avoid degenerate look-at
+               : (Vector3){0.0f, 1.0f, 0.0f};
     b.right = Vector3Normalize(Vector3CrossProduct(b.up, b.dir));
     b.lightUp = Vector3Normalize(Vector3CrossProduct(b.dir, b.right));
     return b;
@@ -153,9 +186,9 @@ static Vector3 SnapToLightTexels(Vector3 center, const ShadowLightBasis *b, floa
     float rightCoord = Vector3DotProduct(center, b->right);
     float upCoord = Vector3DotProduct(center, b->lightUp);
     center = Vector3Add(center, Vector3Scale(
-        b->right, roundf(rightCoord / texelWorld) * texelWorld - rightCoord));
+                                    b->right, roundf(rightCoord / texelWorld) * texelWorld - rightCoord));
     center = Vector3Add(center, Vector3Scale(
-        b->lightUp, roundf(upCoord / texelWorld) * texelWorld - upCoord));
+                                    b->lightUp, roundf(upCoord / texelWorld) * texelWorld - upCoord));
     return center;
 }
 
@@ -176,7 +209,8 @@ static bool s_heldValid = false;
 static const ShadowLightBasis *HeldLightBasis(void)
 {
     Vector3 current = Vector3Normalize(Environment_GetSunDirection());
-    if (!s_heldValid || Vector3DistanceSqr(current, s_heldSun) >= ENV_SHADOW_SUN_EPS_SQ) {
+    if (!s_heldValid || Vector3DistanceSqr(current, s_heldSun) >= ENV_SHADOW_SUN_EPS_SQ)
+    {
         s_heldSun = current;
         s_heldBasis = MakeLightBasis(current);
         s_heldValid = true;
@@ -197,7 +231,8 @@ static bool CreateShadowTarget(int resolution, unsigned int *outFbo,
                               RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
     *outDepth = rlLoadTextureDepth(resolution, resolution, false);
     *outFbo = rlLoadFramebuffer();
-    if (*outFbo == 0 || *outDepth == 0 || *outColor == 0) {
+    if (*outFbo == 0 || *outDepth == 0 || *outColor == 0)
+    {
         DestroyShadowTarget(*outFbo, *outDepth, *outColor);
         *outFbo = *outDepth = *outColor = 0;
         return false;
@@ -210,7 +245,8 @@ static bool CreateShadowTarget(int resolution, unsigned int *outFbo,
                         RL_ATTACHMENT_TEXTURE2D, 0);
     bool complete = rlFramebufferComplete(*outFbo);
     rlDisableFramebuffer();
-    if (!complete) {
+    if (!complete)
+    {
         DestroyShadowTarget(*outFbo, *outDepth, *outColor);
         *outFbo = *outDepth = *outColor = 0;
         return false;
@@ -301,15 +337,19 @@ int EnvShadow_GetQuality(void) { return s_quality; }
 
 bool EnvShadow_SetQuality(int resolvedTier)
 {
-    if (s_capturing) return false;
-    if (resolvedTier < 0 || resolvedTier > 3) resolvedTier = 2;
-    if (!s_ready) {
+    if (s_capturing)
+        return false;
+    if (resolvedTier < 0 || resolvedTier > 3)
+        resolvedTier = 2;
+    if (!s_ready)
+    {
         s_quality = resolvedTier;
         return true;
     }
     int dynamicSize, staticSize;
     ShadowQualitySizes(resolvedTier, &dynamicSize, &staticSize);
-    if (dynamicSize == s_resolution && staticSize == s_staticResolution) {
+    if (dynamicSize == s_resolution && staticSize == s_staticResolution)
+    {
         s_quality = resolvedTier;
         return true;
     }
@@ -320,7 +360,8 @@ bool EnvShadow_SetQuality(int resolvedTier)
     rlDrawRenderBatchActive();
     if (!CreateShadowTarget(dynamicSize, &fbo, &depth, &color, &dynamicMap))
         return false;
-    if (!CreateShadowTarget(staticSize, &staticFbo, &staticDepth, &staticColor, &staticMap)) {
+    if (!CreateShadowTarget(staticSize, &staticFbo, &staticDepth, &staticColor, &staticMap))
+    {
         DestroyShadowTarget(fbo, depth, color);
         return false;
     }
@@ -349,22 +390,27 @@ bool EnvShadow_SetQuality(int resolvedTier)
 void EnvShadow_SetFocus(Vector3 center, float halfExtent)
 {
     EnsureShadowEnv();
-    if (s_env.focusOverride) {
+    if (s_env.focusOverride)
+    {
         center.x = s_env.focusX;
         center.z = s_env.focusZ;
     }
-    if (halfExtent < 8.0f) halfExtent = 8.0f;
-    if (halfExtent > 96.0f) halfExtent = 96.0f;
+    if (halfExtent < 8.0f)
+        halfExtent = 8.0f;
+    if (halfExtent > 96.0f)
+        halfExtent = 96.0f;
     // Round up to a coarse step: the snapping grid below is sized from
     // halfExtent, so a continuously changing extent (camera zoom) would move
     // the grid every frame and shimmer fine edges. Rounding up only ever
     // covers MORE than requested (<= one step), at a texel-density cost < 3%.
     halfExtent = ceilf(halfExtent / ENV_SHADOW_EXTENT_STEP) * ENV_SHADOW_EXTENT_STEP;
-    if (halfExtent > 96.0f) halfExtent = 96.0f;
+    if (halfExtent > 96.0f)
+        halfExtent = 96.0f;
     // Stabilize the orthographic projection in the light plane. Without this,
     // every sub-centimetre camera movement shifts all shadow texels and makes
     // fine grass/contact edges shimmer even when the scene is otherwise still.
-    if (s_resolution > 0) {
+    if (s_resolution > 0)
+    {
         float texelWorld = (halfExtent * 2.0f) / (float)s_resolution;
         center = SnapToLightTexels(center, HeldLightBasis(), texelWorld);
     }
@@ -411,8 +457,10 @@ static Matrix ComputeLightVP(void)
 
 static Matrix ComputeStaticLightVP(Vector3 center, float halfExtent)
 {
-    if (halfExtent < 8.0f) halfExtent = 8.0f;
-    if (halfExtent > 128.0f) halfExtent = 128.0f;
+    if (halfExtent < 8.0f)
+        halfExtent = 8.0f;
+    if (halfExtent > 128.0f)
+        halfExtent = 128.0f;
     // The static map is world-fixed and captured on demand, so it uses the
     // live sun at capture time (HasStaticCache validates against that).
     ShadowLightBasis basis = MakeLightBasis(Vector3Normalize(Environment_GetSunDirection()));
@@ -474,7 +522,8 @@ void EnvShadow_BeginCapture(void)
     s_lightVP = ComputeLightVP();
     BeginCaptureTarget(s_fboId, s_resolution, s_lightView,
                        s_shadowHalfExtent, s_captureDistance);
-    if (s_mapCasterCallback != NULL) {
+    if (s_mapCasterCallback != NULL)
+    {
         s_mapCasterCallback(s_depthShader, s_mapCasterUserData);
         // DrawModel uses its material shader and disables it afterward. Restore
         // the environment depth shader for engine-owned casters that follow.
@@ -487,9 +536,12 @@ static void ScanShadowMap(const float *pixels, int total, float *minDepth, int *
 {
     float mn = 1.0f;
     int occ = 0;
-    for (int i = 0; i < total; i++) {
-        if (pixels[i] < mn) mn = pixels[i];
-        if (pixels[i] < 0.999f) occ++;
+    for (int i = 0; i < total; i++)
+    {
+        if (pixels[i] < mn)
+            mn = pixels[i];
+        if (pixels[i] < 0.999f)
+            occ++;
     }
     *minDepth = mn;
     *occupied = occ;
@@ -500,7 +552,8 @@ static void VerifyDynamicShadowMap(void)
     float *pixels = (float *)rlReadTexturePixels(
         s_shadowMapTex.id, s_resolution, s_resolution,
         RL_PIXELFORMAT_UNCOMPRESSED_R32);
-    if (pixels == NULL) {
+    if (pixels == NULL)
+    {
         TraceLog(LOG_WARNING, "ENV_SHADOW: dynamic verify readback failed");
         return;
     }
@@ -515,8 +568,10 @@ static void VerifyDynamicShadowMap(void)
     int receiverShadowed = 0;
     int receiverShadowedFlipped = 0;
     const int receiverGrid = 256;
-    for (int z = 0; z < receiverGrid; z++) {
-        for (int x = 0; x < receiverGrid; x++) {
+    for (int z = 0; z < receiverGrid; z++)
+    {
+        for (int x = 0; x < receiverGrid; x++)
+        {
             float fx = ((float)x + 0.5f) / (float)receiverGrid;
             float fz = ((float)z + 0.5f) / (float)receiverGrid;
             Vector3 world = {
@@ -552,7 +607,8 @@ static void VerifyStaticShadowMap(void)
     float *pixels = (float *)rlReadTexturePixels(
         s_staticShadowMapTex.id, s_staticResolution, s_staticResolution,
         RL_PIXELFORMAT_UNCOMPRESSED_R32);
-    if (pixels == NULL) {
+    if (pixels == NULL)
+    {
         TraceLog(LOG_WARNING, "ENV_SHADOW: static verify readback failed");
         return;
     }
@@ -571,9 +627,11 @@ void EnvShadow_EndCapture(void)
     if (!s_ready || !s_enabled || !s_capturing || s_staticCaptureOpen)
         return;
     EndCaptureTarget();
-    if (!s_dynamicVerifyDumped) {
+    if (!s_dynamicVerifyDumped)
+    {
         EnsureShadowEnv();
-        if (s_env.dynamicVerify) {
+        if (s_env.dynamicVerify)
+        {
             s_dynamicVerifyDumped = true;
             VerifyDynamicShadowMap();
         }
@@ -595,8 +653,10 @@ void EnvShadow_BeginStaticCapture(Vector3 center, float halfExtent)
 {
     if (!s_ready || !s_enabled || !s_staticTargetReady || s_capturing)
         return;
-    if (halfExtent < 8.0f) halfExtent = 8.0f;
-    if (halfExtent > 128.0f) halfExtent = 128.0f;
+    if (halfExtent < 8.0f)
+        halfExtent = 8.0f;
+    if (halfExtent > 128.0f)
+        halfExtent = 128.0f;
     s_staticCacheValid = false;
     s_staticLightVP = ComputeStaticLightVP(center, halfExtent);
     s_staticCaptureOpen = true;
@@ -612,8 +672,10 @@ void EnvShadow_EndStaticCapture(void)
     s_staticCaptureOpen = false;
     s_staticSunDir = Vector3Normalize(Environment_GetSunDirection());
     s_staticCacheValid = true;
-    TraceLog(LOG_INFO, "ENV_SHADOW: static cache captured (%dx%d)",
-             s_staticResolution, s_staticResolution);
+    s_staticCaptureTime = GetTime();
+    s_staticCaptureCount++;
+    TraceLog(LOG_INFO, "ENV_SHADOW: static cache captured #%u (%dx%d)",
+             s_staticCaptureCount, s_staticResolution, s_staticResolution);
     EnsureShadowEnv();
     if (s_env.staticVerify)
         VerifyStaticShadowMap();
@@ -632,7 +694,12 @@ bool EnvShadow_HasStaticCache(void)
     // rotates the sun, the static map (every map caster) is recaptured once per
     // ENV_SHADOW_SUN_EPS_SQ of movement instead of at ~4x that rate.
     Vector3 current = Vector3Normalize(Environment_GetSunDirection());
-    return Vector3DistanceSqr(current, s_staticSunDir) < ENV_SHADOW_SUN_EPS_SQ;
+    if (Vector3DistanceSqr(current, s_staticSunDir) < ENV_SHADOW_SUN_EPS_SQ)
+        return true;
+    // The sun has drifted past the tolerance. Recapture, but not more often than
+    // the minimum interval (0 disables the throttle).
+    EnsureShadowEnv();
+    return (GetTime() - s_staticCaptureTime) < s_env.staticMinInterval;
 }
 
 bool EnvShadow_NeedsStaticCapture(void)

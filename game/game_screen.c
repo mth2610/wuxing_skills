@@ -1,19 +1,19 @@
 #include "game_screen.h"
 #include "entities/entities.h"
 #include "environment/environment_system.h"
-#include "core/skill_manager.h"
-#include "core/skill_helper.h"
+#include "skills/skill_manager.h"
+#include "skills/skill_helper.h"
 #include "core/composition/visual_composer.h"
 #include "character/character_model.h"
 #include "control/control.h"
 #include "boss/boss_system.h"
-#include "core/map_manager.h"
+#include "maps/map_manager.h"
 #include "game/game_rules.h"
 #include "ai/ai.h"
 #include "ui/ui.h"
 #include "net/net_transport.h"
 #include "combat/combat.h"
-#include "core/audio_system.h"
+#include "audio/audio_system.h"
 #include <math.h>
 #include <string.h>
 

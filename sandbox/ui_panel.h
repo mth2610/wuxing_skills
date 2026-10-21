@@ -2,7 +2,7 @@
 #define UI_PANEL_H
 
 #include "raylib.h"
-#include "core/skill_manager.h"
+#include "skills/skill_manager.h"
 
 typedef struct {
     int activeSkillIndex;

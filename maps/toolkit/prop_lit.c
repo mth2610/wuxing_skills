@@ -1,7 +1,7 @@
 #include "maps/toolkit/prop_lit.h"
 #include "maps/toolkit/map_shadow.h"
 #include "core/resource_manager.h"
-#include "core/camera_context.h"
+#include "post_process/camera_context.h"
 #include "core/vfx_light.h"
 #include "environment/environment_system.h"
 #include "raymath.h"

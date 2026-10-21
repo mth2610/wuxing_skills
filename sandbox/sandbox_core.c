@@ -1,13 +1,13 @@
 #include "sandbox/sandbox_core.h"
-#include "core/skill_manager.h"
-#include "core/skill_helper.h"
+#include "skills/skill_manager.h"
+#include "skills/skill_helper.h"
 #include "core/composition/visual_composer.h"
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h" // EnvShadow_IsCapturing — skip non-casters in the shadow pass
 #include "entities/entities.h"
-#include "core/wind/wind_system.h"
-#include "core/atmosphere.h"
-#include "core/map_manager.h"
+#include "environment/wind/wind_system.h"
+#include "environment/atmosphere.h"
+#include "maps/map_manager.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <stddef.h>

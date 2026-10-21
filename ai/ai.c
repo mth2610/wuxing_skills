@@ -2,9 +2,9 @@
 // persistent state lives on the Agent itself; this module just walks the
 // pool every frame (same iteration idiom as Entity_Update).
 #include "ai/ai.h"
-#include "core/skill_manager.h" // hero bots cast off equippedSkills
+#include "skills/skill_manager.h" // hero bots cast off equippedSkills
 #include "combat/combat.h"      // projectile snapshot for dash-dodging
-#include "core/map_manager.h"
+#include "maps/map_manager.h"
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h> // rand

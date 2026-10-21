@@ -2,7 +2,7 @@
 #define SKILL_GALAXY_SPIRAL_H
 
 #include "raylib.h"
-#include "core/skill_manager.h"
+#include "skills/skill_manager.h"
 
 // Spiral galaxy — a GPU-particle showcase. Spawns thousands of glowing particles along spiral
 // arms in a disk around the cast target; a vortex force field spins them with differential

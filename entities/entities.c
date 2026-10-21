@@ -1,7 +1,7 @@
 // entities/entities.c
 #include "entities.h"
-#include "core/skill_manager.h"
-#include "core/map_manager.h"
+#include "skills/skill_manager.h"
+#include "maps/map_manager.h"
 #include "raymath.h"
 #include <math.h>
 #include <stddef.h>

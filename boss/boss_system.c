@@ -1,8 +1,8 @@
 // boss/boss_system.c — ENGINE half: written once, never edited to add a
 // boss (new boss = new <name>_def.c data file). Pure logic — no VFX headers.
 #include "boss/boss_system.h"
-#include "core/skill_manager.h" // CastSkill/CanCast/TriggerCooldown/GetIndexByName
-#include "core/map_manager.h"
+#include "skills/skill_manager.h" // CastSkill/CanCast/TriggerCooldown/GetIndexByName
+#include "maps/map_manager.h"
 #include <math.h>
 #include <stddef.h>
 

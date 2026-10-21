@@ -2,7 +2,7 @@
 // field that slows every enemy inside (speedMult modifier, refreshed each
 // tick). Trên Sông (NAT_RIVER) → cộng hưởng: deeper slow. DATA half.
 #include "formations/formation_system.h"
-#include "core/skill_manager.h" // ELEMENT_COLOR_WATER
+#include "skills/skill_manager.h" // ELEMENT_COLOR_WATER
 #include "raylib.h"
 #include <math.h>
 
