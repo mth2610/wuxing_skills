@@ -39,17 +39,22 @@ static int FxaaWouldFilter(float lumaMin, float lumaMax)
 
 int main(void)
 {
-    const char *fs = "core/shaders/fxaa.fs";
+    const char *fs = "post_process/shaders/fxaa.fs";
+    FILE *probe = fopen(fs, "rb");
+    if (probe) fclose(probe); else fs = "core/shaders/fxaa.fs";
+    const char *pfx = "post_process/post_fx.c";
 
     /* A shader missing from CMakeLists does not fail — LoadShader falls back to raylib's
        default and the pass keeps "working" as a plain blit. Same failure shape as the
        bloom and trail shaders before it (see core/docs/LANDMINES.md). */
-    CHECK(Has("CMakeLists.txt", "configure_file(core/shaders/fxaa.fs"),
+    CHECK(Has("CMakeLists.txt", "configure_file(post_process/shaders/fxaa.fs") ||
+          Has("CMakeLists.txt", "configure_file(core/shaders/fxaa.fs"),
           "the FXAA shader is copied into desktop build trees");
 
-    CHECK(Has("core/post_fx.c", "fxaaShader = LoadShader(0, \"core/shaders/fxaa.fs\")"),
+    CHECK(Has(pfx, "fxaaShader = LoadShader(0, \"post_process/shaders/fxaa.fs\")") ||
+          Has(pfx, "fxaaShader = LoadShader(0, \"core/shaders/fxaa.fs\")"),
           "post FX loads the FXAA shader");
-    CHECK(Has("core/post_fx.c", "Tuning_RegisterFloat(\"postfx_fxaa\""),
+    CHECK(Has(pfx, "Tuning_RegisterFloat(\"postfx_fxaa\""),
           "FXAA can be turned off from tuning.cfg for an A/B");
 
     /* The texel size must come from the LIVE target, never from the window: the two differ
@@ -57,21 +62,21 @@ int main(void)
        the offscreen targets are the logical size. A hardcoded or window-derived texel
        makes the filter sample the wrong neighbours at exactly the resolutions nobody
        tests on. Same rule as the bloom composite's u_bloomTexel. */
-    CHECK(Has("core/post_fx.c", "1.0f / (float)ldrTex.texture.width"),
+    CHECK(Has(pfx, "1.0f / (float)ldrTex.texture.width"),
           "the FXAA texel size comes from the live target, not the window size");
 
     /* `postfx_fxaa = 0` has to be a true A/B against the previous output, which means the
        composite still goes straight to the swapchain in that case rather than through a
        second, differently-sized draw. */
-    CHECK(Has("core/post_fx.c", "if (useFxaa) BeginTextureMode(ldrTex);") &&
-          Has("core/post_fx.c", "useFxaa ? (float)width : (float)GetRenderWidth()"),
+    CHECK(Has(pfx, "if (useFxaa) BeginTextureMode(ldrTex);") &&
+          Has(pfx, "useFxaa ? (float)width : (float)GetRenderWidth()"),
           "with FXAA off the composite still targets the swapchain directly");
 
     /* RT->RT full-frame convention. A positive source height here is an upside-down
        frame; the expensive mistake is the PARTIAL-rect case, where the flip also needs a
        mirrored destination — that one shipped silently for months in
        SceneTargets_SnapshotDepth. This draw is full-frame, so the flip alone is right. */
-    CHECK(Has("core/post_fx.c", "-(float)ldrTex.texture.height"),
+    CHECK(Has(pfx, "-(float)ldrTex.texture.height"),
           "the FXAA resolve keeps the RT->RT vertical-flip convention");
 
     /* It runs on tone-mapped values. FXAA thresholds on perceptual luma; on linear HDR a

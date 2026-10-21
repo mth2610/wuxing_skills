@@ -169,7 +169,7 @@ int main(void)
      * 1/60 would measure a constant and report a healthy frame forever. Pinning
      * them is the mirror-image mistake, so it gets its own assertion rather
      * than trusting that nobody runs a blanket search-and-replace. */
-    if (!HasWallClock("core/post_fx.c")) {
+    if (!HasWallClock("post_process/post_fx.c") && !HasWallClock("core/post_fx.c")) {
         fprintf(stderr, "FAIL: post_fx perf sampling must keep wall-clock time\n");
         failed++;
     }

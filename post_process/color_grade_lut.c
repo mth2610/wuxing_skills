@@ -1,4 +1,4 @@
-#include "core/color_grade_lut.h"
+#include "post_process/color_grade_lut.h"
 
 #include <stddef.h>
 

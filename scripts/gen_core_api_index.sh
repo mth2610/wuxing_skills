@@ -36,7 +36,7 @@ HEADERS=(
   core/vfx_contrast.h core/vfx_appearance.h core/vfx_render.h
   core/screen_distort.h core/metaball_fx.h core/color_gradient.h
   core/float_curve.h core/uv/flow_map.h core/deform/mesh_deform.h core/uv/uv_deform.h core/uv/surface_flow.h core/uv/uv_fx.h core/path_spline.h core/sprite_anim.h
-  core/vfx_light.h core/post_fx.h core/camera_fx.h
+  core/vfx_light.h core/camera_fx.h
   core/debug_draw.h core/motion_controller.h core/status_vfx.h core/afterimage.h
   core/surface_material.h core/gfx_quality.h core/audio_system.h core/atmosphere.h
   core/wind/wind_types.h core/wind/wind_system.h

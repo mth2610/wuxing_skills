@@ -75,11 +75,16 @@ static float KarisWeightedAverage(const float groups[5], int karisOn)
 int main(void)
 {
     int failed = 0;
-    char *postFx = ReadFile("core/post_fx.c");
-    char *postFxH = ReadFile("core/post_fx.h");
-    char *bright = ReadFile("core/shaders/bloom_bright.fs");
-    char *down = ReadFile("core/shaders/bloom_downsample.fs");
-    char *up = ReadFile("core/shaders/bloom_upsample.fs");
+    char *postFx = ReadFile("post_process/post_fx.c");
+    if (!postFx) postFx = ReadFile("core/post_fx.c");
+    char *postFxH = ReadFile("post_process/post_fx.h");
+    if (!postFxH) postFxH = ReadFile("core/post_fx.h");
+    char *bright = ReadFile("post_process/shaders/bloom_bright.fs");
+    if (!bright) bright = ReadFile("core/shaders/bloom_bright.fs");
+    char *down = ReadFile("post_process/shaders/bloom_downsample.fs");
+    if (!down) down = ReadFile("core/shaders/bloom_downsample.fs");
+    char *up = ReadFile("post_process/shaders/bloom_upsample.fs");
+    if (!up) up = ReadFile("core/shaders/bloom_upsample.fs");
 
     /* ---- 1. Pyramid depth ------------------------------------------------ */
     /* 5 levels below the 1/4 bright target = 6 total, reaching 1/128. Anything
@@ -258,7 +263,8 @@ int main(void)
      * holding nothing but smooth low frequencies and there is no detail to alias.
      * So the composite runs the same tent the chain uses, and needs that target's
      * texel size to do it. */
-    char *composite = ReadFile("core/shaders/post_process.fs");
+    char *composite = ReadFile("post_process/shaders/post_process.fs");
+    if (!composite) composite = ReadFile("core/shaders/post_process.fs");
     failed += Require(composite, "uniform vec2 u_bloomTexel",
                       "the composite must know the bloom target's texel size");
     failed += Require(composite, "bloomSum / 16.0",

@@ -38,8 +38,10 @@ static float BrightestOfCell(const float values[16])
 int main(void)
 {
     int failed = 0;
-    char *shader = ReadFile("core/shaders/bloom_bright.fs");
-    char *postFx = ReadFile("core/post_fx.c");
+    char *shader = ReadFile("post_process/shaders/bloom_bright.fs");
+    if (!shader) shader = ReadFile("core/shaders/bloom_bright.fs");
+    char *postFx = ReadFile("post_process/post_fx.c");
+    if (!postFx) postFx = ReadFile("core/post_fx.c");
 
     // A one-pixel 4.5-HDR lightning core disappears under the old box average
     // (0.28125 < 1.25 threshold), but the brightest-sample prefilter keeps it.

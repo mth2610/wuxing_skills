@@ -150,9 +150,12 @@ int main(void)
     }
 
     /* ---- The two mirrors have not drifted -------------------------------- */
-    char *shader = ReadFile("core/shaders/post_process.fs");
-    char *lutC = ReadFile("core/color_grade_lut.c");
-    char *lutH = ReadFile("core/color_grade_lut.h");
+    char *shader = ReadFile("post_process/shaders/post_process.fs");
+    if (!shader) shader = ReadFile("core/shaders/post_process.fs");
+    char *lutC = ReadFile("post_process/color_grade_lut.c");
+    if (!lutC) lutC = ReadFile("core/color_grade_lut.c");
+    char *lutH = ReadFile("post_process/color_grade_lut.h");
+    if (!lutH) lutH = ReadFile("core/color_grade_lut.h");
 
     failed += Require(shader, "float uInTile = 0.5 + c.r * (size - 1.0);",
                       "shader must address red at texel centres inside the tile");

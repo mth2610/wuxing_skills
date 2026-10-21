@@ -1,10 +1,10 @@
-#include "core/post_fx.h"
+#include "post_process/post_fx.h"
 #include "core/tuning.h"
 #include "core/scene_targets.h"
 #include "core/screen_distort.h" // SceneTargets_IsHDR — scene buffer is the HDR authority
 #include "core/gfx_quality.h"    // E8 — the tier budget for the two new passes
-#include "core/color_grade_lut.h" // G5 — display-referred grading strip
-#include "core/post_fx_debug_internal.inl"
+#include "post_process/color_grade_lut.h" // G5 — display-referred grading strip
+#include "post_process/post_fx_debug_internal.inl"
 #include "rlgl.h"
 #include <string.h>
 
@@ -250,10 +250,10 @@ void PostFX_Init(int width, int height)
   TraceLog(LOG_INFO, "PostFX: bloom pyramid %d levels (1/4 .. 1/%d)", s_dfLevels + 1,
            4 << s_dfLevels);
 
-  brightShader = LoadShader(0, "core/shaders/bloom_bright.fs");
-  dsShader = LoadShader(0, "core/shaders/bloom_downsample.fs");
-  usShader = LoadShader(0, "core/shaders/bloom_upsample.fs");
-  compositeShader = LoadShader(0, "core/shaders/post_process.fs");
+  brightShader = LoadShader(0, "post_process/shaders/bloom_bright.fs");
+  dsShader = LoadShader(0, "post_process/shaders/bloom_downsample.fs");
+  usShader = LoadShader(0, "post_process/shaders/bloom_upsample.fs");
+  compositeShader = LoadShader(0, "post_process/shaders/post_process.fs");
 
   brightThresholdLoc = GetShaderLocation(brightShader, "u_threshold");
   brightExposureLoc = GetShaderLocation(brightShader, "u_exposure");
@@ -292,7 +292,7 @@ void PostFX_Init(int width, int height)
   lutParamsLoc = GetShaderLocation(compositeShader, "u_lutParams");
   lutSizeLoc = GetShaderLocation(compositeShader, "u_lutSize");
   ColorGradeLut_Init();
-  fxaaShader = LoadShader(0, "core/shaders/fxaa.fs");
+  fxaaShader = LoadShader(0, "post_process/shaders/fxaa.fs");
   fxaaTexelLoc = GetShaderLocation(fxaaShader, "u_texel");
   radialBlurEnabledLoc = GetShaderLocation(compositeShader, "u_radialBlurEnabled");
   radialBlurCenterLoc = GetShaderLocation(compositeShader, "u_radialBlurCenter");

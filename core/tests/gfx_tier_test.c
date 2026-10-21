@@ -120,8 +120,9 @@ static char *SlurpFile(const char *path)
 
 static void Test_SourcesStillGate(void)
 {
-    const char *pf = SlurpFile("core/post_fx.c");
-    CHECK(pf != NULL, "core/post_fx.c readable");
+    const char *pf = SlurpFile("post_process/post_fx.c");
+    if (!pf) pf = SlurpFile("core/post_fx.c");
+    CHECK(pf != NULL, "post_process/post_fx.c readable");
     if (pf) {
         CHECK(strstr(pf, "PostFX_ApplyQualityTier(&local);") != NULL,
               "PostFX_Draw still applies the tier");

@@ -6,7 +6,7 @@
 #include "maps/toolkit/map_props.h"
 #include "maps/toolkit/prop_lit.h"
 #include "core/camera_context.h"
-#include "core/color_grade_lut.h"
+#include "post_process/color_grade_lut.h"
 #include "core/map_manager.h"
 #include "core/resource_manager.h"
 #include "core/volumetric/volumetric_fog.h"

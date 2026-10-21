@@ -66,7 +66,8 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/particles/particle_system.c \
                           core/particles/gpu/particle_gpu_backend.c \
                           core/path_spline.c \
-                          core/post_fx.c \
+                          post_process/post_fx.c \
+                          post_process/color_grade_lut.c \
                           core/ribbon_strip.c \
                           core/screen_distort.c \
                           core/skill_manager.c \
@@ -436,6 +437,10 @@ copy_project_resources: create_temp_project_dirs
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/environment/shaders
 	cp -f environment/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/environment/shaders/ 2>/dev/null || true
 	cp -f environment/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/environment/shaders/ 2>/dev/null || true
+
+	@# post_process/shaders
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/post_process/shaders
+	cp -f post_process/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/post_process/shaders/ 2>/dev/null || true
 
 	@# Tự động sao chép các tệp tài nguyên của maps/ (như shader bamboo_alpha.fs) vào assets của APK
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/maps

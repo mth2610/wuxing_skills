@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Generate 16^3 strip LUTs for core/color_grade_lut.c.
+"""Generate 16^3 strip LUTs for post_process/color_grade_lut.c.
 
-Layout MUST match core/color_grade_lut.h: 256x16, tiles left-to-right by blue
+Layout MUST match post_process/color_grade_lut.h: 256x16, tiles left-to-right by blue
 slice, +U red, +V green, image row 0 = green 0. Get the green direction wrong
 and the result is not a mirrored image — it is an inexplicable colour cast, so
 this file is the one place the convention is implemented for authoring.

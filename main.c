@@ -7,7 +7,7 @@
 #include "core/gas/gas_system.h"
 #include "core/metaball_fx.h"
 #include "core/particles/particle_manager.h"
-#include "core/post_fx.h"
+#include "post_process/post_fx.h"
 #include "sandbox/sandbox_core.h"
 #include "core/scene_targets.h"
 #include "core/screen_distort.h"

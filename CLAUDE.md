@@ -96,6 +96,7 @@ Never edit another module's files — ask that module's agent. Never read/list/t
 | **Net Agent** | `net/` | `control/control.h`, `entities/entities.h`, `net/docs/API.md` — wire formats (ENet transport gated), see `net/CLAUDE.md` |
 | **Character Agent** | `character/` | `core/resource_manager.h` — model/animation rendering, counterpart to `entities/`'s pure logic, see `character/CLAUDE.md` |
 | **Game Agent** | `game/` | `entities/entities.h`, `environment/environment_system.h`, `core/map_manager.h`, `sandbox/sandbox_core.h`, `character/character_model.h`, `control/control.h`, `boss/boss_system.h`, `game/docs/API.md` — match state machine + zone rule table, see `game/CLAUDE.md` |
+| **Post-Process Agent** | `post_process/` | `core/scene_targets.h`, `core/screen_distort.h`, `core/tuning.h`, `core/gfx_quality.h` — see `post_process/CLAUDE.md` |
 | **Sandbox Agent** | `sandbox/` | `.h` headers of ALL modules (dev/test integration harness, not shipped gameplay) — see `sandbox/CLAUDE.md` |
 | **Renderer Agent (rlvk)** | `third_party/vulkan/` (umbrella + `rlvk/*.inl` + tests), `scripts/*rlvk*` | `third_party/vulkan/docs/HANDOFF.md` — Vulkan 1.1 backend; 3-tier test ladder (compile/headless/visual), never debugs via the game first — see `third_party/vulkan/CLAUDE.md` |
 

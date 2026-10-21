@@ -199,8 +199,8 @@ add_executable(wuxing
     core/gas/gas_sim.c
     core/gas/gas_system.c
     core/path_spline.c
-    core/post_fx.c
-    core/color_grade_lut.c
+    post_process/post_fx.c
+    post_process/color_grade_lut.c
     core/ribbon_strip.c
     core/lightning/lightning_stroke.c
     core/scene_targets.c
@@ -296,7 +296,7 @@ add_executable(wuxing
 )
 
 # Thêm root path để resolve includes có tiền tố core/ và skills/
-target_include_directories(wuxing PRIVATE . core/geometry core/material core/composition core/presets)
+target_include_directories(wuxing PRIVATE . post_process core/geometry core/material core/composition core/presets)
 
 if(WUXING_USE_VULKAN)
     target_include_directories(wuxing PRIVATE ${Vulkan_INCLUDE_DIRS})
@@ -355,12 +355,18 @@ configure_file(core/shaders/rim_glow.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders
 configure_file(core/shaders/dissolve.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/dissolve.fs COPYONLY)
 configure_file(core/shaders/flow_map.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/flow_map.fs COPYONLY)
 configure_file(core/shaders/distortion.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/distortion.fs COPYONLY)
+
+# --- Post-process module shaders ---
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders)
+configure_file(post_process/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/bloom_bright.fs COPYONLY)
+configure_file(post_process/shaders/bloom_downsample.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/bloom_downsample.fs COPYONLY)
+configure_file(post_process/shaders/bloom_upsample.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/bloom_upsample.fs COPYONLY)
+configure_file(post_process/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/post_process.fs COPYONLY)
+configure_file(post_process/shaders/fxaa.fs ${CMAKE_CURRENT_BINARY_DIR}/post_process/shaders/fxaa.fs COPYONLY)
+
+# Backward-compatibility copies for core/shaders (and external visual tests)
 configure_file(core/shaders/bloom_bright.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_bright.fs COPYONLY)
 configure_file(core/shaders/bloom_blur.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_blur.fs COPYONLY)
-# bloom_downsample/bloom_upsample were missing here, same failure shape as the
-# trail shaders below: LoadShader falls back to raylib's default on a missing
-# file, so the bloom pyramid would keep "working" as a plain bilinear resize —
-# no 13-tap filter, no Karis, and the scatter uniform silently nowhere.
 configure_file(core/shaders/bloom_downsample.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_downsample.fs COPYONLY)
 configure_file(core/shaders/bloom_upsample.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/bloom_upsample.fs COPYONLY)
 configure_file(core/shaders/post_process.fs ${CMAKE_CURRENT_BINARY_DIR}/core/shaders/post_process.fs COPYONLY)
