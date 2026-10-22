@@ -1840,10 +1840,50 @@ and index binding 1; compute rebinds its own field buffer at binding 1.
   away from the origin. Source: `core/trails/trail_ribbon_gpu.c`; renderer
   guard: `ribbon_gpu_world_strip`.
 
+## A resolution A/B prices a clear plus its fill, not the clear (22/10/2026)
+
+- **Symptom:** a big render target's per-frame cost is blamed on its attachment clears
+  because halving its resolution saves several ms, yet deleting one attachment saves
+  almost nothing.
+- **Cause:** resolution scales the clear **and** the geometry's fill together, and a
+  clear's price depends on the attachment: on rlvk→MoltenVK/Intel a 2048² **depth**
+  clear is fast-cleared to ~0, while a 2048² **R32F colour** clear is ~16.8 MB of real
+  writes (~1.0 ms). Measured on the shadow target: `WUXING_SHADOW_RES=1024` −2.88 ms,
+  `=512` −4.37 ms, but removing the depth attachment outright −0.2 ms and
+  `SKIP=shadowcasters` −1.4 ms — so the "clear" was 1.0 ms colour clear + 1.4 ms caster
+  fill + 0.2 ms depth, not 2×16.8 MB.
+- **Rule:** price a clear by deleting the attachment or the clear itself; use a
+  resolution A/B only for the *whole* target (clear + fill). Do not assume
+  "attachment + clear = bytes × 2" — an unsampled depth attachment can be nearly free,
+  and a float colour attachment can be the expensive half. Source:
+  `environment/env_shadow.c` (min-blend capture), `environment/docs/LANDMINES.md`.
+
+## Isolated subsystem cost is not the frame's marginal cost (22/10/2026)
+
+- **Symptom:** a subsystem measures 4-11 ms per draw in isolation and is picked as the
+  FPS target, but cutting a quarter of its work moves the frame by a few tenths of a
+  millisecond.
+- **Cause:** per-draw work overlaps with the rest of the frame, so removing it does not
+  shorten the frame by its measured cost. On this rlvk->MoltenVK path deleting the
+  *entire* song_quao ground draw (188x300 m heightfield, 112 800 triangles, 1280x720,
+  HIGH) moved the frame 19.27 -> 17.23 ms (-2.05 ms, 3/3 paired runs, about 0.36 of its
+  per-draw cost); dropping 1.3 ms of that draw's fragment work bought 0.47 ms of frame
+  (3/3 paired runs).
+- **Rule:** before optimizing inside a draw, delete the whole draw once and measure the
+  frame delta - that delta is the ceiling, and everything inside the draw must be priced
+  against it. Decide with paired alternating full-frame runs (base, variant, variant,
+  base, 3+ pairs, same fixed camera and frame, accept only a consistent direction).
+  Keep per-pixel repeat slopes and `RLVK_PASS_MARK` drains for *attribution* only: they
+  overstate frame value and are defeated by clock drift (one unchanged shader measured
+  4.3-6.5 ms/draw across runs minutes apart on this machine). Sources: `maps/docs/LANDMINES.md`
+  ("Deleting the whole ground draw..." and "Ground shader is texture-sample bound").
+
 ## Patch Log
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-22 | DeepSeek | A resolution A/B prices a clear plus its fill | `environment/env_shadow.c` shadow-capture A/B (`WUXING_SHADOW_RES`, depth-attachment removal, `SKIP=shadowcasters`); `environment/docs/LANDMINES.md` | Ground-truth |
+| 2026-10-22 | DeepSeek | Isolated subsystem cost vs frame marginal | `maps/docs/LANDMINES.md` ground entries; song_quao paired full-frame runs (ground skipped vs full) | Ground-truth |
 | 2026-10-08 | Codex | World-space GPU camera view | core/trails/trail_ribbon_gpu.c; gameplay ribbon captures; ribbon_gpu_world_strip | Ground-truth |
 | 2026-10-08 | Codex | Vulkan frame activation | main.c; rlvk_core.inl; validated upload/compute/draw guards | Ground-truth |
 | 2026-10-07 | Codex | Gas/fog matrix unwind | main.c; third_party/vulkan/tests/rlvk_visual_test.c; matched meadow captures | Ground-truth |

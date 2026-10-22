@@ -229,9 +229,26 @@ static bool CreateShadowTarget(int resolution, unsigned int *outFbo,
 {
     *outColor = rlLoadTexture(NULL, resolution, resolution,
                               RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
+#if defined(GRAPHICS_API_VULKAN)
+    /* PERF (22/10/2026): rlvk builds this target without a depth attachment.
+       It existed only to resolve which caster wins a texel, and the R32F colour
+       already carries that answer — the caster shader writes gl_FragCoord.z —
+       so the same rule is expressed as a min-blend in BeginCaptureTarget below.
+       Removes 16.8 MB of depth traffic per 2048² capture; measured ~0.2 ms of a
+       ~20 ms song_quao frame (this driver fast-clears depth, so the clear was
+       cheap and the depth WRITES were the rest). Verified image-identical.
+       Kept for GL/GLES: blending a float target there needs EXT_float_blend, and
+       a backend that cannot blend R32F renders NO shadow at all. */
+    *outDepth = 0;
+#else
     *outDepth = rlLoadTextureDepth(resolution, resolution, false);
+#endif
     *outFbo = rlLoadFramebuffer();
+#if defined(GRAPHICS_API_VULKAN)
+    if (*outFbo == 0 || *outColor == 0)
+#else
     if (*outFbo == 0 || *outDepth == 0 || *outColor == 0)
+#endif
     {
         DestroyShadowTarget(*outFbo, *outDepth, *outColor);
         *outFbo = *outDepth = *outColor = 0;
@@ -241,8 +258,10 @@ static bool CreateShadowTarget(int resolution, unsigned int *outFbo,
     rlEnableFramebuffer(*outFbo);
     rlFramebufferAttach(*outFbo, *outColor, RL_ATTACHMENT_COLOR_CHANNEL0,
                         RL_ATTACHMENT_TEXTURE2D, 0);
+#if !defined(GRAPHICS_API_VULKAN)
     rlFramebufferAttach(*outFbo, *outDepth, RL_ATTACHMENT_DEPTH,
                         RL_ATTACHMENT_TEXTURE2D, 0);
+#endif
     bool complete = rlFramebufferComplete(*outFbo);
     rlDisableFramebuffer();
     if (!complete)
@@ -291,22 +310,16 @@ void EnvShadow_Init(void)
         return;
     }
 
-    // Depth + throwaway color attachment — same recipe as
-    // core/screen_distort.c's LoadRenderTextureWithDepthTexture, which is
-    // proven to work on this project's rlvk (Vulkan) backend already. A
-    // depth-ONLY FBO (rlActiveDrawBuffers(0), no color attachment) is a
-    // different, untested configuration under a custom Vulkan reimplementation
-    // of rlgl — not worth the risk here, the color texture is never sampled.
-    // The color attachment IS the shadow map now: the depth shader writes gl_FragCoord.z into it
-    // (R32F), so it's sampled directly — no depth->R32F copy pass. Depth attachment is only for the
-    // capture's depth TEST (nearest caster wins); it is never sampled.
-    // NOTE (§7.27, OPEN PERF ISSUE): this depth attachment is only ever depth-TESTED against — the
-    // shadow map we sample is the R32F COLOR attachment above. But rlvk still builds a
-    // Caps.noSampledDepth "sampleable twin" for it and bounces depth->buffer->twin at EVERY scope
-    // close (~32 MB/frame at 2048) for a twin nobody reads. That is the prime suspect for the
-    // remaining shadow cost. Do NOT "fix" it by passing useRenderBuffer=true here: raylib's own
-    // LoadRenderTexture also passes true, so honouring it in rlvk strips the twin from every render
-    // texture and breaks soft-particle depth sampling (VUID-…-oldLayout-01211). See the notes.
+    // The color attachment IS the shadow map: the caster shader writes gl_FragCoord.z into it
+    // (R32F), so it is sampled directly — no depth->R32F copy pass.
+    // HISTORY (§7.27, CLOSED 22/10/2026): this target used to carry a depth attachment purely for
+    // the capture's depth TEST. The §7.27 note blamed a rlvk "sampleable twin" bounce at every scope
+    // close; VKPROFILE disproved that (the 2048² slot reports twin_pixels=0). The real cost of this
+    // target is the R32F colour CLEAR (~1.0 ms) plus the map casters' own fill (~1.4 ms) — deleting
+    // the depth attachment is worth only ~0.2 ms, because the driver fast-clears depth. It is still
+    // gone: same image, 16.8 MB/frame less traffic. Under rlvk the nearest-caster rule it used to
+    // provide is a min-blend on the R32F colour (see CreateShadowTarget / BeginCaptureTarget).
+    // Do NOT reintroduce the depth attachment to "make the depth test work" — there is no test.
     if (!CreateShadowTarget(s_resolution, &s_fboId, &s_depthTexId,
                             &s_colorTexId, &s_shadowMapTex))
     {
@@ -322,7 +335,7 @@ void EnvShadow_Init(void)
 
     s_ready = true;
     s_enabled = true; // Real shadows remain available at every graphics tier.
-    TraceLog(LOG_INFO, "ENV_SHADOW: ready, %dx%d depth target (fbo=%u depthTex=%u shadowMapTex=%u)",
+    TraceLog(LOG_INFO, "ENV_SHADOW: ready, %dx%d capture target (fbo=%u depthTex=%u shadowMapTex=%u)",
              s_resolution, s_resolution, s_fboId, s_depthTexId, s_colorTexId);
     if (s_staticTargetReady)
         TraceLog(LOG_INFO, "ENV_SHADOW: static cache target ready, %dx%d (fbo=%u shadowMapTex=%u)",
@@ -481,8 +494,22 @@ static void BeginCaptureTarget(unsigned int fbo, int resolution, Matrix lightVie
 {
     s_capturing = true;
     rlDrawRenderBatchActive();
+#if defined(GRAPHICS_API_VULKAN)
+    /* Nearest caster wins, without a depth attachment (see CreateShadowTarget):
+       the caster shader writes gl_FragCoord.z — exactly the value the depth test
+       would compare — and GL_MIN / VK_BLEND_OP_MIN keeps min(src, dst) per
+       texel. A min over all fragments IS the depth test's rule, and it is
+       order-independent in the same way, so the map is numerically identical.
+       The clear leaves 1.0, which is MIN's identity, so texels no caster
+       touches still read "unshadowed". Blend factors are ignored by MIN. */
+    rlDisableDepthTest();
+    rlDisableDepthMask();
+    rlSetBlendFactors(1 /*RL_ONE*/, 0 /*RL_ZERO*/, 0x8007 /*GL_MIN*/);
+    rlSetBlendMode(RL_BLEND_CUSTOM);
+#else
     rlEnableDepthTest();
     rlEnableDepthMask();
+#endif
     rlEnableFramebuffer(fbo);
     rlViewport(0, 0, resolution, resolution);
     rlClearColor(255, 255, 255, 255);
@@ -504,6 +531,11 @@ static void EndCaptureTarget(void)
 {
     EndShaderMode();
     rlDrawRenderBatchActive();
+#if defined(GRAPHICS_API_VULKAN)
+    rlSetBlendMode(RL_BLEND_ALPHA); /* scene default again */
+    rlEnableDepthTest();
+    rlEnableDepthMask();
+#endif
     rlMatrixMode(RL_PROJECTION);
     rlPopMatrix();
     rlMatrixMode(RL_MODELVIEW);
