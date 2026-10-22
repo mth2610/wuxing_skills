@@ -1207,8 +1207,15 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     }
 
     Vector4 tuftBands = view.bands;
-    if (meadow->parametric)
-        NatureParametric_PrepareVisible(meadow, worldOffset, tuftBands);
+    // Never prepare here: the id-texture upload would split the active scene render pass. Maps
+    // call MapProp_UpdateFloraSystem before drawing, so this is normally already prepared; if a
+    // camera change slipped in after the update, this frame keeps using GPU rejection.
+    bool compactNow = false;
+    {
+        NatureParametricMeadow *parametricData = meadow->parametric;
+        compactNow = parametricData && parametricData->compact &&
+                     NatureParametric_IsPrepared(meadow, worldOffset, tuftBands);
+    }
     Shader shader = meadow->parametric ? NatureParametric_Shader(false)
                                        : Nature_GetShader(meadow->textured);
     Nature_BeginWindReceiverShader(shader);
@@ -1272,6 +1279,27 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         }
     }
 
+    // Canonical compact meadows carry every per-instance value in the packed id list, so each
+    // visible LOD band is one instanced draw. The per-chunk loop below stays for every other
+    // meadow (non-canonical reeds/pampas and the opt-out legacy submission path).
+    bool bandBatched = ordered && compactNow && ordered->canonical;
+    if (bandBatched)
+    {
+        for (int lod = 0; lod < 3; lod++)
+        {
+            if (ordered->bandCount[lod] <= 0)
+                continue;
+            NatureParametric_DrawBand(meadow, lod, shader, worldOffset);
+            if (lod == 2)
+                s_natureRenderStats.meadowFarDraws++;
+            else if (lod == 1)
+                s_natureRenderStats.meadowMidDraws++;
+            else
+                s_natureRenderStats.meadowNearDraws++;
+        }
+        drawCount = 0;
+    }
+
     for (int draw = 0; draw < drawCount; draw++)
     {
         int i = drawOrder[draw];
@@ -1289,9 +1317,9 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
                 if (!NatureParametric_LodIntersectsSphere(lod, minDistance, maxDistance, tuftBands))
                     continue;
                 NatureParametricMeadow *data = meadow->parametric;
-                if (data->compact && data->ranges[i].visibleCount[lod] == 0)
+                if (compactNow && data->ranges[i].visibleCount[lod] == 0)
                     continue;
-                NatureParametric_DrawChunk(meadow, i, lod, shader, worldOffset);
+                NatureParametric_DrawChunk(meadow, i, lod, shader, worldOffset, compactNow);
                 if (lod == 2)
                     s_natureRenderStats.meadowFarDraws++;
                 else if (lod == 1)
@@ -1368,7 +1396,7 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
             continue;
         if (meadow->parametric)
         {
-            NatureParametric_DrawChunk(meadow, i, 3, shader, worldOffset);
+            NatureParametric_DrawChunk(meadow, i, 3, shader, worldOffset, false);
             s_natureRenderStats.meadowShadowDraws++;
             continue;
         }

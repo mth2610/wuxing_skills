@@ -2,6 +2,8 @@
 #include "core/force_field.h"
 #include <float.h>
 #include <math.h>
+#include <stdio.h>  // WIND_STATS (stderr), chỉ dùng khi WUXING_WIND_STATS được đặt
+#include <stdlib.h> // getenv
 #include <string.h>
 
 // =============================================================================
@@ -72,6 +74,27 @@ static WindTerrainGrid s_terrainGrid;
 static Vector2 s_terrainInvCellSizeXZ = {0};
 static unsigned int s_terrainVersionCounter = 0; // đơn điệu tăng, KHÔNG reset ở Init/Unload
 static bool s_initialized = false;
+
+// Memo 1 mục cho bước 1-3 của Wind_EvaluateVelocityChannels (macro + gradient độ cao +
+// nâng địa hình). Ba bước này chỉ phụ thuộc (pos, time, s_macroConfig, terrain) và KHÔNG
+// phụ thuộc includeMotion hay Vorticle, nên Wind_EvaluateVelocity và
+// Wind_EvaluateBackgroundVelocity gọi liên tiếp cùng (pos, time) có thể dùng chung.
+// Khóa so sánh theo từng bit nên kết quả giống hệt bản không memo. Phải đặt false mỗi khi
+// macro hoặc terrain đổi (Init / Unload / SetMacro / SetTerrainHeightQuery / RebuildTerrainGrid).
+static bool s_baseMemoValid = false;
+
+// Bộ đếm chẩn đoán. In mỗi 5 giây khi đặt WUXING_WIND_STATS=1 (ra stderr).
+typedef struct
+{
+    unsigned int updates;
+    unsigned int macroCalls;     // Wind_GetMacroAt (3 lần noise mỗi lần gọi)
+    unsigned int evalFull;       // Wind_EvaluateVelocity (có motion airflow)
+    unsigned int evalBackground; // Wind_EvaluateBackgroundVelocity
+    unsigned int memoHits;       // số lần bước 1-3 được lấy từ memo thay vì tính lại
+} WindStats;
+static WindStats s_stats;
+static int s_statsEnabled = -1; // <0: chưa đọc env
+static float s_statsAccum = 0.0f;
 
 // -----------------------------------------------------------------------------
 // Helpers an toàn số học & Fast Math
@@ -402,6 +425,7 @@ void Wind_Init(void)
         .heightGradientK = 1.0f,
     };
     Wind_RefreshMacroCache();
+    s_baseMemoValid = false;
     s_initialized = true;
 }
 
@@ -433,6 +457,7 @@ void Wind_Unload(void)
     s_terrainGrid.version = Wind_NextTerrainVersion();
     memset(&s_guidingGust, 0, sizeof(s_guidingGust));
     s_guidingTotalDist = 0.0f;
+    s_baseMemoValid = false;
     s_initialized = false;
 }
 
@@ -450,6 +475,7 @@ void Wind_SetMacro(const WindMacroConfig *cfg)
         return;
     s_macroConfig = *cfg;
     Wind_RefreshMacroCache();
+    s_baseMemoValid = false;
 }
 
 WindMacroConfig Wind_GetMacro(void)
@@ -465,6 +491,7 @@ void Wind_SetTerrainHeightQuery(TerrainHeightQueryFn queryFn, void *userData)
 {
     s_terrainQuery = queryFn;
     s_terrainUserData = userData;
+    s_baseMemoValid = false;
     s_terrainGrid.built = false;
     s_terrainGrid.active = false;
     s_terrainInvCellSizeXZ = (Vector2){0};
@@ -474,6 +501,7 @@ void Wind_SetTerrainHeightQuery(TerrainHeightQueryFn queryFn, void *userData)
 void Wind_RebuildTerrainGrid(Vector2 centerXZ, Vector2 halfExtentXZ)
 {
     unsigned int nextVersion = Wind_NextTerrainVersion();
+    s_baseMemoValid = false;
     memset(&s_terrainGrid, 0, sizeof(s_terrainGrid));
     s_terrainInvCellSizeXZ = (Vector2){0};
     s_terrainGrid.version = nextVersion;
@@ -592,12 +620,32 @@ static inline bool Wind_GroundHeight(WindGroundSample *g, float x, float z)
 // -----------------------------------------------------------------------------
 // Quản lý mảng Vorticles (Active compaction)
 // -----------------------------------------------------------------------------
+static void Wind_StatsTick(float dt)
+{
+    if (s_statsEnabled < 0)
+        s_statsEnabled = (getenv("WUXING_WIND_STATS") != NULL) ? 1 : 0;
+    if (!s_statsEnabled)
+        return;
+    s_statsAccum += dt;
+    s_stats.updates++;
+    if (s_statsAccum < 5.0f)
+        return;
+    fprintf(stderr,
+            "WIND_STATS: %.1fs updates=%u macroAt=%u evalFull=%u evalBg=%u memoHits=%u "
+            "vorticles=%d motion=%d\n",
+            (double)s_statsAccum, s_stats.updates, s_stats.macroCalls, s_stats.evalFull,
+            s_stats.evalBackground, s_stats.memoHits, s_activeCount, s_motionAirflowCount);
+    memset(&s_stats, 0, sizeof(s_stats));
+    s_statsAccum = 0.0f;
+}
+
 void Wind_Update(float dt)
 {
     if (!s_initialized)
         return;
     if (!(dt > 0.0f))
         return;
+    Wind_StatsTick(dt);
 
     // 1. Cập nhật tiến trình đợt Gió Dẫn Đường (Guiding Wind)
     if (s_guidingGust.active)
@@ -738,6 +786,7 @@ int Wind_SpawnTurbulence(Vector3 pos, float radius, float strength, float noiseS
 // -----------------------------------------------------------------------------
 Vector3 Wind_GetMacroAt(Vector3 pos, float time)
 {
+    s_stats.macroCalls++;
     if (!s_initialized || s_macroBaseLen < 1e-4f)
         return (Vector3){0};
 
@@ -971,55 +1020,88 @@ static inline bool Wind_InBounds(Vector3 p, Vector3 lo, Vector3 hi)
            p.z >= lo.z && p.z <= hi.z;
 }
 
+typedef struct
+{
+    Vector3 pos;
+    float time;
+    Vector3 vel;             // totalVel sau bước 3
+    WindGroundSample ground; // trạng thái lấy mẫu địa hình sau bước 3 (bước 5 có thể lấy mẫu tiếp)
+} WindBaseMemo;
+static WindBaseMemo s_baseMemo;
+
 static Vector3 Wind_EvaluateVelocityChannels(Vector3 pos, float time, bool includeMotion)
 {
     if (!s_initialized)
         return (Vector3){0};
 
-    // 1. Thành phần gió vĩ mô (Macro Wind)
-    Vector3 totalVel = Wind_GetMacroAt(pos, time);
+    if (includeMotion)
+        s_stats.evalFull++;
+    else
+        s_stats.evalBackground++;
 
-    const bool hasTerrain = (s_terrainQuery != NULL);
+    Vector3 totalVel;
     WindGroundSample ground = {0};
 
-    // 2. Điều biến vận tốc theo cao độ (Atmospheric Boundary Layer Height Gradient)
-    if (hasTerrain && s_macroConfig.heightGradientK > 0.0f)
+    if (s_baseMemoValid &&
+        memcmp(&s_baseMemo.pos, &pos, sizeof(pos)) == 0 &&
+        memcmp(&s_baseMemo.time, &time, sizeof(time)) == 0)
     {
-        if (Wind_GroundHeight(&ground, pos.x, pos.z))
-        {
-            float hRel = pos.y - ground.h;
-            float factor = 1.0f + s_macroConfig.heightGradientK * (Wind_HeightFactor(hRel) - 1.0f);
-            totalVel = Vector3Scale(totalVel, factor);
-        }
+        totalVel = s_baseMemo.vel;
+        ground = s_baseMemo.ground;
+        s_stats.memoHits++;
     }
-
-    // 3. Thành phần nâng địa hình (Terrain-Aware Lift)
-    if (hasTerrain && s_macroConfig.terrainLiftK > 0.0f)
+    else
     {
-        float speedXZSq = totalVel.x * totalVel.x + totalVel.z * totalVel.z;
-        if (speedXZSq > 1e-6f && Wind_GroundHeight(&ground, pos.x, pos.z))
-        {
-            float speedXZ = sqrtf(speedXZSq);
-            float invSpeedXZ = 1.0f / speedXZ;
-            float dirX = totalVel.x * invSpeedXZ;
-            float dirZ = totalVel.z * invSpeedXZ;
+        // 1. Thành phần gió vĩ mô (Macro Wind)
+        totalVel = Wind_GetMacroAt(pos, time);
 
-            const float sampleDist = 1.5f;
-            float h1 = 0.0f;
-            if (Wind_SampleTerrain(pos.x + dirX * sampleDist,
-                                   pos.z + dirZ * sampleDist, &h1))
+        const bool hasTerrain = (s_terrainQuery != NULL);
+
+        // 2. Điều biến vận tốc theo cao độ (Atmospheric Boundary Layer Height Gradient)
+        if (hasTerrain && s_macroConfig.heightGradientK > 0.0f)
+        {
+            if (Wind_GroundHeight(&ground, pos.x, pos.z))
             {
-                float dH = h1 - ground.h;
-                if (dH > 0.0f)
+                float hRel = pos.y - ground.h;
+                float factor = 1.0f + s_macroConfig.heightGradientK * (Wind_HeightFactor(hRel) - 1.0f);
+                totalVel = Vector3Scale(totalVel, factor);
+            }
+        }
+
+        // 3. Thành phần nâng địa hình (Terrain-Aware Lift)
+        if (hasTerrain && s_macroConfig.terrainLiftK > 0.0f)
+        {
+            float speedXZSq = totalVel.x * totalVel.x + totalVel.z * totalVel.z;
+            if (speedXZSq > 1e-6f && Wind_GroundHeight(&ground, pos.x, pos.z))
+            {
+                float speedXZ = sqrtf(speedXZSq);
+                float invSpeedXZ = 1.0f / speedXZ;
+                float dirX = totalVel.x * invSpeedXZ;
+                float dirZ = totalVel.z * invSpeedXZ;
+
+                const float sampleDist = 1.5f;
+                float h1 = 0.0f;
+                if (Wind_SampleTerrain(pos.x + dirX * sampleDist,
+                                       pos.z + dirZ * sampleDist, &h1))
                 {
-                    float lift = (dH * (1.0f / 1.5f)) * speedXZ * s_macroConfig.terrainLiftK;
-                    if (lift > 12.0f)
-                        lift = 12.0f;
-                    totalVel.y += lift;
+                    float dH = h1 - ground.h;
+                    if (dH > 0.0f)
+                    {
+                        float lift = (dH * (1.0f / 1.5f)) * speedXZ * s_macroConfig.terrainLiftK;
+                        if (lift > 12.0f)
+                            lift = 12.0f;
+                        totalVel.y += lift;
+                    }
                 }
             }
         }
-    }
+
+        s_baseMemo.pos = pos;
+        s_baseMemo.time = time;
+        s_baseMemo.vel = totalVel;
+        s_baseMemo.ground = ground;
+        s_baseMemoValid = true;
+    } // hết nhánh tính lại bước 1-3
 
     // 4. Tổng hợp từ mảng Vorticles cục bộ với lọc nhanh theo AABB tổng
     Vector3 c;

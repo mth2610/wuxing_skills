@@ -696,79 +696,137 @@ void MapProp_SetFlowerFieldLod(MapFlowerField *field, float lodDistance, float s
     field->shadowDistance = shadowDistance;
 }
 
-void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float time,
-                             Vector2 windDirection, float windStrength)
+// Batched flower draw.
+//
+// Flower fields are small spatial cells (see MapFlora_SplitFlowerCell in map_props_flora.inl), so
+// frustum / distance / near-far LOD decisions are made per cell instead of per 20m+ cluster.
+// Everything that used to be repeated per field is now done once per batch:
+//   - per-frame camera / quality constants (focal distance, zoom, ranges)
+//   - projected contact-shadow pass state (shader mode, blend mode, depth mask flushes)
+//   - wind-receiver shader binding + Nature_UpdateShader uniforms
+#define NATURE_FLOWER_BATCH_DRAW 1u
+#define NATURE_FLOWER_BATCH_FAR 2u
+#define NATURE_FLOWER_BATCH_SHADOW 4u
+
+void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector3 worldOffset,
+                                  float time, Vector2 windDirection, float windStrength)
 {
-    if (!field || !field->ready)
+    if (!fields || fieldCount <= 0)
         return;
-    s_natureRenderStats.flowerFieldsTested++;
-    Vector3 center = Vector3Add(field->boundsCenter, worldOffset);
-    if (!Nature_IsChunkVisible(center, field->boundsRadius))
+
+    static unsigned char *s_batchFlags = NULL;
+    static int s_batchFlagsCapacity = 0;
+    if (fieldCount > s_batchFlagsCapacity)
     {
-        s_natureRenderStats.flowerFieldsFrustumCulled++;
-        return;
+        unsigned char *grown = (unsigned char *)RL_REALLOC(s_batchFlags, (size_t)fieldCount);
+        if (!grown)
+            return;
+        s_batchFlags = grown;
+        s_batchFlagsCapacity = fieldCount;
     }
+    unsigned char *flags = s_batchFlags;
+
+    // ---- per-frame constants (previously recomputed for every field) ----
     GfxQuality quality = GfxQuality_Get();
     float rangeScale = quality >= GFX_HIGH  ? 1.0f
                        : quality == GFX_MED ? 0.84f
                        : quality == GFX_LOW ? 0.68f
                                             : 0.55f;
-    float dx = camera.position.x - center.x;
-    float dz = camera.position.z - center.z;
-    float centerDistance = sqrtf(dx * dx + dz * dz);
-    float visibleDistance = centerDistance - field->boundsRadius;
-    if (field->drawDistance > 0.0f &&
-        visibleDistance > field->drawDistance * rangeScale)
-    {
-        s_natureRenderStats.flowerFieldsDistanceCulled++;
-        return;
-    }
     float lodScale = quality >= GFX_HIGH  ? 1.0f
                      : quality == GFX_MED ? 0.82f
                      : quality == GFX_LOW ? 0.58f
                                           : 0.45f;
-    if (field->farReady && field->lodDistance > 0.0f)
-    {
-        float focalDx = camera.position.x - camera.target.x;
-        float focalDz = camera.position.z - camera.target.z;
-        float focalDistH = sqrtf(focalDx * focalDx + focalDz * focalDz);
-        float fovyRad = fmaxf(camera.fovy, 15.0f) * DEG2RAD;
-        float zoomFactor = tanf(45.0f * 0.5f * DEG2RAD) / tanf(fovyRad * 0.5f);
-        if (zoomFactor < 0.8f)
-            zoomFactor = 0.8f;
-        if (zoomFactor > 2.5f)
-            zoomFactor = 2.5f;
-        float spatialHash = sinf(field->boundsCenter.x * 12.9898f + field->boundsCenter.z * 78.233f);
-        spatialHash -= floorf(spatialHash);
-        float threshold = focalDistH + field->lodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 3.0f;
-        float hysteresis = quality >= GFX_HIGH ? 1.25f : 2.0f;
-        if (field->farLod)
-        {
-            if (visibleDistance < threshold - hysteresis)
-                field->farLod = false;
-        }
-        else if (visibleDistance > threshold + hysteresis)
-        {
-            field->farLod = true;
-        }
-    }
-    else
-    {
-        field->farLod = false;
-    }
-    bool useFarModel = field->farReady && field->farLod;
+    float focalDx = camera.position.x - camera.target.x;
+    float focalDz = camera.position.z - camera.target.z;
+    float focalDistH = sqrtf(focalDx * focalDx + focalDz * focalDz);
+    float fovyRad = fmaxf(camera.fovy, 15.0f) * DEG2RAD;
+    float zoomFactor = tanf(45.0f * 0.5f * DEG2RAD) / tanf(fovyRad * 0.5f);
+    if (zoomFactor < 0.8f)
+        zoomFactor = 0.8f;
+    if (zoomFactor > 2.5f)
+        zoomFactor = 2.5f;
+    float hysteresis = quality >= GFX_HIGH ? 1.25f : 2.0f;
     NatureShadowMode shadowMode = Nature_GetShadowMode();
     bool realShadowActive = quality >= GFX_LOW && EnvShadow_IsEnabled() &&
                             shadowMode != NATURE_SHADOW_PROJECTED_ONLY;
     bool useProjectedShadows = quality >= GFX_MED &&
                                shadowMode != NATURE_SHADOW_REAL_ONLY;
-    // When real directional shadows are active, limit contact shadow pass to close range
-    float maxContactDist = realShadowActive
-                               ? fminf(field->shadowDistance, 14.0f)
-                               : (field->shadowDistance * (quality >= GFX_HIGH ? 1.0f : 0.78f));
-    bool shadowInRange = field->shadowDistance <= 0.0f || visibleDistance <= maxContactDist;
 
-    if (field->shadowReady && useProjectedShadows && shadowInRange)
+    // ---- pass 1: cull + LOD (identical rules to the old per-field path) ----
+    bool anyShadow = false;
+    bool anyDraw = false;
+    for (int i = 0; i < fieldCount; i++)
+    {
+        MapFlowerField *field = &fields[i];
+        flags[i] = 0;
+        if (!field->ready)
+            continue;
+        s_natureRenderStats.flowerFieldsTested++;
+        Vector3 center = Vector3Add(field->boundsCenter, worldOffset);
+        if (!Nature_IsChunkVisible(center, field->boundsRadius))
+        {
+            s_natureRenderStats.flowerFieldsFrustumCulled++;
+            continue;
+        }
+        float dx = camera.position.x - center.x;
+        float dz = camera.position.z - center.z;
+        float centerDistance = sqrtf(dx * dx + dz * dz);
+        float visibleDistance = centerDistance - field->boundsRadius;
+        if (field->drawDistance > 0.0f &&
+            visibleDistance > field->drawDistance * rangeScale)
+        {
+            s_natureRenderStats.flowerFieldsDistanceCulled++;
+            continue;
+        }
+        if (field->farReady && field->lodDistance > 0.0f)
+        {
+            float spatialHash = sinf(field->boundsCenter.x * 12.9898f + field->boundsCenter.z * 78.233f);
+            spatialHash -= floorf(spatialHash);
+            float threshold = focalDistH + field->lodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 3.0f;
+            if (field->farLod)
+            {
+                if (visibleDistance < threshold - hysteresis)
+                    field->farLod = false;
+            }
+            else if (visibleDistance > threshold + hysteresis)
+            {
+                field->farLod = true;
+            }
+        }
+        else
+        {
+            field->farLod = false;
+        }
+
+        unsigned char f = NATURE_FLOWER_BATCH_DRAW;
+        if (field->farReady && field->farLod)
+            f |= NATURE_FLOWER_BATCH_FAR;
+
+        // When real directional shadows are active, limit contact shadow pass to close range
+        float maxContactDist = realShadowActive
+                                   ? fminf(field->shadowDistance, 14.0f)
+                                   : (field->shadowDistance * (quality >= GFX_HIGH ? 1.0f : 0.78f));
+        bool shadowInRange = field->shadowDistance <= 0.0f || visibleDistance <= maxContactDist;
+        if (field->shadowReady && useProjectedShadows)
+        {
+            if (shadowInRange)
+            {
+                f |= NATURE_FLOWER_BATCH_SHADOW;
+                anyShadow = true;
+            }
+            else
+            {
+                s_natureRenderStats.flowerShadowDistanceCulled++;
+            }
+        }
+        flags[i] = f;
+        anyDraw = true;
+    }
+    if (!anyDraw)
+        return;
+
+    // ---- pass 2: projected contact shadows, one state setup for all fields ----
+    if (anyShadow)
     {
         Shader shadowShader = FlowerShadow_GetShader();
         BeginShaderMode(shadowShader);
@@ -776,29 +834,60 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
         EndShaderMode();
         rlDisableDepthMask();
         BeginBlendMode(BLEND_MULTIPLIED);
-        DrawModel(field->shadowModel, worldOffset, 1.0f, WHITE);
-        s_natureRenderStats.flowerShadowDraws++;
+        for (int i = 0; i < fieldCount; i++)
+        {
+            if (!(flags[i] & NATURE_FLOWER_BATCH_SHADOW))
+                continue;
+            DrawModel(fields[i].shadowModel, worldOffset, 1.0f, WHITE);
+            s_natureRenderStats.flowerShadowDraws++;
+        }
         EndBlendMode();
         rlEnableDepthMask();
     }
-    else if (field->shadowReady && useProjectedShadows && !shadowInRange)
+
+    // ---- pass 3: flower geometry, shader/wind uniforms set once per (textured, alpha) group ----
+    bool groupOpen = false;
+    bool groupTextured = false;
+    float groupAlpha = 0.0f;
+    for (int i = 0; i < fieldCount; i++)
     {
-        s_natureRenderStats.flowerShadowDistanceCulled++;
+        if (!(flags[i] & NATURE_FLOWER_BATCH_DRAW))
+            continue;
+        MapFlowerField *field = &fields[i];
+        if (!groupOpen || field->textured != groupTextured || field->alphaCutoff != groupAlpha)
+        {
+            if (groupOpen)
+                Nature_EndWindReceiverShader();
+            Shader shader = Nature_GetShader(field->textured);
+            Nature_BeginWindReceiverShader(shader);
+            Nature_UpdateShader(shader, time, windDirection, windStrength,
+                                field->textured, field->alphaCutoff,
+                                NATURE_WIND_RESPONSE_FLOWER);
+            if (!groupOpen)
+                rlDisableBackfaceCulling();
+            groupOpen = true;
+            groupTextured = field->textured;
+            groupAlpha = field->alphaCutoff;
+        }
+        bool useFarModel = (flags[i] & NATURE_FLOWER_BATCH_FAR) != 0;
+        DrawModel(useFarModel ? field->farModel : field->model, worldOffset, 1.0f, WHITE);
+        s_natureRenderStats.flowerDraws++;
+        if (useFarModel)
+            s_natureRenderStats.flowerFarDraws++;
+        else
+            s_natureRenderStats.flowerNearDraws++;
     }
-    Shader shader = Nature_GetShader(field->textured);
-    Nature_BeginWindReceiverShader(shader);
-    Nature_UpdateShader(shader, time, windDirection, windStrength,
-                        field->textured, field->alphaCutoff,
-                        NATURE_WIND_RESPONSE_FLOWER);
-    rlDisableBackfaceCulling();
-    DrawModel(useFarModel ? field->farModel : field->model, worldOffset, 1.0f, WHITE);
-    Nature_EndWindReceiverShader();
-    s_natureRenderStats.flowerDraws++;
-    if (useFarModel)
-        s_natureRenderStats.flowerFarDraws++;
-    else
-        s_natureRenderStats.flowerNearDraws++;
-    rlEnableBackfaceCulling();
+    if (groupOpen)
+    {
+        Nature_EndWindReceiverShader();
+        rlEnableBackfaceCulling();
+    }
+}
+
+void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float time,
+                             Vector2 windDirection, float windStrength)
+{
+    MapProp_DrawFlowerFieldBatch(field, 1, worldOffset, time, windDirection, windStrength);
 }
 
 void MapProp_DrawFlowerFieldShadowCaster(MapFlowerField *field, Vector3 worldOffset,

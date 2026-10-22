@@ -139,8 +139,12 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     s_cachedClumpTexel = vec4(p0.xyz, clump.w);
     s_hasCachedClumpTexel = true;
 
+#ifndef NATURE_BLADE_POSITION_ONLY
+    // Colour texels are only read by the lit pass; the depth-only shadow caster evaluates the
+    // same silhouette without paying two of its seven atlas gathers per vertex.
     vec3 rootColor = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 5, baseCoord.y), 0).rgb;
     vec3 tipColor  = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 6, baseCoord.y), 0).rgb;
+#endif
 
     NatureApplyCanonicalLod(p0, p1, p2, p3);
 
@@ -237,6 +241,13 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     }
 #endif
 
+#ifdef NATURE_BLADE_POSITION_ONLY
+    // Depth-only pass: no shading normal, no palette gradient, no plume tint.
+    normal = vec3(0.0, 1.0, 0.0);
+    color = vec4(1.0);
+    windUV = vec2(p0.w, t);
+    surfaceUV = vec2(sideSign, t);
+#else
     // Continuous normal interpolation along t (eliminates the sudden role > 2.5 normal jump at the tip!)
     vec3 sphereDirection = normalize(position - vec3(clump.x, clump.y - 0.04, clump.z));
     float upBlend = mix(0.42, 0.54, t);
@@ -274,4 +285,5 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     color = vec4(smoothCol, fadeAlpha);
     windUV = vec2(p0.w, t);
     surfaceUV = vec2(sideSign, t);
+#endif
 }

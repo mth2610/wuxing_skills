@@ -40,6 +40,10 @@ typedef struct
     int *drawOrder;
     float *drawDepth;
     int drawCount;
+    // Compact submissions pack ids lod-major (see NatureParametric_PrepareVisible), so every
+    // visible tuft of one visible LOD band is one contiguous run: a band can be drawn with a
+    // single instanced draw instead of one per chunk.
+    int bandBase[3], bandCount[3];
     int canonicalBlades, tuftCount, idPixelCount;
     Vector3 *roots;
     float *ranks, *idPixels;
@@ -479,8 +483,11 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
         }
     }
 
+    // Compact submission is the default: it submits only the tufts an LOD band actually uses
+    // (about half of the candidates) and, for canonical meadows, lets a whole band be drawn in
+    // one instanced draw. `legacy` keeps the GPU-rejection path for A/B profiling.
     const char *submission = getenv("WUXING_MEADOW_SUBMISSION");
-    data->compact = submission && strcmp(submission, "compact") == 0;
+    data->compact = !submission || strcmp(submission, "legacy") != 0;
     const char *order = getenv("WUXING_MEADOW_ORDER");
     data->nearFirst = !order || (strcmp(order, "none") != 0 && strcmp(order, "unsorted") != 0);
     const char *trace = getenv("WUXING_MEADOW_SUBMISSION_TRACE");
@@ -649,8 +656,8 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     meadow->shadowDistance = style.shadowDistance;
     meadow->alphaCutoff = style.alphaCutoff;
     meadow->ready = true;
-    TraceLog(LOG_INFO, "MEADOW_PARAMETRIC: chunks=%d tufts=%d parameter_bytes=%lld shared_atlas=1 immutable_templates=4",
-             meadow->chunkCount, count, parameterBytes);
+    TraceLog(LOG_INFO, "MEADOW_PARAMETRIC: chunks=%d tufts=%d parameter_bytes=%lld shared_atlas=1 canonical=%d compact=%d immutable_templates=4",
+             meadow->chunkCount, count, parameterBytes, data->canonical ? 1 : 0, data->compact ? 1 : 0);
     return true;
 
 failed:
@@ -749,6 +756,11 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
     }
 
     Vector3 localEye = Vector3Subtract(camera.position, worldOffset);
+    // Same fade range MapProp_DrawMeadow uploads to the vertex shader; roots at or past it are
+    // collapsed to a point there, so they must not be submitted at all.
+    NatureMeadowView view = NatureParametric_View(meadow);
+    float fadeEnd = view.drawDistance;
+    float fadeEndSq = fadeEnd * fadeEnd;
     float lod0MaxD = bands.x > 0.0f ? (bands.x - bands.z) : (bands.y - bands.w);
     float lod1MinD = bands.x + bands.z;
     float lod1MaxD = bands.y - bands.w;
@@ -764,19 +776,30 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
         float nearD = chunkDist - meadow->chunks[chunk].radius;
         float farD = chunkDist + meadow->chunks[chunk].radius;
 
-        if (bands.y <= 0.0f || farD <= lod0MaxD)
+        // Tufts past the fade range are scaled onto their own root by the vertex shader
+        // (u_tuftFadeRange), i.e. they rasterise nothing. Dropping them here removes their whole
+        // vertex-shader cost without changing a single pixel.
+        if (nearD >= fadeEnd)
+        {
+            range->visibleCount[0] = 0;
+            range->visibleCount[1] = 0;
+            range->visibleCount[2] = 0;
+            continue;
+        }
+
+        if ((bands.y <= 0.0f || farD <= lod0MaxD) && farD <= fadeEnd)
         {
             range->visibleCount[0] = range->count;
             totalLodCounts[0] += range->count;
             memset(data->visibleLods + range->tuftOffset, 0, range->count);
         }
-        else if (bands.x > 0.0f && nearD >= lod1MinD && farD <= lod1MaxD)
+        else if (bands.x > 0.0f && nearD >= lod1MinD && farD <= lod1MaxD && farD <= fadeEnd)
         {
             range->visibleCount[1] = range->count;
             totalLodCounts[1] += range->count;
             memset(data->visibleLods + range->tuftOffset, 1, range->count);
         }
-        else if (nearD >= lod2MinD)
+        else if (nearD >= lod2MinD && farD <= fadeEnd)
         {
             range->visibleCount[2] = range->count;
             totalLodCounts[2] += range->count;
@@ -788,7 +811,14 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
             int end = start + range->count;
             for (int id = start; id < end; id++)
             {
-                int lod = NatureParametric_SelectLod(data->roots[id], data->ranks[id], localEye, bands);
+                Vector3 root = data->roots[id];
+                float dx = root.x - localEye.x, dy = root.y - localEye.y, dz = root.z - localEye.z;
+                if (dx * dx + dy * dy + dz * dz >= fadeEndSq)
+                {
+                    data->visibleLods[id] = 3; // never emitted: no LOD band claims it
+                    continue;
+                }
+                int lod = NatureParametric_SelectLod(root, data->ranks[id], localEye, bands);
                 data->visibleLods[id] = (unsigned char)lod;
                 range->visibleCount[lod]++;
             }
@@ -801,6 +831,7 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
     int cursor = 0;
     for (int lod = 0; lod < 3; lod++)
     {
+        data->bandBase[lod] = cursor;
         for (int chunk = 0; chunk < meadow->chunkCount; chunk++)
         {
             NatureTuftRange *range = &data->ranges[chunk];
@@ -827,6 +858,7 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
                 }
             }
         }
+        data->bandCount[lod] = cursor - data->bandBase[lod];
     }
 
     if (cursor > 0)
@@ -862,11 +894,13 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
 }
 
 static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int lod,
-                                       Shader shader, Vector3 worldOffset)
+                                       Shader shader, Vector3 worldOffset, bool compactNow)
 {
     NatureParametricMeadow *data = meadow->parametric;
     int pass = lod == 3 ? 1 : 0;
-    bool compact = pass == 0 && data->compact;
+    // `compactNow` is only true when the id texture was refreshed outside the active render
+    // pass; otherwise this frame falls back to GPU-rejection submission (no mid-pass upload).
+    bool compact = pass == 0 && compactNow;
     int instanceCount = compact ? data->ranges[chunk].visibleCount[lod] : data->ranges[chunk].count;
     if (instanceCount <= 0)
         return;
@@ -893,13 +927,21 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
     if (pass == 0)
         SetShaderValue(shader, s_natureTuftLodLevelLoc, &lod, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureBladeCountLoc[pass], &mesh->blades, SHADER_UNIFORM_INT);
-    SetShaderValue(shader, s_natureBladeOffsetLoc[pass], &data->ranges[chunk].offset[lod], SHADER_UNIFORM_INT);
 
     int canonical = data->canonical ? 1 : 0, compactValue = compact ? 1 : 0;
     SetShaderValue(shader, s_natureCanonicalLoc[pass], &canonical, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureCanonicalBladesLoc[pass], &data->canonicalBlades, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureGeometryLodLoc[pass], &lod, SHADER_UNIFORM_INT);
-    SetShaderValue(shader, s_natureTuftOffsetLoc[pass], &data->ranges[chunk].tuftOffset, SHADER_UNIFORM_INT);
+
+    // Canonical blade data derives every blade id from the absolute tuft id, and compact
+    // submission supplies that id from the id texture, so both uniforms are dead in that
+    // combination. Leaving them untouched keeps the staged uniform block unchanged across
+    // chunk draws, which lets the backend skip the per-chunk uniform push entirely.
+    if (!(data->canonical && compact))
+    {
+        SetShaderValue(shader, s_natureBladeOffsetLoc[pass], &data->ranges[chunk].offset[lod], SHADER_UNIFORM_INT);
+        SetShaderValue(shader, s_natureTuftOffsetLoc[pass], &data->ranges[chunk].tuftOffset, SHADER_UNIFORM_INT);
+    }
     if (s_natureCompactLoc[pass] >= 0)
         SetShaderValue(shader, s_natureCompactLoc[pass], &compactValue, SHADER_UNIFORM_INT);
 
@@ -916,6 +958,58 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
     rlEnableTexture(data->parameters.id);
     int unit = 0;
     SetShaderValue(shader, s_natureParameterLoc[pass], &unit, SHADER_UNIFORM_INT);
+
+    rlEnableVertexArray(mesh->vao);
+    rlDrawVertexArrayElementsInstanced(0, mesh->indexCount, NULL, instanceCount);
+    rlDisableVertexArray();
+}
+
+// Draw one whole visible LOD band in a single instanced draw.
+//
+// NatureParametric_PrepareVisible packs the compact id list lod-major, so every instance of a
+// band is contiguous. Canonical blade data derives blade ids from the absolute tuft id fetched
+// out of that list, so nothing in the shader depends on which chunk an instance came from. This
+// submits exactly the instances the per-chunk loop would, in the same (nearest-first) order, with
+// one descriptor push instead of one per chunk.
+static void NatureParametric_DrawBand(MapMeadowSurface *meadow, int lod, Shader shader,
+                                      Vector3 worldOffset)
+{
+    NatureParametricMeadow *data = meadow->parametric;
+    int instanceCount = data->bandCount[lod];
+    if (instanceCount <= 0)
+        return;
+
+    NatureTuftTemplate *mesh = &data->templates[lod];
+    Matrix model = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
+    model = MatrixMultiply(model, rlGetMatrixTransform());
+    Matrix mvp = MatrixMultiply(MatrixMultiply(model, rlGetMatrixModelview()), rlGetMatrixProjection());
+    SetShaderValueMatrix(shader, shader.locs[SHADER_LOC_MATRIX_MVP], mvp);
+
+    const Vector4 white = {1.0f, 1.0f, 1.0f, 1.0f};
+    if (shader.locs[SHADER_LOC_COLOR_DIFFUSE] >= 0)
+        SetShaderValue(shader, shader.locs[SHADER_LOC_COLOR_DIFFUSE], &white, SHADER_UNIFORM_VEC4);
+
+    SetShaderValue(shader, s_natureWorldOffsetLoc[0], &worldOffset, SHADER_UNIFORM_VEC3);
+    SetShaderValue(shader, s_natureTuftLodLevelLoc, &lod, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, s_natureBladeCountLoc[0], &mesh->blades, SHADER_UNIFORM_INT);
+    int canonical = 1, compactValue = 1;
+    SetShaderValue(shader, s_natureCanonicalLoc[0], &canonical, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, s_natureCanonicalBladesLoc[0], &data->canonicalBlades, SHADER_UNIFORM_INT);
+    SetShaderValue(shader, s_natureGeometryLodLoc[0], &lod, SHADER_UNIFORM_INT);
+    if (s_natureCompactLoc[0] >= 0)
+        SetShaderValue(shader, s_natureCompactLoc[0], &compactValue, SHADER_UNIFORM_INT);
+
+    int bandBase = data->bandBase[lod];
+    SetShaderValue(shader, s_natureVisibleOffsetLoc, &bandBase, SHADER_UNIFORM_INT);
+    int idUnit = 6;
+    rlActiveTextureSlot(idUnit);
+    rlEnableTexture(data->visibleIds.id);
+    SetShaderValue(shader, s_natureVisibleIdsLoc, &idUnit, SHADER_UNIFORM_INT);
+
+    rlActiveTextureSlot(0);
+    rlEnableTexture(data->parameters.id);
+    int unit = 0;
+    SetShaderValue(shader, s_natureParameterLoc[0], &unit, SHADER_UNIFORM_INT);
 
     rlEnableVertexArray(mesh->vao);
     rlDrawVertexArrayElementsInstanced(0, mesh->indexCount, NULL, instanceCount);

@@ -16,6 +16,7 @@ uniform int u_interactionEnabled;
 
 out vec2 fragTexCoord;
 
+#define NATURE_BLADE_POSITION_ONLY
 #include "maps/toolkit/shaders/nature_parametric.glsl"
 
 void main()

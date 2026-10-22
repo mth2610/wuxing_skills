@@ -43,7 +43,13 @@
 
 - **Symptom:** Compact tuft lists reduce submitted vertices, but frame time increases and the scene gains two additional full-resolution depth copies.
 - **Cause:** `UpdateTexture` inside `MapProp_DrawMeadow` splits the active scene render pass. The Vulkan backend preserves the scene's readable depth attachment when reopening it; uploading once for each meadow adds extra copies.
-- **Rule:** Call `MapProp_PrepareMeadow` after camera finalization and before framebuffer captures or scene drawing. Reuse prepared IDs when the view is unchanged; retain Draw's fallback for callers without a preparation phase. Compare renderer counters as well as visible frame timing. The production test checks preparation reuse and camera/resize invalidation.
+- **Rule:** Call `MapProp_PrepareMeadow` after camera finalization and before framebuffer captures or scene drawing. Reuse prepared IDs when the view is unchanged. `MapProp_DrawMeadow` must never prepare or upload: it checks `NatureParametric_IsPrepared` and falls back to GPU rejection for that frame if a camera change arrived after the update (the fallback used to upload mid-pass, which is what split the pass in the first place). Compare renderer counters as well as visible frame timing. The production test checks preparation reuse and camera/resize invalidation.
+
+### Instanced foliage cost tracks submitted instances, not draws or pixels
+
+- **Symptom:** A dense meadow pass costs ~4 ms at 1280x720 and ~4 ms at 640x360, so it looks fill-bound; merging 41 chunk draws into 3 band draws saves ~0.1 ms, so it also looks draw-bound. Neither conclusion is true.
+- **Cause:** The pass cost is per submitted instance x per-vertex blade-atlas gathers in `shaders/nature_parametric.glsl`. Halving instances (compact ids: 26 689 -> 13 333) saved ~0.9 ms; clamping instances to one per band dropped the whole grass contribution to ~0 where draw count and every uniform binding stayed identical. Screen resolution changes none of that because blades cover few pixels each.
+- **Rule:** Attribute foliage cost by clamping `instanceCount` (and by dropping one flora part at a time), never by counting draws or by scaling resolution alone. Before claiming a win, re-measure with the same clamp so the instance-proportional share is visible; `MEADOW_SUBMISSION` trace reports submitted instances and vertices. Keep `WUXING_MEADOW_SUBMISSION=legacy` as the A/B control. The caster pass is part of the same budget (~1.1 ms of 4.0 ms in song_quao), so trims that apply to both passes win twice.
 
 ### A player-centred vegetation field drops remote wind impacts
 
@@ -127,6 +133,7 @@
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-22 | DeepSeek | Compact-by-default band batching and depth-only caster shader | `maps/toolkit/map_props_meadow.inl`, `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/nature_parametric.glsl`, `maps/toolkit/shaders/nature_shadow_parametric.vs`; interleaved cold 170-frame runs (song_quao 1280x720, legacy vs compact) | Ground-truth |
 | 2026-10-12 | Codex | DEM shoreline correspondence and foliage budget coverage | maps/pipeline/dem_pipeline.py; maps/toolkit/map_props_nature.inl; matched captures and focused tests | Ground-truth |
 | 2026-10-09 | Codex | Interior relief threshold and shared meadow palette | maps/tests/test_verdant_heightmap.py; maps/toolkit/meadow_palette.h; maps/toolkit/shaders/ground_splat.fs | Ground-truth |
 | 2026-10-04 | Codex | Heightmap normalization and background/water shader scopes | `scripts/generate_island_heightmap.py`, `maps/toolkit/map_props_cloud.inl`, `maps/toolkit/map_props_nature.inl`, `maps/tests/test_map_background_state.py` | Ground-truth |
