@@ -58,6 +58,7 @@ static float Nature_Random01(unsigned int *state)
 #include "maps/toolkit/map_props_boundary_contour.inl"
 #include "maps/toolkit/map_props_ground.inl"
 #include "maps/toolkit/map_props_strip.inl"
+#include "maps/toolkit/map_props_cull.inl"
 #include "maps/toolkit/map_props_rocks.inl"
 #include "maps/toolkit/map_props_cloud.inl"
 #include "maps/toolkit/map_props_sky.inl"

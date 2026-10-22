@@ -800,6 +800,12 @@ typedef struct
     float waveWakeTimer;
     float waveLastImpulseTime;
 
+    // Model-space bounding sphere of `waterModel`, baked at creation. The whole
+    // surface is a single draw, so MapProp_DrawWaterOverlay skips it entirely
+    // when this sphere is outside the camera frustum.
+    Vector3 boundsCenter;
+    float boundsRadius;
+
     bool ready;
 
     // Private exact-byte upload cache; allocated only with the wake texture.

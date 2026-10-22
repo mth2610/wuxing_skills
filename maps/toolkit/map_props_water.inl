@@ -242,6 +242,7 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
         }
     }
     water.waterModel = Nature_ModelFromMesh(lakeMesh, Water_GetShader());
+    MapProp_ModelBounds(&water.waterModel, &water.boundsCenter, &water.boundsRadius);
     Texture2D waterDetail = ResourceManager_LoadTexture("assets/textures/noise.png");
     SetTextureWrap(waterDetail, TEXTURE_WRAP_REPEAT);
     SetTextureFilter(waterDetail, TEXTURE_FILTER_BILINEAR);
@@ -461,6 +462,7 @@ MapWaterSurface MapProp_CreateWaterPatch(Vector3 center, float width, float dept
     }
 
     water.waterModel = Nature_ModelFromMesh(patchMesh, Water_GetShader());
+    MapProp_ModelBounds(&water.waterModel, &water.boundsCenter, &water.boundsRadius);
     Texture2D waterDetail = ResourceManager_LoadTexture("assets/textures/noise.png");
     SetTextureWrap(waterDetail, TEXTURE_WRAP_REPEAT);
     SetTextureFilter(waterDetail, TEXTURE_FILTER_BILINEAR);
@@ -599,6 +601,7 @@ MapWaterSurface MapProp_CreateWaterStrip(Vector3 start, Vector3 end, float width
     }
 
     water.waterModel = Nature_ModelFromMesh(stripMesh, Water_GetShader());
+    MapProp_ModelBounds(&water.waterModel, &water.boundsCenter, &water.boundsRadius);
     Texture2D waterDetail = ResourceManager_LoadTexture("assets/textures/noise.png");
     SetTextureWrap(waterDetail, TEXTURE_WRAP_REPEAT);
     SetTextureFilter(waterDetail, TEXTURE_FILTER_BILINEAR);
@@ -675,6 +678,7 @@ MapWaterSurface MapProp_CreateTerrainWater(const char *meshPath, MapWaterConfig 
     config.center = (Vector3){0};
     water.config = config;
     water.waterModel = LoadModel(meshPath);
+    MapProp_ModelBounds(&water.waterModel, &water.boundsCenter, &water.boundsRadius);
     if (water.waterModel.meshCount < 1 || water.waterModel.materialCount < 1)
     {
         UnloadModel(water.waterModel);
@@ -802,6 +806,7 @@ MapWaterSurface MapProp_CreateWaterSpline(const Vector3 *points, const float *wi
     MemFree(normals);
 
     water.waterModel = Nature_ModelFromMesh(splineMesh, Water_GetShader());
+    MapProp_ModelBounds(&water.waterModel, &water.boundsCenter, &water.boundsRadius);
     Texture2D waterDetail = ResourceManager_LoadTexture("assets/textures/noise.png");
     SetTextureWrap(waterDetail, TEXTURE_WRAP_REPEAT);
     SetTextureFilter(waterDetail, TEXTURE_FILTER_BILINEAR);
@@ -994,8 +999,23 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
 {
     if (!water || !water->ready)
         return;
-    Water_UploadWaveField((MapWaterSurface *)water);
     Vector3 position = water->config.center;
+
+    // The whole surface is one draw call, so skip it entirely when its bounding
+    // sphere is outside the camera frustum (map_props_cull.inl). Conservative:
+    // a surface that is even partly on screen is always drawn.
+    if (water->boundsRadius > 0.0f)
+    {
+        MapPropViewFrustum frustum;
+        if (MapProp_BuildViewFrustum(&frustum))
+        {
+            Vector3 boundsPos = Vector3Add(position, water->boundsCenter);
+            if (MapProp_FrustumCullsSphere(&frustum, boundsPos, water->boundsRadius))
+                return;
+        }
+    }
+
+    Water_UploadWaveField((MapWaterSurface *)water);
 
     Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
     Vector4 sun = ColorNormalize(Environment_GetSunColor());
