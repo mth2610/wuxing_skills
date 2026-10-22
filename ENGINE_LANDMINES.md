@@ -33,10 +33,61 @@
 | 23 | Graphics SSBO bindings have a smaller limit than compute | Anyone adding raw instanced shader-buffer draws |
 | 24 | Duplicate physical response through field adapters | Particle, tracer and vegetation receivers using Wind and direct fields |
 | 25 | Per-element uniform-array query (`"u_x[0]"`) never resolves under rlvk — the whole array reads zero | Anyone uploading a `uniform vecN name[K]` (colour ramps, volume shapes) |
+| 26 | `TEXTURE_FILTER_ANISOTROPIC_*X` is a silent no-op under rlvk — every texture is trilinear | Anyone measuring or "optimising" anisotropic filtering cost |
+| 27 | `textureGather` compiles but is silently WRONG on the R32F shadow maps (MoltenVK/Intel) | Any shader taking the `MAP_SHADOW_USE_GATHER` fast path |
 
 ---
 
 | 25 | Per-element uniform-array query (`"u_x[0]"`) never resolves under rlvk — the whole array reads zero | Anyone uploading a `uniform vecN name[K]` (colour ramps, volume shapes) |
+
+---
+
+## 27. `textureGather` compiles under rlvk but returns the WRONG texels on the R32F shadow maps (22/10/2026)
+
+**Symptom.** A receiver that takes the `textureGather` fast path in
+`maps/toolkit/shaders/map_shadow.glsl` compiles cleanly at `#version 330` (no
+error, no validation message) and then renders the terrain almost black: mean RGB
+`(8.6, 28.9, 42.5)` against `(41.0, 69.2, 44.3)` for the identical camera/frame
+with the gather path off. Every pixel reads as shadowed.
+
+**Cause.** The shadow maps are `RL_PIXELFORMAT_UNCOMPRESSED_R32` colour targets
+(`environment/env_shadow.c`), and this MoltenVK/Intel path reports
+`Caps.floatFilterR32 == false` — R32F is sampled `NEAREST` because the format is
+not filterable. `OpImageGather` lowers to Metal `gather`, whose 2×2 texel
+selection assumes a filterable format there; on this device it does not return
+the four texels the shader expects. Same trap family as §14: a format that is
+merely *sampled* is not thereby *filterable* or *gatherable*.
+
+**Rule.** Keep `MAP_SHADOW_USE_GATHER` 0 on this backend — the compiled-out
+gather branches in `map_shadow.glsl` are unexercised here, so never "just flip
+the define" to test them. If a texel-exact gather is ever wanted for
+`MapShadowCompareBilinearTexel` (4 point taps → 1 gather, identical math), it
+must first be verified against an R32F target on the *target* backend; the
+measured failure above is the only data point we have, and it says no.
+
+---
+
+## 26. `TEXTURE_FILTER_ANISOTROPIC_*X` is a silent no-op under rlvk (22/10/2026)
+
+**Symptom.** A large tiled ground surface is fill-bound and the obvious suspect
+is 16× anisotropic filtering on its detail textures. Disabling aniso changes
+nothing measurable, and there is no driver-side tell that the setting did not
+apply.
+
+**Cause.** `third_party/vulkan/rlvk/rlvk_matrix.inl` (~line 478) handles
+`RL_TEXTURE_MAG_FILTER` / `RL_TEXTURE_MIN_FILTER` only; every other parameter,
+including the anisotropic min-filter values, falls into `default: return; //`
+`anisotropy / mipmap bias unsupported for now`. `ResourceManager_LoadTextureVariant`
+already establishes `TEXTURE_FILTER_TRILINEAR` *before* requesting anisotropy
+(`core/resource_manager.c`), so the request degrades to plain trilinear — a
+supported, sane result, just not what the call site asks for.
+
+**Rule.** On the rlvk backend all ground/map/detail textures are trilinear with
+mipmaps, full stop. Two consequences: never budget anisotropic sampling cost on
+this backend, and never "buy performance" by lowering the aniso level (it is
+already not applied — you would only change the GL/GLES fallback paths). Verify
+what a sampler actually does by reading `rlvk_matrix.inl`'s switch, not by
+trusting the `SetTextureFilter` enum passed in.
 
 ---
 
