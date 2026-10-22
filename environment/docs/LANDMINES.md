@@ -30,3 +30,14 @@ resolution A/B cannot separate them. Keep the min-blend capture (free, image-ide
 and it closes §7.27), and treat the shadow map's **resolution as the only remaining
 lever**: every texel a caster does not touch must read 1.0 ("unshadowed"), so the colour
 clear cannot be skipped or scissored away.
+
+**Outcome (shipped).** HIGH dropped the dynamic map 2048² → 1024²
+(`ShadowQualitySizes`). 5 alternating pairs on a cooled machine, same binary pair,
+`--warmup 90`: median **19.50 → 17.63 ms (−1.87 ms, 5/5 pairs, −1.35 … −3.02)**.
+Visual cost measured on one build with `WUXING_SHADOW_RES` only: `mean_abs 1.19`,
+`px>8 6.41 %` against a same-config noise floor of `0.12–0.20` — real, and ~10x the
+floor, but confined to PCF softness on grass self-shadow (invisible at 1x, a coarser
+texel step at 3x). `song_quao` focuses a 21.6 m box, so 1024² still resolves
+**2.1 cm/texel** where a screen pixel covers ~3 cm — the map stays finer than the
+image. 512² would buy another ~1.5 ms and doubles that error again (`mean_abs 1.26`
+vs 1024); not taken.

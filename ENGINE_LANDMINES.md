@@ -1855,7 +1855,11 @@ and index binding 1; compute rebinds its own field buffer at binding 1.
 - **Rule:** price a clear by deleting the attachment or the clear itself; use a
   resolution A/B only for the *whole* target (clear + fill). Do not assume
   "attachment + clear = bytes × 2" — an unsampled depth attachment can be nearly free,
-  and a float colour attachment can be the expensive half. Source:
+  and a float colour attachment can be the expensive half. Follow-through: shipping
+  `song_quao` HIGH at 1024² instead of 2048² measured **−1.87 ms median over 5
+  alternating pairs** (19.50 → 17.63 ms, 5/5) at a `mean_abs 1.19` visual delta against
+  a 0.15 same-config noise floor — a resolution cut *is* the remaining lever once the
+  clear cannot be skipped (every untouched texel must read "unshadowed"). Source:
   `environment/env_shadow.c` (min-blend capture), `environment/docs/LANDMINES.md`.
 
 ## Isolated subsystem cost is not the frame's marginal cost (22/10/2026)

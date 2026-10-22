@@ -146,7 +146,13 @@ static void DestroyShadowTarget(unsigned int fbo, unsigned int depth, unsigned i
 static void ShadowQualitySizes(int quality, int *dynamicSize, int *staticSize)
 {
     EnsureShadowEnv();
-    *dynamicSize = quality < 2 ? 1024 : 2048;
+    /* 22/10/2026: HIGH used to capture the dynamic map at 2048². The capture's
+       R32F clear plus its caster fill cost 2.88 ms/frame at 2048 vs 1024 on the
+       song_quao frame (measured, paired runs), and 1024 texels over the arena box
+       still resolve finer than the 1280x720 screen does. WUXING_SHADOW_RES still
+       overrides for A/B. See environment/docs/LANDMINES.md ("the depth
+       attachment was never the cost"). */
+    *dynamicSize = 1024;
     *staticSize = quality < 2 ? 512 : 1024;
     if (s_env.dynamicRes > 0)
         *dynamicSize = s_env.dynamicRes;
