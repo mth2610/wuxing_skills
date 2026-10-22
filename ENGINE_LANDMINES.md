@@ -35,10 +35,44 @@
 | 25 | Per-element uniform-array query (`"u_x[0]"`) never resolves under rlvk — the whole array reads zero | Anyone uploading a `uniform vecN name[K]` (colour ramps, volume shapes) |
 | 26 | `TEXTURE_FILTER_ANISOTROPIC_*X` is a silent no-op under rlvk — every texture is trilinear | Anyone measuring or "optimising" anisotropic filtering cost |
 | 27 | `textureGather` compiles but is silently WRONG on the R32F shadow maps (MoltenVK/Intel) | Any shader taking the `MAP_SHADOW_USE_GATHER` fast path |
+| 28 | `rlGetMatrixModelview()` is IDENTITY inside `BeginMode3D` (rlvk bakes the camera into `State.transform`) | Anyone doing CPU frustum culling or camera-space math with rlgl matrix getters |
 
 ---
 
 | 25 | Per-element uniform-array query (`"u_x[0]"`) never resolves under rlvk — the whole array reads zero | Anyone uploading a `uniform vecN name[K]` (colour ramps, volume shapes) |
+
+---
+
+## 28. `rlGetMatrixModelview()` is IDENTITY inside `BeginMode3D` — CPU frustum culling culls the whole world (22/10/2026)
+
+**Symptom.** Adding per-object frustum culling to a map draw loses *every* rock
+draw at every camera (`VKPROFILE fb=1 draws` 157 → 93 for 64 rocks) and the rocks
+vanish from the render. The mirror image also happens: a frustum that matches
+nothing and culls nothing.
+
+**Cause.** rlvk does not keep the camera in `State.modelview`. `BeginMode3D`
+pushes MODELVIEW and multiplies the view into the *software transform* matrix
+that the backend bakes into vertices, so while a 3D pass is active
+`rlGetMatrixModelview()` is identity. A frustum built from
+`MatrixMultiply(rlGetMatrixModelview(), rlGetMatrixProjection())` is therefore a
+camera at the origin looking down -Z, and every real object legitimately fails
+every plane.
+
+The real view is `rlGetMatrixTransform()`. The layout trap is in combining it:
+`State.transform` is in raylib row-vector order (so `Vector3Transform(v, T)` is
+correct), while `State.projection` is the matrix uploaded to the GPU (its rows
+are `(m0,m4,m8,m12)`, `(m1,m5,m9,m13)`, …). `MatrixMultiply(T, P)` mixes the two
+conventions and produces garbage (`PT` in the same test gave coordinates in the
+thousands). Compose by hand instead: view-space position from `T`, then each
+projection row dotted with it.
+
+**Rule.** Build CPU culling frusta from `rlGetMatrixTransform()` +
+`rlGetMatrixProjection()` — never `rlGetMatrixModelview()` — and compose them
+per row rather than with `MatrixMultiply`. Prove it before trusting the result:
+the camera target must be inside all six planes, the eye must land on the near
+plane, and a per-placement NDC dump must show every culled sphere either behind
+the camera (`w < 0`) or outside `|ndc| ≤ 1`. A smaller draw count proves nothing
+on its own — culling everything changes it too.
 
 ---
 

@@ -3,6 +3,99 @@
 // paths are given. #include'd once from map_props.c — not a standalone
 // translation unit.
 
+// --- Frustum culling ----------------------------------------------------
+// Rocks are one DrawModelEx each, so a scattered map pays `count` draw calls
+// (song_quao: 64 of 157 draws in the frame) even when every rock is behind
+// the camera. Culling uses the model-space bounding sphere of the generated
+// mesh, scaled and inflated into world space (see Rock_PlacementBounds), so it
+// is conservative: a rock is skipped only when its whole enclosing sphere is
+// outside the frustum, and nothing on screen changes.
+typedef struct { float p[6][4]; } RockFrustum; // (a,b,c,d), inside when a*x+b*y+c*z+d >= 0
+
+static bool Rock_BuildFrustum(RockFrustum *out)
+{
+    // rlvk keeps the camera in State.transform (it bakes the view into vertices);
+    // rlGetMatrixModelview() is identity inside BeginMode3D, so using it here
+    // silently culls against a camera at the origin. State.transform is the view
+    // in raylib's row-vector order, State.projection the matrix uploaded to the
+    // GPU, whose rows are (m[r], m[4+r], m[8+r], m[12+r]).
+    Matrix T = rlGetMatrixTransform();
+    Matrix P = rlGetMatrixProjection();
+    const float *p = &P.m0;
+    // Rows of T that produce view-space x, y and z from a world position.
+    const float Tx[4] = { T.m0, T.m4, T.m8,  T.m12 };
+    const float Ty[4] = { T.m1, T.m5, T.m9,  T.m13 };
+    const float Tz[4] = { T.m2, T.m6, T.m10, T.m14 };
+
+    // clip component r of a world position, as a plane (a,b,c,d): row r of P
+    // applied to the view-space position.
+    float clipPlane[4][4];
+    for (int r = 0; r < 4; r++)
+    {
+        const float rx = p[r], ry = p[r + 4], rz = p[r + 8], rw = p[r + 12];
+        for (int k = 0; k < 4; k++)
+            clipPlane[r][k] = rx * Tx[k] + ry * Ty[k] + rz * Tz[k];
+        clipPlane[r][3] += rw;
+    }
+
+    for (int i = 0; i < 6; i++)
+    {
+        int axis = i >> 1;                                  // 0=x 1=y 2=z
+        float sign = ((i & 1) == 0) ? 1.0f : -1.0f;         // w + / - clip
+        float a = clipPlane[3][0] + sign * clipPlane[axis][0];
+        float b = clipPlane[3][1] + sign * clipPlane[axis][1];
+        float c = clipPlane[3][2] + sign * clipPlane[axis][2];
+        float d = clipPlane[3][3] + sign * clipPlane[axis][3];
+        float len = sqrtf(a * a + b * b + c * c);
+        if (!(len > 1e-6f))
+            return false; // unset/NaN matrices: caller draws everything
+        float inv = 1.0f / len;
+        out->p[i][0] = a * inv;
+        out->p[i][1] = b * inv;
+        out->p[i][2] = c * inv;
+        out->p[i][3] = d * inv;
+    }
+    return true;
+}
+
+static inline bool Rock_FrustumCullsSphere(const RockFrustum *f, Vector3 c, float radius)
+{
+    for (int i = 0; i < 6; i++)
+    {
+        float dist = f->p[i][0] * c.x + f->p[i][1] * c.y + f->p[i][2] * c.z + f->p[i][3];
+        if (dist < -radius)
+            return true;
+    }
+    return false;
+}
+
+static void Rock_MeshBounds(const Mesh *mesh, Vector3 *outCenter, float *outRadius)
+{
+    Vector3 mn = { mesh->vertices[0], mesh->vertices[1], mesh->vertices[2] };
+    Vector3 mx = mn;
+    for (int i = 1; i < mesh->vertexCount; i++)
+    {
+        float x = mesh->vertices[i * 3 + 0];
+        float y = mesh->vertices[i * 3 + 1];
+        float z = mesh->vertices[i * 3 + 2];
+        if (x < mn.x) mn.x = x; else if (x > mx.x) mx.x = x;
+        if (y < mn.y) mn.y = y; else if (y > mx.y) mx.y = y;
+        if (z < mn.z) mn.z = z; else if (z > mx.z) mx.z = z;
+    }
+    Vector3 center = { (mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f, (mn.z + mx.z) * 0.5f };
+    float rSq = 0.0f;
+    for (int i = 0; i < mesh->vertexCount; i++)
+    {
+        float dx = mesh->vertices[i * 3 + 0] - center.x;
+        float dy = mesh->vertices[i * 3 + 1] - center.y;
+        float dz = mesh->vertices[i * 3 + 2] - center.z;
+        float d = dx * dx + dy * dy + dz * dz;
+        if (d > rSq) rSq = d;
+    }
+    *outCenter = center;
+    *outRadius = sqrtf(rSq);
+}
+
 static inline float Rock_Smoothstep(float edge0, float edge1, float x)
 {
     float t = (x - edge0) / (edge1 - edge0);
@@ -206,6 +299,7 @@ MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, 
 {
     MapRockSet rocks = {0};
     Mesh mesh = Nature_BuildProceduralRockMesh(0);
+    Rock_MeshBounds(&mesh, &rocks.boundsCenter, &rocks.boundsRadius);
 
     if (normalPath && roughnessPath)
     {
@@ -233,6 +327,7 @@ MapRockSet MapProp_CreateMountainCrags(const char *diffusePath, const char *norm
 {
     MapRockSet rocks = {0};
     Mesh mesh = Nature_BuildProceduralRockMesh(1);
+    Rock_MeshBounds(&mesh, &rocks.boundsCenter, &rocks.boundsRadius);
 
     if (normalPath && roughnessPath)
     {
@@ -260,6 +355,7 @@ MapRockSet MapProp_CreateRiverStones(const char *diffusePath, const char *normal
 {
     MapRockSet rocks = {0};
     Mesh mesh = Nature_BuildProceduralRockMesh(2);
+    Rock_MeshBounds(&mesh, &rocks.boundsCenter, &rocks.boundsRadius);
 
     if (normalPath && roughnessPath)
     {
@@ -283,6 +379,23 @@ MapRockSet MapProp_CreateRiverStones(const char *diffusePath, const char *normal
     return rocks;
 }
 
+// World-space bounding sphere of one placement. Encloses the mesh
+// DrawModelEx will draw at `pos` with `scale`; `pad` widens it for anything
+// drawn around the rock (fake blob shadows) that must not disappear with it.
+static inline void Rock_PlacementBounds(const MapRockSet *set, Vector3 pos,
+                                       Vector3 scale, float pad,
+                                       Vector3 *outCenter, float *outRadius)
+{
+    // Rotation-independent: the placement origin, inflated to cover the mesh's
+    // offset bounding centre too. Never smaller than the transformed mesh sphere.
+    float maxScale = fmaxf(scale.x, fmaxf(scale.y, scale.z));
+    float centerLen = sqrtf(set->boundsCenter.x * set->boundsCenter.x +
+                            set->boundsCenter.y * set->boundsCenter.y +
+                            set->boundsCenter.z * set->boundsCenter.z);
+    *outCenter = pos;
+    *outRadius = maxScale * (set->boundsRadius + centerLen) + pad;
+}
+
 void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placements, int count, bool drawShadow)
 {
     if (!rocks->ready)
@@ -298,6 +411,8 @@ void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placemen
     // fill-rate/shadow overdraw, both already fixed) turns out to still
     // matter; not done speculatively.
 
+    RockFrustum frustum;
+    bool cull = Rock_BuildFrustum(&frustum);
     Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
     for (int i = 0; i < count; i++)
     {
@@ -317,6 +432,14 @@ void MapProp_DrawRocks(const MapRockSet *rocks, const MapRockPlacement *placemen
                 Environment_DrawSmartShadow(p->position, ENV_SHAPE_SPHERE,
                                             p->radiusScale * 2.0f, p->heightScale * 2.0f);
             }
+        }
+
+        if (cull)
+        {
+            Vector3 bc; float br;
+            Rock_PlacementBounds(rocks, pos, scale,
+                                 drawShadow ? 2.0f * p->radiusScale : 0.0f, &bc, &br);
+            if (Rock_FrustumCullsSphere(&frustum, bc, br)) continue;
         }
 
         DrawModelEx(rocks->model, pos, rotAxis, p->rotationDeg, scale, WHITE);
@@ -470,21 +593,35 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
     if (!sys || !sys->ready || sys->count <= 0) return;
 
     PropLit_UpdateLighting();
+    RockFrustum frustum;
+    bool cull = Rock_BuildFrustum(&frustum);
     Vector3 rotAxis = {0.0f, 1.0f, 0.0f};
-
     for (int i = 0; i < sys->count; i++) {
         const MapRockItem *p = &sys->items[i];
-        Model model;
+        const MapRockSet *set;
         if (p->archetype == MAP_ROCK_CRAG) {
-            model = sys->crags.model;
+            set = &sys->crags;
         } else if (p->archetype == MAP_ROCK_RIVER_STONE) {
-            model = sys->riverStones.model;
+            set = &sys->riverStones;
         } else {
-            model = sys->boulders.model;
+            set = &sys->boulders;
         }
+        Model model = set->model;
+        if (!set->ready) continue;
 
         Vector3 pos = {p->position.x, p->position.y - 0.3f * p->heightScale, p->position.z};
         Vector3 scale = {p->radiusScale, p->heightScale, p->radiusScale};
+
+        // One DrawModelEx per rock; skip the ones whose enclosing sphere is
+        // fully outside the camera frustum (exact: nothing on screen changes).
+        if (cull)
+        {
+            float shadowPad = (drawShadows && p->archetype != MAP_ROCK_CRAG)
+                                  ? 2.0f * p->radiusScale : 0.0f;
+            Vector3 bc; float br;
+            Rock_PlacementBounds(set, pos, scale, shadowPad, &bc, &br);
+            if (Rock_FrustumCullsSphere(&frustum, bc, br)) continue;
+        }
 
         if (drawShadows && p->archetype != MAP_ROCK_CRAG) {
             float waterSurfaceY = 0.0f, waterDepth = 0.0f;

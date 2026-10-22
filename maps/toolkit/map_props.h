@@ -204,6 +204,11 @@ typedef struct
 {
     Model model;
     bool ready;
+    // Model-space bounding sphere of the generated mesh, baked once at load.
+    // MapProp_DrawRockSystem culls each placement against the camera frustum
+    // with it, so a rock is skipped only when the whole mesh is off-screen.
+    Vector3 boundsCenter;
+    float boundsRadius;
 } MapRockSet;
 
 typedef struct

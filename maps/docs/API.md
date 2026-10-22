@@ -123,8 +123,21 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows);
 void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader);
 void MapProp_UnloadRockSystem(MapRockSystem *sys);
 
+// MapProp_DrawRockSystem submits one DrawModelEx per placement, so it frustum-culls each
+// placement first, against the sphere baked in MapRockSet (boundsCenter/boundsRadius)
+// published into world space with the placement's max scale. A placement is skipped only
+// when its whole sphere is outside the camera frustum, so the rendered image is unchanged.
+// With drawShadows the sphere is padded by the blob-shadow radius. The frustum comes from
+// rlGetMatrixTransform() + rlGetMatrixProjection() — rlGetMatrixModelview() is identity
+// inside BeginMode3D under rlvk (ENGINE_LANDMINES.md §28).
+
 // Legacy individual rock set (boulders only)
-typedef struct { Model model; bool ready; } MapRockSet;
+typedef struct {
+    Model model;
+    bool ready;
+    Vector3 boundsCenter;   // model-space bounding sphere of the generated mesh,
+    float boundsRadius;     // baked once at creation; used for frustum culling
+} MapRockSet;
 typedef struct { Vector3 position; float radiusScale, heightScale, rotationDeg; } MapRockPlacement;
 MapRockSet MapProp_CreateRocks(const char *diffusePath, const char *normalPath, const char *roughnessPath);
 MapRockSet MapProp_CreateMountainCrags(const char *diffusePath, const char *normalPath, const char *roughnessPath);
