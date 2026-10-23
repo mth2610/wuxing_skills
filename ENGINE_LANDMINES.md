@@ -1862,6 +1862,24 @@ and index binding 1; compute rebinds its own field buffer at binding 1.
   clear cannot be skipped (every untouched texel must read "unshadowed"). Source:
   `environment/env_shadow.c` (min-blend capture), `environment/docs/LANDMINES.md`.
 
+## On a fill-bound frame the lever is pixel count, not culling (23/10/2026)
+
+- **Symptom:** every remaining pass measures 1–3 ms when deleted, yet no culling change
+  survives contact — the ground's 112 800 triangles can all be dropped for 2.05 ms, but
+  chunking it buys 0.3 ms; the meadow is already frustum- and distance-culled.
+- **Cause:** the frame is fill-bound, so cost follows shaded pixels, not draw calls or
+  vertices. Culling removes geometry; it does not remove the pixels that geometry covered
+  unless the whole draw disappears, and every whole draw left is visible content.
+- **Rule:** when a frame is fill-bound, price **pixels**: render scale is the only lever that
+  cuts every pass at once. Measured on `song_quao` (1280×720, HIGH, paired runs): 0.85 scale
+  `16.83 → 13.78 ms` (−18 %, 3/3 pairs), 0.80 `−5.0 ms` against a 1.0 baseline in the same
+  session. Ship it as an adaptive ladder (`post_process/render_scale.*`, budget 15.0 ms) so the
+  full-resolution image is used whenever the scene can afford it. Two traps come with it:
+  every pass that draws into the scene target must ask `SceneTargets_GetWidth/Height` instead
+  of the window size, and a scale step must rebuild textures only — never reload shaders, or
+  the hitch lands exactly when the frame is already late (`post_process/docs/LANDMINES.md`
+  #10–#12).
+
 ## Isolated subsystem cost is not the frame's marginal cost (22/10/2026)
 
 - **Symptom:** a subsystem measures 4-11 ms per draw in isolation and is picked as the
@@ -1886,6 +1904,7 @@ and index binding 1; compute rebinds its own field buffer at binding 1.
 
 | Date | Editor | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-23 | DeepSeek | Fill-bound frame: pixel count is the lever | `post_process/render_scale.*` + scene/post resize + 7 size-coupling fixes; paired song_quao runs (1.00 vs 0.85) | Ground-truth |
 | 2026-10-22 | DeepSeek | A resolution A/B prices a clear plus its fill | `environment/env_shadow.c` shadow-capture A/B (`WUXING_SHADOW_RES`, depth-attachment removal, `SKIP=shadowcasters`); `environment/docs/LANDMINES.md` | Ground-truth |
 | 2026-10-22 | DeepSeek | Isolated subsystem cost vs frame marginal | `maps/docs/LANDMINES.md` ground entries; song_quao paired full-frame runs (ground skipped vs full) | Ground-truth |
 | 2026-10-08 | Codex | World-space GPU camera view | core/trails/trail_ribbon_gpu.c; gameplay ribbon captures; ribbon_gpu_world_strip | Ground-truth |

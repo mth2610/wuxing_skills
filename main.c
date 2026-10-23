@@ -8,6 +8,7 @@
 #include "core/metaball_fx.h"
 #include "core/particles/particle_manager.h"
 #include "post_process/post_fx.h"
+#include "post_process/render_scale.h"
 #include "sandbox/sandbox_core.h"
 #include "post_process/scene_targets.h"
 #include "post_process/screen_distort.h"
@@ -504,12 +505,16 @@ int main(int argc, char **argv) {
   VFXLight_Init();
   DecalSystem_Init();
   /* Scene targets FIRST: PostFX_Init reads SceneTargets_IsHDR(), and the distort
-     pass reads the colour target this creates. */
-  SceneTargets_Init(screenWidth, screenHeight);
+     pass reads the colour target this creates. Both are sized by the adaptive
+     render scale rather than the window: the frame is fill-bound, and the post
+     composite upscales to the swapchain (that blit already existed for the
+     Android native-size mismatch). See post_process/render_scale.h. */
+  RenderScale_Init(GetRenderWidth(), GetRenderHeight());
+  SceneTargets_Init(RenderScale_GetWidth(), RenderScale_GetHeight());
   ScreenDistort_Init();
   LiquidSurface_Init(screenWidth, screenHeight);
   LiquidMetaball3D_Init();
-  PostFX_Init(screenWidth, screenHeight);
+  PostFX_Init(RenderScale_GetWidth(), RenderScale_GetHeight());
   SurfaceMaterial_Init(); // G2 — must precede InitSandbox (CharacterModel_Load applies it)
   GfxQuality_InitDefault();
   GasSystem_Init(screenWidth, screenHeight);
@@ -819,6 +824,21 @@ int main(int argc, char **argv) {
     double updateTime[9] = {0};
     double profileAcquireSeconds = 0;
     if (benchmarkVisible) profileTime[0] = GetTime();
+
+    /* ADAPTIVE RENDER SCALE, part 1: apply a pending size change HERE, before
+     * anything is bound. SceneTargets_Resize/PostFX_Resize only rebuild
+     * textures (no shader reload, no uniform re-read), so a step costs an
+     * allocation rather than a compile. Sizes are chosen at the end of the
+     * previous frame; see part 2 near EndDrawing. */
+    {
+      int rw = 0, rh = 0;
+      if (RenderScale_TakeResize(&rw, &rh))
+      {
+        SceneTargets_Resize(rw, rh);
+        PostFX_Resize(rw, rh);
+      }
+    }
+    const double frameClockStart = GetTime();
     // The headless paths pin dt so a capture is reproducible. That pin only ever
     // covered THIS variable, while VFX/composition code re-read GetFrameTime()
     // on its own — free-running here, since headless also skips SetTargetFPS —
@@ -2061,8 +2081,19 @@ int main(int argc, char **argv) {
     GradientProbe_Readback();
 
     if (benchmarkVisible) profileTime[10] = GetTime();
+    const float submitMs = (float)((GetTime() - frameClockStart) * 1000.0);
     PASS_MARK("frame_end");
     EndDrawing();
+    /* ADAPTIVE RENDER SCALE, part 2: decide with the SUBMIT time — the wall
+     * time from the top of the frame to just before present, which excludes the
+     * vsync wait. A delivered interval saturates at one refresh under
+     * SetTargetFPS(60), so it cannot tell a 9 ms frame from a 16.5 ms one; it is
+     * passed as a confirmation signal only. Headless capture paths keep a fixed
+     * scale so a capture stays reproducible — WUXING_RENDER_SCALE_ADAPTIVE
+     * forces the controller on there, which is how the ladder and the resize
+     * path are tested without a window. */
+    if (!headlessFixedStep || RenderScale_AdaptiveForced())
+        RenderScale_Frame(submitMs, GetFrameTime(), GetRenderWidth(), GetRenderHeight());
     if (benchmarkVisible) {
         profileTime[11] = GetTime();
         if (renderVFXFrame >= benchmarkStartFrame) {

@@ -205,7 +205,7 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
     Matrix viewProj = MatrixMultiply(view, proj);
     Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
 
-    Vector2 resolution = (Vector2){(float)GetScreenWidth(), (float)GetScreenHeight()};
+    Vector2 resolution = (Vector2){(float)SceneTargets_GetWidth(), (float)SceneTargets_GetHeight()};
     Vector3 sunDir = Vector3Normalize(Vector3Negate(Environment_GetSunDirection()));
     Color sunCol = Environment_GetSunColor();
     Vector3 sunColor = (Vector3){sunCol.r / 255.0f, sunCol.g / 255.0f, sunCol.b / 255.0f};

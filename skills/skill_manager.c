@@ -17,6 +17,7 @@
 #endif
 #include "raymath.h"
 #include "environment/environment_system.h"
+#include "core/scene_targets.h"
 #if HAS_SKILL_SHIELD
 #include "skills/water/water_shield/shield_skill.h"
 #endif
@@ -1268,7 +1269,11 @@ void SkillManager_BeginShader(Shader shader)
   int resLoc = GetShaderLocation(shader, "u_resolution");
   if (resLoc >= 0)
   {
-    Vector2 res = {(float)GetScreenWidth(), (float)GetScreenHeight()};
+    /* The scene target, not the window: with an adaptive render scale the world
+     * is shaded into a smaller buffer and upscaled by the post composite, and
+     * any shader doing screen-space math must see the size it is actually
+     * rasterised at. Equal to the window while the scale is 1.0. */
+    Vector2 res = {(float)SceneTargets_GetWidth(), (float)SceneTargets_GetHeight()};
     SetShaderValue(shader, resLoc, &res, SHADER_UNIFORM_VEC2);
   }
 

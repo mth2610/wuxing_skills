@@ -237,9 +237,39 @@ static int s_sceneSamples = 1;
    for diagnostics and for anyone who needs to know which path is live. */
 int SceneTargets_GetSceneSamples(void) { return s_sceneSamples; }
 
-void SceneTargets_Init(int width, int height)
+/* ---------------------------------------------------------------------------
+ * ADAPTIVE RENDER SCALE (22/10/2026)
+ * ---------------------------------------------------------------------------
+ * The frame is fill-bound on the target hardware, so the only lever that moves
+ * it by whole milliseconds is the number of pixels every pass shades. Measured
+ * on the song_quao frame (1280x720, HIGH, 3 paired runs): 1.00 -> 16.83 ms,
+ * 0.85 -> 13.78 ms, and the whole-window equivalent of 0.95 (1216x684) went
+ * 17.50/17.88 -> 16.18/15.93. The scale is chosen per frame by RenderScale
+ * (post_process/render_scale.c).
+ *
+ * Only the allocations below depend on the size. Everything else here — the
+ * shaders, the 1x1 exposure ping-pong, the depth-copy shader — is built once,
+ * because reloading a shader costs a compile hitch exactly when the frame is
+ * already late, and a scale change must not do that.
+ * ------------------------------------------------------------------------- */
+static int s_targetWidth = 0;  /* scene-target size in use (== render scale * display) */
+static int s_targetHeight = 0;
+
+static void SceneTargets_DestroySizedTargets(void)
 {
-  s_depthSampleOnDemand = false;
+  if (renderTex.id > 0)
+    UnloadRenderTexture(renderTex);
+  renderTex = (RenderTexture2D){0};
+  if (prevDepthTex.id > 0)
+    UnloadRenderTexture(prevDepthTex);
+  prevDepthTex = (RenderTexture2D){0};
+  if (s_bgLuma.id > 0)
+    UnloadRenderTexture(s_bgLuma);
+  s_bgLuma = (RenderTexture2D){0};
+}
+
+static void SceneTargets_CreateSizedTargets(int width, int height)
+{
   bool forceLdr = (getenv("WUXING_NO_HDR") != NULL);
   s_depthTextureActive = false;
 
@@ -345,8 +375,6 @@ void SceneTargets_Init(int width, int height)
     s_bgLuma = LoadRenderTextureWithDepthTexture(lw, lh, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
     SetTextureFilter(s_bgLuma.texture, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(s_bgLuma.texture, TEXTURE_WRAP_CLAMP);
-    s_bgLumaShader = LoadShader(0, "core/shaders/bg_luma.fs");
-    s_bgLumaTexelLoc = GetShaderLocation(s_bgLumaShader, "u_srcTexel");
     /* Open the target's scope ONCE here. Under rlvk a framebuffer that has never
        been entered through BeginTextureMode has no render-pass scope, and a
        later rlEnableFramebuffer into it draws nothing at all — silently. That is
@@ -356,25 +384,36 @@ void SceneTargets_Init(int width, int height)
     ClearBackground(BLACK);
     EndTextureMode();
     TraceLog(LOG_INFO, "SceneTargets: background-luma target %dx%d", lw, lh);
-
-    for (int i = 0; i < 2; i++) {
-      s_exposure[i] = LoadRenderTextureWithDepthTexture(1, 1, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
-      SetTextureFilter(s_exposure[i].texture, TEXTURE_FILTER_POINT);
-      /* Open the scope AND seed it at 1.0 — an unexposed first frame, and a
-         target the backend has entered at least once (see the note above). */
-      BeginTextureMode(s_exposure[i]);
-      ClearBackground((Color){255, 255, 255, 255});
-      EndTextureMode();
-    }
-    s_exposureShader = LoadShader(0, "core/shaders/exposure.fs");
-    s_expLocLuma = GetShaderLocation(s_exposureShader, "u_lumaTex");
-    s_expLocSize = GetShaderLocation(s_exposureShader, "u_lumaSize");
-    s_expLocDt   = GetShaderLocation(s_exposureShader, "u_dt");
-    s_expLocGrey = GetShaderLocation(s_exposureShader, "u_targetGrey");
-    s_expLocMin  = GetShaderLocation(s_exposureShader, "u_minExposure");
-    s_expLocDown = GetShaderLocation(s_exposureShader, "u_speedDown");
-    s_expLocUp   = GetShaderLocation(s_exposureShader, "u_speedUp");
   }
+}
+
+void SceneTargets_Init(int width, int height)
+{
+  s_depthSampleOnDemand = false;
+  s_targetWidth = width;
+  s_targetHeight = height;
+  SceneTargets_CreateSizedTargets(width, height);
+
+  s_bgLumaShader = LoadShader(0, "core/shaders/bg_luma.fs");
+  s_bgLumaTexelLoc = GetShaderLocation(s_bgLumaShader, "u_srcTexel");
+
+  for (int i = 0; i < 2; i++) {
+    s_exposure[i] = LoadRenderTextureWithDepthTexture(1, 1, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+    SetTextureFilter(s_exposure[i].texture, TEXTURE_FILTER_POINT);
+    /* Open the scope AND seed it at 1.0 — an unexposed first frame, and a
+       target the backend has entered at least once (see the note above). */
+    BeginTextureMode(s_exposure[i]);
+    ClearBackground((Color){255, 255, 255, 255});
+    EndTextureMode();
+  }
+  s_exposureShader = LoadShader(0, "core/shaders/exposure.fs");
+  s_expLocLuma = GetShaderLocation(s_exposureShader, "u_lumaTex");
+  s_expLocSize = GetShaderLocation(s_exposureShader, "u_lumaSize");
+  s_expLocDt   = GetShaderLocation(s_exposureShader, "u_dt");
+  s_expLocGrey = GetShaderLocation(s_exposureShader, "u_targetGrey");
+  s_expLocMin  = GetShaderLocation(s_exposureShader, "u_minExposure");
+  s_expLocDown = GetShaderLocation(s_exposureShader, "u_speedDown");
+  s_expLocUp   = GetShaderLocation(s_exposureShader, "u_speedUp");
 
   depthCopyShader = LoadShader(0, "core/shaders/depth_copy.fs");
   depthCopyNearLoc = GetShaderLocation(depthCopyShader, "u_near");
@@ -397,6 +436,35 @@ void SceneTargets_Init(int width, int height)
   // kept because the distinction still means something to the code that reasons
   // about which effects occlude; only the two render targets are gone.
 }
+
+/* Rebuild the size-dependent scene buffers for a new render scale. Called by
+ * RenderScale at a frame boundary, never mid-pass. Textures only: no shader is
+ * reloaded, no uniform is re-read, so the cost is an allocation rather than a
+ * compile. */
+void SceneTargets_Resize(int width, int height)
+{
+  if (width < 8 || height < 8)
+    return;
+  if (width == s_targetWidth && height == s_targetHeight && renderTex.id > 0)
+    return;
+
+  /* The distortion / mesh snapshot is a copy of the scene at the OLD size; the
+     next frame's SnapshotScene rebuilds it, but until then it would be sampled
+     with normalized UVs against a differently sized scene, so drop it. */
+  if (s_sceneSnapshot.id > 0)
+    UnloadRenderTexture(s_sceneSnapshot);
+  s_sceneSnapshot = (RenderTexture2D){0};
+  s_sceneSnapshotRequested = false;
+
+  SceneTargets_DestroySizedTargets();
+  s_targetWidth = width;
+  s_targetHeight = height;
+  SceneTargets_CreateSizedTargets(width, height);
+  TraceLog(LOG_INFO, "SceneTargets: scene chain resized to %dx%d", width, height);
+}
+
+int SceneTargets_GetWidth(void) { return s_targetWidth; }
+int SceneTargets_GetHeight(void) { return s_targetHeight; }
 
 bool SceneTargets_IsHDR(void) { return s_hdrActive; }
 

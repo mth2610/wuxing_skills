@@ -18,6 +18,16 @@
 // Khởi tạo hệ thống Screen Distortion
 void SceneTargets_Init(int width, int height);
 
+/* ADAPTIVE RENDER SCALE — the scene colour/depth chain is rendered at a size
+ * that can differ from the display, and the post composite upscales it. These
+ * report the size actually in use (their own source of truth, so a screen-space
+ * pass that draws INTO the scene target must use them rather than
+ * GetRenderWidth()). RenderScale (post_process/render_scale.c) drives Resize at
+ * a frame boundary; it rebuilds textures only, never shaders. */
+int  SceneTargets_GetWidth(void);
+int  SceneTargets_GetHeight(void);
+void SceneTargets_Resize(int width, int height);
+
 // Đợt G — true HDR: true if the scene buffer (renderTex, where the whole 3D
 // world is drawn) is a 16-bit half-float target, so emissive/additive VFX keep
 // values > 1.0 until PostFX tone-maps. false = LDR RGBA8 fallback (GLES2).

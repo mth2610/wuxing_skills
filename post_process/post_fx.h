@@ -80,6 +80,14 @@ typedef struct {
 // Khởi tạo Post-processing Stack
 void PostFX_Init(int width, int height);
 
+/* ADAPTIVE RENDER SCALE — the post chain (main HDR copy, bloom pyramid, LDR
+ * FXAA source) is sized from the scene target it consumes, so it must be
+ * resized with it. Textures only: shaders, the LUT and the uniform locations
+ * survive a resize, so this never compiles anything. */
+int  PostFX_GetWidth(void);
+int  PostFX_GetHeight(void);
+void PostFX_Resize(int width, int height);
+
 // Đợt G — true HDR: returns true if the offscreen scene/bloom chain is a 16-bit
 // half-float target (colors > 1.0 preserved until tone mapping). false = the
 // GPU fell back to LDR RGBA8 (older GLES2). Valid after PostFX_Init.

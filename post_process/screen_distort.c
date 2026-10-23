@@ -182,7 +182,7 @@ void ScreenDistort_Draw(Camera3D camera)
   // uncleared (black) - see RLVK_HANDOFF.md §7.14.
   DrawTexturePro(sceneTex,
                  (Rectangle){0, 0, (float)sceneTex.width, -(float)sceneTex.height},
-                 (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
+                 (Rectangle){0, 0, (float)sceneTex.width, (float)sceneTex.height},
                  (Vector2){0, 0}, 0.0f, WHITE);
   EndShaderMode();
 }
@@ -233,7 +233,7 @@ void ScreenDistort_BeginMeshPass(Texture2D flowMap, float strength, Vector2 flow
 
   Vector2 res = (snapshot.id > 0)
       ? (Vector2){ (float)snapshot.width, (float)snapshot.height }
-      : (Vector2){ (float)GetRenderWidth(), (float)GetRenderHeight() };
+      : (Vector2){ (float)SceneTargets_GetWidth(), (float)SceneTargets_GetHeight() };
   if (meshLocResolution >= 0)
     SetShaderValue(meshDistortShader, meshLocResolution, &res, SHADER_UNIFORM_VEC2);
 

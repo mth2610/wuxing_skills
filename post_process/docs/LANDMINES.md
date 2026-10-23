@@ -64,3 +64,49 @@ Debugging lessons learned in post-processing. Format: **Symptom → Cause → Ru
 - **Symptom:** VRAM consumption climbs when switching maps or resizing windows.
 - **Cause:** `PostFX_Init()` reallocated all render textures without releasing existing ones if `mainRenderTex.id != 0`.
 - **Rule:** Always check `if (mainRenderTex.id != 0) PostFX_Unload();` at the beginning of `PostFX_Init()`.
+
+---
+
+### 10. Adaptive render scale: screen-space passes must ask the SCENE TARGET for its size
+- **Symptom:** after the scene chain started rendering at a scale below 1.0, fog was stretched and
+  offset, the gas/liquid composites covered only the top-left corner of the frame, decals and
+  metaballs appeared shifted, and skill shaders' screen-space effects landed in the wrong place.
+  The shadow capture restored a window-sized viewport too.
+- **Cause:** those passes drew a full-screen quad into the **scene target** (or fed a
+  screen-space uniform) using `GetRenderWidth()/GetScreenWidth()`. That was only ever correct
+  because the scene target happened to be the window size. The scene chain now renders at
+  `scale * display` and the post composite upscales, so the two sizes diverge.
+- **Rule:** anything that draws **into** the scene target, or does screen-space math for a shader
+  that rasterises into it, must use `SceneTargets_GetWidth()/GetHeight()`. Anything that draws
+  into the post chain uses `PostFX_GetWidth()/GetHeight()` (equal to the scene size) or the
+  source texture's own `width/height`. Audit list fixed when the scale was introduced:
+  `environment/volumetric/volumetric_fog.c` (both composites), `core/gas/gas_system.c`,
+  `core/liquid/liquid_surface.c` (composite dest + `sceneTexel`), `core/metaball_fx.c`,
+  `core/liquid/liquid_metaball3d.c` (`u_resolution`), `skills/skill_manager.c` (`u_resolution`),
+  `post_process/screen_distort.c` (identity copy + mesh resolution). Aspect ratios may keep
+  reading the window — they are scale-invariant.
+
+---
+
+### 11. A render-scale step must rebuild textures only — never reload shaders
+- **Symptom:** the frame hitches by several milliseconds exactly when the adaptive scale steps,
+  which is the one moment the frame is already over budget.
+- **Cause:** `SceneTargets_Init` / `PostFX_Init` do both: they allocate the sized targets (scene
+  HDR, depth, soft-depth, bg-luma, main HDR copy, bloom pyramid, LDR AA source) **and** load
+  shaders plus 1×1 exposure targets. Re-running Init for a resize recompiles every shader.
+- **Rule:** a scale change goes through `SceneTargets_Resize` / `PostFX_Resize`, which only
+  destroy and recreate the size-dependent textures. Shader programs, uniform locations, the LUT
+  and the 1×1 exposure ping-pong survive.
+
+---
+
+### 12. Prove the scale-1.0 path is unchanged before shipping the scale
+- **Symptom:** "it looks the same" hides a real regression when the adaptive path silently
+  changes the sharpened output at 1.0.
+- **Cause:** the FXAA pass now applies a luma unsharp mask; if its amount were a constant it
+  would sharpen even an unscaled frame and the pre-scale look would be gone.
+- **Rule:** the sharpen amount is derived from the scale (`0.40 * (1/scale - 1)`, exactly `0.0`
+  at 1.0, capped at 0.25) and `postfx_sharpen` overrides it. Verify with the capture harness:
+  cross-build diff at 1.0 was `mean_abs 0.68 / px>24 0.06 %` against a same-build floor of
+  `0.48`, i.e. inside capture noise; a 0.85 capture differs at `mean_abs 3.6 / px>8 18 %`,
+  which is the intended softness trade.

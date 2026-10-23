@@ -543,7 +543,8 @@ void GasSystem_Composite(void) {
     DrawTexturePro(compositeTexture,
                    (Rectangle){0, 0, (float)compositeTexture.width,
                                -(float)compositeTexture.height},
-                   (Rectangle){0, 0, (float)GetRenderWidth(), (float)GetRenderHeight()},
+                   (Rectangle){0, 0, (float)SceneTargets_GetWidth(),
+                               (float)SceneTargets_GetHeight()},
                    (Vector2){0, 0}, 0.0f, WHITE);
     EndBlendMode();
     s_perfFrame.compositeSubmitCpuMs =

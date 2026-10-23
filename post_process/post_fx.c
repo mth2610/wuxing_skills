@@ -6,6 +6,7 @@
 #include "post_process/color_grade_lut.h" // G5 — display-referred grading strip
 #include "post_process/post_fx_debug_internal.inl"
 #include "rlgl.h"
+#include "post_process/render_scale.h"
 #include <string.h>
 
 static RenderTexture2D mainRenderTex;
@@ -16,6 +17,7 @@ static RenderTexture2D bloomTex; // bright-pass output + final upsampled result 
 static RenderTexture2D ldrTex;
 static Shader fxaaShader;
 static int fxaaTexelLoc = -1;
+static int fxaaSharpenLoc = -1;
 
 // HDR (Đợt G) — the whole offscreen chain (scene + bloom pyramid) uses a
 // 16-bit half-float color format so additive VFX / emissive can exceed 1.0 and
@@ -163,6 +165,12 @@ static float s_shoulderView = 0.0f;
    applies to the window framebuffer) cannot antialias it and every silhouette in the
    game lands with binary coverage. Off = the old aliased output, for A/B. */
 static float s_fxaa = 1.0f;
+/* ADAPTIVE RENDER SCALE sharpening: < 0 = derive from the scale (exactly 0 at
+ * 1.0, ~0.07 at 0.85, ~0.11 at 0.80), >= 0 = explicit. A stronger amount (0.13
+ * at 0.85) read as "crunchy" speckle on grass at 1:1, so it stays gentle — the
+ * point is to undo the upscale blur, not to invent detail. See
+ * post_process/shaders/fxaa.fs. */
+static float s_sharpen = -1.0f;
 static float s_bloomScatterOverride = 0.0f;
 static float s_bloomKaris = 1.0f;     // 1 = firefly weighting on (see below)
 
@@ -204,19 +212,29 @@ static RenderTexture2D LoadRenderTextureWithFormat(int width, int height, int fo
   return target;
 }
 
-void PostFX_Init(int width, int height)
-{
-  if (mainRenderTex.id != 0)
-  {
-    PostFX_Unload();
-  }
+/* ADAPTIVE RENDER SCALE (22/10/2026). The post chain is sized from the scene
+ * target it consumes, so a render-scale change has to rebuild these targets
+ * together with SceneTargets' — but NOT the shaders, the LUT or the uniform
+ * locations: recompiling a shader at the moment the frame is already late is
+ * the one cost a scale change must never pay. */
+static int s_targetWidth = 0;
+static int s_targetHeight = 0;
 
-  // --- HDR: match ScreenDistort's authoritative decision. ScreenDistort_Init
-  // runs first (main.c) and probes the real scene buffer (float color + depth);
-  // PostFX only receives the composited distort quad, so it must use the SAME
-  // format to preserve > 1.0 values into bloom/tone-map. If ScreenDistort fell
-  // back to LDR, so do we. (A color-only float target is a strict subset of the
-  // color+depth float FBO ScreenDistort already validated, so no re-probe here.)
+static void PostFX_DestroySizedTargets(void)
+{
+  if (mainRenderTex.id > 0) UnloadRenderTexture(mainRenderTex);
+  mainRenderTex = (RenderTexture2D){0};
+  if (bloomTex.id > 0) UnloadRenderTexture(bloomTex);
+  bloomTex = (RenderTexture2D){0};
+  if (ldrTex.id > 0) UnloadRenderTexture(ldrTex);
+  ldrTex = (RenderTexture2D){0};
+  for (int i = 0; i < s_dfLevels; i++)
+    UnloadRenderTexture(dfTex[i]);
+  s_dfLevels = 0;
+}
+
+static void PostFX_CreateSizedTargets(int width, int height)
+{
   const int hdrFmt = RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16;
   const int ldrFmt = RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
   s_hdrActive = SceneTargets_IsHDR();
@@ -224,8 +242,6 @@ void PostFX_Init(int width, int height)
   mainRenderTex = LoadRenderTextureWithFormat(width, height, colorFmt);
   SetTextureFilter(mainRenderTex.texture, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(mainRenderTex.texture, TEXTURE_WRAP_CLAMP);
-  TraceLog(LOG_INFO, "PostFX: %s pipeline (%s)", s_hdrActive ? "HDR float" : "LDR",
-           s_hdrActive ? "R16G16B16A16" : "R8G8B8A8");
 
   bloomTex = LoadRenderTextureWithFormat(width / 4, height / 4, colorFmt);
   SetTextureFilter(bloomTex.texture, TEXTURE_FILTER_BILINEAR);
@@ -256,6 +272,40 @@ void PostFX_Init(int width, int height)
   }
   TraceLog(LOG_INFO, "PostFX: bloom pyramid %d levels (1/4 .. 1/%d)", s_dfLevels + 1,
            4 << s_dfLevels);
+  s_targetWidth = width;
+  s_targetHeight = height;
+}
+
+int PostFX_GetWidth(void) { return s_targetWidth; }
+int PostFX_GetHeight(void) { return s_targetHeight; }
+
+void PostFX_Resize(int width, int height)
+{
+  if (width < 8 || height < 8)
+    return;
+  if (width == s_targetWidth && height == s_targetHeight && mainRenderTex.id != 0)
+    return;
+  PostFX_DestroySizedTargets();
+  PostFX_CreateSizedTargets(width, height);
+  TraceLog(LOG_INFO, "PostFX: chain resized to %dx%d", width, height);
+}
+
+void PostFX_Init(int width, int height)
+{
+  if (mainRenderTex.id != 0)
+  {
+    PostFX_Unload();
+  }
+
+  // --- HDR: match ScreenDistort's authoritative decision. ScreenDistort_Init
+  // runs first (main.c) and probes the real scene buffer (float color + depth);
+  // PostFX only receives the composited distort quad, so it must use the SAME
+  // format to preserve > 1.0 values into bloom/tone-map. If ScreenDistort fell
+  // back to LDR, so do we. (A color-only float target is a strict subset of the
+  // color+depth float FBO ScreenDistort already validated, so no re-probe here.)
+  PostFX_CreateSizedTargets(width, height);
+  TraceLog(LOG_INFO, "PostFX: %s pipeline (%s)", s_hdrActive ? "HDR float" : "LDR",
+           s_hdrActive ? "R16G16B16A16" : "R8G8B8A8");
 
   brightShader = LoadShader(0, "post_process/shaders/bloom_bright.fs");
   dsShader = LoadShader(0, "post_process/shaders/bloom_downsample.fs");
@@ -306,6 +356,7 @@ void PostFX_Init(int width, int height)
   SetShaderValue(compositeShader, lutSizeLoc, &lutSize, SHADER_UNIFORM_FLOAT);
   fxaaShader = LoadShader(0, "post_process/shaders/fxaa.fs");
   fxaaTexelLoc = GetShaderLocation(fxaaShader, "u_texel");
+  fxaaSharpenLoc = GetShaderLocation(fxaaShader, "u_sharpen");
   radialBlurEnabledLoc = GetShaderLocation(compositeShader, "u_radialBlurEnabled");
   radialBlurCenterLoc = GetShaderLocation(compositeShader, "u_radialBlurCenter");
   radialBlurStrengthLoc = GetShaderLocation(compositeShader, "u_radialBlurStrength");
@@ -319,13 +370,8 @@ bool PostFX_IsHDR(void) { return s_hdrActive; }
 
 void PostFX_Unload(void)
 {
-  UnloadRenderTexture(mainRenderTex);
-  UnloadRenderTexture(bloomTex);
-  UnloadRenderTexture(ldrTex);
+  PostFX_DestroySizedTargets();
   UnloadShader(fxaaShader);
-  for (int i = 0; i < s_dfLevels; i++)
-    UnloadRenderTexture(dfTex[i]);
-  s_dfLevels = 0;
 
   UnloadShader(brightShader);
   UnloadShader(dsShader);
@@ -633,6 +679,7 @@ void PostFX_Draw(const PostFXConfig *config)
     Tuning_RegisterFloat("postfx_hue_restore", &s_hueRestore, 0.0f);
     Tuning_RegisterFloat("postfx_shoulder_view", &s_shoulderView, 0.0f);
     Tuning_RegisterFloat("postfx_fxaa", &s_fxaa, 1.0f);
+    Tuning_RegisterFloat("postfx_sharpen", &s_sharpen, -1.0f);
     Tuning_RegisterFloat("postfx_auto_exposure", &s_autoExposure, 0.0f);
     Tuning_RegisterFloat("bloom_karis", &s_bloomKaris, 1.0f);
     Tuning_RegisterFloat("lut_strength", &s_lutStrengthOverride, 0.0f);
@@ -912,6 +959,20 @@ void PostFX_Draw(const PostFXConfig *config)
       float texel[2] = {1.0f / (float)ldrTex.texture.width,
                         1.0f / (float)ldrTex.texture.height};
       SetShaderValue(fxaaShader, fxaaTexelLoc, texel, SHADER_UNIFORM_VEC2);
+    }
+    /* Sharpen in the same pass, and ONLY by the amount the upscale removed: at
+     * render scale 1.0 this evaluates to exactly 0.0, so the 1.0 image keeps the
+     * pre-scale output. */
+    if (fxaaSharpenLoc >= 0)
+    {
+      float sharpen = s_sharpen;
+      if (sharpen < 0.0f)
+      {
+        const float scale = RenderScale_GetScale();
+        sharpen = (scale > 0.01f) ? 0.40f * (1.0f / scale - 1.0f) : 0.0f;
+        if (sharpen > 0.25f) sharpen = 0.25f;
+      }
+      SetShaderValue(fxaaShader, fxaaSharpenLoc, &sharpen, SHADER_UNIFORM_FLOAT);
     }
     rlDisableColorBlend();
     DrawTexturePro(ldrTex.texture,

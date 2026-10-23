@@ -1,4 +1,5 @@
 #include "core/metaball_fx.h"
+#include "core/scene_targets.h"
 #include "raymath.h"
 #include "rlgl.h"
 #include <math.h>
@@ -145,8 +146,8 @@ void MetaballFX_Composite(void) {
                  SHADER_UNIFORM_FLOAT);
   DrawTexturePro(maskTex.texture,
                  (Rectangle){0, 0, (float)w, -(float)h}, // source (flip Y)
-                 (Rectangle){0, 0, (float)GetScreenWidth(),
-                             (float)GetScreenHeight()}, // dest: full screen
+                 (Rectangle){0, 0, (float)SceneTargets_GetWidth(),
+                             (float)SceneTargets_GetHeight()}, // dest: whole scene target
                  (Vector2){0, 0}, 0.0f, WHITE);
   EndShaderMode();
   EndBlendMode();

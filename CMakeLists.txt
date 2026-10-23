@@ -210,6 +210,7 @@ add_executable(wuxing
     post_process/post_fx.c
     post_process/color_grade_lut.c
     post_process/scene_targets.c
+    post_process/render_scale.c
     post_process/screen_distort.c
     post_process/camera_fx.c
     core/ribbon_strip.c

@@ -1027,7 +1027,7 @@ void LiquidSurface_Composite(void) {
     if(!LiquidSurface_HasPending()) { s_frameOwnerPriority=-1; return; }
     double stageStart=LiquidSurface_HostClock();
     Vector2 texel={1.0f/s_smoothB.texture.width,1.0f/s_smoothB.texture.height};
-    Vector2 sceneTexel={1.0f/GetRenderWidth(),1.0f/GetRenderHeight()};
+    Vector2 sceneTexel={1.0f/(float)SceneTargets_GetWidth(),1.0f/(float)SceneTargets_GetHeight()};
     /* The snapshot from Capture, never the live scene target: the body pass we are
      * drawing inside binds that same texture as its colour attachment. */
     Texture2D scene=s_sceneCopy.id?s_sceneCopy.texture:SceneTargets_GetSceneTexture();
@@ -1121,7 +1121,7 @@ void LiquidSurface_Composite(void) {
     SetShaderValueTexture(s_composite,s_sceneLoc,scene);
     if(has) SetShaderValueTexture(s_composite,s_sceneDepthLoc,sceneDepth);
     Texture2D depthSource=s_smoothB.texture;
-    DrawTexturePro(depthSource,(Rectangle){0,0,depthSource.width,-depthSource.height},(Rectangle){0,0,GetRenderWidth(),GetRenderHeight()},(Vector2){0,0},0,WHITE);
+    DrawTexturePro(depthSource,(Rectangle){0,0,depthSource.width,-depthSource.height},(Rectangle){0,0,(float)SceneTargets_GetWidth(),(float)SceneTargets_GetHeight()},(Vector2){0,0},0,WHITE);
     EndShaderMode();
     EndBlendMode();
     s_stats.compositeHostMs=LiquidSurface_HostElapsed(stageStart);

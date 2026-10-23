@@ -400,7 +400,7 @@ void VolumetricFog_Render(Camera3D camera) {
         if (s_locHfVolColorSoft >= 0) SetShaderValueV(s_heightFogShader, s_locHfVolColorSoft, volColorSoft, SHADER_UNIFORM_VEC4, 4);
 
         Rectangle srcRect = { 0.0f, 0.0f, (float)sceneDepth.width, -(float)sceneDepth.height };
-        Rectangle dstRect = { 0.0f, 0.0f, (float)s_fullWidth, (float)s_fullHeight };
+        Rectangle dstRect = { 0.0f, 0.0f, (float)SceneTargets_GetWidth(), (float)SceneTargets_GetHeight() };
         DrawTexturePro(sceneDepth, srcRect, dstRect, (Vector2){ 0, 0 }, 0.0f, WHITE);
 
         EndShaderMode();
@@ -483,7 +483,11 @@ void VolumetricFog_Render(Camera3D camera) {
     SetShaderValueTexture(s_compositeShader, s_locCompLowDepth, sceneDepth);
 
     Rectangle volSrcRect = { 0.0f, 0.0f, (float)s_lowWidth, -(float)s_lowHeight };
-    Rectangle fullDstRect = { 0.0f, 0.0f, (float)s_fullWidth, (float)s_fullHeight };
+    /* Dest = the SCENE TARGET, not s_fullWidth/Height (the size this module was
+       init'd with): with an adaptive render scale the scene buffer is smaller
+       than the window and the post composite upscales it, so a window-sized quad
+       here would show only the top-left corner of the fog. */
+    Rectangle fullDstRect = { 0.0f, 0.0f, (float)SceneTargets_GetWidth(), (float)SceneTargets_GetHeight() };
     DrawTexturePro(s_volumetricTarget.texture, volSrcRect, fullDstRect, (Vector2){ 0, 0 }, 0.0f, WHITE);
 
     EndShaderMode();

@@ -21,6 +21,14 @@ out vec4 finalColor;
 
 uniform sampler2D texture0;
 uniform vec2 u_texel;       // 1/width, 1/height of texture0
+/* ADAPTIVE RENDER SCALE — the frame is upscaled from a smaller scene target, and
+ * a bilinear upscale reads as blur on grass and on thin grass-blade silhouettes.
+ * A luma-only unsharp mask recovers most of that perceived detail for ZERO extra
+ * texture fetches: the four neighbour LUMAS this pass already loads for its edge
+ * test ARE the Laplacian stencil, and adding the result to all three channels
+ * keeps chroma untouched (no colour fringing on silhouettes). 0 = off, which is
+ * what a 1.0 render scale passes. */
+uniform float u_sharpen;
 
 // The perceptual weights, not the linear-luminance ones: this runs post tone map.
 float fxaaLuma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
@@ -44,9 +52,10 @@ void main()
     // gentle gradients, which is what stops a bloom halo or a sky ramp from being
     // smeared into blotches. The absolute one (1/32) keeps it off near-black, where
     // 8-bit noise would otherwise register as an edge in every frame and shimmer.
+    float lap = 4.0 * lM - (lNW + lNE + lSW + lSE);
     if (range < max(lMax * (1.0 / 16.0), 1.0 / 32.0))
     {
-        finalColor = vec4(rgbM, 1.0);
+        finalColor = vec4(clamp(rgbM + u_sharpen * lap, 0.0, 1.0), 1.0);
         return;
     }
 
@@ -70,5 +79,6 @@ void main()
     // narrow pair whenever it does — this is the guard that keeps a bright rim from
     // growing a halo of its own.
     float lB = fxaaLuma(rgbB);
-    finalColor = vec4((lB < lMin || lB > lMax) ? rgbA : rgbB, 1.0);
+    vec3 aa = (lB < lMin || lB > lMax) ? rgbA : rgbB;
+    finalColor = vec4(clamp(aa + u_sharpen * lap, 0.0, 1.0), 1.0);
 }
