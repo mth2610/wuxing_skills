@@ -1,29 +1,4 @@
-/* SCENE TARGETS — the render targets the whole frame is built in.
- *
- * This is the module ScreenDistort had grown into. Of ~140 references to
- * `ScreenDistort_*` across 24 files, only 19 were about distortion; the rest
- * asked it for the scene colour buffer, the scene depth, the previous frame's
- * depth snapshot, the refraction copy, the HDR flag, the MSAA sample count, or
- * the VFX draw target. A module whose name describes an effect but whose API is
- * mostly render-target ownership costs every reader the same detour, and the
- * long landmine comments in both this file and post_fx.c existed to pay it.
- *
- * So the ownership lives here and ScreenDistort keeps what its name says: a
- * list of shockwave sources and one full-screen pass that reads this module's
- * colour target.
- *
- * WHAT THIS OWNS
- *   renderTex        the scene: HDR (or LDR fallback) colour + a sampleable
- *                    depth texture. THE authoritative HDR decision — PostFX
- *                    matches it, never the other way round.
- *   prevDepthTex     last frame's linearised depth, half-res, for soft particles
- *   s_sceneSnapshot  a sample-safe copy of the finished scene, for refraction
- *
- * ALPHA IN THE SCENE TARGET IS UNDEFINED. Additive VFX push it past 1.0 and
- * nothing consumes it, so any pass that composites this target must disable
- * blending — see the flush note in post_fx.c, which is the bug that rule exists
- * to prevent.
- */
+/* SCENE TARGETS — the render targets the whole frame is built in. */
 #include "post_process/scene_targets.h"
 #include "core/vfx_render.h"
 #include "post_process/render_target_probe.h"
@@ -32,21 +7,6 @@
 #include <string.h>
 #include <stdlib.h> // getenv/atoi (WUXING_NO_HDR, WUXING_MSAA)
 
-// CORE_ISSUES.md Item 3 rebuild — root cause #2: the soft-particle depth
-// linearization must use the SAME near/far the scene was actually rendered
-// with. rlGetCullDistanceNear/Far() reflects rlSetClipPlanes() (main.c),
-// which is a DIFFERENT, unrelated global from the near plane
-// MyBeginMode3D's rlFrustum() actually uses for perspective projection (see
-// main.c). Using the wrong one silently produces near-zero linear depth for
-// all real scene content. Keep these in sync with MyBeginMode3D's
-// rlFrustum() call if that ever changes.
-// Real-world-scaled (root CLAUDE.md "Standard coordinates & scale") — was
-// 10.0f/15000.0f pre-rescale. NOTE: not a straight ÷100 of the old values —
-// near values below ~1.0 produced a fully blank render in this project's
-// rlFrustum()/GL setup (empirically bisected; root cause not identified,
-// suspected precision issue with very small near-plane/frustum-extent
-// values), so these track MyBeginMode3D's near=1.0f/far=1000.0f rather than
-// the exact ÷100 scale used everywhere else in this rescale.
 #define SOFT_PARTICLE_SCENE_NEAR 1.0f
 #define SOFT_PARTICLE_SCENE_FAR 1000.0f
 
@@ -54,19 +14,16 @@ static RenderTexture2D renderTex;
 static Rectangle s_softDepthRegion;
 static bool s_softDepthRegionValid;
 
-// --- Soft particles: previous-frame depth snapshot (see header comment) ---
+// --- Soft particles: previous-frame depth snapshot ---
 static RenderTexture2D prevDepthTex;
 static Shader depthCopyShader;
 static int depthCopyNearLoc;
 static int depthCopyFarLoc;
 
-// --- Refraction tap: sample-safe copy of the finished scene (see header) ---
+// --- Refraction tap: sample-safe copy of the finished scene ---
 static RenderTexture2D s_sceneSnapshot;
 static bool s_sceneSnapshotRequested = false;
 
-// Per-shader cache of soft-particle uniform locations — GetShaderLocation()
-// is a string-hash lookup the engine does not cache for you (CORE_API.md),
-// so don't call it every frame from SceneTargets_BindDepthForSoftParticles.
 #define SOFT_PARTICLE_SHADER_CACHE_SIZE 8
 typedef struct
 {
@@ -76,7 +33,6 @@ typedef struct
 static SoftParticleShaderCacheEntry s_softCache[SOFT_PARTICLE_SHADER_CACHE_SIZE];
 static int s_softCacheCount = 0;
 
-// [TỐI ƯU HÓA 1]: Thêm 'static inline' để triệt tiêu chi phí gọi hàm (Call Overhead)
 static inline SoftParticleShaderCacheEntry *GetSoftParticleLocs(Shader shader)
 {
   for (int i = 0; i < s_softCacheCount; i++)
@@ -94,8 +50,6 @@ static inline SoftParticleShaderCacheEntry *GetSoftParticleLocs(Shader shader)
   entry->farLoc = GetShaderLocation(shader, "u_cameraFar");
   entry->resLoc = GetShaderLocation(shader, "u_resolution");
 
-  // [TỐI ƯU HÓA 2]: Cache Uniforms - Đẩy u_near và u_far lên GPU 1 lần duy nhất khi
-  // shader lần đầu tiên được nạp vào cache, thay vì phải gọi mỗi frame.
   float nearVal = SOFT_PARTICLE_SCENE_NEAR;
   float farVal = SOFT_PARTICLE_SCENE_FAR;
   if (entry->nearLoc >= 0)
@@ -106,20 +60,9 @@ static inline SoftParticleShaderCacheEntry *GetSoftParticleLocs(Shader shader)
   return entry;
 }
 
-// HDR (Đợt G) — renderTex is the AUTHORITATIVE scene buffer: the whole 3D
-// world is drawn into it (SceneTargets_Begin/End), so THIS is where colors
-// must be allowed to exceed 1.0 for true HDR. PostFX's mainRenderTex only
-// receives the already-composited distort quad, so it just has to match. We
-// probe a 16-bit half-float color + depth-texture FBO here; GLES2 devices
-// without float-renderable color fall back to RGBA8 (old LDR path). Query via
-// SceneTargets_IsHDR() — PostFX_Init reads it to stay in lockstep.
 static bool s_hdrActive = false;
 static bool s_depthTextureActive = false;
 
-// LoadRenderTexture() mặc định gắn depth attachment là RENDERBUFFER (không
-// sample được trong shader). Build framebuffer thủ công qua rlgl để depth
-// attachment là TEXTURE thật. colorFormat chọn RGBA8 (LDR) hoặc R16G16B16A16
-// (HDR float) — xem probe trong SceneTargets_Init.
 static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height, int colorFormat)
 {
   RenderTexture2D target = {0};
@@ -137,7 +80,7 @@ static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height, 
     target.depth.id = rlLoadTextureDepth(width, height, false);
     target.depth.width = width;
     target.depth.height = height;
-    target.depth.format = 19; // DEPTH_COMPONENT_24BIT (rlgl internal format id)
+    target.depth.format = 19; // DEPTH_COMPONENT_24BIT
     target.depth.mipmaps = 1;
 
     rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
@@ -152,39 +95,9 @@ static RenderTexture2D LoadRenderTextureWithDepthTexture(int width, int height, 
   return target;
 }
 
-// Single-channel 32-bit FLOAT color target (no depth attachment). Used to
-// snapshot LINEARIZED scene depth: an 8-bit RGBA copy crushes all far depths
-// (near=0.1, far=15000) to 255, making scene vs particle depth
-// indistinguishable. R32F keeps full precision.
-/* Soft fade is deliberately low-frequency: it removes a hard intersection,
- * not a geometric edge.  Half-resolution depth cuts the only full-screen
- * soft-particle pass to one quarter of its former pixel cost. */
-#define SOFT_DEPTH_DOWNSCALE 2
-
-/* BACKGROUND LUMINANCE, for effects that must adapt to what is behind them.
- *
- * 1/16 on each axis, so 80x45 at 720p — deliberately tiny. What consumes it is a
- * broad attenuation term, not a detail lookup, and a small target has two further
- * virtues: it costs almost nothing to fill mid-frame, and it averages away the
- * local structure that would otherwise make an effect's own attenuation flicker
- * as it moves across a busy background. */
-#define BG_LUMA_DOWNSCALE 16
-static RenderTexture2D s_bgLuma;
-static Shader  s_bgLumaShader;
-static int     s_bgLumaTexelLoc = -1;
-static bool    s_bgLumaValid = false;
-
-/* AUTO EXPOSURE (§7.5). 1x1 ping-pong, never read back to the CPU — the value
-   lives on the GPU and post_process.fs samples it. Two targets because a shader
-   cannot read the texture it is writing. */
-static RenderTexture2D s_exposure[2];
-static int    s_exposureCur = 0;
-static Shader s_exposureShader;
-static int    s_expLocLuma = -1, s_expLocSize = -1, s_expLocDt = -1;
-static int    s_expLocGrey = -1, s_expLocMin = -1, s_expLocDown = -1, s_expLocUp = -1;
-static bool   s_exposureReady = false;
-
-static RenderTexture2D LoadLinearDepthTarget(int width, int height)
+/* [TỐI ƯU HÓA FBO]: Target chỉ chứa Color attachment, không gắn Depth Texture 24-bit
+ * dư thừa cho các pass 2D như s_bgLuma và s_exposure. */
+static RenderTexture2D LoadColorOnlyTarget(int width, int height, int colorFormat)
 {
   RenderTexture2D target = {0};
   target.id = rlLoadFramebuffer();
@@ -192,36 +105,50 @@ static RenderTexture2D LoadLinearDepthTarget(int width, int height)
   {
     rlEnableFramebuffer(target.id);
 
-    target.texture.id = rlLoadTexture(NULL, width, height, RL_PIXELFORMAT_UNCOMPRESSED_R32, 1);
+    target.texture.id = rlLoadTexture(NULL, width, height, colorFormat, 1);
     target.texture.width = width;
     target.texture.height = height;
-    target.texture.format = RL_PIXELFORMAT_UNCOMPRESSED_R32;
+    target.texture.format = colorFormat;
     target.texture.mipmaps = 1;
 
     rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0, RL_ATTACHMENT_TEXTURE2D, 0);
 
     if (!rlFramebufferComplete(target.id))
     {
-      TraceLog(LOG_WARNING, "SceneTargets: linear-depth framebuffer incomplete");
+      TraceLog(LOG_WARNING, "SceneTargets: color-only framebuffer incomplete");
     }
     rlDisableFramebuffer();
   }
-  // R32F float textures are NOT linear-filterable on many GL3.3 drivers —
-  // sampling with the default BILINEAR filter returns 0/undefined. Force
-  // POINT (nearest) filtering, and clamp to avoid edge wrap artifacts.
+  return target;
+}
+
+#define SOFT_DEPTH_DOWNSCALE 2
+#define BG_LUMA_DOWNSCALE 16
+#define BG_LUMA_KEEPALIVE_FRAMES 15
+
+static RenderTexture2D s_bgLuma;
+static Shader s_bgLumaShader;
+static int s_bgLumaTexelLoc = -1;
+static bool s_bgLumaValid = false;
+static int s_bgLumaIdleFrames = BG_LUMA_KEEPALIVE_FRAMES + 1;
+static int s_bgLumaThrottle = 0;
+
+static RenderTexture2D s_exposure[2];
+static int s_exposureCur = 0;
+static Shader s_exposureShader;
+static int s_expLocLuma = -1, s_expLocSize = -1, s_expLocDt = -1;
+static int s_expLocGrey = -1, s_expLocMin = -1, s_expLocDown = -1, s_expLocUp = -1;
+static bool s_exposureReady = false;
+static int s_probeFrame = 0;
+
+static RenderTexture2D LoadLinearDepthTarget(int width, int height)
+{
+  RenderTexture2D target = LoadColorOnlyTarget(width, height, RL_PIXELFORMAT_UNCOMPRESSED_R32);
   SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
   SetTextureWrap(target.texture, TEXTURE_WRAP_CLAMP);
   return target;
 }
 
-/* ANTI-ALIASING — owned by the rlvk Renderer Agent, kept to these few lines on purpose.
- * The 3D world rasterizes into `renderTex`, never into the window, so FLAG_MSAA_4X_HINT /
- * rlvkSetMsaaSamples (both swapchain-only) can never anti-alias it: every geometric silhouette
- * in the game landed with binary coverage. rlvkSetFramebufferSamples makes renderTex ITSELF a
- * 2x/4x target and resolves into the same colour and depth textures this module already hands out,
- * so ScreenDistort_Draw / SnapshotDepth / GetRawDepthTexture are unaffected.
- * Returns the sample count actually in effect (1 when the device declines) — it can cost
- * aliasing, never correctness. GL 3.3 / GLES have no offscreen-MSAA path and stay on FXAA. */
 #if defined(GRAPHICS_API_VULKAN)
 extern int rlvkSetFramebufferSamples(unsigned int fbId, int samples);
 extern bool rlvkSetFramebufferDepthSampleOnDemand(unsigned int fbId, bool enabled);
@@ -230,40 +157,11 @@ extern bool rlvkRefreshFramebufferDepthTexture(unsigned int fbId);
 static bool s_depthSampleOnDemand = false;
 static int s_sceneSamples = 1;
 
-/* Actual scene samples: 2/4 = hardware MSAA, 1 = single-sampled.
-   NOT a reason to switch FXAA off. MSAA and FXAA fix different edges here: with MSAA on, the
-   post-3D VFX silhouettes still measured 937 -> 933 luma steps, i.e. unchanged, so dropping
-   FXAA when MSAA is enabled would make exactly the edges the owner reported worse. Exported
-   for diagnostics and for anyone who needs to know which path is live. */
 int SceneTargets_GetSceneSamples(void) { return s_sceneSamples; }
 
-/* ---------------------------------------------------------------------------
- * ADAPTIVE RENDER SCALE (22/10/2026)
- * ---------------------------------------------------------------------------
- * The frame is fill-bound on the target hardware, so the only lever that moves
- * it by whole milliseconds is the number of pixels every pass shades. Measured
- * on the song_quao frame (1280x720, HIGH, 3 paired runs): 1.00 -> 16.83 ms,
- * 0.85 -> 13.78 ms, and the whole-window equivalent of 0.95 (1216x684) went
- * 17.50/17.88 -> 16.18/15.93. The scale is chosen per frame by RenderScale
- * (post_process/render_scale.c).
- *
- * Only the allocations below depend on the size. Everything else here — the
- * shaders, the 1x1 exposure ping-pong, the depth-copy shader — is built once,
- * because reloading a shader costs a compile hitch exactly when the frame is
- * already late, and a scale change must not do that.
- * ------------------------------------------------------------------------- */
-static int s_targetWidth = 0;  /* scene-target size in use (== render scale * display) */
+static int s_targetWidth = 0;
 static int s_targetHeight = 0;
 
-/* Enter a freshly created target ONCE through BeginTextureMode and clear it.
- *
- * Two problems, one call. (a) Under rlvk a framebuffer that has never been
- * entered through BeginTextureMode has no render-pass scope, and a later
- * rlEnableFramebuffer into it draws nothing at all — silently. (b) A target that
- * has never been written contains whatever the driver handed back; the first
- * frame that composites it therefore shows that memory, which is how a resize
- * became a WHITE FLASH on screen (uninitialised HDR reads as a blown-out frame).
- * Clearing costs one full-screen write on the resize frame only. */
 static void SceneTargets_PrimeTarget(RenderTexture2D target)
 {
   if (target.id == 0 || target.texture.id == 0)
@@ -275,9 +173,6 @@ static void SceneTargets_PrimeTarget(RenderTexture2D target)
 
 static void SceneTargets_DestroySizedTargets(void)
 {
-  /* Flush the batched draws first: destroying a texture the current batch (or
-   * the previous frame's submission) can still reference is how a rebuild turns
-   * into a one-frame garbage surface. */
   rlDrawRenderBatchActive();
   if (renderTex.id > 0)
     UnloadRenderTexture(renderTex);
@@ -288,6 +183,7 @@ static void SceneTargets_DestroySizedTargets(void)
   if (s_bgLuma.id > 0)
     UnloadRenderTexture(s_bgLuma);
   s_bgLuma = (RenderTexture2D){0};
+  s_bgLumaValid = false;
 }
 
 static void SceneTargets_CreateSizedTargets(int width, int height)
@@ -356,28 +252,6 @@ static void SceneTargets_CreateSizedTargets(int width, int height)
     prevDepthTex = (RenderTexture2D){0};
   }
 
-  /* DEFAULT OFF, opt in with WUXING_MSAA=2 or 4 (Vulkan only; unsupported requests
-     return 1). The following cost/quality measurements describe the 4x path. What it buys
-     here is not worth its price by default, and both halves of that were measured:
-       - what it fixes: opaque geometry silhouettes. The map's ellipse edge went 47 -> 17 luma
-         steps >20. Real, but this is a NIGHT arena — its geometry edges are low-contrast, so
-         the win is hard to see even where the numbers move. It would matter on bright daylight
-         scenery, which is where this branch is headed.
-       - what it costs: the scene scope opens exactly TWICE per frame — measured at 1.97/frame
-         and CONSTANT, the same with a heavy fixture, a light one, and an empty scene — so two
-         full-screen resolves every frame, always. Each moves ~55 MB (4x RGBA16F colour + 4x
-         depth at 1280x720), which is ~2-4 ms on a bandwidth-shared GPU and was measured at ~5 ms
-         on the Intel Iris 6000 here. ~10 ms against a 16.6 ms budget.
-     And the second of those two resolves is nearly pure waste: that scope is the post-3D VFX
-     pass, where MSAA measured 937 -> 933 luma steps, because an emissive HDR silhouette is
-     eaten by the tone curve and a shader-decided rim is thinner than the pixel MSAA shades
-     once. See ENGINE_LANDMINES.md #19 for the three edge classes.
-
-     An env var rather than tuning.cfg, deliberately: this decides the FBO's allocation inside
-     SceneTargets_Init, and Tuning_Init runs AFTER the subsystem inits (core/docs/LANDMINES.md
-     — an early Tuning_RegisterFloat silently keeps its default). Gating on GfxQuality would be
-     worse, not better: the tier is cycled at runtime from main.c, so an Init-time snapshot of
-     it would silently desync from what the HUD says. */
   s_sceneSamples = 1;
 #if defined(GRAPHICS_API_VULKAN)
   if (renderTex.id > 0)
@@ -392,20 +266,18 @@ static void SceneTargets_CreateSizedTargets(int width, int height)
   {
     int lw = (width + BG_LUMA_DOWNSCALE - 1) / BG_LUMA_DOWNSCALE;
     int lh = (height + BG_LUMA_DOWNSCALE - 1) / BG_LUMA_DOWNSCALE;
-    if (lw < 4) lw = 4;
-    if (lh < 4) lh = 4;
-    s_bgLuma = LoadRenderTextureWithDepthTexture(lw, lh, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    if (lw < 4)
+      lw = 4;
+    if (lh < 4)
+      lh = 4;
+    s_bgLuma = LoadColorOnlyTarget(lw, lh, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
     SetTextureFilter(s_bgLuma.texture, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(s_bgLuma.texture, TEXTURE_WRAP_CLAMP);
-    /* Prime it here (the reason is on SceneTargets_PrimeTarget): this target is
-       later re-entered with rlEnableFramebuffer by the luma capture, which only
-       works when a render-pass scope already exists. */
     SceneTargets_PrimeTarget(s_bgLuma);
-    TraceLog(LOG_INFO, "SceneTargets: background-luma target %dx%d", lw, lh);
+    s_bgLumaValid = false;
+    TraceLog(LOG_INFO, "SceneTargets: background-luma target %dx%d (color-only)", lw, lh);
   }
 
-  /* Same for the scene buffers: the FIRST frame after a resize composites these
-     before anything else has drawn into them. */
   SceneTargets_PrimeTarget(renderTex);
   SceneTargets_PrimeTarget(prevDepthTex);
 }
@@ -420,30 +292,29 @@ void SceneTargets_Init(int width, int height)
   s_bgLumaShader = LoadShader(0, "core/shaders/bg_luma.fs");
   s_bgLumaTexelLoc = GetShaderLocation(s_bgLumaShader, "u_srcTexel");
 
-  for (int i = 0; i < 2; i++) {
-    s_exposure[i] = LoadRenderTextureWithDepthTexture(1, 1, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
+  for (int i = 0; i < 2; i++)
+  {
+    s_exposure[i] = LoadColorOnlyTarget(1, 1, RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16);
     SetTextureFilter(s_exposure[i].texture, TEXTURE_FILTER_POINT);
-    /* Open the scope AND seed it at 1.0 — an unexposed first frame, and a
-       target the backend has entered at least once (see the note above). */
     BeginTextureMode(s_exposure[i]);
     ClearBackground((Color){255, 255, 255, 255});
     EndTextureMode();
   }
+  s_exposureReady = true;
+
   s_exposureShader = LoadShader(0, "core/shaders/exposure.fs");
   s_expLocLuma = GetShaderLocation(s_exposureShader, "u_lumaTex");
   s_expLocSize = GetShaderLocation(s_exposureShader, "u_lumaSize");
-  s_expLocDt   = GetShaderLocation(s_exposureShader, "u_dt");
+  s_expLocDt = GetShaderLocation(s_exposureShader, "u_dt");
   s_expLocGrey = GetShaderLocation(s_exposureShader, "u_targetGrey");
-  s_expLocMin  = GetShaderLocation(s_exposureShader, "u_minExposure");
+  s_expLocMin = GetShaderLocation(s_exposureShader, "u_minExposure");
   s_expLocDown = GetShaderLocation(s_exposureShader, "u_speedDown");
-  s_expLocUp   = GetShaderLocation(s_exposureShader, "u_speedUp");
+  s_expLocUp = GetShaderLocation(s_exposureShader, "u_speedUp");
 
   depthCopyShader = LoadShader(0, "core/shaders/depth_copy.fs");
   depthCopyNearLoc = GetShaderLocation(depthCopyShader, "u_near");
   depthCopyFarLoc = GetShaderLocation(depthCopyShader, "u_far");
 
-  // [TỐI ƯU HÓA 3]: Đẩy thẳng hằng số u_near/u_far lên shader copy chiều sâu ngay khi init
-  // Thay vì phải thực hiện mỗi lần gọi SnapshotDepth.
   float nearVal = SOFT_PARTICLE_SCENE_NEAR;
   float farVal = SOFT_PARTICLE_SCENE_FAR;
   if (depthCopyNearLoc >= 0)
@@ -452,18 +323,8 @@ void SceneTargets_Init(int width, int height)
     SetShaderValue(depthCopyShader, depthCopyFarLoc, &farVal, SHADER_UNIFORM_FLOAT);
 
   s_softCacheCount = 0;
-  // The split VFX render layers were retired after measurement showed the
-  // composite is arithmetic that cancels — see the commit that removed them and
-  // core/docs/LANDMINES.md. VFX now draw straight into the scene target, which
-  // is what BeginVFXBody/BeginVFXEmission do below. The body/emission NAMES are
-  // kept because the distinction still means something to the code that reasons
-  // about which effects occlude; only the two render targets are gone.
 }
 
-/* Rebuild the size-dependent scene buffers for a new render scale. Called by
- * RenderScale at a frame boundary, never mid-pass. Textures only: no shader is
- * reloaded, no uniform is re-read, so the cost is an allocation rather than a
- * compile. */
 void SceneTargets_Resize(int width, int height)
 {
   if (width < 8 || height < 8)
@@ -471,9 +332,6 @@ void SceneTargets_Resize(int width, int height)
   if (width == s_targetWidth && height == s_targetHeight && renderTex.id > 0)
     return;
 
-  /* The distortion / mesh snapshot is a copy of the scene at the OLD size; the
-     next frame's SnapshotScene rebuilds it, but until then it would be sampled
-     with normalized UVs against a differently sized scene, so drop it. */
   if (s_sceneSnapshot.id > 0)
     UnloadRenderTexture(s_sceneSnapshot);
   s_sceneSnapshot = (RenderTexture2D){0};
@@ -493,15 +351,30 @@ bool SceneTargets_IsHDR(void) { return s_hdrActive; }
 
 void SceneTargets_Unload(void)
 {
-  UnloadRenderTexture(renderTex);
-  if (s_depthTextureActive)
+  SceneTargets_DestroySizedTargets();
+  for (int i = 0; i < 2; i++)
   {
-    UnloadRenderTexture(prevDepthTex);
+    if (s_exposure[i].id > 0)
+      UnloadRenderTexture(s_exposure[i]);
+    s_exposure[i] = (RenderTexture2D){0};
   }
-  if (s_sceneSnapshot.id) UnloadRenderTexture(s_sceneSnapshot);
+  s_exposureReady = false;
+
+  if (s_sceneSnapshot.id > 0)
+    UnloadRenderTexture(s_sceneSnapshot);
   s_sceneSnapshot = (RenderTexture2D){0};
   s_sceneSnapshotRequested = false;
-  UnloadShader(depthCopyShader);
+
+  if (s_bgLumaShader.id > 0)
+    UnloadShader(s_bgLumaShader);
+  s_bgLumaShader = (Shader){0};
+  if (s_exposureShader.id > 0)
+    UnloadShader(s_exposureShader);
+  s_exposureShader = (Shader){0};
+  if (depthCopyShader.id > 0)
+    UnloadShader(depthCopyShader);
+  depthCopyShader = (Shader){0};
+  s_softCacheCount = 0;
 }
 
 void SceneTargets_Begin(void)
@@ -509,13 +382,6 @@ void SceneTargets_Begin(void)
   BeginTextureMode(renderTex);
   s_softDepthRegionValid = false;
 }
-
-/* Frame index for the opt-in HDR probe (WUXING_VFX_PROBE_PREFIX/_FRAME). The
- * scene target is the ONE place scene-referred radiance can still be read
- * before the tone map turns it into a display value, and nothing was calling
- * the probe — so "what radiance is this effect actually emitting" had no
- * answer, and every brightness decision was made by eye. */
-static int s_probeFrame = 0;
 
 void SceneTargets_End(void)
 {
@@ -529,9 +395,6 @@ void SceneTargets_End(void)
   s_probeFrame++;
 }
 
-// Both "layers" are the scene target. Kept as distinct entry points so call
-// sites still declare whether they occlude (body) or only add light (emission),
-// which is the distinction the particle and trail systems route on.
 void SceneTargets_BeginVFXBody(void)
 {
   rlDrawRenderBatchActive();
@@ -548,25 +411,6 @@ void SceneTargets_EndVFXLayer(void)
   rlEnableFramebuffer(renderTex.id);
 }
 
-/* WORLD-SPACE REFRACTION LAYER — the one 3D pass that runs after SceneTargets_End.
- *
- * BindSceneFramebuffer above only BINDS the FBO; the viewport is whatever the
- * last Begin/EndTextureMode left behind. During the normal 3D pass that is the
- * scene target, so the omission never showed. But the shield/metaball refraction
- * layer runs after SceneTargets_End, whose EndTextureMode put the viewport back
- * to the WINDOW size. While the scene target WAS the window that was a no-op; with
- * an adaptive render scale the target is smaller (1088x612 at 0.85), and the 3D
- * refraction passes then projected through a 1280x720 viewport inside a 1088x612
- * buffer: 1/scale too large, displaced away from the top-left, and clipped past
- * the buffer edge. Measured on the FLOW SHIELD fixture before the fix, 0.85 vs
- * 1.0: centroid (754,334) vs (641,392), diameter 186 px vs 158 px = exactly
- * 1/0.85. Glass shield (SHIELD SHELL fixture) had the same displacement.
- *
- * Only the 3D block is bracketed. The 2D layer that follows (gas/liquid/metaball
- * composites, volumetric fog) draws with the WINDOW ortho that EndTextureMode
- * restored, so it depends on the window viewport to fill the target — see the
- * comment in environment/volumetric/volumetric_fog.c's composite. Giving it the
- * smaller viewport instead would shrink those composites to the top-left 85%. */
 void SceneTargets_BeginWorldRefraction(void)
 {
   rlDrawRenderBatchActive();
@@ -603,19 +447,23 @@ bool VFXRender_AppearanceDrawsPass(VFXResolvedAppearance appearance,
 
 const char *VFXRender_OutputDefines(VFXSurfaceMode surface)
 {
-    switch (surface)
-    {
-    case VFX_SURFACE_ADDITIVE:      return "#define OUTPUT_EMISSION 1\n";
-    case VFX_SURFACE_PREMULTIPLIED: return "#define OUTPUT_PREMULTIPLIED 1\n";
-    case VFX_SURFACE_ALPHA:
-    default:                        return "#define OUTPUT_BODY 1\n";
-    }
+  switch (surface)
+  {
+  case VFX_SURFACE_ADDITIVE:
+    return "#define OUTPUT_EMISSION 1\n";
+  case VFX_SURFACE_PREMULTIPLIED:
+    return "#define OUTPUT_PREMULTIPLIED 1\n";
+  case VFX_SURFACE_ALPHA:
+  default:
+    return "#define OUTPUT_BODY 1\n";
+  }
 }
 
 VFXContrastLayer VFXRender_ContrastLayer(VFXRenderPass pass)
 {
   return pass == VFX_RENDER_PASS_EMISSION
-             ? VFX_CONTRAST_EMISSION : VFX_CONTRAST_BODY;
+             ? VFX_CONTRAST_EMISSION
+             : VFX_CONTRAST_BODY;
 }
 
 VFXRenderScope VFXRender_BeginDraw(VFXRenderPass pass,
@@ -625,12 +473,15 @@ VFXRenderScope VFXRender_BeginDraw(VFXRenderPass pass,
   VFXRenderScope scope = {true, depthWrite, pass, surface};
   VFXRender_BeginPass(pass);
   rlDrawRenderBatchActive();
-  if (depthWrite) rlEnableDepthMask();
-  else rlDisableDepthMask();
+  if (depthWrite)
+    rlEnableDepthMask();
+  else
+    rlDisableDepthMask();
   BeginBlendMode(surface == VFX_SURFACE_ADDITIVE
                      ? BLEND_ADDITIVE
                      : (surface == VFX_SURFACE_PREMULTIPLIED
-                            ? BLEND_ALPHA_PREMULTIPLY : BLEND_ALPHA));
+                            ? BLEND_ALPHA_PREMULTIPLY
+                            : BLEND_ALPHA));
   rlDrawRenderBatchActive();
   return scope;
 }
@@ -642,75 +493,37 @@ VFXRenderScope VFXRender_BeginAppearance(VFXRenderPass pass,
                                          VFXResolvedAppearance *outResolved)
 {
   VFXResolvedAppearance resolved = VFXAppearance_Resolve(appearanceId, legacy);
-  if (outResolved != NULL) *outResolved = resolved;
+  if (outResolved != NULL)
+    *outResolved = resolved;
   if (!VFXRender_AppearanceDrawsPass(resolved, pass))
     return (VFXRenderScope){0};
-  /* THE APPEARANCE'S OWN SURFACE GOVERNS BOTH PASSES (20/08/2026).
-   *
-   * This used to force EMISSION to VFX_SURFACE_ADDITIVE for every named
-   * appearance, on the reasoning that a second semantic draw must ADD light
-   * rather than composite the same geometry's coverage twice. That reasoning is
-   * real — SWEEP SLASH was migrated to premultiplied, measured, and REVERTED for
-   * exactly it: three passes sharing one edge stopped summing and started
-   * occluding each other, and its footprint over threshold halved.
-   *
-   * But the predicate was wrong. What decides is not "is this the emission
-   * pass"; it is "does this emission cover the SAME AREA the body already
-   * covered", and only the effect knows that. Applied as a blanket it was
-   * costing the one shipping caller that reaches this function. Measured on
-   * SHIELD SHELL, whose emission mask is deliberately sparse (rim band, contact,
-   * ripple — see glass_shell.fs), forcing removed:
-   *
-   *   white  darken 92.1 -> 95.5   structure 0.035 -> 0.105   body 0.26 -> 1.12
-   *   cool   darken 81.9 -> 85.6   structure 0.138 -> 0.168   chroma 0.179 -> 0.313
-   *   mid    darken 72.9 -> 77.0   structure 0.506 -> 0.615
-   *   warm   darken 87.4 -> 91.3   body 1.90 -> 2.31
-   *
-   * |d| rises or holds on every background INCLUDING dark; the only cost is
-   * structure on dark, -4%. FLAME VOLUME and TRAIL MAIN measured bit-identical
-   * across the change, which is what bounds the blast radius: this function has
-   * exactly one shipping caller (vc_shield_shell.inl) plus
-   * DrawRibbonStripAppearanceEx, which nothing calls.
-   *
-   * SO: AN APPEARANCE WHOSE EMISSION IS A SECOND FULL-COVERAGE COPY OF ITS BODY
-   * MUST NOT DECLARE A PREMULTIPLIED SURFACE. The framework no longer catches
-   * that for you, because the framework cannot see it. */
   VFXSurfaceMode passSurface = resolved.surface;
   return VFXRender_BeginDraw(pass, passSurface, depthWrite);
 }
 
 void VFXRender_EndDraw(VFXRenderScope *scope)
 {
-  if (scope == NULL || !scope->active) return;
+  if (scope == NULL || !scope->active)
+    return;
   rlDrawRenderBatchActive();
   EndBlendMode();
-  /* The shared VFX default is read-only depth. Every direct scope restores
-   * the engine default (writes enabled), regardless of its requested mode. */
   rlEnableDepthMask();
   rlDrawRenderBatchActive();
   VFXRender_EndPass();
   scope->active = false;
 }
-// PERF (2026-07-22): frames since anything last called SceneTargets_BindDepthForSoftParticles.
-// The snapshot below is a FULL-SCREEN pass, and it is also the only thing that ever samples
-// renderTex.depth — which under rlvk's Caps.noSampledDepth quirk (MoltenVK/Intel) is served by a
-// twin the backend refills at every scope close of this render target. With no soft particles on
-// screen both are pure waste. The keep-alive window is generous (soft particles read the PREVIOUS
-// frame's depth by design, and effects start abruptly), so a skill that begins using them finds
-// the snapshot already running.
-#define SOFT_DEPTH_KEEPALIVE_FRAMES 20
-static int s_softDepthIdleFrames = SOFT_DEPTH_KEEPALIVE_FRAMES + 1; // start idle: nothing has asked yet
 
-/* WINDOW -> SCENE TARGET. GetWorldToScreen() answers in window pixels (the
- * swapchain the player sees); the depth buffer lives in the scene target, which
- * the adaptive render scale makes smaller. Same aspect, so a per-axis scale is
- * exact to within the target's rounding. At scale 1.0 this is the identity. */
+#define SOFT_DEPTH_KEEPALIVE_FRAMES 20
+static int s_softDepthIdleFrames = SOFT_DEPTH_KEEPALIVE_FRAMES + 1;
+
 Rectangle SceneTargets_WindowRectToTarget(Rectangle windowRect)
 {
   const float sx = (GetScreenWidth() > 0 && s_targetWidth > 0)
-                       ? (float)s_targetWidth / (float)GetScreenWidth() : 1.0f;
+                       ? (float)s_targetWidth / (float)GetScreenWidth()
+                       : 1.0f;
   const float sy = (GetScreenHeight() > 0 && s_targetHeight > 0)
-                       ? (float)s_targetHeight / (float)GetScreenHeight() : 1.0f;
+                       ? (float)s_targetHeight / (float)GetScreenHeight()
+                       : 1.0f;
   return (Rectangle){windowRect.x * sx, windowRect.y * sy,
                      windowRect.width * sx, windowRect.height * sy};
 }
@@ -722,26 +535,20 @@ void SceneTargets_RequestSoftDepthRegion(Rectangle screenRegion)
   const float maxH = (float)renderTex.texture.height;
   if (screenRegion.width <= 0.0f || screenRegion.height <= 0.0f || maxW <= 0.0f || maxH <= 0.0f)
     return;
-  /* `screenRegion` is in SCENE-TARGET pixels — the space of the depth buffer this
-   * captures from, and the space SceneTargets_RequestSceneSnapshot() arms a
-   * full-frame region in. A caller that built its rectangle from GetWorldToScreen()
-   * has WINDOW pixels instead and must pass it through
-   * SceneTargets_WindowRectToTarget() first; while the scene target was the window
-   * the two spaces were identical, so that step was easy to omit and impossible to
-   * notice. Do not convert here: doing so silently shrinks the internal
-   * full-target request to `scale` of the target and leaves the rest of the depth
-   * map stale (caught by WUXING_SOFTDEPTH_DEBUG on the FLOW SHIELD fixture:
-   * the snapshot's 1088x612 request came back as 924.8x520.2 at scale 0.85). */
   const float margin = 48.0f;
   float x0 = fmaxf(0.0f, screenRegion.x - margin);
   float y0 = fmaxf(0.0f, screenRegion.y - margin);
   float x1 = fminf(maxW, screenRegion.x + screenRegion.width + margin);
   float y1 = fminf(maxH, screenRegion.y + screenRegion.height + margin);
-  if (x1 <= x0 || y1 <= y0) return;
-  if (!s_softDepthRegionValid) {
+  if (x1 <= x0 || y1 <= y0)
+    return;
+  if (!s_softDepthRegionValid)
+  {
     s_softDepthRegion = (Rectangle){x0, y0, x1 - x0, y1 - y0};
     s_softDepthRegionValid = true;
-  } else {
+  }
+  else
+  {
     float oldX1 = s_softDepthRegion.x + s_softDepthRegion.width;
     float oldY1 = s_softDepthRegion.y + s_softDepthRegion.height;
     s_softDepthRegion.x = fminf(s_softDepthRegion.x, x0);
@@ -754,36 +561,17 @@ void SceneTargets_RequestSoftDepthRegion(Rectangle screenRegion)
 void SceneTargets_RequestSceneSnapshot(void)
 {
   s_sceneSnapshotRequested = true;
-  /* The refraction consumer (glass shield) also reads the prev-frame linear
-   * depth for the contact term, but SnapshotDepth only fills prevDepthTex
-   * while a full-screen soft-depth region is armed and the keep-alive is not
-   * idle. Arm both here so the depth stays fresh for as long as a refractive
-   * effect is alive — otherwise the shield samples stale or empty depth. */
   if (renderTex.texture.width > 0 && renderTex.texture.height > 0)
     SceneTargets_RequestSoftDepthRegion(
         (Rectangle){0, 0, (float)renderTex.texture.width,
                     (float)renderTex.texture.height});
-  if (s_softDepthIdleFrames > 0) s_softDepthIdleFrames = 0;
+  if (s_softDepthIdleFrames > 0)
+    s_softDepthIdleFrames = 0;
 }
 
-/* Colour-only target in the scene's own format: an exact-copy destination for
- * the refraction tap. No depth attachment — the copy is a pure blit. */
 static RenderTexture2D LoadSceneSnapshotTarget(int width, int height, int format)
 {
-  RenderTexture2D target = {0};
-  target.id = rlLoadFramebuffer();
-  if (target.id == 0) return target;
-  rlEnableFramebuffer(target.id);
-  target.texture.id = rlLoadTexture(NULL, width, height, format, 1);
-  target.texture.width = width;
-  target.texture.height = height;
-  target.texture.format = format;
-  target.texture.mipmaps = 1;
-  rlFramebufferAttach(target.id, target.texture.id, RL_ATTACHMENT_COLOR_CHANNEL0,
-                      RL_ATTACHMENT_TEXTURE2D, 0);
-  if (!rlFramebufferComplete(target.id))
-    TraceLog(LOG_WARNING, "SceneTargets: scene-snapshot target incomplete");
-  rlDisableFramebuffer();
+  RenderTexture2D target = LoadColorOnlyTarget(width, height, format);
   SetTextureFilter(target.texture, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(target.texture, TEXTURE_WRAP_CLAMP);
   return target;
@@ -791,9 +579,11 @@ static RenderTexture2D LoadSceneSnapshotTarget(int width, int height, int format
 
 void SceneTargets_SnapshotScene(void)
 {
-  if (!s_sceneSnapshotRequested) return;
+  if (!s_sceneSnapshotRequested)
+    return;
   s_sceneSnapshotRequested = false;
-  if (renderTex.id == 0 || renderTex.texture.id == 0) return;
+  if (renderTex.id == 0 || renderTex.texture.id == 0)
+    return;
 
   const int w = renderTex.texture.width;
   const int h = renderTex.texture.height;
@@ -801,19 +591,14 @@ void SceneTargets_SnapshotScene(void)
       s_sceneSnapshot.texture.height != h ||
       s_sceneSnapshot.texture.format != renderTex.texture.format)
   {
-    if (s_sceneSnapshot.id) UnloadRenderTexture(s_sceneSnapshot);
+    if (s_sceneSnapshot.id)
+      UnloadRenderTexture(s_sceneSnapshot);
     s_sceneSnapshot = LoadSceneSnapshotTarget(w, h, renderTex.texture.format);
   }
-  if (s_sceneSnapshot.id == 0) return;
+  if (s_sceneSnapshot.id == 0)
+    return;
 
-  /* 2D-time copy (main.c calls this after MyEndMode3D, before the screen-space
-   * composite). It must NOT run inside a 3D pass: EndTextureMode() resets the
-   * projection/modelview to screen ortho, corrupting every later draw in the
-   * pass (engine landmine #15 — the glass shield once vanished entirely). */
   BeginTextureMode(s_sceneSnapshot);
-  /* An exact copy: blending would fold the scene's own alpha into it, and the
-   * negative source height is this file's RT->RT convention, which leaves
-   * storage orientation identical to the source (gl_FragCoord UVs line up). */
   rlDisableColorBlend();
   DrawTextureRec(renderTex.texture,
                  (Rectangle){0, 0, (float)w, -(float)h}, (Vector2){0, 0}, WHITE);
@@ -824,105 +609,114 @@ void SceneTargets_SnapshotScene(void)
 
 Texture2D SceneTargets_GetSceneSnapshotTexture(void) { return s_sceneSnapshot.texture; }
 
-/* CAPTURE THE BACKGROUND, mid-3D-pass, WITHOUT disturbing the camera.
- *
- * Called from the frame loop after the world is drawn and BEFORE any VFX, so
- * what lands here is what an effect is standing in front of — not the effect.
- * Sampling a finished frame instead would feed an effect its own light, and it
- * would dim itself, brighten because it dimmed, and oscillate.
- *
- * NO BeginTextureMode, and NO MATRIX TOUCHING EITHER — both were tried.
- *
- * BeginTextureMode is out because raylib's EndTextureMode hard-resets projection
- * and modelview without restoring the caller's, which would corrupt the camera
- * for every VFX draw after this point (engine landmine #15 — it has cost this
- * project a vanished shield once already).
- *
- * Pushing and popping the matrices by hand around an identity-space quad is ALSO
- * out, and that one had to be bisected to believe: it changes the rendered frame
- * even with the draw removed entirely and the pops in the correct reverse order.
- * rlgl keeps one matrix stack across modes and defers application to the batch,
- * so the round-trip is not the no-op it reads as.
- *
- * What works is leaving the matrices alone completely: bg_luma.vs ignores `mvp`
- * and takes vertices already in clip space. The FBO is switched with
- * rlEnableFramebuffer, exactly as SceneTargets_BeginVFXBody does. */
+/* [TỐI ƯU HÓA NGẮT RENDERPASS]: Chỉ chụp s_bgLuma khi có hệ thống yêu cầu
+ * (VFX gọi GetBackgroundLuma, AutoExposure gọi GetExposureTexture, frame đầu
+ * tiên sau khi khởi tạo/resize, hoặc frame đang chạy RenderTargetProbe).
+ * Khi không có VFX nào cần, tránh đóng/mở lại renderTex giữa chừng! */
 void SceneTargets_CaptureBackgroundLuma(void)
 {
-    if (s_bgLuma.id == 0 || s_bgLumaShader.id == 0) return;
-    const int lw = s_bgLuma.texture.width, lh = s_bgLuma.texture.height;
-    const int sw = renderTex.texture.width, sh = renderTex.texture.height;
-    if (lw <= 0 || sw <= 0) return;
+  if (s_bgLuma.id == 0 || s_bgLumaShader.id == 0)
+    return;
+  const int lw = s_bgLuma.texture.width, lh = s_bgLuma.texture.height;
+  const int sw = renderTex.texture.width, sh = renderTex.texture.height;
+  if (lw <= 0 || sw <= 0)
+    return;
 
-    /* BeginTextureMode, because under rlvk nothing else renders into a target:
-       an rlEnableFramebuffer into a framebuffer whose scope the backend has not
-       opened draws NOTHING, silently — measured, the target came back all zeros.
-       The price is that EndTextureMode resets projection and modelview, so the
-       CALLER has to re-establish the camera afterwards; main.c brackets this
-       call with MyEndMode3D / MyBeginMode3D for exactly that reason. */
-    BeginTextureMode(s_bgLuma);
-    BeginShaderMode(s_bgLumaShader);
-    if (s_bgLumaTexelLoc >= 0) {
-        float texel[2] = {1.0f / (float)sw, 1.0f / (float)sh};
-        SetShaderValue(s_bgLumaShader, s_bgLumaTexelLoc, texel, SHADER_UNIFORM_VEC2);
+  const bool probeActive = RenderTargetProbe_MatchesFrame(s_probeFrame);
+  if (s_bgLumaValid && !probeActive)
+  {
+    if (s_bgLumaIdleFrames > BG_LUMA_KEEPALIVE_FRAMES)
+    {
+      // Đảm bảo framebuffer và viewport vẫn trỏ về renderTex cho phần còn lại của frame
+      rlEnableFramebuffer(renderTex.id);
+      rlViewport(0, 0, sw, sh);
+      return;
     }
-    rlDisableColorBlend();
-    DrawTexturePro(renderTex.texture,
-                   (Rectangle){0, 0, (float)sw, -(float)sh},
-                   (Rectangle){0, 0, (float)lw, (float)lh},
-                   (Vector2){0, 0}, 0.0f, WHITE);
-    rlDrawRenderBatchActive();      /* flush INSIDE the disabled-blend window */
-    rlEnableColorBlend();
-    EndShaderMode();
-    EndTextureMode();
+    s_bgLumaIdleFrames++;
+    // Khi đang active (nhưng không phải frame probe), cập nhật cách nhịp 2 frame/lần
+    s_bgLumaThrottle = (s_bgLumaThrottle + 1) & 1;
+    if (s_bgLumaThrottle != 0)
+    {
+      rlEnableFramebuffer(renderTex.id);
+      rlViewport(0, 0, sw, sh);
+      return;
+    }
+  }
 
-    /* EndTextureMode returns to the DEFAULT framebuffer, not to the scene. */
-    rlEnableFramebuffer(renderTex.id);
-    rlViewport(0, 0, sw, sh);
-    s_bgLumaValid = true;
+  BeginTextureMode(s_bgLuma);
+  BeginShaderMode(s_bgLumaShader);
+  if (s_bgLumaTexelLoc >= 0)
+  {
+    float texel[2] = {1.0f / (float)sw, 1.0f / (float)sh};
+    SetShaderValue(s_bgLumaShader, s_bgLumaTexelLoc, texel, SHADER_UNIFORM_VEC2);
+  }
+  rlDisableColorBlend();
+  DrawTexturePro(renderTex.texture,
+                 (Rectangle){0, 0, (float)sw, -(float)sh},
+                 (Rectangle){0, 0, (float)lw, (float)lh},
+                 (Vector2){0, 0}, 0.0f, WHITE);
+  rlDrawRenderBatchActive();
+  rlEnableColorBlend();
+  EndShaderMode();
+  EndTextureMode();
+
+  rlEnableFramebuffer(renderTex.id);
+  rlViewport(0, 0, sw, sh);
+  s_bgLumaValid = true;
 }
 
 Texture2D SceneTargets_GetBackgroundLuma(void)
 {
-    return s_bgLumaValid ? s_bgLuma.texture : (Texture2D){0};
+  s_bgLumaIdleFrames = 0;
+  return s_bgLumaValid ? s_bgLuma.texture : (Texture2D){0};
 }
 
-/* Advance the exposure. Call once per frame at 2D TIME — after SceneTargets_End
- * and before PostFX_Draw — so BeginTextureMode is legal here. Cheap: one
- * fragment, and the result never touches the CPU. */
 void SceneTargets_UpdateExposure(float dt, float targetGrey, float minExposure,
                                  float speedDown, float speedUp)
 {
-    if (s_exposureShader.id == 0 || !s_bgLumaValid) return;
-    const int dst = 1 - s_exposureCur;
+  if (s_exposureShader.id == 0 || !s_bgLumaValid)
+    return;
 
-    BeginTextureMode(s_exposure[dst]);
-    BeginShaderMode(s_exposureShader);
-    float sz[2] = {(float)s_bgLuma.texture.width, (float)s_bgLuma.texture.height};
-    if (s_expLocLuma >= 0) SetShaderValueTexture(s_exposureShader, s_expLocLuma, s_bgLuma.texture);
-    if (s_expLocSize >= 0) SetShaderValue(s_exposureShader, s_expLocSize, sz, SHADER_UNIFORM_VEC2);
-    if (s_expLocDt   >= 0) SetShaderValue(s_exposureShader, s_expLocDt, &dt, SHADER_UNIFORM_FLOAT);
-    if (s_expLocGrey >= 0) SetShaderValue(s_exposureShader, s_expLocGrey, &targetGrey, SHADER_UNIFORM_FLOAT);
-    if (s_expLocMin  >= 0) SetShaderValue(s_exposureShader, s_expLocMin, &minExposure, SHADER_UNIFORM_FLOAT);
-    if (s_expLocDown >= 0) SetShaderValue(s_exposureShader, s_expLocDown, &speedDown, SHADER_UNIFORM_FLOAT);
-    if (s_expLocUp   >= 0) SetShaderValue(s_exposureShader, s_expLocUp, &speedUp, SHADER_UNIFORM_FLOAT);
-    rlDisableColorBlend();
-    /* texture0 is the PREVIOUS exposure — the shader reads its own history. */
-    DrawTexturePro(s_exposure[s_exposureCur].texture,
-                   (Rectangle){0, 0, 1, -1}, (Rectangle){0, 0, 1, 1},
-                   (Vector2){0, 0}, 0.0f, WHITE);
-    rlDrawRenderBatchActive();
-    rlEnableColorBlend();
-    EndShaderMode();
-    EndTextureMode();
+  const bool probeActive = RenderTargetProbe_MatchesFrame(s_probeFrame - 1);
+  if (s_exposureReady && !probeActive && s_bgLumaIdleFrames > BG_LUMA_KEEPALIVE_FRAMES)
+    return;
 
-    s_exposureCur = dst;
-    s_exposureReady = true;
+  const int dst = 1 - s_exposureCur;
+
+  BeginTextureMode(s_exposure[dst]);
+  BeginShaderMode(s_exposureShader);
+  float sz[2] = {(float)s_bgLuma.texture.width, (float)s_bgLuma.texture.height};
+  if (s_expLocLuma >= 0)
+    SetShaderValueTexture(s_exposureShader, s_expLocLuma, s_bgLuma.texture);
+  if (s_expLocSize >= 0)
+    SetShaderValue(s_exposureShader, s_expLocSize, sz, SHADER_UNIFORM_VEC2);
+  if (s_expLocDt >= 0)
+    SetShaderValue(s_exposureShader, s_expLocDt, &dt, SHADER_UNIFORM_FLOAT);
+  if (s_expLocGrey >= 0)
+    SetShaderValue(s_exposureShader, s_expLocGrey, &targetGrey, SHADER_UNIFORM_FLOAT);
+  if (s_expLocMin >= 0)
+    SetShaderValue(s_exposureShader, s_expLocMin, &minExposure, SHADER_UNIFORM_FLOAT);
+  if (s_expLocDown >= 0)
+    SetShaderValue(s_exposureShader, s_expLocDown, &speedDown, SHADER_UNIFORM_FLOAT);
+  if (s_expLocUp >= 0)
+    SetShaderValue(s_exposureShader, s_expLocUp, &speedUp, SHADER_UNIFORM_FLOAT);
+  rlDisableColorBlend();
+  DrawTexturePro(s_exposure[s_exposureCur].texture,
+                 (Rectangle){0, 0, 1, -1}, (Rectangle){0, 0, 1, 1},
+                 (Vector2){0, 0}, 0.0f, WHITE);
+  rlDrawRenderBatchActive();
+  rlEnableColorBlend();
+  EndShaderMode();
+  EndTextureMode();
+
+  s_exposureCur = dst;
+  s_exposureReady = true;
 }
 
 Texture2D SceneTargets_GetExposureTexture(void)
 {
-    return s_exposureReady ? s_exposure[s_exposureCur].texture : (Texture2D){0};
+  s_bgLumaIdleFrames = 0;
+  return s_exposureReady ? s_exposure[s_exposureCur].texture : (Texture2D){0};
 }
 
 void SceneTargets_SnapshotDepth(void)
@@ -930,28 +724,13 @@ void SceneTargets_SnapshotDepth(void)
   if (!s_depthTextureActive)
     return;
   if (s_softDepthIdleFrames > SOFT_DEPTH_KEEPALIVE_FRAMES)
-    return;             // nobody has wanted soft-particle depth for a while: skip the whole pass
+    return;
   if (!s_softDepthRegionValid)
     return;
   s_softDepthIdleFrames++;
-  // [TỐI ƯU HÓA]: Lược bỏ hoàn toàn khối lệnh SetShaderValue(u_near, u_far) ở đây
-  // vì đã được gán chết trên GPU ở hàm _Init, giảm API Draw Call.
+
   BeginTextureMode(prevDepthTex);
   BeginShaderMode(depthCopyShader);
-  // THE DESTINATION Y IS THE MIRROR OF THE SOURCE Y, not a copy of it. A negative
-  // source height makes DrawTexturePro sample the block bottom-to-top, which is what
-  // turns FBO storage order back into screen order — but it mirrors WITHIN THE BLOCK,
-  // so the block also has to be placed at its mirrored position for the composition to
-  // be the plain identity the sampler assumes. Writing `region.y / D` is only correct
-  // when the region is the whole frame (y = 0, h = H), which is the one case this was
-  // ever exercised in, so the bug hid: a full-screen region is its own mirror.
-  //
-  // With a partial region the depth landed `H - 2y - h` screen rows away from where it
-  // was read. Every consumer then compared its fragment against the wrong row of the
-  // floor, and because the floor's depth changes fastest exactly where a shell meets it,
-  // the error was largest where the contact term matters most: the ShieldShell's ground
-  // line measured a 0.35-1.5 m gap at the pixel where the depth TEST had already cut the
-  // geometry away, so no contact band could ever be drawn there.
   const float regionBottom = s_softDepthRegion.y + s_softDepthRegion.height;
   const float mirroredY = (float)renderTex.texture.height - regionBottom;
   Rectangle source = {s_softDepthRegion.x, s_softDepthRegion.y,
@@ -960,7 +739,10 @@ void SceneTargets_SnapshotDepth(void)
                            mirroredY / SOFT_DEPTH_DOWNSCALE,
                            s_softDepthRegion.width / SOFT_DEPTH_DOWNSCALE,
                            s_softDepthRegion.height / SOFT_DEPTH_DOWNSCALE};
+  rlDisableColorBlend();
   DrawTexturePro(renderTex.depth, source, destination, (Vector2){0, 0}, 0.0f, WHITE);
+  rlDrawRenderBatchActive();
+  rlEnableColorBlend();
   EndShaderMode();
   EndTextureMode();
 }
@@ -969,7 +751,8 @@ Texture2D SceneTargets_GetDepthTexture(void) { return prevDepthTex.texture; }
 Texture2D SceneTargets_GetSceneTexture(void) { return renderTex.texture; }
 bool SceneTargets_PrepareRawDepth(void)
 {
-  if (!s_depthTextureActive) return false;
+  if (!s_depthTextureActive)
+    return false;
 #if defined(GRAPHICS_API_VULKAN)
   if (s_depthSampleOnDemand)
     return rlvkRefreshFramebufferDepthTexture(renderTex.id);
@@ -982,7 +765,7 @@ void SceneTargets_BindDepthForSoftParticles(Shader shader, int textureSlot)
 {
   if (!s_depthTextureActive)
     return;
-  s_softDepthIdleFrames = 0; // re-arm the snapshot (and rlvk's depth-twin refill) for the next frames
+  s_softDepthIdleFrames = 0;
   if (shader.id == 0 || shader.locs == NULL)
     return;
 
@@ -997,9 +780,6 @@ void SceneTargets_BindDepthForSoftParticles(Shader shader, int textureSlot)
     rlEnableTexture(prevDepthTex.texture.id);
   }
 
-  // [TỐI ƯU HÓA]: Lược bỏ SetShaderValue(u_near, u_far) mỗi frame ở đây
-  // vì GetSoftParticleLocs đã lo việc gán dữ liệu 1 lần vào cache.
-  // Chỉ cập nhật resolution (nếu màn hình resize)
   if (locs->resLoc >= 0)
   {
     Vector2 res = {(float)renderTex.texture.width, (float)renderTex.texture.height};
