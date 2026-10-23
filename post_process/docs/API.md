@@ -21,6 +21,8 @@ Documents the **Post-Processing** module (`post_process/post_fx.h` and `post_pro
 | `ColorGradeLut_Texture()` | `post_process/color_grade_lut.h` | Returns the active 2D strip texture for shader binding. |
 | `SceneTargets_GetWidth()` / `GetHeight()` | `post_process/scene_targets.h` | Size actually in use by the scene chain — the render scale may make it smaller than the window. Anything drawing **into** the scene target must use these. |
 | `SceneTargets_BeginWorldRefraction()` / `EndWorldRefraction()` | `post_process/scene_targets.h` | Brackets the 3D refraction layer (shield / metaball 3D) that runs after `SceneTargets_End`: scene FBO with the **target** viewport, then the window viewport back for the 2D composite layer. |
+| `SceneTargets_RequestSoftDepthRegion(rect)` | `post_process/scene_targets.h` | Arms the part of the depth buffer soft particles need this frame. `rect` is in **scene-target** pixels; build it from a world position via `SceneTargets_WindowRectToTarget()` (`GetWorldToScreen` output is window pixels). |
+| `SceneTargets_WindowRectToTarget(rect)` | `post_process/scene_targets.h` | Converts a window-space rectangle to scene-target pixels (identity at scale 1.0). |
 | `SceneTargets_Resize(w, h)` | `post_process/scene_targets.h` | Rebuilds the size-dependent scene buffers for a new render scale. Textures only: no shader reload. |
 | `PostFX_GetWidth()` / `GetHeight()` | `post_process/post_fx.h` | Size of the post chain (main HDR copy / bloom / LDR AA source), equal to the scene size. |
 | `PostFX_Resize(w, h)` | `post_process/post_fx.h` | Rebuilds the post-chain targets; shaders, LUT and uniform locations survive. |

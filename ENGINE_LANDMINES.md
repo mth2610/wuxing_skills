@@ -1914,6 +1914,11 @@ and index binding 1; compute rebinds its own field buffer at binding 1.
   correction to the 3D block rather than to the shared bind helper
   (`post_process/docs/LANDMINES.md` #14; measured: flow shield centroid (754,334)→(641,392) and
   diameter 186→158 px at 0.85, 1.0 byte-identical).
+- The same window-vs-target confusion applies to **screen rectangles** handed to target-space APIs:
+  a `GetWorldToScreen` result is window pixels, and at 0.85 it is 1/scale too large and displaced
+  (a depth-region request 176 px off for an effect at x = 1100). Convert at the call site, not
+  inside the API — the target-space callers would be double-scaled
+  (`post_process/docs/LANDMINES.md` #15).
 
 ## Isolated subsystem cost is not the frame's marginal cost (22/10/2026)
 

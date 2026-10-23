@@ -155,17 +155,25 @@ Debugging lessons learned in post-processing. Format: **Symptom → Cause → Ru
 
 ---
 
-### 15. A screen rectangle from `GetWorldToScreen` is in WINDOW pixels, not target pixels
-- **Symptom:** none visible on a flat fixture; latent. Effects that arm a depth capture from a
-  world position could sample a depth strip that missed them once the render scale shipped.
-- **Cause:** `SceneTargets_RequestSoftDepthRegion` clamps against `renderTex.texture.width/height`
-  (scene-target pixels) and its callers hand it rectangles built from `GetWorldToScreen` (window
-  pixels). Equal only while the target was the window; at 0.85 the requested strip was `1/0.85`
-  too large and shifted down-right, so a shield or particle near the frame edge could fall
-  outside the captured depth and read a stale frame.
-- **Rule:** convert **inside** `SceneTargets_RequestSoftDepthRegion` (`maxW / GetScreenWidth()`)
-  so every caller — full-screen or world-derived — keeps passing window pixels, and say the unit
-  in the header. Full-screen callers (fog, 3D metaball, GPU particles) still map to the whole
-  target, which is why the conversion is a no-op for them; the FLOW SHIELD fixture at 0.85 was
-  byte-identical before/after, so do not expect a picture change — this is correctness, not a fix
-  you can see.
+### 15. A rectangle from `GetWorldToScreen` is WINDOW pixels; the depth capture is TARGET pixels
+- **Symptom:** none visible on the flat fixtures — latent. Anything armed from a world position
+  (`SceneTargets_RequestSoftDepthRegion`) asked for a depth strip `1/scale` too large and shifted by
+  `(1/scale - 1) x position`, so at 0.85 an effect at x = 1100 was 176 px off and one near the edge
+  fell outside the strip entirely. The soft-particle fade or the shield contact term then compared
+  its fragment against a stale depth row.
+- **Cause:** the region is used verbatim against `renderTex.depth` (target pixels), while its callers
+  build the rectangle from `GetWorldToScreen` (window pixels). Identical only while the scene target
+  was the window.
+- **Rule:** `SceneTargets_RequestSoftDepthRegion` takes **target** pixels; anything derived from a
+  world position goes through `SceneTargets_WindowRectToTarget()` first (identity at scale 1.0). It
+  was converted **inside** the function first — that is wrong, and the probe below is what caught
+  it: `SceneTargets_RequestSceneSnapshot()` already arms `(0,0,W,H)` in target pixels, and the
+  internal conversion shrank that full-frame request to `924.8x520.2` at 0.85, leaving the right
+  and bottom of the depth map stale. Full-frame callers that pass `GetScreenWidth/Height` stay
+  correct either way because the region is clamped to the target.
+- **Measured** (`WUXING_SOFTDEPTH_DEBUG=1`, SMOKE PUFF fixture, 0.85, 1088x612 target from a
+  1280x720 window): request `(517.5, 293.6) 189.4x176.2` target px; the plume's actual target-space
+  footprint, masked against the background plate, is `(538, 315)-(660, 408)` — fully inside. The
+  unconverted request would have been `(608.8, 345.4) 222.8x207.3`, missing the plume's left 23 px
+  and arming ~170 px of empty ground to its right. The fixture capture is byte-identical before and
+  after (flat depth), so this is correctness, not a picture change — do not expect a diff.

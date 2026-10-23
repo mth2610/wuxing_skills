@@ -701,6 +701,20 @@ void VFXRender_EndDraw(VFXRenderScope *scope)
 #define SOFT_DEPTH_KEEPALIVE_FRAMES 20
 static int s_softDepthIdleFrames = SOFT_DEPTH_KEEPALIVE_FRAMES + 1; // start idle: nothing has asked yet
 
+/* WINDOW -> SCENE TARGET. GetWorldToScreen() answers in window pixels (the
+ * swapchain the player sees); the depth buffer lives in the scene target, which
+ * the adaptive render scale makes smaller. Same aspect, so a per-axis scale is
+ * exact to within the target's rounding. At scale 1.0 this is the identity. */
+Rectangle SceneTargets_WindowRectToTarget(Rectangle windowRect)
+{
+  const float sx = (GetScreenWidth() > 0 && s_targetWidth > 0)
+                       ? (float)s_targetWidth / (float)GetScreenWidth() : 1.0f;
+  const float sy = (GetScreenHeight() > 0 && s_targetHeight > 0)
+                       ? (float)s_targetHeight / (float)GetScreenHeight() : 1.0f;
+  return (Rectangle){windowRect.x * sx, windowRect.y * sy,
+                     windowRect.width * sx, windowRect.height * sy};
+}
+
 void SceneTargets_RequestSoftDepthRegion(Rectangle screenRegion)
 {
   s_softDepthIdleFrames = 0;
@@ -708,24 +722,21 @@ void SceneTargets_RequestSoftDepthRegion(Rectangle screenRegion)
   const float maxH = (float)renderTex.texture.height;
   if (screenRegion.width <= 0.0f || screenRegion.height <= 0.0f || maxW <= 0.0f || maxH <= 0.0f)
     return;
-  /* CALLERS HAND IN WINDOW PIXELS; THE CAPTURE BELOW WRITES INTO THE SCENE TARGET.
-   * The rectangle is built from GetWorldToScreen() (window space), and while the
-   * scene target was the window the two spaces were the same. At a render scale
-   * of 0.85 the target is 1088x612, so a window-space region landed 1/0.85 too
-   * large and shifted down-right — the captured depth strip could miss the
-   * effect it was armed for, and the contact term then read a stale depth.
-   * Convert here, once, rather than at six call sites (full-screen callers — the
-   * fog, the 3D metaball, the GPU particle backend — still map to the full
-   * target, so this is a no-op for them). */
-  const float toTargetX = (GetScreenWidth() > 0) ? maxW / (float)GetScreenWidth() : 1.0f;
-  const float toTargetY = (GetScreenHeight() > 0) ? maxH / (float)GetScreenHeight() : 1.0f;
-  const Rectangle region = { screenRegion.x * toTargetX, screenRegion.y * toTargetY,
-                             screenRegion.width * toTargetX, screenRegion.height * toTargetY };
+  /* `screenRegion` is in SCENE-TARGET pixels — the space of the depth buffer this
+   * captures from, and the space SceneTargets_RequestSceneSnapshot() arms a
+   * full-frame region in. A caller that built its rectangle from GetWorldToScreen()
+   * has WINDOW pixels instead and must pass it through
+   * SceneTargets_WindowRectToTarget() first; while the scene target was the window
+   * the two spaces were identical, so that step was easy to omit and impossible to
+   * notice. Do not convert here: doing so silently shrinks the internal
+   * full-target request to `scale` of the target and leaves the rest of the depth
+   * map stale (caught by WUXING_SOFTDEPTH_DEBUG on the FLOW SHIELD fixture:
+   * the snapshot's 1088x612 request came back as 924.8x520.2 at scale 0.85). */
   const float margin = 48.0f;
-  float x0 = fmaxf(0.0f, region.x - margin);
-  float y0 = fmaxf(0.0f, region.y - margin);
-  float x1 = fminf(maxW, region.x + region.width + margin);
-  float y1 = fminf(maxH, region.y + region.height + margin);
+  float x0 = fmaxf(0.0f, screenRegion.x - margin);
+  float y0 = fmaxf(0.0f, screenRegion.y - margin);
+  float x1 = fminf(maxW, screenRegion.x + screenRegion.width + margin);
+  float y1 = fminf(maxH, screenRegion.y + screenRegion.height + margin);
   if (x1 <= x0 || y1 <= y0) return;
   if (!s_softDepthRegionValid) {
     s_softDepthRegion = (Rectangle){x0, y0, x1 - x0, y1 - y0};

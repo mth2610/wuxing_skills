@@ -1490,8 +1490,13 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
           bounds.height = y1 - bounds.y;
         }
       }
+      /* bounds is built from GetWorldToScreen (window px); the snapshot it arms
+         writes into the scene target, smaller than the window under a render
+         scale. Without this the region was 1/scale too large and shifted, so a
+         soft particle near the frame edge could read a stale depth row. */
       if (hasBounds)
-        SceneTargets_RequestSoftDepthRegion(bounds);
+        SceneTargets_RequestSoftDepthRegion(
+            SceneTargets_WindowRectToTarget(bounds));
     }
 
     // Sắp xếp các hạt từ xa đến gần (Back-to-Front Depth Sorting)

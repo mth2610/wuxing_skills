@@ -408,5 +408,8 @@ static void VC_FlowShield_Draw3D(Camera3D cam)
             bounds.width = x1 - bounds.x; bounds.height = y1 - bounds.y;
         }
     }
-    if (hasBounds) SceneTargets_RequestSoftDepthRegion(bounds);
+    /* bounds is GetWorldToScreen output (window px); the depth capture lives in
+       the scene target, which the render scale may make smaller. */
+    if (hasBounds) SceneTargets_RequestSoftDepthRegion(
+        SceneTargets_WindowRectToTarget(bounds));
 }

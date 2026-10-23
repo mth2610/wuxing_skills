@@ -112,12 +112,19 @@ void SceneTargets_EndWorldRefraction(void);
 // (frame vừa render xong) sang prevDepthTex để frame KẾ TIẾP particle sample
 // an toàn (không feedback loop).
 void SceneTargets_SnapshotDepth(void);
-/* Submit the full-resolution screen region required by soft particles this
- * frame. Multiple requests are unioned; the next snapshot copies only it.
- * The rectangle is in WINDOW pixels (GetWorldToScreen output); it is converted
- * to the scene target's pixel space internally, so a caller never has to know
- * the adaptive render scale. Pass a full-screen rectangle to mean "everywhere". */
+/* Submit the region of the DEPTH BUFFER required by soft particles this frame.
+ * Multiple requests are unioned; the next snapshot copies only it.
+ *
+ * The rectangle is in SCENE-TARGET pixels (the depth buffer's own space) — a
+ * full-screen request is (0,0,SceneTargets_GetWidth(),SceneTargets_GetHeight()).
+ * A rectangle built from GetWorldToScreen() is in WINDOW pixels and must go
+ * through SceneTargets_WindowRectToTarget() first; the two spaces are identical
+ * at scale 1.0, which is why omitting the conversion looked correct until the
+ * adaptive render scale existed. */
 void SceneTargets_RequestSoftDepthRegion(Rectangle screenRegion);
+
+/* GetWorldToScreen rectangle (window px) -> scene-target px. Identity at scale 1.0. */
+Rectangle SceneTargets_WindowRectToTarget(Rectangle windowRect);
 
 // Texture độ sâu của frame TRƯỚC (trễ 1 frame) — sample được. Giá trị đã
 // LINEARIZED (world-space distance), KHÔNG phải NDC [0..1] thô.
