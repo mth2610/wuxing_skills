@@ -255,8 +255,30 @@ int SceneTargets_GetSceneSamples(void) { return s_sceneSamples; }
 static int s_targetWidth = 0;  /* scene-target size in use (== render scale * display) */
 static int s_targetHeight = 0;
 
+/* Enter a freshly created target ONCE through BeginTextureMode and clear it.
+ *
+ * Two problems, one call. (a) Under rlvk a framebuffer that has never been
+ * entered through BeginTextureMode has no render-pass scope, and a later
+ * rlEnableFramebuffer into it draws nothing at all — silently. (b) A target that
+ * has never been written contains whatever the driver handed back; the first
+ * frame that composites it therefore shows that memory, which is how a resize
+ * became a WHITE FLASH on screen (uninitialised HDR reads as a blown-out frame).
+ * Clearing costs one full-screen write on the resize frame only. */
+static void SceneTargets_PrimeTarget(RenderTexture2D target)
+{
+  if (target.id == 0 || target.texture.id == 0)
+    return;
+  BeginTextureMode(target);
+  ClearBackground(BLACK);
+  EndTextureMode();
+}
+
 static void SceneTargets_DestroySizedTargets(void)
 {
+  /* Flush the batched draws first: destroying a texture the current batch (or
+   * the previous frame's submission) can still reference is how a rebuild turns
+   * into a one-frame garbage surface. */
+  rlDrawRenderBatchActive();
   if (renderTex.id > 0)
     UnloadRenderTexture(renderTex);
   renderTex = (RenderTexture2D){0};
@@ -375,16 +397,17 @@ static void SceneTargets_CreateSizedTargets(int width, int height)
     s_bgLuma = LoadRenderTextureWithDepthTexture(lw, lh, RL_PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
     SetTextureFilter(s_bgLuma.texture, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(s_bgLuma.texture, TEXTURE_WRAP_CLAMP);
-    /* Open the target's scope ONCE here. Under rlvk a framebuffer that has never
-       been entered through BeginTextureMode has no render-pass scope, and a
-       later rlEnableFramebuffer into it draws nothing at all — silently. That is
-       why renderTex can be re-entered mid-frame with rlEnableFramebuffer (the
-       refraction pass does exactly that) and this one could not. */
-    BeginTextureMode(s_bgLuma);
-    ClearBackground(BLACK);
-    EndTextureMode();
+    /* Prime it here (the reason is on SceneTargets_PrimeTarget): this target is
+       later re-entered with rlEnableFramebuffer by the luma capture, which only
+       works when a render-pass scope already exists. */
+    SceneTargets_PrimeTarget(s_bgLuma);
     TraceLog(LOG_INFO, "SceneTargets: background-luma target %dx%d", lw, lh);
   }
+
+  /* Same for the scene buffers: the FIRST frame after a resize composites these
+     before anything else has drawn into them. */
+  SceneTargets_PrimeTarget(renderTex);
+  SceneTargets_PrimeTarget(prevDepthTex);
 }
 
 void SceneTargets_Init(int width, int height)

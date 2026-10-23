@@ -1873,12 +1873,30 @@ and index binding 1; compute rebinds its own field buffer at binding 1.
 - **Rule:** when a frame is fill-bound, price **pixels**: render scale is the only lever that
   cuts every pass at once. Measured on `song_quao` (1280×720, HIGH, paired runs): 0.85 scale
   `16.83 → 13.78 ms` (−18 %, 3/3 pairs), 0.80 `−5.0 ms` against a 1.0 baseline in the same
-  session. Ship it as an adaptive ladder (`post_process/render_scale.*`, budget 15.0 ms) so the
-  full-resolution image is used whenever the scene can afford it. Two traps come with it:
+  session. Ship it as a **per-map constant rung** (`post_process/render_scale.*`): start at
+  0.85, ignore the first ~2 s, then move only for a sustained reason (≈2 s over 16 ms down, up to the
+  floor; ≈5 s under 10.5 ms up, one up-step per map). Three traps come with it:
   every pass that draws into the scene target must ask `SceneTargets_GetWidth/Height` instead
-  of the window size, and a scale step must rebuild textures only — never reload shaders, or
-  the hitch lands exactly when the frame is already late (`post_process/docs/LANDMINES.md`
-  #10–#12).
+  of the window size; a scale step must rebuild textures only — never reload shaders; and a
+  re-created target must be primed (entered through `BeginTextureMode` and cleared) before
+  anything samples it (`post_process/docs/LANDMINES.md` #10–#13).
+
+### A render-scale controller that tracks the budget oscillates, and each step flashes (23/10/2026)
+
+- **Symptom:** the reported frame rate jumped 60 → 40 → 30s → 60 while playing, and every so
+  often the screen showed one WHITE frame and went back to normal. Both appeared only after
+  adaptive render scale shipped.
+- **Cause:** two feedback loops, one resource. (a) The rung moved up and down by ~1.5 ms where
+  the frame sits next to the 16.67 ms refresh, so a step alone flipped the delivered rate
+  between one and two refreshes; the controller read that flip as load and stepped again. (b) A
+  step reallocates the scene + post chains and rebuilds six framebuffers — tens of milliseconds
+  of hitch, and the new targets had never been cleared or entered through `BeginTextureMode`, so
+  the first frame that composited them showed uninitialised memory (white).
+- **Rule:** treat resolution as a per-map constant, not a control loop. Move a rung only on a
+  *sustained* (multi-second) reason, never step up again after a down-step proved it wrong on
+  that map, and prime every re-created target (enter + clear) so a rebuild cannot present
+  garbage. Measured cost of the wrong version: repeated 60↔30 oscillation and a white flash per
+  step; the fixed rung holds 60 with no hitches after the map loads.
 
 ## Isolated subsystem cost is not the frame's marginal cost (22/10/2026)
 

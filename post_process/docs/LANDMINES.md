@@ -110,3 +110,18 @@ Debugging lessons learned in post-processing. Format: **Symptom → Cause → Ru
   cross-build diff at 1.0 was `mean_abs 0.68 / px>24 0.06 %` against a same-build floor of
   `0.48`, i.e. inside capture noise; a 0.85 capture differs at `mean_abs 3.6 / px>8 18 %`,
   which is the intended softness trade.
+
+---
+
+### 13. A re-created render target must be entered AND cleared before use
+- **Symptom:** after a render-scale change the screen showed one WHITE frame, then looked normal.
+- **Cause:** the rebuild created new framebuffers whose contents were uninitialised driver memory.
+  Nothing had written to them yet (the composite of that frame samples the scene target before a
+  full frame of shading has landed, and a post target is read by the bloom chain before its own
+  clear), so the first frame presented whatever the allocation returned — blown-out white.
+  Separately, an rlvk framebuffer that has never been entered through `BeginTextureMode` has no
+  render-pass scope, so an `rlEnableFramebuffer` into it silently draws nothing.
+- **Rule:** every target created by `SceneTargets_CreateSizedTargets` / `PostFX_CreateSizedTargets`
+  goes through `SceneTargets_PrimeTarget` / `PostFX_PrimeTarget` (enter via `BeginTextureMode`,
+  `ClearBackground(BLACK)`, exit), and the destroy path flushes with `rlDrawRenderBatchActive()`
+  first. Both are resize-frame-only costs. Do not "optimise" the clear away.

@@ -107,19 +107,30 @@ HIGH) the cost tracks the number of shaded pixels almost linearly, so the scene 
 `scale * display` and the post composite upscales to the swapchain with the blit that already
 existed for the Android native-size mismatch.
 
-- **Ladder:** `1.00, 0.95, 0.90, 0.85, 0.80` (floor adjustable with `WUXING_RENDER_SCALE_MIN`),
-  budget `15.0 ms` (`WUXING_RENDER_SCALE_BUDGET`), `WUXING_RENDER_SCALE` pins a fixed rung for A/B.
+**The rung is a per-map constant, not a per-second variable.** Every change reallocates the scene
+and post chains (~35 MB at 720p) and rebuilds six framebuffers: a hitch of tens of milliseconds,
+a window for the compositor to present a blank frame, and — because the frame sits next to the
+16.67 ms refresh — a 1.5 ms step can flip the delivered rate between one and two refreshes. A
+controller that tracks the budget therefore oscillates 60 → 30 fps and flashes the screen on each
+step. Both were observed in play.
+
+- **Ladder:** `1.00, 0.95, 0.90, 0.85, 0.80, 0.75`. Starts at **0.85** (the measured sweet spot,
+  and the rung most likely kept, so the common case never resizes at all).
+- **Settle:** the first ~2 s after a map/screen change are ignored — asset and effect ramp-in is
+  not the steady state (a calibration in that window claimed 11.6 ms where the steady state was
+  16.8 ms, and the controller then had to walk itself back down).
+- **Down:** one rung after ~2 s of sustained submit > 16.0 ms (up to 4 per map, enough to walk
+  to the floor). Never on a single hitch frame.
+- **Up:** one rung after ~5 s of sustained submit < 10.5 ms, **once per map**. If a down-step
+  follows within 15 s, the up-step is marked wrong and never retried on that map.
 - **Signal:** the *submit* time of the frame (top of the frame → just before `EndDrawing`),
   excluding the vsync wait. A delivered interval saturates at one refresh under
-  `SetTargetFPS(60)` and cannot distinguish a 9 ms frame from a 16.5 ms one; the interval is used
-  only to confirm a step did not break the target (it must stay at one refresh).
-- **Hysteresis:** one rung down per 20-frame window over budget (≥1 s apart); one rung up only
-  after four consecutive windows under `0.8 × budget`. Between the two thresholds it holds, which
-  is what stops the ladder from oscillating where the scene cost sits at the budget.
+  `SetTargetFPS(60)` and cannot distinguish a 9 ms frame from a 16.5 ms one, so it is not used.
 - **Measured** (song_quao, 1280x720, HIGH, paired full-frame runs): `1.00 → 16.83 ms`,
-  `0.85 → 13.78 ms` (median of 3 pairs, 3/3), `0.80 → 15.3 ms` in an earlier, hotter window.
-  Visual cost of 0.85: `mean_abs 3.6`, `px>8 18 %` against the frame — a bilinear-upscale
-  softness on grass detail, recovered in part by the luma sharpen that lives inside the FXAA pass
-  (see §3.3 of `post_process/docs/LANDMINES.md` #12).
+  `0.85 → 13.78 ms` (median of 3 pairs, 3/3). Visual cost of 0.85: `mean_abs 3.6`,
+  `px>8 18 %` against the frame — a bilinear-upscale softness on grass detail, partly recovered
+  by the luma sharpen inside the FXAA pass (`post_process/docs/LANDMINES.md` #12).
+- **Knobs:** `WUXING_RENDER_SCALE` pins a fixed rung for A/B; `WUXING_RENDER_SCALE_START` changes
+  the starting rung; `WUXING_RENDER_SCALE_MIN` moves the floor (default 0.80).
 - **Headless captures are pinned to a fixed scale** so a capture is reproducible;
   `WUXING_RENDER_SCALE_ADAPTIVE=1` forces the controller on there for testing.

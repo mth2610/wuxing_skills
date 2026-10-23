@@ -825,6 +825,25 @@ int main(int argc, char **argv) {
     double profileAcquireSeconds = 0;
     if (benchmarkVisible) profileTime[0] = GetTime();
 
+    /* A map switch or a screen change (menu -> arena) is the ONLY moment the
+     * render-scale rung may be re-decided: the screen is already changing, so the
+     * one-time resize hitch has nothing to ruin. Between those the rung is
+     * frozen, which is what keeps the frame rate from oscillating across the
+     * vsync boundary. */
+    {
+      static int lastMapIndex = -1;
+      static int lastScreen = -1;
+      const int mapIndex = MapManager_GetActiveIndex();
+      const int screenNow = (int)currentScreen;
+      if (mapIndex != lastMapIndex || screenNow != lastScreen)
+      {
+        if (lastMapIndex >= 0)
+          RenderScale_NotifyMapChange();
+        lastMapIndex = mapIndex;
+        lastScreen = screenNow;
+      }
+    }
+
     /* ADAPTIVE RENDER SCALE, part 1: apply a pending size change HERE, before
      * anything is bound. SceneTargets_Resize/PostFX_Resize only rebuild
      * textures (no shader reload, no uniform re-read), so a step costs an

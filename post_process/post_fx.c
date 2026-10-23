@@ -222,6 +222,9 @@ static int s_targetHeight = 0;
 
 static void PostFX_DestroySizedTargets(void)
 {
+  /* Flush queued draws before freeing textures they may reference — see the same
+   * guard in scene_targets.c. */
+  rlDrawRenderBatchActive();
   if (mainRenderTex.id > 0) UnloadRenderTexture(mainRenderTex);
   mainRenderTex = (RenderTexture2D){0};
   if (bloomTex.id > 0) UnloadRenderTexture(bloomTex);
@@ -233,6 +236,21 @@ static void PostFX_DestroySizedTargets(void)
   s_dfLevels = 0;
 }
 
+/* Enter a freshly created target once and clear it. Both halves matter: BeginTextureMode
+ * is what gives the framebuffer a render-pass scope in rlvk, and the clear is what
+ * keeps the first frame that samples it from showing uninitialised memory (that
+ * is what a re-created target presented as a white flash before this existed).
+ * Post-scale targets are fully overwritten every frame, so this runs on the
+ * resize frame only. */
+static void PostFX_PrimeTarget(RenderTexture2D target)
+{
+  if (target.id == 0 || target.texture.id == 0)
+    return;
+  BeginTextureMode(target);
+  ClearBackground(BLACK);
+  EndTextureMode();
+}
+
 static void PostFX_CreateSizedTargets(int width, int height)
 {
   const int hdrFmt = RL_PIXELFORMAT_UNCOMPRESSED_R16G16B16A16;
@@ -242,10 +260,12 @@ static void PostFX_CreateSizedTargets(int width, int height)
   mainRenderTex = LoadRenderTextureWithFormat(width, height, colorFmt);
   SetTextureFilter(mainRenderTex.texture, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(mainRenderTex.texture, TEXTURE_WRAP_CLAMP);
+  PostFX_PrimeTarget(mainRenderTex);
 
   bloomTex = LoadRenderTextureWithFormat(width / 4, height / 4, colorFmt);
   SetTextureFilter(bloomTex.texture, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(bloomTex.texture, TEXTURE_WRAP_CLAMP);
+  PostFX_PrimeTarget(bloomTex);
 
   /* ALWAYS LDR, never colorFmt: this holds the tone-mapped result, and FXAA's contrast
      thresholds are perceptual. Clamped wrap so the 3x3 neighbourhood at the frame border
@@ -253,6 +273,7 @@ static void PostFX_CreateSizedTargets(int width, int height)
   ldrTex = LoadRenderTextureWithFormat(width, height, ldrFmt);
   SetTextureFilter(ldrTex.texture, TEXTURE_FILTER_BILINEAR);
   SetTextureWrap(ldrTex.texture, TEXTURE_WRAP_CLAMP);
+  PostFX_PrimeTarget(ldrTex);
 
   int w = width / 4, h = height / 4;
   s_dfLevels = 0;
@@ -268,6 +289,7 @@ static void PostFX_CreateSizedTargets(int width, int height)
     dfTex[i] = LoadRenderTextureWithFormat(w, h, colorFmt);
     SetTextureFilter(dfTex[i].texture, TEXTURE_FILTER_BILINEAR);
     SetTextureWrap(dfTex[i].texture, TEXTURE_WRAP_CLAMP);
+    PostFX_PrimeTarget(dfTex[i]);
     s_dfLevels++;
   }
   TraceLog(LOG_INFO, "PostFX: bloom pyramid %d levels (1/4 .. 1/%d)", s_dfLevels + 1,
