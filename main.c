@@ -1896,6 +1896,10 @@ int main(int argc, char **argv) {
     // order.
     SceneTargets_SnapshotScene();
     MyBeginMode3D(camera);
+    /* Scene FBO + VIEWPORT. EndTextureMode (inside SceneTargets_End) restored the
+       window viewport, so without this the whole refraction layer projects 1/scale
+       too large and shifted off the cast point at any render scale < 1.0. */
+    SceneTargets_BeginWorldRefraction();
     VFX_ShieldShell_DrawRefraction(camera);
     VFX_FlowShield_DrawRefraction(camera);
     VFXTest_DrawRefraction(camera);
@@ -1903,6 +1907,9 @@ int main(int argc, char **argv) {
         LiquidMetaball3D_Draw(camera, NULL, 0.0f);
     }
     MyEndMode3D();
+    /* Back to the window viewport: the 2D composites below draw with the window
+       ortho that EndTextureMode restored and expect it to map the full screen. */
+    SceneTargets_EndWorldRefraction();
     CompositeScreenSpaceVFX(camera);
     if (benchmarkVisible) profileTime[6] = GetTime();
     PASS_MARK("transparent");

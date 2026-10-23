@@ -1898,6 +1898,23 @@ and index binding 1; compute rebinds its own field buffer at binding 1.
   garbage. Measured cost of the wrong version: repeated 60↔30 oscillation and a white flash per
   step; the fixed rung holds 60 with no hitches after the map loads.
 
+### A render target's viewport is not part of its binding (23/10/2026)
+
+- **Symptom:** with adaptive render scale, a few VFX appeared displaced from the cast point and
+  visibly oversized, while the rest of the frame was correct. Worse the further the effect was
+  from the top-left; gone at scale 1.0.
+- **Cause:** `rlEnableFramebuffer` binds an FBO but leaves the viewport alone, and raylib restores
+  the WINDOW viewport in `EndTextureMode`. Any 3D pass that re-enters the scene target *after*
+  `SceneTargets_End` (the shield / metaball refraction layer) therefore projected onto a
+  window-sized viewport inside a smaller buffer: 1/scale too large, shifted, clipped. It was
+  invisible until the target stopped being the window.
+- **Rule:** whenever a pass binds a target by hand, ask whether its viewport still matches; pair
+  the bind with `rlViewport` at the target size, and restore the caller's viewport on exit. The
+  2D passes after the scene layer depend on the window viewport + window ortho, so scope the
+  correction to the 3D block rather than to the shared bind helper
+  (`post_process/docs/LANDMINES.md` #14; measured: flow shield centroid (754,334)→(641,392) and
+  diameter 186→158 px at 0.85, 1.0 byte-identical).
+
 ## Isolated subsystem cost is not the frame's marginal cost (22/10/2026)
 
 - **Symptom:** a subsystem measures 4-11 ms per draw in isolation and is picked as the

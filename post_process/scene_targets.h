@@ -66,6 +66,16 @@ void SceneTargets_BeginVFXBody(void);
 void SceneTargets_BeginVFXEmission(void);
 void SceneTargets_EndVFXLayer(void);
 
+/* WORLD-SPACE REFRACTION LAYER (shield / metaball 3D), the only 3D pass that
+ * runs AFTER SceneTargets_End. EndTextureMode restored the WINDOW viewport, and
+ * the begin/end helpers above only re-bind the FBO — so a 3D pass started there
+ * projects 1/scale too large and off its cast position whenever the scene target
+ * is smaller than the window. Bracket such a block with these two: Begin binds
+ * the scene FBO with the target viewport, End restores the window viewport that
+ * the 2D composite layer expects. Measured on the FLOW SHIELD fixture. */
+void SceneTargets_BeginWorldRefraction(void);
+void SceneTargets_EndWorldRefraction(void);
+
 /* ============================================================================
  * SOFT PARTICLES — scene depth texture
  * --------------------------------------------------------------------------
@@ -103,7 +113,10 @@ void SceneTargets_EndVFXLayer(void);
 // an toàn (không feedback loop).
 void SceneTargets_SnapshotDepth(void);
 /* Submit the full-resolution screen region required by soft particles this
- * frame. Multiple requests are unioned; the next snapshot copies only it. */
+ * frame. Multiple requests are unioned; the next snapshot copies only it.
+ * The rectangle is in WINDOW pixels (GetWorldToScreen output); it is converted
+ * to the scene target's pixel space internally, so a caller never has to know
+ * the adaptive render scale. Pass a full-screen rectangle to mean "everywhere". */
 void SceneTargets_RequestSoftDepthRegion(Rectangle screenRegion);
 
 // Texture độ sâu của frame TRƯỚC (trễ 1 frame) — sample được. Giá trị đã

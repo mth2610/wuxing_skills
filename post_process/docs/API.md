@@ -20,6 +20,7 @@ Documents the **Post-Processing** module (`post_process/post_fx.h` and `post_pro
 | `ColorGradeLut_Load(path)` | `post_process/color_grade_lut.h` | Loads an external $256 \times 16$ 3D LUT strip from disk. |
 | `ColorGradeLut_Texture()` | `post_process/color_grade_lut.h` | Returns the active 2D strip texture for shader binding. |
 | `SceneTargets_GetWidth()` / `GetHeight()` | `post_process/scene_targets.h` | Size actually in use by the scene chain — the render scale may make it smaller than the window. Anything drawing **into** the scene target must use these. |
+| `SceneTargets_BeginWorldRefraction()` / `EndWorldRefraction()` | `post_process/scene_targets.h` | Brackets the 3D refraction layer (shield / metaball 3D) that runs after `SceneTargets_End`: scene FBO with the **target** viewport, then the window viewport back for the 2D composite layer. |
 | `SceneTargets_Resize(w, h)` | `post_process/scene_targets.h` | Rebuilds the size-dependent scene buffers for a new render scale. Textures only: no shader reload. |
 | `PostFX_GetWidth()` / `GetHeight()` | `post_process/post_fx.h` | Size of the post chain (main HDR copy / bloom / LDR AA source), equal to the scene size. |
 | `PostFX_Resize(w, h)` | `post_process/post_fx.h` | Rebuilds the post-chain targets; shaders, LUT and uniform locations survive. |
@@ -130,6 +131,11 @@ step. Both were observed in play.
   `0.85 → 13.78 ms` (median of 3 pairs, 3/3). Visual cost of 0.85: `mean_abs 3.6`,
   `px>8 18 %` against the frame — a bilinear-upscale softness on grass detail, partly recovered
   by the luma sharpen inside the FXAA pass (`post_process/docs/LANDMINES.md` #12).
+- **World-space passes after `SceneTargets_End`** (shield / liquid-metaball 3D refraction) must be
+  bracketed by `SceneTargets_BeginWorldRefraction()` / `SceneTargets_EndWorldRefraction()`:
+  re-binding the scene FBO does not restore its viewport, and `EndTextureMode` left it at the
+  window size. The 2D layer that follows (gas/liquid/metaball composites, volumetric fog) must
+  keep the window viewport — it draws with the window ortho (`post_process/docs/LANDMINES.md` #14).
 - **Knobs:** `WUXING_RENDER_SCALE` pins a fixed rung for A/B; `WUXING_RENDER_SCALE_START` changes
   the starting rung; `WUXING_RENDER_SCALE_MIN` moves the floor (default 0.80).
 - **Headless captures are pinned to a fixed scale** so a capture is reproducible;

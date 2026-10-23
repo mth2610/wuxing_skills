@@ -548,6 +548,38 @@ void SceneTargets_EndVFXLayer(void)
   rlEnableFramebuffer(renderTex.id);
 }
 
+/* WORLD-SPACE REFRACTION LAYER — the one 3D pass that runs after SceneTargets_End.
+ *
+ * BindSceneFramebuffer above only BINDS the FBO; the viewport is whatever the
+ * last Begin/EndTextureMode left behind. During the normal 3D pass that is the
+ * scene target, so the omission never showed. But the shield/metaball refraction
+ * layer runs after SceneTargets_End, whose EndTextureMode put the viewport back
+ * to the WINDOW size. While the scene target WAS the window that was a no-op; with
+ * an adaptive render scale the target is smaller (1088x612 at 0.85), and the 3D
+ * refraction passes then projected through a 1280x720 viewport inside a 1088x612
+ * buffer: 1/scale too large, displaced away from the top-left, and clipped past
+ * the buffer edge. Measured on the FLOW SHIELD fixture before the fix, 0.85 vs
+ * 1.0: centroid (754,334) vs (641,392), diameter 186 px vs 158 px = exactly
+ * 1/0.85. Glass shield (SHIELD SHELL fixture) had the same displacement.
+ *
+ * Only the 3D block is bracketed. The 2D layer that follows (gas/liquid/metaball
+ * composites, volumetric fog) draws with the WINDOW ortho that EndTextureMode
+ * restored, so it depends on the window viewport to fill the target — see the
+ * comment in environment/volumetric/volumetric_fog.c's composite. Giving it the
+ * smaller viewport instead would shrink those composites to the top-left 85%. */
+void SceneTargets_BeginWorldRefraction(void)
+{
+  rlDrawRenderBatchActive();
+  rlEnableFramebuffer(renderTex.id);
+  rlViewport(0, 0, s_targetWidth, s_targetHeight);
+}
+
+void SceneTargets_EndWorldRefraction(void)
+{
+  rlDrawRenderBatchActive();
+  rlViewport(0, 0, GetRenderWidth(), GetRenderHeight());
+}
+
 void VFXRender_BeginPass(VFXRenderPass pass)
 {
   if (pass == VFX_RENDER_PASS_EMISSION)
@@ -676,11 +708,24 @@ void SceneTargets_RequestSoftDepthRegion(Rectangle screenRegion)
   const float maxH = (float)renderTex.texture.height;
   if (screenRegion.width <= 0.0f || screenRegion.height <= 0.0f || maxW <= 0.0f || maxH <= 0.0f)
     return;
+  /* CALLERS HAND IN WINDOW PIXELS; THE CAPTURE BELOW WRITES INTO THE SCENE TARGET.
+   * The rectangle is built from GetWorldToScreen() (window space), and while the
+   * scene target was the window the two spaces were the same. At a render scale
+   * of 0.85 the target is 1088x612, so a window-space region landed 1/0.85 too
+   * large and shifted down-right — the captured depth strip could miss the
+   * effect it was armed for, and the contact term then read a stale depth.
+   * Convert here, once, rather than at six call sites (full-screen callers — the
+   * fog, the 3D metaball, the GPU particle backend — still map to the full
+   * target, so this is a no-op for them). */
+  const float toTargetX = (GetScreenWidth() > 0) ? maxW / (float)GetScreenWidth() : 1.0f;
+  const float toTargetY = (GetScreenHeight() > 0) ? maxH / (float)GetScreenHeight() : 1.0f;
+  const Rectangle region = { screenRegion.x * toTargetX, screenRegion.y * toTargetY,
+                             screenRegion.width * toTargetX, screenRegion.height * toTargetY };
   const float margin = 48.0f;
-  float x0 = fmaxf(0.0f, screenRegion.x - margin);
-  float y0 = fmaxf(0.0f, screenRegion.y - margin);
-  float x1 = fminf(maxW, screenRegion.x + screenRegion.width + margin);
-  float y1 = fminf(maxH, screenRegion.y + screenRegion.height + margin);
+  float x0 = fmaxf(0.0f, region.x - margin);
+  float y0 = fmaxf(0.0f, region.y - margin);
+  float x1 = fminf(maxW, region.x + region.width + margin);
+  float y1 = fminf(maxH, region.y + region.height + margin);
   if (x1 <= x0 || y1 <= y0) return;
   if (!s_softDepthRegionValid) {
     s_softDepthRegion = (Rectangle){x0, y0, x1 - x0, y1 - y0};

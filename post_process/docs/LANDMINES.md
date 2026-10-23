@@ -125,3 +125,47 @@ Debugging lessons learned in post-processing. Format: **Symptom → Cause → Ru
   goes through `SceneTargets_PrimeTarget` / `PostFX_PrimeTarget` (enter via `BeginTextureMode`,
   `ClearBackground(BLACK)`, exit), and the destroy path flushes with `rlDrawRenderBatchActive()`
   first. Both are resize-frame-only costs. Do not "optimise" the clear away.
+
+---
+
+### 14. Re-binding the scene FBO does not restore its viewport
+- **Symptom:** at any render scale below 1.0, some VFX were drawn 1/scale too large and displaced
+  away from the cast point (most visible: the flow shield, then the glass shield). At 1.0 they
+  were correct.
+- **Cause:** the world-space refraction layer (glass shield, flow shield, liquid metaball 3D) runs
+  **after `SceneTargets_End`**, so `EndTextureMode` had already put the viewport back to the WINDOW
+  size; `SceneTargets_BeginVFXBody` / `EndVFXLayer` only call `rlEnableFramebuffer`, which binds the
+  FBO but never touches the viewport. The passes then projected through a 1280x720 viewport inside
+  a 1088x612 buffer: geometry scaled by 1/0.85 and clipped past the buffer edge. Invisible while the
+  scene target WAS the window, which is why it shipped with the render scale.
+  Measured with the FLOW SHIELD fixture, identical camera/frame: 1.0 centroid (641, 392) diameter
+  158 px; 0.85 before the fix (754, 334) diameter 186 px (= 158 / 0.85); after the fix (641, 386)
+  diameter 158 px. SHIELD SHELL likewise returned to a bit-identical bounding box.
+- **Rule:** a 3D pass that runs after `SceneTargets_End` is bracketed with
+  `SceneTargets_BeginWorldRefraction()` / `EndWorldRefraction()` (scene FBO + target viewport,
+  then the window viewport back). Do **not** move that viewport into
+  `SceneTargets_BeginVFXBody` for everything: the 2D layer after it (gas/liquid/metaball
+  composites, volumetric fog) draws with the window ortho that `EndTextureMode` restored and
+  relies on the window viewport to fill the target — measured byte-identical gas capture before
+  and after this fix, while giving it the smaller viewport would shrink composites to the
+  top-left 85 %.
+- **Verify:** `WUXING_RENDER_SCALE=0.85` vs `=1.0` on the `FLOW SHIELD` and `SHIELD SHELL`
+  fixtures; the effect mask must return the same bounding box, and a 1.0 capture must stay
+  byte-identical (`mean_abs 0.000`) to the pre-change build.
+
+---
+
+### 15. A screen rectangle from `GetWorldToScreen` is in WINDOW pixels, not target pixels
+- **Symptom:** none visible on a flat fixture; latent. Effects that arm a depth capture from a
+  world position could sample a depth strip that missed them once the render scale shipped.
+- **Cause:** `SceneTargets_RequestSoftDepthRegion` clamps against `renderTex.texture.width/height`
+  (scene-target pixels) and its callers hand it rectangles built from `GetWorldToScreen` (window
+  pixels). Equal only while the target was the window; at 0.85 the requested strip was `1/0.85`
+  too large and shifted down-right, so a shield or particle near the frame edge could fall
+  outside the captured depth and read a stale frame.
+- **Rule:** convert **inside** `SceneTargets_RequestSoftDepthRegion` (`maxW / GetScreenWidth()`)
+  so every caller — full-screen or world-derived — keeps passing window pixels, and say the unit
+  in the header. Full-screen callers (fog, 3D metaball, GPU particles) still map to the whole
+  target, which is why the conversion is a no-op for them; the FLOW SHIELD fixture at 0.85 was
+  byte-identical before/after, so do not expect a picture change — this is correctness, not a fix
+  you can see.
