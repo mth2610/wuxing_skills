@@ -40,8 +40,6 @@ bool LiquidCaptureCPU_Init(void)
     if (s_ready) return true;
     s_shader = ResourceManager_LoadShader("core/liquid/shaders/liquid_capture_ellipsoid.vs",
                                            "core/liquid/shaders/liquid_capture_ellipsoid.fs");
-    /* ResourceManager may return raylib's default shader after a compile error.
-     * Rendering with it would produce plausible quads instead of liquid depth. */
     if (!s_shader.id || s_shader.id == rlGetShaderIdDefault()) return false;
     s_uniform.projection = GetShaderLocation(s_shader,"u_projection");
     s_uniform.inverseProjection = GetShaderLocation(s_shader,"u_inverseProjection");
@@ -80,7 +78,7 @@ void LiquidCaptureCPU_Unload(void)
     if (s_vbo) rlUnloadVertexBuffer(s_vbo);
     if (s_vao) rlUnloadVertexArray(s_vao);
     s_vbo = s_vao = 0;
-    s_shader = (Shader){0}; /* ResourceManager owns the shader. */
+    s_shader = (Shader){0};
     s_ready = false;
     s_preparedCount = s_vertexCount = 0;
 }
@@ -109,9 +107,6 @@ int LiquidCaptureCPU_Prepare(const LiquidCaptureCPUInstance *instances, int coun
         for (int vertex = 0; vertex < 6; ++vertex) {
             Vector2 ndc = {cornerX[vertex] ? bounds.z : bounds.x,
                            cornerY[vertex] ? bounds.w : bounds.y};
-            /* Raster geometry sits at NDC depth zero. This remains inside the
-             * clip volume even if the actual ellipsoid centre is outside the
-             * near plane; the fragment stage clips its selected analytic root. */
             Vector3 viewPosition;
             if (!LiquidCaptureCPU_UnprojectNDC(s_inverseProjection,
                                                 (Vector3){ndc.x,ndc.y,0},&viewPosition)) {
@@ -129,15 +124,7 @@ int LiquidCaptureCPU_Prepare(const LiquidCaptureCPUInstance *instances, int coun
         }
         if (s_vertexCount == firstVertex+6) s_preparedCount++;
     }
-    if (s_vertexCount > 0) {
-        /* Upload only the active slice of each planar stream instead of the
-         * full 384-instance capacity every frame. */
-        rlUpdateVertexBuffer(s_vbo, s_vertices.position, s_vertexCount * (int)sizeof(Vector3), (int)offsetof(LiquidCaptureCPUVertices, position));
-        rlUpdateVertexBuffer(s_vbo, s_vertices.ndc,      s_vertexCount * (int)sizeof(Vector2), (int)offsetof(LiquidCaptureCPUVertices, ndc));
-        rlUpdateVertexBuffer(s_vbo, s_vertices.center,   s_vertexCount * (int)sizeof(Vector3), (int)offsetof(LiquidCaptureCPUVertices, center));
-        rlUpdateVertexBuffer(s_vbo, s_vertices.material, s_vertexCount * 4,                    (int)offsetof(LiquidCaptureCPUVertices, material));
-        rlUpdateVertexBuffer(s_vbo, s_vertices.radii,    s_vertexCount * (int)sizeof(Vector4), (int)offsetof(LiquidCaptureCPUVertices, radii));
-    }
+    if (s_vertexCount > 0) rlUpdateVertexBuffer(s_vbo,&s_vertices,sizeof(s_vertices),0);
     return s_preparedCount;
 }
 

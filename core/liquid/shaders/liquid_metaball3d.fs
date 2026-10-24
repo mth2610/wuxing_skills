@@ -37,21 +37,16 @@ uniform vec3 u_skyAmbient;
 uniform vec3 u_groundAmbient;
 uniform float u_time;
 
-/* Per-ray culled blob list: a single pixel's ray only intersects a small subset
- * of the 64 blobs. Filtering once before marching cuts 70-85% of loop iterations
- * and immediately discards empty bounding-box pixels. */
-int g_activeBlobs[MAX_BLOBS];
-float g_activeInvR2[MAX_BLOBS];
-int g_activeCount = 0;
-
-// Wyvill potential field: (1 - d^2)^3 for d < 1 over ray-relevant blobs only
+// Wyvill potential field: (1 - d^2)^3 for d < 1
 float EvaluateField(vec3 p) {
     float phi = 0.0;
-    for (int k = 0; k < MAX_BLOBS; k++) {
-        if (k >= g_activeCount) break;
-        int idx = g_activeBlobs[k];
-        vec3 d = p - u_blobs[idx].xyz;
-        float d2 = dot(d, d) * g_activeInvR2[k];
+    for (int i = 0; i < MAX_BLOBS; i++) {
+        if (i >= u_blobCount) break;
+        vec4 b = u_blobs[i];
+        vec3 d = p - b.xyz;
+        // Fast Manhattan/axis reject before dot product & division
+        if (abs(d.x) >= b.w || abs(d.y) >= b.w || abs(d.z) >= b.w) continue;
+        float d2 = dot(d, d) / (b.w * b.w);
         if (d2 < 1.0) {
             float w = 1.0 - d2;
             phi += w * w * w;
@@ -63,11 +58,12 @@ float EvaluateField(vec3 p) {
 // Exact analytical gradient: grad = sum( -6 * (1 - d^2)^2 * (p - c) / r^2 )
 vec3 EvaluateNormal(vec3 p) {
     vec3 grad = vec3(0.0);
-    for (int k = 0; k < MAX_BLOBS; k++) {
-        if (k >= g_activeCount) break;
-        int idx = g_activeBlobs[k];
-        vec3 d = p - u_blobs[idx].xyz;
-        float invR2 = g_activeInvR2[k];
+    for (int i = 0; i < MAX_BLOBS; i++) {
+        if (i >= u_blobCount) break;
+        vec4 b = u_blobs[i];
+        vec3 d = p - b.xyz;
+        if (abs(d.x) >= b.w || abs(d.y) >= b.w || abs(d.z) >= b.w) continue;
+        float invR2 = 1.0 / (b.w * b.w);
         float d2 = dot(d, d) * invR2;
         if (d2 < 1.0) {
             float w = 1.0 - d2;
@@ -120,31 +116,28 @@ void main() {
         discard;
     }
 
-    /* Pre-cull blobs against this pixel's ray and tighten [tStart, tEnd] to the
-     * actual union of intersected blob intervals along the ray. */
+    // Fast ray-sphere interval tightening: discard empty bounding box pixels immediately
+    // and narrow [tStart, tEnd] to only the segment where the ray actually intersects blobs.
     float tightEnter = tEnd;
     float tightExit = tStart;
-    g_activeCount = 0;
+    bool hitAnySphere = false;
     for (int i = 0; i < MAX_BLOBS; i++) {
         if (i >= u_blobCount) break;
-        vec4 blob = u_blobs[i];
-        vec3 toBlob = blob.xyz - rayOrigin;
-        float r = blob.w;
+        vec4 b = u_blobs[i];
+        vec3 toBlob = b.xyz - rayOrigin;
         float proj = dot(toBlob, rayDir);
-        if (proj + r < tStart || proj - r > tEnd) continue;
+        if (proj + b.w < tStart || proj - b.w > tEnd) continue;
         float distSq = dot(toBlob, toBlob) - proj * proj;
-        float r2 = r * r;
+        float r2 = b.w * b.w;
         if (distSq < r2) {
             float halfChord = sqrt(max(r2 - distSq, 0.0));
             tightEnter = min(tightEnter, max(tStart, proj - halfChord));
             tightExit  = max(tightExit,  min(tEnd,   proj + halfChord));
-            g_activeBlobs[g_activeCount] = i;
-            g_activeInvR2[g_activeCount] = 1.0 / max(r2, 1e-6);
-            g_activeCount++;
+            hitAnySphere = true;
         }
     }
 
-    if (g_activeCount == 0 || tightEnter >= tightExit) {
+    if (!hitAnySphere || tightEnter >= tightExit) {
         discard;
     }
 
@@ -199,13 +192,13 @@ void main() {
     } else {
         float tThickSearch = tHit;
         float tBackHit = tEnd;
-        float thickStep = (tEnd - tHit) / 8.0;
-        for (int k = 0; k < 8; k++) {
+        float thickStep = (tEnd - tHit) / 6.0;
+        for (int k = 0; k < 6; k++) {
             tThickSearch += thickStep;
             if (EvaluateField(rayOrigin + rayDir * tThickSearch) < u_threshold) {
                 float tA = tThickSearch - thickStep;
                 float tB = tThickSearch;
-                for (int b = 0; b < 3; b++) {
+                for (int b = 0; b < 2; b++) {
                     float tMid = (tA + tB) * 0.5;
                     if (EvaluateField(rayOrigin + rayDir * tMid) >= u_threshold) {
                         tA = tMid;
@@ -235,7 +228,6 @@ void main() {
             sin(wp.x * 1.8 + u_time * 1.8) * 0.035 + w2 * 0.025,
             cos(wp.x * 2.1 - u_time * 2.1) * 0.035 + w3 * 0.025
         );
-        /* Project capillary wave perturbation onto tangent plane so it doesn't bias normal length */
         capillary -= normal * dot(capillary, normal);
         waveNormal = normalize(normal + capillary * (0.35 + u_roughness * 1.1));
     }
@@ -319,9 +311,7 @@ void main() {
     }
 
     vec3 color = vec3(0.0);
-    /* Smooth silhouette edge anti-aliasing based on ray chord thickness */
-    float edgeCoverage = smoothstep(0.0, 0.035, thickness);
-    float alpha = edgeCoverage;
+    float alpha = 1.0;
 
     if (u_liquidClass == 2) {
         vec3 metalReflection = mix(u_bodyColor.rgb * 0.75, u_glowColor.rgb, fresnel) * envSky;
