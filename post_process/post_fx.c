@@ -505,11 +505,9 @@ static void PostFX_ApplyQualityTier(PostFXConfig *c)
 static int PostFX_GetActiveBloomLevels(void)
 {
   GfxQuality q = GfxQuality_Get();
-  int maxLv = DUAL_FILTER_LEVELS;
+  int maxLv = 4;
   if (q == GFX_LOW)
     maxLv = 3;
-  else if (q == GFX_MED)
-    maxLv = 4;
   return (s_dfLevels < maxLv) ? s_dfLevels : maxLv;
 }
 
@@ -662,8 +660,7 @@ void PostFX_Draw(const PostFXConfig *config)
 
   // PASS 6: Composite → screen (hoặc ldrTex nếu bật FXAA)
   const bool useFxaa = (s_fxaa > 0.5f) && fxaaShader.id != 0 && ldrTex.id != 0;
-  if (useFxaa)
-    BeginTextureMode(ldrTex);
+  if (useFxaa) BeginTextureMode(ldrTex);
 
   BeginShaderMode(compositeShader);
 

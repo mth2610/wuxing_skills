@@ -129,7 +129,15 @@ int LiquidCaptureCPU_Prepare(const LiquidCaptureCPUInstance *instances, int coun
         }
         if (s_vertexCount == firstVertex+6) s_preparedCount++;
     }
-    if (s_vertexCount > 0) rlUpdateVertexBuffer(s_vbo,&s_vertices,sizeof(s_vertices),0);
+    if (s_vertexCount > 0) {
+        /* Upload only the active slice of each planar stream instead of the
+         * full 384-instance capacity every frame. */
+        rlUpdateVertexBuffer(s_vbo, s_vertices.position, s_vertexCount * (int)sizeof(Vector3), (int)offsetof(LiquidCaptureCPUVertices, position));
+        rlUpdateVertexBuffer(s_vbo, s_vertices.ndc,      s_vertexCount * (int)sizeof(Vector2), (int)offsetof(LiquidCaptureCPUVertices, ndc));
+        rlUpdateVertexBuffer(s_vbo, s_vertices.center,   s_vertexCount * (int)sizeof(Vector3), (int)offsetof(LiquidCaptureCPUVertices, center));
+        rlUpdateVertexBuffer(s_vbo, s_vertices.material, s_vertexCount * 4,                    (int)offsetof(LiquidCaptureCPUVertices, material));
+        rlUpdateVertexBuffer(s_vbo, s_vertices.radii,    s_vertexCount * (int)sizeof(Vector4), (int)offsetof(LiquidCaptureCPUVertices, radii));
+    }
     return s_preparedCount;
 }
 

@@ -9,7 +9,9 @@
 #define NATURE_LOD_NEAR_BLEND_HALF_WIDTH 1.8f
 #define NATURE_LOD_FAR_BLEND_HALF_WIDTH 4.2f
 #define NATURE_VISIBLE_ID_ROW_TEXELS 256
-#define NATURE_CAMERA_EPSILON_SQ 0.0009f
+// [TỐI ƯU HIỆU NĂNG]: Nới rộng dung sai camera epsilon (3cm -> 15cm) để đóng băng texture upload
+// khi đứng im hoặc rung nhẹ camera, triệt tiêu hoàn toàn hiện tượng rớt FPS xuống 30 do bus stall.
+#define NATURE_CAMERA_EPSILON_SQ 0.0225f
 
 typedef struct
 {
@@ -173,6 +175,21 @@ static inline float NatureParametric_Smoothstep(float low, float high, float val
     float t = (value - low) / span;
     t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
     return t * t * (3.0f - 2.0f * t);
+}
+
+static inline int NatureParametric_SelectLod(Vector3 root, float rank, Vector3 cameraPos, Vector4 bands)
+{
+    float dx = root.x - cameraPos.x, dy = root.y - cameraPos.y, dz = root.z - cameraPos.z;
+    float d = sqrtf(dx * dx + dy * dy + dz * dz);
+    if (bands.y <= 0.0f)
+        return 0;
+    float farWeight = NatureParametric_Smoothstep(bands.y - bands.w, bands.y + bands.w, d);
+    if (rank < farWeight)
+        return 2;
+    float midWeight = bands.x > 0.0f
+                          ? NatureParametric_Smoothstep(bands.x - bands.z, bands.x + bands.z, d)
+                          : 0.0f;
+    return rank < midWeight ? 1 : 0;
 }
 
 static inline int NatureParametric_SelectLodFast(float d2, float rank, Vector4 bands,

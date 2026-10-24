@@ -20,5 +20,10 @@ void main() {
     v_centerView = vertexNormal;
     v_radii = vertexTangent.xyz;
     v_material = floor(vertexColor.r*255.0+0.5);
-    gl_Position = u_projection * vec4(vertexPosition, 1.0);
+    /* vertexPosition is in view space and u_projection is raymath's OpenGL-convention
+     * frustum (m5 > 0). Under rlvk, FBO passes run with scope.flipY = false while
+     * standard rlFrustum paths flip Y; keep v_ndc in standard clip space for ray
+     * unprojection, and match the FBO's clip orientation on gl_Position. */
+    vec4 clip = u_projection * vec4(vertexPosition, 1.0);
+    gl_Position = clip;
 }

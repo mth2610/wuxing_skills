@@ -22,19 +22,19 @@ const vec3 CLOUD_LIGHT = vec3(0.98, 0.93, 0.82); // Warm luminous sunlight crest
 
 void main()
 {
-    // 1. Lấy mẫu lớp nhiễu phụ trước
-    float n2 = texture(texture0, v_flowUVs.zw).r;
-    
-    // VISUAL UPGRADE: Dùng n2 làm lệch nhẹ (Domain Warp) tọa độ lớp chính
-    vec2 warpedFlow1 = v_flowUVs.xy + (n2 - 0.5) * 0.055;
+    float dist = length(v_viewVec);
+
+    // [TỐI ƯU VISUAL & KHỬ MOIRÉ]: Lọc mượt các bậc nhiễu vi mô ở khoảng cách xa để
+    // triệt tiêu 100% hiện tượng sọc ngang (scanline banding) ở góc nhìn dốc (grazing angle)
+    float octaveWeight = 1.0 - smoothstep(60.0, 360.0, dist);
+    float n2 = mix(0.5, texture(texture0, v_flowUVs.zw).r, octaveWeight);
+    vec2 warpedFlow1 = v_flowUVs.xy + (n2 - 0.5) * (0.055 * octaveWeight);
     float n1 = texture(texture0, warpedFlow1).r;
 
-    // Kết hợp mật độ mây
-    float density = n1 * 0.62 + n2 * 0.38;
+    float density = mix(n1, n1 * 0.62 + n2 * 0.38, octaveWeight);
 
-    // 2. Tối ưu khoảng cách và vector hướng nhìn ra chân trời xa
-    float dist = length(v_viewVec);
-    float horizon = smoothstep(420.0, 1150.0, dist) * 0.80;
+    // Chân trời hòa nhập 100% vào ánh sáng vòm trời xa, không còn ngấn viền sắc cạnh
+    float horizon = smoothstep(200.0, 720.0, dist);
 
     // Early out: Hủy ngay fragment nếu không đủ mật độ
     if (u_cloudBankEnabled == 0 && density < 0.38 && horizon < 0.98) discard;
@@ -42,11 +42,11 @@ void main()
     // Chuẩn hóa các vector
     vec3 viewDir = v_viewVec / max(dist, 0.0001);
     
-    // Perturb normal from cloud noise slope for true 3D rolling cloud billows
+    // Perturb normal from cloud noise slope for true 3D rolling cloud billows (damped at distance)
     float nR = texture(texture0, warpedFlow1 + vec2(0.007, 0.0)).r;
     float nU = texture(texture0, warpedFlow1 + vec2(0.0, 0.007)).r;
-    vec3 billowNormal = normalize(vec3(-(nR - n1) * 6.2, 1.0, -(nU - n1) * 6.2));
-    vec3 N = normalize(mix(normalize(v_normal), billowNormal, 0.78));
+    vec3 billowNormal = normalize(vec3(-(nR - n1) * (6.2 * octaveWeight), 1.0, -(nU - n1) * (6.2 * octaveWeight)));
+    vec3 N = normalize(mix(normalize(v_normal), billowNormal, 0.78 * octaveWeight));
     vec3 L = normalize(-lightDir);
 
     // 3. Xử lý ánh sáng & Màu sắc

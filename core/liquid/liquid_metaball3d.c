@@ -136,15 +136,10 @@ int LiquidMetaball3D_BeginBody(const LiquidDesc *material, float threshold)
         index = 0;
         s_bodyCount = 1;
     } else if (s_bodies[s_bodyCount - 1].count == 0) {
-        /* Reuse an empty tail: a body begun and then abandoned (a rejected
-         * spawn) must not consume a slot for the rest of the frame. */
         index = s_bodyCount - 1;
     } else if (s_bodyCount < LIQUID_METABALL3D_MAX_BODIES) {
         index = s_bodyCount++;
     } else {
-        /* Out of slots: append to the last body instead of silently dropping
-         * the geometry. Its optics stay the last body's, which is wrong but
-         * visible — dropping is invisible and reads as a rendering bug. */
         index = LIQUID_METABALL3D_MAX_BODIES - 1;
     }
 
@@ -160,9 +155,6 @@ int LiquidMetaball3D_BeginBody(const LiquidDesc *material, float threshold)
 
 void LiquidMetaball3D_EndBody(void)
 {
-    /* Nothing to flush: blobs are already stored per body, and the next
-     * BeginBody moves past this one because it is no longer empty. Kept as an
-     * explicit terminator so a caller does not have to know that. */
 }
 
 void LiquidMetaball3D_SetMaterial(const LiquidDesc *material)
@@ -210,14 +202,16 @@ int LiquidMetaball3D_GetBlobCount(void)
     return total;
 }
 
-/* Bounding box and coarse march resolution for ONE body. */
+/* Bounding box and distance-adaptive coarse march resolution for ONE body. */
 static void LiquidMetaball3D_BodyBounds(const LiquidMetaball3DBody *body,
+                                        Vector3 cameraPos,
                                         Vector3 *outMin, Vector3 *outMax,
                                         Vector3 *outCenter, Vector3 *outSize,
                                         int *outSteps)
 {
     const Vector4 *blob = body->blobs;
-    const float pad = 1.35f;
+    /* Wyvill field is strictly zero for d >= 1.0 * r; 1.08f is sufficient padding */
+    const float pad = 1.08f;
     float minRadius = blob[0].w;
     Vector3 boxMin = (Vector3){blob[0].x - blob[0].w * pad,
                                blob[0].y - blob[0].w * pad,
@@ -239,29 +233,19 @@ static void LiquidMetaball3D_BodyBounds(const LiquidMetaball3DBody *body,
 
     Vector3 boxCenter = Vector3Scale(Vector3Add(boxMin, boxMax), 0.5f);
     Vector3 boxSize = Vector3Subtract(boxMax, boxMin);
-    // Pad slightly to prevent ray clipping
-    boxSize.x = fmaxf(boxSize.x + 0.15f, 0.4f);
-    boxSize.y = fmaxf(boxSize.y + 0.15f, 0.4f);
-    boxSize.z = fmaxf(boxSize.z + 0.15f, 0.4f);
+    boxSize.x = fmaxf(boxSize.x + 0.08f, 0.25f);
+    boxSize.y = fmaxf(boxSize.y + 0.08f, 0.25f);
+    boxSize.z = fmaxf(boxSize.z + 0.08f, 0.25f);
 
-    /* Coarse march resolution derived from the SMALLEST blob, then refined by
-     * the bisection in the fragment shader.
-     *
-     * A fixed 48 steps across a 1.2 m body sampled the field every 2.5 cm even
-     * though the field has no feature smaller than a 0.2 m kernel — six times
-     * the field evaluations for the same crossing. 0.75 * the smallest radius
-     * cannot step over a kernel's own support, and the 5-step bisection then
-     * resolves the crossing to span/12/32.
-     *
-     * The box DIAGONAL, not the per-pixel segment, so the count is stable
-     * frame to frame: a per-pixel count would make the surface's sampling
-     * shimmer as the camera moves. */
     float diagonal = sqrtf(boxSize.x * boxSize.x + boxSize.y * boxSize.y +
                            boxSize.z * boxSize.z);
-    float step = fmaxf(minRadius * 0.75f, 0.02f);
+    float distToCam = Vector3Distance(cameraPos, boxCenter);
+    /* Scale step size gently with camera distance so distant bodies don't burn 36 steps */
+    float distFactor = fminf(fmaxf(distToCam / 8.0f, 1.0f), 2.2f);
+    float step = fmaxf(minRadius * 0.80f * distFactor, 0.025f);
     int steps = (int)ceilf(diagonal / step);
-    if (steps < 12) steps = 12;
-    if (steps > 48) steps = 48;
+    if (steps < 10) steps = 10;
+    if (steps > 32) steps = 32;
 
     *outMin = boxMin;
     *outMax = boxMax;
@@ -284,7 +268,6 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
                                   ? threshold : s_fallbackThreshold;
     LiquidDesc defaultMat = LiquidSurface_ProfileDesc(LIQUID_MOTION_WATER);
 
-    // Request snapshots ONCE for the whole frame, not once per blob.
     SceneTargets_RequestSceneSnapshot();
     SceneTargets_RequestSoftDepthRegion((Rectangle){0, 0, (float)GetScreenWidth(), (float)GetScreenHeight()});
 
@@ -294,7 +277,6 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
     int hasSceneColor = (sceneColor.id != 0) ? 1 : 0;
     int hasSceneDepth = (sceneDepth.id != 0) ? 1 : 0;
 
-    // View-projection matrix matching MyBeginMode3D's near=1.0 and far=1000.0
     float aspect = (float)GetScreenWidth() / (float)fmaxf((float)GetScreenHeight(), 1.0f);
     Matrix view = GetCameraMatrix(camera);
     double top = tan(camera.fovy * 0.5 * DEG2RAD);
@@ -320,11 +302,8 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
     rlDrawRenderBatchActive();
     BeginBlendMode(BLEND_ALPHA);
 
-    // RULE: Under rlvk, Shader argument to SetShaderValue does not select program.
-    // Activate target program with BeginShaderMode, keep uniform uploads + draws in scope, then end it.
     BeginShaderMode(s_shader);
 
-    /* Body-independent uniforms, uploaded once. */
     if (s_locCameraPos >= 0) SetShaderValue(s_shader, s_locCameraPos, &camera.position, SHADER_UNIFORM_VEC3);
     if (s_locCameraForward >= 0) SetShaderValue(s_shader, s_locCameraForward, &camForward, SHADER_UNIFORM_VEC3);
     if (s_locViewProj >= 0) SetShaderValueMatrix(s_shader, s_locViewProj, viewProj);
@@ -349,8 +328,8 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
         if (body->count <= 0) continue;
 
         Vector3 boxMin, boxMax, boxCenter, boxSize;
-        int steps = 24;
-        LiquidMetaball3D_BodyBounds(body, &boxMin, &boxMax, &boxCenter, &boxSize, &steps);
+        int steps = 20;
+        LiquidMetaball3D_BodyBounds(body, camera.position, &boxMin, &boxMax, &boxCenter, &boxSize, &steps);
 
         const LiquidDesc *mat = body->hasMaterial ? &body->material
                               : (fallback ? fallback : &defaultMat);
@@ -385,6 +364,12 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
                           camera.position.z >= boxMin.z && camera.position.z <= boxMax.z);
         rlSetCullFace(camInside ? RL_CULL_FACE_FRONT : RL_CULL_FACE_BACK);
         DrawCoreCube(boxCenter, boxSize.x, boxSize.y, boxSize.z, WHITE);
+        /* CRITICAL FIX FOR MULTIPLE BODIES:
+         * DrawCoreCube batches vertices into rlgl's active render batch!
+         * Without flushing here, loop iteration bi+1 overwrites u_blobs, u_boxMin,
+         * and u_boxMax BEFORE body bi is actually drawn, causing all 5-6 bodies to
+         * render with the LAST body's uniforms and clipping boxes! */
+        rlDrawRenderBatchActive();
     }
 
     rlSetCullFace(RL_CULL_FACE_BACK);
@@ -396,6 +381,5 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
     rlDrawRenderBatchActive();
     VFXRender_EndPass();
 
-    // Consume this frame's bodies
     LiquidMetaball3D_Reset();
 }

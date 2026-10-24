@@ -244,8 +244,9 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                      + cos(worldPosition.x * -0.07 + worldPosition.z * 0.16) * 0.45;
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
     float tipHeightMask = FastRamp(0.32, 0.92, h);
-    vec3 coolEmeraldTip = vec3(0.95, 1.03, 0.90);
-    vec3 warmGoldenTip  = vec3(1.18, 1.12, 0.74);
+    // Hài hòa sắc xanh ngọc bích Kiếm Hiệp (Tsushima Emerald & Morning Gold), tránh chói vàng bết màu
+    vec3 coolEmeraldTip = vec3(0.96, 1.02, 0.94);
+    vec3 warmGoldenTip  = vec3(1.08, 1.05, 0.88);
     vec3 tipTone = mix(vec3(1.0), mix(coolEmeraldTip, warmGoldenTip, warmShift), tipHeightMask);
     baseColor *= tipTone;
 
@@ -315,8 +316,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 ambientGround = mix(groundBounce, greenBounce, 0.50);
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
-    // Deep rooted contact occlusion (0.24..1.0): firmly anchors grass tufts into dark fertile soil bed
-    float rootAO = mix(0.24, 1.0, smoothstep(0.0, 0.48, h));
+    // [TỐI ƯU VISUAL]: Nới nhẹ rootAO tối thiểu (0.24 -> 0.46) để gốc cỏ bám đất chắc chắn mà không bị đen kịt
+    float rootAO = mix(0.46, 1.0, smoothstep(0.0, 0.44, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);

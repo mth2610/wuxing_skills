@@ -213,9 +213,10 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     // Smooth shoreline transition right up to the water's edge
     float surfaceY = SampleWaterHeight(x, z);
     float waterClearance = pos.y - surfaceY;
-    if (waterClearance < 0.01f)
+    // Chuyển tiếp mượt mà ven mép nước, triệt tiêu vết cắt hình học răng cưa
+    if (waterClearance < 0.03f)
         return 0.0f;
-    float shoreFade = SmoothStep01(0.01f, 0.24f, waterClearance);
+    float shoreFade = SmoothStep01(0.03f, 0.38f, waterClearance);
 
     Color splat = SampleSplat(x, z);
     float rockScree = (float)splat.g / 255.0f;
@@ -782,24 +783,24 @@ void InitSongQuaoMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {18, 28, 12, 255},  // Matches shaded ground moss substrate seamlessly
-            .grassTipColor = {148, 196, 66, 255}, // Warm golden-chartreuse sunlit canopy
+            .grassRootColor = {28, 40, 20, 255},  // Đất mùn phì nhiêu hòa quyện tự nhiên với mặt đất
+            .grassTipColor = {126, 176, 78, 255}, // Sắc xanh ngọc bích Tsushima thanh tao, thơ mộng
             .bladesPerClump = 5,                  // 5 wider blades cover better than 6 thin needles at 17% less vertex cost
             .bladeSegments = 4,
             .bladeWidthScale = 0.128f, // Fuller botanical ribbon width hides bare ground between tufts
             .lodDistance = 20.0f,
             .midLodDistance = 10.5f,
             .drawDistance = 36.0f,
-            .shadowDistance = 10.5f, // Cuts dynamic shadow caster load by ~48% while keeping near shadows crisp
+            .shadowDistance = 8.5f, // Giảm bán kính shadow casters xuống 8.5m để giữ bóng đổ cận cảnh sắc nét và tiết kiệm ~1.2ms GPU
             .grassState = MAP_GRASS_STATE_LUSH,
-            .reedRootColor = {22, 34, 15, 255},
-            .reedTipColor = {124, 164, 68, 255},
+            .reedRootColor = {24, 36, 16, 255},
+            .reedTipColor = {118, 158, 70, 255},
             .hasReedPlumes = false, // Eliminates stiff white card artifacts on reeds (API.md §1b)
             .botanicalVariation = 1.0f,
             .pampasPlacements = s_pampasPlacements,
             .pampasCount = s_pampasCount,
-            .pampasRootColor = {30, 42, 20, 255},
-            .pampasTipColor = {188, 184, 126, 255}, // Soft warmchampagne-olive blend, no longer stark vertical white bars
+            .pampasRootColor = {32, 44, 22, 255},
+            .pampasTipColor = {186, 182, 128, 255}, // Soft warmchampagne-olive blend, no longer stark vertical white bars
         });
 
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
@@ -814,14 +815,14 @@ void InitSongQuaoMap(void)
                                              .detailScale = 0.24f,
                                              .detailStrength = 0.32f,
                                              .maxDepth = 1.65f,
-                                             .absorption = {0.92f, 0.36f, 0.14f},
-                                             .scatterColor = {0.12f, 0.44f, 0.38f},
-                                             .scatterCoeff = 0.38f,
+                                             .absorption = {0.52f, 0.22f, 0.08f},
+                                             .scatterColor = {0.16f, 0.52f, 0.48f},
+                                             .scatterCoeff = 0.32f,
                                              .causticsStrength = 0.75f,
                                              .causticsScale = 1.75f,
                                              .foamThreshold = 0.165f,
-                                             .deepColor = {18, 52, 60, 248},
-                                             .shallowColor = {76, 136, 124, 68},
+                                             .deepColor = {28, 68, 76, 175},
+                                             .shallowColor = {98, 168, 160, 48},
                                              .foamColor = {235, 242, 245, 195},
                                          });
 

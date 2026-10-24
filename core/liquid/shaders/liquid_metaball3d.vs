@@ -11,6 +11,9 @@ uniform mat4 u_invView;
 
 void main() {
     v_texCoord = vertexTexCoord;
-    v_worldPos = vec3(u_invView * vec4(vertexPosition, 1.0));
+    /* DrawCoreCube submits vertices directly in world space around boxCenter.
+     * Multiplying by u_invView here double-transformed world coordinates whenever
+     * the camera moved or rotated. */
+    v_worldPos = vertexPosition;
     gl_Position = mvp * vec4(vertexPosition, 1.0);
 }

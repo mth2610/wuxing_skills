@@ -113,7 +113,8 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
                            phase, 1.0f, 1.0f, flower->petalColor, flower->petalColor);
         }
     }
-    return Nature_ModelFromMesh(mesh, Nature_GetShader(texturedBloom));
+    // Hoa luôn sử dụng nature_lit.fs (NatureShade) thay vì nature_opaque.fs (GrassShade)
+    return Nature_ModelFromMesh(mesh, Nature_GetShader(true));
 }
 
 static inline int Nature_FlowerBloomVertexCount(int variant, bool textured)
@@ -658,7 +659,8 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         (void)Nature_IndexBladeMesh(&mesh);
 
     field.textured = (petalTexturePath != NULL);
-    field.model = Nature_ModelFromMesh(mesh, Nature_GetShader(field.textured));
+    // Luôn sử dụng Nature_GetShader(true) để gọi nature_lit.fs (chứa NatureShade cho hoa/cánh hoa)
+    field.model = Nature_ModelFromMesh(mesh, Nature_GetShader(true));
     field.farModel = Nature_BuildFlowerFarModel(placements, count, field.textured,
                                                 atlasColumns, atlasRows);
     field.farReady = field.farModel.meshCount > 0;
@@ -858,7 +860,7 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
         {
             if (groupOpen)
                 Nature_EndWindReceiverShader();
-            Shader shader = Nature_GetShader(field->textured);
+            Shader shader = Nature_GetShader(true);
             Nature_BeginWindReceiverShader(shader);
             Nature_UpdateShader(shader, time, windDirection, windStrength,
                                 field->textured, field->alphaCutoff,

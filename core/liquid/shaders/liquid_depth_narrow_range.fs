@@ -10,6 +10,7 @@ uniform float u_kernelRadius;
 uniform sampler2D u_materialIdTex;
 uniform float u_materialKernels[6];
 uniform int u_multipleMaterials;
+
 /* Filled pixels borrow the nearest actual capture fragment's identity. */
 int MaterialAt(vec2 uv) {
     vec4 sampleValue=texture(u_materialIdTex,uv);
@@ -22,40 +23,32 @@ int MaterialAt(vec2 uv) {
     }
     return clamp(int(sampleValue.b+0.5),0,5);
 }
+
 /* 1 when texture0 is the RAW capture, i.e. it already carries the material id in
  * .b. Round 0 reads the capture and every later round reads a single-channel
- * smoothed target, so the depth read below would otherwise fetch the SAME texel
- * twice (once for depth, once for identity) on the pass that runs at full res. */
+ * smoothed target.
+ * FIXED: When u_sourceCarriesMaterial == 0 (Round 1+), identity comes from
+ * u_materialIdTex, while the smoothed depth MUST come from texture0.r! */
 uniform int u_sourceCarriesMaterial;
 float DepthForMaterial(vec2 uv,int material) {
     if(u_multipleMaterials==0) return texture(texture0,uv).r;
-    vec4 raw=u_sourceCarriesMaterial!=0?texture(texture0,uv):texture(u_materialIdTex,uv);
-    if(raw.r<0.99999 && int(raw.b+0.5)!=material) return 1.0;
-    return raw.r;
+    if(u_sourceCarriesMaterial!=0) {
+        vec4 raw=texture(texture0,uv);
+        if(raw.r<0.99999 && int(raw.b+0.5)!=material) return 1.0;
+        return raw.r;
+    } else {
+        vec4 idSample=texture(u_materialIdTex,uv);
+        if(idSample.r<0.99999 && int(idSample.b+0.5)!=material) return 1.0;
+        return texture(texture0,uv).r;
+    }
 }
+
 uniform int u_filterRadius;
 uniform int u_fillHoles;
 uniform sampler2D u_occupancyTex;
 uniform int u_useOccupancy;
 /* 0 = the separable 1D pass (run twice by the host), 1 = the true 2D kernel. */
 uniform int u_filter2D;
-/* Radius ceiling for the 2D kernel, in texels.
- *
- * The disc is quadratic in the radius while the separable pair is linear, and the
- * radius GROWS as the camera closes in. Unbounded that measured 112 ms/frame at
- * close range against the separable path's 31 — the 9 fps the user hit.
- *
- * Subsampling the disc was tried first and rejected: stepping it by a stride
- * bounds the tap count at the same reach, but a fixed sparse lattice point-sampled
- * the same way on every pixel makes the LATTICE visible, and the body came out
- * covered in a fine regular dot pattern. Trading stripes for dots is not a fix,
- * and the obvious repair — half-texel taps so hardware bilinear box-filters each
- * step — would rest on LINEAR filtering of R32F, which Vulkan makes optional
- * (rlvk detects it as Caps.floatFilterR32) and which would fail silently.
- *
- * So bound the REACH instead. A dense radius-10 disc is 317 taps against the
- * separable pair's 114 at radius 28, and being isotropic and gap-free it still
- * smooths better than the wider separable cross. */
 #define LIQUID_FILTER2D_MAX_RADIUS 10
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
@@ -72,26 +65,19 @@ float DeviceDepth(float viewDistance) {
 }
 
 void main() {
+    /* Fast early-out on empty 8x8 tiles for ALL passes when occupancy is enabled. */
+    if (u_useOccupancy != 0 && texture(u_occupancyTex, fragTexCoord).r < 0.5) {
+        finalColor = vec4(1.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
     float centerDevice = texture(texture0, fragTexCoord).r;
 
-    /* Bridge gaps between densely packed small particles (e.g. a force-field orb
-     * at high particle count) by taking the nearest depth around an empty pixel.
-     *
-     * 3x3, not 5x5. This fill is a DILATION: it also grows the body outward at
-     * the silhouette, and every pixel it invents keeps its value as the centre
-     * of its own filter run — the centre is the one sample the clamp cannot
-     * correct, since the clamp only bounds neighbours. A 5x5 grew that invented
-     * fringe two texels deep all the way round; 3x3 halves it while still
-     * bridging the one-texel gaps this exists for. */
     if (centerDevice >= 0.99999 && u_fillHoles != 0) {
-        if(u_useOccupancy!=0 && texture(u_occupancyTex,fragTexCoord).r<0.5) {
-            finalColor=vec4(1.0,0.0,0.0,1.0);
-            return;
-        }
         float nearest = 1.0;
         for (int y = -1; y <= 1; y++) {
             for (int x = -1; x <= 1; x++) {
-                if(x==0 && y==0) continue; /* center is already known empty */
+                if(x==0 && y==0) continue;
                 nearest = min(nearest, texture(texture0, fragTexCoord + vec2(x, y) * u_texel).r);
             }
         }
@@ -108,29 +94,9 @@ void main() {
     float weightedDepth = centerDistance;
     float weightSum = 1.0;
 
-    /* The filter radius has to follow the splat's size ON SCREEN, which is what
-     * this shader was missing: a fixed 10 texels cannot flatten a kernel that
-     * projects to forty, so every splat kept its own dome and the body rendered
-     * as a heap of beads whenever the camera came close. Derive the projected
-     * kernel radius per pixel — proj[1][1] is 1/tan(fovy/2) and 1/u_texel.y is
-     * the target height. Reach about ONE kernel across, not two: two erases the
-     * splat dome and then keeps going, converging the interior toward a plane,
-     * and a body whose middle is flat while its silhouette still carries splat
-     * bumps reads as neither liquid nor solid. One kernel is the smallest reach
-     * that can still remove a dome. u_filterRadius stays as the tier's CEILING,
-     * so quality tiers still bound the cost. */
-    float projScale = u_projection[1][1] * (0.5 / max(u_texel.y, 1e-6));
+    float projScale = abs(u_projection[1][1]) * (0.5 / max(u_texel.y, 1e-6));
     float kernelPixels = kernelRadius * projScale / max(centerDistance, 0.05);
 
-    /* The amount of smoothing must be CONTINUOUS in depth. Deriving the Gaussian
-     * from an integer radius made it a step function of distance: every texel
-     * the radius jumped, the surface got a different amount of smoothing, and
-     * the boundary between the two amounts is an iso-depth curve — a contour
-     * line. Eight of them across a two-metre body, which is exactly the
-     * topographic-map pattern the sandbox showed. So sigma comes from the raw
-     * projected size, and only the LOOP BOUND stays integer: cut at three sigma,
-     * where the weight is ~1%, the quantized cutoff carries too little energy to
-     * draw a line. */
     float reachPixels = max(kernelPixels * 1.25, 2.0);
     float sigmaS = max(reachPixels * 0.5, 1.0);
     int adaptiveRadius = int(min(ceil(sigmaS * 3.0), float(u_filterRadius)));
@@ -138,48 +104,21 @@ void main() {
     float threshold = kernelRadius * 10.5;
     float lowerClamp = centerDistance - kernelRadius;
 
-    /* ---- The TRUE 2D kernel. ----------------------------------------------
-     *
-     * The 1D path below is the paper's `filter1D`, and running it twice is an
-     * approximate separation. Truong & Yuksel's own point about the bilateral
-     * Gaussian — "not separable, and an approximate separation can result in
-     * visual artefacts" — applies to their filter too, which is why their
-     * reference implementation ships `filter2D` alongside it behind a switch.
-     *
-     * Measured here before writing this: running only the horizontal pass smears
-     * the reconstructed normal into HORIZONTAL ribbons, only the vertical pass
-     * into VERTICAL ones. Each pass smooths along its own axis and neither ever
-     * sees a diagonal neighbour, so the residue of both is a cross-hatch that
-     * concentrates next to the silhouette.
-     *
-     * The paper's rules are unchanged — pair rejection, clamp-not-reject below
-     * the lower bound, range extension, separate bounds per side. What changes
-     * is that a "side" is now an arbitrary 2D offset rather than +x or -x, so
-     * the four sample directions of each iteration carry four bound sets.
-     *
-     * Ordering differs from the reference and it is deliberate: samples are
-     * walked outward (rows from the centre, and within a row from the centre),
-     * because range EXTENSION is a walk — a bound that has already been widened
-     * by a distant sample would let a nearer one through that should have been
-     * rejected. */
     if (u_filter2D != 0) {
         vec4 upper = vec4(centerDistance + threshold);
         vec4 lower = vec4(centerDistance - threshold);
-        float radiusSquared;
         int radius2D = min(adaptiveRadius, LIQUID_FILTER2D_MAX_RADIUS);
-        radiusSquared = float(radius2D * radius2D);
+        float radiusSquared = float(radius2D * radius2D);
+        float invTwoSigmaSq = -0.5 / (sigmaS * sigmaS);
         for (int dy = 0; dy <= 32; dy++) {
             if (dy > radius2D) break;
             for (int m = 0; m <= 32; m++) {
                 if (m > radius2D) break;
-                if (dy == 0 && m == 0) continue;          // the centre is already in
+                if (dy == 0 && m == 0) continue;
                 float r2 = float(m * m + dy * dy);
-                if (r2 > radiusSquared) continue;         // a disc, not a square
-                float w = exp(-0.5 * r2 / (sigmaS * sigmaS));
+                if (r2 > radiusSquared) continue;
+                float w = exp(r2 * invTwoSigmaSq);
 
-                /* Pair A spans (+m,+dy) and its point reflection; pair B spans
-                 * (-m,+dy) and its own. On an axis the two coincide, so B is
-                 * skipped there to avoid sampling the same texel twice. */
                 for (int pair = 0; pair < 2; pair++) {
                     if (pair == 1 && (m == 0 || dy == 0)) continue;
                     vec2 off = vec2((pair == 0 ? float(m) : -float(m)), float(dy)) * u_texel;
@@ -209,31 +148,14 @@ void main() {
         return;
     }
 
-    /* Narrow-range filter, Truong & Yuksel 2018, implemented from the paper.
-     *
-     *   - a sample FURTHER than `upper` is background or a separate sheet: its
-     *     weight goes to zero AND SO DOES ITS PARTNER'S on the opposite side.
-     *     That pairing is the part everything else here got wrong. Dropping one
-     *     side alone biases the average toward the side that still has surface;
-     *     substituting a fabricated value instead adds weight carrying the
-     *     CENTRE's own depth, which dilutes the smoothing and leaves the edge
-     *     stiffer than the interior. Zeroing the pair removes weight rather than
-     *     adding it, so the remaining rings still flatten at full strength after
-     *     the sum/weight normalisation — unbiased and undiluted.
-     *   - a sample NEARER than `lower` is clamped to one kernel radius in front
-     *     of the centre, not rejected, so a splat's near face still pulls.
-     *   - otherwise the range EXTENDS to follow it. This is what lets the filter
-     *     track a sloped surface, and it replaces the tangent-plane prediction
-     *     this file used to estimate from a finite difference.
-     *
-     * Each side carries its own bounds, exactly as the reference does. */
     float upperPos = centerDistance + threshold, lowerPos = centerDistance - threshold;
     float upperNeg = upperPos, lowerNeg = lowerPos;
+    float invTwoSigmaSq = -0.5 / (sigmaS * sigmaS);
 
     for (int i = 1; i <= 32; i++) {
         if (i > adaptiveRadius) break;
         float fi = float(i);
-        float w = exp(-0.5 * fi * fi / (sigmaS * sigmaS));
+        float w = exp(fi * fi * invTwoSigmaSq);
         float wPos = w, wNeg = w;
 
         float dPos = ViewDistance(DepthForMaterial(fragTexCoord+u_direction*u_texel*fi,material));
