@@ -27,6 +27,7 @@
 #include "environment/wind/wind_system.h"
 #include "environment/volumetric/volumetric_fog.h"
 #include "environment/environment_system.h"
+#include "environment/env_shadow.h"
 
 #define TEST_PATH_POINT_COUNT 16
 static Vector3 s_testPathPoints[TEST_PATH_POINT_COUNT];
@@ -1502,8 +1503,69 @@ int VFXTest_ConsumeCameraTiltStep(void)
     return step;
 }
 
+static float s_vfxTimeOfDayHours = 16.5f; // Golden hour / afternoon start matching song_quao
+static bool s_vfxDraggingTimeOfDay = false;
+
+static void VFXTest_ApplyTimeOfDay(float hour)
+{
+    s_vfxTimeOfDayHours = fmaxf(0.0f, fminf(24.0f, hour));
+    float t = s_vfxTimeOfDayHours / 24.0f;
+    Environment_SetTimeOfDay(t);
+
+    float sunAngle = (s_vfxTimeOfDayHours / 24.0f) * 2.0f * PI - PI * 0.5f;
+    float sunElevation = sinf(sunAngle);
+    float sunAzimuth = cosf(sunAngle);
+
+    Vector3 sunDir = Vector3Normalize((Vector3){ -sunAzimuth * 0.85f, -sunElevation, -0.52f });
+
+    if (sunElevation > 0.04f) {
+        float horizonWarmth = 1.0f - fmaxf(0.0f, fminf(1.0f, (sunElevation - 0.04f) / 0.45f));
+        Color noonSun = (Color){255, 246, 228, 255};
+        Color sunsetSun = (Color){255, 192, 118, 255};
+        Color sunColor = (Color){
+            (unsigned char)(noonSun.r * (1.0f - horizonWarmth) + sunsetSun.r * horizonWarmth),
+            (unsigned char)(noonSun.g * (1.0f - horizonWarmth) + sunsetSun.g * horizonWarmth),
+            (unsigned char)(noonSun.b * (1.0f - horizonWarmth) + sunsetSun.b * horizonWarmth),
+            255
+        };
+
+        Color noonSky = (Color){96, 128, 168, 255};
+        Color sunsetSky = (Color){86, 102, 138, 255};
+        Color ambientColor = (Color){
+            (unsigned char)(noonSky.r * (1.0f - horizonWarmth) + sunsetSky.r * horizonWarmth),
+            (unsigned char)(noonSky.g * (1.0f - horizonWarmth) + sunsetSky.g * horizonWarmth),
+            (unsigned char)(noonSky.b * (1.0f - horizonWarmth) + sunsetSky.b * horizonWarmth),
+            255
+        };
+
+        Color shadowColor = (Color){38, 50, 68, (unsigned char)(80 + 25 * horizonWarmth)};
+        float intensity = 1.9f + 0.45f * horizonWarmth;
+
+        Environment_SetSunDirection(sunDir);
+        Environment_SetSunColor(sunColor);
+        Environment_SetSunIntensity(intensity);
+        Environment_SetAmbientColor(ambientColor);
+        Environment_SetShadowColor(shadowColor);
+    } else {
+        float moonElev = fmaxf(-sunElevation, 0.38f);
+        Vector3 moonDir = Vector3Normalize((Vector3){ sunAzimuth * 0.85f, -moonElev, 0.52f });
+        Color moonColor = (Color){160, 202, 252, 255};
+        Color nightAmbient = (Color){24, 38, 58, 255};
+        Color nightShadow = (Color){10, 16, 26, 60};
+
+        Environment_SetSunDirection(moonDir);
+        Environment_SetSunColor(moonColor);
+        Environment_SetSunIntensity(0.70f);
+        Environment_SetAmbientColor(nightAmbient);
+        Environment_SetShadowColor(nightShadow);
+    }
+
+    EnvShadow_InvalidateStaticCache();
+}
+
 typedef struct VFXTest_UILayout {
     Rectangle header, inspector, browser, help, metrics[3], cameraStatus;
+    Rectangle timeSlider, gfxButton, fogButton;
     int inspectorRows, browserColumns, browserRows;
     float rowHeight, browserCellWidth;
 } VFXTest_UILayout;
@@ -1520,15 +1582,47 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
     VFXTest_UILayout ui = {0};
     ui.header = (Rectangle){12.0f, top, w - 24.0f, 40.0f};
     float statusBottom = top + 40.0f;
-    if (w >= 1100.0f) {
-        for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){178.0f + i * 76.0f, top, 76.0f, 40.0f};
-        ui.cameraStatus = (Rectangle){412.0f, top, w - 842.0f, 40.0f};
+
+    // Right-side buttons
+    float rightCursor = ui.header.x + ui.header.width - 4.0f;
+    float btnW = ui.header.width < 580.0f ? 52.0f : 62.0f;
+    rightCursor -= (3 * btnW + 8.0f);
+
+    float fogW = ui.header.width < 700.0f ? 84.0f : 110.0f;
+    rightCursor -= (fogW + 6.0f);
+    ui.fogButton = (Rectangle){rightCursor + 6.0f, top + 5.0f, fogW, 30.0f};
+
+    float gfxW = ui.header.width < 700.0f ? 76.0f : 96.0f;
+    rightCursor -= (gfxW + 6.0f);
+    ui.gfxButton = (Rectangle){rightCursor + 6.0f, top + 5.0f, gfxW, 30.0f};
+
+    if (w >= 1150.0f) {
+        float leftCursor = ui.header.x + 124.0f;
+        ui.metrics[0] = (Rectangle){leftCursor, top, 66.0f, 40.0f}; leftCursor += 70.0f;
+        ui.metrics[1] = (Rectangle){leftCursor, top, 72.0f, 40.0f}; leftCursor += 76.0f;
+        ui.metrics[2] = (Rectangle){leftCursor, top, 96.0f, 40.0f}; leftCursor += 100.0f;
+
+        float camW = 186.0f;
+        ui.cameraStatus = (Rectangle){leftCursor, top, camW, 40.0f};
+        leftCursor += camW + 8.0f;
+
+        float sliderW = rightCursor - leftCursor - 8.0f;
+        if (sliderW < 130.0f) sliderW = 130.0f;
+        ui.timeSlider = (Rectangle){leftCursor, top, sliderW, 40.0f};
     } else {
-        ui.header.height = 116.0f;
-        for (int i = 0; i < 3; ++i) ui.metrics[i] = (Rectangle){18.0f + i * ((w - 36.0f) / 3.0f), top + 40.0f, (w - 36.0f) / 3.0f, 36.0f};
-        ui.cameraStatus = (Rectangle){18.0f, top + 76.0f, w - 36.0f, 36.0f};
-        statusBottom = top + 116.0f;
+        ui.header.height = 118.0f;
+        float row2Y = top + 42.0f;
+        float r2Left = 18.0f;
+        ui.metrics[0] = (Rectangle){r2Left, row2Y, 68.0f, 34.0f}; r2Left += 72.0f;
+        ui.metrics[1] = (Rectangle){r2Left, row2Y, 74.0f, 34.0f}; r2Left += 78.0f;
+        ui.metrics[2] = (Rectangle){r2Left, row2Y, 98.0f, 34.0f}; r2Left += 104.0f;
+        ui.cameraStatus = (Rectangle){r2Left, row2Y, w - 36.0f - r2Left, 34.0f};
+
+        float row3Y = top + 78.0f;
+        ui.timeSlider = (Rectangle){18.0f, row3Y, w - 36.0f, 34.0f};
+        statusBottom = top + 118.0f;
     }
+
     float panelTop = fmaxf(176.0f, statusBottom + 40.0f);
     ui.rowHeight = 44.0f;
     float panelHeight = fminf(76.0f + fmaxf(1.0f, (float)s_inspectorParamCount) * ui.rowHeight, fmaxf(116.0f, h - panelTop - 48.0f));
@@ -1547,9 +1641,13 @@ static VFXTest_UILayout VFXTest_UIGetLayout(void)
 
 static Rectangle VFXTest_UIHeaderButton(VFXTest_UILayout ui, int index)
 {
-    float width = ui.header.width < 580.0f ? 56.0f : 76.0f;
-    return (Rectangle){ui.header.x + ui.header.width - (3 - index) * (width + 6.0f) - 4.0f,
-                       ui.header.y + 5.0f, width, 30.0f};
+    float backW = ui.header.width < 580.0f ? 52.0f : 62.0f;
+    float helpW = ui.header.width < 580.0f ? 52.0f : 62.0f;
+    float fixW = ui.header.width < 580.0f ? 56.0f : 68.0f;
+    float rightEdge = ui.header.x + ui.header.width - 4.0f;
+    if (index == 2) return (Rectangle){rightEdge - backW, ui.header.y + 5.0f, backW, 30.0f};
+    if (index == 1) return (Rectangle){rightEdge - backW - 4.0f - helpW, ui.header.y + 5.0f, helpW, 30.0f};
+    return (Rectangle){rightEdge - backW - 4.0f - helpW - 4.0f - fixW, ui.header.y + 5.0f, fixW, 30.0f};
 }
 
 static Rectangle VFXTest_UIInspectorRow(VFXTest_UILayout ui, int visibleRow)
@@ -1570,18 +1668,13 @@ static Rectangle VFXTest_UIParameterButton(Rectangle row, int direction)
 
 static Rectangle VFXTest_UITiltButton(VFXTest_UILayout ui, int direction)
 {
-    return (Rectangle){ui.cameraStatus.x + ui.cameraStatus.width - (direction < 0 ? 72.0f : 36.0f),
-                       ui.cameraStatus.y + (ui.cameraStatus.height - 30.0f) * 0.5f, 30.0f, 30.0f};
+    return (Rectangle){ui.cameraStatus.x + ui.cameraStatus.width - (direction < 0 ? 56.0f : 28.0f),
+                       ui.cameraStatus.y + (ui.cameraStatus.height - 28.0f) * 0.5f, 26.0f, 28.0f};
 }
 
 static Rectangle VFXTest_UIFogButton(VFXTest_UILayout ui)
 {
-    if (GetScreenWidth() >= 1100)
-        return (Rectangle){VFXTest_UIHeaderButton(ui, 0).x - 152.0f,
-                           ui.header.y + 5.0f, 146.0f, 30.0f};
-    float width = ui.cameraStatus.width >= 440.0f ? 146.0f : 96.0f;
-    return (Rectangle){VFXTest_UITiltButton(ui, -1).x - width - 8.0f,
-                       VFXTest_UITiltButton(ui, -1).y, width, 30.0f};
+    return ui.fogButton;
 }
 
 static Rectangle VFXTest_UIBrowserCell(VFXTest_UILayout ui, int visibleIndex)
@@ -1615,6 +1708,9 @@ bool VFXTest_IsPointerOverUI(void)
     Vector2 mouse = GetMousePosition();
     if (CheckCollisionPointRec(mouse, ui.header)) return true;
     if (CheckCollisionPointRec(mouse, ui.cameraStatus)) return true;
+    if (CheckCollisionPointRec(mouse, ui.timeSlider)) return true;
+    if (CheckCollisionPointRec(mouse, ui.gfxButton)) return true;
+    if (CheckCollisionPointRec(mouse, ui.fogButton)) return true;
     for (int i = 0; i < 3; ++i) if (CheckCollisionPointRec(mouse, ui.metrics[i])) return true;
     if (s_isPanelOpen || s_vfxHelpOpen) return true; /* Modal panels own their backdrop. */
     if (s_inspectorParamCount > 0 && CheckCollisionPointRec(mouse, ui.inspector)) return true;
@@ -1718,6 +1814,27 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
         Fog_SetRenderMode(mode == FOG_MODE_OFF ? FOG_MODE_HEIGHT :
                           mode == FOG_MODE_HEIGHT ? FOG_MODE_VOLUMETRIC : FOG_MODE_OFF);
     }
+    if (VFXTest_UIButtonReleased(ui.gfxButton)) {
+        GfxQuality_Cycle();
+    }
+    Vector2 mouse = GetMousePosition();
+    Rectangle timeHit = {ui.timeSlider.x, ui.timeSlider.y, ui.timeSlider.width, ui.timeSlider.height};
+    if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(mouse, timeHit)) {
+        s_vfxDraggingTimeOfDay = true;
+        s_vfxPointerCaptured = true;
+    }
+    if (s_vfxDraggingTimeOfDay) {
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            s_vfxPointerCaptured = true;
+            float trackX = ui.timeSlider.x + 80.0f;
+            float trackW = fmaxf(40.0f, ui.timeSlider.width - 90.0f);
+            float norm = fmaxf(0.0f, fminf(1.0f, (mouse.x - trackX) / trackW));
+            s_vfxTimeOfDayHours = norm * 24.0f;
+            VFXTest_ApplyTimeOfDay(s_vfxTimeOfDayHours);
+        } else {
+            s_vfxDraggingTimeOfDay = false;
+        }
+    }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 0))) { s_isPanelOpen = !s_isPanelOpen; s_vfxHelpOpen = false; }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 1))) { s_vfxHelpOpen = !s_vfxHelpOpen; s_isPanelOpen = false; }
     if (VFXTest_UIButtonReleased(VFXTest_UIHeaderButton(ui, 2))) back = true;
@@ -1807,8 +1924,16 @@ static bool VFXTest_UIHandleInput(Vector3 playerPos)
 
 static void VFXTest_UIText(const char *text, Rectangle rect, int fontSize, Color color)
 {
+    if (!text || rect.width <= 0 || rect.height <= 0) return;
+    int textW = MeasureText(text, fontSize);
+    int xOffset = 6;
+    if (rect.width >= textW + 8) {
+        xOffset = (int)(rect.width - textW) / 2;
+    } else {
+        xOffset = 2;
+    }
     BeginScissorMode((int)rect.x, (int)rect.y, (int)rect.width, (int)rect.height);
-    DrawText(text, (int)rect.x + 6, (int)rect.y + (int)(rect.height - fontSize) / 2, fontSize, color);
+    DrawText(text, (int)rect.x + xOffset, (int)rect.y + (int)(rect.height - fontSize) / 2, fontSize, color);
     EndScissorMode();
 }
 
@@ -1842,27 +1967,56 @@ static void VFXTest_UIDraw(void)
     DrawRectangleRounded(ui.header, 0.12f, 4, (Color){15, 20, 27, 230});
     const char *name = s_testCategory == TEST_CAT_NEWFX && s_testIndex >= 0 && s_testIndex < VFXTest_NewFxCount()
                        ? s_newFxNames[s_testIndex] : "MESH PREVIEW";
-    Rectangle title = {ui.header.x + 6.0f, ui.header.y, VFXTest_UIHeaderButton(ui, 0).x - ui.header.x - 10.0f, 40.0f};
-    if (GetScreenWidth() >= 1100) title.width = 150.0f;
-    VFXTest_UIText(name, title, 14, RAYWHITE);
+    Rectangle title = {ui.header.x + 6.0f, ui.header.y, 115.0f, 40.0f};
+    VFXTest_UIText(name, title, 13, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 0), "Fixtures", s_isPanelOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 1), "Help", s_vfxHelpOpen);
     VFXTest_UIDrawButton(VFXTest_UIHeaderButton(ui, 2), "Back", false);
+
     FogRenderMode fogMode = Fog_GetRenderMode();
     const char *fogLabel = fogMode == FOG_MODE_OFF ? "Fog: None" :
-                           fogMode == FOG_MODE_HEIGHT ?
-                           (ui.cameraStatus.width >= 440.0f || GetScreenWidth() >= 1100 ? "Fog: Height Map" : "Fog: Height") : "Fog: Raymarch";
-    VFXTest_UIDrawButton(VFXTest_UIFogButton(ui), fogLabel, fogMode != FOG_MODE_OFF);
+                           fogMode == FOG_MODE_HEIGHT ? "Fog: Height" : "Fog: Raymarch";
+    VFXTest_UIDrawButton(ui.fogButton, fogLabel, fogMode != FOG_MODE_OFF);
+
+    // Active GFX quality tier indicator
+    GfxQuality tier = GfxQuality_Get();
+    const char *tierName = GfxQuality_GetName(tier);
+    VFXTest_UIDrawButton(ui.gfxButton, TextFormat("GFX: %s", tierName), tier >= GFX_HIGH);
+
+    // Interactive Time of Day (Sun & Moon) Slider
+    DrawRectangleRounded(ui.timeSlider, 0.15f, 4, (Color){20, 26, 35, 235});
+    DrawRectangleRoundedLines(ui.timeSlider, 0.15f, 4, (Color){55, 68, 85, 255});
+    int hourInt = (int)s_vfxTimeOfDayHours;
+    int minInt = (int)((s_vfxTimeOfDayHours - (float)hourInt) * 60.0f);
+    bool isDay = (s_vfxTimeOfDayHours >= 5.5f && s_vfxTimeOfDayHours <= 18.5f);
+    const char *timeLabel = TextFormat("%s %02d:%02d", isDay ? "Sun" : "Moon", hourInt, minInt);
+    Rectangle timeLabelRect = {ui.timeSlider.x + 4.0f, ui.timeSlider.y, 74.0f, ui.timeSlider.height};
+    VFXTest_UIText(timeLabel, timeLabelRect, 11, isDay ? (Color){255, 218, 130, 255} : (Color){160, 205, 255, 255});
+
+    float trackX = ui.timeSlider.x + 80.0f;
+    float trackW = fmaxf(40.0f, ui.timeSlider.width - 90.0f);
+    float trackY = ui.timeSlider.y + (ui.timeSlider.height - 6.0f) * 0.5f;
+    Rectangle trackRect = {trackX, trackY, trackW, 6.0f};
+    DrawRectangleRounded(trackRect, 0.5f, 2, (Color){38, 48, 62, 240});
+
+    float normTime = s_vfxTimeOfDayHours / 24.0f;
+    float fillW = fmaxf(4.0f, trackW * normTime);
+    DrawRectangleRounded((Rectangle){trackX, trackY, fillW, 6.0f}, 0.5f, 2,
+                         isDay ? (Color){245, 175, 75, 255} : (Color){100, 165, 255, 240});
+
+    float thumbX = trackX + normTime * trackW;
+    DrawCircle((int)thumbX, (int)(trackY + 3.0f), 7.0f, isDay ? (Color){255, 235, 170, 255} : (Color){210, 235, 255, 255});
+    DrawCircleLines((int)thumbX, (int)(trackY + 3.0f), 7.0f, (Color){30, 40, 55, 255});
+
     const char *variant = VFXTest_UIActiveVariant();
     if (variant) VFXTest_UIText(TextFormat("%s   |   %s", variant,
                              VFXTest_IsNewFxNamed("GUIDED MOTION") ? "Shift+, / Shift+. preset" : "< / > preset"),
                              (Rectangle){12.0f, ui.header.y + ui.header.height + 6.0f, fmaxf(180.0f, GetScreenWidth() - 340.0f), 24.0f}, 12, SKYBLUE);
     VFXTest_UIText(TextFormat("%.0f FPS", s_vfxTelemetryFps), ui.metrics[0], 12, RAYWHITE);
     VFXTest_UIText(TextFormat("%.1f ms", s_vfxTelemetryFrameMs), ui.metrics[1], 12, LIGHTGRAY);
-    VFXTest_UIText(TextFormat("peak %.1f", s_vfxTelemetryPeakMs), ui.metrics[2], 11, LIGHTGRAY);
-    Rectangle cameraLabel = {ui.cameraStatus.x, ui.cameraStatus.y, ui.cameraStatus.width - 78.0f, ui.cameraStatus.height};
-    if (GetScreenWidth() < 1100) cameraLabel.width = VFXTest_UIFogButton(ui).x - cameraLabel.x - 6.0f;
-    VFXTest_UIText(TextFormat("Tilt %.0f deg  Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 12, RAYWHITE);
+    VFXTest_UIText(TextFormat("pk %.1f ms", s_vfxTelemetryPeakMs), ui.metrics[2], 11, LIGHTGRAY);
+    Rectangle cameraLabel = {ui.cameraStatus.x, ui.cameraStatus.y, ui.cameraStatus.width - 58.0f, ui.cameraStatus.height};
+    VFXTest_UIText(TextFormat("Tilt %.0f deg  Zoom %.2fx", s_vfxTelemetryTilt, s_vfxTelemetryZoom), cameraLabel, 11, RAYWHITE);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, -1), "-", false);
     VFXTest_UIDrawButton(VFXTest_UITiltButton(ui, 1), "+", false);
     if (!s_isPanelOpen && !s_vfxHelpOpen && s_inspectorParamCount > 0) {

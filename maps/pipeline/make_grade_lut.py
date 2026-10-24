@@ -83,11 +83,11 @@ def grade_pixel(r01, g01, b01):
     g_lin += shadow_weight * 0.004
     b_lin += shadow_weight * 0.022
 
-    # Highlight bias: warm golden amber (r +0.038, g +0.022, b -0.016 in highlights)
-    highlight_weight = math.pow(clamp01((luma - 0.35) / 0.65), 1.4)
-    r_lin += highlight_weight * 0.038
-    g_lin += highlight_weight * 0.022
-    b_lin += highlight_weight * -0.016
+    # Highlight bias: gentle natural sun warmth without yellow-tinting grass foliage
+    highlight_weight = math.pow(clamp01((luma - 0.40) / 0.60), 1.6)
+    r_lin += highlight_weight * 0.012
+    g_lin += highlight_weight * 0.008
+    b_lin += highlight_weight * -0.004
 
     r_srgb = clamp01(linear_to_srgb(clamp01(r_lin)))
     g_srgb = clamp01(linear_to_srgb(clamp01(g_lin)))
@@ -96,10 +96,10 @@ def grade_pixel(r01, g01, b01):
     # 3. HSL selective tuning (Ghost of Tsushima style):
     h, s, l = rgb_to_hsl(r_srgb, g_srgb, b_srgb)
 
-    # Foliage green detection (centered around hue 0.28 = 100 deg)
-    is_green = math.exp(-math.pow((h - 0.28) / 0.08, 2.0))
-    s = s * (1.0 - 0.16 * is_green)
-    h = h + (0.22 - h) * 0.12 * is_green
+    # Foliage green tuning (Tsushima lush emerald/jade clarity):
+    # Preserve pristine green hue (~0.28-0.31) without pushing towards yellow (0.22)
+    is_green = math.exp(-math.pow((h - 0.29) / 0.08, 2.0))
+    s = clamp01(s * (1.0 + 0.10 * is_green))
 
     # Red/Orange/Gold detection (centered around hue 0.05 = 18 deg)
     dist_red = min(abs(h - 0.05), abs(h - 1.05))
