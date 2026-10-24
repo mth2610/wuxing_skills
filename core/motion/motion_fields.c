@@ -2165,6 +2165,7 @@ void MotionFields_PackGpu(MotionGpuScene *out)
       out->zoneNoise.w = 1;
   }
   int maxGpuFields = (int)(sizeof(out->fields) / sizeof(out->fields[0]));
+  uint32_t hasDrag = 0;
   for (int idx = 0; idx < s_activeTargetCount; idx++)
   {
     if ((int)out->meta[0] >= maxGpuFields)
@@ -2174,8 +2175,13 @@ void MotionFields_PackGpu(MotionGpuScene *out)
                          : t->desc.usePhysicalField ? &t->desc.physicalField
                                                     : NULL;
     if (t->handle && d)
+    {
+      if (t->physicalDragLawCount > 0)
+        hasDrag = 1;
       MotionGpu_PackField(d, t->handle, t->age, &out->fields[out->meta[0]++]);
+    }
   }
+  out->meta[2] = hasDrag;
 }
 
 void MotionFields_SampleBody(Vector3 p, Vector3 v,

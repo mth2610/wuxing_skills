@@ -51,6 +51,22 @@ static inline void MotionGpu_PackField(const FieldDesc *d,MotionFieldHandle hand
   out->halfExtents=MotionGpu_V4(d->volume.halfExtentsM,(float)volumeCount);
   out->capsuleA=MotionGpu_V4(d->volume.capsuleStart,d->flow.followSpeedMps);
   out->capsuleB=MotionGpu_V4(d->volume.capsuleEnd,(float)d->flow.priority);
+  if (d->volume.shape == FIELD_PATH_TUBE && volumeCount > 0) {
+    Vector3 minP = d->volume.path.points[0];
+    Vector3 maxP = d->volume.path.points[0];
+    for (int i = 1; i < volumeCount; i++) {
+      const Vector3 p = d->volume.path.points[i];
+      if (p.x < minP.x) minP.x = p.x;
+      if (p.y < minP.y) minP.y = p.y;
+      if (p.z < minP.z) minP.z = p.z;
+      if (p.x > maxP.x) maxP.x = p.x;
+      if (p.y > maxP.y) maxP.y = p.y;
+      if (p.z > maxP.z) maxP.z = p.z;
+    }
+    float r = d->volume.radiusM;
+    out->capsuleA = (Vector4){minP.x - r, minP.y - r, minP.z - r, d->flow.followSpeedMps};
+    out->capsuleB = (Vector4){maxP.x + r, maxP.y + r, maxP.z + r, (float)d->flow.priority};
+  }
   out->position=MotionGpu_V4(d->transform.position,d->trajectory.speedMps);
   out->axisX=MotionGpu_V4(d->transform.axisX,(float)trajectoryCount);
   out->axisY=MotionGpu_V4(d->transform.axisY,d->lifetime.startDelaySec);
@@ -71,6 +87,7 @@ static inline void MotionGpu_PackField(const FieldDesc *d,MotionFieldHandle hand
   for(int i=0;i<d->forceLawCount;i++) {
     const ForceLaw *l=&d->forceLaws[i];MotionGpuLaw *g=&out->laws[i];
     if(l->type==FORCE_LAW_DRAG) out->identity[3]|=8u;
+    if(l->type==FORCE_LAW_PATH_GUIDE || l->type==FORCE_LAW_MOVING_GUIDE) out->identity[3]|=16u;
     g->forceType=MotionGpu_V4(l->forceNewtons,(float)l->type);
     g->accelerationMagnitude=MotionGpu_V4(l->accelerationMps2,l->magnitudeNewtons);
     g->centerStiffness=MotionGpu_V4(l->center,l->springStiffnessNPerM);

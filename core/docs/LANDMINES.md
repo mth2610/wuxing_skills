@@ -4256,3 +4256,31 @@ When particles have local force fields (`s_waterRingField`, `orb->field`), keep
 `receiveMotionFields = false` to avoid high-frequency spring fighting between
 competing guidance fields.
 
+## GPU Motion Field & Particle Integration Scaling Trap (24/10/2026)
+
+**Symptom.** Casting 5-6 simultaneous motion fields / guided VFX (e.g. `GUIDED MOTION`)
+causes severe FPS drops (e.g. 118 FPS drops to 35 FPS, frame time 8.4ms jumps to 28ms+),
+even though CPU frame update time is under 2.0 ms.
+
+**Cause.** (1) `FIELD_PATH_TUBE` in `motion_fields.glsl` lacked spatial bounding rejection,
+forcing all 8,192 GPU particle compute threads to unconditionally evaluate 32 Bezier curve
+segment projections for every active tube in the arena.
+(2) `motionAdvanceStep` unconditionally ran 2 passes (pass 0 and pass 1) for all active fields
+even when zero active fields had drag laws.
+(3) `mCurl` evaluated finite differences with redundant Perlin noise evaluations and multiple
+redundant `mWeight` distance evaluations per particle.
+(4) `particle_motion.glsl` ran an open-ended `while(remaining > 1e-6)` substepping loop
+at 120Hz (`dt = min(remaining, 1.0/120.0)`). When frame time slowed down to 30ms, the
+compute shader executed 4 substeps instead of 2, creating a positive feedback loop that
+doubled GPU execution time.
+
+**Rule.**
+- Always pack bounding boxes (`capsuleA`/`capsuleB`) for `FIELD_PATH_TUBE` in `MotionGpu_PackField`
+  to allow single-instruction AABB early rejection in `mSampleField`.
+- Track `hasDrag` in `MotionFields_PackGpu` and pack it into `meta[2]` to skip pass 1 in `motionAdvanceStep`.
+- Particle compute integration (`particle_motion.glsl`) must advance with a bounded single frame step
+  (`dt = min(u_dt, 1.0/30.0)`), reserving substepping exclusively for XPBD constraint solvers (`trail_ribbon.comp`).
+- Use analytic 12-sample finite differences for `mCurl` with weight evaluated once at the sample origin,
+  and pack law presence bitflags (`16u` for guide laws) in field `identity[3]` to eliminate shader loops over force laws.
+
+

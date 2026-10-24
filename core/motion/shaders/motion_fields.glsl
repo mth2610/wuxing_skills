@@ -96,18 +96,21 @@ float mRadius(int fi) {
     vec3 h=motionFields[fi].halfExtents.xyz;
     return motionFields[fi].identity.y==2u?min(h.x,min(h.y,h.z)):motionFields[fi].volume.x;
 }
-vec3 mPotential(int fi,vec3 p,vec3 nearest,float age,float speed,float eddy) {
-    float w=mWeight(fi,p,nearest);if(w<=0.0) return vec3(0);
-    vec3 q=p/eddy+age*speed/eddy*vec3(.37,.51,.29);
-    return vec3(motionPerlin(q),motionPerlin(q+vec3(31.416)),motionPerlin(q+vec3(67.234)))*speed*eddy*w;
-}
 vec3 mCurl(int fi,vec3 p,vec3 nearest,float age,float speed,float eddy) {
-    if(speed<=0.0) return vec3(0);if(eddy<=0.0) eddy=mRadius(fi)*.25;
-    float h=eddy*.02;vec3 dx=vec3(h,0,0),dy=vec3(0,h,0),dz=vec3(0,0,h);
-    vec3 ax=mPotential(fi,p+dx,nearest,age,speed,eddy)-mPotential(fi,p-dx,nearest,age,speed,eddy);
-    vec3 ay=mPotential(fi,p+dy,nearest,age,speed,eddy)-mPotential(fi,p-dy,nearest,age,speed,eddy);
-    vec3 az=mPotential(fi,p+dz,nearest,age,speed,eddy)-mPotential(fi,p-dz,nearest,age,speed,eddy);
-    return vec3(ay.z-az.y,az.x-ax.z,ax.y-ay.x)/(2.0*h);
+    if(speed<=0.0) return vec3(0);
+    float w=mWeight(fi,p,nearest);
+    if(w<=0.0) return vec3(0);
+    if(eddy<=0.0) eddy=mRadius(fi)*.25;
+    vec3 q=p/eddy+age*speed/eddy*vec3(.37,.51,.29);
+    const float step=0.02;
+    const vec3 c31=vec3(31.416), c67=vec3(67.234);
+    float ax_y=motionPerlin(q+vec3(step,0,0)+c31)-motionPerlin(q-vec3(step,0,0)+c31);
+    float ax_z=motionPerlin(q+vec3(step,0,0)+c67)-motionPerlin(q-vec3(step,0,0)+c67);
+    float ay_x=motionPerlin(q+vec3(0,step,0))    -motionPerlin(q-vec3(0,step,0));
+    float ay_z=motionPerlin(q+vec3(0,step,0)+c67)-motionPerlin(q-vec3(0,step,0)+c67);
+    float az_x=motionPerlin(q+vec3(0,0,step))    -motionPerlin(q-vec3(0,0,step));
+    float az_y=motionPerlin(q+vec3(0,0,step)+c31)-motionPerlin(q-vec3(0,0,step)+c31);
+    return vec3(ay_z-az_y,az_x-ax_z,ax_y-ay_x)*(speed*w/(2.0*step));
 }
 void mFrame(int fi,float age,out vec3 center,out vec3 velocity) {
     center=motionFields[fi].position.xyz;velocity=motionFields[fi].frameVelocity.xyz;
@@ -277,6 +280,14 @@ void mSampleField(int fi,vec3 pos,vec3 vel,vec3 ordinary,float rho,float mass,fl
         vec3 h=motionFields[fi].halfExtents.xyz;
         if(any(greaterThan(abs(p),h))) return;
     }
+    if(shape==3) {
+        if(any(lessThan(p, motionFields[fi].capsuleA.xyz)) || any(greaterThan(p, motionFields[fi].capsuleB.xyz))) return;
+    }
+    if(shape==1) {
+        vec3 cMin = min(motionFields[fi].capsuleA.xyz, motionFields[fi].capsuleB.xyz) - vec3(radius);
+        vec3 cMax = max(motionFields[fi].capsuleA.xyz, motionFields[fi].capsuleB.xyz) + vec3(radius);
+        if(any(lessThan(p, cMin)) || any(greaterThan(p, cMax))) return;
+    }
     MPath path;path.p=vec3(0);path.t=vec3(1,0,0);path.n=vec3(0,1,0);path.b=vec3(0,0,1);
     if(shape==3) path=mPath(fi,p);
     float w=mWeight(fi,p,path.p)*life;if(w<=0.0) return;
@@ -308,17 +319,18 @@ void mSampleField(int fi,vec3 pos,vec3 vel,vec3 ordinary,float rho,float mass,fl
     vec3 lane=vec3(0);bool hasLane=false;
     bool preserve=shape==0?(flags&1u)!=0u:(shape==3 && (flags&2u)!=0u);
     if(body.meta.y!=0u && preserve) {
-        bool guide=false;
-        for(int j=0;j<int(motionFields[fi].flowParams.w);j++)
-            if(int(motionFields[fi].laws[j].forceType.w)==(shape==0?7:6)) guide=true;
+        bool guide=(flags & 16u)!=0u;
         int slot=-1;
         if(guide) {
             for(int j=0;j<4;j++) if(body.laneHandles[j]==motionFields[fi].identity.x) {slot=j;hasLane=true;break;}
             if(!hasLane) {
-                for(int j=0;j<4;j++) {
-                    bool alive=false;
-                    for(int k=0;k<int(motionMeta.x);k++) if(body.laneHandles[j]==motionFields[k].identity.x) alive=true;
-                    if(!alive) {slot=j;break;}
+                for(int j=0;j<4;j++) if(body.laneHandles[j]==0u) {slot=j;break;}
+                if(slot<0) {
+                    for(int j=0;j<4;j++) {
+                        bool alive=false;
+                        for(int k=0;k<int(motionMeta.x);k++) if(body.laneHandles[j]==motionFields[k].identity.x) alive=true;
+                        if(!alive) {slot=j;break;}
+                    }
                 }
                 if(slot>=0) {
                     if(shape==0) {lane=mLimit(p,radius*.65);if(flowOn) lane=mRotate(lane,axis,-swirl/radius*age);}
@@ -444,11 +456,13 @@ void motionAdvanceStep(inout vec3 pos,inout vec3 vel,inout MotionGpuBody body,
     float invMass=body.body0.x,mass=1.0/invMass,rho=body.body2.z>0.0?body.body2.z:1.225;
         MSample s;s.force=vec3(0);s.acc=vec3(0);s.air=ordinary;s.dragAir=vec3(0);
         s.weight=0.0;s.priority=0;s.dragK=0.0;s.buoyancy=false;s.drag=false;s.count=0;
-        for(int pass=0;pass<2;pass++) for(int fi=0;fi<int(motionMeta.x);fi++)
+        int maxPass = motionMeta.z != 0u ? 2 : 1;
+        for(int pass=0;pass<maxPass;pass++) for(int fi=0;fi<int(motionMeta.x);fi++)
             mSampleField(fi,pos,vel,ordinary,rho,mass,dt,offset,body,s,pass!=0);
         vec3 acceleration=body.acceleration.xyz+s.acc+(body.force.xyz+s.force)*invMass;
         acceleration+=externalAcceleration;
-        acceleration+=motionZone(pos,time)*body.body1.x*body.body1.z;
+        if(body.body1.x*body.body1.z>0.0)
+            acceleration+=motionZone(pos,time)*(body.body1.x*body.body1.z);
         float buoyancy=!s.buoyancy && body.body2.w>0.0?rho/body.body2.w:0.0;
         acceleration.y+=9.81*body.body0.y*(buoyancy-1.0);
         vel+=mSolveControllers(s,acceleration,invMass,dt);
