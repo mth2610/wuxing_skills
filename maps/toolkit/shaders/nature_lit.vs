@@ -34,24 +34,27 @@ out vec4 v_staticLightSpace;
 void main()
 {
     vec3 local = vertexPosition;
+    mat3 worldLinear = mat3(u_worldFromShaderSpace) * mat3(matModel);
     vec3 shaderPosition = vec3(matModel * vec4(local, 1.0));
     vec3 world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
 
-    // Precompute combined 3x3 linear basis once (reused for displacement & normal)
-    mat3 worldLinear = mat3(u_worldFromShaderSpace) * mat3(matModel);
     float h = vertexTexCoord.y;
     vec3 bentNormal = vertexNormal;
     float windSheen = 0.0;
 
-    // Skip wind & state evaluations for stationary root vertices
+    // Bỏ qua toàn bộ tính toán gió & trạng thái cho các đỉnh gốc cỏ đứng yên (h == 0)
     if (h > 0.0001) {
         float windCompliance = 1.0;
-        vec2 grassState = GrassEvaluateLocalState(world);
-        if (dot(grassState, grassState) > 1e-5) {
-            vec3 rootApprox = vec3(local.x, local.y - h, local.z);
-            GrassApplyVertexMorphology(local, rootApprox, h, grassState, windCompliance);
-            shaderPosition = vec3(matModel * vec4(local, 1.0));
-            world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
+
+        // [TỐI ƯU HIỆU NĂNG]: Chỉ tính toán trạng thái cỏ khô/cháy khi map thực sự kích hoạt
+        if ((u_grassStateParams.x + u_grassStateParams.y) > 0.0001 || u_grassBurnZoneCount > 0) {
+            vec2 grassState = GrassEvaluateLocalState(world);
+            if (dot(grassState, grassState) > 1e-5) {
+                vec3 rootApprox = vec3(local.x, local.y - h, local.z);
+                GrassApplyVertexMorphology(local, rootApprox, h, grassState, windCompliance);
+                shaderPosition = vec3(matModel * vec4(local, 1.0));
+                world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
+            }
         }
 
         float rootMask = h * h;
@@ -78,14 +81,15 @@ void main()
         float dispSq = dot(dispXZ, dispXZ);
         float dispLen = sqrt(dispSq);
         float effHeight = max(abs(local.y), 0.15);
-        float dispY = -dispSq / (effHeight * 1.8 + sqrt(effHeight * effHeight * 3.24 + dispSq));
+        // [TỐI ƯU ALU]: Xấp xỉ hữu tỉ bảo toàn chiều dài cung, loại bỏ lệnh sqrt() thứ 2 mỗi đỉnh
+        float dispY = -dispSq / (effHeight * 3.6 + dispSq * (0.28 / effHeight));
 
         vec3 localDelta = vec3(dispXZ.x, dispY, dispXZ.y);
         local += localDelta;
         world += worldLinear * localDelta;
 
-        bentNormal.xz += windBend * (0.95 * h);
-        bentNormal.y  += dispLen * 0.45;
+        bentNormal.xz += windBend * (0.88 * h);
+        bentNormal.y  += dispLen * 0.48;
 
         float archSheenMask = h * clamp((0.92 - h) * 4.5, 0.0, 1.0);
         windSheen = clamp(dispLen / maxAllowedBend, 0.0, 1.0) * archSheenMask;

@@ -101,8 +101,16 @@ typedef enum {
 /* At HIGH, compact dense bodies need one 2D reconstruction round; larger or
  * close-up bodies keep two. This is a BODY footprint threshold, not a quality
  * downgrade: one round already spans a complete optical kernel, while the
- * second exists to remove residual large-scale lumpiness on broad surfaces. */
+ * second exists to remove residual large-scale lumpiness on broad surfaces.
+ *
+ * Measured (LIQUID BENCH, 5 bodies, 1280x720): one round vs two changes 0.06% of
+ * pixels and costs 2.6 ms of a 9.3 ms surface chain, so the threshold is where
+ * the money is saved. The second round is only reachable above this footprint. */
 #define LIQUID_SURFACE_COMPACT_BODY_PX 180.0f
+/* Kept for source compatibility with callers that size a kernel bound; no
+ * longer gates the reconstruction round count (see the note in liquid_surface.c:
+ * a 0.112 m kernel already projects to ~14 px at six metres, which made the
+ * compact path unreachable). */
 #define LIQUID_SURFACE_COMPACT_KERNEL_PX 8.0f
 
 /* Ask BEFORE building a fluid body, every frame the body wants to exist.

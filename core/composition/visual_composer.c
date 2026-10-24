@@ -80,6 +80,23 @@
 #include "common/vc_motion_field_ribbons.inl"
 // @gen:archetype_includes end
 
+/* Five-body liquid stress lab.
+ *
+ * liquid_bench.inl exists for exactly this — water, poison, mud, lava and metal
+ * sharing one frame — and was left unreachable, so the only liquid fixture the
+ * harness could measure was WATER ORB: one body, respawning periodically, with
+ * most frames containing nothing. "Can five liquids coexist at frame rate" was
+ * therefore never actually measurable. Env-gated so normal play is unchanged. */
+static bool LiquidBench_EnvEnabled(void)
+{
+    static int enabled = -1;
+    if (enabled < 0) {
+        const char *env = getenv("WUXING_LIQUID_BENCH");
+        enabled = (env && atoi(env) != 0) ? 1 : 0;
+    }
+    return enabled != 0;
+}
+
 void VFX_Compose_Update(float dt)
 {
     MotionFields_Update(dt);
@@ -115,7 +132,19 @@ void VFX_Compose_Update(float dt)
     VC_RefParticles_Update(dt);   /* calibration target — vc_ref_particle.inl */
     VC_GuidedMotion_Update(dt);
     WaterOrb_Update(dt);
-    // LiquidBench_Update(dt);
+    /* Five-body liquid stress lab (WUXING_LIQUID_BENCH=1). The heartbeat keeps
+     * the fixture alive; simulation and surface submission stay in the engine's
+     * normal update/composite phases. */
+    if (LiquidBench_EnvEnabled()) {
+        static Vector3 benchOrigin;
+        static bool benchOriginSet = false;
+        if (!benchOriginSet) {
+            benchOrigin = (Vector3){6.0f, MapManager_GetGroundHeightAt(6.0f, 4.4f), 4.4f};
+            benchOriginSet = true;
+        }
+        VFX_ComposeLiquidBench(benchOrigin, 1.6f, 1.0f);
+        LiquidBench_Update(dt);
+    }
     /* Choreography can update parent frames after field ages advance. Refresh
      * bindings without advancing clocks before component GPU snapshots. */
     MotionFields_RefreshFrames();
@@ -155,5 +184,5 @@ void VFX_Compose_Draw3D(Camera3D cam)
 void VFX_Compose_SubmitScreenSpaceVFX(void)
 {
     WaterOrb_SubmitSurface();
-    // LiquidBench_SubmitSurface();
+    if (LiquidBench_EnvEnabled()) LiquidBench_SubmitSurface();
 }

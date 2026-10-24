@@ -55,10 +55,10 @@ int main(void)
 {
     int bad = 0;
 
-    char *distort = ReadFile("core/scene_targets.c");
+    char *distort = ReadFile("post_process/scene_targets.c");
     char *fluid = ReadFile("core/liquid/liquid_surface.c");
     if (!distort || !fluid) {
-        printf("FAIL: cannot read core/scene_targets.c or core/liquid/liquid_surface.c\n");
+        printf("FAIL: cannot read post_process/scene_targets.c or core/liquid/liquid_surface.c\n");
         free(distort); free(fluid);
         return 1;
     }

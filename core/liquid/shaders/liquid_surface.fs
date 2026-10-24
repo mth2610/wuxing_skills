@@ -670,7 +670,14 @@ void main() {
     }
 
     // Screen Space Reflection (SSR) for High/Ultra tier
-    if (u_qualityTier >= 2) {
+    /* Only where a reflection can actually be seen. A dielectric reflects
+     * `visibleFresnel` of what this feeds — 2-5% face-on and only near 1 at the
+     * grazing rim — so tracing 14 scene taps across the whole interior spent the
+     * pass on a contribution below the display's quantisation. A conductor has
+     * no such out: its reflection IS the material, so it keeps every pixel. */
+    float visibleFresnelLuma = max(max(visibleFresnel.r, visibleFresnel.g), visibleFresnel.b);
+    float ssrWeight = conductor ? 1.0 : visibleFresnelLuma;
+    if (u_qualityTier >= 2 && ssrWeight > 0.05) {
         vec3 rayDirView = reflect(-V, N);
         vec4 ssrHit = TraceSSR(positionView, rayDirView, fluidDistance);
         if (ssrHit.a > 0.0) {

@@ -23,23 +23,22 @@ void main()
 
     if (u_useTexture != 0 && fragTexCoord.x >= 0.0) {
         vec4 texel = texture(texture0, fragTexCoord);
-        // Preserve alpha coverage across mipmaps to prevent distant flowers/plumes from thinning out
+        // Giữ độ phủ alpha ở các bậc mipmap xa để hoa/bông cỏ không bị mỏng đi
         float uvGrad = dot(fwidth(fragTexCoord), vec2(0.5));
         float boostedAlpha = texel.a + clamp(uvGrad * 0.65, 0.0, 0.22);
         if (boostedAlpha < u_alphaCutoff) discard;
         albedo *= texel.rgb;
     } else {
-        // Subtle center-ridge depth & lush vertical vibrancy gradient for untextured blades/stems
-        float centerRidge = 1.0 - 0.05 * (1.0 - abs(clamp(fragTexCoord.x, -1.0, 1.0)));
-        vec3 stemLift = mix(vec3(1.04, 1.10, 1.01), vec3(1.14, 1.20, 1.08), clamp(fragHeight, 0.0, 1.0));
+        // [TỐI ƯU VISUAL]: Làm dịu hệ số stemLift để thân cỏ/hoa hòa vào nền đất mượt hơn, không bị chói vàng
+        float hClamped = clamp(fragHeight, 0.0, 1.0);
+        float centerRidge = 1.0 - 0.045 * (1.0 - abs(clamp(fragTexCoord.x, -1.0, 1.0)));
+        vec3 stemLift = mix(vec3(0.98, 1.04, 0.96), vec3(1.08, 1.12, 1.03), hClamped);
         albedo *= stemLift * centerRidge;
     }
 
-    // Re-normalize interpolated normal & handle back-facing foliage gracefully
-    vec3 N = normalize(fragNormal);
-    if (!gl_FrontFacing) {
-        N = normalize(vec3(-N.x, max(N.y, 0.25), -N.z));
-    }
+    // [TỐI ƯU ALU]: Lật hướng pháp tuyến mặt sau TRƯỚC khi normalize để chỉ tốn đúng 1 lần inversesqrt()
+    vec3 rawN = gl_FrontFacing ? fragNormal : vec3(-fragNormal.x, max(abs(fragNormal.y), 0.28), -fragNormal.z);
+    vec3 N = normalize(rawN);
 
     finalColor = vec4(NatureShade(albedo, fragPosition, N, fragHeight, fragTexCoord.x, v_lightSpace, v_staticLightSpace), 1.0);
 }

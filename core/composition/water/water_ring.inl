@@ -346,6 +346,8 @@ static void WaterRing_SubmitSurface(void)
         float swirlSpeed = s_currentLiquidRingConfig.swirlSpeed;
         float t = (float)GetTime();
 
+        float ringThreshold = s_currentLiquidRingConfig.threshold > 0.05f ? s_currentLiquidRingConfig.threshold : 0.40f;
+        LiquidMetaball3D_BeginBody(&s_waterRingMaterial, ringThreshold);
         for (int b = 0; b < blobCount; ++b) {
             float theta = ((float)b / (float)blobCount) * (2.0f * PI) + (t * flowSpeed);
             float phi = ((float)b * 1.618f) * (2.0f * PI) + (t * swirlSpeed);
@@ -358,8 +360,7 @@ static void WaterRing_SubmitSurface(void)
             };
             LiquidMetaball3D_RegisterBlob(pos, bRadius);
         }
-        LiquidMetaball3D_SetMaterial(&s_waterRingMaterial);
-        LiquidMetaball3D_SetThreshold(s_currentLiquidRingConfig.threshold > 0.05f ? s_currentLiquidRingConfig.threshold : 0.40f);
+        LiquidMetaball3D_EndBody();
     }
     else
     {

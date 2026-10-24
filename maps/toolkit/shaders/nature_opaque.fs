@@ -17,27 +17,29 @@ out vec4 finalColor;
 
 void main()
 {
-    // Recover true edge-to-edge normalized transverse coordinate uNorm in [-1.0, +1.0]
-    // Inside the tip triangle (fragHeight > 0.76), vertex u converges toward 0.0 at the apex;
-    // rescaling by the tip triangle envelope eliminates the horizontal shading seam at t = 0.76!
-    float tipEnvelope = max((1.0 - fragHeight) * 4.166667, 0.08); // 1.0 / (1.0 - 0.76)
-    float uNorm = (fragHeight > 0.76)
-        ? clamp(fragTexCoord.x / min(tipEnvelope, 1.0), -1.0, 1.0)
-        : clamp(fragTexCoord.x, -1.0, 1.0);
+    // Khôi phục tọa độ ngang [-1..1] không cần nhánh rẽ tại điểm nối thân-ngọn (0.76)
+    float tipScale = clamp((1.0 - fragHeight) * 4.166667, 0.08, 1.0);
+    float uNorm = clamp(fragTexCoord.x / tipScale, -1.0, 1.0);
 
-    vec3 baseNormal = gl_FrontFacing ? fragNormal : -fragNormal;
+    // [TỐI ƯU VISUAL QUAN TRỌNG]: Khi nhìn mặt lưng của lá cỏ uốn cong (!gl_FrontFacing),
+    // giữ thành phần pháp tuyến trục Y hướng lên bầu trời (>= 0.30) thay vì đảo âm (-fragNormal.y)
+    // khiến mặt sau lá cỏ bị tối đen.
+    vec3 baseNormal = gl_FrontFacing
+        ? fragNormal
+        : normalize(vec3(-fragNormal.x, max(abs(fragNormal.y), 0.30), -fragNormal.z));
+
     vec3 albedo = fragColor.rgb * colDiffuse.rgb;
 
     vec3 lit = GrassShade(albedo, fragPosition, baseNormal, fragHeight,
                           uNorm, v_lightSpace, v_staticLightSpace);
 
-    // Dynamic Wind-Wave Glint & Sheen (Ghost of Tsushima Wind Gust Waves)
+    // Dynamic Wind-Wave Glint & Sheen (làm dịu ánh vàng để không gây bệt màu cỏ)
     float windSheen = fragColor.a;
     if (windSheen > 0.001) {
-        float archMask = smoothstep(0.12, 0.45, fragHeight) * (1.0 - smoothstep(0.72, 0.95, fragHeight));
-        vec3 sheenCol = u_lightColor * vec3(1.15, 1.08, 0.68) * (windSheen * 0.32 * archMask);
+        float archMask = smoothstep(0.14, 0.46, fragHeight) * (1.0 - smoothstep(0.72, 0.95, fragHeight));
+        vec3 sheenCol = u_lightColor * vec3(1.06, 1.04, 0.82) * (windSheen * 0.24 * archMask);
         lit += sheenCol;
-        lit *= 1.0 + windSheen * 0.12;
+        lit *= 1.0 + windSheen * 0.08;
     }
 
     finalColor = vec4(lit, 1.0);

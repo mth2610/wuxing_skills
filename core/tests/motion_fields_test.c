@@ -40,7 +40,7 @@ static inline float Vector3DotProduct(Vector3 a, Vector3 b) {
 #include "core/force_field.c"
 #include "core/motion/motion_body.h"
 #include "core/motion/motion_fields.c"
-#include "core/wind/wind_system.c"
+#include "environment/wind/wind_system.c"
 #include <math.h>
 #include <stdio.h>
 static int failures;

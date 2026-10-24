@@ -37,7 +37,7 @@ static inline float Vector3DotProduct(Vector3 a, Vector3 b) {
 
 #define CORE_HEADLESS_TEST 1
 #include "core/force_field.c"
-#include "core/wind/wind_system.c"
+#include "environment/wind/wind_system.c"
 
 static int s_failed = 0;
 static int s_passed = 0;
@@ -554,7 +554,7 @@ int main(void) {
                !FileContains("core/particles/gpu/particle_gpu_backend.c", "Wind_SpawnTurbulence(") &&
                FileContains("core/motion/motion_fields.c", "MotionFields_CreateTarget(&d)"),
                "Arrival fields are explicitly configured, with no hidden CPU/GPU blast or wake");
-    TEST_CHECK(FileContains("core/wind/wind_system.c",
+    TEST_CHECK(FileContains("environment/wind/wind_system.c",
                             "Wind_TurbulenceAttackWeight") &&
                FileContains("core/particles/shaders/gpu/particle_gpu.comp",
                             "smoothstep(0.0, attackTime, age)"),

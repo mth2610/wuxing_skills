@@ -56,8 +56,12 @@ static int Admit(int priority, float frameMs, double now, double surfaceRunStamp
 static int ReconstructionRounds(int quality, float bodyPx, float kernelPx,
                                 int hasHint)
 {
-    int compact = hasHint && bodyPx > 0.0f && bodyPx <= COMPACT_BODY_PX &&
-                  kernelPx <= COMPACT_KERNEL_PX;
+    /* Footprint on screen is the criterion; the kernel size is deliberately NOT
+     * part of it any more (a 0.112 m kernel already projects to ~14 px at six
+     * metres, which made the compact path unreachable). Kept in the signature so
+     * the cases below still document what a caller passes. */
+    (void)kernelPx;
+    int compact = hasHint && bodyPx > 0.0f && bodyPx <= COMPACT_BODY_PX;
     return quality >= 3 ? (compact ? 1 : 2) : (quality >= 2 ? 2 : 1);
 }
 
@@ -133,10 +137,14 @@ int main(void)
 
     /* Compact dense force-field bodies already span a whole splat kernel in
      * one 2D round. Broad/close-up bodies and unhinted legacy callers keep the
-     * authored two-round HIGH path. Lower tiers are unchanged. */
+     * authored two-round HIGH path. Lower tiers are unchanged.
+     *
+     * A large projected KERNEL no longer forces the second round: the disc is
+     * capped in texels anyway (LIQUID_FILTER2D_MAX_RADIUS), so compounding it
+     * twice only widens the reach for bodies that are large ON SCREEN. */
     CHECK(ReconstructionRounds(3,120.0f,5.0f,1)==1);
     CHECK(ReconstructionRounds(3,220.0f,5.0f,1)==2);
-    CHECK(ReconstructionRounds(3,120.0f,12.0f,1)==2);
+    CHECK(ReconstructionRounds(3,120.0f,40.0f,1)==1);
     CHECK(ReconstructionRounds(3,120.0f,5.0f,0)==2);
     CHECK(ReconstructionRounds(2,120.0f,5.0f,1)==2);
     CHECK(ReconstructionRounds(1,120.0f,5.0f,1)==1);

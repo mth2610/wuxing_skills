@@ -98,7 +98,7 @@ static Model Nature_BuildMeadowShadowChunk(const MapMeadowPlacement *placements,
         float width = fmaxf(clump->radius * 0.72f, 0.038f);
         Vector3 encoded = {clump->height * 1.05f, width, clump->phase};
         Color rootShade = {240, 240, 240, 255};
-        Color tipShade = {170, 170, 170, 255};
+        Color tipShade = {178, 178, 178, 255};
         for (int vertex = 0; vertex < 6; vertex++)
         {
             Color shade = vertex < 2 || vertex == 3 ? rootShade : tipShade;
@@ -183,10 +183,12 @@ static inline Vector3 Nature_EvalCubicBezier(Vector3 p0, Vector3 p1, Vector3 p2,
     float omt3 = omt2 * omt;
     float t2 = t * t;
     float t3 = t2 * t;
+    float b1 = 3.0f * omt2 * t;
+    float b2 = 3.0f * omt * t2;
     return (Vector3){
-        omt3 * p0.x + 3.0f * omt2 * t * p1.x + 3.0f * omt * t2 * p2.x + t3 * p3.x,
-        omt3 * p0.y + 3.0f * omt2 * t * p1.y + 3.0f * omt * t2 * p2.y + t3 * p3.y,
-        omt3 * p0.z + 3.0f * omt2 * t * p1.z + 3.0f * omt * t2 * p2.z + t3 * p3.z};
+        omt3 * p0.x + b1 * p1.x + b2 * p2.x + t3 * p3.x,
+        omt3 * p0.y + b1 * p1.y + b2 * p2.y + t3 * p3.y,
+        omt3 * p0.z + b1 * p1.z + b2 * p2.z + t3 * p3.z};
 }
 
 static inline Vector3 Nature_EvalCubicBezierTangent(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
@@ -297,23 +299,21 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             pBase.y + (height * 0.86f - droopY),
             bz + dirZ * (lean * 0.98f)};
 
+        // [TỐI ƯU VISUAL]: Nâng nhẹ sắc độ gốc cỏ sậy để không tạo mảng đen gắt trên nền đất ẩm
         bool isOuterDrySheath = (blade < 2);
         if (isOuterDrySheath)
         {
-            bladeRoot = (Color){42, 48, 22, 255};
-            bladeTip = (Color){168, 174, 82, 255};
+            bladeRoot = (Color){48, 56, 26, 255};
+            bladeTip = (Color){164, 172, 84, 255};
         }
         else
         {
-            bladeRoot = (Color){28, 48, 20, 255};
-            bladeTip = (Color){132, 182, 68, 255};
+            bladeRoot = (Color){36, 58, 25, 255};
+            bladeTip = (Color){128, 178, 70, 255};
         }
     }
     else if (isPampas)
     {
-        // Ghost of Tsushima Japanese Pampas / Chè Cỏ Tranh:
-        // Blades 0 and 1: Tall erect stalks crowned with silvery-gold plumes (isSeedhead = true)
-        // Blades 2+: Arching basal foliage ribbons framing the plumes
         float baseAzimuth = clumpAngle + (float)bladeId * golden + (bHash - 0.5f) * 0.65f;
         float radX = cosf(baseAzimuth);
         float radZ = sinf(baseAzimuth);
@@ -332,27 +332,27 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
 
         if (bladeId == 0)
         {
-            // Center plume stalk with feathery seedhead
+            // [TỐI ƯU VISUAL]: Tăng độ uốn cong mềm mại (lean & droop) và dịu nhẹ độ chói cho thân
+            // bông cỏ tranh để không bị dựng đứng như thanh kiếm trắng cứng ở mức zoom gần.
             isSeedhead = true;
-            height = clump->height * (1.30f + 0.30f * bHash2);
-            width = clump->radius * style.bladeWidthScale * (1.10f + 0.20f * bHash3);
-            lean = height * (0.22f + 0.08f * bHash);
-            droopY = height * 0.05f;
+            height = clump->height * (1.24f + 0.26f * bHash2);
+            width = clump->radius * style.bladeWidthScale * (1.02f + 0.18f * bHash3);
+            lean = height * (0.34f + 0.12f * bHash);
+            droopY = height * (0.11f + 0.05f * bHash3);
 
             pBase = (Vector3){bx, clump->position.y - 0.010f, bz};
-            pP1 = (Vector3){bx + dirX * (lean * 0.20f), pBase.y + height * 0.38f, bz + dirZ * (lean * 0.20f)};
-            pP2 = (Vector3){bx + dirX * (lean * 0.52f), pBase.y + height * 0.74f, bz + dirZ * (lean * 0.52f)};
-            pP3 = (Vector3){bx + dirX * (lean * 0.90f), pBase.y + (height * 0.96f - droopY), bz + dirZ * (lean * 0.90f)};
+            pP1 = (Vector3){bx + dirX * (lean * 0.24f), pBase.y + height * 0.38f, bz + dirZ * (lean * 0.24f)};
+            pP2 = (Vector3){bx + dirX * (lean * 0.58f), pBase.y + height * 0.73f, bz + dirZ * (lean * 0.58f)};
+            pP3 = (Vector3){bx + dirX * (lean * 0.96f), pBase.y + (height * 0.92f - droopY), bz + dirZ * (lean * 0.96f)};
 
-            bladeRoot = (Color){38, 46, 22, 255};
-            bladeTip = (Color){172, 178, 102, 255}; // Golden cane stalk
+            bladeRoot = (Color){44, 54, 26, 255};
+            bladeTip = (Color){158, 168, 96, 255};
         }
         else
         {
-            // Basal arching ribbon
             isSeedhead = false;
-            height = clump->height * (0.65f + 0.18f * bHash2);
-            width = clump->radius * style.bladeWidthScale * 0.88f;
+            height = clump->height * (0.68f + 0.18f * bHash2);
+            width = clump->radius * style.bladeWidthScale * 0.90f;
             lean = height * (0.65f + 0.18f * bHash);
             droopY = height * (0.24f + 0.08f * bHash3);
 
@@ -361,8 +361,8 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             pP2 = (Vector3){bx + dirX * (lean * 0.58f), pBase.y + height * 0.66f, bz + dirZ * (lean * 0.58f)};
             pP3 = (Vector3){bx + dirX * (lean * 0.96f), pBase.y + (height * 0.86f - droopY), bz + dirZ * (lean * 0.96f)};
 
-            bladeRoot = (Color){24, 36, 16, 255};
-            bladeTip = (Color){124, 162, 64, 255}; // Olive-gold foliage
+            bladeRoot = (Color){32, 46, 20, 255};
+            bladeTip = (Color){122, 160, 66, 255};
         }
     }
     else if (bladesPerClump <= 2 && bladeSegments <= 2)
@@ -389,8 +389,6 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     }
     else
     {
-        // Volumetric 3D fountain clump architecture:
-        // Natural collar radius and 360-degree golden-angle fan with organic splay
         float baseAzimuth = clumpAngle + (float)bladeId * golden + (bHash - 0.5f) * 1.15f;
         float radX = cosf(baseAzimuth);
         float radZ = sinf(baseAzimuth);
@@ -416,11 +414,9 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         }
         bladeLeanAngle = atan2f(dirZ, dirX);
 
-        // AAA Volumetric 3-Tier Morphology Hierarchy (Interlocking canopy arches)
         float lengthScale, widthScaleVal, leanFactor, droopFactor;
         if (bladeId < 2)
         {
-            // Tier 1: Hero Upright & Arching Spears (reaches highest for sunlight)
             lengthScale = 1.08f + 0.16f * bHash2;
             widthScaleVal = 0.88f + 0.12f * bHash3;
             leanFactor = 0.42f + 0.16f * bHash;
@@ -428,7 +424,6 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         }
         else if (bladeId < 4)
         {
-            // Tier 2: Mid-Canopy Billows (sweeps outward to interlock with neighboring tufts)
             lengthScale = 0.90f + 0.14f * bHash2;
             widthScaleVal = 1.00f + 0.14f * bHash3;
             leanFactor = 0.62f + 0.18f * bHash;
@@ -436,7 +431,6 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         }
         else
         {
-            // Tier 3: Ground Skirt & Drape (curves outward to cover ground between tufts)
             lengthScale = 0.72f + 0.12f * bHash2;
             widthScaleVal = 1.14f + 0.16f * bHash3;
             leanFactor = 0.82f + 0.20f * bHash;
@@ -475,13 +469,11 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
             droopY *= 0.65f;
         }
 
-        // 3D axial torsion and organic lateral curl (prevents edge-on 1-pixel collapse)
         float curlSign = ((bladeId & 1) == 0) ? 1.0f : -1.0f;
         float curlAmt = (bHash - 0.5f) * 0.28f + curlSign * 0.14f;
         float latX = -dirZ;
         float latZ = dirX;
 
-        // Smooth constant-curvature cantilever Bézier arch with 3D axial torsion
         pBase = (Vector3){bx, clump->position.y - 0.015f, bz};
         pP1 = (Vector3){
             bx + dirX * (lean * 0.26f),
@@ -499,29 +491,30 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         isSeedhead = false;
         float colorField = sinf(clump->position.x * 0.12f + clump->position.z * 0.08f) * 0.55f +
                            sinf(clump->position.z * 0.14f - clump->position.x * 0.06f + 1.2f) * 0.45f;
-        float tone = 1.0f + colorField * 0.06f + (bHash - 0.5f) * 0.08f;
-        int rR = (int)(style.rootColor.r * tone);
-        int rG = (int)(style.rootColor.g * tone);
-        int rB = (int)(style.rootColor.b * tone);
-        int tR = (int)(style.tipColor.r * tone * 0.98f);
-        int tG = (int)(style.tipColor.g * tone * 1.03f);
+        float tone = 1.0f + colorField * 0.05f + (bHash - 0.5f) * 0.06f;
+        // [TỐI ƯU VISUAL]: Nâng nhẹ độ sáng gốc cỏ để giảm độ tương phản gắt giữa chân bụi cỏ và mặt đất
+        int rR = (int)(style.rootColor.r * tone * 1.06f + 4.0f);
+        int rG = (int)(style.rootColor.g * tone * 1.06f + 6.0f);
+        int rB = (int)(style.rootColor.b * tone * 1.04f + 3.0f);
+        int tR = (int)(style.tipColor.r * tone * 0.96f);
+        int tG = (int)(style.tipColor.g * tone * 1.02f);
         int tB = (int)(style.tipColor.b * tone * 1.00f);
 
         if (bHash2 < 0.12f && bladeId < 2)
         {
-            tR = (int)(tR * 1.05f);
-            tG = (int)(tG * 1.05f);
-            tB = (int)(tB * 0.95f);
+            tR = (int)(tR * 1.04f);
+            tG = (int)(tG * 1.04f);
+            tB = (int)(tB * 0.96f);
         }
 
         if (bladeId >= 4)
         {
-            rR = (int)(rR * 0.92f);
-            rG = (int)(rG * 0.94f);
-            rB = (int)(rB * 0.92f);
-            tR = (int)(tR * 0.88f);
-            tG = (int)(tG * 0.92f);
-            tB = (int)(tB * 0.88f);
+            rR = (int)(rR * 0.95f);
+            rG = (int)(rG * 0.96f);
+            rB = (int)(rB * 0.95f);
+            tR = (int)(tR * 0.92f);
+            tG = (int)(tG * 0.95f);
+            tB = (int)(tB * 0.92f);
         }
         bladeRoot = (Color){(unsigned char)fminf(255, fmaxf(0, rR)),
                             (unsigned char)fminf(255, fmaxf(0, rG)),
@@ -533,16 +526,25 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
     if (!isReed && !isPampas && style.botanicalVariation > 0.0f)
     {
         Vector3 canopy = MeadowCanopyColor(MeadowHabitat(clump->position.x, clump->position.z));
-        float variation = 0.95f + 0.10f * bHash2;
+        float variation = 0.96f + 0.08f * bHash2;
         Color canopyTip = {(unsigned char)(canopy.x * variation * 255.0f),
                            (unsigned char)(canopy.y * variation * 255.0f),
                            (unsigned char)(canopy.z * variation * 255.0f), 255};
         bladeTip = Nature_LerpColor(bladeTip, canopyTip,
-                                    fminf(style.botanicalVariation, 1.0f) * 0.45f);
+                                    fminf(style.botanicalVariation, 1.0f) * 0.42f);
     }
     return (NatureBladeDescriptor){pBase, pP1, pP2, pP3, clump->position,
                                    bladeRoot, bladeTip, width, clump->phase, bladeLeanAngle, isReed, isSeedhead};
 }
+
+typedef struct
+{
+    float t;
+    Vector3 center;
+    Vector3 pL, pR;
+    Vector3 nL, nR, nTip;
+    Color color;
+} NatureBladeKnot;
 
 static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int count,
                                      MapMeadowStyle style, float minX, float maxX,
@@ -571,6 +573,11 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
     Mesh mesh = Nature_AllocMesh(vertexCount);
     int cursor = 0;
     ordinal = 0;
+
+    const Vector3 terrainNormal = {0.0f, 1.0f, 0.0f};
+    const float tipStart = (bladeSegments == 2) ? 0.54f : (bladeSegments > 2 ? 0.76f : 0.0f);
+    const float invSegMinus1 = (bladeSegments > 1) ? (1.0f / (float)(bladeSegments - 1)) : 0.0f;
+
     for (int i = 0; i < count; i++)
     {
         const MapMeadowPlacement *clump = &placements[i];
@@ -579,6 +586,9 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             continue;
         if ((ordinal++ % sampleStride) != 0)
             continue;
+
+        Vector3 clumpSphereCenter = {clump->position.x, clump->position.y - 0.04f, clump->position.z};
+
         for (int blade = 0; blade < bladesPerClump; blade++)
         {
             NatureBladeDescriptor desc = Nature_DescribeMeadowBlade(clump, i, blade,
@@ -587,145 +597,109 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             float width = desc.width, bladeLeanAngle = desc.leanAngle;
             Vector3 pBase = desc.p0, pP1 = desc.p1, pP2 = desc.p2, pP3 = desc.p3;
             Color bladeRoot = desc.rootColor, bladeTip = desc.tipColor;
+            Vector3 baseSide = {-sinf(bladeLeanAngle), 0.0f, cosf(bladeLeanAngle)};
 
-            Vector3 baseSide = (Vector3){-sinf(bladeLeanAngle), 0.0f, cosf(bladeLeanAngle)};
-            Vector3 terrainNormal = (Vector3){0.0f, 1.0f, 0.0f};
-
-            for (int segment = 0; segment < bladeSegments; segment++)
+            // [TỐI ƯU HIỆU NĂNG]: Chỉ tính toán mặt cắt ngang tại (bladeSegments + 1) nút đúng 1 lần
+            // thay vì tính lặp lại cả 2 đầu cho từng đốt!
+            NatureBladeKnot knots[7];
+            for (int k = 0; k <= bladeSegments; k++)
             {
-                float tipStart = (bladeSegments == 2) ? 0.54f : (bladeSegments > 2 ? 0.76f : 0.0f);
-                float t0 = segment == bladeSegments - 1 ? tipStart
-                                                        : tipStart * (float)segment / (float)(bladeSegments - 1);
-                float t1 = segment == bladeSegments - 1 ? 1.0f
-                                                        : tipStart * (float)(segment + 1) / (float)(bladeSegments - 1);
+                float tk = (k == bladeSegments) ? 1.0f : (tipStart * (float)k * invSegMinus1);
+                knots[k].t = tk;
+                Vector3 center = Nature_EvalCubicBezier(pBase, pP1, pP2, pP3, tk);
+                knots[k].center = center;
 
-                Vector3 center0 = Nature_EvalCubicBezier(pBase, pP1, pP2, pP3, t0);
-                Vector3 center1 = Nature_EvalCubicBezier(pBase, pP1, pP2, pP3, t1);
+                Vector3 T = Vector3Normalize(Nature_EvalCubicBezierTangent(pBase, pP1, pP2, pP3, tk));
+                Vector3 crossS = Vector3CrossProduct(T, terrainNormal);
+                float lenS = Vector3Length(crossS);
+                Vector3 S = (lenS > 0.001f) ? Vector3Scale(crossS, 1.0f / lenS) : baseSide;
 
-                Vector3 T0 = Vector3Normalize(Nature_EvalCubicBezierTangent(pBase, pP1, pP2, pP3, t0));
-                Vector3 T1 = Vector3Normalize(Nature_EvalCubicBezierTangent(pBase, pP1, pP2, pP3, t1));
+                Vector3 Ngeo = Vector3Normalize(Vector3CrossProduct(S, T));
+                if (Ngeo.y < 0.0f)
+                    Ngeo = Vector3Negate(Ngeo);
+                Ngeo.y = fmaxf(Ngeo.y, 0.30f);
+                Ngeo = Vector3Normalize(Ngeo);
 
-                Vector3 crossS0 = Vector3CrossProduct(T0, terrainNormal);
-                float lenS0 = Vector3Length(crossS0);
-                Vector3 S0 = (lenS0 > 0.001f) ? Vector3Scale(crossS0, 1.0f / lenS0) : baseSide;
+                float occ = (tk < 0.25f) ? (0.90f + 0.40f * tk) : 1.0f;
+                float sCurve = tk * tk * (3.0f - 2.0f * tk);
+                knots[k].color = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, sCurve), occ);
 
-                Vector3 crossS1 = Vector3CrossProduct(T1, terrainNormal);
-                float lenS1 = Vector3Length(crossS1);
-                Vector3 S1 = (lenS1 > 0.001f) ? Vector3Scale(crossS1, 1.0f / lenS1) : baseSide;
-
-                Vector3 Ngeo0 = Vector3Normalize(Vector3CrossProduct(S0, T0));
-                if (Ngeo0.y < 0.0f)
-                    Ngeo0 = Vector3Negate(Ngeo0);
-                Ngeo0.y = fmaxf(Ngeo0.y, 0.25f);
-                Ngeo0 = Vector3Normalize(Ngeo0);
-
-                Vector3 Ngeo1 = Vector3Normalize(Vector3CrossProduct(S1, T1));
-                if (Ngeo1.y < 0.0f)
-                    Ngeo1 = Vector3Negate(Ngeo1);
-                Ngeo1.y = fmaxf(Ngeo1.y, 0.25f);
-                Ngeo1 = Vector3Normalize(Ngeo1);
-
-                float u0 = 1.0f - t0;
-                float u1 = 1.0f - t1;
-                float profile0;
-                float profile1;
-                if (isReed)
+                if (k == bladeSegments)
                 {
-                    profile0 = (0.78f + 0.36f * sinf(PI * t0)) * (1.0f - powf(t0, 1.8f));
-                    profile1 = (0.78f + 0.36f * sinf(PI * t1)) * (1.0f - powf(t1, 1.8f));
+                    // Nút đỉnh ngọn chỉ cần pháp tuyến nTip, tiết kiệm 6 lần chuẩn hóa Vector3Normalize
+                    Vector3 dSphereTip = Vector3Normalize(Vector3Subtract(center, clumpSphereCenter));
+                    Vector3 nTargetTip = Vector3Normalize(Vector3Lerp(dSphereTip, terrainNormal, 0.56f));
+                    knots[k].nTip = Vector3Normalize(Vector3Lerp(Ngeo, nTargetTip, 0.60f));
                 }
                 else
                 {
-                    // AAA Botanical Sword-Leaf Profile:
-                    // 1. Sheath base: anchors smoothly into soil
-                    // 2. Mid body: natural fullness
-                    // 3. Tip: elegant parabolic taper down to sharp apex
-                    float sheath0 = fminf(1.0f, 0.65f + 2.5f * t0);
-                    float body0 = 0.82f + 0.32f * sinf(PI * fminf(t0 * 1.35f, 1.0f));
-                    float tipT0 = fmaxf(0.0f, (t0 - 0.35f) / 0.65f);
-                    float taper0 = fmaxf(0.0f, 1.0f - tipT0 * tipT0);
-                    profile0 = sheath0 * body0 * taper0;
-
-                    float sheath1 = fminf(1.0f, 0.65f + 2.5f * t1);
-                    float body1 = 0.82f + 0.32f * sinf(PI * fminf(t1 * 1.35f, 1.0f));
-                    float tipT1 = fmaxf(0.0f, (t1 - 0.35f) / 0.65f);
-                    float taper1 = fmaxf(0.0f, 1.0f - tipT1 * tipT1);
-                    profile1 = sheath1 * body1 * taper1;
-                }
-                float halfW0 = (width * 0.5f) * profile0;
-                float halfW1 = (width * 0.5f) * profile1;
-
-                Vector3 fold0 = Vector3Scale(Ngeo0, width * 0.08f * (4.0f * t0 * u0));
-                Vector3 fold1 = Vector3Scale(Ngeo1, width * 0.08f * (4.0f * t1 * u1));
-
-                Vector3 p0 = Vector3Add(Vector3Subtract(center0, Vector3Scale(S0, halfW0)), fold0);
-                Vector3 p1 = Vector3Add(Vector3Add(center0, Vector3Scale(S0, halfW0)), fold0);
-                Vector3 p2 = Vector3Add(Vector3Add(center1, Vector3Scale(S1, halfW1)), fold1);
-                Vector3 p3 = Vector3Add(Vector3Subtract(center1, Vector3Scale(S1, halfW1)), fold1);
-
-                float occ0 = (t0 < 0.25f) ? (0.82f + 0.72f * t0) : 1.0f;
-                float occ1 = (t1 < 0.25f) ? (0.82f + 0.72f * t1) : 1.0f;
-                float s0 = t0 * t0 * (3.0f - 2.0f * t0);
-                float s1 = t1 * t1 * (3.0f - 2.0f * t1);
-                Color color0 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, s0), occ0);
-                Color color1 = Nature_ScaleColor(Nature_LerpColor(bladeRoot, bladeTip, s1), occ1);
-
-                Vector3 clumpSphereCenter = (Vector3){clump->position.x, clump->position.y - 0.04f, clump->position.z};
-
-                Vector3 dSphere0L = Vector3Normalize(Vector3Subtract(p0, clumpSphereCenter));
-                Vector3 dSphere0R = Vector3Normalize(Vector3Subtract(p1, clumpSphereCenter));
-                Vector3 dSphere1L = Vector3Normalize(Vector3Subtract(p3, clumpSphereCenter));
-                Vector3 dSphere1R = Vector3Normalize(Vector3Subtract(p2, clumpSphereCenter));
-                Vector3 dSphereTip = Vector3Normalize(Vector3Subtract(center1, clumpSphereCenter));
-
-                float groundAnchor0 = fmaxf(0.0f, 1.0f - t0 * 3.0f);
-                float terrainBlend0 = 0.45f + 0.25f * groundAnchor0;
-                Vector3 nTarget0L = Vector3Normalize(Vector3Lerp(dSphere0L, terrainNormal, terrainBlend0));
-                Vector3 nTarget0R = Vector3Normalize(Vector3Lerp(dSphere0R, terrainNormal, terrainBlend0));
-
-                float groundAnchor1 = fmaxf(0.0f, 1.0f - t1 * 3.0f);
-                float terrainBlend1 = 0.45f + 0.25f * groundAnchor1;
-                Vector3 nTarget1L = Vector3Normalize(Vector3Lerp(dSphere1L, terrainNormal, terrainBlend1));
-                Vector3 nTarget1R = Vector3Normalize(Vector3Lerp(dSphere1R, terrainNormal, terrainBlend1));
-                Vector3 nTargetTip = Vector3Normalize(Vector3Lerp(dSphereTip, terrainNormal, 0.52f));
-
-                Vector3 nMesh0L = Vector3Normalize(Vector3Subtract(Ngeo0, Vector3Scale(S0, 0.32f)));
-                Vector3 nMesh0R = Vector3Normalize(Vector3Add(Ngeo0, Vector3Scale(S0, 0.32f)));
-                Vector3 nMesh1L = Vector3Normalize(Vector3Subtract(Ngeo1, Vector3Scale(S1, 0.26f)));
-                Vector3 nMesh1R = Vector3Normalize(Vector3Add(Ngeo1, Vector3Scale(S1, 0.26f)));
-
-                Vector3 nL0 = Vector3Normalize(Vector3Lerp(nMesh0L, nTarget0L, 0.50f));
-                Vector3 nR0 = Vector3Normalize(Vector3Lerp(nMesh0R, nTarget0R, 0.50f));
-                Vector3 nL1 = Vector3Normalize(Vector3Lerp(nMesh1L, nTarget1L, 0.52f));
-                Vector3 nR1 = Vector3Normalize(Vector3Lerp(nMesh1R, nTarget1R, 0.52f));
-                Vector3 nTip = Vector3Normalize(Vector3Lerp(Ngeo1, nTargetTip, 0.56f));
-
-                if (style.hasPlumes)
-                {
-                    if (segment == bladeSegments - 1)
+                    float uk = 1.0f - tk;
+                    float profile;
+                    if (isReed)
                     {
-                        Nature_SetVertex(&mesh, cursor++, p0, nL0, clump->phase, t0, color0);
-                        Nature_SetVertex(&mesh, cursor++, p1, nR0, clump->phase, t0, color0);
-                        Nature_SetVertex(&mesh, cursor++, center1, nTip, clump->phase, 1.0f, color1);
+                        profile = (0.78f + 0.36f * sinf(PI * tk)) * (1.0f - powf(tk, 1.8f));
                     }
                     else
                     {
-                        Nature_AddCurvedBladeQuad(&mesh, &cursor, p0, p1, p2, p3,
-                                                  nL0, nR0, nR1, nL1,
-                                                  clump->phase, t0, t1, color0, color1);
+                        float sheath = fminf(1.0f, 0.65f + 2.5f * tk);
+                        float body = 0.82f + 0.32f * sinf(PI * fminf(tk * 1.35f, 1.0f));
+                        float tipT = fmaxf(0.0f, (tk - 0.35f) * (1.0f / 0.65f));
+                        float taper = fmaxf(0.0f, 1.0f - tipT * tipT);
+                        profile = sheath * body * taper;
                     }
+                    float halfW = (width * 0.5f) * profile;
+                    Vector3 fold = Vector3Scale(Ngeo, width * 0.055f * (4.0f * tk * uk));
+
+                    Vector3 pL = Vector3Add(Vector3Subtract(center, Vector3Scale(S, halfW)), fold);
+                    Vector3 pR = Vector3Add(Vector3Add(center, Vector3Scale(S, halfW)), fold);
+                    knots[k].pL = pL;
+                    knots[k].pR = pR;
+
+                    Vector3 dSphereL = Vector3Normalize(Vector3Subtract(pL, clumpSphereCenter));
+                    Vector3 dSphereR = Vector3Normalize(Vector3Subtract(pR, clumpSphereCenter));
+
+                    // [TỐI ƯU VISUAL]: Neo pháp tuyến gốc cỏ mạnh hơn về phía pháp tuyến mặt đất (0,1,0)
+                    // để chân cỏ bắt sáng tiệp màu với địa hình, và giảm độ gãy ngang mặt lá (0.32 -> 0.18).
+                    float groundAnchor = fmaxf(0.0f, 1.0f - tk * 2.5f);
+                    float terrainBlend = 0.52f + 0.34f * groundAnchor;
+                    Vector3 nTargetL = Vector3Normalize(Vector3Lerp(dSphereL, terrainNormal, terrainBlend));
+                    Vector3 nTargetR = Vector3Normalize(Vector3Lerp(dSphereR, terrainNormal, terrainBlend));
+
+                    float edgeSpread = 0.18f * (1.0f - 0.35f * groundAnchor);
+                    Vector3 nMeshL = Vector3Normalize(Vector3Subtract(Ngeo, Vector3Scale(S, edgeSpread)));
+                    Vector3 nMeshR = Vector3Normalize(Vector3Add(Ngeo, Vector3Scale(S, edgeSpread)));
+
+                    float normalLerp = 0.58f + 0.24f * groundAnchor;
+                    knots[k].nL = Vector3Normalize(Vector3Lerp(nMeshL, nTargetL, normalLerp));
+                    knots[k].nR = Vector3Normalize(Vector3Lerp(nMeshR, nTargetR, normalLerp));
                 }
-                else if (segment == bladeSegments - 1)
+            }
+
+            for (int segment = 0; segment < bladeSegments; segment++)
+            {
+                const NatureBladeKnot *k0 = &knots[segment];
+                const NatureBladeKnot *k1 = &knots[segment + 1];
+
+                if (segment == bladeSegments - 1)
                 {
-                    Nature_AddCurvedBladeTip(&mesh, &cursor, p0, p1, center1,
-                                             nL0, nR0, nTip,
-                                             clump->phase, t0, color0, color1);
+                    if (style.hasPlumes)
+                    {
+                        Nature_SetVertex(&mesh, cursor++, k0->pL, k0->nL, clump->phase, k0->t, k0->color);
+                        Nature_SetVertex(&mesh, cursor++, k0->pR, k0->nR, clump->phase, k0->t, k0->color);
+                        Nature_SetVertex(&mesh, cursor++, k1->center, k1->nTip, clump->phase, 1.0f, k1->color);
+                    }
+                    else
+                    {
+                        Nature_AddCurvedBladeTip(&mesh, &cursor, k0->pL, k0->pR, k1->center,
+                                                 k0->nL, k0->nR, k1->nTip,
+                                                 clump->phase, k0->t, k0->color, k1->color);
+                    }
                 }
                 else
                 {
-                    Nature_AddCurvedBladeQuad(&mesh, &cursor, p0, p1, p2, p3,
-                                              nL0, nR0, nR1, nL1,
-                                              clump->phase, t0, t1, color0, color1);
+                    Nature_AddCurvedBladeQuad(&mesh, &cursor, k0->pL, k0->pR, k1->pR, k1->pL,
+                                              k0->nL, k0->nR, k1->nR, k1->nL,
+                                              clump->phase, k0->t, k1->t, k0->color, k1->color);
                 }
             }
         }
@@ -769,8 +743,8 @@ static Model Nature_BuildMeadowChunk(const MapMeadowPlacement *placements, int c
             Vector3 q2 = {qTip.x + side.x * halfW * 0.70f, qTip.y, qTip.z + side.z * halfW * 0.70f};
             Vector3 q3 = {qTip.x - side.x * halfW * 0.70f, qTip.y, qTip.z - side.z * halfW * 0.70f};
 
-            Color c0 = {245, 238, 220, 255};
-            Color c1 = {255, 255, 255, 255};
+            Color c0 = {240, 234, 212, 255};
+            Color c1 = {250, 248, 236, 255};
 
             if (style.texturePath != NULL)
             {
@@ -999,42 +973,125 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
     return meadow;
 }
 
-static bool Nature_IsChunkVisible(Vector3 center, float radius)
+// ============================================================================
+// CACHED CAMERA FRUSTUM (Loại bỏ 3x sqrtf, 1x tanf và 2x GetScreenWidth/Height mỗi chunk)
+// ============================================================================
+typedef struct
 {
+    Vector3 pos;
+    Vector3 target;
+    Vector3 up;
+    float fovy;
+    int projection;
+    Vector3 forward;
+    Vector3 right;
+    Vector3 viewUp;
+    float tanHalfFov;
+    float aspect;
+    float orthoHalfV;
+    float orthoHalfH;
+    bool degenerate;
+    bool valid;
+} NatureFrustumCache;
+
+static NatureFrustumCache s_natureFrustumCache = {0};
+
+static inline void Nature_RefreshFrustumCache(void)
+{
+    if (s_natureFrustumCache.valid &&
+        s_natureFrustumCache.pos.x == camera.position.x &&
+        s_natureFrustumCache.pos.y == camera.position.y &&
+        s_natureFrustumCache.pos.z == camera.position.z &&
+        s_natureFrustumCache.target.x == camera.target.x &&
+        s_natureFrustumCache.target.y == camera.target.y &&
+        s_natureFrustumCache.target.z == camera.target.z &&
+        s_natureFrustumCache.up.x == camera.up.x &&
+        s_natureFrustumCache.up.y == camera.up.y &&
+        s_natureFrustumCache.up.z == camera.up.z &&
+        s_natureFrustumCache.fovy == camera.fovy &&
+        s_natureFrustumCache.projection == camera.projection)
+    {
+        return;
+    }
+
+    s_natureFrustumCache.pos = camera.position;
+    s_natureFrustumCache.target = camera.target;
+    s_natureFrustumCache.up = camera.up;
+    s_natureFrustumCache.fovy = camera.fovy;
+    s_natureFrustumCache.projection = camera.projection;
+    s_natureFrustumCache.valid = true;
+
     Vector3 forward = Vector3Subtract(camera.target, camera.position);
     float forwardLength = Vector3Length(forward);
     if (forwardLength < 0.001f)
-        return true;
+    {
+        s_natureFrustumCache.degenerate = true;
+        return;
+    }
     forward = Vector3Scale(forward, 1.0f / forwardLength);
+
     Vector3 right = Vector3CrossProduct(forward, camera.up);
     float rightLength = Vector3Length(right);
     if (rightLength < 0.001f)
-        return true;
+    {
+        s_natureFrustumCache.degenerate = true;
+        return;
+    }
     right = Vector3Scale(right, 1.0f / rightLength);
     Vector3 viewUp = Vector3Normalize(Vector3CrossProduct(right, forward));
-    Vector3 toCenter = Vector3Subtract(center, camera.position);
-    float depth = Vector3DotProduct(toCenter, forward);
+
+    float aspect = (float)GetScreenWidth() / (float)fmaxf((float)GetScreenHeight(), 1.0f);
+    s_natureFrustumCache.forward = forward;
+    s_natureFrustumCache.right = right;
+    s_natureFrustumCache.viewUp = viewUp;
+    s_natureFrustumCache.aspect = aspect;
+    s_natureFrustumCache.tanHalfFov = tanf(camera.fovy * DEG2RAD * 0.5f);
+    s_natureFrustumCache.orthoHalfV = camera.fovy * 0.5f;
+    s_natureFrustumCache.orthoHalfH = s_natureFrustumCache.orthoHalfV * aspect;
+    s_natureFrustumCache.degenerate = false;
+}
+
+static bool Nature_IsChunkVisible(Vector3 center, float radius)
+{
+    Nature_RefreshFrustumCache();
+    if (s_natureFrustumCache.degenerate)
+        return true;
+
+    Vector3 toCenter = {
+        center.x - s_natureFrustumCache.pos.x,
+        center.y - s_natureFrustumCache.pos.y,
+        center.z - s_natureFrustumCache.pos.z,
+    };
+    float depth = toCenter.x * s_natureFrustumCache.forward.x +
+                  toCenter.y * s_natureFrustumCache.forward.y +
+                  toCenter.z * s_natureFrustumCache.forward.z;
     if (depth < -radius)
         return false;
 
-    float aspect = (float)GetScreenWidth() / (float)fmaxf((float)GetScreenHeight(), 1.0f);
     float halfVertical;
     float halfHorizontal;
-    if (camera.projection == CAMERA_ORTHOGRAPHIC)
+    if (s_natureFrustumCache.projection == CAMERA_ORTHOGRAPHIC)
     {
-        halfVertical = camera.fovy * 0.5f;
-        halfHorizontal = halfVertical * aspect;
+        halfVertical = s_natureFrustumCache.orthoHalfV;
+        halfHorizontal = s_natureFrustumCache.orthoHalfH;
     }
     else
     {
-        float positiveDepth = fmaxf(depth, 0.0f);
-        halfVertical = tanf(camera.fovy * DEG2RAD * 0.5f) * positiveDepth;
-        halfHorizontal = halfVertical * aspect;
+        float positiveDepth = depth > 0.0f ? depth : 0.0f;
+        halfVertical = s_natureFrustumCache.tanHalfFov * positiveDepth;
+        halfHorizontal = halfVertical * s_natureFrustumCache.aspect;
     }
-    float sideDistance = fabsf(Vector3DotProduct(toCenter, right));
-    float verticalDistance = fabsf(Vector3DotProduct(toCenter, viewUp));
-    return sideDistance <= halfHorizontal + radius &&
-           verticalDistance <= halfVertical + radius;
+
+    float sideDistance = fabsf(toCenter.x * s_natureFrustumCache.right.x +
+                               toCenter.y * s_natureFrustumCache.right.y +
+                               toCenter.z * s_natureFrustumCache.right.z);
+    if (sideDistance > halfHorizontal + radius)
+        return false;
+
+    float verticalDistance = fabsf(toCenter.x * s_natureFrustumCache.viewUp.x +
+                                   toCenter.y * s_natureFrustumCache.viewUp.y +
+                                   toCenter.z * s_natureFrustumCache.viewUp.z);
+    return verticalDistance <= halfVertical + radius;
 }
 
 static bool Nature_IntersectsDynamicShadowCoverage(Vector3 center, float radius)
@@ -1059,15 +1116,19 @@ void MapProp_PrepareMeadow(MapMeadowSurface *meadow, Vector3 worldOffset)
     NatureMeadowView view = NatureParametric_View(meadow);
     if (NatureParametric_IsPrepared(meadow, worldOffset, view.bands))
         return;
+    Nature_RefreshFrustumCache();
     float drawDistanceSq = view.drawDistance * view.drawDistance;
     for (int i = 0; i < meadow->chunkCount; i++)
     {
         MapMeadowChunk *chunk = &meadow->chunks[i];
         Vector3 center = Vector3Add(chunk->center, worldOffset);
-        chunk->visibleThisFrame = Nature_IsChunkVisible(center, chunk->radius);
         float dx = camera.position.x - center.x, dz = camera.position.z - center.z;
         if (view.drawDistance > 0.0f && dx * dx + dz * dz > drawDistanceSq)
+        {
             chunk->visibleThisFrame = false;
+            continue;
+        }
+        chunk->visibleThisFrame = Nature_IsChunkVisible(center, chunk->radius);
     }
     NatureParametric_PrepareVisible(meadow, worldOffset, view.bands);
 }
@@ -1082,6 +1143,8 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     float lodScale = view.lodScale, zoomFactor = view.zoomFactor;
     float lodDistance = view.lodDistance, drawDistance = view.drawDistance;
     float drawDistanceSq = drawDistance * drawDistance;
+
+    Nature_RefreshFrustumCache();
 
     float fdx = camera.position.x - camera.target.x;
     float fdz = camera.position.z - camera.target.z;
@@ -1116,8 +1179,9 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         {
             if (lodDistance > 0.0f)
             {
-                float spatialHash = sinf(chunk->center.x * 12.9898f + chunk->center.z * 78.233f);
-                spatialHash = spatialHash - floorf(spatialHash);
+                // Hash nhanh không cần sinf() đắt đỏ mỗi frame
+                float hSeed = chunk->center.x * 0.1031f + chunk->center.z * 0.3183f;
+                float spatialHash = hSeed - floorf(hSeed);
                 float farThreshold = focalDist + lodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 4.0f;
                 float midThreshold = (meadow->midLodDistance > 0.0f && chunk->midReady)
                                          ? (focalDist + meadow->midLodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 2.5f)
@@ -1193,8 +1257,8 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             Vector3 center = Vector3Add(chunk->center, worldOffset);
             float dx = camera.position.x - center.x;
             float dz = camera.position.z - center.z;
-            float visibleDistance = sqrtf(dx * dx + dz * dz) - chunk->radius;
-            if (visibleDistance > shadowDistance)
+            float maxShadowDist = shadowDistance + chunk->radius;
+            if (dx * dx + dz * dz > maxShadowDist * maxShadowDist)
             {
                 s_natureRenderStats.meadowShadowDistanceCulled++;
                 continue;
@@ -1207,9 +1271,6 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     }
 
     Vector4 tuftBands = view.bands;
-    // Never prepare here: the id-texture upload would split the active scene render pass. Maps
-    // call MapProp_UpdateFloraSystem before drawing, so this is normally already prepared; if a
-    // camera change slipped in after the update, this frame keeps using GPU rejection.
     bool compactNow = false;
     {
         NatureParametricMeadow *parametricData = meadow->parametric;
@@ -1227,7 +1288,9 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         NatureParametric_BindReceivers(shader, false);
         SetShaderValue(shader, s_natureTuftLodBandsLoc, &tuftBands, SHADER_UNIFORM_VEC4);
         SetShaderValue(shader, s_natureTuftLodCameraLoc, &camera.position, SHADER_UNIFORM_VEC3);
-        Vector2 fadeRange = {view.drawDistance * 0.82f, view.drawDistance};
+        // [TỐI ƯU VISUAL]: Nới rộng vùng chuyển tiếp mờ dần ở xa (0.76 -> 1.00) để cỏ trên
+        // sườn đồi xa hòa vào địa hình tự nhiên hơn.
+        Vector2 fadeRange = {view.drawDistance * 0.76f, view.drawDistance};
         SetShaderValue(shader, s_natureTuftFadeRangeLoc, &fadeRange, SHADER_UNIFORM_VEC2);
     }
     if (!meadow->textured)
@@ -1244,6 +1307,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     float localDepth[256];
     int *drawOrder = localOrder;
     float *drawDepth = localDepth;
+    bool hasPrecomputedDepth = false;
 
     if (ordered && ordered->nearFirst)
     {
@@ -1252,6 +1316,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     }
     else
     {
+        hasPrecomputedDepth = true;
         if (meadow->chunkCount > 256)
         {
             drawOrder = (int *)MemAlloc(meadow->chunkCount * sizeof(int));
@@ -1279,9 +1344,6 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         }
     }
 
-    // Canonical compact meadows carry every per-instance value in the packed id list, so each
-    // visible LOD band is one instanced draw. The per-chunk loop below stays for every other
-    // meadow (non-canonical reeds/pampas and the opt-out legacy submission path).
     bool bandBatched = ordered && compactNow && ordered->canonical;
     if (bandBatched)
     {
@@ -1308,8 +1370,16 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
             continue;
         if (meadow->parametric)
         {
-            Vector3 center = Vector3Add(chunk->center, worldOffset);
-            float d = Vector3Distance(camera.position, center);
+            float d;
+            if (hasPrecomputedDepth)
+            {
+                d = sqrtf(drawDepth[draw]);
+            }
+            else
+            {
+                Vector3 center = Vector3Add(chunk->center, worldOffset);
+                d = Vector3Distance(camera.position, center);
+            }
             float minDistance = fmaxf(0.0f, d - chunk->radius);
             float maxDistance = d + chunk->radius;
             for (int lod = 0; lod < 3; lod++)
@@ -1360,13 +1430,17 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
 void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffset,
                                      float time, Vector2 windDirection, float windStrength)
 {
-    Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
-    if (!meadow || !meadow->ready || GfxQuality_Get() < GFX_MED ||
-        fabsf(sunDir.y) > 0.72f ||
+    GfxQuality quality = GfxQuality_Get();
+    if (!meadow || !meadow->ready || quality < GFX_MED ||
         meadow->shadowDistance <= 0.0f ||
         Nature_GetShadowMode() == NATURE_SHADOW_PROJECTED_ONLY ||
         !Nature_ShadowCasterTypeEnabled(false))
         return;
+
+    Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
+    if (fabsf(sunDir.y) > 0.72f)
+        return;
+
     Shader shader = meadow->parametric ? NatureParametric_Shader(true) : NatureShadow_GetShader();
     Nature_BeginWindReceiverShader(shader);
     Nature_UpdateShadowShader(shader, time, windDirection, windStrength,
@@ -1376,9 +1450,14 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
         NatureParametric_BindReceivers(shader, true);
     rlDisableBackfaceCulling();
 
+    // [TỐI ƯU HIỆU NĂNG]: Đưa phép tính bán kính vùng phủ bóng ra ngoài vòng lặp chunk
     Vector3 shadowFocus = EnvShadow_GetFocus();
-    float maxDist = fminf(meadow->shadowDistance + 4.0f,
-                          EnvShadow_GetHalfExtent() + 4.0f);
+    float halfExtent = EnvShadow_GetHalfExtent();
+    float groundRadius = fmaxf(halfExtent, 8.0f) / fmaxf(fabsf(sunDir.y), 0.32f);
+    float qualityDistScale = (quality >= GFX_HIGH) ? 1.0f : 0.80f;
+    float maxDist = fminf(meadow->shadowDistance * qualityDistScale + 4.0f, halfExtent + 4.0f);
+    bool filterActive = Nature_ShadowCasterFilterActive();
+
     for (int i = 0; i < meadow->chunkCount; i++)
     {
         MapMeadowChunk *chunk = &meadow->chunks[i];
@@ -1387,13 +1466,16 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
         Vector3 center = Vector3Add(chunk->center, worldOffset);
         float dx = center.x - shadowFocus.x;
         float dz = center.z - shadowFocus.z;
-        float limit = fminf(maxDist + chunk->radius * 0.35f,
-                            EnvShadow_GetHalfExtent() + 2.0f);
-        if ((dx * dx + dz * dz) > limit * limit)
+        float distSq = dx * dx + dz * dz;
+        float limit = fminf(maxDist + chunk->radius * 0.35f, halfExtent + 2.0f);
+        if (distSq > limit * limit)
             continue;
-        if (!Nature_IntersectsDynamicShadowCoverage(center, chunk->radius) &&
-            !Nature_ShadowCasterFilterActive())
-            continue;
+        if (!filterActive)
+        {
+            float covLimit = groundRadius + chunk->radius * 1.12f + 2.0f;
+            if (distSq > covLimit * covLimit)
+                continue;
+        }
         if (meadow->parametric)
         {
             NatureParametric_DrawChunk(meadow, i, 3, shader, worldOffset, false);

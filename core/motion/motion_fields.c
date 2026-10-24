@@ -78,6 +78,12 @@ static int s_activeGuideCount = 0;
 
 static int s_activePhysicalGuides[MOTION_FIELDS_MAX_GUIDES];
 static int s_activePhysicalGuideCount = 0;
+/* Union of every physical target's padded box. A receiver outside it cannot be
+ * touched by any field, so the whole per-target scan is skipped — the broadphase
+ * boxes only ever save a query, and on a frame where five fields are alive but
+ * the particle is somewhere else, all five still cost their bounds test. */
+static Vector3 s_physicalUnionMin, s_physicalUnionMax;
+static bool s_physicalUnionValid = false;
 
 static uint32_t s_generation;
 static float s_time;
@@ -141,6 +147,26 @@ static void Motion_RebuildBroadphase(void)
     }
   }
   s_activePhysicalGuideCount = physGCount;
+
+  /* Only without guides: a guide is a moving path, has no precomputed box here,
+   * and is tested by projecting onto the path instead. */
+  s_physicalUnionValid = false;
+  if (physTCount > 0 && physGCount == 0)
+  {
+    s_physicalUnionMin = s_physicalTargetBroadphase[0].boundsMin;
+    s_physicalUnionMax = s_physicalTargetBroadphase[0].boundsMax;
+    for (int idx = 1; idx < physTCount; ++idx)
+    {
+      const MotionBroadphaseEntry *b = &s_physicalTargetBroadphase[idx];
+      s_physicalUnionMin.x = fminf(s_physicalUnionMin.x, b->boundsMin.x);
+      s_physicalUnionMin.y = fminf(s_physicalUnionMin.y, b->boundsMin.y);
+      s_physicalUnionMin.z = fminf(s_physicalUnionMin.z, b->boundsMin.z);
+      s_physicalUnionMax.x = fmaxf(s_physicalUnionMax.x, b->boundsMax.x);
+      s_physicalUnionMax.y = fmaxf(s_physicalUnionMax.y, b->boundsMax.y);
+      s_physicalUnionMax.z = fmaxf(s_physicalUnionMax.z, b->boundsMax.z);
+    }
+    s_physicalUnionValid = true;
+  }
 }
 
 static void Motion_RebuildActiveLists(void)
@@ -644,6 +670,7 @@ void MotionFields_Reset(void)
   s_activePhysicalTargetCount = 0;
   s_activeGuideCount = 0;
   s_activePhysicalGuideCount = 0;
+  s_physicalUnionValid = false;
   s_time = 0;
   s_updateDt = 0;
   Wind_SetMotionAirflow(NULL, 0);
@@ -1803,6 +1830,16 @@ typedef struct
   int dragLawCount;
 } CachedDragPassItem;
 
+static inline bool Motion_InUnionBounds(Vector3 p, float padding)
+{
+  return p.x >= s_physicalUnionMin.x - padding &&
+         p.x <= s_physicalUnionMax.x + padding &&
+         p.y >= s_physicalUnionMin.y - padding &&
+         p.y <= s_physicalUnionMax.y + padding &&
+         p.z >= s_physicalUnionMin.z - padding &&
+         p.z <= s_physicalUnionMax.z + padding;
+}
+
 static void Motion_SamplePhysical(Vector3 p, Vector3 v,
                                   const BodyPhysicalProperties *body,
                                   const MediumProperties *medium,
@@ -1814,9 +1851,16 @@ static void Motion_SamplePhysical(Vector3 p, Vector3 v,
       (spatialOnly || s_activePhysicalGuideCount == 0))
     return;
 
+  bool zeroOffset = (timeOffset == 0.0f);
+  /* p is outside every target's box at once: the loop below would reject it on
+   * its first bounds test, for every target. Guides have no box (see the union
+   * build), so this is only armed when there are none. */
+  if (zeroOffset && s_physicalUnionValid &&
+      !Motion_InUnionBounds(p, 0.0f))
+    return;
+
   CachedDragPassItem dragQueue[MOTION_FIELDS_MAX_TARGETS + MOTION_FIELDS_MAX_GUIDES];
   int dragCount = 0;
-  bool zeroOffset = (timeOffset == 0.0f);
 
   /* Pass 0: Duyệt qua mảng Broadphase phẳng */
   for (int idx = 0; idx < s_activePhysicalTargetCount; ++idx)

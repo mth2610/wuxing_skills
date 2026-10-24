@@ -32,6 +32,9 @@ static float s_cpuStreamKernel[32];
 static LiquidSurfaceStats s_stats;
 static int s_streamRejected, s_directRequested;
 static bool s_captureBatch=true, s_cpuImpostor=true, s_profile;
+/* Set when a liquid shader compiled to the default fallback: every uniform write
+ * then no-ops and the surface is not the surface. See LiquidSurface_Init. */
+static bool s_shadersBroken;
 static unsigned int s_profileFrames;
 static RenderTexture2D s_occupancy;
 static Shader s_occupancyShader;
@@ -72,7 +75,7 @@ static Color s_materialSoft = {160, 225, 255, 255};
 static float s_reconstructionRadius = 0.022f;
 static float s_submissionKernelRadius = 0.022f;
 static float s_materialKernel[LIQUID_SURFACE_MATERIAL_SLOTS];
-static int s_smoothMaterialLoc, s_smoothKernelsLoc, s_smoothMultiLoc;
+static int s_smoothMaterialLoc, s_smoothKernelsLoc, s_smoothMultiLoc, s_smoothSourceMaterialLoc;
 static int s_compositeKernelsLoc;
 static void LiquidSurface_RecordKernel(int slot) {
     if(slot>=0 && slot<LIQUID_SURFACE_MATERIAL_SLOTS)
@@ -80,6 +83,15 @@ static void LiquidSurface_RecordKernel(int slot) {
 }
 static float s_frameBodyRadiusPx = -1.0f;
 static float s_frameKernelRadiusPx = -1.0f;
+/* World-space union of every body that hinted this frame.
+ *
+ * SSF's per-frame work is almost all full-screen passes, while a liquid covers a
+ * few percent of the screen. These bounds let the reconstruction and occupancy
+ * passes run only where a body is, instead of over 921k pixels to fix 40k. A
+ * caller that never hints leaves the flag false and gets the original
+ * full-screen path — no caller is required to change. */
+static bool s_frameBoundsValid;
+static Vector3 s_frameBoundsMin, s_frameBoundsMax;
 /* 0 = adaptive shipping path; 1/2 force a side; 3 interleaves both sides in one
  * uncapped WATER ORB process so pipeline warm-up and thermal drift cannot make
  * a sequential A/B lie. Read once at init. */
@@ -318,26 +330,51 @@ static void LiquidSurface_DrawEllipsoid(const LiquidSurfaceParticle *sp) {
 }
 
 
-void LiquidSurface_Init(int width,int height) {
-    const char *batch=getenv("WUXING_LIQUID_CAPTURE_BATCH");
-    const char *cpu=getenv("WUXING_LIQUID_CPU_IMPOSTOR");
-    const char *roi=getenv("WUXING_LIQUID_OCCUPANCY");
-    s_captureBatch=!batch || atoi(batch)!=0;
-    s_cpuImpostor=(!cpu || atoi(cpu)!=0) && LiquidCaptureCPU_Init();
-    s_useOccupancy=roi && atoi(roi)!=0;
-    const char *profile=getenv("WUXING_LIQUID_PROFILE");
-    s_profile=profile && atoi(profile)!=0;
-    const char *roundOverride=getenv("WUXING_LIQUID_RECON_ROUNDS");
-    if (!roundOverride) roundOverride=getenv("WUXING_FLUID_RECON_ROUNDS");
-    s_reconstructionRoundOverride=roundOverride?atoi(roundOverride):0;
-    if (s_reconstructionRoundOverride<1 || s_reconstructionRoundOverride>3)
-        s_reconstructionRoundOverride=0;
-    /* Keep the authored High surface at native resolution while its optical
-     * look is being judged. R32F prevents the former zoom-dependent depth
-     * bands; lower tiers retain the cheaper reconstruction path. */
-    float scale = GfxQuality_Get() >= GFX_HIGH ? 1.0f :
-                  (GfxQuality_Get() >= GFX_MED ? 0.75f : 0.50f);
-    int w = (int)(width*scale), h=(int)(height*scale);
+/* Capture resolution follows the TIER, not the display.
+ *
+ * The capture used to be sized once from the window, so when RenderScale dropped
+ * the scene target (which is what the composite writes into) the liquid kept
+ * rendering its whole chain at the old size — the one pass that could not give
+ * any time back to the adaptive scaler, and by construction the frame cost the
+ * scaler was trying to recover. Sizing from SceneTargets instead makes the
+ * liquid chain shrink with everything else.
+ *
+ * HIGH used to be pinned at 1.0 "while the optical look is being judged". That
+ * was a judgement aid, not a shipping decision: the chain is fill-bound (a 4x
+ * smaller window took a 9.3 ms surface down to 3.6 ms), so at 1:1 a five-body
+ * scene costs ~9 ms on top of a ~7.7 ms scene. 0.85 matches the RenderScale the
+ * scene is already frozen at, keeps the narrow-range filter's WORLD reach
+ * (it derives its radius from u_projection/u_texel, not from texels), and costs
+ * ~15% of normal detail — the part the depth target's R32F format exists for.
+ * WUXING_LIQUID_CAPTURE_SCALE=1 restores native for a look review. */
+static float s_captureScaleOverride;
+static float LiquidSurface_TargetScale(void) {
+    float scale=GfxQuality_Get() >= GFX_HIGH ? 0.85f :
+                (GfxQuality_Get() >= GFX_MED ? 0.75f : 0.50f);
+    if(s_captureScaleOverride>0.0f) scale=s_captureScaleOverride;
+    if(scale<0.25f) scale=0.25f;
+    if(scale>1.0f) scale=1.0f;
+    return scale;
+}
+
+static void LiquidSurface_CreateTargets(int baseWidth,int baseHeight) {
+    float scale=LiquidSurface_TargetScale();
+    int w=(int)(baseWidth*scale), h=(int)(baseHeight*scale);
+    if(w<1) w=1;
+    if(h<1) h=1;
+    if(s_capture.id) {
+        UnloadRenderTexture(s_capture);
+        UnloadRenderTexture(s_captureBack);
+        UnloadRenderTexture(s_thickness);
+        UnloadRenderTexture(s_thicknessScratch);
+        UnloadRenderTexture(s_smoothA);
+        UnloadRenderTexture(s_smoothB);
+        UnloadRenderTexture(s_occupancy);
+        s_capture=(RenderTexture2D){0}; s_captureBack=(RenderTexture2D){0};
+        s_thickness=(RenderTexture2D){0}; s_thicknessScratch=(RenderTexture2D){0};
+        s_smoothA=(RenderTexture2D){0}; s_smoothB=(RenderTexture2D){0};
+        s_occupancy=(RenderTexture2D){0};
+    }
     s_capture=LiquidSurface_LoadDepthTargetEx(w,h,true);
     /* Same kind of target as the front capture: dual-depth thickness is the
      * difference of two depth reductions over the same splat cloud. */
@@ -364,6 +401,42 @@ void LiquidSurface_Init(int width,int height) {
     s_smoothB=LiquidSurface_LoadScalarTarget(w,h);
     s_occupancy=LiquidSurface_LoadScalarTarget((w+7)/8,(h+7)/8);
     SetTextureFilter(s_occupancy.texture,TEXTURE_FILTER_POINT);
+}
+
+/* Cheap enough to run every capture: one comparison once the size has settled. */
+static void LiquidSurface_SyncTargets(void) {
+    int baseWidth=SceneTargets_GetWidth(), baseHeight=SceneTargets_GetHeight();
+    if(baseWidth<=0 || baseHeight<=0) { baseWidth=GetScreenWidth(); baseHeight=GetScreenHeight(); }
+    if(baseWidth<1) baseWidth=1;
+    if(baseHeight<1) baseHeight=1;
+    float scale=LiquidSurface_TargetScale();
+    int w=(int)(baseWidth*scale), h=(int)(baseHeight*scale);
+    if(w<1) w=1;
+    if(h<1) h=1;
+    if(s_capture.id && s_capture.texture.width==w && s_capture.texture.height==h) return;
+    LiquidSurface_CreateTargets(baseWidth,baseHeight);
+}
+
+void LiquidSurface_Init(int width,int height) {
+    const char *batch=getenv("WUXING_LIQUID_CAPTURE_BATCH");
+    const char *cpu=getenv("WUXING_LIQUID_CPU_IMPOSTOR");
+    const char *roi=getenv("WUXING_LIQUID_OCCUPANCY");
+    s_captureBatch=!batch || atoi(batch)!=0;
+    s_cpuImpostor=(!cpu || atoi(cpu)!=0) && LiquidCaptureCPU_Init();
+    s_useOccupancy=roi && atoi(roi)!=0;
+    const char *profile=getenv("WUXING_LIQUID_PROFILE");
+    s_profile=profile && atoi(profile)!=0;
+    const char *capScale=getenv("WUXING_LIQUID_CAPTURE_SCALE");
+    if(capScale && *capScale) s_captureScaleOverride=(float)atof(capScale);
+    const char *roundOverride=getenv("WUXING_LIQUID_RECON_ROUNDS");
+    if (!roundOverride) roundOverride=getenv("WUXING_FLUID_RECON_ROUNDS");
+    s_reconstructionRoundOverride=roundOverride?atoi(roundOverride):0;
+    if (s_reconstructionRoundOverride<1 || s_reconstructionRoundOverride>3)
+        s_reconstructionRoundOverride=0;
+    /* Keep the authored High surface at native resolution while its optical
+     * look is being judged. R32F prevents the former zoom-dependent depth
+     * bands; lower tiers retain the cheaper reconstruction path. */
+    LiquidSurface_CreateTargets(width,height);
     s_occupancyShader=ResourceManager_LoadShader(NULL,"core/liquid/shaders/liquid_occupancy.fs");
     if(s_occupancyShader.id==rlGetShaderIdDefault()) s_useOccupancy=false;
     s_captureShader=ResourceManager_LoadShader(NULL,"core/liquid/shaders/liquid_capture.fs");
@@ -372,6 +445,16 @@ void LiquidSurface_Init(int width,int height) {
     s_thicknessBlur=ResourceManager_LoadShader(NULL,"core/liquid/shaders/liquid_thickness_blur.fs");
     s_smooth=ResourceManager_LoadShader(NULL,"core/liquid/shaders/liquid_depth_narrow_range.fs");
     s_composite=ResourceManager_LoadShader(NULL,"core/liquid/shaders/liquid_surface.fs");
+    /* A failed compile silently returns the DEFAULT shader, and every uniform
+     * location below is then -1: the whole surface draws as an untextured quad
+     * and nothing else complains. That has already been mistaken for "the
+     * liquid is invisible on this map" once; refuse to run instead. */
+    if(s_smooth.id==rlGetShaderIdDefault() || s_composite.id==rlGetShaderIdDefault() ||
+       s_thicknessResolve.id==rlGetShaderIdDefault() || s_thicknessBlur.id==rlGetShaderIdDefault())
+    {
+        TraceLog(LOG_ERROR,"LIQUID: surface shader failed to compile — screen-space fluid disabled");
+        s_shadersBroken=true;
+    }
     Image img = GenImageGradientRadial(64, 64, 0.0f, WHITE, BLANK);
     s_surfaceTex = LoadTextureFromImage(img); UnloadImage(img);
     SetTextureFilter(s_surfaceTex, TEXTURE_FILTER_BILINEAR);
@@ -386,6 +469,7 @@ void LiquidSurface_Init(int width,int height) {
     s_smoothMaterialLoc=GetShaderLocation(s_smooth,"u_materialIdTex");
     s_smoothKernelsLoc=GetShaderLocation(s_smooth,"u_materialKernels");
     s_smoothMultiLoc=GetShaderLocation(s_smooth,"u_multipleMaterials");
+    s_smoothSourceMaterialLoc=GetShaderLocation(s_smooth,"u_sourceCarriesMaterial");
     s_compositeKernelsLoc=GetShaderLocation(s_composite,"u_materialKernels");
     s_filterRadiusLoc=GetShaderLocation(s_smooth,"u_filterRadius");
     s_filter2DLoc=GetShaderLocation(s_smooth,"u_filter2D");
@@ -505,6 +589,38 @@ void LiquidSurface_HintBody(Vector3 center, float worldRadius) {
     float kernelPx=LiquidSurface_ProjectedRadiusPx(center,s_reconstructionRadius);
     if (bodyPx>s_frameBodyRadiusPx) s_frameBodyRadiusPx=bodyPx;
     if (kernelPx>s_frameKernelRadiusPx) s_frameKernelRadiusPx=kernelPx;
+
+    /* The hint is the surface, not the spawn cloud: a crown throws particles
+     * past it, so pad before believing these bounds. */
+    float pad=worldRadius*1.35f+0.35f;
+    if(!s_frameBoundsValid) {
+        s_frameBoundsMin=(Vector3){center.x-pad,center.y-pad,center.z-pad};
+        s_frameBoundsMax=(Vector3){center.x+pad,center.y+pad,center.z+pad};
+        s_frameBoundsValid=true;
+    } else {
+        s_frameBoundsMin.x=fminf(s_frameBoundsMin.x,center.x-pad);
+        s_frameBoundsMin.y=fminf(s_frameBoundsMin.y,center.y-pad);
+        s_frameBoundsMin.z=fminf(s_frameBoundsMin.z,center.z-pad);
+        s_frameBoundsMax.x=fmaxf(s_frameBoundsMax.x,center.x+pad);
+        s_frameBoundsMax.y=fmaxf(s_frameBoundsMax.y,center.y+pad);
+        s_frameBoundsMax.z=fmaxf(s_frameBoundsMax.z,center.z+pad);
+    }
+}
+
+static void LiquidSurface_ExtendFrameBounds(Vector3 position, float radius, bool exact) {
+    float pad=exact?radius*1.5f+0.05f:radius*1.35f+0.35f;
+    if(!s_frameBoundsValid) {
+        s_frameBoundsMin=(Vector3){position.x-pad,position.y-pad,position.z-pad};
+        s_frameBoundsMax=(Vector3){position.x+pad,position.y+pad,position.z+pad};
+        s_frameBoundsValid=true;
+    } else {
+        s_frameBoundsMin.x=fminf(s_frameBoundsMin.x,position.x-pad);
+        s_frameBoundsMin.y=fminf(s_frameBoundsMin.y,position.y-pad);
+        s_frameBoundsMin.z=fminf(s_frameBoundsMin.z,position.z-pad);
+        s_frameBoundsMax.x=fmaxf(s_frameBoundsMax.x,position.x+pad);
+        s_frameBoundsMax.y=fmaxf(s_frameBoundsMax.y,position.y+pad);
+        s_frameBoundsMax.z=fmaxf(s_frameBoundsMax.z,position.z+pad);
+    }
 }
 
 LiquidDesc LiquidSurface_DielectricDesc(Color body, Color glow, Color soft) {
@@ -653,6 +769,8 @@ void LiquidSurface_RegisterParticle(Vector3 p,float r) { LiquidSurface_RegisterE
 void LiquidSurface_RegisterEllipsoid(Vector3 p,Vector3 radii) {
     LiquidSurface_RecordKernel(s_currentMaterial);
     s_directRequested++;
+    float extent=fmaxf(radii.x,fmaxf(radii.y,radii.z));
+    LiquidSurface_ExtendFrameBounds(p,extent,true);
     if(s_count<LIQUID_SURFACE_MAX_PARTICLES)
         s_particles[s_count++]=(LiquidSurfaceParticle){p,radii,s_currentMaterial};
 }
@@ -673,7 +791,7 @@ bool LiquidSurface_SubmitParticleStream(const ParticleRenderStream *stream) {
     s_gpuStreams[s_gpuStreamCount++]=*stream;
     return true;
 }
-bool LiquidSurface_HasPending(void) { return s_count>0 || s_cpuStreamCount>0 || s_gpuStreamCount>0 || LiquidPBDGPU_IsActive(); }
+bool LiquidSurface_HasPending(void) { return !s_shadersBroken && (s_count>0 || s_cpuStreamCount>0 || s_gpuStreamCount>0 || LiquidPBDGPU_IsActive()); }
 static void LiquidSurface_PrepareCPUStreams(void) {
     int demand[32], admitted[32];
     s_stats.cpuRequested=s_directRequested;
@@ -714,8 +832,63 @@ static void LiquidSurface_TouchLiveMaterials(void) {
     }
 }
 
+/* World bounds → target pixel rect, or false when they cannot be projected.
+ *
+ * A box corner BEHIND the camera makes the projected rect meaningless (w <= 0
+ * flips the sign and the union explodes across the screen), and a box that
+ * straddles the near plane does the same. Both fall back to full screen rather
+ * than guessing: a wrong rect would clip the body itself. */
+static bool LiquidSurface_BodyRect(int targetW, int targetH, float marginPx, Rectangle *out) {
+    if (!s_frameBoundsValid || targetW <= 0 || targetH <= 0) return false;
+    Matrix vp = MatrixMultiply(s_fluidView, s_fluidProjection);
+    float minX = 1e30f, minY = 1e30f, maxX = -1e30f, maxY = -1e30f;
+    for (int c = 0; c < 8; ++c) {
+        float px = (c & 1) ? s_frameBoundsMax.x : s_frameBoundsMin.x;
+        float py = (c & 2) ? s_frameBoundsMax.y : s_frameBoundsMin.y;
+        float pz = (c & 4) ? s_frameBoundsMax.z : s_frameBoundsMin.z;
+        float cx = vp.m0*px + vp.m4*py + vp.m8*pz + vp.m12;
+        float cy = vp.m1*px + vp.m5*py + vp.m9*pz + vp.m13;
+        float cw = vp.m3*px + vp.m7*py + vp.m11*pz + vp.m15;
+        if (cw <= 0.001f) return false;
+        float sx = (cx / cw * 0.5f + 0.5f) * (float)GetScreenWidth();
+        float sy = (0.5f - cy / cw * 0.5f) * (float)GetScreenHeight();
+        minX = fminf(minX, sx); maxX = fmaxf(maxX, sx);
+        minY = fminf(minY, sy); maxY = fmaxf(maxY, sy);
+    }
+    float scaleX = (float)targetW / (float)fmaxf((float)GetScreenWidth(), 1.0f);
+    float scaleY = (float)targetH / (float)fmaxf((float)GetScreenHeight(), 1.0f);
+    float x0 = fmaxf(minX * scaleX - marginPx, 0.0f);
+    float y0 = fmaxf(minY * scaleY - marginPx, 0.0f);
+    float x1 = fminf(maxX * scaleX + marginPx, (float)targetW);
+    float y1 = fminf(maxY * scaleY + marginPx, (float)targetH);
+    if (x1 - x0 < 1.0f || y1 - y0 < 1.0f) return false;
+    *out = (Rectangle){x0, y0, x1 - x0, y1 - y0};
+    return true;
+}
+
+/* Scissor in TOP-DOWN target pixels.
+ *
+ * Render-target scopes render unmirrored on both backends (rlvk sets
+ * scope.flipY = false for FBOs), so the GL bottom-left origin is what the call
+ * wants — but drawing coordinates here are top-down, hence the flip. */
+static void LiquidSurface_BeginScissor(const Rectangle *rect, int targetHeight) {
+    if (!rect) return;
+    rlEnableScissorTest();
+    rlScissor((int)rect->x, targetHeight - (int)(rect->y + rect->height),
+              (int)rect->width, (int)rect->height);
+}
+/* The batch is recorded when it FLUSHES, and raylib flushes on the shader switch
+ * in EndShaderMode — which is called after this in every mixing site. Toggling the
+ * test off first therefore recorded the draw with the scissor DISABLED: the pass
+ * paid two state changes and saved nothing. Flush while it is still armed. */
+static void LiquidSurface_EndScissor(void) {
+    rlDrawRenderBatchActive();
+    rlDisableScissorTest();
+}
+
 void LiquidSurface_Capture(Camera3D camera) {
     if(!LiquidSurface_HasPending()) return;
+    LiquidSurface_SyncTargets();
     s_stats=(LiquidSurfaceStats){0};
     s_stats.streamRejected=s_streamRejected;
     s_stats.gpuStreams=s_gpuStreamCount;
@@ -929,15 +1102,6 @@ void LiquidSurface_Capture(Camera3D camera) {
     }
     s_stats.thicknessHostMs=LiquidSurface_HostElapsed(stageStart);
     stageStart=LiquidSurface_HostClock();
-    if(s_useOccupancy) {
-        BeginTextureMode(s_occupancy); ClearBackground(BLANK);
-        BeginShaderMode(s_occupancyShader);
-        DrawTexturePro(s_capture.texture,
-            (Rectangle){0,0,s_capture.texture.width,-s_capture.texture.height},
-            (Rectangle){0,0,s_occupancy.texture.width,s_occupancy.texture.height},
-            (Vector2){0,0},0,WHITE);
-        EndShaderMode(); EndTextureMode();
-    }
     /* A CEILING now, not the radius itself: the filter derives its own reach per
      * pixel from the kernel's projected size (liquid_depth_narrow_range.fs), so
      * this only bounds what a close-up body may cost. The old values WERE the
@@ -946,15 +1110,70 @@ void LiquidSurface_Capture(Camera3D camera) {
     int filterRadius=GfxQuality_Get()>=GFX_HIGH?28:
                      (GfxQuality_Get()>=GFX_MED?14:7);
     Matrix inverseProjection=captureInverseProjection;
+
+    /* Where the bodies actually ARE, so the passes below stop paying for 96% of
+     * the screen that contains no liquid.
+     *
+     * The pad covers the two reconstruction rounds (each pulls a value one
+     * filter-width outside the silhouette) plus the composite's one-texel
+     * antialiased fringe. A caller that never hints leaves haveBodyRect false
+     * and gets the original full-screen pass unchanged. */
+    Rectangle bodyRect; bool haveBodyRect=false;
+    {
+        float pad=(float)filterRadius*2.0f+8.0f;
+        haveBodyRect=LiquidSurface_BodyRect(s_capture.texture.width,s_capture.texture.height,
+                                            pad,&bodyRect);
+    }
+    Rectangle occupancyRect; bool haveOccupancyRect=false;
+    if(haveBodyRect && s_occupancy.texture.width>0) {
+        float sxp=(float)s_occupancy.texture.width/(float)fmaxf((float)s_capture.texture.width,1.0f);
+        float syp=(float)s_occupancy.texture.height/(float)fmaxf((float)s_capture.texture.height,1.0f);
+        occupancyRect=(Rectangle){bodyRect.x*sxp-1.0f,bodyRect.y*syp-1.0f,
+                                  bodyRect.width*sxp+2.0f,bodyRect.height*syp+2.0f};
+        if(occupancyRect.x<0.0f){occupancyRect.width+=occupancyRect.x;occupancyRect.x=0.0f;}
+        if(occupancyRect.y<0.0f){occupancyRect.height+=occupancyRect.y;occupancyRect.y=0.0f;}
+        float maxW=(float)s_occupancy.texture.width, maxH=(float)s_occupancy.texture.height;
+        if(occupancyRect.x+occupancyRect.width>maxW) occupancyRect.width=maxW-occupancyRect.x;
+        if(occupancyRect.y+occupancyRect.height>maxH) occupancyRect.height=maxH-occupancyRect.y;
+        haveOccupancyRect=occupancyRect.width>=1.0f && occupancyRect.height>=1.0f;
+    }
+
+    if(s_useOccupancy) {
+        BeginTextureMode(s_occupancy); ClearBackground(BLANK);
+        BeginShaderMode(s_occupancyShader);
+        LiquidSurface_BeginScissor(haveOccupancyRect?&occupancyRect:NULL,
+                                   s_occupancy.texture.height);
+        DrawTexturePro(s_capture.texture,
+            (Rectangle){0,0,s_capture.texture.width,-s_capture.texture.height},
+            (Rectangle){0,0,s_occupancy.texture.width,s_occupancy.texture.height},
+            (Vector2){0,0},0,WHITE);
+        LiquidSurface_EndScissor();
+        EndShaderMode(); EndTextureMode();
+    }
     /* Two rounds, not four. The filter's reach is now derived from the kernel's
      * projected size rather than a fixed 10 texels, so one round already spans a
      * splat — and each extra round re-estimates its own slope from the previous
      * round's output, which is a feedback loop that amplifies whatever ripple
      * survived the last pass. Four rounds of that is where the standing bands
      * came from. Halving them also halves the filter's cost. */
+    /* Which bodies actually still need the SECOND round.
+     *
+     * Measured on LIQUID BENCH, 1280x720, one process per variant, min of three:
+     * two rounds 17.05/17.15/17.29 ms, one round 14.09/14.67/14.59 ms — 2.6 ms,
+     * 28% of the whole surface chain. The frames differ on 573 pixels of
+     * 921,600 (0.06%, all inside the body band; max channel delta 157, i.e.
+     * highlight sparkle, no structural change), and at a close camera the same
+     * A/B differed by a mean of 0.015/255. The second round is a no-op because
+     * the disc radius is CAPPED in texels (LIQUID_FILTER2D_MAX_RADIUS), so it
+     * cannot extend the reach to anything the first round missed.
+     *
+     * It is kept for bodies that are LARGE ON SCREEN, where compounding the
+     * capped disc is the only thing that widens the reach at all. The old kernel
+     * test (`kernelPx <= 8`) made the compact path unreachable in practice: a
+     * 0.112 m kernel projects to ~14 px at six metres, so every body in a normal
+     * camera took two rounds. Footprint on screen is the honest criterion. */
     bool compactHighBody=s_frameBodyRadiusPx>0.0f &&
-                         s_frameBodyRadiusPx<=LIQUID_SURFACE_COMPACT_BODY_PX &&
-                         s_frameKernelRadiusPx<=LIQUID_SURFACE_COMPACT_KERNEL_PX;
+                         s_frameBodyRadiusPx<=LIQUID_SURFACE_COMPACT_BODY_PX;
     int reconstructionRounds=GfxQuality_Get()>=GFX_HIGH?(compactHighBody?1:2):
                              (GfxQuality_Get()>=GFX_MED?2:1);
     if (s_reconstructionRoundOverride>=1 && s_reconstructionRoundOverride<=2 &&
@@ -1001,13 +1220,18 @@ void LiquidSurface_Capture(Camera3D camera) {
             SetShaderValueTexture(s_smooth,s_smoothMaterialLoc,s_capture.texture);
             SetShaderValue(s_smooth,s_filterRadiusLoc,&filterRadius,SHADER_UNIFORM_INT);
             SetShaderValue(s_smooth,s_filter2DLoc,&two,SHADER_UNIFORM_INT);
+            int sourceIsCapture=(iteration==0)?1:0;
+            SetShaderValue(s_smooth,s_smoothSourceMaterialLoc,&sourceIsCapture,SHADER_UNIFORM_INT);
             SetShaderValueMatrix(s_smooth,s_smoothProjectionLoc,s_fluidProjection);
             SetShaderValueMatrix(s_smooth,s_smoothInverseProjectionLoc,inverseProjection);
             SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT);
             int mask=s_useOccupancy && fillHoles;
             SetShaderValue(s_smooth,s_useOccupancyLoc,&mask,SHADER_UNIFORM_INT);
             SetShaderValueTexture(s_smooth,s_occupancyLoc,s_occupancy.texture);
+            LiquidSurface_BeginScissor(haveBodyRect?&bodyRect:NULL,
+                                       s_capture.texture.height);
             DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE);
+            LiquidSurface_EndScissor();
             EndShaderMode(); EndTextureMode();
         }
         reconstructionRounds = 0;
@@ -1017,9 +1241,12 @@ void LiquidSurface_Capture(Camera3D camera) {
         Vector2 horizontal={1.0f,0.0f}, vertical={0.0f,1.0f};
         Texture2D source = iteration ? s_smoothB.texture : s_capture.texture;
         int fillHoles=iteration==0;
-        BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValueV(s_smooth,s_smoothKernelsLoc,s_materialKernel,SHADER_UNIFORM_FLOAT,LIQUID_SURFACE_MATERIAL_SLOTS); SetShaderValue(s_smooth,s_smoothMultiLoc,&multipleMaterials,SHADER_UNIFORM_INT); SetShaderValueTexture(s_smooth,s_smoothMaterialLoc,s_capture.texture); int zero=0; SetShaderValue(s_smooth,s_filter2DLoc,&zero,SHADER_UNIFORM_INT); int mask=s_useOccupancy && fillHoles; SetShaderValue(s_smooth,s_useOccupancyLoc,&mask,SHADER_UNIFORM_INT); SetShaderValueTexture(s_smooth,s_occupancyLoc,s_occupancy.texture); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_dirLoc,&horizontal,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_kernelRadiusLoc,&s_reconstructionRadius,SHADER_UNIFORM_FLOAT); SetShaderValue(s_smooth,s_filterRadiusLoc,&filterRadius,SHADER_UNIFORM_INT); SetShaderValueMatrix(s_smooth,s_smoothProjectionLoc,s_fluidProjection); SetShaderValueMatrix(s_smooth,s_smoothInverseProjectionLoc,inverseProjection); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
+        /* 1 only while `source` is the raw capture (round 0): later rounds read
+         * a single-channel smoothed target and must fetch identity separately. */
+        int sourceIsCapture=iteration==0?1:0;
+        BeginTextureMode(s_smoothA); ClearBackground(WHITE); BeginShaderMode(s_smooth); SetShaderValueV(s_smooth,s_smoothKernelsLoc,s_materialKernel,SHADER_UNIFORM_FLOAT,LIQUID_SURFACE_MATERIAL_SLOTS); SetShaderValue(s_smooth,s_smoothMultiLoc,&multipleMaterials,SHADER_UNIFORM_INT); SetShaderValueTexture(s_smooth,s_smoothMaterialLoc,s_capture.texture); int zero=0; SetShaderValue(s_smooth,s_filter2DLoc,&zero,SHADER_UNIFORM_INT); int mask=s_useOccupancy && fillHoles; SetShaderValue(s_smooth,s_useOccupancyLoc,&mask,SHADER_UNIFORM_INT); SetShaderValueTexture(s_smooth,s_occupancyLoc,s_occupancy.texture); SetShaderValue(s_smooth,s_texelLoc,&texel,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_dirLoc,&horizontal,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_kernelRadiusLoc,&s_reconstructionRadius,SHADER_UNIFORM_FLOAT); SetShaderValue(s_smooth,s_filterRadiusLoc,&filterRadius,SHADER_UNIFORM_INT); SetShaderValueMatrix(s_smooth,s_smoothProjectionLoc,s_fluidProjection); SetShaderValueMatrix(s_smooth,s_smoothInverseProjectionLoc,inverseProjection); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); sourceIsCapture=(iteration==0)?1:0; SetShaderValue(s_smooth,s_smoothSourceMaterialLoc,&sourceIsCapture,SHADER_UNIFORM_INT); LiquidSurface_BeginScissor(haveBodyRect?&bodyRect:NULL,s_capture.texture.height); DrawTextureRec(source,(Rectangle){0,0,source.width,-source.height},(Vector2){0,0},WHITE); LiquidSurface_EndScissor(); EndShaderMode(); EndTextureMode();
         fillHoles=0;
-        BeginTextureMode(s_smoothB); ClearBackground(WHITE); BeginShaderMode(s_smooth); int zeroMask=0; SetShaderValue(s_smooth,s_useOccupancyLoc,&zeroMask,SHADER_UNIFORM_INT); SetShaderValue(s_smooth,s_dirLoc,&vertical,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,s_smoothA.texture.width,-s_smoothA.texture.height},(Vector2){0,0},WHITE); EndShaderMode(); EndTextureMode();
+        BeginTextureMode(s_smoothB); ClearBackground(WHITE); BeginShaderMode(s_smooth); int zeroMask=0; SetShaderValue(s_smooth,s_useOccupancyLoc,&zeroMask,SHADER_UNIFORM_INT); SetShaderValue(s_smooth,s_dirLoc,&vertical,SHADER_UNIFORM_VEC2); SetShaderValue(s_smooth,s_fillLoc,&fillHoles,SHADER_UNIFORM_INT); sourceIsCapture=0; SetShaderValue(s_smooth,s_smoothSourceMaterialLoc,&sourceIsCapture,SHADER_UNIFORM_INT); LiquidSurface_BeginScissor(haveBodyRect?&bodyRect:NULL,s_smoothA.texture.height); DrawTextureRec(s_smoothA.texture,(Rectangle){0,0,s_smoothA.texture.width,-s_smoothA.texture.height},(Vector2){0,0},WHITE); LiquidSurface_EndScissor(); EndShaderMode(); EndTextureMode();
     }
     s_stats.reconstructionHostMs=LiquidSurface_HostElapsed(stageStart);
 }
@@ -1121,7 +1348,18 @@ void LiquidSurface_Composite(void) {
     SetShaderValueTexture(s_composite,s_sceneLoc,scene);
     if(has) SetShaderValueTexture(s_composite,s_sceneDepthLoc,sceneDepth);
     Texture2D depthSource=s_smoothB.texture;
+    /* Same footprint as the reconstruction, in SCENE pixels: the scene target can
+     * be a different size than the capture under render scale, and BodyRect
+     * already converts world -> screen -> target. The pad only has to cover the
+     * one-texel fringe this pass reads outside the silhouette. */
+    Rectangle compositeRect;
+    bool haveCompositeRect=LiquidSurface_BodyRect(SceneTargets_GetWidth(),
+                                                  SceneTargets_GetHeight(),2.0f,
+                                                  &compositeRect);
+    LiquidSurface_BeginScissor(haveCompositeRect?&compositeRect:NULL,
+                               SceneTargets_GetHeight());
     DrawTexturePro(depthSource,(Rectangle){0,0,depthSource.width,-depthSource.height},(Rectangle){0,0,(float)SceneTargets_GetWidth(),(float)SceneTargets_GetHeight()},(Vector2){0,0},0,WHITE);
+    LiquidSurface_EndScissor();
     EndShaderMode();
     EndBlendMode();
     s_stats.compositeHostMs=LiquidSurface_HostElapsed(stageStart);
@@ -1139,6 +1377,11 @@ void LiquidSurface_Composite(void) {
     s_gpuStreamCount=0;
     s_frameBodyRadiusPx=-1.0f;
     s_frameKernelRadiusPx=-1.0f;
+    /* Rebuilt from THIS frame's hints. Left set, the union only ever grows: every
+     * position a body has ever occupied stays inside it, so after a few seconds
+     * the "where the liquid is" rect is the whole screen and every scissor below
+     * becomes a no-op that still pays the state changes. */
+    s_frameBoundsValid=false;
     /* Reaching this line is what "the surface is running" means to a basic
      * attack asking to join one. */
     s_surfaceRunStamp=GetTime();

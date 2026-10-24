@@ -9,7 +9,7 @@
 #define NATURE_LOD_NEAR_BLEND_HALF_WIDTH 1.8f
 #define NATURE_LOD_FAR_BLEND_HALF_WIDTH 4.2f
 #define NATURE_VISIBLE_ID_ROW_TEXELS 256
-#define NATURE_CAMERA_EPSILON_SQ 0.0001f
+#define NATURE_CAMERA_EPSILON_SQ 0.0009f
 
 typedef struct
 {
@@ -39,10 +39,9 @@ typedef struct
     bool traceEnabled;
     int *drawOrder;
     float *drawDepth;
+    float *chunkDistCache;
     int drawCount;
-    // Compact submissions pack ids lod-major (see NatureParametric_PrepareVisible), so every
-    // visible tuft of one visible LOD band is one contiguous run: a band can be drawn with a
-    // single instanced draw instead of one per chunk.
+    // Compact submissions pack ids lod-major in front-to-back chunk drawOrder
     int bandBase[3], bandCount[3];
     int canonicalBlades, tuftCount, idPixelCount;
     Vector3 *roots;
@@ -79,7 +78,8 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     float focalDistance = sqrtf(dx * dx + dy * dy + dz * dz);
 
     float fovy = fmaxf(camera.fovy, 15.0f) * DEG2RAD;
-    float zoom = tanf(45.0f * 0.5f * DEG2RAD) / tanf(fovy * 0.5f);
+    // tan(22.5 deg) = 0.41421356f (hằng số tính sẵn thay vì gọi tanf mỗi lần)
+    float zoom = 0.41421356f / tanf(fovy * 0.5f);
     zoom = fminf(fmaxf(zoom, 0.8f), 2.5f);
 
     float lodZoom = (zoom > 1.0f) ? sqrtf(zoom) : zoom;
@@ -108,7 +108,7 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
     return view;
 }
 
-static bool NatureParametric_SameVector(Vector3 a, Vector3 b)
+static inline bool NatureParametric_SameVector(Vector3 a, Vector3 b)
 {
     float dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
     return (dx * dx + dy * dy + dz * dz) <= NATURE_CAMERA_EPSILON_SQ;
@@ -121,17 +121,17 @@ static bool NatureParametric_IsPrepared(const MapMeadowSurface *meadow, Vector3 
            NatureParametric_SameVector(data->preparedCamera.position, camera.position) &&
            NatureParametric_SameVector(data->preparedCamera.target, camera.target) &&
            NatureParametric_SameVector(data->preparedCamera.up, camera.up) &&
-           fabsf(data->preparedCamera.fovy - camera.fovy) <= 0.01f &&
+           fabsf(data->preparedCamera.fovy - camera.fovy) <= 0.02f &&
            data->preparedCamera.projection == camera.projection &&
            NatureParametric_SameVector(data->preparedOffset, offset) &&
-           fabsf(data->preparedBands.x - bands.x) <= 0.01f &&
-           fabsf(data->preparedBands.y - bands.y) <= 0.01f &&
-           fabsf(data->preparedBands.z - bands.z) <= 0.01f &&
-           fabsf(data->preparedBands.w - bands.w) <= 0.01f &&
-           data->preparedWidth == GetScreenWidth() &&
-           data->preparedHeight == GetScreenHeight() &&
+           fabsf(data->preparedBands.x - bands.x) <= 0.02f &&
+           fabsf(data->preparedBands.y - bands.y) <= 0.02f &&
+           fabsf(data->preparedBands.z - bands.z) <= 0.02f &&
+           fabsf(data->preparedBands.w - bands.w) <= 0.02f &&
            data->preparedQuality == GfxQuality_Get() &&
-           fabsf(data->preparedDrawDistance - meadow->drawDistance) <= 0.01f;
+           fabsf(data->preparedDrawDistance - meadow->drawDistance) <= 0.02f &&
+           data->preparedWidth == GetScreenWidth() &&
+           data->preparedHeight == GetScreenHeight();
 }
 
 static Shader s_natureParametricShader = {0};
@@ -175,26 +175,16 @@ static inline float NatureParametric_Smoothstep(float low, float high, float val
     return t * t * (3.0f - 2.0f * t);
 }
 
-static inline int NatureParametric_SelectLod(Vector3 root, float rank, Vector3 eye, Vector4 bands)
+static inline int NatureParametric_SelectLodFast(float d2, float rank, Vector4 bands,
+                                                 float nearMinSq, float farMaxSq,
+                                                 float midInnerMinSq, float midInnerMaxSq)
 {
-    if (bands.y <= 0.0f)
+    if (bands.y <= 0.0f || d2 <= nearMinSq)
         return 0;
-    float dx = root.x - eye.x, dy = root.y - eye.y, dz = root.z - eye.z;
-    float d2 = dx * dx + dy * dy + dz * dz;
-
-    float nearMin = bands.x > 0.0f ? (bands.x - bands.z) : (bands.y - bands.w);
-    if (nearMin > 0.0f && d2 <= nearMin * nearMin)
-        return 0;
-    float farMax = bands.y + bands.w;
-    if (d2 >= farMax * farMax)
+    if (d2 >= farMaxSq)
         return 2;
-    if (bands.x > 0.0f)
-    {
-        float midInnerMin = bands.x + bands.z;
-        float midInnerMax = bands.y - bands.w;
-        if (midInnerMax > midInnerMin && d2 >= midInnerMin * midInnerMin && d2 <= midInnerMax * midInnerMax)
-            return 1;
-    }
+    if (midInnerMaxSq > midInnerMinSq && d2 >= midInnerMinSq && d2 <= midInnerMaxSq)
+        return 1;
 
     float d = sqrtf(d2);
     float farWeight = NatureParametric_Smoothstep(bands.y - bands.w, bands.y + bands.w, d);
@@ -263,8 +253,6 @@ static Shader NatureParametric_Shader(bool shadow)
     return *shader;
 }
 
-// Builds welded blade template with lancet shoulder at tipStart = 0.76 (for segments > 2)
-// and arch-peak waist at 0.54 (for segments == 2), eliminating upper-blade kinks.
 static bool NatureParametric_BuildTemplate(NatureTuftTemplate *mesh, int blades, int segments)
 {
     Vector3 vertices[NATURE_TEMPLATE_MAX_VERTICES];
@@ -343,6 +331,7 @@ static void NatureParametric_Destroy(MapMeadowSurface *meadow)
     MemFree(data->visibleLods);
     MemFree(data->drawOrder);
     MemFree(data->drawDepth);
+    MemFree(data->chunkDistCache);
     MemFree(data);
     meadow->parametric = NULL;
 }
@@ -430,8 +419,10 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
     meadow->chunks = MemAlloc(activeChunks * sizeof(*meadow->chunks));
     data->drawOrder = MemAlloc(activeChunks * sizeof(*data->drawOrder));
     data->drawDepth = MemAlloc(activeChunks * sizeof(*data->drawDepth));
+    data->chunkDistCache = MemAlloc(activeChunks * sizeof(*data->chunkDistCache));
     chunkWriteCursor = MemAlloc(activeChunks * sizeof(int));
-    if (!data->ranges || !meadow->chunks || !data->drawOrder || !data->drawDepth || !chunkWriteCursor)
+    if (!data->ranges || !meadow->chunks || !data->drawOrder || !data->drawDepth ||
+        !data->chunkDistCache || !chunkWriteCursor)
         goto failed;
     memset(data->ranges, 0, activeChunks * sizeof(*data->ranges));
     memset(meadow->chunks, 0, activeChunks * sizeof(*meadow->chunks));
@@ -483,9 +474,6 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
         }
     }
 
-    // Compact submission is the default: it submits only the tufts an LOD band actually uses
-    // (about half of the candidates) and, for canonical meadows, lets a whole band be drawn in
-    // one instanced draw. `legacy` keeps the GPU-rejection path for A/B profiling.
     const char *submission = getenv("WUXING_MEADOW_SUBMISSION");
     data->compact = !submission || strcmp(submission, "legacy") != 0;
     const char *order = getenv("WUXING_MEADOW_ORDER");
@@ -715,13 +703,24 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
         return;
 
     Vector3 forward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+    Vector3 localEye = Vector3Subtract(camera.position, worldOffset);
+
     data->drawCount = 0;
     for (int chunk = 0; chunk < meadow->chunkCount; chunk++)
     {
+        NatureTuftRange *range = &data->ranges[chunk];
+        range->visibleCount[0] = 0;
+        range->visibleCount[1] = 0;
+        range->visibleCount[2] = 0;
+
         if (!meadow->chunks[chunk].visibleThisFrame)
             continue;
-        Vector3 relative = Vector3Subtract(Vector3Add(meadow->chunks[chunk].center, worldOffset), camera.position);
-        float depth = Vector3DotProduct(relative, forward);
+
+        Vector3 localRel = Vector3Subtract(meadow->chunks[chunk].center, localEye);
+        float dist = sqrtf(localRel.x * localRel.x + localRel.y * localRel.y + localRel.z * localRel.z);
+        data->chunkDistCache[chunk] = dist;
+
+        float depth = localRel.x * forward.x + localRel.y * forward.y + localRel.z * forward.z;
         int slot = data->drawCount++;
         if (data->nearFirst)
         {
@@ -747,17 +746,6 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
     if (!data->compact)
         return;
 
-    for (int chunk = 0; chunk < meadow->chunkCount; chunk++)
-    {
-        NatureTuftRange *range = &data->ranges[chunk];
-        range->visibleCount[0] = 0;
-        range->visibleCount[1] = 0;
-        range->visibleCount[2] = 0;
-    }
-
-    Vector3 localEye = Vector3Subtract(camera.position, worldOffset);
-    // Same fade range MapProp_DrawMeadow uploads to the vertex shader; roots at or past it are
-    // collapsed to a point there, so they must not be submitted at all.
     NatureMeadowView view = NatureParametric_View(meadow);
     float fadeEnd = view.drawDistance;
     float fadeEndSq = fadeEnd * fadeEnd;
@@ -766,104 +754,143 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
     float lod1MaxD = bands.y - bands.w;
     float lod2MinD = bands.y + bands.w;
 
+    float nearMinSq = (lod0MaxD > 0.0f) ? (lod0MaxD * lod0MaxD) : 0.0f;
+    float farMax = bands.y + bands.w;
+    float farMaxSq = farMax * farMax;
+    float midInnerMinSq = (bands.x > 0.0f && lod1MinD > 0.0f) ? (lod1MinD * lod1MinD) : 0.0f;
+    float midInnerMaxSq = (bands.x > 0.0f && lod1MaxD > lod1MinD) ? (lod1MaxD * lod1MaxD) : -1.0f;
+
     int totalLodCounts[3] = {0, 0, 0};
 
+    // PASS 1: Phân loại LOD cho các chunk hiển thị (sử dụng khoảng cách chunk đã cache)
     for (int idx = 0; idx < data->drawCount; idx++)
     {
         int chunk = data->drawOrder[idx];
         NatureTuftRange *range = &data->ranges[chunk];
-        float chunkDist = Vector3Distance(localEye, meadow->chunks[chunk].center);
+        float chunkDist = data->chunkDistCache[chunk];
         float nearD = chunkDist - meadow->chunks[chunk].radius;
         float farD = chunkDist + meadow->chunks[chunk].radius;
 
-        // Tufts past the fade range are scaled onto their own root by the vertex shader
-        // (u_tuftFadeRange), i.e. they rasterise nothing. Dropping them here removes their whole
-        // vertex-shader cost without changing a single pixel.
         if (nearD >= fadeEnd)
-        {
-            range->visibleCount[0] = 0;
-            range->visibleCount[1] = 0;
-            range->visibleCount[2] = 0;
             continue;
-        }
 
         if ((bands.y <= 0.0f || farD <= lod0MaxD) && farD <= fadeEnd)
         {
             range->visibleCount[0] = range->count;
             totalLodCounts[0] += range->count;
-            memset(data->visibleLods + range->tuftOffset, 0, range->count);
+            memset(data->visibleLods + range->tuftOffset, 0, (size_t)range->count);
         }
         else if (bands.x > 0.0f && nearD >= lod1MinD && farD <= lod1MaxD && farD <= fadeEnd)
         {
             range->visibleCount[1] = range->count;
             totalLodCounts[1] += range->count;
-            memset(data->visibleLods + range->tuftOffset, 1, range->count);
+            memset(data->visibleLods + range->tuftOffset, 1, (size_t)range->count);
         }
         else if (nearD >= lod2MinD && farD <= fadeEnd)
         {
             range->visibleCount[2] = range->count;
             totalLodCounts[2] += range->count;
-            memset(data->visibleLods + range->tuftOffset, 2, range->count);
+            memset(data->visibleLods + range->tuftOffset, 2, (size_t)range->count);
         }
         else
         {
             int start = range->tuftOffset;
             int end = start + range->count;
+            int c0 = 0, c1 = 0, c2 = 0;
             for (int id = start; id < end; id++)
             {
                 Vector3 root = data->roots[id];
                 float dx = root.x - localEye.x, dy = root.y - localEye.y, dz = root.z - localEye.z;
-                if (dx * dx + dy * dy + dz * dz >= fadeEndSq)
+                float d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 >= fadeEndSq)
                 {
-                    data->visibleLods[id] = 3; // never emitted: no LOD band claims it
+                    data->visibleLods[id] = 3;
                     continue;
                 }
-                int lod = NatureParametric_SelectLod(root, data->ranks[id], localEye, bands);
+                int lod = NatureParametric_SelectLodFast(d2, data->ranks[id], bands,
+                                                         nearMinSq, farMaxSq,
+                                                         midInnerMinSq, midInnerMaxSq);
                 data->visibleLods[id] = (unsigned char)lod;
-                range->visibleCount[lod]++;
+                if (lod == 0)
+                    c0++;
+                else if (lod == 1)
+                    c1++;
+                else
+                    c2++;
             }
-            totalLodCounts[0] += range->visibleCount[0];
-            totalLodCounts[1] += range->visibleCount[1];
-            totalLodCounts[2] += range->visibleCount[2];
+            range->visibleCount[0] = c0;
+            range->visibleCount[1] = c1;
+            range->visibleCount[2] = c2;
+            totalLodCounts[0] += c0;
+            totalLodCounts[1] += c1;
+            totalLodCounts[2] += c2;
         }
     }
 
-    int cursor = 0;
-    for (int lod = 0; lod < 3; lod++)
+    // [TỐI ƯU EARLY-Z & SINGLE-PASS PACKING]:
+    // Đóng gói idPixels theo đúng thứ tự gần-ra-xa (data->drawOrder[idx]) trong 1 lượt duyệt duy nhất!
+    data->bandBase[0] = 0;
+    data->bandCount[0] = totalLodCounts[0];
+    data->bandBase[1] = totalLodCounts[0];
+    data->bandCount[1] = totalLodCounts[1];
+    data->bandBase[2] = totalLodCounts[0] + totalLodCounts[1];
+    data->bandCount[2] = totalLodCounts[2];
+
+    int writeHead[3] = {data->bandBase[0], data->bandBase[1], data->bandBase[2]};
+
+    for (int idx = 0; idx < data->drawCount; idx++)
     {
-        data->bandBase[lod] = cursor;
-        for (int chunk = 0; chunk < meadow->chunkCount; chunk++)
+        int chunk = data->drawOrder[idx];
+        NatureTuftRange *range = &data->ranges[chunk];
+        range->visibleOffset[0] = writeHead[0];
+        range->visibleOffset[1] = writeHead[1];
+        range->visibleOffset[2] = writeHead[2];
+
+        int n0 = range->visibleCount[0];
+        int n1 = range->visibleCount[1];
+        int n2 = range->visibleCount[2];
+        if ((n0 | n1 | n2) == 0)
+            continue;
+
+        int start = range->tuftOffset;
+        int end = start + range->count;
+
+        if (n0 == range->count)
         {
-            NatureTuftRange *range = &data->ranges[chunk];
-            range->visibleOffset[lod] = cursor;
-            int cCount = range->visibleCount[lod];
-            if (cCount == 0)
-                continue;
-
-            int start = range->tuftOffset;
-            int end = start + range->count;
-            if (cCount == range->count)
+            int w0 = writeHead[0];
+            for (int id = start; id < end; id++)
+                data->idPixels[w0++] = (float)id;
+            writeHead[0] = w0;
+        }
+        else if (n1 == range->count)
+        {
+            int w1 = writeHead[1];
+            for (int id = start; id < end; id++)
+                data->idPixels[w1++] = (float)id;
+            writeHead[1] = w1;
+        }
+        else if (n2 == range->count)
+        {
+            int w2 = writeHead[2];
+            for (int id = start; id < end; id++)
+                data->idPixels[w2++] = (float)id;
+            writeHead[2] = w2;
+        }
+        else
+        {
+            for (int id = start; id < end; id++)
             {
-                for (int id = start; id < end; id++)
-                {
-                    data->idPixels[cursor++] = (float)id;
-                }
-            }
-            else
-            {
-                for (int id = start; id < end; id++)
-                {
-                    if (data->visibleLods[id] == lod)
-                        data->idPixels[cursor++] = (float)id;
-                }
+                unsigned char lod = data->visibleLods[id];
+                if (lod < 3)
+                    data->idPixels[writeHead[lod]++] = (float)id;
             }
         }
-        data->bandCount[lod] = cursor - data->bandBase[lod];
     }
 
-    if (cursor > 0)
+    int totalSubmitted = totalLodCounts[0] + totalLodCounts[1] + totalLodCounts[2];
+    if (totalSubmitted > 0)
     {
-        int activeRows = (cursor + NATURE_VISIBLE_ID_ROW_TEXELS * 4 - 1) / (NATURE_VISIBLE_ID_ROW_TEXELS * 4);
+        int activeRows = (totalSubmitted + NATURE_VISIBLE_ID_ROW_TEXELS * 4 - 1) / (NATURE_VISIBLE_ID_ROW_TEXELS * 4);
         Rectangle updateRec = {0.0f, 0.0f, (float)NATURE_VISIBLE_ID_ROW_TEXELS, (float)activeRows};
         UpdateTextureRec(data->visibleIds, updateRec, data->idPixels);
     }
@@ -874,7 +901,7 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
         for (int idx = 0; idx < data->drawCount; idx++)
         {
             int chunk = data->drawOrder[idx];
-            float d = Vector3Distance(localEye, meadow->chunks[chunk].center);
+            float d = data->chunkDistCache[chunk];
             float nearD = fmaxf(0.0f, d - meadow->chunks[chunk].radius);
             float farD = d + meadow->chunks[chunk].radius;
             for (int lod = 0; lod < 3; lod++)
@@ -886,10 +913,10 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
                 candidateVertices += data->ranges[chunk].count * data->templates[lod].vertexCount;
             }
         }
-        int activeRows = (cursor + NATURE_VISIBLE_ID_ROW_TEXELS * 4 - 1) / (NATURE_VISIBLE_ID_ROW_TEXELS * 4);
-        int uploadedBytes = cursor ? activeRows * NATURE_VISIBLE_ID_ROW_TEXELS * 4 * (int)sizeof(float) : 0;
+        int activeRows = (totalSubmitted + NATURE_VISIBLE_ID_ROW_TEXELS * 4 - 1) / (NATURE_VISIBLE_ID_ROW_TEXELS * 4);
+        int uploadedBytes = totalSubmitted ? activeRows * NATURE_VISIBLE_ID_ROW_TEXELS * 4 * (int)sizeof(float) : 0;
         TraceLog(LOG_INFO, "MEADOW_SUBMISSION: tufts=%d submitted_visible=%d legacy_candidates=%d vertices=%d legacy_vertices=%d id_upload_bytes=%d",
-                 data->tuftCount, cursor, candidateInstances, compactVertices, candidateVertices, uploadedBytes);
+                 data->tuftCount, totalSubmitted, candidateInstances, compactVertices, candidateVertices, uploadedBytes);
     }
 }
 
@@ -898,8 +925,6 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
 {
     NatureParametricMeadow *data = meadow->parametric;
     int pass = lod == 3 ? 1 : 0;
-    // `compactNow` is only true when the id texture was refreshed outside the active render
-    // pass; otherwise this frame falls back to GPU-rejection submission (no mid-pass upload).
     bool compact = pass == 0 && compactNow;
     int instanceCount = compact ? data->ranges[chunk].visibleCount[lod] : data->ranges[chunk].count;
     if (instanceCount <= 0)
@@ -933,10 +958,6 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
     SetShaderValue(shader, s_natureCanonicalBladesLoc[pass], &data->canonicalBlades, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureGeometryLodLoc[pass], &lod, SHADER_UNIFORM_INT);
 
-    // Canonical blade data derives every blade id from the absolute tuft id, and compact
-    // submission supplies that id from the id texture, so both uniforms are dead in that
-    // combination. Leaving them untouched keeps the staged uniform block unchanged across
-    // chunk draws, which lets the backend skip the per-chunk uniform push entirely.
     if (!(data->canonical && compact))
     {
         SetShaderValue(shader, s_natureBladeOffsetLoc[pass], &data->ranges[chunk].offset[lod], SHADER_UNIFORM_INT);
@@ -964,13 +985,6 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
     rlDisableVertexArray();
 }
 
-// Draw one whole visible LOD band in a single instanced draw.
-//
-// NatureParametric_PrepareVisible packs the compact id list lod-major, so every instance of a
-// band is contiguous. Canonical blade data derives blade ids from the absolute tuft id fetched
-// out of that list, so nothing in the shader depends on which chunk an instance came from. This
-// submits exactly the instances the per-chunk loop would, in the same (nearest-first) order, with
-// one descriptor push instead of one per chunk.
 static void NatureParametric_DrawBand(MapMeadowSurface *meadow, int lod, Shader shader,
                                       Vector3 worldOffset)
 {

@@ -12,6 +12,7 @@ uniform int u_blobCount;
 uniform vec3 u_boxMin;
 uniform vec3 u_boxMax;
 uniform float u_threshold; // default 0.50
+uniform int u_stepCount;   // coarse march steps, host-derived from the smallest blob
 uniform vec3 u_cameraPos;
 uniform vec3 u_cameraForward;
 uniform mat4 u_viewProj;
@@ -112,9 +113,17 @@ void main() {
         discard;
     }
 
-    // Raymarching search for isosurface
-    int numSteps = 48;
-    float stepSize = (tEnd - tStart) / float(numSteps);
+    // Raymarching search for isosurface.
+    //
+    // The step count comes from the host (u_stepCount) and is derived from the
+    // SMALLEST blob: a fixed 48 steps over a one-metre body evaluates the field
+    // every 2 cm even though nothing in it varies below a 0.2 m kernel. Five
+    // bisections then put the crossing at span/12/32, far finer than the old
+    // 48-step coarse hit. stepSize is still computed for the segment actually
+    // visible to this pixel, so scene-depth clipping keeps its precision.
+    int numSteps = u_stepCount;
+    if (numSteps < 4) numSteps = 48;
+    float stepSize = max(tEnd - tStart, 1e-5) / float(numSteps);
     float t = tStart;
     float tPrev = t;
     float phiPrev = EvaluateField(rayOrigin + rayDir * t);
@@ -126,13 +135,14 @@ void main() {
         tHit = tStart;
     } else {
         for (int s = 0; s < 48; s++) {
+            if (s >= numSteps) break;
             t += stepSize;
             if (t > tEnd) break;
             float phi = EvaluateField(rayOrigin + rayDir * t);
             if (phi >= u_threshold) {
                 float tA = tPrev;
                 float tB = t;
-                for (int b = 0; b < 4; b++) {
+                for (int b = 0; b < 5; b++) {
                     float tMid = (tA + tB) * 0.5;
                     if (EvaluateField(rayOrigin + rayDir * tMid) >= u_threshold) {
                         tB = tMid;
@@ -153,29 +163,38 @@ void main() {
         discard;
     }
 
-    // Measure internal thickness for absorption with bisection refinement
-    float tThickSearch = tHit;
-    float tBackHit = tEnd;
-    float thickStep = (tEnd - tHit) / 8.0;
-    for (int k = 0; k < 8; k++) {
-        tThickSearch += thickStep;
-        if (EvaluateField(rayOrigin + rayDir * tThickSearch) < u_threshold) {
-            float tA = tThickSearch - thickStep;
-            float tB = tThickSearch;
-            for (int b = 0; b < 4; b++) {
-                float tMid = (tA + tB) * 0.5;
-                if (EvaluateField(rayOrigin + rayDir * tMid) >= u_threshold) {
-                    tA = tMid;
-                } else {
-                    tB = tMid;
+    // Internal thickness for absorption.
+    //
+    // A conductor has no transmission at all and an opaque dielectric's
+    // transmittance is already zero, so the twelve extra field evaluations that
+    // search for the back surface buy nothing there.
+    float thickness;
+    if (u_liquidClass == 2 || u_opacityPerMeter > 40.0) {
+        thickness = max(min((tEnd - tHit) * 0.25, 0.08), 0.02);
+    } else {
+        float tThickSearch = tHit;
+        float tBackHit = tEnd;
+        float thickStep = (tEnd - tHit) / 8.0;
+        for (int k = 0; k < 8; k++) {
+            tThickSearch += thickStep;
+            if (EvaluateField(rayOrigin + rayDir * tThickSearch) < u_threshold) {
+                float tA = tThickSearch - thickStep;
+                float tB = tThickSearch;
+                for (int b = 0; b < 3; b++) {
+                    float tMid = (tA + tB) * 0.5;
+                    if (EvaluateField(rayOrigin + rayDir * tMid) >= u_threshold) {
+                        tA = tMid;
+                    } else {
+                        tB = tMid;
+                    }
                 }
+                tBackHit = tB;
+                break;
             }
-            tBackHit = tB;
-            break;
+            tBackHit = tThickSearch;
         }
-        tBackHit = tThickSearch;
+        thickness = max(tBackHit - tHit, 0.02);
     }
-    float thickness = max(tBackHit - tHit, 0.02);
 
     vec3 hitPos = rayOrigin + rayDir * tHit;
     vec3 normal = EvaluateNormal(hitPos);
@@ -309,9 +328,14 @@ void main() {
         alpha = 1.0;
     }
 
-    // Write true curved surface depth
-    vec4 clip = u_viewProj * vec4(hitPos, 1.0);
-    gl_FragDepth = (clip.z / clip.w) * 0.5 + 0.5;
+    /* No gl_FragDepth write.
+     *
+     * The host draws this cube with the depth mask DISABLED (rlDisableDepthMask
+     * in LiquidMetaball3D_Draw): nothing this shader emits can reach the depth
+     * buffer. What the write did do was force late depth testing on tile-based
+     * GPUs, so every pixel of every body's bounding box ran the full raymarch
+     * even when it was already behind geometry. The scene-depth clamp above
+     * still cuts the ray at real occluders. */
 
     finalColor = vec4(color, alpha);
 }

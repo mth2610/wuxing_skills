@@ -22,12 +22,16 @@ int MaterialAt(vec2 uv) {
     }
     return clamp(int(sampleValue.b+0.5),0,5);
 }
+/* 1 when texture0 is the RAW capture, i.e. it already carries the material id in
+ * .b. Round 0 reads the capture and every later round reads a single-channel
+ * smoothed target, so the depth read below would otherwise fetch the SAME texel
+ * twice (once for depth, once for identity) on the pass that runs at full res. */
+uniform int u_sourceCarriesMaterial;
 float DepthForMaterial(vec2 uv,int material) {
-    if(u_multipleMaterials!=0) {
-        vec4 raw=texture(u_materialIdTex,uv);
-        if(raw.r<0.99999 && int(raw.b+0.5)!=material) return 1.0;
-    }
-    return texture(texture0,uv).r;
+    if(u_multipleMaterials==0) return texture(texture0,uv).r;
+    vec4 raw=u_sourceCarriesMaterial!=0?texture(texture0,uv):texture(u_materialIdTex,uv);
+    if(raw.r<0.99999 && int(raw.b+0.5)!=material) return 1.0;
+    return raw.r;
 }
 uniform int u_filterRadius;
 uniform int u_fillHoles;

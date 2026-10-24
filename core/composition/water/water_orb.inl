@@ -446,6 +446,11 @@ static void WaterOrb_SubmitSurface(void)
             float rScale = 1.35f;
             float baseBlobRad = (orb->config.blobRadius > 0.01f) ? orb->config.blobRadius : (orb->radius * 0.22f);
 
+            /* One body per orb: its own blob list, optics and threshold. Two
+             * orbs sharing the module's single list merged into one isosurface
+             * and both rendered with the last material bound. */
+            LiquidMetaball3D_BeginBody(&orb->material, thresh);
+
             // 1. Live particles driven by Motion Fields (moving guide during flight, radial blast on impact)
             for (int s = 0; s < sampleCount; ++s) {
                 float r = fmaxf(samples[s].radius, baseBlobRad) * rScale;
@@ -468,8 +473,7 @@ static void WaterOrb_SubmitSurface(void)
                 }
             }
 
-            LiquidMetaball3D_SetMaterial(&orb->material);
-            LiquidMetaball3D_SetThreshold(thresh);
+            LiquidMetaball3D_EndBody();
         } else {
             // SCREEN SPACE FLUID (SSF) BRANCH
             LiquidSurface_BindMaterial(&orb->material);

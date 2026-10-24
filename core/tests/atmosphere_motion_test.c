@@ -36,7 +36,7 @@ static void UnloadTexture(Texture2D t) { (void)t; }
 static void DrawBillboard(Camera3D c,Texture2D t,Vector3 p,float s,Color col) { (void)c;(void)t;(void)p;(void)s;(void)col; }
 VFXRenderScope VFXRender_BeginDraw(VFXRenderPass p,VFXSurfaceMode m,bool d) { (void)p;(void)m;(void)d;return (VFXRenderScope){0}; }
 void VFXRender_EndDraw(VFXRenderScope *s) { (void)s; }
-#include "core/atmosphere.c"
+#include "environment/atmosphere.c"
 static int failed;
 #define CHECK(c,m) do { printf("[%s] %s\n",(c)?"PASS":"FAIL",m);if(!(c)) failed++; } while(0)
 static void Reset(void) {
