@@ -4282,5 +4282,9 @@ doubled GPU execution time.
   (`dt = min(u_dt, 1.0/30.0)`), reserving substepping exclusively for XPBD constraint solvers (`trail_ribbon.comp`).
 - Use analytic 12-sample finite differences for `mCurl` with weight evaluated once at the sample origin,
   and pack law presence bitflags (`16u` for guide laws) in field `identity[3]` to eliminate shader loops over force laws.
+- In `mPath`, eliminate redundant arc-distance `while` loops and divisions; use `bestSeg` and `bestPos` from the initial projection pass directly.
+- In `mWeight`, test squared distance against `r*r` (outside) and `coreR*coreR` (core) before performing `sqrt` and cubic smoothstep polynomials.
+- Guard `mCurl` calls with `flowParams.x > 0.0` and pass precalculated `w` directly to avoid redundant weight evaluations per particle per field.
+- Precalculate `invRadius` in `mSampleField` to replace repeated divisions by radius with multiplications, and guard lane tracking with `!dragPass`.
 
 

@@ -75,8 +75,14 @@ static inline void MotionGpu_PackField(const FieldDesc *d,MotionFieldHandle hand
   out->angularVelocity=MotionGpu_V4(d->transform.angularVelocityRadPerSec,d->lifetime.fadeSec);
   out->flowVelocity=MotionGpu_V4(d->flow.velocityMps,d->flow.blendWeight>0?d->flow.blendWeight:1);
   out->flowAxis=MotionGpu_V4(d->flow.axis,d->flow.addBackgroundVelocity?1:0);
-  out->flowParams=(Vector4){d->flow.procedural.turbulenceSpeedMps,d->flow.procedural.swirlSpeedMps,
-    d->flow.procedural.eddyLengthM,(float)d->forceLawCount};
+  float r = d->volume.radiusM;
+  if (d->volume.shape == FIELD_BOX) {
+    r = d->volume.halfExtentsM.x < d->volume.halfExtentsM.y ? d->volume.halfExtentsM.x : d->volume.halfExtentsM.y;
+    if (d->volume.halfExtentsM.z < r) r = d->volume.halfExtentsM.z;
+  }
+  float eddy = d->flow.procedural.eddyLengthM > 0.0f ? d->flow.procedural.eddyLengthM : (r * 0.25f);
+  out->flowParams = (Vector4){d->flow.procedural.turbulenceSpeedMps, d->flow.procedural.swirlSpeedMps,
+    eddy, (float)d->forceLawCount};
   for(int i=0;i<trajectoryCount;i++)
     out->trajectory[i]=MotionGpu_V4(d->trajectory.path.points[i],d->trajectory.path.distance[i]);
   for(int i=0;i<volumeCount;i++) {
@@ -92,7 +98,8 @@ static inline void MotionGpu_PackField(const FieldDesc *d,MotionFieldHandle hand
     g->accelerationMagnitude=MotionGpu_V4(l->accelerationMps2,l->magnitudeNewtons);
     g->centerStiffness=MotionGpu_V4(l->center,l->springStiffnessNPerM);
     g->params=(Vector4){l->dampingNsPerM,l->forwardForceNewtons,0,0};
-    g->procedural=(Vector4){l->procedural.turbulenceSpeedMps,l->procedural.swirlSpeedMps,l->procedural.eddyLengthM,0};
+    float lawEddy = l->procedural.eddyLengthM > 0.0f ? l->procedural.eddyLengthM : (r * 0.25f);
+    g->procedural=(Vector4){l->procedural.turbulenceSpeedMps,l->procedural.swirlSpeedMps,lawEddy,0};
   }
 }
 static inline MotionGpuBody MotionGpu_PackBodyForReceiver(const MotionBodyProfile *profile,
