@@ -788,10 +788,10 @@ void InitSongQuaoMap(void)
             .bladesPerClump = 5,                  // 5 wider blades cover better than 6 thin needles at 17% less vertex cost
             .bladeSegments = 4,
             .bladeWidthScale = 0.128f, // Fuller botanical ribbon width hides bare ground between tufts
-            .lodDistance = 20.0f,
-            .midLodDistance = 10.5f,
-            .drawDistance = 36.0f,
-            .shadowDistance = 8.5f, // Giảm bán kính shadow casters xuống 8.5m để giữ bóng đổ cận cảnh sắc nét và tiết kiệm ~1.2ms GPU
+            .lodDistance = 26.0f,
+            .midLodDistance = 0.0f, // Tắt Mid LOD ở vùng chơi để triệt tiêu hiện tượng nhấp nháy LOD quanh camera
+            .drawDistance = 38.0f,
+            .shadowDistance = 9.5f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {24, 36, 16, 255},
             .reedTipColor = {118, 158, 70, 255},
@@ -800,7 +800,7 @@ void InitSongQuaoMap(void)
             .pampasPlacements = s_pampasPlacements,
             .pampasCount = s_pampasCount,
             .pampasRootColor = {32, 44, 22, 255},
-            .pampasTipColor = {186, 182, 128, 255}, // Soft warmchampagne-olive blend, no longer stark vertical white bars
+            .pampasTipColor = {186, 182, 128, 255}, // Soft warm champagne-olive blend
         });
 
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
@@ -808,22 +808,22 @@ void InitSongQuaoMap(void)
                                              .ecosystem = WATER_ECO_CUSTOM,
                                              .radiusX = MAP_WIDTH * 0.5f,
                                              .radiusZ = MAP_DEPTH * 0.5f,
-                                             .waveHeight = 0.020f,
-                                             .waveScale = 2.60f,
-                                             .waveSpeed = 0.85f,
+                                             .waveHeight = 0.016f,
+                                             .waveScale = 2.40f,
+                                             .waveSpeed = 0.65f,
                                              .flowVelocity = {0.24f, 0.38f},
-                                             .detailScale = 0.24f,
-                                             .detailStrength = 0.32f,
+                                             .detailScale = 0.22f,
+                                             .detailStrength = 0.22f,
                                              .maxDepth = 1.65f,
                                              .absorption = {0.52f, 0.22f, 0.08f},
-                                             .scatterColor = {0.16f, 0.52f, 0.48f},
+                                             .scatterColor = {0.10f, 0.46f, 0.44f},
                                              .scatterCoeff = 0.32f,
-                                             .causticsStrength = 0.75f,
-                                             .causticsScale = 1.75f,
-                                             .foamThreshold = 0.165f,
-                                             .deepColor = {28, 68, 76, 175},
-                                             .shallowColor = {98, 168, 160, 48},
-                                             .foamColor = {235, 242, 245, 195},
+                                             .causticsStrength = 0.20f,
+                                             .causticsScale = 3.40f,
+                                             .foamThreshold = 0.075f,
+                                             .deepColor = {18, 56, 68, 205},
+                                             .shallowColor = {76, 156, 148, 42},
+                                             .foamColor = {238, 246, 248, 180},
                                          });
 
     s_lastShadowFocus = kMapCenter;

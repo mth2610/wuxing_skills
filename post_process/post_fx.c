@@ -814,11 +814,10 @@ void PostFX_Draw(const PostFXConfig *config)
       if (sharpen < 0.0f)
       {
         const float scale = RenderScale_GetScale();
-        // [TỐI ƯU VISUAL]: Giữ mức làm nét nền nhẹ (0.045) ngay cả ở scale 1.0 để
-        // bù lại độ mờ do FXAA gây ra trên các ngọn cỏ mảnh của map song_quao.
-        sharpen = (scale > 0.01f) ? (0.045f + 0.38f * (1.0f / scale - 1.0f)) : 0.045f;
-        if (sharpen > 0.25f)
-          sharpen = 0.25f;
+        // Giữ mức làm nét nền nhẹ và mượt (0.025) ở scale 1.0, tránh gây đốm gai vỡ hạt trên viền cỏ
+        sharpen = (scale > 0.01f) ? (0.025f + 0.15f * (1.0f / scale - 1.0f)) : 0.025f;
+        if (sharpen > 0.08f)
+          sharpen = 0.08f;
       }
       SetShaderValue(fxaaShader, fxaaSharpenLoc, &sharpen, SHADER_UNIFORM_FLOAT);
     }

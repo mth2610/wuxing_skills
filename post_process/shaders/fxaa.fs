@@ -31,8 +31,8 @@ void main()
     float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
     float range = lMax - lMin;
 
-    // Laplacian edge mask for zero-cost unsharp sharpening
-    float lap = 4.0 * lM - (lNW + lNE + lSW + lSE);
+    // Laplacian edge mask with soft clamping to prevent ringing/stippling on sub-pixel grass blades
+    float lap = clamp(4.0 * lM - (lNW + lNE + lSW + lSE), -0.12, 0.12);
 
     // Early exit on low-contrast areas (avoids smearing smooth bloom halos, skies, and gradients)
     if (range < max(lMax * (1.0 / 16.0), 1.0 / 32.0))

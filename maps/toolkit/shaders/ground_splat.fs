@@ -11,12 +11,12 @@
 #include "maps/toolkit/shaders/meadow_palette.glsl"
 
 // ---- Look knobs ( tinh chỉnh hài hòa màu cỏ & nền đất cho song_quao ) ----
-#define GS_DISTANT_CANOPY_GAIN 0.56
+#define GS_DISTANT_CANOPY_GAIN 0.75
 #define GS_CREST_COOL vec3(0.92, 0.98, 0.93)
 #define GS_CREST_WARM vec3(1.05, 1.03, 0.96)
-#define GS_GRASS_CHROMA 0.88
+#define GS_GRASS_CHROMA 0.92
 #define GS_NEAR_DETAIL_BOOST 0.18
-#define GS_FAR_CANOPY_SHADE 0.16
+#define GS_FAR_CANOPY_SHADE 0.10
 
 uniform sampler2D u_cloudNoise;
 uniform sampler2D u_groundRelief;

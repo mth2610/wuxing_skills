@@ -3,13 +3,14 @@
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
 #include "raylib.h"
 
 static const float kLadder[] = {1.00f, 0.92f, 0.85f, 0.78f, 0.72f, 0.68f};
 #define LADDER_COUNT ((int)(sizeof(kLadder) / sizeof(kLadder[0])))
 
-#define START_RUNG 2        /* 0.85 — sweet spot khởi điểm */
+#define START_RUNG 0        /* 1.00 — Native 1:1 crisp resolution by default */
 #define WINDOW_FRAMES 20    /* ~0.33 s at 60 Hz */
 #define SETTLE_WINDOWS 6    /* ~2 s ổn định đầu map */
 #define UP_WINDOWS 18       /* ~6 s dư dả hiệu năng rõ rệt trước khi nâng scale */
@@ -23,7 +24,7 @@ static const float kLadder[] = {1.00f, 0.92f, 0.85f, 0.78f, 0.72f, 0.68f};
 
 static int s_level = START_RUNG;
 static int s_floorLevel = LADDER_COUNT - 1;
-static bool s_adaptive = true;
+static bool s_adaptive = false;
 static int s_displayW = 0, s_displayH = 0;
 static int s_outW = 0, s_outH = 0;
 static int s_pendingW = 0, s_pendingH = 0;
@@ -112,7 +113,8 @@ void RenderScale_Init(int displayWidth, int displayHeight)
   }
 
   s_level = START_RUNG;
-  s_adaptive = true;
+  const char *adaptiveEnv = getenv("WUXING_RENDER_SCALE_ADAPTIVE");
+  s_adaptive = (adaptiveEnv != NULL && (strcmp(adaptiveEnv, "1") == 0 || strcmp(adaptiveEnv, "true") == 0));
   if (startEnv != NULL)
   {
     float v = (float)atof(startEnv);
