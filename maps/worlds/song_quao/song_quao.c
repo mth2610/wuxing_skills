@@ -28,8 +28,8 @@
 #define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
 #define CLOUD_SEA_Y -4.20f
 
-// Broad valley meadow coverage (84,000 tufts across the central plateau & surrounding hills)
-#define GRASS_TUFT_CAPACITY 84000
+// Broad valley meadow coverage across the celestial island plateau and rolling hills
+#define GRASS_TUFT_CAPACITY 98000
 #define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
 #define REED_COUNT 340
 #define PAMPAS_COUNT 420
@@ -194,17 +194,11 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
 {
     (void)userData;
 
-    // Fast valley-ellipse rejection covering the central plateau and surrounding mid-ground hills
-    float nx = (x - kMapCenter.x) / (MAP_WIDTH * 0.33f);
-    float nz = (z - kMapCenter.z) / (MAP_DEPTH * 0.23f);
-    float basinDist = nx * nx + nz * nz;
-    if (basinDist >= 1.0f)
-        return 0.0f;
-
     Vector3 pos, normal;
     if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &pos, &normal))
         return 0.0f;
 
+    // Organic boundary at island cliff drop-off into cloud sea
     if (pos.y < PLAYABLE_BASIN_MIN_Y || normal.y < 0.38f)
         return 0.0f;
     float heightFade = SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y, pos.y);
@@ -213,7 +207,6 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     // Smooth shoreline transition right up to the water's edge
     float surfaceY = SampleWaterHeight(x, z);
     float waterClearance = pos.y - surfaceY;
-    // Chuyển tiếp mượt mà ven mép nước, triệt tiêu vết cắt hình học răng cưa
     if (waterClearance < 0.02f)
         return 0.0f;
     float shoreFade = SmoothStep01(0.02f, 0.24f, waterClearance);
@@ -227,20 +220,18 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
         return 0.0f;
     float rockFade = 1.0f - SmoothStep01(0.65f, 0.88f, rockScree);
 
-    float edgeFade = 1.0f - SmoothStep01(0.82f, 1.0f, basinDist);
-
-    // Coherent macro meadow swells (continuous lush turf without harsh bare holes)
+    // Coherent macro meadow swells with organic breathing room
     float warpedX = x + sinf(z * 0.12f) * 2.6f;
-    float macroField = sinf(warpedX * 0.11f + z * 0.06f) * 0.55f +
-                       sinf(z * 0.16f - x * 0.05f + 1.2f) * 0.30f +
-                       sinf(x * 0.25f + z * 0.22f) * 0.15f;
-    float patch = SmoothStep01(-0.38f, 0.38f, macroField);
-    float macro = 0.92f + 0.08f * patch;
+    float macroField = sinf(warpedX * 0.075f + z * 0.048f) * 0.55f +
+                       sinf(z * 0.11f - x * 0.042f + 1.2f) * 0.30f +
+                       sinf(x * 0.19f + z * 0.15f) * 0.15f;
+    float patch = SmoothStep01(-0.35f, 0.35f, macroField);
+    float macro = 0.68f + 0.32f * patch;
 
     float flowerSuppression = MapFlora_EvaluateFlowerSuppression(
         x, z, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
 
-    return fmaxf(0.0f, fminf(1.0f, macro * heightFade * slopeFade * shoreFade * edgeFade * rockFade * flowerSuppression));
+    return fmaxf(0.0f, fminf(1.0f, macro * heightFade * slopeFade * shoreFade * rockFade * flowerSuppression));
 }
 
 static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
@@ -248,14 +239,10 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     (void)userData;
     float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, cx, cz);
     float waterClearance = gy - SampleWaterHeight(cx, cz);
-    float nx = (cx - kMapCenter.x) / (MAP_WIDTH * 0.33f);
-    float nz = (cz - kMapCenter.z) / (MAP_DEPTH * 0.23f);
-    float basinDist = nx * nx + nz * nz;
-    // Gentle shoreline, cliff & outer-basin height taper so peripheral tufts hug the earth instead of standing as dark dots
+    // Gentle shoreline & cliff height taper so peripheral tufts hug the earth
     float shoreTaper = 0.54f + 0.46f * SmoothStep01(0.0f, 0.45f, waterClearance);
     float cliffTaper = 0.58f + 0.42f * SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y + 0.40f, gy);
-    float outerTaper = 1.0f - 0.36f * SmoothStep01(0.75f, 0.99f, basinDist);
-    return shoreTaper * cliffTaper * outerTaper;
+    return shoreTaper * cliffTaper;
 }
 
 static float SongQuaoSampleGroundHeight(float x, float z, void *ctx)
@@ -288,15 +275,13 @@ static float Random01(unsigned int *rng)
 
 static void BuildFloraPlacements(void)
 {
-    // 1. Lush interlocking valley meadow across the central plateau & surrounding hills
-    float spanX = MAP_WIDTH * 0.33f;
-    float spanZ = MAP_DEPTH * 0.23f;
+    // 1. Lush interlocking meadow across the whole floating island (central plateau, northern peak & southern ridge)
     s_grassCount = MapFlora_GenerateMeadowPlacements(
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapFloraMeadowConfig){
-            .minBounds = {kMapCenter.x - spanX, kMapCenter.z - spanZ},
-            .maxBounds = {kMapCenter.x + spanX, kMapCenter.z + spanZ},
-            .spacing = 0.270f,
+            .minBounds = {10.0f, 8.0f},
+            .maxBounds = {MAP_WIDTH - 10.0f, MAP_DEPTH - 8.0f},
+            .spacing = 0.34f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -308,6 +293,8 @@ static void BuildFloraPlacements(void)
              s_grassCount, GRASS_TUFT_CAPACITY);
 
     // 2. Reeds along riverbanks & wetland margins inside the valley basin
+    float spanX = MAP_WIDTH * 0.38f;
+    float spanZ = MAP_DEPTH * 0.32f;
     unsigned int rng = 0x9371a5u;
     s_reedCount = 0;
     for (int attempts = 0; attempts < 3600 && s_reedCount < REED_COUNT; attempts++)
@@ -808,10 +795,10 @@ void InitSongQuaoMap(void)
             .grassTipColor = {112, 166, 62, 255}, // Sắc xanh ngọc bích Tsushima thanh tao, không bị bạc màu dưới nắng trưa
             .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.104f, // Lá cỏ thanh mảnh, uốn cong theo luồng gió thay vì bản rộng cứng
-            .lodDistance = 18.5f,
-            .midLodDistance = 8.5f,    // 3-tier Bezier LOD: Near (6b x 4s) -> Mid (3b x 2s) -> Far (2b x 2s)
-            .drawDistance = 48.0f,
+            .bladeWidthScale = 0.108f, // Lá cỏ thanh mảnh, uốn cong theo luồng gió thay vì bản rộng cứng
+            .lodDistance = 24.0f,
+            .midLodDistance = 12.0f,   // 3-tier Bezier LOD: Near (6b x 4s) -> Mid (3b x 2s) -> Far (2b x 2s)
+            .drawDistance = 88.0f,     // Tầm nhìn bao quát trọn vẹn toàn bộ các rặng đồi của hòn đảo thiên giới
             .shadowDistance = 14.0f,   // Khôi phục bóng đổ thực (real shadow casters) cho thảm cỏ và khóm hoa
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {30, 48, 22, 255},

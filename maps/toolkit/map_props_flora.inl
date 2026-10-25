@@ -274,13 +274,15 @@ int MapFlora_GenerateMeadowPlacements(
 
         float wave1 = sinf(cx * 0.07f + cz * 0.05f) * 0.60f + sinf(cx * -0.05f + cz * 0.11f + 1.2f) * 0.40f;
         float eddy = sinf(cx * 0.20f - cz * 0.16f + 0.8f) * 0.55f + sinf(cx * 0.12f + cz * 0.22f + 2.3f) * 0.45f;
-        float patchAngleOffset = (patchHash - 0.5f) * 24.0f * (0.45f + 0.55f * clumpCore);
-        float flowAngle = -16.0f + wave1 * 18.0f + eddy * 12.0f + patchAngleOffset;
+        float patchAngleOffset = (patchHash - 0.5f) * 28.0f * (0.45f + 0.55f * clumpCore);
+        // Multi-frequency wind deflection across hill contours and swales
+        float macroSwirl = sinf(cx * 0.026f + cz * 0.018f) * 32.0f + cosf(cz * 0.038f - cx * 0.022f) * 20.0f;
+        float flowAngle = -16.0f + macroSwirl + wave1 * 22.0f + eddy * 14.0f + patchAngleOffset;
 
         float hash = sinf((float)(i * 47) + cx * 12.9898f + cz * 78.233f) * 43758.5453f;
         hash -= floorf(hash);
-        // Tight ±12 deg tuft yaw variation around the Voronoi patch streamline so blades comb together
-        clump->rotationDeg = flowAngle + (hash - 0.5f) * 24.0f;
+        // Natural ±18 deg tuft yaw variation around the Voronoi patch streamline so blades comb organically
+        clump->rotationDeg = flowAngle + (hash - 0.5f) * 36.0f;
 
         float localHeight = clump->height;
         float localRadius = clump->radius;
@@ -300,11 +302,18 @@ int MapFlora_GenerateMeadowPlacements(
             }
         }
 
-        // Two-tier Ghost of Tsushima grass height ("high-type" lush drifts vs "low-type" base turf)
-        float highTypePatch = (patchHash2 > 0.62f) ? (0.14f * clumpCore) : (-0.05f * clumpCore);
-        float canopyWave = 0.90f + 0.14f * (wave1 * 0.65f + eddy * 0.35f) + highTypePatch;
+        // Ghost of Tsushima Dynamic Multi-Tier Grass Landscape:
+        // Tier 1: Low fine turf (0.28m - 0.36m) on crests, walkways and rocky shoulders.
+        // Tier 2: Rolling meadow (0.40m - 0.52m) across open hillside slopes.
+        // Tier 3: Tall prairie drifts (0.60m - 0.74m) in hollows, valleys, and river swales.
+        float macroTierWave = sinf(cx * 0.042f + cz * 0.032f) * 0.55f +
+                              cosf(cz * 0.060f - cx * 0.035f + 1.2f) * 0.30f +
+                              sinf(cx * 0.11f + cz * 0.08f) * 0.15f;
+        float tierFactor = 0.5f + 0.5f * macroTierWave;
+        float tieredBase = 0.30f + 0.28f * (tierFactor * tierFactor * (3.0f - 2.0f * tierFactor));
+        float highTypePatch = (patchHash2 > 0.58f) ? (0.12f * clumpCore) : (-0.05f * clumpCore);
         float heightNorm = (localHeight - 0.34f) / 0.20f;
-        clump->height = (0.36f + heightNorm * 0.16f) * (0.90f + 0.18f * growth) * canopyWave;
+        clump->height = (tieredBase + heightNorm * 0.14f + highTypePatch) * (0.88f + 0.20f * growth);
         clump->height *= 0.84f + 0.16f * coverage;
 
         if (config.flowerClusters && config.flowerClusterCount > 0)

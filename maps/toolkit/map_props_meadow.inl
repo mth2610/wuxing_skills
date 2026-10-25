@@ -404,35 +404,49 @@ static NatureBladeDescriptor Nature_DescribeMeadowBlade(const MapMeadowPlacement
         float bx = clump->position.x + radX * collarRadius;
         float bz = clump->position.z + radZ * collarRadius;
 
-        float bladeFrac = (style.bladesPerClump > 1)
-                              ? ((float)bladeId / (float)(style.bladesPerClump - 1) - 0.5f)
-                              : 0.0f;
-        float fanYaw = bladeFrac * 0.46f + (bHash - 0.5f) * 0.18f;
-        bladeLeanAngle = clumpAngle + fanYaw;
-        float dirX = cosf(bladeLeanAngle);
-        float dirZ = sinf(bladeLeanAngle);
+        // Ghost of Tsushima 3D Volumetric Tuft Collar:
+        // Blend outward radial splay (from root on tuft disk) with the wind flow direction.
+        // Outer skirt blades splay broadly outwards to cushion the ground, while center hero
+        // blades stand taller and follow the wind, eliminating the flat "comb" parallel look!
+        float dirX = flowX, dirZ = flowZ;
+        float splayWeight = (bladeId < 2) ? (0.26f + 0.10f * bHash)
+                            : (bladeId < 4 ? (0.46f + 0.12f * bHash) : (0.64f + 0.14f * bHash));
+        float splayX = radX * splayWeight + flowX * (1.0f - splayWeight);
+        float splayZ = radZ * splayWeight + flowZ * (1.0f - splayWeight);
+        float splayLen = sqrtf(splayX * splayX + splayZ * splayZ);
+        if (splayLen > 0.01f)
+        {
+            dirX = splayX / splayLen;
+            dirZ = splayZ / splayLen;
+        }
+        else
+        {
+            dirX = flowX;
+            dirZ = flowZ;
+        }
+        bladeLeanAngle = atan2f(dirZ, dirX);
 
         float lengthScale, widthScaleVal, leanFactor, droopFactor;
         if (bladeId < 2)
         {
-            lengthScale = 1.08f + 0.14f * bHash2;
-            widthScaleVal = 0.92f + 0.10f * bHash3;
-            leanFactor = 0.44f + 0.10f * bHash;
-            droopFactor = 0.08f + 0.04f * bHash3;
+            lengthScale = 1.12f + 0.16f * bHash2;
+            widthScaleVal = 0.90f + 0.10f * bHash3;
+            leanFactor = 0.36f + 0.10f * bHash;  // Upright, proud center blades
+            droopFactor = 0.06f + 0.04f * bHash3;
         }
         else if (bladeId < 4)
         {
-            lengthScale = 0.96f + 0.14f * bHash2;
+            lengthScale = 0.98f + 0.16f * bHash2;
             widthScaleVal = 0.98f + 0.12f * bHash3;
-            leanFactor = 0.52f + 0.12f * bHash;
-            droopFactor = 0.10f + 0.05f * bHash3;
+            leanFactor = 0.52f + 0.12f * bHash;  // Gracefully arching mid blades
+            droopFactor = 0.11f + 0.05f * bHash3;
         }
         else
         {
-            lengthScale = 0.86f + 0.12f * bHash2;
-            widthScaleVal = 1.04f + 0.12f * bHash3;
-            leanFactor = 0.58f + 0.12f * bHash;
-            droopFactor = 0.12f + 0.05f * bHash3;
+            lengthScale = 0.82f + 0.14f * bHash2;
+            widthScaleVal = 1.06f + 0.12f * bHash3;
+            leanFactor = 0.66f + 0.14f * bHash;  // Spreading, cascading skirt blades
+            droopFactor = 0.16f + 0.06f * bHash3;
         }
 
         height = clump->height * lengthScale;
@@ -1107,13 +1121,13 @@ void MapProp_PrepareMeadow(MapMeadowSurface *meadow, Vector3 worldOffset)
     if (NatureParametric_IsPrepared(meadow, worldOffset, view.bands))
         return;
     Nature_RefreshFrustumCache();
-    float drawDistanceSq = view.drawDistance * view.drawDistance;
     for (int i = 0; i < meadow->chunkCount; i++)
     {
         MapMeadowChunk *chunk = &meadow->chunks[i];
         Vector3 center = Vector3Add(chunk->center, worldOffset);
         float dx = camera.position.x - center.x, dz = camera.position.z - center.z;
-        if (view.drawDistance > 0.0f && dx * dx + dz * dz > drawDistanceSq)
+        float maxDrawDist = view.drawDistance + chunk->radius;
+        if (view.drawDistance > 0.0f && dx * dx + dz * dz > maxDrawDist * maxDrawDist)
         {
             chunk->visibleThisFrame = false;
             continue;
@@ -1155,7 +1169,8 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
         float dx = camera.position.x - center.x;
         float dz = camera.position.z - center.z;
         float distanceSq = dx * dx + dz * dz;
-        if (drawDistance > 0.0f && distanceSq > drawDistanceSq)
+        float maxDrawDist = drawDistance + chunk->radius;
+        if (drawDistance > 0.0f && distanceSq > maxDrawDist * maxDrawDist)
         {
             s_natureRenderStats.meadowDistanceCulled++;
             continue;
