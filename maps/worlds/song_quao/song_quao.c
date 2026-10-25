@@ -28,11 +28,11 @@
 #define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
 #define CLOUD_SEA_Y -4.20f
 
-// Optimized capacities for 60 FPS target while maintaining lush interlocking coverage
-#define GRASS_TUFT_CAPACITY 48000
+// Broad valley meadow coverage (84,000 tufts across the central plateau & surrounding hills)
+#define GRASS_TUFT_CAPACITY 84000
 #define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
-#define REED_COUNT 420
-#define PAMPAS_COUNT 680
+#define REED_COUNT 340
+#define PAMPAS_COUNT 420
 
 // Safe elevation floor above the sheer outer cliff abyss (-CLIFF_DEPTH)
 #define PLAYABLE_BASIN_MIN_Y (-2.40f)
@@ -194,9 +194,9 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
 {
     (void)userData;
 
-    // Fast valley-ellipse rejection first
-    float nx = (x - kMapCenter.x) / (MAP_WIDTH * 0.275f);
-    float nz = (z - kMapCenter.z) / (MAP_DEPTH * 0.275f);
+    // Fast valley-ellipse rejection covering the central plateau and surrounding mid-ground hills
+    float nx = (x - kMapCenter.x) / (MAP_WIDTH * 0.33f);
+    float nz = (z - kMapCenter.z) / (MAP_DEPTH * 0.23f);
     float basinDist = nx * nx + nz * nz;
     if (basinDist >= 1.0f)
         return 0.0f;
@@ -205,26 +205,29 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &pos, &normal))
         return 0.0f;
 
-    if (pos.y < PLAYABLE_BASIN_MIN_Y || normal.y < 0.44f)
+    if (pos.y < PLAYABLE_BASIN_MIN_Y || normal.y < 0.38f)
         return 0.0f;
     float heightFade = SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y, pos.y);
-    float slopeFade = SmoothStep01(0.44f, 0.70f, normal.y);
+    float slopeFade = SmoothStep01(0.38f, 0.56f, normal.y);
 
     // Smooth shoreline transition right up to the water's edge
     float surfaceY = SampleWaterHeight(x, z);
     float waterClearance = pos.y - surfaceY;
     // Chuyển tiếp mượt mà ven mép nước, triệt tiêu vết cắt hình học răng cưa
-    if (waterClearance < 0.03f)
+    if (waterClearance < 0.02f)
         return 0.0f;
-    float shoreFade = SmoothStep01(0.03f, 0.38f, waterClearance);
+    float shoreFade = SmoothStep01(0.02f, 0.24f, waterClearance);
 
     Color splat = SampleSplat(x, z);
-    float rockScree = (float)splat.g / 255.0f;
+    // Gate rockScree by actual geometric slope (1.0 - normal.y), matching ground_splat.fs wCliff
+    // so gentle grassy hills never get bare contour strips carved out of them.
+    float geomSlope = 1.0f - normal.y;
+    float rockScree = ((float)splat.g / 255.0f) * SmoothStep01(0.18f, 0.45f, geomSlope);
     if (rockScree > 0.88f)
         return 0.0f;
-    float rockFade = 1.0f - SmoothStep01(0.62f, 0.88f, rockScree);
+    float rockFade = 1.0f - SmoothStep01(0.65f, 0.88f, rockScree);
 
-    float edgeFade = 1.0f - SmoothStep01(0.72f, 1.0f, basinDist);
+    float edgeFade = 1.0f - SmoothStep01(0.82f, 1.0f, basinDist);
 
     // Coherent macro meadow swells (continuous lush turf without harsh bare holes)
     float warpedX = x + sinf(z * 0.12f) * 2.6f;
@@ -232,7 +235,7 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
                        sinf(z * 0.16f - x * 0.05f + 1.2f) * 0.30f +
                        sinf(x * 0.25f + z * 0.22f) * 0.15f;
     float patch = SmoothStep01(-0.38f, 0.38f, macroField);
-    float macro = 0.78f + 0.22f * patch;
+    float macro = 0.92f + 0.08f * patch;
 
     float flowerSuppression = MapFlora_EvaluateFlowerSuppression(
         x, z, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
@@ -245,10 +248,14 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     (void)userData;
     float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, cx, cz);
     float waterClearance = gy - SampleWaterHeight(cx, cz);
-    // Gentle shoreline & bank height taper so grass hugs the earth organically
-    float shoreTaper = 0.42f + 0.58f * SmoothStep01(0.0f, 0.55f, waterClearance);
-    float cliffTaper = 0.50f + 0.50f * SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y + 0.40f, gy);
-    return shoreTaper * cliffTaper;
+    float nx = (cx - kMapCenter.x) / (MAP_WIDTH * 0.33f);
+    float nz = (cz - kMapCenter.z) / (MAP_DEPTH * 0.23f);
+    float basinDist = nx * nx + nz * nz;
+    // Gentle shoreline, cliff & outer-basin height taper so peripheral tufts hug the earth instead of standing as dark dots
+    float shoreTaper = 0.54f + 0.46f * SmoothStep01(0.0f, 0.45f, waterClearance);
+    float cliffTaper = 0.58f + 0.42f * SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y + 0.40f, gy);
+    float outerTaper = 1.0f - 0.36f * SmoothStep01(0.75f, 0.99f, basinDist);
+    return shoreTaper * cliffTaper * outerTaper;
 }
 
 static float SongQuaoSampleGroundHeight(float x, float z, void *ctx)
@@ -281,17 +288,15 @@ static float Random01(unsigned int *rng)
 
 static void BuildFloraPlacements(void)
 {
-    // 1. Lush interlocking valley meadow:
-    // Balanced 0.285m spacing paired with fuller blade width (0.128f) cuts vertex/instance count
-    // by ~25% for 60 FPS while eliminating spiky gaps between tufts.
-    float spanX = MAP_WIDTH * 0.275f;
-    float spanZ = MAP_DEPTH * 0.275f;
+    // 1. Lush interlocking valley meadow across the central plateau & surrounding hills
+    float spanX = MAP_WIDTH * 0.33f;
+    float spanZ = MAP_DEPTH * 0.23f;
     s_grassCount = MapFlora_GenerateMeadowPlacements(
         s_grassPlacements, GRASS_TUFT_CAPACITY, &s_ground, kMapCenter,
         (MapFloraMeadowConfig){
             .minBounds = {kMapCenter.x - spanX, kMapCenter.z - spanZ},
             .maxBounds = {kMapCenter.x + spanX, kMapCenter.z + spanZ},
-            .spacing = 0.285f,
+            .spacing = 0.270f,
             .seed = 0x51a7c3u,
             .densityFn = SongQuaoGrassDensity,
             .ecology = &s_habitat,
@@ -302,13 +307,17 @@ static void BuildFloraPlacements(void)
     TraceLog(LOG_INFO, "SONG_QUAO_MEADOW: placements=%d capacity=%d",
              s_grassCount, GRASS_TUFT_CAPACITY);
 
-    // 2. Reeds along riverbanks & wetland margins (kept low and natural, no white paper plumes)
+    // 2. Reeds along riverbanks & wetland margins inside the valley basin
     unsigned int rng = 0x9371a5u;
     s_reedCount = 0;
     for (int attempts = 0; attempts < 3600 && s_reedCount < REED_COUNT; attempts++)
     {
-        float rx = 12.0f + Random01(&rng) * (MAP_WIDTH - 24.0f);
-        float rz = 12.0f + Random01(&rng) * (MAP_DEPTH - 24.0f);
+        float rx = kMapCenter.x + (Random01(&rng) * 2.0f - 1.0f) * spanX * 0.92f;
+        float rz = kMapCenter.z + (Random01(&rng) * 2.0f - 1.0f) * spanZ * 0.92f;
+        float rnx = (rx - kMapCenter.x) / (spanX * 0.92f);
+        float rnz = (rz - kMapCenter.z) / (spanZ * 0.92f);
+        if (rnx * rnx + rnz * rnz > 1.0f)
+            continue;
         Vector3 pos, normal;
         if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, rx, rz, &pos, &normal))
             continue;
@@ -328,8 +337,8 @@ static void BuildFloraPlacements(void)
             if (reedCluster < -0.15f)
                 continue;
 
-            float rad = 0.20f + 0.08f * Random01(&rng);
-            float h = 0.62f + 0.28f * Random01(&rng);
+            float rad = 0.24f + 0.08f * Random01(&rng);
+            float h = 0.44f + 0.18f * Random01(&rng);
             s_reedPlacements[s_reedCount++] = (MapMeadowPlacement){
                 .position = pos,
                 .radius = rad,
@@ -340,18 +349,27 @@ static void BuildFloraPlacements(void)
     }
 
     // 3. Clustered Hillside Silvergrass / Pampas Drifts (Ghost of Tsushima style):
-    // Grouped into organic wind-swept colonies on hill crests & river terraces instead of
-    // isolated 1.8m vertical spikes scattered randomly across the camera view.
+    // Grouped into organic wind-swept colonies inside the valley meadow so isolated tufts never speck bare distant hills.
     s_pampasCount = 0;
     for (int attempts = 0; attempts < 5200 && s_pampasCount < PAMPAS_COUNT; attempts++)
     {
-        float rx = 18.0f + Random01(&rng) * (MAP_WIDTH - 36.0f);
-        float rz = 18.0f + Random01(&rng) * (MAP_DEPTH - 36.0f);
+        float rx = kMapCenter.x + (Random01(&rng) * 2.0f - 1.0f) * spanX * 0.86f;
+        float rz = kMapCenter.z + (Random01(&rng) * 2.0f - 1.0f) * spanZ * 0.86f;
+        float pnx = (rx - kMapCenter.x) / (spanX * 0.86f);
+        float pnz = (rz - kMapCenter.z) / (spanZ * 0.86f);
+        if (pnx * pnx + pnz * pnz > 1.0f)
+            continue;
+
+        // Keep central hero clearing free of tall pampas spikes at close zoom
+        float cdx = rx - kMapCenter.x;
+        float cdz = rz - kMapCenter.z;
+        if (cdx * cdx + cdz * cdz < 11.5f * 11.5f)
+            continue;
 
         // Coherent colony mask: only spawn inside natural hillside drifts
         float driftMask = sinf(rx * 0.17f + sinf(rz * 0.09f) * 1.8f) *
                           cosf(rz * 0.15f - rx * 0.08f);
-        if (driftMask < 0.28f)
+        if (driftMask < 0.30f)
             continue;
 
         Vector3 pos, normal;
@@ -374,10 +392,10 @@ static void BuildFloraPlacements(void)
         if (flowerSupp < 0.75f)
             continue;
 
-        // Graceful arching proportions (0.68m - 0.96m) with wider base radius so blades arch outward
-        float colonyWeight = SmoothStep01(0.28f, 0.75f, driftMask);
-        float rad = 0.28f + 0.10f * Random01(&rng);
-        float h = (0.68f + 0.28f * colonyWeight) * (0.88f + 0.24f * Random01(&rng));
+        // Graceful arching proportions (0.46m - 0.64m) with wide base radius so blades arch outward
+        float colonyWeight = SmoothStep01(0.30f, 0.75f, driftMask);
+        float rad = 0.30f + 0.10f * Random01(&rng);
+        float h = (0.48f + 0.14f * colonyWeight) * (0.90f + 0.18f * Random01(&rng));
         s_pampasPlacements[s_pampasCount++] = (MapMeadowPlacement){
             .position = pos,
             .radius = rad,
@@ -427,10 +445,13 @@ static void BuildRocks(void)
             pos = item->position;
         }
         float sinkOffset = (item->archetype == MAP_ROCK_RIVER_STONE)
-                               ? (item->heightScale * 0.22f)
-                               : (item->heightScale * 0.30f);
+                               ? (item->heightScale * 0.44f)
+                               : (item->heightScale * 0.32f);
+        float heightScale = (item->archetype == MAP_ROCK_RIVER_STONE)
+                                ? (item->heightScale * 0.68f)
+                                : item->heightScale;
         pos.y -= sinkOffset;
-        MapProp_AddRockItem(&s_rocks, pos, item->radiusScale, item->heightScale, item->rotationDeg, item->archetype);
+        MapProp_AddRockItem(&s_rocks, pos, item->radiusScale, heightScale, item->rotationDeg, item->archetype);
     }
 
     for (int i = 0; i < distantCragCount; i++)
@@ -755,7 +776,7 @@ void InitSongQuaoMap(void)
     MapProp_SetGroundEcology(&s_ground, &s_habitat);
 
     // Deep forest-moss substrate tint harmonized with grass roots to eliminate the "plastic carpet" gap
-    MapProp_SetGroundTint(&s_ground, (Color){34, 46, 24, 255});
+    MapProp_SetGroundTint(&s_ground, (Color){38, 54, 26, 255});
     MapProp_SetGroundSurfaceMaps(&s_ground,
                                  "assets/textures/verdant_meadow_substrate_material.png",
                                  "assets/textures/dirt_material.png");
@@ -764,43 +785,43 @@ void InitSongQuaoMap(void)
 
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(1400.0f, 1400.0f, 65.0f);
-    MapBoundaryMistStyle rim = {2.4f, 10.5f, 0.45f, 1.9f, 0.50f};
-    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -3.85f, &rim))
+    MapBoundaryMistStyle rim = {4.2f, 20.0f, 0.58f, 1.85f, 0.62f};
+    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -2.55f, &rim))
         TraceLog(LOG_WARNING, "Song Quao: terrain boundary mist bake failed");
 
     BuildRocks();
 
-    // Cull small 3D pebbles/twigs at 18m (saves prop_lit draw calls when hidden inside dense turf)
+    // Cull small 3D pebbles/twigs at 14m (saves prop_lit draw calls when hidden inside dense turf)
     s_debris = MapProp_CreateDebrisSystem(
         SONG_QUAO_DEBRIS_ITEMS, SONG_QUAO_DEBRIS_ITEM_COUNT,
-        &s_ground, kMapCenter, 18.0f);
+        &s_ground, kMapCenter, 14.0f);
 
-    // Build Flora with fuller interlocking blades (0.128 width scale), 5 blades/clump,
-    // disabled white reed plumes, and tightened LOD/shadow radii for locked 60 FPS
+    // Build Flora with Ghost of Tsushima slender curved Bezier blades (0.112 width scale),
+    // 6 blades distributed across each tuft disk, Voronoi patch clumping, and seamless 2-segment curved LODs
     BuildFloraPlacements();
     s_flora = MapProp_CreateFloraSystem(
         s_grassPlacements, s_grassCount,
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {28, 40, 20, 255},  // Đất mùn phì nhiêu hòa quyện tự nhiên với mặt đất
-            .grassTipColor = {126, 176, 78, 255}, // Sắc xanh ngọc bích Tsushima thanh tao, thơ mộng
-            .bladesPerClump = 5,                  // 5 wider blades cover better than 6 thin needles at 17% less vertex cost
+            .grassRootColor = {44, 66, 28, 255},  // Tiệp mượt với nền cỏ rêu nắng sớm (không tạo vệt tối đen)
+            .grassTipColor = {138, 186, 78, 255}, // Sắc xanh ngọc bích Tsushima thanh tao, thơ mộng
+            .bladesPerClump = 6,
             .bladeSegments = 4,
-            .bladeWidthScale = 0.128f, // Fuller botanical ribbon width hides bare ground between tufts
-            .lodDistance = 26.0f,
-            .midLodDistance = 0.0f, // Tắt Mid LOD ở vùng chơi để triệt tiêu hiện tượng nhấp nháy LOD quanh camera
-            .drawDistance = 38.0f,
-            .shadowDistance = 9.5f,
+            .bladeWidthScale = 0.104f, // Lá cỏ thanh mảnh, uốn cong theo luồng gió thay vì bản rộng cứng
+            .lodDistance = 18.5f,
+            .midLodDistance = 8.5f,    // 3-tier Bezier LOD: Near (6b x 4s) -> Mid (3b x 2s) -> Far (2b x 2s)
+            .drawDistance = 48.0f,
+            .shadowDistance = -1.0f,   // Matches verdant_path.c (GEMINI.md §3); eliminates shadow-map acne & redundant caster pass
             .grassState = MAP_GRASS_STATE_LUSH,
-            .reedRootColor = {24, 36, 16, 255},
-            .reedTipColor = {118, 158, 70, 255},
+            .reedRootColor = {40, 60, 26, 255},
+            .reedTipColor = {126, 170, 74, 255},
             .hasReedPlumes = false, // Eliminates stiff white card artifacts on reeds (API.md §1b)
             .botanicalVariation = 1.0f,
-            .pampasPlacements = s_pampasPlacements,
-            .pampasCount = s_pampasCount,
-            .pampasRootColor = {32, 44, 22, 255},
-            .pampasTipColor = {186, 182, 128, 255}, // Soft warm champagne-olive blend
+            .pampasPlacements = NULL,
+            .pampasCount = 0,
+            .pampasRootColor = {44, 62, 28, 255},
+            .pampasTipColor = {148, 176, 92, 255},
         });
 
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
@@ -853,7 +874,7 @@ void UpdateSongQuaoMap(float dt)
     if (fabsf(focus.x - s_lastShadowFocus.x) > 0.01f || fabsf(focus.z - s_lastShadowFocus.z) > 0.01f)
     {
         s_lastShadowFocus = focus;
-        EnvShadow_SetFocus(focus, 10.8f);
+        EnvShadow_SetFocus(focus, 8.8f);
     }
     CaptureSongQuaoStaticShadows();
 }

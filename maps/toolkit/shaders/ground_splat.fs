@@ -3,7 +3,9 @@
 // Đợt E / E2 — VFX point lights.
 #include "core/shaders/common/vfx_lights.glsl"
 // Preserve thin grass silhouettes without adding shadow-map samples.
+// Bake tier-1 bilinear PCF into terrain receiver (cuts 9-tap penumbra loop to 4 taps; grass shadows are softened below).
 #define MAP_DYNAMIC_SHADOW_RADIUS 1.35
+#define MAP_SHADOW_FILTER_QUALITY 1
 
 #include "maps/toolkit/shaders/map_shadow.glsl"
 #include "environment/shaders/cloud_shadow.glsl"
@@ -11,12 +13,12 @@
 #include "maps/toolkit/shaders/meadow_palette.glsl"
 
 // ---- Look knobs ( tinh chỉnh hài hòa màu cỏ & nền đất cho song_quao ) ----
-#define GS_DISTANT_CANOPY_GAIN 0.75
-#define GS_CREST_COOL vec3(0.92, 0.98, 0.93)
-#define GS_CREST_WARM vec3(1.05, 1.03, 0.96)
-#define GS_GRASS_CHROMA 0.92
-#define GS_NEAR_DETAIL_BOOST 0.18
-#define GS_FAR_CANOPY_SHADE 0.10
+#define GS_DISTANT_CANOPY_GAIN 0.74
+#define GS_CREST_COOL vec3(0.92, 0.99, 0.94)
+#define GS_CREST_WARM vec3(1.06, 1.04, 0.95)
+#define GS_GRASS_CHROMA 0.95
+#define GS_NEAR_DETAIL_BOOST 0.22
+#define GS_FAR_CANOPY_SHADE 0.14
 
 uniform sampler2D u_cloudNoise;
 uniform sampler2D u_groundRelief;
@@ -123,7 +125,9 @@ void main()
             lakeDepthFactor = clamp(-signedShore * (1.0 / 3.0), 0.0, 1.0);
             shoreFactor = 1.0;
         } else {
-            shoreFactor = max(ecology.b, 1.0 - smoothstep(0.0, 2.6, signedShore));
+            // Use true signed shore distance (do not mix ecology.b TWI moisture into shoreFactor,
+            // which previously created dark wet-mud circles on dry hillsides).
+            shoreFactor = 1.0 - smoothstep(0.0, 2.2, signedShore);
         }
     } else if (u_pathSegCount > 0) {
         float minDistSq = 1000000.0;
@@ -157,12 +161,13 @@ void main()
     vec3 geomNormal = normalize(fragNormal);
     float slope = clamp(1.0 - geomNormal.y, 0.0, 1.0);
 
-    // ---- 6. Soil Detail ----
+    // ---- 6. Soil Detail (Tightened gate skips dirt fetches on pure meadow turf) ----
     bool soilPossible = distToPath < PATH_INFLUENCE
-                     || shoreFactor > 0.002
-                     || streamWet > 0.40
-                     || slope > 0.18
-                     || rockScree > 0.25;
+                     || shoreFactor > 0.015
+                     || streamWet > 0.45
+                     || slope > 0.24
+                     || rockScree > 0.62
+                     || fragWorldPos.y < -1.15;
     vec4 colorDirt = vec4(0.5, 0.5, 0.5, 1.0);
     vec3 dirtDetail = vec3(0.5);
     if (soilPossible) {
@@ -215,7 +220,7 @@ void main()
             vec4 substrateRelief = textureGrad(u_groundRelief, tiledUV, uvDx, uvDy);
             litterClasses = substrateRelief.ba;
             if (boundary) {
-                float soilHeight = textureGrad(u_groundRelief, tiledUV * 0.85, uvDx * 0.85, uvDy * 0.85).g;
+                float soilHeight = substrateRelief.g;
                 vec3 groupWeights = vec3(weights.x, combinedSoil, weights.z);
                 vec3 groupRelief  = vec3(substrateRelief.r, soilHeight, soilHeight);
                 vec3 heights = groupWeights + (groupRelief - 0.5) * 0.28;
@@ -254,25 +259,36 @@ void main()
                                           vec2(uvDy.y, -uvDy.x) * 0.38).rgb;
             blendedGrass = mix(colorGrass.rgb, broadGrass, 0.28);
         }
-        // [TỐI ƯU BĂNG THÔNG]: Chỉ đọc normal/roughness map của cỏ trong bán kính 40m
-        if (camDistSqXZ < 1600.0) {
+        // [TỐI ƯU BĂNG THÔNG]: Chỉ đọc normal/roughness map của cỏ trong bán kính 32m
+        if (camDistSqXZ < 1024.0) {
             grassMaterial = textureGrad(texGrassMaterial, tiledUV, uvDx, uvDy);
         }
         fineGrassLuma = dot(colorGrass.rgb, vec3(0.2126, 0.7152, 0.0722));
 
+        // High-frequency botanical moss/fiber micro-grain at close zoom (< 12m, e.g. Zoom 10.28x)
+        if (camDistSqXZ < 144.0) {
+            float closeWeight = (1.0 - camDistSqXZ * (1.0 / 144.0)) * detailResolve;
+            float fiberA = sin(fragWorldPos.x * 26.0 + fragWorldPos.z * 19.0)
+                         * cos(fragWorldPos.x * -17.0 + fragWorldPos.z * 29.0);
+            float fiberB = sin(fragWorldPos.x * 54.0 - fragWorldPos.z * 48.0);
+            float microFiber = (fiberA * 0.65 + fiberB * 0.35) * closeWeight;
+            blendedGrass *= 1.0 + microFiber * 0.14;
+            fineGrassLuma = clamp(fineGrassLuma + microFiber * 0.08, 0.05, 0.95);
+        }
+
         float turfDetail = dot(blendedGrass, vec3(0.2126, 0.7152, 0.0722));
         float detailContrast = clamp((turfDetail - 0.22) * 1.65, -0.26, 0.30);
 
-        // Nền cỏ xanh rêu tự nhiên, bớt ám vàng đất để tiệp với lá cỏ 3D
-        vec3 turfBase = vec3(0.145, 0.218, 0.082);
+        // Nền cỏ xanh rêu tự nhiên, tiệp hoàn toàn với gốc và thân lá cỏ 3D
+        vec3 turfBase = vec3(0.155, 0.228, 0.086);
         float tintLuma = dot(colDiffuse.rgb, vec3(0.299, 0.587, 0.114));
         if (tintLuma > 0.05) {
             vec3 normalizedTint = clamp(colDiffuse.rgb / tintLuma, vec3(0.78), vec3(1.22));
             turfBase *= mix(vec3(1.0), normalizedTint, 0.30);
         }
 
-        vec3 humusPocketTone = vec3(0.162, 0.148, 0.088);
-        float humusPocketMask = (1.0 - smoothstep(0.14, 0.28, turfDetail)) * detailResolve * 0.36;
+        vec3 humusPocketTone = vec3(0.152, 0.168, 0.088);
+        float humusPocketMask = (1.0 - smoothstep(0.14, 0.28, turfDetail)) * detailResolve * 0.28;
         turfBase = mix(turfBase, humusPocketTone, humusPocketMask);
 
         vec3 litterChroma = clamp(blendedGrass / max(turfDetail, 0.06), vec3(0.72), vec3(1.34));
@@ -293,30 +309,35 @@ void main()
         }
 
         vec3 targetCanopyColor = MeadowCanopyColor(habitatVal);
-        vec3 nearCanopySubstrate = targetCanopyColor * 0.54;
+        vec3 nearCanopySubstrate = targetCanopyColor * 0.58;
         grassAlbedo = mix(grassAlbedo,
                           nearCanopySubstrate * (1.0 + detailContrast * (0.68 + GS_NEAR_DETAIL_BOOST * detailResolve)),
-                          0.52 - GS_NEAR_DETAIL_BOOST * 0.45 * detailResolve);
+                          0.56 - GS_NEAR_DETAIL_BOOST * 0.42 * detailResolve);
 
         if (u_ecologyEnabled != 0)
             grassAlbedo *= mix(vec3(1.0), vec3(0.90, 0.99, 0.92), ecology.b);
 
-        if (camDistSqXZ > 121.0) {
+        if (camDistSqXZ > 64.0) {
             float camDist = sqrt(camDistSqXZ);
-            float distantCanopyBlend = smoothstep(12.0, 44.0, camDist) * wGrass;
+            float distantCanopyBlend = smoothstep(10.0, 36.0, camDist) * wGrass;
             if (u_ecologyEnabled != 0)
-                distantCanopyBlend *= smoothstep(0.08, 0.60, ecology.r);
+                distantCanopyBlend *= smoothstep(0.04, 0.48, ecology.r);
             if (distantCanopyBlend > 0.002) {
                 vec3 canopyColor = targetCanopyColor * GS_DISTANT_CANOPY_GAIN;
-                float clumpNoise1 = sin(fragWorldPos.x * 1.85 + fragWorldPos.z * 1.45)
-                                  * cos(fragWorldPos.x * -1.35 + fragWorldPos.z * 2.15);
-                float tuftGrain = clamp(0.5 + 0.28 * clumpNoise1 + (turfDetail - 0.22) * 0.65, 0.0, 1.0);
-                distantTuftRelief = (tuftGrain - 0.5) * distantCanopyBlend;
-                canopyColor *= mix(0.84, 1.16, tuftGrain);
+                // Smooth organic turf variation (no periodic sin*cos corduroy grid)
+                float tuftGrain = clamp(0.5 + (turfDetail - 0.22) * 0.55, 0.0, 1.0);
+                distantTuftRelief = (tuftGrain - 0.5) * distantCanopyBlend * 0.28;
+                canopyColor *= mix(0.88, 1.10, tuftGrain);
+
+                // Macro emerald-to-golden tip harmony matching GrassShade
+                float macroPatch = sin(fragWorldPos.x * 0.12 + fragWorldPos.z * 0.08) * 0.55
+                                 + cos(fragWorldPos.x * -0.07 + fragWorldPos.z * 0.16) * 0.45;
+                float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
+                canopyColor *= mix(vec3(0.95, 1.03, 0.92), vec3(1.06, 1.04, 0.88), warmShift * 0.60);
 
                 float windWave = sin(dot(fragWorldPos.xz, vec2(0.26, 0.18)) - u_time * 2.0) * 0.5 + 0.5;
-                canopyColor *= mix(vec3(0.96, 0.98, 0.95), vec3(1.06, 1.05, 0.97), windWave * distantCanopyBlend);
-                grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.84);
+                canopyColor *= mix(vec3(0.97, 0.99, 0.95), vec3(1.05, 1.04, 0.96), windWave * distantCanopyBlend);
+                grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.92);
             }
         }
 
@@ -388,27 +409,29 @@ void main()
         blendedAlbedo = mix(blendedAlbedo, streamBedTint, smoothstep(0.50, 0.92, streamWet) * 0.55);
     }
 
-    if (u_groundDebrisEnabled != 0) {
+    if (u_groundDebrisEnabled != 0 && camDistSqXZ < 1024.0) {
+        float debrisDistFade = 1.0 - smoothstep(576.0, 1024.0, camDistSqXZ);
         vec4 debris = texture(u_groundDebris, fragTexCoord);
         float fineGrain = (soilPossible) ? dirtDetail.r : fineGrassLuma;
+        float grassDebrisAtten = 1.0 - wGrass * 0.72;
 
-        float dryWoodlandMask = 1.0 - clamp(shoreFactor + streamWet, 0.0, 1.0);
+        float dryWoodlandMask = (1.0 - clamp(shoreFactor + streamWet, 0.0, 1.0)) * debrisDistFade * grassDebrisAtten;
         if (debris.r > 0.04 && dryWoodlandMask > 0.05) {
             vec3 leafLitterColor = mix(vec3(0.25, 0.18, 0.09), vec3(0.42, 0.29, 0.14), fineGrain);
             float leafMask = smoothstep(0.10, 0.58, debris.r) * (0.40 + 0.60 * fineGrain) * dryWoodlandMask;
-            blendedAlbedo = mix(blendedAlbedo, leafLitterColor, leafMask * 0.42);
+            blendedAlbedo = mix(blendedAlbedo, leafLitterColor, leafMask * 0.36);
         }
 
         if (debris.g > 0.04) {
             vec3 gravelColor = mix(vec3(0.21, 0.23, 0.16), vec3(0.34, 0.34, 0.26), fineGrain);
-            float gravelMask = smoothstep(0.14, 0.68, debris.g) * (1.0 - wGrass * 0.42);
-            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * 0.50);
+            float gravelMask = smoothstep(0.14, 0.68, debris.g) * grassDebrisAtten * debrisDistFade;
+            blendedAlbedo = mix(blendedAlbedo, gravelColor, gravelMask * 0.45);
         }
 
         if (debris.a > 0.04) {
-            vec3 mossColor = mix(vec3(0.13, 0.24, 0.08), vec3(0.24, 0.36, 0.12), fineGrain);
-            float mossMask = smoothstep(0.08, 0.55, debris.a);
-            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * 0.72);
+            vec3 mossColor = mix(vec3(0.18, 0.30, 0.10), vec3(0.28, 0.42, 0.14), fineGrain);
+            float mossMask = smoothstep(0.12, 0.60, debris.a) * debrisDistFade * grassDebrisAtten;
+            blendedAlbedo = mix(blendedAlbedo, mossColor, mossMask * 0.28);
         }
     }
 
@@ -427,7 +450,7 @@ void main()
 
     // ---- 10. Tangent Frame & Specular AA ----
     vec4 soilMaterial = vec4(0.5, 0.5, 1.0, 0.8);
-    if (hasSoil && camDistSqXZ < 2500.0)
+    if (hasSoil && camDistSqXZ < 1225.0)
         soilMaterial = textureGrad(texSoilMaterial, tiledUV * 0.85, uvDx * 0.85, uvDy * 0.85);
 
     vec3 microNormal = normalize(mix(grassMaterial.rgb, soilMaterial.rgb, soilWeight) * 2.0 - 1.0);

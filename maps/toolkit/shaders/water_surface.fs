@@ -362,8 +362,8 @@ void main()
         float wakeFoamTex = dynamicWakeFoam * smoothstep(0.32, 0.78, foamNoise + dynamicWakeFoam * 0.35);
         brokenFoam = clamp(max(brokenFoam, wakeFoamTex), 0.0, 1.0);
         if (u_waterShape == 3) {
-            // Fade foam cleanly at zero-depth shoreline lip so polygon edges are never outlined
-            brokenFoam *= smoothstep(0.025, 0.11, waterDepth);
+            // Fade foam cleanly at shallow shoreline lip & river stones so submerged rocks aren't ringed in white
+            brokenFoam *= smoothstep(0.045, 0.16, waterDepth) * 0.52;
         }
     }
 

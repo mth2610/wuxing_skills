@@ -299,7 +299,15 @@ void MapProp_DrawDebrisSystem(const MapDebrisSystem *debris, Vector3 cameraPosit
     Nature_BeginWindReceiverShader(shader);
     Nature_UpdateShader(shader, (float)GetTime(), (Vector2){1.0f, 0.0f}, 0.1f,
                         false, 0.5f, NATURE_WIND_RESPONSE_STATIC);
-    SetShaderValue(shader, GetShaderLocation(shader, "u_viewPos"), &cameraPosition, SHADER_UNIFORM_VEC3);
+    static int s_cachedShaderId = -1;
+    static int s_viewPosLoc = -1;
+    if ((int)shader.id != s_cachedShaderId) {
+        s_cachedShaderId = (int)shader.id;
+        s_viewPosLoc = GetShaderLocation(shader, "u_viewPos");
+    }
+    if (s_viewPosLoc >= 0) {
+        SetShaderValue(shader, s_viewPosLoc, &cameraPosition, SHADER_UNIFORM_VEC3);
+    }
 
     rlDisableBackfaceCulling();
 
@@ -312,10 +320,12 @@ void MapProp_DrawDebrisSystem(const MapDebrisSystem *debris, Vector3 cameraPosit
 
         float dx = p->position.x - cameraPosition.x;
         float dz = p->position.z - cameraPosition.z;
-        if (dx * dx + dz * dz > maxDistSq) continue;
+        float distSq = dx * dx + dz * dz;
+        if (distSq > maxDistSq) continue;
+        if (!Nature_IsChunkVisible(p->position, 0.35f)) continue;
 
         Model model = debris->models[p->type];
-        float s = p->scale * 1.8f;
+        float s = p->scale * ((p->type == MAP_DEBRIS_LEAF) ? 1.15f : 1.55f);
         Vector3 scale = {s, s, s};
         DrawModelEx(model, p->position, (Vector3){0.0f, 1.0f, 0.0f}, p->rotationDeg, scale, p->color);
     }

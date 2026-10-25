@@ -21,17 +21,18 @@ void main() {
     float bestRawBrightness = -1.0;
     float brightCount = 0.0;
 
-    for (int y = 0; y < 4; ++y) {
-        float offsetY = (float(y) - 1.5) * u_sourceTexelSize.y;
-        for (int x = 0; x < 4; ++x) {
-            vec2 cellOffset = vec2((float(x) - 1.5) * u_sourceTexelSize.x, offsetY);
+    // 9-tap (3x3) bilinear-assisted brightest-sample prefilter across the 4x4 source cell:
+    // preserves 1-pixel hot HDR emitters (Landmine #6) while cutting texture fetches by 44% (16 -> 9).
+    for (int y = -1; y <= 1; ++y) {
+        float offsetY = float(y) * 1.15 * u_sourceTexelSize.y;
+        for (int x = -1; x <= 1; ++x) {
+            vec2 cellOffset = vec2(float(x) * 1.15 * u_sourceTexelSize.x, offsetY);
             vec3 sampleColor = texture(texture0, fragTexCoord + cellOffset).rgb;
             float rawBrightness = max(sampleColor.r, max(sampleColor.g, sampleColor.b));
             if (rawBrightness > bestRawBrightness) {
                 bestRawBrightness = rawBrightness;
                 col = sampleColor;
             }
-            // Dùng step() thay cho nhánh if để tránh phân kỳ warp trên GPU
             brightCount += step(rawThreshold, rawBrightness);
         }
     }
@@ -47,8 +48,8 @@ void main() {
         return;
     }
 
-    // Chỉ những pixel thực sự vượt ngưỡng mới tính sqrt()
-    float coverage = sqrt(max(brightCount * 0.0625, 0.0625));
+    // Chỉ những pixel thực sự vượt ngưỡng mới tính sqrt() (chuẩn hóa cho 9 mẫu: 1/9 = 0.111111)
+    float coverage = sqrt(max(brightCount * 0.111111, 0.0625));
 
     soft = clamp(soft, 0.0, 2.0 * knee);
     soft = (soft * soft) / (4.0 * knee + 0.00001);

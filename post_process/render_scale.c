@@ -10,17 +10,17 @@
 static const float kLadder[] = {1.00f, 0.92f, 0.85f, 0.78f, 0.72f, 0.68f};
 #define LADDER_COUNT ((int)(sizeof(kLadder) / sizeof(kLadder[0])))
 
-#define START_RUNG 0        /* 1.00 — Native 1:1 crisp resolution by default */
+#define START_RUNG 0        /* 1.00 — Native resolution by default; quality tiers are explicitly chosen via GfxQuality */
 #define WINDOW_FRAMES 20    /* ~0.33 s at 60 Hz */
 #define SETTLE_WINDOWS 6    /* ~2 s ổn định đầu map */
-#define UP_WINDOWS 18       /* ~6 s dư dả hiệu năng rõ rệt trước khi nâng scale */
-#define UP_MS 9.2f          /* Chỉ nâng khi thực sự nhẹ (< 9.2 ms) */
-#define COMFORT_MS 13.5f    /* Ngưỡng an toàn để xóa bộ đếm quá tải */
+#define UP_WINDOWS 12       /* ~4 s dư dả hiệu năng rõ rệt trước khi nâng scale */
+#define UP_MS 12.2f         /* Nâng lên 0.85 khi thực sự nhẹ (< 12.2 ms) */
+#define COMFORT_MS 14.2f    /* Ngưỡng an toàn để xóa bộ đếm quá tải */
 #define EMERGENCY_MS 16.0f  /* Vượt ngưỡng này sẽ rớt khỏi mốc 60 Hz */
 #define EMERGENCY_WINDOWS 4 /* ~1.3 s quá tải liên tục là hạ ngay để cứu FPS */
 #define EMERGENCY_LIMIT 5   /* Đủ để đi hết thang xuống mức sàn */
 #define UP_LIMIT 1          /* Tối đa 1 lần nâng mỗi map */
-#define FLOOR_DEFAULT 0.68f /* Mở sàn xuống 0.68 cho các map nặng fill-rate như song_quao */
+#define FLOOR_DEFAULT 0.68f /* Mở sàn xuống 0.68 khi bật WUXING_RENDER_SCALE_ADAPTIVE=1 */
 
 static int s_level = START_RUNG;
 static int s_floorLevel = LADDER_COUNT - 1;
@@ -114,7 +114,23 @@ void RenderScale_Init(int displayWidth, int displayHeight)
 
   s_level = START_RUNG;
   const char *adaptiveEnv = getenv("WUXING_RENDER_SCALE_ADAPTIVE");
-  s_adaptive = (adaptiveEnv != NULL && (strcmp(adaptiveEnv, "1") == 0 || strcmp(adaptiveEnv, "true") == 0));
+  const char *captureEnv = getenv("WUXING_CAPTURE_FRAMES");
+  if (captureEnv != NULL && adaptiveEnv == NULL && fixed == NULL && startEnv == NULL)
+  {
+    /* Headless captures default to native 1.00 fixed scale for reproducibility
+     * unless explicitly overridden via WUXING_RENDER_SCALE* env vars. */
+    s_level = 0;
+    s_adaptive = false;
+  }
+  else if (adaptiveEnv != NULL)
+  {
+    s_adaptive = (strcmp(adaptiveEnv, "1") == 0 || strcmp(adaptiveEnv, "true") == 0);
+  }
+  else
+  {
+    /* Native 1.00 fixed resolution by default; users select UNLIT/LOW/MED/HIGH/ULTRA explicitly. */
+    s_adaptive = false;
+  }
   if (startEnv != NULL)
   {
     float v = (float)atof(startEnv);

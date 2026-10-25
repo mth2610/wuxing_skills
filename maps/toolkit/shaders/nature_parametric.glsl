@@ -25,6 +25,9 @@ int s_cachedTuftId = -1;
 float s_cachedDistToCam = -1.0;
 vec4 s_cachedClumpTexel = vec4(0.0);
 bool s_hasCachedClumpTexel = false;
+vec3 s_cachedTangent = vec3(0.0, 1.0, 0.0);
+vec3 s_cachedSide = vec3(1.0, 0.0, 0.0);
+float s_cachedHalfWidth = 0.0;
 
 int NatureTuftId()
 {
@@ -68,7 +71,8 @@ bool NatureTuftUsesCurrentLod()
         ivec2((blade & 255) * 7 + 4, blade >> 8), 0);
     s_hasCachedClumpTexel = true;
     vec3 root = s_cachedClumpTexel.xyz;
-    vec3 diff = (root + u_worldOffset) - u_tuftLodCamera;
+    vec3 worldRoot = root + u_worldOffset;
+    vec3 diff = worldRoot - u_tuftLodCamera;
     float d2 = dot(diff, diff);
 
     if (u_tuftFadeRange.y > 0.0 && d2 >= u_tuftFadeRange.y * u_tuftFadeRange.y) return false;
@@ -101,24 +105,13 @@ vec4 NatureBladeParameter(int blade, int column)
 
 void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p3)
 {
-    if (u_canonicalBladeData != 0) {
-        if (u_geometryLod > 0) {
-            float bladeRatio = max(float(max(u_canonicalBlades, 1)) / float(max(u_bladesPerTuft, 1)), 1.0);
-            float expPower = (u_geometryLod == 2) ? 0.68 : 0.62;
-            p1.w *= pow(bladeRatio, expPower);
-        }
-
-        if (u_geometryLod == 2) {
-            float height = (p1.y - p0.y) * 2.7777778; // 1.0 / 0.36
-            float droop = height * 0.68 - (p3.y - p0.y);
-            p1.xz = p0.xz + (p1.xz - p0.xz) * 0.80;
-            p1.y  = p0.y  + (p1.y  - p0.y)  * 0.86;
-            p2.xz = p0.xz + (p2.xz - p0.xz) * 0.80;
-            p2.y  = p0.y  + (p2.y  - p0.y)  * 0.86;
-            p3.xz = p0.xz + (p3.xz - p0.xz) * 0.80;
-            p3.y  = p0.y  + max(height * 0.18, height * 0.62 - droop * 0.50);
-            p1.w *= 1.16;
-        }
+    if (u_canonicalBladeData != 0 && u_geometryLod > 0) {
+        // Ghost of Tsushima Seamless LOD Continuity:
+        // Low-density LOD blades evaluate the EXACT same cubic Bezier curve (p0, p1, p2, p3)
+        // as high-density blades so height and arch posture never collapse across LOD bands.
+        float bladeRatio = max(float(max(u_canonicalBlades, 1)) / float(max(u_bladesPerTuft, 1)), 1.0);
+        float expPower = (u_geometryLod == 2) ? 0.48 : 0.44;
+        p1.w *= pow(bladeRatio, expPower);
     }
 }
 
@@ -172,20 +165,23 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     }
 
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    // View-assisted ribbon orientation: gently turns edge-on blades toward the camera
-    // so they never collapse into 1px wires, while preserving natural 3D twist at close range.
+    // 3D view-assisted ribbon orientation: gently turns edge-on blades toward the 3D camera ray
+    // so tilted/bent blades never collapse into 1px dotted wires at any camera pitch or zoom.
     vec3 toCamVec = (p0.xyz + u_worldOffset) - u_tuftLodCamera;
     float distToCam = (s_cachedDistToCam >= 0.0) ? s_cachedDistToCam : length(toCamVec);
     s_cachedDistToCam = distToCam;
 
-    vec2 viewRightXZ = vec2(-toCamVec.z, toCamVec.x);
-    float vrLenSq = dot(viewRightXZ, viewRightXZ);
-    if (vrLenSq > 1e-4) {
-        viewRightXZ *= inversesqrt(vrLenSq);
-        if (dot(side.xz, viewRightXZ) < 0.0) viewRightXZ = -viewRightXZ;
-        // Less billboarding up close (0.26) for true 3D blade angles; stronger at distance (0.44) for coverage
-        float viewAssist = mix(0.26, 0.44, clamp(distToCam * 0.04, 0.0, 1.0));
-        side.xz = normalize(mix(side.xz, viewRightXZ, viewAssist));
+    vec3 viewSide3D = cross(tangent, toCamVec);
+    float vsLenSq = dot(viewSide3D, viewSide3D);
+    if (vsLenSq > 1e-5) {
+        viewSide3D *= inversesqrt(vsLenSq);
+        if (dot(side, viewSide3D) < 0.0) viewSide3D = -viewSide3D;
+        vec3 naturalNormal = normalize(cross(side, tangent));
+        vec3 viewDir = toCamVec / max(distToCam, 0.001);
+        float edgeOn = 1.0 - abs(dot(naturalNormal, viewDir));
+        float viewAssist = mix(0.36, 0.50, clamp(distToCam * 0.04, 0.0, 1.0));
+        viewAssist = mix(viewAssist, 0.82, edgeOn * edgeOn);
+        side = normalize(mix(side, viewSide3D, viewAssist));
     }
 #endif
 
@@ -210,25 +206,28 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         float tasselTaper = (t > 0.75) ? max(0.2, 1.0 - (t - 0.75) * 3.2) : 1.0;
         profile = stalk * tasselTaper;
     } else {
-        // AAA Botanical sword-leaf taper:
-        float sheath = min(1.0, 0.65 + 2.5 * t);
-        float body = 0.82 + 0.32 * sin(3.14159265 * min(t * 1.35, 1.0));
-        float tipT = max(0.0, (t - 0.35) * (1.0 / 0.65));
-        float taper = max(0.0, 1.0 - tipT * tipT);
-        profile = sheath * body * taper;
+        // Ghost of Tsushima C1-Continuous Katana Blade Taper:
+        // Slope before tipStart (t = 0.78, profile = 0.31) matches the tip triangle slope to t = 1.0,
+        // eliminating any chisel/pentagon corner where the body quad strip meets the tip triangle!
+        float sheath = 0.90 + 0.10 * smoothstep(0.0, 0.15, t);
+        float taper = max(0.0, 1.0 - 0.56 * t - 0.38 * t2);
+        profile = sheath * taper;
     }
     float halfWidth = p1.w * 0.5 * profile;
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
     // Distance-only sub-pixel anti-aliasing floor (0 at close range so close-up tips are razor-sharp!)
-    float farAntiAlias = clamp((distToCam - 6.0) * 0.05, 0.0, 1.0);
-    float minPxHalfWidth = farAntiAlias * distToCam * 0.00048 * (1.0 - 0.72 * t);
+    float farAntiAlias = clamp((distToCam - 8.0) * 0.04, 0.0, 1.0);
+    float minPxHalfWidth = farAntiAlias * distToCam * 0.00038 * (1.0 - 0.75 * t);
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 
     // Smoothly arch the blade spine without creating a step between ring vertices and the tip apex
     float spineArch = p1.w * 0.08 * sinPiT;
+    s_cachedTangent = tangent;
+    s_cachedSide = side;
+    s_cachedHalfWidth = halfWidth;
     position = center + side * (halfWidth * sideSign) + geometricNormal * spineArch;
 
 #ifdef NATURE_VISIBLE_TUFT_LOD
@@ -237,6 +236,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
                                     max(u_tuftFadeRange.y - u_tuftFadeRange.x, 0.001), 0.0, 1.0);
         float scaleFade = perimeterFade * (2.0 - perimeterFade);
         position = p0.xyz + (position - p0.xyz) * scaleFade;
+        s_cachedHalfWidth *= scaleFade;
         fadeAlpha = perimeterFade;
     }
 #endif
@@ -258,23 +258,23 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     // Per-blade botanical identity (0..1) derived from blade index & phase
     float bladeHash = fract(float(localBlade) * 0.6180339 + p0.w * 1.73205);
     // Inner hero blades are fresher/brighter; outer skirt blades are deeper olive/emerald
-    float tierShade = (localBlade < 2) ? 1.06 : ((localBlade < 4) ? 0.98 : 0.88);
-    float bladeTone = (0.92 + 0.16 * bladeHash) * tierShade;
+    float tierShade = (localBlade < 2) ? 1.04 : ((localBlade < 4) ? 0.99 : 0.93);
+    float bladeTone = (0.94 + 0.12 * bladeHash) * tierShade;
 
     // Rich 3-Stop Botanical Color Gradient:
     // Stop 1 (Deep Mossy Sheath Base) -> Stop 2 (Vibrant Viridian Body) -> Stop 3 (Warm Sunlit Chartreuse Tip)
     vec3 rootNorm = rootColor * (1.0 / 255.0);
     vec3 tipNorm  = tipColor  * (1.0 / 255.0);
     // Subtle per-blade hue shift between emerald and warm spring-gold
-    vec3 hueVar = mix(vec3(0.94, 1.02, 0.96), vec3(1.08, 1.02, 0.84), bladeHash);
+    vec3 hueVar = mix(vec3(0.95, 1.02, 0.96), vec3(1.06, 1.02, 0.86), bladeHash);
     tipNorm *= hueVar;
-    vec3 viridianMid = mix(rootNorm, tipNorm, 0.50) * vec3(0.90, 1.04, 0.88);
+    vec3 viridianMid = mix(rootNorm, tipNorm, 0.54) * vec3(0.94, 1.04, 0.90);
 
-    float lowerMix = smoothstep(0.0, 0.44, t);
-    float upperMix = smoothstep(0.36, 0.92, t);
+    float lowerMix = smoothstep(0.0, 0.40, t);
+    float upperMix = smoothstep(0.30, 0.88, t);
     vec3 gradCol = mix(mix(rootNorm, viridianMid, lowerMix), tipNorm, upperMix);
 
-    float baseOcclusion = mix(0.78, 1.0, smoothstep(0.0, 0.32, t));
+    float baseOcclusion = mix(0.90, 1.0, smoothstep(0.0, 0.28, t));
     vec3 smoothCol = clamp(gradCol * (baseOcclusion * bladeTone), 0.0, 1.0);
     if (p3.w > 0.5 && t > 0.70) {
         float plumeT = smoothstep(0.70, 0.88, t);

@@ -262,26 +262,31 @@ void main() {
 
     // 3. Color Grading
     if (u_colorGradeEnabled > 0.5) {
-        vec3 gradedCol = sceneCol.rgb;
+        vec3 gradedCol = clamp(sceneCol.rgb, 0.0, 1.0);
         
-        // Contrast
-        gradedCol = (gradedCol - vec3(0.5)) * u_contrast + vec3(0.5);
+        // Filmic toe/shoulder micro-contrast: protects deep shadow detail (grass roots)
+        // from black-crush while deepening midtone separation and keeping highlights silky.
+        vec3 sCurve = gradedCol * gradedCol * (3.0 - 2.0 * gradedCol);
+        float sBlend = clamp((u_contrast - 1.0) * 0.55, -0.25, 0.35);
+        gradedCol = mix(gradedCol, sCurve, sBlend);
+        float linContrast = 1.0 + (u_contrast - 1.0) * 0.45;
+        gradedCol = clamp((gradedCol - vec3(0.5)) * linContrast + vec3(0.5), 0.0, 1.0);
         
         // [TỐI ƯU 4]: Tính toán Luminance (độ sáng) ĐÚNG 1 LẦN.
-        // Chuyển vec3 magic number thành hằng số (const) để compiler tối ưu register.
         const vec3 LUMA_COEFF = vec3(0.2126, 0.7152, 0.0722);
         float luma = dot(gradedCol, LUMA_COEFF);
         
-        // Saturation
-        gradedCol = mix(vec3(luma), gradedCol, u_saturation);
+        // Highlight-protected vibrance saturation: enriches foliage/sky midtones while
+        // preventing bright sunlit grass tips and wildflowers from turning neon.
+        float satProtection = 1.0 - 0.32 * smoothstep(0.58, 0.96, luma);
+        float effSat = mix(1.0, u_saturation, satProtection);
+        gradedCol = mix(vec3(luma), gradedCol, effSat);
         
-        // Split-tone
-        // [TỐI ƯU 5]: Xóa bỏ hàm clamp(). 
-        // Hàm smoothstep nội bộ đã tự động clamp giá trị đầu vào trong khoảng [edge0, edge1] rồi.
+        // Split-tone with smooth luminance transition
         gradedCol *= mix(u_shadowTint, u_highlightTint, smoothstep(0.0, 1.0, luma));
         
         // Color Tint
-        sceneCol.rgb = gradedCol * u_colorTint;
+        sceneCol.rgb = clamp(gradedCol * u_colorTint, 0.0, 1.0);
     }
 
     // 3b. Colour-grade LUT (Đợt G5). Deliberately LAST in the colour chain and

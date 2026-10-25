@@ -77,7 +77,7 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
         Vector3 right = {cosf(stemAngle), 0.0f, sinf(stemAngle)};
         Vector3 forward = {-sinf(stemAngle), 0.0f, cosf(stemAngle)};
         float petalScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
-        float radius = flower->bloomRadius * petalScale * 1.08f * 1.12f;
+        float radius = flower->bloomRadius * petalScale * 0.72f;
         float ox0 = (-right.x - forward.x) * radius;
         float oz0 = (-right.z - forward.z) * radius;
         float ox1 = (right.x - forward.x) * radius;
@@ -109,8 +109,9 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
         }
         else
         {
+            Color softPetal = Nature_ScaleColor(flower->petalColor, 0.84f);
             Nature_AddQuad(&mesh, &cursor, p0, p1, p2, p3, bloomNormal,
-                           phase, 1.0f, 1.0f, flower->petalColor, flower->petalColor);
+                           phase, 0.55f, 0.65f, softPetal, softPetal);
         }
     }
     // Hoa luôn sử dụng nature_lit.fs (NatureShade) thay vì nature_opaque.fs (GrassShade)
@@ -415,11 +416,15 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                            phase, 0.0f, 0.25f, basalColor, Nature_ScaleColor(basalColor, 1.25f));
         }
 
-        // 2. Straight upright stem (24 verts)
-        float stemWidth = fmaxf(0.005f, flower->bloomRadius * 0.08f);
+        // 2. Gracefully curved stem leaning with the meadow breeze (no rigid vertical T-stick)
+        float stemWidth = fmaxf(0.0045f, flower->bloomRadius * 0.07f);
+        float stemLeanAngle = flower->rotationDeg * DEG2RAD * 0.73f + phase * 3.14f;
+        float stemLean = h * 0.22f;
+        float stemDirX = cosf(stemLeanAngle);
+        float stemDirZ = sinf(stemLeanAngle);
         Vector3 stemP0 = base;
-        Vector3 midStem = (Vector3){base.x, base.y + h * 0.50f, base.z};
-        Vector3 head = (Vector3){base.x, base.y + h, base.z};
+        Vector3 midStem = (Vector3){base.x + stemDirX * (stemLean * 0.38f), base.y + h * 0.52f, base.z + stemDirZ * (stemLean * 0.38f)};
+        Vector3 head = (Vector3){base.x + stemDirX * stemLean, base.y + h * 0.94f, base.z + stemDirZ * stemLean};
 
         for (int cross = 0; cross < 2; cross++)
         {

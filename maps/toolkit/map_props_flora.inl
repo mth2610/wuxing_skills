@@ -150,14 +150,14 @@ void MapFlora_GenerateFlowerPlacements(
             }
 
             bool tallAccent = (variant == 2 || variant == 4 || variant == 6);
-            // Natural wildflower height nestled organically into the grass canopy
-            float coreLift = isColony ? (1.0f - 0.20f * radialNorm) : 0.84f;
-            float driftHeightBase = tallAccent ? 0.52f : 0.44f;
-            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.09f - 0.02f)) * coreLift;
+            // Natural wildflower height nestled organically into the grass canopy (no sticking out like tall poles)
+            float coreLift = isColony ? (1.0f - 0.16f * radialNorm) : 0.86f;
+            float driftHeightBase = tallAccent ? 0.34f : 0.28f;
+            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.07f - 0.02f)) * coreLift;
 
-            // Delicate, natural bloom proportions
-            float baseBloomRadius = tallAccent ? 0.128f : 0.106f;
-            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.92f + Nature_Random01(&rng) * 0.22f) * (0.90f + 0.14f * coreLift);
+            // Delicate painterly bloom proportions that nestle into the grass without speckling distant hills
+            float baseBloomRadius = tallAccent ? 0.086f : 0.072f;
+            outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.92f + Nature_Random01(&rng) * 0.18f) * (0.90f + 0.12f * coreLift);
             outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.74f);
             outPlacements[outIdx].petalCount = (unsigned char)(5 + (variant % 3));
             outPlacements[outIdx].bloomVariant = (unsigned char)variant;
@@ -171,40 +171,13 @@ float MapFlora_EvaluateFlowerUnderstorey(
     const MapFloraFlowerCluster *clusters,
     int clusterCount)
 {
-    if (!clusters || clusterCount <= 0)
-        return 1.0f;
-    float understorey = 1.0f;
-    for (int c = 0; c < clusterCount; c++)
-    {
-        float rx = (clusters[c].radius.x > 0.1f) ? clusters[c].radius.x : 10.0f;
-        float rz = (clusters[c].radius.y > 0.1f) ? clusters[c].radius.y : rx;
-        float dx = (x - clusters[c].center.x) / rx;
-        float dz = (z - clusters[c].center.z) / rz;
-        float centerD2 = dx * dx + dz * dz;
-        if (centerD2 > 1.65f)
-            continue;
-
-        Vector2 epicenters[3];
-        MapFlora_GetClusterEpicentersNorm(c, epicenters);
-        float minColonyD2 = centerD2 * 0.85f;
-        for (int e = 0; e < 3; e++)
-        {
-            float edx = dx - epicenters[e].x;
-            float edz = dz - epicenters[e].y;
-            float ed2 = edx * edx + edz * edz;
-            if (ed2 < minColonyD2)
-                minColonyD2 = ed2;
-        }
-
-        // Softly nestle grass height around flower colonies (54% floor instead of harsh 42% depression)
-        if (minColonyD2 < 0.48f)
-        {
-            float blend = fminf(1.0f, fmaxf(0.0f, (minColonyD2 - 0.06f) / 0.42f));
-            float smooth = blend * blend * (3.0f - 2.0f * blend);
-            understorey = fminf(understorey, 0.54f + 0.46f * smooth);
-        }
-    }
-    return understorey;
+    (void)x;
+    (void)z;
+    (void)clusters;
+    (void)clusterCount;
+    // Keep full continuous grass height across wildflower colonies so flower clusters
+    // never carve visible circular depressions into hillsides.
+    return 1.0f;
 }
 
 float MapFlora_EvaluateFlowerSuppression(
@@ -212,40 +185,12 @@ float MapFlora_EvaluateFlowerSuppression(
     const MapFloraFlowerCluster *clusters,
     int clusterCount)
 {
-    if (!clusters || clusterCount <= 0)
-        return 1.0f;
-    float flowerSuppression = 1.0f;
-    for (int c = 0; c < clusterCount; c++)
-    {
-        float rx = (clusters[c].radius.x > 0.1f) ? clusters[c].radius.x : 10.0f;
-        float rz = (clusters[c].radius.y > 0.1f) ? clusters[c].radius.y : rx;
-        float dx = (x - clusters[c].center.x) / rx;
-        float dz = (z - clusters[c].center.z) / rz;
-        float centerD2 = dx * dx + dz * dz;
-        if (centerD2 > 1.65f)
-            continue;
-
-        Vector2 epicenters[3];
-        MapFlora_GetClusterEpicentersNorm(c, epicenters);
-        float minColonyD2 = centerD2 * 0.85f;
-        for (int e = 0; e < 3; e++)
-        {
-            float edx = dx - epicenters[e].x;
-            float edz = dz - epicenters[e].y;
-            float ed2 = edx * edx + edz * edz;
-            if (ed2 < minColonyD2)
-                minColonyD2 = ed2;
-        }
-
-        // Keep 62% grass tuft density under flowers so flower stems blend into turf instead of bare dirt
-        if (minColonyD2 < 0.45f)
-        {
-            float blend = fminf(1.0f, fmaxf(0.0f, (minColonyD2 - 0.05f) / 0.40f));
-            float smooth = blend * blend * (3.0f - 2.0f * blend);
-            flowerSuppression = fminf(flowerSuppression, 0.62f + 0.38f * smooth);
-        }
-    }
-    return flowerSuppression;
+    (void)x;
+    (void)z;
+    (void)clusters;
+    (void)clusterCount;
+    // Keep 100% grass tuft density under wildflowers so hillsides remain a seamless carpet.
+    return 1.0f;
 }
 
 int MapFlora_GenerateMeadowPlacements(
@@ -283,15 +228,59 @@ int MapFlora_GenerateMeadowPlacements(
         float cx = clump->position.x;
         float cz = clump->position.z;
 
-        // Unified 3-wave landscape streamline orientation + full 240-degree yaw jitter
+        // Ghost of Tsushima Voronoi Patch Clumping + Wind Streamline Orientation:
+        // Partition the meadow into ~2.1m Voronoi patches so neighboring tufts share a coherent
+        // wind-combed facing, bend posture, and high/low grass tier instead of 240-deg spiky chaos.
+        const float voronoiScale = 0.48f; // ~2.08m patch size
+        float gx = cx * voronoiScale;
+        float gz = cz * voronoiScale;
+        int cellX = (int)floorf(gx);
+        int cellZ = (int)floorf(gz);
+        float bestDistSq = 99.0f;
+        float secondDistSq = 99.0f;
+        float patchHash = 0.5f;
+        float patchHash2 = 0.5f;
+        for (int dz = -1; dz <= 1; dz++)
+        {
+            for (int dx = -1; dx <= 1; dx++)
+            {
+                int nx = cellX + dx;
+                int nz = cellZ + dz;
+                unsigned int ch = (unsigned int)(nx * 73856093) ^ (unsigned int)(nz * 19349663) ^ seed;
+                ch ^= ch >> 16;
+                ch *= 0x7feb352du;
+                ch ^= ch >> 15;
+                float jx = (float)(ch & 0xffffu) * (1.0f / 65535.0f);
+                float jz = (float)((ch >> 16) & 0xffffu) * (1.0f / 65535.0f);
+                float px = ((float)nx + 0.15f + 0.70f * jx) - gx;
+                float pz = ((float)nz + 0.15f + 0.70f * jz) - gz;
+                float d2 = px * px + pz * pz;
+                if (d2 < bestDistSq)
+                {
+                    secondDistSq = bestDistSq;
+                    bestDistSq = d2;
+                    patchHash = jx;
+                    patchHash2 = jz;
+                }
+                else if (d2 < secondDistSq)
+                {
+                    secondDistSq = d2;
+                }
+            }
+        }
+        // Smooth edge factor (0 at patch border, 1 at Voronoi clump core)
+        float edgeDist = sqrtf(fmaxf(0.0f, secondDistSq)) - sqrtf(fmaxf(0.0f, bestDistSq));
+        float clumpCore = fminf(1.0f, edgeDist * 1.65f);
+
         float wave1 = sinf(cx * 0.07f + cz * 0.05f) * 0.60f + sinf(cx * -0.05f + cz * 0.11f + 1.2f) * 0.40f;
-        float eddy = sinf(cx * 0.22f - cz * 0.18f + 0.8f) * 0.55f + sinf(cx * 0.14f + cz * 0.26f + 2.3f) * 0.45f;
-        float micro = sinf(cx * 0.55f + cz * 0.45f + 3.1f) * 0.50f + sinf(cx * -0.42f + cz * 0.62f) * 0.50f;
-        float flowAngle = 45.0f + wave1 * 32.0f + eddy * 24.0f + micro * 16.0f;
+        float eddy = sinf(cx * 0.20f - cz * 0.16f + 0.8f) * 0.55f + sinf(cx * 0.12f + cz * 0.22f + 2.3f) * 0.45f;
+        float patchAngleOffset = (patchHash - 0.5f) * 24.0f * (0.45f + 0.55f * clumpCore);
+        float flowAngle = -16.0f + wave1 * 18.0f + eddy * 12.0f + patchAngleOffset;
 
         float hash = sinf((float)(i * 47) + cx * 12.9898f + cz * 78.233f) * 43758.5453f;
         hash -= floorf(hash);
-        clump->rotationDeg = flowAngle + (hash - 0.5f) * 240.0f;
+        // Tight ±12 deg tuft yaw variation around the Voronoi patch streamline so blades comb together
+        clump->rotationDeg = flowAngle + (hash - 0.5f) * 24.0f;
 
         float localHeight = clump->height;
         float localRadius = clump->radius;
@@ -311,11 +300,12 @@ int MapFlora_GenerateMeadowPlacements(
             }
         }
 
-        // Organic billowing meadow rhythm
-        float canopyWave = 0.86f + 0.18f * (wave1 * 0.65f + eddy * 0.35f);
+        // Two-tier Ghost of Tsushima grass height ("high-type" lush drifts vs "low-type" base turf)
+        float highTypePatch = (patchHash2 > 0.62f) ? (0.14f * clumpCore) : (-0.05f * clumpCore);
+        float canopyWave = 0.90f + 0.14f * (wave1 * 0.65f + eddy * 0.35f) + highTypePatch;
         float heightNorm = (localHeight - 0.34f) / 0.20f;
-        clump->height = (0.34f + heightNorm * 0.16f) * (0.88f + 0.20f * growth) * canopyWave;
-        clump->height *= 0.82f + 0.18f * coverage;
+        clump->height = (0.36f + heightNorm * 0.16f) * (0.90f + 0.18f * growth) * canopyWave;
+        clump->height *= 0.84f + 0.16f * coverage;
 
         if (config.flowerClusters && config.flowerClusterCount > 0)
         {
@@ -324,9 +314,9 @@ int MapFlora_GenerateMeadowPlacements(
             clump->height *= understorey;
         }
 
-        // Slightly broader tuft collar radius (0.24m..0.32m) so adjacent clumps interlock seamlessly
-        clump->radius = 0.24f + biome * 0.07f;
-        clump->radius *= 0.92f + 0.16f * (localRadius - 0.24f) / 0.08f;
+        // Broader tuft collar radius (0.26m..0.34m) so adjacent clumps interlock into a gapless cushion
+        clump->radius = 0.26f + biome * 0.08f;
+        clump->radius *= 0.94f + 0.16f * (localRadius - 0.24f) / 0.08f;
 
         if (config.edgeTaperFn)
         {
@@ -347,8 +337,8 @@ MapFloraSystem MapProp_CreateFloraSystem(
     MapFloraStyle style)
 {
     MapFloraSystem flora = {0};
-    flora.windDirection = (Vector2){0.86f, 0.51f};
-    flora.windStrength = 0.038f;
+    flora.windDirection = (Vector2){0.95f, -0.31f};
+    flora.windStrength = 0.036f;
 
     // 1. Valley / Meadow Grass (16m chunk size cuts draw calls by ~44% vs 12m chunks)
     if (grassPlacements && grassCount > 0)
@@ -388,10 +378,10 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                     .bladeSegments = 3,
                                                     .bladeWidthScale = 0.132f,
                                                     .chunkSize = 20.0f,
-                                                    .lodDistance = 20.0f,
-                                                    .midLodDistance = 11.0f,
-                                                    .drawDistance = 36.0f,
-                                                    .shadowDistance = (style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 9.0f) : 9.0f,
+                                                    .lodDistance = 13.5f,
+                                                    .midLodDistance = 7.0f,
+                                                    .drawDistance = 24.0f,
+                                                    .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 7.5f) : 7.5f),
                                                     .texturePath = NULL,
                                                     .hasPlumes = false,
                                                     .growthForm = MAP_MEADOW_GROWTH_REED,
@@ -408,12 +398,12 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                       .tipColor = (style.pampasTipColor.a > 0) ? style.pampasTipColor : (Color){194, 188, 134, 255},
                                                       .bladesPerClump = 5,
                                                       .bladeSegments = 3,
-                                                      .bladeWidthScale = 0.095f,
+                                                      .bladeWidthScale = 0.105f,
                                                       .chunkSize = 20.0f,
-                                                      .lodDistance = 20.0f,
-                                                      .midLodDistance = 11.0f,
-                                                      .drawDistance = 34.0f,
-                                                      .shadowDistance = (style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 9.5f) : 9.5f,
+                                                      .lodDistance = 13.5f,
+                                                      .midLodDistance = 7.0f,
+                                                      .drawDistance = 22.0f,
+                                                      .shadowDistance = (style.shadowDistance < 0.0f) ? 0.0f : ((style.shadowDistance > 0.0f) ? fminf(style.shadowDistance, 7.5f) : 7.5f),
                                                       .texturePath = NULL,
                                                       .growthForm = MAP_MEADOW_GROWTH_PAMPAS,
                                                   });
@@ -446,9 +436,9 @@ MapFloraSystem MapProp_CreateFloraSystem(
                 stemColor, centerColor,
                 NULL, 0.0f, 1, 1);
 
-            // Optimized LOD (15m) & draw distance (36m) eliminate sub-pixel distant flower draw calls
-            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 15.0f, 8.5f);
-            MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 36.0f);
+            // Optimized LOD (14m) & draw distance (26m) without redundant projected shadow pass
+            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 14.0f, 0.0f);
+            MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 26.0f);
             placementOffset += count;
         }
     }
@@ -481,7 +471,6 @@ void MapProp_UpdateFloraSystem(MapFloraSystem *flora, Vector3 cameraTarget, floa
     if (!s_natureInteractionOpen)
     {
         MapProp_BeginNatureInteraction(cameraTarget, dt);
-        MapProp_AddNatureInteractor(cameraTarget, 1.25f, 0.34f);
         MapProp_AddNatureWindVorticles(flora->time);
         MapProp_EndNatureInteraction();
     }
@@ -508,13 +497,10 @@ void MapProp_DrawFloraSystem(MapFloraSystem *flora)
         MapProp_DrawMeadow(&flora->pampasMeadow, (Vector3){0}, flora->time,
                            flora->windDirection, 0.052f);
     }
-    for (int i = 0; i < flora->flowerClusterCount; i++)
+    if (flora->flowerClusterCount > 0 && flora->flowerFields)
     {
-        if (flora->flowerFields[i].ready)
-        {
-            MapProp_DrawFlowerField(&flora->flowerFields[i], (Vector3){0}, flora->time,
-                                    flora->windDirection, 0.032f);
-        }
+        MapProp_DrawFlowerFieldBatch(flora->flowerFields, flora->flowerClusterCount,
+                                     (Vector3){0}, flora->time, flora->windDirection, 0.032f);
     }
 }
 

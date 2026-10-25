@@ -75,28 +75,33 @@ static NatureMeadowView NatureParametric_View(const MapMeadowSurface *meadow)
                                                                      : 0.78f;
 
     float dx = camera.position.x - camera.target.x;
-    float dy = camera.position.y - camera.target.y;
     float dz = camera.position.z - camera.target.z;
-    float focalDistance = sqrtf(dx * dx + dy * dy + dz * dz);
+    float focalDistanceXZ = sqrtf(dx * dx + dz * dz);
 
     float fovy = fmaxf(camera.fovy, 15.0f) * DEG2RAD;
-    // tan(22.5 deg) = 0.41421356f (hằng số tính sẵn thay vì gọi tanf mỗi lần)
     float zoom = 0.41421356f / tanf(fovy * 0.5f);
     zoom = fminf(fmaxf(zoom, 0.8f), 2.5f);
 
     float lodZoom = (zoom > 1.0f) ? sqrtf(zoom) : zoom;
     float scale = lodScale * lodZoom;
 
+    // Horizontal camera-to-target focal offset (GEMINI.md §2.3):
+    // Ensures the meadow around camera.target stays in Near/Mid LOD when the camera orbits back,
+    // without ever shrinking drawDistance or LOD radii when zoomed in close!
+    float focalOffset = fminf(focalDistanceXZ * 0.80f, 12.5f);
+
     NatureMeadowView view;
     view.lodScale = lodScale;
     view.zoomFactor = zoom;
-    view.lodDistance = meadow->lodDistance * scale;
-    view.drawDistance = meadow->drawDistance > 0.0f ? focalDistance + meadow->drawDistance * rangeScale * zoom : 0.0f;
+    view.lodDistance = focalOffset + meadow->lodDistance * scale;
+    view.drawDistance = meadow->drawDistance > 0.0f
+                            ? (focalOffset + meadow->drawDistance * rangeScale * fminf(zoom, 1.20f))
+                            : 0.0f;
 
     float rawMidDist = meadow->midLodDistance > 0.0f
                            ? meadow->midLodDistance
                            : (meadow->lodDistance > 12.0f ? meadow->lodDistance * 0.48f : 0.0f);
-    float midDist = rawMidDist * scale;
+    float midDist = (rawMidDist > 0.0f) ? (focalOffset + rawMidDist * scale) : 0.0f;
     float nearBlend = NATURE_LOD_NEAR_BLEND_HALF_WIDTH * scale;
     float farBlend = NATURE_LOD_FAR_BLEND_HALF_WIDTH * scale;
     if (midDist > 0.0f && view.lodDistance > midDist)
@@ -275,7 +280,7 @@ static bool NatureParametric_BuildTemplate(NatureTuftTemplate *mesh, int blades,
     Vector3 vertices[NATURE_TEMPLATE_MAX_VERTICES];
     unsigned short indices[NATURE_TEMPLATE_MAX_INDICES];
     int vertexCount = 0, indexCount = 0;
-    float tipStart = (segments == 2) ? 0.54f : (segments > 2 ? 0.76f : 0.0f);
+    float tipStart = (segments == 2) ? 0.64f : (segments > 2 ? 0.78f : 0.0f);
 
     for (int blade = 0; blade < blades; blade++)
     {
@@ -569,19 +574,26 @@ static bool NatureParametric_Create(MapMeadowSurface *meadow,
             .ready = true};
     }
 
+    // Ghost of Tsushima High-to-Low Density Blade Templates:
+    // LOD 1 and LOD 2 keep 2 Bezier segments (7 vertices / 3 tris per blade) so distant blades
+    // preserve their graceful curved Bezier arch instead of collapsing into flat 1-segment spikes.
     int blades[4] = {
         style.bladesPerClump,
-        style.bladesPerClump >= 5 ? 4 : (style.bladesPerClump >= 3 ? 3 : style.bladesPerClump),
-        style.bladesPerClump >= 3 ? 3 : style.bladesPerClump,
-        style.bladesPerClump >= 3 ? 3 : style.bladesPerClump};
-    int segments[4] = {style.bladeSegments, style.bladeSegments >= 3 ? 2 : 1, 1, 2};
+        style.bladesPerClump >= 4 ? 3 : style.bladesPerClump,
+        style.bladesPerClump >= 3 ? 2 : style.bladesPerClump,
+        style.bladesPerClump >= 3 ? 2 : style.bladesPerClump};
+    int segments[4] = {
+        style.bladeSegments,
+        style.bladeSegments >= 2 ? 2 : 1,
+        style.bladeSegments >= 2 ? 2 : 1,
+        2};
 
     float baseBlades = (float)(blades[0] > 0 ? blades[0] : 1);
     float widths[4] = {
         1.0f,
-        powf(baseBlades / (float)blades[1], 0.62f),
-        powf(baseBlades / (float)blades[2], 0.68f),
-        powf(baseBlades / (float)blades[3], 0.55f)};
+        powf(baseBlades / (float)blades[1], 0.46f),
+        powf(baseBlades / (float)blades[2], 0.48f),
+        powf(baseBlades / (float)blades[3], 0.45f)};
 
     int geometryLods = shadows ? 4 : 3;
     int atlasLods = data->canonical ? 1 : geometryLods;

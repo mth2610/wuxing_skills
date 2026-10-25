@@ -129,10 +129,17 @@
 - **Cause:** The parametric renderer inherited the general mesh path's model/inverse-camera pair, although its only model transform is the caller's world offset.
 - **Rule:** Upload the exact translation once per draw and keep parametric world positions as `local + u_worldOffset`; preserve MVP separately. Require the offset uniform in both pass fallback checks. Rotation or scale needs an explicit position and normal transform before extending this path. `maps/tests/test_meadow_world_space.py` checks translated/rotated cameras, nonzero offsets, shader expressions and production uploads; matched captures and timings still decide visual equivalence and performance.
 
+### Ungated splat scree and oversized placement bounds thin foreground grass
+
+- **Symptom:** A gentle grassy hillside shows a bare contour strip at close zoom, or expanding meadow bounds makes the foreground turf look sparse even at a tight `0.28 m` grid spacing.
+- **Cause:** `ground_splat.fs` gates `splat.g` (cliff/scree) by actual geometric slope (`1.0 - geomNormal.y`), so gentle contours with high `splat.g` still render as green grass, whereas CPU `SongQuaoGrassDensity` rejected tufts on raw `splat.g` alone. Separately, when candidate tufts inside `minBounds..maxBounds` exceed `maxCount`, reservoir sampling in `MapProp_GenerateMeadowPlacements` randomly evicts foreground tufts to store distant tufts beyond `drawDistance`.
+- **Rule:** Gate CPU scree rejection by `1.0 - normal.y` using the same slope window as `ground_splat.fs`, and size `minBounds..maxBounds` / `spacing` so accepted candidates stay at or below `maxCount` (zero reservoir thinning in the playable basin).
+
 ## Patch Log
 
 | Date | Editor (human/AI) | Section edited | Based on which source | Tier |
 |---|---|---|---|---|
+| 2026-10-25 | Antigravity | Slope-gated scree rejection, reservoir-thinning guard, and focal-coupled LOD scaling | `maps/worlds/song_quao/song_quao.c`, `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/ground_splat.fs`, `maps/toolkit/shaders/nature_surface.glsl` | Ground-truth |
 | 2026-10-22 | DeepSeek | Ground shader cost model, branch guards, whole-draw frame marginal | `maps/toolkit/shaders/ground_splat.fs` repeat-harness ablations; song_quao paired full-frame runs (base vs `WUXING_SONGQUAO_SKIP=ground`, 3 pairs) | Ground-truth |
 | 2026-10-22 | DeepSeek | Compact-by-default band batching and depth-only caster shader | `maps/toolkit/map_props_meadow.inl`, `maps/toolkit/map_props_meadow_parametric.inl`, `maps/toolkit/shaders/nature_parametric.glsl`, `maps/toolkit/shaders/nature_shadow_parametric.vs`; interleaved cold 170-frame runs (song_quao 1280x720, legacy vs compact) | Ground-truth |
 | 2026-10-12 | Codex | DEM shoreline correspondence and foliage budget coverage | maps/pipeline/dem_pipeline.py; maps/toolkit/map_props_nature.inl; matched captures and focused tests | Ground-truth |
@@ -300,3 +307,18 @@
   - **~5 trilinear taps per typical pixel** (3 for the flow-phase detail gradient, 2 dual-phase caustics, +1 shore foam only where depth < `foamThreshold`); every one is load-bearing — the caustic term survives into `underwaterTerms` through `mix(underwater, reflectedSky, reflectWeight)`, so it cannot be branched out.
   - **CPU is not the cost:** a stopwatch around the draw reads ~55 µs/frame, of which ~46 µs is the first-call pipeline bind and ~9 µs per repeat (≈50 `SetShaderValue` uploads + the batch kick). Caching uniforms would save single-digit µs.
 - **Rule:** do not re-open water for per-pixel savings on this asset — there is no image-neutral headroom left, and the machine cannot resolve a ≤0.1 ms change anyway (see the ground entry above). Culling the *whole* draw is exact and is implemented (`MapWaterSurface.boundsCenter/boundsRadius` baked by `MapProp_ModelBounds`, sphere test in `map_props_cull.inl`), but it is provably a no-op on this map: the river spans x 33.7–157.7, z 24.8–271.3, so its sphere (radius ≈137 m) always intersects the frustum. It only pays on maps whose water body is local — on `verdant_path`'s lake (10.5×7.4 m at (63, 0.075, 25.5)) looking away gives `draws=14` with and without the lake, and looking at it gives `draws=32` vs `31`. If a future water body is a large multi-lobed surface, the cull needs per-chunk bounds (and more draws), not a bigger sphere.
+
+### Ecology moisture channel in `shoreFactor` paints wet-soil spots on dry hillsides
+
+- **Symptom:** Wide views of `song_quao` show dark circular mud blotches scattered across dry hillsides, and close views show a dark circular stain where 3D grass meets the terrain.
+- **Cause:** `song_quao_habitat.png` stores Topographic Wetness Index (`moisture`) in channel `B` (`ecology.b`). `ground_splat.fs` computed `shoreFactor = max(ecology.b, 1.0 - smoothstep(0.0, 2.6, signedShore))`, promoting local TWI depressions on elevated hillsides into `wWetSoil` (which subtracts `wGrass` and darkens albedo via `wetCapillaryDarken`). Separately, `GrassShade` in `nature_surface.glsl` stacked five root-darkening multipliers (`selfShadow * rootAO * shadowVis * canVis * ambientFloor`), making 3D grass roots darker than the underlying terrain.
+- **Rule:** Drive `shoreFactor` strictly from signed shoreline distance (`1.0 - smoothstep(0.0, 2.2, signedShore)`); use `ecology.b` only for lushness/color variation, never to expose mud on hillsides. Keep `GrassShade` root luminance matched to `ground_splat.fs` and never suppress grass density (`MapFlora_EvaluateFlowerSuppression`) under wildflower colonies.
+
+### Unbent 2D ribbon width shears into 1-pixel dotted lines and upside-down arches under wind
+
+- **Symptom:** At close zoom (`Zoom 10.28x`), grass blades bent by wind or leaning toward a downward-pitched camera collapse into 1-pixel dotted lines or fold into upside-down "U" staples.
+- **Cause:** Three compounding geometry issues in `nature_parametric.glsl`, `nature_lit_parametric.vs`, and `map_props_meadow.inl`:
+  1. `NatureEvaluateBlade` added `side * (halfWidth * sideSign)` in the unbent XZ plane before `nature_lit_parametric.vs` applied horizontal `dispXZ`. When wind blew parallel to `side`, `dispXZ` sheared the quad strip along its own width vector until left and right edges became colinear (`0 px` projected width).
+  2. Wind and interaction were sampled at per-vertex `world` instead of the blade root `rootWorld`, splitting single blades across the `u_windCacheMap` height boundary (`abs(y - u_windCacheRegion.w) < 2.0`) or `u_interactionMap` texels.
+  3. Subtracting world-space `dispSq / (...)` from `local.y` exceeded the remaining vertical rise of short blades, and excessive static lean (`> 1.0 * height`) toward `+Z` projected downward on screen (`screen_y ∝ y * cos(pitch) - z * sin(pitch)`).
+- **Rule:** Evaluate wind/interaction at `rootWorld = s_cachedClumpTexel.xyz + u_worldOffset` so all vertices of a blade share one force sample. Re-orthogonalize `bentSide` perpendicular to `bentTangent` and blend with 3D `cross(bentTangent, toCamVec)` after spine deformation. Scale `maxAllowedBend` by blade height and use monotonic height compression (`rootLocal.y + bladeSpanY * (1.0 - 0.22 * bendRatio * h)`) with C1-continuous tip taper (`tipStart = 0.78`, `profile(0.78) = 0.31`). Do not add an automatic interactor at `cameraTarget` inside `MapProp_UpdateFloraSystem`.

@@ -505,9 +505,7 @@ static void PostFX_ApplyQualityTier(PostFXConfig *c)
 static int PostFX_GetActiveBloomLevels(void)
 {
   GfxQuality q = GfxQuality_Get();
-  int maxLv = 4;
-  if (q == GFX_LOW)
-    maxLv = 3;
+  int maxLv = (q >= GFX_ULTRA) ? 4 : 3;
   return (s_dfLevels < maxLv) ? s_dfLevels : maxLv;
 }
 
@@ -814,10 +812,10 @@ void PostFX_Draw(const PostFXConfig *config)
       if (sharpen < 0.0f)
       {
         const float scale = RenderScale_GetScale();
-        // Giữ mức làm nét nền nhẹ và mượt (0.025) ở scale 1.0, tránh gây đốm gai vỡ hạt trên viền cỏ
-        sharpen = (scale > 0.01f) ? (0.025f + 0.15f * (1.0f / scale - 1.0f)) : 0.025f;
-        if (sharpen > 0.08f)
-          sharpen = 0.08f;
+        // CAS sharpening: 0.04 micro-crispness at native 1.0, scaling up to ~0.21 at 0.78x
+        sharpen = (scale > 0.01f) ? (0.04f + 0.60f * (1.0f / scale - 1.0f)) : 0.04f;
+        if (sharpen > 0.24f)
+          sharpen = 0.24f;
       }
       SetShaderValue(fxaaShader, fxaaSharpenLoc, &sharpen, SHADER_UNIFORM_FLOAT);
     }

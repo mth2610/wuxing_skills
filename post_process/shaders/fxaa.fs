@@ -31,8 +31,12 @@ void main()
     float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
     float range = lMax - lMin;
 
-    // Laplacian edge mask with soft clamping to prevent ringing/stippling on sub-pixel grass blades
-    float lap = clamp(4.0 * lM - (lNW + lNE + lSW + lSE), -0.12, 0.12);
+    // FidelityFX CAS-inspired (Contrast-Adaptive Sharpening) weight:
+    // Maximizes micro-detail recovery on low/medium-contrast ground and distant turf,
+    // while automatically tapering to zero on high-contrast grass blade silhouettes
+    // and bright flower/pampas tips to prevent white stipple halos.
+    float casHeadroom = clamp(sqrt(min(lMin, 1.0 - lMax) / max(lMax, 1e-4)), 0.0, 1.0);
+    float lap = clamp(4.0 * lM - (lNW + lNE + lSW + lSE), -0.14, 0.14) * casHeadroom;
 
     // Early exit on low-contrast areas (avoids smearing smooth bloom halos, skies, and gradients)
     if (range < max(lMax * (1.0 / 16.0), 1.0 / 32.0))
@@ -59,6 +63,6 @@ void main()
     float lB = fxaaLuma(rgbB);
     vec3 aa = (lB < lMin || lB > lMax) ? rgbA : rgbB;
 
-    // Apply adaptive sharpening to keep high-frequency textures crisp
+    // Apply contrast-adaptive sharpening to keep high-frequency textures crisp
     finalColor = vec4(clamp(aa + u_sharpen * lap, 0.0, 1.0), 1.0);
 }

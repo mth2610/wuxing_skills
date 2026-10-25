@@ -23,30 +23,32 @@ const vec3 CLOUD_LIGHT = vec3(0.98, 0.93, 0.82); // Warm luminous sunlight crest
 void main()
 {
     float dist = length(v_viewVec);
+    vec3 viewDir = v_viewVec / max(dist, 0.0001);
 
-    // [TỐI ƯU VISUAL & KHỬ MOIRÉ]: Lọc mượt các bậc nhiễu vi mô ở khoảng cách xa để
-    // triệt tiêu 100% hiện tượng sọc ngang (scanline banding) ở góc nhìn dốc (grazing angle)
-    float octaveWeight = 1.0 - smoothstep(60.0, 360.0, dist);
+    // [TỐI ƯU VISUAL & KHỬ MOIRÉ]: Lọc mượt các bậc nhiễu vi mô theo cả khoảng cách VÀ góc nhìn dốc
+    // (grazing angle abs(viewDir.y)) để triệt tiêu 100% hiện tượng sọc ngang (scanline banding) ở Tilt 20 deg
+    float distWeight = 1.0 - smoothstep(45.0, 260.0, dist);
+    float grazingWeight = smoothstep(0.04, 0.32, abs(viewDir.y));
+    float octaveWeight = distWeight * grazingWeight;
     float n2 = mix(0.5, texture(texture0, v_flowUVs.zw).r, octaveWeight);
-    vec2 warpedFlow1 = v_flowUVs.xy + (n2 - 0.5) * (0.055 * octaveWeight);
+    vec2 warpedFlow1 = v_flowUVs.xy + (n2 - 0.5) * (0.045 * octaveWeight);
     float n1 = texture(texture0, warpedFlow1).r;
 
-    float density = mix(n1, n1 * 0.62 + n2 * 0.38, octaveWeight);
+    float density = mix(n1, n1 * 0.66 + n2 * 0.34, octaveWeight);
 
     // Chân trời hòa nhập 100% vào ánh sáng vòm trời xa, không còn ngấn viền sắc cạnh
-    float horizon = smoothstep(200.0, 720.0, dist);
+    float horizon = smoothstep(160.0, 620.0, dist);
 
     // Early out: Hủy ngay fragment nếu không đủ mật độ
     if (u_cloudBankEnabled == 0 && density < 0.38 && horizon < 0.98) discard;
 
-    // Chuẩn hóa các vector
-    vec3 viewDir = v_viewVec / max(dist, 0.0001);
-    
-    // Perturb normal from cloud noise slope for true 3D rolling cloud billows (damped at distance)
-    float nR = texture(texture0, warpedFlow1 + vec2(0.007, 0.0)).r;
-    float nU = texture(texture0, warpedFlow1 + vec2(0.0, 0.007)).r;
-    vec3 billowNormal = normalize(vec3(-(nR - n1) * (6.2 * octaveWeight), 1.0, -(nU - n1) * (6.2 * octaveWeight)));
-    vec3 N = normalize(mix(normalize(v_normal), billowNormal, 0.78 * octaveWeight));
+    // Perturb normal from cloud noise slope with derivative-aware step size (prevents horizontal scanlines)
+    vec2 stepUV = max(fwidth(warpedFlow1) * 1.5, vec2(0.012));
+    float nR = texture(texture0, warpedFlow1 + vec2(stepUV.x, 0.0)).r;
+    float nU = texture(texture0, warpedFlow1 + vec2(0.0, stepUV.y)).r;
+    float slopeScale = 3.8 * octaveWeight;
+    vec3 billowNormal = normalize(vec3(-(nR - n1) * slopeScale, 1.0, -(nU - n1) * slopeScale));
+    vec3 N = normalize(mix(normalize(v_normal), billowNormal, 0.65 * octaveWeight));
     vec3 L = normalize(-lightDir);
 
     // 3. Xử lý ánh sáng & Màu sắc

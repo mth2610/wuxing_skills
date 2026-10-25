@@ -55,26 +55,31 @@ void main()
 
     // Skip all wind & state deformation evaluations for stationary root vertices (h == 0)
     if (h > 0.0001) {
+        vec3 rootLocal = s_cachedClumpTexel.xyz;
+        vec3 rootWorld = rootLocal + u_worldOffset;
+        vec3 spineCenter = local - s_cachedSide * (s_cachedHalfWidth * vertexPosition.x);
+
         float windCompliance = 1.0;
-        vec2 grassState = GrassEvaluateLocalState(world);
+        vec2 grassState = GrassEvaluateLocalState(rootWorld);
         if (dot(grassState, grassState) > 1e-5) {
-            // s_cachedClumpTexel.xyz is guaranteed by NatureEvaluateBlade to hold exact root p0.xyz
-            vec3 rootLocal = s_cachedClumpTexel.xyz;
-            GrassApplyVertexMorphology(local, rootLocal, h, grassState, windCompliance);
-            world = local + u_worldOffset;
+            GrassApplyVertexMorphology(spineCenter, rootLocal, h, grassState, windCompliance);
         }
 
-        float rootMask = h * h;
-        float maxAllowedBend = max(u_interactionMaxBend * u_natureWindResponse.w * windCompliance, 0.001);
+        float bladeSpanY = max(spineCenter.y - rootLocal.y, 0.0);
+        float bladeHeightEst = max(bladeSpanY / max(h, 0.25), 0.22);
+        float rootMask = h * (0.42 + 0.58 * h);
+        float maxAllowedBend = min(
+            max(u_interactionMaxBend * u_natureWindResponse.w * windCompliance, 0.001),
+            bladeHeightEst * 0.58);
 
         vec2 windBend = NatureVegetationWindBend(
-            world, bladeWindUV, u_time, u_windStrength * windCompliance, maxAllowedBend);
-        windBend += NatureDominantWindImpact(world) * (u_natureWindResponse.w * windCompliance);
+            rootWorld, bladeWindUV, u_time, u_windStrength * windCompliance, maxAllowedBend);
+        windBend += NatureDominantWindImpact(rootWorld) * (u_natureWindResponse.w * windCompliance);
 
         if (u_interactionEnabled != 0 && u_interactionWorldSize > 0.0001) {
-            vec2 uvOffset = (world.xz - u_interactionCenter) / u_interactionWorldSize;
+            vec2 uvOffset = (rootWorld.xz - u_interactionCenter) / u_interactionWorldSize;
             float maxAxis = max(abs(uvOffset.x), abs(uvOffset.y));
-            // Only sample interaction texture when vertex is inside the active 18m region
+            // Only sample interaction texture when root is inside the active 18m region
             if (maxAxis < 0.5) {
                 vec2 interactionUV = uvOffset + 0.5;
                 vec3 interactionSample = textureLod(u_interactionMap, interactionUV, 0.0).rgb;
@@ -85,16 +90,39 @@ void main()
             }
         }
 
+        // Smoothly cap total horizontal wind + interaction bend to maxAllowedBend
+        float rawBendLen = length(windBend);
+        if (rawBendLen > maxAllowedBend) {
+            windBend *= maxAllowedBend / rawBendLen;
+        }
+
         vec2 dispXZ = windBend * rootMask;
         float dispSq = dot(dispXZ, dispXZ);
         float dispLen = sqrt(dispSq);
 
-        // Elevation-independent arc radius: fixes stretching on hills and clamping in valleys,
-        // while using Padé approximation with dispLen to avoid a second sqrt() call.
-        float arcRadius = max(maxAllowedBend * 1.35 * max(h, 0.22), 0.16);
-        local.xz += dispXZ;
-        local.y  -= dispSq / (2.0 * arcRadius + 0.42 * dispLen);
+        // Strictly monotonic cantilever deflection (guaranteed dy/dh > 0 so blade tips NEVER hook downward!)
+        float bendRatio = clamp(dispLen / bladeHeightEst, 0.0, 0.60);
+        spineCenter.xz += dispXZ;
+        spineCenter.y   = rootLocal.y + bladeSpanY * (1.0 - 0.22 * bendRatio * h);
 
+        // Re-orthogonalize ribbon width vector perpendicular to the bent 3D spine tangent
+        // and 3D camera ray so wind never shears a blade along its own width into a 1px wire!
+        float dMaskDh = 0.45 + 1.10 * h;
+        vec3 bentTangent = normalize(s_cachedTangent + vec3(windBend.x * dMaskDh, -dispLen * 0.40, windBend.y * dMaskDh));
+        vec3 bentSide = s_cachedSide - bentTangent * dot(s_cachedSide, bentTangent);
+        float bsLenSq = dot(bentSide, bentSide);
+        bentSide = (bsLenSq > 1e-5) ? (bentSide * inversesqrt(bsLenSq)) : s_cachedSide;
+
+        vec3 toCamVec = rootWorld - u_tuftLodCamera;
+        vec3 viewSide3D = cross(bentTangent, toCamVec);
+        float vsLenSq = dot(viewSide3D, viewSide3D);
+        if (vsLenSq > 1e-5) {
+            viewSide3D *= inversesqrt(vsLenSq);
+            if (dot(bentSide, viewSide3D) < 0.0) viewSide3D = -viewSide3D;
+            bentSide = normalize(mix(bentSide, viewSide3D, 0.45));
+        }
+
+        local = spineCenter + bentSide * (s_cachedHalfWidth * vertexPosition.x);
         world = local + u_worldOffset;
 
         // As the blade bends over, its upper surface tilts skyward (+Y) and along the bend slope,

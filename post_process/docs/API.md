@@ -117,22 +117,18 @@ a window for the compositor to present a blank frame, and — because the frame 
 controller that tracks the budget therefore oscillates 60 → 30 fps and flashes the screen on each
 step. Both were observed in play.
 
-- **Ladder:** `1.00, 0.95, 0.90, 0.85, 0.80, 0.75`. Starts at **0.85** (the measured sweet spot,
-  and the rung most likely kept, so the common case never resizes at all).
+- **Ladder:** `1.00, 0.92, 0.85, 0.78, 0.72, 0.68`. Defaults to **1.00 fixed native resolution** (`s_adaptive = false`) because graphics quality tiers (`UNLIT`, `LOW`, `MED`, `HIGH`, `ULTRA`) are explicitly chosen by the user. Adaptive stepping or fixed sub-native rungs are opt-in via environment variables.
 - **Settle:** the first ~2 s after a map/screen change are ignored — asset and effect ramp-in is
   not the steady state (a calibration in that window claimed 11.6 ms where the steady state was
   16.8 ms, and the controller then had to walk itself back down).
-- **Down:** one rung after ~2 s of sustained submit > 16.0 ms (up to 4 per map, enough to walk
+- **Down:** one rung after ~1.3 s of sustained submit > 16.0 ms (up to 5 per map, enough to walk
   to the floor). Never on a single hitch frame.
-- **Up:** one rung after ~5 s of sustained submit < 10.5 ms, **once per map**. If a down-step
+- **Up:** one rung after ~4 s of sustained submit < 12.2 ms, **once per map**. If a down-step
   follows within 15 s, the up-step is marked wrong and never retried on that map.
 - **Signal:** the *submit* time of the frame (top of the frame → just before `EndDrawing`),
   excluding the vsync wait. A delivered interval saturates at one refresh under
   `SetTargetFPS(60)` and cannot distinguish a 9 ms frame from a 16.5 ms one, so it is not used.
-- **Measured** (song_quao, 1280x720, HIGH, paired full-frame runs): `1.00 → 16.83 ms`,
-  `0.85 → 13.78 ms` (median of 3 pairs, 3/3). Visual cost of 0.85: `mean_abs 3.6`,
-  `px>8 18 %` against the frame — a bilinear-upscale softness on grass detail, partly recovered
-  by the luma sharpen inside the FXAA pass (`post_process/docs/LANDMINES.md` #12).
+- **Contrast-Adaptive Sharpening (CAS):** `fxaa.fs` weights sharpening by local contrast headroom (`1.0 - smoothstep(0.08, 0.28, range)`) so `0.78–0.85` upscaling restores crisp terrain and distant meadow detail without haloing high-contrast grass blade silhouettes.
 - **World-space passes after `SceneTargets_End`** (shield / liquid-metaball 3D refraction) must be
   bracketed by `SceneTargets_BeginWorldRefraction()` / `SceneTargets_EndWorldRefraction()`:
   re-binding the scene FBO does not restore its viewport, and `EndTextureMode` left it at the

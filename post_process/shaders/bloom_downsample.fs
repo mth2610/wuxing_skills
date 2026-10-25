@@ -21,16 +21,8 @@ void main() {
     vec2 t = u_texelSize;
     vec2 t2 = t * 2.0;
 
-    // 13-tap Jimenez downsample
-    vec3 a = texture(texture0, uv + vec2(-t2.x,  t2.y)).rgb;
-    vec3 b = texture(texture0, uv + vec2(  0.0,  t2.y)).rgb;
-    vec3 c = texture(texture0, uv + vec2( t2.x,  t2.y)).rgb;
-    vec3 d = texture(texture0, uv + vec2(-t2.x,   0.0)).rgb;
+    // Core 5-tap Dual-Kawase samples (center + 4 inner bilinear diagonals)
     vec3 e = texture(texture0, uv                     ).rgb;
-    vec3 f = texture(texture0, uv + vec2( t2.x,   0.0)).rgb;
-    vec3 g = texture(texture0, uv + vec2(-t2.x, -t2.y)).rgb;
-    vec3 h = texture(texture0, uv + vec2(  0.0, -t2.y)).rgb;
-    vec3 i = texture(texture0, uv + vec2( t2.x, -t2.y)).rgb;
     vec3 j = texture(texture0, uv + vec2( -t.x,   t.y)).rgb;
     vec3 k = texture(texture0, uv + vec2(  t.x,   t.y)).rgb;
     vec3 l = texture(texture0, uv + vec2( -t.x,  -t.y)).rgb;
@@ -38,7 +30,16 @@ void main() {
 
     vec3 roundCol;
     if (u_karis > 0.5) {
-        // Karis firefly control (chỉ bật ở mip đầu tiên)
+        // Full 13-tap Jimenez + Karis firefly control (chỉ bật ở mip đầu tiên)
+        vec3 a = texture(texture0, uv + vec2(-t2.x,  t2.y)).rgb;
+        vec3 b = texture(texture0, uv + vec2(  0.0,  t2.y)).rgb;
+        vec3 c = texture(texture0, uv + vec2( t2.x,  t2.y)).rgb;
+        vec3 d = texture(texture0, uv + vec2(-t2.x,   0.0)).rgb;
+        vec3 f = texture(texture0, uv + vec2( t2.x,   0.0)).rgb;
+        vec3 g = texture(texture0, uv + vec2(-t2.x, -t2.y)).rgb;
+        vec3 h = texture(texture0, uv + vec2(  0.0, -t2.y)).rgb;
+        vec3 i = texture(texture0, uv + vec2( t2.x, -t2.y)).rgb;
+
         vec3 g0 = (j + k + l + m) * 0.25;
         vec3 g1 = (a + b + d + e) * 0.25;
         vec3 g2 = (b + c + e + f) * 0.25;
@@ -54,10 +55,8 @@ void main() {
         float invWSum = 1.0 / max(w0 + w1 + w2 + w3 + w4, 1e-5);
         roundCol = (g0 * w0 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4) * invWSum;
     } else {
-        // Đường thẳng không phân chia nhóm và không chia wSum cho 4 tầng mip tiếp theo
-        roundCol = (j + k + l + m + e) * 0.125
-                 + (b + d + f + h) * 0.0625
-                 + (a + c + g + i) * 0.03125;
+        // Fast 5-tap Dual-Kawase downsample cho các tầng mip tiếp theo (giảm 61.5% texture fetches)
+        roundCol = e * 0.5 + (j + k + l + m) * 0.125;
     }
 
     if (u_streakEnabled > 0.5) {

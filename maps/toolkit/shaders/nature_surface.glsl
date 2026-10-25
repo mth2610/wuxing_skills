@@ -258,7 +258,15 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float sssScale  = 1.0;
     vec3 emberGlow  = vec3(0.0);
     // Grounded olive-moss root tone matching ground_splat.fs turfBase
-    vec3 rootSubstrateTone = vec3(0.145, 0.215, 0.076);
+    vec3 rootSubstrateTone = vec3(0.155, 0.228, 0.086);
+
+    // Subtle botanical leaf-vein & rounded-edge modulation at close zoom (< 9m)
+    if (distSq < 81.0) {
+        float closeDetail = (1.0 - distSq * (1.0 / 81.0)) * (1.0 - antiShimmer);
+        float vein = 1.0 - 0.065 * abs(sin(u * 9.424778)) * closeDetail;
+        float edgeRoll = 1.0 - 0.085 * (u * u) * closeDetail;
+        baseColor *= vein * edgeRoll;
+    }
 
     if (dryness > 0.001 || scorch > 0.001) {
         float wiltWeight = clamp(dryness * 1.85, 0.0, 1.0);
@@ -305,19 +313,22 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         }
     }
 
-    // Seamless Root-to-Ground Turf Color Blending
-    float rootBlend = (1.0 - FastRamp(0.0, 0.28, h)) * 0.46;
+    // Seamless Root-to-Ground Turf Color Blending + Distant Root Lift (prevents dark root stains at near/mid/far range)
+    float distRootLift = FastRamp(7.0, 22.0, distToCam);
+    float rootBlend = (1.0 - FastRamp(0.0, 0.24, h)) * mix(0.22, 0.04, distRootLift);
     baseColor = mix(baseColor, rootSubstrateTone, rootBlend);
+    vec3 sunlitCanopyTone = vec3(0.45, 0.64, 0.25) * mix(coolEmeraldTip, warmGoldenTip, warmShift);
+    baseColor = mix(baseColor, sunlitCanopyTone, distRootLift * (1.0 - h) * 0.72);
 
     vec3 skyAmbient = Environment_HemisphereIrradiance(vec3(0.0, 1.0, 0.0), u_ambientColor);
     vec3 groundBounce = Environment_HemisphereIrradiance(vec3(0.0, -1.0, 0.0), u_ambientColor);
     // Warm chlorophyll bounce in shadows keeps shadowed valleys lush and painterly
-    vec3 greenBounce = baseColor * (u_ambientColor * 1.42 + vec3(0.040, 0.078, 0.020));
-    vec3 ambientGround = mix(groundBounce, greenBounce, 0.50);
+    vec3 greenBounce = baseColor * (u_ambientColor * 1.56 + vec3(0.052, 0.092, 0.026));
+    vec3 ambientGround = mix(groundBounce, greenBounce, 0.58);
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
-    // [TỐI ƯU VISUAL]: Nới nhẹ rootAO tối thiểu (0.24 -> 0.46) để gốc cỏ bám đất chắc chắn mà không bị đen kịt
-    float rootAO = mix(0.46, 1.0, smoothstep(0.0, 0.44, h));
+    // Gentle root AO without stacked darkening that creates dark stains or black holes between clumps
+    float rootAO = mix(mix(0.86, 0.98, distRootLift), 1.0, smoothstep(0.0, 0.34, h));
     vec3 lit = baseColor * ambient * rootAO;
 
     float nv = max(dot(faceNormal, viewDir), 0.0);
@@ -327,25 +338,26 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, u_lightDir, worldPosition, distToCam);
     if (shadow > 0.001) {
-        float sunVis = shadow * Environment_CloudVisibility(u_cloudNoise, worldPosition);
+        float cloudVis = (distSq < 900.0) ? Environment_CloudVisibility(u_cloudNoise, worldPosition) : 0.92;
+        float sunVis = shadow * cloudVis;
         if (sunVis > 0.001) {
             // Preserve warm morning sunlight chroma instead of desaturating toward gray
             vec3 effectiveLightColor = u_lightColor * (1.0 / (1.0 + max(u_lightDir.y - 0.38, 0.0) * 0.80));
 
             // Use canopy-blended shading normal `shadingN` so blades in a clump share soft, velvety diffuse transitions
-            vec3 shadingN = normalize(mix(faceNormal, n, 0.54));
+            vec3 shadingN = normalize(mix(faceNormal, n, 0.58));
             vec3 modelLightDir = normalize(vec3(u_lightDir.x + 0.32 * u_lightDir.y, u_lightDir.y * 0.76, u_lightDir.z - 0.24 * u_lightDir.y));
-            float wrappedFace  = clamp((dot(shadingN, u_lightDir) + 0.42) * 0.704225, 0.0, 1.0);
-            float wrappedModel = clamp((dot(shadingN, modelLightDir) + 0.42) * 0.704225, 0.0, 1.0);
+            float wrappedFace  = clamp((dot(shadingN, u_lightDir) + 0.46) * 0.68493, 0.0, 1.0);
+            float wrappedModel = clamp((dot(shadingN, modelLightDir) + 0.46) * 0.68493, 0.0, 1.0);
             float zenithBlend  = FastRamp(0.50, 0.90, u_lightDir.y);
             float wrapped = mix(wrappedFace, wrappedModel, zenithBlend * 0.60);
 
-            // Smooth Beer-Lambert canopy extinction
-            float canopyDepth = 0.34 * (1.0 - h);
-            float opticalDepth = canopyDepth * 0.75 / max(u_lightDir.y, 0.26);
-            float expCanopy = 1.0 / (1.0 + opticalDepth + 0.34 * opticalDepth * opticalDepth);
-            float verticalSelfShadow = mix(0.72, 1.0, smoothstep(0.0, 0.50, h));
-            float canopy = (0.44 + 0.56 * expCanopy) * verticalSelfShadow;
+            // Smooth Beer-Lambert canopy extinction harmonized with ground_splat.fs luminance
+            float canopyDepth = 0.22 * (1.0 - h) * (1.0 - distRootLift * 0.65);
+            float opticalDepth = canopyDepth * 0.62 / max(u_lightDir.y, 0.28);
+            float expCanopy = 1.0 / (1.0 + opticalDepth + 0.30 * opticalDepth * opticalDepth);
+            float verticalSelfShadow = mix(mix(0.86, 0.97, distRootLift), 1.0, smoothstep(0.0, 0.42, h));
+            float canopy = (mix(0.68, 0.84, distRootLift) + mix(0.32, 0.16, distRootLift) * expCanopy) * verticalSelfShadow;
 
             vec3 anisoSpec = vec3(0.0);
             float waxySpec = 0.0;
@@ -364,10 +376,10 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                 float sinTH16 = sinTH8 * sinTH8;
                 float sinTHBroad = mix(sinTH16, sinTH4, distRoughness);
 
-                vec3 primarySheen   = mix(baseColor, vec3(1.00, 0.98, 0.84), 0.52) * (sinTH8 * 0.045);
-                vec3 secondaryGlint = mix(baseColor, vec3(1.00, 0.98, 0.88), 0.40) * (sinTHBroad * 0.032 * (1.0 - distRoughness * 0.78));
+                vec3 primarySheen   = mix(baseColor, vec3(1.00, 0.98, 0.86), 0.56) * (sinTH8 * 0.058);
+                vec3 secondaryGlint = mix(baseColor, vec3(1.00, 0.98, 0.90), 0.44) * (sinTHBroad * 0.038 * (1.0 - distRoughness * 0.75));
                 anisoSpec = (primarySheen + secondaryGlint) * (specAA * max(NdotH + 0.25, 0.0));
-                waxySpec = FastPow32(NdotH) * (0.038 * h) * specAA * (1.0 - distRoughness);
+                waxySpec = FastPow32(NdotH) * (0.044 * h) * specAA * (1.0 - distRoughness);
             }
 
             // Luminous Golden-Jade Subsurface Translucency (Ghost of Tsushima Morning Glow):
@@ -379,13 +391,13 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float backLobe = FastPow1_4(backLight);
             float edgeThinness = 0.68 + 0.32 * absU;
             float sssWindow = FastRamp(0.08, 0.44, h) * (1.0 - FastRamp(0.86, 1.0, h) * 0.28);
-            float transmission = (backLobe * 0.65 + backWrap * 0.45 + forwardLobe * 1.15 * (0.35 + 0.65 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 goldenJadeSSS = mix(baseColor * vec3(1.72, 1.88, 0.62), vec3(0.98, 1.05, 0.45) * (dot(baseColor, vec3(0.333)) * 1.85), 0.38) + vec3(0.045, 0.058, 0.012) * sssScale;
+            float transmission = (backLobe * 0.68 + backWrap * 0.48 + forwardLobe * 1.18 * (0.35 + 0.65 * h)) * sssWindow * edgeThinness * sssScale;
+            vec3 goldenJadeSSS = mix(baseColor * vec3(1.72, 1.88, 0.62), vec3(0.98, 1.05, 0.45) * (dot(baseColor, vec3(0.333)) * 1.85), 0.38) + vec3(0.048, 0.062, 0.014) * sssScale;
 
-            float diffuseLobe = wrapped * (0.42 + 0.58 * wrapped);
-            vec3 directDiffuse = baseColor * (diffuseLobe * 0.62);
-            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.95);
-            vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.36) * baseColor;
+            float diffuseLobe = wrapped * (0.50 + 0.50 * wrapped);
+            vec3 directDiffuse = baseColor * (diffuseLobe * 0.78);
+            vec3 jadeTrans = goldenJadeSSS * (transmission * 1.04);
+            vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.38) * baseColor;
 
             vec3 directSun = (directDiffuse + jadeTrans) * (canopy * sunVis) + specHighlight * sunVis;
             lit += directSun * effectiveLightColor;
