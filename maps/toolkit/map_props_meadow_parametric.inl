@@ -152,6 +152,7 @@ static int s_natureCanonicalBladesLoc[2], s_natureCanonicalLoc[2], s_natureGeome
 static int s_natureTuftOffsetLoc[2], s_natureCompactLoc[2], s_natureVisibleIdsLoc;
 static int s_natureVisibleOffsetLoc;
 static int s_natureWorldOffsetLoc[2];
+static int s_natureWindFieldDetailLoc[2];
 
 static float NatureParametric_Rank(Vector3 root)
 {
@@ -249,6 +250,7 @@ static Shader NatureParametric_Shader(bool shadow)
         s_natureTuftOffsetLoc[pass] = GetShaderLocation(*shader, "u_chunkTuftOffset");
         s_natureWorldOffsetLoc[pass] = GetShaderLocation(*shader, "u_worldOffset");
         s_natureCompactLoc[pass] = GetShaderLocation(*shader, "u_compactTuftSubmission");
+        s_natureWindFieldDetailLoc[pass] = GetShaderLocation(*shader, "u_windFieldDetail");
         const char *samplers[4] = {"u_windCacheMap", "u_interactionMap", "shadowMap", "staticShadowMap"};
         for (int i = 0; i < 4; i++)
             s_natureReceiverSamplerLoc[pass][i] = GetShaderLocation(*shader, samplers[i]);
@@ -865,6 +867,7 @@ static void NatureParametric_PrepareVisible(MapMeadowSurface *meadow, Vector3 wo
     data->bandBase[2] = totalLodCounts[0] + totalLodCounts[1];
     data->bandCount[2] = totalLodCounts[2];
 
+
     int writeHead[3] = {data->bandBase[0], data->bandBase[1], data->bandBase[2]};
 
     for (int idx = 0; idx < data->drawCount; idx++)
@@ -986,6 +989,11 @@ static void NatureParametric_DrawChunk(MapMeadowSurface *meadow, int chunk, int 
     SetShaderValue(shader, s_natureCanonicalLoc[pass], &canonical, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureCanonicalBladesLoc[pass], &data->canonicalBlades, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureGeometryLodLoc[pass], &lod, SHADER_UNIFORM_INT);
+    if (s_natureWindFieldDetailLoc[pass] >= 0)
+    {
+        int windDetail = (lod == 0 && GfxQuality_Get() >= GFX_MED) ? 1 : 0;
+        SetShaderValue(shader, s_natureWindFieldDetailLoc[pass], &windDetail, SHADER_UNIFORM_INT);
+    }
 
     if (!(data->canonical && compact))
     {
@@ -1039,6 +1047,11 @@ static void NatureParametric_DrawBand(MapMeadowSurface *meadow, int lod, Shader 
     SetShaderValue(shader, s_natureCanonicalLoc[0], &canonical, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureCanonicalBladesLoc[0], &data->canonicalBlades, SHADER_UNIFORM_INT);
     SetShaderValue(shader, s_natureGeometryLodLoc[0], &lod, SHADER_UNIFORM_INT);
+    if (s_natureWindFieldDetailLoc[0] >= 0)
+    {
+        int windDetail = (lod == 0 && GfxQuality_Get() >= GFX_MED) ? 1 : 0;
+        SetShaderValue(shader, s_natureWindFieldDetailLoc[0], &windDetail, SHADER_UNIFORM_INT);
+    }
     if (s_natureCompactLoc[0] >= 0)
         SetShaderValue(shader, s_natureCompactLoc[0], &compactValue, SHADER_UNIFORM_INT);
 

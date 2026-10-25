@@ -10,6 +10,7 @@ in float fragHeight;
 in vec2 fragTexCoord;
 in vec4 v_lightSpace;
 in vec4 v_staticLightSpace;
+in float v_macroPatch;
 
 uniform float u_grassTipSoftening;
 
@@ -31,7 +32,7 @@ void main()
     vec3 albedo = fragColor.rgb * colDiffuse.rgb;
 
     vec3 lit = GrassShade(albedo, fragPosition, baseNormal, fragHeight,
-                          uNorm, v_lightSpace, v_staticLightSpace);
+                          uNorm, v_lightSpace, v_staticLightSpace, v_macroPatch);
 
     // Dynamic Wind-Wave Glint & Sheen (làm dịu ánh vàng để không gây bệt màu cỏ)
     float windSheen = fragColor.a;

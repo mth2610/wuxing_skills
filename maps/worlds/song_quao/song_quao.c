@@ -796,8 +796,8 @@ void InitSongQuaoMap(void)
             .bladesPerClump = 6,
             .bladeSegments = 4,
             .bladeWidthScale = 0.108f, // Lá cỏ thanh mảnh, uốn cong theo luồng gió thay vì bản rộng cứng
-            .lodDistance = 24.0f,
-            .midLodDistance = 12.0f,   // 3-tier Bezier LOD: Near (6b x 4s) -> Mid (3b x 2s) -> Far (2b x 2s)
+            .lodDistance = 20.0f,
+            .midLodDistance = 10.0f,   // 3-tier Bezier LOD: Near (6b x 4s) -> Mid (3b x 2s) -> Far (2b x 2s)
             .drawDistance = 88.0f,     // Tầm nhìn bao quát trọn vẹn toàn bộ các rặng đồi của hòn đảo thiên giới
             .shadowDistance = 14.0f,   // Khôi phục bóng đổ thực (real shadow casters) cho thảm cỏ và khóm hoa
             .grassState = MAP_GRASS_STATE_LUSH,

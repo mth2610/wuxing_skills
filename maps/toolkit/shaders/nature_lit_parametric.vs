@@ -25,6 +25,7 @@ out float fragHeight;
 out vec2 fragTexCoord;
 out vec4 v_lightSpace;
 out vec4 v_staticLightSpace;
+out float v_macroPatch;
 
 #define NATURE_VISIBLE_TUFT_LOD
 #include "maps/toolkit/shaders/nature_parametric.glsl"
@@ -76,7 +77,7 @@ void main()
             rootWorld, bladeWindUV, u_time, u_windStrength * windCompliance, maxAllowedBend);
         windBend += NatureDominantWindImpact(rootWorld) * (u_natureWindResponse.w * windCompliance);
 
-        if (u_interactionEnabled != 0 && u_interactionWorldSize > 0.0001) {
+        if (u_geometryLod < 2 && u_interactionEnabled != 0 && u_interactionWorldSize > 0.0001) {
             vec2 uvOffset = (rootWorld.xz - u_interactionCenter) / u_interactionWorldSize;
             float maxAxis = max(abs(uvOffset.x), abs(uvOffset.y));
             // Only sample interaction texture when root is inside the active 18m region
@@ -106,21 +107,13 @@ void main()
         spineCenter.y   = rootLocal.y + bladeSpanY * (1.0 - 0.22 * bendRatio * h);
 
         // Re-orthogonalize ribbon width vector perpendicular to the bent 3D spine tangent
-        // and 3D camera ray so wind never shears a blade along its own width into a 1px wire!
+        // (s_cachedSide was already view-assisted in nature_parametric.glsl, so projecting
+        // perpendicular to bentTangent maintains its camera-facing component without redundant math).
         float dMaskDh = 0.45 + 1.10 * h;
         vec3 bentTangent = normalize(s_cachedTangent + vec3(windBend.x * dMaskDh, -dispLen * 0.40, windBend.y * dMaskDh));
         vec3 bentSide = s_cachedSide - bentTangent * dot(s_cachedSide, bentTangent);
         float bsLenSq = dot(bentSide, bentSide);
         bentSide = (bsLenSq > 1e-5) ? (bentSide * inversesqrt(bsLenSq)) : s_cachedSide;
-
-        vec3 toCamVec = rootWorld - u_tuftLodCamera;
-        vec3 viewSide3D = cross(bentTangent, toCamVec);
-        float vsLenSq = dot(viewSide3D, viewSide3D);
-        if (vsLenSq > 1e-5) {
-            viewSide3D *= inversesqrt(vsLenSq);
-            if (dot(bentSide, viewSide3D) < 0.0) viewSide3D = -viewSide3D;
-            bentSide = normalize(mix(bentSide, viewSide3D, 0.45));
-        }
 
         local = spineCenter + bentSide * (s_cachedHalfWidth * vertexPosition.x);
         world = local + u_worldOffset;
@@ -142,5 +135,6 @@ void main()
     fragTexCoord = bladeSurfaceUV;
     v_lightSpace = u_lightVP * vec4(world, 1.0);
     v_staticLightSpace = u_staticLightVP * vec4(world, 1.0);
+    v_macroPatch = sin(world.x * 0.12 + world.z * 0.08) * 0.55 + cos(world.x * -0.07 + world.z * 0.16) * 0.45;
     gl_Position = mvp * vec4(local, 1.0);
 }

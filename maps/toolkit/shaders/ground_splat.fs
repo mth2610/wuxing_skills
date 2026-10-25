@@ -30,6 +30,8 @@ in vec2 fragTexCoord;
 in vec3 fragPosition;
 in vec3 fragNormal;
 in vec3 fragWorldPos;
+in vec4 v_lightSpace;
+in vec4 v_staticLightSpace;
 
 uniform vec4 colDiffuse;
 uniform sampler2D texture0;         // Splatmap
@@ -493,7 +495,7 @@ void main()
     float effectiveNdotL = mix(NdotL, grassWrapNdotL * horizonEnvelope, wGrass * 0.72) * (0.85 + 0.15 * cavityAO);
 
     float dynShadowCoverage;
-    float rawShadow = MapShadowVisibilityCov(fragPosition, normal, light, dynShadowCoverage);
+    float rawShadow = MapShadowVisibilityCovLS(v_lightSpace, v_staticLightSpace, normal, light, dynShadowCoverage);
     float canopyFarField = wGrass * (1.0 - dynShadowCoverage)
                          * (1.0 - smoothstep(900.0, 1764.0, camDistSqXZ))
                          * smoothstep(0.08, 0.60, ecology.r);

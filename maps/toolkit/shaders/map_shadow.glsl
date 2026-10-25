@@ -238,13 +238,12 @@ float MapShadowContrast(float visibility)
     return mix(visibility, sCurve, 0.18);
 }
 
-float MapDynamicShadowVisibilityCov(vec3 worldPos, float slope, out float coverage)
+float MapDynamicShadowVisibilityCovLS(vec4 lightSpace, float slope, out float coverage)
 {
     coverage = 0.0;
     if (u_shadowEnabled < 0.5)
         return 1.0;
 
-    vec4 lightSpace = u_lightVP * vec4(worldPos, 1.0);
     vec3 projected = lightSpace.xyz * (0.5 / max(lightSpace.w, 0.00001)) + 0.5;
     if (projected.z <= 0.0 || projected.z >= 1.0 ||
         projected.x <= 0.0 || projected.x >= 1.0 ||
@@ -263,17 +262,21 @@ float MapDynamicShadowVisibilityCov(vec3 worldPos, float slope, out float covera
     return MapShadowContrast(mix(1.0, visibility, edgeFade));
 }
 
+float MapDynamicShadowVisibilityCov(vec3 worldPos, float slope, out float coverage)
+{
+    return MapDynamicShadowVisibilityCovLS(u_lightVP * vec4(worldPos, 1.0), slope, coverage);
+}
+
 float MapDynamicShadowVisibility(vec3 worldPos, float slope)
 {
     float coverage;
     return MapDynamicShadowVisibilityCov(worldPos, slope, coverage);
 }
 
-float MapStaticShadowVisibility(vec3 worldPos, float slope)
+float MapStaticShadowVisibilityLS(vec4 lightSpace, float slope)
 {
     if (u_staticShadowEnabled < 0.5)
         return 1.0;
-    vec4 lightSpace = u_staticLightVP * vec4(worldPos, 1.0);
     vec3 projected = lightSpace.xyz * (0.5 / max(lightSpace.w, 0.00001)) + 0.5;
     if (projected.z <= 0.0 || projected.z >= 1.0 ||
         projected.x <= 0.0 || projected.x >= 1.0 ||
@@ -290,6 +293,11 @@ float MapStaticShadowVisibility(vec3 worldPos, float slope)
     return mix(1.0, visibility, fade);
 }
 
+float MapStaticShadowVisibility(vec3 worldPos, float slope)
+{
+    return MapStaticShadowVisibilityLS(u_staticLightVP * vec4(worldPos, 1.0), slope);
+}
+
 #ifdef MAP_SHADOW_NORMAL_OFFSET_TEXELS
 float MapShadowWorldTexelSize(mat4 lightVP, float texelSize)
 {
@@ -297,6 +305,23 @@ float MapShadowWorldTexelSize(mat4 lightVP, float texelSize)
     return texelSize / max(0.5 * length(row0), 0.000001);
 }
 #endif
+
+float MapShadowVisibilityCovLS(vec4 lightSpace, vec4 staticLightSpace, vec3 normal, vec3 lightDir, out float dynamicCoverage)
+{
+    dynamicCoverage = 0.0;
+    if (u_shadowEnabled < 0.5 && u_staticShadowEnabled < 0.5)
+        return 1.0;
+
+    float normLenSq = dot(normal, normal) * dot(lightDir, lightDir);
+    float cosTheta = dot(normal, lightDir) * inversesqrt(max(normLenSq, 1e-12));
+    float slope = 1.0 - clamp(cosTheta, 0.0, 1.0);
+
+    float dynamicShadow = MapDynamicShadowVisibilityCovLS(lightSpace, slope, dynamicCoverage);
+    if (dynamicShadow <= 0.001)
+        return 0.0;
+
+    return min(dynamicShadow, MapStaticShadowVisibilityLS(staticLightSpace, slope));
+}
 
 float MapShadowVisibilityCov(vec3 worldPos, vec3 normal, vec3 lightDir, out float dynamicCoverage)
 {

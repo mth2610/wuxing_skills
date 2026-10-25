@@ -197,7 +197,7 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 // ============================================================================
 vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                 float heightAlongPlant, float uTransverse,
-                vec4 lightSpace, vec4 staticLightSpace)
+                vec4 lightSpace, vec4 staticLightSpace, float macroPatch)
 {
     float h = clamp(heightAlongPlant, 0.0, 1.0);
 
@@ -239,9 +239,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float terrainBlend = 1.0 - (1.0 - baseCanopySmooth) * (1.0 - groundBlend);
     vec3 n = normalize(mix(faceNormal, vec3(0.0, 1.0, 0.0), terrainBlend));
 
-    // Coherent macro botanical hue shift across the valley (emerald swales -> golden-chartreuse sunlit drifts)
-    float macroPatch = sin(worldPosition.x * 0.12 + worldPosition.z * 0.08) * 0.55
-                     + cos(worldPosition.x * -0.07 + worldPosition.z * 0.16) * 0.45;
+    // Coherent macro botanical hue shift across the valley (interpolated from vertex stage)
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
     float tipHeightMask = FastRamp(0.32, 0.92, h);
     // Hài hòa sắc xanh ngọc bích Kiếm Hiệp (Tsushima Emerald & Morning Gold), tránh chói vàng bết màu
@@ -365,7 +363,7 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
             vec3 anisoSpec = vec3(0.0);
             float waxySpec = 0.0;
-            if (archWindow > 0.005) {
+            if (archWindow > 0.005 && distToCam < 22.0) {
                 vec3 halfDir = normalize(modelLightDir + viewDir);
                 float NdotH = max(dot(faceNormal, halfDir), 0.0);
                 float tDotHUnnorm = halfDir.y - faceNormal.y * NdotH;

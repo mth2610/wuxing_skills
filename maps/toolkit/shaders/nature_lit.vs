@@ -30,6 +30,7 @@ out float fragHeight;
 out vec2 fragTexCoord;
 out vec4 v_lightSpace;
 out vec4 v_staticLightSpace;
+out float v_macroPatch;
 
 void main()
 {
@@ -102,5 +103,6 @@ void main()
     fragTexCoord = vertexTexCoord2;
     v_lightSpace = u_lightVP * vec4(world, 1.0);
     v_staticLightSpace = u_staticLightVP * vec4(world, 1.0);
+    v_macroPatch = sin(world.x * 0.12 + world.z * 0.08) * 0.55 + cos(world.x * -0.07 + world.z * 0.16) * 0.45;
     gl_Position = mvp * vec4(local, 1.0);
 }
