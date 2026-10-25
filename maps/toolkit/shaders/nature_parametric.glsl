@@ -274,7 +274,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     float upperMix = smoothstep(0.30, 0.88, t);
     vec3 gradCol = mix(mix(rootNorm, viridianMid, lowerMix), tipNorm, upperMix);
 
-    float baseOcclusion = mix(0.90, 1.0, smoothstep(0.0, 0.28, t));
+    float baseOcclusion = mix(0.76, 1.0, smoothstep(0.0, 0.32, t));
     vec3 smoothCol = clamp(gradCol * (baseOcclusion * bladeTone), 0.0, 1.0);
     if (p3.w > 0.5 && t > 0.70) {
         float plumeT = smoothstep(0.70, 0.88, t);

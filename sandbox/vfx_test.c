@@ -1519,9 +1519,14 @@ static void VFXTest_ApplyTimeOfDay(float hour)
     Vector3 sunDir = Vector3Normalize((Vector3){ -sunAzimuth * 0.85f, -sunElevation, -0.52f });
 
     if (sunElevation > 0.04f) {
-        float horizonWarmth = 1.0f - fmaxf(0.0f, fminf(1.0f, (sunElevation - 0.04f) / 0.45f));
-        Color noonSun = (Color){255, 246, 228, 255};
-        Color sunsetSun = (Color){255, 192, 118, 255};
+        float horizonWarmth = 1.0f - fmaxf(0.0f, fminf(1.0f, (sunElevation - 0.04f) / 0.52f));
+        horizonWarmth = horizonWarmth * horizonWarmth * (3.0f - 2.0f * horizonWarmth);
+        // Smooth atmospheric airmass attenuation when sun is low on the horizon (< 16 deg, e.g. 17:30-17:50)
+        float horizonAtten = fmaxf(0.0f, fminf(1.0f, (sunElevation - 0.04f) / 0.24f));
+        horizonAtten = 0.52f + 0.48f * (horizonAtten * horizonAtten * (3.0f - 2.0f * horizonAtten));
+
+        Color noonSun = (Color){255, 244, 224, 255};
+        Color sunsetSun = (Color){255, 200, 134, 255};
         Color sunColor = (Color){
             (unsigned char)(noonSun.r * (1.0f - horizonWarmth) + sunsetSun.r * horizonWarmth),
             (unsigned char)(noonSun.g * (1.0f - horizonWarmth) + sunsetSun.g * horizonWarmth),
@@ -1529,8 +1534,8 @@ static void VFXTest_ApplyTimeOfDay(float hour)
             255
         };
 
-        Color noonSky = (Color){96, 128, 168, 255};
-        Color sunsetSky = (Color){86, 102, 138, 255};
+        Color noonSky = (Color){78, 108, 144, 255};
+        Color sunsetSky = (Color){68, 94, 130, 255};
         Color ambientColor = (Color){
             (unsigned char)(noonSky.r * (1.0f - horizonWarmth) + sunsetSky.r * horizonWarmth),
             (unsigned char)(noonSky.g * (1.0f - horizonWarmth) + sunsetSky.g * horizonWarmth),
@@ -1538,8 +1543,9 @@ static void VFXTest_ApplyTimeOfDay(float hour)
             255
         };
 
-        Color shadowColor = (Color){38, 50, 68, (unsigned char)(80 + 25 * horizonWarmth)};
-        float intensity = 1.9f + 0.45f * horizonWarmth;
+        Color shadowColor = (Color){32, 46, 64, (unsigned char)(96 + 24 * horizonWarmth)};
+        float baseIntensity = 1.52f + 0.50f * horizonWarmth;
+        float intensity = baseIntensity * horizonAtten;
 
         Environment_SetSunDirection(sunDir);
         Environment_SetSunColor(sunColor);
@@ -2095,6 +2101,11 @@ bool VFXTest_UpdateAndHandleInput(Vector3 playerPos, Vector3 mouseTarget3D, Text
 
     if (!s_hasTestPath)
     {
+        const char *todEnv = getenv("WUXING_TIME_OF_DAY");
+        if (todEnv && todEnv[0] != '\0')
+        {
+            VFXTest_ApplyTimeOfDay(strtof(todEnv, NULL));
+        }
         s_prefabStartPos = playerPos;
         Vector3 pathStart = Vector3Add(playerPos, (Vector3){0.0f, 0.3f, 0.0f});
         Vector3 pathEnd = Vector3Add(playerPos, (Vector3){3.0f, 0.0f, 0.0f});

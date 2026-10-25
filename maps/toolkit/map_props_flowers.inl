@@ -8,12 +8,12 @@ static Model Nature_BuildFlowerShadowModel(const MapFlowerPlacement *placements,
     for (int i = 0; i < count; i++)
     {
         const MapFlowerPlacement *flower = &placements[i];
-        float width = fmaxf(flower->bloomRadius * 0.95f, 0.045f);
+        float width = fmaxf(flower->bloomRadius * 1.18f, 0.068f);
         Vector3 root = flower->position;
-        root.y += 0.0015f;
+        root.y += 0.002f;
         Vector3 encoded = {flower->height, width, flower->phase};
-        Color rootShade = {180, 180, 180, 255};
-        Color tipShade = {110, 110, 110, 255};
+        Color rootShade = {225, 225, 225, 255};
+        Color tipShade = {150, 150, 150, 255};
         const Vector2 uv[6] = {
             {0.0f, 0.0f},
             {0.0f, 1.0f},

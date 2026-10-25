@@ -436,8 +436,8 @@ MapFloraSystem MapProp_CreateFloraSystem(
                 stemColor, centerColor,
                 NULL, 0.0f, 1, 1);
 
-            // Optimized LOD (14m) & draw distance (26m) without redundant projected shadow pass
-            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 14.0f, 0.0f);
+            // Restore projected contact shadow + real shadow caster distance (18m) for wildflowers
+            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 14.0f, 18.0f);
             MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 26.0f);
             placementOffset += count;
         }
@@ -515,37 +515,22 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
         MapProp_DrawMeadowShadowCasters(&flora->valleyMeadow, offset, flora->time,
                                         flora->windDirection, flora->windStrength);
     }
-
-    // Optimization: Only rasterize reed/pampas/flower casters when explicitly requested by
-    // diagnostic filter WUXING_NATURE_SHADOW_CASTERS; valleyMeadow + contact shadows already ground them.
-    static int s_casterFilterChecked = 0;
-    static bool s_casterFilterHasValue = false;
-    if (!s_casterFilterChecked)
+    if (flora->reedCount > 0)
     {
-        const char *casterFilter = getenv("WUXING_NATURE_SHADOW_CASTERS");
-        s_casterFilterHasValue = (casterFilter && casterFilter[0] != '\0');
-        s_casterFilterChecked = 1;
+        MapProp_DrawMeadowShadowCasters(&flora->reedMeadow, offset, flora->time,
+                                        flora->windDirection, 0.058f);
     }
-
-    if (s_casterFilterHasValue)
+    if (flora->pampasCount > 0)
     {
-        if (flora->reedCount > 0)
+        MapProp_DrawMeadowShadowCasters(&flora->pampasMeadow, offset, flora->time,
+                                        flora->windDirection, 0.052f);
+    }
+    for (int i = 0; i < flora->flowerClusterCount; i++)
+    {
+        if (flora->flowerFields[i].ready)
         {
-            MapProp_DrawMeadowShadowCasters(&flora->reedMeadow, offset, flora->time,
-                                            flora->windDirection, 0.058f);
-        }
-        if (flora->pampasCount > 0)
-        {
-            MapProp_DrawMeadowShadowCasters(&flora->pampasMeadow, offset, flora->time,
-                                            flora->windDirection, 0.052f);
-        }
-        for (int i = 0; i < flora->flowerClusterCount; i++)
-        {
-            if (flora->flowerFields[i].ready)
-            {
-                MapProp_DrawFlowerFieldShadowCaster(&flora->flowerFields[i], offset, flora->time,
-                                                    flora->windDirection, 0.032f);
-            }
+            MapProp_DrawFlowerFieldShadowCaster(&flora->flowerFields[i], offset, flora->time,
+                                                flora->windDirection, 0.032f);
         }
     }
 }

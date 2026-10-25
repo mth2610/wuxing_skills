@@ -13,10 +13,10 @@
 #include "maps/toolkit/shaders/meadow_palette.glsl"
 
 // ---- Look knobs ( tinh chỉnh hài hòa màu cỏ & nền đất cho song_quao ) ----
-#define GS_DISTANT_CANOPY_GAIN 0.74
+#define GS_DISTANT_CANOPY_GAIN 0.68
 #define GS_CREST_COOL vec3(0.92, 0.99, 0.94)
-#define GS_CREST_WARM vec3(1.06, 1.04, 0.95)
-#define GS_GRASS_CHROMA 0.95
+#define GS_CREST_WARM vec3(1.04, 1.03, 0.95)
+#define GS_GRASS_CHROMA 0.96
 #define GS_NEAR_DETAIL_BOOST 0.22
 #define GS_FAR_CANOPY_SHADE 0.14
 
@@ -84,7 +84,7 @@ void main()
     vec3 light = (lightLenSq > 0.01) ? (-lightDir * inversesqrt(lightLenSq)) : vec3(0.0, 1.0, 0.0);
     vec3 actualAmbient = (ambientColor.a == 0.0) ? vec3(0.4) : ambientColor.rgb;
     vec3 actualLight   = (lightColor.a == 0.0)   ? vec3(1.0) : lightColor.rgb;
-    actualLight *= 1.0 / (1.0 + max(light.y - 0.36, 0.0) * 0.88);
+    actualLight *= 1.0 / (1.0 + max(light.y - 0.32, 0.0) * 1.18);
 
     // ---- 2. Cloud Veil Pre-Evaluation & Early Out ----
     float veil = 0.0;
@@ -488,8 +488,9 @@ void main()
     // ---- 11. Physically Based Lighting & Soft Grass Shadows ----
     float rawNdotL = dot(normal, light);
     float NdotL = max(rawNdotL, 0.0);
-    float grassWrapNdotL = max((rawNdotL + 0.32) * (1.0 / 1.32), 0.0);
-    float effectiveNdotL = mix(NdotL, grassWrapNdotL, wGrass * 0.65) * (0.85 + 0.15 * cavityAO);
+    float grassWrapNdotL = max((rawNdotL + 0.38) * (1.0 / 1.38), 0.0);
+    float horizonEnvelope = smoothstep(0.02, 0.38, max(light.y, 0.0)) * 0.66 + 0.34;
+    float effectiveNdotL = mix(NdotL, grassWrapNdotL * horizonEnvelope, wGrass * 0.72) * (0.85 + 0.15 * cavityAO);
 
     float dynShadowCoverage;
     float rawShadow = MapShadowVisibilityCov(fragPosition, normal, light, dynShadowCoverage);
@@ -498,14 +499,14 @@ void main()
                          * smoothstep(0.08, 0.60, ecology.r);
     rawShadow *= 1.0 - GS_FAR_CANOPY_SHADE * canopyFarField;
 
-    // [TỐI ƯU VISUAL]: Làm mềm bóng cỏ trên mặt đất, tránh nhân tối kép cả Direct lẫn Ambient
-    float turfShadowVis = rawShadow * mix(rawShadow, 1.0, 0.64);
+    // Grounded, visible shadows for flowers, grass tufts, and rocks on the meadow floor
+    float turfShadowVis = rawShadow * mix(rawShadow, 1.0, 0.32);
     float resolvedShadow = mix(rawShadow, turfShadowVis, wGrass);
-    float shadowFloor = mix(0.28, 0.54, wGrass);
+    float shadowFloor = mix(0.18, 0.24, wGrass);
     float shadow = mix(shadowFloor, 1.0, resolvedShadow);
     float sunVisibility = shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos);
 
-    float ambientShadowMod = mix(mix(0.80, 0.78, wGrass), 1.0, resolvedShadow);
+    float ambientShadowMod = mix(mix(0.68, 0.64, wGrass), 1.0, resolvedShadow);
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient) * (cavityAO * ambientShadowMod);
 
     vec3 totalLight = ambient + actualLight * effectiveNdotL * sunVisibility;
@@ -517,8 +518,8 @@ void main()
 
     if (wGrass > 0.05 && sunVisibility > 0.01) {
         float backScatter = max(dot(viewDir, -light), 0.0);
-        float sssFactor = (backScatter * backScatter * backScatter) * wGrass * sunVisibility * 0.18;
-        groundLit += grassAlbedo * actualLight * vec3(1.22, 1.34, 0.56) * sssFactor;
+        float sssFactor = (backScatter * backScatter * backScatter) * wGrass * sunVisibility * horizonEnvelope * 0.14;
+        groundLit += grassAlbedo * actualLight * vec3(0.94, 1.32, 0.62) * sssFactor;
     }
 
     float h2 = NdotH * NdotH;

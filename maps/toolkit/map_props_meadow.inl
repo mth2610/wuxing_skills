@@ -1428,7 +1428,7 @@ void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffs
         return;
 
     Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
-    if (fabsf(sunDir.y) > 0.72f)
+    if (fabsf(sunDir.y) > 0.98f)
         return;
 
     Shader shader = meadow->parametric ? NatureParametric_Shader(true) : NatureShadow_GetShader();

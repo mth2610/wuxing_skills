@@ -1756,17 +1756,16 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
     const NatureShaderLocs *locs = Nature_GetCachedLocs(shader);
     Vector3 lightTravel = Environment_GetSunDirection();
     Vector4 shadowColor = ColorNormalize(Environment_GetShadowColor());
-    // [TỐI ƯU VISUAL]: Làm dịu nhẹ màu bóng tiếp xúc để không tạo vệt đen kịt trên nền cỏ xanh-vàng
     Vector3 shadowTint = {
-        fminf(1.0f, shadowColor.x * 1.12f + 0.04f),
-        fminf(1.0f, shadowColor.y * 1.15f + 0.05f),
-        fminf(1.0f, shadowColor.z * 1.10f + 0.03f),
+        fminf(1.0f, shadowColor.x * 0.74f),
+        fminf(1.0f, shadowColor.y * 0.76f),
+        fminf(1.0f, shadowColor.z * 0.78f),
     };
 
-    float projectionScale = realShadowActive ? 0.14f : 0.56f;
-    float widthScale = realShadowActive ? 1.22f : 1.18f;
-    float tipWidth = realShadowActive ? 0.88f : 0.78f;
-    float shadowStrength = realShadowActive ? 0.36f : 0.64f;
+    float projectionScale = realShadowActive ? 0.44f : 0.62f;
+    float widthScale = realShadowActive ? 1.32f : 1.24f;
+    float tipWidth = realShadowActive ? 0.88f : 0.80f;
+    float shadowStrength = realShadowActive ? 0.68f : 0.78f;
 
     if (locs->lightTravel >= 0)
         SetShaderValue(shader, locs->lightTravel, &lightTravel, SHADER_UNIFORM_VEC3);

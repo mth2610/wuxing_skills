@@ -704,11 +704,11 @@ void InitSongQuaoMap(void)
     Environment_SetTimeOfDaySpeed(0.0f);
     // Ghost of Tsushima / Where Winds Meet cinematic golden-hour lighting:
     // Rich cerulean-slate sky fill so shadowed grass retains lush depth instead of turning muddy black
-    Environment_SetAmbientColor((Color){86, 112, 142, 255});
-    Environment_SetSunColor((Color){255, 214, 154, 255});
-    Environment_SetSunIntensity(2.35f);
-    Environment_SetSunDirection(Vector3Normalize((Vector3){0.46f, -0.34f, -0.82f}));
-    Environment_SetShadowColor((Color){38, 52, 70, 88});
+    Environment_SetAmbientColor((Color){76, 104, 138, 255});
+    Environment_SetSunColor((Color){255, 218, 162, 255});
+    Environment_SetSunIntensity(1.85f);
+    Environment_SetSunDirection(Vector3Normalize((Vector3){0.46f, -0.38f, -0.80f}));
+    Environment_SetShadowColor((Color){32, 46, 64, 98});
 
     AtmosphereProfile atmos = {
         .color = {226, 236, 246, 255},
@@ -804,24 +804,24 @@ void InitSongQuaoMap(void)
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {44, 66, 28, 255},  // Tiệp mượt với nền cỏ rêu nắng sớm (không tạo vệt tối đen)
-            .grassTipColor = {138, 186, 78, 255}, // Sắc xanh ngọc bích Tsushima thanh tao, thơ mộng
+            .grassRootColor = {30, 50, 22, 255},  // Sắc xanh rêu rừng sâu tạo độ tương phản tự nhiên ở gốc cỏ
+            .grassTipColor = {112, 166, 62, 255}, // Sắc xanh ngọc bích Tsushima thanh tao, không bị bạc màu dưới nắng trưa
             .bladesPerClump = 6,
             .bladeSegments = 4,
             .bladeWidthScale = 0.104f, // Lá cỏ thanh mảnh, uốn cong theo luồng gió thay vì bản rộng cứng
             .lodDistance = 18.5f,
             .midLodDistance = 8.5f,    // 3-tier Bezier LOD: Near (6b x 4s) -> Mid (3b x 2s) -> Far (2b x 2s)
             .drawDistance = 48.0f,
-            .shadowDistance = -1.0f,   // Matches verdant_path.c (GEMINI.md §3); eliminates shadow-map acne & redundant caster pass
+            .shadowDistance = 14.0f,   // Khôi phục bóng đổ thực (real shadow casters) cho thảm cỏ và khóm hoa
             .grassState = MAP_GRASS_STATE_LUSH,
-            .reedRootColor = {40, 60, 26, 255},
-            .reedTipColor = {126, 170, 74, 255},
+            .reedRootColor = {30, 48, 22, 255},
+            .reedTipColor = {108, 156, 62, 255},
             .hasReedPlumes = false, // Eliminates stiff white card artifacts on reeds (API.md §1b)
             .botanicalVariation = 1.0f,
             .pampasPlacements = NULL,
             .pampasCount = 0,
-            .pampasRootColor = {44, 62, 28, 255},
-            .pampasTipColor = {148, 176, 92, 255},
+            .pampasRootColor = {36, 52, 24, 255},
+            .pampasTipColor = {138, 168, 84, 255},
         });
 
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
