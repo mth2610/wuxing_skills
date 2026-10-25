@@ -16,7 +16,7 @@ static inline int GpuParticleFieldLease_Register(GpuParticleFieldLease *leases,
                                                 int capacity, const void *field,
                                                 float lifetime)
 {
-    if (!leases || !field) return -1;
+    if (!leases || !field || capacity <= 0) return -1;
     int freeSlot = -1;
     for (int i = 0; i < capacity; ++i) {
         if (leases[i].field == field) {
@@ -25,7 +25,7 @@ static inline int GpuParticleFieldLease_Register(GpuParticleFieldLease *leases,
         }
         if (!leases[i].field && freeSlot < 0) freeSlot = i;
     }
-    if (freeSlot < 0 || lifetime <= 0.0f) return -1;
+    if (freeSlot < 0 || !(lifetime > 0.0f)) return -1;
     leases[freeSlot] = (GpuParticleFieldLease){field, lifetime};
     return freeSlot;
 }
@@ -36,6 +36,7 @@ static inline int GpuParticleFieldLease_Register(GpuParticleFieldLease *leases,
 static inline void GpuParticleFieldLease_Advance(GpuParticleFieldLease *leases,
                                                 int capacity, float dt)
 {
+    if (!leases || capacity <= 0 || !(dt > 0.0f)) return;
     for (int i = 0; i < capacity; ++i) {
         if (!leases[i].field) continue;
         leases[i].remaining -= dt;
@@ -44,11 +45,24 @@ static inline void GpuParticleFieldLease_Advance(GpuParticleFieldLease *leases,
     }
 }
 
+/* Returns the Tight Upper Bound (1 + highest active slot index), or 0 if empty.
+ * Allows callers to shrink the active SSBO upload span when trailing leases expire. */
+static inline int GpuParticleFieldLease_ActiveSpan(const GpuParticleFieldLease *leases,
+                                                  int capacity)
+{
+    if (!leases || capacity <= 0) return 0;
+    for (int i = capacity - 1; i >= 0; --i) {
+        if (leases[i].field && leases[i].remaining > 0.0f)
+            return i + 1;
+    }
+    return 0;
+}
+
 /* Pointer identity only; never dereference caller-owned storage. */
 static inline bool GpuParticleFieldLease_InUse(const GpuParticleFieldLease *leases,
                                               int capacity, const void *field)
 {
-    if (!field) return false;
+    if (!leases || !field || capacity <= 0) return false;
     for (int i = 0; i < capacity; ++i)
         if (leases[i].field == field && leases[i].remaining > 0.0f) return true;
     return false;

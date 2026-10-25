@@ -11,6 +11,10 @@
 // identity, so fragPosition is the world position with no transform needed —
 // see ENGINE_LANDMINES.md on the matModel-identity rule.
 
+#ifdef GL_ES
+precision highp float;
+#endif
+
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 in vec4 vertexColor;

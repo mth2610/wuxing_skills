@@ -7,9 +7,9 @@
  * Private implementation behind core/particles/particle_manager.h.
  *
  * Hai path, tự detect runtime:
- *   COMPUTE path  (GL 4.3+ / GLES 3.1+, Android Mali-G68+)
+ *   COMPUTE path  (GL 4.3+ / GLES 3.1+, Android Mali-G68+, Vulkan rlvk)
  *                 — physics hoàn toàn trên GPU, dispatch compute shader
- *   CPU/VBO path  (GL 3.3, macOS / thiết bị cũ)
+ *   CPU/VBO path  (GL 3.3, macOS OpenGL / thiết bị cũ)
  *                 — physics trên CPU, upload VBO mỗi frame
  *
  * Tích hợp vào main.c:

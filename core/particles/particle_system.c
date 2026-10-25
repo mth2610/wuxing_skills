@@ -194,6 +194,7 @@ typedef struct
   // Stretch rendering
   float stretchStrength;
   float stretchMinSpeed;
+  Vector3 lastStretchDir; // Giữ hướng kéo giãn ổn định khi hạt giảm tốc dưới minSpeed
 
   // Physical collision
   bool collisionEnabled;
@@ -234,6 +235,11 @@ static bool s_depthSortDirty = true;
 static Vector3 s_lastSortCamPos = {0};
 static Vector3 s_lastSortCamTarget = {0};
 
+static Texture2D s_defaultParticleSprite = {0};
+static Texture2D s_elementSparkSprite = {0};
+static Texture2D s_glowSprite = {0};
+static Texture2D s_sparkCapsuleSprite = {0};
+
 static inline void Particle_Deactivate(int idx)
 {
   if (idx < 0 || idx >= MAX_PARTICLES || !g_Particles[idx].active)
@@ -242,8 +248,11 @@ static inline void Particle_Deactivate(int idx)
   if (listIdx < 0 || listIdx >= s_activeCount)
     return;
 
-  EmissionChildren_Release(g_Particles[idx].children);
-  g_Particles[idx].children = (EmissionChildrenHandle){0};
+  if (g_Particles[idx].children != 0)
+  {
+    EmissionChildren_Release(g_Particles[idx].children);
+    g_Particles[idx].children = (EmissionChildrenHandle){0};
+  }
   g_Particles[idx].active = false;
 
   int lastId = s_activeIds[s_activeCount - 1];
@@ -304,6 +313,17 @@ static float EmissionRandom01(void *user)
 
 void InitParticleSystem(void)
 {
+  // Giải phóng an toàn các handle children còn đang hoạt động trước khi reset
+  for (int a = 0; a < s_activeCount; a++)
+  {
+    int idx = s_activeIds[a];
+    if (idx >= 0 && idx < MAX_PARTICLES && g_Particles[idx].active && g_Particles[idx].children != 0)
+    {
+      EmissionChildren_Release(g_Particles[idx].children);
+      g_Particles[idx].children = (EmissionChildrenHandle){0};
+    }
+  }
+
   EmissionChildren_Init(SpawnEmissionChild, EmissionRandom01, NULL);
   for (int i = 0; i < MAX_PARTICLES - 1; i++)
     s_nextFree[i] = i + 1;
@@ -314,6 +334,7 @@ void InitParticleSystem(void)
   for (int i = 0; i < MAX_PARTICLES; i++)
   {
     g_Particles[i].active = false;
+    g_Particles[i].children = (EmissionChildrenHandle){0};
     s_slotListIndex[i] = -1;
   }
 }
@@ -475,6 +496,16 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   // Populate stretch, collision, and trail parameters
   p->stretchStrength = config.render.stretchStrength;
   p->stretchMinSpeed = config.render.stretchMinSpeed;
+  float initSpeedSq = p->vx * p->vx + p->vy * p->vy + p->vz * p->vz;
+  if (initSpeedSq > 1e-6f)
+  {
+    float invSpd = 1.0f / sqrtf(initSpeedSq);
+    p->lastStretchDir = (Vector3){p->vx * invSpd, p->vy * invSpd, p->vz * invSpd};
+  }
+  else
+  {
+    p->lastStretchDir = (Vector3){0.0f, 1.0f, 0.0f};
+  }
 
   p->collisionEnabled = config.physics.collisionEnabled;
   p->collisionElasticity = config.physics.collisionElasticity;
@@ -488,8 +519,17 @@ void ParticleSystem_SpawnFromEmitter(ParticleConfig config, int emitterId, int r
   p->trailStepTime = (config.render.trailStepTime > 0.0f) ? config.render.trailStepTime : 0.015f;
   p->trailOnly = (p->trailLength > 0) ? config.render.trailOnly : 0;
   p->trailSmooth = config.render.trailSmooth;
-  p->trailHistoryCount = 0;
   p->trailHistoryTimer = 0.0f;
+  if (p->trailLength > 0)
+  {
+    // Khởi tạo điểm gốc ngay khi spawn để vệt trail xuất hiện mượt từ frame đầu tiên
+    p->trailHistory[0] = config.position;
+    p->trailHistoryCount = 1;
+  }
+  else
+  {
+    p->trailHistoryCount = 0;
+  }
 
   // Advanced facing & 3D Mesh (Niagara parity)
   p->facingMode = config.render.facingMode;
@@ -634,7 +674,6 @@ void UpdateParticles(float dt)
                                 (hasAnyMotionFields && PS_PointInAABB(position, motionLo, motionHi, sweepPad));
 
       // Chỉ chia 2 substeps đều nhau khi frametime > 22.2ms (< 45 FPS) VÀ hạt nằm trong vùng MotionField.
-      // Tránh lỗi ở 60 FPS (dt ~ 0.0168s) bị tách thành 0.0166s + 0.0002s làm nhân đôi chi phí lấy mẫu!
       int numSteps = (canHitMotionFields && remaining > (1.0f / 45.0f)) ? 2 : 1;
       float fixedStep = remaining / (float)numSteps;
 
@@ -991,28 +1030,54 @@ void UpdateParticles(float dt)
       }
       if (p->y <= floorY)
       {
-        p->vy = -p->vy * p->collisionElasticity;
+        float preImpactVy = p->vy;
+        if (p->vy < 0.0f)
+        {
+          p->vy = -p->vy * p->collisionElasticity;
+        }
         p->vx *= 0.75f;
         p->vz *= 0.75f;
         p->y = floorY + 0.005f;
 
-        EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_COLLISION,
-                                                               .position = {p->x, floorY + 0.005f, p->z},
-                                                               .velocity = {p->vx, p->vy, p->vz},
-                                                               .normal = {0.0f, 1.0f, 0.0f}});
+        // Chỉ phát sự kiện va chạm khi hạt thực sự rơi đập xuống sàn, tránh spam mỗi frame khi hạt đã nằm yên
+        if (preImpactVy < -0.05f)
+        {
+          EmissionChildren_Publish(p->children, &(EmissionEvent){.kind = EMISSION_EVENT_COLLISION,
+                                                                 .position = {p->x, floorY + 0.005f, p->z},
+                                                                 .velocity = {p->vx, p->vy, p->vz},
+                                                                 .normal = {0.0f, 1.0f, 0.0f}});
+        }
       }
     }
 
     // Particle Trail History Update
     if (p->trailLength > 0)
     {
+      int maxLen = p->trailLength;
+      if (maxLen > 8)
+        maxLen = 8;
+
       p->trailHistoryTimer += dt;
-      if (p->trailHistoryTimer >= p->trailStepTime || p->trailHistoryCount == 0)
+      if (p->trailHistoryCount == 1)
       {
-        p->trailHistoryTimer = 0.0f;
-        int maxLen = p->trailLength;
-        if (maxLen > 8)
-          maxLen = 8;
+        // Đẩy vị trí spawn xuống slot [1] và dùng slot [0] làm đầu đọc trực tiếp (live head)
+        if (maxLen >= 2)
+        {
+          p->trailHistory[1] = p->trailHistory[0];
+          p->trailHistory[0] = (Vector3){p->x, p->y, p->z};
+          p->trailHistoryCount = 2;
+        }
+        else
+        {
+          p->trailHistory[0] = (Vector3){p->x, p->y, p->z};
+        }
+      }
+      else if (p->trailHistoryTimer >= p->trailStepTime || p->trailHistoryCount == 0)
+      {
+        p->trailHistoryTimer -= p->trailStepTime;
+        if (p->trailHistoryTimer >= p->trailStepTime)
+          p->trailHistoryTimer = 0.0f;
+
         int limit = (p->trailHistoryCount < maxLen) ? p->trailHistoryCount : maxLen - 1;
         for (int h = limit; h > 0; h--)
         {
@@ -1035,7 +1100,8 @@ void UpdateParticles(float dt)
 
 static float s_particleDepths[MAX_PARTICLES];
 
-// Chuỗi gap Ciura tối ưu cho Shell Sort (nhanh hơn 30-40% so với gap = count / 2)
+// Chuỗi gap Ciura tối ưu cho Shell Sort, kết hợp khóa phụ (texId, blendMode) khi cùng độ sâu
+// để gom batch trên Vulkan mà vẫn bảo toàn thứ tự Back-to-Front.
 static void SortParticlesByDepth(int *ids, int count, const float *depths)
 {
   static const int ciuraGaps[] = {701, 301, 132, 57, 23, 10, 4, 1};
@@ -1048,10 +1114,31 @@ static void SortParticlesByDepth(int *ids, int count, const float *depths)
     {
       int temp = ids[i];
       float tempDepth = depths[temp];
+      unsigned int tempTex = g_Particles[temp].texId;
+      int tempBlend = g_Particles[temp].blendMode;
       int j = i;
-      while (j >= gap && depths[ids[j - gap]] > tempDepth)
+      while (j >= gap)
       {
-        ids[j] = ids[j - gap];
+        int prev = ids[j - gap];
+        float prevDepth = depths[prev];
+        float diff = prevDepth - tempDepth;
+        bool swap = false;
+        if (diff > 1e-4f)
+        {
+          swap = true;
+        }
+        else if (diff >= -1e-4f)
+        {
+          // Khi 2 hạt có cùng độ sâu (ví dụ cùng nổ ra từ 1 vị trí), gom nhóm theo blendMode & texId
+          if (g_Particles[prev].blendMode > tempBlend ||
+              (g_Particles[prev].blendMode == tempBlend && g_Particles[prev].texId > tempTex))
+          {
+            swap = true;
+          }
+        }
+        if (!swap)
+          break;
+        ids[j] = prev;
         j -= gap;
       }
       ids[j] = temp;
@@ -1359,22 +1446,6 @@ static void ParticleLighting_Begin(Camera3D camera)
   SetShaderValueV(s_litShader, s_locVfxRadius, rad, SHADER_UNIFORM_FLOAT, PARTICLE_MAX_VFX_LIGHTS);
 }
 
-static void ParticleLighting_SetStrength(float v)
-{
-  if (!s_litActive)
-    return;
-  rlDrawRenderBatchActive();
-  SetShaderValue(s_litShader, s_locLightStrength, &v, SHADER_UNIFORM_FLOAT);
-}
-
-static void ParticleLighting_SetEmissive(float v)
-{
-  if (!s_litActive || s_locEmissiveBoost < 0)
-    return;
-  rlDrawRenderBatchActive();
-  SetShaderValue(s_litShader, s_locEmissiveBoost, &v, SHADER_UNIFORM_FLOAT);
-}
-
 static void ParticleLighting_End(void)
 {
   if (!s_litActive)
@@ -1433,8 +1504,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
                 viewDir.x * right.y - viewDir.y * right.x};
 
   // Kiểm tra xem Camera hoặc danh sách Particle có thay đổi kể từ pass trước không.
-  // Nhờ đó khi gọi DrawParticlesBody rồi DrawParticlesEmission trong cùng 1 frame,
-  // ta chỉ tính vùng Soft-Depth và chạy Shell Sort đúng 1 lần duy nhất!
   bool camChanged = (Vector3DistanceSqr(camera.position, s_lastSortCamPos) > 1e-6f) ||
                     (Vector3DistanceSqr(camera.target, s_lastSortCamTarget) > 1e-6f);
   bool needSortAndBounds = s_depthSortDirty || camChanged;
@@ -1445,9 +1514,12 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     {
       Rectangle bounds = {0};
       bool hasBounds = false;
+      float screenW = (float)GetScreenWidth();
       float screenH = (float)GetScreenHeight();
       float halfFovy = camera.fovy * DEG2RAD * 0.5f;
-      float projScale = screenH / fmaxf(2.0f * tanf(halfFovy), 1e-5f);
+      float tanHalfFovy = fmaxf(tanf(halfFovy), 1e-5f);
+      float projScale = screenH / (2.0f * tanHalfFovy);
+      float invAspect = (screenW > 1.0f) ? (screenH / screenW) : 1.0f;
 
       for (int a = 0; a < s_activeCount; ++a)
       {
@@ -1462,9 +1534,15 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         if (forwardDist <= 0.01f)
           continue;
 
-        float distSq = dx * dx + dy * dy + dz * dz;
-        float distance = sqrtf(distSq);
-        Vector2 center = GetWorldToScreen((Vector3){p->x, p->y, p->z}, camera);
+        // Chiếu trực tiếp bằng hệ trục trực chuẩn (right, up, -viewDir) thay vì gọi GetWorldToScreen
+        float viewX = dx * right.x + dy * right.y + dz * right.z;
+        float viewY = dx * up.x + dy * up.y + dz * up.z;
+        float invZ = 1.0f / (forwardDist * tanHalfFovy);
+        float ndcX = viewX * invZ * invAspect;
+        float ndcY = viewY * invZ;
+        Vector2 center = {
+            (ndcX + 1.0f) * 0.5f * screenW,
+            (1.0f - ndcY) * 0.5f * screenH};
 
         float drawRadius = p->radius;
         if (p->radiusCurve)
@@ -1472,8 +1550,9 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
           float lr = Clamp(p->lifetime / p->maxLifetime, 0.0f, 1.0f);
           drawRadius *= SkillCurve_Eval(p->radiusCurve, 1.0f - lr);
         }
-        float softDepthRadius = drawRadius * fmaxf(p->facingAspect, 1.0f);
-        float radiusPx = softDepthRadius * projScale / distance;
+        float stretchMax = (p->stretchStrength > 0.0f || p->facingMode == VFX_FACING_VELOCITY) ? 3.5f : 1.0f;
+        float softDepthRadius = drawRadius * fmaxf(p->facingAspect, stretchMax);
+        float radiusPx = softDepthRadius * projScale / forwardDist;
         Rectangle r = {center.x - radiusPx, center.y - radiusPx, radiusPx * 2.0f, radiusPx * 2.0f};
         if (!hasBounds)
         {
@@ -1490,10 +1569,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
           bounds.height = y1 - bounds.y;
         }
       }
-      /* bounds is built from GetWorldToScreen (window px); the snapshot it arms
-         writes into the scene target, smaller than the window under a render
-         scale. Without this the region was 1/scale too large and shifted, so a
-         soft particle near the frame edge could read a stale depth row. */
       if (hasBounds)
         SceneTargets_RequestSoftDepthRegion(
             SceneTargets_WindowRectToTarget(bounds));
@@ -1522,7 +1597,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
 
   unsigned int curTex = 0xFFFFFFFFu;
   int curBlend = -1;
-  int curUnlit = -1;
   int curGridC = -1, curGridR = -1;
   float curBoost = -1.0f;
   int curVolume = -1;
@@ -1550,168 +1624,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
     if (p->renderMode == 3 || p->trailOnly)
       continue;
 
-    unsigned int want = p->texId ? p->texId : texture.id;
-    int wantGridC = (p->spriteAnim ? p->spriteAnim->cols : 1);
-    int wantGridR = (p->spriteAnim ? p->spriteAnim->rows : 1);
-    float wantBoost = p->emissiveBoost * s_emissiveBoost;
-    float wantStrength = p->unlit ? 0.0f : (((p->sixWayLighting || p->smokeSheet) && s_lightingStrength <= 0.0f) ? 1.0f : s_lightingStrength);
-    int drawBlend = (layerFilter == 0) ? VFX_BLEND_ALPHA : p->blendMode;
-    unsigned int packedSmokeTint = VFXPackColor(p->smokeTint);
-
-    if (want != curTex || drawBlend != curBlend || wantStrength != curStrength ||
-        wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost ||
-        p->volumeSheet != curVolume || p->rampTexId != curRamp ||
-        p->heatGain != curHeat || p->smokeGain != curSmokeGain ||
-        packedSmokeTint != curSmokeTint ||
-        p->sixWayLighting != curSixWay || p->sixWayTexBId != curSixWayTexB ||
-        p->sixWayScattering != curSixWayScat || p->sixWayAbsorption != curSixWayAbs ||
-        p->smokeSheet != curSmokeSheet || p->normalTexId != curNormalTex ||
-        p->motionTexId != curMotionTex || p->motionWarpScale != curMotionWarp)
-    {
-      if (curTex != 0xFFFFFFFFu)
-        rlEnd();
-      s_perfBatches++;
-      if (drawBlend != curBlend)
-      {
-        rlDrawRenderBatchActive();
-        if (curBlend >= 0)
-          EndBlendMode();
-        BeginBlendMode(drawBlend == VFX_BLEND_ADDITIVE        ? BLEND_ADDITIVE
-                       : drawBlend == VFX_BLEND_PREMULTIPLIED ? BLEND_ALPHA_PREMULTIPLY
-                                                              : BLEND_ALPHA);
-        rlDrawRenderBatchActive();
-        curBlend = drawBlend;
-      }
-      if (p->volumeSheet != curVolume || p->smokeSheet != curSmokeSheet ||
-          p->rampTexId != curRamp ||
-          p->heatGain != curHeat || p->smokeGain != curSmokeGain ||
-          packedSmokeTint != curSmokeTint)
-      {
-        rlDrawRenderBatchActive();
-        float vs = p->smokeSheet ? 3.0f : (float)p->volumeSheet;
-        float hg = p->heatGain;
-        if (s_litActive && s_locVolumeSheet >= 0)
-          SetShaderValue(s_litShader, s_locVolumeSheet, &vs, SHADER_UNIFORM_FLOAT);
-        if (s_litActive && s_locHeatGain >= 0)
-          SetShaderValue(s_litShader, s_locHeatGain, &hg, SHADER_UNIFORM_FLOAT);
-        if (s_litActive && p->volumeSheet && p->rampTexId != 0 && s_locRampLUT >= 0)
-        {
-          Texture2D ramp = {0};
-          ramp.id = p->rampTexId;
-          ramp.width = 1;
-          ramp.height = 1;
-          ramp.mipmaps = 1;
-          ramp.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-          SetShaderValueTexture(s_litShader, s_locRampLUT, ramp);
-        }
-        if (s_litActive && s_locSmokeGain >= 0)
-        {
-          float sg = p->smokeGain;
-          SetShaderValue(s_litShader, s_locSmokeGain, &sg, SHADER_UNIFORM_FLOAT);
-        }
-        if (s_litActive && s_locSmokeTint >= 0)
-        {
-          float st[3] = {(float)p->smokeTint.r * (1.0f / 255.0f),
-                         (float)p->smokeTint.g * (1.0f / 255.0f),
-                         (float)p->smokeTint.b * (1.0f / 255.0f)};
-          SetShaderValue(s_litShader, s_locSmokeTint, st, SHADER_UNIFORM_VEC3);
-        }
-        curVolume = p->volumeSheet;
-        curRamp = p->rampTexId;
-        curHeat = p->heatGain;
-        curSmokeGain = p->smokeGain;
-        curSmokeTint = packedSmokeTint;
-      }
-      if (p->sixWayLighting != curSixWay || p->sixWayTexBId != curSixWayTexB ||
-          p->sixWayScattering != curSixWayScat || p->sixWayAbsorption != curSixWayAbs)
-      {
-        rlDrawRenderBatchActive();
-        float sw = (float)p->sixWayLighting;
-        float scat = p->sixWayScattering;
-        float absVal = p->sixWayAbsorption;
-        if (s_litActive && s_locSixWayLighting >= 0)
-          SetShaderValue(s_litShader, s_locSixWayLighting, &sw, SHADER_UNIFORM_FLOAT);
-        if (s_litActive && s_locSixWayScattering >= 0)
-          SetShaderValue(s_litShader, s_locSixWayScattering, &scat, SHADER_UNIFORM_FLOAT);
-        if (s_litActive && s_locSixWayAbsorption >= 0)
-          SetShaderValue(s_litShader, s_locSixWayAbsorption, &absVal, SHADER_UNIFORM_FLOAT);
-        if (s_litActive && p->sixWayLighting > 1 && p->sixWayTexBId != 0 && s_locSixWayTexB >= 0)
-        {
-          Texture2D texB = {0};
-          texB.id = p->sixWayTexBId;
-          texB.width = 1;
-          texB.height = 1;
-          texB.mipmaps = 1;
-          texB.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-          SetShaderValueTexture(s_litShader, s_locSixWayTexB, texB);
-        }
-        curSixWay = p->sixWayLighting;
-        curSixWayTexB = p->sixWayTexBId;
-        curSixWayScat = p->sixWayScattering;
-        curSixWayAbs = p->sixWayAbsorption;
-      }
-      if (p->smokeSheet != curSmokeSheet || p->normalTexId != curNormalTex)
-      {
-        rlDrawRenderBatchActive();
-        if (s_litActive && p->normalTexId != 0 && s_locNormalTex >= 0)
-        {
-          Texture2D nTex = {0};
-          nTex.id = p->normalTexId;
-          nTex.width = 1;
-          nTex.height = 1;
-          nTex.mipmaps = 1;
-          nTex.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-          SetShaderValueTexture(s_litShader, s_locNormalTex, nTex);
-        }
-        curSmokeSheet = p->smokeSheet;
-        curNormalTex = p->normalTexId;
-      }
-      if (p->motionTexId != curMotionTex || p->motionWarpScale != curMotionWarp)
-      {
-        rlDrawRenderBatchActive();
-        float useMotion = (p->motionTexId != 0 && p->motionWarpScale > 0.0f) ? 1.0f : 0.0f;
-        float warpScale = p->motionWarpScale;
-        if (s_litActive && s_locUseMotionVectors >= 0)
-          SetShaderValue(s_litShader, s_locUseMotionVectors, &useMotion, SHADER_UNIFORM_FLOAT);
-        if (s_litActive && s_locMotionWarp >= 0)
-          SetShaderValue(s_litShader, s_locMotionWarp, &warpScale, SHADER_UNIFORM_FLOAT);
-        if (s_litActive && p->motionTexId != 0 && s_locMotionTex >= 0)
-        {
-          Texture2D mTex = {0};
-          mTex.id = p->motionTexId;
-          mTex.width = 1;
-          mTex.height = 1;
-          mTex.mipmaps = 1;
-          mTex.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
-          SetShaderValueTexture(s_litShader, s_locMotionTex, mTex);
-        }
-        curMotionTex = p->motionTexId;
-        curMotionWarp = p->motionWarpScale;
-      }
-      if (wantStrength != curStrength)
-      {
-        ParticleLighting_SetStrength(wantStrength);
-        curStrength = wantStrength;
-        curUnlit = p->unlit;
-      }
-      if (wantBoost != curBoost)
-      {
-        ParticleLighting_SetEmissive((p->unlit || p->volumeSheet) ? wantBoost : 1.0f);
-        curBoost = wantBoost;
-      }
-      if (wantGridC != curGridC || wantGridR != curGridR)
-      {
-        float grid[2] = {(float)wantGridC, (float)wantGridR};
-        if (s_locAtlasGrid >= 0)
-          SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
-        curGridC = wantGridC;
-        curGridR = wantGridR;
-      }
-      rlSetTexture(want);
-      rlBegin(RL_QUADS);
-      curTex = want;
-    }
-
+    // Tính trước bán kính và màu sắc/alpha của hạt TRƯỚC khi kiểm tra ngắt batch.
+    // Nhờ đó các hạt đã mờ hết (alpha == 0) hoặc thu nhỏ về 0 sẽ không gây flush batch vô ích trên Vulkan.
     float lifeRatio = p->lifetime / p->maxLifetime;
     if (lifeRatio < 0.0f)
       lifeRatio = 0.0f;
@@ -1719,8 +1633,27 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       lifeRatio = 1.0f;
 
     float invRatio = 1.0f - lifeRatio;
-    Color c = p->colorStart;
+    float drawRadius = p->radius;
+    if (p->radiusCurve)
+    {
+      drawRadius *= SkillCurve_Eval(p->radiusCurve, invRatio);
+    }
+    if (drawRadius <= 1e-5f)
+      continue;
 
+    // Culling nhanh các hạt billboard nằm hoàn toàn phía sau lưng camera
+    if (p->meshModel.meshCount == 0)
+    {
+      float dx = p->x - camera.position.x;
+      float dy = p->y - camera.position.y;
+      float dz = p->z - camera.position.z;
+      float forwardDist = -(dx * viewDir.x + dy * viewDir.y + dz * viewDir.z);
+      float cullMargin = drawRadius * fmaxf(p->facingAspect, 3.5f);
+      if (forwardDist < -cullMargin)
+        continue;
+    }
+
+    Color c = p->colorStart;
     if (p->gradient)
     {
       c = ColorGradient_Sample(p->gradient, invRatio);
@@ -1739,6 +1672,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       int a_val = (int)((float)p->colorStart.a * mul);
       c.a = (unsigned char)(a_val < 0 ? 0 : (a_val > 255 ? 255 : a_val));
     }
+    if (c.a == 0 && p->meshModel.meshCount == 0)
+      continue;
 
     if (p->emissiveCurve)
     {
@@ -1772,12 +1707,6 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       c.b = (p->volumeSheet >= 5) ? (unsigned char)(p->colorStart.b) : h;
     }
 
-    float drawRadius = p->radius;
-    if (p->radiusCurve)
-    {
-      drawRadius *= SkillCurve_Eval(p->radiusCurve, invRatio);
-    }
-
     // ── FEATURE 3: 3D MESH PARTICLE RENDERING (Niagara NE_Debris Parity) ─────
     if (p->meshModel.meshCount > 0)
     {
@@ -1788,30 +1717,213 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       }
       rlDrawRenderBatchActive();
 
-      rlPushMatrix();
-      rlTranslatef(p->x, p->y, p->z);
-      rlRotatef(p->meshRotation.z * RAD2DEG, 0.0f, 0.0f, 1.0f);
-      rlRotatef(p->meshRotation.y * RAD2DEG, 0.0f, 1.0f, 0.0f);
-      rlRotatef(p->meshRotation.x * RAD2DEG, 1.0f, 0.0f, 0.0f);
-      rlScalef(drawRadius, drawRadius, drawRadius);
+      // Tính ma trận model trực tiếp để tương thích hoàn toàn với Vulkan backend
+      Matrix matScale = MatrixScale(drawRadius, drawRadius, drawRadius);
+      Matrix matRot = MatrixRotateZYX(p->meshRotation);
+      Matrix matTrans = MatrixTranslate(p->x, p->y, p->z);
+      Matrix meshTransform = MatrixMultiply(MatrixMultiply(p->meshModel.transform, matScale),
+                                            MatrixMultiply(matRot, matTrans));
 
       for (int m = 0; m < p->meshModel.meshCount; m++)
       {
         Material mat = p->meshModel.materials[p->meshModel.meshMaterial[m]];
         Color origColor = mat.maps[MATERIAL_MAP_DIFFUSE].color;
         mat.maps[MATERIAL_MAP_DIFFUSE].color = c;
-        DrawMesh(p->meshModel.meshes[m], mat, MatrixIdentity());
+        DrawMesh(p->meshModel.meshes[m], mat, meshTransform);
         mat.maps[MATERIAL_MAP_DIFFUSE].color = origColor;
       }
 
-      rlPopMatrix();
       rlDrawRenderBatchActive();
-      // Khôi phục lại s_litShader sau khi DrawMesh ghi đè shader của material
+      // Khôi phục lại s_litShader và đánh dấu các uniform cache cần đồng bộ lại sau DrawMesh
       if (s_litActive && s_litShader.id != 0)
       {
         BeginShaderMode(s_litShader);
+        if (s_softBound)
+          SceneTargets_BindDepthForSoftParticles(s_litShader, PARTICLE_SOFT_DEPTH_SLOT);
+        curGridC = -1;
+        curGridR = -1;
+        curBoost = -1.0f;
+        curVolume = -1;
+        curRamp = 0xFFFFFFFFu;
+        curSixWay = -1;
+        curSmokeSheet = -1;
+        curNormalTex = 0xFFFFFFFFu;
+        curMotionTex = 0xFFFFFFFFu;
+        curStrength = -1.0f;
       }
+      curBlend = -1;
       continue;
+    }
+
+    // Chuẩn hóa các trạng thái chỉ có hiệu lực khi tính năng tương ứng bật để tránh tách batch giả
+    unsigned int want = p->texId ? p->texId : texture.id;
+    int drawBlend = (layerFilter == 0) ? VFX_BLEND_ALPHA : p->blendMode;
+    int wantGridC = s_litActive ? (p->spriteAnim ? p->spriteAnim->cols : 1) : 1;
+    int wantGridR = s_litActive ? (p->spriteAnim ? p->spriteAnim->rows : 1) : 1;
+    float wantBoost = s_litActive ? ((p->unlit || p->volumeSheet) ? (p->emissiveBoost * s_emissiveBoost) : 1.0f) : 1.0f;
+    float wantStrength = s_litActive ? (p->unlit ? 0.0f : (((p->sixWayLighting || p->smokeSheet) && s_lightingStrength <= 0.0f) ? 1.0f : s_lightingStrength)) : 0.0f;
+
+    int wantVolume = s_litActive ? p->volumeSheet : 0;
+    int wantSmokeSheet = s_litActive ? p->smokeSheet : 0;
+    unsigned int wantRamp = (wantVolume != 0) ? p->rampTexId : 0u;
+    float wantHeat = (wantVolume != 0 || wantSmokeSheet != 0) ? p->heatGain : 1.0f;
+    float wantSmokeGain = (wantVolume != 0 || wantSmokeSheet != 0) ? p->smokeGain : 1.0f;
+    unsigned int packedSmokeTint = (wantVolume != 0 || wantSmokeSheet != 0) ? VFXPackColor(p->smokeTint) : 0u;
+
+    int wantSixWay = s_litActive ? p->sixWayLighting : 0;
+    unsigned int wantSixWayTexB = (wantSixWay > 1) ? p->sixWayTexBId : 0u;
+    float wantSixWayScat = (wantSixWay != 0) ? p->sixWayScattering : 1.0f;
+    float wantSixWayAbs = (wantSixWay != 0) ? p->sixWayAbsorption : 1.0f;
+
+    unsigned int wantNormalTex = (wantSmokeSheet != 0) ? p->normalTexId : 0u;
+    unsigned int wantMotionTex = (s_litActive && p->motionTexId != 0 && p->motionWarpScale > 0.0f) ? p->motionTexId : 0u;
+    float wantMotionWarp = (wantMotionTex != 0u) ? p->motionWarpScale : 0.0f;
+
+    if (want != curTex || drawBlend != curBlend || wantStrength != curStrength ||
+        wantGridC != curGridC || wantGridR != curGridR || wantBoost != curBoost ||
+        wantVolume != curVolume || wantRamp != curRamp ||
+        wantHeat != curHeat || wantSmokeGain != curSmokeGain ||
+        packedSmokeTint != curSmokeTint ||
+        wantSixWay != curSixWay || wantSixWayTexB != curSixWayTexB ||
+        wantSixWayScat != curSixWayScat || wantSixWayAbs != curSixWayAbs ||
+        wantSmokeSheet != curSmokeSheet || wantNormalTex != curNormalTex ||
+        wantMotionTex != curMotionTex || wantMotionWarp != curMotionWarp)
+    {
+      if (curTex != 0xFFFFFFFFu)
+        rlEnd();
+      // Flush batch hiện tại đúng 1 lần trước khi thay đổi tập uniform/blend state cho batch mới
+      rlDrawRenderBatchActive();
+      s_perfBatches++;
+
+      if (drawBlend != curBlend)
+      {
+        if (curBlend >= 0)
+          EndBlendMode();
+        BeginBlendMode(drawBlend == VFX_BLEND_ADDITIVE        ? BLEND_ADDITIVE
+                       : drawBlend == VFX_BLEND_PREMULTIPLIED ? BLEND_ALPHA_PREMULTIPLY
+                                                              : BLEND_ALPHA);
+        curBlend = drawBlend;
+      }
+      if (s_litActive)
+      {
+        if (wantVolume != curVolume || wantSmokeSheet != curSmokeSheet ||
+            wantRamp != curRamp || wantHeat != curHeat ||
+            wantSmokeGain != curSmokeGain || packedSmokeTint != curSmokeTint)
+        {
+          float vs = wantSmokeSheet ? 3.0f : (float)wantVolume;
+          if (s_locVolumeSheet >= 0)
+            SetShaderValue(s_litShader, s_locVolumeSheet, &vs, SHADER_UNIFORM_FLOAT);
+          if (s_locHeatGain >= 0)
+            SetShaderValue(s_litShader, s_locHeatGain, &wantHeat, SHADER_UNIFORM_FLOAT);
+          if (wantVolume && wantRamp != 0 && s_locRampLUT >= 0)
+          {
+            Texture2D ramp = {0};
+            ramp.id = wantRamp;
+            ramp.width = 1;
+            ramp.height = 1;
+            ramp.mipmaps = 1;
+            ramp.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+            SetShaderValueTexture(s_litShader, s_locRampLUT, ramp);
+          }
+          if (s_locSmokeGain >= 0)
+            SetShaderValue(s_litShader, s_locSmokeGain, &wantSmokeGain, SHADER_UNIFORM_FLOAT);
+          if (s_locSmokeTint >= 0 && (wantVolume != 0 || wantSmokeSheet != 0))
+          {
+            float st[3] = {(float)p->smokeTint.r * (1.0f / 255.0f),
+                           (float)p->smokeTint.g * (1.0f / 255.0f),
+                           (float)p->smokeTint.b * (1.0f / 255.0f)};
+            SetShaderValue(s_litShader, s_locSmokeTint, st, SHADER_UNIFORM_VEC3);
+          }
+          curVolume = wantVolume;
+          curRamp = wantRamp;
+          curHeat = wantHeat;
+          curSmokeGain = wantSmokeGain;
+          curSmokeTint = packedSmokeTint;
+        }
+        if (wantSixWay != curSixWay || wantSixWayTexB != curSixWayTexB ||
+            wantSixWayScat != curSixWayScat || wantSixWayAbs != curSixWayAbs)
+        {
+          float sw = (float)wantSixWay;
+          if (s_locSixWayLighting >= 0)
+            SetShaderValue(s_litShader, s_locSixWayLighting, &sw, SHADER_UNIFORM_FLOAT);
+          if (s_locSixWayScattering >= 0)
+            SetShaderValue(s_litShader, s_locSixWayScattering, &wantSixWayScat, SHADER_UNIFORM_FLOAT);
+          if (s_locSixWayAbsorption >= 0)
+            SetShaderValue(s_litShader, s_locSixWayAbsorption, &wantSixWayAbs, SHADER_UNIFORM_FLOAT);
+          if (wantSixWay > 1 && wantSixWayTexB != 0 && s_locSixWayTexB >= 0)
+          {
+            Texture2D texB = {0};
+            texB.id = wantSixWayTexB;
+            texB.width = 1;
+            texB.height = 1;
+            texB.mipmaps = 1;
+            texB.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+            SetShaderValueTexture(s_litShader, s_locSixWayTexB, texB);
+          }
+          curSixWay = wantSixWay;
+          curSixWayTexB = wantSixWayTexB;
+          curSixWayScat = wantSixWayScat;
+          curSixWayAbs = wantSixWayAbs;
+        }
+        if (wantSmokeSheet != curSmokeSheet || wantNormalTex != curNormalTex)
+        {
+          if (wantNormalTex != 0 && s_locNormalTex >= 0)
+          {
+            Texture2D nTex = {0};
+            nTex.id = wantNormalTex;
+            nTex.width = 1;
+            nTex.height = 1;
+            nTex.mipmaps = 1;
+            nTex.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+            SetShaderValueTexture(s_litShader, s_locNormalTex, nTex);
+          }
+          curSmokeSheet = wantSmokeSheet;
+          curNormalTex = wantNormalTex;
+        }
+        if (wantMotionTex != curMotionTex || wantMotionWarp != curMotionWarp)
+        {
+          float useMotion = (wantMotionTex != 0 && wantMotionWarp > 0.0f) ? 1.0f : 0.0f;
+          if (s_locUseMotionVectors >= 0)
+            SetShaderValue(s_litShader, s_locUseMotionVectors, &useMotion, SHADER_UNIFORM_FLOAT);
+          if (s_locMotionWarp >= 0)
+            SetShaderValue(s_litShader, s_locMotionWarp, &wantMotionWarp, SHADER_UNIFORM_FLOAT);
+          if (wantMotionTex != 0 && s_locMotionTex >= 0)
+          {
+            Texture2D mTex = {0};
+            mTex.id = wantMotionTex;
+            mTex.width = 1;
+            mTex.height = 1;
+            mTex.mipmaps = 1;
+            mTex.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+            SetShaderValueTexture(s_litShader, s_locMotionTex, mTex);
+          }
+          curMotionTex = wantMotionTex;
+          curMotionWarp = wantMotionWarp;
+        }
+        if (wantStrength != curStrength)
+        {
+          if (s_locLightStrength >= 0)
+            SetShaderValue(s_litShader, s_locLightStrength, &wantStrength, SHADER_UNIFORM_FLOAT);
+          curStrength = wantStrength;
+        }
+        if (wantBoost != curBoost)
+        {
+          if (s_locEmissiveBoost >= 0)
+            SetShaderValue(s_litShader, s_locEmissiveBoost, &wantBoost, SHADER_UNIFORM_FLOAT);
+          curBoost = wantBoost;
+        }
+        if (wantGridC != curGridC || wantGridR != curGridR)
+        {
+          float grid[2] = {(float)wantGridC, (float)wantGridR};
+          if (s_locAtlasGrid >= 0)
+            SetShaderValue(s_litShader, s_locAtlasGrid, grid, SHADER_UNIFORM_VEC2);
+          curGridC = wantGridC;
+          curGridR = wantGridR;
+        }
+      }
+      rlSetTexture(want);
+      rlBegin(RL_QUADS);
+      curTex = want;
     }
 
     float rx = right.x * drawRadius, ry = right.y * drawRadius, rz = right.z * drawRadius;
@@ -1863,35 +1975,60 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       float vy = p->vx * up.x + p->vy * up.y + p->vz * up.z;
       float screenSpeedSq = vx * vx + vy * vy;
       float minSpeed = p->stretchMinSpeed > 0.05f ? p->stretchMinSpeed : 0.05f;
-      if (screenSpeedSq > minSpeed * minSpeed)
-      {
-        float screenSpeed = sqrtf(screenSpeedSq);
-        float invSpeed = 1.0f / screenSpeed;
-        float dirX = vx * invSpeed;
-        float dirY = vy * invSpeed;
 
-        Vector3 tangentDir = {
+      float dirX, dirY;
+      float screenSpeed = sqrtf(screenSpeedSq);
+      if (screenSpeed > 1e-4f)
+      {
+        float invSpeed = 1.0f / screenSpeed;
+        dirX = vx * invSpeed;
+        dirY = vy * invSpeed;
+        p->lastStretchDir = (Vector3){
             right.x * dirX + up.x * dirY,
             right.y * dirX + up.y * dirY,
             right.z * dirX + up.z * dirY};
-        Vector3 rightDir = {
-            right.x * dirY - up.x * dirX,
-            right.y * dirY - up.y * dirX,
-            right.z * dirY - up.z * dirX};
-
-        float stretchFactor = 1.0f + screenSpeed * (p->stretchStrength > 0.0f ? p->stretchStrength : 0.05f);
-        if (stretchFactor > 3.5f)
-          stretchFactor = 3.5f;
-
-        rx = rightDir.x * drawRadius;
-        ry = rightDir.y * drawRadius;
-        rz = rightDir.z * drawRadius;
-
-        float stretchedRadius = drawRadius * stretchFactor;
-        ux = tangentDir.x * stretchedRadius;
-        uy = tangentDir.y * stretchedRadius;
-        uz = tangentDir.z * stretchedRadius;
       }
+      else
+      {
+        // Bảo toàn hướng di chuyển cuối cùng khi hạt giảm tốc, tránh giật góc xoay về trục Up
+        float lx = p->lastStretchDir.x * right.x + p->lastStretchDir.y * right.y + p->lastStretchDir.z * right.z;
+        float ly = p->lastStretchDir.x * up.x + p->lastStretchDir.y * up.y + p->lastStretchDir.z * up.z;
+        float lLenSq = lx * lx + ly * ly;
+        if (lLenSq > 1e-6f)
+        {
+          float invL = 1.0f / sqrtf(lLenSq);
+          dirX = lx * invL;
+          dirY = ly * invL;
+        }
+        else
+        {
+          dirX = 0.0f;
+          dirY = 1.0f;
+        }
+      }
+
+      Vector3 tangentDir = {
+          right.x * dirX + up.x * dirY,
+          right.y * dirX + up.y * dirY,
+          right.z * dirX + up.z * dirY};
+      Vector3 rightDir = {
+          right.x * dirY - up.x * dirX,
+          right.y * dirY - up.y * dirX,
+          right.z * dirY - up.z * dirX};
+
+      float effectiveSpeed = (screenSpeed > minSpeed) ? screenSpeed : 0.0f;
+      float stretchFactor = 1.0f + effectiveSpeed * (p->stretchStrength > 0.0f ? p->stretchStrength : 0.05f);
+      if (stretchFactor > 3.5f)
+        stretchFactor = 3.5f;
+
+      rx = rightDir.x * drawRadius;
+      ry = rightDir.y * drawRadius;
+      rz = rightDir.z * drawRadius;
+
+      float stretchedRadius = drawRadius * stretchFactor;
+      ux = tangentDir.x * stretchedRadius;
+      uy = tangentDir.y * stretchedRadius;
+      uz = tangentDir.z * stretchedRadius;
     }
     else if (p->rotation != 0.0f)
     {
@@ -1954,7 +2091,7 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
 #define PS_EMIT_QUAD(_sample, _a)                                          \
   do                                                                       \
   {                                                                        \
-    if ((_a) > 0)                                                          \
+    if ((_a) > 0.5f)                                                       \
     {                                                                      \
       const SpriteAnimFrameSample psSample = (_sample);                    \
       const Rectangle psUV = psSample.uv;                                  \
@@ -2008,10 +2145,11 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       }
       else
       {
+        // Xoay vuông góc 90 độ đúng trong mặt phẳng billboard thay vì tráo lệch thành phần (-uz, uy, ux)
         float tempRx = rx, tempRy = ry, tempRz = rz;
-        rx = -uz;
-        ry = uy;
-        rz = ux;
+        rx = -ux;
+        ry = -uy;
+        rz = -uz;
         ux = tempRx;
         uy = tempRy;
         uz = tempRz;
@@ -2076,13 +2214,17 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
   for (int a = 0; a < s_activeCount; a++)
   {
     ParticleInternal *p = &g_Particles[s_activeIds[a]];
+    if (p->renderMode == 3)
+      continue;
     if (p->trailLength > 0 && p->trailHistoryCount >= 2)
     {
       if (layerFilter == 0 && p->blendMode != VFX_BLEND_ALPHA)
         continue;
       if (layerFilter == 1 && p->blendMode == VFX_BLEND_ALPHA)
         continue;
-      int want = (layerFilter == 0 || p->blendMode == VFX_BLEND_ALPHA) ? BLEND_ALPHA : BLEND_ADDITIVE;
+      int want = (layerFilter == 0 || p->blendMode == VFX_BLEND_ALPHA) ? BLEND_ALPHA
+                 : (p->blendMode == VFX_BLEND_PREMULTIPLIED)           ? BLEND_ALPHA_PREMULTIPLY
+                                                                       : BLEND_ADDITIVE;
       if (want != trailBlend)
       {
         if (trailBlend >= 0)
@@ -2114,6 +2256,8 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
       }
 
       float baseAlpha = (float)baseColor.a * (1.0f / 255.0f);
+      if (baseAlpha <= 1e-4f)
+        continue;
 
       int sub = p->trailSmooth ? PS_TRAIL_SUBDIV : 1;
       int outCount = (count - 1) * sub + 1;
@@ -2135,7 +2279,10 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
 
       float invSub = 1.0f / (float)sub;
       float invCountMinus1 = 1.0f / (float)(count - 1);
-      float baseWidth = p->radius * p->trailWidthRatio;
+      float drawRadius = p->radius;
+      if (p->radiusCurve)
+        drawRadius *= SkillCurve_Eval(p->radiusCurve, invRatio);
+      float baseWidth = drawRadius * p->trailWidthRatio;
 
       for (int o = 0; o < outCount; o++)
       {
@@ -2185,8 +2332,22 @@ static void DrawParticlesLayer(Camera3D camera, Texture2D texture, int layerFilt
         trailPoints[o].v = ageRatio;
       }
 
+      Texture2D trailTex = texture;
+      if (trailTex.id == 0)
+      {
+        if (p->texId != 0)
+        {
+          trailTex = ParticleSystem_DefaultSprite();
+          trailTex.id = p->texId;
+        }
+        else
+        {
+          trailTex = ParticleSystem_DefaultSprite();
+        }
+      }
+
       DrawRibbonStripProfiledEx(
-          trailPoints, outCount, texture, camera, RIBBON_CAMERA_FACING,
+          trailPoints, outCount, trailTex, camera, RIBBON_CAMERA_FACING,
           (Vector3){0.0f, 1.0f, 0.0f}, p->contrastProfile,
           p->blendMode == VFX_BLEND_ADDITIVE
               ? VFX_CONTRAST_EMISSION
@@ -2214,7 +2375,30 @@ void DrawParticlesEmission(Camera3D camera, Texture2D texture)
   DrawParticlesLayer(camera, texture, 1);
 }
 
-void UnloadParticleSystem(void) { InitParticleSystem(); }
+void UnloadParticleSystem(void)
+{
+  InitParticleSystem();
+  if (s_defaultParticleSprite.id != 0)
+  {
+    UnloadTexture(s_defaultParticleSprite);
+    s_defaultParticleSprite = (Texture2D){0};
+  }
+  if (s_elementSparkSprite.id != 0)
+  {
+    UnloadTexture(s_elementSparkSprite);
+    s_elementSparkSprite = (Texture2D){0};
+  }
+  if (s_glowSprite.id != 0)
+  {
+    UnloadTexture(s_glowSprite);
+    s_glowSprite = (Texture2D){0};
+  }
+  if (s_sparkCapsuleSprite.id != 0)
+  {
+    UnloadTexture(s_sparkCapsuleSprite);
+    s_sparkCapsuleSprite = (Texture2D){0};
+  }
+}
 
 bool IsParticleSystemActive(void) { return s_activeCount > 0; }
 
@@ -2247,8 +2431,10 @@ void ParticleSystem_ResetForceFieldRegistry(void) {}
 
 void ParticleSystem_GetStats(int *active, int *max)
 {
-  *active = s_activeCount;
-  *max = MAX_PARTICLES;
+  if (active)
+    *active = s_activeCount;
+  if (max)
+    *max = MAX_PARTICLES;
 }
 
 int ParticleSystem_CountSurfaceSamples(int emitterId)
@@ -2337,6 +2523,12 @@ void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const Part
     float cosPitch = cosf(pitch);
 
     ParticleConfig pcfg = {0};
+    pcfg.general = cfg->general;
+    pcfg.geometry = cfg->geometry;
+    pcfg.physics = cfg->physics;
+    pcfg.animation = cfg->animation;
+    pcfg.render = cfg->render;
+
     pcfg.position = origin;
     pcfg.velocity = (Vector3){
         cosf(angle) * speed * cosPitch,
@@ -2349,6 +2541,11 @@ void ParticleSystem_SpawnRadialBurst(Vector3 origin, float sizeScale, const Part
     pcfg.forceField = cfg->forceField;
     pcfg.gradient = cfg->gradient;
 
+    pcfg.physics.position = pcfg.position;
+    pcfg.physics.velocity = pcfg.velocity;
+    pcfg.geometry.radius = pcfg.radius;
+    pcfg.general.life = pcfg.lifetime;
+
     SpawnParticle(pcfg);
   }
 }
@@ -2359,11 +2556,6 @@ void ParticleSystem_SpawnGlow(ParticleConfig core)
   core.render.unlit = 1;
   SpawnParticle(core);
 }
-
-static Texture2D s_defaultParticleSprite = {0};
-static Texture2D s_elementSparkSprite = {0};
-static Texture2D s_glowSprite = {0};
-static Texture2D s_sparkCapsuleSprite = {0};
 
 Texture2D ParticleSystem_DefaultSprite(void)
 {

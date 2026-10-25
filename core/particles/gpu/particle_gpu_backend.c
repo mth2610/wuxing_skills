@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 // ---------------------------------------------------------------------------
 // GPU particle data — phải khớp struct trong .comp và _ssbo.vs
@@ -37,6 +38,8 @@ typedef struct
     float formation_x, formation_y, formation_z, formation_pad;
 } GpuParticleData;
 
+typedef char GpuParticleDataStrideAssert[(sizeof(GpuParticleData) == GPU_PARTICLE_DATA_STRIDE_BYTES) ? 1 : -1];
+
 #define MAX_GPU_TRAVEL_PATHS 32
 #define MAX_GPU_IMPACT_EFFECTS 32
 
@@ -45,24 +48,69 @@ typedef struct
 typedef struct
 {
     Vector4 points[PARTICLE_TRAVEL_MAX_WAYPOINTS];
-    Vector4 params; /* x=count, y=speed, z=steering, w=max acceleration */
-    Vector4 radii;  /* x=waypoint radius, y=target radius */
-    Vector4 arrival; /* x=arrival force-field slot, y=offset, z=kick */
+    Vector4 params;  /* x=count, y=speed, z=steering, w=max acceleration */
+    Vector4 radii;   /* x=waypoint radius, y=target radius, z=arrivalForceDuration */
+    Vector4 arrival; /* x=arrival force-field slot, y=offset, z=kick, w=velScale */
     Vector4 formation_origin;
 } ParticleTravelPathGPU;
 
 // ---------------------------------------------------------------------------
+// Cached Shader Uniform Locations — tránh tra cứu chuỗi (strcmp) mỗi frame
+// trên Vulkan/OpenGL backend.
+// ---------------------------------------------------------------------------
+typedef struct
+{
+    int filterBlend;
+    int blendLaw;
+    int surfaceIndexed;
+    int materialId;
+    int matchFrontMaterial;
+    int frontDepthTex;
+    int right;
+    int up;
+    int mvp;
+    int view;
+    int projection;
+    int filterEmitter;
+    int filterMode;
+    int softFade;
+} GpuDrawShaderLocs;
+
+static void CacheDrawShaderLocs(Shader sh, GpuDrawShaderLocs *locs)
+{
+    if (!locs) return;
+    if (sh.id == 0) {
+        memset(locs, -1, sizeof(*locs));
+        return;
+    }
+    locs->filterBlend        = GetShaderLocation(sh, "u_filterBlend");
+    locs->blendLaw           = GetShaderLocation(sh, "u_blendLaw");
+    locs->surfaceIndexed     = GetShaderLocation(sh, "u_surfaceIndexed");
+    locs->materialId         = GetShaderLocation(sh, "u_materialId");
+    locs->matchFrontMaterial = GetShaderLocation(sh, "u_matchFrontMaterial");
+    locs->frontDepthTex      = GetShaderLocation(sh, "u_frontDepthTex");
+    locs->right              = GetShaderLocation(sh, "u_right");
+    locs->up                 = GetShaderLocation(sh, "u_up");
+    locs->mvp                = GetShaderLocation(sh, "mvp");
+    locs->view               = GetShaderLocation(sh, "u_view");
+    locs->projection         = GetShaderLocation(sh, "u_projection");
+    locs->filterEmitter      = GetShaderLocation(sh, "u_filterEmitter");
+    locs->filterMode         = GetShaderLocation(sh, "u_filterRenderMode");
+    locs->softFade           = GetShaderLocation(sh, "u_softFade");
+}
+
+// ---------------------------------------------------------------------------
 // Force field registry — map con trỏ ForceField (CPU) -> slot GPU.
 // Compute packs fields into binding 1; CPU/VBO evaluates the same pointers.
-// Không sửa core/force_field.h — dùng nguyên ForceFieldGPU/ForceField_PackGPU
-// đã khai báo sẵn ở đó.
 // ---------------------------------------------------------------------------
 static GpuParticleFieldLease s_fieldLeases[MAX_GPU_FORCE_FIELDS];
 
-static const ForceField *FieldAt(int slot)
+static inline const ForceField *FieldAt(int slot)
 {
+    if (slot < 0 || slot >= MAX_GPU_FORCE_FIELDS) return NULL;
     return (const ForceField *)s_fieldLeases[slot].field;
 }
+
 static Vector3 s_fieldAxisOrigin[MAX_GPU_FORCE_FIELDS];
 static Vector3 s_fieldAxisDir[MAX_GPU_FORCE_FIELDS];
 static int s_fieldCount = 0;
@@ -124,6 +172,8 @@ static void PackTravelPath(const ParticleTravelPath *path,
                            ParticleTravelPathGPU *packed)
 {
     int count = ParticleTravel_WaypointCount(path);
+    if (count > PARTICLE_TRAVEL_MAX_WAYPOINTS)
+        count = PARTICLE_TRAVEL_MAX_WAYPOINTS;
     memset(packed, 0, sizeof(*packed));
     for (int i = 0; i < count; ++i) {
         Vector3 point = ParticleTravel_GetWaypoint(path, i);
@@ -161,31 +211,39 @@ static int s_surfaceRouteCount, s_surfaceIndexCount;
 static bool s_surfaceCacheValid, s_surfaceIndexed;
 static int s_surfaceLastInstanceCount;
 static unsigned int s_ssbo = 0;
-static unsigned int s_ff_ssbo = 0; // ForceFieldBuffer, binding = 1
-static unsigned int s_path_ssbo = 0; // ParticleTravelPathBuffer, binding = 2
-static unsigned int s_wind_ssbo = 0; // WindBuffer, binding = 3
+static unsigned int s_ff_ssbo = 0;           // ForceFieldBuffer, binding = 1
+static unsigned int s_path_ssbo = 0;         // ParticleTravelPathBuffer, binding = 2
+static unsigned int s_wind_ssbo = 0;         // WindBuffer, binding = 3
 static unsigned int s_wind_terrain_ssbo = 0; // WindTerrainBuffer, binding = 4
-static unsigned int s_motion_scene_ssbo, s_motion_body_ssbo;
+static unsigned int s_motion_scene_ssbo = 0, s_motion_body_ssbo = 0;
 static MotionGpuScene s_motionScene;
 static MotionGpuBody s_motionBodies[MAX_GPU_PARTICLES];
-static int s_motionLiveCount;
-static bool s_drawingChildren;
-static int s_drawBlend=VFX_BLEND_ADDITIVE;
-static unsigned int s_blendMask;
+static int s_motionLiveCount = 0;
+static bool s_drawingChildren = false;
+static int s_drawBlend = VFX_BLEND_ADDITIVE;
+static unsigned int s_blendMask = 0;
 static unsigned int s_uploaded_wind_terrain_version = ~0u;
 static unsigned int s_compute_prog = 0;
+static int s_comp_loc_dt = -1;
+static int s_comp_loc_time = -1;
+static int s_comp_loc_vecField[GPU_VECTOR_FIELD_SLOTS];
+
 static unsigned int s_draw_vao = 0;
 static unsigned int s_draw_quad_vbo = 0; // template quad, attribute 0
 static Shader s_draw_shader_gpu = {0};
+static GpuDrawShaderLocs s_draw_locs_gpu;
+
 /* Liquid-table slot the NEXT surface draw rasterizes into the capture's B
  * channel. Set by core/liquid/liquid_surface.c before each stream so several
  * liquids can share one capture; see LiquidDesc in liquid_surface.h. */
 static float s_surfaceMaterialId = 0.0f;
 static Texture2D s_surfaceFrontDepth = {0};
 static Shader s_surface_capture_shader_gpu = {0};
+static GpuDrawShaderLocs s_surface_capture_locs_gpu;
 static Shader s_surface_capture_shader_cpu = {0};
 static int s_cpu_capture_material_loc = -1;
 static Shader s_surface_back_shader_gpu = {0};
+static GpuDrawShaderLocs s_surface_back_locs_gpu;
 static Shader s_surface_back_shader_cpu = {0};
 static int s_cpu_capture_params_loc = -1;
 static int s_cpu_capture_proj_loc = -1;
@@ -202,7 +260,6 @@ static int s_spawn_count_this_frame = 0;
 static int s_filterEmitter = -1, s_filterRenderMode = -1;
 static int s_surfacePass = 0; /* 0 normal, 1 front depth, 3 back depth */
 
-
 // Vector field textures cho FORCE_VECTOR_TEXTURE — không sở hữu (không Unload
 // ở đây), chỉ bind vào texture unit trước mỗi dispatch khi slot đang set.
 static Texture2D s_vectorFieldTex[GPU_VECTOR_FIELD_SLOTS] = {0};
@@ -212,6 +269,44 @@ static Texture2D s_vectorFieldTex[GPU_VECTOR_FIELD_SLOTS] = {0};
 // than being clipped by a hard depth-test rail.
 #define GPU_PARTICLE_SOFT_DEPTH_SLOT 3
 #define GPU_PARTICLE_SOFT_FADE_METERS 0.35f
+
+static inline unsigned char ClampFloatToByte(float v)
+{
+    if (v <= 0.0f) return 0;
+    if (v >= 255.0f) return 255;
+    return (unsigned char)(v + 0.5f);
+}
+
+static void ComputeCameraBasis(Camera3D camera, Vector3 *outViewDir,
+                               Vector3 *outRight, Vector3 *outUp)
+{
+    Vector3 viewDir = Vector3Subtract(camera.position, camera.target);
+    float viewLenSq = Vector3LengthSqr(viewDir);
+    if (viewLenSq > 1e-8f)
+        viewDir = Vector3Scale(viewDir, 1.0f / sqrtf(viewLenSq));
+    else
+        viewDir = (Vector3){0.0f, 0.0f, 1.0f};
+
+    Vector3 right = Vector3CrossProduct(camera.up, viewDir);
+    float rightLenSq = Vector3LengthSqr(right);
+    if (rightLenSq < 1e-8f) {
+        right = Vector3CrossProduct((Vector3){0.0f, 1.0f, 0.0f}, viewDir);
+        rightLenSq = Vector3LengthSqr(right);
+        if (rightLenSq < 1e-8f) {
+            right = Vector3CrossProduct((Vector3){1.0f, 0.0f, 0.0f}, viewDir);
+            rightLenSq = Vector3LengthSqr(right);
+        }
+    }
+    if (rightLenSq > 1e-8f)
+        right = Vector3Scale(right, 1.0f / sqrtf(rightLenSq));
+    else
+        right = (Vector3){1.0f, 0.0f, 0.0f};
+
+    Vector3 up = Vector3CrossProduct(viewDir, right);
+    if (outViewDir) *outViewDir = viewDir;
+    if (outRight) *outRight = right;
+    if (outUp) *outUp = up;
+}
 
 // ---------------------------------------------------------------------------
 // Compute shader loader
@@ -280,8 +375,10 @@ void GpuParticleSystem_Init(void)
         return;
 
     memset(s_cpu_pool, 0, sizeof(s_cpu_pool));
-    memset(s_motionBodies,0,sizeof(s_motionBodies));
-    s_motionLiveCount=0;s_blendMask=0;
+    memset(s_motionBodies, 0, sizeof(s_motionBodies));
+    s_motionLiveCount = 0;
+    s_blendMask = 0;
+    s_drawingChildren = false;
     memset(s_vectorFieldTex, 0, sizeof(s_vectorFieldTex));
     s_spawn_cursor = 0;
     s_hasSpawned = false;
@@ -290,6 +387,9 @@ void GpuParticleSystem_Init(void)
     s_fieldCount = 0;
     memset(s_fieldLeases, 0, sizeof(s_fieldLeases));
     s_surfaceRevision = 0;
+    s_surfaceCachedRevision = 0;
+    s_surfaceRouteCount = 0;
+    s_surfaceIndexCount = 0;
     s_surfaceCacheValid = s_surfaceIndexed = false;
     s_surfaceLastInstanceCount = 0;
     memset(s_surfaceResidentRouting, 0, sizeof(s_surfaceResidentRouting));
@@ -303,6 +403,13 @@ void GpuParticleSystem_Init(void)
         s_particleImpactCount[i] = 0;
     }
     s_elapsed_time = 0.0f;
+    s_comp_loc_dt = -1;
+    s_comp_loc_time = -1;
+    for (int i = 0; i < GPU_VECTOR_FIELD_SLOTS; ++i)
+        s_comp_loc_vecField[i] = -1;
+    CacheDrawShaderLocs((Shader){0}, &s_draw_locs_gpu);
+    CacheDrawShaderLocs((Shader){0}, &s_surface_capture_locs_gpu);
+    CacheDrawShaderLocs((Shader){0}, &s_surface_back_locs_gpu);
 
 #if defined(GRAPHICS_API_VULKAN) || defined(WUXING_USE_VULKAN)
     bool gl43 = true;
@@ -338,15 +445,22 @@ void GpuParticleSystem_Init(void)
             goto cpu_path;
         }
 
-        s_ssbo = rlLoadShaderBuffer(MAX_GPU_PARTICLES * (ptrdiff_t)sizeof(GpuParticleData), NULL, RL_DYNAMIC_DRAW);
+        s_comp_loc_dt = rlGetLocationUniform(s_compute_prog, "u_dt");
+        s_comp_loc_time = rlGetLocationUniform(s_compute_prog, "u_time");
+        for (int slot = 0; slot < GPU_VECTOR_FIELD_SLOTS; ++slot) {
+            char uname[24];
+            snprintf(uname, sizeof(uname), "uVectorField%d", slot);
+            s_comp_loc_vecField[slot] = rlGetLocationUniform(s_compute_prog, uname);
+        }
 
+        s_ssbo = rlLoadShaderBuffer(MAX_GPU_PARTICLES * (ptrdiff_t)sizeof(GpuParticleData), NULL, RL_DYNAMIC_DRAW);
         s_surface_index_ssbo = rlLoadShaderBuffer(MAX_GPU_PARTICLES * (ptrdiff_t)sizeof(GpuSurfaceIndex), NULL, RL_DYNAMIC_DRAW);
         s_ff_ssbo = rlLoadShaderBuffer(MAX_GPU_FORCE_FIELDS * (ptrdiff_t)sizeof(ForceFieldGPU), NULL, RL_DYNAMIC_DRAW);
         s_path_ssbo = rlLoadShaderBuffer(MAX_GPU_TRAVEL_PATHS * (ptrdiff_t)sizeof(ParticleTravelPathGPU), NULL, RL_DYNAMIC_DRAW);
         s_wind_ssbo = rlLoadShaderBuffer((unsigned int)sizeof(WindGPU), NULL, RL_DYNAMIC_DRAW);
         s_wind_terrain_ssbo = rlLoadShaderBuffer((unsigned int)sizeof(WindTerrainGPU), NULL, RL_DYNAMIC_DRAW);
-        s_motion_scene_ssbo=rlLoadShaderBuffer(sizeof(MotionGpuScene),NULL,RL_DYNAMIC_DRAW);
-        s_motion_body_ssbo=rlLoadShaderBuffer(sizeof(s_motionBodies),s_motionBodies,RL_DYNAMIC_DRAW);
+        s_motion_scene_ssbo = rlLoadShaderBuffer(sizeof(MotionGpuScene), NULL, RL_DYNAMIC_DRAW);
+        s_motion_body_ssbo = rlLoadShaderBuffer(sizeof(s_motionBodies), s_motionBodies, RL_DYNAMIC_DRAW);
         s_uploaded_wind_terrain_version = ~0u;
 
         s_draw_shader_gpu = ResourceManager_LoadShader(ssbo_vs_path, fs_path);
@@ -356,48 +470,36 @@ void GpuParticleSystem_Init(void)
             rlDisableShader();
             rlUnloadShaderProgram(s_compute_prog);
             s_compute_prog = 0;
-            rlUnloadShaderBuffer(s_ssbo);
-            s_ssbo = 0;
-            rlUnloadShaderBuffer(s_ff_ssbo);
-            s_ff_ssbo = 0;
-            rlUnloadShaderBuffer(s_path_ssbo);
-            s_path_ssbo = 0;
-            rlUnloadShaderBuffer(s_wind_ssbo);
-            s_wind_ssbo = 0;
-            rlUnloadShaderBuffer(s_wind_terrain_ssbo);
-            s_wind_terrain_ssbo = 0;
-            rlUnloadShaderBuffer(s_motion_scene_ssbo);s_motion_scene_ssbo=0;
-            rlUnloadShaderBuffer(s_motion_body_ssbo);s_motion_body_ssbo=0;
+            if (s_surface_index_ssbo) { rlUnloadShaderBuffer(s_surface_index_ssbo); s_surface_index_ssbo = 0; }
+            if (s_ssbo) { rlUnloadShaderBuffer(s_ssbo); s_ssbo = 0; }
+            if (s_ff_ssbo) { rlUnloadShaderBuffer(s_ff_ssbo); s_ff_ssbo = 0; }
+            if (s_path_ssbo) { rlUnloadShaderBuffer(s_path_ssbo); s_path_ssbo = 0; }
+            if (s_wind_ssbo) { rlUnloadShaderBuffer(s_wind_ssbo); s_wind_ssbo = 0; }
+            if (s_wind_terrain_ssbo) { rlUnloadShaderBuffer(s_wind_terrain_ssbo); s_wind_terrain_ssbo = 0; }
+            if (s_motion_scene_ssbo) { rlUnloadShaderBuffer(s_motion_scene_ssbo); s_motion_scene_ssbo = 0; }
+            if (s_motion_body_ssbo) { rlUnloadShaderBuffer(s_motion_body_ssbo); s_motion_body_ssbo = 0; }
             goto cpu_path;
         }
+        CacheDrawShaderLocs(s_draw_shader_gpu, &s_draw_locs_gpu);
+
         s_surface_capture_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/liquid_surface_capture.vs", "core/liquid/shaders/liquid_capture_particle.fs");
         s_surface_back_shader_gpu = ResourceManager_LoadShader("core/particles/shaders/gpu/liquid_surface_capture.vs", "core/liquid/shaders/liquid_capture_particle_back.fs");
         if (s_surface_capture_shader_gpu.id == 0)
         {
             TraceLog(LOG_WARNING, "GPU_PARTICLES: surface capture shader unavailable");
         }
+        CacheDrawShaderLocs(s_surface_capture_shader_gpu, &s_surface_capture_locs_gpu);
+        CacheDrawShaderLocs(s_surface_back_shader_gpu, &s_surface_back_locs_gpu);
 
         // Template quad (2 tam giác, góc ±1, CCW = front-face) ở attribute 0.
         // Per-particle data đi qua SSBO binding 0 đọc bằng gl_InstanceID trong VS.
         static const float quadTemplate[18] = {
-            -1.0f,
-            -1.0f,
-            0.0f,
-            1.0f,
-            -1.0f,
-            0.0f,
-            1.0f,
-            1.0f,
-            0.0f,
-            -1.0f,
-            -1.0f,
-            0.0f,
-            1.0f,
-            1.0f,
-            0.0f,
-            -1.0f,
-            1.0f,
-            0.0f,
+            -1.0f, -1.0f, 0.0f,
+             1.0f, -1.0f, 0.0f,
+             1.0f,  1.0f, 0.0f,
+            -1.0f, -1.0f, 0.0f,
+             1.0f,  1.0f, 0.0f,
+            -1.0f,  1.0f, 0.0f,
         };
         s_draw_vao = rlLoadVertexArray();
         rlEnableVertexArray(s_draw_vao);
@@ -415,11 +517,11 @@ cpu_path:
         // Sphere impostor shaders for CPU SSF capture/thickness.
         s_surface_capture_shader_cpu = ResourceManager_LoadShader(NULL, "core/liquid/shaders/liquid_capture_cpu.fs");
         s_surface_back_shader_cpu = ResourceManager_LoadShader(NULL, "core/liquid/shaders/liquid_capture_cpu_back.fs");
-        s_cpu_capture_params_loc  = GetShaderLocation(s_surface_capture_shader_cpu,  "u_capture_params");
-        s_cpu_capture_material_loc= GetShaderLocation(s_surface_capture_shader_cpu,  "u_materialId");
-        s_cpu_capture_proj_loc    = GetShaderLocation(s_surface_capture_shader_cpu,  "u_projection");
-        s_cpu_back_params_loc     = GetShaderLocation(s_surface_back_shader_cpu, "u_capture_params");
-        s_cpu_back_proj_loc       = GetShaderLocation(s_surface_back_shader_cpu, "u_projection");
+        s_cpu_capture_params_loc   = GetShaderLocation(s_surface_capture_shader_cpu, "u_capture_params");
+        s_cpu_capture_material_loc = GetShaderLocation(s_surface_capture_shader_cpu, "u_materialId");
+        s_cpu_capture_proj_loc     = GetShaderLocation(s_surface_capture_shader_cpu, "u_projection");
+        s_cpu_back_params_loc      = GetShaderLocation(s_surface_back_shader_cpu, "u_capture_params");
+        s_cpu_back_proj_loc        = GetShaderLocation(s_surface_back_shader_cpu, "u_projection");
         // ----- CPU/VBO PATH -----
         s_use_compute = false;
         TraceLog(LOG_INFO, "GPU_PARTICLES: CPU/VBO path active (%d particles)", MAX_GPU_PARTICLES);
@@ -435,20 +537,21 @@ bool GpuParticleSystem_TrySpawn(GpuParticleConfig cfg)
 {
     if (!s_initialized)
         return false;
-    if(s_use_compute && !EmissionGpu_SetParent((unsigned int)(s_spawn_cursor%MAX_GPU_PARTICLES),
-            cfg.emissionConfig,cfg.emitterId)) {
+    int idx = s_spawn_cursor % MAX_GPU_PARTICLES;
+    if (s_use_compute && !EmissionGpu_SetParent((unsigned int)idx,
+            cfg.emissionConfig, cfg.emitterId)) {
         return false;
     }
     s_hasSpawned = true;
     ++s_surfaceRevision;
-
-    int idx = s_spawn_cursor % MAX_GPU_PARTICLES;
     s_spawn_cursor++;
 
     if (s_cpu_pool[idx].active >= 0.5f) {
-        if(s_motionBodies[idx].meta[0]) --s_motionLiveCount;
+        if (s_motionBodies[idx].meta[0]) --s_motionLiveCount;
         ReleasePath((int)s_cpu_pool[idx].route_pad0);
         EmissionImpact_Release(s_particleImpactIndex[idx]);
+        s_particleImpactIndex[idx] = 0;
+        s_particleImpactCount[idx] = 0;
     }
 
     GpuParticleData d;
@@ -468,16 +571,17 @@ bool GpuParticleSystem_TrySpawn(GpuParticleConfig cfg)
     d.csr = boost;
     d.csg = boost;
     d.csb = boost;
-    d.csa = cfg.colorStart.a / 255.0f;
+    d.csa = cfg.colorStart.a * (1.0f / 255.0f);
     d.cer = boost;
     d.ceg = boost;
     d.ceb = boost;
-    d.cea = cfg.colorEnd.a / 255.0f;
-    d.life_rem = cfg.lifetime;
-    d.life_max = cfg.lifetime;
-    d.phase = (float)GetRandomValue(0, 10000) / 10000.0f;
+    d.cea = cfg.colorEnd.a * (1.0f / 255.0f);
+    float safeLife = cfg.lifetime > 1e-6f ? cfg.lifetime : 1e-6f;
+    d.life_rem = safeLife;
+    d.life_max = safeLife;
+    d.phase = (float)GetRandomValue(0, 10000) * 0.0001f;
     d.active = 1.0f;
-    d.ff_index = (float)RegisterField(cfg.forceField, cfg.axisOrigin, cfg.axisDir, cfg.lifetime);
+    d.ff_index = (float)RegisterField(cfg.forceField, cfg.axisOrigin, cfg.axisDir, safeLife);
     d.ff_pad0 = cfg.stretchStrength;
     d.ff_pad1 = cfg.collisionEnabled ? cfg.collisionElasticity : -1.0f;
     d.ff_pad2 = cfg.collisionFloorY;
@@ -485,26 +589,32 @@ bool GpuParticleSystem_TrySpawn(GpuParticleConfig cfg)
     d.render_mode = (float)cfg.renderMode;
     if (cfg.travelPath)
         (void)RegisterField(cfg.travelPath->arrivalForceField,
-                            (Vector3){0}, (Vector3){0}, cfg.lifetime);
+                            (Vector3){0}, (Vector3){0}, safeLife);
     d.route_pad0 = (float)RegisterPath(cfg.travelPath);
     d.route_pad1 = 0.0f;
     d.impact_age = 0.0f;
     d.impact_active = 0.0f;
     d.wind_influence = cfg.windInfluence;
     d.impact_pad1 = 0.0f;
-    s_motionBodies[idx]=(MotionGpuBody){0};
-    if(cfg.spatialMotionOnly) {
-        s_motionBodies[idx]=MotionGpu_PackBody(cfg.dynamics,cfg.initialAccelerationMps2,
-            cfg.constantForceNewtons,cfg.receiveMotionFields,cfg.windInfluence);
-        MotionGpuBody *body=&s_motionBodies[idx];
-        if(cfg.dynamics && cfg.drag>0 && body->body0.z<=0) body->body0.z=cfg.drag;
-        d.vx+=cfg.initialImpulseNs.x*body->body0.x;
-        d.vy+=cfg.initialImpulseNs.y*body->body0.x;
-        d.vz+=cfg.initialImpulseNs.z*body->body0.x;
-        d.impact_pad1=(float)cfg.blendMode;
+    s_motionBodies[idx] = (MotionGpuBody){0};
+    if (cfg.spatialMotionOnly) {
+        s_motionBodies[idx] = MotionGpu_PackBody(cfg.dynamics, cfg.initialAccelerationMps2,
+            cfg.constantForceNewtons, cfg.receiveMotionFields, cfg.windInfluence);
+        MotionGpuBody *body = &s_motionBodies[idx];
+        if (cfg.dynamics && cfg.drag > 0.0f && body->body0.z <= 0.0f)
+            body->body0.z = cfg.drag;
+        d.vx += cfg.initialImpulseNs.x * body->body0.x;
+        d.vy += cfg.initialImpulseNs.y * body->body0.x;
+        d.vz += cfg.initialImpulseNs.z * body->body0.x;
+        d.impact_pad1 = (float)cfg.blendMode;
         ++s_motionLiveCount;
-    } else d.impact_pad1=VFX_BLEND_ADDITIVE;
-    s_blendMask|=1u<<(int)d.impact_pad1;
+    } else {
+        d.impact_pad1 = (float)VFX_BLEND_ADDITIVE;
+    }
+    int blendBit = (int)d.impact_pad1;
+    if (blendBit >= 0 && blendBit < 32)
+        s_blendMask |= (1u << blendBit);
+
     d.formation_x = d.formation_y = d.formation_z = d.formation_pad = 0.0f;
     if (cfg.travelPath && cfg.travelPath->formationOrigin) {
         d.formation_x = cfg.position.x - cfg.travelPath->formationOrigin->x;
@@ -525,6 +635,7 @@ bool GpuParticleSystem_TrySpawn(GpuParticleConfig cfg)
     }
     return true;
 }
+
 void GpuParticleSystem_Spawn(GpuParticleConfig cfg)
 {
     (void)GpuParticleSystem_TrySpawn(cfg);
@@ -543,8 +654,10 @@ void GpuParticleSystem_SetVectorFieldTexture(int slot, Texture2D tex)
 // ---------------------------------------------------------------------------
 // Update
 // ---------------------------------------------------------------------------
-static int LegacyDustRandom(int min,int max,void *user) {
-    (void)user;return GetRandomValue(min,max);
+static int LegacyDustRandom(int min, int max, void *user)
+{
+    (void)user;
+    return GetRandomValue(min, max);
 }
 
 void GpuParticleSystem_Update(float dt)
@@ -555,20 +668,26 @@ void GpuParticleSystem_Update(float dt)
         return;
 
     GpuParticleFieldLease_Advance(s_fieldLeases, MAX_GPU_FORCE_FIELDS, dt);
-    ++s_surfaceRevision;
+    s_fieldCount = GpuParticleFieldLease_ActiveSpan(s_fieldLeases, s_fieldCount);
+
     if (s_use_compute)
     {
         // Batch upload cho các hạt mới spawn trong frame này
         if (s_spawn_count_this_frame > 0)
         {
             int start = s_spawn_start_this_frame;
-            int count = s_spawn_count_this_frame > MAX_GPU_PARTICLES ? MAX_GPU_PARTICLES : s_spawn_count_this_frame;
+            int count = s_spawn_count_this_frame;
+            if (count >= MAX_GPU_PARTICLES)
+            {
+                start = 0;
+                count = MAX_GPU_PARTICLES;
+            }
             int end = start + count;
 
             if (end <= MAX_GPU_PARTICLES)
             {
                 rlUpdateShaderBuffer(s_ssbo, &s_cpu_pool[start], count * sizeof(GpuParticleData), start * sizeof(GpuParticleData));
-                rlUpdateShaderBuffer(s_motion_body_ssbo,&s_motionBodies[start],count*sizeof(MotionGpuBody),start*sizeof(MotionGpuBody));
+                rlUpdateShaderBuffer(s_motion_body_ssbo, &s_motionBodies[start], count * sizeof(MotionGpuBody), start * sizeof(MotionGpuBody));
             }
             else
             {
@@ -576,8 +695,8 @@ void GpuParticleSystem_Update(float dt)
                 int chunk2 = count - chunk1;
                 rlUpdateShaderBuffer(s_ssbo, &s_cpu_pool[start], chunk1 * sizeof(GpuParticleData), start * sizeof(GpuParticleData));
                 rlUpdateShaderBuffer(s_ssbo, &s_cpu_pool[0], chunk2 * sizeof(GpuParticleData), 0);
-                rlUpdateShaderBuffer(s_motion_body_ssbo,&s_motionBodies[start],chunk1*sizeof(MotionGpuBody),start*sizeof(MotionGpuBody));
-                rlUpdateShaderBuffer(s_motion_body_ssbo,&s_motionBodies[0],chunk2*sizeof(MotionGpuBody),0);
+                rlUpdateShaderBuffer(s_motion_body_ssbo, &s_motionBodies[start], chunk1 * sizeof(MotionGpuBody), start * sizeof(MotionGpuBody));
+                rlUpdateShaderBuffer(s_motion_body_ssbo, &s_motionBodies[0], chunk2 * sizeof(MotionGpuBody), 0);
             }
             for (int i = 0; i < count; ++i) {
                 int slot = (start + i) % MAX_GPU_PARTICLES;
@@ -585,23 +704,27 @@ void GpuParticleSystem_Update(float dt)
                                                        offsetof(GpuParticleData, emitter_id),
                                                        offsetof(GpuParticleData, render_mode));
             }
+            /* Chỉ tăng s_surfaceRevision khi có dữ liệu routing mới được nạp lên GPU,
+             * giúp giữ nguyên cache s_surfaceIndices ở các frame không spawn thêm hạt. */
+            ++s_surfaceRevision;
             s_spawn_start_this_frame = -1;
             s_spawn_count_this_frame = 0;
         }
 
-        if(s_motionLiveCount>0 || EmissionGpu_HasChildren()) {
+        if (s_motionLiveCount > 0 || EmissionGpu_HasChildren()) {
             MotionFields_PackGpu(&s_motionScene);
-            rlUpdateShaderBuffer(s_motion_scene_ssbo,&s_motionScene,
-                offsetof(MotionGpuScene,fields)+s_motionScene.meta[0]*sizeof(MotionGpuField),0);
+            rlUpdateShaderBuffer(s_motion_scene_ssbo, &s_motionScene,
+                offsetof(MotionGpuScene, fields) + s_motionScene.meta[0] * sizeof(MotionGpuField), 0);
         }
-        // Re-pack mọi force field đã đăng ký
+        // Re-pack mọi force field đang hoạt động
         if (s_fieldCount > 0)
         {
             ForceFieldGPU packed[MAX_GPU_FORCE_FIELDS];
             for (int i = 0; i < s_fieldCount; i++)
             {
-                if (FieldAt(i))
-                    ForceField_PackGPU(FieldAt(i), s_fieldAxisOrigin[i],
+                const ForceField *ff = FieldAt(i);
+                if (ff)
+                    ForceField_PackGPU(ff, s_fieldAxisOrigin[i],
                                        s_fieldAxisDir[i], &packed[i]);
                 else
                     memset(&packed[i], 0, sizeof(packed[i]));
@@ -619,17 +742,17 @@ void GpuParticleSystem_Update(float dt)
                     highestSlot = i;
                 }
             }
-            rlUpdateShaderBuffer(s_path_ssbo, packed,
-                                 (highestSlot + 1) * (ptrdiff_t)sizeof(packed[0]), 0);
+            if (highestSlot >= 0) {
+                rlUpdateShaderBuffer(s_path_ssbo, packed,
+                                     (highestSlot + 1) * (ptrdiff_t)sizeof(packed[0]), 0);
+            }
         }
 
         rlEnableShader(s_compute_prog);
-        int loc_dt = rlGetLocationUniform(s_compute_prog, "u_dt");
-        if (loc_dt >= 0)
-            rlSetUniform(loc_dt, &dt, RL_SHADER_UNIFORM_FLOAT, 1);
-        int loc_time = rlGetLocationUniform(s_compute_prog, "u_time");
-        if (loc_time >= 0)
-            rlSetUniform(loc_time, &s_elapsed_time, RL_SHADER_UNIFORM_FLOAT, 1);
+        if (s_comp_loc_dt >= 0)
+            rlSetUniform(s_comp_loc_dt, &dt, RL_SHADER_UNIFORM_FLOAT, 1);
+        if (s_comp_loc_time >= 0)
+            rlSetUniform(s_comp_loc_time, &s_elapsed_time, RL_SHADER_UNIFORM_FLOAT, 1);
 
         for (int slot = 0; slot < GPU_VECTOR_FIELD_SLOTS; slot++)
         {
@@ -637,9 +760,7 @@ void GpuParticleSystem_Update(float dt)
                 continue;
             rlActiveTextureSlot(slot);
             rlEnableTexture(s_vectorFieldTex[slot].id);
-            char uname[24];
-            snprintf(uname, sizeof(uname), "uVectorField%d", slot);
-            int loc_tex = rlGetLocationUniform(s_compute_prog, uname);
+            int loc_tex = s_comp_loc_vecField[slot];
             if (loc_tex >= 0)
                 rlSetUniform(loc_tex, &slot, RL_SHADER_UNIFORM_INT, 1);
         }
@@ -650,7 +771,7 @@ void GpuParticleSystem_Update(float dt)
         rlUpdateShaderBuffer(s_wind_ssbo, &windData, (unsigned int)sizeof(WindGPU), 0);
 
         const WindTerrainGrid *terrainGrid = Wind_GetTerrainGrid();
-        if (terrainGrid->version != s_uploaded_wind_terrain_version) {
+        if (terrainGrid && terrainGrid->version != s_uploaded_wind_terrain_version) {
             WindTerrainGPU terrainData;
             MotionGpu_PackWindTerrain(terrainGrid, &terrainData);
             rlUpdateShaderBuffer(s_wind_terrain_ssbo, &terrainData,
@@ -663,22 +784,25 @@ void GpuParticleSystem_Update(float dt)
         rlBindShaderBuffer(s_path_ssbo, 2);
         rlBindShaderBuffer(s_wind_ssbo, 3);
         rlBindShaderBuffer(s_wind_terrain_ssbo, 4);
-        rlBindShaderBuffer(s_motion_scene_ssbo,5);
-        rlBindShaderBuffer(s_motion_body_ssbo,6);
+        rlBindShaderBuffer(s_motion_scene_ssbo, 5);
+        rlBindShaderBuffer(s_motion_body_ssbo, 6);
         /* Children use the same production Motion integrator. Advance existing
          * children before generating births so new children start at age zero. */
-        if(EmissionGpu_HasChildren()) {
-            rlBindShaderBuffer(EmissionGpu_ChildBuffer(),0);
-            rlBindShaderBuffer(EmissionGpu_ChildBodyBuffer(),6);
-            rlComputeShaderDispatch((EMISSION_GPU_CHILD_CAPACITY+255)/256,1,1);
-            rlBindShaderBuffer(s_ssbo,0);rlBindShaderBuffer(s_motion_body_ssbo,6);
+        if (EmissionGpu_HasChildren()) {
+            rlBindShaderBuffer(EmissionGpu_ChildBuffer(), 0);
+            rlBindShaderBuffer(EmissionGpu_ChildBodyBuffer(), 6);
+            rlComputeShaderDispatch((EMISSION_GPU_CHILD_CAPACITY + 255) / 256, 1, 1);
+            rlBindShaderBuffer(s_ssbo, 0);
+            rlBindShaderBuffer(s_motion_body_ssbo, 6);
         }
         /* Before ring wrap, slots beyond the spawn high-water mark have never
          * existed. Bound work by ownership, never by the CPU event shadow. */
-        unsigned int groups = (GpuParticleSystem_ActiveCount() + 255) / 256;
-        rlComputeShaderDispatch(groups, 1, 1);
+        int activeSpan = GpuParticleSystem_ActiveCount();
+        unsigned int groups = (unsigned int)((activeSpan + 255) / 256);
+        if (groups > 0)
+            rlComputeShaderDispatch(groups, 1, 1);
         rlDisableShader();
-        EmissionGpu_Dispatch(s_ssbo,(unsigned int)GpuParticleSystem_ActiveCount(),dt);
+        EmissionGpu_Dispatch(s_ssbo, (unsigned int)activeSpan, dt);
 
         for (int slot = 0; slot < GPU_VECTOR_FIELD_SLOTS; slot++)
         {
@@ -689,10 +813,12 @@ void GpuParticleSystem_Update(float dt)
         }
         rlActiveTextureSlot(0);
     }
+
     // ALWAYS run CPU update loop for tracking and spawning events (like dust puffs on collision!)
-    // If s_use_compute is false, this loop also integrates positions.
-    // If s_use_compute is true, it replicates physics in sync with GPU compute so the CPU can detect collision.
-    int slotLimit=s_use_compute?GpuParticleSystem_ActiveCount():MAX_GPU_PARTICLES;
+    // Bound by high-water mark s_spawn_cursor on both compute and CPU paths.
+    int slotLimit = s_spawn_cursor < MAX_GPU_PARTICLES ? s_spawn_cursor : MAX_GPU_PARTICLES;
+    const float baseWindBlend = 1.0f - expf(-3.5f * dt);
+
     for (int i = 0; i < slotLimit; i++)
     {
         GpuParticleData *p = &s_cpu_pool[i];
@@ -701,37 +827,51 @@ void GpuParticleSystem_Update(float dt)
         p->life_rem -= dt;
         if (p->life_rem <= 0.0f)
         {
-            if(s_use_compute) EmissionGpu_ReleaseParent((unsigned int)i);
-            if(s_motionBodies[i].meta[0]) {--s_motionLiveCount;s_motionBodies[i].meta[0]=0;}
+            if (s_use_compute) EmissionGpu_ReleaseParent((unsigned int)i);
+            if (s_motionBodies[i].meta[0]) {
+                --s_motionLiveCount;
+                s_motionBodies[i].meta[0] = 0;
+            }
             ReleasePath((int)p->route_pad0);
             p->route_pad0 = -1.0f;
             EmissionImpact_Release(s_particleImpactIndex[i]);
             s_particleImpactIndex[i] = 0;
+            s_particleImpactCount[i] = 0;
             p->active = 0.0f;
             continue;
         }
         /* Motion GPU state is authoritative. Only lifetime/owner bookkeeping
          * runs on CPU: no per-particle field sampling, integration or readback. */
-        if(s_use_compute && s_motionBodies[i].meta[0]) continue;
+        if (s_use_compute && s_motionBodies[i].meta[0])
+            continue;
 
         int pathIndex = (int)p->route_pad0;
+        const ParticleTravelPath *activePath =
+            (pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS) ? s_pathRegistry[pathIndex] : NULL;
         bool impactActive = p->impact_active > 0.5f;
         int forceIndex = (int)p->ff_index;
-        if (impactActive && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
-            s_pathRegistry[pathIndex])
-            forceIndex = RegisterField(s_pathRegistry[pathIndex]->arrivalForceField,
-                                       (Vector3){0}, (Vector3){0}, p->life_rem);
+        if (impactActive) {
+            p->impact_age += dt;
+            if (activePath && activePath->arrivalForceField &&
+                (activePath->arrivalForceDuration <= 0.0f || p->impact_age <= activePath->arrivalForceDuration)) {
+                forceIndex = RegisterField(activePath->arrivalForceField,
+                                           (Vector3){0}, (Vector3){0}, p->life_rem);
+            } else {
+                forceIndex = -1;
+            }
+        }
 
         // 1. Evaluate Force Field on CPU
-        if (forceIndex >= 0)
+        if (forceIndex >= 0 && forceIndex < s_fieldCount)
         {
-            int ff_idx = forceIndex;
-            if (ff_idx < s_fieldCount)
+            const ForceField *ff = FieldAt(forceIndex);
+            if (ff)
             {
-                const ForceField *ff = FieldAt(ff_idx);
                 Vector3 pos = {p->px, p->py, p->pz};
                 Vector3 vel = {p->vx, p->vy, p->vz};
-                Vector3 acc = ForceField_Evaluate(ff, pos, vel, s_elapsed_time, s_fieldAxisOrigin[ff_idx], s_fieldAxisDir[ff_idx]);
+                Vector3 acc = ForceField_Evaluate(ff, pos, vel, s_elapsed_time,
+                                                  s_fieldAxisOrigin[forceIndex],
+                                                  s_fieldAxisDir[forceIndex]);
                 p->vx += acc.x * dt;
                 p->vy += acc.y * dt;
                 p->vz += acc.z * dt;
@@ -744,45 +884,45 @@ void GpuParticleSystem_Update(float dt)
         }
 
         // 2. Drag
-        float drag_f = 1.0f - p->drag * dt;
-        if (drag_f < 0.0f)
-            drag_f = 0.0f;
-        p->vx *= drag_f;
-        p->vy *= drag_f;
-        p->vz *= drag_f;
+        if (p->drag > 0.0f)
+        {
+            float drag_f = 1.0f - p->drag * dt;
+            if (drag_f < 0.0f)
+                drag_f = 0.0f;
+            p->vx *= drag_f;
+            p->vy *= drag_f;
+            p->vz *= drag_f;
+        }
 
         // 3. Path steering runs after force/drag, then owns integration.
         bool reachedTarget = false;
-        if (!impactActive && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
-            s_pathRegistry[pathIndex]) {
+        if (!impactActive && activePath) {
             Vector3 position = {p->px, p->py, p->pz};
             Vector3 velocity = {p->vx, p->vy, p->vz};
             int waypoint = (int)p->route_pad1;
-            reachedTarget = ParticleTravel_StepFormation(s_pathRegistry[pathIndex], dt,
+            reachedTarget = ParticleTravel_StepFormation(activePath, dt,
                                                 &position, &velocity, &waypoint,
                                                 (Vector3){p->formation_x, p->formation_y, p->formation_z});
             p->px = position.x; p->py = position.y; p->pz = position.z;
             p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
             p->route_pad1 = (float)waypoint;
         } else {
-            if (impactActive || p->wind_influence > 0.0f) {
-                if (impactActive) p->impact_age += dt;
-                // Jitter per-particle: phá vỡ coherence Perlin khi tất cả hạt cùng vị trí target
+            if (p->wind_influence > 0.0f) {
+                // Jitter per-particle: dùng floorf thay vì fmodf+branch để khớp GLSL fract() và nhanh hơn
                 float seed = (float)i;
-                float h1 = fmodf(sinf(seed * 127.1f) * 43758.5453f, 1.0f);
-                float h2 = fmodf(sinf(seed * 269.5f) * 43758.5453f, 1.0f);
-                float h3 = fmodf(sinf(seed * 419.2f) * 43758.5453f, 1.0f);
-                if (h1 < 0.0f) h1 += 1.0f;
-                if (h2 < 0.0f) h2 += 1.0f;
-                if (h3 < 0.0f) h3 += 1.0f;
+                float s1 = sinf(seed * 127.1f) * 43758.5453f;
+                float s2 = sinf(seed * 269.5f) * 43758.5453f;
+                float s3 = sinf(seed * 419.2f) * 43758.5453f;
+                float h1 = s1 - floorf(s1);
+                float h2 = s2 - floorf(s2);
+                float h3 = s3 - floorf(s3);
                 Vector3 samplePos = {
-                  p->px + (h1 - 0.5f) * 3.0f,
-                  p->py + (h2 - 0.5f) * 3.0f,
-                  p->pz + (h3 - 0.5f) * 3.0f
+                    p->px + (h1 - 0.5f) * 3.0f,
+                    p->py + (h2 - 0.5f) * 3.0f,
+                    p->pz + (h3 - 0.5f) * 3.0f
                 };
                 Vector3 windVel = Wind_EvaluateVelocity(samplePos, s_elapsed_time);
-                float infl = p->wind_influence;
-                float blendRate = (1.0f - expf(-3.5f * dt)) * infl;
+                float blendRate = baseWindBlend * p->wind_influence;
                 p->vx += (windVel.x - p->vx) * blendRate;
                 p->vy += (windVel.y - p->vy) * blendRate;
                 p->vz += (windVel.z - p->vz) * blendRate;
@@ -792,37 +932,41 @@ void GpuParticleSystem_Update(float dt)
             p->pz += p->vz * dt;
         }
 
-        if (reachedTarget && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
-            s_pathRegistry[pathIndex] && s_pathRegistry[pathIndex]->arrivalForceField) {
+        if (reachedTarget && activePath && activePath->arrivalForceField) {
             Vector3 position = {p->px, p->py, p->pz};
             Vector3 velocity = {p->vx, p->vy, p->vz};
-            ParticleTravel_ApplyImpactEntry(s_pathRegistry[pathIndex], &position, &velocity);
+            ParticleTravel_ApplyImpactEntry(activePath, &position, &velocity);
             p->px = position.x; p->py = position.y; p->pz = position.z;
             p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
             p->impact_age = 0.0f;
             p->impact_active = 1.0f;
-
             continue;
         }
         if (reachedTarget) {
             EmissionChildrenHandle impactIndex = s_particleImpactIndex[i];
-            EmissionImpact_Publish(impactIndex,s_particleImpactCount[i],&(EmissionEvent){
-                .kind=EMISSION_EVENT_ARRIVAL,.position={p->px,p->py,p->pz},.velocity={p->vx,p->vy,p->vz}});
+            EmissionImpact_Publish(impactIndex, s_particleImpactCount[i], &(EmissionEvent){
+                .kind = EMISSION_EVENT_ARRIVAL,
+                .position = {p->px, p->py, p->pz},
+                .velocity = {p->vx, p->vy, p->vz}});
             ReleasePath(pathIndex);
             p->route_pad0 = -1.0f;
             EmissionImpact_Release(impactIndex);
             s_particleImpactIndex[i] = 0;
+            s_particleImpactCount[i] = 0;
             p->active = 0.0f;
             continue;
         }
 
         if (forceIndex >= 0 && forceIndex < s_fieldCount) {
-            Vector3 position = {p->px, p->py, p->pz};
-            Vector3 velocity = {p->vx, p->vy, p->vz};
-            ForceField_ResolveParticleContacts(FieldAt(forceIndex), p->radius,
-                                              &position, &velocity);
-            p->px = position.x; p->py = position.y; p->pz = position.z;
-            p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
+            const ForceField *ff = FieldAt(forceIndex);
+            if (ff) {
+                Vector3 position = {p->px, p->py, p->pz};
+                Vector3 velocity = {p->vx, p->vy, p->vz};
+                ForceField_ResolveParticleContacts(ff, p->radius,
+                                                  &position, &velocity);
+                p->px = position.x; p->py = position.y; p->pz = position.z;
+                p->vx = velocity.x; p->vy = velocity.y; p->vz = velocity.z;
+            }
         }
         // 4. Ground/Floor collision check (which triggers dust puffs on CPU)
         if (p->ff_pad1 >= 0.0f)
@@ -830,12 +974,13 @@ void GpuParticleSystem_Update(float dt)
             float floorY = p->ff_pad2;
             if (p->py <= floorY)
             {
-                p->vy = -p->vy * p->ff_pad1;
+                if (p->vy < 0.0f)
+                    p->vy = -p->vy * p->ff_pad1;
                 p->vx *= 0.8f;
                 p->vz *= 0.8f;
                 p->py = floorY + 0.005f;
 
-                EmissionLegacy_CollisionDust((Vector3){p->px,floorY+.01f,p->pz},LegacyDustRandom,NULL);
+                EmissionLegacy_CollisionDust((Vector3){p->px, floorY + 0.01f, p->pz}, LegacyDustRandom, NULL);
             }
         }
     }
@@ -845,27 +990,39 @@ void GpuParticleSystem_Update(float dt)
 // Draw
 // ---------------------------------------------------------------------------
 static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture);
-void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture) {
-    GpuParticleSystem_DrawLayer(camera,texture,0);
+
+void GpuParticleSystem_Draw(Camera3D camera, Texture2D texture)
+{
+    GpuParticleSystem_DrawLayer(camera, texture, 0);
 }
-void GpuParticleSystem_DrawLayer(Camera3D camera,Texture2D texture,int layer) {
-    if(s_surfacePass!=0 || !s_use_compute) {
-        if(s_surfacePass!=0 || layer!=1) GpuParticleSystem_DrawPass(camera,texture);
+
+void GpuParticleSystem_DrawLayer(Camera3D camera, Texture2D texture, int layer)
+{
+    if (s_surfacePass != 0 || !s_use_compute) {
+        if (s_surfacePass != 0 || layer != 1)
+            GpuParticleSystem_DrawPass(camera, texture);
         return;
     }
-    for(int blend=VFX_BLEND_ALPHA;blend<=VFX_BLEND_ADDITIVE;blend++) {
-        if(!((s_blendMask|EmissionGpu_BlendMask()) & (1u<<blend)) || (layer==1 && blend!=VFX_BLEND_ALPHA) ||
-            (layer==2 && blend!=VFX_BLEND_ADDITIVE)) continue;
-        s_drawBlend=blend;
+    unsigned int combinedMask = s_blendMask | EmissionGpu_BlendMask();
+    for (int blend = VFX_BLEND_ALPHA; blend <= VFX_BLEND_ADDITIVE; blend++) {
+        if (!(combinedMask & (1u << blend)) ||
+            (layer == 1 && blend != VFX_BLEND_ALPHA) ||
+            (layer == 2 && blend != VFX_BLEND_ADDITIVE))
+            continue;
+        s_drawBlend = blend;
         rlDrawRenderBatchActive();
-        BeginBlendMode(blend==VFX_BLEND_ALPHA?BLEND_ALPHA:BLEND_ADDITIVE);
-        GpuParticleSystem_DrawPass(camera,texture);
-        if(EmissionGpu_HasChildren()) {
-            s_drawingChildren=true;GpuParticleSystem_DrawPass(camera,texture);s_drawingChildren=false;
+        BeginBlendMode(blend == VFX_BLEND_ALPHA ? BLEND_ALPHA : BLEND_ADDITIVE);
+        GpuParticleSystem_DrawPass(camera, texture);
+        if (EmissionGpu_HasChildren()) {
+            s_drawingChildren = true;
+            GpuParticleSystem_DrawPass(camera, texture);
+            s_drawingChildren = false;
         }
-        rlDrawRenderBatchActive();EndBlendMode();
+        rlDrawRenderBatchActive();
+        EndBlendMode();
     }
 }
+
 static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture)
 {
     if (!s_initialized || !s_hasSpawned)
@@ -873,12 +1030,13 @@ static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture)
     if (s_surfacePass != 0 && s_surfaceIndexed && s_surfaceIndexCount == 0)
         return;
 
-    Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.position, camera.target));
-    Vector3 right = Vector3Normalize(Vector3CrossProduct(camera.up, viewDir));
-    Vector3 up = Vector3CrossProduct(viewDir, right);
+    Vector3 viewDir, right, up;
+    ComputeCameraBasis(camera, &viewDir, &right, &up);
 
     Matrix matView = MatrixLookAt(camera.position, camera.target, camera.up);
-    float aspectMVP = (float)GetScreenWidth() / (float)GetScreenHeight();
+    int screenW = GetScreenWidth();
+    int screenH = GetScreenHeight();
+    float aspectMVP = (screenH > 0) ? ((float)screenW / (float)screenH) : 1.0f;
     double topMVP = 1.0 * tan(camera.fovy * 0.5 * DEG2RAD);
     double rightMVP = topMVP * aspectMVP;
     Matrix matProjMVP = MatrixFrustum(-rightMVP, rightMVP, -topMVP, topMVP, 1.0, 1000.0);
@@ -888,56 +1046,58 @@ static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture)
     {
         bool softParticlePass = false;
         Shader drawShader = s_draw_shader_gpu;
-        if (s_surfacePass == 1 && s_surface_capture_shader_gpu.id) drawShader = s_surface_capture_shader_gpu;
-        if (s_surfacePass == 3 && s_surface_back_shader_gpu.id) drawShader = s_surface_back_shader_gpu;
-        BeginShaderMode(drawShader);
-        if(s_surfacePass==0) {
-            float blend=(float)s_drawBlend;
-            int loc=GetShaderLocation(drawShader,"u_filterBlend");
-            if(loc>=0) SetShaderValue(drawShader,loc,&blend,SHADER_UNIFORM_FLOAT);
-            loc=GetShaderLocation(drawShader,"u_blendLaw");
-            if(loc>=0) SetShaderValue(drawShader,loc,&s_drawBlend,SHADER_UNIFORM_INT);
-        }
-        if (s_surfacePass != 0) {
-            int loc_indexed = GetShaderLocation(drawShader, "u_surfaceIndexed");
-            int indexed = s_surfaceIndexed ? 1 : 0;
-            if (loc_indexed >= 0) SetShaderValue(drawShader, loc_indexed, &indexed, SHADER_UNIFORM_INT);
-            /* Both shader branches reflect binding 1, including legacy control. */
-            rlBindShaderBuffer(s_surface_index_ssbo, 1);
-        }
-        if (s_surfacePass != 0)
-        {
-            int loc_material = GetShaderLocation(drawShader, "u_materialId");
-            if (loc_material >= 0)
-                SetShaderValue(drawShader, loc_material, &s_surfaceMaterialId, SHADER_UNIFORM_FLOAT);
-        }
-        if (s_surfacePass == 3) {
-            int loc_match = GetShaderLocation(drawShader, "u_matchFrontMaterial");
-            int loc_front = GetShaderLocation(drawShader, "u_frontDepthTex");
-            float match = s_surfaceFrontDepth.id != 0 ? 1.0f : 0.0f;
-            int textureSlot = 0;
-            if (loc_match >= 0) SetShaderValue(drawShader, loc_match, &match, SHADER_UNIFORM_FLOAT);
-            if (loc_front >= 0) SetShaderValue(drawShader, loc_front, &textureSlot, SHADER_UNIFORM_INT);
+        const GpuDrawShaderLocs *locs = &s_draw_locs_gpu;
+        if (s_surfacePass == 1 && s_surface_capture_shader_gpu.id) {
+            drawShader = s_surface_capture_shader_gpu;
+            locs = &s_surface_capture_locs_gpu;
+        } else if (s_surfacePass == 3 && s_surface_back_shader_gpu.id) {
+            drawShader = s_surface_back_shader_gpu;
+            locs = &s_surface_back_locs_gpu;
         }
 
-        int loc_right = GetShaderLocation(drawShader, "u_right");
-        int loc_up = GetShaderLocation(drawShader, "u_up");
-        int loc_mvp = GetShaderLocation(drawShader, "mvp");
-        int loc_filterEmitter = GetShaderLocation(drawShader, "u_filterEmitter");
-        int loc_filterMode = GetShaderLocation(drawShader, "u_filterRenderMode");
-        if (loc_right >= 0)
-            SetShaderValue(drawShader, loc_right, &right, SHADER_UNIFORM_VEC3);
-        if (loc_up >= 0)
-            SetShaderValue(drawShader, loc_up, &up, SHADER_UNIFORM_VEC3);
-        if (loc_mvp >= 0)
-            SetShaderValueMatrix(drawShader, loc_mvp, matMVP);
-        int loc_view = GetShaderLocation(drawShader, "u_view");
-        int loc_projection = GetShaderLocation(drawShader, "u_projection");
-        if (loc_view >= 0) SetShaderValueMatrix(drawShader, loc_view, matView);
-        if (loc_projection >= 0) SetShaderValueMatrix(drawShader, loc_projection, matProjMVP);
+        BeginShaderMode(drawShader);
+        if (s_surfacePass == 0) {
+            float blend = (float)s_drawBlend;
+            if (locs->filterBlend >= 0)
+                SetShaderValue(drawShader, locs->filterBlend, &blend, SHADER_UNIFORM_FLOAT);
+            if (locs->blendLaw >= 0)
+                SetShaderValue(drawShader, locs->blendLaw, &s_drawBlend, SHADER_UNIFORM_INT);
+        } else {
+            int indexed = s_surfaceIndexed ? 1 : 0;
+            if (locs->surfaceIndexed >= 0)
+                SetShaderValue(drawShader, locs->surfaceIndexed, &indexed, SHADER_UNIFORM_INT);
+            /* Both shader branches reflect binding 1, including legacy control. */
+            rlBindShaderBuffer(s_surface_index_ssbo, 1);
+
+            if (locs->materialId >= 0)
+                SetShaderValue(drawShader, locs->materialId, &s_surfaceMaterialId, SHADER_UNIFORM_FLOAT);
+
+            if (s_surfacePass == 3) {
+                float match = s_surfaceFrontDepth.id != 0 ? 1.0f : 0.0f;
+                int textureSlot = 0;
+                if (locs->matchFrontMaterial >= 0)
+                    SetShaderValue(drawShader, locs->matchFrontMaterial, &match, SHADER_UNIFORM_FLOAT);
+                if (locs->frontDepthTex >= 0)
+                    SetShaderValue(drawShader, locs->frontDepthTex, &textureSlot, SHADER_UNIFORM_INT);
+            }
+        }
+
+        if (locs->right >= 0)
+            SetShaderValue(drawShader, locs->right, &right, SHADER_UNIFORM_VEC3);
+        if (locs->up >= 0)
+            SetShaderValue(drawShader, locs->up, &up, SHADER_UNIFORM_VEC3);
+        if (locs->mvp >= 0)
+            SetShaderValueMatrix(drawShader, locs->mvp, matMVP);
+        if (locs->view >= 0)
+            SetShaderValueMatrix(drawShader, locs->view, matView);
+        if (locs->projection >= 0)
+            SetShaderValueMatrix(drawShader, locs->projection, matProjMVP);
+
         float filterEmitter = (float)s_filterEmitter, filterMode = (float)s_filterRenderMode;
-        if (loc_filterEmitter >= 0) SetShaderValue(drawShader, loc_filterEmitter, &filterEmitter, SHADER_UNIFORM_FLOAT);
-        if (loc_filterMode >= 0) SetShaderValue(drawShader, loc_filterMode, &filterMode, SHADER_UNIFORM_FLOAT);
+        if (locs->filterEmitter >= 0)
+            SetShaderValue(drawShader, locs->filterEmitter, &filterEmitter, SHADER_UNIFORM_FLOAT);
+        if (locs->filterMode >= 0)
+            SetShaderValue(drawShader, locs->filterMode, &filterMode, SHADER_UNIFORM_FLOAT);
 
         // Fluid capture/thickness shaders do not draw visible billboards and
         // must not sample the scene depth. The ordinary GPU particle pass uses
@@ -946,27 +1106,20 @@ static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture)
         {
             Texture2D depthTex = SceneTargets_GetDepthTexture();
             float softFade = depthTex.id != 0 ? GPU_PARTICLE_SOFT_FADE_METERS : 0.0f;
-            int loc_softFade = GetShaderLocation(drawShader, "u_softFade");
             if (softFade > 0.0f)
             {
-                /* GPU particles are buffer-resident, so the CPU cannot cheaply
-                 * derive their screen union. Preserve correctness with a full
-                 * request; CPU particles use their much tighter bounds. */
                 SceneTargets_RequestSoftDepthRegion((Rectangle){0.0f, 0.0f,
-                                                       (float)GetScreenWidth(),
-                                                       (float)GetScreenHeight()});
+                                                       (float)screenW,
+                                                       (float)screenH});
                 SceneTargets_BindDepthForSoftParticles(drawShader, GPU_PARTICLE_SOFT_DEPTH_SLOT);
                 softParticlePass = true;
             }
-            if (loc_softFade >= 0)
-                SetShaderValue(drawShader, loc_softFade, &softFade, SHADER_UNIFORM_FLOAT);
+            if (locs->softFade >= 0)
+                SetShaderValue(drawShader, locs->softFade, &softFade, SHADER_UNIFORM_FLOAT);
         }
 
-        rlBindShaderBuffer(s_drawingChildren?EmissionGpu_ChildBuffer():s_ssbo, 0);
+        rlBindShaderBuffer(s_drawingChildren ? EmissionGpu_ChildBuffer() : s_ssbo, 0);
 
-        // A soft-particle fragment behind the ground must reach the shader so
-        // its alpha can fade. Flush around both depth state changes: queued
-        // raylib geometry otherwise receives the wrong raster state.
         if (softParticlePass)
         {
             rlDrawRenderBatchActive();
@@ -974,18 +1127,20 @@ static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture)
             rlDisableDepthTest();
         }
 
-        // Đảm bảo kết nối texture đúng khe và báo hiệu rõ cho Vulkan/OpenGL
         rlActiveTextureSlot(0);
-        unsigned int drawTextureId = s_surfacePass == 3 && s_surfaceFrontDepth.id != 0
+        unsigned int drawTextureId = (s_surfacePass == 3 && s_surfaceFrontDepth.id != 0)
                                       ? s_surfaceFrontDepth.id : texture.id;
         rlEnableTexture(drawTextureId);
 
         rlEnableShader(drawShader.id);
         rlEnableVertexArray(s_draw_vao);
-        int instanceCount = s_surfacePass != 0 && s_surfaceIndexed
-                                ? s_surfaceIndexCount : (s_drawingChildren?EMISSION_GPU_CHILD_CAPACITY:GpuParticleSystem_ActiveCount());
-        rlDrawVertexArrayInstanced(0, 6, instanceCount);
-        if (s_surfacePass != 0) s_surfaceLastInstanceCount = instanceCount;
+        int instanceCount = (s_surfacePass != 0 && s_surfaceIndexed)
+                                ? s_surfaceIndexCount
+                                : (s_drawingChildren ? EMISSION_GPU_CHILD_CAPACITY : GpuParticleSystem_ActiveCount());
+        if (instanceCount > 0)
+            rlDrawVertexArrayInstanced(0, 6, instanceCount);
+        if (s_surfacePass != 0)
+            s_surfaceLastInstanceCount = instanceCount;
         rlDisableVertexArray();
 
         rlDisableShader();
@@ -997,10 +1152,9 @@ static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture)
             rlEnableDepthTest();
         }
 
-        // Gỡ texture bằng API tường minh thay vì rlSetTexture(0)
         rlActiveTextureSlot(0);
         rlDisableTexture();
-        if (s_surfacePass == 0)
+        if (s_surfacePass == 0 && softParticlePass)
             SceneTargets_UnbindSoftParticleDepth(GPU_PARTICLE_SOFT_DEPTH_SLOT);
         EndShaderMode();
     }
@@ -1009,7 +1163,8 @@ static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture)
         rlSetTexture(texture.id);
         rlBegin(RL_QUADS);
 
-        for (int i = 0; i < MAX_GPU_PARTICLES; i++)
+        int slotLimit = s_spawn_cursor < MAX_GPU_PARTICLES ? s_spawn_cursor : MAX_GPU_PARTICLES;
+        for (int i = 0; i < slotLimit; i++)
         {
             GpuParticleData *p = &s_cpu_pool[i];
             if (p->active < 0.5f)
@@ -1018,14 +1173,30 @@ static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture)
             if (s_filterEmitter >= 0 && (int)p->emitter_id != s_filterEmitter) continue;
             if (s_filterRenderMode >= 0 && (int)p->render_mode != s_filterRenderMode) continue;
 
-            float t = 1.0f - (p->life_rem / p->life_max);
+            float r = p->radius;
+            if (r <= 1e-5f)
+                continue;
 
-            unsigned char cr = (unsigned char)((p->csr + (p->cer - p->csr) * t) * 255.0f);
-            unsigned char cg = (unsigned char)((p->csg + (p->ceg - p->csg) * t) * 255.0f);
-            unsigned char cb = (unsigned char)((p->csb + (p->ceb - p->csb) * t) * 255.0f);
-            unsigned char ca = (unsigned char)((p->csa + (p->cea - p->csa) * t) * 255.0f);
+            // Culling nhanh các hạt nằm hoàn toàn sau lưng camera
+            float dx = p->px - camera.position.x;
+            float dy = p->py - camera.position.y;
+            float dz = p->pz - camera.position.z;
+            float forwardDist = -(dx * viewDir.x + dy * viewDir.y + dz * viewDir.z);
+            if (forwardDist < -r * 3.5f)
+                continue;
 
-            float cx = p->px, cy = p->py, cz = p->pz, r = p->radius;
+            float t = (p->life_max > 1e-6f) ? (1.0f - (p->life_rem / p->life_max)) : 1.0f;
+            if (t < 0.0f) t = 0.0f;
+            else if (t > 1.0f) t = 1.0f;
+
+            unsigned char ca = ClampFloatToByte((p->csa + (p->cea - p->csa) * t) * 255.0f);
+            if (ca == 0)
+                continue;
+            unsigned char cr = ClampFloatToByte((p->csr + (p->cer - p->csr) * t) * 255.0f);
+            unsigned char cg = ClampFloatToByte((p->csg + (p->ceg - p->csg) * t) * 255.0f);
+            unsigned char cb = ClampFloatToByte((p->csb + (p->ceb - p->csb) * t) * 255.0f);
+
+            float cx = p->px, cy = p->py, cz = p->pz;
 
             rlColor4ub(cr, cg, cb, ca);
 
@@ -1036,12 +1207,12 @@ static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture)
             float stretchStrength = p->ff_pad0;
             if (stretchStrength > 0.0f)
             {
-                Vector3 vel = {p->vx, p->vy, p->vz};
-                float vx = vel.x * right.x + vel.y * right.y + vel.z * right.z;
-                float vy = vel.x * up.x + vel.y * up.y + vel.z * up.z;
-                float screenSpeed = sqrtf(vx * vx + vy * vy);
-                if (screenSpeed > 0.05f)
+                float vx = p->vx * right.x + p->vy * right.y + p->vz * right.z;
+                float vy = p->vx * up.x + p->vy * up.y + p->vz * up.z;
+                float screenSpeedSq = vx * vx + vy * vy;
+                if (screenSpeedSq > 0.0025f) // > 0.05f^2
                 {
+                    float screenSpeed = sqrtf(screenSpeedSq);
                     float invSpeed = 1.0f / screenSpeed;
                     float dirX = vx * invSpeed;
                     float dirY = vy * invSpeed;
@@ -1064,9 +1235,10 @@ static void GpuParticleSystem_DrawPass(Camera3D camera, Texture2D texture)
                     ry = rightDir.y * r;
                     rz = rightDir.z * r;
 
-                    ux = tangentDir.x * r * stretchFactor;
-                    uy = tangentDir.y * r * stretchFactor;
-                    uz = tangentDir.z * r * stretchFactor;
+                    float stretchedR = r * stretchFactor;
+                    ux = tangentDir.x * stretchedR;
+                    uy = tangentDir.y * stretchedR;
+                    uz = tangentDir.z * stretchedR;
                 }
             }
 
@@ -1096,25 +1268,28 @@ void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, in
     if (s_use_compute) {
         GpuParticleSystem_Draw(camera, texture);
     } else if (s_surface_capture_shader_cpu.id) {
-        /* CPU path: draw each particle as a billboard with sphere-impostor depth.
-         * The shader reconstructs depth from texcoord, so we submit per-particle
-         * center+radius via u_capture_params before every quad. */
+        /* CPU path: giữ BeginShaderMode và ma trận chiếu cố định bên ngoài vòng lặp,
+         * chỉ flush mỗi quad để cập nhật u_capture_params thay vì bật/tắt shader mỗi hạt. */
         Matrix matView = MatrixLookAt(camera.position, camera.target, camera.up);
-        Matrix matProj;
-        float aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
+        int screenH = GetScreenHeight();
+        float aspect = (screenH > 0) ? ((float)GetScreenWidth() / (float)screenH) : 1.0f;
         double top = tan(camera.fovy * 0.5 * DEG2RAD);
         double right_f = top * aspect;
-        matProj = MatrixFrustum(-right_f, right_f, -top, top, 0.01, 1000.0);
+        Matrix matProj = MatrixFrustum(-right_f, right_f, -top, top, 0.01, 1000.0);
 
-        /* Camera basis for billboard quads */
-        Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-        Vector3 camRight = Vector3Normalize(Vector3CrossProduct(viewDir, camera.up));
-        Vector3 camUp    = Vector3CrossProduct(camRight, viewDir);
+        Vector3 viewTowardTarget = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+        Vector3 camRight = Vector3Normalize(Vector3CrossProduct(viewTowardTarget, camera.up));
+        Vector3 camUp    = Vector3CrossProduct(camRight, viewTowardTarget);
 
+        BeginShaderMode(s_surface_capture_shader_cpu);
         if (s_cpu_capture_proj_loc >= 0)
             SetShaderValueMatrix(s_surface_capture_shader_cpu, s_cpu_capture_proj_loc, matProj);
+        if (s_cpu_capture_material_loc >= 0)
+            SetShaderValue(s_surface_capture_shader_cpu, s_cpu_capture_material_loc,
+                           &s_surfaceMaterialId, SHADER_UNIFORM_FLOAT);
 
-        for (int i = 0; i < MAX_GPU_PARTICLES; i++) {
+        int slotLimit = s_spawn_cursor < MAX_GPU_PARTICLES ? s_spawn_cursor : MAX_GPU_PARTICLES;
+        for (int i = 0; i < slotLimit; i++) {
             GpuParticleData *p = &s_cpu_pool[i];
             if (p->active < 0.5f) continue;
             if ((int)p->render_mode != 3) continue;
@@ -1123,20 +1298,12 @@ void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, in
 
             Vector3 worldPos = {p->px, p->py, p->pz};
             float r = p->radius;
-
-            /* Transform center to view space for the shader */
             Vector3 viewPos = Vector3Transform(worldPos, matView);
-
             float params[4] = {viewPos.x, viewPos.y, viewPos.z, r};
-            BeginShaderMode(s_surface_capture_shader_cpu);
-            if (s_cpu_capture_proj_loc >= 0)
-                SetShaderValueMatrix(s_surface_capture_shader_cpu, s_cpu_capture_proj_loc, matProj);
+
             if (s_cpu_capture_params_loc >= 0)
                 SetShaderValue(s_surface_capture_shader_cpu, s_cpu_capture_params_loc,
                                params, SHADER_UNIFORM_VEC4);
-            if (s_cpu_capture_material_loc >= 0)
-                SetShaderValue(s_surface_capture_shader_cpu, s_cpu_capture_material_loc,
-                               &s_surfaceMaterialId, SHADER_UNIFORM_FLOAT);
 
             Vector3 rx = {camRight.x * r, camRight.y * r, camRight.z * r};
             Vector3 uy = {camUp.x * r,    camUp.y * r,    camUp.z * r};
@@ -1148,8 +1315,9 @@ void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, in
             rlTexCoord2f(1.0f, 1.0f); rlVertex3f(x0 + rx.x - uy.x, y0 + rx.y - uy.y, z0 + rx.z - uy.z);
             rlTexCoord2f(0.0f, 1.0f); rlVertex3f(x0 - rx.x - uy.x, y0 - rx.y - uy.y, z0 - rx.z - uy.z);
             rlEnd();
-            EndShaderMode();
+            rlDrawRenderBatchActive();
         }
+        EndShaderMode();
     }
     s_surfacePass = 0;
     s_filterEmitter = s_filterRenderMode = -1;
@@ -1157,10 +1325,6 @@ void GpuParticleSystem_DrawSurfaceEmitter(Camera3D camera, Texture2D texture, in
 
 void GpuParticleSystem_DrawSurfaceBackEmitter(Camera3D camera, int emitterId)
 {
-    /* Far root of every splat, reduced with MAX (see
-     * liquid_capture_particle_back.fs). Same geometry, same filters and the same
-     * depth state as the front pass — only the shader differs, so the two
-     * captures are guaranteed to describe the same cloud. */
     s_filterEmitter = emitterId;
     s_filterRenderMode = 3;
     s_surfacePass = 3;
@@ -1168,16 +1332,22 @@ void GpuParticleSystem_DrawSurfaceBackEmitter(Camera3D camera, int emitterId)
         GpuParticleSystem_Draw(camera, (Texture2D){0});
     } else if (s_surface_back_shader_cpu.id) {
         Matrix matView = MatrixLookAt(camera.position, camera.target, camera.up);
-        float aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
+        int screenH = GetScreenHeight();
+        float aspect = (screenH > 0) ? ((float)GetScreenWidth() / (float)screenH) : 1.0f;
         double top = tan(camera.fovy * 0.5 * DEG2RAD);
         double right_f = top * aspect;
         Matrix matProj = MatrixFrustum(-right_f, right_f, -top, top, 0.01, 1000.0);
 
-        Vector3 viewDir = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-        Vector3 camRight = Vector3Normalize(Vector3CrossProduct(viewDir, camera.up));
-        Vector3 camUp    = Vector3CrossProduct(camRight, viewDir);
+        Vector3 viewTowardTarget = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
+        Vector3 camRight = Vector3Normalize(Vector3CrossProduct(viewTowardTarget, camera.up));
+        Vector3 camUp    = Vector3CrossProduct(camRight, viewTowardTarget);
 
-        for (int i = 0; i < MAX_GPU_PARTICLES; i++) {
+        BeginShaderMode(s_surface_back_shader_cpu);
+        if (s_cpu_back_proj_loc >= 0)
+            SetShaderValueMatrix(s_surface_back_shader_cpu, s_cpu_back_proj_loc, matProj);
+
+        int slotLimit = s_spawn_cursor < MAX_GPU_PARTICLES ? s_spawn_cursor : MAX_GPU_PARTICLES;
+        for (int i = 0; i < slotLimit; i++) {
             GpuParticleData *p = &s_cpu_pool[i];
             if (p->active < 0.5f) continue;
             if ((int)p->render_mode != 3) continue;
@@ -1189,9 +1359,6 @@ void GpuParticleSystem_DrawSurfaceBackEmitter(Camera3D camera, int emitterId)
             Vector3 viewPos = Vector3Transform(worldPos, matView);
             float params[4] = {viewPos.x, viewPos.y, viewPos.z, r};
 
-            BeginShaderMode(s_surface_back_shader_cpu);
-            if (s_cpu_back_proj_loc >= 0)
-                SetShaderValueMatrix(s_surface_back_shader_cpu, s_cpu_back_proj_loc, matProj);
             if (s_cpu_back_params_loc >= 0)
                 SetShaderValue(s_surface_back_shader_cpu, s_cpu_back_params_loc,
                                params, SHADER_UNIFORM_VEC4);
@@ -1206,13 +1373,13 @@ void GpuParticleSystem_DrawSurfaceBackEmitter(Camera3D camera, int emitterId)
             rlTexCoord2f(1.0f, 1.0f); rlVertex3f(x0 + rx.x - uy.x, y0 + rx.y - uy.y, z0 + rx.z - uy.z);
             rlTexCoord2f(0.0f, 1.0f); rlVertex3f(x0 - rx.x - uy.x, y0 - rx.y - uy.y, z0 - rx.z - uy.z);
             rlEnd();
-            EndShaderMode();
+            rlDrawRenderBatchActive();
         }
+        EndShaderMode();
     }
     s_surfacePass = 0;
     s_filterEmitter = s_filterRenderMode = -1;
 }
-
 
 static bool GpuParticleSystem_PrepareSurfaceIndices(const GpuSurfaceRoute *routes, int count)
 {
@@ -1231,7 +1398,8 @@ static bool GpuParticleSystem_PrepareSurfaceIndices(const GpuSurfaceRoute *route
                                              : offsetof(GpuParticleData, emitter_id);
         size_t modeOffset = s_use_compute ? offsetof(GpuSurfaceRouting, renderMode)
                                           : offsetof(GpuParticleData, render_mode);
-        int n = GpuSurfaceIndex_Build(metadata, MAX_GPU_PARTICLES, stride,
+        int residentSpan = s_spawn_cursor < MAX_GPU_PARTICLES ? s_spawn_cursor : MAX_GPU_PARTICLES;
+        int n = GpuSurfaceIndex_Build(metadata, residentSpan, stride,
                                      emitterOffset, modeOffset, routes, count,
                                      s_surfaceIndices, MAX_GPU_PARTICLES);
         if (n < 0) return false;
@@ -1308,7 +1476,6 @@ void GpuParticleSystem_SetSurfaceCaptureFrontDepth(Texture2D texture)
     s_surfaceFrontDepth = texture;
 }
 
-
 // ---------------------------------------------------------------------------
 // Unload
 // ---------------------------------------------------------------------------
@@ -1317,6 +1484,21 @@ void GpuParticleSystem_Unload(void)
     EmissionGpu_Unload();
     if (!s_initialized)
         return;
+
+    int slotLimit = s_spawn_cursor < MAX_GPU_PARTICLES ? s_spawn_cursor : MAX_GPU_PARTICLES;
+    for (int i = 0; i < slotLimit; ++i) {
+        if (s_particleImpactIndex[i] != 0) {
+            EmissionImpact_Release(s_particleImpactIndex[i]);
+            s_particleImpactIndex[i] = 0;
+        }
+        s_particleImpactCount[i] = 0;
+    }
+    memset(s_fieldLeases, 0, sizeof(s_fieldLeases));
+    s_fieldCount = 0;
+    memset(s_pathRegistry, 0, sizeof(s_pathRegistry));
+    memset(s_pathRefs, 0, sizeof(s_pathRefs));
+    s_activePathSlots = 0;
+
     if (s_use_compute)
     {
         if (s_surface_index_ssbo) {
@@ -1348,8 +1530,14 @@ void GpuParticleSystem_Unload(void)
             rlUnloadShaderBuffer(s_wind_terrain_ssbo);
             s_wind_terrain_ssbo = 0;
         }
-        if(s_motion_scene_ssbo) {rlUnloadShaderBuffer(s_motion_scene_ssbo);s_motion_scene_ssbo=0;}
-        if(s_motion_body_ssbo) {rlUnloadShaderBuffer(s_motion_body_ssbo);s_motion_body_ssbo=0;}
+        if (s_motion_scene_ssbo) {
+            rlUnloadShaderBuffer(s_motion_scene_ssbo);
+            s_motion_scene_ssbo = 0;
+        }
+        if (s_motion_body_ssbo) {
+            rlUnloadShaderBuffer(s_motion_body_ssbo);
+            s_motion_body_ssbo = 0;
+        }
         if (s_draw_vao)
         {
             rlUnloadVertexArray(s_draw_vao);
@@ -1369,6 +1557,10 @@ void GpuParticleSystem_Unload(void)
     }
     s_initialized = false;
     s_use_compute = false;
+    s_hasSpawned = false;
+    s_spawn_cursor = 0;
+    s_motionLiveCount = 0;
+    s_blendMask = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1383,7 +1575,8 @@ int GpuParticleSystem_ActiveCount(void)
     if (s_use_compute)
         return s_spawn_cursor < MAX_GPU_PARTICLES ? s_spawn_cursor : MAX_GPU_PARTICLES;
     int count = 0;
-    for (int i = 0; i < MAX_GPU_PARTICLES; i++)
+    int slotLimit = s_spawn_cursor < MAX_GPU_PARTICLES ? s_spawn_cursor : MAX_GPU_PARTICLES;
+    for (int i = 0; i < slotLimit; i++)
     {
         if (s_cpu_pool[i].active >= 0.5f)
             count++;
@@ -1410,7 +1603,7 @@ void GpuParticleSystem_DrawDebug(int x, int y)
         rl_ver == 4 ? "GL 4.3+" : rl_ver == 3 ? "GL 3.3"
                               : rl_ver == 5   ? "GLES 2.0"
                               : rl_ver == 6   ? "GLES 3.x"
-                                              : "GL ?";
+                                              : "Vulkan / GL";
 
     int active = GpuParticleSystem_ActiveCount();
 

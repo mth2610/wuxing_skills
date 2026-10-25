@@ -3,11 +3,6 @@
 // Đọc thẳng SSBO particle theo gl_InstanceID (mỗi instance = 1 hạt, quad 6 verts).
 // Template quad nằm ở attribute 0 (vertexPosition, góc ±1).
 //
-// KHÔNG dùng per-instance attribute + divisor ("VBO Instancing Bypass" cũ) nữa:
-// rlvk (Vulkan backend) không hỗ trợ divisor/attribute tùy biến ngoài bộ canonical —
-// attribute đọc lệch stride ra zeros → life_data.w < 0.5 → mọi hạt bị bóp tàng hình.
-// Vulkan và GL 4.3 đều BẢO ĐẢM vertex-stage SSBO read (chính là lý do chọn Vulkan
-// cho path này); Android GLES không chạy compute path nên không bị ảnh hưởng.
 // `readonly` bắt buộc: rlvk cần NonWritable khi thiếu vertexPipelineStoresAndAtomics.
 
 struct GpuParticleData {
@@ -16,9 +11,9 @@ struct GpuParticleData {
     vec4 color_start;
     vec4 color_end;
     vec4 life_data;
-    vec4 ff_data; // không dùng ở VS, giữ để khớp stride với GPU/CPU struct
+    vec4 ff_data;        // y = stretchStrength (ff_pad0)
     vec4 route_data;     // x=emitter id, y=render mode, z=travel slot, w=waypoint
-    vec4 impact_data;    // x=impact age, y=impact active
+    vec4 impact_data;    // x=impact age, y=impact active, z=wind, w=blendMode
     vec4 formation_data; // xyz = per-particle offset from formation origin
 };
 
@@ -31,56 +26,75 @@ in vec3 vertexPosition;   // template quad corner, xy trong [-1, 1]
 uniform mat4 mvp;
 uniform vec3 u_right;   // camera right vector
 uniform vec3 u_up;      // camera up vector
-uniform float u_filterEmitter; // < 0 = all
+uniform float u_filterEmitter;    // < 0 = all
 uniform float u_filterRenderMode; // < 0 = all
-uniform float u_filterBlend;
+uniform float u_filterBlend;      // < 0 = all
 
 out vec2 fragTexCoord;
 out vec4 fragColor;
 
 void main() {
-    // TỐI ƯU HÓA: Chỉ đọc vector life_data, không copy toàn bộ struct
-    vec4 life = particles[gl_InstanceID].life_data;
-    vec4 route = particles[gl_InstanceID].route_data;
+    uint id = uint(gl_InstanceID);
+    vec4 life = particles[id].life_data;
+    vec4 route = particles[id].route_data;
 
-    // Invisible nếu inactive hoặc vừa mới chết
-    if (life.w < 0.5 || life.y <= 0.0 ||
-        abs(particles[gl_InstanceID].impact_data.w-u_filterBlend)>.25 ||
+    // Culling sớm ở Vertex Stage nếu hạt không hoạt động, đã hết đời hoặc khác bộ lọc
+    if (life.w < 0.5 || life.x <= 0.0 || life.y <= 0.0 ||
+        (u_filterBlend >= 0.0 && abs(particles[id].impact_data.w - u_filterBlend) > 0.25) ||
         (u_filterRenderMode < 0.0 && abs(route.y - 3.0) < 0.25) ||
         (u_filterEmitter >= 0.0 && abs(route.x - u_filterEmitter) > 0.25) ||
         (u_filterRenderMode >= 0.0 && abs(route.y - u_filterRenderMode) > 0.25)) {
-        // Do not use w = 0 here: Vulkan rasterizers may still produce an
-        // undefined clipped primitive. A point outside every clip plane is
-        // deterministic and prevents SURFACE_INPUT particles leaking into
-        // the normal billboard pass as square sprites.
         gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);
         fragColor    = vec4(0.0);
         fragTexCoord = vec2(0.0);
         return;
     }
 
-    // TỐI ƯU HÓA: Nạp trực tiếp dữ liệu cần thiết từ SSBO
-    vec4 pr     = particles[gl_InstanceID].pos_radius;
-    float r     = pr.w;
+    vec4 pr = particles[id].pos_radius;
+    float r = pr.w;
+
+    // Tính màu sắc & kiểm tra độ trong suốt trước khi biến đổi ma trận để tránh
+    // rasterize các quad đã mờ hoàn toàn (alpha < 0.005) hoặc bán kính <= 0.
+    float t = clamp(1.0 - (life.x / life.y), 0.0, 1.0);
+    vec4 col_start = particles[id].color_start;
+    vec4 col_end   = particles[id].color_end;
+    vec4 color     = mix(col_start, col_end, t);
+
+    if (r <= 1e-5 || color.a < 0.005) {
+        gl_Position  = vec4(2.0, 2.0, 2.0, 1.0);
+        fragColor    = vec4(0.0);
+        fragTexCoord = vec2(0.0);
+        return;
+    }
+
     vec3 center = pr.xyz;
     vec2 corner = vertexPosition.xy;
-
     vec3 worldPos;
-    float stretchStrength = particles[gl_InstanceID].ff_data.y; // ff_pad0
-    vec3 vel = particles[gl_InstanceID].vel_drag.xyz;
-    float vx = dot(vel, u_right);
-    float vy = dot(vel, u_up);
-    float screenSpeed = length(vec2(vx, vy));
 
-    if (stretchStrength > 0.0 && screenSpeed > 0.05) {
-        vec2 dir2D = vec2(vx, vy) / screenSpeed;
-        vec3 tangentDir = u_right * dir2D.x + u_up * dir2D.y;
-        vec3 rightDir   = u_right * dir2D.y - u_up * dir2D.x;
-        
-        float stretchFactor = min(1.0 + screenSpeed * stretchStrength, 3.5);
-        worldPos = center
-                 + rightDir   * (corner.x * r)
-                 + tangentDir * (corner.y * r * stretchFactor);
+    // Chỉ đọc vận tốc từ SSBO và chiếu lên mặt phẳng camera khi hạt thực sự có stretchStrength > 0
+    float stretchStrength = particles[id].ff_data.y;
+    if (stretchStrength > 0.0) {
+        vec3 vel = particles[id].vel_drag.xyz;
+        float vx = dot(vel, u_right);
+        float vy = dot(vel, u_up);
+        float screenSpeedSq = vx * vx + vy * vy;
+
+        if (screenSpeedSq > 0.0025) { // > 0.05^2
+            float invSpeed    = inversesqrt(screenSpeedSq);
+            float screenSpeed = screenSpeedSq * invSpeed;
+            vec2 dir2D        = vec2(vx, vy) * invSpeed;
+            vec3 tangentDir   = u_right * dir2D.x + u_up * dir2D.y;
+            vec3 rightDir     = u_right * dir2D.y - u_up * dir2D.x;
+
+            float stretchFactor = min(1.0 + screenSpeed * stretchStrength, 3.5);
+            worldPos = center
+                     + rightDir   * (corner.x * r)
+                     + tangentDir * (corner.y * r * stretchFactor);
+        } else {
+            worldPos = center
+                     + u_right * (corner.x * r)
+                     + u_up    * (corner.y * r);
+        }
     } else {
         worldPos = center
                  + u_right * (corner.x * r)
@@ -88,15 +102,6 @@ void main() {
     }
 
     gl_Position  = mvp * vec4(worldPos, 1.0);
-    
-    // (-1,-1)->(0,0) ... (1,1)->(1,1), khớp UV_TABLE cũ
-    fragTexCoord = corner * 0.5 + 0.5;   
-
-    // TỐI ƯU HÓA: Bỏ hàm clamp() do Compute Shader đã bảo đảm life.x <= life.y
-    float t = 1.0 - (life.x / life.y);
-    
-    vec4 col_start = particles[gl_InstanceID].color_start;
-    vec4 col_end   = particles[gl_InstanceID].color_end;
-    
-    fragColor = mix(col_start, col_end, t);
+    fragTexCoord = corner * 0.5 + 0.5;
+    fragColor    = color;
 }

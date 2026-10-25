@@ -4,14 +4,15 @@
 #include <stdbool.h>
 
 /* The compute clock advances even before the first particle is spawned.
- * No lifetime estimate is sufficient to declare a previously used GPU pool
- * empty: this gate only admits work once a spawn has occurred since Init. */
+ * When running on the CPU/VBO fallback path, the clock also advances once
+ * particles have spawned so time-dependent ForceFields and Wind turbulence
+ * animate properly instead of freezing at t = 0. */
 static inline bool GpuParticleWork_BeginUpdate(bool initialized, bool compute,
                                                bool hasSpawned, float dt,
                                                float *elapsed)
 {
-    if (!initialized) return false;
-    if (compute) *elapsed += dt;
+    if (!initialized || !elapsed || dt < 0.0f) return false;
+    if (compute || hasSpawned) *elapsed += dt;
     return hasSpawned;
 }
 

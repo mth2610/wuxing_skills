@@ -9,7 +9,7 @@ precision highp sampler2D;
 
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
-// Phải khớp byte-for-byte với GpuParticleData trong gpu_particle_system.c
+// Phải khớp byte-for-byte với GpuParticleData trong particle_gpu_backend.c
 struct GpuParticleData {
     vec4 pos_radius;     // xyz = position, w = radius
     vec4 vel_drag;       // xyz = velocity, w = drag coefficient
@@ -18,7 +18,7 @@ struct GpuParticleData {
     vec4 life_data;      // x = life_remaining, y = life_max, z = phase, w = active (0/1)
     vec4 ff_data;        // x = force field slot (-1 = none), yzw = reserved
     vec4 route_data;     // x=emitter id, y=render mode, z=travel slot, w=waypoint
-    vec4 impact_data;    // x=impact age, y=impact active, z=wind_influence
+    vec4 impact_data;    // x=impact age, y=impact active, z=wind_influence, w=blendMode
     vec4 formation_data; // xyz = per-particle offset from formation origin
 };
 
@@ -28,8 +28,7 @@ layout(std430, binding = 0) buffer ParticleBuffer {
 
 // ---------------------------------------------------------------------------
 // Force field — phải khớp byte-for-byte với ForceLayerGPU/ForceFieldGPU
-// trong core/force_field.h (không sửa header đó, chỉ mirror layout ở đây,
-// giống cách GpuParticleData đã được mirror thủ công giữa .comp/.c/.vs).
+// trong core/force_field.h.
 // ---------------------------------------------------------------------------
 struct ForceLayerGPU {
     vec4 origin;    // xyz dùng, w đệm
@@ -53,9 +52,9 @@ layout(std430, binding = 1) readonly buffer ForceFieldBuffer {
 #define MAX_GPU_TRAVEL_PATHS 32
 struct ParticleTravelPathGPU {
     vec4 points[TRAVEL_MAX_WAYPOINTS];
-    vec4 params; // x=count, y=speed, z=steering, w=max acceleration
-    vec4 radii;  // x=waypoint radius, y=target radius
-    vec4 arrival; // x=arrival force slot, y=offset, z=kick
+    vec4 params;  // x=count, y=speed, z=steering, w=max acceleration
+    vec4 radii;   // x=waypoint radius, y=target radius, z=arrivalForceDuration
+    vec4 arrival; // x=arrival force slot, y=offset, z=kick, w=velScale
     vec4 formation_origin;
 };
 
@@ -66,16 +65,16 @@ layout(std430, binding = 2) readonly buffer ParticleTravelPathBuffer {
 #include "core/motion/shaders/motion_wind_types.glsl"
 
 // Phải khớp thứ tự enum ForceType trong core/force_field.h
-#define FT_GRAVITY_DIR   0
-#define FT_GRAVITY_POINT 1
-#define FT_VORTEX        2
-#define FT_WIND          3
-#define FT_NOISE_PERLIN  4
-#define FT_NOISE_CURL    5
-#define FT_DRAG          6
-#define FT_VISCOSITY     7
-#define FT_RADIAL_AXIS   8
-#define FT_VORTEX_AXIS   9
+#define FT_GRAVITY_DIR    0
+#define FT_GRAVITY_POINT  1
+#define FT_VORTEX         2
+#define FT_WIND           3
+#define FT_NOISE_PERLIN   4
+#define FT_NOISE_CURL     5
+#define FT_DRAG           6
+#define FT_VISCOSITY      7
+#define FT_RADIAL_AXIS    8
+#define FT_VORTEX_AXIS    9
 #define FT_VECTOR_TEXTURE 10
 #define FT_RECEIVER_PLANE 11
 
@@ -83,11 +82,9 @@ uniform float u_dt;
 uniform float u_time;
 
 // Vector field textures — RG = hướng flow XZ remap [-1,1] -> [0,1].
-// Slot index chọn qua ForceLayer.noiseScale (xem core/force_field.h).
 uniform sampler2D uVectorField0;
 uniform sampler2D uVectorField1;
 
-// TỐI ƯU HÓA: Hash không dùng hàm lượng giác (sin), nhẹ hơn rất nhiều cho GPU ALU
 #include "core/motion/shaders/motion_wind_noise.glsl"
 
 // Phải khớp CalcAttenuation() trong core/force_field.c
@@ -99,28 +96,25 @@ float calcAttenuation(vec3 origin, float radius, float falloff, vec3 pos) {
     float t = sqrt(distSq) / radius;
     if (falloff <= 0.0) return 1.0;
     if (falloff <= 1.0) return 1.0 - t;
-    return (1.0 - t) * (1.0 - t);
+    float omt = 1.0 - t;
+    return omt * omt;
 }
 
-// TỐI ƯU HÓA: Truyền `out float outTotalVisc` để gộp vòng lặp SSBO
-bool motionPhysicalNoise=false;
+bool motionPhysicalNoise = false;
 float fieldNoiseScalar(vec3 p);
 vec3 fieldCurlNoise(vec3 p);
 
 vec3 evalForceField(int idx, vec3 pos, vec3 vel, float time, out float outTotalVisc) {
     vec3 totalAcc = vec3(0.0);
     outTotalVisc = 0.0;
-    
-    if (idx < 0) return totalAcc;
 
-    // TỐI ƯU HÓA: Không copy toàn bộ ForceFieldGPU vào local (ngăn tràn thanh ghi)
-    int n = uFields[idx].meta.x;
-    if (n > FF_MAX_LAYERS) n = FF_MAX_LAYERS;
+    if (idx < 0 || idx >= int(uFields.length())) return totalAcc;
+
+    int n = clamp(uFields[idx].meta.x, 0, FF_MAX_LAYERS);
 
     for (int i = 0; i < n; i++) {
-        // Chỉ copy layer hiện tại
         ForceLayerGPU L = uFields[idx].layers[i];
-        
+
         int   type     = int(L.params0.w + 0.5);
         vec3  o        = L.origin.xyz;
         vec3  dir      = L.direction.xyz;
@@ -130,10 +124,12 @@ vec3 evalForceField(int idx, vec3 pos, vec3 vel, float time, out float outTotalV
         float nScale   = L.params1.x;
         float nSpeed   = L.params1.y;
 
-        // Gộp tính toán Viscosity vào cùng 1 pass
         if (type == FT_VISCOSITY) {
             outTotalVisc += strength;
-            continue; 
+            continue;
+        }
+        if (type == FT_RECEIVER_PLANE) {
+            continue;
         }
 
         float atten = 1.0;
@@ -151,63 +147,80 @@ vec3 evalForceField(int idx, vec3 pos, vec3 vel, float time, out float outTotalV
             vec3 toOrigin = o - pos;
             float distSq = dot(toOrigin, toOrigin);
             if (distSq >= 1e-4) {
-                float dist = sqrt(distSq);
-                acc = (toOrigin / dist) * (strength / (dist + 1.0));
+                float invDist = inversesqrt(distSq);
+                float dist = distSq * invDist;
+                acc = (toOrigin * invDist) * (strength / (dist + 1.0));
             }
 
         } else if (type == FT_VORTEX) {
-            vec3 axis = normalize(dir);
-            vec3 toPos = pos - o;
-            vec3 radial = toPos - axis * dot(toPos, axis);
-            float dist = length(radial);
-            if (dist >= 1e-3) {
-                vec3 tangent = normalize(cross(axis, radial));
-                acc = tangent * (strength / (dist + 1.0));
+            float dirLenSq = dot(dir, dir);
+            if (dirLenSq >= 1e-6) {
+                vec3 axis = dir * inversesqrt(dirLenSq);
+                vec3 toPos = pos - o;
+                vec3 radial = toPos - axis * dot(toPos, axis);
+                float distSq = dot(radial, radial);
+                if (distSq >= 1e-6) {
+                    float invDist = inversesqrt(distSq);
+                    float dist = distSq * invDist;
+                    // Vì axis là vector đơn vị và vuông góc với radial, |cross(axis, radial)| == dist.
+                    vec3 tangent = cross(axis, radial) * invDist;
+                    acc = tangent * (strength / (dist + 1.0));
+                }
             }
 
         } else if (type == FT_WIND) {
             float t = time * nSpeed;
-            float nx = fieldNoiseScalar(vec3(pos.x * nScale + t, pos.y * nScale, pos.z * nScale));
-            float nz = fieldNoiseScalar(vec3(pos.x * nScale + 53.9, pos.y * nScale, pos.z * nScale + t));
-            acc = dir * strength + vec3(nx, 0.0, nz) * strength * 0.35;
+            vec3 scaledPos = pos * nScale;
+            float nx = fieldNoiseScalar(vec3(scaledPos.x + t, scaledPos.y, scaledPos.z));
+            float nz = fieldNoiseScalar(vec3(scaledPos.x + 53.9, scaledPos.y, scaledPos.z + t));
+            acc = dir * strength + vec3(nx, 0.0, nz) * (strength * 0.35);
 
         } else if (type == FT_NOISE_PERLIN) {
             float t = time * nSpeed;
-            float nx = fieldNoiseScalar(vec3(pos.x * nScale + t,    pos.y * nScale + 17.7, pos.z * nScale + 17.7));
-            float ny = fieldNoiseScalar(vec3(pos.x * nScale + 37.3, pos.y * nScale + t,    pos.z * nScale + 37.3));
-            float nz = fieldNoiseScalar(vec3(pos.x * nScale + 73.1, pos.y * nScale + 73.1, pos.z * nScale + t));
+            vec3 scaledPos = pos * nScale;
+            float nx = fieldNoiseScalar(vec3(scaledPos.x + t,    scaledPos.y + 17.7, scaledPos.z + 17.7));
+            float ny = fieldNoiseScalar(vec3(scaledPos.x + 37.3, scaledPos.y + t,    scaledPos.z + 37.3));
+            float nz = fieldNoiseScalar(vec3(scaledPos.x + 73.1, scaledPos.y + 73.1, scaledPos.z + t));
             acc = vec3(nx, ny, nz) * strength;
 
         } else if (type == FT_NOISE_CURL) {
             float t = time * nSpeed;
-            vec3 p = vec3(pos.x * nScale + t, pos.y * nScale, pos.z * nScale + t);
+            vec3 scaledPos = pos * nScale;
+            vec3 p = vec3(scaledPos.x + t, scaledPos.y, scaledPos.z + t);
             acc = fieldCurlNoise(p) * strength;
 
         } else if (type == FT_DRAG) {
             acc = -strength * vel;
 
         } else if (type == FT_RADIAL_AXIS || type == FT_VORTEX_AXIS) {
-            if (dot(dir, dir) >= 1e-6) {
+            float dirLenSq = dot(dir, dir);
+            if (dirLenSq >= 1e-6) {
+                // Chuẩn hóa trục trước khi chiếu để khoảng cách vuông góc chính xác với mọi vector dir
+                vec3 axis = dir * inversesqrt(dirLenSq);
                 vec3 toPoint = pos - o;
-                float alongAxis = dot(toPoint, dir);
-                vec3 closestOnAxis = o + dir * alongAxis;
+                float alongAxis = dot(toPoint, axis);
+                vec3 closestOnAxis = o + axis * alongAxis;
                 vec3 radialVec = pos - closestOnAxis;
                 float perpDistSq = dot(radialVec, radialVec);
                 bool outOfRadius = (radius > 0.0 && perpDistSq >= radius * radius);
                 if (!outOfRadius && perpDistSq >= 1e-6) {
-                    float perpDist = sqrt(perpDistSq);
+                    float invPerpDist = inversesqrt(perpDistSq);
+                    float perpDist = perpDistSq * invPerpDist;
                     if (radius <= 0.0) {
                         atten = 1.0;
                     } else {
                         float tt = perpDist / radius;
                         if (falloff <= 0.0) atten = 1.0;
                         else if (falloff <= 1.0) atten = 1.0 - tt;
-                        else atten = (1.0 - tt) * (1.0 - tt);
+                        else {
+                            float omt = 1.0 - tt;
+                            atten = omt * omt;
+                        }
                     }
                     if (type == FT_RADIAL_AXIS) {
-                        acc = (radialVec * (-1.0 / perpDist)) * strength;
+                        acc = (radialVec * (-invPerpDist)) * strength;
                     } else {
-                        vec3 tangent = normalize(cross(dir, radialVec));
+                        vec3 tangent = cross(axis, radialVec) * invPerpDist;
                         acc = tangent * (strength / (perpDist + 1.0));
                     }
                 }
@@ -219,7 +232,6 @@ vec3 evalForceField(int idx, vec3 pos, vec3 vel, float time, out float outTotalV
                 vec2 uv = (pos.xz - o.xz) / (2.0 * halfExtent) + 0.5;
                 if (uv.x >= 0.0 && uv.x <= 1.0 && uv.y >= 0.0 && uv.y <= 1.0) {
                     int slot = int(nScale + 0.5);
-                    // SỬA LỖI: Compute Shader yêu cầu explicit LOD (textureLod)
                     vec4 texel = (slot == 1) ? textureLod(uVectorField1, uv, 0.0)
                                               : textureLod(uVectorField0, uv, 0.0);
                     vec2 flow = texel.rg * 2.0 - 1.0;
@@ -241,6 +253,42 @@ float segmentDistanceSq(vec3 a, vec3 b, vec3 point) {
     return dot(delta, delta);
 }
 
+vec3 computeTransportedOffset(int pathIndex, int waypoint, int finalIndex, vec3 formationOffset) {
+    if (dot(formationOffset, formationOffset) <= 1e-10) {
+        return vec3(0.0);
+    }
+    vec3 origin = uTravelPaths[pathIndex].formation_origin.xyz;
+    vec3 fromDelta = uTravelPaths[pathIndex].points[0].xyz - origin;
+    float fromLenSq = dot(fromDelta, fromDelta);
+    if (fromLenSq <= 1e-8) {
+        return formationOffset;
+    }
+    vec3 baseA = (waypoint > 0) ? uTravelPaths[pathIndex].points[waypoint - 1].xyz : origin;
+    vec3 baseB = uTravelPaths[pathIndex].points[min(waypoint, finalIndex)].xyz;
+    vec3 toDelta = baseB - baseA;
+    float toLenSq = dot(toDelta, toDelta);
+    if (toLenSq <= 1e-8) {
+        return formationOffset;
+    }
+
+    vec3 fromT = fromDelta * inversesqrt(fromLenSq);
+    vec3 toT = toDelta * inversesqrt(toLenSq);
+    vec3 rotAxis = cross(fromT, toT);
+    float rotSinSq = dot(rotAxis, rotAxis);
+    float rotCos = clamp(dot(fromT, toT), -1.0, 1.0);
+    if (rotSinSq > 1e-10) {
+        float invSin = inversesqrt(rotSinSq);
+        float rotSin = rotSinSq * invSin;
+        rotAxis *= invSin;
+        return formationOffset * rotCos +
+               cross(rotAxis, formationOffset) * rotSin +
+               rotAxis * dot(rotAxis, formationOffset) * (1.0 - rotCos);
+    } else if (rotCos < 0.0) {
+        return -formationOffset;
+    }
+    return formationOffset;
+}
+
 // Mirrors ParticleTravel_Step. Force and drag have already modified `vel`;
 // finite steering guides that result instead of erasing field deflection.
 bool evalTravelPath(int pathIndex, inout vec3 pos, inout vec3 vel,
@@ -251,58 +299,50 @@ bool evalTravelPath(int pathIndex, inout vec3 pos, inout vec3 vel,
     if (count <= 0) return false;
     int finalIndex = count - 1;
     int waypoint = clamp(int(waypointValue + 0.5), 0, finalIndex);
-    vec3 baseA = waypoint > 0 ? uTravelPaths[pathIndex].points[waypoint - 1].xyz
-                              : uTravelPaths[pathIndex].formation_origin.xyz;
-    vec3 baseB = uTravelPaths[pathIndex].points[min(waypoint, finalIndex)].xyz;
-    vec3 fromT = normalize(uTravelPaths[pathIndex].points[0].xyz -
-                           uTravelPaths[pathIndex].formation_origin.xyz);
-    vec3 toT = normalize(baseB - baseA);
-    vec3 rotAxis = cross(fromT, toT);
-    float rotSin = length(rotAxis);
-    float rotCos = clamp(dot(fromT, toT), -1.0, 1.0);
-    vec3 transportedOffset = formationOffset;
-    if (rotSin > 1e-5) {
-        rotAxis /= rotSin;
-        transportedOffset = formationOffset * rotCos +
-            cross(rotAxis, formationOffset) * rotSin +
-            rotAxis * dot(rotAxis, formationOffset) * (1.0 - rotCos);
-    } else if (rotCos < 0.0) transportedOffset = -formationOffset;
+
+    vec3 transportedOffset = computeTransportedOffset(pathIndex, waypoint, finalIndex, formationOffset);
+
     float waypointRadius = uTravelPaths[pathIndex].radii.x > 0.0
                                ? uTravelPaths[pathIndex].radii.x : 0.10;
     float targetRadius = uTravelPaths[pathIndex].radii.y > 0.0
                              ? uTravelPaths[pathIndex].radii.y : waypointRadius;
+    float waypointRadiusSq = waypointRadius * waypointRadius;
 
     for (int i = 0; i < TRAVEL_MAX_WAYPOINTS - 1; ++i) {
         if (waypoint >= finalIndex) break;
         vec3 occupiedGoal = uTravelPaths[pathIndex].points[waypoint].xyz + transportedOffset;
         vec3 occupiedDelta = pos - occupiedGoal;
-        if (dot(occupiedDelta, occupiedDelta) > waypointRadius * waypointRadius)
+        if (dot(occupiedDelta, occupiedDelta) > waypointRadiusSq)
             break;
         waypoint++;
+        transportedOffset = computeTransportedOffset(pathIndex, waypoint, finalIndex, formationOffset);
     }
 
     vec3 goal = uTravelPaths[pathIndex].points[waypoint].xyz + transportedOffset;
     vec3 toGoal = goal - pos;
-    float distanceToGoal = length(toGoal);
+    float distSq = dot(toGoal, toGoal);
     float speed = uTravelPaths[pathIndex].params.y;
     if (speed <= 0.0) {
-        speed = length(vel);
-        if (speed <= 1e-4) speed = 1.0;
+        float velSq = dot(vel, vel);
+        speed = (velSq > 1e-8) ? sqrt(velSq) : 1.0;
     }
-    vec3 desired = distanceToGoal > 1e-5 ? toGoal * (speed / distanceToGoal)
-                                          : vec3(0.0);
+    vec3 desired = (distSq > 1e-10) ? (toGoal * (speed * inversesqrt(distSq)))
+                                    : vec3(0.0);
     float steering = uTravelPaths[pathIndex].params.z > 0.0
                          ? uTravelPaths[pathIndex].params.z : 8.0;
     vec3 velocityDelta = (desired - vel) * (1.0 - exp(-steering * dt));
     float maxAcceleration = uTravelPaths[pathIndex].params.w;
-    float changeLength = length(velocityDelta);
-    if (maxAcceleration > 0.0 && changeLength > maxAcceleration * dt &&
-        changeLength > 1e-6)
-        velocityDelta *= (maxAcceleration * dt) / changeLength;
+    if (maxAcceleration > 0.0) {
+        float maxDelta = maxAcceleration * dt;
+        float changeSq = dot(velocityDelta, velocityDelta);
+        if (changeSq > maxDelta * maxDelta && changeSq > 1e-12) {
+            velocityDelta *= maxDelta * inversesqrt(changeSq);
+        }
+    }
     vel += velocityDelta;
 
     vec3 next = pos + vel * dt;
-    float hitRadius = waypoint == finalIndex ? targetRadius : waypointRadius;
+    float hitRadius = (waypoint == finalIndex) ? targetRadius : waypointRadius;
     if (segmentDistanceSq(pos, next, goal) <= hitRadius * hitRadius) {
         if (waypoint == finalIndex) {
             pos = goal;
@@ -323,110 +363,112 @@ void main() {
     uint idx = gl_GlobalInvocationID.x;
     if (idx >= uint(particles.length())) return;
 
-    GpuParticleData p = particles[idx];
+    // TỐI ƯU BĂNG THÔNG SSBO: Chỉ đọc 16 bytes (life_data) trước để kiểm tra hạt còn sống không.
+    // Tránh nạp lãng phí toàn bộ 144 bytes (9 vec4) cho các slot trống hoặc vừa hết hạn!
+    vec4 life = particles[idx].life_data;
+    if (life.w < 0.5) return;
 
-    // Skip inactive
-    if (p.life_data.w < 0.5) return;
-
-    // Decrement lifetime
-    p.life_data.x -= u_dt;
-    if (p.life_data.x <= 0.0) {
-        p.life_data.w = 0.0; // deactivate
-        particles[idx] = p;
+    life.x -= u_dt;
+    if (life.x <= 0.0) {
+        particles[idx].life_data = vec4(life.x, life.y, life.z, 0.0);
         return;
     }
+
+    GpuParticleData p = particles[idx];
+    p.life_data = life;
 
     int forceIndex = int(p.ff_data.x);
-    if(idx<uint(motionBodies.length()) && motionBodies[idx].meta.x!=0u) {
-        motionPhysicalNoise=true;motionIntegrate(idx,p);
+    bool isMotionBody = (idx < uint(motionBodies.length()) && motionBodies[idx].meta.x != 0u);
+
+    if (isMotionBody) {
+        motionPhysicalNoise = true;
+        motionIntegrate(idx, p);
     } else {
-    int pathIndex = int(p.route_data.z);
-    bool impactActive = p.impact_data.y > 0.5;
-    if (impactActive && pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
-        (uTravelPaths[pathIndex].radii.z <= 0.0 ||
-         p.impact_data.x <= uTravelPaths[pathIndex].radii.z))
-        forceIndex = int(uTravelPaths[pathIndex].arrival.x + 0.5);
-    float totalVisc = 0.0;
-    vec3 ffAccel = evalForceField(forceIndex, p.pos_radius.xyz, p.vel_drag.xyz, u_time, totalVisc);
-    
-    p.vel_drag.xyz += ffAccel * u_dt;
-
-    // Viscosity damping — tính toán từ kết quả gộp
-    if (totalVisc > 0.0) {
-        p.vel_drag.xyz *= exp(-totalVisc * u_dt);
-    }
-
-    // Drag — giảm vận tốc mỗi frame
-    float drag_factor = 1.0 - p.vel_drag.w * u_dt;
-    drag_factor = max(drag_factor, 0.0);
-    p.vel_drag.xyz *= drag_factor;
-
-    // Guided travel owns integration when a path slot is present.
-    bool reachedTarget = false;
-    float windInf = p.impact_data.z;
-    if (p.route_data.z < 0.0) {
-        // Hạt thông thường không có travel path: nhận gió và vorticles nếu wind_influence > 0
-        if (windInf > 0.0) {
-            float h1 = fract(sin(float(idx) * 127.1) * 43758.5453);
-            float h2 = fract(sin(float(idx) * 269.5) * 43758.5453);
-            float h3 = fract(sin(float(idx) * 419.2) * 43758.5453);
-            vec3 samplePos = p.pos_radius.xyz + vec3(h1 - 0.5, h2 - 0.5, h3 - 0.5) * 3.0;
-            vec3 windVel = evalWindVelocity(samplePos, u_time);
-            float blendRate = (1.0 - exp(-3.5 * u_dt)) * windInf;
-            p.vel_drag.xyz += (windVel - p.vel_drag.xyz) * blendRate;
+        int pathIndex = int(p.route_data.z);
+        bool impactActive = p.impact_data.y > 0.5;
+        if (impactActive) {
+            p.impact_data.x += u_dt;
+            if (pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
+                (uTravelPaths[pathIndex].radii.z <= 0.0 ||
+                 p.impact_data.x <= uTravelPaths[pathIndex].radii.z)) {
+                forceIndex = int(uTravelPaths[pathIndex].arrival.x + 0.5);
+            } else {
+                forceIndex = -1;
+            }
         }
-        p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
-    } else if (!impactActive) {
-        reachedTarget = evalTravelPath(pathIndex, p.pos_radius.xyz,
-                                       p.vel_drag.xyz, p.route_data.w, u_dt,
-                                       p.formation_data.xyz);
-    } else {
-        // Thuần túy chịu tác động khí động học từ Wind System
-        // Jitter per-particle: mỗi hạt sample gió tại vị trí lệch riêng (hash từ idx)
-        // để phá vỡ coherence không gian của Perlin Noise khi tất cả hạt cùng vị trí target
-        float h1 = fract(sin(float(idx) * 127.1) * 43758.5453);
-        float h2 = fract(sin(float(idx) * 269.5) * 43758.5453);
-        float h3 = fract(sin(float(idx) * 419.2) * 43758.5453);
-        vec3 samplePos = p.pos_radius.xyz + vec3(h1 - 0.5, h2 - 0.5, h3 - 0.5) * 3.0;
-        vec3 windVel = evalWindVelocity(samplePos, u_time);
-        float blendRate = (1.0 - exp(-3.5 * u_dt)) * windInf;
-        p.vel_drag.xyz += (windVel - p.vel_drag.xyz) * blendRate;
-        p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
-        p.impact_data.x += u_dt;
-    }
-    if (reachedTarget && uTravelPaths[pathIndex].arrival.x >= -0.5) {
-        int ptCount = int(uTravelPaths[pathIndex].params.x + 0.5);
-        vec3 targetPos = ptCount > 0 ? uTravelPaths[pathIndex].points[ptCount - 1].xyz : p.pos_radius.xyz;
-        vec3 radial = p.pos_radius.xyz - targetPos;
-        vec3 outward = length(radial) > 1e-4 ? normalize(radial) : (length(p.vel_drag.xyz) > 1e-4 ? normalize(p.vel_drag.xyz) : vec3(0.0, 1.0, 0.0));
-        if (dot(outward, outward) < 1e-6) outward = vec3(1.0, 0.0, 0.0);
-        if (uTravelPaths[pathIndex].arrival.w > 0.0)
-            p.vel_drag.xyz *= uTravelPaths[pathIndex].arrival.w;
-        if (uTravelPaths[pathIndex].arrival.y > 0.0)
-            p.pos_radius.xyz += outward * uTravelPaths[pathIndex].arrival.y;
-        if (uTravelPaths[pathIndex].arrival.z != 0.0)
-            p.vel_drag.xyz += outward * uTravelPaths[pathIndex].arrival.z;
-        // arrivalKick = 0: không gán cứng velocity = windVel tại frame arrival
-        // Per-frame blend (dòng 501-503) sẽ kéo velocity về gió mượt mà
-        p.impact_data.x = 0.0;
-        p.impact_data.y = 1.0;
-    } else if (reachedTarget) {
-        p.life_data.w = 0.0;
-        particles[idx] = p;
-        return;
-    }
 
-    } // legacy integrator
+        float totalVisc = 0.0;
+        vec3 ffAccel = evalForceField(forceIndex, p.pos_radius.xyz, p.vel_drag.xyz, u_time, totalVisc);
+        p.vel_drag.xyz += ffAccel * u_dt;
+
+        if (totalVisc > 0.0) {
+            p.vel_drag.xyz *= exp(-totalVisc * u_dt);
+        }
+
+        if (p.vel_drag.w > 0.0) {
+            float drag_factor = max(1.0 - p.vel_drag.w * u_dt, 0.0);
+            p.vel_drag.xyz *= drag_factor;
+        }
+
+        bool reachedTarget = false;
+        if (pathIndex >= 0 && !impactActive) {
+            reachedTarget = evalTravelPath(pathIndex, p.pos_radius.xyz,
+                                           p.vel_drag.xyz, p.route_data.w, u_dt,
+                                           p.formation_data.xyz);
+        } else {
+            // Hạt thông thường hoặc hạt đã tới đích (impactActive): chỉ lấy mẫu gió khi windInf > 0.0
+            float windInf = p.impact_data.z;
+            if (windInf > 0.0) {
+                float fIdx = float(idx);
+                float h1 = fract(sin(fIdx * 127.1) * 43758.5453);
+                float h2 = fract(sin(fIdx * 269.5) * 43758.5453);
+                float h3 = fract(sin(fIdx * 419.2) * 43758.5453);
+                vec3 samplePos = p.pos_radius.xyz + vec3(h1 - 0.5, h2 - 0.5, h3 - 0.5) * 3.0;
+                vec3 windVel = evalWindVelocity(samplePos, u_time);
+                float blendRate = (1.0 - exp(-3.5 * u_dt)) * windInf;
+                p.vel_drag.xyz += (windVel - p.vel_drag.xyz) * blendRate;
+            }
+            p.pos_radius.xyz += p.vel_drag.xyz * u_dt;
+        }
+
+        if (reachedTarget) {
+            if (pathIndex >= 0 && pathIndex < MAX_GPU_TRAVEL_PATHS &&
+                uTravelPaths[pathIndex].arrival.x >= -0.5) {
+                int ptCount = int(uTravelPaths[pathIndex].params.x + 0.5);
+                vec3 targetPos = ptCount > 0 ? uTravelPaths[pathIndex].points[ptCount - 1].xyz : p.pos_radius.xyz;
+                vec3 radial = p.pos_radius.xyz - targetPos;
+                float radialSq = dot(radial, radial);
+                float velSq = dot(p.vel_drag.xyz, p.vel_drag.xyz);
+                vec3 outward = (radialSq > 1e-8)
+                    ? (radial * inversesqrt(radialSq))
+                    : ((velSq > 1e-8) ? (p.vel_drag.xyz * inversesqrt(velSq)) : vec3(0.0, 1.0, 0.0));
+                if (dot(outward, outward) < 1e-6) outward = vec3(1.0, 0.0, 0.0);
+
+                if (uTravelPaths[pathIndex].arrival.w > 0.0)
+                    p.vel_drag.xyz *= uTravelPaths[pathIndex].arrival.w;
+                if (uTravelPaths[pathIndex].arrival.y > 0.0)
+                    p.pos_radius.xyz += outward * uTravelPaths[pathIndex].arrival.y;
+                if (uTravelPaths[pathIndex].arrival.z != 0.0)
+                    p.vel_drag.xyz += outward * uTravelPaths[pathIndex].arrival.z;
+
+                p.impact_data.x = 0.0;
+                p.impact_data.y = 1.0;
+            } else {
+                particles[idx].life_data = vec4(p.life_data.x, p.life_data.y, p.life_data.z, 0.0);
+                return;
+            }
+        }
+    }
 
     // Same receiver contract as ParticlePlane_Resolve on both CPU paths.
-    if (forceIndex >= 0) {
-        int count = min(uFields[forceIndex].meta.x, FF_MAX_LAYERS);
+    if (forceIndex >= 0 && forceIndex < int(uFields.length())) {
+        int count = clamp(uFields[forceIndex].meta.x, 0, FF_MAX_LAYERS);
         for (int i = 0; i < count; ++i) {
             ForceLayerGPU layer = uFields[forceIndex].layers[i];
             if (int(layer.params0.w + 0.5) != FT_RECEIVER_PLANE) continue;
-            float normalLength = length(layer.direction.xyz);
-            if (normalLength < 1e-6) continue;
-            vec3 normal = layer.direction.xyz / normalLength;
+            float normalLenSq = dot(layer.direction.xyz, layer.direction.xyz);
+            if (normalLenSq < 1e-12) continue;
+            vec3 normal = layer.direction.xyz * inversesqrt(normalLenSq);
             float distance = dot(p.pos_radius.xyz - layer.origin.xyz, normal);
             float radius = max(p.pos_radius.w, 0.0);
             if (distance >= radius) continue;
@@ -439,6 +481,7 @@ void main() {
             }
         }
     }
+
     // Ground / Terrain Collision Y-bounce
     float elasticity = p.ff_data.z; // ff_pad1
     if (elasticity >= 0.0) {
@@ -448,11 +491,18 @@ void main() {
             floorY = max(floorY, terrainY);
         }
         if (p.pos_radius.y <= floorY) {
-            p.vel_drag.y = -p.vel_drag.y * elasticity;
-            p.vel_drag.xz *= motionBodies[idx].meta.x!=0u ? 0.75 : 0.8;
+            if (p.vel_drag.y < 0.0) {
+                p.vel_drag.y = -p.vel_drag.y * elasticity;
+            }
+            p.vel_drag.xz *= isMotionBody ? 0.75 : 0.8;
             p.pos_radius.y = floorY + 0.005;
         }
     }
 
-    particles[idx] = p;
+    // Chỉ ghi lại đúng 5 vec4 có thay đổi (80 bytes) thay vì ghi đè cả 9 vec4 (144 bytes)
+    particles[idx].pos_radius  = p.pos_radius;
+    particles[idx].vel_drag    = p.vel_drag;
+    particles[idx].life_data   = p.life_data;
+    particles[idx].route_data  = p.route_data;
+    particles[idx].impact_data = p.impact_data;
 }

@@ -47,13 +47,37 @@ static inline int GpuSurfaceIndex_Build(const void *particles, int particleCount
         routeCount < 0 || routeCount > GPU_SURFACE_MAX_STREAMS ||
         emitterOffset + sizeof(float) > stride || modeOffset + sizeof(float) > stride)
         return -1;
+    if (particleCount == 0 || routeCount == 0)
+        return 0;
+
+    /* Tiền chuyển đổi emitterId sang float một lần để tránh ép kiểu int->float
+     * lặp lại (particleCount * routeCount) lần trong vòng lặp nóng. */
+    float routeEmitterIds[GPU_SURFACE_MAX_STREAMS];
+    for (int r = 0; r < routeCount; ++r) {
+        routeEmitterIds[r] = (float)routes[r].emitterId;
+    }
+
     int count = 0;
-    for (int i = 0; i < particleCount; ++i) {
-        const unsigned char *slot = (const unsigned char *)particles + (size_t)i * stride;
-        GpuSurfaceRouting routing = GpuSurfaceRouting_Read(slot, emitterOffset, modeOffset);
+    const unsigned char *cursor = (const unsigned char *)particles;
+
+    if (routeCount == 1) {
+        const float targetEmitter = routeEmitterIds[0];
+        const float targetMaterial = routes[0].materialId;
+        for (int i = 0; i < particleCount; ++i, cursor += stride) {
+            GpuSurfaceRouting routing = GpuSurfaceRouting_Read(cursor, emitterOffset, modeOffset);
+            if (routing.renderMode != 3.0f || routing.emitterId != targetEmitter)
+                continue;
+            if (count >= capacity) return -1;
+            output[count++] = (GpuSurfaceIndex){(uint32_t)i, targetMaterial};
+        }
+        return count;
+    }
+
+    for (int i = 0; i < particleCount; ++i, cursor += stride) {
+        GpuSurfaceRouting routing = GpuSurfaceRouting_Read(cursor, emitterOffset, modeOffset);
         if (routing.renderMode != 3.0f) continue;
         for (int r = 0; r < routeCount; ++r) {
-            if (routing.emitterId != (float)routes[r].emitterId) continue;
+            if (routing.emitterId != routeEmitterIds[r]) continue;
             if (count >= capacity) return -1;
             output[count++] = (GpuSurfaceIndex){(uint32_t)i, routes[r].materialId};
             break;

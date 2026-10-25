@@ -3,6 +3,10 @@
 // VBO layout: position(vec3) | texcoord(vec2) | color(vec4 float) = 36 bytes/vert
 // Billboard corners đã được tính trên CPU và upload vào VBO mỗi frame.
 
+#ifdef GL_ES
+precision highp float;
+#endif
+
 in vec3 vertexPosition;
 in vec2 vertexTexCoord;
 in vec4 vertexColor;
