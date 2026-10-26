@@ -11,5 +11,6 @@ out vec4 finalColor;
 uniform float u_materialId;
 
 void main() {
-    finalColor = vec4(gl_FragCoord.z, 1.0, u_materialId, 1.0);
+    float depth = clamp(gl_FragCoord.z, 0.0, 1.0);
+    finalColor = vec4(depth, 1.0, u_materialId, 1.0);
 }

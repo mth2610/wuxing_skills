@@ -38,6 +38,7 @@ static RenderTexture2D s_occupancy;
 static Shader s_occupancyShader;
 static int s_occupancyLoc, s_useOccupancyLoc;
 static bool s_useOccupancy = true;
+
 LiquidSurfaceStats LiquidSurface_GetStats(void) { return s_stats; }
 static double LiquidSurface_HostClock(void) { return s_profile ? GetTime() : 0.0; }
 static double LiquidSurface_HostElapsed(double start) { return s_profile ? (GetTime() - start) * 1000.0 : 0.0; }
@@ -52,6 +53,8 @@ static RenderTexture2D s_capture, s_captureBack, s_thickness, s_thicknessScratch
 static RenderTexture2D s_sceneCopy;
 static Shader s_captureShader, s_captureBackShader, s_smooth, s_composite;
 static Shader s_thicknessResolve, s_thicknessBlur;
+static int s_captureMaterialLoc = -1;
+static int s_captureBackMaterialLoc = -1, s_captureBackMatchLoc = -1, s_captureBackFrontTexLoc = -1;
 static int s_resolveBackLoc, s_resolveInverseProjectionLoc;
 static int s_blurTexelLoc, s_blurDirectionLoc, s_blurRadiusLoc;
 static int s_texelLoc, s_dirLoc, s_fillLoc;
@@ -65,7 +68,7 @@ static int s_pointLightCountLoc, s_pointLightPosLoc, s_pointLightColorLoc;
 static int s_materialBodyLoc, s_materialGlowLoc, s_materialSoftLoc, s_materialOpticsLoc;
 static int s_timeLoc;
 static int s_compositeKernelRadiusLoc;
-static Matrix s_fluidView, s_fluidProjection;
+static Matrix s_fluidView, s_fluidProjection, s_fluidInverseProjection, s_fluidViewToWorld;
 static Color s_materialBody = {41, 128, 185, 255};
 static Color s_materialGlow = {80, 180, 255, 255};
 static Color s_materialSoft = {160, 225, 255, 255};
@@ -74,11 +77,13 @@ static float s_submissionKernelRadius = 0.022f;
 static float s_materialKernel[LIQUID_SURFACE_MATERIAL_SLOTS];
 static int s_smoothMaterialLoc, s_smoothKernelsLoc, s_smoothMultiLoc, s_smoothSourceMaterialLoc;
 static int s_compositeKernelsLoc;
+
 static void LiquidSurface_RecordKernel(int slot)
 {
     if (slot >= 0 && slot < LIQUID_SURFACE_MATERIAL_SLOTS)
         s_materialKernel[slot] = fmaxf(s_materialKernel[slot], s_submissionKernelRadius);
 }
+
 static float s_frameBodyRadiusPx = -1.0f;
 static float s_frameKernelRadiusPx = -1.0f;
 static bool s_frameBoundsValid;
@@ -114,7 +119,7 @@ static Vector3 LiquidSurface_TransformDirection(Vector3 direction, Matrix matrix
 
 static Matrix LiquidSurface_MakeProjection(Camera3D camera)
 {
-    float aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
+    float aspect = (float)GetScreenWidth() / (float)fmaxf((float)GetScreenHeight(), 1.0f);
     if (camera.projection == CAMERA_ORTHOGRAPHIC)
     {
         double top = camera.fovy * 0.5;
@@ -133,7 +138,7 @@ static void LiquidSurface_BeginCaptureMode3D(Camera3D camera, int targetW, int t
     rlMatrixMode(RL_PROJECTION);
     rlPushMatrix();
     rlLoadIdentity();
-    float aspect = (float)GetScreenWidth() / (float)GetScreenHeight();
+    float aspect = (float)GetScreenWidth() / (float)fmaxf((float)GetScreenHeight(), 1.0f);
     if (camera.projection == CAMERA_ORTHOGRAPHIC)
     {
         double top = camera.fovy * 0.5;
@@ -242,11 +247,6 @@ static void LiquidSurface_DrawEllipsoid(const LiquidSurfaceParticle *sp)
     rlPopMatrix();
 }
 
-/* Match SceneTargets 1:1 by default!
- * When s_capture is scaled to 0.85 or 0.75 while GPU particle/PBD shaders or
- * gl_FragCoord lookups assume 1:1 scene dimensions (or when rlvk's viewport
- * inside custom draw passes uses SceneTargets size), the captured fluid is
- * shifted off-center and clipped at the sub-scaled FBO border! */
 static float s_captureScaleOverride;
 static float LiquidSurface_TargetScale(void)
 {
@@ -358,6 +358,12 @@ void LiquidSurface_Init(int width, int height)
     s_surfaceTex = LoadTextureFromImage(img);
     UnloadImage(img);
     SetTextureFilter(s_surfaceTex, TEXTURE_FILTER_BILINEAR);
+
+    s_captureMaterialLoc = GetShaderLocation(s_captureShader, "u_materialId");
+    s_captureBackMaterialLoc = GetShaderLocation(s_captureBackShader, "u_materialId");
+    s_captureBackMatchLoc = GetShaderLocation(s_captureBackShader, "u_matchFrontMaterial");
+    s_captureBackFrontTexLoc = GetShaderLocation(s_captureBackShader, "u_frontDepthTex");
+
     s_texelLoc = GetShaderLocation(s_smooth, "u_texel");
     s_dirLoc = GetShaderLocation(s_smooth, "u_direction");
     s_fillLoc = GetShaderLocation(s_smooth, "u_fillHoles");
@@ -533,8 +539,8 @@ LiquidDesc LiquidSurface_DielectricDesc(Color body, Color glow, Color soft)
     d.liquidClass = LIQUID_CLASS_DIELECTRIC;
     d.emission = 0.0f;
     d.ior = 1.333f;
-    d.roughnessScale = 1.0f;
-    d.opacityPerMetre = 0.0f;
+    d.roughnessScale = 0.72f;
+    d.opacityPerMetre = 2.4f;
     d.foam = 1.0f;
     return d;
 }
@@ -548,51 +554,58 @@ LiquidDesc LiquidSurface_ProfileDesc(LiquidMotionProfile profile)
     case LIQUID_MOTION_POISON:
         m = VFX_Material(VC_MAT_POISON);
         (void)m;
-        d = LiquidSurface_DielectricDesc((Color){150, 215, 55, 255},
-                                         (Color){190, 255, 45, 255},
-                                         (Color){225, 255, 130, 255});
-        d.ior = 1.36f;
-        d.roughnessScale = 1.40f;
-        d.opacityPerMetre = 1.2f;
-        d.foam = 0.35f;
+        d = LiquidSurface_DielectricDesc((Color){52, 175, 42, 255},
+                                         (Color){175, 255, 45, 255},
+                                         (Color){220, 255, 130, 255});
+        d.ior = 1.38f;
+        d.roughnessScale = 0.95f;
+        d.opacityPerMetre = 4.8f;
+        d.emission = 0.22f;
+        d.foam = 0.50f;
         return d;
     case LIQUID_MOTION_MUD:
         m = VFX_Material(VC_MAT_EARTH);
-        d = LiquidSurface_DielectricDesc((Color){96, 63, 38, 255}, m->glow,
-                                         (Color){130, 92, 58, 255});
-        d.ior = 1.45f;
-        d.roughnessScale = 5.0f;
-        d.opacityPerMetre = 32.0f;
-        d.foam = 0.0f;
+        d = LiquidSurface_DielectricDesc((Color){92, 58, 34, 255}, m->glow,
+                                         (Color){138, 98, 62, 255});
+        d.ior = 1.48f;
+        d.roughnessScale = 2.40f;
+        d.opacityPerMetre = 38.0f;
+        d.foam = 0.05f;
         return d;
     case LIQUID_MOTION_LAVA:
         m = VFX_Material(VC_MAT_FIRE);
         (void)m;
-        d = LiquidSurface_DielectricDesc((Color){105, 20, 6, 255},
-                                         (Color){255, 190, 45, 255},
-                                         (Color){80, 30, 12, 255});
+        d = LiquidSurface_DielectricDesc((Color){78, 16, 5, 255},
+                                         (Color){255, 175, 35, 255},
+                                         (Color){255, 225, 95, 255});
         d.liquidClass = LIQUID_CLASS_EMISSIVE;
-        d.emission = 1.35f;
-        d.ior = 1.60f;
-        d.roughnessScale = 3.8f;
-        d.opacityPerMetre = 32.0f;
+        d.emission = 1.65f;
+        d.ior = 1.62f;
+        d.roughnessScale = 3.20f;
+        d.opacityPerMetre = 42.0f;
         d.foam = 1.0f;
         return d;
     case LIQUID_MOTION_LIQUID_METAL:
         m = VFX_Material(VC_MAT_METAL);
         (void)m;
-        d = LiquidSurface_DielectricDesc((Color){224, 220, 212, 255},
-                                         (Color){238, 242, 248, 255},
-                                         (Color){255, 250, 238, 255});
+        d = LiquidSurface_DielectricDesc((Color){226, 224, 218, 255},
+                                         (Color){242, 246, 252, 255},
+                                         (Color){255, 252, 242, 255});
         d.liquidClass = LIQUID_CLASS_CONDUCTOR;
-        d.roughnessScale = 0.80f;
-        d.opacityPerMetre = 60.0f;
+        d.ior = 2.50f;
+        d.roughnessScale = 0.45f;
+        d.opacityPerMetre = 64.0f;
         d.foam = 0.0f;
         return d;
     case LIQUID_MOTION_WATER:
     default:
         m = VFX_Material(VC_MAT_WATER);
-        return LiquidSurface_DielectricDesc(m->body, m->glow, m->soft);
+        d = LiquidSurface_DielectricDesc(m->body, m->glow, m->soft);
+        d.ior = 1.333f;
+        d.roughnessScale = 0.65f;
+        d.opacityPerMetre = 2.4f;
+        d.foam = 1.0f;
+        return d;
     }
 }
 
@@ -769,10 +782,6 @@ static void LiquidSurface_TouchLiveMaterials(void)
     }
 }
 
-/* Scissor disabled: hardware scissor in rlvk uses window Y coordinates that
- * slice the fluid body horizontally when FBO orientation or unhinted streams
- * disagree with the hinted bounding box. 8x8 tile occupancy (`s_occupancy`)
- * provides early-out in the shader without ever clipping visible geometry! */
 static void LiquidSurface_BeginScissor(const Rectangle *rect, int targetHeight)
 {
     (void)rect;
@@ -859,6 +868,19 @@ void LiquidSurface_Capture(Camera3D camera)
     s_hasCamera = true;
     s_fluidView = MatrixLookAt(camera.position, camera.target, camera.up);
     s_fluidProjection = LiquidSurface_MakeProjection(camera);
+    s_fluidInverseProjection = MatrixInvert(s_fluidProjection);
+    s_fluidViewToWorld = MatrixInvert(s_fluidView);
+
+    /* Derive projected radius from frame bounds when emitters did not call HintBody */
+    if (s_frameBoundsValid && s_frameBodyRadiusPx <= 0.0f)
+    {
+        Vector3 boxCenter = Vector3Scale(Vector3Add(s_frameBoundsMin, s_frameBoundsMax), 0.5f);
+        Vector3 boxHalf = Vector3Scale(Vector3Subtract(s_frameBoundsMax, s_frameBoundsMin), 0.5f);
+        float maxExtent = fmaxf(boxHalf.x, fmaxf(boxHalf.y, boxHalf.z));
+        s_frameBodyRadiusPx = LiquidSurface_ProjectedRadiusPx(boxCenter, maxExtent);
+        s_frameKernelRadiusPx = LiquidSurface_ProjectedRadiusPx(boxCenter, s_reconstructionRadius);
+    }
+
     bool cpuPrepared = s_cpuImpostor;
     int cpuVisible = cpuPrepared ? LiquidCaptureCPU_Prepare(s_particles, s_count, s_fluidView, s_fluidProjection) : 0;
     ParticleSurfaceCaptureStream streams[32];
@@ -895,7 +917,6 @@ void LiquidSurface_Capture(Camera3D camera)
     }
     else if (s_count > 0)
     {
-        int materialLoc = GetShaderLocation(s_captureShader, "u_materialId");
         for (int slot = 0; slot < LIQUID_SURFACE_MATERIAL_SLOTS; ++slot)
         {
             bool any = false;
@@ -906,8 +927,8 @@ void LiquidSurface_Capture(Camera3D camera)
             s_stats.captureDraws++;
             BeginShaderMode(s_captureShader);
             float slotValue = (float)slot;
-            if (materialLoc >= 0)
-                SetShaderValue(s_captureShader, materialLoc, &slotValue, SHADER_UNIFORM_FLOAT);
+            if (s_captureMaterialLoc >= 0)
+                SetShaderValue(s_captureShader, s_captureMaterialLoc, &slotValue, SHADER_UNIFORM_FLOAT);
             for (int i = 0; i < s_count; i++)
                 if (s_particles[i].material == slot)
                     LiquidSurface_DrawEllipsoid(&s_particles[i]);
@@ -920,7 +941,7 @@ void LiquidSurface_Capture(Camera3D camera)
     s_stats.frontHostMs = LiquidSurface_HostElapsed(stageStart);
     stageStart = LiquidSurface_HostClock();
     Vector2 texel = {1.0f / s_capture.texture.width, 1.0f / s_capture.texture.height};
-    Matrix captureInverseProjection = MatrixInvert(s_fluidProjection);
+    Matrix captureInverseProjection = s_fluidInverseProjection;
 
     {
         ParticleManager_SetSurfaceCaptureFrontDepth(s_capture.texture);
@@ -965,9 +986,12 @@ void LiquidSurface_Capture(Camera3D camera)
                     continue;
                 BeginShaderMode(s_captureBackShader);
                 float material = (float)slot, match = 1.0f;
-                SetShaderValue(s_captureBackShader, GetShaderLocation(s_captureBackShader, "u_materialId"), &material, SHADER_UNIFORM_FLOAT);
-                SetShaderValue(s_captureBackShader, GetShaderLocation(s_captureBackShader, "u_matchFrontMaterial"), &match, SHADER_UNIFORM_FLOAT);
-                SetShaderValueTexture(s_captureBackShader, GetShaderLocation(s_captureBackShader, "u_frontDepthTex"), s_capture.texture);
+                if (s_captureBackMaterialLoc >= 0)
+                    SetShaderValue(s_captureBackShader, s_captureBackMaterialLoc, &material, SHADER_UNIFORM_FLOAT);
+                if (s_captureBackMatchLoc >= 0)
+                    SetShaderValue(s_captureBackShader, s_captureBackMatchLoc, &match, SHADER_UNIFORM_FLOAT);
+                if (s_captureBackFrontTexLoc >= 0)
+                    SetShaderValueTexture(s_captureBackShader, s_captureBackFrontTexLoc, s_capture.texture);
                 for (int i = 0; i < s_count; i++)
                     if (s_particles[i].material == slot)
                         LiquidSurface_DrawEllipsoid(&s_particles[i]);
@@ -1021,7 +1045,13 @@ void LiquidSurface_Capture(Camera3D camera)
     s_stats.thicknessHostMs = LiquidSurface_HostElapsed(stageStart);
     stageStart = LiquidSurface_HostClock();
 
-    int filterRadius = GfxQuality_Get() >= GFX_HIGH ? 28 : (GfxQuality_Get() >= GFX_MED ? 14 : 7);
+    int maxFilterRadius = GfxQuality_Get() >= GFX_HIGH ? 22 : (GfxQuality_Get() >= GFX_MED ? 14 : 7);
+    int filterRadius = maxFilterRadius;
+    if (s_frameKernelRadiusPx > 0.0f && s_frameKernelRadiusPx < 1e6f)
+    {
+        int adaptive = (int)ceilf(s_frameKernelRadiusPx * 2.25f);
+        filterRadius = (int)Clamp((float)adaptive, 6.0f, (float)maxFilterRadius);
+    }
     Matrix inverseProjection = captureInverseProjection;
 
     if (s_useOccupancy)
@@ -1155,8 +1185,8 @@ void LiquidSurface_Composite(void)
     Texture2D scene = s_sceneCopy.id ? s_sceneCopy.texture : SceneTargets_GetSceneTexture();
     Texture2D sceneDepth = SceneTargets_GetRawDepthTexture();
     int has = sceneDepth.id ? 1 : 0;
-    Matrix inverseProjection = MatrixInvert(s_fluidProjection);
-    Matrix viewToWorld = MatrixInvert(s_fluidView);
+    Matrix inverseProjection = s_fluidInverseProjection;
+    Matrix viewToWorld = s_fluidViewToWorld;
     int qualityTier = (int)GfxQuality_Get();
 
     Vector3 sunToLight = Vector3Normalize(Vector3Negate(Environment_GetSunDirection()));

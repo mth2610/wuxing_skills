@@ -10,10 +10,11 @@ uniform float u_materialId;
  * reduction still has to be a MAX, hence the same complement-depth trick as
  * liquid_capture_particle_back.fs. */
 void main() {
-    if(u_matchFrontMaterial>0.5) {
-        vec4 front=texelFetch(u_frontDepthTex,ivec2(gl_FragCoord.xy),0);
-        if(front.r>=0.99999 || abs(front.b-u_materialId)>0.25) discard;
+    float depth = clamp(gl_FragCoord.z, 0.0, 1.0);
+    if (u_matchFrontMaterial > 0.5) {
+        vec4 front = texelFetch(u_frontDepthTex, ivec2(gl_FragCoord.xy), 0);
+        if (front.r >= 0.99999 || abs(front.b - u_materialId) > 0.25 || depth < front.r - 1e-5) discard;
     }
-    gl_FragDepth = 1.0 - gl_FragCoord.z;
-    finalColor = vec4(gl_FragCoord.z, 1.0, 0.0, 1.0);
+    gl_FragDepth = 1.0 - depth;
+    finalColor = vec4(depth, 1.0, 0.0, 1.0);
 }

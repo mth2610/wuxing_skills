@@ -13,33 +13,37 @@ uniform int u_multipleMaterials;
 
 /* Filled pixels borrow the nearest actual capture fragment's identity. */
 int MaterialAt(vec2 uv) {
-    vec4 sampleValue=texture(u_materialIdTex,uv);
-    if(sampleValue.r>=0.99999) {
-        float nearest=1.0;
-        for(int y=-1;y<=1;y++) for(int x=-1;x<=1;x++) {
-            vec4 candidate=texture(u_materialIdTex,uv+vec2(x,y)*u_texel);
-            if(candidate.r<nearest) { nearest=candidate.r; sampleValue=candidate; }
+    vec4 sampleValue = texture(u_materialIdTex, uv);
+    if (sampleValue.r >= 0.99999) {
+        float nearest = 1.0;
+        for (int y = -1; y <= 1; y++) {
+            for (int x = -1; x <= 1; x++) {
+                if (x == 0 && y == 0) continue;
+                vec4 candidate = texture(u_materialIdTex, uv + vec2(x, y) * u_texel);
+                if (candidate.r < nearest) {
+                    nearest = candidate.r;
+                    sampleValue = candidate;
+                }
+            }
         }
     }
-    return clamp(int(sampleValue.b+0.5),0,5);
+    return clamp(int(sampleValue.b + 0.5), 0, 5);
 }
 
 /* 1 when texture0 is the RAW capture, i.e. it already carries the material id in
  * .b. Round 0 reads the capture and every later round reads a single-channel
- * smoothed target.
- * FIXED: When u_sourceCarriesMaterial == 0 (Round 1+), identity comes from
- * u_materialIdTex, while the smoothed depth MUST come from texture0.r! */
+ * smoothed target. */
 uniform int u_sourceCarriesMaterial;
-float DepthForMaterial(vec2 uv,int material) {
-    if(u_multipleMaterials==0) return texture(texture0,uv).r;
-    if(u_sourceCarriesMaterial!=0) {
-        vec4 raw=texture(texture0,uv);
-        if(raw.r<0.99999 && int(raw.b+0.5)!=material) return 1.0;
+float DepthForMaterial(vec2 uv, int material) {
+    if (u_multipleMaterials == 0) return texture(texture0, uv).r;
+    if (u_sourceCarriesMaterial != 0) {
+        vec4 raw = texture(texture0, uv);
+        if (raw.r < 0.99999 && int(raw.b + 0.5) != material) return 1.0;
         return raw.r;
     } else {
-        vec4 idSample=texture(u_materialIdTex,uv);
-        if(idSample.r<0.99999 && int(idSample.b+0.5)!=material) return 1.0;
-        return texture(texture0,uv).r;
+        vec4 idSample = texture(u_materialIdTex, uv);
+        if (idSample.r < 0.99999 && int(idSample.b + 0.5) != material) return 1.0;
+        return texture(texture0, uv).r;
     }
 }
 
@@ -53,15 +57,19 @@ uniform int u_filter2D;
 uniform mat4 u_projection;
 uniform mat4 u_inverseProjection;
 
+/* Fast analytical Z/W evaluation: clip.xy is (0, 0), so only column 2 and 3
+ * of u_inverseProjection / u_projection participate (2 MADs instead of 16). */
 float ViewDistance(float deviceDepth) {
-    vec4 clip=vec4(0.0,0.0,deviceDepth*2.0-1.0,1.0);
-    vec4 view=u_inverseProjection*clip;
-    return max(0.0001,-view.z/view.w);
+    float ndcZ = deviceDepth * 2.0 - 1.0;
+    float viewZ = u_inverseProjection[2][2] * ndcZ + u_inverseProjection[3][2];
+    float viewW = u_inverseProjection[2][3] * ndcZ + u_inverseProjection[3][3];
+    return max(0.0001, -viewZ / max(abs(viewW), 1e-7) * sign(viewW));
 }
 
 float DeviceDepth(float viewDistance) {
-    vec4 clip=u_projection*vec4(0.0,0.0,-viewDistance,1.0);
-    return clip.z/clip.w*0.5+0.5;
+    float clipZ = -u_projection[2][2] * viewDistance + u_projection[3][2];
+    float clipW = -u_projection[2][3] * viewDistance + u_projection[3][3];
+    return clipZ / max(abs(clipW), 1e-7) * sign(clipW) * 0.5 + 0.5;
 }
 
 void main() {
@@ -77,7 +85,7 @@ void main() {
         float nearest = 1.0;
         for (int y = -1; y <= 1; y++) {
             for (int x = -1; x <= 1; x++) {
-                if(x==0 && y==0) continue;
+                if (x == 0 && y == 0) continue;
                 nearest = min(nearest, texture(texture0, fragTexCoord + vec2(x, y) * u_texel).r);
             }
         }
@@ -88,8 +96,8 @@ void main() {
         return;
     }
 
-    int material=MaterialAt(fragTexCoord);
-    float kernelRadius=u_materialKernels[material]>0.0?u_materialKernels[material]:u_kernelRadius;
+    int material = (u_multipleMaterials != 0) ? MaterialAt(fragTexCoord) : 0;
+    float kernelRadius = u_materialKernels[material] > 0.0 ? u_materialKernels[material] : u_kernelRadius;
     float centerDistance = ViewDistance(centerDevice);
     float weightedDepth = centerDistance;
     float weightSum = 1.0;
@@ -103,16 +111,17 @@ void main() {
 
     float threshold = kernelRadius * 10.5;
     float lowerClamp = centerDistance - kernelRadius;
+    float invTwoSigmaSq = -0.5 / (sigmaS * sigmaS);
+    float invTwoRangeSq = -0.5 / max(threshold * threshold * 0.25, 1e-6);
 
     if (u_filter2D != 0) {
         vec4 upper = vec4(centerDistance + threshold);
         vec4 lower = vec4(centerDistance - threshold);
         int radius2D = min(adaptiveRadius, LIQUID_FILTER2D_MAX_RADIUS);
         float radiusSquared = float(radius2D * radius2D);
-        float invTwoSigmaSq = -0.5 / (sigmaS * sigmaS);
-        for (int dy = 0; dy <= 32; dy++) {
+        for (int dy = 0; dy <= LIQUID_FILTER2D_MAX_RADIUS; dy++) {
             if (dy > radius2D) break;
-            for (int m = 0; m <= 32; m++) {
+            for (int m = 0; m <= LIQUID_FILTER2D_MAX_RADIUS; m++) {
                 if (m > radius2D) break;
                 if (dy == 0 && m == 0) continue;
                 float r2 = float(m * m + dy * dy);
@@ -124,19 +133,48 @@ void main() {
                     vec2 off = vec2((pair == 0 ? float(m) : -float(m)), float(dy)) * u_texel;
                     int iPos = pair * 2, iNeg = pair * 2 + 1;
 
-                    float dPos = ViewDistance(DepthForMaterial(fragTexCoord+off,material));
-                    float dNeg = ViewDistance(DepthForMaterial(fragTexCoord-off,material));
-                    float wPos = w, wNeg = w;
+                    float rawPos = DepthForMaterial(fragTexCoord + off, material);
+                    float rawNeg = DepthForMaterial(fragTexCoord - off, material);
+                    bool validPos = (rawPos < 0.99999);
+                    bool validNeg = (rawNeg < 0.99999);
+                    if (!validPos && !validNeg) continue;
 
-                    if (dPos > upper[iPos]) { wPos = 0.0; wNeg = 0.0; }
-                    else if (dPos < lower[iPos]) { dPos = lowerClamp; }
-                    else { upper[iPos] = max(upper[iPos], dPos + threshold);
-                           lower[iPos] = min(lower[iPos], dPos - threshold); }
+                    float dPos = validPos ? ViewDistance(rawPos) : 1e6;
+                    float dNeg = validNeg ? ViewDistance(rawNeg) : 1e6;
+                    float wPos = validPos ? w : 0.0;
+                    float wNeg = validNeg ? w : 0.0;
 
-                    if (dNeg > upper[iNeg]) { wNeg = 0.0; wPos = 0.0; }
-                    else if (dNeg < lower[iNeg]) { dNeg = lowerClamp; }
-                    else { upper[iNeg] = max(upper[iNeg], dNeg + threshold);
-                           lower[iNeg] = min(lower[iNeg], dNeg - threshold); }
+                    if (validPos) {
+                        if (dPos > upper[iPos]) {
+                            wPos = 0.0;
+                        } else if (dPos < lower[iPos]) {
+                            dPos = lowerClamp;
+                        } else {
+                            upper[iPos] = max(upper[iPos], dPos + threshold);
+                            lower[iPos] = min(lower[iPos], dPos - threshold);
+                        }
+                    }
+                    if (validNeg) {
+                        if (dNeg > upper[iNeg]) {
+                            wNeg = 0.0;
+                        } else if (dNeg < lower[iNeg]) {
+                            dNeg = lowerClamp;
+                        } else {
+                            upper[iNeg] = max(upper[iNeg], dNeg + threshold);
+                            lower[iNeg] = min(lower[iNeg], dNeg - threshold);
+                        }
+                    }
+
+                    /* When one side of a symmetric tap crosses a silhouette edge,
+                     * weight the surviving interior tap by range similarity so
+                     * silhouette edges still smooth without slope bias. */
+                    if (wPos > 0.0 && wNeg == 0.0) {
+                        float diff = dPos - centerDistance;
+                        wPos *= 0.45 * exp(diff * diff * invTwoRangeSq);
+                    } else if (wNeg > 0.0 && wPos == 0.0) {
+                        float diff = dNeg - centerDistance;
+                        wNeg *= 0.45 * exp(diff * diff * invTwoRangeSq);
+                    }
 
                     weightedDepth += dPos * wPos + dNeg * wNeg;
                     weightSum += wPos + wNeg;
@@ -150,24 +188,54 @@ void main() {
 
     float upperPos = centerDistance + threshold, lowerPos = centerDistance - threshold;
     float upperNeg = upperPos, lowerNeg = lowerPos;
-    float invTwoSigmaSq = -0.5 / (sigmaS * sigmaS);
+    vec2 stepUV = u_direction * u_texel;
 
     for (int i = 1; i <= 32; i++) {
         if (i > adaptiveRadius) break;
         float fi = float(i);
         float w = exp(fi * fi * invTwoSigmaSq);
-        float wPos = w, wNeg = w;
+        vec2 off = stepUV * fi;
 
-        float dPos = ViewDistance(DepthForMaterial(fragTexCoord+u_direction*u_texel*fi,material));
-        float dNeg = ViewDistance(DepthForMaterial(fragTexCoord-u_direction*u_texel*fi,material));
+        float rawPos = DepthForMaterial(fragTexCoord + off, material);
+        float rawNeg = DepthForMaterial(fragTexCoord - off, material);
+        bool validPos = (rawPos < 0.99999);
+        bool validNeg = (rawNeg < 0.99999);
+        if (!validPos && !validNeg) continue;
 
-        if (dPos > upperPos) { wPos = 0.0; wNeg = 0.0; }
-        else if (dPos < lowerPos) { dPos = lowerClamp; }
-        else { upperPos = max(upperPos, dPos + threshold); lowerPos = min(lowerPos, dPos - threshold); }
+        float dPos = validPos ? ViewDistance(rawPos) : 1e6;
+        float dNeg = validNeg ? ViewDistance(rawNeg) : 1e6;
+        float wPos = validPos ? w : 0.0;
+        float wNeg = validNeg ? w : 0.0;
 
-        if (dNeg > upperNeg) { wNeg = 0.0; wPos = 0.0; }
-        else if (dNeg < lowerNeg) { dNeg = lowerClamp; }
-        else { upperNeg = max(upperNeg, dNeg + threshold); lowerNeg = min(lowerNeg, dNeg - threshold); }
+        if (validPos) {
+            if (dPos > upperPos) {
+                wPos = 0.0;
+            } else if (dPos < lowerPos) {
+                dPos = lowerClamp;
+            } else {
+                upperPos = max(upperPos, dPos + threshold);
+                lowerPos = min(lowerPos, dPos - threshold);
+            }
+        }
+
+        if (validNeg) {
+            if (dNeg > upperNeg) {
+                wNeg = 0.0;
+            } else if (dNeg < lowerNeg) {
+                dNeg = lowerClamp;
+            } else {
+                upperNeg = max(upperNeg, dNeg + threshold);
+                lowerNeg = min(lowerNeg, dNeg - threshold);
+            }
+        }
+
+        if (wPos > 0.0 && wNeg == 0.0) {
+            float diff = dPos - centerDistance;
+            wPos *= 0.45 * exp(diff * diff * invTwoRangeSq);
+        } else if (wNeg > 0.0 && wPos == 0.0) {
+            float diff = dNeg - centerDistance;
+            wNeg *= 0.45 * exp(diff * diff * invTwoRangeSq);
+        }
 
         weightedDepth += dPos * wPos + dNeg * wNeg;
         weightSum += wPos + wNeg;

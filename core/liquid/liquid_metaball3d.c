@@ -176,8 +176,35 @@ void LiquidMetaball3D_RegisterBlob(Vector3 position, float radius)
 {
     if (radius <= 0.001f) return;
     LiquidMetaball3DBody *body = LiquidMetaball3D_CurrentBody();
-    if (body->count >= LIQUID_METABALL3D_MAX_BLOBS) return;
-    body->blobs[body->count++] = (Vector4){position.x, position.y, position.z, radius};
+    if (body->count < LIQUID_METABALL3D_MAX_BLOBS) {
+        body->blobs[body->count++] = (Vector4){position.x, position.y, position.z, radius};
+        return;
+    }
+    /* Volume-preserving merge when capacity is full: fuse with the nearest blob
+     * so excess particles contribute to volume rather than vanishing. */
+    int bestIdx = 0;
+    float bestDistSq = 1e30f;
+    for (int i = 0; i < body->count; ++i) {
+        float dx = body->blobs[i].x - position.x;
+        float dy = body->blobs[i].y - position.y;
+        float dz = body->blobs[i].z - position.z;
+        float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bestDistSq) {
+            bestDistSq = d2;
+            bestIdx = i;
+        }
+    }
+    Vector4 *target = &body->blobs[bestIdx];
+    float va = target->w * target->w * target->w;
+    float vb = radius * radius * radius;
+    float vSum = va + vb;
+    if (vSum > 1e-9f) {
+        float wb = vb / vSum;
+        target->x += (position.x - target->x) * wb;
+        target->y += (position.y - target->y) * wb;
+        target->z += (position.z - target->z) * wb;
+        target->w = cbrtf(vSum);
+    }
 }
 
 void LiquidMetaball3D_RegisterBlobs(const Vector3 *positions, const float *radii, int count)
@@ -213,6 +240,7 @@ static void LiquidMetaball3D_BodyBounds(const LiquidMetaball3DBody *body,
     /* Wyvill field is strictly zero for d >= 1.0 * r; 1.08f is sufficient padding */
     const float pad = 1.08f;
     float minRadius = blob[0].w;
+    float sumRadius = blob[0].w;
     Vector3 boxMin = (Vector3){blob[0].x - blob[0].w * pad,
                                blob[0].y - blob[0].w * pad,
                                blob[0].z - blob[0].w * pad};
@@ -223,6 +251,7 @@ static void LiquidMetaball3D_BodyBounds(const LiquidMetaball3DBody *body,
     for (int i = 1; i < body->count; ++i) {
         float r = blob[i].w * pad;
         minRadius = fminf(minRadius, blob[i].w);
+        sumRadius += blob[i].w;
         boxMin.x = fminf(boxMin.x, blob[i].x - r);
         boxMin.y = fminf(boxMin.y, blob[i].y - r);
         boxMin.z = fminf(boxMin.z, blob[i].z - r);
@@ -230,6 +259,10 @@ static void LiquidMetaball3D_BodyBounds(const LiquidMetaball3DBody *body,
         boxMax.y = fmaxf(boxMax.y, blob[i].y + r);
         boxMax.z = fmaxf(boxMax.z, blob[i].z + r);
     }
+
+    /* Guard against a single tiny outlier droplet forcing 32 march steps across a large box */
+    float avgRadius = sumRadius / (float)body->count;
+    float effectiveRadius = fmaxf(minRadius, avgRadius * 0.45f);
 
     Vector3 boxCenter = Vector3Scale(Vector3Add(boxMin, boxMax), 0.5f);
     Vector3 boxSize = Vector3Subtract(boxMax, boxMin);
@@ -240,9 +273,9 @@ static void LiquidMetaball3D_BodyBounds(const LiquidMetaball3DBody *body,
     float diagonal = sqrtf(boxSize.x * boxSize.x + boxSize.y * boxSize.y +
                            boxSize.z * boxSize.z);
     float distToCam = Vector3Distance(cameraPos, boxCenter);
-    /* Scale step size gently with camera distance so distant bodies don't burn 36 steps */
-    float distFactor = fminf(fmaxf(distToCam / 8.0f, 1.0f), 2.2f);
-    float step = fmaxf(minRadius * 0.80f * distFactor, 0.025f);
+    /* Scale step size gently with camera distance so distant bodies don't burn 32 steps */
+    float distFactor = fminf(fmaxf(distToCam / 8.0f, 1.0f), 2.4f);
+    float step = fmaxf(effectiveRadius * 0.80f * distFactor, 0.028f);
     int steps = (int)ceilf(diagonal / step);
     if (steps < 10) steps = 10;
     if (steps > 32) steps = 32;
@@ -279,9 +312,16 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
 
     float aspect = (float)GetScreenWidth() / (float)fmaxf((float)GetScreenHeight(), 1.0f);
     Matrix view = GetCameraMatrix(camera);
-    double top = tan(camera.fovy * 0.5 * DEG2RAD);
-    double right = top * aspect;
-    Matrix proj = MatrixFrustum(-right, right, -top, top, 1.0f, 1000.0f);
+    Matrix proj;
+    if (camera.projection == CAMERA_ORTHOGRAPHIC) {
+        double top = camera.fovy * 0.5;
+        double right = top * aspect;
+        proj = MatrixOrtho(-right, right, -top, top, 0.0001, 150.0);
+    } else {
+        double top = tan(camera.fovy * 0.5 * DEG2RAD);
+        double right = top * aspect;
+        proj = MatrixFrustum(-right, right, -top, top, 1.0f, 1000.0f);
+    }
     Matrix viewProj = MatrixMultiply(view, proj);
     Matrix invView = MatrixInvert(view);
     Vector3 camForward = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
@@ -331,6 +371,15 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
         int steps = 20;
         LiquidMetaball3D_BodyBounds(body, camera.position, &boxMin, &boxMax, &boxCenter, &boxSize, &steps);
 
+        bool camInside = (camera.position.x >= boxMin.x && camera.position.x <= boxMax.x &&
+                          camera.position.y >= boxMin.y && camera.position.y <= boxMax.y &&
+                          camera.position.z >= boxMin.z && camera.position.z <= boxMax.z);
+        if (!camInside) {
+            float halfDiag = 0.5f * sqrtf(boxSize.x * boxSize.x + boxSize.y * boxSize.y + boxSize.z * boxSize.z);
+            Vector3 toBox = Vector3Subtract(boxCenter, camera.position);
+            if (Vector3DotProduct(toBox, camForward) < -halfDiag) continue;
+        }
+
         const LiquidDesc *mat = body->hasMaterial ? &body->material
                               : (fallback ? fallback : &defaultMat);
         float bodyThreshold = body->hasThreshold ? body->threshold : fallbackThreshold;
@@ -340,7 +389,7 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
         Vector4 softColor = ColorNormalize(mat->soft);
         float ior = mat->ior > 1.0f ? mat->ior : 1.333f;
         float roughness = mat->roughnessScale > 0.0f ? mat->roughnessScale * 0.20f : 0.20f;
-        float opacity = mat->opacityPerMetre > 0.0f ? mat->opacityPerMetre : 1.8f;
+        float opacity = mat->opacityPerMetre > 0.0f ? mat->opacityPerMetre : 2.2f;
         float emission = mat->emission;
         int liquidClass = (int)mat->liquidClass;
 
@@ -359,16 +408,8 @@ void LiquidMetaball3D_Draw(Camera3D camera, const LiquidDesc *material, float th
         if (s_locEmission >= 0) SetShaderValue(s_shader, s_locEmission, &emission, SHADER_UNIFORM_FLOAT);
         if (s_locLiquidClass >= 0) SetShaderValue(s_shader, s_locLiquidClass, &liquidClass, SHADER_UNIFORM_INT);
 
-        bool camInside = (camera.position.x >= boxMin.x && camera.position.x <= boxMax.x &&
-                          camera.position.y >= boxMin.y && camera.position.y <= boxMax.y &&
-                          camera.position.z >= boxMin.z && camera.position.z <= boxMax.z);
         rlSetCullFace(camInside ? RL_CULL_FACE_FRONT : RL_CULL_FACE_BACK);
         DrawCoreCube(boxCenter, boxSize.x, boxSize.y, boxSize.z, WHITE);
-        /* CRITICAL FIX FOR MULTIPLE BODIES:
-         * DrawCoreCube batches vertices into rlgl's active render batch!
-         * Without flushing here, loop iteration bi+1 overwrites u_blobs, u_boxMin,
-         * and u_boxMax BEFORE body bi is actually drawn, causing all 5-6 bodies to
-         * render with the LAST body's uniforms and clipping boxes! */
         rlDrawRenderBatchActive();
     }
 
