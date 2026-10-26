@@ -1,6 +1,6 @@
 #include "trail_system.h"
 #include "core/trails/trail_ribbon.h"
-#include "core/time_fx.h"   // TimeFX_Elapsed — pinned clock; GetTime() is wall clock
+#include "core/time_fx.h" // TimeFX_Elapsed — pinned clock; GetTime() is wall clock
 #include "core/force_field.h"
 #include "core/composition/visual_composer.h"
 #include "core/geometry/procedural_mesh_utils.h"
@@ -22,7 +22,6 @@ static int freeListHead = 0;
 static int activeCount = 0;
 static int s_activeIds[MAX_TRAIL_PARTICLES];
 static int s_slotListIndex[MAX_TRAIL_PARTICLES];
-// Loc index cache cho Flowmap Shader Uniforms
 
 typedef struct
 {
@@ -35,16 +34,22 @@ static Image s_tubeNoiseImg = {0};
 static Texture2D s_globalTrailTex = {0};
 void TrailSystem_SetGlobalTexture(Texture2D tex) { s_globalTrailTex = tex; }
 Texture2D TrailSystem_GetGlobalTexture(void) { return s_globalTrailTex; }
+
 /* One trail_glow.fs source, one program per blend law a trail can be drawn
  * under — body (BLEND_ALPHA) and emission (BLEND_ADDITIVE). Those two are the
  * only outcomes: a premultiplied appearance is mapped onto alpha body plus
  * additive emission below, not passed through. Indexed by
  * TrailUsesAdditiveBlend(). */
-enum { TRAIL_SHADER_BODY = 0, TRAIL_SHADER_EMISSION = 1 };
+enum
+{
+    TRAIL_SHADER_BODY = 0,
+    TRAIL_SHADER_EMISSION = 1
+};
 static Shader s_defaultShader[2];
 static Shader s_bodyShader;
 static bool s_bodyShaderTried = false;
 static int s_bodyContrastParamsLoc = -1;
+
 /* Uber deform shader (trail_deform.vs/.fs): five uniform-selected vertex
  * deform modes + the packed 4-channel wisp material. Trails route here if
  * they use EITHER half: deform.mode 0 + material.mode 1 is a FLAT ribbon
@@ -54,6 +59,24 @@ static Shader s_deformShader;
 static bool s_deformShaderTried = false;
 static Shader s_volumeShader;
 static bool s_volumeShaderTried = false;
+
+/* Cached uniform locations for s_volumeShader to eliminate per-group/per-frame
+ * GetShaderLocation lookups. */
+typedef struct
+{
+    int mask;
+    int viewPos;
+    int normalSrc;
+    int cull;
+    int rim;
+    int erode;
+    int erodeBand;
+    int debug;
+    int bloom;
+} VolumeShaderLocs;
+
+static VolumeShaderLocs s_volLocs = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
+
 /* THE VOLUME TUBE'S TWO-SHEET PAN, GENERALISED 05/08/2026 — was a bespoke
  * u_volPan uniform + hand-rolled shader math, now core/uv's SurfaceFlow
  * (core/uv/surface_flow.h), the same "mesh + UVDeformField + SurfaceFlow =
@@ -65,18 +88,20 @@ static bool s_volumeShaderTried = false;
  * — nothing here varies frame to frame, so there is nothing to rebuild. */
 static SurfaceFlow s_volFlow;
 static SurfaceFlowLocs s_volFlowLocs;
+
 /* Debug view for the volume tube — see trail_volume.fs. Live in tuning.cfg so a
  * term can be inspected without a rebuild. */
 static float s_volDebug = 0.0f;
-static float s_volDensity = 1.75f;   /* u_volMask.w — xem chỗ đăng ký tunable */
-static float s_volDepthMode = 0.0f;  /* u_volMask.x — hệ số số hạng THÂN */
-static float s_volRim = 1.0f;        /* u_volRim    — hệ số số hạng RÌA */
-static float s_volDepthPow = 2.0f;   /* u_volMask.y — số mũ chung của cả hai */
-static float s_volCull = 1.0f;       /* u_volCull   — 0 = vẽ cả hai mặt */
-static float s_volNormalSrc = 0.0f;  /* u_volNormalSrc — 1 = dFdx thay attribute */
-static float s_volErode = 0.0f;      /* u_volErode    — noise erosion biên, 0 = tắt */
-static float s_volErodeBand = 0.2f;  /* u_volErodeBand — bề rộng vùng tưa theo b/R */
-static float s_volBloom = 2.5f;      /* u_volBloom    — HDR bloom gain cho lõi thể tích năng lượng */
+static float s_volDensity = 1.75f;  /* u_volMask.w — xem chỗ đăng ký tunable */
+static float s_volDepthMode = 0.0f; /* u_volMask.x — hệ số số hạng THÂN */
+static float s_volRim = 1.0f;       /* u_volRim    — hệ số số hạng RÌA */
+static float s_volDepthPow = 2.0f;  /* u_volMask.y — số mũ chung của cả hai */
+static float s_volCull = 1.0f;      /* u_volCull   — 0 = vẽ cả hai mặt */
+static float s_volNormalSrc = 0.0f; /* u_volNormalSrc — 1 = dFdx thay attribute */
+static float s_volErode = 0.0f;     /* u_volErode    — noise erosion biên, 0 = tắt */
+static float s_volErodeBand = 0.2f; /* u_volErodeBand — bề rộng vùng tưa theo b/R */
+static float s_volBloom = 2.5f;     /* u_volBloom    — HDR bloom gain cho lõi thể tích năng lượng */
+
 /* Set only while DrawTrailEntitiesLayer owns the draw; layered helpers use it
  * to keep alpha body to the one textured material layer. */
 static int s_drawLayerFilter = -1;
@@ -101,7 +126,7 @@ static int shaderCacheMaskTexLocs[TRAIL_SHADER_CACHE_SIZE];
 static int shaderCacheCount = 0;
 
 // Deform/material uniform locations, one struct per cached shader. The
-// per-name arrays above cover the legacy uniforms; these 19 ride a single
+// per-name arrays above cover the legacy uniforms; these ride a single
 // cache entry because they are always set together (ApplyDeformUniforms).
 typedef struct
 {
@@ -115,86 +140,72 @@ typedef struct
     int wave, noise, helix, lane, cap;
     int p0, p1, p2, uvScale, seed, maxDist, add, alpha;
     int style, colRamp;
-    // The mode-2 sine warp's coordinate half, generalised 05/08/2026 onto
-    // core/uv's UVDeformField (u_sinWave is GONE — see the "SIN-WAVE STRAND
-    // TRAIL" push site for the reproduction). uv_field.glsl is shape-neutral
-    // uniform naming (u_uvField/u_uvMeta), so this cache is exactly
-    // UVDeform_CacheLocations(shader), same as SurfaceFlowLocs elsewhere.
     UVDeformLocs uvWarp;
-    // Mode 1's (sin-multi) vertex wave — core/deform's FIRST GLSL mirror,
-    // 05/08/2026 (core/deform/shaders/mesh_deform.glsl). u_meshDeform/
-    // u_meshDeformMeta, cached exactly like uvWarp above.
     MeshDeformLocs meshWarp;
 } DeformLocs;
 
 static DeformLocs shaderCacheDeformLocs[TRAIL_SHADER_CACHE_SIZE];
 static DeformLocs s_fallbackDeformLocs;
 
-static void CacheShaderLocs(Shader shader);   // defined below; called first by GetCachedDeformLocs
+static void CacheShaderLocs(Shader shader); // defined below; called first by GetCachedDeformLocs
 
 static void FillDeformLocs(Shader shader, DeformLocs *l)
 {
-    l->nodeArc=GetShaderLocation(shader,"u_nodeArc");
-    l->deformMode    = GetShaderLocation(shader, "u_deformMode");
-    l->waveAmpA      = GetShaderLocation(shader, "u_waveAmpA");
-    l->waveAmpB      = GetShaderLocation(shader, "u_waveAmpB");
-    l->waveFreq      = GetShaderLocation(shader, "u_waveFreq");
-    l->waveSpeed     = GetShaderLocation(shader, "u_waveSpeed");
-    l->wavePhase     = GetShaderLocation(shader, "u_wavePhase");
-    l->waveEnv       = GetShaderLocation(shader, "u_waveEnv");
-    l->waveStrength  = GetShaderLocation(shader, "u_waveStrength");
-    l->curlScale     = GetShaderLocation(shader, "u_curlScale");
-    l->stripNormal   = GetShaderLocation(shader, "u_stripNormal");
-    l->matMode       = GetShaderLocation(shader, "u_matMode");
-    l->wispMix       = GetShaderLocation(shader, "u_wispMix");
-    l->dissolve      = GetShaderLocation(shader, "u_dissolve");
-    l->dissolveSoft  = GetShaderLocation(shader, "u_dissolveSoft");
-    l->tiling        = GetShaderLocation(shader, "u_tiling");
-    l->panSpeed      = GetShaderLocation(shader, "u_panSpeed");
-    l->tailFadeA     = GetShaderLocation(shader, "u_tailFadeA");
-    l->tailFadeB     = GetShaderLocation(shader, "u_tailFadeB");
-    l->uvWarp        = UVDeform_CacheLocations(shader);
-    l->meshWarp      = MeshDeform_CacheLocations(shader);
-    l->bandShape     = GetShaderLocation(shader, "u_bandShape");
-    l->coreShape     = GetShaderLocation(shader, "u_coreShape");
-    l->pathArc       = GetShaderLocation(shader, "u_pathArc");
-    l->colHot        = GetShaderLocation(shader, "u_colHot");
-    l->strandFlow    = GetShaderLocation(shader, "u_strandFlow");
-    l->renderPass    = GetShaderLocation(shader, "u_renderPass");
-    l->bodyOpacity   = GetShaderLocation(shader, "u_bodyOpacity");
-    l->toneMapSafe   = GetShaderLocation(shader, "u_tonemapSafe");
+    l->nodeArc = GetShaderLocation(shader, "u_nodeArc");
+    l->deformMode = GetShaderLocation(shader, "u_deformMode");
+    l->waveAmpA = GetShaderLocation(shader, "u_waveAmpA");
+    l->waveAmpB = GetShaderLocation(shader, "u_waveAmpB");
+    l->waveFreq = GetShaderLocation(shader, "u_waveFreq");
+    l->waveSpeed = GetShaderLocation(shader, "u_waveSpeed");
+    l->wavePhase = GetShaderLocation(shader, "u_wavePhase");
+    l->waveEnv = GetShaderLocation(shader, "u_waveEnv");
+    l->waveStrength = GetShaderLocation(shader, "u_waveStrength");
+    l->curlScale = GetShaderLocation(shader, "u_curlScale");
+    l->stripNormal = GetShaderLocation(shader, "u_stripNormal");
+    l->matMode = GetShaderLocation(shader, "u_matMode");
+    l->wispMix = GetShaderLocation(shader, "u_wispMix");
+    l->dissolve = GetShaderLocation(shader, "u_dissolve");
+    l->dissolveSoft = GetShaderLocation(shader, "u_dissolveSoft");
+    l->tiling = GetShaderLocation(shader, "u_tiling");
+    l->panSpeed = GetShaderLocation(shader, "u_panSpeed");
+    l->tailFadeA = GetShaderLocation(shader, "u_tailFadeA");
+    l->tailFadeB = GetShaderLocation(shader, "u_tailFadeB");
+    l->uvWarp = UVDeform_CacheLocations(shader);
+    l->meshWarp = MeshDeform_CacheLocations(shader);
+    l->bandShape = GetShaderLocation(shader, "u_bandShape");
+    l->coreShape = GetShaderLocation(shader, "u_coreShape");
+    l->pathArc = GetShaderLocation(shader, "u_pathArc");
+    l->colHot = GetShaderLocation(shader, "u_colHot");
+    l->strandFlow = GetShaderLocation(shader, "u_strandFlow");
+    l->renderPass = GetShaderLocation(shader, "u_renderPass");
+    l->bodyOpacity = GetShaderLocation(shader, "u_bodyOpacity");
+    l->toneMapSafe = GetShaderLocation(shader, "u_tonemapSafe");
     l->contrastParams = GetShaderLocation(shader, "u_contrastParams");
-    l->colTail       = GetShaderLocation(shader, "u_colTail");
-    l->tailShape     = GetShaderLocation(shader, "u_tailShape");
-    l->roll          = GetShaderLocation(shader, "u_roll");
-    l->drift         = GetShaderLocation(shader, "u_drift");
-    l->jitter        = GetShaderLocation(shader, "u_jitter");
-    l->widthProfile  = GetShaderLocation(shader, "u_widthProfile");
-    l->shard         = GetShaderLocation(shader, "u_shard");
-    l->wave          = GetShaderLocation(shader, "u_wave");
-    l->noise         = GetShaderLocation(shader, "u_noise");
-    l->helix         = GetShaderLocation(shader, "u_helix");
-    l->lane          = GetShaderLocation(shader, "u_lane");
-    l->cap           = GetShaderLocation(shader, "u_cap");
-    l->p0            = GetShaderLocation(shader, "u_p0");
-    l->p1            = GetShaderLocation(shader, "u_p1");
-    l->p2            = GetShaderLocation(shader, "u_p2");
-    l->uvScale       = GetShaderLocation(shader, "u_uvScale");
-    l->seed          = GetShaderLocation(shader, "u_seed");
-    l->maxDist       = GetShaderLocation(shader, "u_maxDist");
-    l->add           = GetShaderLocation(shader, "u_add");
-    l->alpha         = GetShaderLocation(shader, "u_alpha");
-    l->style         = GetShaderLocation(shader, "u_style");
+    l->colTail = GetShaderLocation(shader, "u_colTail");
+    l->tailShape = GetShaderLocation(shader, "u_tailShape");
+    l->roll = GetShaderLocation(shader, "u_roll");
+    l->drift = GetShaderLocation(shader, "u_drift");
+    l->jitter = GetShaderLocation(shader, "u_jitter");
+    l->widthProfile = GetShaderLocation(shader, "u_widthProfile");
+    l->shard = GetShaderLocation(shader, "u_shard");
+    l->wave = GetShaderLocation(shader, "u_wave");
+    l->noise = GetShaderLocation(shader, "u_noise");
+    l->helix = GetShaderLocation(shader, "u_helix");
+    l->lane = GetShaderLocation(shader, "u_lane");
+    l->cap = GetShaderLocation(shader, "u_cap");
+    l->p0 = GetShaderLocation(shader, "u_p0");
+    l->p1 = GetShaderLocation(shader, "u_p1");
+    l->p2 = GetShaderLocation(shader, "u_p2");
+    l->uvScale = GetShaderLocation(shader, "u_uvScale");
+    l->seed = GetShaderLocation(shader, "u_seed");
+    l->maxDist = GetShaderLocation(shader, "u_maxDist");
+    l->add = GetShaderLocation(shader, "u_add");
+    l->alpha = GetShaderLocation(shader, "u_alpha");
+    l->style = GetShaderLocation(shader, "u_style");
+
     // ONE base location, not four element queries. rlvk's SPIR-V reflection
-    // stores a plain array under its BASE name ("u_colRamp"), so the GL-style
-    // "u_colRamp[0]" spelling never resolves there — all four came back -1,
-    // the pushes below were skipped in silence, every Ramp() read black, and
-    // 14 of 16 motion-ribbon presets drew nothing (only styles with
-    // constant-colour terms — SILK's border/headHot, LIGHTNING's white core —
-    // showed anything at all). Desktop GL wants the "[0]" spelling, so try it
-    // first and fall back to the base name; the upload is a single count=4
-    // call either way (glUniform3fv from [0]; rlvk's 16-byte-strided UBO
-    // write from base), so both backends land the same bytes.
+    // stores a plain array under its BASE name ("u_colRamp"), while Desktop GL
+    // wants "u_colRamp[0]". Try "[0]" first and fall back to base name.
     l->colRamp = GetShaderLocation(shader, "u_colRamp[0]");
     if (l->colRamp < 0)
         l->colRamp = GetShaderLocation(shader, "u_colRamp");
@@ -206,8 +217,6 @@ static const DeformLocs *GetCachedDeformLocs(Shader shader)
     for (int i = 0; i < shaderCacheCount; i++)
         if (shaderCacheIds[i] == shader.id)
             return &shaderCacheDeformLocs[i];
-    // Cache miss (over budget): compute into the fallback slot — still once
-    // per shader, never per instance.
     FillDeformLocs(shader, &s_fallbackDeformLocs);
     return &s_fallbackDeformLocs;
 }
@@ -240,8 +249,6 @@ static int GetCachedShaderLoc(Shader shader, const int *locs, const char *name)
     for (int i = 0; i < shaderCacheCount; i++)
         if (shaderCacheIds[i] == shader.id)
             return locs[i];
-    // The small cache is deliberately bounded; preserve correctness if a scene
-    // uses more than its shader budget.
     return GetShaderLocation(shader, name);
 }
 
@@ -307,31 +314,34 @@ static float scratchSegRatio[TRAIL_HISTORY_COUNT];
 static bool TrailUsesAdditiveBlend(const TrailEntity *t)
 {
     BlendMode blend = t->useCustomBlendMode ? t->blendMode
-                                             : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+                                            : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
     return blend != BLEND_ALPHA;
 }
 
 /* A trail carrying its own shader keeps it — that caller owns the pairing. */
 static inline Shader ResolveShader(const TrailEntity *t)
 {
-    if (t->shader.id != 0) return t->shader;
+    if (t->shader.id != 0)
+        return t->shader;
     return s_defaultShader[TrailUsesAdditiveBlend(t) ? TRAIL_SHADER_EMISSION
                                                      : TRAIL_SHADER_BODY];
 }
 
 static void EnsureTrailBodyShader(void)
 {
-    if (s_bodyShaderTried) return;
+    if (s_bodyShaderTried)
+        return;
     s_bodyShaderTried = true;
     s_bodyShader = ResourceManager_LoadShader(NULL, "core/trails/shaders/trail_body.fs");
     if (s_bodyShader.id != 0)
         s_bodyContrastParamsLoc = GetShaderLocation(s_bodyShader,
-                                                     "u_contrastParams");
+                                                    "u_contrastParams");
 }
 
 static void EnsureTrailDeformShader(void)
 {
-    if (s_deformShaderTried) return;
+    if (s_deformShaderTried)
+        return;
     s_deformShaderTried = true;
     s_deformShader = ResourceManager_LoadShader("core/trails/shaders/trail_deform.vs",
                                                 "core/trails/shaders/trail_deform.fs");
@@ -340,16 +350,6 @@ static void EnsureTrailDeformShader(void)
         TraceLog(LOG_WARNING, "TRAIL: trail_deform.vs/.fs failed to load — deform modes fall back to flat ribbons");
         return;
     }
-    /* DIAGNOSTIC, 05/08/2026 — mode 2's w0/w1/w2 came off trail_deform.fs's
-     * own uniforms onto u_uvField/u_uvMeta (uv_field.glsl) this session, and
-     * strand trail came out wrong (a smooth wide rainbow smear, no braided
-     * bundles) on the very next real build. "The shader loaded" and "its
-     * uniforms resolved" are different facts — see trail_volume.fs's own
-     * precedent for this exact print. If fieldLoc/metaLoc come back -1, every
-     * SetShaderValueV in UVDeform_Apply is silently skipped and the shader
-     * reads whatever u_uvField already held (compiled-in zero, most likely —
-     * kind=0 IS UV_DEFORM_SINE, amplitude=0 collapses all three bundles onto
-     * the SAME centre, losing the crossing/braiding this mode exists for). */
     const DeformLocs *diagLocs = GetCachedDeformLocs(s_deformShader);
     TraceLog(LOG_INFO,
              "TRAIL: trail_deform loaded — shader id %u, u_uvField loc %d, "
@@ -364,7 +364,8 @@ static void EnsureTrailDeformShader(void)
 
 static void EnsureTrailVolumeShader(void)
 {
-    if (s_volumeShaderTried) return;
+    if (s_volumeShaderTried)
+        return;
     s_volumeShaderTried = true;
     s_volumeShader = ResourceManager_LoadShader("core/trails/shaders/trail_volume.vs",
                                                 "core/trails/shaders/trail_volume.fs");
@@ -377,98 +378,44 @@ static void EnsureTrailVolumeShader(void)
                  "gas, and nothing else will say why.");
         return;
     }
-    /* UNCONDITIONAL, and it prints the UNIFORM LOCATIONS, not just the id.
-     *
-     * A shader that loads and a shader whose uniforms resolve are different
-     * facts. If u_volMask comes back -1 the pushes below are skipped in silence
-     * and every constant in it reads as ZERO — which makes the edge rolloff
-     * `smoothstep(0, 0.001, d)`, i.e. a hard edge, and no amount of retuning
-     * that constant changes anything on screen. That is indistinguishable from
-     * "the value is wrong" unless the location is printed. */
+
     Tuning_RegisterFloat("volume_debug", &s_volDebug, 0.0f);
-    /* u_volMask.w — ĐỘ ĐẬM CHUNG của mọi volume trail (cột khói, smoke trail,
-     * volume trail...). Thành tunable 06/08/2026, cùng lúc với bản sửa dấu
-     * của số hạng độ dày quang học trong trail_volume.fs: bản sửa đó nâng độ
-     * đục trung bình dọc thân lên 8.02 lần (đo ở
-     * core/tests/volume_optical_depth_test.c), nên 1.75 chỉ đúng cho
-     * `vol_depth_mode = 0`. Hai knob ĐI CẶP:
-     *     mode 0 (mặc định, dạng viền cũ)      -> density ~1.75
-     *     mode 1 (độ dày quang học đúng vật lý) -> density ~0.60
-     *
-     * LÀ TUNABLE chứ không phải hằng số mới, vì con số đúng là chuyện THẨM
-     * MỸ và nó dùng chung cho nhiều hiệu ứng: quét nó trong tuning.cfg lúc
-     * game đang chạy rẻ hơn nhiều so với đoán rồi build lại (core/CLAUDE.md
-     * §5). */
     Tuning_RegisterFloat("vol_density", &s_volDensity, 1.75f);
-    /* u_volMask.x — DẠNG của số hạng độ dày. Mặc định 0 = giữ NGUYÊN hình
-     * cột khói đã có từ trước, vì đổi nó sang dạng đúng vật lý (mode 1) làm
-     * cột đọc ra "không tự nhiên như trước" dù smoke trail thì cần đúng dạng
-     * đó. Một bản sửa đúng về vật lý vẫn là hồi quy nếu nó lấy mất cái nhìn
-     * người dùng đã ưng — nên nó là công tắc, không phải bản thay thế. */
     Tuning_RegisterFloat("vol_depth_mode", &s_volDepthMode, 0.0f);
-    /* Hai knob còn lại của cùng công thức. Mặc định (mode 0 / rim 1 / pow 2)
-     * cho lại ĐÚNG TỪNG BIT công thức trước 06/08/2026, nên không caller nào
-     * đổi hình cho tới khi có người cố ý vặn. */
     Tuning_RegisterFloat("vol_rim", &s_volRim, 1.0f);
     Tuning_RegisterFloat("vol_depth_pow", &s_volDepthPow, 2.0f);
-    /* Xem doc dài ở u_volCull trong trail_volume.fs. Mặc định 1 = hành vi cũ;
-     * chỉ có nghĩa khi đi cùng vol_depth_mode, số đo ở silhouette_test.c. */
     Tuning_RegisterFloat("vol_cull", &s_volCull, 1.0f);
-    /* Xem doc dai o u_volNormalSrc trong trail_volume.fs. Mac dinh 0 = duong
-     * cu, nen bat cong tac la mot lan luu file chu khong phai mot lan build. */
     Tuning_RegisterFloat("vol_normal_src", &s_volNormalSrc, 0.0f);
-    /* Noise erosion biên (kỹ thuật 2) — xem doc dài ở u_volErode trong
-     * trail_volume.fs. Mặc định 0 = biên mềm như cũ; bật lên cho biên tưa. */
     Tuning_RegisterFloat("vol_erode", &s_volErode, 0.0f);
     Tuning_RegisterFloat("vol_erode_band", &s_volErodeBand, 0.2f);
     Tuning_RegisterFloat("vol_bloom", &s_volBloom, 2.5f);
-    /* `vol_view_src` is GONE (06/08/2026): the view vector is settled at
-     * normalize(-fragPosition) — see the viewPos comment further down and
-     * trail_volume.vs's header. A switch over a settled question only rots. */
-    s_volFlowLocs = SurfaceFlow_CacheLocations(s_volumeShader);
 
-    /* Reproduces the OLD u_volPan/u_volMask.x constants exactly —
-     * pan[4] = {-0.085, 0, 0.043, 0}, mask[4].x = 1.63 — see
-     * trail_volume.fs's own comment on the SurfaceFlow that replaced it.
-     *
-     * SurfaceFlow_LayerUV's tile-mode formula is `mat*tiling - pan`
-     * (SUBTRACT), where the old code SAMPLED at `fragTexCoord + pan1/2`
-     * (ADD). Reproducing the same net scroll direction under a repeat-
-     * wrapped sampler (mod 1, so `x - fract(k*t) == x + fract(-k*t)` on the
-     * screen) means negating the old pan CONSTANT, not the formula:
-     *   sheet 1 (layer 0): old `pan1.y = fract(-0.085*t)`, sampled ADDED ->
-     *     net v - 0.085t. New: tiling (1,1) [no scale, matches old
-     *     fragTexCoord unscaled], pan.y = +0.085 -> v*1 - fract(0.085t) ==
-     *     v - 0.085t (mod 1). Around (.x) pan/tiling stay at their
-     *     identity values (0 pan, 1 tiling) on BOTH layers — panning u
-     *     rotates the sheet about the tube's axis, and with any along-pan
-     *     the sum is a screw thread; smoke rises, it does not spin.
-     *   sheet 2 (layer 1): old `pan2.y = fract(0.043*t)`, sampled ADDED
-     *     onto `v*1.63` -> net v*1.63 + 0.043t. New: tiling (1,1.63)
-     *     [reproduces mask[4].x], pan.y = -0.043 -> v*1.63 -
-     *     fract(-0.043t) == v*1.63 + 0.043t (mod 1). MUL blend against
-     *     layer 0 reproduces the old `s1.a * s2.a`.
-     * env = NONE on both (UVDeform_Envelope(NONE,...) == 1.0, i.e. no
-     * gating) — the old code never gated pattern by anything either. */
+    s_volFlowLocs = SurfaceFlow_CacheLocations(s_volumeShader);
+    s_volLocs.mask = GetShaderLocation(s_volumeShader, "u_volMask");
+    s_volLocs.viewPos = GetShaderLocation(s_volumeShader, "viewPos");
+    s_volLocs.normalSrc = GetShaderLocation(s_volumeShader, "u_volNormalSrc");
+    s_volLocs.cull = GetShaderLocation(s_volumeShader, "u_volCull");
+    s_volLocs.rim = GetShaderLocation(s_volumeShader, "u_volRim");
+    s_volLocs.erode = GetShaderLocation(s_volumeShader, "u_volErode");
+    s_volLocs.erodeBand = GetShaderLocation(s_volumeShader, "u_volErodeBand");
+    s_volLocs.debug = GetShaderLocation(s_volumeShader, "u_volDebug");
+    s_volLocs.bloom = GetShaderLocation(s_volumeShader, "u_volBloom");
+
     SurfaceFlow_Clear(&s_volFlow);
     SurfaceFlow_AddLayer(&s_volFlow, (SurfaceFlowLayer){
-        .tiling = {1.0f, 1.0f}, .pan = {0.0f, 0.085f},
-        .blend = SURFACE_FLOW_MUL, .env = UV_ENV_NONE});
+                                         .tiling = {1.0f, 1.0f}, .pan = {0.0f, 0.085f}, .blend = SURFACE_FLOW_MUL, .env = UV_ENV_NONE});
     SurfaceFlow_AddLayer(&s_volFlow, (SurfaceFlowLayer){
-        .tiling = {1.0f, 1.63f}, .pan = {0.0f, -0.043f},
-        .blend = SURFACE_FLOW_MUL, .env = UV_ENV_NONE});
-    s_volFlow.stretchUV = false; // TILE mode — layer 1 needs its 1.63x scale,
-                                 // which STRETCH mode ignores entirely
-    s_volFlow.envAxis = 1;      // inert (env = NONE on both layers), set for
-                                 // sanity: 1 = along the body, not around it
+                                         .tiling = {1.0f, 1.63f}, .pan = {0.0f, -0.043f}, .blend = SURFACE_FLOW_MUL, .env = UV_ENV_NONE});
+    s_volFlow.stretchUV = false;
+    s_volFlow.envAxis = 1;
 
     TraceLog(LOG_INFO,
              "TRAIL: trail_volume loaded — shader id %u, u_flowLayer loc %d, "
              "u_volMask loc %d%s",
              (unsigned)s_volumeShader.id,
              s_volFlowLocs.layerLoc,
-             GetShaderLocation(s_volumeShader, "u_volMask"),
-             (GetShaderLocation(s_volumeShader, "u_volMask") < 0)
+             s_volLocs.mask,
+             (s_volLocs.mask < 0)
                  ? "  <-- MISSING: every mask constant reads as 0, edge goes hard"
                  : "");
 }
@@ -522,9 +469,6 @@ static float ComputeWidthEnvelopeFast(const TrailEntity *t, float segRatio, floa
         return 1.0f + 0.25f * sinf(segRatio * 12.0f - time * 10.0f);
     case TRAIL_WIDTH_ENVELOPE_SMOKE_LIFECYCLE:
     {
-        // segRatio runs tail->head in reverse: age 0 is fresh source smoke;
-        // age 1 is the oldest tail. It grows first, billows in the middle and
-        // reaches zero before the tail is culled by follower idle fade.
         float age = 1.0f - segRatio;
         float grow = SmoothStepC(0.0f, 0.22f, age);
         float dissolve = 1.0f - SmoothStepC(0.66f, 1.0f, age);
@@ -532,20 +476,13 @@ static float ComputeWidthEnvelopeFast(const TrailEntity *t, float segRatio, floa
     }
     case TRAIL_WIDTH_ENVELOPE_SMOKE_WIDEN:
     {
-        // Widen-only: a compact plume head that spreads monotonically to FULL
-        // width at the tail. The width itself never collapses — the material
-        // tail ramp (tailFadeA/B in the fragment shader) evaporates the tip.
         float age = 1.0f - segRatio;
         float grow = SmoothStepC(0.0f, 0.25f, age);
         return 0.15f + 0.85f * grow;
     }
     case TRAIL_WIDTH_ENVELOPE_ENERGY_BLADE:
     {
-        // Compact head -> widest just behind it -> long taper to a needle.
-        // The tail floor is deliberately non-zero: a width of exactly 0 makes
-        // the last quad degenerate, which renders as a dark wedge rather than
-        // as nothing (the same trap documented on SmokeTrail's radius).
-        float age = 1.0f - segRatio; // 0 at the head, 1 at the tail
+        float age = 1.0f - segRatio;
         float lead = SmoothStepC(0.0f, 0.14f, age);
         float body = 1.0f - SmoothStepC(0.14f, 1.0f, age);
         return (0.35f + 0.65f * lead) * (0.06f + 0.94f * body * body);
@@ -556,8 +493,9 @@ static float ComputeWidthEnvelopeFast(const TrailEntity *t, float segRatio, floa
     }
 }
 
-float TrailRibbon_WidthEnvelope(const TrailEntity *t,float ratio,float time) {
-    return ComputeWidthEnvelopeFast(t,ratio,time);
+float TrailRibbon_WidthEnvelope(const TrailEntity *t, float ratio, float time)
+{
+    return ComputeWidthEnvelopeFast(t, ratio, time);
 }
 
 // Centripetal Catmull-Rom (alpha = 0.5) - Messiah Engine standard.
@@ -572,7 +510,8 @@ static inline float Trail_KnotInterval(Vector3 a, Vector3 b)
 static inline Vector3 Trail_V3LerpParam(Vector3 v1, Vector3 v2, float t1, float t2, float t)
 {
     float denom = t2 - t1;
-    if (fabsf(denom) < 1e-5f) return v1;
+    if (fabsf(denom) < 1e-5f)
+        return v1;
     float factor = (t - t1) / denom;
     return (Vector3){
         v1.x + factor * (v2.x - v1.x),
@@ -582,8 +521,10 @@ static inline Vector3 Trail_V3LerpParam(Vector3 v1, Vector3 v2, float t1, float 
 
 static inline Vector3 CatmullRom(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, float t)
 {
-    if (t <= 0.0f) return p1;
-    if (t >= 1.0f) return p2;
+    if (t <= 0.0f)
+        return p1;
+    if (t >= 1.0f)
+        return p2;
 
     float t0 = 0.0f;
     float t1 = t0 + Trail_KnotInterval(p0, p1);
@@ -679,7 +620,9 @@ static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
 
         if (i == N - 2)
         {
-            float u = (fHead > 1e-4f) ? Clamp(f / fHead, 0.0f, 1.0f) : 0.0f;
+            if (fHead <= 1e-4f)
+                return GetHistoryKnot(t, N - 2, N);
+            float u = Clamp(f / fHead, 0.0f, 1.0f);
             Vector3 P0 = GetHistoryKnot(t, N - 3, N);
             Vector3 P1 = GetHistoryKnot(t, N - 2, N);
             Vector3 P2 = GetHistoryKnot(t, N - 1, N);
@@ -688,9 +631,13 @@ static Vector3 GetInterpolatedPosition(const TrailEntity *t, float segRatio)
         }
 
         Vector3 P0 = GetHistoryKnot(t, i - 1, N);
-        Vector3 P1 = GetHistoryKnot(t, i,     N);
+        Vector3 P1 = GetHistoryKnot(t, i, N);
         Vector3 P2 = GetHistoryKnot(t, i + 1, N);
         Vector3 P3 = GetHistoryKnot(t, i + 2, N);
+        // Nếu P3 là live-head nhưng vừa mới chốt node (fHead rất nhỏ), P3 trùng với P2
+        // làm gãy tiếp tuyến Catmull-Rom; ngoại suy P3 từ P1 -> P2 để giữ đường cong mượt.
+        if (i + 2 == N - 1 && fHead < 1e-3f)
+            P3 = Vector3Add(P2, Vector3Subtract(P2, P1));
         return CatmullRom(P0, P1, P2, P3, f);
     }
 
@@ -730,7 +677,7 @@ static Vector3 ApplyAnchoredHelix(const TrailEntity *t, Vector3 pos, float segRa
 
     Vector3 axis = Vector3Normalize(t->helixAxis);
     Vector3 ref = (fabsf(axis.y) > 0.9f) ? (Vector3){1.0f, 0.0f, 0.0f}
-                                          : (Vector3){0.0f, 1.0f, 0.0f};
+                                         : (Vector3){0.0f, 1.0f, 0.0f};
     Vector3 u = Vector3Normalize(Vector3CrossProduct(axis, ref));
     Vector3 v = Vector3CrossProduct(axis, u);
     float age = 1.0f - segRatio;
@@ -741,29 +688,45 @@ static Vector3 ApplyAnchoredHelix(const TrailEntity *t, Vector3 pos, float segRa
     return Vector3Add(pos, Vector3Scale(offset, t->helixRadius * grow));
 }
 
-// [TỐI ƯU PERFORMANCE] Frustum & Distance Culling loại bỏ vẽ trail ngoài màn hình
+// [TỐI ƯU PERFORMANCE & FIX PORTAL/LONG-TRAIL CULLING]
+// Tính hình cầu bao (Bounding Sphere) từ cả head và tail, đồng thời hỗ trợ TRAIL_TYPE_PORTAL
 static inline bool IsTrailVisible(const TrailEntity *t, Camera3D camera)
 {
-    if (t->historyCount < 1)
-        return false;
-
-    Vector3 head = t->history[t->historyHead];
+    Vector3 center;
     float radius = (t->length > t->thickness) ? t->length : t->thickness;
-    if (t->trailLength > radius)
-        radius = t->trailLength;
-    radius += t->distortionStrength + 1.0f;
 
-    Vector3 camToHead = Vector3Subtract(head, camera.position);
-    float distSqr = Vector3LengthSqr(camToHead);
+    if (t->type == TRAIL_TYPE_PORTAL)
+    {
+        center = t->position;
+        radius *= TRAIL_PORTAL_QUAD_SIZE_MUL;
+    }
+    else
+    {
+        if (t->historyCount < 1)
+            return false;
 
-    // Culling nếu xa quá 500m
-    if (distSqr > 250000.0f)
+        Vector3 head = t->history[GetHistoryNodeIndex(t, t->historyCount - 1)];
+        Vector3 tail = t->history[GetHistoryNodeIndex(t, 0)];
+        center = Vector3Scale(Vector3Add(head, tail), 0.5f);
+        float halfSpan = Vector3Distance(head, tail) * 0.5f;
+        if (halfSpan > radius)
+            radius = halfSpan;
+    }
+
+    radius += t->distortionStrength + t->helixRadius + 1.5f;
+
+    Vector3 camToCenter = Vector3Subtract(center, camera.position);
+    float distSqr = Vector3LengthSqr(camToCenter);
+
+    // Culling nếu tâm vệt cách xa quá (500m + radius)
+    float maxDist = 500.0f + radius;
+    if (distSqr > maxDist * maxDist)
         return false;
 
     Vector3 camFwd = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-    float proj = Vector3DotProduct(camToHead, camFwd);
+    float proj = Vector3DotProduct(camToCenter, camFwd);
 
-    // Culling nếu nằm hoàn toàn phía sau Camera
+    // Culling nếu toàn bộ hình cầu bao nằm phía sau Camera
     if (proj < -radius)
         return false;
 
@@ -897,13 +860,15 @@ static void UpdateProjectilePhysics(int id, TrailEntity *t, float dt, float time
     bool shouldInsert = true;
     if (t->minVertexDistance > 0.0f && t->historyCount > 0)
     {
-        Vector3 lastNode = t->history[t->historyHead];
-        float distSqr = (spawnPos.x - lastNode.x) * (spawnPos.x - lastNode.x) +
-                        (spawnPos.y - lastNode.y) * (spawnPos.y - lastNode.y) +
-                        (spawnPos.z - lastNode.z) * (spawnPos.z - lastNode.z);
+        // Đo khoảng cách tới điểm chốt ngay trước live-head để tránh kéo lê 1 node mãi mãi
+        int anchorIdx = (t->historyCount > 1)
+                            ? ((t->historyHead - 1 + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT)
+                            : t->historyHead;
+        Vector3 lastNode = t->history[anchorIdx];
+        float distSqr = Vector3DistanceSqr(spawnPos, lastNode);
         if (distSqr < t->minVertexDistance * t->minVertexDistance)
         {
-            shouldInsert = false;
+            shouldInsert = (t->historyCount == 1);
         }
     }
 
@@ -918,7 +883,7 @@ static void UpdateProjectilePhysics(int id, TrailEntity *t, float dt, float time
     Vector3 posBeforeMove = t->position;
 
     Vector3 toTarget = Vector3Subtract(t->target, t->position);
-    float distSqr = toTarget.x * toTarget.x + toTarget.y * toTarget.y + toTarget.z * toTarget.z;
+    float distSqr = Vector3LengthSqr(toTarget);
 
     if (distSqr > TRAIL_PROJECTILE_RETARGET_DIST_SQR)
     {
@@ -932,15 +897,17 @@ static void UpdateProjectilePhysics(int id, TrailEntity *t, float dt, float time
         float newSpeed = fminf(velLen + TRAIL_PROJECTILE_ACCEL_RATE * dt, TRAIL_PROJECTILE_MAX_SPEED);
         float curveStrength = fminf(distToTarget / curveRange, 1.0f);
 
-        Vector3 perpDir = {-desiredDir.z, 0.0f, desiredDir.x};
-        float wobble = sinf(t->wobblePhase) * wobbleAmp * curveStrength * dt;
+        Vector3 upRef = (fabsf(desiredDir.y) > 0.95f) ? (Vector3){1.0f, 0.0f, 0.0f} : (Vector3){0.0f, 1.0f, 0.0f};
+        Vector3 perpDir = Vector3Normalize(Vector3CrossProduct(desiredDir, upRef));
+        float wobble = sinf(t->wobblePhase) * wobbleAmp * curveStrength;
 
         Vector3 desiredVel = {
             desiredDir.x * newSpeed + perpDir.x * wobble,
             desiredDir.y * newSpeed + perpDir.y * wobble,
             desiredDir.z * newSpeed + perpDir.z * wobble};
 
-        t->velocity = Vector3Lerp(t->velocity, desiredVel, dt * TRAIL_PROJECTILE_STEER_LERP_RATE);
+        float steerAlpha = 1.0f - expf(-TRAIL_PROJECTILE_STEER_LERP_RATE * dt);
+        t->velocity = Vector3Lerp(t->velocity, desiredVel, steerAlpha);
     }
 
     const bool windActive = WindZone_IsActive();
@@ -1161,15 +1128,18 @@ static void UpdateFollowerPhysics(int i, TrailEntity *t, float dt, float time)
 
         if (t->nodeHomeSpring > 0.0f)
         {
+            // Giảm ảnh hưởng của gió/trường lực ở sát đầu vệt để đầu vệt bám sát vũ khí,
+            // nhưng giữ nguyên độ cứng của lò xo kéo về nodeHome.
+            float depth = (float)h / (float)(t->historyCount - 1);
+            float externalScale = 0.25f + 0.75f * depth;
+            acc.x *= externalScale;
+            acc.y *= externalScale;
+            acc.z *= externalScale;
+
             Vector3 pull = Vector3Subtract(t->nodeHome[idx], t->history[idx]);
             acc.x += pull.x * t->nodeHomeSpring;
             acc.y += pull.y * t->nodeHomeSpring;
             acc.z += pull.z * t->nodeHomeSpring;
-            float depth = (float)h / (float)(t->historyCount - 1);
-            float scale = 0.25f + 0.75f * depth;
-            acc.x *= scale;
-            acc.y *= scale;
-            acc.z *= scale;
         }
 
         t->nodeVelocity[idx] = (Vector3){
@@ -1292,7 +1262,7 @@ static bool EvictLowestPriorityTrail(VFXPriority incomingPriority)
 int SpawnTrailEntity(TrailConfig config)
 {
     TrailConfig_Unify(&config);
-    if (freeListHead >= MAX_TRAIL_PARTICLES)
+    if (freeListHead < 0 || freeListHead >= MAX_TRAIL_PARTICLES)
         if (!EvictLowestPriorityTrail(config.priority))
             return -1;
 
@@ -1383,8 +1353,6 @@ int SpawnTrailEntity(TrailConfig config)
         t->tubeRadialSegs = TRAIL_TUBE_RADIAL_MAX;
     t->tubeMaxRings = (config.tubeMaxRings > 0) ? config.tubeMaxRings
                                                 : TRAIL_TUBE_RINGS_DEFAULT;
-    /* 0 = rơi về tubeMaxRings, tức đúng hành vi trước 06/08/2026 cho mọi
-     * caller không khai báo. Xem doc field ở trail_system.h. */
     t->tubeGeomSegs = (config.tubeGeomSegs > 0) ? config.tubeGeomSegs : 0;
     t->section = (config.sectionCount >= 3) ? config.section : NULL;
     t->sectionCount = (t->section != NULL) ? config.sectionCount : 0;
@@ -1393,7 +1361,8 @@ int SpawnTrailEntity(TrailConfig config)
     t->tubeCaps = config.tubeCaps;
     t->tubeVolumeShading = config.tubeVolumeShading;
     t->tubeDeformFrozen = config.tubeDeformFrozen;
-    if (config.tubeVolumeShading) EnsureTrailVolumeShader();
+    if (config.tubeVolumeShading)
+        EnsureTrailVolumeShader();
     t->tubeSingleSided = config.tubeSingleSided;
     t->tubeNoiseAmp = config.tubeNoiseAmp;
     t->dropletConfig = config.dropletConfig;
@@ -1420,11 +1389,12 @@ int SpawnTrailEntity(TrailConfig config)
     if (config.material.appearance != VFX_APPEARANCE_INHERIT)
     {
         BlendMode legacyBlend = config.useCustomBlendMode ? config.blendMode
-            : ((config.blendMode > 0) ? config.blendMode : BLEND_ADDITIVE);
+                                                          : ((config.blendMode > 0) ? config.blendMode : BLEND_ADDITIVE);
         VFXSurfaceMode legacySurface = legacyBlend == BLEND_ALPHA
-            ? VFX_SURFACE_ALPHA
-            : (legacyBlend == BLEND_ALPHA_PREMULTIPLY
-                   ? VFX_SURFACE_PREMULTIPLIED : VFX_SURFACE_ADDITIVE);
+                                           ? VFX_SURFACE_ALPHA
+                                           : (legacyBlend == BLEND_ALPHA_PREMULTIPLY
+                                                  ? VFX_SURFACE_PREMULTIPLIED
+                                                  : VFX_SURFACE_ADDITIVE);
         VFXResolvedAppearance appearance = VFXAppearance_Resolve(
             config.material.appearance,
             (VFXResolvedAppearance){
@@ -1433,21 +1403,21 @@ int SpawnTrailEntity(TrailConfig config)
                 .bodyOpacity = config.material.bodyOpacity,
                 .emissionIntensity = config.material.hdrGain,
                 .emissionThreshold = 1.0f,
-                .unlit = true
-            });
+                .unlit = true});
         t->useCustomBlendMode = true;
         // Trail shaders already expose separate BODY and EMISSION resolvers.
         // A premultiplied semantic therefore maps to alpha body + additive
         // emission, rather than asking straight-colour ribbon vertices to obey
         // a premultiplied blend contract they cannot encode.
         t->blendMode = appearance.surface == VFX_SURFACE_ALPHA
-                           ? BLEND_ALPHA : BLEND_ADDITIVE;
+                           ? BLEND_ALPHA
+                           : BLEND_ADDITIVE;
         t->material.contrastProfile = appearance.contrast;
         t->material.bodyOpacity = appearance.bodyOpacity;
         t->material.hdrGain = appearance.emissionIntensity > 0.0f
-                                  ? appearance.emissionIntensity : 1.0f;
+                                  ? appearance.emissionIntensity
+                                  : 1.0f;
     }
-    // ────────────────────────────────────────────────────────────────────
 
     for (int h = 0; h < TRAIL_HISTORY_COUNT; h++)
     {
@@ -1499,18 +1469,29 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos)
         return;
     TrailEntity *t = &trailPool[id];
 
-    bool shouldInsert = true;
-    if (t->minVertexDistance > 0.0f && t->historyCount > 0)
+    if (t->historyCount == 0)
     {
-        Vector3 lastNode = t->history[t->historyHead];
-        float distSqr = (newTipPos.x - lastNode.x) * (newTipPos.x - lastNode.x) +
-                        (newTipPos.y - lastNode.y) * (newTipPos.y - lastNode.y) +
-                        (newTipPos.z - lastNode.z) * (newTipPos.z - lastNode.z);
-        if (distSqr < t->minVertexDistance * t->minVertexDistance)
-        {
-            shouldInsert = false;
-        }
+        t->historyHead = 0;
+        t->historyCount = 1;
+        t->history[0] = newTipPos;
+        t->nodeHome[0] = newTipPos;
+        t->nodeVelocity[0] = (Vector3){0, 0, 0};
+        t->nodeRest[0] = (t->spacingMeters > 1e-4f) ? t->spacingMeters : 1e-4f;
+        t->nodeUV[0] = t->laidDist;
+        t->position = newTipPos;
+        t->timeSinceLastFollowerUpdate = 0.0f;
+        t->fadeAccumulator = 0.0f;
+        return;
     }
+
+    int prevAnchor = (t->historyCount > 1)
+                         ? ((t->historyHead - 1 + TRAIL_HISTORY_COUNT) % TRAIL_HISTORY_COUNT)
+                         : t->historyHead;
+    float distToAnchorSqr = Vector3DistanceSqr(newTipPos, t->history[prevAnchor]);
+
+    bool shouldInsert = (t->historyCount == 1) ||
+                        (t->minVertexDistance <= 0.0f) ||
+                        (distToAnchorSqr >= t->minVertexDistance * t->minVertexDistance);
 
     if (shouldInsert)
     {
@@ -1518,12 +1499,20 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos)
         t->historyHead = (t->historyHead + 1) % TRAIL_HISTORY_COUNT;
         GrowHistoryTowardMaxNodes(t);
 
-        float step = (t->historyCount > 1) ? Vector3Distance(newTipPos, t->history[prev]) : 0.0f;
+        float step = Vector3Distance(newTipPos, t->history[prev]);
         if (step < 1e-4f)
             step = (t->spacingMeters > 1e-4f) ? t->spacingMeters : 1e-4f;
         t->nodeRest[t->historyHead] = step;
-        t->laidDist += (t->historyCount > 1) ? step : 0.0f;
+        t->laidDist += step;
         t->nodeUV[t->historyHead] = t->laidDist;
+    }
+    else
+    {
+        float step = sqrtf(distToAnchorSqr);
+        if (step < 1e-4f)
+            step = 1e-4f;
+        t->nodeRest[t->historyHead] = step;
+        t->nodeUV[t->historyHead] = t->nodeUV[prevAnchor] + step;
     }
 
     t->history[t->historyHead] = newTipPos;
@@ -1534,7 +1523,7 @@ void UpdateFollowerPosition(int id, Vector3 newTipPos)
     t->fadeAccumulator = 0.0f;
 }
 
-/* Distance, never frames, owns follower density.  The newest retained node is
+/* Distance, never frames, owns follower density. The newest retained node is
  * the fractional carry: if a frame only travels 0.03 m of a 0.10 m spacing it
  * stays put, and the next segment completes the 0.10 m interval. */
 static void MotionRibbon_SampleFollower(int id, Vector3 newTipPos)
@@ -1545,10 +1534,7 @@ static void MotionRibbon_SampleFollower(int id, Vector3 newTipPos)
         UpdateFollowerPosition(id, newTipPos);
         return;
     }
-    // The append loop measures from the last LAID control point, tracked
-    // separately: the render head below rides the live tip every frame in its
-    // own dedicated slot above spacingAnchor, so spacingAnchor is never
-    // overwritten or snapped backward when the next interval completes.
+
     if (!t->hasSpacingAnchor)
     {
         t->spacingAnchor = t->history[t->historyHead];
@@ -1592,8 +1578,6 @@ static void MotionRibbon_SampleFollower(int id, Vector3 newTipPos)
         t->sampleAcc += remainingStep;
     }
 
-    /* Keep physics/ownership current even while the render head waits for the
-     * next metre-spaced control point.  No zero-length frame is manufactured. */
     t->position = newTipPos;
     t->timeSinceLastFollowerUpdate = 0.0f;
     t->fadeAccumulator = 0.0f;
@@ -1609,19 +1593,6 @@ static void MotionRibbon_SampleFollower(int id, Vector3 newTipPos)
     }
 }
 
-// A cut throws the PATH away — the emitter is somewhere unrelated and the
-// laid history no longer describes anything. It must not also throw away where
-// the SURFACE had got to.
-//
-// `laidDist` is the odometer the strand material phases its texture against
-// (nodeUV[] is laidDist at the moment each node was laid, and the fragment
-// stage reads it as `u_pathArc.x`). Zeroing it here snapped that phase back to
-// the start, so a cut cost a stall AND an instant jump in the pattern — the
-// "stutters once, then changes phase" the owner reported. The stall is what a
-// cut IS and stays; the jump was never part of it. Keeping the odometer running
-// is safe because nothing else reads it: it is not the aspect cap's length
-// (that is measured against the drawn span), and the draw path already folds it
-// at 8192 m for float precision, so an unbounded value was always expected.
 static void FollowerCut(TrailEntity *t, Vector3 tip)
 {
     t->historyHead = 0;
@@ -1630,10 +1601,10 @@ static void FollowerCut(TrailEntity *t, Vector3 tip)
     t->nodeHome[0] = tip;
     t->nodeVelocity[0] = (Vector3){0, 0, 0};
     t->nodeRest[0] = (t->spacingMeters > 1e-4f) ? t->spacingMeters : 1e-4f;
-    t->nodeUV[0] = t->laidDist; // NOT 0 — see above
+    t->nodeUV[0] = t->laidDist; // preserve odometer phase across cuts
     t->prevAttachPos = tip;
     t->sampleAcc = 0.0f;
-    t->hasSpacingAnchor = false; // re-initialised from history[0] on next sample
+    t->hasSpacingAnchor = false;
 }
 
 void Trail_SetLateralOffset(int id, Vector3 worldOffset)
@@ -1641,15 +1612,9 @@ void Trail_SetLateralOffset(int id, Vector3 worldOffset)
     if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
         return;
     TrailEntity *t = &trailPool[id];
-    /* This offset is part of the follower's authored path. Keep it out of the
-     * transform-teleport test: otherwise the first offset (and any fast change
-     * in its frame) looks like the emitter jumped and FollowerCut discards the
-     * history. Slewing the offset still shapes the ribbon over time; moving
-     * the reference by the same delta prevents the control signal from being
-     * mistaken for emitter motion. */
     if (t->attachedTransform && t->hasPrevAttach)
         t->prevAttachPos = Vector3Add(t->prevAttachPos,
-            Vector3Subtract(worldOffset, t->lateralOffset));
+                                      Vector3Subtract(worldOffset, t->lateralOffset));
     t->lateralOffset = worldOffset;
 }
 
@@ -1660,14 +1625,12 @@ void Trail_SetFrozen(int id, bool frozen)
     trailPool[id].frozen = frozen;
 }
 
-// Per-entity EMISSION lift, after creation. The material is a COPY taken when
-// the entity is created (see the appearance resolve above), so editing a
-// composition's recipe afterwards reaches nothing — this is the only way in.
 void Trail_SetHdrGain(int id, float gain)
 {
     if (id < 0 || id >= MAX_TRAIL_PARTICLES || !trailPool[id].active)
         return;
-    if (gain < 0.0f) gain = 0.0f;
+    if (gain < 0.0f)
+        gain = 0.0f;
     trailPool[id].material.hdrGain = gain;
 }
 
@@ -1754,36 +1717,25 @@ void UpdateTrailSystem(float dt)
             continue;
         }
 
-        if (TrailRibbonSystem_Update(i, dt)) { a++; continue; }
+        if (TrailRibbonSystem_Update(i, dt))
+        {
+            a++;
+            continue;
+        }
 
-        // Keep an unscaled clock. The shader applies uSpeed exactly once;
-        // scaling here too made flow-map speed unintentionally quadratic.
         if (t->useFlowMap)
         {
             t->flowTimeAccumulator += dt;
         }
         t->uvScrollOffset += t->uvScrollSpeed * dt;
 
-        /* LÀM MỊN chiều dài path thật cho tọa độ nhiễu — nguồn của
-         * "đổi pha một cái rụp" báo 05/08/2026: PMTube_BuildAlongPath tính
-         * spanLen THÔ lại từ đầu MỖI KHUNG HÌNH, và MỘT giá trị đó lái toạ độ
-         * nhiễu của TOÀN BỘ mesh cùng lúc (tNoise = t*spanLen/noiseWavelength
-         * cho MỌI vành) — spanLen nhảy dù chỉ một khung là mọi vành cùng nhảy
-         * tọa độ đọc trường nhiễu CÙNG LÚC, có thể xuyên qua ranh giới ô
-         * lattice và đổi hẳn sang một mảng giá trị không tương quan — cả mesh
-         * "chớp" sang một hình dạng khác trong một khung, đúng cảm giác "rụp".
-         *
-         * Chỉ tính khi caller thật sự cần (đã bật noiseWavelength) — tránh
-         * tốn cho cột khói/spark trail/ember trail không dùng cờ này. Đi từ
-         * history THÔ (không phải path đã resample bằng Catmull-Rom lúc vẽ)
-         * vì Update có dt thật để làm mịn đúng — Draw thì không, và chỉ cần
-         * MỘT ước lượng ổn định, không cần khớp chính xác mét. */
         if (t->tubeShapeConfig != NULL && t->tubeShapeConfig->noiseWavelength > 0.0f &&
             t->historyCount > 1)
         {
             float rawSpanLen = 0.0f;
             int limit = t->historyCount - 1;
-            if (limit > TRAIL_HISTORY_COUNT - 1) limit = TRAIL_HISTORY_COUNT - 1;
+            if (limit > TRAIL_HISTORY_COUNT - 1)
+                limit = TRAIL_HISTORY_COUNT - 1;
             for (int k = 0; k < limit; k++)
             {
                 int i0 = GetHistoryNodeIndex(t, k);
@@ -1791,11 +1743,9 @@ void UpdateTrailSystem(float dt)
                 rawSpanLen += Vector3Distance(t->history[i0], t->history[i1]);
             }
             if (t->tubeNoiseSpanLen <= 0.0f)
-                t->tubeNoiseSpanLen = rawSpanLen; // mẫu đầu tiên — không có gì để trễ theo
+                t->tubeNoiseSpanLen = rawSpanLen;
             else
             {
-                // Hằng số thời gian ~0.35s: đủ chậm để chặn cú nhảy-một-khung,
-                // đủ nhanh để vẫn bám kịp một pha tăng/giảm tốc thật của emitter.
                 float tau = 0.35f;
                 float alpha = 1.0f - expf(-dt / tau);
                 t->tubeNoiseSpanLen += (rawSpanLen - t->tubeNoiseSpanLen) * alpha;
@@ -1829,10 +1779,6 @@ void UpdateTrailSystem(float dt)
             float moved = Vector3Distance(tip, t->prevAttachPos);
             if (t->teleportSpeed > 0.0f && moved > t->teleportSpeed * dt)
             {
-                // Log the ODOMETER too: a cut is visible as a stall, and the
-                // question that always follows is whether the surface re-phased
-                // with it. Printing the value that answers that is cheaper than
-                // the bisection which found this in the first place.
                 TraceLog(LOG_INFO,
                          "TRAIL: follower %d cut — transform jumped %.2f m "
                          "(> %.1f m/s * %.4f s); path odometer held at %.2f m.",
@@ -1897,43 +1843,23 @@ void UpdateTrailSystem(float dt)
     TrailRibbonSystem_EndUpdate();
 }
 
-// Forward declaration — DrawTrailRibbon is defined after the layered draw
-// functions but called from DrawLayeredRibbon.
+// Forward declaration
 static void DrawTrailRibbon(const TrailEntity *t, const RibbonPoint *points,
                             int count, Texture2D texture, Camera3D camera);
 
-/* A layer stack authored for an ADDITIVE trail carries EMISSION WEIGHTS, not
- * coverage. VFX_RIBBON_MAIN's three layers are 0.10 / 0.36 / 0.30 because they
- * SUM as light; reused verbatim as BLEND_ALPHA coverage in the body pass they
- * cap the body at ~0.36, so `scene*(1-cov)` keeps two thirds of the destination
- * and the trail cannot hold its hue over anything bright — measured on a bright
- * clear: peak chroma 0.32 against 0.61 on the night sky, and the body layer ALONE
- * only reached 0.18. `material.bodyOpacity` is the separately-authored coverage
- * for exactly this (see its comment in trail_system.h); the deform path has
- * always honoured it and the classic layered path silently did not.
- *
- * Returns the alpha multiplier this layer should draw the CURRENT pass with.
- * Left at the layer's own weight whenever bodyOpacity is unset (0), so every
- * existing trail keeps its authored look. Deliberately does NOT apply the
- * contrast profile's alpha: the vertex colour picks that up downstream, and
- * applying it here would run the same opacity policy twice — the same reasoning
- * the deform path states at its own bodyOpacity upload. */
-static float TrailLayerPassAlphaMul(const TrailEntity *t,const TrailLayer *ly) {
-    return TrailRibbon_LayerAlpha(t,ly,s_drawLayerFilter);
+static float TrailLayerPassAlphaMul(const TrailEntity *t, const TrailLayer *ly)
+{
+    return TrailRibbon_LayerAlpha(t, ly, s_drawLayerFilter);
 }
 
-float TrailRibbon_LayerAlpha(const TrailEntity *t,const TrailLayer *ly,int layerFilter) {
-    float a=ly->alphaMul>0?ly->alphaMul:1;
-    if(layerFilter==0&&TrailUsesAdditiveBlend(t)&&t->material.bodyOpacity>0)
-        return fminf(t->material.bodyOpacity,1);
+float TrailRibbon_LayerAlpha(const TrailEntity *t, const TrailLayer *ly, int layerFilter)
+{
+    float a = ly->alphaMul > 0 ? ly->alphaMul : 1;
+    if (layerFilter == 0 && TrailUsesAdditiveBlend(t) && t->material.bodyOpacity > 0)
+        return fminf(t->material.bodyOpacity, 1);
     return a;
 }
 
-/* Whitening a layer toward 255 is an EMISSION idea — it reads as "hotter than
- * its own colour" only where the result is added to the scene. In the alpha body
- * pass it desaturates the one layer whose whole job is to carry hue, so the body
- * arrives at the compositor already washed out and no amount of coverage can put
- * the colour back. Emission keeps it; body does not. */
 static bool TrailLayerWhitensThisPass(const TrailEntity *t)
 {
     return !(s_drawLayerFilter == 0 && TrailUsesAdditiveBlend(t) &&
@@ -1943,10 +1869,10 @@ static bool TrailLayerWhitensThisPass(const TrailEntity *t)
 static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fallbackTex, Camera3D camera)
 {
     for (int L = 0; L < t->layerCount; L++)
-    {        // Halo/core are emission energy. Putting them into the alpha body
-        // stacks three soft quads and erases the authored flow texture.
+    {
         if (s_drawLayerFilter == 0 && TrailUsesAdditiveBlend(t) &&
-            t->layerCount >= 2 && L != 1) continue;
+            t->layerCount >= 2 && L != 1)
+            continue;
         const TrailLayer *ly = &t->layers[L];
         float wMul = (ly->widthMul > 0.0f) ? ly->widthMul : 1.0f;
         float aMul = TrailLayerPassAlphaMul(t, ly);
@@ -1955,8 +1881,6 @@ static void DrawLayeredRibbon(const TrailEntity *t, int drawCount, Texture2D fal
         {
             scratchLayer[h] = scratchOuter[h];
             scratchLayer[h].halfWidth *= wMul;
-            // Deform trails keep texcoord.y = normalized seg (wave envelope);
-            // their texture scroll lives in the packed-material shader.
             if (!TrailUsesDeformShader(t))
                 scratchLayer[h].v -= t->uvScrollOffset * sMul;
             float a = (float)scratchOuter[h].tint.a * aMul;
@@ -1999,30 +1923,14 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
         radial = 3;
     if (radial > TUBE_MESH_MAX_RADIAL)
         radial = TUBE_MESH_MAX_RADIAL;
-    /* SỐ LÁT HÌNH HỌC, không phải số node lịch sử — hai câu hỏi khác nhau,
-     * xem doc `tubeGeomSegs` ở trail_system.h. 0 = rơi về tubeMaxRings như
-     * trước. Path vẫn có đủ n node; PMTubeSamplePath lấy mẫu lại theo chiều
-     * dài cung nên ít lát hơn số node là hoàn toàn hợp lệ. */
     int segs = (t->tubeGeomSegs > 0) ? t->tubeGeomSegs
-             : ((t->tubeMaxRings > 0) ? t->tubeMaxRings : TRAIL_TUBE_RINGS_DEFAULT);
+                                     : ((t->tubeMaxRings > 0) ? t->tubeMaxRings : TRAIL_TUBE_RINGS_DEFAULT);
     if (segs > TUBE_MESH_MAX_SEGMENTS)
         segs = TUBE_MESH_MAX_SEGMENTS;
     if (segs < 2)
         segs = 2;
 
-    /* MỘT trong ba loại mesh, do CALLER chọn — ba module hình là độc lập với
-     * nhau, nên caller chọn LOẠI MESH chứ không chọn tham số của một đường bao
-     * dùng chung. Không có mặc định: trail nào bật TRAIL_SHAPE_TUBE mà không
-     * khai báo hình thì không có hình để dựng, và nói ra điều đó.
-     *
-     * Trạng thái THEO THỜI GIAN (noiseAmp, noiseOffset) vẫn của trail —
-     * noiseOffset là thứ đẩy vùng cuộn trào chạy DỌC thân trên cùng đồng hồ mà
-     * sheet đang cuộn. HÌNH DẠNG là của caller. */
     float runNoiseAmp = t->tubeNoiseAmp;
-    /* Cả hai đồng hồ của deform bị chặn cùng lúc, nếu không thì "đóng băng" chỉ
-     * dừng một nửa: noiseOffset đẩy trường DỌC thân, còn buildTime chạy trục W
-     * của noise (nó cuộn tại chỗ). Dừng một cái vẫn còn chuyển động, và đó lại
-     * đúng là thứ nhìn giống hệt "vẫn xoay". */
     float runNoiseOffset = t->tubeDeformFrozen ? 0.0f : (-t->uvScrollOffset * 0.5f);
     float buildTime = t->tubeDeformFrozen ? 0.0f : TimeFX_Elapsed();
     const unsigned char *runPixels = (const unsigned char *)s_tubeNoiseImg.data;
@@ -2040,32 +1948,28 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
         dropCfg.noiseAmp = runNoiseAmp;
         dropCfg.noiseOffset = runNoiseOffset;
         if (dropCfg.noisePixels == NULL)
-        { dropCfg.noisePixels = runPixels; dropCfg.noiseImgW = runW; dropCfg.noiseImgH = runH; }
+        {
+            dropCfg.noisePixels = runPixels;
+            dropCfg.noiseImgW = runW;
+            dropCfg.noiseImgH = runH;
+        }
     }
     else if (t->tubeShapeConfig != NULL)
     {
         shape = 2;
         tubeCfg = *t->tubeShapeConfig;
         tubeCfg.noiseAmp = runNoiseAmp;
-        // *tubeCfg.noiseOffsetScrollMul: caller-decided (PMTubeConfig doc ở
-        // procedural_mesh_utils.h). Cột đứng yên cần đồng hồ THẬT này vì t
-        // của nó không mang nghĩa tuổi vật chất; một trail đang di chuyển đã
-        // có tuổi vật chất THẬT từ chính chuyển động, cộng thêm đồng hồ này
-        // là hai nguồn chuyển động không ăn khớp — nhân 0 tắt hẳn, không đổi
-        // gì cho ai đang để mặc định 1.0 (PMTube_DefaultConfig).
         tubeCfg.noiseOffset = runNoiseOffset * tubeCfg.noiseOffsetScrollMul;
-        // Bản làm mịn theo thời gian (UpdateTrailSystem, dt thật) thay cho
-        // spanLen thô mỗi khung — xem doc noiseSpanLenOverride ở
-        // procedural_mesh_utils.h và tubeNoiseSpanLen ở trail_system.h. 0 khi
-        // noiseWavelength chưa bật (UpdateTrailSystem không tính) nên không
-        // đổi gì cho caller không dùng cờ này.
         tubeCfg.noiseSpanLenOverride = t->tubeNoiseSpanLen;
         if (tubeCfg.noisePixels == NULL)
-        { tubeCfg.noisePixels = runPixels; tubeCfg.noiseImgW = runW; tubeCfg.noiseImgH = runH; }
+        {
+            tubeCfg.noisePixels = runPixels;
+            tubeCfg.noiseImgW = runW;
+            tubeCfg.noiseImgH = runH;
+        }
     }
     else
     {
-        /* Im lặng ở đây là chỗ mọi lỗi hình học của module này từng trốn. */
         TraceLog(LOG_WARNING,
                  "TRAIL: TRAIL_SHAPE_TUBE nhưng không có dropletConfig lẫn "
                  "tubeShapeConfig — không có hình để dựng, bỏ qua");
@@ -2080,39 +1984,9 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     for (int i = 1; i < n; i++)
         arcLen += Vector3Distance(path[i], path[i - 1]);
 
-    // The mesh is rebuilt from a sliding history window every frame.  Its
-    // local arc length therefore changes as nodes enter at the head and leave
-    // at the tail.  Anchor UVs in accumulated trail distance instead of that
-    // transient local range, otherwise the reparameterisation can visually
-    // cancel uvScrollOffset whenever the follower moves.
     int tailNode = NodeIndexForSegRatio(t, drawCount, drawCount - 1);
     int headNode = NodeIndexForSegRatio(t, drawCount, 0);
 
-    /* NEO VẬT CHẤT CHO TRƯỜNG NHIỄU — cùng đúng một cách UV ngay trên đã neo,
-     * và vì đúng một lý do (comment ngay trên: cửa sổ history trượt mỗi khung
-     * nên phạm vi CỤC BỘ là tạm thời, phải neo vào QUÃNG ĐƯỜNG TÍCH LUỸ).
-     *
-     * Thiếu nó, toạ độ nhiễu là `tNoise = t * spanLen / wavelength`, tức
-     * "khoảng cách tính từ node CŨ NHẤT" — mà node cũ nhất bị bỏ đi liên tục,
-     * nên cái mốc đó TRƯỢT theo. Một cục phình vì thế đứng yên so với HÌNH
-     * ống chứ không so với KHỐI KHÍ: cả cụm hoa văn bị kéo lê nguyên khối
-     * cùng ống thay vì trôi ngược qua thân khi vật chất già đi. Đó đúng là
-     * cái mesh_deform.h cảnh báo ở doc tham số `mat`: "passing surf.y here
-     * instead is the mistake that makes a churning body read as a
-     * pre-squeezed shape being dragged" — ở đây không phải surf.y, nhưng là
-     * cùng một sai lầm: một toạ độ đo từ mốc di động.
-     *
-     * nodeUV[] = laidDist, quãng đường tích luỹ lúc node được đặt (:1295) —
-     * nhãn vật chất thật. Cộng nó vào biến tNoise (đo từ đuôi) cho ra quãng
-     * đường TUYỆT ĐỐI tại từng vành, chia cho wavelength là ra đúng toạ độ
-     * vật chất theo mét.
-     *
-     * Chỉ khi noiseWavelength > 0: caller không bật cờ đó thì tNoise = t
-     * (phân số), cộng một số đo bằng mét vào là vô nghĩa — và đó là mọi
-     * caller cũ (cột khói, spark, ember), không đổi một bit nào.
-     *
-     * fmodf 8192: nodeUV tăng không giới hạn, và phần thập phân của nó là
-     * thứ lattice đọc — cùng lý do và cùng hằng số dòng :1968 đã dùng. */
     if (shape == 2 && tubeCfg.noiseWavelength > 0.0f)
         tubeCfg.noiseOffset += fmodf(t->nodeUV[tailNode], 8192.0f) / tubeCfg.noiseWavelength;
 
@@ -2126,7 +2000,8 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     for (int L = 0; L < t->layerCount; L++)
     {
         if (s_drawLayerFilter == 0 && TrailUsesAdditiveBlend(t) &&
-            t->layerCount >= 2 && L != 1) continue;
+            t->layerCount >= 2 && L != 1)
+            continue;
         const TrailLayer *ly = &t->layers[L];
         float aMul = TrailLayerPassAlphaMul(t, ly);
         VFXContrastLayer contrastLayer =
@@ -2135,8 +2010,8 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
                 ? VFX_CONTRAST_BODY
                 : VFX_CONTRAST_EMISSION;
         Color col = VFXContrast_ApplyColor(scratchOuter[0].tint,
-                                            t->material.contrastProfile,
-                                            contrastLayer);
+                                           t->material.contrastProfile,
+                                           contrastLayer);
         float a = (float)col.a * aMul;
         if (a > 255.0f)
             a = 255.0f;
@@ -2154,8 +2029,6 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
         float mpt = (t->uvMetresPerTile > 0.01f) ? t->uvMetresPerTile : 1.0f;
         float uvBase = t->nodeUV[tailNode] / mpt;
         float tiles = (t->nodeUV[headNode] - t->nodeUV[tailNode]) / mpt;
-        // A just-spawned follower can have a one-node/near-zero-distance
-        // window; keep a visible first tile until accumulated distance exists.
         if (tiles <= 0.0f)
             tiles = arcLen / mpt;
         if (tiles < 0.5f)
@@ -2164,9 +2037,6 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
         float uvOff = uvBase - t->uvScrollOffset * sMul;
         if (shape == 2 && TrailUsesVolumeShader(t))
         {
-            /* Mặt nạ tắt dần hai đầu đi bằng MÀU ĐỈNH, nên không gọi
-             * rlColor4ub ở đây — màu nền đi vào qua tham số. Chân tắt nhanh
-             * (khói phải dính vào nguồn), ngọn tan chậm hơn. */
             Color base = (Color){col.r, col.g, col.b, (unsigned char)a};
             PMTube_DrawFaded(&tubeMesh, tiles, uvOff, base, 0.10f, 0.72f, mpt);
         }
@@ -2183,19 +2053,18 @@ static void DrawLayeredTube(const TrailEntity *t, int drawCount, Texture2D fallb
     rlColor4ub(255, 255, 255, 255);
 }
 
-// Per-instance deform + packed-material uniforms, pushed just before this
-// trail's geometry inside its render group. Wave params are per-trail state,
-// so they live here — only the shared u_time clock stays at group level.
-void TrailRibbon_BindAppearance(Shader shader,const TrailEntity *t, Camera3D camera,int layerFilter)
+void TrailRibbon_BindAppearance(Shader shader, const TrailEntity *t, Camera3D camera, int layerFilter)
 {
     if (shader.id == 0)
         return;
     const DeformLocs *L = GetCachedDeformLocs(shader);
-    int nodeArc=0;
-    if(L->nodeArc>=0) SetShaderValue(shader,L->nodeArc,&nodeArc,SHADER_UNIFORM_INT);
-    float time=fmodf(TimeFX_Elapsed(),4096.0f);
-    int timeLoc=GetCachedTimeLoc(shader);
-    if(timeLoc>=0) SetShaderValue(shader,timeLoc,&time,SHADER_UNIFORM_FLOAT);
+    int nodeArc = 0;
+    if (L->nodeArc >= 0)
+        SetShaderValue(shader, L->nodeArc, &nodeArc, SHADER_UNIFORM_INT);
+    float time = fmodf(TimeFX_Elapsed(), 4096.0f);
+    int timeLoc = GetCachedTimeLoc(shader);
+    if (timeLoc >= 0)
+        SetShaderValue(shader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
     const TrailDeformConfig *d = &t->deform;
     const TrailMaterialConfig *m = &t->material;
     float contrastParams[4];
@@ -2204,146 +2073,139 @@ void TrailRibbon_BindAppearance(Shader shader,const TrailEntity *t, Camera3D cam
         SetShaderValue(shader, L->contrastParams, contrastParams,
                        SHADER_UNIFORM_VEC4);
 
-    if (L->deformMode >= 0) SetShaderValue(shader, L->deformMode, &d->mode, SHADER_UNIFORM_FLOAT);
-    if (L->waveAmpA >= 0) SetShaderValue(shader, L->waveAmpA, d->ampA, SHADER_UNIFORM_VEC3);
-    if (L->waveAmpB >= 0) SetShaderValue(shader, L->waveAmpB, d->ampB, SHADER_UNIFORM_VEC3);
-    if (L->waveFreq >= 0) SetShaderValue(shader, L->waveFreq, d->freq, SHADER_UNIFORM_VEC3);
-    if (L->waveSpeed >= 0) SetShaderValue(shader, L->waveSpeed, d->speed, SHADER_UNIFORM_VEC3);
-    if (L->wavePhase >= 0) SetShaderValue(shader, L->wavePhase, &d->phase, SHADER_UNIFORM_FLOAT);
-    if (L->waveStrength >= 0) SetShaderValue(shader, L->waveStrength, &d->strength, SHADER_UNIFORM_FLOAT);
-    if (L->curlScale >= 0) SetShaderValue(shader, L->curlScale, &d->curlScale, SHADER_UNIFORM_FLOAT);
+    if (L->deformMode >= 0)
+        SetShaderValue(shader, L->deformMode, &d->mode, SHADER_UNIFORM_FLOAT);
+    if (L->waveAmpA >= 0)
+        SetShaderValue(shader, L->waveAmpA, d->ampA, SHADER_UNIFORM_VEC3);
+    if (L->waveAmpB >= 0)
+        SetShaderValue(shader, L->waveAmpB, d->ampB, SHADER_UNIFORM_VEC3);
+    if (L->waveFreq >= 0)
+        SetShaderValue(shader, L->waveFreq, d->freq, SHADER_UNIFORM_VEC3);
+    if (L->waveSpeed >= 0)
+        SetShaderValue(shader, L->waveSpeed, d->speed, SHADER_UNIFORM_VEC3);
+    if (L->wavePhase >= 0)
+        SetShaderValue(shader, L->wavePhase, &d->phase, SHADER_UNIFORM_FLOAT);
+    if (L->waveStrength >= 0)
+        SetShaderValue(shader, L->waveStrength, &d->strength, SHADER_UNIFORM_FLOAT);
+    if (L->curlScale >= 0)
+        SetShaderValue(shader, L->curlScale, &d->curlScale, SHADER_UNIFORM_FLOAT);
     {
         float env[2] = {d->envHead, d->envTail};
-        if (L->waveEnv >= 0) SetShaderValue(shader, L->waveEnv, env, SHADER_UNIFORM_VEC2);
+        if (L->waveEnv >= 0)
+            SetShaderValue(shader, L->waveEnv, env, SHADER_UNIFORM_VEC2);
     }
-    if (L->roll >= 0) {
+    if (L->roll >= 0)
+    {
         float roll[2] = {d->rollRate, d->rollSpeed};
         SetShaderValue(shader, L->roll, roll, SHADER_UNIFORM_VEC2);
     }
-    if (L->drift >= 0) {
+    if (L->drift >= 0)
+    {
         float drift[3] = {d->drift.x, d->drift.y, d->drift.z};
         SetShaderValue(shader, L->drift, drift, SHADER_UNIFORM_VEC3);
     }
-    if (L->jitter >= 0) {
+    if (L->jitter >= 0)
+    {
         float jit[4] = {d->jitter.x, d->jitter.y, d->jitter.z, d->jitter.w};
         SetShaderValue(shader, L->jitter, jit, SHADER_UNIFORM_VEC4);
     }
-    if (L->widthProfile >= 0) {
+    if (L->widthProfile >= 0)
+    {
         float wp[4] = {d->widthProf.x, d->widthProf.y, d->widthProf.z, d->widthProf.w};
         SetShaderValue(shader, L->widthProfile, wp, SHADER_UNIFORM_VEC4);
     }
-    if (L->shard >= 0) {
+    if (L->shard >= 0)
+    {
         float sh[2] = {d->shard.x, d->shard.y};
         SetShaderValue(shader, L->shard, sh, SHADER_UNIFORM_VEC2);
     }
-    if (L->wave >= 0) {
+    if (L->wave >= 0)
+    {
         float w[4] = {d->wave.x, d->wave.y, d->wave.z, d->wave.w};
         SetShaderValue(shader, L->wave, w, SHADER_UNIFORM_VEC4);
     }
-    if (L->noise >= 0) {
+    if (L->noise >= 0)
+    {
         float ns[4] = {d->noise.x, d->noise.y, d->noise.z, d->noise.w};
         SetShaderValue(shader, L->noise, ns, SHADER_UNIFORM_VEC4);
     }
-    if (L->helix >= 0) {
+    if (L->helix >= 0)
+    {
         float hx[4] = {d->helix.x, d->helix.y, d->helix.z, d->helix.w};
         SetShaderValue(shader, L->helix, hx, SHADER_UNIFORM_VEC4);
     }
-    if (L->lane >= 0) {
+    if (L->lane >= 0)
+    {
         float ln[4] = {d->lane.x, d->lane.y, d->lane.z, d->lane.w};
         SetShaderValue(shader, L->lane, ln, SHADER_UNIFORM_VEC4);
     }
-    if (L->cap >= 0) {
+    if (L->cap >= 0)
+    {
         float cp[2] = {d->cap.x, d->cap.y};
         SetShaderValue(shader, L->cap, cp, SHADER_UNIFORM_VEC2);
     }
-    if (L->p0 >= 0) {
+    if (L->p0 >= 0)
+    {
         float p0[4] = {m->p0.x, m->p0.y, m->p0.z, m->p0.w};
         SetShaderValue(shader, L->p0, p0, SHADER_UNIFORM_VEC4);
     }
-    if (L->p1 >= 0) {
+    if (L->p1 >= 0)
+    {
         float p1[4] = {m->p1.x, m->p1.y, m->p1.z, m->p1.w};
         SetShaderValue(shader, L->p1, p1, SHADER_UNIFORM_VEC4);
     }
-    if (L->p2 >= 0) {
+    if (L->p2 >= 0)
+    {
         float p2[4] = {m->p2.x, m->p2.y, m->p2.z, m->p2.w};
         SetShaderValue(shader, L->p2, p2, SHADER_UNIFORM_VEC4);
     }
-    if (L->uvScale >= 0) {
+    if (L->uvScale >= 0)
+    {
         float uvs[2] = {m->uvScale.x > 0.001f ? m->uvScale.x : 1.0f, m->uvScale.y > 0.001f ? m->uvScale.y : 1.0f};
         SetShaderValue(shader, L->uvScale, uvs, SHADER_UNIFORM_VEC2);
     }
-    if (L->seed >= 0) SetShaderValue(shader, L->seed, &m->seed, SHADER_UNIFORM_FLOAT);
-    if (L->maxDist >= 0) SetShaderValue(shader, L->maxDist, &m->maxDist, SHADER_UNIFORM_FLOAT);
-    if (L->add >= 0) SetShaderValue(shader, L->add, &m->add, SHADER_UNIFORM_FLOAT);
-    if (L->alpha >= 0) {
+    if (L->seed >= 0)
+        SetShaderValue(shader, L->seed, &m->seed, SHADER_UNIFORM_FLOAT);
+    if (L->maxDist >= 0)
+        SetShaderValue(shader, L->maxDist, &m->maxDist, SHADER_UNIFORM_FLOAT);
+    if (L->add >= 0)
+        SetShaderValue(shader, L->add, &m->add, SHADER_UNIFORM_FLOAT);
+    if (L->alpha >= 0)
+    {
         float al = m->alpha > 0.001f ? m->alpha : 1.0f;
         SetShaderValue(shader, L->alpha, &al, SHADER_UNIFORM_FLOAT);
     }
-    if (L->style >= 0) {
+    if (L->style >= 0)
+    {
         SetShaderValue(shader, L->style, &m->style, SHADER_UNIFORM_FLOAT);
     }
-    if (L->colRamp >= 0) {
+    if (L->colRamp >= 0)
+    {
         float cr[12];
-        for (int k = 0; k < 4; k++) {
+        for (int k = 0; k < 4; k++)
+        {
             cr[k * 3 + 0] = m->colRamp[k].r / 255.0f;
             cr[k * 3 + 1] = m->colRamp[k].g / 255.0f;
             cr[k * 3 + 2] = m->colRamp[k].b / 255.0f;
         }
         SetShaderValueV(shader, L->colRamp, cr, SHADER_UNIFORM_VEC3, 4);
     }
-    // MODE 1 (sin-multi) ONLY — core/deform's first GLSL mirror,
-    // 05/08/2026 (core/deform/shaders/mesh_deform.glsl). 2 octaves along
-    // `side` (MESH_DEFORM_DIR_AXIS) + 2 along u_stripNormal
-    // (MESH_DEFORM_DIR_TANGENT) — down from the shader's old hardcoded 3+3,
-    // to fit MeshDeformField's MESH_DEFORM_MAX_LAYERS=4 budget without
-    // changing that shared layout. Modes 2-4 (curl3/helix/noise) still read
-    // the plain u_waveAmpA/u_waveFreq/u_waveSpeed/u_curlScale pushed above
-    // — untouched, still bespoke, see trail_deform.vs's own comment on why
-    // they do not fit this module's layer-sum model.
+
     if (d->mode >= 0.5f && d->mode < 1.5f)
     {
-        // amplitude = 2x the caller's ampA/ampB: MESH_DEFORM_SINE's own
-        // formula is `raw = 0.5 + 0.5*sin(...)`, so `(raw-0.5)*amplitude`
-        // works out to `0.5*sin(...)*amplitude` — HALF the amplitude a
-        // naive `amplitude*sin(...)` would give. Doubling here is what
-        // makes the packed layer's FINAL contribution equal
-        // `ampA.x*sin(...)`, matching what the old inline code wrote
-        // directly. See core/deform/mesh_deform.c's MeshDeform_EvaluateLayer
-        // SINE branch — this is a property of that formula, not something
-        // specific to this call site.
-        //
-        // speed is in TURNS/second here (core/uv/uv_deform.h's convention,
-        // shared via UVDeform_SinePhase), not the old inline code's
-        // radians/second — a deliberate, documented deviation (see
-        // trail_deform.vs's own comment at the call site) since nothing
-        // currently spawns mode 1 to have a fidelity bar to clear.
         MeshDeformField warp;
         MeshDeform_Clear(&warp);
         MeshDeform_AddLayer(&warp, (MeshDeformLayer){
-            .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_AXIS,
-            .tiling = {0.0f, d->freq[0]}, .amplitude = 2.0f * d->ampA[0],
-            .speed = d->speed[0], .phase = d->phase, .env = UV_ENV_NONE});
+                                       .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_AXIS, .tiling = {0.0f, d->freq[0]}, .amplitude = 2.0f * d->ampA[0], .speed = d->speed[0], .phase = d->phase, .env = UV_ENV_NONE});
         MeshDeform_AddLayer(&warp, (MeshDeformLayer){
-            .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_AXIS,
-            .tiling = {0.0f, d->freq[1]}, .amplitude = 2.0f * d->ampA[1],
-            .speed = d->speed[1], .phase = d->phase, .env = UV_ENV_NONE});
+                                       .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_AXIS, .tiling = {0.0f, d->freq[1]}, .amplitude = 2.0f * d->ampA[1], .speed = d->speed[1], .phase = d->phase, .env = UV_ENV_NONE});
         MeshDeform_AddLayer(&warp, (MeshDeformLayer){
-            .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_TANGENT,
-            .tiling = {0.0f, d->freq[0]}, .amplitude = 2.0f * d->ampB[0],
-            .speed = d->speed[0], .phase = d->phase, .env = UV_ENV_NONE});
+                                       .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_TANGENT, .tiling = {0.0f, d->freq[0]}, .amplitude = 2.0f * d->ampB[0], .speed = d->speed[0], .phase = d->phase, .env = UV_ENV_NONE});
         MeshDeform_AddLayer(&warp, (MeshDeformLayer){
-            .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_TANGENT,
-            .tiling = {0.0f, d->freq[1]}, .amplitude = 2.0f * d->ampB[1],
-            .speed = d->speed[1], .phase = d->phase, .env = UV_ENV_NONE});
-        // Field-level amplitude/timeScale stay neutral (1.0/default-via-
-        // Clear) — the x2 compensation and per-octave speed already live
-        // in each layer, so nothing should scale them again here.
+                                       .kind = MESH_DEFORM_SINE, .direction = MESH_DEFORM_DIR_TANGENT, .tiling = {0.0f, d->freq[1]}, .amplitude = 2.0f * d->ampB[1], .speed = d->speed[1], .phase = d->phase, .env = UV_ENV_NONE});
         MeshDeform_Apply(&warp, shader, &L->meshWarp);
     }
     {
-        // Strip plane normal, mirroring ribbon_strip.c's ResolveFrameNormals:
-        // view direction for camera-facing, world-up for RIBBON_WORLD_UP,
-        // fixedNormal for RIBBON_FIXED_NORMAL.
         Vector3 n;
         if (t->ribbonMode == RIBBON_WORLD_UP)
             n = (Vector3){0.0f, 1.0f, 0.0f};
@@ -2351,145 +2213,92 @@ void TrailRibbon_BindAppearance(Shader shader,const TrailEntity *t, Camera3D cam
             n = Vector3Normalize(t->fixedNormal);
         else
             n = Vector3Normalize(Vector3Subtract(camera.target, camera.position));
-        if (L->stripNormal >= 0) SetShaderValue(shader, L->stripNormal, &n, SHADER_UNIFORM_VEC3);
+        if (L->stripNormal >= 0)
+            SetShaderValue(shader, L->stripNormal, &n, SHADER_UNIFORM_VEC3);
     }
 
     {
-        // Which of the two render passes this draw belongs to. DrawTrailEntities
-        // (the combined, non-split entry point) reports -1; treat that as the
-        // EMISSION formula, which is what the combined path has always drawn.
-        // Getting this wrong is invisible in a dark scene and washes the whole
-        // effect out in a bright one — see trail_deform.fs's header.
-        // 2 = the EMISSION pass drawn under BLEND_ALPHA_PREMULTIPLY. The blend
-        // state and the fragment formula are ONE decision: additive is
-        // (SRC_ALPHA, ONE), so the hardware applies coverage; premultiplied is
-        // (ONE, ONE_MINUS_SRC_ALPHA) and the shader must apply it instead.
-        // Selecting the blend without telling the shader is a 1/alpha
-        // brightening of every soft edge, which is what it measured as.
         BlendMode srcBm = t->useCustomBlendMode
                               ? t->blendMode
                               : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
         float pass = (layerFilter == 0)
                          ? 0.0f
                          : ((srcBm == BLEND_ALPHA_PREMULTIPLY) ? 2.0f : 1.0f);
-        // Vertex colour already carries the profile's alpha multiplier. Keep
-        // the separately-authored body coverage unchanged so a deform trail
-        // does not apply the same opacity policy twice.
         float bodyOpacity = (m->bodyOpacity > 0.0f) ? m->bodyOpacity : 0.0f;
         float toneMapSafe = (m->contrastProfile == VFX_CONTRAST_MAGIC) ? 1.0f : 0.0f;
-        if (bodyOpacity > 1.0f) bodyOpacity = 1.0f;
-        if (L->renderPass >= 0) SetShaderValue(shader, L->renderPass, &pass, SHADER_UNIFORM_FLOAT);
-        if (L->bodyOpacity >= 0) SetShaderValue(shader, L->bodyOpacity, &bodyOpacity, SHADER_UNIFORM_FLOAT);
-        if (L->toneMapSafe >= 0) SetShaderValue(shader, L->toneMapSafe, &toneMapSafe, SHADER_UNIFORM_FLOAT);
+        if (bodyOpacity > 1.0f)
+            bodyOpacity = 1.0f;
+        if (L->renderPass >= 0)
+            SetShaderValue(shader, L->renderPass, &pass, SHADER_UNIFORM_FLOAT);
+        if (L->bodyOpacity >= 0)
+            SetShaderValue(shader, L->bodyOpacity, &bodyOpacity, SHADER_UNIFORM_FLOAT);
+        if (L->toneMapSafe >= 0)
+            SetShaderValue(shader, L->toneMapSafe, &toneMapSafe, SHADER_UNIFORM_FLOAT);
     }
 
-    if (L->matMode >= 0) SetShaderValue(shader, L->matMode, &m->mode, SHADER_UNIFORM_FLOAT);
-    if (L->wispMix >= 0) SetShaderValue(shader, L->wispMix, &m->wispMix, SHADER_UNIFORM_FLOAT);
-    if (L->dissolve >= 0) SetShaderValue(shader, L->dissolve, &m->dissolve, SHADER_UNIFORM_FLOAT);
-    if (L->dissolveSoft >= 0) SetShaderValue(shader, L->dissolveSoft, &m->dissolveSoft, SHADER_UNIFORM_FLOAT);
+    if (L->matMode >= 0)
+        SetShaderValue(shader, L->matMode, &m->mode, SHADER_UNIFORM_FLOAT);
+    if (L->wispMix >= 0)
+        SetShaderValue(shader, L->wispMix, &m->wispMix, SHADER_UNIFORM_FLOAT);
+    if (L->dissolve >= 0)
+        SetShaderValue(shader, L->dissolve, &m->dissolve, SHADER_UNIFORM_FLOAT);
+    if (L->dissolveSoft >= 0)
+        SetShaderValue(shader, L->dissolveSoft, &m->dissolveSoft, SHADER_UNIFORM_FLOAT);
     {
         float tiling[2] = {m->tilingX, m->tilingY};
-        if (L->tiling >= 0) SetShaderValue(shader, L->tiling, tiling, SHADER_UNIFORM_VEC2);
+        if (L->tiling >= 0)
+            SetShaderValue(shader, L->tiling, tiling, SHADER_UNIFORM_VEC2);
     }
     {
         float pan[4] = {m->panCoarse, m->panFine, 0.0f, 0.0f};
-        if (L->panSpeed >= 0) SetShaderValue(shader, L->panSpeed, pan, SHADER_UNIFORM_VEC4);
+        if (L->panSpeed >= 0)
+            SetShaderValue(shader, L->panSpeed, pan, SHADER_UNIFORM_VEC4);
     }
     {
-        // Tail dissolve ramp in segment space; disabled when start >= end.
         float a = m->tailFadeA >= m->tailFadeB ? 1.0f : m->tailFadeA;
         float b = m->tailFadeA >= m->tailFadeB ? 1.0f : m->tailFadeB;
-        if (L->tailFadeA >= 0) SetShaderValue(shader, L->tailFadeA, &a, SHADER_UNIFORM_FLOAT);
-        if (L->tailFadeB >= 0) SetShaderValue(shader, L->tailFadeB, &b, SHADER_UNIFORM_FLOAT);
+        if (L->tailFadeA >= 0)
+            SetShaderValue(shader, L->tailFadeA, &a, SHADER_UNIFORM_FLOAT);
+        if (L->tailFadeB >= 0)
+            SetShaderValue(shader, L->tailFadeB, &b, SHADER_UNIFORM_FLOAT);
     }
 
     // ── SIN-WAVE STRAND TRAIL (material mode 2) ─────────────────────────────
     if (m->mode >= 1.5f)
     {
-        // THE WARP HALF (w0/w1/w2), generalised 05/08/2026 onto core/uv's
-        // UVDeformField — was a raw u_sinWave vec4 the shader detuned by hand
-        // per bundle. UVDeform_LayerOffset (uv_deform.glsl) already computes
-        // exactly `sin(fract(drive*freq + t*speed)*TAU + phase) * amp`, with
-        // `amp = layerAmplitude * envelope(mat.y)` built in — i.e. `ramp`
-        // (the head-weld gate) was always this function's own envelope term,
-        // not something mode 2 had to hand-roll. The three bundles' detune
-        // (spread) is a per-instance CONSTANT, so it folds into each layer's
-        // packed freq/speed/phase/amplitude once here instead of being
-        // reapplied per fragment — algebraically identical to the old
-        // per-bundle multiply, though not guaranteed bit-identical (the
-        // generic path multiplies amplitude*envelope in a fixed order, so a
-        // detuned layer's final product can differ by up to 1 ULP from the
-        // old `(amp*ramp)*detune` grouping — invisible on screen, unlike the
-        // structural bit-identity trail_volume.fs's migration required).
         UVDeformField warp;
         UVDeform_Clear(&warp);
         float spread = m->waveSpread;
         UVDeform_AddLayer(&warp, (UVDeformLayer){
-            .kind = UV_DEFORM_SINE, .driveAxis = 0, .outAxis = 0,
-            .amplitude = m->waveAmp, .frequency = m->waveFreq,
-            .speed = m->waveTravel, .phase = d->phase,
-            .env = UV_ENV_HEAD_WELD, .envAxis = 1,
-            .envStart = 0.0f, .envEnd = d->envHead});
+                                     .kind = UV_DEFORM_SINE, .driveAxis = 0, .outAxis = 0, .amplitude = m->waveAmp, .frequency = m->waveFreq, .speed = m->waveTravel, .phase = d->phase, .env = UV_ENV_HEAD_WELD, .envAxis = 1, .envStart = 0.0f, .envEnd = d->envHead});
         UVDeform_AddLayer(&warp, (UVDeformLayer){
-            .kind = UV_DEFORM_SINE, .driveAxis = 0, .outAxis = 0,
-            .amplitude = m->waveAmp * (1.0f - 0.28f * spread),
-            .frequency = m->waveFreq * (1.0f + 0.73f * spread),
-            .speed = m->waveTravel * 1.41f, .phase = d->phase * 2.3f,
-            .env = UV_ENV_HEAD_WELD, .envAxis = 1,
-            .envStart = 0.0f, .envEnd = d->envHead});
+                                     .kind = UV_DEFORM_SINE, .driveAxis = 0, .outAxis = 0, .amplitude = m->waveAmp * (1.0f - 0.28f * spread), .frequency = m->waveFreq * (1.0f + 0.73f * spread), .speed = m->waveTravel * 1.41f, .phase = d->phase * 2.3f, .env = UV_ENV_HEAD_WELD, .envAxis = 1, .envStart = 0.0f, .envEnd = d->envHead});
         UVDeform_AddLayer(&warp, (UVDeformLayer){
-            .kind = UV_DEFORM_SINE, .driveAxis = 0, .outAxis = 0,
-            .amplitude = m->waveAmp * (1.0f + 0.25f * spread),
-            .frequency = m->waveFreq * (1.0f - 0.39f * spread),
-            .speed = m->waveTravel * 0.67f, .phase = d->phase * 4.1f,
-            .env = UV_ENV_HEAD_WELD, .envAxis = 1,
-            .envStart = 0.0f, .envEnd = d->envHead});
+                                     .kind = UV_DEFORM_SINE, .driveAxis = 0, .outAxis = 0, .amplitude = m->waveAmp * (1.0f + 0.25f * spread), .frequency = m->waveFreq * (1.0f - 0.39f * spread), .speed = m->waveTravel * 0.67f, .phase = d->phase * 4.1f, .env = UV_ENV_HEAD_WELD, .envAxis = 1, .envStart = 0.0f, .envEnd = d->envHead});
         UVDeform_Apply(&warp, shader, &L->uvWarp);
-        // FIXED INDICES 0/1/2 IN THE SHADER, NOT LOOPED — trail_deform.fs
-        // reads u_uvField[0..2]/[3..5]/[6..8] directly (w0/w1/w2 each feed a
-        // SPECIFIC sheet channel downstream, r/g/r — they are named bundles,
-        // not an interchangeable summed stack). UVDeform_PackGPU COMPACTS: a
-        // layer whose amplitude rounds to ~0 is dropped and every later
-        // layer's GPU index shifts down (core/uv/uv_deform.c, "GPU indices
-        // are therefore NOT CPU indices"). All three amplitudes here are
-        // waveAmp scaled by a factor near 1 (1 ± ~0.3*spread, spread < 1), so
-        // none of the three known styles (ENERGY/SMOKE) ever get close to
-        // that threshold — but a FUTURE style must keep waveAmp meaningfully
-        // non-zero, or the fixed-index read on the shader side silently
-        // pairs the wrong bundle's detune with the wrong sampled channel.
+
         float hdrGain = (m->hdrGain > 0.0f) ? m->hdrGain : 1.0f;
-        // Energy trails keep their compact radiance inside the body shader to
-        // avoid a duplicate geometry pass; hdrGain is still an EMISSION
-        // property even when the render target is VFXBody.
         if (TrailUsesAdditiveBlend(t))
             hdrGain = VFXContrast_ApplyEmissionIntensity(
                 hdrGain, m->contrastProfile);
         float band[4] = {m->bundleWidth, m->edgeSoft, hdrGain,
                          (m->strandGain > 0.0f) ? m->strandGain : 1.0f};
         float strandFlow[4] = {m->flowStrength, m->bundleWeight, m->stretchUV, 0.0f};
-        if (L->bandShape >= 0) SetShaderValue(shader, L->bandShape, band, SHADER_UNIFORM_VEC4);
-        if (L->strandFlow >= 0) SetShaderValue(shader, L->strandFlow, strandFlow, SHADER_UNIFORM_VEC4);
-        // ZERO MEANS UNSET, and the fallbacks are the literals trail_deform.fs
-        // used to carry (0.18 half-width, 0.45 density gate). Resolved HERE
-        // rather than in the shader so a material that leaves them at zero
-        // cannot render differently depending on which shader variant loads.
+        if (L->bandShape >= 0)
+            SetShaderValue(shader, L->bandShape, band, SHADER_UNIFORM_VEC4);
+        if (L->strandFlow >= 0)
+            SetShaderValue(shader, L->strandFlow, strandFlow, SHADER_UNIFORM_VEC4);
+
         float coreShape[2] = {(m->coreHalfWidth > 0.0f) ? m->coreHalfWidth : 0.18f,
                               (m->coreDensityGate > 0.0f) ? m->coreDensityGate : 0.45f};
-        if (L->coreShape >= 0) SetShaderValue(shader, L->coreShape, coreShape, SHADER_UNIFORM_VEC2);
+        if (L->coreShape >= 0)
+            SetShaderValue(shader, L->coreShape, coreShape, SHADER_UNIFORM_VEC2);
 
         float tailShape[4] = {m->tailStagger, m->tailDissolve,
                               (m->tailNarrow > 0.0f) ? m->tailNarrow : 1.0f, 0.0f};
-        if (L->tailShape >= 0) SetShaderValue(shader, L->tailShape, tailShape, SHADER_UNIFORM_VEC4);
+        if (L->tailShape >= 0)
+            SetShaderValue(shader, L->tailShape, tailShape, SHADER_UNIFORM_VEC4);
 
-        // The wave is anchored in METRES of the path the emitter actually
-        // laid, not in normalized segment space: nodeUV[] already carries the
-        // cumulative distance per node, so the tail node's distance is the
-        // arc origin and the head-minus-tail span is the length the fragment
-        // stage interpolates across (texcoord.y grows head -> tail, so the
-        // shader SUBTRACTS the span from the head distance). Anchoring here is
-        // the whole reason the crests stand still on the path while only time
-        // moves them — in segment space a growing trail stretches the entire
-        // waveform and the ribbon reads as a rigid rope being swung.
         float arc[2] = {0.0f, 1.0f};
         if (t->historyCount > 1)
         {
@@ -2513,20 +2322,13 @@ void TrailRibbon_BindAppearance(Shader shader,const TrailEntity *t, Camera3D cam
                 }
                 if (span > 0.001f)
                 {
-                    // nodeUV is CUMULATIVE distance and never resets, so a
-                    // long-lived trail on a moving emitter walks it into the
-                    // tens of thousands of metres, where a float32 can no
-                    // longer resolve a fraction of a texture tile. Fold it.
-                    // 8192 m keeps the shader's fract() inputs precise and is
-                    // ~30 minutes of continuous movement; the fold re-phases
-                    // the waves once when it wraps, which is the honest cost
-                    // of not letting the arithmetic decay instead.
                     arc[0] = fmodf(t->nodeUV[headNode], 8192.0f);
                     arc[1] = span;
                 }
             }
         }
-        if (L->pathArc >= 0) SetShaderValue(shader, L->pathArc, arc, SHADER_UNIFORM_VEC2);
+        if (L->pathArc >= 0)
+            SetShaderValue(shader, L->pathArc, arc, SHADER_UNIFORM_VEC2);
 
         VFXContrastLayer hotLayer = TrailUsesAdditiveBlend(t)
                                         ? VFX_CONTRAST_EMISSION
@@ -2543,11 +2345,9 @@ void TrailRibbon_BindAppearance(Shader shader,const TrailEntity *t, Camera3D cam
             hot[1] = fallbackHot.g / 255.0f;
             hot[2] = fallbackHot.b / 255.0f;
         }
-        if (L->colHot >= 0) SetShaderValue(shader, L->colHot, hot, SHADER_UNIFORM_VEC3);
+        if (L->colHot >= 0)
+            SetShaderValue(shader, L->colHot, hot, SHADER_UNIFORM_VEC3);
 
-        // Tail colour. Unset (black) means "no along-trail ramp": fall back to
-        // the head tint so an author who never sets it gets a flat hue rather
-        // than a trail that fades into black.
         Color tailColor = VFXContrast_ApplyColor(
             m->tailColor, m->contrastProfile, VFX_CONTRAST_BODY);
         float tailCol[3] = {tailColor.r / 255.0f, tailColor.g / 255.0f,
@@ -2560,17 +2360,16 @@ void TrailRibbon_BindAppearance(Shader shader,const TrailEntity *t, Camera3D cam
             tailCol[1] = fallbackTail.g / 255.0f;
             tailCol[2] = fallbackTail.b / 255.0f;
         }
-        if (L->colTail >= 0) SetShaderValue(shader, L->colTail, tailCol, SHADER_UNIFORM_VEC3);
+        if (L->colTail >= 0)
+            SetShaderValue(shader, L->colTail, tailCol, SHADER_UNIFORM_VEC3);
     }
 }
 
-static void ApplyDeformUniforms(const TrailEntity *t,Camera3D camera) {
-    TrailRibbon_BindAppearance(s_deformShader,t,camera,s_drawLayerFilter);
+static void ApplyDeformUniforms(const TrailEntity *t, Camera3D camera)
+{
+    TrailRibbon_BindAppearance(s_deformShader, t, camera, s_drawLayerFilter);
 }
 
-// Ribbon submission router: deform trails go through the Deformed variant
-// (side vector in the normal slot, seg in texcoord.y), classic trails keep
-// the old path untouched.
 static void DrawTrailRibbon(const TrailEntity *t, const RibbonPoint *points, int count,
                             Texture2D texture, Camera3D camera)
 {
@@ -2594,7 +2393,14 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
     float lifeRatio = t->lifetime / t->maxLifetime;
     Color c = t->tint;
 
-    { // u_coreStrength: 0 khi disableInnerCore, 1 khi có core
+    if (TrailUsesDeformShader(t))
+    {
+        // Flush batch hiện tại trước khi ghi đè bộ uniform per-instance của s_deformShader
+        rlDrawRenderBatchActive();
+        ApplyDeformUniforms(t, camera);
+    }
+    else
+    {
         Shader sh = ResolveShader(t);
         int loc = GetCachedCoreStrLoc(sh);
         if (loc >= 0)
@@ -2603,9 +2409,6 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
             SetShaderValue(sh, loc, &v, SHADER_UNIFORM_FLOAT);
         }
     }
-
-    if (TrailUsesDeformShader(t))
-        ApplyDeformUniforms(t, camera);
 
     if (t->type == TRAIL_TYPE_PROJECTILE)
     {
@@ -2640,9 +2443,6 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
 
                 scratchOuter[h].position = posNode;
                 scratchOuter[h].halfWidth = t->thickness * TRAIL_PROJECTILE_OUTER_WIDTH_MUL * taper;
-                // Deform trails carry the normalized segment (0 = head, 1 = tail)
-                // in texcoord.y — the deform VS needs it for the wave envelope;
-                // texture tiling/scroll moves into the packed-material shader.
                 scratchOuter[h].v = TrailUsesDeformShader(t)
                                         ? (float)h / (float)(drawCount - 1)
                                         : (segRatio * t->uvTiling - t->uvScrollOffset);
@@ -2752,7 +2552,8 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
         if (age < TRAIL_PORTAL_SPAWN_GROW_TIME)
             radius *= (age / TRAIL_PORTAL_SPAWN_GROW_TIME);
         Rectangle uvRect = t->spriteAnim ? SpriteAnim_CalculateUV(t->spriteAnim, age, NULL) : (Rectangle){0, 0, 1, 1};
-        DrawCameraFacingQuad(camBasis, t->position, radius * TRAIL_PORTAL_QUAD_SIZE_MUL, radius * TRAIL_PORTAL_QUAD_SIZE_MUL, t->angle * DEG2RAD, (Color){c.r, c.g, c.b, (unsigned char)(c.a * lifeRatio)}, (Texture2D){0}, uvRect);
+        Texture2D portalTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
+        DrawCameraFacingQuad(camBasis, t->position, radius * TRAIL_PORTAL_QUAD_SIZE_MUL, radius * TRAIL_PORTAL_QUAD_SIZE_MUL, t->angle * DEG2RAD, (Color){c.r, c.g, c.b, (unsigned char)(c.a * lifeRatio)}, portalTex, uvRect);
     }
     else if (t->type == TRAIL_TYPE_FOLLOWER)
     {
@@ -2793,9 +2594,6 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                 float cpuTaper = (t->material.style > 0.5f) ? 1.0f : taper;
                 scratchOuter[h].position = posNode;
                 scratchOuter[h].halfWidth = t->thickness * cpuTaper;
-                // Deform trails: texcoord.y carries the normalized segment
-                // (0 = head, 1 = tail) for the wave envelope; tiling/scroll
-                // live in the packed-material shader.
                 scratchOuter[h].v = TrailUsesDeformShader(t)
                                         ? (float)h / (float)(drawCount - 1)
                                         : ((t->uvMetresPerTile > 0.0f)
@@ -2823,7 +2621,6 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
             }
             else
             {
-                // [TỐI ƯU PERFORMANCE] Loop Fusion: Gom 2 vòng lặp dải Outer & Inner làm 1
                 for (int h = 0; h < drawCount; h++)
                 {
                     float taper = scratchTaper[h];
@@ -2832,8 +2629,6 @@ static void DrawTrailGeometry(TrailEntity *t, Camera3D camera, const TrailCamera
                     // Outer Strip adjustments
                     scratchOuter[h].halfWidth = t->thickness * 1.5f * taper;
                     scratchOuter[h].tint.a = (unsigned char)((float)scratchOuter[h].tint.a * (180.0f / 255.0f));
-                    // Deform trails keep texcoord.y = normalized seg; the scroll
-                    // for texture motion is applied in the material shader.
                     if (!TrailUsesDeformShader(t))
                         scratchOuter[h].v -= t->uvScrollOffset;
 
@@ -2892,18 +2687,10 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         return;
 
     s_drawLayerFilter = layerFilter;
-    if (layerFilter == 0) EnsureTrailBodyShader();
+    if (layerFilter == 0)
+        EnsureTrailBodyShader();
     EnsureTrailDeformShader();
 
-    // WRAPPED clock. GetTime() grows without bound, and every trail shader
-    // multiplies it by a pan/travel speed before using it as a UV or a sine
-    // phase. After an hour that product is in the tens of thousands, where a
-    // float32 step is ~0.004 — visible stepping in a panned texture and a
-    // juddering wave. Both consumers are periodic (sampler wrap is REPEAT, sine
-    // has period 2pi), so folding the clock is invisible while it lasts. This is
-    // the C-side half of the reference's frac() rule; the shader folds again
-    // after each multiply. WRAP is a multiple of 8 so the fold lands on a clean
-    // binary boundary for the common integer-ish speeds.
     float time = fmodf(TimeFX_Elapsed(), 4096.0f);
     Matrix matView = GetCameraMatrix(camera);
     TrailCameraBasis camBasis = {
@@ -2914,22 +2701,27 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
     rlDrawRenderBatchActive();
     rlDisableDepthMask();
 
-    RenderGroup groups[32];
+    RenderGroup groups[MAX_TRAIL_RENDER_GROUPS];
     int groupCount = 0;
 
     // Gom cụm RenderGroup dựa trên BlendMode, Shader và Texture ID
     for (int a = 0; a < activeCount; a++)
     {
         TrailEntity *t = &trailPool[s_activeIds[a]];
-        if (TrailRibbonSystem_IsModern(s_activeIds[a])) continue;
+        if (TrailRibbonSystem_IsModern(s_activeIds[a]))
+            continue;
 
-        // Tối ưu culling sớm ngay tại vòng lặp thu thập
         if (!IsTrailVisible(t, camera))
             continue;
 
-        // MUST mirror the selection in the draw loop below, exactly. The two
-        // are what put a trail in a group and what checks it belongs there; if
-        // they disagree the trail matches no group and is silently never drawn.
+        BlendMode sourceBm = t->useCustomBlendMode ? t->blendMode
+                                                   : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
+        bool hasAlphaBody = (sourceBm == BLEND_ALPHA) || (t->material.bodyOpacity > 0.0f);
+        if (layerFilter == 0 && !hasAlphaBody)
+            continue;
+        if (layerFilter == 1 && sourceBm == BLEND_ALPHA)
+            continue;
+
         Shader sh;
         if (TrailUsesVolumeShader(t))
             sh = s_volumeShader;
@@ -2937,11 +2729,9 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             sh = s_deformShader;
         else
             sh = (layerFilter == 0 && TrailUsesAdditiveBlend(t) && s_bodyShader.id != 0)
-                     ? s_bodyShader : ResolveShader(t);
-        BlendMode sourceBm = t->useCustomBlendMode ? t->blendMode
-                                                   : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
-        if (layerFilter == 0 && (sourceBm == BLEND_ADDITIVE || sourceBm == BLEND_ALPHA_PREMULTIPLY)) continue;
-        if (layerFilter == 1 && sourceBm == BLEND_ALPHA) continue;
+                     ? s_bodyShader
+                     : ResolveShader(t);
+
         BlendMode bm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;
         Texture2D tex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
 
@@ -2954,7 +2744,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
                 break;
             }
         }
-        if (!found && groupCount < 32)
+        if (!found && groupCount < MAX_TRAIL_RENDER_GROUPS)
         {
             groups[groupCount].bm = bm;
             groups[groupCount].sh = sh;
@@ -2978,7 +2768,7 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
 
         Shader fullShader = groups[g].sh;
         BeginShaderMode(fullShader);
-        // rlvk writes to the currently active shader, not the Shader argument.
+
         int timeLoc = GetCachedTimeLoc(fullShader);
         if (timeLoc >= 0)
             SetShaderValue(fullShader, timeLoc, &time, SHADER_UNIFORM_FLOAT);
@@ -2991,91 +2781,35 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
             SetShaderValue(fullShader, s_bodyContrastParamsLoc, contrastParams,
                            SHADER_UNIFORM_VEC4);
         }
-        // Volume-tube constants, pushed ONCE PER GROUP and never between
-        // instances. Per-instance uniform writes are the pattern that empties
-        // rlvk's UBO arena (ENGINE_LANDMINES §8); everything that genuinely
-        // varies per column already rides in a vertex attribute.
+
         if (s_volumeShader.id != 0 && fullShader.id == s_volumeShader.id)
         {
-            int maskLoc = GetShaderLocation(fullShader, "u_volMask");
-            // The two-sheet pan itself is now s_volFlow (built once in
-            // EnsureTrailVolumeShader — see the exact-reproduction comment
-            // there), pushed exactly like vc_shield_shell.inl pushes its own
-            // SurfaceFlow. Still once per group, still no per-instance
-            // uniform write — s_volFlow never changes, so there is nothing
-            // instance-specific to push in the first place.
             SurfaceFlow_Apply(&s_volFlow, fullShader, &s_volFlowLocs, time);
-            // .x ĐÃ CÓ CHỦ LẠI, 06/08/2026 — nó từng bỏ trống (pan của sheet
-            // 2 dọn sang s_volFlow), giờ là hệ số số hạng THÂN. Cả 4 ô đều
-            // load-bearing: .x hệ số thân, .y số mũ, .z độ mềm viền, .w độ
-            // đậm chung; hệ số RÌA đi riêng qua u_volRim vì hết ô.
-            //
-            // .y = 2.0: the volume power. core/tests/silhouette_test.c
-            // (Test_ThePowerMustBeAtLeastTwo) proved a power below 1 CANNOT
-            // dissolve the edge at any constant — |N.V| leaves the silhouette
-            // with an infinite derivative (~sqrt of screen distance), and
-            // squaring cancels that root so the falloff is linear in screen
-            // distance, which is what reads as soft. The 0.85 this used to be
-            // was tried alongside a two-sided mesh with no cull, which the
-            // same test file (Test_CullingIsWhatMakesItWork) showed cannot
-            // work regardless of power — a grazing ray crosses an unbounded
-            // number of two-sided facets. Both fixes are now in: this power,
-            // and trail_volume.fs's `if (facing < 0.0) discard;`.
-            /* .x hệ số THÂN, .y số mũ, .z độ mềm viền, .w độ đậm chung —
-             * ba trong bốn là tunable, xem chỗ đăng ký. THÂN và ĐỘ ĐẬM ĐI
-             * CẶP: bật thân lên 1 làm độ đục trung bình tăng ~8 lần, đổi một
-             * cái mà quên cái kia là cháy trắng hoặc mờ tịt. */
             float mask[4] = {s_volDepthMode, s_volDepthPow, 0.34f, s_volDensity};
-            if (maskLoc >= 0) SetShaderValue(fullShader, maskLoc, mask, SHADER_UNIFORM_VEC4);
-            /* viewPos — the volume shader NO LONGER USES IT for shading, and
-             * that is the fix, not an oversight (06/08/2026).
-             *
-             * The tube is drawn in IMMEDIATE MODE, so rlgl has already
-             * view-transformed its vertices on the CPU and trail_volume.vs
-             * passes them straight through: fragPosition is VIEW space, where
-             * the camera IS the origin. The view vector is normalize(-fragPos)
-             * and no uniform can fail to arrive. Mixing a world-space viewPos
-             * into that is exactly what produced the inverted |N.V| that cost
-             * a whole session — full chain in trail_volume.vs's header and
-             * core/docs/VOLUME_SHADING_HANDOFF.md.
-             *
-             * Still pushed because volume_debug = 15 reads it back as a
-             * diagnostic band, and because fs_header.glsl declares it for
-             * every consumer; a raw BeginShaderMode (what this function uses,
-             * not SkillManager_BeginShader) never sets it otherwise. */
-            int viewPosLoc = GetShaderLocation(fullShader, "viewPos");
-            if (viewPosLoc >= 0)
+            if (s_volLocs.mask >= 0)
+                SetShaderValue(fullShader, s_volLocs.mask, mask, SHADER_UNIFORM_VEC4);
+            if (s_volLocs.viewPos >= 0)
             {
                 Vector3 vp = camera.position;
-                SetShaderValue(fullShader, viewPosLoc, &vp, SHADER_UNIFORM_VEC3);
+                SetShaderValue(fullShader, s_volLocs.viewPos, &vp, SHADER_UNIFORM_VEC3);
             }
-            int nsrcLoc = GetShaderLocation(fullShader, "u_volNormalSrc");
-            if (nsrcLoc >= 0)
-                SetShaderValue(fullShader, nsrcLoc, &s_volNormalSrc, SHADER_UNIFORM_FLOAT);
-            int cullLoc = GetShaderLocation(fullShader, "u_volCull");
-            if (cullLoc >= 0)
-                SetShaderValue(fullShader, cullLoc, &s_volCull, SHADER_UNIFORM_FLOAT);
-            int rimLoc = GetShaderLocation(fullShader, "u_volRim");
-            if (rimLoc >= 0)
-                SetShaderValue(fullShader, rimLoc, &s_volRim, SHADER_UNIFORM_FLOAT);
-            int erodeLoc = GetShaderLocation(fullShader, "u_volErode");
-            if (erodeLoc >= 0)
-                SetShaderValue(fullShader, erodeLoc, &s_volErode, SHADER_UNIFORM_FLOAT);
-            int bandLoc = GetShaderLocation(fullShader, "u_volErodeBand");
-            if (bandLoc >= 0)
-                SetShaderValue(fullShader, bandLoc, &s_volErodeBand, SHADER_UNIFORM_FLOAT);
-            int dbgLoc = GetShaderLocation(fullShader, "u_volDebug");
-            if (dbgLoc >= 0)
-                SetShaderValue(fullShader, dbgLoc, &s_volDebug, SHADER_UNIFORM_FLOAT);
-            int bloomLoc = GetShaderLocation(fullShader, "u_volBloom");
-            if (bloomLoc >= 0)
+            if (s_volLocs.normalSrc >= 0)
+                SetShaderValue(fullShader, s_volLocs.normalSrc, &s_volNormalSrc, SHADER_UNIFORM_FLOAT);
+            if (s_volLocs.cull >= 0)
+                SetShaderValue(fullShader, s_volLocs.cull, &s_volCull, SHADER_UNIFORM_FLOAT);
+            if (s_volLocs.rim >= 0)
+                SetShaderValue(fullShader, s_volLocs.rim, &s_volRim, SHADER_UNIFORM_FLOAT);
+            if (s_volLocs.erode >= 0)
+                SetShaderValue(fullShader, s_volLocs.erode, &s_volErode, SHADER_UNIFORM_FLOAT);
+            if (s_volLocs.erodeBand >= 0)
+                SetShaderValue(fullShader, s_volLocs.erodeBand, &s_volErodeBand, SHADER_UNIFORM_FLOAT);
+            if (s_volLocs.debug >= 0)
+                SetShaderValue(fullShader, s_volLocs.debug, &s_volDebug, SHADER_UNIFORM_FLOAT);
+            if (s_volLocs.bloom >= 0)
             {
                 float bloomGain = (groups[g].bm == BLEND_ADDITIVE) ? s_volBloom : 0.0f;
-                SetShaderValue(fullShader, bloomLoc, &bloomGain, SHADER_UNIFORM_FLOAT);
+                SetShaderValue(fullShader, s_volLocs.bloom, &bloomGain, SHADER_UNIFORM_FLOAT);
             }
-            /* ONCE. Proves the volume path is the one drawing, and with what —
-             * "it looks the same" and "this code never ran" are the same
-             * picture. */
             static bool announced = false;
             if (!announced)
             {
@@ -3084,16 +2818,14 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
                          "TRAIL: volume group DRAWING — shader %u, mask loc %d, "
                          "viewPos loc %d, debug %.0f loc %d (-1 = KHONG TOI NOI), "
                          "floor %.2f, density %.2f",
-                         (unsigned)fullShader.id, maskLoc,
-                         GetShaderLocation(fullShader, "viewPos"),
+                         (unsigned)fullShader.id, s_volLocs.mask,
+                         s_volLocs.viewPos,
                          (double)s_volDebug,
-                         GetShaderLocation(fullShader, "u_volDebug"),
+                         s_volLocs.debug,
                          mask[2], mask[3]);
             }
         }
-        // Locations are shader-level state, not per-trail state. Resolve them
-        // once per pass; several simultaneous smoke trails previously repeated
-        // five GetShaderLocation calls for every instance, every frame.
+
         int flowTimeLoc = GetCachedFlowTimeLoc(fullShader);
         int flowSpeedLoc = GetCachedFlowSpeedLoc(fullShader);
         int flowStrengthLoc = GetCachedFlowStrengthLoc(fullShader);
@@ -3104,8 +2836,6 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         int maskTexLoc = GetCachedMaskTexLoc(fullShader);
         if (groups[g].useFlowMap)
         {
-            // Keep one clock for the batch. Flow phase is visual state, not
-            // per-instance geometry, so grouping it prevents rlvk UBO churn.
             if (flowTimeLoc >= 0)
                 SetShaderValue(fullShader, flowTimeLoc, &time, SHADER_UNIFORM_FLOAT);
             if (flowSpeedLoc >= 0)
@@ -3119,9 +2849,6 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         }
         else if (flowStrengthLoc >= 0)
         {
-            // Shader uniforms persist across draw groups.  Explicitly clear a
-            // previous flow-enabled batch so ordinary ribbons never inherit
-            // UV distortion from the group rendered just before them.
             const float noFlow = 0.0f;
             SetShaderValue(fullShader, flowStrengthLoc, &noFlow, SHADER_UNIFORM_FLOAT);
         }
@@ -3132,7 +2859,8 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         if (maskTexLoc >= 0)
         {
             Texture2D maskTex = (groups[g].noiseMask.id != 0)
-                                    ? groups[g].noiseMask : s_tubeFlatTex;
+                                    ? groups[g].noiseMask
+                                    : s_tubeFlatTex;
             if (maskTex.id != 0)
                 SetShaderValueTexture(fullShader, maskTexLoc, maskTex);
         }
@@ -3140,14 +2868,18 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
         for (int a = 0; a < activeCount; a++)
         {
             TrailEntity *t = &trailPool[s_activeIds[a]];
-            if (TrailRibbonSystem_IsModern(s_activeIds[a])) continue;
+            if (TrailRibbonSystem_IsModern(s_activeIds[a]))
+                continue;
             if (!IsTrailVisible(t, camera))
                 continue;
 
             BlendMode sourceBm = t->useCustomBlendMode ? t->blendMode
                                                        : ((t->blendMode > 0) ? t->blendMode : BLEND_ADDITIVE);
-            if (layerFilter == 0 && (sourceBm == BLEND_ADDITIVE || sourceBm == BLEND_ALPHA_PREMULTIPLY)) continue;
-            if (layerFilter == 1 && sourceBm == BLEND_ALPHA) continue;
+            bool hasAlphaBody = (sourceBm == BLEND_ALPHA) || (t->material.bodyOpacity > 0.0f);
+            if (layerFilter == 0 && !hasAlphaBody)
+                continue;
+            if (layerFilter == 1 && sourceBm == BLEND_ALPHA)
+                continue;
             BlendMode currentBm = (layerFilter == 0) ? BLEND_ALPHA : sourceBm;
             Texture2D currentTex = t->sprite.id > 0 ? t->sprite : s_globalTrailTex;
 
@@ -3158,7 +2890,8 @@ static void DrawTrailEntitiesLayer(Camera3D camera, int layerFilter)
                 currentShader = s_deformShader;
             else
                 currentShader = (layerFilter == 0 && TrailUsesAdditiveBlend(t) && s_bodyShader.id != 0)
-                                     ? s_bodyShader : ResolveShader(t);
+                                    ? s_bodyShader
+                                    : ResolveShader(t);
             if (TrailMatchesRenderGroup(t, &groups[g], currentBm, currentShader, currentTex))
             {
                 DrawTrailGeometry(t, camera, &camBasis, time);
@@ -3201,16 +2934,27 @@ void UnloadTrailSystem(void)
         }
     }
 
-    // Reset lại toàn bộ trạng thái của Pool và Free List về ban đầu
+    // Reset lại toàn bộ trạng thái của Pool và Free List về ban đầu (đồng bộ với InitTrailSystem)
     activeCount = 0;
     freeListHead = 0;
 
     for (int i = 0; i < MAX_TRAIL_PARTICLES; i++)
     {
         trailPool[i].active = false;
-        trailPool[i].nextFree = (i < MAX_TRAIL_PARTICLES - 1) ? (i + 1) : -1;
+        trailPool[i].nextFree = i + 1;
         s_slotListIndex[i] = -1;
         s_activeIds[i] = -1;
+    }
+
+    if (s_tubeNoiseImg.data != NULL)
+    {
+        UnloadImage(s_tubeNoiseImg);
+        s_tubeNoiseImg = (Image){0};
+    }
+    if (s_tubeFlatTex.id != 0)
+    {
+        UnloadTexture(s_tubeFlatTex);
+        s_tubeFlatTex = (Texture2D){0};
     }
 }
 

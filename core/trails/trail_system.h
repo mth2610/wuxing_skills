@@ -12,6 +12,7 @@
 
 #define MAX_TRAIL_PARTICLES 500
 #define TRAIL_HISTORY_COUNT 60
+#define MAX_TRAIL_RENDER_GROUPS 128
 
 #define TRAIL_PROJECTILE_TAPER_POWER 1.2f
 #define TRAIL_PROJECTILE_OUTER_WIDTH_MUL 1.3f
@@ -85,16 +86,16 @@ typedef struct
 // CPU-cloth pipeline untouched (and the classic shaders selected).
 typedef struct
 {
-    float mode;       // 0 = off, 1 = sin-multi, 2 = curl3, 3 = helix, 4 = noise
-    float ampA[3];    // per-octave amplitude along the ribbon side (across width)
-    float ampB[3];    // per-octave amplitude along the strip normal
-    float freq[3];    // per-octave frequency (cycles along the path, seg 0..1)
-    float speed[3];   // per-octave travel speed
-    float phase;      // per-spawn random phase — desyncs simultaneous casts
-    float envHead;    // wave amplitude -> 0 at the head over this seg fraction
-    float envTail;    // wave amplitude -> 0 at the tail over this seg fraction
-    float strength;   // global multiplier
-    float curlScale;  // noise frequency for curl3 / noise modes
+    float mode;      // 0 = off, 1 = sin-multi, 2 = curl3, 3 = helix, 4 = noise
+    float ampA[3];   // per-octave amplitude along the ribbon side (across width)
+    float ampB[3];   // per-octave amplitude along the strip normal
+    float freq[3];   // per-octave frequency (cycles along the path, seg 0..1)
+    float speed[3];  // per-octave travel speed
+    float phase;     // per-spawn random phase — desyncs simultaneous casts
+    float envHead;   // wave amplitude -> 0 at the head over this seg fraction
+    float envTail;   // wave amplitude -> 0 at the tail over this seg fraction
+    float strength;  // global multiplier
+    float curlScale; // noise frequency for curl3 / noise modes
 
     // ── DEFORM ENHANCEMENTS (WebGL reference) ───────────────────────────────
     float rollRate;    // rad/m along path (screw / axial twist)
@@ -189,8 +190,8 @@ typedef struct
     // The two halves of "where is the core". Both 0 = the values trail_deform.fs
     // hardcoded before they were exposed (0.18 / 0.45), so a material that does
     // not set them renders exactly as it did.
-    float coreHalfWidth;    // geometric centreline half-width, 0..1 of half-width
-    float coreDensityGate;  // strand density above which the body burns hot too
+    float coreHalfWidth;   // geometric centreline half-width, 0..1 of half-width
+    float coreDensityGate; // strand density above which the body burns hot too
     // Colour at the TAIL of the trail; the head uses the entity tint. The
     // along-trail ramp is what makes a trail read as cooling (or as smoke
     // thinning); without it the whole ribbon is one flat hue. Leave black to
@@ -228,16 +229,16 @@ typedef struct
     const struct TrailRecipe *recipe;
 
     // ── PROCEDURAL PRESET STYLE (WebGL reference) ───────────────────────────
-    float style;       // 0 = standard strand, 1..16 = specialized WebGL styles
-    Color colRamp[4];  // 4-stop gradient ramp (C0, C1, C2, C3)
-    Vector4 p0;        // uP0
-    Vector4 p1;        // uP1
-    Vector4 p2;        // uP2
-    Vector2 uvScale;   // uUVScale
-    float seed;        // uSeed
-    float maxDist;     // uMaxD
-    float add;         // uAdd
-    float alpha;       // uAlpha
+    float style;      // 0 = standard strand, 1..16 = specialized WebGL styles
+    Color colRamp[4]; // 4-stop gradient ramp (C0, C1, C2, C3)
+    Vector4 p0;       // uP0
+    Vector4 p1;       // uP1
+    Vector4 p2;       // uP2
+    Vector2 uvScale;  // uUVScale
+    float seed;       // uSeed
+    float maxDist;    // uMaxD
+    float add;        // uAdd
+    float alpha;      // uAlpha
 } TrailMaterialConfig;
 
 // ── Trail Cross-section ─────────────────────────────────────────────────────
@@ -605,8 +606,8 @@ typedef struct TrailEntity
     Texture2D sprite;  // 20 bytes
     Texture2D flowMap; // 20 bytes (Thêm Flowmap Texture vào Entity)
     Texture2D noiseMask;
-    Shader shader;     // 12/16 bytes
-    Color tint;        // 4 bytes
+    Shader shader; // 12/16 bytes
+    Color tint;    // 4 bytes
 
     // 3. Các biến thực (Floats) - 4 bytes
     float length;
