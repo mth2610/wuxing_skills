@@ -5,6 +5,7 @@ in vec2 vertexTexCoord;
 
 uniform mat4 mvp;
 uniform vec3 u_modelPos;
+uniform vec2 u_lakeRadii;
 uniform float u_time;
 uniform float u_waveHeight;
 uniform float u_waveScale;
@@ -26,7 +27,7 @@ out float fragWaterDepth;
 void main()
 {
     vec3 local = vertexPosition;
-    vec3 world = local + u_modelPos;
+    vec3 world = (u_waterShape == 3) ? local : (local + u_modelPos);
 
     // Calculate shore distance factor to smoothly dampen waves near shoreline
     vec2 coord = vertexTexCoord * 2.0 - 1.0;
@@ -45,6 +46,9 @@ void main()
     } else if (u_waterShape == 3) {
         // Terrain-clipped water: vertexTexCoord.x is depth in meters (0 at exact shoreline)
         shoreFade = smoothstep(0.0, 0.25, vertexTexCoord.x);
+        if (u_lakeRadii.x > 0.001 && u_lakeRadii.y > 0.001) {
+            coord = vec2((world.x - u_modelPos.x) / u_lakeRadii.x, (world.z - u_modelPos.z) / u_lakeRadii.y);
+        }
     }
 
     // Gentle 3D vertical wave undulation damped to 0.0 at the shoreline so edges never detach from terrain

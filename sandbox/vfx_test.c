@@ -1479,7 +1479,7 @@ static int s_vfxInspectorScroll = 0;
 static int s_vfxBrowserScroll = 0;
 static int s_vfxDraggingSlider = -1;
 static float s_vfxTelemetryFps, s_vfxTelemetryFrameMs, s_vfxTelemetryPeakMs;
-static float s_vfxTelemetryTilt = 18.0f, s_vfxTelemetryDistance = 20.571864f, s_vfxTelemetryZoom = 1.0f;
+static float s_vfxTelemetryTilt = 26.0f, s_vfxTelemetryDistance = 12.0f, s_vfxTelemetryZoom = 1.5f;
 static int s_vfxPendingTiltStep;
 
 void VFXTest_SetPerformanceTelemetry(float fps, float frameTimeMs, float peakFrameMs)

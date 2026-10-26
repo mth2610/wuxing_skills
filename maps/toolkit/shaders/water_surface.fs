@@ -149,64 +149,44 @@ void main()
 
     slope += detailSlope * (u_detailStrength * 2.40 * shoreFade * detailDistFade);
 
-    // Conditional wave-field sampling + Analytical Ripple Rings & Interactor Wake
+    // Conditional wave-field sampling (2D Shallow-Water PDE wave grid)
     vec2 interactSlope = vec2(0.0);
     float waveCurvature = 0.0;
     float wakeCrestHighlight = 0.0;
-    float ringCrestHighlight = 0.0;
     float dynamicWakeFoam = 0.0;
 
     if (u_waveFieldEnabled > 0) {
-        vec4 waveField = texture(u_waveFieldTex, fragLakeCoord * 0.5 + 0.5);
-        interactSlope = (waveField.rg - 0.5) * 2.45;
-        waveCurvature = (waveField.a - 0.5) * 5.0;
-        wakeCrestHighlight = max(0.0, waveField.b - 0.5) * 0.52;
-        dynamicWakeFoam = clamp((wakeCrestHighlight * 1.6 + max(0.0, waveCurvature) * 0.22 - 0.12) * shoreFade, 0.0, 0.65);
-    }
-
-    // Analytical expanding ripple rings (supports WATER_SHAPE_TERRAIN where wake grid is absent)
-    for (int i = 0; i < 4; i++) {
-        float ringAmp = u_rippleParams[i].x;
-        float ringMaxRad = u_rippleRings[i].z;
-        if (ringAmp > 0.001 && ringMaxRad > 0.01) {
-            vec2 toFrag = fragWorldXZ - u_rippleRings[i].xy;
-            float rDistSq = dot(toFrag, toFrag);
-            float maxExtent = ringMaxRad + 1.25;
-            if (rDistSq < maxExtent * maxExtent && rDistSq > 1e-5) {
-                float rDist = sqrt(rDistSq);
-                float curRad = u_rippleRings[i].w;
-                float bandWidth = max(u_rippleParams[i].y, 0.35);
-                float deltaR = rDist - curRad;
-                float env = exp(-(deltaR * deltaR) / (bandWidth * bandWidth)) * ringAmp;
-                if (env > 0.001) {
-                    float phase = deltaR * 18.0 - u_time * 8.0;
-                    float sWave = sin(phase);
-                    float cWave = cos(phase);
-                    vec2 rDir = toFrag / rDist;
-                    interactSlope += rDir * (cWave * env * 0.85);
-                    ringCrestHighlight += max(0.0, sWave) * env * 0.55;
-                    dynamicWakeFoam = max(dynamicWakeFoam, max(0.0, sWave) * env * 0.38 * shoreFade);
-                }
-            }
+        vec2 waveUv = fragLakeCoord * 0.5 + 0.5;
+        float gridFade = 1.0;
+        if (u_waterShape == 3) {
+            vec2 edge = smoothstep(vec2(0.72), vec2(0.96), abs(fragLakeCoord));
+            gridFade = (1.0 - edge.x) * (1.0 - edge.y);
         }
+        vec4 waveField = texture(u_waveFieldTex, waveUv);
+        interactSlope = (waveField.rg - 0.5) * (2.45 * gridFade);
+        waveCurvature = (waveField.a - 0.5) * (5.0 * gridFade);
+        wakeCrestHighlight = max(0.0, waveField.b - 0.5) * (0.52 * gridFade);
+        dynamicWakeFoam = clamp((wakeCrestHighlight * 1.6 + max(0.0, waveCurvature) * 0.22 - 0.12) * shoreFade * gridFade, 0.0, 0.65);
     }
 
-    // Direct player/entity water interactor wake
-    if (u_waterRadius > 0.01) {
+    // Direct player/entity water interactor wake: gentle non-oscillatory bow displacement (no concentric rings)
+    float submerged = u_waterInteractor.y;
+    if (u_waterRadius > 0.01 && submerged > 0.01) {
         vec2 toInteractor = fragWorldXZ - u_waterInteractor.xz;
         float iDistSq = dot(toInteractor, toInteractor);
-        float activeRad = u_waterRadius * 3.2;
+        float activeRad = u_waterRadius * 2.4;
+
         if (iDistSq < activeRad * activeRad && iDistSq > 1e-5) {
             float iDist = sqrt(iDistSq);
             float normDist = iDist / u_waterRadius;
             float speed = length(u_waterVelocity.xz);
-            float wakeEnv = exp(-normDist * 0.85) * clamp(speed * 0.25 + 0.15, 0.0, 1.0);
-            float wakeWave = sin(normDist * 10.0 - u_time * 9.0);
-            float wakeDeriv = cos(normDist * 10.0 - u_time * 9.0);
+            float speedFactor = clamp(speed * 0.35 + 0.15, 0.0, 1.0);
+
+            // Smooth single-lobe hump (NO sinusoidal concentric rings)
+            float bowEnv = exp(-normDist * 1.5) * speedFactor * submerged * smoothstep(2.4, 1.2, normDist);
             vec2 iDir = toInteractor / iDist;
-            interactSlope += iDir * (wakeDeriv * wakeEnv * 0.65);
-            wakeCrestHighlight += max(0.0, wakeWave) * wakeEnv * 0.45;
-            dynamicWakeFoam = max(dynamicWakeFoam, smoothstep(1.3, 0.4, normDist) * wakeEnv * 0.42 * shoreFade);
+            interactSlope += iDir * (bowEnv * 0.35);
+            dynamicWakeFoam = max(dynamicWakeFoam, smoothstep(1.2, 0.3, normDist) * bowEnv * 0.35 * shoreFade);
         }
     }
 
@@ -317,7 +297,7 @@ void main()
 
     // Facet wave glints
     float crest = smoothstep(0.48, 0.92, waveFacet) * 0.045;
-    vec3 waveHighlight = reflectedSky * (max(waveFacet, 0.0) * 0.038 + crest + wakeCrestHighlight * 0.42 + ringCrestHighlight * 0.52);
+    vec3 waveHighlight = reflectedSky * (max(waveFacet, 0.0) * 0.038 + crest + wakeCrestHighlight * 0.42);
 
     // Crisp multi-scale specular sun glint (eliminates wide nh16 milky glare patch)
     vec3 halfDir = normalize(L + viewDir);
@@ -359,12 +339,13 @@ void main()
         brokenFoam = max(brokenFoam, meniscusLip * 0.11 * smoothstep(0.48, 0.72, foamNoise));
         brokenFoam += max(contactRipple, 0.0) * 0.09 * contactMask;
 
-        float wakeFoamTex = dynamicWakeFoam * smoothstep(0.32, 0.78, foamNoise + dynamicWakeFoam * 0.35);
-        brokenFoam = clamp(max(brokenFoam, wakeFoamTex), 0.0, 1.0);
         if (u_waterShape == 3) {
-            // Fade foam cleanly at shallow shoreline lip & river stones so submerged rocks aren't ringed in white
+            // Fade shoreline contact foam cleanly at shallow shoreline lip & river stones so submerged rocks aren't ringed in white
             brokenFoam *= smoothstep(0.045, 0.16, waterDepth) * 0.52;
         }
+
+        float wakeFoamTex = dynamicWakeFoam * smoothstep(0.32, 0.78, foamNoise + dynamicWakeFoam * 0.35);
+        brokenFoam = clamp(max(brokenFoam, wakeFoamTex), 0.0, 1.0);
     }
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────

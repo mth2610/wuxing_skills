@@ -814,6 +814,7 @@ void InitSongQuaoMap(void)
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
                                          (MapWaterConfig){
                                              .ecosystem = WATER_ECO_CUSTOM,
+                                             .center = {kMapCenter.x, 0.0f, kMapCenter.z},
                                              .radiusX = MAP_WIDTH * 0.5f,
                                              .radiusZ = MAP_DEPTH * 0.5f,
                                              .waveHeight = 0.016f,
@@ -1010,7 +1011,22 @@ bool GetWaterInfoSongQuaoMap(float x, float z, float *outSurfaceY, float *outWat
 
 void SetWaterInteractorSongQuaoMap(Vector3 position, Vector3 velocity, float radius)
 {
-    MapProp_SetWaterInteractor(&s_river, position, velocity, radius, 0.0f);
+    if (!s_ready || position.x < 0.0f || position.z < 0.0f || position.x > MAP_WIDTH || position.z > MAP_DEPTH) {
+        MapProp_SetWaterInteractor(&s_river, position, velocity, radius, 0.0f);
+        return;
+    }
+    float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, position.x, position.z);
+    float surfaceY = SampleWaterHeight(position.x, position.z);
+    if (surfaceY > gy + 0.005f) {
+        float depth = surfaceY - gy;
+        float submerged = 0.0f;
+        if (position.y < surfaceY + 0.20f) {
+            submerged = fminf(1.0f, fmaxf(0.0f, (surfaceY - position.y + 0.25f) / fmaxf(depth, 0.35f)));
+        }
+        MapProp_SetWaterInteractor(&s_river, position, velocity, radius, submerged);
+    } else {
+        MapProp_SetWaterInteractor(&s_river, position, velocity, radius, 0.0f);
+    }
 }
 
 void AddWaterRippleSongQuaoMap(Vector3 position, float radius, float intensity)

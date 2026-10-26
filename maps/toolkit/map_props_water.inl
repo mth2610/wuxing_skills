@@ -170,6 +170,38 @@ static void Water_InitializeWaveUploadCache(MapWaterSurface *water)
     water->waveUploadedTextureId = water->waveFieldTex.id;
 }
 
+static void Water_InitializeWaveField(MapWaterSurface *water)
+{
+    const int cellCount = WATER_FIELD_SIZE * WATER_FIELD_SIZE;
+    water->waveHeightField = calloc((size_t)cellCount, sizeof(float));
+    water->waveNextField = calloc((size_t)cellCount, sizeof(float));
+    water->waveVelocityField = calloc((size_t)cellCount, sizeof(float));
+    water->wavePixels = malloc((size_t)cellCount * 4u);
+    if (water->waveHeightField && water->waveNextField && water->waveVelocityField && water->wavePixels)
+    {
+        for (int i = 0; i < cellCount; i++)
+        {
+            water->wavePixels[i * 4 + 0] = 128;
+            water->wavePixels[i * 4 + 1] = 128;
+            water->wavePixels[i * 4 + 2] = 128;
+            water->wavePixels[i * 4 + 3] = 128;
+        }
+        Image waveImage = {
+            .data = water->wavePixels,
+            .width = WATER_FIELD_SIZE,
+            .height = WATER_FIELD_SIZE,
+            .mipmaps = 1,
+            .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+        water->waveFieldTex = LoadTextureFromImage(waveImage);
+        if (water->waveFieldTex.id > 0)
+        {
+            SetTextureFilter(water->waveFieldTex, TEXTURE_FILTER_BILINEAR);
+            SetTextureWrap(water->waveFieldTex, TEXTURE_WRAP_CLAMP);
+            Water_InitializeWaveUploadCache(water);
+        }
+    }
+}
+
 static void Water_UploadWaveField(MapWaterSurface *water)
 {
     if (!water->waveFieldTex.id || !water->wavePixels)
@@ -368,34 +400,9 @@ MapWaterSurface MapProp_CreateWaterSurface(MapWaterConfig config)
     }
     water.bankModel = Nature_ModelFromMesh(bankMesh, Water_GetBedShader());
     water.bankModel.materials[0].maps[MATERIAL_MAP_DIFFUSE].texture = water.bedDiffuseTex;
-    const int cellCount = WATER_FIELD_SIZE * WATER_FIELD_SIZE;
-    water.waveHeightField = calloc((size_t)cellCount, sizeof(float));
-    water.waveNextField = calloc((size_t)cellCount, sizeof(float));
-    water.waveVelocityField = calloc((size_t)cellCount, sizeof(float));
-    water.wavePixels = malloc((size_t)cellCount * 4u);
-    if (water.waveHeightField && water.waveNextField && water.waveVelocityField && water.wavePixels)
-    {
-        for (int i = 0; i < cellCount; i++)
-        {
-            water.wavePixels[i * 4 + 0] = 128;
-            water.wavePixels[i * 4 + 1] = 128;
-            water.wavePixels[i * 4 + 2] = 128;
-            water.wavePixels[i * 4 + 3] = 128;
-        }
-        Image waveImage = {
-            .data = water.wavePixels,
-            .width = WATER_FIELD_SIZE,
-            .height = WATER_FIELD_SIZE,
-            .mipmaps = 1,
-            .format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
-        water.waveFieldTex = LoadTextureFromImage(waveImage);
-        if (water.waveFieldTex.id > 0)
-        {
-            SetTextureFilter(water.waveFieldTex, TEXTURE_FILTER_BILINEAR);
-            SetTextureWrap(water.waveFieldTex, TEXTURE_WRAP_CLAMP);
-            Water_InitializeWaveUploadCache(&water);
-        }
-    }
+    water.waveGridCenter = config.center;
+    water.waveGridRadius = fmaxf(config.radiusX, config.radiusZ);
+    Water_InitializeWaveField(&water);
     water.ready = true;
     return water;
 }
@@ -675,8 +682,6 @@ MapWaterSurface MapProp_CreateTerrainWater(const char *meshPath, MapWaterConfig 
         return water;
     Water_ApplyConfigDefaults(&config);
     config.shape = WATER_SHAPE_TERRAIN;
-    config.center = (Vector3){0};
-    water.config = config;
     water.waterModel = LoadModel(meshPath);
     MapProp_ModelBounds(&water.waterModel, &water.boundsCenter, &water.boundsRadius);
     if (water.waterModel.meshCount < 1 || water.waterModel.materialCount < 1)
@@ -684,6 +689,14 @@ MapWaterSurface MapProp_CreateTerrainWater(const char *meshPath, MapWaterConfig 
         UnloadModel(water.waterModel);
         return (MapWaterSurface){0};
     }
+    if (config.center.x == 0.0f && config.center.z == 0.0f)
+        config.center = water.boundsCenter;
+    if (config.radiusX <= 0.0f || config.radiusZ <= 0.0f)
+    {
+        config.radiusX = (water.boundsRadius > 0.0f) ? water.boundsRadius : 100.0f;
+        config.radiusZ = config.radiusX;
+    }
+    water.config = config;
     Texture2D detail = ResourceManager_LoadTextureVariant("assets/textures/noise.png",
                                                           true, TEXTURE_FILTER_TRILINEAR, TEXTURE_WRAP_REPEAT);
     water.causticTex = ResourceManager_LoadTextureVariant("assets/textures/water_caustics.png",
@@ -693,6 +706,9 @@ MapWaterSurface MapProp_CreateTerrainWater(const char *meshPath, MapWaterConfig 
         water.waterModel.materials[i].shader = Water_GetShader();
         water.waterModel.materials[i].maps[MATERIAL_MAP_DIFFUSE].texture = detail;
     }
+    water.waveGridRadius = 16.0f; // 16m radius = 32m local fluid simulation domain
+    water.waveGridCenter = (Vector3){0};
+    Water_InitializeWaveField(&water);
     water.ready = true;
     return water;
 }
@@ -999,7 +1015,8 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
 {
     if (!water || !water->ready)
         return;
-    Vector3 position = water->config.center;
+    Vector3 position = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridCenter : water->config.center;
+    Vector3 drawPos = (water->config.shape == WATER_SHAPE_TERRAIN) ? (Vector3){0} : position;
 
     // The whole surface is one draw call, so skip it entirely when its bounding
     // sphere is outside the camera frustum (map_props_cull.inl). Conservative:
@@ -1009,7 +1026,7 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
         MapPropViewFrustum frustum;
         if (MapProp_BuildViewFrustum(&frustum))
         {
-            Vector3 boundsPos = Vector3Add(position, water->boundsCenter);
+            Vector3 boundsPos = Vector3Add(drawPos, water->boundsCenter);
             if (MapProp_FrustumCullsSphere(&frustum, boundsPos, water->boundsRadius))
                 return;
         }
@@ -1047,7 +1064,9 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     SetShaderValue(shader, s_waterLocViewPos, &camera.position, SHADER_UNIFORM_VEC3);
     if (s_waterLocModelPos >= 0)
         SetShaderValue(shader, s_waterLocModelPos, &position, SHADER_UNIFORM_VEC3);
-    Vector2 lakeRadii = {water->config.radiusX, water->config.radiusZ};
+    Vector2 lakeRadii = (water->config.shape == WATER_SHAPE_TERRAIN)
+                            ? (Vector2){water->waveGridRadius, water->waveGridRadius}
+                            : (Vector2){water->config.radiusX, water->config.radiusZ};
     int lakeSeed = (int)water->config.seed;
     if (s_waterLocLakeRadii >= 0)
         SetShaderValue(shader, s_waterLocLakeRadii, &lakeRadii, SHADER_UNIFORM_VEC2);
@@ -1164,7 +1183,7 @@ void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time)
     rlDisableDepthMask();
     BeginBlendMode(BLEND_ALPHA);
 
-    DrawModel(water->waterModel, position, 1.0f, WHITE);
+    DrawModel(water->waterModel, drawPos, 1.0f, WHITE);
 
     rlDrawRenderBatchActive();
     EndBlendMode();
@@ -1237,24 +1256,29 @@ void MapProp_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radi
     if (water->waveVelocityField)
     {
         const int n = WATER_FIELD_SIZE;
-        float dx = 2.0f * water->config.radiusX / (float)(n - 1);
-        float dz = 2.0f * water->config.radiusZ / (float)(n - 1);
-        float sigma = footstep ? 0.22f : 0.30f;
-        float impulse = footstep ? fminf(1.2f, intensity * 2.35f)
-                                 : fminf(1.1f, fmaxf(0.0f, intensity) * 0.9f);
-        int cx = (int)roundf((position.x - water->config.center.x + water->config.radiusX) / dx);
-        int cz = (int)roundf((position.z - water->config.center.z + water->config.radiusZ) / dz);
+        float radX = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridRadius : water->config.radiusX;
+        float radZ = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridRadius : water->config.radiusZ;
+        Vector3 center = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridCenter : water->config.center;
+        float dx = 2.0f * radX / (float)(n - 1);
+        float dz = 2.0f * radZ / (float)(n - 1);
+        float cellMin = fmaxf(dx * 0.95f, dz * 0.95f);
+        float sigma = fmaxf(cellMin, footstep ? 0.32f : 0.45f);
+        float impulse = footstep ? fminf(1.4f, intensity * 2.8f)
+                                 : fminf(1.2f, fmaxf(0.0f, intensity) * 1.0f);
+        int cx = (int)roundf((position.x - center.x + radX) / dx);
+        int cz = (int)roundf((position.z - center.z + radZ) / dz);
         int reachX = (int)ceilf(3.0f * sigma / dx);
         int reachZ = (int)ceilf(3.0f * sigma / dz);
         for (int z = fmaxf(1, cz - reachZ); z <= fminf(n - 2, cz + reachZ); z++)
         {
-            float wz = water->config.center.z - water->config.radiusZ + z * dz;
+            float wz = center.z - radZ + z * dz;
             for (int x = fmaxf(1, cx - reachX); x <= fminf(n - 2, cx + reachX); x++)
             {
-                float wx = water->config.center.x - water->config.radiusX + x * dx;
-                float nx = (wx - water->config.center.x) / water->config.radiusX;
-                float nz = (wz - water->config.center.z) / water->config.radiusZ;
-                if (nx * nx + nz * nz >= 0.94f)
+                float wx = center.x - radX + x * dx;
+                float nx = (wx - center.x) / radX;
+                float nz = (wz - center.z) / radZ;
+                float distMetric = (water->config.shape == WATER_SHAPE_RADIAL) ? (nx * nx + nz * nz) : fmaxf(nx * nx, nz * nz);
+                if (distMetric >= 0.95f)
                     continue;
                 float dist2 = (wx - position.x) * (wx - position.x) +
                               (wz - position.z) * (wz - position.z);
@@ -1277,30 +1301,96 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
     if (!water || !water->ready || dt <= 0.0f)
         return;
 
-    // 1. Update wading footsteps for all water types (including WATER_SHAPE_TERRAIN)
+    // 1. Seamlessly shift wave grid to track player on large terrain water maps
+    if (water->config.shape == WATER_SHAPE_TERRAIN && water->waveHeightField)
+    {
+        const int n = WATER_FIELD_SIZE;
+        const float dx = 2.0f * water->waveGridRadius / (float)(n - 1);
+        const float dz = dx;
+
+        if (water->waveGridCenter.x == 0.0f && water->waveGridCenter.z == 0.0f)
+        {
+            water->waveGridCenter = water->interactorPos;
+            water->config.center = water->waveGridCenter;
+        }
+
+        if (water->interactorPos.x != 0.0f || water->interactorPos.z != 0.0f)
+        {
+            int shiftX = (int)roundf((water->interactorPos.x - water->waveGridCenter.x) / dx);
+            int shiftZ = (int)roundf((water->interactorPos.z - water->waveGridCenter.z) / dz);
+
+            if (shiftX != 0 || shiftZ != 0)
+            {
+                if (abs(shiftX) >= n || abs(shiftZ) >= n)
+                {
+                    memset(water->waveHeightField, 0, (size_t)(n * n) * sizeof(float));
+                    memset(water->waveVelocityField, 0, (size_t)(n * n) * sizeof(float));
+                }
+                else
+                {
+                    for (int z = 0; z < n; z++)
+                    {
+                        int sz = z + shiftZ;
+                        for (int x = 0; x < n; x++)
+                        {
+                            int sx = x + shiftX;
+                            if (sx >= 0 && sx < n && sz >= 0 && sz < n)
+                                water->waveNextField[z * n + x] = water->waveHeightField[sz * n + sx];
+                            else
+                                water->waveNextField[z * n + x] = 0.0f;
+                        }
+                    }
+                    memcpy(water->waveHeightField, water->waveNextField, (size_t)(n * n) * sizeof(float));
+
+                    for (int z = 0; z < n; z++)
+                    {
+                        int sz = z + shiftZ;
+                        for (int x = 0; x < n; x++)
+                        {
+                            int sx = x + shiftX;
+                            if (sx >= 0 && sx < n && sz >= 0 && sz < n)
+                                water->waveNextField[z * n + x] = water->waveVelocityField[sz * n + sx];
+                            else
+                                water->waveNextField[z * n + x] = 0.0f;
+                        }
+                    }
+                    memcpy(water->waveVelocityField, water->waveNextField, (size_t)(n * n) * sizeof(float));
+                    memset(water->waveNextField, 0, (size_t)(n * n) * sizeof(float));
+                }
+                water->waveGridCenter.x += (float)shiftX * dx;
+                water->waveGridCenter.z += (float)shiftZ * dz;
+                water->config.center = water->waveGridCenter;
+            }
+        }
+    }
+
+    // 2. Update wading footsteps for all water types (including WATER_SHAPE_TERRAIN)
     float motionSpeed = hypotf(water->interactorVel.x, water->interactorVel.z);
     if (water->interactorSubmerged > 0.05f && motionSpeed > 0.35f)
     {
         water->waveWakeTimer += dt;
-        if (water->waveWakeTimer >= 0.24f)
+        if (water->waveWakeTimer >= 0.22f)
         {
-            water->waveWakeTimer -= 0.24f;
-            MapProp_AddWaterRipple(water, water->interactorPos, 1.8f, 0.48f);
+            water->waveWakeTimer -= 0.22f;
+            MapProp_AddWaterRipple(water, water->interactorPos, 1.8f, 0.52f);
         }
     }
     else
     {
-        water->waveWakeTimer = 0.12f;
+        water->waveWakeTimer = 0.11f;
     }
 
-    // 2. 128x128 2D Wave Equation Solver (only for lakes with waveFieldTex)
+    // 3. 128x128 2D Wave Equation Solver (only for lakes with waveFieldTex)
     if (!water->waveFieldTex.id || !water->waveHeightField)
         return;
 
     const int n = WATER_FIELD_SIZE;
     const float step = 1.0f / 60.0f;
-    const float dx = 2.0f * water->config.radiusX / (float)(n - 1);
-    const float dz = 2.0f * water->config.radiusZ / (float)(n - 1);
+    float radX = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridRadius : water->config.radiusX;
+    float radZ = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridRadius : water->config.radiusZ;
+    Vector3 center = (water->config.shape == WATER_SHAPE_TERRAIN) ? water->waveGridCenter : water->config.center;
+    const float dx = 2.0f * radX / (float)(n - 1);
+    const float dz = 2.0f * radZ / (float)(n - 1);
     const float invDx2 = 1.0f / (dx * dx);
     const float invDz2 = 1.0f / (dz * dz);
 
@@ -1320,12 +1410,12 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
             {
                 int i = z * n + x;
                 float nx = 2.0f * (float)x / (float)(n - 1) - 1.0f;
-                float radial2 = nx * nx + nz * nz;
-                bool blocked = radial2 >= 0.94f;
+                float distMetric = (water->config.shape == WATER_SHAPE_RADIAL) ? (nx * nx + nz * nz) : fmaxf(nx * nx, nz * nz);
+                bool blocked = (distMetric >= 0.94f);
                 if (!blocked && water->obstacleCount > 0)
                 {
-                    float wx = water->config.center.x + nx * water->config.radiusX;
-                    float wz = water->config.center.z + nz * water->config.radiusZ;
+                    float wx = center.x + nx * radX;
+                    float wz = center.z + nz * radZ;
                     for (int k = 0; k < water->obstacleCount; k++)
                     {
                         float ox = wx - water->obstacles[k].x;
@@ -1346,8 +1436,8 @@ void MapProp_UpdateWaterSurface(MapWaterSurface *water, float dt)
                 float h = water->waveHeightField[i];
                 float lap = (water->waveHeightField[i - 1] + water->waveHeightField[i + 1] - 2.0f * h) * invDx2 +
                             (water->waveHeightField[i - n] + water->waveHeightField[i + n] - 2.0f * h) * invDz2;
-                float speedSquared = (2.35f * 2.35f) * fmaxf(0.08f, 1.0f - radial2);
-                float shoreDamping = 1.4f + 4.0f * fmaxf(0.0f, radial2 - 0.70f);
+                float speedSquared = (2.35f * 2.35f) * fmaxf(0.08f, 1.0f - distMetric);
+                float shoreDamping = 1.4f + 4.0f * fmaxf(0.0f, distMetric - 0.70f);
                 float velocity = (water->waveVelocityField[i] + speedSquared * lap * step) *
                                  fmaxf(0.0f, 1.0f - shoreDamping * step);
                 float nextH = fmaxf(-0.12f, fminf(0.12f, h + velocity * step));

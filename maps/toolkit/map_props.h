@@ -799,6 +799,8 @@ typedef struct
     float waveStepRemainder;
     float waveWakeTimer;
     float waveLastImpulseTime;
+    Vector3 waveGridCenter;
+    float waveGridRadius;
 
     // Model-space bounding sphere of `waterModel`, baked at creation. The whole
     // surface is a single draw, so MapProp_DrawWaterOverlay skips it entirely
