@@ -352,11 +352,9 @@ void main() {
         else                  sceneCol.rgb = vec3(g);
     }
 
-    // ALPHA 1.0, EXPLICITLY. fragColor is WHITE at every call site so the rgb
-    // product is unchanged, but the alpha used to be the SOURCE's — and on the
-    // direct path (PostFX_UseDirectSource) the source is the scene target,
-    // whose alpha is accumulated VFX coverage above 1.0 and means nothing.
-    // This is the same rule distortion.fs follows: whatever reads the scene
-    // target defines its own alpha rather than passing an undefined one on.
-    finalColor = vec4(sceneCol.rgb * fragColor.rgb, 1.0);
+    // Write perceptual luma into alpha so FXAA can read it directly from texture taps
+    // without computing 5 redundant dot products per pixel.
+    vec3 outRgb = sceneCol.rgb * fragColor.rgb;
+    float outLuma = dot(outRgb, vec3(0.299, 0.587, 0.114));
+    finalColor = vec4(outRgb, outLuma);
 }

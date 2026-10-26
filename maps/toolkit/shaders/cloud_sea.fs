@@ -30,7 +30,7 @@ void main()
     float distWeight = 1.0 - smoothstep(45.0, 260.0, dist);
     float grazingWeight = smoothstep(0.04, 0.32, abs(viewDir.y));
     float octaveWeight = distWeight * grazingWeight;
-    float n2 = mix(0.5, texture(texture0, v_flowUVs.zw).r, octaveWeight);
+    float n2 = (octaveWeight > 0.001) ? texture(texture0, v_flowUVs.zw).r : 0.5;
     vec2 warpedFlow1 = v_flowUVs.xy + (n2 - 0.5) * (0.045 * octaveWeight);
     float n1 = texture(texture0, warpedFlow1).r;
 
@@ -43,12 +43,17 @@ void main()
     if (u_cloudBankEnabled == 0 && density < 0.38 && horizon < 0.98) discard;
 
     // Perturb normal from cloud noise slope with derivative-aware step size (prevents horizontal scanlines)
-    vec2 stepUV = max(fwidth(warpedFlow1) * 1.5, vec2(0.012));
-    float nR = texture(texture0, warpedFlow1 + vec2(stepUV.x, 0.0)).r;
-    float nU = texture(texture0, warpedFlow1 + vec2(0.0, stepUV.y)).r;
-    float slopeScale = 3.8 * octaveWeight;
-    vec3 billowNormal = normalize(vec3(-(nR - n1) * slopeScale, 1.0, -(nU - n1) * slopeScale));
-    vec3 N = normalize(mix(normalize(v_normal), billowNormal, 0.65 * octaveWeight));
+    vec3 N;
+    if (octaveWeight > 0.001) {
+        vec2 stepUV = max(fwidth(warpedFlow1) * 1.5, vec2(0.012));
+        float nR = texture(texture0, warpedFlow1 + vec2(stepUV.x, 0.0)).r;
+        float nU = texture(texture0, warpedFlow1 + vec2(0.0, stepUV.y)).r;
+        float slopeScale = 3.8 * octaveWeight;
+        vec3 billowNormal = normalize(vec3(-(nR - n1) * slopeScale, 1.0, -(nU - n1) * slopeScale));
+        N = normalize(mix(normalize(v_normal), billowNormal, 0.65 * octaveWeight));
+    } else {
+        N = normalize(v_normal);
+    }
     vec3 L = normalize(-lightDir);
 
     // 3. Xử lý ánh sáng & Màu sắc

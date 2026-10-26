@@ -28,13 +28,14 @@ float fxaaLuma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 void main()
 {
     vec2 uv = fragTexCoord;
-    vec3 rgbM = texture(texture0, uv).rgb;
+    vec4 sampM = texture(texture0, uv);
+    vec3 rgbM  = sampM.rgb;
 
-    float lM  = fxaaLuma(rgbM);
-    float lNW = fxaaLuma(texture(texture0, uv + vec2(-1.0, -1.0) * u_texel).rgb);
-    float lNE = fxaaLuma(texture(texture0, uv + vec2( 1.0, -1.0) * u_texel).rgb);
-    float lSW = fxaaLuma(texture(texture0, uv + vec2(-1.0,  1.0) * u_texel).rgb);
-    float lSE = fxaaLuma(texture(texture0, uv + vec2( 1.0,  1.0) * u_texel).rgb);
+    float lM  = sampM.a;
+    float lNW = texture(texture0, uv + vec2(-1.0, -1.0) * u_texel).a;
+    float lNE = texture(texture0, uv + vec2( 1.0, -1.0) * u_texel).a;
+    float lSW = texture(texture0, uv + vec2(-1.0,  1.0) * u_texel).a;
+    float lSE = texture(texture0, uv + vec2( 1.0,  1.0) * u_texel).a;
 
     float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
     float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));

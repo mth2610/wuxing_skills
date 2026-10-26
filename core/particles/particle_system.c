@@ -1341,7 +1341,7 @@ static void ParticleLighting_Begin(Camera3D camera)
   }
   if (s_locBgAdapt >= 0)
     SetShaderValue(s_litShader, s_locBgAdapt, &s_bgAdapt, SHADER_UNIFORM_FLOAT);
-  if (s_locBgLuma >= 0)
+  if (s_locBgLuma >= 0 && s_bgAdapt > 0.001f)
   {
     Texture2D bl = SceneTargets_GetBackgroundLuma();
     if (bl.id != 0)

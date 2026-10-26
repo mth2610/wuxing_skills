@@ -19,6 +19,7 @@ out vec3 fragNormal;
 out vec3 fragWorldPos;
 out vec4 v_lightSpace;
 out vec4 v_staticLightSpace;
+out vec2 v_macroPatchAndField;
 
 void main()
 {
@@ -28,8 +29,17 @@ void main()
     vec4 shaderPos = matModel * worldVertex;
     fragPosition = shaderPos.xyz;
     fragNormal   = vertexNormal;
-    fragWorldPos = vertexPosition + u_groundOffset;
+    vec3 wp      = vertexPosition + u_groundOffset;
+    fragWorldPos = wp;
     v_lightSpace = u_lightVP * shaderPos;
     v_staticLightSpace = u_staticLightVP * shaderPos;
+
+    float patch = sin(wp.x * 0.12 + wp.z * 0.08) * 0.55
+                + cos(wp.x * -0.07 + wp.z * 0.16) * 0.45;
+    float macroA = sin(wp.x * 0.042 + wp.z * 0.028);
+    float macroB = sin(wp.x * -0.022 + wp.z * 0.048 + 1.35);
+    float field = 0.50 + 0.32 * macroA + 0.18 * macroB;
+    v_macroPatchAndField = vec2(patch, field);
+
     gl_Position  = mvp * worldVertex;
 }

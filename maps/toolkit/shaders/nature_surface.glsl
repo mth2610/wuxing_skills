@@ -153,8 +153,8 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float canopyExtinction = clamp(1.0 / (1.0 + 0.95 * invH + 0.50 * invH * invH), 0.68, 1.0);
 
     float skyWeight = n.y * 0.5 + 0.5;
-    vec3 skyAmbient = Environment_HemisphereIrradiance(vec3(0.0, 1.0, 0.0), u_ambientColor);
-    vec3 groundBounce = Environment_HemisphereIrradiance(vec3(0.0, -1.0, 0.0), u_ambientColor);
+    vec3 skyAmbient = clamp(u_ambientColor * vec3(1.25, 1.25, 1.35), 0.0, 1.0);
+    vec3 groundBounce = clamp(u_ambientColor * vec3(0.55, 0.45, 0.40), 0.0, 1.0);
 
     // Gentle cup cavity (0.78..1.0) preserves bright, readable flower centers
     float cupCavity = mix(0.78, 1.0, FastRamp(0.76, 0.96, hNorm));
@@ -210,11 +210,16 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float u = clamp(uTransverse, -1.0, 1.0);
     float absU = abs(u);
 
-    float fwU = fwidth(u);
-    float fwH = fwidth(h);
-    float unresolved = max(FastRamp(0.55, 1.80, fwU), FastRamp(0.16, 0.45, fwH));
-    float tipConvergence = FastRamp(0.82, 0.99, h);
-    float antiShimmer = max(max(unresolved, FastRamp(11.0, 30.0, distToCam)), tipConvergence * 0.75);
+    float antiShimmer;
+    if (distToCam >= 30.0) {
+        antiShimmer = 1.0;
+    } else {
+        float fwU = fwidth(u);
+        float fwH = fwidth(h);
+        float unresolved = max(FastRamp(0.55, 1.80, fwU), FastRamp(0.16, 0.45, fwH));
+        float tipConvergence = FastRamp(0.82, 0.99, h);
+        antiShimmer = max(max(unresolved, FastRamp(11.0, 30.0, distToCam)), tipConvergence * 0.75);
+    }
 
     // 1. Soft Cylindrical Blade Normal + Tsushima Canopy Upward Bias:
     // Biases the blade normal upward (0.48 minimum Y) and limits side-to-side twist so
@@ -318,8 +323,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 distantCanopyTone = mix(vec3(0.24, 0.42, 0.15), vec3(0.34, 0.52, 0.19), warmShift * 0.65);
     baseColor = mix(baseColor, distantCanopyTone, distRootLift * (1.0 - h) * 0.36);
 
-    vec3 skyAmbient = Environment_HemisphereIrradiance(vec3(0.0, 1.0, 0.0), u_ambientColor);
-    vec3 groundBounce = Environment_HemisphereIrradiance(vec3(0.0, -1.0, 0.0), u_ambientColor);
+    vec3 skyAmbient = clamp(u_ambientColor * vec3(1.25, 1.25, 1.35), 0.0, 1.0);
+    vec3 groundBounce = clamp(u_ambientColor * vec3(0.55, 0.45, 0.40), 0.0, 1.0);
     // Warm chlorophyll bounce in shadows keeps shadowed valleys lush and painterly
     vec3 greenBounce = baseColor * (u_ambientColor * 1.18 + vec3(0.026, 0.052, 0.016));
     vec3 ambientGround = mix(groundBounce, greenBounce, 0.48);
@@ -347,12 +352,13 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
             // Use canopy-blended shading normal `shadingN` so blades in a clump share soft, velvety diffuse transitions
             float lowSunMacroBlend = 1.0 - smoothstep(0.08, 0.36, max(u_lightDir.y, 0.0));
-            vec3 shadingN = normalize(mix(faceNormal, n, mix(0.58, 0.82, lowSunMacroBlend)));
+            float shadingNWeight = mix(0.58, 0.82, lowSunMacroBlend);
+            vec3 shadingN = normalize(mix(faceNormal, n, shadingNWeight));
             vec3 modelLightDir = normalize(vec3(u_lightDir.x + 0.32 * u_lightDir.y, u_lightDir.y * 0.76, u_lightDir.z - 0.24 * u_lightDir.y));
             float wrappedFace  = clamp((dot(shadingN, u_lightDir) + 0.38) * 0.7246, 0.0, 1.0);
             float wrappedModel = clamp((dot(shadingN, modelLightDir) + 0.38) * 0.7246, 0.0, 1.0);
-            float zenithBlend  = FastRamp(0.50, 0.90, u_lightDir.y);
-            float wrapped = mix(wrappedFace, wrappedModel, zenithBlend * 0.60);
+            float zenithBlend  = FastRamp(0.50, 0.90, u_lightDir.y) * 0.60;
+            float wrapped = mix(wrappedFace, wrappedModel, zenithBlend);
 
             // Smooth Beer-Lambert canopy extinction harmonized with ground_splat.fs luminance
             float canopyDepth = 0.34 * (1.0 - h) * (1.0 - distRootLift * 0.55);

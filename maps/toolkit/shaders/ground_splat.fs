@@ -32,6 +32,7 @@ in vec3 fragNormal;
 in vec3 fragWorldPos;
 in vec4 v_lightSpace;
 in vec4 v_staticLightSpace;
+in vec2 v_macroPatchAndField;
 
 uniform vec4 colDiffuse;
 uniform sampler2D texture0;         // Splatmap
@@ -331,9 +332,8 @@ void main()
                 distantTuftRelief = (tuftGrain - 0.5) * distantCanopyBlend * 0.28;
                 canopyColor *= mix(0.88, 1.10, tuftGrain);
 
-                // Macro emerald-to-golden tip harmony matching GrassShade
-                float macroPatch = sin(fragWorldPos.x * 0.12 + fragWorldPos.z * 0.08) * 0.55
-                                 + cos(fragWorldPos.x * -0.07 + fragWorldPos.z * 0.16) * 0.45;
+                // Macro emerald-to-golden tip harmony matching GrassShade (interpolated from vertex stage)
+                float macroPatch = v_macroPatchAndField.x;
                 float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
                 canopyColor *= mix(vec3(0.95, 1.03, 0.92), vec3(1.06, 1.04, 0.88), warmShift * 0.60);
 
@@ -348,60 +348,64 @@ void main()
     }
 
     // ---- 9. Cliff Strata, Woodland Loam & River Shingle ----
-    float porousDarkening = smoothstep(0.0, 0.45, wWetSoil) * (1.0 - wWetSoil * 0.35);
-    float soilLuma = dot(dirtDetail, vec3(0.299, 0.587, 0.114));
-    float pebbleRelief = smoothstep(0.26, 0.72, soilLuma);
-    vec3 loamDark  = vec3(0.19, 0.148, 0.095);
-    vec3 loamLight = vec3(0.38, 0.298, 0.200);
-    vec3 warmLoamColor = mix(loamDark, loamLight, pebbleRelief) * (0.86 + 0.28 * dirtDetail) * (1.0 - porousDarkening * 0.18);
-
-    vec3 cliffAlbedo = warmLoamColor;
     float cliffStrataBump = 0.0;
-    if (wCliff > 0.10 && (slope > 0.28 || outerAbyssMask > 0.05)) {
-        vec2 triUVx = fragWorldPos.zy * 0.28;
-        vec2 triUVz = fragWorldPos.xy * 0.28;
-        vec3 triWeights = abs(geomNormal);
-        triWeights /= max(triWeights.x + triWeights.y + triWeights.z, 0.001);
+    float pebbleRelief = 0.0;
+    vec3 blendedAlbedo = grassAlbedo * wGrass;
 
-        vec3 rockTexX = texture(texPath, triUVx).rgb;
-        vec3 rockTexZ = texture(texPath, triUVz).rgb;
-        vec3 triRock  = rockTexX * triWeights.x + dirtDetail * triWeights.y + rockTexZ * triWeights.z;
+    if (hasSoil) {
+        float porousDarkening = smoothstep(0.0, 0.45, wWetSoil) * (1.0 - wWetSoil * 0.35);
+        float soilLuma = dot(dirtDetail, vec3(0.299, 0.587, 0.114));
+        pebbleRelief = smoothstep(0.26, 0.72, soilLuma);
+        vec3 loamDark  = vec3(0.19, 0.148, 0.095);
+        vec3 loamLight = vec3(0.38, 0.298, 0.200);
+        vec3 warmLoamColor = mix(loamDark, loamLight, pebbleRelief) * (0.86 + 0.28 * dirtDetail) * (1.0 - porousDarkening * 0.18);
 
-        float wallMask = 1.0 - triWeights.y;
-        float strataWarp = sin(fragWorldPos.x * 0.14 + fragWorldPos.z * 0.11) * 1.6;
-        float strataCoord = (fragWorldPos.y + strataWarp) * 0.42;
-        float strataBand = sin(strataCoord * 3.14159) * 0.5 + 0.5;
-        float strataLedge = smoothstep(0.35, 0.65, strataBand);
-        float jointCrack = smoothstep(0.12, 0.55, triRock.r);
-        cliffStrataBump = ((strataLedge - 0.5) * 0.20 + (jointCrack - 0.5) * 0.15) * wallMask;
+        vec3 cliffAlbedo = warmLoamColor;
+        if (wCliff > 0.10 && (slope > 0.28 || outerAbyssMask > 0.05)) {
+            vec2 triUVx = fragWorldPos.zy * 0.28;
+            vec2 triUVz = fragWorldPos.xy * 0.28;
+            vec3 triWeights = abs(geomNormal);
+            triWeights /= max(triWeights.x + triWeights.y + triWeights.z, 0.001);
 
-        vec3 warmSlate   = vec3(0.24, 0.25, 0.22);
-        vec3 warmGranite = vec3(0.40, 0.38, 0.32);
-        vec3 lichenMoss  = vec3(0.20, 0.28, 0.14);
-        cliffAlbedo = mix(warmSlate, warmGranite, clamp(triRock.r * 0.72 + strataLedge * 0.28, 0.0, 1.0));
-        float ledgeMoss = clamp(geomNormal.y * 1.15 - 0.30, 0.0, 1.0) * smoothstep(0.38, 0.80, triRock.g);
-        cliffAlbedo = mix(cliffAlbedo, lichenMoss, ledgeMoss * 0.55);
-    }
+            vec3 rockTexX = texture(texPath, triUVx).rgb;
+            vec3 rockTexZ = texture(texPath, triUVz).rgb;
+            vec3 triRock  = rockTexX * triWeights.x + dirtDetail * triWeights.y + rockTexZ * triWeights.z;
 
-    float cliffMix = clamp(wCliff / max(wDrySoil, 0.001), 0.0, 1.0);
-    vec3 drySoilColor = mix(warmLoamColor, cliffAlbedo, cliffMix);
+            float wallMask = 1.0 - triWeights.y;
+            float strataWarp = sin(fragWorldPos.x * 0.14 + fragWorldPos.z * 0.11) * 1.6;
+            float strataCoord = (fragWorldPos.y + strataWarp) * 0.42;
+            float strataBand = sin(strataCoord * 3.14159) * 0.5 + 0.5;
+            float strataLedge = smoothstep(0.35, 0.65, strataBand);
+            float jointCrack = smoothstep(0.12, 0.55, triRock.r);
+            cliffStrataBump = ((strataLedge - 0.5) * 0.20 + (jointCrack - 0.5) * 0.15) * wallMask;
 
-    float pebbleGrain = smoothstep(0.22, 0.78, dirtDetail.r);
-    vec3 dampShingle = mix(vec3(0.19, 0.19, 0.15), vec3(0.31, 0.29, 0.22), pebbleGrain);
-    vec3 mossyBank   = vec3(0.15, 0.22, 0.10) * (0.80 + 0.40 * dirtDetail.g);
-    vec3 wetSoilColor = mix(mossyBank, dampShingle, clamp(shoreFactor * 0.68 + streamWet * 0.32, 0.0, 1.0));
-    if (lakeDepthFactor > 0.0) {
-        vec3 submergedBed = mix(vec3(0.15, 0.19, 0.15), vec3(0.09, 0.14, 0.13), lakeDepthFactor);
-        wetSoilColor = mix(wetSoilColor, submergedBed * (0.84 + 0.32 * pebbleGrain), clamp(lakeDepthFactor * 1.15, 0.0, 1.0));
-    }
+            vec3 warmSlate   = vec3(0.24, 0.25, 0.22);
+            vec3 warmGranite = vec3(0.40, 0.38, 0.32);
+            vec3 lichenMoss  = vec3(0.20, 0.28, 0.14);
+            cliffAlbedo = mix(warmSlate, warmGranite, clamp(triRock.r * 0.72 + strataLedge * 0.28, 0.0, 1.0));
+            float ledgeMoss = clamp(geomNormal.y * 1.15 - 0.30, 0.0, 1.0) * smoothstep(0.38, 0.80, triRock.g);
+            cliffAlbedo = mix(cliffAlbedo, lichenMoss, ledgeMoss * 0.55);
+        }
 
-    vec3 trailCore = mix(vec3(0.27, 0.20, 0.13), vec3(0.49, 0.38, 0.26), pebbleRelief) * (0.86 + 0.28 * colorDirt.rgb);
-    vec3 pathMarginColor = mix(warmLoamColor, trailCore, wPath);
+        float cliffMix = clamp(wCliff / max(wDrySoil, 0.001), 0.0, 1.0);
+        vec3 drySoilColor = mix(warmLoamColor, cliffAlbedo, cliffMix);
 
-    vec3 blendedAlbedo = grassAlbedo * wGrass
-                       + drySoilColor * wDrySoil
+        float pebbleGrain = smoothstep(0.22, 0.78, dirtDetail.r);
+        vec3 dampShingle = mix(vec3(0.19, 0.19, 0.15), vec3(0.31, 0.29, 0.22), pebbleGrain);
+        vec3 mossyBank   = vec3(0.15, 0.22, 0.10) * (0.80 + 0.40 * dirtDetail.g);
+        vec3 wetSoilColor = mix(mossyBank, dampShingle, clamp(shoreFactor * 0.68 + streamWet * 0.32, 0.0, 1.0));
+        if (lakeDepthFactor > 0.0) {
+            vec3 submergedBed = mix(vec3(0.15, 0.19, 0.15), vec3(0.09, 0.14, 0.13), lakeDepthFactor);
+            wetSoilColor = mix(wetSoilColor, submergedBed * (0.84 + 0.32 * pebbleGrain), clamp(lakeDepthFactor * 1.15, 0.0, 1.0));
+        }
+
+        vec3 trailCore = mix(vec3(0.27, 0.20, 0.13), vec3(0.49, 0.38, 0.26), pebbleRelief) * (0.86 + 0.28 * colorDirt.rgb);
+        vec3 pathMarginColor = mix(warmLoamColor, trailCore, wPath);
+
+        blendedAlbedo += drySoilColor * wDrySoil
                        + wetSoilColor * wWetSoil
                        + pathMarginColor * wPath;
+    }
 
     float wetCapillaryDarken = smoothstep(0.15, 0.85, wWetSoil) * (1.0 - lakeDepthFactor * 0.5) * 0.28;
     blendedAlbedo *= (1.0 - wetCapillaryDarken);
@@ -437,9 +441,7 @@ void main()
         }
     }
 
-    float macroA = sin(fragWorldPos.x * 0.042 + fragWorldPos.z * 0.028);
-    float macroB = sin(fragWorldPos.x * -0.022 + fragWorldPos.z * 0.048 + 1.35);
-    float macroField = 0.50 + 0.32 * macroA + 0.18 * macroB;
+    float macroField = v_macroPatchAndField.y;
     float heightInfluence = clamp((fragWorldPos.y - 1.2) * 0.08, -0.20, 0.30);
     float crestWarmth = clamp(macroField + heightInfluence, 0.0, 1.0);
     blendedAlbedo *= mix(GS_CREST_COOL, GS_CREST_WARM, crestWarmth);
@@ -506,7 +508,7 @@ void main()
     float resolvedShadow = mix(rawShadow, turfShadowVis, wGrass);
     float shadowFloor = mix(0.18, 0.24, wGrass);
     float shadow = mix(shadowFloor, 1.0, resolvedShadow);
-    float sunVisibility = shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos);
+    float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) : 0.0;
 
     float ambientShadowMod = mix(mix(0.68, 0.64, wGrass), 1.0, resolvedShadow);
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient) * (cavityAO * ambientShadowMod);

@@ -882,8 +882,10 @@ void DrawSongQuaoMap(void)
 
     if (!(s_skipMask & SQ_SKIP_DEBRIS))
         MapProp_DrawDebrisSystem(&s_debris, camera.position);
+
     if (!(s_skipMask & SQ_SKIP_FLORA))
         MapProp_DrawFloraSystem(&s_flora);
+
     if (!(s_skipMask & SQ_SKIP_SKY))
         MapProp_DrawSkyDome(&s_sky);
     if (!(s_skipMask & SQ_SKIP_CLOUDSEA))
