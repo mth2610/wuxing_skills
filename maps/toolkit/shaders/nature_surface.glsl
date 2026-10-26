@@ -103,8 +103,8 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 geometricNormal = normalize(worldNormal);
     vec3 faceNormal = gl_FrontFacing ? geometricNormal : -geometricNormal;
 
-    // Lift bloom & stem normals upward so 3D petals catch warm sky/sun irradiance evenly
-    faceNormal.y = max(faceNormal.y, -0.10) + mix(0.28, 0.45, bloomMask);
+    // Preserve sculpted 3D petal cupping normals while gently lifting stem bases
+    faceNormal.y = max(faceNormal.y, -0.10) + (1.0 - bloomMask) * 0.28;
     faceNormal = normalize(faceNormal);
 
     vec3 bladeSide = vec3(-faceNormal.z, 0.0, faceNormal.x);

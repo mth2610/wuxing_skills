@@ -364,11 +364,17 @@ void main()
         if (wCliff > 0.10 && (slope > 0.28 || outerAbyssMask > 0.05)) {
             vec2 triUVx = fragWorldPos.zy * 0.28;
             vec2 triUVz = fragWorldPos.xy * 0.28;
-            vec3 triWeights = abs(geomNormal);
+            vec3 triWeights = pow(abs(geomNormal), vec3(3.0));
             triWeights /= max(triWeights.x + triWeights.y + triWeights.z, 0.001);
 
             vec3 rockTexX = texture(texPath, triUVx).rgb;
             vec3 rockTexZ = texture(texPath, triUVz).rgb;
+            if (nearDualScale) {
+                vec3 rockDetailX = texture(texPath, triUVx * 2.8).rgb;
+                vec3 rockDetailZ = texture(texPath, triUVz * 2.8).rgb;
+                rockTexX = mix(rockTexX, rockDetailX, 0.32);
+                rockTexZ = mix(rockTexZ, rockDetailZ, 0.32);
+            }
             vec3 triRock  = rockTexX * triWeights.x + dirtDetail * triWeights.y + rockTexZ * triWeights.z;
 
             float wallMask = 1.0 - triWeights.y;

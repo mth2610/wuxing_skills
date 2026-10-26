@@ -222,12 +222,15 @@ static inline float Nature_EvalPetalWidth(float t, const PetalParams *p)
 
 static inline float Nature_EvalPetalElevation(float t, const PetalParams *p)
 {
+    // Botanical 3D Conical Chalice Cup:
+    // Petals rise in a smooth upward bowl (conical lift of ~25-30 deg + curveAmount)
     float s = sinf(t * 1.5707963f);
-    return p->curveAmount * (s * 1.25f - 0.25f * t * t);
+    float conical = p->length * 0.28f * (t * 0.85f + 0.15f * t * t);
+    return conical + p->curveAmount * (s * 1.25f - 0.25f * t * t);
 }
 
 static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
-                                      Vector3 head, Vector3 dir, Vector3 side,
+                                      Vector3 head, Vector3 headNormal, Vector3 dir, Vector3 side,
                                       const PetalParams *p, float phase,
                                       Color cBase, Color cMid, Color cTip)
 {
@@ -260,43 +263,43 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
         float phi1 = p->twistAmount * t1;
         float phi2 = p->twistAmount * t2;
         float phi3 = p->twistAmount * t3;
-        side1 = (Vector3){side.x * cosf(phi1), sinf(phi1) * len * 0.10f, side.z * cosf(phi1)};
-        side2 = (Vector3){side.x * cosf(phi2), sinf(phi2) * len * 0.15f, side.z * cosf(phi2)};
-        side3 = (Vector3){side.x * cosf(phi3), sinf(phi3) * len * 0.18f, side.z * cosf(phi3)};
+        side1 = Vector3Add(Vector3Scale(side, cosf(phi1)), Vector3Scale(headNormal, sinf(phi1) * len * 0.10f));
+        side2 = Vector3Add(Vector3Scale(side, cosf(phi2)), Vector3Scale(headNormal, sinf(phi2) * len * 0.15f));
+        side3 = Vector3Add(Vector3Scale(side, cosf(phi3)), Vector3Scale(headNormal, sinf(phi3) * len * 0.18f));
     }
 
-    Vector3 p0 = {head.x + dir.x * (len * t0), head.y + dy0 + 0.003f, head.z + dir.z * (len * t0)};
-    Vector3 p1 = {head.x + dir.x * (len * t1), head.y + dy1, head.z + dir.z * (len * t1)};
-    Vector3 p2 = {head.x + dir.x * (len * t2), head.y + dy2, head.z + dir.z * (len * t2)};
-    Vector3 p3 = {head.x + dir.x * (len * t3), head.y + dy3, head.z + dir.z * (len * t3)};
-    Vector3 pApex = {head.x + dir.x * len, head.y + dy4, head.z + dir.z * len};
+    Vector3 p0 = Vector3Add(head, Vector3Add(Vector3Scale(dir, len * t0), Vector3Scale(headNormal, dy0 + 0.003f)));
+    Vector3 p1 = Vector3Add(head, Vector3Add(Vector3Scale(dir, len * t1), Vector3Scale(headNormal, dy1)));
+    Vector3 p2 = Vector3Add(head, Vector3Add(Vector3Scale(dir, len * t2), Vector3Scale(headNormal, dy2)));
+    Vector3 p3 = Vector3Add(head, Vector3Add(Vector3Scale(dir, len * t3), Vector3Scale(headNormal, dy3)));
+    Vector3 pApex = Vector3Add(head, Vector3Add(Vector3Scale(dir, len), Vector3Scale(headNormal, dy4)));
 
     // Transverse cupping: petal margins dish upward across width creating rich 3D volume
-    float cup0 = w0 * 0.22f;
-    float cup1 = w1 * 0.28f;
-    float cup2 = w2 * 0.22f;
-    float cup3 = w3 * 0.14f;
+    float cup0 = w0 * 0.28f;
+    float cup1 = w1 * 0.38f;
+    float cup2 = w2 * 0.32f;
+    float cup3 = w3 * 0.20f;
 
-    Vector3 b0 = {p0.x - side0.x * w0, p0.y + cup0, p0.z - side0.z * w0};
-    Vector3 b1 = {p0.x + side0.x * w0, p0.y + cup0, p0.z + side0.z * w0};
+    Vector3 b0 = Vector3Add(Vector3Subtract(p0, Vector3Scale(side0, w0)), Vector3Scale(headNormal, cup0));
+    Vector3 b1 = Vector3Add(Vector3Add(p0, Vector3Scale(side0, w0)), Vector3Scale(headNormal, cup0));
 
-    Vector3 m0 = {p1.x - side1.x * w1, p1.y + cup1, p1.z - side1.z * w1};
-    Vector3 m1 = {p1.x + side1.x * w1, p1.y + cup1, p1.z + side1.z * w1};
+    Vector3 m0 = Vector3Add(Vector3Subtract(p1, Vector3Scale(side1, w1)), Vector3Scale(headNormal, cup1));
+    Vector3 m1 = Vector3Add(Vector3Add(p1, Vector3Scale(side1, w1)), Vector3Scale(headNormal, cup1));
 
-    Vector3 s0 = {p2.x - side2.x * w2, p2.y + cup2, p2.z - side2.z * w2};
-    Vector3 s1 = {p2.x + side2.x * w2, p2.y + cup2, p2.z + side2.z * w2};
+    Vector3 s0 = Vector3Add(Vector3Subtract(p2, Vector3Scale(side2, w2)), Vector3Scale(headNormal, cup2));
+    Vector3 s1 = Vector3Add(Vector3Add(p2, Vector3Scale(side2, w2)), Vector3Scale(headNormal, cup2));
 
-    Vector3 c0 = {p3.x - side3.x * w3, p3.y + cup3, p3.z - side3.z * w3};
-    Vector3 c1 = {p3.x + side3.x * w3, p3.y + cup3, p3.z + side3.z * w3};
+    Vector3 c0 = Vector3Add(Vector3Subtract(p3, Vector3Scale(side3, w3)), Vector3Scale(headNormal, cup3));
+    Vector3 c1 = Vector3Add(Vector3Add(p3, Vector3Scale(side3, w3)), Vector3Scale(headNormal, cup3));
 
-    // Cupped analytical normals across width
-    Vector3 nL0 = Vector3Normalize((Vector3){dir.x * 0.15f + side.x * 0.32f, 0.92f, dir.z * 0.15f + side.z * 0.32f});
-    Vector3 nR0 = Vector3Normalize((Vector3){dir.x * 0.15f - side.x * 0.32f, 0.92f, dir.z * 0.15f - side.z * 0.32f});
-    Vector3 nL1 = Vector3Normalize((Vector3){dir.x * 0.32f + side1.x * 0.38f, 0.86f, dir.z * 0.32f + side1.z * 0.38f});
-    Vector3 nR1 = Vector3Normalize((Vector3){dir.x * 0.32f - side1.x * 0.38f, 0.86f, dir.z * 0.32f - side1.z * 0.38f});
-    Vector3 nL2 = Vector3Normalize((Vector3){dir.x * 0.52f + side2.x * 0.34f, 0.80f, dir.z * 0.52f + side2.z * 0.34f});
-    Vector3 nR2 = Vector3Normalize((Vector3){dir.x * 0.52f - side2.x * 0.34f, 0.80f, dir.z * 0.52f - side2.z * 0.34f});
-    Vector3 n3 = Vector3Normalize((Vector3){dir.x * 0.68f, 0.70f, dir.z * 0.68f});
+    // Cupped analytical normals across width angling outward and upward
+    Vector3 nL0 = Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(dir, 0.20f), Vector3Scale(side, 0.40f)), Vector3Scale(headNormal, 0.88f)));
+    Vector3 nR0 = Vector3Normalize(Vector3Add(Vector3Subtract(Vector3Scale(dir, 0.20f), Vector3Scale(side, 0.40f)), Vector3Scale(headNormal, 0.88f)));
+    Vector3 nL1 = Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(dir, 0.40f), Vector3Scale(side1, 0.45f)), Vector3Scale(headNormal, 0.78f)));
+    Vector3 nR1 = Vector3Normalize(Vector3Add(Vector3Subtract(Vector3Scale(dir, 0.40f), Vector3Scale(side1, 0.45f)), Vector3Scale(headNormal, 0.78f)));
+    Vector3 nL2 = Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(dir, 0.58f), Vector3Scale(side2, 0.38f)), Vector3Scale(headNormal, 0.70f)));
+    Vector3 nR2 = Vector3Normalize(Vector3Add(Vector3Subtract(Vector3Scale(dir, 0.58f), Vector3Scale(side2, 0.38f)), Vector3Scale(headNormal, 0.70f)));
+    Vector3 n3 = Vector3Normalize(Vector3Add(Vector3Scale(dir, 0.75f), Vector3Scale(headNormal, 0.62f)));
 
     // Segment 0: Base to Mid (6 vertices)
     Nature_SetVertex(mesh, (*cursor)++, b0, nL0, phase, 0.85f, cBase);
@@ -323,8 +326,8 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
     Nature_SetVertex(mesh, (*cursor)++, c0, n3, phase, 1.00f, cTip);
 
     // Segment 3: Botanical Rounded Dome Apex (6 vertices, 2 fan triangles to pApex)
-    Vector3 nTipL = Vector3Normalize((Vector3){dir.x * 0.70f - side.x * 0.35f, 0.60f, dir.z * 0.70f - side.z * 0.35f});
-    Vector3 nTipR = Vector3Normalize((Vector3){dir.x * 0.70f + side.x * 0.35f, 0.60f, dir.z * 0.70f + side.z * 0.35f});
+    Vector3 nTipL = Vector3Normalize(Vector3Add(Vector3Subtract(Vector3Scale(dir, 0.70f), Vector3Scale(side, 0.35f)), Vector3Scale(headNormal, 0.60f)));
+    Vector3 nTipR = Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(dir, 0.70f), Vector3Scale(side, 0.35f)), Vector3Scale(headNormal, 0.60f)));
     Nature_SetVertex(mesh, (*cursor)++, c0, nTipL, phase, 1.00f, cTip);
     Nature_SetVertex(mesh, (*cursor)++, p3, n3, phase, 1.00f, cTip);
     Nature_SetVertex(mesh, (*cursor)++, pApex, nTipL, phase, 1.00f, cTip);
@@ -334,21 +337,50 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
     Nature_SetVertex(mesh, (*cursor)++, pApex, nTipR, phase, 1.00f, cTip);
 }
 
-static void Nature_AddFlowerCenterDome(Mesh *mesh, int *cursor, Vector3 head, float cR, float cHeight, float phase, Color centerColor)
+static Color Nature_GetSpeciesCenterColor(int variant)
 {
-    Vector3 apex = {head.x, head.y + cHeight * 1.35f, head.z};
+    switch (variant & 7)
+    {
+    case 0: return (Color){248, 185, 22, 255}; // Daisy: rich golden amber
+    case 1: return (Color){195, 115, 18, 255}; // Buttercup: deep warm burnt-orange/amber
+    case 2: return (Color){34, 24, 24, 255};   // Poppy: dark velvety charcoal
+    case 3: return (Color){45, 40, 78, 255};   // Cornflower: deep sapphire navy
+    case 4: return (Color){238, 165, 24, 255}; // Peach-rose: bright honey gold
+    case 5: return (Color){245, 200, 32, 255}; // Cosmos: sunny golden yolk
+    case 6: return (Color){92, 58, 128, 255};  // Lavender: deep violet-aubergine
+    case 7: return (Color){168, 185, 48, 255}; // Primrose: chartreuse lime-gold
+    default: return (Color){248, 185, 22, 255};
+    }
+}
+
+static void Nature_AddFlowerCenterDome(Mesh *mesh, int *cursor,
+                                       Vector3 head, Vector3 headNormal,
+                                       Vector3 headRight, Vector3 headForward,
+                                       float cR, float cHeight, float phase, Color centerColor)
+{
+    Vector3 apex = Vector3Add(head, Vector3Scale(headNormal, cHeight * 1.45f));
     Color apexColor = Nature_ScaleColor(centerColor, 1.25f);
-    Color rimColor = Nature_ScaleColor(centerColor, 0.75f);
+    // Outer stamen collar: rich contrasting darker rim for floral depth
+    Color rimColor = Nature_ScaleColor(centerColor, 0.45f);
     for (int s = 0; s < 6; s++)
     {
         float a0 = (float)s * 1.04719755f;
         float a1 = (float)(s + 1) * 1.04719755f;
-        float goldMod0 = 1.0f + 0.06f * sinf((float)s * 2.39996f);
-        float goldMod1 = 1.0f + 0.06f * sinf((float)(s + 1) * 2.39996f);
-        Vector3 r0 = {head.x + cosf(a0) * cR * goldMod0, head.y + 0.005f, head.z + sinf(a0) * cR * goldMod0};
-        Vector3 r1 = {head.x + cosf(a1) * cR * goldMod1, head.y + 0.005f, head.z + sinf(a1) * cR * goldMod1};
-        Vector3 norm = Vector3Normalize((Vector3){cosf((a0 + a1) * 0.5f) * 0.55f, 0.84f, sinf((a0 + a1) * 0.5f) * 0.55f});
-        Nature_SetVertex(mesh, (*cursor)++, apex, (Vector3){0.0f, 1.0f, 0.0f}, phase, 1.0f, apexColor);
+        float goldMod0 = 1.0f + 0.08f * sinf((float)s * 2.39996f);
+        float goldMod1 = 1.0f + 0.08f * sinf((float)(s + 1) * 2.39996f);
+        Vector3 rad0 = Vector3Add(Vector3Scale(headRight, cosf(a0) * cR * goldMod0),
+                                  Vector3Scale(headForward, sinf(a0) * cR * goldMod0));
+        Vector3 rad1 = Vector3Add(Vector3Scale(headRight, cosf(a1) * cR * goldMod1),
+                                  Vector3Scale(headForward, sinf(a1) * cR * goldMod1));
+        Vector3 r0 = Vector3Add(head, Vector3Add(rad0, Vector3Scale(headNormal, 0.005f)));
+        Vector3 r1 = Vector3Add(head, Vector3Add(rad1, Vector3Scale(headNormal, 0.005f)));
+
+        float midA = (a0 + a1) * 0.5f;
+        Vector3 midRad = Vector3Add(Vector3Scale(headRight, cosf(midA) * 0.55f),
+                                    Vector3Scale(headForward, sinf(midA) * 0.55f));
+        Vector3 norm = Vector3Normalize(Vector3Add(midRad, Vector3Scale(headNormal, 0.84f)));
+
+        Nature_SetVertex(mesh, (*cursor)++, apex, headNormal, phase, 1.0f, apexColor);
         Nature_SetVertex(mesh, (*cursor)++, r0, norm, phase, 0.95f, rimColor);
         Nature_SetVertex(mesh, (*cursor)++, r1, norm, phase, 0.95f, rimColor);
     }
@@ -478,6 +510,17 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         }
 
         // 5. Assemble 3D Flower Head
+        // Natural flower head tilt towards light/wind (12 deg ~ 16 deg) along stem lean direction
+        float tiltAmount = 0.22f + 0.08f * sinf(phase * 6.28f);
+        Vector3 headNormal = Vector3Normalize((Vector3){stemDirX * tiltAmount, 0.96f, stemDirZ * tiltAmount});
+        float stemAngle = flower->rotationDeg * DEG2RAD;
+        Vector3 refRight = {cosf(stemAngle), 0.0f, sinf(stemAngle)};
+        Vector3 headRight = Vector3Normalize(Vector3Subtract(refRight, Vector3Scale(headNormal, Vector3DotProduct(refRight, headNormal))));
+        Vector3 headForward = Vector3CrossProduct(headNormal, headRight);
+        Color effCenterColor = Nature_GetSpeciesCenterColor(flower->bloomVariant);
+        if (centerColor.a > 0 && flower->bloomVariant < 0)
+            effCenterColor = centerColor;
+
         if (field.textured)
         {
             int variantCount = atlasColumns * atlasRows;
@@ -493,10 +536,9 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 (float)(row + 1) / (float)atlasRows - insetV,
             };
 
-            float stemAngle = flower->rotationDeg * DEG2RAD;
-            Vector3 bloomNormal = (Vector3){0.0f, 1.0f, 0.0f};
-            Vector3 right = {cosf(stemAngle), 0.0f, sinf(stemAngle)};
-            Vector3 forward = {-sinf(stemAngle), 0.0f, cosf(stemAngle)};
+            Vector3 bloomNormal = headNormal;
+            Vector3 right = headRight;
+            Vector3 forward = headForward;
 
             float ox0 = (-right.x - forward.x) * r;
             float oz0 = (-right.z - forward.z) * r;
@@ -531,7 +573,7 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
             Nature_AddTexturedBloom(&mesh, &cursor, k0, k1, k2, k3, r1,
                                     phase, flower->petalColor, uvRect);
 
-            Nature_AddFlowerCenterDome(&mesh, &cursor, head, r * 0.22f, r * 0.10f, phase, centerColor);
+            Nature_AddFlowerCenterDome(&mesh, &cursor, head, headNormal, headRight, headForward, r * 0.22f, r * 0.10f, phase, effCenterColor);
         }
         else
         {
@@ -555,10 +597,10 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 };
                 for (int k = 0; k < 5; k++)
                 {
-                    float angle = flower->rotationDeg * DEG2RAD + (float)k * 1.256637f;
-                    Vector3 dir = {cosf(angle), 0.0f, sinf(angle)};
-                    Vector3 side = {-dir.z, 0.0f, dir.x};
-                    Nature_AddParametricPetal(&mesh, &cursor, head, dir, side, &pOuter,
+                    float angle = (float)k * 1.256637f;
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    Vector3 side = Vector3CrossProduct(headNormal, dir);
+                    Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pOuter,
                                               phase, cBase, cMid, cTip);
                 }
                 PetalParams pInner = {
@@ -574,13 +616,13 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 Color cInMid = Nature_ScaleColor(cMid, 0.95f);
                 for (int k = 0; k < 3; k++)
                 {
-                    float angle = flower->rotationDeg * DEG2RAD + 0.628318f + (float)k * 2.094395f;
-                    Vector3 dir = {cosf(angle), 0.0f, sinf(angle)};
-                    Vector3 side = {-dir.z, 0.0f, dir.x};
-                    Nature_AddParametricPetal(&mesh, &cursor, head, dir, side, &pInner,
+                    float angle = 0.628318f + (float)k * 2.094395f;
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    Vector3 side = Vector3CrossProduct(headNormal, dir);
+                    Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pInner,
                                               phase, cInBase, cInMid, cTip);
                 }
-                Nature_AddFlowerCenterDome(&mesh, &cursor, head, r * 0.28f, r * 0.16f, phase, centerColor);
+                Nature_AddFlowerCenterDome(&mesh, &cursor, head, headNormal, headRight, headForward, r * 0.28f, r * 0.16f, phase, effCenterColor);
                 break;
             }
             case 1:
@@ -595,13 +637,13 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 };
                 for (int k = 0; k < 8; k++)
                 {
-                    float angle = flower->rotationDeg * DEG2RAD + (float)k * 0.785398f;
-                    Vector3 dir = {cosf(angle), 0.0f, sinf(angle)};
-                    Vector3 side = {-dir.z, 0.0f, dir.x};
-                    Nature_AddParametricPetal(&mesh, &cursor, head, dir, side, &pDaisy,
+                    float angle = (float)k * 0.785398f;
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    Vector3 side = Vector3CrossProduct(headNormal, dir);
+                    Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pDaisy,
                                               phase, cBase, cMid, cTip);
                 }
-                Nature_AddFlowerCenterDome(&mesh, &cursor, head, r * 0.35f, r * 0.15f, phase, centerColor);
+                Nature_AddFlowerCenterDome(&mesh, &cursor, head, headNormal, headRight, headForward, r * 0.35f, r * 0.15f, phase, effCenterColor);
                 break;
             }
             case 2:
@@ -611,7 +653,7 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 for (int k = 0; k < 4; k++)
                 {
                     float s = 0.22f + (float)k * 0.24f;
-                    Vector3 tierHead = {head.x, head.y + spH * s, head.z};
+                    Vector3 tierHead = Vector3Add(head, Vector3Scale(headNormal, spH * s));
                     float bloomFactor = (s < 0.65f) ? 1.0f : fmaxf(0.40f, 1.0f - (s - 0.65f) / 0.35f);
                     PetalParams pFloret = {
                         .shape = PETAL_SHAPE_OVAL,
@@ -623,15 +665,15 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                     };
                     for (int j = 0; j < 2; j++)
                     {
-                        float angle = flower->rotationDeg * DEG2RAD + (float)k * phaseSpiral + (float)j * PI;
-                        Vector3 dir = {cosf(angle), 0.0f, sinf(angle)};
-                        Vector3 side = {-dir.z, 0.0f, dir.x};
-                        Nature_AddParametricPetal(&mesh, &cursor, tierHead, dir, side, &pFloret,
+                        float angle = (float)k * phaseSpiral + (float)j * PI;
+                        Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                        Vector3 side = Vector3CrossProduct(headNormal, dir);
+                        Nature_AddParametricPetal(&mesh, &cursor, tierHead, headNormal, dir, side, &pFloret,
                                                   phase, cBase, cMid, cTip);
                     }
                 }
-                Vector3 tipApex = {head.x, head.y + spH, head.z};
-                Nature_AddFlowerCenterDome(&mesh, &cursor, tipApex, r * 0.16f, r * 0.18f, phase, centerColor);
+                Vector3 tipApex = Vector3Add(head, Vector3Scale(headNormal, spH));
+                Nature_AddFlowerCenterDome(&mesh, &cursor, tipApex, headNormal, headRight, headForward, r * 0.16f, r * 0.18f, phase, effCenterColor);
                 break;
             }
             case 3:
@@ -646,13 +688,13 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 };
                 for (int k = 0; k < 6; k++)
                 {
-                    float angle = flower->rotationDeg * DEG2RAD + (float)k * 1.04719755f;
-                    Vector3 dir = {cosf(angle), 0.0f, sinf(angle)};
-                    Vector3 side = {-dir.z, 0.0f, dir.x};
-                    Nature_AddParametricPetal(&mesh, &cursor, head, dir, side, &pBell,
+                    float angle = (float)k * 1.04719755f;
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    Vector3 side = Vector3CrossProduct(headNormal, dir);
+                    Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pBell,
                                               phase, cBase, cMid, cTip);
                 }
-                Nature_AddFlowerCenterDome(&mesh, &cursor, head, r * 0.24f, r * 0.14f, phase, centerColor);
+                Nature_AddFlowerCenterDome(&mesh, &cursor, head, headNormal, headRight, headForward, r * 0.24f, r * 0.14f, phase, effCenterColor);
                 break;
             }
             }

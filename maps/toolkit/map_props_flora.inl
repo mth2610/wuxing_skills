@@ -150,13 +150,14 @@ void MapFlora_GenerateFlowerPlacements(
             }
 
             bool tallAccent = (variant == 2 || variant == 4 || variant == 6);
-            // Natural wildflower height nestled organically into the grass canopy (no sticking out like tall poles)
-            float coreLift = isColony ? (1.0f - 0.16f * radialNorm) : 0.86f;
-            float driftHeightBase = tallAccent ? 0.34f : 0.28f;
-            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.07f - 0.02f)) * coreLift;
+            // AAA Wildflower Height: elevated above the grass understorey cushion (0.44m - 0.56m)
+            // so blooms catch full sunlight and never get drowned or pierced by grass stalks.
+            float coreLift = isColony ? (1.0f - 0.12f * radialNorm) : 0.88f;
+            float driftHeightBase = tallAccent ? 0.52f : 0.45f;
+            outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.08f - 0.03f)) * coreLift;
 
-            // Delicate painterly bloom proportions that nestle into the grass without speckling distant hills
-            float baseBloomRadius = tallAccent ? 0.086f : 0.072f;
+            // Painterly bloom proportions with rich surface presence across all camera zoom levels
+            float baseBloomRadius = tallAccent ? 0.098f : 0.086f;
             outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.92f + Nature_Random01(&rng) * 0.18f) * (0.90f + 0.12f * coreLift);
             outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.74f);
             outPlacements[outIdx].petalCount = (unsigned char)(5 + (variant % 3));
@@ -171,13 +172,43 @@ float MapFlora_EvaluateFlowerUnderstorey(
     const MapFloraFlowerCluster *clusters,
     int clusterCount)
 {
-    (void)x;
-    (void)z;
-    (void)clusters;
-    (void)clusterCount;
-    // Keep full continuous grass height across wildflower colonies so flower clusters
-    // never carve visible circular depressions into hillsides.
-    return 1.0f;
+    if (!clusters || clusterCount <= 0)
+        return 1.0f;
+
+    float minScale = 1.0f;
+    for (int c = 0; c < clusterCount; c++)
+    {
+        const MapFloraFlowerCluster *cl = &clusters[c];
+        float rx = (cl->radius.x > 0.1f) ? cl->radius.x : 10.0f;
+        float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
+        float dx = (x - cl->center.x) / rx;
+        float dz = (z - cl->center.z) / rz;
+        float distSq = dx * dx + dz * dz;
+        if (distSq > 1.44f) // outside 1.2x cluster radius
+            continue;
+
+        Vector2 epicenters[3];
+        MapFlora_GetClusterEpicentersNorm(c, epicenters);
+
+        float minEpiDistSq = 999.0f;
+        for (int e = 0; e < 3; e++)
+        {
+            float edx = dx - epicenters[e].x;
+            float edz = dz - epicenters[e].y;
+            float d2 = edx * edx + edz * edz;
+            if (d2 < minEpiDistSq)
+                minEpiDistSq = d2;
+        }
+
+        float epiDist = sqrtf(minEpiDistSq);
+        // Core understorey cushion: scale grass height down to 0.42x (from ~0.52m to ~0.22m)
+        // Transition back to 1.0x at distance 0.48 in normalized cluster space
+        float weight = 1.0f - MapMath_SmoothStep01(0.04f, 0.45f, epiDist);
+        float scale = 1.0f - 0.58f * weight; // 1.0 -> 0.42
+        if (scale < minScale)
+            minScale = scale;
+    }
+    return minScale;
 }
 
 float MapFlora_EvaluateFlowerSuppression(
@@ -185,12 +216,43 @@ float MapFlora_EvaluateFlowerSuppression(
     const MapFloraFlowerCluster *clusters,
     int clusterCount)
 {
-    (void)x;
-    (void)z;
-    (void)clusters;
-    (void)clusterCount;
-    // Keep 100% grass tuft density under wildflowers so hillsides remain a seamless carpet.
-    return 1.0f;
+    if (!clusters || clusterCount <= 0)
+        return 1.0f;
+
+    float minDensity = 1.0f;
+    for (int c = 0; c < clusterCount; c++)
+    {
+        const MapFloraFlowerCluster *cl = &clusters[c];
+        float rx = (cl->radius.x > 0.1f) ? cl->radius.x : 10.0f;
+        float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
+        float dx = (x - cl->center.x) / rx;
+        float dz = (z - cl->center.z) / rz;
+        float distSq = dx * dx + dz * dz;
+        if (distSq > 1.44f)
+            continue;
+
+        Vector2 epicenters[3];
+        MapFlora_GetClusterEpicentersNorm(c, epicenters);
+
+        float minEpiDistSq = 999.0f;
+        for (int e = 0; e < 3; e++)
+        {
+            float edx = dx - epicenters[e].x;
+            float edz = dz - epicenters[e].y;
+            float d2 = edx * edx + edz * edz;
+            if (d2 < minEpiDistSq)
+                minEpiDistSq = d2;
+        }
+
+        float epiDist = sqrtf(minEpiDistSq);
+        // In the dense center of flower colonies, thin grass tufts by ~52% (density 0.48)
+        // so blades have natural breathing room and do not crowd flower blossoms
+        float weight = 1.0f - MapMath_SmoothStep01(0.02f, 0.38f, epiDist);
+        float density = 1.0f - 0.52f * weight;
+        if (density < minDensity)
+            minDensity = density;
+    }
+    return minDensity;
 }
 
 int MapFlora_GenerateMeadowPlacements(
@@ -611,9 +673,9 @@ MapFloraSystem MapProp_CreateFloraSystem(
                 stemColor, centerColor,
                 NULL, 0.0f, 1, 1);
 
-            // Restore projected contact shadow + real shadow caster distance (18m) for wildflowers
-            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 14.0f, 18.0f);
-            MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 26.0f);
+            // High-fidelity LOD: near 3D petals to 24m, far billboard drift to 68m, shadow casters to 18m
+            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 24.0f, 18.0f);
+            MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 68.0f);
             placementOffset += count;
         }
     }
