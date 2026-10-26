@@ -2,36 +2,6 @@
 #include "core/shaders/common/vs_header.glsl"
 #include "core/deform/shaders/mesh_deform.glsl"
 
-// ── TRAIL DEFORM — uber vertex deformation for ribbon trails ────────────────
-// One shader, five deform modes selected by a uniform (a uniform branch costs
-// a few ALU and lets every trail share one program — no per-mode shader, no
-// extra state switches):
-//
-//   u_deformMode  1 = sin-multi (2-3 sin octaves — fire/energy wisp)
-//                 2 = curl3     (hash-noise 3D swirl — real depth, not 2D)
-//                 3 = helix     (corkscrew around the strip's (side, normal) frame)
-//                 4 = noise     (organic non-periodic wobble)
-//                 0 = passthrough (reserved; mode 0 trails never use this shader)
-//
-// The branch thresholds sit at 0.5/1.5/2.5/3.5 so INTEGER uniform modes 1..4
-// land in exactly the branch above — a 1.5-based chain would send mode 1 into
-// passthrough and shift every other mode up by one (this happened once).
-//
-// REINTERPRETED ATTRIBUTE: `vertexNormal` carries the ribbon's unit SIDE
-// vector (across the strip width), written by DrawRibbonStripDeformedEx. A
-// degenerate vector (e.g. a non-ribbon quad drawn under this shader, which
-// never writes normals) falls back to a fixed axis instead of producing NaN.
-//
-// Coordinate input: vertexTexCoord.x = across (0..1), .y = path segment,
-// 0 = head .. 1 = tail. The amplitude envelope (u_waveEnv) forces the wave to
-// 0 at the head so the strip never detaches from its emitter, and to 0 at the
-// tail so the old end does not thrash.
-//
-// All displacement happens in the strip's own frame — `side` (across width,
-// per-vertex) and u_stripNormal (strip plane normal: view direction for
-// camera-facing ribbons, world-up for RIBBON_WORLD_UP, fixedNormal for
-// RIBBON_FIXED_NORMAL) — so the shape reads correctly from any camera angle.
-
 in vec4 vertexColor;
 
 uniform float u_deformMode;
@@ -65,11 +35,17 @@ out vec2 vSegUV;             // x = across 0..1, y = segment 0 (head) .. 1 (tail
 
 const float TAU = 6.2831853;
 
-float Hash13(vec3 p)
+// Vectorized 4-lane hash for 3D lattice corners
+vec4 Hash43(vec4 px, vec4 py, float pz)
 {
-    p = fract(p * 0.1031);
-    p += dot(p, p.zyx + 31.32);
-    return fract((p.x + p.y) * p.z);
+    vec4 x = fract(px * 0.1031);
+    vec4 y = fract(py * 0.1031);
+    vec4 z = vec4(fract(pz * 0.1031));
+    vec4 d = x * (z + 31.32) + y * (y + 31.32) + z * (x + 31.32);
+    x += d;
+    y += d;
+    z += d;
+    return fract((x + y) * z);
 }
 
 float VNoise3D(vec3 p)
@@ -77,30 +53,24 @@ float VNoise3D(vec3 p)
     vec3 i = floor(p);
     vec3 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
-    float n000 = Hash13(i);
-    float n100 = Hash13(i + vec3(1.0, 0.0, 0.0));
-    float n010 = Hash13(i + vec3(0.0, 1.0, 0.0));
-    float n110 = Hash13(i + vec3(1.0, 1.0, 0.0));
-    float n001 = Hash13(i + vec3(0.0, 0.0, 1.0));
-    float n101 = Hash13(i + vec3(1.0, 0.0, 1.0));
-    float n011 = Hash13(i + vec3(0.0, 1.0, 1.0));
-    float n111 = Hash13(i + vec3(1.0, 1.0, 1.0));
-    float x00 = mix(n000, n100, f.x);
-    float x10 = mix(n010, n110, f.x);
-    float x01 = mix(n001, n101, f.x);
-    float x11 = mix(n011, n111, f.x);
-    return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
+    vec4 hx = vec4(i.x, i.x + 1.0, i.x, i.x + 1.0);
+    vec4 hy = vec4(i.y, i.y, i.y + 1.0, i.y + 1.0);
+    vec4 n0 = Hash43(hx, hy, i.z);
+    vec4 n1 = Hash43(hx, hy, i.z + 1.0);
+    vec4 nz = mix(n0, n1, f.z);
+    return mix(mix(nz.x, nz.y, f.x), mix(nz.z, nz.w, f.x), f.y);
 }
 
 void main()
 {
-    vPathMetres = 0.0;
-    float sideLen = length(vertexNormal);
-    vec3 side = (sideLen > 0.5) ? normalize(vertexNormal) : vec3(1.0, 0.0, 0.0);
+    float sideLenSq = dot(vertexNormal, vertexNormal);
+    float sideLen = (sideLenSq > 0.25) ? sqrt(sideLenSq) : 0.0;
+    vec3 side = (sideLen > 0.5) ? (vertexNormal / sideLen) : vec3(1.0, 0.0, 0.0);
     float halfWidth = max(sideLen - 1.0, 0.0);
     float seg = clamp(vertexTexCoord.y, 0.0, 1.0);
     float vDist = seg * max(u_pathArc.y, 1.0);
     float vArc = u_pathArc.x - vDist;
+    vPathMetres = vArc;
     float headWeld = smoothstep(0.0, 0.16, seg);
 
     float headFade = max(u_waveEnv.x, 0.001);
@@ -114,10 +84,12 @@ void main()
     float phase = u_wavePhase;
 
     // ── Tangent & Bi-normal for ribbon frame ────────────────────────────────
-    vec3 T = normalize(cross(side, u_stripNormal));
-    if (dot(T, T) < 0.01) T = vec3(0.0, 0.0, 1.0);
-    vec3 B = normalize(cross(T, side));
-    if (dot(B, B) < 0.01) B = u_stripNormal;
+    vec3 rawT = cross(side, u_stripNormal);
+    float rawTLenSq = dot(rawT, rawT);
+    vec3 T = (rawTLenSq > 1e-4) ? (rawT * inversesqrt(rawTLenSq)) : vec3(0.0, 0.0, 1.0);
+    vec3 rawB = cross(T, side);
+    float rawBLenSq = dot(rawB, rawB);
+    vec3 B = (rawBLenSq > 1e-4) ? (rawB * inversesqrt(rawBLenSq)) : u_stripNormal;
 
     // ── ROLL: modulate ribbon width along stationary arc without out-of-plane twist spikes
     vec3 sd = side;
@@ -131,16 +103,17 @@ void main()
     if (u_wave.x > 0.0)
     {
         float wv = sin(vArc * u_wave.y + t * u_wave.z + u_seed * 6.2831853);
-        float wa = u_wave.x * headWeld * pow(seg, max(u_wave.w, 0.35));
+        float wa = u_wave.x * headWeld * pow(max(seg, 1e-4), max(u_wave.w, 0.35));
         c += side * wv * wa;
         c += B * cos(vArc * u_wave.y * 0.7 + t * u_wave.z * 1.3 + u_seed * 4.0) * wa * 0.35;
     }
 
-    // ── NOISE: turbulence 3D trong world space (from trail.html) ────────────
+    // ── NOISE: turbulence 3D trong world space ──────────────────────────────
     if (u_noise.x > 0.0)
     {
         vec3 q = c * u_noise.y + vec3(0.0, -t * u_noise.z, 0.0) + u_seed * 13.7;
-        c += (vec3(VNoise3D(q), VNoise3D(q + vec3(17.1)), VNoise3D(q + vec3(31.7))) - 0.5) * 2.0 * u_noise.x * headWeld * pow(seg, max(u_noise.w, 0.35));
+        float na = 2.0 * u_noise.x * headWeld * pow(max(seg, 1e-4), max(u_noise.w, 0.35));
+        c += (vec3(VNoise3D(q), VNoise3D(q + vec3(17.1)), VNoise3D(q + vec3(31.7))) - 0.5) * na;
     }
 
     // ── DRIFT: directional acceleration by age^2 (rising fire / billowing smoke)
@@ -166,21 +139,18 @@ void main()
         for (int i = 0; i < 4; i++)
         {
             float fi = float(i);
-            float i0 = floor(x + fi * 7.3);
-            float h0 = fract(sin(i0 + tq + fi * 3.1) * 43758.5453);
-            float h1 = fract(sin(i0 + 1.0 + tq + fi * 3.1) * 43758.5453);
-            float z0 = mix(h0, h1, fract(x + fi * 7.3));
-
-            float i1_idx = floor(x + fi * 3.7);
-            float h2 = fract(sin(i1_idx + tq + fi * 5.9 + 11.0) * 43758.5453);
-            float h3 = fract(sin(i1_idx + 1.0 + tq + fi * 5.9 + 11.0) * 43758.5453);
-            float z1 = mix(h2, h3, fract(x + fi * 3.7));
-
-            o += (vec2(z0, z1) - 0.5) * amp;
+            vec2 xOff = x + vec2(fi * 7.3, fi * 3.7);
+            vec2 i0 = floor(xOff);
+            vec2 f0 = fract(xOff);
+            vec4 seeds = vec4(i0.x, i0.x + 1.0, i0.y, i0.y + 1.0) +
+                         vec4(tq + fi * 3.1, tq + fi * 3.1, tq + fi * 5.9 + 11.0, tq + fi * 5.9 + 11.0);
+            vec4 h = fract(sin(seeds) * 43758.5453);
+            vec2 z = mix(h.xz, h.yw, f0);
+            o += (z - 0.5) * amp;
             x *= 2.1;
             amp *= 0.55;
         }
-        c += (side * o.x + B * o.y) * 2.0 * u_jitter.x * headWeld * smoothstep(0.0, u_jitter.w, vDist) * (1.0 - 0.3 * seg);
+        c += (side * o.x + B * o.y) * 2.0 * u_jitter.x * headWeld * smoothstep(0.0, max(u_jitter.w, 1e-4), vDist) * (1.0 - 0.3 * seg);
     }
 
     // ── LANE: bundle nhiều sợi lệch khỏi trục, xoáy theo d (Phong Nhận) ─────
@@ -199,13 +169,9 @@ void main()
         float headLen = max(u_widthProfile.y, 0.0001);
         float ht = clamp(vDist / headLen, 0.0, 1.0);
         float head = (u_widthProfile.y > 0.0) ? mix(sin(ht * 1.5707963), sqrt(max(1.0 - (1.0 - ht) * (1.0 - ht), 0.0)), u_cap.x) : 1.0;
-        float bulge = 1.0 + u_widthProfile.w * sin(3.14159265 * clamp(seg, 0.0, 1.0));
+        float bulge = 1.0 + u_widthProfile.w * sin(3.14159265 * seg);
         float grow = 1.0 + u_widthProfile.z * seg;
-        float shard = 1.0;
-        if (u_shard.y > 0.0)
-        {
-            shard = mix(1.0, 0.2 + 0.8 * fract(-vArc * u_shard.x), u_shard.y);
-        }
+        float shard = (u_shard.y > 0.0) ? mix(1.0, 0.2 + 0.8 * fract(-vArc * u_shard.x), u_shard.y) : 1.0;
         hw = taper * head * bulge * grow * shard;
     }
 
@@ -226,16 +192,16 @@ void main()
     else if (u_deformMode >= 1.5)
     {
         // CURL3 — true 3D swirl from hash noise, projected onto the strip frame.
-        vec3 n = vec3(VNoise3D(pos * u_curlScale + vec3(t * 0.31, t * 0.17, t * 0.23)),
-                      VNoise3D(pos * u_curlScale + vec3(t * 0.17, t * 0.23, t * 0.31)),
-                      VNoise3D(pos * u_curlScale + vec3(t * 0.23, t * 0.31, t * 0.17)));
-        vec3 d = sd * (n.x - 0.5) + u_stripNormal * (n.y - 0.5);
+        vec3 baseP = pos * u_curlScale;
+        float nx = VNoise3D(baseP + vec3(t * 0.31, t * 0.17, t * 0.23));
+        float ny = VNoise3D(baseP + vec3(t * 0.17, t * 0.23, t * 0.31));
+        vec3 d = sd * (nx - 0.5) + u_stripNormal * (ny - 0.5);
         pos += d * u_waveStrength * env * 2.0;
     }
     else if (u_deformMode >= 0.5)
     {
         vec3 d = MeshDeform_ApplyField(vec2(seg, seg), vec2(seg, seg), t,
-                                       side, u_stripNormal, 3, 3);
+                                       sd, u_stripNormal, 3, 3);
         pos += d * env * u_waveStrength;
     }
 

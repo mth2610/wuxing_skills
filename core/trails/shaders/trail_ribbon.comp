@@ -12,116 +12,179 @@ struct RibbonNode {vec4 positionRest,velocity,previous;};
 struct RibbonParams {uvec4 meta;vec4 compliance,anchor,anchorVelocity;};
 layout(std430,binding=0) buffer RibbonNodes {RibbonNode nodes[];};
 layout(std430,binding=1) readonly buffer RibbonParameters {RibbonParams ribbons[];};
-const float fixedDt=1.0/120.0;
-const int maxNodes=60;
-shared vec3 positions[60],previous[60],velocities[60];
-shared float rests[60],lambdas[60],bendLambdas[60];
+const float fixedDt = 1.0 / 120.0;
+const float invFixedDt = 120.0;
+const float invFixedDtSq = 14400.0;
+const int maxNodes = 60;
+shared vec3 positions[60], previous[60], velocities[60];
+shared float rests[60], bendRests[60], lambdas[60], bendLambdas[60];
 shared float accumulator;
 shared int stepCount;
 shared int transportField;
 shared vec3 start;
-void projectPair(int a,int b,float rest,float compliance,float invMass,bool pinned,inout float lambda) {
-    vec3 delta=positions[b]-positions[a];float len=length(delta);
-    if(len<1e-8) {
-        delta=previous[b]-previous[a];len=length(delta);
-        delta=len<1e-8?vec3(0,-1,0):delta/len;len=0.0;
-    } else delta/=len;
-    float wa=pinned && a==0?0.0:invMass;
-    float alpha=max(compliance,0.0)/(fixedDt*fixedDt);
-    float change=(-(len-rest)-alpha*lambda)/(wa+invMass+alpha);
-    lambda+=change;positions[a]-=delta*(wa*change);positions[b]+=delta*(invMass*change);
+
+void projectPairFast(int a, int b, float rest, float alpha, float invMass, float invDenomFree, float invDenomPinned, bool pinned, inout float lambda) {
+    vec3 delta = positions[b] - positions[a];
+    float lenSq = dot(delta, delta);
+    float len;
+    if (lenSq < 1e-16) {
+        delta = previous[b] - previous[a];
+        float prevLenSq = dot(delta, delta);
+        delta = (prevLenSq < 1e-16) ? vec3(0.0, -1.0, 0.0) : (delta * inversesqrt(prevLenSq));
+        len = 0.0;
+    } else {
+        float invLen = inversesqrt(lenSq);
+        len = lenSq * invLen;
+        delta *= invLen;
+    }
+    bool pinA = (pinned && a == 0);
+    float wa = pinA ? 0.0 : invMass;
+    float invDenom = pinA ? invDenomPinned : invDenomFree;
+    float change = (-(len - rest) - alpha * lambda) * invDenom;
+    lambda += change;
+    positions[a] -= delta * (wa * change);
+    positions[b] += delta * (invMass * change);
 }
+
 void main() {
-    uint slot=u_slot<0?gl_WorkGroupID.x:uint(u_slot);
-    if(slot>=uint(ribbons.length())) return;
-    RibbonParams r=ribbons[slot];
-    int count=int(r.meta.x),base=int(slot)*maxNodes;
-    if(r.meta.w==0u || count<2 || count>maxNodes || u_dt<=0.0) return;
-    int node=int(gl_LocalInvocationID.x);
-    if((r.meta.w&2u)!=0u) {
-        if(node==0) transportField=mFindPathTransport(r.meta.y);
+    uint slot = u_slot < 0 ? gl_WorkGroupID.x : uint(u_slot);
+    if (slot >= uint(ribbons.length())) return;
+    RibbonParams r = ribbons[slot];
+    int count = int(r.meta.x), base = int(slot) * maxNodes;
+    if (r.meta.w == 0u || count < 2 || count > maxNodes || u_dt <= 0.0) return;
+    int node = int(gl_LocalInvocationID.x);
+
+    if ((r.meta.w & 2u) != 0u) {
+        if (node == 0) transportField = mFindPathTransport(r.meta.y);
         barrier();
-        if(transportField>=0 && node<count) {
-            vec3 old=nodes[base+node].positionRest.xyz;
-            float spacing=nodes[base+1].positionRest.w;
-            float distance=r.compliance.w-float(node)*spacing;
+        if (transportField >= 0 && node < count) {
+            vec3 old = nodes[base + node].positionRest.xyz;
+            float spacing = nodes[base + 1].positionRest.w;
+            float distance = r.compliance.w - float(node) * spacing;
             vec3 p;
-            if((r.meta.w&4u)!=0u) {
-                MotionGpuBody body=motionBodies[base+node];
-                float lag=r.anchorVelocity.w>1e-5?float(node)*spacing/r.anchorVelocity.w:0.0;
-                p=mPathTransportAdvance(transportField,distance,r.anchor.xyz,lag,u_dt,body);
-                motionBodies[base+node]=body;
-            } else p=mPathTransportSample(transportField,distance,r.anchor.xyz);
-            nodes[base+node].positionRest.xyz=p;
-            nodes[base+node].previous=vec4(old,0);
-            nodes[base+node].velocity=vec4((p-old)/u_dt,0);
+            if ((r.meta.w & 4u) != 0u) {
+                MotionGpuBody body = motionBodies[base + node];
+                float lag = r.anchorVelocity.w > 1e-5 ? float(node) * spacing / r.anchorVelocity.w : 0.0;
+                p = mPathTransportAdvance(transportField, distance, r.anchor.xyz, lag, u_dt, body);
+                motionBodies[base + node] = body;
+            } else {
+                p = mPathTransportSample(transportField, distance, r.anchor.xyz);
+            }
+            nodes[base + node].positionRest.xyz = p;
+            nodes[base + node].previous = vec4(old, 0.0);
+            nodes[base + node].velocity = vec4((p - old) / u_dt, 0.0);
         }
         return;
     }
-    bool pinned=r.meta.z!=0u && r.anchor.w>0.5;
-    if(node<count) {
-        positions[node]=nodes[base+node].positionRest.xyz;
-        velocities[node]=nodes[base+node].velocity.xyz;
-        previous[node]=positions[node];rests[node]=nodes[base+node].positionRest.w;
+
+    bool pinned = (r.meta.z != 0u && r.anchor.w > 0.5);
+    bool didTeleportJump = (pinned && r.anchorVelocity.w > 0.5);
+
+    if (node < count) {
+        positions[node] = nodes[base + node].positionRest.xyz;
+        velocities[node] = nodes[base + node].velocity.xyz;
+        // Preserve actual previous position across frames when stepCount == 0
+        previous[node] = nodes[base + node].previous.xyz;
+        rests[node] = nodes[base + node].positionRest.w;
     }
     barrier();
-    if(node==0) {
-        if(r.compliance.z>0.5) velocities[0]=r.anchorVelocity.xyz;
-        if(pinned && r.anchorVelocity.w>0.5) {
-            vec3 jump=r.anchor.xyz-positions[0];
-            for(int i=0;i<count;i++) positions[i]+=jump;
-            velocities[0]=r.anchorVelocity.xyz;
+
+    if (node < count) {
+        bendRests[node] = (node >= 2) ? (rests[node - 1] + rests[node]) : 0.0;
+    }
+
+    if (node == 0) {
+        if (r.compliance.z > 0.5) velocities[0] = r.anchorVelocity.xyz;
+        if (didTeleportJump) {
+            vec3 jump = r.anchor.xyz - positions[0];
+            for (int i = 0; i < count; i++) {
+                positions[i] += jump;
+                previous[i] += jump;
+            }
+            velocities[0] = r.anchorVelocity.xyz;
         }
-        accumulator=nodes[base].velocity.w+min(u_dt,8.0*fixedDt);
-        stepCount=min(8,int((accumulator+1e-7)/fixedDt));
-        start=positions[0];
+        accumulator = nodes[base].velocity.w + min(u_dt, 8.0 * fixedDt);
+        stepCount = min(8, int((accumulator + 1e-7) * invFixedDt));
+        start = positions[0];
     }
     barrier();
-    for(int k=0;k<stepCount;k++) {
-        float offset=-float(stepCount-k)*fixedDt,time=u_time+offset;
-        if(node<count) {
-            previous[node]=positions[node];lambdas[node]=0.0;bendLambdas[node]=0.0;
-            if(node==0 && pinned) {
-                positions[node]=mix(start,r.anchor.xyz,float(k+1)/float(stepCount));
+
+    // Fast-path when frame dt is smaller than fixedDt (e.g. >120 FPS) and no substep triggers:
+    // avoid 180 redundant global SSBO writes and preserve previous[] history.
+    if (stepCount == 0 && !didTeleportJump) {
+        if (node == 0) {
+            nodes[base].velocity = vec4(velocities[0], max(0.0, accumulator));
+        }
+        return;
+    }
+
+    float invMass = motionBodies[base].body0.x;
+    float alphaDist = max(r.compliance.x, 0.0) * invFixedDtSq;
+    float invDenomFreeDist = 1.0 / max(2.0 * invMass + alphaDist, 1e-12);
+    float invDenomPinnedDist = 1.0 / max(invMass + alphaDist, 1e-12);
+
+    float alphaBend = max(r.compliance.y, 0.0) * invFixedDtSq;
+    float invDenomFreeBend = 1.0 / max(2.0 * invMass + alphaBend, 1e-12);
+    float invDenomPinnedBend = 1.0 / max(invMass + alphaBend, 1e-12);
+    int iterations = clamp(int(r.meta.y), 1, 32);
+
+    for (int k = 0; k < stepCount; k++) {
+        float offset = -float(stepCount - k) * fixedDt, time = u_time + offset;
+        if (node < count) {
+            previous[node] = positions[node];
+            lambdas[node] = 0.0;
+            bendLambdas[node] = 0.0;
+            if (node == 0 && pinned) {
+                positions[node] = mix(start, r.anchor.xyz, float(k + 1) / float(stepCount));
             } else {
-                MotionGpuBody body=motionBodies[base+node];
-                vec3 position=positions[node],velocity=velocities[node];
-                motionAdvanceStep(position,velocity,body,
-                    evalMotionBackgroundWind(position,time),vec3(0),0.0,time,fixedDt,offset);
-                positions[node]=position;velocities[node]=velocity;
-                motionBodies[base+node]=body;
+                MotionGpuBody body = motionBodies[base + node];
+                vec3 position = positions[node], velocity = velocities[node];
+                motionAdvanceStep(position, velocity, body,
+                    evalMotionBackgroundWind(position, time), vec3(0.0), 0.0, time, fixedDt, offset);
+                positions[node] = position;
+                velocities[node] = velocity;
+                motionBodies[base + node] = body;
             }
         }
         barrier();
-        if(node==0) {
-            float invMass=motionBodies[base].body0.x;
-            int iterations=clamp(int(r.meta.y),1,32);
-            for(int pass=0;pass<iterations;pass++) {
-                if(r.compliance.y>=0.0) for(int i=2;i<count;i++)
-                    projectPair(i-2,i,rests[i-1]+rests[i],r.compliance.y,invMass,pinned,bendLambdas[i]);
-                for(int j=1;j<count;j++) {
-                    int i=(pass&1)!=0?count-j:j;
-                    projectPair(i-1,i,rests[i],r.compliance.x,invMass,pinned,lambdas[i]);
+
+        if (node == 0) {
+            for (int pass = 0; pass < iterations; pass++) {
+                if (r.compliance.y >= 0.0) {
+                    for (int i = 2; i < count; i++) {
+                        projectPairFast(i - 2, i, bendRests[i], alphaBend, invMass,
+                                        invDenomFreeBend, invDenomPinnedBend, pinned, bendLambdas[i]);
+                    }
+                }
+                for (int j = 1; j < count; j++) {
+                    int i = (pass & 1) != 0 ? (count - j) : j;
+                    projectPairFast(i - 1, i, rests[i], alphaDist, invMass,
+                                    invDenomFreeDist, invDenomPinnedDist, pinned, lambdas[i]);
                 }
             }
         }
         barrier();
-        if(node<count) {
-            float terrainH=0.0;
-            if(sampleTerrainHeight(positions[node].xz,terrainH)) {
-                float minY=terrainH+0.02;
-                if(positions[node].y<minY) {
-                    positions[node].y=minY;
+
+        if (node < count) {
+            float terrainH = 0.0;
+            if (sampleTerrainHeight(positions[node].xz, terrainH)) {
+                float minY = terrainH + 0.02;
+                if (positions[node].y < minY) {
+                    positions[node].y = minY;
                 }
             }
-            velocities[node]=(positions[node]-previous[node])/fixedDt;
+            if (node == 0 && pinned) {
+                velocities[0] = r.anchorVelocity.xyz;
+            } else {
+                velocities[node] = (positions[node] - previous[node]) * invFixedDt;
+            }
         }
-        if(node==0 && pinned) velocities[0]=r.anchorVelocity.xyz;
         barrier();
     }
-    if(node<count) {
-        nodes[base+node].positionRest.xyz=positions[node];
-        nodes[base+node].velocity=vec4(velocities[node],node==0?max(0.0,accumulator-float(stepCount)*fixedDt):0.0);
-        nodes[base+node].previous=vec4(previous[node],0);
+
+    if (node < count) {
+        nodes[base + node].positionRest.xyz = positions[node];
+        nodes[base + node].velocity = vec4(velocities[node], node == 0 ? max(0.0, accumulator - float(stepCount) * fixedDt) : 0.0);
+        nodes[base + node].previous = vec4(previous[node], 0.0);
     }
 }

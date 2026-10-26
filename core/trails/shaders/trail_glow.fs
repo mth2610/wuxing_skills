@@ -22,7 +22,7 @@ uniform float uStrength;      // = 0.0 nếu không dùng Flow Map
 uniform float uTiling;
 
 // Glow & HDR Core Controls
-uniform float u_coreStrength;  // 0.0 = Không lõi, > 0.0 = Lõi rực sáng HDR
+uniform float u_coreStrength; // 0.0 = Không lõi, > 0.0 = Lõi rực sáng HDR
 
 // Noise Dissolve / Erosion Controls (XÉ RÁCH VỆT KHÓI)
 uniform float uDissolve;      // Dải [0.0 - 1.0]: Độ tan biến/xé rách (0 = nguyên vẹn, 1 = biến mất)
@@ -32,13 +32,13 @@ uniform vec3  uBurnColor;     // Màu viền rực sáng nơi bị xé rách (V�
 out vec4 finalColor;
 
 void main() {
+    if (fragColor.a <= 0.001) discard;
+
     // 1. Tính toán Tiling UV
     float mainTiling = (uTiling > 0.0) ? uTiling : 1.0;
-    float maskTiling = (uMaskTiling > 0.0) ? uMaskTiling : 1.0;
-    
     vec2 uvMain = fragTexCoord * mainTiling;
-    vec2 uvMask = fragTexCoord * maskTiling;
     vec4 texColor;
+    vec2 flowOffset = vec2(0.0);
 
     // ==========================================
     // BƯỚC 1: FLOW MAP (DISTORTION)
@@ -50,12 +50,10 @@ void main() {
         float phase1 = fract(u_flowTime * uSpeed + 0.5);
         float blend = abs(phase0 * 2.0 - 1.0);
 
-        vec4 col0 = texture(texture0, uvMain + flow * (phase0 - 0.5) * uStrength);
+        flowOffset = flow * (phase0 - 0.5) * uStrength;
+        vec4 col0 = texture(texture0, uvMain + flowOffset);
         vec4 col1 = texture(texture0, uvMain + flow * (phase1 - 0.5) * uStrength);
         texColor = mix(col0, col1, blend);
-        
-        // Biến dạng luôn cả Noise Map theo Flow Map để vết rách cuộn tự nhiên
-        uvMask += flow * (phase0 - 0.5) * (uStrength * 0.5);
     } else {
         texColor = texture(texture0, uvMain);
     }
@@ -63,43 +61,47 @@ void main() {
     // ==========================================
     // BƯỚC 2: NOISE DISSOLVE / EROSION (XÉ RÁCH)
     // ==========================================
-    float noiseVal = texture(maskTex, uvMask).r; // Lấy độ nhiễu kênh Red
     float alphaMask = 1.0;
     vec3 burnGlow = vec3(0.0);
 
     if (uDissolve > 0.0) {
-        // Cắt bớt Alpha dựa trên Noise Map và uDissolve
-        // Đuôi vệt khói sẽ bị xé thành các vệt lởm chởm
+        float maskTiling = (uMaskTiling > 0.0) ? uMaskTiling : 1.0;
+        vec2 uvMask = fragTexCoord * maskTiling + flowOffset * 0.5;
+        float noiseVal = texture(maskTex, uvMask).r;
+
         float dissolveThreshold = uDissolve;
-        
-        // Tạo mặt nạ đục/trong suốt sắc nét
         alphaMask = smoothstep(dissolveThreshold, dissolveThreshold + 0.12, noiseVal);
 
-        // Tạo hiệu ứng viền cháy HDR (Edge Burn) ngay ranh giới xé rách
-        float edge = smoothstep(dissolveThreshold - 0.05, dissolveThreshold, noiseVal) - alphaMask;
-        // Smoke supplies no burn colour: erosion should make soft gaps, not
-        // create an accidental orange energy rim. Effects that want a hot edge
-        // must opt in by setting uBurnColor explicitly.
-        float isWarm = step(uBurnColor.b, uBurnColor.r * 0.85);
-        vec3 radiantBurn = calcRadiantEnergy(edge, max(uBurnColor, vec3(0.0)), vec3(1.0, 0.98, 0.92), isWarm, 2.5);
-        burnGlow = edge * radiantBurn;
+        // Chỉ tính viền cháy HDR (Edge Burn) khi người dùng thực sự cấu hình uBurnColor > 0.
+        // Sửa lỗi: khi uBurnColor = (0,0,0), step(0.0, 0.0) trả về 1.0 khiến khói bị viền cam/trắng.
+        if (dot(uBurnColor, uBurnColor) > 1e-4) {
+            float edge = smoothstep(dissolveThreshold - 0.05, dissolveThreshold, noiseVal) - alphaMask;
+            if (edge > 1e-4) {
+                float isWarm = step(uBurnColor.b, uBurnColor.r * 0.85);
+                vec3 radiantBurn = calcRadiantEnergy(edge, max(uBurnColor, vec3(0.0)), vec3(1.0, 0.98, 0.92), isWarm, 2.5);
+                burnGlow = edge * radiantBurn;
+            }
+        }
     }
 
     // ==========================================
     // BƯỚC 3: GLOW & HDR CORE (LÕI SÁNG)
     // ==========================================
     float centerDist = abs(fragTexCoord.x - 0.5) * 2.0;
-    float glowMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 1.25);
+    float x = clamp(1.0 - centerDist, 0.0, 1.0);
+    // Xấp xỉ chính xác x^1.25 = x * sqrt(sqrt(x)) không cần pow()
+    float sqrtX = sqrt(x);
+    float glowMask = x * sqrt(sqrtX);
 
-    // Alpha tổng hợp (kết hợp Noise Dissolve)
     float smokeAlpha = texColor.a * fragColor.a * glowMask * alphaMask;
-
     vec3 finalRGB = (fragColor.rgb * texColor.rgb * 1.5) + burnGlow;
     float finalAlpha = smokeAlpha;
 
     // Lõi rực sáng ở giữa (Ghost of Tsushima Radiant Energy Core)
     if (u_coreStrength > 0.0) {
-        float coreMask = pow(clamp(1.0 - centerDist, 0.0, 1.0), 5.5) * u_coreStrength;
+        // x^5.5 = x^5 * sqrt(x) nhanh hơn pow(x, 5.5)
+        float x2 = x * x;
+        float coreMask = (x2 * x2 * x * sqrtX) * u_coreStrength;
         float coreAlpha = clamp(fragColor.a * 1.6, 0.0, 1.0) * alphaMask;
 
         finalAlpha = mix(smokeAlpha, coreAlpha, coreMask);
@@ -109,11 +111,8 @@ void main() {
         finalRGB = mix(finalRGB, coreColor, coreMask);
     }
 
-    // A trail picks BLEND_ALPHA or BLEND_ADDITIVE per instance (trail_system.c
-    // maps a premultiplied appearance onto "alpha body + additive emission", so
-    // those two are the only outcomes), which is why this is the permutation
-    // form rather than a fixed resolver. The variant is chosen by the OUTPUT_*
-    // define ResolveShader asked the loader for.
+    if (finalAlpha < 0.002 && dot(burnGlow, burnGlow) < 1e-5) discard;
+
     finalColor = VFX_ResolveOutput(finalRGB, 1.0, finalAlpha,
                                    finalRGB, 1.0, 1.0);
 }

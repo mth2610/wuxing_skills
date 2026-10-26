@@ -8,12 +8,7 @@
 #include "core/uv/shaders/surface_flow.glsl"
 
 // u_uvField/u_uvMeta ONLY — declared directly, NOT pulled in from the
-// uv_field GLSL module. That module's own job is bundling these
-// declarations with helper functions (UVDeform_ApplyField,
-// SurfaceFlow_FieldSample) this shader does not need — w0/w1/w2 below call
-// UVDeform_LayerOffset directly (already available from the uv_deform
-// module, pulled in two lines up) with manually-sliced u_uvField[i] ranges,
-// so the ONLY thing missing was the uniform declaration itself.
+// uv_field GLSL module.
 //
 // LANDMINE, hit twice on a real build, 05/08/2026 — read this before
 // changing anything above this comment, and see core/shader_preprocessor.c
@@ -25,137 +20,38 @@
 // directive keyword immediately followed by its quoted path — ANYWHERE in
 // this file, even inside a prose comment explaining not to — makes the
 // loader pull it in for real, duplicating the uv_deform/surface_flow
-// bodies in the flattened output and breaking compilation two different
-// ways depending on exactly how the duplication lands. This paragraph
-// itself deliberately never spells that keyword-plus-quoted-path pattern
-// for that reason — describe the mechanism in prose, never write the
-// literal pattern, not even as a "don't do this" example.
+// bodies in the flattened output and breaking compilation.
 #define UV_DEFORM_MAX_LAYERS 4
 uniform vec4 u_uvField[UV_DEFORM_MAX_LAYERS * 3];
 uniform vec4 u_uvMeta;
 
-// ── TRAIL DEFORM FRAGMENT — packed 4-channel wisp material ──────────────────
-// ONE RGBA texture carries four roles (the "packed" convention), so one bind
-// and one asset replace the sheet + flow map + mask trio:
-//   R = coarse wisp shape   G = fine wisp detail
-//   B = dissolve noise      A = high-frequency turbulence
-//
-// Two samples of the SAME texture (one bind, one asset, cache-friendly):
-// R+B ride the coarse pan, G+A ride the fine pan, so the coarse and fine wisp
-// layers scroll at different speeds — the internal motion that makes the
-// strip read as thick matter, not a flat sticker. A-channel turbulence
-// modulates the coarse<->fine mix (self-referential ripple of the wisp edge,
-// no third sample needed), and B pans the dissolve edge so the tail erodes
-// organically as the noise field moves through it.
-//
-// ── THE TWO PASSES ARE NOT THE SAME FORMULA (u_renderPass) ──────────────────
-// This shader used to emit one colour for both passes, on the belief that
-// BLEND_ALPHA and BLEND_ADDITIVE both consume `src.rgb * src.a`. Only the
-// additive one does. raylib's BLEND_ALPHA is glBlendFunc(SRC_ALPHA,
-// ONE_MINUS_SRC_ALPHA) — NOT premultiplied — so the hardware multiplies by
-// alpha itself. Emitting an already-intensity-scaled RGB there gets it scaled a
-// SECOND time, and the body pass collapses to ~intensity², contributing almost
-// no coverage. The trail then exists only in the additive pass, and additive
-// over a bright destination cannot add contrast: the whole effect washes out
-// against a bright sky or a lit floor. That is the bug, and it is why a VFX can
-// look right over the night arena and vanish over daylight.
-//
-//   u_renderPass 0 = BODY (BLEND_ALPHA): unpremultiplied colour + a COVERAGE
-//                    alpha. This pass is what keeps the element hue readable
-//                    over a bright destination — it occludes.
-//   u_renderPass 1 = EMISSION (BLEND_ADDITIVE): colour * intensity * HDR gain.
-//
-// Trails run both semantic passes. BODY carries coloured coverage; EMISSION
-// carries HDR radiance. Keeping gain out of BODY prevents an energy trail from
-// becoming an opaque red material strip and lets smoke retain its soft edge.
-
-// ── MODE 2 — SIN-WAVE STRAND TRAIL ──────────────────────────────────────────
-// Implements the RzFX "Sin Wave Trail" breakdown (ryanzengvfx.blogspot.com,
-// 2019-04). Two structural facts drive the whole thing:
-//
-// 1. THE WAVE IS IN UV SPACE, NOT IN THE VERTICES. The strip stays a wide flat
-//    quad; the trail snakes inside it. Geometry cannot fold through itself, and
-//    the waveform is anchored in METRES of laid path (u_pathArc) so a growing
-//    trail or an accelerating head does not rubber-band it — only u_time moves
-//    the crests.
-//
-// 2. THE TRAIL IS THREE OVERLAPPING STRAND BUNDLES, NOT ONE BAND. The article's
-//    Sin01/02/03 blocks are three independent wave fields, each sampling a
-//    trail-pattern channel at its own offset. That overlap IS the braided,
-//    frayed look. A single analytic band — however well eroded by noise — can
-//    only ever be one smooth-edged ribbon, which is precisely the "biên và đuôi
-//    liền mạch" failure this mode replaced. There is therefore NO band function
-//    here: the silhouette comes from the sheet's own strand density.
-//
-// Everything that frays is multiplied by `ramp` (the along-trail coordinate),
-// per the article's "multiply U coordinate to keep shape in the start position
-// and more distortion to the end": the head stays a tight coherent ribbon and
-// the tail is where the strands fan apart and dissolve.
-
 uniform sampler2D texture0;
-uniform float u_matMode;        // < 1.5 = passthrough, >= 1.5 = strand material
+uniform float u_matMode;        // 0 = passthrough, 1 = packed 4-ch wisp, 2 = sin-wave strands
 uniform float u_wispMix;        // coarse(R) -> fine(G)
 uniform float u_dissolve;       // B-channel dissolve threshold
 uniform float u_dissolveSoft;   // dissolve edge softness
-                                // threshold, strongest at the band edges —
-                                // the silhouette frays ("rách") like smoke
 uniform vec2  u_tiling;         // x = tiles along path, y = tiles across width
 uniform vec4  u_panSpeed;       // x = coarse pan, y = fine pan (UV units/sec)
 uniform float u_tailFadeA;      // segment fade start (0 = head, 1 = tail)
 uniform float u_tailFadeB;      // segment fade end — tail dissolves to zero here
-                                // (tailFadeA >= tailFadeB disables the ramp)
 
-// Mode 2 only. u_wavePhase and u_waveEnv are DECLARED IN BOTH STAGES on
-// purpose: one program, one uniform location, so the C layer keeps setting
-// them once and the band's phase/head-fade stay in lockstep with the vertex
-// stage's (which mode 2 leaves in passthrough anyway).
-//
-// u_sinWave is GONE, 05/08/2026 — the three wave fields' amplitude/frequency
-// /speed/spread now live in u_uvField/u_uvMeta (uv_field.glsl, included
-// above), pushed as a 3-layer core/uv UVDeformField from
-// trail_system.c's ApplyDeformUniforms. See the w0/w1/w2 block below.
-uniform vec4  u_bandShape;  // x = strand bundle half-width (0..1 of half-width)
-                            // y = quad edge-mask softness
-                            // z = HDR gain (> 1 feeds bloom)
-                            // w = strand gain (contrast; higher = more separated)
-uniform vec4  u_strandFlow; // x = B-channel flow distortion strength
-                            // y = weight of the third (widest) strand bundle
-                            // z = 0 tile the sheet by metres of path,
-                            //     1 STRETCH it once over the whole trail
-                            // w = unused
-uniform vec4  u_tailShape;  // how the tail comes apart:
-                            // x = stagger — how far the three bundles' ends are
-                            //     spread apart in segment space
-                            // y = extra dissolve threshold over the last stretch
-                            // z = bundle narrowing at the end (1 = no narrowing)
-                            // w = unused
-uniform vec2  u_pathArc;    // x = metres at the HEAD node, y = laid length (m)
-uniform vec3  u_colHot;     // HDR core colour (hot centre of a strand)
-uniform vec3  u_colTail;    // colour at the TAIL; vColor.rgb is the head
-uniform float u_wavePhase;  // per-spawn random phase — desyncs simultaneous casts
-uniform vec2  u_waveEnv;    // x = head fade fraction (band welded to the emitter)
-uniform float u_renderPass; // 0 = BODY (alpha), 1 = EMISSION additive,
-                            // 2 = EMISSION premultiplied
-uniform float u_bodyOpacity;// coverage scale for the body pass, 0..1
-uniform float u_tonemapSafe;// 1 only for migrated MAGIC trail radiance
+uniform vec4  u_bandShape;      // x = bundle half-width, y = edge softness, z = HDR gain, w = strand gain
+uniform vec4  u_strandFlow;     // x = B-channel flow strength, y = bundle 3 weight, z = stretchUV
+uniform vec4  u_tailShape;      // x = stagger, y = extra tail dissolve, z = tail narrow
+uniform vec2  u_pathArc;        // x = metres at HEAD node, y = laid length (m)
+uniform vec3  u_colHot;         // HDR core colour
+uniform vec3  u_colTail;        // colour at the TAIL; vColor.rgb is the head
+uniform float u_wavePhase;      // per-spawn random phase
+uniform vec2  u_waveEnv;        // x = head fade fraction
+uniform float u_renderPass;     // 0 = BODY (alpha), 1 = EMISSION additive, 2 = EMISSION premultiplied
+uniform float u_bodyOpacity;    // coverage scale for the body pass, 0..1
+uniform float u_tonemapSafe;    // 1 only for migrated MAGIC trail radiance
 uniform vec4  u_contrastParams; // enabled, edgeSharpness, coreSize, coreIntensity
-// WHERE THE HOT CORE IS. Both were literals in this file until 27/08/2026, and
-// the pair is what decides whether a hot core reads as a FILAMENT or a slab:
-//   x = geometric centreline half-width, in the across-strip units the bundle
-//       distances d0/d1/d2 are measured in. The inner/outer ratio of the
-//       centreline's falloff is preserved (the old pair was 0.02 : 0.18), so
-//       passing 0.18 reproduces the old constants exactly.
-//   y = the strand DENSITY above which the body itself burns toward u_colHot.
-//       The old 0.45 turns any reasonably dense fragment hot, which on a
-//       gap-filling `strandGain` means the whole packed body goes hot at once —
-//       a slab. Raising it confines the hot colour to the true peaks.
-// trail_system.c resolves 0 to the old literals before pushing, so this shader
-// never carries the defaults itself.
-uniform vec2  u_coreShape;
+uniform vec2  u_coreShape;      // x = coreHalfWidth, y = coreDensityGate
 
 // ── WebGL Style & 4-Color Ramp Extensions ───────────────────────────────────
-uniform float u_style;        // 0 = standard strand, 1..15 = specialized WebGL styles
-uniform vec3  u_colRamp[4];   // 4-stop gradient ramp (C0, C1, C2, C3)
+uniform float u_style;          // 0 = standard strand, 1..15 = specialized WebGL styles
+uniform vec3  u_colRamp[4];     // 4-stop gradient ramp (C0, C1, C2, C3)
 uniform vec4  u_p0;
 uniform vec4  u_p1;
 uniform vec4  u_p2;
@@ -188,13 +84,21 @@ float Hash21(vec2 p)
     return fract((p3.x + p3.y) * p3.z);
 }
 
+// Vectorized 4-corner SIMD 2D value noise (4x fewer hash calls, bit-identical)
 float VNoise2D(vec2 p)
 {
     vec2 i = floor(p);
     vec2 f = fract(p);
     f = f * f * (3.0 - 2.0 * f);
-    return mix(mix(Hash21(i), Hash21(i + vec2(1.0, 0.0)), f.x),
-               mix(Hash21(i + vec2(0.0, 1.0)), Hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+    vec4 h = vec4(i.x, i.x + 1.0, i.x, i.x + 1.0);
+    vec4 hy = vec4(i.y, i.y, i.y + 1.0, i.y + 1.0);
+    vec4 p1 = fract(h * 0.1031);
+    vec4 p2 = fract(hy * 0.1031);
+    vec4 d = p1 * (p2 + 33.33) + p2 * (p1 + 33.33) + p1 * (p1 + 33.33);
+    p1 += d;
+    p2 += d;
+    vec4 r = fract((p1 + p2) * p1);
+    return mix(mix(r.x, r.y, f.x), mix(r.z, r.w, f.x), f.y);
 }
 
 float Fbm2D(vec2 p)
@@ -234,23 +138,26 @@ vec3 Voronoi2D(vec2 x)
 {
     vec2 n = floor(x);
     vec2 f = fract(x);
-    float d1 = 8.0, d2 = 8.0, id = 0.0;
+    float d1 = 8.0, d2 = 8.0;
+    vec2 bestCell = n;
     for (int j = -1; j <= 1; j++) {
         for (int i = -1; i <= 1; i++) {
             vec2 g = vec2(float(i), float(j));
-            vec2 of = vec2(Hash21(n + g), Hash21(n + g + 37.7));
+            vec2 cell = n + g;
+            vec2 of = vec2(Hash21(cell), Hash21(cell + 37.7));
             vec2 r = g + of - f;
             float d = dot(r, r);
             if (d < d1) {
                 d2 = d1;
                 d1 = d;
-                id = Hash21(n + g + 11.1);
+                bestCell = cell;
             } else if (d < d2) {
                 d2 = d;
             }
         }
     }
-    return vec3(sqrt(d1), sqrt(d2) - sqrt(d1), id);
+    float s1 = sqrt(d1);
+    return vec3(s1, sqrt(d2) - s1, Hash21(bestCell + 11.1));
 }
 
 float SegDist(vec2 p, vec2 a, vec2 b, float w)
@@ -272,9 +179,6 @@ float Glyph3x3(vec2 p, float id)
     return r;
 }
 
-// A ribbon is not a uniform emitter: most of its area is the colour-bearing
-// carrier and only the dense crest is HDR excess. Preserve only the fraction
-// above the project's 1.25 bloom threshold; sub-threshold material remains byte-identical.
 vec3 TrailToneMapSafeRadiance(vec3 radiance)
 {
     float peak = max(radiance.r, max(radiance.g, radiance.b));
@@ -289,6 +193,7 @@ vec4 ResolvePass(vec3 colour, float inten, float vAlpha, float gain)
         if (u_bodyOpacity <= 0.001) discard;
         float bodyMask = VFXContrast_BodyMask(inten, u_contrastParams);
         float coverage = clamp(bodyMask * vAlpha * u_bodyOpacity, 0.0, 1.0);
+        if (coverage < 1e-4) discard;
         return VFX_ResolveBody(colour, 1.0, coverage);
     }
     if (u_renderPass < 1.5)
@@ -309,11 +214,9 @@ vec4 ResolvePassEx(vec3 bodyCol, vec3 emissiveCol, float inten, float vAlpha, fl
     {
         if (u_bodyOpacity <= 0.001 || isAdditive) discard;
         float coverage = clamp(a * u_bodyOpacity, 0.0, 1.0);
+        if (coverage < 1e-4) discard;
         return VFX_ResolveBody(bodyCol, 1.0, coverage);
     }
-    // Emission pass (or single pass) under BLEND_ALPHA_PREMULTIPLY (GL_ONE, GL_ONE_MINUS_SRC_ALPHA).
-    // isAdditive == true: outAlpha = 0.0 ensures pure additive radiance without darkening background.
-    // isAdditive == false: outAlpha = a ensures exact premultiplied alpha blending (silk, ink, etc.).
     float outAlpha = isAdditive ? 0.0 : a;
     vec3 radiance = VFX_Finite3(emissiveCol * max(gain, 0.0) * a);
     if (u_tonemapSafe > 0.5)
@@ -323,27 +226,68 @@ vec4 ResolvePassEx(vec3 bodyCol, vec3 emissiveCol, float inten, float vAlpha, fl
 
 void main()
 {
-    if (u_matMode < 1.5)
+    // Early-out before any texture fetch or procedural noise if this is a Body
+    // pass for a pure-emissive trail or a transparent vertex.
+    if (vColor.a <= 0.001) discard;
+    if (u_renderPass < 0.5 && u_bodyOpacity <= 0.001) discard;
+
+    // ── MODE 0: Passthrough texture with vertex deform ──────────────────────
+    if (u_matMode < 0.5)
     {
-        finalColor = texture(texture0, vSegUV) * vColor;
+        vec4 texel = texture(texture0, vSegUV);
+        if (texel.a * vColor.a < 0.003) discard;
+        finalColor = ResolvePass(texel.rgb * vColor.rgb, texel.a, vColor.a, max(u_bandShape.z, 1.0));
         return;
     }
 
     float along = vSegUV.y;                   // 0 = head .. 1 = tail
     float across = (vSegUV.x - 0.5) * 2.0;    // -1 .. 1 across the width
-    float metres = u_nodeArc!=0?vPathMetres:u_pathArc.x - along * u_pathArc.y;
-    float e = 1.0 - abs(across);
+    float metres = (u_nodeArc != 0) ? vPathMetres : (u_pathArc.x - along * u_pathArc.y);
+
+    // ── MODE 1: Packed 4-channel Wisp Material (R=coarse, G=fine, B=dissolve, A=turbulence)
+    if (u_matMode < 1.5)
+    {
+        vec2 tile = max(u_tiling, vec2(0.01));
+        float panC = SurfaceFlow_Pan(u_time, u_panSpeed.x);
+        float panF = SurfaceFlow_Pan(u_time, u_panSpeed.y);
+        vec2 uvCoarse = vec2(vSegUV.x * tile.y, fract(along * tile.x - panC));
+        vec2 uvFine   = vec2(vSegUV.x * tile.y, fract(along * tile.x * 1.35 - panF));
+
+        vec4 sCoarse = texture(texture0, uvCoarse);
+        vec4 sFine   = texture(texture0, uvFine);
+
+        float turb = (sFine.a - 0.5) * 0.35;
+        float mixF = clamp(u_wispMix + turb, 0.0, 1.0);
+        float wisp = mix(sCoarse.r, sFine.g, mixF);
+
+        float edgeFade = 1.0 - smoothstep(0.75, 1.0, abs(across));
+        float thr = u_dissolve * along + (1.0 - edgeFade) * 0.25;
+        float disMask = smoothstep(thr, thr + max(u_dissolveSoft, 0.01), sCoarse.b);
+        float tailBand = (u_tailFadeA >= u_tailFadeB)
+                             ? 1.0
+                             : 1.0 - smoothstep(u_tailFadeA, u_tailFadeB, along);
+
+        float inten = wisp * edgeFade * disMask * tailBand;
+        if (inten < 0.004) discard;
+
+        vec3 col = mix(vColor.rgb, u_colTail, along);
+        if (dot(u_colTail, u_colTail) < 1e-4) col = vColor.rgb;
+        finalColor = ResolvePass(col, inten, vColor.a, max(u_bandShape.z, 1.0));
+        return;
+    }
 
     // ── PROCEDURAL PRESET STYLES (WebGL Trail Lab Pipeline) ─────────────────
     if (u_style > 0.5)
     {
+        if (u_renderPass < 0.5 && u_add > 0.5) discard;
+
         float v = vSegUV.x;                   // 0..1 across width (vUV.y in WebGL)
         float e = 1.0 - abs(2.0 * v - 1.0);   // edge falloff (1 - abs(2v - 1))
         float a = vSegUV.y;                   // age 0 (head) .. 1 (tail) (vAge in WebGL)
-        float vDist = a * max(u_pathArc.y, 1.0); // distance in metres from head
+        float vDist = a * max(u_pathArc.y, 1.0);
         if (u_maxDist > 0.0 && vDist > u_maxDist) discard;
 
-        float vS = u_pathArc.x - vDist;       // worldArcLen (stationary along world path)
+        float vS = metres;                    // stationary world arc-length
         float u = -vS * (u_uvScale.x > 0.001 ? u_uvScale.x : 1.0);
         float vShade = sin(vS * u_wave.y + u_time * u_wave.z + u_seed * 6.2831853);
         float vSpeed = 0.85;
@@ -371,7 +315,8 @@ void main()
             float n = Fbm2D(vec2(u * u_p0.x - u_time * u_p0.y, v * u_p0.z));
             float core = pow(e, u_p1.x);
             float glow = pow(e, u_p1.y);
-            float pulse = pow(0.5 + 0.5 * sin(u * u_p0.w - u_time * u_p2.x), 3.0);
+            float sPulse = 0.5 + 0.5 * sin(u * u_p0.w - u_time * u_p2.x);
+            float pulse = sPulse * sPulse * sPulse;
             float fade = pow(clamp(1.0 - a, 0.0, 1.0), u_p1.z);
             float hh = exp(-vDist * 8.0);
             float body = glow * (0.35 + 0.9 * n) + pulse * glow * 0.5;
@@ -380,13 +325,13 @@ void main()
         else if (st == 3) // Tiên Đới (Celestial Silk)
         {
             float sh = 0.65 + 0.35 * vShade;
-            float lines = 0.5 + 0.5 * sin(v * u_p0.x + Fbm2D(vec2(u * 0.8, v * 2.0)) * 3.0);
+            float nSilk = Fbm2D(vec2(u * 0.8, v * 2.0));
+            float lines = 0.5 + 0.5 * sin(v * u_p0.x + nSilk * 3.0);
             float band = smoothstep(0.7, 1.0, sin(u * u_p0.y - u_time * u_p0.z));
             float border = (1.0 - smoothstep(0.0, 0.035, abs(v - 0.13))) + (1.0 - smoothstep(0.0, 0.035, abs(v - 0.87)));
-            vec3 base = Ramp(v * 0.9 + Fbm2D(vec2(u * 1.2, v * 3.0)) * 0.25);
+            vec3 base = Ramp(v * 0.9 + nSilk * 0.25);
             vec3 col = base * sh * (0.85 + 0.15 * lines) + band * 0.3 * u_colRamp[3] + border * vec3(1.0, 0.85, 0.5) * 0.7;
 
-            // Soft pearl sheen at the head without bleaching silk hue
             float headHot = exp(-vDist * 6.5) * pow(e, 0.65);
             col += vec3(1.0, 0.9, 0.8) * headHot * 0.75;
 
@@ -397,7 +342,7 @@ void main()
             float fr = fract(u * u_p0.x - u_time * u_p0.y);
             float dash = smoothstep(0.15, 0.35, fr) * (1.0 - smoothstep(0.65, 0.85, fr));
             float core = pow(e, u_p1.x);
-            float glow = pow(e, 1.5);
+            float glow = e * sqrt(max(e, 0.0));
             float fade = pow(clamp(1.0 - a, 0.0, 1.0), u_p1.y) * smoothstep(0.0, 0.1, vDist);
             c = vec4(Ramp(0.3 + 0.7 * core) * (1.0 + core), (glow * 0.6 * (0.4 + 0.6 * dash) + core * 0.9) * fade);
         }
@@ -426,7 +371,7 @@ void main()
             float dd = length(fract(g) - 0.5);
             float scale = smoothstep(0.62, 0.28, dd);
             float edgeL = smoothstep(0.28, 0.5, dd);
-            float lam = 0.4 + 0.6 * max(dot(vec3(0.0, 1.0, 0.0), normalize(vec3(0.4, 0.8, 0.5))), 0.0);
+            const float lam = 0.4 + 0.6 * 0.78446454; // precomputed dot((0,1,0), normalize(0.4,0.8,0.5))
             vec3 col = Ramp(0.25 + 0.5 * scale + 0.25 * lam) * (0.55 + 0.7 * scale) * lam + fres * Ramp(0.95) * 1.2 - edgeL * 0.15;
             float fade = pow(clamp(1.0 - a, 0.0, 1.0), u_p1.y);
             c = vec4(col + exp(-vDist * u_p1.z) * Ramp(1.0), (0.35 + 0.5 * scale + fres) * fade);
@@ -457,7 +402,10 @@ void main()
             vec3 vo = Voronoi2D(vec2(u * u_p0.x, v * u_p0.y));
             float facet = 0.55 + 0.45 * vo.z;
             float edgeL = 1.0 - smoothstep(0.0, 0.08, vo.y);
-            float spark = pow(Hash11(vo.z * 91.0 + floor(u_time * 4.0 + vo.z * 10.0)), 12.0);
+            float hSpark = Hash11(vo.z * 91.0 + floor(u_time * 4.0 + vo.z * 10.0));
+            float h2 = hSpark * hSpark;
+            float h4 = h2 * h2;
+            float spark = h4 * h4 * h4; // hSpark^12 without pow()
             float fade = pow(clamp(1.0 - a, 0.0, 1.0), u_p1.x);
             c = vec4(Ramp(facet * 0.7 + edgeL * 0.3) * (1.0 + edgeL * 0.8 + spark * 4.0), smoothstep(0.0, 0.35, e) * fade * (0.5 + 0.5 * facet));
         }
@@ -523,14 +471,10 @@ void main()
             float flow = 0.78 + 0.22 * smoothstep(0.1, 0.5, fr) * (1.0 - smoothstep(0.6, 0.9, fr));
             float core = smoothstep(0.0, 0.7, e);
             float fade = pow(clamp(1.0 - a, 0.0, 1.0), u_p1.x) * smoothstep(0.0, 0.1, vDist);
-            c = vec4(mix(u_colRamp[1], u_colRamp[0], core) * flow, pow(e, 0.5) * fade);
+            c = vec4(mix(u_colRamp[1], u_colRamp[0], core) * flow, sqrt(max(e, 0.0)) * fade);
         }
 
         float pAlpha = c.a * u_alpha;
-        /* A fixed alpha discard makes the procedural edge binary at subpixel
-         * widths. FXAA sees only the final emissive composite and cannot
-         * recover coverage lost here. Feather the cutoff over this fragment's
-         * screen-space alpha footprint before blending. */
         float alphaFootprint = max(fwidth(pAlpha), 1e-5);
         pAlpha *= smoothstep(0.003 - alphaFootprint,
                              0.003 + alphaFootprint, pAlpha);
@@ -544,256 +488,134 @@ void main()
         return;
     }
 
-        // Arc-length anchored centreline. `metres` is where THIS fragment sits
-        // along the path the emitter actually laid, so a trail that is still
-        // growing (or a head that speeds up) slides new strip past a standing
-        // waveform instead of stretching the whole wave with it — the exact
-        // failure that made vertex-space sines read as a rigid swinging rope.
-        // u_pathArc.x is the HEAD's distance and along grows toward the tail,
-        // hence the subtraction. The `+ u_time` sign then walks the crests
-        // toward the TAIL (constant phase => metres decreasing), which is the
-        // direction energy sheds from a moving emitter.
-        metres = u_nodeArc!=0?vPathMetres:u_pathArc.x - along * u_pathArc.y;
-        // ph (u_wavePhase) is no longer read here — the per-spawn phase is
-        // now baked into each packed SINE layer's own `phase` field
-        // (trail_system.c's ApplyDeformUniforms: d->phase, d->phase*2.3,
-        // d->phase*4.1), same as freq/speed/amplitude. Still declared as a
-        // uniform above and still read by the VERTEX stage (mode 2 leaves
-        // that in passthrough, but the uniform is shared with the other
-        // modes) — just no longer needed as a local here.
+    // ── MODE 2: Sin-Wave Strand Trail ────────────────────────────────────────
+    float edgeMask = 1.0 - smoothstep(1.0 - max(u_bandShape.y, 0.01), 1.0, abs(across));
+    if (edgeMask <= 0.001) discard;
 
-        // `ramp` is the article's "multiply by the U coordinate". It gates
-        // EVERY source of disorder — wave amplitude, flow distortion, dissolve
-        // — so the trail leaves the emitter as one tight coherent ribbon and
-        // only comes apart behind it. Without it the head frays too and the
-        // effect loses its anchor. The smoothstep is the head weld: excursion
-        // is exactly 0 at the emitter.
-        //
-        // This is UV_ENV_HEAD_WELD in core/uv/shaders/uv_deform.glsl — the
-        // shape was general enough to name, so the module names it and this
-        // shader is one of its callers rather than its only implementation.
-        float ramp = UVDeform_Envelope(UV_ENV_HEAD_WELD, along, 0.0,
-                                       max(u_waveEnv.x, 0.001));
+    float tailBand = (u_tailFadeA >= u_tailFadeB)
+                         ? 1.0
+                         : 1.0 - smoothstep(u_tailFadeA, u_tailFadeB, along);
+    if (tailBand <= 0.001) discard;
 
-        // ── Phase 3: flow distortion from the B channel ──────────────────
-        // Two samples at different pan offsets, subtracted from 0.5 so the
-        // pair is zero-mean: a biased mean would slide the whole trail
-        // sideways instead of warping it. This is what tears the strand
-        // bundles apart from each other toward the tail.
-        // Every time-driven offset is folded with fract() before it is added
-        // (the reference's Step 12). u_time * speed grows without bound, and a
-        // float32 loses its low bits long before the effect is retired; the
-        // sheet wraps REPEAT and sine has period 2pi, so folding changes
-        // nothing visible while it keeps the arithmetic in [0,1].
-        float panA = SurfaceFlow_Pan(u_time, u_panSpeed.x);
-        float panB = SurfaceFlow_Pan(u_time, u_panSpeed.y);
+    float ramp = UVDeform_Envelope(UV_ENV_HEAD_WELD, along, 0.0,
+                                   max(u_waveEnv.x, 0.001));
 
+    float panA = SurfaceFlow_Pan(u_time, u_panSpeed.x);
+    float panB = SurfaceFlow_Pan(u_time, u_panSpeed.y);
+
+    // ── Phase 1/2: three independent wave fields (Sin01/02/03) ───────────────
+    vec2 driveMat = vec2(metres, along);
+    float w0 = UVDeform_LayerOffset(u_uvField[0], u_uvField[1], u_uvField[2],
+                                    vSegUV, driveMat, u_time, vec2(0.5)).x;
+    float w1 = UVDeform_LayerOffset(u_uvField[3], u_uvField[4], u_uvField[5],
+                                    vSegUV, driveMat, u_time, vec2(0.5)).x;
+    float w2 = UVDeform_LayerOffset(u_uvField[6], u_uvField[7], u_uvField[8],
+                                    vSegUV, driveMat, u_time, vec2(0.5)).x;
+
+    // ── Phase 3: flow distortion from the B channel (only sampled if active) ─
+    if (u_strandFlow.x > 1e-4)
+    {
         vec2 fuv = vec2(vSegUV.x, fract(metres * u_tiling.x * 0.5));
-        float b1 = texture(texture0, fuv + vec2(0.0, -panA)).b;
-        float b2 = texture(texture0, fuv * 1.37 + vec2(0.29, -panB * 0.7)).b;
-        float flow = ((b1 - 0.5) + (b2 - 0.5)) * u_strandFlow.x * ramp;
+        float b1 = texture(texture0, fuv + vec2(0.0, -panA)).b - 0.5;
+        float b2 = texture(texture0, fuv * 1.37 + vec2(0.29, -panB * 0.7)).b - 0.5;
+        float flowScale = u_strandFlow.x * ramp;
+        w0 += (b1 + b2) * flowScale;
+        w1 += (b1 - b2) * flowScale * 0.90;
+        w2 -= (b1 + b2 * 0.6) * flowScale * 0.80;
+    }
 
-        // ── Phase 1/2: three independent wave fields (Sin01/02/03) ────────
-        // GENERALISED 05/08/2026 onto core/uv's packed UVDeformField
-        // (u_uvField/u_uvMeta from uv_field.glsl) — was u_sinWave, hand-
-        // detuned per bundle right here. Each bundle is now its own packed
-        // SINE layer (trail_system.c's ApplyDeformUniforms builds all three
-        // from the SAME numbers this file used to detune by hand: freq/speed
-        // /phase/amplitude scaled by `spread` once, on the C side, not per
-        // fragment). Keeping them as SEPARATE layers — rather than summing
-        // into one centreline — is still the entire point: each carries its
-        // own strand bundle, and the bundles cross.
-        //
-        // `ramp` is no longer computed into `amp` by hand either — it is
-        // UVDeform_LayerOffset's OWN envelope term (env=HEAD_WELD, envAxis=1
-        // reads mat.y=along), the same UV_ENV_HEAD_WELD this file already
-        // used for `ramp` above — so mat.y must carry `along` for the
-        // envelope to gate correctly, and mat.x carries `metres` to drive the
-        // sine, matching driveAxis=0 packed on the C side.
-        //
-        // Algebraically identical to the old per-bundle detune, not
-        // guaranteed bit-identical — the generic path always multiplies
-        // amplitude*envelope in that fixed order, so a detuned layer's
-        // product can differ from the old `(amp*ramp)*detune` grouping by up
-        // to 1 ULP. Invisible on screen; see trail_system.c's own note at the
-        // push site for why that bar is different from trail_volume.fs's.
-        vec2 driveMat = vec2(metres, along);
-        float w0 = UVDeform_LayerOffset(u_uvField[0], u_uvField[1], u_uvField[2],
-                                        vSegUV, driveMat, u_time, vec2(0.5)).x;
-        float w1 = UVDeform_LayerOffset(u_uvField[3], u_uvField[4], u_uvField[5],
-                                        vSegUV, driveMat, u_time, vec2(0.5)).x;
-        float w2 = UVDeform_LayerOffset(u_uvField[6], u_uvField[7], u_uvField[8],
-                                        vSegUV, driveMat, u_time, vec2(0.5)).x;
+    float endMid = clamp(u_tailFadeA, 0.0, 1.0);
+    float endLate = clamp(u_tailFadeA + u_tailShape.x, 0.0, 1.0);
+    float endEarly = clamp(u_tailFadeA - u_tailShape.x, 0.0, 1.0);
+    float dying = smoothstep(endEarly, 1.0, along);
 
-        // ── Sample one strand bundle per wave field ──────────────────────
-        // Each bundle is the sheet's strand density mapped across
-        // [centre - bundleHW, centre + bundleHW]. The V axis runs in METRES so
-        // the filaments stay pinned to the path the emitter laid and read as
-        // matter being shed, not as a texture sliding over a surface.
-        // ── The along-trail texture coordinate: TILE or STRETCH ───────────
-        // STRETCH is the reference's own convention. Its R/G channels are not a
-        // repeating material — each is ONE complete smoke streak whose head and
-        // tail taper are painted into the sheet — so U maps once across the
-        // whole trail. Tiling such a sheet by metres destroys exactly the thing
-        // it was authored for: you get a rope of identical segments with no
-        // head, no tail and no silhouette, and three sin-offset samples of a
-        // rope are just three ropes.
-        //
-        // TILE is for sheets authored as a repeating filament material (the
-        // energy style). There the fold rules matter: never nest them —
-        // fract(fract(x)*1.6) != fract(x*1.6) changes the tiling RATE and chops
-        // each bundle into mismatched runs.
-        // ── Where each bundle ENDS ────────────────────────────────────────
-        // Three different points, not one. A tail whose every layer stops on
-        // the same line reads as clipped no matter how soft the fade over it —
-        // the softness only blurs the cut, it does not remove it. Staggering
-        // the ends lets the trail unravel across a stretch: the earliest
-        // bundle thins out first and the last one carries a few surviving
-        // wisps past it.
-        float endMid = clamp(u_tailFadeA, 0.0, 1.0);
-        float endLate = clamp(u_tailFadeA + u_tailShape.x, 0.0, 1.0);
-        float endEarly = clamp(u_tailFadeA - u_tailShape.x, 0.0, 1.0);
-        float dying = smoothstep(endEarly, 1.0, along); // 0 in the body, 1 at the tip
+    float bundleHW = max(u_bandShape.x, 0.02) *
+                     mix(1.0, clamp(u_tailShape.z, 0.05, 1.0), dying);
 
-        // Bundles NARROW as they die. A band that only fades keeps its full
-        // width to the very end and reads as a rectangle going transparent;
-        // real smoke thins to threads before it disappears.
-        float bundleHW = max(u_bandShape.x, 0.02) *
-                         mix(1.0, clamp(u_tailShape.z, 0.05, 1.0), dying);
-        //
-        // SurfaceFlow_AlongV (core/uv/shaders/surface_flow.glsl) IS this rule:
-        // it takes vBase unfolded and folds it once together with the layer's
-        // own scale, which is the non-nesting the comment above demands.
-        float vBase = metres * u_tiling.x;
-        bool stretch = u_strandFlow.z > 0.5;
-        float v0 = SurfaceFlow_AlongV(along, vBase, 1.00, panA, stretch);
-        float v1 = SurfaceFlow_AlongV(along, vBase, 1.60, panB, stretch);
-        float v2 = SurfaceFlow_AlongV(along, vBase, 0.70, panA * 0.55, stretch);
-        float s0 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w0, bundleHW), v0)).r;
-        float s1 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w1, bundleHW * 0.72), v1)).g;
-        float s2 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w2, bundleHW * 1.35), v2)).r;
+    float vBase = metres * u_tiling.x;
+    bool stretch = u_strandFlow.z > 0.5;
+    float v0 = SurfaceFlow_AlongV(along, vBase, 1.00, panA, stretch);
+    float v1 = SurfaceFlow_AlongV(along, vBase, 1.60, panB, stretch);
+    float v2 = SurfaceFlow_AlongV(along, vBase, 0.70, panA * 0.55, stretch);
+    float s0 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w0, bundleHW), v0)).r;
+    float s1 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w1, bundleHW * 0.72), v1)).g;
+    float s2 = texture(texture0, vec2(SurfaceFlow_AcrossU(across, w2, bundleHW * 1.35), v2)).r;
 
-        // A wrap guard that stays flat across 80% of the bundle turns a white
-        // fallback texel (or any broad R/G patch) into three solid ribbons.
-        // Use a real cross-section instead: full only on the centreline, then
-        // taper continuously to zero. The authored sheet still supplies all
-        // fine hairs and gaps; this envelope guarantees that it can never
-        // inflate into a flat rectangular band.
-        float d0 = abs(across - w0) / bundleHW;
-        float d1 = abs(across - w1) / (bundleHW * 0.72);
-        float d2 = abs(across - w2) / (bundleHW * 1.35);
-        float env0 = 1.0 - smoothstep(0.04, 1.0, d0);
-        float env1 = 1.0 - smoothstep(0.04, 1.0, d1);
-        float env2 = 1.0 - smoothstep(0.04, 1.0, d2);
-        s0 *= env0;
-        s1 *= env1;
-        s2 *= env2;
+    float d0 = abs(across - w0) / bundleHW;
+    float d1 = abs(across - w1) / (bundleHW * 0.72);
+    float d2 = abs(across - w2) / (bundleHW * 1.35);
+    float env0 = 1.0 - smoothstep(0.04, 1.0, d0);
+    float env1 = 1.0 - smoothstep(0.04, 1.0, d1);
+    float env2 = 1.0 - smoothstep(0.04, 1.0, d2);
+    s0 *= env0;
+    s1 *= env1;
+    s2 *= env2;
 
-        // Each bundle's own end. Applied per bundle, BEFORE the max: after it,
-        // one shared cut would just clip the combined result again.
-        float end0 = 1.0 - smoothstep(endMid, 1.0, along);
-        float end1 = 1.0 - smoothstep(endLate, 1.0, along);
-        float end2 = 1.0 - smoothstep(endEarly, 1.0, along);
-        s0 *= end0;
-        s1 *= end1;
-        s2 *= end2;
+    float end0 = 1.0 - smoothstep(endMid, 1.0, along);
+    float end1 = 1.0 - smoothstep(endLate, 1.0, along);
+    float end2 = 1.0 - smoothstep(endEarly, 1.0, along);
+    s0 *= end0;
+    s1 *= end1;
+    s2 *= end2;
 
-        // The hot core is a structural part of an energy strand, not an
-        // accidental threshold in the source texture. Do NOT multiply this
-        // by s0/s1/s2: the authored R/G hairs need not cross the exact bundle
-        // centre, and doing so made hotSignal identically zero while the red
-        // support remained visible. Texture owns fine gaps; geometry guarantees
-        // one narrow hot centreline for each live bundle.
-        // 0.1111 = the old inner/outer ratio (0.02 / 0.18) kept as a ratio, so
-        // narrowing the core narrows its falloff with it instead of turning a
-        // thin core into a hard-edged wire.
-        float coreOut = max(u_coreShape.x, 0.004);
-        float coreIn  = coreOut * 0.1111;
-        float core0 = (1.0 - smoothstep(coreIn, coreOut, d0)) * end0;
-        float core1 = (1.0 - smoothstep(coreIn, coreOut, d1)) * end1 *
-                      clamp(u_wispMix, 0.0, 1.0);
-        float core2 = (1.0 - smoothstep(coreIn, coreOut, d2)) * end2 *
-                      clamp(u_strandFlow.y, 0.0, 1.0);
-        float centreCore = max(max(core0, core1), core2);
+    float coreOut = max(u_coreShape.x, 0.004);
+    float coreIn  = coreOut * 0.1111;
+    float wispMixClamp = clamp(u_wispMix, 0.0, 1.0);
+    float b2WeightClamp = clamp(u_strandFlow.y, 0.0, 1.0);
+    float core0 = (1.0 - smoothstep(coreIn, coreOut, d0)) * end0;
+    float core1 = (1.0 - smoothstep(coreIn, coreOut, d1)) * end1 * wispMixClamp;
+    float core2 = (1.0 - smoothstep(coreIn, coreOut, d2)) * end2 * b2WeightClamp;
+    float centreCore = max(max(core0, core1), core2);
 
-        // MAX, not sum: overlapping hairs must stay hairs. Summing fills the
-        // gaps between them back in and the three bundles merge into exactly
-        // the one smooth band this mode exists to avoid.
-        float strand = max(max(s0, s1 * clamp(u_wispMix, 0.0, 1.0)),
-                           s2 * clamp(u_strandFlow.y, 0.0, 1.0));
-        strand = pow(clamp(strand, 0.0, 1.0), max(u_bandShape.w, 0.05));
+    float strand = max(max(s0, s1 * wispMixClamp), s2 * b2WeightClamp);
+    strand = pow(clamp(strand, 0.0, 1.0), max(u_bandShape.w, 0.05));
 
-        // ── Phase 4: edge mask ────────────────────────────────────────────
-        // "Clean the shape animation over the edge" — nothing survives past
-        // the quad boundary, whatever the waves did.
-        float edgeMask = 1.0 - smoothstep(1.0 - max(u_bandShape.y, 0.01), 1.0, abs(across));
+    // ── Phase 5: dissolve (A channel) ────────────────────────────────────────
+    float dis = texture(texture0, vec2(vSegUV.x * 0.83 + 0.17,
+                                       SurfaceFlow_AlongV(along, vBase, 0.45,
+                                                          panB * 0.35, false))).a;
+    float thr = u_dissolve * ramp + u_tailShape.y * dying;
+    float dissolveMask2 = smoothstep(thr, thr + max(u_dissolveSoft, 0.01), dis);
 
-        // ── Phase 5: dissolve (A channel), biting hardest at the tail ─────
-        // The threshold climbs with `ramp`, so the head is untouched and the
-        // tail erodes into separate wisps instead of fading out as a whole.
-        // NOTE the `false`: the dissolve channel ALWAYS tiles by metres, even
-        // for a stretch-authored sheet whose R/G carry one complete streak.
-        // That predates this module and is preserved exactly; it is passed
-        // explicitly here rather than left implicit so the asymmetry is
-        // visible instead of hiding in a missing branch.
-        float dis = texture(texture0, vec2(vSegUV.x * 0.83 + 0.17,
-                                           SurfaceFlow_AlongV(along, vBase, 0.45,
-                                                              panB * 0.35, false))).a;
-        // The threshold climbs with `ramp` down the whole trail, then climbs
-        // FASTER over the dying stretch. That second term is what turns the
-        // end into holes and islands instead of a uniform dimming: the noise
-        // field eats through the thin parts first and leaves the dense ones
-        // behind for a moment.
-        float thr = u_dissolve * ramp + u_tailShape.y * dying;
-        float dissolveMask2 = smoothstep(thr, thr + max(u_dissolveSoft, 0.01), dis);
+    float commonMask = edgeMask * dissolveMask2 * tailBand;
+    float inten = strand * commonMask;
+    float hotSignal = centreCore * commonMask;
+    if (max(inten, hotSignal) < 0.004)
+        discard;
 
-        float tailBand = (u_tailFadeA >= u_tailFadeB)
-                             ? 1.0
-                             : 1.0 - smoothstep(u_tailFadeA, u_tailFadeB, along);
+    // ── Phase 6: colour ──────────────────────────────────────────────────────
+    vec3 lengthCol = mix(vColor.rgb, u_colTail, along);
+    if (dot(u_colRamp[1], u_colRamp[1]) + dot(u_colRamp[2], u_colRamp[2]) > 0.0001) {
+        lengthCol = SampleRamp(along);
+    }
 
-        float inten = strand * edgeMask * dissolveMask2 * tailBand;
-        float hotSignal = centreCore * edgeMask * dissolveMask2 * tailBand;
-        // The structural core is deliberately independent of the R/G sheet.
-        // Its liveness test must be independent too: discarding on `inten`
-        // alone silently killed the yellow core wherever the source texture
-        // happened to be dark, leaving only the broad red support visible.
-        if (max(inten, hotSignal) < 0.004)
-            discard;
-
-        // ── Phase 6: colour ───────────────────────────────────────────────
-        // TWO ramps, and they answer different questions. The reference has
-        // only the first:
-        //   * ALONG the trail (u): head colour -> tail colour. This is what
-        //     makes a trail read as cooling, or as smoke thinning out, and
-        //     leaving it out is why an earlier pass looked like one flat hue
-        //     smeared down the whole ribbon.
-        //   * ACROSS a strand (intensity): the dense middle of a filament
-        //     burns toward u_colHot. Without it a coloured strand is a neon
-        //     stripe rather than something hot.
-        vec3 lengthCol = mix(vColor.rgb, u_colTail, along);
-        if (dot(u_colRamp[1], u_colRamp[1]) + dot(u_colRamp[2], u_colRamp[2]) > 0.0001) {
-            lengthCol = SampleRamp(along);
-        }
-
+    vec3 hot;
+    float passIntensity;
+    if (u_renderPass < 0.5)
+    {
+        hot = mix(lengthCol, u_colHot, hotSignal * 0.65);
+        passIntensity = max(inten, hotSignal * 0.65);
+    }
+    else
+    {
         float densGate = clamp(u_coreShape.y, 0.05, 0.98);
         float hotMix = max(smoothstep(densGate, 1.0, inten),
                            smoothstep(0.08, 0.45, hotSignal));
-
         float coreTrans = smoothstep(0.60, 1.0, hotMix);
-        vec3 elemCol = mix(lengthCol * (0.8 + inten * 0.4), vec3(1.0, 1.0, 1.0) * 3.2, coreTrans);
+        vec3 elemCol = mix(lengthCol * (0.8 + inten * 0.4), vec3(3.2), coreTrans);
 
         float isFire = step(lengthCol.b, lengthCol.r * 0.65) * step(0.35, lengthCol.r);
-        float flameTemp = clamp(mix(inten * 0.55, 1.0, hotSignal * hotSignal) * (1.0 - along * 0.30), 0.0, 1.0);
-        vec3 fireCol = calcBlackbodyNormalized(flameTemp);
+        if (isFire > 0.5)
+        {
+            float flameTemp = clamp(mix(inten * 0.55, 1.0, hotSignal * hotSignal) * (1.0 - along * 0.30), 0.0, 1.0);
+            hot = calcBlackbodyNormalized(flameTemp);
+        }
+        else
+        {
+            hot = elemCol;
+        }
+        passIntensity = max(inten, hotSignal);
+    }
 
-        vec3 hot = (u_renderPass < 0.5)
-                       ? mix(lengthCol, u_colHot, hotSignal * 0.65)
-                       : mix(elemCol, fireCol, isFire);
-
-        // Feed the structural centreline into radiance/coverage too.
-        float passIntensity = (u_renderPass < 0.5)
-                                  ? max(inten, hotSignal * 0.65)
-                                  : max(inten, hotSignal);
-        finalColor = ResolvePass(hot, passIntensity, vColor.a, u_bandShape.z);
-        return;
+    finalColor = ResolvePass(hot, passIntensity, vColor.a, u_bandShape.z);
 }
