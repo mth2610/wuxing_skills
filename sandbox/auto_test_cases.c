@@ -395,7 +395,7 @@ static AutoTestResult AutoTest_SkillRegistryStep(int frameInCase, char *outReaso
   return AUTOTEST_RUNNING; // maxFrames timeout fails the case
 }
 
-// The match (game_mode_loop test) pins VERDANT_PATH + its ring-out bounds
+// The match (game_mode_loop test) pins SONG_QUAO + its ring-out bounds
 // and parks the player at the island spawn. Tests that spawn actors at
 // DEFAULT_ARENA coordinates must restore that world first, or their agents
 // (and the parked player) fall out of the new bounds mid-test.

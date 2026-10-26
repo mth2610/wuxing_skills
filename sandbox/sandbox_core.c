@@ -149,12 +149,12 @@ void Sandbox_ResetTrainingDummy(void) {
 }
 
 static float g_cameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
-static float g_camDist = 12.0f; // Zoom 1.50x default (18.0f / 1.50f)
+static float g_camDist = 18.0f / 1.52f; // Zoom 1.52x default (~11.842f)
 
 void InitSandbox(PlayerEntity* player, EnemyEntity* enemy) {
     // Camera (real-world-scaled: 1 unit = 1 meter)
     g_cameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
-    g_camDist = 12.0f; // Zoom 1.50x default
+    g_camDist = 18.0f / 1.52f; // Zoom 1.52x default
     camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
     camera.fovy = SANDBOX_CAMERA_DEFAULT_FOVY;
     camera.projection = CAMERA_PERSPECTIVE;

@@ -1188,7 +1188,7 @@ int main(int argc, char **argv) {
         CameraFX_Update(&camera, dt);
     } else if (currentScreen == SCREEN_VFX_TESTER) {
         static float vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
-        static float vfxCamDist = 12.0f; // Zoom 1.50x default (18.0f / 1.50f = 12.0f)
+        static float vfxCamDist = 18.0f / 1.52f; // Zoom 1.52x default (~11.842f)
         static float vfxCamPitch = SANDBOX_CAMERA_PITCH_DEGREES;
 
         static float s_vfxPlayerVelY = 0.0f;
@@ -1206,7 +1206,7 @@ int main(int argc, char **argv) {
             s_vfxPlayerJumping = false;
             vfxCameraAngle = SANDBOX_CAMERA_DEFAULT_YAW;
             float prefDist = VFXTest_GetPreferredCameraDistance();
-            vfxCamDist = (prefDist > 0.0f) ? prefDist : 12.0f;
+            vfxCamDist = (prefDist > 0.0f) ? prefDist : (18.0f / 1.52f);
             float prefPitch = VFXTest_GetPreferredCameraPitch();
             vfxCamPitch = (prefPitch > 0.0f) ? prefPitch : SANDBOX_CAMERA_PITCH_DEGREES;
         }
@@ -1447,7 +1447,7 @@ int main(int argc, char **argv) {
 
         // Intersect against the flat Y=0 plane first (cheap, works for the
         // common flat-map case), then snap the result's Y to the ACTIVE
-        // map's real ground height — on a heightmap map (e.g. VERDANT_PATH)
+        // map's real ground height — on a heightmap map (e.g. SONG_QUAO)
         // Y=0 is only correct on the plateau interior; anywhere else (near
         // the cliff falloff) this used to leave mouseTarget3D.y wrong,
         // which broke ground-hugging/multi-point NEWFX effects that assume
@@ -1514,7 +1514,7 @@ int main(int argc, char **argv) {
             // leaves the lobby) so TAO PHONG / NHAP MA work again from the menu.
             Net_Stop();
             GameScreen_SetOnlineCode(NULL);
-            // The match pinned VERDANT_PATH + its ring-out bounds — hand the
+            // The match pinned SONG_QUAO + its ring-out bounds — hand the
             // sandbox its DEFAULT_ARENA world back (bounds are global; a
             // sandbox player outside the match circle would fall forever).
             for (int i = 0; i < MapManager_GetCount(); i++) {
@@ -1983,12 +1983,6 @@ int main(int argc, char **argv) {
         scenePostFX.contrast = 1.08f;
         scenePostFX.lutEnabled = true;
         scenePostFX.vignetteRadius = 1.08f;
-        scenePostFX.vignetteSoftness = 0.35f;
-    } else if (activeMapName && strcmp(activeMapName, "VERDANT_PATH") == 0) {
-        scenePostFX.saturation = 1.25f;
-        scenePostFX.contrast = 1.07f;
-        scenePostFX.lutEnabled = true;
-        scenePostFX.vignetteRadius = 1.05f;
         scenePostFX.vignetteSoftness = 0.35f;
     }
     PostFX_Draw(&scenePostFX);

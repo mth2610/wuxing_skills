@@ -457,8 +457,8 @@ int main(void) {
                             "Wind_EvaluateVorticleVelocity") &&
                FileContains("maps/toolkit/map_props_nature.inl",
                             "existingBend.x + airVelocity.x * kNatureWindBendPerMps") &&
-               FileContains("maps/worlds/verdant_path/verdant_path.c",
-                            "MapProp_AddNatureWindVorticles(s_time)"),
+               FileContains("maps/toolkit/map_props_flora.inl",
+                            "MapProp_AddNatureWindVorticles(flora->time)"),
                "Grass and flowers receive and superpose active Wind Vorticles");
     TEST_CHECK(!FileContains("maps/toolkit/shaders/nature_lit.vs", "u_vorticles") &&
                FileContains("maps/toolkit/shaders/nature_lit.vs",

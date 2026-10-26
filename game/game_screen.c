@@ -14,6 +14,7 @@
 #include "net/net_transport.h"
 #include "combat/combat.h"
 #include "audio/audio_system.h"
+#include "sandbox/sandbox_core.h"
 #include <math.h>
 #include <string.h>
 
@@ -21,8 +22,12 @@
 #define PI 3.14159265358979323846f
 #endif
 
+#define GAME_DEFAULT_TILT_DEGREES 26.0f
+#define GAME_DEFAULT_ZOOM_RATIO 1.52f
+
 static float s_camAngle = 0.0f;
-static float s_camDist = 13.0f;
+static float s_camDist = 18.0f / 1.52f; // Zoom 1.52x default (~11.842f)
+static float s_camPitch = 26.0f;        // Tilt 26 deg default
 static bool s_backToMenu = false;
 
 // --- Module 7 match state ---
@@ -35,7 +40,7 @@ static float s_swingSlowTimer = 0.0f; // movement damped while a swing plays
 
 // Team battle: two spawn clusters facing each other across the plateau
 // center; heroes fan out ±z within their cluster.
-static const Vector3 TEAM_SPAWN[2] = {{42.0f, 0.0f, 37.5f}, {58.0f, 0.0f, 37.5f}};
+static const Vector3 TEAM_SPAWN[2] = {{86.0f, 0.0f, 150.0f}, {102.0f, 0.0f, 150.0f}};
 
 // Per-agent render state for OTHER heroes (remote players + bots), so each
 // gets its own walk/idle animation + facing on the shared character model.
@@ -44,16 +49,15 @@ static Vector3 s_remotePrevPos[MAX_AGENTS];
 static float s_remoteYaw[MAX_AGENTS];
 static bool s_remoteAnimInit[MAX_AGENTS];
 
-// The Phase 0 match runs on VERDANT_PATH — the real grass island (100x75m,
-// flat plateau at Y=0, cliff falloff past ~34m from center). Ring-out
+// The match runs on SONG_QUAO — the celestial floating island. Ring-out
 // bounds + player placement are applied in the INTRO tick (only while this
 // screen is ACTIVE — the bounds are global, and the sandbox needs the
 // DEFAULT_ARENA circle back; main.c restores it on back-to-menu).
-#define MATCH_MAP_NAME "VERDANT_PATH"
-static const Vector3 MATCH_ARENA_CENTER = {50.0f, 0.0f, 37.5f};
-static const float MATCH_ARENA_RADIUS = 34.0f;
-static const Vector3 PLAYER_SPAWN = {46.0f, 0.0f, 37.5f};
-static const Vector3 BOSS_SPAWN = {54.0f, 0.0f, 37.5f};
+#define MATCH_MAP_NAME "SONG_QUAO"
+static const Vector3 MATCH_ARENA_CENTER = {94.15f, 0.0f, 150.0f};
+static const float MATCH_ARENA_RADIUS = 75.0f;
+static const Vector3 PLAYER_SPAWN = {90.0f, 0.0f, 150.0f};
+static const Vector3 BOSS_SPAWN = {98.0f, 0.0f, 150.0f};
 static const float INTRO_SECONDS = 2.0f;
 
 // Default loadout (keys 1-4). One skill per element — deliberately NOT
@@ -101,7 +105,9 @@ static void ResetMatch(PlayerEntity *player)
     // because ResetMatch only runs at startup or while in-game.
     if (Entity_GetAgent(player->agentId) == NULL)
     {
-        player->agentId = Entity_SpawnAgent(PLAYER_SPAWN, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
+        Vector3 spawn = PLAYER_SPAWN;
+        spawn.y = MapManager_GetGroundHeightAt(spawn.x, spawn.z);
+        player->agentId = Entity_SpawnAgent(spawn, 100.0f, 0, TEAM_ALLY, ARCH_HERO);
         // Team battle: the lobby may have moved the host to side 1 — the
         // respawned agent must keep that side (roster's HOST entry has it).
         if (s_mode == GAME_MODE_TEAM_BATTLE)
@@ -161,7 +167,8 @@ static void PlaceHeroesAtTeamSpawns(void)
 void GameScreen_Init(PlayerEntity *player)
 {
     s_camAngle = 0.0f;
-    s_camDist = 13.0f;
+    s_camDist = 18.0f / 1.52f; // Zoom 1.52x default (~11.842f)
+    s_camPitch = 26.0f;        // Tilt 26 deg default
     s_backToMenu = false;
     UI_Init();
     ResetMatch(player);
@@ -274,7 +281,9 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
         {
             if (s_mode == GAME_MODE_BOSS)
             {
-                Boss_Spawn(&BOSS_HAC_DIEN_TON_GIA, BOSS_SPAWN, TEAM_ENEMY);
+                Vector3 bossSpawn = BOSS_SPAWN;
+                bossSpawn.y = MapManager_GetGroundHeightAt(bossSpawn.x, bossSpawn.z);
+                Boss_Spawn(&BOSS_HAC_DIEN_TON_GIA, bossSpawn, TEAM_ENEMY);
             }
             else if (!Net_ClientDrivesWorld())
             {
@@ -484,9 +493,6 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     if (s_camDist > 22.0f)
         s_camDist = 22.0f;
 
-    float s = sinf(s_camAngle);
-    float c = cosf(s_camAngle);
-
     // Module 4: movement/jump/dash/meditate/skill-cast all live in control/
     // now — this screen only forwards the camera and reads back the agent's
     // authoritative position (control writes it via Entity_SetPosition, and
@@ -590,11 +596,8 @@ void GameScreen_Update(PlayerEntity *player, Camera3D *camera, float dt)
     }
 
     camera->target = (Vector3){
-        player->position.x, player->position.y + 1.6f, player->position.z};
-    camera->position = (Vector3){
-        player->position.x + s * s_camDist,
-        player->position.y + s_camDist * 0.85f,
-        player->position.z + c * s_camDist};
+        player->position.x, player->position.y + SANDBOX_CAMERA_TARGET_HEIGHT, player->position.z};
+    camera->position = SandboxCamera_OrbitPositionAtPitch(player->position, s_camAngle, s_camDist, s_camPitch);
 }
 
 static Color MinionElementColor(int elem)

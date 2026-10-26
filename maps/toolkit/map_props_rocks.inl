@@ -595,3 +595,53 @@ void MapProp_UnloadRockSystem(MapRockSystem *sys)
     sys->ready = false;
 }
 
+void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *ground,
+                               Vector3 groundCenter, const MapRockItem *items, int itemCount)
+{
+    if (!sys || !items || itemCount <= 0)
+        return;
+    for (int i = 0; i < itemCount; i++)
+    {
+        const MapRockItem *item = &items[i];
+        Vector3 pos = item->position;
+        Vector3 normal;
+        if (ground && ground->ready)
+        {
+            if (!MapProp_SampleGroundSurface(ground, groundCenter, item->position.x, item->position.z, &pos, &normal))
+            {
+                pos = item->position;
+            }
+        }
+        float sinkOffset = (item->archetype == MAP_ROCK_RIVER_STONE)
+                               ? (item->heightScale * 0.44f)
+                               : (item->heightScale * 0.32f);
+        float heightScale = (item->archetype == MAP_ROCK_RIVER_STONE)
+                                ? (item->heightScale * 0.68f)
+                                : item->heightScale;
+        pos.y -= sinkOffset;
+        MapProp_AddRockItem(sys, pos, item->radiusScale, heightScale, item->rotationDeg, item->archetype);
+    }
+}
+
+void MapProp_AddCragPlacements(MapRockSystem *sys, const MapGroundSurface *ground,
+                               Vector3 groundCenter, const Vector2 *points, int count,
+                               float baseScale)
+{
+    if (!sys || !points || count <= 0)
+        return;
+    float scaleBase = baseScale > 0.0f ? baseScale : 1.45f;
+    for (int i = 0; i < count; i++)
+    {
+        Vector3 pos = {points[i].x, 0.0f, points[i].y};
+        Vector3 normal;
+        if (ground && ground->ready &&
+            MapProp_SampleGroundSurface(ground, groundCenter, points[i].x, points[i].y, &pos, &normal))
+        {
+            float rot = (float)(i * 67 % 360);
+            float scale = scaleBase + 0.35f * (float)(i % 3);
+            MapProp_AddRockItem(sys, pos, scale, scale * 1.25f, rot, MAP_ROCK_CRAG);
+        }
+    }
+}
+
+

@@ -199,9 +199,6 @@ Vector3 MapManager_GetActiveSpawnPoint(void) {
     if (strcmp(name, "SONG_QUAO") == 0) {
         // Song Quao island center is (94.15f, 150.0f). Spawn near the main meadow plateau.
         pt = (Vector3){ 94.15f, 0.0f, 150.0f };
-    } else if (strcmp(name, "VERDANT_PATH") == 0) {
-        // Verdant Path central meadow clearing / path fork
-        pt = (Vector3){ 46.0f, 0.0f, 37.5f };
     } else {
         // DEFAULT_ARENA and default fallback
         pt = (Vector3){ 6.0f, 0.0f, 4.4f };
@@ -220,9 +217,6 @@ void MapManager_GetActiveBounds(Vector3 *outCenter, float *outRadius) {
     if (strcmp(name, "SONG_QUAO") == 0) {
         if (outCenter) *outCenter = (Vector3){ 94.15f, 0.0f, 150.0f };
         if (outRadius) *outRadius = 135.0f;
-    } else if (strcmp(name, "VERDANT_PATH") == 0) {
-        if (outCenter) *outCenter = (Vector3){ 50.0f, 0.0f, 37.5f };
-        if (outRadius) *outRadius = 34.0f;
     } else {
         if (outCenter) *outCenter = (Vector3){ 6.0f, 0.0f, 4.4f };
         if (outRadius) *outRadius = 18.0f;
