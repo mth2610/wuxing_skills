@@ -339,6 +339,172 @@ int MapFlora_GenerateMeadowPlacements(
     return count;
 }
 
+int MapFlora_GenerateReedPlacements(
+    MapMeadowPlacement *outPlacements, int maxCount,
+    const MapGroundSurface *ground, Vector3 groundCenter,
+    MapFloraReedConfig config)
+{
+    if (!outPlacements || maxCount <= 0 || !ground || !ground->ready)
+        return 0;
+
+    float spanX = config.span.x > 0.0f ? config.span.x : (ground->boundary.rect.z > 0.0f ? ground->boundary.rect.z * 0.38f : 70.0f);
+    float spanZ = config.span.y > 0.0f ? config.span.y : (ground->boundary.rect.w > 0.0f ? ground->boundary.rect.w * 0.32f : 96.0f);
+    float minClearance = config.minWaterClearance > 0.0f ? config.minWaterClearance : 0.01f;
+    float maxClearance = config.maxWaterClearance > 0.0f ? config.maxWaterClearance : 0.42f;
+    unsigned char minWetAlpha = config.minWetSplatAlpha > 0 ? config.minWetSplatAlpha : 95;
+    float maxWetClearance = config.maxWetClearance > 0.0f ? config.maxWetClearance : 0.85f;
+    float minSlopeNormalY = config.minSlopeNormalY > 0.0f ? config.minSlopeNormalY : 0.70f;
+    float minGroundY = config.minGroundY != 0.0f ? config.minGroundY : -2.40f;
+    float clusterDist = config.minClusterDistance != 0.0f ? config.minClusterDistance : -0.15f;
+    float minRad = config.minRadius > 0.0f ? config.minRadius : 0.24f;
+    float maxRad = config.maxRadius > 0.0f ? config.maxRadius : 0.32f;
+    float minH = config.minHeight > 0.0f ? config.minHeight : 0.44f;
+    float maxH = config.maxHeight > 0.0f ? config.maxHeight : 0.62f;
+
+    unsigned int rng = config.seed ? config.seed : 0x9371a5u;
+    int count = 0;
+    int maxAttempts = maxCount * 12;
+
+    for (int attempts = 0; attempts < maxAttempts && count < maxCount; attempts++)
+    {
+        float rx = groundCenter.x + (Nature_Random01(&rng) * 2.0f - 1.0f) * spanX * 0.92f;
+        float rz = groundCenter.z + (Nature_Random01(&rng) * 2.0f - 1.0f) * spanZ * 0.92f;
+        float rnx = (rx - groundCenter.x) / (spanX * 0.92f);
+        float rnz = (rz - groundCenter.z) / (spanZ * 0.92f);
+        if (rnx * rnx + rnz * rnz > 1.0f)
+            continue;
+
+        Vector3 pos, normal;
+        if (!MapProp_SampleGroundSurface(ground, groundCenter, rx, rz, &pos, &normal))
+            continue;
+        if (normal.y < minSlopeNormalY || pos.y < minGroundY)
+            continue;
+
+        float waterY = -100.0f;
+        if (config.dem)
+            waterY = MapDem_SampleWaterHeight(config.dem, rx, rz);
+        else if (config.sampleWaterHeight)
+            waterY = config.sampleWaterHeight(rx, rz, config.ctx);
+
+        float clearance = pos.y - waterY;
+        Color splat = {0, 0, 0, 0};
+        if (config.dem)
+            splat = MapDem_SampleSplat(config.dem, rx, rz);
+        else if (config.sampleSplat)
+            splat = config.sampleSplat(rx, rz, config.ctx);
+
+        float cliffFloor = config.dem ? -config.dem->cliffDepth + 0.5f : -7.5f;
+        bool nearShore = (waterY > cliffFloor) && (clearance >= minClearance && clearance <= maxClearance);
+        bool wetMargin = (splat.a > minWetAlpha) && (clearance >= 0.02f && clearance <= maxWetClearance);
+
+        if (nearShore || wetMargin)
+        {
+            float reedCluster = sinf(rx * 0.35f + rz * 0.28f) * cosf(rz * 0.42f - rx * 0.19f);
+            if (reedCluster < clusterDist)
+                continue;
+
+            float rad = minRad + (maxRad - minRad) * Nature_Random01(&rng);
+            float h = minH + (maxH - minH) * Nature_Random01(&rng);
+            outPlacements[count++] = (MapMeadowPlacement){
+                .position = pos,
+                .radius = rad,
+                .height = h,
+                .rotationDeg = Nature_Random01(&rng) * 360.0f,
+                .phase = Nature_Random01(&rng)};
+        }
+    }
+    return count;
+}
+
+int MapFlora_GeneratePampasPlacements(
+    MapMeadowPlacement *outPlacements, int maxCount,
+    const MapGroundSurface *ground, Vector3 groundCenter,
+    MapFloraPampasConfig config)
+{
+    if (!outPlacements || maxCount <= 0 || !ground || !ground->ready)
+        return 0;
+
+    float spanX = config.span.x > 0.0f ? config.span.x : (ground->boundary.rect.z > 0.0f ? ground->boundary.rect.z * 0.38f : 70.0f);
+    float spanZ = config.span.y > 0.0f ? config.span.y : (ground->boundary.rect.w > 0.0f ? ground->boundary.rect.w * 0.32f : 96.0f);
+    float clearingRadius = config.clearingRadius > 0.0f ? config.clearingRadius : 11.5f;
+    float clearingSq = clearingRadius * clearingRadius;
+    float minSlopeNormalY = config.minSlopeNormalY > 0.0f ? config.minSlopeNormalY : 0.54f;
+    float minGroundY = config.minGroundY != 0.0f ? config.minGroundY : -1.20f;
+    float minClearance = config.minWaterClearance > 0.0f ? config.minWaterClearance : 0.85f;
+    unsigned char maxRockG = config.maxRockSplatGreen > 0 ? config.maxRockSplatGreen : 190;
+    float driftThreshold = config.driftThreshold > 0.0f ? config.driftThreshold : 0.30f;
+    float minRad = config.minRadius > 0.0f ? config.minRadius : 0.30f;
+    float maxRad = config.maxRadius > 0.0f ? config.maxRadius : 0.40f;
+    float baseH = config.baseHeight > 0.0f ? config.baseHeight : 0.48f;
+
+    unsigned int rng = config.seed ? config.seed : 0x9371a5u;
+    int count = 0;
+    int maxAttempts = maxCount * 14;
+
+    for (int attempts = 0; attempts < maxAttempts && count < maxCount; attempts++)
+    {
+        float rx = groundCenter.x + (Nature_Random01(&rng) * 2.0f - 1.0f) * spanX * 0.86f;
+        float rz = groundCenter.z + (Nature_Random01(&rng) * 2.0f - 1.0f) * spanZ * 0.86f;
+        float pnx = (rx - groundCenter.x) / (spanX * 0.86f);
+        float pnz = (rz - groundCenter.z) / (spanZ * 0.86f);
+        if (pnx * pnx + pnz * pnz > 1.0f)
+            continue;
+
+        float cdx = rx - groundCenter.x;
+        float cdz = rz - groundCenter.z;
+        if (cdx * cdx + cdz * cdz < clearingSq)
+            continue;
+
+        float driftMask = sinf(rx * 0.17f + sinf(rz * 0.09f) * 1.8f) *
+                          cosf(rz * 0.15f - rx * 0.08f);
+        if (driftMask < driftThreshold)
+            continue;
+
+        Vector3 pos, normal;
+        if (!MapProp_SampleGroundSurface(ground, groundCenter, rx, rz, &pos, &normal))
+            continue;
+        if (normal.y < minSlopeNormalY || pos.y < minGroundY)
+            continue;
+
+        float waterY = -100.0f;
+        if (config.dem)
+            waterY = MapDem_SampleWaterHeight(config.dem, rx, rz);
+        else if (config.sampleWaterHeight)
+            waterY = config.sampleWaterHeight(rx, rz, config.ctx);
+
+        if (pos.y - waterY < minClearance)
+            continue;
+
+        Color splat = {0, 0, 0, 0};
+        if (config.dem)
+            splat = MapDem_SampleSplat(config.dem, rx, rz);
+        else if (config.sampleSplat)
+            splat = config.sampleSplat(rx, rz, config.ctx);
+
+        if (splat.g > maxRockG)
+            continue;
+
+        if (config.flowerClusters && config.flowerClusterCount > 0)
+        {
+            float flowerSupp = MapFlora_EvaluateFlowerSuppression(
+                rx, rz, config.flowerClusters, config.flowerClusterCount);
+            if (flowerSupp < 0.75f)
+                continue;
+        }
+
+        float colonyWeight = MapMath_SmoothStep01(driftThreshold, 0.75f, driftMask);
+        float rad = minRad + (maxRad - minRad) * Nature_Random01(&rng);
+        float h = (baseH + 0.14f * colonyWeight) * (0.90f + 0.18f * Nature_Random01(&rng));
+        outPlacements[count++] = (MapMeadowPlacement){
+            .position = pos,
+            .radius = rad,
+            .height = h,
+            .rotationDeg = Nature_Random01(&rng) * 360.0f,
+            .phase = Nature_Random01(&rng)};
+    }
+    return count;
+}
+
 MapFloraSystem MapProp_CreateFloraSystem(
     const MapMeadowPlacement *grassPlacements, int grassCount,
     const MapMeadowPlacement *reedPlacements, int reedCount,

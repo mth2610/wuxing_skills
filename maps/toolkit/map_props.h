@@ -4,6 +4,46 @@
 #include "raylib.h"
 #include "map_ecology.h"
 #include <stdbool.h>
+#include <math.h>
+
+// Shared math helper for smooth transitions (GLSL smoothstep clamp)
+static inline float MapMath_SmoothStep01(float edge0, float edge1, float x)
+{
+    float t = (x - edge0) / fmaxf(1e-5f, edge1 - edge0);
+    t = fminf(1.0f, fmaxf(0.0f, t));
+    return t * t * (3.0f - 2.0f * t);
+}
+
+// Snaps a camera/actor target onto a regular world grid for stable dynamic shadow projections
+static inline Vector3 MapProp_SnapShadowFocus(Vector3 target, float gridSize)
+{
+    float inv = 1.0f / (gridSize > 0.0f ? gridSize : 0.5f);
+    return (Vector3){
+        floorf(target.x * inv + 0.5f) * gridSize,
+        0.0f,
+        floorf(target.z * inv + 0.5f) * gridSize
+    };
+}
+
+// Subtractive GPU profiling skip mask (WUXING_MAP_SKIP or WUXING_SONGQUAO_SKIP)
+typedef enum {
+    MAP_SKIP_GROUND         = 1 << 0,
+    MAP_SKIP_ROCKS          = 1 << 1,
+    MAP_SKIP_DEBRIS         = 1 << 2,
+    MAP_SKIP_FLORA          = 1 << 3,
+    MAP_SKIP_SKY            = 1 << 4,
+    MAP_SKIP_CLOUDSEA       = 1 << 5,
+    MAP_SKIP_WATER          = 1 << 6,
+    MAP_SKIP_MIST           = 1 << 7,
+    MAP_SKIP_SHADOWCASTERS  = 1 << 8,
+    MAP_SKIP_FLUFF          = 1 << 9,
+    MAP_SKIP_CLOUDSHADOW    = 1 << 10,
+    MAP_SKIP_FOGVOLUMES     = 1 << 11,
+    MAP_SKIP_GODRAYS        = 1 << 12,
+    MAP_SKIP_GRADE          = 1 << 13,
+} MapSkipMaskFlag;
+
+unsigned int MapProp_GetSkipMask(void);
 
 // Reusable map-building blocks, shared across every map/ so a new map is
 // "call these with different numbers" instead of copy-pasting mesh/texture
@@ -272,6 +312,11 @@ int MapProp_AddRockCluster(MapRockSystem *sys, Vector3 center, MapRockArchetype 
 void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows);
 void MapProp_DrawRockSystemShadowCasters(MapRockSystem *sys, Shader depthShader);
 void MapProp_UnloadRockSystem(MapRockSystem *sys);
+void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *ground,
+                               Vector3 groundCenter, const MapRockItem *items, int itemCount);
+void MapProp_AddCragPlacements(MapRockSystem *sys, const MapGroundSurface *ground,
+                               Vector3 groundCenter, const Vector2 *points, int count,
+                               float baseScale);
 
 
 // Fills outPlacements[] (capacity maxCount) with a ring of giant rock
@@ -656,6 +701,58 @@ float MapFlora_EvaluateFlowerSuppression(
     const MapFloraFlowerCluster *clusters,
     int clusterCount);
 
+struct MapDemIsland; // Forward declaration
+
+typedef struct {
+    Vector2 span;             // XZ half-extent for placement search (e.g. {mapWidth * 0.38f, mapDepth * 0.32f})
+    float minWaterClearance;  // Default: 0.01f
+    float maxWaterClearance;  // Default: 0.42f
+    unsigned char minWetSplatAlpha; // Default: 95
+    float maxWetClearance;    // Default: 0.85f
+    float minSlopeNormalY;    // Default: 0.70f
+    float minGroundY;         // Default: -2.40f
+    float minClusterDistance; // Clustering spatial wave threshold, default: -0.15f
+    float minRadius;          // Default: 0.24f
+    float maxRadius;          // Default: 0.32f
+    float minHeight;          // Default: 0.44f
+    float maxHeight;          // Default: 0.62f
+    unsigned int seed;
+    const struct MapDemIsland *dem; // Optional DEM island helper
+    float (*sampleWaterHeight)(float x, float z, void *ctx);
+    Color (*sampleSplat)(float x, float z, void *ctx);
+    void *ctx;
+} MapFloraReedConfig;
+
+int MapFlora_GenerateReedPlacements(
+    MapMeadowPlacement *outPlacements, int maxCount,
+    const MapGroundSurface *ground, Vector3 groundCenter,
+    MapFloraReedConfig config);
+
+typedef struct {
+    Vector2 span;             // XZ half-extent
+    float clearingRadius;     // Central clearing radius to keep free (e.g. 11.5f)
+    float minSlopeNormalY;    // Default: 0.54f
+    float minGroundY;         // Default: -1.20f
+    float minWaterClearance;  // Default: 0.85f
+    unsigned char maxRockSplatGreen; // Default: 190
+    float driftThreshold;     // Default: 0.30f
+    float minRadius;          // Default: 0.30f
+    float maxRadius;          // Default: 0.40f
+    float baseHeight;         // Default: 0.48f
+    const MapFloraFlowerCluster *flowerClusters;
+    int flowerClusterCount;
+    unsigned int seed;
+    const struct MapDemIsland *dem; // Optional DEM island helper
+    float (*sampleWaterHeight)(float x, float z, void *ctx);
+    Color (*sampleSplat)(float x, float z, void *ctx);
+    void *ctx;
+} MapFloraPampasConfig;
+
+int MapFlora_GeneratePampasPlacements(
+    MapMeadowPlacement *outPlacements, int maxCount,
+    const MapGroundSurface *ground, Vector3 groundCenter,
+    MapFloraPampasConfig config);
+
 MapFloraSystem MapProp_CreateFloraSystem(
     const MapMeadowPlacement *grassPlacements, int grassCount,
     const MapMeadowPlacement *reedPlacements, int reedCount,
@@ -843,5 +940,74 @@ void MapProp_DrawWaterBed(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterOverlay(const MapWaterSurface *water, float time);
 void MapProp_DrawWaterSurface(const MapWaterSurface *water, float time);
 void MapProp_UnloadWaterSurface(MapWaterSurface *water);
+
+// --- Atmospheric Fluff / Floating Spores System -------------------------
+
+typedef struct {
+    Vector3 position;
+    float phase;
+    float size;
+    float speed;
+    float rot;
+    float rotSpeed;
+    float opacity;
+} MapFluffParticle;
+
+typedef struct {
+    MapFluffParticle *particles;
+    int count;
+    Texture2D texture;
+    bool ready;
+} MapFluffSystem;
+
+MapFluffSystem MapProp_CreateFluffSystem(int count, unsigned int seed);
+void MapProp_UpdateFluffSystem(MapFluffSystem *fluff, Vector3 cameraTarget,
+                               const MapGroundSurface *ground, Vector3 groundCenter,
+                               float minGroundY, float dt);
+void MapProp_DrawFluffSystem(const MapFluffSystem *fluff, Camera3D cam);
+void MapProp_UnloadFluffSystem(MapFluffSystem *fluff);
+
+// --- DEM-based Island System (sampling, heightfield water, abyss detection, and MapManager query hooks) ---
+
+typedef struct MapDemIsland {
+    float mapWidth;
+    float mapDepth;
+    float heightRange;
+    float cliffDepth;
+    Vector3 mapCenter;
+    Image splatImage;
+    bool splatLoaded;
+    Image waterHeightImage;
+    bool waterHeightLoaded;
+    bool ready;
+} MapDemIsland;
+
+bool MapDem_InitIsland(MapDemIsland *dem,
+                       float mapWidth, float mapDepth,
+                       float heightRange, float cliffDepth,
+                       const char *splatPath,
+                       const char *waterHeightPath);
+
+void MapDem_UnloadIsland(MapDemIsland *dem);
+
+Color MapDem_SampleSplat(const MapDemIsland *dem, float x, float z);
+
+float MapDem_SampleWaterHeight(const MapDemIsland *dem, float x, float z);
+
+bool MapDem_IsAbyss(const MapDemIsland *dem, const MapGroundSurface *ground, float x, float z);
+
+float MapDem_GetGroundHeight(const MapDemIsland *dem, const MapGroundSurface *ground,
+                             float x, float z);
+
+bool MapDem_SampleGroundSurface(const MapDemIsland *dem, const MapGroundSurface *ground,
+                                float x, float z, Vector3 *outPosition, Vector3 *outNormal);
+
+bool MapDem_GetWaterInfo(const MapDemIsland *dem, const MapGroundSurface *ground,
+                         float x, float z, float *outSurfaceY, float *outWaterDepth);
+
+void MapDem_SetWaterInteractor(const MapDemIsland *dem, const MapGroundSurface *ground,
+                               MapWaterSurface *water, Vector3 position, Vector3 velocity, float radius);
+
+void MapDem_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radius, float intensity);
 
 #endif // MAP_PROPS_H

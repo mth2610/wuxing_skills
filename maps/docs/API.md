@@ -394,6 +394,49 @@ In `maps/toolkit/prop_lit.c`, call `PropLit_UpdateLighting()` inside the active 
 
 Texture-blend hybrid ground material (grassBase + grassDetail + dirt, blended via `fbm2` noise) — was once tried as the main ground but shelved due to an unresolved visual issue (see `core/docs/PROGRESS.md` Item 38). Still in the codebase for possible reuse later; **not the default choice** — `MapProp_CreateGround` currently uses its own `ground_splat.fs`, not `grass_material`.
 
+### `MapDemIsland` & Reusable DEM Island Architecture
+
+For maps built from DEM GeoTIFF data (`dem_pipeline.py`) across all 5 elements (Metal, Wood, Water, Fire, Earth), the generic terrain/hydrology queries and placement algorithms live in `maps/toolkit/`:
+
+```c
+typedef struct MapDemIsland {
+    float mapWidth;
+    float mapDepth;
+    float heightRange;
+    float cliffDepth;
+    Vector3 mapCenter;
+    Image splatImage;
+    bool splatLoaded;
+    Image waterHeightImage;
+    bool waterHeightLoaded;
+    bool ready;
+} MapDemIsland;
+
+bool MapDem_InitIsland(MapDemIsland *dem, float mapWidth, float mapDepth,
+                       float heightRange, float cliffDepth,
+                       const char *splatPath, const char *waterHeightPath);
+void MapDem_UnloadIsland(MapDemIsland *dem);
+Color MapDem_SampleSplat(const MapDemIsland *dem, float x, float z);
+float MapDem_SampleWaterHeight(const MapDemIsland *dem, float x, float z);
+bool MapDem_IsAbyss(const MapDemIsland *dem, const MapGroundSurface *ground, float x, float z);
+float MapDem_GetGroundHeight(const MapDemIsland *dem, const MapGroundSurface *ground, float x, float z);
+bool MapDem_SampleGroundSurface(const MapDemIsland *dem, const MapGroundSurface *ground,
+                                float x, float z, Vector3 *outPosition, Vector3 *outNormal);
+bool MapDem_GetWaterInfo(const MapDemIsland *dem, const MapGroundSurface *ground,
+                         float x, float z, float *outSurfaceY, float *outWaterDepth);
+void MapDem_SetWaterInteractor(const MapDemIsland *dem, const MapGroundSurface *ground,
+                               MapWaterSurface *water, Vector3 position, Vector3 velocity, float radius);
+void MapDem_AddWaterRipple(MapWaterSurface *water, Vector3 position, float radius, float intensity);
+```
+
+#### Shared Procedural Generators & Helpers:
+- `MapFlora_GenerateReedPlacements`: Procedurally clusters reeds along wetland/river margins based on water elevation, clearance, and splatmap wetness.
+- `MapFlora_GeneratePampasPlacements`: Procedurally groups wind-swept tall grass/silvergrass colonies along hillside swales while avoiding water, rocks, and wildflower beds.
+- `MapProp_PopulateRockItems` & `MapProp_AddCragPlacements`: Snaps authored/generated rock items to terrain with archetype-aware sinking offsets (e.g. flattening river stones) and places boundary crags.
+- `MapFluffSystem`: Atmospheric pollen/dandelion spore particle system that drifts with wind and billards with camera tracking.
+- `MapProp_SnapShadowFocus`: Snaps camera target onto a regular grid (e.g. 0.5m) for stable directional shadow cascades.
+- `MapProp_GetSkipMask`: Reads `WUXING_MAP_SKIP` (and `WUXING_SONGQUAO_SKIP`) for subtractive GPU profiling.
+
 ---
 
 ## 2. Header File (`.h`) Declaration Rules
@@ -1162,3 +1205,5 @@ Slope uses projected metre spacing, consistent with [GDAL's slope units](https:/
 TWI uses contributing area per contour width divided by slope, consistent with
 [the GRASS topographic-index definition](https://grass.osgeo.org/grass85/manuals/r.watershed.html).
 The implementation is a local D8 bake, not an invocation of GRASS.
+
+- 26/10/2026: **DEM Island Pipeline Modularization**: Extracted generic DEM island runtime queries (`MapDemIsland`, `MapDem_*`), procedural vegetation placement algorithms (`MapFlora_GenerateReedPlacements`, `MapFlora_GeneratePampasPlacements`), rock item population/sinking (`MapProp_PopulateRockItems`, `MapProp_AddCragPlacements`), atmospheric spores system (`MapFluffSystem`), shadow grid snapping (`MapProp_SnapShadowFocus`), and skip mask profiling (`MapProp_GetSkipMask`) from `maps/worlds/song_quao/song_quao.c` into `maps/toolkit/`. `song_quao.c` now exclusively contains map-specific constants, flora density tuning, color palettes, and lighting setups.
