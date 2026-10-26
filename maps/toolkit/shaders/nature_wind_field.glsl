@@ -51,26 +51,31 @@ vec2 NatureGlobalWindXZ(vec3 worldPosition, float time)
     if (u_windGustAmplitude <= 0.0001)
         return baseVelocity.xz;
 
-    // Fast height check before computing UV & querying textureSize
-    if (u_windCacheEnabled != 0 && abs(worldPosition.y - u_windCacheRegion.w) < 2.0) {
+    // Fast height & bounding-box check BEFORE querying textureSize(u_windCacheMap, 0)
+    if (u_windCacheEnabled != 0 && u_windCacheRegion.z > 0.0001 && abs(worldPosition.y - u_windCacheRegion.w) < 2.0) {
         // Apply Taylor's frozen-turbulence spatial shift when response lag is large
         float extraLag = max(0.0, u_natureWindResponse.x - 0.08);
         vec2 sampleXZ = worldPosition.xz - baseVelocity.xz * (extraLag * 0.45);
         vec2 uvOffset = (sampleXZ - u_windCacheRegion.xy) / u_windCacheRegion.z;
-        float halfTexel = 0.5 / float(textureSize(u_windCacheMap, 0).x);
+        float maxAxis = max(abs(uvOffset.x), abs(uvOffset.y));
 
-        if (max(abs(uvOffset.x), abs(uvOffset.y)) <= (0.5 - halfTexel)) {
-            vec4 cached = textureLod(u_windCacheMap, uvOffset + 0.5, 0.0);
-            float fraction = clamp((time - u_windCacheTimeRange.x) / u_windCacheTimeRange.y, 0.0, 1.0);
-            vec2 velocity = mix(cached.rg, cached.ba, fraction);
-            return (velocity * 2.0 - 1.0) * u_windCacheScale;
+        if (maxAxis < 0.5) {
+            float texWidth = max(float(textureSize(u_windCacheMap, 0).x), 1.0);
+            float halfTexel = 0.5 / texWidth;
+            if (maxAxis <= (0.5 - halfTexel)) {
+                vec4 cached = textureLod(u_windCacheMap, uvOffset + 0.5, 0.0);
+                float fraction = clamp((time - u_windCacheTimeRange.x) / max(u_windCacheTimeRange.y, 0.0001), 0.0, 1.0);
+                vec2 velocity = mix(cached.rg, cached.ba, fraction);
+                return (velocity * 2.0 - 1.0) * u_windCacheScale;
+            }
         }
     }
 
     float baseSpeed = sqrt(baseSpeedSq);
     float s = u_windNoiseScale;
     float speed = u_windNoiseSpeed;
-    float ts = time * speed;
+    // Giữ ts trong miền float32 chính xác cao khi game chạy nhiều giờ liên tục
+    float ts = mod(time * speed, 16384.0);
     vec3 scaledPos = worldPosition * s;
 
     float nx = NatureWindNoiseScalar3D(vec3(
@@ -116,7 +121,8 @@ vec2 NatureVegetationWindBend(vec3 worldPosition, vec2 phaseUV,
     vec2 transverse = vec2(-windDirection.y, windDirection.x);
 
     // Dual-harmonic flutter using both phaseUV channels without extra trig calls
-    float phase = time * u_natureWindResponse.z
+    // Dùng mod(..., 6283.185307) (1000 * 2pi) để bảo toàn độ chính xác sin/cos khi u_time lớn
+    float phase = mod(time * u_natureWindResponse.z, 6283.185307)
                 + dot(worldPosition.xz, vec2(0.55, -0.45))
                 + dot(phaseUV, vec2(6.2831853, 3.1415926));
     float s1 = sin(phase);
@@ -130,17 +136,17 @@ vec2 NatureVegetationWindBend(vec3 worldPosition, vec2 phaseUV,
     vec2 bend = windDirection * (bendLength * (1.0 + axialPulse))
               + transverse * (bendLength * lateralFlutter);
 
-    // Smooth soft-knee saturation approaching maxBend (avoids robotic hard-clipping)
+    // [TỐI ƯU ALU]: Chỉ tính inversesqrt(dispSq) khi độ uốn thực sự vượt ngưỡng kneeStart (70% maxBend),
+    // giúp bỏ qua hoàn toàn căn bậc hai cho đa số đỉnh cỏ trong điều kiện gió bình thường.
     float dispSq = dot(bend, bend);
-    if (dispSq > 1e-8) {
-        float dispLen = sqrt(dispSq);
-        float kneeStart = maxBend * 0.70;
-        if (dispLen > kneeStart) {
-            float span = max(maxBend - kneeStart, 1e-5);
-            float excess = (dispLen - kneeStart) / span;
-            float softLen = kneeStart + span * (excess / (1.0 + excess));
-            bend *= (softLen / dispLen);
-        }
+    float kneeStart = maxBend * 0.70;
+    if (dispSq > kneeStart * kneeStart) {
+        float invDisp = inversesqrt(dispSq);
+        float dispLen = dispSq * invDisp;
+        float span = max(maxBend - kneeStart, 1e-5);
+        float excess = (dispLen - kneeStart) / span;
+        float softLen = kneeStart + span * (excess / (1.0 + excess));
+        bend *= (softLen * invDisp);
     }
     return bend;
 }

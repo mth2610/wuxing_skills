@@ -154,7 +154,9 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     vec3 rawTangent = u2 * (p1.xyz - p0.xyz) +
                       (2.0 * ut) * (p2.xyz - p1.xyz) +
                       t2 * (p3.xyz - p2.xyz);
-    vec3 tangent = normalize(rawTangent);
+    // [BUG FIX]: Chuẩn hóa an toàn cho rawTangent để tránh NaN nếu đường cong suy biến
+    float rawTanLenSq = dot(rawTangent, rawTangent);
+    vec3 tangent = (rawTanLenSq > 1e-8) ? (rawTangent * inversesqrt(rawTanLenSq)) : vec3(0.0, 1.0, 0.0);
 
     vec3 side = vec3(-tangent.z, 0.0, tangent.x);
     float sideLenSq = dot(side, side);
@@ -168,28 +170,40 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     // 3D view-assisted ribbon orientation: gently turns edge-on blades toward the 3D camera ray
     // so tilted/bent blades never collapse into 1px dotted wires at any camera pitch or zoom.
     vec3 toCamVec = (p0.xyz + u_worldOffset) - u_tuftLodCamera;
-    float distToCam = (s_cachedDistToCam >= 0.0) ? s_cachedDistToCam : length(toCamVec);
-    s_cachedDistToCam = distToCam;
+    float distToCam;
+    float invDistToCam;
+    if (s_cachedDistToCam >= 0.0) {
+        distToCam = s_cachedDistToCam;
+        invDistToCam = 1.0 / max(distToCam, 0.001);
+    } else {
+        float tcLenSq = max(dot(toCamVec, toCamVec), 1e-6);
+        invDistToCam = inversesqrt(tcLenSq);
+        distToCam = tcLenSq * invDistToCam;
+        s_cachedDistToCam = distToCam;
+    }
 
     vec3 viewSide3D = cross(tangent, toCamVec);
     float vsLenSq = dot(viewSide3D, viewSide3D);
     if (vsLenSq > 1e-5) {
         viewSide3D *= inversesqrt(vsLenSq);
         if (dot(side, viewSide3D) < 0.0) viewSide3D = -viewSide3D;
-        vec3 naturalNormal = normalize(cross(side, tangent));
-        vec3 viewDir = toCamVec / max(distToCam, 0.001);
+        vec3 natCross = cross(side, tangent);
+        vec3 naturalNormal = natCross * inversesqrt(max(dot(natCross, natCross), 1e-8));
+        vec3 viewDir = toCamVec * invDistToCam;
         float edgeOn = 1.0 - abs(dot(naturalNormal, viewDir));
         float viewAssist = mix(0.36, 0.50, clamp(distToCam * 0.04, 0.0, 1.0));
         viewAssist = mix(viewAssist, 0.82, edgeOn * edgeOn);
-        side = normalize(mix(side, viewSide3D, viewAssist));
+        vec3 mixedSide = mix(side, viewSide3D, viewAssist);
+        side = mixedSide * inversesqrt(max(dot(mixedSide, mixedSide), 1e-8));
     }
 #endif
 
-    vec3 geometricNormal = normalize(cross(side, tangent));
+    vec3 rawGeomN = cross(side, tangent);
+    vec3 geometricNormal = rawGeomN * inversesqrt(max(dot(rawGeomN, rawGeomN), 1e-8));
     if (geometricNormal.y < 0.0) geometricNormal = -geometricNormal;
     if (geometricNormal.y < 0.25) {
         geometricNormal.y = 0.25;
-        geometricNormal = normalize(geometricNormal);
+        geometricNormal *= inversesqrt(dot(geometricNormal, geometricNormal));
     }
 
     // Continuous AAA Sword-Leaf Taper Profile:
@@ -249,11 +263,15 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     surfaceUV = vec2(sideSign, t);
 #else
     // Continuous normal interpolation along t (eliminates the sudden role > 2.5 normal jump at the tip!)
-    vec3 sphereDirection = normalize(position - vec3(clump.x, clump.y - 0.04, clump.z));
+    vec3 rawSphere = position - vec3(clump.x, clump.y - 0.04, clump.z);
+    vec3 sphereDirection = rawSphere * inversesqrt(max(dot(rawSphere, rawSphere), 1e-8));
     float upBlend = mix(0.42, 0.54, t);
-    vec3 target = normalize(mix(sphereDirection, vec3(0.0, 1.0, 0.0), upBlend));
-    vec3 meshNormal = normalize(geometricNormal + side * (sideSign * (0.34 * (1.0 - 0.35 * t))));
-    normal = normalize(mix(meshNormal, target, mix(0.44, 0.54, t)));
+    vec3 rawTarget = mix(sphereDirection, vec3(0.0, 1.0, 0.0), upBlend);
+    vec3 target = rawTarget * inversesqrt(max(dot(rawTarget, rawTarget), 1e-8));
+    vec3 rawMeshN = geometricNormal + side * (sideSign * (0.34 * (1.0 - 0.35 * t)));
+    vec3 meshNormal = rawMeshN * inversesqrt(max(dot(rawMeshN, rawMeshN), 1e-8));
+    vec3 rawFinalN = mix(meshNormal, target, mix(0.44, 0.54, t));
+    normal = rawFinalN * inversesqrt(max(dot(rawFinalN, rawFinalN), 1e-8));
 
     // Per-blade botanical identity (0..1) derived from blade index & phase
     float bladeHash = fract(float(localBlade) * 0.6180339 + p0.w * 1.73205);

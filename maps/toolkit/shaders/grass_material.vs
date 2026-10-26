@@ -31,7 +31,9 @@ out vec4 v_noiseUVs;  // .xy = maskNoiseUV, .zw = colorVarUV
 
 void main() {
     fragPosition = vec3(matModel * vec4(vertexPosition, 1.0));
-    fragNormal   = normalize(mat3(matModel) * vertexNormal);
+    vec3 worldNormal = mat3(matModel) * vertexNormal;
+    float nLenSq = dot(worldNormal, worldNormal);
+    fragNormal = (nLenSq > 1e-8) ? (worldNormal * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
 
     // Tính toán sẵn toàn bộ tọa độ lấy mẫu tại đỉnh (chỉ chạy vài lần cho cả mặt đất)
     vec2 worldXZ = vertexTexCoord;

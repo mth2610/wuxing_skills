@@ -17,15 +17,19 @@ out vec3 v_normal;
 
 void main()
 {
-    // Tính toán tọa độ UV và hiệu ứng trôi ngay tại đỉnh (Vertex)
+    // Tính toán tọa độ UV và dùng fract() cho độ lệch thời gian để tránh mất độ chính xác
+    // dấu phẩy động (float32 precision drift) khi game chạy liên tục nhiều giờ
     vec2 uv = vertexTexCoord * tiling;
-    v_flowUVs.xy = uv + vec2(0.02, 0.008) * u_time;
-    v_flowUVs.zw = uv * 1.7 + vec2(-0.015, 0.01) * u_time;
+    v_flowUVs.xy = uv + fract(vec2(0.02, 0.008) * u_time);
+    v_flowUVs.zw = uv * 1.7 + fract(vec2(-0.015, 0.01) * u_time);
 
     // Tính trước vector từ camera đến điểm mây
     vec3 worldPos = vertexPosition + u_cloudOffset;
     v_viewVec = worldPos - u_viewPos;
 
-    v_normal = vertexNormal;
+    // Chuẩn hóa an toàn tại đỉnh để giảm tải cho Fragment Shader
+    float nLenSq = dot(vertexNormal, vertexNormal);
+    v_normal = (nLenSq > 1e-8) ? (vertexNormal * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
+
     gl_Position = mvp * vec4(vertexPosition, 1.0);
 }

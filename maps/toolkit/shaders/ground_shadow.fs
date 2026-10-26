@@ -26,36 +26,67 @@ const vec2 poissonDisk[16] = vec2[](
    vec2( 0.19984126, 0.78641367 ), vec2( 0.14383161, -0.14100790 ) 
 );
 
+// Giữ hàm helper tương thích nhưng dùng textureLod(..., 0.0) để an toàn trong rẽ nhánh Vulkan
 float ShadowTapBilinear(vec2 uv, float z, float res) {
     vec2  t    = uv * res - 0.5;
     vec2  f    = fract(t);
     vec2  base = (floor(t) + 0.5) * u_shadowTexel;
-    float s00 = step(z, texture(texture0, base).r);
-    float s10 = step(z, texture(texture0, base + vec2(u_shadowTexel, 0.0)).r);
-    float s01 = step(z, texture(texture0, base + vec2(0.0, u_shadowTexel)).r);
-    float s11 = step(z, texture(texture0, base + vec2(u_shadowTexel, u_shadowTexel)).r);
+    float s00 = step(z, textureLod(texture0, base, 0.0).r);
+    float s10 = step(z, textureLod(texture0, base + vec2(u_shadowTexel, 0.0), 0.0).r);
+    float s01 = step(z, textureLod(texture0, base + vec2(0.0, u_shadowTexel), 0.0).r);
+    float s11 = step(z, textureLod(texture0, base + vec2(u_shadowTexel, u_shadowTexel), 0.0).r);
     return mix(mix(s00, s10, f.x), mix(s01, s11, f.x), f.y);
 }
 
+// [TỐI ƯU BĂNG THÔNG & VISUAL]: Thay 4x ShadowTapBilinear (16 lần đọc texture) bằng bộ lọc
+// 3x3 Quadratic B-Spline Tent PCF chỉ dùng đúng 9 lần đọc textureLod(..., 0.0) (giảm 43.75%
+// băng thông lấy mẫu shadow map) đồng thời cho vùng nửa tối (penumbra) mượt liên tục bậc C1.
 float ShadowFactor(vec3 worldPos) {
     vec4 posLS = u_lightVP * vec4(worldPos, 1.0);
-    vec3 proj = posLS.xyz / posLS.w;
-    proj = proj * 0.5 + 0.5;
-    
-    if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
+    if (abs(posLS.w) < 1e-6) return 1.0;
 
+    vec3 proj = (posLS.xyz / posLS.w) * 0.5 + 0.5;
+    if (proj.z > 1.0 || proj.z < 0.0 || proj.x <= 0.0 || proj.x >= 1.0 || proj.y <= 0.0 || proj.y >= 1.0) {
+        return 1.0;
+    }
+
+    float texel = max(u_shadowTexel, 1e-6);
+    float res = 1.0 / texel;
     float z = proj.z - 0.0015;
-    float res = 1.0 / u_shadowTexel;
-    const float S = 1.25;
 
-    // Tính 1 lần res và lấy mẫu đối xứng mượt
-    float shadow = 0.0;
-    shadow += ShadowTapBilinear(proj.xy + vec2(-S, -S) * u_shadowTexel, z, res);
-    shadow += ShadowTapBilinear(proj.xy + vec2( S, -S) * u_shadowTexel, z, res);
-    shadow += ShadowTapBilinear(proj.xy + vec2(-S,  S) * u_shadowTexel, z, res);
-    shadow += ShadowTapBilinear(proj.xy + vec2( S,  S) * u_shadowTexel, z, res);
+    vec2 t = proj.xy * res - 0.5;
+    vec2 f = fract(t);
+    vec2 base = (floor(t) + 0.5) * texel;
 
-    return shadow * 0.25;
+    // Trọng số B-Spline bậc 2 mượt C1 (tổng wx0 + wx1 + wx2 == 1.0, wy0 + wy1 + wy2 == 1.0)
+    vec2 omf = 1.0 - f;
+    vec2 fm  = f - 0.5;
+    vec2 w0  = 0.5 * omf * omf;
+    vec2 w1  = 0.75 - fm * fm;
+    vec2 w2  = 0.5 * f * f;
+
+    // 9 mẫu lưới 3x3 với textureLod(..., 0.0) an toàn tuyệt đối trong nhánh động SPIR-V
+    float s00 = step(z, textureLod(texture0, base + vec2(-texel, -texel), 0.0).r);
+    float s10 = step(z, textureLod(texture0, base + vec2(   0.0, -texel), 0.0).r);
+    float s20 = step(z, textureLod(texture0, base + vec2( texel, -texel), 0.0).r);
+
+    float s01 = step(z, textureLod(texture0, base + vec2(-texel,    0.0), 0.0).r);
+    float s11 = step(z, textureLod(texture0, base,                        0.0).r);
+    float s21 = step(z, textureLod(texture0, base + vec2( texel,    0.0), 0.0).r);
+
+    float s02 = step(z, textureLod(texture0, base + vec2(-texel,  texel), 0.0).r);
+    float s12 = step(z, textureLod(texture0, base + vec2(   0.0,  texel), 0.0).r);
+    float s22 = step(z, textureLod(texture0, base + vec2( texel,  texel), 0.0).r);
+
+    float row0 = s00 * w0.x + s10 * w1.x + s20 * w2.x;
+    float row1 = s01 * w0.x + s11 * w1.x + s21 * w2.x;
+    float row2 = s02 * w0.x + s12 * w1.x + s22 * w2.x;
+    float shadow = row0 * w0.y + row1 * w1.y + row2 * w2.y;
+
+    // Làm mờ mềm rìa ngoài cùng của frustum bóng để tránh vệt cắt vuông góc
+    vec2 borderDist = min(proj.xy, 1.0 - proj.xy);
+    float borderFade = smoothstep(0.0, 0.03, min(borderDist.x, borderDist.y));
+    return mix(1.0, shadow, borderFade);
 }
 
 #define GROUND_SHADOW_DEBUG_PROJ 0
@@ -69,7 +100,7 @@ void main() {
             finalColor = vec4(0.0, 0.0, 0.4, 1.0);
             return;
         }
-        float d = texture(texture0, pr.xy).r;
+        float d = textureLod(texture0, pr.xy, 0.0).r;
         finalColor = vec4(vec3(d), 1.0);
         return;
     }

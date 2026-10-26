@@ -2,21 +2,6 @@
 
 // ============================================================
 // WUXING — prop_lit Vertex Shader (CORE_ISSUES.md Item 36)
-//
-// Lit material for map terrain/props, driven by raylib's own
-// Material + DrawModel()/DrawModelEx() pipeline — NOT a skill VFX shader.
-// Deliberately does not pull in core/shaders/common/vs_header.glsl: that
-// header's u_time/viewPos/u_resolution uniforms are auto-bound by
-// SkillManager_BeginShader(), which never runs for a plain DrawModel()
-// call, and its VS_FinalOutput() doesn't know about tangents. Only the
-// raylib-standard mvp/matModel (auto-bound by DrawMesh/DrawModel — see
-// core/prop_lit.c for the shader.locs[] fixups this relies on) plus a
-// tangent attribute for normal mapping are needed here.
-//
-// Procedural meshes MUST call GenMeshTangents(&mesh) before
-// LoadModelFromMesh(), or vertexTangent will be all-zero and normal
-// mapping will read as flat/zero. glTF-imported models usually ship
-// tangents already — verify, don't assume.
 // ============================================================
 
 #ifdef GL_ES
@@ -44,12 +29,25 @@ void main() {
     fragLocalY   = vertexPosition.y;
 
     mat3 normalMat = mat3(matModel);
-    fragNormal  = normalize(normalMat * vertexNormal);
-    fragTangent = normalize(normalMat * vertexTangent.xyz);
-    // Re-orthogonalize against the normal (Gram-Schmidt) so a non-uniformly
-    // scaled matModel can't skew the TBN basis.
-    fragTangent = normalize(fragTangent - fragNormal * dot(fragNormal, fragTangent));
-    fragBitangent = cross(fragNormal, fragTangent) * vertexTangent.w;
+    vec3 rawN = normalMat * vertexNormal;
+    float nLenSq = dot(rawN, rawN);
+    fragNormal = (nLenSq > 1e-8) ? (rawN * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
+
+    // [BUG FIX]: Bảo vệ chống lỗi normalize(vec3(0.0)) -> NaN nếu mesh quên gọi GenMeshTangents()
+    // hoặc khi vertexTangent song song với vertexNormal
+    vec3 rawT = normalMat * vertexTangent.xyz;
+    rawT -= fragNormal * dot(fragNormal, rawT);
+    float tLenSq = dot(rawT, rawT);
+    if (tLenSq > 1e-8) {
+        fragTangent = rawT * inversesqrt(tLenSq);
+    } else {
+        vec3 refAxis = (abs(fragNormal.y) < 0.999) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+        vec3 fallbackT = cross(refAxis, fragNormal);
+        fragTangent = fallbackT * inversesqrt(max(dot(fallbackT, fallbackT), 1e-8));
+    }
+
+    float handedness = (abs(vertexTangent.w) > 0.5) ? sign(vertexTangent.w) : 1.0;
+    fragBitangent = cross(fragNormal, fragTangent) * handedness;
 
     gl_Position = mvp * vec4(vertexPosition, 1.0);
 }

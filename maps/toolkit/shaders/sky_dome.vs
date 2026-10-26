@@ -8,6 +8,7 @@ out vec3 skyRay;
 void main()
 {
     skyRay = vertexPosition;
-    gl_Position = mvp * vec4(vertexPosition, 1.0);
-    gl_Position.z = gl_Position.w * 0.999998;
+    vec4 clipPos = mvp * vec4(vertexPosition, 1.0);
+    clipPos.z = clipPos.w * 0.999998;
+    gl_Position = clipPos;
 }

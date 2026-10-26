@@ -52,6 +52,12 @@ void main() {
     vec2 baseUV   = v_tileUVs.xy;
     vec2 detailUV = v_tileUVs.zw;
 
+    // [VULKAN / SPIR-V FIX]: Tính trước đạo hàm UV ở luồng đồng nhất (uniform control flow)
+    // để dùng cho textureGrad(texture3) bên trong nhánh if (mask > 0.001), triệt tiêu lỗi
+    // chọn sai mipmap gây răng cưa ô vuông ở rìa chuyển tiếp Cỏ - Đất trên Vulkan.
+    vec2 baseDx = dFdx(baseUV);
+    vec2 baseDy = dFdy(baseUV);
+
     // 1. Đọc hạt chi tiết (detail) và tính mặt nạ (mask) TRƯỚC
     mediump float detail = texture(texture2, detailUV).r;
     mediump float grainOffset = detail - 0.5;
@@ -61,7 +67,7 @@ void main() {
     mediump float mask = smoothstep(0.40, 0.50, edge);
 
     // 2. Lấy mẫu Cỏ và áp dụng chi tiết hạt
-    mediump vec3 grass = texture(texture0, baseUV).rgb;
+    mediump vec3 grass = textureGrad(texture0, baseUV, baseDx, baseDy).rgb;
     mediump vec3 grassDetailed = grass * (1.0 + 0.30 * grainOffset);
 
     // 3. VISUAL UPGRADE: Chuyển sắc tự nhiên theo vùng (Broad Color & Hue Shift)
@@ -76,10 +82,10 @@ void main() {
     grassDetailed *= hueTint * (1.0 + 0.28 * varCentered);
 
     // 4. TỐI ƯU BĂNG THÔNG: Chỉ đọc Texture Đất (texture3) khi pixel thực sự có đất!
-    // Đa số diện tích mặt đất là cỏ (mask == 0), nhánh này giúp GPU bỏ qua lượt fetch texture3
+    // Dùng textureGrad với đạo hàm tính sẵn để an toàn tuyệt đối trên SPIR-V / Vulkan.
     mediump vec3 blended = grassDetailed;
     if (mask > 0.001) {
-        mediump vec3 dirt = texture(texture3, baseUV).rgb;
+        mediump vec3 dirt = textureGrad(texture3, baseUV, baseDx, baseDy).rgb;
         
         // VISUAL UPGRADE: Tận dụng luôn hạt detail để tạo độ nhám sỏi cát cho Đất
         dirt *= (1.0 + 0.22 * grainOffset) * (0.92 + 0.16 * colorVar);
@@ -92,9 +98,10 @@ void main() {
         blended *= 1.0 - (GRASS_RIM_DARKEN * rim);
     }
 
-    // 5. Tính toán Ánh sáng (Lighting)
-    vec3 normal = normalize(fragNormal);
-    vec3 lightDir = normalize(u_lightDir);
+    // 5. Tính toán Ánh sáng (Lighting) với chuẩn hóa vector an toàn
+    vec3 normal = fragNormal * inversesqrt(max(dot(fragNormal, fragNormal), 1e-8));
+    float lLenSq = dot(u_lightDir, u_lightDir);
+    vec3 lightDir = (lLenSq > 1e-8) ? (u_lightDir * inversesqrt(lLenSq)) : vec3(0.0, 1.0, 0.0);
 
     // VISUAL UPGRADE: Cỏ có lá mỏng tán xạ ánh sáng (Subsurface Wrap = 0.15)
     // trong khi Đất phẳng lì (Wrap = 0.0). Pha trộn độ mở sáng theo mask.

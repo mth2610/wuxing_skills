@@ -58,11 +58,21 @@ out vec4 finalColor;
 
 void main()
 {
-    float t = u_time * u_waveSpeed;
+    // [VULKAN / SPIR-V FIX]: Tính toàn bộ đạo hàm không gian màn hình (dFdx/dFdy) ở đầu hàm main()
+    // trong luồng đồng nhất (uniform control flow) để truyền vào textureGrad cho mọi nhánh động bên dưới,
+    // triệt tiêu hoàn toàn lỗi chọn sai mipmap tại biên 35m, rìa bọt sóng và bờ hồ trên Vulkan.
+    vec2 xzDx = dFdx(fragWorldXZ);
+    vec2 xzDy = dFdy(fragWorldXZ);
+    vec2 lakeDx = dFdx(fragLakeCoord) * 0.5;
+    vec2 lakeDy = dFdy(fragLakeCoord) * 0.5;
+
+    // Giữ pha thời gian trong miền float32 chính xác cao, đồng bộ với water_surface.vs
+    float t = mod(u_time * u_waveSpeed, 6283.185307);
 
     // Continuous analytical radial bathymetry and shoreline damping
     float radial = 0.0;
     float shoreFade = fragShoreFade;
+    float radialEdgeFade = 1.0;
     if (u_waterShape == 0) {
         vec2 delta = (fragWorldXZ - u_modelPos.xz) / max(u_lakeRadii, vec2(0.001));
         float angle = atan(delta.y, delta.x);
@@ -73,6 +83,14 @@ void main()
                              + sin(angle * 11.0 - seedPhase * 0.40) * 0.018;
         float edge = 1.0 + shorelineNoise;
         radial = clamp(length(delta) / max(edge, 0.001), 0.0, 1.0);
+        if (radial > 0.84) {
+            float shoreNoise = textureGrad(texture0, fragWorldXZ * 0.72, xzDx * 0.72, xzDy * 0.72).r;
+            float shoreFine  = textureGrad(texture0, fragWorldXZ * 2.1,  xzDx * 2.1,  xzDy * 2.1).r;
+            float shoreBreakup = (shoreNoise - 0.5) * 0.045 + (shoreFine - 0.5) * 0.012;
+            radialEdgeFade = 1.0 - smoothstep(0.91 + shoreBreakup, 1.0, radial);
+            // Early-out discard cho các pixel nằm ngoài đường viền hồ tròn
+            if (radialEdgeFade < 0.002) discard;
+        }
         shoreFade = 1.0 - smoothstep(0.75, 0.98, radial);
     }
 
@@ -86,7 +104,7 @@ void main()
     if (u_waterShape == 3 && dot(effectiveFlow, effectiveFlow) < 0.000025) {
         effectiveFlow = vec2(0.14, 0.22);
     }
-    vec2 pFlow = fragWorldXZ - effectiveFlow * (u_time * 0.45);
+    vec2 pFlow = fragWorldXZ - effectiveFlow * mod(u_time * 0.45, 4096.0);
 
     vec3 pWave = vec3(
         dot(pFlow, d0) * u_waveScale + t,
@@ -104,15 +122,20 @@ void main()
     vec3 viewVec = u_viewPos - fragPosition;
     float distSq = dot(viewVec, viewVec);
     float detailDistFade = 1.0 / (1.0 + distSq * 0.0015);
+    // [VISUAL FIX]: Hệ số chuyển mượt từ 28m -> 35m (distSq 784 -> 1225) để xóa sổ vệt cắt bậc tại 35m
+    float dualDetailFade = 1.0 - smoothstep(784.0, 1225.0, distSq);
 
-    // Distance-gated Microdetail sampling (saves 3 texture fetches per pixel beyond 35m)
+    // Distance-gated Microdetail sampling với textureGrad an toàn trong nhánh động
     float flowSpeedSq = dot(u_flowVelocity, u_flowVelocity);
     vec2 detailSlope = vec2(0.0);
     const vec2 eps = vec2(0.006, 0.0);
+    vec2 detDx0 = xzDx * u_detailScale;
+    vec2 detDy0 = xzDy * u_detailScale;
 
     if (flowSpeedSq > 0.000025) {
-        float flowSpeed = sqrt(flowSpeedSq);
-        vec2 flowDir = u_flowVelocity / flowSpeed;
+        float invFlowSpeed = inversesqrt(flowSpeedSq);
+        float flowSpeed = flowSpeedSq * invFlowSpeed;
+        vec2 flowDir = u_flowVelocity * invFlowSpeed;
         float flowProgress = u_time * flowSpeed * 0.22;
         float phase0 = fract(flowProgress);
         float phase1 = fract(flowProgress + 0.5);
@@ -120,28 +143,36 @@ void main()
 
         vec2 baseUV = fragWorldXZ * u_detailScale;
         vec2 uv0 = baseUV + flowDir * phase0;
-        float n0 = texture(texture0, uv0).r;
-        vec2 s0 = vec2(texture(texture0, uv0 + eps.xy).r, texture(texture0, uv0 + eps.yx).r) - n0;
+        float n0 = textureGrad(texture0, uv0, detDx0, detDy0).r;
+        vec2 s0 = vec2(textureGrad(texture0, uv0 + eps.xy, detDx0, detDy0).r,
+                       textureGrad(texture0, uv0 + eps.yx, detDx0, detDy0).r) - n0;
 
         if (distSq < 1225.0) {
             vec2 uv1 = baseUV + flowDir * phase1;
-            float n1 = texture(texture0, uv1).r;
-            vec2 s1 = vec2(texture(texture0, uv1 + eps.xy).r, texture(texture0, uv1 + eps.yx).r) - n1;
-            detailSlope = mix(s0, s1, flowWeight);
+            float n1 = textureGrad(texture0, uv1, detDx0, detDy0).r;
+            vec2 s1 = vec2(textureGrad(texture0, uv1 + eps.xy, detDx0, detDy0).r,
+                           textureGrad(texture0, uv1 + eps.yx, detDx0, detDy0).r) - n1;
+            detailSlope = mix(s0, s1, flowWeight * dualDetailFade);
         } else {
             detailSlope = s0;
         }
     } else {
-        vec2 detailUv0 = fragWorldXZ * u_detailScale + vec2(t * 0.011, -t * 0.007);
-        float d0_val = texture(texture0, detailUv0).r;
-        vec2 d0_grad = vec2(texture(texture0, detailUv0 + eps.xy).r, texture(texture0, detailUv0 + eps.yx).r) - d0_val;
+        vec2 detailUv0 = fragWorldXZ * u_detailScale + fract(vec2(t * 0.011, -t * 0.007));
+        float d0_val = textureGrad(texture0, detailUv0, detDx0, detDy0).r;
+        vec2 d0_grad = vec2(textureGrad(texture0, detailUv0 + eps.xy, detDx0, detDy0).r,
+                            textureGrad(texture0, detailUv0 + eps.yx, detDx0, detDy0).r) - d0_val;
 
         if (distSq < 1225.0) {
-            vec2 detailUv1 = vec2(-fragWorldXZ.y, fragWorldXZ.x) * (u_detailScale * 0.63)
-                           + vec2(-t * 0.006, t * 0.009);
-            float d1_val = texture(texture0, detailUv1).r;
-            vec2 d1_grad = vec2(texture(texture0, detailUv1 + eps.xy).r, texture(texture0, detailUv1 + eps.yx).r) - d1_val;
-            detailSlope = d0_grad * 0.72 + vec2(d1_grad.y, -d1_grad.x) * 0.28;
+            float scale1 = u_detailScale * 0.63;
+            vec2 detDx1 = vec2(-xzDx.y, xzDx.x) * scale1;
+            vec2 detDy1 = vec2(-xzDy.y, xzDy.x) * scale1;
+            vec2 detailUv1 = vec2(-fragWorldXZ.y, fragWorldXZ.x) * scale1
+                           + fract(vec2(-t * 0.006, t * 0.009));
+            float d1_val = textureGrad(texture0, detailUv1, detDx1, detDy1).r;
+            vec2 d1_grad = vec2(textureGrad(texture0, detailUv1 + eps.xy, detDx1, detDy1).r,
+                                textureGrad(texture0, detailUv1 + eps.yx, detDx1, detDy1).r) - d1_val;
+            vec2 blendedGrad = d0_grad * 0.72 + vec2(d1_grad.y, -d1_grad.x) * 0.28;
+            detailSlope = mix(d0_grad, blendedGrad, dualDetailFade);
         } else {
             detailSlope = d0_grad;
         }
@@ -162,36 +193,41 @@ void main()
             vec2 edge = smoothstep(vec2(0.72), vec2(0.96), abs(fragLakeCoord));
             gridFade = (1.0 - edge.x) * (1.0 - edge.y);
         }
-        vec4 waveField = texture(u_waveFieldTex, waveUv);
+        vec4 waveField = textureGrad(u_waveFieldTex, waveUv, lakeDx, lakeDy);
         interactSlope = (waveField.rg - 0.5) * (2.45 * gridFade);
         waveCurvature = (waveField.a - 0.5) * (5.0 * gridFade);
         wakeCrestHighlight = max(0.0, waveField.b - 0.5) * (0.52 * gridFade);
         dynamicWakeFoam = clamp((wakeCrestHighlight * 1.6 + max(0.0, waveCurvature) * 0.22 - 0.12) * shoreFade * gridFade, 0.0, 0.65);
     }
 
-    // Direct player/entity water interactor wake: gentle non-oscillatory bow displacement (no concentric rings)
-    float submerged = u_waterInteractor.y;
+    // Direct player/entity water interactor wake: gentle non-oscillatory bow displacement
+    float submerged = (u_waterSubmerged > 0.0) ? u_waterSubmerged : u_waterInteractor.y;
     if (u_waterRadius > 0.01 && submerged > 0.01) {
         vec2 toInteractor = fragWorldXZ - u_waterInteractor.xz;
         float iDistSq = dot(toInteractor, toInteractor);
         float activeRad = u_waterRadius * 2.4;
 
         if (iDistSq < activeRad * activeRad && iDistSq > 1e-5) {
-            float iDist = sqrt(iDistSq);
+            float invIDist = inversesqrt(iDistSq);
+            float iDist = iDistSq * invIDist;
             float normDist = iDist / u_waterRadius;
             float speed = length(u_waterVelocity.xz);
             float speedFactor = clamp(speed * 0.35 + 0.15, 0.0, 1.0);
 
-            // Smooth single-lobe hump (NO sinusoidal concentric rings)
-            float bowEnv = exp(-normDist * 1.5) * speedFactor * submerged * smoothstep(2.4, 1.2, normDist);
-            vec2 iDir = toInteractor / iDist;
+            // [SPIR-V FIX]: Sửa lỗi smoothstep(2.4, 1.2, normDist) và smoothstep(1.2, 0.3, normDist)
+            // (undefined behavior khi edge0 > edge1 trên Vulkan) thành (1.0 - smoothstep(edge1, edge0, normDist))
+            float outerWakeFade = 1.0 - smoothstep(1.2, 2.4, normDist);
+            float innerFoamFade = 1.0 - smoothstep(0.3, 1.2, normDist);
+            float bowEnv = exp(-normDist * 1.5) * speedFactor * clamp(submerged, 0.0, 1.5) * outerWakeFade;
+            vec2 iDir = toInteractor * invIDist;
             interactSlope += iDir * (bowEnv * 0.35);
-            dynamicWakeFoam = max(dynamicWakeFoam, smoothstep(1.2, 0.3, normDist) * bowEnv * 0.35 * shoreFade);
+            dynamicWakeFoam = max(dynamicWakeFoam, innerFoamFade * bowEnv * 0.35 * shoreFade);
         }
     }
 
     slope += interactSlope * shoreFade;
-    vec3 normal = normalize(vec3(-slope.x, 1.0, -slope.y));
+    float slopeLenSq = dot(slope, slope);
+    vec3 normal = vec3(-slope.x, 1.0, -slope.y) * inversesqrt(1.0 + slopeLenSq);
 
     // ── 2. DEPTH & BATHYMETRY ESTIMATION (h <= 1.5m) ─────────────────────────
     float waterDepth = 0.0;
@@ -206,11 +242,11 @@ void main()
     }
 
     // Hardware scene depth buffer refinement (used only for analytic rect/strip shapes)
-    if (!hasValidDepth && u_hasDepthTex > 0 && u_resolution.x > 1.0) {
+    if (!hasValidDepth && u_hasDepthTex > 0 && u_resolution.x > 1.0 && u_resolution.y > 1.0) {
         vec2 screenUV = gl_FragCoord.xy / u_resolution;
-        float sceneLinear = texture(u_cameraDepthTex, screenUV).r;
+        float sceneLinear = textureLod(u_cameraDepthTex, screenUV, 0.0).r;
         float ndc = gl_FragCoord.z * 2.0 - 1.0;
-        float fragLinear = 2000.0 / (1001.0 - ndc * 999.0);
+        float fragLinear = 2000.0 / max(1001.0 - ndc * 999.0, 0.001);
 
         if (sceneLinear > 1.01 && sceneLinear >= fragLinear - 0.05) {
             waterDepth = clamp(sceneLinear - fragLinear, 0.0, u_maxDepth);
@@ -223,14 +259,15 @@ void main()
             float edgeDist = min(1.0 - abs(fragLakeCoord.x), 1.0 - abs(fragLakeCoord.y));
             waterDepth = clamp(smoothstep(0.0, 0.35, edgeDist) * u_maxDepth, 0.0, u_maxDepth);
         } else if (u_waterShape == 2) {
-            float channelDist = 1.0 - abs(fragLakeCoord.y);
-            waterDepth = clamp(sin(channelDist * 1.5708) * u_maxDepth, 0.0, u_maxDepth);
+            float channelDist = clamp(1.0 - abs(fragLakeCoord.y), 0.0, 1.0);
+            waterDepth = clamp(sin(channelDist * 1.5707963) * u_maxDepth, 0.0, u_maxDepth);
         }
     }
 
     // ── 3. OPTICAL BEER-LAMBERT TRANSMITTANCE & WATER COLUMN ─────────────────
     vec3 viewDir = viewVec * inversesqrt(max(distSq, 1e-8));
-    vec3 L = normalize(u_lightDir);
+    float lLenSq = dot(u_lightDir, u_lightDir);
+    vec3 L = (lLenSq > 1e-8) ? (u_lightDir * inversesqrt(lLenSq)) : vec3(0.0, 1.0, 0.0);
     // Zenith irradiance compensation + HDR soft-knee so water never washes out
     float zenithDamp = 1.0 / (1.0 + max(L.y - 0.36, 0.0) * 0.85);
     vec3 effectiveLight = u_lightColor * zenithDamp;
@@ -247,28 +284,34 @@ void main()
     vec3 transmittance = exp(-absorptionCoeff * opticalPath);
 
     // ── 4. WATER CAUSTICS (Refracted Dual-Layer Photon Focusing) ─────────────
-    vec2 causticRefract = normal.xz * clamp(waterDepth * 0.25, 0.015, 0.18);
-    vec2 causticBase = fragWorldXZ + causticRefract;
-    vec2 causticUv0 = causticBase * (u_causticsScale * 0.32) + vec2(t * 0.038, t * 0.024);
-    vec2 causticUv1 = causticBase * (u_causticsScale * 0.45) + vec2(-t * 0.029, t * 0.043);
-    float c0 = texture(u_causticTex, causticUv0).r;
-    float c1 = texture(u_causticTex, causticUv1).r;
-    float causticMin = min(c0, c1) * 2.2;
-    float causticWave = causticMin * sqrt(max(causticMin, 0.0));
-
     float depthFadeCaustic = smoothstep(0.015, 0.20, waterDepth) * (1.0 - smoothstep(0.85, 1.45, waterDepth) * 0.45);
-    float causticIntensity = smoothstep(0.50, 0.88, causticWave) *
-                             u_causticsStrength * 0.068 * depthFadeCaustic;
-    vec3 causticLight = effectiveLight * causticIntensity * transmittance;
+    vec3 causticLight = vec3(0.0);
+    if (depthFadeCaustic * u_causticsStrength > 0.001) {
+        vec2 causticRefract = normal.xz * clamp(waterDepth * 0.25, 0.015, 0.18);
+        vec2 causticBase = fragWorldXZ + causticRefract;
+        float cScale0 = u_causticsScale * 0.32;
+        float cScale1 = u_causticsScale * 0.45;
+        vec2 causticUv0 = causticBase * cScale0 + fract(vec2(t * 0.038, t * 0.024));
+        vec2 causticUv1 = causticBase * cScale1 + fract(vec2(-t * 0.029, t * 0.043));
+        float c0 = textureGrad(u_causticTex, causticUv0, xzDx * cScale0, xzDy * cScale0).r;
+        float c1 = textureGrad(u_causticTex, causticUv1, xzDx * cScale1, xzDy * cScale1).r;
+        float causticMin = min(c0, c1) * 2.2;
+        float causticWave = causticMin * sqrt(max(causticMin, 0.0));
+
+        float causticIntensity = smoothstep(0.50, 0.88, causticWave) *
+                                 u_causticsStrength * 0.068 * depthFadeCaustic;
+        causticLight = effectiveLight * (causticIntensity * transmittance);
+    }
 
     // ── 5. SINGLE-LAYER WATER SUBSURFACE SCATTERING (Wave-Crest SSS) ─────────
     float waveFacet = dot(sinP, vec3(0.52, 0.31, 0.17));
-    vec3 scatterLightDir = normalize(L + vec3(normal.x, 0.0, normal.z) * 0.65);
+    vec3 rawScatterDir = L + vec3(normal.x, 0.0, normal.z) * 0.65;
+    vec3 scatterLightDir = rawScatterDir * inversesqrt(max(dot(rawScatterDir, rawScatterDir), 1e-8));
     float backlight = max(0.0, dot(viewDir, -vec3(scatterLightDir.x, scatterLightDir.y * 0.25, scatterLightDir.z)));
     float bl2 = backlight * backlight;
     float sssFactor = (bl2 * backlight * 0.78 + 0.18) * u_scatterCoeff;
     float crestThickness = clamp((1.0 - normal.y * 0.88) + max(0.0, waveFacet) * 0.32 + wakeCrestHighlight * 0.75, 0.0, 1.0);
-    vec3 sssLight = effectiveLight * u_scatterColor * sssFactor * (1.0 - exp(-2.2 * waterDepth)) * crestThickness;
+    vec3 sssLight = effectiveLight * u_scatterColor * (sssFactor * (1.0 - exp(-2.2 * waterDepth)) * crestThickness);
 
     // ── 6. HYBRID FRESNEL & ENVIRONMENT REFLECTION (Energy-Conserving) ───────
     const float F0 = 0.02;
@@ -299,8 +342,9 @@ void main()
     float crest = smoothstep(0.48, 0.92, waveFacet) * 0.045;
     vec3 waveHighlight = reflectedSky * (max(waveFacet, 0.0) * 0.038 + crest + wakeCrestHighlight * 0.42);
 
-    // Crisp multi-scale specular sun glint (eliminates wide nh16 milky glare patch)
-    vec3 halfDir = normalize(L + viewDir);
+    // Crisp multi-scale specular sun glint (chuẩn hóa an toàn cho halfDir)
+    vec3 halfSum = L + viewDir;
+    vec3 halfDir = halfSum * inversesqrt(max(dot(halfSum, halfSum), 1e-6));
     float NdotH = max(dot(normal, halfDir), 0.0);
     float nh2   = NdotH * NdotH;
     float nh4   = nh2 * nh2;
@@ -312,16 +356,17 @@ void main()
     float nh96  = nh64 * nh32;
     float nh128 = nh64 * nh64;
     float glintSharp = nh128 * nh128; // NdotH^256 crisp sun diamond
-    // Modulate mid-glint by wave slope energy so flat water never turns into a bright white sheet
-    float waveSlopeEnergy = clamp(length(slope) * 14.0, 0.12, 1.0);
+    // Modulate mid-glint by wave slope energy (tái sử dụng slopeLenSq đã tính ở trên)
+    float waveSlopeEnergy = clamp(sqrt(slopeLenSq) * 14.0, 0.12, 1.0);
     float glintMid = (nh96 * 0.28 + nh64 * 0.12) * waveSlopeEnergy;
 
     vec3 sunGlint = effectiveLight * (glintSharp * 2.8 + glintMid * 0.65) * (0.20 + fresnel * 0.80) * detailDistFade;
     float disturbance = clamp(length(interactSlope) * 2.2, 0.0, 1.0);
     vec3 waveReflection = reflectedSky * (nh12 * disturbance * 0.38);
 
-    // Crisp wave-slope contrast across all sun angles
-    vec2 horizAzimuth = normalize(L.xz + vec2(0.42, -0.34));
+    // Crisp wave-slope contrast across all sun angles (chuẩn hóa an toàn cho horizAzimuth)
+    vec2 rawAzimuth = L.xz + vec2(0.42, -0.34);
+    vec2 horizAzimuth = rawAzimuth * inversesqrt(max(dot(rawAzimuth, rawAzimuth), 1e-8));
     float waveSlopeContrast = dot(normal.xz, horizAzimuth) * 2.2;
     vec3 waveLighting = effectiveLight * clamp(waveSlopeContrast + (dot(normal, L) - L.y), -0.22, 0.24) * 0.28;
 
@@ -332,7 +377,8 @@ void main()
 
     if (contactMask > 0.001 || dynamicWakeFoam > 0.001) {
         float meniscusLip = smoothstep(0.0, 0.022, waterDepth) * (1.0 - smoothstep(0.022, 0.075, waterDepth));
-        float foamNoise = texture(texture0, fragWorldXZ * 0.45 + vec2(t * 0.022, -t * 0.016)).r;
+        vec2 foamUV = fragWorldXZ * 0.45 + fract(vec2(t * 0.022, -t * 0.016));
+        float foamNoise = textureGrad(texture0, foamUV, xzDx * 0.45, xzDy * 0.45).r;
         float contactRipple = sin(waterDepth * 36.0 - t * 4.8) * exp(-waterDepth * 6.5);
 
         brokenFoam = smoothstep(0.49, 0.80, contactMask * 0.58 + (foamNoise - 0.5) * 0.72);
@@ -357,23 +403,17 @@ void main()
     float surfaceAlpha = fresnel * 0.65 + waterColumnAlpha + glintAlphaBoost;
 
     // Smooth analytical shoreline edge feathering (clean, antialiased contact lip)
-    float shoreEdgeFade = 1.0;
-    if (u_waterShape == 0) {
-        if (radial > 0.84) {
-            float shoreNoise = texture(texture0, fragWorldXZ * 0.72).r;
-            float shoreFine  = texture(texture0, fragWorldXZ * 2.1).r;
-            float shoreBreakup = (shoreNoise - 0.5) * 0.045 + (shoreFine - 0.5) * 0.012;
-            shoreEdgeFade = 1.0 - smoothstep(0.91 + shoreBreakup, 1.0, radial);
-        }
-    } else if (u_waterShape == 3) {
+    float shoreEdgeFade = radialEdgeFade;
+    if (u_waterShape == 3) {
         // Clean linear feathering from depth = 0.002m to 0.12m eliminates jagged pixel steps
         shoreEdgeFade = smoothstep(0.002, 0.12, waterDepth);
-    } else {
+    } else if (u_waterShape != 0) {
         shoreEdgeFade = smoothstep(0.002, 0.035, waterDepth);
     }
     surfaceAlpha *= shoreEdgeFade;
 
     float alpha = clamp(surfaceAlpha + brokenFoam * 0.26 * shoreEdgeFade, 0.0, 0.90);
+    if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
     vec3 shallowTint = (u_waterShape == 3) ? u_shallowColor : mix(u_shallowColor, vec3(0.14, 0.52, 0.50), 0.45);

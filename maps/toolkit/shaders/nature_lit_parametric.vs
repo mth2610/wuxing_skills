@@ -61,9 +61,11 @@ void main()
         vec3 spineCenter = local - s_cachedSide * (s_cachedHalfWidth * vertexPosition.x);
 
         float windCompliance = 1.0;
-        vec2 grassState = GrassEvaluateLocalState(rootWorld);
-        if (dot(grassState, grassState) > 1e-5) {
-            GrassApplyVertexMorphology(spineCenter, rootLocal, h, grassState, windCompliance);
+        if ((u_grassStateParams.x + u_grassStateParams.y) > 0.0001 || u_grassBurnZoneCount > 0) {
+            vec2 grassState = GrassEvaluateLocalState(rootWorld);
+            if (dot(grassState, grassState) > 1e-5) {
+                GrassApplyVertexMorphology(spineCenter, rootLocal, h, grassState, windCompliance);
+            }
         }
 
         float bladeSpanY = max(spineCenter.y - rootLocal.y, 0.0);
@@ -91,15 +93,17 @@ void main()
             }
         }
 
-        // Smoothly cap total horizontal wind + interaction bend to maxAllowedBend
-        float rawBendLen = length(windBend);
+        // [TỐI ƯU ALU]: Gộp bước giới hạn biên độ gió và tính dispLen chỉ với 1 lệnh inversesqrt duy nhất
+        // (loại bỏ hoàn toàn lệnh sqrt(dispSq) thứ 2 mỗi đỉnh vì rootMask >= 0)
+        float rawBendSq = dot(windBend, windBend);
+        float rawBendLen = (rawBendSq > 1e-10) ? (rawBendSq * inversesqrt(rawBendSq)) : 0.0;
         if (rawBendLen > maxAllowedBend) {
             windBend *= maxAllowedBend / rawBendLen;
+            rawBendLen = maxAllowedBend;
         }
 
         vec2 dispXZ = windBend * rootMask;
-        float dispSq = dot(dispXZ, dispXZ);
-        float dispLen = sqrt(dispSq);
+        float dispLen = rawBendLen * rootMask;
 
         // Strictly monotonic cantilever deflection (guaranteed dy/dh > 0 so blade tips NEVER hook downward!)
         float bendRatio = clamp(dispLen / bladeHeightEst, 0.0, 0.60);
@@ -107,10 +111,9 @@ void main()
         spineCenter.y   = rootLocal.y + bladeSpanY * (1.0 - 0.22 * bendRatio * h);
 
         // Re-orthogonalize ribbon width vector perpendicular to the bent 3D spine tangent
-        // (s_cachedSide was already view-assisted in nature_parametric.glsl, so projecting
-        // perpendicular to bentTangent maintains its camera-facing component without redundant math).
         float dMaskDh = 0.45 + 1.10 * h;
-        vec3 bentTangent = normalize(s_cachedTangent + vec3(windBend.x * dMaskDh, -dispLen * 0.40, windBend.y * dMaskDh));
+        vec3 rawBentTan = s_cachedTangent + vec3(windBend.x * dMaskDh, -dispLen * 0.40, windBend.y * dMaskDh);
+        vec3 bentTangent = rawBentTan * inversesqrt(max(dot(rawBentTan, rawBentTan), 1e-8));
         vec3 bentSide = s_cachedSide - bentTangent * dot(s_cachedSide, bentTangent);
         float bsLenSq = dot(bentSide, bentSide);
         bentSide = (bsLenSq > 1e-5) ? (bentSide * inversesqrt(bsLenSq)) : s_cachedSide;
@@ -118,8 +121,7 @@ void main()
         local = spineCenter + bentSide * (s_cachedHalfWidth * vertexPosition.x);
         world = local + u_worldOffset;
 
-        // As the blade bends over, its upper surface tilts skyward (+Y) and along the bend slope,
-        // creating natural rolling specular wind waves instead of dark inverted patches.
+        // As the blade bends over, its upper surface tilts skyward (+Y) and along the bend slope
         bentNormal.xz += windBend * (0.95 * h);
         bentNormal.y  += dispLen * 0.45;
 
@@ -129,7 +131,7 @@ void main()
     }
 
     fragPosition = world;
-    fragNormal = normalize(bentNormal);
+    fragNormal = bentNormal * inversesqrt(max(dot(bentNormal, bentNormal), 1e-8));
     fragColor = vec4(bladeColor.rgb, windSheen);
     fragHeight = h;
     fragTexCoord = bladeSurfaceUV;

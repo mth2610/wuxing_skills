@@ -7,13 +7,18 @@ out vec4 finalColor;
 
 void main()
 {
-    float along = v_shadowData.x;
+    float along = clamp(v_shadowData.x, 0.0, 1.0);
     float across = v_shadowData.y;
 
     // VISUAL UPGRADE: Bo tròn đầu bóng theo phương trình Elip tự nhiên thay vì cắt vuông góc
     // Khi tiến về ngọn bóng (along -> 1.0), khoảng cách ngang hiệu dụng tăng lên giúp bo tròn đỉnh
     float tipCurve = smoothstep(0.65, 1.0, along);
-    float radialDist = sqrt(across * across + tipCurve * tipCurve);
+    float radialDistSq = across * across + tipCurve * tipCurve;
+
+    // Early-out nhanh trước khi gọi sqrt nếu điểm nằm hoàn toàn ngoài hình elip bóng
+    if (radialDistSq >= 1.0) discard;
+
+    float radialDist = sqrt(radialDistSq);
 
     // VISUAL UPGRADE: Contact Hardening (Bóng sắc nét ở gốc cây, mờ rộng dần về phía ngọn)
     // Gốc cây (along = 0): bắt đầu mờ từ 0.60 -> 1.0 (crisp root contact grounding)

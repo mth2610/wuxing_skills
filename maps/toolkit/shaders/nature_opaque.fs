@@ -22,12 +22,13 @@ void main()
     float tipScale = clamp((1.0 - fragHeight) * 4.166667, 0.08, 1.0);
     float uNorm = clamp(fragTexCoord.x / tipScale, -1.0, 1.0);
 
-    // [TỐI ƯU VISUAL QUAN TRỌNG]: Khi nhìn mặt lưng của lá cỏ uốn cong (!gl_FrontFacing),
-    // giữ thành phần pháp tuyến trục Y hướng lên bầu trời (>= 0.30) thay vì đảo âm (-fragNormal.y)
-    // khiến mặt sau lá cỏ bị tối đen.
-    vec3 baseNormal = gl_FrontFacing
+    // [TỐI ƯU VISUAL & ALU]: Khi nhìn mặt lưng của lá cỏ uốn cong (!gl_FrontFacing),
+    // giữ thành phần pháp tuyến trục Y hướng lên bầu trời (>= 0.30) thay vì đảo âm (-fragNormal.y),
+    // sau đó chuẩn hóa hợp nhất cả mặt trước và mặt sau chỉ bằng 1 lệnh inversesqrt() duy nhất.
+    vec3 rawN = gl_FrontFacing
         ? fragNormal
-        : normalize(vec3(-fragNormal.x, max(abs(fragNormal.y), 0.30), -fragNormal.z));
+        : vec3(-fragNormal.x, max(abs(fragNormal.y), 0.30), -fragNormal.z);
+    vec3 baseNormal = rawN * inversesqrt(max(dot(rawN, rawN), 1e-8));
 
     vec3 albedo = fragColor.rgb * colDiffuse.rgb;
 

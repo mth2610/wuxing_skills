@@ -16,7 +16,8 @@ out vec4 fragColor;
 void main() {
     fragPosition = vertexPosition + u_modelPos;
     fragTexCoord = vertexTexCoord;
-    fragNormal = normalize(vertexNormal);
+    float nLenSq = dot(vertexNormal, vertexNormal);
+    fragNormal = (nLenSq > 1e-8) ? (vertexNormal * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
     fragColor = vertexColor;
 
     gl_Position = mvp * vec4(vertexPosition, 1.0);

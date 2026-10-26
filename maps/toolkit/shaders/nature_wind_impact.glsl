@@ -34,7 +34,9 @@ vec2 NatureDominantWindImpact(vec3 worldPosition)
 
         float invDist = inversesqrt(max(distSq, 1e-8));
         float distanceToImpact = distSq * invDist;
-        vec2 pushDirection = (distSq > 1e-8) ? (delta * invDist) : u_windImpactDirection;
+        float dirLenSq = dot(u_windImpactDirection, u_windImpactDirection);
+        vec2 fallbackDir = (dirLenSq > 1e-8) ? (u_windImpactDirection * inversesqrt(dirLenSq)) : vec2(1.0, 0.0);
+        vec2 pushDirection = (distSq > 1e-8) ? (delta * invDist) : fallbackDir;
 
         // Asymmetric Friedlander-style wave profile (sharp front, smooth trailing wake)
         float signedDist = distanceToImpact - frontRadius;
@@ -42,8 +44,9 @@ vec2 NatureDominantWindImpact(vec3 worldPosition)
         float absNorm = abs(normDist);
         float wavefront = 1.0 - smoothstep(0.25, 1.0, absNorm);
 
-        // Subtle secondary inward suction recoil at the trailing edge of the blast ring
-        float trailingRecoil = (signedDist < -bandWidth * 0.55) ? -0.15 : 1.0;
+        // [VISUAL FIX]: Chuyển mượt pha hút ngược (trailing suction recoil) bằng smoothstep
+        // thay cho toán tử bậc thang (? -0.15 : 1.0) gây giật cục ngọn cỏ trong 1 frame
+        float trailingRecoil = mix(-0.15, 1.0, smoothstep(-bandWidth * 0.75, -bandWidth * 0.35, signedDist));
         float tailFade = 1.0 - smoothstep(0.70, 1.0, u_windImpactAge);
 
         return pushDirection * (u_windImpactStrength * wavefront * tailFade * trailingRecoil);
@@ -58,9 +61,11 @@ vec2 NatureDominantWindImpact(vec3 worldPosition)
         float t = 1.0 - distanceToImpact / u_windImpactRadius;
         float attenuation = t * t * (3.0 - 2.0 * t);
 
-        // Blend primary slash direction with a slight radial parting push
+        // [SPIR-V FIX]: Chuẩn hóa an toàn cho pushDirection tránh lỗi normalize(vec2(0.0)) -> NaN
         vec2 radialDir = (distSq > 1e-8) ? (delta * invDist) : vec2(0.0);
-        vec2 pushDirection = normalize(u_windImpactDirection + radialDir * (0.22 * t));
+        vec2 rawPush = u_windImpactDirection + radialDir * (0.22 * t);
+        float pushLenSq = dot(rawPush, rawPush);
+        vec2 pushDirection = (pushLenSq > 1e-8) ? (rawPush * inversesqrt(pushLenSq)) : radialDir;
 
         return pushDirection * (u_windImpactStrength * attenuation);
     }

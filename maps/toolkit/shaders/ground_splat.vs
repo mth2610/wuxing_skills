@@ -28,7 +28,12 @@ void main()
     vec4 worldVertex = vec4(vertexPosition, 1.0);
     vec4 shaderPos = matModel * worldVertex;
     fragPosition = shaderPos.xyz;
-    fragNormal   = vertexNormal;
+
+    // Chuẩn hóa pháp tuyến an toàn theo ma trận model tại Vertex Shader
+    vec3 worldNormal = mat3(matModel) * vertexNormal;
+    float nLenSq = dot(worldNormal, worldNormal);
+    fragNormal = (nLenSq > 1e-8) ? (worldNormal * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
+
     vec3 wp      = vertexPosition + u_groundOffset;
     fragWorldPos = wp;
     v_lightSpace = u_lightVP * shaderPos;

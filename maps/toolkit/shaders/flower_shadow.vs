@@ -29,9 +29,11 @@ void main()
     vec2 direction = (travelLenSq > 1e-6) ? (travel * invLen) : vec2(1.0, 0.0);
     vec2 perpendicular = vec2(-direction.y, direction.x);
 
-    // VISUAL UPGRADE: Giới hạn mềm chiều dài bóng để không bị kéo giãn quá mức khi nắng xế
+    // VISUAL UPGRADE: Giới hạn mềm tiệm cận (Soft-knee asymptotic clamp) chiều dài bóng
+    // giúp bóng dài ra mượt mà khi nắng xế mà không bị khựng đột ngột tại ngưỡng 3.2
     float rawLength = travelLenSq * invLen;
-    float clampedLength = min(rawLength, 3.2); 
+    const float MAX_LEN = 3.2;
+    float clampedLength = (rawLength * MAX_LEN) * inversesqrt(rawLength * rawLength + MAX_LEN * MAX_LEN);
     vec2 safeTravel = direction * clampedLength;
 
     vec3 position = vertexPosition;
@@ -41,10 +43,12 @@ void main()
     float widthProfile = mix(1.0, u_tipWidth, along) * u_widthScale;
     position.xz += perpendicular * (shadowWidth * across * widthProfile);
 
-    // TỐI ƯU: Nhân sẵn hằng số cường độ bóng và độ suy giảm theo khoảng cách ngay tại đỉnh
-    // Gốc cây (along = 0) đậm hơn, ngọn bóng (along = 1) nhạt dần tự nhiên
+    // TỐI ƯU: Nhân sẵn hằng số cường độ bóng, độ suy giảm theo chiều dài và độ cao mặt trời
+    float horizonFade = (dot(u_lightTravel, u_lightTravel) > 1e-6)
+                      ? smoothstep(-0.05, 0.12, -u_lightTravel.y)
+                      : 1.0;
     float distanceAtten = mix(1.0, 0.65, along);
-    float precomputedStrength = vertexColor.r * 0.58 * u_shadowStrength * distanceAtten;
+    float precomputedStrength = vertexColor.r * 0.58 * u_shadowStrength * distanceAtten * horizonFade;
 
     v_shadowData = vec3(along, across, precomputedStrength);
     gl_Position = mvp * vec4(position, 1.0);

@@ -67,15 +67,17 @@ out vec4 finalColor;
 
 void main()
 {
-    // ---- 0. Derivatives ----
+    // ---- 0. Derivatives (Tính toàn bộ đạo hàm trong luồng đồng nhất trước discard/return) ----
+    vec2 baseUvDx = dFdx(fragTexCoord), baseUvDy = dFdy(fragTexCoord);
     vec2 tiledUV = fragTexCoord * tiling;
-    vec2 uvDx = dFdx(tiledUV), uvDy = dFdy(tiledUV);
-    vec2 wpDx = dFdx(fragWorldPos.xz), wpDy = dFdy(fragWorldPos.xz);
+    vec2 uvDx = baseUvDx * tiling, uvDy = baseUvDy * tiling;
+    vec3 wpDx3 = dFdx(fragWorldPos), wpDy3 = dFdy(fragWorldPos);
+    vec2 wpDx = wpDx3.xz, wpDy = wpDy3.xz;
     float pixelMetersSq = max(dot(wpDx, wpDx), dot(wpDy, wpDy));
     float detailResolve = 1.0 - smoothstep(0.000225, 0.0049, pixelMetersSq);
 
     // ---- 1. Splat Fetch & Early Abyss Discard ----
-    vec4 splatSample = texture(texture0, fragTexCoord);
+    vec4 splatSample = textureGrad(texture0, fragTexCoord, baseUvDx, baseUvDy);
     float streamWet = splatSample.a;
     float rockScree = splatSample.g;
 
@@ -109,6 +111,8 @@ void main()
     vec3 viewVec = viewPos - fragWorldPos;
     float camDistSqXZ = dot(viewVec.xz, viewVec.xz);
     bool nearDualScale = (camDistSqXZ < 289.0); // Trong vòng 17m mới đọc texture xoay lớp thứ 2
+    // [VISUAL FIX]: Hệ số chuyển mượt từ 14m -> 17m để xóa sổ đường viền nhảy bậc (LOD pop ring) tại 17m
+    float dualScaleFade = 1.0 - smoothstep(196.0, 289.0, camDistSqXZ);
 
     // ---- 3. Distance to Path ----
     vec4 ecology = vec4(1.0, 0.6, 0.0, 0.5);
@@ -116,9 +120,9 @@ void main()
     float shoreFactor = 0.0;
     float lakeDepthFactor = 0.0;
     if (u_ecologyEnabled != 0) {
-        vec2 ecoUV = (fragWorldPos.xz - u_ecologyRect.xy) / u_ecologyRect.zw;
-        ecology = texture(u_ecology, ecoUV);
-        vec4 metric = texture(u_ecologyDistance, ecoUV);
+        vec2 ecoUV = (fragWorldPos.xz - u_ecologyRect.xy) / max(u_ecologyRect.zw, vec2(0.0001));
+        ecology = textureLod(u_ecology, ecoUV, 0.0);
+        vec4 metric = textureLod(u_ecologyDistance, ecoUV, 0.0);
         float roadU16 = (metric.r * 65280.0 + metric.g * 255.0) * (1.0 / 65535.0);
         distToPath = (roadU16 * 2.0 - 1.0) * 16.0 + 1.15;
 
@@ -134,7 +138,7 @@ void main()
         }
     } else if (u_pathSegCount > 0) {
         float minDistSq = 1000000.0;
-        int count = min(u_pathSegCount, MAX_PATH_SEGS);
+        int count = clamp(u_pathSegCount, 0, MAX_PATH_SEGS);
         for (int i = 0; i < count; i++) {
             vec4 seg = u_pathSegs[i];
             vec2 pa = fragWorldPos.xz - seg.xy;
@@ -147,8 +151,8 @@ void main()
     }
 
     // ---- 4. Shoreline Wetness & Lake Basin ----
-    if (u_lakeParams.z > 0.0) {
-        vec2 lakeDelta = (fragWorldPos.xz - u_lakeParams.xy) / u_lakeParams.zw;
+    if (u_lakeParams.z > 0.0 && u_lakeParams.w > 0.0) {
+        vec2 lakeDelta = (fragWorldPos.xz - u_lakeParams.xy) / max(u_lakeParams.zw, vec2(0.0001));
         float lakeDistSq = dot(lakeDelta, lakeDelta);
         if (lakeDistSq < 1.5625) {
             float lakeDist = sqrt(lakeDistSq);
@@ -161,7 +165,7 @@ void main()
     }
 
     // ---- 5. Geometry Normal & Slope ----
-    vec3 geomNormal = normalize(fragNormal);
+    vec3 geomNormal = fragNormal * inversesqrt(max(dot(fragNormal, fragNormal), 1e-8));
     float slope = clamp(1.0 - geomNormal.y, 0.0, 1.0);
 
     // ---- 6. Soil Detail (Tightened gate skips dirt fetches on pure meadow turf) ----
@@ -181,7 +185,7 @@ void main()
                                          vec2(-uvDx.y, uvDx.x) * 0.31,
                                          vec2(-uvDy.y, uvDy.x) * 0.31).rgb;
             vec3 broadMod = clamp(broadDirt / max(dot(broadDirt, vec3(0.3333)), 0.18), vec3(0.80), vec3(1.22));
-            dirtDetail = clamp(colorDirt.rgb * mix(vec3(1.0), broadMod, 0.45), vec3(0.0), vec3(1.0));
+            dirtDetail = clamp(colorDirt.rgb * mix(vec3(1.0), broadMod, 0.45 * dualScaleFade), vec3(0.0), vec3(1.0));
         } else {
             dirtDetail = colorDirt.rgb;
         }
@@ -200,10 +204,11 @@ void main()
     float wPathMargin = smoothstep(0.95, 1.65, distToPath) * (1.0 - smoothstep(1.65, 3.1, distToPath));
     float wWetSoil = max(shoreFactor * 0.82, smoothstep(0.68, 0.96, streamWet) * 0.82);
 
-    float wSlope = smoothstep(0.28, 0.58, slope);
-    float outerAbyssMask = 1.0 - smoothstep(-2.40, -1.10, fragWorldPos.y);
-    float steepOrAbyssMask = max(smoothstep(0.22, 0.48, slope), outerAbyssMask);
-    float rockCliff = smoothstep(0.76, 0.96, rockScree) * steepOrAbyssMask;
+    // Transition steeper terrain banks and outer cliff rims into rock strata & scree
+    float wSlope = smoothstep(0.20, 0.48, slope);
+    float outerAbyssMask = 1.0 - smoothstep(-2.40, 0.25, fragWorldPos.y);
+    float steepOrAbyssMask = max(smoothstep(0.18, 0.42, slope), outerAbyssMask);
+    float rockCliff = smoothstep(0.65, 0.92, rockScree) * steepOrAbyssMask;
     float wCliff = clamp(max(wSlope, rockCliff), 0.0, 1.0);
 
     float wDrySoil = clamp(max(wPathMargin * 0.78, wCliff * 0.92), 0.0, 1.0)
@@ -221,7 +226,7 @@ void main()
         bool boundary = dominantWeight < 0.96;
         if (boundary || (weights.x > 0.05 && nearDualScale)) {
             vec4 substrateRelief = textureGrad(u_groundRelief, tiledUV, uvDx, uvDy);
-            litterClasses = substrateRelief.ba;
+            litterClasses = mix(vec2(0.5), substrateRelief.ba, boundary ? 1.0 : dualScaleFade);
             if (boundary) {
                 float soilHeight = substrateRelief.g;
                 vec3 groupWeights = vec3(weights.x, combinedSoil, weights.z);
@@ -260,11 +265,14 @@ void main()
             vec3 broadGrass = textureGrad(texGrass, broadGrassUV,
                                           vec2(uvDx.y, -uvDx.x) * 0.38,
                                           vec2(uvDy.y, -uvDy.x) * 0.38).rgb;
-            blendedGrass = mix(colorGrass.rgb, broadGrass, 0.28);
+            blendedGrass = mix(colorGrass.rgb, broadGrass, 0.28 * dualScaleFade);
         }
-        // [TỐI ƯU BĂNG THÔNG]: Chỉ đọc normal/roughness map của cỏ trong bán kính 32m
+        // [TỐI ƯU BĂNG THÔNG & CHỐNG POP]: Chỉ đọc normal/roughness map của cỏ trong bán kính 32m
+        // và pha mượt về giá trị phẳng từ 28m -> 32m.
         if (camDistSqXZ < 1024.0) {
-            grassMaterial = textureGrad(texGrassMaterial, tiledUV, uvDx, uvDy);
+            float grassMatFade = 1.0 - smoothstep(784.0, 1024.0, camDistSqXZ);
+            vec4 sampledGrassMat = textureGrad(texGrassMaterial, tiledUV, uvDx, uvDy);
+            grassMaterial = mix(grassMaterial, sampledGrassMat, grassMatFade);
         }
         fineGrassLuma = dot(colorGrass.rgb, vec3(0.2126, 0.7152, 0.0722));
 
@@ -337,7 +345,8 @@ void main()
                 float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
                 canopyColor *= mix(vec3(0.95, 1.03, 0.92), vec3(1.06, 1.04, 0.88), warmShift * 0.60);
 
-                float windWave = sin(dot(fragWorldPos.xz, vec2(0.26, 0.18)) - u_time * 2.0) * 0.5 + 0.5;
+                float windPhase = fract(u_time * 0.31830988) * 6.2831853;
+                float windWave = sin(dot(fragWorldPos.xz, vec2(0.26, 0.18)) - windPhase) * 0.5 + 0.5;
                 canopyColor *= mix(vec3(0.97, 0.99, 0.95), vec3(1.05, 1.04, 0.96), windWave * distantCanopyBlend);
                 grassAlbedo = mix(grassAlbedo, canopyColor, distantCanopyBlend * 0.92);
             }
@@ -364,16 +373,23 @@ void main()
         if (wCliff > 0.10 && (slope > 0.28 || outerAbyssMask > 0.05)) {
             vec2 triUVx = fragWorldPos.zy * 0.28;
             vec2 triUVz = fragWorldPos.xy * 0.28;
-            vec3 triWeights = pow(abs(geomNormal), vec3(3.0));
+            vec2 triDxX = wpDx3.zy * 0.28, triDyX = wpDy3.zy * 0.28;
+            vec2 triDxZ = wpDx3.xy * 0.28, triDyZ = wpDy3.xy * 0.28;
+
+            // [SPIR-V FIX & ALU OPT]: Thay pow(abs(geomNormal), vec3(3.0)) bằng phép nhân bậc 3
+            // để tránh lỗi log2(0.0) -> NaN khi vector pháp tuyến trùng trục tọa độ.
+            vec3 absN = abs(geomNormal);
+            vec3 triWeights = absN * absN * absN;
             triWeights /= max(triWeights.x + triWeights.y + triWeights.z, 0.001);
 
-            vec3 rockTexX = texture(texPath, triUVx).rgb;
-            vec3 rockTexZ = texture(texPath, triUVz).rgb;
+            // Dùng textureGrad thay cho texture() trong nhánh động để tránh lỗi đạo hàm ngầm trên Vulkan
+            vec3 rockTexX = textureGrad(texPath, triUVx, triDxX, triDyX).rgb;
+            vec3 rockTexZ = textureGrad(texPath, triUVz, triDxZ, triDyZ).rgb;
             if (nearDualScale) {
-                vec3 rockDetailX = texture(texPath, triUVx * 2.8).rgb;
-                vec3 rockDetailZ = texture(texPath, triUVz * 2.8).rgb;
-                rockTexX = mix(rockTexX, rockDetailX, 0.32);
-                rockTexZ = mix(rockTexZ, rockDetailZ, 0.32);
+                vec3 rockDetailX = textureGrad(texPath, triUVx * 2.8, triDxX * 2.8, triDyX * 2.8).rgb;
+                vec3 rockDetailZ = textureGrad(texPath, triUVz * 2.8, triDxZ * 2.8, triDyZ * 2.8).rgb;
+                rockTexX = mix(rockTexX, rockDetailX, 0.32 * dualScaleFade);
+                rockTexZ = mix(rockTexZ, rockDetailZ, 0.32 * dualScaleFade);
             }
             vec3 triRock  = rockTexX * triWeights.x + dirtDetail * triWeights.y + rockTexZ * triWeights.z;
 
@@ -423,7 +439,7 @@ void main()
 
     if (u_groundDebrisEnabled != 0 && camDistSqXZ < 1024.0) {
         float debrisDistFade = 1.0 - smoothstep(576.0, 1024.0, camDistSqXZ);
-        vec4 debris = texture(u_groundDebris, fragTexCoord);
+        vec4 debris = textureGrad(u_groundDebris, fragTexCoord, baseUvDx, baseUvDy);
         float fineGrain = (soilPossible) ? dirtDetail.r : fineGrassLuma;
         float grassDebrisAtten = 1.0 - wGrass * 0.72;
 
@@ -460,27 +476,33 @@ void main()
 
     // ---- 10. Tangent Frame & Specular AA ----
     vec4 soilMaterial = vec4(0.5, 0.5, 1.0, 0.8);
-    if (hasSoil && camDistSqXZ < 1225.0)
-        soilMaterial = textureGrad(texSoilMaterial, tiledUV * 0.85, uvDx * 0.85, uvDy * 0.85);
+    if (hasSoil && camDistSqXZ < 1225.0) {
+        float soilMatFade = 1.0 - smoothstep(900.0, 1225.0, camDistSqXZ);
+        vec4 sampledSoilMat = textureGrad(texSoilMaterial, tiledUV * 0.85, uvDx * 0.85, uvDy * 0.85);
+        soilMaterial = mix(soilMaterial, sampledSoilMat, soilMatFade);
+    }
 
-    vec3 microNormal = normalize(mix(grassMaterial.rgb, soilMaterial.rgb, soilWeight) * 2.0 - 1.0);
+    vec3 rawMicro = mix(grassMaterial.rgb, soilMaterial.rgb, soilWeight) * 2.0 - 1.0;
+    vec3 microNormal = rawMicro * inversesqrt(max(dot(rawMicro, rawMicro), 1e-8));
     if (wCliff > 0.05) {
         microNormal.y += cliffStrataBump * wCliff * 0.40;
-        microNormal = normalize(microNormal);
+        microNormal *= inversesqrt(max(dot(microNormal, microNormal), 1e-8));
     }
     if (abs(distantTuftRelief) > 0.001) {
         microNormal.xz += vec2(distantTuftRelief * 0.36, -distantTuftRelief * 0.30);
-        microNormal = normalize(microNormal);
+        microNormal *= inversesqrt(max(dot(microNormal, microNormal), 1e-8));
     }
 
     vec3 refAxis = (abs(geomNormal.z) < 0.999) ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-    vec3 tangent = normalize(cross(refAxis, geomNormal));
+    vec3 tRaw = cross(refAxis, geomNormal);
+    vec3 tangent = tRaw * inversesqrt(max(dot(tRaw, tRaw), 1e-8));
     vec3 bitangent = cross(geomNormal, tangent);
 
     float puddleFlatten = 1.0 - smoothstep(0.60, 0.95, wWetSoil) * 0.45;
     float microStrength = mix(0.26, 0.52, max(soilWeight, wCliff)) * puddleFlatten * (0.45 + 0.55 * detailResolve);
-    vec3 normal = normalize(geomNormal * (0.66 + 0.34 * microNormal.z)
-                          + (tangent * microNormal.x + bitangent * microNormal.y) * microStrength);
+    vec3 nRaw = geomNormal * (0.66 + 0.34 * microNormal.z)
+              + (tangent * microNormal.x + bitangent * microNormal.y) * microStrength;
+    vec3 normal = nRaw * inversesqrt(max(dot(nRaw, nRaw), 1e-8));
 
     float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
     roughness = mix(roughness, 0.78, (wDrySoil + wPath) * 0.80);
@@ -523,7 +545,9 @@ void main()
     vec3 groundLit = blendedAlbedo * totalLight;
 
     vec3 viewDir = viewVec * inversesqrt(max(dot(viewVec, viewVec), 0.0001));
-    vec3 halfDir = normalize(light + viewDir);
+    // [SPIR-V FIX]: Chuẩn hóa an toàn cho halfDir khi viewDir ngược hướng hoàn toàn với light
+    vec3 halfSum = light + viewDir;
+    vec3 halfDir = halfSum * inversesqrt(max(dot(halfSum, halfSum), 1e-6));
     float NdotH = max(dot(normal, halfDir), 0.0);
 
     if (wGrass > 0.05 && sunVisibility > 0.01) {

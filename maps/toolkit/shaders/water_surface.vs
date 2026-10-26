@@ -47,14 +47,19 @@ void main()
         // Terrain-clipped water: vertexTexCoord.x is depth in meters (0 at exact shoreline)
         shoreFade = smoothstep(0.0, 0.25, vertexTexCoord.x);
         if (u_lakeRadii.x > 0.001 && u_lakeRadii.y > 0.001) {
-            coord = vec2((world.x - u_modelPos.x) / u_lakeRadii.x, (world.z - u_modelPos.z) / u_lakeRadii.y);
+            coord = (world.xz - u_modelPos.xz) / u_lakeRadii;
         }
     }
 
     // Gentle 3D vertical wave undulation damped to 0.0 at the shoreline so edges never detach from terrain
     if (shoreFade > 0.001 && u_waveHeight > 0.0001) {
-        float t = u_time * u_waveSpeed;
-        vec2 pFlow = world.xz - u_flowVelocity * (u_time * 0.45);
+        // Đồng bộ mod() thời gian với water_surface.fs để tránh trôi pha float32 khi game chạy lâu
+        float t = mod(u_time * u_waveSpeed, 6283.185307);
+        vec2 effectiveFlow = u_flowVelocity;
+        if (u_waterShape == 3 && dot(effectiveFlow, effectiveFlow) < 0.000025) {
+            effectiveFlow = vec2(0.14, 0.22);
+        }
+        vec2 pFlow = world.xz - effectiveFlow * mod(u_time * 0.45, 4096.0);
         float w0 = sin(dot(pFlow, vec2(0.82, 0.57)) * u_waveScale + t);
         float w1 = sin(dot(pFlow, vec2(-0.31, 0.95)) * (u_waveScale * 1.73) - t * 1.31);
         float dispY = (w0 * 0.60 + w1 * 0.40) * u_waveHeight * shoreFade;

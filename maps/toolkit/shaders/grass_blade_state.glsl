@@ -31,14 +31,14 @@ vec2 GrassEvaluateLocalState(vec3 worldPos)
 {
     float baseDry = u_grassStateParams.x;
     float baseScorch = u_grassStateParams.y;
-    int zoneCount = u_grassBurnZoneCount;
+    int zoneCount = clamp(u_grassBurnZoneCount, 0, 8);
 
     if (baseDry <= 0.0001 && baseScorch <= 0.0001 && zoneCount <= 0) {
         return vec2(0.0);
     }
 
     float patchVar = u_grassStateParams.w;
-    float patchNoise = (patchVar > 0.001) ? GrassStatePatchNoise(worldPos.xz) : 0.5;
+    float patchNoise = (patchVar > 0.001 || zoneCount > 0) ? GrassStatePatchNoise(worldPos.xz) : 0.5;
 
     float dryness = baseDry;
     if (dryness > 0.001 && dryness < 0.999 && patchVar > 0.001) {
@@ -46,20 +46,33 @@ vec2 GrassEvaluateLocalState(vec3 worldPos)
     }
 
     float scorch = baseScorch;
+    float raggedScale = 0.86 + 0.28 * patchNoise;
+
     for (int i = 0; i < 8; i++) {
         if (i >= zoneCount) break;
         vec4 zone = u_grassBurnZones[i];
         float radius = abs(zone.w);
         if (radius <= 0.001) continue;
+
         vec2 dXZ = worldPos.xz - zone.xz;
-        float dist = sqrt(dot(dXZ, dXZ));
-        // Organic ragged fire perimeter using patchNoise
-        float raggedRadius = radius * (0.86 + 0.28 * patchNoise);
+        float distSq = dot(dXZ, dXZ);
+
+        // [TỐI ƯU HIỆU NĂNG]: Culling sớm bằng bình phương khoảng cách (tránh gọi sqrt() và phép chia
+        // đắt đỏ cho >95% đỉnh cỏ nằm ngoài bán kính ảnh hưởng nhiệt của vùng cháy)
+        float raggedRadius = radius * raggedScale;
+        float maxHaloReach = raggedRadius * 1.40 + 0.08;
+        if (distSq >= maxHaloReach * maxHaloReach) continue;
+
+        float dist = sqrt(distSq);
+        // Nếu zone.w âm, cho phép giảm nhẹ cường độ tâm cháy theo quy ước (<1 strength)
+        float strengthScale = (zone.w < 0.0) ? 0.78 : 1.0;
+
         float zoneScorch = 1.0 - clamp((dist - raggedRadius * 0.45) / max(raggedRadius * 0.55, 0.05), 0.0, 1.0);
-        zoneScorch = zoneScorch * zoneScorch * (3.0 - 2.0 * zoneScorch);
+        zoneScorch = zoneScorch * zoneScorch * (3.0 - 2.0 * zoneScorch) * strengthScale;
+
         // Heat halo around the fire zone also dries & yellows adjacent grass
         float heatHalo = 1.0 - clamp((dist - raggedRadius * 0.75) / max(raggedRadius * 0.65, 0.08), 0.0, 1.0);
-        dryness = max(dryness, heatHalo * 0.85);
+        dryness = max(dryness, heatHalo * 0.85 * strengthScale);
         scorch = max(scorch, zoneScorch);
     }
 
@@ -77,9 +90,17 @@ void GrassApplyVertexMorphology(inout vec3 localPos, vec3 rootPos, float h,
     float scorch = grassState.y;
     if (dryness <= 0.001 && scorch <= 0.001) return;
 
-    // 1. Withered / Dry droop: loss of turgor sags the upper arch downward
-    float wiltDroop = dryness * (1.0 - 0.35 * dryness) * 0.14 * h * h;
-    localPos.y -= wiltDroop;
+    // 1. Withered / Dry droop & inward margin curl:
+    // Giữ độ cao tối thiểu trên mặt đất (rootPos.y) để ngọn cỏ khô không bị xuyên thủng địa hình
+    float h2 = h * h;
+    float wiltDroop = dryness * (1.0 - 0.35 * dryness) * 0.14 * h2;
+    localPos.y = max(localPos.y - wiltDroop, rootPos.y + 0.005 * h);
+
+    if (dryness > 0.001) {
+        float dryCurlXZ = 1.0 - dryness * 0.10 * h;
+        localPos.xz = rootPos.xz + (localPos.xz - rootPos.xz) * dryCurlXZ;
+        windCompliance *= (1.0 - dryness * 0.18);
+    }
 
     // 2. Fire-scorched shrinkage: heat shrivels the thin upper blade into stunted char stalks
     if (scorch > 0.001) {

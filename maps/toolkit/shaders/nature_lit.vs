@@ -72,15 +72,25 @@ void main()
                 vec2 interactionUV = uvOffset + 0.5;
                 vec3 interactionSample = textureLod(u_interactionMap, interactionUV, 0.0).rgb;
                 vec2 pushDirection = interactionSample.rg * 2.0 - 1.0;
-                float edgeFeather = 1.0 - smoothstep(0.42, 0.50, maxAxis);
-                float interaction = interactionSample.b * edgeFeather;
-                windBend += pushDirection * (interaction * maxAllowedBend);
+                float edgeFeather = clamp((0.50 - maxAxis) * 12.5, 0.0, 1.0);
+                edgeFeather *= edgeFeather * (3.0 - 2.0 * edgeFeather);
+                windBend += pushDirection * (interactionSample.b * edgeFeather * maxAllowedBend);
             }
         }
 
+        // [BUG FIX & ALU OPT]: Giới hạn tổng biên độ uốn (gió + xung lực + tương tác) không vượt quá
+        // maxAllowedBend để tránh biến dạng gãy gập mesh hoa/bụi cây khi nhiều lực chồng lấp,
+        // đồng thời dùng chung 1 lệnh inversesqrt duy nhất cho cả rawBendLen và dispLen.
+        float rawBendSq = dot(windBend, windBend);
+        float rawBendLen = (rawBendSq > 1e-10) ? (rawBendSq * inversesqrt(rawBendSq)) : 0.0;
+        if (rawBendLen > maxAllowedBend) {
+            windBend *= maxAllowedBend / rawBendLen;
+            rawBendLen = maxAllowedBend;
+        }
+
         vec2 dispXZ = windBend * rootMask;
-        float dispSq = dot(dispXZ, dispXZ);
-        float dispLen = sqrt(dispSq);
+        float dispLen = rawBendLen * rootMask;
+        float dispSq = dispLen * dispLen;
         float effHeight = max(abs(local.y), 0.15);
         // [TỐI ƯU ALU]: Xấp xỉ hữu tỉ bảo toàn chiều dài cung, loại bỏ lệnh sqrt() thứ 2 mỗi đỉnh
         float dispY = -dispSq / (effHeight * 3.6 + dispSq * (0.28 / effHeight));
@@ -97,7 +107,8 @@ void main()
     }
 
     fragPosition = world;
-    fragNormal = normalize(worldLinear * bentNormal);
+    vec3 worldN = worldLinear * bentNormal;
+    fragNormal = worldN * inversesqrt(max(dot(worldN, worldN), 1e-8));
     fragColor = vec4(vertexColor.rgb, windSheen);
     fragHeight = h;
     fragTexCoord = vertexTexCoord2;
