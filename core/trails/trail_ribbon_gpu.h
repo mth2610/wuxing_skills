@@ -21,8 +21,8 @@ typedef char TrailRibbonGpuNodeLayout[(sizeof(TrailRibbonGpuNode)==48)?1:-1];
 typedef char TrailRibbonGpuParamsLayout[(sizeof(TrailRibbonGpuParams)==64)?1:-1];
 
 /* Lazy device initialization. False means the modern CPU fallback is needed.
- * BeginUpdate uploads one shared scene/wind snapshot; Update stages controls.
- * EndUpdate submits one dispatch for all active slots after lifetime/attachment updates.
+ * BeginUpdate stages clock; Update stages controls; EndUpdate uploads scene/wind
+ * and submits one dispatch for all active slots after lifetime/attachment updates.
  * GetState is intentionally unavailable: GPU positions stay GPU-owned. */
 bool TrailRibbonGpu_IsAvailable(void);
 int TrailRibbonGpu_Spawn(const TrailRibbonState *state,const TrailRibbonMaterial *material);
