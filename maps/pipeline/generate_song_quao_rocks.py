@@ -1,31 +1,21 @@
 #!/usr/bin/env python3
 """
-Enhanced Geomorphological & Geological Rock Distribution Generator for Song Quao Map.
-Generates:
-  - assets/maps/song_quao/song_quao_rock_data.h
-  - assets/maps/song_quao/song_quao_rock_placements.json
+Geomorphological, Hydrodynamic & Japanese Stone Arrangement Generator for Song Quao Map.
+Strict Geological Suite: Granitic Pluton + Fluvial Alluvial Erosion (Wuxing: Thủy & Mộc w/ Thổ).
 
-Hierarchy & Lithology:
-  1. ĐÁ TO (Mega / Large Boulders & Spires):
-     - Summit Granite Massif & Sacred Obsidian Spire
-     - High Ridge Karst Limestone Pinnacles
-     - Western & Outer Cliff Precipice (Columnar Basalt & Karst Crags)
-  2. ĐÁ TRUNG (Medium Boulders & Outcrops):
-     - Meadow rolling knoll Granite boulders
-     - Hillside Sandstone strata ledges
-     - Talus crest Slate & Basalt blocks
-     - In-stream cascade breaker boulders
-  3. ĐÁ NHỎ (Small Rocks & Companions):
-     - Orbiting companion stones
-     - Trailside and meadow fringe stones
-     - Pond & river shoreline stepping stones
-  4. ĐÁ VỤN (Scree / Talus & Gravel):
-     - Talus aprons below steep cliffs (Slate & Scree)
-     - Shoreline gravel shingle
-  5. ĐÁ Ở SÔNG SUỐI (River Stones & Fluvial Cobbles):
-     - In-stream rapids cobbles (oriented with stream flow)
-     - Shallow crossing stepping stones
-     - Waterfront gravel & wet alluvial stones
+Aesthetic & Arrangement Principles:
+  1. Japanese Garden & Aquascaping Art (Sanzon Ishigumi 三尊石組 & Takashi Amano Stream Aquascaping):
+     - Meadow Outcrops: Guaranteed triadic asymmetry (Oyaishi 親石 master boulder + Fukuishi 副石 companion + Soeishi 添石 accent + Suteishi 捨て石 scree).
+     - NEVER place lone boulders standing alone on bare grass; stones in a cluster touch/nestle at their bases.
+     - River-Island Triad (Kojima Ishigumi 小島石組) at split river forks (Z=90m) with upstream Mizuwake-ishi (水分石 river-splitter boulder).
+  2. Fluvial Hydrodynamics & Riparian Clusters:
+     - Curvature-based meanders: outer cut-bank gets a 3-stone shoreline anchor pod; inner point-bar gets a shingle of gentle rounded cobbles.
+     - Central stream thalweg is kept clean and free-flowing (NO isolated flat discs in the channel!).
+     - Sawatari-ishi (沢渡り石): natural staggered stepping stone crossing at the shallow ford (Z=150m).
+  3. Lithology & Scale (Meter-Scale: 1 unit = 1 meter):
+     - MAP_ROCK_GRANITE: Weathered polyhedral corestone boulders (Đá To 2.8m - 3.8m, Đá Trung 1.7m - 2.4m, Đá Nhỏ 1.0m - 1.5m).
+     - MAP_ROCK_RIVER_STONE: Water-worn smooth 3D cobbles and boulders (0.3m - 1.1m).
+     - MAP_ROCK_SCREE: Angular companion talus chips (0.4m - 0.7m).
 """
 
 import os
@@ -40,300 +30,314 @@ def generate_rocks():
 
     data = np.load(analysis_path)
     ground = data["ground_y_m"]
+    water_depth = data["water_depth_m"]
     slope = data["slope_deg"]
     aspect = data["aspect_deg"]
     tpi = data["tpi_m"]
-    water_depth = data["water_depth_m"]
     valid = data["valid"]
     h, w = ground.shape
     sx = 188.2149 / (w - 1)
     sz = 300.0 / (h - 1)
-
-    wet = (water_depth > 0.005)
-    streams = (water_depth > 0.02) & (water_depth < 0.40) & (ground > -2.0)
-
-    # Lake center & radius from metadata
-    lake_cx, lake_cz = 166.11, 226.98
-    lake_rx, lake_rz = 8.51, 11.50
     yy, xx = np.indices((h, w))
-    world_x = xx * sx
-    world_z = yy * sz
-    dist_lake = np.hypot((world_x - lake_cx) / lake_rx, (world_z - lake_cz) / lake_rz)
-    lake = (dist_lake <= 1.0) & wet
+    wx = xx * sx
+    wz = yy * sz
+
+    ARCH_GRANITE = 3     # Weathered rounded granite tor & corestone boulder
+    ARCH_RIVER_STONE = 2 # Water-worn smooth 3D river cobble & boulder
+    ARCH_SCREE = 9       # Small granite gravel & companion talus chip
 
     rock_items = []
     occupied = []
 
-    def is_free(x, z, min_dist):
-        return all(np.hypot(x - ox, z - oz) >= (min_dist + orad * 0.35) for ox, oz, orad in occupied)
+    def get_terrain(x, z):
+        r = int(np.clip(z / sz, 0, h - 1))
+        c = int(np.clip(x / sx, 0, w - 1))
+        return ground[r, c], slope[r, c], water_depth[r, c], valid[r, c]
 
-    def add_rock(x, y, z, rScale, hScale, rot, archetype):
-        rock_items.append(dict(x=float(x), y=float(y), z=float(z),
+    def is_free(x, z, r, min_overlap=0.55):
+        for ox, oz, orad in occupied:
+            if np.hypot(x - ox, z - oz) < (r + orad) * min_overlap:
+                return False
+        return True
+
+    def add_rock(x, z, rScale, hScale, rot, arch, max_slope=16.0, min_overlap=0.55):
+        gy, sl, wd, val = get_terrain(x, z)
+        if not val or sl > max_slope:
+            return False
+        # Universal boundary guard: well within island plateau safe margin
+        if x < 80.0 or x > 146.0 or z < 18.0 or z > 255.0 or gy < 1.0:
+            return False
+        # Land rocks must be dry
+        if arch != ARCH_RIVER_STONE and wd >= 0.01:
+            return False
+        if not is_free(x, z, rScale, min_overlap=min_overlap):
+            return False
+
+        rock_items.append(dict(x=float(x), y=float(gy), z=float(z),
                                rScale=float(rScale), hScale=float(hScale),
-                               rot=float(rot), archetype=int(archetype)))
+                               rot=float(rot), archetype=int(arch)))
         occupied.append((x, z, rScale))
-
-    ARCH_BOULDER = 0     # Granite Tor
-    ARCH_CRAG = 1        # Karst Spire
-    ARCH_RIVER_STONE = 2 # River Cobble
-    ARCH_GRANITE = 3     # Granite Block / Cleavage
-    ARCH_BASALT = 4      # Hexagonal Columnar Basalt
-    ARCH_SANDSTONE = 5   # Tabular Sedimentary Strata
-    ARCH_LIMESTONE = 6   # Karst Pinnacle
-    ARCH_OBSIDIAN = 7    # Conchoidal Glass Shard
-    ARCH_SLATE = 8       # Foliated Cleavage Slabs
-    ARCH_SCREE = 9       # Shattered Gravel
+        return True
 
     # -------------------------------------------------------------
-    # 1. ĐÁ TO (Mega / Large Boulders & Spires)
+    # 1. SUMMIT MASSIF (Highest mountain peak at X ~ 121, Z ~ 20)
     # -------------------------------------------------------------
-    # 1.1 Summit Massif (Granite & Obsidian)
     peak_r, peak_c = np.unravel_index(np.argmax(np.where(valid, ground, -999.0)), ground.shape)
     peak_x, peak_z, peak_y = float(peak_c * sx), float(peak_r * sz), float(ground[peak_r, peak_c])
-    add_rock(peak_x - 1.2, peak_y, peak_z - 0.8, 3.8, 4.5, 45.0, ARCH_GRANITE)
-    add_rock(peak_x + 1.5, peak_y, peak_z + 1.2, 1.9, 5.2, 115.0, ARCH_OBSIDIAN)
-    add_rock(peak_x - 3.5, peak_y - 0.4, peak_z + 2.8, 2.8, 3.4, 210.0, ARCH_GRANITE)
 
-    # 1.2 Western Island Precipice (Prominent cliff face in camera view: X in [62, 78], Z in [125, 185])
-    # Place majestic Columnar Basalt pillars and Karst spires cascading down to the cloud sea!
-    west_precipice_mask = valid & ~wet & (world_x >= 62.0) & (world_x <= 78.0) & (world_z >= 125.0) & (world_z <= 185.0) & (slope >= 18.0)
-    for idx in np.argsort(-slope.ravel()):
-        r, c = divmod(int(idx), w)
-        if not west_precipice_mask[r, c]: continue
-        x, z = float(c * sx), float(r * sz)
-        if is_free(x, z, 4.8):
-            rScale = 2.4 + 1.2 * ((len(rock_items) * 17) % 10) / 10.0
-            hScale = rScale * (1.6 + 0.7 * ((len(rock_items) * 29) % 10) / 10.0)
-            rot = float((len(rock_items) * 73) % 360)
-            # Columnar basalt and karst pinnacles dominating the cliff face
-            arch = ARCH_BASALT if (len(rock_items) % 2 == 0) else ARCH_LIMESTONE
-            add_rock(x, ground[r, c], z, rScale, hScale, rot, arch)
-            if len([r for r in rock_items if 62.0 <= r['x'] <= 78.0 and 125.0 <= r['z'] <= 185.0 and r['rScale'] >= 2.0]) >= 20:
-                break
+    # Grand anchor tors crowning the summit ridge
+    add_rock(peak_x - 0.5, peak_z - 0.5, 4.4, 3.5, 45.0, ARCH_GRANITE, max_slope=18.0)
+    add_rock(peak_x + 3.2, peak_z + 1.6, 3.4, 2.7, 120.0, ARCH_GRANITE, max_slope=18.0)
+    add_rock(peak_x - 3.2, peak_z + 2.3, 3.0, 2.4, 215.0, ARCH_GRANITE, max_slope=18.0)
+    add_rock(peak_x + 0.8, peak_z - 3.2, 2.6, 2.1, 310.0, ARCH_GRANITE, max_slope=18.0)
 
-    # 1.3 High Ridge Karst Spires (Limestone & Granite) across the rest of the island
-    ridge_score = np.where(valid & ~wet & (ground > 4.2) & (tpi > 2.0) & (slope > 12.0),
-                           tpi * 0.6 + (ground / 13.0) * 0.4, 0.0)
-    for idx in np.argsort(-ridge_score.ravel()):
-        r, c = divmod(int(idx), w)
-        if ridge_score[r, c] <= 0.12: break
-        x, z = float(c * sx), float(r * sz)
-        if is_free(x, z, 14.0):
-            rScale = 2.4 + 1.1 * ((len(rock_items) * 19) % 10) / 10.0
-            hScale = rScale * (1.7 + 0.6 * ((len(rock_items) * 23) % 10) / 10.0)
-            rot = float((len(rock_items) * 67) % 360)
-            arch = ARCH_LIMESTONE if (len(rock_items) % 2 == 0) else ARCH_GRANITE
-            add_rock(x, ground[r, c], z, rScale, hScale, rot, arch)
-            if len([r for r in rock_items if r['rScale'] >= 2.2]) >= 26: break
-
-    # 1.4 Outer Perimeter Rim Drop-Offs (facing cloud sea)
-    rim_cliff_score = np.where(valid & ~wet & (ground >= -1.4) & (ground <= 8.5) & (slope >= 20.0),
-                               slope * 0.7 + (8.5 - np.abs(ground - 3.5)) * 0.3, 0.0)
-    for idx in np.argsort(-rim_cliff_score.ravel()):
-        r, c = divmod(int(idx), w)
-        if rim_cliff_score[r, c] <= 5.0: break
-        x, z = float(c * sx), float(r * sz)
-        if is_free(x, z, 9.0):
-            rScale = 2.2 + 1.1 * ((len(rock_items) * 31) % 10) / 10.0
-            hScale = rScale * (1.5 + 0.6 * ((len(rock_items) * 37) % 10) / 10.0)
-            rot = float((len(rock_items) * 83) % 360)
-            m = len(rock_items) % 3
-            arch = ARCH_BASALT if m == 0 else (ARCH_SANDSTONE if m == 1 else ARCH_LIMESTONE)
-            add_rock(x, ground[r, c], z, rScale, hScale, rot, arch)
-            if len([r for r in rock_items if r['rScale'] >= 2.0]) >= 48: break
+    # Scree companion chips around summit tors
+    for ang, dist in [(65, 4.6), (180, 5.0), (290, 5.2), (15, 4.0), (140, 4.4)]:
+        rad = np.radians(ang)
+        cx, cz = peak_x + np.cos(rad) * dist, peak_z + np.sin(rad) * dist
+        add_rock(cx, cz, 0.65, 0.35, ang + 30, ARCH_SCREE, max_slope=18.0)
 
     # -------------------------------------------------------------
-    # 2. ĐÁ TRUNG (Medium Boulders & Outcrops)
+    # 2. SANZON ISHIGUMI (三尊石組) MEADOW KNOLL CLUSTERS
     # -------------------------------------------------------------
-    # 2.1 Meadow Knolls & Rolling Slopes (Granite & Sandstone)
-    meadow_score = np.where(valid & ~wet & (ground > 0.0) & (ground < 8.5) &
-                            (slope > 5.5) & (slope < 20.0) & (tpi > 0.1),
-                            slope * 0.5 + tpi * 0.5, 0.0)
-    for idx in np.argsort(-meadow_score.ravel()):
-        r, c = divmod(int(idx), w)
-        if meadow_score[r, c] <= 0.06: break
-        x, z = float(c * sx), float(r * sz)
-        if is_free(x, z, 7.0):
-            rScale = 1.25 + 0.65 * ((len(rock_items) * 13) % 10) / 10.0
-            hScale = rScale * (0.65 + 0.35 * ((len(rock_items) * 29) % 10) / 10.0)
-            rot = float((len(rock_items) * 53) % 360)
-            arch = ARCH_GRANITE if (len(rock_items) % 2 == 0) else ARCH_SANDSTONE
-            add_rock(x, ground[r, c], z, rScale, hScale, rot, arch)
-            if len([r for r in rock_items if 1.1 <= r['rScale'] < 2.0]) >= 45: break
+    # Dilate river mask by 8m (8 grid cells) to ensure meadow knolls are safely inland
+    river_mask = (water_depth > 0.01)
+    river_dilated = np.zeros_like(river_mask)
+    for dr in range(-8, 9):
+        for dc in range(-8, 9):
+            if dr*dr + dc*dc <= 64:
+                river_dilated |= np.roll(np.roll(river_mask, dr, axis=0), dc, axis=1)
 
-    # 2.2 Talus Crests & Mid-Slopes (Slate, Basalt & Sandstone)
-    talus_crest_score = np.where(valid & ~wet & (slope > 14.0) & (slope < 28.0) & (ground > -1.2),
-                                 slope, 0.0)
-    for idx in np.argsort(-talus_crest_score.ravel()):
-        r, c = divmod(int(idx), w)
-        if talus_crest_score[r, c] <= 4.0: break
-        x, z = float(c * sx), float(r * sz)
-        if is_free(x, z, 5.8):
-            rScale = 1.15 + 0.55 * ((len(rock_items) * 11) % 10) / 10.0
-            hScale = rScale * (0.60 + 0.45 * ((len(rock_items) * 17) % 10) / 10.0)
-            rot = float((len(rock_items) * 71) % 360)
-            m = len(rock_items) % 3
-            arch = ARCH_SLATE if m == 0 else (ARCH_BASALT if m == 1 else ARCH_SANDSTONE)
-            add_rock(x, ground[r, c], z, rScale, hScale, rot, arch)
-            if len([r for r in rock_items if 1.1 <= r['rScale'] < 2.0]) >= 75: break
+    score = np.where(valid & (~river_dilated) & (ground >= 2.0) & (ground <= 9.0) &
+                     (slope <= 10.0) & (tpi > 0.05) &
+                     (wx >= 86.0) & (wx <= 144.0) & (wz >= 45.0) & (wz <= 245.0),
+                     tpi * 2.0 - slope * 0.05, 0.0)
 
-    # 2.3 Cascade Breakers (Large river boulders dividing water current)
-    cascade_score = np.where(streams & (slope > 2.8), slope * water_depth, 0.0)
-    for idx in np.argsort(-cascade_score.ravel()):
-        r, c = divmod(int(idx), w)
-        if cascade_score[r, c] <= 0.04: break
-        x, z = float(c * sx), float(r * sz)
-        if is_free(x, z, 5.0):
-            rScale = 1.05 + 0.45 * ((len(rock_items) * 23) % 10) / 10.0
-            hScale = rScale * 0.65
-            rot = float(aspect[r, c] + 90.0)
-            add_rock(x, ground[r, c], z, rScale, hScale, rot, ARCH_GRANITE)
-            if len([r for r in rock_items if r['archetype'] == ARCH_GRANITE and r['rScale'] <= 1.6 and r['rScale'] >= 1.0]) >= 18: break
-
-    # -------------------------------------------------------------
-    # 3. ĐÁ NHỎ & VỆ TINH (Small Rocks & Companion Stones)
-    # -------------------------------------------------------------
-    # 3.1 Companions orbiting large & medium anchors
-    anchors = [r for r in rock_items if r['rScale'] >= 1.15]
-    for i, anc in enumerate(anchors):
-        comp_count = 2 if anc['rScale'] < 2.0 else 3
-        for c_idx in range(comp_count):
-            ang = float((i * 110 + c_idx * 145) % 360) * np.pi / 180.0
-            dist = anc['rScale'] * (1.1 + 0.6 * c_idx)
-            cx_pos = anc['x'] + np.cos(ang) * dist
-            cz_pos = anc['z'] + np.sin(ang) * dist
-            r_grid = int(np.clip(cz_pos / sz, 0, h - 1))
-            c_grid = int(np.clip(cx_pos / sx, 0, w - 1))
-            if valid[r_grid, c_grid] and not wet[r_grid, c_grid]:
-                c_scale = anc['rScale'] * (0.35 + 0.15 * c_idx)
-                c_h = c_scale * (0.55 + 0.20 * c_idx)
-                c_rot = anc['rot'] + 40.0 * (c_idx + 1)
-                c_arch = anc['archetype'] if (anc['archetype'] != ARCH_OBSIDIAN) else ARCH_GRANITE
-                add_rock(cx_pos, ground[r_grid, c_grid], cz_pos, c_scale, c_h, c_rot, c_arch)
-
-    # 3.2 Scattered Trailside & Margin Stones
-    margin_score = np.where(valid & ~wet & (ground > -1.0) & (slope > 6.0) & (slope < 24.0),
-                            1.0, 0.0)
-    for idx in np.argsort(-margin_score.ravel())[::5]:
+    # Candidate knoll centers (spacing >= 22m)
+    knolls = []
+    for idx in np.argsort(-score.ravel()):
+        if score.ravel()[idx] <= 0: break
         r, c = divmod(int(idx), w)
         x, z = float(c * sx), float(r * sz)
-        if is_free(x, z, 4.0):
-            rScale = 0.50 + 0.38 * ((len(rock_items) * 27) % 10) / 10.0
-            hScale = rScale * (0.50 + 0.25 * ((len(rock_items) * 19) % 10) / 10.0)
-            rot = float((len(rock_items) * 41) % 360)
-            arch = ARCH_SANDSTONE if (len(rock_items) % 2 == 0) else ARCH_GRANITE
-            add_rock(x, ground[r, c], z, rScale, hScale, rot, arch)
-            if len([r for r in rock_items if 0.45 <= r['rScale'] < 1.0]) >= 135: break
+        # Avoid river-island area (handled separately in Domain 3)
+        if 96.0 <= x <= 106.0 and 80.0 <= z <= 98.0:
+            continue
+        if all(np.hypot(x - cx, z - cz) >= 22.0 for cx, cz in knolls):
+            knolls.append((x, z))
+            if len(knolls) >= 16: break
+
+    placed_clusters = 0
+    for ki, (kx, kz) in enumerate(knolls):
+        r_oya = 3.0 + 0.4 * (ki % 3)
+        h_oya = r_oya * 0.78
+        rot_oya = float((ki * 73) % 360)
+
+        # Radial search for optimal Fukuishi (65% scale) and Soeishi (42% scale)
+        best_triad = None
+        min_cost = 999.0
+        r_fuku = r_oya * 0.65
+        h_fuku = r_fuku * 0.76
+        d_fuku = (r_oya + r_fuku) * 0.62
+
+        r_soe = r_oya * 0.42
+        h_soe = r_soe * 0.74
+        d_soe = (r_oya + r_soe) * 0.66
+
+        for a1 in range(0, 360, 15):
+            rad1 = np.radians(a1)
+            f_x, f_z = kx + np.cos(rad1) * d_fuku, kz + np.sin(rad1) * d_fuku
+            gy1, sl1, wd1, val1 = get_terrain(f_x, f_z)
+            if not val1 or wd1 >= 0.01 or sl1 > 14.0 or gy1 < 1.2:
+                continue
+
+            for a2 in range(a1 + 80, a1 + 160, 15):
+                a2_norm = a2 % 360
+                rad2 = np.radians(a2_norm)
+                s_x, s_z = kx + np.cos(rad2) * d_soe, kz + np.sin(rad2) * d_soe
+                gy2, sl2, wd2, val2 = get_terrain(s_x, s_z)
+                if not val2 or wd2 >= 0.01 or sl2 > 14.0 or gy2 < 1.2:
+                    continue
+
+                cost = sl1 + sl2
+                if cost < min_cost:
+                    min_cost = cost
+                    best_triad = (a1, a2_norm, f_x, f_z, s_x, s_z)
+
+        # STRICT GUARANTEE: Never place Oyaishi alone if companions cannot fit!
+        if not best_triad:
+            continue
+
+        # Commit Triad
+        add_rock(kx, kz, r_oya, h_oya, rot_oya, ARCH_GRANITE, max_slope=14.0, min_overlap=0.50)
+        a1, a2, f_x, f_z, s_x, s_z = best_triad
+        add_rock(f_x, f_z, r_fuku, h_fuku, (rot_oya + 35.0) % 360, ARCH_GRANITE, max_slope=14.0, min_overlap=0.50)
+        add_rock(s_x, s_z, r_soe, h_soe, (rot_oya - 50.0) % 360, ARCH_GRANITE, max_slope=14.0, min_overlap=0.50)
+
+        # Suteishi (grounding scree chips around base perimeter)
+        for si, sang_deg in enumerate([a1 - 40, a2 + 40, (a1 + a2) // 2 + 180]):
+            sang = np.radians((sang_deg) % 360)
+            sdist = r_oya + 0.6 + 0.3 * si
+            sx_pos, sz_pos = kx + np.cos(sang) * sdist, kz + np.sin(sang) * sdist
+            r_s = 0.50 + 0.15 * ((ki + si) % 3)
+            add_rock(sx_pos, sz_pos, r_s, r_s * 0.55, (rot_oya + si * 80) % 360, ARCH_SCREE, max_slope=16.0, min_overlap=0.45)
+
+        placed_clusters += 1
+        if placed_clusters >= 8:
+            break
 
     # -------------------------------------------------------------
-    # 4. ĐÁ VỤN (Scree / Talus Aprons & Gravel)
+    # 3. RIVER-ISLAND SANZON TRIAD (Kojima Ishigumi 小島石組) at Z=90
     # -------------------------------------------------------------
-    scree_score = np.where(valid & ~wet & (ground > -2.2) & (slope > 16.0) & (slope < 38.0),
-                           slope, 0.0)
-    for idx in np.argsort(-scree_score.ravel())[::2]:
-        r, c = divmod(int(idx), w)
-        x, z = float(c * sx), float(r * sz)
-        if is_free(x, z, 1.8):
-            rScale = 0.20 + 0.18 * ((len(rock_items) * 37) % 10) / 10.0
-            hScale = rScale * (0.45 + 0.25 * ((len(rock_items) * 23) % 10) / 10.0)
-            rot = float((len(rock_items) * 59) % 360)
-            arch = ARCH_SLATE if (len(rock_items) % 3 == 0) else ARCH_SCREE
-            add_rock(x, ground[r, c], z, rScale, hScale, rot, arch)
-            if len([r for r in rock_items if r['archetype'] in (ARCH_SCREE, ARCH_SLATE) and r['rScale'] < 0.45]) >= 150: break
+    # Specifically scaled for the 6-8m river island at (100.2, 90.0)
+    # Master boulder
+    add_rock(100.20, 90.00, 1.95, 1.55, 65.0, ARCH_GRANITE, max_slope=32.0, min_overlap=0.45)
+    # Supporting daughter boulder along island ridge
+    add_rock(100.80, 88.00, 1.25, 1.00, 105.0, ARCH_GRANITE, max_slope=32.0, min_overlap=0.45)
+    # Accent stone
+    add_rock(101.40, 91.20, 0.80, 0.65, 20.0, ARCH_GRANITE, max_slope=32.0, min_overlap=0.45)
+    # Talus grounding chips
+    add_rock(99.40, 89.40, 0.48, 0.28, 140.0, ARCH_SCREE, max_slope=34.0, min_overlap=0.40)
+    add_rock(101.20, 89.10, 0.42, 0.25, 220.0, ARCH_SCREE, max_slope=34.0, min_overlap=0.40)
+
+    # Mizuwake-ishi (水分石 - River-splitter anchor boulder at upstream prow)
+    add_rock(103.50, 84.50, 0.95, 0.75, 45.0, ARCH_RIVER_STONE, max_slope=24.0, min_overlap=0.45)
+    add_rock(102.80, 85.20, 0.55, 0.38, 120.0, ARCH_RIVER_STONE, max_slope=24.0, min_overlap=0.45)
+
+    # Island shoreline waterline cobblestones (hugging waterline, NOT in mid-channel!)
+    add_rock(96.50, 90.00, 0.55, 0.38, 70.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
+    add_rock(96.20, 90.80, 0.38, 0.26, 150.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
+    add_rock(104.60, 91.00, 0.52, 0.35, 110.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
+    add_rock(104.90, 91.70, 0.36, 0.25, 200.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
 
     # -------------------------------------------------------------
-    # 5. ĐÁ Ở SÔNG SUỐI (River Stones & Fluvial Cobbles)
+    # 4. STREAM RIPARIAN CLUSTERS & FLUID GEOMORPHOLOGY
     # -------------------------------------------------------------
-    # 5.1 In-stream channel rapids (oriented with water current)
-    stream_candidates = np.where(streams & ~lake)
-    if len(stream_candidates[0]) > 0:
-        step = max(1, len(stream_candidates[0]) // 110)
-        for i in range(0, len(stream_candidates[0]), step):
-            r = int(stream_candidates[0][i])
-            c = int(stream_candidates[1][i])
-            x, z = float(c * sx), float(r * sz)
-            if is_free(x, z, 1.8):
-                rScale = 0.42 + 0.38 * ((i * 19) % 10) / 10.0
-                hScale = rScale * (0.32 + 0.18 * ((i * 31) % 10) / 10.0) # flattened hydro profile
-                rot = float(aspect[r, c]) # aligned with hydrodynamic stream flow
-                add_rock(x, ground[r, c], z, rScale, hScale, rot, ARCH_RIVER_STONE)
-                if len([r for r in rock_items if r['archetype'] == ARCH_RIVER_STONE]) >= 85: break
+    # Track stream channel cross sections
+    z_list = []
+    x_mid_list = []
+    x_left_list = []
+    x_right_list = []
 
-    # 5.2 Stepping stone crossings across the river in front of camera
-    # At Z in [148, 154], X in [98, 105], place a natural diagonal chain of stepping stones
-    for step_i in range(5):
-        st_x = 98.5 + step_i * 1.5
-        st_z = 153.0 - step_i * 0.9
-        r_grid = int(np.clip(st_z / sz, 0, h - 1))
-        c_grid = int(np.clip(st_x / sx, 0, w - 1))
-        st_r = 0.55 + 0.15 * ((step_i * 7) % 5) / 5.0
-        st_h = 0.28
-        add_rock(st_x, ground[r_grid, c_grid], st_z, st_r, st_h, 35.0 * step_i, ARCH_RIVER_STONE)
+    for r in range(35, 235):
+        z_m = r * sz
+        cols = np.where((water_depth[r, :] > 0.02) & (water_depth[r, :] < 0.45) & (ground[r, :] > 1.2))[0]
+        if len(cols) >= 2:
+            w_m = (cols[-1] - cols[0]) * sx
+            if w_m < 25.0: # stream only
+                z_list.append(z_m)
+                x_mid_list.append(np.mean(cols) * sx)
+                x_left_list.append(cols[0] * sx)
+                x_right_list.append(cols[-1] * sx)
 
-    # 5.3 Waterfront Lake Shoreline & Shallows
-    shore_mask = valid & (dist_lake >= 0.82) & (dist_lake <= 1.45) & (ground > -0.6)
-    shore_candidates = np.where(shore_mask)
-    if len(shore_candidates[0]) > 0:
-        step = max(1, len(shore_candidates[0]) // 50)
-        for i in range(0, len(shore_candidates[0]), step):
-            r = int(shore_candidates[0][i])
-            c = int(shore_candidates[1][i])
-            x, z = float(c * sx), float(r * sz)
-            if is_free(x, z, 2.0):
-                rScale = 0.36 + 0.32 * ((i * 23) % 10) / 10.0
-                hScale = rScale * 0.42
-                rot = float((i * 47) % 360)
-                add_rock(x, ground[r, c], z, rScale, hScale, rot, ARCH_RIVER_STONE)
-                if len([r for r in rock_items if r['archetype'] == ARCH_RIVER_STONE]) >= 110: break
+    z_arr = np.array(z_list)
+    x_arr = np.array(x_mid_list)
+    dx = np.gradient(x_arr, z_arr)
+    d2x = np.gradient(dx, z_arr)
 
-    # 5.4 Foreground Pond Edge & Shallows (west hollow at x in [80, 93], z in [154, 174])
-    front_pond_mask = valid & (world_x >= 80.0) & (world_x <= 93.0) & (world_z >= 154.0) & (world_z <= 174.0) & (ground < 1.4)
-    fp_candidates = np.where(front_pond_mask)
-    if len(fp_candidates[0]) > 0:
-        for i in range(len(fp_candidates[0])):
-            r = int(fp_candidates[0][i])
-            c = int(fp_candidates[1][i])
-            x, z = float(c * sx), float(r * sz)
-            if is_free(x, z, 1.4):
-                rScale = 0.34 + 0.28 * ((i * 17) % 10) / 10.0
-                hScale = rScale * 0.38
-                rot = float((i * 53) % 360)
-                add_rock(x, ground[r, c], z, rScale, hScale, rot, ARCH_RIVER_STONE)
-                if len([r for r in rock_items if r['archetype'] == ARCH_RIVER_STONE]) >= 130: break
+    # Meander bend curvature peaks (spacing >= 16m)
+    bend_indices = []
+    for i in range(2, len(d2x)-2):
+        if abs(d2x[i]) > 0.015:
+            if (d2x[i] > 0 and d2x[i] >= d2x[i-1] and d2x[i] >= d2x[i+1]) or \
+               (d2x[i] < 0 and d2x[i] <= d2x[i-1] and d2x[i] <= d2x[i+1]):
+                if not bend_indices or (z_arr[i] - z_arr[bend_indices[-1]]) >= 16.0:
+                    bend_indices.append(i)
 
-    print(f"Total rocks generated: {len(rock_items)}")
-    arch_names = {
-        0: "BOULDER", 1: "CRAG", 2: "RIVER_STONE", 3: "GRANITE",
-        4: "BASALT", 5: "SANDSTONE", 6: "LIMESTONE", 7: "OBSIDIAN",
-        8: "SLATE", 9: "SCREE"
-    }
-    counts = {}
-    for r in rock_items:
-        a = r['archetype']
-        counts[a] = counts.get(a, 0) + 1
-    for a, cnt in sorted(counts.items()):
-        print(f"  {arch_names.get(a, str(a))}: {cnt} items")
+    # 4.1 Meander Riparian Pods:
+    # Outer cut-bank gets an anchor boulder + downstream cobble + pebble at the water margin.
+    # Inner point-bar gets a shingle of 2 smooth cobbles in the shallows.
+    # Thalweg (channel center) is kept 100% CLEAR!
+    for bi in bend_indices:
+        curv = d2x[bi]
+        z_val = z_arr[bi]
+        # Skip island region (already custom composed in Domain 3)
+        if 80.0 <= z_val <= 98.0:
+            continue
 
-    # Write C header
+        xl = x_left_list[bi]
+        xr = x_right_list[bi]
+
+        if curv > 0:
+            # Curves East: outer cut-bank is RIGHT bank, inner point-bar is LEFT bank
+            # Right bank anchor pod (hugging waterline)
+            add_rock(xr + 0.15, z_val, 0.85, 0.62, 45.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xr + 0.65, z_val + 0.75, 0.52, 0.36, 120.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xr - 0.10, z_val + 1.25, 0.32, 0.22, 190.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            # Left bank inner point-bar shingle
+            add_rock(xl - 0.20, z_val - 0.40, 0.42, 0.28, 80.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xl + 0.35, z_val + 0.45, 0.28, 0.19, 160.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+        else:
+            # Curves West: outer cut-bank is LEFT bank, inner point-bar is RIGHT bank
+            # Left bank anchor pod (hugging waterline)
+            add_rock(xl - 0.15, z_val, 0.85, 0.62, 225.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xl - 0.65, z_val + 0.75, 0.52, 0.36, 300.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xl + 0.10, z_val + 1.25, 0.32, 0.22, 350.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            # Right bank inner point-bar shingle
+            add_rock(xr + 0.20, z_val - 0.40, 0.42, 0.28, 110.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xr - 0.35, z_val + 0.45, 0.28, 0.19, 20.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+
+    # 4.2 Sawatari-ishi (沢渡り石): Transverse Stepping Stone Crossing at shallow ford (Z=150.0m)
+    # Staggered in natural human stride rhythm, flat tops emerging 12-16cm above water
+    stepping_coords = [
+        (101.8, 149.8, 0.60, 0.48, 45.0),
+        (102.9, 150.3, 0.58, 0.52, 115.0),
+        (104.1, 149.7, 0.62, 0.54, 210.0),
+        (105.3, 150.2, 0.58, 0.50, 310.0),
+        (106.5, 149.9, 0.60, 0.48, 80.0),
+    ]
+    for sx_c, sz_c, sr, sh, srot in stepping_coords:
+        add_rock(sx_c, sz_c, sr, sh, srot, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.45)
+
+    # 4.3 Cascade Choke Boulders (Bậc ghềnh thác) at steep narrow drops
+    # Near Z=52:
+    add_rock(103.50, 52.00, 0.88, 0.65, 60.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+    add_rock(100.80, 52.40, 0.78, 0.58, 240.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+    # Near Z=138:
+    add_rock(108.20, 138.00, 0.85, 0.62, 80.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+    add_rock(105.40, 138.30, 0.75, 0.55, 270.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+
+    # Sort rocks deterministically
+    rock_items.sort(key=lambda r: (r['z'], r['x']))
+
+    # Write output C header
     header_path = "assets/maps/song_quao/song_quao_rock_data.h"
     with open(header_path, "w") as f:
-        f.write("// Geomorphological & Geological Rock Placements for Song Quao Map\n")
+        f.write("// Geomorphological, Hydrodynamic & Japanese Stone Arrangement Placements for Song Quao Map\n")
+        f.write("// Harmonious Wuxing Geological Suite: Granite + River Stone + Scree\n")
         f.write("#ifndef SONG_QUAO_ROCK_DATA_H\n")
         f.write("#define SONG_QUAO_ROCK_DATA_H\n\n")
         f.write('#include "maps/toolkit/map_props.h"\n\n')
         f.write("static const MapRockItem SONG_QUAO_ROCK_ITEMS[] = {\n")
+
+        arch_names = {
+            ARCH_GRANITE: "MAP_ROCK_GRANITE",
+            ARCH_RIVER_STONE: "MAP_ROCK_RIVER_STONE",
+            ARCH_SCREE: "MAP_ROCK_SCREE",
+        }
+
         for item in rock_items:
-            arch_str = f"MAP_ROCK_{arch_names[item['archetype']]}"
-            f.write(f'    {{{{{item["x"]:.2f}f, {item["y"]:.2f}f, {item["z"]:.2f}f}}, {item["rScale"]:.2f}f, {item["hScale"]:.2f}f, {item["rot"]:.1f}f, {arch_str}}},\n')
+            arch_str = arch_names.get(item['archetype'], "MAP_ROCK_GRANITE")
+            f.write(f"    {{{{{item['x']:.2f}f, {item['y']:.2f}f, {item['z']:.2f}f}}, "
+                    f"{item['rScale']:.2f}f, {item['hScale']:.2f}f, {item['rot']:.1f}f, {arch_str}}},\n")
+
         f.write("};\n")
-        f.write("#define SONG_QUAO_ROCK_ITEM_COUNT (int)(sizeof(SONG_QUAO_ROCK_ITEMS) / sizeof(SONG_QUAO_ROCK_ITEMS[0]))\n\n")
+        f.write(f"#define SONG_QUAO_ROCK_ITEM_COUNT (int)(sizeof(SONG_QUAO_ROCK_ITEMS) / sizeof(SONG_QUAO_ROCK_ITEMS[0]))\n\n")
         f.write("#endif // SONG_QUAO_ROCK_DATA_H\n")
 
-    # Write JSON
     json_path = "assets/maps/song_quao/song_quao_rock_placements.json"
     with open(json_path, "w") as f:
         json.dump(rock_items, f, indent=2)
 
+    granite = [r for r in rock_items if r['archetype'] == ARCH_GRANITE]
+    large_g = [r for r in granite if r['rScale'] >= 2.8]
+    med_g = [r for r in granite if 1.6 <= r['rScale'] < 2.8]
+    small_g = [r for r in granite if r['rScale'] < 1.6]
+    river = [r for r in rock_items if r['archetype'] == ARCH_RIVER_STONE]
+    scree = [r for r in rock_items if r['archetype'] == ARCH_SCREE]
+    print(f"Total rocks generated: {len(rock_items)}")
+    print(f"  GRANITE: {len(granite)} items ({len(large_g)} Large Đá To >= 2.8m, {len(med_g)} Medium Đá Trung, {len(small_g)} Small Đá Nhỏ)")
+    print(f"  RIVER_STONE: {len(river)} items (Riparian Anchor Pods, Shingles, Crossing, Chokes)")
+    print(f"  SCREE: {len(scree)} items (Natural talus companion chips)")
     print(f"Written: {header_path} and {json_path}")
 
 if __name__ == "__main__":

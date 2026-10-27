@@ -248,30 +248,22 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
             uMult = 2.8f; vMult = 2.2f;
 
         } else if (rockType == MAP_ROCK_RIVER_STONE) {
-            // River stone / cobblestone: water-worn flattened alluvial disc boulder (oblate ellipsoid)
-            float facet = 1.0f + 0.14f * cosf(2.0f * angle) + 0.08f * sinf(3.0f * angle);
-            float newR = horizR * facet * 1.30f;
-            vx = cosf(angle) * newR * 1.35f;
-            // Oblate flattening: thin Y axis with smooth water-worn rounded crown
-            float flatY = (y < 0.0f) ? (y * 0.30f - 0.06f) : (y * 0.38f);
-            vy = flatY;
-            vz = sinf(angle) * newR * 0.88f;
+            // River stone / cobblestone: perfectly water-worn, smoothed fluvial pebble / boulder
+            // Plump natural water-smoothed dome with stable resting base (aspect ratio ~ 1.6:1)
+            float asymmetry = 1.0f + 0.08f * cosf(angle + 0.35f) + 0.05f * sinf(2.0f * angle);
+            float newR = horizR * asymmetry;
+            vx = cosf(angle) * newR * 1.15f;
+            vz = sinf(angle) * newR * 0.92f;
 
-            static const float kRiverPlanes[4][4] = {
-                { 0.65f, 0.65f,  0.39f, 0.38f},
-                {-0.70f, 0.60f, -0.38f, 0.40f},
-                { 0.25f, 0.85f, -0.46f, 0.35f},
-                {-0.30f, 0.82f,  0.48f, 0.36f},
-            };
-            for (int p = 0; p < 4; p++) {
-                float dist = vx * kRiverPlanes[p][0] + vy * kRiverPlanes[p][1] + vz * kRiverPlanes[p][2] - kRiverPlanes[p][3];
-                if (dist > 0.0f) {
-                    vx -= kRiverPlanes[p][0] * dist * 0.80f;
-                    vy -= kRiverPlanes[p][1] * dist * 0.80f;
-                    vz -= kRiverPlanes[p][2] * dist * 0.80f;
-                }
+            // Water-worn dome crown: smooth rounded convex top, flat stable resting base
+            float normR = fminf(1.0f, sqrtf(vx * vx + vz * vz) / 1.15f);
+            float dome = cosf(normR * (PI * 0.5f));
+            if (y >= 0.0f) {
+                vy = y * 0.72f * (0.80f + 0.20f * powf(dome, 0.75f));
+            } else {
+                vy = y * 0.40f - 0.02f;
             }
-            uMult = 1.8f; vMult = 1.6f;
+            uMult = 1.6f; vMult = 1.6f;
 
         } else if (rockType == MAP_ROCK_SCREE) {
             // Scree / Talus gravel: irregular shattered angular chip
@@ -873,11 +865,13 @@ void MapProp_DrawRockSystem(const MapRockSystem *sys, bool drawShadows)
             }
         }
 
-        Color rockTint = (Color){248, 246, 242, 255};
+        Color rockTint = (Color){235, 230, 222, 255}; // warm weathered granite tor
         if (p->archetype == MAP_ROCK_SANDSTONE) {
             rockTint = (Color){255, 248, 235, 255}; // warm golden glow
         } else if (p->archetype == MAP_ROCK_RIVER_STONE) {
-            rockTint = (Color){238, 244, 242, 255}; // subtle freshwater mineral
+            rockTint = (Color){155, 168, 175, 255}; // natural deep freshwater mineral / wet river stone
+        } else if (p->archetype == MAP_ROCK_SCREE) {
+            rockTint = (Color){215, 210, 202, 255}; // natural weathered granite talus chips
         } else if (p->archetype == MAP_ROCK_LIMESTONE || p->archetype == MAP_ROCK_CRAG) {
             rockTint = (Color){252, 250, 245, 255}; // pale ivory karst
         }
@@ -974,7 +968,7 @@ void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *groun
             sinkOffset = item->heightScale * 0.20f;
             break;
         case MAP_ROCK_RIVER_STONE:
-            sinkOffset = item->heightScale * 0.25f;
+            sinkOffset = item->heightScale * 0.12f;
             break;
         case MAP_ROCK_SCREE:
             sinkOffset = item->heightScale * 0.05f;
@@ -983,9 +977,7 @@ void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *groun
             sinkOffset = item->heightScale * 0.18f;
             break;
         }
-        float heightScale = (item->archetype == MAP_ROCK_RIVER_STONE)
-                                ? (item->heightScale * 0.85f)
-                                : item->heightScale;
+        float heightScale = item->heightScale;
         pos.y -= sinkOffset;
         MapProp_AddRockItem(sys, pos, item->radiusScale, heightScale, item->rotationDeg, item->archetype);
     }

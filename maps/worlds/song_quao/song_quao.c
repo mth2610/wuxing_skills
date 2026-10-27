@@ -201,30 +201,14 @@ static void BuildFloraPlacements(void)
 
 static void BuildRocks(void)
 {
-    static const Vector2 kDistantCrags[] = {
-        {120.0f, 25.0f},
-        {105.0f, 40.0f},
-        {80.0f, 30.0f},
-        {35.0f, 280.0f},
-        {55.0f, 270.0f},
-        {155.0f, 265.0f},
-        {20.0f, 160.0f},
-        {175.0f, 140.0f},
-        {45.0f, 90.0f},
-        {165.0f, 80.0f},
-    };
-    int distantCragCount = (int)(sizeof(kDistantCrags) / sizeof(kDistantCrags[0]));
-
     s_rocks = MapProp_CreateRockSystem(
-        "assets/textures/rock_diffuse.png",
-        "assets/textures/rock_normal.png",
-        "assets/textures/rock_roughness.png",
-        SONG_QUAO_ROCK_ITEM_COUNT + distantCragCount);
+        "assets/textures/rocks/granite_diffuse.png",
+        "assets/textures/rocks/granite_normal.png",
+        "assets/textures/rocks/granite_roughness.png",
+        SONG_QUAO_ROCK_ITEM_COUNT);
 
     MapProp_PopulateRockItems(&s_rocks, &s_ground, kMapCenter,
                               SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
-    MapProp_AddCragPlacements(&s_rocks, &s_ground, kMapCenter,
-                              kDistantCrags, distantCragCount, 1.45f);
 }
 
 static void SpawnSongQuaoMistVolumes(void)
