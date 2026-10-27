@@ -282,9 +282,17 @@ void MapProp_UnloadRocks(MapRockSet *rocks);
 // --- Unified Rock & Crag System -----------------------------------------
 
 typedef enum {
-    MAP_ROCK_BOULDER = 0,     // Weathered rounded boulder
+    MAP_ROCK_BOULDER = 0,     // Weathered rounded boulder (Granite Tor)
     MAP_ROCK_CRAG,            // Jagged karst/granite mountain crag/spire
-    MAP_ROCK_RIVER_STONE      // Smooth, flattened riverbed/shoreline stone
+    MAP_ROCK_RIVER_STONE,     // Smooth, flattened riverbed/shoreline stone
+    MAP_ROCK_GRANITE,         // Chiseled Granite Tor / Massive blocky cleavage
+    MAP_ROCK_BASALT,          // Hexagonal columnar basalt joints
+    MAP_ROCK_SANDSTONE,       // Layered tabular sandstone strata
+    MAP_ROCK_LIMESTONE,       // Dissolved karst pinnacle with vertical fluting
+    MAP_ROCK_OBSIDIAN,        // Conchoidal razor-sharp volcanic glass shard
+    MAP_ROCK_SLATE,           // Thin foliated tilted metamorphic plates
+    MAP_ROCK_SCREE,           // Angular shattered talus gravel
+    MAP_ROCK_ARCHETYPE_COUNT
 } MapRockArchetype;
 
 typedef struct {
@@ -296,9 +304,10 @@ typedef struct {
 } MapRockItem;
 
 typedef struct {
-    MapRockSet boulders;
-    MapRockSet crags;
-    MapRockSet riverStones;
+    MapRockSet models[MAP_ROCK_ARCHETYPE_COUNT];
+    MapRockSet boulders;     // backwards-compatibility alias to models[MAP_ROCK_BOULDER]
+    MapRockSet crags;        // backwards-compatibility alias to models[MAP_ROCK_CRAG]
+    MapRockSet riverStones;  // backwards-compatibility alias to models[MAP_ROCK_RIVER_STONE]
     MapRockItem *items;
     int count;
     int capacity;

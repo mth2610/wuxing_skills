@@ -418,3 +418,83 @@
   - `bash scripts/run_core_tests.sh flame`: **4/4 suites PASSED (100%)**.
   - Biên dịch CMake: **0 warning, 0 error**.
 
+---
+
+## 14. Session Summary: Hệ Thống Đá & Địa Chất Hoàn Thiện Map Song Quao (Granite, Basalt, Sandstone, Limestone, Obsidian, Slate, River Stones, Scree)
+
+### 14.1. Bối Cảnh & Yêu Cầu Từ Người Dùng
+- **Mục tiêu**: Hoàn thiện toàn diện hệ thống đá cho bản đồ `song_quao` theo ảnh tham chiếu thực tế:
+  1. *Phân bố đá theo địa hình & địa mạo*: Đá to (mega/large boulders), đá trung (outcrops & ledges), đá nhỏ (companion stones), đá vụn (scree/talus gravel), đá ở lòng sông suối (river stones/stepping stones).
+  2. *Đa dạng hóa chủng loại đá, hình dạng & chất cảm PBR*:
+     - **Granit (Granite)**: Khối đá lớn (tors), phong hóa bóc mòn bở rời, thớ nứt trực giao.
+     - **Bazan (Basalt)**: Trụ đá đa giác cột lăng trụ xếp lớp kiểu Gành Đá Đĩa / Giant's Causeway.
+     - **Sa thạch (Sandstone)**: Khối bàn cờ dạng phiến bậc thang nằm ngang với phân tầng trầm tích.
+     - **Đá vôi & Đỉnh Karst (Limestone / Karst Spires)**: Tháp đá vôi chóp nhọn sắc cạnh, rãnh xói mòn dọc do nước mưa (rillenkarren).
+     - **Obsidian (Thủy tinh núi lửa)**: Mảnh vỡ sắc nhọn dạng vỏ sò (conchoidal fractures).
+     - **Đá phiến (Slate)**: Lớp vỉa biến chất xếp chồng nghiêng theo góc dốc (dip angle).
+     - **Đá sông suối (River Stones)**: Cuội mài nhẵn, dẹt dạng đĩa (oblate ellipsoids) nằm ở lòng suối và ven hồ.
+     - **Đá vụn (Scree)**: Mảnh vụn góc cạnh dưới chân vách đá và bãi sỏi.
+  3. *Phù hợp địa chất & ngũ hành*: Đảo nổi thiên giới Song Quao mang tính chất Thủy - Mộc - Thổ hài hòa.
+
+---
+
+### 14.2. Các Lỗi Kỹ Thuật Đã Phát Hiện & Khắc Phục (Landmines & Root Causes)
+
+1. **Lỗi Double-Sinking & Double-Darkening**:
+   - `MapProp_PopulateRockItems` đã trừ `sinkOffset`, nhưng `DrawModelEx` lại trừ tiếp `-0.3f * heightScale`, làm đá lún sâu $> 62\%$ xuống đất, biến cột bazan và đỉnh karst cao $6\text{m}$ thành những bướu bẹt ẩn dưới thảm cỏ.
+   - Nhân màu tint tối `(105, 108, 114)` lên texture PBR bazan/obsidian vốn đã sẫm màu làm albedo sụp đổ thành khối đen sì.
+   - *Khắc phục*: Bỏ trừ trùng lặp ở `DrawModelEx`, gán `sinkOffset` đặc thù theo từng chủng loại đá ($0.05\text{m} - 0.25\text{m}$), dùng neutral tint `(248, 246, 242)`.
+2. **Lỗi GPU Không Cập Nhật Vertex Deformed Từ `GenMeshSphere` (Root Cause Của "Egg Shape")**:
+   - Hàm `GenMeshSphere` của Raylib tự động gọi `UploadMesh(&mesh, false)` ngay khi tạo.
+   - Mã nguồn biến dạng hình học trên CPU (`mesh.vertices[...] = vx;`) nhưng không bao giờ gọi `UpdateMeshBuffer` hay `UploadMesh` lại. GPU tiếp tục vẽ quả cầu ban đầu trong VBO, khiến toàn bộ đá hiển thị như những quả trứng tròn dù thuật toán toán học đã biến dạng!
+   - Kèm theo đó, điều kiện `if (mesh.indices != NULL)` bị bỏ qua vì `GenMeshSphere` không dùng chỉ mục (`indices == NULL`), dẫn đến normal không bao giờ được tính lại.
+   - *Khắc phục*: Giải phóng VAO/VBO cũ của Raylib bằng `rlUnloadVertexArray` / `rlUnloadVertexBuffer`, tính toán pháp tuyến tam giác hình học và vector tiếp tuyến (tangent) đầy đủ, rồi gọi `UploadMesh(&mesh, false)` để đẩy lưới thực tế lên GPU VRAM.
+3. **Lỗi Chiếu Vân Vân Sọc Dọc Thay Vì Nằm Ngang Trầm Tích**:
+   - Tọa độ texture UV cầu làm vân trầm tích sa thạch chạy theo kinh tuyến (từ đỉnh xuống đáy).
+   - *Khắc phục*: Áp dụng phép chiếu trụ (cylindrical mapping) với trục $V$ tỉ lệ thuận tuyệt đối với độ cao thực $Y$ của đỉnh, và chiếu phẳng (planar mapping) trên mặt thớt bằng phẳng của khối đá sa thạch và mặt trên cột bazan.
+
+---
+
+### 14.3. Các Giải Pháp Kỹ Thuật Đã Hoàn Thành
+
+1. **Bộ 24 Texture PBR 512x512 Tự Nhiên (`maps/toolkit/tools/generate_rock_textures.py`)**:
+   - Sinh bộ 3 maps (diffuse, normal, roughness) cho 8 loại đá bằng thuật toán Pure NumPy + Zlib, không phụ thuộc thư viện ngoài:
+     - `granite_diffuse/normal/roughness.png`
+     - `basalt_diffuse/normal/roughness.png`
+     - `sandstone_diffuse/normal/roughness.png`
+     - `limestone_diffuse/normal/roughness.png`
+     - `obsidian_diffuse/normal/roughness.png`
+     - `slate_diffuse/normal/roughness.png`
+     - `river_stone_diffuse/normal/roughness.png`
+     - `scree_diffuse/normal/roughness.png`
+2. **Sinh Học Khối Lưới Biến Dạng Thủ Tục Cho 8 Chủng Loại Đá (`map_props_rocks.inl`)**:
+   - **Bazan**: Bó 3 cột lăng trụ lục giác liên kết với mặt cắt phẳng ở đỉnh cap và các khớp nguội ngang.
+   - **Sa thạch**: Khối hộp chữ nhật với 3 tầng bậc thang ngang và các rãnh xói mòn khuyết lõm.
+   - **Karst Limestone & Crags**: Tháp nhọn cao vút với rãnh rillenkarren chạy dọc và chóp dao lam sắc lẹm.
+   - **Obsidian**: Khối thủy tinh bất đối xứng với các vết vỡ lõm sâu dạng vỏ sò.
+   - **Đá phiến**: Bản mỏng xếp chồng nghiêng $24^\circ$.
+   - **Đá sông suối**: Thể phỏng cầu dẹt oblate với bề mặt nhẵn mài mòn dòng chảy.
+   - **Đá vụn**: Mảnh vỡ sắc cạnh góc nhọn ngẫu nhiên.
+   - **Granit**: Khối lõi cầu gồ ghề với phong hóa bóc vỏ hành và thềm chân loe.
+3. **Tái Phân Bố 657 Khối Đá Địa Mạo (`generate_song_quao_rocks.py`)**:
+   - 112 viên đá cuội và stepping stones dưới lòng suối và quanh bờ hồ.
+   - 88 cụm cột bazan dựng đứng dọc vách vực phía Tây và rìa đảo.
+   - 71 tháp đá vôi Karst nhọn rải rác trên sống núi cao.
+   - 117 phiến sa thạch bậc thang trên sườn đồi.
+   - 91 khối Granite massif trên đỉnh núi và đồng cỏ.
+   - 1 mũi Obsidian thiêng trên đỉnh cao nhất.
+   - 78 phiến đá biến chất và 99 đá vụn bãi sỏi sườn talus.
+4. **Cải Tiến Shader Chiếu Sáng Đá (`prop_lit.fs`)**:
+   - Giảm tỉ lệ trộn pháp tuyến tam giác `mix(smoothN, facetN, 0.28)` để bề mặt nhẵn mịn tự nhiên mà không lộ lưới tam giác thô.
+   - Ràng buộc rêu mốc trên đỉnh (`topMossMask`) chỉ xuất hiện ở cao độ thấp ẩm ướt ($Y < 6.0\text{m}$) trên đá sáng màu; triệt tiêu hoàn toàn hiện tượng vạt rêu vàng ám bẩn trên đỉnh cột bazan và thủy tinh obsidian.
+
+---
+
+### 14.4. Kết Quả Đo Đạc & Kiểm Thử
+- **Hình ảnh kiểm chứng thực tế**:
+  - `scratch/verified_overview_v5.png`: Toàn cảnh thung lũng, dòng suối với đá cuội chìm nổi, phiến sa thạch tầng bậc trầm tích ngang ở tiền cảnh, vách bazan và tháp karst vươn cao hùng vĩ.
+  - `scratch/verified_west_cliffs_v5.png`: Vách vực phía Tây với quần thể cột đá bazan đen sừng sững bên cạnh các tháp đá vôi Karst trắng ngà vươn lên biển mây bồng bềnh.
+- **Kiểm thử tự động**:
+  - `WUXING_AUTOTEST=1 ./build/wuxing`: **19/19 test suites PASSED (100%)**.
+- **Biên dịch**: CMake build hoàn tất **0 warning, 0 error**.
+

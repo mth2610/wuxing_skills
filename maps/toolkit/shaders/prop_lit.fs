@@ -54,6 +54,7 @@ void main() {
     vec3 viewDir = toCam * invCamDist;
 
     vec4 albedo = textureGrad(texture0, fragTexCoord, uvDx, uvDy);
+    albedo.rgb *= colDiffuse.rgb;
     vec3 normalSample = textureGrad(texture2, fragTexCoord, uvDx, uvDy).rgb * 2.0 - 1.0;
 
     // High-frequency crystalline mineral grain & micro-facet detail on close zoom (< 18m)
@@ -71,13 +72,14 @@ void main() {
 
     vec3 worldPosition = vec3(u_cloudWorldFromShader * vec4(fragPosition, 1.0));
     vec3 smoothN = fragNormal * inversesqrt(max(dot(fragNormal, fragNormal), 1e-8));
-    // Blend geometric triangle facet normal so rocks exhibit crisp, chiseled planar cleavage faces
+    // Blend subtle geometric triangle facet normal so rocks exhibit crisp chiseled cleavage
+    // without suffering from low-poly faceted triangle artifacts
     vec3 facetN = cross(dPdx, dPdy);
     float facetLenSq = dot(facetN, facetN);
     if (facetLenSq > 1e-10) {
         facetN *= inversesqrt(facetLenSq);
         if (dot(facetN, smoothN) < 0.0) facetN = -facetN;
-        vec3 mixedSmooth = mix(smoothN, facetN, 0.85);
+        vec3 mixedSmooth = mix(smoothN, facetN, 0.28);
         smoothN = mixedSmooth * inversesqrt(max(dot(mixedSmooth, mixedSmooth), 1e-8));
     }
 
@@ -113,17 +115,19 @@ void main() {
     actualLight *= 1.0 / (1.0 + max(worldLightDir.y - 0.36, 0.0) * 0.82);
     vec3 actualAmbient = (dot(u_ambientColor, u_ambientColor) > 0.001) ? u_ambientColor : vec3(0.36, 0.42, 0.50);
 
-    // Warm mineral & geological strata variation so boulders never look like monochrome grey plastic
+    // Warm mineral & geological strata variation while preserving true lithology tones
     float strataNoise = sin(worldPosition.y * 3.8 + worldPosition.x * 0.45 - worldPosition.z * 0.35) * 0.5 + 0.5;
-    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.76, 0.74, 0.70), vec3(1.04, 0.98, 0.88), strataNoise);
+    vec3 rockAlbedo = albedo.rgb * mix(vec3(0.92, 0.92, 0.90), vec3(1.05, 1.02, 0.98), strataNoise);
 
-    // Top-surface moss & lichen colonization on horizontal upward-facing boulder shelves
-    float topMossMask = smoothstep(0.48, 0.80, worldNormal.y) * smoothstep(0.02, 0.38, fragLocalY)
-                      * smoothstep(0.20, 0.70, albedo.g);
+    // Top-surface moss & lichen colonization: restricted to low-altitude meadow zones (y < 6.0m)
+    // and upward-facing shelves of light mineral rocks (never on dark basalt or glassy obsidian)
+    float altitudeMoss = smoothstep(6.5, 1.5, worldPosition.y);
+    float topMossMask = smoothstep(0.62, 0.88, worldNormal.y) * smoothstep(0.12, 0.45, fragLocalY)
+                      * smoothstep(0.38, 0.72, albedo.g) * altitudeMoss;
     vec3 crownMossAlbedo = mix(vec3(0.14, 0.24, 0.08), vec3(0.25, 0.36, 0.12), albedo.r);
     vec3 lichenTone = vec3(0.55, 0.44, 0.16);
     crownMossAlbedo = mix(crownMossAlbedo, lichenTone, smoothstep(0.48, 0.88, albedo.r));
-    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.78);
+    rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.75);
 
     // Lower skirt earthy moss & turf grounding blend
     float skirtMask = (1.0 - smoothstep(-0.35, 0.15, fragLocalY));
@@ -172,5 +176,5 @@ void main() {
     vec3 hazeColor = actualAmbient * 1.35;
     lit = mix(lit, hazeColor, haze);
 
-    finalColor = vec4(lit, albedo.a) * colDiffuse;
+    finalColor = vec4(lit, albedo.a * colDiffuse.a);
 }

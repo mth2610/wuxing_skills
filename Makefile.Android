@@ -51,6 +51,8 @@ PROJECT_SOURCE_FILES   := main.c \
                           environment/environment_system.c \
                           environment/env_shadow.c \
                           environment/atmosphere.c \
+                          environment/volumetric/volumetric_fog.c \
+                          environment/wind/wind_system.c \
                           maps/map_manager.c \
                           skills/skill_manager.c \
                           skills/skill_helper.c \
@@ -59,52 +61,80 @@ PROJECT_SOURCE_FILES   := main.c \
                           core/color_gradient.c \
                           core/float_curve.c \
                           core/tuning.c \
-                          core/emitter_system.c \
+                          core/emitter/emitter.c \
+                          core/emitter/emitter_sources.c \
+                          core/emitter/mesh_surface_source.c \
+                          core/emitter/particle_children.c \
+                          core/emitter/emitter_gpu.c \
+                          core/emitter/legacy_particle_emitter.c \
+                          core/emitter/preset_emitter.c \
+                          core/emitter/particle_source.c \
+                          core/emitter/emitter_sinks.c \
                           core/uv/flow_map.c \
                           core/deform/mesh_deform.c \
                           core/uv/uv_deform.c \
                           core/uv/surface_flow.c \
                           core/force_field.c \
+                          core/motion/motion_fields.c \
                           core/particles/particle_system.c \
+                          core/particles/particle_manager.c \
                           core/particles/gpu/particle_gpu_backend.c \
+                          core/liquid/liquid_impact.c \
+                          core/liquid/liquid_pbd.c \
+                          core/liquid/liquid_pbd_gpu.c \
+                          core/liquid/liquid_capture_cpu.c \
+                          core/liquid/liquid_surface.c \
+                          core/liquid/liquid_metaball3d.c \
+                          core/gas/gas_sim.c \
+                          core/gas/gas_system.c \
                           core/path_spline.c \
                           post_process/post_fx.c \
                           post_process/color_grade_lut.c \
                           post_process/scene_targets.c \
+                          post_process/render_scale.c \
                           post_process/screen_distort.c \
                           post_process/camera_fx.c \
                           core/ribbon_strip.c \
+                          core/lightning/lightning_stroke.c \
+                          core/surface_material.c \
+                          core/gfx_quality.c \
                           core/sprite_anim.c \
                           core/trails/trail_system.c \
+                          core/trails/trail_ribbon.c \
+                          core/trails/trail_ribbon_gpu.c \
                           core/utils_math.c \
                           core/vfx_light.c \
+                          core/vfx_contrast.c \
                           core/decals/decal_system.c \
                           core/geometry/procedural_mesh_utils.c \
                           core/geometry/mesh_cache.c \
+                          core/geometry/sdf_capsule.c \
                           core/material/material_system.c \
                           core/composition/visual_composer.c \
+                          core/composition/vfx_sequence.c \
                           core/presets/vfx_presets.c \
-                          core/vfx_proc_ray.c \
-                          core/afterimage.c \
+                          core/vfx_surface_registry.c \
                           core/time_fx.c \
                           core/motion_controller.c \
                           core/status_vfx.c \
-                          core/shader_preprocessor.c \
-                          core/metaball_fx.c \
+                          core/afterimage.c \
                           core/mesh_adjacency.c \
+                          core/shading/shader_preprocessor.c \
+                          core/metaball_fx.c \
+                          core/debug_draw.c \
                           entities/entities.c \
                           sandbox/sandbox_core.c \
                           sandbox/ui_panel.c \
                           sandbox/vfx_test.c \
                           sandbox/skill_debugger.c \
                           sandbox/auto_test.c \
-    sandbox/colour_probe.c \
+                          sandbox/colour_probe.c \
+                          sandbox/fresnel_probe.c \
+                          sandbox/gradient_probe.c \
+                          sandbox/auto_test_cases.c \
                           sandbox/visual_verify.c \
                           sandbox/pool_stats.c \
                           audio/audio_system.c \
-                          core/debug_draw.c \
-                          core/surface_material.c \
-                          core/gfx_quality.c \
                           $(wildcard ai/*.c) \
                           $(wildcard boss/*.c) \
                           $(wildcard combat/*.c) \
@@ -188,7 +218,7 @@ CFLAGS += -DHAS_SOCKLEN_T=1 -DHAS_FCNTL=1 -DHAS_POLL=1 -DHAS_GETADDRINFO=1 \
           -DHAS_INET_PTON=1 -DHAS_INET_NTOP=1 -DHAS_MSGHDR_FLAGS=1
 
 # Include paths
-INCLUDE_PATHS = -I. -Icore/geometry -Icore/material -Icore/composition -Icore/presets -I$(RAYLIB_PATH)/src -I$(NATIVE_APP_GLUE_PATH) -I$(ENET_PATH)/include
+INCLUDE_PATHS = -I. -Ipost_process -Icore/geometry -Icore/material -Icore/composition -Icore/presets -I$(RAYLIB_PATH)/src -I$(NATIVE_APP_GLUE_PATH) -I$(ENET_PATH)/include
 ifeq ($(USE_VULKAN), 1)
     # third_party/vulkan/rlvk.h - Vulkan headers themselves come from the NDK sysroot
     # (auto-included via the NDK clang wrapper, same as <android/native_window.h>/<EGL/egl.h>).
@@ -395,30 +425,15 @@ copy_project_resources: create_temp_project_dirs
 	@echo "<resources><string name=\"app_name\">$(APP_LABEL_NAME)</string></resources>" >> $(PROJECT_BUILD_PATH)/res/values/strings.xml
 	@# Copy tuning.cfg (Item 9 data-driven tuning) — read-only on Android, no hot-reload there
 	cp -f tuning.cfg $(PROJECT_BUILD_PATH)/assets/tuning.cfg 2>/dev/null || true
-	@# Copy shader files và texture vào assets với đúng thư mục tương ứng
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/shaders/common
-	cp -f core/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true
-	cp -f core/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/core/shaders/ 2>/dev/null || true
-	cp -f core/shaders/common/*.glsl $(PROJECT_BUILD_PATH)/assets/core/shaders/common/ 2>/dev/null || true
-	@# core/uv shared includes (flow_map.glsl moved here from core/shaders/common).
-	@# These are #include'd by aura_shell.fs and glass_shell.fs, which ARE copied
-	@# above — without this pair they resolve to nothing and the shader fails to
-	@# compile, which raylib answers with the DEFAULT shader at a nonzero id.
-	@# core/trails/shaders IS copied now — trail_volume.vs/.fs is not optional the
-	@# way trail_deform.fs was. Missing, the volume tube falls back to the default
-	@# shader and renders as an opaque solid: no pattern product, no end fade, no
-	@# edge falloff. The effect still draws, so nothing reports a shader problem.
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/trails/shaders
-	cp -f core/trails/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/core/trails/shaders/ 2>/dev/null || true
-	cp -f core/trails/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/core/trails/shaders/ 2>/dev/null || true
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/uv/shaders
-	cp -f core/uv/shaders/*.glsl $(PROJECT_BUILD_PATH)/assets/core/uv/shaders/ 2>/dev/null || true
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/deform/shaders
-	cp -f core/deform/shaders/*.glsl $(PROJECT_BUILD_PATH)/assets/core/deform/shaders/ 2>/dev/null || true
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu
-	cp -f core/particles/shaders/gpu/*.comp $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu/ 2>/dev/null || true
-	cp -f core/particles/shaders/gpu/*.vs $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu/ 2>/dev/null || true
-	cp -f core/particles/shaders/gpu/*.fs $(PROJECT_BUILD_PATH)/assets/core/particles/shaders/gpu/ 2>/dev/null || true
+	@# Copy toàn bộ shader/texture trong core/
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/core
+	cd core && find . -type d -exec mkdir -p ../$(PROJECT_BUILD_PATH)/assets/core/{} \;
+	cd core && find . -type f \( -name "*.fs" -o -name "*.png" -o -name "*.vs" -o -name "*.glsl" -o -name "*.comp" \) -exec cp -f {} ../$(PROJECT_BUILD_PATH)/assets/core/{} \;
+
+	@# Copy toàn bộ shader/texture trong environment/
+	mkdir -p $(PROJECT_BUILD_PATH)/assets/environment
+	cd environment && find . -type d -exec mkdir -p ../$(PROJECT_BUILD_PATH)/assets/environment/{} \;
+	cd environment && find . -type f \( -name "*.fs" -o -name "*.png" -o -name "*.vs" -o -name "*.glsl" \) -exec cp -f {} ../$(PROJECT_BUILD_PATH)/assets/environment/{} \;
 	
 	@# Tự động quét và sao chép cấu trúc thư mục của skills/ cùng các asset liên quan (.fs, .vs, .png)
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/skills
@@ -428,16 +443,6 @@ copy_project_resources: create_temp_project_dirs
 	@# Copy toàn bộ thư mục assets vào assets/assets để AssetManager đọc được chuỗi "assets/..."
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/assets
 	cp -rf assets/* $(PROJECT_BUILD_PATH)/assets/assets/ 2>/dev/null || true
-
-	@# environment/shaders (shadow_depth.vs/.fs) — BỎ SÓT cho tới 2026-07-22. Không có luật copy
-	@# nào cho environment/, nên trên máy ResourceManager_LoadShader thất bại và raylib im lặng
-	@# rơi về SHADER MẶC ĐỊNH cho pass capture bóng: shadow map R32F khi đó chứa MÀU của caster
-	@# chứ không phải gl_FragCoord.z, nên bóng vẫn "có" nhưng sai bản chất.
-	@# Dấu hiệu trong logcat: "SHADER: Không đọc được file: environment/shaders/shadow_depth.vs"
-	@# rồi ID kế tiếp compile với 3 uniforms (shader mặc định) thay vì 1 (shadow_depth thật).
-	mkdir -p $(PROJECT_BUILD_PATH)/assets/environment/shaders
-	cp -f environment/shaders/*.vs $(PROJECT_BUILD_PATH)/assets/environment/shaders/ 2>/dev/null || true
-	cp -f environment/shaders/*.fs $(PROJECT_BUILD_PATH)/assets/environment/shaders/ 2>/dev/null || true
 
 	@# post_process/shaders
 	mkdir -p $(PROJECT_BUILD_PATH)/assets/post_process/shaders
@@ -499,6 +504,8 @@ config_project_package: copy_project_resources generate_android_manifest
 compile_project_code: config_project_package compile_raylib_android compile_shaderc_android $(OBJS)
 	$(CC) -o $(PROJECT_BUILD_PATH)/lib/$(ANDROID_ARCH_NAME)/lib$(PROJECT_LIBRARY_NAME).so \
 		$(OBJS) -shared $(INCLUDE_PATHS) $(LDFLAGS) $(LDLIBS)
+
+$(OBJS): | compile_raylib_android compile_shaderc_android
 
 $(PROJECT_BUILD_PATH)/obj/%.o:%.c
 	# $< (the .c only), NOT $^: once the -include'd .d files exist, $^ pulls in every
