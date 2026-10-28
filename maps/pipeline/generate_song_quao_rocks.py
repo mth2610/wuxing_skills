@@ -67,13 +67,17 @@ def generate_rocks():
         # Universal boundary guard: well within island plateau safe margin
         if x < 80.0 or x > 146.0 or z < 18.0 or z > 255.0 or gy < 1.0:
             return False
-        # Land rocks must be dry
-        if arch != ARCH_RIVER_STONE and wd >= 0.01:
+        # Land rocks must be dry; scree companion chips can sit in shallow margins <= 0.08m
+        if arch not in (ARCH_RIVER_STONE, ARCH_SCREE) and wd >= 0.01:
+            return False
+        if arch == ARCH_SCREE and wd > 0.08:
             return False
         if not is_free(x, z, rScale, min_overlap=min_overlap):
             return False
 
-        rock_items.append(dict(x=float(x), y=float(gy), z=float(z),
+        # River stones embed naturally into the alluvial sand/gravel bed
+        sink = hScale * 0.28 if arch == ARCH_RIVER_STONE else 0.0
+        rock_items.append(dict(x=float(x), y=float(gy - sink), z=float(z),
                                rScale=float(rScale), hScale=float(hScale),
                                rot=float(rot), archetype=int(arch)))
         occupied.append((x, z, rScale))
@@ -199,15 +203,15 @@ def generate_rocks():
     add_rock(99.40, 89.40, 0.48, 0.28, 140.0, ARCH_SCREE, max_slope=34.0, min_overlap=0.40)
     add_rock(101.20, 89.10, 0.42, 0.25, 220.0, ARCH_SCREE, max_slope=34.0, min_overlap=0.40)
 
-    # Mizuwake-ishi (水分石 - River-splitter anchor boulder at upstream prow)
-    add_rock(103.50, 84.50, 0.95, 0.75, 45.0, ARCH_RIVER_STONE, max_slope=24.0, min_overlap=0.45)
-    add_rock(102.80, 85.20, 0.55, 0.38, 120.0, ARCH_RIVER_STONE, max_slope=24.0, min_overlap=0.45)
+    # Mizuwake-ishi (水分石 - River-splitter anchor stone at upstream prow, half-sunken in sand)
+    add_rock(103.50, 84.50, 0.44, 0.24, 45.0, ARCH_RIVER_STONE, max_slope=24.0, min_overlap=0.45)
+    add_rock(102.80, 85.20, 0.28, 0.16, 120.0, ARCH_RIVER_STONE, max_slope=24.0, min_overlap=0.45)
 
-    # Island shoreline waterline cobblestones (hugging waterline, NOT in mid-channel!)
-    add_rock(96.50, 90.00, 0.55, 0.38, 70.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
-    add_rock(96.20, 90.80, 0.38, 0.26, 150.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
-    add_rock(104.60, 91.00, 0.52, 0.35, 110.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
-    add_rock(104.90, 91.70, 0.36, 0.25, 200.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
+    # Island shoreline waterline cobblestones (hugging waterline, resting on sand bar)
+    add_rock(96.50, 90.00, 0.32, 0.18, 70.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
+    add_rock(96.20, 90.80, 0.20, 0.12, 150.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
+    add_rock(104.60, 91.00, 0.30, 0.16, 110.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
+    add_rock(104.90, 91.70, 0.18, 0.10, 200.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45)
 
     # -------------------------------------------------------------
     # 4. STREAM RIPARIAN CLUSTERS & FLUID GEOMORPHOLOGY
@@ -259,42 +263,84 @@ def generate_rocks():
 
         if curv > 0:
             # Curves East: outer cut-bank is RIGHT bank, inner point-bar is LEFT bank
-            # Right bank anchor pod (hugging waterline)
-            add_rock(xr + 0.15, z_val, 0.85, 0.62, 45.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
-            add_rock(xr + 0.65, z_val + 0.75, 0.52, 0.36, 120.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
-            add_rock(xr - 0.10, z_val + 1.25, 0.32, 0.22, 190.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            # Right bank anchor pod (hugging waterline on sand beach)
+            add_rock(xr + 0.25, z_val, 0.44, 0.24, 45.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xr + 0.65, z_val + 0.75, 0.28, 0.16, 120.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xr + 0.10, z_val + 1.25, 0.18, 0.11, 190.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
             # Left bank inner point-bar shingle
-            add_rock(xl - 0.20, z_val - 0.40, 0.42, 0.28, 80.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
-            add_rock(xl + 0.35, z_val + 0.45, 0.28, 0.19, 160.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xl - 0.25, z_val - 0.40, 0.24, 0.14, 80.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xl - 0.10, z_val + 0.45, 0.16, 0.10, 160.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
         else:
             # Curves West: outer cut-bank is LEFT bank, inner point-bar is RIGHT bank
-            # Left bank anchor pod (hugging waterline)
-            add_rock(xl - 0.15, z_val, 0.85, 0.62, 225.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
-            add_rock(xl - 0.65, z_val + 0.75, 0.52, 0.36, 300.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
-            add_rock(xl + 0.10, z_val + 1.25, 0.32, 0.22, 350.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            # Left bank anchor pod (hugging waterline on sand beach)
+            add_rock(xl - 0.25, z_val, 0.44, 0.24, 225.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xl - 0.65, z_val + 0.75, 0.28, 0.16, 300.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xl - 0.10, z_val + 1.25, 0.18, 0.11, 350.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
             # Right bank inner point-bar shingle
-            add_rock(xr + 0.20, z_val - 0.40, 0.42, 0.28, 110.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
-            add_rock(xr - 0.35, z_val + 0.45, 0.28, 0.19, 20.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xr + 0.25, z_val - 0.40, 0.24, 0.14, 110.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+            add_rock(xr + 0.10, z_val + 0.45, 0.16, 0.10, 20.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
 
     # 4.2 Sawatari-ishi (沢渡り石): Transverse Stepping Stone Crossing at shallow ford (Z=150.0m)
     # Staggered in natural human stride rhythm, flat tops emerging 12-16cm above water
     stepping_coords = [
-        (101.8, 149.8, 0.60, 0.48, 45.0),
-        (102.9, 150.3, 0.58, 0.52, 115.0),
-        (104.1, 149.7, 0.62, 0.54, 210.0),
-        (105.3, 150.2, 0.58, 0.50, 310.0),
-        (106.5, 149.9, 0.60, 0.48, 80.0),
+        (101.8, 149.8, 0.48, 0.32, 45.0),
+        (102.9, 150.3, 0.46, 0.34, 115.0),
+        (104.1, 149.7, 0.50, 0.35, 210.0),
+        (105.3, 150.2, 0.46, 0.33, 310.0),
+        (106.5, 149.9, 0.48, 0.32, 80.0),
     ]
     for sx_c, sz_c, sr, sh, srot in stepping_coords:
         add_rock(sx_c, sz_c, sr, sh, srot, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.45)
 
     # 4.3 Cascade Choke Boulders (Bậc ghềnh thác) at steep narrow drops
     # Near Z=52:
-    add_rock(103.50, 52.00, 0.88, 0.65, 60.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
-    add_rock(100.80, 52.40, 0.78, 0.58, 240.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+    add_rock(103.50, 52.00, 0.48, 0.30, 60.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+    add_rock(100.80, 52.40, 0.42, 0.26, 240.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
     # Near Z=138:
-    add_rock(108.20, 138.00, 0.85, 0.62, 80.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
-    add_rock(105.40, 138.30, 0.75, 0.55, 270.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+    add_rock(108.20, 138.00, 0.46, 0.28, 80.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+    add_rock(105.40, 138.30, 0.40, 0.25, 270.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
+
+    # 4.4 Continuous Riparian Shingle & Bank Cobble Clusters
+    # Populate natural river cobbles and small pebbles along both banks (hugging sand shoreline)
+    for i in range(0, len(z_arr), 3):
+        z_val = z_arr[i]
+        # Skip island region (already custom composed in Domain 3)
+        if 80.0 <= z_val <= 98.0:
+            continue
+
+        xl = x_left_list[i]
+        xr = x_right_list[i]
+
+        # Deterministic pseudo-random seed based on index
+        phase = (i * 37) % 100
+
+        # --- Left Bank Pod (Hugging shoreline beach) ---
+        r_left = 0.22 + 0.14 * ((phase * 7) % 10) / 10.0
+        h_left = r_left * 0.55
+        rot_l = float((phase * 43) % 360)
+        offset_l = -0.25 - 0.20 * ((phase * 13) % 10) / 10.0
+        if add_rock(xl + offset_l, z_val, r_left, h_left, rot_l, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.45):
+            # Companion pebble / scree chip nestled beside it
+            c_ang = np.radians((rot_l + 70.0) % 360)
+            c_dist = (r_left + 0.16) * 0.65
+            c_x = xl + offset_l + np.cos(c_ang) * c_dist
+            c_z = z_val + np.sin(c_ang) * c_dist
+            c_arch = ARCH_SCREE if (phase % 2 == 0) else ARCH_RIVER_STONE
+            add_rock(c_x, c_z, 0.14, 0.08, rot_l + 30.0, c_arch, max_slope=36.0, min_overlap=0.40)
+
+        # --- Right Bank Pod (Hugging shoreline beach) ---
+        r_right = 0.20 + 0.12 * ((phase * 17) % 10) / 10.0
+        h_right = r_right * 0.55
+        rot_r = float((phase * 67) % 360)
+        offset_r = 0.25 + 0.20 * ((phase * 23) % 10) / 10.0
+        if add_rock(xr + offset_r, z_val + 0.6, r_right, h_right, rot_r, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.45):
+            # Companion pebble / scree chip nestled beside it
+            c_ang = np.radians((rot_r - 65.0) % 360)
+            c_dist = (r_right + 0.16) * 0.65
+            c_x = xr + offset_r + np.cos(c_ang) * c_dist
+            c_z = z_val + 0.6 + np.sin(c_ang) * c_dist
+            c_arch = ARCH_SCREE if (phase % 3 != 0) else ARCH_RIVER_STONE
+            add_rock(c_x, c_z, 0.13, 0.08, rot_r - 25.0, c_arch, max_slope=36.0, min_overlap=0.40)
 
     # Sort rocks deterministically
     rock_items.sort(key=lambda r: (r['z'], r['x']))

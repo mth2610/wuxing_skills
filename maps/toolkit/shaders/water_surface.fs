@@ -284,7 +284,7 @@ void main()
     vec3 transmittance = exp(-absorptionCoeff * opticalPath);
 
     // ── 4. WATER CAUSTICS (Refracted Dual-Layer Photon Focusing) ─────────────
-    float depthFadeCaustic = smoothstep(0.015, 0.20, waterDepth) * (1.0 - smoothstep(0.85, 1.45, waterDepth) * 0.45);
+    float depthFadeCaustic = smoothstep(0.006, 0.10, waterDepth) * (1.0 - smoothstep(0.85, 1.45, waterDepth) * 0.45);
     vec3 causticLight = vec3(0.0);
     if (depthFadeCaustic * u_causticsStrength > 0.001) {
         vec2 causticRefract = normal.xz * clamp(waterDepth * 0.25, 0.015, 0.18);
@@ -327,9 +327,9 @@ void main()
     vec3 reflectedSky = mix(skyHorizon, skyZenith, skyAngle);
 
     // Subtle green-emerald riverbank canopy reflection near shallow margins
-    vec3 bankCanopyReflect = vec3(0.11, 0.20, 0.09) * (0.65 + u_ambientColor.g * 0.45);
-    float bankReflectMask = (1.0 - smoothstep(0.05, 0.65, waterDepth)) * (1.0 - skyAngle * 0.65);
-    reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.48);
+    vec3 bankCanopyReflect = vec3(0.12, 0.22, 0.10) * (0.65 + u_ambientColor.g * 0.45);
+    float bankReflectMask = (1.0 - smoothstep(0.02, 0.55, waterDepth)) * (1.0 - skyAngle * 0.65);
+    reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.72);
 
     // Restrained atmospheric sun-glow on horizon reflection
     float sunReflect = max(0.0, dot(reflectDir, L));
@@ -376,18 +376,21 @@ void main()
     float brokenFoam = 0.0;
 
     if (contactMask > 0.001 || dynamicWakeFoam > 0.001) {
-        float meniscusLip = smoothstep(0.0, 0.022, waterDepth) * (1.0 - smoothstep(0.022, 0.075, waterDepth));
+        float meniscusLip = smoothstep(0.001, 0.016, waterDepth) * (1.0 - smoothstep(0.016, 0.065, waterDepth));
         vec2 foamUV = fragWorldXZ * 0.45 + fract(vec2(t * 0.022, -t * 0.016));
         float foamNoise = textureGrad(texture0, foamUV, xzDx * 0.45, xzDy * 0.45).r;
         float contactRipple = sin(waterDepth * 36.0 - t * 4.8) * exp(-waterDepth * 6.5);
 
         brokenFoam = smoothstep(0.49, 0.80, contactMask * 0.58 + (foamNoise - 0.5) * 0.72);
-        brokenFoam = max(brokenFoam, meniscusLip * 0.11 * smoothstep(0.48, 0.72, foamNoise));
+        brokenFoam = max(brokenFoam, meniscusLip * 0.18 * smoothstep(0.38, 0.68, foamNoise));
         brokenFoam += max(contactRipple, 0.0) * 0.09 * contactMask;
 
         if (u_waterShape == 3) {
-            // Fade shoreline contact foam cleanly at shallow shoreline lip & river stones so submerged rocks aren't ringed in white
-            brokenFoam *= smoothstep(0.045, 0.16, waterDepth) * 0.52;
+            // Faint natural mountain stream micro-bubbles along shallow ripples (no heavy ocean surf):
+            // Feathers smoothly near depth=0 so mesh triangle silhouettes never become visible.
+            float shoreRippleFoam = contactMask * smoothstep(0.58, 0.88, foamNoise + contactRipple * 0.35) * 0.20;
+            brokenFoam = clamp(brokenFoam * 0.25 + shoreRippleFoam, 0.0, 0.35);
+            brokenFoam *= smoothstep(0.002, 0.025, waterDepth);
         }
 
         float wakeFoamTex = dynamicWakeFoam * smoothstep(0.32, 0.78, foamNoise + dynamicWakeFoam * 0.35);
@@ -395,24 +398,25 @@ void main()
     }
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
+    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.003, 0.085, waterDepth) : 1.0;
     float waterColumnAlpha = (u_waterShape == 3)
-        ? (0.05 + 0.68 * smoothstep(0.02, 0.75, waterDepth))
+        ? (0.70 * smoothstep(0.010, 0.50, waterDepth))
         : (0.12 + 0.36 * (1.0 - exp(-1.8 * waterDepth)));
     // Only crisp pinpoint glintSharp contributes to alpha, preventing broad milky opacity blobs
     float glintAlphaBoost = clamp(glintSharp * 0.35, 0.0, 0.22);
-    float surfaceAlpha = fresnel * 0.65 + waterColumnAlpha + glintAlphaBoost;
+    float surfaceAlpha = (fresnel * 0.65 * shoreFadeOptical) + waterColumnAlpha + glintAlphaBoost;
 
     // Smooth analytical shoreline edge feathering (clean, antialiased contact lip)
     float shoreEdgeFade = radialEdgeFade;
     if (u_waterShape == 3) {
-        // Clean linear feathering from depth = 0.002m to 0.12m eliminates jagged pixel steps
-        shoreEdgeFade = smoothstep(0.002, 0.12, waterDepth);
+        // Crisp antialiased shoreline contact feathering within 2.5cm of depth (eliminates mesh facet arcs)
+        shoreEdgeFade = smoothstep(0.0015, 0.025, waterDepth);
     } else if (u_waterShape != 0) {
         shoreEdgeFade = smoothstep(0.002, 0.035, waterDepth);
     }
     surfaceAlpha *= shoreEdgeFade;
 
-    float alpha = clamp(surfaceAlpha + brokenFoam * 0.26 * shoreEdgeFade, 0.0, 0.90);
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.18 * shoreEdgeFade, 0.0, 0.90);
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
@@ -431,8 +435,8 @@ void main()
     color += waveHighlight + sunGlint + waveReflection;
     color += effectiveLight * vec3(0.62, 0.76, 0.84) * clamp(waveCurvature, -0.20, 0.20);
 
-    vec3 frothColor = mix(u_foamColor, vec3(1.0), 0.14) * (0.72 + effectiveLight * 0.14);
-    color = mix(color, frothColor, brokenFoam * 0.85);
+    vec3 frothColor = mix(u_foamColor, vec3(0.95, 0.98, 1.0), 0.25) * (0.68 + effectiveLight * 0.20);
+    color = mix(color, frothColor, brokenFoam * 0.45);
 
     // VFX Point Light response
     color += VFXLights_Accumulate(fragPosition, normal, u_shallowColor) * 0.65;

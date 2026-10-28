@@ -326,6 +326,7 @@ void MapProp_PopulateRockItems(MapRockSystem *sys, const MapGroundSurface *groun
 void MapProp_AddCragPlacements(MapRockSystem *sys, const MapGroundSurface *ground,
                                Vector3 groundCenter, const Vector2 *points, int count,
                                float baseScale);
+float MapProp_EvaluateRockSuppression(float x, float z, const MapRockItem *items, int itemCount);
 
 
 // Fills outPlacements[] (capacity maxCount) with a ring of giant rock

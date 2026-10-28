@@ -425,7 +425,7 @@ int MapFlora_GenerateReedPlacements(
 
     unsigned int rng = config.seed ? config.seed : 0x9371a5u;
     int count = 0;
-    int maxAttempts = maxCount * 12;
+    int maxAttempts = maxCount * 32;
 
     for (int attempts = 0; attempts < maxAttempts && count < maxCount; attempts++)
     {

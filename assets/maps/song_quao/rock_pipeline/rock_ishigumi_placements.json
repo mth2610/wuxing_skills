@@ -1,0 +1,1222 @@
+[
+  {
+    "x": 120.33,
+    "y": 11.07,
+    "z": 16.04,
+    "rScale": 2.3,
+    "hScale": 1.8,
+    "rot": 50.0,
+    "archetype": 3,
+    "role": "fukuishi"
+  },
+  {
+    "x": 118.22,
+    "y": 9.21,
+    "z": 16.37,
+    "rScale": 0.5,
+    "hScale": 0.26,
+    "rot": 38.0,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 116.15,
+    "y": 11.47,
+    "z": 19.5,
+    "rScale": 0.62,
+    "hScale": 0.32,
+    "rot": 78.0,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 120.74,
+    "y": 12.71,
+    "z": 19.8,
+    "rScale": 3.6,
+    "hScale": 2.85,
+    "rot": 38.0,
+    "archetype": 3,
+    "role": "oyaishi"
+  },
+  {
+    "x": 117.62,
+    "y": 11.97,
+    "z": 21.34,
+    "rScale": 1.51,
+    "hScale": 1.13,
+    "rot": 20.0,
+    "archetype": 3,
+    "role": "soeishi"
+  },
+  {
+    "x": 125.08,
+    "y": 11.68,
+    "z": 22.18,
+    "rScale": 0.74,
+    "hScale": 0.38,
+    "rot": 118.0,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 120.34,
+    "y": 8.86,
+    "z": 36.6,
+    "rScale": 0.44,
+    "hScale": 0.3,
+    "rot": 110.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 117.98,
+    "y": 9.05,
+    "z": 37.0,
+    "rScale": 0.88,
+    "hScale": 0.65,
+    "rot": 225.0,
+    "archetype": 2,
+    "role": "cutbank_anchor"
+  },
+  {
+    "x": 119.79,
+    "y": 8.61,
+    "z": 37.45,
+    "rScale": 0.3,
+    "hScale": 0.2,
+    "rot": 20.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 117.45,
+    "y": 9.05,
+    "z": 37.78,
+    "rScale": 0.54,
+    "hScale": 0.38,
+    "rot": 300.0,
+    "archetype": 2,
+    "role": "cutbank_pod"
+  },
+  {
+    "x": 118.23,
+    "y": 8.5,
+    "z": 38.28,
+    "rScale": 0.34,
+    "hScale": 0.24,
+    "rot": 350.0,
+    "archetype": 2,
+    "role": "cutbank_pebble"
+  },
+  {
+    "x": 103.5,
+    "y": 6.48,
+    "z": 52.0,
+    "rScale": 0.92,
+    "hScale": 0.68,
+    "rot": 60.0,
+    "archetype": 2,
+    "role": "cascade_choke"
+  },
+  {
+    "x": 100.8,
+    "y": 6.8,
+    "z": 52.4,
+    "rScale": 0.82,
+    "hScale": 0.6,
+    "rot": 240.0,
+    "archetype": 2,
+    "role": "cascade_choke"
+  },
+  {
+    "x": 103.32,
+    "y": 6.38,
+    "z": 54.6,
+    "rScale": 0.44,
+    "hScale": 0.3,
+    "rot": 110.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 100.97,
+    "y": 6.58,
+    "z": 55.0,
+    "rScale": 0.88,
+    "hScale": 0.65,
+    "rot": 225.0,
+    "archetype": 2,
+    "role": "cutbank_anchor"
+  },
+  {
+    "x": 102.77,
+    "y": 6.28,
+    "z": 55.45,
+    "rScale": 0.3,
+    "hScale": 0.2,
+    "rot": 20.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 100.44,
+    "y": 6.58,
+    "z": 55.78,
+    "rScale": 0.54,
+    "hScale": 0.38,
+    "rot": 300.0,
+    "archetype": 2,
+    "role": "cutbank_pod"
+  },
+  {
+    "x": 101.22,
+    "y": 6.28,
+    "z": 56.28,
+    "rScale": 0.34,
+    "hScale": 0.24,
+    "rot": 350.0,
+    "archetype": 2,
+    "role": "cutbank_pebble"
+  },
+  {
+    "x": 112.14,
+    "y": 9.56,
+    "z": 62.03,
+    "rScale": 1.36,
+    "hScale": 1.02,
+    "rot": 25.6,
+    "archetype": 3,
+    "role": "soeishi"
+  },
+  {
+    "x": 114.33,
+    "y": 9.77,
+    "z": 62.21,
+    "rScale": 0.62,
+    "hScale": 0.32,
+    "rot": 83.6,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 111.13,
+    "y": 9.17,
+    "z": 65.0,
+    "rScale": 3.25,
+    "hScale": 2.44,
+    "rot": 43.6,
+    "archetype": 3,
+    "role": "oyaishi"
+  },
+  {
+    "x": 107.72,
+    "y": 8.35,
+    "z": 65.07,
+    "rScale": 2.08,
+    "hScale": 1.62,
+    "rot": 55.6,
+    "archetype": 3,
+    "role": "fukuishi"
+  },
+  {
+    "x": 107.79,
+    "y": 8.39,
+    "z": 67.02,
+    "rScale": 0.5,
+    "hScale": 0.26,
+    "rot": 43.6,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 113.84,
+    "y": 9.17,
+    "z": 68.72,
+    "rScale": 0.74,
+    "hScale": 0.38,
+    "rot": 123.6,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 95.91,
+    "y": 6.15,
+    "z": 73.6,
+    "rScale": 0.44,
+    "hScale": 0.3,
+    "rot": 80.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 99.26,
+    "y": 5.61,
+    "z": 74.0,
+    "rScale": 0.88,
+    "hScale": 0.65,
+    "rot": 45.0,
+    "archetype": 2,
+    "role": "cutbank_anchor"
+  },
+  {
+    "x": 96.46,
+    "y": 5.66,
+    "z": 74.45,
+    "rScale": 0.3,
+    "hScale": 0.2,
+    "rot": 160.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 99.79,
+    "y": 5.61,
+    "z": 74.78,
+    "rScale": 0.54,
+    "hScale": 0.38,
+    "rot": 120.0,
+    "archetype": 2,
+    "role": "cutbank_pod"
+  },
+  {
+    "x": 99.01,
+    "y": 5.5,
+    "z": 75.28,
+    "rScale": 0.34,
+    "hScale": 0.24,
+    "rot": 190.0,
+    "archetype": 2,
+    "role": "cutbank_pebble"
+  },
+  {
+    "x": 103.5,
+    "y": 6.65,
+    "z": 84.5,
+    "rScale": 0.95,
+    "hScale": 0.72,
+    "rot": 45.0,
+    "archetype": 2,
+    "role": "mizuwake_ishi"
+  },
+  {
+    "x": 102.8,
+    "y": 6.56,
+    "z": 85.2,
+    "rScale": 0.58,
+    "hScale": 0.38,
+    "rot": 120.0,
+    "archetype": 2,
+    "role": "mizuwake_companion"
+  },
+  {
+    "x": 100.8,
+    "y": 6.42,
+    "z": 88.0,
+    "rScale": 1.15,
+    "hScale": 0.88,
+    "rot": 105.0,
+    "archetype": 3,
+    "role": "kojima_fuku"
+  },
+  {
+    "x": 101.2,
+    "y": 6.52,
+    "z": 89.1,
+    "rScale": 0.42,
+    "hScale": 0.25,
+    "rot": 220.0,
+    "archetype": 9,
+    "role": "kojima_sute"
+  },
+  {
+    "x": 96.5,
+    "y": 5.87,
+    "z": 90.0,
+    "rScale": 0.55,
+    "hScale": 0.36,
+    "rot": 70.0,
+    "archetype": 2,
+    "role": "waterline_stone"
+  },
+  {
+    "x": 100.2,
+    "y": 6.46,
+    "z": 90.0,
+    "rScale": 1.65,
+    "hScale": 1.25,
+    "rot": 65.0,
+    "archetype": 3,
+    "role": "kojima_oya"
+  },
+  {
+    "x": 96.2,
+    "y": 5.87,
+    "z": 90.8,
+    "rScale": 0.38,
+    "hScale": 0.25,
+    "rot": 150.0,
+    "archetype": 2,
+    "role": "waterline_stone"
+  },
+  {
+    "x": 104.6,
+    "y": 6.11,
+    "z": 91.0,
+    "rScale": 0.52,
+    "hScale": 0.34,
+    "rot": 110.0,
+    "archetype": 2,
+    "role": "waterline_stone"
+  },
+  {
+    "x": 101.4,
+    "y": 6.35,
+    "z": 91.2,
+    "rScale": 0.75,
+    "hScale": 0.58,
+    "rot": 20.0,
+    "archetype": 3,
+    "role": "kojima_soe"
+  },
+  {
+    "x": 104.9,
+    "y": 6.11,
+    "z": 91.7,
+    "rScale": 0.36,
+    "hScale": 0.24,
+    "rot": 200.0,
+    "archetype": 2,
+    "role": "waterline_stone"
+  },
+  {
+    "x": 111.86,
+    "y": 6.51,
+    "z": 93.41,
+    "rScale": 0.74,
+    "hScale": 0.38,
+    "rot": 130.1,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 112.13,
+    "y": 7.47,
+    "z": 98.0,
+    "rScale": 3.25,
+    "hScale": 2.67,
+    "rot": 50.1,
+    "archetype": 3,
+    "role": "oyaishi"
+  },
+  {
+    "x": 114.8,
+    "y": 7.45,
+    "z": 99.65,
+    "rScale": 1.36,
+    "hScale": 1.02,
+    "rot": 32.1,
+    "archetype": 3,
+    "role": "soeishi"
+  },
+  {
+    "x": 109.45,
+    "y": 7.27,
+    "z": 100.11,
+    "rScale": 2.08,
+    "hScale": 1.62,
+    "rot": 62.1,
+    "archetype": 3,
+    "role": "fukuishi"
+  },
+  {
+    "x": 110.69,
+    "y": 7.31,
+    "z": 101.62,
+    "rScale": 0.5,
+    "hScale": 0.26,
+    "rot": 50.1,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 114.14,
+    "y": 7.25,
+    "z": 101.74,
+    "rScale": 0.62,
+    "hScale": 0.32,
+    "rot": 90.1,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 93.91,
+    "y": 4.85,
+    "z": 109.6,
+    "rScale": 0.44,
+    "hScale": 0.3,
+    "rot": 80.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 99.26,
+    "y": 4.36,
+    "z": 110.0,
+    "rScale": 0.88,
+    "hScale": 0.65,
+    "rot": 45.0,
+    "archetype": 2,
+    "role": "cutbank_anchor"
+  },
+  {
+    "x": 94.46,
+    "y": 4.49,
+    "z": 110.45,
+    "rScale": 0.3,
+    "hScale": 0.2,
+    "rot": 160.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 99.79,
+    "y": 4.36,
+    "z": 110.78,
+    "rScale": 0.54,
+    "hScale": 0.38,
+    "rot": 120.0,
+    "archetype": 2,
+    "role": "cutbank_pod"
+  },
+  {
+    "x": 99.01,
+    "y": 4.22,
+    "z": 111.28,
+    "rScale": 0.34,
+    "hScale": 0.24,
+    "rot": 190.0,
+    "archetype": 2,
+    "role": "cutbank_pebble"
+  },
+  {
+    "x": 104.33,
+    "y": 5.41,
+    "z": 118.36,
+    "rScale": 0.74,
+    "hScale": 0.38,
+    "rot": 125.4,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 110.11,
+    "y": 5.23,
+    "z": 121.06,
+    "rScale": 1.36,
+    "hScale": 1.02,
+    "rot": 27.4,
+    "archetype": 3,
+    "role": "soeishi"
+  },
+  {
+    "x": 107.12,
+    "y": 5.4,
+    "z": 122.0,
+    "rScale": 3.24,
+    "hScale": 2.69,
+    "rot": 45.4,
+    "archetype": 3,
+    "role": "oyaishi"
+  },
+  {
+    "x": 105.3,
+    "y": 4.94,
+    "z": 124.87,
+    "rScale": 2.07,
+    "hScale": 1.62,
+    "rot": 57.4,
+    "archetype": 3,
+    "role": "fukuishi"
+  },
+  {
+    "x": 108.32,
+    "y": 4.08,
+    "z": 129.6,
+    "rScale": 0.44,
+    "hScale": 0.3,
+    "rot": 110.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 103.97,
+    "y": 4.42,
+    "z": 130.0,
+    "rScale": 0.88,
+    "hScale": 0.65,
+    "rot": 225.0,
+    "archetype": 2,
+    "role": "cutbank_anchor"
+  },
+  {
+    "x": 107.77,
+    "y": 3.86,
+    "z": 130.45,
+    "rScale": 0.3,
+    "hScale": 0.2,
+    "rot": 20.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 103.44,
+    "y": 4.42,
+    "z": 130.78,
+    "rScale": 0.54,
+    "hScale": 0.38,
+    "rot": 300.0,
+    "archetype": 2,
+    "role": "cutbank_pod"
+  },
+  {
+    "x": 104.22,
+    "y": 4.25,
+    "z": 131.28,
+    "rScale": 0.34,
+    "hScale": 0.24,
+    "rot": 350.0,
+    "archetype": 2,
+    "role": "cutbank_pebble"
+  },
+  {
+    "x": 108.2,
+    "y": 3.07,
+    "z": 138.0,
+    "rScale": 0.88,
+    "hScale": 0.64,
+    "rot": 80.0,
+    "archetype": 2,
+    "role": "cascade_choke"
+  },
+  {
+    "x": 105.4,
+    "y": 3.29,
+    "z": 138.3,
+    "rScale": 0.78,
+    "hScale": 0.56,
+    "rot": 270.0,
+    "archetype": 2,
+    "role": "cascade_choke"
+  },
+  {
+    "x": 100.7,
+    "y": 3.18,
+    "z": 149.6,
+    "rScale": 0.6,
+    "hScale": 0.42,
+    "rot": 110.0,
+    "archetype": 2,
+    "role": "sawatari_ishi"
+  },
+  {
+    "x": 103.1,
+    "y": 2.4,
+    "z": 149.7,
+    "rScale": 0.62,
+    "hScale": 0.44,
+    "rot": 290.0,
+    "archetype": 2,
+    "role": "sawatari_ishi"
+  },
+  {
+    "x": 105.5,
+    "y": 2.22,
+    "z": 149.8,
+    "rScale": 0.58,
+    "hScale": 0.41,
+    "rot": 125.0,
+    "archetype": 2,
+    "role": "sawatari_ishi"
+  },
+  {
+    "x": 99.5,
+    "y": 3.6,
+    "z": 150.1,
+    "rScale": 0.56,
+    "hScale": 0.38,
+    "rot": 35.0,
+    "archetype": 2,
+    "role": "sawatari_ishi"
+  },
+  {
+    "x": 101.9,
+    "y": 2.59,
+    "z": 150.2,
+    "rScale": 0.54,
+    "hScale": 0.4,
+    "rot": 205.0,
+    "archetype": 2,
+    "role": "sawatari_ishi"
+  },
+  {
+    "x": 106.7,
+    "y": 2.46,
+    "z": 150.2,
+    "rScale": 0.52,
+    "hScale": 0.36,
+    "rot": 215.0,
+    "archetype": 2,
+    "role": "sawatari_ishi"
+  },
+  {
+    "x": 104.3,
+    "y": 2.16,
+    "z": 150.3,
+    "rScale": 0.55,
+    "hScale": 0.39,
+    "rot": 40.0,
+    "archetype": 2,
+    "role": "sawatari_ishi"
+  },
+  {
+    "x": 89.9,
+    "y": 3.95,
+    "z": 153.6,
+    "rScale": 0.44,
+    "hScale": 0.3,
+    "rot": 80.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 113.28,
+    "y": 2.92,
+    "z": 154.0,
+    "rScale": 0.88,
+    "hScale": 0.65,
+    "rot": 45.0,
+    "archetype": 2,
+    "role": "cutbank_anchor"
+  },
+  {
+    "x": 90.45,
+    "y": 3.81,
+    "z": 154.45,
+    "rScale": 0.3,
+    "hScale": 0.2,
+    "rot": 160.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 113.81,
+    "y": 2.92,
+    "z": 154.78,
+    "rScale": 0.54,
+    "hScale": 0.38,
+    "rot": 120.0,
+    "archetype": 2,
+    "role": "cutbank_pod"
+  },
+  {
+    "x": 113.03,
+    "y": 2.79,
+    "z": 155.28,
+    "rScale": 0.34,
+    "hScale": 0.24,
+    "rot": 190.0,
+    "archetype": 2,
+    "role": "cutbank_pebble"
+  },
+  {
+    "x": 141.91,
+    "y": 2.64,
+    "z": 170.84,
+    "rScale": 0.62,
+    "hScale": 0.32,
+    "rot": 73.4,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 140.1,
+    "y": 2.67,
+    "z": 172.07,
+    "rScale": 1.36,
+    "hScale": 1.02,
+    "rot": 15.4,
+    "archetype": 3,
+    "role": "soeishi"
+  },
+  {
+    "x": 141.16,
+    "y": 2.67,
+    "z": 175.0,
+    "rScale": 3.23,
+    "hScale": 2.42,
+    "rot": 33.4,
+    "archetype": 3,
+    "role": "oyaishi"
+  },
+  {
+    "x": 145.58,
+    "y": 2.48,
+    "z": 176.2,
+    "rScale": 0.74,
+    "hScale": 0.38,
+    "rot": 113.4,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 138.56,
+    "y": 2.58,
+    "z": 177.17,
+    "rScale": 2.07,
+    "hScale": 1.61,
+    "rot": 45.4,
+    "archetype": 3,
+    "role": "fukuishi"
+  },
+  {
+    "x": 139.82,
+    "y": 2.52,
+    "z": 178.64,
+    "rScale": 0.5,
+    "hScale": 0.26,
+    "rot": 33.4,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 152.37,
+    "y": 1.69,
+    "z": 184.6,
+    "rScale": 0.44,
+    "hScale": 0.3,
+    "rot": 110.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 148.02,
+    "y": 1.64,
+    "z": 185.0,
+    "rScale": 0.88,
+    "hScale": 0.65,
+    "rot": 225.0,
+    "archetype": 2,
+    "role": "cutbank_anchor"
+  },
+  {
+    "x": 151.82,
+    "y": 1.57,
+    "z": 185.45,
+    "rScale": 0.3,
+    "hScale": 0.2,
+    "rot": 20.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 147.49,
+    "y": 1.64,
+    "z": 185.78,
+    "rScale": 0.54,
+    "hScale": 0.38,
+    "rot": 300.0,
+    "archetype": 2,
+    "role": "cutbank_pod"
+  },
+  {
+    "x": 148.27,
+    "y": 1.37,
+    "z": 186.28,
+    "rScale": 0.34,
+    "hScale": 0.24,
+    "rot": 350.0,
+    "archetype": 2,
+    "role": "cutbank_pebble"
+  },
+  {
+    "x": 59.68,
+    "y": 2.76,
+    "z": 195.66,
+    "rScale": 0.62,
+    "hScale": 0.32,
+    "rot": 80.0,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 57.51,
+    "y": 3.02,
+    "z": 195.9,
+    "rScale": 1.36,
+    "hScale": 1.02,
+    "rot": 22.0,
+    "archetype": 3,
+    "role": "soeishi"
+  },
+  {
+    "x": 57.07,
+    "y": 3.13,
+    "z": 199.0,
+    "rScale": 3.24,
+    "hScale": 2.23,
+    "rot": 40.0,
+    "archetype": 3,
+    "role": "oyaishi"
+  },
+  {
+    "x": 52.57,
+    "y": 3.35,
+    "z": 199.95,
+    "rScale": 0.74,
+    "hScale": 0.38,
+    "rot": 120.0,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 60.5,
+    "y": 2.66,
+    "z": 200.83,
+    "rScale": 0.5,
+    "hScale": 0.26,
+    "rot": 40.0,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 130.04,
+    "y": 2.52,
+    "z": 201.51,
+    "rScale": 0.74,
+    "hScale": 0.38,
+    "rot": 114.6,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 58.86,
+    "y": 2.82,
+    "z": 201.89,
+    "rScale": 2.07,
+    "hScale": 1.62,
+    "rot": 52.0,
+    "archetype": 3,
+    "role": "fukuishi"
+  },
+  {
+    "x": 68.28,
+    "y": 1.21,
+    "z": 204.6,
+    "rScale": 0.44,
+    "hScale": 0.3,
+    "rot": 110.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 60.92,
+    "y": 1.51,
+    "z": 205.0,
+    "rScale": 0.88,
+    "hScale": 0.65,
+    "rot": 225.0,
+    "archetype": 2,
+    "role": "cutbank_anchor"
+  },
+  {
+    "x": 67.73,
+    "y": 1.31,
+    "z": 205.45,
+    "rScale": 0.3,
+    "hScale": 0.2,
+    "rot": 20.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 60.39,
+    "y": 1.51,
+    "z": 205.78,
+    "rScale": 0.54,
+    "hScale": 0.38,
+    "rot": 300.0,
+    "archetype": 2,
+    "role": "cutbank_pod"
+  },
+  {
+    "x": 129.15,
+    "y": 2.46,
+    "z": 206.0,
+    "rScale": 3.23,
+    "hScale": 2.59,
+    "rot": 34.6,
+    "archetype": 3,
+    "role": "oyaishi"
+  },
+  {
+    "x": 61.17,
+    "y": 1.22,
+    "z": 206.28,
+    "rScale": 0.34,
+    "hScale": 0.24,
+    "rot": 350.0,
+    "archetype": 2,
+    "role": "cutbank_pebble"
+  },
+  {
+    "x": 125.8,
+    "y": 1.82,
+    "z": 206.52,
+    "rScale": 2.07,
+    "hScale": 1.61,
+    "rot": 46.6,
+    "archetype": 3,
+    "role": "fukuishi"
+  },
+  {
+    "x": 131.81,
+    "y": 2.3,
+    "z": 207.62,
+    "rScale": 1.36,
+    "hScale": 1.02,
+    "rot": 16.6,
+    "archetype": 3,
+    "role": "soeishi"
+  },
+  {
+    "x": 126.12,
+    "y": 1.66,
+    "z": 208.43,
+    "rScale": 0.5,
+    "hScale": 0.26,
+    "rot": 34.6,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 131.18,
+    "y": 1.93,
+    "z": 209.71,
+    "rScale": 0.62,
+    "hScale": 0.32,
+    "rot": 74.6,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 65.71,
+    "y": 3.34,
+    "z": 220.37,
+    "rScale": 0.5,
+    "hScale": 0.26,
+    "rot": 45.4,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 67.63,
+    "y": 3.98,
+    "z": 220.66,
+    "rScale": 2.07,
+    "hScale": 1.61,
+    "rot": 57.4,
+    "archetype": 3,
+    "role": "fukuishi"
+  },
+  {
+    "x": 57.87,
+    "y": 2.03,
+    "z": 223.6,
+    "rScale": 0.44,
+    "hScale": 0.3,
+    "rot": 80.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 60.22,
+    "y": 1.85,
+    "z": 224.0,
+    "rScale": 0.88,
+    "hScale": 0.65,
+    "rot": 45.0,
+    "archetype": 2,
+    "role": "cutbank_anchor"
+  },
+  {
+    "x": 67.08,
+    "y": 4.21,
+    "z": 224.0,
+    "rScale": 3.23,
+    "hScale": 2.26,
+    "rot": 45.4,
+    "archetype": 3,
+    "role": "oyaishi"
+  },
+  {
+    "x": 58.42,
+    "y": 1.88,
+    "z": 224.45,
+    "rScale": 0.3,
+    "hScale": 0.2,
+    "rot": 160.0,
+    "archetype": 2,
+    "role": "pointbar_shingle"
+  },
+  {
+    "x": 60.75,
+    "y": 1.85,
+    "z": 224.78,
+    "rScale": 0.54,
+    "hScale": 0.38,
+    "rot": 120.0,
+    "archetype": 2,
+    "role": "cutbank_pod"
+  },
+  {
+    "x": 59.97,
+    "y": 1.87,
+    "z": 225.28,
+    "rScale": 0.34,
+    "hScale": 0.24,
+    "rot": 190.0,
+    "archetype": 2,
+    "role": "cutbank_pebble"
+  },
+  {
+    "x": 69.79,
+    "y": 4.56,
+    "z": 225.53,
+    "rScale": 1.36,
+    "hScale": 1.02,
+    "rot": 27.4,
+    "archetype": 3,
+    "role": "soeishi"
+  },
+  {
+    "x": 62.95,
+    "y": 2.41,
+    "z": 225.98,
+    "rScale": 0.74,
+    "hScale": 0.38,
+    "rot": 125.4,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 69.23,
+    "y": 4.51,
+    "z": 227.64,
+    "rScale": 0.62,
+    "hScale": 0.32,
+    "rot": 85.4,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 49.2,
+    "y": 3.8,
+    "z": 252.36,
+    "rScale": 2.07,
+    "hScale": 1.62,
+    "rot": 45.5,
+    "archetype": 3,
+    "role": "fukuishi"
+  },
+  {
+    "x": 47.05,
+    "y": 4.49,
+    "z": 255.0,
+    "rScale": 3.24,
+    "hScale": 2.66,
+    "rot": 33.5,
+    "archetype": 3,
+    "role": "oyaishi"
+  },
+  {
+    "x": 48.66,
+    "y": 4.84,
+    "z": 257.69,
+    "rScale": 1.36,
+    "hScale": 1.02,
+    "rot": 15.5,
+    "archetype": 3,
+    "role": "soeishi"
+  },
+  {
+    "x": 47.12,
+    "y": 4.99,
+    "z": 259.24,
+    "rScale": 0.62,
+    "hScale": 0.32,
+    "rot": 73.5,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 31.03,
+    "y": 6.22,
+    "z": 268.52,
+    "rScale": 0.74,
+    "hScale": 0.38,
+    "rot": 126.7,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 35.89,
+    "y": 4.79,
+    "z": 272.48,
+    "rScale": 0.5,
+    "hScale": 0.26,
+    "rot": 46.7,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 32.04,
+    "y": 5.06,
+    "z": 273.0,
+    "rScale": 3.24,
+    "hScale": 2.04,
+    "rot": 46.7,
+    "archetype": 3,
+    "role": "oyaishi"
+  },
+  {
+    "x": 28.0,
+    "y": 6.21,
+    "z": 274.29,
+    "rScale": 0.62,
+    "hScale": 0.32,
+    "rot": 86.7,
+    "archetype": 9,
+    "role": "suteishi"
+  },
+  {
+    "x": 35.18,
+    "y": 5.26,
+    "z": 274.29,
+    "rScale": 2.07,
+    "hScale": 1.62,
+    "rot": 58.7,
+    "archetype": 3,
+    "role": "fukuishi"
+  },
+  {
+    "x": 29.93,
+    "y": 5.65,
+    "z": 275.31,
+    "rScale": 1.36,
+    "hScale": 1.02,
+    "rot": 28.7,
+    "archetype": 3,
+    "role": "soeishi"
+  }
+]

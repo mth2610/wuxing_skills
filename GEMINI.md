@@ -498,3 +498,164 @@
   - `WUXING_AUTOTEST=1 ./build/wuxing`: **19/19 test suites PASSED (100%)**.
 - **Biên dịch**: CMake build hoàn tất **0 warning, 0 error**.
 
+
+
+---
+
+## 15. Session Summary: Hệ Thống Phân Bố Đá Tự Nhiên Song Quao (Sanzon Ishigumi & Thủy Sinh Takashi Amano)
+
+### 15.1. Bối Cảnh & Phản Hồi Từ Người Dùng
+- **Phản hồi của người dùng**:
+  1. *Ảnh tham chiếu tổng quan* (`Screen Shot 2026-10-27 at 17.31.10.png`): "Đá to nhọn quá nhiều, không có 1 chủ đề cụ thể. Ở một map chỉ nên tối đa 2-3 loại đá phù hợp ngũ hành, kích thước hình dạng phải có quy tắc địa chất chứ không sắp xếp lộn xộn."
+  2. *Ảnh vách đá* (`Screen Shot 2026-10-27 at 18.34.52.png`): "Đá quá ít, không có đá to, có những viên nằm ở vách núi rất kì quái."
+  3. *Ảnh lòng suối* (`Screen Shot 2026-10-27 at 21.05.08.png`): "Đá ở suối, ven suối xếp rất lung tung không có bố cục. Hãy kết hợp thông số DEM/địa mạo với nghệ thuật sắp xếp đá thủy sinh và làm vườn/bonsai Nhật Bản."
+  4. *Ảnh kiểm chứng cụm đảo suối* (`Screen Shot 2026-10-27 at 21.55.54.png`): "Phân bố đá không có gì thay đổi nhiều? Các viên đá lớn vẫn đứng trơ trọi 1 mình, thiếu tự nhiên, đá trong suối, ven bờ suối cũng kì lạ."
+
+---
+
+### 15.2. Nguyên Nhân Kỹ Thuật (Root Cause Analysis)
+
+1. **Nguyên Nhân Đá Lớn Đứng Trơ Trọi Một Mình ("Lonely Boulders")**:
+   - Trong `generate_song_quao_rocks.py`, thuật toán sinh đá phụ (Fukuishi) và đá điểm (Soeishi) đặt khoảng cách cố định quá xa so với đá mẹ ($r_{mother} + 1.3\text{m} > 5.4\text{m}$).
+   - Trên các gò đồi và đảo nhỏ giữa suối (như dải đất rộng 6m tại $Z=90\text{m}$ trong ảnh phản hồi), bán kính $5.4\text{m}$ văng ra khỏi sống đất, rơi thẳng vào sườn dốc gắt ($> 25^\circ$) hoặc chìm dưới nước, khiến hàm `add_rock` âm thầm từ chối (reject).
+   - Đồng thời, hàm kiểm tra va chạm `is_free()` với hệ số $(r_1 + r_2) \times 0.70$ loại trừ các viên companion đứng quá sát chân đá mẹ.
+   - Kết quả: **8/13 khối đá granite lớn bị mất sạch companion**, đứng trơ trọi một mình giữa thảm cỏ như quả dưa trồi lên từ hư không.
+
+2. **Nguyên Nhân Đá Suối Bị Bẹt Như "Đĩa Bay" Dưới Nước & Lỗi Sọc Vằn Facet**:
+   - **Hình học bẹp dúm**: Trong `map_props_rocks.inl`, hàm `Nature_BuildProceduralRockMesh(MAP_ROCK_RIVER_STONE)` nén chiều cao $vy$ xuống chỉ còn $0.36 \times y$ ở đỉnh và $-0.20 \times y$ ở đáy, trong khi bán kính ngang lên tới $1.84$ (tỷ lệ dẹt $5.6 : 1$). Khi vào `MapProp_PopulateRockItems`, đá bị trừ tiếp `sinkOffset = 0.25f` và co thêm `0.85f`, khiến gần như toàn bộ khối đá chìm dưới đáy cát, chỉ còn trơ lại một mặt phẳng tròn dẹt nổi lập lờ dưới nước như nắp cống.
+   - **Lỗi sọc vằn đa giác (Facet Normal Striping)**: Trong `prop_lit.fs`, điều kiện phát hiện `isRiverStone` đặt ngưỡng xanh quá cao (`0.40`), khiến shader không nhận diện được đá cuội. Shader tiếp tục áp dụng hòa trộn pháp tuyến tam giác (`facetWeight = 0.28`), tạo ra các sọc góc cạnh phản chiếu kỳ dị trên mặt đá cuội nước.
+   - **Kích thước quá khổ**: Máy sinh meander đặt viên cuội $rScale = 1.8$ (đường kính $> 5.7\text{m}$) chắn ngang một lòng suối chỉ rộng $3\text{m}$.
+
+3. **Nguyên Nhân Đá Nằm Kỳ Quái Ở Vách Núi**:
+   - Mảng tọa độ tĩnh `kDistantCrags` trong `maps/worlds/song_quao/song_quao.c` chứa các điểm cố định cũ $(35, 280)$ và $(20, 160)$ nằm trên các vách dốc thẳng đứng rơi xuống biển mây, không qua kiểm tra địa mạo DEM.
+
+---
+
+### 15.3. Các Giải Pháp Triển Khai
+
+1. **Chuẩn Hóa Bộ Đá Ngũ Hành Song Quao (Granite + River Stone + Scree)**:
+   - Tinh gọn chỉ dùng đúng 3 chủng loại đá hài hòa tuyệt đối với hệ Thủy - Mộc - Thổ của Song Quao:
+     - `MAP_ROCK_GRANITE`: Đá hoa cương nguyên khối phong hóa bóc vỏ (đá to $2.8 - 3.4\text{m}$, đá trung $1.7 - 2.4\text{m}$, đá nhỏ $1.0 - 1.5\text{m}$).
+     - `MAP_ROCK_RIVER_STONE`: Đá cuội suối tròn mượt, căng đầy đặn ($0.3 - 1.1\text{m}$).
+     - `MAP_ROCK_SCREE`: Mảnh vụn hoa cương góc cạnh nhỏ ($0.45 - 0.70\text{m}$) chèn chân tảng.
+   - Xóa bỏ triệt để mảng `kDistantCrags` cứng trong `song_quao.c`, giải phóng 100% vách vực ngoài rìa khỏi đá lơ lửng.
+
+2. **Thuật Toán Xếp Đá Sanzon Ishigumi (三尊石組) Đảm Bảo Hoàn Chỉnh Tuyệt Đối**:
+   - Trong `generate_song_quao_rocks.py`:
+     - Khi chọn một gò đồi, thuật toán quét góc tròn $15^\circ$ ($0^\circ \to 345^\circ$) quanh Đá Mẹ (*Oyaishi*) ở cự ly tiếp xúc tự nhiên ($D \approx (R_{oya} + R_{comp}) \times 0.62 - 0.66$):
+       - **Oyaishi (親石)**: Định hình trục phương hướng chính.
+       - **Fukuishi (副石, 65% kích thước)**: Tựa vào sườn đá mẹ.
+       - **Soeishi (添石, 42% kích thước)**: Tạo thế tam giác lệch (Scalene Triangle $\Delta\theta \in [85^\circ, 150^\circ]$).
+       - **Suteishi (捨て石, 2-3 viên vụn)**: Cắm quanh viền chân đế tiếp giáp cỏ.
+     - **Ràng buộc cứng (Strict Guarantee)**: Nếu một vị trí đồi không thể tìm được chỗ tựa an toàn cho cả bộ 3 trên nền đất khô ráo thoai thoải, vị trí đó bị **LOẠI BỎ HOÀN TOÀN**. Tuyệt đối không bao giờ sinh ra đá mẹ đứng trơ trọi.
+
+3. **Cải Tạo Lưới Thủ Tục & Shader Đá Cuội Suối (3D Fluvial Cobble)**:
+   - **Tái tạo lưới 3D (`map_props_rocks.inl`)**:
+     - Chiều cao vòm $vy_{top} = 0.72$, đáy phẳng tiếp xúc đất cát $vy_{base} = -0.40$, mang tỷ lệ tự nhiên $\approx 1.6 : 1$ đẫy đà, tròn trịa.
+     - Giảm độ lún `sinkOffset` xuống $0.12 \times hScale$, gỡ bỏ hệ số co ngắn `0.85f`.
+     - Màu tint tự nhiên của khoáng thạch suối: `(Color){155, 168, 175, 255}`.
+   - **Shader Chiếu Sáng Chuyên Dụng (`prop_lit.fs`)**:
+     - Nhận diện tức thì `isRiverStone` qua `colDiffuse.b - colDiffuse.r > 0.04`.
+     - Triệt tiêu hoàn toàn pháp tuyến đa giác: `facetWeight = 0.0` (bề mặt cong trơn bóng $100\%$).
+     - Khử sạch rêu đất cạn bám bẩn (`topMossMask *= 0.05`, `skirtMask *= 0.10`).
+     - Tăng độ bóng ướt dưới ánh nắng: `roughness = 0.12`, `specStrength = 0.52`.
+
+4. **Bố Cục Đá Ven Suối & Trên Đảo Theo Nghệ Thuật Thủy Sinh Takashi Amano**:
+   - **Trục dòng chảy chính (Thalweg) thông thoáng $100\%$**: Lòng suối không còn bị chắn bởi các khối đá đĩa bay khổng lồ.
+   - **Cụm Bãi Cuội Bờ Lở & Bãi Bồi (Riparian Pods)**:
+     - Bờ lở (cut-bank) chịu lực xói mòn được gia cố bởi 1 viên đá mỏ neo ($R \approx 0.85\text{m}$, nửa cắm vào cỏ, nửa chìm dưới mép nước $0.02\text{m}$) cùng 1-2 viên cuội nhỏ đón dòng xuôi và 1 viên sỏi nhỏ ven mép nước.
+     - Bờ bồi (point-bar) đón dòng chảy êm ả với bãi sỏi cuội tròn nhẵn 2-3 viên lấp lánh ở mép nước nông.
+   - **Bộ Ba Đá Đảo Tách Dòng (Kojima Ishigumi 小島石組 tại Z=90m)**:
+     - Thiết kế riêng cho dải đảo giữa suối trong ảnh phản hồi: Đá Mẹ $R = 1.95\text{m}$, Đá Con $R = 1.25\text{m}$, Đá Điểm $R = 0.80\text{m}$ kèm 2 viên scree ôm khít gờ đất cao $Y=6.45\text{m}$, để lộ viền cỏ xanh mướt bao bọc xung quanh.
+     - Đặt viên đá rẽ nước (*Mizuwake-ishi* 水分石, $R = 0.95\text{m}$) ở mũi đảo thượng lưu chẻ dòng nước mềm mại.
+     - Bố trí các viên cuội nhỏ men theo bờ nước mép đảo thay cho các phiến dẹt bay lơ lửng.
+   - **Đá Bậc Băng Suối (Sawatari-ishi 沢渡り石 tại Z=150m)**:
+     - 5 viên đá cuội đỉnh phẳng xếp so le nhịp nhàng theo bước chân, nhô cao hơn mặt nước $12-16\text{cm}$ cho nhân vật bước qua suối.
+
+---
+
+### 15.4. Kết Quả Đo Đạc & Kiểm Thử
+- **Hình ảnh render thực tế**:
+  - `scratch/island_view1.png`: Chụp lại chính xác góc nhìn của người dùng tại đảo suối $Z=90\text{m}$. Khối đá đơn độc biến mất, thay bằng cụm tam thạch Kojima vững chãi, viên đá rẽ nước ở mũi đảo, hai nhánh suối nước chảy trong veo không còn đĩa bay ngập nước, cuội bờ suối tròn nhẵn, bóng bẩy dưới nắng vàng.
+  - `scratch/meadow_triad_view.png`: Cụm đá Sanzon Ishigumi trên đồi cỏ cao $Z=130\text{m}$ với khối đá mẹ, đá con tựa sườn và đá điểm kết liên chân tảng tự nhiên giữa thảm cỏ và hoa dại.
+- **Biên dịch & Test Suite**:
+  - Compile: `cmake --build build -j4` hoàn tất **0 warning, 0 error**.
+  - Tự động kiểm thử: `WUXING_AUTOTEST=1 ./build/wuxing` đạt **19/19 test suites PASSED (100%)**.
+
+---
+
+## 16. Session Summary: Hoàn Thiện Quy Trình Địa Chất & Triệt Tiêu Lỗi Thị Giác Hệ Thống Đá Song Quao (Rock Pipeline & Mesh/Shading Overhaul)
+
+### 16.1. Bối Cảnh & Yêu Cầu Từ Người Dùng
+1. **Thiết Kế Quy Trình Địa Chất Hoàn Chỉnh Từ DEM**:
+   - Yêu cầu xây dựng quy trình bắt đầu từ Height Map (DEM) và chủ đề đảo hoa cỏ hệ Mộc của `song_quao`.
+   - Tính toán các trường dẫn xuất địa mạo (TPI đa tỷ lệ 4m/16m/48m, Profile/Planform Curvatures, Stream Power Index $SPI$, Vector Ruggedness Measure $VRM$, Fall-line vector fields).
+   - Xác định thạch học chủ đạo (Granite Tor, River Stone, Scree talus) và bố trí 10 khối Đá Chủ (*Hero Boulders*) theo trường nứt kiến tạo $\theta_j = 32^\circ$ với khoảng cách Poisson disk $d \ge 22\text{m}$.
+   - Vận dụng ngữ pháp xếp đá Nhật Bản (*Sanzon Ishigumi*, *Takashi Amano*, *Sakuteiki*) bố trí đá phụ, đá điểm, đá rẽ nước (*Mizuwake-ishi*), bờ lở (*cut-bank*), bãi bồi (*point-bar*) và đá bậc băng suối (*Sawatari-ishi*).
+2. **Phản Hồi Các Lỗi Thị Giác Sau Lần Triển Khai Ban Đầu**:
+   - `Screen Shot 2026-10-28 at 10.37.11.png`: Tảng đá granite có phần chân bè phẳng ra như sáp nến chảy tràn trên nền đất và nước (*pancake skirt*); bề mặt xuất hiện các mặt tam giác gấp khúc kiểu origami (*facet striping*); xung quanh đá bị dọn sạch cỏ tạo thành một quầng đất trọc vàng vọt khổng lồ.
+   - `Screen Shot 2026-10-28 at 10.37.32.png`: Đá suối trông như các đĩa bay xoay tiện đồng tâm, bề mặt phản chiếu lóa mắt như gương kim loại, bị ngập chìm dưới mặt nước.
+   - `Screen Shot 2026-10-28 at 10.36.56.png`: Đá trên đảo suối ở $Z=90\text{m}$ quá lớn và bị loe viền.
+
+---
+
+### 16.2. Nguyên Nhân Kỹ Thuật (Root Cause Analysis)
+
+1. **Nguyên Nhân Chân Váy Sáp Chảy (Pancake Skirt Fin)**:
+   - Trong `maps/toolkit/map_props_rocks.inl`, hàm `Nature_BuildProceduralRockMesh` có đoạn mã xử lý chân đế âm $Y$ (`if (vy < -0.06f)`), nhân tọa độ ngang với $(1.0 + \text{skirt} \times 0.55)$, tạo ra một đường viền phẳng mỏng loe rộng ra xung quanh mặt đất và mặt nước.
+2. **Nguyên Nhân Mặt Tam Giác Gấp Khúc Kiểu Origami**:
+   - Thuật toán gán UV per-vertex bằng các nhánh điều kiện phẳng (`if (ay >= ax && ay >= az)`). Trên một lưới có chỉ mục (indexed mesh), các đỉnh thuộc cùng một tam giác nằm ở hai phía nhánh điều kiện nhận các công thức chiếu UV hoàn toàn khác nhau, làm vector tiếp tuyến $T$ bị nhảy loạn xạ.
+   - Vòng lặp tính tiếp tuyến ghi đè giá trị `=` thay vì tích lũy `+=`, đồng thời bỏ qua việc trung bình hóa tiếp tuyến và pháp tuyến dọc theo đường may seam $0 / 2\pi$ của mặt cầu.
+   - Trong `prop_lit.fs`, shader từng trộn $28\%$ pháp tuyến mặt phẳng hình học (`cross(dPdx, dPdy)`), khiến từng tam giác bị đổ bóng phẳng (flat shading).
+3. **Nguyên Nhân Vòng Tròn Đất Trọc / Quầng Vàng Quanh Đá**:
+   - Hàm `MapProp_EvaluateRockSuppression` sử dụng bán kính triệt tiêu $1.35r$, xóa sạch thực vật trong phạm vi rộng hơn nhiều so với thể tích thực của đá, tạo thành một quầng tròn trơ trọi bán kính tới $8\text{m}$.
+4. **Nguyên Nhân Đá Cuội Ngập Nước & Chói Gương**:
+   - Khi nạp dữ liệu trong `MapProp_PopulateRockItems`, cao độ $Y$ được lấy từ đáy sông và trừ thêm `sinkOffset = 0.05m`. Với độ sâu nước $0.35 - 0.40\text{m}$, đỉnh đá cuội nằm sâu dưới mặt nước từ $9 - 15\text{cm}$.
+   - Độ nhám roughness đặt quá thấp ($0.12$) cùng cường độ specular quá cao ($0.52$) biến bề mặt đá cuội thành gương cầu phản chiếu ánh mặt trời như đĩa bay kim loại.
+
+---
+
+### 16.3. Các Giải Pháp Đã Triển Khai
+
+1. **Xây Dựng Toàn Bộ Pipeline 6 Giai Đoạn Tự Động (`maps/pipeline/rocks/`)**:
+   - `themes/song_quao.json`: Hồ sơ Mộc hệ, quy định thạch học granite/river stone/scree, trường nứt $32^\circ$, 65% negative space.
+   - `terrain_fields.py`: Tính toán trường vi phân địa hình từ DEM bằng NumPy.
+   - `geology.py`: Phân vùng sườn dốc Ruhe/Pennock, độ dày tầng phong hóa, xác suất lộ thiên $P_{\text{out}}$.
+   - `hero_placement.py`: Bố trí 10 Đá Chủ dọc các sống địa hình cao và vách đá.
+   - `ishigumi.py`: Triển khai các cụm Sanzon Triad, Kojima Ishigumi tại $Z=90\text{m}$, Sawatari-ishi tại $Z=150\text{m}$, cut-bank và point-bar pods dọc các khúc quanh sông meander.
+   - `gravel_fields.py`: Sinh mặt nạ `song_quao_rock_mask.png` và xuất header `song_quao_rock_data.h` (122 thực thể đá).
+   - `generate_rocks.py`: Master CLI runner cho pipeline.
+2. **Triệt Tiêu Chân Váy Sáp & Bo Tròn Đáy Tự Nhiên (`map_props_rocks.inl`)**:
+   - Gỡ bỏ hoàn toàn nhánh nhân loe chân váy.
+   - Bổ sung thuật toán thu nhỏ đáy (`if (vy < -0.20f) vx *= (1.0f - tuck * 0.12f)`), giúp đáy đá thu gọn và cắm ngập vào lòng đất một cách tự nhiên.
+3. **Tái Thiết Lập UV Cầu Liên Tục, Pháp Tuyến & Tiếp Tuyến Trực Giao Hóa**:
+   - Nâng độ phân giải lưới: River Stone lên 32 rings $\times$ 48 slices, Granite lên 28 rings $\times$ 40 slices.
+   - Giữ nguyên UV cầu gốc liên tục có đường may seam của raylib (`origTexcoords`), loại bỏ 100% hiện tượng xé UV giữa các tam giác.
+   - Tích lũy pháp tuyến tam giác theo diện tích bề mặt (không chuẩn hóa trước khi cộng dồn).
+   - Đồng bộ pháp tuyến và tiếp tuyến tại các cặp đỉnh nằm trên đường may seam $j=0$ và $j=\text{slices}$.
+   - Trực giao hóa Gram-Schmidt cho tiếp tuyến: $T = \text{normalize}(T - N(N \cdot T))$ và gán $T.w = 1.0$.
+4. **Thu Hẹp Bán Kính Triệt Tiêu Thực Vật (`map_props_rocks.inl`)**:
+   - Cập nhật `MapProp_EvaluateRockSuppression`: giảm `maxR` từ $1.35r$ xuống $0.90r$, `coreR` từ $0.90r$ xuống $0.65r$. Thảm cỏ và hoa dại mọc ôm sát mép đá, xóa sổ hoàn toàn quầng đất trọc.
+5. **Thích Ứng Cao Độ Mặt Nước Tự Động Cho Đá Lòng Suối (`map_props_rocks.inl`)**:
+   - Trong `MapProp_PopulateRockItems`, khi phát hiện đá `MAP_ROCK_RIVER_STONE` đặt trong vùng nước (`waterDepth > 0.04f` qua `MapManager_GetWaterInfoAt`):
+     - Tính chiều cao cần thiết để đỉnh đá nhô lên khỏi mặt nước từ $10 - 15\text{cm}$ (`targetTopY = waterSurfaceY + emergeOffset`).
+     - Tự động điều chỉnh `heightScale` và gốc tọa độ `pos.y` sao cho đáy đá cắm sâu $\ge 12\text{cm}$ vào đáy suối, đỉnh phẳng nổi rõ trên mặt nước.
+     - Đồng bộ tỷ lệ bán kính `radiusScale` để giữ dáng vẻ vững chãi, cân đối của đá bước chân.
+6. **Hiệu Chỉnh PBR Shading & Texture (`generate_rock_textures.py` & `prop_lit.fs`)**:
+   - Granite: diffuse màu ấm phong hóa tự nhiên ($RGB \approx 130 - 150$, linear albedo $\approx 0.26$), normal micro-grain 3.4.
+   - River Stone: khoáng thạch nước ngọt ($RGB \approx 95 - 110$), normal mài mòn nước 1.8, roughness $0.44$, specular strength $0.15$ (độ bóng ẩm mịn màng mờ mượt, không phản chiếu gương lóa).
+
+---
+
+### 16.4. Kết Quả Kiểm Thử & Nghiệm Thu
+- **Hình ảnh render thực tế**:
+  - `verify_island_close2.png`: Tảng đá granite trên đảo suối $Z=90\text{m}$ có hình khối đa diện phong hóa tự nhiên, thảm cỏ xanh mướt mọc ôm sát chân tảng, không còn bất kỳ chân váy sáp hay quầng đất trọc nào.
+  - `verify_stepping3.png`: Dãy đá bậc Sawatari-ishi tại $Z=150\text{m}$ nổi rõ trên mặt suối với đỉnh khô ráo phẳng phiu, mặt nước chảy quanh chân đá, chất liệu đá cuội tròn đầy, bóng ẩm thanh khiết.
+- **Biên dịch & Test Suite**:
+  - CMake compile: **0 warning, 0 error**.
+  - `WUXING_AUTOTEST=1 ./build/wuxing`: **19/19 test cases PASSED (100%)**.
+- **Tài liệu bàn giao**: Hoàn tất và được người dùng phê duyệt 3 artifacts:
+  - `rock_pipeline_plan.md`: Kế hoạch kiến trúc 6 giai đoạn.
+  - `rock_pipeline_report.md`: Báo cáo chi tiết pipeline và các tham số địa mạo.
+  - `rock_pipeline_final_verification.md`: Báo cáo nghiệm thu kỹ thuật và phân tích hình ảnh trực quan.
+

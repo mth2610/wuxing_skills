@@ -27,7 +27,7 @@
 // Broad valley meadow coverage across the celestial island plateau and rolling hills
 #define GRASS_TUFT_CAPACITY 98000
 #define FLOWER_COUNT SONG_QUAO_TOTAL_FLOWERS
-#define REED_COUNT 340
+#define REED_COUNT 800
 #define PAMPAS_COUNT 420
 
 // Safe elevation floor above the sheer outer cliff abyss (-CLIFF_DEPTH)
@@ -85,12 +85,14 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float heightFade = MapMath_SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y, pos.y);
     float slopeFade = MapMath_SmoothStep01(0.38f, 0.56f, normal.y);
 
-    // Smooth shoreline transition right up to the water's edge
+    // Smooth, organic shoreline transition with micro-meander noise
     float surfaceY = MapDem_SampleWaterHeight(&s_dem, x, z);
     float waterClearance = pos.y - surfaceY;
-    if (waterClearance < 0.02f)
+    float shoreMeander = sinf(x * 1.6f + z * 1.2f) * 0.035f + cosf(x * 3.2f - z * 2.6f) * 0.018f;
+    float minClearance = 0.015f + shoreMeander;
+    if (waterClearance < minClearance)
         return 0.0f;
-    float shoreFade = MapMath_SmoothStep01(0.02f, 0.24f, waterClearance);
+    float shoreFade = MapMath_SmoothStep01(minClearance, 0.20f + shoreMeander, waterClearance);
 
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
     // Gate rockScree by actual geometric slope (1.0 - normal.y), matching ground_splat.fs wCliff
@@ -111,7 +113,10 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float flowerSuppression = MapFlora_EvaluateFlowerSuppression(
         x, z, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT);
 
-    return fmaxf(0.0f, fminf(1.0f, macro * heightFade * slopeFade * shoreFade * rockFade * flowerSuppression));
+    float rockSuppression = MapProp_EvaluateRockSuppression(
+        x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
+
+    return fmaxf(0.0f, fminf(1.0f, macro * heightFade * slopeFade * shoreFade * rockFade * flowerSuppression * rockSuppression));
 }
 
 static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
@@ -119,8 +124,8 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     (void)userData;
     float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, cx, cz);
     float waterClearance = gy - MapDem_SampleWaterHeight(&s_dem, cx, cz);
-    // Gentle shoreline & cliff height taper so peripheral tufts hug the earth
-    float shoreTaper = 0.54f + 0.46f * MapMath_SmoothStep01(0.0f, 0.45f, waterClearance);
+    // Graceful shoreline taper: peripheral tufts bow down to ~28% height near water shingle
+    float shoreTaper = 0.28f + 0.72f * MapMath_SmoothStep01(0.01f, 0.45f, waterClearance);
     float cliffTaper = 0.58f + 0.42f * MapMath_SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y + 0.40f, gy);
     return shoreTaper * cliffTaper;
 }
@@ -143,6 +148,8 @@ static bool SongQuaoIsFlowerExcluded(float x, float z, void *ctx)
         return true;
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
     if (splat.g > 205)
+        return true;
+    if (MapProp_EvaluateRockSuppression(x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT) < 0.65f)
         return true;
     return false;
 }
@@ -174,6 +181,11 @@ static void BuildFloraPlacements(void)
         (MapFloraReedConfig){
             .span = {spanX, spanZ},
             .dem = &s_dem,
+            .minWaterClearance = 0.01f,
+            .maxWaterClearance = 0.16f,
+            .minWetSplatAlpha = 140,
+            .maxWetClearance = 0.20f,
+            .minClusterDistance = 0.42f,
             .seed = 0x9371a5u,
         });
 

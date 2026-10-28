@@ -1,0 +1,28 @@
+{
+  "name": "song_quao",
+  "element": "moc",
+  "biome": "temperate_flower_meadow",
+  "description": "Lush celestial island meadow (Mộc) with weathered granitic pluton tors, crystal river cobbles, and moss-grounded talus scree.",
+  "lithology_suite": [
+    "granite_weathered",
+    "river_cobble_mixed",
+    "granite_scree"
+  ],
+  "rock_coverage_target": 0.016,
+  "hero_count_range": [7, 10],
+  "joint_strike_deg": 32.0,
+  "joint_sets": 2,
+  "weathering": "high",
+  "palette": {
+    "granite_tint": [148, 142, 134, 255],
+    "river_stone_tint": [118, 132, 138, 255],
+    "scree_tint": [136, 130, 122, 255],
+    "moss_coverage": 0.60,
+    "lichen_coverage": 0.30,
+    "skirt_soil_blend": 0.55
+  },
+  "negative_space": 0.65,
+  "gameplay_center": [94.10, 150.0],
+  "gameplay_clear_radius_m": 14.0,
+  "bounds_safe_margin_m": 12.0
+}

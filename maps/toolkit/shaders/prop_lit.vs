@@ -28,14 +28,15 @@ void main() {
     fragTexCoord = vertexTexCoord;
     fragLocalY   = vertexPosition.y;
 
-    mat3 normalMat = mat3(matModel);
+    mat3 model3 = mat3(matModel);
+    mat3 normalMat = transpose(inverse(model3));
     vec3 rawN = normalMat * vertexNormal;
     float nLenSq = dot(rawN, rawN);
     fragNormal = (nLenSq > 1e-8) ? (rawN * inversesqrt(nLenSq)) : vec3(0.0, 1.0, 0.0);
 
     // [BUG FIX]: Bảo vệ chống lỗi normalize(vec3(0.0)) -> NaN nếu mesh quên gọi GenMeshTangents()
     // hoặc khi vertexTangent song song với vertexNormal
-    vec3 rawT = normalMat * vertexTangent.xyz;
+    vec3 rawT = model3 * vertexTangent.xyz;
     rawT -= fragNormal * dot(fragNormal, rawT);
     float tLenSq = dot(rawT, rawT);
     if (tLenSq > 1e-8) {

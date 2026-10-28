@@ -93,26 +93,26 @@ def generate_textures(out_dir, size=512):
     os.makedirs(out_dir, exist_ok=True)
     
     # 1. GRANITE (Coarse crystalline matrix with pink feldspar, smoky quartz, black biotite mica)
-    n1 = make_tileable_noise(size, 5, seed=101)
+    n1 = make_tileable_noise(size, 4, seed=101)
     n2 = make_tileable_noise(size, 6, seed=102)
     n_grain = make_tileable_noise(size, 7, seed=103)
     
     # Crystals
-    feldspar = np.clip(n1 * 1.5 - 0.2, 0, 1) # pinkish grains
-    mica = np.clip(n2 * 2.5 - 1.2, 0, 1)     # dark mica specks
+    feldspar = np.clip(n1 * 1.4 - 0.2, 0, 1) # muted feldspar grains
+    mica = np.clip(n2 * 2.2 - 1.0, 0, 1)     # dark mica specks
     quartz = 1.0 - np.maximum(feldspar, mica) # quartz groundmass
     
-    # Base pinkish-gray granite albedo
-    r_granite = 175 * quartz + 215 * feldspar + 45 * mica + n_grain * 15
-    g_granite = 168 * quartz + 170 * feldspar + 48 * mica + n_grain * 15
-    b_granite = 160 * quartz + 155 * feldspar + 55 * mica + n_grain * 15
+    # Calibrated weathered granite albedo (natural linear reflectance ~0.26)
+    r_granite = 135 * quartz + 152 * feldspar + 38 * mica + n_grain * 10
+    g_granite = 130 * quartz + 138 * feldspar + 40 * mica + n_grain * 10
+    b_granite = 124 * quartz + 126 * feldspar + 42 * mica + n_grain * 10
     diff_granite = np.clip(np.stack([r_granite, g_granite, b_granite], axis=-1), 0, 255).astype(np.uint8)
     
-    h_granite = n1 * 0.4 + n2 * 0.3 + n_grain * 0.3
-    norm_granite = height_to_normal(h_granite, strength=5.5)
+    h_granite = n1 * 0.45 + n2 * 0.25 + n_grain * 0.15
+    norm_granite = height_to_normal(h_granite, strength=3.4)
     
     # Quartz has lower roughness (~0.45), feldspar medium (~0.75), mica high cleavage (~0.85)
-    rough_granite = np.clip((0.72 + 0.15 * n1 - 0.25 * quartz + 0.10 * mica) * 255, 0, 255).astype(np.uint8)
+    rough_granite = np.clip((0.74 + 0.12 * n1 - 0.18 * quartz + 0.10 * mica) * 255, 0, 255).astype(np.uint8)
     rough_granite_rgb = np.stack([rough_granite, rough_granite, rough_granite], axis=-1)
     
     write_png(os.path.join(out_dir, "granite_diffuse.png"), diff_granite)
@@ -217,21 +217,24 @@ def generate_textures(out_dir, size=512):
     write_png(os.path.join(out_dir, "slate_normal.png"), norm_slate)
     write_png(os.path.join(out_dir, "slate_roughness.png"), rough_slate_rgb)
     
-    # 7. RIVER STONE (Smooth water-tumbled alluvial stone with subtle algae/wet sheen)
+    # 7. RIVER STONE (Natural water-worn granite & quartzite cobble with warm mineral tones)
     nr1 = make_tileable_noise(size, 3, seed=701)
-    nr2 = make_tileable_noise(size, 5, seed=702)
-    moss_vein = np.clip(nr2 * 1.8 - 0.6, 0, 1)
+    nr2 = make_tileable_noise(size, 6, seed=702)
+    nr3 = make_tileable_noise(size, 10, seed=703)
+    quartz_vein = np.clip(np.sin(nr2 * 6.0 + nr1 * 2.5) * 2.0 - 1.2, 0, 1)
     
-    base_r = 160 + 20 * nr1
-    r_river = base_r * 0.96 - moss_vein * 24
-    g_river = base_r * 1.02 + moss_vein * 18
-    b_river = base_r * 0.98 - moss_vein * 30
+    # Warm weathered granite/quartzite mineral body (145-185 luminance)
+    base_r = 152 + 28 * nr1 + 10 * nr3
+    r_river = base_r * 1.04 + quartz_vein * 35
+    g_river = base_r * 0.98 + quartz_vein * 32
+    b_river = base_r * 0.92 + quartz_vein * 28
     diff_river = np.clip(np.stack([r_river, g_river, b_river], axis=-1), 0, 255).astype(np.uint8)
     
-    h_river = nr1 * 0.40 + nr2 * 0.20
-    norm_river = height_to_normal(h_river, strength=2.5) # smooth water-worn surface
+    h_river = nr1 * 0.20 + quartz_vein * 0.15 + nr3 * 0.08
+    norm_river = height_to_normal(h_river, strength=1.2) # smooth, silky water-tumbled surface
     
-    rough_river = np.clip((0.36 + 0.18 * nr1) * 255, 0, 255).astype(np.uint8)
+    # Natural velvety river-stone roughness (~0.52 - 0.62)
+    rough_river = np.clip((0.52 + 0.10 * nr1 - quartz_vein * 0.08) * 255, 0, 255).astype(np.uint8)
     rough_river_rgb = np.stack([rough_river, rough_river, rough_river], axis=-1)
     
     write_png(os.path.join(out_dir, "river_stone_diffuse.png"), diff_river)

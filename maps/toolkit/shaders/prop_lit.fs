@@ -72,18 +72,7 @@ void main() {
 
     vec3 worldPosition = vec3(u_cloudWorldFromShader * vec4(fragPosition, 1.0));
     vec3 smoothN = fragNormal * inversesqrt(max(dot(fragNormal, fragNormal), 1e-8));
-    // Blend subtle geometric triangle facet normal for land rocks (granite, sandstone, crags).
-    // For water-worn river stones (colDiffuse.b > colDiffuse.r), preserve 100% smooth curved normals.
-    float isRiverStone = smoothstep(0.01, 0.05, colDiffuse.b - colDiffuse.r);
-    float facetWeight = mix(0.28, 0.0, isRiverStone);
-    vec3 facetN = cross(dPdx, dPdy);
-    float facetLenSq = dot(facetN, facetN);
-    if (facetLenSq > 1e-10 && facetWeight > 0.001) {
-        facetN *= inversesqrt(facetLenSq);
-        if (dot(facetN, smoothN) < 0.0) facetN = -facetN;
-        vec3 mixedSmooth = mix(smoothN, facetN, facetWeight);
-        smoothN = mixedSmooth * inversesqrt(max(dot(mixedSmooth, mixedSmooth), 1e-8));
-    }
+    float isRiverStone = (colDiffuse.a < 0.985) ? 1.0 : smoothstep(0.01, 0.05, colDiffuse.b - colDiffuse.r);
 
     // [BUG FIX]: Bảo vệ chống suy biến vector tiếp tuyến T (NaN) khi smoothN trùng phương với fragTangent
     // hoặc khi mesh procedural quên gọi GenMeshTangents()
@@ -121,25 +110,25 @@ void main() {
     float strataNoise = sin(worldPosition.y * 3.8 + worldPosition.x * 0.45 - worldPosition.z * 0.35) * 0.5 + 0.5;
     vec3 rockAlbedo = albedo.rgb * mix(vec3(0.92, 0.92, 0.90), vec3(1.05, 1.02, 0.98), strataNoise);
 
-    // Top-surface moss & lichen colonization: restricted to low-altitude meadow zones (y < 6.0m)
-    // and upward-facing shelves of light mineral rocks (never on dark basalt or glassy obsidian)
-    float altitudeMoss = smoothstep(6.5, 1.5, worldPosition.y);
-    float topMossMask = smoothstep(0.62, 0.88, worldNormal.y) * smoothstep(0.12, 0.45, fragLocalY)
-                      * smoothstep(0.38, 0.72, albedo.g) * altitudeMoss;
+    // Top-surface moss & lichen colonization across meadow plateau
+    // Fades smoothly at extreme alpine heights (y > 11m)
+    float altitudeMoss = (1.0 - smoothstep(9.5, 13.5, worldPosition.y)) * 0.40 + 0.60;
+    float topMossMask = smoothstep(0.55, 0.82, worldNormal.y) * smoothstep(-0.15, 0.40, fragLocalY)
+                      * smoothstep(0.32, 0.75, albedo.g) * altitudeMoss;
     topMossMask *= (1.0 - isRiverStone * 0.95);
-    vec3 crownMossAlbedo = mix(vec3(0.14, 0.24, 0.08), vec3(0.25, 0.36, 0.12), albedo.r);
-    vec3 lichenTone = vec3(0.55, 0.44, 0.16);
-    crownMossAlbedo = mix(crownMossAlbedo, lichenTone, smoothstep(0.48, 0.88, albedo.r));
+    vec3 crownMossAlbedo = mix(vec3(0.12, 0.22, 0.07), vec3(0.22, 0.34, 0.10), albedo.r);
+    vec3 lichenTone = vec3(0.48, 0.42, 0.18);
+    crownMossAlbedo = mix(crownMossAlbedo, lichenTone, smoothstep(0.45, 0.85, albedo.r));
     rockAlbedo = mix(rockAlbedo, crownMossAlbedo, topMossMask * 0.75);
 
     // Lower skirt earthy moss & turf grounding blend
-    float skirtMask = (1.0 - smoothstep(-0.35, 0.15, fragLocalY));
+    float skirtMask = (1.0 - smoothstep(-0.45, 0.12, fragLocalY));
     skirtMask *= (1.0 - isRiverStone * 0.90);
-    vec3 skirtMossAlbedo = vec3(0.15, 0.22, 0.09);
+    vec3 skirtMossAlbedo = vec3(0.14, 0.20, 0.08);
     rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.72);
 
     // Deep soil capillary moisture & contact ambient occlusion at base
-    float skirtContact = (1.0 - smoothstep(-0.45, -0.05, fragLocalY)) * (1.0 - isRiverStone * 0.50);
+    float skirtContact = (1.0 - smoothstep(-0.50, -0.05, fragLocalY)) * (1.0 - isRiverStone * 0.50);
     rockAlbedo *= mix(1.0, 0.62, skirtContact * 0.55);
 
     // River stone & shoreline wetness darkening at water level
@@ -147,19 +136,20 @@ void main() {
     // thành (1.0 - smoothstep(-0.05, 0.35, worldPosition.y))
     float waterDamp = (1.0 - smoothstep(-0.05, 0.35, worldPosition.y))
                     * (1.0 - smoothstep(-0.85, -0.30, worldPosition.y));
-    rockAlbedo *= mix(1.0, 0.65, waterDamp * 0.85);
+    rockAlbedo *= mix(1.0, 0.88, waterDamp * 0.35);
 
     albedo.rgb = rockAlbedo;
     roughness = mix(roughness, 0.86, max(topMossMask, skirtMask) * 0.78);
-    roughness = mix(roughness, 0.12, max(waterDamp, isRiverStone * 0.92) * 0.85);
+    // River stones have natural matte velvety freshwater wetness (roughness ~0.52, NOT mirror glass)
+    roughness = mix(roughness, 0.52, max(waterDamp * 0.50, isRiverStone * 0.65));
 
     // Preserve lateral facet contrast even when the sun is near zenith (12:00 Noon)
     vec3 rawModelL = lightDir + vec3(0.32, -0.18, -0.26) * max(worldLightDir.y - 0.50, 0.0);
     vec3 modelLightDir = rawModelL * inversesqrt(max(dot(rawModelL, rawModelL), 1e-8));
     float diff = calcDiffuse(normal, modelLightDir, 0.0);
-    float shininess    = mix(72.0, 10.0, roughness);
-    float specStrength = mix(0.02, 0.20, 1.0 - roughness);
-    specStrength = mix(specStrength, 0.52, max(waterDamp, isRiverStone * 0.92) * 0.85);
+    float shininess    = mix(24.0, 8.0, roughness);
+    float specStrength = mix(0.03, 0.10, 1.0 - roughness);
+    specStrength = mix(specStrength, 0.08, max(waterDamp * 0.40, isRiverStone * 0.50));
     float spec = calcSpecular(normal, modelLightDir, viewDir, shininess) * specStrength;
 
     float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
@@ -169,7 +159,9 @@ void main() {
 
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient);
     float groundAO = clamp(0.76 + worldPosition.y * 0.30, 0.72, 1.0);
-    float skirtAO  = clamp(0.30 + 0.70 * smoothstep(-0.45, 0.18, fragLocalY), 0.28, 1.0);
+    float skirtAO = (isRiverStone > 0.5)
+        ? clamp(0.72 + 0.28 * smoothstep(-0.65, -0.15, fragLocalY), 0.70, 1.0)
+        : clamp(0.30 + 0.70 * smoothstep(-0.45, 0.18, fragLocalY), 0.28, 1.0);
     vec3 lit = albedo.rgb * (ambient * groundAO * skirtAO + diff * actualLight * shadow)
              + spec * actualLight * shadow;
 

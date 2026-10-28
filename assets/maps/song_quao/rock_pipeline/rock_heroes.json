@@ -1,0 +1,112 @@
+[
+  {
+    "id": "hero_summit",
+    "x": 120.73831329787232,
+    "z": 19.8,
+    "y": 12.948317527770996,
+    "radius": 3.6,
+    "height": 2.85,
+    "rot_deg": 38.0,
+    "role": "oyaishi_summit",
+    "archetype": 3
+  },
+  {
+    "id": "hero_01",
+    "x": 111.12688244680851,
+    "z": 65.0,
+    "y": 9.170428276062012,
+    "radius": 3.25,
+    "height": 2.44,
+    "rot_deg": 43.6,
+    "role": "oyaishi_meadow",
+    "archetype": 3
+  },
+  {
+    "id": "hero_02",
+    "x": 112.12802553191489,
+    "z": 98.0,
+    "y": 7.4664225578308105,
+    "radius": 3.25,
+    "height": 2.67,
+    "rot_deg": 50.1,
+    "role": "oyaishi_meadow",
+    "archetype": 3
+  },
+  {
+    "id": "hero_03",
+    "x": 129.1474579787234,
+    "z": 206.0,
+    "y": 2.456946611404419,
+    "radius": 3.23,
+    "height": 2.59,
+    "rot_deg": 34.6,
+    "role": "oyaishi_meadow",
+    "archetype": 3
+  },
+  {
+    "id": "hero_04",
+    "x": 67.07658670212766,
+    "z": 224.0,
+    "y": 4.210025310516357,
+    "radius": 3.23,
+    "height": 2.26,
+    "rot_deg": 45.4,
+    "role": "oyaishi_meadow",
+    "archetype": 3
+  },
+  {
+    "id": "hero_05",
+    "x": 32.036578723404254,
+    "z": 273.0,
+    "y": 5.064408302307129,
+    "radius": 3.24,
+    "height": 2.04,
+    "rot_deg": 46.7,
+    "role": "oyaishi_meadow",
+    "archetype": 3
+  },
+  {
+    "id": "hero_06",
+    "x": 57.06515585106383,
+    "z": 199.0,
+    "y": 3.1311511993408203,
+    "radius": 3.24,
+    "height": 2.23,
+    "rot_deg": 40.0,
+    "role": "oyaishi_meadow",
+    "archetype": 3
+  },
+  {
+    "id": "hero_07",
+    "x": 107.12231010638297,
+    "z": 122.0,
+    "y": 5.399862766265869,
+    "radius": 3.24,
+    "height": 2.69,
+    "rot_deg": 45.4,
+    "role": "oyaishi_meadow",
+    "archetype": 3
+  },
+  {
+    "id": "hero_08",
+    "x": 141.161175,
+    "z": 175.0,
+    "y": 2.6722819805145264,
+    "radius": 3.23,
+    "height": 2.42,
+    "rot_deg": 33.4,
+    "role": "oyaishi_meadow",
+    "archetype": 3
+  },
+  {
+    "id": "hero_09",
+    "x": 47.053725,
+    "z": 255.0,
+    "y": 4.490913391113281,
+    "radius": 3.24,
+    "height": 2.66,
+    "rot_deg": 33.5,
+    "role": "oyaishi_meadow",
+    "archetype": 3
+  }
+]
