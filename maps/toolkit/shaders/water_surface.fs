@@ -409,8 +409,9 @@ void main()
     // Smooth analytical shoreline edge feathering (clean, antialiased contact lip)
     float shoreEdgeFade = radialEdgeFade;
     if (u_waterShape == 3) {
-        // Crisp antialiased shoreline contact feathering within 2.5cm of depth (eliminates mesh facet arcs)
-        shoreEdgeFade = smoothstep(0.0015, 0.025, waterDepth);
+        // Soft organic shoreline feathering (eliminates discrete DEM triangle facet edges)
+        float shoreJitter = (sin(fragWorldXZ.x * 6.5 + fragWorldXZ.y * 5.2) * 0.5 + 0.5) * 0.015;
+        shoreEdgeFade = smoothstep(0.002, 0.075 + shoreJitter, waterDepth);
     } else if (u_waterShape != 0) {
         shoreEdgeFade = smoothstep(0.002, 0.035, waterDepth);
     }

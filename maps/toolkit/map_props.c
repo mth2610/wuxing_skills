@@ -5,7 +5,7 @@
 #include "maps/toolkit/map_shadow.h"
 #include "environment/environment_system.h"
 #include "environment/env_shadow.h"
-#include "core/vfx_light.h"   // Đợt E / E2 — VFXLight_BindToShader on the ground
+#include "core/vfx_light.h"             // Đợt E / E2 — VFXLight_BindToShader on the ground
 #include "post_process/scene_targets.h" // Depth buffer for soft particles & shallow water
 #include "core/gfx_quality.h"
 #include "post_process/camera_context.h"
@@ -17,7 +17,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
-#include <stdlib.h>   // getenv (WUXING_GROUND_LOOKUP_VERIFY)
+#include <stdlib.h> // getenv (WUXING_GROUND_LOOKUP_VERIFY)
 
 // Split into one .inl per prop kind (ground/strip/rocks) — each grew its own
 // shader + statics and stopped reading well as one flat file. #include'd
@@ -26,12 +26,7 @@
 // pieces. Add a new prop kind by adding a new map_props_<kind>.inl + #include
 // here + declaring it in map_props.h.
 
-// raylib's GenMeshPlane UVs span a flat 0..1 across the whole plane; scale
-// them so the texture repeats every `tileSize` meters instead of stretching
-// once across the mesh. Shared helper, currently unused by ground/strip
-// (both keep raw 0..1 UV for their own reasons — see their .inl files) but
-// kept for future prop kinds (bush/flower patch) that want simple tiling.
-static void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength, float tileSize)
+static inline void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength, float tileSize)
 {
     float repeatU = worldWidth / tileSize;
     float repeatV = worldLength / tileSize;
@@ -42,15 +37,37 @@ static void TilePlaneUVs(Mesh *mesh, float worldWidth, float worldLength, float 
     }
 }
 
-static unsigned int Nature_NextRandom(unsigned int *state)
+static inline unsigned int Nature_NextRandom(unsigned int *state)
 {
     *state = *state * 1664525u + 1013904223u;
     return *state;
 }
 
-static float Nature_Random01(unsigned int *state)
+static inline float Nature_Random01(unsigned int *state)
 {
     return (float)(Nature_NextRandom(state) & 0x00ffffffu) / 16777215.0f;
+}
+
+// Băm số nguyên cực nhanh phục vụ chọn loài hoa, góc xoay và tỉa mật độ LOD ở cự ly xa
+static inline unsigned int Nature_HashU32(unsigned int x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+static inline float Nature_Hash01(unsigned int x)
+{
+    return (float)(Nature_HashU32(x) & 0x00ffffffu) * (1.0f / 16777215.0f);
+}
+
+static inline void Nature_FastSinCos(float angleRad, float *outSin, float *outCos)
+{
+    *outSin = sinf(angleRad);
+    *outCos = cosf(angleRad);
 }
 
 #include "maps/toolkit/map_props_texture.inl"
@@ -68,5 +85,3 @@ static float Nature_Random01(unsigned int *state)
 #include "maps/toolkit/map_props_debris.inl"
 #include "maps/toolkit/map_props_fluff.inl"
 #include "maps/toolkit/map_props_dem.inl"
-
-

@@ -388,29 +388,34 @@ void InitSongQuaoMap(void)
         &s_ground, kMapCenter, 14.0f);
 
     BuildFloraPlacements();
+
+    // [TỐI ƯU FLORA 60+ FPS]:
+    // - Dùng 5 nhánh cỏ/bụi x 3 đoạn uốn cong với bản lá rộng 0.124f giúp giữ nguyên độ dày
+    //   của thảm cỏ 98.000 bụi nhưng giảm ~37% đỉnh/tam giác ở tầng cận cảnh (triệt tiêu Quad Overdraw).
+    // - Phân bổ khoảng cách 3 tầng LOD (11.5m / 22.0m / 86.0m) mượt mà và kích hoạt cỏ lau sườn đồi.
     s_flora = MapProp_CreateFloraSystem(
         s_grassPlacements, s_grassCount,
         s_reedPlacements, s_reedCount,
         s_flowerPlacements, SONG_QUAO_FLOWER_CLUSTERS, SONG_QUAO_FLOWER_CLUSTER_COUNT,
         (MapFloraStyle){
-            .grassRootColor = {30, 50, 22, 255},  // Sắc xanh rêu rừng sâu
-            .grassTipColor = {112, 166, 62, 255}, // Sắc xanh ngọc bích Tsushima
-            .bladesPerClump = 6,
-            .bladeSegments = 4,
-            .bladeWidthScale = 0.108f,
-            .lodDistance = 20.0f,
-            .midLodDistance = 10.0f,
-            .drawDistance = 88.0f,
-            .shadowDistance = 14.0f,
+            .grassRootColor = {30, 50, 22, 255},  // Sắc xanh rêu rừng sâu ăn khớp nền đất
+            .grassTipColor = {116, 172, 64, 255}, // Sắc xanh ngọc bích bắt nắng ngược sáng
+            .bladesPerClump = 5,
+            .bladeSegments = 3,
+            .bladeWidthScale = 0.124f,
+            .lodDistance = 22.0f,
+            .midLodDistance = 11.5f,
+            .drawDistance = 86.0f,
+            .shadowDistance = 13.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {30, 48, 22, 255},
             .reedTipColor = {108, 156, 62, 255},
             .hasReedPlumes = false,
             .botanicalVariation = 1.0f,
-            .pampasPlacements = NULL,
-            .pampasCount = 0,
+            .pampasPlacements = s_pampasPlacements,
+            .pampasCount = s_pampasCount,
             .pampasRootColor = {36, 52, 24, 255},
-            .pampasTipColor = {138, 168, 84, 255},
+            .pampasTipColor = {144, 174, 88, 255},
         });
 
     s_river = MapProp_CreateTerrainWater("assets/maps/song_quao/song_quao_water.obj",
@@ -456,11 +461,13 @@ void UpdateSongQuaoMap(float dt)
     if (!(s_skipMask & MAP_SKIP_FLUFF))
         MapProp_UpdateFluffSystem(&s_fluff, camera.target, &s_ground, kMapCenter, PLAYABLE_BASIN_MIN_Y, dt);
 
-    Vector3 focus = MapProp_SnapShadowFocus(camera.target, 0.5f);
+    // [TỐI ƯU SHADOW]: Snap tâm bóng đổ theo bước 1.0m để tránh cập nhật ma trận bóng liên tục
+    // khi camera chỉ nhích nhẹ, giữ ổn định cả hiệu năng lẫn chống rung răng cưa bóng (shadow shimmering).
+    Vector3 focus = MapProp_SnapShadowFocus(camera.target, 1.0f);
     if (fabsf(focus.x - s_lastShadowFocus.x) > 0.01f || fabsf(focus.z - s_lastShadowFocus.z) > 0.01f)
     {
         s_lastShadowFocus = focus;
-        EnvShadow_SetFocus(focus, 8.8f);
+        EnvShadow_SetFocus(focus, 10.8f);
     }
     CaptureSongQuaoStaticShadows();
 }

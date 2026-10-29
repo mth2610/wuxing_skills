@@ -29,10 +29,42 @@ Color MapProp_GetFlowerSpeciesColor(int variant, bool accent)
     return accent ? secondary[variant] : primary[variant];
 }
 
+// ============================================================================
+// CACHED CLUSTER EPICENTERS (Loại bỏ hàng triệu lệnh sinf/cosf khi sinh 98.000 bụi cỏ)
+// ============================================================================
+#define FLORA_MAX_CACHED_CLUSTERS 64
+static Vector2 s_cachedClusterEpicenters[FLORA_MAX_CACHED_CLUSTERS][3];
+static bool s_clusterEpicentersInitialized = false;
+
+static void MapFlora_EnsureEpicenterCache(void)
+{
+    if (s_clusterEpicentersInitialized)
+        return;
+    s_clusterEpicentersInitialized = true;
+    for (int c = 0; c < FLORA_MAX_CACHED_CLUSTERS; c++)
+    {
+        float clusterSeedAngle = (float)c * 1.047f + 0.35f;
+        for (int e = 0; e < 3; e++)
+        {
+            float epAngle = clusterSeedAngle + (float)e * 2.094f + 0.35f * sinf((float)(c * 7 + e * 3));
+            float epDist = 0.28f + 0.16f * cosf((float)(c * 3 + e * 5));
+            s_cachedClusterEpicenters[c][e] = (Vector2){cosf(epAngle) * epDist, sinf(epAngle) * epDist};
+        }
+    }
+}
+
 // Helper: Computes the exact 3 organic colony epicenters in normalized cluster space
 // so flower placement, grass understorey depression, and grass density suppression align 100%.
-static void MapFlora_GetClusterEpicentersNorm(int clusterIndex, Vector2 outEpicenters[3])
+static inline void MapFlora_GetClusterEpicentersNorm(int clusterIndex, Vector2 outEpicenters[3])
 {
+    MapFlora_EnsureEpicenterCache();
+    if (clusterIndex >= 0 && clusterIndex < FLORA_MAX_CACHED_CLUSTERS)
+    {
+        outEpicenters[0] = s_cachedClusterEpicenters[clusterIndex][0];
+        outEpicenters[1] = s_cachedClusterEpicenters[clusterIndex][1];
+        outEpicenters[2] = s_cachedClusterEpicenters[clusterIndex][2];
+        return;
+    }
     float clusterSeedAngle = (float)clusterIndex * 1.047f + 0.35f;
     for (int e = 0; e < 3; e++)
     {
@@ -55,6 +87,7 @@ void MapFlora_GenerateFlowerPlacements(
     if (!outPlacements || totalFlowerCount <= 0 || !clusters || clusterCount <= 0)
         return;
 
+    MapFlora_EnsureEpicenterCache();
     unsigned int rng = seed ? seed : 0x7A9B3C1Du;
     int placementCursor = 0;
 
@@ -115,12 +148,19 @@ void MapFlora_GenerateFlowerPlacements(
                 if (isExcluded && isExcluded(x, z, ctx))
                     continue;
 
-                // Poisson minimum distance enforcement
+                // [TỐI ƯU POISSON]: Kiểm tra nhanh theo từng trục trước khi tính bình phương khoảng cách
                 bool tooClose = false;
-                for (int prev = clusterStartIndex; prev < placementCursor; prev++)
+                int searchStart = (placementCursor - clusterStartIndex > 512)
+                                      ? (placementCursor - 512)
+                                      : clusterStartIndex;
+                for (int prev = placementCursor - 1; prev >= searchStart; prev--)
                 {
                     float pdx = x - outPlacements[prev].position.x;
+                    if (pdx >= 0.068f || pdx <= -0.068f)
+                        continue;
                     float pdz = z - outPlacements[prev].position.z;
+                    if (pdz >= 0.068f || pdz <= -0.068f)
+                        continue;
                     if (pdx * pdx + pdz * pdz < 0.068f * 0.068f)
                     {
                         tooClose = true;
@@ -175,14 +215,22 @@ float MapFlora_EvaluateFlowerUnderstorey(
     if (!clusters || clusterCount <= 0)
         return 1.0f;
 
+    MapFlora_EnsureEpicenterCache();
     float minScale = 1.0f;
     for (int c = 0; c < clusterCount; c++)
     {
         const MapFloraFlowerCluster *cl = &clusters[c];
         float rx = (cl->radius.x > 0.1f) ? cl->radius.x : 10.0f;
         float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
-        float dx = (x - cl->center.x) / rx;
-        float dz = (z - cl->center.z) / rz;
+        float rawDx = x - cl->center.x;
+        if (rawDx > rx * 1.2f || rawDx < -rx * 1.2f)
+            continue;
+        float rawDz = z - cl->center.z;
+        if (rawDz > rz * 1.2f || rawDz < -rz * 1.2f)
+            continue;
+
+        float dx = rawDx / rx;
+        float dz = rawDz / rz;
         float distSq = dx * dx + dz * dz;
         if (distSq > 1.44f) // outside 1.2x cluster radius
             continue;
@@ -200,9 +248,12 @@ float MapFlora_EvaluateFlowerUnderstorey(
                 minEpiDistSq = d2;
         }
 
+        if (minEpiDistSq >= 0.45f * 0.45f)
+            continue;
+
         float epiDist = sqrtf(minEpiDistSq);
         // Core understorey cushion: scale grass height down to 0.42x (from ~0.52m to ~0.22m)
-        // Transition back to 1.0x at distance 0.48 in normalized cluster space
+        // Transition back to 1.0x at distance 0.45 in normalized cluster space
         float weight = 1.0f - MapMath_SmoothStep01(0.04f, 0.45f, epiDist);
         float scale = 1.0f - 0.58f * weight; // 1.0 -> 0.42
         if (scale < minScale)
@@ -219,14 +270,22 @@ float MapFlora_EvaluateFlowerSuppression(
     if (!clusters || clusterCount <= 0)
         return 1.0f;
 
+    MapFlora_EnsureEpicenterCache();
     float minDensity = 1.0f;
     for (int c = 0; c < clusterCount; c++)
     {
         const MapFloraFlowerCluster *cl = &clusters[c];
         float rx = (cl->radius.x > 0.1f) ? cl->radius.x : 10.0f;
         float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
-        float dx = (x - cl->center.x) / rx;
-        float dz = (z - cl->center.z) / rz;
+        float rawDx = x - cl->center.x;
+        if (rawDx > rx * 1.2f || rawDx < -rx * 1.2f)
+            continue;
+        float rawDz = z - cl->center.z;
+        if (rawDz > rz * 1.2f || rawDz < -rz * 1.2f)
+            continue;
+
+        float dx = rawDx / rx;
+        float dz = rawDz / rz;
         float distSq = dx * dx + dz * dz;
         if (distSq > 1.44f)
             continue;
@@ -243,6 +302,9 @@ float MapFlora_EvaluateFlowerSuppression(
             if (d2 < minEpiDistSq)
                 minEpiDistSq = d2;
         }
+
+        if (minEpiDistSq >= 0.38f * 0.38f)
+            continue;
 
         float epiDist = sqrtf(minEpiDistSq);
         // In the dense center of flower colonies, thin grass tufts by ~52% (density 0.48)
@@ -577,7 +639,7 @@ MapFloraSystem MapProp_CreateFloraSystem(
     flora.windDirection = (Vector2){0.95f, -0.31f};
     flora.windStrength = 0.036f;
 
-    // 1. Valley / Meadow Grass (16m chunk size cuts draw calls by ~44% vs 12m chunks)
+    // 1. Valley / Meadow Grass (18m chunk size cuts draw calls & frustum checks while keeping tight culling)
     if (grassPlacements && grassCount > 0)
     {
         float lodDist = (style.lodDistance > 0.0f) ? style.lodDistance : 20.0f;
@@ -587,9 +649,9 @@ MapFloraSystem MapProp_CreateFloraSystem(
                                                       .rootColor = (style.grassRootColor.a > 0) ? style.grassRootColor : (Color){24, 38, 16, 255},
                                                       .tipColor = (style.grassTipColor.a > 0) ? style.grassTipColor : (Color){142, 192, 64, 255},
                                                       .bladesPerClump = (style.bladesPerClump > 0) ? style.bladesPerClump : 5,
-                                                      .bladeSegments = (style.bladeSegments > 0) ? style.bladeSegments : 4,
+                                                      .bladeSegments = (style.bladeSegments > 0) ? style.bladeSegments : 3,
                                                       .bladeWidthScale = (style.bladeWidthScale > 0.0f) ? style.bladeWidthScale : 0.128f,
-                                                      .chunkSize = 16.0f,
+                                                      .chunkSize = 18.0f,
                                                       .lodDistance = lodDist,
                                                       .midLodDistance = midDist,
                                                       .drawDistance = (style.drawDistance > 0.0f) ? style.drawDistance : 36.0f,
@@ -673,8 +735,8 @@ MapFloraSystem MapProp_CreateFloraSystem(
                 stemColor, centerColor,
                 NULL, 0.0f, 1, 1);
 
-            // High-fidelity LOD: near 3D petals to 24m, far billboard drift to 68m, shadow casters to 18m
-            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 24.0f, 18.0f);
+            // High-fidelity LOD: near 3D petals to 24m, far drift to 68m, shadow casters to 16m
+            MapProp_SetFlowerFieldLod(&flora.flowerFields[i], 24.0f, 16.0f);
             MapProp_SetFlowerFieldDrawDistance(&flora.flowerFields[i], 68.0f);
             placementOffset += count;
         }
@@ -691,15 +753,15 @@ void MapProp_UpdateFloraSystem(MapFloraSystem *flora, Vector3 cameraTarget, floa
         return;
     flora->time += dt;
 
-    if (flora->valleyGrassCount > 0)
+    if (flora->valleyGrassCount > 0 && flora->valleyMeadow.parametric)
     {
         MapProp_PrepareMeadow(&flora->valleyMeadow, (Vector3){0});
     }
-    if (flora->reedCount > 0)
+    if (flora->reedCount > 0 && flora->reedMeadow.parametric)
     {
         MapProp_PrepareMeadow(&flora->reedMeadow, (Vector3){0});
     }
-    if (flora->pampasCount > 0)
+    if (flora->pampasCount > 0 && flora->pampasMeadow.parametric)
     {
         MapProp_PrepareMeadow(&flora->pampasMeadow, (Vector3){0});
     }
@@ -747,27 +809,33 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
         return;
 
     Vector3 offset = {0};
-    if (flora->valleyGrassCount > 0)
+    if (Nature_ShadowCasterTypeEnabled(false))
     {
-        MapProp_DrawMeadowShadowCasters(&flora->valleyMeadow, offset, flora->time,
-                                        flora->windDirection, flora->windStrength);
-    }
-    if (flora->reedCount > 0)
-    {
-        MapProp_DrawMeadowShadowCasters(&flora->reedMeadow, offset, flora->time,
-                                        flora->windDirection, 0.058f);
-    }
-    if (flora->pampasCount > 0)
-    {
-        MapProp_DrawMeadowShadowCasters(&flora->pampasMeadow, offset, flora->time,
-                                        flora->windDirection, 0.052f);
-    }
-    for (int i = 0; i < flora->flowerClusterCount; i++)
-    {
-        if (flora->flowerFields[i].ready)
+        if (flora->valleyGrassCount > 0)
         {
-            MapProp_DrawFlowerFieldShadowCaster(&flora->flowerFields[i], offset, flora->time,
-                                                flora->windDirection, 0.032f);
+            MapProp_DrawMeadowShadowCasters(&flora->valleyMeadow, offset, flora->time,
+                                            flora->windDirection, flora->windStrength);
+        }
+        if (flora->reedCount > 0)
+        {
+            MapProp_DrawMeadowShadowCasters(&flora->reedMeadow, offset, flora->time,
+                                            flora->windDirection, 0.058f);
+        }
+        if (flora->pampasCount > 0)
+        {
+            MapProp_DrawMeadowShadowCasters(&flora->pampasMeadow, offset, flora->time,
+                                            flora->windDirection, 0.052f);
+        }
+    }
+    if (Nature_ShadowCasterTypeEnabled(true) && flora->flowerFields)
+    {
+        for (int i = 0; i < flora->flowerClusterCount; i++)
+        {
+            if (flora->flowerFields[i].ready)
+            {
+                MapProp_DrawFlowerFieldShadowCaster(&flora->flowerFields[i], offset, flora->time,
+                                                    flora->windDirection, 0.032f);
+            }
         }
     }
 }

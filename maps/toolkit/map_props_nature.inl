@@ -90,6 +90,17 @@ static bool s_natureWindPixelsDirty = false;
 static bool s_natureInteractorAddedThisFrame = false;
 static float s_natureInteractionUploadTimer = 0.0f;
 static Color s_natureWindPixels[NATURE_INTERACTION_PIXEL_COUNT];
+
+// [TỐI ƯU BOUNDING BOX]: Chỉ quét và trộn các ô thực sự có tương tác dẫm cỏ / gió cục bộ
+static int s_natureActiveMinX = NATURE_INTERACTION_RESOLUTION;
+static int s_natureActiveMaxX = -1;
+static int s_natureActiveMinY = NATURE_INTERACTION_RESOLUTION;
+static int s_natureActiveMaxY = -1;
+static int s_natureWindMinX = NATURE_INTERACTION_RESOLUTION;
+static int s_natureWindMaxX = -1;
+static int s_natureWindMinY = NATURE_INTERACTION_RESOLUTION;
+static int s_natureWindMaxY = -1;
+
 // Cache độ cao mặt đất cho từng ô tương tác 64x64 để không phải raycast/sample lại mỗi frame
 #define NATURE_GROUND_Y_INVALID (-1e20f)
 static float s_natureCellGroundY[NATURE_INTERACTION_PIXEL_COUNT];
@@ -123,8 +134,10 @@ static bool s_natureWindTraceVisibleUploaded = false;
 static bool s_natureWindTraceShadowUploaded = false;
 static MapNatureRenderStats s_natureRenderStats = {0};
 
-// [TỐI ƯU HIỆU NĂNG]: Chu kỳ lấy mẫu gió vĩ mô 20 Hz (50 ms) thay vì 30 Hz (33.3 ms)
-// để tránh cộng hưởng với thời gian frame ~30-33 ms khiến CPU phải tính lại mỗi frame.
+// Bộ đếm frame phục vụ khử trùng lặp Uniform (Per-Frame Uniform Deduplication)
+static unsigned int s_natureRenderFrameId = 1;
+
+// [TỐI ƯU HIỆU NĂNG]: Chu kỳ lấy mẫu gió vĩ mô 20 Hz (50 ms)
 #define NATURE_MACRO_RESOLUTION 32
 static const float kNatureMacroWorldSize = 64.0f;
 static const float kNatureMacroInterval = 1.0f / 20.0f;
@@ -233,7 +246,8 @@ static inline bool Nature_ShadowCasterFilterActive(void)
 }
 
 // ============================================================================
-// PER-SHADER UNIFORM LOCATION CACHE (Eliminates runtime glGetUniformLocation stalls)
+// PER-SHADER UNIFORM LOCATION & FRAME STATE CACHE
+// (Eliminates runtime glGetUniformLocation & redundant per-chunk Vulkan uploads)
 // ============================================================================
 #define NATURE_MAX_CACHED_SHADERS 8
 
@@ -248,6 +262,7 @@ typedef struct
     int lightColor;
     int ambientColor;
     int viewPos;
+    int sssParams;
     int useTexture;
     int alphaCutoff;
     int alphaCoverage;
@@ -286,12 +301,22 @@ typedef struct
     int widthScale;
     int tipWidth;
     int shadowStrength;
+
+    // Trạng thái đã upload gần nhất trên shader này để tránh gọi lại SetShaderValue dư thừa
+    unsigned int lastVisibleFrameId;
+    unsigned int lastShadowFrameId;
+    int lastUseTexture;
+    int lastResponseKind;
+    int lastWindCacheEnabled;
+    float lastAlphaCutoff;
+    float lastWindStrength;
+    bool lastWorldWasIdentity;
 } NatureShaderLocs;
 
 static NatureShaderLocs s_natureShaderLocCache[NATURE_MAX_CACHED_SHADERS];
 static int s_natureShaderLocCacheCount = 0;
 
-static const NatureShaderLocs *Nature_GetCachedLocs(Shader shader)
+static NatureShaderLocs *Nature_GetCachedLocsMutable(Shader shader)
 {
     for (int i = 0; i < s_natureShaderLocCacheCount; i++)
     {
@@ -303,6 +328,7 @@ static const NatureShaderLocs *Nature_GetCachedLocs(Shader shader)
                    : (int)(shader.id % NATURE_MAX_CACHED_SHADERS);
 
     NatureShaderLocs *locs = &s_natureShaderLocCache[slot];
+    memset(locs, 0, sizeof(*locs));
     locs->shaderId = shader.id;
     locs->worldFromShaderSpace = GetShaderLocation(shader, "u_worldFromShaderSpace");
     locs->worldOffset = GetShaderLocation(shader, "u_worldOffset");
@@ -312,6 +338,7 @@ static const NatureShaderLocs *Nature_GetCachedLocs(Shader shader)
     locs->lightColor = GetShaderLocation(shader, "u_lightColor");
     locs->ambientColor = GetShaderLocation(shader, "u_ambientColor");
     locs->viewPos = GetShaderLocation(shader, "u_viewPos");
+    locs->sssParams = GetShaderLocation(shader, "u_sssParams");
     locs->useTexture = GetShaderLocation(shader, "u_useTexture");
     locs->alphaCutoff = GetShaderLocation(shader, "u_alphaCutoff");
     locs->alphaCoverage = GetShaderLocation(shader, "u_alphaCoverage");
@@ -351,7 +378,13 @@ static const NatureShaderLocs *Nature_GetCachedLocs(Shader shader)
     locs->tipWidth = GetShaderLocation(shader, "u_tipWidth");
     locs->shadowStrength = GetShaderLocation(shader, "u_shadowStrength");
 
-    // [TỐI ƯU UNIFORM]: Đẩy các hằng số bất biến lên GPU 1 lần duy nhất khi đăng ký shader
+    locs->lastUseTexture = -1;
+    locs->lastResponseKind = -1;
+    locs->lastWindCacheEnabled = -1;
+    locs->lastAlphaCutoff = -1.0f;
+    locs->lastWindStrength = -1.0f;
+    locs->lastWorldWasIdentity = false;
+
     BeginShaderMode(shader);
     if (locs->interactionWorldSize >= 0)
         SetShaderValue(shader, locs->interactionWorldSize, &kNatureInteractionWorldSize, SHADER_UNIFORM_FLOAT);
@@ -360,6 +393,11 @@ static const NatureShaderLocs *Nature_GetCachedLocs(Shader shader)
     EndShaderMode();
 
     return locs;
+}
+
+static inline const NatureShaderLocs *Nature_GetCachedLocs(Shader shader)
+{
+    return Nature_GetCachedLocsMutable(shader);
 }
 
 static inline unsigned char Nature_EncodeMacroComponentFast(float value, float invScale)
@@ -454,7 +492,6 @@ static void Nature_UpdateMacroCache(float time)
         sampleTime <= s_natureMacroTimeRange.x + kNatureMacroInterval)
         return;
 
-    // Cho phép tái sử dụng lát cắt tương lai ngay cả khi 1 frame bị trễ nhẹ (lên tới 2.5x interval)
     bool canShiftSlice = sameRegion &&
                          (sampleTime >= s_natureMacroTimeRange.x + kNatureMacroInterval) &&
                          (sampleTime < s_natureMacroTimeRange.x + kNatureMacroInterval * 2.5f);
@@ -551,6 +588,9 @@ static void Nature_EndWindReceiverShader(void)
 void MapProp_ResetNatureRenderStats(void)
 {
     s_natureRenderStats = (MapNatureRenderStats){0};
+    s_natureRenderFrameId++;
+    if (s_natureRenderFrameId == 0)
+        s_natureRenderFrameId = 1;
 }
 
 MapNatureRenderStats MapProp_GetNatureRenderStats(void)
@@ -558,12 +598,12 @@ MapNatureRenderStats MapProp_GetNatureRenderStats(void)
     return s_natureRenderStats;
 }
 
-static Color Nature_EmptyInteractionPixel(void)
+static inline Color Nature_EmptyInteractionPixel(void)
 {
     return (Color){128, 128, 0, 255};
 }
 
-static Vector2 Nature_DecodeInteractionPixel(Color pixel)
+static inline Vector2 Nature_DecodeInteractionPixel(Color pixel)
 {
     if (pixel.b == 0)
         return (Vector2){0.0f, 0.0f};
@@ -574,7 +614,7 @@ static Vector2 Nature_DecodeInteractionPixel(Color pixel)
     };
 }
 
-static Color Nature_EncodeInteractionPixel(Vector2 bend)
+static inline Color Nature_EncodeInteractionPixel(Vector2 bend)
 {
     float magSq = bend.x * bend.x + bend.y * bend.y;
     if (magSq <= 0.00000001f)
@@ -619,10 +659,20 @@ static void Nature_InitInteraction(void)
     s_natureWindPixelsDirty = false;
     s_natureInteractorAddedThisFrame = false;
     s_natureInteractionUploadTimer = 0.0f;
+    s_natureActiveMinX = NATURE_INTERACTION_RESOLUTION;
+    s_natureActiveMaxX = -1;
+    s_natureActiveMinY = NATURE_INTERACTION_RESOLUTION;
+    s_natureActiveMaxY = -1;
+    s_natureWindMinX = NATURE_INTERACTION_RESOLUTION;
+    s_natureWindMaxX = -1;
+    s_natureWindMinY = NATURE_INTERACTION_RESOLUTION;
+    s_natureWindMaxY = -1;
+
     Color empty = Nature_EmptyInteractionPixel();
     for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
     {
         s_natureInteractionPixels[i] = empty;
+        s_natureInteractionScratch[i] = empty;
         s_natureWindPixels[i] = empty;
         s_natureCellGroundY[i] = NATURE_GROUND_Y_INVALID;
     }
@@ -643,71 +693,137 @@ static void Nature_ScrollAndDecayInteraction(Vector2 newCenter, float dt)
     float decay = (dt > 0.0f) ? expf(-dt * 2.15f) : 1.0f;
     Color empty = Nature_EmptyInteractionPixel();
 
-    // [TỐI ƯU O(1)]: Khi tâm không dịch chuyển, nếu không có pixel nào khác 0 thì thoát ngay!
+    // [TỐI ƯU BOUNDING BOX]: Khi tâm không dịch chuyển, chỉ duyệt đúng hình chữ nhật chứa các ô có dữ liệu!
     if (shiftX == 0 && shiftY == 0)
     {
-        if (dt > 0.0f && s_natureInteractionHasData)
+        if (dt > 0.0f && s_natureInteractionHasData && s_natureActiveMinX <= s_natureActiveMaxX)
         {
-            bool anyRemaining = false;
-            for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
+            int nextMinX = NATURE_INTERACTION_RESOLUTION, nextMaxX = -1;
+            int nextMinY = NATURE_INTERACTION_RESOLUTION, nextMaxY = -1;
+            for (int y = s_natureActiveMinY; y <= s_natureActiveMaxY; y++)
             {
-                unsigned char b = s_natureInteractionPixels[i].b;
-                if (b > 0)
+                int row = y * NATURE_INTERACTION_RESOLUTION;
+                for (int x = s_natureActiveMinX; x <= s_natureActiveMaxX; x++)
                 {
-                    unsigned char nextB = (unsigned char)((float)b * decay);
-                    if (nextB < 2)
+                    int i = row + x;
+                    unsigned char b = s_natureInteractionPixels[i].b;
+                    if (b > 0)
                     {
-                        s_natureInteractionPixels[i] = empty;
-                        s_natureInteractionDirty = true;
-                    }
-                    else
-                    {
-                        anyRemaining = true;
-                        if (nextB != b)
+                        unsigned char nextB = (unsigned char)((float)b * decay);
+                        if (nextB < 2)
                         {
-                            s_natureInteractionPixels[i].b = nextB;
+                            s_natureInteractionPixels[i] = empty;
                             s_natureInteractionDirty = true;
+                        }
+                        else
+                        {
+                            if (nextB != b)
+                            {
+                                s_natureInteractionPixels[i].b = nextB;
+                                s_natureInteractionDirty = true;
+                            }
+                            if (x < nextMinX)
+                                nextMinX = x;
+                            if (x > nextMaxX)
+                                nextMaxX = x;
+                            if (y < nextMinY)
+                                nextMinY = y;
+                            if (y > nextMaxY)
+                                nextMaxY = y;
                         }
                     }
                 }
             }
-            s_natureInteractionHasData = anyRemaining;
+            s_natureActiveMinX = nextMinX;
+            s_natureActiveMaxX = nextMaxX;
+            s_natureActiveMinY = nextMinY;
+            s_natureActiveMaxY = nextMaxY;
+            s_natureInteractionHasData = (nextMinX <= nextMaxX);
         }
         return;
     }
 
-    // Nếu cả lưới tương tác lẫn trường lực đều đang rỗng, chỉ cần cập nhật tâm và xóa cache độ cao
+    // Nếu dịch chuyển quá toàn bộ lưới 64x64 thì reset nhanh
+    if (abs(shiftX) >= NATURE_INTERACTION_RESOLUTION || abs(shiftY) >= NATURE_INTERACTION_RESOLUTION)
+    {
+        for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
+        {
+            s_natureInteractionPixels[i] = empty;
+            s_natureForceBend[i] = (Vector2){0};
+            s_natureForceVelocity[i] = (Vector2){0};
+            s_natureCellGroundY[i] = NATURE_GROUND_Y_INVALID;
+        }
+        s_natureActiveMinX = NATURE_INTERACTION_RESOLUTION;
+        s_natureActiveMaxX = -1;
+        s_natureActiveMinY = NATURE_INTERACTION_RESOLUTION;
+        s_natureActiveMaxY = -1;
+        s_natureInteractionHasData = false;
+        s_natureInteractionScrolled = true;
+        s_natureInteractionDirty = true;
+        s_natureInteractionCenter = newCenter;
+        return;
+    }
+
+    // Khi cả lưới tương tác và trường lực đều rỗng, vẫn dịch mảng s_natureCellGroundY để bảo toàn cache độ cao mặt đất!
     if (!s_natureInteractionHasData && !s_natureForceAwake)
     {
+        for (int y = 0; y < NATURE_INTERACTION_RESOLUTION; y++)
+        {
+            int sourceY = y + shiftY;
+            bool validY = (sourceY >= 0 && sourceY < NATURE_INTERACTION_RESOLUTION);
+            int dstRow = y * NATURE_INTERACTION_RESOLUTION;
+            int srcRow = sourceY * NATURE_INTERACTION_RESOLUTION;
+            for (int x = 0; x < NATURE_INTERACTION_RESOLUTION; x++)
+            {
+                int sourceX = x + shiftX;
+                s_natureCellGroundYScratch[dstRow + x] =
+                    (validY && sourceX >= 0 && sourceX < NATURE_INTERACTION_RESOLUTION)
+                        ? s_natureCellGroundY[srcRow + sourceX]
+                        : NATURE_GROUND_Y_INVALID;
+            }
+        }
+        memcpy(s_natureCellGroundY, s_natureCellGroundYScratch, sizeof(s_natureCellGroundY));
         s_natureInteractionCenter = newCenter;
-        for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
-            s_natureCellGroundY[i] = NATURE_GROUND_Y_INVALID;
         return;
     }
 
     s_natureInteractionScrolled = true;
     s_natureInteractionDirty = true;
-    bool anyRemaining = false;
+    int nextMinX = NATURE_INTERACTION_RESOLUTION, nextMaxX = -1;
+    int nextMinY = NATURE_INTERACTION_RESOLUTION, nextMaxY = -1;
 
     for (int y = 0; y < NATURE_INTERACTION_RESOLUTION; y++)
     {
         int sourceY = y + shiftY;
         bool validY = (sourceY >= 0 && sourceY < NATURE_INTERACTION_RESOLUTION);
+        int dstRow = y * NATURE_INTERACTION_RESOLUTION;
+        int srcRow = sourceY * NATURE_INTERACTION_RESOLUTION;
         for (int x = 0; x < NATURE_INTERACTION_RESOLUTION; x++)
         {
             int sourceX = x + shiftX;
-            int destination = y * NATURE_INTERACTION_RESOLUTION + x;
+            int destination = dstRow + x;
             if (validY && sourceX >= 0 && sourceX < NATURE_INTERACTION_RESOLUTION)
             {
-                int source = sourceY * NATURE_INTERACTION_RESOLUTION + sourceX;
+                int source = srcRow + sourceX;
                 Color value = s_natureInteractionPixels[source];
                 if (value.b > 0)
                 {
                     value.b = (unsigned char)((float)value.b * decay);
                     if (value.b < 2)
+                    {
                         value = empty;
+                    }
                     else
-                        anyRemaining = true;
+                    {
+                        if (x < nextMinX)
+                            nextMinX = x;
+                        if (x > nextMaxX)
+                            nextMaxX = x;
+                        if (y < nextMinY)
+                            nextMinY = y;
+                        if (y > nextMaxY)
+                            nextMaxY = y;
+                    }
                 }
                 s_natureInteractionScratch[destination] = value;
                 s_natureForceBendScratch[destination] = s_natureForceBend[source];
@@ -727,7 +843,11 @@ static void Nature_ScrollAndDecayInteraction(Vector2 newCenter, float dt)
     memcpy(s_natureForceBend, s_natureForceBendScratch, sizeof(s_natureForceBend));
     memcpy(s_natureForceVelocity, s_natureForceVelocityScratch, sizeof(s_natureForceVelocity));
     memcpy(s_natureCellGroundY, s_natureCellGroundYScratch, sizeof(s_natureCellGroundY));
-    s_natureInteractionHasData = anyRemaining;
+    s_natureActiveMinX = nextMinX;
+    s_natureActiveMaxX = nextMaxX;
+    s_natureActiveMinY = nextMinY;
+    s_natureActiveMaxY = nextMaxY;
+    s_natureInteractionHasData = (nextMinX <= nextMaxX);
     s_natureInteractionCenter = newCenter;
 }
 
@@ -748,12 +868,23 @@ void MapProp_BeginNatureInteraction(Vector3 focus, float dt)
     s_natureRequestedFocusCenter = snappedCenter;
     Nature_ScrollAndDecayInteraction(snappedCenter, dt);
 
-    // [TỐI ƯU O(1)]: Chỉ xóa s_natureWindPixels khi frame trước thực sự có ghi dữ liệu gió vào mảng
+    // [TỐI ƯU BOUNDING BOX]: Chỉ xóa đúng vùng s_natureWindPixels đã bị ghi ở frame trước
     if (s_natureWindPixelsDirty)
     {
         Color empty = Nature_EmptyInteractionPixel();
-        for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
-            s_natureWindPixels[i] = empty;
+        if (s_natureWindMinX <= s_natureWindMaxX)
+        {
+            for (int y = s_natureWindMinY; y <= s_natureWindMaxY; y++)
+            {
+                int row = y * NATURE_INTERACTION_RESOLUTION;
+                for (int x = s_natureWindMinX; x <= s_natureWindMaxX; x++)
+                    s_natureWindPixels[row + x] = empty;
+            }
+        }
+        s_natureWindMinX = NATURE_INTERACTION_RESOLUTION;
+        s_natureWindMaxX = -1;
+        s_natureWindMinY = NATURE_INTERACTION_RESOLUTION;
+        s_natureWindMaxY = -1;
         s_natureWindPixelsDirty = false;
     }
 
@@ -781,6 +912,8 @@ void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength)
         maxX = NATURE_INTERACTION_RESOLUTION - 1;
     if (maxY >= NATURE_INTERACTION_RESOLUTION)
         maxY = NATURE_INTERACTION_RESOLUTION - 1;
+    if (minX > maxX || minY > maxY)
+        return;
 
     float radiusSq = radius * radius;
     float invRadius = 1.0f / radius;
@@ -793,6 +926,7 @@ void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength)
         float dzSq = dz * dz;
         if (dzSq >= radiusSq)
             continue;
+        int row = y * NATURE_INTERACTION_RESOLUTION;
         for (int x = minX; x <= maxX; x++)
         {
             float worldX = s_natureInteractionCenter.x - halfSize + (x + 0.5f) * cellSize;
@@ -804,7 +938,7 @@ void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength)
             float falloff = 1.0f - distance * invRadius;
             falloff *= falloff;
             float bend = strengthNorm * falloff;
-            Color *pixel = &s_natureInteractionPixels[y * NATURE_INTERACTION_RESOLUTION + x];
+            Color *pixel = &s_natureInteractionPixels[row + x];
             unsigned char encodedBend = (unsigned char)(bend * 255.0f);
             if (encodedBend <= pixel->b)
                 continue;
@@ -813,6 +947,15 @@ void MapProp_AddNatureInteractor(Vector3 position, float radius, float strength)
             pixel->g = (unsigned char)((dz * inverseDistance * 0.5f + 0.5f) * 255.0f);
             pixel->b = encodedBend;
             pixel->a = 255;
+
+            if (x < s_natureActiveMinX)
+                s_natureActiveMinX = x;
+            if (x > s_natureActiveMaxX)
+                s_natureActiveMaxX = x;
+            if (y < s_natureActiveMinY)
+                s_natureActiveMinY = y;
+            if (y > s_natureActiveMaxY)
+                s_natureActiveMaxY = y;
             s_natureInteractionDirty = true;
             s_natureInteractionHasData = true;
         }
@@ -859,8 +1002,6 @@ static int Nature_UpdateDominantWindImpact(const VorticleData *vorticles,
         return -1;
     }
 
-    // [FIX PING-PONG]: Chỉ dịch tâm lưới tương tác sang vorticle khi không có interactor dẫm cỏ
-    // đang hoạt động và khi có vorticle dạng trường không gian (không phải directImpact giải tích).
     if (!s_natureInteractorAddedThisFrame && !s_natureInteractionHasData &&
         strongestFocus != directImpact)
     {
@@ -1013,7 +1154,7 @@ static void Nature_AddAnchoredMotion(void)
     if (steps < 1)
         steps = 1;
     if (steps > 4)
-        steps = 4; // Giới hạn tối đa 4 substeps để tránh nghẽn CPU khi có frame khựng
+        steps = 4;
     float step = s_natureForceDt / (float)steps;
 
     int gridMinX = 0, gridMaxX = NATURE_INTERACTION_RESOLUTION - 1;
@@ -1154,6 +1295,14 @@ static void Nature_AddAnchoredMotion(void)
                 windBend.x + bend->x,
                 windBend.y + bend->y,
             });
+            if (x < s_natureWindMinX)
+                s_natureWindMinX = x;
+            if (x > s_natureWindMaxX)
+                s_natureWindMaxX = x;
+            if (y < s_natureWindMinY)
+                s_natureWindMinY = y;
+            if (y > s_natureWindMaxY)
+                s_natureWindMaxY = y;
             s_natureWindPixelsDirty = true;
             s_natureInteractionDirty = true;
         }
@@ -1278,6 +1427,14 @@ void MapProp_AddNatureWindVorticles(float time)
                     existingBend.y + airVelocity.z * kNatureWindBendPerMps,
                 };
                 *pixel = Nature_EncodeInteractionPixel(combinedBend);
+                if (x < s_natureWindMinX)
+                    s_natureWindMinX = x;
+                if (x > s_natureWindMaxX)
+                    s_natureWindMaxX = x;
+                if (y < s_natureWindMinY)
+                    s_natureWindMinY = y;
+                if (y > s_natureWindMaxY)
+                    s_natureWindMaxY = y;
                 s_natureWindPixelsDirty = true;
                 s_natureInteractionDirty = true;
             }
@@ -1291,8 +1448,6 @@ void MapProp_EndNatureInteraction(void)
     if (!s_natureInteractionOpen || !s_natureInteractionReady)
         return;
 
-    // Rate-limit GPU texture uploads to 30 Hz when the interaction window hasn't scrolled,
-    // eliminating per-frame CPU->GPU staging stalls when standing still!
     bool shouldUpload = !s_natureInteractionUploadValid ||
                         s_natureInteractionScrolled ||
                         (s_natureInteractionDirty && s_natureInteractionUploadTimer >= (1.0f / 30.0f));
@@ -1301,50 +1456,45 @@ void MapProp_EndNatureInteraction(void)
     {
         if (!s_natureWindPixelsDirty)
         {
-            // Nếu không có gió cục bộ ghi vào s_natureWindPixels, chỉ cần đẩy thẳng s_natureInteractionPixels
-            if (!s_natureInteractionUploadValid ||
-                memcmp(s_natureInteractionUploaded, s_natureInteractionPixels,
-                       sizeof(s_natureInteractionPixels)) != 0)
-            {
-                UpdateTexture(s_natureInteractionTexture, s_natureInteractionPixels);
-                memcpy(s_natureInteractionUploaded, s_natureInteractionPixels,
-                       sizeof(s_natureInteractionPixels));
-                s_natureInteractionUploadValid = true;
-            }
+            UpdateTexture(s_natureInteractionTexture, s_natureInteractionPixels);
+            s_natureInteractionUploadValid = true;
         }
         else
         {
-            Color empty = Nature_EmptyInteractionPixel();
-            for (int i = 0; i < NATURE_INTERACTION_PIXEL_COUNT; i++)
+            // Chỉ trộn đúng vùng Bounding Box của gió cục bộ lên trên bản sao của s_natureInteractionPixels
+            memcpy(s_natureInteractionScratch, s_natureInteractionPixels, sizeof(s_natureInteractionPixels));
+            int minX = (s_natureWindMinX >= 0) ? s_natureWindMinX : 0;
+            int maxX = (s_natureWindMaxX < NATURE_INTERACTION_RESOLUTION) ? s_natureWindMaxX : (NATURE_INTERACTION_RESOLUTION - 1);
+            int minY = (s_natureWindMinY >= 0) ? s_natureWindMinY : 0;
+            int maxY = (s_natureWindMaxY < NATURE_INTERACTION_RESOLUTION) ? s_natureWindMaxY : (NATURE_INTERACTION_RESOLUTION - 1);
+
+            for (int y = minY; y <= maxY; y++)
             {
-                Color pInt = s_natureInteractionPixels[i];
-                Color pWind = s_natureWindPixels[i];
-                if (pWind.b == 0)
+                int row = y * NATURE_INTERACTION_RESOLUTION;
+                for (int x = minX; x <= maxX; x++)
                 {
-                    s_natureInteractionScratch[i] = (pInt.b == 0) ? empty : pInt;
-                    continue;
+                    int i = row + x;
+                    Color pWind = s_natureWindPixels[i];
+                    if (pWind.b == 0)
+                        continue;
+                    Color pInt = s_natureInteractionPixels[i];
+                    if (pInt.b == 0)
+                    {
+                        s_natureInteractionScratch[i] = pWind;
+                    }
+                    else
+                    {
+                        Vector2 interactionBend = Nature_DecodeInteractionPixel(pInt);
+                        Vector2 windBend = Nature_DecodeInteractionPixel(pWind);
+                        s_natureInteractionScratch[i] = Nature_EncodeInteractionPixel((Vector2){
+                            interactionBend.x + windBend.x,
+                            interactionBend.y + windBend.y,
+                        });
+                    }
                 }
-                if (pInt.b == 0)
-                {
-                    s_natureInteractionScratch[i] = pWind;
-                    continue;
-                }
-                Vector2 interactionBend = Nature_DecodeInteractionPixel(pInt);
-                Vector2 windBend = Nature_DecodeInteractionPixel(pWind);
-                s_natureInteractionScratch[i] = Nature_EncodeInteractionPixel((Vector2){
-                    interactionBend.x + windBend.x,
-                    interactionBend.y + windBend.y,
-                });
             }
-            if (!s_natureInteractionUploadValid ||
-                memcmp(s_natureInteractionUploaded, s_natureInteractionScratch,
-                       sizeof(s_natureInteractionScratch)) != 0)
-            {
-                UpdateTexture(s_natureInteractionTexture, s_natureInteractionScratch);
-                memcpy(s_natureInteractionUploaded, s_natureInteractionScratch,
-                       sizeof(s_natureInteractionScratch));
-                s_natureInteractionUploadValid = true;
-            }
+            UpdateTexture(s_natureInteractionTexture, s_natureInteractionScratch);
+            s_natureInteractionUploadValid = true;
         }
         s_natureInteractionDirty = false;
         s_natureInteractionUploadTimer = 0.0f;
@@ -1372,6 +1522,14 @@ void MapProp_ClearNatureInteraction(void)
     s_natureWindPixelsDirty = false;
     s_natureInteractorAddedThisFrame = false;
     s_natureInteractionUploadTimer = 0.0f;
+    s_natureActiveMinX = NATURE_INTERACTION_RESOLUTION;
+    s_natureActiveMaxX = -1;
+    s_natureActiveMinY = NATURE_INTERACTION_RESOLUTION;
+    s_natureActiveMaxY = -1;
+    s_natureWindMinX = NATURE_INTERACTION_RESOLUTION;
+    s_natureWindMaxX = -1;
+    s_natureWindMinY = NATURE_INTERACTION_RESOLUTION;
+    s_natureWindMaxY = -1;
     if (s_natureMacroTexture.id != 0)
         UnloadTexture(s_natureMacroTexture);
     s_natureMacroTexture = (Texture2D){0};
@@ -1522,7 +1680,7 @@ static void Nature_UploadGrassStateUniforms(Shader shader)
     }
 }
 
-static Color Nature_LerpColor(Color a, Color b, float t)
+static inline Color Nature_LerpColor(Color a, Color b, float t)
 {
     Color result = {
         (unsigned char)(a.r + (b.r - a.r) * t),
@@ -1532,7 +1690,7 @@ static Color Nature_LerpColor(Color a, Color b, float t)
     return result;
 }
 
-static Color Nature_ScaleColor(Color color, float scale)
+static inline Color Nature_ScaleColor(Color color, float scale)
 {
     int r = (int)(color.r * scale);
     int g = (int)(color.g * scale);
@@ -1781,8 +1939,11 @@ static void Nature_UpdateProjectedShadowShader(Shader shader, bool realShadowAct
         SetShaderValue(shader, locs->shadowStrength, &shadowStrength, SHADER_UNIFORM_FLOAT);
 }
 
-static void Nature_SetVertex(Mesh *mesh, int index, Vector3 p, Vector3 n,
-                             float phase, float heightMask, Color color)
+// ============================================================================
+// GEOMETRY BUILDER PRIMITIVES (Supports both Quads & Zero-Discard 3D Diamonds/Tris)
+// ============================================================================
+static inline void Nature_SetVertex(Mesh *mesh, int index, Vector3 p, Vector3 n,
+                                    float phase, float heightMask, Color color)
 {
     mesh->vertices[index * 3 + 0] = p.x;
     mesh->vertices[index * 3 + 1] = p.y;
@@ -1800,10 +1961,44 @@ static void Nature_SetVertex(Mesh *mesh, int index, Vector3 p, Vector3 n,
     mesh->colors[index * 4 + 3] = 255;
 }
 
-static void Nature_SetUv2(Mesh *mesh, int index, float u, float v)
+static inline void Nature_SetUv2(Mesh *mesh, int index, float u, float v)
 {
     mesh->texcoords2[index * 2 + 0] = u;
     mesh->texcoords2[index * 2 + 1] = v;
+}
+
+// Tam giác đơn 3D (Dùng cho ngọn lá cỏ nhọn hoặc cánh hoa LOD1/LOD2 không cần discard)
+static inline void Nature_AddTri(Mesh *mesh, int *cursor,
+                                 Vector3 p0, Vector3 p1, Vector3 p2, Vector3 normal,
+                                 float phase, float h0, float h1, float h2,
+                                 Color c0, Color c1, Color c2)
+{
+    Nature_SetVertex(mesh, (*cursor)++, p0, normal, phase, h0, c0);
+    Nature_SetVertex(mesh, (*cursor)++, p1, normal, phase, h1, c1);
+    Nature_SetVertex(mesh, (*cursor)++, p2, normal, phase, h2, c2);
+}
+
+// Cánh hoa 3D hình kim cương uốn cong (2 tam giác = 6 đỉnh, đầu nhọn tự nhiên, 0% Overdraw)
+static inline void Nature_AddDiamondPetal(Mesh *mesh, int *cursor,
+                                          Vector3 pBase, Vector3 pLeft, Vector3 pRight, Vector3 pTip,
+                                          Vector3 nLower, Vector3 nUpper,
+                                          float phase, float hBase, float hMid, float hTip,
+                                          Color cBase, Color cMid, Color cTip)
+{
+    int base = *cursor;
+    Nature_SetVertex(mesh, (*cursor)++, pBase, nLower, phase, hBase, cBase);
+    Nature_SetVertex(mesh, (*cursor)++, pLeft, nLower, phase, hMid, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, pRight, nLower, phase, hMid, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, pLeft, nUpper, phase, hMid, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, pTip, nUpper, phase, hTip, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, pRight, nUpper, phase, hMid, cMid);
+    // Ghi tọa độ màng cánh (u, v) vào texcoords2 phục vụ tính gân cánh hoa & SSS
+    Nature_SetUv2(mesh, base + 0, 0.0f, 0.0f);
+    Nature_SetUv2(mesh, base + 1, -1.0f, 0.56f);
+    Nature_SetUv2(mesh, base + 2, 1.0f, 0.56f);
+    Nature_SetUv2(mesh, base + 3, -1.0f, 0.56f);
+    Nature_SetUv2(mesh, base + 4, 0.0f, 1.0f);
+    Nature_SetUv2(mesh, base + 5, 1.0f, 0.56f);
 }
 
 static void Nature_AddQuad(Mesh *mesh, int *cursor, Vector3 p0, Vector3 p1,
@@ -1894,194 +2089,241 @@ static Vector4 Nature_GetWindResponse(NatureWindResponseKind kind)
         return (Vector4){0.11f, 0.075f, 2.8f, 0.72f};
     if (kind == NATURE_WIND_RESPONSE_STATIC)
         return (Vector4){0.0f, 0.0f, 0.0f, 0.0f};
-    // [TỐI ƯU VISUAL]: Giảm nhẹ tần số dao động ngọn cỏ (6.8 -> 5.2) để sóng cỏ mượt mà,
-    // giảm hiện tượng rung hạt (sub-pixel shimmering) khi nhìn xa hoặc zoom gần.
     return (Vector4){0.035f, 0.13f, 5.2f, 1.0f};
+}
+
+static inline bool Nature_IsIdentityMatrix(Matrix m)
+{
+    return (m.m0 == 1.0f && m.m5 == 1.0f && m.m10 == 1.0f && m.m15 == 1.0f &&
+            m.m1 == 0.0f && m.m2 == 0.0f && m.m3 == 0.0f &&
+            m.m4 == 0.0f && m.m6 == 0.0f && m.m7 == 0.0f &&
+            m.m8 == 0.0f && m.m9 == 0.0f && m.m11 == 0.0f &&
+            m.m12 == 0.0f && m.m13 == 0.0f && m.m14 == 0.0f);
 }
 
 static inline Matrix Nature_FastInvertTransform(Matrix m)
 {
-    // Kiểm tra nhanh ma trận đơn vị (trường hợp 99% các lần gọi vẽ thảm cỏ)
-    if (m.m0 == 1.0f && m.m5 == 1.0f && m.m10 == 1.0f && m.m15 == 1.0f &&
-        m.m1 == 0.0f && m.m2 == 0.0f && m.m3 == 0.0f &&
-        m.m4 == 0.0f && m.m6 == 0.0f && m.m7 == 0.0f &&
-        m.m8 == 0.0f && m.m9 == 0.0f && m.m11 == 0.0f &&
-        m.m12 == 0.0f && m.m13 == 0.0f && m.m14 == 0.0f)
-    {
+    if (Nature_IsIdentityMatrix(m))
         return m;
-    }
     return MatrixInvert(m);
 }
 
-static void Nature_UpdateWindFieldShader(Shader shader, Vector2 fallbackDirection,
-                                         NatureWindResponseKind responseKind, float compliance)
+static void Nature_UpdateWindFieldShader(Shader shader, NatureShaderLocs *locs,
+                                         Vector2 fallbackDirection,
+                                         NatureWindResponseKind responseKind,
+                                         float compliance, bool firstUploadThisFrame)
 {
-    const NatureShaderLocs *locs = Nature_GetCachedLocs(shader);
     WindMacroConfig macro = s_natureWindMacro;
     int cacheEnabled = s_natureMacroReady && s_natureWindReceiverReady &&
                                responseKind == NATURE_WIND_RESPONSE_GRASS && compliance <= 0.12f
                            ? 1
                            : 0;
-    if (locs->windCacheEnabled >= 0)
-        SetShaderValue(shader, locs->windCacheEnabled, &cacheEnabled, SHADER_UNIFORM_INT);
-    if (cacheEnabled)
+    if (firstUploadThisFrame || locs->lastWindCacheEnabled != cacheEnabled)
     {
-        if (locs->windCacheRegion >= 0)
-            SetShaderValue(shader, locs->windCacheRegion, &s_natureMacroRegion, SHADER_UNIFORM_VEC4);
-        if (locs->windCacheScale >= 0)
-            SetShaderValue(shader, locs->windCacheScale, &s_natureMacroScale, SHADER_UNIFORM_FLOAT);
-        if (locs->windCacheTimeRange >= 0)
-            SetShaderValue(shader, locs->windCacheTimeRange, &s_natureMacroTimeRange, SHADER_UNIFORM_VEC2);
-        if (locs->windCacheMap >= 0)
-            SetShaderValueTexture(shader, locs->windCacheMap, s_natureMacroTexture);
+        if (locs->windCacheEnabled >= 0)
+            SetShaderValue(shader, locs->windCacheEnabled, &cacheEnabled, SHADER_UNIFORM_INT);
+        if (cacheEnabled)
+        {
+            if (locs->windCacheRegion >= 0)
+                SetShaderValue(shader, locs->windCacheRegion, &s_natureMacroRegion, SHADER_UNIFORM_VEC4);
+            if (locs->windCacheScale >= 0)
+                SetShaderValue(shader, locs->windCacheScale, &s_natureMacroScale, SHADER_UNIFORM_FLOAT);
+            if (locs->windCacheTimeRange >= 0)
+                SetShaderValue(shader, locs->windCacheTimeRange, &s_natureMacroTimeRange, SHADER_UNIFORM_VEC2);
+            if (locs->windCacheMap >= 0)
+                SetShaderValueTexture(shader, locs->windCacheMap, s_natureMacroTexture);
+        }
+        locs->lastWindCacheEnabled = cacheEnabled;
     }
 
-    if (!s_natureWindReceiverReady)
+    if (firstUploadThisFrame)
     {
-        float directionLength = sqrtf(fallbackDirection.x * fallbackDirection.x +
-                                      fallbackDirection.y * fallbackDirection.y);
-        Vector2 direction = directionLength > 0.0001f
-                                ? (Vector2){fallbackDirection.x / directionLength,
-                                            fallbackDirection.y / directionLength}
-                                : (Vector2){0.0f, 0.0f};
-        macro = (WindMacroConfig){
-            .baseDirection = {direction.x * kNatureWindReferenceSpeed, 0.0f,
-                              direction.y * kNatureWindReferenceSpeed},
-            .gustAmplitude = 0.6f,
-            .noiseScale = 0.06f,
-            .noiseSpeed = 1.0f,
-            .terrainLiftK = 0.0f,
-        };
+        if (!s_natureWindReceiverReady)
+        {
+            float directionLength = sqrtf(fallbackDirection.x * fallbackDirection.x +
+                                          fallbackDirection.y * fallbackDirection.y);
+            Vector2 direction = directionLength > 0.0001f
+                                    ? (Vector2){fallbackDirection.x / directionLength,
+                                                fallbackDirection.y / directionLength}
+                                    : (Vector2){0.0f, 0.0f};
+            macro = (WindMacroConfig){
+                .baseDirection = {direction.x * kNatureWindReferenceSpeed, 0.0f,
+                                  direction.y * kNatureWindReferenceSpeed},
+                .gustAmplitude = 0.6f,
+                .noiseScale = 0.06f,
+                .noiseSpeed = 1.0f,
+                .terrainLiftK = 0.0f,
+            };
+        }
+        if (locs->windBaseVelocity >= 0)
+            SetShaderValue(shader, locs->windBaseVelocity, &macro.baseDirection, SHADER_UNIFORM_VEC3);
+        if (locs->windGustAmplitude >= 0)
+            SetShaderValue(shader, locs->windGustAmplitude, &macro.gustAmplitude, SHADER_UNIFORM_FLOAT);
+        if (locs->windNoiseScale >= 0)
+            SetShaderValue(shader, locs->windNoiseScale, &macro.noiseScale, SHADER_UNIFORM_FLOAT);
+        if (locs->windNoiseSpeed >= 0)
+            SetShaderValue(shader, locs->windNoiseSpeed, &macro.noiseSpeed, SHADER_UNIFORM_FLOAT);
+        int fieldDetail = GfxQuality_Get() >= GFX_MED ? 1 : 0;
+        if (locs->windFieldDetail >= 0)
+            SetShaderValue(shader, locs->windFieldDetail, &fieldDetail, SHADER_UNIFORM_INT);
     }
-    Vector4 response = Nature_GetWindResponse(responseKind);
-    if (locs->windBaseVelocity >= 0)
-        SetShaderValue(shader, locs->windBaseVelocity, &macro.baseDirection, SHADER_UNIFORM_VEC3);
-    if (locs->windGustAmplitude >= 0)
-        SetShaderValue(shader, locs->windGustAmplitude, &macro.gustAmplitude, SHADER_UNIFORM_FLOAT);
-    if (locs->windNoiseScale >= 0)
-        SetShaderValue(shader, locs->windNoiseScale, &macro.noiseScale, SHADER_UNIFORM_FLOAT);
-    if (locs->windNoiseSpeed >= 0)
-        SetShaderValue(shader, locs->windNoiseSpeed, &macro.noiseSpeed, SHADER_UNIFORM_FLOAT);
-    int fieldDetail = GfxQuality_Get() >= GFX_MED ? 1 : 0;
-    if (locs->windFieldDetail >= 0)
-        SetShaderValue(shader, locs->windFieldDetail, &fieldDetail, SHADER_UNIFORM_INT);
-    if (locs->natureWindResponse >= 0)
-        SetShaderValue(shader, locs->natureWindResponse, &response, SHADER_UNIFORM_VEC4);
+
+    if (firstUploadThisFrame || locs->lastResponseKind != (int)responseKind)
+    {
+        Vector4 response = Nature_GetWindResponse(responseKind);
+        if (locs->natureWindResponse >= 0)
+            SetShaderValue(shader, locs->natureWindResponse, &response, SHADER_UNIFORM_VEC4);
+        locs->lastResponseKind = (int)responseKind;
+    }
 }
 
 static void Nature_UpdateShader(Shader shader, float time, Vector2 windDirection, float windStrength,
                                 bool useTexture, float alphaCutoff,
                                 NatureWindResponseKind responseKind)
 {
-    const NatureShaderLocs *locs = Nature_GetCachedLocs(shader);
-    Environment_BindCloudShadowShader(shader);
-    float windLength = sqrtf(windDirection.x * windDirection.x + windDirection.y * windDirection.y);
-    if (windLength > 0.0001f)
-    {
-        windDirection.x /= windLength;
-        windDirection.y /= windLength;
-    }
-    Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
-    Vector4 sun = ColorNormalize(Environment_GetSunColor());
-    Vector4 ambient = ColorNormalize(Environment_GetAmbientColor());
-    float sunIntensity = Environment_GetSunIntensity();
-    Vector3 sunRgb = Vector3Scale((Vector3){sun.x, sun.y, sun.z}, sunIntensity);
-    // [TỐI ƯU VISUAL]: Bù nhẹ ánh sáng tán xạ môi trường (ambient fill) cho lá cỏ ở cảnh ban ngày
-    // để mặt khuất nắng của khóm cỏ giữ được sắc xanh tự nhiên thay vì bị tối sẫm.
-    float ambientFill = 1.0f + fminf(sunIntensity * 0.08f, 0.14f);
-    Vector3 ambientRgb = {
-        fminf(ambient.x * ambientFill + 0.015f, 1.0f),
-        fminf(ambient.y * ambientFill + 0.022f, 1.0f),
-        fminf(ambient.z * ambientFill + 0.012f, 1.0f),
-    };
+    NatureShaderLocs *locs = Nature_GetCachedLocsMutable(shader);
+    bool firstUploadThisFrame = (locs->lastVisibleFrameId != s_natureRenderFrameId);
 
+    // 1. Ma trận không gian: Nếu đang là ma trận đơn vị và lần trước cũng là đơn vị thì không cần đẩy lại 16 floats
     if (locs->worldFromShaderSpace >= 0)
     {
-        Matrix worldFromShaderSpace = Nature_FastInvertTransform(rlGetMatrixTransform());
-        SetShaderValueMatrix(shader, locs->worldFromShaderSpace, worldFromShaderSpace);
-    }
-    if (locs->time >= 0)
-        SetShaderValue(shader, locs->time, &time, SHADER_UNIFORM_FLOAT);
-    if (locs->windStrength >= 0)
-        SetShaderValue(shader, locs->windStrength, &windStrength, SHADER_UNIFORM_FLOAT);
-    Nature_UpdateWindFieldShader(shader, windDirection, responseKind, windStrength);
-
-    if (locs->lightDir >= 0)
-        SetShaderValue(shader, locs->lightDir, &lightDir, SHADER_UNIFORM_VEC3);
-    if (locs->lightColor >= 0)
-        SetShaderValue(shader, locs->lightColor, &sunRgb, SHADER_UNIFORM_VEC3);
-    if (locs->ambientColor >= 0)
-        SetShaderValue(shader, locs->ambientColor, &ambientRgb, SHADER_UNIFORM_VEC3);
-    if (locs->viewPos >= 0)
-        SetShaderValue(shader, locs->viewPos, &camera.position, SHADER_UNIFORM_VEC3);
-
-    int textured = useTexture ? 1 : 0;
-    if (locs->useTexture >= 0)
-        SetShaderValue(shader, locs->useTexture, &textured, SHADER_UNIFORM_INT);
-    if (locs->alphaCutoff >= 0)
-        SetShaderValue(shader, locs->alphaCutoff, &alphaCutoff, SHADER_UNIFORM_FLOAT);
-
-    float tipSoftening = useTexture ? 0.22f : 0.85f;
-    if (locs->grassTipSoftening >= 0)
-        SetShaderValue(shader, locs->grassTipSoftening, &tipSoftening, SHADER_UNIFORM_FLOAT);
-    Nature_UploadGrassStateUniforms(shader);
-
-    int interactionEnabled = s_natureInteractionReady ? 1 : 0;
-    if (locs->interactionEnabled >= 0)
-        SetShaderValue(shader, locs->interactionEnabled, &interactionEnabled, SHADER_UNIFORM_INT);
-    if (interactionEnabled)
-    {
-        if (locs->interactionCenter >= 0)
-            SetShaderValue(shader, locs->interactionCenter, &s_natureInteractionCenter, SHADER_UNIFORM_VEC2);
-        if (locs->interactionMap >= 0)
-            SetShaderValueTexture(shader, locs->interactionMap, s_natureInteractionTexture);
-    }
-
-    int windImpactEnabled = s_natureWindImpactEnabled ? 1 : 0;
-    if (locs->windImpactEnabled >= 0)
-        SetShaderValue(shader, locs->windImpactEnabled, &windImpactEnabled, SHADER_UNIFORM_INT);
-    if (windImpactEnabled)
-    {
-        if (locs->windImpactCenter >= 0)
-            SetShaderValue(shader, locs->windImpactCenter, &s_natureWindImpactCenter, SHADER_UNIFORM_VEC2);
-        if (locs->windImpactDirection >= 0)
-            SetShaderValue(shader, locs->windImpactDirection, &s_natureWindImpactDirection, SHADER_UNIFORM_VEC2);
-        if (locs->windImpactType >= 0)
-            SetShaderValue(shader, locs->windImpactType, &s_natureWindImpactType, SHADER_UNIFORM_INT);
-        if (locs->windImpactRadius >= 0)
-            SetShaderValue(shader, locs->windImpactRadius, &s_natureWindImpactRadius, SHADER_UNIFORM_FLOAT);
-        if (locs->windImpactStrength >= 0)
-            SetShaderValue(shader, locs->windImpactStrength, &s_natureWindImpactStrength, SHADER_UNIFORM_FLOAT);
-        if (locs->windImpactAge >= 0)
-            SetShaderValue(shader, locs->windImpactAge, &s_natureWindImpactAge, SHADER_UNIFORM_FLOAT);
-
-        if (Nature_WindTraceEnabled() && !s_natureWindTraceVisibleUploaded)
+        Matrix curTransform = rlGetMatrixTransform();
+        bool isIdentity = Nature_IsIdentityMatrix(curTransform);
+        if (firstUploadThisFrame || !isIdentity || !locs->lastWorldWasIdentity)
         {
-            bool uniformsValid = (locs->worldFromShaderSpace >= 0 || locs->worldOffset >= 0) &&
-                                 locs->windImpactEnabled >= 0 && locs->windImpactCenter >= 0 &&
-                                 locs->windImpactDirection >= 0 && locs->windImpactType >= 0 &&
-                                 locs->windImpactRadius >= 0 &&
-                                 locs->windImpactStrength >= 0 && locs->windImpactAge >= 0;
-            TraceLog(uniformsValid ? LOG_INFO : LOG_WARNING,
-                     "[WIND_TRACE] vegetation_shader pass=visible shader=%u uniforms=%s enabled=%d type=%d center=(%.2f,%.2f) radius=%.2f bend=%.3f age=%.3f locations=(world:%d offset:%d enabled:%d center:%d direction:%d type:%d radius:%d strength:%d age:%d)",
-                     shader.id, uniformsValid ? "ok" : "MISSING", windImpactEnabled,
-                     s_natureWindImpactType,
-                     s_natureWindImpactCenter.x, s_natureWindImpactCenter.y,
-                     s_natureWindImpactRadius, s_natureWindImpactStrength,
-                     s_natureWindImpactAge, locs->worldFromShaderSpace, locs->worldOffset,
-                     locs->windImpactEnabled, locs->windImpactCenter, locs->windImpactDirection,
-                     locs->windImpactType, locs->windImpactRadius, locs->windImpactStrength, locs->windImpactAge);
-            s_natureWindTraceVisibleUploaded = true;
+            Matrix worldFromShaderSpace = isIdentity ? curTransform : MatrixInvert(curTransform);
+            SetShaderValueMatrix(shader, locs->worldFromShaderSpace, worldFromShaderSpace);
+            locs->lastWorldWasIdentity = isIdentity;
         }
     }
 
-    MapShadow_UpdateShader(shader);
-    if (EnvShadow_IsEnabled())
+    // 2. Các Uniform toàn cục theo Frame (chỉ đẩy 1 lần duy nhất mỗi Frame cho từng Shader)
+    if (firstUploadThisFrame)
     {
-        if (locs->lightVP >= 0)
-            SetShaderValueMatrix(shader, locs->lightVP, EnvShadow_GetLightVP());
-        if (EnvShadow_HasStaticCache() && locs->staticLightVP >= 0)
-            SetShaderValueMatrix(shader, locs->staticLightVP, EnvShadow_GetStaticLightVP());
+        locs->lastVisibleFrameId = s_natureRenderFrameId;
+
+        Environment_BindCloudShadowShader(shader);
+        if (locs->time >= 0)
+            SetShaderValue(shader, locs->time, &time, SHADER_UNIFORM_FLOAT);
+
+        Vector3 lightDir = Vector3Negate(Environment_GetSunDirection());
+        Vector4 sun = ColorNormalize(Environment_GetSunColor());
+        Vector4 ambient = ColorNormalize(Environment_GetAmbientColor());
+        float sunIntensity = Environment_GetSunIntensity();
+        Vector3 sunRgb = Vector3Scale((Vector3){sun.x, sun.y, sun.z}, sunIntensity);
+        float ambientFill = 1.0f + fminf(sunIntensity * 0.08f, 0.14f);
+        Vector3 ambientRgb = {
+            fminf(ambient.x * ambientFill + 0.015f, 1.0f),
+            fminf(ambient.y * ambientFill + 0.022f, 1.0f),
+            fminf(ambient.z * ambientFill + 0.012f, 1.0f),
+        };
+
+        if (locs->lightDir >= 0)
+            SetShaderValue(shader, locs->lightDir, &lightDir, SHADER_UNIFORM_VEC3);
+        if (locs->lightColor >= 0)
+            SetShaderValue(shader, locs->lightColor, &sunRgb, SHADER_UNIFORM_VEC3);
+        if (locs->ambientColor >= 0)
+            SetShaderValue(shader, locs->ambientColor, &ambientRgb, SHADER_UNIFORM_VEC3);
+        if (locs->viewPos >= 0)
+            SetShaderValue(shader, locs->viewPos, &camera.position, SHADER_UNIFORM_VEC3);
+
+        // Tham số Subsurface Scattering (SSS) tự động cho cánh hoa & ngọn cỏ khi ngược nắng
+        if (locs->sssParams >= 0)
+        {
+            Vector4 sss = {
+                1.45f, // x: Cường độ xuyên sáng tổng thể (SSS strength)
+                0.34f, // y: Độ bẻ cong pháp tuyến tán xạ Mie (Normal distortion)
+                0.78f, // z: Cường độ viền kim quang Fresnel (Rim backlight)
+                0.85f  // w: Độ tương phản gân cánh hoa (Vein contrast)
+            };
+            SetShaderValue(shader, locs->sssParams, &sss, SHADER_UNIFORM_VEC4);
+        }
+
+        Nature_UploadGrassStateUniforms(shader);
+
+        int interactionEnabled = s_natureInteractionReady ? 1 : 0;
+        if (locs->interactionEnabled >= 0)
+            SetShaderValue(shader, locs->interactionEnabled, &interactionEnabled, SHADER_UNIFORM_INT);
+        if (interactionEnabled)
+        {
+            if (locs->interactionCenter >= 0)
+                SetShaderValue(shader, locs->interactionCenter, &s_natureInteractionCenter, SHADER_UNIFORM_VEC2);
+            if (locs->interactionMap >= 0)
+                SetShaderValueTexture(shader, locs->interactionMap, s_natureInteractionTexture);
+        }
+
+        int windImpactEnabled = s_natureWindImpactEnabled ? 1 : 0;
+        if (locs->windImpactEnabled >= 0)
+            SetShaderValue(shader, locs->windImpactEnabled, &windImpactEnabled, SHADER_UNIFORM_INT);
+        if (windImpactEnabled)
+        {
+            if (locs->windImpactCenter >= 0)
+                SetShaderValue(shader, locs->windImpactCenter, &s_natureWindImpactCenter, SHADER_UNIFORM_VEC2);
+            if (locs->windImpactDirection >= 0)
+                SetShaderValue(shader, locs->windImpactDirection, &s_natureWindImpactDirection, SHADER_UNIFORM_VEC2);
+            if (locs->windImpactType >= 0)
+                SetShaderValue(shader, locs->windImpactType, &s_natureWindImpactType, SHADER_UNIFORM_INT);
+            if (locs->windImpactRadius >= 0)
+                SetShaderValue(shader, locs->windImpactRadius, &s_natureWindImpactRadius, SHADER_UNIFORM_FLOAT);
+            if (locs->windImpactStrength >= 0)
+                SetShaderValue(shader, locs->windImpactStrength, &s_natureWindImpactStrength, SHADER_UNIFORM_FLOAT);
+            if (locs->windImpactAge >= 0)
+                SetShaderValue(shader, locs->windImpactAge, &s_natureWindImpactAge, SHADER_UNIFORM_FLOAT);
+
+            if (Nature_WindTraceEnabled() && !s_natureWindTraceVisibleUploaded)
+            {
+                bool uniformsValid = (locs->worldFromShaderSpace >= 0 || locs->worldOffset >= 0) &&
+                                     locs->windImpactEnabled >= 0 && locs->windImpactCenter >= 0 &&
+                                     locs->windImpactDirection >= 0 && locs->windImpactType >= 0 &&
+                                     locs->windImpactRadius >= 0 &&
+                                     locs->windImpactStrength >= 0 && locs->windImpactAge >= 0;
+                TraceLog(uniformsValid ? LOG_INFO : LOG_WARNING,
+                         "[WIND_TRACE] vegetation_shader pass=visible shader=%u uniforms=%s enabled=%d type=%d center=(%.2f,%.2f) radius=%.2f bend=%.3f age=%.3f",
+                         shader.id, uniformsValid ? "ok" : "MISSING", windImpactEnabled,
+                         s_natureWindImpactType,
+                         s_natureWindImpactCenter.x, s_natureWindImpactCenter.y,
+                         s_natureWindImpactRadius, s_natureWindImpactStrength,
+                         s_natureWindImpactAge);
+                s_natureWindTraceVisibleUploaded = true;
+            }
+        }
+
+        MapShadow_UpdateShader(shader);
+        if (EnvShadow_IsEnabled())
+        {
+            if (locs->lightVP >= 0)
+                SetShaderValueMatrix(shader, locs->lightVP, EnvShadow_GetLightVP());
+            if (EnvShadow_HasStaticCache() && locs->staticLightVP >= 0)
+                SetShaderValueMatrix(shader, locs->staticLightVP, EnvShadow_GetStaticLightVP());
+        }
+    }
+
+    // 3. Các Uniform thay đổi theo từng nhóm thực thể (Cỏ vs Hoa vs Tĩnh)
+    if (firstUploadThisFrame || fabsf(locs->lastWindStrength - windStrength) > 0.0001f)
+    {
+        if (locs->windStrength >= 0)
+            SetShaderValue(shader, locs->windStrength, &windStrength, SHADER_UNIFORM_FLOAT);
+        locs->lastWindStrength = windStrength;
+    }
+
+    Nature_UpdateWindFieldShader(shader, locs, windDirection, responseKind, windStrength, firstUploadThisFrame);
+
+    int textured = useTexture ? 1 : 0;
+    if (firstUploadThisFrame || locs->lastUseTexture != textured)
+    {
+        if (locs->useTexture >= 0)
+            SetShaderValue(shader, locs->useTexture, &textured, SHADER_UNIFORM_INT);
+        float tipSoftening = useTexture ? 0.22f : 0.85f;
+        if (locs->grassTipSoftening >= 0)
+            SetShaderValue(shader, locs->grassTipSoftening, &tipSoftening, SHADER_UNIFORM_FLOAT);
+        locs->lastUseTexture = textured;
+    }
+
+    if (firstUploadThisFrame || fabsf(locs->lastAlphaCutoff - alphaCutoff) > 0.0001f)
+    {
+        if (locs->alphaCutoff >= 0)
+            SetShaderValue(shader, locs->alphaCutoff, &alphaCutoff, SHADER_UNIFORM_FLOAT);
+        locs->lastAlphaCutoff = alphaCutoff;
     }
 }
 
@@ -2089,81 +2331,89 @@ static void Nature_UpdateShadowShader(Shader shader, float time, Vector2 windDir
                                       float windStrength, bool useTexture, float alphaCutoff,
                                       NatureWindResponseKind responseKind)
 {
-    const NatureShaderLocs *locs = Nature_GetCachedLocs(shader);
-    float windLength = sqrtf(windDirection.x * windDirection.x + windDirection.y * windDirection.y);
-    if (windLength > 0.0001f)
-    {
-        windDirection.x /= windLength;
-        windDirection.y /= windLength;
-    }
+    NatureShaderLocs *locs = Nature_GetCachedLocsMutable(shader);
+    bool firstUploadThisFrame = (locs->lastShadowFrameId != s_natureRenderFrameId);
+
     if (locs->worldFromShaderSpace >= 0)
     {
-        Matrix worldFromShaderSpace = Nature_FastInvertTransform(rlGetMatrixTransform());
-        SetShaderValueMatrix(shader, locs->worldFromShaderSpace, worldFromShaderSpace);
+        Matrix curTransform = rlGetMatrixTransform();
+        bool isIdentity = Nature_IsIdentityMatrix(curTransform);
+        if (firstUploadThisFrame || !isIdentity || !locs->lastWorldWasIdentity)
+        {
+            Matrix worldFromShaderSpace = isIdentity ? curTransform : MatrixInvert(curTransform);
+            SetShaderValueMatrix(shader, locs->worldFromShaderSpace, worldFromShaderSpace);
+            locs->lastWorldWasIdentity = isIdentity;
+        }
     }
-    if (locs->time >= 0)
-        SetShaderValue(shader, locs->time, &time, SHADER_UNIFORM_FLOAT);
-    if (locs->windStrength >= 0)
-        SetShaderValue(shader, locs->windStrength, &windStrength, SHADER_UNIFORM_FLOAT);
-    Nature_UpdateWindFieldShader(shader, windDirection, responseKind, windStrength);
-    Nature_UploadGrassStateUniforms(shader);
+
+    if (firstUploadThisFrame)
+    {
+        locs->lastShadowFrameId = s_natureRenderFrameId;
+        if (locs->time >= 0)
+            SetShaderValue(shader, locs->time, &time, SHADER_UNIFORM_FLOAT);
+        Nature_UploadGrassStateUniforms(shader);
+
+        int interactionEnabled = s_natureInteractionReady ? 1 : 0;
+        if (locs->interactionEnabled >= 0)
+            SetShaderValue(shader, locs->interactionEnabled, &interactionEnabled, SHADER_UNIFORM_INT);
+        if (interactionEnabled)
+        {
+            if (locs->interactionCenter >= 0)
+                SetShaderValue(shader, locs->interactionCenter, &s_natureInteractionCenter, SHADER_UNIFORM_VEC2);
+            if (locs->interactionMap >= 0)
+                SetShaderValueTexture(shader, locs->interactionMap, s_natureInteractionTexture);
+        }
+
+        int windImpactEnabled = s_natureWindImpactEnabled ? 1 : 0;
+        if (locs->windImpactEnabled >= 0)
+            SetShaderValue(shader, locs->windImpactEnabled, &windImpactEnabled, SHADER_UNIFORM_INT);
+        if (windImpactEnabled)
+        {
+            if (locs->windImpactCenter >= 0)
+                SetShaderValue(shader, locs->windImpactCenter, &s_natureWindImpactCenter, SHADER_UNIFORM_VEC2);
+            if (locs->windImpactDirection >= 0)
+                SetShaderValue(shader, locs->windImpactDirection, &s_natureWindImpactDirection, SHADER_UNIFORM_VEC2);
+            if (locs->windImpactType >= 0)
+                SetShaderValue(shader, locs->windImpactType, &s_natureWindImpactType, SHADER_UNIFORM_INT);
+            if (locs->windImpactRadius >= 0)
+                SetShaderValue(shader, locs->windImpactRadius, &s_natureWindImpactRadius, SHADER_UNIFORM_FLOAT);
+            if (locs->windImpactStrength >= 0)
+                SetShaderValue(shader, locs->windImpactStrength, &s_natureWindImpactStrength, SHADER_UNIFORM_FLOAT);
+            if (locs->windImpactAge >= 0)
+                SetShaderValue(shader, locs->windImpactAge, &s_natureWindImpactAge, SHADER_UNIFORM_FLOAT);
+
+            if (Nature_WindTraceEnabled() && !s_natureWindTraceShadowUploaded)
+            {
+                s_natureWindTraceShadowUploaded = true;
+            }
+        }
+    }
+
+    if (firstUploadThisFrame || fabsf(locs->lastWindStrength - windStrength) > 0.0001f)
+    {
+        if (locs->windStrength >= 0)
+            SetShaderValue(shader, locs->windStrength, &windStrength, SHADER_UNIFORM_FLOAT);
+        locs->lastWindStrength = windStrength;
+    }
+
+    Nature_UpdateWindFieldShader(shader, locs, windDirection, responseKind, windStrength, firstUploadThisFrame);
 
     int textured = useTexture ? 1 : 0;
-    if (locs->useTexture >= 0)
-        SetShaderValue(shader, locs->useTexture, &textured, SHADER_UNIFORM_INT);
-    if (locs->alphaCutoff >= 0)
-        SetShaderValue(shader, locs->alphaCutoff, &alphaCutoff, SHADER_UNIFORM_FLOAT);
-    float alphaCoverage = useTexture ? 0.75f : 0.0f;
-    if (locs->alphaCoverage >= 0)
-        SetShaderValue(shader, locs->alphaCoverage, &alphaCoverage, SHADER_UNIFORM_FLOAT);
-
-    int interactionEnabled = s_natureInteractionReady ? 1 : 0;
-    if (locs->interactionEnabled >= 0)
-        SetShaderValue(shader, locs->interactionEnabled, &interactionEnabled, SHADER_UNIFORM_INT);
-    if (interactionEnabled)
+    if (firstUploadThisFrame || locs->lastUseTexture != textured)
     {
-        if (locs->interactionCenter >= 0)
-            SetShaderValue(shader, locs->interactionCenter, &s_natureInteractionCenter, SHADER_UNIFORM_VEC2);
-        if (locs->interactionMap >= 0)
-            SetShaderValueTexture(shader, locs->interactionMap, s_natureInteractionTexture);
+        if (locs->useTexture >= 0)
+            SetShaderValue(shader, locs->useTexture, &textured, SHADER_UNIFORM_INT);
+        float alphaCoverage = useTexture ? 0.75f : 0.0f;
+        if (locs->alphaCoverage >= 0)
+            SetShaderValue(shader, locs->alphaCoverage, &alphaCoverage, SHADER_UNIFORM_FLOAT);
+        locs->lastUseTexture = textured;
     }
 
-    int windImpactEnabled = s_natureWindImpactEnabled ? 1 : 0;
-    if (locs->windImpactEnabled >= 0)
-        SetShaderValue(shader, locs->windImpactEnabled, &windImpactEnabled, SHADER_UNIFORM_INT);
-    if (windImpactEnabled)
+    if (firstUploadThisFrame || fabsf(locs->lastAlphaCutoff - alphaCutoff) > 0.0001f)
     {
-        if (locs->windImpactCenter >= 0)
-            SetShaderValue(shader, locs->windImpactCenter, &s_natureWindImpactCenter, SHADER_UNIFORM_VEC2);
-        if (locs->windImpactDirection >= 0)
-            SetShaderValue(shader, locs->windImpactDirection, &s_natureWindImpactDirection, SHADER_UNIFORM_VEC2);
-        if (locs->windImpactType >= 0)
-            SetShaderValue(shader, locs->windImpactType, &s_natureWindImpactType, SHADER_UNIFORM_INT);
-        if (locs->windImpactRadius >= 0)
-            SetShaderValue(shader, locs->windImpactRadius, &s_natureWindImpactRadius, SHADER_UNIFORM_FLOAT);
-        if (locs->windImpactStrength >= 0)
-            SetShaderValue(shader, locs->windImpactStrength, &s_natureWindImpactStrength, SHADER_UNIFORM_FLOAT);
-        if (locs->windImpactAge >= 0)
-            SetShaderValue(shader, locs->windImpactAge, &s_natureWindImpactAge, SHADER_UNIFORM_FLOAT);
-
-        if (Nature_WindTraceEnabled() && !s_natureWindTraceShadowUploaded)
-        {
-            bool uniformsValid = (locs->worldFromShaderSpace >= 0 || locs->worldOffset >= 0) &&
-                                 locs->windImpactEnabled >= 0 && locs->windImpactCenter >= 0 &&
-                                 locs->windImpactDirection >= 0 && locs->windImpactType >= 0 &&
-                                 locs->windImpactRadius >= 0 &&
-                                 locs->windImpactStrength >= 0 && locs->windImpactAge >= 0;
-            TraceLog(uniformsValid ? LOG_INFO : LOG_WARNING,
-                     "[WIND_TRACE] vegetation_shader pass=shadow shader=%u uniforms=%s enabled=%d type=%d center=(%.2f,%.2f) radius=%.2f bend=%.3f age=%.3f locations=(world:%d offset:%d enabled:%d center:%d direction:%d type:%d radius:%d strength:%d age:%d)",
-                     shader.id, uniformsValid ? "ok" : "MISSING", windImpactEnabled,
-                     s_natureWindImpactType,
-                     s_natureWindImpactCenter.x, s_natureWindImpactCenter.y,
-                     s_natureWindImpactRadius, s_natureWindImpactStrength,
-                     s_natureWindImpactAge, locs->worldFromShaderSpace, locs->worldOffset,
-                     locs->windImpactEnabled, locs->windImpactCenter, locs->windImpactDirection,
-                     locs->windImpactType, locs->windImpactRadius, locs->windImpactStrength, locs->windImpactAge);
-            s_natureWindTraceShadowUploaded = true;
-        }
+        if (locs->alphaCutoff >= 0)
+            SetShaderValue(shader, locs->alphaCutoff, &alphaCutoff, SHADER_UNIFORM_FLOAT);
+        locs->lastAlphaCutoff = alphaCutoff;
     }
 }
 

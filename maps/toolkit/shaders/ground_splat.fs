@@ -128,15 +128,15 @@ void main()
 
         float shoreU16 = (metric.b * 65280.0 + metric.a * 255.0) * (1.0 / 65535.0);
         float signedShore = (shoreU16 * 2.0 - 1.0) * 16.0;
-        if (signedShore < 0.0) {
-            lakeDepthFactor = clamp(-signedShore * (1.0 / 3.0), 0.0, 1.0);
+        // Organic continuous domain noise breaks discrete raster distance-transform wavefront scallops
+        float shoreJitter = sin(fragWorldPos.x * 2.4 + fragWorldPos.z * 1.9) * 0.22
+                          + cos(fragWorldPos.x * 4.8 - fragWorldPos.z * 3.9) * 0.11;
+        float smoothSignedShore = signedShore + shoreJitter;
+        if (smoothSignedShore < 0.0) {
+            lakeDepthFactor = clamp(-smoothSignedShore * (1.0 / 2.6), 0.0, 1.0);
             shoreFactor = 1.0;
         } else {
-            // Organic domain noise breaks discrete raster distance-transform wavefront scallops
-            float shoreJitter = sin(fragWorldPos.x * 2.4 + fragWorldPos.z * 1.9) * 0.25
-                              + cos(fragWorldPos.x * 4.8 - fragWorldPos.z * 3.9) * 0.12;
-            float shoreDist = max(0.0, signedShore + shoreJitter);
-            shoreFactor = 1.0 - smoothstep(0.0, 1.15, shoreDist);
+            shoreFactor = 1.0 - smoothstep(0.0, 1.25, smoothSignedShore);
         }
     } else if (u_pathSegCount > 0) {
         float minDistSq = 1000000.0;
@@ -204,7 +204,10 @@ void main()
     // ---- 7. Four-Layer Weights & Height-Based Relief Blending ----
     float wPath = 1.0 - smoothstep(1.10, 1.95, distToPath);
     float wPathMargin = smoothstep(0.95, 1.65, distToPath) * (1.0 - smoothstep(1.65, 3.1, distToPath));
-    float wWetSoil = max(shoreFactor * 0.82, smoothstep(0.68, 0.96, streamWet) * 0.82);
+    float wWetSoil = max(shoreFactor * 0.95, smoothstep(0.55, 0.92, streamWet));
+    if (lakeDepthFactor > 0.0) {
+        wWetSoil = mix(wWetSoil, 1.0, clamp(lakeDepthFactor * 2.0, 0.0, 1.0));
+    }
 
     // Transition steeper terrain banks and outer cliff rims into rock strata & scree
     float wSlope = smoothstep(0.20, 0.48, slope);
@@ -417,74 +420,57 @@ void main()
         float cliffMix = clamp(wCliff / max(wDrySoil, 0.001), 0.0, 1.0);
         vec3 drySoilColor = mix(warmLoamColor, cliffAlbedo, cliffMix);
 
-        // ---- AAA Alluvial Riverbed Sand, Fine Gravel & Multi-Hue River Pebbles ----
+        // ---- AAA Alluvial Riverbed Sand & Natural Fine River Gravel ----
         vec3 wetSoilColor = vec3(0.0);
         if (isRiparian > 0.01) {
             // 1. Alluvial quartz/feldspar river sand with hydrodynamic current ripples
-            float sandRipple = sin(fragWorldPos.z * 15.0 + sin(fragWorldPos.x * 4.5) * 1.4) * 0.5 + 0.5;
-            vec3 drySand = mix(vec3(0.58, 0.50, 0.38), vec3(0.64, 0.56, 0.44), sandRipple * 0.38);
-            vec3 wetSand = mix(vec3(0.46, 0.38, 0.28), vec3(0.50, 0.42, 0.31), sandRipple * 0.38);
-            vec3 submergedSand = mix(vec3(0.40, 0.34, 0.25), vec3(0.44, 0.37, 0.28), sandRipple * 0.38);
+            float sandRipple1 = sin(fragWorldPos.z * 9.5 + sin(fragWorldPos.x * 3.6) * 1.5 + fragWorldPos.x * 1.2) * 0.5 + 0.5;
+            float sandRipple2 = sin(fragWorldPos.x * 18.0 - fragWorldPos.z * 7.5) * 0.5 + 0.5;
+            float sandRipple = sandRipple1 * 0.68 + sandRipple2 * 0.32;
 
-            vec3 sandBase = mix(drySand, wetSand, clamp(shoreFactor * 0.65 + streamWet * 0.55, 0.0, 1.0));
+            // Rich warm golden alluvial sand tones
+            vec3 drySand = mix(vec3(0.58, 0.50, 0.38), vec3(0.66, 0.58, 0.44), sandRipple * 0.28);
+            vec3 wetSand = mix(vec3(0.44, 0.36, 0.26), vec3(0.50, 0.42, 0.31), sandRipple * 0.28);
+            vec3 submergedSand = mix(vec3(0.35, 0.30, 0.23), vec3(0.42, 0.36, 0.28), sandRipple * 0.28);
+
+            vec3 sandBase = mix(drySand, wetSand, clamp(shoreFactor * 0.70 + streamWet * 0.60, 0.0, 1.0));
             sandBase = mix(sandBase, submergedSand, clamp(lakeDepthFactor * 1.25, 0.0, 1.0));
 
-            // Micro sand grain texture
-            float sandGrain = fract(sin(dot(fragWorldPos.xz, vec2(193.1, 749.3))) * 43758.5453);
-            sandBase *= 0.94 + 0.12 * sandGrain;
+            // Scanned photographic micro-sediment & earth grain from texPath (macro ~0.55m)
+            vec3 microSediment = textureGrad(texPath, fragWorldPos.xz * 1.85, wpDx * 1.85, wpDy * 1.85).rgb;
+            sandBase *= (0.78 + 0.44 * microSediment.r) * (0.82 + 0.36 * colorDirt.rgb);
 
-            // 2. Medium rounded river pebbles (~8-15cm, domain-warped organic clusters)
-            vec2 warpPos = fragWorldPos.xz + vec2(sin(fragWorldPos.z * 1.8 + 0.5), cos(fragWorldPos.x * 1.8 - 0.3)) * 0.22;
-            vec2 pebbleUV = warpPos * 10.5;
-            vec2 pId = floor(pebbleUV);
-            vec2 pF = fract(pebbleUV) - 0.5;
-            float pHash1 = fract(sin(dot(pId, vec2(127.1, 311.7))) * 43758.5453);
-            float pHash2 = fract(sin(dot(pId, vec2(269.5, 183.3))) * 43758.5453);
-            vec2 pCenter = (vec2(pHash1, pHash2) - 0.5) * 0.48;
-            float pDist = length(pF - pCenter);
-            float pRad = 0.16 + 0.22 * pHash1;
+            // 2. High-resolution photographic river gravel & pebble shingle (~2-5cm, scanned)
+            vec2 gravelUV = tiledUV * 3.4;
+            vec2 grDx = uvDx * 3.4, grDy = uvDy * 3.4;
+            vec3 fineGravelTex = textureGrad(texPath, gravelUV, grDx, grDy).rgb;
 
-            // Density clustering: clusters of pebbles separated by clean rippled sand bars
-            float shingleCluster = sin(fragWorldPos.x * 1.4 + fragWorldPos.z * 1.1)
-                                 * cos(fragWorldPos.z * 1.9 - fragWorldPos.x * 0.8) * 0.5 + 0.5;
-            float pebblePresence = step(0.30, shingleCluster * 0.65 + pHash2 * 0.45);
-            float pebbleMask = smoothstep(pRad, pRad - 0.07, pDist) * pebblePresence;
+            // Natural gravel shingle bars (banks where water flow deposits stones)
+            float barNoise = sin(fragWorldPos.x * 0.65 + fragWorldPos.z * 0.50)
+                           * cos(fragWorldPos.z * 0.85 - fragWorldPos.x * 0.40);
+            float shingleBar = 0.35 + 0.65 * smoothstep(-0.20, 0.25, barNoise);
 
-            vec3 pebbleCol;
-            if (pHash1 < 0.26) {
-                pebbleCol = mix(vec3(0.68, 0.65, 0.58), vec3(0.76, 0.72, 0.65), pHash2); // ivory quartz
-            } else if (pHash1 < 0.58) {
-                pebbleCol = mix(vec3(0.50, 0.46, 0.40), vec3(0.58, 0.53, 0.46), pHash2); // warm granite
-            } else if (pHash1 < 0.82) {
-                pebbleCol = mix(vec3(0.56, 0.44, 0.30), vec3(0.48, 0.36, 0.24), pHash2); // amber jasper
-            } else {
-                pebbleCol = mix(vec3(0.32, 0.33, 0.32), vec3(0.40, 0.41, 0.39), pHash2); // river slate
-            }
-            pebbleCol *= (0.74 + 0.26 * smoothstep(pRad, 0.0, pDist));
+            // Pebble grains: photographic mineral flecks (quartzite, granite, slate)
+            float pebbleLuma = dot(fineGravelTex, vec3(0.299, 0.587, 0.114));
+            float gravelHighlight = smoothstep(0.46, 0.74, pebbleLuma);
+            float pebbleCrevice = 1.0 - smoothstep(0.28, 0.46, pebbleLuma);
 
-            // 3. Fine river gravel (~2-4cm, domain-warped)
-            vec2 gWarpPos = fragWorldPos.xz + vec2(cos(fragWorldPos.z * 3.5), sin(fragWorldPos.x * 3.5)) * 0.12;
-            vec2 gravelUV = gWarpPos * 26.0;
-            vec2 gId = floor(gravelUV);
-            vec2 gF = fract(gravelUV) - 0.5;
-            float gHash = fract(sin(dot(gId, vec2(113.5, 271.9))) * 38192.174);
-            vec2 gCenter = (vec2(gHash, fract(gHash * 7.13)) - 0.5) * 0.42;
-            float gDist = length(gF - gCenter);
-            float gravelMask = smoothstep(0.22, 0.09, gDist);
-            vec3 gravelCol = mix(vec3(0.58, 0.54, 0.46), vec3(0.42, 0.38, 0.32), gHash);
+            vec3 pebbleMineral = mix(vec3(0.36, 0.35, 0.33), vec3(0.56, 0.52, 0.45), gravelHighlight);
+            pebbleMineral = mix(pebbleMineral, vec3(0.50, 0.43, 0.34), fineGravelTex.g);
 
-            vec3 riverbedBed = sandBase;
-            riverbedBed = mix(riverbedBed, gravelCol, gravelMask * 0.65);
-            riverbedBed = mix(riverbedBed, pebbleCol, pebbleMask);
+            // Contact shadow/cavity darkening around fine gravel embedded in sand
+            float gravelAO = 1.0 - pebbleCrevice * 0.28 * shingleBar;
+            vec3 riverbedBed = mix(sandBase, pebbleMineral, gravelHighlight * 0.65 * shingleBar) * gravelAO;
 
-            // Export pebble normal dome perturbation
+            // Export high-frequency 3D micro-normal for sand ripples and river pebbles
             if (camDistSqXZ < 400.0) {
-                vec2 pDome = (pF - pCenter) / max(pRad, 0.05);
-                proceduralPebbleNormal = pDome * pebbleMask * 0.45 * detailResolve;
+                vec4 gravelMat = textureGrad(texSoilMaterial, gravelUV, grDx, grDy);
+                vec2 gNorm = (gravelMat.rg * 2.0 - 1.0);
+                proceduralPebbleNormal = gNorm * (0.35 * shingleBar + 0.20) * detailResolve;
             }
 
             vec3 mossyBank = vec3(0.24, 0.30, 0.15) * (0.85 + 0.35 * dirtDetail.g);
-            float sandDominance = clamp(shoreFactor * 1.25 + streamWet * 1.4 + lakeDepthFactor * 1.8, 0.0, 1.0);
+            float sandDominance = clamp(shoreFactor * 1.15 + streamWet * 1.35 + lakeDepthFactor * 1.8, 0.0, 1.0);
             wetSoilColor = mix(mossyBank, riverbedBed, sandDominance);
         } else {
             vec3 mossyBank = vec3(0.22, 0.28, 0.14) * (0.85 + 0.35 * dirtDetail.g);
