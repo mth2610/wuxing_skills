@@ -45,6 +45,8 @@ unsigned int MapProp_GetSkipMask(void)
         mask |= MAP_SKIP_GODRAYS;
     if (strstr(env, "grade"))
         mask |= MAP_SKIP_GRADE;
+    if (strstr(env, "cliff"))
+        mask |= MAP_SKIP_CLIFF;
 
     return mask;
 }

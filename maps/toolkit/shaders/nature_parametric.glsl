@@ -106,12 +106,10 @@ vec4 NatureBladeParameter(int blade, int column)
 void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p3)
 {
     if (u_canonicalBladeData != 0 && u_geometryLod > 0) {
-        // Ghost of Tsushima Seamless LOD Continuity:
-        // Low-density LOD blades evaluate the EXACT same cubic Bezier curve (p0, p1, p2, p3)
-        // as high-density blades so height and arch posture never collapse across LOD bands.
+        // [TỐI ƯU ALU]: Thay hàm pow() đắt đỏ bằng sqrt() + hệ số bù bề rộng cho LOD 1 & LOD 2
         float bladeRatio = max(float(max(u_canonicalBlades, 1)) / float(max(u_bladesPerTuft, 1)), 1.0);
-        float expPower = (u_geometryLod == 2) ? 0.48 : 0.44;
-        p1.w *= pow(bladeRatio, expPower);
+        float widthBoost = (u_geometryLod == 2) ? 1.12 : 0.97;
+        p1.w *= sqrt(bladeRatio) * widthBoost;
     }
 }
 
@@ -133,8 +131,6 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     s_hasCachedClumpTexel = true;
 
 #ifndef NATURE_BLADE_POSITION_ONLY
-    // Colour texels are only read by the lit pass; the depth-only shadow caster evaluates the
-    // same silhouette without paying two of its seven atlas gathers per vertex.
     vec3 rootColor = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 5, baseCoord.y), 0).rgb;
     vec3 tipColor  = texelFetch(u_bladeParameters, ivec2(baseCoord.x + 6, baseCoord.y), 0).rgb;
 #endif
@@ -154,7 +150,6 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     vec3 rawTangent = u2 * (p1.xyz - p0.xyz) +
                       (2.0 * ut) * (p2.xyz - p1.xyz) +
                       t2 * (p3.xyz - p2.xyz);
-    // [BUG FIX]: Chuẩn hóa an toàn cho rawTangent để tránh NaN nếu đường cong suy biến
     float rawTanLenSq = dot(rawTangent, rawTangent);
     vec3 tangent = (rawTanLenSq > 1e-8) ? (rawTangent * inversesqrt(rawTanLenSq)) : vec3(0.0, 1.0, 0.0);
 
@@ -167,8 +162,6 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     }
 
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    // 3D view-assisted ribbon orientation: gently turns edge-on blades toward the 3D camera ray
-    // so tilted/bent blades never collapse into 1px dotted wires at any camera pitch or zoom.
     vec3 toCamVec = (p0.xyz + u_worldOffset) - u_tuftLodCamera;
     float distToCam;
     float invDistToCam;
@@ -187,14 +180,20 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     if (vsLenSq > 1e-5) {
         viewSide3D *= inversesqrt(vsLenSq);
         if (dot(side, viewSide3D) < 0.0) viewSide3D = -viewSide3D;
-        vec3 natCross = cross(side, tangent);
-        vec3 naturalNormal = natCross * inversesqrt(max(dot(natCross, natCross), 1e-8));
-        vec3 viewDir = toCamVec * invDistToCam;
-        float edgeOn = 1.0 - abs(dot(naturalNormal, viewDir));
-        float viewAssist = mix(0.36, 0.50, clamp(distToCam * 0.04, 0.0, 1.0));
-        viewAssist = mix(viewAssist, 0.82, edgeOn * edgeOn);
-        vec3 mixedSide = mix(side, viewSide3D, viewAssist);
-        side = mixedSide * inversesqrt(max(dot(mixedSide, mixedSide), 1e-8));
+        if (u_geometryLod < 2) {
+            vec3 natCross = cross(side, tangent);
+            vec3 naturalNormal = natCross * inversesqrt(max(dot(natCross, natCross), 1e-8));
+            vec3 viewDir = toCamVec * invDistToCam;
+            float edgeOn = 1.0 - abs(dot(naturalNormal, viewDir));
+            float viewAssist = mix(0.36, 0.50, clamp(distToCam * 0.04, 0.0, 1.0));
+            viewAssist = mix(viewAssist, 0.82, edgeOn * edgeOn);
+            vec3 mixedSide = mix(side, viewSide3D, viewAssist);
+            side = mixedSide * inversesqrt(max(dot(mixedSide, mixedSide), 1e-8));
+        } else {
+            // Fast-path hướng mặt lá cho cỏ xa (LOD 2)
+            vec3 mixedSide = mix(side, viewSide3D, 0.52);
+            side = mixedSide * inversesqrt(max(dot(mixedSide, mixedSide), 1e-8));
+        }
     }
 #endif
 
@@ -206,23 +205,15 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
         geometricNormal *= inversesqrt(dot(geometricNormal, geometricNormal));
     }
 
-    // Continuous AAA Sword-Leaf Taper Profile:
-    // Swells gently in the lower third (t = 0.25) and tapers continuously from t = 0.30 to 1.00.
-    // Eliminates the wide "Popsicle-stick" rectangle look and the abrupt elbow at t = 0.86!
     float sinPiT = 4.0 * ut;
     float profile;
     if (p2.w > 0.5) {
-        // Reed / broad leaf profile
         profile = (0.78 + 0.36 * sinPiT) * (1.0 - t2 * (0.72 + 0.24 * t));
     } else if (p3.w > 0.5) {
-        // Pampas feather plume: slender stalk below, delicate natural taper at tassel tip
         float stalk = min(1.0, 0.50 + 1.4 * t);
         float tasselTaper = (t > 0.75) ? max(0.2, 1.0 - (t - 0.75) * 3.2) : 1.0;
         profile = stalk * tasselTaper;
     } else {
-        // Ghost of Tsushima C1-Continuous Katana Blade Taper:
-        // Slope before tipStart (t = 0.78, profile = 0.31) matches the tip triangle slope to t = 1.0,
-        // eliminating any chisel/pentagon corner where the body quad strip meets the tip triangle!
         float sheath = 0.90 + 0.10 * smoothstep(0.0, 0.15, t);
         float taper = max(0.0, 1.0 - 0.56 * t - 0.38 * t2);
         profile = sheath * taper;
@@ -231,13 +222,11 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
-    // Distance-only sub-pixel anti-aliasing floor (0 at close range so close-up tips are razor-sharp!)
     float farAntiAlias = clamp((distToCam - 8.0) * 0.04, 0.0, 1.0);
     float minPxHalfWidth = farAntiAlias * distToCam * 0.00038 * (1.0 - 0.75 * t);
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 
-    // Smoothly arch the blade spine without creating a step between ring vertices and the tip apex
     float spineArch = p1.w * 0.08 * sinPiT;
     s_cachedTangent = tangent;
     s_cachedSide = side;
@@ -256,34 +245,33 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
 #endif
 
 #ifdef NATURE_BLADE_POSITION_ONLY
-    // Depth-only pass: no shading normal, no palette gradient, no plume tint.
     normal = vec3(0.0, 1.0, 0.0);
     color = vec4(1.0);
     windUV = vec2(p0.w, t);
     surfaceUV = vec2(sideSign, t);
 #else
-    // Continuous normal interpolation along t (eliminates the sudden role > 2.5 normal jump at the tip!)
-    vec3 rawSphere = position - vec3(clump.x, clump.y - 0.04, clump.z);
-    vec3 sphereDirection = rawSphere * inversesqrt(max(dot(rawSphere, rawSphere), 1e-8));
-    float upBlend = mix(0.42, 0.54, t);
-    vec3 rawTarget = mix(sphereDirection, vec3(0.0, 1.0, 0.0), upBlend);
-    vec3 target = rawTarget * inversesqrt(max(dot(rawTarget, rawTarget), 1e-8));
-    vec3 rawMeshN = geometricNormal + side * (sideSign * (0.34 * (1.0 - 0.35 * t)));
-    vec3 meshNormal = rawMeshN * inversesqrt(max(dot(rawMeshN, rawMeshN), 1e-8));
-    vec3 rawFinalN = mix(meshNormal, target, mix(0.44, 0.54, t));
-    normal = rawFinalN * inversesqrt(max(dot(rawFinalN, rawFinalN), 1e-8));
+    if (u_geometryLod < 2) {
+        vec3 rawSphere = position - vec3(clump.x, clump.y - 0.04, clump.z);
+        vec3 sphereDirection = rawSphere * inversesqrt(max(dot(rawSphere, rawSphere), 1e-8));
+        float upBlend = mix(0.42, 0.54, t);
+        vec3 rawTarget = mix(sphereDirection, vec3(0.0, 1.0, 0.0), upBlend);
+        vec3 target = rawTarget * inversesqrt(max(dot(rawTarget, rawTarget), 1e-8));
+        vec3 rawMeshN = geometricNormal + side * (sideSign * (0.34 * (1.0 - 0.35 * t)));
+        vec3 meshNormal = rawMeshN * inversesqrt(max(dot(rawMeshN, rawMeshN), 1e-8));
+        vec3 rawFinalN = mix(meshNormal, target, mix(0.44, 0.54, t));
+        normal = rawFinalN * inversesqrt(max(dot(rawFinalN, rawFinalN), 1e-8));
+    } else {
+        // [TỐI ƯU ALU]: Ở LOD 2 (> 22m), rút gọn 4 phép chuẩn hóa vector cầu về 1 phép pha mượt
+        vec3 rawFastN = mix(geometricNormal, vec3(0.0, 1.0, 0.0), 0.52);
+        normal = rawFastN * inversesqrt(max(dot(rawFastN, rawFastN), 1e-8));
+    }
 
-    // Per-blade botanical identity (0..1) derived from blade index & phase
     float bladeHash = fract(float(localBlade) * 0.6180339 + p0.w * 1.73205);
-    // Inner hero blades are fresher/brighter; outer skirt blades are deeper olive/emerald
     float tierShade = (localBlade < 2) ? 1.04 : ((localBlade < 4) ? 0.99 : 0.93);
     float bladeTone = (0.94 + 0.12 * bladeHash) * tierShade;
 
-    // Rich 3-Stop Botanical Color Gradient:
-    // Stop 1 (Deep Mossy Sheath Base) -> Stop 2 (Vibrant Viridian Body) -> Stop 3 (Warm Sunlit Chartreuse Tip)
     vec3 rootNorm = rootColor * (1.0 / 255.0);
     vec3 tipNorm  = tipColor  * (1.0 / 255.0);
-    // Subtle per-blade hue shift between emerald and warm spring-gold
     vec3 hueVar = mix(vec3(0.95, 1.02, 0.96), vec3(1.06, 1.02, 0.86), bladeHash);
     tipNorm *= hueVar;
     vec3 viridianMid = mix(rootNorm, tipNorm, 0.54) * vec3(0.94, 1.04, 0.90);
@@ -296,7 +284,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     vec3 smoothCol = clamp(gradCol * (baseOcclusion * bladeTone), 0.0, 1.0);
     if (p3.w > 0.5 && t > 0.70) {
         float plumeT = smoothstep(0.70, 0.88, t);
-        vec3 plumeSilk = mix(tipNorm, vec3(0.82, 0.80, 0.62), 0.55); // Harmonious warm wheat tassel
+        vec3 plumeSilk = mix(tipNorm, vec3(0.82, 0.80, 0.62), 0.55);
         smoothCol = mix(smoothCol, plumeSilk * bladeTone, plumeT * 0.65);
     }
 

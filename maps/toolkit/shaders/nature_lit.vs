@@ -43,11 +43,11 @@ void main()
     vec3 bentNormal = vertexNormal;
     float windSheen = 0.0;
 
-    // Bỏ qua toàn bộ tính toán gió & trạng thái cho các đỉnh gốc cỏ đứng yên (h == 0)
+    // Bỏ qua toàn bộ tính toán gió & trạng thái cho các đỉnh gốc đứng yên (h == 0)
     if (h > 0.0001) {
         float windCompliance = 1.0;
 
-        // [TỐI ƯU HIỆU NĂNG]: Chỉ tính toán trạng thái cỏ khô/cháy khi map thực sự kích hoạt
+        // Chỉ tính toán trạng thái cỏ khô/cháy khi map thực sự kích hoạt
         if ((u_grassStateParams.x + u_grassStateParams.y) > 0.0001 || u_grassBurnZoneCount > 0) {
             vec2 grassState = GrassEvaluateLocalState(world);
             if (dot(grassState, grassState) > 1e-5) {
@@ -78,9 +78,7 @@ void main()
             }
         }
 
-        // [BUG FIX & ALU OPT]: Giới hạn tổng biên độ uốn (gió + xung lực + tương tác) không vượt quá
-        // maxAllowedBend để tránh biến dạng gãy gập mesh hoa/bụi cây khi nhiều lực chồng lấp,
-        // đồng thời dùng chung 1 lệnh inversesqrt duy nhất cho cả rawBendLen và dispLen.
+        // Giới hạn tổng biên độ uốn bằng 1 lệnh inversesqrt duy nhất
         float rawBendSq = dot(windBend, windBend);
         float rawBendLen = (rawBendSq > 1e-10) ? (rawBendSq * inversesqrt(rawBendSq)) : 0.0;
         if (rawBendLen > maxAllowedBend) {
@@ -92,7 +90,7 @@ void main()
         float dispLen = rawBendLen * rootMask;
         float dispSq = dispLen * dispLen;
         float effHeight = max(abs(local.y), 0.15);
-        // [TỐI ƯU ALU]: Xấp xỉ hữu tỉ bảo toàn chiều dài cung, loại bỏ lệnh sqrt() thứ 2 mỗi đỉnh
+        // Xấp xỉ hữu tỉ bảo toàn chiều dài cung của cuống hoa / lá cỏ khi nghiêng
         float dispY = -dispSq / (effHeight * 3.6 + dispSq * (0.28 / effHeight));
 
         vec3 localDelta = vec3(dispXZ.x, dispY, dispXZ.y);

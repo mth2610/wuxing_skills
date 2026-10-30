@@ -29,19 +29,17 @@ void main()
     vec3 local = bladePosition;
     float h = bladeWindUV.y;
 
-    // [TỐI ƯU HIỆU NĂNG]: Bỏ qua toàn bộ tính toán nhiễu gió 3D và đọc texture tương tác
-    // đối với các đỉnh gốc cỏ đứng yên (h == 0)
+    // Bỏ qua tính toán gió & đọc texture tương tác cho các đỉnh gốc cỏ đứng yên (h == 0)
     if (h > 0.0001) {
-        vec3 rootWorld = s_cachedClumpTexel.xyz + u_worldOffset;
-        float rootMask = h * h;
+        vec3 rootLocal = s_cachedClumpTexel.xyz;
+        vec3 rootWorld = rootLocal + u_worldOffset;
+        float rootMask = h * (0.42 + 0.58 * h);
         float maxAllowedBend = max(u_interactionMaxBend * u_natureWindResponse.w, 0.001);
 
         vec2 windBend = NatureVegetationWindBend(
             rootWorld, bladeWindUV, u_time, u_windStrength, maxAllowedBend);
         windBend += NatureDominantWindImpact(rootWorld) * u_natureWindResponse.w;
 
-        // [VULKAN / SPIR-V FIX & BANDWIDTH OPT]: Dùng textureLod(..., 0.0) thay cho texture()
-        // trong Vertex Shader và chỉ đọc texture khi gốc cỏ thực sự nằm trong vùng tương tác
         if (u_interactionEnabled != 0 && u_interactionWorldSize > 0.0001) {
             vec2 uvOffset = (rootWorld.xz - u_interactionCenter) / u_interactionWorldSize;
             float maxAxis = max(abs(uvOffset.x), abs(uvOffset.y));
@@ -55,13 +53,17 @@ void main()
             }
         }
 
-        // Giới hạn tổng biên độ uốn đồng bộ với nature_lit_parametric.vs để bóng không bị lệch khỏi lá cỏ
+        // Gộp bước giới hạn biên độ uốn và độ hạ thấp ngọn cỏ đồng bộ với nature_lit_parametric.vs
         float rawBendSq = dot(windBend, windBend);
-        if (rawBendSq > maxAllowedBend * maxAllowedBend) {
-            windBend *= maxAllowedBend * inversesqrt(rawBendSq);
+        float rawBendLen = (rawBendSq > 1e-10) ? (rawBendSq * inversesqrt(rawBendSq)) : 0.0;
+        if (rawBendLen > maxAllowedBend) {
+            windBend *= maxAllowedBend / rawBendLen;
+            rawBendLen = maxAllowedBend;
         }
 
+        float dispLen = rawBendLen * rootMask;
         local.xz += windBend * rootMask;
+        local.y  -= dispLen * 0.18 * h;
     }
 
     fragTexCoord = bladeSurfaceUV;

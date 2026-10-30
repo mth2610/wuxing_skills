@@ -41,6 +41,7 @@ typedef enum
     MAP_SKIP_FOGVOLUMES = 1 << 11,
     MAP_SKIP_GODRAYS = 1 << 12,
     MAP_SKIP_GRADE = 1 << 13,
+    MAP_SKIP_CLIFF = 1 << 14,
 } MapSkipMaskFlag;
 
 unsigned int MapProp_GetSkipMask(void);
@@ -241,6 +242,7 @@ typedef struct
     float innerWidth, outerWidth, heightOffset, outerDrop, opacity;
 } MapBoundaryMistStyle;
 
+int MapProp_ExtractBoundaryLoop(const MapGroundSurface *ground, float height, Vector3 *outPoints, int maxPoints);
 bool MapProp_SetCloudSeaBoundaryContours(MapCloudSea *cloud,
                                          const MapBoundaryContour *contours, int count, const MapBoundaryMistStyle *style);
 bool MapProp_SetCloudSeaGroundBoundary(MapCloudSea *cloud,
@@ -250,6 +252,29 @@ void MapProp_SetCloudSeaIslandBoundary(MapCloudSea *cloud, const MapIslandBounda
 void MapProp_DrawCloudSea(const MapCloudSea *cloud, Vector3 worldCenter, float yOffset);
 void MapProp_DrawIslandMist(const MapCloudSea *cloud, Vector3 worldCenter);
 void MapProp_UnloadCloudSea(MapCloudSea *cloud);
+
+#define MAX_CLIFF_CHUNKS 32
+
+typedef struct
+{
+    Model model;
+    Vector3 center;
+    float radius;
+    bool ready;
+} MapCliffChunk;
+
+typedef struct
+{
+    MapCliffChunk chunks[MAX_CLIFF_CHUNKS];
+    int chunkCount;
+    Material material;
+    Shader shader;
+    bool ready;
+} MapCliffSkirt;
+
+MapCliffSkirt MapProp_CreateCliffSkirt(const MapGroundSurface *ground, Vector3 mapCenter, float sliceHeight, float bottomY);
+void MapProp_DrawCliffSkirt(const MapCliffSkirt *cliff, Camera3D cam);
+void MapProp_UnloadCliffSkirt(MapCliffSkirt *cliff);
 
 typedef struct
 {

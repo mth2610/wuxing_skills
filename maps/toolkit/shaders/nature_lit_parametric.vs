@@ -77,24 +77,26 @@ void main()
 
         vec2 windBend = NatureVegetationWindBend(
             rootWorld, bladeWindUV, u_time, u_windStrength * windCompliance, maxAllowedBend);
-        windBend += NatureDominantWindImpact(rootWorld) * (u_natureWindResponse.w * windCompliance);
 
-        if (u_geometryLod < 2 && u_interactionEnabled != 0 && u_interactionWorldSize > 0.0001) {
-            vec2 uvOffset = (rootWorld.xz - u_interactionCenter) / u_interactionWorldSize;
-            float maxAxis = max(abs(uvOffset.x), abs(uvOffset.y));
-            // Only sample interaction texture when root is inside the active 18m region
-            if (maxAxis < 0.5) {
-                vec2 interactionUV = uvOffset + 0.5;
-                vec3 interactionSample = textureLod(u_interactionMap, interactionUV, 0.0).rgb;
-                vec2 pushDirection = interactionSample.rg * 2.0 - 1.0;
-                float edgeFeather = clamp((0.50 - maxAxis) * 12.5, 0.0, 1.0);
-                edgeFeather *= edgeFeather * (3.0 - 2.0 * edgeFeather);
-                windBend += pushDirection * (interactionSample.b * edgeFeather * maxAllowedBend);
+        // [TỐI ƯU ALU]: Chỉ tính xung lực gió cục bộ và tương tác dẫm cỏ cho LOD 0 & LOD 1 (< 22m)
+        if (u_geometryLod < 2) {
+            windBend += NatureDominantWindImpact(rootWorld) * (u_natureWindResponse.w * windCompliance);
+
+            if (u_interactionEnabled != 0 && u_interactionWorldSize > 0.0001) {
+                vec2 uvOffset = (rootWorld.xz - u_interactionCenter) / u_interactionWorldSize;
+                float maxAxis = max(abs(uvOffset.x), abs(uvOffset.y));
+                if (maxAxis < 0.5) {
+                    vec2 interactionUV = uvOffset + 0.5;
+                    vec3 interactionSample = textureLod(u_interactionMap, interactionUV, 0.0).rgb;
+                    vec2 pushDirection = interactionSample.rg * 2.0 - 1.0;
+                    float edgeFeather = clamp((0.50 - maxAxis) * 12.5, 0.0, 1.0);
+                    edgeFeather *= edgeFeather * (3.0 - 2.0 * edgeFeather);
+                    windBend += pushDirection * (interactionSample.b * edgeFeather * maxAllowedBend);
+                }
             }
         }
 
-        // [TỐI ƯU ALU]: Gộp bước giới hạn biên độ gió và tính dispLen chỉ với 1 lệnh inversesqrt duy nhất
-        // (loại bỏ hoàn toàn lệnh sqrt(dispSq) thứ 2 mỗi đỉnh vì rootMask >= 0)
+        // Gộp bước giới hạn biên độ gió và tính dispLen chỉ với 1 lệnh inversesqrt duy nhất
         float rawBendSq = dot(windBend, windBend);
         float rawBendLen = (rawBendSq > 1e-10) ? (rawBendSq * inversesqrt(rawBendSq)) : 0.0;
         if (rawBendLen > maxAllowedBend) {
@@ -104,28 +106,28 @@ void main()
 
         vec2 dispXZ = windBend * rootMask;
         float dispLen = rawBendLen * rootMask;
-
-        // Strictly monotonic cantilever deflection (guaranteed dy/dh > 0 so blade tips NEVER hook downward!)
         float bendRatio = clamp(dispLen / bladeHeightEst, 0.0, 0.60);
         spineCenter.xz += dispXZ;
         spineCenter.y   = rootLocal.y + bladeSpanY * (1.0 - 0.22 * bendRatio * h);
 
-        // Re-orthogonalize ribbon width vector perpendicular to the bent 3D spine tangent
-        float dMaskDh = 0.45 + 1.10 * h;
-        vec3 rawBentTan = s_cachedTangent + vec3(windBend.x * dMaskDh, -dispLen * 0.40, windBend.y * dMaskDh);
-        vec3 bentTangent = rawBentTan * inversesqrt(max(dot(rawBentTan, rawBentTan), 1e-8));
-        vec3 bentSide = s_cachedSide - bentTangent * dot(s_cachedSide, bentTangent);
-        float bsLenSq = dot(bentSide, bentSide);
-        bentSide = (bsLenSq > 1e-5) ? (bentSide * inversesqrt(bsLenSq)) : s_cachedSide;
-
-        local = spineCenter + bentSide * (s_cachedHalfWidth * vertexPosition.x);
+        if (u_geometryLod < 2) {
+            // Trực giao hóa Gram-Schmidt 3D chính xác cho lá cỏ cận cảnh / trung cảnh
+            float dMaskDh = 0.45 + 1.10 * h;
+            vec3 rawBentTan = s_cachedTangent + vec3(windBend.x * dMaskDh, -dispLen * 0.40, windBend.y * dMaskDh);
+            vec3 bentTangent = rawBentTan * inversesqrt(max(dot(rawBentTan, rawBentTan), 1e-8));
+            vec3 bentSide = s_cachedSide - bentTangent * dot(s_cachedSide, bentTangent);
+            float bsLenSq = dot(bentSide, bentSide);
+            bentSide = (bsLenSq > 1e-5) ? (bentSide * inversesqrt(bsLenSq)) : s_cachedSide;
+            local = spineCenter + bentSide * (s_cachedHalfWidth * vertexPosition.x);
+        } else {
+            // Fast-path cho cỏ xa (LOD 2): Tiết kiệm 2 lệnh inversesqrt và 2 tích vô hướng mỗi đỉnh
+            local = spineCenter + s_cachedSide * (s_cachedHalfWidth * vertexPosition.x);
+        }
         world = local + u_worldOffset;
 
-        // As the blade bends over, its upper surface tilts skyward (+Y) and along the bend slope
         bentNormal.xz += windBend * (0.95 * h);
         bentNormal.y  += dispLen * 0.45;
 
-        // Window windSheen to the broad mid-upper arch (tapers to 0 at tip h > 0.85 so tips never flicker)
         float archSheenMask = h * clamp((0.90 - h) * 4.5, 0.0, 1.0);
         windSheen = clamp(dispLen / maxAllowedBend, 0.0, 1.0) * archSheenMask;
     }
@@ -135,8 +137,17 @@ void main()
     fragColor = vec4(bladeColor.rgb, windSheen);
     fragHeight = h;
     fragTexCoord = bladeSurfaceUV;
-    v_lightSpace = u_lightVP * vec4(world, 1.0);
-    v_staticLightSpace = u_staticLightVP * vec4(world, 1.0);
+
+    // [TỐI ƯU ALU]: Chỉ nhân 2 ma trận bóng đổ 4x4 khi bụi cỏ nằm trong bán kính nhận bóng (<= 28.5m)
+    if (s_cachedDistToCam <= 28.5) {
+        vec4 world4 = vec4(world, 1.0);
+        v_lightSpace = u_lightVP * world4;
+        v_staticLightSpace = u_staticLightVP * world4;
+    } else {
+        v_lightSpace = vec4(0.0);
+        v_staticLightSpace = vec4(0.0);
+    }
+
     v_macroPatch = sin(world.x * 0.12 + world.z * 0.08) * 0.55 + cos(world.x * -0.07 + world.z * 0.16) * 0.45;
     gl_Position = mvp * vec4(local, 1.0);
 }

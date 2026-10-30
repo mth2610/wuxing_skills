@@ -17,8 +17,8 @@ uniform vec4 ambientColor;
 
 out vec4 finalColor;
 
-const vec3 CLOUD_DARK  = vec3(0.30, 0.36, 0.50); // Deep atmospheric shadow in cloud valleys
-const vec3 CLOUD_LIGHT = vec3(0.98, 0.93, 0.82); // Warm luminous sunlight crest
+const vec3 CLOUD_DARK  = vec3(0.56, 0.62, 0.72); // Soft atmospheric pearl shadow in cloud valleys
+const vec3 CLOUD_LIGHT = vec3(0.99, 0.96, 0.90); // Warm luminous sunlight crest
 
 void main()
 {
@@ -51,9 +51,6 @@ void main()
     // Chân trời hòa nhập 100% vào ánh sáng vòm trời xa, không còn ngấn viền sắc cạnh
     float horizon = smoothstep(160.0, 620.0, dist);
 
-    // Early out: Hủy ngay fragment nếu không đủ mật độ
-    if (u_cloudBankEnabled == 0 && density < 0.38 && horizon < 0.98) discard;
-
     // Chuẩn hóa pháp tuyến cơ sở 1 lần duy nhất
     vec3 baseN = v_normal * inversesqrt(max(dot(v_normal, v_normal), 1e-8));
 
@@ -63,10 +60,10 @@ void main()
         vec2 stepUV = max(flowFootprint * 1.5, vec2(0.012));
         float nR = textureGrad(texture0, warpedFlow1 + vec2(stepUV.x, 0.0), uvDx1, uvDy1).r;
         float nU = textureGrad(texture0, warpedFlow1 + vec2(0.0, stepUV.y), uvDx1, uvDy1).r;
-        float slopeScale = 3.8 * octaveWeight;
+        float slopeScale = 2.1 * octaveWeight;
         vec3 billowNormal = vec3(-(nR - n1) * slopeScale, 1.0, -(nU - n1) * slopeScale);
         billowNormal *= inversesqrt(dot(billowNormal, billowNormal));
-        vec3 mixedN = mix(baseN, billowNormal, 0.65 * octaveWeight);
+        vec3 mixedN = mix(baseN, billowNormal, 0.58 * octaveWeight);
         N = mixedN * inversesqrt(max(dot(mixedN, mixedN), 1e-8));
     } else {
         N = baseN;
@@ -86,8 +83,8 @@ void main()
     vec3 sky = MapSkyRadiance(skyRay, L, u_skyAmbient, u_hazeColor, cloudSunLight);
 
     // Độ dày của mây & bóng tự thân kèm tán xạ nội (Multi-scattering ambient bounce)
-    float edge = smoothstep(0.32, 0.76, density);
-    float verticalAO = clamp(N.y * 0.48 + 0.52, 0.22, 1.0);
+    float edge = smoothstep(0.30, 0.76, density);
+    float verticalAO = clamp(N.y * 0.35 + 0.65, 0.42, 1.0);
     float powderEffect = 1.0 - exp(-density * 2.4);
     float cloudShading = clamp(edge * verticalAO * mix(0.88, 1.08, powderEffect), 0.0, 1.0);
     vec3 cloudBase = mix(CLOUD_DARK, CLOUD_LIGHT, cloudShading);

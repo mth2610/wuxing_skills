@@ -1144,7 +1144,7 @@ void MapProp_AddCragPlacements(MapRockSystem *sys, const MapGroundSurface *groun
         {
             float rot = (float)(i * 67 % 360);
             float scale = scaleBase + 0.35f * (float)(i % 3);
-            MapProp_AddRockItem(sys, pos, scale, scale * 1.25f, rot, MAP_ROCK_CRAG);
+            MapProp_AddRockItem(sys, pos, scale, scale * 0.85f, rot, MAP_ROCK_GRANITE);
         }
     }
 }

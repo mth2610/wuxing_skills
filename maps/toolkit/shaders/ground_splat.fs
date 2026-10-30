@@ -81,6 +81,7 @@ void main()
     float streamWet = splatSample.a;
     float rockScree = splatSample.g;
 
+    // Discard outer abyss floor outside the island perimeter
     if (rockScree > 0.85 && splatSample.r < 0.10 && fragWorldPos.y <= -7.2) {
         discard;
     }
@@ -210,13 +211,12 @@ void main()
     }
 
     // Transition steeper terrain banks and outer cliff rims into rock strata & scree
-    float wSlope = smoothstep(0.20, 0.48, slope);
-    float outerAbyssMask = 1.0 - smoothstep(-2.40, 0.25, fragWorldPos.y);
-    float steepOrAbyssMask = max(smoothstep(0.18, 0.42, slope), outerAbyssMask);
-    float rockCliff = smoothstep(0.65, 0.92, rockScree) * steepOrAbyssMask;
-    float wCliff = clamp(max(wSlope, rockCliff), 0.0, 1.0);
+    float wSlope = smoothstep(0.08, 0.22, slope);
+    float outerAbyssMask = 1.0 - smoothstep(-0.80, 0.80, fragWorldPos.y);
+    float rockCliff = smoothstep(0.20, 0.65, rockScree);
+    float wCliff = clamp(max(wSlope, max(rockCliff * 0.85, outerAbyssMask)), 0.0, 1.0);
 
-    float wDrySoil = clamp(max(wPathMargin * 0.78, wCliff * 0.92), 0.0, 1.0)
+    float wDrySoil = clamp(max(wPathMargin * 0.78, wCliff), 0.0, 1.0)
                    * (1.0 - wWetSoil * 0.85) * (1.0 - wPath * 0.85);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
 
@@ -368,6 +368,8 @@ void main()
     vec2 proceduralPebbleNormal = vec2(0.0);
     float isRiparian = clamp(shoreFactor * 1.25 + streamWet * 1.50 + lakeDepthFactor * 2.0, 0.0, 1.0);
     vec3 blendedAlbedo = grassAlbedo * wGrass;
+    float vCragJoint = 0.5;
+    float hCragJoint = 0.5;
 
     if (hasSoil) {
         float porousDarkening = smoothstep(0.0, 0.45, wWetSoil) * (1.0 - wWetSoil * 0.35);
@@ -378,46 +380,60 @@ void main()
         vec3 warmLoamColor = mix(loamDark, loamLight, pebbleRelief) * (0.86 + 0.28 * dirtDetail) * (1.0 - porousDarkening * 0.18);
 
         vec3 cliffAlbedo = warmLoamColor;
-        if (wCliff > 0.10 && (slope > 0.28 || outerAbyssMask > 0.05)) {
-            vec2 triUVx = fragWorldPos.zy * 0.28;
-            vec2 triUVz = fragWorldPos.xy * 0.28;
-            vec2 triDxX = wpDx3.zy * 0.28, triDyX = wpDy3.zy * 0.28;
-            vec2 triDxZ = wpDx3.xy * 0.28, triDyZ = wpDy3.xy * 0.28;
+        if (wCliff > 0.05) {
+            vec2 triUVx = fragWorldPos.zy * 0.45;
+            vec2 triUVy = fragWorldPos.xz * 0.45;
+            vec2 triUVz = fragWorldPos.xy * 0.45;
+            vec2 triDxX = wpDx3.zy * 0.45, triDyX = wpDy3.zy * 0.45;
+            vec2 triDxY = wpDx * 0.45, triDyY = wpDy * 0.45;
+            vec2 triDxZ = wpDx3.xy * 0.45, triDyZ = wpDy3.xy * 0.45;
 
-            // [SPIR-V FIX & ALU OPT]: Thay pow(abs(geomNormal), vec3(3.0)) bằng phép nhân bậc 3
-            // để tránh lỗi log2(0.0) -> NaN khi vector pháp tuyến trùng trục tọa độ.
             vec3 absN = abs(geomNormal);
             vec3 triWeights = absN * absN * absN;
             triWeights /= max(triWeights.x + triWeights.y + triWeights.z, 0.001);
 
-            // Dùng textureGrad thay cho texture() trong nhánh động để tránh lỗi đạo hàm ngầm trên Vulkan
             vec3 rockTexX = textureGrad(texPath, triUVx, triDxX, triDyX).rgb;
+            vec3 rockTexY = textureGrad(texPath, triUVy, triDxY, triDyY).rgb;
             vec3 rockTexZ = textureGrad(texPath, triUVz, triDxZ, triDyZ).rgb;
             if (nearDualScale) {
                 vec3 rockDetailX = textureGrad(texPath, triUVx * 2.8, triDxX * 2.8, triDyX * 2.8).rgb;
+                vec3 rockDetailY = textureGrad(texPath, triUVy * 2.8, triDxY * 2.8, triDyY * 2.8).rgb;
                 vec3 rockDetailZ = textureGrad(texPath, triUVz * 2.8, triDxZ * 2.8, triDyZ * 2.8).rgb;
                 rockTexX = mix(rockTexX, rockDetailX, 0.32 * dualScaleFade);
+                rockTexY = mix(rockTexY, rockDetailY, 0.32 * dualScaleFade);
                 rockTexZ = mix(rockTexZ, rockDetailZ, 0.32 * dualScaleFade);
             }
-            vec3 triRock  = rockTexX * triWeights.x + dirtDetail * triWeights.y + rockTexZ * triWeights.z;
+            vec3 triRock = rockTexX * triWeights.x + rockTexY * triWeights.y + rockTexZ * triWeights.z;
 
             float wallMask = 1.0 - triWeights.y;
+            // Columnar basalt and granitic orthogonal cleavage joints
+            float jointWarp = sin(fragWorldPos.x * 0.18 + fragWorldPos.z * 0.15) * 1.8;
+            vCragJoint = abs(fract((fragWorldPos.x * 0.28 + fragWorldPos.z * 0.24 + jointWarp) * 0.5) - 0.5) * 2.0;
+            hCragJoint = abs(fract((fragWorldPos.y + jointWarp * 0.4) * 0.32) - 0.5) * 2.0;
+            float cragFacet = smoothstep(0.12, 0.65, vCragJoint * hCragJoint);
+
             float strataWarp = sin(fragWorldPos.x * 0.14 + fragWorldPos.z * 0.11) * 1.6;
             float strataCoord = (fragWorldPos.y + strataWarp) * 0.42;
             float strataBand = sin(strataCoord * 3.14159) * 0.5 + 0.5;
             float strataLedge = smoothstep(0.35, 0.65, strataBand);
             float jointCrack = smoothstep(0.12, 0.55, triRock.r);
-            cliffStrataBump = ((strataLedge - 0.5) * 0.20 + (jointCrack - 0.5) * 0.15) * wallMask;
+            cliffStrataBump = ((strataLedge - 0.5) * 0.20 + (jointCrack - 0.5) * 0.15 + (cragFacet - 0.5) * 0.25) * wallMask;
 
-            vec3 warmSlate   = vec3(0.24, 0.25, 0.22);
-            vec3 warmGranite = vec3(0.40, 0.38, 0.32);
-            vec3 lichenMoss  = vec3(0.20, 0.28, 0.14);
-            cliffAlbedo = mix(warmSlate, warmGranite, clamp(triRock.r * 0.72 + strataLedge * 0.28, 0.0, 1.0));
-            float ledgeMoss = clamp(geomNormal.y * 1.15 - 0.30, 0.0, 1.0) * smoothstep(0.38, 0.80, triRock.g);
-            cliffAlbedo = mix(cliffAlbedo, lichenMoss, ledgeMoss * 0.55);
+            // Authentic sunlit weathered granite corestone tones
+            vec3 darkFissure  = vec3(0.16, 0.15, 0.13);
+            vec3 coreGranite  = vec3(0.42, 0.39, 0.34);
+            vec3 sunlitQuartz = vec3(0.56, 0.51, 0.43);
+            vec3 lichenMoss   = vec3(0.18, 0.28, 0.11);
+
+            vec3 rockBase = mix(darkFissure, coreGranite, smoothstep(0.10, 0.60, vCragJoint * hCragJoint));
+            rockBase = mix(rockBase, sunlitQuartz, clamp(triRock.r * 0.58 + strataLedge * 0.35, 0.0, 1.0));
+
+            // Velvet moss on upward-facing ledges near the plateau
+            float ledgeMoss = clamp(geomNormal.y * 1.35 - 0.25, 0.0, 1.0) * smoothstep(0.30, 0.75, triRock.g);
+            cliffAlbedo = mix(rockBase, lichenMoss, ledgeMoss * 0.58);
         }
 
-        float cliffMix = clamp(wCliff / max(wDrySoil, 0.001), 0.0, 1.0);
+        float cliffMix = smoothstep(0.04, 0.22, wCliff);
         vec3 drySoilColor = mix(warmLoamColor, cliffAlbedo, cliffMix);
 
         // ---- AAA Alluvial Riverbed Sand & Natural Fine River Gravel ----
@@ -557,6 +573,11 @@ void main()
     float microStrength = mix(0.26, 0.52, max(soilWeight, wCliff)) * puddleFlatten * (0.45 + 0.55 * detailResolve);
     vec3 nRaw = geomNormal * (0.66 + 0.34 * microNormal.z)
               + (tangent * microNormal.x + bitangent * microNormal.y) * microStrength;
+    if (wCliff > 0.05) {
+        float cliffWall = 1.0 - geomNormal.y * geomNormal.y;
+        vec3 cragPerturb = (tangent * (vCragJoint - 0.5) + bitangent * (hCragJoint - 0.5)) * 0.55;
+        nRaw += cragPerturb * (wCliff * cliffWall);
+    }
     vec3 normal = nRaw * inversesqrt(max(dot(nRaw, nRaw), 1e-8));
 
     float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
@@ -645,6 +666,15 @@ void main()
 
     if (veil > 0.001) {
         groundLit = mix(groundLit, cloudVeilColor, veil);
+    }
+
+    // Soft atmospheric cloud sea dissolution at the submerged base of the island
+    if (fragWorldPos.y < -2.40) {
+        float cloudImmersion = smoothstep(-2.40, -5.20, fragWorldPos.y);
+        vec3 cloudBaseTone = mix(vec3(0.62, 0.68, 0.78), vec3(0.96, 0.94, 0.88), max(light.y, 0.0));
+        vec3 cloudHazeLight = actualAmbient * 1.45 + actualLight * (0.35 + 0.65 * max(light.y, 0.0));
+        vec3 cloudHazeTarget = cloudBaseTone * cloudHazeLight;
+        groundLit = mix(groundLit, cloudHazeTarget, cloudImmersion * 0.85);
     }
 
     finalColor = vec4(groundLit, 1.0);

@@ -22,7 +22,7 @@
 #define MAP_WIDTH SONG_QUAO_MAP_WIDTH
 #define MAP_DEPTH SONG_QUAO_MAP_DEPTH
 #define CLIFF_DEPTH SONG_QUAO_CLIFF_DEPTH
-#define CLOUD_SEA_Y -4.20f
+#define CLOUD_SEA_Y -5.20f
 
 // Broad valley meadow coverage across the celestial island plateau and rolling hills
 #define GRASS_TUFT_CAPACITY 98000
@@ -51,6 +51,7 @@ static MapDebrisSystem s_debris;
 static MapFloraSystem s_flora;
 static MapSkyDome s_sky;
 static MapCloudSea s_cloudSea;
+static MapCliffSkirt s_cliff;
 static MapWaterSurface s_river;
 static MapEcology s_habitat;
 static MapFluffSystem s_fluff;
@@ -79,11 +80,15 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     if (!MapProp_SampleGroundSurface(&s_ground, kMapCenter, x, z, &pos, &normal))
         return 0.0f;
 
-    // Organic boundary at island cliff drop-off into cloud sea
-    if (pos.y < PLAYABLE_BASIN_MIN_Y || normal.y < 0.38f)
+    // Grass carpets the island plateau and rolling knolls right up to the cliff drop-off
+    if (pos.y < -2.20f || normal.y < 0.62f)
         return 0.0f;
-    float heightFade = MapMath_SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y, pos.y);
-    float slopeFade = MapMath_SmoothStep01(0.38f, 0.56f, normal.y);
+    // Suppress grass in the sheer river outlet cascade drop-off
+    if (pos.x > 146.0f && pos.z > 230.0f && pos.y < 0.15f)
+        return 0.0f;
+
+    float heightFade = MapMath_SmoothStep01(-2.20f, -1.10f, pos.y);
+    float slopeFade = MapMath_SmoothStep01(0.62f, 0.76f, normal.y);
 
     // Smooth, organic shoreline transition with micro-meander noise
     float surfaceY = MapDem_SampleWaterHeight(&s_dem, x, z);
@@ -213,14 +218,35 @@ static void BuildFloraPlacements(void)
 
 static void BuildRocks(void)
 {
+    static const Vector2 kCliffCrags[] = {
+        {120.0f, 25.0f},
+        {105.0f, 40.0f},
+        {80.0f, 30.0f},
+        {35.0f, 280.0f},
+        {55.0f, 270.0f},
+        {155.0f, 265.0f},
+        {20.0f, 160.0f},
+        {175.0f, 140.0f},
+        {45.0f, 90.0f},
+        {165.0f, 80.0f},
+        // Promontory and outlet cliff edge crags
+        {164.0f, 242.0f},
+        {168.0f, 248.0f},
+        {158.0f, 254.0f},
+        {142.0f, 246.0f},
+    };
+    int cragCount = (int)(sizeof(kCliffCrags) / sizeof(kCliffCrags[0]));
+
     s_rocks = MapProp_CreateRockSystem(
         "assets/textures/rocks/granite_diffuse.png",
         "assets/textures/rocks/granite_normal.png",
         "assets/textures/rocks/granite_roughness.png",
-        SONG_QUAO_ROCK_ITEM_COUNT);
+        SONG_QUAO_ROCK_ITEM_COUNT + cragCount);
 
     MapProp_PopulateRockItems(&s_rocks, &s_ground, kMapCenter,
                               SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
+    MapProp_AddCragPlacements(&s_rocks, &s_ground, kMapCenter,
+                              kCliffCrags, cragCount, 2.65f);
 }
 
 static void SpawnSongQuaoMistVolumes(void)
@@ -376,9 +402,7 @@ void InitSongQuaoMap(void)
 
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(1400.0f, 1400.0f, 65.0f);
-    MapBoundaryMistStyle rim = {4.2f, 20.0f, 0.58f, 1.85f, 0.62f};
-    if (!MapProp_SetCloudSeaGroundBoundary(&s_cloudSea, &s_ground, -2.55f, &rim))
-        TraceLog(LOG_WARNING, "Song Quao: terrain boundary mist bake failed");
+    s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -1.75f, -24.0f);
 
     BuildRocks();
 
@@ -481,6 +505,7 @@ void DrawSongQuaoMap(void)
 
     if (!(s_skipMask & MAP_SKIP_GROUND))
         MapProp_DrawGround(&s_ground, kMapCenter);
+    // (Cliff skirt disabled to eliminate corrugated knife-cut artifacts)
 
     bool useFakeRockShadows = !EnvShadow_IsEnabled();
     if (!(s_skipMask & MAP_SKIP_ROCKS))
@@ -504,8 +529,6 @@ void DrawTransparentSongQuaoMap(void)
         return;
     if (!(s_skipMask & MAP_SKIP_WATER))
         MapProp_DrawWaterOverlay(&s_river, GetTime());
-    if (!(s_skipMask & MAP_SKIP_MIST))
-        MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
     if (!(s_skipMask & MAP_SKIP_FLUFF))
         MapProp_DrawFluffSystem(&s_fluff, camera);
 }
@@ -532,6 +555,7 @@ void UnloadSongQuaoMap(void)
     MapProp_UnloadFloraSystem(&s_flora);
     MapProp_UnloadDebrisSystem(&s_debris);
     MapProp_UnloadRockSystem(&s_rocks);
+    MapProp_UnloadCliffSkirt(&s_cliff);
     MapProp_UnloadCloudSea(&s_cloudSea);
     MapProp_UnloadSkyDome(&s_sky);
     MapProp_UnloadGround(&s_ground);

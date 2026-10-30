@@ -144,17 +144,20 @@ static int BoundarySimplify(Vector3 *points, int count)
     return output;
 }
 
-bool MapProp_SetCloudSeaGroundBoundary(MapCloudSea *cloud,
-    const MapGroundSurface *ground, float height, const MapBoundaryMistStyle *style)
+int MapProp_ExtractBoundaryLoop(const MapGroundSurface *ground, float height, Vector3 *outPoints, int maxPoints)
 {
-    if (!cloud || !ground || !ground->ready || !isfinite(height)) return false;
-    BoundaryNode *nodes = MemAlloc(BOUNDARY_NODE_CAP*sizeof(*nodes));
-    int *slots = MemAlloc(BOUNDARY_HASH_CAP*sizeof(*slots));
-    Vector3 *points = MemAlloc(BOUNDARY_NODE_CAP*sizeof(*points));
-    MapBoundaryContour *loops = MemAlloc((BOUNDARY_NODE_CAP/3)*sizeof(*loops));
-    bool ok = false;
-    if (!nodes || !slots || !points || !loops) goto cleanup;
-    memset(slots, 0, BOUNDARY_HASH_CAP*sizeof(*slots));
+    if (!ground || !ground->ready || !isfinite(height) || !outPoints || maxPoints < 3) return 0;
+    BoundaryNode *nodes = MemAlloc(BOUNDARY_NODE_CAP * sizeof(*nodes));
+    int *slots = MemAlloc(BOUNDARY_HASH_CAP * sizeof(*slots));
+    Vector3 *points = MemAlloc(BOUNDARY_NODE_CAP * sizeof(*points));
+    int loopLen = 0;
+    if (!nodes || !slots || !points) {
+        if (nodes) MemFree(nodes);
+        if (slots) MemFree(slots);
+        if (points) MemFree(points);
+        return 0;
+    }
+    memset(slots, 0, BOUNDARY_HASH_CAP * sizeof(*slots));
     int count = 0;
     for (int m = 0; m < ground->model.meshCount; m++) {
         const Mesh *mesh = &ground->model.meshes[m];
@@ -163,51 +166,70 @@ bool MapProp_SetCloudSeaGroundBoundary(MapCloudSea *cloud,
             for (int i = 0; i < 3; i++) {
                 int v = mesh->indices ? mesh->indices[t*3+i] : t*3+i;
                 if (v < 0 || v >= mesh->vertexCount || !mesh->vertices) goto cleanup;
-                p[i] = Vector3Add((Vector3){mesh->vertices[v*3],mesh->vertices[v*3+1],mesh->vertices[v*3+2]},ground->drawOffset);
+                p[i] = Vector3Add((Vector3){mesh->vertices[v*3],mesh->vertices[v*3+1],mesh->vertices[v*3+2]}, ground->drawOffset);
                 if (!BoundaryPointFinite(p[i])) goto cleanup;
                 if (p[i].y > height) high = p[i];
             }
             for (int i = 0; i < 3; i++) {
-                Vector3 a=p[i], b=p[(i+1)%3];
-                if ((a.y>height)==(b.y>height)) continue;
-                if (a.y>b.y) {Vector3 swap=a;a=b;b=swap;}
-                if (hits<2) hit[hits++] = Vector3Lerp(a,b,(height-a.y)/(b.y-a.y));
+                Vector3 a = p[i], b = p[(i+1)%3];
+                if ((a.y > height) == (b.y > height)) continue;
+                if (a.y > b.y) { Vector3 swap = a; a = b; b = swap; }
+                if (hits < 2) hit[hits++] = Vector3Lerp(a, b, (height - a.y) / (b.y - a.y));
             }
-            if (hits!=2 || Vector3DistanceSqr(hit[0],hit[1])<1e-10f) continue;
-            float cross = (hit[1].x-hit[0].x)*(high.z-hit[0].z) - (hit[1].z-hit[0].z)*(high.x-hit[0].x);
-            if (cross<0) { Vector3 swap=hit[0];hit[0]=hit[1];hit[1]=swap; }
-            int a=BoundaryNodeFind(nodes,slots,&count,hit[0]), b=BoundaryNodeFind(nodes,slots,&count,hit[1]);
-            if (a<0 || b<0 || (nodes[a].next!=-1 && nodes[a].next!=b)) goto cleanup;
-            nodes[a].next=b;
+            if (hits != 2 || Vector3DistanceSqr(hit[0], hit[1]) < 1e-10f) continue;
+            float cross = (hit[1].x - hit[0].x) * (high.z - hit[0].z) - (hit[1].z - hit[0].z) * (high.x - hit[0].x);
+            if (cross < 0) { Vector3 swap = hit[0]; hit[0] = hit[1]; hit[1] = swap; }
+            int a = BoundaryNodeFind(nodes, slots, &count, hit[0]);
+            int b = BoundaryNodeFind(nodes, slots, &count, hit[1]);
+            if (a < 0 || b < 0 || (nodes[a].next != -1 && nodes[a].next != b)) goto cleanup;
+            nodes[a].next = b;
         }
     }
-    int output = 0, loopCount = 0;
+    int bestLen = 0;
+    double maxArea = 0;
     for (int start = 0; start < count; start++) {
         if (nodes[start].used) continue;
-        int first = output, current = start;
+        int first = 0, current = start;
         double area = 0;
         do {
-            if (current<0 || nodes[current].used || nodes[current].next<0) goto cleanup;
+            if (current < 0 || nodes[current].used || nodes[current].next < 0) goto cleanup;
             nodes[current].used = true;
             int next = nodes[current].next;
-            area += (double)nodes[current].p.x*nodes[next].p.z - (double)nodes[next].p.x*nodes[current].p.z;
-            points[output++] = nodes[current].p;
+            area += (double)nodes[current].p.x * nodes[next].p.z - (double)nodes[next].p.x * nodes[current].p.z;
+            points[first++] = nodes[current].p;
             current = next;
-        } while (current!=start);
-        int n = output-first;
-        // Negative winding is a depression inside the plateau (e.g. the lake).
-        if (n>=3 && area>1e-6) {
-            n=BoundarySimplify(points+first,n);
-            output=first+n;
-            loops[loopCount++] = (MapBoundaryContour){points+first,n};
+        } while (current != start);
+        if (first >= 3 && area > maxArea) {
+            maxArea = area;
+            int n = BoundarySimplify(points, first);
+            if (n > maxPoints) n = maxPoints;
+            for (int i = 0; i < n; i++) outPoints[i] = points[i];
+            bestLen = n;
         }
-        else output=first;
     }
-    if (!loopCount) goto cleanup;
-    ok = MapProp_SetCloudSeaBoundaryContours(cloud,loops,loopCount,style);
+    loopLen = bestLen;
 cleanup:
-    MemFree(nodes);MemFree(slots);MemFree(points);MemFree(loops);
+    MemFree(nodes);
+    MemFree(slots);
+    MemFree(points);
+    return loopLen;
+}
+
+bool MapProp_SetCloudSeaGroundBoundary(MapCloudSea *cloud,
+    const MapGroundSurface *ground, float height, const MapBoundaryMistStyle *style)
+{
+    if (!cloud || !ground || !ground->ready || !isfinite(height) || !style) return false;
+    Vector3 *points = MemAlloc(BOUNDARY_NODE_CAP * sizeof(*points));
+    if (!points) return false;
+    int n = MapProp_ExtractBoundaryLoop(ground, height, points, BOUNDARY_NODE_CAP);
+    bool ok = false;
+    if (n >= 3) {
+        MapBoundaryContour loop = { points, n };
+        ok = MapProp_SetCloudSeaBoundaryContours(cloud, &loop, 1, style);
+    }
+    MemFree(points);
     return ok;
 }
+
 #undef BOUNDARY_NODE_CAP
 #undef BOUNDARY_HASH_CAP

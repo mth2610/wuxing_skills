@@ -40,8 +40,9 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
                               vec3 normal, vec3 lightDir, vec3 worldPosition,
                               float distToCam)
 {
-    // Fade out foliage shadow-map reads smoothly by 22m (analytical canopy AO handles far turf)
-    float shadowFade = 1.0 - FastRamp(14.0, 22.0, distToCam);
+    // [NÂNG CẤP ĐỔ BÓNG HOA & CỎ]: Mở rộng tầm nhìn bóng đổ thực từ 14..22m lên 18..28m
+    // để toàn bộ thảm hoa tiền cảnh và trung cảnh đều nhận bóng đổ sắc nét.
+    float shadowFade = 1.0 - FastRamp(18.0, 28.0, distToCam);
     if (shadowFade <= 0.0)
         return 1.0;
 
@@ -54,9 +55,8 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
         if (all(greaterThan(projected, vec3(0.0))) && all(lessThan(projected, vec3(1.0)))) {
             float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.16);
             if (edgeFade > 0.0) {
-                float bias = clamp(0.0012 + slope * 0.0020, 0.0010, 0.0034);
-                // Use 4-tap bilinear within 12m and fast 1-tap beyond 12m to cut close-zoom overdraw cost
-                float sampleDyn = (distToCam < 12.0)
+                float bias = clamp(0.0011 + slope * 0.0019, 0.0009, 0.0032);
+                float sampleDyn = (distToCam < 14.0)
                     ? MapShadowCompareBilinear(shadowMap, projected.xy, projected.z - bias, u_shadowTexel)
                     : MapShadowCompare(shadowMap, projected.xy, projected.z - bias);
                 rawDyn = mix(1.0, sampleDyn, edgeFade);
@@ -72,7 +72,6 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
             float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.08);
             if (edgeFade > 0.0) {
                 float bias = clamp(0.0010 + slope * 0.0018, 0.0008, 0.0028);
-                // Single-tap static shadow lookup on foliage saves 3 textureLod fetches per blade pixel
                 float sampleStatic = MapShadowCompare(staticShadowMap, projected.xy, projected.z - bias);
                 float rawStatic = mix(1.0, sampleStatic, edgeFade);
                 rawCombined = min(rawDyn, rawStatic);
@@ -80,12 +79,14 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
         }
     }
 
-    float translucentVis = mix(0.20, 1.0, rawCombined);
+    // Tăng độ tương phản bóng đổ (0.12 thay vì 0.20) để bóng trên khóm hoa và thảm cỏ có chiều sâu rõ rệt
+    float translucentVis = mix(0.12, 1.0, rawCombined);
     return mix(1.0, translucentVis, shadowFade);
 }
 
 // ============================================================================
-// GENERAL FOLIAGE, STEMS, REEDS & BLOOMS SHADING
+// GENERAL FOLIAGE, STEMS, REEDS & 3D WILDFLOWER BLOOMS SHADING
+// Dual-Sided Botanical SSS, Vein Translucency, Calyx Self-Shadow & Real-Time PCF
 // ============================================================================
 vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                  float heightAlongPlant, float uTransverse,
@@ -101,23 +102,34 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     vec3 lightDir = (lLenSq > 1e-8) ? (u_lightDir * inversesqrt(lLenSq)) : vec3(0.0, 1.0, 0.0);
 
     float hNorm = clamp(heightAlongPlant, 0.0, 1.0);
-    float bloomMask = smoothstep(0.62, 0.88, hNorm);
+    float bloomMask = smoothstep(0.58, 0.84, hNorm);
+    float u = clamp(uTransverse, -1.0, 1.0);
+    float absU = abs(u);
 
     vec3 geometricNormal = worldNormal * inversesqrt(max(dot(worldNormal, worldNormal), 1e-8));
     vec3 faceNormal = gl_FrontFacing ? geometricNormal : -geometricNormal;
 
-    // Preserve sculpted 3D petal cupping normals while gently lifting stem bases
-    faceNormal.y = max(faceNormal.y, -0.10) + (1.0 - bloomMask) * 0.28;
+    // Giữ độ khum 3D của cánh hoa đồng thời nâng nhẹ pháp tuyến cuống hoa
+    faceNormal.y = max(faceNormal.y, -0.18) + (1.0 - bloomMask) * 0.26;
     faceNormal *= inversesqrt(max(dot(faceNormal, faceNormal), 1e-8));
 
+    // Uốn cong pháp tuyến ngang cho cả lá/cuống (0.48) và cánh hoa 3D (0.28) để cánh hoa bắt sáng khối tròn 3D
     vec3 bladeSide = vec3(-faceNormal.z, 0.0, faceNormal.x);
     float sideLenSq = dot(bladeSide, bladeSide);
     if (sideLenSq > 1e-6) {
         bladeSide *= inversesqrt(sideLenSq);
-        float u = clamp(uTransverse, -1.0, 1.0);
-        vec3 tiltedN = faceNormal + bladeSide * (u * 0.48 * (1.0 - bloomMask));
+        float curveStrength = mix(0.48, 0.28, bloomMask);
+        vec3 tiltedN = faceNormal + bladeSide * (u * curveStrength);
         faceNormal = tiltedN * inversesqrt(max(dot(tiltedN, tiltedN), 1e-8));
     }
+
+    // Bản đồ gân cánh hoa & độ mỏng màng sinh học (Vein & Membrane Translucency Map)
+    float centerRib = exp(-absU * 5.8) * (1.0 - FastRamp(0.75, 1.0, hNorm) * 0.55);
+    float sideVeins = (distSq < 324.0) ? (abs(sin(u * 18.84955 - hNorm * 9.0)) * 0.16 * bloomMask) : 0.0;
+    float veinMask  = clamp(centerRib * 0.45 + sideVeins, 0.0, 0.65);
+
+    // Làm đậm nhẹ sắc độ dọc theo gân chính của cánh hoa để thấy rõ cấu trúc cánh khi nhìn gần
+    baseColor *= 1.0 - veinMask * mix(0.06, 0.16, bloomMask);
 
     float antiShimmer = FastRamp(14.0, 42.0, distToCam) * (1.0 - bloomMask);
     float flattenFactor = antiShimmer * 0.85;
@@ -134,68 +146,92 @@ vec3 NatureShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     vec3 rawModelL = vec3(lightDir.x + 0.30 * lightDir.y, lightDir.y * 0.78, lightDir.z - 0.22 * lightDir.y);
     vec3 modelLightDir = rawModelL * inversesqrt(max(dot(rawModelL, rawModelL), 1e-8));
-    float wrap = mix(0.36, 0.58, bloomMask);
-    float wrapped = clamp((dot(faceNormal, modelLightDir) + wrap) / (1.0 + wrap), 0.0, 1.0);
-    // Soften petal diffuse roll-off so 3D procedural blooms glow warmly from every viewing angle
-    float directDiffuse = mix(wrapped * wrapped, wrapped * (0.45 + 0.55 * wrapped), bloomMask);
 
-    float backfaceSun = max(-dot(faceNormal, lightDir), 0.0);
-    float viewSunAlign = max(dot(-lightDir, viewDir), 0.0);
-    float transmissionAngle = FastPow1_4(backfaceSun) * 0.72 + FastPow2(viewSunAlign) * 0.65;
+    // [ĐỔ BÓNG TỰ THÂN ĐÀI HOA (CALYX & COROLLA SELF-SHADOWING)]:
+    // Mặt cánh hoa quay lưng về phía Mặt Trời sẽ tự đổ bóng nhẹ vào lòng đài hoa,
+    // tạo độ tương phản rõ rệt giữa mặt đón nắng và mặt khuất nắng của bông hoa 3D!
+    float rawNdotL = dot(faceNormal, modelLightDir);
+    float wrap = mix(0.32, 0.42, bloomMask);
+    float wrapped = clamp((rawNdotL + wrap) / (1.0 + wrap), 0.0, 1.0);
+    float calyxSelfShadow = mix(1.0, smoothstep(-0.35, 0.25, rawNdotL) * 0.55 + 0.45, bloomMask);
+    float directDiffuse = (wrapped * (0.55 + 0.45 * wrapped)) * calyxSelfShadow;
 
-    float petalDiffusion = 0.38 + 0.62 * wrapped;
-    transmissionAngle = mix(transmissionAngle, max(transmissionAngle, petalDiffusion * 0.85), bloomMask);
-    float thinness = mix(0.24, 1.0, FastRamp(0.06, 0.62, hNorm));
-    float transmission = transmissionAngle * thinness;
+    // [XUYÊN SÁNG & TÁN XẠ NGƯỢC NẮNG 2 THÀNH PHẦN (BOTANICAL DUAL-LOBE SSS)]:
+    // 1. Truyền sáng qua mặt lưng khi nắng chiếu vào phía sau cánh hoa/lá (Back-lit Transmission)
+    float backfaceSun = clamp((dot(-faceNormal, lightDir) + 0.22) * 0.8196, 0.0, 1.0);
+    // 2. Tán xạ Mie hướng thẳng về mắt khi nhìn ngược về phía Mặt Trời (Forward Phase Translucency)
+    vec3 distortedSunDir = normalize(lightDir + faceNormal * 0.36);
+    float viewSunAlign = clamp(dot(viewDir, -distortedSunDir), 0.0, 1.0);
+    float forwardMie = FastPow4(viewSunAlign) * 1.85 + FastPow2(viewSunAlign) * 0.55;
 
-    vec3 foliageSSS = baseColor * vec3(1.55, 1.72, 0.50) + vec3(0.04, 0.07, 0.015) * thinness;
-    vec3 petalSSS   = baseColor * vec3(1.52, 1.36, 1.05) + vec3(0.09, 0.06, 0.03);
+    // Độ mỏng màng sinh học: Mép cánh (absU -> 1) và đầu cánh (hNorm -> 1) mỏng thấu quang mạnh,
+    // trong khi gân hoa (veinMask) và đài hoa dày hơn nên giữ lại đường gân sẫm màu khi ngược nắng!
+    float edgeThinness = mix(0.35, 1.0, FastRamp(0.08, 0.72, hNorm)) * (0.72 + 0.28 * absU);
+    float membraneThinness = edgeThinness * (1.0 - veinMask * mix(0.25, 0.62, bloomMask));
+    float transmission = (backfaceSun * 0.82 + forwardMie * (0.35 + 0.65 * backfaceSun)) * membraneThinness;
+
+    // Sắc độ xuyên sáng rực rỡ: Lá xanh ngọc lục bảo, Cánh hoa bừng sáng sắc huyết ngọc / kim quang ấm
+    vec3 foliageSSS = baseColor * vec3(1.48, 1.75, 0.52) + vec3(0.03, 0.06, 0.01) * membraneThinness;
+    vec3 petalSSS   = baseColor * vec3(1.68, 1.42, 1.08) + vec3(0.11, 0.06, 0.03) * membraneThinness;
     vec3 subsurfaceColor = mix(foliageSSS, petalSSS, bloomMask);
 
+    // [ĐỔ BÓNG THỜI GIAN THỰC (SHADOW MAP + CLOUD SHADOW)]:
     float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, lightDir, worldPosition, distToCam);
-    float cloudVis = (shadow > 0.001) ? Environment_CloudVisibility(u_cloudNoise, worldPosition) : 0.0;
+    float cloudVis = 0.92;
+    if (shadow > 0.001 && distSq < 900.0) {
+        float cloudDistFade = FastRamp(576.0, 900.0, distSq);
+        cloudVis = mix(Environment_CloudVisibility(u_cloudNoise, worldPosition), 0.92, cloudDistFade);
+    }
 
     float invH = 1.0 - hNorm;
-    float canopyExtinction = clamp(1.0 / (1.0 + 0.95 * invH + 0.50 * invH * invH), 0.68, 1.0);
+    float canopyExtinction = clamp(1.0 / (1.0 + 0.95 * invH + 0.50 * invH * invH), 0.62, 1.0);
 
     float skyWeight = n.y * 0.5 + 0.5;
     vec3 skyAmbient = clamp(u_ambientColor * vec3(1.25, 1.25, 1.35), 0.0, 1.0);
     vec3 groundBounce = clamp(u_ambientColor * vec3(0.55, 0.45, 0.40), 0.0, 1.0);
 
-    // Gentle cup cavity (0.78..1.0) preserves bright, readable flower centers
-    float cupCavity = mix(0.78, 1.0, FastRamp(0.76, 0.96, hNorm));
+    // Tạo độ sâu lòng đài hoa (Cup Cavity Ambient Occlusion)
+    float cupCavity = mix(0.66, 1.0, FastRamp(0.64, 0.94, hNorm)) * (1.0 - centerRib * 0.14 * bloomMask);
     vec3 ambientFloor = mix(groundBounce, skyAmbient, skyWeight) * mix(1.0, cupCavity, bloomMask);
 
-    float horizon = 0.78 + 0.22 * max(n.y, 0.0);
+    float horizon = 0.76 + 0.24 * max(n.y, 0.0);
     vec3 lit = baseColor * ambientFloor * horizon;
+
+    // [FIX QUAN TRỌNG]: Hạ độ sáng môi trường khi hoa/lá nằm trong vùng bóng đổ (shadow < 1.0)
+    // để bóng của núi đá, cây cối và khóm hoa đổ lên nhau hiện rõ ràng!
+    lit *= mix(0.60, 1.0, shadow) * mix(0.82, 1.0, calyxSelfShadow);
 
     float sunFactor = canopyExtinction * cloudVis * shadow;
     if (sunFactor > 0.001) {
-        // [SPIR-V FIX]: Chuẩn hóa an toàn cho halfDir tránh lỗi chia 0 (NaN) khi viewDir == -lightDir
         vec3 halfSum = lightDir + viewDir;
         vec3 halfDir = halfSum * inversesqrt(max(dot(halfSum, halfSum), 1e-6));
         float NdotH = max(dot(faceNormal, halfDir), 0.0);
         float specLobeStem = FastPow32(NdotH);
         float specLobeBloom = FastPow16(NdotH);
-        float specIntensity = mix(0.55 * (1.0 - antiShimmer * 0.75), 0.42, bloomMask) * canopyExtinction;
+        float specIntensity = mix(0.50 * (1.0 - antiShimmer * 0.75), 0.38, bloomMask) * canopyExtinction * calyxSelfShadow;
         float spec = mix(specLobeStem, specLobeBloom, bloomMask) * specIntensity;
 
+        // Viền kim quang ngược nắng (Fresnel Backlit Rim Scattering)
         float oneMinusNV = clamp(1.0 - max(dot(faceNormal, viewDir), 0.0), 0.0, 1.0);
-        float rim = (oneMinusNV * oneMinusNV * sqrt(oneMinusNV)) * mix(0.18, 0.30, bloomMask);
+        float rimAlign = 0.30 + 0.70 * viewSunAlign;
+        float rim = (oneMinusNV * oneMinusNV * sqrt(oneMinusNV)) * mix(0.20, 0.46, bloomMask) * rimAlign;
 
-        vec3 directSunTerms = baseColor * (directDiffuse * 1.12 + rim)
-                            + subsurfaceColor * (transmission * mix(0.74, 0.95, bloomMask))
+        vec3 directSunTerms = baseColor * (directDiffuse * 1.10)
+                            + subsurfaceColor * (transmission * mix(0.85, 1.28, bloomMask) + rim)
                             + vec3(spec, spec, spec * 0.94);
         lit += directSunTerms * (effectiveLightColor * sunFactor);
     }
 
-    lit += subsurfaceColor * (transmission * mix(0.18, 0.28, bloomMask)) * skyAmbient;
+    // Xuyên sáng môi trường bầu trời cũng chịu ảnh hưởng của bóng đổ để không làm bệt vùng tối
+    lit += subsurfaceColor * (transmission * mix(0.14, 0.22, bloomMask)) * skyAmbient * mix(0.35, 1.0, shadow);
 
     float hCurve = hNorm / (0.68 + 0.32 * hNorm);
-    float rootAO = clamp(0.78 + 0.22 * hCurve, 0.78, 1.0);
+    float rootAO = clamp(0.72 + 0.28 * hCurve, 0.72, 1.0);
     lit *= mix(rootAO, 1.0, bloomMask);
 
-    lit += VFXLights_Accumulate(worldPosition, n, baseColor);
+    if (distSq < 1225.0) {
+        lit += VFXLights_Accumulate(worldPosition, n, baseColor);
+    }
     return lit;
 }
 
@@ -221,8 +257,6 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float u = clamp(uTransverse, -1.0, 1.0);
     float absU = abs(u);
 
-    // [VULKAN / SPIR-V FIX]: Tính đạo hàm fwidth(u) và fwidth(h) trong luồng đồng nhất (uniform control flow)
-    // TRƯỚC nhánh if (distToCam >= 30.0) để tránh lỗi đạo hàm quad không đồng nhất tại ranh giới 30m.
     float fwU = fwidth(u);
     float fwH = fwidth(h);
     float antiShimmer;
@@ -234,9 +268,6 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         antiShimmer = max(max(unresolved, FastRamp(11.0, 30.0, distToCam)), tipConvergence * 0.75);
     }
 
-    // 1. Soft Cylindrical Blade Normal + Tsushima Canopy Upward Bias:
-    // Biases the blade normal upward (0.48 minimum Y) and limits side-to-side twist so
-    // neighboring blades in a clump form a cohesive velvety cushion rather than spiky shards.
     vec3 rawFaceN = vec3(worldNormal.x * 0.72, max(abs(worldNormal.y), 0.48), worldNormal.z * 0.72);
     vec3 faceNormal = rawFaceN * inversesqrt(max(dot(rawFaceN, rawFaceN), 1e-8));
     if (distToCam < 18.0) {
@@ -250,26 +281,21 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         }
     }
 
-    // Arch Bell Window: concentrates specular sheen on the curved mid-upper arch (h in [0.16, 0.86])
     float archWindow = FastRamp(0.16, 0.44, h) * (1.0 - FastRamp(0.68, 0.88, h));
 
-    // Cohesive canopy normal `n`: blends at least 46% upward even at close zoom so light glides smoothly across tufts
     float groundBlend = (1.0 - FastRamp(0.0, 0.34, h)) * 0.52;
     float baseCanopySmooth = mix(0.46, 0.88, antiShimmer);
     float terrainBlend = 1.0 - (1.0 - baseCanopySmooth) * (1.0 - groundBlend);
     vec3 rawCanopyN = mix(faceNormal, vec3(0.0, 1.0, 0.0), terrainBlend);
     vec3 n = rawCanopyN * inversesqrt(max(dot(rawCanopyN, rawCanopyN), 1e-8));
 
-    // Coherent macro botanical hue shift across the valley (interpolated from vertex stage)
     float warmShift = clamp(macroPatch * 0.5 + 0.5, 0.0, 1.0);
     float tipHeightMask = FastRamp(0.32, 0.92, h);
-    // Hài hòa sắc xanh ngọc bích Kiếm Hiệp (Tsushima Emerald & Morning Gold), tránh chói vàng bết màu
     vec3 coolEmeraldTip = vec3(0.96, 1.02, 0.94);
     vec3 warmGoldenTip  = vec3(1.08, 1.05, 0.88);
     vec3 tipTone = mix(vec3(1.0), mix(coolEmeraldTip, warmGoldenTip, warmShift), tipHeightMask);
     baseColor *= tipTone;
 
-    // ── GENERALIZED 4-STATE BOTANICAL TRANSITION ─────────────────────────────
     vec2 grassState = ((u_grassStateParams.x + u_grassStateParams.y) > 0.0001 || u_grassBurnZoneCount > 0)
         ? GrassEvaluateLocalState(worldPosition)
         : vec2(0.0);
@@ -278,10 +304,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     float specScale = 1.0;
     float sssScale  = 1.0;
     vec3 emberGlow  = vec3(0.0);
-    // Grounded olive-moss root tone matching ground_splat.fs turfBase
     vec3 rootSubstrateTone = vec3(0.155, 0.228, 0.086);
 
-    // Subtle botanical leaf-vein & rounded-edge modulation at close zoom (< 9m)
     if (distSq < 81.0) {
         float closeDetail = (1.0 - distSq * (1.0 / 81.0)) * (1.0 - antiShimmer);
         float vein = 1.0 - 0.065 * abs(sin(u * 9.424778)) * closeDetail;
@@ -334,7 +358,6 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         }
     }
 
-    // Seamless Root-to-Ground Turf Color Blending + Distant Root Lift (prevents dark root stains without bleaching roots)
     float distRootLift = FastRamp(10.0, 28.0, distToCam);
     float rootBlend = (1.0 - FastRamp(0.0, 0.24, h)) * mix(0.20, 0.04, distRootLift);
     baseColor = mix(baseColor, rootSubstrateTone, rootBlend);
@@ -343,12 +366,10 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
 
     vec3 skyAmbient = clamp(u_ambientColor * vec3(1.25, 1.25, 1.35), 0.0, 1.0);
     vec3 groundBounce = clamp(u_ambientColor * vec3(0.55, 0.45, 0.40), 0.0, 1.0);
-    // Warm chlorophyll bounce in shadows keeps shadowed valleys lush and painterly
     vec3 greenBounce = baseColor * (u_ambientColor * 1.18 + vec3(0.026, 0.052, 0.016));
     vec3 ambientGround = mix(groundBounce, greenBounce, 0.48);
     vec3 ambient = mix(ambientGround, skyAmbient, n.y * 0.5 + 0.5);
 
-    // Natural 3D root-to-tip self-occlusion so blades have lush depth at noon, sunset, and night
     float rootAO = mix(mix(0.74, 0.90, distRootLift), 1.0, smoothstep(0.0, 0.38, h));
     vec3 lit = baseColor * ambient * rootAO;
 
@@ -358,10 +379,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     lit += waxSheen * rootAO;
 
     float shadow = FoliageShadowVisibility(lightSpace, staticLightSpace, n, lightDir, worldPosition, distToCam);
-    // Grounded ambient occlusion inside cast shadows so flower, grass, and rock shadows read clearly
-    lit *= mix(0.72, 1.0, shadow);
+    lit *= mix(0.68, 1.0, shadow);
     if (shadow > 0.001) {
-        // [VISUAL FIX]: Pha mượt bóng mây từ 24m -> 30m thay vì cắt bậc đột ngột về 0.92 tại 30m
         float cloudVis = 0.92;
         if (distSq < 900.0) {
             float cloudDistFade = FastRamp(576.0, 900.0, distSq);
@@ -369,11 +388,9 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
         }
         float sunVis = shadow * cloudVis;
         if (sunVis > 0.001) {
-            // Noon energy conservation + horizon grazing envelope (keeps 12:00 unbleached and 17:34 coupled to terrain)
             vec3 effectiveLightColor = u_lightColor * (1.0 / (1.0 + max(lightDir.y - 0.32, 0.0) * 1.18));
             float horizonEnvelope = smoothstep(0.02, 0.38, max(lightDir.y, 0.0)) * 0.66 + 0.34;
 
-            // Use canopy-blended shading normal `shadingN` so blades in a clump share soft, velvety diffuse transitions
             float lowSunMacroBlend = 1.0 - smoothstep(0.08, 0.36, max(lightDir.y, 0.0));
             float shadingNWeight = mix(0.58, 0.82, lowSunMacroBlend);
             vec3 rawShadingN = mix(faceNormal, n, shadingNWeight);
@@ -385,7 +402,6 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             float zenithBlend  = FastRamp(0.50, 0.90, lightDir.y) * 0.60;
             float wrapped = mix(wrappedFace, wrappedModel, zenithBlend);
 
-            // Smooth Beer-Lambert canopy extinction harmonized with ground_splat.fs luminance
             float canopyDepth = 0.34 * (1.0 - h) * (1.0 - distRootLift * 0.55);
             float opticalDepth = canopyDepth * 0.75 / max(lightDir.y, 0.28);
             float expCanopy = 1.0 / (1.0 + opticalDepth + 0.35 * opticalDepth * opticalDepth);
@@ -395,7 +411,6 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
             vec3 anisoSpec = vec3(0.0);
             float waxySpec = 0.0;
             if (archWindow > 0.005 && distToCam < 22.0) {
-                // [SPIR-V FIX]: Chuẩn hóa an toàn cho halfDir
                 vec3 halfSum = modelLightDir + viewDir;
                 vec3 halfDir = halfSum * inversesqrt(max(dot(halfSum, halfSum), 1e-6));
                 float NdotH = max(dot(faceNormal, halfDir), 0.0);
@@ -417,20 +432,20 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
                 waxySpec = FastPow32(NdotH) * (0.032 * h) * specAA * (1.0 - distRoughness);
             }
 
-            // Luminous Chlorophyll Emerald-Jade Subsurface Translucency:
-            // Keeps G > R even under warm golden-hour / sunset light so blades never turn mustard-olive
-            float forwardScatter = max(dot(-lightDir, viewDir), 0.0);
+            // Tăng cường tán xạ ngược sáng Mie xuyên qua ngọn cỏ mỏng khi nhìn về phía Mặt Trời
+            vec3 distortedSun = normalize(lightDir + faceNormal * 0.32);
+            float forwardScatter = max(dot(-distortedSun, viewDir), 0.0);
             float backLight = max(-dot(faceNormal, modelLightDir), 0.0);
-            float forwardLobe = forwardScatter * forwardScatter;
-            float backLobe = FastPow2(backLight) * (0.35 + 0.65 * forwardScatter);
-            float edgeThinness = 0.66 + 0.34 * absU;
-            float sssWindow = FastRamp(0.18, 0.56, h) * (1.0 - FastRamp(0.86, 1.0, h) * 0.25);
-            float transmission = (backLobe * 0.44 + forwardLobe * 0.64 * (0.30 + 0.70 * h)) * sssWindow * edgeThinness * sssScale;
-            vec3 goldenJadeSSS = baseColor * vec3(0.94, 1.38, 0.64) + vec3(0.015, 0.034, 0.008) * sssScale;
+            float forwardLobe = forwardScatter * forwardScatter * (0.85 + 0.55 * forwardScatter);
+            float backLobe = FastPow2(backLight) * (0.38 + 0.62 * forwardScatter);
+            float edgeThinness = 0.64 + 0.36 * absU;
+            float sssWindow = FastRamp(0.16, 0.54, h) * (1.0 - FastRamp(0.88, 1.0, h) * 0.20);
+            float transmission = (backLobe * 0.48 + forwardLobe * 0.72 * (0.28 + 0.72 * h)) * sssWindow * edgeThinness * sssScale;
+            vec3 goldenJadeSSS = baseColor * vec3(0.96, 1.42, 0.66) + vec3(0.018, 0.038, 0.010) * sssScale;
 
             float diffuseLobe = wrapped * (0.48 + 0.52 * wrapped);
             vec3 directDiffuse = baseColor * (diffuseLobe * 0.74);
-            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.88);
+            vec3 jadeTrans = goldenJadeSSS * (transmission * 0.94);
             vec3 specHighlight = anisoSpec + vec3(waxySpec * 0.34) * baseColor;
 
             vec3 directSun = ((directDiffuse + jadeTrans) * canopy + specHighlight) * (sunVis * horizonEnvelope);
@@ -439,6 +454,8 @@ vec3 GrassShade(vec3 baseColor, vec3 worldPosition, vec3 worldNormal,
     }
 
     lit += emberGlow;
-    lit += VFXLights_Accumulate(worldPosition, n, baseColor);
+    if (distSq < 1225.0) {
+        lit += VFXLights_Accumulate(worldPosition, n, baseColor);
+    }
     return lit;
 }

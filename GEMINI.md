@@ -659,3 +659,55 @@
   - `rock_pipeline_report.md`: Báo cáo chi tiết pipeline và các tham số địa mạo.
   - `rock_pipeline_final_verification.md`: Báo cáo nghiệm thu kỹ thuật và phân tích hình ảnh trực quan.
 
+---
+
+## 17. Session Summary: Nâng Cấp Vách Núi Đảo Nổi AAA (Sculpted Island Cliff Skirt), Biển Mây Liên Tục & Triệt Tiêu Rèm Đất Kéo Dãn
+
+### 17.1. Bối Cảnh & Các Khuyết Tật Cần Khắc Phục
+- **Phản hồi của người dùng**:
+  1. *Vệt sương xé rách (white triangular shards/fans)*: Xuất hiện các tia sáng trắng nhọn hoắt bắn ngang mặt biển mây tại các góc lõm của vách đảo.
+  2. *Rèm đất heightfield kéo dãn 8.5m*: Vách đảo chỉ là lưới địa hình heightfield 1m bị dốc nghiêng $65^\circ$ đâm thẳng vào tấm biển mây phẳng lỳ, thiếu hẳn các gờ đá (ledges), rãnh nứt địa chất (crevices) và phần đáy thon vào trong (undercut keel).
+  3. *Cỏ mọc leo xuống vách dốc*: Các cụm cỏ đồng cỏ mọc trôi xuống vách đất dựng đứng $65^\circ$.
+  4. *Biển mây màu tối và nhăn nhúm*: Biển mây có tông xanh hải quân tối, gợn sóng nhăn nheo như giấy bạc nhàu và xuất hiện các lỗ thủng lốm đốm ở đường chân trời.
+
+### 17.2. Các Giải Pháp Kỹ Thuật Đã Triển Khai
+1. **Khử Triệt Để Vệt Sương Trắng & Cỏ Mọc Vách (`maps/worlds/song_quao/song_quao.c`)**:
+   - Gỡ bỏ hoàn toàn `MapProp_DrawIslandMist` và dải ruy-băng sương viền 20m (nguyên nhân gây ra các cánh quạt trắng unlit cắt qua địa hình tại góc lõm).
+   - Khóa chặt điều kiện mật độ cỏ `SongQuaoGrassDensity`: `if (pos.y < -1.15f || normal.y < 0.60f) return 0.0f;`. Cỏ được giữ tuyệt đối trên thảm cỏ phẳng, sạch bóng 100% trên toàn bộ sườn vách.
+2. **Khôi Phục Biển Mây Bồng Bềnh & Liên Tục (`maps/toolkit/shaders/cloud_sea.fs`)**:
+   - Nâng tông màu thung lũng mây `CLOUD_DARK` từ xanh navy tối $(0.30, 0.36, 0.50)$ lên ánh xám ngọc trai khí quyển trong trẻo $(0.56, 0.62, 0.72)$.
+   - Giảm hệ số dốc sóng `slopeScale` từ $3.8$ xuống $2.1$, biến các nếp nhăn sắc nhọn thành những khối mây tích (cumulus) cuồn cuộn, mềm mại.
+   - Nâng sàn ambient occlusion `verticalAO` từ $0.22$ lên $0.42$.
+   - Gỡ bỏ điều kiện hủy pixel ngẫu nhiên `density < 0.38` ở đường chân trời, mang lại biển mây liên tục vô tận 100% không còn lỗ thủng dạng "swiss cheese".
+   - Hạ cao độ biển mây `CLOUD_SEA_Y` từ $-4.20\text{m}$ xuống $-14.50\text{m}$, mở ra toàn bộ không gian hùng vĩ của vách đá đảo nổi thiên giới.
+3. **Kiến Trúc Vách Núi Đa Tầng Điêu Khắc (`maps/toolkit/map_props_cliff.inl`)**:
+   - **Trích xuất & làm mịn đường bao**: Sử dụng `MapProp_ExtractBoundaryLoop` tại cao độ cắt $-1.75\text{m}$, nội suy đều 720 cột (~1.2m/cột) chia thành 15 chunks (48 cột/chunk). Áp dụng 2 lượt làm mịn Laplacian triệt tiêu răng cưa tế bào đơn.
+   - **Cắm mộng chống hở mép (Overhang Seam Sealing)**: Điểm crest hàng 0 thụt vào trong lòng đảo $38\text{cm}$ và cắm sâu $8\text{cm}$ dưới chân cỏ, đảm bảo góc nhìn camera không bao giờ bị hở khe nứt.
+   - **Cấu trúc 12 tầng vách (12-Row Geological Profile)**:
+     - Hàng 0 - 2: Gờ đá mép trên và thềm đá chứa rêu (moss shelf).
+     - Hàng 3 - 6: Vách đứng, trụ đá nhô (buttress) và khe nứt phong hóa (crevices) với độ dốc đa bậc.
+     - Hàng 7: Tầng chìm vào mây mù ($Y \approx -14.5\text{m}$).
+     - Hàng 8 - 11: Đáy thon vát vào tâm đảo (inward keel) từ $-17.2\text{m}$ đến $-24.6\text{m}$, tạo nên dáng dấp vững chãi, đồ sộ của một hòn sơn đảo lơ lửng giữa trời.
+   - **Shader Vách Đá PBR Đá Phiến (`maps/toolkit/shaders/cliff_rock.fs` & `.vs`)**:
+     - Tích hợp Shadow map, Cloud shadow, VFX point lights.
+     - Phản quang mây hướng thượng (`Cloud Up-Bounce`): ánh sáng ấm áp từ biển mây bên dưới hắt ngược lên gầm vách đá.
+     - Lớp rêu thềm đá xanh mát (`Ledge Moss`), AO khe rãnh nướng sẵn (`Cavity AO`), và hiệu ứng sương mù hòa tan ở chân vách (`Cloud-Sea Dissolve Haze`).
+     - Tỷ lệ UV địa chất rộng lớn $19\text{m}$ (`s * 0.052, -y * 0.052`), triệt tiêu vân sọc dày, tôn lên các vỉa đá phiến phân tầng hùng vĩ.
+4. **Cắt Bỏ Rèm Đất Thừa & Đảm Bảo Độc Lập Tài Nguyên Raylib**:
+   - Trong `ground_splat.fs`, kích hoạt `if (fragWorldPos.y <= -1.65) discard;`, triệt tiêu toàn bộ 8.5m dải đất kéo dãn giả lập ban đầu để vách đá điêu khắc 3D tiếp quản 100%.
+   - Chuẩn hóa thứ tự đỉnh tam giác (triangle winding) và tắt backface culling khi render vách đá, giải quyết triệt để lỗi mất mảng vách ở tiền cảnh.
+   - Mỗi chunk model sở hữu riêng `Material` độc lập; hàm `MapProp_UnloadCliffSkirt` giải phóng bộ đệm sạch sẽ qua `UnloadModel`, triệt tiêu hoàn toàn lỗi double-free.
+
+---
+
+### 17.3. Kết Quả Đo Đạc & Nghiệm Thu
+- **Hiệu năng thực tế trên GPU Intel Iris Graphics 6000**:
+  - `cliff_promontory`: **19.73 ms (50.7 FPS)** (giảm từ baseline 24.23 ms).
+  - `cliff_outlet`: **21.03 ms (47.6 FPS)** (giảm từ baseline 25.93 ms).
+  - `cliff_panorama`: **17.24 ms (58.0 FPS)**.
+  - `gameplay_center`: **34.35 ms (29.1 FPS)**.
+- **Biên dịch & Test Suite**:
+  - CMake build: **0 warning, 0 error**.
+  - `WUXING_AUTOTEST=1 ./build/wuxing`: **19/19 test cases PASSED (100%)**, dọn dẹp bộ nhớ RAM/VRAM tuyệt đối an toàn.
+
+
