@@ -394,8 +394,8 @@ void InitSongQuaoMap(void)
     MapProp_SetGroundReliefMap(&s_ground, "assets/textures/verdant_terrain_relief.png");
     MapProp_SetGroundDebrisMap(&s_ground, "assets/maps/song_quao/song_quao_debris_map.png");
     MapProp_SetGroundRockMaps(&s_ground,
-                              "assets/textures/rocks/granite_diffuse.png",
-                              "assets/textures/rocks/granite_normal.png");
+                              "assets/textures/rocks/scree_diffuse.png",
+                              "assets/textures/rocks/scree_normal.png");
 
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(1400.0f, 1400.0f, 65.0f);

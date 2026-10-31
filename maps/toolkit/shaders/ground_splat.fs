@@ -372,6 +372,8 @@ void main()
     float isRiparian = clamp(shoreFactor * 1.25 + streamWet * 1.50 + lakeDepthFactor * 2.0, 0.0, 1.0);
     vec3 blendedAlbedo = grassAlbedo * wGrass;
     vec3 cliffTriNormal = geomNormal;
+    float cliffOcclusion = 1.0;
+    float cliffRoughnessMod = 0.0;
 
     if (hasSoil) {
         float porousDarkening = smoothstep(0.0, 0.45, wWetSoil) * (1.0 - wWetSoil * 0.35);
@@ -383,12 +385,12 @@ void main()
 
         vec3 cliffAlbedo = warmLoamColor;
         if (wCliff > 0.01) {
-            vec2 triUVx = fragWorldPos.zy * 0.32;
-            vec2 triUVy = fragWorldPos.xz * 0.32;
-            vec2 triUVz = fragWorldPos.xy * 0.32;
-            vec2 triDxX = wpDx3.zy * 0.32, triDyX = wpDy3.zy * 0.32;
-            vec2 triDxY = wpDx * 0.32, triDyY = wpDy * 0.32;
-            vec2 triDxZ = wpDx3.xy * 0.32, triDyZ = wpDy3.xy * 0.32;
+            vec2 triUVx = fragWorldPos.zy * 0.20;
+            vec2 triUVy = fragWorldPos.xz * 0.20;
+            vec2 triUVz = fragWorldPos.xy * 0.20;
+            vec2 triDxX = wpDx3.zy * 0.20, triDyX = wpDy3.zy * 0.20;
+            vec2 triDxY = wpDx * 0.20, triDyY = wpDy * 0.20;
+            vec2 triDxZ = wpDx3.xy * 0.20, triDyZ = wpDy3.xy * 0.20;
 
             vec3 absN = abs(geomNormal);
             vec3 triWeights = absN * absN * absN * absN;
@@ -409,45 +411,66 @@ void main()
                 rockNormZ = textureGrad(u_groundRockNormal, triUVz, triDxZ, triDyZ).rgb * 2.0 - 1.0;
 
                 if (nearDualScale) {
-                    vec3 rockDetailX = textureGrad(u_groundRock, triUVx * 2.8, triDxX * 2.8, triDyX * 2.8).rgb;
-                    vec3 rockDetailY = textureGrad(u_groundRock, triUVy * 2.8, triDxY * 2.8, triDyY * 2.8).rgb;
-                    vec3 rockDetailZ = textureGrad(u_groundRock, triUVz * 2.8, triDxZ * 2.8, triDyZ * 2.8).rgb;
-                    rockTexX = mix(rockTexX, rockDetailX, 0.28 * dualScaleFade);
-                    rockTexY = mix(rockTexY, rockDetailY, 0.28 * dualScaleFade);
-                    rockTexZ = mix(rockTexZ, rockDetailZ, 0.28 * dualScaleFade);
+                    vec2 dUVx = triUVx * 3.2;
+                    vec2 dUVy = triUVy * 3.2;
+                    vec2 dUVz = triUVz * 3.2;
+                    vec2 dDxX = triDxX * 3.2, dDyX = triDyX * 3.2;
+                    vec2 dDxY = triDxY * 3.2, dDyY = triDyY * 3.2;
+                    vec2 dDxZ = triDxZ * 3.2, dDyZ = triDyZ * 3.2;
+
+                    vec3 detailX = textureGrad(u_groundRock, dUVx, dDxX, dDyX).rgb;
+                    vec3 detailY = textureGrad(u_groundRock, dUVy, dDxY, dDyY).rgb;
+                    vec3 detailZ = textureGrad(u_groundRock, dUVz, dDxZ, dDyZ).rgb;
+                    rockTexX = mix(rockTexX, detailX * 1.08, 0.35 * dualScaleFade);
+                    rockTexY = mix(rockTexY, detailY * 1.08, 0.35 * dualScaleFade);
+                    rockTexZ = mix(rockTexZ, detailZ * 1.08, 0.35 * dualScaleFade);
+
+                    vec3 detailNormX = textureGrad(u_groundRockNormal, dUVx, dDxX, dDyX).rgb * 2.0 - 1.0;
+                    vec3 detailNormY = textureGrad(u_groundRockNormal, dUVy, dDxY, dDyY).rgb * 2.0 - 1.0;
+                    vec3 detailNormZ = textureGrad(u_groundRockNormal, dUVz, dDxZ, dDyZ).rgb * 2.0 - 1.0;
+                    rockNormX = normalize(mix(rockNormX, detailNormX, 0.42 * dualScaleFade));
+                    rockNormY = normalize(mix(rockNormY, detailNormY, 0.42 * dualScaleFade));
+                    rockNormZ = normalize(mix(rockNormZ, detailNormZ, 0.42 * dualScaleFade));
                 }
             } else {
                 rockTexX = textureGrad(texPath, triUVx, triDxX, triDyX).rgb;
                 rockTexY = textureGrad(texPath, triUVy, triDxY, triDyY).rgb;
                 rockTexZ = textureGrad(texPath, triUVz, triDxZ, triDyZ).rgb;
                 if (nearDualScale) {
-                    vec3 rockDetailX = textureGrad(texPath, triUVx * 2.8, triDxX * 2.8, triDyX * 2.8).rgb;
-                    vec3 rockDetailY = textureGrad(texPath, triUVy * 2.8, triDxY * 2.8, triDyY * 2.8).rgb;
-                    vec3 rockDetailZ = textureGrad(texPath, triUVz * 2.8, triDxZ * 2.8, triDyZ * 2.8).rgb;
-                    rockTexX = mix(rockTexX, rockDetailX, 0.32 * dualScaleFade);
-                    rockTexY = mix(rockTexY, rockDetailY, 0.32 * dualScaleFade);
-                    rockTexZ = mix(rockTexZ, rockDetailZ, 0.32 * dualScaleFade);
+                    vec3 detailX = textureGrad(texPath, triUVx * 2.8, triDxX * 2.8, triDyX * 2.8).rgb;
+                    vec3 detailY = textureGrad(texPath, triUVy * 2.8, triDxY * 2.8, triDyY * 2.8).rgb;
+                    vec3 detailZ = textureGrad(texPath, triUVz * 2.8, triDxZ * 2.8, triDyZ * 2.8).rgb;
+                    rockTexX = mix(rockTexX, detailX, 0.32 * dualScaleFade);
+                    rockTexY = mix(rockTexY, detailY, 0.32 * dualScaleFade);
+                    rockTexZ = mix(rockTexZ, detailZ, 0.32 * dualScaleFade);
                 }
             }
             vec3 triRock = rockTexX * triWeights.x + rockTexY * triWeights.y + rockTexZ * triWeights.z;
 
-            // Authentic sunlit weathered granite corestone tones (matching cliff_rock.fs and rock props)
-            triRock = mix(triRock, vec3(dot(triRock, vec3(0.3333))), 0.16);
-            triRock = max(triRock, vec3(0.25, 0.24, 0.23));
-
-            float macroTone = sin(fragWorldPos.x * 0.045 + fragWorldPos.z * 0.038) * 0.5 + 0.5;
-            vec3 graniteTint = mix(vec3(0.92, 0.90, 0.88), vec3(1.06, 1.02, 0.96), macroTone);
-            vec3 rockBase = triRock * graniteTint;
+            // Authentic weathered rock tone matching boulder props (Color(142, 136, 128))
+            vec3 boulderTint = vec3(0.557, 0.533, 0.502);
+            float macroTone = sin(fragWorldPos.x * 0.035 + fragWorldPos.z * 0.026) * 0.5 + 0.5;
+            vec3 stoneTint = mix(boulderTint * 0.94, boulderTint * 1.06, macroTone);
+            vec3 rockBase = triRock * stoneTint * 1.35;
 
             // Velvet moss on upward-facing rock ledges near the plateau
-            float ledgeFacing = clamp(geomNormal.y * 1.35 - 0.25, 0.0, 1.0);
-            vec3 ledgeMoss = mix(vec3(0.14, 0.22, 0.09), vec3(0.24, 0.36, 0.14), triRock.g);
+            float ledgeFacing = clamp(geomNormal.y * 1.45 - 0.20, 0.0, 1.0);
+            vec3 ledgeMoss = mix(vec3(0.12, 0.20, 0.08), vec3(0.22, 0.34, 0.11), triRock.g);
             cliffAlbedo = mix(rockBase, ledgeMoss, ledgeFacing * 0.65);
 
+            // Amplify normal map relief for crisp 3D rock fractures
+            rockNormX.xy *= 1.45;
+            rockNormY.xy *= 1.45;
+            rockNormZ.xy *= 1.45;
             vec3 worldNx = vec3(rockNormX.z * sign(geomNormal.x), rockNormX.y, rockNormX.x * sign(geomNormal.x));
             vec3 worldNy = vec3(rockNormY.x, rockNormY.z * sign(geomNormal.y), rockNormY.y);
             vec3 worldNz = vec3(rockNormZ.x * sign(geomNormal.z), rockNormZ.y, rockNormZ.z * sign(geomNormal.z));
             cliffTriNormal = normalize(worldNx * triWeights.x + worldNy * triWeights.y + worldNz * triWeights.z);
+
+            // Crevice ambient occlusion directly from normal map crevices
+            float normCrevice = clamp(rockNormX.z * triWeights.x + rockNormY.z * triWeights.y + rockNormZ.z * triWeights.z, 0.35, 1.0);
+            cliffOcclusion = mix(0.70, 1.0, normCrevice);
+            cliffRoughnessMod = (1.0 - normCrevice) * 0.12;
         }
 
         float cliffMix = smoothstep(0.02, 0.20, wCliff);
@@ -585,7 +608,7 @@ void main()
 
     float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
     roughness = mix(roughness, 0.78, (wDrySoil + wPath) * 0.80);
-    roughness = mix(roughness, 0.82, wCliff * 0.85);
+    roughness = mix(roughness, clamp(0.72 + cliffRoughnessMod, 0.45, 0.92), wCliff * 0.85);
     roughness = mix(roughness, 0.36, wWetSoil * isRiparian * 0.75);
     roughness = clamp(roughness + (1.0 - detailResolve) * 0.25, 0.20, 0.98);
 
@@ -593,7 +616,7 @@ void main()
     // có chiều sâu tự nhiên mà không bị bết đen.
     float nearCanopyMask = 1.0 - smoothstep(324.0, 1800.0, camDistSqXZ);
     float canopyContactAO = mix(1.0, 0.76 + 0.18 * fineGrassLuma, wGrass * nearCanopyMask);
-    float cliffCreviceAO = 1.0 - wCliff * 0.12;
+    float cliffCreviceAO = mix(1.0, cliffOcclusion, smoothstep(0.04, 0.35, wCliff));
     float cavityAO = mix(0.86 + 0.14 * fineGrassLuma,
                          0.72 + 0.28 * pebbleRelief, soilWeight) * reliefShadow * cliffCreviceAO * canopyContactAO;
 
@@ -667,6 +690,13 @@ void main()
     }
 
     groundLit += VFXLights_AccumulateFlat(fragPosition, blendedAlbedo);
+
+    if (wCliff > 0.04 && fragWorldPos.y < -1.0) {
+        float lowerSkirt = 1.0 - smoothstep(-5.20, -1.00, fragWorldPos.y);
+        float cloudBounceFactor = max(-normal.y * 0.65 + 0.25, 0.0) * lowerSkirt;
+        vec3 cloudBounce = vec3(0.92, 0.90, 0.86) * actualAmbient * cloudBounceFactor * 0.95;
+        groundLit += blendedAlbedo * cloudBounce;
+    }
 
     if (veil > 0.001) {
         groundLit = mix(groundLit, cloudVeilColor, veil);
