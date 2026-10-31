@@ -18,6 +18,7 @@ static int locGroundOffset = -1;
 static int locGroundTiling = -1, locGroundCloudNoise = -1;
 static int locGroundReliefSampler = -1, locGroundReliefEnabled = -1;
 static int locGroundDebrisSampler = -1, locGroundDebrisEnabled = -1;
+static int locGroundRockSampler = -1, locGroundRockNormalSampler = -1, locGroundRockEnabled = -1;
 static int locEcologyRect = -1;
 static int locEcologyEnabled = -1;
 static int locEcologySampler = -1, locEcologyDistanceSampler = -1;
@@ -32,6 +33,8 @@ static int locTexGrassMaterial = -1, locTexSoilMaterial = -1;
 #define GROUND_DEBRIS_TEXTURE_SLOT 9        // Macro debris distribution map (R=litter, G=scree, B=twigs, A=moss).
 #define GROUND_ECOLOGY_TEXTURE_SLOT 10      // Macro habitat / vegetation suitability.
 #define GROUND_ECOLOGY_DIST_TEXTURE_SLOT 11 // Metric path & shore signed distance.
+#define GROUND_ROCK_TEXTURE_SLOT 12         // Dedicated high-resolution cliff/crag rock diffuse.
+#define GROUND_ROCK_NORMAL_SLOT 13          // Packed normal RGB + roughness for triplanar cliffs.
 static Vector4 s_groundPathSegs[MAX_GROUND_PATH_SEGS];
 static int s_groundPathSegCount = 0;
 static Vector4 s_groundLakeParams = {0};
@@ -344,6 +347,9 @@ static MapGroundSurface SetupGroundMaterial(Mesh mesh, float width, float depth,
         locGroundReliefEnabled = GetShaderLocation(groundShader, "u_groundReliefEnabled");
         locGroundDebrisSampler = GetShaderLocation(groundShader, "u_groundDebris");
         locGroundDebrisEnabled = GetShaderLocation(groundShader, "u_groundDebrisEnabled");
+        locGroundRockSampler = GetShaderLocation(groundShader, "u_groundRock");
+        locGroundRockNormalSampler = GetShaderLocation(groundShader, "u_groundRockNormal");
+        locGroundRockEnabled = GetShaderLocation(groundShader, "u_groundRockEnabled");
         locEcologyRect = GetShaderLocation(groundShader, "u_ecologyRect");
         locEcologyEnabled = GetShaderLocation(groundShader, "u_ecologyEnabled");
         locGroundCloudUV = GetShaderLocation(groundShader, "u_cloudUV");
@@ -601,6 +607,12 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
     rlEnableTexture((ecologyEnabled && ground->ecology->distanceTexture.id)
                         ? ground->ecology->distanceTexture.id
                         : rlGetTextureIdDefault());
+
+    int rockEnabled = ground->rockTexture.id != 0;
+    rlActiveTextureSlot(GROUND_ROCK_TEXTURE_SLOT);
+    rlEnableTexture(rockEnabled ? ground->rockTexture.id : rlGetTextureIdDefault());
+    rlActiveTextureSlot(GROUND_ROCK_NORMAL_SLOT);
+    rlEnableTexture((rockEnabled && ground->rockNormalTexture.id) ? ground->rockNormalTexture.id : rlGetTextureIdDefault());
     rlActiveTextureSlot(0);
 
     int reliefSlot = GROUND_RELIEF_TEXTURE_SLOT;
@@ -615,6 +627,14 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
         SetShaderValue(groundShader, locGroundDebrisSampler, &debrisSlot, SHADER_UNIFORM_INT);
     if (locGroundDebrisEnabled >= 0)
         SetShaderValue(groundShader, locGroundDebrisEnabled, &debrisEnabled, SHADER_UNIFORM_INT);
+    int rockSlot = GROUND_ROCK_TEXTURE_SLOT;
+    if (locGroundRockSampler >= 0)
+        SetShaderValue(groundShader, locGroundRockSampler, &rockSlot, SHADER_UNIFORM_INT);
+    int rockNormSlot = GROUND_ROCK_NORMAL_SLOT;
+    if (locGroundRockNormalSampler >= 0)
+        SetShaderValue(groundShader, locGroundRockNormalSampler, &rockNormSlot, SHADER_UNIFORM_INT);
+    if (locGroundRockEnabled >= 0)
+        SetShaderValue(groundShader, locGroundRockEnabled, &rockEnabled, SHADER_UNIFORM_INT);
     int ecoSlot = GROUND_ECOLOGY_TEXTURE_SLOT;
     if (locEcologySampler >= 0)
         SetShaderValue(groundShader, locEcologySampler, &ecoSlot, SHADER_UNIFORM_INT);
@@ -688,6 +708,10 @@ void MapProp_DrawGround(const MapGroundSurface *ground, Vector3 worldCenter)
         SetShaderValue(groundShader, locGroundOffset, &pos, SHADER_UNIFORM_VEC3);
     DrawModel(ground->model, pos, 1.0f, WHITE);
 
+    rlActiveTextureSlot(GROUND_ROCK_NORMAL_SLOT);
+    rlDisableTexture();
+    rlActiveTextureSlot(GROUND_ROCK_TEXTURE_SLOT);
+    rlDisableTexture();
     rlActiveTextureSlot(GROUND_ECOLOGY_DIST_TEXTURE_SLOT);
     rlDisableTexture();
     rlActiveTextureSlot(GROUND_ECOLOGY_TEXTURE_SLOT);
@@ -751,6 +775,16 @@ void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground,
     ground->model.materials[0].maps[MATERIAL_MAP_EMISSION].texture = soilMaterial;
 }
 
+void MapProp_SetGroundRockMaps(MapGroundSurface *ground,
+                               const char *diffusePath,
+                               const char *normalPath)
+{
+    if (!ground || !ground->ready)
+        return;
+    ground->rockTexture = diffusePath ? MapLoadMippedTexture(diffusePath, TEXTURE_WRAP_REPEAT) : (Texture2D){0};
+    ground->rockNormalTexture = normalPath ? MapLoadMippedTexture(normalPath, TEXTURE_WRAP_REPEAT) : (Texture2D){0};
+}
+
 void MapProp_UnloadGround(MapGroundSurface *ground)
 {
     if (!ground || !ground->ready)
@@ -761,6 +795,8 @@ void MapProp_UnloadGround(MapGroundSurface *ground)
     // Leave ResourceManager-cached textures intact; only clear borrowed references
     ground->reliefTexture = (Texture2D){0};
     ground->debrisTexture = (Texture2D){0};
+    ground->rockTexture = (Texture2D){0};
+    ground->rockNormalTexture = (Texture2D){0};
     UnloadModel(ground->model);
     ground->ready = false;
 }

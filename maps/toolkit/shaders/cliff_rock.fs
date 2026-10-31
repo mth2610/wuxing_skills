@@ -53,6 +53,9 @@ void main() {
     vec3 viewDir = toCam * invCamDist;
 
     vec4 albedo = textureGrad(texture0, fragTexCoord, uvDx, uvDy);
+    // Soften extreme biotite mica pits for authentic weathered granite bedrock
+    albedo.rgb = mix(albedo.rgb, vec3(dot(albedo.rgb, vec3(0.333))), 0.18);
+    albedo.rgb = max(albedo.rgb, vec3(0.26, 0.25, 0.24));
     albedo.rgb *= colDiffuse.rgb;
     vec3 normalSample = textureGrad(texture2, fragTexCoord, uvDx, uvDy).rgb * 2.0 - 1.0;
 
@@ -103,13 +106,18 @@ void main() {
     actualLight *= 1.0 / (1.0 + max(worldLightDir.y - 0.36, 0.0) * 0.82);
     vec3 actualAmbient = (dot(u_ambientColor, u_ambientColor) > 0.001) ? u_ambientColor : vec3(0.36, 0.42, 0.50);
 
-    // 1. Natural Granite & Slate Geological Strata Tone
+    // 1. Natural Granite Geological Strata Tone & Rain Drainage Streaks
     float strataCoord = worldPosition.y * 0.28 + sin(worldPosition.x * 0.08 + worldPosition.z * 0.06) * 1.2;
     float strataBand = sin(strataCoord * 3.14159) * 0.5 + 0.5;
-    vec3 rockBase = albedo.rgb;
+
+    // Subtle vertical drainage and mineral oxidation streaks
+    float drainStreak = sin(worldPosition.x * 0.35 + sin(worldPosition.z * 0.25) * 1.4) * 0.5 + 0.5;
+    vec3 streakColor = mix(vec3(0.92, 0.90, 0.88), vec3(1.06, 1.02, 0.96), drainStreak);
+
+    vec3 rockBase = albedo.rgb * streakColor;
     // Modulate with vertex strata shade
-    rockBase *= mix(vec3(0.86, 0.88, 0.92), vec3(1.08, 1.04, 0.98), fragColor.a);
-    rockBase *= mix(vec3(0.92, 0.92, 0.90), vec3(1.06, 1.03, 0.97), strataBand * 0.25);
+    rockBase *= mix(vec3(0.88, 0.90, 0.94), vec3(1.06, 1.03, 0.98), fragColor.a);
+    rockBase *= mix(vec3(0.94, 0.94, 0.92), vec3(1.04, 1.02, 0.98), strataBand * 0.20);
 
     // 2. Ledge Moss & Lichen Colonization
     // Top-facing shelves near the plateau catch lush green velvet moss

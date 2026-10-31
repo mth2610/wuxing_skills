@@ -10,31 +10,37 @@ void main()
     float along = clamp(v_shadowData.x, 0.0, 1.0);
     float across = v_shadowData.y;
 
-    // VISUAL UPGRADE: Bo tròn đầu bóng theo phương trình Elip tự nhiên thay vì cắt vuông góc
-    // Khi tiến về ngọn bóng (along -> 1.0), khoảng cách ngang hiệu dụng tăng lên giúp bo tròn đỉnh
-    float tipCurve = smoothstep(0.65, 1.0, along);
-    float radialDistSq = across * across + tipCurve * tipCurve;
+    // [VISUAL UPGRADE - BLOSSOM CROWN & STEM SHADOW PROFILE]:
+    // Tạo hình bóng đổ thực tế của một khóm hoa:
+    // - Gốc hoa (along < 0.25): Bóng tiếp xúc chân khóm hoa (Root Contact AO)
+    // - Thân cuống (along 0.25..0.55): Thắt gọn theo dáng cuống và lá non
+    // - Đài hoa (along 0.58..0.92): Phình tròn tạo bóng của tán cánh hoa trên mặt cỏ!
+    float rootLobe  = exp(-along * 5.0) * 0.55;
+    float stemWaist = 0.48;
+    float bloomDiff = (along - 0.74) * 3.85;
+    float bloomCrown = exp(-bloomDiff * bloomDiff) * 0.54;
+    float halfWidth = clamp(stemWaist + rootLobe + bloomCrown, 0.42, 0.98);
 
-    // Early-out nhanh trước khi gọi sqrt nếu điểm nằm hoàn toàn ngoài hình elip bóng
+    float normAcross = abs(across) / halfWidth;
+    float tipEnd = smoothstep(0.78, 1.0, along);
+    float radialDistSq = normAcross * normAcross + tipEnd * tipEnd;
+
+    // Early-out nhanh trước khi gọi sqrt nếu điểm nằm ngoài bóng hoa
     if (radialDistSq >= 1.0) discard;
 
     float radialDist = sqrt(radialDistSq);
 
-    // VISUAL UPGRADE: Contact Hardening (Bóng sắc nét ở gốc cây, mờ rộng dần về phía ngọn)
-    // Gốc cây (along = 0): bắt đầu mờ từ 0.60 -> 1.0 (crisp root contact grounding)
-    // Ngọn bóng (along = 1): mờ mềm toàn bộ từ 0.10 -> 1.0 (soft diffuse penumbra)
-    float innerSoftness = mix(0.60, 0.10, along);
+    // Contact Hardening: sắc nét ở gốc hoa và tâm đài hoa, tán xạ mềm ở rìa ngoài
+    float innerSoftness = mix(0.65, 0.28, along);
     float coverage = 1.0 - smoothstep(innerSoftness, 1.0, radialDist);
 
-    // Khử hoàn toàn phần thừa ở mép cực đại của đỉnh bóng
-    coverage *= 1.0 - smoothstep(0.85, 1.0, along);
+    // Tăng nhẹ độ đậm bóng tại vùng gốc hoa và vùng tâm đài hoa
+    float densityProfile = mix(1.12, 0.85, along) + bloomCrown * 0.35;
+    float finalAlpha = clamp(v_shadowData.z * coverage * densityProfile, 0.0, 0.88);
 
-    float finalAlpha = v_shadowData.z * coverage;
+    if (finalAlpha < 0.005) discard;
 
-    // TỐI ƯU OVERDRAW: Bỏ qua việc ghi xuống Framebuffer nếu pixel ở rìa gần như trong suốt
-    if (finalAlpha < 0.004) discard;
-
-    vec3 targetTint = max(u_shadowTint, vec3(0.16));
+    vec3 targetTint = max(u_shadowTint * 0.85, vec3(0.12));
     vec3 multiplier = mix(vec3(1.0), targetTint, finalAlpha);
 
     finalColor = vec4(multiplier, 1.0);

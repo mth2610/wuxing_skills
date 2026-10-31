@@ -79,6 +79,8 @@ typedef struct
     Vector2 tiling;
     Texture2D reliefTexture;
     Texture2D debrisTexture;
+    Texture2D rockTexture;
+    Texture2D rockNormalTexture;
     MapIslandBoundary boundary;
 } MapGroundSurface;
 
@@ -108,6 +110,7 @@ void MapProp_SetGroundSurfaceMaps(MapGroundSurface *ground,
                                   const char *soilMaterialPath);
 void MapProp_SetGroundReliefMap(MapGroundSurface *ground, const char *reliefPath);
 void MapProp_SetGroundDebrisMap(MapGroundSurface *ground, const char *debrisMapPath);
+void MapProp_SetGroundRockMaps(MapGroundSurface *ground, const char *diffusePath, const char *normalPath);
 void MapProp_SetGroundHabitat(MapGroundSurface *ground,
                               const Vector4 *pathSegments, int segmentCount,
                               Vector4 lakeParams);
@@ -440,6 +443,20 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
 void MapProp_DrawMeadowShadowCasters(MapMeadowSurface *meadow, Vector3 worldOffset,
                                      float time, Vector2 windDirection, float windStrength);
 void MapProp_UnloadMeadow(MapMeadowSurface *meadow);
+
+// Danh mục 8 loài hoa dại Tiên Hiệp – Kiếm Hiệp
+typedef enum
+{
+    MAP_FLOWER_SPECIES_MIXED = -1,     // Bách Hoa Cốc (Pha trộn tự nhiên theo quần thể)
+    MAP_FLOWER_SPECIES_TUYET_LIEN = 0, // Bạch Cúc / Thiên Sơn Tuyết Liên
+    MAP_FLOWER_SPECIES_KIM_CUC = 1,    // Hoàng Anh / Kim Cúc Cổ Phong
+    MAP_FLOWER_SPECIES_BI_NGAN = 2,    // Chu Sa Hồng / Bỉ Ngạn Hoa
+    MAP_FLOWER_SPECIES_U_LAN = 3,      // Lam Điệp / U Lan Linh Thảo
+    MAP_FLOWER_SPECIES_DAO_THAO = 4,   // Đào Hoa / Vân Mộng Đào Thảo
+    MAP_FLOWER_SPECIES_LINH_DANG = 5,  // Tử Mẫu / Tử Linh Đang
+    MAP_FLOWER_SPECIES_HUAN_Y = 6,     // Huân Y Thảo / Tử Vân Anh
+    MAP_FLOWER_SPECIES_NGOC_LAN = 7,   // Ngọc Lan / Linh Thảo
+} MapFlowerSpeciesVariant;
 
 typedef struct
 {

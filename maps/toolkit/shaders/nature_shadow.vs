@@ -24,8 +24,7 @@ void main()
     vec3 local = vertexPosition;
     float h = vertexTexCoord.y;
 
-    // [TỐI ƯU HIỆU NĂNG]: Bỏ qua 2 phép nhân ma trận mat4, nhiễu gió 3D và đọc texture
-    // cho các đỉnh gốc đứng yên (h == 0) vì rootMask == 0 không làm thay đổi local.xz
+    // Bỏ qua toàn bộ phép biến đổi gió và đọc texture cho các đỉnh gốc đứng yên (h == 0)
     if (h > 0.0001) {
         vec3 shaderPosition = vec3(matModel * vec4(local, 1.0));
         vec3 world = vec3(u_worldFromShaderSpace * vec4(shaderPosition, 1.0));
@@ -36,8 +35,6 @@ void main()
             world, vertexTexCoord, u_time, u_windStrength, maxAllowedBend);
         windBend += NatureDominantWindImpact(world) * u_natureWindResponse.w;
 
-        // [VULKAN / SPIR-V FIX & BANDWIDTH OPT]: Dùng textureLod(..., 0.0) thay vì texture()
-        // trong Vertex Shader và chỉ đọc texture khi đỉnh nằm trong phạm vi tương tác
         if (u_interactionEnabled != 0 && u_interactionWorldSize > 0.0001) {
             vec2 uvOffset = (world.xz - u_interactionCenter) / u_interactionWorldSize;
             float maxAxis = max(abs(uvOffset.x), abs(uvOffset.y));
@@ -51,7 +48,6 @@ void main()
             }
         }
 
-        // Giới hạn tổng biên độ uốn đồng bộ với nature_lit.vs
         float rawBendSq = dot(windBend, windBend);
         if (rawBendSq > maxAllowedBend * maxAllowedBend) {
             windBend *= maxAllowedBend * inversesqrt(rawBendSq);

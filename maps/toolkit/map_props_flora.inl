@@ -6,14 +6,14 @@ Color MapProp_GetFlowerSpeciesColor(int variant, bool accent)
     // Painterly Ghost of Tsushima & Where Winds Meet botanical palette:
     // Balanced chroma so petals glow naturally under HDR sun without clipping into flat white cones
     static const Color primary[8] = {
-        {248, 242, 224, 255}, // 0: warm ivory daisy (Bạch Cúc)
-        {250, 204, 48, 255},  // 1: golden amber buttercup (Hoàng Anh)
-        {232, 62, 48, 255},   // 2: vermilion crimson poppy (Chu Sa Hồng)
-        {96, 158, 242, 255},  // 3: cerulean sapphire cornflower (Lam Điệp)
-        {244, 146, 176, 255}, // 4: wild peach-rose blossom (Đào Hoa)
-        {214, 96, 164, 255},  // 5: orchid magenta cosmos (Tử Mẫu)
-        {164, 134, 234, 255}, // 6: misty lavender violet (Huân Y Thảo)
-        {248, 232, 158, 255}, // 7: soft primrose cream (Ngọc Lan)
+        {248, 242, 224, 255}, // 0: Bạch Cúc / Thiên Sơn Tuyết Liên (Warm Ivory / Snow Lotus)
+        {250, 204, 48, 255},  // 1: Hoàng Anh / Kim Cúc Cổ Phong (Golden Amber Buttercup)
+        {232, 62, 48, 255},   // 2: Chu Sa Hồng / Bỉ Ngạn Hoa (Vermilion Crimson Spider Lily)
+        {96, 158, 242, 255},  // 3: Lam Điệp / U Lan Linh Thảo (Cerulean Sapphire Orchid)
+        {244, 146, 176, 255}, // 4: Đào Hoa / Vân Mộng Đào Thảo (Wild Peach-Rose Blossom)
+        {214, 96, 164, 255},  // 5: Tử Mẫu / Tử Linh Đang (Orchid Magenta Bellflower)
+        {164, 134, 234, 255}, // 6: Huân Y Thảo / Tử Vân Anh (Misty Lavender Violet)
+        {248, 232, 158, 255}, // 7: Ngọc Lan / Linh Thảo (Soft Primrose Cream)
     };
     static const Color secondary[8] = {
         {238, 228, 202, 255},
@@ -90,6 +90,7 @@ void MapFlora_GenerateFlowerPlacements(
     MapFlora_EnsureEpicenterCache();
     unsigned int rng = seed ? seed : 0x7A9B3C1Du;
     int placementCursor = 0;
+    int speciesOverride = MapProp_GetFlowerSpeciesOverride();
 
     for (int c = 0; c < clusterCount && placementCursor < totalFlowerCount; c++)
     {
@@ -148,7 +149,7 @@ void MapFlora_GenerateFlowerPlacements(
                 if (isExcluded && isExcluded(x, z, ctx))
                     continue;
 
-                // [TỐI ƯU POISSON]: Kiểm tra nhanh theo từng trục trước khi tính bình phương khoảng cách
+                // Kiểm tra nhanh theo từng trục trước khi tính bình phương khoảng cách
                 bool tooClose = false;
                 int searchStart = (placementCursor - clusterStartIndex > 512)
                                       ? (placementCursor - 512)
@@ -188,15 +189,14 @@ void MapFlora_GenerateFlowerPlacements(
             {
                 variant = cl->species[(int)(Nature_Random01(&rng) * 4.0f) % 4];
             }
+            if (speciesOverride >= 0)
+                variant = speciesOverride & 7;
 
             bool tallAccent = (variant == 2 || variant == 4 || variant == 6);
-            // AAA Wildflower Height: elevated above the grass understorey cushion (0.44m - 0.56m)
-            // so blooms catch full sunlight and never get drowned or pierced by grass stalks.
             float coreLift = isColony ? (1.0f - 0.12f * radialNorm) : 0.88f;
             float driftHeightBase = tallAccent ? 0.52f : 0.45f;
             outPlacements[outIdx].height = (driftHeightBase + (Nature_Random01(&rng) * 0.08f - 0.03f)) * coreLift;
 
-            // Painterly bloom proportions with rich surface presence across all camera zoom levels
             float baseBloomRadius = tallAccent ? 0.098f : 0.086f;
             outPlacements[outIdx].bloomRadius = baseBloomRadius * (0.92f + Nature_Random01(&rng) * 0.18f) * (0.90f + 0.12f * coreLift);
             outPlacements[outIdx].petalColor = MapProp_GetFlowerSpeciesColor(variant, Nature_Random01(&rng) > 0.74f);
@@ -216,50 +216,50 @@ float MapFlora_EvaluateFlowerUnderstorey(
         return 1.0f;
 
     MapFlora_EnsureEpicenterCache();
-    float minScale = 1.0f;
+    // [TỐI ƯU TOÁN HỌC]: Chỉ tìm minEpiDistSq nhỏ nhất trên tất cả các cụm hoa bằng phép nhân cộng,
+    // sau đó chỉ gọi đúng 1 lệnh sqrtf() duy nhất ở cuối hàm!
+    float globalMinEpiDistSq = 0.45f * 0.45f;
+    bool hitAny = false;
+
     for (int c = 0; c < clusterCount; c++)
     {
         const MapFloraFlowerCluster *cl = &clusters[c];
         float rx = (cl->radius.x > 0.1f) ? cl->radius.x : 10.0f;
-        float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
         float rawDx = x - cl->center.x;
         if (rawDx > rx * 1.2f || rawDx < -rx * 1.2f)
             continue;
+        float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
         float rawDz = z - cl->center.z;
         if (rawDz > rz * 1.2f || rawDz < -rz * 1.2f)
             continue;
 
-        float dx = rawDx / rx;
-        float dz = rawDz / rz;
-        float distSq = dx * dx + dz * dz;
-        if (distSq > 1.44f) // outside 1.2x cluster radius
+        float dx = rawDx * (1.0f / rx);
+        float dz = rawDz * (1.0f / rz);
+        if (dx * dx + dz * dz > 1.44f)
             continue;
 
         Vector2 epicenters[3];
         MapFlora_GetClusterEpicentersNorm(c, epicenters);
 
-        float minEpiDistSq = 999.0f;
         for (int e = 0; e < 3; e++)
         {
             float edx = dx - epicenters[e].x;
             float edz = dz - epicenters[e].y;
             float d2 = edx * edx + edz * edz;
-            if (d2 < minEpiDistSq)
-                minEpiDistSq = d2;
+            if (d2 < globalMinEpiDistSq)
+            {
+                globalMinEpiDistSq = d2;
+                hitAny = true;
+            }
         }
-
-        if (minEpiDistSq >= 0.45f * 0.45f)
-            continue;
-
-        float epiDist = sqrtf(minEpiDistSq);
-        // Core understorey cushion: scale grass height down to 0.42x (from ~0.52m to ~0.22m)
-        // Transition back to 1.0x at distance 0.45 in normalized cluster space
-        float weight = 1.0f - MapMath_SmoothStep01(0.04f, 0.45f, epiDist);
-        float scale = 1.0f - 0.58f * weight; // 1.0 -> 0.42
-        if (scale < minScale)
-            minScale = scale;
     }
-    return minScale;
+
+    if (!hitAny)
+        return 1.0f;
+
+    float epiDist = sqrtf(globalMinEpiDistSq);
+    float weight = 1.0f - MapMath_SmoothStep01(0.04f, 0.45f, epiDist);
+    return 1.0f - 0.58f * weight;
 }
 
 float MapFlora_EvaluateFlowerSuppression(
@@ -271,50 +271,49 @@ float MapFlora_EvaluateFlowerSuppression(
         return 1.0f;
 
     MapFlora_EnsureEpicenterCache();
-    float minDensity = 1.0f;
+    // [TỐI ƯU TOÁN HỌC]: Chỉ gọi đúng 1 lệnh sqrtf() ở cuối hàm khi điểm xét thực sự nằm trong vùng nén cỏ
+    float globalMinEpiDistSq = 0.38f * 0.38f;
+    bool hitAny = false;
+
     for (int c = 0; c < clusterCount; c++)
     {
         const MapFloraFlowerCluster *cl = &clusters[c];
         float rx = (cl->radius.x > 0.1f) ? cl->radius.x : 10.0f;
-        float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
         float rawDx = x - cl->center.x;
         if (rawDx > rx * 1.2f || rawDx < -rx * 1.2f)
             continue;
+        float rz = (cl->radius.y > 0.1f) ? cl->radius.y : rx;
         float rawDz = z - cl->center.z;
         if (rawDz > rz * 1.2f || rawDz < -rz * 1.2f)
             continue;
 
-        float dx = rawDx / rx;
-        float dz = rawDz / rz;
-        float distSq = dx * dx + dz * dz;
-        if (distSq > 1.44f)
+        float dx = rawDx * (1.0f / rx);
+        float dz = rawDz * (1.0f / rz);
+        if (dx * dx + dz * dz > 1.44f)
             continue;
 
         Vector2 epicenters[3];
         MapFlora_GetClusterEpicentersNorm(c, epicenters);
 
-        float minEpiDistSq = 999.0f;
         for (int e = 0; e < 3; e++)
         {
             float edx = dx - epicenters[e].x;
             float edz = dz - epicenters[e].y;
             float d2 = edx * edx + edz * edz;
-            if (d2 < minEpiDistSq)
-                minEpiDistSq = d2;
+            if (d2 < globalMinEpiDistSq)
+            {
+                globalMinEpiDistSq = d2;
+                hitAny = true;
+            }
         }
-
-        if (minEpiDistSq >= 0.38f * 0.38f)
-            continue;
-
-        float epiDist = sqrtf(minEpiDistSq);
-        // In the dense center of flower colonies, thin grass tufts by ~52% (density 0.48)
-        // so blades have natural breathing room and do not crowd flower blossoms
-        float weight = 1.0f - MapMath_SmoothStep01(0.02f, 0.38f, epiDist);
-        float density = 1.0f - 0.52f * weight;
-        if (density < minDensity)
-            minDensity = density;
     }
-    return minDensity;
+
+    if (!hitAny)
+        return 1.0f;
+
+    float epiDist = sqrtf(globalMinEpiDistSq);
+    float weight = 1.0f - MapMath_SmoothStep01(0.02f, 0.38f, epiDist);
+    return 1.0f - 0.52f * weight;
 }
 
 int MapFlora_GenerateMeadowPlacements(
@@ -352,9 +351,6 @@ int MapFlora_GenerateMeadowPlacements(
         float cx = clump->position.x;
         float cz = clump->position.z;
 
-        // Ghost of Tsushima Voronoi Patch Clumping + Wind Streamline Orientation:
-        // Partition the meadow into ~2.1m Voronoi patches so neighboring tufts share a coherent
-        // wind-combed facing, bend posture, and high/low grass tier instead of 240-deg spiky chaos.
         const float voronoiScale = 0.48f; // ~2.08m patch size
         float gx = cx * voronoiScale;
         float gz = cz * voronoiScale;
@@ -366,11 +362,12 @@ int MapFlora_GenerateMeadowPlacements(
         float patchHash2 = 0.5f;
         for (int dz = -1; dz <= 1; dz++)
         {
+            int nz = cellZ + dz;
+            unsigned int rowHash = (unsigned int)(nz * 19349663) ^ seed;
             for (int dx = -1; dx <= 1; dx++)
             {
                 int nx = cellX + dx;
-                int nz = cellZ + dz;
-                unsigned int ch = (unsigned int)(nx * 73856093) ^ (unsigned int)(nz * 19349663) ^ seed;
+                unsigned int ch = (unsigned int)(nx * 73856093) ^ rowHash;
                 ch ^= ch >> 16;
                 ch *= 0x7feb352du;
                 ch ^= ch >> 15;
@@ -392,20 +389,17 @@ int MapFlora_GenerateMeadowPlacements(
                 }
             }
         }
-        // Smooth edge factor (0 at patch border, 1 at Voronoi clump core)
         float edgeDist = sqrtf(fmaxf(0.0f, secondDistSq)) - sqrtf(fmaxf(0.0f, bestDistSq));
         float clumpCore = fminf(1.0f, edgeDist * 1.65f);
 
         float wave1 = sinf(cx * 0.07f + cz * 0.05f) * 0.60f + sinf(cx * -0.05f + cz * 0.11f + 1.2f) * 0.40f;
         float eddy = sinf(cx * 0.20f - cz * 0.16f + 0.8f) * 0.55f + sinf(cx * 0.12f + cz * 0.22f + 2.3f) * 0.45f;
         float patchAngleOffset = (patchHash - 0.5f) * 28.0f * (0.45f + 0.55f * clumpCore);
-        // Multi-frequency wind deflection across hill contours and swales
         float macroSwirl = sinf(cx * 0.026f + cz * 0.018f) * 32.0f + cosf(cz * 0.038f - cx * 0.022f) * 20.0f;
         float flowAngle = -16.0f + macroSwirl + wave1 * 22.0f + eddy * 14.0f + patchAngleOffset;
 
         float hash = sinf((float)(i * 47) + cx * 12.9898f + cz * 78.233f) * 43758.5453f;
         hash -= floorf(hash);
-        // Natural ±18 deg tuft yaw variation around the Voronoi patch streamline so blades comb organically
         clump->rotationDeg = flowAngle + (hash - 0.5f) * 36.0f;
 
         float localHeight = clump->height;
@@ -426,10 +420,6 @@ int MapFlora_GenerateMeadowPlacements(
             }
         }
 
-        // Ghost of Tsushima Dynamic Multi-Tier Grass Landscape:
-        // Tier 1: Low fine turf (0.28m - 0.36m) on crests, walkways and rocky shoulders.
-        // Tier 2: Rolling meadow (0.40m - 0.52m) across open hillside slopes.
-        // Tier 3: Tall prairie drifts (0.60m - 0.74m) in hollows, valleys, and river swales.
         float macroTierWave = sinf(cx * 0.042f + cz * 0.032f) * 0.55f +
                               cosf(cz * 0.060f - cx * 0.035f + 1.2f) * 0.30f +
                               sinf(cx * 0.11f + cz * 0.08f) * 0.15f;
@@ -447,7 +437,6 @@ int MapFlora_GenerateMeadowPlacements(
             clump->height *= understorey;
         }
 
-        // Broader tuft collar radius (0.26m..0.34m) so adjacent clumps interlock into a gapless cushion
         clump->radius = 0.26f + biome * 0.08f;
         clump->radius *= 0.94f + 0.16f * (localRadius - 0.24f) / 0.08f;
 
@@ -485,16 +474,22 @@ int MapFlora_GenerateReedPlacements(
     float minH = config.minHeight > 0.0f ? config.minHeight : 0.44f;
     float maxH = config.maxHeight > 0.0f ? config.maxHeight : 0.62f;
 
+    float effSpanX = spanX * 0.92f;
+    float effSpanZ = spanZ * 0.92f;
+    float invEffSpanX = 1.0f / fmaxf(effSpanX, 0.001f);
+    float invEffSpanZ = 1.0f / fmaxf(effSpanZ, 0.001f);
+    float cliffFloor = config.dem ? -config.dem->cliffDepth + 0.5f : -7.5f;
+
     unsigned int rng = config.seed ? config.seed : 0x9371a5u;
     int count = 0;
     int maxAttempts = maxCount * 32;
 
     for (int attempts = 0; attempts < maxAttempts && count < maxCount; attempts++)
     {
-        float rx = groundCenter.x + (Nature_Random01(&rng) * 2.0f - 1.0f) * spanX * 0.92f;
-        float rz = groundCenter.z + (Nature_Random01(&rng) * 2.0f - 1.0f) * spanZ * 0.92f;
-        float rnx = (rx - groundCenter.x) / (spanX * 0.92f);
-        float rnz = (rz - groundCenter.z) / (spanZ * 0.92f);
+        float rx = groundCenter.x + (Nature_Random01(&rng) * 2.0f - 1.0f) * effSpanX;
+        float rz = groundCenter.z + (Nature_Random01(&rng) * 2.0f - 1.0f) * effSpanZ;
+        float rnx = (rx - groundCenter.x) * invEffSpanX;
+        float rnz = (rz - groundCenter.z) * invEffSpanZ;
         if (rnx * rnx + rnz * rnz > 1.0f)
             continue;
 
@@ -517,7 +512,6 @@ int MapFlora_GenerateReedPlacements(
         else if (config.sampleSplat)
             splat = config.sampleSplat(rx, rz, config.ctx);
 
-        float cliffFloor = config.dem ? -config.dem->cliffDepth + 0.5f : -7.5f;
         bool nearShore = (waterY > cliffFloor) && (clearance >= minClearance && clearance <= maxClearance);
         bool wetMargin = (splat.a > minWetAlpha) && (clearance >= 0.02f && clearance <= maxWetClearance);
 
@@ -558,8 +552,13 @@ int MapFlora_GeneratePampasPlacements(
     unsigned char maxRockG = config.maxRockSplatGreen > 0 ? config.maxRockSplatGreen : 190;
     float driftThreshold = config.driftThreshold > 0.0f ? config.driftThreshold : 0.30f;
     float minRad = config.minRadius > 0.0f ? config.minRadius : 0.30f;
-    float maxRad = config.maxRadius > 0.0f ? config.maxRadius : 0.40f;
+    float maxRad = config.maxRadius > 0.0f ? config.minRadius : 0.40f;
     float baseH = config.baseHeight > 0.0f ? config.baseHeight : 0.48f;
+
+    float effSpanX = spanX * 0.86f;
+    float effSpanZ = spanZ * 0.86f;
+    float invEffSpanX = 1.0f / fmaxf(effSpanX, 0.001f);
+    float invEffSpanZ = 1.0f / fmaxf(effSpanZ, 0.001f);
 
     unsigned int rng = config.seed ? config.seed : 0x9371a5u;
     int count = 0;
@@ -567,16 +566,16 @@ int MapFlora_GeneratePampasPlacements(
 
     for (int attempts = 0; attempts < maxAttempts && count < maxCount; attempts++)
     {
-        float rx = groundCenter.x + (Nature_Random01(&rng) * 2.0f - 1.0f) * spanX * 0.86f;
-        float rz = groundCenter.z + (Nature_Random01(&rng) * 2.0f - 1.0f) * spanZ * 0.86f;
-        float pnx = (rx - groundCenter.x) / (spanX * 0.86f);
-        float pnz = (rz - groundCenter.z) / (spanZ * 0.86f);
-        if (pnx * pnx + pnz * pnz > 1.0f)
-            continue;
-
+        float rx = groundCenter.x + (Nature_Random01(&rng) * 2.0f - 1.0f) * effSpanX;
+        float rz = groundCenter.z + (Nature_Random01(&rng) * 2.0f - 1.0f) * effSpanZ;
         float cdx = rx - groundCenter.x;
         float cdz = rz - groundCenter.z;
         if (cdx * cdx + cdz * cdz < clearingSq)
+            continue;
+
+        float pnx = cdx * invEffSpanX;
+        float pnz = cdz * invEffSpanZ;
+        if (pnx * pnx + pnz * pnz > 1.0f)
             continue;
 
         float driftMask = sinf(rx * 0.17f + sinf(rz * 0.09f) * 1.8f) *
@@ -827,16 +826,13 @@ void MapProp_DrawFloraShadowCasters(MapFloraSystem *flora)
                                             flora->windDirection, 0.052f);
         }
     }
-    if (Nature_ShadowCasterTypeEnabled(true) && flora->flowerFields)
+    // [TỐI ƯU SHADOW BATCHING]: Gọi trực tiếp MapProp_DrawFlowerFieldShadowCasterBatch
+    // để gom toàn bộ các cụm hoa vào 1 lần bind shader duy nhất thay vì bật/tắt shader mỗi cụm!
+    if (Nature_ShadowCasterTypeEnabled(true) && flora->flowerFields && flora->flowerClusterCount > 0)
     {
-        for (int i = 0; i < flora->flowerClusterCount; i++)
-        {
-            if (flora->flowerFields[i].ready)
-            {
-                MapProp_DrawFlowerFieldShadowCaster(&flora->flowerFields[i], offset, flora->time,
-                                                    flora->windDirection, 0.032f);
-            }
-        }
+        MapProp_DrawFlowerFieldShadowCasterBatch(
+            flora->flowerFields, flora->flowerClusterCount, offset,
+            flora->time, flora->windDirection, 0.032f);
     }
 }
 

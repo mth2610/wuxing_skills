@@ -29,8 +29,7 @@ void main()
     vec2 direction = (travelLenSq > 1e-6) ? (travel * invLen) : vec2(1.0, 0.0);
     vec2 perpendicular = vec2(-direction.y, direction.x);
 
-    // VISUAL UPGRADE: Giới hạn mềm tiệm cận (Soft-knee asymptotic clamp) chiều dài bóng
-    // giúp bóng dài ra mượt mà khi nắng xế mà không bị khựng đột ngột tại ngưỡng 3.2
+    // Giới hạn mềm tiệm cận (Soft-knee asymptotic clamp) chiều dài bóng
     float rawLength = travelLenSq * invLen;
     const float MAX_LEN = 3.2;
     float clampedLength = (rawLength * MAX_LEN) * inversesqrt(rawLength * rawLength + MAX_LEN * MAX_LEN);
@@ -38,17 +37,21 @@ void main()
 
     vec3 position = vertexPosition;
     position.xz += safeTravel * (plantHeight * along * u_projectionScale);
-    
-    // Mở rộng nhẹ bề ngang khi bóng vươn xa (hiệu ứng tán xạ vùng nửa tối - Penumbra)
-    float widthProfile = mix(1.0, u_tipWidth, along) * u_widthScale;
+
+    // Mở rộng bề ngang ở phần ngọn để bao phủ trọn hình chiếu đài cánh hoa
+    float widthProfile = mix(1.0, max(u_tipWidth, 1.08), along) * u_widthScale;
     position.xz += perpendicular * (shadowWidth * across * widthProfile);
 
-    // TỐI ƯU: Nhân sẵn hằng số cường độ bóng, độ suy giảm theo chiều dài và độ cao mặt trời
+    // [SLOPE & UNDERSTOREY GROUNDING FIX]:
+    // Nâng nhẹ độ cao Y dọc theo chiều dài bóng để tấm bóng không bị chìm xuống dưới mặt đất
+    // trên các sườn đồi dốc nhẹ và phủ êm lên lớp gốc cỏ thấp dưới chân khóm hoa.
+    position.y += 0.012 + along * 0.022;
+
     float horizonFade = (dot(u_lightTravel, u_lightTravel) > 1e-6)
                       ? smoothstep(-0.05, 0.12, -u_lightTravel.y)
                       : 1.0;
-    float distanceAtten = mix(1.0, 0.65, along);
-    float precomputedStrength = vertexColor.r * 0.58 * u_shadowStrength * distanceAtten * horizonFade;
+    float distanceAtten = mix(1.0, 0.78, along);
+    float precomputedStrength = vertexColor.r * 0.76 * u_shadowStrength * distanceAtten * horizonFade;
 
     v_shadowData = vec3(along, across, precomputedStrength);
     gl_Position = mvp * vec4(position, 1.0);

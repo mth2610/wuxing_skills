@@ -32,7 +32,20 @@ static Mesh Ground_CreateIndexedHeightfield(Image image, Vector3 size, bool pack
     int index = 0;
     for (int z = 0; z < h - 1; z++) for (int x = 0; x < w - 1; x++) {
         int a = z * w + x, b = a + w, c = a + 1, d = b + 1;
-        int ids[6] = {a, b, c, c, b, d};
+        float ya = mesh.vertices[a * 3 + 1];
+        float yb = mesh.vertices[b * 3 + 1];
+        float yc = mesh.vertices[c * 3 + 1];
+        float yd = mesh.vertices[d * 3 + 1];
+        float diffAD = fabsf(ya - yd);
+        float diffBC = fabsf(yb - yc);
+        int ids[6];
+        if (diffAD < diffBC) {
+            ids[0] = a; ids[1] = b; ids[2] = d;
+            ids[3] = a; ids[4] = d; ids[5] = c;
+        } else {
+            ids[0] = a; ids[1] = b; ids[2] = c;
+            ids[3] = c; ids[4] = b; ids[5] = d;
+        }
         for (int k = 0; k < 6; k++) mesh.indices[index++] = (unsigned short)ids[k];
     }
     for (int t = 0; t < mesh.triangleCount; t++) {

@@ -1,5 +1,5 @@
 // Flower Field System (Optimized 3D Diamond-Cupped Petals, Analytical Vein/SSS UVs,
-// 3D Far-LOD Blossoms, and Batched Shadow Casters).
+// 3D Far-LOD Blossoms, Front-to-Back Early-Z Batching, and Batched Shadow Casters).
 // Split from map_props_nature.inl for clean modular domain separation.
 
 static int s_flowerSpeciesOverride = -2; // -2 = uninitialized, -1 = Mixed, 0..7 = Single species
@@ -52,26 +52,27 @@ static Model Nature_BuildFlowerShadowModel(const MapFlowerPlacement *placements,
 {
     Mesh mesh = Nature_AllocMesh(count * 6);
     int cursor = 0;
+    const Vector2 uv[6] = {
+        {0.0f, 0.0f},
+        {0.0f, 1.0f},
+        {1.0f, 1.0f},
+        {0.0f, 0.0f},
+        {1.0f, 1.0f},
+        {1.0f, 0.0f},
+    };
     for (int i = 0; i < count; i++)
     {
         const MapFlowerPlacement *flower = &placements[i];
-        float width = fmaxf(flower->bloomRadius * 1.18f, 0.068f);
+        // Mở rộng bề ngang bóng đài hoa để tạo bóng tán hoa rõ nét dưới gốc và trên lớp cỏ thấp
+        float width = fmaxf(flower->bloomRadius * 1.48f, 0.088f);
         Vector3 root = flower->position;
-        root.y += 0.002f;
-        Vector3 encoded = {flower->height, width, flower->phase};
-        Color rootShade = {225, 225, 225, 255};
-        Color tipShade = {150, 150, 150, 255};
-        const Vector2 uv[6] = {
-            {0.0f, 0.0f},
-            {0.0f, 1.0f},
-            {1.0f, 1.0f},
-            {0.0f, 0.0f},
-            {1.0f, 1.0f},
-            {1.0f, 0.0f},
-        };
+        root.y += 0.016f;
+        Vector3 encoded = {flower->height * 1.08f, width, flower->phase};
+        Color rootShade = {245, 245, 245, 255};
+        Color tipShade = {210, 210, 210, 255};
         for (int vertex = 0; vertex < 6; vertex++)
         {
-            Color shade = vertex < 2 || vertex == 3 ? rootShade : tipShade;
+            Color shade = (vertex < 2 || vertex == 3) ? rootShade : tipShade;
             Nature_SetVertex(&mesh, cursor, root, encoded, flower->phase, 0.0f, shade);
             mesh.texcoords[cursor * 2 + 0] = uv[vertex].x;
             mesh.texcoords[cursor * 2 + 1] = uv[vertex].y;
@@ -83,8 +84,9 @@ static Model Nature_BuildFlowerShadowModel(const MapFlowerPlacement *placements,
 
 static inline bool Nature_KeepFarFlower(const MapFlowerPlacement *flower)
 {
-    float hash = sinf(flower->position.x * 12.9898f + flower->position.z * 78.233f + flower->phase * 37.719f) * 43758.5453f;
-    return hash - floorf(hash) < 0.62f;
+    float h = flower->position.x * 12.9898f + flower->position.z * 78.233f + flower->phase * 37.719f;
+    float hash = sinf(h) * 43758.5453f;
+    return (hash - floorf(hash)) < 0.80f;
 }
 
 static Color Nature_GetSpeciesCenterColor(int variant)
@@ -92,32 +94,32 @@ static Color Nature_GetSpeciesCenterColor(int variant)
     switch (variant & 7)
     {
     case 0:
-        return (Color){248, 185, 22, 255}; // 0: Bạch Cúc (Daisy): nhụy hoàng kim
+        return (Color){248, 185, 22, 255}; // 0: Bạch Cúc / Tuyết Liên: nhụy hoàng kim
     case 1:
-        return (Color){195, 115, 18, 255}; // 1: Hoàng Anh (Buttercup): nhụy cam hổ phách
+        return (Color){195, 115, 18, 255}; // 1: Hoàng Anh / Kim Cúc: nhụy cam hổ phách
     case 2:
-        return (Color){44, 18, 22, 255}; // 2: Chu Sa Hồng / Bỉ Ngạn (Crimson Poppy/Lily): tâm huyết mặc
+        return (Color){250, 175, 68, 255}; // 2: Bỉ Ngạn Hoa: đầu tua nhụy ánh kim đỏ
     case 3:
-        return (Color){45, 40, 78, 255}; // 3: Lam Điệp (Cornflower): tâm lam sẫm
+        return (Color){165, 245, 232, 255}; // 3: U Lan Linh Thảo: tâm ngọc bích phát sáng
     case 4:
-        return (Color){238, 165, 24, 255}; // 4: Đào Hoa (Peach-rose): nhụy mật ong
+        return (Color){238, 165, 24, 255}; // 4: Vân Mộng Đào Thảo: nhụy mật ong
     case 5:
-        return (Color){245, 200, 32, 255}; // 5: Tử Mẫu (Cosmos): nhụy vàng tươi
+        return (Color){245, 200, 32, 255}; // 5: Tử Linh Đang: nhụy chuông vàng tươi
     case 6:
-        return (Color){92, 58, 128, 255}; // 6: Huân Y Thảo / Tử Linh Đang (Lavender/Bell): nhụy tím sẫm
+        return (Color){92, 58, 128, 255}; // 6: Huân Y Thảo: nhụy tím sẫm
     case 7:
-        return (Color){168, 185, 48, 255}; // 7: Ngọc Lan / Tuyết Liên (Primrose/Lotus): nhụy lục kim
+        return (Color){242, 198, 42, 255}; // 7: Ngọc Lan: nhụy kim quang
     default:
         return (Color){248, 185, 22, 255};
     }
 }
 
 // [TỐI ƯU 3D FAR-LOD & SHADOW CASTER]:
-// Thay vì dùng 1 tấm quad phẳng 2D ở cự ly xa, mỗi bông hoa ở xa được dựng bằng đài hoa 3D
-// gồm 3 cánh tam giác khum hướng thiên (9 đỉnh/bông). Giữ trọn khối 3D từ mọi góc nhìn
-// và dùng làm mesh đổ bóng siêu nhẹ cho lượt Shadow Map Pass!
+// Mỗi bông hoa ở xa được dựng bằng 1 tam giác thân + 3 cánh tam giác khum 3D (12 đỉnh = 4 tam giác/bông).
+// Vừa giữ trọn khối 3D từ mọi góc nhìn ở cự ly 24m..68m, vừa tạo bóng đổ đầy đủ cả cuống lẫn đài hoa
+// trong lượt Shadow Map Pass với chi phí đỉnh chỉ bằng 1/10 so với Near Model!
 static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, int count,
-                                        bool texturedBloom,
+                                        Color stemColor, bool texturedBloom,
                                         int atlasColumns, int atlasRows)
 {
     int selected = 0;
@@ -126,11 +128,11 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
         if (Nature_KeepFarFlower(&placements[i]))
             selected++;
     }
-    bool forceFirst = selected == 0;
+    bool forceFirst = (selected == 0);
     if (forceFirst)
         selected = 1;
 
-    int vertsPerFarFlower = texturedBloom ? 6 : 9;
+    int vertsPerFarFlower = texturedBloom ? 6 : 12;
     Mesh mesh = Nature_AllocMesh(selected * vertsPerFarFlower);
     int cursor = 0;
     for (int i = 0; i < count; i++)
@@ -156,7 +158,7 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
         Vector3 right = Vector3Normalize(Vector3Subtract(refRight, Vector3Scale(headNormal, Vector3DotProduct(refRight, headNormal))));
         Vector3 forward = Vector3CrossProduct(headNormal, right);
         float petalScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
-        float radius = flower->bloomRadius * petalScale * 1.18f;
+        float radius = flower->bloomRadius * petalScale * 1.25f;
 
         if (texturedBloom)
         {
@@ -181,15 +183,26 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
         }
         else
         {
-            // Đài hoa 3D 3 cánh khum hướng nắng (9 đỉnh/bông, Zero-Discard)
+            // 1. Tam giác cuống hoa (3 đỉnh) giúp hoa ở xa và bóng đổ Shadow Map có thân liền mạch
+            float stemHalfW = fmaxf(0.012f, flower->bloomRadius * 0.16f);
+            Vector3 stemSide = Vector3Scale(right, stemHalfW);
+            int stemIdx = cursor;
+            Nature_SetVertex(&mesh, cursor++, Vector3Subtract(base, stemSide), right, phase, 0.0f, Nature_ScaleColor(stemColor, 0.78f));
+            Nature_SetVertex(&mesh, cursor++, Vector3Add(base, stemSide), right, phase, 0.0f, Nature_ScaleColor(stemColor, 0.78f));
+            Nature_SetVertex(&mesh, cursor++, head, headNormal, phase, 0.90f, stemColor);
+            Nature_SetUv2(&mesh, stemIdx + 0, -1.0f, 0.0f);
+            Nature_SetUv2(&mesh, stemIdx + 1, 1.0f, 0.0f);
+            Nature_SetUv2(&mesh, stemIdx + 2, 0.0f, 0.9f);
+
+            // 2. Đài hoa 3D 3 cánh khum hướng nắng (9 đỉnh/bông, Zero-Discard)
             Color cCore = Nature_LerpColor(centerCol, petalCol, 0.45f);
-            Color cTip = Nature_ScaleColor(petalCol, 1.06f);
-            float cupLift = radius * 0.28f;
+            Color cTip = Nature_ScaleColor(petalCol, 1.08f);
+            float cupLift = (variant == 5) ? (-radius * 0.25f) : (radius * 0.28f);
             for (int p = 0; p < 3; p++)
             {
                 float aMid = stemAngle + (float)p * 2.0943951f;
-                float aL = aMid - 0.68f;
-                float aR = aMid + 0.68f;
+                float aL = aMid - 0.72f;
+                float aR = aMid + 0.72f;
                 Vector3 dL = Vector3Add(Vector3Scale(right, cosf(aL) * radius), Vector3Scale(forward, sinf(aL) * radius));
                 Vector3 dR = Vector3Add(Vector3Scale(right, cosf(aR) * radius), Vector3Scale(forward, sinf(aR) * radius));
                 Vector3 pL = Vector3Add(head, Vector3Add(dL, Vector3Scale(headNormal, cupLift)));
@@ -197,7 +210,7 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
                 Vector3 nPetal = Vector3Normalize(Vector3Add(headNormal, Vector3Scale(Vector3Add(dL, dR), 0.35f)));
 
                 int baseIdx = cursor;
-                Nature_SetVertex(&mesh, cursor++, head, nPetal, phase, 0.90f, cCore);
+                Nature_SetVertex(&mesh, cursor++, head, nPetal, phase, 0.88f, cCore);
                 Nature_SetVertex(&mesh, cursor++, pL, nPetal, phase, 1.00f, cTip);
                 Nature_SetVertex(&mesh, cursor++, pR, nPetal, phase, 1.00f, cTip);
                 Nature_SetUv2(&mesh, baseIdx + 0, 0.0f, 0.0f);
@@ -209,24 +222,26 @@ static Model Nature_BuildFlowerFarModel(const MapFlowerPlacement *placements, in
     return Nature_ModelFromMesh(mesh, Nature_GetShader(true));
 }
 
-// [TỐI ƯU ĐỈNH HOA 3D]:
-// Mỗi cánh hoa 3D dùng lưới Kim Cương Khum 2 tầng (12 đỉnh = 4 tam giác) thay vì 24 đỉnh,
-// giảm 50% số đỉnh mà vẫn giữ nguyên độ cong vòm 3D cả chiều dọc lẫn chiều ngang!
+// Số lượng đỉnh phần Đài Hoa 3D theo từng loài (Variant 0..7)
 static inline int Nature_FlowerBloomVertexCount(int variant, bool textured)
 {
     if (textured)
         return 30; // 3 textured bloom cards (18) + 3D pollen disc dome (12) = 30
-    int morph = variant % 4;
-    switch (morph)
+    switch (variant & 7)
     {
-    case 0:
-        return 108; // 2-layer Rose/Poppy/Peach: 5 outer + 3 inner (8 * 12 = 96) + dome (12) = 108
-    case 1:
-        return 96; // 7 oval daisy/lotus petals (7 * 12 = 84) + phyllotaxis disc (12) = 96
-    case 2:
-        return 84; // Lavender/Bell spike: 3 whorls x 2 florets (6 * 12 = 72) + tip bud dome (12) = 84
-    case 3:
-        return 84; // 6 reflexed spider-lily/lanceolate petals (6 * 12 = 72) + center dome (12) = 84
+    case 0: // Bạch Cúc / Thiên Sơn Tuyết Liên (5 cánh ngoài + 3 cánh trong + đài nhụy = 108)
+    case 4: // Vân Mộng Đào Thảo (5 cánh khía tim ngoài + 3 cánh trong + đài nhụy = 108)
+    case 7: // Ngọc Lan Linh Thảo (5 cánh ngoài + 3 cánh trong + đài nhụy = 108)
+        return 108;
+    case 1: // Kim Cúc Cổ Phong (7 cánh hoàng kim + đài nhụy = 96)
+        return 96;
+    case 2: // Bỉ Ngạn Hoa (6 cánh vuốt rồng uốn ngược * 12 + 6 tua nhụy dài * 3 + đài nhụy 6 = 96)
+        return 96;
+    case 3: // U Lan Linh Thảo (6 cánh lan ngọc bích + đài nhụy = 84)
+        return 84;
+    case 5: // Tử Linh Đang (Chuông tím rủ ngược: 3 tầng * 2 cánh chuông + đài nhụy = 84)
+    case 6: // Huân Y Thảo (Chuỗi hoa tím 3 tầng * 2 + đài nhụy = 84)
+        return 84;
     default:
         return 96;
     }
@@ -309,7 +324,7 @@ static inline float Nature_EvalPetalWidth(float t, const PetalParams *p)
 static inline float Nature_EvalPetalElevation(float t, const PetalParams *p)
 {
     float s = sinf(t * 1.5707963f);
-    float conical = p->length * 0.28f * (t * 0.85f + 0.15f * t * t);
+    float conical = p->length * 0.26f * (t * 0.85f + 0.15f * t * t);
     return conical + p->curveAmount * (s * 1.25f - 0.25f * t * t);
 }
 
@@ -350,7 +365,6 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
     Vector3 p2 = Vector3Add(head, Vector3Add(Vector3Scale(dir, len * t2), Vector3Scale(headNormal, dy2)));
     Vector3 pApex = Vector3Add(head, Vector3Add(Vector3Scale(dir, len), Vector3Scale(headNormal, dyApex)));
 
-    // Độ khum ngang cánh hoa 3D (Transverse 3D cupping)
     float cup0 = w0 * 0.26f;
     float cup1 = w1 * 0.38f;
     float cup2 = w2 * 0.26f;
@@ -361,7 +375,6 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
     Vector3 m0 = Vector3Add(Vector3Subtract(p1, Vector3Scale(side1, w1)), Vector3Scale(headNormal, cup1));
     Vector3 m1 = Vector3Add(Vector3Add(p1, Vector3Scale(side1, w1)), Vector3Scale(headNormal, cup1));
 
-    Vector3 s0 = Vector3Add(Vector3Subtract(p2, Vector3Scale(side2, w2)), Vector3Scale(headNormal, cup2));
     Vector3 s1 = Vector3Add(Vector3Add(p2, Vector3Scale(side2, w2)), Vector3Scale(headNormal, cup2));
 
     Vector3 nL0 = Vector3Normalize(Vector3Add(Vector3Add(Vector3Scale(dir, 0.22f), Vector3Scale(side, 0.40f)), Vector3Scale(headNormal, 0.86f)));
@@ -373,19 +386,19 @@ static void Nature_AddParametricPetal(Mesh *mesh, int *cursor,
     int baseIdx = *cursor;
 
     // Đốt 0: Gốc cánh -> Bụng cánh rộng nhất (6 đỉnh)
-    Nature_SetVertex(mesh, (*cursor)++, b0, nL0, phase, 0.84f, cBase);
-    Nature_SetVertex(mesh, (*cursor)++, b1, nR0, phase, 0.84f, cBase);
-    Nature_SetVertex(mesh, (*cursor)++, m1, nR1, phase, 0.94f, cMid);
-    Nature_SetVertex(mesh, (*cursor)++, b0, nL0, phase, 0.84f, cBase);
-    Nature_SetVertex(mesh, (*cursor)++, m1, nR1, phase, 0.94f, cMid);
-    Nature_SetVertex(mesh, (*cursor)++, m0, nL1, phase, 0.94f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, b0, nL0, phase, 0.76f, cBase);
+    Nature_SetVertex(mesh, (*cursor)++, b1, nR0, phase, 0.76f, cBase);
+    Nature_SetVertex(mesh, (*cursor)++, m1, nR1, phase, 0.90f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, b0, nL0, phase, 0.76f, cBase);
+    Nature_SetVertex(mesh, (*cursor)++, m1, nR1, phase, 0.90f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, m0, nL1, phase, 0.90f, cMid);
 
     // Đốt 1: Bụng cánh -> Vai cánh & Đỉnh cánh nhọn/bầu (6 đỉnh)
-    Nature_SetVertex(mesh, (*cursor)++, m0, nL1, phase, 0.94f, cMid);
-    Nature_SetVertex(mesh, (*cursor)++, m1, nR1, phase, 0.94f, cMid);
-    Nature_SetVertex(mesh, (*cursor)++, s1, nTip, phase, 0.98f, cTip);
-    Nature_SetVertex(mesh, (*cursor)++, m0, nL1, phase, 0.94f, cMid);
-    Nature_SetVertex(mesh, (*cursor)++, s1, nTip, phase, 0.98f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, m0, nL1, phase, 0.90f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, m1, nR1, phase, 0.90f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, s1, nTip, phase, 0.96f, cTip);
+    Nature_SetVertex(mesh, (*cursor)++, m0, nL1, phase, 0.90f, cMid);
+    Nature_SetVertex(mesh, (*cursor)++, s1, nTip, phase, 0.96f, cTip);
     Nature_SetVertex(mesh, (*cursor)++, pApex, nTip, phase, 1.00f, cTip);
 
     // Ghi tọa độ sinh học (u in [-1..1], v in [0..1]) vào texcoords2 để Shader tính Gân cánh hoa & Xuyên sáng SSS
@@ -412,7 +425,7 @@ static void Nature_AddFlowerCenterDome(Mesh *mesh, int *cursor,
 {
     Vector3 apex = Vector3Add(head, Vector3Scale(headNormal, cHeight * 1.45f));
     Color apexColor = Nature_ScaleColor(centerColor, 1.25f);
-    Color rimColor = Nature_ScaleColor(centerColor, 0.48f);
+    Color rimColor = Nature_ScaleColor(centerColor, 0.52f);
     for (int s = 0; s < 4; s++)
     {
         float a0 = (float)s * 1.5707963f;
@@ -430,9 +443,9 @@ static void Nature_AddFlowerCenterDome(Mesh *mesh, int *cursor,
         Vector3 norm = Vector3Normalize(Vector3Add(midRad, Vector3Scale(headNormal, 0.84f)));
 
         int baseIdx = *cursor;
-        Nature_SetVertex(mesh, (*cursor)++, apex, headNormal, phase, 1.0f, apexColor);
-        Nature_SetVertex(mesh, (*cursor)++, r0, norm, phase, 0.94f, rimColor);
-        Nature_SetVertex(mesh, (*cursor)++, r1, norm, phase, 0.94f, rimColor);
+        Nature_SetVertex(mesh, (*cursor)++, apex, headNormal, phase, 0.96f, apexColor);
+        Nature_SetVertex(mesh, (*cursor)++, r0, norm, phase, 0.86f, rimColor);
+        Nature_SetVertex(mesh, (*cursor)++, r1, norm, phase, 0.86f, rimColor);
         Nature_SetUv2(mesh, baseIdx + 0, 0.0f, 0.15f);
         Nature_SetUv2(mesh, baseIdx + 1, -0.5f, 0.05f);
         Nature_SetUv2(mesh, baseIdx + 2, 0.5f, 0.05f);
@@ -461,7 +474,6 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
     if (atlasRows < 1)
         atlasRows = 1;
 
-    // Phần thân + lá gốc + lá thân + đài hoa được tối ưu gọn còn 30 đỉnh/bông (thay vì 84 đỉnh)
     const int kStemAndFoliageVerts = 30;
     int vertexCount = 0;
     for (int i = 0; i < count; i++)
@@ -493,30 +505,31 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         float r = flower->bloomRadius * petalScale;
 
         // 1. Basal leaf blades: 2 lá kiếm vươn đối xứng ở gốc (6 đỉnh = 2 tam giác nhọn)
-        // Đặc biệt với biến thể 2 (Chu Sa Hồng / Bỉ Ngạn Hoa): thu nhỏ lá gốc sát đất
-        float basalScale = (variant == 2) ? 0.25f : 1.0f;
-        Color basalRoot = {38, 64, 26, 255};
-        Color basalTip = {62, 102, 42, 255};
+        // Bỉ Ngạn Hoa (variant == 2): "Hoa nở không thấy lá" -> thu nhỏ lá sát gốc
+        // U Lan Linh Thảo (variant == 3): Lá kiếm vươn dài thanh tao (1.42x)
+        float basalScale = (variant == 2) ? 0.12f : ((variant == 3) ? 1.42f : 1.0f);
+        Color basalRoot = {34, 58, 24, 255};
+        Color basalTip = {66, 112, 44, 255};
         for (int b = 0; b < 2; b++)
         {
             float bAngle = flower->rotationDeg * DEG2RAD + (float)b * PI + 0.42f;
             Vector3 bDir = {cosf(bAngle), 0.0f, sinf(bAngle)};
-            Vector3 bSide = {-bDir.z * 0.022f * basalScale, 0.0f, bDir.x * 0.022f * basalScale};
-            float bLen = fmaxf(0.085f, flower->bloomRadius * 1.15f) * basalScale;
+            Vector3 bSide = {-bDir.z * 0.024f * basalScale, 0.0f, bDir.x * 0.024f * basalScale};
+            float bLen = fmaxf(0.090f, flower->bloomRadius * 1.20f) * basalScale;
             Vector3 r0 = {base.x - bSide.x, base.y + 0.002f, base.z - bSide.z};
             Vector3 r1 = {base.x + bSide.x, base.y + 0.002f, base.z + bSide.z};
-            Vector3 rTip = {base.x + bDir.x * bLen, base.y + 0.032f * basalScale, base.z + bDir.z * bLen};
+            Vector3 rTip = {base.x + bDir.x * bLen, base.y + 0.036f * basalScale, base.z + bDir.z * bLen};
             int bIdx = cursor;
             Nature_SetVertex(&mesh, cursor++, r0, (Vector3){0.0f, 1.0f, 0.0f}, phase, 0.0f, basalRoot);
             Nature_SetVertex(&mesh, cursor++, r1, (Vector3){0.0f, 1.0f, 0.0f}, phase, 0.0f, basalRoot);
-            Nature_SetVertex(&mesh, cursor++, rTip, (Vector3){0.0f, 1.0f, 0.0f}, phase, 0.28f, basalTip);
+            Nature_SetVertex(&mesh, cursor++, rTip, (Vector3){0.0f, 1.0f, 0.0f}, phase, 0.32f, basalTip);
             Nature_SetUv2(&mesh, bIdx + 0, -1.0f, 0.0f);
             Nature_SetUv2(&mesh, bIdx + 1, 1.0f, 0.0f);
             Nature_SetUv2(&mesh, bIdx + 2, 0.0f, 0.5f);
         }
 
         // 2. Cuống hoa cong mềm mại 2 đoạn (12 đỉnh)
-        float stemWidth = fmaxf(0.0048f, flower->bloomRadius * 0.075f);
+        float stemWidth = fmaxf(0.0052f, flower->bloomRadius * 0.078f);
         float stemLeanAngle = flower->rotationDeg * DEG2RAD * 0.73f + phase * 3.14f;
         float stemLean = h * 0.22f;
         float stemDirX = cosf(stemLeanAngle);
@@ -525,43 +538,47 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         Vector3 midStem = (Vector3){base.x + stemDirX * (stemLean * 0.38f), base.y + h * 0.52f, base.z + stemDirZ * (stemLean * 0.38f)};
         Vector3 head = (Vector3){base.x + stemDirX * stemLean, base.y + h * 0.94f, base.z + stemDirZ * stemLean};
 
+        Color effStemCol = (variant == 2) ? (Color){78, 36, 38, 255} : stemColor;
         float stemAngle = flower->rotationDeg * DEG2RAD;
         Vector3 sideA = {cosf(stemAngle) * stemWidth, 0.0f, sinf(stemAngle) * stemWidth};
-        Vector3 normA = {-sinf(stemAngle), 0.12f, cosf(stemAngle)};
+        Vector3 normA = {-sinf(stemAngle), 0.15f, cosf(stemAngle)};
 
         Vector3 s0_0 = Vector3Subtract(stemP0, sideA);
         Vector3 s0_1 = Vector3Add(stemP0, sideA);
         Vector3 s0_2 = Vector3Add(midStem, Vector3Scale(sideA, 0.82f));
         Vector3 s0_3 = Vector3Subtract(midStem, Vector3Scale(sideA, 0.82f));
-        Nature_AddQuad(&mesh, &cursor, s0_0, s0_1, s0_2, s0_3, normA, phase, 0.0f, 0.5f, stemColor, stemColor);
+        Nature_AddQuad(&mesh, &cursor, s0_0, s0_1, s0_2, s0_3, normA, phase, 0.0f, 0.5f,
+                       Nature_ScaleColor(effStemCol, 0.75f), effStemCol);
 
         Vector3 s1_0 = s0_3;
         Vector3 s1_1 = s0_2;
         Vector3 s1_2 = Vector3Add(head, Vector3Scale(sideA, 0.55f));
         Vector3 s1_3 = Vector3Subtract(head, Vector3Scale(sideA, 0.55f));
-        Nature_AddQuad(&mesh, &cursor, s1_0, s1_1, s1_2, s1_3, normA, phase, 0.5f, 0.95f, stemColor, stemColor);
+        Nature_AddQuad(&mesh, &cursor, s1_0, s1_1, s1_2, s1_3, normA, phase, 0.5f, 0.90f,
+                       effStemCol, Nature_ScaleColor(effStemCol, 1.08f));
 
         // 3. 2 Lá non giữa thân + 2 Đài hoa đỡ dưới đầu bông (4 tam giác = 12 đỉnh)
+        float stemLeafScale = (variant == 2) ? 0.15f : 1.0f;
         for (int leaf = 0; leaf < 2; leaf++)
         {
             float rootT = leaf == 0 ? 0.42f : 0.68f;
             float leafAngle = stemLeanAngle + (leaf == 0 ? 1.45f : -1.45f);
             Vector3 lDir = {cosf(leafAngle), 0.0f, sinf(leafAngle)};
-            Vector3 lSide = {-lDir.z * 0.014f, 0.0f, lDir.x * 0.014f};
-            float lLen = fmaxf(0.052f, flower->bloomRadius * 0.80f);
+            Vector3 lSide = {-lDir.z * 0.015f * stemLeafScale, 0.0f, lDir.x * 0.015f * stemLeafScale};
+            float lLen = fmaxf(0.054f, flower->bloomRadius * 0.82f) * stemLeafScale;
             Vector3 lRoot = Vector3Lerp(stemP0, head, rootT);
             Vector3 lTip = {lRoot.x + lDir.x * lLen, lRoot.y + lLen * 0.36f, lRoot.z + lDir.z * lLen};
             int lIdx = cursor;
-            Nature_SetVertex(&mesh, cursor++, Vector3Subtract(lRoot, lSide), (Vector3){0, 1, 0}, phase, rootT, stemColor);
-            Nature_SetVertex(&mesh, cursor++, Vector3Add(lRoot, lSide), (Vector3){0, 1, 0}, phase, rootT, stemColor);
-            Nature_SetVertex(&mesh, cursor++, lTip, (Vector3){0, 1, 0}, phase, rootT + 0.25f, Nature_ScaleColor(stemColor, 1.18f));
+            Nature_SetVertex(&mesh, cursor++, Vector3Subtract(lRoot, lSide), (Vector3){0, 1, 0}, phase, rootT, effStemCol);
+            Nature_SetVertex(&mesh, cursor++, Vector3Add(lRoot, lSide), (Vector3){0, 1, 0}, phase, rootT, effStemCol);
+            Nature_SetVertex(&mesh, cursor++, lTip, (Vector3){0, 1, 0}, phase, rootT + 0.25f, Nature_ScaleColor(effStemCol, 1.22f));
             Nature_SetUv2(&mesh, lIdx + 0, -1.0f, 0.1f);
             Nature_SetUv2(&mesh, lIdx + 1, 1.0f, 0.1f);
             Nature_SetUv2(&mesh, lIdx + 2, 0.0f, 0.6f);
         }
 
         float calyxLen = r * 0.48f;
-        Color calyxColor = Nature_ScaleColor(stemColor, 0.90f);
+        Color calyxColor = Nature_ScaleColor(effStemCol, 0.88f);
         for (int c = 0; c < 2; c++)
         {
             float cAngle = stemAngle + (float)c * PI + 0.785398f;
@@ -570,15 +587,15 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
             Vector3 cBasePt = {head.x, head.y - stemWidth * 0.5f, head.z};
             Vector3 cTipPt = {head.x + cDir.x * calyxLen, head.y + stemWidth * 0.2f, head.z + cDir.z * calyxLen};
             int cIdx = cursor;
-            Nature_SetVertex(&mesh, cursor++, Vector3Subtract(cBasePt, cSide), (Vector3){0, 1, 0}, phase, 0.90f, calyxColor);
-            Nature_SetVertex(&mesh, cursor++, Vector3Add(cBasePt, cSide), (Vector3){0, 1, 0}, phase, 0.90f, calyxColor);
-            Nature_SetVertex(&mesh, cursor++, cTipPt, (Vector3){0, 1, 0}, phase, 0.96f, Nature_ScaleColor(calyxColor, 1.2f));
+            Nature_SetVertex(&mesh, cursor++, Vector3Subtract(cBasePt, cSide), (Vector3){0, 1, 0}, phase, 0.86f, calyxColor);
+            Nature_SetVertex(&mesh, cursor++, Vector3Add(cBasePt, cSide), (Vector3){0, 1, 0}, phase, 0.86f, calyxColor);
+            Nature_SetVertex(&mesh, cursor++, cTipPt, (Vector3){0, 1, 0}, phase, 0.92f, Nature_ScaleColor(calyxColor, 1.2f));
             Nature_SetUv2(&mesh, cIdx + 0, -0.8f, 0.0f);
             Nature_SetUv2(&mesh, cIdx + 1, 0.8f, 0.0f);
             Nature_SetUv2(&mesh, cIdx + 2, 0.0f, 0.4f);
         }
 
-        // 4. Lắp ráp Đài Hoa 3D theo loài (5. Assemble 3D Flower Head)
+        // 4. Lắp ráp Đài Hoa 3D theo từng loài đặc trưng Tiên Hiệp – Kiếm Hiệp
         float tiltAmount = 0.22f + 0.08f * sinf(phase * 6.28f);
         Vector3 headNormal = Vector3Normalize((Vector3){stemDirX * tiltAmount, 0.96f, stemDirZ * tiltAmount});
         Vector3 refRight = {cosf(stemAngle), 0.0f, sinf(stemAngle)};
@@ -634,24 +651,25 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         }
         else
         {
-            int morph = variant % 4;
-            Color cBase = Nature_ScaleColor(petalColor, 0.72f);
+            Color cBase = Nature_ScaleColor(petalColor, 0.68f);
             Color cMid = petalColor;
-            Color cTip = Nature_ScaleColor(petalColor, 1.15f);
+            Color cTip = Nature_ScaleColor(petalColor, 1.18f);
 
-            switch (morph)
+            switch (variant & 7)
             {
-            case 0:
+            case 0: // [0] Thiên Sơn Tuyết Liên / Bạch Cúc (Đài sen 2 tầng khum cao hướng thiên)
+            case 4: // [4] Vân Mộng Đào Thảo (Hoa đào dại 2 tầng cánh bầu khía tim)
+            case 7: // [7] Ngọc Lan Linh Thảo
             {
-                // Morph 0: Đài hoa 2 tầng khum 3D (Đào Hoa / Tuyết Liên / Mẫu Đơn)
+                bool isLotus = (variant == 0 || variant == 7);
                 PetalParams pOuter = {
-                    .shape = PETAL_SHAPE_OBCORDATE,
-                    .wMax = r * 0.48f,
-                    .length = r * 1.05f,
-                    .exponent = 1.25f,
-                    .notchDepth = r * 0.16f,
-                    .curveAmount = r * 0.38f,
-                    .twistAmount = 0.08f,
+                    .shape = isLotus ? PETAL_SHAPE_OVAL : PETAL_SHAPE_OBCORDATE,
+                    .wMax = r * (isLotus ? 0.44f : 0.48f),
+                    .length = r * 1.06f,
+                    .exponent = isLotus ? 0.72f : 1.25f,
+                    .notchDepth = isLotus ? 0.0f : (r * 0.16f),
+                    .curveAmount = r * (isLotus ? 0.48f : 0.36f),
+                    .twistAmount = 0.07f,
                 };
                 for (int k = 0; k < 5; k++)
                 {
@@ -662,16 +680,16 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                                               phase, cBase, cMid, cTip);
                 }
                 PetalParams pInner = {
-                    .shape = PETAL_SHAPE_OBCORDATE,
+                    .shape = isLotus ? PETAL_SHAPE_OVAL : PETAL_SHAPE_OBCORDATE,
                     .wMax = r * 0.38f,
-                    .length = r * 0.78f,
-                    .exponent = 1.15f,
-                    .notchDepth = r * 0.12f,
-                    .curveAmount = r * 0.54f,
-                    .twistAmount = -0.10f,
+                    .length = r * 0.80f,
+                    .exponent = isLotus ? 0.68f : 1.15f,
+                    .notchDepth = isLotus ? 0.0f : (r * 0.12f),
+                    .curveAmount = r * (isLotus ? 0.64f : 0.52f),
+                    .twistAmount = -0.09f,
                 };
-                Color cInBase = Nature_ScaleColor(cBase, 0.90f);
-                Color cInMid = Nature_ScaleColor(cMid, 0.95f);
+                Color cInBase = Nature_LerpColor(effCenterColor, cBase, 0.65f);
+                Color cInMid = Nature_ScaleColor(cMid, 0.96f);
                 for (int k = 0; k < 3; k++)
                 {
                     float angle = 0.628318f + (float)k * 2.094395f;
@@ -683,9 +701,8 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 Nature_AddFlowerCenterDome(&mesh, &cursor, head, headNormal, headRight, headForward, r * 0.28f, r * 0.16f, phase, effCenterColor);
                 break;
             }
-            case 1:
+            case 1: // [1] Kim Cúc Cổ Phong (7 cánh hoàng kim xòe rộng hướng nắng)
             {
-                // Morph 1: Kim Cúc / Bạch Cúc 7 cánh xòe rộng đón nắng
                 PetalParams pDaisy = {
                     .shape = PETAL_SHAPE_OVAL,
                     .wMax = r * 0.36f,
@@ -705,22 +722,76 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 Nature_AddFlowerCenterDome(&mesh, &cursor, head, headNormal, headRight, headForward, r * 0.35f, r * 0.15f, phase, effCenterColor);
                 break;
             }
-            case 2:
+            case 2: // [2] Bỉ Ngạn Hoa (Mạn Châu Sa Hoa: 6 cánh vuốt rồng uốn ngược + 6 tua nhụy vươn dài cong vút)
             {
-                // Morph 2: Chuỗi hoa linh thảo / Tử Linh Đang 3 tầng xoắn ốc
+                PetalParams pSpider = {
+                    .shape = PETAL_SHAPE_LANCEOLATE,
+                    .wMax = r * 0.28f,
+                    .length = r * 1.18f,
+                    .tPeak = 0.26f,
+                    .curveAmount = -r * 0.32f, // Cánh hoa uốn cong ngược xuống dưới như vuốt rồng
+                    .twistAmount = 0.11f,
+                };
+                for (int k = 0; k < 6; k++)
+                {
+                    float angle = (float)k * 1.04719755f;
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    Vector3 side = Vector3CrossProduct(headNormal, dir);
+                    Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pSpider,
+                                              phase, cBase, cMid, cTip);
+                }
+                // 6 Tua nhụy dài cong vút vươn cao (6 * 3 = 18 đỉnh) + 2 tam giác tâm hoa (6 đỉnh) = 24 đỉnh
+                Color stamenBase = cMid;
+                Color stamenTip = effCenterColor;
+                float stamenLen = r * 1.48f;
+                float stamenLift = r * 0.72f;
+                for (int k = 0; k < 6; k++)
+                {
+                    float angle = 0.5235988f + (float)k * 1.04719755f;
+                    Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
+                    Vector3 side = Vector3Scale(Vector3CrossProduct(headNormal, dir), r * 0.055f);
+                    Vector3 sL = Vector3Subtract(head, side);
+                    Vector3 sR = Vector3Add(head, side);
+                    Vector3 sApex = Vector3Add(head, Vector3Add(Vector3Scale(dir, stamenLen), Vector3Scale(headNormal, stamenLift)));
+                    Vector3 nStamen = Vector3Normalize(Vector3Add(headNormal, Vector3Scale(dir, 0.45f)));
+                    int sIdx = cursor;
+                    Nature_SetVertex(&mesh, cursor++, sL, nStamen, phase, 0.88f, stamenBase);
+                    Nature_SetVertex(&mesh, cursor++, sR, nStamen, phase, 0.88f, stamenBase);
+                    Nature_SetVertex(&mesh, cursor++, sApex, nStamen, phase, 1.00f, stamenTip);
+                    Nature_SetUv2(&mesh, sIdx + 0, -0.8f, 0.2f);
+                    Nature_SetUv2(&mesh, sIdx + 1, 0.8f, 0.2f);
+                    Nature_SetUv2(&mesh, sIdx + 2, 0.0f, 1.0f);
+                }
+                // Tâm nhụy Bỉ Ngạn (6 đỉnh)
+                Vector3 c0 = Vector3Add(head, Vector3Scale(headRight, -r * 0.16f));
+                Vector3 c1 = Vector3Add(head, Vector3Scale(headRight, r * 0.16f));
+                Vector3 c2 = Vector3Add(head, Vector3Add(Vector3Scale(headForward, r * 0.16f), Vector3Scale(headNormal, r * 0.12f)));
+                Vector3 c3 = Vector3Add(head, Vector3Add(Vector3Scale(headForward, -r * 0.16f), Vector3Scale(headNormal, r * 0.12f)));
+                Nature_SetVertex(&mesh, cursor++, c0, headNormal, phase, 0.92f, cBase);
+                Nature_SetVertex(&mesh, cursor++, c1, headNormal, phase, 0.92f, cBase);
+                Nature_SetVertex(&mesh, cursor++, c2, headNormal, phase, 0.96f, stamenTip);
+                Nature_SetVertex(&mesh, cursor++, c0, headNormal, phase, 0.92f, cBase);
+                Nature_SetVertex(&mesh, cursor++, c2, headNormal, phase, 0.96f, stamenTip);
+                Nature_SetVertex(&mesh, cursor++, c3, headNormal, phase, 0.96f, stamenTip);
+                break;
+            }
+            case 5: // [5] Tử Linh Đang (Hoa chuông tím rủ nhẹ 3 tầng)
+            case 6: // [6] Huân Y Thảo (Chuỗi hoa linh thảo 3 tầng xoắn ốc)
+            {
+                bool isBell = (variant == 5);
                 float spH = r * 2.1f;
                 float phaseSpiral = 0.48f;
                 for (int k = 0; k < 3; k++)
                 {
                     float s = 0.24f + (float)k * 0.32f;
                     Vector3 tierHead = Vector3Add(head, Vector3Scale(headNormal, spH * s));
-                    float bloomFactor = (s < 0.68f) ? 1.0f : fmaxf(0.45f, 1.0f - (s - 0.68f) / 0.35f);
+                    float bloomFactor = (s < 0.68f) ? 1.0f : fmaxf(0.48f, 1.0f - (s - 0.68f) / 0.35f);
                     PetalParams pFloret = {
                         .shape = PETAL_SHAPE_OVAL,
-                        .wMax = r * 0.26f * bloomFactor,
-                        .length = r * 0.66f * bloomFactor,
-                        .exponent = 1.10f,
-                        .curveAmount = r * 0.26f * bloomFactor,
+                        .wMax = r * 0.28f * bloomFactor,
+                        .length = r * 0.68f * bloomFactor,
+                        .exponent = 1.05f,
+                        .curveAmount = r * (isBell ? -0.22f : 0.26f) * bloomFactor,
                         .twistAmount = 0.04f,
                     };
                     for (int j = 0; j < 2; j++)
@@ -736,15 +807,15 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                 Nature_AddFlowerCenterDome(&mesh, &cursor, tipApex, headNormal, headRight, headForward, r * 0.16f, r * 0.18f, phase, effCenterColor);
                 break;
             }
-            case 3:
+            case 3: // [3] U Lan Linh Thảo (6 cánh thanh mảnh vươn cong thanh nhã)
+            default:
             {
-                // Morph 3: Cánh vuốt rồng uốn cong 6 cánh (U Lan / Bỉ Ngạn / Lam Điệp)
-                PetalParams pBell = {
+                PetalParams pOrchid = {
                     .shape = PETAL_SHAPE_LANCEOLATE,
-                    .wMax = r * 0.34f,
-                    .length = r * 1.14f,
-                    .tPeak = 0.28f,
-                    .curveAmount = r * 0.36f,
+                    .wMax = r * 0.35f,
+                    .length = r * 1.16f,
+                    .tPeak = 0.30f,
+                    .curveAmount = r * 0.38f,
                     .twistAmount = 0.06f,
                 };
                 for (int k = 0; k < 6; k++)
@@ -752,7 +823,7 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
                     float angle = (float)k * 1.04719755f;
                     Vector3 dir = Vector3Add(Vector3Scale(headRight, cosf(angle)), Vector3Scale(headForward, sinf(angle)));
                     Vector3 side = Vector3CrossProduct(headNormal, dir);
-                    Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pBell,
+                    Nature_AddParametricPetal(&mesh, &cursor, head, headNormal, dir, side, &pOrchid,
                                               phase, cBase, cMid, cTip);
                 }
                 Nature_AddFlowerCenterDome(&mesh, &cursor, head, headNormal, headRight, headForward, r * 0.24f, r * 0.14f, phase, effCenterColor);
@@ -767,7 +838,7 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
 
     field.textured = (petalTexturePath != NULL);
     field.model = Nature_ModelFromMesh(mesh, Nature_GetShader(true));
-    field.farModel = Nature_BuildFlowerFarModel(placements, count, field.textured,
+    field.farModel = Nature_BuildFlowerFarModel(placements, count, stemColor, field.textured,
                                                 atlasColumns, atlasRows);
     field.farReady = field.farModel.meshCount > 0;
     if (GfxQuality_Get() >= GFX_MED)
@@ -815,16 +886,27 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
         return;
 
     static unsigned char *s_batchFlags = NULL;
-    static int s_batchFlagsCapacity = 0;
-    if (fieldCount > s_batchFlagsCapacity)
+    static int *s_batchOrder = NULL;
+    static float *s_batchDepth = NULL;
+    static int s_batchCapacity = 0;
+    if (fieldCount > s_batchCapacity)
     {
-        unsigned char *grown = (unsigned char *)RL_REALLOC(s_batchFlags, (size_t)fieldCount);
-        if (!grown)
+        unsigned char *grownFlags = (unsigned char *)RL_REALLOC(s_batchFlags, (size_t)fieldCount);
+        int *grownOrder = (int *)RL_REALLOC(s_batchOrder, (size_t)fieldCount * sizeof(int));
+        float *grownDepth = (float *)RL_REALLOC(s_batchDepth, (size_t)fieldCount * sizeof(float));
+        if (!grownFlags || !grownOrder || !grownDepth)
             return;
-        s_batchFlags = grown;
-        s_batchFlagsCapacity = fieldCount;
+        s_batchFlags = grownFlags;
+        s_batchOrder = grownOrder;
+        s_batchDepth = grownDepth;
+        s_batchCapacity = fieldCount;
     }
     unsigned char *flags = s_batchFlags;
+    int *drawOrder = s_batchOrder;
+    float *drawDepth = s_batchDepth;
+    int drawCount = 0;
+
+    Nature_RefreshFrustumCache();
 
     GfxQuality quality = GfxQuality_Get();
     float rangeScale = quality >= GFX_HIGH  ? 1.0f
@@ -839,7 +921,7 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
     float focalDz = camera.position.z - camera.target.z;
     float focalDistH = sqrtf(focalDx * focalDx + focalDz * focalDz);
     float fovyRad = fmaxf(camera.fovy, 15.0f) * DEG2RAD;
-    float zoomFactor = tanf(45.0f * 0.5f * DEG2RAD) / tanf(fovyRad * 0.5f);
+    float zoomFactor = 0.41421356f / tanf(fovyRad * 0.5f);
     if (zoomFactor < 0.8f)
         zoomFactor = 0.8f;
     if (zoomFactor > 2.5f)
@@ -852,7 +934,6 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
                                shadowMode != NATURE_SHADOW_REAL_ONLY;
 
     bool anyShadow = false;
-    bool anyDraw = false;
     for (int i = 0; i < fieldCount; i++)
     {
         MapFlowerField *field = &fields[i];
@@ -861,21 +942,25 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
             continue;
         s_natureRenderStats.flowerFieldsTested++;
         Vector3 center = Vector3Add(field->boundsCenter, worldOffset);
+
+        float dx = camera.position.x - center.x;
+        float dy = camera.position.y - center.y;
+        float dz = camera.position.z - center.z;
+        float distSqXZ = dx * dx + dz * dz;
+        float maxDrawDist = field->drawDistance * rangeScale + field->boundsRadius;
+        if (field->drawDistance > 0.0f && distSqXZ > maxDrawDist * maxDrawDist)
+        {
+            s_natureRenderStats.flowerFieldsDistanceCulled++;
+            continue;
+        }
         if (!Nature_IsChunkVisible(center, field->boundsRadius))
         {
             s_natureRenderStats.flowerFieldsFrustumCulled++;
             continue;
         }
-        float dx = camera.position.x - center.x;
-        float dz = camera.position.z - center.z;
-        float centerDistance = sqrtf(dx * dx + dz * dz);
+
+        float centerDistance = sqrtf(distSqXZ);
         float visibleDistance = centerDistance - field->boundsRadius;
-        if (field->drawDistance > 0.0f &&
-            visibleDistance > field->drawDistance * rangeScale)
-        {
-            s_natureRenderStats.flowerFieldsDistanceCulled++;
-            continue;
-        }
         if (field->farReady && field->lodDistance > 0.0f)
         {
             float hSeed = field->boundsCenter.x * 0.1031f + field->boundsCenter.z * 0.3183f;
@@ -901,7 +986,7 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
             f |= NATURE_FLOWER_BATCH_FAR;
 
         float maxContactDist = realShadowActive
-                                   ? fminf(field->shadowDistance, 14.0f)
+                                   ? fminf(field->shadowDistance, 16.0f)
                                    : (field->shadowDistance * (quality >= GFX_HIGH ? 1.0f : 0.78f));
         bool shadowInRange = field->shadowDistance <= 0.0f || visibleDistance <= maxContactDist;
         if (field->shadowReady && useProjectedShadows)
@@ -917,9 +1002,20 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
             }
         }
         flags[i] = f;
-        anyDraw = true;
+
+        // Sắp xếp cụm hoa theo thứ tự gần-ra-xa (Front-to-Back Early-Z)
+        float distSq3D = distSqXZ + dy * dy;
+        int slot = drawCount++;
+        while (slot > 0 && drawDepth[slot - 1] > distSq3D)
+        {
+            drawOrder[slot] = drawOrder[slot - 1];
+            drawDepth[slot] = drawDepth[slot - 1];
+            slot--;
+        }
+        drawOrder[slot] = i;
+        drawDepth[slot] = distSq3D;
     }
-    if (!anyDraw)
+    if (drawCount <= 0)
         return;
 
     if (anyShadow)
@@ -930,8 +1026,9 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
         EndShaderMode();
         rlDisableDepthMask();
         BeginBlendMode(BLEND_MULTIPLIED);
-        for (int i = 0; i < fieldCount; i++)
+        for (int d = 0; d < drawCount; d++)
         {
+            int i = drawOrder[d];
             if (!(flags[i] & NATURE_FLOWER_BATCH_SHADOW))
                 continue;
             DrawModel(fields[i].shadowModel, worldOffset, 1.0f, WHITE);
@@ -944,10 +1041,9 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
     bool groupOpen = false;
     bool groupTextured = false;
     float groupAlpha = 0.0f;
-    for (int i = 0; i < fieldCount; i++)
+    for (int d = 0; d < drawCount; d++)
     {
-        if (!(flags[i] & NATURE_FLOWER_BATCH_DRAW))
-            continue;
+        int i = drawOrder[d];
         MapFlowerField *field = &fields[i];
         if (!groupOpen || field->textured != groupTextured || field->alphaCutoff != groupAlpha)
         {
@@ -986,8 +1082,8 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
 }
 
 // [TỐI ƯU BATCHED SHADOW CASTER]:
-// Gom tất cả các ô hoa cần đổ bóng vào chung 1 lần mở/đóng Shader và sử dụng `farModel` 3D (9 đỉnh/bông)
-// khi không bật bộ lọc chẩn đoán, giúp lượt vẽ bóng đổ hoa nhanh gấp ~12 lần!
+// Đưa phép tính vùng phủ bóng ra ngoài vòng lặp và dùng `farModel` 3D (có cả cuống + đài hoa 12 đỉnh)
+// giúp lượt vẽ bóng đổ hoa vào Shadow Map nhanh gấp ~10 lần và tạo bóng rõ nét trên mặt đất/cỏ!
 void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldCount,
                                               Vector3 worldOffset, float time,
                                               Vector2 windDirection, float windStrength)
@@ -997,8 +1093,15 @@ void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldC
         !Nature_ShadowCasterTypeEnabled(true))
         return;
 
+    Vector3 sunDir = Vector3Normalize(Environment_GetSunDirection());
+    if (fabsf(sunDir.y) > 0.98f)
+        return;
+
     bool filterActive = Nature_ShadowCasterFilterActive();
     Vector3 shadowFocus = EnvShadow_GetFocus();
+    float extent = fmaxf(EnvShadow_GetHalfExtent(), 8.0f);
+    float groundRadius = extent / fmaxf(fabsf(sunDir.y), 0.32f);
+
     Shader shader = NatureShadow_GetShader();
     bool shaderBound = false;
 
@@ -1010,15 +1113,17 @@ void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldC
         Vector3 center = Vector3Add(field->boundsCenter, worldOffset);
         if (!filterActive)
         {
+            float dx = center.x - shadowFocus.x;
+            float dz = center.z - shadowFocus.z;
+            float distSq = dx * dx + dz * dz;
             if (field->shadowDistance > 0.0f)
             {
-                float dx = center.x - shadowFocus.x;
-                float dz = center.z - shadowFocus.z;
-                float maxDist = field->shadowDistance + field->boundsRadius + 2.0f;
-                if (dx * dx + dz * dz > maxDist * maxDist)
+                float maxDist = field->shadowDistance + field->boundsRadius + 2.5f;
+                if (distSq > maxDist * maxDist)
                     continue;
             }
-            if (!Nature_IntersectsDynamicShadowCoverage(center, field->boundsRadius))
+            float covLimit = groundRadius + field->boundsRadius * 1.12f + 2.0f;
+            if (distSq > covLimit * covLimit)
                 continue;
         }
 
@@ -1032,7 +1137,6 @@ void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldC
             shaderBound = true;
         }
 
-        // Dùng farModel 3D nhẹ cho đổ bóng thực tế; giữ near model khi chạy test filterActive
         Model *castModel = (!filterActive && field->farReady && !field->textured)
                                ? &field->farModel
                                : &field->model;

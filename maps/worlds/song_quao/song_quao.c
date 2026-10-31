@@ -81,14 +81,11 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
         return 0.0f;
 
     // Grass carpets the island plateau and rolling knolls right up to the cliff drop-off
-    if (pos.y < -2.20f || normal.y < 0.62f)
-        return 0.0f;
-    // Suppress grass in the sheer river outlet cascade drop-off
-    if (pos.x > 146.0f && pos.z > 230.0f && pos.y < 0.15f)
+    if (pos.y < -2.20f || normal.y < 0.50f)
         return 0.0f;
 
     float heightFade = MapMath_SmoothStep01(-2.20f, -1.10f, pos.y);
-    float slopeFade = MapMath_SmoothStep01(0.62f, 0.76f, normal.y);
+    float slopeFade = MapMath_SmoothStep01(0.50f, 0.72f, normal.y);
 
     // Smooth, organic shoreline transition with micro-meander noise
     float surfaceY = MapDem_SampleWaterHeight(&s_dem, x, z);
@@ -102,10 +99,10 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
     // Gate rockScree by actual geometric slope (1.0 - normal.y), matching ground_splat.fs wCliff
     float geomSlope = 1.0f - normal.y;
-    float rockScree = ((float)splat.g / 255.0f) * MapMath_SmoothStep01(0.18f, 0.45f, geomSlope);
-    if (rockScree > 0.88f)
+    float rockScree = ((float)splat.g / 255.0f) * MapMath_SmoothStep01(0.25f, 0.50f, geomSlope);
+    if (rockScree > 0.90f)
         return 0.0f;
-    float rockFade = 1.0f - MapMath_SmoothStep01(0.65f, 0.88f, rockScree);
+    float rockFade = 1.0f - MapMath_SmoothStep01(0.60f, 0.90f, rockScree);
 
     // Coherent macro meadow swells with organic breathing room
     float warpedX = x + sinf(z * 0.12f) * 2.6f;
@@ -229,11 +226,6 @@ static void BuildRocks(void)
         {175.0f, 140.0f},
         {45.0f, 90.0f},
         {165.0f, 80.0f},
-        // Promontory and outlet cliff edge crags
-        {164.0f, 242.0f},
-        {168.0f, 248.0f},
-        {158.0f, 254.0f},
-        {142.0f, 246.0f},
     };
     int cragCount = (int)(sizeof(kCliffCrags) / sizeof(kCliffCrags[0]));
 
@@ -314,7 +306,9 @@ static void CaptureSongQuaoStaticShadows(void)
 
 void InitSongQuaoMap(void)
 {
-    s_skipMask = MapProp_GetSkipMask();
+    // Skip disjointed s_cliff skirt: s_ground's unified triplanar granite terrain
+    // renders the seamless floating island directly into the cloud sea.
+    s_skipMask = MapProp_GetSkipMask() | MAP_SKIP_CLIFF;
     if (s_skipMask & MAP_SKIP_GRADE)
         ColorGradeLut_UseNeutral();
     else
@@ -399,10 +393,14 @@ void InitSongQuaoMap(void)
                                  "assets/textures/dirt_material.png");
     MapProp_SetGroundReliefMap(&s_ground, "assets/textures/verdant_terrain_relief.png");
     MapProp_SetGroundDebrisMap(&s_ground, "assets/maps/song_quao/song_quao_debris_map.png");
+    MapProp_SetGroundRockMaps(&s_ground,
+                              "assets/textures/rocks/granite_diffuse.png",
+                              "assets/textures/rocks/granite_normal.png");
 
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(1400.0f, 1400.0f, 65.0f);
-    s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -1.75f, -24.0f);
+    if (!(s_skipMask & MAP_SKIP_CLIFF))
+        s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -1.35f, -26.0f);
 
     BuildRocks();
 
@@ -505,7 +503,8 @@ void DrawSongQuaoMap(void)
 
     if (!(s_skipMask & MAP_SKIP_GROUND))
         MapProp_DrawGround(&s_ground, kMapCenter);
-    // (Cliff skirt disabled to eliminate corrugated knife-cut artifacts)
+    if (!(s_skipMask & MAP_SKIP_CLIFF))
+        MapProp_DrawCliffSkirt(&s_cliff, camera);
 
     bool useFakeRockShadows = !EnvShadow_IsEnabled();
     if (!(s_skipMask & MAP_SKIP_ROCKS))
@@ -555,7 +554,8 @@ void UnloadSongQuaoMap(void)
     MapProp_UnloadFloraSystem(&s_flora);
     MapProp_UnloadDebrisSystem(&s_debris);
     MapProp_UnloadRockSystem(&s_rocks);
-    MapProp_UnloadCliffSkirt(&s_cliff);
+    if (s_cliff.ready)
+        MapProp_UnloadCliffSkirt(&s_cliff);
     MapProp_UnloadCloudSea(&s_cloudSea);
     MapProp_UnloadSkyDome(&s_sky);
     MapProp_UnloadGround(&s_ground);
