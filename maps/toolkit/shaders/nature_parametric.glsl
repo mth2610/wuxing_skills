@@ -108,7 +108,7 @@ void NatureApplyCanonicalLod(vec4 p0, inout vec4 p1, inout vec4 p2, inout vec4 p
     if (u_canonicalBladeData != 0 && u_geometryLod > 0) {
         // [TỐI ƯU ALU]: Thay hàm pow() đắt đỏ bằng sqrt() + hệ số bù bề rộng cho LOD 1 & LOD 2
         float bladeRatio = max(float(max(u_canonicalBlades, 1)) / float(max(u_bladesPerTuft, 1)), 1.0);
-        float widthBoost = (u_geometryLod == 2) ? 1.12 : 0.97;
+        float widthBoost = (u_geometryLod == 2) ? 1.48 : 1.18;
         p1.w *= sqrt(bladeRatio) * widthBoost;
     }
 }
@@ -223,7 +223,7 @@ void NatureEvaluateBlade(out vec3 position, out vec3 normal,
     float fadeAlpha = 1.0;
 #ifdef NATURE_VISIBLE_TUFT_LOD
     float farAntiAlias = clamp((distToCam - 8.0) * 0.04, 0.0, 1.0);
-    float minPxHalfWidth = farAntiAlias * distToCam * 0.00038 * (1.0 - 0.75 * t);
+    float minPxHalfWidth = farAntiAlias * distToCam * 0.00062 * (1.0 - 0.72 * t);
     halfWidth = max(halfWidth, minPxHalfWidth);
 #endif
 

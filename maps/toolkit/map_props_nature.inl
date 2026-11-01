@@ -249,7 +249,7 @@ static inline bool Nature_ShadowCasterFilterActive(void)
 // PER-SHADER UNIFORM LOCATION & FRAME STATE CACHE
 // (Eliminates runtime glGetUniformLocation & redundant per-chunk Vulkan uploads)
 // ============================================================================
-#define NATURE_MAX_CACHED_SHADERS 8
+#define NATURE_MAX_CACHED_SHADERS 12
 
 typedef struct
 {

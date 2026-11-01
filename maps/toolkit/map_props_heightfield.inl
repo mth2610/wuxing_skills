@@ -64,6 +64,43 @@ static Mesh Ground_CreateIndexedHeightfield(Image image, Vector3 size, bool pack
         Vector3 n = Vector3Normalize((Vector3){mesh.normals[i*3],mesh.normals[i*3+1],mesh.normals[i*3+2]});
         mesh.normals[i*3]=n.x; mesh.normals[i*3+1]=n.y; mesh.normals[i*3+2]=n.z;
     }
+    float *smoothNormals = MemAlloc((unsigned int)mesh.vertexCount * 3u * sizeof(float));
+    if (smoothNormals) {
+        for (int pass = 0; pass < 2; pass++) {
+            for (int z = 0; z < h; z++) {
+                int z0 = (z > 0) ? z - 1 : z;
+                int z1 = (z < h - 1) ? z + 1 : z;
+                for (int x = 0; x < w; x++) {
+                    int x0 = (x > 0) ? x - 1 : x;
+                    int x1 = (x < w - 1) ? x + 1 : x;
+                    int c = z * w + x;
+                    Vector3 acc = {
+                        mesh.normals[c * 3 + 0] * 4.0f,
+                        mesh.normals[c * 3 + 1] * 4.0f,
+                        mesh.normals[c * 3 + 2] * 4.0f,
+                    };
+                    const int neighbors[8] = {
+                        z * w + x0, z * w + x1, z0 * w + x, z1 * w + x,
+                        z0 * w + x0, z0 * w + x1, z1 * w + x0, z1 * w + x1
+                    };
+                    const float weights[8] = {2.0f, 2.0f, 2.0f, 2.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+                    for (int k = 0; k < 8; k++) {
+                        int nb = neighbors[k];
+                        float wk = weights[k];
+                        acc.x += mesh.normals[nb * 3 + 0] * wk;
+                        acc.y += mesh.normals[nb * 3 + 1] * wk;
+                        acc.z += mesh.normals[nb * 3 + 2] * wk;
+                    }
+                    Vector3 n = Vector3Normalize(acc);
+                    smoothNormals[c * 3 + 0] = n.x;
+                    smoothNormals[c * 3 + 1] = n.y;
+                    smoothNormals[c * 3 + 2] = n.z;
+                }
+            }
+            memcpy(mesh.normals, smoothNormals, (size_t)mesh.vertexCount * 3u * sizeof(float));
+        }
+        MemFree(smoothNormals);
+    }
     if (!indexed) {
         Mesh expanded = {0};
         expanded.vertexCount = mesh.triangleCount * 3;

@@ -118,29 +118,51 @@ void main()
     // [VISUAL FIX]: Hệ số chuyển mượt từ 14m -> 17m để xóa sổ đường viền nhảy bậc (LOD pop ring) tại 17m
     float dualScaleFade = 1.0 - smoothstep(196.0, 289.0, camDistSqXZ);
 
-    // ---- 3. Distance to Path ----
+    // ---- 3. Distance to Path & Continuous 16-bit Shoreline ----
     vec4 ecology = vec4(1.0, 0.6, 0.0, 0.5);
     float distToPath = 1000.0;
     float shoreFactor = 0.0;
     float lakeDepthFactor = 0.0;
+    float smoothSignedShore = 1000.0;
+    float riparianSandMargin = 0.0;
     if (u_ecologyEnabled != 0) {
-        vec2 ecoUV = (fragWorldPos.xz - u_ecologyRect.xy) / max(u_ecologyRect.zw, vec2(0.0001));
+        vec2 ecoUV = clamp((fragWorldPos.xz - u_ecologyRect.xy) / max(u_ecologyRect.zw, vec2(0.0001)), vec2(0.0), vec2(1.0));
         ecology = textureLod(u_ecology, ecoUV, 0.0);
-        vec4 metric = textureLod(u_ecologyDistance, ecoUV, 0.0);
-        float roadU16 = (metric.r * 65280.0 + metric.g * 255.0) * (1.0 / 65535.0);
-        distToPath = (roadU16 * 2.0 - 1.0) * 16.0 + 1.15;
 
-        float shoreU16 = (metric.b * 65280.0 + metric.a * 255.0) * (1.0 / 65535.0);
-        float signedShore = (shoreU16 * 2.0 - 1.0) * 16.0;
-        // Organic continuous domain noise breaks discrete raster distance-transform wavefront scallops
-        float shoreJitter = sin(fragWorldPos.x * 2.4 + fragWorldPos.z * 1.9) * 0.22
-                          + cos(fragWorldPos.x * 4.8 - fragWorldPos.z * 3.9) * 0.11;
-        float smoothSignedShore = signedShore + shoreJitter;
+        // Decode 16-bit RG/BA at 4 texel corners BEFORE bilinear blend to prevent 8-bit low-byte wrap sawtooth
+        ivec2 distSize = textureSize(u_ecologyDistance, 0);
+        vec2 texCoordF = ecoUV * vec2(distSize - ivec2(1));
+        ivec2 tc0 = clamp(ivec2(floor(texCoordF)), ivec2(0), distSize - ivec2(1));
+        ivec2 tc1 = min(tc0 + ivec2(1), distSize - ivec2(1));
+        vec2 tf = fract(texCoordF);
+
+        vec4 m00 = texelFetch(u_ecologyDistance, tc0, 0);
+        vec4 m10 = texelFetch(u_ecologyDistance, ivec2(tc1.x, tc0.y), 0);
+        vec4 m01 = texelFetch(u_ecologyDistance, ivec2(tc0.x, tc1.y), 0);
+        vec4 m11 = texelFetch(u_ecologyDistance, tc1, 0);
+
+        vec2 d00 = vec2(m00.r * 65280.0 + m00.g * 255.0, m00.b * 65280.0 + m00.a * 255.0);
+        vec2 d10 = vec2(m10.r * 65280.0 + m10.g * 255.0, m10.b * 65280.0 + m10.a * 255.0);
+        vec2 d01 = vec2(m01.r * 65280.0 + m01.g * 255.0, m01.b * 65280.0 + m01.a * 255.0);
+        vec2 d11 = vec2(m11.r * 65280.0 + m11.g * 255.0, m11.b * 65280.0 + m11.a * 255.0);
+        vec2 decodedU16 = mix(mix(d00, d10, tf.x), mix(d01, d11, tf.x), tf.y) * (1.0 / 65535.0);
+
+        distToPath = (decodedU16.x * 2.0 - 1.0) * 16.0 + 1.15;
+        float signedShore = (decodedU16.y * 2.0 - 1.0) * 16.0;
+
+        // Multi-scale organic shoreline domain warp: breaks up any residual grid linearity into natural coves
+        float shoreWarp = sin(fragWorldPos.x * 0.42 + fragWorldPos.z * 0.31) * 0.22
+                        + cos(fragWorldPos.z * 0.88 - fragWorldPos.x * 0.64) * 0.12
+                        + sin(fragWorldPos.x * 2.15 + fragWorldPos.z * 1.75) * 0.055;
+        smoothSignedShore = signedShore + shoreWarp;
         if (smoothSignedShore < 0.0) {
             lakeDepthFactor = clamp(-smoothSignedShore * (1.0 / 2.6), 0.0, 1.0);
             shoreFactor = 1.0;
         } else {
-            shoreFactor = 1.0 - smoothstep(0.0, 1.25, smoothSignedShore);
+            // Soft continuous moisture gradient: wet waterline sand into damp beach
+            float wetCore = 1.0 - smoothstep(0.0, 0.35, smoothSignedShore);
+            float dampFringe = 1.0 - smoothstep(0.12, 1.45, smoothSignedShore);
+            shoreFactor = max(wetCore, dampFringe * 0.48);
         }
     } else if (u_pathSegCount > 0) {
         float minDistSq = 1000000.0;
@@ -208,7 +230,7 @@ void main()
     // ---- 7. Four-Layer Weights & Height-Based Relief Blending ----
     float wPath = 1.0 - smoothstep(1.10, 1.95, distToPath);
     float wPathMargin = smoothstep(0.95, 1.65, distToPath) * (1.0 - smoothstep(1.65, 3.1, distToPath));
-    float wWetSoil = max(shoreFactor * 0.95, smoothstep(0.55, 0.92, streamWet));
+    float wWetSoil = max(shoreFactor * 0.85, smoothstep(0.42, 0.88, streamWet));
     if (lakeDepthFactor > 0.0) {
         wWetSoil = mix(wWetSoil, 1.0, clamp(lakeDepthFactor * 2.0, 0.0, 1.0));
     }
@@ -220,9 +242,22 @@ void main()
     float rockCliff = smoothstep(0.35, 0.75, rockScree) * smoothstep(0.12, 0.32, slope);
     float wCliff = clamp(max(wSlope, max(rockCliff, outerAbyssMask)), 0.0, 1.0);
 
-    float wDrySoil = clamp(max(wPathMargin * 0.78, wCliff), 0.0, 1.0)
-                   * (1.0 - wWetSoil * 0.85) * (1.0 - wPath * 0.85);
+    // Natural riparian sand/pebble margin transitioning into meadow (compact, organic coves)
+    if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.10) {
+        riparianSandMargin = (1.0 - smoothstep(0.05, 1.35, smoothSignedShore)) * 0.58;
+    }
+
+    float wDrySoil = clamp(max(max(wPathMargin * 0.78, wCliff), riparianSandMargin), 0.0, 1.0)
+                   * (1.0 - wWetSoil * 0.75) * (1.0 - wPath * 0.85);
     float wGrass = clamp(1.0 - wPath - wWetSoil - wDrySoil, 0.0, 1.0);
+
+    // Feather grass smoothly into the riparian bank between 0.18m and 1.45m
+    if (u_ecologyEnabled != 0 && smoothSignedShore >= -0.25 && smoothSignedShore < 1.85) {
+        float grassGrain = (dirtDetail.r - 0.5) * 0.22;
+        float grassTaper = smoothstep(0.18, 1.45, smoothSignedShore + grassGrain);
+        wGrass *= grassTaper;
+        wDrySoil = clamp(1.0 - wPath - wWetSoil - wGrass, 0.0, 1.0);
+    }
 
     vec4 weights = vec4(wGrass, wDrySoil, wWetSoil, wPath);
     vec4 resolved = weights / max(dot(weights, vec4(1.0)), 0.0001);
@@ -233,24 +268,22 @@ void main()
         float combinedSoil = weights.y + weights.w;
         float dominantWeight = max(max(weights.x, combinedSoil), weights.z);
         bool boundary = dominantWeight < 0.96;
-        if (boundary || (weights.x > 0.05 && nearDualScale)) {
+        if (boundary) {
             vec4 substrateRelief = textureGrad(u_groundRelief, tiledUV, uvDx, uvDy);
-            litterClasses = mix(vec2(0.5), substrateRelief.ba, boundary ? 1.0 : dualScaleFade);
-            if (boundary) {
-                float soilHeight = substrateRelief.g;
-                vec3 groupWeights = vec3(weights.x, combinedSoil, weights.z);
-                vec3 groupRelief  = vec3(substrateRelief.r, soilHeight, soilHeight);
-                vec3 heights = groupWeights + (groupRelief - 0.5) * 0.28;
-                float peak = max(max(heights.x, heights.y), heights.z);
-                vec3 candidates = max(heights - vec3(peak - 0.34), vec3(0.0)) * groupWeights;
-                candidates /= max(dot(candidates, vec3(1.0)), 0.0001);
-                float pathRatio = weights.w / max(combinedSoil, 0.0001);
-                vec4 groupedResolved = vec4(candidates.x, candidates.y * (1.0 - pathRatio), candidates.z, candidates.y * pathRatio);
-                resolved = mix(resolved, groupedResolved, detailResolve * 0.52);
+            litterClasses = substrateRelief.ba;
+            float soilHeight = substrateRelief.g;
+            vec3 groupWeights = vec3(weights.x, combinedSoil, weights.z);
+            vec3 groupRelief  = vec3(substrateRelief.r, soilHeight, soilHeight);
+            vec3 heights = groupWeights + (groupRelief - 0.5) * 0.28;
+            float peak = max(max(heights.x, heights.y), heights.z);
+            vec3 candidates = max(heights - vec3(peak - 0.34), vec3(0.0)) * groupWeights;
+            candidates /= max(dot(candidates, vec3(1.0)), 0.0001);
+            float pathRatio = weights.w / max(combinedSoil, 0.0001);
+            vec4 groupedResolved = vec4(candidates.x, candidates.y * (1.0 - pathRatio), candidates.z, candidates.y * pathRatio);
+            resolved = mix(resolved, groupedResolved, detailResolve * 0.52);
 
-                float heightDelta = (substrateRelief.r - soilHeight) * (resolved.x - (1.0 - resolved.x));
-                reliefShadow = clamp(1.0 + heightDelta * 0.28 * detailResolve, 0.85, 1.05);
-            }
+            float heightDelta = (substrateRelief.r - soilHeight) * (resolved.x - (1.0 - resolved.x));
+            reliefShadow = clamp(1.0 + heightDelta * 0.28 * detailResolve, 0.85, 1.05);
         }
     }
     wGrass = resolved.x; wDrySoil = resolved.y;
@@ -480,21 +513,28 @@ void main()
         vec3 wetSoilColor = vec3(0.0);
         if (isRiparian > 0.01) {
             // 1. Alluvial quartz/feldspar river sand with hydrodynamic current ripples
-            float sandRipple1 = sin(fragWorldPos.z * 9.5 + sin(fragWorldPos.x * 3.6) * 1.5 + fragWorldPos.x * 1.2) * 0.5 + 0.5;
-            float sandRipple2 = sin(fragWorldPos.x * 18.0 - fragWorldPos.z * 7.5) * 0.5 + 0.5;
-            float sandRipple = sandRipple1 * 0.68 + sandRipple2 * 0.32;
+            float sandPhase1 = fragWorldPos.z * 8.5 + sin(fragWorldPos.x * 2.8) * 1.4 + fragWorldPos.x * 1.1;
+            float sandPhase2 = fragWorldPos.x * 15.0 - fragWorldPos.z * 6.5;
+            float sandRipple1 = sin(sandPhase1) * 0.5 + 0.5;
+            float sandRipple2 = sin(sandPhase2) * 0.5 + 0.5;
+            float sandRipple = sandRipple1 * 0.65 + sandRipple2 * 0.35;
 
-            // Rich warm golden alluvial sand tones
-            vec3 drySand = mix(vec3(0.58, 0.50, 0.38), vec3(0.66, 0.58, 0.44), sandRipple * 0.28);
-            vec3 wetSand = mix(vec3(0.44, 0.36, 0.26), vec3(0.50, 0.42, 0.31), sandRipple * 0.28);
-            vec3 submergedSand = mix(vec3(0.35, 0.30, 0.23), vec3(0.42, 0.36, 0.28), sandRipple * 0.28);
+            // Harmonious alluvial sand tones with natural ~20% moisture contrast (warm golden riverbed)
+            vec3 drySand = mix(vec3(0.54, 0.48, 0.38), vec3(0.60, 0.54, 0.44), sandRipple * 0.22);
+            vec3 wetSand = mix(vec3(0.44, 0.39, 0.31), vec3(0.50, 0.44, 0.36), sandRipple * 0.22);
+            vec3 submergedSand = mix(vec3(0.40, 0.36, 0.29), vec3(0.46, 0.41, 0.34), sandRipple * 0.22);
 
-            vec3 sandBase = mix(drySand, wetSand, clamp(shoreFactor * 0.70 + streamWet * 0.60, 0.0, 1.0));
-            sandBase = mix(sandBase, submergedSand, clamp(lakeDepthFactor * 1.25, 0.0, 1.0));
+            float wetLevel = clamp(shoreFactor * 0.85 + streamWet * 0.50, 0.0, 1.0);
+            vec3 sandBase = mix(drySand, wetSand, wetLevel);
+            sandBase = mix(sandBase, submergedSand, clamp(lakeDepthFactor * 1.20, 0.0, 1.0));
 
             // Scanned photographic micro-sediment & earth grain from texPath (macro ~0.55m)
             vec3 microSediment = textureGrad(texPath, fragWorldPos.xz * 1.85, wpDx * 1.85, wpDy * 1.85).rgb;
             sandBase *= (0.78 + 0.44 * microSediment.r) * (0.82 + 0.36 * colorDirt.rgb);
+
+            // Along the riparian beach apron, dry soil harmonizes with alluvial sand instead of dark loam
+            float beachDryMix = clamp(shoreFactor * 0.85 + riparianSandMargin * 1.4, 0.0, 1.0);
+            drySoilColor = mix(drySoilColor, drySand * (0.82 + 0.36 * colorDirt.rgb), beachDryMix);
 
             // 2. High-resolution photographic river gravel & pebble shingle (~2-5cm, scanned)
             vec2 gravelUV = tiledUV * 3.4;
@@ -511,25 +551,33 @@ void main()
             float gravelHighlight = smoothstep(0.46, 0.74, pebbleLuma);
             float pebbleCrevice = 1.0 - smoothstep(0.28, 0.46, pebbleLuma);
 
-            vec3 pebbleMineral = mix(vec3(0.36, 0.35, 0.33), vec3(0.56, 0.52, 0.45), gravelHighlight);
-            pebbleMineral = mix(pebbleMineral, vec3(0.50, 0.43, 0.34), fineGravelTex.g);
+            vec3 pebbleMineral = mix(vec3(0.42, 0.40, 0.38), vec3(0.62, 0.58, 0.50), gravelHighlight);
+            pebbleMineral = mix(pebbleMineral, vec3(0.54, 0.47, 0.38), fineGravelTex.g);
 
             // Contact shadow/cavity darkening around fine gravel embedded in sand
-            float gravelAO = 1.0 - pebbleCrevice * 0.28 * shingleBar;
+            float gravelAO = 1.0 - pebbleCrevice * 0.22 * shingleBar;
             vec3 riverbedBed = mix(sandBase, pebbleMineral, gravelHighlight * 0.65 * shingleBar) * gravelAO;
 
             // Export high-frequency 3D micro-normal for sand ripples and river pebbles
-            if (camDistSqXZ < 400.0) {
+            if (camDistSqXZ < 625.0) {
+                // Analytical normal gradient from hydrodynamic current ripples
+                float dRipX = cos(sandPhase1) * (cos(fragWorldPos.x * 2.8) * 3.92 + 1.1) * 0.30
+                            + cos(sandPhase2) * 15.0 * 0.15;
+                float dRipZ = cos(sandPhase1) * 8.5 * 0.30
+                            - cos(sandPhase2) * 6.5 * 0.15;
+                vec2 rippleNorm = clamp(vec2(dRipX, dRipZ) * 0.040, vec2(-0.35), vec2(0.35));
+
                 vec4 gravelMat = textureGrad(texSoilMaterial, gravelUV, grDx, grDy);
                 vec2 gNorm = (gravelMat.rg * 2.0 - 1.0);
-                proceduralPebbleNormal = gNorm * (0.35 * shingleBar + 0.20) * detailResolve;
+                proceduralPebbleNormal = (gNorm * (0.35 * shingleBar + 0.18) + rippleNorm * (1.0 - shingleBar * 0.5)) * detailResolve;
             }
 
-            vec3 mossyBank = vec3(0.24, 0.30, 0.15) * (0.85 + 0.35 * dirtDetail.g);
-            float sandDominance = clamp(shoreFactor * 1.15 + streamWet * 1.35 + lakeDepthFactor * 1.8, 0.0, 1.0);
-            wetSoilColor = mix(mossyBank, riverbedBed, sandDominance);
+            // Riparian zone: clean alluvial riverbed sand & gravel (no muddy green sludge)
+            float sandDominance = clamp(shoreFactor * 1.25 + streamWet * 1.35 + lakeDepthFactor * 2.0, 0.0, 1.0);
+            vec3 bankFringeHumus = mix(vec3(0.32, 0.28, 0.22), vec3(0.42, 0.36, 0.28), dirtDetail.g) * (0.88 + 0.28 * colorDirt.rgb);
+            wetSoilColor = mix(bankFringeHumus, riverbedBed, smoothstep(0.08, 0.45, sandDominance));
         } else {
-            vec3 mossyBank = vec3(0.22, 0.28, 0.14) * (0.85 + 0.35 * dirtDetail.g);
+            vec3 mossyBank = vec3(0.28, 0.26, 0.20) * (0.85 + 0.35 * dirtDetail.g);
             wetSoilColor = mossyBank;
         }
 
@@ -541,8 +589,10 @@ void main()
                        + pathMarginColor * wPath;
     }
 
-    float wetCapillaryDarken = smoothstep(0.15, 0.85, wWetSoil) * (1.0 - isRiparian * 0.75) * 0.20;
-    blendedAlbedo *= (1.0 - wetCapillaryDarken);
+    // Natural capillary dampening (gentle ~6% darkening, perfectly smooth without harsh dark band)
+    float riparianSaturation = clamp(shoreFactor * 0.85 + lakeDepthFactor * 1.0, 0.0, 1.0);
+    float wetCapillaryDarken = riparianSaturation * 0.06;
+    blendedAlbedo *= (1.0 - clamp(wetCapillaryDarken, 0.0, 0.10));
 
     if (u_groundDebrisEnabled != 0 && camDistSqXZ < 1024.0) {
         float debrisDistFade = 1.0 - smoothstep(576.0, 1024.0, camDistSqXZ);
@@ -600,6 +650,9 @@ void main()
     float microStrength = mix(0.26, 0.52, max(soilWeight, wCliff)) * puddleFlatten * (0.45 + 0.55 * detailResolve);
     vec3 nRaw = geomNormal * (0.66 + 0.34 * microNormal.z)
               + (tangent * microNormal.x + bitangent * microNormal.y) * microStrength;
+    if (isRiparian > 0.01) {
+        nRaw += (tangent * proceduralPebbleNormal.x + bitangent * proceduralPebbleNormal.y) * (isRiparian * 0.70 * puddleFlatten);
+    }
     if (wCliff > 0.01) {
         float cliffBlend = smoothstep(0.04, 0.40, wCliff);
         nRaw = mix(nRaw, cliffTriNormal, cliffBlend * (0.65 + 0.35 * detailResolve));
@@ -609,8 +662,13 @@ void main()
     float roughness = mix(grassMaterial.a, soilMaterial.a, soilWeight);
     roughness = mix(roughness, 0.78, (wDrySoil + wPath) * 0.80);
     roughness = mix(roughness, clamp(0.72 + cliffRoughnessMod, 0.45, 0.92), wCliff * 0.85);
-    roughness = mix(roughness, 0.36, wWetSoil * isRiparian * 0.75);
-    roughness = clamp(roughness + (1.0 - detailResolve) * 0.25, 0.20, 0.98);
+    // Continuous wet-to-dry roughness gradient:
+    // - Waterline saturation: smooth liquid sheen (0.24)
+    // - Capillary damp sand: velvety moist surface (0.48)
+    // - Dry sand / loam: matte (0.78)
+    float riparianRoughness = mix(0.78, 0.24, smoothstep(0.12, 0.92, shoreFactor));
+    roughness = mix(roughness, riparianRoughness, isRiparian * 0.85);
+    roughness = clamp(roughness, 0.22, 0.98);
 
     // [TỐI ƯU VISUAL]: Nới nhẹ canopyContactAO (0.64 -> 0.76) để mặt đất giữa các bụi cỏ
     // có chiều sâu tự nhiên mà không bị bết đen.
@@ -620,12 +678,12 @@ void main()
     float cavityAO = mix(0.86 + 0.14 * fineGrassLuma,
                          0.72 + 0.28 * pebbleRelief, soilWeight) * reliefShadow * cliffCreviceAO * canopyContactAO;
 
-    // ---- 11. Physically Based Lighting & Soft Grass Shadows ----
+    // ---- 11. Physically Based Lighting & Soft Grass/Soil Shadows ----
     float rawNdotL = dot(normal, light);
-    float NdotL = max(rawNdotL, 0.0);
-    float grassWrapNdotL = max((rawNdotL + 0.38) * (1.0 / 1.38), 0.0);
+    float soilWrapNdotL = max((rawNdotL + 0.34) * (1.0 / 1.34), 0.0);
+    float grassWrapNdotL = max((rawNdotL + 0.40) * (1.0 / 1.40), 0.0);
     float horizonEnvelope = smoothstep(0.02, 0.38, max(light.y, 0.0)) * 0.66 + 0.34;
-    float effectiveNdotL = mix(NdotL, grassWrapNdotL * horizonEnvelope, wGrass * 0.72) * (0.85 + 0.15 * cavityAO);
+    float effectiveNdotL = mix(soilWrapNdotL * horizonEnvelope, grassWrapNdotL * horizonEnvelope, wGrass * 0.72) * (0.85 + 0.15 * cavityAO);
 
     float dynShadowCoverage;
     float rawShadow = MapShadowVisibilityCovLS(v_lightSpace, v_staticLightSpace, normal, light, dynShadowCoverage);
@@ -667,10 +725,11 @@ void main()
     float drySpec = mix(h8, h24, smoothness) * smoothness * 0.022;
     groundLit += actualLight * drySpec * sunVisibility;
 
-    // ---- 12. Capillary Wetness Mechanics (Loại bỏ pow(NdotH, 64.0) đắt đỏ) ----
-    if (wWetSoil > 0.05 && lakeDepthFactor < 0.35) {
-        float waterlineBand = smoothstep(0.05, 0.55, wWetSoil) * (1.0 - smoothstep(0.08, 0.35, lakeDepthFactor));
-        waterlineBand = max(waterlineBand, smoothstep(0.12, 0.85, shoreFactor) * 0.90);
+    // ---- 12. Capillary Wetness Mechanics (Tight meniscus waterline contact sheen) ----
+    if ((wWetSoil > 0.05 || isRiparian > 0.05) && lakeDepthFactor < 0.40) {
+        // Wet glistening meniscus only in immediate contact with water (-0.05m to +0.22m)
+        float waterlineBand = (1.0 - smoothstep(0.0, 0.25, abs(smoothSignedShore - 0.02)))
+                            * (1.0 - smoothstep(0.04, 0.35, lakeDepthFactor));
         float oneMinusNdotV = 1.0 - max(dot(normal, viewDir), 0.0);
         float om2 = oneMinusNdotV * oneMinusNdotV;
         float fresnelWet = 0.04 + 0.96 * (om2 * om2 * oneMinusNdotV);
@@ -678,10 +737,10 @@ void main()
         // Tái sử dụng h8 để tính NdotH^64 chỉ với 3 phép nhân thay vì gọi pow()
         float h16 = h8 * h8;
         float h32 = h16 * h16;
-        float wetSpecSharp = (h32 * h32) * 0.52;
-        float wetSpecBroad = h24 * 0.28;
-        vec3 wetSheen = actualLight * (wetSpecSharp + wetSpecBroad * detailResolve) * (0.32 + fresnelWet * 0.68);
-        vec3 skySheen = actualAmbient * (fresnelWet * 0.28) * cavityAO;
+        float wetSpecSharp = (h32 * h32) * 0.75; // Crisp sun reflection diamond on wet sand
+        float wetSpecBroad = h24 * 0.35;
+        vec3 wetSheen = actualLight * (wetSpecSharp + wetSpecBroad * detailResolve) * (0.35 + fresnelWet * 0.65);
+        vec3 skySheen = actualAmbient * (fresnelWet * 0.38) * cavityAO;
         groundLit += (wetSheen * sunVisibility + skySheen) * waterlineBand;
     }
 
@@ -703,12 +762,12 @@ void main()
     }
 
     // Soft atmospheric cloud sea dissolution at the submerged base of the island
-    if (fragWorldPos.y < -2.40) {
-        float cloudImmersion = smoothstep(-2.40, -5.20, fragWorldPos.y);
-        vec3 cloudBaseTone = mix(vec3(0.62, 0.68, 0.78), vec3(0.96, 0.94, 0.88), max(light.y, 0.0));
-        vec3 cloudHazeLight = actualAmbient * 1.45 + actualLight * (0.35 + 0.65 * max(light.y, 0.0));
+    if (fragWorldPos.y < -1.80) {
+        float cloudImmersion = smoothstep(-1.80, -4.80, fragWorldPos.y);
+        vec3 cloudBaseTone = mix(vec3(0.56, 0.62, 0.72), vec3(0.95, 0.92, 0.86), 0.55);
+        vec3 cloudHazeLight = actualAmbient * 0.85 + actualLight * (0.42 * max(light.y + 0.35, 0.25));
         vec3 cloudHazeTarget = cloudBaseTone * cloudHazeLight;
-        groundLit = mix(groundLit, cloudHazeTarget, cloudImmersion * 0.85);
+        groundLit = mix(groundLit, cloudHazeTarget, cloudImmersion * 0.92);
     }
 
     finalColor = vec4(groundLit, 1.0);

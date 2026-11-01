@@ -128,39 +128,51 @@ void main() {
     rockAlbedo = mix(rockAlbedo, skirtMossAlbedo, skirtMask * 0.72);
 
     // Deep soil capillary moisture & contact ambient occlusion at base
-    float skirtContact = (1.0 - smoothstep(-0.50, -0.05, fragLocalY)) * (1.0 - isRiverStone * 0.50);
+    float skirtContact = (isRiverStone > 0.5)
+        ? 0.0
+        : (1.0 - smoothstep(-0.50, -0.05, fragLocalY));
     rockAlbedo *= mix(1.0, 0.62, skirtContact * 0.55);
 
     // River stone & shoreline wetness darkening at water level
-    // [SPIR-V FIX]: Sửa lỗi smoothstep(0.35, -0.05, worldPosition.y) (undefined behavior khi edge0 > edge1)
-    // thành (1.0 - smoothstep(-0.05, 0.35, worldPosition.y))
-    float waterDamp = (1.0 - smoothstep(-0.05, 0.35, worldPosition.y))
-                    * (1.0 - smoothstep(-0.85, -0.30, worldPosition.y));
-    rockAlbedo *= mix(1.0, 0.88, waterDamp * 0.35);
+    // Lake water level dampness (near Y = 0.0m)
+    float lakeWaterDamp = (1.0 - smoothstep(-0.05, 0.35, worldPosition.y))
+                        * (1.0 - smoothstep(-0.85, -0.30, worldPosition.y));
+    rockAlbedo *= mix(1.0, 0.78, lakeWaterDamp * 0.45);
 
     albedo.rgb = rockAlbedo;
     roughness = mix(roughness, 0.86, max(topMossMask, skirtMask) * 0.78);
-    // River stones have natural matte velvety freshwater wetness (roughness ~0.52, NOT mirror glass)
-    roughness = mix(roughness, 0.52, max(waterDamp * 0.50, isRiverStone * 0.65));
+    // River stones have authentic water-worn smoothness (roughness ~0.28)
+    // Lake shoreline rocks get water sheen when submerged
+    roughness = mix(roughness, 0.28, isRiverStone);
+    roughness = mix(roughness, 0.20, lakeWaterDamp * 0.75);
 
     // Preserve lateral facet contrast even when the sun is near zenith (12:00 Noon)
     vec3 rawModelL = lightDir + vec3(0.32, -0.18, -0.26) * max(worldLightDir.y - 0.50, 0.0);
     vec3 modelLightDir = rawModelL * inversesqrt(max(dot(rawModelL, rawModelL), 1e-8));
     float diff = calcDiffuse(normal, modelLightDir, 0.0);
-    float shininess    = mix(24.0, 8.0, roughness);
-    float specStrength = mix(0.03, 0.10, 1.0 - roughness);
-    specStrength = mix(specStrength, 0.08, max(waterDamp * 0.40, isRiverStone * 0.50));
+    float shininess    = mix(32.0, 8.0, roughness);
+    float specStrength = mix(0.03, 0.12, 1.0 - roughness);
+    specStrength = mix(specStrength, 0.16, max(lakeWaterDamp * 0.60, isRiverStone * 0.65));
     float spec = calcSpecular(normal, modelLightDir, viewDir, shininess) * specStrength;
 
     float shadow = MapShadowVisibility(fragPosition, normal, lightDir);
+    if (isRiverStone > 0.5) {
+        // River stones in open stream receive crisp sun glint & ambient bounce without self-shadow acne
+        shadow = max(shadow, 0.72);
+    }
     if (shadow > 0.001) {
         shadow *= Environment_CloudVisibility(u_cloudNoise, worldPosition);
     }
 
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient);
+    if (isRiverStone > 0.5) {
+        // Stream bounce & upward water irradiance fills pebble shadows with radiant clarity
+        vec3 streamBounce = actualAmbient * 1.55 + actualLight * 0.18;
+        ambient = mix(ambient, streamBounce, 0.45);
+    }
     float groundAO = clamp(0.76 + worldPosition.y * 0.30, 0.72, 1.0);
     float skirtAO = (isRiverStone > 0.5)
-        ? clamp(0.72 + 0.28 * smoothstep(-0.65, -0.15, fragLocalY), 0.70, 1.0)
+        ? 1.0
         : clamp(0.30 + 0.70 * smoothstep(-0.45, 0.18, fragLocalY), 0.28, 1.0);
     vec3 lit = albedo.rgb * (ambient * groundAO * skirtAO + diff * actualLight * shadow)
              + spec * actualLight * shadow;

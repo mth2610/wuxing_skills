@@ -60,9 +60,13 @@ void main()
             effectiveFlow = vec2(0.14, 0.22);
         }
         vec2 pFlow = world.xz - effectiveFlow * mod(u_time * 0.45, 4096.0);
-        float w0 = sin(dot(pFlow, vec2(0.82, 0.57)) * u_waveScale + t);
-        float w1 = sin(dot(pFlow, vec2(-0.31, 0.95)) * (u_waveScale * 1.73) - t * 1.31);
-        float dispY = (w0 * 0.60 + w1 * 0.40) * u_waveHeight * shoreFade;
+        // Non-linear domain warp breaks parallel sinusoidal stripes into natural stream eddies
+        vec2 warp = vec2(sin(pFlow.y * 0.55 + t * 0.35), cos(pFlow.x * 0.55 - t * 0.28)) * 0.45;
+        vec2 pw = pFlow + warp;
+        float w0 = sin(dot(pw, vec2(0.707, 0.707)) * u_waveScale + t);
+        float w1 = sin(dot(pw, vec2(-0.612, 0.791)) * (u_waveScale * 1.58) - t * 1.25);
+        float w2 = sin(dot(pw, vec2(0.866, -0.500)) * (u_waveScale * 2.14) + t * 0.85);
+        float dispY = (w0 * 0.45 + w1 * 0.35 + w2 * 0.20) * u_waveHeight * shoreFade;
         local.y += dispY;
         world.y += dispY;
     }

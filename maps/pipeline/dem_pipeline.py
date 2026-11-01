@@ -261,28 +261,67 @@ def write_water_mesh(path, ground, surface, sx, sz):
     OBJ vertices are world-space. Shore intersections have exactly zero depth.
     """
     h,w=ground.shape
+    tris=[]
+    for r in range(h-1):
+        for c in range(w-1):
+            nodes=[(r,c),(r+1,c),(r,c+1),(r+1,c+1)]
+            verts=[np.array([x*sx,surface[y,x],y*sz,surface[y,x]-ground[y,x]],dtype=np.float64) for y,x in nodes]
+            for ids in ((0,1,2),(2,1,3)):
+                polygon=[]
+                for a,b in zip(ids,(ids[1],ids[2],ids[0])):
+                    va,vb=verts[a],verts[b]
+                    if va[3]>0: polygon.append(va.copy())
+                    if (va[3]>0)!=(vb[3]>0):
+                        t=va[3]/(va[3]-vb[3])
+                        v=va+(vb-va)*t; v[3]=0.0
+                        polygon.append(v)
+                for i in range(1,len(polygon)-1):
+                    tris.append((polygon[0].copy(),polygon[i].copy(),polygon[i+1].copy()))
+
+    # Tangential contour fairing for large terrain meshes (smooths 1m cell diagonal kinks along shore)
+    if len(tris)>32 and h>=16 and w>=16:
+        quant=lambda v:(int(round(v[0]*1000.0)),int(round(v[2]*1000.0)))
+        pos_map={}
+        shore_adj={}
+        for t in tris:
+            keys=[quant(v) for v in t]
+            for v,k in zip(t,keys):
+                if k not in pos_map: pos_map[k]=v.copy()
+            for i in range(3):
+                j=(i+1)%3
+                if t[i][3]==0.0 and t[j][3]==0.0 and keys[i]!=keys[j]:
+                    shore_adj.setdefault(keys[i],set()).add(keys[j])
+                    shore_adj.setdefault(keys[j],set()).add(keys[i])
+        for _ in range(3):
+            updated={}
+            for k,nbrs in shore_adj.items():
+                if len(nbrs)==2:
+                    n1,n2=tuple(nbrs)
+                    p0,p1,p2=pos_map[k],pos_map[n1],pos_map[n2]
+                    avg_x=0.5*p0[0]+0.25*(p1[0]+p2[0])
+                    avg_z=0.5*p0[2]+0.25*(p1[2]+p2[2])
+                    avg_y=0.5*p0[1]+0.25*(p1[1]+p2[1])
+                    nv=p0.copy()
+                    nv[0]=avg_x; nv[1]=avg_y; nv[2]=avg_z
+                    updated[k]=nv
+            pos_map.update(updated)
+        for t in tris:
+            for v in t:
+                if v[3]==0.0:
+                    k=quant(v)
+                    if k in pos_map:
+                        sv=pos_map[k]
+                        v[0],v[1],v[2]=sv[0],sv[1],sv[2]
+
     count=0
     with open(path,'w') as f:
         f.write('# DEM terrain water; vt.x = depth metres\n')
         f.write('vn 0.000000 1.000000 0.000000\n')
-        for r in range(h-1):
-            for c in range(w-1):
-                nodes=[(r,c),(r+1,c),(r,c+1),(r+1,c+1)]
-                verts=[np.array([x*sx,surface[y,x],y*sz,surface[y,x]-ground[y,x]]) for y,x in nodes]
-                for ids in ((0,1,2),(2,1,3)):
-                    polygon=[]
-                    for a,b in zip(ids,(ids[1],ids[2],ids[0])):
-                        va,vb=verts[a],verts[b]
-                        if va[3]>0: polygon.append(va)
-                        if (va[3]>0)!=(vb[3]>0):
-                            t=va[3]/(va[3]-vb[3])
-                            v=va+(vb-va)*t; v[3]=0
-                            polygon.append(v)
-                    for i in range(1,len(polygon)-1):
-                        for v in (polygon[0],polygon[i],polygon[i+1]):
-                            f.write(f'v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\nvt {max(0,v[3]):.6f} 0\n')
-                        f.write(f'f {count+1}/{count+1}/1 {count+2}/{count+2}/1 {count+3}/{count+3}/1\n')
-                        count+=3
+        for t in tris:
+            for v in t:
+                f.write(f'v {v[0]:.6f} {v[1]:.6f} {v[2]:.6f}\nvt {max(0.0,v[3]):.6f} 0\n')
+            f.write(f'f {count+1}/{count+1}/1 {count+2}/{count+2}/1 {count+3}/{count+3}/1\n')
+            count+=3
     return count//3
 
 
@@ -297,27 +336,58 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         raise ValueError('prefix must be a lowercase C identifier')
     if not all(np.isfinite(v) and v>0 for v in (max_dim,height_range,cliff_depth,cliff_margin,res_scale)) or not 0<stream_ratio<1:
         raise ValueError('Invalid dimensions or stream ratio')
-    raw,valid_raw,geo=read_dem(dem_path)
-    if not valid_raw.any(): raise ValueError('No valid elevations')
-    yy,xx=np.where(valid_raw)
-    crop=(slice(yy.min(),yy.max()+1),slice(xx.min(),xx.max()+1))
-    source=raw[crop]; valid_source=valid_raw[crop]
-    px,py=geo['pixel_size_m']
-    print(f'[DEM] EPSG:{geo["crs_epsg"]}, {px:g} x {py:g} m; valid footprint {geo["valid_area_m2"]/1e6:.4f} km2',flush=True)
-    # Source metrics precede artistic compression. NoData is never an elevation.
-    clean=normalized_smooth(source,valid_source,0.8)
-    gy,gx=np.gradient(clean,py,px)
-    slope=np.hypot(gx,gy)
-    slope_deg=np.degrees(np.arctan(slope))
-    aspect=np.mod(np.degrees(np.arctan2(-gx,gy)),360)
-    tpi=clean-normalized_smooth(source,valid_source,5.0)
-    curvature=np.gradient(gx,px,axis=1)+np.gradient(gy,py,axis=0)
-    source_dir,source_accum,source_filled=compute_d8_flow(source,valid_source,px,py)
-    source_basins=delineate_basins(source_dir,source_filled,valid_source)
-    main_outlet=np.unravel_index(np.argmax(source_accum),source.shape)
-    main_basin=source_basins==source_basins[main_outlet]
-    area=source_accum*px*py
-    twi=np.log(np.maximum(area/np.sqrt(px*py),1e-9)/np.maximum(slope,0.001))
+
+    cached_npz = os.path.join(out_dir, f'{prefix}_source_analysis.npz')
+    cached_manifest = os.path.join(out_dir, f'{prefix}_manifest.json')
+    if (not os.path.exists(dem_path) or str(dem_path).endswith('.npz')) and os.path.exists(cached_npz) and os.path.exists(cached_manifest):
+        with open(cached_manifest, 'r') as mf:
+            old_manifest = json.load(mf)
+        geo = dict(old_manifest['source'])
+        digest = geo.pop('sha256', '0' * 64)
+        crop_pixels = geo.pop('crop_pixels', [0, 0, 0, 0])
+        geo.pop('path', None)
+        s_npz = np.load(cached_npz)
+        valid_source = s_npz['valid'].astype(bool)
+        source = np.where(valid_source, np.nan_to_num(s_npz['elevation_m'], nan=0.0), 0.0).astype(np.float64)
+        px, py = geo['pixel_size_m']
+        print(f'[DEM] Loaded cached source analysis ({source.shape[1]}x{source.shape[0]}) from {cached_npz}', flush=True)
+        clean = normalized_smooth(source, valid_source, 0.8)
+        slope_deg = np.where(valid_source, np.nan_to_num(s_npz['slope_deg'], nan=0.0), 0.0).astype(np.float64)
+        aspect = np.where(valid_source, np.nan_to_num(s_npz['aspect_deg'], nan=0.0), 0.0).astype(np.float64)
+        tpi = np.where(valid_source, np.nan_to_num(s_npz['tpi_m'], nan=0.0), 0.0).astype(np.float64)
+        curvature = np.where(valid_source, np.nan_to_num(s_npz['curvature_per_m'], nan=0.0), 0.0).astype(np.float64)
+        twi = np.where(valid_source, np.nan_to_num(s_npz['twi'], nan=0.0), 0.0).astype(np.float64)
+        area = np.where(valid_source, np.nan_to_num(s_npz['contributing_area_m2'], nan=0.0), 0.0).astype(np.float64)
+        source_dir = s_npz['flow_direction']
+        source_basins = s_npz['basin_id']
+        main_basin = s_npz['main_catchment'].astype(bool)
+        source_accum = area / max(px * py, 1e-9)
+        main_outlet = np.unravel_index(np.argmax(source_accum), source.shape)
+        xx_min, yy_min = int(crop_pixels[0]), int(crop_pixels[1])
+    else:
+        raw,valid_raw,geo=read_dem(dem_path)
+        if not valid_raw.any(): raise ValueError('No valid elevations')
+        yy,xx=np.where(valid_raw)
+        xx_min, yy_min = int(xx.min()), int(yy.min())
+        crop=(slice(yy.min(),yy.max()+1),slice(xx.min(),xx.max()+1))
+        source=raw[crop]; valid_source=valid_raw[crop]
+        px,py=geo['pixel_size_m']
+        print(f'[DEM] EPSG:{geo["crs_epsg"]}, {px:g} x {py:g} m; valid footprint {geo["valid_area_m2"]/1e6:.4f} km2',flush=True)
+        # Source metrics precede artistic compression. NoData is never an elevation.
+        clean=normalized_smooth(source,valid_source,0.8)
+        gy,gx=np.gradient(clean,py,px)
+        slope=np.hypot(gx,gy)
+        slope_deg=np.degrees(np.arctan(slope))
+        aspect=np.mod(np.degrees(np.arctan2(-gx,gy)),360)
+        tpi=clean-normalized_smooth(source,valid_source,5.0)
+        curvature=np.gradient(gx,px,axis=1)+np.gradient(gy,py,axis=0)
+        source_dir,source_accum,source_filled=compute_d8_flow(source,valid_source,px,py)
+        source_basins=delineate_basins(source_dir,source_filled,valid_source)
+        main_outlet=np.unravel_index(np.argmax(source_accum),source.shape)
+        main_basin=source_basins==source_basins[main_outlet]
+        area=source_accum*px*py
+        twi=np.log(np.maximum(area/np.sqrt(px*py),1e-9)/np.maximum(slope,0.001))
+        with open(dem_path,'rb') as source_file: digest=hashlib.sha256(source_file.read()).hexdigest()
     lo,hi=float(source[valid_source].min()),float(source[valid_source].max())
     # Large connected low-elevation plateaus are candidates, not surveyed water.
     low=valid_source & (source<=lo+(hi-lo)*0.30)
@@ -392,27 +462,28 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         if d<0 or not valid[nr,nc] or perimeter[nr,nc]<=cliff_margin: continue
         ax,az=c*sx,r*sz; bx,bz=nc*sx,nr*sz
         half=float(np.clip(0.85+0.024*np.sqrt(accum[r,c]),0.95,2.6))
-        radius=half+max(sx,sz)*1.85
-        x0=max(0,int((min(ax,bx)-radius*1.4)/sx)); x1=min(w,int((max(ax,bx)+radius*1.4)/sx)+2)
-        z0=max(0,int((min(az,bz)-radius*1.4)/sz)); z1=min(h,int((max(az,bz)+radius*1.4)/sz)+2)
+        radius=half+max(sx,sz)*2.55
+        x0=max(0,int((min(ax,bx)-radius*1.6)/sx)); x1=min(w,int((max(ax,bx)+radius*1.6)/sx)+2)
+        z0=max(0,int((min(az,bz)-radius*1.6)/sz)); z1=min(h,int((max(az,bz)+radius*1.6)/sz)+2)
         sl=np.s_[z0:z1,x0:x1]
         t=np.clip(((X[sl]-ax)*(bx-ax)+(Z[sl]-az)*(bz-az))/max((bx-ax)**2+(bz-az)**2,1e-9),0,1)
         dist=np.hypot(X[sl]-(ax+t*(bx-ax)),Z[sl]-(az+t*(bz-az)))
         w_raw=0.5+0.5*np.cos(np.pi*np.clip(dist/radius,0,1))
-        weight=w_raw*np.sqrt(np.maximum(w_raw,0.0))
+        weight=w_raw*w_raw*(3.0-2.0*w_raw)
         corridor[sl]=np.maximum(corridor[sl],weight)
         level=conditioned[r,c]*(1-t)+conditioned[nr,nc]*t
-        # Carve a smooth U-shaped bed with convex bank interpolation across cells
-        bed=np.minimum(terrain[sl],level-0.52*weight)
+        # Carve a smooth U-shaped bed with wide C2 bank interpolation across cells
+        bed=np.minimum(terrain[sl],level-0.46*weight)
         terrain[sl]=terrain[sl]*(1.0-weight)+bed*weight
-        w_surf=np.clip((radius*1.35-dist)/max(radius*1.35,1e-6),0,1)
+        w_surf=np.clip((radius*1.85-dist)/max(radius*1.85,1e-6),0,1)
+        w_surf=w_surf*w_surf*(3.0-2.0*w_surf)
         stream_surface_num[sl]+=w_surf*(level-0.08)
         stream_surface_den[sl]+=w_surf
     has_stream_surf = stream_surface_den > 1e-4
     avg_stream_surf = np.where(has_stream_surf, stream_surface_num / np.maximum(stream_surface_den, 1e-4), surface)
     # Smooth bed & bank transitions inside wet corridors to eliminate diagonal grid facets
-    bed_smooth = normalized_smooth(terrain, valid, 1.35)
-    smooth_mask = np.clip(corridor * 0.85 + w_lake * 0.90, 0.0, 0.90)
+    bed_smooth = normalized_smooth(terrain, valid, 1.75)
+    smooth_mask = np.clip(corridor * 0.90 + w_lake * 0.92, 0.0, 0.94)
     terrain = terrain * (1.0 - smooth_mask) + bed_smooth * smooth_mask
     # Continuous water_plane field (extends smoothly onto adjacent dry banks for exact zero-depth contour clipping)
     lake_plane_w = np.clip(lake_blend * 2.2, 0.0, 1.0)
@@ -420,28 +491,28 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     water_plane = stream_plane * (1.0 - lake_plane_w) + np.maximum(stream_plane, lake_y) * lake_plane_w
     wet_corridor = valid & (perimeter > cliff_margin) & ((lake_blend > 0.01) | has_stream_surf)
     if wet_corridor.any():
-        plane_smooth = normalized_smooth(water_plane, wet_corridor, 1.65)
+        plane_smooth = normalized_smooth(water_plane, wet_corridor, 1.85)
         water_plane = np.where(wet_corridor & (lake_blend < 0.25), plane_smooth, water_plane)
-    terrain=terrain*cliff-(1-cliff)*cliff_depth
-    terrain[~valid]=-cliff_depth
-    # Quantize terrain heightfield first, then clip water_plane against quantized ground
-    total=height_range+cliff_depth
-    height_code=np.rint(np.clip((terrain+cliff_depth)/total,0,1)*65535).astype(np.uint16)
-    ground=height_code.astype(float)/65535*total-cliff_depth
-    encoded=np.rint(height_code.astype(float)/257).astype(np.uint8)
-    water_plane=np.where(valid & (perimeter>cliff_margin),water_plane,ground-0.25)
-    surface=np.where(water_plane>ground+0.005,water_plane,ground-0.12)
-    water_code=np.rint(np.clip((surface+cliff_depth)/total,0,1)*65535).astype(np.uint16)
-    surface=water_code.astype(float)/65535*total-cliff_depth
-    water_depth=np.maximum(0,water_plane-ground)
-    wet=water_depth>0.005
 
-    # Eliminate small disconnected puddle clusters (< 80 cells) on hill slopes
+    # Add natural stratified rock terrace shelves to outer cliff rim (0.05 < cliff < 0.95)
+    cliff_band = np.clip(4.0 * cliff * (1.0 - cliff), 0.0, 1.0) * valid.astype(float)
+    strata_wave = (np.sin(X * 0.16 + Z * 0.11) * 0.45 +
+                   np.cos(Z * 0.24 - X * 0.19) * 0.35 +
+                   np.sin((X + Z) * 0.42) * 0.20)
+    terrace_step = np.sin(cliff * np.pi * 4.0) * 0.38 + strata_wave * 0.42
+    terrain = terrain * cliff - (1.0 - cliff) * cliff_depth + cliff_band * terrace_step
+    terrain[~valid] = -cliff_depth
+
+    rim_water_taper = np.clip((perimeter - (cliff_margin + 1.5)) / 5.5, 0.0, 1.0)
+    water_plane = np.where(valid, water_plane * rim_water_taper + (terrain - 0.35) * (1.0 - rim_water_taper), terrain - 0.35)
+    raw_wet = (water_plane - terrain) > 0.005
+
+    # Identify main connected river/lake networks (>= 80 cells) and gently fill tiny isolated slope puddles
     visited_wet = np.zeros((h, w), dtype=bool)
     clean_wet = np.zeros((h, w), dtype=bool)
     for r in range(h):
         for c in range(w):
-            if wet[r, c] and not visited_wet[r, c]:
+            if raw_wet[r, c] and not visited_wet[r, c]:
                 comp = []
                 q = [(r, c)]
                 visited_wet[r, c] = True
@@ -449,22 +520,41 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
                     comp.append((y, x))
                     for dy, dx in ((-1,0),(1,0),(0,-1),(0,1),(-1,-1),(-1,1),(1,-1),(1,1)):
                         ny, nx = y + dy, x + dx
-                        if 0 <= ny < h and 0 <= nx < w and wet[ny, nx] and not visited_wet[ny, nx]:
+                        if 0 <= ny < h and 0 <= nx < w and raw_wet[ny, nx] and not visited_wet[ny, nx]:
                             visited_wet[ny, nx] = True
                             q.append((ny, nx))
                 if len(comp) >= 80:
                     for y, x in comp:
                         clean_wet[y, x] = True
-    wet = clean_wet
+
+    puddle_mask = raw_wet & ~clean_wet
+    if puddle_mask.any():
+        puddle_deficit = np.where(puddle_mask, np.maximum(0.0, water_plane - terrain + 0.06), 0.0)
+        terrain += gaussian_filter_2d(puddle_deficit, 1.4)
+        water_plane -= gaussian_filter_2d(puddle_deficit, 1.4) * 0.5
+
+    # Quantize terrain heightfield first, then preserve continuous water_plane across shoreline
+    total=height_range+cliff_depth
+    height_code=np.rint(np.clip((terrain+cliff_depth)/total,0,1)*65535).astype(np.uint16)
+    ground=height_code.astype(float)/65535*total-cliff_depth
+    encoded=np.rint(height_code.astype(float)/257).astype(np.uint8)
+
+    # Diffuse water_plane smoothly onto adjacent dry banks without discontinuous -0.25m step jumps
+    near_wet = gaussian_filter_2d(clean_wet.astype(float), 2.5) > 0.01
+    smooth_ext_plane = normalized_smooth(water_plane, clean_wet | wet_corridor, 2.0)
+    water_plane = np.where(clean_wet, water_plane,
+                           np.where(near_wet, np.minimum(smooth_ext_plane, ground - 0.002), ground - 0.25))
+    water_plane = np.where(valid, water_plane * rim_water_taper + (ground - 0.35) * (1.0 - rim_water_taper), ground - 0.35)
+
+    water_depth = np.maximum(0.0, water_plane - ground)
+    wet = clean_wet & (water_depth > 0.002)
     water_depth = np.where(wet, water_depth, 0.0)
-    water_plane = np.where(wet, water_plane, ground - 0.25)
-    surface = np.where(wet, water_plane, ground - 0.12)
+
+    # Encode continuous water_plane into water_height.png so C-side bilinear sampling has zero 1m step jumps
+    surface = water_plane
     water_code = np.rint(np.clip((surface + cliff_depth) / total, 0, 1) * 65535).astype(np.uint16)
     surface = water_code.astype(float) / 65535 * total - cliff_depth
 
-    moisture=np.clip((sample(twi)-6)/8,0,1)
-    shore=gaussian_filter_2d(wet.astype(float),max(0.7,2/min(sx,sz)))
-    moisture=np.maximum(moisture,shore)
     slope_s = sample(slope_deg)
     tpi_s = sample(tpi)
     twi_s = sample(twi)
@@ -475,54 +565,80 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     rock = np.maximum(np.maximum(rock_slope, rock_ridge), 1.0 - cliff)
     rock[water_depth > 0.01] = 0.0
 
-    wet = water_depth > 0.005
     moisture = np.clip((twi_s - 5.5) / 8.0, 0.0, 1.0)
-    shore = gaussian_filter_2d(wet.astype(float), max(0.7, 2.0 / min(sx, sz)))
+    shore = gaussian_filter_2d(wet.astype(float), max(1.1, 2.2 / min(sx, sz)))
     moisture = np.maximum(moisture, shore)
     depositional = np.clip(-tpi_s / 25.0, 0.0, 1.0) * moisture
     growth = np.clip(0.45 + 0.55 * moisture, 0.0, 1.0) * (1.0 - rock)
 
-    # Lush valley & hillside meadow coverage
+    # 2x Super-Resolved Continuous Shoreline & Ecology Maps (eliminates 1m grid staircase on riverbanks)
+    h2, w2 = h * 2 - 1, w * 2 - 1
+    sx2, sz2 = width / (w2 - 1), depth / (h2 - 1)
+    up2 = lambda a: resample_grid(a.astype(np.float64), h2, w2)
+    valid2 = up2(valid.astype(float)) > 0.5
+    ground2 = gaussian_filter_2d(up2(ground), 0.85)
+    water_plane2 = gaussian_filter_2d(up2(water_plane), 1.15)
+    elev_diff2 = ground2 - water_plane2
+    wet2 = valid2 & (elev_diff2 < -0.002)
+    raw_dist2 = distance_inside(~wet2, sx2, sz2) - distance_inside(wet2, sx2, sz2)
+    gy2, gx2 = np.gradient(elev_diff2, sz2, sx2)
+    grad2 = np.maximum(np.hypot(gx2, gy2), 0.10)
+    subpixel_zero2 = np.clip(elev_diff2 / grad2, -1.6, 1.6)
+    near_zero_w2 = np.exp(-0.5 * (raw_dist2 / 1.15) ** 2)
+    signed_shore2 = gaussian_filter_2d(raw_dist2 * (1.0 - near_zero_w2) + subpixel_zero2 * near_zero_w2, 1.65)
+    signed_shore = resample_grid(signed_shore2, h, w)
+
+    # Smooth continuous riparian wetness from signed_shore2 (zero binary 1m cell blocks)
+    shore2 = np.clip(1.0 - (signed_shore2 + 0.35) / 2.65, 0.0, 1.0)
+    shore2 = shore2 * shore2 * (3.0 - 2.0 * shore2)
+    wet_smooth2 = np.clip(1.0 - (signed_shore2 + 0.10) / 0.85, 0.0, 1.0)
+    wet_smooth2 = wet_smooth2 * wet_smooth2 * (3.0 - 2.0 * wet_smooth2)
+
+    rock2 = np.clip(up2(rock), 0.0, 1.0)
+    slope2 = up2(slope_s)
+    tpi2 = up2(tpi_s)
+    moisture2 = np.maximum(up2(moisture), shore2)
+    depositional2 = np.clip(-tpi2 / 25.0, 0.0, 1.0) * moisture2
+    growth2 = np.clip(0.45 + 0.55 * moisture2, 0.0, 1.0) * (1.0 - rock2)
+    valley_boost2 = np.clip((18.0 - slope2) / 18.0, 0.0, 1.0) * np.clip((12.0 - ground2) / 12.0, 0.0, 1.0)
+    coverage2 = np.clip((1.0 - rock2 * 0.85) * (1.0 - wet_smooth2) * (0.76 + 0.24 * growth2 + 0.22 * valley_boost2), 0.0, 1.0)
+    coverage2[~valid2] = 0.0
+    soil2 = np.clip((1.0 - coverage2) * (1.0 - rock2) * (1.0 - wet_smooth2) * 1.15, 0.0, 1.0)
+    wet_mud2 = np.clip(np.maximum(shore2 * 0.78, wet_smooth2), 0.0, 1.0)
+
+    leaf_litter2 = np.clip(growth2 * 0.65 + depositional2 * 0.50, 0.0, 1.0) * np.clip((16.0 - slope2) / 16.0, 0.0, 1.0) * np.clip(1.0 - shore2 * 1.8, 0.0, 1.0) * (1.0 - wet_smooth2) * (1.0 - rock2 * 0.8)
+    scree_gravel2 = np.clip((slope2 - 10.0) / 12.0, 0.0, 1.0) * np.clip((28.0 - slope2) / 12.0, 0.0, 1.0) * (0.35 + 0.65 * rock2)
+    scree_gravel2 = np.maximum(scree_gravel2, np.clip(rock2 * (1.0 - wet_smooth2), 0.0, 1.0) * 0.70)
+    scree_gravel2 = np.maximum(scree_gravel2, np.clip(shore2 * (1.0 - wet_smooth2) * 0.85, 0.0, 1.0))
+    twigs2 = np.clip(growth2 * 0.55 * (1.0 - slope2 / 20.0), 0.0, 1.0) * (1.0 - wet_smooth2)
+    moss2 = np.clip(moisture2 * 0.90 * (0.45 + 0.55 * rock2), 0.0, 1.0) * (1.0 - wet_smooth2)
+    flowers2 = np.clip(coverage2 * (1.0 - moisture2 * 0.6) * (1.0 - slope2 / 18.0) * np.clip((tpi2 + 5.0) / 10.0, 0.0, 1.0), 0.0, 1.0)
+
+    splat2 = np.stack((coverage2, rock2, flowers2, shore2), axis=-1)
+    splat2[~valid2] = (0, 1, 0, 0)
+    habitat2 = np.stack((coverage2, growth2, moisture2, 1.0 - moisture2), axis=-1)
+    habitat2[~valid2] = 0.0
+    debris_map2 = np.stack((leaf_litter2, scree_gravel2, twigs2, moss2), axis=-1)
+    debris_map2[~valid2] = 0
+    ground_material2 = np.stack((coverage2, soil2, wet_mud2, rock2), axis=-1)
+    ground_material2[~valid2] = (0, 0, 0, 1)
+
+    sunny2 = np.clip(tpi2 / 15.0 + 0.5, 0.0, 1.0)
+    r_tint2 = np.clip(0.32 + 0.30 * sunny2 + 0.16 * soil2 + 0.12 * rock2, 0.0, 1.0)
+    g_tint2 = np.clip(0.46 + 0.45 * coverage2 * (1.0 - rock2 * 0.6) + 0.15 * moss2, 0.0, 1.0)
+    b_tint2 = np.clip(0.24 + 0.22 * rock2 + 0.28 * wet_mud2, 0.0, 1.0)
+    tint_map2 = np.stack((r_tint2, g_tint2, b_tint2), axis=-1)
+    tint_map2[~valid2] = (0.3, 0.3, 0.3)
+
+    # 1x arrays for CPU debris/flora placement extraction
     valley_boost = np.clip((18.0 - slope_s) / 18.0, 0.0, 1.0) * np.clip((12.0 - ground) / 12.0, 0.0, 1.0)
     coverage = np.clip((1.0 - rock * 0.85) * (1.0 - wet) * (0.76 + 0.24 * growth + 0.22 * valley_boost), 0.0, 1.0)
     coverage[~valid] = 0.0
-
-    # Bare dirt / soil substrate along margins and transitions
-    soil = np.clip((1.0 - coverage) * (1.0 - rock) * (1.0 - wet.astype(float)) * 1.15, 0.0, 1.0)
-    wet_mud = np.clip(np.maximum(shore * 0.75, wet.astype(float)), 0.0, 1.0)
-
-    # Debris Layers:
-    # 1. Leaf Litter (R): sheltered swales, under growth canopy, gentle ground (excluded near shoreline so shore isn't rusty red)
     leaf_litter = np.clip(growth * 0.65 + depositional * 0.50, 0.0, 1.0) * np.clip((16.0 - slope_s) / 16.0, 0.0, 1.0) * np.clip(1.0 - shore * 1.8, 0.0, 1.0) * (1.0 - wet.astype(float)) * (1.0 - rock * 0.8)
-    # 2. Scree Gravel & River Shingle (G): talus zones below cliffs + natural pebble shingle along stream/lake shores
     scree_gravel = np.clip((slope_s - 10.0) / 12.0, 0.0, 1.0) * np.clip((28.0 - slope_s) / 12.0, 0.0, 1.0) * (0.35 + 0.65 * rock)
     scree_gravel = np.maximum(scree_gravel, np.clip(rock * (1.0 - wet.astype(float)), 0.0, 1.0) * 0.70)
     scree_gravel = np.maximum(scree_gravel, np.clip(shore * (1.0 - wet.astype(float)) * 0.85, 0.0, 1.0))
-    # 3. Fallen Twigs & Wood (B): woodland margins
     twigs = np.clip(growth * 0.55 * (1.0 - slope_s / 20.0), 0.0, 1.0) * (1.0 - wet.astype(float))
-    # 4. Moss & Lichen (A): moist shady swales, damp rock crevices, lush riverbanks
-    moss = np.clip(moisture * 0.90 * (0.45 + 0.55 * rock), 0.0, 1.0) * (1.0 - wet.astype(float))
-
-    # Wildflowers in sunny gentle knolls
-    flowers = np.clip(coverage * (1.0 - moisture * 0.6) * (1.0 - slope_s / 18.0) * np.clip((tpi_s + 5.0) / 10.0, 0.0, 1.0), 0.0, 1.0)
-    splat = np.stack((coverage, rock, flowers, np.maximum(shore, wet)), axis=-1)
-    splat[~valid] = (0, 1, 0, 0)
-    habitat = np.stack((coverage, growth, moisture, 1.0 - moisture), axis=-1)
-    habitat[~valid] = 0.0
-
-    debris_map = np.stack((leaf_litter, scree_gravel, twigs, moss), axis=-1)
-    debris_map[~valid] = 0
-
-    ground_material = np.stack((coverage, soil, wet_mud, rock), axis=-1)
-    ground_material[~valid] = (0, 0, 0, 255)
-
-    # Macro ground color tint (RGB)
-    sunny = np.clip(tpi_s / 15.0 + 0.5, 0.0, 1.0)
-    r_tint = np.clip(0.32 + 0.30 * sunny + 0.16 * soil + 0.12 * rock, 0.0, 1.0)
-    g_tint = np.clip(0.46 + 0.45 * coverage * (1.0 - rock * 0.6) + 0.15 * moss, 0.0, 1.0)
-    b_tint = np.clip(0.24 + 0.22 * rock + 0.28 * wet_mud, 0.0, 1.0)
-    tint_map = np.stack((r_tint, g_tint, b_tint), axis=-1)
-    tint_map[~valid] = (0.3, 0.3, 0.3)
 
     # Classification is morphological, not rock type or species observation.
     landform=np.where(sample(tpi)<-8,1,np.where(sample(tpi)>8,3,2)).astype(np.uint8)
@@ -533,11 +649,11 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     write_png(path('island_heightmap.png'),encoded)
     height_rgba=np.stack((height_code>>8,height_code&255,np.zeros_like(height_code),np.full_like(height_code,255)),axis=-1)
     write_png(path('heightfield.png'),height_rgba,6)
-    write_png(path('ecology_splat.png'),np.rint(splat*255),6)
-    write_png(path('ground_material.png'),np.rint(ground_material*255),6)
-    write_png(path('debris_map.png'),np.rint(debris_map*255),6)
-    write_png(path('ground_tint.png'),np.rint(tint_map*255),2)
-    write_png(path('habitat.png'),np.rint(habitat*255),6)
+    write_png(path('ecology_splat.png'),np.rint(splat2*255),6)
+    write_png(path('ground_material.png'),np.rint(ground_material2*255),6)
+    write_png(path('debris_map.png'),np.rint(debris_map2*255),6)
+    write_png(path('ground_tint.png'),np.rint(tint_map2*255),2)
+    write_png(path('habitat.png'),np.rint(habitat2*255),6)
     write_png(path('stream_mask.png'),streams.astype(np.uint8)*255)
     write_png(path('main_catchment_mask.png'),(sample(main_basin.astype(float))>0.5).astype(np.uint8)*255)
     write_png(path('lake_mask.png'),lake.astype(np.uint8)*255)
@@ -545,13 +661,14 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     write_png(path('substrate_proxy.png'),np.stack((rock,depositional,moisture),axis=-1)*255,2)
     write_png(path('terrain_metrics.png'),np.stack((np.clip(sample(slope_deg)/60,0,1),
         np.clip((sample(twi)-4)/12,0,1),np.clip(sample(tpi)/100+0.5,0,1)),axis=-1)*255,2)
-    water_rgba=np.stack((water_code>>8,water_code&255,wet*255,lake*255),axis=-1).astype(np.uint8)
+    # Include 4m riparian moisture envelope in B channel so C-side water height sampling never jumps across 1m cells
+    riparian_b = np.rint(np.clip(gaussian_filter_2d(wet.astype(float), 2.8) * 3.5, 0.0, 1.0) * 255).astype(np.uint8)
+    water_rgba=np.stack((water_code>>8,water_code&255,riparian_b,lake*255),axis=-1).astype(np.uint8)
     write_png(path('water_height.png'),water_rgba,6)
-    # Road distance is +16 m (no authored road); shore signed distance is metres.
-    signed_shore=distance_inside(~wet,sx,sz)-distance_inside(wet,sx,sz)
-    shore_code=np.rint((np.clip(signed_shore/16,-1,1)*0.5+0.5)*65535).astype(np.uint16)
-    distance=np.stack((np.full_like(shore_code,255),np.full_like(shore_code,255),shore_code>>8,shore_code&255),axis=-1)
-    write_png(path('habitat_distance.png'),distance,6)
+    # Road distance is +16 m (no authored road); shore signed distance is metres (2x super-resolved).
+    shore_code2=np.rint((np.clip(signed_shore2/16,-1,1)*0.5+0.5)*65535).astype(np.uint16)
+    distance2=np.stack((np.full_like(shore_code2,255),np.full_like(shore_code2,255),shore_code2>>8,shore_code2&255),axis=-1)
+    write_png(path('habitat_distance.png'),distance2,6)
     triangles=write_water_mesh(path('water.obj'),ground,water_plane,sx,sz)
     fields=dict(valid=valid,source_elevation_m=sample(clean).astype('f4'),slope_deg=sample(slope_deg).astype('f4'),
                 aspect_deg=np.mod(np.degrees(np.arctan2(sample(np.sin(np.radians(aspect))),
@@ -576,22 +693,8 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     rz=float((lys.max()-lys.min()+1)*sz/2) if lys.size else 0.0
 
     # Geomorphological rock and flora feature extraction
-    # Restrict large ridge crags strictly to outer perimeter cliffs so interior meadow hills stay clean
-    max_g = max(float(ground[valid].max()), 1e-4) if valid.any() else 1.0
-    crag_score = np.where(valid & (perimeter > cliff_margin + 1) & (perimeter < cliff_margin + 16) &
-                          (water_depth < 0.01) & (ground > 3.2) & (slope_s > 16.0),
-                          (ground / max_g) * 0.65 + np.clip((slope_s - 16.0) / 24.0, 0, 1) * 0.35, 0.0)
-    crags = []
-    for idx in np.argsort(-crag_score.ravel()):
-        r, c = divmod(int(idx), w)
-        if crag_score[r, c] <= 0.30: break
-        x, z = float(c * sx), float(r * sz)
-        if all(np.hypot(x - cx, z - cz) >= 24.0 for cx, cz, cy in crags):
-            crags.append((x, z, float(ground[r, c])))
-            if len(crags) >= 8: break
-
-    # Place boulders strictly along rocky banks, shoreline benches, and cliff toes (never on open grass hilltops)
-    talus_score = np.where(valid & (perimeter > cliff_margin + 3) & (water_depth < 0.01) & (ground > -1.5) & (ground < 3.4) &
+    # Place low-profile weathered granite boulders strictly along rocky banks, shoreline benches, and interior toes
+    talus_score = np.where(valid & (perimeter > cliff_margin + 7.0) & (water_depth < 0.01) & (ground > -0.8) & (ground < 3.4) &
                            (((shore > 0.14) & (shore < 0.65)) | ((slope_s > 12.0) & (slope_s < 24.0) & (tpi_s < -2.0))),
                            shore * 0.70 + np.clip((24.0 - slope_s) / 15.0, 0, 1) * 0.30, 0.0)
     boulders = []
@@ -601,7 +704,7 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         x, z = float(c * sx), float(r * sz)
         if all(np.hypot(x - cx, z - cz) >= 18.0 for cx, cz, cy in boulders):
             boulders.append((x, z, float(ground[r, c])))
-            if len(boulders) >= 10: break
+            if len(boulders) >= 12: break
 
     river_score = np.where(valid & (perimeter > cliff_margin) & streams & ~lake & (water_depth > 0.02) & (water_depth < 0.35),
                            water_depth, 0.0)
@@ -614,26 +717,19 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
             river_stones.append((x, z, float(ground[r, c])))
             if len(river_stones) >= 16: break
 
-    flower_score = np.where(valid & (perimeter > cliff_margin + 4) & (water_depth < 0.01) & (ground > 0.0) & (ground < 8.5) & (slope_s < 12.0),
-                            (1.0 - slope_s / 12.0) * 0.6 + np.clip((tpi_s + 10.0) / 20.0, 0, 1) * 0.4, 0.0)
+    flower_score = np.where(valid & (perimeter > cliff_margin + 3.5) & (water_depth < 0.01) & (ground > -0.4) & (ground < 9.5) & (slope_s < 14.5),
+                            (1.0 - slope_s / 14.5) * 0.55 + np.clip((tpi_s + 10.0) / 20.0, 0, 1) * 0.25 + shore * 0.20, 0.0)
     flower_colonies = []
     for idx in np.argsort(-flower_score.ravel()):
         r, c = divmod(int(idx), w)
-        if flower_score[r, c] <= 0.35: break
+        if flower_score[r, c] <= 0.28: break
         x, z = float(c * sx), float(r * sz)
-        if all(np.hypot(x - cx, z - cz) >= 16.0 for cx, cz, cy in flower_colonies):
+        if all(np.hypot(x - cx, z - cz) >= 13.5 for cx, cz, cy in flower_colonies):
             flower_colonies.append((x, z, float(ground[r, c])))
-            if len(flower_colonies) >= 14: break
+            if len(flower_colonies) >= 28: break
 
-    # Build rock items array: crags, boulder clusters with companions, river stones
+    # Build rock items array: low-profile boulder clusters with companions + river stones (no tall crag spires)
     rock_items = []
-    # 1. Outer Rim Ridge Crags
-    for i, (x, z, y) in enumerate(crags):
-        rScale = 0.95 + 0.38 * ((i * 17) % 10) / 10.0
-        hScale = 0.90 + 0.42 * ((i * 31) % 10) / 10.0
-        rot = float((i * 73) % 360)
-        rock_items.append(dict(x=x, y=y, z=z, rScale=rScale, hScale=hScale, rot=rot, archetype=1))
-    # 2. Boulder clusters (low-profile, grounded along banks & talus toes)
     for i, (x, z, y) in enumerate(boulders):
         rScale = 0.64 + 0.28 * ((i * 13) % 10) / 10.0
         hScale = 0.36 + 0.18 * ((i * 29) % 10) / 10.0
@@ -676,11 +772,13 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         f.write(f'static const MapFloraFlowerCluster {prefix.upper()}_FLOWER_CLUSTERS[] = {{\n')
         total_flowers = 0
         for i, (x, z, y) in enumerate(flower_colonies):
-            count = 135 + 15 * (i % 4)
+            count = 1400 + 80 * (i % 4)
             total_flowers += count
-            species = i % 8
-            sp0, sp1, sp2, sp3 = species, (species + 2) % 8, (species + 4) % 8, (species + 6) % 8
-            f.write(f'    {{{{{x:.2f}f, {y:.2f}f, {z:.2f}f}}, {{12.5f, 12.5f}}, {count}, {species}, {{{sp0}, {sp1}, {sp2}, {sp3}}}, {{0}}, {{0}}, {{0}}}},\n')
+            species = i % 6
+            sp0, sp1, sp2, sp3 = species, (species + 1) % 6, (species + 3) % 6, (species + 4) % 6
+            rad_x = 18.0 + 1.5 * (i % 3)
+            rad_z = 18.0 + 1.5 * ((i + 1) % 3)
+            f.write(f'    {{{{{x:.2f}f, {y:.2f}f, {z:.2f}f}}, {{{rad_x:.1f}f, {rad_z:.1f}f}}, {count}, {species}, {{{sp0}, {sp1}, {sp2}, {sp3}}}, {{0}}, {{0}}, {{0}}}},\n')
         f.write('};\n')
         f.write(f'#define {prefix.upper()}_FLOWER_CLUSTER_COUNT (int)(sizeof({prefix.upper()}_FLOWER_CLUSTERS) / sizeof({prefix.upper()}_FLOWER_CLUSTERS[0]))\n')
         f.write(f'#define {prefix.upper()}_TOTAL_FLOWERS {total_flowers}\n\n')
@@ -759,9 +857,8 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         f.write(f'#include "{prefix}_flora_data.h"\n')
         f.write(f'#include "{prefix}_debris_data.h"\n')
         f.write(f'#endif // {guard}\n')
-    with open(dem_path,'rb') as source_file: digest=hashlib.sha256(source_file.read()).hexdigest()
     manifest=dict(schema=2,source=dict(geo,path=os.path.abspath(dem_path),sha256=digest,
-        crop_pixels=[int(xx.min()),int(yy.min()),int(source.shape[1]),int(source.shape[0])]),
+        crop_pixels=[int(xx_min),int(yy_min),int(source.shape[1]),int(source.shape[0])]),
         game=dict(width_m=width,depth_m=depth,grid=[h,w],height_range_m=height_range,cliff_depth_m=cliff_depth,
                   horizontal_scale=scale,vertical_transform='normalized elevation power 1.12',water_triangles=triangles),
         inference=dict(lake=lake_origin,lake_source_level_m=lake_level,lake_source_area_m2=float(lake_source.sum()*px*py),
@@ -772,7 +869,7 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
                        bathymetry='procedural game-scale reconstruction; not measured lake depth'),
         source_statistics=dict(elevation_min_m=lo,elevation_max_m=hi,source_outlets=int(np.count_nonzero(valid_source & (source_dir<0))),
             main_catchment_area_m2=float(main_basin.sum()*px*py),
-            main_outlet_source_pixel=[int(main_outlet[1]+xx.min()),int(main_outlet[0]+yy.min())]),
+            main_outlet_source_pixel=[int(main_outlet[1]+xx_min),int(main_outlet[0]+yy_min)]),
         parameters=dict(max_dim=max_dim,height_range=height_range,cliff_depth=cliff_depth,cliff_margin=cliff_margin,
                         resolution_scale=res_scale,stream_ratio=stream_ratio),
         metrics=dict(bake_seconds=time.perf_counter()-started,wet_nodes=int(wet.sum()),lake_nodes=int(lake.sum())))

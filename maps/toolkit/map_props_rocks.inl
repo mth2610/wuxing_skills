@@ -304,11 +304,13 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
                 float nz = kBoulderPlanes[p][2];
                 float d  = kBoulderPlanes[p][3];
                 float dist = vx * nx + vy * ny + vz * nz - d;
-                if (dist > 0.0f) {
-                    float clipStrength = 0.88f;
-                    vx -= nx * dist * clipStrength;
-                    vy -= ny * dist * clipStrength;
-                    vz -= nz * dist * clipStrength;
+                if (dist > -0.08f) {
+                    float u = dist + 0.08f;
+                    float softDist = 0.5f * (u + sqrtf(u * u + 0.012f));
+                    float clipStrength = 0.74f;
+                    vx -= nx * softDist * clipStrength;
+                    vy -= ny * softDist * clipStrength;
+                    vz -= nz * softDist * clipStrength;
                 }
             }
 
@@ -399,49 +401,54 @@ static Mesh Nature_BuildProceduralRockMesh(int rockType)
 
     if (rockType != MAP_ROCK_BASALT && rockType != MAP_ROCK_SANDSTONE &&
         rockType != MAP_ROCK_OBSIDIAN && rockType != MAP_ROCK_SLATE) {
-        // Average seam vertices across the 0/slices boundary
-        for (int r = 0; r <= rings; r++) {
-            int idx0 = r * (slices + 1);
-            int idx1 = idx0 + slices;
-            if (idx1 < mesh.vertexCount) {
-                float avgNx = mesh.normals[idx0 * 3 + 0] + mesh.normals[idx1 * 3 + 0];
-                float avgNy = mesh.normals[idx0 * 3 + 1] + mesh.normals[idx1 * 3 + 1];
-                float avgNz = mesh.normals[idx0 * 3 + 2] + mesh.normals[idx1 * 3 + 2];
-                mesh.normals[idx0 * 3 + 0] = mesh.normals[idx1 * 3 + 0] = avgNx;
-                mesh.normals[idx0 * 3 + 1] = mesh.normals[idx1 * 3 + 1] = avgNy;
-                mesh.normals[idx0 * 3 + 2] = mesh.normals[idx1 * 3 + 2] = avgNz;
+        // Spatial normal welding across unindexed GenMeshSphere triangles
+        float *welded = (float *)RL_MALLOC(mesh.vertexCount * 3 * sizeof(float));
+        if (welded) {
+            int bucketHeads[2048];
+            int *nextVert = (int *)RL_MALLOC(mesh.vertexCount * sizeof(int));
+            if (nextVert) {
+                for (int b = 0; b < 2048; b++) bucketHeads[b] = -1;
+                for (int i = 0; i < mesh.vertexCount; i++) {
+                    int qx = (int)roundf(mesh.vertices[i * 3 + 0] * 250.0f);
+                    int qy = (int)roundf(mesh.vertices[i * 3 + 1] * 250.0f);
+                    int qz = (int)roundf(mesh.vertices[i * 3 + 2] * 250.0f);
+                    unsigned int h = ((unsigned int)qx * 73856093u) ^
+                                     ((unsigned int)qy * 19349663u) ^
+                                     ((unsigned int)qz * 83492791u);
+                    int b = (int)(h & 2047u);
+                    nextVert[i] = bucketHeads[b];
+                    bucketHeads[b] = i;
+                }
+                for (int i = 0; i < mesh.vertexCount; i++) {
+                    float vx = mesh.vertices[i * 3 + 0];
+                    float vy = mesh.vertices[i * 3 + 1];
+                    float vz = mesh.vertices[i * 3 + 2];
+                    int qx = (int)roundf(vx * 250.0f);
+                    int qy = (int)roundf(vy * 250.0f);
+                    int qz = (int)roundf(vz * 250.0f);
+                    unsigned int h = ((unsigned int)qx * 73856093u) ^
+                                     ((unsigned int)qy * 19349663u) ^
+                                     ((unsigned int)qz * 83492791u);
+                    int b = (int)(h & 2047u);
+                    float sx = 0.0f, sy = 0.0f, sz = 0.0f;
+                    for (int j = bucketHeads[b]; j != -1; j = nextVert[j]) {
+                        float dx = mesh.vertices[j * 3 + 0] - vx;
+                        float dy = mesh.vertices[j * 3 + 1] - vy;
+                        float dz = mesh.vertices[j * 3 + 2] - vz;
+                        if (dx * dx + dy * dy + dz * dz < 0.0004f) {
+                            sx += mesh.normals[j * 3 + 0];
+                            sy += mesh.normals[j * 3 + 1];
+                            sz += mesh.normals[j * 3 + 2];
+                        }
+                    }
+                    welded[i * 3 + 0] = sx;
+                    welded[i * 3 + 1] = sy;
+                    welded[i * 3 + 2] = sz;
+                }
+                memcpy(mesh.normals, welded, mesh.vertexCount * 3 * sizeof(float));
+                RL_FREE(nextVert);
             }
-        }
-        // Average pole vertices at ring 0 (top pole) and ring rings (bottom pole)
-        float topNx = 0.0f, topNy = 0.0f, topNz = 0.0f;
-        float botNx = 0.0f, botNy = 0.0f, botNz = 0.0f;
-        for (int s = 0; s <= slices; s++) {
-            int topIdx = s;
-            int botIdx = rings * (slices + 1) + s;
-            if (topIdx < mesh.vertexCount) {
-                topNx += mesh.normals[topIdx * 3 + 0];
-                topNy += mesh.normals[topIdx * 3 + 1];
-                topNz += mesh.normals[topIdx * 3 + 2];
-            }
-            if (botIdx < mesh.vertexCount) {
-                botNx += mesh.normals[botIdx * 3 + 0];
-                botNy += mesh.normals[botIdx * 3 + 1];
-                botNz += mesh.normals[botIdx * 3 + 2];
-            }
-        }
-        for (int s = 0; s <= slices; s++) {
-            int topIdx = s;
-            int botIdx = rings * (slices + 1) + s;
-            if (topIdx < mesh.vertexCount) {
-                mesh.normals[topIdx * 3 + 0] = topNx;
-                mesh.normals[topIdx * 3 + 1] = topNy;
-                mesh.normals[topIdx * 3 + 2] = topNz;
-            }
-            if (botIdx < mesh.vertexCount) {
-                mesh.normals[botIdx * 3 + 0] = botNx;
-                mesh.normals[botIdx * 3 + 1] = botNy;
-                mesh.normals[botIdx * 3 + 2] = botNz;
-            }
+            RL_FREE(welded);
         }
         for (int i = 0; i < mesh.vertexCount; i++) {
             Vector3 n = {mesh.normals[i * 3 + 0], mesh.normals[i * 3 + 1], mesh.normals[i * 3 + 2]};

@@ -75,8 +75,8 @@ def generate_rocks():
         if not is_free(x, z, rScale, min_overlap=min_overlap):
             return False
 
-        # River stones embed naturally into the alluvial sand/gravel bed
-        sink = hScale * 0.28 if arch == ARCH_RIVER_STONE else 0.0
+        # River stones embed naturally into the alluvial sand/gravel bed (45-55% embedded)
+        sink = hScale * 0.48 if arch == ARCH_RIVER_STONE else (hScale * 0.22 if arch == ARCH_SCREE else 0.0)
         rock_items.append(dict(x=float(x), y=float(gy - sink), z=float(z),
                                rScale=float(rScale), hScale=float(hScale),
                                rot=float(rot), archetype=int(arch)))
@@ -300,47 +300,54 @@ def generate_rocks():
     add_rock(108.20, 138.00, 0.46, 0.28, 80.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
     add_rock(105.40, 138.30, 0.40, 0.25, 270.0, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.48)
 
-    # 4.4 Continuous Riparian Shingle & Bank Cobble Clusters
-    # Populate natural river cobbles and small pebbles along both banks (hugging sand shoreline)
-    for i in range(0, len(z_arr), 3):
+    # 4.4 Natural Riparian Shingle & Fluvial Deposition Bars (Wabi-Sabi Asymmetry)
+    # Replaces the mechanical every-3-step necklace with sparse, organic deposition clusters
+    # Spaced >= 22m apart, alternating banks asymmetrically to leave wide, serene sandbars.
+    last_shingle_z = -999.0
+    for i in range(len(z_arr)):
         z_val = z_arr[i]
-        # Skip island region (already custom composed in Domain 3)
-        if 80.0 <= z_val <= 98.0:
+        # Skip island region (Domain 3) and steep gorge sections
+        if (80.0 <= z_val <= 98.0) or (z_val - last_shingle_z < 24.0):
             continue
 
         xl = x_left_list[i]
         xr = x_right_list[i]
+        cur_w = xr - xl
+        # Deposition bars form where the stream gently widens or curves
+        if cur_w < 3.2:
+            continue
 
-        # Deterministic pseudo-random seed based on index
-        phase = (i * 37) % 100
+        phase = (int(z_val * 7) + i * 31) % 100
+        bank_choice = phase % 2 # Asymmetric single-bank placement!
 
-        # --- Left Bank Pod (Hugging shoreline beach) ---
-        r_left = 0.22 + 0.14 * ((phase * 7) % 10) / 10.0
-        h_left = r_left * 0.55
-        rot_l = float((phase * 43) % 360)
-        offset_l = -0.25 - 0.20 * ((phase * 13) % 10) / 10.0
-        if add_rock(xl + offset_l, z_val, r_left, h_left, rot_l, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.45):
-            # Companion pebble / scree chip nestled beside it
-            c_ang = np.radians((rot_l + 70.0) % 360)
-            c_dist = (r_left + 0.16) * 0.65
-            c_x = xl + offset_l + np.cos(c_ang) * c_dist
-            c_z = z_val + np.sin(c_ang) * c_dist
-            c_arch = ARCH_SCREE if (phase % 2 == 0) else ARCH_RIVER_STONE
-            add_rock(c_x, c_z, 0.14, 0.08, rot_l + 30.0, c_arch, max_slope=36.0, min_overlap=0.40)
-
-        # --- Right Bank Pod (Hugging shoreline beach) ---
-        r_right = 0.20 + 0.12 * ((phase * 17) % 10) / 10.0
-        h_right = r_right * 0.55
-        rot_r = float((phase * 67) % 360)
-        offset_r = 0.25 + 0.20 * ((phase * 23) % 10) / 10.0
-        if add_rock(xr + offset_r, z_val + 0.6, r_right, h_right, rot_r, ARCH_RIVER_STONE, max_slope=36.0, min_overlap=0.45):
-            # Companion pebble / scree chip nestled beside it
-            c_ang = np.radians((rot_r - 65.0) % 360)
-            c_dist = (r_right + 0.16) * 0.65
-            c_x = xr + offset_r + np.cos(c_ang) * c_dist
-            c_z = z_val + 0.6 + np.sin(c_ang) * c_dist
-            c_arch = ARCH_SCREE if (phase % 3 != 0) else ARCH_RIVER_STONE
-            add_rock(c_x, c_z, 0.13, 0.08, rot_r - 25.0, c_arch, max_slope=36.0, min_overlap=0.40)
+        if bank_choice == 0:
+            # Left bank deposition cluster (1 main cobble + 1-2 small companion chips)
+            r_main = 0.32 + 0.16 * ((phase * 7) % 10) / 10.0
+            h_main = r_main * 0.48
+            rot_m = float((phase * 47) % 360)
+            offset_m = -0.15 - 0.25 * ((phase * 13) % 10) / 10.0
+            if add_rock(xl + offset_m, z_val, r_main, h_main, rot_m, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45):
+                last_shingle_z = z_val
+                # 1 Companion nestled downstream in the sediment shadow
+                c_ang = np.radians((rot_m + 55.0) % 360)
+                c_dist = (r_main + 0.18) * 0.62
+                c_x = xl + offset_m + np.cos(c_ang) * c_dist
+                c_z = z_val + np.sin(c_ang) * c_dist
+                add_rock(c_x, c_z, 0.16, 0.09, rot_m + 25.0, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.40)
+        else:
+            # Right bank deposition cluster (1 main cobble + 1-2 small companion chips)
+            r_main = 0.28 + 0.14 * ((phase * 11) % 10) / 10.0
+            h_main = r_main * 0.48
+            rot_m = float((phase * 61) % 360)
+            offset_m = 0.15 + 0.25 * ((phase * 17) % 10) / 10.0
+            if add_rock(xr + offset_m, z_val, r_main, h_main, rot_m, ARCH_RIVER_STONE, max_slope=34.0, min_overlap=0.45):
+                last_shingle_z = z_val
+                # 1 Companion nestled downstream in the sediment shadow
+                c_ang = np.radians((rot_m - 50.0) % 360)
+                c_dist = (r_main + 0.18) * 0.62
+                c_x = xr + offset_m + np.cos(c_ang) * c_dist
+                c_z = z_val + np.sin(c_ang) * c_dist
+                add_rock(c_x, c_z, 0.15, 0.08, rot_m - 30.0, ARCH_SCREE, max_slope=34.0, min_overlap=0.40)
 
     # Sort rocks deterministically
     rock_items.sort(key=lambda r: (r['z'], r['x']))

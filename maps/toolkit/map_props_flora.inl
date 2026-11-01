@@ -125,30 +125,34 @@ void MapFlora_GenerateFlowerPlacements(
             float x = cl->center.x;
             float z = cl->center.z;
             float radialNorm = 0.5f;
-            for (int attempt = 0; attempt < 24; attempt++)
+            bool foundValid = false;
+            for (int attempt = 0; attempt < 32; attempt++)
             {
                 float angle = Nature_Random01(&rng) * (2.0f * PI);
                 float uRand = Nature_Random01(&rng);
                 float rVal = uRand * sqrtf(uRand);
                 radialNorm = rVal;
-                if (isColony)
+                if (isColony && attempt < 16)
                 {
+                    int tryColony = (colony + (attempt >> 2)) % 3;
                     float along = cosf(angle) * rVal * 0.38f;
                     float across = sinf(angle) * rVal * 0.20f;
-                    float dxNorm = epicenters[colony].x + (cosFlow * along - sinFlow * across);
-                    float dzNorm = epicenters[colony].y + (sinFlow * along + cosFlow * across);
+                    float dxNorm = epicenters[tryColony].x + (cosFlow * along - sinFlow * across);
+                    float dzNorm = epicenters[tryColony].y + (sinFlow * along + cosFlow * across);
                     x = cl->center.x + dxNorm * rx;
                     z = cl->center.z + dzNorm * rz;
                 }
                 else
                 {
-                    x = cl->center.x + cosf(angle) * rx * (0.25f + 0.55f * rVal);
-                    z = cl->center.z + sinf(angle) * rz * (0.25f + 0.55f * rVal);
+                    float fallbackScale = (attempt < 24) ? (0.20f + 0.45f * rVal) : (0.05f + 0.18f * rVal);
+                    x = cl->center.x + cosf(angle) * rx * fallbackScale;
+                    z = cl->center.z + sinf(angle) * rz * fallbackScale;
                 }
 
                 if (isExcluded && isExcluded(x, z, ctx))
                     continue;
 
+                foundValid = true;
                 // Kiểm tra nhanh theo từng trục trước khi tính bình phương khoảng cách
                 bool tooClose = false;
                 int searchStart = (placementCursor - clusterStartIndex > 512)
@@ -170,6 +174,13 @@ void MapFlora_GenerateFlowerPlacements(
                 }
                 if (!tooClose || attempt >= 23)
                     break;
+            }
+            if (!foundValid)
+            {
+                float a = Nature_Random01(&rng) * (2.0f * PI);
+                float r = Nature_Random01(&rng) * 1.2f;
+                x = cl->center.x + cosf(a) * r;
+                z = cl->center.z + sinf(a) * r;
             }
 
             float gy = sampleHeight ? sampleHeight(x, z, ctx) : 0.0f;

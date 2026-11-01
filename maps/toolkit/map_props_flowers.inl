@@ -48,6 +48,175 @@ static inline Color Nature_ResolveFlowerPetalColor(const MapFlowerPlacement *flo
     return flower->petalColor;
 }
 
+// ============================================================================
+// GPU-INSTANCED PARAMETRIC FLOWER PIPELINE ("Bách Hoa Cốc" 3-LOD Architecture)
+// ============================================================================
+#define FLOWER_PARAMETRIC_LODS 3
+#define FLOWER_TEMPLATE_MAX_VERTS 64
+#define FLOWER_TEMPLATE_MAX_INDICES 96
+
+typedef struct
+{
+    unsigned int vao, vertices, indices;
+    int vertexCount, indexCount;
+} FlowerParametricTemplate;
+
+static FlowerParametricTemplate s_flowerTemplates[FLOWER_PARAMETRIC_LODS] = {0};
+static bool s_flowerTemplatesReady = false;
+static Shader s_flowerParametricShader = {0};
+static Shader s_flowerParametricShadowShader = {0};
+static int s_flowerInstanceTexLoc[2] = {-1, -1};
+static int s_flowerSpeciesOverrideLoc[2] = {-1, -1};
+static int s_flowerLodStrideLoc[2] = {-1, -1};
+static int s_flowerWorldOffsetLoc[2] = {-1, -1};
+
+static Shader FlowerParametric_GetShader(bool shadow)
+{
+    Shader *shader = shadow ? &s_flowerParametricShadowShader : &s_flowerParametricShader;
+    int pass = shadow ? 1 : 0;
+    if (shader->id == 0)
+    {
+        *shader = ResourceManager_LoadShader(
+            shadow ? "maps/toolkit/shaders/flower_parametric_shadow.vs"
+                   : "maps/toolkit/shaders/flower_parametric.vs",
+            shadow ? "maps/toolkit/shaders/nature_shadow.fs"
+                   : "maps/toolkit/shaders/flower_parametric.fs");
+        shader->locs[SHADER_LOC_VERTEX_POSITION] = GetShaderLocationAttrib(*shader, "vertexPosition");
+        shader->locs[SHADER_LOC_MATRIX_MVP] = GetShaderLocation(*shader, "mvp");
+        shader->locs[SHADER_LOC_MATRIX_MODEL] = GetShaderLocation(*shader, "matModel");
+        shader->locs[SHADER_LOC_COLOR_DIFFUSE] = GetShaderLocation(*shader, "colDiffuse");
+        s_flowerInstanceTexLoc[pass] = GetShaderLocation(*shader, "u_flowerInstances");
+        s_flowerSpeciesOverrideLoc[pass] = GetShaderLocation(*shader, "u_speciesOverride");
+        s_flowerLodStrideLoc[pass] = GetShaderLocation(*shader, "u_lodStride");
+        s_flowerWorldOffsetLoc[pass] = GetShaderLocation(*shader, "u_worldOffset");
+        if (!shadow)
+        {
+            MapShadow_ConfigureShader(*shader);
+            VFXLight_RegisterShader(*shader);
+        }
+        (void)Nature_GetCachedLocs(*shader);
+    }
+    return *shader;
+}
+
+static bool FlowerParametric_BuildTemplate(FlowerParametricTemplate *tmpl, int lod)
+{
+    Vector3 verts[FLOWER_TEMPLATE_MAX_VERTS];
+    unsigned short indices[FLOWER_TEMPLATE_MAX_INDICES];
+    int vCount = 0, iCount = 0;
+
+    // 0. Stem (part = 0): 2 segments for LOD0, 1 segment for LOD1/LOD2
+    float tagStem = 0.0f;
+    if (lod == 0)
+    {
+        unsigned short b = (unsigned short)vCount;
+        verts[vCount++] = (Vector3){tagStem, 0.0f, 0.0f};
+        verts[vCount++] = (Vector3){tagStem, 1.0f, 0.0f};
+        verts[vCount++] = (Vector3){tagStem, 0.0f, 0.5f};
+        verts[vCount++] = (Vector3){tagStem, 1.0f, 0.5f};
+        verts[vCount++] = (Vector3){tagStem, 0.5f, 1.0f};
+        indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
+        indices[iCount++] = b + 1; indices[iCount++] = b + 3; indices[iCount++] = b + 2;
+        indices[iCount++] = b + 2; indices[iCount++] = b + 3; indices[iCount++] = b + 4;
+    }
+    else
+    {
+        unsigned short b = (unsigned short)vCount;
+        verts[vCount++] = (Vector3){tagStem, 0.0f, 0.0f};
+        verts[vCount++] = (Vector3){tagStem, 1.0f, 0.0f};
+        verts[vCount++] = (Vector3){tagStem, 0.5f, 1.0f};
+        indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
+    }
+
+    // 1. Basal Sword Leaves (part = 1): 2 diamond leaves on LOD0
+    if (lod == 0)
+    {
+        for (int l = 0; l < 2; l++)
+        {
+            float tagLeaf = (float)(1 * 16 + l);
+            unsigned short b = (unsigned short)vCount;
+            verts[vCount++] = (Vector3){tagLeaf, 0.5f, 0.0f};
+            verts[vCount++] = (Vector3){tagLeaf, 1.0f, 0.38f};
+            verts[vCount++] = (Vector3){tagLeaf, 0.5f, 1.0f};
+            verts[vCount++] = (Vector3){tagLeaf, 0.0f, 0.38f};
+            indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
+            indices[iCount++] = b + 0; indices[iCount++] = b + 2; indices[iCount++] = b + 3;
+        }
+    }
+
+    // 2. Outer Cupped Petals (part = 2): 6 diamond petals on LOD0, 6 tris on LOD1, 4 tris on LOD2
+    int outerCount = (lod == 2) ? 4 : 6;
+    for (int p = 0; p < outerCount; p++)
+    {
+        float tagPetal = (float)(2 * 16 + p);
+        unsigned short b = (unsigned short)vCount;
+        if (lod == 0)
+        {
+            verts[vCount++] = (Vector3){tagPetal, 0.5f, 0.0f};
+            verts[vCount++] = (Vector3){tagPetal, 1.0f, 0.45f};
+            verts[vCount++] = (Vector3){tagPetal, 0.5f, 1.0f};
+            verts[vCount++] = (Vector3){tagPetal, 0.0f, 0.45f};
+            indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
+            indices[iCount++] = b + 0; indices[iCount++] = b + 2; indices[iCount++] = b + 3;
+        }
+        else
+        {
+            verts[vCount++] = (Vector3){tagPetal, 0.5f, 0.0f};
+            verts[vCount++] = (Vector3){tagPetal, 1.0f, 0.88f};
+            verts[vCount++] = (Vector3){tagPetal, 0.0f, 0.88f};
+            indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
+        }
+    }
+
+    // 3. Inner Petals / Stamens (part = 3): 6 on LOD0, 3 on LOD1, 0 on LOD2
+    int innerCount = (lod == 0) ? 6 : ((lod == 1) ? 3 : 0);
+    for (int p = 0; p < innerCount; p++)
+    {
+        float tagInner = (float)(3 * 16 + p);
+        unsigned short b = (unsigned short)vCount;
+        verts[vCount++] = (Vector3){tagInner, 0.5f, 0.0f};
+        verts[vCount++] = (Vector3){tagInner, 1.0f, 0.78f};
+        verts[vCount++] = (Vector3){tagInner, 0.0f, 0.78f};
+        indices[iCount++] = b + 0; indices[iCount++] = b + 1; indices[iCount++] = b + 2;
+    }
+
+    tmpl->vao = rlLoadVertexArray();
+    if (!tmpl->vao || !rlEnableVertexArray(tmpl->vao))
+        return false;
+    tmpl->vertices = rlLoadVertexBuffer(verts, vCount * (int)sizeof(Vector3), false);
+    rlSetVertexAttribute(0, 3, RL_FLOAT, false, sizeof(Vector3), 0);
+    rlEnableVertexAttribute(0);
+    tmpl->indices = rlLoadVertexBufferElement(indices, iCount * (int)sizeof(unsigned short), false);
+    rlDisableVertexArray();
+    tmpl->vertexCount = vCount;
+    tmpl->indexCount = iCount;
+    return tmpl->vao != 0 && tmpl->vertices != 0 && tmpl->indices != 0;
+}
+
+static bool FlowerParametric_Init(void)
+{
+    const char *renderer = getenv("WUXING_FLOWER_RENDERER");
+    if (renderer && strcmp(renderer, "legacy") == 0)
+        return false;
+    if (s_flowerTemplatesReady)
+        return true;
+
+    Shader vis = FlowerParametric_GetShader(false);
+    Shader shd = FlowerParametric_GetShader(true);
+    if (vis.id == 0 || vis.id == rlGetShaderIdDefault() ||
+        shd.id == 0 || shd.id == rlGetShaderIdDefault() ||
+        s_flowerInstanceTexLoc[0] < 0)
+        return false;
+
+    for (int lod = 0; lod < FLOWER_PARAMETRIC_LODS; lod++)
+    {
+        if (!FlowerParametric_BuildTemplate(&s_flowerTemplates[lod], lod))
+            return false;
+    }
+    s_flowerTemplatesReady = true;
+    return true;
+}
+
 static Model Nature_BuildFlowerShadowModel(const MapFlowerPlacement *placements, int count)
 {
     Mesh mesh = Nature_AllocMesh(count * 6);
@@ -490,6 +659,72 @@ MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, i
         vertexCount += kStemAndFoliageVerts + Nature_FlowerBloomVertexCount(variant, field.textured);
     }
 
+    // Handcrafted 8 botanical 3D species generator is the primary high-fidelity path.
+    // The parametric template override is gated behind WUXING_FLOWER_PARAMETRIC=1.
+    const char *envFlowerParametric = getenv("WUXING_FLOWER_PARAMETRIC");
+    if (envFlowerParametric && strcmp(envFlowerParametric, "1") == 0 && !field.textured && FlowerParametric_Init())
+    {
+        int rows = (count + 255) / 256;
+        if (rows < 1)
+            rows = 1;
+        float *pixels = MemAlloc((unsigned int)(rows * 512 * 4) * sizeof(float));
+        if (pixels)
+        {
+            memset(pixels, 0, (size_t)(rows * 512 * 4) * sizeof(float));
+            for (int i = 0; i < count; i++)
+            {
+                const MapFlowerPlacement *flower = &placements[i];
+                int row = i >> 8;
+                int col = (i & 255) * 2;
+                int base = (row * 512 + col) * 4;
+                float fracPhase = flower->phase - floorf(flower->phase);
+                if (fracPhase < 0.0f)
+                    fracPhase += 1.0f;
+                int rawVar = ((int)flower->bloomVariant) & 7;
+                float pScale = flower->petalLengthScale > 0.0f ? flower->petalLengthScale : 1.0f;
+                int packedRGB = ((int)flower->petalColor.r << 16) |
+                                ((int)flower->petalColor.g << 8) |
+                                (int)flower->petalColor.b;
+
+                pixels[base + 0] = flower->position.x;
+                pixels[base + 1] = flower->position.y;
+                pixels[base + 2] = flower->position.z;
+                pixels[base + 3] = (float)rawVar * 100.0f + fminf(fracPhase, 0.9999f);
+
+                pixels[base + 4] = flower->height;
+                pixels[base + 5] = flower->bloomRadius * pScale;
+                pixels[base + 6] = flower->rotationDeg * DEG2RAD;
+                pixels[base + 7] = (float)packedRGB;
+            }
+            Image instImg = {
+                .data = pixels,
+                .width = 512,
+                .height = rows,
+                .mipmaps = 1,
+                .format = PIXELFORMAT_UNCOMPRESSED_R32G32B32A32,
+            };
+            field.instanceTexture = LoadTextureFromImage(instImg);
+            MemFree(pixels);
+            if (field.instanceTexture.id != 0)
+            {
+                SetTextureFilter(field.instanceTexture, TEXTURE_FILTER_POINT);
+                SetTextureWrap(field.instanceTexture, TEXTURE_WRAP_CLAMP);
+                field.parametric = true;
+                field.instanceCount = count;
+                field.farReady = true;
+                field.shadowReady = false;
+                field.alphaCutoff = 0.0f;
+                field.boundsCenter = Vector3Scale(Vector3Add(boundsMin, boundsMax), 0.5f);
+                field.boundsRadius = Vector3Distance(boundsMin, boundsMax) * 0.5f;
+                field.drawDistance = 125.0f;
+                field.lodDistance = 28.0f;
+                field.shadowDistance = 20.0f;
+                field.ready = true;
+                return field;
+            }
+        }
+    }
+
     Mesh mesh = Nature_AllocMesh(vertexCount);
     int cursor = 0;
     for (int i = 0; i < count; i++)
@@ -878,6 +1113,7 @@ void MapProp_SetFlowerFieldLod(MapFlowerField *field, float lodDistance, float s
 #define NATURE_FLOWER_BATCH_DRAW 1u
 #define NATURE_FLOWER_BATCH_FAR 2u
 #define NATURE_FLOWER_BATCH_SHADOW 4u
+#define NATURE_FLOWER_BATCH_VERY_FAR 8u
 
 void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector3 worldOffset,
                                   float time, Vector2 windDirection, float windStrength)
@@ -934,6 +1170,8 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
                                shadowMode != NATURE_SHADOW_REAL_ONLY;
 
     bool anyShadow = false;
+    bool anyParametric = false;
+    bool anyLegacy = false;
     for (int i = 0; i < fieldCount; i++)
     {
         MapFlowerField *field = &fields[i];
@@ -961,11 +1199,12 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
 
         float centerDistance = sqrtf(distSqXZ);
         float visibleDistance = centerDistance - field->boundsRadius;
+        float threshold = 0.0f;
         if (field->farReady && field->lodDistance > 0.0f)
         {
             float hSeed = field->boundsCenter.x * 0.1031f + field->boundsCenter.z * 0.3183f;
             float spatialHash = hSeed - floorf(hSeed);
-            float threshold = focalDistH + field->lodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 3.0f;
+            threshold = focalDistH + field->lodDistance * lodScale * zoomFactor + (spatialHash - 0.5f) * 3.0f;
             if (field->farLod)
             {
                 if (visibleDistance < threshold - hysteresis)
@@ -983,7 +1222,16 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
 
         unsigned char f = NATURE_FLOWER_BATCH_DRAW;
         if (field->farReady && field->farLod)
+        {
             f |= NATURE_FLOWER_BATCH_FAR;
+            if (field->parametric && threshold > 0.0f && visibleDistance > threshold * 2.35f)
+                f |= NATURE_FLOWER_BATCH_VERY_FAR;
+        }
+
+        if (field->parametric)
+            anyParametric = true;
+        else
+            anyLegacy = true;
 
         float maxContactDist = realShadowActive
                                    ? fminf(field->shadowDistance, 16.0f)
@@ -1038,40 +1286,120 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
         rlEnableDepthMask();
     }
 
-    bool groupOpen = false;
-    bool groupTextured = false;
-    float groupAlpha = 0.0f;
-    for (int d = 0; d < drawCount; d++)
+    if (anyParametric)
     {
-        int i = drawOrder[d];
-        MapFlowerField *field = &fields[i];
-        if (!groupOpen || field->textured != groupTextured || field->alphaCutoff != groupAlpha)
+        Shader shader = FlowerParametric_GetShader(false);
+        Nature_BeginWindReceiverShader(shader);
+        Nature_UpdateShader(shader, time, windDirection, windStrength,
+                            false, 0.0f, NATURE_WIND_RESPONSE_FLOWER);
+        rlDisableBackfaceCulling();
+
+        Matrix model = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
+        model = MatrixMultiply(model, rlGetMatrixTransform());
+        Matrix mvp = MatrixMultiply(MatrixMultiply(model, rlGetMatrixModelview()), rlGetMatrixProjection());
+        SetShaderValueMatrix(shader, shader.locs[SHADER_LOC_MATRIX_MVP], mvp);
+        if (s_flowerWorldOffsetLoc[0] >= 0)
+            SetShaderValue(shader, s_flowerWorldOffsetLoc[0], &worldOffset, SHADER_UNIFORM_VEC3);
+        int spOverride = MapProp_GetFlowerSpeciesOverride();
+        if (s_flowerSpeciesOverrideLoc[0] >= 0)
+            SetShaderValue(shader, s_flowerSpeciesOverrideLoc[0], &spOverride, SHADER_UNIFORM_INT);
+        int unit0 = 0;
+        if (s_flowerInstanceTexLoc[0] >= 0)
+            SetShaderValue(shader, s_flowerInstanceTexLoc[0], &unit0, SHADER_UNIFORM_INT);
+
+        int activeLod = -1;
+        int activeStride = -1;
+        for (int d = 0; d < drawCount; d++)
         {
-            if (groupOpen)
-                Nature_EndWindReceiverShader();
-            Shader shader = Nature_GetShader(true);
-            Nature_BeginWindReceiverShader(shader);
-            Nature_UpdateShader(shader, time, windDirection, windStrength,
-                                field->textured, field->alphaCutoff,
-                                NATURE_WIND_RESPONSE_FLOWER);
-            if (!groupOpen)
-                rlDisableBackfaceCulling();
-            groupOpen = true;
-            groupTextured = field->textured;
-            groupAlpha = field->alphaCutoff;
+            int i = drawOrder[d];
+            MapFlowerField *field = &fields[i];
+            if (!field->parametric || field->instanceCount <= 0)
+                continue;
+
+            int lod = 0;
+            int stride = 1;
+            if (flags[i] & NATURE_FLOWER_BATCH_VERY_FAR)
+            {
+                lod = 2;
+                stride = 2;
+            }
+            else if (flags[i] & NATURE_FLOWER_BATCH_FAR)
+            {
+                lod = 1;
+                stride = 1;
+            }
+            int instances = (stride > 1) ? ((field->instanceCount + stride - 1) / stride) : field->instanceCount;
+            if (instances <= 0)
+                continue;
+
+            if (activeStride != stride && s_flowerLodStrideLoc[0] >= 0)
+            {
+                SetShaderValue(shader, s_flowerLodStrideLoc[0], &stride, SHADER_UNIFORM_INT);
+                activeStride = stride;
+            }
+
+            rlActiveTextureSlot(0);
+            rlEnableTexture(field->instanceTexture.id);
+
+            FlowerParametricTemplate *tmpl = &s_flowerTemplates[lod];
+            if (activeLod != lod)
+            {
+                rlEnableVertexArray(tmpl->vao);
+                activeLod = lod;
+            }
+            rlDrawVertexArrayElementsInstanced(0, tmpl->indexCount, NULL, instances);
+
+            s_natureRenderStats.flowerDraws++;
+            if (lod > 0)
+                s_natureRenderStats.flowerFarDraws++;
+            else
+                s_natureRenderStats.flowerNearDraws++;
         }
-        bool useFarModel = (flags[i] & NATURE_FLOWER_BATCH_FAR) != 0;
-        DrawModel(useFarModel ? field->farModel : field->model, worldOffset, 1.0f, WHITE);
-        s_natureRenderStats.flowerDraws++;
-        if (useFarModel)
-            s_natureRenderStats.flowerFarDraws++;
-        else
-            s_natureRenderStats.flowerNearDraws++;
-    }
-    if (groupOpen)
-    {
+        if (activeLod >= 0)
+            rlDisableVertexArray();
         Nature_EndWindReceiverShader();
         rlEnableBackfaceCulling();
+    }
+
+    if (anyLegacy)
+    {
+        bool groupOpen = false;
+        bool groupTextured = false;
+        float groupAlpha = 0.0f;
+        for (int d = 0; d < drawCount; d++)
+        {
+            int i = drawOrder[d];
+            MapFlowerField *field = &fields[i];
+            if (field->parametric)
+                continue;
+            if (!groupOpen || field->textured != groupTextured || field->alphaCutoff != groupAlpha)
+            {
+                if (groupOpen)
+                    Nature_EndWindReceiverShader();
+                Shader shader = Nature_GetShader(true);
+                Nature_BeginWindReceiverShader(shader);
+                Nature_UpdateShader(shader, time, windDirection, windStrength,
+                                    field->textured, field->alphaCutoff,
+                                    NATURE_WIND_RESPONSE_FLOWER);
+                if (!groupOpen)
+                    rlDisableBackfaceCulling();
+                groupOpen = true;
+                groupTextured = field->textured;
+                groupAlpha = field->alphaCutoff;
+            }
+            bool useFarModel = (flags[i] & NATURE_FLOWER_BATCH_FAR) != 0;
+            DrawModel(useFarModel ? field->farModel : field->model, worldOffset, 1.0f, WHITE);
+            s_natureRenderStats.flowerDraws++;
+            if (useFarModel)
+                s_natureRenderStats.flowerFarDraws++;
+            else
+                s_natureRenderStats.flowerNearDraws++;
+        }
+        if (groupOpen)
+        {
+            Nature_EndWindReceiverShader();
+            rlEnableBackfaceCulling();
+        }
     }
 }
 
@@ -1082,8 +1410,8 @@ void MapProp_DrawFlowerField(MapFlowerField *field, Vector3 worldOffset, float t
 }
 
 // [TỐI ƯU BATCHED SHADOW CASTER]:
-// Đưa phép tính vùng phủ bóng ra ngoài vòng lặp và dùng `farModel` 3D (có cả cuống + đài hoa 12 đỉnh)
-// giúp lượt vẽ bóng đổ hoa vào Shadow Map nhanh gấp ~10 lần và tạo bóng rõ nét trên mặt đất/cỏ!
+// Đưa phép tính vùng phủ bóng ra ngoài vòng lặp và dùng GPU instancing LOD1/LOD2
+// giúp lượt vẽ bóng đổ hoa vào Shadow Map siêu nhẹ và tạo bóng rõ nét trên mặt đất/cỏ!
 void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldCount,
                                               Vector3 worldOffset, float time,
                                               Vector2 windDirection, float windStrength)
@@ -1102,13 +1430,73 @@ void MapProp_DrawFlowerFieldShadowCasterBatch(MapFlowerField *fields, int fieldC
     float extent = fmaxf(EnvShadow_GetHalfExtent(), 8.0f);
     float groundRadius = extent / fmaxf(fabsf(sunDir.y), 0.32f);
 
+    bool paramBound = false;
+    for (int i = 0; i < fieldCount; i++)
+    {
+        MapFlowerField *field = &fields[i];
+        if (!field->ready || !field->parametric || field->instanceCount <= 0)
+            continue;
+        Vector3 center = Vector3Add(field->boundsCenter, worldOffset);
+        if (!filterActive)
+        {
+            float dx = center.x - shadowFocus.x;
+            float dz = center.z - shadowFocus.z;
+            float distSq = dx * dx + dz * dz;
+            if (field->shadowDistance > 0.0f)
+            {
+                float maxDist = field->shadowDistance + field->boundsRadius + 2.5f;
+                if (distSq > maxDist * maxDist)
+                    continue;
+            }
+            float covLimit = groundRadius + field->boundsRadius * 1.12f + 2.0f;
+            if (distSq > covLimit * covLimit)
+                continue;
+        }
+
+        if (!paramBound)
+        {
+            Shader shd = FlowerParametric_GetShader(true);
+            Nature_BeginWindReceiverShader(shd);
+            Nature_UpdateShadowShader(shd, time, windDirection, windStrength,
+                                      false, 0.0f, NATURE_WIND_RESPONSE_FLOWER);
+            Matrix model = MatrixTranslate(worldOffset.x, worldOffset.y, worldOffset.z);
+            Matrix mvp = MatrixMultiply(model, EnvShadow_GetLightVP());
+            SetShaderValueMatrix(shd, shd.locs[SHADER_LOC_MATRIX_MVP], mvp);
+            if (s_flowerWorldOffsetLoc[1] >= 0)
+                SetShaderValue(shd, s_flowerWorldOffsetLoc[1], &worldOffset, SHADER_UNIFORM_VEC3);
+            int spOverride = MapProp_GetFlowerSpeciesOverride();
+            if (s_flowerSpeciesOverrideLoc[1] >= 0)
+                SetShaderValue(shd, s_flowerSpeciesOverrideLoc[1], &spOverride, SHADER_UNIFORM_INT);
+            int stride = 2;
+            if (s_flowerLodStrideLoc[1] >= 0)
+                SetShaderValue(shd, s_flowerLodStrideLoc[1], &stride, SHADER_UNIFORM_INT);
+            int unit0 = 0;
+            if (s_flowerInstanceTexLoc[1] >= 0)
+                SetShaderValue(shd, s_flowerInstanceTexLoc[1], &unit0, SHADER_UNIFORM_INT);
+            rlDisableBackfaceCulling();
+            rlEnableVertexArray(s_flowerTemplates[1].vao);
+            paramBound = true;
+        }
+
+        int instances = (field->instanceCount + 1) / 2;
+        rlActiveTextureSlot(0);
+        rlEnableTexture(field->instanceTexture.id);
+        rlDrawVertexArrayElementsInstanced(0, s_flowerTemplates[1].indexCount, NULL, instances);
+    }
+    if (paramBound)
+    {
+        rlDisableVertexArray();
+        Nature_EndWindReceiverShader();
+        rlEnableBackfaceCulling();
+    }
+
     Shader shader = NatureShadow_GetShader();
     bool shaderBound = false;
 
     for (int i = 0; i < fieldCount; i++)
     {
         MapFlowerField *field = &fields[i];
-        if (!field->ready)
+        if (!field->ready || field->parametric)
             continue;
         Vector3 center = Vector3Add(field->boundsCenter, worldOffset);
         if (!filterActive)
@@ -1163,11 +1551,21 @@ void MapProp_UnloadFlowerField(MapFlowerField *field)
 {
     if (!field || !field->ready)
         return;
-    if (field->shadowReady)
-        UnloadModel(field->shadowModel);
-    if (field->farReady)
-        UnloadModel(field->farModel);
-    UnloadModel(field->model);
+    if (field->instanceTexture.id != 0)
+    {
+        UnloadTexture(field->instanceTexture);
+        field->instanceTexture = (Texture2D){0};
+    }
+    if (!field->parametric)
+    {
+        if (field->shadowReady)
+            UnloadModel(field->shadowModel);
+        if (field->farReady)
+            UnloadModel(field->farModel);
+        UnloadModel(field->model);
+    }
+    field->parametric = false;
+    field->instanceCount = 0;
     field->farReady = false;
     field->farLod = false;
     field->shadowReady = false;

@@ -47,18 +47,25 @@ bool MapProp_SetCloudSeaBoundaryContours(MapCloudSea *cloud,
     for (int l = 0; l < loopCount; l++) {
         int n = BoundaryContourCount(&loops[l]);
         for (int i = 0; i < n; i++) {
-            Vector3 p = loops[l].points[i], before = loops[l].points[(i+n-1)%n], after = loops[l].points[(i+1)%n];
-            Vector2 a = Vector2Normalize((Vector2){p.z-before.z, before.x-p.x});
-            Vector2 b = Vector2Normalize((Vector2){after.z-p.z, p.x-after.x});
-            Vector2 outward = Vector2Normalize(Vector2Add(a, b));
-            if (Vector2Length(outward) < 0.1f) outward = b;
-            float miter = 1.0f / fmaxf(0.5f, Vector2DotProduct(outward, b));
+            Vector3 p0 = loops[l].points[(i+n-2)%n];
+            Vector3 p1 = loops[l].points[(i+n-1)%n];
+            Vector3 p2 = loops[l].points[i];
+            Vector3 p3 = loops[l].points[(i+1)%n];
+            Vector3 p4 = loops[l].points[(i+2)%n];
+            Vector3 p = {
+                (p0.x + 2.0f * p1.x + 4.0f * p2.x + 2.0f * p3.x + p4.x) * 0.1f,
+                p2.y,
+                (p0.z + 2.0f * p1.z + 4.0f * p2.z + 2.0f * p3.z + p4.z) * 0.1f
+            };
+            Vector2 tang = { p4.x - p0.x, p4.z - p0.z };
+            Vector2 outward = Vector2Normalize((Vector2){ tang.y, -tang.x });
+            if (Vector2Length(outward) < 0.1f) outward = (Vector2){ 1.0f, 0.0f };
             // Baked, map-local variation; no runtime noise or moving vertices.
             float variation = 0.5f + 0.25f*sinf(p.x*0.37f+p.z*0.29f) + 0.25f*cosf(p.z*0.41f-p.x*0.17f);
-            float width = 0.8f + 0.4f*variation;
+            float width = 0.85f + 0.30f*variation;
             for (int side = 0; side < 2; side++) {
                 int v = (base+i)*2+side;
-                float shift = (side ? style->outerWidth : -style->innerWidth) * width * miter;
+                float shift = (side ? style->outerWidth : -style->innerWidth) * width;
                 mesh.vertices[v*3] = p.x + outward.x * shift;
                 mesh.vertices[v*3+1] = p.y + style->heightOffset - (side ? style->outerDrop : 0);
                 mesh.vertices[v*3+2] = p.z + outward.y * shift;

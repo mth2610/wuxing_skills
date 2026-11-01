@@ -87,14 +87,16 @@ static float SongQuaoGrassDensity(float x, float z, void *userData)
     float heightFade = MapMath_SmoothStep01(-2.20f, -1.10f, pos.y);
     float slopeFade = MapMath_SmoothStep01(0.50f, 0.72f, normal.y);
 
-    // Smooth, organic shoreline transition with micro-meander noise
+    // Natural, organic shoreline clumping: lush sedge/grass pockets reach right to the water's edge
+    // while leaving organic sandy coves near stepping stones
     float surfaceY = MapDem_SampleWaterHeight(&s_dem, x, z);
     float waterClearance = pos.y - surfaceY;
-    float shoreMeander = sinf(x * 1.6f + z * 1.2f) * 0.035f + cosf(x * 3.2f - z * 2.6f) * 0.018f;
-    float minClearance = 0.015f + shoreMeander;
+    float coveNoise = sinf(x * 0.14f + z * 0.11f) * 0.55f
+                    + cosf(z * 0.23f - x * 0.19f + 0.8f) * 0.45f;
+    float minClearance = (coveNoise > 0.20f) ? 0.012f : (0.042f - coveNoise * 0.025f);
     if (waterClearance < minClearance)
         return 0.0f;
-    float shoreFade = MapMath_SmoothStep01(minClearance, 0.20f + shoreMeander, waterClearance);
+    float shoreFade = MapMath_SmoothStep01(minClearance, minClearance + 0.095f, waterClearance);
 
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
     // Gate rockScree by actual geometric slope (1.0 - normal.y), matching ground_splat.fs wCliff
@@ -126,8 +128,8 @@ static float SongQuaoEdgeTaper(float cx, float cz, void *userData)
     (void)userData;
     float gy = MapProp_SampleGroundHeight(&s_ground, kMapCenter, cx, cz);
     float waterClearance = gy - MapDem_SampleWaterHeight(&s_dem, cx, cz);
-    // Graceful shoreline taper: peripheral tufts bow down to ~28% height near water shingle
-    float shoreTaper = 0.28f + 0.72f * MapMath_SmoothStep01(0.01f, 0.45f, waterClearance);
+    // Graceful shoreline taper: peripheral tufts bow down to ~20% height near water shingle
+    float shoreTaper = 0.20f + 0.80f * MapMath_SmoothStep01(0.045f, 0.32f, waterClearance);
     float cliffTaper = 0.58f + 0.42f * MapMath_SmoothStep01(PLAYABLE_BASIN_MIN_Y, PLAYABLE_BASIN_FADE_Y + 0.40f, gy);
     return shoreTaper * cliffTaper;
 }
@@ -146,10 +148,10 @@ static bool SongQuaoIsFlowerExcluded(float x, float z, void *ctx)
         return true;
     if (pos.y < PLAYABLE_BASIN_FADE_Y || normal.y < 0.65f)
         return true;
-    if (MapDem_SampleWaterHeight(&s_dem, x, z) >= pos.y - 0.14f)
+    if (MapDem_SampleWaterHeight(&s_dem, x, z) >= pos.y - 0.015f)
         return true;
     Color splat = MapDem_SampleSplat(&s_dem, x, z);
-    if (splat.g > 205)
+    if (splat.g > 205 || splat.b > 95)
         return true;
     if (MapProp_EvaluateRockSuppression(x, z, SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT) < 0.65f)
         return true;
@@ -177,19 +179,21 @@ static void BuildFloraPlacements(void)
 
     // 2. Reeds along riverbanks & wetland margins inside the valley basin
     float spanX = MAP_WIDTH * 0.38f;
-    float spanZ = MAP_DEPTH * 0.32f;
+    float spanZ = MAP_DEPTH * 0.46f;
     s_reedCount = MapFlora_GenerateReedPlacements(
         s_reedPlacements, REED_COUNT, &s_ground, kMapCenter,
         (MapFloraReedConfig){
             .span = {spanX, spanZ},
             .dem = &s_dem,
-            .minWaterClearance = 0.01f,
-            .maxWaterClearance = 0.16f,
-            .minWetSplatAlpha = 140,
-            .maxWetClearance = 0.20f,
-            .minClusterDistance = 0.42f,
+            .minWaterClearance = 0.006f,
+            .maxWaterClearance = 0.20f,
+            .minWetSplatAlpha = 100,
+            .maxWetClearance = 0.32f,
+            .minClusterDistance = 0.12f,
             .seed = 0x9371a5u,
         });
+    TraceLog(LOG_INFO, "SONG_QUAO_REEDS: placements=%d capacity=%d",
+             s_reedCount, REED_COUNT);
 
     // 3. Clustered Hillside Silvergrass / Pampas Drifts (Ghost of Tsushima style)
     s_pampasCount = MapFlora_GeneratePampasPlacements(
@@ -215,30 +219,14 @@ static void BuildFloraPlacements(void)
 
 static void BuildRocks(void)
 {
-    static const Vector2 kCliffCrags[] = {
-        {120.0f, 25.0f},
-        {105.0f, 40.0f},
-        {80.0f, 30.0f},
-        {35.0f, 280.0f},
-        {55.0f, 270.0f},
-        {155.0f, 265.0f},
-        {20.0f, 160.0f},
-        {175.0f, 140.0f},
-        {45.0f, 90.0f},
-        {165.0f, 80.0f},
-    };
-    int cragCount = (int)(sizeof(kCliffCrags) / sizeof(kCliffCrags[0]));
-
     s_rocks = MapProp_CreateRockSystem(
         "assets/textures/rocks/granite_diffuse.png",
         "assets/textures/rocks/granite_normal.png",
         "assets/textures/rocks/granite_roughness.png",
-        SONG_QUAO_ROCK_ITEM_COUNT + cragCount);
+        SONG_QUAO_ROCK_ITEM_COUNT);
 
     MapProp_PopulateRockItems(&s_rocks, &s_ground, kMapCenter,
                               SONG_QUAO_ROCK_ITEMS, SONG_QUAO_ROCK_ITEM_COUNT);
-    MapProp_AddCragPlacements(&s_rocks, &s_ground, kMapCenter,
-                              kCliffCrags, cragCount, 2.65f);
 }
 
 static void SpawnSongQuaoMistVolumes(void)
@@ -277,6 +265,17 @@ static void SpawnSongQuaoMistVolumes(void)
         .driftVelocity = {0.02f, 0.0f, 0.01f},
         .active = true};
     FogVolume_Create(&centralMeadowMist);
+
+    LocalFogVolume outletWaterfallMist = {
+        .shape = FOG_SHAPE_CYLINDER,
+        .position = {SONG_QUAO_OUTLET_X, -0.35f, SONG_QUAO_OUTLET_Z - 1.5f},
+        .extents = {14.5f, 1.45f, 12.0f},
+        .color = {234, 244, 252, 255},
+        .density = 0.16f,
+        .edgeSoftness = 0.92f,
+        .driftVelocity = {0.0f, -0.02f, 0.04f},
+        .active = true};
+    FogVolume_Create(&outletWaterfallMist);
 }
 
 static void DrawSongQuaoShadowCasters(Shader depthShader, void *userData)
@@ -399,6 +398,15 @@ void InitSongQuaoMap(void)
 
     s_sky = MapProp_CreateSkyDome();
     s_cloudSea = MapProp_CreateCloudSea(1400.0f, 1400.0f, 65.0f);
+    MapProp_SetCloudSeaGroundBoundary(
+        &s_cloudSea, &s_ground, -4.85f,
+        &(MapBoundaryMistStyle){
+            .innerWidth = 1.2f,
+            .outerWidth = 3.6f,
+            .heightOffset = 0.22f,
+            .outerDrop = 0.42f,
+            .opacity = 0.32f,
+        });
     if (!(s_skipMask & MAP_SKIP_CLIFF))
         s_cliff = MapProp_CreateCliffSkirt(&s_ground, kMapCenter, -1.35f, -26.0f);
 
@@ -446,22 +454,22 @@ void InitSongQuaoMap(void)
                                              .center = {kMapCenter.x, 0.0f, kMapCenter.z},
                                              .radiusX = MAP_WIDTH * 0.5f,
                                              .radiusZ = MAP_DEPTH * 0.5f,
-                                             .waveHeight = 0.016f,
-                                             .waveScale = 2.40f,
-                                             .waveSpeed = 0.65f,
-                                             .flowVelocity = {0.24f, 0.38f},
-                                             .detailScale = 0.22f,
-                                             .detailStrength = 0.22f,
+                                             .waveHeight = 0.009f,
+                                             .waveScale = 1.65f,
+                                             .waveSpeed = 0.58f,
+                                             .flowVelocity = {0.20f, 0.32f},
+                                             .detailScale = 0.36f,
+                                             .detailStrength = 0.30f,
                                              .maxDepth = 1.65f,
-                                             .absorption = {0.52f, 0.22f, 0.08f},
-                                             .scatterColor = {0.10f, 0.46f, 0.44f},
+                                             .absorption = {0.35f, 0.12f, 0.04f},
+                                             .scatterColor = {0.18f, 0.65f, 0.72f},
                                              .scatterCoeff = 0.32f,
-                                             .causticsStrength = 0.20f,
-                                             .causticsScale = 3.40f,
-                                             .foamThreshold = 0.075f,
-                                             .deepColor = {18, 56, 68, 205},
-                                             .shallowColor = {76, 156, 148, 42},
-                                             .foamColor = {238, 246, 248, 180},
+                                             .causticsStrength = 0.38f,
+                                             .causticsScale = 4.20f,
+                                             .foamThreshold = 0.065f,
+                                             .deepColor = {28, 96, 142, 200},
+                                             .shallowColor = {72, 188, 202, 120},
+                                             .foamColor = {242, 248, 250, 190},
                                          });
 
     s_lastShadowFocus = kMapCenter;
@@ -526,6 +534,8 @@ void DrawTransparentSongQuaoMap(void)
 {
     if (!s_ready)
         return;
+    if (!(s_skipMask & MAP_SKIP_CLOUDSEA))
+        MapProp_DrawIslandMist(&s_cloudSea, kMapCenter);
     if (!(s_skipMask & MAP_SKIP_WATER))
         MapProp_DrawWaterOverlay(&s_river, GetTime());
     if (!(s_skipMask & MAP_SKIP_FLUFF))

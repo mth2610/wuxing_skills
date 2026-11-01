@@ -487,6 +487,9 @@ typedef struct
     float lodDistance;
     float shadowDistance;
     bool ready;
+    Texture2D instanceTexture;
+    int instanceCount;
+    bool parametric;
 } MapFlowerField;
 
 MapFlowerField MapProp_CreateFlowerField(const MapFlowerPlacement *placements, int count,

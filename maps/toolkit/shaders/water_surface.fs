@@ -94,10 +94,11 @@ void main()
         shoreFade = 1.0 - smoothstep(0.75, 0.98, radial);
     }
 
-    // ── 1. WAVE NORMALS & DUAL-PHASE FLOW (SIMD Vectorized) ──────────────────
-    const vec2 d0 = vec2(0.82, 0.57);
-    const vec2 d1 = vec2(-0.31, 0.95);
-    const vec2 d2 = vec2(0.96, -0.18);
+    // ── 1. WAVE NORMALS & MULTI-PHASE FLOW (SIMD Vectorized) ────────────────
+    const vec2 d0 = vec2(0.707, 0.707);
+    const vec2 d1 = vec2(-0.612, 0.791);
+    const vec2 d2 = vec2(0.866, -0.500);
+    const vec2 d3 = vec2(-0.382, -0.924);
 
     // Subtle natural downstream drift for terrain rivers when u_flowVelocity is unset
     vec2 effectiveFlow = u_flowVelocity;
@@ -106,17 +107,22 @@ void main()
     }
     vec2 pFlow = fragWorldXZ - effectiveFlow * mod(u_time * 0.45, 4096.0);
 
-    vec3 pWave = vec3(
-        dot(pFlow, d0) * u_waveScale + t,
-        dot(pFlow, d1) * (u_waveScale * 1.73) - t * 1.31,
-        dot(pFlow, d2) * (u_waveScale * 2.61) + t * 0.73
+    // Non-linear domain warping breaks parallel sinusoidal stripes into organic meandering eddy ripples
+    vec2 warp = vec2(sin(pFlow.y * 0.55 + t * 0.35), cos(pFlow.x * 0.55 - t * 0.28)) * 0.45;
+    vec2 pw = pFlow + warp;
+
+    vec4 pWave = vec4(
+        dot(pw, d0) * u_waveScale + t,
+        dot(pw, d1) * (u_waveScale * 1.58) - t * 1.25,
+        dot(pw, d2) * (u_waveScale * 2.14) + t * 0.85,
+        dot(pw, d3) * (u_waveScale * 2.92) - t * 0.62
     );
 
-    vec3 cosP = cos(pWave);
-    vec3 sinP = sin(pWave);
+    vec4 cosP = cos(pWave);
+    vec4 sinP = sin(pWave);
 
-    vec2 slope = (d0 * (cosP.x * 0.50) + d1 * (cosP.y * 0.5017) + d2 * (cosP.z * 0.4176))
-               * (u_waveScale * u_waveHeight * 1.85 * shoreFade);
+    vec2 slope = (d0 * (cosP.x * 0.38) + d1 * (cosP.y * 0.32) + d2 * (cosP.z * 0.20) + d3 * (cosP.w * 0.15))
+               * (u_waveScale * u_waveHeight * 1.75 * shoreFade);
 
     // Distance attenuation factor for micro-details to prevent far-field aliasing
     vec3 viewVec = u_viewPos - fragPosition;
@@ -304,7 +310,7 @@ void main()
     }
 
     // ── 5. SINGLE-LAYER WATER SUBSURFACE SCATTERING (Wave-Crest SSS) ─────────
-    float waveFacet = dot(sinP, vec3(0.52, 0.31, 0.17));
+    float waveFacet = dot(sinP, vec4(0.42, 0.30, 0.18, 0.10));
     vec3 rawScatterDir = L + vec3(normal.x, 0.0, normal.z) * 0.65;
     vec3 scatterLightDir = rawScatterDir * inversesqrt(max(dot(rawScatterDir, rawScatterDir), 1e-8));
     float backlight = max(0.0, dot(viewDir, -vec3(scatterLightDir.x, scatterLightDir.y * 0.25, scatterLightDir.z)));
@@ -321,15 +327,17 @@ void main()
 
     vec3 reflectDir = reflect(-viewDir, normal);
     float skyAngle = clamp(reflectDir.y * 0.85 + 0.15, 0.0, 1.0);
-    // Natural mountain-valley sky & riparian foliage reflection (avoids artificial neon-cyan wash)
-    vec3 skyZenith  = vec3(0.14, 0.30, 0.52) * (0.72 + u_ambientColor.b * 0.34);
-    vec3 skyHorizon = vec3(0.32, 0.44, 0.50) * (0.66 + u_ambientColor.g * 0.26);
+    // Crystalline mountain-valley sky reflection (luminous azure to horizon pearl)
+    vec3 skyZenith  = vec3(0.18, 0.44, 0.74) * (0.80 + u_ambientColor.b * 0.32);
+    vec3 skyHorizon = vec3(0.42, 0.62, 0.76) * (0.75 + u_ambientColor.g * 0.25);
     vec3 reflectedSky = mix(skyHorizon, skyZenith, skyAngle);
 
-    // Subtle green-emerald riverbank canopy reflection near shallow margins
-    vec3 bankCanopyReflect = vec3(0.12, 0.22, 0.10) * (0.65 + u_ambientColor.g * 0.45);
-    float bankReflectMask = (1.0 - smoothstep(0.02, 0.55, waterDepth)) * (1.0 - skyAngle * 0.65);
-    reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.72);
+    if (u_waterShape != 3) {
+        // Subtle green-emerald riverbank canopy reflection for static lake basins
+        vec3 bankCanopyReflect = vec3(0.12, 0.22, 0.10) * (0.65 + u_ambientColor.g * 0.45);
+        float bankReflectMask = (1.0 - smoothstep(0.02, 0.55, waterDepth)) * (1.0 - skyAngle * 0.65);
+        reflectedSky = mix(reflectedSky, bankCanopyReflect, bankReflectMask * 0.72);
+    }
 
     // Restrained atmospheric sun-glow on horizon reflection
     float sunReflect = max(0.0, dot(reflectDir, L));
@@ -386,38 +394,33 @@ void main()
         brokenFoam += max(contactRipple, 0.0) * 0.09 * contactMask;
 
         if (u_waterShape == 3) {
-            // Faint natural mountain stream micro-bubbles along shallow ripples (no heavy ocean surf):
-            // Feathers smoothly near depth=0 so mesh triangle silhouettes never become visible.
-            float shoreRippleFoam = contactMask * smoothstep(0.58, 0.88, foamNoise + contactRipple * 0.35) * 0.20;
-            brokenFoam = clamp(brokenFoam * 0.25 + shoreRippleFoam, 0.0, 0.35);
-            brokenFoam *= smoothstep(0.002, 0.025, waterDepth);
+            // Mountain stream: crystal-clear freshwater edge without artificial white surf ribbons
+            // Foam only arises from active dynamic wake disturbances (swimmers / crossing entities)
+            brokenFoam = dynamicWakeFoam * smoothstep(0.32, 0.78, foamNoise + dynamicWakeFoam * 0.35);
+        } else {
+            float wakeFoamTex = dynamicWakeFoam * smoothstep(0.32, 0.78, foamNoise + dynamicWakeFoam * 0.35);
+            brokenFoam = clamp(max(brokenFoam, wakeFoamTex), 0.0, 1.0);
         }
-
-        float wakeFoamTex = dynamicWakeFoam * smoothstep(0.32, 0.78, foamNoise + dynamicWakeFoam * 0.35);
-        brokenFoam = clamp(max(brokenFoam, wakeFoamTex), 0.0, 1.0);
     }
 
     // ── 8. CRYSTAL CLEAR SEE-THROUGH WATER TRANSPARENCY ──────────────────────
-    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.003, 0.085, waterDepth) : 1.0;
+    // Crystalline shallow mountain stream water: translucent clarity revealing 3D riverbed
     float waterColumnAlpha = (u_waterShape == 3)
-        ? (0.70 * smoothstep(0.010, 0.50, waterDepth))
+        ? clamp(0.24 + 0.50 * (1.0 - exp(-2.6 * waterDepth)), 0.0, 0.78)
         : (0.12 + 0.36 * (1.0 - exp(-1.8 * waterDepth)));
-    // Only crisp pinpoint glintSharp contributes to alpha, preventing broad milky opacity blobs
     float glintAlphaBoost = clamp(glintSharp * 0.35, 0.0, 0.22);
-    float surfaceAlpha = (fresnel * 0.65 * shoreFadeOptical) + waterColumnAlpha + glintAlphaBoost;
+    float surfaceAlpha = (fresnel * 0.65) + waterColumnAlpha + glintAlphaBoost;
 
-    // Smooth analytical shoreline edge feathering (clean, antialiased contact lip)
+    // Smooth analytical shoreline edge feathering (dissolves to 0 alpha within 3.5cm of shoreline)
     float shoreEdgeFade = radialEdgeFade;
     if (u_waterShape == 3) {
-        // Soft organic shoreline feathering (eliminates discrete DEM triangle facet edges)
-        float shoreJitter = (sin(fragWorldXZ.x * 6.5 + fragWorldXZ.y * 5.2) * 0.5 + 0.5) * 0.015;
-        shoreEdgeFade = smoothstep(0.002, 0.075 + shoreJitter, waterDepth);
+        shoreEdgeFade = smoothstep(0.001, 0.035, waterDepth);
     } else if (u_waterShape != 0) {
         shoreEdgeFade = smoothstep(0.002, 0.035, waterDepth);
     }
     surfaceAlpha *= shoreEdgeFade;
 
-    float alpha = clamp(surfaceAlpha + brokenFoam * 0.18 * shoreEdgeFade, 0.0, 0.90);
+    float alpha = clamp(surfaceAlpha + brokenFoam * 0.22 * shoreEdgeFade, 0.0, 0.90);
     if (alpha < 0.002) discard;
 
     // ── 9. ENERGY-CONSERVING COMPOSITION ─────────────────────────────────────
@@ -426,10 +429,15 @@ void main()
 
     vec3 depthBlend = clamp(mix(vec3(1.0 - smoothstep(0.04, 0.82, waterDepth)), transmittance, 0.60), 0.0, 1.0);
     vec3 waterVolumeColor = mix(deepTint, shallowTint, depthBlend);
-    waterVolumeColor *= (0.58 + u_ambientColor * 0.24 + effectiveLight * 0.11);
+    waterVolumeColor *= (0.88 + u_ambientColor * 0.38 + effectiveLight * 0.28);
 
-    // Energy-conserving Fresnel blend: transmitted volume + subsurface terms attenuate as reflection rises
-    float reflectWeight = clamp(fresnel * 0.62 + 0.05, 0.0, 0.82);
+    // Smooth optical dissolve near the 0-depth contact lip (eliminates sharp sky-reflection boundary)
+    float shoreFadeOptical = (u_waterShape == 3) ? smoothstep(0.003, 0.055, waterDepth) : 1.0;
+
+    // Energy-conserving Fresnel blend: water surface reflects the luminous sky
+    float reflectWeight = (u_waterShape == 3)
+        ? clamp((fresnel * 0.65 + 0.18) * shoreFadeOptical, 0.0, 0.88)
+        : clamp(fresnel * 0.72 + 0.08, 0.0, 0.88);
     vec3 underwaterTerms = waterVolumeColor + causticLight + sssLight + waveLighting;
     vec3 color = mix(underwaterTerms, reflectedSky, reflectWeight);
 
