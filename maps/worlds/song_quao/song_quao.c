@@ -435,8 +435,8 @@ void InitSongQuaoMap(void)
             .bladeWidthScale = 0.124f,
             .lodDistance = 22.0f,
             .midLodDistance = 11.5f,
-            .drawDistance = 86.0f,
-            .shadowDistance = 13.0f,
+            .drawDistance = 48.0f,
+            .shadowDistance = 24.0f,
             .grassState = MAP_GRASS_STATE_LUSH,
             .reedRootColor = {30, 48, 22, 255},
             .reedTipColor = {108, 156, 62, 255},
@@ -473,7 +473,7 @@ void InitSongQuaoMap(void)
                                          });
 
     s_lastShadowFocus = kMapCenter;
-    EnvShadow_SetFocus(kMapCenter, 10.8f);
+    EnvShadow_SetFocus(kMapCenter, 18.0f);
     EnvShadow_SetMapCasterCallback(DrawSongQuaoShadowCasters, NULL);
     CaptureSongQuaoStaticShadows();
     MapManager_SetZones(SONG_QUAO_ZONES, SONG_QUAO_ZONE_COUNT);
@@ -497,7 +497,7 @@ void UpdateSongQuaoMap(float dt)
     if (fabsf(focus.x - s_lastShadowFocus.x) > 0.01f || fabsf(focus.z - s_lastShadowFocus.z) > 0.01f)
     {
         s_lastShadowFocus = focus;
-        EnvShadow_SetFocus(focus, 10.8f);
+        EnvShadow_SetFocus(focus, 18.0f);
     }
     CaptureSongQuaoStaticShadows();
 }

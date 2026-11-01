@@ -1854,7 +1854,9 @@ int main(int argc, char **argv) {
         VFXTest_Draw3D();
 
         if ((!renderVFXMode || renderVFXIndex == -1) && !VFXTest_ShouldHideCharacterRef()) {
-            Environment_DrawSmartShadow(player.position, ENV_SHAPE_SPHERE, 0.45f, 0.85f);
+            if (!EnvShadow_IsEnabled()) {
+                Environment_DrawSmartShadow(player.position, ENV_SHAPE_SPHERE, 0.45f, 0.85f);
+            }
             if (CharacterModel_IsLoaded()) {
                 CharacterModel_Draw(&player.anim, player.position, s_vfxPlayerYaw, 1.0f, WHITE);
             } else {

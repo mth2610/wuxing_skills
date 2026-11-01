@@ -1166,7 +1166,7 @@ void MapProp_DrawFlowerFieldBatch(MapFlowerField *fields, int fieldCount, Vector
     NatureShadowMode shadowMode = Nature_GetShadowMode();
     bool realShadowActive = quality >= GFX_LOW && EnvShadow_IsEnabled() &&
                             shadowMode != NATURE_SHADOW_PROJECTED_ONLY;
-    bool useProjectedShadows = quality >= GFX_MED &&
+    bool useProjectedShadows = !realShadowActive && quality >= GFX_MED &&
                                shadowMode != NATURE_SHADOW_REAL_ONLY;
 
     bool anyShadow = false;

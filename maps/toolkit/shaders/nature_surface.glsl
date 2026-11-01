@@ -40,9 +40,8 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
                               vec3 normal, vec3 lightDir, vec3 worldPosition,
                               float distToCam)
 {
-    // [NÂNG CẤP ĐỔ BÓNG HOA & CỎ]: Mở rộng tầm nhìn bóng đổ thực từ 14..22m lên 18..28m
-    // để toàn bộ thảm hoa tiền cảnh và trung cảnh đều nhận bóng đổ sắc nét.
-    float shadowFade = 1.0 - FastRamp(18.0, 28.0, distToCam);
+    // Smooth distance fade beyond the active shadow cascade
+    float shadowFade = 1.0 - FastRamp(22.0, 36.0, distToCam);
     if (shadowFade <= 0.0)
         return 1.0;
 
@@ -53,12 +52,17 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
         float invW = 1.0 / max(lightSpace.w, 1e-5);
         vec3 projected = (lightSpace.xyz * invW) * 0.5 + 0.5;
         if (all(greaterThan(projected, vec3(0.0))) && all(lessThan(projected, vec3(1.0)))) {
-            float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.16);
+            float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.22);
             if (edgeFade > 0.0) {
-                float bias = clamp(0.0011 + slope * 0.0019, 0.0009, 0.0032);
-                float sampleDyn = (distToCam < 14.0)
-                    ? MapShadowCompareBilinear(shadowMap, projected.xy, projected.z - bias, u_shadowTexel)
-                    : MapShadowCompare(shadowMap, projected.xy, projected.z - bias);
+                float bias = clamp(0.0028 + slope * 0.0035, 0.0025, 0.0065);
+                float sampleDyn;
+                if (u_shadowFilterQuality >= 1.5 && distToCam < 16.0) {
+                    sampleDyn = MapShadowFilteredVisibilityTier(shadowMap, projected.xy, projected.z - bias, u_shadowTexel, 1.35, 0.18, u_shadowFilterQuality);
+                } else if (distToCam < 24.0) {
+                    sampleDyn = MapShadowCompareBilinear(shadowMap, projected.xy, projected.z - bias, u_shadowTexel);
+                } else {
+                    sampleDyn = MapShadowCompare(shadowMap, projected.xy, projected.z - bias);
+                }
                 rawDyn = mix(1.0, sampleDyn, edgeFade);
             }
         }
@@ -69,18 +73,21 @@ float FoliageShadowVisibility(vec4 lightSpace, vec4 staticLightSpace,
         float invW = 1.0 / max(staticLightSpace.w, 1e-5);
         vec3 projected = (staticLightSpace.xyz * invW) * 0.5 + 0.5;
         if (all(greaterThan(projected, vec3(0.0))) && all(lessThan(projected, vec3(1.0)))) {
-            float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.08);
+            float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.12);
             if (edgeFade > 0.0) {
-                float bias = clamp(0.0010 + slope * 0.0018, 0.0008, 0.0028);
-                float sampleStatic = MapShadowCompare(staticShadowMap, projected.xy, projected.z - bias);
+                float bias = clamp(0.0025 + slope * 0.0030, 0.0020, 0.0055);
+                float sampleStatic = (distToCam < 20.0)
+                    ? MapShadowCompareBilinear(staticShadowMap, projected.xy, projected.z - bias, u_staticShadowTexel)
+                    : MapShadowCompare(staticShadowMap, projected.xy, projected.z - bias);
                 float rawStatic = mix(1.0, sampleStatic, edgeFade);
                 rawCombined = min(rawDyn, rawStatic);
             }
         }
     }
 
-    // Tăng độ tương phản bóng đổ (0.12 thay vì 0.20) để bóng trên khóm hoa và thảm cỏ có chiều sâu rõ rệt
-    float translucentVis = mix(0.12, 1.0, rawCombined);
+    // Soft, luminous botanical shadow floor: in shadow, foliage maintains translucent emerald green (0.70)
+    // instead of harsh black dirt, eliminating self-shadow acne and dark boundaries on screen.
+    float translucentVis = mix(0.70, 1.0, rawCombined);
     return mix(1.0, translucentVis, shadowFade);
 }
 

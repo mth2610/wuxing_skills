@@ -981,11 +981,11 @@ MapMeadowSurface MapProp_CreateMeadow(const MapMeadowPlacement *placements, int 
             int realShadowCount = 0;
             if (buildRealShadowLod)
             {
-                // Real Shadow LOD: Tỉa stride=2 kèm lá rộng 1.68x và gắn sẵn NatureShadow_GetShader()
-                int shadowStride = (cellCount >= 16) ? 2 : 1;
+                // Real Shadow LOD: cast 100% grass clumps (stride=1) with 3 blades, 2 segments and natural 1.18x width
+                int shadowStride = 1;
                 realShadowModel = Nature_BuildMeadowChunkFromIndices(
                     placements, cellIndices, cellCount, style, shadowStride,
-                    2, 2, 1.68f, realShadowShader, &realShadowCount);
+                    3, 2, 1.18f, realShadowShader, &realShadowCount);
             }
 
             MapMeadowChunk *chunk = &meadow.chunks[meadow.chunkCount++];
@@ -1367,7 +1367,7 @@ void MapProp_DrawMeadow(MapMeadowSurface *meadow, Vector3 worldOffset, float tim
     NatureShadowMode shadowMode = Nature_GetShadowMode();
     bool realShadowActive = quality >= GFX_LOW && EnvShadow_IsEnabled() &&
                             shadowMode != NATURE_SHADOW_PROJECTED_ONLY;
-    bool useProjectedShadows = hasAnyContactShadow && quality >= GFX_MED &&
+    bool useProjectedShadows = !realShadowActive && hasAnyContactShadow && quality >= GFX_MED &&
                                shadowMode != NATURE_SHADOW_REAL_ONLY;
     if (useProjectedShadows && meadow->shadowDistance > 0.0f)
     {

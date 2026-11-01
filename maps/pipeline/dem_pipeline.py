@@ -722,11 +722,11 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
     flower_colonies = []
     for idx in np.argsort(-flower_score.ravel()):
         r, c = divmod(int(idx), w)
-        if flower_score[r, c] <= 0.28: break
+        if flower_score[r, c] <= 0.35: break
         x, z = float(c * sx), float(r * sz)
-        if all(np.hypot(x - cx, z - cz) >= 13.5 for cx, cz, cy in flower_colonies):
+        if all(np.hypot(x - cx, z - cz) >= 16.0 for cx, cz, cy in flower_colonies):
             flower_colonies.append((x, z, float(ground[r, c])))
-            if len(flower_colonies) >= 28: break
+            if len(flower_colonies) >= 14: break
 
     # Build rock items array: low-profile boulder clusters with companions + river stones (no tall crag spires)
     rock_items = []
@@ -772,12 +772,12 @@ def process_dem(dem_path, max_dim=300.0, height_range=16.0, cliff_depth=8.0,
         f.write(f'static const MapFloraFlowerCluster {prefix.upper()}_FLOWER_CLUSTERS[] = {{\n')
         total_flowers = 0
         for i, (x, z, y) in enumerate(flower_colonies):
-            count = 1400 + 80 * (i % 4)
+            count = 135 + 15 * (i % 4)
             total_flowers += count
-            species = i % 6
-            sp0, sp1, sp2, sp3 = species, (species + 1) % 6, (species + 3) % 6, (species + 4) % 6
-            rad_x = 18.0 + 1.5 * (i % 3)
-            rad_z = 18.0 + 1.5 * ((i + 1) % 3)
+            species = i % 8
+            sp0, sp1, sp2, sp3 = species, (species + 2) % 8, (species + 4) % 8, (species + 6) % 8
+            rad_x = 12.5
+            rad_z = 12.5
             f.write(f'    {{{{{x:.2f}f, {y:.2f}f, {z:.2f}f}}, {{{rad_x:.1f}f, {rad_z:.1f}f}}, {count}, {species}, {{{sp0}, {sp1}, {sp2}, {sp3}}}, {{0}}, {{0}}, {{0}}}},\n')
         f.write('};\n')
         f.write(f'#define {prefix.upper()}_FLOWER_CLUSTER_COUNT (int)(sizeof({prefix.upper()}_FLOWER_CLUSTERS) / sizeof({prefix.upper()}_FLOWER_CLUSTERS[0]))\n')

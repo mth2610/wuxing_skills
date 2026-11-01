@@ -255,7 +255,7 @@ float MapDynamicShadowVisibilityCovLS(vec4 lightSpace, float slope, out float co
         projected.y <= 0.0 || projected.y >= 1.0)
         return 1.0;
 
-    float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.12);
+    float edgeFade = MapShadowCoverageFadeWidth(projected.xy, 0.20);
     if (edgeFade <= 0.0)
         return 1.0;
     coverage = edgeFade;

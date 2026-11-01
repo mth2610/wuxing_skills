@@ -1,6 +1,7 @@
 #include "game_screen.h"
 #include "entities/entities.h"
 #include "environment/environment_system.h"
+#include "environment/env_shadow.h"
 #include "skills/skill_manager.h"
 #include "skills/skill_helper.h"
 #include "core/composition/visual_composer.h"
@@ -701,7 +702,10 @@ void GameScreen_Draw3D(const PlayerEntity *player)
         }
     }
 
-    Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
+    if (!EnvShadow_IsEnabled())
+    {
+        Environment_DrawSmartShadow(player->position, ENV_SHAPE_SPHERE, 0.5f, 0.9f);
+    }
     if (CharacterModel_IsLoaded())
     {
         CharacterModel_Draw(&player->anim, player->position, Control_GetYaw(), 1.0f, WHITE);

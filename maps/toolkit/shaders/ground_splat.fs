@@ -2,10 +2,8 @@
 
 // Đợt E / E2 — VFX point lights.
 #include "core/shaders/common/vfx_lights.glsl"
-// Preserve thin grass silhouettes without adding shadow-map samples.
-// Bake tier-1 bilinear PCF into terrain receiver (cuts 9-tap penumbra loop to 4 taps; grass shadows are softened below).
-#define MAP_DYNAMIC_SHADOW_RADIUS 1.35
-#define MAP_SHADOW_FILTER_QUALITY 1
+// Dynamic PCF penumbra radius for smooth, natural shadow edges on terrain and submerged riverbed.
+#define MAP_DYNAMIC_SHADOW_RADIUS 1.45
 
 #include "maps/toolkit/shaders/map_shadow.glsl"
 #include "environment/shaders/cloud_shadow.glsl"
@@ -435,13 +433,13 @@ void main()
             vec3 rockNormZ = vec3(0.0, 0.0, 1.0);
 
             if (u_groundRockEnabled != 0) {
-                rockTexX = textureGrad(u_groundRock, triUVx, triDxX, triDyX).rgb;
-                rockTexY = textureGrad(u_groundRock, triUVy, triDxY, triDyY).rgb;
-                rockTexZ = textureGrad(u_groundRock, triUVz, triDxZ, triDyZ).rgb;
+                rockTexX = (triWeights.x > 0.02) ? textureGrad(u_groundRock, triUVx, triDxX, triDyX).rgb : vec3(0.0);
+                rockTexY = (triWeights.y > 0.02) ? textureGrad(u_groundRock, triUVy, triDxY, triDyY).rgb : vec3(0.0);
+                rockTexZ = (triWeights.z > 0.02) ? textureGrad(u_groundRock, triUVz, triDxZ, triDyZ).rgb : vec3(0.0);
 
-                rockNormX = textureGrad(u_groundRockNormal, triUVx, triDxX, triDyX).rgb * 2.0 - 1.0;
-                rockNormY = textureGrad(u_groundRockNormal, triUVy, triDxY, triDyY).rgb * 2.0 - 1.0;
-                rockNormZ = textureGrad(u_groundRockNormal, triUVz, triDxZ, triDyZ).rgb * 2.0 - 1.0;
+                rockNormX = (triWeights.x > 0.02) ? (textureGrad(u_groundRockNormal, triUVx, triDxX, triDyX).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+                rockNormY = (triWeights.y > 0.02) ? (textureGrad(u_groundRockNormal, triUVy, triDxY, triDyY).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
+                rockNormZ = (triWeights.z > 0.02) ? (textureGrad(u_groundRockNormal, triUVz, triDxZ, triDyZ).rgb * 2.0 - 1.0) : vec3(0.0, 0.0, 1.0);
 
                 if (nearDualScale) {
                     vec2 dUVx = triUVx * 3.2;
@@ -451,31 +449,42 @@ void main()
                     vec2 dDxY = triDxY * 3.2, dDyY = triDyY * 3.2;
                     vec2 dDxZ = triDxZ * 3.2, dDyZ = triDyZ * 3.2;
 
-                    vec3 detailX = textureGrad(u_groundRock, dUVx, dDxX, dDyX).rgb;
-                    vec3 detailY = textureGrad(u_groundRock, dUVy, dDxY, dDyY).rgb;
-                    vec3 detailZ = textureGrad(u_groundRock, dUVz, dDxZ, dDyZ).rgb;
-                    rockTexX = mix(rockTexX, detailX * 1.08, 0.35 * dualScaleFade);
-                    rockTexY = mix(rockTexY, detailY * 1.08, 0.35 * dualScaleFade);
-                    rockTexZ = mix(rockTexZ, detailZ * 1.08, 0.35 * dualScaleFade);
-
-                    vec3 detailNormX = textureGrad(u_groundRockNormal, dUVx, dDxX, dDyX).rgb * 2.0 - 1.0;
-                    vec3 detailNormY = textureGrad(u_groundRockNormal, dUVy, dDxY, dDyY).rgb * 2.0 - 1.0;
-                    vec3 detailNormZ = textureGrad(u_groundRockNormal, dUVz, dDxZ, dDyZ).rgb * 2.0 - 1.0;
-                    rockNormX = normalize(mix(rockNormX, detailNormX, 0.42 * dualScaleFade));
-                    rockNormY = normalize(mix(rockNormY, detailNormY, 0.42 * dualScaleFade));
-                    rockNormZ = normalize(mix(rockNormZ, detailNormZ, 0.42 * dualScaleFade));
+                    if (triWeights.x > 0.02) {
+                        vec3 detailX = textureGrad(u_groundRock, dUVx, dDxX, dDyX).rgb;
+                        rockTexX = mix(rockTexX, detailX * 1.08, 0.35 * dualScaleFade);
+                        vec3 detailNormX = textureGrad(u_groundRockNormal, dUVx, dDxX, dDyX).rgb * 2.0 - 1.0;
+                        rockNormX = normalize(mix(rockNormX, detailNormX, 0.42 * dualScaleFade));
+                    }
+                    if (triWeights.y > 0.02) {
+                        vec3 detailY = textureGrad(u_groundRock, dUVy, dDxY, dDyY).rgb;
+                        rockTexY = mix(rockTexY, detailY * 1.08, 0.35 * dualScaleFade);
+                        vec3 detailNormY = textureGrad(u_groundRockNormal, dUVy, dDxY, dDyY).rgb * 2.0 - 1.0;
+                        rockNormY = normalize(mix(rockNormY, detailNormY, 0.42 * dualScaleFade));
+                    }
+                    if (triWeights.z > 0.02) {
+                        vec3 detailZ = textureGrad(u_groundRock, dUVz, dDxZ, dDyZ).rgb;
+                        rockTexZ = mix(rockTexZ, detailZ * 1.08, 0.35 * dualScaleFade);
+                        vec3 detailNormZ = textureGrad(u_groundRockNormal, dUVz, dDxZ, dDyZ).rgb * 2.0 - 1.0;
+                        rockNormZ = normalize(mix(rockNormZ, detailNormZ, 0.42 * dualScaleFade));
+                    }
                 }
             } else {
-                rockTexX = textureGrad(texPath, triUVx, triDxX, triDyX).rgb;
-                rockTexY = textureGrad(texPath, triUVy, triDxY, triDyY).rgb;
-                rockTexZ = textureGrad(texPath, triUVz, triDxZ, triDyZ).rgb;
+                rockTexX = (triWeights.x > 0.02) ? textureGrad(texPath, triUVx, triDxX, triDyX).rgb : vec3(0.0);
+                rockTexY = (triWeights.y > 0.02) ? textureGrad(texPath, triUVy, triDxY, triDyY).rgb : vec3(0.0);
+                rockTexZ = (triWeights.z > 0.02) ? textureGrad(texPath, triUVz, triDxZ, triDyZ).rgb : vec3(0.0);
                 if (nearDualScale) {
-                    vec3 detailX = textureGrad(texPath, triUVx * 2.8, triDxX * 2.8, triDyX * 2.8).rgb;
-                    vec3 detailY = textureGrad(texPath, triUVy * 2.8, triDxY * 2.8, triDyY * 2.8).rgb;
-                    vec3 detailZ = textureGrad(texPath, triUVz * 2.8, triDxZ * 2.8, triDyZ * 2.8).rgb;
-                    rockTexX = mix(rockTexX, detailX, 0.32 * dualScaleFade);
-                    rockTexY = mix(rockTexY, detailY, 0.32 * dualScaleFade);
-                    rockTexZ = mix(rockTexZ, detailZ, 0.32 * dualScaleFade);
+                    if (triWeights.x > 0.02) {
+                        vec3 detailX = textureGrad(texPath, triUVx * 2.8, triDxX * 2.8, triDyX * 2.8).rgb;
+                        rockTexX = mix(rockTexX, detailX, 0.32 * dualScaleFade);
+                    }
+                    if (triWeights.y > 0.02) {
+                        vec3 detailY = textureGrad(texPath, triUVy * 2.8, triDxY * 2.8, triDyY * 2.8).rgb;
+                        rockTexY = mix(rockTexY, detailY, 0.32 * dualScaleFade);
+                    }
+                    if (triWeights.z > 0.02) {
+                        vec3 detailZ = textureGrad(texPath, triUVz * 2.8, triDxZ * 2.8, triDyZ * 2.8).rgb;
+                        rockTexZ = mix(rockTexZ, detailZ, 0.32 * dualScaleFade);
+                    }
                 }
             }
             vec3 triRock = rockTexX * triWeights.x + rockTexY * triWeights.y + rockTexZ * triWeights.z;
@@ -692,14 +701,14 @@ void main()
                          * smoothstep(0.08, 0.60, ecology.r);
     rawShadow *= 1.0 - GS_FAR_CANOPY_SHADE * canopyFarField;
 
-    // Grounded, visible shadows for flowers, grass tufts, and rocks on the meadow floor
-    float turfShadowVis = rawShadow * mix(rawShadow, 1.0, 0.32);
+    // Soft, grounded shadows for flowers, props, and rocks without muddy black splotches
+    float turfShadowVis = rawShadow * mix(rawShadow, 1.0, 0.45);
     float resolvedShadow = mix(rawShadow, turfShadowVis, wGrass);
-    float shadowFloor = mix(0.18, 0.24, wGrass);
+    float shadowFloor = mix(0.32, 0.52, wGrass);
     float shadow = mix(shadowFloor, 1.0, resolvedShadow);
     float sunVisibility = (shadow > 0.001) ? shadow * Environment_CloudVisibility(u_cloudNoise, fragWorldPos) : 0.0;
 
-    float ambientShadowMod = mix(mix(0.68, 0.64, wGrass), 1.0, resolvedShadow);
+    float ambientShadowMod = mix(mix(0.80, 0.86, wGrass), 1.0, resolvedShadow);
     vec3 ambient = Environment_HemisphereIrradiance(normal, actualAmbient) * (cavityAO * ambientShadowMod);
 
     vec3 totalLight = ambient + actualLight * effectiveNdotL * sunVisibility;

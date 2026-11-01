@@ -186,7 +186,7 @@ def generate_rocks():
             add_rock(sx_pos, sz_pos, r_s, r_s * 0.55, (rot_oya + si * 80) % 360, ARCH_SCREE, max_slope=16.0, min_overlap=0.45)
 
         placed_clusters += 1
-        if placed_clusters >= 8:
+        if placed_clusters >= 12:
             break
 
     # -------------------------------------------------------------

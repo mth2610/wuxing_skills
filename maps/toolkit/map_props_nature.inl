@@ -185,7 +185,16 @@ static void Nature_InitEnvFlags(void)
         s_cachedShadowMode = NATURE_SHADOW_HYBRID;
 
     const char *filter = getenv("WUXING_NATURE_SHADOW_CASTERS");
-    if (filter == NULL || filter[0] == '\0' || filter[0] == 'a' || filter[0] == 'A')
+    if (filter == NULL || filter[0] == '\0')
+    {
+        // By default: flowers, boulders, characters, props & meadow grass cast shadows.
+        // Foliage receiver uses enhanced depth-bias and botanical translucent floor (0.70)
+        // to eliminate self-shadow acne while providing soft, grounded contact shadows.
+        s_cachedCasterFilterActive = false;
+        s_cachedCasterAllowFlower = true;
+        s_cachedCasterAllowMeadow = true;
+    }
+    else if (filter[0] == 'a' || filter[0] == 'A')
     {
         s_cachedCasterFilterActive = false;
         s_cachedCasterAllowFlower = true;
