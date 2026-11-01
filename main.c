@@ -871,6 +871,16 @@ int main(int argc, char **argv) {
     EnvShadow_SetQuality(resolvedQuality >= GFX_ULTRA ? 3 :
                          resolvedQuality >= GFX_HIGH ? 2 :
                          resolvedQuality >= GFX_MED ? 1 : 0);
+    static GfxQuality s_lastScaledQuality = (GfxQuality)-1;
+    if (resolvedQuality != s_lastScaledQuality)
+    {
+        s_lastScaledQuality = resolvedQuality;
+        float targetScale = (resolvedQuality >= GFX_ULTRA) ? 1.00f :
+                            (resolvedQuality >= GFX_HIGH)  ? 0.92f :
+                            (resolvedQuality >= GFX_MED)   ? 0.85f :
+                            (resolvedQuality >= GFX_LOW)   ? 0.78f : 0.85f;
+        RenderScale_SetScale(targetScale);
+    }
     TimeFX_SetRawDelta(rawDt);
     float dt = headlessFixedStep ? rawDt : TimeFX_Apply(rawDt);
     g_totalElapsed += dt;

@@ -68,6 +68,7 @@ void  RenderScale_NotifyMapChange(void);
  * drawing anything. */
 bool  RenderScale_TakeResize(int *width, int *height);
 
+void  RenderScale_SetScale(float scale);
 int   RenderScale_GetWidth(void);
 int   RenderScale_GetHeight(void);
 float RenderScale_GetScale(void);

@@ -187,12 +187,12 @@ static void Nature_InitEnvFlags(void)
     const char *filter = getenv("WUXING_NATURE_SHADOW_CASTERS");
     if (filter == NULL || filter[0] == '\0')
     {
-        // By default: characters, enemies, props, boulders & flowers cast shadows.
-        // Meadow grass is excluded from casting depth (preventing 65k clump aliased noise
-        // and dirty shadow acne, while matching Ghost of Tsushima / Zelda botanical design).
+        // By default: characters, enemies, props, boulders, flowers & meadow grass cast shadows.
+        // Foliage receiver uses enhanced depth-bias and botanical translucent floor (0.62)
+        // to eliminate self-shadow acne while providing soft, grounded contact shadows.
         s_cachedCasterFilterActive = false;
         s_cachedCasterAllowFlower = true;
-        s_cachedCasterAllowMeadow = false;
+        s_cachedCasterAllowMeadow = true;
     }
     else if (filter[0] == 'a' || filter[0] == 'A')
     {

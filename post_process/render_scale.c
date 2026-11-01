@@ -25,6 +25,7 @@ static const float kLadder[] = {1.00f, 0.92f, 0.85f, 0.78f, 0.72f, 0.68f};
 static int s_level = START_RUNG;
 static int s_floorLevel = LADDER_COUNT - 1;
 static bool s_adaptive = false;
+static bool s_hasFixedOverride = false;
 static int s_displayW = 0, s_displayH = 0;
 static int s_outW = 0, s_outH = 0;
 static int s_pendingW = 0, s_pendingH = 0;
@@ -95,6 +96,7 @@ void RenderScale_Init(int displayWidth, int displayHeight)
   s_displayH = displayHeight;
 
   const char *fixed = getenv("WUXING_RENDER_SCALE");
+  s_hasFixedOverride = (fixed != NULL);
   const char *startEnv = getenv("WUXING_RENDER_SCALE_START");
   const char *floorEnv = getenv("WUXING_RENDER_SCALE_MIN");
 
@@ -275,6 +277,23 @@ int RenderScale_GetWidth(void) { return s_outW; }
 int RenderScale_GetHeight(void) { return s_outH; }
 float RenderScale_GetScale(void) { return kLadder[s_level]; }
 bool RenderScale_IsAdaptive(void) { return s_adaptive; }
+
+void RenderScale_SetScale(float scale)
+{
+  if (s_hasFixedOverride || scale <= 0.0f)
+    return;
+  int best = 0;
+  for (int i = 0; i < LADDER_COUNT; i++)
+  {
+    if (fabsf(kLadder[i] - scale) < fabsf(kLadder[best] - scale))
+      best = i;
+  }
+  if (best != s_level)
+  {
+    s_level = best;
+    Publish(s_displayW, s_displayH);
+  }
+}
 
 bool RenderScale_AdaptiveForced(void)
 {
